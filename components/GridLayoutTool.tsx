@@ -2543,6 +2543,19 @@ const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
    匯入時已經烤了一張第一格（poster），拿它當來源，卡片就跟圖片長得一樣。
    （創意拼圖是在外面就把 src 換成 poster 了，所以那邊照樣走 img.src。） */
 const cardSrc = (img.isVideo && img.poster) ? img.poster : img.src;
+useEffect(()=>{
+  let cancelled=false;
+  const source=getPreviewImg(cardSrc);
+  const prime=()=>{if(cancelled||!source.naturalWidth)return;
+    for(const [id] of FX_ROOT_TOOLS){
+      const key=`${cardSrc}|fx:${id}`;
+      if(cardThumbCache.has(key))continue;
+      void queueCardThumb(()=>{if(cardThumbCache.has(key))return;const thumb=makeCardThumb(source,effectPreset(id,FX_DEFS) as PhotoFx);if(thumb)putCardThumb(key,thumb);},()=>cancelled);
+    }
+  };
+  if(source.complete)prime();else source.addEventListener('load',prime,{once:true});
+  return()=>{cancelled=true;source.removeEventListener('load',prime);};
+},[cardSrc]);
 
 /* ── 兩段式的那幾顆（形狀／描邊／發光）按下去要立刻有反應 ──────────────
  *
@@ -3736,6 +3749,10 @@ const CARD_W = 64, CARD_H = 76;
 /** 縮圖用的實際像素密度，2～3 之間 —— 太低會糊，太高只是白算 */
 const CARD_DPR = Math.max(2, Math.min(3, Math.round(typeof window !== 'undefined' ? (window.devicePixelRatio || 2) : 2)));
 const cardThumbCache = new Map<string, HTMLCanvasElement>();
+const putCardThumb=(key:string,canvas:HTMLCanvasElement)=>{
+  if(cardThumbCache.size>=200){const oldKey=cardThumbCache.keys().next().value!;const old=cardThumbCache.get(oldKey)!;if(!old.isConnected)old.width=old.height=1;cardThumbCache.delete(oldKey);}
+  cardThumbCache.set(key,canvas);
+};
 const cardSourceThumbCache=new Map<string,HTMLCanvasElement>();
 const CardSourceThumb:React.FC<{src:string}>=({src})=>{
   const ref=useRef<HTMLCanvasElement|null>(null);
@@ -3764,7 +3781,7 @@ let cardThumbWork:Promise<void>=Promise.resolve();
 function queueCardThumb(work:()=>void,cancelled:()=>boolean):Promise<void>{
   const task=cardThumbWork.then(async()=>{
     if(cancelled())return;
-    await new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r())));
+    await new Promise<void>(r=>requestAnimationFrame(()=>r()));
     if(cancelled())return;
     await awaitPhotoIdle();if(!cancelled())work();
   });
@@ -3776,12 +3793,13 @@ const makeCardThumb = (img: HTMLImageElement, fx: PhotoFx): HTMLCanvasElement | 
   if (!img.naturalWidth) return null;
   const w = CARD_W * CARD_DPR, h = CARD_H * CARD_DPR;
   // 先等比例填滿卡片（object-cover），再把效果套在這張小圖上
-  const cut = document.createElement('canvas');
-  cut.width = w; cut.height = h;
-  const cctx = cut.getContext('2d')!;
-  const s = Math.max(w / img.naturalWidth, h / img.naturalHeight);
-  const dw = img.naturalWidth * s, dh = img.naturalHeight * s;
-  cctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  let cut=cardSourceThumbCache.get(img.src);
+  if(!cut){cut=document.createElement('canvas');cut.width=w;cut.height=h;
+    const s=Math.max(w/img.naturalWidth,h/img.naturalHeight),dw=img.naturalWidth*s,dh=img.naturalHeight*s;
+    cut.getContext('2d')!.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);
+    if(cardSourceThumbCache.size>=20){const key=cardSourceThumbCache.keys().next().value!;const old=cardSourceThumbCache.get(key)!;old.width=old.height=1;cardSourceThumbCache.delete(key);}
+    cardSourceThumbCache.set(img.src,cut);
+  }
   return applyPhotoFx(cut, w, h, fx);
 };
 
@@ -3823,8 +3841,7 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
         }
         const made = makeCardThumb(img, fx);
         if (!made || !made.width || !made.height) return;
-        if (cardThumbCache.size >= 200) cardThumbCache.delete(cardThumbCache.keys().next().value!);
-        cardThumbCache.set(cacheKey, made);
+        putCardThumb(cacheKey,made);
         thumb = made;
       }
       if (dead || !ref.current) return;

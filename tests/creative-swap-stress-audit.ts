@@ -5,7 +5,7 @@ void(async()=>{
  window.addEventListener('error',e=>errors.push(e.message));window.addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));
  try{
   let stage:HTMLElement|null=null;for(let i=0;i<500;i++){stage=document.querySelector('[data-creative-stage]');if(stage?.dataset.photoCount==='4'&&document.querySelectorAll('[data-photo-cell]').length===4)break;await tick();}await wait(60);
-  if(!stage)throw Error('photos missing');const canvas=stage.querySelector('canvas')!;
+  if(!stage||document.querySelectorAll('[data-photo-cell]').length!==4)throw Error(`Four visible cells required; count=${document.querySelectorAll('[data-photo-cell]').length}`);const canvas=stage.querySelector('canvas')!;
   const pointer=(type:string,p:{x:number;y:number},id:number)=>canvas.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId:id,pointerType:'touch',clientX:p.x,clientY:p.y,buttons:type==='pointerup'?0:1}));
   const point=(index:number)=>{const r=document.querySelector(`[data-photo-cell="${index}"]`)!.getBoundingClientRect();return {x:r.x+r.width*.2,y:r.y+r.height*.2};};
   const brightness=(p:{x:number;y:number})=>{const box=canvas.getBoundingClientRect(),sample=document.createElement('canvas');sample.width=sample.height=8;const g=sample.getContext('2d')!;

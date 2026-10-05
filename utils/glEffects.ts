@@ -681,6 +681,8 @@ interface Ctx {
   highlightPixels?:Uint8Array;
   gpuHistogram?:GpuHighlightHistogram|null;
   renderedKey?:string;renderedScene?:FxScene;renderedColour?:FxColourInput;
+  // Geometry changes only recompose this texture; they do not rerun filters.
+  photoResult?:{key:string;texture:WebGLTexture;full?:Uint8Array;plain?:Uint8Array;amount?:number};
   lowfiHalo?:LowfiHaloMask;
   colour?:{full:WebGLTexture;plain:WebGLTexture;target:WebGLTexture;w:number;h:number;fullValue?:Uint8Array;plainValue?:Uint8Array};
   plainTex?:WebGLTexture;
@@ -781,6 +783,7 @@ export function compactFxSurface(canvas:HTMLCanvasElement){
  const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
  c.uploadKey=undefined;c.highlightKey=undefined;c.highlightBins=undefined;
  c.renderedKey=undefined;c.renderedScene=undefined;c.renderedColour=undefined;
+ c.photoResult=undefined;
  c.highlightPixels=undefined;
  c.gpuHistogram?.dispose();c.gpuHistogram=undefined;
  c.lowfiHalo?.dispose(gl);c.lowfiHalo=undefined;
@@ -894,6 +897,7 @@ export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,s
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,ctx.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
   c.uploadKey=undefined; // A later effect must not reuse a source-key from an earlier render.
   c.renderedKey=undefined;
+  c.photoResult=undefined;
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.disable(gl.BLEND);gl.disable(gl.DEPTH_TEST);gl.disable(gl.DITHER);
   gl.bindBuffer(gl.ARRAY_BUFFER,c.quad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
   gl.useProgram(program);gl.uniform1i(uniformLocation(gl,program,'uTex'),0);gl.drawArrays(gl.TRIANGLES,0,3);gl.flush();return true;
@@ -945,12 +949,20 @@ export function applyGlEffects(
   if (w > c.maxTex || h > c.maxTex) return;
 
   const outputW=scene?.black.width||w,outputH=scene?.black.height||h;
+  const photoKey=sourceKey?`${sourceKey}|${w}x${h}|${JSON.stringify(params)}`:undefined;
   const renderKey=sourceKey?`${sourceKey}|${w}x${h}|${JSON.stringify(params)}|${JSON.stringify(scene?.placements)}`:undefined;
   // A tab/selection repaint is not an effect change. Keep the already drawn
   // full-quality frame instead of running every effect pass a second time.
   if(renderKey&&c.renderedKey===renderKey&&c.renderedScene===scene&&c.renderedColour===colour&&c.canvas.width===outputW&&c.canvas.height===outputH)return c.canvas;
   if(c.canvas.width!==outputW)c.canvas.width = outputW;
   if(c.canvas.height!==outputH)c.canvas.height = outputH;
+  if(scene&&!auditReference&&photoKey&&c.photoResult?.key===photoKey&&c.photoResult.full===colour?.full&&c.photoResult.plain===colour?.plain&&c.photoResult.amount===colour?.amount&&c.pool?.w===w&&c.pool.h===h){
+    if(composeFxScene(gl,c.photoResult.texture,scene)){
+      c.renderedKey=renderKey;c.renderedScene=scene;c.renderedColour=colour;
+      return c.canvas;
+    }
+  }
+  c.photoResult=undefined;
   gl.viewport(0, 0, w, h);
 
   // 貼圖與 framebuffer 都是重複使用的，尺寸沒變就不重配
@@ -1135,6 +1147,7 @@ export function applyGlEffects(
     // 畫到預設 framebuffer，再貼回 2D 畫布
     if(scene){
       if(!composeFxScene(gl,texs[cur],scene))return;
+      if(photoKey&&!auditReference)c.photoResult={key:photoKey,texture:texs[cur],full:colour?.full,plain:colour?.plain,amount:colour?.amount};
     }else{gl.useProgram(copy);bind(copy, texs[cur], texs[cur]);drawTo(null);gl.flush();}
 
     if(!surface){

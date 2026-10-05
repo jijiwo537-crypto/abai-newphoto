@@ -11,8 +11,9 @@ void(async()=>{
  const geometry=JSON.parse(stage!.dataset.sceneGeometry!),rect=canvas.getBoundingClientRect();
  const p={x:rect.left+(geometry.ix+geometry.iw*.2)/geometry.cw*rect.width,y:rect.top+(geometry.iy+geometry.ih*.2)/geometry.ch*rect.height};
  const pointer=(type:string,id:number,q=p,target:HTMLElement=canvas)=>target.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerId:id,pointerType:'touch',clientX:q.x,clientY:q.y,buttons:type==='pointerup'?0:1}));
- const cells=Number(stage!.dataset.photoCount||1)>1?2:1;
- const roi={x:Math.round(64*geometry.ix/geometry.cw),y:Math.round(64*geometry.iy/geometry.ch),w:Math.max(1,Math.floor(64*geometry.iw/geometry.cw/cells)),h:Math.max(1,Math.floor(64*geometry.ih/geometry.ch/cells))};
+ const cell=document.querySelector('[data-photo-cell="0"]')?.getBoundingClientRect();
+ const roi=cell?{x:Math.ceil(64*(cell.x-rect.x)/rect.width)+1,y:Math.ceil(64*(cell.y-rect.y)/rect.height)+1,w:Math.max(1,Math.floor(64*cell.width/rect.width)-2),h:Math.max(1,Math.floor(64*cell.height/rect.height)-2)}
+ :{x:Math.round(64*geometry.ix/geometry.cw),y:Math.round(64*geometry.iy/geometry.ch),w:Math.max(1,Math.floor(64*geometry.iw/geometry.cw)),h:Math.max(1,Math.floor(64*geometry.ih/geometry.ch))};
  const extract=(g:CanvasRenderingContext2D)=>g.getImageData(roi.x,roi.y,roi.w,roi.h).data;
  const pixels=()=>{
   const cv=document.createElement('canvas');cv.width=64;cv.height=64;const g=cv.getContext('2d')!;
@@ -38,13 +39,13 @@ void(async()=>{
    const card=document.querySelector<HTMLButtonElement>(`[data-fx-card="${id}"]`)!;
    if(!card)throw Error('missing effect '+id);
    const previous=pixels(),start=performance.now();card.click();await wait(2);
-   let elapsed=performance.now()-start;
+   let elapsed=performance.now()-start;const selectionMs=elapsed;
    let delta=difference(previous,pixels());
    const minimum=id==='fxSpin'?.005:.1;
    // Observe the next actual presentation, rather than assuming React and
    // WebKit always present on the second scheduled animation callback.
    for(let frame=0;delta<=minimum&&frame<4;frame++){await tick();elapsed=performance.now()-start;delta=difference(previous,pixels());}
-   times.push({id,ms:elapsed,selected:card.getAttribute('aria-pressed')==='true',difference:delta,paint:canvas.dataset.paintMs,rebuilds:canvas.dataset.spatialRebuilds,reason:canvas.dataset.sceneRebuildReason,backend:canvas.dataset.regionFxBackend});
+   times.push({id,ms:elapsed,selectionMs,selected:card.getAttribute('aria-pressed')==='true',difference:delta,paint:canvas.dataset.paintMs,rebuilds:canvas.dataset.spatialRebuilds,reason:canvas.dataset.sceneRebuildReason,backend:canvas.dataset.regionFxBackend});
    if(stress&&i%20===19)await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify({kind:'long-switch-progress',route:location.search,count:i+1,samples:times.slice(-20)})}).catch(()=>{});
    // Alternate fast clicks with settling: exercise native snapshot allocation
    // as well as the resident editing renderer, rather than only a hot loop.

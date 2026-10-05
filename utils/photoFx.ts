@@ -507,7 +507,7 @@ export function applyPhotoFx(
      那正是「來源是影片」時每一格都會發生、又完全不必要的那一次配置。 */
   const resized = out.width !== oW || out.height !== oH;
   if (resized) { out.width = oW; out.height = oH; }
-  if(opts?.scene&&opts.cacheSource&&!hasActiveFx(fx)&&[fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].filter(Boolean).length===1){
+  if(opts?.gpuSurface&&opts.cacheSource&&!fx.colorNoise&&!hasActiveFx(fx)&&[fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.vignette].filter(Boolean).length===1){
     const kind=fx.soft?'soft':fx.fringeIntensity?'halo':fx.leakOpacity?'leak':fx.blur?'blur':'simple';
     // The optical family shares one source and one context. The active kind
     // belongs to the render key, NOT the allocation key: switching soft/halo/

@@ -1434,6 +1434,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
    * 匯出走的是另一條路（isMain 為 false、倍率是匯出倍率），
    * 算出來的 onScreenPx 本來就是全解析度，所以一個像素都不會少。
    */
+  const regionEffectCapacity=(photo:any,index:number,w:number,h:number,onScreenPx:number)=>{
+    const transform=latestImageTransform.current,sourceSize=Math.max(w,h);
+    const cell=photoRegionRef.current&&regionRects(photoRegionRef.current,Math.abs(transform.w),Math.abs(transform.h))[index];
+    const scale=onScreenPx/Math.max(1,Math.abs(transform.w),Math.abs(transform.h));
+    let required=onScreenPx;
+    if(cell){const dw=Math.abs(transform.w)*cell.w,dh=Math.abs(transform.h)*cell.h,crop=photoCrop(photo,dw,dh);
+      required=sourceSize*Math.max(dw*scale/Math.max(1,crop.sw),dh*scale/Math.max(1,crop.sh));}
+    const id=`region-fx-${index}@${photo.src}`;
+    const cap=photoPreviewCapacity(required,Math.max(regionPreviewCaps.current.get(id)||0,1600),sourceSize);
+    regionPreviewCaps.current.set(id,cap);return cap;
+  };
   const fxCanvasOf = useCallback((o: any, isMain = false, onScreenPx = 0): CanvasImageSource | null => {
     if (!o.img) return null;
     const warm=regionWarmStage.current;
@@ -1500,14 +1511,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Keep ordinary full preview density (never its live/640 shortcut), and
     // grow it to the actual canvas pixel footprint when the view is enlarged.
     if (isMain && regionPhoto) {
-      const sourceSize=Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height);
-      // Reserve the common occupancy-slider footprint once. Growing from
-      // 1792 to 2048 mid-gesture otherwise reruns the entire effects chain.
-      // Geometry must never change the effect work surface. Retain original
-      // photo density once instead of crossing capacity buckets while pinching
-      // (each crossing used to synchronously rerun the complete FX pipeline).
-      cap=photoPreviewCapacity(onScreenPx,Math.max(regionPreviewCaps.current.get(o.id)||0,sourceSize),sourceSize);
-      regionPreviewCaps.current.set(o.id,cap);
+      // Photo cells use independent crop coordinates. Their preview density
+      // must be derived from that cell, not from all the other photos.
+      const slot=Number(o.id.slice('region-fx-'.length).split('@')[0]);
+      // Use the actual photo's device-pixel footprint (including crop zoom),
+      // not the entire nine-photo region or the native file size. Capacity
+      // only grows, and always exceeds physical display demand; no live/640
+      // quality shortcut is used for a base photograph.
+      cap=regionEffectCapacity(o,slot,o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height,onScreenPx);
     }
     /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
        維持原本的尺寸才不會讓任何既有的畫面變糊。 */
@@ -1522,7 +1533,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const hit = objFxCache.current.get(o.id);
     // A geometry-only redraw must not prepare effects or touch a GPU pool.
     // In particular the fallback blend preparation used to precede this hit.
-    if (hit && hit.key === key && (!regionBlendTool.current || !!viewPinchRef.current || !!baseDragRef.current || !!basePinchRef.current)) return hit.cv;
+    // The key contains every pixel-affecting parameter. A selected photo's
+    // crop, hover or tab change must not rebuild its effect endpoints.
+    if (hit && hit.key === key) return hit.cv;
     /* ── 這裡以前有一個「影片＋形狀就限速到 20fps」的閘門，已經拿掉 ────────
        當初加它是因為那條路一格要開三、四張離屏畫布，一秒六十次會把記憶體灌爆。
        現在那幾張都固定重複使用（vidScratchRef），而且工作尺寸夾到了螢幕上
@@ -2105,6 +2118,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 自訂遮罩的網址要活到草稿真正寫入；过早 revoke 会让下一次自动保存读不到。 */
   const maskDraftUrlRef = useRef<string | null>(null);
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
+  const latestImageTransform=useRef(imageTransform);latestImageTransform.current=imageTransform;
   const [maskTransform, setMaskTransform] = useState<{x:number;y:number;w:number;h:number;frameW?:number;frameH?:number}>({ x: 0, y: 0, w: 0, h: 0 });
   const motionFrameRef = useRef<HTMLDivElement>(null);
   const motionStartRectRef = useRef<DOMRect | null>(null);
@@ -4876,6 +4890,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const backdropPrefix=useRef<{key:string;canvas:HTMLCanvasElement}|null>(null);
   useEffect(()=>()=>{if(backdropPrefix.current)backdropPrefix.current.canvas.width=backdropPrefix.current.canvas.height=1;},[]);
   const forceFullPreviewRef = useRef(false);
+  const pinchBackingCapacity=useRef<{w:number;h:number}|null>(null);
   const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
   useEffect(()=>()=>linkGlowTilesRef.current?.dispose(),[]);
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1, previewCapture=false) => {
@@ -4911,7 +4926,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           resident?.shown?.remove();
           if(resident){resident.scene.black.width=resident.scene.black.height=resident.scene.white.width=resident.scene.white.height=1;}
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
-          const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale)),k=Math.min(1,cap/Math.max(w,h));
+          const cap=regionEffectCapacity(photo,index,w,h,Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale),k=Math.min(1,cap/Math.max(w,h));
           const iw=Math.max(1,Math.round(w*k)),ih=Math.max(1,Math.round(h*k));
           const scenes:HTMLCanvasElement[]=[];let placements:FxPlacement[]=[];
           try{for(const fill of ['black','white']){
@@ -4932,7 +4947,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             placement.uv=[crop.sx/photo!.width,crop.sy/photo!.height,crop.sw/photo!.width,crop.sh/photo!.height];
           }
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
-          const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale)),k=Math.min(1,cap/Math.max(w,h));
+          const cap=regionEffectCapacity(photo,index,w,h,Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale),k=Math.min(1,cap/Math.max(w,h));
           const shown=applyPhotoFx(original,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),photo!.fx||{},{cacheSource:true,gpuSurface:true,out:resident.input,scene:resident.scene});
           if(shown!==resident.input&&shown.width===targetCanvas.width&&shown.height===targetCanvas.height){
             if(resident.shown&&resident.shown!==shown)resident.shown.remove();
@@ -4954,7 +4969,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(!colour.ready||colour.signature!==signature||colour.width!==targetCanvas.width||colour.height!==targetCanvas.height||colour.scale!==renderScale){
           if(import.meta.env.DEV){targetCanvas.dataset.colourRebuilds=String(Number(targetCanvas.dataset.colourRebuilds||0)+1);targetCanvas.dataset.sceneRebuildReason=JSON.stringify({key:colour.signature!==signature,scale:[colour.scale,renderScale],size:[colour.width,colour.height,targetCanvas.width,targetCanvas.height]});}
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
-          const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale));
+          const cap=regionEffectCapacity(photo,index,w,h,Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale);
           const k=Math.min(1,cap/Math.max(w,h)),iw=Math.max(1,Math.round(w*k)),ih=Math.max(1,Math.round(h*k));
           const scenes:HTMLCanvasElement[]=[];let placements:FxPlacement[]=[];
           try{
@@ -5063,7 +5078,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Reuse capacity while pinching, without changing the physical pixel/CSS
     // mapping. Spare backing pixels are cleared, so no scene can leak out.
     const bucketed=isMain&&canWindow&&baseCssWRef.current>0&&(!!viewPinchRef.current||performance.now()<wheelUntilRef.current);
-    const backingW=bucketed?Math.ceil(vp.w/256)*256:vp.w,backingH=bucketed?Math.ceil(vp.h/256)*256:vp.h;
+    let backingW=bucketed?Math.ceil(vp.w/256)*256:vp.w,backingH=bucketed?Math.ceil(vp.h/256)*256:vp.h;
+    if(targetCanvas===canvasRef.current){
+      if(bucketed){
+        const capacity=pinchBackingCapacity.current;
+        backingW=Math.max(backingW,capacity?.w||0);backingH=Math.max(backingH,capacity?.h||0);
+        pinchBackingCapacity.current={w:backingW,h:backingH};
+      }else pinchBackingCapacity.current=null;
+    }
     if(windowed && thumbRef.current){thumbRef.current.width=thumbRef.current.height=1;thumbRef.current=null;}
     if (isMain) {
       Object.assign(targetCanvas.style,windowed||bucketed
@@ -5077,7 +5099,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(bucketed){ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,backingW,backingH);}
     /* 指派寬高會順便把 context 狀態全部重置；現在尺寸沒變就不指派了，
        所以 transform／透明度／合成模式要自己歸位，免得上一格的狀態殘留。 */
+    const frameContext=ctx;
+    frameContext.save();
+    try {
     ctx.setTransform(1, 0, 0, 1, -vp.x, -vp.y);
+    // Retained backing capacity is transparent storage, not extra page area.
+    // Keep the same integer page clip when shrinking within that capacity.
+    ctx.beginPath();ctx.rect(0,0,tW,tH);ctx.clip();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
 
@@ -7524,6 +7552,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
+    } finally { frameContext.restore(); }
     /* editingTextId 一定要在這裡：正在畫布上打字的那一段字是「不畫」的
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
@@ -8140,13 +8169,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         await new Promise<void>(r=>requestAnimationFrame(()=>r()));
         if(cancelled)return;
         const cv=canvasRef.current,p=photoRegionRef.current?.photos[0];
-        if(cv&&cv.width>32&&cv.height>32&&previewScaleRef.current>0&&p&&decodedRegionPhotos.current.has(p.src))break;
+        if(cv&&cv.width>32&&cv.height>32&&previewScaleRef.current>0&&latestImageTransform.current.w>0&&latestImageTransform.current.h>0&&p&&decodedRegionPhotos.current.has(p.src))break;
       }
-      await warmLowfiLut();
+      // Downloading the lowfi LUT must not hold up unrelated optical shader
+      // preflight. Its own ready callback repaints once the LUT is available.
+      void warmLowfiLut().catch(()=>{});
       const cv=canvasRef.current,p=photoRegionRef.current?.photos[0];
       if(cancelled||!cv||cv.width<=32||!p||hasPhotoFx(p.fx)||activePointers.current.size)return;
-      const existing=regionSpatial.current;
-      if(existing?.key===regionGpuSceneKey.current&&existing.scale===previewScaleRef.current&&existing.scene.black.width===cv.width&&existing.scene.black.height===cv.height)return;
       // Capture unchanged scene coverage at import time, not on the first
       // effect click. No effect is enabled and the visible result is unchanged.
       try{
@@ -8154,12 +8183,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const ready=regionSpatial.current,source=decodedRegionPhotos.current.get(p.src);
         if(ready&&source&&!ready.shown){
           const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height;
-          const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*previewScaleRef.current)),k=Math.min(1,cap/Math.max(w,h));
+          const transform=latestImageTransform.current;
+          const cap=regionEffectCapacity(p,0,w,h,Math.max(Math.abs(transform.w),Math.abs(transform.h))*previewScaleRef.current),k=Math.min(1,cap/Math.max(w,h));
           for(const id of ['soft','fringeIntensity','leakOpacity','fxMosaic','fxLowfi','fxExposureSpill']){
             const primed=applyPhotoFx(source,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),{...FX_PARAM_DEFAULTS,[id]:100},{cacheSource:true,gpuSurface:true,out:ready.input,scene:ready.scene});
             // WebKit can defer the real texture/shader work until presentation.
             // Fence only this import-time preflight, never an interaction frame.
-            if(primed instanceof HTMLCanvasElement&&primed!==ready.input)primed.getContext('webgl2')?.finish();
+            if(primed instanceof HTMLCanvasElement&&primed!==ready.input)(primed.getContext('webgl2')||primed.getContext('webgl'))?.finish();
           }
         }
       }
