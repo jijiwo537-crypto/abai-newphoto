@@ -4,25 +4,22 @@ import {readFileSync} from 'node:fs';
 const gl=readFileSync(new URL('../utils/glEffects.ts',import.meta.url),'utf8');
 const collage=readFileSync(new URL('../components/CollageTool.tsx',import.meta.url),'utf8');
 const panel=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
-test('creative presentation protects the CSS interpolation footprint without altering export geometry',()=>{
+test('photos and completed canvas scene are presented as one pixel-aligned surface',()=>{
  const presenter=readFileSync(new URL('../utils/creativeSeamless.ts',import.meta.url),'utf8');
  const shader=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
- assert.match(presenter,/clipGuard:\[1\/W,1\/H\]/);
+ assert.match(presenter,/overlay:\{image:main,origin:\[l,t\]\}/);
+ assert.doesNotMatch(presenter,/clipGuard:/);
  assert.match(presenter,/Math.max\(-1,Math.floor\(\(visible.left-box.left\)\*sx\)-1\)/);
  assert.match(presenter,/Math.min\(main.width\+1,Math.ceil\(\(visible.right-box.left\)\*sx\)\+1\)/);
- assert.match(shader,/view.clipGuard\|\|\[0,0\]/);
- assert.match(shader,/clip.xy-clipGuard/);
- assert.match(shader,/otherClip.zw\+clipGuard/);
- // Bilinear samples within half a texel of the cell edge must find opaque
- // neighbours. A framebuffer-only audit misses this transparent contribution.
- for(let phase=0;phase<1;phase+=.01){
-  const edge=100+phase,start=Math.ceil(edge-.5),p=edge+.001;
-  const low=Math.floor(p-.5),high=low+1;
-  const owned=(i)=>i+.5>=edge;
-  const guarded=(i)=>i+.5>=edge-1;
-  assert.ok(guarded(low)&&guarded(high));
-  assert.ok(owned(start));
- }
+ assert.match(shader,/texelFetch\(sceneOverlay,pixel,0\)/);
+ assert.match(shader,/top\+base\*\(1\.-top.a\)/);
+ assert.match(shader,/gl.texSubImage2D/);
+ assert.match(presenter,/this.main.style.opacity='0'/);
+ assert.match(collage,/Math.ceil\(maskW\)/);
+ assert.match(shader,/joined.rgb\/joined.a/);
+ assert.match(collage,/maskGuard-maskX, maskGuard-maskY/);
+ assert.match(collage,/offs.mx\+maskX-maskGuard/);
+ assert.match(collage,/ctx.rect\(offs.mx,offs.my,maskW,maskH\)/);
 });
 test('a chosen LUT at zero intensity does not run an unnecessary photo pipeline',()=>{
  const fx=readFileSync(new URL('../utils/photoFx.ts',import.meta.url),'utf8');
@@ -68,7 +65,7 @@ test('wheel zoom holds background photo work until the gesture commits',()=>{
 test('seam GPU capability and uniform queries are cached outside the hot path',()=>{
  const seam=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
  assert.match(seam,/this.maxTextureUnits=gl.getParameter/);
- assert.match(seam,/if\(count>this.maxTextureUnits\)/);
+ assert.match(seam,/if\(count\+\(view.overlay\?1:0\)>this.maxTextureUnits\)/);
  assert.match(seam,/if\(!locations!.has\(name\)\)/);
  assert.equal((seam.match(/gl.getParameter\(/g)||[]).length,1);
 });
@@ -95,8 +92,9 @@ test('non-feathered pixels have exactly one photo owner at fractional boundaries
 });
 test('photo window clips and clearing use the shader pixel-centre boundary rule',()=>{
  const creative=readFileSync(new URL('../utils/creativeSeamless.ts',import.meta.url),'utf8');
- assert.match(collage,/Math.ceil\(ox\*matrix.a\+matrix.e-\.5\)/);
- assert.match(creative,/clearLeft=Math.ceil\(left-\.5\)/);
+ assert.match(collage,/scenePixelEdge\(ox,matrix.a,matrix.e\)/);
+ assert.match(collage,/scenePixelEdge\(offs.mx,matrix.a,matrix.e\)/);
+ assert.match(creative,/clearLeft=scenePixelEdge\(left\)/);
  assert.match(creative,/ctx.setTransform\(1,0,0,1,0,0\)/);
  // Adjacent windows always partition integer pixel centres, independently
  // of fractional preview zoom, with neither overlap nor unowned pixels.

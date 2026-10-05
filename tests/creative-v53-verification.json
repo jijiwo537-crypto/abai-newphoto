@@ -1,0 +1,31 @@
+{
+  "revision": "v53-grouped-scene-and-shared-pixel-boundaries",
+  "date": "2026-10-06",
+  "scope": "Creative collage photo/photo and photo/mask preview boundaries",
+  "changes": [
+    "Completed canvas scene and original-photo GPU compositor are resolved into one presented surface per frame",
+    "Photo clipping, clearing and mask clipping use the same half-open pixel-centre boundary helper",
+    "Mask storage rounds outward and has sampling padding without changing logical crop or clip",
+    "GPU overlay uses exact texel fetch, reused storage and correct straight-alpha presentation"
+  ],
+  "verification": {
+    "sharedBoundaryPropertyCases": 7200,
+    "focusedNodeTestsPassed": 17,
+    "nativeRasterZoomFrames": 120,
+    "browserCompositedZoomFrames": 120,
+    "browserCompositedBorderPixelsChecked": 803532,
+    "browserCompositedCrackPixels": 0,
+    "maskBoundaryPixelsChecked": 178206,
+    "nativeRasterPhotoCracks": 0,
+    "maskFringeOrOverdrawPixels": 0,
+    "previewExportComparison": "four photographs, gradient/detail, mask holes, fusion 1/30/70/100 passed",
+    "rapidEffectSwitching": "24 switches and live pixels/reference renderer passed",
+    "threePortraitPhotoSwaps": "18 exchanges; targets darken, sources preserved, pixels visible on first frame passed",
+    "ninePhotoGeometryRegression": "drag, object pinch, effect/occupancy/fusion sliders and preview zoom passed"
+  },
+  "limitations": [
+    "Browser QA viewport 402x874 is not a physical iPhone verification",
+    "Frame callback rates are not a guarantee of iPhone GPU performance",
+    "Broader Node suite has 94 passes and 3 pre-existing obsolete source-pattern assertion failures, confirmed against previous HEAD"
+  ]
+}

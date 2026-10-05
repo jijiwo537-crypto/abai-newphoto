@@ -17,6 +17,7 @@ import { patternEntranceRanks, type PatternDirection } from '../utils/patternEnt
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import { exportHeic } from '../utils/heicExport';
 import { CreativeSeamless } from '../utils/creativeSeamless';
+import { scenePixelEdge } from '../utils/scenePixelGrid';
 import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
 import { createPortal, flushSync } from 'react-dom';
@@ -5426,8 +5427,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // The GPU window accepts pixel centres, not antialiased fractional
         // canvas clips. Use the same integer ownership for its transparent
         // main-canvas window, without changing source crop or logical geometry.
-        const left=Math.ceil(ox*matrix.a+matrix.e-.5),top=Math.ceil(oy*matrix.d+matrix.f-.5);
-        const right=Math.ceil((ox+w)*matrix.a+matrix.e-.5),bottom=Math.ceil((oy+h)*matrix.d+matrix.f-.5);
+        const left=scenePixelEdge(ox,matrix.a,matrix.e),top=scenePixelEdge(oy,matrix.d,matrix.f);
+        const right=scenePixelEdge(ox+w,matrix.a,matrix.e),bottom=scenePixelEdge(oy+h,matrix.d,matrix.f);
         ctx.setTransform(1,0,0,1,0,0);ctx.rect(left,top,right-left,bottom-top);ctx.setTransform(matrix);
       }else ctx.rect(ox, oy, w, h);
       ctx.clip();
@@ -6260,30 +6261,51 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        尺寸不再每格重配，畫出來的像素完全一樣。 */
     const maskX = windowed ? Math.max(0, vp.x-offs.mx) : 0;
     const maskY = windowed ? Math.max(0, vp.y-offs.my) : 0;
-    const lmW = windowed ? Math.max(0,Math.ceil(Math.min(maskW,vp.x+vp.w-offs.mx)-maskX)) : maskW | 0;
-    const lmH = windowed ? Math.max(0,Math.ceil(Math.min(maskH,vp.y+vp.h-offs.my)-maskY)) : maskH | 0;
+    const lmW = windowed ? Math.max(0,Math.ceil(Math.min(maskW,vp.x+vp.w-offs.mx)-maskX)) : Math.ceil(maskW);
+    const lmH = windowed ? Math.max(0,Math.ceil(Math.min(maskH,vp.y+vp.h-offs.my)-maskY)) : Math.ceil(maskH);
     if(lmW<1 || lmH<1) return;
+    // The source bitmap must continue beyond its logical edge. drawImage
+    // otherwise antialiases its own fractional rectangle even under an exact
+    // integer clip, introducing transparent texels inside the shared boundary.
+    // Padding changes storage only: all artwork keeps its original coordinates.
+    const maskGuard=2,maskStorageW=lmW+maskGuard*2,maskStorageH=lmH+maskGuard*2;
+    const pasteMask=()=>{
+      ctx.save();
+      const matrix=ctx.getTransform();
+      if(isMain&&!previewCapture&&!animRef.current&&layout!==AROUND&&!hasBackdrop&&!regionHold.current?.active&&matrix.b===0&&matrix.c===0&&matrix.a>0&&matrix.d>0){
+        // Same half-open pixel partition as drawImg: the common image/mask
+        // edge is quantized once by the same rule, never by separate widths.
+        const left=scenePixelEdge(offs.mx,matrix.a,matrix.e),top=scenePixelEdge(offs.my,matrix.d,matrix.f);
+        const right=scenePixelEdge(offs.mx+maskW,matrix.a,matrix.e),bottom=scenePixelEdge(offs.my+maskH,matrix.d,matrix.f);
+        ctx.setTransform(1,0,0,1,0,0);ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();ctx.setTransform(matrix);
+      }else{ctx.beginPath();ctx.rect(offs.mx,offs.my,maskW,maskH);ctx.clip();}
+      ctx.drawImage(lmc,0,0,maskStorageW,maskStorageH,offs.mx+maskX-maskGuard,offs.my+maskY-maskGuard,maskStorageW,maskStorageH);
+      ctx.restore();
+    };
     const cutMaskKey = isMain ? JSON.stringify([maskKey, maskX,maskY,lmW,lmH,layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlowColor,
       linkMode !== 'none' ? animRef.current?.t : null,
       holes.filter(h => !h.side || h.side === 'both' || h.side === 'mask')
         .map(h => [h.id,h.side,h.manuallyPlaced,h.randomNumber,getHoleSize(h),h.angle,hA(h),glowBeat(h),glowBeatLink(h)])]) : '';
-    if (isMain && cutMaskKey === cutMaskCacheKeyRef.current && lmc.width >= lmW && lmc.height >= lmH) {
-      ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx+maskX, offs.my+maskY, lmW, lmH);
+    if (isMain && cutMaskKey === cutMaskCacheKeyRef.current && lmc.width === maskStorageW && lmc.height === maskStorageH) {
+      pasteMask();
       return;
     }
-    if (lmc.width !== lmW || lmc.height !== lmH) {
-      lmc.width = lmW;
-      lmc.height = lmH;
+    if (lmc.width !== maskStorageW || lmc.height !== maskStorageH) {
+      lmc.width = maskStorageW;
+      lmc.height = maskStorageH;
     }
     const lmx = get2dWide(lmc)!;
-    lmx.setTransform(1, 0, 0, 1, -maskX, -maskY);
+    lmx.setTransform(1, 0, 0, 1, maskGuard-maskX, maskGuard-maskY);
     lmx.save();
     if(dirtyPatternRect){const r=dirtyPatternRect;lmx.beginPath();lmx.rect(r.x-offs.mx,r.y-offs.my,r.w,r.h);lmx.clip();}
     lmx.globalAlpha = 1;
     lmx.globalCompositeOperation = 'copy';
     // 純色的底稿只有 8×8（見上面 plainMask），這裡直接填色，不要把小塊拉大
-    if (plainMask) { lmx.fillStyle = maskColor; lmx.fillRect(0, 0, maskW, maskH); }
-    else lmx.drawImage(fCanvas, 0, 0);
+    // Storage rounds outward; logical clipping above determines the final
+    // edge. Fill the whole storage so a fractional last texel cannot expose
+    // the dark page backing. Texture coordinates are not stretched.
+    lmx.fillStyle=maskColor;lmx.fillRect(-maskGuard,-maskGuard,Math.ceil(maskW)+maskGuard*2,Math.ceil(maskH)+maskGuard*2);
+    if(!plainMask){lmx.globalCompositeOperation='source-over';lmx.drawImage(fCanvas,0,0);}
     const maskPairs = linksFor('mask').filter(([a, b]) =>
       layout === AROUND
       || (isHoleFullyInsideMask(a, s, maskW, maskH) && isHoleFullyInsideMask(b, s, maskW, maskH)));
@@ -6361,7 +6383,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     // 只貼「這一格真正用到」的那一塊（畫布可能比它大，見上面的說明）
     lmx.restore();
-    ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx+maskX, offs.my+maskY, lmW, lmH);
+    pasteMask();
     if (isMain) cutMaskCacheKeyRef.current = cutMaskKey;
     };
 
@@ -7424,7 +7446,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = sgs; ctx.stroke();
 
     drawObjects(aboveObjs.slice(prefixAbove.length));
-    if(targetCanvas===canvasRef.current)creativeSeam.current?.flush();
 
     /* ── 歷史紀錄的縮圖，就在這一行拍 ────────────────────────────────
        這裡是「成品都畫完了、選取框還沒畫上去」的唯一一個時間點 ——
@@ -7636,6 +7657,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
     } finally { frameContext.restore(); }
+    // Submit only after every canvas layer and transient frame is complete.
+    // The browser receives one grouped surface, not separate photo/mask planes.
+    if(targetCanvas===canvasRef.current)creativeSeam.current?.flush();
     /* editingTextId 一定要在這裡：正在畫布上打字的那一段字是「不畫」的
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；

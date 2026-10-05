@@ -22,7 +22,7 @@ void(async()=>{
   // Reconstruct the displayed sibling order. A stale overlay hiding a freshly
   // painted main canvas must fail this audit.
   for(const source of canvas.parentElement!.querySelectorAll('canvas')){
-   if(getComputedStyle(source).display==='none'||!source.width||!source.height)continue;
+   if(getComputedStyle(source).display==='none'||getComputedStyle(source).opacity==='0'||!source.width||!source.height)continue;
    const gl=source.getContext('webgl2')||source.getContext('webgl');
    if(gl){
     if(source.dataset.creativeSeamPresentation){
