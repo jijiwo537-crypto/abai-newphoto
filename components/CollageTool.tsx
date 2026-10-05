@@ -1223,6 +1223,31 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionPaintRaf=useRef(0);
   useEffect(()=>()=>{if(regionPaintRaf.current)cancelAnimationFrame(regionPaintRaf.current);},[]);
   const decodedRegionPhotos = useRef(new Map<string, HTMLImageElement>());
+  const regionDrawables=useRef(new Map<string,ImageBitmap>());
+  useEffect(()=>{
+    let cancelled=false;const sources=new Set(photoRegion?.photos.map(p=>p.src).filter(Boolean));
+    for(const [src,bitmap] of regionDrawables.current)if(!sources.has(src)){bitmap.close();regionDrawables.current.delete(src);}
+    void(async()=>{for(const src of sources){
+      if(regionDrawables.current.has(src))continue;
+      await awaitPhotoIdle();if(cancelled)return;
+      const img=decodedRegionPhotos.current.get(src);if(!img||typeof createImageBitmap!=='function')continue;
+      let bitmap:ImageBitmap|null=null,surface:HTMLCanvasElement|null=null;
+      try{bitmap=await createImageBitmap(img);
+        await awaitPhotoIdle();if(cancelled)return;
+        surface=document.createElement('canvas');surface.width=bitmap.width;surface.height=bitmap.height;
+        const g=get2dWide(surface)!;g.drawImage(bitmap,0,0);
+        // Materialize deferred decode/upload while idle, not in the first
+        // geometry draw. This single-pixel read does not resample the source.
+        g.getImageData(0,0,1,1);bitmap.close();bitmap=null;
+        const drawable=await createImageBitmap(surface);surface.width=surface.height=1;
+        if(cancelled){drawable.close();return;}
+        regionDrawables.current.set(src,drawable);
+      }catch{/* Keep the decoded image on browsers without bitmap support. */}
+      finally{bitmap?.close();if(surface)surface.width=surface.height=1;}
+    }})();
+    return ()=>{cancelled=true;};
+  },[photoRegion?.photos.map(p=>p.src).join('|'),imageState]);
+  useEffect(()=>()=>{for(const bitmap of regionDrawables.current.values())bitmap.close();regionDrawables.current.clear();},[]);
   const creativeSeam = useRef<CreativeSeamless|null>(null);
   useEffect(()=>()=>creativeSeam.current?.dispose(),[]);
   const [photoLayoutOpen, setPhotoLayoutOpen] = useState(false);
@@ -2139,7 +2164,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const cached=objFxCache.current.get(key);
       // Snapshot once, at unchanged resolution. Geometry edits reuse these
       // exact pixels instead of keeping a GPU pipeline for every old photo.
-      if(cached){const snapshot=document.createElement('canvas');snapshot.width=cached.cv.width;snapshot.height=cached.cv.height;snapshot.getContext('2d')!.drawImage(cached.cv,0,0);objFxCache.current.set(key,{key:cached.key,cv:snapshot});}
+      if(cached&&!(cached.cv instanceof HTMLCanvasElement&&cached.cv.dataset.regionImmutable==='1')){const snapshot=document.createElement('canvas');snapshot.width=cached.cv.width;snapshot.height=cached.cv.height;snapshot.getContext('2d')!.drawImage(cached.cv,0,0);snapshot.dataset.regionImmutable='1';objFxCache.current.set(key,{key:cached.key,cv:snapshot});}
       releasePhotoFxSurface(surface);surface.width=surface.height=1;regionFxSurfaces.current.delete(key);
       const scratch=vidScratchRef.current.get(key);if(scratch){for(const cv of Object.values(scratch))if(cv instanceof HTMLCanvasElement)cv.width=cv.height=1;vidScratchRef.current.delete(key);}
     }
@@ -3425,6 +3450,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [regionSwapPhoto,setRegionSwapPhoto]=useState<string|null>(null);
   const [swapSource,setSwapSource]=useState<PhotoSource|null>(null);
   const swapHoverRef=useRef<PhotoSource|null>(null);
+  const swapPaintForced=useRef(false);
+  const photoGestureIds=useRef(new Set<number>());
+  const photoGestureRelease=useRef<(()=>void)|null>(null);
+  useEffect(()=>{
+    const finish=(e:PointerEvent)=>{photoGestureIds.current.delete(e.pointerId);if(!photoGestureIds.current.size){photoGestureRelease.current?.();photoGestureRelease.current=null;}};
+    const blur=()=>{photoGestureIds.current.clear();photoGestureRelease.current?.();photoGestureRelease.current=null;};
+    window.addEventListener('pointerup',finish,true);window.addEventListener('pointercancel',finish,true);window.addEventListener('blur',blur);
+    return ()=>{window.removeEventListener('pointerup',finish,true);window.removeEventListener('pointercancel',finish,true);window.removeEventListener('blur',blur);blur();};
+  },[]);
   const regionThumbRef=useRef<HTMLCanvasElement>(null);
   const regionThumbPoint=useRef({x:0,y:0});
   const regionTouches=useRef(new Map<number,{x:number;y:number}>());
@@ -3494,6 +3528,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const pa=photoContent(a),pb=photoContent(b);if(!pa?.src||!pb?.src)return;
     const region=photoRegionRef.current;
     const photos=region?.photos.map((p,i)=>a.kind==='region'&&a.index===i?pb:b.kind==='region'&&b.index===i?pa:p);
+    if(region&&photos&&a.kind==='region'&&b.kind==='region'){
+      // Effect pixels belong to the photograph, not its slot. Moving a ready
+      // photograph must not synchronously rebake its full-resolution effects.
+      for(const cache of [objFxCache.current,fxLiveRef.current,regionPreviewCaps.current,regionFxSurfaces.current,vidScratchRef.current] as Map<string,any>[]){
+        const ka=`region-fx-${a.index}@${pa.src}`,kb=`region-fx-${b.index}@${pb.src}`;
+        const va=cache.get(ka),vb=cache.get(kb);cache.delete(ka);cache.delete(kb);
+        if(va!==undefined)cache.set(`region-fx-${b.index}@${pa.src}`,va);
+        if(vb!==undefined)cache.set(`region-fx-${a.index}@${pb.src}`,vb);
+      }
+    }
     if(region&&photos)commitRegion({...region,photos});
     if(region&&!region.multi&&region.photos.length===1&&photos&&photos[0]!==region.photos[0]){
       const p=photos[0];photoUrlRef.current=p.src;
@@ -3528,6 +3572,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   },[regionSwapPhoto]);
   const regionPointerDown=(e:React.PointerEvent)=>{
     if(motionLockRef.current||brushMode!=='off'||(e.target as Element).closest('button,input,.no-pointer-events'))return;
+    photoGestureIds.current.add(e.pointerId);
+    photoGestureRelease.current??=holdPhotoInteraction();
     const second=activePointers.current.size||regionTouches.current.size||regionHold.current;
     if(second)cancelRegionHold();
     const source=photoAt(e.clientX,e.clientY);
@@ -3565,6 +3611,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const photo=photoContent(source);if(!photo?.src)return;
       hold.active=true;objDragRef.current=null;baseDragRef.current=null;interactionRef.current=null;regionGesture.current=null;
       regionThumbPoint.current={x:hold.x,y:hold.y};swapHoverRef.current=source;setSwapSource(source);setRegionSwapPhoto(photo.src);
+      if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
     },PHOTO_SWAP_HOLD_MS);regionHold.current=hold;
   };
   const regionPointerMove=(e:React.PointerEvent)=>{
@@ -3580,7 +3627,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(activePointers.current.has(e.pointerId))activePointers.current.set(e.pointerId,e);
         if(regionThumbRef.current)regionThumbRef.current.style.transform=`translate3d(${e.clientX}px,${e.clientY}px,0) translate(-50%,-50%)`;
         const hover=photoAt(e.clientX,e.clientY);
-        if(JSON.stringify(hover)!==JSON.stringify(swapHoverRef.current)){swapHoverRef.current=hover;setSwapSource(hover);}
+        if(JSON.stringify(hover)!==JSON.stringify(swapHoverRef.current)){
+          swapHoverRef.current=hover;setSwapSource(hover);
+          if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
+        }
         return;
       }
     }
@@ -3597,6 +3647,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     commitRegion({...region,photos:region.photos.map((q,i)=>i===d.index?{...q,zoom,offsetX,offsetY}:q)},true);
   };
   const regionPointerUp=(e:React.PointerEvent)=>{
+    photoGestureIds.current.delete(e.pointerId);
+    if(!photoGestureIds.current.size){photoGestureRelease.current?.();photoGestureRelease.current=null;}
     const hold=regionHold.current,owned=regionTouches.current.has(e.pointerId);
     const tap=regionTap.current;
     if(tap?.id===e.pointerId){
@@ -3615,6 +3667,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         try{e.currentTarget.releasePointerCapture(e.pointerId);}catch{}
       }
       cancelRegionHold();
+      if(hold.active){
+        if(regionPaintRaf.current){cancelAnimationFrame(regionPaintRaf.current);regionPaintRaf.current=0;}
+        regionColour.current?.hide();
+        if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
+        swapPaintForced.current=true;
+        try{regionPaintRef.current();}finally{swapPaintForced.current=false;}
+      }
     }
     if(owned){e.stopPropagation();e.preventDefault();regionTouches.current.delete(e.pointerId);resetRegionGesture();
       if(!regionTouches.current.size){
@@ -4821,7 +4880,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>()=>linkGlowTilesRef.current?.dispose(),[]);
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1, previewCapture=false) => {
     const photoRegion=photoRegionRef.current;
+    const objects=objectsRef.current;
     const debugPaintStart = import.meta.env.DEV ? performance.now() : 0;
+    const debugSections:Record<string,number>={};let debugPrevious=debugPaintStart;
+    const debugSection=(name:string)=>{if(import.meta.env.DEV){const now=performance.now();debugSections[name]=now-debugPrevious;debugPrevious=now;}};
     const {selectedTarget, selectedPatternSide, selectedObj, baseSelected} = chromeSelectionRef.current;
     if (!imageState) return;
     // All painting routes share this guard, including pause/selection effects.
@@ -4831,7 +4893,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Backdrop-dependent materials are nonlinear. Black/white photo endpoints
     // cannot reconstruct them; use the shared live scene when masks are present.
     const hasBackdrop=objectsRef.current.some(o=>isBackdropMask(o.kind));
-    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop){
+    if(targetCanvas===canvasRef.current&&(regionHold.current?.active||swapPaintForced.current)){
+      regionColour.current?.hide();
+      if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
+    }
+    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&!regionHold.current?.active&&!swapPaintForced.current){
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
       const sceneGeometryGesture=!!objDragRef.current||!!objPinchRef.current||!!objStretchRef.current||!!baseDragRef.current||!!basePinchRef.current||!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
       if((regionSpatialActive.current||regionPreflight.current)&&original&&(supportsResidentPhotoEffects(photo?.fx)||regionPreflight.current)&&!sceneGeometryGesture&&!photoRegion?.seamless&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
@@ -5016,6 +5082,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ctx.globalCompositeOperation = 'source-over';
 
     const priorPatternPaint = lastPatternPaintRef.current;
+    debugSection('geometry');
     const canRetain = isMain && !windowed && !animRef.current && !motionTargetFlashRef.current && !hideChromeRef.current
       && linkMode === 'none' && glowIdle === 'none' && !guides.length
       && !isVideoEl(imageState.img) && !objects.some(o => isVideoEl(o.img)||isBackdropMask(o.kind));
@@ -5181,6 +5248,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (isMain) maskCacheKeyRef.current = maskKey;
 
     const regionDecoded = new Map(decodedRegionPhotos.current);
+    // ImageBitmap pins decoded native pixels. HTMLImageElement can lazily
+    // re-decode its compressed source after memory eviction in the first pinch.
+    // No resize, quality reduction or per-zoom image loading is involved.
+    if(isMain)for(const [src,bitmap] of regionDrawables.current)regionDecoded.set(src,bitmap as unknown as HTMLImageElement);
     const regionForPaint = photoRegion ? {...photoRegion,photos:photoRegion.photos.map((p,i)=>{
       const original = decodedRegionPhotos.current.get(p.src);
       // Endpoint captures must replace even an UNEDITED photo. Otherwise
@@ -5212,7 +5283,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 2D viewport every frame. Complex/vector/pattern scenes retain the general
     // compositor; never rasterize their edges into a lower-density snapshot.
     const maskPhotosReady=!photoRegion||(photoRegion.photos.every(p=>p.src&&decodedRegionPhotos.current.has(p.src))&&regionRects(photoRegion,iw,ih).length===photoRegion.photos.length);
-    const directMaskPhotos:BackdropPhotoLayer[]|null=isMain&&!previewCapture&&hasBackdrop&&maskPhotosReady&&layout!==AROUND&&(layout===FULL||patternType==='none'&&!maskImageState)&&!holes.length&&!animRef.current&&!swapSource&&!baseSelected&&selectedRegionPhotoRef.current===null&&!photoRegion?.seamless&&objects.every(o=>!o.below&&o.type==='shape'&&isBackdropMask(o.kind)&&o.kind!=='mask-frost-feather')?[]:null;
+    const directMaskPhotos:BackdropPhotoLayer[]|null=isMain&&!previewCapture&&hasBackdrop&&maskPhotosReady&&layout!==AROUND&&(layout===FULL||patternType==='none'&&!maskImageState)&&!holes.length&&!animRef.current&&!regionHold.current?.active&&!swapSource&&!baseSelected&&selectedRegionPhotoRef.current===null&&!photoRegion?.seamless&&objects.every(o=>!o.below&&o.type==='shape'&&isBackdropMask(o.kind)&&o.kind!=='mask-frost-feather')?[]:null;
     const drawBase = (g: CanvasRenderingContext2D, img: any, x: number, y: number, w: number, h: number, allowDim = false, clip?:number[]) => {
       if(directMaskPhotos&&img===baseImg){
         const m=g.getTransform(),transform=(r:number[])=>[m.a*r[0]+m.e,m.d*r[1]+m.f,m.a*r[2],m.d*r[3]],multi=photoRegion&&(photoRegion.multi||photoRegion.photos.length>1);
@@ -5232,14 +5303,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }
       }
       if (img === baseImg && photoRegion && (photoRegion.multi || photoRegion.photos.length>1)) {
-        const dim=isMain && allowDim && swapSource?.kind==='region' ? swapSource.index : -1;
+        const hover=swapHoverRef.current;
+        const dim=isMain && allowDim && hover?.kind==='region' ? hover.index : -1;
         creativeSeam.current ||= new CreativeSeamless();
         if(!creativeSeam.current.paint(g,regionForPaint!,regionDecoded,x,y,w,h,dim,isMain))
           paintPhotoRegion(g, regionForPaint!, regionDecoded, x, y, w, h, dim);
       } else {
         const single = img === baseImg && regionForPaint?.photos.length === 1
           ? regionDecoded.get(regionForPaint.photos[0].src) || img : img;
-        if(isMain&&allowDim&&swapSource?.kind==='region'&&swapSource.index===0)drawDimmedPhoto(g,single,0,0,single.naturalWidth||single.width,single.naturalHeight||single.height,x,y,w,h);
+        if(isMain&&allowDim&&swapHoverRef.current?.kind==='region'&&swapHoverRef.current.index===0)drawDimmedPhoto(g,single,0,0,single.naturalWidth||single.width,single.naturalHeight||single.height,x,y,w,h);
         else g.drawImage(single,x,y,w,h);
       }
     };
@@ -5737,6 +5809,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ) => {
       if (!glowOn(side) || (!items.length && !pairs.length)) return;
       glowRasterSize = items.reduce((largest,it)=>Math.max(largest,it.sz),0);
+      // Reserve common pattern glows at the maximum view footprint before
+      // pinching. Only soft light is cached; shape edges remain live vectors.
+      // Never cap the required size: oversized patterns retain their density.
+      if(isMain&&!animRef.current&&!isTextHole(holeType))glowRasterSize=Math.max(glowRasterSize,
+        Math.min(768,glowRasterSize/Math.max(1,viewTRef.current.k)*maxZoomRef.current));
       const a0 = animRef.current;
       const linkGlowColor = linkColor ? nearestGlowSwatch(linkColor) : holeGlowColor;
       const linkAlpha = ([a, b]: [any, any]) =>
@@ -6274,7 +6351,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         && (f.waveMix === undefined || f.waveMix > 1e-5)
         && !(o.type === 'shape' && (GRID_SHAPE_KINDS.has(o.kind)||isBackdropMask(o.kind)));
       const objectAlpha = ((o.opacity ?? ((o.alpha ?? 1) * 100)) / 100) * (f ? f.a : 1);
-      const dimPhoto=isMain&&swapSource?.kind==='object'&&swapSource.id===o.id;
+      const dimPhoto=isMain&&swapHoverRef.current?.kind==='object'&&swapHoverRef.current.id===o.id;
       /* 半透明圖形必須先以不透明狀態合成完整本體、紋理、描邊與三層光，
          最後整張只套一次 alpha。若直接讓每一道筆畫各自半透明，重疊處會
          累加變深，甚至看見暫存畫布的矩形邊界。 */
@@ -7181,6 +7258,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
 
     const prefixCacheable=isMain&&!previewCapture&&!directMaskPhotos&&hasBackdrop&&objects.some(o=>o.id===selectedObj&&isBackdropMask(o.kind))&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
+    debugSection('prepare');
     const prefixEnd=prefixCacheable?aboveObjs.findIndex(o=>o.id===selectedObj&&isBackdropMask(o.kind)):-1;
     const prefixAbove=prefixEnd>0?aboveObjs.slice(0,prefixEnd):[];
     // Live sliders and in-cell crop gestures update refs before React state.
@@ -7212,12 +7290,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          在遮罩那一半完全看不見 —— 那是不對的。 */
       drawCentreImage();
       drawBackdrop();
+      debugSection('photographs');
       drawMaskLayer();
+      debugSection('mask-patterns');
       drawObjects(belowObjs);
       if (belowObjs.length) drawMaskHolesOnTop();
       drawImageSideHoles();
+      debugSection('image-patterns');
     }
 
+    debugSection('layers');
     if(prefixCacheable&&!cachedPrefix){
       drawObjects(prefixAbove);
       const prefix=backdropPrefix.current?.canvas||document.createElement('canvas');
@@ -7430,6 +7512,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     
     ctx.restore();
     if(isMain) lastPatternPaintRef.current=canRetain?{identity:patternSceneIdentity,holes,scale:s}:null;
+    debugSection('chrome');
+    if(import.meta.env.DEV&&performance.now()-debugPaintStart>30)targetCanvas.dataset.slowPaintSections=JSON.stringify(debugSections);
     if(import.meta.env.DEV && isMain){
       targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount || 0)+1);
       targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);

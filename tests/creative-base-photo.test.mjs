@@ -1,8 +1,15 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';
 const s=fs.readFileSync('components/CollageTool.tsx','utf8');
 test('only centre photo painting requests swap dimming',()=>{
- assert.match(s,/allowDim = false/);assert.match(s,/isMain && allowDim && swapSource/);
+ assert.match(s,/allowDim = false/);assert.match(s,/isMain && allowDim && hover\?\.kind==='region'/);
  assert.match(s,/offs\.ix, offs\.iy, iw, ih, kIn, true/);
+});
+test('swap pixels move with their photo cache and bypass editing overlays',()=>{
+ assert.match(s,/cache.set\(`region-fx-\$\{b.index\}@\$\{pa.src\}`,va\)/);
+ assert.match(s,/cache.set\(`region-fx-\$\{a.index\}@\$\{pb.src\}`,vb\)/);
+ assert.match(s,/!regionHold.current\?\.active&&!swapPaintForced.current/);
+ assert.match(s,/try\{regionPaintRef.current\(\);\}finally\{swapPaintForced.current=false;\}/);
+ assert.match(s,/photoGestureRelease.current\?\?=holdPhotoInteraction\(\)/);
 });
 test('base selected frame is painted before foreground objects, not as a DOM border',()=>{
  const cell=s.slice(s.indexOf('return <div key={i} data-photo-cell'),s.indexOf('return <div key={i} data-photo-cell')+500);
