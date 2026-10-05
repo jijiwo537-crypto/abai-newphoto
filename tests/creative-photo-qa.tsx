@@ -24,7 +24,7 @@ const floating=params.has('swaps')?[{id:'qa-float-a',type:'image',src:URL.create
 createRoot(document.getElementById('root')!).render(params.has('seamPresentation')&&params.has('split')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{layout:'mask-right',canvasRatio:'3:2',holeCount:3,holeType:'circle',holeSize:35,holes:[{id:'seam-hole-a',x:80,y:120,side:'mask'},{id:'seam-hole-b',x:180,y:330,side:'mask'},{id:'seam-hole-c',x:100,y:510,side:'mask'}]}}/>
  : params.has('edgeAudit')
- ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,3)} initialState={{layout:'mask-right',canvasRatio:'3:2',holeCount:0}}/>
+ ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,3)} initialState={{layout:params.has('maskBottom')?'mask-bottom':'mask-right',canvasRatio:params.has('square')?'1:1':'3:2',holeCount:0,maskColor:params.has('blackMask')?'#000000':'#CFE6DE'}}/>
  : params.has('mixedSwap')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,4)} initialState={{layout:'mask-right',canvasRatio:'3:2',holeCount:0,objects:[{id:'mixed-float',type:'image',src:URL.createObjectURL(files[4]),x:500,y:220,w:120,h:180,rot:0,opacity:100}]}}/>
  : params.has('swapStress')&&params.has('three')

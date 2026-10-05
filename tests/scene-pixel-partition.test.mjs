@@ -28,3 +28,14 @@ test('outward intermediate storage covers the last fractional texel without chan
   assert.ok(storage-logical<1);
  }
 });
+test('resident photo placement follows exactly the same parent scale between render frames',()=>{
+ for(const physicalWidth of [512,1024,1307])for(const viewportStart of [0,13.5,89])for(const viewportWidth of [70,100,150]){
+  const l=37,W=413,left=viewportStart+l/physicalWidth*viewportWidth,width=W/physicalWidth*viewportWidth;
+  for(const parentWidth of [201.1,352.75,903.13,1789.21]){
+   const imageLeft=left/100*parentWidth,imageRight=(left+width)/100*parentWidth;
+   const mainLeft=viewportStart/100*parentWidth,mainWidth=viewportWidth/100*parentWidth;
+   assert.ok(Math.abs(imageLeft-(mainLeft+l/physicalWidth*mainWidth))<1e-10);
+   assert.ok(Math.abs(imageRight-(mainLeft+(l+W)/physicalWidth*mainWidth))<1e-10);
+  }
+ }
+});

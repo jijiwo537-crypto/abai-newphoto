@@ -1,7 +1,7 @@
 import { seamGeometry, seamImageTransform, type SeamPhoto, type SeamRect } from './seamlessLayout';
 import { configureWebglWide, get2dWide } from './colorSpace';
 export type SeamTexture = { image: CanvasImageSource; width: number; height: number } | null;
-export type SeamView = { width:number;height:number;xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;viewport?:number[];clip?:number[];clipGuard?:[number,number];overlay?:{image:HTMLCanvasElement;origin:[number,number]};other?:{xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;clip:number[]} };
+export type SeamView = { width:number;height:number;xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;viewport?:number[];clip?:number[];clipGuard?:[number,number];other?:{xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;clip:number[]} };
 
 /** Original-size source textures + physical-pixel viewport rendering. Fusion
  * changes uniforms only; dragging and resting use the identical quality path. */
@@ -21,8 +21,6 @@ class SeamGpu {
   private maxTextureUnits:number;
   private uniforms=new Map<WebGLProgram,Map<string,WebGLUniformLocation|null>>();
   private lastPresentation:(()=>void)|null=null;
-  private overlayTexture:WebGLTexture|null=null;
-  private overlaySize:[number,number]=[0,0];
   constructor(canvas:HTMLCanvasElement,direct=false,private presentationOnly=false){
     const webkit=/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
     this.transferred=!direct&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
@@ -35,7 +33,7 @@ class SeamGpu {
     this.blank.width=this.blank.height=1;const empty=this.blank.getContext('2d')!;empty.fillStyle='#121212';empty.fillRect(0,0,1,1);
     this.buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
   }
-  dispose(){const gl=this.gl;for(const t of this.textures.values())gl.deleteTexture(t);if(this.overlayTexture)gl.deleteTexture(this.overlayTexture);this.overlayTexture=null;this.overlaySize=[0,0];for(const p of this.programs.values())gl.deleteProgram(p);gl.deleteBuffer(this.buffer);this.textures.clear();this.textureBytes.clear();this.revisions.clear();this.programs.clear();this.uniforms.clear();this.lastPresentation=null;if(!gl.isContextLost())gl.getExtension('WEBGL_lose_context')?.loseContext();}
+  dispose(){const gl=this.gl;for(const t of this.textures.values())gl.deleteTexture(t);for(const p of this.programs.values())gl.deleteProgram(p);gl.deleteBuffer(this.buffer);this.textures.clear();this.textureBytes.clear();this.revisions.clear();this.programs.clear();this.uniforms.clear();this.lastPresentation=null;if(!gl.isContextLost())gl.getExtension('WEBGL_lose_context')?.loseContext();}
   get lost(){return this.invalid||this.gl.isContextLost();}
   copyPixels(ctx:CanvasRenderingContext2D,x:number,y:number,presentation?:HTMLCanvasElement){
     // Chromium transfers the rendered bitmap into the displayed canvas and
@@ -73,36 +71,22 @@ class SeamGpu {
     const fs=shader(gl.FRAGMENT_SHADER,`#version 300 es
       precision highp float;in vec2 uv;out vec4 color;uniform vec2 size;uniform vec3 viewX;uniform vec3 viewY;uniform bool fused;
       uniform bool zones;uniform bool second;uniform vec4 clip;uniform vec4 otherClip;uniform vec2 clipGuard;uniform vec3 otherX;uniform vec3 otherY;
-      uniform bool grouped;uniform sampler2D sceneOverlay;uniform vec2 rasterSize;uniform ivec2 overlayOrigin;
       ${uniforms}
       vec3 toP3(vec3 v){vec3 linear=mix(v/12.92,pow((v+.055)/1.055,vec3(2.4)),step(vec3(.04045),v));
         linear=mat3(.82259287,.03319951,.01708535,.17753395,.96678350,.07239572,0.,0.,.91030148)*linear;
         return mix(linear*12.92,1.055*pow(max(linear,vec3(0.)),vec3(1./2.4))-.055,step(vec3(.0031308),linear));}
-      vec4 composeScene(vec4 base){
-        if(!grouped)return base;
-        ivec2 pixel=ivec2(floor(uv*rasterSize))+overlayOrigin;
-        ivec2 bounds=textureSize(sceneOverlay,0);
-        if(any(lessThan(pixel,ivec2(0)))||any(greaterThanEqual(pixel,bounds)))return base;
-        // The overlay is already rasterized on the very same physical grid.
-        // Fetch exact texels: no second CSS resampling or independent rounding.
-        vec4 top=texelFetch(sceneOverlay,pixel,0);
-        vec4 joined=top+base*(1.-top.a);
-        // This WebGL context presents straight alpha. Compose premultiplied
-        // samples, then convert once, including translucent outer page pixels.
-        return joined.a>0.?vec4(joined.rgb/joined.a,joined.a):joined;
-      }
       void main(){bool a=all(greaterThanEqual(uv,clip.xy))&&all(lessThanEqual(uv,clip.zw));bool b=second&&all(greaterThanEqual(uv,otherClip.xy))&&all(lessThanEqual(uv,otherClip.zw));
         // A separately composited canvas is bilinearly sampled by the browser.
         // Replicate photo edges into its filter footprint, beneath the main
         // canvas's authoritative mask. Do not alter crop, cell bounds or UVs.
         bool guardA=all(greaterThanEqual(uv,clip.xy-clipGuard))&&all(lessThanEqual(uv,clip.zw+clipGuard));
         bool guardB=second&&all(greaterThanEqual(uv,otherClip.xy-clipGuard))&&all(lessThanEqual(uv,otherClip.zw+clipGuard));
-        if(zones&&!guardA&&!guardB){color=composeScene(vec4(0.));return;}
+        if(zones&&!guardA&&!guardB){color=vec4(0.);return;}
         vec3 vx=zones&&!a&&b?otherX:viewX,vy=zones&&!a&&b?otherY:viewY;
         vec2 p=clamp(vec2(dot(uv,vx.xy)+vx.z,dot(uv,vy.xy)+vy.z),vec2(.00001),size-vec2(.00001));
         float nearest=1.e30;int owner=-1;if(!fused){${owners}}
         vec3 sum=vec3(0.);float coverage=0.;${layers}
-        color=composeScene(vec4(sum/max(.000001,min(1.,coverage)),1.));}`);
+        color=vec4(sum/max(.000001,min(1.,coverage)),1.);}`);
     p=gl.createProgram()!;gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);gl.deleteShader(vs);gl.deleteShader(fs);
     if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p)||'Program');
     this.programs.set(count,p);return p;
@@ -121,7 +105,7 @@ class SeamGpu {
       if(!(image instanceof HTMLCanvasElement)&&resident+incoming<=32*1024*1024&&this.textures.size<=12)continue;
       resident-=this.textureBytes.get(image)||0;gl.deleteTexture(tex);this.textures.delete(image);this.textureBytes.delete(image);this.revisions.delete(image);
     }
-    if(count+(view.overlay?1:0)>this.maxTextureUnits)throw new Error('佈局相片數超過 GPU 上限');
+    if(count>this.maxTextureUnits)throw new Error('佈局相片數超過 GPU 上限');
     if(this.canvas.width!==target.width)this.canvas.width=target.width;if(this.canvas.height!==target.height)this.canvas.height=target.height;
     gl.viewport(0,0,target.width,target.height);const p=this.program(count);gl.useProgram(p);
     let locations=this.uniforms.get(p);if(!locations){locations=new Map();this.uniforms.set(p,locations);}
@@ -135,26 +119,6 @@ class SeamGpu {
     gl.uniform2fv(uniform('clipGuard'),view.clipGuard||[0,0]);
     gl.uniform4fv(uniform('otherClip'),view.other?.clip||[-1,-1,-1,-1]);
     const other=view.other||view;gl.uniform3f(uniform('otherX'),other.xx,other.xy,other.x0);gl.uniform3f(uniform('otherY'),other.yx,other.yy,other.y0);
-    gl.uniform1i(uniform('grouped'),view.overlay?1:0);
-    gl.uniform2f(uniform('rasterSize'),target.width,target.height);
-    gl.uniform2i(uniform('overlayOrigin'),view.overlay?.origin[0]||0,view.overlay?.origin[1]||0);
-    gl.uniform1i(uniform('sceneOverlay'),count);
-    if(view.overlay){
-      const image=view.overlay.image;
-      this.overlayTexture||=gl.createTexture()!;
-      gl.activeTexture(gl.TEXTURE0+count);gl.bindTexture(gl.TEXTURE_2D,this.overlayTexture);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);
-      // The scene canvas is already in the output colour space. Import its
-      // premultiplied texels directly, without readPixels or another ICC pass.
-      gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,gl.NONE);
-      if(this.overlaySize[0]!==image.width||this.overlaySize[1]!==image.height){
-        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image);
-        this.overlaySize=[image.width,image.height];
-      }else gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,gl.RGBA,gl.UNSIGNED_BYTE,image);
-      gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,gl.BROWSER_DEFAULT_WEBGL);
-    }
     for(let i=0;i<count;i++){
       const c=cells[i]||{url:'',zoom:1,offsetX:0,offsetY:0,rotation:0},source=sources[i];
       const g=seamGeometry(rects,i,w,h,amount),t=seamImageTransform(c,source?.width||1,source?.height||1,g);

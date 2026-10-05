@@ -21,10 +21,10 @@ export class CreativeSeamless {
       base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;}),0,{width:1000,height:1000,xx:1000,xy:0,x0:0,yx:0,yy:1000,y0:0},true);
     surface.style.display='none';
   }
-  /** Resolve original photos and the completed canvas scene into one surface.
-   * No independent DOM filtering of the photo/mask boundary and no synchronous
-   * GPU-to-2D readback. Selection chrome is included in the completed scene. */
-  present(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,page:number[]){
+  /** Resident original-photo surface shares the main canvas's exact raster
+   * mapping. Do not upload the changing scene canvas every pinch frame: WebKit
+   * may synchronize two GPU contexts for that upload, blocking interaction. */
+  present(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,page:number[],viewport=[ctx.canvas.width,ctx.canvas.height]){
     const base=seamlessPhotoBase(region);if(!base||base.photos.some(p=>!p.src||!decoded.has(p.src)))return false;
     const m=ctx.getTransform();if(m.b||m.c||m.a<=0||m.d<=0)return false;
     if(this.presentation?.dataset.sourceUploads&&this.presentation.getContext('webgl2')?.isContextLost()){
@@ -34,29 +34,26 @@ export class CreativeSeamless {
     const main=ctx.canvas;
     if(this.main&&this.main!==main)this.main.style.opacity='';
     this.main=main;
-    const visible=main.closest('[data-creative-stage]')?.getBoundingClientRect(),box=main.getBoundingClientRect();
-    const sx=box.width?main.width/box.width:1,sy=box.height?main.height/box.height:1;
-    // Include the filter footprint at the surface's outer edge too. Extending
-    // only the shader clip cannot protect an edge where the texture ends.
-    const l=visible?Math.max(-1,Math.floor((visible.left-box.left)*sx)-1):-1,t=visible?Math.max(-1,Math.floor((visible.top-box.top)*sy)-1):-1;
-    const r=visible?Math.min(main.width+1,Math.ceil((visible.right-box.left)*sx)+1):main.width+1,b=visible?Math.min(main.height+1,Math.ceil((visible.bottom-box.top)*sy)+1):main.height+1;
-    const W=Math.max(1,r-l),H=Math.max(1,b-t);
+    // Main is already a bounded viewport (with reusable pinch capacity), not
+    // a giant zoomed page. Use its IDENTICAL backing size and CSS rectangle.
+    // A second crop/DOM measurement gives the two canvases different CSS
+    // rounding and bilinear sample phases, even if logical edges agree.
+    const l=0,t=0,W=main.width,H=main.height;
     if(surface.width!==W)surface.width=W;if(surface.height!==H)surface.height=H;
     const sources=base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;});
     const left=Math.max(0,page[0],x*m.a+m.e),top=Math.max(0,page[1],y*m.d+m.f);
-    const right=Math.min(main.width,page[0]+page[2],(x+w)*m.a+m.e),bottom=Math.min(main.height,page[1]+page[3],(y+h)*m.d+m.f);
-    // Keep identical physical-pixel sampling, but allocate only pixels visible
-    // in the editor. A retained pinch capacity must not enlarge this GPU plane.
-    // Photos, mask and all canvas objects are resolved before DOM compositing.
-    // Their shared edge has exactly one pixel owner; no expanded photo crop.
-    const view:SeamView={width:w,height:h,xx:W/m.a,xy:0,x0:(l-m.e)/m.a-x,yx:0,yy:H/m.d,y0:(t-m.f)/m.d-y,clip:[(left-l)/W,(top-t)/H,(right-l)/W,(bottom-t)/H],overlay:{image:main,origin:[l,t]}};
+    const right=Math.min(viewport[0],page[0]+page[2],(x+w)*m.a+m.e),bottom=Math.min(viewport[1],page[1]+page[3],(y+h)*m.d+m.f);
+    // Keep identical physical-pixel sampling within the bounded editor raster,
+    // including the main canvas's reusable pinch capacity.
+    // Photo texels continue under the opaque mask's filter footprint, while
+    // its exact half-open clip remains authoritative. No source crop changes.
+    const view:SeamView={width:w,height:h,xx:W/m.a,xy:0,x0:(l-m.e)/m.a-x,yx:0,yy:H/m.d,y0:(t-m.f)/m.d-y,clip:[(left-l)/W,(top-t)/H,(right-l)/W,(bottom-t)/H],clipGuard:[2/W,2/H]};
     const first=this.firstView;if(!first)this.firstView=view;
     // A split canvas draws the same photos twice (image and mask window).
     // Submit the combined two-window shader once, after both placements have
     // been collected, instead of shading the entire viewport twice per frame.
     this.pendingPresentation=()=>drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,first?{...first,other:{...view,clip:view.clip!}}:view,true);
-    const parent=main.parentElement?.getBoundingClientRect();
-    Object.assign(surface.style,{position:'absolute',left:`${box.left-(parent?.left||box.left)+l/sx}px`,top:`${box.top-(parent?.top||box.top)+t/sy}px`,width:`${W/sx}px`,height:`${H/sy}px`,zIndex:'0',pointerEvents:'none',display:'block'});
+    Object.assign(surface.style,{position:'absolute',left:main.style.left||'0px',top:main.style.top||'0px',width:main.style.width||'100%',height:main.style.height||'100%',zIndex:'0',pointerEvents:'none',display:'block'});
     surface.dataset.presentationX=String(l);surface.dataset.presentationY=String(t);
     surface.dataset.creativeSeamPresentation='1';if(surface.parentElement!==main.parentElement)main.parentElement?.prepend(surface);
     // Remove opaque main-canvas pixels at exactly the same pixel centres as
@@ -68,7 +65,7 @@ export class CreativeSeamless {
     ctx.clearRect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.restore();return true;
   }
   beginFrame(){this.firstView=null;this.pendingPresentation=null;if(this.main)this.main.style.opacity='';}
-  flush(){const draw=this.pendingPresentation;this.pendingPresentation=null;if(draw){try{draw();if(this.main)this.main.style.opacity='0';}catch(error){this.hide();throw error;}}else this.hide();}
+  flush(){const draw=this.pendingPresentation;this.pendingPresentation=null;if(draw){try{draw();}catch(error){this.hide();throw error;}}else this.hide();}
   hide(){this.firstView=null;this.pendingPresentation=null;if(this.presentation)this.presentation.style.display='none';if(this.main)this.main.style.opacity='';}
   get shown(){return this.presentation?.style.display==='block'||!!this.pendingPresentation;}
   paint(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,dim=-1,preview=false){

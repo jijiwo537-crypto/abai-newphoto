@@ -5402,7 +5402,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         creativeSeam.current ||= new CreativeSeamless();
         if(g===ctx&&targetCanvas===canvasRef.current&&!previewCapture&&layout!==AROUND&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&dim<0){
           const m=g.getTransform(),bounds=clip||[0,0,tW,tH];
-          try{if(creativeSeam.current.present(g,regionForPaint!,regionDecoded,x,y,w,h,[bounds[0]*m.a+m.e,bounds[1]*m.d+m.f,bounds[2]*m.a,bounds[3]*m.d])){
+          try{if(creativeSeam.current.present(g,regionForPaint!,regionDecoded,x,y,w,h,[bounds[0]*m.a+m.e,bounds[1]*m.d+m.f,bounds[2]*m.a,bounds[3]*m.d],[vp.w,vp.h])){
             const base=seamlessPhotoBase(regionForPaint!);
             if(base&&base!==regionForPaint)paintPhotoRegion(g,regionForPaint!,regionDecoded,x,y,w,h,dim,regionForPaint!.photos.slice(2).map((_,i)=>i+2));
             return;
@@ -7657,8 +7657,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
     } finally { frameContext.restore(); }
-    // Submit only after every canvas layer and transient frame is complete.
-    // The browser receives one grouped surface, not separate photo/mask planes.
+    // Submit the resident photo plane once after collecting both windows.
+    // It shares the main canvas's exact raster/CSS map; no scene upload.
     if(targetCanvas===canvasRef.current)creativeSeam.current?.flush();
     /* editingTextId 一定要在這裡：正在畫布上打字的那一段字是「不畫」的
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束

@@ -8,7 +8,7 @@ void(async()=>{
  const check=(name:string,pass:boolean,detail?:any)=>report.checks.push({name,pass,detail});
  try{
   let stage:HTMLElement|null=null;for(let i=0;i<600;i++){stage=document.querySelector('[data-creative-stage]');if(stage?.dataset.sceneGeometry)break;await tick();}await wait(30);
-  if(!stage)throw Error('missing scene');const canvas=stage.querySelector<HTMLCanvasElement>('canvas')!;
+  if(!stage)throw Error('missing scene');const canvas=stage.querySelector<HTMLCanvasElement>('canvas:not([data-creative-seam-presentation]):not([data-base-spatial-presentation])')!;
   const point=(x:number,y:number)=>{const g=JSON.parse(stage!.dataset.sceneGeometry!),r=canvas.parentElement!.getBoundingClientRect();return{x:r.left+x/g.cw*r.width,y:r.top+y/g.ch*r.height};};
   const pointer=(type:string,id:number,p:{x:number;y:number},target:HTMLElement=canvas)=>target.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId:id,pointerType:'touch',clientX:p.x,clientY:p.y,buttons:type==='pointerup'?0:1}));
   const tap=(p:{x:number;y:number})=>{pointer('pointerdown',3601,p);pointer('pointerup',3601,p);};

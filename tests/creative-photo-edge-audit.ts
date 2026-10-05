@@ -14,6 +14,7 @@ void(async()=>{
    const viewport=stage!.getBoundingClientRect(),mainBox=main.getBoundingClientRect();
    const copy=document.createElement('canvas');copy.width=composited?Math.ceil(viewport.width*3):main.width;copy.height=composited?Math.ceil(viewport.height*3):main.height;const g=get2dWide(copy)!;
    const b=composited?viewport:mainBox;
+   let referencePixels:Uint8ClampedArray|null=null;
    if(composited){
     // Reproduce the CSS filter footprint and fractional layer placement, not
     // only the framebuffer. This catches transparent texels outside the window.
@@ -23,6 +24,14 @@ void(async()=>{
     const paint=(source:HTMLCanvasElement,box:DOMRect)=>g.drawImage(source,(box.left-b.left)/b.width*copy.width,(box.top-b.top)/b.height*copy.height,box.width/b.width*copy.width,box.height/b.height*copy.height);
     paint(tile,gpu.getBoundingClientRect());
     if(!new URLSearchParams(location.search).has('guardFootprint')&&getComputedStyle(main).opacity!=='0')paint(main,mainBox);
+    // Independent oracle: resolve native layers first, then resize that single
+    // image once. A valid antialiased white/black interface is grey, not white;
+    // comparing it to white falsely labels legitimate boundary coverage a gap.
+    const native=document.createElement('canvas');native.width=main.width;native.height=main.height;
+    const ng=get2dWide(native)!;ng.drawImage(tile,Number(gpu.dataset.presentationX||0),Number(gpu.dataset.presentationY||0));if(getComputedStyle(main).opacity!=='0')ng.drawImage(main,0,0);
+    const ref=document.createElement('canvas');ref.width=copy.width;ref.height=copy.height;const rg=get2dWide(ref)!;rg.fillStyle='#000';rg.fillRect(0,0,ref.width,ref.height);
+    rg.drawImage(native,(mainBox.left-b.left)/b.width*ref.width,(mainBox.top-b.top)/b.height*ref.height,mainBox.width/b.width*ref.width,mainBox.height/b.height*ref.height);
+    referencePixels=rg.getImageData(0,0,ref.width,ref.height).data;native.width=native.height=ref.width=ref.height=1;
     tile.width=tile.height=1;
    }else{copySeamPreviewPixels(gpu,g,Number(gpu.dataset.presentationX||0),Number(gpu.dataset.presentationY||0));if(getComputedStyle(main).opacity!=='0')g.drawImage(main,0,0);}
    const pixels=g.getImageData(0,0,copy.width,copy.height).data;let min=255,bad=0,n=0;const examples:any[]=[];
@@ -33,7 +42,7 @@ void(async()=>{
     // screenshot grid which can miss a one-pixel crack at fractional zoom.
     const x0=Math.max(0,Math.ceil((l-b.left)/b.width*copy.width-.5)),x1=Math.min(copy.width-1,Math.floor((rr-b.left)/b.width*copy.width-.5));
     const y0=Math.max(0,Math.ceil((t-b.top)/b.height*copy.height-.5)),y1=Math.min(copy.height-1,Math.floor((bb-b.top)/b.height*copy.height-.5));
-    const sample=(x:number,y:number)=>{const k=(y*copy.width+x)*4,v=Math.min(pixels[k],pixels[k+1],pixels[k+2]);min=Math.min(min,v);bad+=v<245?1:0;n++;if(v<245&&examples.length<4)examples.push({x,y,v,cell:{x:r.x,y:r.y,w:r.width,h:r.height},stage:{x:b.x,y:b.y,w:b.width,h:b.height},gpu:gpu.getBoundingClientRect().toJSON()});};
+    const sample=(x:number,y:number)=>{const k=(y*copy.width+x)*4,v=Math.min(pixels[k],pixels[k+1],pixels[k+2]);min=Math.min(min,v);const delta=referencePixels?Math.max(...[0,1,2,3].map(c=>Math.abs(pixels[k+c]-referencePixels![k+c]))):255-v;const wrong=referencePixels?delta>3:v<245;bad+=wrong?1:0;n++;if(wrong&&examples.length<4)examples.push({x,y,v,delta,actual:Array.from(pixels.slice(k,k+4)),reference:referencePixels?Array.from(referencePixels.slice(k,k+4)):undefined,cell:{x:r.x,y:r.y,w:r.width,h:r.height},stage:{x:b.x,y:b.y,w:b.width,h:b.height},gpu:gpu.getBoundingClientRect().toJSON()});};
     for(let x=x0+2;x<=x1-2;x++){sample(x,y0);sample(x,y1);}
     for(let y=y0+2;y<=y1-2;y++){sample(x0,y);sample(x1,y);}
    }
@@ -45,7 +54,7 @@ void(async()=>{
    // The mask side must remain exactly its own colour, not a white photo
    // overdraw/fringe. Test at native pixels (CSS resizing may legitimately
    // interpolate the two neighbouring colours across one physical pixel).
-   if(!composited&&ex>=0&&ex+10<copy.width)for(let yy=ay;yy<by;yy++){
+   if(!composited&&ex>=Math.max(0,px(viewport.left))&&ex+10<Math.min(copy.width,px(viewport.right)))for(let yy=ay;yy<by;yy++){
     const reference=(yy*copy.width+ex+10)*4;
     // At the viewport's right edge the far reference can lie outside the
     // deliberately bounded presentation surface, where no scene is rendered.
@@ -55,6 +64,18 @@ void(async()=>{
      for(let channel=0;channel<4;channel++)delta=Math.max(delta,Math.abs(pixels[k+channel]-pixels[reference+channel]));
      maskBad+=delta>2?1:0;maskSamples++;
      if(delta>2&&maskExamples.length<2)maskExamples.push({xx,yy,ex,delta,pixel:Array.from(pixels.slice(k,k+4)),reference:Array.from(pixels.slice(reference,reference+4)),edgeRight,box:b.toJSON(),size:[copy.width,copy.height]});
+    }
+   }
+   if(!composited&&new URLSearchParams(location.search).has('maskBottom')){
+    maskBad=0;maskSamples=0;maskExamples.length=0;
+    const ey=py(edgeBottom),ax=Math.max(0,px(Math.max(Math.min(...cells.map(c=>c.left))+4,viewport.left+4))),bx=Math.min(copy.width,px(Math.min(edgeRight-4,viewport.right-4)));
+    if(ey>=Math.max(0,py(viewport.top))&&ey+10<Math.min(copy.height,py(viewport.bottom)))for(let xx=ax;xx<bx;xx++){
+     const ref=((ey+10)*copy.width+xx)*4;if(pixels[ref+3]!==255)continue;
+     for(let yy=ey;yy<=ey+2;yy++){
+      const k=(yy*copy.width+xx)*4;let delta=0;for(let c=0;c<4;c++)delta=Math.max(delta,Math.abs(pixels[k+c]-pixels[ref+c]));
+      maskBad+=delta>2?1:0;maskSamples++;
+      if(delta>2&&maskExamples.length<2)maskExamples.push({xx,yy,delta,pixel:Array.from(pixels.slice(k,k+4)),reference:Array.from(pixels.slice(ref,ref+4))});
+     }
     }
    }
    copy.width=copy.height=1;return {min,bad,n,maskBad,maskSamples,maskExamples,examples,bytes:gpu.dataset.residentTextureBytes};

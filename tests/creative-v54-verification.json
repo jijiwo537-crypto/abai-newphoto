@@ -1,0 +1,30 @@
+{
+  "version": "creative-v54",
+  "date": "2026-10-06",
+  "scope": "Creative collage photo/photo and photo/mask preview seams and zoom regression",
+  "changes": [
+    "Removed v53 per-frame completed scene upload between GPU contexts; retained resident original photo textures.",
+    "Photo presentation uses the main canvas's identical backing dimensions and CSS rectangle, without an independently measured crop.",
+    "Visible photo clips use the actual viewport rather than retained pinch storage; mask and photo boundaries retain a shared pixel-centre ownership rule.",
+    "Corrected gesture audit to measure the main editing canvas, not the prepended GPU photo plane."
+  ],
+  "environment": {"browser": "Codex in-app browser", "viewport": [402, 874], "physicalIPhoneVerified": false, "simulatorStarted": false, "tabs": 1},
+  "tests": [
+    {"case": "three photos, square, black bottom mask, native raster", "frames": 120, "pass": true, "badPhotoSamples": 0, "badMaskSamples": 0},
+    {"case": "three portrait photos, square, black right mask, DOM compositing against grouped native reference", "frames": 120, "pass": true, "badSamples": 0, "channelTolerance": 3},
+    {"case": "three photos, square, black bottom mask, DOM compositing against grouped native reference", "frames": 120, "pass": true, "badSamples": 0, "channelTolerance": 3},
+    {"case": "four gradient/detail photos, split layout, seamless amounts 1/30/70/100 versus export renderer", "pass": true},
+    {"case": "rapid effects, LUT, slider and selected photograph movement change visible pixels before release", "pass": true},
+    {"case": "focused source and boundary property tests", "passed": 18, "failed": 0}
+  ],
+  "gestureAudit": {
+    "fixture": "nine large photos with real LUT and lowfi effect, geometry sliders and maximum preview zoom",
+    "pass": true,
+    "previewTouchPinch": {"paintedFrames": 91, "paintP95Ms": 1.5, "maxPaintMs": 2, "sourceUploads": 0},
+    "previewWheelZoom": {"paintedFrames": 90, "paintP95Ms": 0.9, "maxPaintMs": 1.2, "sourceUploads": 0},
+    "limitations": ["Browser frame cadence is not a physical iPhone FPS guarantee.", "Occupancy transition recorded one 72.5 ms paint/preparation spike; not claiming every operation is stall-free.", "v53's zero-painted-frame audit was invalid evidence for main-canvas performance."]
+  },
+  "build": "production build passed; guarded serial execution",
+  "memory": "One browser tab and no Simulator startup. Guarded build limits are not a guarantee of total Codex app GPU/compressed memory.",
+  "broaderSuite": "Three pre-existing stale source-regex assertions are documented in prior audits and were not modified to conceal failures."
+}
