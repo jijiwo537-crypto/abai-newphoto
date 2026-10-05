@@ -9,9 +9,6 @@ export class CreativeSeamless {
   private surface:HTMLCanvasElement|null=null;
   private colorTile:HTMLCanvasElement|null=null;
   private presentation:HTMLCanvasElement|null=null;
-  private firstView:SeamView|null=null;
-  private pendingPresentation:(()=>void)|null=null;
-  private main:HTMLCanvasElement|null=null;
   private interactive=new CreativeFeatherSurface();
   warm(region:PhotoRegion,decoded:Map<string,HTMLImageElement>){
     const base=seamlessPhotoBase(region);if(!base||this.presentation?.style.display==='block')return;
@@ -21,9 +18,9 @@ export class CreativeSeamless {
       base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;}),0,{width:1000,height:1000,xx:1000,xy:0,x0:0,yx:0,yy:1000,y0:0},true);
     surface.style.display='none';
   }
-  /** Resident original-photo surface shares the main canvas's exact raster
-   * mapping. Do not upload the changing scene canvas every pinch frame: WebKit
-   * may synchronize two GPU contexts for that upload, blocking interaction. */
+  /** Resolve resident original photos INTO the main scene before the mask.
+   * Never ask the DOM compositor to filter two complementary alpha layers.
+   * Source uploads remain cached; there is no scene upload or CPU readback. */
   present(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,page:number[],viewport=[ctx.canvas.width,ctx.canvas.height]){
     const base=seamlessPhotoBase(region);if(!base||base.photos.some(p=>!p.src||!decoded.has(p.src)))return false;
     const m=ctx.getTransform();if(m.b||m.c||m.a<=0||m.d<=0)return false;
@@ -32,8 +29,6 @@ export class CreativeSeamless {
     }
     const surface=this.presentation||(this.presentation=document.createElement('canvas'));
     const main=ctx.canvas;
-    if(this.main&&this.main!==main)this.main.style.opacity='';
-    this.main=main;
     // Main is already a bounded viewport (with reusable pinch capacity), not
     // a giant zoomed page. Use its IDENTICAL backing size and CSS rectangle.
     // A second crop/DOM measurement gives the two canvases different CSS
@@ -48,26 +43,21 @@ export class CreativeSeamless {
     // Photo texels continue under the opaque mask's filter footprint, while
     // its exact half-open clip remains authoritative. No source crop changes.
     const view:SeamView={width:w,height:h,xx:W/m.a,xy:0,x0:(l-m.e)/m.a-x,yx:0,yy:H/m.d,y0:(t-m.f)/m.d-y,clip:[(left-l)/W,(top-t)/H,(right-l)/W,(bottom-t)/H],clipGuard:[2/W,2/H]};
-    const first=this.firstView;if(!first)this.firstView=view;
-    // A split canvas draws the same photos twice (image and mask window).
-    // Submit the combined two-window shader once, after both placements have
-    // been collected, instead of shading the entire viewport twice per frame.
-    this.pendingPresentation=()=>drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,first?{...first,other:{...view,clip:view.clip!}}:view,true);
-    Object.assign(surface.style,{position:'absolute',left:main.style.left||'0px',top:main.style.top||'0px',width:main.style.width||'100%',height:main.style.height||'100%',zIndex:'0',pointerEvents:'none',display:'block'});
-    surface.dataset.presentationX=String(l);surface.dataset.presentationY=String(t);
-    surface.dataset.creativeSeamPresentation='1';if(surface.parentElement!==main.parentElement)main.parentElement?.prepend(surface);
-    // Remove opaque main-canvas pixels at exactly the same pixel centres as
-    // the shader's photo window. Fractional clearRect/clip edges otherwise
-    // leave a varying alpha fringe above an already-filled GPU photograph.
+    drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,view,true);
+    // The GPU buffer is private, not an independently scaled DOM layer.
+    // Copy in the same task before its transient framebuffer is discarded.
+    surface.remove();surface.style.display='none';
+    main.dataset.creativePhotoComposition='single-canvas';
     const clearLeft=scenePixelEdge(left),clearTop=scenePixelEdge(top);
     const clearRight=scenePixelEdge(right),clearBottom=scenePixelEdge(bottom);
     ctx.save();ctx.setTransform(1,0,0,1,0,0);
-    ctx.clearRect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.restore();return true;
+    ctx.beginPath();ctx.rect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.clip();
+    ctx.drawImage(surface,0,0);ctx.restore();return true;
   }
-  beginFrame(){this.firstView=null;this.pendingPresentation=null;if(this.main)this.main.style.opacity='';}
-  flush(){const draw=this.pendingPresentation;this.pendingPresentation=null;if(draw){try{draw();}catch(error){this.hide();throw error;}}else this.hide();}
-  hide(){this.firstView=null;this.pendingPresentation=null;if(this.presentation)this.presentation.style.display='none';if(this.main)this.main.style.opacity='';}
-  get shown(){return this.presentation?.style.display==='block'||!!this.pendingPresentation;}
+  beginFrame(){}
+  flush(){}
+  hide(){if(this.presentation){this.presentation.style.display='none';this.presentation.remove();}}
+  get shown(){return false;}
   paint(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,dim=-1,preview=false){
     if(!region.seamless||region.photos.length<2)return false;
     const base=seamlessPhotoBase(region);if(!base)return false;
@@ -113,5 +103,5 @@ export class CreativeSeamless {
       return true;
     }finally{ctx.restore();}
   }
-  dispose(){this.hide();this.main=null;this.interactive.dispose();if(this.presentation){disposeSeamPreview(this.presentation);this.presentation.remove();this.presentation.width=this.presentation.height=1;this.presentation=null;}if(this.surface){disposeSeamPreview(this.surface);this.surface.width=this.surface.height=1;this.surface=null;}if(this.colorTile){this.colorTile.width=this.colorTile.height=1;this.colorTile=null;}}
+  dispose(){this.hide();this.interactive.dispose();if(this.presentation){disposeSeamPreview(this.presentation);this.presentation.remove();this.presentation.width=this.presentation.height=1;this.presentation=null;}if(this.surface){disposeSeamPreview(this.surface);this.surface.width=this.surface.height=1;this.surface=null;}if(this.colorTile){this.colorTile.width=this.colorTile.height=1;this.colorTile=null;}}
 }

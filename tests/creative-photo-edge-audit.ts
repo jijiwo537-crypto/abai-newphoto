@@ -5,17 +5,17 @@ void(async()=>{
  const report:any={kind:'creative-photo-edges',checks:[],samples:[]};
  try{
   let stage:HTMLElement|null=null;
-  for(let i=0;i<600;i++){stage=document.querySelector('[data-creative-stage]');if(stage?.dataset.photoCount==='3'&&stage.querySelector('[data-creative-seam-presentation]'))break;await tick();}
+  for(let i=0;i<600;i++){stage=document.querySelector('[data-creative-stage]');if(stage?.dataset.photoCount==='3'&&stage.querySelector('canvas[data-creative-photo-composition="single-canvas"]'))break;await tick();}
   if(!stage)throw Error('missing stage');await wait(60);
   const main=stage.querySelector<HTMLCanvasElement>('canvas:not([data-creative-seam-presentation])')!;
   const scan=()=>{
-   const gpu=stage!.querySelector<HTMLCanvasElement>('[data-creative-seam-presentation]')!;
+   const gpu=stage!.querySelector<HTMLCanvasElement>('[data-creative-seam-presentation]')||main;
    const composited=new URLSearchParams(location.search).has('composited');
    const viewport=stage!.getBoundingClientRect(),mainBox=main.getBoundingClientRect();
    const copy=document.createElement('canvas');copy.width=composited?Math.ceil(viewport.width*3):main.width;copy.height=composited?Math.ceil(viewport.height*3):main.height;const g=get2dWide(copy)!;
    const b=composited?viewport:mainBox;
    let referencePixels:Uint8ClampedArray|null=null;
-   if(composited){
+   if(composited&&gpu!==main){
     // Reproduce the CSS filter footprint and fractional layer placement, not
     // only the framebuffer. This catches transparent texels outside the window.
     const tile=document.createElement('canvas');tile.width=gpu.width;tile.height=gpu.height;
@@ -33,7 +33,8 @@ void(async()=>{
     rg.drawImage(native,(mainBox.left-b.left)/b.width*ref.width,(mainBox.top-b.top)/b.height*ref.height,mainBox.width/b.width*ref.width,mainBox.height/b.height*ref.height);
     referencePixels=rg.getImageData(0,0,ref.width,ref.height).data;native.width=native.height=ref.width=ref.height=1;
     tile.width=tile.height=1;
-   }else{copySeamPreviewPixels(gpu,g,Number(gpu.dataset.presentationX||0),Number(gpu.dataset.presentationY||0));if(getComputedStyle(main).opacity!=='0')g.drawImage(main,0,0);}
+   }else if(composited){g.fillStyle='#000';g.fillRect(0,0,copy.width,copy.height);g.drawImage(main,(mainBox.left-b.left)/b.width*copy.width,(mainBox.top-b.top)/b.height*copy.height,mainBox.width/b.width*copy.width,mainBox.height/b.height*copy.height);}
+   else{if(gpu!==main)copySeamPreviewPixels(gpu,g,Number(gpu.dataset.presentationX||0),Number(gpu.dataset.presentationY||0));g.drawImage(main,0,0);}
    const pixels=g.getImageData(0,0,copy.width,copy.height).data;let min=255,bad=0,n=0;const examples:any[]=[];
    for(const cell of stage!.querySelectorAll<HTMLElement>('[data-photo-cell]')){
     const r=cell.getBoundingClientRect(),inset=composited&&!new URLSearchParams(location.search).has('guardFootprint')?1/3:0;const l=Math.max(r.left+inset,viewport.left,b.left),t=Math.max(r.top+inset,viewport.top,b.top),rr=Math.min(r.right-inset,viewport.right,b.right),bb=Math.min(r.bottom-inset,viewport.bottom,b.bottom);
@@ -42,7 +43,7 @@ void(async()=>{
     // screenshot grid which can miss a one-pixel crack at fractional zoom.
     const x0=Math.max(0,Math.ceil((l-b.left)/b.width*copy.width-.5)),x1=Math.min(copy.width-1,Math.floor((rr-b.left)/b.width*copy.width-.5));
     const y0=Math.max(0,Math.ceil((t-b.top)/b.height*copy.height-.5)),y1=Math.min(copy.height-1,Math.floor((bb-b.top)/b.height*copy.height-.5));
-    const sample=(x:number,y:number)=>{const k=(y*copy.width+x)*4,v=Math.min(pixels[k],pixels[k+1],pixels[k+2]);min=Math.min(min,v);const delta=referencePixels?Math.max(...[0,1,2,3].map(c=>Math.abs(pixels[k+c]-referencePixels![k+c]))):255-v;const wrong=referencePixels?delta>3:v<245;bad+=wrong?1:0;n++;if(wrong&&examples.length<4)examples.push({x,y,v,delta,actual:Array.from(pixels.slice(k,k+4)),reference:referencePixels?Array.from(referencePixels.slice(k,k+4)):undefined,cell:{x:r.x,y:r.y,w:r.width,h:r.height},stage:{x:b.x,y:b.y,w:b.width,h:b.height},gpu:gpu.getBoundingClientRect().toJSON()});};
+    const sample=(x:number,y:number)=>{const k=(y*copy.width+x)*4,v=Math.min(pixels[k],pixels[k+1],pixels[k+2]);min=Math.min(min,v);const expected=new URLSearchParams(location.search).has('darkPhotos')?24:255;const delta=referencePixels?Math.max(...[0,1,2,3].map(c=>Math.abs(pixels[k+c]-referencePixels![k+c]))):Math.max(...[0,1,2].map(c=>Math.abs(pixels[k+c]-expected)));const wrong=delta>(composited?15:3);bad+=wrong?1:0;n++;if(wrong&&examples.length<4)examples.push({x,y,v,delta,actual:Array.from(pixels.slice(k,k+4)),reference:referencePixels?Array.from(referencePixels.slice(k,k+4)):undefined,cell:{x:r.x,y:r.y,w:r.width,h:r.height},stage:{x:b.x,y:b.y,w:b.width,h:b.height},gpu:gpu.getBoundingClientRect().toJSON()});};
     for(let x=x0+2;x<=x1-2;x++){sample(x,y0);sample(x,y1);}
     for(let y=y0+2;y<=y1-2;y++){sample(x0,y);sample(x1,y);}
    }
@@ -80,11 +81,14 @@ void(async()=>{
    }
    copy.width=copy.height=1;return {min,bad,n,maskBad,maskSamples,maskExamples,examples,bytes:gpu.dataset.residentTextureBytes};
   };
+  report.samples.push({i:'initial-static',...scan()});
   const eachFrame=new URLSearchParams(location.search).has('eachFrame'),frames=eachFrame?120:60;
   for(let i=0;i<frames;i++){
    const r=stage.getBoundingClientRect();stage.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2,deltaY:(i<frames/2?-1:1)*(eachFrame?15:30)}));await wait(3);
    if(eachFrame||i%3===0)report.samples.push({i,...scan()});
   }
+  await wait(30);report.samples.push({i:'settled-static',...scan()});
+  report.checks.push({name:'photos and mask use one displayed scene canvas',pass:!stage.querySelector('[data-creative-seam-presentation]')&&main.dataset.creativePhotoComposition==='single-canvas'});
   report.checks.push({name:'no dark cracks in filled photo borders through zoom',pass:report.samples.every((s:any)=>s.bad===0),detail:report.samples});
   if(!new URLSearchParams(location.search).has('composited'))report.checks.push({name:'photo and mask have no overdraw or white fringe at shared boundary',pass:report.samples.some((s:any)=>s.maskSamples>0)&&report.samples.every((s:any)=>s.maskBad===0),detail:report.samples.map((s:any)=>({i:s.i,bad:s.maskBad,n:s.maskSamples,examples:s.maskExamples}))});
   report.pass=report.checks.every((c:any)=>c.pass);

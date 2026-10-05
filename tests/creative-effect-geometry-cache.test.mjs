@@ -10,8 +10,9 @@ test('preview uses resident photo textures without uploading the changing scene 
  assert.doesNotMatch(presenter,/overlay:\{image:main/);
  assert.match(presenter,/clipGuard:\[2\/W,2\/H\]/);
  assert.match(presenter,/W=main.width,H=main.height/);
- assert.match(presenter,/left:main.style.left/);
- assert.match(presenter,/width:main.style.width/);
+ assert.match(presenter,/ctx.drawImage\(surface,0,0\)/);
+ assert.match(presenter,/creativePhotoComposition='single-canvas'/);
+ assert.doesNotMatch(presenter,/prepend\(surface\)|clearRect\(clearLeft/);
  assert.doesNotMatch(presenter,/getBoundingClientRect/);
  assert.doesNotMatch(shader,/sceneOverlay|overlayTexture|texSubImage2D/);
  assert.doesNotMatch(presenter,/this.main.style.opacity='0'/);

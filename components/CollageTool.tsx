@@ -2168,6 +2168,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
     && (selectedRegionPhoto !== null || baseSelected || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
   regionPhotoEditingRef.current=objEditImage;
+  const objEditText = activeTab === 'objedit' && !colorPickerTarget && objects.some(o=>o.id===selectedObj&&o.type==='text');
   useEffect(()=>{
     const index=selectedRegionPhoto??0,photo=photoRegion?.photos[index];
     // Never bake a native-size master between clicks in the editing panel.
@@ -6778,6 +6779,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.restore();
         }
       } else if (o.type === 'text') {
+        // Layout text at a stable logical font size. Preview magnification is
+        // a scene transform, not a new font/letter-spacing measurement.
+        const textSceneScale=s;if(!o.sym)ctx.scale(textSceneScale,textSceneScale);
+        { const s=o.sym?textSceneScale:1;
         // 正在畫布上直接編輯時，字交給疊在上面的 textarea 顯示
         if (isMain && editingTextRef.current === o.id) { ctx.restore(); return; }
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
@@ -6794,6 +6799,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         (ctx as any).letterSpacing = `${(o.letterSpacing || 0) * s}px`;
+        if(import.meta.env.DEV&&!o.sym){const m=ctx.getTransform();targetCanvas.dataset.textLogicalFrame=JSON.stringify({id:o.id,font:ctx.font,matrix:[m.a,m.b,m.c,m.d,m.e,m.f]});}
         /* 符號：把「真正畫出來的那一塊」的中心搬到框心。
            不校正的話，前進寬度／em 方框跟墨水差多少，符號就偏出框多少 ——
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
@@ -7001,7 +7007,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.fillStyle = o.color || '#ffffff';
           ctx.shadowColor = o.glowColor || '#ffffff';
           for (const k2 of [1, 2, 3]) {
-            ctx.shadowBlur = (Math.min(15, o.glow) / 20) * 14 * k2 * tk;
+            ctx.shadowBlur = (Math.min(15, o.glow) / 20) * 14 * k2 * tk * (o.sym?1:textSceneScale);
             drawText(false);
           }
           ctx.restore();
@@ -7017,6 +7023,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         drawText(false);
         ctx.shadowBlur = 0;
         (ctx as any).letterSpacing = '0px';
+        }
       }
       ctx.globalAlpha = 1;
       const targetFlash = motionTargetFlashRef.current;
@@ -7657,8 +7664,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
     } finally { frameContext.restore(); }
-    // Submit the resident photo plane once after collecting both windows.
-    // It shares the main canvas's exact raster/CSS map; no scene upload.
+    // Resident photos were resolved into this scene before its mask/objects.
+    // There is only one DOM canvas to filter at the final CSS scale.
     if(targetCanvas===canvasRef.current)creativeSeam.current?.flush();
     /* editingTextId 一定要在這裡：正在畫布上打字的那一段字是「不畫」的
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
@@ -9089,15 +9096,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           -webkit-tap-highlight-color: rgba(0,0,0,0);
         }
         .custom-range:focus { outline: none; }
-        .custom-range.dense { height: 26px; width: 100%; margin: 0; }
-        .custom-range.dense::-webkit-slider-runnable-track {
-          background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
-        }
-        .custom-range.dense::-moz-range-track {
-          background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
-        }
-        .custom-range.dense::-webkit-slider-thumb { height: 26px; width: 18px; margin-top: -12px; }
-        .custom-range.dense::-moz-range-thumb { height: 26px; width: 18px; }
+        /* Dense touch geometry is shared in styles.css; do not override it. */
         .custom-range::-webkit-slider-runnable-track {
           width: 100%;
           height: 2px;
@@ -10126,7 +10125,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         {/* overscrollBehavior 用 none 而不是 contain：contain 只擋住「把捲動傳給外層」，
             自己還是會橡皮筋 —— 已經到頂了再往上拉，畫面不該有任何位移。
             動畫頁底部另外留 pb-12，最後一根滑桿才不會貼在最下緣。 */}
-        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'none' }} className={`relative flex-1 min-h-0 ${photoLayoutOpen || objEditImage ? 'overflow-hidden' : `${activeTab === 'shape' && !colorPickerTarget ? 'px-5 py-0' : 'p-5'} ${activeTab === 'motion' && !colorPickerTarget ? 'pb-12' : (activeTab === 'shape' && !colorPickerTarget ? '' : colorPickerTarget || activeTab === 'objedit' ? 'pb-5' : 'pb-20')} custom-scrollbar ${
+        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'none' }} className={`relative flex-1 min-h-0 ${objEditText ? 'overflow-hidden px-5 py-0' : photoLayoutOpen || objEditImage ? 'overflow-hidden' : `${activeTab === 'shape' && !colorPickerTarget ? 'px-5 py-0' : 'p-5'} ${activeTab === 'motion' && !colorPickerTarget ? 'pb-12' : (activeTab === 'shape' && !colorPickerTarget ? '' : colorPickerTarget || activeTab === 'objedit' ? 'pb-5' : 'pb-20')} custom-scrollbar ${
           (activeTab === 'setting' && !colorPickerTarget) ||
           (activeTab === 'add' && !colorPickerTarget) ||
           (activeTab === 'objedit' && !colorPickerTarget) ||

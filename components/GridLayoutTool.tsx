@@ -2024,7 +2024,7 @@ export const TextEditorPanel: React.FC<{
 
   return (
     <div
-      className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300"
+      data-text-editor="1" className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300"
       onPointerDownCapture={e => {
         if ((e.target as HTMLElement).matches?.('input[type="range"]')) setTuning(true);
       }}
@@ -2057,7 +2057,7 @@ export const TextEditorPanel: React.FC<{
         </button>
       </div>}
 
-      <div className={`flex-1 no-scrollbar h-full ${colorPage ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden pr-2 ${symbol ? 'pl-2' : 'pl-3'}`}>
+      <div data-text-editor-scroll className={`flex-1 no-scrollbar h-full ${colorPage ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden pr-2 ${symbol ? 'pl-2' : 'pl-3'}`}>
         {colorPage && (
           <ColorPickerPage
             value={colorPage.value}
@@ -2892,7 +2892,7 @@ return (
                          cacheKey={`${cardSrc}|fx:${id}`}
                          fx={effectPreset(id,FX_DEFS) as PhotoFx} />
               <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
-                <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${selected || on ? 'text-white' : 'text-white/60'}`}>
+                <span style={{textTransform:'none'}} className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap ${selected || on ? 'text-white' : 'text-white/60'}`}>
                   {label}
                 </span>
               </div>
@@ -9839,6 +9839,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const imageEditMode = activeTab === 'adjust'
     && (!!floatingImages.find(f => f.id === selectedFloatingId && f.text === undefined && !f.shape)
         || (!selectedFloatingId && selectedIndex !== null && selectedLayoutId !== null));
+  const textEditMode = activeTab === 'adjust' && floatingImages.some(f=>f.id===selectedFloatingId&&f.text!==undefined);
 
   const [historyState, setHistoryState] = useState<{
     history: { pages: PageConfig[]; floatingImages: FloatingImage[]; brushStrokes: ClassicBrushStroke[]; selectedRatio: string; isLandscape: boolean }[];
@@ -14281,15 +14282,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         .custom-range:focus { outline: none; }
         /* 特效細項的並排滑桿：跟「編輯」同一份。盒子收到 18px（剛好包住 15px 的圓點），
            軌道也只畫 9px..寬-9px，圓點才走得到頭尾（並排的滑桿不能像一般滑桿那樣往外擴）。 */
-        .custom-range.dense { height: 26px; width: 100%; margin: 0; }
-        .custom-range.dense::-webkit-slider-runnable-track {
-          background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
-        }
-        .custom-range.dense::-moz-range-track {
-          background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
-        }
-        .custom-range.dense::-webkit-slider-thumb { height: 26px; width: 18px; margin-top: -12px; }
-        .custom-range.dense::-moz-range-thumb { height: 26px; width: 18px; }
+        /* Dense touch geometry is shared in styles.css; do not override it. */
         .custom-range::-webkit-slider-runnable-track {
           width: 100%;
           height: 2px;
@@ -16379,7 +16372,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           </div>
 
           {/* Tabs Content */}
-          <div className={`flex-1 min-h-0 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
+          <div className={`flex-1 min-h-0 no-scrollbar ${imageEditMode ? '' : textEditMode ? 'px-4 py-0' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
 
             {activeTab === 'motion' && (() => {
               const target = motionItems.find(f => f.id === motionTargetId) || null;

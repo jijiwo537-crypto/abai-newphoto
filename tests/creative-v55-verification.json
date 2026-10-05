@@ -1,0 +1,26 @@
+{
+  "version": "v55",
+  "date": "2026-10-06",
+  "environment": "Single browser tab, 402x874 viewport. Not physical iPhone or Simulator verification.",
+  "changes": [
+    "Resolve resident GPU photo result into the single displayed scene canvas before mask and objects; eliminate independently composited photo DOM plane.",
+    "Keep non-symbol creative text at fixed logical font size through scene zoom, including deformed text.",
+    "Remove outer vertical padding and duplicate scrolling from shared text editor presentation.",
+    "Increase dense slider invisible thumb to 44x44 without changing visible knob or numeric travel.",
+    "Remove uppercasing from cross-page effect labels so soft glow name retains lowercase ll."
+  ],
+  "results": {
+    "focusedNodeTests": {"passed": 22, "failed": 0},
+    "photoMaskBottomDark": {"passed": true, "frames": 122},
+    "photoMaskRightDark": {"passed": true, "frames": 122},
+    "previewExportColourComparison": {"passed": true, "seamAmounts": [1,30,70,100], "maximumChannelError": 3},
+    "creativeDeformedText": {"passed": true, "zoomFrames": 80, "maximumLogicalInkBoundSpread": 0.922},
+    "textEditorFontAndStylePane": {"passed": true, "scrollPaneMatchesContainer": true},
+    "ninePhotoGestureAudit": {"passed": true, "sourceUploadsDuringGestures": 0, "previewWheelPaintMaxMs": 5.9, "occupancyColdSpikeMs": 103.3}
+  },
+  "limitations": [
+    "Browser results do not guarantee every physical iPhone frame or memory behavior.",
+    "Text deformation stabilization is scoped to creative non-symbol text; shared text editor spacing applies to both collage tools.",
+    "Occupancy cold preparation spike remains recorded; this report does not claim all operations are guaranteed 60fps."
+  ]
+}

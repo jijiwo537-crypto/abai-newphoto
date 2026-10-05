@@ -14,15 +14,17 @@ const fixtureColors=colors.slice(0,params.has('mixedSwap')?5:params.has('single'
 for(const [i,color] of fixtureColors.entries()){
  const portrait=params.has('portrait')||params.has('mixedSwap')&&i===4;
  const c=document.createElement('canvas');c.width=params.has('huge')?(portrait?3072:4096):params.has('large')?(portrait?1536:2048):portrait?600:900;c.height=params.has('huge')?(portrait?4096:3072):params.has('large')?(portrait?2048:1536):portrait?900:600;
- const g=c.getContext('2d')!;g.fillStyle=params.has('edgeAudit')?'white':color;
+ const g=c.getContext('2d')!;g.fillStyle=params.has('edgeAudit')?(params.has('darkPhotos')?'#181818':'white'):color;
  if(params.has('gradient')){const gradient=g.createLinearGradient(0,0,c.width,c.height);gradient.addColorStop(0,color);gradient.addColorStop(.5,'#13254f');gradient.addColorStop(1,'#fef1b7');g.fillStyle=gradient;}
- g.fillRect(0,0,c.width,c.height);g.fillStyle='white';g.font='bold 100px sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText(String(i+1),c.width/2,c.height/2);
+ g.fillRect(0,0,c.width,c.height);g.fillStyle='white';g.font='bold 100px sans-serif';g.textAlign='center';g.textBaseline='middle';if(!params.has('edgeAudit'))g.fillText(String(i+1),c.width/2,c.height/2);
  if(params.has('detail')){for(let row=0;row<10;row++)for(let col=0;col<12;col++){g.fillStyle=(row+col)%2?'#fed298':'#26305c';g.fillRect(col*c.width/12,row*c.height/10,c.width/30,c.height/24);}}
  const blob=await new Promise<Blob>(r=>c.toBlob(b=>r(b!),'image/png'));c.width=c.height=1;files.push(new File([blob],`photo-${i+1}.png`,{type:'image/png'}));
 }
 const floating=params.has('swaps')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[9]),x:500,y:220,w:120,h:90,rot:0,opacity:100},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
 createRoot(document.getElementById('root')!).render(params.has('seamPresentation')&&params.has('split')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{layout:'mask-right',canvasRatio:'3:2',holeCount:3,holeType:'circle',holeSize:35,holes:[{id:'seam-hole-a',x:80,y:120,side:'mask'},{id:'seam-hole-b',x:180,y:330,side:'mask'},{id:'seam-hole-c',x:100,y:510,side:'mask'}]}}/>
+ : params.has('textWarpAudit')
+ ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialState={{layout:'image-full',canvasRatio:'1:1',holeCount:0,objects:[{id:'qa-warp-text',type:'text',text:'ABAI',color:'#00FF00',x:300,y:450,w:400,h:100,size:48,textStretchBaseW:200,textStretchBaseH:140,rot:0}]}}/>
  : params.has('edgeAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,3)} initialState={{layout:params.has('maskBottom')?'mask-bottom':'mask-right',canvasRatio:params.has('square')?'1:1':'3:2',holeCount:0,maskColor:params.has('blackMask')?'#000000':'#CFE6DE'}}/>
  : params.has('mixedSwap')
@@ -52,7 +54,8 @@ createRoot(document.getElementById('root')!).render(params.has('seamPresentation
  : params.has('ig')
  ? <IgPreview shots={files.slice(0,2).map(f=>URL.createObjectURL(f))} frame={{w:3,h:2}} pageCount={2} faces={[]} onClose={()=>{}}/>
  : <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={params.has('direction')?{layout:'image-full',canvasRatio:'3:2',holeCount:4,holeSize:15,maskColor:'#FFFFFF',holes:[{id:'right',x:700,y:100,side:'image'},{id:'left',x:100,y:200,side:'image'},{id:'middle',x:400,y:500,side:'image'},{id:'absent',x:-200,y:200,side:'mask'}]}:params.has('audit')||params.has('four')?{holeCount:0,layout:'image-full',canvasRatio:'3:2',objects:floating}:{holeCount:0}}/>);
-if(params.has('edgeAudit'))void import('./creative-photo-edge-audit');
+if(params.has('textWarpAudit'))void import('./creative-text-warp-audit');
+else if(params.has('edgeAudit'))void import('./creative-photo-edge-audit');
 else if(params.has('seamPresentation'))void import('./creative-seam-presentation-audit');
 else if(params.has('mixedSwap'))void import('./creative-mixed-swap-audit');
 else if(params.has('coldInterleave'))void import('./creative-cold-interleave-audit');

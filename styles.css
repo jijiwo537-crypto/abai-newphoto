@@ -172,16 +172,17 @@ select:focus, select:focus-visible {
   -webkit-tap-highlight-color: rgba(0,0,0,0);
 }
 .custom-range:focus { outline: none; }
-/* 特效細項的並排滑桿：盒子收到 26px，軌道只畫 9px..寬-9px，圓點才走得到頭尾 */
-.custom-range.dense { height: 26px; width: 100%; margin: 0; }
+/* 並排滑桿保持原本軌道端點，白點使用44px透明觸控盒。
+   左右各補13px抵消拇指增寬，白點的可見大小和行程不變。 */
+.custom-range.dense { height: 44px; width: calc(100% + 26px); margin: 0 -13px; }
 .custom-range.dense::-webkit-slider-runnable-track {
-  background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
+  background: linear-gradient(to right, rgba(0,0,0,0) 22px, #333 22px, #333 calc(100% - 22px), rgba(0,0,0,0) calc(100% - 22px));
 }
 .custom-range.dense::-moz-range-track {
-  background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
+  background: linear-gradient(to right, rgba(0,0,0,0) 22px, #333 22px, #333 calc(100% - 22px), rgba(0,0,0,0) calc(100% - 22px));
 }
-.custom-range.dense::-webkit-slider-thumb { height: 26px; width: 18px; margin-top: -12px; }
-.custom-range.dense::-moz-range-thumb { height: 26px; width: 18px; }
+.custom-range.dense::-webkit-slider-thumb { height: 44px; width: 44px; margin-top: -21px; }
+.custom-range.dense::-moz-range-thumb { height: 44px; width: 44px; background: radial-gradient(circle at center, #fff 0, #fff 7.5px, transparent 8px); border-radius: 0; }
 .custom-range::-webkit-slider-runnable-track {
   width: 100%;
   height: 2px;
