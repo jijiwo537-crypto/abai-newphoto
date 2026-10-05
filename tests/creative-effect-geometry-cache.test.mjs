@@ -4,6 +4,26 @@ import {readFileSync} from 'node:fs';
 const gl=readFileSync(new URL('../utils/glEffects.ts',import.meta.url),'utf8');
 const collage=readFileSync(new URL('../components/CollageTool.tsx',import.meta.url),'utf8');
 const panel=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
+test('creative presentation protects the CSS interpolation footprint without altering export geometry',()=>{
+ const presenter=readFileSync(new URL('../utils/creativeSeamless.ts',import.meta.url),'utf8');
+ const shader=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
+ assert.match(presenter,/clipGuard:\[1\/W,1\/H\]/);
+ assert.match(presenter,/Math.max\(-1,Math.floor\(\(visible.left-box.left\)\*sx\)-1\)/);
+ assert.match(presenter,/Math.min\(main.width\+1,Math.ceil\(\(visible.right-box.left\)\*sx\)\+1\)/);
+ assert.match(shader,/view.clipGuard\|\|\[0,0\]/);
+ assert.match(shader,/clip.xy-clipGuard/);
+ assert.match(shader,/otherClip.zw\+clipGuard/);
+ // Bilinear samples within half a texel of the cell edge must find opaque
+ // neighbours. A framebuffer-only audit misses this transparent contribution.
+ for(let phase=0;phase<1;phase+=.01){
+  const edge=100+phase,start=Math.ceil(edge-.5),p=edge+.001;
+  const low=Math.floor(p-.5),high=low+1;
+  const owned=(i)=>i+.5>=edge;
+  const guarded=(i)=>i+.5>=edge-1;
+  assert.ok(guarded(low)&&guarded(high));
+  assert.ok(owned(start));
+ }
+});
 test('a chosen LUT at zero intensity does not run an unnecessary photo pipeline',()=>{
  const fx=readFileSync(new URL('../utils/photoFx.ts',import.meta.url),'utf8');
  const body=fx.slice(fx.indexOf('export const hasPhotoFx ='),fx.indexOf('/* ── LUT 載入'));

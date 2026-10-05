@@ -1,7 +1,7 @@
 import { seamGeometry, seamImageTransform, type SeamPhoto, type SeamRect } from './seamlessLayout';
 import { configureWebglWide, get2dWide } from './colorSpace';
 export type SeamTexture = { image: CanvasImageSource; width: number; height: number } | null;
-export type SeamView = { width:number;height:number;xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;viewport?:number[];clip?:number[];other?:{xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;clip:number[]} };
+export type SeamView = { width:number;height:number;xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;viewport?:number[];clip?:number[];clipGuard?:[number,number];other?:{xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;clip:number[]} };
 
 /** Original-size source textures + physical-pixel viewport rendering. Fusion
  * changes uniforms only; dragging and resting use the identical quality path. */
@@ -70,13 +70,18 @@ class SeamGpu {
     }`).join('\n');
     const fs=shader(gl.FRAGMENT_SHADER,`#version 300 es
       precision highp float;in vec2 uv;out vec4 color;uniform vec2 size;uniform vec3 viewX;uniform vec3 viewY;uniform bool fused;
-      uniform bool zones;uniform bool second;uniform vec4 clip;uniform vec4 otherClip;uniform vec3 otherX;uniform vec3 otherY;
+      uniform bool zones;uniform bool second;uniform vec4 clip;uniform vec4 otherClip;uniform vec2 clipGuard;uniform vec3 otherX;uniform vec3 otherY;
       ${uniforms}
       vec3 toP3(vec3 v){vec3 linear=mix(v/12.92,pow((v+.055)/1.055,vec3(2.4)),step(vec3(.04045),v));
         linear=mat3(.82259287,.03319951,.01708535,.17753395,.96678350,.07239572,0.,0.,.91030148)*linear;
         return mix(linear*12.92,1.055*pow(max(linear,vec3(0.)),vec3(1./2.4))-.055,step(vec3(.0031308),linear));}
       void main(){bool a=all(greaterThanEqual(uv,clip.xy))&&all(lessThanEqual(uv,clip.zw));bool b=second&&all(greaterThanEqual(uv,otherClip.xy))&&all(lessThanEqual(uv,otherClip.zw));
-        if(zones&&!a&&!b){color=vec4(0.);return;}
+        // A separately composited canvas is bilinearly sampled by the browser.
+        // Replicate photo edges into its filter footprint, beneath the main
+        // canvas's authoritative mask. Do not alter crop, cell bounds or UVs.
+        bool guardA=all(greaterThanEqual(uv,clip.xy-clipGuard))&&all(lessThanEqual(uv,clip.zw+clipGuard));
+        bool guardB=second&&all(greaterThanEqual(uv,otherClip.xy-clipGuard))&&all(lessThanEqual(uv,otherClip.zw+clipGuard));
+        if(zones&&!guardA&&!guardB){color=vec4(0.);return;}
         vec3 vx=zones&&!a&&b?otherX:viewX,vy=zones&&!a&&b?otherY:viewY;
         vec2 p=clamp(vec2(dot(uv,vx.xy)+vx.z,dot(uv,vy.xy)+vy.z),vec2(.00001),size-vec2(.00001));
         float nearest=1.e30;int owner=-1;if(!fused){${owners}}
@@ -111,6 +116,7 @@ class SeamGpu {
     gl.uniform3f(uniform('viewX'),view.xx,view.xy,view.x0);gl.uniform3f(uniform('viewY'),view.yx,view.yy,view.y0);
     gl.uniform1i(uniform('zones'),view.clip?1:0);gl.uniform1i(uniform('second'),view.other?1:0);
     gl.uniform4fv(uniform('clip'),view.clip||[-1,-1,2,2]);
+    gl.uniform2fv(uniform('clipGuard'),view.clipGuard||[0,0]);
     gl.uniform4fv(uniform('otherClip'),view.other?.clip||[-1,-1,-1,-1]);
     const other=view.other||view;gl.uniform3f(uniform('otherX'),other.xx,other.xy,other.x0);gl.uniform3f(uniform('otherY'),other.yx,other.yy,other.y0);
     for(let i=0;i<count;i++){

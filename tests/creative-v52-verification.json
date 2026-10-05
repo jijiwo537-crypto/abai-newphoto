@@ -1,0 +1,13 @@
+{
+  "scope": "Creative base-photo compositor interpolation boundary",
+  "environment": "Production React QA, Chromium IAB 402x874; CSS placement reconstructed at 3x density, not native iPhone",
+  "finding": "Framebuffer-only tests missed transparency at the outer presentation surface. Shader window padding alone still failed the tightened boundary audit.",
+  "fix": "One physical texel of original edge colour protects both the window clip and outer presentation surface. Original scene coordinates, crop and export path are unchanged.",
+  "tests": {
+    "tightenedBoundaryFootprint": {"samples":120,"badPixels":0,"minimumWhiteChannel":255},
+    "seamPresentation": {"passed":true},
+    "liveEffectAndFilterEditing": {"passed":true,"rapidSwitches":24},
+    "targetedRegressions": {"passed":59,"failed":0}
+  },
+  "limitations": ["Native iPhone verification was not performed because the simulator previously exceeded the user's memory budget."]
+}

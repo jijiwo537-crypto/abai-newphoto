@@ -32,8 +32,10 @@ export class CreativeSeamless {
     const main=ctx.canvas;
     const visible=main.closest('[data-creative-stage]')?.getBoundingClientRect(),box=main.getBoundingClientRect();
     const sx=box.width?main.width/box.width:1,sy=box.height?main.height/box.height:1;
-    const l=visible?Math.max(0,Math.floor((visible.left-box.left)*sx)):0,t=visible?Math.max(0,Math.floor((visible.top-box.top)*sy)):0;
-    const r=visible?Math.min(main.width,Math.ceil((visible.right-box.left)*sx)):main.width,b=visible?Math.min(main.height,Math.ceil((visible.bottom-box.top)*sy)):main.height;
+    // Include the filter footprint at the surface's outer edge too. Extending
+    // only the shader clip cannot protect an edge where the texture ends.
+    const l=visible?Math.max(-1,Math.floor((visible.left-box.left)*sx)-1):-1,t=visible?Math.max(-1,Math.floor((visible.top-box.top)*sy)-1):-1;
+    const r=visible?Math.min(main.width+1,Math.ceil((visible.right-box.left)*sx)+1):main.width+1,b=visible?Math.min(main.height+1,Math.ceil((visible.bottom-box.top)*sy)+1):main.height+1;
     const W=Math.max(1,r-l),H=Math.max(1,b-t);
     if(surface.width!==W)surface.width=W;if(surface.height!==H)surface.height=H;
     const sources=base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;});
@@ -41,7 +43,10 @@ export class CreativeSeamless {
     const right=Math.min(main.width,page[0]+page[2],(x+w)*m.a+m.e),bottom=Math.min(main.height,page[1]+page[3],(y+h)*m.d+m.f);
     // Keep identical physical-pixel sampling, but allocate only pixels visible
     // in the editor. A retained pinch capacity must not enlarge this GPU plane.
-    const view:SeamView={width:w,height:h,xx:W/m.a,xy:0,x0:(l-m.e)/m.a-x,yx:0,yy:H/m.d,y0:(t-m.f)/m.d-y,clip:[(left-l)/W,(top-t)/H,(right-l)/W,(bottom-t)/H]};
+    // The DOM compositor can interpolate a transparent neighbour even when
+    // every interior framebuffer pixel is filled. Retain one physical texel
+    // of edge colour under the mask to cover that interpolation footprint.
+    const view:SeamView={width:w,height:h,xx:W/m.a,xy:0,x0:(l-m.e)/m.a-x,yx:0,yy:H/m.d,y0:(t-m.f)/m.d-y,clip:[(left-l)/W,(top-t)/H,(right-l)/W,(bottom-t)/H],clipGuard:[1/W,1/H]};
     const first=this.firstView;if(!first)this.firstView=view;
     // A split canvas draws the same photos twice (image and mask window).
     // Submit the combined two-window shader once, after both placements have
