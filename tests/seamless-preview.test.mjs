@@ -27,6 +27,15 @@ test('non-fusion GPU photos keep exact cell edges without a feather band',()=>{
   assert.equal(g.left+g.right+g.top+g.bottom,0);
  }
 });
+test('gapless layout raster closes subpixel joins in both GPU and FX canvas paths',()=>{
+ const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
+ const surface=readFileSync(new URL('../components/LayoutPhotoSurface.tsx',import.meta.url),'utf8');
+ assert.match(gpu,/isolated&&!sealEdges\?inside:distance<nearest/);
+ assert.match(gpu,/uniform bool sealEdges/);
+ assert.match(surface,/sealEdges:noVisibleGutter/);
+ assert.match(surface,/const x=x0-leftBleed,y=y0-topBleed,cw=w0\+leftBleed\+rightBleed,ch=h0\+topBleed\+bottomBleed/);
+ assert.match(surface,/const cx=\(rightBleed-leftBleed\)\/2,cy=\(bottomBleed-topBleed\)\/2/);
+});
 test('preview/export inverse crop matches arbitrary rotation, offsets, opacity and source sizes',()=>{
   const rects=[{x:0,y:0,w:1,h:.5},{x:0,y:.5,w:.5,h:.5},{x:.5,y:.5,w:.5,h:.5}];
   for(const amount of [0,20,50,100])for(const rotation of [0,15,90,123,180,270])for(const index of [0,1,2]){
@@ -39,6 +48,7 @@ test('preview/export inverse crop matches arbitrary rotation, offsets, opacity a
     }
   }
 });
+
 test('fusion gesture bypasses full editor state and keeps pixels at fixed full resolution',()=>{
   const component=readFileSync(new URL('../components/SeamlessLayout.tsx',import.meta.url),'utf8');
   const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
@@ -57,6 +67,26 @@ test('fusion gesture bypasses full editor state and keeps pixels at fixed full r
   // WebKit's profile conversion happens once on texture creation, not while
   // adjusting fusion or redrawing an already-resident source.
   assert.match(gpu,/if\(!tex\|\|this\.revisions\.get\(image\)!==revision\)[\s\S]*getImageData[\s\S]*this.textures.set/);
+});
+
+test('fusion normalizes RGB by total feather weight instead of clamping it at one',()=>{
+  const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
+  assert.match(gpu,/float divisor=isolated\?max\(\.000001,min\(1\.,coverage\)\):max\(\.000001,coverage\)/);
+  assert.match(gpu,/color=vec4\(toEncoded\(sum\/divisor\),isolated\?min\(1\.,coverage\):1\.\)/);
+  const weighted=(values,weights)=>values.reduce((sum,v,i)=>sum+v*weights[i],0)/weights.reduce((a,b)=>a+b,0);
+  assert.ok(Math.abs(weighted([.2,.8],[.75,.75])-.5)<1e-12);
+});
+
+test('seam color blending occurs in linear light and round-trips unchanged cell colors',()=>{
+  const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
+  assert.match(gpu,/vec3 toLinear\(vec3 v\)/);assert.match(gpu,/vec3 toEncoded\(vec3 v\)/);
+  assert.match(gpu,/sum\+=rgb\*weight;coverage\+=weight/);
+  const linear=v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4;
+  const encoded=v=>v<=.0031308?v*12.92:1.055*v**(1/2.4)-.055;
+  for(const color of [.01,.04,.18,.5,.9])assert.ok(Math.abs(encoded(linear(color))-color)<1e-12);
+  const mix=(a,b,t)=>encoded(linear(a)*(1-t)+linear(b)*t);
+  assert.ok(Math.abs(mix(.2,.2,.63)-.2)<1e-12);
+  assert.ok(mix(.05,.8,.5)>((.05+.8)/2));
 });
 
 test('selection alone does not allocate a second seamless renderer',()=>{
