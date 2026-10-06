@@ -62,9 +62,11 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
   },[]);
   useEffect(()=>{
     const paint=()=>paintCurrent.current();
-    window.addEventListener('abai-preview-transform',paint);window.addEventListener('scroll',paint,true);window.addEventListener('resize',paint);
+    // The strip dispatches this event on itself without bubbling. Capture is
+    // essential: otherwise ancestor zoom stretches the LAST raster frame.
+    window.addEventListener('abai-preview-transform',paint,true);window.addEventListener('scroll',paint,true);window.addEventListener('resize',paint);
     const observer=new ResizeObserver(paint);if(svg.current)observer.observe(svg.current);
-    return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);};
+    return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);};
   },[]);
   useLayoutEffect(()=>{setLive(amount);},[amount]);
   useLayoutEffect(()=>{if(!previewId)return;previews.set(previewId,setLive);return()=>{previews.delete(previewId);};},[previewId]);

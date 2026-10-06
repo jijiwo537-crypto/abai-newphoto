@@ -16,6 +16,9 @@ void(async()=>{
   root.querySelector<HTMLElement>('[data-cell-id="0"]')!.click();await wait();document.querySelector<HTMLButtonElement>('button[title="編輯"]')!.click();await wait();
   const button=(suffix:string)=>[...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.trim().endsWith(suffix))!;
   button('特效').click();await wait();document.querySelector<HTMLButtonElement>('[data-fx-card="fxLowfi"]')!.click();await wait(20);
+  // Optical parameter painting may use WebKit's direct native-canvas path;
+  // the visible physical-pixel surface must remain unchanged for the gesture.
+  cv=root.querySelector<HTMLCanvasElement>(surface)!;
   const input=document.querySelector<HTMLInputElement>('footer input[type=range]')!;if(!input)throw Error('slider missing');
   const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!;
   const event=(type:string)=>input.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId:5701,pointerType:'touch'}));

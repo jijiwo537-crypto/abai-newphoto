@@ -1412,6 +1412,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionColourActive=useRef(false);
   const regionSpatialActive=useRef(false);
   const regionPreflight=useRef(false);
+  const regionSelectionFeedbackPending=useRef(false);
   const regionPrimedSource=useRef('');
   const regionPlacements=useRef<FxPlacement[]|null>(null);
   const regionSpatialInput=useRef<HTMLCanvasElement|null>(null);
@@ -2218,7 +2219,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const selectedKey=selectedRegionPhoto??(photoRegionRef.current?.photos.length?0:null);
     const currentSrc=selectedKey===null?null:photoRegionRef.current?.photos[selectedKey]?.src;
     const keep=currentSrc?`region-fx-${selectedKey}@${currentSrc}`:null;
-    for(const [key,surface] of regionFxSurfaces.current){
+    let cancelled=false;
+    // Retiring a GPU photo can require a full-size readback. Never put it on
+    // the click that should only reveal selection chrome.
+    void awaitPhotoIdle().then(()=>{if(cancelled)return;for(const [key,surface] of regionFxSurfaces.current){
       if(key===keep)continue;
       const cached=objFxCache.current.get(key);
       // Snapshot once, at unchanged resolution. Geometry edits reuse these
@@ -2226,7 +2230,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(cached&&!(cached.cv instanceof HTMLCanvasElement&&cached.cv.dataset.regionImmutable==='1')){const snapshot=document.createElement('canvas');snapshot.width=cached.cv.width;snapshot.height=cached.cv.height;snapshot.getContext('2d')!.drawImage(cached.cv,0,0);snapshot.dataset.regionImmutable='1';objFxCache.current.set(key,{key:cached.key,cv:snapshot});}
       releasePhotoFxSurface(surface);surface.width=surface.height=1;regionFxSurfaces.current.delete(key);
       const scratch=vidScratchRef.current.get(key);if(scratch){for(const cv of Object.values(scratch))if(cv instanceof HTMLCanvasElement)cv.width=cv.height=1;vidScratchRef.current.delete(key);}
-    }
+    }});
     if(!objEditImage){
       regionColour.current?.hide();
       const resident=regionSpatial.current;
@@ -2249,8 +2253,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     // Changing the first slot during a swap is not entering image editing.
     // Do not upload/re-prime all effect kernels behind a geometry-only swap.
-    if(selectedKey===null||!objEditImage)return;
-    let cancelled=false;
+    if(selectedKey===null||!objEditImage)return()=>{cancelled=true;};
     void(async()=>{
       // Prime the actual source/pool while the imported photo is idle, before
       // opening the editor. Shader-only warm-up leaves the first texture upload
@@ -2342,6 +2345,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   // Existing effects remain on the GPU when switching to filters/adjustments.
   // The tab is UI state, not a reason to fall back to a native-size CPU render.
   regionSpatialActive.current=activeTab!=='motion'&&activeTab!=='setting'&&(baseSelected||selectedRegionPhoto!==null);
+  useEffect(()=>{
+    let cancelled=false;
+    if(!regionSelectionFeedbackPending.current)return;
+    void awaitPhotoIdle().then(()=>{if(cancelled)return;regionSelectionFeedbackPending.current=false;regionPaintRef.current();});
+    return()=>{cancelled=true;};
+  },[selectedRegionPhoto,activeTab]);
   useEffect(()=>{
     if(!regionBlendTool.current)regionBlend.current?.clear();
     regionPaintRef.current();
@@ -3523,7 +3532,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>()=>{if(regionThumbTimer.current!==null)clearTimeout(regionThumbTimer.current);},[]);
   const commitRegion=(next:PhotoRegion,live=false)=>{
     photoRegionRef.current=next;
-    if(live){regionLiveUntil.current=performance.now()+350;deferHeavyWork(600);}
+    if(live){regionSelectionFeedbackPending.current=false;regionLiveUntil.current=performance.now()+350;deferHeavyWork(600);}
     if(!live){setPhotoRegion(next);return;}
     if(regionSliderHeld.current&&regionBlend.current?.isReady&&regionSceneStamp.current?.key===regionSceneKey.current){regionPaintRef.current();return;}
     if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
@@ -3714,9 +3723,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(tap?.id===e.pointerId){
       regionTap.current=null;
       if(!hold?.active&&!tap.moved&&e.type!=='pointercancel'&&activePointers.current.size===1){
+        regionSelectionFeedbackPending.current=true;
         selectedRegionPhotoRef.current=tap.index;setSelectedRegionPhoto(tap.index);
         selectedObjRef.current=null;baseSelectedRef.current=false;maskSelectedRef.current=false;
         setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);
+        // The existing processed photo pixels are already available. Draw
+        // their frame immediately; scene warm-up is not selection feedback.
+        regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
+        regionPaintRef.current();
       }
     }
     if(hold?.id===e.pointerId){
@@ -4986,7 +5000,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       regionColour.current?.hide();
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
     }
-    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&!regionHold.current?.active&&!swapPaintForced.current&&(basePhotoEditing||regionPreflight.current)){
+    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&!regionHold.current?.active&&!swapPaintForced.current&&!regionSelectionFeedbackPending.current&&(basePhotoEditing||regionPreflight.current)){
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
       const sceneGeometryGesture=!!objDragRef.current||!!objPinchRef.current||!!objStretchRef.current||!!baseDragRef.current||!!basePinchRef.current||!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
       if((regionSpatialActive.current||regionPreflight.current)&&original&&(supportsResidentPhotoEffects(photo?.fx)||regionPreflight.current)&&!sceneGeometryGesture&&!photoRegion?.seamless&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
@@ -9588,6 +9602,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             data-photo-arrangement={photoRegion?.arrangement || 'grid'}
             data-photo-template-index={photoRegion?.templateIndex}
             data-photo-transforms={import.meta.env.DEV?JSON.stringify(photoRegion?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0}))):undefined}
+            data-photo-effects={import.meta.env.DEV?JSON.stringify(photoRegion?.photos.map(p=>p.fx||{})):undefined}
             data-photo-seamless={import.meta.env.DEV?JSON.stringify({on:!!photoRegion?.seamless,amount:photoRegion?.seamlessAmount||0}):undefined}
             data-pattern-stamps={import.meta.env.DEV?JSON.stringify(holes.map(h=>({...h,size:getHoleSize(h)}))):undefined}
             data-pattern-count={import.meta.env.DEV?holeCount:undefined}

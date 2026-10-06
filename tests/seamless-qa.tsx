@@ -7,6 +7,10 @@ import {SeamlessLayout} from '../components/SeamlessLayout';
 const photo=(color:string)=>'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800"><rect width="600" height="800" fill="${new URLSearchParams(location.search).has('flat')?'#333':color}"/>${new URLSearchParams(location.search).has('flat')?'':'<circle cx="300" cy="240" r="95" fill="#fff"/><path d="M0 800L300 380L600 800" fill="#333"/>'}</svg>`);
 const params=new URLSearchParams(location.search);
 const cells=['#ff4030','#2080ee','#50ce80'].map((color,i)=>({id:`seam-photo-${i}`,url:params.has('large')?photo(color).replace('width%3D%22600%22%20height%3D%22800%22','width%3D%222400%22%20height%3D%223200%22%20viewBox%3D%220%200%20600%20800%22'):photo(color),zoom:params.has('transformed')?1.6:1,offsetX:params.has('transformed')?.23:0,offsetY:params.has('transformed')?-.17:0,rotation:params.has('transformed')?i*23:0,naturalWidth:params.has('large')?2400:600,naturalHeight:params.has('large')?3200:800}));
+if(params.has('layoutRasterAudit')){
+ cells.forEach((cell,i)=>{const cv=document.createElement('canvas');cv.width=1200;cv.height=1600;const g=cv.getContext('2d')!;g.fillStyle=['#ba4c38','#3870ba','#389e70'][i];g.fillRect(0,0,1200,1600);g.strokeStyle='#fff';g.lineWidth=2;for(let x=0;x<1200;x+=12){g.beginPath();g.moveTo(x,0);g.lineTo(x,1600);g.stroke();}g.fillStyle='black';g.font='64px sans-serif';g.fillText('ABAI 012345',250,500);cell.url=cv.toDataURL();cell.naturalWidth=1200;cell.naturalHeight=1600;cv.width=cv.height=1;});
+ void import('./layout-raster-zoom-audit');
+}
 const zoomCells=cells.slice(0,2),zoomRects=[{x:0,y:0,w:.5,h:1},{x:.5,y:0,w:.5,h:1}];
 const state={coordinateVersion:2,pageWidth:309,selectedRatio:'3:4',isLandscape:false,floatingImages:[],pages:[{id:'seam-page',bgColor:'#ff00ff',layouts:[{id:'seam-layout',images:cells.slice(0,params.has('junction')?3:2),templateIndex:params.has('junction')?0:1,t:{x:0,y:0,scale:.9},gap:8,radius:4,z:0,seamless:!params.has('off'),seamlessAmount:70}]}]};
 if(params.has('textureZoom')){
@@ -22,6 +26,7 @@ if(params.has('empty')){
  layout.t.scale=1;layout.gap=0;layout.radius=0;layout.seamless=false;
 }
 if(params.has('emptyAudit'))void import('./empty-layout-audit');
+if(params.has('layoutRasterAudit')){state.pages[0].layouts[0].gap=0;state.pages[0].layouts[0].radius=0;}
 if(params.has('cellEditAudit')){state.pages[0].layouts[0].gap=0;state.pages[0].layouts[0].radius=0;void import('./layout-photo-edit-audit');}
 if(params.has('exportAudit'))void import('./collage-export-audit');
 if(params.has('chromeAudit'))void import('./collage-chrome-audit');

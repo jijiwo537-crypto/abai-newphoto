@@ -1,7 +1,7 @@
 import { seamGeometry, seamImageTransform, type SeamPhoto, type SeamRect } from './seamlessLayout';
 import { configureWebglWide, get2dWide } from './colorSpace';
 export type SeamTexture = { image: CanvasImageSource; width: number; height: number } | null;
-export type SeamView = { width:number;height:number;xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;viewport?:number[];clip?:number[];clipGuard?:[number,number];other?:{xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;clip:number[]} };
+export type SeamView = { width:number;height:number;xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;isolated?:boolean;radii?:number[];crops?:{tx:number;ty:number;scale:number;angle:number}[];viewport?:number[];clip?:number[];clipGuard?:[number,number];other?:{xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;clip:number[]} };
 
 /** Original-size source textures + physical-pixel viewport rendering. Fusion
  * changes uniforms only; dragging and resting use the identical quality path. */
@@ -54,10 +54,14 @@ class SeamGpu {
     const shader=(type:number,source:string)=>{const s=gl.createShader(type)!;gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s)||'Shader');return s;};
     const vs=shader(gl.VERTEX_SHADER,`#version 300 es
       in vec2 position;out vec2 uv;void main(){uv=vec2((position.x+1.)*.5,(1.-position.y)*.5);gl_Position=vec4(position,0.,1.);}`);
-    const uniforms=Array.from({length:count},(_,i)=>`uniform sampler2D photo${i};uniform vec4 box${i};uniform vec4 edges${i};uniform vec4 crop${i};uniform vec4 source${i};uniform float opacity${i};uniform bool srgb${i};`).join('\n');
-    const owners=Array.from({length:count},(_,i)=>`{vec4 b=box${i};vec2 outside=max(max(b.xy-p,p-(b.xy+b.zw)),vec2(0.));float distance=dot(outside,outside);if(distance<nearest){nearest=distance;owner=${i};}}`).join('\n');
+    const uniforms=Array.from({length:count},(_,i)=>`uniform sampler2D photo${i};uniform vec4 box${i};uniform vec4 limits${i};uniform vec4 edges${i};uniform vec4 crop${i};uniform vec4 source${i};uniform float opacity${i};uniform float radius${i};uniform bool srgb${i};`).join('\n');
+    const owners=Array.from({length:count},(_,i)=>`{vec4 b=box${i},bounds=limits${i};vec2 outside=max(max(b.xy-p,p-(b.xy+b.zw)),vec2(0.));float distance=dot(outside,outside);bool inside=all(greaterThanEqual(p,bounds.xy))&&all(lessThan(p,bounds.zw));if(isolated?inside:distance<nearest){nearest=distance;owner=${i};}}`).join('\n');
     const layers=Array.from({length:count},(_,i)=>`{
       vec4 b=box${i},e=edges${i},c=crop${i},s=source${i};
+      // Derivatives must run outside the per-pixel owner branch; otherwise
+      // neighbouring corner fragments can obtain undefined edge widths.
+      float roundCoverage=1.;
+      if(isolated&&radius${i}>0.){vec2 q=abs(p-(b.xy+b.zw*.5))-(b.zw*.5-radius${i});float sd=length(max(q,vec2(0.)))+min(max(q.x,q.y),0.)-radius${i};roundCoverage=1.-smoothstep(-fwidth(sd)*.5,fwidth(sd)*.5,sd);}
       if(!fused?owner==${i}:(p.x>=b.x&&p.y>=b.y&&p.x<=b.x+b.z&&p.y<=b.y+b.w)){
         float wx=(e.x>0.?smoothstep(b.x,b.x+2.*e.x,p.x):1.)*(e.z>0.?1.-smoothstep(b.x+b.z-2.*e.z,b.x+b.z,p.x):1.);
         float wy=(e.y>0.?smoothstep(b.y,b.y+2.*e.y,p.y):1.)*(e.w>0.?1.-smoothstep(b.y+b.w-2.*e.w,b.y+b.w,p.y):1.);
@@ -65,11 +69,18 @@ class SeamGpu {
         vec4 tex=texture(photo${i},d/(s.xy*c.z)+.5);
         if(srgb${i}&&tex.a>0.)tex.rgb=toP3(tex.rgb/tex.a)*tex.a;
         float a=tex.a*opacity${i};vec3 rgb=tex.rgb*opacity${i}+vec3(18./255.)*(1.-a);
-        float weight=wx*wy;sum+=rgb*weight;coverage+=weight;
+        float weight=wx*wy;
+        if(isolated){
+          // Real gaps/rounded corners; straight cell edges have one owner.
+          vec4 bounds=limits${i};bool inside=all(greaterThanEqual(p,bounds.xy))&&all(lessThan(p,bounds.zw));
+          if(!inside)weight=0.;
+          weight*=roundCoverage;
+          sum+=tex.rgb*opacity${i}*weight;coverage+=a*weight;
+        }else{sum+=rgb*weight;coverage+=weight;}
       }
     }`).join('\n');
     const fs=shader(gl.FRAGMENT_SHADER,`#version 300 es
-      precision highp float;in vec2 uv;out vec4 color;uniform vec2 size;uniform vec3 viewX;uniform vec3 viewY;uniform bool fused;
+      precision highp float;in vec2 uv;out vec4 color;uniform vec2 size;uniform vec3 viewX;uniform vec3 viewY;uniform bool fused;uniform bool isolated;
       uniform bool zones;uniform bool second;uniform vec4 clip;uniform vec4 otherClip;uniform vec2 clipGuard;uniform vec3 otherX;uniform vec3 otherY;
       ${uniforms}
       vec3 toP3(vec3 v){vec3 linear=mix(v/12.92,pow((v+.055)/1.055,vec3(2.4)),step(vec3(.04045),v));
@@ -86,7 +97,7 @@ class SeamGpu {
         vec2 p=clamp(vec2(dot(uv,vx.xy)+vx.z,dot(uv,vy.xy)+vy.z),vec2(.00001),size-vec2(.00001));
         float nearest=1.e30;int owner=-1;if(!fused){${owners}}
         vec3 sum=vec3(0.);float coverage=0.;${layers}
-        color=vec4(sum/max(.000001,min(1.,coverage)),1.);}`);
+        color=vec4(sum/max(.000001,min(1.,coverage)),isolated?min(1.,coverage):1.);}`);
     p=gl.createProgram()!;gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);gl.deleteShader(vs);gl.deleteShader(fs);
     if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p)||'Program');
     this.programs.set(count,p);return p;
@@ -113,6 +124,7 @@ class SeamGpu {
     const loc=gl.getAttribLocation(p,'position');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
     gl.uniform2f(uniform('size'),w,h);
     gl.uniform1i(uniform('fused'),amount>=0?1:0);
+    gl.uniform1i(uniform('isolated'),view.isolated?1:0);
     gl.uniform3f(uniform('viewX'),view.xx,view.xy,view.x0);gl.uniform3f(uniform('viewY'),view.yx,view.yy,view.y0);
     gl.uniform1i(uniform('zones'),view.clip?1:0);gl.uniform1i(uniform('second'),view.other?1:0);
     gl.uniform4fv(uniform('clip'),view.clip||[-1,-1,2,2]);
@@ -121,7 +133,7 @@ class SeamGpu {
     const other=view.other||view;gl.uniform3f(uniform('otherX'),other.xx,other.xy,other.x0);gl.uniform3f(uniform('otherY'),other.yx,other.yy,other.y0);
     for(let i=0;i<count;i++){
       const c=cells[i]||{url:'',zoom:1,offsetX:0,offsetY:0,rotation:0},source=sources[i];
-      const g=seamGeometry(rects,i,w,h,amount),t=seamImageTransform(c,source?.width||1,source?.height||1,g);
+      const g=seamGeometry(rects,i,w,h,amount),t=view.crops?.[i]||seamImageTransform(c,source?.width||1,source?.height||1,g);
       gl.activeTexture(gl.TEXTURE0+i);
       const image=source?.image||this.blank;let tex=this.textures.get(image);
       const revision=(image as HTMLCanvasElement).dataset?.seamRevision||'';
@@ -164,10 +176,12 @@ class SeamGpu {
       gl.uniform1i(uniform(`photo${i}`),i);
       gl.uniform1i(uniform(`srgb${i}`),srgbCanvas&&this.color.colorSpace==='display-p3'?1:0);
       gl.uniform4f(uniform(`box${i}`),g.ex,g.ey,g.ew,g.eh);
+      gl.uniform4f(uniform(`limits${i}`),g.ex,g.ey,g.ex+g.ew,g.ey+g.eh);
       gl.uniform4f(uniform(`edges${i}`),g.left,g.top,g.right,g.bottom);
       gl.uniform4f(uniform(`crop${i}`),t.tx,t.ty,t.scale,0);
       gl.uniform4f(uniform(`source${i}`),source?.width||1,source?.height||1,Math.cos(t.angle),Math.sin(t.angle));
       gl.uniform1f(uniform(`opacity${i}`),(c.opacity??100)/100);
+      gl.uniform1f(uniform(`radius${i}`),view.radii?.[i]||0);
     }
     if(view.viewport){gl.disable(gl.SCISSOR_TEST);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.enable(gl.SCISSOR_TEST);gl.scissor(view.viewport[0],view.viewport[1],view.viewport[2],view.viewport[3]);}
     gl.drawArrays(gl.TRIANGLE_STRIP,0,4);gl.disable(gl.SCISSOR_TEST);

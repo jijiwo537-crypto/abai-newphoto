@@ -85,7 +85,10 @@ test('compacting optical editing also releases its nested effect surface',()=>{
 });
 test('non-feathered pixels have exactly one photo owner at fractional boundaries',()=>{
  const seam=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
- assert.match(seam,/if\(distance<nearest\)\{nearest=distance;owner=/);
+ // Isolated layout tiles use half-open limits so a pixel centre on a shared
+ // boundary belongs to exactly one tile; legacy feather geometry keeps the
+ // nearest-photo ownership rule.
+ assert.match(seam,/if\(isolated\?inside:distance<nearest\)\{nearest=distance;owner=/);
  assert.match(seam,/!fused\?owner==/);
  assert.match(seam,/image instanceof HTMLCanvasElement/);
  assert.match(seam,/this.textureBytes.clear\(\);this.revisions.clear\(\)/);
@@ -108,7 +111,8 @@ test('photo window clips and clearing use the shader pixel-centre boundary rule'
  }
 });
 test('every preview layer shares one exact integer-raster to continuous-scene map',()=>{
- assert.match(collage,/rasterX=isMain&&!previewCapture\?tW\/offs.cw:1/);
+ // Full-scene endpoint captures share the main scene's raster map too.
+ assert.match(collage,/rasterX=isMain\?tW\/offs.cw:1/);
  assert.match(collage,/vp.x\/tW\*100/);
  assert.match(collage,/backingW\/tW\*100/);
  assert.equal((collage.match(/setTransform\(rasterX, 0, 0, rasterY, -vp.x, -vp.y\)/g)||[]).length,3);

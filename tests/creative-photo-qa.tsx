@@ -40,7 +40,7 @@ createRoot(document.getElementById('root')!).render(params.has('occupancyLiveAud
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} lutList={params.has('zeroEffects')?[{id:'qa-zero-f3',name:'F3',url:'/luts/f3.webp'}]:[]} initialState={{layout:'mask-right',canvasRatio:'3:2',holeCount:0}}/>
  : params.has('swapStress')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{layout:'mask-right',canvasRatio:'3:2',holeCount:30,glowMode:'image',holeType:'star',holeSize:12,objects:Array.from({length:8},(_,i)=>({id:`swap-shape-${i}`,type:'shape',kind:i%2?'star':'grid-orbits',filled:i%2===1,color:'#fff',x:700,y:100+i*100,w:30,h:30,rot:0,shapeGlow:true,shapeGlowAmount:25}))}}/>
- : (params.has('coldEditAudit')||params.has('coldEffectsAudit')||params.has('liveVisible')||params.has('gestureCost'))&&params.has('realFilters')
+ : (params.has('coldEditAudit')||params.has('coldEffectsAudit')||params.has('liveVisible')||params.has('gestureCost')||params.has('selectionAudit'))&&params.has('realFilters')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} lutList={Array.from({length:22},(_,i)=>({id:`cold-${params.get('run')||'audit'}-f${i+1}`,name:`F${i+1}`,url:`/luts/f${i+1}.webp`}))} initialState={params.has('busyZoom')?{holeCount:30,holeType:'star',holeSize:15,linkMode:'solid',glowMode:'image',holes:Array.from({length:30},(_,i)=>({id:`busy-zoom-${i}`,x:50+(i%6)*140,y:50+Math.floor(i/6)*100,side:'image'}))}:{holeCount:0}}/>
  : params.has('spatialIntegrationAudit')&&params.has('around')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{holeCount:2,layout:'mask-around',holeSize:45,holeType:'circle',holes:[{id:'audit-a',x:100,y:100,side:'mask'},{id:'audit-b',x:600,y:500,side:'mask'}]}}/>
@@ -61,7 +61,8 @@ createRoot(document.getElementById('root')!).render(params.has('occupancyLiveAud
  : params.has('ig')
  ? <IgPreview shots={files.slice(0,2).map(f=>URL.createObjectURL(f))} frame={{w:3,h:2}} pageCount={2} faces={[]} onClose={()=>{}}/>
  : <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={params.has('direction')?{layout:'image-full',canvasRatio:'3:2',holeCount:4,holeSize:15,maskColor:'#FFFFFF',holes:[{id:'right',x:700,y:100,side:'image'},{id:'left',x:100,y:200,side:'image'},{id:'middle',x:400,y:500,side:'image'},{id:'absent',x:-200,y:200,side:'mask'}]}:params.has('audit')||params.has('four')?{holeCount:0,layout:'image-full',canvasRatio:'3:2',objects:floating}:{holeCount:0}}/>);
-if(params.has('occupancyLiveAudit'))void import('./creative-occupancy-live-audit');
+if(params.has('selectionAudit'))void import('./creative-selection-latency-audit');
+else if(params.has('occupancyLiveAudit'))void import('./creative-occupancy-live-audit');
 else if(params.has('snapshotAudit'))void import('./creative-snapshot-audit');
 else if(params.has('glowAudit'))void import('./creative-grid-glow-audit');
 else if(params.has('textWarpAudit'))void import('./creative-text-warp-audit');
