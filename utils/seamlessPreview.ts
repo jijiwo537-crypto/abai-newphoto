@@ -70,7 +70,11 @@ class SeamGpu {
         vec3 encoded=tex.a>0.?tex.rgb/tex.a:vec3(0.);
         if(srgb${i})encoded=toP3(encoded);
         vec3 linearSource=toLinear(encoded);
-        float a=tex.a*opacity${i};vec3 rgb=linearSource*a+toLinear(vec3(18./255.))*(1.-a);
+        float a=tex.a*opacity${i};
+        // Match the app's established canvas source-over appearance. Linear-light
+        // averaging brightens mixed photo edges and makes the whole seam feel washed
+        // out; keep encoded, color-managed RGB and only blend inside the feather band.
+        vec3 rgb=encoded*a+vec3(18./255.)*(1.-a);
         float weight=wx*wy;
         if(isolated){
           // Real gaps/rounded corners; straight cell edges have one owner.
@@ -105,7 +109,7 @@ class SeamGpu {
         // sum slightly above one. Clamp only output alpha; clamping the RGB
         // divisor changes image tone as the fusion width moves.
         float divisor=isolated?max(.000001,min(1.,coverage)):max(.000001,coverage);
-        color=vec4(toEncoded(sum/divisor),isolated?min(1.,coverage):1.);}`);
+        color=vec4(isolated?toEncoded(sum/divisor):sum/divisor,isolated?min(1.,coverage):1.);}`);
     p=gl.createProgram()!;gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);gl.deleteShader(vs);gl.deleteShader(fs);
     if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p)||'Program');
     this.programs.set(count,p);return p;
