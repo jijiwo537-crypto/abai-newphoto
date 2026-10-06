@@ -77,18 +77,17 @@ test('fusion normalizes RGB by total feather weight instead of clamping it at on
   assert.ok(Math.abs(weighted([.2,.8],[.75,.75])-.5)<1e-12);
 });
 
-test('seam color blending occurs in linear light and round-trips unchanged cell colors',()=>{
+test('seam feather uses canvas-compatible encoded RGB and preserves unchanged colors',()=>{
   const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
-  assert.match(gpu,/vec3 toLinear\(vec3 v\)/);assert.match(gpu,/vec3 toEncoded\(vec3 v\)/);
+  assert.match(gpu,/vec3 rgb=encoded\*a\+vec3\(18\.\/255\.\)\*\(1\.-a\)/);
+  assert.match(gpu,/isolated\?toEncoded\(sum\/divisor\):sum\/divisor/);
   assert.match(gpu,/sum\+=rgb\*weight;coverage\+=weight/);
-  const linear=v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4;
-  const encoded=v=>v<=.0031308?v*12.92:1.055*v**(1/2.4)-.055;
-  for(const color of [.01,.04,.18,.5,.9])assert.ok(Math.abs(encoded(linear(color))-color)<1e-12);
-  const mix=(a,b,t)=>encoded(linear(a)*(1-t)+linear(b)*t);
-  assert.ok(Math.abs(mix(.2,.2,.63)-.2)<1e-12);
-  assert.ok(mix(.05,.8,.5)>((.05+.8)/2));
+  const mix=(a,b,t)=>a*(1-t)+b*t;
+  for(const color of [.01,.04,.18,.5,.9])assert.equal(mix(color,color,.63),color);
+  // Unlike linear-light interpolation, encoded RGB does not lift mixed photo
+  // edges above the app's established canvas source-over result.
+  assert.ok(Math.abs(mix(.05,.8,.5)-.425)<1e-12);
 });
-
 test('selection alone does not allocate a second seamless renderer',()=>{
   const component=readFileSync(new URL('../components/SeamlessLayout.tsx',import.meta.url),'utf8');
   const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
