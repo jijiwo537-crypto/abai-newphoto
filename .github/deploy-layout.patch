@@ -1,0 +1,339 @@
+diff --git a/components/ArtStudio.css b/components/ArtStudio.css
+index dbb79b2271fec45c47e127c3a4844730e527f29f..a00931855da96c294b770df46cb63c251e089073 100644
+--- a/components/ArtStudio.css
++++ b/components/ArtStudio.css
+@@ -35,7 +35,7 @@
+ .art-panel nav button[aria-pressed=true]:after{content:'';position:absolute;bottom:0;left:0;right:0;height:2px;background:#eee}
+ .art-chars{display:flex;align-items:center;gap:16px;font-size:12px}.art-chars input{flex:1;min-width:0;background:#1c1c1c;border:1px solid #ffffff16;border-radius:6px;padding:7px 10px;color:white;caret-color:white;font-family:monospace;font-size:16px}.art-chars input:focus{outline:1px solid white}
+ .art-presets{display:flex;gap:8px;margin:12px 0}.art-presets button{flex:1;min-width:0;border:1px solid #ffffff16;border-radius:6px;padding:7px 8px;font-size:12px;white-space:nowrap}.art-presets button[aria-pressed=true]{background:#eee;color:#111}
+-.art-range{display:block;margin:12px 0;font-size:11px;color:#aaa}.art-range span{display:flex;justify-content:space-between;align-items:center}.art-range output{color:#eee;font-variant-numeric:tabular-nums}.art-range input{display:block;width:100%;accent-color:white;margin-top:9px;appearance:none;height:24px;background:transparent;touch-action:none}.art-range input::-webkit-slider-runnable-track{height:2px;background:#444;border-radius:2px}.art-range input::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:white;margin-top:-6.5px;border:0}.art-range input::-moz-range-track{height:2px;background:#444}.art-range input::-moz-range-thumb{width:15px;height:15px;border:0;border-radius:50%;background:white}
++.art-range{display:block;margin:12px 0;font-size:11px;color:#aaa}.art-range span{display:flex;justify-content:space-between;align-items:center}.art-range output{color:#eee;font-variant-numeric:tabular-nums}.art-range input{display:block;width:100%;accent-color:white;margin-top:9px;appearance:none;height:24px;background:transparent;touch-action:pan-y}.art-range input::-webkit-slider-runnable-track{height:2px;background:#444;border-radius:2px}.art-range input::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:white;margin-top:-6.5px;border:0}.art-range input::-moz-range-track{height:2px;background:#444}.art-range input::-moz-range-thumb{width:15px;height:15px;border:0;border-radius:50%;background:white}
+ .art-color,.art-toggle{display:flex;align-items:center;justify-content:space-between;width:100%;font-size:12px;min-height:48px}.art-color .art-presets{margin:0;width:128px}.art-toggle i{width:31px;height:18px;background:#333;border-radius:20px;position:relative}.art-toggle i:after{content:'';position:absolute;top:3px;left:3px;width:12px;height:12px;border-radius:50%;background:#888;transition:transform .15s}.art-toggle[aria-checked=true] i{background:#eee}.art-toggle[aria-checked=true] i:after{background:#111;transform:translateX(13px)}
+ .art-error{position:absolute;z-index:120;left:20px;right:20px;top:80px;background:#542b2b;padding:20px;border-radius:12px;font-size:13px}
+ .art-export{position:absolute;inset:0;background:#000;z-index:110;display:flex;flex-direction:column}
+diff --git a/components/CollageTool.tsx b/components/CollageTool.tsx
+index 4f1377e09a1d12b474ad4eb63e05387b57fd8127..ce9b206ea2989ce1f5482e8be82541cd00e30632 100644
+--- a/components/CollageTool.tsx
++++ b/components/CollageTool.tsx
+@@ -521,7 +521,7 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
+         min={min} max={max} step={1} value={value}
+         onValue={v => onVal(Math.round(v))}
+         className="premium-slider w-full"
+-        style={{ touchAction: 'none' }}
++        style={{ touchAction: 'pan-y' }}
+       />
+     </div>
+   </div>
+@@ -9156,7 +9156,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
+           outline: none;
+           margin: 0 -32px;
+           padding: 0;
+-          touch-action: none;
++          touch-action: pan-y;
+           -webkit-tap-highlight-color: rgba(0,0,0,0);
+         }
+         .custom-range:focus { outline: none; }
+@@ -9224,11 +9224,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
+            對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
+            長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
+            判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
+-        .slider-wrap { position: relative; touch-action: none; }
++        .slider-wrap { position: relative; touch-action: pan-y; }
+         /* touch-action 一定要寫在 .slider-wrap 上、不能只寫在 ::before：
+            偽元素被點到時，瀏覽器查的是「產生它的那個元素」的 touch-action ——
+-           寫在 ::before 上等於沒寫，橫向拖曳會被當成捲動而中途被收走
+-           （拖到一半就停在那裡）。 */
++           寫在 ::before 上等於沒寫；pan-y 讓直向自然捲動，橫向由 sliderTouch 接手。 */
+         .slider-wrap::before { content: ''; position: absolute; left: -7px; right: -7px; top: 50%; height: 56px; margin-top: -28px; }
+         /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
+            不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
+diff --git a/components/GridLayoutTool.tsx b/components/GridLayoutTool.tsx
+index 743a9f0499e80e3655a75a703fa7567ed4642fe4..c25431236357181b2ae6ce865cec4874981de879 100644
+--- a/components/GridLayoutTool.tsx
++++ b/components/GridLayoutTool.tsx
+@@ -14225,11 +14225,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
+            對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
+            長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
+            判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
+-        .slider-wrap { position: relative; touch-action: none; }
++        .slider-wrap { position: relative; touch-action: pan-y; }
+         /* touch-action 一定要寫在 .slider-wrap 上、不能只寫在 ::before：
+            偽元素被點到時，瀏覽器查的是「產生它的那個元素」的 touch-action ——
+-           寫在 ::before 上等於沒寫，橫向拖曳會被當成捲動而中途被收走
+-           （拖到一半就停在那裡）。 */
++           寫在 ::before 上等於沒寫；pan-y 讓直向自然捲動，橫向由 sliderTouch 接手。 */
+         .slider-wrap::before { content: ''; position: absolute; left: -7px; right: -7px; top: 50%; height: 56px; margin-top: -28px; }
+         /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
+            不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
+@@ -14264,7 +14263,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
+           outline: none;
+           margin: 0 -32px;
+           padding: 0;
+-          touch-action: none;
++          touch-action: pan-y;
+           -webkit-tap-highlight-color: rgba(0,0,0,0);
+         }
+         .custom-range:focus { outline: none; }
+diff --git a/components/ImageEditor.tsx b/components/ImageEditor.tsx
+index dae1b344be527e5dc1e1eba4b1839e9d040c2366..95f1942d652c245601e00a489d48cee2aa667ec0 100644
+--- a/components/ImageEditor.tsx
++++ b/components/ImageEditor.tsx
+@@ -786,14 +786,14 @@ const FastSlider = React.memo(({
+                 )}
+             </div>
+ 
+-            <div style={dense ? {touchAction:'none'} : undefined} className={`relative flex items-center justify-center touch-none ${dense ? 'slider-wrap h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
++            <div style={dense ? {touchAction:'pan-y'} : undefined} className={`relative flex items-center justify-center touch-none ${dense ? 'slider-wrap h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
+                 <input 
+                     ref={inputRef}
+                     type="range" aria-label={label} min={effectControlMin(toolId,min)} max={max} step={effectControlStep(toolId,step)}
+                     data-smooth-range={isContinuousEffectControl(toolId)?'true':undefined}
+                     defaultValue={displayValue}
+                     data-fine-drag={dense ? 'true' : undefined}
+-                    style={dense ? {left:0,width:'100%',height:26,margin:'-13px 0 0',touchAction:'none','--thumb-w':'18px'} as React.CSSProperties : undefined}
++                    style={dense ? {left:0,width:'100%',height:26,margin:'-13px 0 0',touchAction:'pan-y','--thumb-w':'18px'} as React.CSSProperties : undefined}
+                     disabled={disabled}
+                     onChange={handleChange}
+                     onPointerDown={onInteractStart}
+@@ -6368,7 +6368,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
+           outline: none; 
+           margin: 0 -32px; 
+           padding: 0;
+-          touch-action: none;
++          touch-action: pan-y;
+           -webkit-tap-highlight-color: rgba(0,0,0,0);
+         }
+         .custom-range:focus {
+diff --git a/components/LayoutPhotoSurface.tsx b/components/LayoutPhotoSurface.tsx
+index 026023cd26c360e5ca535f759e3d62908c51ecf3..08ce3cd9f832a62fe1e93c55731b5a8afae1d981 100644
+--- a/components/LayoutPhotoSurface.tsx
++++ b/components/LayoutPhotoSurface.tsx
+@@ -57,11 +57,21 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
+       cv.style.width=`${surface.width}px`;cv.style.height=`${surface.height}px`;
+       cv.style.transform=`matrix(${surface.transform.join(',')})`;cv.style.clipPath=`polygon(${surface.clip})`;
+       const sources:SeamTexture[]=[],clips:Rect[]=[],radii:number[]=[],crops:{tx:number;ty:number;scale:number;angle:number}[]=[];
++      // At zero gutter, adjacent cells must remain visually closed after the
++      // browser resamples this physical-pixel surface through the preview zoom
++      // transform. Give shared edges half a raster sample of overlap on each
++      // side; owner selection stays deterministic in the compositor. Do not
++      // bleed when a user intentionally requested a gutter or rounded corners.
++      const noVisibleGutter=gap<=.001&&radius<=.001&&cells.every(c=>!(c.imgRadius||0));
++      const bleedX=noVisibleGutter?(Math.abs(surface.view.xx/W)+Math.abs(surface.view.xy/H))*.5:0;
++      const bleedY=noVisibleGutter?(Math.abs(surface.view.yx/W)+Math.abs(surface.view.yy/H))*.5:0;
+       rects.forEach((r,i)=>{
+         const c=cells[i];if(!c)return;
+         const x=gap+r.x*aw,y=gap+r.y*ah,cw=Math.max(0,r.w*aw-gap),ch=Math.max(0,r.h*ah-gap);
+         const resource=c.url?resources.current.get(c.id):undefined,im=resource?.image;
+-        clips.push({x:x/width,y:y/height,w:cw/width,h:ch/height});
++        const leftBleed=noVisibleGutter&&r.x>1e-6?bleedX:0,rightBleed=noVisibleGutter&&r.x+r.w<1-1e-6?bleedX:0;
++        const topBleed=noVisibleGutter&&r.y>1e-6?bleedY:0,bottomBleed=noVisibleGutter&&r.y+r.h<1-1e-6?bleedY:0;
++        clips.push({x:(x-leftBleed)/width,y:(y-topBleed)/height,w:(cw+leftBleed+rightBleed)/width,h:(ch+topBleed+bottomBleed)/height});
+         if(!im?.naturalWidth){sources.push(null);radii.push(radius);crops.push({tx:0,ty:0,scale:1,angle:0});return;}
+         const fx=live.current.get(c.id)||c.fx||{},key=JSON.stringify([fx,revision]);
+         if(resource!.key!==key){
+@@ -76,7 +86,10 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
+         const dx=c.offsetX*r.w*aw,dy=c.offsetY*r.h*ah,angle=c.rotation*Math.PI/180;
+         const cr=c.imgRadius?Math.min(cw,ch)*Math.min(.5,Math.max(0,c.imgRadius/100)):Math.min(radius,cw/2,ch/2);
+         sources.push({image:source,width:iw,height:ih});radii.push(cr);
+-        crops.push({tx:dx*Math.cos(angle)+dy*Math.sin(angle),ty:-dx*Math.sin(angle)+dy*Math.cos(angle),scale,angle});
++        // Keep the crop's optical center fixed while its raster clip receives
++        // the subpixel seam guard above.
++        const cx=(rightBleed-leftBleed)/2,cy=(bottomBleed-topBleed)/2;
++        crops.push({tx:dx*Math.cos(angle)+dy*Math.sin(angle)-cx*Math.cos(angle)-cy*Math.sin(angle),ty:-dx*Math.sin(angle)+dy*Math.cos(angle)+cx*Math.sin(angle)-cy*Math.cos(angle),scale,angle});
+       });
+       if(editPresentation.current){
+         // WebKit can directly crop a native FX canvas into a physical-pixel
+diff --git a/styles.css b/styles.css
+index 2ffc5906e4ff96487ea0b5248ad21fa7175209a1..a6e5411b843660a09acc101cd96ea04373d08543 100644
+--- a/styles.css
++++ b/styles.css
+@@ -133,13 +133,12 @@ select:focus, select:focus-visible {
+    為什麼撐大的是 ::before、不是滑桿本人：滑桿一旦被撐高，那一整塊都會帶著
+    Chromium 原生的「按下去就跳到手指的位置」，而且攔不掉（preventDefault
+    對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
+-   長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
+-   判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
+-.slider-wrap { position: relative; touch-action: none; }
++   range 不會成為觸控候選人：橫向拖曳和點擊由 utils/sliderTouch.ts 判讀；
++   直向捲動則保留瀏覽器原生 pan-y。 */
++.slider-wrap { position: relative; touch-action: pan-y; }
+ /* touch-action 一定要寫在 .slider-wrap 上、不能只寫在 ::before：
+    偽元素被點到時，瀏覽器查的是「產生它的那個元素」的 touch-action ——
+-   寫在 ::before 上等於沒寫，橫向拖曳會被當成捲動而中途被收走
+-   （拖到一半就停在那裡）。 */
++           寫在 ::before 上等於沒寫；pan-y 讓直向自然捲動，橫向由 sliderTouch 接手。 */
+ .slider-wrap::before { content: ''; position: absolute; left: -7px; right: -7px; top: 50%; height: 56px; margin-top: -28px; }
+ /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
+    不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
+@@ -168,7 +167,7 @@ select:focus, select:focus-visible {
+   outline: none;
+   margin: 0 -32px;
+   padding: 0;
+-  touch-action: none;
++  touch-action: pan-y;
+   -webkit-tap-highlight-color: rgba(0,0,0,0);
+ }
+ .custom-range:focus { outline: none; }
+diff --git a/tests/layout-source-raster.test.mjs b/tests/layout-source-raster.test.mjs
+index 2b368fb5e58530b0688fe9a977b3309fa8156937..0a7a10755ca30d189bbf0a1bcd694d58891f4ef7 100644
+--- a/tests/layout-source-raster.test.mjs
++++ b/tests/layout-source-raster.test.mjs
+@@ -16,6 +16,9 @@ test('ordinary layout samples full source into bounded screen pixels, not a fixe
+  assert.match(layout,/drawSeamPreview\(cv,cells,clips,sources,-1/);
+  assert.match(layout,/applyPhotoFx\(im,im.naturalWidth,im.naturalHeight/);
+  assert.doesNotMatch(layout,/4096\/Math.max\(width,height\)/);
++ assert.match(layout,/noVisibleGutter=gap<=\.001&&radius<=\.001/);
++ assert.match(layout,/const bleedX=noVisibleGutter\?\(Math\.abs\(surface\.view\.xx\/W\)\+Math\.abs\(surface\.view\.xy\/H\)\)\*\.5/);
++ assert.match(layout,/crop's optical center fixed/);
+ });
+ test('photo selection paints cached pixels before resident scene preparation',()=>{
+  const tap=creative.slice(creative.indexOf('const regionPointerUp='),creative.indexOf('const handlePointerDown ='));
+diff --git a/tests/slider-touch-targets.test.mjs b/tests/slider-touch-targets.test.mjs
+index f36ce57d2431886b7fcdeda44a61657245bda2e9..46bb4786cb999be4a3a07d61b5302304218cae33 100644
+--- a/tests/slider-touch-targets.test.mjs
++++ b/tests/slider-touch-targets.test.mjs
+@@ -12,13 +12,17 @@ test('creative occupancy and seamless sliders retain layout with enlarged touch
+  }
+  assert.match(read('styles.css'),/slider-wrap::before[^}]*height: 56px/);
+ });
+-test('slider ownership prevents native panel scrolling and grabs the 44px thumb zone',()=>{
+- assert.match(read('styles.css'),/\.slider-wrap \{[^}]*touch-action: none/);
+- assert.match(read('components/GridLayoutTool.tsx'),/\.slider-wrap \{[^}]*touch-action: none/);
+- assert.match(read('components/CollageTool.tsx'),/\.slider-wrap \{[^}]*touch-action: none/);
++test('slider wrappers allow vertical page scrolling while retaining horizontal custom drags',()=>{
++ assert.match(read('styles.css'),/\.slider-wrap \{[^}]*touch-action: pan-y/);
++ assert.match(read('components/GridLayoutTool.tsx'),/\.slider-wrap \{[^}]*touch-action: pan-y/);
++ assert.match(read('components/CollageTool.tsx'),/\.slider-wrap \{[^}]*touch-action: pan-y/);
++ assert.match(read('styles.css'),/\.custom-range \{[^}]*touch-action: pan-y/);
++ assert.match(read('components/ArtStudio.css'),/\.art-range input\{[^}]*touch-action:pan-y/);
+  const s=read('utils/sliderTouch.ts');
+  assert.match(s,/Math.abs\(x0-center\)<=22/);
+- assert.match(s,/let live = onThumb/);
++ assert.match(s,/let live = onThumb && !isTouch/);
++ assert.match(s,/dy > SCROLL_SLOP && dy > dx \* INTENT_RATIO/);
++ assert.match(s,/dx > dy \* INTENT_RATIO/);
+  assert.match(s,/advance\(m.clientX, m.clientY\).*m.preventDefault/);
+ });
+ test('beauty has enlarged invisible touch area; color match already has a 64px transparent thumb',()=>{
+@@ -48,10 +52,29 @@ test('off-center thumb drag claims immediately, updates diagonally, prevents scr
+  vm.runInNewContext(ts.transpileModule(read('utils/sliderTouch.ts'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,sandbox);
+  sandbox.exports.installSliderTouch();
+  listeners.get('pointerdown')({target:wrap,clientX:200,clientY:128,pointerId:1,pointerType:'touch'});
+- assert.deepEqual(events,['pointerdown','capture']);
++ assert.deepEqual(events,[]);
+  let prevented=0;
+  listeners.get('touchmove')({touches:[{clientX:280,clientY:145}],cancelable:true,preventDefault:()=>prevented++});
+- assert.equal(prevented,1);assert.ok(Number(input.value)>80);
++ assert.equal(prevented,1);assert.ok(Number(input.value)>80);assert.ok(events.includes('pointerdown'));assert.ok(events.includes('capture'));
+  listeners.get('pointerup')({pointerId:1,type:'pointerup',clientX:280,clientY:145});
+  assert.ok(events.includes('pointerup'));assert.ok(events.includes('release'));assert.equal(listeners.has('touchmove'),false);
+ });
++test('vertical swipe starting on the slider thumb is handed to the scrollable panel',()=>{
++ const listeners=new Map(),events=[];
++ class Input {
++  min='0';max='100';step='1';dataset={};disabled=false;_value='50';
++  get value(){return this._value;}set value(v){this._value=v;}
++  getBoundingClientRect(){return {left:100,right:300,top:100,bottom:116,width:200,height:16};}
++  dispatchEvent(e){events.push(e.type);return true;}
++ }
++ class Event {constructor(type,init={}){this.type=type;Object.assign(this,init);}}
++ const input=new Input(),wrap={classList:{contains:c=>c==='slider-wrap'},querySelector:()=>input,getBoundingClientRect:()=>input.getBoundingClientRect(),setPointerCapture:()=>events.push('capture'),releasePointerCapture:()=>events.push('release')};
++ const add=(name,fn)=>listeners.set(name,fn);
++ const sandbox={exports:{},require:()=>({fineSliderValue:()=>50}),HTMLInputElement:Input,Event,PointerEvent:Event,MouseEvent:Event,getComputedStyle:()=>({getPropertyValue:()=>14}),document:{addEventListener:add,querySelectorAll:()=>[wrap]},window:{addEventListener:add,removeEventListener:(name)=>listeners.delete(name)}};
++ vm.runInNewContext(ts.transpileModule(read('utils/sliderTouch.ts'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,sandbox);
++ sandbox.exports.installSliderTouch();
++ listeners.get('pointerdown')({target:wrap,clientX:200,clientY:108,pointerId:2,pointerType:'touch'});
++ let prevented=0;
++ listeners.get('touchmove')({touches:[{clientX:201,clientY:117}],cancelable:true,preventDefault:()=>prevented++});
++ assert.equal(prevented,0);assert.equal(input.value,'50');assert.equal(events.includes('capture'),false);
++});
+diff --git a/utils/sliderTouch.ts b/utils/sliderTouch.ts
+index 0fdadda2895aabe0d84e978d7601b65ab388e87f..4e6fe52585b96dc58a06e6ae5133229eb25aa1aa 100644
+--- a/utils/sliderTouch.ts
++++ b/utils/sliderTouch.ts
+@@ -9,8 +9,8 @@
+  *   ‧ 按在多出來的那一圈裡：
+  *       手指橫向移動超過 4px → 當作拖曳
+  *       放開時還沒移動       → 當作點擊，把這一下轉交給底下那個元素
+- *   ‧ 滑桿區內使用 touch-action:none，避免瀏覽器把拖動改成頁面捲動。
+- *     面板其他區域仍照常捲動。
++ *   ‧ 滑桿區允許原生 pan-y。手勢方向明確向上／下時交還瀏覽器捲動；
++ *     明確向左／右時才由自訂滑桿接手。
+  *
+  * ── 為什麼整套手勢都自己接（滑桿掛了 pointer-events: none）─────────────
+  * 試過兩種比較省事的做法，都不行：
+@@ -35,9 +35,10 @@ import {fineSliderValue} from './sliderPrecision';
+ const CORE_HALF = 9;
+ /** 手指橫向移動超過這麼多就算「在拖滑桿」，不算「點一下」 */
+ const DRAG_SLOP = 4;
+-/** 直向要移動超過這麼多才算「在捲面板」。刻意比橫向大很多 ——
+-    拇指拖滑桿是弧線，起手常常先往下滑幾像素，那不是要捲頁面。 */
+-const SCROLL_SLOP = 14;
++/** 直向手勢較早交還頁面，避免手指落在滑桿擴大的觸控區時卡住滾動。 */
++const SCROLL_SLOP = 7;
++/** 明確的方向優先權；輕微斜向起手仍留在判斷區，不立即改變值。 */
++const INTENT_RATIO = 1.15;
+ /** touchmove 一定要非被動，不然 preventDefault 沒有作用 */
+ const TM_OPT = { passive: false, capture: true } as AddEventListenerOptions;
+ /** 轉交點擊時最多往下找幾層（底下可能又是另一根滑桿的透明區） */
+@@ -174,7 +175,9 @@ export const installSliderTouch = () => {
+     // 白點周圍至少44px的觸控區立即取得手勢，但不跳值。
+     // 其他透明區仍等待橫向拖動，避免遮住相鄰按鈕的點擊。
+     const onThumb = Math.abs(x0-center)<=22 && Math.abs(y0-(r.top+r.height/2))<=22;
+-    let live = onThumb;   // 已經認定是在拖滑桿（認定之後就再也不會反悔）
++    // Touch 上即使起點落在白點，也先辨認手勢方向；否則垂直滑頁只要
++    // 從白點旁起手就會永遠被滑桿鎖住。滑鼠仍保留白點立即拖曳手感。
++    let live = onThumb && !isTouch;
+     let dead = false;   // 已經認定使用者是在捲面板，這一下從頭到尾不關滑桿的事
+     let done = false;
+     let notifiedStart = false;
+@@ -199,21 +202,18 @@ export const installSliderTouch = () => {
+       if (dead) return false;
+       if (!live) {
+         const dx = Math.abs(cx - x0), dy = Math.abs(cy - y0);
+-        /* 兩邊的門檻刻意不對稱，而且一旦認定就不再改：
+-           拇指拖滑桿本來就是弧線，起手常常先往下滑幾像素才轉成橫的
+-           —— 舊版看第一顆 move 就把它判成「在捲面板」並且鎖死，
+-           所以只要拖得不夠直就整段失效。現在橫向只要不是被直向輾壓
+-           （dx*2 >= dy）就算拖滑桿；要判成捲面板則得直向明顯大很多
+-           （超過 14px 而且是橫向的兩倍以上）。兩邊都還沒過門檻就繼續等，
+-           這段期間什麼都不做，所以不會誤動到任何東西。 */
+-        if (dx > (fine ? .5 : DRAG_SLOP) && dx * 2 >= dy) {
++        /* 先辨認明確縱向意圖，再辨認橫向拖動。舊版的 14px 門檻、
++           2:1 方向比，加上 touch-action:none，會把整個頁面捲動鎖在滑桿上。
++           pan-y 由 CSS 預先允許，縱向意圖一旦成立便不 preventDefault，
++           瀏覽器可自然接手；橫向手勢仍使用同一個精確值映射。 */
++        if (dy > SCROLL_SLOP && dy > dx * INTENT_RATIO) {
++          dead = true; return false;
++        } else if (dx > (fine ? .5 : DRAG_SLOP) && dx > dy * INTENT_RATIO) {
+           live = true;
+           notifyStart(cx, cy);
+           /* 抓住這根指頭：接下來不管手指飄到哪一顆按鈕、哪一根滑桿上面，
+              事件都只會送到這裡，別人不會亮起來、也不會被按到。 */
+           try { wrap.setPointerCapture(id); } catch { /* 抓不到就算了，事件還是收得到 */ }
+-        } else if (dy > SCROLL_SLOP && dy > dx * 2) {
+-          dead = true; return false;
+         } else return false;
+       }
+       setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel,el.dataset.smoothRange==='true')) : valueAt(el, onThumb ? cx-x0+center : cx));
+@@ -225,9 +225,8 @@ export const installSliderTouch = () => {
+       if (advance(m.clientX, m.clientY) && m.cancelable) m.preventDefault();
+     };
+ 
+-    /* 觸控多接一條，而且是 passive:false —— 這是「拖到一半不會被瀏覽器搶走」
+-       的關鍵。搭配滑桿區的 touch-action:none，弧線拖曳不會變成頁面捲動。
+-       面板其他區域的捲動不受影響。 */
++    /* 觸控事件負責精確改值；只有橫向意圖成立後才 preventDefault。
++       CSS pan-y 讓縱向手勢從 slider-wrap 起手也可以自然捲動頁面。 */
+     const onTouchMove = (t: TouchEvent) => {
+       if (t.touches.length !== 1) return;          // 兩指以上是縮放，不要碰
+       const f = t.touches[0];
+@@ -278,7 +277,7 @@ export const installSliderTouch = () => {
+       window.addEventListener('touchend', onTouchEnd, true);
+       window.addEventListener('touchcancel', onTouchEnd, true);
+     }
+-    if (onThumb) {
++    if (onThumb && !isTouch) {
+       notifyStart(x0,y0);
+       try { wrap.setPointerCapture(id); } catch { /* Detached test surfaces have no capture. */ }
+     }
