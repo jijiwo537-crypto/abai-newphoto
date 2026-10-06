@@ -1,7 +1,7 @@
 name: Build and deploy to GitHub Pages
 on:
   push:
-    branches: [main, codex/deploy-layout-20261006b]
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
