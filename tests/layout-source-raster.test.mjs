@@ -16,6 +16,9 @@ test('ordinary layout samples full source into bounded screen pixels, not a fixe
  assert.match(layout,/drawSeamPreview\(cv,cells,clips,sources,-1/);
  assert.match(layout,/applyPhotoFx\(im,im.naturalWidth,im.naturalHeight/);
  assert.doesNotMatch(layout,/4096\/Math.max\(width,height\)/);
+ assert.match(layout,/noVisibleGutter=gap<=\.001&&radius<=\.001/);
+ assert.match(layout,/const bleedX=noVisibleGutter\?\(Math\.abs\(surface\.view\.xx\/W\)\+Math\.abs\(surface\.view\.xy\/H\)\)\*1\.25/);
+ assert.match(layout,/crop's optical center fixed/);
 });
 test('photo selection paints cached pixels before resident scene preparation',()=>{
  const tap=creative.slice(creative.indexOf('const regionPointerUp='),creative.indexOf('const handlePointerDown ='));
@@ -26,7 +29,8 @@ test('photo selection paints cached pixels before resident scene preparation',()
 });
 test('exact shared boundary pixel belongs to the right/lower cell, not a transparent tie',()=>{
  const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
- assert.match(gpu,/if\(isolated\?inside:distance<nearest\)/);
+ assert.match(gpu,/if\(isolated&&!sealEdges\?inside:distance<nearest\)/);
+ assert.match(gpu,/if\(!inside&&!sealEdges\)weight=0\./);
  assert.match(gpu,/lessThan\(p,bounds.zw\)/);
  assert.match(gpu,/g.ex,g.ey,g.ex\+g.ew,g.ey\+g.eh/);
 });
