@@ -12,13 +12,17 @@ test('creative occupancy and seamless sliders retain layout with enlarged touch 
  }
  assert.match(read('styles.css'),/slider-wrap::before[^}]*height: 56px/);
 });
-test('slider ownership prevents native panel scrolling and grabs the 44px thumb zone',()=>{
- assert.match(read('styles.css'),/\.slider-wrap \{[^}]*touch-action: none/);
- assert.match(read('components/GridLayoutTool.tsx'),/\.slider-wrap \{[^}]*touch-action: none/);
- assert.match(read('components/CollageTool.tsx'),/\.slider-wrap \{[^}]*touch-action: none/);
+test('slider wrappers allow vertical page scrolling while retaining horizontal custom drags',()=>{
+ assert.match(read('styles.css'),/\.slider-wrap \{[^}]*touch-action: pan-y/);
+ assert.match(read('components/GridLayoutTool.tsx'),/\.slider-wrap \{[^}]*touch-action: pan-y/);
+ assert.match(read('components/CollageTool.tsx'),/\.slider-wrap \{[^}]*touch-action: pan-y/);
+ assert.match(read('styles.css'),/\.custom-range \{[^}]*touch-action: pan-y/);
+ assert.match(read('components/ArtStudio.css'),/\.art-range input\{[^}]*touch-action:pan-y/);
  const s=read('utils/sliderTouch.ts');
  assert.match(s,/Math.abs\(x0-center\)<=22/);
- assert.match(s,/let live = onThumb/);
+ assert.match(s,/let live = onThumb && !isTouch/);
+ assert.match(s,/dy > SCROLL_SLOP && dy > dx \* INTENT_RATIO/);
+ assert.match(s,/dx > dy \* INTENT_RATIO/);
  assert.match(s,/advance\(m.clientX, m.clientY\).*m.preventDefault/);
 });
 test('beauty has enlarged invisible touch area; color match already has a 64px transparent thumb',()=>{
@@ -48,10 +52,29 @@ test('off-center thumb drag claims immediately, updates diagonally, prevents scr
  vm.runInNewContext(ts.transpileModule(read('utils/sliderTouch.ts'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,sandbox);
  sandbox.exports.installSliderTouch();
  listeners.get('pointerdown')({target:wrap,clientX:200,clientY:128,pointerId:1,pointerType:'touch'});
- assert.deepEqual(events,['pointerdown','capture']);
+ assert.deepEqual(events,[]);
  let prevented=0;
  listeners.get('touchmove')({touches:[{clientX:280,clientY:145}],cancelable:true,preventDefault:()=>prevented++});
- assert.equal(prevented,1);assert.ok(Number(input.value)>80);
+ assert.equal(prevented,1);assert.ok(Number(input.value)>80);assert.ok(events.includes('pointerdown'));assert.ok(events.includes('capture'));
  listeners.get('pointerup')({pointerId:1,type:'pointerup',clientX:280,clientY:145});
  assert.ok(events.includes('pointerup'));assert.ok(events.includes('release'));assert.equal(listeners.has('touchmove'),false);
+});
+test('vertical swipe starting on the slider thumb is handed to the scrollable panel',()=>{
+ const listeners=new Map(),events=[];
+ class Input {
+  min='0';max='100';step='1';dataset={};disabled=false;_value='50';
+  get value(){return this._value;}set value(v){this._value=v;}
+  getBoundingClientRect(){return {left:100,right:300,top:100,bottom:116,width:200,height:16};}
+  dispatchEvent(e){events.push(e.type);return true;}
+ }
+ class Event {constructor(type,init={}){this.type=type;Object.assign(this,init);}}
+ const input=new Input(),wrap={classList:{contains:c=>c==='slider-wrap'},querySelector:()=>input,getBoundingClientRect:()=>input.getBoundingClientRect(),setPointerCapture:()=>events.push('capture'),releasePointerCapture:()=>events.push('release')};
+ const add=(name,fn)=>listeners.set(name,fn);
+ const sandbox={exports:{},require:()=>({fineSliderValue:()=>50}),HTMLInputElement:Input,Event,PointerEvent:Event,MouseEvent:Event,getComputedStyle:()=>({getPropertyValue:()=>14}),document:{addEventListener:add,querySelectorAll:()=>[wrap]},window:{addEventListener:add,removeEventListener:(name)=>listeners.delete(name)}};
+ vm.runInNewContext(ts.transpileModule(read('utils/sliderTouch.ts'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,sandbox);
+ sandbox.exports.installSliderTouch();
+ listeners.get('pointerdown')({target:wrap,clientX:200,clientY:108,pointerId:2,pointerType:'touch'});
+ let prevented=0;
+ listeners.get('touchmove')({touches:[{clientX:201,clientY:117}],cancelable:true,preventDefault:()=>prevented++});
+ assert.equal(prevented,0);assert.equal(input.value,'50');assert.equal(events.includes('capture'),false);
 });

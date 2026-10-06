@@ -9,8 +9,8 @@
  *   ‧ 按在多出來的那一圈裡：
  *       手指橫向移動超過 4px → 當作拖曳
  *       放開時還沒移動       → 當作點擊，把這一下轉交給底下那個元素
- *   ‧ 滑桿區內使用 touch-action:none，避免瀏覽器把拖動改成頁面捲動。
- *     面板其他區域仍照常捲動。
+ *   ‧ 滑桿區允許原生 pan-y。手勢方向明確向上／下時交還瀏覽器捲動；
+ *     明確向左／右時才由自訂滑桿接手。
  *
  * ── 為什麼整套手勢都自己接（滑桿掛了 pointer-events: none）─────────────
  * 試過兩種比較省事的做法，都不行：
@@ -35,9 +35,10 @@ import {fineSliderValue} from './sliderPrecision';
 const CORE_HALF = 9;
 /** 手指橫向移動超過這麼多就算「在拖滑桿」，不算「點一下」 */
 const DRAG_SLOP = 4;
-/** 直向要移動超過這麼多才算「在捲面板」。刻意比橫向大很多 ——
-    拇指拖滑桿是弧線，起手常常先往下滑幾像素，那不是要捲頁面。 */
-const SCROLL_SLOP = 14;
+/** 直向手勢較早交還頁面，避免手指落在滑桿擴大的觸控區時卡住滾動。 */
+const SCROLL_SLOP = 7;
+/** 明確的方向優先權；輕微斜向起手仍留在判斷區，不立即改變值。 */
+const INTENT_RATIO = 1.15;
 /** touchmove 一定要非被動，不然 preventDefault 沒有作用 */
 const TM_OPT = { passive: false, capture: true } as AddEventListenerOptions;
 /** 轉交點擊時最多往下找幾層（底下可能又是另一根滑桿的透明區） */
@@ -174,7 +175,9 @@ export const installSliderTouch = () => {
     // 白點周圍至少44px的觸控區立即取得手勢，但不跳值。
     // 其他透明區仍等待橫向拖動，避免遮住相鄰按鈕的點擊。
     const onThumb = Math.abs(x0-center)<=22 && Math.abs(y0-(r.top+r.height/2))<=22;
-    let live = onThumb;   // 已經認定是在拖滑桿（認定之後就再也不會反悔）
+    // Touch 上即使起點落在白點，也先辨認手勢方向；否則垂直滑頁只要
+    // 從白點旁起手就會永遠被滑桿鎖住。滑鼠仍保留白點立即拖曳手感。
+    let live = onThumb && !isTouch;
     let dead = false;   // 已經認定使用者是在捲面板，這一下從頭到尾不關滑桿的事
     let done = false;
     let notifiedStart = false;
@@ -199,21 +202,18 @@ export const installSliderTouch = () => {
       if (dead) return false;
       if (!live) {
         const dx = Math.abs(cx - x0), dy = Math.abs(cy - y0);
-        /* 兩邊的門檻刻意不對稱，而且一旦認定就不再改：
-           拇指拖滑桿本來就是弧線，起手常常先往下滑幾像素才轉成橫的
-           —— 舊版看第一顆 move 就把它判成「在捲面板」並且鎖死，
-           所以只要拖得不夠直就整段失效。現在橫向只要不是被直向輾壓
-           （dx*2 >= dy）就算拖滑桿；要判成捲面板則得直向明顯大很多
-           （超過 14px 而且是橫向的兩倍以上）。兩邊都還沒過門檻就繼續等，
-           這段期間什麼都不做，所以不會誤動到任何東西。 */
-        if (dx > (fine ? .5 : DRAG_SLOP) && dx * 2 >= dy) {
+        /* 先辨認明確縱向意圖，再辨認橫向拖動。舊版的 14px 門檻、
+           2:1 方向比，加上 touch-action:none，會把整個頁面捲動鎖在滑桿上。
+           pan-y 由 CSS 預先允許，縱向意圖一旦成立便不 preventDefault，
+           瀏覽器可自然接手；橫向手勢仍使用同一個精確值映射。 */
+        if (dy > SCROLL_SLOP && dy > dx * INTENT_RATIO) {
+          dead = true; return false;
+        } else if (dx > (fine ? .5 : DRAG_SLOP) && dx > dy * INTENT_RATIO) {
           live = true;
           notifyStart(cx, cy);
           /* 抓住這根指頭：接下來不管手指飄到哪一顆按鈕、哪一根滑桿上面，
              事件都只會送到這裡，別人不會亮起來、也不會被按到。 */
           try { wrap.setPointerCapture(id); } catch { /* 抓不到就算了，事件還是收得到 */ }
-        } else if (dy > SCROLL_SLOP && dy > dx * 2) {
-          dead = true; return false;
         } else return false;
       }
       setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel,el.dataset.smoothRange==='true')) : valueAt(el, onThumb ? cx-x0+center : cx));
@@ -225,9 +225,8 @@ export const installSliderTouch = () => {
       if (advance(m.clientX, m.clientY) && m.cancelable) m.preventDefault();
     };
 
-    /* 觸控多接一條，而且是 passive:false —— 這是「拖到一半不會被瀏覽器搶走」
-       的關鍵。搭配滑桿區的 touch-action:none，弧線拖曳不會變成頁面捲動。
-       面板其他區域的捲動不受影響。 */
+    /* 觸控事件負責精確改值；只有橫向意圖成立後才 preventDefault。
+       CSS pan-y 讓縱向手勢從 slider-wrap 起手也可以自然捲動頁面。 */
     const onTouchMove = (t: TouchEvent) => {
       if (t.touches.length !== 1) return;          // 兩指以上是縮放，不要碰
       const f = t.touches[0];
@@ -278,7 +277,7 @@ export const installSliderTouch = () => {
       window.addEventListener('touchend', onTouchEnd, true);
       window.addEventListener('touchcancel', onTouchEnd, true);
     }
-    if (onThumb) {
+    if (onThumb && !isTouch) {
       notifyStart(x0,y0);
       try { wrap.setPointerCapture(id); } catch { /* Detached test surfaces have no capture. */ }
     }

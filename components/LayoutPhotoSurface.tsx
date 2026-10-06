@@ -57,11 +57,21 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       cv.style.width=`${surface.width}px`;cv.style.height=`${surface.height}px`;
       cv.style.transform=`matrix(${surface.transform.join(',')})`;cv.style.clipPath=`polygon(${surface.clip})`;
       const sources:SeamTexture[]=[],clips:Rect[]=[],radii:number[]=[],crops:{tx:number;ty:number;scale:number;angle:number}[]=[];
+      // At zero gutter, adjacent cells must remain visually closed after the
+      // browser resamples this physical-pixel surface through the preview zoom
+      // transform. Give shared edges half a raster sample of overlap on each
+      // side; owner selection stays deterministic in the compositor. Do not
+      // bleed when a user intentionally requested a gutter or rounded corners.
+      const noVisibleGutter=gap<=.001&&radius<=.001&&cells.every(c=>!(c.imgRadius||0));
+      const bleedX=noVisibleGutter?(Math.abs(surface.view.xx/W)+Math.abs(surface.view.xy/H))*.5:0;
+      const bleedY=noVisibleGutter?(Math.abs(surface.view.yx/W)+Math.abs(surface.view.yy/H))*.5:0;
       rects.forEach((r,i)=>{
         const c=cells[i];if(!c)return;
         const x=gap+r.x*aw,y=gap+r.y*ah,cw=Math.max(0,r.w*aw-gap),ch=Math.max(0,r.h*ah-gap);
         const resource=c.url?resources.current.get(c.id):undefined,im=resource?.image;
-        clips.push({x:x/width,y:y/height,w:cw/width,h:ch/height});
+        const leftBleed=noVisibleGutter&&r.x>1e-6?bleedX:0,rightBleed=noVisibleGutter&&r.x+r.w<1-1e-6?bleedX:0;
+        const topBleed=noVisibleGutter&&r.y>1e-6?bleedY:0,bottomBleed=noVisibleGutter&&r.y+r.h<1-1e-6?bleedY:0;
+        clips.push({x:(x-leftBleed)/width,y:(y-topBleed)/height,w:(cw+leftBleed+rightBleed)/width,h:(ch+topBleed+bottomBleed)/height});
         if(!im?.naturalWidth){sources.push(null);radii.push(radius);crops.push({tx:0,ty:0,scale:1,angle:0});return;}
         const fx=live.current.get(c.id)||c.fx||{},key=JSON.stringify([fx,revision]);
         if(resource!.key!==key){
@@ -76,7 +86,10 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         const dx=c.offsetX*r.w*aw,dy=c.offsetY*r.h*ah,angle=c.rotation*Math.PI/180;
         const cr=c.imgRadius?Math.min(cw,ch)*Math.min(.5,Math.max(0,c.imgRadius/100)):Math.min(radius,cw/2,ch/2);
         sources.push({image:source,width:iw,height:ih});radii.push(cr);
-        crops.push({tx:dx*Math.cos(angle)+dy*Math.sin(angle),ty:-dx*Math.sin(angle)+dy*Math.cos(angle),scale,angle});
+        // Keep the crop's optical center fixed while its raster clip receives
+        // the subpixel seam guard above.
+        const cx=(rightBleed-leftBleed)/2,cy=(bottomBleed-topBleed)/2;
+        crops.push({tx:dx*Math.cos(angle)+dy*Math.sin(angle)-cx*Math.cos(angle)-cy*Math.sin(angle),ty:-dx*Math.sin(angle)+dy*Math.cos(angle)+cx*Math.sin(angle)-cy*Math.cos(angle),scale,angle});
       });
       if(editPresentation.current){
         // WebKit can directly crop a native FX canvas into a physical-pixel

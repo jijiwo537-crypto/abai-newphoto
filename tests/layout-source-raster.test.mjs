@@ -16,6 +16,9 @@ test('ordinary layout samples full source into bounded screen pixels, not a fixe
  assert.match(layout,/drawSeamPreview\(cv,cells,clips,sources,-1/);
  assert.match(layout,/applyPhotoFx\(im,im.naturalWidth,im.naturalHeight/);
  assert.doesNotMatch(layout,/4096\/Math.max\(width,height\)/);
+ assert.match(layout,/noVisibleGutter=gap<=\.001&&radius<=\.001/);
+ assert.match(layout,/const bleedX=noVisibleGutter\?\(Math\.abs\(surface\.view\.xx\/W\)\+Math\.abs\(surface\.view\.xy\/H\)\)\*\.5/);
+ assert.match(layout,/crop's optical center fixed/);
 });
 test('photo selection paints cached pixels before resident scene preparation',()=>{
  const tap=creative.slice(creative.indexOf('const regionPointerUp='),creative.indexOf('const handlePointerDown ='));
