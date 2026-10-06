@@ -190,25 +190,43 @@ index 2b368fb5e58530b0688fe9a977b3309fa8156937..7bcb41476fa3a75223c36b7f6c175720
  });
  test('photo selection paints cached pixels before resident scene preparation',()=>{
   const tap=creative.slice(creative.indexOf('const regionPointerUp='),creative.indexOf('const handlePointerDown ='));
-diff --git a/tests/seamless-preview.test.mjs b/tests/seamless-preview.test.mjs
-index db62932f2ee7fa9db2728f2dcf76924cbf15ef61..8c77e22cbb8ddbd909655ab147080af0c84e9533 100644
 --- a/tests/seamless-preview.test.mjs
 +++ b/tests/seamless-preview.test.mjs
-@@ -59,6 +59,14 @@ test('fusion gesture bypasses full editor state and keeps pixels at fixed full r
-   assert.match(gpu,/if\(!tex\|\|this\.revisions\.get\(image\)!==revision\)[\s\S]*getImageData[\s\S]*this.textures.set/);
+@@ -39,6 +39,7 @@
+     }
+   }
  });
- 
++
+ test('fusion gesture bypasses full editor state and keeps pixels at fixed full resolution',()=>{
+   const component=readFileSync(new URL('../components/SeamlessLayout.tsx',import.meta.url),'utf8');
+   const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
+@@ -57,6 +58,26 @@
+   // WebKit's profile conversion happens once on texture creation, not while
+   // adjusting fusion or redrawing an already-resident source.
+   assert.match(gpu,/if\(!tex\|\|this\.revisions\.get\(image\)!==revision\)[\s\S]*getImageData[\s\S]*this.textures.set/);
++});
++
 +test('fusion normalizes RGB by total feather weight instead of clamping it at one',()=>{
 +  const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
 +  assert.match(gpu,/float divisor=isolated\?max\(\.000001,min\(1\.,coverage\)\):max\(\.000001,coverage\)/);
-+  assert.match(gpu,/color=vec4\(sum\/divisor,isolated\?min\(1\.,coverage\):1\.\)/);
++  assert.match(gpu,/color=vec4\(toEncoded\(sum\/divisor\),isolated\?min\(1\.,coverage\):1\.\)/);
 +  const weighted=(values,weights)=>values.reduce((sum,v,i)=>sum+v*weights[i],0)/weights.reduce((a,b)=>a+b,0);
 +  assert.ok(Math.abs(weighted([.2,.8],[.75,.75])-.5)<1e-12);
 +});
 +
++test('seam color blending occurs in linear light and round-trips unchanged cell colors',()=>{
++  const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
++  assert.match(gpu,/vec3 toLinear\(vec3 v\)/);assert.match(gpu,/vec3 toEncoded\(vec3 v\)/);
++  assert.match(gpu,/sum\+=rgb\*weight;coverage\+=weight/);
++  const linear=v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4;
++  const encoded=v=>v<=.0031308?v*12.92:1.055*v**(1/2.4)-.055;
++  for(const color of [.01,.04,.18,.5,.9])assert.ok(Math.abs(encoded(linear(color))-color)<1e-12);
++  const mix=(a,b,t)=>encoded(linear(a)*(1-t)+linear(b)*t);
++  assert.ok(Math.abs(mix(.2,.2,.63)-.2)<1e-12);
++  assert.ok(mix(.05,.8,.5)>((.05+.8)/2));
+ });
+ 
  test('selection alone does not allocate a second seamless renderer',()=>{
-   const component=readFileSync(new URL('../components/SeamlessLayout.tsx',import.meta.url),'utf8');
-   const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
 diff --git a/tests/slider-touch-targets.test.mjs b/tests/slider-touch-targets.test.mjs
 index f36ce57d2431886b7fcdeda44a61657245bda2e9..46bb4786cb999be4a3a07d61b5302304218cae33 100644
 --- a/tests/slider-touch-targets.test.mjs
@@ -268,11 +286,39 @@ index f36ce57d2431886b7fcdeda44a61657245bda2e9..46bb4786cb999be4a3a07d61b5302304
 + listeners.get('touchmove')({touches:[{clientX:201,clientY:117}],cancelable:true,preventDefault:()=>prevented++});
 + assert.equal(prevented,0);assert.equal(input.value,'50');assert.equal(events.includes('capture'),false);
 +});
-diff --git a/utils/seamlessPreview.ts b/utils/seamlessPreview.ts
-index 5e60168a74bfcf9dec41fcd96e417fd31cae1370..e8aec6d2fdc65aa0c7f71d7657ce89b12a460007 100644
 --- a/utils/seamlessPreview.ts
 +++ b/utils/seamlessPreview.ts
-@@ -97,7 +97,11 @@ class SeamGpu {
+@@ -67,15 +67,17 @@
+         float wy=(e.y>0.?smoothstep(b.y,b.y+2.*e.y,p.y):1.)*(e.w>0.?1.-smoothstep(b.y+b.w-2.*e.w,b.y+b.w,p.y):1.);
+         vec2 d=p-(b.xy+b.zw*.5);d=vec2(d.x*s.z+d.y*s.w,-d.x*s.w+d.y*s.z)-c.xy;
+         vec4 tex=texture(photo${i},d/(s.xy*c.z)+.5);
+-        if(srgb${i}&&tex.a>0.)tex.rgb=toP3(tex.rgb/tex.a)*tex.a;
+-        float a=tex.a*opacity${i};vec3 rgb=tex.rgb*opacity${i}+vec3(18./255.)*(1.-a);
++        vec3 encoded=tex.a>0.?tex.rgb/tex.a:vec3(0.);
++        if(srgb${i})encoded=toP3(encoded);
++        vec3 linearSource=toLinear(encoded);
++        float a=tex.a*opacity${i};vec3 rgb=linearSource*a+toLinear(vec3(18./255.))*(1.-a);
+         float weight=wx*wy;
+         if(isolated){
+           // Real gaps/rounded corners; straight cell edges have one owner.
+           vec4 bounds=limits${i};bool inside=all(greaterThanEqual(p,bounds.xy))&&all(lessThan(p,bounds.zw));
+           if(!inside)weight=0.;
+           weight*=roundCoverage;
+-          sum+=tex.rgb*opacity${i}*weight;coverage+=a*weight;
++          sum+=linearSource*a*weight;coverage+=a*weight;
+         }else{sum+=rgb*weight;coverage+=weight;}
+       }
+     }`).join('\n');
+@@ -86,6 +88,8 @@
+       vec3 toP3(vec3 v){vec3 linear=mix(v/12.92,pow((v+.055)/1.055,vec3(2.4)),step(vec3(.04045),v));
+         linear=mat3(.82259287,.03319951,.01708535,.17753395,.96678350,.07239572,0.,0.,.91030148)*linear;
+         return mix(linear*12.92,1.055*pow(max(linear,vec3(0.)),vec3(1./2.4))-.055,step(vec3(.0031308),linear));}
++      vec3 toLinear(vec3 v){return mix(v/12.92,pow((v+.055)/1.055,vec3(2.4)),step(vec3(.04045),v));}
++      vec3 toEncoded(vec3 v){return mix(v*12.92,1.055*pow(max(v,vec3(0.)),vec3(1./2.4))-.055,step(vec3(.0031308),v));}
+       void main(){bool a=all(greaterThanEqual(uv,clip.xy))&&all(lessThanEqual(uv,clip.zw));bool b=second&&all(greaterThanEqual(uv,otherClip.xy))&&all(lessThanEqual(uv,otherClip.zw));
+         // A separately composited canvas is bilinearly sampled by the browser.
+         // Replicate photo edges into its filter footprint, beneath the main
+@@ -97,7 +101,11 @@
          vec2 p=clamp(vec2(dot(uv,vx.xy)+vx.z,dot(uv,vy.xy)+vy.z),vec2(.00001),size-vec2(.00001));
          float nearest=1.e30;int owner=-1;if(!fused){${owners}}
          vec3 sum=vec3(0.);float coverage=0.;${layers}
@@ -281,7 +327,7 @@ index 5e60168a74bfcf9dec41fcd96e417fd31cae1370..e8aec6d2fdc65aa0c7f71d7657ce89b1
 +        // sum slightly above one. Clamp only output alpha; clamping the RGB
 +        // divisor changes image tone as the fusion width moves.
 +        float divisor=isolated?max(.000001,min(1.,coverage)):max(.000001,coverage);
-+        color=vec4(sum/divisor,isolated?min(1.,coverage):1.);}`);
++        color=vec4(toEncoded(sum/divisor),isolated?min(1.,coverage):1.);}`);
      p=gl.createProgram()!;gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);gl.deleteShader(vs);gl.deleteShader(fs);
      if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p)||'Program');
      this.programs.set(count,p);return p;
