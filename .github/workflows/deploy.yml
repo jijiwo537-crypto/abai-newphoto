@@ -1,58 +1,36 @@
 name: Build and deploy to GitHub Pages
-
 on:
   push:
-    branches: [main]
+    branches: [main, codex/deploy-layout-20261006b]
   workflow_dispatch:
-
-# 只給發布 Pages 需要的權限
 permissions:
   contents: read
   pages: write
   id-token: write
-
-# GitHub Pages 正式發布：啟用 Pages 後只觸發這一次完整建置。
-# 同時只跑一個發布；後來的推送會取代排隊中的那一次，但不會中斷正在跑的
 concurrency:
   group: pages
   cancel-in-progress: false
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      # package.json 目前比既有 lockfile 新；先讓 npm 同步依賴後再執行正式編譯。
+      - run: git apply --check .github/deploy-layout.patch && git apply .github/deploy-layout.patch
       - run: npm install --no-audit --no-fund
-
-      # vite.config.ts 已經設成相對路徑，所以放在使用者名稱底下的子路徑也能正常載入
-      #
-      # 登入用的 Supabase 設定從 GitHub 的 Secrets 帶進來。
-      # 在 repo 的 Settings → Secrets and variables → Actions 新增這兩筆：
-      #   SUPABASE_URL              https://xxxx.supabase.co
-      #   SUPABASE_PUBLISHABLE_KEY  sb_publishable_...
-      #
-      # 沒設也不會讓打包失敗 —— 只是 App 裡按登入會顯示「後端尚未設定」，
-      # 其他功能照常。
       - run: npm run build
         env:
           VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
-
       - uses: actions/configure-pages@v5
         with:
           enablement: true
-
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
-
   deploy:
     needs: build
     runs-on: ubuntu-latest
