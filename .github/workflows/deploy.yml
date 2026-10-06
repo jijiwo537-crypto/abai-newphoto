@@ -2,7 +2,7 @@ name: Build and deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/deploy-layout-20261006]
   workflow_dispatch:
 
 # 只給發布 Pages 需要的權限
