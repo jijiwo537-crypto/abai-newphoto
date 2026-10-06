@@ -105,6 +105,8 @@ index dae1b344be527e5dc1e1eba4b1839e9d040c2366..95f1942d652c245601e00a489d48cee2
          }
          .custom-range:focus {
 diff --git a/components/LayoutPhotoSurface.tsx b/components/LayoutPhotoSurface.tsx
+--- a/components/LayoutPhotoSurface.tsx
++++ b/components/LayoutPhotoSurface.tsx
 @@ -57,11 +57,23 @@
        cv.style.width=`${surface.width}px`;cv.style.height=`${surface.height}px`;
        cv.style.transform=`matrix(${surface.transform.join(',')})`;cv.style.clipPath=`polygon(${surface.clip})`;
@@ -164,7 +166,6 @@ diff --git a/components/LayoutPhotoSurface.tsx b/components/LayoutPhotoSurface.t
        }
        flat.style.display=editPresentation.current?'block':'none';cv.style.display=editPresentation.current?'none':'block';
        flat.toggleAttribute('data-layout-photo-surface',editPresentation.current);cv.toggleAttribute('data-layout-photo-surface',!editPresentation.current);
-
 diff --git a/styles.css b/styles.css
 index 2ffc5906e4ff96487ea0b5248ad21fa7175209a1..a6e5411b843660a09acc101cd96ea04373d08543 100644
 --- a/styles.css
@@ -197,6 +198,8 @@ index 2ffc5906e4ff96487ea0b5248ad21fa7175209a1..a6e5411b843660a09acc101cd96ea043
  }
  .custom-range:focus { outline: none; }
 diff --git a/tests/layout-source-raster.test.mjs b/tests/layout-source-raster.test.mjs
+--- a/tests/layout-source-raster.test.mjs
++++ b/tests/layout-source-raster.test.mjs
 @@ -16,6 +16,9 @@
   assert.match(layout,/drawSeamPreview\(cv,cells,clips,sources,-1/);
   assert.match(layout,/applyPhotoFx\(im,im.naturalWidth,im.naturalHeight/);
@@ -217,8 +220,9 @@ diff --git a/tests/layout-source-raster.test.mjs b/tests/layout-source-raster.te
   assert.match(gpu,/lessThan\(p,bounds.zw\)/);
   assert.match(gpu,/g.ex,g.ey,g.ex\+g.ew,g.ey\+g.eh/);
  });
-
 diff --git a/tests/seamless-preview.test.mjs b/tests/seamless-preview.test.mjs
+--- a/tests/seamless-preview.test.mjs
++++ b/tests/seamless-preview.test.mjs
 @@ -27,6 +27,15 @@
    assert.equal(g.left+g.right+g.top+g.bottom,0);
   }
@@ -270,7 +274,6 @@ diff --git a/tests/seamless-preview.test.mjs b/tests/seamless-preview.test.mjs
  });
  
  test('selection alone does not allocate a second seamless renderer',()=>{
-
 diff --git a/tests/slider-touch-targets.test.mjs b/tests/slider-touch-targets.test.mjs
 index f36ce57d2431886b7fcdeda44a61657245bda2e9..46bb4786cb999be4a3a07d61b5302304218cae33 100644
 --- a/tests/slider-touch-targets.test.mjs
@@ -331,6 +334,8 @@ index f36ce57d2431886b7fcdeda44a61657245bda2e9..46bb4786cb999be4a3a07d61b5302304
 + assert.equal(prevented,0);assert.equal(input.value,'50');assert.equal(events.includes('capture'),false);
 +});
 diff --git a/utils/seamlessPreview.ts b/utils/seamlessPreview.ts
+--- a/utils/seamlessPreview.ts
++++ b/utils/seamlessPreview.ts
 @@ -1,7 +1,7 @@
  import { seamGeometry, seamImageTransform, type SeamPhoto, type SeamRect } from './seamlessLayout';
  import { configureWebglWide, get2dWide } from './colorSpace';
@@ -405,7 +410,6 @@ diff --git a/utils/seamlessPreview.ts b/utils/seamlessPreview.ts
      gl.uniform3f(uniform('viewX'),view.xx,view.xy,view.x0);gl.uniform3f(uniform('viewY'),view.yx,view.yy,view.y0);
      gl.uniform1i(uniform('zones'),view.clip?1:0);gl.uniform1i(uniform('second'),view.other?1:0);
      gl.uniform4fv(uniform('clip'),view.clip||[-1,-1,2,2]);
-
 diff --git a/utils/sliderTouch.ts b/utils/sliderTouch.ts
 index 0fdadda2895aabe0d84e978d7601b65ab388e87f..4e6fe52585b96dc58a06e6ae5133229eb25aa1aa 100644
 --- a/utils/sliderTouch.ts
