@@ -105,10 +105,10 @@ index dae1b344be527e5dc1e1eba4b1839e9d040c2366..95f1942d652c245601e00a489d48cee2
          }
          .custom-range:focus {
 diff --git a/components/LayoutPhotoSurface.tsx b/components/LayoutPhotoSurface.tsx
-index 026023cd26c360e5ca535f759e3d62908c51ecf3..08ce3cd9f832a62fe1e93c55731b5a8afae1d981 100644
+index 026023cd26c360e5ca535f759e3d62908c51ecf3..cb562617fd70c308810b937c5e68986bdbb5e81f 100644
 --- a/components/LayoutPhotoSurface.tsx
 +++ b/components/LayoutPhotoSurface.tsx
-@@ -57,11 +57,21 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
+@@ -57,11 +57,23 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
        cv.style.width=`${surface.width}px`;cv.style.height=`${surface.height}px`;
        cv.style.transform=`matrix(${surface.transform.join(',')})`;cv.style.clipPath=`polygon(${surface.clip})`;
        const sources:SeamTexture[]=[],clips:Rect[]=[],radii:number[]=[],crops:{tx:number;ty:number;scale:number;angle:number}[]=[];
@@ -118,8 +118,10 @@ index 026023cd26c360e5ca535f759e3d62908c51ecf3..08ce3cd9f832a62fe1e93c55731b5a8a
 +      // side; owner selection stays deterministic in the compositor. Do not
 +      // bleed when a user intentionally requested a gutter or rounded corners.
 +      const noVisibleGutter=gap<=.001&&radius<=.001&&cells.every(c=>!(c.imgRadius||0));
-+      const bleedX=noVisibleGutter?(Math.abs(surface.view.xx/W)+Math.abs(surface.view.xy/H))*.5:0;
-+      const bleedY=noVisibleGutter?(Math.abs(surface.view.yx/W)+Math.abs(surface.view.yy/H))*.5:0;
++      // Cover the browser's half-texel bilinear footprint and clip antialiasing
++      // at shared edges. Crops are compensated below, so source framing stays fixed.
++      const bleedX=noVisibleGutter?(Math.abs(surface.view.xx/W)+Math.abs(surface.view.xy/H))*1.25:0;
++      const bleedY=noVisibleGutter?(Math.abs(surface.view.yx/W)+Math.abs(surface.view.yy/H))*1.25:0;
        rects.forEach((r,i)=>{
          const c=cells[i];if(!c)return;
          const x=gap+r.x*aw,y=gap+r.y*ah,cw=Math.max(0,r.w*aw-gap),ch=Math.max(0,r.h*ah-gap);
@@ -131,7 +133,7 @@ index 026023cd26c360e5ca535f759e3d62908c51ecf3..08ce3cd9f832a62fe1e93c55731b5a8a
          if(!im?.naturalWidth){sources.push(null);radii.push(radius);crops.push({tx:0,ty:0,scale:1,angle:0});return;}
          const fx=live.current.get(c.id)||c.fx||{},key=JSON.stringify([fx,revision]);
          if(resource!.key!==key){
-@@ -76,7 +86,10 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
+@@ -76,7 +88,10 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
          const dx=c.offsetX*r.w*aw,dy=c.offsetY*r.h*ah,angle=c.rotation*Math.PI/180;
          const cr=c.imgRadius?Math.min(cw,ch)*Math.min(.5,Math.max(0,c.imgRadius/100)):Math.min(radius,cw/2,ch/2);
          sources.push({image:source,width:iw,height:ih});radii.push(cr);
@@ -175,7 +177,7 @@ index 2ffc5906e4ff96487ea0b5248ad21fa7175209a1..a6e5411b843660a09acc101cd96ea043
  }
  .custom-range:focus { outline: none; }
 diff --git a/tests/layout-source-raster.test.mjs b/tests/layout-source-raster.test.mjs
-index 2b368fb5e58530b0688fe9a977b3309fa8156937..0a7a10755ca30d189bbf0a1bcd694d58891f4ef7 100644
+index 2b368fb5e58530b0688fe9a977b3309fa8156937..7bcb41476fa3a75223c36b7f6c17572081286184 100644
 --- a/tests/layout-source-raster.test.mjs
 +++ b/tests/layout-source-raster.test.mjs
 @@ -16,6 +16,9 @@ test('ordinary layout samples full source into bounded screen pixels, not a fixe
@@ -183,11 +185,30 @@ index 2b368fb5e58530b0688fe9a977b3309fa8156937..0a7a10755ca30d189bbf0a1bcd694d58
   assert.match(layout,/applyPhotoFx\(im,im.naturalWidth,im.naturalHeight/);
   assert.doesNotMatch(layout,/4096\/Math.max\(width,height\)/);
 + assert.match(layout,/noVisibleGutter=gap<=\.001&&radius<=\.001/);
-+ assert.match(layout,/const bleedX=noVisibleGutter\?\(Math\.abs\(surface\.view\.xx\/W\)\+Math\.abs\(surface\.view\.xy\/H\)\)\*\.5/);
++ assert.match(layout,/const bleedX=noVisibleGutter\?\(Math\.abs\(surface\.view\.xx\/W\)\+Math\.abs\(surface\.view\.xy\/H\)\)\*1\.25/);
 + assert.match(layout,/crop's optical center fixed/);
  });
  test('photo selection paints cached pixels before resident scene preparation',()=>{
   const tap=creative.slice(creative.indexOf('const regionPointerUp='),creative.indexOf('const handlePointerDown ='));
+diff --git a/tests/seamless-preview.test.mjs b/tests/seamless-preview.test.mjs
+index db62932f2ee7fa9db2728f2dcf76924cbf15ef61..8c77e22cbb8ddbd909655ab147080af0c84e9533 100644
+--- a/tests/seamless-preview.test.mjs
++++ b/tests/seamless-preview.test.mjs
+@@ -59,6 +59,14 @@ test('fusion gesture bypasses full editor state and keeps pixels at fixed full r
+   assert.match(gpu,/if\(!tex\|\|this\.revisions\.get\(image\)!==revision\)[\s\S]*getImageData[\s\S]*this.textures.set/);
+ });
+ 
++test('fusion normalizes RGB by total feather weight instead of clamping it at one',()=>{
++  const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
++  assert.match(gpu,/float divisor=isolated\?max\(\.000001,min\(1\.,coverage\)\):max\(\.000001,coverage\)/);
++  assert.match(gpu,/color=vec4\(sum\/divisor,isolated\?min\(1\.,coverage\):1\.\)/);
++  const weighted=(values,weights)=>values.reduce((sum,v,i)=>sum+v*weights[i],0)/weights.reduce((a,b)=>a+b,0);
++  assert.ok(Math.abs(weighted([.2,.8],[.75,.75])-.5)<1e-12);
++});
++
+ test('selection alone does not allocate a second seamless renderer',()=>{
+   const component=readFileSync(new URL('../components/SeamlessLayout.tsx',import.meta.url),'utf8');
+   const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
 diff --git a/tests/slider-touch-targets.test.mjs b/tests/slider-touch-targets.test.mjs
 index f36ce57d2431886b7fcdeda44a61657245bda2e9..46bb4786cb999be4a3a07d61b5302304218cae33 100644
 --- a/tests/slider-touch-targets.test.mjs
@@ -247,6 +268,23 @@ index f36ce57d2431886b7fcdeda44a61657245bda2e9..46bb4786cb999be4a3a07d61b5302304
 + listeners.get('touchmove')({touches:[{clientX:201,clientY:117}],cancelable:true,preventDefault:()=>prevented++});
 + assert.equal(prevented,0);assert.equal(input.value,'50');assert.equal(events.includes('capture'),false);
 +});
+diff --git a/utils/seamlessPreview.ts b/utils/seamlessPreview.ts
+index 5e60168a74bfcf9dec41fcd96e417fd31cae1370..e8aec6d2fdc65aa0c7f71d7657ce89b12a460007 100644
+--- a/utils/seamlessPreview.ts
++++ b/utils/seamlessPreview.ts
+@@ -97,7 +97,11 @@ class SeamGpu {
+         vec2 p=clamp(vec2(dot(uv,vx.xy)+vx.z,dot(uv,vy.xy)+vy.z),vec2(.00001),size-vec2(.00001));
+         float nearest=1.e30;int owner=-1;if(!fused){${owners}}
+         vec3 sum=vec3(0.);float coverage=0.;${layers}
+-        color=vec4(sum/max(.000001,min(1.,coverage)),isolated?min(1.,coverage):1.);}`);
++        // T-junctions and antialiased cell bands can contribute a coverage
++        // sum slightly above one. Clamp only output alpha; clamping the RGB
++        // divisor changes image tone as the fusion width moves.
++        float divisor=isolated?max(.000001,min(1.,coverage)):max(.000001,coverage);
++        color=vec4(sum/divisor,isolated?min(1.,coverage):1.);}`);
+     p=gl.createProgram()!;gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);gl.deleteShader(vs);gl.deleteShader(fs);
+     if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p)||'Program');
+     this.programs.set(count,p);return p;
 diff --git a/utils/sliderTouch.ts b/utils/sliderTouch.ts
 index 0fdadda2895aabe0d84e978d7601b65ab388e87f..4e6fe52585b96dc58a06e6ae5133229eb25aa1aa 100644
 --- a/utils/sliderTouch.ts
