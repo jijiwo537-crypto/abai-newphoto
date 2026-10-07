@@ -1286,13 +1286,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const region=photoRegionRef.current;
     // Long-press swap thumbnails are ready before the first hold.
     if(region&&region.photos.length>1)for(const p of region.photos){const img=p.src&&decodedRegionPhotos.current.get(p.src);if(img?.naturalWidth)swapThumb(p.src,img,Math.round(80*window.devicePixelRatio));}
-    if(region&&region.photos.length>1){
+    // Only a seamless region uses this GPU surface; warming it for every
+    // multi-photo layout kept every original resident on the GPU.
+    if(region&&region.photos.length>1&&region.seamless){
       const decoded=new Map(decodedRegionPhotos.current);
       try{creativeSeam.current??=new CreativeSeamless();creativeSeam.current.warm(region,decoded);}catch{}
     }
     })();
     return ()=>{cancelled=true;};
-  },[photoRegion?.photos.map(p=>p.src).join('|'),imageState,layout]);
+  },[photoRegion?.photos.map(p=>p.src).join('|'),imageState,layout,!!photoRegion?.seamless]);
   useEffect(()=>()=>{for(const bitmap of regionDrawables.current.values())bitmap.close();regionDrawables.current.clear();},[]);
   const creativeSeam = useRef<CreativeSeamless|null>(null);
   useEffect(()=>()=>creativeSeam.current?.dispose(),[]);
@@ -1498,8 +1500,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // and rebuild the whole filter/effect pipeline under the fingers.
     // Larger originals still grow to physical display demand; no lower-quality
     // interaction mode is used and only the current slot owns a shader pool.
-    const cap=photoPreviewCapacity(required,Math.max(regionPreviewCaps.current.get(id)||0,Math.min(sourceSize,4096)),sourceSize);
+    // Floor 2048 (was 4096 = ~50MB per edited photo, all resident at once,
+    // which crashed iOS with several edited photos). It still grows to the
+    // physical display demand when the view is zoomed in.
+    const cap=photoPreviewCapacity(required,Math.max(regionPreviewCaps.current.get(id)||0,Math.min(sourceSize,2048)),sourceSize);
     regionPreviewCaps.current.set(id,cap);return cap;
+  };
+  /** Export-sized effect pixels are one-shot; release them after an export. */
+  const releaseExportFx = () => {
+    for (const [key, entry] of objFxCache.current) if (key.startsWith('export-')) {
+      if (entry.cv instanceof HTMLCanvasElement) entry.cv.width = entry.cv.height = 1;
+      objFxCache.current.delete(key);
+    }
   };
   const fxCanvasOf = useCallback((o: any, isMain = false, onScreenPx = 0, prepareNative = false): CanvasImageSource | null => {
     if (!o.img) return null;
@@ -1515,9 +1527,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       z: o.imgShapeZoom || 1,
     };
     const hasShape = shape.r || shape.f || shape.sw || shape.g || isImgShaped(shape.k);
+    let exportCap=0;
     if(!isMain&&o.id?.startsWith('region-fx-')){
       const preview=objFxCache.current.get(o.id);
-      const required=Math.min(2400,Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height));
+      /* Export: effects at exactly the pixels this cell needs in the output
+         (cell size x crop zoom), up to the original — not a fixed 2400 cap
+         that left edited photos softer than unedited ones. */
+      const native=Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height);
+      const slot=Number(o.id.slice('region-fx-'.length).split('@')[0]),t=latestImageTransform.current;
+      const cell=photoRegionRef.current&&regionRects(photoRegionRef.current,Math.abs(t.w),Math.abs(t.h))[slot];
+      let required=native;
+      if(cell&&onScreenPx>0){const dw=Math.abs(t.w)*cell.w,dh=Math.abs(t.h)*cell.h,crop=photoCrop(o,dw,dh),k=onScreenPx/Math.max(1,Math.abs(t.w),Math.abs(t.h));
+        required=Math.min(native,Math.ceil(native*Math.max(dw*k/Math.max(1,crop.sw),dh*k/Math.max(1,crop.sh))));}
+      exportCap=required;
       if(!hasShape&&preview?.key.startsWith(JSON.stringify([o.fx,shape])+'|')&&Math.max(preview.cv.width,preview.cv.height)>=required)return preview.cv;
       // History/export must not replace a live photo's work surface or cache
       // key with a different-sized result halfway through a gesture.
@@ -1565,6 +1587,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        圖片物件如果還卡在 1600，畫上去等於被放大過 —— 那一顆就會比旁邊的
        圖形與文字糊。預覽維持 1600（拖曳中 640），手感完全沒動到。 */
     let cap = live ? 640 : (isMain ? 1600 : 2400);
+    if (exportCap) cap = exportCap;
     // Base-photo previews must use the preview route, not the export route.
     // Keep ordinary full preview density (never its live/640 shortcut), and
     // grow it to the actual canvas pixel footprint when the view is enlarged.
@@ -1577,7 +1600,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       // only grows, and always exceeds physical display demand; no live/640
       // quality shortcut is used for a base photograph.
       cap=regionEffectCapacity(o,slot,o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height,onScreenPx);
-      if(prepareNative)cap=Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height);
+      /* The settled snapshot used to be native size (~48MB per 12MP photo,
+         kept for every edited photo): several edited photos crashed iOS.
+         Preview only needs display density (capacity already grows with
+         zoom); exports recompute effects at the output size. */
+      if(prepareNative)cap=Math.max(cap,Math.min(1600,Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height)));
     }
     /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
        維持原本的尺寸才不會讓任何既有的畫面變糊。 */
@@ -2664,7 +2691,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (sn.env) applyEnvRef.current(sn.env);
     setHoles(sn.holes.map(h => ({ ...h })));
     setObjects(sn.objects.map(o => ({ ...o, fx: o.fx ? { ...o.fx } : o.fx })));
-    if (!sn.env) { setSelectedTarget(null); setSelectedObj(null); }
+    // Keep the selection, unless the restored state no longer has it.
+    if (selectedObjRef.current && !sn.objects.some(o => o.id === selectedObjRef.current)) setSelectedObj(null);
+    if (selectedTarget && !sn.holes.some(h => h.id === selectedTarget || h.id + '_paired' === selectedTarget)) setSelectedTarget(null);
     /* 套用 env 會連帶觸發「換排版就重灑圖案」那類 effect，
        所以要多等幾格再解鎖，中間的連鎖變動都不記進歷史。 */
     setTimeout(() => { restoringRef.current = false; dirtyRef.current = false; setDirty(false); }, 260);
@@ -3614,6 +3643,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionTouches=useRef(new Map<number,{x:number;y:number}>());
   const regionEditTap=useRef<{x:number;y:number;away:boolean;moved:boolean}|null>(null);
   const regionTap=useRef<{id:number;index:number|null;x:number;y:number;moved:boolean}|null>(null);
+  const emptyCellTap=useRef<{id:number;index:number;x:number;y:number;moved:boolean}|null>(null);
   const regionScenePinch=useRef(false);
   const regionGesture=useRef<{index:number;photo:any;cx:number;cy:number;distance:number;w:number;h:number}|null>(null);
   const regionLiveUntil=useRef(0);
@@ -3733,6 +3763,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   },[regionSwapPhoto]);
   const regionPointerDown=(e:React.PointerEvent)=>{
     if(motionLockRef.current||brushMode!=='off'||(e.target as Element).closest('button,input,.no-pointer-events'))return;
+    // A second finger turns a pending empty-cell tap into a gesture.
+    if(emptyCellTap.current&&emptyCellTap.current.id!==e.pointerId)emptyCellTap.current.moved=true;
     photoGestureIds.current.add(e.pointerId);
     photoGestureRelease.current??=holdPhotoInteraction();
     const second=activePointers.current.size||regionTouches.current.size||regionHold.current;
@@ -3761,7 +3793,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(!second&&leavingSelectedPhoto){
         regionScenePinch.current=false;regionTap.current={id:e.pointerId,index:null,x:e.clientX,y:e.clientY,moved:false};
       }else if(!second&&multi){
-        if(!photoContent(source)?.src){e.stopPropagation();regionUploadIndex.current=source.index;regionUploadRef.current?.click();return;}
+        if(!photoContent(source)?.src){
+          /* 空格子：等「放開而且沒有移動」才算點一下 —— 手指只是落在空格上開始
+             捏合或拖曳時不該跳出相簿。這一下也只選中這一格，不讓底下的畫布
+             把它當成點底圖（以前會把整張底圖框起來）。 */
+          e.stopPropagation();e.preventDefault();
+          emptyCellTap.current={id:e.pointerId,index:source.index,x:e.clientX,y:e.clientY,moved:false};
+          return;
+        }
         regionScenePinch.current=false;regionTap.current={id:e.pointerId,index:source.index,x:e.clientX,y:e.clientY,moved:false};
       }else setSelectedRegionPhoto(null);
     }
@@ -3776,6 +3815,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     },PHOTO_SWAP_HOLD_MS);regionHold.current=hold;
   };
   const regionPointerMove=(e:React.PointerEvent)=>{
+    const empty=emptyCellTap.current;
+    if(empty?.id===e.pointerId){if(Math.hypot(e.clientX-empty.x,e.clientY-empty.y)>8)empty.moved=true;e.stopPropagation();return;}
     const tap=regionTap.current;
     if(tap?.id===e.pointerId&&Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8)tap.moved=true;
     const hold=regionHold.current;
@@ -3811,6 +3852,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     commitRegion({...region,photos:region.photos.map((q,i)=>i===d.index?{...q,zoom,offsetX,offsetY}:q)},true);
   };
   const regionPointerUp=(e:React.PointerEvent)=>{
+    const empty=emptyCellTap.current;
+    if(empty?.id===e.pointerId){
+      emptyCellTap.current=null;photoGestureIds.current.delete(e.pointerId);
+      if(!photoGestureIds.current.size){photoGestureRelease.current?.();photoGestureRelease.current=null;}
+      e.stopPropagation();
+      if(!empty.moved&&e.type!=='pointercancel'){
+        selectedRegionPhotoRef.current=empty.index;setSelectedRegionPhoto(empty.index);
+        selectedObjRef.current=null;baseSelectedRef.current=false;maskSelectedRef.current=false;
+        setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);
+        regionPaintRef.current();
+        regionUploadIndex.current=empty.index;regionUploadRef.current?.click();
+      }
+      return;
+    }
     photoGestureIds.current.delete(e.pointerId);
     if(!photoGestureIds.current.size){photoGestureRelease.current?.();photoGestureRelease.current=null;}
     const hold=regionHold.current,owned=regionTouches.current.has(e.pointerId);
@@ -8837,8 +8892,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
     linkMode, linkColor,
     moShape, moLink, motionHold,
-    // 選取框也是畫面的一部分，一起記起來才會「回到一模一樣」
-    selectedObj, selectedTarget,
+    /* 選取不是作品內容：不記進復原紀錄（以前選一下東西也算一步，按復原
+       會先倒回「選了什麼」，看起來像沒反應或亂跳）。跟 Figma／Procreate 一樣，
+       復原只改內容，選取維持現狀；被復原掉的物件才會自動取消選取。 */
   };
   applyEnvRef.current = (e: any) => {
     if (!e) return;
@@ -8872,7 +8928,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setGlowMoText(e.glowMoText || { idle: 'none', amp: 100, speed: 100 });
     setLinkMode(e.linkMode); setLinkColor(e.linkColor ?? null);
     setMoShape(e.moShape); setMoLink(e.moLink); setMotionHold(e.motionHold);
-    setSelectedObj(e.selectedObj ?? null); setSelectedTarget(e.selectedTarget ?? null);
   };
 
   /* 只要上面那組設定有變就記一格。等停下來 400ms 才記 ——
@@ -9098,6 +9153,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     } finally {
       exportStream?.getTracks().forEach(track=>track.stop());
       cv.width = 0; cv.height = 0;
+      releaseExportFx();
       animRef.current = null;
       setVideoProg(null);
     }
@@ -9136,6 +9192,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            原尺寸。不然會存到動畫半途，位置跟編輯時看到的對不上。 */
         animRef.current = null;
         renderToCanvas(exportCanvas, exportScale);
+        releaseExportFx();
         
         // 用所選格式編碼，再持有 blob 網址，避免 dataURL 額外的字串記憶體。
         const url = imageExportFormat==='heic'?await exportHeic(exportCanvas):await canvasToUrl(exportCanvas,imageExportFormat==='jpg'?'image/jpeg':'image/png',1);
@@ -9911,7 +9968,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     const left=Math.max(off.ix,cell.x),top=Math.max(off.iy,cell.y),right=Math.min(off.ix+off.iw,cell.x+cell.w),bottom=Math.min(off.iy+off.ih,cell.y+cell.h);
                     if(right<=left||bottom<=top)return null;
                     return <div key={i} data-photo-cell={i} className="absolute flex items-center justify-center" style={{left:`${left/off.cw*100}%`,top:`${top/off.ch*100}%`,width:`${(right-left)/off.cw*100}%`,height:`${(bottom-top)/off.ch*100}%`}}>
-                      {!photoRegion.photos[i].src && <button aria-label="選擇相片" className="pointer-events-auto absolute inset-0" onClick={()=>{regionUploadIndex.current=i;regionUploadRef.current?.click();}}/>}
+                      {!photoRegion.photos[i].src && <button aria-label="選擇相片" className="pointer-events-auto absolute inset-0"
+                        /* 這一下只屬於這個空格：不能再往下傳到畫布被當成「點底圖」
+                           （那會把整張底圖框起來）。放開才選中這一格並打開相簿。 */
+                        onPointerDown={e=>e.stopPropagation()} onPointerUp={e=>e.stopPropagation()}
+                        onClick={e=>{e.stopPropagation();
+                          selectedRegionPhotoRef.current=i;setSelectedRegionPhoto(i);
+                          selectedObjRef.current=null;baseSelectedRef.current=false;maskSelectedRef.current=false;
+                          setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);
+                          regionPaintRef.current();
+                          regionUploadIndex.current=i;regionUploadRef.current?.click();}}/>}
                     </div>;
                   })}
                 </div>;

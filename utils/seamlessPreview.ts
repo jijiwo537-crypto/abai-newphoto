@@ -21,7 +21,7 @@ class SeamGpu {
   private maxTextureUnits:number;
   private uniforms=new Map<WebGLProgram,Map<string,WebGLUniformLocation|null>>();
   private lastPresentation:(()=>void)|null=null;
-  constructor(canvas:HTMLCanvasElement,direct=false,private presentationOnly=false,readonly srgbOutput=false){
+  constructor(canvas:HTMLCanvasElement,private direct=false,private presentationOnly=false,readonly srgbOutput=false){
     const webkit=/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
     this.transferred=!direct&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
     this.canvas=this.transferred?new OffscreenCanvas(canvas.width,canvas.height):canvas;
@@ -166,6 +166,14 @@ class SeamGpu {
       // just like originals. Only live mutable effect canvases need the shader
       // conversion, avoiding repeated gamma powers during preview zoom.
       const srgbCanvas=image instanceof HTMLCanvasElement&&!!revision&&image.dataset.regionImmutable!=='1';
+      /* Memory: a native 12MP texture plus mipmaps is ~64MB. Previews sample
+         at screen density, so cap their textures to what a phone screen can
+         show (more photos -> each smaller). iOS kills the page when several
+         full-size originals are resident at once. Exports (direct) keep the
+         original resolution. UVs are normalised, so geometry is unchanged. */
+      const limit=this.direct?Infinity:count<=2?4096:count<=4?3072:2048;
+      const sw=source?.width||1,sh=source?.height||1,shrink=Math.min(1,limit/Math.max(sw,sh));
+      const uploadW=Math.max(1,Math.round(sw*shrink)),uploadH=Math.max(1,Math.round(sh*shrink));
       if(!tex||this.revisions.get(image)!==revision){tex||=gl.createTexture()!;gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);
         if(srgbCanvas){
           // Photo effects are explicitly sRGB. Import their resident canvas
@@ -174,14 +182,21 @@ class SeamGpu {
           gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,gl.NONE);
           gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image as TexImageSource);
           gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,gl.BROWSER_DEFAULT_WEBGL);
-        }else if(this.color.directUpload){
+        }else if(this.color.directUpload&&!(limit<Math.max(source?.width||1,source?.height||1))){
           gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image as TexImageSource);
+        }else if(this.color.directUpload){
+          // Preview texture capped to display demand (see limit), drawn once
+          // through a colour-managed canvas in the output space.
+          const small=document.createElement('canvas');small.width=uploadW;small.height=uploadH;
+          const g2=small.getContext('2d',{colorSpace:this.color.colorSpace})!;g2.imageSmoothingQuality='high';g2.drawImage(image,0,0,uploadW,uploadH);
+          gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,small);
+          small.width=small.height=1;
         }else{
           // Safari's DOM texture importer can apply the profile twice. Manage
           // ICC conversion explicitly once at original resolution, then upload
           // raw bytes in the output color space (no per-gesture readback).
-          const pixels=document.createElement('canvas');pixels.width=source?.width||1;pixels.height=source?.height||1;
-          const ctx=pixels.getContext('2d',{colorSpace:this.color.colorSpace})!;ctx.drawImage(image,0,0);
+          const pixels=document.createElement('canvas');pixels.width=uploadW;pixels.height=uploadH;
+          const ctx=pixels.getContext('2d',{colorSpace:this.color.colorSpace})!;ctx.imageSmoothingQuality='high';ctx.drawImage(image,0,0,uploadW,uploadH);
           const data=ctx.getImageData(0,0,pixels.width,pixels.height);
           // Typed-array uploads do not perform UNPACK_PREMULTIPLY_ALPHA_WEBGL.
           for(let k=0;k<data.data.length;k+=4){const a=data.data[k+3]/255;if(a!==1){data.data[k]*=a;data.data[k+1]*=a;data.data[k+2]*=a;}}
@@ -196,7 +211,7 @@ class SeamGpu {
         // ordinary trilinear mipmaps already sample their isotropic footprint.
         // Forcing maximum anisotropy adds work without additional image detail.
         gl.generateMipmap(gl.TEXTURE_2D);
-        this.uploads++;this.textures.set(image,tex);this.revisions.set(image,revision);this.textureBytes.set(image,(source?.width||1)*(source?.height||1)*4*4/3);
+        this.uploads++;this.textures.set(image,tex);this.revisions.set(image,revision);this.textureBytes.set(image,(srgbCanvas?(source?.width||1)*(source?.height||1):uploadW*uploadH)*4*4/3);
       }else {gl.bindTexture(gl.TEXTURE_2D,tex);this.textures.delete(image);this.textures.set(image,tex);}
       gl.uniform1i(uniform(`photo${i}`),i);
       gl.uniform1i(uniform(`srgb${i}`),srgbCanvas&&this.color.colorSpace==='display-p3'?1:0);
