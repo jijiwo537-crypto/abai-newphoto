@@ -18,13 +18,13 @@ import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessLayout, SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface} from './LayoutPhotoSurface';
-import {subscribeCellPhoto,updateCellPhoto} from '../utils/liveCellPhoto';
+import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto} from '../utils/liveCellPhoto';
 import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
@@ -9034,6 +9034,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
   const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
+  // Warm the selected cell's live effect pipeline as soon as its editor opens.
+  const primedCellId=activeTab==='adjust'&&!selectedFloatingId&&selectedIndex!==null&&selectedLayoutId
+    ?activePage?.layouts.find(l=>l.id===selectedLayoutId)?.images[selectedIndex]?.id:undefined;
+  useEffect(()=>{if(primedCellId)primeCellPhoto(primedCellId);},[primedCellId]);
   const normalPreviewSize = useRef<{ width: number; height: number } | null>(null);
   const getRatioDimensions = (ratio = selectedRatio, landscape = isLandscape) => {
     if (activeTab === 'pages' && normalPreviewSize.current) return normalPreviewSize.current;
@@ -9792,6 +9796,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [pagesMode, pagesScale, activeTab, positionPageCtls, applyStripGeometry]);
+
+  // Decode the filter tables while the editor is idle (like the creative
+  // collage and home editor), so the first filter tap applies immediately
+  // instead of waiting for its LUT to download, decode and repair.
+  useEffect(() => {
+    let alive = true;
+    void awaitPhotoIdle().then(() => { if (alive) void warmEditorLuts(lutList); });
+    return () => { alive = false; };
+    // The default `lutList = []` is a new array each render; key by content.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lutList.map(l => l.id).join('|')]);
 
   // 進到濾鏡分頁才在背景把濾鏡一個一個載進來，載好一個就重畫一次
   useEffect(() => {

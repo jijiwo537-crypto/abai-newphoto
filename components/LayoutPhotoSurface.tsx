@@ -1,6 +1,8 @@
 import React,{useLayoutEffect,useEffect,useRef} from 'react';
-import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,type PhotoFx} from '../utils/photoFx';
-import {subscribeCellPhoto} from '../utils/liveCellPhoto';
+import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,getLoadedLut,warmPhotoFxSurface,type PhotoFx} from '../utils/photoFx';
+import {FX_DEFS} from '../utils/glEffects';
+import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
+import {subscribeCellPhoto,subscribeCellPrime} from '../utils/liveCellPhoto';
 import {resolveSeamSurface} from '../utils/seamlessSurfaceGeometry';
 import {drawSeamPreview,disposeSeamPreview,type SeamTexture} from '../utils/seamlessPreview';
 import {drawCoveredPhoto} from '../utils/coveredPhoto';
@@ -8,13 +10,23 @@ import {get2dWide} from '../utils/colorSpace';
 
 type Cell={id:string;url:string;naturalWidth?:number;naturalHeight?:number;zoom:number;offsetX:number;offsetY:number;rotation:number;opacity?:number;imgRadius?:number;fx?:PhotoFx};
 type Rect={x:number;y:number;w:number;h:number};
-type Resource={url:string;image:HTMLImageElement;input:HTMLCanvasElement;key:string;output:CanvasImageSource|null};
+type Resource={url:string;image:HTMLImageElement;input:HTMLCanvasElement;key:string;output:CanvasImageSource|null;
+  /** Editor-sized proxy used while a slider is held (same size as the home editor preview). */
+  preview?:HTMLCanvasElement;previewKey?:string;previewOutput?:HTMLCanvasElement|null;pending?:string;primed?:boolean};
+// The home editor previews at 1800px. Matching it keeps every slider frame
+// independent of the photo's native size (12MP+ on phones).
+const LIVE_PREVIEW=1800;
+const previewSize=(im:HTMLImageElement)=>{const k=Math.min(1,LIVE_PREVIEW/Math.max(im.naturalWidth,im.naturalHeight));return [Math.max(1,Math.round(im.naturalWidth*k)),Math.max(1,Math.round(im.naturalHeight*k))];};
+// Effect pixels depend on the cell's own LUT being decoded, not on every
+// unrelated background LUT load that bumps the editor-wide revision.
+const fxKey=(fx:PhotoFx)=>JSON.stringify([fx,fx.lut?!!getLoadedLut(fx.lut):0]);
+const releaseResource=(r:Resource)=>{r.image.onload=null;r.pending=undefined;releasePhotoFxSurface(r.input);r.input.width=r.input.height=1;if(r.preview){releasePhotoFxSurface(r.preview);r.preview.width=r.preview.height=1;}};
 /** Every cell is painted in one unchanged layout plane. Selection never swaps
  * SVG/HTML geometry, and neighbour edges cannot be independently composited. */
 export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision}:{cells:Cell[];rects:Rect[];width:number;height:number;gap:number;radius:number;revision:number}){
   const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef(()=>{});
   const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;drawRef.current();});};
-  useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values()){r.image.onload=null;releasePhotoFxSurface(r.input);r.input.width=r.input.height=1;}resources.current.clear();if(element&&!element.isConnected)disposeSeamPreview(element);};},[]);
+  useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element&&!element.isConnected)disposeSeamPreview(element);};},[]);
   useEffect(()=>{
     // Repaint in the SAME transform frame, not a second rAF one frame later.
     // Sources and FX remain cached; zoom only resamples their visible pixels.
@@ -27,16 +39,26 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
   },[]);
   useLayoutEffect(()=>{
     const clean=cells.map(c=>subscribeCellPhoto(c.id,fx=>{live.current.set(c.id,fx);schedule();}));
-    return()=>clean.forEach(fn=>fn());
+    // Selecting a cell for editing prepares its live proxy while idle: source
+    // downscale + upload, colour chain and effect shaders. The first slider
+    // frame then only renders, like the home editor's prepared buffers.
+    const primes=cells.map(c=>subscribeCellPrime(c.id,()=>{void(async()=>{
+      await awaitPhotoIdle();
+      const r=resources.current.get(c.id),im=r?.image;if(!r||r.primed||!im?.naturalWidth||live.current.has(c.id))return;
+      r.primed=true;r.preview??=document.createElement('canvas');const [pw,ph]=previewSize(im);
+      applyPhotoFx(im,pw,ph,{exposure:1},{cacheSource:true,gpuSurface:true,out:r.preview});r.previewKey='';
+      for(const d of FX_DEFS){await awaitPhotoIdle();if(resources.current.get(c.id)!==r||!r.preview)return;warmPhotoFxSurface(r.preview,d.id);}
+    })();}));
+    return()=>{clean.forEach(fn=>fn());primes.forEach(fn=>fn());};
   },[cells.map(c=>c.id).join('|')]);
   useLayoutEffect(()=>{live.current.clear();},[cells]);
   useLayoutEffect(()=>{
     const active=new Set(cells.map(c=>c.id));
-    for(const [id,r] of resources.current)if(!active.has(id)){r.image.onload=null;releasePhotoFxSurface(r.input);r.input.width=r.input.height=1;resources.current.delete(id);}
+    for(const [id,r] of resources.current)if(!active.has(id)){releaseResource(r);resources.current.delete(id);}
     cells.forEach(c=>{
       if(!c.url)return;
       const old=resources.current.get(c.id);if(old?.url===c.url)return;
-      if(old){old.image.onload=null;releasePhotoFxSurface(old.input);old.input.width=old.input.height=1;}
+      if(old)releaseResource(old);
       const image=new Image();image.onload=schedule;image.src=c.url;
       resources.current.set(c.id,{url:c.url,image,input:document.createElement('canvas'),key:'',output:null});
     });
@@ -69,14 +91,37 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         const resource=c.url?resources.current.get(c.id):undefined,im=resource?.image;
         clips.push({x:x/width,y:y/height,w:cw/width,h:ch/height});
         if(!im?.naturalWidth){sources.push(null);radii.push(radius);crops.push({tx:0,ty:0,scale:1,angle:0});return;}
-        const fx=live.current.get(c.id)||c.fx||{},key=JSON.stringify([fx,revision]);
-        if(resource!.key!==key){
-          if(hasPhotoFx(fx))editPresentation.current=true;
-          resource!.output=hasPhotoFx(fx)?applyPhotoFx(im,im.naturalWidth,im.naturalHeight,fx,{cacheSource:true,gpuSurface:true,out:resource!.input}):im;
-          if(resource!.output instanceof HTMLCanvasElement)resource!.output.dataset.seamRevision=key;
-          resource!.key=key;
+        const liveFx=live.current.get(c.id),fx=liveFx||c.fx||{},key=fxKey(fx),r0=resource!;
+        const bake=()=>{
+          r0.pending=undefined;
+          r0.output=hasPhotoFx(fx)?applyPhotoFx(im,im.naturalWidth,im.naturalHeight,fx,{cacheSource:true,gpuSurface:true,out:r0.input}):im;
+          if(r0.output instanceof HTMLCanvasElement)r0.output.dataset.seamRevision=key;
+          r0.key=key;
+        };
+        let shown:CanvasImageSource|null=null;
+        if(liveFx&&hasPhotoFx(fx)){
+          // Slider held: render the editor-sized proxy, never native pixels.
+          if(r0.previewKey!==key){
+            r0.preview??=document.createElement('canvas');const [pw,ph]=previewSize(im);
+            r0.previewOutput=applyPhotoFx(im,pw,ph,fx,{cacheSource:true,gpuSurface:true,out:r0.preview});
+            r0.previewOutput.dataset.seamRevision=key;r0.previewKey=key;
+          }
+          editPresentation.current=true;shown=r0.previewOutput!;
+        }else if(r0.key!==key){
+          if(hasPhotoFx(fx)&&r0.previewKey===key&&r0.previewOutput){
+            // Just released: keep the identical proxy on screen and finish the
+            // native-resolution pixels when the editor is idle, not on pointerup.
+            editPresentation.current=true;shown=r0.previewOutput;
+            if(r0.pending!==key){r0.pending=key;void awaitPhotoIdle().then(()=>{
+              if(r0.pending!==key||resources.current.get(c.id)!==r0||live.current.has(c.id))return;
+              bake();schedule();
+            });}
+          }else{
+            if(hasPhotoFx(fx))editPresentation.current=true;
+            bake();
+          }
         }
-        const source=resource!.output!,iw=(source as any).naturalWidth||(source as any).width,ih=(source as any).naturalHeight||(source as any).height;
+        const source=shown||resource!.output!,iw=(source as any).naturalWidth||(source as any).width,ih=(source as any).naturalHeight||(source as any).height;
         const turn=Math.abs(c.rotation%180)===90;
         const scale=Math.max(r.w*aw/(turn?ih:iw),r.h*ah/(turn?iw:ih))*1.02*c.zoom;
         const dx=c.offsetX*r.w*aw,dy=c.offsetY*r.h*ah,angle=c.rotation*Math.PI/180;
