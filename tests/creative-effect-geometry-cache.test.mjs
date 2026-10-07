@@ -10,7 +10,11 @@ test('preview uses resident photo textures without uploading the changing scene 
  assert.doesNotMatch(presenter,/overlay:\{image:main/);
  assert.match(presenter,/clipGuard:\[2\/W,2\/H\]/);
  assert.match(presenter,/W=main.width,H=main.height/);
- assert.match(presenter,/ctx.drawImage\(surface,0,0\)/);
+ assert.match(presenter,/let image:HTMLCanvasElement=surface;/);
+ assert.match(presenter,/ctx.drawImage\(image,0,0\)/);
+ // WebKit double-converts a P3 WebGL canvas drawn into 2D (washed-out photos).
+ const present=presenter.slice(presenter.indexOf('present('),presenter.indexOf('beginFrame'));
+ assert.match(present,/if\(isWebKit\(\)\)\{[\s\S]*copySeamPreviewPixels\(surface,get2dWide\(tile\)!\);image=tile;/);
  assert.match(presenter,/creativePhotoComposition='single-canvas'/);
  assert.doesNotMatch(presenter,/prepend\(surface\)|clearRect\(clearLeft/);
  assert.doesNotMatch(presenter,/getBoundingClientRect/);

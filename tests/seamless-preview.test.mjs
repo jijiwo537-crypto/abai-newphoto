@@ -34,7 +34,17 @@ test('gapless layout raster closes subpixel joins in both GPU and FX canvas path
  assert.match(gpu,/uniform bool sealEdges/);
  assert.match(surface,/sealEdges:noVisibleGutter/);
  assert.match(surface,/const x=x0-leftBleed,y=y0-topBleed,cw=w0\+leftBleed\+rightBleed,ch=h0\+topBleed\+bottomBleed/);
- assert.match(surface,/const cx=\(rightBleed-leftBleed\)\/2,cy=\(bottomBleed-topBleed\)\/2/);
+ assert.match(surface,/const cx=x0\+w0\/2\+crop\.tx/);
+ // GPU owners use exact cell edges; only the separately antialiased 2D clips overlap.
+ assert.match(surface,/clips\.push\(\{x:x\/width,y:y\/height,w:cw\/width,h:ch\/height\}\)/);
+ assert.match(surface,/const r=rects\[i\],source=sources\[i\]/);
+});
+test('GPU photo sampling never relies on implicit derivatives inside the owner branch',()=>{
+ const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
+ assert.match(gpu,/textureGrad\(photo\$\{i\},d\/st\+\.5,gx,gy\)/);
+ assert.doesNotMatch(gpu,/[^/]texture\(photo|fwidth\(|dFdx\(|dFdy\(/);
+ assert.match(gpu,/vec2 dpx=vec2\(vx\.x,vy\.x\)\/pixels\.x,dpy=vec2\(vx\.y,vy\.y\)\/pixels\.y/);
+ assert.match(gpu,/gl\.uniform2f\(uniform\('pixels'\),target\.width,target\.height\)/);
 });
 test('preview/export inverse crop matches arbitrary rotation, offsets, opacity and source sizes',()=>{
   const rects=[{x:0,y:0,w:1,h:.5},{x:0,y:.5,w:.5,h:.5},{x:.5,y:.5,w:.5,h:.5}];

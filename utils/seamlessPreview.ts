@@ -58,15 +58,21 @@ class SeamGpu {
     const owners=Array.from({length:count},(_,i)=>`{vec4 b=box${i},bounds=limits${i};vec2 outside=max(max(b.xy-p,p-(b.xy+b.zw)),vec2(0.));float distance=dot(outside,outside);bool inside=all(greaterThanEqual(p,bounds.xy))&&all(lessThan(p,bounds.zw));if(isolated&&!sealEdges?inside:distance<nearest){nearest=distance;owner=${i};}}`).join('\n');
     const layers=Array.from({length:count},(_,i)=>`{
       vec4 b=box${i},e=edges${i},c=crop${i},s=source${i};
-      // Derivatives must run outside the per-pixel owner branch; otherwise
-      // neighbouring corner fragments can obtain undefined edge widths.
+      // Screen derivatives are analytic (dpx/dpy), never dFdx/fwidth inside
+      // the per-pixel owner branch, where neighbouring corner fragments would
+      // obtain undefined edge widths.
       float roundCoverage=1.;
-      if(isolated&&radius${i}>0.){vec2 q=abs(p-(b.xy+b.zw*.5))-(b.zw*.5-radius${i});float sd=length(max(q,vec2(0.)))+min(max(q.x,q.y),0.)-radius${i};roundCoverage=1.-smoothstep(-fwidth(sd)*.5,fwidth(sd)*.5,sd);}
+      if(isolated&&radius${i}>0.){vec2 q=abs(p-(b.xy+b.zw*.5))-(b.zw*.5-radius${i});float sd=length(max(q,vec2(0.)))+min(max(q.x,q.y),0.)-radius${i};roundCoverage=1.-smoothstep(-aa*.5,aa*.5,sd);}
       if(!fused?owner==${i}:(p.x>=b.x&&p.y>=b.y&&p.x<=b.x+b.z&&p.y<=b.y+b.w)){
         float wx=(e.x>0.?smoothstep(b.x,b.x+2.*e.x,p.x):1.)*(e.z>0.?1.-smoothstep(b.x+b.z-2.*e.z,b.x+b.z,p.x):1.);
         float wy=(e.y>0.?smoothstep(b.y,b.y+2.*e.y,p.y):1.)*(e.w>0.?1.-smoothstep(b.y+b.w-2.*e.w,b.y+b.w,p.y):1.);
         vec2 d=p-(b.xy+b.zw*.5);d=vec2(d.x*s.z+d.y*s.w,-d.x*s.w+d.y*s.z)-c.xy;
-        vec4 tex=texture(photo${i},d/(s.xy*c.z)+.5);
+        // Implicit texture() derivatives are undefined in this divergent owner
+        // branch. At a shared cell edge the 2x2 quad mixes two owners, the GPU
+        // then picks a tiny mip level and paints a 1-2px averaged line that
+        // appears/disappears as zoom shifts the quad grid. Use exact gradients.
+        vec2 st=s.xy*c.z,gx=vec2(dpx.x*s.z+dpx.y*s.w,-dpx.x*s.w+dpx.y*s.z)/st,gy=vec2(dpy.x*s.z+dpy.y*s.w,-dpy.x*s.w+dpy.y*s.z)/st;
+        vec4 tex=textureGrad(photo${i},d/st+.5,gx,gy);
         vec3 encoded=tex.a>0.?tex.rgb/tex.a:vec3(0.);
         if(srgb${i})encoded=toP3(encoded);
         vec3 linearSource=toLinear(encoded);
@@ -86,7 +92,7 @@ class SeamGpu {
       }
     }`).join('\n');
     const fs=shader(gl.FRAGMENT_SHADER,`#version 300 es
-      precision highp float;in vec2 uv;out vec4 color;uniform vec2 size;uniform vec3 viewX;uniform vec3 viewY;uniform bool fused;uniform bool isolated;uniform bool sealEdges;
+      precision highp float;in vec2 uv;out vec4 color;uniform vec2 size;uniform vec3 viewX;uniform vec3 viewY;uniform vec2 pixels;uniform bool fused;uniform bool isolated;uniform bool sealEdges;
       uniform bool zones;uniform bool second;uniform vec4 clip;uniform vec4 otherClip;uniform vec2 clipGuard;uniform vec3 otherX;uniform vec3 otherY;
       ${uniforms}
       vec3 toP3(vec3 v){vec3 linear=mix(v/12.92,pow((v+.055)/1.055,vec3(2.4)),step(vec3(.04045),v));
@@ -103,6 +109,8 @@ class SeamGpu {
         if(zones&&!guardA&&!guardB){color=vec4(0.);return;}
         vec3 vx=zones&&!a&&b?otherX:viewX,vy=zones&&!a&&b?otherY:viewY;
         vec2 p=clamp(vec2(dot(uv,vx.xy)+vx.z,dot(uv,vy.xy)+vy.z),vec2(.00001),size-vec2(.00001));
+        // One framebuffer pixel step in layout space (uv spans the viewport).
+        vec2 dpx=vec2(vx.x,vy.x)/pixels.x,dpy=vec2(vx.y,vy.y)/pixels.y;float aa=max(length(dpx),length(dpy));
         float nearest=1.e30;int owner=-1;if(!fused){${owners}}
         vec3 sum=vec3(0.);float coverage=0.;${layers}
         // T-junctions and antialiased cell bands can contribute a coverage
@@ -134,7 +142,7 @@ class SeamGpu {
     let locations=this.uniforms.get(p);if(!locations){locations=new Map();this.uniforms.set(p,locations);}
     const uniform=(name:string)=>{if(!locations!.has(name))locations!.set(name,gl.getUniformLocation(p,name));return locations!.get(name)!;};
     const loc=gl.getAttribLocation(p,'position');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
-    gl.uniform2f(uniform('size'),w,h);
+    gl.uniform2f(uniform('size'),w,h);gl.uniform2f(uniform('pixels'),target.width,target.height);
     gl.uniform1i(uniform('fused'),amount>=0?1:0);
     gl.uniform1i(uniform('isolated'),view.isolated?1:0);
     gl.uniform1i(uniform('sealEdges'),view.sealEdges?1:0);

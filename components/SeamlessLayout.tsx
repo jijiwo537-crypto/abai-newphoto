@@ -3,7 +3,14 @@ import { prepareSeamSource, type SeamSource, type SeamPhoto, type SeamRect } fro
 import { drawSeamPreview, disposeSeamPreview } from '../utils/seamlessPreview';
 import { resolveSeamSurface } from '../utils/seamlessSurfaceGeometry';
 import {subscribeCellPhoto} from '../utils/liveCellPhoto';
-import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface} from '../utils/photoFx';
+import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,getLoadedLut,type PhotoFx} from '../utils/photoFx';
+import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
+
+// Live slider frames use the home editor's 1800px preview size. The texture
+// keeps the original's logical width/height, so crop and fusion are unchanged.
+const LIVE_PREVIEW=1800;
+const liveSize=(w:number,h:number)=>{const k=Math.min(1,LIVE_PREVIEW/Math.max(w,h));return [Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k))];};
+const lutReady=(fx?:PhotoFx)=>fx?.lut?!!getLoadedLut(fx.lut):0;
 
 // Fusion input updates only the layout renderer, not the entire editor.
 const previews = new Map<string, (amount: number) => void>();
@@ -31,8 +38,9 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
   const liveFrame=useRef(0),dirtyPhotos=useRef(new Set<string>());
   const canvas=useRef<HTMLCanvasElement>(null);
   const effectSurfaces=useRef(new Map<string,HTMLCanvasElement>());
-  useEffect(()=>{const urls=new Set(cells.map(c=>c.url));for(const key of originals.current.keys())if(!urls.has(key))originals.current.delete(key);const ids=new Set(cells.map((c,i)=>c.id||String(i)));for(const [id,cv] of effectSurfaces.current)if(!ids.has(id)){releasePhotoFxSurface(cv);cv.width=cv.height=1;effectSurfaces.current.delete(id);}},[cells]);
-  useEffect(()=>()=>{for(const cv of effectSurfaces.current.values()){releasePhotoFxSurface(cv);cv.width=cv.height=1;}effectSurfaces.current.clear();},[]);
+  const liveSurfaces=useRef(new Map<string,HTMLCanvasElement>()),liveKeys=useRef(new Map<string,string>());
+  useEffect(()=>{const urls=new Set(cells.map(c=>c.url));for(const key of originals.current.keys())if(!urls.has(key))originals.current.delete(key);const ids=new Set(cells.map((c,i)=>c.id||String(i)));for(const map of [effectSurfaces.current,liveSurfaces.current])for(const [id,cv] of map)if(!ids.has(id)){releasePhotoFxSurface(cv);cv.width=cv.height=1;map.delete(id);liveKeys.current.delete(id);}},[cells]);
+  useEffect(()=>()=>{for(const map of [effectSurfaces.current,liveSurfaces.current]){for(const cv of map.values()){releasePhotoFxSurface(cv);cv.width=cv.height=1;}map.clear();}liveKeys.current.clear();},[]);
   const svg=useRef<SVGSVGElement>(null),paintCurrent=useRef<()=>void>(()=>{}),warmKey=useRef('');
   useEffect(()=>{
     const clean=cells.filter(c=>c.id).map(c=>subscribeCellPhoto(c.id!,fx=>{
@@ -44,14 +52,16 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
           const photo=cellsRef.current[i];if(!photo?.id||!dirtyPhotos.current.has(photo.id))return source;
           const original=originals.current.get(photo.url);if(!original)return source;
           if(!hasPhotoFx(photo.fx))return original;
-          let input=effectSurfaces.current.get(photo.id);if(!input){input=document.createElement('canvas');effectSurfaces.current.set(photo.id,input);}
-          const image=applyPhotoFx(original.image,original.width,original.height,photo.fx!,{cacheSource:true,gpuSurface:true,out:input});
-          image.dataset.seamRevision=JSON.stringify([photo.url,photo.fx,revision]);return {...original,image};
+          let input=liveSurfaces.current.get(photo.id);if(!input){input=document.createElement('canvas');liveSurfaces.current.set(photo.id,input);}
+          const [pw,ph]=liveSize(original.width,original.height);
+          const image=applyPhotoFx(original.image,pw,ph,photo.fx!,{cacheSource:true,gpuSurface:true,out:input});
+          const key=JSON.stringify([photo.url,photo.fx,lutReady(photo.fx)]);
+          image.dataset.seamRevision=key;liveKeys.current.set(photo.id,key);return {...original,image};
         });dirtyPhotos.current.clear();paintCurrent.current();
       });
     }));
     return()=>{clean.forEach(f=>f());cancelAnimationFrame(liveFrame.current);liveFrame.current=0;dirtyPhotos.current.clear();};
-  },[cells.map(c=>c.id).join('|'),revision]);
+  },[cells.map(c=>c.id).join('|')]);
   const [ready,setReady]=useState(false),[prepared,setPrepared]=useState<{key:string;sources:SeamSource[]}|null>(null),[live,setLive]=useState(amount);
   const [contextRevision,restoreContext]=useState(0);
   useEffect(()=>{
@@ -68,24 +78,33 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
     const observer=new ResizeObserver(paint);if(svg.current)observer.observe(svg.current);
     return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);};
   },[]);
-  useLayoutEffect(()=>{setLive(amount);},[amount]);
-  useLayoutEffect(()=>{if(!previewId)return;previews.set(previewId,setLive);return()=>{previews.delete(previewId);};},[previewId]);
+  const liveAmount=useRef(amount);
+  useLayoutEffect(()=>{liveAmount.current=amount;setLive(amount);},[amount]);
+  // Fusion drags only change shader uniforms: repaint directly, without
+  // re-rendering this component (or reflowing React output) on every tick.
+  useLayoutEffect(()=>{if(!previewId)return;previews.set(previewId,v=>{liveAmount.current=v;if(svg.current)svg.current.dataset.seamlessAmount=String(v);paintCurrent.current();});return()=>{previews.delete(previewId);};},[previewId]);
   // Source decoding/effect processing never depends on fusion or uniform zoom.
-  const sourceKey=JSON.stringify([revision,cells.map(c=>[c.url,c.fx||{}])]);
+  // Unrelated background LUT loads bump the editor-wide revision; only this
+  // layout's own LUT readiness changes its effect pixels.
+  const sourceKey=JSON.stringify(cells.map(c=>[c.url,c.fx||{},lutReady(c.fx)]));
   useEffect(()=>{
     let cancelled=false;
     Promise.all(cells.map(async(c,i)=>{
-      const original=await prepareSeamSource({...c,fx:undefined},revision);
+      const original=await prepareSeamSource({...c,fx:undefined},0);
       if(!cancelled&&original)originals.current.set(c.url,original);
       if(cancelled||!original||!hasPhotoFx(c.fx))return original;
-      const id=c.id||String(i);let input=effectSurfaces.current.get(id);
+      const id=c.id||String(i),key=JSON.stringify([c.url,c.fx,lutReady(c.fx)]);
+      // A just-released slider already shows these exact effects at preview
+      // size. Finish native pixels when idle instead of on pointerup.
+      if(liveKeys.current.get(id)===key){await awaitPhotoIdle();if(cancelled)return original;}
+      let input=effectSurfaces.current.get(id);
       if(!input){input=document.createElement('canvas');effectSurfaces.current.set(id,input);}
       const image=applyPhotoFx(original.image,original.width,original.height,c.fx!,{cacheSource:true,gpuSurface:true,out:input});
-      image.dataset.seamRevision=JSON.stringify([c.url,c.fx,revision]);
+      image.dataset.seamRevision=key;
       return {...original,image};
     })).then(sources=>{if(!cancelled){sourcesRef.current=sources;setPrepared({key:sourceKey,sources});}}).catch(error=>{if(!cancelled)console.error('Seamless sources:',error);});
     return()=>{cancelled=true;};
-  },[sourceKey,revision]);
+  },[sourceKey]);
   const aspect=Math.round(width/Math.max(.000001,height)*1e8)/1e8;
   // Keep the last complete frame visible until the next complete source set
   // is ready; parameter input must not expose the original/blank fallback.
@@ -121,7 +140,7 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
       element.style.transform=`matrix(${surface.transform.join(',')})`;
       element.style.clipPath=`polygon(${surface.clip})`;
       root.dataset.rasterView=JSON.stringify(surface.rasterView);
-      try{drawSeamPreview(element,cellsRef.current,rects,sourcesRef.current||sources,live,surface.view);warmKey.current=key;setReady(true);element.dataset.paintCount=String(Number(element.dataset.paintCount||0)+1);}
+      try{drawSeamPreview(element,cellsRef.current,rects,sourcesRef.current||sources,liveAmount.current,surface.view);warmKey.current=key;setReady(true);element.dataset.paintCount=String(Number(element.dataset.paintCount||0)+1);}
       catch(error){setReady(false);console.error('Seamless GPU:',error);}
     };
     paintCurrent.current=paint;paint();

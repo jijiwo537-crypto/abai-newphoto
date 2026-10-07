@@ -18,13 +18,15 @@ import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessLayout, SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface} from './LayoutPhotoSurface';
-import {subscribeCellPhoto,updateCellPhoto} from '../utils/liveCellPhoto';
+import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto} from '../utils/liveCellPhoto';
+import {drawStableText} from '../utils/stableText';
+import {warmPhotoEffectsWhenIdle} from '../utils/fxWarmup';
 import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
@@ -4951,9 +4953,12 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       const unitMotionFrame = usesUnitMotion && lines.length === 1 ? motionFrame : null;
       const drawAnimatedUnits = (stroke = false) => {
         if (!unitMotionFrame && !image.sym) {
-          lines.forEach((line, i) => stroke
-            ? ctx.strokeText(line, dx, startY + i * lineH + dy)
-            : ctx.fillText(line, dx, startY + i * lineH + dy));
+          // Cached raster under the continuous matrix: no per-scale re-hinting jitter.
+          lines.forEach((line, i) => {
+            const y = startY + i * lineH + dy;
+            if (drawStableText(ctx, stroke ? 'stroke' : 'fill', line, dx, y)) return;
+            if (stroke) ctx.strokeText(line, dx, y); else ctx.fillText(line, dx, y);
+          });
           return;
         }
         const raster = rasterizeSymbolAnimationLayers(
@@ -5285,9 +5290,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       const spacing = image.letterSpacing || 0;
       const lines = (image.text === '' ? TEXT_PLACEHOLDER : (image.text || TEXT_PLACEHOLDER)).split('\n');
       const metrics = lines.map(line => g.measureText(line || ' '));
+      /* 跟繪製端同一個寬度：Canvas 的 letterSpacing 在每個字（含最後一個）
+         後面都加一次，textAlign center 也是以這個完整前進寬度置中。 */
       const w = Math.max(6, ...lines.map((line, index) => {
         const glyphs = Array.from(line);
-        return metrics[index].width + Math.max(0, glyphs.length - 1) * spacing;
+        return metrics[index].width + glyphs.length * spacing;
       })) + 8;
       const ascent = Math.max(size * .7, ...metrics.map(m => m.actualBoundingBoxAscent || 0));
       const descent = Math.max(size * .15, ...metrics.map(m => m.actualBoundingBoxDescent || 0));
@@ -5295,13 +5302,21 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
          actualBoundingBox 的頂／底，再加對稱 4px，所以下方不會多留一截。 */
       const h = Math.max(6, (lines.length - 1) * size * 1.12 + ascent + descent) + 8;
       const patch: Partial<FloatingImage> = {};
-      if (Math.abs(w - dimsRef.current.w) > 1) {
-        patch.width = w;
-        patch.x = image.x + (dimsRef.current.w - w) / 2;
+      /* 被四邊擠壓過的文字：量到的是未擠壓的自然尺寸。框要維持原本的擠壓
+         比例，基準尺寸換成新的自然尺寸，字距／字級一改，框才會跟著等比變寬，
+         而不是把擠壓還原、或把字拉變形。 */
+      const sx = image.textStretchBaseW ? dimsRef.current.w / image.textStretchBaseW : 1;
+      const sy = image.textStretchBaseH ? dimsRef.current.h / image.textStretchBaseH : 1;
+      const nw = w * sx, nh = h * sy;
+      if (Math.abs(nw - dimsRef.current.w) > 1) {
+        patch.width = nw;
+        patch.x = image.x + (dimsRef.current.w - nw) / 2;
+        if (image.textStretchBaseW) patch.textStretchBaseW = w;
       }
-      if (Math.abs(h - dimsRef.current.h) > 1) {
-        patch.height = h;
-        patch.y = image.y + (dimsRef.current.h - h) / 2;
+      if (Math.abs(nh - dimsRef.current.h) > 1) {
+        patch.height = nh;
+        patch.y = image.y + (dimsRef.current.h - nh) / 2;
+        if (image.textStretchBaseH) patch.textStretchBaseH = h;
       }
       if (patch.width !== undefined || patch.height !== undefined) onChangeRef.current(patch);
     };
@@ -9034,6 +9049,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
   const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
+  // Warm the selected cell's live effect pipeline as soon as its editor opens.
+  const primedCellId=activeTab==='adjust'&&!selectedFloatingId&&selectedIndex!==null&&selectedLayoutId
+    ?activePage?.layouts.find(l=>l.id===selectedLayoutId)?.images[selectedIndex]?.id:undefined;
+  useEffect(()=>{if(primedCellId)primeCellPhoto(primedCellId);},[primedCellId]);
   const normalPreviewSize = useRef<{ width: number; height: number } | null>(null);
   const getRatioDimensions = (ratio = selectedRatio, landscape = isLandscape) => {
     if (activeTab === 'pages' && normalPreviewSize.current) return normalPreviewSize.current;
@@ -9792,6 +9811,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [pagesMode, pagesScale, activeTab, positionPageCtls, applyStripGeometry]);
+
+  // Decode the filter tables while the editor is idle (like the creative
+  // collage and home editor), so the first filter tap applies immediately
+  // instead of waiting for its LUT to download, decode and repair.
+  useEffect(() => { warmPhotoEffectsWhenIdle(); }, []);
+  useEffect(() => {
+    let alive = true;
+    void awaitPhotoIdle().then(() => { if (alive) void warmEditorLuts(lutList); });
+    return () => { alive = false; };
+    // The default `lutList = []` is a new array each render; key by content.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lutList.map(l => l.id).join('|')]);
 
   // 進到濾鏡分頁才在背景把濾鏡一個一個載進來，載好一個就重畫一次
   useEffect(() => {

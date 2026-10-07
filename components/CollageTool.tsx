@@ -60,6 +60,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
 );
 
 import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
+import { drawStableText } from '../utils/stableText';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -97,6 +98,7 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhoto
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface} from '../utils/photoFx';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
+import {warmPhotoEffectsWhenIdle} from '../utils/fxWarmup';
 import {warmLowfiLut} from '../utils/lowfiLut';
 import {FX_DEFS} from '../utils/glEffects';
 import {PhotoSceneColour,supportsSceneColour} from '../utils/photoSceneColour';
@@ -1261,6 +1263,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     await awaitPhotoIdle();if(cancelled)return;
     const region=photoRegionRef.current;
+    // Long-press swap thumbnails are ready before the first hold.
+    if(region&&region.photos.length>1)for(const p of region.photos){const img=p.src&&decodedRegionPhotos.current.get(p.src);if(img?.naturalWidth)swapThumb(p.src,img,Math.round(80*window.devicePixelRatio));}
     if(region&&region.photos.length>1){
       const decoded=new Map(decodedRegionPhotos.current);
       try{creativeSeam.current??=new CreativeSeamless();creativeSeam.current.warm(region,decoded);}catch{}
@@ -1532,7 +1536,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           第一次一樣了，逐次判斷會在 640 與 1600 之間來回重算（實測 640 與
           1600 各算了 30 次，等於完全沒省到）。 */
     const regionPhoto = o.id?.startsWith('region-fx-');
-    if (isMain && !regionPhoto && lv.key && lv.key !== baseKey) lv.liveUntil = now + 300;
+    // The very first change counts too: an image that never had effects has
+    // no previous key, and its first slider frame used to run at full 1600px.
+    if (isMain && !regionPhoto && lv.key !== baseKey && (lv.key || hasPhotoFx(o.fx))) lv.liveUntil = now + 300;
     const live = isMain && !regionPhoto && lv.liveUntil > now;
     /* 匯出時工作尺寸放寬到 2400：成品現在最少也有 2400px 長邊（見 EXPORT_MIN_DIM），
        圖片物件如果還卡在 1600，畫上去等於被放大過 —— 那一顆就會比旁邊的
@@ -2175,6 +2181,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (selectedObj || selectedTarget) { setBaseSelected(false); setMaskSelected(false); }
   }, [selectedObj, selectedTarget]);
   useEffect(() => { if (!maskImageState) setMaskSelected(false); }, [maskImageState]);
+  useEffect(() => { warmPhotoEffectsWhenIdle(); }, []);
+  /* 打開圖片編輯時，趁空檔把這張圖的「拖曳中」工作尺寸先準備好（來源縮圖、
+     像素快取、顏色鏈的 GPU 貼圖），第一下拖滑桿就跟首頁編輯一樣直接算。 */
+  useEffect(() => {
+    if (activeTab !== 'objedit' || !selectedObj) return;
+    let cancelled = false;
+    void awaitPhotoIdle().then(() => {
+      const o = objectsRef.current.find(v => v.id === selectedObj && v.type === 'image');
+      if (cancelled || !o?.img || isVideoEl(o.img)) return;
+      const w0 = o.img.naturalWidth || o.img.width, h0 = o.img.naturalHeight || o.img.height;
+      if (!w0 || !h0) return;
+      const k = Math.min(1, 640 / Math.max(w0, h0));
+      applyPhotoFx(o.img, Math.max(1, Math.round(w0 * k)), Math.max(1, Math.round(h0 * k)), { exposure: 1 }, { cacheSource: true, fast: true });
+    });
+    return () => { cancelled = true; };
+  }, [activeTab, selectedObj]);
   /* 圖片編輯頁是自己排好三段式高度的整頁面板：外面不能再包內距，
      footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
@@ -3506,6 +3528,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [getHoleSize, holeType, checkHitHole, layout, maskScale, canvasRatio, imageState, isHoleFullyInsideMask]);
 
   type PhotoSource = {kind:'region';index:number} | {kind:'object';id:string};
+  const swapThumbs=useRef(new Map<string,HTMLCanvasElement>());
+  const swapThumb=(src:string,img:HTMLImageElement,size:number)=>{
+    let thumb=swapThumbs.current.get(src);
+    if(!thumb||thumb.width<size){
+      thumb=document.createElement('canvas');thumb.width=thumb.height=size;
+      const g=get2dWide(thumb),d=Math.min(img.naturalWidth,img.naturalHeight);
+      if(g){g.imageSmoothingQuality='high';g.drawImage(img,(img.naturalWidth-d)/2,(img.naturalHeight-d)/2,d,d,0,0,size,size);}
+      swapThumbs.current.set(src,thumb);
+      if(swapThumbs.current.size>24){const [key,old]=swapThumbs.current.entries().next().value!;old.width=old.height=1;swapThumbs.current.delete(key);}
+    }
+    return thumb;
+  };
   const regionHold = useRef<{ id:number;source:PhotoSource;x:number;y:number;timer:number;active:boolean } | null>(null);
   const [regionSwapPhoto,setRegionSwapPhoto]=useState<string|null>(null);
   const [swapSource,setSwapSource]=useState<PhotoSource|null>(null);
@@ -3636,7 +3670,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useLayoutEffect(()=>{
     const c=regionThumbRef.current,img=regionSwapPhoto&&decodedRegionPhotos.current.get(regionSwapPhoto);if(!c||!img)return;
     const size=Math.round(80*window.devicePixelRatio);c.width=c.height=size;const g=get2dWide(c);
-    if(g){const d=Math.min(img.naturalWidth,img.naturalHeight);g.drawImage(img,(img.naturalWidth-d)/2,(img.naturalHeight-d)/2,d,d,0,0,size,size);}
+    // Downscaling a native-size original on every long press is a visible
+    // stall on phones; the square thumbnail is cached per photograph.
+    if(g){const thumb=swapThumb(regionSwapPhoto!,img,size);g.drawImage(thumb,0,0,size,size);}
     const p=regionThumbPoint.current;c.style.transform=`translate3d(${p.x}px,${p.y}px,0) translate(-50%,-50%)`;
   },[regionSwapPhoto]);
   const regionPointerDown=(e:React.PointerEvent)=>{
@@ -3697,7 +3733,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(regionThumbRef.current)regionThumbRef.current.style.transform=`translate3d(${e.clientX}px,${e.clientY}px,0) translate(-50%,-50%)`;
         const hover=photoAt(e.clientX,e.clientY);
         if(JSON.stringify(hover)!==JSON.stringify(swapHoverRef.current)){
-          swapHoverRef.current=hover;setSwapSource(hover);
+          // Hover feedback is a canvas repaint only. Setting React state here
+          // re-rendered the whole editor and painted the scene a second time
+          // on every target change, which made dragging between photos stutter.
+          swapHoverRef.current=hover;
           if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
         }
         return;
@@ -5504,7 +5543,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const m = Math.max(maskW / Math.max(1, sw), maskH / Math.max(1, sh));
       /* 底是影片的話還要加上「現在是第幾格」——不加的話這張底圖會一直
          沿用第一幀，畫面上就是「四周包圍的底定格了，只有洞在動」。 */
-      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${baseVidTok}|${JSON.stringify(photoRegion)}|${isMain?JSON.stringify(swapSource):''}`;
+      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${baseVidTok}|${JSON.stringify(photoRegion)}|${isMain?JSON.stringify(swapHoverRef.current):''}`;
       const hit = isMain ? aroundBdRef.current : null;
       if (hit && hit.key === key && hit.img === img) return hit.cv;
       const cv = isMain ? holeBackdropCanvasRef.current : document.createElement('canvas');
@@ -6942,6 +6981,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             return;
           }
           if (!unitLayout) {
+            // Cached raster under the continuous matrix: no per-scale re-hinting jitter.
+            if (drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx, tdy)) return;
             if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
             else ctx.fillText(o.text || '', tdx, tdy);
             return;
@@ -7250,7 +7291,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const a0h = animRef.current;
       const sigTop = `${layout}|${maskScale}|${s.toFixed(4)}|${offs.cw}x${offs.ch}|${offs.mx},${offs.my}`
         + `|B${belowBox ? [belowBox.x0, belowBox.y0, belowBox.x1, belowBox.y1].map(v => Math.round(v)).join(',') : ''}`
-        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}|${baseVidTok}|${JSON.stringify(photoRegion)}|${isMain?JSON.stringify(swapSource):''}`
+        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}|${baseVidTok}|${JSON.stringify(photoRegion)}|${isMain?JSON.stringify(swapHoverRef.current):''}`
         + `|${holeType}|${isTextHole(holeType) ? customText : ''}|${holeAngle}|${linkMode}|${linkColor || ''}`
         + `|${LINK_W.toFixed(3)}`
         + '|H' + holes.map(h => {
@@ -10975,6 +11016,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               }, 140);
                             }
                             patch({ ...d, size: d.fontSize }); return;
+                          }
+                          if (d.letterSpacing !== undefined && !sel.sym) {
+                            /* 字距改變的是整串字的前進寬度：Canvas 在每個字（含最後一個）
+                               後面各加一次字距。選中框跟著同樣增減，框心固定；
+                               被左右擠壓過的文字維持原本的擠壓比例。 */
+                            const n = Array.from(sel.text || '').length;
+                            const grow = (d.letterSpacing - (sel.letterSpacing || 0)) * n;
+                            const ratio = sel.textStretchBaseW ? sel.w / sel.textStretchBaseW : 1;
+                            const w = Math.max(6, sel.w + grow * ratio);
+                            d = { ...d, w, x: sel.x - (w - sel.w) / 2,
+                              ...(sel.textStretchBaseW ? { textStretchBaseW: Math.max(1, sel.textStretchBaseW + grow) } : null) };
                           }
                           patch(d);
                         }}

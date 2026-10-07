@@ -3,6 +3,7 @@ import {get2dWide} from './colorSpace';
 import {scenePixelEdge} from './scenePixelGrid';
 import {regionRects,seamlessPhotoBase,paintPhotoRegion,type PhotoRegion} from './creativePhotoLayout';
 import {CreativeFeatherSurface} from './creativeFeatherSurface';
+const isWebKit=()=>/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
 /** One GPU surface per editor. Render just the visible physical-pixel viewport,
  * not an enormous zoomed composite. Source photos keep their original quality. */
 export class CreativeSeamless {
@@ -52,7 +53,17 @@ export class CreativeSeamless {
     const clearRight=scenePixelEdge(right),clearBottom=scenePixelEdge(bottom);
     ctx.save();ctx.setTransform(1,0,0,1,0,0);
     ctx.beginPath();ctx.rect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.clip();
-    ctx.drawImage(surface,0,0);ctx.restore();return true;
+    // WebKit applies a second colour conversion when drawing a Display-P3
+    // WebGL canvas into 2D: already-P3 bytes are treated as sRGB and then
+    // converted again, visibly washing out every seamless photo. Copy its
+    // tagged raw pixels instead, exactly as the tiled path below does.
+    let image:HTMLCanvasElement=surface;
+    if(isWebKit()){
+      const tile=this.colorTile||(this.colorTile=document.createElement('canvas'));
+      if(tile.width!==W)tile.width=W;if(tile.height!==H)tile.height=H;
+      copySeamPreviewPixels(surface,get2dWide(tile)!);image=tile;
+    }
+    ctx.drawImage(image,0,0);ctx.restore();return true;
   }
   beginFrame(){}
   flush(){}
@@ -91,7 +102,7 @@ export class CreativeSeamless {
         drawSeamPreview(surface,photos,rects,sources,region.seamlessAmount||0,{width:w,height:h,
           xx:surface.width/m.a,xy:0,x0:(px-m.e)/m.a-x,yx:0,yy:surface.height/m.d,y0:(py-m.f)/m.d-y});
         let image=surface;
-        if(/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent))){
+        if(isWebKit()){
           const tile=this.colorTile||(this.colorTile=document.createElement('canvas'));
           if(tile.width!==tw)tile.width=tw;if(tile.height!==th)tile.height=th;
           copySeamPreviewPixels(surface,get2dWide(tile)!);image=tile;
