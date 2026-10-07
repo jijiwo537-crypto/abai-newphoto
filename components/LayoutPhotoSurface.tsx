@@ -57,23 +57,17 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       cv.style.width=`${surface.width}px`;cv.style.height=`${surface.height}px`;
       cv.style.transform=`matrix(${surface.transform.join(',')})`;cv.style.clipPath=`polygon(${surface.clip})`;
       const sources:SeamTexture[]=[],clips:Rect[]=[],radii:number[]=[],crops:{tx:number;ty:number;scale:number;angle:number}[]=[];
-      // At zero gutter, adjacent cells must remain visually closed after the
-      // browser resamples this physical-pixel surface through the preview zoom
-      // transform. Give shared edges half a raster sample of overlap on each
-      // side; owner selection stays deterministic in the compositor. Do not
-      // bleed when a user intentionally requested a gutter or rounded corners.
+      // The GPU path is one opaque raster: adjacent cells share exact float
+      // edges and every sample has an owner (sealEdges), so the browser's
+      // resampling of this canvas can never open a gap between them. Only the
+      // 2D effect canvas below antialiases each clip separately and needs a
+      // subpixel overlap. No overlap with a real gutter or rounded corners.
       const noVisibleGutter=gap<=.001&&radius<=.001&&cells.every(c=>!(c.imgRadius||0));
-      // Cover the browser's half-texel bilinear footprint and clip antialiasing
-      // at shared edges. Crops are compensated below, so source framing stays fixed.
-      const bleedX=noVisibleGutter?(Math.abs(surface.view.xx/W)+Math.abs(surface.view.xy/H))*1.25:0;
-      const bleedY=noVisibleGutter?(Math.abs(surface.view.yx/W)+Math.abs(surface.view.yy/H))*1.25:0;
       rects.forEach((r,i)=>{
         const c=cells[i];if(!c)return;
         const x=gap+r.x*aw,y=gap+r.y*ah,cw=Math.max(0,r.w*aw-gap),ch=Math.max(0,r.h*ah-gap);
         const resource=c.url?resources.current.get(c.id):undefined,im=resource?.image;
-        const leftBleed=noVisibleGutter&&r.x>1e-6?bleedX:0,rightBleed=noVisibleGutter&&r.x+r.w<1-1e-6?bleedX:0;
-        const topBleed=noVisibleGutter&&r.y>1e-6?bleedY:0,bottomBleed=noVisibleGutter&&r.y+r.h<1-1e-6?bleedY:0;
-        clips.push({x:(x-leftBleed)/width,y:(y-topBleed)/height,w:(cw+leftBleed+rightBleed)/width,h:(ch+topBleed+bottomBleed)/height});
+        clips.push({x:x/width,y:y/height,w:cw/width,h:ch/height});
         if(!im?.naturalWidth){sources.push(null);radii.push(radius);crops.push({tx:0,ty:0,scale:1,angle:0});return;}
         const fx=live.current.get(c.id)||c.fx||{},key=JSON.stringify([fx,revision]);
         if(resource!.key!==key){
@@ -88,10 +82,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         const dx=c.offsetX*r.w*aw,dy=c.offsetY*r.h*ah,angle=c.rotation*Math.PI/180;
         const cr=c.imgRadius?Math.min(cw,ch)*Math.min(.5,Math.max(0,c.imgRadius/100)):Math.min(radius,cw/2,ch/2);
         sources.push({image:source,width:iw,height:ih});radii.push(cr);
-        // Keep the crop's optical center fixed while its raster clip receives
-        // the subpixel seam guard above.
-        const cx=(rightBleed-leftBleed)/2,cy=(bottomBleed-topBleed)/2;
-        crops.push({tx:dx*Math.cos(angle)+dy*Math.sin(angle)-cx*Math.cos(angle)-cy*Math.sin(angle),ty:-dx*Math.sin(angle)+dy*Math.cos(angle)+cx*Math.sin(angle)-cy*Math.cos(angle),scale,angle});
+        crops.push({tx:dx*Math.cos(angle)+dy*Math.sin(angle),ty:-dx*Math.sin(angle)+dy*Math.cos(angle),scale,angle});
       });
       if(editPresentation.current){
         // WebKit can directly crop a native FX canvas into a physical-pixel
@@ -103,14 +94,22 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         flat.style.width=cv.style.width;flat.style.height=cv.style.height;flat.style.transform=cv.style.transform;flat.style.clipPath=cv.style.clipPath;
         const v=surface.view,m=new DOMMatrix([v.xx/W,v.yx/W,v.xy/H,v.yy/H,v.x0,v.y0]).inverse();
         const g=get2dWide(flat)!;g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,W,H);g.setTransform(m);g.imageSmoothingQuality='high';
-        clips.forEach((r,i)=>{
-          const source=sources[i],crop=crops[i],c=cells[i];
-          const x0=gap+r.x*aw,y0=gap+r.y*ah,w0=Math.max(0,r.w*aw-gap),h0=Math.max(0,r.h*ah);
+        // Cover the 2D canvas's half-texel footprint and clip antialiasing at
+        // shared edges: each clip overlaps its neighbours by ~1 raster pixel.
+        const bleedX=noVisibleGutter?(Math.abs(v.xx/W)+Math.abs(v.xy/H))*1.25:0;
+        const bleedY=noVisibleGutter?(Math.abs(v.yx/W)+Math.abs(v.yy/H))*1.25:0;
+        clips.forEach((_,i)=>{
+          // Layout rects, not the normalized clips: those are already scaled
+          // by the full width and would shift every cell by the gutter.
+          const r=rects[i],source=sources[i],crop=crops[i],c=cells[i];
+          const x0=gap+r.x*aw,y0=gap+r.y*ah,w0=Math.max(0,r.w*aw-gap),h0=Math.max(0,r.h*ah-gap);
           const leftBleed=noVisibleGutter&&r.x>1e-6?bleedX:0,rightBleed=noVisibleGutter&&r.x+r.w<1-1e-6?bleedX:0;
           const topBleed=noVisibleGutter&&r.y>1e-6?bleedY:0,bottomBleed=noVisibleGutter&&r.y+r.h<1-1e-6?bleedY:0;
           const x=x0-leftBleed,y=y0-topBleed,cw=w0+leftBleed+rightBleed,ch=h0+topBleed+bottomBleed;
           if(!source){g.fillStyle='#121212';g.fillRect(x,y,cw,ch);return;}
-          const cx=x+cw/2+crop.tx*Math.cos(crop.angle)-crop.ty*Math.sin(crop.angle),cy=y+ch/2+crop.tx*Math.sin(crop.angle)+crop.ty*Math.cos(crop.angle);
+          // Keep the crop's optical center on the unbled cell, so the overlap
+          // never moves the photo's framing.
+          const cx=x0+w0/2+crop.tx*Math.cos(crop.angle)-crop.ty*Math.sin(crop.angle),cy=y0+h0/2+crop.tx*Math.sin(crop.angle)+crop.ty*Math.cos(crop.angle);
           const {image,width:iw,height:ih}=source;
           g.save();g.globalAlpha=(c.opacity??100)/100;
           if(radii[i]>0||crop.angle){g.beginPath();g.roundRect(x,y,cw,ch,radii[i]);g.clip();g.translate(cx,cy);g.rotate(crop.angle);g.drawImage(image,-iw*crop.scale/2,-ih*crop.scale/2,iw*crop.scale,ih*crop.scale);}
