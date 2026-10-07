@@ -61,6 +61,7 @@ import {
 } from './utils/toolDraft';
 import { listExports, loadExport, subscribeExports, type ExportMeta } from './utils/exportHistory';
 import type { ExitChoice } from './types';
+import { watchAppUpdates } from './utils/appUpdate';
 
 const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
   layout: '跨頁拼圖',
@@ -131,6 +132,15 @@ const App: React.FC = () => {
   const [recentExports, setRecentExports] = useState<ExportMeta[]>([]);
   const [toolDraftState, setToolDraftState] = useState<any>(null);
   const [currentView, setCurrentView] = useState<AppView>('home');
+  /* 主畫面 App 不會自己換新版：回到前景時檢查，只在首頁才重新載入。 */
+  const currentViewRef = useRef(currentView);
+  currentViewRef.current = currentView;
+  const appUpdates = useRef<ReturnType<typeof watchAppUpdates> | null>(null);
+  useEffect(() => {
+    appUpdates.current = watchAppUpdates(() => currentViewRef.current === 'home');
+    return () => appUpdates.current?.stop();
+  }, []);
+  useEffect(() => { if (currentView === 'home') appUpdates.current?.retry(); }, [currentView]);
   const [editorImage, setEditorImage] = useState<string | null>(null);
   /** 批量編輯：這次匯入的所有照片（只有一張時就跟以前一樣） */
   const [editorImages, setEditorImages] = useState<string[]>([]);
