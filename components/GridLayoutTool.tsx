@@ -14970,7 +14970,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         opacity={(c.opacity ?? 100)/100} preserveAspectRatio="none"
                                         transform={`translate(${x+w/2+(c.offsetX||0)*w} ${y+h/2+(c.offsetY||0)*h}) rotate(${c.rotation||0}) scale(${s})`}/>
                                     </g> : <rect x={x} y={y} width={w} height={h} fill="#0c0c0c"/>}
-                                    {isThisLayoutSelected && selectedIndex===idx && !selectionDragging && <rect x={x} y={y} width={w} height={h} fill="none" stroke="white" style={{strokeWidth:'var(--layout-grid-stroke, 1px)'}}/>}
+                                    {isThisLayoutSelected && selectedIndex===idx && !selectionDragging && <rect x={x} y={y} width={w} height={h} fill="none" stroke="white" strokeDasharray={`${4 / Math.max(0.0001, kRef.current)} ${4 / Math.max(0.0001, kRef.current)}`} style={{strokeWidth:'var(--layout-grid-stroke, 1px)'}}/>}
                                   </g>;
                                 })}
                                 {layout.images.some(c=>!c.url) && <path
@@ -15301,17 +15301,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         })()}
 
                                         {/* Thin solid outline on top of the image */}
-                                        {isSelected && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (
-                                          <div 
-                                            className="absolute inset-0 pointer-events-none z-30 border-solid border-white/90"
-                                            style={{
-                                              borderRadius: `${radius}px`,
-                                              borderWidth: 0.75 / Math.max(0.0001, kRef.current),
-                                              boxShadow: `0 0 ${3 / Math.max(0.0001, kRef.current)}px rgba(0,0,0,0.28)`,
-                                              ...(radius > 0 ? { WebkitMaskImage: '-webkit-radial-gradient(white, black)' } : null),
-                                            }}
-                                          />
-                                        )}
+                                        {isSelected && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (() => {
+                                          /* 跟創意拼圖選中底圖同一款：1 螢幕像素的白色虛線（4／4），
+                                             整條線畫在格子內側，不加陰影。 */
+                                          const ui = 1 / Math.max(0.0001, kRef.current);
+                                          const cr = Math.min(radius, Math.max(0, cellWidth - gap) / 2, Math.max(0, cellHeight - gap) / 2);
+                                          return (
+                                            <svg className="absolute inset-0 pointer-events-none z-30" width="100%" height="100%" style={{ overflow: 'visible' }} aria-hidden>
+                                              <rect x={ui / 2} y={ui / 2} width={Math.max(0, cellWidth - gap - ui)} height={Math.max(0, cellHeight - gap - ui)}
+                                                rx={Math.max(0, cr - ui / 2)} fill="none" stroke="white" strokeWidth={ui} strokeDasharray={`${4 * ui} ${4 * ui}`} />
+                                            </svg>
+                                          );
+                                        })()}
 
                                         {/* Drag Over Highlight Overlay - Simplified with React state */}
                                         {(() => {
@@ -15477,6 +15478,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                       x={selectedEmpty.x} y={selectedEmpty.y}
                                       width={selectedEmpty.w} height={selectedEmpty.h}
                                       fill="none" stroke="white"
+                                      strokeDasharray={`${4 / Math.max(0.0001, kRef.current)} ${4 / Math.max(0.0001, kRef.current)}`}
                                       style={{ strokeWidth: 'var(--layout-grid-stroke, 1px)' }}
                                     />
                                   )}

@@ -44,7 +44,7 @@ export class CreativeSeamless {
     // Photo texels continue under the opaque mask's filter footprint, while
     // its exact half-open clip remains authoritative. No source crop changes.
     const view:SeamView={width:w,height:h,xx:W/m.a,xy:0,x0:(l-m.e)/m.a-x,yx:0,yy:H/m.d,y0:(t-m.f)/m.d-y,clip:[(left-l)/W,(top-t)/H,(right-l)/W,(bottom-t)/H],clipGuard:[2/W,2/H]};
-    drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,view,true);
+    drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,view,true,isWebKit());
     // The GPU buffer is private, not an independently scaled DOM layer.
     // Copy in the same task before its transient framebuffer is discarded.
     surface.remove();surface.style.display='none';
@@ -53,17 +53,10 @@ export class CreativeSeamless {
     const clearRight=scenePixelEdge(right),clearBottom=scenePixelEdge(bottom);
     ctx.save();ctx.setTransform(1,0,0,1,0,0);
     ctx.beginPath();ctx.rect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.clip();
-    // WebKit applies a second colour conversion when drawing a Display-P3
-    // WebGL canvas into 2D: already-P3 bytes are treated as sRGB and then
-    // converted again, visibly washing out every seamless photo. Copy its
-    // tagged raw pixels instead, exactly as the tiled path below does.
-    let image:HTMLCanvasElement=surface;
-    if(isWebKit()){
-      const tile=this.colorTile||(this.colorTile=document.createElement('canvas'));
-      if(tile.width!==W)tile.width=W;if(tile.height!==H)tile.height=H;
-      copySeamPreviewPixels(surface,get2dWide(tile)!);image=tile;
-    }
-    ctx.drawImage(image,0,0);ctx.restore();return true;
+    // Drawn straight into the 2D scene. On WebKit the surface renders sRGB
+    // (see drawSeamPreview srgbOutput), which drawImage reads correctly; no
+    // GPU readback that could come back empty and blank the photos.
+    ctx.drawImage(surface,0,0);ctx.restore();return true;
   }
   beginFrame(){}
   flush(){}

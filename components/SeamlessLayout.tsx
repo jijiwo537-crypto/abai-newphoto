@@ -68,12 +68,16 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
   },[cells.map(c=>c.id).join('|')]);
   const [ready,setReady]=useState(false),[prepared,setPrepared]=useState<{key:string;sources:SeamSource[]}|null>(null),[live,setLive]=useState(amount);
   const [contextRevision,restoreContext]=useState(0);
+  const lastRemount=useRef(-1e9);
   useEffect(()=>{
     const element=canvas.current;if(!element)return;
     // iOS Safari evicts the oldest WebGL context when too many are alive and
     // never restores it on the same element. Swap in a fresh <canvas> (keyed
     // by contextRevision) instead of leaving the photos blank/grey.
-    const lost=(e:Event)=>{e.preventDefault();warmKey.current='';restoreContext(v=>v+1);},restored=()=>restoreContext(v=>v+1);
+    // Rate-limited so a starved GPU can never churn canvases in a loop.
+    const lost=(e:Event)=>{e.preventDefault();warmKey.current='';
+      const now=performance.now();if(now-lastRemount.current<2000){setReady(false);return;}
+      lastRemount.current=now;restoreContext(v=>v+1);},restored=()=>restoreContext(v=>v+1);
     element.addEventListener('webglcontextlost',lost);element.addEventListener('webglcontextrestored',restored);
     return()=>{element.removeEventListener('webglcontextlost',lost);element.removeEventListener('webglcontextrestored',restored);disposeSeamPreview(element);};
   },[contextRevision]);

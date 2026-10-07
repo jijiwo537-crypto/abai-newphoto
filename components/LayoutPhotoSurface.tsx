@@ -28,6 +28,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
   // An evicted WebGL context never comes back on the same <canvas>; replace
   // the element so the next paint gets a fresh context instead of staying blank.
   const [surfaceGeneration,setSurfaceGeneration]=useState(0);
+  const lastRemount=useRef(-1e9);
   const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;drawRef.current();});};
   useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element&&!element.isConnected)disposeSeamPreview(element);};},[]);
   useEffect(()=>{
@@ -38,7 +39,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
     window.addEventListener('scroll',paint,true);window.addEventListener('resize',paint);
     const observer=new ResizeObserver(paint);if(plane.current)observer.observe(plane.current);
     const element=ref.current;
-    const lost=(e:Event)=>{e.preventDefault();if(element)disposeSeamPreview(element);setSurfaceGeneration(g=>g+1);};
+    const lost=(e:Event)=>{e.preventDefault();if(element)disposeSeamPreview(element);const now=performance.now();if(now-lastRemount.current<2000)return;lastRemount.current=now;setSurfaceGeneration(g=>g+1);};
     element?.addEventListener('webglcontextlost',lost);element?.addEventListener('webglcontextrestored',paint);
     return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);element?.removeEventListener('webglcontextlost',lost);element?.removeEventListener('webglcontextrestored',paint);};
   },[surfaceGeneration]);

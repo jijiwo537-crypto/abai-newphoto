@@ -6912,7 +6912,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const textSceneScale=s;if(!o.sym)ctx.scale(textSceneScale,textSceneScale);
         { const s=o.sym?textSceneScale:1;
         // 正在畫布上直接編輯時，字交給疊在上面的 textarea 顯示
-        if (isMain && editingTextRef.current === o.id) { ctx.restore(); return; }
+        /* 輸入中也照常由畫布畫字：輸入框只負責游標與鍵盤，本身的字是透明的。
+           以前把字交給 DOM 輸入框顯示，解析度、字距與基線都跟畫布不同，
+           一打字字就變糊、位置也跟著跳。只有內容還是佔位文字時不畫。 */
+        if (isMain && editingTextRef.current === o.id && (o.sym || o.text === TEXT_PLACEHOLDER)) { ctx.restore(); return; }
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
            面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
         const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
@@ -10007,7 +10010,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 fontSize: (o.size || 40) * k / inputScale,
                 letterSpacing: `${(o.letterSpacing || 0) * k / inputScale}px`,
                 lineHeight: `${boxH * k / inputScale}px`,
-                color: o.color || '#FFFFFF',
+                // The canvas shows the text itself (same pixels as when not
+                // editing); this field only provides the caret and keyboard.
+                color: o.sym ? (o.color || '#FFFFFF') : 'transparent',
+                WebkitTextFillColor: o.sym ? undefined : 'transparent',
                 caretColor: '#FFFFFF',
                 textAlign: 'center',
                 whiteSpace: 'pre',

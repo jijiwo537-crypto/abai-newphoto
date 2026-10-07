@@ -21,12 +21,16 @@ class SeamGpu {
   private maxTextureUnits:number;
   private uniforms=new Map<WebGLProgram,Map<string,WebGLUniformLocation|null>>();
   private lastPresentation:(()=>void)|null=null;
-  constructor(canvas:HTMLCanvasElement,direct=false,private presentationOnly=false){
+  constructor(canvas:HTMLCanvasElement,direct=false,private presentationOnly=false,srgbOutput=false){
     const webkit=/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
     this.transferred=!direct&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
     this.canvas=this.transferred?new OffscreenCanvas(canvas.width,canvas.height):canvas;
     const gl=this.canvas.getContext('webgl2',{alpha:true,antialias:false,premultipliedAlpha:false,preserveDrawingBuffer:!presentationOnly}) as WebGL2RenderingContext|null;
-    if(!gl)throw new Error('無縫拼圖 GPU 無法啟動');this.gl=gl;this.color=configureWebglWide(gl);
+    if(!gl)throw new Error('無縫拼圖 GPU 無法啟動');this.gl=gl;
+    // srgbOutput: this surface is drawn into a 2D canvas with drawImage. WebKit
+    // treats a WebGL canvas as sRGB there, so render sRGB (colour-managed
+    // uploads) instead of Display-P3 bytes it would misread as washed out.
+    this.color=srgbOutput?{colorSpace:'srgb',directUpload:false}:configureWebglWide(gl);
     this.maxTextureUnits=gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
     this.canvas.addEventListener('webglcontextlost',e=>{this.invalid=true;e.preventDefault();if(this.transferred)canvas.dispatchEvent(new Event('webglcontextlost',{cancelable:true}));},{once:true});
     if(this.transferred)this.canvas.addEventListener('webglcontextrestored',()=>canvas.dispatchEvent(new Event('webglcontextrestored')),{once:true});
@@ -217,8 +221,8 @@ class SeamGpu {
   }
 }
 const renderers=new WeakMap<HTMLCanvasElement,SeamGpu>();
-export function drawSeamPreview(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView,presentationOnly=false){
-  let gpu=renderers.get(target);if(!gpu||gpu.lost){gpu=new SeamGpu(target,false,presentationOnly);renderers.set(target,gpu);}gpu.draw(target,cells,rects,sources,amount,view);
+export function drawSeamPreview(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView,presentationOnly=false,srgbOutput=false){
+  let gpu=renderers.get(target);if(!gpu||gpu.lost){gpu=new SeamGpu(target,false,presentationOnly,srgbOutput);renderers.set(target,gpu);}gpu.draw(target,cells,rects,sources,amount,view);
 }
 export function disposeSeamPreview(target:HTMLCanvasElement){renderers.get(target)?.dispose();renderers.delete(target);}
 /** A 2D collage composition cannot display the WebGL layer directly. On
