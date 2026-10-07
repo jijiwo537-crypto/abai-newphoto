@@ -7,6 +7,7 @@ import {drawSeamShared,releaseSeamShared,type SeamTexture} from '../utils/seamle
 import {previews as seamlessPreviews} from './SeamlessLayout';
 import {drawCoveredPhoto} from '../utils/coveredPhoto';
 import {get2dWide} from '../utils/colorSpace';
+import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
 
 type Cell={id:string;url:string;naturalWidth?:number;naturalHeight?:number;zoom:number;offsetX:number;offsetY:number;rotation:number;opacity?:number;imgRadius?:number;fx?:PhotoFx};
 type Rect={x:number;y:number;w:number;h:number};
@@ -133,9 +134,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
           }
         }
         const source=shown||resource!.output!,iw=(source as any).naturalWidth||(source as any).width,ih=(source as any).naturalHeight||(source as any).height;
-        const turn=Math.abs(c.rotation%180)===90;
-        const scale=Math.max(r.w*aw/(turn?ih:iw),r.h*ah/(turn?iw:ih))*1.02*c.zoom;
-        const dx=c.offsetX*r.w*aw,dy=c.offsetY*r.h*ah,angle=c.rotation*Math.PI/180;
+        // Shared with every other preview path and the export (one framing rule).
+        const {scale,dx,dy,angle}=cellPhotoPlacement(r.w*aw,r.h*ah,iw,ih,c);
         const cr=c.imgRadius?Math.min(cw,ch)*Math.min(.5,Math.max(0,c.imgRadius/100)):Math.min(radius,cw/2,ch/2);
         sources.push({image:source,width:iw,height:ih});radii.push(cr);
         crops.push({tx:dx*Math.cos(angle)+dy*Math.sin(angle),ty:-dx*Math.sin(angle)+dy*Math.cos(angle),scale,angle});

@@ -34,3 +34,19 @@ test('exact shared boundary pixel belongs to the right/lower cell, not a transpa
  assert.match(gpu,/lessThan\(p,bounds.zw\)/);
  assert.match(gpu,/g.ex,g.ey,g.ex\+g.ew,g.ey\+g.eh/);
 });
+test('preview paths and export frame layout photos with one shared rule',async()=>{
+ const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
+ const util=readFileSync(new URL('../utils/layoutCellPhoto.ts',import.meta.url),'utf8');
+ assert.match(layout,/cellPhotoPlacement\(r\.w\*aw,r\.h\*ah,iw,ih,c\)/);
+ assert.match(grid,/cellPhotoPlacement\(w,h,iw,ih,c\|\|\{\}\)/);
+ assert.match(grid,/cellPhotoPlacement\(rawW, rawH, w_img, h_img, cell\)/);
+ assert.match(grid,/const slotW = rect\.w \* areaW, slotH = rect\.h \* areaH;\s*const place = cellPhotoPlacement\(slotW, slotH, imgW, imgH, cell\)/);
+ assert.doesNotMatch(grid,/1\.015 \+ 0\.005/);
+ assert.doesNotMatch(grid+layout,/\*1\.02\*|\* 1\.02;/);
+ assert.match(util,/CELL_COVER_BLEED = 1\.02/);
+ const ts=(await import('typescript')).default,vm=await import('node:vm'),scope={exports:{}};
+ vm.runInNewContext(ts.transpileModule(util,{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,scope);
+ const p=scope.exports.cellPhotoPlacement(300,400,600,800,{zoom:1.5,offsetX:.1,offsetY:-.2,rotation:90});
+ assert.ok(Math.abs(p.scale-Math.max(300/800,400/600)*1.02*1.5)<1e-12);
+ assert.equal(p.dx,30);assert.equal(p.dy,-80);
+});

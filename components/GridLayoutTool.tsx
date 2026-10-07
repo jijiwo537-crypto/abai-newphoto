@@ -12,6 +12,7 @@ import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, Slid
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,warmBackdropMasks} from '../utils/backdropMasks';
+import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { paintCachedClassicGlow } from './ClassicGlowCache';
 import { settledSortSeams } from '../utils/sortSeams';
@@ -13869,26 +13870,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
             const imgW = img.naturalWidth || img.width;
             const imgH = img.naturalHeight || img.height;
-            const is90or270 = (cell.rotation % 180) !== 0;
 
-            const drawW = is90or270 ? imgH : imgW;
-            const drawH = is90or270 ? imgW : imgH;
-
-            const scaleX = iw / drawW;
-            const scaleY = ih / drawH;
-            // Add a tiny subpixel bleed factor to prevent thin gaps on edges
-            const coverScale = Math.max(scaleX, scaleY) * 1.015 + 0.005;
-            const finalScale = coverScale * cell.zoom;
+            /* 取景跟預覽完全同一條規則（utils/layoutCellPhoto）：以「沒取整」的
+               格子槽（含它那一份間距）計算縮放與位移，照片中心＝格子中心。
+               以前這裡用扣掉間距、又取整過的內框，縮放係數也不同
+               （×1.015＋0.005 對預覽的 ×1.02），匯出構圖會跟畫面差一點。
+               取整只留給上面的裁切框（相鄰格共用同一條像素邊界、不露縫）。 */
+            const slotW = rect.w * areaW, slotH = rect.h * areaH;
+            const place = cellPhotoPlacement(slotW, slotH, imgW, imgH, cell);
+            const finalScale = place.scale;
+            const centerX = boxX + inset + (rect.x + rect.w / 2) * areaW;
+            const centerY = boxY + inset + (rect.y + rect.h / 2) * areaH;
 
             // Perform transformations
-            ctx.translate(ix + iw / 2, iy + ih / 2);
+            ctx.translate(centerX, centerY);
 
             // Apply user shifts (in unrotated coordinate space to match preview)
-            const shiftX = cell.offsetX * iw;
-            const shiftY = cell.offsetY * ih;
-            ctx.translate(shiftX, shiftY);
+            ctx.translate(place.dx, place.dy);
 
-            ctx.rotate((cell.rotation * Math.PI) / 180);
+            ctx.rotate(place.angle);
 
             // Scale and draw（整組佈局是一個群組，格內照片跟著一起縮放）
             ctx.scale(finalScale, finalScale);
@@ -15013,15 +15013,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   const r = resolveLayoutRect(raw, lw, lh, layout.overlaySize), c = layout.images[idx];
                                   const x=r.x*lw, y=r.y*lh, w=r.w*lw, h=r.h*lh;
                                   const iw=c?.naturalWidth || 800, ih=c?.naturalHeight || 600;
-                                  const turn=!!(c?.rotation % 180);
-                                  const s=Math.max(w/(turn?ih:iw),h/(turn?iw:ih))*1.02*(c?.zoom || 1);
+                                  const place=cellPhotoPlacement(w,h,iw,ih,c||{}),s=place.scale;
                                   const clip=`inset-${layout.id}-${idx}`;
                                   return <g key={idx}>
                                     <defs><clipPath id={clip}><rect x={x} y={y} width={w} height={h}/></clipPath></defs>
                                     {c?.url ? <g clipPath={`url(#${clip})`}>
                                       <image href={c.url} x={-iw/2} y={-ih/2} width={iw} height={ih}
                                         opacity={(c.opacity ?? 100)/100} preserveAspectRatio="none"
-                                        transform={`translate(${x+w/2+(c.offsetX||0)*w} ${y+h/2+(c.offsetY||0)*h}) rotate(${c.rotation||0}) scale(${s})`}/>
+                                        transform={`translate(${x+w/2+place.dx} ${y+h/2+place.dy}) rotate(${place.rotation}) scale(${s})`}/>
                                     </g> : <rect x={x} y={y} width={w} height={h} fill="#0c0c0c"/>}
                                     {isThisLayoutSelected && selectedIndex===idx && !selectionDragging && <rect x={x} y={y} width={w} height={h} fill="none" stroke="white" strokeDasharray={`${4 / Math.max(0.0001, kRef.current)} ${4 / Math.max(0.0001, kRef.current)}`} style={{strokeWidth:'var(--layout-grid-stroke, 1px)'}}/>}
                                   </g>;
@@ -15214,19 +15213,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
                                   const w_img = cell.naturalWidth || 800;
                                   const h_img = cell.naturalHeight || 600;
-                                  const is90or270 = (cell.rotation % 180) !== 0;
-
-                                  const drawW = is90or270 ? h_img : w_img;
-                                  const drawH = is90or270 ? w_img : h_img;
-
                                   /* 用「沒取整」的格子大小算，照片的縮放才不會跟著
                                      格線取整一起跳（框取整、照片連續，見上面的說明）。 */
-                                  const scaleX = rawW / drawW;
-                                  const scaleY = rawH / drawH;
-                                  // 防止格子邊緣露出細縫的「咬邊」。純粹用乘的，不能再加常數 ——
-                                  // 加常數的話縮放時每張照片相對格子的比例會跟著變，就不是等比例了。
-                                  const coverScale = Math.max(scaleX, scaleY) * 1.02;
-                                  const finalScale = coverScale * cell.zoom;
+                                  // 同一條取景規則（utils/layoutCellPhoto），預覽各路徑與匯出共用。
+                                  const place = cellPhotoPlacement(rawW, rawH, w_img, h_img, cell);
+                                  const finalScale = place.scale;
 
                                   const layoutW = w_img;
                                   const layoutH = h_img;
@@ -15333,7 +15324,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             maxWidth: 'none',
                                             maxHeight: 'none',
                                             transformOrigin: 'center center',
-                                            transform: `translate(-50%, -50%) translate(${cell.offsetX * rawW + fixX}px, ${cell.offsetY * rawH + fixY}px) rotate(${cell.rotation}deg) scale(${cssScale})`,
+                                            transform: `translate(-50%, -50%) translate(${place.dx + fixX}px, ${place.dy + fixY}px) rotate(${place.rotation}deg) scale(${cssScale})`,
                                             transition: imageTransition,
                                             opacity: (cell.opacity ?? 100) / 100,
                                             pointerEvents: 'none',
