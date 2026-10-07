@@ -11,7 +11,7 @@ import { idleDefaults } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
-import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask} from '../utils/backdropMasks';
+import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,warmBackdropMasks} from '../utils/backdropMasks';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { paintCachedClassicGlow } from './ClassicGlowCache';
 import { settledSortSeams } from '../utils/sortSeams';
@@ -9894,6 +9894,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     && selectedIndex === null && !selectedFloatingId;
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
+  // Compile the shared mask programs while the shape list is merely open,
+  // so tapping a mask does not wait on shader compilation.
+  useEffect(()=>{if(addSub!=='shape')return;const ric=(window as any).requestIdleCallback as undefined|((f:()=>void,o?:any)=>number);const id=ric?ric(warmBackdropMasks,{timeout:600}):window.setTimeout(warmBackdropMasks,120);return()=>{if(ric)(window as any).cancelIdleCallback(id);else clearTimeout(id);};},[addSub]);
   /* 離開「新增」分頁就回到最外層：下次再進來看到的是那幾顆大按鈕，
      而不是上次停在的圖形／符號清單。 */
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);

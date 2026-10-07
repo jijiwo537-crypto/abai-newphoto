@@ -6,7 +6,7 @@ test('creative photo capture respects selected objects and edits selected cells 
  const s=read('components/CollageTool.tsx');
  const capture=s.slice(s.indexOf('const regionPointerDown='),s.indexOf('const regionPointerMove='));
  assert.match(capture,/otherSelection=.*selectedObjRef.current.*selectedTarget.*baseSelectedRef.current.*maskSelectedRef.current/);
- assert.match(capture,/own=.*!otherSelection&&selectedRegionPhotoRef.current!==null/);
+ assert.match(capture,/selectedHasPhoto=selectedRegionPhotoRef.current!==null&&!!photoRegionRef.current\?\.photos\[selectedRegionPhotoRef.current\]\?\.src/);assert.match(capture,/own=.*!otherSelection&&selectedHasPhoto/);
  assert.match(capture,/else if\(!otherSelection\)/);
  assert.doesNotMatch(capture,/selectedRegionPhotoRef.current===source.index/);
  assert.match(s,/regionEditTap.current.moved=true/);

@@ -1,7 +1,7 @@
 
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { reframeBasePhoto } from '../utils/reframeBasePhoto';
-import {MASK_SHAPE_ITEMS,isBackdropMask,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
+import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,warmBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { previewViewport } from '../utils/previewViewport';
 import { LinkGlowTiles } from '../utils/linkGlowTiles';
@@ -462,8 +462,76 @@ const symBox = (str: string, fam: string, size: number) => {
 };
 
 /** 創意拼圖與經典拼圖共用同一份圖形路徑範圍；這裡把它換成物件座標。 */
+/* 圖形（線條與網格除外）的選取框要「剛好貼著」墨水外緣：框線的內緣碰到
+   圖形最外側的像素，但完全不壓到它。查表的 SHAPE_FIT 只是路徑的近似框，
+   描邊的尖角（星形、三角形的 miter）、圓角星、對話框尾巴都會偏掉，
+   所以這裡跟拼圖本身用同一組繪製呼叫（同一條路徑、同一種接角、外描邊），
+   在離屏畫一次、掃 alpha，量出真正的墨水範圍。一種外形設定只量一次。 */
+const shapeInkCache = new Map<string, { x: number; y: number; w: number; h: number } | null>();
+export const hugsShapeInk = (o: any) => o?.type === 'shape' && !SPECIAL_LINE_KINDS.has(o.kind) && !GRID_SHAPE_KINDS.has(o.kind);
+/** 選取框中心線離墨水多遠（CSS px）。貼齊的圖形＝框線寬的一半（0.275）
+    再加 0.175：墨水邊緣那一排抗鋸齒的半透明像素也不會被框線壓到，
+    肉眼看起來仍是貼著。 */
+export const selectionFrameGap = (o: any) => o?.type === 'image' ? 0.375 : hugsShapeInk(o)
+  // 字形圖案的墨水是字型度量，頂端比幾何路徑多一點誤差，多留 0.2。
+  ? (o.kind === 'hole' && isTextHole(o.hole) ? 0.65 : 0.45) : 2;
+const measuredShapeInk = (o: any): { x: number; y: number; w: number; h: number } | null => {
+  // Glyph patterns already use their own measured alpha ink (glyphInk below).
+  if (!hugsShapeInk(o) || !(o.w > 0) || !(o.h > 0) || typeof document === 'undefined' || (o.kind === 'hole' && isTextHole(o.hole))) return null;
+  if (isBackdropMask(o.kind)) {
+    // 遮罩是解析式裁切：方形／圓形就是整個框，星形是那十個頂點的外接框。
+    if (maskGeometry(o.kind, o) !== 'star') return { x: 0, y: 0, w: o.w, h: o.h };
+    const pts = Array.from({ length: 10 }, (_, i) => { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? .45 : 1; return [Math.cos(a) * r, Math.sin(a) * r]; });
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    return { x: (Math.min(...xs) + 1) / 2 * o.w, y: (Math.min(...ys) + 1) / 2 * o.h, w: (Math.max(...xs) - Math.min(...xs)) / 2 * o.w, h: (Math.max(...ys) - Math.min(...ys)) / 2 * o.h };
+  }
+  const long = Math.max(o.w, o.h), base = (o.lineBase || long);
+  const key = JSON.stringify([o.kind, o.hole, o.text, !!o.filled, Math.round(o.w / o.h * 1e4), o.lineW ?? 6, Math.round(base / long * 1e4),
+    Math.round((o.textureBaseW || o.w) / o.w * 1e3), Math.round((o.textureBaseH || o.h) / o.h * 1e3), o.strokeW || 0, o.innerSize, o.outlineWidth]);
+  if (shapeInkCache.has(key)) return shapeInkCache.get(key)!;
+  let ink: { x: number; y: number; w: number; h: number } | null = null;
+  try {
+    const k = 480 / long, bw = o.w * k, bh = o.h * k, unit = base * k / 160;
+    const lw = Math.max(0.4 * k, (o.lineW ?? 6) * unit), sw = Math.min(8, Math.max(0, o.strokeW || 0)) * unit;
+    const solid = o.filled && o.kind !== 'line';
+    const pad = Math.ceil(Math.min(Math.max(bw, bh), lw * shapeMiterLimit(bw, bh)) + sw * 2 + 8);
+    const cv = document.createElement('canvas'); cv.width = Math.ceil(bw + pad * 2); cv.height = Math.ceil(bh + pad * 2);
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    if (g) {
+      g.translate(pad, pad); g.fillStyle = g.strokeStyle = '#fff';
+      // Same join state the scene painter sets before every shape kind.
+      g.lineJoin = 'miter'; g.lineCap = 'butt'; g.miterLimit = shapeMiterLimit(bw, bh); g.lineWidth = lw;
+      if (o.kind === 'hole') {
+        g.translate(bw / 2, bh / 2);
+        drawHoleShape(g, { ...o, glow: 0, dots: false, tex: 'none', lineUnit: unit, textureBaseW: (o.textureBaseW || o.w) * k, textureBaseH: (o.textureBaseH || o.h) * k }, bw, bh, shapeGlowBlurs(bw, bh).map(() => 0));
+      } else {
+        const path = shapePathBox(o.kind, bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k);
+        if (sw > 0) {
+          g.save(); g.lineJoin = 'round'; g.miterLimit = 2; g.lineWidth = solid ? sw * 2 : lw + sw * 2;
+          if (!strokeCompositeShape(g, o.kind, bw, bh, o.innerSize)) g.stroke(path);
+          g.restore();
+        }
+        g.lineJoin = 'miter'; g.lineCap = 'butt'; g.miterLimit = shapeMiterLimit(bw, bh); g.lineWidth = lw;
+        if (solid) drawFeatheredShapeBody(g, o.kind, bw, bh, undefined, '#fff', undefined, '#fff', { innerSize: o.innerSize, outlineWidth: o.outlineWidth });
+        else g.stroke(path);
+      }
+      const { data } = g.getImageData(0, 0, cv.width, cv.height);
+      let x0 = cv.width, y0 = cv.height, x1 = -1, y1 = -1;
+      for (let y = 0; y < cv.height; y++) for (let x = 0, i = y * cv.width * 4 + 3; x < cv.width; x++, i += 4)
+        if (data[i] > 6) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 >= x0 && y1 >= y0) ink = { x: (x0 - pad) / k, y: (y0 - pad) / k, w: (x1 + 1 - x0) / k, h: (y1 + 1 - y0) / k };
+    }
+    cv.width = cv.height = 1;
+  } catch { ink = null; }
+  shapeInkCache.set(key, ink);
+  if (shapeInkCache.size > 256) shapeInkCache.delete(shapeInkCache.keys().next().value!);
+  return ink;
+};
+
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
+  const hug = measuredShapeInk(o);
+  if (hug) return { x: hug.x * scale - gap, y: hug.y * scale - gap, w: hug.w * scale + gap * 2, h: hug.h * scale + gap * 2 };
   if (o.sym) {
     /* 外框使用固定基础字级的规范化几何，再跟物件一起等比缩放。
        缩放期间不可按每一帧的新字级重新扫描 alpha，否则 iOS 会卡顿且框会跳。 */
@@ -2423,6 +2491,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const footerRef = useRef<HTMLElement>(null);
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
+  // Compile the shared mask programs while the shape list is merely open,
+  // so tapping a mask does not wait on shader compilation.
+  useEffect(()=>{if(addSub!=='shape')return;const ric=(window as any).requestIdleCallback as undefined|((f:()=>void,o?:any)=>number);const id=ric?ric(warmBackdropMasks,{timeout:600}):window.setTimeout(warmBackdropMasks,120);return()=>{if(ric)(window as any).cancelIdleCallback(id);else clearTimeout(id);};},[addSub]);
   /** 新增清單目前亮白框的選項，以及真正交給上方畫筆連續生成的選項。 */
   const [addPaletteChoice, setAddPaletteChoice] = useState<any>(null);
   const [objectBrushChoice, setObjectBrushChoice] = useState<any>(null);
@@ -3778,7 +3849,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Selection owns the gesture, not the photo underneath the first finger.
     // The capture layer must not turn a selected object/pattern into a photo tap.
     const otherSelection=!!selectedObjRef.current||!!selectedTarget||baseSelectedRef.current||maskSelectedRef.current;
-    const own=regionTouches.current.size>0||(!otherSelection&&selectedRegionPhotoRef.current!==null);
+    // An EMPTY selected cell has no photo to pan/zoom: it must not own the
+    // gesture, or every tap is swallowed and the cell can never be deselected.
+    const selectedHasPhoto=selectedRegionPhotoRef.current!==null&&!!photoRegionRef.current?.photos[selectedRegionPhotoRef.current]?.src;
+    const own=regionTouches.current.size>0||(!otherSelection&&selectedHasPhoto);
     if(own){
       const p=regionCoordinates(e.clientX,e.clientY);if(!p)return;
       e.stopPropagation();e.preventDefault();try{e.currentTarget.setPointerCapture(e.pointerId);}catch{}
@@ -3802,7 +3876,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           return;
         }
         regionScenePinch.current=false;regionTap.current={id:e.pointerId,index:source.index,x:e.clientX,y:e.clientY,moved:false};
-      }else setSelectedRegionPhoto(null);
+      }else{selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);}
     }
     if(second||!source||!photoContent(source)?.src)return;
     const hold={id:e.pointerId,source,x:e.clientX,y:e.clientY,timer:0,active:false};
@@ -5385,7 +5459,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ctx.beginPath();ctx.rect(0,0,offs.cw,offs.ch);ctx.clip();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    const sceneIsStatic=liveMaskScale.current===null&&!selectedObj&&!selectedTarget&&!baseSelected&&selectedRegionPhotoRef.current===null&&!regionPhotoEditingRef.current&&!animRef.current&&!motionTargetFlashRef.current&&!editingTextId&&!swapSource&&!regionSliderHeld.current&&!regionHold.current?.active
+    // A plain object selection is an SVG overlay above the canvas: the scene
+    // pixels are identical, so pinch-zooming with a selected mask/shape keeps
+    // using the immutable tiles. Only a shape-outline selection (stroked
+    // into the canvas) needs the live painter.
+    const sceneIsStatic=liveMaskScale.current===null&&!(selectedObj&&shapeSel)&&!selectedTarget&&!baseSelected&&selectedRegionPhotoRef.current===null&&!regionPhotoEditingRef.current&&!animRef.current&&!motionTargetFlashRef.current&&!editingTextId&&!swapSource&&!regionSliderHeld.current&&!regionHold.current?.active
       &&!objDragRef.current&&!objPinchRef.current&&!objStretchRef.current&&!baseDragRef.current&&!basePinchRef.current&&!interactionRef.current
       &&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
     // No source rasterization, shader upload, per-object rounding, or rebuilding
@@ -5397,11 +5475,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(import.meta.env.DEV){targetCanvas.dataset.sceneSnapshot='tiles';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);targetCanvas.dataset.viewport=JSON.stringify(vp);targetCanvas.dataset.fullSize=JSON.stringify([tW,tH]);}
       return;
     }
-    if(targetCanvas===canvasRef.current&&import.meta.env.DEV)targetCanvas.dataset.sceneSnapshot='live';
+    /* Objects just added (palette tap, import) are appended on top of a scene
+       the tiles already hold. Paint those tiles and draw only the new objects:
+       re-rendering every photograph/effect live for one new shape was the
+       visible delay after tapping an item. Pixels match the tile view the
+       user was already looking at. */
+    let tilePrefix:any[]|null=null;
+    if(targetCanvas===canvasRef.current&&!previewCapture&&sceneIsStatic&&stableScene.current.key&&objects.length){
+      for(let k=1;k<=Math.min(3,objects.length);k++){
+        const tail=objects.slice(objects.length-k);
+        if(tail.some(o=>o.below||isVideoEl(o.img)))break;
+        if(JSON.stringify([backdropSceneFingerprint,objects.slice(0,objects.length-k),photoRegion,lutRevision],compactSceneValue)===stableScene.current.key){tilePrefix=tail;break;}
+      }
+    }
+    if(targetCanvas===canvasRef.current&&import.meta.env.DEV)targetCanvas.dataset.sceneSnapshot=tilePrefix?'tiles+objects':'live';
 
     const priorPatternPaint = lastPatternPaintRef.current;
     debugSection('geometry');
-    const canRetain = isMain && !previewCapture && !windowed && !animRef.current && !motionTargetFlashRef.current && !hideChromeRef.current
+    const canRetain = isMain && !tilePrefix && !previewCapture && !windowed && !animRef.current && !motionTargetFlashRef.current && !hideChromeRef.current
       && linkMode === 'none' && glowIdle === 'none' && !guides.length
       && !isVideoEl(imageState.img) && !objects.some(o => isVideoEl(o.img)||isBackdropMask(o.kind));
     let dirtyPatternRect: {x:number;y:number;w:number;h:number}|null = null;
@@ -7323,7 +7414,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              不然愛心上面那片空白、星星底下那條也會被框進去。
              沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
           // 圖片框的內緣剛好貼齊圖片，不留下空隙也不蓋住像素。
-          const ink = objectSelectionInk(o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx);
+          const ink = objectSelectionInk(o, s, selectionFrameGap(o) * uiPx);
           ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
         }
         ctx.shadowColor = 'transparent';
@@ -7662,14 +7753,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!isMain) bd.width = 0;
     };
 
-    const maskPrefix=isMain&&!previewCapture&&!directMaskPhotos&&hasBackdrop&&objects.some(o=>o.id===selectedObj&&isBackdropMask(o.kind))&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
+    // The prefix is keyed on the viewport; while the view itself is being
+    // pinched every frame has a new key, so building it is a pure extra copy.
+    const viewMoving=!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
+    const maskPrefix=isMain&&!previewCapture&&!viewMoving&&!directMaskPhotos&&hasBackdrop&&objects.some(o=>o.id===selectedObj&&isBackdropMask(o.kind))&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
     /* 拖曳／兩指縮放／擠壓一個物件時，它底下的整個畫面（照片、遮罩、圖案、
        更底層的物件）每一幀都一模一樣。把那一段快取成一張，之後每一幀只貼回
        快取、再畫這個物件與它上面的東西 —— 不再每一幀重畫整個場景。 */
     const movingId=isMain?((objDragRef.current?.moved&&objDragRef.current.id)||(objPinchRef.current?.gestureStarted&&objPinchRef.current.id)||objStretchRef.current?.id||null):null;
     const movingIndex=movingId?aboveObjs.findIndex(o=>o.id===movingId):-1;
     const liftPrefix=!maskPrefix&&isMain&&!previewCapture&&!directMaskPhotos&&movingIndex>=0&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
-    const prefixCacheable=maskPrefix||liftPrefix;
+    const prefixCacheable=!tilePrefix&&(maskPrefix||liftPrefix);
     debugSection('prepare');
     const prefixEnd=maskPrefix?aboveObjs.findIndex(o=>o.id===selectedObj&&isBackdropMask(o.kind)):liftPrefix?movingIndex:-1;
     const prefixAbove=prefixEnd>0?aboveObjs.slice(0,prefixEnd):[];
@@ -7680,6 +7774,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const cachedPrefix=prefixCacheable&&backdropPrefix.current?.key===prefixKey?backdropPrefix.current:null;
     if(cachedPrefix){
       ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.globalCompositeOperation='copy';ctx.drawImage(cachedPrefix.canvas,0,0);ctx.restore();
+    }else if(tilePrefix){
+      ctx.save();ctx.setTransform(rasterX,0,0,rasterY,-vp.x,-vp.y);ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';
+      stableScene.current.paint(ctx,stableScene.current.key,offs.cw,offs.ch);ctx.restore();
+      regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
     }else if (layout === FULL) {
       /* 滿版本身沒有遮罩區，但仍保留「圖案」層。圖案直接使用圖片側既有
          的同一支繪製器覆在底圖上，數量、位置、動畫、發光與其他排版一致；
@@ -7725,7 +7823,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // else { ctx.moveTo(sw, 0); ctx.lineTo(sw, sh); }
     // ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = sgs; ctx.stroke();
 
-    drawObjects(aboveObjs.slice(prefixAbove.length));
+    drawObjects(tilePrefix||aboveObjs.slice(prefixAbove.length));
 
     /* ── 歷史紀錄的縮圖，就在這一行拍 ────────────────────────────────
        這裡是「成品都畫完了、選取框還沒畫上去」的唯一一個時間點 ——
@@ -8548,12 +8646,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   renderToCanvasRef.current = renderToCanvas;
   useEffect(()=>{
-    if(!imageState||stableScene.current.key===stableSceneKey||objEditImage||selectedRegionPhoto!==null||baseSelected||selectedObj||selectedTarget)return;
+    if(!imageState||stableScene.current.key===stableSceneKey||objEditImage||selectedRegionPhoto!==null||baseSelected||shapeSel||selectedTarget)return;
     let cancelled=false;
     const valid=()=>!cancelled&&stableSceneKeyRef.current===stableSceneKey&&!animRef.current
       &&!activePointers.current.size&&!isPhotoInteractionBusy()&&!regionSliderHeld.current&&!regionHold.current?.active
       &&!regionPhotoEditingRef.current&&selectedRegionPhotoRef.current===null
-      &&!chromeSelectionRef.current.baseSelected&&!chromeSelectionRef.current.selectedObj&&!chromeSelectionRef.current.selectedTarget
+      &&!chromeSelectionRef.current.baseSelected&&!shapeSelRef.current&&!chromeSelectionRef.current.selectedTarget
       &&!editingTextId&&!swapSource&&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
     void awaitPhotoIdle().then(()=>{
       if(!valid())return;
@@ -8566,7 +8664,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       },valid).then(ready=>{if(import.meta.env.DEV&&canvasRef.current)canvasRef.current.dataset.scenePreparation=stableScene.current.status;if(ready&&valid())regionPaintRef.current();});
     });
     return()=>{cancelled=true;};
-  },[stableSceneKey,imageState,layout,maskScale,canvasRatio,maxPreviewScale,viewT,editingTextId,swapSource,activeTab,objDragging,objPinching,objStretching,objEditImage,selectedRegionPhoto,baseSelected,selectedObj,selectedTarget]);
+  },[stableSceneKey,imageState,layout,maskScale,canvasRatio,maxPreviewScale,viewT,editingTextId,swapSource,activeTab,objDragging,objPinching,objStretching,objEditImage,selectedRegionPhoto,baseSelected,selectedObj,shapeSel,selectedTarget]);
   const regionShadersPrimed=useRef(false);
   useEffect(()=>{
     if(!imageState||!photoRegion?.photos.length||regionShadersPrimed.current)return;
@@ -10013,7 +10111,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 if (!baseSelected && !maskSelected && (!o || shaped)) return null;
                 const logicalPerCssPx = off.cw / Math.max(1, (baseCss?.w || off.cw) * displayScale);
                 const ink = o && !shaped
-                  ? objectSelectionInk(o, 1, (o.type === 'image' ? 0.375 : 2) * logicalPerCssPx)
+                  ? objectSelectionInk(o, 1, selectionFrameGap(o) * logicalPerCssPx)
                   : null;
                 const stroke = o
                   ? (o.type === 'shape' ? (o.kind === 'line' ? 0.32 : 0.55) : o.sym ? 0.5 : 0.75)
@@ -10205,7 +10303,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              這裡照畫選取框那一段同一份幾何重算：框的中心在哪、轉完之後最低點在哪。 */
           const shapeMode = shapeSel === o.id && isImgShaped(o.imgShape);
           // shapeMode 描的是整個外形（見畫選取框那一段），其他時候是 ink
-          const frameGap = o.type === 'image' ? 0.375 / Math.max(k, 0.0001) : 2 / Math.max(k, 0.0001);
+          const frameGap = selectionFrameGap(o) / Math.max(k, 0.0001);
           const ink = shapeMode
             ? { x: 0, y: 0, w: o.w, h: o.h }
             : objectSelectionInk(o, 1, frameGap);

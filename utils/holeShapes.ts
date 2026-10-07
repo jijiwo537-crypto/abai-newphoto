@@ -416,7 +416,7 @@ export const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: n
       let rot = (Math.PI / 2) * 3;
       ctx.moveTo(cx, cy - r);
       for (let i = 0; i < spikes; i++) {
-        ctx.lineTo(cx + Math.cos(rot) * r, cy + Math.sin(rot) * r); 
+        if (i > 0) ctx.lineTo(cx + Math.cos(rot) * r, cy + Math.sin(rot) * r);
         rot += step;
         ctx.lineTo(cx + Math.cos(rot) * (r / 2.2), cy + Math.sin(rot) * (r / 2.2)); 
         rot += step;
@@ -427,7 +427,9 @@ export const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: n
       let rotCross = (Math.PI / 2) * 3;
       ctx.moveTo(cx, cy - r);
       for (let i = 0; i < 4; i++) {
-        ctx.lineTo(cx + Math.cos(rotCross) * r, cy + Math.sin(rotCross) * r); 
+        // The first outer point IS the start point: a zero-length segment
+        // there made the top join rasterize differently from the other three.
+        if (i > 0) ctx.lineTo(cx + Math.cos(rotCross) * r, cy + Math.sin(rotCross) * r);
         rotCross += stepCross;
         ctx.lineTo(cx + Math.cos(rotCross) * (r * 0.25), cy + Math.sin(rotCross) * (r * 0.25)); 
         rotCross += stepCross;

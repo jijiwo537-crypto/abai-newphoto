@@ -236,17 +236,44 @@ class MaskGpu {
   f('fxMosaicBlocks',settings.maskCells??15);f('fxMosaicGap',0);f('fxMosaicShape',0);f('fxGlassBlocks',settings.maskCells??22);f('fxGlassRound',0);f('fxGlassRefract',(settings.maskRefract??100)/100);f('fxGlassBevel',0);
   gl.drawArrays(gl.TRIANGLES,0,6);return this.canvas;
  }
+ /** A target canvas went away: drop every reference to it so it can be
+     collected. Its texture slots stay allocated and simply re-upload. */
+ release(canvas:HTMLCanvasElement){
+  for(const slot of this.sources.values())if(slot.source===canvas){slot.source=null;slot.stamp=null;slot.width=slot.height=0;}
+  if(this.lastSource===canvas){this.lastSource=null;this.lastStamp=null;this.inputWidth=this.inputHeight=0;}
+  for(const [key,slot]of this.photoTextures)if(slot.source===canvas){this.gl.deleteTexture(slot.texture);this.photoTextures.delete(key);}
+ }
  dispose(){this.sources.clear();this.photoTextures.clear();this.gl.getExtension('WEBGL_lose_context')?.loseContext();this.canvas.width=this.canvas.height=1;this.lastSource=null;this.lastStamp=null;}
 }
-const renderers=new WeakMap<HTMLCanvasElement,MaskGpu|null>();
+/* One GPU program set serves every target canvas. It used to be one WebGL
+   context + six compiled programs PER canvas (every preview tile, the prefix
+   cache, every classic scene surface): the first mask frame stalled on shader
+   compilation, and iOS's ~16 live-context limit started evicting the photo
+   renderers' contexts. Nothing in the renderer depends on which canvas it
+   draws into: sources are keyed by identity + stamp and the output is
+   consumed synchronously. */
+const renderers={shared:undefined as MaskGpu|null|undefined,failures:0};
+const maskRenderer=()=>{
+ let renderer=renderers.shared;
+ if(renderer===undefined||renderer?.gl.isContextLost()){
+  renderer?.dispose();renderer=null;
+  try{renderer=new MaskGpu();}catch(error){renderers.failures++;backdropMaskDiagnostics.lastError=String(error);}
+  // A device without usable WebGL keeps the full-resolution CPU fallback.
+  renderers.shared=renderer??(renderers.failures<3?undefined:null);
+ }
+ return renderer;
+};
+const dropRenderer=(renderer:MaskGpu|null)=>{if(renderer&&renderer.gl.isContextLost()){renderer.dispose();if(renderers.shared===renderer)renderers.shared=undefined;}};
+/** Warm the shared programs before the first mask is added (idle time). */
+export const warmBackdropMasks=()=>{try{maskRenderer();}catch{}};
 export const backdropMaskDiagnostics={gpuFrames:0,cpuFrames:0,uploads:0,reuses:0,lastError:'',renderMs:0,compositeMs:0,uploadMs:0};
 const featherSurfaces=new WeakMap<HTMLCanvasElement,HTMLCanvasElement>();
-export const disposeBackdropMasks=(canvas:HTMLCanvasElement)=>{renderers.get(canvas)?.dispose();renderers.delete(canvas);const f=featherSurfaces.get(canvas);if(f)f.width=f.height=1;featherSurfaces.delete(canvas);};
+export const disposeBackdropMasks=(canvas:HTMLCanvasElement)=>{renderers.shared?.release(canvas);const f=featherSurfaces.get(canvas);if(f)f.width=f.height=1;featherSurfaces.delete(canvas);};
 export function drawBackdropMaskBatch(ctx:CanvasRenderingContext2D,layers:BackdropMaskLayer[],photos?:BackdropPhotoLayer[]){
  layers=layers.filter(layer=>layer.opacity>0);
- if(!layers.length)return;let renderer=renderers.get(ctx.canvas);const start=performance.now();
+ if(!layers.length)return;let renderer:MaskGpu|null=null;const start=performance.now();
  try{
-  if(renderer===undefined||renderer?.gl.isContextLost()){renderer?.dispose();renderer=new MaskGpu();renderers.set(ctx.canvas,renderer);}
+  renderer=maskRenderer();
   if(!renderer)throw Error('mask batch fallback');const output=renderer.renderBatch(ctx.canvas,layers,photos);backdropMaskDiagnostics.gpuFrames+=layers.length;backdropMaskDiagnostics.renderMs=performance.now()-start;
   const t=performance.now();ctx.save();try{
    // Preserve untouched wide-gamut pixels outside the material footprints.
@@ -257,7 +284,7 @@ export function drawBackdropMaskBatch(ctx:CanvasRenderingContext2D,layers:Backdr
    }ctx.setTransform(1,0,0,1,0,0);ctx.clip();ctx.globalAlpha=1;ctx.globalCompositeOperation='copy';ctx.drawImage(output,0,0);
   }finally{ctx.restore();}backdropMaskDiagnostics.compositeMs=performance.now()-t;
  }catch(error){
-  renderer?.dispose();renderers.delete(ctx.canvas);backdropMaskDiagnostics.lastError=String(error);
+  dropRenderer(renderer);backdropMaskDiagnostics.lastError=String(error);
   for(const layer of layers){ctx.save();try{const m=layer.matrix;ctx.setTransform(m.a,m.b,m.c,m.d,m.e,m.f);ctx.globalAlpha=layer.opacity;drawBackdropMask(ctx,layer.kind,layer.w,layer.h,layer.settings);}finally{ctx.restore();}}
  }
 }
@@ -286,12 +313,12 @@ export function drawBackdropMask(ctx:CanvasRenderingContext2D,kind:string,w:numb
  if(w<=0||h<=0)return;const m=ctx.getTransform();if(![m.a,m.b,m.c,m.d,m.e,m.f].every(Number.isFinite)||Math.abs(m.a*m.d-m.b*m.c)<1e-8)return;
  const sigma=kind.includes('frost')?Math.min(w*Math.hypot(m.a,m.b),h*Math.hypot(m.c,m.d))*.12*(settings.maskAmount??50)/100:0;
  const b=maskPhysicalBounds(m,w,h,source.width,source.height,Math.max(sigma*3,kind==='mask-mosaic'||kind==='mask-bricks'?Math.max(w*Math.hypot(m.a,m.b),h*Math.hypot(m.c,m.d))*.1:0)+2);if(!b.width||!b.height)return;
- let renderer=renderers.get(ctx.canvas),output:HTMLCanvasElement;const renderStart=performance.now();
+ let renderer:MaskGpu|null=null,output:HTMLCanvasElement;const renderStart=performance.now();
  try{
-  if(renderer===undefined||renderer?.gl.isContextLost()){renderer?.dispose();renderer=new MaskGpu();renderers.set(ctx.canvas,renderer);}
+  renderer=maskRenderer();
   output=renderer?renderer.render(source,m,w,h,kind,settings,b,sigma,sourceStamp,sourceKey):fallbackMask(source,m,w,h,kind,settings,b,sigma);
   if(renderer)backdropMaskDiagnostics.gpuFrames++;else backdropMaskDiagnostics.cpuFrames++;
- }catch(error){renderer?.dispose();renderer=null;renderers.set(ctx.canvas,null);backdropMaskDiagnostics.lastError=String(error);backdropMaskDiagnostics.cpuFrames++;console.warn('遮罩 GPU 改用安全備援',error);output=fallbackMask(source,m,w,h,kind,settings,b,sigma);}
+ }catch(error){dropRenderer(renderer);renderer=null;backdropMaskDiagnostics.lastError=String(error);backdropMaskDiagnostics.cpuFrames++;console.warn('遮罩 GPU 改用安全備援',error);output=fallbackMask(source,m,w,h,kind,settings,b,sigma);}
  backdropMaskDiagnostics.renderMs=performance.now()-renderStart;const compositeStart=performance.now();ctx.save();try{
   // Shape belongs to the native analytic clip, not a low-resolution blur bitmap.
   clipMask(ctx,w,h,maskGeometry(kind,settings));
