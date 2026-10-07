@@ -98,15 +98,15 @@ test('seam feather uses canvas-compatible encoded RGB and preserves unchanged co
   // edges above the app's established canvas source-over result.
   assert.ok(Math.abs(mix(.05,.8,.5)-.425)<1e-12);
 });
-test('selection alone does not allocate a second seamless renderer',()=>{
-  const component=readFileSync(new URL('../components/SeamlessLayout.tsx',import.meta.url),'utf8');
+test('seamless and separate cells share one layout GPU surface',()=>{
   const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
-  assert.match(grid,/prepareSeamless = !insetLayout && !!layout.seamless/);
-  assert.match(grid,/enabled=\{stableSeamless\}/);
-  assert.match(component,/if\(!enabled&&warmKey.current===key\)return/);
-  assert.match(component,/visibility:ready&&enabled\?'visible':'hidden'/);
+  const surface=readFileSync(new URL('../components/LayoutPhotoSurface.tsx',import.meta.url),'utf8');
+  // Toggling seamless only changes uniforms; no second renderer or re-upload.
+  assert.match(grid,/const nativeLayout = !insetLayout;/);
+  assert.match(grid,/fusion=\{stableSeamless \? \(layout.seamlessAmount \?\? 0\) : undefined\}/);
+  assert.doesNotMatch(grid,/<SeamlessLayout /);
+  assert.match(surface,/if\(fused\)drawSeamPreview\(cv,cells,clips,sources,fusionLive.current!,surface.view\)/);
 });
-
 test('screen-aligned fusion samples remain locked to the layout at fractional zoom and rotation',()=>{
   class Matrix {
     constructor(v){[this.a,this.b,this.c,this.d,this.e,this.f]=v;}

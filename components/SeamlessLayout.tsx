@@ -13,7 +13,7 @@ const liveSize=(w:number,h:number)=>{const k=Math.min(1,LIVE_PREVIEW/Math.max(w,
 const lutReady=(fx?:PhotoFx)=>fx?.lut?!!getLoadedLut(fx.lut):0;
 
 // Fusion input updates only the layout renderer, not the entire editor.
-const previews = new Map<string, (amount: number) => void>();
+export const previews = new Map<string, (amount: number) => void>();
 export function SeamlessAmountSlider({ previewId, value, onCommit }: { previewId: string; value: number; onCommit: (value: number) => void }) {
   const [live,setLive]=useState(value);
   const latest=useRef(value),frame=useRef(0),committed=useRef(value);

@@ -16,7 +16,7 @@ import {BackdropMaskControls} from './BackdropMaskControls';
 import { paintCachedClassicGlow } from './ClassicGlowCache';
 import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
-import { SeamlessLayout, SeamlessAmountSlider } from './SeamlessLayout';
+import { SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface} from './LayoutPhotoSurface';
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto} from '../utils/liveCellPhoto';
 import {drawStableText} from '../utils/stableText';
@@ -5202,6 +5202,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   const textInnerRef = useRef<HTMLSpanElement>(null);
   const textMeasureRef = useRef<HTMLSpanElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  /** 輸入中的插入點（自己畫的游標位置；真正的輸入框是看不見的） */
+  const [textCaret, setTextCaret] = useState<number | null>(null);
+  const syncTextCaret = (el: HTMLTextAreaElement) => setTextCaret(el.selectionEnd ?? el.value.length);
 
   /* 輸入框是「手指放開」那一刻才打開的，而瀏覽器在 touchend 之後還會補送
      一輪滑鼠事件（mousedown/click）到畫布上 —— 那一下會把焦點從剛冒出來的
@@ -5220,6 +5223,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     el.focus({ preventScroll: true });
     const n = el.value.length;
     try { el.setSelectionRange(n, n); } catch {}
+    setTextCaret(n);
   }, [isTextEditing]);
 
   // 打完什麼都沒留就把預設字放回去，圖層才不會變成看不見的空框。
@@ -6952,12 +6956,18 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               // 不設寬度上限：文字只在使用者自己換行的地方斷，
               // 有上限的話 pre 會直接被裁掉而不是換行。
               whiteSpace: 'pre',
-              // 打字時字還是由這個 span 撐出版面（框才會跟著長），
-              // 只是讓位給上面那層真正在收鍵盤輸入的 textarea
-              visibility: isTextEditing ? 'hidden' : undefined,
+              /* 打字時字也由這一層顯示（真正收鍵盤的輸入框是看不見的），
+                 插入點用自己畫的游標標出來。 */
             }}
           >
-            {image.text}
+            {isTextEditing ? (() => {
+              const text = image.text || '', at = Math.max(0, Math.min(text.length, textCaret ?? text.length));
+              return <>{text.slice(0, at)}<span aria-hidden className="abai-text-caret" style={{
+                display: 'inline-block', width: 0, height: '1.05em', verticalAlign: '-0.15em',
+                borderLeft: `${2 / Math.max(0.0001, textRenderScale)}px solid #FFFFFF`, marginRight: `${-2 / Math.max(0.0001, textRenderScale)}px`,
+                animation: 'abai-caret-blink 1s steps(1) infinite',
+              }} />{text.slice(at)}<style>{'@keyframes abai-caret-blink{0%,55%{opacity:1}56%,100%{opacity:0}}'}</style></>;
+            })() : image.text}
           </span>
 
           {/* 量測專用：永遠 1 倍大、不參與版面，框的寬高只看它 */}
@@ -6985,13 +6995,15 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
 
           {/* 直接在畫布上打字：疊一層一模一樣排版的 textarea，
               原生鍵盤與游標都交給它，內容仍然即時寫回圖層 */}
-          {isTextEditing && (
+          {isTextEditing && createPortal(
             <textarea
               ref={textAreaRef}
               value={image.text}
               // 關掉軟換行，打字時看到的斷行才跟收工後一樣
               wrap="off"
-              onChange={e => onChange({ text: e.target.value })}
+              onChange={e => { onChange({ text: e.target.value }); syncTextCaret(e.currentTarget); }}
+              onSelect={e => syncTextCaret(e.currentTarget)}
+              onKeyUp={e => syncTextCaret(e.currentTarget)}
               onBlur={e => {
                 /* 剛打開的那一瞬間被搶走焦點的，是同一下手勢補送的滑鼠事件，
                    不是使用者真的點去別的地方 —— 把焦點搶回來就好。 */
@@ -7007,17 +7019,18 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               // 這樣打字中也還能直接縮放／旋轉
               onTouchStart={e => { if (e.touches.length < 2) e.stopPropagation(); }}
               onTouchMove={e => { if (e.touches.length < 2) e.stopPropagation(); }}
+              /* 看不見的小輸入框，固定在畫面頂端（鍵盤永遠蓋不到）：字再大、打得
+                 再長，iOS 都不必捲動畫面去追游標，整個介面不再隨按鍵抖動、視角也
+                 留在原地。字與游標由上面那一層照原樣顯示。16px 避免 iOS 自動放大。 */
               style={{
-                position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
-                margin: 0, padding: 0, border: 'none', outline: 'none', resize: 'none',
-                background: 'transparent', overflow: 'hidden', pointerEvents: 'auto',
-                font: 'inherit', fontFamily: 'inherit', fontSize: 'inherit',
-                fontWeight: 'inherit', letterSpacing: 'inherit', lineHeight: 'inherit',
-                color: 'inherit', textAlign: 'center', whiteSpace: 'pre',
-                caretColor: '#FFFFFF',
-                zIndex: 45,
+                position: 'fixed', left: 0, top: 'calc(env(safe-area-inset-top, 0px) + 4px)',
+                width: 2, height: 2, opacity: 0, fontSize: 16, margin: 0, padding: 0,
+                border: 'none', outline: 'none', resize: 'none', overflow: 'hidden',
+                background: 'transparent', color: 'transparent', caretColor: 'transparent',
+                whiteSpace: 'pre', zIndex: 45,
               }}
-            />
+            />,
+            document.body,
           )}
         </div>
       ) : isSceneInk && scene ? null : needsShapeCanvas ? (<>
@@ -14900,9 +14913,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const lh = lbox.h * ls;
                               const insetLayout = isInsetLayout(layout);
                               const stableSeamless = !!layout.seamless && !insetLayout;
-                              const prepareSeamless = !insetLayout && !!layout.seamless;
                               const nativeInset = insetLayout && layout.images.every(c => !hasPhotoFx(c.fx));
-                              const nativeLayout = !insetLayout && !layout.seamless;
+                              /* 一般與無縫共用同一個 GPU 畫面與已上傳的原圖：切換無縫只是換
+                                 著色器參數，不再拆掉一個畫面、重新解碼與上傳全部原圖。 */
+                              const nativeLayout = !insetLayout;
                               const gap = layout.seamless || insetLayout ? 0 : layout.gap * ls;
                               const radius = layout.seamless || insetLayout ? 0 : layout.radius * ls;
                               const lLeft = (previewW - lw) / 2 + (layout.t?.x || 0);
@@ -14952,8 +14966,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 onTouchEnd={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                                 onTouchCancel={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                               >
-                              {prepareSeamless && <SeamlessLayout previewId={layout.id} enabled={stableSeamless} cells={layout.images} rects={pageActiveTemplate.rects} width={lbox.w} height={lbox.h} scale={ls} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
-                              {nativeLayout && <LayoutPhotoSurface cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} gap={gap} radius={radius} revision={lutRevision}/>}
+                              {nativeLayout && <LayoutPhotoSurface cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} gap={gap} radius={radius} revision={lutRevision}
+                                fusion={stableSeamless ? (layout.seamlessAmount ?? 0) : undefined} previewId={layout.id}/>}
                               {nativeInset && <svg data-inset-photo-layer="1" width={lw} height={lh}
                                 className="absolute inset-0 pointer-events-none" style={{zIndex: 15, overflow: 'visible'}}>
                                 {pageActiveTemplate.rects.map((raw, idx) => {

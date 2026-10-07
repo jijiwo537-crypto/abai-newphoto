@@ -437,11 +437,11 @@ symbolFontReady.then(() => creativeSymbolPlacementCache.clear());
 
 /** 一般文字「剛好包住它」的框（未經四邊擠壓的自然尺寸）。跟繪製端同一套
     字型、粗細、字距與描邊；字型還沒載好時回傳 null（載好再量一次）。 */
-const plainTextBox = (o: any): { w: number; h: number } | null => {
+const plainTextBox = (o: any, force = false): { w: number; h: number } | null => {
   if (typeof document === 'undefined') return null;
   const fam = o.fontFamily || DEFAULT_FONT, size = o.size || 40;
   const font = `${o.italic ? 'italic ' : ''}${o.bold ? 800 : 400} ${size}px ${fontStack(fam)}`;
-  if ((document as any).fonts?.check && !(document as any).fonts.check(font)) return null;
+  if (!force && (document as any).fonts?.check && !(document as any).fonts.check(font)) return null;
   const g = document.createElement('canvas').getContext('2d');
   if (!g) return null;
   const spacing = o.letterSpacing || 0;
@@ -2207,6 +2207,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      就照實際排版重新量，框心固定；被四邊擠壓過的維持原本的擠壓比例。
      兩指縮放／四邊擠壓進行中不量（手勢自己在改框），放開後才量一次。 */
   const textFitKeys = useRef(new Map<string, string>());
+  const textFontWaits = useRef(new Set<string>());
   const [textFitTick, setTextFitTick] = useState(0);
   useLayoutEffect(() => {
     const patches = new Map<string, any>();
@@ -2215,8 +2216,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (objPinchRef.current?.id === o.id || objStretchRef.current?.id === o.id) continue;
       const key = JSON.stringify([o.text, o.fontFamily, o.size, o.bold, o.italic, o.letterSpacing, o.strokeWidth]);
       if (textFitKeys.current.get(o.id) === key) continue;
-      const box = plainTextBox(o);
-      if (!box) { void ensureFont(o.fontFamily || DEFAULT_FONT).then(() => setTextFitTick(t => t + 1)); continue; }
+      // Wait for the font at most once per text state, then measure anyway:
+      // fonts.check can stay false for a stack, which used to re-schedule
+      // this effect forever (React "maximum update depth").
+      const waited = textFontWaits.current.has(key);
+      const box = plainTextBox(o, waited);
+      if (!box) { textFontWaits.current.add(key); void ensureFont(o.fontFamily || DEFAULT_FONT).finally(() => setTextFitTick(t => t + 1)); continue; }
       textFitKeys.current.set(o.id, key);
       const sx = o.textStretchBaseW ? o.w / o.textStretchBaseW : 1, sy = o.textStretchBaseH ? o.h / o.textStretchBaseH : 1;
       const w = box.w * sx, h = box.h * sy;
@@ -2353,7 +2358,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const editingTextRef = useRef<string | null>(null);
   const editingFieldRef = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => {
-    if (editingTextId) editingFieldRef.current?.focus({ preventScroll: true });
+    if (editingTextId) {
+      const el = editingFieldRef.current;
+      el?.focus({ preventScroll: true });
+      // Continue typing at the end of the existing text.
+      if (el) { const n = el.value.length; try { el.setSelectionRange(n, n); } catch {} }
+    }
   }, [editingTextId]);
   editingTextRef.current = editingTextId;
   /* 輸入框是「手指放開」那一刻才打開的，而瀏覽器在 touchend 之後還會補送
@@ -6915,7 +6925,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 輸入中也照常由畫布畫字：輸入框只負責游標與鍵盤，本身的字是透明的。
            以前把字交給 DOM 輸入框顯示，解析度、字距與基線都跟畫布不同，
            一打字字就變糊、位置也跟著跳。只有內容還是佔位文字時不畫。 */
-        if (isMain && editingTextRef.current === o.id && (o.sym || o.text === TEXT_PLACEHOLDER)) { ctx.restore(); return; }
+
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
            面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
         const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
@@ -6940,6 +6950,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* Canvas 在每個字（含最後一個）後面都加字距，置中時整串會往左偏
            半個字距；補回去，字距才會跟選中框一樣從中心往兩邊長。 */
         const spacingShift = o.sym ? 0 : spacingPx / 2;
+        /* 輸入中的游標：輸入框本身看不見（見下方 textarea），由畫布在目前
+           插入點畫一條直線，跟字用同一個字型、字距與矩陣量位置。 */
+        const drawEditCaret = () => {
+          const text = o.text === TEXT_PLACEHOLDER ? '' : (o.text || '');
+          const field = editingFieldRef.current;
+          const sel = Math.max(0, Math.min(text.length, field?.selectionEnd ?? text.length));
+          const total = text ? ctx.measureText(text).width : 0;
+          const pre = sel ? ctx.measureText(text.slice(0, sel)).width - spacingPx / 2 : 0;
+          const m = ctx.getTransform(), px = 1 / Math.max(1e-6, Math.hypot(m.a, m.b));
+          const fontPx = (o.sym ? o.size : pinFont) * s;
+          ctx.save(); ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(spacingShift - total / 2 + pre - px, -fontPx * .6, px * 2, fontPx * 1.2);
+          ctx.restore();
+        };
+        if (isMain && editingTextRef.current === o.id && (o.sym || o.text === TEXT_PLACEHOLDER)) { if (!o.sym) drawEditCaret(); ctx.restore(); return; }
         if(import.meta.env.DEV&&!o.sym){const m=ctx.getTransform();targetCanvas.dataset.textLogicalFrame=JSON.stringify({id:o.id,font:ctx.font,matrix:[m.a,m.b,m.c,m.d,m.e,m.f]});}
         /* 符號：把「真正畫出來的那一塊」的中心搬到框心。
            不校正的話，前進寬度／em 方框跟墨水差多少，符號就偏出框多少 ——
@@ -7165,6 +7190,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.fillStyle = o.color || '#ffffff';
         drawText(false);
         ctx.shadowBlur = 0;
+        if (isMain && !o.sym && editingTextRef.current === o.id) drawEditCaret();
         (ctx as any).letterSpacing = '0px';
         }
       }
@@ -9967,7 +9993,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             }));
             setEditingTextId(null);
           };
-          return (
+          const field = (
             <textarea
               ref={editingFieldRef}
               /* 預設那四個字只是佔位，點進來打字時不該真的要自己刪掉；
@@ -9995,7 +10021,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               onPointerDown={e => e.stopPropagation()}
               onTouchStart={e => { if (e.touches.length < 2) e.stopPropagation(); }}
               onTouchMove={e => { if (e.touches.length < 2) e.stopPropagation(); }}
-              style={{
+              onSelect={() => regionPaintRef.current()}
+              style={!o.sym ? {
+                /* 一般文字：輸入框是看不見的小格子，固定在畫面頂端（鍵盤永遠蓋不到）。
+                   字與游標都由畫布照原本的樣子畫；字再大、打得再長，iOS 都不需要
+                   捲動畫面去追游標 —— 整個介面不會再跟著每一個按鍵抖動。
+                   16px 字級避免 iOS 聚焦時自動放大頁面。 */
+                position: 'fixed', left: 0, top: 'calc(env(safe-area-inset-top, 0px) + 4px)',
+                width: 2, height: 2, opacity: 0, fontSize: 16, padding: 0, margin: 0,
+                border: 'none', outline: 'none', resize: 'none', overflow: 'hidden',
+                background: 'transparent', color: 'transparent', caretColor: 'transparent',
+                whiteSpace: 'pre', zIndex: 55,
+              } : {
                 position: 'absolute',
                 left: left - boxW * k * (1 / inputScale - 1) / 2,
                 top: top - boxH * k * (1 / inputScale - 1) / 2,
@@ -10021,6 +10058,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               }}
             />
           );
+          // Portal: a fixed element inside the transformed stage would be
+          // positioned relative to that transform, not to the screen.
+          return o.sym ? field : createPortal(field, document.body);
         })()}
 
         {/* 選中的圖片／文字下方浮出的工具列 —— 跟經典拼圖同一組動作。

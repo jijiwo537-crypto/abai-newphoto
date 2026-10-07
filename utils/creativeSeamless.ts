@@ -16,7 +16,7 @@ export class CreativeSeamless {
     const surface=this.presentation||(this.presentation=document.createElement('canvas'));
     surface.width=surface.height=1;
     drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,1000,1000),
-      base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;}),0,{width:1000,height:1000,xx:1000,xy:0,x0:0,yx:0,yy:1000,y0:0},true);
+      base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;}),0,{width:1000,height:1000,xx:1000,xy:0,x0:0,yx:0,yy:1000,y0:0},true,isWebKit());
     surface.style.display='none';
   }
   /** Resolve resident original photos INTO the main scene before the mask.

@@ -21,7 +21,7 @@ class SeamGpu {
   private maxTextureUnits:number;
   private uniforms=new Map<WebGLProgram,Map<string,WebGLUniformLocation|null>>();
   private lastPresentation:(()=>void)|null=null;
-  constructor(canvas:HTMLCanvasElement,direct=false,private presentationOnly=false,srgbOutput=false){
+  constructor(canvas:HTMLCanvasElement,direct=false,private presentationOnly=false,readonly srgbOutput=false){
     const webkit=/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
     this.transferred=!direct&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
     this.canvas=this.transferred?new OffscreenCanvas(canvas.width,canvas.height):canvas;
@@ -222,7 +222,11 @@ class SeamGpu {
 }
 const renderers=new WeakMap<HTMLCanvasElement,SeamGpu>();
 export function drawSeamPreview(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView,presentationOnly=false,srgbOutput=false){
-  let gpu=renderers.get(target);if(!gpu||gpu.lost){gpu=new SeamGpu(target,false,presentationOnly,srgbOutput);renderers.set(target,gpu);}gpu.draw(target,cells,rects,sources,amount,view);
+  let gpu=renderers.get(target);
+  // A canvas's colour mode is fixed by its first renderer; a mismatch would
+  // silently keep the wrong (washed-out on WebKit) output. Fail loudly.
+  if(gpu&&!gpu.lost&&gpu.srgbOutput!==srgbOutput)throw new Error('Seam surface colour mode mismatch');
+  if(!gpu||gpu.lost){gpu=new SeamGpu(target,false,presentationOnly,srgbOutput);renderers.set(target,gpu);}gpu.draw(target,cells,rects,sources,amount,view);
 }
 export function disposeSeamPreview(target:HTMLCanvasElement){renderers.get(target)?.dispose();renderers.delete(target);}
 /** A 2D collage composition cannot display the WebGL layer directly. On
