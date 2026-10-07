@@ -2071,7 +2071,8 @@ export const TextEditorPanel: React.FC<{
           />
         )}
         {!colorPage && sub === 'font' && !symbol && (
-          <div className="space-y-2.5 pt-1 pb-1">
+          /* 頂部留一段安全距離：內容不要貼著上面那排分頁按鈕 */
+          <div className="space-y-2.5 pt-4 pb-1">
             <div className="flex items-center gap-1 bg-white/[0.06] rounded-full p-0.5">
               {FONT_CATEGORIES.map(c => (
                 <button
@@ -2100,7 +2101,7 @@ export const TextEditorPanel: React.FC<{
 
         {!colorPage && (sub === 'style' || symbol) && (
           /* 底部留一段：捲到底時最後一根滑桿不要貼著邊（原本 pb-24，減半） */
-          <div className="space-y-3.5 pt-1 pb-12">
+          <div className="space-y-3.5 pt-4 pb-12">
             {/* 文字內容一律直接在畫布上打（選中之後再點一次那段字），
                 所以這裡不放輸入框。符號也是一樣的改法。 */}
             {/* 最上面就是這個物件自己的顏色，色票直接攤開 ——
