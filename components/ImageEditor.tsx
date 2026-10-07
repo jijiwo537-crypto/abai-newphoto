@@ -786,7 +786,7 @@ const FastSlider = React.memo(({
                 )}
             </div>
 
-            <div style={dense ? {touchAction:'none'} : undefined} className={`relative flex items-center justify-center touch-none ${dense ? 'slider-wrap h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
+            <div style={dense ? {touchAction:'none'} : undefined} className={`slider-wrap relative flex items-center justify-center touch-none ${dense ? 'h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
                 <input 
                     ref={inputRef}
                     type="range" aria-label={label} min={effectControlMin(toolId,min)} max={max} step={effectControlStep(toolId,step)}

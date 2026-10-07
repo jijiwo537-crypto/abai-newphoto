@@ -98,6 +98,7 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhoto
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface} from '../utils/photoFx';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
+import {useSmoothSlider, snapToStep} from '../utils/smoothSlider';
 import {warmPhotoEffectsWhenIdle} from '../utils/fxWarmup';
 import {warmLowfiLut} from '../utils/lowfiLut';
 import {FX_DEFS} from '../utils/glEffects';
@@ -1126,7 +1127,22 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
   const [hsv, setHsv] = useState(() => hexToHsv(color));
   const [hexInput, setHexInput] = useState(color);
 
+  /* 拖色相／飽和度／明度時，白點只看自己的狀態，顏色一幀交給編輯器一次 ——
+     以前每動一下就讓整個編輯器重畫一次，白點要等它畫完才前進。
+     編輯器晚一幀回傳的舊顏色不能把白點拉回去：自己送出去的顏色一律略過。 */
+  const colorFrame = useRef(0), colorPending = useRef<string | null>(null), sentColors = useRef<string[]>([]);
+  const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
+  const queueColor = (hex: string) => {
+    sentColors.current = [...sentColors.current.slice(-7), hex.toUpperCase()];
+    colorPending.current = hex;
+    if (!colorFrame.current) colorFrame.current = requestAnimationFrame(() => {
+      colorFrame.current = 0; const h = colorPending.current; colorPending.current = null; if (h) onChangeRef.current(h);
+    });
+  };
+  useEffect(() => () => { if (colorFrame.current) { cancelAnimationFrame(colorFrame.current); const h = colorPending.current; if (h) onChangeRef.current(h); } }, []);
+
   useEffect(() => { 
+    if (sentColors.current.includes(color.toUpperCase())) return;
     setHexInput((prev) => {
       if (color.toUpperCase() !== prev.toUpperCase()) {
         setHsv(hexToHsv(color));
@@ -1141,7 +1157,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
     setHsv(newHsv as any);
     const newHex = hsvToHex(newHsv.h, newHsv.s, newHsv.v);
     setHexInput(newHex);
-    onChange(newHex);
+    queueColor(newHex);
   };
 
   const handleHexInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3705,14 +3721,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const k=baseFrameScale(off),t=imageTransform;
     return photoRegionHit(regionRects(region,t.w*k,t.h*k),(x-off.ix-t.x*k)/(t.w*k),(y-off.iy-t.y*k)/(t.h*k));
   };
-  const photoAt=(clientX:number,clientY:number):PhotoSource|null=>{
+  /** forSwap：長按互換用。疊在照片上的圖形、文字、符號、遮罩與圖案只是裝飾，
+      不能擋住底下的照片（以前它們的整個外框都會擋，拿不起來、也放不下去）；
+      只有真正的圖片物件算數，以及「已經選中」的物件（它有自己的手勢）。 */
+  const photoAt=(clientX:number,clientY:number,forSwap=false):PhotoSource|null=>{
     const p=regionCoordinates(clientX,clientY);if(!p)return null;
     for(let i=objectsRef.current.length-1;i>=0;i--){
       const o=objectsRef.current[i],r=-(o.rot||0)*Math.PI/180,dx=p.x-o.x-o.w/2,dy=p.y-o.y-o.h/2;
-      if(Math.abs(dx*Math.cos(r)-dy*Math.sin(r))<=o.w/2&&Math.abs(dx*Math.sin(r)+dy*Math.cos(r))<=o.h/2)
-        return o.type==='image'&&o.img&&!o.vid&&!isVideoEl(o.img)?{kind:'object',id:o.id}:null;
+      if(Math.abs(dx*Math.cos(r)-dy*Math.sin(r))<=o.w/2&&Math.abs(dx*Math.sin(r)+dy*Math.cos(r))<=o.h/2){
+        const photo=o.type==='image'&&o.img&&!o.vid&&!isVideoEl(o.img);
+        if(forSwap&&!photo&&o.id!==selectedObjRef.current)continue;
+        return photo?{kind:'object',id:o.id}:null;
+      }
     }
-    if(layout!==FULL&&holesRef.current.some(h=>checkHitHole(p.x,p.y,h,imageState?.globalScale||1,p.off,'image')))return null;
+    if(!forSwap&&layout!==FULL&&holesRef.current.some(h=>checkHitHole(p.x,p.y,h,imageState?.globalScale||1,p.off,'image')))return null;
     const index=hitRegionPhoto(clientX,clientY);
     return index<0?null:{kind:'region',index};
   };
@@ -3829,8 +3851,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         regionScenePinch.current=false;regionTap.current={id:e.pointerId,index:source.index,x:e.clientX,y:e.clientY,moved:false};
       }else{selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);}
     }
-    if(second||!source||!photoContent(source)?.src)return;
-    const hold={id:e.pointerId,source,x:e.clientX,y:e.clientY,timer:0,active:false};
+    const holdSource=source||photoAt(e.clientX,e.clientY,true);
+    if(second||!holdSource||!photoContent(holdSource)?.src)return;
+    const hold={id:e.pointerId,source:holdSource,x:e.clientX,y:e.clientY,timer:0,active:false};
     hold.timer=window.setTimeout(()=>{
       if(regionHold.current!==hold||regionTouches.current.size+activePointers.current.size!==1)return;
       const photo=photoContent(source);if(!photo?.src)return;
@@ -3855,7 +3878,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(p&&regionTouches.current.has(e.pointerId))regionTouches.current.set(e.pointerId,{x:p.x,y:p.y});
         if(activePointers.current.has(e.pointerId))activePointers.current.set(e.pointerId,e);
         if(regionThumbRef.current)regionThumbRef.current.style.transform=`translate3d(${e.clientX}px,${e.clientY}px,0) translate(-50%,-50%)`;
-        const hover=photoAt(e.clientX,e.clientY);
+        const hover=photoAt(e.clientX,e.clientY,true);
         if(JSON.stringify(hover)!==JSON.stringify(swapHoverRef.current)){
           // Hover feedback is a canvas repaint only. Setting React state here
           // re-rendered the whole editor and painted the scene a second time
@@ -3912,7 +3935,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     if(hold?.id===e.pointerId){
       if(hold.active){
-        e.stopPropagation();e.preventDefault();const target=e.type==='pointercancel'?null:photoAt(e.clientX,e.clientY);
+        e.stopPropagation();e.preventDefault();const target=e.type==='pointercancel'?null:photoAt(e.clientX,e.clientY,true);
         if(target)swapPhotos(hold.source,target);
         activePointers.current.delete(e.pointerId);setObjDragging(false);objDraggingRef.current=false;
         try{e.currentTarget.releasePointerCapture(e.pointerId);}catch{}
@@ -11843,29 +11866,31 @@ const RafRange = ({ min, max, step, value, onChange }: any) => {
 /* wide＝圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆）。
    只有指定要換的那幾頁會傳，其他地方維持原樣。 */
 const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, fixedDecimals = false, onCommit, wide = false }: any) => {
-  const { push, flush } = useRafOnChange(onChange);
-  const done = () => { flush(); onCommit && onCommit(); };
   const safeMin = Number.isFinite(Number(min)) ? Number(min) : 0;
   const requestedMax = Number.isFinite(Number(max)) ? Number(max) : 100;
   const safeMax = Math.max(safeMin, requestedMax);
   const numericValue = Number(value);
   const safeValue = Math.max(safeMin, Math.min(safeMax, Number.isFinite(numericValue) ? numericValue : safeMin));
+  // 白點跟著手指連續走，交給編輯器的值一幀一次、照原本的刻度取整（utils/smoothSlider）
+  const { shown, input, end } = useSmoothSlider(safeValue, safeMin, safeMax, step, v => { deferHeavyWork(); onChange(v); }, onCommit);
+  const label2 = snapToStep(shown, safeMin, safeMax, step);
   return (
   <div className="flex flex-col">
     <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
       <span>{label}</span>
       {/* 小數位要能顯示出來，不然 1.25 跟 1.5 在畫面上都是 1，看起來就像滑桿沒作用 */}
       <span className="text-white font-sans tabular-nums">
-        {decimals > 0 ? (fixedDecimals ? safeValue.toFixed(decimals) : safeValue.toFixed(decimals).replace(/\.?0+$/, '') || '0') : Math.round(safeValue)}
+        {decimals > 0 ? (fixedDecimals ? label2.toFixed(decimals) : label2.toFixed(decimals).replace(/\.?0+$/, '') || '0') : Math.round(label2)}
       </span>
     </div>
     {/* onCommit：手指／滑鼠放開時才觸發（動畫頁拿它來自動重播） */}
     <div className="slider-wrap" style={{ height: 16 }}>
-      <input type="range" min={safeMin} max={safeMax} step={step} value={safeValue}
-        onChange={e => push(Number(e.target.value))}
-        onPointerUp={done}
-        onTouchEnd={done}
-        onKeyUp={done}
+      <input type="range" min={safeMin} max={safeMax} step="any" value={shown}
+        onChange={e => input(Number(e.target.value))}
+        onPointerUp={end}
+        onPointerCancel={end}
+        onTouchEnd={end}
+        onKeyUp={end}
         className={wide ? 'slim-slider w-full' : 'premium-slider w-full'} onPointerDown={e => e.stopPropagation()} />
     </div>
   </div>

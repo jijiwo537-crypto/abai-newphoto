@@ -73,6 +73,8 @@ import {
   motionDurationFromUi, motionUiFromDuration,
 } from '../utils/objectMotion';
 import { preferredVideoFrameRate } from '../utils/videoFrameRate';
+import { useSmoothSlider, snapToStep } from '../utils/smoothSlider';
+import { LiveRange } from './LiveRange';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
 
@@ -94,50 +96,30 @@ const imageBreathSpeedFromUi = (ui: number) => (70 + Math.max(0, Math.min(100, u
    export，桌面開發環境有時直到點進動畫才報錯，iPhone WebKit 則會直接把
    整個 React 畫面清成黑色。這裡保留同款外觀，但讓經典拼圖自己持有元件。 */
 const CompactSlider = ({ label, value, min, max, onChange, step = 'any', decimals = 0, fixedDecimals = false, onCommit, disabled = false }: any) => {
-  const queued = useRef<number | null>(null);
-  const raf = useRef(0);
-  const push = (next: number) => {
-    queued.current = next;
-    if (raf.current) return;
-    raf.current = requestAnimationFrame(() => {
-      raf.current = 0;
-      if (queued.current !== null) onChange(queued.current);
-      queued.current = null;
-    });
-  };
-  const finish = () => {
-    if (raf.current) cancelAnimationFrame(raf.current);
-    raf.current = 0;
-    if (queued.current !== null) onChange(queued.current);
-    queued.current = null;
-    onCommit?.();
-  };
-  useEffect(() => () => {
-    if (raf.current) cancelAnimationFrame(raf.current);
-    raf.current = 0;
-    queued.current = null;
-  }, []);
   const safeMin = Number.isFinite(Number(min)) ? Number(min) : 0;
   const requestedMax = Number.isFinite(Number(max)) ? Number(max) : 100;
   const safeMax = Math.max(safeMin, requestedMax);
   const numericValue = Number(value);
   const safeValue = Math.max(safeMin, Math.min(safeMax, Number.isFinite(numericValue) ? numericValue : safeMin));
+  // 白點跟著手指連續走，交給編輯器的值一幀一次、照原本的刻度取整（utils/smoothSlider）
+  const { shown, input, end } = useSmoothSlider(safeValue, safeMin, safeMax, step, v => onChange(v), onCommit);
+  const label2 = snapToStep(shown, safeMin, safeMax, step);
   return (
     <div className={`flex flex-col ${disabled ? 'opacity-45' : ''}`}>
       <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
         <span>{label}</span>
         <span className="text-white font-sans tabular-nums">
           {decimals > 0
-            ? (fixedDecimals ? safeValue.toFixed(decimals) : safeValue.toFixed(decimals).replace(/\.?0+$/, '') || '0')
-            : Math.round(safeValue)}
+            ? (fixedDecimals ? label2.toFixed(decimals) : label2.toFixed(decimals).replace(/\.?0+$/, '') || '0')
+            : Math.round(label2)}
         </span>
       </div>
       <div className="slider-wrap" style={{ height: 16 }}>
         <input
-          type="range" min={safeMin} max={safeMax} step={step} value={safeValue}
+          type="range" min={safeMin} max={safeMax} step="any" value={shown}
           disabled={disabled}
-          onChange={e => push(Number(e.target.value))}
-          onPointerUp={finish} onTouchEnd={finish} onKeyUp={finish}
+          onChange={e => input(Number(e.target.value))}
+          onPointerUp={end} onPointerCancel={end} onTouchEnd={end} onKeyUp={end}
           onPointerDown={e => e.stopPropagation()}
           className="premium-slider w-full"
         />
@@ -1646,6 +1628,8 @@ export const SmoothRange: React.FC<{
     const next = pendingRef.current;
     pendingRef.current = next;
     onValueRef.current(next);
+    // The thumb moved continuously; settle it on the delivered (stepped) value.
+    if (inputRef.current) inputRef.current.value = String(next);
     // Finish the draft only after its final input sample has been delivered.
     if (wasDragging) onInteractionRef.current?.(false);
   };
@@ -1653,14 +1637,16 @@ export const SmoothRange: React.FC<{
     <input
       ref={inputRef}
       type="range"
-      min={min} max={max} step={step}
+      /* 白點連續移動（step any），交給預覽的值照原本的 step 取整 ——
+         20～30 格的滑桿（數量、描邊…）不再一格一格地跳。 */
+      min={min} max={max} step="any"
       defaultValue={value}
       onPointerDown={() => {
         if (!draggingRef.current) onInteractionRef.current?.(true);
         draggingRef.current = true;
-        pendingRef.current = Number(inputRef.current?.value ?? value);
+        pendingRef.current = snapToStep(Number(inputRef.current?.value ?? value), min, max, step);
       }}
-      onInput={e => queue(Number((e.currentTarget as HTMLInputElement).value))}
+      onInput={e => { const next = snapToStep(Number((e.currentTarget as HTMLInputElement).value), min, max, step); if (next !== pendingRef.current) queue(next); }}
       onPointerUp={finish}
       onPointerCancel={finish}
       onBlur={() => { if (draggingRef.current) finish(); }}
@@ -2558,6 +2544,19 @@ useEffect(() => { setDetailTool(''); }, [effectCard,img.id]);
 const [,setLocalFx] = useState<PhotoFx>(img.fx || {});
 const liveFx = useRef<PhotoFx>(img.fx || {});
 const pendingCommit = useRef<ReturnType<typeof setTimeout> | null>(null);
+/* 調整滑桿：白點由瀏覽器原生即時移動（不受控），交給編輯器的值一幀一次。
+   以前非隔離模式下白點綁在整個編輯器的 state 上，每動一下都要等整棵重畫完
+   白點才前進 —— 物件一多就變成一幀一幀地跳。 */
+const editorDrag = useRef(false);
+const editorFrame = useRef(0);
+const editorPending = useRef<{ deliver: (v: number) => void; v: number } | null>(null);
+const flushEditorSlider = () => {
+  if (editorFrame.current) cancelAnimationFrame(editorFrame.current);
+  editorFrame.current = 0;
+  const p = editorPending.current; editorPending.current = null;
+  if (p) p.deliver(p.v);
+};
+useEffect(() => () => { if (editorFrame.current) cancelAnimationFrame(editorFrame.current); }, []);
 const sliderInput = useRef(false);
 const lutChoiceSerial = useRef(0);
 useEffect(()=>{lutChoiceSerial.current++;setLoadingLut(null);return()=>{lutChoiceSerial.current++;};},[img.id]);
@@ -2707,22 +2706,29 @@ const editorSlider = (
   const input = (cls: string) => (
     <input
       key={`${img.id}|${adjustSub}|${tuneTool}|${shapeTool}|${effectCard}|${detailTool}`}
-      type="range" aria-label={label} min={min} max={max} step={step}
-      {...(isolateFxUpdates ? {defaultValue:value} : {value})}
-      ref={el=>{if(el && isolateFxUpdates && pendingCommit.current===null)el.value=String(value);}}
+      type="range" aria-label={label} min={min} max={max} step="any"
+      defaultValue={value}
+      ref={el=>{if(el && !editorDrag.current && (!isolateFxUpdates || pendingCommit.current===null))el.value=String(value);}}
       onChange={e => {
-        const v=step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value);
-        sliderInput.current=true;
-        try {onVal(v);} finally {sliderInput.current=false;}
+        // 白點連續；值照原本的刻度取整（發光強度只有 20 格也不再一格一格跳）。
+        const v=snapToStep(Number(e.target.value),min,max,step);
         if(isolateFxUpdates){
+          // Isolated edits never re-render this panel: label the value directly.
           const row=e.currentTarget.closest('[data-adjust-slider]');
           const number=row?.querySelector('[data-adjust-number]');
           if(number)number.textContent=step<1?v.toFixed(1):String(v);
         }
+        const deliver=(x:number)=>{sliderInput.current=true;try {onVal(x);} finally {sliderInput.current=false;}};
+        if(isolateFxUpdates){deliver(v);return;}
+        editorDrag.current=true;
+        editorPending.current={deliver,v};
+        if(!editorFrame.current)editorFrame.current=requestAnimationFrame(flushEditorSlider);
       }}
       onPointerDown={hideChrome ? () => setTuningEdge(true) : undefined}
-      onPointerUp={hideChrome ? () => setTuningEdge(false) : undefined}
-      onPointerCancel={hideChrome ? () => setTuningEdge(false) : undefined}
+      onPointerUp={e => { flushEditorSlider(); editorDrag.current=false; e.currentTarget.value=String(snapToStep(Number(e.currentTarget.value),min,max,step)); if (hideChrome) setTuningEdge(false); }}
+      onPointerCancel={() => { flushEditorSlider(); editorDrag.current=false; if (hideChrome) setTuningEdge(false); }}
+      onTouchEnd={() => { flushEditorSlider(); editorDrag.current=false; }}
+      onKeyUp={() => { flushEditorSlider(); editorDrag.current=false; }}
       onLostPointerCapture={hideChrome ? () => setTuningEdge(false) : undefined}
       className={cls}
     />
@@ -2734,7 +2740,7 @@ const editorSlider = (
     <div className="w-full flex items-center gap-3" data-adjust-slider>
       <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] pointer-events-none shrink-0">{label}</span>
       {swatches}
-      <div className="relative flex-1 min-w-0 h-11 flex items-center touch-none">
+      <div className="slider-wrap relative flex-1 min-w-0 h-11 flex items-center touch-none">
         {input('custom-range dense')}
       </div>
       <span data-adjust-number className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0 text-center min-w-[2.6rem]">{step < 1 ? value.toFixed(1) : value}</span>
@@ -2747,7 +2753,7 @@ const editorSlider = (
         {swatches}
         <span data-adjust-number className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0">{value}</span>
       </div>
-      <div className="relative h-11 flex items-center justify-center touch-none">
+      <div className="slider-wrap relative h-11 flex items-center justify-center touch-none">
         {input('custom-range')}
       </div>
     </div>
@@ -3092,7 +3098,22 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
   const [hsv, setHsv] = useState(() => hexToHsv(color));
   const [hexInput, setHexInput] = useState(color);
 
+  /* 拖色相／飽和度／明度時，白點只看自己的狀態，顏色一幀交給編輯器一次 ——
+     以前每動一下就讓整個編輯器重畫一次，白點要等它畫完才前進。
+     編輯器晚一幀回傳的舊顏色不能把白點拉回去：自己送出去的顏色一律略過。 */
+  const colorFrame = useRef(0), colorPending = useRef<string | null>(null), sentColors = useRef<string[]>([]);
+  const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
+  const queueColor = (hex: string) => {
+    sentColors.current = [...sentColors.current.slice(-7), hex.toUpperCase()];
+    colorPending.current = hex;
+    if (!colorFrame.current) colorFrame.current = requestAnimationFrame(() => {
+      colorFrame.current = 0; const h = colorPending.current; colorPending.current = null; if (h) onChangeRef.current(h);
+    });
+  };
+  useEffect(() => () => { if (colorFrame.current) { cancelAnimationFrame(colorFrame.current); const h = colorPending.current; if (h) onChangeRef.current(h); } }, []);
+
   useEffect(() => { 
+    if (sentColors.current.includes(color.toUpperCase())) return;
     setHexInput((prev) => {
       if (color.toUpperCase() !== prev.toUpperCase()) {
         setHsv(hexToHsv(color));
@@ -3107,7 +3128,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
     setHsv(newHsv as any);
     const newHex = hsvToHex(newHsv.h, newHsv.s, newHsv.v);
     setHexInput(newHex);
-    onChange(newHex);
+    queueColor(newHex);
   };
 
   // 跟發光同一條漸層，明度提到 90%；第一顆是純白
@@ -8481,10 +8502,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         <span className="text-white/70 tabular-nums">{value}</span>
       </div>
       {/* 圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆） */}
-      <div className="slider-wrap" style={{ height: 16 }}>
-        <input type="range" min={0} max={max} step={1} value={value}
-          onChange={e => onVal(parseInt(e.target.value))} className="slim-slider w-full" />
-      </div>
+      <LiveRange min={0} max={max} step={1} value={value} onValue={onVal} className="slim-slider w-full" />
     </div>
   );
   const layoutSelected = selectedLayoutId !== null;
@@ -11574,16 +11592,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }));
   };
 
+  /* 長按互換找目標時，看的是「手指底下整疊元素」，不是只看最上面那一個：
+     圖形、文字、符號（以及選取框、工具列這類介面）疊在格子上方時，
+     以前會直接擋住，底下的格子永遠收不到這張照片。現在跳過它們往下找，
+     第一個「照片格子」或「自由圖片」才算數。 */
+  const pointStack = (clientX: number, clientY: number) =>
+    (document.elementsFromPoint ? document.elementsFromPoint(clientX, clientY) : [document.elementFromPoint(clientX, clientY)].filter(Boolean)) as Element[];
+  const isPhotoFloating = (id: string | null) => {
+    const f = id ? floatingImages.find(x => x.id === id) : null;
+    return !!f && !f.shape && f.text === undefined;
+  };
+
   const getCellIndexFromPoint = (clientX: number, clientY: number): number | null => {
-    const elem = document.elementFromPoint(clientX, clientY);
-    if (!elem) return null;
-    const cellElem = elem.closest('[data-cell-id]');
-    // 一頁上可能有多個佈局，只有「正在編輯的那個」的格子才算數
-    if (cellElem && cellElem.closest(`[data-layout-id="${selectedLayoutId}"]`)) {
+    for (const elem of pointStack(clientX, clientY)) {
+      const fEl = elem.closest('[data-floating-id]');
+      // 疊在上面的圖形／文字不擋；真正的自由圖片蓋住的話就不是格子
+      if (fEl) { if (isPhotoFloating(fEl.getAttribute('data-floating-id'))) return null; continue; }
+      const cellElem = elem.closest('[data-cell-id]');
+      if (!cellElem) continue;
+      // 一頁上可能有多個佈局，只有「正在編輯的那個」的格子才算數
+      if (!cellElem.closest(`[data-layout-id="${selectedLayoutId}"]`)) return null;
       const idAttr = cellElem.getAttribute('data-cell-id');
-      if (idAttr !== null) {
-        return parseInt(idAttr, 10);
-      }
+      return idAttr !== null ? parseInt(idAttr, 10) : null;
     }
     return null;
   };
@@ -11592,28 +11622,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   // land on either kind, so drop targets are resolved for both. Stickers sit above the
   // cells, so whichever is on top at that point wins.
   const getSwapTargetFromPoint = (clientX: number, clientY: number): SwapTarget | null => {
-    const elem = document.elementFromPoint(clientX, clientY);
-    if (!elem) return null;
-    const fEl = elem.closest('[data-floating-id]');
-    if (fEl) {
-      const id = fEl.getAttribute('data-floating-id');
-      /* 只有真正的自由图片能成为交换目标。
-         图形与文字都不接收拖入：经过图形时不高亮、不选中，也不触发任何交换反馈。 */
-      const target = id ? floatingImages.find(f => f.id === id) : null;
-      if (id && target && !target.shape && target.text === undefined) {
-        if (target.isVideo && touchDragState.current) return null;
-        return { kind: 'floating', id };
+    for (const elem of pointStack(clientX, clientY)) {
+      const fEl = elem.closest('[data-floating-id]');
+      if (fEl) {
+        const id = fEl.getAttribute('data-floating-id');
+        /* 只有真正的自由图片能成为交换目标。
+           图形与文字不接收拖入，也不再挡住底下的格子：跳过它们继续往下找。 */
+        if (isPhotoFloating(id)) {
+          const target = floatingImages.find(f => f.id === id)!;
+          if (target.isVideo && touchDragState.current) return null;
+          return { kind: 'floating', id: id! };
+        }
+        continue;
       }
-      if (id) return null;
-    }
-    const cEl = elem.closest('[data-cell-id]');
-    if (cEl) {
-      if (floatingImages.find(f => f.id === floatSwapRef.current?.id)?.isVideo) return null;
-      // 拖放不需要先選中佈局，任何佈局的格子都可以接收
-      const idAttr = cEl.getAttribute('data-cell-id');
-      const layEl = cEl.closest('[data-layout-id]');
-      if (idAttr !== null) {
-        return { kind: 'cell', idx: parseInt(idAttr, 10), layoutId: layEl?.getAttribute('data-layout-id') || undefined };
+      const cEl = elem.closest('[data-cell-id]');
+      if (cEl) {
+        if (floatingImages.find(f => f.id === floatSwapRef.current?.id)?.isVideo) return null;
+        // 拖放不需要先選中佈局，任何佈局的格子都可以接收
+        const idAttr = cEl.getAttribute('data-cell-id');
+        const layEl = cEl.closest('[data-layout-id]');
+        if (idAttr !== null) {
+          return { kind: 'cell', idx: parseInt(idAttr, 10), layoutId: layEl?.getAttribute('data-layout-id') || undefined };
+        }
       }
     }
     return null;
@@ -16942,8 +16972,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       {/* Gap slider */}
                       {isInsetLayout(activeLayout) ? <div className="space-y-1.5">
                         <div className="flex justify-between text-[11px] font-bold text-white/70"><span>大小</span><span className="font-mono text-white">{Math.round((Math.max(50, activeLayout?.overlaySize ?? 80) - 50) * 2)}</span></div>
-                        <input aria-label="大小" type="range" min="0" max="100" step="1" value={(Math.max(50, activeLayout?.overlaySize ?? 80) - 50) * 2}
-                          className="premium-slider w-full" onChange={e => patchActiveLayout(l => ({...l, overlaySize: 50 + Number(e.target.value) / 2}))} />
+                        <LiveRange ariaLabel="大小" min={0} max={100} step={1} value={(Math.max(50, activeLayout?.overlaySize ?? 80) - 50) * 2}
+                          onValue={v => patchActiveLayout(l => ({...l, overlaySize: 50 + v / 2}))} />
                       </div> : <>
                       <div className="space-y-3">
                         <div className="flex items-center justify-between text-[11px] font-bold text-white/70">
@@ -16964,18 +16994,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           <span>間距</span>
                           <span className="font-mono text-white">{gap}px</span>
                         </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="25"
-                          step="1"
-                          value={gap}
-                          onChange={(e) => {
+                        <LiveRange ariaLabel="間距" min={0} max={25} step={1} value={gap}
+                          onValue={v => {
                             if (selectedIndex !== null) setSelectedIndex(null);
-                            setGap(parseInt(e.target.value));
-                          }}
-                          className="premium-slider w-full"
-                        />
+                            setGap(v);
+                          }} />
                       </div>
 
                       {/* Radius slider */}
@@ -16984,15 +17007,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           <span>圓角</span>
                           <span className="font-mono text-white">{radius}px</span>
                         </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="30"
-                          step="1"
-                          value={radius}
-                          onChange={(e) => {
+                        <LiveRange ariaLabel="圓角" min={0} max={30} step={1} value={radius}
+                          onValue={v => {
                             if (selectedIndex !== null) setSelectedIndex(null);
-                            setRadius(parseInt(e.target.value));
+                            setRadius(v);
                           }}
                           className="premium-slider w-full"
                         />

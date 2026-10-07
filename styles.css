@@ -149,6 +149,13 @@ select:focus, select:focus-visible {
    所以高度不影響外觀，而它也就不會蓋到上下相鄰的按鈕。 */
 .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 16px; margin: -8px 0 0 0; }
 .slider-wrap > input.designer-color-slider { height: 16px; margin: -8px 0 0 0; left: 0; width: 100%; background: transparent !important; }
+/* 圖片編輯那一款（custom-range）也走同一套觸控：外觀與白點行程完全照舊
+   （左右各溢出 32px／dense 13px，透明拇指盒 64px／44px），只是觸控改由
+   .slider-wrap 判讀 —— 每一根滑桿的觸控範圍都一樣大，拖動時頁面也不會捲。
+   --thumb-w 必須等於拇指盒寬，utils/sliderTouch.ts 才算得出同一個值。 */
+.slider-wrap > input.custom-range { --thumb-w: 64px; left: -32px; width: calc(100% + 64px); height: 40px; margin: -20px 0 0 0; }
+.slider-wrap > input.custom-range.dense { --thumb-w: 44px; left: -13px; width: calc(100% + 26px); height: 44px; margin: -22px 0 0 0; }
+.slider-wrap > input.custom-range.compact { height: 30px; margin: -15px 0 0 0; }
 
 /* 顏色滑桿：6px 的漸層軌道 ＋ 自己畫的白圓球。
    圓球用 margin-top 對齊軌道正中央（(6-18)/2 = -6），

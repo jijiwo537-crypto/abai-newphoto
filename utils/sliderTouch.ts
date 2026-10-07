@@ -153,6 +153,16 @@ export const installSliderTouch = () => {
   if (installed || typeof document === 'undefined') return;
   installed = true;
 
+  /* 從滑桿上開始的觸控，一律不交給瀏覽器捲動頁面。
+     只靠 touch-action:none 不夠：iOS 有時在手指斜著拖的前幾格就已經決定要
+     捲動（創意拼圖拖無縫滑桿時整頁跟著上下滑就是這個）。在 touchstart 就
+     preventDefault，瀏覽器從頭到尾都不會捲。這一下若其實是要點底下的按鈕，
+     放開時照舊由 forwardTap 轉交點擊。 */
+  document.addEventListener('touchstart', (t: TouchEvent) => {
+    const hit = t.target as Element | null;
+    if (t.touches.length === 1 && t.cancelable && hit?.closest?.('.slider-wrap')) t.preventDefault();
+  }, { passive: false, capture: true });
+
   document.addEventListener('pointerdown', (e: PointerEvent) => {
     const hit = e.target as HTMLElement | null;
     if (!hit || !hit.classList || !hit.classList.contains('slider-wrap')) return;

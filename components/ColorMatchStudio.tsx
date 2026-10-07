@@ -631,7 +631,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
                 <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">{label}</span>
                 <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded">{val}</span>
               </div>
-              <div className="relative h-10 flex items-center justify-center touch-none">
+              <div className="slider-wrap relative h-10 flex items-center justify-center touch-none">
                 <input
                   type="range" min={0} max={max} value={val}
                   data-cm-slider={label}

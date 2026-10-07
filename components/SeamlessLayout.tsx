@@ -22,11 +22,16 @@ export function SeamlessAmountSlider({ previewId, value, onCommit }: { previewId
   const update=(v:number)=>{latest.current=v;setLive(v);if(!frame.current)frame.current=requestAnimationFrame(()=>{
     frame.current=0;previews.get(previewId)?.(latest.current);
   });};
-  const commit=()=>{previews.get(previewId)?.(latest.current);if(committed.current!==latest.current){committed.current=latest.current;onCommit(latest.current);}};
+  // The thumb and preview follow the finger continuously; the stored amount
+  // keeps its integer scale (snapped on release, like before).
+  const commit=()=>{const v=Math.round(latest.current);latest.current=v;setLive(v);previews.get(previewId)?.(v);if(committed.current!==v){committed.current=v;onCommit(v);}};
   return <div className="space-y-1.5 col-span-2">
-    <div className="flex justify-between text-[11px] font-bold text-white/70"><span>融合程度</span><span className="font-mono text-white">{live}</span></div>
-    <input aria-label="融合程度" type="range" min={0} max={100} step={1} value={live} className="premium-slider w-full"
+    <div className="flex justify-between text-[11px] font-bold text-white/70"><span>融合程度</span><span className="font-mono text-white">{Math.round(live)}</span></div>
+    {/* 跟其他滑桿同一套：同樣大的觸控範圍，拖動時頁面不會跟著捲 */}
+    <div className="slider-wrap w-full" style={{height:16}}>
+    <input aria-label="融合程度" type="range" min={0} max={100} step="any" value={live} className="premium-slider w-full"
       onChange={e=>update(Number(e.target.value))} onPointerUp={commit} onPointerCancel={commit} onTouchEnd={commit} onKeyUp={commit} onBlur={commit}/>
+    </div>
   </div>;
 }
 

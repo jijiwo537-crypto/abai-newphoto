@@ -80,3 +80,9 @@
 .art-character-presets button{padding-inline:3px;font-size:clamp(10px,3vw,12px)}
 .art-text-fields{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}.art-text-fields label{font-size:10px;line-height:14px;color:#999}.art-text-fields input{display:block;min-width:0;width:100%;height:30px;font-size:16px;background:#202020;border-radius:4px;padding:2px 4px;color:white;caret-color:white}
 .art-placement-hint{position:absolute;left:50%;top:28px;transform:translateX(-50%);padding:8px 16px;background:rgba(0,0,0,.76);border:1px solid #ffffff12;backdrop-filter:blur(20px) saturate(.7);-webkit-backdrop-filter:blur(20px) saturate(.7);border-radius:999px;color:#ddd;font-size:11px;line-height:16px;pointer-events:none;white-space:nowrap}
+
+/* 藝術工作室的滑桿也走全站同一套觸控（.slider-wrap）：觸控範圍跟其他滑桿一樣大，
+   拖動時頁面不會捲。外觀照舊：軌道跟原本一樣寬，白點 15px。 */
+.art-range .art-range-track{margin-top:9px}
+.art-tracking-controls .art-range .art-range-track{margin-top:3px;height:22px!important}
+.art-range .slider-wrap>input[type=range]{--thumb-w:15px;left:0;width:100%;height:16px;margin:-8px 0 0 0}

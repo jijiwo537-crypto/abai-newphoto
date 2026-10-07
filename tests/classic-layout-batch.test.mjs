@@ -43,10 +43,10 @@ test('inset size uses stored 50..100, defaults to 80, and keeps a stable center'
   assert.ok(Math.abs(resolveLayoutRect(raw,300,400).w-.256*1.3)<1e-10);
   assert.deepEqual(resolveLayoutRect(raw,300,400,0),resolveLayoutRect(raw,300,400,50));
   assert.deepEqual(resolveLayoutRect(raw,300,400,200),resolveLayoutRect(raw,300,400,100));
-  assert.match(source,/overlaySize: 50 \+ Number\(e.target.value\) \/ 2/);
+  assert.match(source,/overlaySize: 50 \+ v \/ 2/);
   assert.match(source,/data-inset-photo-layer/);
   assert.match(source,/!insetLayout && <LayoutEmptyPromptLayer/);
-  assert.match(source,/aria-label="大小" type="range" min="0" max="100"/);
+  assert.match(source,/<LiveRange ariaLabel="大小" min=\{0\} max=\{100\}/);
 });
 test('inset photos share page units and layout chrome stays outside the image',()=>{
  assert.doesNotMatch(source,/data-inset-photo-layer="1"[^\n]*viewBox/);

@@ -1,3 +1,4 @@
+import {LiveRange} from './LiveRange';
 import {TransformWrapper,TransformComponent} from 'react-zoom-pan-pinch';
 import React,{useState,useRef,useEffect,useLayoutEffect,useCallback} from 'react';
 import {ASCII_DEFAULTS} from '../utils/asciiRenderer';
@@ -132,7 +133,7 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
   setTracking(s=>redistributeRegions(s));randomizeFeedback(e.currentTarget);
  };
  const selectMany=(key:'shapes'|'materials',value:string)=>setTracking(s=>({...s,[key]:value==='none'?[]:s[key].includes(value)?s[key].filter((x:string)=>x!==value):[...s[key],value],...(key==='materials'&&value!=='none'?{count:s.count===0?10:s.count}:{})}));
- const slider=(name:string,value:number,min:number,max:number,change:(v:number)=>void,step=1,unit='')=><label className="art-range"><span>{name}<output>{Number(value.toFixed(2))}{unit}</output></span><input aria-label={name} type="range" min={min} max={max} step={step} value={value} onChange={e=>change(+e.target.value)}/></label>;
+ const slider=(name:string,value:number,min:number,max:number,change:(v:number)=>void,step=1,unit='')=><label className="art-range"><span>{name}<output>{Number(value.toFixed(2))}{unit}</output></span><LiveRange ariaLabel={name} min={min} max={max} step={step} value={value} onValue={change} className="" wrapClassName="art-range-track" height={24}/></label>;
  const range=(name:string,key:'columns'|'low',min:number,max:number)=>slider(name,settings[key],min,max,v=>setSettings(s=>({...s,[key]:v,high:100})));
  const tr=(name:string,key:string,min:number,max:number,step=1)=>max===1?slider(name,Math.round(Number(tracking[key])*100),min*100,100,v=>updateTracking(key,v/100)):slider(name,Number(tracking[key]),min,max,v=>updateTracking(key,v),step);
  const binary=(name:string,on:boolean,change:(value:boolean)=>void)=><div className="art-color" role="group" aria-label={name}><span>{name}</span><div className="art-presets">{[false,true].map(value=><button key={String(value)} aria-pressed={on===value} onClick={()=>change(value)}>{value?'開啟':'關閉'}</button>)}</div></div>;
