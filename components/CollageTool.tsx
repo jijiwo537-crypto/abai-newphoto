@@ -60,6 +60,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
 );
 
 import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
+import { drawStableText } from '../utils/stableText';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -6942,6 +6943,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             return;
           }
           if (!unitLayout) {
+            // Cached raster under the continuous matrix: no per-scale re-hinting jitter.
+            if (drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx, tdy)) return;
             if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
             else ctx.fillText(o.text || '', tdx, tdy);
             return;
@@ -10975,6 +10978,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               }, 140);
                             }
                             patch({ ...d, size: d.fontSize }); return;
+                          }
+                          if (d.letterSpacing !== undefined && !sel.sym) {
+                            /* 字距改變的是整串字的前進寬度：Canvas 在每個字（含最後一個）
+                               後面各加一次字距。選中框跟著同樣增減，框心固定；
+                               被左右擠壓過的文字維持原本的擠壓比例。 */
+                            const n = Array.from(sel.text || '').length;
+                            const grow = (d.letterSpacing - (sel.letterSpacing || 0)) * n;
+                            const ratio = sel.textStretchBaseW ? sel.w / sel.textStretchBaseW : 1;
+                            const w = Math.max(6, sel.w + grow * ratio);
+                            d = { ...d, w, x: sel.x - (w - sel.w) / 2,
+                              ...(sel.textStretchBaseW ? { textStretchBaseW: Math.max(1, sel.textStretchBaseW + grow) } : null) };
                           }
                           patch(d);
                         }}
