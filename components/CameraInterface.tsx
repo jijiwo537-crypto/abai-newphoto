@@ -20,7 +20,11 @@ declare global {
   }
 }
 
-type AspectRatio = '16:9' | '3:2';
+type AspectRatio = '3:2' | '4:3' | '1:1' | '16:9';
+/** 點一下比例鍵的輪替順序。4:3 是感光元件的原生比例（完全不裁切）。 */
+const ASPECT_CYCLE: AspectRatio[] = ['3:2', '4:3', '1:1', '16:9'];
+/** 直式時「寬 ÷ 高」 */
+const PORTRAIT_RATIO: Record<AspectRatio, number> = { '3:2': 2 / 3, '4:3': 3 / 4, '1:1': 1, '16:9': 9 / 16 };
 type TimerMode = 0 | 3 | 10;
 type ActiveControl = 'none' | 'kelvin' | 'exposure' | 'filters' | 'effects';
 
@@ -55,7 +59,9 @@ const canvasToBlobUrl = (cvs: HTMLCanvasElement, timeoutMs = 4500): Promise<stri
       cvs.toBlob(
         b => finish(() => b ? resolve(URL.createObjectURL(b)) : reject(new Error('toBlob failed'))),
         'image/jpeg',
-        1,
+        /* 0.92：跟品質 1 肉眼分不出差別，但檔案小 2–3 倍、編碼更快 ——
+           Apple 相機與多數專業相機 App 的 JPEG 也落在這個區間。 */
+        0.92,
       );
     } catch (error) {
       finish(() => reject(error));
@@ -630,8 +636,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
       const srcW = captureSource instanceof HTMLVideoElement ? captureSource.videoWidth : captureSource.width;
       const srcH = captureSource instanceof HTMLVideoElement ? captureSource.videoHeight : captureSource.height;
-      let targetRatio = 2/3; // Default 3:2 (Portrait 2:3)
-      if (aspectRatio === '16:9') targetRatio = 9/16;
+      const targetRatio = PORTRAIT_RATIO[aspectRatio] ?? 2 / 3;
       const srcRatio = srcW / srcH;
 
       let cropW = srcW;
@@ -675,14 +680,17 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
       /* 第一幀若剛好是相機切換／回前景產生的全黑幀，就等下一幀重畫；
          最多三次，每次都有時限，永遠不會把黑圖加進相簿。 */
-      for (let attempt = 0; attempt < 3; attempt++) {
+      // Each check is a GPU readback; remember the result instead of re-reading.
+      let hasFrame = false;
+      for (let attempt = 0; attempt < 3 && !hasFrame; attempt++) {
         draw();
-        if (canvasHasFrame(photoCanvas)) break;
+        hasFrame = canvasHasFrame(photoCanvas);
+        if (hasFrame) break;
         await waitForCameraFrame(video, 600);
         const rendered = viewfinderRef.current?.getCanvas();
         if (rendered && canvasHasFrame(rendered)) captureSource = rendered;
       }
-      if (!canvasHasFrame(photoCanvas)) return;
+      if (!hasFrame) return;
 
       const url = await canvasToBlobUrl(photoCanvas);
       ownedUrlsRef.current.add(url);
@@ -802,6 +810,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         // 16:9 (Portrait 9:16) - Requirement: Height matches 3:2 height
         targetH = h32;
         targetW = targetH * (9/16);
+        break;
+      case '4:3':
+      case '1:1':
+        // 比 3:2 矮的比例：寬度維持 3:2 的寬，高度照比例縮短
+        targetW = w32;
+        targetH = w32 / PORTRAIT_RATIO[aspectRatio];
         break;
       case '3:2':
       default:
@@ -1097,7 +1111,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               </button>
 
               <button 
-                onClick={() => setAspectRatio(prev => prev === '3:2' ? '16:9' : '3:2')}
+                onClick={() => setAspectRatio(prev => ASPECT_CYCLE[(ASPECT_CYCLE.indexOf(prev) + 1) % ASPECT_CYCLE.length])}
                 className="p-3 active:scale-90 transition-transform flex flex-col items-center shrink-0"
               >
                 <div className="w-8 h-8 border-[2px] border-white rounded-[6px] flex items-center justify-center">

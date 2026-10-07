@@ -45,12 +45,30 @@ uniform float u_kelvin;
 uniform bool u_isUserFacing;
 uniform float u_zoom;
 uniform vec2 u_crop;
+uniform bool u_dither;
 in vec2 v_texCoord;
 out vec4 outColor;
 
-vec3 applyKelvin(vec3 rgb, float kelvin) {
+/* 曝光與色溫在「線性光」裡算（跟真的相機與 Lightroom 同一種做法）：
+   ① sRGB 解碼成線性 → ② 曝光 ×2^EV、色溫用 R／B 通道倍率（von Kries 式，
+   亮度不變）→ ③ 超出範圍的亮部用平滑肩部收回，不再硬切成一片死白 → ④ 編回 sRGB。
+   沒調任何東西時（EV 0、5000K）整條路徑是恆等，畫面跟以前相同（只多了看不見的抖色）。 */
+vec3 toLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
+vec3 toEncoded(vec3 c) { return mix(c * 12.92, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
+vec3 kelvinGain(float kelvin) {
     float temp = (kelvin - 5000.0) / 5000.0;
-    return rgb + vec3(temp * 0.0975, 0.0, -temp * 0.0975);
+    vec3 g = vec3(exp2(temp * 0.55), 1.0, exp2(-temp * 0.55));
+    return g / dot(g, vec3(0.2126, 0.7152, 0.0722));
+}
+/* 肩部：低於 knee 完全不動；knee 以上把 [knee, peak] 平滑壓進 [knee, 1]。
+   peak＝這次調整後可能出現的最大值，peak <= 1（沒有提亮）時就是恆等。
+   斜率在 knee 處連續（=1），不會出現一條亮度斷層。 */
+vec3 shoulder(vec3 x, float peak) {
+    if (peak <= 1.0) return x;
+    const float knee = 0.8;
+    float s = (peak - 1.0) / ((peak - knee) * (1.0 - knee));
+    vec3 over = max(x - knee, vec3(0.0));
+    return mix(x, knee + over / (1.0 + over * s), step(vec3(knee), x));
 }
 
 void main() {
@@ -62,11 +80,10 @@ void main() {
     vec4 source = texture(u_video, tc);
     vec3 rgb = source.rgb;
 
-    // Manual Adjustments
-    rgb *= pow(2.0, u_exposure);
-    rgb = applyKelvin(rgb, u_kelvin);
-
-    rgb = clamp(rgb, 0.0, 1.0);
+    // Manual Adjustments (linear light)
+    vec3 gain = kelvinGain(u_kelvin) * exp2(u_exposure);
+    vec3 lin = toLinear(clamp(rgb, 0.0, 1.0)) * gain;
+    rgb = toEncoded(clamp(shoulder(lin, max(gain.r, max(gain.g, gain.b))), 0.0, 1.0));
 
     if (u_useLut) {
         float size = 64.0;
@@ -97,7 +114,10 @@ void main() {
         rgb = mix(c1, c2, fract(b));
     }
 
-    outColor = vec4(rgb, 1.0);
+    // ±½ 個 8-bit 階的抖色：漸層天空不出現色帶（肉眼看不到雜訊）。
+    // Only on the final output; an intermediate effect target is dithered by the composite.
+    if (u_dither) rgb += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
+    outColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);
 }
 `;
 
@@ -202,6 +222,7 @@ void main() {
       for(int i=-12;i<=12;i++){vec3 n=texture(u_narrow,tc+vec2(0.,float(i)*3./1200.)).rgb;c=1.-(1.-c)*(1.-n*u_soft2*.05);}
     }
     if(u_lowfi>0.)c=mix(c,lowfiColor(c,sensorUV,u_res,dot(base,vec3(.2126,.7152,.0722))),u_lowfi);
+    c += (fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
     outColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 `;
@@ -468,6 +489,14 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
     /* 一幀的完整畫法。預覽跟「拍全解析度靜態照」共用這一段，
        所以拍下來的顏色、特效跟畫面上看到的一定一致。 */
+    /* 著色器參數的位置每個程式只查一次。以前每一幀要查幾十次
+       （getUniformLocation 在 iOS 上是同步的字串查表）。 */
+    const uniformCache = new Map<WebGLProgram, Map<string, WebGLUniformLocation | null>>();
+    const uloc = (p: WebGLProgram, name: string) => {
+      let m = uniformCache.get(p); if (!m) { m = new Map(); uniformCache.set(p, m); }
+      if (!m.has(name)) m.set(name, gl.getUniformLocation(p, name));
+      return m.get(name)!;
+    };
     const draw = (source: TexImageSource, W: number, H: number) => {
       const f = fxRef.current;
       const input=source as any;
@@ -490,21 +519,22 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source as any);
-      gl.uniform1i(gl.getUniformLocation(prog, 'u_video'), 0);
+      gl.uniform1i(uloc(prog, 'u_video'), 0);
 
       const useLut = !!lutTexRef.current;
-      gl.uniform1i(gl.getUniformLocation(prog, 'u_useLut'), useLut ? 1 : 0);
+      gl.uniform1i(uloc(prog, 'u_useLut'), useLut ? 1 : 0);
       const pr = paramRef.current;
-      gl.uniform1f(gl.getUniformLocation(prog, 'u_exposure'), pr.exposure);
-      gl.uniform1f(gl.getUniformLocation(prog, 'u_kelvin'), pr.kelvin);
-      gl.uniform1f(gl.getUniformLocation(prog, 'u_zoom'), zoomRef.current);
-      gl.uniform2f(gl.getUniformLocation(prog,'u_crop'),anyFx ? 1 : cropX,anyFx ? 1 : cropY);
-      gl.uniform1i(gl.getUniformLocation(prog, 'u_isUserFacing'), pr.isUserFacing ? 1 : 0);
+      gl.uniform1f(uloc(prog, 'u_exposure'), pr.exposure);
+      gl.uniform1f(uloc(prog, 'u_kelvin'), pr.kelvin);
+      gl.uniform1f(uloc(prog, 'u_zoom'), zoomRef.current);
+      gl.uniform2f(uloc(prog,'u_crop'),anyFx ? 1 : cropX,anyFx ? 1 : cropY);
+      gl.uniform1i(uloc(prog, 'u_isUserFacing'), pr.isUserFacing ? 1 : 0);
+      gl.uniform1i(uloc(prog, 'u_dither'), anyFx ? 0 : 1);
 
       if (useLut) {
         gl.activeTexture(gl.TEXTURE1);
         gl.bindTexture(gl.TEXTURE_2D, lutTexRef.current);
-        gl.uniform1i(gl.getUniformLocation(prog, 'u_lut'), 1);
+        gl.uniform1i(uloc(prog, 'u_lut'), 1);
       }
 
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -516,7 +546,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       if(soft2>0){
         gl.useProgram(highlightProgRef.current);gl.bindFramebuffer(gl.FRAMEBUFFER,cut!.fb);gl.viewport(0,0,1,1);
         gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,scene!.tex);
-        gl.uniform1i(gl.getUniformLocation(highlightProgRef.current!,'u_tex'),0);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+        gl.uniform1i(uloc(highlightProgRef.current!,'u_tex'),0);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
       }
 
       gl.useProgram(bp);
@@ -537,25 +567,25 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         let srcTex: WebGLTexture = scene!.tex;
         for (let i = 0; i < passes; i++) {
           const last = i === passes - 1;
-          gl.uniform1f(gl.getUniformLocation(bp, 'u_radius'), radius);
-          gl.uniform1i(gl.getUniformLocation(bp,'u_mode'),i===0?mode:0);
-          gl.uniform1i(gl.getUniformLocation(bp,'u_box'),box);
-          gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_2D,cut!.tex);gl.uniform1i(gl.getUniformLocation(bp,'u_cut'),3);
+          gl.uniform1f(uloc(bp, 'u_radius'), radius);
+          gl.uniform1i(uloc(bp,'u_mode'),i===0?mode:0);
+          gl.uniform1i(uloc(bp,'u_box'),box);
+          gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_2D,cut!.tex);gl.uniform1i(uloc(bp,'u_cut'),3);
           // 亮部萃取只在第一趟做，之後就是單純的模糊
-          gl.uniform1f(gl.getUniformLocation(bp, 'u_brightTh'), i === 0 ? brightTh : -1);
+          gl.uniform1f(uloc(bp, 'u_brightTh'), i === 0 ? brightTh : -1);
           gl.bindFramebuffer(gl.FRAMEBUFFER, a.fb);
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, srcTex);
-          gl.uniform1i(gl.getUniformLocation(bp, 'u_tex'), 0);
-          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), box?CAMERA_SPILL_STEP:1 / W2, 0);
+          gl.uniform1i(uloc(bp, 'u_tex'), 0);
+          gl.uniform2f(uloc(bp, 'u_step'), box?CAMERA_SPILL_STEP:1 / W2, 0);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-          gl.uniform1f(gl.getUniformLocation(bp, 'u_brightTh'), -1);
-          gl.uniform1i(gl.getUniformLocation(bp,'u_mode'),0);
+          gl.uniform1f(uloc(bp, 'u_brightTh'), -1);
+          gl.uniform1i(uloc(bp,'u_mode'),0);
           gl.bindFramebuffer(gl.FRAMEBUFFER, last ? out.fb : b.fb);
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, a.tex);
-          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 0, box?CAMERA_SPILL_STEP:1 / H2);
+          gl.uniform2f(uloc(bp, 'u_step'), 0, box?CAMERA_SPILL_STEP:1 / H2);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
           srcTex = last ? out.tex : b.tex;
@@ -583,21 +613,21 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.useProgram(cp);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, scene!.tex);
-      gl.uniform1i(gl.getUniformLocation(cp, 'u_scene'), 0);
+      gl.uniform1i(uloc(cp, 'u_scene'), 0);
       gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, blurTex);
-      gl.uniform1i(gl.getUniformLocation(cp, 'u_blur'), 1);
+      gl.uniform1i(uloc(cp, 'u_blur'), 1);
       gl.activeTexture(gl.TEXTURE2);
       gl.bindTexture(gl.TEXTURE_2D, glowTex);
-      gl.uniform1i(gl.getUniformLocation(cp, 'u_glow'), 2);
-      gl.uniform1f(gl.getUniformLocation(cp, 'u_soft'), soft);
-      gl.uniform1f(gl.getUniformLocation(cp, 'u_blurAmt'), blurAmt);
+      gl.uniform1i(uloc(cp, 'u_glow'), 2);
+      gl.uniform1f(uloc(cp, 'u_soft'), soft);
+      gl.uniform1f(uloc(cp, 'u_blurAmt'), blurAmt);
       for(const [unit,name,target] of [[3,'u_spill',wide],[4,'u_narrow',narrow],[5,'u_haloTex',haloTarget]] as const){
-        gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,target!.tex);gl.uniform1i(gl.getUniformLocation(cp,name),unit);
+        gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,target!.tex);gl.uniform1i(uloc(cp,name),unit);
       }
-      gl.uniform1f(gl.getUniformLocation(cp,'u_soft2'),soft2);gl.uniform1f(gl.getUniformLocation(cp,'u_halo'),halo);gl.uniform1f(gl.getUniformLocation(cp,'u_lowfi'),lowfi);
-      gl.uniform2f(gl.getUniformLocation(cp,'u_res'),sourceW,sourceH);
-      gl.uniform2f(gl.getUniformLocation(cp,'u_effectCrop'),cropX,cropY);
+      gl.uniform1f(uloc(cp,'u_soft2'),soft2);gl.uniform1f(uloc(cp,'u_halo'),halo);gl.uniform1f(uloc(cp,'u_lowfi'),lowfi);
+      gl.uniform2f(uloc(cp,'u_res'),sourceW,sourceH);
+      gl.uniform2f(uloc(cp,'u_effectCrop'),cropX,cropY);
       if(lowfi>0)bindLowfiLut(gl,cp);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     };
@@ -610,21 +640,36 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     };
 
     const previewLimit=gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number;
+    /* 只在「真的有東西變了」時才畫：相機送來新影格（requestVideoFrameCallback），
+       或曝光／色溫／效果／變焦／濾鏡／畫布尺寸改了。螢幕是 60–120Hz，串流只有
+       30fps；以前每一個螢幕幀都重新上傳同一張影格、重跑所有效果，白白耗電發熱。
+       不支援 rVFC 的瀏覽器維持每幀都畫。 */
+    const rvfc = typeof (video as any)?.requestVideoFrameCallback === 'function';
+    let newFrame = true, frameHandle = 0, lastState = '', lastLut: WebGLTexture | null = null;
+    const onVideoFrame = () => { newFrame = true; frameHandle = (video as any).requestVideoFrameCallback(onVideoFrame); };
+    if (rvfc) frameHandle = (video as any).requestVideoFrameCallback(onVideoFrame);
     const tick = () => {
       if (!stillActiveRef.current && video && video.readyState >= 2) {
         const size=previewSizeRef.current;
         const target=size.w&&size.h?cameraPreviewGeometry(size.w,size.h,window.devicePixelRatio,video.videoWidth,video.videoHeight,previewLimit):{w:video.videoWidth,h:video.videoHeight};
+        let resized = false;
         if (canvasRef.current && (canvasRef.current.width !== target.w || canvasRef.current.height !== target.h)) {
           canvasRef.current.width = target.w;
           canvasRef.current.height = target.h;
+          resized = true;
         }
-        draw(video, gl.canvas.width, gl.canvas.height);
+        const pr = paramRef.current;
+        const state = `${pr.exposure}|${pr.kelvin}|${pr.isUserFacing}|${zoomRef.current}|${JSON.stringify(fxRef.current)}`;
+        if (!rvfc || newFrame || resized || state !== lastState || lastLut !== lutTexRef.current) {
+          newFrame = false; lastState = state; lastLut = lutTexRef.current;
+          draw(video, gl.canvas.width, gl.canvas.height);
+        }
       }
       rafId = requestAnimationFrame(tick);
     };
 
     tick();
-    return () => { cancelAnimationFrame(rafId); drawRef.current = null; };
+    return () => { cancelAnimationFrame(rafId); if (rvfc) (video as any).cancelVideoFrameCallback?.(frameHandle); drawRef.current = null; };
   }, [video, gpuEpoch]);
 
   // Handle LUT Loading
