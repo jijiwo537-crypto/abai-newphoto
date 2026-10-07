@@ -98,6 +98,7 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhoto
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface} from '../utils/photoFx';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
+import {warmPhotoEffectsWhenIdle} from '../utils/fxWarmup';
 import {warmLowfiLut} from '../utils/lowfiLut';
 import {FX_DEFS} from '../utils/glEffects';
 import {PhotoSceneColour,supportsSceneColour} from '../utils/photoSceneColour';
@@ -1535,7 +1536,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           第一次一樣了，逐次判斷會在 640 與 1600 之間來回重算（實測 640 與
           1600 各算了 30 次，等於完全沒省到）。 */
     const regionPhoto = o.id?.startsWith('region-fx-');
-    if (isMain && !regionPhoto && lv.key && lv.key !== baseKey) lv.liveUntil = now + 300;
+    // The very first change counts too: an image that never had effects has
+    // no previous key, and its first slider frame used to run at full 1600px.
+    if (isMain && !regionPhoto && lv.key !== baseKey && (lv.key || hasPhotoFx(o.fx))) lv.liveUntil = now + 300;
     const live = isMain && !regionPhoto && lv.liveUntil > now;
     /* 匯出時工作尺寸放寬到 2400：成品現在最少也有 2400px 長邊（見 EXPORT_MIN_DIM），
        圖片物件如果還卡在 1600，畫上去等於被放大過 —— 那一顆就會比旁邊的
@@ -2178,6 +2181,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (selectedObj || selectedTarget) { setBaseSelected(false); setMaskSelected(false); }
   }, [selectedObj, selectedTarget]);
   useEffect(() => { if (!maskImageState) setMaskSelected(false); }, [maskImageState]);
+  useEffect(() => { warmPhotoEffectsWhenIdle(); }, []);
+  /* 打開圖片編輯時，趁空檔把這張圖的「拖曳中」工作尺寸先準備好（來源縮圖、
+     像素快取、顏色鏈的 GPU 貼圖），第一下拖滑桿就跟首頁編輯一樣直接算。 */
+  useEffect(() => {
+    if (activeTab !== 'objedit' || !selectedObj) return;
+    let cancelled = false;
+    void awaitPhotoIdle().then(() => {
+      const o = objectsRef.current.find(v => v.id === selectedObj && v.type === 'image');
+      if (cancelled || !o?.img || isVideoEl(o.img)) return;
+      const w0 = o.img.naturalWidth || o.img.width, h0 = o.img.naturalHeight || o.img.height;
+      if (!w0 || !h0) return;
+      const k = Math.min(1, 640 / Math.max(w0, h0));
+      applyPhotoFx(o.img, Math.max(1, Math.round(w0 * k)), Math.max(1, Math.round(h0 * k)), { exposure: 1 }, { cacheSource: true, fast: true });
+    });
+    return () => { cancelled = true; };
+  }, [activeTab, selectedObj]);
   /* 圖片編輯頁是自己排好三段式高度的整頁面板：外面不能再包內距，
      footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget

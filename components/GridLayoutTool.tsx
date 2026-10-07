@@ -20,6 +20,7 @@ import { SeamlessLayout, SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface} from './LayoutPhotoSurface';
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto} from '../utils/liveCellPhoto';
 import {drawStableText} from '../utils/stableText';
+import {warmPhotoEffectsWhenIdle} from '../utils/fxWarmup';
 import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
@@ -9814,6 +9815,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   // Decode the filter tables while the editor is idle (like the creative
   // collage and home editor), so the first filter tap applies immediately
   // instead of waiting for its LUT to download, decode and repair.
+  useEffect(() => { warmPhotoEffectsWhenIdle(); }, []);
   useEffect(() => {
     let alive = true;
     void awaitPhotoIdle().then(() => { if (alive) void warmEditorLuts(lutList); });
