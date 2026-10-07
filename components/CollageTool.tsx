@@ -1262,6 +1262,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     await awaitPhotoIdle();if(cancelled)return;
     const region=photoRegionRef.current;
+    // Long-press swap thumbnails are ready before the first hold.
+    if(region&&region.photos.length>1)for(const p of region.photos){const img=p.src&&decodedRegionPhotos.current.get(p.src);if(img?.naturalWidth)swapThumb(p.src,img,Math.round(80*window.devicePixelRatio));}
     if(region&&region.photos.length>1){
       const decoded=new Map(decodedRegionPhotos.current);
       try{creativeSeam.current??=new CreativeSeamless();creativeSeam.current.warm(region,decoded);}catch{}
@@ -3507,6 +3509,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [getHoleSize, holeType, checkHitHole, layout, maskScale, canvasRatio, imageState, isHoleFullyInsideMask]);
 
   type PhotoSource = {kind:'region';index:number} | {kind:'object';id:string};
+  const swapThumbs=useRef(new Map<string,HTMLCanvasElement>());
+  const swapThumb=(src:string,img:HTMLImageElement,size:number)=>{
+    let thumb=swapThumbs.current.get(src);
+    if(!thumb||thumb.width<size){
+      thumb=document.createElement('canvas');thumb.width=thumb.height=size;
+      const g=get2dWide(thumb),d=Math.min(img.naturalWidth,img.naturalHeight);
+      if(g){g.imageSmoothingQuality='high';g.drawImage(img,(img.naturalWidth-d)/2,(img.naturalHeight-d)/2,d,d,0,0,size,size);}
+      swapThumbs.current.set(src,thumb);
+      if(swapThumbs.current.size>24){const [key,old]=swapThumbs.current.entries().next().value!;old.width=old.height=1;swapThumbs.current.delete(key);}
+    }
+    return thumb;
+  };
   const regionHold = useRef<{ id:number;source:PhotoSource;x:number;y:number;timer:number;active:boolean } | null>(null);
   const [regionSwapPhoto,setRegionSwapPhoto]=useState<string|null>(null);
   const [swapSource,setSwapSource]=useState<PhotoSource|null>(null);
@@ -3637,7 +3651,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useLayoutEffect(()=>{
     const c=regionThumbRef.current,img=regionSwapPhoto&&decodedRegionPhotos.current.get(regionSwapPhoto);if(!c||!img)return;
     const size=Math.round(80*window.devicePixelRatio);c.width=c.height=size;const g=get2dWide(c);
-    if(g){const d=Math.min(img.naturalWidth,img.naturalHeight);g.drawImage(img,(img.naturalWidth-d)/2,(img.naturalHeight-d)/2,d,d,0,0,size,size);}
+    // Downscaling a native-size original on every long press is a visible
+    // stall on phones; the square thumbnail is cached per photograph.
+    if(g){const thumb=swapThumb(regionSwapPhoto!,img,size);g.drawImage(thumb,0,0,size,size);}
     const p=regionThumbPoint.current;c.style.transform=`translate3d(${p.x}px,${p.y}px,0) translate(-50%,-50%)`;
   },[regionSwapPhoto]);
   const regionPointerDown=(e:React.PointerEvent)=>{
@@ -3698,7 +3714,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(regionThumbRef.current)regionThumbRef.current.style.transform=`translate3d(${e.clientX}px,${e.clientY}px,0) translate(-50%,-50%)`;
         const hover=photoAt(e.clientX,e.clientY);
         if(JSON.stringify(hover)!==JSON.stringify(swapHoverRef.current)){
-          swapHoverRef.current=hover;setSwapSource(hover);
+          // Hover feedback is a canvas repaint only. Setting React state here
+          // re-rendered the whole editor and painted the scene a second time
+          // on every target change, which made dragging between photos stutter.
+          swapHoverRef.current=hover;
           if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
         }
         return;
@@ -5505,7 +5524,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const m = Math.max(maskW / Math.max(1, sw), maskH / Math.max(1, sh));
       /* 底是影片的話還要加上「現在是第幾格」——不加的話這張底圖會一直
          沿用第一幀，畫面上就是「四周包圍的底定格了，只有洞在動」。 */
-      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${baseVidTok}|${JSON.stringify(photoRegion)}|${isMain?JSON.stringify(swapSource):''}`;
+      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${baseVidTok}|${JSON.stringify(photoRegion)}|${isMain?JSON.stringify(swapHoverRef.current):''}`;
       const hit = isMain ? aroundBdRef.current : null;
       if (hit && hit.key === key && hit.img === img) return hit.cv;
       const cv = isMain ? holeBackdropCanvasRef.current : document.createElement('canvas');
@@ -7253,7 +7272,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const a0h = animRef.current;
       const sigTop = `${layout}|${maskScale}|${s.toFixed(4)}|${offs.cw}x${offs.ch}|${offs.mx},${offs.my}`
         + `|B${belowBox ? [belowBox.x0, belowBox.y0, belowBox.x1, belowBox.y1].map(v => Math.round(v)).join(',') : ''}`
-        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}|${baseVidTok}|${JSON.stringify(photoRegion)}|${isMain?JSON.stringify(swapSource):''}`
+        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}|${baseVidTok}|${JSON.stringify(photoRegion)}|${isMain?JSON.stringify(swapHoverRef.current):''}`
         + `|${holeType}|${isTextHole(holeType) ? customText : ''}|${holeAngle}|${linkMode}|${linkColor || ''}`
         + `|${LINK_W.toFixed(3)}`
         + '|H' + holes.map(h => {
