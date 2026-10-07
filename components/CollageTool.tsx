@@ -435,6 +435,27 @@ const prepareCreativeSymbolPlacement = (
    幾何；後續點擊仍會以最終字身重新準備，不會保留錯誤外框。 */
 symbolFontReady.then(() => creativeSymbolPlacementCache.clear());
 
+/** 一般文字「剛好包住它」的框（未經四邊擠壓的自然尺寸）。跟繪製端同一套
+    字型、粗細、字距與描邊；字型還沒載好時回傳 null（載好再量一次）。 */
+const plainTextBox = (o: any): { w: number; h: number } | null => {
+  if (typeof document === 'undefined') return null;
+  const fam = o.fontFamily || DEFAULT_FONT, size = o.size || 40;
+  const font = `${o.italic ? 'italic ' : ''}${o.bold ? 800 : 400} ${size}px ${fontStack(fam)}`;
+  if ((document as any).fonts?.check && !(document as any).fonts.check(font)) return null;
+  const g = document.createElement('canvas').getContext('2d');
+  if (!g) return null;
+  const spacing = o.letterSpacing || 0;
+  g.font = font; (g as any).letterSpacing = `${spacing}px`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  const m = g.measureText(o.text || ' ');
+  const pad = Math.max(8, size * .12), stroke = (o.strokeWidth || 0) * size / 40;
+  const half = Math.max(m.actualBoundingBoxAscent || size * .6, m.actualBoundingBoxDescent || size * .4);
+  return {
+    w: Math.max(12, m.width - spacing + (pad + stroke) * 2),
+    h: Math.max(12, half * 2 + (pad + stroke) * 2),
+  };
+};
+
 /** 依符號的內容與字級算出「剛好包住它」的框（含一點點留白，才好按） */
 const symBox = (str: string, fam: string, size: number) => {
   return sharedSymbolBox(str, fam, size);
@@ -2182,6 +2203,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [selectedObj, selectedTarget]);
   useEffect(() => { if (!maskImageState) setMaskSelected(false); }, [maskImageState]);
   useEffect(() => { warmPhotoEffectsWhenIdle(); }, []);
+  /* 一般文字的選中框永遠包住文字：內容、字型、字級、粗斜體、字距或描邊一改，
+     就照實際排版重新量，框心固定；被四邊擠壓過的維持原本的擠壓比例。
+     兩指縮放／四邊擠壓進行中不量（手勢自己在改框），放開後才量一次。 */
+  const textFitKeys = useRef(new Map<string, string>());
+  const [textFitTick, setTextFitTick] = useState(0);
+  useLayoutEffect(() => {
+    const patches = new Map<string, any>();
+    for (const o of objects) {
+      if (o.type !== 'text' || o.sym) continue;
+      if (objPinchRef.current?.id === o.id || objStretchRef.current?.id === o.id) continue;
+      const key = JSON.stringify([o.text, o.fontFamily, o.size, o.bold, o.italic, o.letterSpacing, o.strokeWidth]);
+      if (textFitKeys.current.get(o.id) === key) continue;
+      const box = plainTextBox(o);
+      if (!box) { void ensureFont(o.fontFamily || DEFAULT_FONT).then(() => setTextFitTick(t => t + 1)); continue; }
+      textFitKeys.current.set(o.id, key);
+      const sx = o.textStretchBaseW ? o.w / o.textStretchBaseW : 1, sy = o.textStretchBaseH ? o.h / o.textStretchBaseH : 1;
+      const w = box.w * sx, h = box.h * sy;
+      if (Math.abs(w - o.w) < .5 && Math.abs(h - o.h) < .5) continue;
+      patches.set(o.id, { w, h, x: o.x + (o.w - w) / 2, y: o.y + (o.h - h) / 2,
+        ...(o.textStretchBaseW ? { textStretchBaseW: box.w } : null),
+        ...(o.textStretchBaseH ? { textStretchBaseH: box.h } : null) });
+    }
+    if (patches.size) setObjects(prev => prev.map(o => patches.has(o.id) ? { ...o, ...patches.get(o.id) } : o));
+  }, [objects, textFitTick, objPinching, objStretching]);
   /* 打開圖片編輯時，趁空檔把這張圖的「拖曳中」工作尺寸先準備好（來源縮圖、
      像素快取、顏色鏈的 GPU 貼圖），第一下拖滑桿就跟首頁編輯一樣直接算。 */
   useEffect(() => {
@@ -6878,10 +6923,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         );
         const weight = o.bold ? 800 : 400;
         const style = o.italic ? 'italic ' : '';
-        ctx.font = `${style}${weight} ${o.size * s}px ${fontStack(fam)}`;
+        /* 兩指縮放文字時字級每一幀都在變：瀏覽器每一幀依新字級重新排字、
+           各自吸附像素，字就會抖。手勢期間固定用起手的字級排字，倍率交給
+           矩陣；字距與描邊除回同一倍率，放開時畫面完全一致。 */
+        const pinFont = !o.sym && objPinchRef.current?.id === o.id && objPinchRef.current.size0 ? objPinchRef.current.size0 : o.size;
+        const fontK = !o.sym ? o.size / Math.max(1e-6, pinFont) : 1;
+        if (fontK !== 1) ctx.scale(fontK, fontK);
+        ctx.font = `${style}${weight} ${(o.sym ? o.size : pinFont) * s}px ${fontStack(fam)}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        (ctx as any).letterSpacing = `${(o.letterSpacing || 0) * s}px`;
+        const spacingPx = (o.letterSpacing || 0) * s / fontK;
+        (ctx as any).letterSpacing = `${spacingPx}px`;
+        /* Canvas 在每個字（含最後一個）後面都加字距，置中時整串會往左偏
+           半個字距；補回去，字距才會跟選中框一樣從中心往兩邊長。 */
+        const spacingShift = o.sym ? 0 : spacingPx / 2;
         if(import.meta.env.DEV&&!o.sym){const m=ctx.getTransform();targetCanvas.dataset.textLogicalFrame=JSON.stringify({id:o.id,font:ctx.font,matrix:[m.a,m.b,m.c,m.d,m.e,m.f]});}
         /* 符號：把「真正畫出來的那一塊」的中心搬到框心。
            不校正的話，前進寬度／em 方框跟墨水差多少，符號就偏出框多少 ——
@@ -6939,7 +6994,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             /* 一般文字的縮放 II 也必須先完整排版一次，再從同一張成品分層。
                逐字重新 fillText 會破壞 kerning、組合字、粗斜體與自訂字距。 */
             const rasterFontPx = 96;
-            const rasterScale = o.size * s / rasterFontPx;
+            const rasterScale = pinFont * s / rasterFontPx;
             const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
             const logicalStroke = stroke && rasterScale > 0 ? ctx.lineWidth / rasterScale : 0;
             const raster = rasterizeSymbolAnimationLayers(
@@ -6949,7 +7004,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 plainText: true,
                 fontWeight: weight,
                 fontStyle: o.italic ? 'italic' : 'normal',
-                letterSpacing: (o.letterSpacing || 0) * rasterFontPx / Math.max(1, o.size),
+                letterSpacing: spacingPx * rasterFontPx / Math.max(1, pinFont * s),
               },
             );
             if (!raster) {
@@ -6982,9 +7037,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
           if (!unitLayout) {
             // Cached raster under the continuous matrix: no per-scale re-hinting jitter.
-            if (drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx, tdy)) return;
-            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
-            else ctx.fillText(o.text || '', tdx, tdy);
+            if (drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx + spacingShift, tdy)) return;
+            if (stroke) ctx.strokeText(o.text || '', tdx + spacingShift, tdy);
+            else ctx.fillText(o.text || '', tdx + spacingShift, tdy);
             return;
           }
           const now = f?.idleT ?? 0;
@@ -7101,7 +7156,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.lineJoin = 'round';
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#FFFFFF';
-          ctx.lineWidth = o.strokeWidth * 2 * tk;
+          ctx.lineWidth = o.strokeWidth * 2 * tk / fontK;
           drawText(true);
         }
         ctx.fillStyle = o.color || '#ffffff';
@@ -9878,8 +9933,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           /* 符號的框是「剛好包住墨水」的，常常比 em 方框小一大截 ——
              輸入框照那個框開的話字會被裁掉。所以符號的輸入框至少要有
              一個字級的高度與寬度，並且以框心為中心攤開。一般文字不變。 */
-          const boxW = o.sym ? Math.max(o.w, (o.size || 40) * 1.2) : o.w;
-          const boxH = o.sym ? Math.max(o.h, (o.size || 40) * 1.6) : o.h;
+          /* 輸入框要跟畫布上的字一模一樣：同字型、同字級，被四邊擠壓過的文字
+             也用同一個擠壓比例顯示，不能退回預設的未變形樣子。框本身用未擠壓的
+             自然尺寸排字，再用 transform 套上擠壓。 */
+          const stretchX = !o.sym && o.textStretchBaseW ? o.w / o.textStretchBaseW : 1;
+          const stretchY = !o.sym && o.textStretchBaseH ? o.h / o.textStretchBaseH : 1;
+          const boxW = o.sym ? Math.max(o.w, (o.size || 40) * 1.2) : o.w / stretchX;
+          const boxH = o.sym ? Math.max(o.h, (o.size || 40) * 1.6) : o.h / stretchY;
           const left = r.left - sr.left + (o.x + o.w / 2 - boxW / 2) * k;
           const top = r.top - sr.top + (o.y + o.h / 2 - boxH / 2) * k;
           // Safari auto-zooms small native text fields. Keep the native font at
@@ -9937,7 +9997,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 left: left - boxW * k * (1 / inputScale - 1) / 2,
                 top: top - boxH * k * (1 / inputScale - 1) / 2,
                 width: boxW * k / inputScale, height: boxH * k / inputScale,
-                transform: `rotate(${o.rot || 0}deg) scale(${inputScale})`,
+                transform: `rotate(${o.rot || 0}deg) scale(${inputScale * stretchX}, ${inputScale * stretchY})`,
                 transformOrigin: '50% 50%',
                 margin: 0, padding: 0, border: 'none', outline: 'none', resize: 'none',
                 background: 'transparent', overflow: 'hidden',
@@ -10032,7 +10092,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             setObjects(prev => [...prev, { ...o, id, x: o.x + o.w * 0.08, y: o.y + o.h * 0.08 }]);
             setSelectedObj(id);
           };
-          const canStretch = !shapeMode && !o.sym && !isVideoEl(o.img)
+          /* 正在輸入文字時，四邊擠壓的小白點先收起來：打字時手指很容易碰到它們，
+             一碰就把文字變形，框也就包不住字了。 */
+          const canStretch = !shapeMode && !o.sym && !isVideoEl(o.img) && editingTextId !== o.id
             && (o.type !== 'shape' || shapeSupportsStretch(o.kind, o.filled, o.hole));
           return (<>
             {canStretch && (
@@ -11016,17 +11078,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               }, 140);
                             }
                             patch({ ...d, size: d.fontSize }); return;
-                          }
-                          if (d.letterSpacing !== undefined && !sel.sym) {
-                            /* 字距改變的是整串字的前進寬度：Canvas 在每個字（含最後一個）
-                               後面各加一次字距。選中框跟著同樣增減，框心固定；
-                               被左右擠壓過的文字維持原本的擠壓比例。 */
-                            const n = Array.from(sel.text || '').length;
-                            const grow = (d.letterSpacing - (sel.letterSpacing || 0)) * n;
-                            const ratio = sel.textStretchBaseW ? sel.w / sel.textStretchBaseW : 1;
-                            const w = Math.max(6, sel.w + grow * ratio);
-                            d = { ...d, w, x: sel.x - (w - sel.w) / 2,
-                              ...(sel.textStretchBaseW ? { textStretchBaseW: Math.max(1, sel.textStretchBaseW + grow) } : null) };
                           }
                           patch(d);
                         }}
