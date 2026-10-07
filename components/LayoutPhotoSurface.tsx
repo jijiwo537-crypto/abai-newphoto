@@ -1,9 +1,9 @@
-import React,{useLayoutEffect,useEffect,useRef,useState} from 'react';
+import React,{useLayoutEffect,useEffect,useRef} from 'react';
 import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,getLoadedLut,type PhotoFx} from '../utils/photoFx';
 import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
 import {subscribeCellPhoto,subscribeCellPrime} from '../utils/liveCellPhoto';
 import {resolveSeamSurface} from '../utils/seamlessSurfaceGeometry';
-import {drawSeamPreview,disposeSeamPreview,type SeamTexture} from '../utils/seamlessPreview';
+import {drawSeamShared,releaseSeamShared,type SeamTexture} from '../utils/seamlessPreview';
 import {previews as seamlessPreviews} from './SeamlessLayout';
 import {drawCoveredPhoto} from '../utils/coveredPhoto';
 import {get2dWide} from '../utils/colorSpace';
@@ -29,16 +29,14 @@ const releaseResource=(r:Resource)=>{r.image.onload=null;r.pending=undefined;rel
  * toggling seamless only changes shader uniforms (no re-decode/re-upload). */
 export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision,fusion,previewId}:{cells:Cell[];rects:Rect[];width:number;height:number;gap:number;radius:number;revision:number;fusion?:number;previewId?:string}){
   const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef(()=>{});
-  // An evicted WebGL context never comes back on the same <canvas>; replace
-  // the element so the next paint gets a fresh context instead of staying blank.
-  const [surfaceGeneration,setSurfaceGeneration]=useState(0);
-  const lastRemount=useRef(-1e9);
+  // The layout canvas is a plain 2D bitmap fed by the editor-wide shared GPU
+  // renderer (drawSeamShared), so it can never lose a context or turn grey.
   const fusionLive=useRef(fusion);
   useLayoutEffect(()=>{fusionLive.current=fusion;},[fusion]);
   // The fusion slider repaints uniforms directly, without a React render.
   useLayoutEffect(()=>{if(!previewId||fusion===undefined)return;seamlessPreviews.set(previewId,v=>{fusionLive.current=v;drawRef.current();});return()=>{seamlessPreviews.delete(previewId);};},[previewId,fusion===undefined]);
   const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;drawRef.current();});};
-  useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element&&!element.isConnected)disposeSeamPreview(element);};},[]);
+  useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element)releaseSeamShared(element);};},[]);
   useEffect(()=>{
     // Repaint in the SAME transform frame, not a second rAF one frame later.
     // Sources and FX remain cached; zoom only resamples their visible pixels.
@@ -46,11 +44,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
     window.addEventListener('abai-preview-transform',paint,true);
     window.addEventListener('scroll',paint,true);window.addEventListener('resize',paint);
     const observer=new ResizeObserver(paint);if(plane.current)observer.observe(plane.current);
-    const element=ref.current;
-    const lost=(e:Event)=>{e.preventDefault();if(element)disposeSeamPreview(element);const now=performance.now();if(now-lastRemount.current<2000)return;lastRemount.current=now;setSurfaceGeneration(g=>g+1);};
-    element?.addEventListener('webglcontextlost',lost);element?.addEventListener('webglcontextrestored',paint);
-    return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);element?.removeEventListener('webglcontextlost',lost);element?.removeEventListener('webglcontextrestored',paint);};
-  },[surfaceGeneration]);
+    return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);};
+  },[]);
   useLayoutEffect(()=>{
     const clean=cells.map(c=>subscribeCellPhoto(c.id,fx=>{live.current.set(c.id,fx);schedule();}));
     // Selecting a cell for editing prepares its live proxy while idle (source
@@ -180,8 +175,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         });
       }else{
         // Geometry-only frames change GPU uniforms, never re-run effects.
-        if(fused)drawSeamPreview(cv,cells,clips,sources,fusionLive.current!,surface.view);
-        else drawSeamPreview(cv,cells,clips,sources,-1,{...surface.view,isolated:true,sealEdges:noVisibleGutter,radii,crops});
+        if(fused)drawSeamShared(cv,cells,clips,sources,fusionLive.current!,surface.view);
+        else drawSeamShared(cv,cells,clips,sources,-1,{...surface.view,isolated:true,sealEdges:noVisibleGutter,radii,crops});
       }
       const flatShown=editPresentation.current&&!fused;
       flat.style.display=flatShown?'block':'none';cv.style.display=flatShown?'none':'block';
@@ -190,6 +185,6 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       if(import.meta.env.DEV){shown.dataset.paintCount=String(Number(shown.dataset.paintCount||0)+1);shown.dataset.rasterView=JSON.stringify(surface.rasterView);shown.dataset.sourceKeys=JSON.stringify([...resources.current.values()].map(r=>r.key));}
     };
     drawRef.current();
-  },[cells,rects,width,height,gap,radius,revision,surfaceGeneration,fusion]);
-  return <><svg ref={plane} data-layout-photo-plane viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" aria-hidden style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,overflow:'hidden'}}><g opacity={0}><circle data-layout-probe cx={0} cy={0} r={.005}/><circle data-layout-probe cx={width} cy={0} r={.005}/><circle data-layout-probe cx={0} cy={height} r={.005}/></g></svg><canvas key={surfaceGeneration} ref={ref} data-layout-photo-surface style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0}}/><canvas ref={editSurface} style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/></>;
+  },[cells,rects,width,height,gap,radius,revision,fusion]);
+  return <><svg ref={plane} data-layout-photo-plane viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" aria-hidden style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,overflow:'hidden'}}><g opacity={0}><circle data-layout-probe cx={0} cy={0} r={.005}/><circle data-layout-probe cx={width} cy={0} r={.005}/><circle data-layout-probe cx={0} cy={height} r={.005}/></g></svg><canvas ref={ref} data-layout-photo-surface style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0}}/><canvas ref={editSurface} style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/></>;
 }

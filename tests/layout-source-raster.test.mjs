@@ -13,7 +13,7 @@ test('ordinary and fused layout capture the non-bubbling strip transform event',
 test('ordinary layout samples full source into bounded screen pixels, not a fixed CSS raster',()=>{
  assert.match(layout,/resolveSeamSurface\(points,width,height,width,height/);
  assert.match(layout,/const W=surface.pixelWidth,H=surface.pixelHeight/);
- assert.match(layout,/drawSeamPreview\(cv,cells,clips,sources,-1/);
+ assert.match(layout,/drawSeamShared\(cv,cells,clips,sources,-1/);
  assert.match(layout,/applyPhotoFx\(im,im.naturalWidth,im.naturalHeight/);
  assert.doesNotMatch(layout,/4096\/Math.max\(width,height\)/);
  assert.match(layout,/noVisibleGutter=gap<=\.001&&radius<=\.001/);

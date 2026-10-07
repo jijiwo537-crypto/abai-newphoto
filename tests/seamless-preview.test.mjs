@@ -105,7 +105,7 @@ test('seamless and separate cells share one layout GPU surface',()=>{
   assert.match(grid,/const nativeLayout = !insetLayout;/);
   assert.match(grid,/fusion=\{stableSeamless \? \(layout.seamlessAmount \?\? 0\) : undefined\}/);
   assert.doesNotMatch(grid,/<SeamlessLayout /);
-  assert.match(surface,/if\(fused\)drawSeamPreview\(cv,cells,clips,sources,fusionLive.current!,surface.view\)/);
+  assert.match(surface,/if\(fused\)drawSeamShared\(cv,cells,clips,sources,fusionLive.current!,surface.view\)/);
 });
 test('screen-aligned fusion samples remain locked to the layout at fractional zoom and rotation',()=>{
   class Matrix {

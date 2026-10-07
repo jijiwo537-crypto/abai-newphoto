@@ -21,9 +21,12 @@ class SeamGpu {
   private maxTextureUnits:number;
   private uniforms=new Map<WebGLProgram,Map<string,WebGLUniformLocation|null>>();
   private lastPresentation:(()=>void)|null=null;
-  constructor(canvas:HTMLCanvasElement,private direct=false,private presentationOnly=false,readonly srgbOutput=false){
+  /** Which images each target last drew. A shared renderer serves many
+   *  targets; a texture is only "inactive" when no target still shows it. */
+  private targetSets=new Map<HTMLCanvasElement,Set<CanvasImageSource>>();
+  constructor(canvas:HTMLCanvasElement,private direct=false,private presentationOnly=false,readonly srgbOutput=false,readonly shared=false){
     const webkit=/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
-    this.transferred=!direct&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
+    this.transferred=!direct&&!shared&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
     this.canvas=this.transferred?new OffscreenCanvas(canvas.width,canvas.height):canvas;
     const gl=this.canvas.getContext('webgl2',{alpha:true,antialias:false,premultipliedAlpha:false,preserveDrawingBuffer:!presentationOnly}) as WebGL2RenderingContext|null;
     if(!gl)throw new Error('無縫拼圖 GPU 無法啟動');this.gl=gl;
@@ -39,6 +42,13 @@ class SeamGpu {
   }
   dispose(){const gl=this.gl;for(const t of this.textures.values())gl.deleteTexture(t);for(const p of this.programs.values())gl.deleteProgram(p);gl.deleteBuffer(this.buffer);this.textures.clear();this.textureBytes.clear();this.revisions.clear();this.programs.clear();this.uniforms.clear();this.lastPresentation=null;if(!gl.isContextLost())gl.getExtension('WEBGL_lose_context')?.loseContext();}
   get lost(){return this.invalid||this.gl.isContextLost();}
+  get surface(){return this.canvas as HTMLCanvasElement;}
+  /** A target went away: its textures become inactive (evictable). */
+  forget(target:HTMLCanvasElement){
+    const set=this.targetSets.get(target);if(!set)return;this.targetSets.delete(target);
+    const still=new Set<CanvasImageSource>();for(const other of this.targetSets.values())for(const image of other)still.add(image);
+    for(const image of set){if(still.has(image)||!(image instanceof HTMLCanvasElement))continue;const tex=this.textures.get(image);if(tex)this.gl.deleteTexture(tex);this.textures.delete(image);this.textureBytes.delete(image);this.revisions.delete(image);}
+  }
   copyPixels(ctx:CanvasRenderingContext2D,x:number,y:number,presentation?:HTMLCanvasElement){
     // Chromium transfers the rendered bitmap into the displayed canvas and
     // clears the OffscreenCanvas framebuffer. Read the displayed bitmap, not
@@ -129,7 +139,8 @@ class SeamGpu {
   draw(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView){
     if(this.presentationOnly)this.lastPresentation=()=>this.draw(target,cells,rects,sources,amount,view);
     const gl=this.gl,w=view.width,h=view.height,count=rects.length;
-    const active=new Set(sources.map(s=>s?.image||this.blank));
+    this.targetSets.set(target,new Set(sources.map(s=>s?.image||this.blank)));
+    const active=new Set<CanvasImageSource>();for(const set of this.targetSets.values())for(const image of set)active.add(image);
     const incoming=sources.reduce((n,s)=>n+(s&&!this.textures.has(s.image)?s.width*s.height*4*4/3:0),0);
     let resident=Array.from(this.textureBytes.values()).reduce((a,b)=>a+b,0);
     // Edited canvases are transient results, not reusable photo originals.
@@ -141,7 +152,10 @@ class SeamGpu {
       resident-=this.textureBytes.get(image)||0;gl.deleteTexture(tex);this.textures.delete(image);this.textureBytes.delete(image);this.revisions.delete(image);
     }
     if(count>this.maxTextureUnits)throw new Error('佈局相片數超過 GPU 上限');
-    if(this.canvas.width!==target.width)this.canvas.width=target.width;if(this.canvas.height!==target.height)this.canvas.height=target.height;
+    // A shared surface only grows: layouts of different sizes render into its
+    // lower-left corner instead of reallocating the drawing buffer per draw.
+    if(this.shared){if(this.canvas.width<target.width)this.canvas.width=target.width;if(this.canvas.height<target.height)this.canvas.height=target.height;}
+    else{if(this.canvas.width!==target.width)this.canvas.width=target.width;if(this.canvas.height!==target.height)this.canvas.height=target.height;}
     gl.viewport(0,0,target.width,target.height);const p=this.program(count);gl.useProgram(p);
     let locations=this.uniforms.get(p);if(!locations){locations=new Map();this.uniforms.set(p,locations);}
     const uniform=(name:string)=>{if(!locations!.has(name))locations!.set(name,gl.getUniformLocation(p,name));return locations!.get(name)!;};
@@ -244,6 +258,26 @@ export function drawSeamPreview(target:HTMLCanvasElement,cells:SeamPhoto[],rects
   if(!gpu||gpu.lost){gpu=new SeamGpu(target,false,presentationOnly,srgbOutput);renderers.set(target,gpu);}gpu.draw(target,cells,rects,sources,amount,view);
 }
 export function disposeSeamPreview(target:HTMLCanvasElement){renderers.get(target)?.dispose();renderers.delete(target);}
+
+/* Multi-page layouts: ONE WebGL renderer for the whole editor. Each layout
+   used to own a context; with several pages iOS evicted the oldest (photos
+   went grey) and every layout compiled its own shaders and kept its own
+   copies. Now every layout paints a plain 2D canvas that receives a copy of
+   its frame: off-screen pages are static bitmaps with no GPU context, and a
+   lost context never blanks anything (2D pixels persist; the next paint
+   simply recreates the renderer). The renderer outputs sRGB, which is how
+   WebKit reads a WebGL canvas in drawImage (see srgbOutput). */
+let sharedGpu:SeamGpu|null=null;
+export function drawSeamShared(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView){
+  if(sharedGpu?.lost){sharedGpu.dispose();sharedGpu=null;}
+  sharedGpu??=new SeamGpu(document.createElement('canvas'),false,false,true,true);
+  sharedGpu.draw(target,cells,rects,sources,amount,view);
+  const g=get2dWide(target)!,src=sharedGpu.surface,w=target.width,h=target.height;
+  g.save();g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='copy';g.imageSmoothingEnabled=false;
+  // WebGL's origin is bottom-left: the viewport rows are the LAST h rows.
+  g.drawImage(src,0,src.height-h,w,h,0,0,w,h);g.restore();
+}
+export function releaseSeamShared(target:HTMLCanvasElement){sharedGpu?.forget(target);}
 /** A 2D collage composition cannot display the WebGL layer directly. On
  * WebKit use tagged raw pixels, avoiding its second DOM color conversion. */
 export function copySeamPreviewPixels(target:HTMLCanvasElement,ctx:CanvasRenderingContext2D,x=0,y=0){
