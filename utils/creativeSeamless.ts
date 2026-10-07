@@ -86,6 +86,8 @@ export class CreativeSeamless {
     const left=Math.max(0,Math.floor(x*m.a+m.e)),top=Math.max(0,Math.floor(y*m.d+m.f));
     const right=Math.min(ctx.canvas.width,Math.ceil((x+w)*m.a+m.e)),bottom=Math.min(ctx.canvas.height,Math.ceil((y+h)*m.d+m.f));
     if(right<=left||bottom<=top)return true;
+    // An evicted context never returns on the same element (iOS); start over.
+    if(this.surface?.getContext('webgl2')?.isContextLost()){disposeSeamPreview(this.surface);this.surface.width=this.surface.height=1;this.surface=null;}
     const surface=this.surface||(this.surface=document.createElement('canvas'));
     const photos=base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0}));
     const sources=base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;});

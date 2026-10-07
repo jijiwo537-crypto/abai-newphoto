@@ -52,6 +52,10 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
           const photo=cellsRef.current[i];if(!photo?.id||!dirtyPhotos.current.has(photo.id))return source;
           const original=originals.current.get(photo.url);if(!original)return source;
           if(!hasPhotoFx(photo.fx))return original;
+          // One live effect surface (one extra GPU context) at a time.
+          // Never release one still on screen (its native pixels not ready yet).
+          const shown=new Set((sourcesRef.current||[]).map(s=>s?.image));
+          for(const [id,cv] of liveSurfaces.current)if(id!==photo.id&&!shown.has(cv)){releasePhotoFxSurface(cv);cv.width=cv.height=1;liveSurfaces.current.delete(id);liveKeys.current.delete(id);}
           let input=liveSurfaces.current.get(photo.id);if(!input){input=document.createElement('canvas');liveSurfaces.current.set(photo.id,input);}
           const [pw,ph]=liveSize(original.width,original.height);
           const image=applyPhotoFx(original.image,pw,ph,photo.fx!,{cacheSource:true,gpuSurface:true,out:input});
@@ -66,10 +70,13 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
   const [contextRevision,restoreContext]=useState(0);
   useEffect(()=>{
     const element=canvas.current;if(!element)return;
-    const lost=(e:Event)=>{e.preventDefault();warmKey.current='';setReady(false);},restored=()=>restoreContext(v=>v+1);
+    // iOS Safari evicts the oldest WebGL context when too many are alive and
+    // never restores it on the same element. Swap in a fresh <canvas> (keyed
+    // by contextRevision) instead of leaving the photos blank/grey.
+    const lost=(e:Event)=>{e.preventDefault();warmKey.current='';restoreContext(v=>v+1);},restored=()=>restoreContext(v=>v+1);
     element.addEventListener('webglcontextlost',lost);element.addEventListener('webglcontextrestored',restored);
     return()=>{element.removeEventListener('webglcontextlost',lost);element.removeEventListener('webglcontextrestored',restored);disposeSeamPreview(element);};
-  },[]);
+  },[contextRevision]);
   useEffect(()=>{
     const paint=()=>paintCurrent.current();
     // The strip dispatches this event on itself without bubbling. Capture is
@@ -151,6 +158,6 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
       style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,transform:`scale(${scale})`,transformOrigin:'0 0',isolation:'isolate',overflow:'hidden'}}>
       <g opacity={0}><circle data-seam-probe cx={0} cy={0} r={.005}/><circle data-seam-probe cx={w} cy={0} r={.005}/><circle data-seam-probe cx={0} cy={h} r={.005}/></g>
     </svg>
-    <canvas ref={canvas} data-seamless-layout width={1} height={1} style={{position:'absolute',left:0,top:0,zIndex:0,pointerEvents:'none',transformOrigin:'0 0',visibility:ready&&enabled?'visible':'hidden'}}/>
+    <canvas key={contextRevision} ref={canvas} data-seamless-layout width={1} height={1} style={{position:'absolute',left:0,top:0,zIndex:0,pointerEvents:'none',transformOrigin:'0 0',visibility:ready&&enabled?'visible':'hidden'}}/>
   </>;
 }

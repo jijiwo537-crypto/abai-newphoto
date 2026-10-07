@@ -1,6 +1,5 @@
-import React,{useLayoutEffect,useEffect,useRef} from 'react';
-import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,getLoadedLut,warmPhotoFxSurface,type PhotoFx} from '../utils/photoFx';
-import {FX_DEFS} from '../utils/glEffects';
+import React,{useLayoutEffect,useEffect,useRef,useState} from 'react';
+import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,getLoadedLut,type PhotoFx} from '../utils/photoFx';
 import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
 import {subscribeCellPhoto,subscribeCellPrime} from '../utils/liveCellPhoto';
 import {resolveSeamSurface} from '../utils/seamlessSurfaceGeometry';
@@ -20,11 +19,15 @@ const previewSize=(im:HTMLImageElement)=>{const k=Math.min(1,LIVE_PREVIEW/Math.m
 // Effect pixels depend on the cell's own LUT being decoded, not on every
 // unrelated background LUT load that bumps the editor-wide revision.
 const fxKey=(fx:PhotoFx)=>JSON.stringify([fx,fx.lut?!!getLoadedLut(fx.lut):0]);
+const releasePreview=(r:Resource)=>{if(!r.preview)return;releasePhotoFxSurface(r.preview);r.preview.width=r.preview.height=1;r.preview=undefined;r.previewKey=undefined;r.previewOutput=null;};
 const releaseResource=(r:Resource)=>{r.image.onload=null;r.pending=undefined;releasePhotoFxSurface(r.input);r.input.width=r.input.height=1;if(r.preview){releasePhotoFxSurface(r.preview);r.preview.width=r.preview.height=1;}};
 /** Every cell is painted in one unchanged layout plane. Selection never swaps
  * SVG/HTML geometry, and neighbour edges cannot be independently composited. */
 export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision}:{cells:Cell[];rects:Rect[];width:number;height:number;gap:number;radius:number;revision:number}){
   const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef(()=>{});
+  // An evicted WebGL context never comes back on the same <canvas>; replace
+  // the element so the next paint gets a fresh context instead of staying blank.
+  const [surfaceGeneration,setSurfaceGeneration]=useState(0);
   const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;drawRef.current();});};
   useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element&&!element.isConnected)disposeSeamPreview(element);};},[]);
   useEffect(()=>{
@@ -34,20 +37,22 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
     window.addEventListener('abai-preview-transform',paint,true);
     window.addEventListener('scroll',paint,true);window.addEventListener('resize',paint);
     const observer=new ResizeObserver(paint);if(plane.current)observer.observe(plane.current);
-    const lost=(e:Event)=>e.preventDefault();ref.current?.addEventListener('webglcontextlost',lost);ref.current?.addEventListener('webglcontextrestored',paint);
-    return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);ref.current?.removeEventListener('webglcontextlost',lost);ref.current?.removeEventListener('webglcontextrestored',paint);};
-  },[]);
+    const element=ref.current;
+    const lost=(e:Event)=>{e.preventDefault();if(element)disposeSeamPreview(element);setSurfaceGeneration(g=>g+1);};
+    element?.addEventListener('webglcontextlost',lost);element?.addEventListener('webglcontextrestored',paint);
+    return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);element?.removeEventListener('webglcontextlost',lost);element?.removeEventListener('webglcontextrestored',paint);};
+  },[surfaceGeneration]);
   useLayoutEffect(()=>{
     const clean=cells.map(c=>subscribeCellPhoto(c.id,fx=>{live.current.set(c.id,fx);schedule();}));
-    // Selecting a cell for editing prepares its live proxy while idle: source
-    // downscale + upload, colour chain and effect shaders. The first slider
-    // frame then only renders, like the home editor's prepared buffers.
+    // Selecting a cell for editing prepares its live proxy while idle (source
+    // downscale + upload into the SHARED colour GPU). It must not create
+    // per-cell WebGL contexts: iOS Safari evicts the oldest live context once
+    // too many exist, which blanked the layout/seamless canvases to grey.
     const primes=cells.map(c=>subscribeCellPrime(c.id,()=>{void(async()=>{
       await awaitPhotoIdle();
       const r=resources.current.get(c.id),im=r?.image;if(!r||r.primed||!im?.naturalWidth||live.current.has(c.id))return;
-      r.primed=true;r.preview??=document.createElement('canvas');const [pw,ph]=previewSize(im);
-      applyPhotoFx(im,pw,ph,{exposure:1},{cacheSource:true,gpuSurface:true,out:r.preview});r.previewKey='';
-      for(const d of FX_DEFS){await awaitPhotoIdle();if(resources.current.get(c.id)!==r||!r.preview)return;warmPhotoFxSurface(r.preview,d.id);}
+      r.primed=true;const [pw,ph]=previewSize(im);
+      applyPhotoFx(im,pw,ph,{exposure:1},{cacheSource:true});
     })();}));
     return()=>{clean.forEach(fn=>fn());primes.forEach(fn=>fn());};
   },[cells.map(c=>c.id).join('|')]);
@@ -102,6 +107,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         if(liveFx&&hasPhotoFx(fx)){
           // Slider held: render the editor-sized proxy, never native pixels.
           if(r0.previewKey!==key){
+            // At most one live effect surface (one extra GPU context) at a time.
+            for(const other of resources.current.values())if(other!==r0)releasePreview(other);
             r0.preview??=document.createElement('canvas');const [pw,ph]=previewSize(im);
             r0.previewOutput=applyPhotoFx(im,pw,ph,fx,{cacheSource:true,gpuSurface:true,out:r0.preview});
             r0.previewOutput.dataset.seamRevision=key;r0.previewKey=key;
@@ -171,6 +178,6 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       if(import.meta.env.DEV){shown.dataset.paintCount=String(Number(shown.dataset.paintCount||0)+1);shown.dataset.rasterView=JSON.stringify(surface.rasterView);shown.dataset.sourceKeys=JSON.stringify([...resources.current.values()].map(r=>r.key));}
     };
     drawRef.current();
-  },[cells,rects,width,height,gap,radius,revision]);
-  return <><svg ref={plane} data-layout-photo-plane viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" aria-hidden style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,overflow:'hidden'}}><g opacity={0}><circle data-layout-probe cx={0} cy={0} r={.005}/><circle data-layout-probe cx={width} cy={0} r={.005}/><circle data-layout-probe cx={0} cy={height} r={.005}/></g></svg><canvas ref={ref} data-layout-photo-surface style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0}}/><canvas ref={editSurface} style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/></>;
+  },[cells,rects,width,height,gap,radius,revision,surfaceGeneration]);
+  return <><svg ref={plane} data-layout-photo-plane viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" aria-hidden style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,overflow:'hidden'}}><g opacity={0}><circle data-layout-probe cx={0} cy={0} r={.005}/><circle data-layout-probe cx={width} cy={0} r={.005}/><circle data-layout-probe cx={0} cy={height} r={.005}/></g></svg><canvas key={surfaceGeneration} ref={ref} data-layout-photo-surface style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0}}/><canvas ref={editSurface} style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/></>;
 }
