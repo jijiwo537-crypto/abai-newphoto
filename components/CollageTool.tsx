@@ -46,7 +46,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
-  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
+  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -467,7 +467,6 @@ const symBox = (str: string, fam: string, size: number) => {
    描邊的尖角（星形、三角形的 miter）、圓角星、對話框尾巴都會偏掉，
    所以這裡跟拼圖本身用同一組繪製呼叫（同一條路徑、同一種接角、外描邊），
    在離屏畫一次、掃 alpha，量出真正的墨水範圍。一種外形設定只量一次。 */
-const shapeInkCache = new Map<string, { x: number; y: number; w: number; h: number } | null>();
 export const hugsShapeInk = (o: any) => o?.type === 'shape' && !SPECIAL_LINE_KINDS.has(o.kind) && !GRID_SHAPE_KINDS.has(o.kind);
 /** 選取框中心線離墨水多遠（CSS px）。貼齊的圖形＝框線寬的一半（0.275）
     再加 0.175：墨水邊緣那一排抗鋸齒的半透明像素也不會被框線壓到，
@@ -475,58 +474,8 @@ export const hugsShapeInk = (o: any) => o?.type === 'shape' && !SPECIAL_LINE_KIN
 export const selectionFrameGap = (o: any) => o?.type === 'image' ? 0.375 : hugsShapeInk(o)
   // 字形圖案的墨水是字型度量，頂端比幾何路徑多一點誤差，多留 0.2。
   ? (o.kind === 'hole' && isTextHole(o.hole) ? 0.65 : 0.45) : 2;
-const measuredShapeInk = (o: any): { x: number; y: number; w: number; h: number } | null => {
-  // Glyph patterns already use their own measured alpha ink (glyphInk below).
-  if (!hugsShapeInk(o) || !(o.w > 0) || !(o.h > 0) || typeof document === 'undefined' || (o.kind === 'hole' && isTextHole(o.hole))) return null;
-  if (isBackdropMask(o.kind)) {
-    // 遮罩是解析式裁切：方形／圓形就是整個框，星形是那十個頂點的外接框。
-    if (maskGeometry(o.kind, o) !== 'star') return { x: 0, y: 0, w: o.w, h: o.h };
-    const pts = Array.from({ length: 10 }, (_, i) => { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? .45 : 1; return [Math.cos(a) * r, Math.sin(a) * r]; });
-    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
-    return { x: (Math.min(...xs) + 1) / 2 * o.w, y: (Math.min(...ys) + 1) / 2 * o.h, w: (Math.max(...xs) - Math.min(...xs)) / 2 * o.w, h: (Math.max(...ys) - Math.min(...ys)) / 2 * o.h };
-  }
-  const long = Math.max(o.w, o.h), base = (o.lineBase || long);
-  const key = JSON.stringify([o.kind, o.hole, o.text, !!o.filled, Math.round(o.w / o.h * 1e4), o.lineW ?? 6, Math.round(base / long * 1e4),
-    Math.round((o.textureBaseW || o.w) / o.w * 1e3), Math.round((o.textureBaseH || o.h) / o.h * 1e3), o.strokeW || 0, o.innerSize, o.outlineWidth]);
-  if (shapeInkCache.has(key)) return shapeInkCache.get(key)!;
-  let ink: { x: number; y: number; w: number; h: number } | null = null;
-  try {
-    const k = 480 / long, bw = o.w * k, bh = o.h * k, unit = base * k / 160;
-    const lw = Math.max(0.4 * k, (o.lineW ?? 6) * unit), sw = Math.min(8, Math.max(0, o.strokeW || 0)) * unit;
-    const solid = o.filled && o.kind !== 'line';
-    const pad = Math.ceil(Math.min(Math.max(bw, bh), lw * shapeMiterLimit(bw, bh)) + sw * 2 + 8);
-    const cv = document.createElement('canvas'); cv.width = Math.ceil(bw + pad * 2); cv.height = Math.ceil(bh + pad * 2);
-    const g = cv.getContext('2d', { willReadFrequently: true });
-    if (g) {
-      g.translate(pad, pad); g.fillStyle = g.strokeStyle = '#fff';
-      // Same join state the scene painter sets before every shape kind.
-      g.lineJoin = 'miter'; g.lineCap = 'butt'; g.miterLimit = shapeMiterLimit(bw, bh); g.lineWidth = lw;
-      if (o.kind === 'hole') {
-        g.translate(bw / 2, bh / 2);
-        drawHoleShape(g, { ...o, glow: 0, dots: false, tex: 'none', lineUnit: unit, textureBaseW: (o.textureBaseW || o.w) * k, textureBaseH: (o.textureBaseH || o.h) * k }, bw, bh, shapeGlowBlurs(bw, bh).map(() => 0));
-      } else {
-        const path = shapePathBox(o.kind, bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k);
-        if (sw > 0) {
-          g.save(); g.lineJoin = 'round'; g.miterLimit = 2; g.lineWidth = solid ? sw * 2 : lw + sw * 2;
-          if (!strokeCompositeShape(g, o.kind, bw, bh, o.innerSize)) g.stroke(path);
-          g.restore();
-        }
-        g.lineJoin = 'miter'; g.lineCap = 'butt'; g.miterLimit = shapeMiterLimit(bw, bh); g.lineWidth = lw;
-        if (solid) drawFeatheredShapeBody(g, o.kind, bw, bh, undefined, '#fff', undefined, '#fff', { innerSize: o.innerSize, outlineWidth: o.outlineWidth });
-        else g.stroke(path);
-      }
-      const { data } = g.getImageData(0, 0, cv.width, cv.height);
-      let x0 = cv.width, y0 = cv.height, x1 = -1, y1 = -1;
-      for (let y = 0; y < cv.height; y++) for (let x = 0, i = y * cv.width * 4 + 3; x < cv.width; x++, i += 4)
-        if (data[i] > 6) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-      if (x1 >= x0 && y1 >= y0) ink = { x: (x0 - pad) / k, y: (y0 - pad) / k, w: (x1 + 1 - x0) / k, h: (y1 + 1 - y0) / k };
-    }
-    cv.width = cv.height = 1;
-  } catch { ink = null; }
-  shapeInkCache.set(key, ink);
-  if (shapeInkCache.size > 256) shapeInkCache.delete(shapeInkCache.keys().next().value!);
-  return ink;
-};
+const measuredShapeInk = (o: any) =>
+  hugsShapeInk(o) && !(o.kind === 'hole' && isTextHole(o.hole)) ? measureShapeInk(o) : null;
 
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
@@ -3871,7 +3820,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           /* 空格子：等「放開而且沒有移動」才算點一下 —— 手指只是落在空格上開始
              捏合或拖曳時不該跳出相簿。這一下也只選中這一格，不讓底下的畫布
              把它當成點底圖（以前會把整張底圖框起來）。 */
-          e.stopPropagation();e.preventDefault();
+          // Not stopped here: the canvas keeps this pointer in its tracker (and
+          // ignores it as a single tap), so a second finger still pinches the
+          // view or the selected object even when it starts over an empty cell.
           emptyCellTap.current={id:e.pointerId,index:source.index,x:e.clientX,y:e.clientY,moved:false};
           return;
         }
@@ -3890,7 +3841,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const regionPointerMove=(e:React.PointerEvent)=>{
     const empty=emptyCellTap.current;
-    if(empty?.id===e.pointerId){if(Math.hypot(e.clientX-empty.x,e.clientY-empty.y)>8)empty.moved=true;e.stopPropagation();return;}
+    if(empty?.id===e.pointerId){if(Math.hypot(e.clientX-empty.x,e.clientY-empty.y)>8)empty.moved=true;
+      // Alone it is only a tap candidate; as part of a pinch the canvas needs its moves.
+      if(activePointers.current.size<=1){e.stopPropagation();return;}}
     const tap=regionTap.current;
     if(tap?.id===e.pointerId&&Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8)tap.moved=true;
     const hold=regionHold.current;
@@ -3930,8 +3883,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(empty?.id===e.pointerId){
       emptyCellTap.current=null;photoGestureIds.current.delete(e.pointerId);
       if(!photoGestureIds.current.size){photoGestureRelease.current?.();photoGestureRelease.current=null;}
-      e.stopPropagation();
-      if(!empty.moved&&e.type!=='pointercancel'){
+      // The canvas still receives this release to drop the pointer it tracked.
+      if(!empty.moved&&e.type!=='pointercancel'&&activePointers.current.size<=1){
         selectedRegionPhotoRef.current=empty.index;setSelectedRegionPhoto(empty.index);
         selectedObjRef.current=null;baseSelectedRef.current=false;maskSelectedRef.current=false;
         setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);
@@ -4051,7 +4004,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const gs = imageState.globalScale || 1, offs = getLayoutOffsets();
     // An unselected multi-photo cell is a tap candidate, not a crop gesture.
     // Keep its pointer in the shared tracker so a second finger zooms the scene.
-    if(activePointers.current.size===1&&regionTap.current?.id===e.pointerId){e.stopPropagation();return;}
+    if(activePointers.current.size===1&&(regionTap.current?.id===e.pointerId||emptyCellTap.current?.id===e.pointerId)){e.stopPropagation();return;}
     const animatedOrder = animRef.current
       ? new Map([...holesRef.current].sort((a,b)=>(a.x-b.x)||(a.y-b.y)).map((h,i)=>[h.id,i])) : null;
     const hitCurrentHole = (h: any, side?: 'image' | 'mask') => {
@@ -10066,10 +10019,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     const left=Math.max(off.ix,cell.x),top=Math.max(off.iy,cell.y),right=Math.min(off.ix+off.iw,cell.x+cell.w),bottom=Math.min(off.iy+off.ih,cell.y+cell.h);
                     if(right<=left||bottom<=top)return null;
                     return <div key={i} data-photo-cell={i} className="absolute flex items-center justify-center" style={{left:`${left/off.cw*100}%`,top:`${top/off.ch*100}%`,width:`${(right-left)/off.cw*100}%`,height:`${(bottom-top)/off.ch*100}%`}}>
-                      {!photoRegion.photos[i].src && <button aria-label="選擇相片" className="pointer-events-auto absolute inset-0"
-                        /* 這一下只屬於這個空格：不能再往下傳到畫布被當成「點底圖」
-                           （那會把整張底圖框起來）。放開才選中這一格並打開相簿。 */
-                        onPointerDown={e=>e.stopPropagation()} onPointerUp={e=>e.stopPropagation()}
+                      {!photoRegion.photos[i].src && <button aria-label="選擇相片" className="pointer-events-none absolute inset-0"
+                        /* 手指不落在這顆按鈕上：它以前整格攔下觸控，手指剛好在空格裡
+                           就沒辦法兩指縮放畫面或物件。點一下改由畫布的空格判定處理
+                           （放開且沒移動才選中並打開相簿）；按鈕只留給鍵盤／輔助功能。 */
                         onClick={e=>{e.stopPropagation();
                           selectedRegionPhotoRef.current=i;setSelectedRegionPhoto(i);
                           selectedObjRef.current=null;baseSelectedRef.current=false;maskSelectedRef.current=false;

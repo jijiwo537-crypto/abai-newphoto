@@ -36,3 +36,11 @@ test('both editors remove shape opacity controls without rewriting saved alpha',
   if(file==='GridLayoutTool')assert.ok(!/slider\('透明度', layer\.opacity/.test(s));
  }
 });
+test('an interrupted preparation resumes the same scene instead of starting over',async()=>{
+ const scene=fixture();let calls=0;const paint=(c,v)=>{calls++;c.width=v.w;c.height=v.h;};
+ assert.equal(await scene.prepare('a',1540,1100,2,paint,()=>calls<2),false);assert.equal(calls,2);
+ assert.equal(await scene.prepare('a',1540,1100,2,paint,()=>true),true);assert.equal(calls,6);
+ assert.equal(scene.key,'a');
+ // A different scene starts from scratch.
+ assert.equal(await scene.prepare('b',1540,1100,2,paint,()=>true),true);assert.equal(calls,12);
+});

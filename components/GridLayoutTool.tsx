@@ -48,7 +48,7 @@ import {
 } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
-  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, drawHoleShape, holeOverflow, glowAmount,
+  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount,
   texOf, paintStripes,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
 } from '../utils/holeShapes';
@@ -800,6 +800,65 @@ const textureGlyphD = (kind: 'star' | 'heart', cx: number, cy: number, r: number
  * This changes joins only, not the object's path, size or snapping geometry. */
 export const shapeMiterLimit = (w: number, h: number, base = 4) =>
   base * Math.max(1, Math.max(Math.abs(w), Math.abs(h)) / Math.max(0.001, Math.min(Math.abs(w), Math.abs(h))));
+
+/* 圖形「真正畫出來的墨水」外接框（選取框貼齊用，兩個拼圖工具共用）。
+   跟畫面同一組繪製呼叫：同一條路徑、同一種接角與 miter 上限、外描邊、
+   複合圖形本體，在離屏畫一次再掃 alpha。一種外形設定只量一次。
+   o 的欄位：kind／hole／text／filled／w／h／lineW／lineBase（線寬基準的長邊）／
+   strokeW／innerSize／outlineWidth／textureBaseW／textureBaseH。回傳物件框座標。 */
+const shapeInkCache = new Map<string, { x: number; y: number; w: number; h: number } | null>();
+export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: number } | null => {
+  if (!(o?.w > 0) || !(o?.h > 0) || typeof document === 'undefined' || SPECIAL_LINE_KINDS.has(o.kind) || GRID_SHAPE_KINDS.has(o.kind)) return null;
+  if (isBackdropMask(o.kind)) {
+    // 遮罩是解析式裁切：方形／圓形就是整個框，星形是那十個頂點的外接框。
+    if (maskGeometry(o.kind, o) !== 'star') return { x: 0, y: 0, w: o.w, h: o.h };
+    const pts = Array.from({ length: 10 }, (_, i) => { const a = -Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? .45 : 1; return [Math.cos(a) * r, Math.sin(a) * r]; });
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    return { x: (Math.min(...xs) + 1) / 2 * o.w, y: (Math.min(...ys) + 1) / 2 * o.h, w: (Math.max(...xs) - Math.min(...xs)) / 2 * o.w, h: (Math.max(...ys) - Math.min(...ys)) / 2 * o.h };
+  }
+  const long = Math.max(o.w, o.h), base = (o.lineBase || long);
+  const key = JSON.stringify([o.kind, o.hole, o.text, o.hole === 'random-num' ? o.id : '', o.miterLimit, !!o.filled, Math.round(o.w / o.h * 1e4), o.lineW ?? 6, Math.round(base / long * 1e4),
+    Math.round((o.textureBaseW || o.w) / o.w * 1e3), Math.round((o.textureBaseH || o.h) / o.h * 1e3), o.strokeW || 0, o.innerSize, o.outlineWidth]);
+  if (shapeInkCache.has(key)) return shapeInkCache.get(key)!;
+  let ink: { x: number; y: number; w: number; h: number } | null = null;
+  try {
+    const k = 480 / long, bw = o.w * k, bh = o.h * k, unit = base * k / 160;
+    const lw = Math.max(0.4 * k, (o.lineW ?? 6) * unit), sw = Math.min(8, Math.max(0, o.strokeW || 0)) * unit;
+    const solid = o.filled && o.kind !== 'line';
+    // Glyph patterns can be several times wider than their box (`<333`).
+    const glyph = o.kind === 'hole' && isTextHole(o.hole || '');
+    const pad = Math.ceil(glyph ? Math.max(bw, bh) * 1.6 : Math.min(Math.max(bw, bh), lw * shapeMiterLimit(bw, bh)) + sw * 2 + 8);
+    const cv = document.createElement('canvas'); cv.width = Math.ceil(bw + pad * 2); cv.height = Math.ceil(bh + pad * 2);
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    if (g) {
+      g.translate(pad, pad); g.fillStyle = g.strokeStyle = '#fff';
+      // Same join state both scene painters set before every shape kind.
+      g.lineJoin = 'miter'; g.lineCap = 'butt'; g.miterLimit = o.miterLimit ?? shapeMiterLimit(bw, bh); g.lineWidth = lw;
+      if (o.kind === 'hole') {
+        g.translate(bw / 2, bh / 2);
+        drawHoleShape(g, { ...o, glow: 0, dots: false, tex: 'none', lineUnit: unit, textureBaseW: (o.textureBaseW || o.w) * k, textureBaseH: (o.textureBaseH || o.h) * k }, bw, bh, shapeGlowBlurs(bw, bh).map(() => 0));
+      } else {
+        const path = new Path2D(shapePathD(o.kind, bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k));
+        if (sw > 0) {
+          g.save(); g.lineJoin = 'round'; g.miterLimit = 2; g.lineWidth = solid ? sw * 2 : lw + sw * 2;
+          if (!strokeCompositeShape(g, o.kind, bw, bh, o.innerSize)) g.stroke(path);
+          g.restore();
+        }
+        if (solid) drawFeatheredShapeBody(g, o.kind, bw, bh, undefined, '#fff', undefined, '#fff', { innerSize: o.innerSize, outlineWidth: o.outlineWidth });
+        else g.stroke(path);
+      }
+      const { data } = g.getImageData(0, 0, cv.width, cv.height);
+      let x0 = cv.width, y0 = cv.height, x1 = -1, y1 = -1;
+      for (let y = 0; y < cv.height; y++) for (let x = 0, i = y * cv.width * 4 + 3; x < cv.width; x++, i += 4)
+        if (data[i] > 6) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 >= x0 && y1 >= y0) ink = { x: (x0 - pad) / k, y: (y0 - pad) / k, w: (x1 + 1 - x0) / k, h: (y1 + 1 - y0) / k };
+    }
+    cv.width = cv.height = 1;
+  } catch { ink = null; }
+  shapeInkCache.set(key, ink);
+  if (shapeInkCache.size > 256) shapeInkCache.delete(shapeInkCache.keys().next().value!);
+  return ink;
+};
 
 export const shapePathD = (
   kind: string, w: number, h: number,
@@ -6636,8 +6695,29 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           height: inkH + edge * 2,
         };
       })() : null;
+      /* 圖形（線條、網格除外）的框貼齊真正畫出來的墨水：跟畫面同一組繪製呼叫
+         量出來的外接框（measureShapeInk，創意拼圖同一支）。框線寬 1.05 螢幕 px，
+         中心離墨水半根線寬再加 0.175 —— 內緣剛好碰到圖形，連邊緣那排抗鋸齒的
+         半透明像素也不壓到。 */
+      const hugInk = image.shape && !image.sym ? measureShapeInk({
+        kind: image.shape, hole: image.holeType, id: image.id, filled: image.shapeFilled,
+        w: image.width, h: image.height, lineW: image.shapeLineW,
+        lineBase: image.shape === 'hole' ? undefined : image.shapeLineBase,
+        strokeW: image.shapeStrokeW, innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth,
+        textureBaseW: image.shapeTextureBaseW, textureBaseH: image.shapeTextureBaseH,
+        maskShape: (image as any).maskShape,
+        // The classic hole painter leaves the canvas default miter limit.
+        miterLimit: image.shape === 'hole' ? 10 : undefined,
+      }) : null;
+      // 字形圖案的墨水依字型在不同字級的描繪略有差異，頂端多留一點。
+      const hugGap = (image.shape === 'hole' && isTextHole(image.holeType || '') ? 1.3 : 0.7) / kNow;
       // 依真正有墨水的範圍畫框，四周留相同距離；星形額外距離也上下對稱。
-      const frameRect = symbolFrame || (frameInk ? {
+      const frameRect = symbolFrame || (hugInk ? {
+        left: boxW * hugInk.x / image.width - hugGap,
+        top: boxH * hugInk.y / image.height - hugGap,
+        width: boxW * hugInk.w / image.width + hugGap * 2,
+        height: boxH * hugInk.h / image.height + hugGap * 2,
+      } : frameInk ? {
         left: boxW * frameInk[0] - framePad.x - starTopGap,
         top: boxH * frameInk[1] - framePad.y - starTopGap,
         width: boxW * frameInk[2] + framePad.x * 2 + starTopGap * 2,

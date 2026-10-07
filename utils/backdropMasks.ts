@@ -27,6 +27,18 @@ export function maskPhysicalBounds(m:DOMMatrix,w:number,h:number,width:number,he
 }
 
 const body=(id:string)=>FX_DEFS.find(d=>d.id===id)!.passes[0].body.replace(/texture2D\(uTex,\s*([^;]+?)\)\.rgb/g,'sampleBackdrop($1).rgb').replace('floor(fxGlassBlocks * uRes.y / uRes.x)','max(1., floor(fxGlassBlocks * uRes.y / uRes.x))');
+/* A mask's mosaic tile is the AVERAGE of the photo under it, not one point
+   sample at its centre. While the mask is scaled or moved, a centre sample
+   slides across photo detail and each tile flickers between unrelated
+   colours; a 5x5 area average changes smoothly with the geometry. */
+const mosaicPoint='sampleBackdrop((cell + 0.5) / grid).rgb';
+const mosaicBody=(()=>{const b=body('fxMosaic');if(!b.includes(mosaicPoint))throw Error('mask mosaic sampling changed');
+ return b.replace('vec3 c = '+mosaicPoint+';','vec3 c=vec3(0.);for(int i=0;i<5;i++)for(int j=0;j<5;j++)c+=sampleBackdrop((cell+(vec2(float(i),float(j))+.5)/5.)/grid).rgb;c/=25.;');})();
+/* The blur runs at a reduced resolution. Snap it to quarter-octave steps:
+   scaling a frosted mask changes sigma every frame, and a continuously
+   changing intermediate size reallocated the textures and moved the sampling
+   grid each frame (visible shimmer). Blur strength stays continuous. */
+const blurBandwidth=(sigma:number)=>Math.min(1,2**(Math.floor(Math.log2(6/Math.max(1,sigma))*4)/4));
 const vertex='attribute vec2 p;varying vec2 uv;void main(){uv=(p+1.)*.5;gl_Position=vec4(p,0.,1.);}';
 const header=`precision highp float;varying vec2 uv;uniform sampler2D image;uniform vec2 size;`;
 // The exact same 49-tap Gaussian, but weights are evaluated once per mask,
@@ -38,7 +50,7 @@ const material=header+`
  uniform float fxMosaicBlocks,fxMosaicGap,fxMosaicShape,fxGlassBlocks,fxGlassRound,fxGlassRefract,fxGlassBevel;
  vec2 screenUV(vec2 p){vec3 q=vec3((p-.5)*uRes,1.);return vec2((dot(mapX,q)+origin.x)/sampleSize.x,1.-(dot(mapY,q)+origin.y)/sampleSize.y);}
  vec4 sampleBackdrop(vec2 p){return texture2D(image,screenUV(p));}
- vec4 mosaic(vec2 uv){${body('fxMosaic')}}
+ vec4 mosaic(vec2 uv){${mosaicBody}}
  vec4 bricks(vec2 uv){${body('fxGlass')}}
  void main(){
   vec3 screen=vec3(uv.x*size.x,(1.-uv.y)*size.y,1.);
@@ -141,7 +153,7 @@ class MaskGpu {
    const layer=layers[i],m=layer.matrix,inv=m.inverse(),settings=layer.settings,program=this.batchProgram;
    const sigma=layer.kind.includes('frost')?Math.min(layer.w*Math.hypot(m.a,m.b),layer.h*Math.hypot(m.c,m.d))*.12*(settings.maskAmount??50)/100:0;
    if(sigma>.25){
-    const bandwidth=Math.min(1,6/Math.max(1,sigma)),bw=Math.max(1,Math.ceil(w*bandwidth)),bh=Math.max(1,Math.ceil(h*bandwidth));
+    const bandwidth=blurBandwidth(sigma),bw=Math.max(1,Math.ceil(w*bandwidth)),bh=Math.max(1,Math.ceil(h*bandwidth));
     if(bw!==this.blurWidth||bh!==this.blurHeight){this.blurWidth=bw;this.blurHeight=bh;for(const t of [this.first,this.second]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,bw,bh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}}
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,input);use(this.blurProgram);gl.viewport(0,0,bw,bh);
     const radius=Math.max(.25,sigma*bandwidth),step=Math.max(1,radius/8),weights=new Float32Array(25);let total=0;for(let j=0;j<=24;j++){weights[j]=Math.exp(-((j*step)**2)/(2*radius*radius));total+=weights[j]*(j?2:1);}for(let j=0;j<=24;j++)weights[j]/=total;
@@ -208,7 +220,7 @@ class MaskGpu {
    // Existing art-material Gaussian uses six samples per sigma. Only this
    // deliberately band-limited blur is sampled at that bandwidth: original
    // ink, negative/mosaic/brick sampling and analytic mask edges stay native.
-   const bandwidth=Math.min(1,6/Math.max(1,sigma));
+   const bandwidth=blurBandwidth(sigma);
    const bw=Math.max(1,Math.ceil(source.width*bandwidth)),bh=Math.max(1,Math.ceil(source.height*bandwidth));
    if(bw!==this.blurWidth||bh!==this.blurHeight){this.blurWidth=bw;this.blurHeight=bh;for(const t of [this.first,this.second]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,bw,bh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}}
    gl.bindTexture(gl.TEXTURE_2D,this.input);gl.viewport(0,0,bw,bh);

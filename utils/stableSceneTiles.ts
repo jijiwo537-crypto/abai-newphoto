@@ -5,25 +5,37 @@ type Tile=SceneWindow&{canvas:HTMLCanvasElement};
 export class StableSceneTiles {
   key='';scale=1;width=0;height=0;status='empty';
   private tiles:Tile[]=[];private generation=0;
-  dispose(){this.generation++;for(const t of this.tiles)t.canvas.width=t.canvas.height=1;this.tiles=[];this.key='';}
+  /* Tiles already rendered for a scene whose preparation was interrupted
+     (any touch cancels it). The same scene resumes from them instead of
+     re-rendering everything, so a scene with slow layers (backdrop masks)
+     still becomes ready between gestures. Dropped as soon as the scene,
+     size or density changes. */
+  private partial:{key:string;width:number;height:number;scale:number;tiles:Map<string,Tile>}|null=null;
+  private dropPartial(){if(!this.partial)return;for(const t of this.partial.tiles.values())t.canvas.width=t.canvas.height=1;this.partial=null;}
+  dispose(){this.generation++;for(const t of this.tiles)t.canvas.width=t.canvas.height=1;this.tiles=[];this.key='';this.dropPartial();}
   async prepare(key:string,width:number,height:number,scale:number,paint:(c:HTMLCanvasElement,v:SceneWindow)=>void,valid:()=>boolean){
-    this.dispose();const generation=this.generation;this.status='preparing';
+    this.generation++;for(const t of this.tiles)t.canvas.width=t.canvas.height=1;this.tiles=[];this.key='';
+    const generation=this.generation;this.status='preparing';
+    if(this.partial&&(this.partial.key!==key||this.partial.width!==width||this.partial.height!==height||this.partial.scale!==scale))this.dropPartial();
     // Independent of browser/app memory: refuse an oversized scene instead of
     // lowering its density or allocating an unbounded background cache.
     const budget=256*1024*1024;
-    if(!Number.isFinite(width*height)||width<=0||height<=0||width*height*4>budget){this.status='size budget';return false;}
-    const tiles:Tile[]=[];
+    if(!Number.isFinite(width*height)||width<=0||height<=0||width*height*4>budget){this.dropPartial();this.status='size budget';return false;}
+    const partial=this.partial??={key,width,height,scale,tiles:new Map()};
+    const done=partial.tiles,ordered:Tile[]=[];
     let bytes=0;const guard=16;
-    const release=()=>{for(const t of tiles)t.canvas.width=t.canvas.height=1;};
     try{
       for(let y=0;y<height;y+=768)for(let x=0;x<width;x+=768){
+        const id=x+','+y,existing=done.get(id);
+        if(existing){ordered.push(existing);bytes+=existing.w*existing.h*4;continue;}
         await new Promise<void>(r=>requestAnimationFrame(()=>r()));
-        if(generation!==this.generation||!valid()){release();this.status='cancelled';return false;}
+        // Interrupted: keep finished tiles for the next attempt at this scene.
+        if(generation!==this.generation||!valid()){if(generation===this.generation)this.status='cancelled';return false;}
         const left=x-guard,top=y-guard,right=Math.min(width,x+768)+guard,bottom=Math.min(height,y+768)+guard;
-        const tile={x:left,y:top,w:right-left,h:bottom-top,canvas:document.createElement('canvas')};tiles.push(tile);
-        bytes+=tile.w*tile.h*4;if(bytes>budget){release();this.status='tile budget';return false;}
+        const tile={x:left,y:top,w:right-left,h:bottom-top,canvas:document.createElement('canvas')};
+        bytes+=tile.w*tile.h*4;if(bytes>budget){tile.canvas.width=tile.canvas.height=1;this.dropPartial();this.status='tile budget';return false;}
         paint(tile.canvas,tile);
-        if(tile.canvas.width!==tile.w||tile.canvas.height!==tile.h)throw Error('scene tile mapping mismatch');
+        if(tile.canvas.width!==tile.w||tile.canvas.height!==tile.h){tile.canvas.width=tile.canvas.height=1;throw Error('scene tile mapping mismatch');}
         // The page boundary is a crop, not a transparent texture boundary.
         // Extend its last sample into the filtering guard: bilinear/bicubic
         // reduction must not mix the page with transparent pixels outside it.
@@ -35,10 +47,11 @@ export class StableSceneTiles {
           if(bottom>height)g.drawImage(tile.canvas,0,tile.h-guard-1,tile.w,1,0,tile.h-guard,tile.w,guard);
           g.restore();
         }
+        done.set(id,tile);ordered.push(tile);
       }
-      if(generation!==this.generation||!valid()){release();return false;}
-      this.tiles=tiles;this.key=key;this.width=width;this.height=height;this.scale=scale;this.status='ready';return true;
-    }catch(e){release();this.status=String(e);return false;}
+      if(generation!==this.generation||!valid()){if(generation===this.generation)this.status='cancelled';return false;}
+      this.partial=null;this.tiles=ordered;this.key=key;this.width=width;this.height=height;this.scale=scale;this.status='ready';return true;
+    }catch(e){this.dropPartial();this.status=String(e);return false;}
   }
   paint(ctx:CanvasRenderingContext2D,key:string,width:number,height:number){
     if(this.key!==key||!this.tiles.length)return false;
