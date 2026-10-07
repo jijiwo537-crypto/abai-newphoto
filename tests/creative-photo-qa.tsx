@@ -65,7 +65,7 @@ if(params.has('selectionAudit'))void import('./creative-selection-latency-audit'
 else if(params.has('occupancyLiveAudit'))void import('./creative-occupancy-live-audit');
 else if(params.has('snapshotAudit'))void import('./creative-snapshot-audit');
 else if(params.has('glowAudit'))void import('./creative-grid-glow-audit');
-else if(params.has('textWarpAudit'))void import('./creative-text-warp-audit');
+else if(params.has('textWarpAudit')&&!params.has('noAudit'))void import('./creative-text-warp-audit');
 else if(params.has('edgeAudit'))void import('./creative-photo-edge-audit');
 else if(params.has('seamPresentation'))void import('./creative-seam-presentation-audit');
 else if(params.has('mixedSwap'))void import('./creative-mixed-swap-audit');

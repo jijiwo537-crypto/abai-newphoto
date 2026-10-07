@@ -2357,6 +2357,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const editingTextRef = useRef<string | null>(null);
   const editingFieldRef = useRef<HTMLTextAreaElement>(null);
+  const editCaretRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (editingTextId) {
       const el = editingFieldRef.current;
@@ -3852,8 +3853,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       try{e.currentTarget.releasePointerCapture(e.pointerId);}catch{}}
   };
 
+  /** 輸入中點一下那段字＝把插入點移到點的位置（輸入框本身看不見，
+      所以由這裡把螢幕座標換成字串位置）。點在字外面則照常結束輸入。 */
+  const placeEditCaret = (e: React.PointerEvent) => {
+    const id = editingTextRef.current, field = editingFieldRef.current;
+    const o = id ? objectsRef.current.find(z => z.id === id) : null;
+    if (!o || o.sym || !field) return false;
+    const p = regionCoordinates(e.clientX, e.clientY);
+    if (!p) return false;
+    const a = -(o.rot || 0) * Math.PI / 180, dx = p.x - (o.x + o.w / 2), dy = p.y - (o.y + o.h / 2);
+    let lx = dx * Math.cos(a) - dy * Math.sin(a);
+    const ly = dx * Math.sin(a) + dy * Math.cos(a);
+    if (Math.abs(lx) > o.w / 2 + 8 || Math.abs(ly) > o.h / 2 + 8) return false;
+    lx /= o.textStretchBaseW ? o.w / o.textStretchBaseW : 1;
+    const g = document.createElement('canvas').getContext('2d');
+    if (!g) return false;
+    const text = o.text === TEXT_PLACEHOLDER ? '' : (o.text || '');
+    const spacing = o.letterSpacing || 0;
+    g.font = `${o.italic ? 'italic ' : ''}${o.bold ? 800 : 400} ${o.size || 40}px ${fontStack(o.fontFamily || DEFAULT_FONT)}`;
+    (g as any).letterSpacing = `${spacing}px`;
+    const total = text ? g.measureText(text).width : 0, start = spacing / 2 - total / 2;
+    // Caret stops at grapheme boundaries (UTF-16 offsets for the field).
+    let best = 0, bestD = Math.abs(lx - start), at = 0;
+    for (const ch of Array.from(text) as string[]) {
+      at += ch.length;
+      const x = start + g.measureText(text.slice(0, at)).width - spacing / 2, d = Math.abs(lx - x);
+      if (d < bestD) { bestD = d; best = at; }
+    }
+    e.preventDefault(); e.stopPropagation();
+    textOpenAtRef.current = performance.now();   // the tap must not end editing
+    try { field.focus({ preventScroll: true }); field.setSelectionRange(best, best); } catch {}
+    regionPaintRef.current();
+    return true;
+  };
   const handlePointerDown = (e: React.PointerEvent) => {
     if (!imageState || !canvasRef.current) return;
+    if (placeEditCaret(e)) return;
     /* 手指一落下就暫停背景濾鏡／縮圖工作，不要等第一個 move 才暫停；
        否則排隊中的同步工作剛好撞上拖曳首幀，之後每一幀反而都正常。 */
     deferHeavyWork();
@@ -6958,11 +6993,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const sel = Math.max(0, Math.min(text.length, field?.selectionEnd ?? text.length));
           const total = text ? ctx.measureText(text).width : 0;
           const pre = sel ? ctx.measureText(text.slice(0, sel)).width - spacingPx / 2 : 0;
-          const m = ctx.getTransform(), px = 1 / Math.max(1e-6, Math.hypot(m.a, m.b));
+          const m = ctx.getTransform();
           const fontPx = (o.sym ? o.size : pinFont) * s;
-          ctx.save(); ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(spacingShift - total / 2 + pre - px, -fontPx * .6, px * 2, fontPx * 1.2);
-          ctx.restore();
+          // A DOM caret over the canvas: 2 CSS px wide and blinking with CSS,
+          // like the multi-page collage, without repainting the scene to blink.
+          const el = editCaretRef.current;
+          if (!el) return;
+          const x = spacingShift - total / 2 + pre, top = m.transformPoint({ x, y: -fontPx * .6 }), bottom = m.transformPoint({ x, y: fontPx * .6 });
+          const rect = targetCanvas.getBoundingClientRect(), kx = rect.width / Math.max(1, targetCanvas.width), ky = rect.height / Math.max(1, targetCanvas.height);
+          const x0 = rect.left + top.x * kx, y0 = rect.top + top.y * ky, x1 = rect.left + bottom.x * kx, y1 = rect.top + bottom.y * ky;
+          el.style.display = 'block';
+          el.style.height = `${Math.hypot(x1 - x0, y1 - y0)}px`;
+          el.style.transform = `translate(${x0 - 1}px, ${y0}px) rotate(${Math.atan2(x0 - x1, y1 - y0)}rad)`;
         };
         if (isMain && editingTextRef.current === o.id && (o.sym || o.text === TEXT_PLACEHOLDER)) { if (!o.sym) drawEditCaret(); ctx.restore(); return; }
         if(import.meta.env.DEV&&!o.sym){const m=ctx.getTransform();targetCanvas.dataset.textLogicalFrame=JSON.stringify({id:o.id,font:ctx.font,matrix:[m.a,m.b,m.c,m.d,m.e,m.f]});}
@@ -7565,9 +7607,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!isMain) bd.width = 0;
     };
 
-    const prefixCacheable=isMain&&!previewCapture&&!directMaskPhotos&&hasBackdrop&&objects.some(o=>o.id===selectedObj&&isBackdropMask(o.kind))&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
+    const maskPrefix=isMain&&!previewCapture&&!directMaskPhotos&&hasBackdrop&&objects.some(o=>o.id===selectedObj&&isBackdropMask(o.kind))&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
+    /* 拖曳／兩指縮放／擠壓一個物件時，它底下的整個畫面（照片、遮罩、圖案、
+       更底層的物件）每一幀都一模一樣。把那一段快取成一張，之後每一幀只貼回
+       快取、再畫這個物件與它上面的東西 —— 不再每一幀重畫整個場景。 */
+    const movingId=isMain?((objDragRef.current?.moved&&objDragRef.current.id)||(objPinchRef.current?.gestureStarted&&objPinchRef.current.id)||objStretchRef.current?.id||null):null;
+    const movingIndex=movingId?aboveObjs.findIndex(o=>o.id===movingId):-1;
+    const liftPrefix=!maskPrefix&&isMain&&!previewCapture&&!directMaskPhotos&&movingIndex>=0&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
+    const prefixCacheable=maskPrefix||liftPrefix;
     debugSection('prepare');
-    const prefixEnd=prefixCacheable?aboveObjs.findIndex(o=>o.id===selectedObj&&isBackdropMask(o.kind)):-1;
+    const prefixEnd=maskPrefix?aboveObjs.findIndex(o=>o.id===selectedObj&&isBackdropMask(o.kind)):liftPrefix?movingIndex:-1;
     const prefixAbove=prefixEnd>0?aboveObjs.slice(0,prefixEnd):[];
     // Live sliders and in-cell crop gestures update refs before React state.
     // Include the actual photo revision, not only the last committed render.
@@ -10060,7 +10109,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           );
           // Portal: a fixed element inside the transformed stage would be
           // positioned relative to that transform, not to the screen.
-          return o.sym ? field : createPortal(field, document.body);
+          return o.sym ? field : createPortal(<>{field}
+            <div ref={editCaretRef} aria-hidden style={{position:'fixed',left:0,top:0,width:2,height:0,borderRadius:1,background:'#FFFFFF',
+              pointerEvents:'none',zIndex:56,transformOrigin:'1px 0',display:'none',animation:'abai-caret-blink 1s steps(1) infinite'}}/>
+            <style>{'@keyframes abai-caret-blink{0%,55%{opacity:1}56%,100%{opacity:0}}'}</style>
+          </>, document.body);
         })()}
 
         {/* 選中的圖片／文字下方浮出的工具列 —— 跟經典拼圖同一組動作。

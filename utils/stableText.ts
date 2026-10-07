@@ -14,6 +14,15 @@ const MAX_TOTAL_PX = 48e6;
 const MAX_ENTRY_PX = 8e6;
 const MAX_SIDE = 8192;
 let totalPx = 0;
+/* document.fonts.check is expensive (it walks the whole font stack) and was
+   called on every frame of a pinch. Once a font is ready it stays ready. */
+const readyFonts = new Set<string>();
+const fontReady = (font: string) => {
+  if (readyFonts.has(font)) return true;
+  const ok = (document as any).fonts?.check?.(font) ?? true;
+  if (ok) readyFonts.add(font);
+  return ok;
+};
 
 const evict = () => {
   while (cache.size > MAX_ENTRIES || totalPx > MAX_TOTAL_PX) {
@@ -40,7 +49,7 @@ export function drawStableText(ctx: CanvasRenderingContext2D, mode: 'fill' | 'st
   const level = Math.min(16, Math.max(1, 2 ** Math.ceil(Math.log2(k))));
   const spacing = String((ctx as any).letterSpacing || '0px');
   // 字型還沒載好時排出來的是備用字型；載好後鑰匙不同，自然重排一次。
-  const ready = (document as any).fonts?.check?.(ctx.font) ?? true;
+  const ready = fontReady(ctx.font);
   const key = [mode, text, ctx.font, spacing, ctx.textAlign, ctx.textBaseline, style,
     mode === 'stroke' ? `${ctx.lineWidth}|${ctx.lineJoin}|${ctx.miterLimit}` : '', level, ready].join('\u0001');
   let hit = cache.get(key);
@@ -73,8 +82,11 @@ export function drawStableText(ctx: CanvasRenderingContext2D, mode: 'fill' | 'st
     hit = { canvas, x: -left, y: -top, w: canvas.width / lv, h: canvas.height / lv, px: canvas.width * canvas.height };
     cache.set(key, hit); totalPx += hit.px; evict();
   }
+  // The raster is at most 2x the on-screen size (power-of-two level), so
+  // plain bilinear is visually identical; 'high' runs an expensive
+  // multi-pass downscale on every frame and made pinch-zooming text stutter.
   const smoothing = ctx.imageSmoothingEnabled, quality = ctx.imageSmoothingQuality;
-  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low';
   ctx.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h);
   ctx.imageSmoothingEnabled = smoothing; ctx.imageSmoothingQuality = quality;
   return true;

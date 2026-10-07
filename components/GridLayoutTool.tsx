@@ -5226,6 +5226,42 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     setTextCaret(n);
   }, [isTextEditing]);
 
+  /* 輸入中點一下那段字＝把插入點移到點的位置。真正的輸入框看不見，所以用
+     顯示層每個字的邊界（Range 的螢幕矩形，已含縮放與旋轉）找最近的位置。
+     點在字外面就照常結束輸入。 */
+  useEffect(() => {
+    if (!isTextEditing) return;
+    const onDown = (e: PointerEvent) => {
+      const span = textInnerRef.current, field = textAreaRef.current;
+      if (!span || !field) return;
+      const box = span.getBoundingClientRect(), pad = 12;
+      if (e.clientX < box.left - pad || e.clientX > box.right + pad || e.clientY < box.top - pad || e.clientY > box.bottom + pad) return;
+      const nodes: Text[] = [];
+      const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) if (!(n.parentElement?.closest('.abai-text-caret'))) nodes.push(n as Text);
+      const range = document.createRange();
+      let best = 0, bestD = Infinity, offset = 0;
+      const consider = (node: Text, i: number, at: number) => {
+        range.setStart(node, i); range.setEnd(node, i);
+        const r = range.getClientRects()[0] || range.getBoundingClientRect();
+        if (!r || (!r.width && !r.height && !r.left && !r.top)) return;
+        const d = Math.hypot(e.clientX - r.left, (e.clientY - (r.top + r.bottom) / 2) * 2);
+        if (d < bestD) { bestD = d; best = at; }
+      };
+      for (const node of nodes) {
+        const t = node.data;
+        for (let i = 0; i <= t.length; i++) consider(node, i, offset + i);
+        offset += t.length;
+      }
+      e.preventDefault(); e.stopPropagation();
+      textOpenAt.current = performance.now();   // this tap must not end editing
+      try { field.focus({ preventScroll: true }); field.setSelectionRange(best, best); } catch {}
+      setTextCaret(best);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [isTextEditing]);
+
   // 打完什麼都沒留就把預設字放回去，圖層才不會變成看不見的空框。
   // 符號放回去的是那顆符號本身 —— 刪過頭了也還救得回來。
   const prevTextEditing = useRef(isTextEditing);
