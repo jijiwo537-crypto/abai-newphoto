@@ -26,7 +26,18 @@ export function maskPhysicalBounds(m:DOMMatrix,w:number,h:number,width:number,he
  return {left,top,width:Math.max(0,Math.min(width,Math.ceil(Math.max(...pts.map(p=>p.x))+pad))-left),height:Math.max(0,Math.min(height,Math.ceil(Math.max(...pts.map(p=>p.y))+pad))-top)};
 }
 
-const body=(id:string)=>FX_DEFS.find(d=>d.id===id)!.passes[0].body.replace(/texture2D\(uTex,\s*([^;]+?)\)\.rgb/g,'sampleBackdrop($1).rgb').replace('floor(fxGlassBlocks * uRes.y / uRes.x)','max(1., floor(fxGlassBlocks * uRes.y / uRes.x))');
+const body=(id:string)=>FX_DEFS.find(d=>d.id===id)!.passes[0].body.replace(/texture2D\(uTex,\s*([^;]+?)\)\.rgb/g,'sampleBackdrop($1).rgb').replace('floor(fxGlassBlocks * uRes.y / uRes.x)','max(1., floor(fxGlassBlocks * uRes.y / uRes.x + .001))');
+/* Glass-brick refraction is a lens per brick, sized by the BRICK. The photo
+   effect displaces by a fraction of the whole image (0.06), which inside a
+   mask meant a magnification of 1 - 0.12 * bricks: about -1.6 (flipped) at
+   22 bricks and -6 at 60. A flipped, magnified view slides the other way
+   at (1 - magnification) times the brick's own motion, so scaling the mask
+   made the content of every brick race up and down. An upright zoom of
+   GLASS_MAGNIFY per brick keeps the faceted look; its content slides only
+   (1 - 1/GLASS_MAGNIFY) of the brick's motion, about 7x calmer. */
+const GLASS_MAGNIFY=1.6;
+const bricksBody=(()=>{const b=body('fxGlass'),from='vec2 p = uv - n * fxGlassRefract * 0.06;';if(!b.includes(from))throw Error('mask glass refraction changed');
+ return b.replace(from,`vec2 p = uv - n * fxGlassRefract * ${((1-1/GLASS_MAGNIFY)/2).toFixed(4)} / grid;`);})();
 /* A mask's mosaic tile is the AVERAGE of the photo under it, not a point
    sample. Point samples (one, or a fixed 5x5 set) are tens of pixels apart
    once a tile is large on a 3x screen: while the mask is scaled they hit or
@@ -56,7 +67,7 @@ const material=header+`
  vec2 screenUV(vec2 p){vec3 q=vec3((p-.5)*uRes,1.);return vec2((dot(mapX,q)+origin.x)/sampleSize.x,1.-(dot(mapY,q)+origin.y)/sampleSize.y);}
  vec4 sampleBackdrop(vec2 p){return texture2D(image,screenUV(p));}
  vec4 mosaic(vec2 uv){${mosaicBody}}
- vec4 bricks(vec2 uv){${body('fxGlass')}}
+ vec4 bricks(vec2 uv){${bricksBody}}
  void main(){
   vec3 screen=vec3(uv.x*size.x,(1.-uv.y)*size.y,1.);
   vec2 local=vec2(dot(invX,screen),dot(invY,screen))/uRes+.5;
@@ -341,13 +352,13 @@ function fallbackMask(source:HTMLCanvasElement,m:DOMMatrix,w:number,h:number,kin
  const softened=kind.includes('frost')&&sigma>.25?blurRGBA(original,b.width,b.height,sigma):original;
  const inv=m.inverse(),circle=false,amount=kind==='mask-mosaic'||kind==='mask-bricks'||kind==='mask-negative'?1:Math.max(0,Math.min(100,settings.maskAmount??maskDefaults(kind).maskAmount!))/100;
  const feather=kind==='mask-frost-feather'?(settings.maskFeather??35)/200:0,aa=1/Math.max(1,Math.min(w*Math.hypot(m.a,m.b),h*Math.hypot(m.c,m.d)));
- const cells=Math.max(1,settings.maskCells??(kind==='mask-mosaic'?15:22)),gy=kind==='mask-bricks'?Math.max(1,Math.floor(cells*h/w)):Math.max(.001,cells*h/w);
+ const cells=Math.max(1,settings.maskCells??(kind==='mask-mosaic'?15:22)),gy=kind==='mask-bricks'?Math.max(1,Math.floor(cells*h/w+.001)):Math.max(.001,cells*h/w);
  for(let y=0;y<b.height;y++)for(let x=0;x<b.width;x++){
   const screenX=x+b.left+.5,screenY=y+b.top+.5,u=(inv.a*screenX+inv.c*screenY+inv.e)/w+.5,v=(inv.b*screenX+inv.d*screenY+inv.f)/h+.5;
   const distance=circle?Math.hypot(u-.5,v-.5):Math.max(Math.abs(u-.5),Math.abs(v-.5));let t=Math.max(0,Math.min(1,(.5-distance)/Math.max(aa,feather)));const alpha=t*t*(3-2*t),i=(y*b.width+x)*4;
   let sample=i;
   if(kind==='mask-mosaic'||kind==='mask-bricks'){
-   let a=u,c=v;if(kind==='mask-mosaic'){a=(Math.floor(u*cells)+.5)/cells;c=(Math.floor(v*gy)+.5)/gy;}else{a=Math.max(0,Math.min(1,u-((u*cells)%1-.5)*2*(settings.maskRefract??100)/100*.06));c=Math.max(0,Math.min(1,v-((v*gy)%1-.5)*2*(settings.maskRefract??100)/100*.06));}
+   let a=u,c=v;if(kind==='mask-mosaic'){a=(Math.floor(u*cells)+.5)/cells;c=(Math.floor(v*gy)+.5)/gy;}else{const k=(settings.maskRefract??100)/100*(1-1/GLASS_MAGNIFY);a=Math.max(0,Math.min(1,u-((u*cells)%1-.5)*k/cells));c=Math.max(0,Math.min(1,v-((v*gy)%1-.5)*k/gy));}
    const lx=(a-.5)*w,ly=(c-.5)*h,sx=Math.max(0,Math.min(b.width-1,Math.round(m.a*lx+m.c*ly+m.e-b.left-.5))),sy=Math.max(0,Math.min(b.height-1,Math.round(m.b*lx+m.d*ly+m.f-b.top-.5)));sample=(sy*b.width+sx)*4;
   }
   const l=(original[i]*.2126+original[i+1]*.7152+original[i+2]*.0722),heat=kind==='mask-thermal'?thermalRGB(l/255):null;
