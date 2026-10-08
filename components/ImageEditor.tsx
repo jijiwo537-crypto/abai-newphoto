@@ -5981,6 +5981,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return activeCategory === 'effects' ? d.fx + p.fx : d.lut + p.lut;
   })();
 
+  const mergeAnimRef = useRef(false);
+  const mergeEffectsRef = useRef<() => void>(() => {});
   const mergeEffects = () => {
     if (!originalImgRef.current || mergingRef.current) return;
     mergingRef.current = true;
@@ -6112,6 +6114,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       }
     })();
   };
+  mergeEffectsRef.current = mergeEffects;   // 動畫播完時用最新的那一份
 
   /** 眼睛：用現在的參數輸出一張，然後打開 IG 預覽 */
   const openIgPreview = async () => {
@@ -7372,9 +7375,34 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           && activeCategory !== 'mask' && activeCategory !== 'adjust' && (
           <button
             aria-label="合併特效"
-            onClick={hasMergeable ? mergeEffects : undefined}
+            onClick={hasMergeable ? (e) => {
+              /* 點下去的回饋：上面那一層往下壓進下面那一層再彈回來（＝合併）。
+                 時長與曲線跟創意拼圖「隨機圖案」那顆一樣（680ms）。
+                 合併本身要烤一次圖（主執行緒會停一下），放在動畫播完才做，
+                 動畫才不會卡在半路；合併前後畫面一模一樣，晚這一下看不出來。 */
+              if (mergeAnimRef.current) return;
+              const [top, bottom] = Array.from(e.currentTarget.querySelectorAll('svg path')) as SVGPathElement[];
+              if (!top || !bottom || window.matchMedia('(prefers-reduced-motion: reduce)').matches) { mergeEffects(); return; }
+              {
+                const timing = { duration: 680, easing: 'cubic-bezier(.22,1,.36,1)' };
+                for (const el of [top, bottom]) el.getAnimations().forEach(a => a.cancel());
+                top.animate([
+                  { transform: 'translateY(0) scale(1)' },
+                  { transform: 'translateY(4.5px) scale(.9)', offset: .4 },
+                  { transform: 'translateY(0) scale(1)' },
+                ], timing);
+                const done = bottom.animate([
+                  { transform: 'translateY(0) scale(1)' },
+                  { transform: 'translateY(-1.5px) scale(1.06)', offset: .4 },
+                  { transform: 'translateY(0) scale(1)' },
+                ], timing);
+                mergeAnimRef.current = true;
+                const run = () => { mergeAnimRef.current = false; mergeEffectsRef.current(); };
+                done.finished.then(run, run);
+              }
+            } : undefined}
             disabled={!hasMergeable}
-            className="absolute bottom-2 left-2 px-2 py-2 flex flex-col items-center justify-center gap-1 select-none touch-none z-20 text-white"
+            className="absolute bottom-2 left-2 px-2 py-2 flex flex-col items-center justify-center gap-1 select-none touch-none z-20 text-white active:scale-90 transition-transform"
           >
             {/* 疊在一起的兩層（沒有箭頭）：扁，寬度比前後對比鍵窄一點。
                 線條要跟前後對比鍵「畫在螢幕上一樣粗」，而不是屬性寫一樣的數字：
@@ -7385,8 +7413,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 顏色也直接寫死白色，不吃 currentColor（按鈕停用時會被瀏覽器調淡）。 */}
             <svg width="28" height="18" viewBox="0 0 34 22" fill="none" xmlns="http://www.w3.org/2000/svg"
                  className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-              <path d="M17 2.5 30 8.5 17 14.5 4 8.5Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" />
-              <path d="M4 13 17 19 30 13" stroke="#fff" strokeWidth="1.82" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M17 2.5 30 8.5 17 14.5 4 8.5Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" style={{ transformBox: 'fill-box', transformOrigin: 'center' }} />
+              <path d="M4 13 17 19 30 13" stroke="#fff" strokeWidth="1.82" strokeLinecap="round" strokeLinejoin="round" style={{ transformBox: 'fill-box', transformOrigin: 'center' }} />
             </svg>
             <span className="text-[9px] leading-none font-medium tracking-wide whitespace-nowrap drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
               {hasMergeable
