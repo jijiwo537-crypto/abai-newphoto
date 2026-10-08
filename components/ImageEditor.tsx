@@ -3454,26 +3454,46 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     !!EFFECT_DETAIL_CAT[toolId] || !!(FX_TOOLS[toolId] && FX_TOOLS[toolId].length > 1);
 
   const fxInputKey=(p:EditorParams)=>`${srcIdOf(buffersSrcRef.current)}|${selectedLutIdx}|${!!lutDataRef.current[lutList[selectedLutIdx]?.id]}|${activeCategory}|${JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('fx'))))}|${forceRecalculateEffectsRef.current}`;
-  /* Luminance histogram of the colour-processed photo (for soft light), keyed
-     by the colour state. Filled from data the pipeline already has: a 128px
-     GPU read on the GPU path, a strided sample of the CPU result otherwise. */
+  /* Luminance histogram of the colour-processed photo (for soft light).
+     Source data, in order of preference:
+       · colourSampleRef — 128px reads of the GPU colour result without and
+         with the film, taken when the colours were last computed;
+       · the CPU result buffers, only when cpuColourKeyRef says they hold
+         exactly the current colours (on the GPU path they are stale);
+       · otherwise null → the soft layer samples the canvas itself.
+     The film strength is applied by mixing the two samples, so moving the
+     strength slider never needs new colour data. */
+  const colourSampleRef = useRef<{ key: string; d0: Uint8Array | null; d1: Uint8Array | null }>({ key: '', d0: null, d1: null });
+  const cpuColourKeyRef = useRef('');
   const colourBinsRef = useRef<{ key: string; bins: Float64Array | null }>({ key: '', bins: null });
-  const colourKeyOf = (p: EditorParams) => `${srcIdOf(buffersSrcRef.current)}|${lutList[selectedLutIdx]?.id}|${p.lutAmount}|${bakeSigRef.current(p)}`;
+  const colourKeyOf = (p: EditorParams) => `${srcIdOf(buffersSrcRef.current)}|${lutList[selectedLutIdx]?.id}|${bakeSigRef.current({ ...p, lutAmount: 0 })}`;
   const colourBinsFor = (p: EditorParams): Float64Array | null => {
     const key = colourKeyOf(p);
-    if (colourBinsRef.current.key === key) return colourBinsRef.current.bins;
-    if (lastGpuRef.current) return null;
-    const b = buffers.current.preview;
-    if (!b.lut0) return null;
-    const lut = lutList[selectedLutIdx], film = !!(lut?.url && lutDataRef.current[lut.id] && b.lut100), a = film ? p.lutAmount / 100 : 0;
-    const n = b.w * b.h, step = Math.max(1, Math.floor(n / 16384)), out = new Uint8ClampedArray(Math.ceil(n / step) * 4);
-    for (let i = 0, j = 0; i < n; i += step, j += 4) {
-      const o = i * 4;
-      for (let k = 0; k < 3; k++) out[j + k] = film ? b.lut0[o + k] + (b.lut100![o + k] - b.lut0[o + k]) * a : b.lut0[o + k];
-      out[j + 3] = 255;
+    const lut = lutList[selectedLutIdx], hasFilm = !!(lut?.url && lutDataRef.current[lut.id]);
+    const a = hasFilm ? p.lutAmount / 100 : 0;
+    const binsKey = `${key}|${a}`;
+    if (colourBinsRef.current.key === binsKey) return colourBinsRef.current.bins;
+    let mixed: Uint8ClampedArray | null = null;
+    const smp = colourSampleRef.current;
+    if (smp.key === key && smp.d0 && (!hasFilm || smp.d1)) {
+      const d0 = smp.d0, d1 = hasFilm ? smp.d1 : null;
+      mixed = new Uint8ClampedArray(d0.length);
+      for (let i = 0; i < d0.length; i++) mixed[i] = d1 ? d0[i] + (d1[i] - d0[i]) * a : d0[i];
+      for (let i = 3; i < mixed.length; i += 4) mixed[i] = 255;
+    } else if (cpuColourKeyRef.current === key) {
+      const b = buffers.current.preview;
+      if (!b.lut0 || (hasFilm && !b.lut100)) return null;
+      const n = b.w * b.h, step = Math.max(1, Math.floor(n / 16384));
+      mixed = new Uint8ClampedArray(Math.ceil(n / step) * 4);
+      for (let i = 0, j = 0; i < n; i += step, j += 4) {
+        const o = i * 4;
+        for (let k = 0; k < 3; k++) mixed[j + k] = hasFilm ? b.lut0[o + k] + (b.lut100![o + k] - b.lut0[o + k]) * a : b.lut0[o + k];
+        mixed[j + 3] = 255;
+      }
     }
-    const bins = highlightHistogram(out);
-    colourBinsRef.current = { key, bins };
+    if (!mixed) return null;
+    const bins = highlightHistogram(mixed);
+    colourBinsRef.current = { key: binsKey, bins };
     return bins;
   };
   const legacyInputKey=(p:EditorParams,w:number,h:number,kind:'soft'|'halation'|'leak')=>{
@@ -4685,13 +4705,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             } else {
                 gpuDone = okBase;
             }
-            if (gpuDone && small0) {
-                const a = activeLut && small100 ? pRender.lutAmount / 100 : 0, d0 = small0.data, d1 = small100?.data;
-                const mixed = new Uint8ClampedArray(d0.length);
-                for (let i = 0; i < d0.length; i++) mixed[i] = d1 ? d0[i] + (d1[i] - d0[i]) * a : d0[i];
-                for (let i = 3; i < mixed.length; i += 4) mixed[i] = 255;
-                colourBinsRef.current = { key: colourKeyOf(pRender), bins: highlightHistogram(mixed) };
-            }
+            if (gpuDone && small0) colourSampleRef.current = { key: colourKeyOf(pRender), d0: small0.data, d1: activeLut ? small100?.data ?? null : null };
             if (gpuDone && !isInteracting) {
                 gpuMsRef.current = performance.now() - tGpu;
                 /* 兩邊都量到了就下判斷。留 1.2 倍的餘裕：
@@ -4712,6 +4726,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 const hi = ord.indexOf(hitKey);
                 if (hi >= 0) { ord.splice(hi, 1); ord.push(hitKey); }
                 b.lut0!.set(cached.lut0);
+                cpuColourKeyRef.current = colourKeyOf(pRender);
                 if (activeLut && b.lut100 && cached.lut100) {
                     b.lut100.set(cached.lut100);
                 }
@@ -4783,6 +4798,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     processPixels(b.source, b.lut100!, b.w, b.h, p100, activeLut.data, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves));
                 }
                 
+                cpuColourKeyRef.current = colourKeyOf(pRender);
                 if (!isInteracting) cpuMsRef.current = performance.now() - tCpu;
                 if (!lut.url || activeLut) {
                     cacheFilterPixels(lut.id, pRender, b.w, b.h, b.lut0!, activeLut ? b.lut100! : null);
