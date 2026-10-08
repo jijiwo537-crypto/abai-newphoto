@@ -248,15 +248,29 @@ export class HalationLayer {
     phase('present');if(import.meta.env.DEV)this.canvas.dataset.haloPhases=JSON.stringify(timings);return result!;
   }
 
-  renderSoft(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,color:number[]):HTMLCanvasElement|null {
+  private histSample:HTMLCanvasElement|null=null;
+  /** bins: luminance histogram of the colour-processed photo, supplied by the
+   *  caller from data it already has (no canvas readback here). */
+  renderSoft(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,color:number[],bins?:Float64Array|null):HTMLCanvasElement|null {
     this.mixLayer=false;
     if(!this.init())return null;
     const gl=this.gl!,ratio=Math.min(1,800/Math.max(w,h)),mw=Math.max(1,Math.floor(w*ratio)),mh=Math.max(1,Math.floor(h*ratio)),count=mw*mh;
     if(this.presentation&&(w>this.maxTextureSize||h>this.maxTextureSize))return null;
     if(this.key!==key||this.sample.width!==mw||this.sample.height!==mh){
       this.sample.width=mw;this.sample.height=mh;if(!this.presentation){this.canvas.width=mw;this.canvas.height=mh;}
-      const s=this.sample.getContext('2d',{willReadFrequently:true})!;s.drawImage(ctx.canvas,0,0,mw,mh);
-      this.softSource=s.getImageData(0,0,mw,mh);this.softBins=highlightHistogram(this.softSource.data);
+      const s=this.sample.getContext('2d')!;s.drawImage(ctx.canvas,0,0,mw,mh);
+      /* The highlight threshold is a percentile of the photo's luminance. It
+         used to read the whole 800px sample back from the GPU on every colour
+         change (a synchronous readback that stalled each slider step). A
+         128px copy gives the same percentile to well within one level; it is
+         used always, so a drag and its release select the same highlights. */
+      if(bins)this.softBins=bins;
+      else{
+        const hk=Math.min(1,128/Math.max(mw,mh)),hw=Math.max(1,Math.round(mw*hk)),hh=Math.max(1,Math.round(mh*hk));
+        const hc=(this.histSample ||=document.createElement('canvas'));if(hc.width!==hw)hc.width=hw;if(hc.height!==hh)hc.height=hh;
+        const hx=hc.getContext('2d',{willReadFrequently:true})!;hx.imageSmoothingQuality='high';hx.drawImage(ctx.canvas,0,0,hw,hh);
+        this.softBins=highlightHistogram(hx.getImageData(0,0,hw,hh).data);
+      }
       if(this.alpha.length!==count){this.alpha=new Uint8ClampedArray(count);this.blurred=new Uint8ClampedArray(count);this.scratch=new Uint8ClampedArray(count);}
       gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
       gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.sample);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);

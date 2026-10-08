@@ -379,6 +379,26 @@ export class LutGpu {
     return this.canvas;
   }
 
+  /** The current colour result at ≤maxSide px (RGBA, rows bottom-up), read
+   *  from a tiny framebuffer. Only this small draw is waited for — not the
+   *  2D canvas pipeline — so it is cheap enough to do per slider step. */
+  private smallTex: WebGLTexture | null = null;
+  private smallFbo: WebGLFramebuffer | null = null;
+  private smallSize = '';
+  readSmall(maxSide = 128): { data: Uint8Array; w: number; h: number } | null {
+    if (this.lost || !this.srcW || (!this.lutSize && !(this.frontOn && !this.backOn))) return null;
+    const gl = this.gl, k = Math.min(1, maxSide / Math.max(this.srcW, this.srcH));
+    const w = Math.max(1, Math.round(this.srcW * k)), h = Math.max(1, Math.round(this.srcH * k));
+    if (!this.smallTex) { this.smallTex = gl.createTexture(); this.smallFbo = gl.createFramebuffer(); }
+    gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, this.smallTex);
+    if (this.smallSize !== `${w}x${h}`) { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null); this.smallSize = `${w}x${h}`; }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.smallFbo); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.smallTex, 0);
+    gl.viewport(0, 0, w, h); gl.useProgram(this.prog); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const data = new Uint8Array(w * h * 4); gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, this.srcW, this.srcH);
+    return { data, w, h };
+  }
+
   /** 需要像素資料時才叫（後面的特效合成會用到）。比 draw 慢，能不叫就不叫。 */
   readInto(out: Uint8ClampedArray): boolean {
     if (this.lost || !this.srcW) return false;

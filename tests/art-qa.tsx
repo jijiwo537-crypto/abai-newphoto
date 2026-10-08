@@ -60,7 +60,7 @@ if(query.has('shapeTexture')){
 }else if(query.has('editor')){
  const c=document.createElement('canvas');c.width=query.has('large')?3000:1200;c.height=query.has('long')?5000:query.has('large')?4000:1600;const g=c.getContext('2d')!;g.scale(c.width/1200,c.height/1600);
  const grad=g.createLinearGradient(0,0,1200,1600);grad.addColorStop(0,'#173959');grad.addColorStop(1,'#dfae96');g.fillStyle=grad;g.fillRect(0,0,1200,1600);g.fillStyle='white';g.fillRect(350,150,100,900);g.beginPath();g.arc(800,800,200,0,Math.PI*2);g.fill();
- createRoot(document.getElementById('root')!).render(query.has('sharedPanel')?<SharedPanelFixture src={c.toDataURL()}/>:<ImageEditor imageSrc={c.toDataURL()} lutList={[{id:'none',name:'原始',url:''}]} onSave={()=>{}} onCancel={()=>{}}/>);
+ createRoot(document.getElementById('root')!).render(query.has('sharedPanel')?<SharedPanelFixture src={c.toDataURL()}/>:<ImageEditor imageSrc={c.toDataURL()} lutList={[{id:'none',name:'原始',url:''},...(query.has('luts')?Array.from({length:4},(_,i)=>({id:`qa-f${i+1}`,name:`F${i+1}`,url:`/luts/f${i+1}.webp`})):[])]} onSave={()=>{}} onCancel={()=>{}}/>);
 }else {
  const c=document.createElement('canvas');c.width=600;c.height=800;
  const g=c.getContext('2d')!;const gradient=g.createLinearGradient(0,0,600,800);gradient.addColorStop(0,'#34547f');gradient.addColorStop(1,'#d7ac94');g.fillStyle=gradient;g.fillRect(0,0,600,800);g.fillStyle='white';g.font='90px sans-serif';g.fillText('ABAI',80,400);

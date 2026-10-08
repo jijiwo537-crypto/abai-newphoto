@@ -425,6 +425,11 @@ export function generateCurveLut(channelPoints: Point[]): Uint8Array {
 export { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast } from '../utils/photoToneMath';
+/* Cache keys name the photo by a short id, not by its source string: a
+   data: URL is megabytes, and serialising it into a key on every slider step
+   cost ~15ms per frame. */
+const SRC_IDS = new Map<string, number>();
+const srcIdOf = (src: string) => { let id = SRC_IDS.get(src); if (id === undefined) { id = SRC_IDS.size + 1; SRC_IDS.set(src, id); } return id; };
 const IDENTITY_BASE_LUT = Uint8Array.from({ length: 256 }, (_, i) => i);
 const IDENTITY_CURVE_LUTS = { rgb: IDENTITY_BASE_LUT, r: IDENTITY_BASE_LUT, g: IDENTITY_BASE_LUT, b: IDENTITY_BASE_LUT };
 
@@ -1044,6 +1049,7 @@ function runThumbChunks<T>(
 }
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false }) => {
+  if (import.meta.env.DEV) (window as any).__editorRenders = ((window as any).__editorRenders || 0) + 1;
   const curveClipId = React.useId();
   /* 主頁入口逐層沿用 ImageAdjustPanel 的 64px 內容 + 12px 底距；相機內的
      非 compact 編輯器維持既有 48px。這個值也同步參與控制區與構圖舞台計算。 */
@@ -3447,10 +3453,32 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const effectHasDetail = (toolId: string) =>
     !!EFFECT_DETAIL_CAT[toolId] || !!(FX_TOOLS[toolId] && FX_TOOLS[toolId].length > 1);
 
-  const fxInputKey=(p:EditorParams)=>`${buffersSrcRef.current}|${selectedLutIdx}|${!!lutDataRef.current[lutList[selectedLutIdx]?.id]}|${activeCategory}|${JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('fx'))))}|${forceRecalculateEffectsRef.current}`;
+  const fxInputKey=(p:EditorParams)=>`${srcIdOf(buffersSrcRef.current)}|${selectedLutIdx}|${!!lutDataRef.current[lutList[selectedLutIdx]?.id]}|${activeCategory}|${JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('fx'))))}|${forceRecalculateEffectsRef.current}`;
+  /* Luminance histogram of the colour-processed photo (for soft light), keyed
+     by the colour state. Filled from data the pipeline already has: a 128px
+     GPU read on the GPU path, a strided sample of the CPU result otherwise. */
+  const colourBinsRef = useRef<{ key: string; bins: Float64Array | null }>({ key: '', bins: null });
+  const colourKeyOf = (p: EditorParams) => `${srcIdOf(buffersSrcRef.current)}|${lutList[selectedLutIdx]?.id}|${p.lutAmount}|${bakeSigRef.current(p)}`;
+  const colourBinsFor = (p: EditorParams): Float64Array | null => {
+    const key = colourKeyOf(p);
+    if (colourBinsRef.current.key === key) return colourBinsRef.current.bins;
+    if (lastGpuRef.current) return null;
+    const b = buffers.current.preview;
+    if (!b.lut0) return null;
+    const lut = lutList[selectedLutIdx], film = !!(lut?.url && lutDataRef.current[lut.id] && b.lut100), a = film ? p.lutAmount / 100 : 0;
+    const n = b.w * b.h, step = Math.max(1, Math.floor(n / 16384)), out = new Uint8ClampedArray(Math.ceil(n / step) * 4);
+    for (let i = 0, j = 0; i < n; i += step, j += 4) {
+      const o = i * 4;
+      for (let k = 0; k < 3; k++) out[j + k] = film ? b.lut0[o + k] + (b.lut100![o + k] - b.lut0[o + k]) * a : b.lut0[o + k];
+      out[j + 3] = 255;
+    }
+    const bins = highlightHistogram(out);
+    colourBinsRef.current = { key, bins };
+    return bins;
+  };
   const legacyInputKey=(p:EditorParams,w:number,h:number,kind:'soft'|'halation'|'leak')=>{
     const excluded=kind==='soft'?['soft','softThreshold','softRadius','softColor']:kind==='leak'?['leakOpacity','leakAngle','leakHue']:['fringeIntensity','fringeSize','fringeFeather','fringeHue'];
-    return JSON.stringify([buffersSrcRef.current,w,h,lutList[selectedLutIdx]?.id,!!lutDataRef.current[lutList[selectedLutIdx]?.id],toneSig(p),Object.fromEntries(Object.entries(p).filter(([k])=>!excluded.includes(k)))]);
+    return JSON.stringify([srcIdOf(buffersSrcRef.current),w,h,lutList[selectedLutIdx]?.id,!!lutDataRef.current[lutList[selectedLutIdx]?.id],toneSig(p),Object.fromEntries(Object.entries(p).filter(([k])=>!excluded.includes(k)))]);
   };
   const applyComplexEffects = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number, p: EditorParams, scale: number, sharedBuf: Uint8ClampedArray | null, isInteracting: boolean, baking: boolean, sourcePixelData: Uint8ClampedArray | null) => {
     const lut = lutList[selectedLutIdx];
@@ -3690,7 +3718,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if(direct){
         const key=legacyInputKey(p,w,h,'soft');
         softPresentRef.current ||= new HalationLayer(fxSurfaceRef.current!);
-        if(softPresentRef.current.renderSoft(ctx,w,h,key,p,hslToRgb(p.softColor/100,1,.5))){legacyPreviewRef.current={kind:'soft',key};showFxSurface(true);return;}
+        if(softPresentRef.current.renderSoft(ctx,w,h,key,p,hslToRgb(p.softColor/100,1,.5),colourBinsFor(p))){legacyPreviewRef.current={kind:'soft',key};showFxSurface(true);return;}
       }
       ctx.save(); 
       ctx.globalCompositeOperation = 'screen'; 
@@ -3700,7 +3728,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const {soft,softThreshold,softRadius,softColor,fringeIntensity,fringeSize,fringeFeather,fringeHue,leakOpacity,leakAngle,leakHue,vignette,...upstream}=p;
         const input=Object.fromEntries(Object.entries(upstream).filter(([key])=>!key.startsWith('fx')));
         softLayerRef.current ||= new HalationLayer();
-        acceleratedSoft=softLayerRef.current.renderSoft(ctx,w,h,JSON.stringify([buffersSrcRef.current,w,h,lutId,toneStr,input]),p,hslToRgb(p.softColor/100,1,.5));
+        acceleratedSoft=softLayerRef.current.renderSoft(ctx,w,h,JSON.stringify([srcIdOf(buffersSrcRef.current),w,h,lutId,toneStr,input]),p,hslToRgb(p.softColor/100,1,.5),colourBinsFor(p));
       }
       if(acceleratedSoft){
         ctx.drawImage(acceleratedSoft,0,0,w,h);
@@ -3824,7 +3852,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const {fringeIntensity,fringeSize,fringeFeather,fringeHue,...upstream}=p;
         // Parameters after this layer do not alter its source pixels.
         const input=Object.fromEntries(Object.entries(upstream).filter(([key])=>!key.startsWith('fx')&&key!=='vignette'));
-        const key=JSON.stringify([buffersSrcRef.current,w,h,lutId,toneStr,input]);
+        const key=JSON.stringify([srcIdOf(buffersSrcRef.current),w,h,lutId,toneStr,input]);
         halationLayerRef.current ||= new HalationLayer();
         acceleratedHalation=halationLayerRef.current.render(ctx,w,h,key,p,hslToRgb(p.fringeHue/360,.8,.35));
     }
@@ -3850,7 +3878,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             const hCtx = hCanvas.getContext('2d', { willReadFrequently: true })!;
             
             const { fringeIntensity: _strength, fringeHue: _hue, fringeFeather: _feather, ...sourceParams } = p;
-            const preparationKey = JSON.stringify([buffersSrcRef.current, w, h, hw, hh, lutId, toneStr, sourceParams]);
+            const preparationKey = JSON.stringify([srcIdOf(buffersSrcRef.current), w, h, hw, hh, lutId, toneStr, sourceParams]);
             const prepared = !baking && !forceRecalculateEffectsRef.current && halationPreparedRef.current?.key === preparationKey
               ? halationPreparedRef.current : null;
             let srcData: Uint8ClampedArray;
@@ -4273,7 +4301,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
          · colorNoise2 —— 它的雜訊遮罩要吃 tempDest 的像素
        任何一步失敗都原封不動走回下面的 CPU 路徑。 */
     if (!p.sharpen && !p.colorNoise2) {
-      const srcKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
+      const srcKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
       if (!exportC0Ref.current) exportC0Ref.current = document.createElement('canvas');
       const ok0 = gpuPaint(exportC0Ref.current, b.source, b.w, b.h,
         { ...p, lutAmount: 0 }, null, 0, 65, srcKey, null);
@@ -4355,7 +4383,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const b = buffers.current.preview;
     const pBase = { ...paramsRef.current, [toolId]: 0 } as EditorParams;
     const lut = lutList[selectedLutIdx];
-    return `${toolId}|${b.w}x${b.h}|${buffersSrcRef.current}|${lut?.id || 'none'}|${pBase.sharpen}|${bakeSigRef.current(pBase)}`;
+    return `${toolId}|${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}|${lut?.id || 'none'}|${pBase.sharpen}|${bakeSigRef.current(pBase)}`;
   }, [lutList, selectedLutIdx]);
 
   /** 算三份裡的下一份。回傳 true 代表這一次真的有做事（沒事做就回 false）。 */
@@ -4513,7 +4541,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const legacy=legacyPreviewRef.current;
     if(!showOriginalRef.current&&!forceRecalculateEffectsRef.current&&legacy&&legacy.key===legacyInputKey(p,b.w,b.h,legacy.kind)){
       const painted=legacy.kind==='soft'&&p.soft>0
-        ? softPresentRef.current?.renderSoft(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.softColor/100,1,.5))
+        ? softPresentRef.current?.renderSoft(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.softColor/100,1,.5),colourBinsFor(p))
         : legacy.kind==='halation'&&p.fringeIntensity>0
           ? halationPresentRef.current?.render(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.fringeHue/360,.8,.35))
           : legacy.kind==='leak'&&p.leakOpacity>0?leakPresentRef.current?.renderLeak(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.leakHue/360,1,.5)):null;
@@ -4637,19 +4665,32 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         if (shouldReprocessPixels && gpuEligible) {
             const tGpu = performance.now();
             const grid = isInteracting ? 33 : 65;
-            const srcKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
+            const srcKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
             if (!lut0CanvasRef.current) lut0CanvasRef.current = document.createElement('canvas');
             /* 調節那一份完全不看濾鏡，所以濾鏡鍵固定是 'none' ——
                換濾鏡時這張表就會直接命中快取，一次都不用重烤。 */
             const okBase = gpuPaint(lut0CanvasRef.current, b.source, b.w, b.h,
                 { ...pRender, lutAmount: 0 }, null, 0, grid, srcKey, null, 'none');
+            // Soft light needs the colour result's luminance histogram: read a
+            // 128px copy from the colour GPU itself (no 2D canvas readback).
+            const wantBins = pRender.soft > 0;
+            const small0 = okBase && wantBins ? getGpu()?.readSmall() ?? null : null;
+            let small100: { data: Uint8Array } | null = null;
             if (okBase && activeLut) {
                 if (!lut100CanvasRef.current) lut100CanvasRef.current = document.createElement('canvas');
                 gpuDone = gpuPaint(lut100CanvasRef.current, b.source, b.w, b.h,
                     { ...pRender, lutAmount: 100 }, activeLut.data, lutSize, grid, srcKey, null,
                     `${lut.id}#${lutSize}`);
+                if (gpuDone && wantBins) small100 = getGpu()?.readSmall() ?? null;
             } else {
                 gpuDone = okBase;
+            }
+            if (gpuDone && small0) {
+                const a = activeLut && small100 ? pRender.lutAmount / 100 : 0, d0 = small0.data, d1 = small100?.data;
+                const mixed = new Uint8ClampedArray(d0.length);
+                for (let i = 0; i < d0.length; i++) mixed[i] = d1 ? d0[i] + (d1[i] - d0[i]) * a : d0[i];
+                for (let i = 3; i < mixed.length; i += 4) mixed[i] = 255;
+                colourBinsRef.current = { key: colourKeyOf(pRender), bins: highlightHistogram(mixed) };
             }
             if (gpuDone && !isInteracting) {
                 gpuMsRef.current = performance.now() - tGpu;
@@ -5346,7 +5387,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         /* 閒著的時候先把 GPU 暖起來（上傳貼圖、建表、跑一次空 draw）。
            不先做的話這些一次性成本會落在手指按下滑桿的第一幀，就是「抖一下」。 */
         if (!isDirtyRef.current && !isInteractingRef.current && performance.now() - lastUiInputRef.current > 800 && b?.source && b.w && b.h) {
-            warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${buffersSrcRef.current}`);
+            warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`);
             /* 貼圖暖好之後，接著一顆一顆把濾鏡的查色表也烤起來。
                每次閒置只烤一顆，主執行緒馬上還回去。 */
             const baked = gpuWarmKeyRef.current ? warmBakes(paramsRef.current) : false;
@@ -5374,7 +5415,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                放開  ：按著的期間如果什麼都沒變（isDirtyRef 是乾淨的），
                        直接把那份貼回來就好，一次搬移，不必重算。 */
             if (flipped) {
-                const snapKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
+                const snapKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
                 if (currentShowOriginal) {
                     if (!compareSnapRef.current) compareSnapRef.current = document.createElement('canvas');
                     const snap = compareSnapRef.current;
