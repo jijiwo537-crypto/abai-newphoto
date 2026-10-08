@@ -5982,7 +5982,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return activeCategory === 'effects' ? d.fx + p.fx : d.lut + p.lut;
   })();
 
-  const mergeEffects = () => {
+  /** after：介面照樣立刻切成合併完的樣子；烤圖等它（合併鍵的動畫）結束才開始 */
+  const mergeEffects = (after?: Promise<unknown>) => {
     if (!originalImgRef.current || mergingRef.current) return;
     mergingRef.current = true;
     if (isInteracting) setIsInteracting(false);
@@ -6024,8 +6025,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        這一段本來就是同步運算，排 setTimeout 只是多等一輪。 */
     (async () => {
       try {
-        /* 介面已經在這一拍切成合併完的樣子；烤圖讓一幀再開始，
-           合併鍵的動畫才交得到合成器手上（之後主執行緒忙也不會卡住它）。 */
+        /* 介面已經在這一拍切成合併完的樣子；烤圖等合併鍵的動畫播完、
+           再讓一幀才開始，動畫才不會被烤圖卡在半路。 */
+        if (after) await after;
         await new Promise<void>(r => requestAnimationFrame(() => setTimeout(r, 0)));
         // 這一次烤進去的是哪一種（按下的當下就記好了，兩邊都套的話兩邊都算）
         const { lut: bakedLut, fx: bakedFx } = mergePendingBakeRef.current;
@@ -7384,45 +7386,47 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           <button
             aria-label="合併特效"
             onClick={hasMergeable ? (e) => {
-              /* 點下去的回饋：底下那條線不動，上面的菱形往上跳再落回原位
+              /* 點下去的回饋：上面的菱形往下壓進下面那一層、再回到原位
                  （第一幀＝最後一幀＝原本的樣子）。時長與曲線跟創意拼圖「隨機圖案」
-                 那顆一樣（680ms）。菱形是獨立的 HTML 元素、只動 transform，
-                 動畫交給合成器跑 —— 合併本身在主執行緒烤圖也不會把動畫卡住，
-                 所以合併照樣按下去就開始，不用等動畫。 */
-              const top = (e.currentTarget as HTMLElement).querySelector<HTMLElement>('[data-merge-top]');
-              if (top && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-                top.getAnimations().forEach(a => a.cancel());
-                top.animate([
-                  { transform: 'translateY(0)' },
-                  { transform: 'translateY(-4px)', offset: .4 },
-                  { transform: 'translateY(0)' },
-                ], { duration: 680, easing: 'cubic-bezier(.22,1,.36,1)' });
+                 那顆一樣（680ms）。介面在按下的這一拍就切成合併完的樣子；
+                 真正的烤圖（主執行緒會停一下）排在動畫之後，動畫才不會卡在半路 ——
+                 合併前後畫面一模一樣，所以烤圖晚一點開始看不出來。 */
+              const els = Array.from((e.currentTarget as HTMLElement).querySelectorAll('[data-merge-top]')) as Element[];
+              let done: Promise<unknown> | undefined;
+              if (els.length && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                for (const el of els) {
+                  el.getAnimations().forEach(a => a.cancel());
+                  const a = el.animate([
+                    { transform: 'translateY(0)' },
+                    { transform: 'translateY(3.5px)', offset: .4 },
+                    { transform: 'translateY(0)' },
+                  ], { duration: 680, easing: 'cubic-bezier(.22,1,.36,1)' });
+                  done = a.finished.catch(() => {});
+                }
               }
-              mergeEffects();
+              mergeEffects(done);
             } : undefined}
             disabled={!hasMergeable}
-            className="absolute bottom-2 left-2 px-2 py-2 flex flex-col items-center justify-center gap-1 select-none touch-none z-20 text-white active:scale-90 transition-transform"
+            /* 固定寬度：底下的字會在「合併特效／合併濾鏡／已合併N」之間換，
+               寬度跟著字變的話，置中在上面的圖標就會左右跳。 */
+            className="absolute bottom-2 left-2 w-14 py-2 flex flex-col items-center justify-center gap-1 select-none touch-none z-20 text-white active:scale-90 transition-transform"
           >
-            {/* 疊在一起的兩層（沒有箭頭）：扁，寬度比前後對比鍵窄一點。
-                線條要跟前後對比鍵「畫在螢幕上一樣粗」，而不是屬性寫一樣的數字：
-                那一顆是 24 的 viewBox 畫成 24px（1:1），這一顆是 34 的 viewBox
-                畫成 28px（0.824 倍），所以 strokeWidth 要除回去 —— 1.5 / (28/34)
-                ≈ 1.82，畫出來才剛好是 1.5px。以前寫 1.2 的實際粗度只有 0.99px，
-                不滿一個像素就會被抗鋸齒攤成灰的，看起來就像半透明。
-                顏色也直接寫死白色，不吃 currentColor（按鈕停用時會被瀏覽器調淡）。 */}
-            {/* 兩層分成兩張同尺寸的 svg 疊在一起：上面的菱形要單獨做動畫 */}
-            <span className="relative block w-[28px] h-[18px]">
-              <svg width="28" height="18" viewBox="0 0 34 22" fill="none" xmlns="http://www.w3.org/2000/svg"
-                   className="absolute inset-0 drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-                <path d="M4 13 17 19 30 13" stroke="#fff" strokeWidth="1.82" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span data-merge-top="" className="absolute inset-0 block will-change-transform">
-                <svg width="28" height="18" viewBox="0 0 34 22" fill="none" xmlns="http://www.w3.org/2000/svg"
-                     className="block drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-                  <path d="M17 2.5 30 8.5 17 14.5 4 8.5Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" />
-                </svg>
-              </span>
-            </span>
+            {/* 兩個疊在一起的菱形：上面那片完整畫出來，下面那片被上面那片蓋住，
+                只露出下半截（用遮罩挖掉上面那片的位置，遮罩跟著上面那片一起動）。
+                線條要跟前後對比鍵「畫在螢幕上一樣粗」：34 的 viewBox 畫成 28px
+                （0.824 倍），所以 strokeWidth 1.82 ≈ 1.5px。顏色寫死白色，
+                不吃 currentColor（按鈕停用時會被瀏覽器調淡）。 */}
+            <svg width="28" height="23" viewBox="0 0 34 28" fill="none" xmlns="http://www.w3.org/2000/svg"
+                 className="block drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+              <defs>
+                <mask id={`${curveClipId}-merge`} maskUnits="userSpaceOnUse" x="0" y="0" width="34" height="28">
+                  <rect width="34" height="28" fill="#fff" />
+                  <path data-merge-top="" d="M17 2 30 9.5 17 17 4 9.5Z" fill="#000" stroke="#000" strokeWidth="5" strokeLinejoin="round" />
+                </mask>
+              </defs>
+              <path d="M17 8.5 30 16 17 23.5 4 16Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" mask={`url(#${curveClipId}-merge)`} />
+              <path data-merge-top="" d="M17 2 30 9.5 17 17 4 9.5Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" />
+            </svg>
             <span className="text-[9px] leading-none font-medium tracking-wide whitespace-nowrap drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
               {hasMergeable
                 ? (activeCategory === 'effects' ? '合併特效' : '合併濾鏡')
