@@ -27,13 +27,18 @@ export function maskPhysicalBounds(m:DOMMatrix,w:number,h:number,width:number,he
 }
 
 const body=(id:string)=>FX_DEFS.find(d=>d.id===id)!.passes[0].body.replace(/texture2D\(uTex,\s*([^;]+?)\)\.rgb/g,'sampleBackdrop($1).rgb').replace('floor(fxGlassBlocks * uRes.y / uRes.x)','max(1., floor(fxGlassBlocks * uRes.y / uRes.x))');
-/* A mask's mosaic tile is the AVERAGE of the photo under it, not one point
-   sample at its centre. While the mask is scaled or moved, a centre sample
-   slides across photo detail and each tile flickers between unrelated
-   colours; a 5x5 area average changes smoothly with the geometry. */
+/* A mask's mosaic tile is the AVERAGE of the photo under it, not a point
+   sample. Point samples (one, or a fixed 5x5 set) are tens of pixels apart
+   once a tile is large on a 3x screen: while the mask is scaled they hit or
+   miss photo detail and whole rows of tiles flicker, which reads as the grid
+   jumping up and down. A separate pass renders one fragment per tile with a
+   dense, tile-size-aware sample set (spacing <= ~2 physical px), so a tile's
+   colour changes continuously with the geometry. */
 const mosaicPoint='sampleBackdrop((cell + 0.5) / grid).rgb';
 const mosaicBody=(()=>{const b=body('fxMosaic');if(!b.includes(mosaicPoint))throw Error('mask mosaic sampling changed');
- return b.replace('vec3 c = '+mosaicPoint+';','vec3 c=vec3(0.);for(int i=0;i<5;i++)for(int j=0;j<5;j++)c+=sampleBackdrop((cell+(vec2(float(i),float(j))+.5)/5.)/grid).rgb;c/=25.;');})();
+ return b.replace('vec3 c = '+mosaicPoint+';','vec3 c=texture2D(cellColors,(cell+.5)/cellCount).rgb;');})();
+const MOSAIC_MAX_SAMPLES=32;
+const mosaicSamples=(w:number,n:number,m:{a:number;b:number;c:number;d:number})=>Math.max(5,Math.min(MOSAIC_MAX_SAMPLES,Math.ceil(w/n*Math.max(Math.hypot(m.a,m.b),Math.hypot(m.c,m.d))/2)));
 /* The blur runs at a reduced resolution. Snap it to quarter-octave steps:
    scaling a frosted mask changes sigma every frame, and a continuously
    changing intermediate size reallocated the textures and moved the sampling
@@ -45,7 +50,7 @@ const header=`precision highp float;varying vec2 uv;uniform sampler2D image;unif
 // not 49 exponential functions for every pixel in both passes.
 const blur=header+`uniform vec2 direction;uniform float stepSize;uniform float weights[25];void main(){vec4 sum=texture2D(image,uv)*weights[0];for(int i=1;i<=24;i++){vec2 d=direction*float(i)*stepSize;sum+=(texture2D(image,uv+d)+texture2D(image,uv-d))*weights[i];}gl_FragColor=sum;}`;
 const material=header+`
- uniform sampler2D softened;uniform vec3 mapX,mapY,invX,invY;uniform vec2 uRes,sampleSize,origin;
+ uniform sampler2D softened,cellColors;uniform vec3 mapX,mapY,invX,invY;uniform vec2 uRes,sampleSize,origin,cellCount;
  uniform float mode,circle,feather,amount,edgeAA;
  uniform float fxMosaicBlocks,fxMosaicGap,fxMosaicShape,fxGlassBlocks,fxGlassRound,fxGlassRefract,fxGlassBevel;
  vec2 screenUV(vec2 p){vec3 q=vec3((p-.5)*uRes,1.);return vec2((dot(mapX,q)+origin.x)/sampleSize.x,1.-(dot(mapY,q)+origin.y)/sampleSize.y);}
@@ -81,6 +86,14 @@ const batchMaterial=material
  .replace('vec4 original=texture2D(image,vec2((uv.x*size.x+origin.x)/sampleSize.x,1.-((1.-uv.y)*size.y+origin.y)/sampleSize.y));','vec4 original=straight(texture2D(image,vec2((uv.x*size.x+origin.x)/sampleSize.x,1.-((1.-uv.y)*size.y+origin.y)/sampleSize.y)));')
  .replace('c=texture2D(softened,uv).rgb','c=straight(texture2D(softened,uv)).rgb')
  .replace('alpha*=original.a;gl_FragColor=vec4(c*alpha,alpha);','alpha*=objectOpacity;gl_FragColor=vec4(mix(original.rgb,c,alpha)*original.a,original.a);');
+const screenUVSource='vec2 screenUV(vec2 p){vec3 q=vec3((p-.5)*uRes,1.);return vec2((dot(mapX,q)+origin.x)/sampleSize.x,1.-(dot(mapY,q)+origin.y)/sampleSize.y);}';
+const cellPass=(sampler:string)=>header+`uniform vec3 mapX,mapY;uniform vec2 uRes,sampleSize,origin;uniform float fxMosaicBlocks,samples;
+ ${screenUVSource}${sampler}
+ void main(){float n=floor(fxMosaicBlocks+.5);vec2 grid=n*vec2(1.,uRes.y/uRes.x),cell=floor(gl_FragCoord.xy);vec3 c=vec3(0.);
+  for(int i=0;i<${MOSAIC_MAX_SAMPLES};i++){if(float(i)>=samples)break;for(int j=0;j<${MOSAIC_MAX_SAMPLES};j++){if(float(j)>=samples)break;c+=sampleBackdrop((cell+(vec2(float(i),float(j))+.5)/samples)/grid).rgb;}}
+  gl_FragColor=vec4(c/(samples*samples),1.);}`;
+const cellMaterial=cellPass('vec4 sampleBackdrop(vec2 p){return texture2D(image,screenUV(p));}');
+const batchCellMaterial=cellPass('vec4 straight(vec4 c){return vec4(c.rgb/max(c.a,.00001),c.a);}vec4 sampleBackdrop(vec2 p){return straight(texture2D(image,screenUV(p)));}');
 export type BackdropMaskLayer={kind:string;w:number;h:number;settings:MaskSettings;matrix:DOMMatrix;opacity:number};
 export type BackdropPhotoLayer={source:HTMLCanvasElement|HTMLImageElement;key:string;rect:number[];uv:number[];clip:number[]};
 class MaskGpu {
@@ -89,6 +102,7 @@ class MaskGpu {
  batchProgram:WebGLProgram;batchTextures:WebGLTexture[]=[];batchWidth=0;batchHeight=0;
  photoProgram:WebGLProgram;photoTextures=new Map<string,{source:CanvasImageSource;texture:WebGLTexture;width:number;height:number}>();
  input:WebGLTexture;first:WebGLTexture;second:WebGLTexture;frame:WebGLFramebuffer;
+ cellProgram:WebGLProgram;batchCellProgram:WebGLProgram;cells:WebGLTexture;cellsWidth=1;cellsHeight=1;
  width=0;height=0;blurWidth=0;blurHeight=0;
  inputWidth=0;inputHeight=0;
  lastSource:HTMLCanvasElement|null=null;lastStamp:unknown=null;lastBlur='';
@@ -105,17 +119,36 @@ class MaskGpu {
   const batchCopy=header+'void main(){gl_FragColor=texture2D(image,uv);}';
   const photo=header+`uniform vec4 rect,crop,clip;void main(){vec2 p=vec2(uv.x,1.-uv.y)*size;vec2 a=(p-rect.xy)/rect.zw;if(any(lessThan(p,clip.xy))||any(greaterThan(p,clip.xy+clip.zw)))discard;vec2 q=crop.xy+a*crop.zw;gl_FragColor=texture2D(image,vec2(q.x,1.-q.y));}`;
   this.photoProgram=compile(photo);
-  this.program=compile(material);this.batchProgram=compile(batchMaterial);this.blurProgram=compile(blur);this.copyProgram=compile(copy);this.batchCopyProgram=compile(batchCopy);this.maxTextureSize=gl.getParameter(gl.MAX_TEXTURE_SIZE);
-  for(const [program,code]of [[this.program,material],[this.batchProgram,batchMaterial],[this.blurProgram,blur],[this.copyProgram,copy],[this.batchCopyProgram,batchCopy],[this.photoProgram,photo]] as const){
+  this.program=compile(material);this.batchProgram=compile(batchMaterial);this.blurProgram=compile(blur);this.copyProgram=compile(copy);this.batchCopyProgram=compile(batchCopy);this.cellProgram=compile(cellMaterial);this.batchCellProgram=compile(batchCellMaterial);this.maxTextureSize=gl.getParameter(gl.MAX_TEXTURE_SIZE);
+  for(const [program,code]of [[this.program,material],[this.batchProgram,batchMaterial],[this.blurProgram,blur],[this.copyProgram,copy],[this.batchCopyProgram,batchCopy],[this.photoProgram,photo],[this.cellProgram,cellMaterial],[this.batchCellProgram,batchCellMaterial]] as const){
    this.positions.set(program,gl.getAttribLocation(program,'p'));const locations=new Map<string,WebGLUniformLocation|null>();
    for(const match of code.matchAll(/uniform\s+\w+\s+([^;]+);/g))for(const variable of match[1].split(',')){const name=variable.trim().replace(/\[\d+\]/,'[0]');locations.set(name,gl.getUniformLocation(program,name));}this.locations.set(program,locations);
   }
   const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
   const texture=()=>{const t=gl.createTexture()!;gl.bindTexture(gl.TEXTURE_2D,t);for(const [k,v]of [[gl.TEXTURE_MIN_FILTER,gl.LINEAR],[gl.TEXTURE_MAG_FILTER,gl.LINEAR],[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]])gl.texParameteri(gl.TEXTURE_2D,k,v);return t;};
   this.input=texture();this.first=texture();this.second=texture();this.frame=gl.createFramebuffer()!;
+  this.cells=texture();gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
   // Every sampler must be complete even when its runtime branch is unused.
   // Otherwise WebKit can output transparent black until frost was used once.
-  for(const t of [this.input,this.first,this.second]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));}
+  for(const t of [this.input,this.first,this.second,this.cells]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));}
+ }
+ /** Mosaic tiles: one fragment per tile, each the area average of the
+     backdrop beneath it. Leaves the tile texture bound on unit 2 and the
+     cellColors/cellCount uniforms set on the material program. */
+ mosaicCells(cellProgram:WebGLProgram,material:WebGLProgram,input:WebGLTexture,m:{a:number;b:number;c:number;d:number;e:number;f:number},w:number,h:number,settings:MaskSettings,sampleWidth:number,sampleHeight:number,originX:number,originY:number){
+  const gl=this.gl,blocks=settings.maskCells??15,n=Math.max(1,Math.floor(blocks+.5));
+  const cols=Math.min(this.maxTextureSize,n),rows=Math.min(this.maxTextureSize,Math.max(1,Math.ceil(n*h/w-1e-6)));
+  gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,null);gl.activeTexture(gl.TEXTURE0);
+  if(cols!==this.cellsWidth||rows!==this.cellsHeight){this.cellsWidth=cols;this.cellsHeight=rows;gl.bindTexture(gl.TEXTURE_2D,this.cells);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,cols,rows,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}
+  gl.bindFramebuffer(gl.FRAMEBUFFER,this.frame);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.cells,0);gl.viewport(0,0,cols,rows);
+  gl.useProgram(cellProgram);const pos=this.positions.get(cellProgram)!;gl.enableVertexAttribArray(pos);gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+  const at=(name:string)=>this.location(cellProgram,name);gl.uniform1i(at('image'),0);
+  gl.uniform3f(at('mapX'),m.a,m.c,m.e);gl.uniform3f(at('mapY'),m.b,m.d,m.f);gl.uniform2f(at('uRes'),w,h);gl.uniform2f(at('sampleSize'),sampleWidth,sampleHeight);gl.uniform2f(at('origin'),originX,originY);
+  gl.uniform1f(at('fxMosaicBlocks'),blocks);gl.uniform1f(at('samples'),mosaicSamples(w,n,m));
+  gl.bindTexture(gl.TEXTURE_2D,input);gl.drawArrays(gl.TRIANGLES,0,6);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.useProgram(material);gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.cells);gl.activeTexture(gl.TEXTURE0);
+  gl.uniform1i(this.location(material,'cellColors'),2);gl.uniform2f(this.location(material,'cellCount'),cols,rows);
  }
  renderBatch(source:HTMLCanvasElement,layers:BackdropMaskLayer[],photos?:BackdropPhotoLayer[]){
   const gl=this.gl,w=source.width,h=source.height;if(gl.isContextLost()||w>this.maxTextureSize||h>this.maxTextureSize)throw Error('mask batch unavailable');
@@ -160,6 +193,7 @@ class MaskGpu {
     gl.uniform1f(this.location(this.blurProgram,'stepSize'),step);gl.uniform1fv(this.location(this.blurProgram,'weights[0]'),weights);gl.bindFramebuffer(gl.FRAMEBUFFER,this.frame);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.first,0);gl.uniform2f(this.location(this.blurProgram,'direction'),1/bw,0);gl.drawArrays(gl.TRIANGLES,0,6);
     gl.bindTexture(gl.TEXTURE_2D,this.first);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.second,0);gl.uniform2f(this.location(this.blurProgram,'direction'),0,1/bh);gl.drawArrays(gl.TRIANGLES,0,6);
    }
+   if(layer.kind==='mask-mosaic')this.mosaicCells(this.batchCellProgram,program,input,m,layer.w,layer.h,settings,w,h,0,0);
    use(program);gl.viewport(0,0,w,h);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,input);gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,sigma>.25?this.second:input);gl.uniform1i(this.location(program,'softened'),1);gl.activeTexture(gl.TEXTURE0);
    const f=(name:string,v:number)=>gl.uniform1f(this.location(program,name),v),v3=(name:string,a:number,b:number,c:number)=>gl.uniform3f(this.location(program,name),a,b,c);
    v3('mapX',m.a,m.c,m.e);v3('mapY',m.b,m.d,m.f);v3('invX',inv.a,inv.c,inv.e);v3('invY',inv.b,inv.d,inv.f);gl.uniform2f(this.location(program,'size'),w,h);gl.uniform2f(this.location(program,'sampleSize'),w,h);gl.uniform2f(this.location(program,'origin'),0,0);gl.uniform2f(this.location(program,'uRes'),layer.w,layer.h);
@@ -236,10 +270,11 @@ class MaskGpu {
   }
   this.lastBlur='';
   if(this.canvas.width!==this.width)this.canvas.width=this.width;if(this.canvas.height!==this.height)this.canvas.height=this.height;
+  const local=new DOMMatrix([m.a,m.b,m.c,m.d,m.e-b.left,m.f-b.top]),inverse=local.inverse();
+  if(kind==='mask-mosaic')this.mosaicCells(this.cellProgram,this.program,this.input,local,w,h,settings,source.width,source.height,b.left,b.top);
   gl.viewport(0,0,this.width,this.height);gl.bindFramebuffer(gl.FRAMEBUFFER,null);use(this.program);
   const f=(name:string,v:number)=>gl.uniform1f(this.location(this.program,name),v),v3=(name:string,x:number,y:number,z:number)=>gl.uniform3f(this.location(this.program,name),x,y,z);
   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.input);gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,this.second);gl.uniform1i(this.location(this.program,'softened'),1);gl.activeTexture(gl.TEXTURE0);
-  const local=new DOMMatrix([m.a,m.b,m.c,m.d,m.e-b.left,m.f-b.top]),inverse=local.inverse();
   v3('mapX',local.a,local.c,local.e);v3('mapY',local.b,local.d,local.f);v3('invX',inverse.a,inverse.c,inverse.e);v3('invY',inverse.b,inverse.d,inverse.f);
   gl.uniform2f(this.location(this.program,'size'),this.width,this.height);gl.uniform2f(this.location(this.program,'uRes'),w,h);
   gl.uniform2f(this.location(this.program,'sampleSize'),source.width,source.height);gl.uniform2f(this.location(this.program,'origin'),b.left,b.top);
