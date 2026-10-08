@@ -2,6 +2,8 @@ import {blurAlpha} from './alphaBoxBlur.js';
 import {highlightHistogram,selectHighlights} from './highlightSelection';
 import {composeFxScene,disposeFxScene,type FxScene} from './glEffects';
 import {uniformLocation} from './uniformLocation';
+import {surfaceGl,type GpuImage} from './fxSurfaceGl';
+import {GpuHighlightHistogram} from './gpuHighlightHistogram';
 
 /** Persistent halation layer: identical 800px highlight kernel at rest and
  * during input. Radius changes only blur one byte/channel; hue and feather
@@ -33,6 +35,7 @@ export class HalationLayer {
   private layerSize='';
   private maxTextureSize=0;
   private softSeed?: WebGLProgram;
+  private softSeedGpu?: WebGLProgram;
   private haloSeed?: WebGLProgram;
   private haloGpu=false;
   private haloMask?:WebGLTexture;
@@ -63,7 +66,7 @@ export class HalationLayer {
   private init() {
     if (this.failed) return false;
     if (this.gl && this.program) return !this.gl.isContextLost();
-    const gl = this.canvas.getContext('webgl', {premultipliedAlpha:false, preserveDrawingBuffer:true});
+    const gl = surfaceGl(this.canvas, {premultipliedAlpha:false, preserveDrawingBuffer:true});
     if (!gl) {this.failed = true; return false;}
     if(!this.listening){this.listening=true;const mark=()=>{this.stale=true;};this.canvas.addEventListener('webglcontextlost',mark);this.canvas.addEventListener('webglcontextrestored',mark);}
     const shader = (type:number, text:string) => {
@@ -101,6 +104,8 @@ export class HalationLayer {
     };
     this.softSeed=makeProgram(`precision highp float; varying vec2 uv; uniform sampler2D source; uniform float cutoff; uniform float tie;
       void main(){vec3 c=texture2D(source,uv).rgb;float bin=floor(dot(c,vec3(.299,.587,.114))*255.+.5);float a=bin>cutoff?1.:bin==cutoff?tie:0.;gl_FragColor=vec4(c,a);}`)||undefined;
+    this.softSeedGpu=makeProgram(`precision highp float; varying vec2 uv; uniform sampler2D source; uniform sampler2D selection;
+      void main(){vec2 sel=texture2D(selection,vec2(.5)).rg;vec3 c=texture2D(source,uv).rgb;float bin=floor(dot(c,vec3(.299,.587,.114))*255.+.5);float a=bin>sel.x?1.:bin==sel.x?sel.y:0.;gl_FragColor=vec4(c,a);}`)||undefined;
     this.haloSeed=makeProgram(`precision highp float; varying vec2 uv; uniform sampler2D source;
       void main(){float l=dot(texture2D(source,uv).rgb,vec3(.299,.587,.114));float a=pow(max(0.,(l-160./255.)/(95./255.)),1.5);gl_FragColor=vec4(0.,0.,0.,floor(a*255.+.5)/255.);}`)||undefined;
     this.softBlur=makeProgram(`precision highp float; varying vec2 uv; uniform sampler2D source; uniform vec2 step; uniform float radius;
@@ -133,11 +138,7 @@ export class HalationLayer {
     if(this.presentation){
       const ow=this.scene?.black.width||w,oh=this.scene?.black.height||h;
       if(this.canvas.width!==ow)this.canvas.width=ow;if(this.canvas.height!==oh)this.canvas.height=oh;
-      if(this.presentKey!==sourceKey){
-        gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
-        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.src(ctx));gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
-        this.presentKey=sourceKey;
-      }
+      this.ensureBase(ctx,sourceKey);
       if(this.layerSize!==`${mw}x${mh}`){
         gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_2D,this.layerTex!);
         gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
@@ -158,7 +159,7 @@ export class HalationLayer {
   private finish(w:number,h:number,strength=1){
     const gl=this.gl!;
     if(this.presentation){
-      gl.useProgram(this.composite!);gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_2D,this.layerTex!);
+      gl.useProgram(this.composite!);gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.base());gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_2D,this.layerTex!);
       gl.uniform1i(uniformLocation(gl,this.composite!,'base'),2);gl.uniform1i(uniformLocation(gl,this.composite!,'layer'),3);
       gl.uniform1f(uniformLocation(gl,this.composite!,'strength'),strength>1?1:strength);
       gl.uniform1f(uniformLocation(gl,this.composite!,'mixLayer'),this.mixLayer?1:0);
@@ -188,17 +189,23 @@ export class HalationLayer {
     timings.outputChanged=Number(this.canvas.width!==(this.scene?.black.width||w)||this.canvas.height!==(this.scene?.black.height||h));
     if(gpu&&this.haloGpu&&this.key.replace(/\|(soft|halo|leak|blur|simple)$/,'')===key.replace(/\|(soft|halo|leak|blur|simple)$/,''))this.key=key;
     if(this.presentation&&(w>this.maxTextureSize||h>this.maxTextureSize))return null;
-    if(this.key!==key||this.haloGpu!==gpu||this.sample.width!==mw||this.sample.height!==mh){
-      this.sample.width=mw;this.sample.height=mh;if(!this.presentation){this.canvas.width=mw;this.canvas.height=mh;}
-      const s=this.sample.getContext('2d',{willReadFrequently:true})!;s.drawImage(this.src(ctx),0,0,mw,mh);
-      if(!gpu){
+    const dims=`${mw}x${mh}`;
+    if(this.key!==key||this.haloGpu!==gpu||this.dims!==dims){
+      if(gpu){
+        // Working copy made on the GPU from the full photo (see sampleFromBase).
+        if(!this.sampleFromBase(ctx,key,w,h,mw,mh))return null;
+        if(this.dims!==dims)for(const t of this.softTextures){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}
+        this.dims=dims;
+      }else{
+        this.sample.width=mw;this.sample.height=mh;this.canvas.width=mw;this.canvas.height=mh;
+        const s=this.sample.getContext('2d',{willReadFrequently:true})!;s.drawImage(this.src(ctx),0,0,mw,mh);
         const pixels=s.getImageData(0,0,mw,mh),count=mw*mh;
         if(this.alpha.length!==count){this.alpha=new Uint8ClampedArray(count);this.blurred=new Uint8ClampedArray(count);this.scratch=new Uint8ClampedArray(count);}
         for(let j=0,i=0;j<count;j++,i+=4){const l=pixels.data[i]*.299+pixels.data[i+1]*.587+pixels.data[i+2]*.114;this.alpha[j]=l>160?Math.pow((l-160)/95,1.5)*255:0;}
+        gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.sample);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
+        this.sampleSize='';this.dims='';
       }
-      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.sample);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
-      if(gpu)for(const t of this.softTextures){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}
       this.haloGpu=gpu;this.key=key;this.radius=-1;
     }
     this.begin(ctx,w,h,mw,mh,key);
@@ -255,10 +262,83 @@ export class HalationLayer {
   }
 
   private histSample:HTMLCanvasElement|null=null;
+  private dims='';
+  /** undefined: not computed for this photo yet; null: CPU percentile in use. */
+  private softSel?:null;
+  private cpuBins(ctx:CanvasRenderingContext2D,mw:number,mh:number){
+    const hk=Math.min(1,128/Math.max(mw,mh)),hw=Math.max(1,Math.round(mw*hk)),hh=Math.max(1,Math.round(mh*hk));
+    const hc=(this.histSample ||=document.createElement('canvas'));if(hc.width!==hw)hc.width=hw;if(hc.height!==hh)hc.height=hh;
+    const hx=hc.getContext('2d',{willReadFrequently:true})!;hx.imageSmoothingQuality='high';hx.drawImage(this.src(ctx),0,0,hw,hh);
+    return highlightHistogram(hx.getImageData(0,0,hw,hh).data);
+  }
   /** When set, the photo is read from this canvas (e.g. the colour GPU's own
    *  canvas during a drag) instead of the 2D canvas passed in as ctx. */
   sourceOverride:HTMLCanvasElement|null=null;
   private src(ctx:CanvasRenderingContext2D){return this.sourceOverride||ctx.canvas;}
+  /** When set, the photo is this texture of the same GPU context (the colour
+   *  stage's result): nothing is copied in at all. Presentation mode only. */
+  sourceImage:GpuImage|null=null;
+  private base(){return this.sourceImage?.texture||this.baseTex!;}
+  /** Full-resolution photo on the GPU: the caller's texture, or one upload
+   *  of the canvas per photograph/colour state. */
+  private ensureBase(ctx:CanvasRenderingContext2D,sourceKey:string){
+    const gl=this.gl!;
+    if(this.sourceImage){this.presentKey='';return;}
+    if(this.presentKey!==sourceKey){
+      gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.src(ctx));gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
+      this.presentKey=sourceKey;
+    }
+  }
+  /* The ≤800px working copy of the photo (presentation mode). Made on the GPU
+     from the full-resolution photo by an exact area average: every source
+     pixel contributes by the fraction of it an output pixel covers. The same
+     pass is used while dragging and at rest, so both select the same
+     highlights. */
+  private downProgram?:WebGLProgram|null;
+  private sampleFromBase(ctx:CanvasRenderingContext2D,key:string,w:number,h:number,mw:number,mh:number){
+    const gl=this.gl!;
+    this.ensureBase(ctx,key.replace(/\|(soft|halo|leak|blur|simple)$/,''));
+    if(this.downProgram===undefined)this.downProgram=this.program2(`precision highp float;varying vec2 uv;uniform sampler2D source;uniform vec2 srcSize;uniform vec2 dstSize;
+      void main(){vec2 o=floor(gl_FragCoord.xy),r=srcSize/dstSize,a=o*r,b=(o+1.)*r;vec4 sum=vec4(0.);float total=0.;
+        for(int j=0;j<16;j++){float y=floor(a.y)+float(j);if(y>=b.y)break;float wy=min(y+1.,b.y)-max(y,a.y);
+          for(int i=0;i<16;i++){float x=floor(a.x)+float(i);if(x>=b.x)break;float wt=(min(x+1.,b.x)-max(x,a.x))*wy;
+            sum+=texture2D(source,(vec2(x,y)+.5)/srcSize)*wt;total+=wt;}}
+        gl_FragColor=sum/total;}`);
+    if(!this.downProgram)return false;
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);
+    if(this.sampleSize!==`${mw}x${mh}`){gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);this.sampleSize=`${mw}x${mh}`;}
+    const base=this.base();
+    gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,base);
+    // Texel centres only; the external texture may be set to linear filtering.
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+    gl.useProgram(this.downProgram);gl.uniform1i(uniformLocation(gl,this.downProgram,'source'),2);
+    gl.uniform2f(uniformLocation(gl,this.downProgram,'srcSize'),w,h);gl.uniform2f(uniformLocation(gl,this.downProgram,'dstSize'),mw,mh);
+    gl.disable(gl.BLEND);gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer!);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.sourceTex!,0);
+    gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+    gl.viewport(0,0,mw,mh);gl.drawArrays(gl.TRIANGLES,0,3);
+    return true;
+  }
+  private sampleSize='';
+  /** GPU percentile of the working copy's luminance, for soft light. */
+  private hist?:GpuHighlightHistogram|null;
+  private histProgs=new Map<string,WebGLProgram|null>();
+  private softSelect(key:string,mw:number,mh:number,coverage:number):WebGLTexture|null{
+    const gl=this.gl!;
+    if(this.hist===undefined)this.hist=GpuHighlightHistogram.create(gl);
+    if(!this.hist)return null;
+    const compile=(k:string,fs:string)=>{if(!this.histProgs.has(k))this.histProgs.set(k,this.program2(fs,'attribute vec2 p; varying vec2 vUv; void main(){vUv=p*.5+.5;gl_Position=vec4(p,0.,1.);}'));return this.histProgs.get(k)!;};
+    const t=this.hist.prepare(this.sourceTex!,mw,mh,key,coverage,this.quad!,compile);
+    gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.viewport(0,0,mw,mh);
+    return t;
+  }
+  private program2(fsText:string,vsText='attribute vec2 p; varying vec2 uv; void main(){uv=p*.5+.5;gl_Position=vec4(p,0.,1.);}'):WebGLProgram|null{
+    const gl=this.gl!;
+    const mk=(type:number,text:string)=>{const sh=gl.createShader(type)!;gl.shaderSource(sh,text);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)){gl.deleteShader(sh);return null;}return sh;};
+    const v=mk(gl.VERTEX_SHADER,vsText),f=mk(gl.FRAGMENT_SHADER,fsText);if(!v||!f)return null;
+    const pr=gl.createProgram()!;gl.attachShader(pr,v);gl.attachShader(pr,f);gl.bindAttribLocation(pr,0,'p');gl.linkProgram(pr);gl.deleteShader(v);gl.deleteShader(f);
+    if(!gl.getProgramParameter(pr,gl.LINK_STATUS)){gl.deleteProgram(pr);return null;}return pr;
+  }
   /** bins: luminance histogram of the colour-processed photo, supplied by the
    *  caller from data it already has (no canvas readback here). */
   renderSoft(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,color:number[],bins?:Float64Array|null):HTMLCanvasElement|null {
@@ -266,26 +346,33 @@ export class HalationLayer {
     if(!this.init())return null;
     const gl=this.gl!,ratio=Math.min(1,800/Math.max(w,h)),mw=Math.max(1,Math.floor(w*ratio)),mh=Math.max(1,Math.floor(h*ratio)),count=mw*mh;
     if(this.presentation&&(w>this.maxTextureSize||h>this.maxTextureSize))return null;
-    if(this.key!==key||this.sample.width!==mw||this.sample.height!==mh){
-      this.sample.width=mw;this.sample.height=mh;if(!this.presentation){this.canvas.width=mw;this.canvas.height=mh;}
-      const s=this.sample.getContext('2d')!;s.drawImage(this.src(ctx),0,0,mw,mh);
-      /* The highlight threshold is a percentile of the photo's luminance. It
-         used to read the whole 800px sample back from the GPU on every colour
-         change (a synchronous readback that stalled each slider step). A
-         128px copy gives the same percentile to well within one level; it is
-         used always, so a drag and its release select the same highlights. */
-      if(bins)this.softBins=bins;
-      else{
-        const hk=Math.min(1,128/Math.max(mw,mh)),hw=Math.max(1,Math.round(mw*hk)),hh=Math.max(1,Math.round(mh*hk));
-        const hc=(this.histSample ||=document.createElement('canvas'));if(hc.width!==hw)hc.width=hw;if(hc.height!==hh)hc.height=hh;
-        const hx=hc.getContext('2d',{willReadFrequently:true})!;hx.imageSmoothingQuality='high';hx.drawImage(this.src(ctx),0,0,hw,hh);
-        this.softBins=highlightHistogram(hx.getImageData(0,0,hw,hh).data);
+    const dims=`${mw}x${mh}`,gpuSample=!!this.presentation;
+    if(this.key!==key||this.dims!==dims){
+      if(gpuSample){
+        // Working copy made on the GPU from the full photo (see sampleFromBase).
+        if(!this.sampleFromBase(ctx,key,w,h,mw,mh))return null;
+        this.softSel=undefined;
+        if(!this.softSelect(key,mw,mh,100-p.softThreshold)){
+          // No float render targets: the CPU percentile, from a canvas.
+          if(bins)this.softBins=bins;
+          else if(this.sourceImage)return null;
+          else this.softBins=this.cpuBins(ctx,mw,mh);
+          this.softSel=null;
+        }
+      }else{
+        this.sample.width=mw;this.sample.height=mh;this.canvas.width=mw;this.canvas.height=mh;
+        const s=this.sample.getContext('2d')!;s.drawImage(this.src(ctx),0,0,mw,mh);
+        /* The highlight threshold is a percentile of the photo's luminance. A
+           128px copy gives the same percentile to well within one level; it is
+           used always, so a drag and its release select the same highlights. */
+        this.softBins=bins||this.cpuBins(ctx,mw,mh);
+        gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
+        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.sample);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
+        this.sampleSize='';
       }
       if(this.alpha.length!==count){this.alpha=new Uint8ClampedArray(count);this.blurred=new Uint8ClampedArray(count);this.scratch=new Uint8ClampedArray(count);}
-      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
-      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.sample);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
-      for(const t of this.softTextures){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}
-      this.key=key;this.softRadius=-1;this.softRange=NaN;
+      if(this.dims!==dims)for(const t of this.softTextures){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}
+      this.key=key;this.dims=dims;this.softRadius=-1;this.softRange=NaN;
     }
     this.begin(ctx,w,h,mw,mh,key);
     const radius=Math.floor(p.softRadius/100*80*Math.max(w,h)/1080*ratio),changedRadius=this.softRadius!==radius;
@@ -296,9 +383,16 @@ export class HalationLayer {
         gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer!);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,target,0);gl.drawArrays(gl.TRIANGLES,0,3);
       };
       if(this.softRange!==p.softThreshold){
-        const selected=selectHighlights(this.softBins!,100-p.softThreshold);gl.useProgram(this.softSeed!);
-        gl.uniform1f(uniformLocation(gl,this.softSeed!,'cutoff'),selected.cutoff);gl.uniform1f(uniformLocation(gl,this.softSeed!,'tie'),selected.tie);
-        draw(this.softSeed!,this.sourceTex!,this.softTextures[0]);
+        const sel=this.softSel===null?null:this.softSelect(key,mw,mh,100-p.softThreshold);
+        if(sel&&this.softSeedGpu){
+          gl.useProgram(this.softSeedGpu);gl.activeTexture(gl.TEXTURE6);gl.bindTexture(gl.TEXTURE_2D,sel);gl.uniform1i(uniformLocation(gl,this.softSeedGpu,'selection'),6);
+          draw(this.softSeedGpu,this.sourceTex!,this.softTextures[0]);
+        }else{
+          if(!this.softBins)return null;
+          const selected=selectHighlights(this.softBins,100-p.softThreshold);gl.useProgram(this.softSeed!);
+          gl.uniform1f(uniformLocation(gl,this.softSeed!,'cutoff'),selected.cutoff);gl.uniform1f(uniformLocation(gl,this.softSeed!,'tie'),selected.tie);
+          draw(this.softSeed!,this.sourceTex!,this.softTextures[0]);
+        }
       }
       if(radius>=1){
         for(let i=0;i<4;i++){
@@ -322,7 +416,7 @@ export class HalationLayer {
     if(!this.presentation||!this.init()||!this.leak||w>this.maxTextureSize||h>this.maxTextureSize)return null;
     const gl=this.gl!;this.begin(ctx,w,h,1,1,key);this.resultTarget(w,h);gl.viewport(0,0,w,h);
     gl.useProgram(this.leak);gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
-    gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.uniform1i(uniformLocation(gl,this.leak,'base'),2);
+    gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.base());gl.uniform1i(uniformLocation(gl,this.leak,'base'),2);
     const angle=(p.leakAngle-180)*Math.PI/180;gl.uniform2f(uniformLocation(gl,this.leak,'size'),w,h);gl.uniform2f(uniformLocation(gl,this.leak,'direction'),Math.cos(angle),Math.sin(angle));
     gl.uniform3f(uniformLocation(gl,this.leak,'color'),color[0]/255,color[1]/255,color[2]/255);gl.uniform1f(uniformLocation(gl,this.leak,'amount'),p.leakOpacity/100);
     gl.drawArrays(gl.TRIANGLES,0,3);if(this.scene)composeFxScene(gl,this.sceneResult!,this.scene);return this.canvas;
@@ -331,10 +425,11 @@ export class HalationLayer {
   renderBlur(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,amount:number):HTMLCanvasElement|null{
     if(!this.init()||!this.presentation)return null;
     const gl=this.gl!,ratio=Math.min(1,800/Math.max(w,h)),mw=Math.max(1,Math.floor(w*ratio)),mh=Math.max(1,Math.floor(h*ratio));
-    if(this.key!==key){
-      this.sample.width=mw;this.sample.height=mh;this.sample.getContext('2d')!.drawImage(this.src(ctx),0,0,mw,mh);
-      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.sample);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
-      for(const tex of this.softTextures){gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}this.key=key;
+    const dims=`${mw}x${mh}`;
+    if(this.key!==key||this.dims!==dims){
+      if(!this.sampleFromBase(ctx,key,w,h,mw,mh))return null;
+      if(this.dims!==dims)for(const tex of this.softTextures){gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}
+      this.key=key;this.dims=dims;
     }
     this.begin(ctx,w,h,mw,mh,key);const radius=Math.floor(amount/6*(Math.max(w,h)/1080)*ratio*1.5);
     gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.viewport(0,0,mw,mh);
@@ -350,11 +445,11 @@ export class HalationLayer {
     this.begin(ctx,w,h,1,1,key);this.resultTarget(w,h);
     if(!this.noiseTex){this.noiseTex=gl.createTexture()!;gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,this.noiseTex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,noise);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);}
     gl.useProgram(this.simple);gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
-    gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.uniform1i(uniformLocation(gl,this.simple,'base'),2);gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,this.noiseTex);gl.uniform1i(uniformLocation(gl,this.simple,'noise'),5);
+    gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.base());gl.uniform1i(uniformLocation(gl,this.simple,'base'),2);gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,this.noiseTex);gl.uniform1i(uniformLocation(gl,this.simple,'noise'),5);
     gl.uniform2f(uniformLocation(gl,this.simple,'size'),w,h);gl.uniform1f(uniformLocation(gl,this.simple,'vignette'),(p.vignette||0)/100);gl.uniform1f(uniformLocation(gl,this.simple,'grain'),(p.colorNoise||0)/100);
     gl.viewport(0,0,w,h);gl.drawArrays(gl.TRIANGLES,0,3);if(this.scene)composeFxScene(gl,this.sceneResult!,this.scene);return this.canvas;
   }
 
   dispose(){const gl=this.gl;if(gl){if(this.sourceTex)gl.deleteTexture(this.sourceTex);if(this.maskTex)gl.deleteTexture(this.maskTex);if(this.baseTex)gl.deleteTexture(this.baseTex);if(this.layerTex)gl.deleteTexture(this.layerTex);this.softTextures.forEach(t=>gl.deleteTexture(t));if(this.softSeed)gl.deleteProgram(this.softSeed);if(this.softBlur)gl.deleteProgram(this.softBlur);if(this.framebuffer)gl.deleteFramebuffer(this.framebuffer);if(this.composite)gl.deleteProgram(this.composite);if(this.quad)gl.deleteBuffer(this.quad);if(this.program)gl.deleteProgram(this.program);}
-    if(gl){disposeFxScene(gl);if(this.haloPhoto)gl.deleteTexture(this.haloPhoto);if(this.haloMask)gl.deleteTexture(this.haloMask);if(this.haloSeed)gl.deleteProgram(this.haloSeed);if(this.sceneResult)gl.deleteTexture(this.sceneResult);if(this.noiseTex)gl.deleteTexture(this.noiseTex);if(this.simple)gl.deleteProgram(this.simple);}if(gl&&this.leak)gl.deleteProgram(this.leak);gl?.getExtension('WEBGL_lose_context')?.loseContext();this.canvas.width=this.canvas.height=this.sample.width=this.sample.height=1;this.alpha=this.blurred=this.scratch=new Uint8ClampedArray(0);this.softSource=undefined;this.key='';this.haloMaskKey='';this.haloPhotoKey='';}
+    if(gl){disposeFxScene(gl);if(this.haloPhoto)gl.deleteTexture(this.haloPhoto);if(this.haloMask)gl.deleteTexture(this.haloMask);if(this.haloSeed)gl.deleteProgram(this.haloSeed);if(this.sceneResult)gl.deleteTexture(this.sceneResult);if(this.noiseTex)gl.deleteTexture(this.noiseTex);if(this.simple)gl.deleteProgram(this.simple);}if(gl&&this.leak)gl.deleteProgram(this.leak);if(gl){if(this.downProgram)gl.deleteProgram(this.downProgram);if(this.softSeedGpu)gl.deleteProgram(this.softSeedGpu);this.hist?.dispose();this.histProgs.forEach(pr=>{if(pr)gl.deleteProgram(pr);});}this.hist=undefined;this.downProgram=undefined;this.histProgs.clear();this.dims='';this.sampleSize='';gl?.getExtension('WEBGL_lose_context')?.loseContext();this.canvas.width=this.canvas.height=this.sample.width=this.sample.height=1;this.alpha=this.blurred=this.scratch=new Uint8ClampedArray(0);this.softSource=undefined;this.key='';this.haloMaskKey='';this.haloPhotoKey='';}
 }

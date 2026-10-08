@@ -34,6 +34,7 @@ import {LOWFI_LUT_GLSL,bindLowfiLut,warmLowfiLut} from './lowfiLut';
 import {LowfiHaloMask,LOWFI_HALO_SEED,LOWFI_HALO_BLUR} from './lowfiHalo';
 import {uniformLocation} from './uniformLocation';
 import {FX_COLOUR_SHADER,colourAtlas,type FxColourInput} from './fxColourInput';
+import {surfaceGl,type GpuImage} from './fxSurfaceGl';
 import {GpuHighlightHistogram} from './gpuHighlightHistogram';
 
 /* ---------- 共用工具（著色器端） ---------- */
@@ -778,8 +779,7 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
       canvas.addEventListener('webglcontextlost',e=>e.preventDefault());
       canvas.addEventListener('webglcontextrestored',()=>{const old=surface?surfaces.get(surface):ctxCache;if(old?.canvas!==canvas)return;disposeFxScene(old.gl);if(surface)surfaces.delete(surface);else{ctxCache=null;ctxFailed=false;}});
     }
-    const gl = (canvas.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true })
-      || canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
+    const gl = surfaceGl(canvas);
     if (!gl) { if(!surface)ctxFailed = true; return null; }
     const quad = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
@@ -902,16 +902,21 @@ function getPool(c: Ctx, w: number, h: number): Pool {
  * Canvas2D and WebGL layers can rasterize a fractional CSS origin differently
  * on WebKit; toggling between them must not change the photograph's framing.
  * This is a full-resolution identity pass, not a reduced-quality proxy. */
-export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,surface:HTMLCanvasElement,sourceCanvas?:HTMLCanvasElement):boolean{
+export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,surface:HTMLCanvasElement,sourceCanvas?:HTMLCanvasElement|GpuImage):boolean{
  const c=getCtx(surface);if(!c||c.gl.isContextLost()||w>c.maxTex||h>c.maxTex||w<2||h<2)return false;
  const {gl}=c;
  try{
   if(surface.width!==w)surface.width=w;if(surface.height!==h)surface.height=h;
   const program=compile(c,'__present_source','precision highp float;varying vec2 vUv;uniform sampler2D uTex;void main(){gl_FragColor=texture2D(uTex,vUv);}');
   if(!program)return false;
-  const source=c.pool?.w===w&&c.pool?.h===h?c.pool.src:(c.plainTex ||= makeTex(gl,w,h));
-  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,source);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,sourceCanvas||ctx.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
+  if(sourceCanvas&&'texture' in sourceCanvas){
+   // Already a texture in this context (the colour stage's result): draw it.
+   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,sourceCanvas.texture);
+  }else{
+   const source=c.pool?.w===w&&c.pool?.h===h?c.pool.src:(c.plainTex ||= makeTex(gl,w,h));
+   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,source);
+   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,(sourceCanvas as HTMLCanvasElement|undefined)||ctx.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
+  }
   c.uploadKey=undefined; // A later effect must not reuse a source-key from an earlier render.
   c.renderedKey=undefined;
   c.photoResult=undefined;
@@ -958,7 +963,7 @@ export function applyGlEffects(
   colour?:FxColourInput,
   /** Read the photo from this canvas instead of ctx2d.canvas (e.g. the colour
    *  GPU's own canvas during a drag), with its luminance histogram if known. */
-  sourceOverride?:{canvas:HTMLCanvasElement;bins?:Float64Array|null},
+  sourceOverride?:{canvas?:HTMLCanvasElement;image?:GpuImage;bins?:Float64Array|null},
 ): HTMLCanvasElement | undefined {
   const active = FX_DEFS.filter(d => fxActive(params, d));
   if (!active.length || w < 2 || h < 2) return;
@@ -996,7 +1001,14 @@ export function applyGlEffects(
   const auditStart=import.meta.env.DEV?performance.now():0;
   let spillSelection:{cutoff:number;tie:number}|undefined;
   let spillSelectionTexture:WebGLTexture|null=null;
-  if(!colour&&active.some(d=>d.id==='fxExposureSpill')){
+  const image=sourceOverride?.image;
+  const spillOn=active.some(d=>d.id==='fxExposureSpill');
+  /* The highlight percentile is computed on the GPU from the very texture the
+     effect reads (exact, every pixel), whatever the photo came from. Nothing
+     is read back, and a drag and its release select the same highlights. */
+  if(spillOn&&c.gpuHistogram===undefined)c.gpuHistogram=GpuHighlightHistogram.create(gl);
+  const gpuSpill=spillOn&&!!c.gpuHistogram;
+  if(!colour&&spillOn&&!gpuSpill&&!image){
     // Cached once per underlying photograph/color result. Range dragging
     // only queries 256 bins; it never reads back or analyzes the GPU image.
     if(!uploadKey||c.highlightKey!==uploadKey||!c.highlightBins){
@@ -1015,7 +1027,8 @@ export function applyGlEffects(
     spillSelection=selectHighlights(c.highlightBins,params.fxSpillRange??20);
   }
   const rawUploadKey=colour?`${w}x${h}|${colour.sourceKey}`:uploadKey;
-  if(!rawUploadKey || c.uploadKey!==rawUploadKey){
+  if(image){srcTex=image.texture;c.uploadKey=undefined;}
+  else if(!rawUploadKey || c.uploadKey!==rawUploadKey){
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D, srcTex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceOverride?.canvas||ctx2d.canvas);
@@ -1071,23 +1084,22 @@ export function applyGlEffects(
         gl.uniform1i(uniformLocation(gl,p,name),unit);
       }
       gl.uniform1f(uniformLocation(gl,p,'uMix'),colour.amount);drawTo(c.colour.target);srcTex=c.colour.target;
-      if(active.some(d=>d.id==='fxExposureSpill')){
-        const histogramStart=import.meta.env.DEV?performance.now():0;
-        if(c.gpuHistogram===undefined)c.gpuHistogram=GpuHighlightHistogram.create(gl);
-        if(c.gpuHistogram)spillSelectionTexture=c.gpuHistogram.prepare(srcTex,w,h,uploadKey,params.fxSpillRange??20,c.quad,(key,fs)=>compile(c,key,fs));
-        gl.bindBuffer(gl.ARRAY_BUFFER,c.quad);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.viewport(0,0,w,h);
-        if(!spillSelectionTexture){
-          if(!uploadKey||c.highlightKey!==uploadKey||!c.highlightBins){
-            gl.bindFramebuffer(gl.FRAMEBUFFER,fb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,srcTex,0);
-            if(c.highlightPixels?.length!==w*h*4)c.highlightPixels=new Uint8Array(w*h*4);
-            gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,c.highlightPixels);c.highlightBins=highlightHistogram(c.highlightPixels);
-            c.highlightKey=uploadKey;
-          }
-          spillSelection=selectHighlights(c.highlightBins,params.fxSpillRange??20);
-        }
-        if(import.meta.env.DEV)auditHistogram=performance.now()-histogramStart;
-      }
     }
+    if(spillOn&&(gpuSpill||colour||(image&&!sourceOverride?.bins))){
+      const histogramStart=import.meta.env.DEV?performance.now():0;
+      if(c.gpuHistogram)spillSelectionTexture=c.gpuHistogram.prepare(srcTex,w,h,uploadKey,params.fxSpillRange??20,c.quad,(key,fs)=>compile(c,key,fs));
+      gl.bindBuffer(gl.ARRAY_BUFFER,c.quad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.viewport(0,0,w,h);
+      if(!spillSelectionTexture){
+        if(!uploadKey||c.highlightKey!==uploadKey||!c.highlightBins){
+          gl.bindFramebuffer(gl.FRAMEBUFFER,fb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,srcTex,0);
+          if(c.highlightPixels?.length!==w*h*4)c.highlightPixels=new Uint8Array(w*h*4);
+          gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,c.highlightPixels);c.highlightBins=highlightHistogram(c.highlightPixels);
+          c.highlightKey=uploadKey;
+        }
+        spillSelection=selectHighlights(c.highlightBins,params.fxSpillRange??20);
+      }
+      if(import.meta.env.DEV)auditHistogram=performance.now()-histogramStart;
+    }else if(spillOn&&image&&sourceOverride?.bins)spillSelection=selectHighlights(sourceOverride.bins,params.fxSpillRange??20);
     let gpuHalo=false;
     if(scene&&!auditReference&&active.some(d=>d.id==='fxLowfi')){
       c.lowfiHalo ||= new LowfiHaloMask();

@@ -6,6 +6,7 @@ import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
 import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from '../utils/lutAtlasRepair.js';
 import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
+import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from '../utils/fxSurfaceGl';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, presentFxSource, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import {warmLowfiLut} from '../utils/lowfiLut';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
@@ -2514,11 +2515,35 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       GPU's own canvas, with no copy into a 2D canvas. */
   const gpuFinal = (p: EditorParams, film: Uint8ClampedArray | null, filmSize: number, filmKey: string, srcKey: string, b: { source: Uint8ClampedArray | null; w: number; h: number }): HTMLCanvasElement | null => {
     const g = getGpu();
-    if (!g || !b.source || !g.fits(b.w, b.h)) return null;
+    return g && gpuColourOn(g, gpuSrcKeyRef, p, film, filmSize, filmKey, srcKey, b) ? g.draw() : null;
+  };
+  /* The colour stage inside the on-screen effect surface's own WebGL2
+     context. Its result is a texture there, which the effects (GLSL effects,
+     soft light, halation, leak) read directly: no full-resolution copy of the
+     photo from one GPU context to another on each slider step, and no
+     readback. Same shader and inputs as getGpu(), so the same 8-bit pixels. */
+  const surfaceGpuRef = useRef<LutGpu | null | undefined>(undefined);
+  const surfaceSrcKeyRef = useRef('');
+  const getSurfaceGpu = (): LutGpu | null => {
+    const surface = fxSurfaceRef.current;
+    if (!surface) return null;
+    if (surfaceGpuRef.current === undefined) {
+      try { const gl = surfaceGl(surface); surfaceGpuRef.current = isWebgl2(gl) ? LutGpu.createOn(gl) : null; } catch { surfaceGpuRef.current = null; }
+    }
+    const g = surfaceGpuRef.current;
+    if (g && (g.lost || g.canvas !== surface)) { surfaceGpuRef.current = undefined; surfaceSrcKeyRef.current = ''; return null; }
+    return g || null;
+  };
+  const gpuFinalImage = (p: EditorParams, film: Uint8ClampedArray | null, filmSize: number, filmKey: string, srcKey: string, b: { source: Uint8ClampedArray | null; w: number; h: number }): GpuImage | null => {
+    const g = getSurfaceGpu();
+    return g && gpuColourOn(g, surfaceSrcKeyRef, p, film, filmSize, filmKey, srcKey, b) ? g.drawImage() : null;
+  };
+  const gpuColourOn = (g: LutGpu, srcKeyRef: React.MutableRefObject<string>, p: EditorParams, film: Uint8ClampedArray | null, filmSize: number, filmKey: string, srcKey: string, b: { source: Uint8ClampedArray | null; w: number; h: number }): boolean => {
+    if (!b.source || !g.fits(b.w, b.h)) return false;
     try {
-      if (gpuSrcKeyRef.current !== srcKey) { if (!g.setSource(b.source, b.w, b.h)) return null; gpuSrcKeyRef.current = srcKey; }
+      if (srcKeyRef.current !== srcKey) { if (!g.setSource(b.source, b.w, b.h)) return false; srcKeyRef.current = srcKey; }
       const front = gpuFrontFor(p);
-      if (!film || !p.lutAmount) { if (!g.setFront(front, false)) return null; }
+      if (!film || !p.lutAmount) { if (!g.setFront(front, false)) return false; }
       else {
         const key = `film|65|100|${filmKey}`;
         let tex = bakeCacheRef.current.get(key);
@@ -2527,12 +2552,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           tex = bakedToTexture(bakeColorLut((bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, pFilm, film, filmSize, IDENTITY_BASE_LUT, null, false, IDENTITY_CURVE_LUTS), 65));
           bakeCacheRef.current.set(key, tex);
         }
-        if (!g.setLut(tex, 65)) return null;
-        if (!g.setFront(front, true, p.lutAmount / 100)) return null;
+        if (!g.setLut(tex, 65)) return false;
+        if (!g.setFront(front, true, p.lutAmount / 100)) return false;
       }
-      return g.draw();
-    } catch { return null; }
+      return true;
+    } catch { return false; }
   };
+  useEffect(() => () => { surfaceGpuRef.current?.dispose(); surfaceGpuRef.current = null; }, []);
   // After a drag rendered through the direct GPU path, run one normal render.
   useEffect(() => { if (!isInteracting && displayStaleRef.current) isDirtyRef.current = true; }, [isInteracting]);
   const pixelBufferCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -4673,7 +4699,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (isInteracting && !isFastBlendActive && fxSurfaceRef.current && b.source && !pRender.sharpen && !pRender.colorNoise2 && !uses2dEffects(pRender)) {
         const srcKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
         const spill = !!pRender.fxExposureSpill;
-        const out = gpuFinal(pRender, activeLut ? activeLut.data : null, lutSize, activeLut ? `${lut.id}#${lutSize}` : '', srcKey, b);
+        const filmKey = activeLut ? `${lut.id}#${lutSize}` : '';
+        /* Colour stage in the surface's own context: the effects read its
+           texture, nothing crosses between GPU contexts, nothing is read
+           back. (Lo-fi's halo still reads a canvas: that one uses the path
+           below.) */
+        const image = !(pRender as any).fxLowfi ? gpuFinalImage(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b) : null;
+        if (image) {
+            const surface = fxSurfaceRef.current;
+            const imageKey = `${srcKey}|${colourKeyOf(pRender)}|${activeLut ? pRender.lutAmount : 0}|${filmKey}`;
+            const shown = hasActiveFx(pRender)
+                ? !!applyGlEffects(ctx, b.w, b.h, pRender, imageKey, surface, false, undefined, undefined, { image })
+                : presentFxSource(ctx, b.w, b.h, surface, image);
+            if (shown) { showFxSurface(true); displayStaleRef.current = true; cvs.style.filter = 'none'; return; }
+        }
+        const out = gpuFinal(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b);
         if (out) {
             const bins = spill ? (() => { const sm = getGpu()?.readSmall(); if (!sm) return null; const d = new Uint8ClampedArray(sm.data); for (let i = 3; i < d.length; i += 4) d[i] = 255; return highlightHistogram(d); })() : null;
             const surface = fxSurfaceRef.current;
@@ -4688,7 +4728,31 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        then the effects run as usual. */
     if (isInteracting && !isFastBlendActive && b.source && !pRender.sharpen && !pRender.colorNoise2 && uses2dEffects(pRender)) {
         const srcKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
-        const out = gpuFinal(pRender, activeLut ? activeLut.data : null, lutSize, activeLut ? `${lut.id}#${lutSize}` : '', srcKey, b);
+        const filmKey = activeLut ? `${lut.id}#${lutSize}` : '';
+        /* Only soft light, halation or light leak on: its GPU layer presents
+           on the effect surface. With the colour stage in that same context
+           it takes the colour result as a texture — no copy, no readback. */
+        const p0 = pRender, others = !!(p0.grain || p0.colorNoise || p0.blur || p0.vignette || p0.maskCreated) || hasActiveFx(p0);
+        const single = others ? null : [p0.soft > 0 && 'soft', p0.fringeIntensity > 0 && 'halation', p0.leakOpacity > 0 && 'leak'].filter(Boolean);
+        if (single && single.length === 1 && fxSurfaceRef.current) {
+            const image = gpuFinalImage(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b);
+            if (image) {
+                const kind = single[0] as 'soft' | 'halation' | 'leak', surface = fxSurfaceRef.current;
+                const layer = kind === 'soft' ? (softPresentRef.current ||= new HalationLayer(surface))
+                    : kind === 'halation' ? (halationPresentRef.current ||= new HalationLayer(surface))
+                    : (leakPresentRef.current ||= new HalationLayer(surface));
+                const key = legacyInputKey(p0, b.w, b.h, kind);
+                layer.sourceImage = image;
+                let painted: HTMLCanvasElement | null = null;
+                try {
+                    painted = kind === 'soft' ? layer.renderSoft(ctx, b.w, b.h, key, p0, hslToRgb(p0.softColor / 100, 1, .5), null)
+                        : kind === 'halation' ? layer.render(ctx, b.w, b.h, key, p0, hslToRgb(p0.fringeHue / 360, .8, .35))
+                        : layer.renderLeak(ctx, b.w, b.h, key, p0, hslToRgb(p0.leakHue / 360, 1, .5));
+                } finally { layer.sourceImage = null; }
+                if (painted) { legacyPreviewRef.current = { kind, key }; showFxSurface(true); displayStaleRef.current = true; cvs.style.filter = 'none'; return; }
+            }
+        }
+        const out = gpuFinal(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b);
         if (out) {
             if (pRender.soft > 0 || pRender.fxExposureSpill) {
                 const sm = getGpu()?.readSmall();
@@ -4698,11 +4762,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     colourBinsRef.current = { key: `${colourKeyOf(pRender)}|${a}`, bins: highlightHistogram(d) };
                 }
             }
-            /* Only soft light, halation or light leak on: its GPU layer reads the
-               colour canvas itself and presents on the GPU surface — the 2D
-               canvas is not touched at all. */
-            const p0 = pRender, others = !!(p0.grain || p0.colorNoise || p0.blur || p0.vignette || p0.maskCreated) || hasActiveFx(p0);
-            const single = others ? null : [p0.soft > 0 && 'soft', p0.fringeIntensity > 0 && 'halation', p0.leakOpacity > 0 && 'leak'].filter(Boolean);
+            /* Fallback when the surface has no WebGL2 colour stage: the layer
+               reads the colour GPU's canvas and presents on the GPU surface —
+               the 2D canvas is not touched at all. */
             if (single && single.length === 1 && fxSurfaceRef.current) {
                 const kind = single[0] as 'soft' | 'halation' | 'leak', surface = fxSurfaceRef.current;
                 const layer = kind === 'soft' ? (softPresentRef.current ||= new HalationLayer(surface))
@@ -6802,7 +6864,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     style={{ objectFit: 'fill' }}
                     className="absolute inset-0 w-full h-full pointer-events-auto rounded-sm"
                 />
-                <canvas ref={fxSurfaceRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
+                <canvas ref={el=>{(fxSurfaceRef as React.MutableRefObject<HTMLCanvasElement|null>).current=el;if(el)preferWebgl2(el);}} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
 
                 {/* 換過去了但還在算的時候，壓暗＋轉圈，別讓人以為沒反應。
                     只留轉圈 —— 「渲染中」三個字反而讓人覺得等很久。 */}

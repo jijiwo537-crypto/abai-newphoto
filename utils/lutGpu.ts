@@ -221,6 +221,21 @@ export class LutGpu {
       antialias: false, depth: false, stencil: false,
     }) as WebGL2RenderingContext | null;
     if (!gl) return null;
+    return LutGpu.build(canvas, gl, false);
+  }
+
+  /**
+   * A colour stage inside another WebGL2 context (an on-screen effect
+   * surface). It renders into its own texture there — see drawImage() —
+   * which the effects of that context read directly: the photo never has to
+   * be copied between GPU contexts. The surface's own drawing is untouched.
+   */
+  static createOn(gl: WebGL2RenderingContext): LutGpu | null {
+    if (!(gl.canvas instanceof HTMLCanvasElement)) return null;
+    return LutGpu.build(gl.canvas, gl, true);
+  }
+
+  private static build(canvas: HTMLCanvasElement, gl: WebGL2RenderingContext, shared: boolean): LutGpu | null {
 
     /* 軟體模擬的 GL 要擋掉。
        某些桌機瀏覽器、虛擬機、無障礙模式底下拿到的 WebGL 其實是 CPU 在算的
@@ -274,7 +289,10 @@ export class LutGpu {
     gl.uniform1i(gl.getUniformLocation(prog, 'uLut'), 1);
 
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    return new LutGpu(canvas, gl, prog, imgTex, lutTex);
+    const g = new LutGpu(canvas, gl, prog, imgTex, lutTex);
+    g.quad = buf; g.shared = shared;
+    if (shared) g.unpackDefaults();
+    return g;
   }
 
   /** 這張圖的尺寸這台裝置吃得下嗎（吃不下就讓呼叫端走 CPU） */
@@ -287,11 +305,13 @@ export class LutGpu {
   setSource(data: Uint8ClampedArray, w: number, h: number): boolean {
     if (this.lost || !this.fits(w, h)) return false;
     const gl = this.gl;
+    if (this.shared) this.unpackDefaults();
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.imgTex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE,
       new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
     this.srcW = w; this.srcH = h;
+    if (this.shared) return true;
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w; this.canvas.height = h;
     }
@@ -302,6 +322,7 @@ export class LutGpu {
   setLut(tex: Uint8Array, size: number, immutable=false): boolean {
     if (this.lost) return false;
     const gl = this.gl;
+    if (this.shared) this.unpackDefaults();
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
     if (size !== this.lutSize) {
@@ -328,6 +349,7 @@ export class LutGpu {
     vib?: number; hsl?: { h: Float32Array; s: Float32Array; l: Float32Array } | null } | null, back = true, filmMix = 1): boolean {
     if (this.lost) return false;
     const gl = this.gl;
+    if (this.shared) this.unpackDefaults();
     gl.useProgram(this.prog);
     this.frontOn = !!f; this.backOn = !f || back;
     gl.uniform1i(this.u('uFront'), f ? 1 : 0);
@@ -386,6 +408,51 @@ export class LutGpu {
     return this.canvas;
   }
 
+  private quad: WebGLBuffer | null = null;
+  private shared = false;
+  private outTex: WebGLTexture | null = null;
+  private outFbo: WebGLFramebuffer | null = null;
+  private outSize = '';
+  /** Other users of a shared context may leave these set; uploads of typed
+      arrays here assume tightly packed, unflipped, unpremultiplied rows. */
+  private unpackDefaults() {
+    const gl = this.gl;
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  }
+  /**
+   * Shared mode: draw the colour result into this stage's own texture of the
+   * shared context and return it (rows bottom-up, like a canvas uploaded with
+   * UNPACK_FLIP_Y_WEBGL). Same shader, inputs and 8-bit output as draw().
+   * All state it relies on is bound here, since the context is shared.
+   */
+  drawImage(): { texture: WebGLTexture; w: number; h: number } | null {
+    if (!this.shared || this.lost || !this.srcW || (!this.lutSize && !(this.frontOn && !this.backOn))) return null;
+    const gl = this.gl, w = this.srcW, h = this.srcH;
+    if (!this.outTex) { this.outTex = gl.createTexture(); this.outFbo = gl.createFramebuffer(); }
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.outTex);
+    if (this.outSize !== `${w}x${h}`) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      // Read at texel centres only, by every consumer.
+      for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+      this.outSize = `${w}x${h}`;
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.outFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.outTex, 0);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.imgTex);
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_3D, this.plainTex);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.toneTex);
+    gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.curveTex);
+    gl.bindVertexArray(null);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST);
+    gl.viewport(0, 0, w, h); gl.useProgram(this.prog);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { texture: this.outTex!, w, h };
+  }
+
   /** The current colour result at ≤maxSide px (RGBA, rows bottom-up), read
    *  from a tiny framebuffer. Only this small draw is waited for — not the
    *  2D canvas pipeline — so it is cheap enough to do per slider step. */
@@ -427,6 +494,14 @@ export class LutGpu {
   }
 
   dispose() {
+    if (this.shared) {
+      // The context belongs to the surface; release only this stage's storage.
+      const gl = this.gl;
+      for (const t of [this.imgTex, this.lutTex, this.plainTex, this.toneTex, this.curveTex, this.outTex, this.smallTex]) if (t) gl.deleteTexture(t);
+      if (this.outFbo) gl.deleteFramebuffer(this.outFbo); if (this.smallFbo) gl.deleteFramebuffer(this.smallFbo);
+      if (this.quad) gl.deleteBuffer(this.quad); gl.deleteProgram(this.prog);
+      this.lost = true; return;
+    }
     const ext = this.gl.getExtension('WEBGL_lose_context');
     ext?.loseContext();
   }
