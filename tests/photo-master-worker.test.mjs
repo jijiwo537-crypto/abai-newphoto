@@ -1,6 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import ts from 'typescript';import{createHash}from'node:crypto';
 const source=fs.readFileSync('utils/photoPixelCore.ts','utf8');
-const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
+// The tone math lives in its own module; inline it so the data: URL import is self-contained.
+const inlined=source.replace(/^import \{[^}]*\} from '\.\/photoToneMath';$/m,fs.readFileSync('utils/photoToneMath.ts','utf8'));
+const js=ts.transpileModule(inlined,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
 const core=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
 test('resident film strength matches every original full precision master without rebaking',()=>{
  const identity=[{x:0,y:0},{x:255,y:255}];
@@ -14,7 +16,7 @@ test('resident film strength matches every original full precision master withou
  }
 });
 test('worker extraction preserves the original pixel function byte for byte',()=>{
- assert.equal(createHash('sha256').update(source.slice(source.indexOf('export const processPixels =')).trim()).digest('hex'),'4069c42ee40bb26d6e62a522b677dd691504aea14dde99637b36090d8b5cd7c5');
+ assert.equal(createHash('sha256').update(source.slice(source.indexOf('export const processPixels =')).trim()).digest('hex'),'f643677d5c42795d7fbfbf4acbae60113249fad9385f84be8eaa618382d1fcfa');
 });
 test('full-precision master tetrahedra preserve the standard pixel pipeline',()=>{
  core.setPixelDither(new Float32Array(4096));

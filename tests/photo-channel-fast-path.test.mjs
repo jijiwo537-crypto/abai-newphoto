@@ -5,7 +5,7 @@ const pre=`const masterLUT_R=new Float32Array(32768),masterLUT_G=new Float32Arra
 const ditherTable=Float32Array.from({length:4096},(_,i)=>((i*71%1024)/1024-.5)*.75);
 const DEFAULT_HSL=Array.from({length:8},()=>({h:0,s:0,l:0}));const HSL_CENTERS=Float32Array.from([0,30,60,120,180,240,270,300]);
 const HSL_MAX_HUE_SHIFT=15,HSL_MAX_SAT=.5,HSL_MAX_LUM=.1;const isHslIdentity=x=>!x||x.every(b=>b.h===0&&b.s===0&&b.l===0);
-`;
+`+fs.readFileSync('utils/photoToneMath.ts','utf8').replace(/^export /gm,'')+'\n';
 const load=async code=>{const js=ts.transpileModule(pre+code,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;return (await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'))).processPixels;};
 const fast=await load(fn),reference=await load(fn.replace(/  \/\/ With independent channel corrections[\s\S]*?(?=  \/\/ Split into explicit loops)/,''));
 test('full-resolution channel fast path is byte-identical to existing tetrahedral pipeline',()=>{

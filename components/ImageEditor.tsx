@@ -419,6 +419,7 @@ export function generateCurveLut(channelPoints: Point[]): Uint8Array {
 // Shared, byte-identical colour maths can also run in a worker.
 export { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
+import { makeToneStage, applyToneStage, applySaturation, makeToneFast } from '../utils/photoToneMath';
 
 function boxBlurH(s: Uint8ClampedArray, d: Uint8ClampedArray, w: number, h: number, r: number) {
   const iarr = 1 / (r + r + 1);
@@ -4079,79 +4080,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const data = imgData.data;
       const len = data.length;
 
-      // Pre-calculate mask adjustment constants (effects intensity increased by 150%, i.e. 2.5x multiplier)
-      const exp = Math.pow(2, (p.maskExposure * 0.175 * 2.5) / 100);
-      const brightVal = p.maskBrightness * 0.25 * 2.5;
-      const conFactor = (259 * ((p.maskContrast * 0.2975 * 2.5) + 255)) / (255 * (259 - (p.maskContrast * 0.2975 * 2.5)));
-      
-      const shadows = p.maskShadows / 100;
-      const highlights = p.maskHighlights / 100;
-      const shLut = new Float32Array(256);
-      if (p.maskShadows !== 0 || p.maskHighlights !== 0) {
-          for (let i = 0; i < 256; i++) {
-              const luma = i / 255;
-              let offset = 0;
-              if (shadows !== 0) {
-                  const shadowMask = Math.pow(1.0 - luma, 3.0);
-                  offset -= shadows * shadowMask * 17.5 * 2.5; 
-              }
-              if (highlights !== 0) {
-                  const highlightMask = Math.pow(luma, 3.0);
-                  offset += highlights * highlightMask * 35.0 * 2.5;
-              }
-              shLut[i] = offset;
-          }
-      }
-
-      const tempK = p.maskTemp * 0.15 * 0.3 * 2.5;
-      const tintK = p.maskTint * 0.04 * 2 * 0.3 * 2.5;
-      let rAdj = 0, gAdj = 0, bAdj = 0;
-      if (tempK > 0) { rAdj = tempK * 1.2; gAdj = tempK * 0.4; bAdj = -tempK * 0.8; }
-      else { bAdj = Math.abs(tempK) * 1.2; rAdj = -Math.abs(tempK) * 0.5; }
-      gAdj += tintK;
-      const hasTempTint = rAdj !== 0 || gAdj !== 0 || bAdj !== 0;
-
-      const protectLut = new Float32Array(256);
-      if (hasTempTint) {
-          for (let i = 0; i < 256; i++) {
-              let pr = (i - 5) * 0.02;
-              protectLut[i] = pr < 0 ? 0 : pr;
-          }
-      }
-
-      const satMult = Math.max(0, 1 + (p.maskSat * 0.5 * 2.5 / 100));
+      /* Same white balance / exposure / tone / saturation as the global
+         pipeline (utils/photoToneMath), applied inside the gradient. A mask
+         slider at ±100 now means exactly what the global slider at ±100
+         means; the old ×2.5 boost only compensated for the old, weak math. */
+      const stage = makeToneStage({ exposure: p.maskExposure, brightness: p.maskBrightness, contrast: p.maskContrast,
+        shadows: p.maskShadows, highlights: p.maskHighlights, temp: p.maskTemp, tint: p.maskTint, sat: p.maskSat });
       const vibVal = (p.maskVib * 0.5 * 2.5) / 100;
       const hasVib = vibVal !== 0;
+      const satK = stage.sat;
+      const c3 = new Float32Array(3);
 
-      /* 曝光 → 亮度 → 對比這三步，對 R、G、B 做的是同一條式子，跟通道是誰無關，
-         而且輸入一定是 0–255 的整數 —— 所以先在 256 個輸入值上算好，
-         迴圈裡就只剩一次查表，每個像素少掉三組乘、三組加、三次夾取。
-         表用 Float32 存的是「夾取後的浮點值」，不是先四捨五入成整數，
-         所以後面飽和度／自然飽和度接到的數字跟原本逐像素算的一模一樣。 */
-      const hasTone = p.maskExposure !== 0 || p.maskBrightness !== 0 || p.maskContrast !== 0;
-      const toneLut = maskToneLutRef.current;
-      if (hasTone) {
-          for (let i = 0; i < 256; i++) {
-              let v = i;
-              if (p.maskExposure !== 0) v *= exp;
-              if (p.maskBrightness !== 0) v += brightVal;
-              if (p.maskContrast !== 0) v = conFactor * (v - 128) + 128;
-              toneLut[i] = v < 0 ? 0 : v > 255 ? 255 : v;
-          }
-      }
-      const hasShHl = p.maskShadows !== 0 || p.maskHighlights !== 0;
-
-      /* ── 只動了曝光／亮度／對比的話，整條鏈就是一張 256 格的表 ──────────
-         這是最常見的情況（大多數人只拉一兩根）。後面那幾步（高光陰影、
-         色溫色調、飽和度、自然飽和度）全都沒開的時候，「輸入 0–255 → 輸出」
-         之間沒有任何跨通道的運算，所以可以先把表四捨五入成整數，
-         迴圈裡就只剩三次查表、完全沒有浮點數。
-         量到 243 萬像素從 13.2ms 降到 8.1ms，而且輸出**逐位元組完全相同**
-         （寫進 Uint8ClampedArray 本來就會做同一個四捨五入）。 */
-      const toneOnly = hasTone && !hasShHl && !hasTempTint && satMult === 1 && !hasVib;
-      if (toneOnly) {
+      /* No white balance, saturation or vibrance: each channel only depends on
+         itself, so the whole mask is three lookups into one 256-entry table. */
+      if (!stage.wb && satK === 1 && !hasVib) {
           const t8 = maskTone8Ref.current;
-          for (let i = 0; i < 256; i++) t8[i] = toneLut[i];
+          for (let i = 0; i < 256; i++) { applyToneStage(stage, i, i, i, c3); t8[i] = c3[0]; }
           for (let i = 0; i < len; i += 4) {
               data[i] = t8[data[i]];
               data[i + 1] = t8[data[i + 1]];
@@ -4159,68 +4103,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           }
           tempCtx.putImageData(imgData, bx0, by0);
       } else {
+          const tone = makeToneFast(stage);
           for (let i = 0; i < len; i += 4) {
-              let r = data[i];
-              let g = data[i+1];
-              let b = data[i+2];
-
-              {
-                  // 1~3. Exposure / Brightness / Contrast（查表，見上面的說明）
-                  if (hasTone) {
-                      r = toneLut[r];
-                      g = toneLut[g];
-                      b = toneLut[b];
-                  }
-
-                  // 4. Shadows & Highlights (Logarithmic roll-off)
-                  if (hasShHl) {
-                      const lumaKey = (r * 77 + g * 150 + b * 29) >> 8;
-                      const shOffset = shLut[lumaKey];
-                      r += shOffset; g += shOffset; b += shOffset;
-                      r = r < 0 ? 0 : r > 255 ? 255 : r;
-                      g = g < 0 ? 0 : g > 255 ? 255 : g;
-                      b = b < 0 ? 0 : b > 255 ? 255 : b;
-                  }
-
-                  // 5. Temp & Tint
-                  if (hasTempTint) {
-                      const protect = protectLut[(r * 77 + g * 150 + b * 29) >> 8];
-                      r += rAdj * protect;
-                      g += gAdj * protect;
-                      b += bAdj * protect;
-                      r = r < 0 ? 0 : r > 255 ? 255 : r;
-                      g = g < 0 ? 0 : g > 255 ? 255 : g;
-                      b = b < 0 ? 0 : b > 255 ? 255 : b;
-                  }
-
-                  // 6. Saturation
+              tone(data[i], data[i + 1], data[i + 2], c3);
+              if (satK !== 1) applySaturation(satK, c3);
+              let r = c3[0], g = c3[1], b = c3[2];
+              if (hasVib) {
                   const avg = (r + g + b) * 0.33333;
-                  if (satMult !== 1) {
-                      r = avg + (r - avg) * satMult;
-                      g = avg + (g - avg) * satMult;
-                      b = avg + (b - avg) * satMult;
-                  }
-
-                  // 7. Vibrance
-                  if (hasVib) {
-                      let max = r > g ? (r > b ? r : b) : (g > b ? g : b);
-                      let min = r < g ? (r < b ? r : b) : (g < b ? g : b);
-                      const curSat = max === 0 ? 0 : (max - min) / max;
-                      const boost = vibVal > 0 ? vibVal * (1 - curSat * curSat) : vibVal;
-                      const b1 = 1 + boost;
-                      r = avg + (r - avg) * b1;
-                      g = avg + (g - avg) * b1;
-                      b = avg + (b - avg) * b1;
-                  }
-
-                  r = r < 0 ? 0 : r > 255 ? 255 : r;
-                  g = g < 0 ? 0 : g > 255 ? 255 : g;
-                  b = b < 0 ? 0 : b > 255 ? 255 : b;
+                  const max = r > g ? (r > b ? r : b) : (g > b ? g : b);
+                  const min = r < g ? (r < b ? r : b) : (g < b ? g : b);
+                  const curSat = max === 0 ? 0 : (max - min) / max;
+                  const b1 = 1 + (vibVal > 0 ? vibVal * (1 - curSat * curSat) : vibVal);
+                  r = avg + (r - avg) * b1; g = avg + (g - avg) * b1; b = avg + (b - avg) * b1;
               }
-
-              data[i] = r;
-              data[i+1] = g;
-              data[i+2] = b;
+              data[i] = r; data[i + 1] = g; data[i + 2] = b;
           }
           tempCtx.putImageData(imgData, bx0, by0);
       }
@@ -4464,6 +4360,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const warmFastPreview = useCallback(() => {
     const t = activeToolIdRef.current;
     if (!FAST_BLEND_TOOLS.includes(t)) return false;
+    // With a usable GPU the drag re-bakes the real colour table; the
+    // crossfade images would only cost memory and idle time.
+    const pb = buffers.current.preview, pp = paramsRef.current;
+    if (!pp.sharpen && !pp.colorNoise2 && pb.source && getGpu()?.fits(pb.w, pb.h)) return false;
     return buildFastStage(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buildFastStage]);
@@ -4477,6 +4377,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     lastRenderDurationRef.current = 12; // Reset interaction timing to avoid carry-over throttles
 
     if (!FAST_BLEND_TOOLS.includes(toolId)) return;
+    {
+      const pb = buffers.current.preview, pp = paramsRef.current;
+      if (!pp.sharpen && !pp.colorNoise2 && pb.source && getGpu()?.fits(pb.w, pb.h)) return;
+    }
 
     // 閒置時沒算完的補上（通常已經算完了，這裡一步都不用做）
     let guard = 4;
@@ -4502,7 +4406,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // must keep using the preview buffer. Everything else drops to the low-res proxy while
     // the user drags and snaps back to full resolution on release.
     const FAST_BLEND_TOOLS = ['brightness', 'exposure', 'contrast', 'highlights', 'shadows', 'temp', 'tint', 'sat', 'vib'];
-    const isFastBlendActive = isInteracting &&
+    /* The three-image crossfade is only a stand-in for devices without a
+       usable GPU. Exposure, white balance and the tone curve are non-linear,
+       so "halfway between 0 and +100" is not what +50 looks like. With the
+       GPU path the colour table is re-baked every frame (33³, ~2ms), so the
+       drag shows exactly what release will show. */
+    const pb = buffers.current.preview;
+    const gpuLiveColour = !p.sharpen && !p.colorNoise2 && !!pb.source && !!getGpu()?.fits(pb.w, pb.h);
+    const isFastBlendActive = isInteracting && !gpuLiveColour &&
         extremeBuffersRef.current.activeToolId === activeToolId &&
         FAST_BLEND_TOOLS.includes(activeToolId) &&
         cache.active && cache.toolId === activeToolId &&

@@ -1,4 +1,5 @@
 import type { EditorParams } from '../components/ImageEditor';
+import { makeToneStage, applyToneStage, applySaturation, makeToneFast } from './photoToneMath';
 const HSL_MAX_HUE_SHIFT=15,HSL_MAX_SAT=.5,HSL_MAX_LUM=.1;
 const HSL_CENTERS=Float32Array.from([0,30,60,120,180,240,270,300]);
 const DEFAULT_HSL=Array.from({length:8},()=>({h:0,s:0,l:0}));
@@ -8,24 +9,13 @@ export const copyPixelDither=()=>ditherTable.slice();
 export const setPixelDither=(value:Float32Array)=>ditherTable.set(value);
 const masterLUT_R=new Float32Array(32768),masterLUT_G=new Float32Array(32768),masterLUT_B=new Float32Array(32768);
 
+/** Per-channel exposure → brightness → contrast as an 8-bit table.
+ *  processPixels no longer reads it (it evaluates photoToneMath directly at
+ *  full precision); kept for callers that still pass one in. */
 export function generateBaseCorrectionLut(exposure: number, contrast: number, brightness: number, output: Uint8Array): void {
-    const exp = Math.pow(2, (exposure * 0.175) / 100);
-    // Standard contrast formula
-    const conFactor = (259 * ((contrast * 0.2975) + 255)) / (255 * (259 - (contrast * 0.2975)));
-    // Reduce effect amplitude by 50% (from 0.5 to 0.25)
-    const brightVal = brightness * 0.25;
-
-    for (let i = 0; i < 256; i++) {
-        let val = i;
-        // 1. Exposure
-        val *= exp;
-        // 2. Brightness
-        val += brightVal;
-        // 3. Contrast
-        val = conFactor * (val - 128) + 128;
-        // Clamp
-        output[i] = Math.max(0, Math.min(255, val + 0.5)) | 0;
-    }
+    const stage = makeToneStage({ exposure, contrast, brightness, shadows: 0, highlights: 0, temp: 0, tint: 0, sat: 0 });
+    const c = new Float32Array(3);
+    for (let i = 0; i < 256; i++) { applyToneStage(stage, i, i, i, c); output[i] = Math.round(c[0]); }
 }
 
 /** Expose the existing full-precision master directly: no second resampling,
@@ -64,18 +54,18 @@ export const processPixels = (
                     p.curves.rgb.some((pt: any) => pt.y !== pt.x) || p.curves.r.some((pt: any) => pt.y !== pt.x) || 
                     p.curves.g.some((pt: any) => pt.y !== pt.x) || p.curves.b.some((pt: any) => pt.y !== pt.x);
 
-  // Temperature & Tint Constants
-  const tempK = p.temp * 0.15 * 0.3;
-  const tintK = p.tint * 0.04 * 2 * 0.3;
-  let rAdj = 0, gAdj = 0, bAdj = 0;
-  if (tempK > 0) { rAdj = tempK * 1.2; gAdj = tempK * 0.4; bAdj = -tempK * 0.8; }
-  else { bAdj = Math.abs(tempK) * 1.2; rAdj = -Math.abs(tempK) * 0.5; }
-  gAdj += tintK;
-  
-  const hasTempTint = rAdj !== 0 || gAdj !== 0 || bAdj !== 0;
+  const stage = makeToneStage(p);
+  const tc = new Float32Array(3);
+  const toneFast = makeToneFast(stage);
+  // The master grid has only 32 input levels per channel: precompute them.
+  const wbM = toneFast.wb;
+  const gridLin = new Float32Array(32), gridTone = new Float32Array(32);
+  for (let i = 0; i < 32; i++) { const v = (i * 255) / 31; gridLin[i] = toneFast.toLinear(v); toneFast(v, v, v, tc); gridTone[i] = tc[0]; }
+  const curveAt = (t: Uint8Array, v: number) => { const f = v < 0 ? 0 : v > 255 ? 255 : v, i = f | 0; return i >= 255 ? t[255] : t[i] + (t[i + 1] - t[i]) * (f - i); };
+  const hasTempTint = !!stage.wb;
 
   // Saturation & Vibrance Constants
-  const satMult = 1 + (p.sat * 0.5 / 100);
+  const satMult = stage.sat;
   const vibVal = (p.vib * 0.5) / 100;
   const hasVib = vibVal !== 0;
 
@@ -100,42 +90,6 @@ export const processPixels = (
   const hasSharpen = p.sharpen > 0 && !!sharpenDetail;
   const sharpenAmount = p.sharpen > 0 ? ((p.sharpen / 100) * 0.59) * 2.0 : 0;
   
-  // Shadows / Highlights Constants - Professional Logarithmic Transition
-  const shadows = p.shadows / 100;
-  const highlights = p.highlights / 100;
-
-  const shLut = new Float32Array(256);
-  for (let i = 0; i < 256; i++) {
-      const luma = i / 255;
-      let offset = 0;
-      
-      // Professional Shadows: Rec.709 inspired toe correction
-      if (shadows !== 0) {
-          // Left (negative) should strengthen (brighten/lift)
-          // Right (positive) should reduce
-          const shadowMask = Math.pow(1.0 - luma, 3.0);
-          offset -= shadows * shadowMask * 17.5; 
-      }
-      
-      // Professional Highlights: Soft shoulder roll-off
-      if (highlights !== 0) {
-          // Left (negative) should strengthen (darken/compress)
-          // Right (positive) should reduce (brighten/boost)
-          const highlightMask = Math.pow(luma, 3.0);
-          offset += highlights * highlightMask * 35.0;
-      }
-      
-      shLut[i] = offset;
-  }
-
-  const protectLut = new Float32Array(256);
-  if (hasTempTint) {
-      for (let i = 0; i < 256; i++) {
-          let pr = (i - 5) * 0.02;
-          protectLut[i] = pr < 0 ? 0 : pr;
-      }
-  }
-
   // --- SMART OPTIMIZATION: MASTER 3D LUT BAKING ---
   // In order to process 2.56M pixels at 60fps within a single CPU thread without losing resolution,
   // we adopt the DaVinci Resolve proxy pattern: we bake the ENTIRE math-heavy color pipeline 
@@ -152,37 +106,24 @@ export const processPixels = (
               let g = (l_g * 255.0) / 31.0;
               let b = (l_b * 255.0) / 31.0;
 
-              // 1. Base Correction
-              const ri = r | 0; const gi = g | 0; const bi = b | 0;
-              r = baseCorrectionLut[ri];
-              g = baseCorrectionLut[gi];
-              b = baseCorrectionLut[bi];
+              // 1–3. White balance → exposure → tone curve (utils/photoToneMath).
+              //      The legacy 8-bit base table is no longer used here.
+              if (wbM) {
+                  const x = gridLin[l_r], y = gridLin[l_g], z = gridLin[l_b];
+                  r = toneFast.encode(wbM[0] * x + wbM[1] * y + wbM[2] * z);
+                  g = toneFast.encode(wbM[3] * x + wbM[4] * y + wbM[5] * z);
+                  b = toneFast.encode(wbM[6] * x + wbM[7] * y + wbM[8] * z);
+              } else { r = gridTone[l_r]; g = gridTone[l_g]; b = gridTone[l_b]; }
 
-              // 2. Shadows & Highlights (Logarithmic roll-off)
-              const lumaKey = (r * 77 + g * 150 + b * 29) >> 8;
-              const shOffset = shLut[lumaKey];
-              r += shOffset; g += shOffset; b += shOffset;
-              r = r < 0 ? 0 : r > 255 ? 255 : r; g = g < 0 ? 0 : g > 255 ? 255 : g; b = b < 0 ? 0 : b > 255 ? 255 : b;
-
-              // 3. Temp & Tint
-              if (hasTempTint) {
-                  const protect = protectLut[(r * 77 + g * 150 + b * 29) >> 8];
-                  r += rAdj * protect; g += gAdj * protect; b += bAdj * protect;
-                  r = r < 0 ? 0 : r > 255 ? 255 : r; g = g < 0 ? 0 : g > 255 ? 255 : g; b = b < 0 ? 0 : b > 255 ? 255 : b;
-              }
-
-              // 4. Curves
+              // 4. Curves — exactly what the curve editor draws (no partial mix),
+              //    interpolated between the 256 table entries.
               if (hasCurves) {
-                  const ri2 = r | 0; const gi2 = g | 0; const bi2 = b | 0;
-                  const cr = cLutR[cLutM[ri2]]; const cg = cLutG[cLutM[gi2]]; const cb = cLutB[cLutM[bi2]];
-                  r = r + (cr - r) * 0.7; g = g + (cg - g) * 0.7; b = b + (cb - b) * 0.7;
+                  r = curveAt(cLutR, curveAt(cLutM, r)); g = curveAt(cLutG, curveAt(cLutM, g)); b = curveAt(cLutB, curveAt(cLutM, b));
               }
 
-              // 5. Saturation
+              // 5. Saturation around luminance; −100 is exact monochrome.
+              if (stage.sat !== 1) { tc[0] = r; tc[1] = g; tc[2] = b; applySaturation(stage.sat, tc); r = tc[0]; g = tc[1]; b = tc[2]; }
               const avg = (r + g + b) * 0.33333;
-              if (satMult !== 1) {
-                  r = avg + (r - avg) * satMult; g = avg + (g - avg) * satMult; b = avg + (b - avg) * satMult;
-              }
 
               // 6. Vibrance
               if (hasVib) {
@@ -303,8 +244,10 @@ export const processPixels = (
   // With independent channel corrections, tetrahedral interpolation reduces
   // exactly to three 1D tables. Keep the same master LUT and dithering, but do
   // not recompute RGB tetrahedra for millions of pixels on every slider tick.
+  // Tone, exposure, brightness, contrast, shadows and highlights are all
+  // per-channel now; only white balance and saturation mix channels.
   if (!useNearestLut && !hasLut && !hasHsl && !hasCurves && !hasTempTint &&
-      !hasVib && satMult === 1 && shadows === 0 && highlights === 0 && !hasSharpen) {
+      !hasVib && satMult === 1 && !hasSharpen) {
     const rr=new Float64Array(256),gg=new Float64Array(256),bb=new Float64Array(256);
     for(let v=0;v<256;v++){
       const f=v*sLUT,a=f|0,b=a===31?31:a+1,t=f-a;
