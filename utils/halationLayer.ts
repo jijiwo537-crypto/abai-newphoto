@@ -129,7 +129,7 @@ export class HalationLayer {
       if(this.canvas.width!==ow)this.canvas.width=ow;if(this.canvas.height!==oh)this.canvas.height=oh;
       if(this.presentKey!==sourceKey){
         gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
-        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,ctx.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
+        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.src(ctx));gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
         this.presentKey=sourceKey;
       }
       if(this.layerSize!==`${mw}x${mh}`){
@@ -184,7 +184,7 @@ export class HalationLayer {
     if(this.presentation&&(w>this.maxTextureSize||h>this.maxTextureSize))return null;
     if(this.key!==key||this.haloGpu!==gpu||this.sample.width!==mw||this.sample.height!==mh){
       this.sample.width=mw;this.sample.height=mh;if(!this.presentation){this.canvas.width=mw;this.canvas.height=mh;}
-      const s=this.sample.getContext('2d',{willReadFrequently:true})!;s.drawImage(ctx.canvas,0,0,mw,mh);
+      const s=this.sample.getContext('2d',{willReadFrequently:true})!;s.drawImage(this.src(ctx),0,0,mw,mh);
       if(!gpu){
         const pixels=s.getImageData(0,0,mw,mh),count=mw*mh;
         if(this.alpha.length!==count){this.alpha=new Uint8ClampedArray(count);this.blurred=new Uint8ClampedArray(count);this.scratch=new Uint8ClampedArray(count);}
@@ -249,6 +249,10 @@ export class HalationLayer {
   }
 
   private histSample:HTMLCanvasElement|null=null;
+  /** When set, the photo is read from this canvas (e.g. the colour GPU's own
+   *  canvas during a drag) instead of the 2D canvas passed in as ctx. */
+  sourceOverride:HTMLCanvasElement|null=null;
+  private src(ctx:CanvasRenderingContext2D){return this.sourceOverride||ctx.canvas;}
   /** bins: luminance histogram of the colour-processed photo, supplied by the
    *  caller from data it already has (no canvas readback here). */
   renderSoft(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,color:number[],bins?:Float64Array|null):HTMLCanvasElement|null {
@@ -258,7 +262,7 @@ export class HalationLayer {
     if(this.presentation&&(w>this.maxTextureSize||h>this.maxTextureSize))return null;
     if(this.key!==key||this.sample.width!==mw||this.sample.height!==mh){
       this.sample.width=mw;this.sample.height=mh;if(!this.presentation){this.canvas.width=mw;this.canvas.height=mh;}
-      const s=this.sample.getContext('2d')!;s.drawImage(ctx.canvas,0,0,mw,mh);
+      const s=this.sample.getContext('2d')!;s.drawImage(this.src(ctx),0,0,mw,mh);
       /* The highlight threshold is a percentile of the photo's luminance. It
          used to read the whole 800px sample back from the GPU on every colour
          change (a synchronous readback that stalled each slider step). A
@@ -268,7 +272,7 @@ export class HalationLayer {
       else{
         const hk=Math.min(1,128/Math.max(mw,mh)),hw=Math.max(1,Math.round(mw*hk)),hh=Math.max(1,Math.round(mh*hk));
         const hc=(this.histSample ||=document.createElement('canvas'));if(hc.width!==hw)hc.width=hw;if(hc.height!==hh)hc.height=hh;
-        const hx=hc.getContext('2d',{willReadFrequently:true})!;hx.imageSmoothingQuality='high';hx.drawImage(ctx.canvas,0,0,hw,hh);
+        const hx=hc.getContext('2d',{willReadFrequently:true})!;hx.imageSmoothingQuality='high';hx.drawImage(this.src(ctx),0,0,hw,hh);
         this.softBins=highlightHistogram(hx.getImageData(0,0,hw,hh).data);
       }
       if(this.alpha.length!==count){this.alpha=new Uint8ClampedArray(count);this.blurred=new Uint8ClampedArray(count);this.scratch=new Uint8ClampedArray(count);}
@@ -322,7 +326,7 @@ export class HalationLayer {
     if(!this.init()||!this.presentation)return null;
     const gl=this.gl!,ratio=Math.min(1,800/Math.max(w,h)),mw=Math.max(1,Math.floor(w*ratio)),mh=Math.max(1,Math.floor(h*ratio));
     if(this.key!==key){
-      this.sample.width=mw;this.sample.height=mh;this.sample.getContext('2d')!.drawImage(ctx.canvas,0,0,mw,mh);
+      this.sample.width=mw;this.sample.height=mh;this.sample.getContext('2d')!.drawImage(this.src(ctx),0,0,mw,mh);
       gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.sample);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
       for(const tex of this.softTextures){gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}this.key=key;
     }

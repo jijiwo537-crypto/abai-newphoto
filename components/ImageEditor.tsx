@@ -2504,6 +2504,37 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       return false;
     }
   };
+  /* Effects that draw on the 2D canvas between the colour stage and the
+     GLSL effects; while any is on, the direct GPU path cannot be used. */
+  const uses2dEffects = (p: EditorParams) => !!(p.grain || p.colorNoise || p.colorNoise2 || p.blur || p.soft || p.leakOpacity || p.fringeIntensity || p.vignette || p.maskCreated);
+  /** The 2D display buffers were skipped by the direct path; the next normal
+      render must recompute them even if the parameters did not change. */
+  const displayStaleRef = useRef(false);
+  /** The final colour image (film strength mixed in the shader) on the colour
+      GPU's own canvas, with no copy into a 2D canvas. */
+  const gpuFinal = (p: EditorParams, film: Uint8ClampedArray | null, filmSize: number, filmKey: string, srcKey: string, b: { source: Uint8ClampedArray | null; w: number; h: number }): HTMLCanvasElement | null => {
+    const g = getGpu();
+    if (!g || !b.source || !g.fits(b.w, b.h)) return null;
+    try {
+      if (gpuSrcKeyRef.current !== srcKey) { if (!g.setSource(b.source, b.w, b.h)) return null; gpuSrcKeyRef.current = srcKey; }
+      const front = gpuFrontFor(p);
+      if (!film || !p.lutAmount) { if (!g.setFront(front, false)) return null; }
+      else {
+        const key = `film|65|100|${filmKey}`;
+        let tex = bakeCacheRef.current.get(key);
+        if (!tex) {
+          const pFilm = { ...DEFAULT_PARAMS, lutAmount: 100, curves: DEFAULT_CURVES, hsl: DEFAULT_PARAMS.hsl } as EditorParams;
+          tex = bakedToTexture(bakeColorLut((bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, pFilm, film, filmSize, IDENTITY_BASE_LUT, null, false, IDENTITY_CURVE_LUTS), 65));
+          bakeCacheRef.current.set(key, tex);
+        }
+        if (!g.setLut(tex, 65)) return null;
+        if (!g.setFront(front, true, p.lutAmount / 100)) return null;
+      }
+      return g.draw();
+    } catch { return null; }
+  };
+  // After a drag rendered through the direct GPU path, run one normal render.
+  useEffect(() => { if (!isInteracting && displayStaleRef.current) isDirtyRef.current = true; }, [isInteracting]);
   const pixelBufferCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const lazyCacheTimeoutRef = useRef<any>(null);
@@ -4559,7 +4590,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     
     const ctx = cvs.getContext('2d')!;
     const legacy=legacyPreviewRef.current;
-    if(!showOriginalRef.current&&!forceRecalculateEffectsRef.current&&legacy&&legacy.key===legacyInputKey(p,b.w,b.h,legacy.kind)){
+    if(!showOriginalRef.current&&!forceRecalculateEffectsRef.current&&!displayStaleRef.current&&legacy&&legacy.key===legacyInputKey(p,b.w,b.h,legacy.kind)){
       const painted=legacy.kind==='soft'&&p.soft>0
         ? softPresentRef.current?.renderSoft(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.softColor/100,1,.5),colourBinsFor(p))
         : legacy.kind==='halation'&&p.fringeIntensity>0
@@ -4630,6 +4661,72 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
     const lutSize = activeLut ? activeLut.size : 0;
 
+    /* ── Direct GPU path while dragging ─────────────────────────────────
+       When nothing after the colour stage draws on the 2D canvas (no grain,
+       blur, soft light, leak, halation, vignette or gradient mask), the
+       colour result is a GPU image that goes straight to the on-screen GPU
+       surface — through the GLSL effects if any are on. This removes the
+       two or three full-resolution canvas-to-canvas copies per frame
+       (WebGL → 2D → 2D → WebGL) that a phone pays for on every slider step.
+       The pixels are the same 8-bit values the normal path produces; after
+       release one normal render brings the 2D buffers up to date. */
+    if (isInteracting && !isFastBlendActive && fxSurfaceRef.current && b.source && !pRender.sharpen && !pRender.colorNoise2 && !uses2dEffects(pRender)) {
+        const srcKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
+        const spill = !!pRender.fxExposureSpill;
+        const out = gpuFinal(pRender, activeLut ? activeLut.data : null, lutSize, activeLut ? `${lut.id}#${lutSize}` : '', srcKey, b);
+        if (out) {
+            const bins = spill ? (() => { const sm = getGpu()?.readSmall(); if (!sm) return null; const d = new Uint8ClampedArray(sm.data); for (let i = 3; i < d.length; i += 4) d[i] = 255; return highlightHistogram(d); })() : null;
+            const surface = fxSurfaceRef.current;
+            const shown = hasActiveFx(pRender)
+                ? !!applyGlEffects(ctx, b.w, b.h, pRender, undefined, surface, false, undefined, undefined, { canvas: out, bins })
+                : presentFxSource(ctx, b.w, b.h, surface, out);
+            if (shown) { showFxSurface(true); displayStaleRef.current = true; cvs.style.filter = 'none'; return; }
+        }
+    }
+    /* Same while dragging with 2D effects on: the colour result reaches the
+       2D canvas in one copy (instead of two full-size intermediate canvases),
+       then the effects run as usual. */
+    if (isInteracting && !isFastBlendActive && b.source && !pRender.sharpen && !pRender.colorNoise2 && uses2dEffects(pRender)) {
+        const srcKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
+        const out = gpuFinal(pRender, activeLut ? activeLut.data : null, lutSize, activeLut ? `${lut.id}#${lutSize}` : '', srcKey, b);
+        if (out) {
+            if (pRender.soft > 0 || pRender.fxExposureSpill) {
+                const sm = getGpu()?.readSmall();
+                if (sm) {
+                    const d = new Uint8ClampedArray(sm.data); for (let i = 3; i < d.length; i += 4) d[i] = 255;
+                    const a = activeLut ? pRender.lutAmount / 100 : 0;
+                    colourBinsRef.current = { key: `${colourKeyOf(pRender)}|${a}`, bins: highlightHistogram(d) };
+                }
+            }
+            /* Only soft light, halation or light leak on: its GPU layer reads the
+               colour canvas itself and presents on the GPU surface — the 2D
+               canvas is not touched at all. */
+            const p0 = pRender, others = !!(p0.grain || p0.colorNoise || p0.blur || p0.vignette || p0.maskCreated) || hasActiveFx(p0);
+            const single = others ? null : [p0.soft > 0 && 'soft', p0.fringeIntensity > 0 && 'halation', p0.leakOpacity > 0 && 'leak'].filter(Boolean);
+            if (single && single.length === 1 && fxSurfaceRef.current) {
+                const kind = single[0] as 'soft' | 'halation' | 'leak', surface = fxSurfaceRef.current;
+                const layer = kind === 'soft' ? (softPresentRef.current ||= new HalationLayer(surface))
+                    : kind === 'halation' ? (halationPresentRef.current ||= new HalationLayer(surface))
+                    : (leakPresentRef.current ||= new HalationLayer(surface));
+                const key = legacyInputKey(p0, b.w, b.h, kind);
+                layer.sourceOverride = out;
+                let painted: HTMLCanvasElement | null = null;
+                try {
+                    painted = kind === 'soft' ? layer.renderSoft(ctx, b.w, b.h, key, p0, hslToRgb(p0.softColor / 100, 1, .5), colourBinsFor(p0))
+                        : kind === 'halation' ? layer.render(ctx, b.w, b.h, key, p0, hslToRgb(p0.fringeHue / 360, .8, .35))
+                        : layer.renderLeak(ctx, b.w, b.h, key, p0, hslToRgb(p0.leakHue / 360, 1, .5));
+                } finally { layer.sourceOverride = null; }
+                if (painted) { legacyPreviewRef.current = { kind, key }; showFxSurface(true); displayStaleRef.current = true; cvs.style.filter = 'none'; return; }
+            }
+            ctx.globalCompositeOperation = 'copy'; ctx.drawImage(out, 0, 0); ctx.globalCompositeOperation = 'source-over';
+            cvs.style.filter = 'none';
+            displayStaleRef.current = true;
+            applyComplexEffects(ctx, b.w, b.h, pRender, Math.max(b.w, b.h) / 1080, b.shared, isInteracting, false, b.dest);
+            if (!fxSurfaceShownRef.current) presentEditorSource(ctx, b.w, b.h);
+            return;
+        }
+    }
+
     if (isFastBlendActive) {
         // Fast proxy GPU-accelerated blending: handled entirely on the GPU in the drawing step below for maximum FPS.
     } else {
@@ -4650,7 +4747,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             b.w !== lastP.bufferWidth ||
             lutSize !== lastP.lutSize ||
             pRender.curves !== lastP.curvesRef ||
-            pRender.hsl !== lastP.hslRef;
+            pRender.hsl !== lastP.hslRef ||
+            displayStaleRef.current;
+        displayStaleRef.current = false;
 
         /* ── 先試 GPU ─────────────────────────────────────────────────
            成功的話兩張離屏畫布（lut0／lut100）就已經畫好，

@@ -65,6 +65,7 @@ uniform float uHslH[8];
 uniform float uHslS[8];
 uniform float uHslL[8];
 uniform bool uBack;
+uniform float uFilmMix;
 in vec2 vUv;
 out vec4 fragColor;
 
@@ -141,9 +142,14 @@ void main() {
   if(uFront){
     // front → vibrance → film LUT (3D, only when a film is applied) → HSL
     vec3 c=vibrance(front(base));
-    if(uBack)c=texture(uLut,c*uScale+uOffset).rgb;
-    if(uHasHsl)c=hslAdjust(c);
-    fragColor=vec4(c,src.a);return;
+    vec3 o=uHasHsl?hslAdjust(c):c;
+    if(uBack){
+      // film strength = mix of the result without and with the film
+      vec3 f=texture(uLut,c*uScale+uOffset).rgb;
+      if(uHasHsl)f=hslAdjust(f);
+      o=mix(o,f,uFilmMix);
+    }
+    fragColor=vec4(o,src.a);return;
   }
   vec3 c = base * uScale + uOffset;
   vec3 colour=texture(uLut,c).rgb;
@@ -319,13 +325,14 @@ export class LutGpu {
    * when a different array object is passed in.
    */
   setFront(f: { wb: number[] | null; k: number; peak: number; tone: Float32Array | null; curves: Uint8Array | null; sat: number;
-    vib?: number; hsl?: { h: Float32Array; s: Float32Array; l: Float32Array } | null } | null, back = true): boolean {
+    vib?: number; hsl?: { h: Float32Array; s: Float32Array; l: Float32Array } | null } | null, back = true, filmMix = 1): boolean {
     if (this.lost) return false;
     const gl = this.gl;
     gl.useProgram(this.prog);
     this.frontOn = !!f; this.backOn = !f || back;
     gl.uniform1i(this.u('uFront'), f ? 1 : 0);
     gl.uniform1i(this.u('uBack'), this.backOn ? 1 : 0);
+    gl.uniform1f(this.u('uFilmMix'), filmMix);
     if (!f) return true;
     const linear = !!f.wb || f.k !== 1 || f.peak > 1;
     gl.uniform1i(this.u('uLinear'), linear ? 1 : 0);

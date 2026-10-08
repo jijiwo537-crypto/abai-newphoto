@@ -902,7 +902,7 @@ function getPool(c: Ctx, w: number, h: number): Pool {
  * Canvas2D and WebGL layers can rasterize a fractional CSS origin differently
  * on WebKit; toggling between them must not change the photograph's framing.
  * This is a full-resolution identity pass, not a reduced-quality proxy. */
-export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,surface:HTMLCanvasElement):boolean{
+export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,surface:HTMLCanvasElement,sourceCanvas?:HTMLCanvasElement):boolean{
  const c=getCtx(surface);if(!c||c.gl.isContextLost()||w>c.maxTex||h>c.maxTex||w<2||h<2)return false;
  const {gl}=c;
  try{
@@ -911,7 +911,7 @@ export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,s
   if(!program)return false;
   const source=c.pool?.w===w&&c.pool?.h===h?c.pool.src:(c.plainTex ||= makeTex(gl,w,h));
   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,source);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,ctx.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,sourceCanvas||ctx.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
   c.uploadKey=undefined; // A later effect must not reuse a source-key from an earlier render.
   c.renderedKey=undefined;
   c.photoResult=undefined;
@@ -944,6 +944,7 @@ export function warmFx(fxId: string, surface?: HTMLCanvasElement): void {
  * 把 2D 畫布上的內容跑過所有開著的新特效，再畫回同一張畫布。
  * 沒有任何特效開著、或這台裝置拿不到 WebGL，就原封不動什麼都不做。
  */
+let histCanvas:HTMLCanvasElement|null=null;
 export function applyGlEffects(
   ctx2d: CanvasRenderingContext2D,
   w: number,
@@ -955,6 +956,9 @@ export function applyGlEffects(
   auditReference = false,
   scene?: FxScene,
   colour?:FxColourInput,
+  /** Read the photo from this canvas instead of ctx2d.canvas (e.g. the colour
+   *  GPU's own canvas during a drag), with its luminance histogram if known. */
+  sourceOverride?:{canvas:HTMLCanvasElement;bins?:Float64Array|null},
 ): HTMLCanvasElement | undefined {
   const active = FX_DEFS.filter(d => fxActive(params, d));
   if (!active.length || w < 2 || h < 2) return;
@@ -996,7 +1000,17 @@ export function applyGlEffects(
     // Cached once per underlying photograph/color result. Range dragging
     // only queries 256 bins; it never reads back or analyzes the GPU image.
     if(!uploadKey||c.highlightKey!==uploadKey||!c.highlightBins){
-      c.highlightBins=highlightHistogram(ctx2d.getImageData(0,0,w,h).data);c.highlightKey=uploadKey;
+      /* A percentile of the photo's luminance. Supplied by the caller when it
+         has it; otherwise read from a 128px copy — a full-resolution
+         getImageData here stalled every colour-slider step. */
+      if(sourceOverride?.bins)c.highlightBins=sourceOverride.bins;
+      else{
+        const k=Math.min(1,128/Math.max(w,h)),hw=Math.max(1,Math.round(w*k)),hh=Math.max(1,Math.round(h*k));
+        const hc=(histCanvas ||=document.createElement('canvas'));if(hc.width!==hw)hc.width=hw;if(hc.height!==hh)hc.height=hh;
+        const hx=hc.getContext('2d',{willReadFrequently:true})!;hx.imageSmoothingQuality='high';hx.drawImage(sourceOverride?.canvas||ctx2d.canvas,0,0,hw,hh);
+        c.highlightBins=highlightHistogram(hx.getImageData(0,0,hw,hh).data);
+      }
+      c.highlightKey=uploadKey;
     }
     spillSelection=selectHighlights(c.highlightBins,params.fxSpillRange??20);
   }
@@ -1004,7 +1018,7 @@ export function applyGlEffects(
   if(!rawUploadKey || c.uploadKey!==rawUploadKey){
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D, srcTex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ctx2d.canvas);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceOverride?.canvas||ctx2d.canvas);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
     c.uploadKey=rawUploadKey;
   }
@@ -1117,7 +1131,7 @@ export function applyGlEffects(
           bindLowfiLut(gl,prog);
           c.lowfiHalo ||= new LowfiHaloMask();
           const haloStart=import.meta.env.DEV?performance.now():0;
-          if(gpuHalo)c.lowfiHalo.bindGpu(gl,prog);else c.lowfiHalo.bind(gl,prog,ctx2d.canvas,w,h,uploadKey);
+          if(gpuHalo)c.lowfiHalo.bindGpu(gl,prog);else c.lowfiHalo.bind(gl,prog,sourceOverride?.canvas||ctx2d.canvas,w,h,uploadKey);
           if(import.meta.env.DEV)auditHalo+=performance.now()-haloStart;
         }
         gl.uniform2f(uniformLocation(gl,prog, 'uDir'), pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
