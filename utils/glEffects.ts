@@ -673,6 +673,9 @@ interface Pool {
   narrow?: WebGLTexture;
   spillKey?: string;
   spillSeed?: WebGLTexture;
+  /** The last effect's input and pre-blend result from the previous call
+   *  (indices into texs), valid while blendKey matches. */
+  blendCache?: { key: string; from: number; layerIn: number };
 }
 
 interface Ctx {
@@ -950,6 +953,8 @@ export function warmFx(fxId: string, surface?: HTMLCanvasElement): void {
  * 沒有任何特效開著、或這台裝置拿不到 WebGL，就原封不動什麼都不做。
  */
 let histCanvas:HTMLCanvasElement|null=null;
+const arrayIds=new WeakMap<object,number>();let nextArrayId=1;
+const arrayId=(a:object)=>{let id=arrayIds.get(a);if(!id){id=nextArrayId++;arrayIds.set(a,id);}return id;};
 export function applyGlEffects(
   ctx2d: CanvasRenderingContext2D,
   w: number,
@@ -1071,8 +1076,20 @@ export function applyGlEffects(
     gl.uniform1f(uniformLocation(gl,prog, 'uTime'), 0);
   };
 
+  /* A change of only the last effect's strength (its main slider) does not
+     change anything that effect computes: strength is applied by the final
+     blend with the effect's input. Both images from the previous call are
+     still in the pool, so only that blend is redrawn — the same pixels a
+     full render gives, without re-running every blur/glow pass per step.
+     (Light spill applies strength inside its own passes: excluded.) */
+  const last=active[active.length-1];
+  const blendKey=!auditReference&&rawUploadKey&&!last.handlesAmount&&last.id!=='fxExposureSpill'
+    ? JSON.stringify([rawUploadKey,image?1:0,colour?[arrayId(colour.full),arrayId(colour.plain),colour.amount]:0,w,h,
+        active.map(d=>[d.id,d===last?0:params[d.id],...d.params.map(p=>params[p.id]??p.def)])])
+    : undefined;
+  const blendHit=!!blendKey&&pool.blendCache?.key===blendKey;
   try {
-    if(colour){
+    if(colour&&!blendHit){
       if(c.colour&&(c.colour.w!==w||c.colour.h!==h)){for(const t of [c.colour.full,c.colour.plain,c.colour.target])gl.deleteTexture(t);c.colour=undefined;}
       c.colour ||= {full:makeTex(gl,1089,33),plain:makeTex(gl,1089,33),target:makeTex(gl,w,h),w,h};
       const p=compile(c,'__residentColour',FX_COLOUR_SHADER);if(!p)return;
@@ -1085,7 +1102,7 @@ export function applyGlEffects(
       }
       gl.uniform1f(uniformLocation(gl,p,'uMix'),colour.amount);drawTo(c.colour.target);srcTex=c.colour.target;
     }
-    if(spillOn&&(gpuSpill||colour||(image&&!sourceOverride?.bins))){
+    if(spillOn&&!blendHit&&(gpuSpill||colour||(image&&!sourceOverride?.bins))){
       const histogramStart=import.meta.env.DEV?performance.now():0;
       if(c.gpuHistogram)spillSelectionTexture=c.gpuHistogram.prepare(srcTex,w,h,uploadKey,params.fxSpillRange??20,c.quad,(key,fs)=>compile(c,key,fs));
       gl.bindBuffer(gl.ARRAY_BUFFER,c.quad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.viewport(0,0,w,h);
@@ -1108,11 +1125,24 @@ export function applyGlEffects(
     // 目前的畫面放在 texs[0]
     const copy = compile(c, '__copy', `${GLSL_HEADER}\nvoid main(){ gl_FragColor = vec4(texture2D(uTex, vUv).rgb, 1.0); }`);
     if (!copy) { cleanup(); return; }
+    let cur = 0;   // 目前畫面所在的 index
+    if(blendHit){
+      const {from,layerIn}=pool.blendCache!;
+      const blend = compile(c, '__blend', BLEND_FS);
+      if (!blend) { cleanup(); return; }
+      let to = 0;
+      while (to === from || to === layerIn) to++;
+      gl.useProgram(blend);
+      bind(blend, texs[from], texs[layerIn]);
+      gl.uniform1f(uniformLocation(gl,blend, 'uAmount'), Math.max(0, Math.min(1, (params[last.id] || 0) / 100)));
+      drawTo(texs[to]);
+      cur = to;
+    }else{
+    pool.blendCache=undefined;
     gl.useProgram(copy);
     bind(copy, srcTex, srcTex);
     drawTo(texs[0]);
 
-    let cur = 0;   // 目前畫面所在的 index
     for (const d of active) {
       const layerIn = cur;                       // 本層輸入（uSrc）
       let from = cur;
@@ -1185,6 +1215,8 @@ export function applyGlEffects(
       gl.uniform1f(uniformLocation(gl,blend, 'uAmount'), d.handlesAmount ? 1 : Math.max(0, Math.min(1, (params[d.id] || 0) / 100)));
       drawTo(texs[to]);
       cur = to;
+      if(d===last&&blendKey)pool.blendCache={key:blendKey,from,layerIn};
+    }
     }
 
     // 畫到預設 framebuffer，再貼回 2D 畫布

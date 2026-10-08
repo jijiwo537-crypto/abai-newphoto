@@ -332,7 +332,7 @@ export class LutGpu {
       gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 0, size, size, size, gl.RGBA, gl.UNSIGNED_BYTE, tex);
     }
     gl.useProgram(this.prog);
-    this.lastLut=tex;gl.uniform1f(gl.getUniformLocation(this.prog,'uMix'),-1);
+    this.lastLut=tex;gl.uniform1f(this.u('uMix'),-1);
     // 半格內縮，跟 CPU 版的格點對法一致
     gl.uniform1f(this.uScale, (size - 1) / size);
     gl.uniform1f(this.uOffset, 0.5 / size);
@@ -395,7 +395,7 @@ export class LutGpu {
     if(!this.setLut(full,size,true))return false;
     const gl=this.gl;
     if(this.lastPlain!==plain){gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_3D,this.plainTex);gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA8,size,size,size,0,gl.RGBA,gl.UNSIGNED_BYTE,plain);this.lastPlain=plain;}
-    gl.uniform1f(gl.getUniformLocation(this.prog,'uMix'),weight);return true;
+    gl.uniform1f(this.u('uMix'),weight);return true;
   }
 
   /** 畫一張。回傳的是這個類別自己的畫布，呼叫端 drawImage 過去就好。 */

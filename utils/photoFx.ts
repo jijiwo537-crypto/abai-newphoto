@@ -20,6 +20,7 @@ import type {FxColourInput} from './fxColourInput';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from './highlightSelection';
 import { bakeColorLut, bakedToTexture } from './lutBake';
 import { LutGpu } from './lutGpu';
+import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from './fxSurfaceGl';
 import { loadCachedLut, saveCachedLut } from './lutStore';
 import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from './lutAtlasRepair.js';
 import {HalationLayer} from './halationLayer';
@@ -85,11 +86,65 @@ const strengthPairCache=new Map<string,{full:Uint8Array;plain:Uint8Array}>();
 // A spatial-effect slider does not change its photograph's colour result.
 // Retain that exact full-resolution input, and keep the effect render target
 // separate: never read the previous effect result as the next frame's source.
-type EffectInput={key:string;source:HTMLCanvasElement;surface:HTMLCanvasElement;colourInput?:FxColourInput;rawKey?:string};
+type EffectInput={key:string;source:HTMLCanvasElement;surface:HTMLCanvasElement;colourInput?:FxColourInput;rawKey?:string;viaImage?:boolean};
 const effectInputs = new WeakMap<HTMLCanvasElement, EffectInput>();
 const gpuSourceKeys=new WeakMap<LutGpu,string>();
-const opticalInputs=new WeakMap<HTMLCanvasElement,{key:string;source:HTMLCanvasElement;layer:HalationLayer}>();
+const opticalInputs=new WeakMap<HTMLCanvasElement,{key:string;source:HTMLCanvasElement;layer:HalationLayer;canvas?:HTMLCanvasElement}>();
 const opticalKeys = new Set(['soft','softThreshold','softRadius','softColor','fringeIntensity','fringeSize','fringeFeather','fringeHue','leakOpacity','leakAngle','leakHue','blur','colorNoise','vignette']);
+/* ── Colour stage inside an effect surface's own GPU context ───────────────
+   An effect surface (marked WebGL2) also hosts a LutGpu. The photo's colour
+   result is drawn there as a texture and the effects read it directly: no
+   full-resolution copies GPU → 2D canvas → 2D canvas → GPU on each colour
+   slider step. Same baked tables and shader as gpuColorChain; the film
+   strength blend happens in the shader instead of 2D compositing. */
+const newSurface=()=>{const c=document.createElement('canvas');preferWebgl2(c);return c;};
+const surfaceGpus=new WeakMap<HTMLCanvasElement,LutGpu|null>();
+let surfacePixels:HTMLCanvasElement|null=null;
+function sourcePixels(source:CanvasImageSource,w:number,h:number,key:string):Uint8ClampedArray|null{
+  const hit=srcPxCache.get(key);if(hit)return hit.px;
+  const c=(surfacePixels ||=document.createElement('canvas'));c.width=w;c.height=h;
+  const g=c.getContext('2d',{willReadFrequently:true});if(!g)return null;
+  g.clearRect(0,0,w,h);g.drawImage(source,0,0,w,h);const px=new Uint8ClampedArray(g.getImageData(0,0,w,h).data);
+  c.width=c.height=1;putSrcPx(key,{px,scratch:null,plain:null});return px;
+}
+function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:number,h:number,fx:PhotoFx,residentStrength:boolean):GpuImage|null{
+  let g=surfaceGpus.get(canvas);
+  if(g===undefined||g?.lost){try{const gl=surfaceGl(canvas);g=isWebgl2(gl)?LutGpu.createOn(gl):null;}catch{g=null;}surfaceGpus.set(canvas,g);}
+  if(!g||!g.fits(w,h))return null;
+  try{
+    const p=toParams(fx),lut=getLoadedLut(fx.lut),amount=(fx.lutAmount??100)/100;
+    const key=`${srcToken(source)}|${w}x${h}`;
+    if(gpuSourceKeys.get(g)!==key){const px=sourcePixels(source,w,h,key);if(!px||!g.setSource(px,w,h))return null;gpuSourceKeys.set(g,key);}
+    const baseLut=new Uint8Array(256);generateBaseCorrectionLut(p.exposure,p.contrast,p.brightness,baseLut);
+    g.setFront(null);
+    if(residentStrength&&lut&&p.hsl.every(b=>!b.h&&!b.s&&!b.l)){
+      // Same endpoints and weight as gpuColorChain's resident path.
+      const params={...p,lutAmount:100},pairKey=JSON.stringify(params)+'|'+srcToken(lut.data);
+      let pair=strengthPairCache.get(pairKey);
+      if(!pair){
+        const bake=(film:Uint8ClampedArray|null)=>bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,params,film,film?lut.size:0,baseLut,null,false,IDENTITY_CURVE_LUTS),33));
+        pair={full:bake(lut.data),plain:bake(null)};strengthPairCache.set(pairKey,pair);
+        while(strengthPairCache.size>8)strengthPairCache.delete(strengthPairCache.keys().next().value!);
+      }
+      if(!g.setLutMix(pair.full,pair.plain,33,amount*amount))return null;
+    }else{
+      const colorKey=colorKeyOf(fx);
+      const bake=(film:Uint8ClampedArray|null,filmSize:number)=>{
+        const bakeKey=colorKey+'|'+(film?srcToken(film):'none')+'|'+filmSize;
+        let texture=colorBakeCache.get(bakeKey);
+        if(!texture){
+          texture=bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,p,film,filmSize,baseLut,null,false,IDENTITY_CURVE_LUTS),33));
+          colorBakeCache.set(bakeKey,texture);while(colorBakeCache.size>4)colorBakeCache.delete(colorBakeCache.keys().next().value!);
+        }
+        return texture;
+      };
+      const full=bake(lut?lut.data:null,lut?lut.size:0);
+      if(lut&&amount<1){if(!g.setLutMix(full,bake(null,0),33,amount))return null;}
+      else if(!g.setLut(full,33,true))return null;
+    }
+    return g.drawImage();
+  }catch{return null;}
+}
 // WebKit's noise-texture interpolation does not match its Canvas overlay.
 // Keep grain on the established renderer rather than changing its appearance.
 export const supportsResidentPhotoEffects=(fx:PhotoFx={})=>!fx.colorNoise&&(hasActiveFx(fx)||!!(fx.soft||fx.fringeIntensity||fx.leakOpacity||fx.blur||fx.vignette));
@@ -100,14 +155,14 @@ export function warmPhotoFxSurface(input:HTMLCanvasElement,id:string,scene?:FxSc
     let optical=opticalInputs.get(input);
     if(!optical||optical.layer.lost){
       if(optical){optical.layer.dispose();releasePhotoFxSurface(optical.source);optical.source.width=optical.source.height=1;}
-      optical={key:'',source:document.createElement('canvas'),layer:new HalationLayer(document.createElement('canvas'))};
+      {const lc=newSurface();optical={key:'',source:document.createElement('canvas'),layer:new HalationLayer(lc),canvas:lc};}
       opticalInputs.set(input,optical);
     }
     optical.layer.warm();
     return;
   }
   let retained=effectInputs.get(input);
-  if(!retained){retained={key:'',source:document.createElement('canvas'),surface:document.createElement('canvas')};effectInputs.set(input,retained);}
+  if(!retained){retained={key:'',source:document.createElement('canvas'),surface:newSurface()};effectInputs.set(input,retained);}
   warmFx(id,retained.surface);
   if(scene)warmFxScene(retained.surface,scene);
 }
@@ -518,23 +573,34 @@ export function applyPhotoFx(
     let optical=opticalInputs.get(out);
     if(!optical||optical.layer.lost){
       if(optical){optical.layer.dispose();releasePhotoFxSurface(optical.source);optical.source.width=optical.source.height=1;}
-      optical={key:'',source:document.createElement('canvas'),layer:new HalationLayer(document.createElement('canvas'))};opticalInputs.set(out,optical);
+      {const lc=newSurface();optical={key:'',source:document.createElement('canvas'),layer:new HalationLayer(lc),canvas:lc};}opticalInputs.set(out,optical);
     }
-    if(optical.key!==sourceKey){
+    /* Colour stage in the layer's own GPU context: the layer reads the colour
+       result as a texture (see surfaceColourImage). Otherwise the colour
+       result is drawn into optical.source once per colour state. */
+    const plainColour=!getLoadedLut(baseFx.lut)&&ADJUST_KEYS.every(([k])=>!baseFx[k]);
+    const image=!plainColour&&optical.canvas?surfaceColourImage(optical.canvas,source,oW,oH,baseFx,false):null;
+    if(image)optical.key='';
+    else if(optical.key!==sourceKey){
       applyPhotoFx(source,oW,oH,baseFx,{cacheSource:true,out:optical.source,gpuSurface:true});
       optical.key=sourceKey;
     }
-    optical.layer.setScene(opts.scene);const p={...toParams(fx),...fx},ctx=optical.source.getContext('2d')!;
-    const result=kind==='soft'?optical.layer.renderSoft(ctx,oW,oH,key,p,hslToRgb((fx.softColor||0)/100,1,.5)):
-      kind==='halo'?optical.layer.render(ctx,oW,oH,key,p,hslToRgb((fx.fringeHue??8)/360,.8,.35)):
-      kind==='leak'?optical.layer.renderLeak(ctx,oW,oH,key,p,hslToRgb((fx.leakHue??15)/360,1,.5)):
-      kind==='blur'?optical.layer.renderBlur(ctx,oW,oH,key,fx.blur!):optical.layer.renderSimple(ctx,oW,oH,key,p,getNoisePattern());
+    const layer=optical.layer;
+    layer.setScene(opts.scene);const p={...toParams(fx),...fx},ctx=optical.source.getContext('2d')!;
+    layer.sourceImage=image;
+    let result:HTMLCanvasElement|null=null;
+    try{
+      result=kind==='soft'?layer.renderSoft(ctx,oW,oH,key,p,hslToRgb((fx.softColor||0)/100,1,.5)):
+        kind==='halo'?layer.render(ctx,oW,oH,key,p,hslToRgb((fx.fringeHue??8)/360,.8,.35)):
+        kind==='leak'?layer.renderLeak(ctx,oW,oH,key,p,hslToRgb((fx.leakHue??15)/360,1,.5)):
+        kind==='blur'?layer.renderBlur(ctx,oW,oH,key,fx.blur!):layer.renderSimple(ctx,oW,oH,key,p,getNoisePattern());
+    }finally{layer.sourceImage=null;}
     if(result)return result;
   }
   const residentEffects = !!opts?.gpuSurface && !!opts.cacheSource && hasActiveFx(fx);
   const inputKey = residentEffects ? effectInputKey(source, oW, oH, fx) : '';
   const retained = residentEffects ? effectInputs.get(out) : undefined;
-  if (retained?.key === inputKey) {
+  if (retained?.key === inputKey && !retained.viaImage) {
     const result = applyGlEffects(retained.source.getContext('2d')!, oW, oH, fx, inputKey, retained.surface, false, opts?.scene,retained.colourInput);
     if (result) return result;
   }
@@ -543,16 +609,28 @@ export function applyPhotoFx(
   const residentFilm=opts?.scene&&residentEffects?getLoadedLut(fx.lut):null;
   if(residentFilm&&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)&&toParams(fx).hsl.every(b=>!b.h&&!b.s&&!b.l)){
     const started=import.meta.env.DEV?performance.now():0;
-    const record:EffectInput=retained||{key:'',source:document.createElement('canvas'),surface:document.createElement('canvas')};
+    const record:EffectInput=retained||{key:'',source:document.createElement('canvas'),surface:newSurface()};
     const rawKey=`${srcToken(source)}|${oW}x${oH}`,params={...toParams(fx),lutAmount:100},base=new Uint8Array(256);
     generateBaseCorrectionLut(params.exposure,params.contrast,params.brightness,base);
     const pairKey=JSON.stringify(params)+'|'+srcToken(residentFilm.data);
     let pair=strengthPairCache.get(pairKey);
     if(!pair){const bake=(film:Uint8ClampedArray|null)=>bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,params,film,film?residentFilm.size:0,base,null,false,IDENTITY_CURVE_LUTS),33));pair={full:bake(residentFilm.data),plain:bake(null)};strengthPairCache.set(pairKey,pair);while(strengthPairCache.size>8)strengthPairCache.delete(strengthPairCache.keys().next().value!);}
     if(record.rawKey!==rawKey){record.source.width=oW;record.source.height=oH;record.source.getContext('2d')!.drawImage(source,0,0,oW,oH);record.rawKey=rawKey;}
-    record.colourInput={...pair,amount:((fx.lutAmount??100)/100)**2,sourceKey:rawKey};record.key=inputKey;effectInputs.set(out,record);
+    record.colourInput={...pair,amount:((fx.lutAmount??100)/100)**2,sourceKey:rawKey};record.key=inputKey;record.viaImage=false;effectInputs.set(out,record);
     const result=applyGlEffects(record.source.getContext('2d')!,oW,oH,fx,inputKey,record.surface,false,opts!.scene,record.colourInput);
     if(result){if(import.meta.env.DEV)result.dataset.colourFxTiming=JSON.stringify({total:performance.now()-started,phases:result.dataset.fxPhases});return result;}
+  }
+  // Colour stage in the effect surface's own context (see surfaceColourImage).
+  const colourOnly=!getLoadedLut(fx.lut)&&ADJUST_KEYS.every(([k])=>!fx[k]);
+  if(residentEffects&&!colourOnly&&!(fx as any).fxLowfi&&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)){
+    const record:EffectInput=retained||{key:'',source:document.createElement('canvas'),surface:newSurface()};
+    const image=surfaceColourImage(record.surface,source,oW,oH,fx,!!opts?.scene);
+    if(image){
+      record.key=inputKey;record.viaImage=true;record.colourInput=undefined;record.rawKey=undefined;effectInputs.set(out,record);
+      const result=applyGlEffects(record.source.getContext('2d')!,oW,oH,fx,inputKey,record.surface,false,opts?.scene,undefined,{image});
+      if(result)return result;
+      record.key='';record.viaImage=false;
+    }
   }
   // A CPU-backed output forces GPU results back to main memory on every
   // slider frame. Cached photo sources are read once; their live output must
@@ -825,14 +903,14 @@ export function applyPhotoFx(
      所以兩邊調同一個特效會得到同一張圖。全部都是 0 就整段跳過。 */
   if (hasActiveFx(fx)) {
     if (residentEffects) {
-      const record = retained || { key: '', source: document.createElement('canvas'), surface: document.createElement('canvas') };
+      const record = retained || { key: '', source: document.createElement('canvas'), surface: newSurface() };
       if (record.source.width !== W) record.source.width = W;
       if (record.source.height !== H) record.source.height = H;
       const input = record.source.getContext('2d')!;
       input.clearRect(0, 0, W, H);
       input.drawImage(out, 0, 0);
       record.key = inputKey;
-      record.colourInput=undefined;record.rawKey=undefined;
+      record.colourInput=undefined;record.rawKey=undefined;record.viaImage=false;
       effectInputs.set(out, record);
       const result = applyGlEffects(input, W, H, fx, inputKey, record.surface, false, opts?.scene);
       if (result) return result;

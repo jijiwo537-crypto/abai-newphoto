@@ -82,7 +82,7 @@ test('320 optical changes allocate one renderer and update the correct effect ea
   renderSoft(){calls.push('soft');return canvas();}render(){calls.push('halo');return canvas();}
   renderLeak(){calls.push('leak');return canvas();}
  }
- const context={opticalInputs:new WeakMap(),opticalKeys:new Set(['soft','softThreshold','softRadius','softColor','fringeIntensity','fringeSize','fringeFeather','fringeHue','leakOpacity','leakAngle','leakHue','blur','colorNoise','vignette']),HalationLayer:Layer,document:{createElement:canvas},hasActiveFx:()=>false,effectInputKey:(_s,w,h,p)=>JSON.stringify([w,h,p]),applyPhotoFx:(_s,_w,_h,_p,o)=>{sourcePaints++;return o.out;},releasePhotoFxSurface:()=>{},toParams:()=>({}),hslToRgb:()=>[],getNoisePattern:canvas};
+ const context={opticalInputs:new WeakMap(),opticalKeys:new Set(['soft','softThreshold','softRadius','softColor','fringeIntensity','fringeSize','fringeFeather','fringeHue','leakOpacity','leakAngle','leakHue','blur','colorNoise','vignette']),HalationLayer:Layer,document:{createElement:canvas},hasActiveFx:()=>false,effectInputKey:(_s,w,h,p)=>JSON.stringify([w,h,p]),applyPhotoFx:(_s,_w,_h,_p,o)=>{sourcePaints++;return o.out;},releasePhotoFxSurface:()=>{},toParams:()=>({}),hslToRgb:()=>[],getNoisePattern:canvas,newSurface:canvas,getLoadedLut:()=>null,ADJUST_KEYS:[['brightness'],['exposure']],surfaceColourImage:()=>null};
  vm.createContext(context);
  const code='this.run=function(source,out,fx){const oW=100,oH=100,opts={scene:{},cacheSource:true,gpuSurface:true};'+branch+'};';
  vm.runInContext(ts.transpile(code,{target:ts.ScriptTarget.ES2022}),context);
