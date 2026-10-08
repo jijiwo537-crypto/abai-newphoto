@@ -1,5 +1,5 @@
 diff --git a/components/ArtStudio.css b/components/ArtStudio.css
-index dbb79b2271fec45c47e127c3a4844730e527f29f..a00931855da96c294b770df46cb63c251e089073 100644
+index b729473..325af9a 100644
 --- a/components/ArtStudio.css
 +++ b/components/ArtStudio.css
 @@ -35,7 +35,7 @@
@@ -12,10 +12,10 @@ index dbb79b2271fec45c47e127c3a4844730e527f29f..a00931855da96c294b770df46cb63c25
  .art-error{position:absolute;z-index:120;left:20px;right:20px;top:80px;background:#542b2b;padding:20px;border-radius:12px;font-size:13px}
  .art-export{position:absolute;inset:0;background:#000;z-index:110;display:flex;flex-direction:column}
 diff --git a/components/CollageTool.tsx b/components/CollageTool.tsx
-index 4f1377e09a1d12b474ad4eb63e05387b57fd8127..ce9b206ea2989ce1f5482e8be82541cd00e30632 100644
+index 2e5008e..3742413 100644
 --- a/components/CollageTool.tsx
 +++ b/components/CollageTool.tsx
-@@ -521,7 +521,7 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
+@@ -562,7 +562,7 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
          min={min} max={max} step={1} value={value}
          onValue={v => onVal(Math.round(v))}
          className="premium-slider w-full"
@@ -24,7 +24,7 @@ index 4f1377e09a1d12b474ad4eb63e05387b57fd8127..ce9b206ea2989ce1f5482e8be82541cd
        />
      </div>
    </div>
-@@ -9156,7 +9156,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
+@@ -9540,7 +9540,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            outline: none;
            margin: 0 -32px;
            padding: 0;
@@ -33,7 +33,7 @@ index 4f1377e09a1d12b474ad4eb63e05387b57fd8127..ce9b206ea2989ce1f5482e8be82541cd
            -webkit-tap-highlight-color: rgba(0,0,0,0);
          }
          .custom-range:focus { outline: none; }
-@@ -9224,11 +9224,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
+@@ -9608,11 +9608,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
             長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
             判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
@@ -48,10 +48,10 @@ index 4f1377e09a1d12b474ad4eb63e05387b57fd8127..ce9b206ea2989ce1f5482e8be82541cd
          /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
             不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
 diff --git a/components/GridLayoutTool.tsx b/components/GridLayoutTool.tsx
-index 743a9f0499e80e3655a75a703fa7567ed4642fe4..c25431236357181b2ae6ce865cec4874981de879 100644
+index e329042..6aea13c 100644
 --- a/components/GridLayoutTool.tsx
 +++ b/components/GridLayoutTool.tsx
-@@ -14225,11 +14225,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
+@@ -14427,11 +14427,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
             長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
             判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
@@ -65,7 +65,7 @@ index 743a9f0499e80e3655a75a703fa7567ed4642fe4..c25431236357181b2ae6ce865cec4874
          .slider-wrap::before { content: ''; position: absolute; left: -7px; right: -7px; top: 50%; height: 56px; margin-top: -28px; }
          /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
             不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
-@@ -14264,7 +14263,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
+@@ -14466,7 +14465,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
            outline: none;
            margin: 0 -32px;
            padding: 0;
@@ -75,15 +75,15 @@ index 743a9f0499e80e3655a75a703fa7567ed4642fe4..c25431236357181b2ae6ce865cec4874
          }
          .custom-range:focus { outline: none; }
 diff --git a/components/ImageEditor.tsx b/components/ImageEditor.tsx
-index dae1b344be527e5dc1e1eba4b1839e9d040c2366..95f1942d652c245601e00a489d48cee2aa667ec0 100644
+index 6a2d442..526a0d3 100644
 --- a/components/ImageEditor.tsx
 +++ b/components/ImageEditor.tsx
 @@ -786,14 +786,14 @@ const FastSlider = React.memo(({
                  )}
              </div>
  
--            <div style={dense ? {touchAction:'none'} : undefined} className={`relative flex items-center justify-center touch-none ${dense ? 'slider-wrap h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
-+            <div style={dense ? {touchAction:'pan-y'} : undefined} className={`relative flex items-center justify-center touch-none ${dense ? 'slider-wrap h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
+-            <div style={dense ? {touchAction:'none'} : undefined} className={`slider-wrap relative flex items-center justify-center touch-none ${dense ? 'h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
++            <div style={dense ? {touchAction:'pan-y'} : undefined} className={`slider-wrap relative flex items-center justify-center touch-none ${dense ? 'h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
                  <input 
                      ref={inputRef}
                      type="range" aria-label={label} min={effectControlMin(toolId,min)} max={max} step={effectControlStep(toolId,step)}
@@ -105,7 +105,7 @@ index dae1b344be527e5dc1e1eba4b1839e9d040c2366..95f1942d652c245601e00a489d48cee2
          }
          .custom-range:focus {
 diff --git a/styles.css b/styles.css
-index 2ffc5906e4ff96487ea0b5248ad21fa7175209a1..a6e5411b843660a09acc101cd96ea04373d08543 100644
+index d6bc968..9de3c12 100644
 --- a/styles.css
 +++ b/styles.css
 @@ -133,13 +133,12 @@ select:focus, select:focus-visible {
@@ -126,7 +126,7 @@ index 2ffc5906e4ff96487ea0b5248ad21fa7175209a1..a6e5411b843660a09acc101cd96ea043
  .slider-wrap::before { content: ''; position: absolute; left: -7px; right: -7px; top: 50%; height: 56px; margin-top: -28px; }
  /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
     不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
-@@ -168,7 +167,7 @@ select:focus, select:focus-visible {
+@@ -175,7 +174,7 @@ select:focus, select:focus-visible {
    outline: none;
    margin: 0 -32px;
    padding: 0;
@@ -136,7 +136,7 @@ index 2ffc5906e4ff96487ea0b5248ad21fa7175209a1..a6e5411b843660a09acc101cd96ea043
  }
  .custom-range:focus { outline: none; }
 diff --git a/tests/slider-touch-targets.test.mjs b/tests/slider-touch-targets.test.mjs
-index f36ce57d2431886b7fcdeda44a61657245bda2e9..46bb4786cb999be4a3a07d61b5302304218cae33 100644
+index f36ce57..46bb478 100644
 --- a/tests/slider-touch-targets.test.mjs
 +++ b/tests/slider-touch-targets.test.mjs
 @@ -12,13 +12,17 @@ test('creative occupancy and seamless sliders retain layout with enlarged touch
@@ -195,7 +195,7 @@ index f36ce57d2431886b7fcdeda44a61657245bda2e9..46bb4786cb999be4a3a07d61b5302304
 + assert.equal(prevented,0);assert.equal(input.value,'50');assert.equal(events.includes('capture'),false);
 +});
 diff --git a/utils/sliderTouch.ts b/utils/sliderTouch.ts
-index 0fdadda2895aabe0d84e978d7601b65ab388e87f..4e6fe52585b96dc58a06e6ae5133229eb25aa1aa 100644
+index 32ad752..56611a1 100644
 --- a/utils/sliderTouch.ts
 +++ b/utils/sliderTouch.ts
 @@ -9,8 +9,8 @@
@@ -223,7 +223,7 @@ index 0fdadda2895aabe0d84e978d7601b65ab388e87f..4e6fe52585b96dc58a06e6ae5133229e
  /** touchmove 一定要非被動，不然 preventDefault 沒有作用 */
  const TM_OPT = { passive: false, capture: true } as AddEventListenerOptions;
  /** 轉交點擊時最多往下找幾層（底下可能又是另一根滑桿的透明區） */
-@@ -174,7 +175,9 @@ export const installSliderTouch = () => {
+@@ -184,7 +185,9 @@ export const installSliderTouch = () => {
      // 白點周圍至少44px的觸控區立即取得手勢，但不跳值。
      // 其他透明區仍等待橫向拖動，避免遮住相鄰按鈕的點擊。
      const onThumb = Math.abs(x0-center)<=22 && Math.abs(y0-(r.top+r.height/2))<=22;
@@ -234,7 +234,7 @@ index 0fdadda2895aabe0d84e978d7601b65ab388e87f..4e6fe52585b96dc58a06e6ae5133229e
      let dead = false;   // 已經認定使用者是在捲面板，這一下從頭到尾不關滑桿的事
      let done = false;
      let notifiedStart = false;
-@@ -199,21 +202,18 @@ export const installSliderTouch = () => {
+@@ -209,21 +212,18 @@ export const installSliderTouch = () => {
        if (dead) return false;
        if (!live) {
          const dx = Math.abs(cx - x0), dy = Math.abs(cy - y0);
@@ -263,7 +263,7 @@ index 0fdadda2895aabe0d84e978d7601b65ab388e87f..4e6fe52585b96dc58a06e6ae5133229e
          } else return false;
        }
        setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel,el.dataset.smoothRange==='true')) : valueAt(el, onThumb ? cx-x0+center : cx));
-@@ -225,9 +225,8 @@ export const installSliderTouch = () => {
+@@ -235,9 +235,8 @@ export const installSliderTouch = () => {
        if (advance(m.clientX, m.clientY) && m.cancelable) m.preventDefault();
      };
  
@@ -275,7 +275,7 @@ index 0fdadda2895aabe0d84e978d7601b65ab388e87f..4e6fe52585b96dc58a06e6ae5133229e
      const onTouchMove = (t: TouchEvent) => {
        if (t.touches.length !== 1) return;          // 兩指以上是縮放，不要碰
        const f = t.touches[0];
-@@ -278,7 +277,7 @@ export const installSliderTouch = () => {
+@@ -288,7 +287,7 @@ export const installSliderTouch = () => {
        window.addEventListener('touchend', onTouchEnd, true);
        window.addEventListener('touchcancel', onTouchEnd, true);
      }
