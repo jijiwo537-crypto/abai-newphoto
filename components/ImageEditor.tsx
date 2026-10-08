@@ -319,12 +319,17 @@ const FX_OWNER: Record<string, FxDef> = (() => {
 
 /** 新特效自己的參數列（強度 + 細項），對應 FX_DEFS */
 const FX_TOOLS: Record<string, ToolDef[]> = Object.fromEntries(
-  FX_DEFS.map(d => [d.id, [
-    { id: d.id, label: '強度', icon: effectDetailIcon('強度', d.icon), min: 0, max: 100 },
+  FX_DEFS.map(d => {
+    // 設了 rootParam 的特效沒有「強度」（固定 100）：第一根改成它的那個參數。
+    const root = d.rootParam ? d.params.find(x => x.id === d.rootParam) : null;
+    return [d.id, [
+    root ? { id: root.id, label: d.rootLabel ?? root.label, icon: effectDetailIcon(root.label, root.icon), min: root.min, max: root.max, step: root.step }
+      : { id: d.id, label: '強度', icon: effectDetailIcon('強度', d.icon), min: 0, max: 100 },
     // hidden 的那幾根不給調整（值永遠是預設），介面上就不要出現
     ...d.params.filter(p => !p.hidden)
       .map(p => ({ id: p.id, label: p.label, icon: effectDetailIcon(p.label, p.icon), min: p.min, max: p.max, step: p.step })),
-  ] as ToolDef[]]),
+  ] as ToolDef[]];
+  }),
 );
 
 /** 最外層那根滑桿要改調哪一個參數（沒設就是調「強度」）。
@@ -332,7 +337,7 @@ const FX_TOOLS: Record<string, ToolDef[]> = Object.fromEntries(
 const FX_ROOT_PARAM: Record<string, ToolDef> = Object.fromEntries(
   FX_DEFS.filter(d => d.rootParam).map(d => {
     const p = d.params.find(x => x.id === d.rootParam)!;
-    return [d.id, { id: p.id, label: p.label, icon: effectDetailIcon(p.label, p.icon), min: p.min, max: p.max, step: p.step } as ToolDef];
+    return [d.id, { id: p.id, label: d.rootLabel ?? p.label, icon: effectDetailIcon(p.label, p.icon), min: p.min, max: p.max, step: p.step } as ToolDef];
   }),
 );
 
@@ -420,6 +425,8 @@ export function generateCurveLut(channelPoints: Point[]): Uint8Array {
 export { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast } from '../utils/photoToneMath';
+const IDENTITY_BASE_LUT = Uint8Array.from({ length: 256 }, (_, i) => i);
+const IDENTITY_CURVE_LUTS = { rgb: IDENTITY_BASE_LUT, r: IDENTITY_BASE_LUT, g: IDENTITY_BASE_LUT, b: IDENTITY_BASE_LUT };
 
 function boxBlurH(s: Uint8ClampedArray, d: Uint8ClampedArray, w: number, h: number, r: number) {
   const iarr = 1 / (r + r + 1);
@@ -2374,6 +2381,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const i = ((b2 * n + g2) * n + r2) * 4;
         tex[i] = r2 * 255; tex[i + 1] = g2 * 255; tex[i + 2] = b2 * 255; tex[i + 3] = 255;
       }
+      g.setFront(null);
       g.setLut(tex, n);
       g.draw();
       gpuWarmKeyRef.current = key;
@@ -2402,6 +2410,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
    * 烤表 → GPU 畫 → 複製進 target 畫布。need 有給就順便把像素讀回來。
    * 任何一步失敗都回傳 false，呼叫端原封不動走回 CPU 路徑。
    */
+  /* Front-stage parameters for the GPU, with the two 1-D tables cached so
+     an exposure / white-balance drag re-uploads nothing but uniforms, and a
+     brightness/contrast/shadows/highlights drag only a 1025-entry table. */
+  const gpuFrontCacheRef = useRef<{ toneKey: string; tone: Float32Array | null; curveSrc: unknown; curves: Uint8Array | null }>({ toneKey: '', tone: null, curveSrc: null, curves: null });
+  const gpuFrontFor = (p: EditorParams) => {
+    const c = gpuFrontCacheRef.current;
+    const toneKey = `${p.brightness},${p.contrast},${p.shadows},${p.highlights}`;
+    const stage = makeToneStage(p, c.toneKey === toneKey ? c.tone : undefined);
+    if (c.toneKey !== toneKey) { c.toneKey = toneKey; c.tone = stage.tone; }
+    const luts = getCurveLuts(p.curves);
+    if (c.curveSrc !== luts) {
+      c.curveSrc = luts;
+      const identity = Object.values(p.curves).every(isIdentityCurve);
+      if (identity) c.curves = null;
+      else { const t = new Uint8Array(1024); for (let i = 0; i < 256; i++) { t[i * 4] = luts.r[i]; t[i * 4 + 1] = luts.g[i]; t[i * 4 + 2] = luts.b[i]; t[i * 4 + 3] = luts.rgb[i]; } c.curves = t; }
+    }
+    return { wb: stage.wb, k: stage.ev ? Math.pow(2, stage.ev) : 1, peak: stage.peak, tone: c.tone, curves: c.curves, sat: stage.sat };
+  };
   const gpuPaint = (
     target: HTMLCanvasElement, src: Uint8ClampedArray, w: number, h: number,
     p: EditorParams, film: Uint8ClampedArray | null, filmSize: number,
@@ -2415,33 +2441,38 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         if (!g.setSource(src, w, h)) return false;
         gpuSrcKeyRef.current = srcKey;
       }
-      /* 烤好的查色表存起來 —— 這是「點濾鏡零延遲」的關鍵。
-         表只跟「顏色參數 ＋ 是哪一顆濾鏡 ＋ 格點數」有關，跟圖片一點關係都沒有。
-         所以：
-           · 調節那一份（沒有濾鏡）在切換濾鏡時**根本不會變**，第一次烤完就一直用
-           · 每顆濾鏡的那一份烤過一次就留著，再點回去是零成本
-         沒有這層快取的話，每點一次濾鏡都要重烤兩張表（65³ 各 16ms），
-         那就是主人感覺到的延遲。 */
-      const key = `${grid}|${bakeSigRef.current(p)}|${filmKey}`;
-      let tex = bakeCacheRef.current.get(key);
-      if (!tex) {
-        // 用區域變數，不要動到共用的 baseCorrectionLutRef（那是別人也在讀的）
-        const base = new Uint8Array(256);
-        generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, base);
-        const cl = getCurveLuts(p.curves);
-        tex = bakedToTexture(bakeColorLut(
-          (bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, p, film, filmSize, base, null, false, cl),
-          grid,
-        ));
-        const cache = bakeCacheRef.current;
-        /* 上限四十份：24 顆濾鏡 × 兩種格點還有餘裕。滿了就丟最早放進來的。 */
-        if (cache.size >= 40) {
-          const oldest = cache.keys().next().value;
-          if (oldest !== undefined) cache.delete(oldest);
+      /* ── Front stage on the GPU (uniforms) ─────────────────────────────
+         White balance, exposure, the tone curve, curves and saturation are
+         evaluated per pixel in the shader from a few numbers and two tiny
+         1-D tables. Dragging any of those sliders (or a curve point) never
+         bakes a 3D table — that bake was what made every slider and the
+         curve editor stutter. */
+      const front = gpuFrontFor(p);
+      /* ── Back stage: vibrance → film LUT → HSL, baked into the 3D LUT ──
+         Only rebuilt when one of those changes, so it is cached across a
+         whole drag of any other slider. Identity → the shader skips it. */
+      const backIdentity = !p.vib && (!film || !p.lutAmount) && isHslIdentity(p.hsl);
+      if (backIdentity) {
+        if (!g.setFront(front, false)) return false;
+      } else {
+        const key = `back|${grid}|${p.vib},${p.lutAmount},${JSON.stringify(p.hsl)}|${filmKey}`;
+        let tex = bakeCacheRef.current.get(key);
+        if (!tex) {
+          const pBack = { ...p, exposure: 0, brightness: 0, contrast: 0, shadows: 0, highlights: 0, temp: 0, tint: 0, sat: 0, curves: DEFAULT_CURVES } as EditorParams;
+          tex = bakedToTexture(bakeColorLut(
+            (bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, pBack, film, filmSize, IDENTITY_BASE_LUT, null, false, IDENTITY_CURVE_LUTS),
+            grid,
+          ));
+          const cache = bakeCacheRef.current;
+          if (cache.size >= 40) {
+            const oldest = cache.keys().next().value;
+            if (oldest !== undefined) cache.delete(oldest);
+          }
+          cache.set(key, tex);
         }
-        cache.set(key, tex);
+        if (!g.setLut(tex, grid)) return false;
+        if (!g.setFront(front, true)) return false;
       }
-      if (!g.setLut(tex, grid)) return false;
       const out = g.draw();
       if (!out) return false;
       if (need && !g.readInto(need)) return false;
@@ -6139,7 +6170,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const newCurves = { ...paramsRef.current.curves, [currentCurveChannel]: newPoints };
     paramsRef.current = { ...paramsRef.current, curves: newCurves };
     isDirtyRef.current = true;
-    scheduleParamsSync();
+    /* Do not re-render the editor per move: that rebuilt the whole React tree
+       (~every panel) on each frame and was what made curves unusable. The
+       canvas loop reads paramsRef; the curve graphic is updated in place and
+       React state is written once, on release (handleCurveEndDrag). */
+    paintCurveSvg(newPoints);
+  };
+  const curvePathRef = useRef<SVGPathElement | null>(null);
+  const paintCurveSvg = (pts: { x: number; y: number }[]) => {
+    curvePathRef.current?.setAttribute('d', boundedCurvePath(pts, getSplineY));
+    const dots = document.querySelectorAll<SVGCircleElement>('#curvesSvg circle.curve-point');
+    pts.forEach((p, i) => { const d = dots[i]; if (d) { d.setAttribute('cx', String((p.x / 255) * 200)); d.setAttribute('cy', String(200 - (p.y / 255) * 200)); } });
   };
   
   const handleCurveEndDrag = () => {
@@ -7251,6 +7292,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                              ))}
                            </g>
                            <path 
+                               ref={curvePathRef}
                                d={getCurvePathD()}
                                clipPath={`url(#${curveClipId})`}
                                fill="none" 

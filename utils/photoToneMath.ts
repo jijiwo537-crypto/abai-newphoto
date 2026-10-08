@@ -97,7 +97,9 @@ export type ToneStage = {
   wb: number[] | null;
   sat: number;
 };
-export const makeToneStage = (p: ToneParams): ToneStage => {
+/** reuseTone: a tone table already built for the same brightness /
+ *  contrast / shadows / highlights (skips rebuilding it). */
+export const makeToneStage = (p: ToneParams, reuseTone?: Float32Array | null): ToneStage => {
   const ev = exposureEv(p.exposure || 0), wb = whiteBalanceMatrix(p.temp || 0, p.tint || 0);
   // Brightest linear value white can reach after WB and exposure: the shoulder
   // rolls it into 1 instead of clipping a channel.
@@ -106,7 +108,8 @@ export const makeToneStage = (p: ToneParams): ToneStage => {
   const b = (p.brightness || 0) / 100, c = (p.contrast || 0) / 100;
   const s = (p.shadows || 0) / 100, h = (p.highlights || 0) / 100;
   let tone: Float32Array | null = null;
-  if (b || c || s || h) {
+  if (reuseTone !== undefined) tone = reuseTone;
+  else if (b || c || s || h) {
     tone = new Float32Array(TONE_SIZE + 1);
     const gamma = Math.pow(2, -b * 0.8);              // brightness: mid-tone gamma
     const g = Math.pow(2, c * (c > 0 ? 0.9 : 0.6));   // contrast: S-curve steepness at the pivot

@@ -43,12 +43,68 @@ uniform float uMix;
    scale/offset 把座標壓進 [半格, 1-半格]，跟 CPU 版的格點對法完全一致。 */
 uniform float uScale;
 uniform float uOffset;
+/* Front stage (utils/photoToneMath evaluated per pixel, see setFront):
+   white balance → exposure → shoulder → encode → tone curve → curves →
+   saturation. Its parameters are uniforms and two tiny 1-D tables, so a
+   slider drag never re-bakes a 3D table. The 3D LUT (uBack) then holds only
+   what follows: vibrance → film LUT → HSL. */
+uniform bool uFront;
+uniform bool uLinear;
+uniform bool uHasWB;
+uniform mat3 uWB;
+uniform float uK;
+uniform float uPeak;
+uniform bool uHasTone;
+uniform sampler2D uTone;
+uniform bool uHasCurve;
+uniform sampler2D uCurve;
+uniform float uSat;
+uniform bool uBack;
 in vec2 vUv;
 out vec4 fragColor;
 
+vec3 toLinear(vec3 v){return mix(v/12.92,pow((v+.055)/1.055,vec3(2.4)),step(vec3(.04045),v));}
+vec3 toSrgb(vec3 v){return mix(v*12.92,1.055*pow(v,vec3(1./2.4))-.055,step(vec3(.0031308),v));}
+const float KNEE=.55;
+float shoulder(float x){
+  if(uPeak<=1.||x<=KNEE)return x;
+  float a=(uPeak-1.)/(1.-KNEE),t=(x-KNEE)/(uPeak-KNEE);
+  return KNEE+(1.-KNEE)*min(1.,((1.+a)*t)/(1.+a*t));
+}
+float tone(float x){return texture(uTone,vec2((clamp(x,0.,1.)*1024.+.5)/1025.,.5)).r;}
+vec4 curveAt(float v){return texture(uCurve,vec2((clamp(v,0.,1.)*255.+.5)/256.,.5));}
+
+vec3 front(vec3 c){
+  if(uLinear){
+    c=toLinear(c);
+    if(uHasWB)c=uWB*c;
+    c=max(c*uK,0.);
+    c=vec3(shoulder(c.r),shoulder(c.g),shoulder(c.b));
+    c=toSrgb(clamp(c,0.,1.));
+  }
+  if(uHasTone)c=vec3(tone(c.r),tone(c.g),tone(c.b));
+  if(uHasCurve){
+    // master curve (alpha) first, then each channel's own curve
+    c=vec3(curveAt(curveAt(c.r).a).r,curveAt(curveAt(c.g).a).g,curveAt(curveAt(c.b).a).b);
+  }
+  if(uSat!=1.){
+    float l=dot(c,vec3(.2126,.7152,.0722)),k=uSat;
+    if(k>1.){
+      // largest k that keeps every channel inside 0…1 (chroma shrinks, no clipping)
+      vec3 d=c-l;
+      for(int i=0;i<3;i++){float di=d[i];if(di>0.&&di*k>1.-l)k=(1.-l)/di;else if(di<0.&&di*k<-l)k=l/-di;}
+    }
+    c=l+(c-l)*k;
+  }
+  return clamp(c,0.,1.);
+}
+
 void main() {
   vec4 src = texture(uImage, vUv);
-  vec3 c = clamp(src.rgb, 0.0, 1.0) * uScale + uOffset;
+  vec3 base = clamp(src.rgb, 0.0, 1.0);
+  if(uFront)base=front(base);
+  if(uFront&&!uBack){fragColor=vec4(base,src.a);return;}
+  vec3 c = base * uScale + uOffset;
   vec3 colour=texture(uLut,c).rgb;
   if(uMix>=0.)colour=mix(texture(uPlainLut,c).rgb,colour,uMix);
   fragColor = vec4(colour, src.a);
@@ -79,6 +135,14 @@ export class LutGpu {
   private srcW = 0;
   private srcH = 0;
   private maxTextureSize: number;
+  private toneTex: WebGLTexture | null = null;
+  private curveTex: WebGLTexture | null = null;
+  private lastTone: Float32Array | null = null;
+  private lastCurve: Uint8Array | null = null;
+  private frontOn = false;
+  private backOn = true;
+  private loc = new Map<string, WebGLUniformLocation | null>();
+  private u(name: string) { if (!this.loc.has(name)) this.loc.set(name, this.gl.getUniformLocation(this.prog, name)); return this.loc.get(name)!; }
   /** 上下文被系統收走時變 true，呼叫端看到就退回 CPU */
   lost = false;
   readonly canvas: HTMLCanvasElement;
@@ -121,7 +185,8 @@ export class LutGpu {
       const name = String(
         (dbg && gl.getParameter((dbg as any).UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '',
       ).toLowerCase();
-      if (/swiftshader|llvmpipe|softpipe|software|microsoft basic/.test(name)) return null;
+      // __ABAI_ALLOW_SOFT_GL: test harnesses only (profiling the GPU path headless).
+      if (/swiftshader|llvmpipe|softpipe|software|microsoft basic/.test(name) && !(globalThis as any).__ABAI_ALLOW_SOFT_GL) return null;
     } catch { /* 拿不到就當作是真的顯示卡 */ }
 
     const vs = compile(gl, gl.VERTEX_SHADER, VERT);
@@ -206,6 +271,52 @@ export class LutGpu {
     return true;
   }
 
+  /**
+   * Front stage parameters (null = off, the old "everything in the 3D LUT"
+   * behaviour). tone: 1025 floats (encoded 0…1 → 0…1); curves: 256 RGBA
+   * bytes (R,G,B channel curves, A master curve). Arrays are uploaded only
+   * when a different array object is passed in.
+   */
+  setFront(f: { wb: number[] | null; k: number; peak: number; tone: Float32Array | null; curves: Uint8Array | null; sat: number } | null, back = true): boolean {
+    if (this.lost) return false;
+    const gl = this.gl;
+    gl.useProgram(this.prog);
+    this.frontOn = !!f; this.backOn = !f || back;
+    gl.uniform1i(this.u('uFront'), f ? 1 : 0);
+    gl.uniform1i(this.u('uBack'), this.backOn ? 1 : 0);
+    if (!f) return true;
+    const linear = !!f.wb || f.k !== 1 || f.peak > 1;
+    gl.uniform1i(this.u('uLinear'), linear ? 1 : 0);
+    gl.uniform1i(this.u('uHasWB'), f.wb ? 1 : 0);
+    if (f.wb) gl.uniformMatrix3fv(this.u('uWB'), true, f.wb);
+    gl.uniform1f(this.u('uK'), f.k);
+    gl.uniform1f(this.u('uPeak'), f.peak);
+    gl.uniform1f(this.u('uSat'), f.sat);
+    const table = (unit: number, tex: WebGLTexture | null, make: () => void) => {
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      if (!tex) { tex = gl.createTexture()!; gl.bindTexture(gl.TEXTURE_2D, tex);
+        for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v); }
+      else gl.bindTexture(gl.TEXTURE_2D, tex);
+      make(); return tex;
+    };
+    gl.uniform1i(this.u('uHasTone'), f.tone ? 1 : 0);
+    gl.uniform1i(this.u('uTone'), 3);
+    if (f.tone && f.tone !== this.lastTone) {
+      this.toneTex = table(3, this.toneTex, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, f.tone!.length, 1, 0, gl.RED, gl.FLOAT, f.tone));
+      this.lastTone = f.tone;
+    } else if (this.toneTex) { gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.toneTex); }
+    gl.uniform1i(this.u('uHasCurve'), f.curves ? 1 : 0);
+    gl.uniform1i(this.u('uCurve'), 4);
+    if (f.curves && f.curves !== this.lastCurve) {
+      this.curveTex = table(4, this.curveTex, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, f.curves));
+      this.lastCurve = f.curves;
+    } else if (this.curveTex) { gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.curveTex); }
+    // Samplers that are declared must be complete even when unused.
+    if (!this.toneTex) this.toneTex = table(3, null, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, 2, 1, 0, gl.RED, gl.FLOAT, new Float32Array([0, 1])));
+    if (!this.curveTex) this.curveTex = table(4, null, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4)));
+    return true;
+  }
+
   setLutMix(full:Uint8Array,plain:Uint8Array,size:number,weight:number):boolean{
     if(!this.setLut(full,size,true))return false;
     const gl=this.gl;
@@ -215,7 +326,7 @@ export class LutGpu {
 
   /** 畫一張。回傳的是這個類別自己的畫布，呼叫端 drawImage 過去就好。 */
   draw(): HTMLCanvasElement | null {
-    if (this.lost || !this.srcW || !this.lutSize) return null;
+    if (this.lost || !this.srcW || (!this.lutSize && !(this.frontOn && !this.backOn))) return null;
     const gl = this.gl;
     gl.viewport(0, 0, this.srcW, this.srcH);
     gl.useProgram(this.prog);
