@@ -59,6 +59,11 @@ uniform sampler2D uTone;
 uniform bool uHasCurve;
 uniform sampler2D uCurve;
 uniform float uSat;
+uniform float uVib;
+uniform bool uHasHsl;
+uniform float uHslH[8];
+uniform float uHslS[8];
+uniform float uHslL[8];
 uniform bool uBack;
 in vec2 vUv;
 out vec4 fragColor;
@@ -98,12 +103,48 @@ vec3 front(vec3 c){
   }
   return clamp(c,0.,1.);
 }
+/* Same formulas as utils/photoPixelCore (steps 6 and 8), in 0…1 units. */
+vec3 vibrance(vec3 c){
+  if(uVib==0.)return c;
+  float avg=(c.r+c.g+c.b)*.33333,mx=max(c.r,max(c.g,c.b)),mn=min(c.r,min(c.g,c.b));
+  float s=mx==0.?0.:(mx-mn)/mx;
+  float k=1.+(uVib>0.?uVib*(1.-s*s):uVib);
+  return clamp(avg+(c-avg)*k,0.,1.);
+}
+const float HC[8]=float[8](0.,30.,60.,120.,180.,240.,270.,300.);
+vec3 hslAdjust(vec3 c){
+  float mx=max(c.r,max(c.g,c.b)),mn=min(c.r,min(c.g,c.b)),chroma=mx-mn;
+  float tg=clamp((chroma-.03)/.09,0.,1.),gate=tg*tg*(3.-2.*tg);
+  if(gate<=0.)return c;
+  float hue;
+  if(mx==c.r)hue=60.*mod((c.g-c.b)/chroma,6.);
+  else if(mx==c.g)hue=60.*((c.b-c.r)/chroma+2.);
+  else hue=60.*((c.r-c.g)/chroma+4.);
+  if(hue<0.)hue+=360.;
+  float lgt=(mx+mn)*.5,sat=chroma/(1.-abs(mx+mn-1.));
+  int i0=7;
+  for(int k=0;k<7;k++){if(hue<HC[k+1]){i0=k;break;}}
+  float c0=HC[i0],c1=i0==7?360.:HC[i0+1];int i1=i0==7?0:i0+1;
+  float tt=c1==c0?0.:(hue-c0)/(c1-c0),wb=tt*tt*(3.-2.*tt),wa=1.-wb;
+  float dh=(uHslH[i0]*wa+uHslH[i1]*wb)*gate,ds=(uHslS[i0]*wa+uHslS[i1]*wb)*gate,dl=(uHslL[i0]*wa+uHslL[i1]*wb)*gate;
+  float h2=hue+dh;if(h2<0.)h2+=360.;else if(h2>=360.)h2-=360.;
+  float s2=clamp(sat*(1.+ds),0.,1.);
+  float l2=clamp(dl>=0.?lgt+(1.-lgt)*dl:lgt*(1.+dl),0.,1.);
+  float cc=(1.-abs(2.*l2-1.))*s2,hp=h2/60.,xx=cc*(1.-abs(mod(hp,2.)-1.));
+  vec3 o=hp<1.?vec3(cc,xx,0.):hp<2.?vec3(xx,cc,0.):hp<3.?vec3(0.,cc,xx):hp<4.?vec3(0.,xx,cc):hp<5.?vec3(xx,0.,cc):vec3(cc,0.,xx);
+  return clamp(o+(l2-cc*.5),0.,1.);
+}
 
 void main() {
   vec4 src = texture(uImage, vUv);
   vec3 base = clamp(src.rgb, 0.0, 1.0);
-  if(uFront)base=front(base);
-  if(uFront&&!uBack){fragColor=vec4(base,src.a);return;}
+  if(uFront){
+    // front → vibrance → film LUT (3D, only when a film is applied) → HSL
+    vec3 c=vibrance(front(base));
+    if(uBack)c=texture(uLut,c*uScale+uOffset).rgb;
+    if(uHasHsl)c=hslAdjust(c);
+    fragColor=vec4(c,src.a);return;
+  }
   vec3 c = base * uScale + uOffset;
   vec3 colour=texture(uLut,c).rgb;
   if(uMix>=0.)colour=mix(texture(uPlainLut,c).rgb,colour,uMix);
@@ -277,7 +318,8 @@ export class LutGpu {
    * bytes (R,G,B channel curves, A master curve). Arrays are uploaded only
    * when a different array object is passed in.
    */
-  setFront(f: { wb: number[] | null; k: number; peak: number; tone: Float32Array | null; curves: Uint8Array | null; sat: number } | null, back = true): boolean {
+  setFront(f: { wb: number[] | null; k: number; peak: number; tone: Float32Array | null; curves: Uint8Array | null; sat: number;
+    vib?: number; hsl?: { h: Float32Array; s: Float32Array; l: Float32Array } | null } | null, back = true): boolean {
     if (this.lost) return false;
     const gl = this.gl;
     gl.useProgram(this.prog);
@@ -292,6 +334,9 @@ export class LutGpu {
     gl.uniform1f(this.u('uK'), f.k);
     gl.uniform1f(this.u('uPeak'), f.peak);
     gl.uniform1f(this.u('uSat'), f.sat);
+    gl.uniform1f(this.u('uVib'), f.vib ?? 0);
+    gl.uniform1i(this.u('uHasHsl'), f.hsl ? 1 : 0);
+    if (f.hsl) { gl.uniform1fv(this.u('uHslH[0]'), f.hsl.h); gl.uniform1fv(this.u('uHslS[0]'), f.hsl.s); gl.uniform1fv(this.u('uHslL[0]'), f.hsl.l); }
     const table = (unit: number, tex: WebGLTexture | null, make: () => void) => {
       gl.activeTexture(gl.TEXTURE0 + unit);
       if (!tex) { tex = gl.createTexture()!; gl.bindTexture(gl.TEXTURE_2D, tex);

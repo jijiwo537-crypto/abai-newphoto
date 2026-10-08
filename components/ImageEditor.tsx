@@ -2413,7 +2413,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* Front-stage parameters for the GPU, with the two 1-D tables cached so
      an exposure / white-balance drag re-uploads nothing but uniforms, and a
      brightness/contrast/shadows/highlights drag only a 1025-entry table. */
-  const gpuFrontCacheRef = useRef<{ toneKey: string; tone: Float32Array | null; curveSrc: unknown; curves: Uint8Array | null }>({ toneKey: '', tone: null, curveSrc: null, curves: null });
+  const gpuFrontCacheRef = useRef<{ toneKey: string; tone: Float32Array | null; curveSrc: unknown; curves: Uint8Array | null; hslKey: string; hsl: { h: Float32Array; s: Float32Array; l: Float32Array } | null }>({ toneKey: '', tone: null, curveSrc: null, curves: null, hslKey: '', hsl: null });
   const gpuFrontFor = (p: EditorParams) => {
     const c = gpuFrontCacheRef.current;
     const toneKey = `${p.brightness},${p.contrast},${p.shadows},${p.highlights}`;
@@ -2426,7 +2426,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (identity) c.curves = null;
       else { const t = new Uint8Array(1024); for (let i = 0; i < 256; i++) { t[i * 4] = luts.r[i]; t[i * 4 + 1] = luts.g[i]; t[i * 4 + 2] = luts.b[i]; t[i * 4 + 3] = luts.rgb[i]; } c.curves = t; }
     }
-    return { wb: stage.wb, k: stage.ev ? Math.pow(2, stage.ev) : 1, peak: stage.peak, tone: c.tone, curves: c.curves, sat: stage.sat };
+    const hslKey = JSON.stringify(p.hsl);
+    if (c.hslKey !== hslKey) {
+      c.hslKey = hslKey;
+      // Same scaling as photoPixelCore: hue ±15°, saturation ±50 %, lightness ±10 %.
+      c.hsl = isHslIdentity(p.hsl) ? null : {
+        h: Float32Array.from(p.hsl, b => b.h / 100 * 15),
+        s: Float32Array.from(p.hsl, b => b.s / 100 * 0.5),
+        l: Float32Array.from(p.hsl, b => b.l / 100 * 0.1),
+      };
+    }
+    return { wb: stage.wb, k: stage.ev ? Math.pow(2, stage.ev) : 1, peak: stage.peak, tone: c.tone, curves: c.curves, sat: stage.sat,
+      vib: (p.vib * 0.5) / 100, hsl: c.hsl };
   };
   const gpuPaint = (
     target: HTMLCanvasElement, src: Uint8ClampedArray, w: number, h: number,
@@ -2448,20 +2459,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
          bakes a 3D table — that bake was what made every slider and the
          curve editor stutter. */
       const front = gpuFrontFor(p);
-      /* ── Back stage: vibrance → film LUT → HSL, baked into the 3D LUT ──
-         Only rebuilt when one of those changes, so it is cached across a
-         whole drag of any other slider. Identity → the shader skips it. */
-      const backIdentity = !p.vib && (!film || !p.lutAmount) && isHslIdentity(p.hsl);
-      if (backIdentity) {
+      /* ── Film LUT: the only 3D table left ───────────────────────────────
+         Vibrance and HSL are in the shader too, so this table depends on
+         nothing but which film is applied. It is always the fine 65³ grid
+         (baked once per film, cached): no slider ever rebuilds it, and the
+         preview during a drag is exactly the preview after release. */
+      if (!film || !p.lutAmount) {
         if (!g.setFront(front, false)) return false;
       } else {
-        const key = `back|${grid}|${p.vib},${p.lutAmount},${JSON.stringify(p.hsl)}|${filmKey}`;
+        const key = `film|65|${p.lutAmount}|${filmKey}`;
         let tex = bakeCacheRef.current.get(key);
         if (!tex) {
-          const pBack = { ...p, exposure: 0, brightness: 0, contrast: 0, shadows: 0, highlights: 0, temp: 0, tint: 0, sat: 0, curves: DEFAULT_CURVES } as EditorParams;
+          const pFilm = { ...DEFAULT_PARAMS, lutAmount: p.lutAmount, curves: DEFAULT_CURVES, hsl: DEFAULT_PARAMS.hsl } as EditorParams;
           tex = bakedToTexture(bakeColorLut(
-            (bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, pBack, film, filmSize, IDENTITY_BASE_LUT, null, false, IDENTITY_CURVE_LUTS),
-            grid,
+            (bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, pFilm, film, filmSize, IDENTITY_BASE_LUT, null, false, IDENTITY_CURVE_LUTS),
+            65,
           ));
           const cache = bakeCacheRef.current;
           if (cache.size >= 40) {
@@ -2470,7 +2482,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           }
           cache.set(key, tex);
         }
-        if (!g.setLut(tex, grid)) return false;
+        if (!g.setLut(tex, 65)) return false;
         if (!g.setFront(front, true)) return false;
       }
       const out = g.draw();
