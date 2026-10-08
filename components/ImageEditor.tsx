@@ -5899,7 +5899,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const loadImg = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
     const im = new Image();
     if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
-    im.onload = () => res(im);
+    // decode() 之後才交出去：iOS 的 load 時像素不一定畫得進 canvas（會烤出透明／黑圖）
+    im.onload = async () => { try { if (typeof im.decode === 'function') await im.decode(); } catch { /* load 已成功 */ } res(im); };
     im.onerror = () => rej(new Error('load failed'));
     im.src = src;
   });
@@ -5981,8 +5982,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return activeCategory === 'effects' ? d.fx + p.fx : d.lut + p.lut;
   })();
 
-  const mergeAnimRef = useRef(false);
-  const mergeEffectsRef = useRef<() => void>(() => {});
   const mergeEffects = () => {
     if (!originalImgRef.current || mergingRef.current) return;
     mergingRef.current = true;
@@ -6025,6 +6024,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        這一段本來就是同步運算，排 setTimeout 只是多等一輪。 */
     (async () => {
       try {
+        /* 介面已經在這一拍切成合併完的樣子；烤圖讓一幀再開始，
+           合併鍵的動畫才交得到合成器手上（之後主執行緒忙也不會卡住它）。 */
+        await new Promise<void>(r => requestAnimationFrame(() => setTimeout(r, 0)));
         // 這一次烤進去的是哪一種（按下的當下就記好了，兩邊都套的話兩邊都算）
         const { lut: bakedLut, fx: bakedFx } = mergePendingBakeRef.current;
         const next = [...srcList];
@@ -6070,9 +6072,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
            中間就會畫出一張「沒有特效的舊圖」—— 那就是合併時閃的那一下。 */
         const shownUrl = next[safeIdx];
         if (shownUrl && shownUrl !== srcList[safeIdx]) {
+          /* load 之後還要等 decode()（再跨一幀）：iOS 的 load 只代表檔案讀到了，
+             這時拿去建緩衝區可能畫進一張透明的 —— 濾鏡／特效縮圖都從緩衝區算，
+             於是合併後整排縮圖變黑。 */
           await new Promise<void>(res => {
             const im = new Image();
-            im.onload = () => { rememberDecoded(shownUrl, im); res(); };
+            im.onload = async () => {
+              try { if (typeof im.decode === 'function') await im.decode(); } catch { /* load 已成功 */ }
+              await new Promise<void>(r => requestAnimationFrame(() => r()));
+              rememberDecoded(shownUrl, im); res();
+            };
             im.onerror = () => res();
             im.src = shownUrl;
           });
@@ -6114,7 +6123,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       }
     })();
   };
-  mergeEffectsRef.current = mergeEffects;   // 動畫播完時用最新的那一份
 
   /** 眼睛：用現在的參數輸出一張，然後打開 IG 預覽 */
   const openIgPreview = async () => {
@@ -7376,30 +7384,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           <button
             aria-label="合併特效"
             onClick={hasMergeable ? (e) => {
-              /* 點下去的回饋：上面那一層往下壓進下面那一層再彈回來（＝合併）。
-                 時長與曲線跟創意拼圖「隨機圖案」那顆一樣（680ms）。
-                 合併本身要烤一次圖（主執行緒會停一下），放在動畫播完才做，
-                 動畫才不會卡在半路；合併前後畫面一模一樣，晚這一下看不出來。 */
-              if (mergeAnimRef.current) return;
-              const [top, bottom] = Array.from(e.currentTarget.querySelectorAll('svg path')) as SVGPathElement[];
-              if (!top || !bottom || window.matchMedia('(prefers-reduced-motion: reduce)').matches) { mergeEffects(); return; }
-              {
-                const timing = { duration: 680, easing: 'cubic-bezier(.22,1,.36,1)' };
-                for (const el of [top, bottom]) el.getAnimations().forEach(a => a.cancel());
+              /* 點下去的回饋：底下那條線不動，上面的菱形往上跳再落回原位
+                 （第一幀＝最後一幀＝原本的樣子）。時長與曲線跟創意拼圖「隨機圖案」
+                 那顆一樣（680ms）。菱形是獨立的 HTML 元素、只動 transform，
+                 動畫交給合成器跑 —— 合併本身在主執行緒烤圖也不會把動畫卡住，
+                 所以合併照樣按下去就開始，不用等動畫。 */
+              const top = (e.currentTarget as HTMLElement).querySelector<HTMLElement>('[data-merge-top]');
+              if (top && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                top.getAnimations().forEach(a => a.cancel());
                 top.animate([
-                  { transform: 'translateY(0) scale(1)' },
-                  { transform: 'translateY(4.5px) scale(.9)', offset: .4 },
-                  { transform: 'translateY(0) scale(1)' },
-                ], timing);
-                const done = bottom.animate([
-                  { transform: 'translateY(0) scale(1)' },
-                  { transform: 'translateY(-1.5px) scale(1.06)', offset: .4 },
-                  { transform: 'translateY(0) scale(1)' },
-                ], timing);
-                mergeAnimRef.current = true;
-                const run = () => { mergeAnimRef.current = false; mergeEffectsRef.current(); };
-                done.finished.then(run, run);
+                  { transform: 'translateY(0)' },
+                  { transform: 'translateY(-4px)', offset: .4 },
+                  { transform: 'translateY(0)' },
+                ], { duration: 680, easing: 'cubic-bezier(.22,1,.36,1)' });
               }
+              mergeEffects();
             } : undefined}
             disabled={!hasMergeable}
             className="absolute bottom-2 left-2 px-2 py-2 flex flex-col items-center justify-center gap-1 select-none touch-none z-20 text-white active:scale-90 transition-transform"
@@ -7411,11 +7410,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 ≈ 1.82，畫出來才剛好是 1.5px。以前寫 1.2 的實際粗度只有 0.99px，
                 不滿一個像素就會被抗鋸齒攤成灰的，看起來就像半透明。
                 顏色也直接寫死白色，不吃 currentColor（按鈕停用時會被瀏覽器調淡）。 */}
-            <svg width="28" height="18" viewBox="0 0 34 22" fill="none" xmlns="http://www.w3.org/2000/svg"
-                 className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-              <path d="M17 2.5 30 8.5 17 14.5 4 8.5Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" style={{ transformBox: 'fill-box', transformOrigin: 'center' }} />
-              <path d="M4 13 17 19 30 13" stroke="#fff" strokeWidth="1.82" strokeLinecap="round" strokeLinejoin="round" style={{ transformBox: 'fill-box', transformOrigin: 'center' }} />
-            </svg>
+            {/* 兩層分成兩張同尺寸的 svg 疊在一起：上面的菱形要單獨做動畫 */}
+            <span className="relative block w-[28px] h-[18px]">
+              <svg width="28" height="18" viewBox="0 0 34 22" fill="none" xmlns="http://www.w3.org/2000/svg"
+                   className="absolute inset-0 drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+                <path d="M4 13 17 19 30 13" stroke="#fff" strokeWidth="1.82" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              <span data-merge-top="" className="absolute inset-0 block will-change-transform">
+                <svg width="28" height="18" viewBox="0 0 34 22" fill="none" xmlns="http://www.w3.org/2000/svg"
+                     className="block drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+                  <path d="M17 2.5 30 8.5 17 14.5 4 8.5Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" />
+                </svg>
+              </span>
+            </span>
             <span className="text-[9px] leading-none font-medium tracking-wide whitespace-nowrap drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
               {hasMergeable
                 ? (activeCategory === 'effects' ? '合併特效' : '合併濾鏡')

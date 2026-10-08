@@ -1155,19 +1155,15 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                    >
                      <div className={`w-16 h-16 rounded-xl border-2 transition-all ${selectedLutIdx === idx ? 'border-white scale-105 shadow-lg' : 'border-white/10 opacity-60'}`}>
                         <div className="w-full h-full bg-zinc-800 rounded-lg overflow-hidden flex flex-col items-center justify-center relative">
-                          {!lut.url ? (
-                            <>
-                                <Icon name="do_not_disturb_on" className="text-white/40 text-xl mb-0.5" />
-                                <span className="text-[10px] font-bold text-white/60 leading-none">原始</span>
-                            </>
-                          ) : (
-                            <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-700/50">
-                                <Icon name="photo_camera" className="text-white/20 text-2xl mb-1" />
-                                <span className="text-[9px] font-bold text-white/80 leading-tight text-center px-1 uppercase truncate w-full">
-                                    {lut.name}
-                                </span>
-                            </div>
-                          )}
+                          {/* 「原始」與其他濾鏡用同一套版面（同尺寸的圖標、同一行高的名稱），
+                              只換圖標與文字 —— 以前兩邊的圖標大小、間距、字級都不同，
+                              原始那格的圖標和字就跟旁邊的對不齊。 */}
+                          <div className={`w-full h-full flex flex-col items-center justify-center ${lut.url ? 'bg-zinc-700/50' : ''}`}>
+                              <Icon name={lut.url ? 'photo_camera' : 'do_not_disturb_on'} className={`${lut.url ? 'text-white/20' : 'text-white/40'} text-2xl mb-1`} />
+                              <span className={`text-[9px] font-bold ${lut.url ? 'text-white/80' : 'text-white/60'} leading-tight text-center px-1 uppercase truncate w-full`}>
+                                  {lut.url ? lut.name : '原始'}
+                              </span>
+                          </div>
                         </div>
                      </div>
                    </button>
