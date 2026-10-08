@@ -522,7 +522,7 @@ const FX_ROOT_PARAM: Record<string, { id: string; label: string; min: number; ma
   Object.fromEntries(
     FX_DEFS.filter(d => d.rootParam).map(d => {
       const p = d.params.find(x => x.id === d.rootParam)!;
-      return [d.id, { id: p.id, label: p.label, min: p.min, max: p.max, def: p.def }];
+      return [d.id, { id: p.id, label: d.rootLabel ?? p.label, min: p.min, max: p.max, def: p.def }];
     }),
   );
 
@@ -2763,8 +2763,10 @@ const editorSlider = (
 
 // Fixed 5rem full-width slider + 6rem parameter buttons, shared by both collages.
 const fxDetailOpen = adjustSub === 'effect' && effectDetail && !!effectCard;
-const detailTools = FX_DETAIL[effectCard] || (FX_SUB_TOOLS[effectCard] || []).map(
- ([k,l,,mn,mx,d]) => [k,l,mn,mx,d] as [string,string,number,number,number]);
+const detailTools = (FX_DETAIL[effectCard] || (FX_SUB_TOOLS[effectCard] || []).map(
+ ([k,l,,mn,mx,d]) => [k,l,mn,mx,d] as [string,string,number,number,number]))
+ // 設了 rootParam 的特效沒有「強度」（固定 100）：那一列換成它的那個參數。
+ .map(t => { const r = FX_ROOT_PARAM[effectCard]; return r && t[0] === effectCard ? [r.id, r.label, r.min, r.max, r.def] as [string,string,number,number,number] : t; });
 const detailActive = detailTools.find(t=>t[0]===detailTool) || detailTools[0];
 
 // 目前這一段要放什麼

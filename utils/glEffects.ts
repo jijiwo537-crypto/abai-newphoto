@@ -154,6 +154,9 @@ export interface FxDef {
    * 要關掉就點特效列最前面的「無」。
    */
   rootParam?: string;
+  /** Label of that outer slider when it should not be the parameter's own
+   *  name (e.g. the screen effect's scanlines are presented as 強度). */
+  rootLabel?: string;
   handlesAmount?: boolean;
   passes: FxPass[];
 }
@@ -544,9 +547,12 @@ export const FX_DEFS: FxDef[] = [
   {
     id: 'fxCrt', label: '螢幕', icon: 'tv',
     onAmount: 100,
+    /* 不能細調：只有最外層一根，調的是掃描線，名稱維持「強度」。 */
+    rootParam: 'fxCrtScan',
+    rootLabel: '強度',
     params: [
       { id: 'fxCrtMask', label: '光罩', icon: 'grid_on', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
-      { id: 'fxCrtScan', label: '掃描線', icon: 'view_day', min: 0, max: 100, def: 50, scale: 0.01 },
+      { id: 'fxCrtScan', label: '掃描線', icon: 'view_day', min: 0, max: 100, def: 50, scale: 0.01 , hidden: true },
       { id: 'fxCrtScanSize', label: '掃描密度', icon: 'density_medium', min: 0, max: 1200, def: 520 , hidden: true },
       { id: 'fxCrtGlow', label: '磷光暈', icon: 'brightness_7', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
       { id: 'fxCrtVig', label: '玻璃暗角', icon: 'circle', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
@@ -597,8 +603,10 @@ export const FX_DEFS: FxDef[] = [
   {
     id: 'fxGlass', label: '玻璃磚', icon: 'window',
     onAmount: 100,
+    /* 最外層調格數；沒有「強度」（強度固定 100）。細項只剩折射。 */
+    rootParam: 'fxGlassBlocks',
     params: [
-      { id: 'fxGlassBlocks', label: '格數', icon: 'apps', min: 4, max: 60, def: 22 },
+      { id: 'fxGlassBlocks', label: '格數', icon: 'apps', min: 4, max: 60, def: 22, hidden: true },
       { id: 'fxGlassRefract', label: '折射', icon: 'lens', min: 0, max: 100, def: 100, scale: 0.01 },
       { id: 'fxGlassBevel', label: '邊緣反光', icon: 'brightness_7', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
       { id: 'fxGlassRound', label: '圓弧度', icon: 'rounded_corner', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
