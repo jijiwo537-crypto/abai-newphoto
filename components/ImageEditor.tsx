@@ -2053,16 +2053,27 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!missing.length) return;
     let alive = true;
     const make = (s: string) => new Promise<void>(resolve => {
-      const finish = (img: HTMLImageElement) => {
+      /* iOS WebKit 的 load 只代表檔案讀到了，像素不一定已經畫得進 canvas ——
+         這時 drawImage 畫出來是透明的，再存成 JPEG 就變成一格全黑
+         （剛匯入時第一張最常中，因為它一進來就被拿去做縮圖）。
+         先等 decode() 再跨一幀才畫；畫完檢查真的有像素，沒有就等一下重畫。 */
+      const finish = async (img: HTMLImageElement, attempt = 0) => {
+        if (!alive) return resolve();
+        try { if (typeof img.decode === 'function') await img.decode(); } catch { /* onload 已成功 */ }
+        await new Promise<void>(r => requestAnimationFrame(() => r()));
         if (!alive) return resolve();
         try {
           const c = document.createElement('canvas');
           c.width = STRIP_THUMB; c.height = STRIP_THUMB;
-          const cx = c.getContext('2d')!;
+          const cx = c.getContext('2d', { willReadFrequently: true })!;
           cx.imageSmoothingQuality = 'high';
           const sw = img.naturalWidth || img.width, sh = img.naturalHeight || img.height;
           const k = Math.max(STRIP_THUMB / sw, STRIP_THUMB / sh);
           cx.drawImage(img, (STRIP_THUMB - sw * k) / 2, (STRIP_THUMB - sh * k) / 2, sw * k, sh * k);
+          const d = cx.getImageData(0, 0, STRIP_THUMB, STRIP_THUMB).data;
+          let painted = false;
+          for (let i = 3; i < d.length; i += 4 * 97) if (d[i]) { painted = true; break; }
+          if (!painted && attempt < 4) { setTimeout(() => { void finish(img, attempt + 1); }, 150 * (attempt + 1)); return; }
           const url = c.toDataURL('image/jpeg', 0.82);
           setStripThumbs(prev => (prev[s] ? prev : { ...prev, [s]: url }));
         } catch { /* 跨來源之類的就算了，那一格留底色 */ }

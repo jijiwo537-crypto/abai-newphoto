@@ -797,6 +797,14 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
 }
 
 
+/** Something else (a HalationLayer presenting soft light / halation / leak)
+ *  drew on this surface: the effects' "this exact frame is already shown"
+ *  shortcut must not skip the next render. */
+export function invalidateFxSurface(canvas:HTMLCanvasElement){
+ const c=surfaces.get(canvas);if(!c)return;
+ c.renderedKey=undefined;c.renderedScene=undefined;c.renderedColour=undefined;c.photoResult=undefined;
+}
+
 /** Release photo-sized storage after a native snapshot, retaining compiled
  * programs so the next edit does not have to compile the same shaders again. */
 export function compactFxSurface(canvas:HTMLCanvasElement){

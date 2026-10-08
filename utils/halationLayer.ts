@@ -1,6 +1,6 @@
 import {blurAlpha} from './alphaBoxBlur.js';
 import {highlightHistogram,selectHighlights} from './highlightSelection';
-import {composeFxScene,disposeFxScene,type FxScene} from './glEffects';
+import {composeFxScene,disposeFxScene,invalidateFxSurface,type FxScene} from './glEffects';
 import {uniformLocation} from './uniformLocation';
 import {surfaceGl,type GpuImage} from './fxSurfaceGl';
 import {GpuHighlightHistogram} from './gpuHighlightHistogram';
@@ -153,6 +153,7 @@ export class HalationLayer {
     // forces WebKit to synchronize its 2D and GPU queues unnecessarily.
     const sourceKey=key.replace(/\|(soft|halo|leak|blur|simple)$/,'');
     if(this.presentation){
+      invalidateFxSurface(this.canvas);
       const ow=this.scene?.black.width||w,oh=this.scene?.black.height||h;
       if(this.canvas.width!==ow)this.canvas.width=ow;if(this.canvas.height!==oh)this.canvas.height=oh;
       this.ensureBase(ctx,sourceKey);
@@ -197,7 +198,7 @@ export class HalationLayer {
     if(cachePhoto&&this.haloPhoto&&this.haloPhotoKey===photoKey){
       const ow=this.scene!.black.width,oh=this.scene!.black.height;
       if(this.canvas.width!==ow)this.canvas.width=ow;if(this.canvas.height!==oh)this.canvas.height=oh;
-      composeFxScene(gl,this.haloPhoto,this.scene!);
+      invalidateFxSurface(this.canvas);composeFxScene(gl,this.haloPhoto,this.scene!);
       if(import.meta.env.DEV)this.canvas.dataset.haloPhases=JSON.stringify({cachedPhoto:true});
       return this.canvas;
     }
