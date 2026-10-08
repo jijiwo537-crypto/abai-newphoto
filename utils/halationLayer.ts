@@ -109,7 +109,7 @@ export class HalationLayer {
     this.haloSeed=makeProgram(`precision highp float; varying vec2 uv; uniform sampler2D source;
       void main(){float l=dot(texture2D(source,uv).rgb,vec3(.299,.587,.114));float a=pow(max(0.,(l-160./255.)/(95./255.)),1.5);gl_FragColor=vec4(0.,0.,0.,floor(a*255.+.5)/255.);}`)||undefined;
     this.softBlur=makeProgram(`precision highp float; varying vec2 uv; uniform sampler2D source; uniform vec2 step; uniform float radius;
-      void main(){vec4 sum=vec4(0.);for(int i=-60;i<=60;i++){if(abs(float(i))<=radius)sum+=texture2D(source,uv+float(i)*step);}gl_FragColor=floor(sum*255./(radius*2.+1.)+.5)/255.;}`)||undefined;
+      void main(){vec4 sum=vec4(0.);for(int i=-60;i<=60;i++){if(float(i)>radius)break;if(float(i)>=-radius)sum+=texture2D(source,uv+float(i)*step);}gl_FragColor=floor(sum*255./(radius*2.+1.)+.5)/255.;}`)||undefined;
     if(!this.softSeed||!this.softBlur||!this.haloSeed){this.failed=true;return false;}
     this.softTextures=[texture(),texture(),texture()];this.framebuffer=gl.createFramebuffer()!;
     this.leak=makeProgram(`precision highp float;varying vec2 uv;uniform sampler2D base;uniform vec2 size;uniform vec2 direction;uniform vec3 color;uniform float amount;
