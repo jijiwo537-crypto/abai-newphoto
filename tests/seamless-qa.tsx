@@ -2,6 +2,8 @@ import React from 'react';
 import {createRoot} from 'react-dom/client';
 import '../styles.css';
 import {GridLayoutTool} from '../components/GridLayoutTool';
+import {installSliderTouch} from '../utils/sliderTouch';
+installSliderTouch();
 import {renderSeamlessLayout} from '../utils/seamlessLayout';
 import {SeamlessLayout} from '../components/SeamlessLayout';
 const photo=(color:string)=>'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800"><rect width="600" height="800" fill="${new URLSearchParams(location.search).has('flat')?'#333':color}"/>${new URLSearchParams(location.search).has('flat')?'':'<circle cx="300" cy="240" r="95" fill="#fff"/><path d="M0 800L300 380L600 800" fill="#333"/>'}</svg>`);
