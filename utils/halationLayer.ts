@@ -50,7 +50,12 @@ export class HalationLayer {
   private sceneResult?:WebGLTexture;
   private sceneResultSize='';
   setScene(scene?:FxScene){this.scene=scene;}
-  get lost(){return !!this.gl&&(this.gl.isContextLost()||!!this.program&&!this.gl.isProgram(this.program));}
+  /* Context loss/restoration is tracked by events. gl.isProgram() is a
+     synchronous query: the browser waits for the GPU to finish all queued
+     work before answering, and this getter runs every frame. */
+  private stale=false;
+  private listening=false;
+  get lost(){return !!this.gl&&(this.gl.isContextLost()||this.stale);}
   constructor(private presentation?:HTMLCanvasElement){this.canvas=presentation||document.createElement('canvas');}
   /** Compile once before interaction without changing any presented pixels. */
   warm(){return this.init();}
@@ -60,6 +65,7 @@ export class HalationLayer {
     if (this.gl && this.program) return !this.gl.isContextLost();
     const gl = this.canvas.getContext('webgl', {premultipliedAlpha:false, preserveDrawingBuffer:true});
     if (!gl) {this.failed = true; return false;}
+    if(!this.listening){this.listening=true;const mark=()=>{this.stale=true;};this.canvas.addEventListener('webglcontextlost',mark);this.canvas.addEventListener('webglcontextrestored',mark);}
     const shader = (type:number, text:string) => {
       const s=gl.createShader(type)!;gl.shaderSource(s,text);gl.compileShader(s);
       if (!gl.getShaderParameter(s,gl.COMPILE_STATUS)) {gl.deleteShader(s);return null;} return s;
