@@ -5316,7 +5316,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
       if(regionColourActive.current&&original&&supportsSceneColour(photo?.fx)&&!sceneGeometryGesture&&!regionTouches.current.size&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
-        regionColour.current??=new PhotoSceneColour();const colour=regionColour.current;
+        regionColour.current??=new PhotoSceneColour();const colour=regionColour.current;colour.onReady=()=>regionPaintRef.current();
         // Colour endpoints contain the actual cropped photograph, not just
         // coverage. Unlike the spatial compositor they cannot reuse pixels
         // captured before a pan/zoom of that photograph.

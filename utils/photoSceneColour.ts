@@ -165,6 +165,14 @@ export class PhotoSceneColour {
    if(lut)this.installLut(lut.tex,false);
    this.key=key;this.film=film;}
   }
+  /* The tables for these settings are still being baked in the worker. If
+     this surface is not already showing a frame of this photo's colours,
+     do not present one now: it would use whatever table is installed — the
+     identity table after prepare(), or a stale one — and flash the photo
+     unadjusted or black (e.g. when an effect is slid to 0 and the preview
+     switches to this surface). The caller then draws its regular path; the
+     worker's result is presented on the next paint. */
+  if(key!==this.key&&(this.key===''||this.canvas.style.display==='none'))return false;
   this.setFilmWeight();gl.viewport(0,0,this.width,this.height);gl.drawArrays(gl.TRIANGLES,0,3);this.recordFrame();this.canvas.style.display='block';return true;
  }
  private canPair(fx:PhotoFx){return !!getLoadedLut(fx.lut)&&photoFxParams(fx).hsl.every(b=>!b.h&&!b.s&&!b.l);}
@@ -177,6 +185,8 @@ export class PhotoSceneColour {
   const times=JSON.parse(this.canvas.dataset.colourFrameTimes||'[]');times.push(performance.now());this.canvas.dataset.colourFrameTimes=JSON.stringify(times.slice(-100));
  }
  hide(){this.canvas.style.display='none';}
+ /** Called when a baked table arrives for a surface that is not presented. */
+ onReady?:()=>void;
  private ensureWorker(){
   if(this.workerFailed)return false;
   if(!this.worker){
@@ -195,6 +205,8 @@ export class PhotoSceneColour {
       this.lutCache.set(this.key,{tex:e.data.tex,plain:e.data.plain,film:this.film,master:!!e.data.master});
       while(this.lutCache.size>8)this.lutCache.delete(this.lutCache.keys().next().value!);
       gl.drawArrays(gl.TRIANGLES,0,3);this.recordFrame();
+      // Not presented yet (see draw): let the owner repaint with it now.
+      if(this.canvas.style.display==='none')this.onReady?.();
       if(import.meta.env.DEV){const jobs=JSON.parse(this.canvas.dataset.colourJobs||'[]');jobs.push({at:performance.now(),bake:e.data.bakeMs,total:performance.now()-this.workerStarted});this.canvas.dataset.colourJobs=JSON.stringify(jobs.slice(-100));}
      }
      this.runWorker();

@@ -926,7 +926,7 @@ const THUMB_DPR = (() => {
 })();
 
 /** sig：這一格是照哪一組條件算出來的，一樣就不用重算 */
-type ThumbEntry = { cvs: HTMLCanvasElement; pixels?: ImageData; v: number; sig: string };
+type ThumbEntry = { cvs: HTMLCanvasElement; pixels?: ImageData; v: number; sig: string; pending?: number };
 type ThumbStore = React.MutableRefObject<Record<string, ThumbEntry>>;
 
 /** 把一張算好的縮圖收進倉庫（重複使用同一張畫布，不要一直生新的） */
@@ -945,10 +945,34 @@ function putThumb(store: ThumbStore, id: string, src: HTMLCanvasElement, sig = '
   try { frame = sx.getImageData(0, 0, src.width, src.height); }
   catch { return; }
   c.getContext('2d')!.putImageData(frame, 0, 0);
-  e.pixels = frame;
+  e.pending = (e.pending || 0) + 1;   // 晚到的非同步快照不能蓋掉這一張
   /* 像素與備援畫布都完整寫完後才發布版本。 */
   e.sig = sig;
   e.v++;
+}
+
+/**
+ * 同 putThumb，但不做同步回讀：特效縮圖是 GPU 畫出來的，getImageData 會讓主執行緒
+ * 等 GPU 把它畫完、再整塊搬回 CPU（一格一次，整排 20 幾次）—— 切到特效頁那一下的卡頓
+ * 大半就是這個。createImageBitmap 是同一瞬間的完整快照（之後 src 被下一格覆蓋也不影響），
+ * 非同步交付，交付後一次蓋進倉庫的畫布，所以顯示端一樣只會拿到完整的一幀。
+ */
+function putThumbAsync(store: ThumbStore, id: string, src: HTMLCanvasElement, onReady: () => void): void {
+  if (!src.width || !src.height) return;
+  if (typeof createImageBitmap !== 'function') { putThumb(store, id, src); onReady(); return; }
+  let e = store.current[id];
+  if (!e) e = store.current[id] = { cvs: document.createElement('canvas'), v: 0, sig: '' };
+  const entry = e, token = (entry.pending = (entry.pending || 0) + 1);
+  createImageBitmap(src).then(bmp => {
+    if (entry.pending !== token || store.current[id] !== entry) { bmp.close(); return; }
+    const c = entry.cvs;
+    if (c.width !== bmp.width || c.height !== bmp.height) { c.width = bmp.width; c.height = bmp.height; }
+    const g = c.getContext('2d')!;
+    g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'copy';
+    g.drawImage(bmp, 0, 0); g.restore(); bmp.close();
+    entry.pixels = undefined; entry.v++;
+    onReady();
+  }).catch(() => { if (entry.pending === token) { putThumb(store, id, src); onReady(); } });
 }
 
 /** 已經掛在畫面上的縮圖格子，算好一張就直接叫它們自己重畫 */
@@ -964,60 +988,63 @@ type ThumbPainters = React.MutableRefObject<Set<() => void>>;
  * 之前每送一批就 setState 一次，等於把整個編輯器重畫十幾遍，
  * 光是那些重畫就佔掉整輪的三分之二（量到特效整排 2292ms → 改成直接畫之後 780ms）。
  */
-const ThumbCanvas: React.FC<{
+const ThumbCanvas = React.memo<{
   store: ThumbStore; id: string; fallbackId?: string; painters: ThumbPainters; attr: string; name: string;
-}> = ({ store, id, fallbackId, painters, attr, name }) => {
-  const ref = useRef<HTMLCanvasElement>(null);
+}>(({ store, id, fallbackId, painters, attr, name }) => {
+  const host = useRef<HTMLDivElement>(null);
+  const copy = useRef<HTMLCanvasElement | null>(null);
   const drawn = useRef('');
+  /* 倉庫裡那張畫布本身就掛上來（搬節點，不複製像素）—— 跟創意拼圖的卡片同一招。
+     以前每次進分頁都新建 20 幾張畫布、配置 GPU 記憶體再 putImageData 一整張，
+     切到「濾鏡」「特效」那一下的延遲主要就是這個。
+     還沒算到自己那一格時頂著的 fallback（大家共用同一張）才複製一份。 */
   const paint = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
+    const h = host.current;
+    if (!h) return;
     const own = store.current[id];
     const e = own || (fallbackId ? store.current[fallbackId] : undefined);
     // 兩份都還沒有時清掉舊照片，不能把上一張／上一顆濾鏡的殘片冒充新縮圖。
-    if (!e) {
-      if (el.width && el.height) el.getContext('2d')?.clearRect(0, 0, el.width, el.height);
-      drawn.current = '';
-      el.dataset.thumbReady = '0';
-      return;
-    }
+    if (!e) { h.replaceChildren(); drawn.current = ''; return; }
     const key = `${own ? id : fallbackId}#${e.v}`;
-    if (drawn.current === key) return;      // 沒換內容就不要重畫
+    if (drawn.current === key && h.firstChild) return;      // 沒換內容就不要重畫
     drawn.current = key;
-    const cx = el.getContext('2d')!;
-    /* 畫之前一定要先清空。
-       drawImage 是「疊上去」不是「換掉」：新的縮圖只要有任何一塊不是完全
-       不透明（像素管線算出來的 alpha 不見得每一格都剛好 255），上一張留在
-       這塊畫布上的內容就會從那些地方透出來，跟新的混在一起 —— 看起來就是
-       「縮圖有一部分怪怪的」，而且離開分頁再回來（畫布重建、內容是空的）
-       就恢復正常。這正是主人描述的那個現象。
-       重設 width／height 本來就會順便清空，但尺寸沒變時不會走那條路，
-       所以這裡明確清一次。 */
-    if (el.width !== e.cvs.width || el.height !== e.cvs.height) { el.width = e.cvs.width; el.height = e.cvs.height; }
-    /* 跟倉庫同樣以完整 CPU 幀一次提交；若是舊快取沒有 pixels 才退回 canvas。 */
-    if (e.pixels) cx.putImageData(e.pixels, 0, 0);
+    let shown: HTMLCanvasElement;
+    if (own && (!e.cvs.parentElement || e.cvs.parentElement === h)) shown = e.cvs;
     else {
-      cx.save();
-      cx.setTransform(1, 0, 0, 1, 0, 0);
-      cx.globalAlpha = 1;
-      cx.filter = 'none';
-      cx.globalCompositeOperation = 'copy';
-      cx.drawImage(e.cvs, 0, 0);
-      cx.restore();
+      const c = (copy.current ||= document.createElement('canvas'));
+      if (c.width !== e.cvs.width || c.height !== e.cvs.height) { c.width = e.cvs.width; c.height = e.cvs.height; }
+      /* 一定要整張蓋掉（copy）：新的縮圖只要有一塊不是完全不透明，上一張的內容
+         就會從那裡透出來，看起來就是「縮圖有一部分怪怪的」。 */
+      const cx = c.getContext('2d')!;
+      cx.save(); cx.setTransform(1, 0, 0, 1, 0, 0); cx.globalAlpha = 1; cx.filter = 'none'; cx.globalCompositeOperation = 'copy';
+      cx.drawImage(e.cvs, 0, 0); cx.restore();
+      shown = c;
     }
-    el.dataset.thumbReady = own ? '1' : '0';
-  }, [store, id, fallbackId]);
+    shown.setAttribute(attr, name);
+    shown.dataset.thumbReady = own ? '1' : '0';
+    shown.className = 'absolute inset-0 w-full h-full object-cover';
+    if (h.firstChild !== shown) h.replaceChildren(shown);
+  }, [store, id, fallbackId, attr, name]);
   /* useLayoutEffect：卡片是每次進頁才掛上來的，排在 useEffect 的話
-     瀏覽器會先畫一幀空白畫布，下一幀才補上圖 —— 那就是「一進特效頁閃一下」。 */
+     瀏覽器會先畫一幀空白，下一幀才補上圖 —— 那就是「一進特效頁閃一下」。 */
   useLayoutEffect(() => {
     const set = painters.current;
     set.add(paint);
     paint();                                 // 剛掛上來（或換照片）先補畫一次
-    return () => { set.delete(paint); };
+    const h = host.current;
+    // 卸下時把倉庫的畫布還回去（拿下來），下一次進分頁才能直接再掛上
+    return () => { set.delete(paint); drawn.current = ''; h?.replaceChildren(); };
   }, [painters, paint]);
-  const props: any = { [attr]: name };
-  return <canvas ref={ref} {...props} className="absolute inset-0 w-full h-full object-cover" />;
-};
+  return <div ref={host} className="absolute inset-0" />;
+});
+
+/** 等這一幀畫出來之後才開始（再加 delay）：切分頁時先讓新分頁出現，縮圖再慢慢補。
+ *  回傳取消函式。 */
+function afterPaint(fn: () => void, delay = 0): () => void {
+  let t = 0, dead = false;
+  const r = requestAnimationFrame(() => { if (!dead) t = window.setTimeout(fn, delay); });
+  return () => { dead = true; cancelAnimationFrame(r); window.clearTimeout(t); };
+}
 
 /**
  * 一格一格把縮圖算出來，每做滿約 14ms 就讓瀏覽器喘一口氣，整排算完才呼叫 done。
@@ -1615,12 +1642,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         // 遮色片 SVG 和 canvas 一起位于缩放层内，所以这里必须保存「层内坐标」，
         // 不能用 getBoundingClientRect()：后者包含当前缩放倍率，复位 transform 又
         // 不会触发 ResizeObserver，之后创建的遮色片就会沿用放大后的错误尺寸。
-        setCanvasBounds({
-          width: canvas.offsetWidth,
-          height: canvas.offsetHeight,
-          top: canvas.offsetTop,
-          left: canvas.offsetLeft,
-        });
+        const next = { width: canvas.offsetWidth, height: canvas.offsetHeight, top: canvas.offsetTop, left: canvas.offsetLeft };
+        /* 沒變就回傳原物件：每次切分頁都會量一次（加上 ResizeObserver 一掛上就回報一次），
+           以前每次都塞一個新物件，等於整個編輯器白白多 render 兩遍。 */
+        setCanvasBounds(prev => prev && prev.width === next.width && prev.height === next.height && prev.top === next.top && prev.left === next.left ? prev : next);
       }
     }
   }, []);
@@ -2640,6 +2665,35 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const softLayerRef = useRef<HalationLayer | null>(null);
   const halationPresentRef=useRef<HalationLayer|null>(null),softPresentRef=useRef<HalationLayer|null>(null);
   const leakPresentRef=useRef<HalationLayer|null>(null);
+  /** 按了特效卡片：下一幀先讓按鈕／分頁的變化畫出來，再下一幀才算圖。
+      以前點下去是「UI 跟整張圖在同一幀一起出來」，算圖多久按鈕就慢多久才亮。 */
+  const uiFirstRef = useRef(false);
+  /* 在特效頁閒著的時候，一顆一顆把特效的著色器（在畫面那塊 GPU 表面上）先編好，
+     柔光／光暈／漏光的圖層也先建好 —— 第一次點某顆特效時就不用當場編譯。
+     手指在動或剛操作過就先等一下，一次只做一顆。 */
+  useEffect(() => {
+    if (activeCategory !== 'effects') return;
+    const ids = EFFECT_TOOLS.map(t => t.id).filter(id => FX_TOOLS[id]);
+    let i = 0, timer = 0, dead = false;
+    const step = () => {
+      if (dead) return;
+      if (isInteractingRef.current || performance.now() - lastUiInputRef.current < 400) { timer = window.setTimeout(step, 250); return; }
+      const surface = fxSurfaceRef.current;
+      if (!surface) return;
+      try {
+        if (i < ids.length) warmFx(ids[i], surface);
+        else if (i === ids.length) {
+          (softPresentRef.current ||= new HalationLayer(surface)).warm();
+          (halationPresentRef.current ||= new HalationLayer(surface)).warm();
+          (leakPresentRef.current ||= new HalationLayer(surface)).warm();
+        } else return;
+      } catch { /* 預熱失敗不影響任何功能 */ }
+      i++;
+      timer = window.setTimeout(step, 40);
+    };
+    const cancel = afterPaint(step, 700);
+    return () => { dead = true; cancel(); window.clearTimeout(timer); };
+  }, [activeCategory]);
   useEffect(()=>()=>{halationLayerRef.current?.dispose();softLayerRef.current?.dispose();halationPresentRef.current?.dispose();softPresentRef.current?.dispose();leakPresentRef.current?.dispose();},[]);
   const halationCacheStateRef = useRef<{
     /** 這份快取是「哪一張照片」算出來的。
@@ -2697,38 +2751,33 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      （見下面 compareSnapRef 那一段）。 */
   useEffect(() => { showOriginalRef.current = showOriginal; }, [showOriginal]);
 
-  // Auto-scroll to selected filter when switching back to filter category
-  // 用 useLayoutEffect：在畫出來之前就把捲動位置設好，才不會先閃一下最前面
+  /* 回到「濾鏡」或「特效」分頁時，把目前套用中的那一顆捲到畫面正中間
+     （在最前面或最後面的，捲到盡頭為止，盡量靠近中間）。沒有套用任何一顆
+     ＝停在「原始」，就是最前面。
+     用 useLayoutEffect：在畫出來之前就把捲動位置設好，才不會先閃一下最前面。
+     以前濾鏡是用寫死的卡片寬度（80）與間距（16）去算，跟實際的卡片（64、8）
+     對不上，越後面的濾鏡偏得越多；特效則一律回到最前面。改成量按鈕本身。 */
   useLayoutEffect(() => {
     const container = toolsScrollRef.current;
-    if (container) {
-        if (activeCategory === 'filter') {
-            const itemWidth = 80; // w-20 (5rem)
-            const gap = 16; // gap-4 (1rem)
-            const padding = 16; // px-4 (1rem)
-
-            const itemCenter = padding + (itemWidth + gap) * selectedLutIdx + itemWidth / 2;
-            const scrollLeft = itemCenter - container.clientWidth / 2;
-
-            container.scrollTo({ left: scrollLeft, behavior: 'auto' });
-        } else if (activeCategory === 'effects' && backFromFxRef.current) {
-            backFromFxRef.current = false;
-            /* 從某個特效的細項退回來時，把「剛剛在編輯的那一顆」擺回畫面中間。
-               不直接還原 scrollLeft —— 退回來的那一瞬間量到的可捲距離還是細項列
-               （比較短）的，設進去會被夾成 43 之類的值，等於還是跳回最前面。
-               對準按鈕本身就沒有這個問題，而且回來時剛好停在你剛編輯的特效上。 */
-            const target = container.querySelector<HTMLElement>(`[data-fx-tool="${activeToolId}"]`);
-            const center = () => {
-                const el = container.querySelector<HTMLElement>(`[data-fx-tool="${activeToolId}"]`);
-                if (!el) return;
-                container.scrollLeft = el.offsetLeft - container.clientWidth / 2 + el.offsetWidth / 2;
-            };
-            center();
-            if (!target) requestAnimationFrame(center);
-        } else {
-            container.scrollLeft = 0;
-        }
+    if (!container) return;
+    let selector = '';
+    if (activeCategory === 'filter') {
+      const id = lutList[selectedLutIdx]?.id;
+      if (id && selectedLutIdx > 0) selector = `[data-filter-card="${CSS.escape(id)}"]`;
+    } else if (activeCategory === 'effects') {
+      backFromFxRef.current = false;
+      const on = EFFECT_TOOLS.find(t => isEffectOn(t.id));
+      if (on) selector = `[data-fx-tool="${CSS.escape(on.id)}"]`;
     }
+    const center = () => {
+      const el = selector ? container.querySelector<HTMLElement>(selector) : null;
+      if (!el) { container.scrollLeft = 0; return !selector; }
+      const er = el.getBoundingClientRect(), cr = container.getBoundingClientRect();
+      container.scrollLeft += (er.left + er.width / 2) - (cr.left + cr.width / 2);
+      return true;
+    };
+    // 卡片可能下一幀才掛上來（分頁剛切換）：那就再對一次
+    if (!center()) requestAnimationFrame(center);
   }, [activeCategory]); // Only trigger on category switch
 
   // Force close or open the mask overlay depending on activeCategory
@@ -3005,7 +3054,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // 還沒有這張照片的縮圖時不等（那正是「整排都還是上一張」的那一刻），
     // 已經對得上了才用防抖，拖滑桿時就不會一直重算。
     const fresh = thumbSigRef.current.split('|')[0] !== thumbSrcOf(buffersSrcRef.current);
-    const t = window.setTimeout(() => {
+    const t = afterPaint(() => {
       const b = buffers.current.preview;
       if (!b || !b.source || !b.w || !b.h) return;
       // 這一批縮圖是為了哪一組「照片 + 調整」算的
@@ -3074,7 +3123,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         () => { thumbSigRef.current = sig; },
       );
     }, fresh ? 0 : 300);
-    return () => { cancelled = true; window.clearTimeout(t); };
+    return () => { cancelled = true; t(); };
   }, [activeCategory, lutList, previewAspect, loadingLutId, activeSrc, buffersTick, lutReadyTick]);
 
   /* 特效縮圖：跟濾鏡那排同一套 —— 先把目前的預覽縮成小圖，
@@ -3089,7 +3138,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (activeCategory !== 'effects') return;
     let cancelled = false;
     const fresh = fxThumbSigRef.current.split('|')[0] !== thumbSrcOf(buffersSrcRef.current);
-    const t = window.setTimeout(() => {
+    const t = afterPaint(() => {
       const b = buffers.current.preview;
       if (!b || !b.source || !b.w || !b.h) return;
       const sig = [thumbSrcOf(buffersSrcRef.current), b.w, b.h, selectedLutIdx].join('|');
@@ -3132,8 +3181,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       // 先把「沒套任何特效」的底圖收進倉庫 —— 還沒輪到的格子先用它頂著，
       // 一進特效分頁整排就有東西可看，不會是一排空格。
       cctx.putImageData(new ImageData(new Uint8ClampedArray(baseData), W, H), 0, 0);
-      putThumb(fxThumbStore, thumbKey(forSrc, FX_THUMB_BASE), cvs);
-      repaintThumbs();
+      putThumbAsync(fxThumbStore, thumbKey(forSrc, FX_THUMB_BASE), cvs, repaintThumbs);
 
       runThumbChunks(
         EFFECT_TOOLS,
@@ -3146,15 +3194,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             applyComplexEffectsRef.current(cctx, W, H, demo, Math.max(W, H) / 1080,
               new Uint8ClampedArray(baseData.length), false, true, baseData);
           } catch { /* 單一格算不出來就留基底圖 */ }
-          putThumb(fxThumbStore, thumbKey(forSrc, tool.id), cvs);
-          return true;
+          putThumbAsync(fxThumbStore, thumbKey(forSrc, tool.id), cvs, repaintThumbs);
+          return false;   // 交付時自己叫重畫
         },
         repaintThumbs,
         () => cancelled,
         () => { fxThumbSigRef.current = sig; },
       );
     }, fresh ? 0 : 300);
-    return () => { cancelled = true; window.clearTimeout(t); };
+    return () => { cancelled = true; t(); };
   }, [activeCategory, lutList, selectedLutIdx, previewAspect, activeSrc, buffersTick]);
 
   const handleFilterSelect = (idx: number) => {
@@ -3438,6 +3486,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   /** 「原始」：把所有特效關掉 */
   const clearAllEffects = () => {
+    uiFirstRef.current = true;
     const next = { ...paramsRef.current, ...NO_EFFECT_PARAMS } as EditorParams;
     paramsRef.current = next;
     isDirtyRef.current = true;
@@ -3449,6 +3498,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   const handleEffectToolSelect = (toolId: string) => {
+    uiFirstRef.current = true;
     if (FX_TOOLS[toolId]) warmFx(toolId);   // 先把著色器編好，第一次拖才不會卡
     setActiveFxId(toolId);
     const amountId = effectAmountId(toolId);
@@ -5619,6 +5669,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 }
             }
 
+            if ((isDirtyRef.current || flipped) && uiFirstRef.current && !interacting) {
+                // The tapped card / tab paints in this frame; the photo follows in the next.
+                uiFirstRef.current = false;
+                rafId = requestAnimationFrame(tick);
+                return;
+            }
             if (isDirtyRef.current || flipped) {
                 const elapsed = now - lastRenderTimeRef.current;
 

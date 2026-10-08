@@ -61,7 +61,13 @@ export class HalationLayer {
   get lost(){return !!this.gl&&(this.gl.isContextLost()||this.stale);}
   constructor(private presentation?:HTMLCanvasElement){this.canvas=presentation||document.createElement('canvas');}
   /** Compile once before interaction without changing any presented pixels. */
-  warm(){return this.init();}
+  warm(){
+    if(!this.init())return false;
+    // Presentation layers also compile the downscale and percentile passes now,
+    // so the first soft light / halation frame does not compile shaders.
+    if(this.presentation){this.ensureDown();if(this.hist===undefined)this.hist=GpuHighlightHistogram.create(this.gl!);}
+    return true;
+  }
 
   private init() {
     if (this.failed) return false;
@@ -109,9 +115,20 @@ export class HalationLayer {
     this.haloSeed=makeProgram(`precision highp float; varying vec2 uv; uniform sampler2D source;
       void main(){float l=dot(texture2D(source,uv).rgb,vec3(.299,.587,.114));float a=pow(max(0.,(l-160./255.)/(95./255.)),1.5);gl_FragColor=vec4(0.,0.,0.,floor(a*255.+.5)/255.);}`)||undefined;
     this.softBlur=makeProgram(`precision highp float; varying vec2 uv; uniform sampler2D source; uniform vec2 step; uniform float radius;
-      void main(){vec4 sum=vec4(0.);for(int i=-60;i<=60;i++){if(float(i)>radius)break;if(float(i)>=-radius)sum+=texture2D(source,uv+float(i)*step);}gl_FragColor=floor(sum*255./(radius*2.+1.)+.5)/255.;}`)||undefined;
+      void main(){
+        /* The same 2r+1 texels, half the fetches: with linear filtering, one
+           fetch exactly between texels i and i+1 returns their average (equal
+           weights), so 2*fetch is their sum. Edges clamp exactly as before. */
+        vec4 sum=texture2D(source,uv);
+        for(int k=0;k<30;k++){float i=float(2*k)+1.;if(i>radius)break;
+          if(i+1.<=radius)sum+=2.*(texture2D(source,uv+(i+.5)*step)+texture2D(source,uv-(i+.5)*step));
+          else sum+=texture2D(source,uv+i*step)+texture2D(source,uv-i*step);}
+        gl_FragColor=floor(sum*255./(radius*2.+1.)+.5)/255.;}`)||undefined;
     if(!this.softSeed||!this.softBlur||!this.haloSeed){this.failed=true;return false;}
     this.softTextures=[texture(),texture(),texture()];this.framebuffer=gl.createFramebuffer()!;
+    // The box blur reads pairs of texels with one linear fetch (see softBlur).
+    // Every other read of these textures is at texel centres, unaffected.
+    for(const t of [...this.softTextures,this.sourceTex!]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);}
     this.leak=makeProgram(`precision highp float;varying vec2 uv;uniform sampler2D base;uniform vec2 size;uniform vec2 direction;uniform vec3 color;uniform float amount;
       void main(){vec3 b=texture2D(base,uv).rgb;vec2 pixel=(vec2(uv.x,1.-uv.y)-.5)*size;float a=clamp(dot(pixel,direction)/(max(size.x,size.y)*1.5),0.,1.)*amount;gl_FragColor=vec4(b+(1.-b)*color*a,1.);}`)||undefined;
     if(this.presentation){
@@ -299,13 +316,8 @@ export class HalationLayer {
   private sampleFromBase(ctx:CanvasRenderingContext2D,key:string,w:number,h:number,mw:number,mh:number){
     const gl=this.gl!;
     this.ensureBase(ctx,key.replace(/\|(soft|halo|leak|blur|simple)$/,''));
-    if(this.downProgram===undefined)this.downProgram=this.program2(`precision highp float;varying vec2 uv;uniform sampler2D source;uniform vec2 srcSize;uniform vec2 dstSize;
-      void main(){vec2 o=floor(gl_FragCoord.xy),r=srcSize/dstSize,a=o*r,b=(o+1.)*r;vec4 sum=vec4(0.);float total=0.;
-        for(int j=0;j<16;j++){float y=floor(a.y)+float(j);if(y>=b.y)break;float wy=min(y+1.,b.y)-max(y,a.y);
-          for(int i=0;i<16;i++){float x=floor(a.x)+float(i);if(x>=b.x)break;float wt=(min(x+1.,b.x)-max(x,a.x))*wy;
-            sum+=texture2D(source,(vec2(x,y)+.5)/srcSize)*wt;total+=wt;}}
-        gl_FragColor=sum/total;}`);
-    if(!this.downProgram)return false;
+    if(!this.ensureDown())return false;
+
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);
     if(this.sampleSize!==`${mw}x${mh}`){gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);this.sampleSize=`${mw}x${mh}`;}
     const base=this.base();
@@ -320,6 +332,15 @@ export class HalationLayer {
     return true;
   }
   private sampleSize='';
+  private ensureDown(){
+    if(this.downProgram===undefined)this.downProgram=this.program2(`precision highp float;varying vec2 uv;uniform sampler2D source;uniform vec2 srcSize;uniform vec2 dstSize;
+      void main(){vec2 o=floor(gl_FragCoord.xy),r=srcSize/dstSize,a=o*r,b=(o+1.)*r;vec4 sum=vec4(0.);float total=0.;
+        for(int j=0;j<16;j++){float y=floor(a.y)+float(j);if(y>=b.y)break;float wy=min(y+1.,b.y)-max(y,a.y);
+          for(int i=0;i<16;i++){float x=floor(a.x)+float(i);if(x>=b.x)break;float wt=(min(x+1.,b.x)-max(x,a.x))*wy;
+            sum+=texture2D(source,(vec2(x,y)+.5)/srcSize)*wt;total+=wt;}}
+        gl_FragColor=sum/total;}`);
+    return !!this.downProgram;
+  }
   /** GPU percentile of the working copy's luminance, for soft light. */
   private hist?:GpuHighlightHistogram|null;
   private histProgs=new Map<string,WebGLProgram|null>();

@@ -2543,6 +2543,28 @@ const [detailTool,setDetailTool] = useState('');
 useEffect(() => { setDetailTool(''); }, [effectCard,img.id]);
 const [,setLocalFx] = useState<PhotoFx>(img.fx || {});
 const liveFx = useRef<PhotoFx>(img.fx || {});
+/* 回到「濾鏡」或「特效」時，把目前套用中的那一顆捲到工具列正中間（在兩端的就
+   捲到盡頭為止）；什麼都沒套＝「原始」，停在最前面。在畫出來之前設好，不會先閃最前面。 */
+const stripRef = useRef<HTMLDivElement>(null);
+useLayoutEffect(() => {
+  const strip = stripRef.current;
+  if (!strip || (adjustSub !== 'filter' && adjustSub !== 'effect')) return;
+  const f = liveFx.current;
+  let selector = '';
+  if (adjustSub === 'filter') { if (f.lut && f.lut !== 'none') selector = `[data-lut-card="${CSS.escape(f.lut)}"]`; }
+  else {
+    const on = FX_ROOT_TOOLS.find(([id]) => ((f as any)[fxAmountId(id)] || 0) !== 0);
+    if (on) selector = `[data-fx-card="${CSS.escape(on[0])}"]`;
+  }
+  const center = () => {
+    const el = selector ? strip.querySelector<HTMLElement>(selector) : null;
+    if (!el) { strip.scrollLeft = 0; return !selector; }
+    const er = el.getBoundingClientRect(), sr = strip.getBoundingClientRect();
+    strip.scrollLeft += (er.left + er.width / 2) - (sr.left + sr.width / 2);
+    return true;
+  };
+  if (!center()) requestAnimationFrame(center);
+}, [adjustSub, img.id]);
 const pendingCommit = useRef<ReturnType<typeof setTimeout> | null>(null);
 /* 調整滑桿：白點由瀏覽器原生即時移動（不受控），交給編輯器的值一幀一次。
    以前非隔離模式下白點綁在整個編輯器的 state 上，每動一下都要等整棵重畫完
@@ -2865,7 +2887,7 @@ return (
     </div>
 
     {/* 2. 工具列（6rem、px-4、gap-2、深一階的底色） */}
-    <div className="flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808] shrink-0"
+    <div ref={stripRef} className="flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808] shrink-0"
          style={{ height: '6rem' }}>
       {/* 濾鏡卡片：外觀跟「編輯」完全一樣 —— 縮圖是這張照片套上這顆濾鏡的樣子，
           名稱壓在下緣，選中的那顆是內描邊的白框（不佔版面、不會位移）。 */}
@@ -2936,6 +2958,29 @@ return (
       </>}
       {/* 特效卡片：跟「編輯」同一份清單、同一種卡片外觀。
           縮圖是這個特效的預設效果，選中的那顆右上角會多一顆編輯鍵（有細項才有）。 */}
+      {/* 「原始」：跟編輯一樣排在第一張，按下去把所有特效（連細項）打回預設＝全部關掉。
+          一個特效都沒開的時候它亮白框。 */}
+      {adjustSub === 'effect' && !fxDetailOpen && (() => {
+        const none = !FX_ROOT_TOOLS.some(([id]) => fxVal(fxAmountId(id), 0) !== 0);
+        return (
+          <button
+            key="__fx-none"
+            data-fx-card=""
+            aria-pressed={none}
+            onClick={() => { setEffectCard(''); setEffectDetail(false); if (!none) setFx({ ...FX_PARAM_DEFAULTS }); }}
+            className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
+          >
+            <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
+              <div className="absolute inset-0 bg-[#1a1a1a]" />
+              <CardThumb src={cardSrc} delay={0} cacheKey={`${cardSrc}|fx:none`} fx={{} as PhotoFx} />
+              <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
+                <span style={{textTransform:'none'}} className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap ${none ? 'text-white' : 'text-white/60'}`}>原始</span>
+              </div>
+              {none && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
+            </div>
+          </button>
+        );
+      })()}
       {adjustSub === 'effect' && !fxDetailOpen && FX_ROOT_TOOLS.map(([id, label], fi) => {
         const amountId = fxAmountId(id);
         const on = fxVal(amountId, 0) !== 0;
