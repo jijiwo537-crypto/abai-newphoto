@@ -244,7 +244,9 @@ const textTmpPool = new Map<number, HTMLCanvasElement>();
 // Unlike the scratch pool, hits skip font rasterization and color compositing.
 const patternRasterCache = new Map<string, {canvas:HTMLCanvasElement; size:number; pad:number; family:string}>();
 let patternRasterBytes = 0;
-const PATTERN_RASTER_BUDGET = 24 * 1024 * 1024;
+const PATTERN_RASTER_BUDGET = 64 * 1024 * 1024;
+/** 快取貼圖的邊長上限：再大也不會比這更清楚，只會讓每一幀配置巨大的畫布。 */
+const PATTERN_TILE_MAX = 3072;
 
 export const drawTextShape = (
   targetCtx: CanvasRenderingContext2D,
@@ -256,7 +258,10 @@ export const drawTextShape = (
   fillStyle: any,
   isDestinationOut: boolean = false,
   holeAngle: number = 0,
-  reuseRaster: boolean = false
+  /* 預設就重用點陣：以前沒有任何呼叫端打開它，字形／圖片圖案（<333、pic333、
+     abai…）每畫一次都要在螢幕解析度重新開一張暫存畫布、貼圖、上色再合成 ——
+     放得很大或放大預覽時，每一幀都在配置幾百萬像素的畫布，就是那個「很卡」。 */
+  reuseRaster: boolean = true
 ) => {
   const str = holeType === 'love' ? '<3'
     : holeType === 'love3' ? '<333'
@@ -274,7 +279,12 @@ export const drawTextShape = (
       && (!image || (image.complete && image.naturalWidth > 0))) {
     // Always round resolution UP. Rotation and requested dimensions are applied
     // when compositing, so adjusting either does not rerasterize every pattern.
-    const resolution = Math.pow(1.12, Math.ceil(Math.log(Math.max(1,sz*density))/Math.log(1.12)));
+    let resolution = Math.pow(1.12, Math.ceil(Math.log(Math.max(1,sz*density))/Math.log(1.12)));
+    /* 上限：圖片圖案的細節不會多於原圖本身；字形貼圖邊長不超過 PATTERN_TILE_MAX。
+       超出的部分由合成時的高品質縮放補上，肉眼看起來一樣。 */
+    const unit = glyphInk(holeType, str, 100);
+    if (unit.r > 0) resolution = Math.min(resolution, Math.max(8, (PATTERN_TILE_MAX / 2 - 3) / (unit.r / 100)));
+    if (image && unit.w > 0) resolution = Math.min(resolution, Math.max(8, 100 * Math.max(image.naturalWidth, 1) / unit.w * 1.25));
     const bounds = glyphInk(holeType,str,resolution);
     const p = Math.max(2, Math.ceil(bounds.r)+3);
     const tileSide = p*2;

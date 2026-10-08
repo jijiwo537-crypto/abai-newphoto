@@ -1899,6 +1899,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return { bw: w * c + h * s2, bh: w * s2 + h * c };
   };
 
+  /* 對齊一律看「看得見的那一塊」：選取框貼著墨水畫（愛心、星星、符號的墨水
+     都比外框小），吸附與亮線卻拿整個外框算，就會出現「框明明還沒碰到邊，
+     對齊線已經亮了」。這裡回傳墨水（＝選取框）相對於框心的範圍，
+     已含旋轉（取旋轉後的外接）。w0/h0 可以跟物件目前的大小不同（縮放中）。 */
+  const inkExtentOf = (o: any, w0: number, h0: number, rot: number) => {
+    let fx0 = 0, fx1 = 1, fy0 = 0, fy1 = 1;
+    if (o && o.w > 0 && o.h > 0) {
+      try {
+        const ink = objectSelectionInk(o, 1, 0);
+        if (ink.w > 0 && ink.h >= 0) { fx0 = ink.x / o.w; fx1 = (ink.x + ink.w) / o.w; fy0 = ink.y / o.h; fy1 = (ink.y + ink.h) / o.h; }
+      } catch { /* 量不到就用整個框 */ }
+    }
+    const r = ((rot || 0) * Math.PI) / 180, c = Math.cos(r), sn = Math.sin(r);
+    let l = Infinity, rr = -Infinity, t = Infinity, b = -Infinity;
+    for (const fx of [fx0, fx1]) for (const fy of [fy0, fy1]) {
+      const x = (fx - .5) * w0, y = (fy - .5) * h0, X = x * c - y * sn, Y = x * sn + y * c;
+      l = Math.min(l, X); rr = Math.max(rr, X); t = Math.min(t, Y); b = Math.max(b, Y);
+    }
+    return { l, r: rr, t, b };
+  };
+
   /**
    * 這個位置上「現在剛好對齊」的每一條線。
    * 跟經典拼圖的 pageGuidelinesAt 同一套：吸附只挑最近的一條，
@@ -1921,12 +1942,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     for (const o of objectsRef.current) {
       if (!o || o.id === selfId || !o.w || !o.h) continue;
       if (isSym(o) !== selfSym) continue;
-      // 跟自己一樣用「旋轉之後的外接框」，轉過的物件才不會亮在半個身子外
-      const { bw, bh } = aabbOf(o.w, o.h, o.rot || 0);
+      // 別人的邊也是「看得見的邊」（墨水、已含旋轉），不是外框
+      const e = inkExtentOf(o, o.w, o.h, o.rot || 0);
       const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
       // 只收邊緣（左右／上下）。中心刻意不收 —— 見 linesAt 裡的說明。
-      xs.push(cx - bw / 2, cx + bw / 2);
-      ys.push(cy - bh / 2, cy + bh / 2);
+      xs.push(cx + e.l, cx + e.r);
+      ys.push(cy + e.t, cy + e.b);
     }
     return { xs, ys, cxs, cys };
   };
@@ -1982,7 +2003,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (!offsG || !w0 || !h0 || !enableSnappingRef.current) return { x: x0, y: y0, guides: [] as any[] };
     /* 判定一律用「旋轉之後的外接框」—— 轉了 90 度還拿原本的寬高去比，
        線就會亮在離邊緣半個身子的地方。 */
-    const { bw, bh } = aabbOf(w0, h0, rot);
+    // 自己的範圍也是墨水（＝選取框），不是外框
+    const ext = inkExtentOf(selfId ? objectsRef.current.find((z: any) => z && z.id === selfId) : null, w0, h0, rot);
     let cx = x0 + w0 / 2, cy = y0 + h0 / 2;
     /* 經典／創意拼圖共用 8 個螢幕像素的吸附距離。這裡先換算成
        畫布座標，因此不同手機尺寸與預覽倍率下的吸附力道仍然一致。 */
@@ -2008,14 +2030,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     })();
     /* centreOnly：只跟「我的中心」配對的線（其他物件的中心）。
        邊緣碰到別人的中心不算對齊，跟畫布中線是同一條規則。 */
-    const axis = (c0: number, half: number, centre: number, edges: number[], seamList: number[], centreOnly: number[] = []) => {
+    const axis = (c0: number, lo: number, hi: number, centre: number, edges: number[], seamList: number[], centreOnly: number[] = []) => {
       const cands: { d: number }[] = [];
-      if (!edgeOnly) cands.push({ d: centre - c0 });
+      const mid = c0 + (lo + hi) / 2;
+      if (!edgeOnly) cands.push({ d: centre - mid });
       for (const v of [...edges, ...seamList]) {
-        cands.push({ d: v - (c0 - half) });
-        cands.push({ d: v - (c0 + half) });
+        cands.push({ d: v - (c0 + lo) });
+        cands.push({ d: v - (c0 + hi) });
       }
-      if (!edgeOnly) for (const v of [...seamList, ...centreOnly]) cands.push({ d: v - c0 });
+      if (!edgeOnly) for (const v of [...seamList, ...centreOnly]) cands.push({ d: v - mid });
       const near = cands.filter(z => Math.abs(z.d) < snap).sort((a, b) => Math.abs(a.d) - Math.abs(b.d));
       if (!near.length) return 0;
       const best = near[0];
@@ -2025,9 +2048,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     /* 畫布的邊界／中線／交界，再加上「其他物件的邊緣」——
        所以圖片跟圖片、圖片跟文字之間也吸得到、也會亮線。 */
-    cx += axis(cx, bw / 2, offsG.cw / 2, [0, offsG.cw, ...(edgeOnly ? [] : others.xs)], seams.xs, regionCenters.xs);
-    cy += axis(cy, bh / 2, offsG.ch / 2, [0, offsG.ch, ...(edgeOnly ? [] : others.ys)], seams.ys, regionCenters.ys);
-    return { x: cx - w0 / 2, y: cy - h0 / 2, guides: linesAt(cx, cy, bw, bh, edgeOnly, selfId) };
+    cx += axis(cx, ext.l, ext.r, offsG.cw / 2, [0, offsG.cw, ...(edgeOnly ? [] : others.xs)], seams.xs, regionCenters.xs);
+    cy += axis(cy, ext.t, ext.b, offsG.ch / 2, [0, offsG.ch, ...(edgeOnly ? [] : others.ys)], seams.ys, regionCenters.ys);
+    return { x: cx - w0 / 2, y: cy - h0 / 2, guides: linesAt(cx + (ext.l + ext.r) / 2, cy + (ext.t + ext.b) / 2, ext.r - ext.l, ext.b - ext.t, edgeOnly, selfId) };
   }, [linesAt, imageState, layout, maskScale]);
 
   /**
@@ -2038,7 +2061,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const snapPinchScale = useCallback((k: number, w0: number, h0: number, cx: number, cy: number, rot: number, selfId?: string) => {
     const o = getLayoutOffsetsRef.current?.();
     if (!o || !enableSnappingRef.current) return { k, guides: [] as any[] };
-    const { bw, bh } = aabbOf(w0, h0, rot);
+    // 墨水（＝選取框）相對於縮放中心的範圍；縮放 k 倍時整組乘 k
+    const ext = inkExtentOf(selfId ? objectsRef.current.find((z: any) => z && z.id === selfId) : null, w0, h0, rot);
+    const bw = ext.r - ext.l, bh = ext.b - ext.t;
     if (bw < 1 || bh < 1) return { k, guides: [] as any[] };
     const shown = Math.max(1, baseCssWRef.current * Math.max(1, viewTRef.current.k));
     const perCss = o.cw / shown;
@@ -2051,27 +2076,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!z || z.id === selfId || !z.w || !z.h) continue;
       const zcx = z.x + z.w / 2, zcy = z.y + z.h / 2;
       if (Math.abs(zcx - cx) > centreEps || Math.abs(zcy - cy) > centreEps) continue;
-      const a = aabbOf(z.w, z.h, z.rot || 0);
-      xs.push(zcx - a.bw / 2, zcx + a.bw / 2);
-      ys.push(zcy - a.bh / 2, zcy + a.bh / 2);
+      const a = inkExtentOf(z, z.w, z.h, z.rot || 0);
+      xs.push(zcx + a.l, zcx + a.r);
+      ys.push(zcy + a.t, zcy + a.b);
     }
     const cands: { k: number; axis: 'x' | 'y'; line: number; delta: number }[] = [];
-    for (const v of xs) {
-      for (const cand of [(2 * (cx - v)) / bw, (2 * (v - cx)) / bw])
-        cands.push({ k: cand, axis: 'x', line: v, delta: Math.abs(cand - k) * bw / 2 });
-    }
-    for (const v of ys) {
-      for (const cand of [(2 * (cy - v)) / bh, (2 * (v - cy)) / bh])
-        cands.push({ k: cand, axis: 'y', line: v, delta: Math.abs(cand - k) * bh / 2 });
-    }
+    // 邊在 c + e×k：哪一個 k 讓這條邊剛好落在線上
+    const push = (axis: 'x' | 'y', c: number, v: number, e: number) => {
+      if (Math.abs(e) < 1e-6) return;
+      const cand = (v - c) / e;
+      cands.push({ k: cand, axis, line: v, delta: Math.abs(cand - k) * Math.abs(e) });
+    };
+    for (const v of xs) { push('x', cx, v, ext.l); push('x', cx, v, ext.r); }
+    for (const v of ys) { push('y', cy, v, ext.t); push('y', cy, v, ext.b); }
     const best = cands.filter(c => c.k > 0.05 && c.k <= 8 && c.delta < snap)
       .sort((a, b) => a.delta - b.delta)[0];
     const bestK = best ? best.k : k;
     if (!best) return { k, guides: [] as any[] };
-    const bw1 = bw * bestK, bh1 = bh * bestK;
     const guides: any[] = [];
-    for (const v of xs) if (Math.min(Math.abs(cx - bw1 / 2 - v), Math.abs(cx + bw1 / 2 - v)) < centreEps) guides.push({ x: v });
-    for (const v of ys) if (Math.min(Math.abs(cy - bh1 / 2 - v), Math.abs(cy + bh1 / 2 - v)) < centreEps) guides.push({ y: v });
+    for (const v of xs) if (Math.min(Math.abs(cx + ext.l * bestK - v), Math.abs(cx + ext.r * bestK - v)) < centreEps) guides.push({ x: v });
+    for (const v of ys) if (Math.min(Math.abs(cy + ext.t * bestK - v), Math.abs(cy + ext.b * bestK - v)) < centreEps) guides.push({ y: v });
     return { k: bestK, guides };
   }, []);
 
@@ -5186,6 +5210,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>()=>{if(backdropPrefix.current)backdropPrefix.current.canvas.width=backdropPrefix.current.canvas.height=1;},[]);
   const forceFullPreviewRef = useRef(false);
   const stableScene=useRef(new StableSceneTiles());
+  const pinchSnapRef=useRef<{key:string;canvas:HTMLCanvasElement}|null>(null);
   const sceneTileWindow=useRef<SceneWindow|null>(null);
   const stableSceneKey=JSON.stringify([backdropSceneFingerprint,objects,photoRegion,lutRevision],compactSceneValue);
   const stableSceneKeyRef=useRef(stableSceneKey);stableSceneKeyRef.current=stableSceneKey;
@@ -5449,6 +5474,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
       drawnScaleRef.current=s;lastMainDrawRef.current=performance.now();
       if(import.meta.env.DEV){targetCanvas.dataset.sceneSnapshot='tiles';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);targetCanvas.dataset.viewport=JSON.stringify(vp);targetCanvas.dataset.fullSize=JSON.stringify([tW,tH]);}
+      return;
+    }
+    /* 放大縮小預覽不改變任何內容：遮罩的結果、照片、圖形都一樣，只是看的倍率
+       不同。完整的預備畫面（上面的 tiles）還沒做好時（剛改過東西的那幾秒），
+       以前每一幀都把整個場景連遮罩重新算一次。現在改用「最近一次在靜止時畫好
+       的整張成品」直接縮放貼上，手勢期間零計算；手放開後才照新倍率畫清楚一次。 */
+    const viewMovingNow=!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
+    const pinchSnap=pinchSnapRef.current;
+    if(targetCanvas===canvasRef.current&&!previewCapture&&sceneIsStatic&&viewMovingNow&&pinchSnap&&pinchSnap.key===liveSceneKey){
+      ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='low';
+      ctx.drawImage(pinchSnap.canvas,0,0,pinchSnap.canvas.width,pinchSnap.canvas.height,0,0,offs.cw,offs.ch);
+      regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
+      drawnScaleRef.current=s;lastMainDrawRef.current=performance.now();
+      if(import.meta.env.DEV){targetCanvas.dataset.sceneSnapshot='pinch-snapshot';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);}
       return;
     }
     /* Objects just added (palette tap, import) are appended on top of a scene
@@ -5779,8 +5818,40 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.drawImage(bd, 0, 0);
       ctx.restore();
     };
+    /* 空格子的「＋ 新增圖片」與空格之間的虛線，屬於照片那一層：畫在畫布裡、
+       照片之後、所有物件與圖案之前，所以任何東西擺上去都會蓋過它。
+       以前它是疊在整張畫布上方的另一層，連圖形、文字都壓在它底下。
+       大小跟以前一樣以「未縮放預覽」的螢幕像素為準（放大預覽時一起變大）。
+       只畫在螢幕上的預覽（含預備好的畫面），匯出不會有。 */
+    const drawEmptyCellPrompts = () => {
+      if (!isMain || !photoRegion?.multi) return;
+      const empty = photoRegion.photos.map(p => !p.src);
+      if (!empty.some(Boolean)) return;
+      const t = imageTransform, K = s * kIn, rects = regionRects(photoRegion, t.w * K, t.h * K);
+      const X = (f: number) => offs.ix + (t.x + f * t.w) * K, Y = (f: number) => offs.iy + (t.y + f * t.h) * K;
+      const px = offs.cw / Math.max(1, baseCssWRef.current || uiRect.width || offs.cw);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(offs.ix, offs.iy, iw, ih); ctx.clip();
+      ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = px * .7; ctx.setLineDash([px * 3, px * 3]);
+      for (const l of emptyCellSeparators(rects, empty)) { ctx.beginPath(); ctx.moveTo(X(l.x1), Y(l.y1)); ctx.lineTo(X(l.x2), Y(l.y2)); ctx.stroke(); }
+      ctx.setLineDash([]);
+      const plus = new Path2D(SOLID_PLUS_PATH);
+      rects.forEach((r, i) => {
+        if (!empty[i]) return;
+        const w = r.w * t.w * K, h = r.h * t.h * K, u = px * Math.min(1, w / (70 * px), h / (50 * px));
+        ctx.save();
+        ctx.translate(X(r.x + r.w / 2), Y(r.y + r.h / 2)); ctx.scale(u, u);
+        ctx.globalAlpha = .6; ctx.fillStyle = '#fff';
+        ctx.save(); ctx.translate(-8, -19); ctx.fill(plus); ctx.restore();
+        ctx.font = '500 8px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+        ctx.fillText('新增圖片', 0, 12);
+        ctx.restore();
+      });
+      ctx.restore();
+    };
     const drawCentreImage = () => {
       drawImg(baseImg as any, imageTransform, offs.ix, offs.iy, iw, ih, kIn, true);
+      drawEmptyCellPrompts();
       // Base-photo chrome belongs to the base layer, beneath objects/patterns.
       const index = selectedRegionPhotoRef.current;
       if (!isMain || !photoRegion?.multi || index === null || activeTab === 'motion' || hideChromeRef.current || animRef.current) return;
@@ -7810,6 +7881,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        所以底圖愈大等愈久。現在畫面每畫一次就順手留一張，返回鍵那一下
        手上已經有圖了，一格都不用再算。
        0.4 秒才留一次，播影片時多出來的成本可以忽略（實測一次約 2 毫秒）。 */
+    // 留一張整張成品給「預覽縮放手勢」用（見上面 pinchSnap）。只在有遮罩這種
+    // 重的場景、而且畫的是完整一頁（沒有放大裁窗）的靜止畫面時才留。
+    if(targetCanvas===canvasRef.current&&!previewCapture&&!windowed&&sceneIsStatic&&hasBackdrop&&!viewMovingNow&&targetCanvas.width>1){
+      const snap=pinchSnapRef.current?.canvas||document.createElement('canvas');
+      if(snap.width!==targetCanvas.width)snap.width=targetCanvas.width;if(snap.height!==targetCanvas.height)snap.height=targetCanvas.height;
+      const sg=get2dWide(snap);
+      if(sg){sg.setTransform(1,0,0,1,0,0);sg.globalCompositeOperation='copy';sg.drawImage(targetCanvas,0,0);sg.globalCompositeOperation='source-over';pinchSnapRef.current={key:liveSceneKey,canvas:snap};}
+    }else if(!hasBackdrop&&pinchSnapRef.current&&targetCanvas===canvasRef.current){pinchSnapRef.current.canvas.width=pinchSnapRef.current.canvas.height=1;pinchSnapRef.current=null;}
     if (isMain && !windowed) {
       const nowT = performance.now();
       // 手勢期間不額外縮製歷史縮圖；畫面仍以原解析度繪製。
@@ -10019,30 +10098,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {photoRegion?.multi && (()=>{
                 const off=getLayoutOffsets();if(!off)return null;
                 const k=baseFrameScale(off),t=imageTransform,rects=regionRects(photoRegion,t.w*k,t.h*k);
-                const px=off.cw/Math.max(1,baseCss?.w||off.cw);
-                const empty=photoRegion.photos.map(p=>!p.src);
                 return <div className="absolute inset-0 pointer-events-none" style={{zIndex:5,overflow:'hidden'}} data-region-cell-overlay>
-                  <svg viewBox={`0 0 ${off.cw} ${off.ch}`} className="absolute inset-0 w-full h-full pointer-events-none" data-photo-cell-chrome>
-                    <defs><clipPath id="creative-cell-chrome-clip"><rect x={off.ix} y={off.iy} width={off.iw} height={off.ih}/></clipPath></defs>
-                    <g clipPath="url(#creative-cell-chrome-clip)">
-                    {emptyCellSeparators(rects,empty).map((l,i)=><line key={i} data-empty-separator x1={off.ix+(t.x+l.x1*t.w)*k} y1={off.iy+(t.y+l.y1*t.h)*k} x2={off.ix+(t.x+l.x2*t.w)*k} y2={off.iy+(t.y+l.y2*t.h)*k} stroke="rgba(255,255,255,.35)" strokeWidth={px*.7} strokeDasharray={`${px*3} ${px*3}`}/>)}
-                    {rects.map((r,i)=>{
-                      if(!empty[i])return null;const cell=regionCell(i)!;
-                      const cx=cell.x+cell.w/2,cy=cell.y+cell.h/2;
-                      const fit=Math.min(1,cell.w/(70*px),cell.h/(50*px)),u=px*fit;
-                      return <g key={i} data-empty-prompt transform={`translate(${cx} ${cy}) scale(${u})`} fill="white" opacity=".6">
-                        <path data-empty-plus d={SOLID_PLUS_PATH} transform="translate(-8 -19)"/>
-                        <text data-empty-label x="0" y="12" textAnchor="middle" fontSize="8" fontWeight="500" fontFamily="sans-serif">選擇相片</text>
-                      </g>;
-                    })}
-                    </g>
-                  </svg>
                   {rects.map((r,i)=>{
                     const cell=regionCell(i)!;
                     const left=Math.max(off.ix,cell.x),top=Math.max(off.iy,cell.y),right=Math.min(off.ix+off.iw,cell.x+cell.w),bottom=Math.min(off.iy+off.ih,cell.y+cell.h);
                     if(right<=left||bottom<=top)return null;
                     return <div key={i} data-photo-cell={i} className="absolute flex items-center justify-center" style={{left:`${left/off.cw*100}%`,top:`${top/off.ch*100}%`,width:`${(right-left)/off.cw*100}%`,height:`${(bottom-top)/off.ch*100}%`}}>
-                      {!photoRegion.photos[i].src && <button aria-label="選擇相片" className="pointer-events-none absolute inset-0"
+                      {!photoRegion.photos[i].src && <button aria-label="新增圖片" className="pointer-events-none absolute inset-0"
                         /* 手指不落在這顆按鈕上：它以前整格攔下觸控，手指剛好在空格裡
                            就沒辦法兩指縮放畫面或物件。點一下改由畫布的空格判定處理
                            （放開且沒移動才選中並打開相簿）；按鈕只留給鍵盤／輔助功能。 */

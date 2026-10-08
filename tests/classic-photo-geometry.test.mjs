@@ -63,6 +63,7 @@ test('actual drag solver snaps cross-page objects to both outer edges at all pre
     const rotExtent=(w,h,r)=>({bw:Math.abs(w*Math.cos(r*Math.PI/180))+Math.abs(h*Math.sin(r*Math.PI/180)),bh:Math.abs(w*Math.sin(r*Math.PI/180))+Math.abs(h*Math.cos(r*Math.PI/180))});
     const SHAPE_FIT={square:[0,0,1,1]},GRID_SHAPE_KINDS=new Set();
     const seamXs=()=>[300,600],pageGuidelinesAt=()=>[],dedupeGuidelines=g=>g;
+    const floatingInkOffsets=(it,w,h,s,r)=>{const e=rotExtent(w*s,h*s,r);return {l:-e.bw/2,r:e.bw/2,t:-e.bh/2,b:e.bh/2};};
     ${body}
     return applySnapping;
   }`, { loader:'ts',format:'esm' });

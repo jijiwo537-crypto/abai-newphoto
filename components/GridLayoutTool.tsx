@@ -1896,7 +1896,7 @@ const LayoutEmptyPromptLayer: React.FC<{
         fill="white" opacity=".2">
         <path data-layout-empty-plus="1" d={SOLID_PLUS_PATH} transform="translate(-8 -19)"/>
         <text data-layout-empty-label="1" x="0" y="12" textAnchor="middle"
-          fontSize="8" fontWeight="700" fontFamily={fontStack(DEFAULT_FONT)}>選擇相片</text>
+          fontSize="8" fontWeight="700" fontFamily={fontStack(DEFAULT_FONT)}>新增圖片</text>
       </g>;
     })}
   </svg>
@@ -7686,17 +7686,49 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     });
   };
 
+  /* 吸附與對齊線一律用「選取框」那一塊（看得見的墨水），跟畫面上的框完全
+     同一份量法：圖形／圖案／遮罩用 measureShapeInk，符號用字形墨水，其他
+     （照片、一般文字）就是整個框。以前圖案與符號拿整個外框算，框明明還沒
+     碰到邊，對齊線就先亮了。回傳相對於框心的範圍（已含旋轉）。 */
+  const floatingInkOffsets = (item: FloatingImage | undefined, w: number, h: number, scale: number, rot: number) => {
+    let fx0 = 0, fx1 = 1, fy0 = 0, fy1 = 1;
+    if (item?.shape && !item.sym) {
+      const ink = measureShapeInk({
+        kind: item.shape, hole: item.holeType, id: item.id, filled: item.shapeFilled,
+        w: item.width, h: item.height, lineW: item.shapeLineW,
+        lineBase: item.shape === 'hole' ? undefined : item.shapeLineBase,
+        strokeW: item.shapeStrokeW, innerSize: item.shapeInnerSize, outlineWidth: item.shapeOutlineWidth,
+        textureBaseW: item.shapeTextureBaseW, textureBaseH: item.shapeTextureBaseH,
+        maskShape: (item as any).maskShape, miterLimit: item.shape === 'hole' ? 10 : undefined,
+      });
+      if (ink) { fx0 = ink.x / item.width; fx1 = (ink.x + ink.w) / item.width; fy0 = ink.y / item.height; fy1 = (ink.y + ink.h) / item.height; }
+    } else if (item?.sym) {
+      const ink = measureSymbolStickerInk(item.text || item.sym, SYMBOL_FONT);
+      const size = item.fontSize || 40, edge = (item.strokeWidth || 0) * (size / 40);
+      const iw = (ink.w * size + edge * 2) / Math.max(1e-6, item.width), ih = (ink.h * size + edge * 2) / Math.max(1e-6, item.height);
+      fx0 = (1 - iw) / 2; fx1 = (1 + iw) / 2; fy0 = (1 - ih) / 2; fy1 = (1 + ih) / 2;
+    }
+    const W = w * scale, H = h * scale, r = (rot || 0) * Math.PI / 180, c = Math.cos(r), sn = Math.sin(r);
+    let l = Infinity, rr = -Infinity, t = Infinity, b = -Infinity;
+    for (const fx of [fx0, fx1]) for (const fy of [fy0, fy1]) {
+      const x = (fx - .5) * W, y = (fy - .5) * H, X = x * c - y * sn, Y = x * sn + y * c;
+      l = Math.min(l, X); rr = Math.max(rr, X); t = Math.min(t, Y); b = Math.max(b, Y);
+    }
+    return { l, r: rr, t, b };
+  };
+
   const pageGuidelinesAt = (
     x: number, y: number, imgWidth: number, imgHeight: number, scale: number, edgeOnly = false, rot = 0,
-    seamBleed = 0,
+    seamBleed = 0, ink?: { l: number; r: number; t: number; b: number },
   ): AlignmentGuideline[] => {
     const out: AlignmentGuideline[] = [];
     // 轉過的圖要用外接矩形去比，不然線會亮在離邊緣半個身子的地方
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * scale, imgHeight * scale, rot);
     const cx = x + imgWidth / 2;
     const cy = y + imgHeight / 2;
-    const left = cx - scaledW / 2, right = cx + scaledW / 2;
-    const top = cy - scaledH / 2, bottom = cy + scaledH / 2;
+    const e = ink || { l: -scaledW / 2, r: scaledW / 2, t: -scaledH / 2, b: scaledH / 2 };
+    const left = cx + e.l, right = cx + e.r;
+    const top = cy + e.t, bottom = cy + e.b;
     const EPS_C = 0.75;   // 中線是精準吸附
     /* 貼齊是「剛好對齊、不外溢」，容差只留給次像素捨入。
        超過就代表真的有縫（或真的超出去），那就不該畫線 —— 不然會出現
@@ -7761,32 +7793,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        例如愛心與五角星的路徑本來就沒有填滿外盒，舊算法雖然讓外盒貼線，
        肉眼看到的圖案仍差一截。這裡沿用選中框同一份 SHAPE_FIT，再把描邊算入，
        最後旋轉四個角取得精確可見外接框。 */
-    const visibleOffsets = (() => {
-      if (!movingItem?.shape || movingItem.shape === 'hole') {
-        return { l: -scaledW / 2, r: scaledW / 2, t: -scaledH / 2, b: scaledH / 2 };
-      }
-      const fit = SHAPE_FIT[movingItem.shape] || [0, 0, 1, 1];
-      const lineBase = movingItem.shapeLineBase || Math.max(imgWidth, imgHeight);
-      const lw = GRID_SHAPE_KINDS.has(movingItem.shape)
-        ? 1.5 * (lineBase / 160) * Math.max(1, Math.min(3, (movingItem.shapeLineW ?? 6) / 6))
-        : Math.max(0.4, (movingItem.shapeLineW ?? 6) * (lineBase / 160));
-      const outer = Math.min(8, Math.max(0, movingItem.shapeStrokeW || 0)) * (lineBase / 160);
-      const inkPad = ((movingItem.shapeFilled && movingItem.shape !== 'line') ? 0 : lw / 2) + outer;
-      /* 圖形本體會隨 scale 放大，但線寬刻意維持固定（上方 Canvas draw 的
-         lineUnit / renderScale 正是這個規則）。這裡若再把線寬乘一次 scale，
-         吸附用的假想邊緣便會離真正墨水愈來愈遠。 */
-      const x0 = imgWidth * imgScale * fit[0] - inkPad - imgWidth * imgScale / 2;
-      const x1 = imgWidth * imgScale * (fit[0] + fit[2]) + inkPad - imgWidth * imgScale / 2;
-      const y0 = imgHeight * imgScale * fit[1] - inkPad - imgHeight * imgScale / 2;
-      const y1 = imgHeight * imgScale * (fit[1] + fit[3]) + inkPad - imgHeight * imgScale / 2;
-      const rr = rot * Math.PI / 180;
-      const c = Math.cos(rr), s = Math.sin(rr);
-      const pts = [[x0,y0],[x1,y0],[x1,y1],[x0,y1]].map(([x,y]) => ({ x: x*c-y*s, y:x*s+y*c }));
-      return {
-        l: Math.min(...pts.map(p => p.x)), r: Math.max(...pts.map(p => p.x)),
-        t: Math.min(...pts.map(p => p.y)), b: Math.max(...pts.map(p => p.y)),
-      };
-    })();
+    const visibleOffsets = floatingInkOffsets(movingItem, imgWidth, imgHeight, imgScale, rot);
 
     // Center coordinates for raw input
     const rawCenterX = rawX + imgWidth / 2;
@@ -8043,6 +8050,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (!movingItem?.shape) {
       guidelines.push(...pageGuidelinesAt(
         snappedX, snappedY, imgWidth, imgHeight, fitScale ?? imgScale, edgeOnly, rot, seamBleed,
+        floatingInkOffsets(movingItem, imgWidth, imgHeight, fitScale ?? imgScale, rot),
       ));
     }
 
@@ -15213,7 +15221,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                               setSlotToUpload(idx);
                                               replaceInputRef.current?.click();
                                             }}
-                                            aria-label="選擇相片"
+                                            aria-label="新增圖片"
                                             className="w-[76px] h-[44px]"
                                           />
                                         </div>
@@ -15302,7 +15310,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                               setSlotToUpload(idx);
                                               replaceInputRef.current?.click();
                                             }}
-                                            aria-label="選擇相片"
+                                            aria-label="新增圖片"
                                             className="w-[76px] h-[44px]"
                                           />
                                           <div
