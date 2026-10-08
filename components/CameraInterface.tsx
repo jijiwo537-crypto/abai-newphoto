@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Icon } from './Icon';
 import { CameraSettings } from '../types';
 import { GalleryOverlay } from './GalleryOverlay';
+import { usePhotoThumbs, thumbFromCanvas } from '../utils/photoThumbs';
 import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
 import { ImageEditor } from './ImageEditor';
 import { createPortal } from 'react-dom';
@@ -190,6 +191,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     maxTextureSize?: () => number;
     renderStill?: (src: TexImageSource, w: number, h: number) => HTMLCanvasElement | null;
     releaseStill?: () => void;
+    restorePreview?: () => void;
   }>(null);
   
   // Logic facing mode vs Visual facing mode (to prevent flip glitch)
@@ -228,6 +230,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const focalLengthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const [photos, setPhotos] = useState<string[]>([]);
+  const { thumbs, seed: seedThumb } = usePhotoThumbs(photos);
   /* 只回收自己建立的 blob 網址；匯入的、編輯回存的字串不要亂動 */
   const ownedUrlsRef = useRef<Set<string>>(new Set());
   const releaseUrl = useCallback((url: string) => {
@@ -691,9 +694,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         if (rendered && canvasHasFrame(rendered)) captureSource = rendered;
       }
       if (!hasFrame) return;
+      // The 2D crop holds the photo now; give the full-size GPU buffers back
+      // before JPEG encoding needs its own memory.
+      viewfinderRef.current?.restorePreview?.();
 
+      const thumb = await thumbFromCanvas(photoCanvas, outW, outH);
       const url = await canvasToBlobUrl(photoCanvas);
       ownedUrlsRef.current.add(url);
+      seedThumb(url, thumb);
       setPhotos(prev => [url, ...prev]);
     } catch {
       /* 相機或編碼器失敗時不要把 rejection 丟到全域；不新增黑圖，直接恢復快門。 */
@@ -712,7 +720,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         requestAnimationFrame(() => capturePhotoRef.current());
       }
     }
-  }, [aspectRatio, canvasHasFrame, flashOn, hasTorch, setTorch, settings.exposure, videoTrack, videoEl, waitForCameraFrame]);
+  }, [aspectRatio, canvasHasFrame, flashOn, hasTorch, seedThumb, setTorch, settings.exposure, videoTrack, videoEl, waitForCameraFrame]);
   capturePhotoRef.current = capturePhoto;
   useEffect(() => () => { captureQueueRef.current = 0; }, []);
 
@@ -1243,7 +1251,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           <div className="flex justify-center">
             <button onClick={() => setShowGallery(true)} className="w-14 h-14 rounded-2xl overflow-hidden border border-white/10 bg-zinc-900 active:scale-90 transition-all shadow-lg ring-1 ring-white/5">
               {photos.length > 0 ? (
-                 <img src={photos[0]} className="w-full h-full object-cover" alt="Latest" />
+                 thumbs[photos[0]] ? <img src={thumbs[photos[0]]} className="w-full h-full object-cover" alt="Latest" /> : <div className="w-full h-full bg-white/10" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <Icon name="image" className="text-white/10 text-2xl" />
@@ -1284,6 +1292,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       {showGallery && (
         <GalleryOverlay 
           photos={photos} 
+          thumbs={thumbs}
           onClose={() => setShowGallery(false)} 
           onDelete={(idx) => setPhotos(prev => { releaseUrl(prev[idx]); return prev.filter((_, i) => i !== idx); })}
           onImport={(newPhotos) => setPhotos(prev => [...newPhotos, ...prev])}

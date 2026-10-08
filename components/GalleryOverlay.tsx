@@ -6,6 +6,8 @@ import { processImageFile } from '../utils/imageLoader';
 
 interface GalleryOverlayProps {
   photos: string[];
+  /** Small previews; the grid never decodes full-resolution photos. */
+  thumbs?: Record<string, string>;
   onClose: () => void;
   onDelete: (index: number) => void;
   onImport: (srcs: string[]) => void;
@@ -14,7 +16,7 @@ interface GalleryOverlayProps {
 
 const RAW_ACCEPT = "image/*,.heic,.heif,.dng,.cr2,.nef,.arw,.orf,.rw2,.raf,.srw";
 
-export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, onClose, onDelete, onImport, onEdit }) => {
+export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, thumbs = {}, onClose, onDelete, onImport, onEdit }) => {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
@@ -80,12 +82,13 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, onClose,
           <div className="grid grid-cols-3 gap-2">
             {photos.map((src, idx) => (
               <div key={idx} className="relative aspect-square group">
-                <img 
-                  src={src} 
+                {thumbs[src] ? <img 
+                  src={thumbs[src]} 
+                  decoding="async" 
                   className="w-full h-full object-cover rounded-lg cursor-pointer active:scale-95 transition-transform" 
                   alt={`Capture ${idx}`}
                   onClick={() => onEdit(src, idx)}
-                />
+                /> : <button aria-label={`Capture ${idx}`} onClick={() => onEdit(src, idx)} className="w-full h-full rounded-lg bg-white/10 animate-pulse" />}
                 {/* 刪除鍵：固定 26×26 的正圓，圖示用行高歸零 + flex 置中，
                     不然圖示字的行高會把它撐成不對稱的形狀、看起來沒對準。
                     另外原本是 hover 才浮現 —— 手機沒有 hover，等於按不到。 */}

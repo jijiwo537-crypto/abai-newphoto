@@ -325,6 +325,19 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       }
       return cv;
     },
+    /** 快門取完全解析度的那一幀之後立刻縮回預覽尺寸並補畫。以前要等下一個
+        animation frame 才縮回，全解析度的 drawing buffer（含 preserveDrawingBuffer
+        的第二份與特效中間緩衝）會跟 2D 裁切畫布、JPEG 編碼同時佔著記憶體。 */
+    restorePreview: () => {
+      const cv = canvasRef.current, gl = glRef.current;
+      if (!cv || !gl || stillActiveRef.current || !video || video.readyState < 2) return;
+      const size = previewSizeRef.current;
+      if (!size.w || !size.h) return;
+      const target = cameraPreviewGeometry(size.w, size.h, window.devicePixelRatio, video.videoWidth, video.videoHeight, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number);
+      if (cv.width === target.w && cv.height === target.h) return;
+      cv.width = target.w; cv.height = target.h;
+      try { drawRef.current?.(video, cv.width, cv.height, null); } catch { /* next frame redraws */ }
+    },
     /** GPU 能吃的最大貼圖邊長 —— 拍照時用來夾住靜態照的尺寸 */
     maxTextureSize: () => {
       const gl = glRef.current;
