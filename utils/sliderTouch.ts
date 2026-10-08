@@ -149,6 +149,12 @@ const forwardTap = (wrap: HTMLElement, x: number, y: number) => {
 
 let installed = false;
 
+/** Any slider is being dragged right now. Background work that would compete
+    with every slider step (e.g. rebuilding a cached scene) waits for it;
+    SLIDER_RELEASE_EVENT fires on window when the drag ends. */
+let held = 0;
+export const sliderHeld = () => held > 0;
+export const SLIDER_RELEASE_EVENT = 'abai-slider-release';
 export const installSliderTouch = () => {
   if (installed || typeof document === 'undefined') return;
   installed = true;
@@ -198,6 +204,7 @@ export const installSliderTouch = () => {
     const notifyStart = (cx: number, cy: number) => {
       if (notifiedStart) return;
       notifiedStart = true;
+      held++;
       el.dispatchEvent(new PointerEvent('pointerdown', {
         bubbles: true, cancelable: true, pointerId: id,
         pointerType: e.pointerType, clientX: cx, clientY: cy,
@@ -247,6 +254,7 @@ export const installSliderTouch = () => {
     const end = (cancelled: boolean, cx: number, cy: number) => {
       if (done) return;
       done = true;
+      if (notifiedStart) { held = Math.max(0, held - 1); if (!held) window.dispatchEvent?.(new Event(SLIDER_RELEASE_EVENT)); }
       window.removeEventListener('pointermove', onMove, true);
       window.removeEventListener('pointerup', onPointerEnd, true);
       window.removeEventListener('pointercancel', onPointerEnd, true);

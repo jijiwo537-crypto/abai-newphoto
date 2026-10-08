@@ -13,12 +13,23 @@ export const MASK_SHAPE_ITEMS = [
 export const isBackdropMask=(kind?:string)=>MASK_SHAPE_ITEMS.some(s=>s.kind===kind)||kind==='mask-thermal'||kind==='mask-frost-circle'||kind==='mask-frost-feather';
 export const maskGeometry=(kind:string,settings:MaskSettings={})=>settings.maskShape||(kind.includes('circle')||kind.includes('feather')?'circle':'square');
 export type MaskSettings={maskShape?:'square'|'circle'|'star';maskAmount?:number;maskCells?:number;maskRefract?:number;maskFeather?:number};
-export const maskDefaults=(kind:string):MaskSettings=>({maskShape:kind.includes('circle')||kind.includes('feather')?'circle':'square',maskAmount:kind.includes('frost')?50:100,maskCells:kind==='mask-mosaic'?15:22,maskRefract:100,maskFeather:kind==='mask-frost-feather'?35:0});
+/** Glass bricks: default 20, at most 50 (older projects may have saved up to 60). */
+export const GLASS_DEFAULT_CELLS=20,GLASS_MAX_CELLS=50;
+export const glassCells=(settings:MaskSettings)=>Math.max(4,Math.min(GLASS_MAX_CELLS,settings.maskCells??GLASS_DEFAULT_CELLS));
+export const maskDefaults=(kind:string):MaskSettings=>({maskShape:kind.includes('circle')||kind.includes('feather')?'circle':'square',maskAmount:kind.includes('frost')?50:100,maskCells:kind==='mask-mosaic'?15:GLASS_DEFAULT_CELLS,maskRefract:100,maskFeather:kind==='mask-frost-feather'?35:0});
 function clipMask(ctx:CanvasRenderingContext2D,w:number,h:number,shape:string){
  ctx.beginPath();if(shape==='circle')ctx.ellipse(0,0,w/2,h/2,0,0,Math.PI*2);
  else if(shape==='star'){for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,r=i%2?.45:1,x=Math.cos(a)*w/2*r,y=Math.sin(a)*h/2*r;i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.closePath();}
  else ctx.rect(-w/2,-h/2,w,h);ctx.clip();
 }
+/** How far from a pixel this mask reads the scene beneath it, in the same
+    units as w/h. A tiled scene must render at least this much margin. */
+export const maskSampleReach=(kind:string,w:number,h:number,settings:MaskSettings={})=>{
+ if(kind==='mask-mosaic'){const n=Math.max(1,Math.floor((settings.maskCells??15)+.5));return w/n+2;}
+ if(kind==='mask-bricks'){const n=glassCells(settings),rows=Math.max(1,Math.floor(n*h/w+.001));return Math.max(w/n,h/rows)*(1-1/GLASS_MAGNIFY)/2*Math.max(0,(settings.maskRefract??100)/100)+2;}
+ if(kind.includes('frost'))return Math.min(w,h)*.12*(settings.maskAmount??50)/100*3.2+2;
+ return 0;
+};
 export const thermalRGB=(l:number)=>{const stops=[[8,4,40],[45,14,124],[190,20,101],[255,85,25],[255,222,66],[255,255,238]],p=Math.max(0,Math.min(1,l))*5,i=Math.min(4,Math.floor(p)),f=p-i;return stops[i].map((v,c)=>v+(stops[i+1][c]-v)*f);};
 export function maskPhysicalBounds(m:DOMMatrix,w:number,h:number,width:number,height:number,pad=0){
  const pts=[[-w/2,-h/2],[w/2,-h/2],[-w/2,h/2],[w/2,h/2]].map(([x,y])=>({x:m.a*x+m.c*y+m.e,y:m.b*x+m.d*y+m.f}));
@@ -210,7 +221,7 @@ class MaskGpu {
    v3('mapX',m.a,m.c,m.e);v3('mapY',m.b,m.d,m.f);v3('invX',inv.a,inv.c,inv.e);v3('invY',inv.b,inv.d,inv.f);gl.uniform2f(this.location(program,'size'),w,h);gl.uniform2f(this.location(program,'sampleSize'),w,h);gl.uniform2f(this.location(program,'origin'),0,0);gl.uniform2f(this.location(program,'uRes'),layer.w,layer.h);
    const shape=maskGeometry(layer.kind,settings);f('circle',shape==='star'?2:shape==='circle'?1:0);const points=new Float32Array(20);for(let j=0;j<10;j++){const a=-Math.PI/2+j*Math.PI/5,r=j%2?.225:.5;points[j*2]=Math.cos(a)*r;points[j*2+1]=Math.sin(a)*r;}gl.uniform2fv(this.location(program,'starPoints[0]'),points);
    f('edgeAA',1/Math.max(1,Math.min(layer.w*Math.hypot(m.a,m.b),layer.h*Math.hypot(m.c,m.d))));f('objectOpacity',layer.opacity);f('feather',0);f('mode',layer.kind==='mask-mosaic'?0:layer.kind==='mask-bricks'?1:layer.kind==='mask-negative'?3:layer.kind==='mask-monochrome'?4:layer.kind==='mask-thermal'?5:2);f('amount',layer.kind.includes('frost')||layer.kind==='mask-mosaic'||layer.kind==='mask-bricks'||layer.kind==='mask-negative'?1:(settings.maskAmount??100)/100);
-   f('fxMosaicBlocks',settings.maskCells??15);f('fxMosaicGap',0);f('fxMosaicShape',0);f('fxGlassBlocks',settings.maskCells??22);f('fxGlassRound',0);f('fxGlassRefract',(settings.maskRefract??100)/100);f('fxGlassBevel',0);
+   f('fxMosaicBlocks',settings.maskCells??15);f('fxMosaicGap',0);f('fxMosaicShape',0);f('fxGlassBlocks',glassCells(settings));f('fxGlassRound',0);f('fxGlassRefract',(settings.maskRefract??100)/100);f('fxGlassBevel',0);
    const last=i===layers.length-1;gl.bindFramebuffer(gl.FRAMEBUFFER,last?null:this.frame);if(!last){const output=this.batchTextures[1+i%2];gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,output,0);input=output;}
    // Outside the mask, use a cheap exact texture copy. Only its visible
    // physical bounds need the material shader (including analytic edges).
@@ -291,7 +302,7 @@ class MaskGpu {
   gl.uniform2f(this.location(this.program,'sampleSize'),source.width,source.height);gl.uniform2f(this.location(this.program,'origin'),b.left,b.top);
   f('mode',kind==='mask-mosaic'?0:kind==='mask-bricks'?1:kind==='mask-negative'?3:kind==='mask-monochrome'?4:kind==='mask-thermal'?5:2);f('circle',0);f('feather',0);f('amount',kind==='mask-mosaic'||kind==='mask-bricks'||kind==='mask-negative'?1:(settings.maskAmount??maskDefaults(kind).maskAmount!)/100);
   f('edgeAA',1/Math.max(1,Math.min(w*Math.hypot(m.a,m.b),h*Math.hypot(m.c,m.d))));
-  f('fxMosaicBlocks',settings.maskCells??15);f('fxMosaicGap',0);f('fxMosaicShape',0);f('fxGlassBlocks',settings.maskCells??22);f('fxGlassRound',0);f('fxGlassRefract',(settings.maskRefract??100)/100);f('fxGlassBevel',0);
+  f('fxMosaicBlocks',settings.maskCells??15);f('fxMosaicGap',0);f('fxMosaicShape',0);f('fxGlassBlocks',glassCells(settings));f('fxGlassRound',0);f('fxGlassRefract',(settings.maskRefract??100)/100);f('fxGlassBevel',0);
   gl.drawArrays(gl.TRIANGLES,0,6);return this.canvas;
  }
  /** A target canvas went away: drop every reference to it so it can be
@@ -352,7 +363,7 @@ function fallbackMask(source:HTMLCanvasElement,m:DOMMatrix,w:number,h:number,kin
  const softened=kind.includes('frost')&&sigma>.25?blurRGBA(original,b.width,b.height,sigma):original;
  const inv=m.inverse(),circle=false,amount=kind==='mask-mosaic'||kind==='mask-bricks'||kind==='mask-negative'?1:Math.max(0,Math.min(100,settings.maskAmount??maskDefaults(kind).maskAmount!))/100;
  const feather=kind==='mask-frost-feather'?(settings.maskFeather??35)/200:0,aa=1/Math.max(1,Math.min(w*Math.hypot(m.a,m.b),h*Math.hypot(m.c,m.d)));
- const cells=Math.max(1,settings.maskCells??(kind==='mask-mosaic'?15:22)),gy=kind==='mask-bricks'?Math.max(1,Math.floor(cells*h/w+.001)):Math.max(.001,cells*h/w);
+ const cells=kind==='mask-bricks'?glassCells(settings):Math.max(1,settings.maskCells??15),gy=kind==='mask-bricks'?Math.max(1,Math.floor(cells*h/w+.001)):Math.max(.001,cells*h/w);
  for(let y=0;y<b.height;y++)for(let x=0;x<b.width;x++){
   const screenX=x+b.left+.5,screenY=y+b.top+.5,u=(inv.a*screenX+inv.c*screenY+inv.e)/w+.5,v=(inv.b*screenX+inv.d*screenY+inv.f)/h+.5;
   const distance=circle?Math.hypot(u-.5,v-.5):Math.max(Math.abs(u-.5),Math.abs(v-.5));let t=Math.max(0,Math.min(1,(.5-distance)/Math.max(aa,feather)));const alpha=t*t*(3-2*t),i=(y*b.width+x)*4;

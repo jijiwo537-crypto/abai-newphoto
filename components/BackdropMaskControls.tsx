@@ -1,11 +1,11 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {maskDefaults,type MaskSettings} from '../utils/backdropMasks';
+import {maskDefaults,glassCells,GLASS_MAX_CELLS,type MaskSettings} from '../utils/backdropMasks';
 export function BackdropMaskControls({kind,settings,onChange,onInteraction}:{kind:string;settings:MaskSettings&{opacity?:number};onChange:(p:any)=>void;onInteraction?:(active:boolean)=>void}){
  const defaults=maskDefaults(kind);
  if(kind==='mask-negative')return <div data-mask-editor={kind} className="h-full flex items-center justify-center"><p className="text-[11px] text-white/40">該物件不可編輯</p></div>;
  const controls:{label:string;key:keyof MaskSettings|'opacity';min:number;max:number;value:number}[]=[];
  if(kind==='mask-mosaic')controls.push({label:'格數',key:'maskCells',min:5,max:200,value:settings.maskCells??15});
- if(kind==='mask-bricks')controls.push({label:'格數',key:'maskCells',min:4,max:60,value:settings.maskCells??22},{label:'折射',key:'maskRefract',min:0,max:100,value:settings.maskRefract??100});
+ if(kind==='mask-bricks')controls.push({label:'格數',key:'maskCells',min:4,max:GLASS_MAX_CELLS,value:glassCells(settings)},{label:'折射',key:'maskRefract',min:0,max:100,value:settings.maskRefract??100});
  if(kind!=='mask-mosaic'&&kind!=='mask-bricks')controls.push({label:'強度',key:'maskAmount',min:0,max:100,value:settings.maskAmount??defaults.maskAmount!});
  if(kind==='mask-frost-feather')controls.push({label:'羽化',key:'maskFeather',min:0,max:100,value:settings.maskFeather??35});
  return <div data-mask-editor={kind} className="max-w-md mx-auto h-full px-4 pt-1 overflow-y-auto no-scrollbar">

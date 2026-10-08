@@ -1,7 +1,8 @@
 
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { reframeBasePhoto } from '../utils/reframeBasePhoto';
-import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,warmBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
+import {MASK_SHAPE_ITEMS,isBackdropMask,maskSampleReach,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,warmBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
+import {sliderHeld,SLIDER_RELEASE_EVENT} from '../utils/sliderTouch';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { previewViewport } from '../utils/previewViewport';
 import { LinkGlowTiles } from '../utils/linkGlowTiles';
@@ -1394,7 +1395,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      座標一律用「輸出畫布」的座標系（跟遮罩同一套），縮放時再乘上倍率。 */
   const [objects, setObjects] = useState<any[]>([]);
   const objectsRef = useRef<any[]>([]);
-  objectsRef.current = objects;
+  const maskSliderLive=useRef<{id:string;patch:any}|null>(null);
+  // A mask slider being dragged paints from the ref; keep its live values.
+  objectsRef.current = maskSliderLive.current ? objects.map(o => o.id === maskSliderLive.current!.id ? { ...o, ...maskSliderLive.current!.patch } : o) : objects;
   const [selectedObj, setSelectedObj] = useState<string | null>(null);
   /** 最初匯入的底圖不是「新增圖片」物件；它有自己獨立、只負責構圖的選取狀態。 */
   const [baseSelected, setBaseSelected] = useState(false);
@@ -3708,6 +3711,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionGesture=useRef<{index:number;photo:any;cx:number;cy:number;distance:number;w:number;h:number}|null>(null);
   const regionLiveUntil=useRef(0);
   const regionSliderHeld=useRef(false);
+  /* 任何滑桿按住中（遮罩格數／折射、圖形、文字、圖案…），場景快取都不能
+     開始重建：它會在每兩格之間把整個場景（含遮罩）重畫成一塊塊快取，
+     滑桿因此一頓一頓的。放開時遞增 sliderRelease 讓快取重新排程。 */
+  const [sliderRelease,setSliderRelease]=useState(0);
+  useEffect(()=>{const bump=()=>setSliderRelease(n=>n+1);window.addEventListener(SLIDER_RELEASE_EVENT,bump);return()=>window.removeEventListener(SLIDER_RELEASE_EVENT,bump);},[]);
   const regionThumbTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
   useEffect(()=>()=>{if(regionThumbTimer.current!==null)clearTimeout(regionThumbTimer.current);},[]);
   const commitRegion=(next:PhotoRegion,live=false)=>{
@@ -8704,7 +8712,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(!imageState||stableScene.current.key===stableSceneKey||objEditImage||selectedRegionPhoto!==null||baseSelected||shapeSel||selectedTarget)return;
     let cancelled=false;
     const valid=()=>!cancelled&&stableSceneKeyRef.current===stableSceneKey&&!animRef.current
-      &&!activePointers.current.size&&!isPhotoInteractionBusy()&&!regionSliderHeld.current&&!regionHold.current?.active
+      &&!activePointers.current.size&&!isPhotoInteractionBusy()&&!regionSliderHeld.current&&!sliderHeld()&&!regionHold.current?.active
       &&!regionPhotoEditingRef.current&&selectedRegionPhotoRef.current===null
       &&!chromeSelectionRef.current.baseSelected&&!shapeSelRef.current&&!chromeSelectionRef.current.selectedTarget
       &&!editingTextId&&!swapSource&&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
@@ -8716,10 +8724,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const prior=hideChromeRef.current;
         try{sceneTileWindow.current=v;hideChromeRef.current=true;renderToCanvasRef.current(tile,scale,true);}
         finally{sceneTileWindow.current=null;hideChromeRef.current=prior;lastPatternPaintRef.current=null;}
-      },valid).then(ready=>{if(import.meta.env.DEV&&canvasRef.current)canvasRef.current.dataset.scenePreparation=stableScene.current.status;if(ready&&valid())regionPaintRef.current();});
+      },valid,objects.reduce((r,o)=>o.type==='shape'&&isBackdropMask(o.kind)?Math.max(r,maskSampleReach(o.kind,o.w,o.h,o)*scale):r,0)).then(ready=>{if(import.meta.env.DEV&&canvasRef.current)canvasRef.current.dataset.scenePreparation=stableScene.current.status;if(ready&&valid())regionPaintRef.current();});
     });
     return()=>{cancelled=true;};
-  },[stableSceneKey,imageState,layout,maskScale,canvasRatio,maxPreviewScale,viewT,editingTextId,swapSource,activeTab,objDragging,objPinching,objStretching,objEditImage,selectedRegionPhoto,baseSelected,selectedObj,shapeSel,selectedTarget]);
+  },[stableSceneKey,sliderRelease,imageState,layout,maskScale,canvasRatio,maxPreviewScale,viewT,editingTextId,swapSource,activeTab,objDragging,objPinching,objStretching,objEditImage,selectedRegionPhoto,baseSelected,selectedObj,shapeSel,selectedTarget]);
   const regionShadersPrimed=useRef(false);
   useEffect(()=>{
     if(!imageState||!photoRegion?.photos.length||regionShadersPrimed.current)return;
@@ -11188,7 +11196,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </div>
                 );
                 if (sel.type === 'shape') {
-                  if(isBackdropMask(sel.kind))return <BackdropMaskControls kind={sel.kind} settings={sel} onChange={patch}/>;
+                  if(isBackdropMask(sel.kind)){
+                    /* 拖遮罩滑桿時不經過 React：每一格只改 objectsRef 再直接重畫畫布
+                       （renderToCanvas 讀的就是 objectsRef），放開才寫回 state。
+                       以前每一格都 setObjects → 整個創意拼圖（上千個元素）重新 render，
+                       折射、格數滑桿才會一頓一頓。 */
+                    const live=(d:any)=>{
+                      if(!maskSliderLive.current){patch(d);return;}
+                      maskSliderLive.current.patch={...maskSliderLive.current.patch,...d};
+                      objectsRef.current=objectsRef.current.map(o=>o.id===sel.id?{...o,...d}:o);
+                      regionPaintRef.current?.();
+                    };
+                    const interaction=(active:boolean)=>{
+                      if(active){maskSliderLive.current={id:sel.id,patch:{}};return;}
+                      const held=maskSliderLive.current;maskSliderLive.current=null;
+                      if(held&&Object.keys(held.patch).length)setObjects(prev=>prev.map(o=>o.id===held.id?{...o,...held.patch}:o));
+                    };
+                    return <BackdropMaskControls kind={sel.kind} settings={sel} onChange={live} onInteraction={interaction}/>;
+                  }
                   const isLine = SPECIAL_LINE_KINDS.has(sel.kind || '');
                   const isGrid = GRID_SHAPE_KINDS.has(sel.kind);
                   const hasWidth = isLine || isGrid || !sel.filled;
