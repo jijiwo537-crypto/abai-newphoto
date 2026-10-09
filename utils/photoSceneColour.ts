@@ -138,6 +138,7 @@ export class PhotoSceneColour {
   gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(4));
   this.hide();return true;
  }
+ private drawnWeight=NaN;
  draw(fx:PhotoFx,synchronous=false):boolean{
   if(!this.ready||!supportsSceneColour(fx))return false;
   const gl=this.gl!,p=this.program!,film=getLoadedLut(fx.lut),key=this.bakeKey(fx);
@@ -173,6 +174,13 @@ export class PhotoSceneColour {
      switches to this surface). The caller then draws its regular path; the
      worker's result is presented on the next paint. */
   if(key!==this.key&&(this.key===''||this.canvas.style.display==='none'))return false;
+  /* 新的色表還在背景烤（worker 回來時自己會畫）：此刻再畫一次只會用「上一張色表」
+     把畫面上已經顯示的同一張重畫一遍 —— 每一格白白多一次整張 GPU 合成（拖調節滑桿時
+     等於每格算兩次）。場景只會在 prepare() 改，而 prepare 一定先把這層藏起來，
+     所以這層還顯示著、濾鏡強度也沒變，就代表畫面一個像素都不會變，直接略過。 */
+  const weight=Math.pow((this.latestFx.lutAmount??100)/100,2);
+  if(key!==this.key&&this.canvas.style.display!=='none'&&weight===this.drawnWeight)return true;
+  this.drawnWeight=weight;
   this.setFilmWeight();gl.viewport(0,0,this.width,this.height);gl.drawArrays(gl.TRIANGLES,0,3);this.recordFrame();this.canvas.style.display='block';return true;
  }
  private canPair(fx:PhotoFx){return !!getLoadedLut(fx.lut)&&photoFxParams(fx).hsl.every(b=>!b.h&&!b.s&&!b.l);}
@@ -200,7 +208,7 @@ export class PhotoSceneColour {
      if(e.data.error){this.failWorker();return;}
      if(!e.data.error&&e.data.generation===this.generation&&e.data.key===this.bakeKey(this.latestFx)&&this.ready){
       const gl=this.gl!;gl.useProgram(this.program!);gl.uniform1i(uniformLocation(gl,this.program!,'identity'),0);
-      this.installLut(e.data.tex,!!e.data.master,e.data.plain);this.setFilmWeight();
+      this.installLut(e.data.tex,!!e.data.master,e.data.plain);this.setFilmWeight();this.drawnWeight=Math.pow((this.latestFx.lutAmount??100)/100,2);
       this.key=e.data.key;this.film=this.workerFilm;
       this.lutCache.set(this.key,{tex:e.data.tex,plain:e.data.plain,film:this.film,master:!!e.data.master});
       while(this.lutCache.size>8)this.lutCache.delete(this.lutCache.keys().next().value!);

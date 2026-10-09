@@ -15,7 +15,7 @@ import {
   DEFAULT_PARAMS,
   type EditorParams,
 } from '../components/ImageEditor';
-import { applyGlEffects, hasActiveFx, FX_DEFS, disposeFxSurface, compactFxSurface, warmFx, warmFxScene, composeFxScene, invalidateFxSurface, type FxScene } from './glEffects';
+import { applyGlEffects, hasActiveFx, FX_DEFS, disposeFxSurface, compactFxSurface, warmFx, warmFxScene, composeFxScene, invalidateFxSurface, presentFxSource, type FxScene } from './glEffects';
 import type {FxColourInput} from './fxColourInput';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from './highlightSelection';
 import { bakeColorLut, bakedToTexture } from './lutBake';
@@ -714,6 +714,19 @@ export function applyPhotoFx(
       const result=applyGlEffects(record.source.getContext('2d')!,oW,oH,fx,inputKey,record.surface,false,opts?.scene,undefined,{image});
       if(result)return result;
       record.key='';record.viaImage=false;
+    }
+  }
+  /* 只有調色（曝光、色溫、濾鏡…）、沒有任何特效，而且呼叫端要的是 GPU 畫面：
+     顏色在效果表面自己的 GPU context 裡算，結果直接畫在那張 GPU 畫布上回傳 ——
+     跟主頁編輯同一招（presentFxSource）。以前走下面的 2D 路，每動一格都把 GPU
+     的結果複製進 2D 畫布（iPhone 上是一次整張讀回）。 */
+  if(opts?.gpuSurface&&opts.cacheSource&&!opts.scene&&!colourOnly&&!hasActiveFx(fx)&&!(fx as any).fxLowfi
+    &&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)){
+    const record:EffectInput=retained||effectInputs.get(out)||{key:'',source:document.createElement('canvas'),surface:newSurface()};
+    const image=surfaceColourImage(record.surface,source,oW,oH,fx,false);
+    if(image&&presentFxSource(record.source.getContext('2d')!,oW,oH,record.surface,image)){
+      record.key='';record.viaImage=true;record.colourInput=undefined;record.rawKey=undefined;effectInputs.set(out,record);
+      return record.surface;
     }
   }
   // A CPU-backed output forces GPU results back to main memory on every

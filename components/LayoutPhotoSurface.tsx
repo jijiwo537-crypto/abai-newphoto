@@ -42,11 +42,14 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
   const fusionLive=useRef(fusion),liveDrag=useRef(false);
   // What the flat (effect-editing) canvas currently holds: its geometry and each cell's pixels.
   const flatState=useRef<{geom:string;sigs:string[]}|null>(null);
+  /** 拖特效時直接疊在原位的那一格 GPU 預覽（見 flat 那一段） */
+  const liveCell=useRef<HTMLDivElement|null>(null);
+  const dropLiveCell=()=>{const host=liveCell.current;if(!host)return;host.remove();const clip=host.firstElementChild?.firstElementChild;clip?.replaceChildren();};
   useLayoutEffect(()=>{fusionLive.current=fusion;},[fusion]);
   // The fusion slider repaints uniforms directly, without a React render.
   useLayoutEffect(()=>{if(!previewId||fusion===undefined)return;seamlessPreviews.set(previewId,(v,isLive)=>{fusionLive.current=v;liveDrag.current=!!isLive;drawRef.current();});return()=>{seamlessPreviews.delete(previewId);};},[previewId,fusion===undefined]);
   const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;drawRef.current();});};
-  useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element){releaseSeamShared(element);dropLiveSeam(element);}};},[]);
+  useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element){releaseSeamShared(element);dropLiveSeam(element);}dropLiveCell();};},[]);
   useEffect(()=>{
     // Repaint in the SAME transform frame, not a second rAF one frame later.
     // Sources and FX remain cached; zoom only resamples their visible pixels.
@@ -97,7 +100,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       if(cv.width!==W)cv.width=W;if(cv.height!==H)cv.height=H;
       cv.style.width=`${surface.width}px`;cv.style.height=`${surface.height}px`;
       cv.style.transform=`matrix(${surface.transform.join(',')})`;cv.style.clipPath=`polygon(${surface.clip})`;
-      const sources:SeamTexture[]=[],clips:Rect[]=[],radii:number[]=[],crops:{tx:number;ty:number;scale:number;angle:number}[]=[],contents:string[]=[];
+      const sources:SeamTexture[]=[],clips:Rect[]=[],radii:number[]=[],crops:{tx:number;ty:number;scale:number;angle:number}[]=[],contents:string[]=[],previewCells:number[]=[];
       // The GPU path is one opaque raster: adjacent cells share exact float
       // edges and every sample has an owner (sealEdges), so the browser's
       // resampling of this canvas can never open a gap between them. Only the
@@ -148,6 +151,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         const cr=c.imgRadius?Math.min(cw,ch)*Math.min(.5,Math.max(0,c.imgRadius/100)):Math.min(radius,cw/2,ch/2);
         sources.push({image:source,width:iw,height:ih});radii.push(cr);
         contents.push(`${surfaceToken(source)}|${shown?r0.previewKey:source===im?'image':r0.key}`);
+        if(shown)previewCells.push(i);
         crops.push({tx:dx*Math.cos(angle)+dy*Math.sin(angle),ty:-dx*Math.sin(angle)+dy*Math.cos(angle),scale,angle});
       });
       const fused=fusionLive.current!==undefined;
@@ -178,7 +182,14 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
            只把那一格（含與鄰格重疊的那一圈）所在的整數像素方塊清掉、照原本的順序與參數把
            所有格子在這個方塊裡重畫一次（鄰格只會畫到重疊的那一兩個像素）。不必每一格都把
            每張原圖重新縮放一次；放開時畫面不重畫，所以放開那一格就是拖曳中最後一格。 */
-        const geom=JSON.stringify([W,H,v,gap,radius,noVisibleGutter,rects,crops,radii,sources.map(t=>t&&[t.width,t.height]),cells.map(c=>[c.opacity??100])]);
+        /* 正在拖特效的那一格（顯示的是編輯尺寸的 GPU 預覽）：跟主頁編輯一樣，那張 GPU 畫布
+           直接疊在原位顯示（同一個裁切、旋轉、圓角、透明度），2D 這張不再每一格把它
+           複製進來 —— iPhone 上那一下是整張從 GPU 讀回，是拖滑桿最主要的成本。
+           放開後一樣疊著那一張（拖曳中最後一格＝放開那一格），閒下來算好原圖尺寸
+           的成品才換回這張 2D 畫布（以前也是在那個時候換）。 */
+        const overlayIdx=previewCells.length===1&&sources[previewCells[0]]?.image instanceof HTMLCanvasElement?previewCells[0]:-1;
+        if(overlayIdx>=0)contents[overlayIdx]='overlay';
+        const geom=JSON.stringify([W,H,v,gap,radius,noVisibleGutter,rects,crops,radii,sources.map((t,i)=>i===overlayIdx?'overlay':t&&[t.width,t.height]),cells.map(c=>[c.opacity??100])]);
         const prev=flatState.current,sigs=contents;
         let region:{l:number;t:number;r:number;b:number}|null={l:0,t:0,r:W,b:H};
         if(!resized&&prev&&prev.geom===geom&&prev.sigs.length===sigs.length){
@@ -202,6 +213,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         clips.forEach((_,i)=>{
           const source=sources[i],crop=crops[i],c=cells[i];
           const {x0,y0,w0,h0,x,y,cw,ch}=cellBox(i);
+          if(i===overlayIdx)return;
           if(!source){g.fillStyle='#121212';g.fillRect(x,y,cw,ch);return;}
           // Keep the crop's optical center on the unbled cell, so the overlap
           // never moves the photo's framing.
@@ -214,7 +226,30 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         });
         g.restore();
         }
+        if(overlayIdx>=0){
+          const i=overlayIdx,source=sources[i]!,crop=crops[i],{x0,y0,w0,h0,x,y,cw,ch}=cellBox(i);
+          const cx=x0+w0/2+crop.tx*Math.cos(crop.angle)-crop.ty*Math.sin(crop.angle),cy=y0+h0/2+crop.tx*Math.sin(crop.angle)+crop.ty*Math.cos(crop.angle);
+          const host=liveCell.current||(liveCell.current=document.createElement('div'));
+          if(host.previousSibling!==flat)flat.after(host);
+          // 同一個外框（尺寸、transform、clip-path）；裡面用「版面座標 → 這個外框」的矩陣擺放
+          Object.assign(host.style,{position:'absolute',left:'0',top:'0',transformOrigin:'0 0',pointerEvents:'none',zIndex:'0',display:'block',overflow:'visible',
+            width:flat.style.width,height:flat.style.height,transform:flat.style.transform,clipPath:flat.style.clipPath});
+          const sx=parseFloat(flat.style.width)/W,sy=parseFloat(flat.style.height)/H;
+          let plane=host.firstElementChild as HTMLDivElement|null;
+          if(!plane){plane=document.createElement('div');host.appendChild(plane);plane.appendChild(document.createElement('div'));}
+          Object.assign(plane.style,{position:'absolute',left:'0',top:'0',width:`${width}px`,height:`${height}px`,transformOrigin:'0 0',
+            transform:`matrix(${sx*m.a},${sy*m.b},${sx*m.c},${sy*m.d},${sx*m.e},${sy*m.f})`});
+          const clip=plane.firstElementChild as HTMLDivElement;
+          Object.assign(clip.style,{position:'absolute',left:`${x}px`,top:`${y}px`,width:`${cw}px`,height:`${ch}px`,overflow:'hidden',
+            borderRadius:`${radii[i]||0}px`,opacity:String((cells[i].opacity??100)/100)});
+          const image=source.image as HTMLCanvasElement;
+          if(image.parentElement!==clip||clip.childNodes.length!==1)clip.replaceChildren(image);
+          const dw=source.width*crop.scale,dh=source.height*crop.scale;
+          Object.assign(image.style,{position:'absolute',display:'block',pointerEvents:'none',left:`${cx-x-dw/2}px`,top:`${cy-y-dh/2}px`,
+            width:`${dw}px`,height:`${dh}px`,transformOrigin:'50% 50%',transform:crop.angle?`rotate(${crop.angle}rad)`:'none'});
+        }else dropLiveCell();
       }else{
+        dropLiveCell();
         flatState.current=null;
         // Geometry-only frames change GPU uniforms, never re-run effects.
         let direct=false;

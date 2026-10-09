@@ -5637,6 +5637,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   // 不然把滑桿拉回 0 的那一格會從 canvas 換成 <img>，新的 <img> 還沒畫上來，
   // 圖片就會整張閃掉一下。值全是 0 的時候 canvas 畫的就是原圖，看起來一樣。
   const usedCanvasRef = useRef(false);
+  /** 只有效果的照片：效果畫布直接掛在這裡顯示（見 shape 畫布的 draw） */
+  const fxHostRef = useRef<HTMLDivElement>(null);
+  const plainFxDisplay = !image.feather && !image.imgRadius && !image.imgGlow && !image.imgStrokeWidth && !isImgShaped(image.imgShape);
   /** 這一層身上有沒有「需要 canvas 才畫得出來」的東西 */
   const hasShapeWork = !!(image.feather || image.imgRadius || image.imgGlow || image.imgStrokeWidth
     || isImgShaped(image.imgShape) || hasPhotoFx(image.fx));
@@ -5698,9 +5701,13 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     void awaitPhotoIdle().then(() => {
       const hit = fxCacheRef.current, input = fxInputRef.current;
       if (!hit || !input || liveFxRef.current || selectedRef.current || hit.canvas.dataset.fxSettled === '1') return;
+      // 收 GPU 管線時那張 GPU 畫布會被拔掉：要先記下它是不是正掛在畫面上
+      const wasShown = hit.canvas.parentElement === fxHostRef.current;
       const settled = settlePhotoFx(hit.canvas, input);
       settled.dataset.fxSettled = '1';
       fxCacheRef.current = { key: hit.key, canvas: settled };
+      // 畫面上直接掛著的是 GPU 那張：換成同像素的 2D 那張
+      if (wasShown) drawRef.current?.();
     });
   };
   useEffect(() => { if (!isSelected) settleFx(); }, [isSelected]);
@@ -5823,6 +5830,17 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       const oy = (H - sh) / 2;
 
       const base = fxSourceFor(img);
+      /* 沒有圓角／羽化／描邊／發光／形狀、只有效果的照片：跟主頁編輯一樣，
+         效果那張畫布直接上畫面（瀏覽器縮放一次），不再每一格把 GPU 的結果
+         複製進這張 2D 畫布 —— iPhone 上那一下等於把整張從 GPU 讀回來，是拖滑桿
+         時最大的成本。放開後收成同尺寸的 2D 那張也照同樣方式顯示，像素一樣。 */
+      const host = fxHostRef.current;
+      if (host && plainFxDisplay && base !== img && base instanceof HTMLCanvasElement) {
+        if (base.parentElement !== host || host.childNodes.length !== 1) host.replaceChildren(base);
+        Object.assign(base.style, { position: 'absolute', left: '0', top: '0', width: '100%', height: '100%', display: 'block', pointerEvents: 'none' });
+        return;
+      }
+      if (host && host.childNodes.length) host.replaceChildren();
       let shaped: CanvasImageSource = base;
       let drawW = iw, drawH = ih, drawX = (W - iw) / 2, drawY = (H - ih) / 2;
       const kind = image.imgShape;
@@ -7288,6 +7306,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             pointerEvents: 'none',
           }}
         />
+        <div ref={fxHostRef} style={{ visibility: plainImageWave ? 'hidden' : undefined, position: 'absolute', left: `${-glowPad}px`, top: `${-glowPad}px`,
+          width: `${snapPx(boxW + glowPad * 2)}px`, height: `${snapPx(boxH + glowPad * 2)}px`, pointerEvents: 'none' }} />
         {plainImageWave && <canvas ref={waveImageCanvasRef} data-classic-wave-canvas={image.id} style={{ position: 'absolute', left: -glowPad, top: -waveImagePad, width: boxW + glowPad * 2, height: boxH + waveImagePad * 2, pointerEvents: 'none' }} />}
         </>
       ) : plainImageWave ? (
