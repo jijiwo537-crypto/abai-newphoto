@@ -137,9 +137,9 @@ export class HalationLayer {
       if(!f||!v)return false;const c=gl.createProgram()!;gl.attachShader(c,v);gl.attachShader(c,f);gl.bindAttribLocation(c,0,'p');gl.linkProgram(c);gl.deleteShader(v);gl.deleteShader(f);
       if(!gl.getProgramParameter(c,gl.LINK_STATUS))return false;this.composite=c;this.baseTex=texture();this.layerTex=texture();
     }
-    this.simple=makeProgram(`precision highp float;varying vec2 uv;uniform sampler2D base;uniform sampler2D noise;uniform vec2 size;uniform float vignette;uniform float grain;
+    this.simple=makeProgram(`precision highp float;varying vec2 uv;uniform sampler2D base;uniform sampler2D noise;uniform vec2 size;uniform float vignette;uniform float grain;uniform float fullLayer;
       void main(){vec3 b=texture2D(base,uv).rgb;vec2 pixel=vec2(uv.x,1.-uv.y)*size;
-      vec3 n=texture2D(noise,fract(pixel/(max(size.x,size.y)/1080.*512.))).rgb;
+      vec3 n=fullLayer>.5?texture2D(noise,pixel/size).rgb:texture2D(noise,fract(pixel/(max(size.x,size.y)/1080.*512.))).rgb;
       vec3 overlay=mix(2.*b*n,1.-2.*(1.-b)*(1.-n),step(vec3(.5),b));b=mix(b,overlay,grain*.63);
       float radial=clamp((length(pixel-size*.5)-size.x/3.)/(max(size.x,size.y)-size.x/3.),0.,1.);
       b*=1.-radial*min(1.,vignette*.8);gl_FragColor=vec4(b,1.);}`)||undefined;
@@ -469,16 +469,29 @@ export class HalationLayer {
     }
     this.mixLayer=true;return this.finish(w,h,amount/240*1.5);
   }
-  renderSimple(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,noise:HTMLCanvasElement):HTMLCanvasElement|null{
+  /** noiseLayer：呼叫端用 2D 畫布照原本的方式（同一張圖樣、同一個縮放）鋪好的整張噪點層，
+   *  跟要處理的照片一樣大。GPU 只做 overlay 混合、逐像素對應，不自己縮放圖樣 —— WebKit 的
+   *  貼圖內插跟它 Canvas 的圖樣縮放不一樣，這樣噪點的樣子就跟 2D 畫出來的完全相同。 */
+  private noiseLayerTex?:WebGLTexture;
+  private noiseLayerSource?:HTMLCanvasElement;
+  renderSimple(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,noise:HTMLCanvasElement,noiseLayer?:HTMLCanvasElement|null):HTMLCanvasElement|null{
     if(!this.init()||!this.presentation||!this.simple)return null;const gl=this.gl!;
     this.begin(ctx,w,h,1,1,key);this.resultTarget(w,h);
-    if(!this.noiseTex){this.noiseTex=gl.createTexture()!;gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,this.noiseTex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,noise);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);}
+    const full=!!noiseLayer&&noiseLayer.width===w&&noiseLayer.height===h;
+    if(full&&this.noiseLayerSource!==noiseLayer){
+      this.noiseLayerTex ||=gl.createTexture()!;gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,this.noiseLayerTex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,noiseLayer!);
+      for(const q of [gl.TEXTURE_MIN_FILTER,gl.TEXTURE_MAG_FILTER])gl.texParameteri(gl.TEXTURE_2D,q,gl.NEAREST);
+      for(const q of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T])gl.texParameteri(gl.TEXTURE_2D,q,gl.CLAMP_TO_EDGE);
+      this.noiseLayerSource=noiseLayer!;
+    }
+    if(!full&&!this.noiseTex){this.noiseTex=gl.createTexture()!;gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,this.noiseTex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,noise);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);}
     gl.useProgram(this.simple);gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
-    gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.base());gl.uniform1i(uniformLocation(gl,this.simple,'base'),2);gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,this.noiseTex);gl.uniform1i(uniformLocation(gl,this.simple,'noise'),5);
+    gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.base());gl.uniform1i(uniformLocation(gl,this.simple,'base'),2);gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,full?this.noiseLayerTex!:this.noiseTex!);gl.uniform1i(uniformLocation(gl,this.simple,'noise'),5);gl.uniform1f(uniformLocation(gl,this.simple,'fullLayer'),full?1:0);
     gl.uniform2f(uniformLocation(gl,this.simple,'size'),w,h);gl.uniform1f(uniformLocation(gl,this.simple,'vignette'),(p.vignette||0)/100);gl.uniform1f(uniformLocation(gl,this.simple,'grain'),(p.colorNoise||0)/100);
     gl.viewport(0,0,w,h);gl.drawArrays(gl.TRIANGLES,0,3);if(this.scene)composeFxScene(gl,this.sceneResult!,this.scene);return this.canvas;
   }
 
   dispose(){const gl=this.gl;if(gl){if(this.sourceTex)gl.deleteTexture(this.sourceTex);if(this.maskTex)gl.deleteTexture(this.maskTex);if(this.baseTex)gl.deleteTexture(this.baseTex);if(this.layerTex)gl.deleteTexture(this.layerTex);this.softTextures.forEach(t=>gl.deleteTexture(t));if(this.softSeed)gl.deleteProgram(this.softSeed);if(this.softBlur)gl.deleteProgram(this.softBlur);if(this.framebuffer)gl.deleteFramebuffer(this.framebuffer);if(this.composite)gl.deleteProgram(this.composite);if(this.quad)gl.deleteBuffer(this.quad);if(this.program)gl.deleteProgram(this.program);}
-    if(gl){disposeFxScene(gl);if(this.haloPhoto)gl.deleteTexture(this.haloPhoto);if(this.haloMask)gl.deleteTexture(this.haloMask);if(this.haloSeed)gl.deleteProgram(this.haloSeed);if(this.sceneResult)gl.deleteTexture(this.sceneResult);if(this.noiseTex)gl.deleteTexture(this.noiseTex);if(this.simple)gl.deleteProgram(this.simple);}if(gl&&this.leak)gl.deleteProgram(this.leak);if(gl){if(this.downProgram)gl.deleteProgram(this.downProgram);if(this.softSeedGpu)gl.deleteProgram(this.softSeedGpu);this.hist?.dispose();this.histProgs.forEach(pr=>{if(pr)gl.deleteProgram(pr);});}this.hist=undefined;this.downProgram=undefined;this.histProgs.clear();this.dims='';this.sampleSize='';gl?.getExtension('WEBGL_lose_context')?.loseContext();this.canvas.width=this.canvas.height=this.sample.width=this.sample.height=1;this.alpha=this.blurred=this.scratch=new Uint8ClampedArray(0);this.softSource=undefined;this.key='';this.haloMaskKey='';this.haloPhotoKey='';}
+    if(gl){disposeFxScene(gl);if(this.haloPhoto)gl.deleteTexture(this.haloPhoto);if(this.haloMask)gl.deleteTexture(this.haloMask);if(this.haloSeed)gl.deleteProgram(this.haloSeed);if(this.sceneResult)gl.deleteTexture(this.sceneResult);if(this.noiseTex)gl.deleteTexture(this.noiseTex);if(this.noiseLayerTex)gl.deleteTexture(this.noiseLayerTex);this.noiseLayerTex=undefined;this.noiseLayerSource=undefined;if(this.simple)gl.deleteProgram(this.simple);}if(gl&&this.leak)gl.deleteProgram(this.leak);if(gl){if(this.downProgram)gl.deleteProgram(this.downProgram);if(this.softSeedGpu)gl.deleteProgram(this.softSeedGpu);this.hist?.dispose();this.histProgs.forEach(pr=>{if(pr)gl.deleteProgram(pr);});}this.hist=undefined;this.downProgram=undefined;this.histProgs.clear();this.dims='';this.sampleSize='';gl?.getExtension('WEBGL_lose_context')?.loseContext();this.canvas.width=this.canvas.height=this.sample.width=this.sample.height=1;this.alpha=this.blurred=this.scratch=new Uint8ClampedArray(0);this.softSource=undefined;this.key='';this.haloMaskKey='';this.haloPhotoKey='';}
 }

@@ -17022,8 +17022,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const set = (patch: Partial<FloatingImage>) => {
                 if (liveFloat && 'fx' in patch && Object.keys(patch).length === 1) {
                   const next = (patch as any).fx as PhotoFx;
-                  // 只在「本來就有效果、改完也還有」時走即時通道；從無到有（或歸零）要換畫法，交給文件
-                  if (hasPhotoFx(img.fx) && hasPhotoFx(next)) {
+                  /* 本來就有效果（這一層正用自己的畫布畫）就一律走即時通道，拖到 0 也是 ——
+                     0 那一格這張畫布直接畫原圖，放開才寫回文件。以前碰到 0 就整份文件更新、
+                     整個畫面重新 render，那就是「拖到最邊邊突然卡一下」。從無到有仍交給文件（要換畫法）。 */
+                  if (hasPhotoFx(img.fx)) {
                     pendingFloatFx.current.set(img.id, next);updateCellPhoto(img.id, next);return;
                   }
                   pendingFloatFx.current.delete(img.id);

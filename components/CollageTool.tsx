@@ -97,7 +97,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
    所以濾鏡與調節的效果不可能有差。 */
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
-import {warmPhotoFxSurface} from '../utils/photoFx';
+import {warmPhotoFxSurface,warmPhotoSceneColour} from '../utils/photoFx';
 import {videoPoster} from '../utils/videoPoster';
 import {canEncodeFrames,encodeCanvasFrames,seekVideosTo} from '../utils/frameExactVideo';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
@@ -1478,6 +1478,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionColour=useRef<PhotoSceneColour|null>(null);
   const regionColourActive=useRef(false);
   const regionSpatialActive=useRef(false);
+  /* 圖片物件拖效果滑桿：場景先拍兩張（這顆物件換成全黑／全白），之後每一格只在 GPU 上把
+     「黑＋(白−黑)×照片」合成出來直接顯示 —— 跟底圖照片同一招。以前每一格都要把 GPU 算好的
+     照片複製回 2D（iPhone 上是一次整張讀回）再把整個拼圖重畫一次。 */
+  const objWarmStage=useRef<{id:string;canvas:HTMLCanvasElement}|null>(null);
+  const objCompositeBaseRef=useRef('');
+  const objCompositePrewarm=useRef<string|null>(null);
+  /** GPU 合成的那張蓋在主畫布正上方：主畫布放大後只畫看得到的那一塊（以百分比定位），
+   *  所以照抄它的位置與大小，不能假設它鋪滿外框。 */
+  const placeOverMain=(shown:HTMLCanvasElement,main:HTMLCanvasElement)=>{
+    const m=main.style,abs=m.position==='absolute';
+    shown.style.cssText=`position:absolute;left:${abs?m.left:'0px'};top:${abs?m.top:'0px'};width:${abs?m.width:'100%'};height:${abs?m.height:'100%'};z-index:2;pointer-events:none`;
+  };
+  const objPlacement=useRef<{inv:DOMMatrix;ew:number;eh:number}|null>(null);
+  const objComposite=useRef<{id:string;key:string;scale:number;scene:FxScene;shown?:HTMLCanvasElement}|null>(null);
+  const sceneColourWarmKey=useRef('');
   const regionPreflight=useRef(false);
   const regionSelectionFeedbackPending=useRef(false);
   const regionPrimedSource=useRef('');
@@ -1543,6 +1558,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     let required=onScreenPx;
     if(cell){const dw=Math.abs(transform.w)*cell.w,dh=Math.abs(transform.h)*cell.h,crop=photoCrop(photo,dw,dh);
       required=sourceSize*Math.max(dw*scale/Math.max(1,crop.sw),dh*scale/Math.max(1,crop.sh));}
+    /* 畫布本身多給了 SUPERSAMPLE 倍（給圖形邊緣抗鋸齒用的），照片不需要：照片的特效只要
+       跟螢幕實際的裝置像素一樣細就好。以前照著畫布算，照片在格子裡放大或畫面放大時，
+       特效要在多 3 倍的像素上算 —— 那就是「圖片放很大時拖滑桿很卡」。 */
+    required/=SUPERSAMPLE;
     const id=`region-fx-${index}@${photo.src}`;
     // Reserve the source's normal photo-resolution tier before its first
     // effect input. A preview pinch must not cross the old 1600 -> 2048 tier
@@ -5237,6 +5256,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   ],compactSceneValue),
   [imageState,photoRegion,selectedRegionPhoto,baseSelected,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle]);
   regionGpuSceneKey.current=gpuSceneFingerprint;
+  // 圖片物件那一條（objComposite）用的場景鑰匙：物件另外逐顆比（被選的那顆不含效果）
+  const objCompositeBase=useMemo(()=>JSON.stringify([
+    imageState,imageState?.img?.src,maskImageState?.img?.src,photoRegion,
+    layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,
+    stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,
+    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,selectedRegionPhoto,baseSelected
+  ],compactSceneValue),
+  [imageState,photoRegion,selectedRegionPhoto,baseSelected,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle]);
+  objCompositeBaseRef.current=objCompositeBase;
+  /* 選到圖片物件、在編輯分頁而且閒著：先把黑／白兩張場景拍好（見 objComposite），
+     第一次碰滑桿才不用當場重拍兩次整個拼圖。 */
+  useEffect(()=>{
+    if(activeTab!=='objedit'||!selectedObj)return;
+    let dead=false;
+    void awaitPhotoIdle().then(()=>{
+      if(dead||leavingRef.current)return;
+      const o=objectsRef.current.find(v=>v.id===selectedObj);
+      if(!o||o.type!=='image'||isVideoEl(o.img))return;
+      objCompositePrewarm.current=selectedObj;regionPaintRef.current?.();objCompositePrewarm.current=null;
+    }).catch(()=>{});
+    return()=>{dead=true;};
+  },[activeTab,selectedObj,objects]);
   const backdropObjectTokens=useRef(new WeakMap<object,number>()),backdropObjectSerial=useRef(0);
   const backdropSceneFingerprint=useMemo(()=>JSON.stringify([
     imageState,photoRegion,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,
@@ -5291,6 +5332,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
     }
     const basePhotoEditing=activeTab==='objedit'&&!selectedObj&&(baseSelected||selectedRegionPhotoRef.current!==null);
+    // 圖片物件那張 GPU 合成（objComposite）只在它自己那條路上顯示；其他畫法一律先收起來
+    if(targetCanvas===canvasRef.current&&!previewCapture&&objComposite.current?.shown&&(selectedObj!==objComposite.current.id||activeTab!=='objedit'))objComposite.current.shown.style.display='none';
     // A resident photo-edit surface contains the old complete scene. It must
     // never obscure subsequent live object/glow painting after leaving editing.
     if(targetCanvas===canvasRef.current&&!basePhotoEditing&&!regionPreflight.current){
@@ -5300,7 +5343,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&!regionHold.current?.active&&!swapPaintForced.current&&!regionSelectionFeedbackPending.current&&(basePhotoEditing||regionPreflight.current)){
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
       const sceneGeometryGesture=!!objDragRef.current||!!objPinchRef.current||!!objStretchRef.current||!!baseDragRef.current||!!basePinchRef.current||!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
-      if((regionSpatialActive.current||regionPreflight.current)&&original&&(supportsResidentPhotoEffects(photo?.fx)||regionPreflight.current)&&!sceneGeometryGesture&&!photoRegion?.seamless&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
+      /* 只剩顏色（例如特效拖回 0）而顏色那一條的場景還沒更新（照片在格子裡平移／縮放過）：
+         繼續用已經備好的這一條把顏色畫進場景。以前一碰到 0 就整個場景重拍三次（實測兩三秒），
+         離開 0 又把場景整張讀回重傳 —— 那就是「拖到最邊邊突然很卡」。 */
+      const colourSignature=regionGpuSceneKey.current+'|crop:'+JSON.stringify([photo?.zoom,photo?.offsetX,photo?.offsetY]);
+      const colourStale=!regionColour.current?.ready||regionColour.current.signature!==colourSignature||regionColour.current.width!==targetCanvas.width||regionColour.current.height!==targetCanvas.height||regionColour.current.scale!==renderScale;
+      const spatialFresh=!!regionSpatial.current&&regionSpatial.current.key===regionGpuSceneKey.current&&regionSpatial.current.scale===renderScale&&regionSpatial.current.scene.black.width===targetCanvas.width&&regionSpatial.current.scene.black.height===targetCanvas.height;
+      const colourOnSpatial=!!photo&&supportsSceneColour(photo.fx)&&colourStale&&spatialFresh&&regionColourActive.current;
+      if((regionSpatialActive.current||regionPreflight.current)&&original&&(supportsResidentPhotoEffects(photo?.fx)||regionPreflight.current||colourOnSpatial)&&!sceneGeometryGesture&&!photoRegion?.seamless&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
         const key=regionGpuSceneKey.current;
         let resident=regionSpatial.current;
         if(!resident||resident.key!==key||resident.scale!==renderScale||resident.scene.black.width!==targetCanvas.width||resident.scene.black.height!==targetCanvas.height){
@@ -5333,12 +5383,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
           const cap=regionEffectCapacity(photo,index,w,h,Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale),k=Math.min(1,cap/Math.max(w,h));
-          const shown=applyPhotoFx(original,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),photo!.fx||{},{cacheSource:true,gpuSurface:true,out:resident.input,scene:resident.scene});
+          const shown=applyPhotoFx(original,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),photo!.fx||{},{cacheSource:true,gpuSurface:true,out:resident.input,scene:resident.scene,sceneColour:colourOnSpatial&&!supportsResidentPhotoEffects(photo?.fx)});
           if(shown!==resident.input&&shown.width===targetCanvas.width&&shown.height===targetCanvas.height){
             if(resident.shown&&resident.shown!==shown)resident.shown.remove();
-            shown.style.cssText='position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none';
+            placeOverMain(shown,targetCanvas);
             shown.dataset.baseSpatialPresentation='1';targetCanvas.parentElement?.append(shown);resident.shown=shown;
             regionColour.current?.hide();
+            // 拖到 0 時會改用同一個 context 只畫顏色（colourOnSpatial）：閒著時先備好，那一格才不會卡
+            const warmKey=`${key}|${renderScale}|${targetCanvas.width}x${targetCanvas.height}|${photo!.src}|${Math.round(w*k)}`;
+            if(sceneColourWarmKey.current!==warmKey&&supportsResidentPhotoEffects(photo?.fx)){
+              sceneColourWarmKey.current=warmKey;const warmed=resident,fx0=photo!.fx||{},ww=Math.max(1,Math.round(w*k)),wh=Math.max(1,Math.round(h*k));
+              void awaitPhotoIdle().then(()=>{if(regionSpatial.current!==warmed||leavingRef.current)return;try{warmPhotoSceneColour(warmed.input,original,ww,wh,fx0,warmed.scene);}catch{/* 預熱失敗不影響任何功能 */}}).catch(()=>{});
+            }
             if(import.meta.env.DEV){targetCanvas.dataset.regionFxBackend='resident-spatial-scene-gpu';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);}
             return;
           }
@@ -5371,13 +5427,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             colour.prepare(targetCanvas,signature,renderScale,scenes);
             // These exact endpoints are also needed by spatial effects.
             // Capture once while entering editing, not on the first FX click.
-            const previous=regionSpatial.current;previous?.shown?.remove();
+            const previous=regionSpatial.current;
+            /* 特效那一條的場景還是同一個（只有照片的裁切變了）就留著：換一份新的會讓它
+               下一格把兩張場景整張讀回、重新上傳。 */
+            const keepSpatial=!!previous&&previous.key===regionGpuSceneKey.current&&previous.scale===renderScale&&previous.scene.black.width===targetCanvas.width&&previous.scene.black.height===targetCanvas.height;
+            if(!keepSpatial){
+            previous?.shown?.remove();
             if(previous){previous.scene.black.width=previous.scene.black.height=previous.scene.white.width=previous.scene.white.height=1;}
             regionSpatialInput.current??=document.createElement('canvas');
             // Spatial coverage does not include crop coordinates: those are
             // UV uniforms. Keeping the colour-only crop suffix here discarded
             // the already primed scene on the very first effect click.
             regionSpatial.current={key:regionGpuSceneKey.current,scale:renderScale,scene:{black:scenes[1],white:scenes[2],placements},input:regionSpatialInput.current};
+            }
             const prepared=regionSpatial.current;
             void awaitPhotoIdle().then(async()=>{
               if(regionSpatial.current!==prepared||leavingRef.current||!regionColourActive.current)return;
@@ -5408,6 +5470,68 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }
       }
       regionColour.current?.hide();
+    }
+    {
+      const composite=objComposite.current;
+      const sel=targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&activeTab==='objedit'&&selectedObj?objectsRef.current.find(v=>v.id===selectedObj):null;
+      const plain=!!sel&&sel.type==='image'&&!!sel.img&&!isVideoEl(sel.img)&&!sel.imgRadius&&!sel.feather&&!sel.imgStrokeWidth&&!sel.imgGlow&&!isImgShaped(sel.imgShape)
+        &&!animRef.current&&!isVideoEl(imageState.img)&&!objectsRef.current.some(v=>isVideoEl(v.img))&&!swapHoverRef.current&&!editingTextId
+        &&!objDragRef.current&&!objPinchRef.current&&!objStretchRef.current&&!baseDragRef.current&&!basePinchRef.current&&!viewPinchRef.current&&performance.now()>=wheelUntilRef.current
+        &&targetCanvas.width*targetCanvas.height<=4_000_000&&(!sel.fx||supportsSceneColour(sel.fx)||supportsResidentPhotoEffects(sel.fx));
+      const key=plain?objCompositeBaseRef.current+'|'+JSON.stringify(objectsRef.current.map(v=>v.id===sel.id?{...v,fx:0}:v),compactSceneValue):'';
+      const engaged=plain&&(maskSliderLive.current?.id===sel.id||objCompositePrewarm.current===sel.id||(composite?.id===sel.id&&composite.key===key&&composite.scale===renderScale));
+      let shownNow=false;
+      if(engaged){
+        let c=composite;
+        if(!c||c.id!==sel.id||c.key!==key||c.scale!==renderScale||c.scene.black.width!==targetCanvas.width||c.scene.black.height!==targetCanvas.height){
+          c?.shown?.remove();
+          if(c){c.scene.black.width=c.scene.black.height=c.scene.white.width=c.scene.white.height=1;}
+          c=null;objComposite.current=null;
+          const w0=sel.img.naturalWidth||sel.img.width,h0=sel.img.naturalHeight||sel.img.height,k=Math.min(1,1600/Math.max(w0,h0));
+          const iw=Math.max(1,Math.round(w0*k)),ih=Math.max(1,Math.round(h0*k));
+          const scenes:HTMLCanvasElement[]=[];let placement:{inv:DOMMatrix;ew:number;eh:number}|null=null;
+          try{for(const fill of ['black','white']){
+            const solid=document.createElement('canvas');solid.width=iw;solid.height=ih;
+            const g=solid.getContext('2d')!;g.drawImage(sel.img,0,0,iw,ih);g.globalCompositeOperation='source-in';g.fillStyle=fill;g.fillRect(0,0,iw,ih);
+            objWarmStage.current={id:sel.id,canvas:solid};objPlacement.current=null;
+            const capture=document.createElement('canvas');renderToCanvasRef.current(capture,renderScale,true);scenes.push(capture);
+            placement=objPlacement.current;solid.width=solid.height=1;
+          }}finally{objWarmStage.current=null;objPlacement.current=null;}
+          if(placement&&scenes.every(cv=>cv.width===targetCanvas.width&&cv.height===targetCanvas.height)){
+            const {inv,ew,eh}=placement;
+            c={id:sel.id,key,scale:renderScale,scene:{black:scenes[0],white:scenes[1],placements:[{rect:[0,0,0,0],uv:[0,0,0,0],clip:[0,0,0,0],
+              affine:[inv.a/ew,inv.b/eh,inv.c/ew,inv.d/eh,(inv.e+ew/2)/ew,(inv.f+eh/2)/eh]}]}};
+            objComposite.current=c;
+          }else for(const cv of scenes)cv.width=cv.height=1;
+        }
+        if(c){
+          let scratch=vidScratchRef.current.get(sel.id);
+          if(!scratch){scratch={geo:document.createElement('canvas'),base:document.createElement('canvas'),cv:document.createElement('canvas'),off:document.createElement('canvas')};vidScratchRef.current.set(sel.id,scratch);}
+          const w0=sel.img.naturalWidth||sel.img.width,h0=sel.img.naturalHeight||sel.img.height,k=Math.min(1,1600/Math.max(w0,h0));
+          const fx=sel.fx||{};
+          const shown=applyPhotoFx(sel.img,Math.max(1,Math.round(w0*k)),Math.max(1,Math.round(h0*k)),fx,{cacheSource:true,gpuSurface:true,out:scratch.base,scene:c.scene,
+            sceneColour:!supportsResidentPhotoEffects(fx)});
+          if(shown!==scratch.base&&shown.width===targetCanvas.width&&shown.height===targetCanvas.height){
+            objGpuIdsRef.current.add(sel.id);
+            if(c.shown&&c.shown!==shown)c.shown.remove();
+            placeOverMain(shown,targetCanvas);
+            if(shown.parentElement!==targetCanvas.parentElement)targetCanvas.parentElement?.append(shown);
+            c.shown=shown;shownNow=true;
+            // 拖到 0 時改用同一個 out 的「只有顏色」那條：閒著時先備好（只畫進內部貼圖）
+            if(!(c as any).colourWarm&&supportsResidentPhotoEffects(fx)){(c as any).colourWarm=true;const warmed=c,iw=Math.max(1,Math.round(w0*k)),ih=Math.max(1,Math.round(h0*k)),img=sel.img,out=scratch.base;
+              void awaitPhotoIdle().then(()=>{if(objComposite.current!==warmed||leavingRef.current)return;try{warmPhotoSceneColour(out,img,iw,ih,fx,warmed.scene);}catch{/* 預熱失敗不影響任何功能 */}}).catch(()=>{});}
+            // 這顆物件的 2D 快取跟目前的效果對不上了：之後回到一般畫法時要重算
+            objFxCache.current.delete(sel.id);
+            if(import.meta.env.DEV){targetCanvas.dataset.objFxBackend='object-scene-gpu';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);}
+            return;
+          }
+        }
+      }
+      if(!shownNow&&composite?.shown)composite.shown.style.display='none';
+      // 換選別的、離開編輯：黑白兩張場景（各一整張畫布）不要留著佔記憶體
+      if(!shownNow&&composite&&targetCanvas===canvasRef.current&&!previewCapture&&(!sel||sel.id!==composite.id||activeTab!=='objedit')){
+        composite.scene.black.width=composite.scene.black.height=composite.scene.white.width=composite.scene.white.height=1;composite.shown?.remove();objComposite.current=null;
+      }
     }
     if(hasBackdrop){regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';}
     if(!hasBackdrop&&targetCanvas===canvasRef.current&&regionSliderHeld.current&&!previewCapture&&!animRef.current&&!viewPinchRef.current&&stamp?.key===regionSceneKey.current&&stamp.scale===renderScale&&stamp.sceneW===targetCanvas.width&&stamp.sceneH===targetCanvas.height&&photo){
@@ -6921,9 +7045,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const liveStroke = dashAnim !== 'none' && (o.imgStrokeWidth || 0) > 0;
         // 這一顆在畫布上實際佔多大 —— 影片用它把效果的工作尺寸夾到剛好夠用
         const onPx = Math.max(o.w, o.h) * s;
-        let src2: any = liveStroke
+        const objWarm = objWarmStage.current?.id === o.id ? objWarmStage.current : null;
+        let src2: any = objWarm ? objWarm.canvas : liveStroke
           ? (fxCanvasOf({ ...o, id: `${o.id}@nodash`, imgStrokeWidth: 0 }, isMain, onPx) || o.img)
           : (fxCanvasOf(o, isMain, onPx) || o.img);
+        // 拍黑／白那兩張時記下這顆物件在場景裡的位置（見 objComposite）
+        if (objWarm) objPlacement.current = { inv: ctx.getTransform().inverse(), ew: o.w * s, eh: o.h * s };
         /* 有形狀效果時畫布比原圖大一圈（留給發光與描邊），
            畫的時候要等比放大回去，圖片本體才會剛好落在原本的框上。 */
         const padX = (src2 as any).__padX || 0, padY = (src2 as any).__padY || 0;
@@ -11511,9 +11638,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       set={(d: any) => {
                         /* 圖片物件拖效果滑桿：跟遮罩滑桿同一招 —— 只改 objectsRef、直接重畫畫布，
                            放開才寫回 state（整個創意拼圖不必每一格重新 render）。
-                           從無到有、或歸零（要換畫法）照舊寫回 state。 */
+                           拖到 0（變回沒有效果）或從 0 拖出來也一樣走這條：以前那一格要整個
+                           創意拼圖重新 render，就是「拖到最邊邊會卡一下」。 */
                         const held=maskSliderLive.current;
-                        if(liveObjFx&&held?.id===sel.id&&'fx' in d&&Object.keys(d).length===1&&hasPhotoFx(sel.fx)&&hasPhotoFx(d.fx)){
+                        if(liveObjFx&&held?.id===sel.id&&'fx' in d&&Object.keys(d).length===1){
                           held.patch={...held.patch,fx:d.fx};
                           objectsRef.current=objectsRef.current.map(o=>o.id===sel.id?{...o,fx:d.fx}:o);
                           // 一格畫面只重畫一次（一次拖動可能送好幾個 input）

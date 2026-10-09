@@ -171,6 +171,15 @@ export function warmPhotoFxSurface(input:HTMLCanvasElement,id:string,scene?:FxSc
   warmFx(id,retained.surface);
   if(scene)warmFxScene(retained.surface,scene);
 }
+/** 閒著時先把「只剩顏色」那一格要用的東西備好（同一個 context：顏色著色器、原圖上傳、場景兩張），
+ *  特效拖到 0 的那一格就不必當場編譯、讀原圖。只畫進內部貼圖，畫面上不會有任何變化。 */
+export function warmPhotoSceneColour(input:HTMLCanvasElement,source:CanvasImageSource,w:number,h:number,fx:PhotoFx,scene:FxScene){
+  let retained=effectInputs.get(input);
+  if(!retained){retained={key:'',source:document.createElement('canvas'),surface:newSurface()};effectInputs.set(input,retained);}
+  const colour=Object.fromEntries(Object.entries(fx).filter(([k])=>!k.startsWith('fx')&&!['soft','fringeIntensity','leakOpacity','blur','colorNoise','vignette'].includes(k))) as PhotoFx;
+  surfaceColourImage(retained.surface,source,Math.max(1,Math.round(w)),Math.max(1,Math.round(h)),colour,true);
+  warmFxScene(retained.surface,scene);
+}
 export function releasePhotoFxSurface(input:HTMLCanvasElement){
   const optical=opticalInputs.get(input);if(optical){optical.layer.dispose();releasePhotoFxSurface(optical.source);optical.source.width=optical.source.height=1;opticalInputs.delete(input);}
   const retained=effectInputs.get(input);if(!retained)return;
@@ -612,7 +621,9 @@ export function applyPhotoFx(
    *       尺寸一樣就直接沿用，連 width 都不重設（重設等於重新配置一次）。 */
   opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean; gpuSurface?: boolean; scene?: FxScene;
     /** 內部用：這一趟的來源已經是「原圖＋光」 */
-    afterGlow?: boolean },
+    afterGlow?: boolean;
+    /** 只有顏色、要畫進 scene：在效果表面自己的 context 裡算顏色、直接合成進場景（同上面那條） */
+    sceneColour?: boolean },
 ): HTMLCanvasElement {
   const out = opts?.out || document.createElement('canvas');
   const oW = Math.max(1, Math.round(w)), oH = Math.max(1, Math.round(h));
@@ -629,7 +640,7 @@ export function applyPhotoFx(
   /* 「原圖＋光」之後只剩顏色、又要畫進場景（拼圖編輯底圖）：顏色在效果表面自己的
      GPU context 裡算，直接合成進場景 —— 跟只有顏色的照片走的那條一樣，不經過 2D。 */
   const fxl = fx as any;
-  if (opts?.afterGlow && opts.scene && opts.gpuSurface && opts.cacheSource && !hasActiveFx(fx) && !fxl.fxLowfi
+  if ((opts?.afterGlow || opts?.sceneColour && !fx.soft && !fx.fringeIntensity) && opts.scene && opts.gpuSurface && opts.cacheSource && !hasActiveFx(fx) && !fxl.fxLowfi
     && ![fx.blur, fx.colorNoise, fx.vignette, fx.leakOpacity].some(Boolean)) {
     const record: EffectInput = effectInputs.get(out) || { key: '', source: document.createElement('canvas'), surface: newSurface() };
     const image = surfaceColourImage(record.surface, source, oW, oH, fx, true);

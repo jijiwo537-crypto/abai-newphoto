@@ -168,6 +168,7 @@ export const DEFAULT_PARAMS: EditorParams = {
 
 type Category = 'filter' | 'adjust' | 'effects' | 'leak' | 'soft' | 'grain' | 'halation' | 'mask' | 'compose' | 'fx';
 type CurveChannel = 'rgb' | 'r' | 'g' | 'b';
+type LegacyKind = 'soft' | 'halation' | 'leak' | 'blur' | 'simple';
 
 interface ToolDef {
   id: string; 
@@ -532,6 +533,9 @@ function precomputeSharpenDetail(sourceData: Uint8ClampedArray, w: number, h: nu
   return detail;
 }
 
+const patternIds = new WeakMap<object, number>();
+let nextPatternId = 1;
+const patternIdOf = (c: HTMLCanvasElement | null) => { if (!c) return 0; let id = patternIds.get(c); if (!id) { id = nextPatternId++; patternIds.set(c, id); } return id; };
 export function generateNoisePattern(type: 'grain' | 'color', size: number = 512): HTMLCanvasElement {
     const canvas = document.createElement('canvas');
     canvas.width = size;
@@ -1812,7 +1816,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const fxSurfaceRef=useRef<HTMLCanvasElement>(null);
   const fxSurfaceShownRef=useRef(false);
   const fxInputKeyRef=useRef('');
-  const legacyPreviewRef=useRef<{kind:'soft'|'halation'|'leak';key:string}|null>(null);
+  const legacyPreviewRef=useRef<{kind:LegacyKind;key:string}|null>(null);
   const showFxSurface=(shown:boolean)=>{
     // Both surfaces share the same absolute box and the parent's transform.
     // Present the GPU result directly: copying it to 2D forces a synchronous
@@ -2602,6 +2606,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return g.drawImage(glow);
   };
 
+  /* 閒著的時候先把畫面那塊 GPU 表面上的顏色那一段建好、原圖傳上去。以前是第一次
+     拖過 0 的那一格才當場編譯＋上傳（實測半秒），拖滑桿時就會「突然卡一下」。 */
+  const warmSurfaceColour = () => {
+    const b = buffers.current.preview;
+    if (!b.source || !fxSurfaceRef.current || isInteractingRef.current) return;
+    const lut = lutList[selectedLutIdx], data = lut?.url ? lutDataRef.current[lut.id] : null;
+    gpuFinalImage(stripGlow(paramsRef.current), data ? data.data : null, data ? data.size : 0, data ? `${lut.id}#${data.size}` : '', `${b.w}x${b.h}|${srcIdent()}`, b);
+  };
+  const warmSurfaceColourRef = useRef(warmSurfaceColour);
+  warmSurfaceColourRef.current = warmSurfaceColour;
   /* ── 發光：GPU 上從原圖算成一張「原圖＋光」的貼圖（與畫面同一個 context） ── */
   /** tex：特效畫進去的那張（由下往上）；td：翻回由上往下、與上傳的原圖同一種排法的那張 */
   const glowTexRef = useRef<{ tex: WebGLTexture; td: WebGLTexture; w: number; h: number; key: string; gl: WebGLRenderingContext } | null>(null);
@@ -2803,7 +2817,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const halationLayerRef = useRef<HalationLayer | null>(null);
   const softLayerRef = useRef<HalationLayer | null>(null);
   const halationPresentRef=useRef<HalationLayer|null>(null),softPresentRef=useRef<HalationLayer|null>(null);
-  const leakPresentRef=useRef<HalationLayer|null>(null);
+  const leakPresentRef=useRef<HalationLayer|null>(null),blurPresentRef=useRef<HalationLayer|null>(null),simplePresentRef=useRef<HalationLayer|null>(null);
   /** 按了特效卡片：下一幀先讓按鈕／分頁的變化畫出來，再下一幀才算圖。
       以前點下去是「UI 跟整張圖在同一幀一起出來」，算圖多久按鈕就慢多久才亮。 */
   const uiFirstRef = useRef(false);
@@ -2825,6 +2839,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           (softPresentRef.current ||= new HalationLayer(surface)).warm();
           (halationPresentRef.current ||= new HalationLayer(surface)).warm();
           (leakPresentRef.current ||= new HalationLayer(surface)).warm();
+          (blurPresentRef.current ||= new HalationLayer(surface)).warm();
+          (simplePresentRef.current ||= new HalationLayer(surface)).warm();
         } else return;
       } catch { /* 預熱失敗不影響任何功能 */ }
       i++;
@@ -2833,7 +2849,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const cancel = afterPaint(step, 700);
     return () => { dead = true; cancel(); window.clearTimeout(timer); };
   }, [activeCategory]);
-  useEffect(()=>()=>{halationLayerRef.current?.dispose();softLayerRef.current?.dispose();halationPresentRef.current?.dispose();softPresentRef.current?.dispose();leakPresentRef.current?.dispose();},[]);
+  useEffect(() => {
+    if (!activeSrc) return;
+    let tries = 0, timer = 0, dead = false;
+    const step = () => {
+      if (dead) return;
+      // 照片還沒解碼好或手指還在動：晚一點再試（最多幾秒）
+      if ((!buffers.current.preview.source || isInteractingRef.current) && ++tries < 12) { timer = window.setTimeout(step, 500); return; }
+      try { warmSurfaceColourRef.current(); } catch { /* 預熱失敗不影響任何功能 */ }
+    };
+    const cancel = afterPaint(step, 900);
+    return () => { dead = true; cancel(); window.clearTimeout(timer); };
+  }, [activeSrc, activeCategory]);
+  useEffect(()=>()=>{halationLayerRef.current?.dispose();softLayerRef.current?.dispose();halationPresentRef.current?.dispose();softPresentRef.current?.dispose();leakPresentRef.current?.dispose();blurPresentRef.current?.dispose();simplePresentRef.current?.dispose();},[]);
   const halationCacheStateRef = useRef<{
     /** 這份快取是「哪一張照片」算出來的。
         批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
@@ -3747,14 +3775,57 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     colourBinsRef.current = { key: binsKey, bins };
     return bins;
   };
-  const legacyInputKey=(p:EditorParams,w:number,h:number,kind:'soft'|'halation'|'leak')=>{
-    const excluded=kind==='soft'?['soft','softThreshold','softRadius','softColor']:kind==='leak'?['leakOpacity','leakAngle','leakHue']:['fringeIntensity','fringeSize','fringeFeather','fringeHue'];
+  const legacyInputKey=(p:EditorParams,w:number,h:number,kind:LegacyKind)=>{
+    const excluded=kind==='soft'?['soft','softThreshold','softRadius','softColor']:kind==='leak'?['leakOpacity','leakAngle','leakHue']:kind==='blur'?['blur']:kind==='simple'?['colorNoise','vignette']:['fringeIntensity','fringeSize','fringeFeather','fringeHue'];
     return JSON.stringify([srcIdent(),w,h,lutList[selectedLutIdx]?.id,!!lutDataRef.current[lutList[selectedLutIdx]?.id],toneSig(p),Object.fromEntries(Object.entries(p).filter(([k])=>!excluded.includes(k)))]);
+  };
+  /* 只開了「一種」舊式特效（柔光／光暈／漏光／朦朧，或噪點＋暗角）而且後面沒有別的東西
+     要畫在 2D 上：那一層直接在畫面那塊 GPU 表面上算、直接顯示。拖曳中與放開後走同一條，
+     所以拖到哪一格、放開就是哪一格；朦朧與噪點以前每動一格都要在 CPU 上整張重算再複製。 */
+  const legacyGpuKind=(p:EditorParams):LegacyKind|null=>{
+    if(p.grain||p.colorNoise2||p.maskCreated||p.sharpen||hasActiveFx(p))return null;
+    const optical=[p.soft>0&&'soft',p.fringeIntensity>0&&'halation',p.leakOpacity>0&&'leak',p.blur>0&&'blur'].filter(Boolean) as LegacyKind[];
+    const simple=p.colorNoise>0||p.vignette>0;
+    if(optical.length===1&&!simple)return optical[0];
+    if(!optical.length&&simple)return 'simple';
+    return null;
+  };
+  const legacyLayer=(kind:LegacyKind,surface:HTMLCanvasElement)=>kind==='soft'?(softPresentRef.current ||= new HalationLayer(surface))
+    :kind==='halation'?(halationPresentRef.current ||= new HalationLayer(surface))
+    :kind==='leak'?(leakPresentRef.current ||= new HalationLayer(surface))
+    :kind==='blur'?(blurPresentRef.current ||= new HalationLayer(surface)):(simplePresentRef.current ||= new HalationLayer(surface));
+  const renderLegacy=(layer:HalationLayer,kind:LegacyKind,ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:EditorParams,bins:Float64Array|null)=>
+    kind==='soft'?layer.renderSoft(ctx,w,h,key,p,hslToRgb(p.softColor/100,1,.5),bins)
+    :kind==='halation'?layer.render(ctx,w,h,key,p,hslToRgb(p.fringeHue/360,.8,.35))
+    :kind==='leak'?layer.renderLeak(ctx,w,h,key,p,hslToRgb(p.leakHue/360,1,.5))
+    :kind==='blur'?layer.renderBlur(ctx,w,h,key,p.blur)
+    :noisePatternRef.current?layer.renderSimple(ctx,w,h,key,p,noisePatternRef.current,p.colorNoise>0?noiseLayerFor(w,h):null):null;
+  /* 噪點層用 2D 畫布照原本 applyComplexEffects 的方式鋪一次（同一張圖樣、同一個縮放），
+     GPU 只負責 overlay —— 噪點長得跟以前 2D 疊出來的一模一樣，尺寸不變就一直沿用。 */
+  const noiseLayerRef=useRef<HTMLCanvasElement|null>(null);
+  const noiseLayerFor=(w:number,h:number)=>{
+    let c=noiseLayerRef.current;const pattern=noisePatternRef.current;
+    if(c&&c.width===w&&c.height===h&&c.dataset.pattern===String(patternIdOf(pattern)))return c;
+    if(!pattern)return null;
+    c ||=document.createElement('canvas');c.width=w;c.height=h;
+    const g=c.getContext('2d')!,fill=g.createPattern(pattern,'repeat'),scale=Math.max(w,h)/1080;
+    if(!fill)return null;
+    g.save();g.scale(scale,scale);g.fillStyle=fill;g.fillRect(0,0,w/scale,h/scale);g.restore();
+    c.dataset.pattern=String(patternIdOf(pattern));noiseLayerRef.current=c;return c;
   };
   const applyComplexEffects = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number, p: EditorParams, scale: number, sharedBuf: Uint8ClampedArray | null, isInteracting: boolean, baking: boolean, sourcePixelData: Uint8ClampedArray | null) => {
     const lut = lutList[selectedLutIdx];
     const lutId = lut?.id || 'none';
     const toneStr = toneSig(p);
+
+    // 朦朧或噪點（＋暗角）單獨開著：跟拖曳中同一條 GPU 路線（見 legacyGpuKind）
+    if (!baking && !forceRecalculateEffectsRef.current && ctx.canvas === displayCanvasRef.current && fxSurfaceRef.current) {
+      const kind = legacyGpuKind(p);
+      if (kind === 'blur' || kind === 'simple') {
+        const key = legacyInputKey(p, w, h, kind);
+        if (renderLegacy(legacyLayer(kind, fxSurfaceRef.current), kind, ctx, w, h, key, p, null)) { legacyPreviewRef.current = { kind, key }; showFxSurface(true); return; }
+      }
+    }
 
     let blurNeedsLazyRefine = false;
     let softNeedsLazyRefine = false;
@@ -4822,11 +4893,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const pPost0 = stripGlow(p);
     const legacy=legacyPreviewRef.current;
     if(!glowStale&&!showOriginalRef.current&&!forceRecalculateEffectsRef.current&&!displayStaleRef.current&&legacy&&legacy.key===legacyInputKey(pPost0,b.w,b.h,legacy.kind)){
-      const painted=legacy.kind==='soft'&&pPost0.soft>0
-        ? softPresentRef.current?.renderSoft(ctx,b.w,b.h,legacy.key,pPost0,hslToRgb(pPost0.softColor/100,1,.5),colourBinsFor(pPost0))
-        : legacy.kind==='halation'&&pPost0.fringeIntensity>0
-          ? halationPresentRef.current?.render(ctx,b.w,b.h,legacy.key,pPost0,hslToRgb(pPost0.fringeHue/360,.8,.35))
-          : legacy.kind==='leak'&&pPost0.leakOpacity>0?leakPresentRef.current?.renderLeak(ctx,b.w,b.h,legacy.key,pPost0,hslToRgb(pPost0.leakHue/360,1,.5)):null;
+      const on=legacy.kind==='soft'?pPost0.soft>0:legacy.kind==='halation'?pPost0.fringeIntensity>0:legacy.kind==='leak'?pPost0.leakOpacity>0
+        :legacy.kind==='blur'?pPost0.blur>0&&legacyGpuKind(pPost0)==='blur':legacyGpuKind(pPost0)==='simple';
+      const painted=on&&fxSurfaceRef.current?renderLegacy(legacyLayer(legacy.kind,fxSurfaceRef.current),legacy.kind,ctx,b.w,b.h,legacy.key,pPost0,colourBinsFor(pPost0)):null;
       if(painted){showFxSurface(true);return;}
     }
     legacyPreviewRef.current=null;
@@ -4866,7 +4935,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         Object.values(pRender.curves).every(isIdentityCurve) &&
         isHslIdentity(pRender.hsl);
 
-    if (showOriginalRef.current || isNoEdits) {
+    /* 拖到 0（整張回到原圖）時不要在拖曳中改走 2D：那一格要把整張原圖寫進 2D 再上傳一次，
+       正是「拖到最邊邊就卡一下」的那一下。拖曳中照樣走下面的 GPU 直通（同一張原圖）。 */
+    const noEditsOnGpu = isNoEdits && isInteracting && !isFastBlendActive && !showOriginalRef.current && !!fxSurfaceRef.current && !!b.source && !!getSurfaceGpu();
+    if (showOriginalRef.current || (isNoEdits && !noEditsOnGpu)) {
         /* 這張已經合併過了 —— 緩衝區裡的「原圖」其實是合併後的結果，
            所以前後對比要改畫一開始留下來的那張才是真的原圖。
            裁切過的話兩者比例會不一樣，等比縮到畫面內、其餘留黑。 */
@@ -4909,9 +4981,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const filmKey = activeLut ? `${lut.id}#${lutSize}` : '';
         /* Colour stage in the surface's own context: the effects read its
            texture, nothing crosses between GPU contexts, nothing is read
-           back. (Lo-fi's halo still reads a canvas: that one uses the path
-           below.) */
-        const image = !(pRender as any).fxLowfi ? gpuFinalImage(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b) : null;
+           back (Lo-fi's halo mask is computed on the GPU too). */
+        const image = gpuFinalImage(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b);
         if (image) {
             const surface = fxSurfaceRef.current;
             const imageKey = `${srcKey}|${colourKeyOf(pRender)}|${activeLut ? pRender.lutAmount : 0}|${filmKey}|${glowSig(pRender)}`;
@@ -4940,23 +5011,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         /* Only soft light, halation or light leak on: its GPU layer presents
            on the effect surface. With the colour stage in that same context
            it takes the colour result as a texture — no copy, no readback. */
-        const p0 = pPost, others = !!(p0.grain || p0.colorNoise || p0.blur || p0.vignette || p0.maskCreated) || hasActiveFx(p0);
-        const single = others ? null : [p0.soft > 0 && 'soft', p0.fringeIntensity > 0 && 'halation', p0.leakOpacity > 0 && 'leak'].filter(Boolean);
-        if (single && single.length === 1 && fxSurfaceRef.current) {
+        const p0 = pPost, kind = legacyGpuKind(p0);
+        if (kind && fxSurfaceRef.current) {
             const image = gpuFinalImage(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b);
             if (image) {
-                const kind = single[0] as 'soft' | 'halation' | 'leak', surface = fxSurfaceRef.current;
-                const layer = kind === 'soft' ? (softPresentRef.current ||= new HalationLayer(surface))
-                    : kind === 'halation' ? (halationPresentRef.current ||= new HalationLayer(surface))
-                    : (leakPresentRef.current ||= new HalationLayer(surface));
+                const layer = legacyLayer(kind, fxSurfaceRef.current);
                 const key = legacyInputKey(p0, b.w, b.h, kind);
                 layer.sourceImage = image;
                 let painted: HTMLCanvasElement | null = null;
-                try {
-                    painted = kind === 'soft' ? layer.renderSoft(ctx, b.w, b.h, key, p0, hslToRgb(p0.softColor / 100, 1, .5), null)
-                        : kind === 'halation' ? layer.render(ctx, b.w, b.h, key, p0, hslToRgb(p0.fringeHue / 360, .8, .35))
-                        : layer.renderLeak(ctx, b.w, b.h, key, p0, hslToRgb(p0.leakHue / 360, 1, .5));
-                } finally { layer.sourceImage = null; }
+                try { painted = renderLegacy(layer, kind, ctx, b.w, b.h, key, p0, null); } finally { layer.sourceImage = null; }
                 if (painted) { legacyPreviewRef.current = { kind, key }; showFxSurface(true); displayStaleRef.current = true; cvs.style.filter = 'none'; return; }
             }
         }
@@ -4974,19 +5037,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             /* Fallback when the surface has no WebGL2 colour stage: the layer
                reads the colour GPU's canvas and presents on the GPU surface —
                the 2D canvas is not touched at all. */
-            if (single && single.length === 1 && fxSurfaceRef.current) {
-                const kind = single[0] as 'soft' | 'halation' | 'leak', surface = fxSurfaceRef.current;
-                const layer = kind === 'soft' ? (softPresentRef.current ||= new HalationLayer(surface))
-                    : kind === 'halation' ? (halationPresentRef.current ||= new HalationLayer(surface))
-                    : (leakPresentRef.current ||= new HalationLayer(surface));
+            if (kind && fxSurfaceRef.current) {
+                const layer = legacyLayer(kind, fxSurfaceRef.current);
                 const key = legacyInputKey(p0, b.w, b.h, kind);
                 layer.sourceOverride = out;
                 let painted: HTMLCanvasElement | null = null;
-                try {
-                    painted = kind === 'soft' ? layer.renderSoft(ctx, b.w, b.h, key, p0, hslToRgb(p0.softColor / 100, 1, .5), colourBinsFor(p0))
-                        : kind === 'halation' ? layer.render(ctx, b.w, b.h, key, p0, hslToRgb(p0.fringeHue / 360, .8, .35))
-                        : layer.renderLeak(ctx, b.w, b.h, key, p0, hslToRgb(p0.leakHue / 360, 1, .5));
-                } finally { layer.sourceOverride = null; }
+                try { painted = renderLegacy(layer, kind, ctx, b.w, b.h, key, p0, colourBinsFor(p0)); } finally { layer.sourceOverride = null; }
                 if (painted) { legacyPreviewRef.current = { kind, key }; showFxSurface(true); displayStaleRef.current = true; cvs.style.filter = 'none'; return; }
             }
             ctx.globalCompositeOperation = 'copy'; ctx.drawImage(out, 0, 0); ctx.globalCompositeOperation = 'source-over';

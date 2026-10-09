@@ -701,7 +701,11 @@ interface Ctx {
   scene?: { value: FxScene; black: WebGLTexture; white: WebGLTexture; wide: boolean };
 }
 
-export type FxPlacement = { rect: number[]; uv: number[]; clip: number[] };
+export type FxPlacement = { rect: number[]; uv: number[]; clip: number[];
+  /** 旋轉／縮放過的物件：場景像素（左上原點）→ 照片 uv 的仿射 [a,b,c,d,e,f]，
+   *  u=a·x+c·y+e、v=b·x+d·y+f（超出 0～1 夾在邊上，邊緣那一圈抗鋸齒像素才取得到顏色；
+   *  照片以外的地方黑白兩張一樣、覆蓋為 0）。只給一顆物件用；有它時 rect/uv/clip 不用。 */
+  affine?: number[] };
 export type FxScene = { black: HTMLCanvasElement; white: HTMLCanvasElement; placements: FxPlacement[] };
 const sceneContexts=new WeakMap<WebGLRenderingContext,Ctx>();
 /** A shared final compositor for modern effects and the editor's legacy optics.
@@ -738,7 +742,8 @@ export function composeFxScene(gl:WebGLRenderingContext,photo:WebGLTexture,scene
  for(const [unit,name,tex] of [[0,'uPhoto',photo],[1,'uBlack',c.scene!.black],[2,'uWhite',c.scene!.white]] as const){gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(uniformLocation(gl,program,name),unit);}
  gl.uniform2f(uniformLocation(gl,program,'uScene'),scene.black.width,scene.black.height);gl.uniform1f(uniformLocation(gl,program,'uWide'),c.scene!.wide?1:0);
  gl.uniform1i(uniformLocation(gl,program,'uCount'),Math.min(8,scene.placements.length));
- for(let i=0;i<Math.min(8,scene.placements.length);i++){const p=scene.placements[i];for(const [name,values] of [['uRect',p.rect],['uCrop',p.uv],['uClip',p.clip]] as const)gl.uniform4fv(uniformLocation(gl,program,`${name}[${i}]`),values);}
+ for(let i=0;i<Math.min(8,scene.placements.length);i++){const p=scene.placements[i];for(const [name,values] of [['uRect',p.rect],['uCrop',p.uv],['uClip',p.clip]] as const)gl.uniform4fv(uniformLocation(gl,program,`${name}[${i}]`),values);
+  const a=p.affine;gl.uniform4f(uniformLocation(gl,program,`uAffU[${i}]`),a?a[0]:0,a?a[2]:0,a?a[4]:0,a?1:0);gl.uniform4f(uniformLocation(gl,program,`uAffV[${i}]`),a?a[1]:0,a?a[3]:0,a?a[5]:0,0);}
  gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,scene.black.width,scene.black.height);gl.drawArrays(gl.TRIANGLES,0,3);gl.flush();
  if(changed)gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(4));
  return true;
@@ -746,12 +751,13 @@ export function composeFxScene(gl:WebGLRenderingContext,photo:WebGLTexture,scene
 export function disposeFxScene(gl:WebGLRenderingContext){const c=sceneContexts.get(gl);if(!c)return;if(c.scene){gl.deleteTexture(c.scene.black);gl.deleteTexture(c.scene.white);}c.progs.forEach(p=>gl.deleteProgram(p));sceneContexts.delete(gl);}
 const SCENE_FS = `precision highp float;
 varying vec2 vUv;uniform sampler2D uPhoto;uniform sampler2D uBlack;uniform sampler2D uWhite;
-uniform vec2 uScene;uniform vec4 uRect[8];uniform vec4 uCrop[8];uniform vec4 uClip[8];uniform int uCount;uniform float uWide;
+uniform vec2 uScene;uniform vec4 uRect[8];uniform vec4 uCrop[8];uniform vec4 uClip[8];uniform vec4 uAffU[8];uniform vec4 uAffV[8];uniform int uCount;uniform float uWide;
 vec3 linearize(vec3 c){return mix(c/12.92,pow((c+.055)/1.055,vec3(2.4)),step(vec3(.04045),c));}
 vec3 encode(vec3 c){return mix(c*12.92,1.055*pow(max(c,vec3(0.)),vec3(1./2.4))-.055,step(vec3(.0031308),c));}
 void main(){vec2 point=vec2(vUv.x,1.-vUv.y)*uScene;vec2 sampleUv=vec2(0.);bool found=false;
 for(int i=0;i<8;i++){if(i>=uCount)break;vec4 r=uRect[i];vec4 clip=uClip[i];
-if(point.x>=clip.x&&point.y>=clip.y&&point.x<=clip.x+clip.z&&point.y<=clip.y+clip.w){sampleUv=uCrop[i].xy+(point-r.xy)/r.zw*uCrop[i].zw;found=true;}}
+if(uAffU[i].w>.5){sampleUv=clamp(vec2(dot(uAffU[i].xy,point)+uAffU[i].z,dot(uAffV[i].xy,point)+uAffV[i].z),0.,1.);found=true;}
+else if(point.x>=clip.x&&point.y>=clip.y&&point.x<=clip.x+clip.z&&point.y<=clip.y+clip.w){sampleUv=uCrop[i].xy+(point-r.xy)/r.zw*uCrop[i].zw;found=true;}}
 vec4 black=texture2D(uBlack,vUv);vec3 coverage=max(vec3(0.),texture2D(uWhite,vUv).rgb-black.rgb);
 vec3 photo=texture2D(uPhoto,vec2(sampleUv.x,1.-sampleUv.y)).rgb;
 if(uWide>.5)photo=encode(mat3(.82259287,.03319951,.01708535,.17753395,.96678350,.07239572,0.,0.,.91030148)*linearize(photo));
@@ -1132,7 +1138,9 @@ export function applyGlEffects(
       if(import.meta.env.DEV)auditHistogram=performance.now()-histogramStart;
     }else if(spillOn&&image&&sourceOverride?.bins)spillSelection=selectHighlights(sourceOverride.bins,params.fxSpillRange??20);
     let gpuHalo=false;
-    if(scene&&!auditReference&&active.some(d=>d.id==='fxLowfi')){
+    /* 低保真的光暈遮罩一律在 GPU 上算（跟 CPU 那份同樣的 800px 亮部、同樣的盒狀模糊與進位）。
+       以前只有拼圖底圖這樣做；編輯頁每換一次來源就把整張讀回 CPU 再算一次。 */
+    if(!auditReference&&active.some(d=>d.id==='fxLowfi')){
       c.lowfiHalo ||= new LowfiHaloMask();
       gpuHalo=c.lowfiHalo.prepareGpu(gl,srcTex,w,h,uploadKey,fb,(key,fs)=>compile(c,key,fs));
     }
