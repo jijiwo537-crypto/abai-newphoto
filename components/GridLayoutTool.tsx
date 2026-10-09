@@ -1490,7 +1490,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     <g clipPath={`url(#material-${maskId})`}>
       {item.kind==='mask-mosaic'||item.kind==='mask-bricks'?Array.from({length:25},(_,i)=><rect key={i} x={2+i%5*4} y={2+Math.floor(i/5)*4} width={item.kind==='mask-bricks'?3.2:4} height={item.kind==='mask-bricks'?3.2:4} fill="currentColor" opacity={.2+(i*7%11)/14}/> ):<>
       <rect x="2" y="2" width="20" height="20" fill="currentColor" opacity=".18"/>
-      {item.kind==='mask-negative'||item.kind==='mask-monochrome'?<path d={item.kind==='mask-monochrome'?'M2 22L22 2V22Z':'M12 2H22V22H12Z'} fill="currentColor"/>:item.kind==='mask-thermal'?<rect x="2" y="2" width="20" height="20" fill={`url(#heat-${maskId})`}/>:<>{[5,9,13,17].map((y,i)=><path key={y} d={`M2 ${y}H22`} stroke="currentColor" strokeWidth="2" opacity={item.kind==='mask-frost-feather'?.25+i*.1:.5}/>)}</>}
+      {item.kind==='mask-negative-mono'?<><path d='M12 2H22V22H12Z' fill="currentColor"/><path d='M2 22L12 12' stroke="currentColor" strokeWidth="1.6" opacity=".55"/></>:item.kind==='mask-negative'||item.kind==='mask-monochrome'?<path d={item.kind==='mask-monochrome'?'M2 22L22 2V22Z':'M12 2H22V22H12Z'} fill="currentColor"/>:item.kind==='mask-thermal'?<rect x="2" y="2" width="20" height="20" fill={`url(#heat-${maskId})`}/>:<>{[5,9,13,17].map((y,i)=><path key={y} d={`M2 ${y}H22`} stroke="currentColor" strokeWidth="2" opacity={item.kind==='mask-frost-feather'?.25+i*.1:.5}/>)}</>}
       </>}
     </g><path d={maskGeometry(item.kind)==='circle'?'M22 12A10 10 0 1 1 2 12A10 10 0 1 1 22 12':'M2 2H22V22H2Z'} fill="none" stroke="currentColor" strokeWidth=".8" opacity={item.kind==='mask-frost-feather'?.4:1}/>
   </svg>;
@@ -2968,7 +2968,10 @@ return (
       {/* 「原始」：跟編輯一樣排在第一張，按下去把所有特效（連細項）打回預設＝全部關掉。
           一個特效都沒開的時候它亮白框。 */}
       {adjustSub === 'effect' && !fxDetailOpen && (() => {
-        const none = !FX_ROOT_TOOLS.some(([id]) => fxVal(fxAmountId(id), 0) !== 0);
+        /* 滑桿拉到 0 的那一顆仍然是選中的特效 —— 那時「原始」不能亮；
+           只有按了「原始」（或一開始什麼都沒選）才亮。 */
+        const cardPicked = !!effectCard && FX_ROOT_TOOLS.some(([id]) => id === effectCard);
+        const none = !cardPicked && !FX_ROOT_TOOLS.some(([id]) => fxVal(fxAmountId(id), 0) !== 0);
         return (
           <button
             key="__fx-none"
@@ -6671,7 +6674,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           <Copy size={14 * previewInv} />
         </button>
         {/* 編輯鍵：文字與圖片都用同一顆（跟佈局那顆同款） */}
-        {image.shape!=='mask-negative'&&<button
+        {image.shape!=='mask-negative'&&image.shape!=='mask-negative-mono'&&<button
           onClick={(e) => { e.stopPropagation(); onLayerAction('edit'); }}
           title={image.text !== undefined ? '編輯文字' : image.shape ? '圖形調整' : '圖片調整'}
           style={{ width: 28 * previewInv, height: 28 * previewInv }}
@@ -6690,6 +6693,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     {/* 選取框與四角圓球：不用「掛載／卸載」切換，改成一直在、用 visibility 開關。
         卸載時瀏覽器偶爾不會重繪那一層（尤其是有 transform 的圖層），
         畫面上就會留下已經取消選取的框與圓球。 */}
+    {/* 套了動畫的物件：外框跟著動畫一起動（白色藥丸不動）。這一層由動畫時鐘直接改 transform */}
+    <div data-chrome-motion={image.id} style={{ position: 'absolute', inset: 0, transformOrigin: '50% 50%', pointerEvents: 'none' }}>
     {(() => {
       // 對齊線亮起來時，選取框與四角圓球也一起讓位（跟工具列同一個理由）
       const showChrome = isSelected && !hideChrome && !isDragging && !isScaling && !hasActiveGuidelines;
@@ -6972,6 +6977,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       </div>
       );
     })()}
+    </div>
     </>
   );
 
@@ -9458,8 +9464,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const frameForItem = useCallback((item: FloatingImage, index: number, time: number) =>
     objectMotionFrame(timedMotionConfig(item), time, motionPhase(item, index)),
   [timedMotionConfig, motionPhase]);
-  /* 佈局也是動畫目標：整組佈局＝一張圖片，套跟圖片同一套（波浪除外 ——
-     那需要把畫面切片變形，佈局是整塊合成的）。 */
+  /* 佈局也是動畫目標：整組佈局＝一張圖片，套跟圖片同一套（波浪由 paintLayoutWave 切片）。 */
   const motionLayouts = activePage.layouts;
   const layoutMotionCfg = useCallback((lay: LayoutItem): ObjectMotionConfig => {
     const raw = classicObjectMotionOf(lay.mo);
@@ -9478,6 +9483,79 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     () => floatingImages.some(hasConfiguredMotion) || pages.some(page => page.layouts.some(layoutHasMotion)),
     [floatingImages, hasConfiguredMotion, pages, layoutHasMotion],
   );
+  /** 佈局的波浪：跟圖片一樣把畫面切成直條做正弦位移。來源是佈局自己那張照片畫布
+      （data-layout-photo-surface，照它的 CSS 矩陣貼過來），畫在一張疊在上面的畫布，
+      波浪播放期間把原本那層藏起來；不是波浪就收掉、原本那層回來。 */
+  const layoutWaveScratch = useRef(new WeakMap<HTMLElement, HTMLCanvasElement>());
+  const paintLayoutWave = useCallback((el: HTMLElement, lay: LayoutItem, f: ObjectMotionFrame | null, w: number, h: number, transform: string) => {
+    const host = el.parentElement;
+    let ov = host?.querySelector<HTMLCanvasElement>(':scope > canvas[data-layout-wave]') || null;
+    const src = el.querySelector<HTMLCanvasElement>('canvas[data-layout-photo-surface]');
+    const waving = !!f && f.gridWave !== undefined && (f.waveMix ?? 1) > 1e-5 && !!src && src.width > 0 && src.style.display !== 'none';
+    if (!waving || !host || !src || !f) {
+      if (ov && ov.style.display !== 'none') ov.style.display = 'none';
+      if (el.style.visibility) el.style.visibility = '';
+      return;
+    }
+    const cfg = layoutMotionCfg(lay);
+    const amp = Math.min(10, h * .065) * Math.max(.15, cfg.amp / 100) * (f.waveMix ?? 1);
+    const pad = Math.ceil(amp + 2);
+    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    const W = Math.max(1, Math.round(w * dpr)), H = Math.max(1, Math.round((h + pad * 2) * dpr));
+    if (!ov) {
+      ov = document.createElement('canvas');
+      ov.dataset.layoutWave = lay.id;
+      ov.style.cssText = 'position:absolute;left:0;pointer-events:none;';
+      host.insertBefore(ov, el.nextSibling);
+    }
+    if (ov.width !== W) ov.width = W;
+    if (ov.height !== H) ov.height = H;
+    Object.assign(ov.style, { display: 'block', top: `${-pad}px`, width: `${w}px`, height: `${h + pad * 2}px`,
+      transform, transformOrigin: `${w / 2}px ${pad + h / 2}px`, opacity: el.style.opacity, zIndex: '1' });
+    let scratch = layoutWaveScratch.current.get(el);
+    if (!scratch) { scratch = document.createElement('canvas'); layoutWaveScratch.current.set(el, scratch); }
+    if (scratch.width !== W) scratch.width = W;
+    if (scratch.height !== H) scratch.height = H;
+    const sg = scratch.getContext('2d'), ctx = ov.getContext('2d');
+    if (!sg || !ctx) return;
+    // 照片畫布在佈局框裡的位置＝它的 CSS 矩陣（transform-origin 0 0）
+    const m = /matrix\(([^)]+)\)/.exec(src.style.transform || '');
+    const [a, b, c, d, e, g] = m ? m[1].split(',').map(Number) : [1, 0, 0, 1, 0, 0];
+    const cssW = parseFloat(src.style.width) || w, cssH = parseFloat(src.style.height) || h;
+    sg.setTransform(1, 0, 0, 1, 0, 0); sg.clearRect(0, 0, W, H);
+    sg.setTransform(dpr * a, dpr * b, dpr * c, dpr * d, dpr * e, dpr * (g + pad));
+    sg.imageSmoothingEnabled = true; sg.imageSmoothingQuality = 'high';
+    sg.drawImage(src, 0, 0, cssW, cssH);
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H);
+    const reveal = f.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, f.gridReveal));
+    const shownW = W * reveal, A = amp * dpr, phase = f.gridWave!;
+    const segments = Math.max(32, Math.min(128, Math.ceil(shownW / 8))), sw = shownW / segments;
+    for (let i = 0; i < segments; i++) {
+      const x = i * sw, x1 = i + 1 === segments ? shownW : x + sw;
+      const dy0 = Math.sin((x / W - phase) * Math.PI * 2) * A, dy1 = Math.sin((x1 / W - phase) * Math.PI * 2) * A;
+      const slope = (dy1 - dy0) / Math.max(.001, x1 - x);
+      ctx.save(); ctx.beginPath(); ctx.rect(x - .5, 0, x1 - x + 1, H); ctx.clip();
+      ctx.transform(1, slope, 0, 1, 0, dy0 - slope * x);
+      ctx.drawImage(scratch, x - 1, 0, x1 - x + 2, H, x - 1, 0, x1 - x + 2, H);
+      ctx.restore();
+    }
+    el.style.visibility = 'hidden';
+  }, [layoutMotionCfg]);
+  /** 選中的物件有動畫時，選取框（data-chrome-motion）跟著同一格動；工具列藥丸不在這一層，維持不動。
+      外框容器已經轉了物件本身的角度，所以位移要轉回那個座標系。 */
+  const chromeMotionRef = useRef({ selectedFloatingId: null as string | null, floatingImages, hasConfiguredMotion, frameForItem });
+  chromeMotionRef.current = { selectedFloatingId, floatingImages, hasConfiguredMotion, frameForItem };
+  const paintChromeMotion = useCallback((time: number) => {
+    const { selectedFloatingId: id, floatingImages: items, hasConfiguredMotion: on, frameForItem: frameOf } = chromeMotionRef.current;
+    document.querySelectorAll<HTMLElement>('[data-chrome-motion]').forEach(el => {
+      const index = el.dataset.chromeMotion === id ? items.findIndex(f => f.id === id) : -1;
+      const item = index >= 0 ? items[index] : null;
+      if (!item || !on(item)) { if (el.style.transform) el.style.transform = ''; return; }
+      const f = frameOf(item, index, time), w = el.offsetWidth, h = el.offsetHeight;
+      const r = -((item.rotation || 0) * Math.PI) / 180, vx = f.dx * w, vy = f.dy * h;
+      el.style.transform = `translate(${vx * Math.cos(r) - vy * Math.sin(r)}px, ${vx * Math.sin(r) + vy * Math.cos(r)}px) scale(${f.k * (f.fx ?? 1)}, ${f.k}) rotate(${f.rot}deg)`;
+    });
+  }, []);
   /** 佈局的動畫直接寫在它那一層 DOM 上（data-layout-motion），每一格不重畫 React。
       只有目前這一頁的佈局會動；其餘（或沒有設定動畫的）一律清回原位。 */
   const layoutMotionRef = useRef({ pages, activePageIndex, layoutHasMotion, layoutMotionFrame });
@@ -9487,15 +9565,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     all.forEach((page, index) => page.layouts.forEach(lay => {
       const el = document.querySelector<HTMLElement>(`[data-layout-motion="${CSS.escape(lay.id)}"]`);
       if (!el) return;
+      const chrome = document.querySelector<HTMLElement>(`[data-layout-chrome-motion="${CSS.escape(lay.id)}"]`);
       if (index !== active || !on(lay)) {
+        if (chrome?.style.transform) chrome.style.transform = '';
         if (el.style.transform || el.style.opacity) { el.style.transform = ''; el.style.opacity = ''; }
+        paintLayoutWave(el, lay, null, 0, 0, '');
         return;
       }
       const f = frameOf(lay, time), w = el.offsetWidth, h = el.offsetHeight;
-      el.style.transform = `translate3d(${f.dx * w}px, ${f.dy * h}px, 0) scale(${f.k * (f.fx ?? 1)}, ${f.k}) rotate(${f.rot}deg)`;
+      const transform = `translate3d(${f.dx * w}px, ${f.dy * h}px, 0) scale(${f.k * (f.fx ?? 1)}, ${f.k}) rotate(${f.rot}deg)`;
+      el.style.transform = transform;
       el.style.opacity = String(Math.max(0, Math.min(1, f.a)));
+      if (chrome) chrome.style.transform = transform;
+      paintLayoutWave(el, lay, f, w, h, transform);
     }));
-  }, []);
+  }, [paintLayoutWave]);
   const sceneMotionFrame = useCallback((item: FloatingImage, index: number) =>
     hasConfiguredMotion(item) ? frameForItem(item, index, motionClockRef.current) : null,
   [hasConfiguredMotion, frameForItem]);
@@ -9627,13 +9711,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // creative collage. Do not rebuild the whole editor for every unit pulse.
       vectorScene.flush();
       paintLayoutMotion(t);
+      paintChromeMotion(t);
       if (hasDomMotion) setMotionTime(t);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [activeTab, motionPlaying, motionTotal, motionRunSeq, anyClassicMotion, hasDomMotion, vectorScene, paintLayoutMotion]);
+  }, [activeTab, motionPlaying, motionTotal, motionRunSeq, anyClassicMotion, hasDomMotion, vectorScene, paintLayoutMotion, paintChromeMotion]);
   // 動畫拿掉、換頁或停住時：沒有動畫的佈局要回到原位（不能停在最後一格）
   useLayoutEffect(() => { paintLayoutMotion(motionClockRef.current); }, [pages, activePageIndex, paintLayoutMotion]);
+  useLayoutEffect(() => { paintChromeMotion(motionClockRef.current); }, [selectedFloatingId, floatingImages, paintChromeMotion]);
   useEffect(() => {
     if (activeTab !== 'motion') return;
     setSelectedFloatingId(null);
@@ -14134,6 +14220,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           // 轉過角度之後佔的橫向範圍會變寬，要用「轉過的外接框」
           const lbw = rotExtent(lb0.w * ls, lb0.h * ls, lay.t?.rot || 0).bw;
           const left = pageIdx * targetW + (targetW - lbw) / 2 + (lay.t?.x || 0) * scaleFactor;
+          let waveRaster: HTMLCanvasElement | null = null;
           drawJobs.push({
             z: 59 + (lay.z ?? 0) * 2,
             minX: left,
@@ -14142,6 +14229,39 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             run: async (c, _live, motionAt) => {
               const f = motionAt !== undefined && layoutHasMotion(lay) ? layoutMotionFrame(lay, motionAt) : null;
               if (!f) return drawPageLayout(c, pageIdx, lay);
+              if (f.gridWave !== undefined && (f.waveMix ?? 1) > 1e-5) {
+                /* 波浪：先把整組佈局畫進一張有安全邊界的離屏畫布，再用跟圖片相同的
+                   直條正弦位移貼回來（見下面浮動圖片的波浪）。 */
+                const cx = pageIdx * targetW + targetW / 2 + (lay.t?.x || 0) * scaleFactor;
+                const cy = targetH / 2 + (lay.t?.y || 0) * scaleFactor;
+                const r = ((lay.t?.rot || 0) * Math.PI) / 180, fw = lb0.w * ls, fh = lb0.h * ls;
+                const bw = Math.abs(fw * Math.cos(r)) + Math.abs(fh * Math.sin(r)), bh = Math.abs(fw * Math.sin(r)) + Math.abs(fh * Math.cos(r));
+                const amplitude = Math.max(2 * scaleFactor, Math.min(Math.max(1, bw) * .055, Math.max(1, bh) * .13)
+                  * Math.max(.15, layoutMotionCfg(lay).amp / 100) * (f.waveMix ?? 1));
+                // 邊界用最大振幅算，佈局本身每一格都一樣 —— 整段匯出只畫一次
+                const pad = Math.max(24 * scaleFactor, Math.max(bw, bh) * .22, amplitude / Math.max(1e-5, f.waveMix ?? 1) * 2 + 4);
+                const W = Math.max(2, Math.ceil(bw + pad * 2)), H = Math.max(2, Math.ceil(bh + pad * 2));
+                if (!waveRaster || waveRaster.width !== W || waveRaster.height !== H) {
+                  waveRaster = document.createElement('canvas'); waveRaster.width = W; waveRaster.height = H;
+                  const og = get2dWide(waveRaster)!;
+                  og.translate(W / 2 - cx, H / 2 - cy);
+                  await drawPageLayout(og, pageIdx, lay);
+                }
+                const off = waveRaster;
+                const x0 = cx - W / 2, y0 = cy - H / 2;
+                const reveal = f.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, f.gridReveal));
+                const slices = Math.max(32, Math.min(128, Math.ceil(W / Math.max(1, 5 * scaleFactor)))), sw = W / slices;
+                c.save();
+                try {
+                  c.globalAlpha *= Math.max(0, Math.min(1, f.a));
+                  if (reveal < 1) { c.beginPath(); c.rect(x0, y0 - amplitude - 2, W * reveal, H + amplitude * 2 + 4); c.clip(); }
+                  for (let i = 0; i < slices; i++) {
+                    const sx = i * sw, dy = Math.sin(((sx + sw / 2) / W) * Math.PI * 2.2 - f.gridWave * Math.PI * 2) * amplitude;
+                    c.drawImage(off, sx, 0, sw + .7, H, x0 + sx, y0 + dy, sw + .7, H);
+                  }
+                } finally { c.restore(); }
+                return;
+              }
               /* 跟預覽同一個變形：佈局中心為軸，先轉到佈局自己的角度，再套動畫的
                  位移（以佈局寬高為單位）、縮放、旋轉，最後轉回來交給原本的畫法。 */
               const cx = pageIdx * targetW + targetW / 2 + (lay.t?.x || 0) * scaleFactor;
@@ -15834,6 +15954,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     className="absolute inset-0 pointer-events-none"
                                     style={{ visibility: activeGuidelines.length > 0 || selectionDragging ? 'hidden' : 'visible' }}
                                   >
+                                    {/* 框與四顆角球跟著佈局的動畫一起動（按鈕列不動），見 paintLayoutMotion */}
+                                    <div data-layout-chrome-motion={layout.id} className="absolute inset-0 pointer-events-none" style={{ transformOrigin: '50% 50%' }}>
                                     {/* 選取框跟一般圖片同款：細白線 + 陰影 */}
                                     <div
                                       className="absolute inset-0 pointer-events-none z-[55] border-solid border-white/95"
@@ -15847,6 +15969,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     {corner('tr', 'top-0 left-full', 'cursor-nesw-resize')}
                                     {corner('bl', 'top-full left-0', 'cursor-nesw-resize')}
                                     {corner('br', 'top-full left-full', 'cursor-nwse-resize')}
+                                    </div>
                                     {/* 按鈕列跟一般圖片、文字同一套：掛在中心、沿「畫面的」Y 軸
                                         推到轉完外接框的外面，再反向轉回來 —— 佈局轉了，
                                         按鈕仍然是正的（只有選取框跟角球跟著轉）。 */}
@@ -16700,7 +16823,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   ? baseIdle.filter(([id]) => id !== 'spin').flatMap(([id, name]) =>
                       id === 'breathe' ? [[id, '縮放'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
                   : targetIsImage
-                    ? baseIdle.filter(([id]) => !layoutTarget || id !== 'grid-wave').map(([id, name]) => id === 'spin' ? ['image-breathe', '呼吸'] as const : [id, name] as const)
+                    ? baseIdle.map(([id, name]) => id === 'spin' ? ['image-breathe', '呼吸'] as const : [id, name] as const)
                     : baseIdle.map(([id, name]) => id === 'spin' && target?.shape === 'grid-orbits' ? ['signal', '信號'] as const : [id, name] as const);
               const pickIntro = (id: string) => {
                 patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) } : { in: id });

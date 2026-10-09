@@ -13,18 +13,20 @@ const liveSize=(w:number,h:number)=>{const k=Math.min(1,LIVE_PREVIEW/Math.max(w,
 const lutReady=(fx?:PhotoFx)=>fx?.lut?!!getLoadedLut(fx.lut):0;
 
 // Fusion input updates only the layout renderer, not the entire editor.
-export const previews = new Map<string, (amount: number) => void>();
+/** live＝手指還在滑桿上（畫面可以走直接顯示的 GPU 層）；放開那一次傳 false */
+export const previews = new Map<string, (amount: number, live?: boolean) => void>();
 export function SeamlessAmountSlider({ previewId, value, onCommit }: { previewId: string; value: number; onCommit: (value: number) => void }) {
   const [live,setLive]=useState(value);
   const latest=useRef(value),frame=useRef(0),committed=useRef(value);
   useEffect(()=>{latest.current=value;committed.current=value;setLive(value);},[value]);
   useEffect(()=>()=>cancelAnimationFrame(frame.current),[]);
   const update=(v:number)=>{latest.current=v;setLive(v);if(!frame.current)frame.current=requestAnimationFrame(()=>{
-    frame.current=0;previews.get(previewId)?.(latest.current);
+    frame.current=0;previews.get(previewId)?.(Math.round(latest.current*100)/100,true);
   });};
-  // The thumb and preview follow the finger continuously; the stored amount
-  // keeps its integer scale (snapped on release, like before).
-  const commit=()=>{const v=Math.round(latest.current);latest.current=v;setLive(v);previews.get(previewId)?.(v);if(committed.current!==v){committed.current=v;onCommit(v);}};
+  // The thumb and preview follow the finger continuously. The stored amount
+  // keeps the dragged value (2 decimals): snapping to an integer on release
+  // visibly shifted the blend band after letting go.
+  const commit=()=>{cancelAnimationFrame(frame.current);frame.current=0;const v=Math.round(latest.current*100)/100;latest.current=v;setLive(v);previews.get(previewId)?.(v,false);if(committed.current!==v){committed.current=v;onCommit(v);}};
   return <div className="space-y-1.5 col-span-2">
     <div className="flex justify-between text-[11px] font-bold text-white/70"><span>融合程度</span><span className="font-mono text-white">{Math.round(live)}</span></div>
     {/* 跟其他滑桿同一套：同樣大的觸控範圍，拖動時頁面不會跟著捲 */}

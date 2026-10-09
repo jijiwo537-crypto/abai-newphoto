@@ -5737,7 +5737,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         creativeSeam.current ||= new CreativeSeamless();
         if(photoRegion.seamless&&g===ctx&&targetCanvas===canvasRef.current&&!previewCapture&&layout!==AROUND&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&dim<0){
           const m=g.getTransform(),bounds=clip||[0,0,tW,tH];
-          try{if(creativeSeam.current.present(g,regionForPaint!,regionDecoded,x,y,w,h,[bounds[0]*m.a+m.e,bounds[1]*m.d+m.f,bounds[2]*m.a,bounds[3]*m.d],[vp.w,vp.h])){
+          // 拖滑桿（無縫、佔比…）的那幾格：GPU 那層直接疊在畫布底下顯示，不複製進 2D 畫布
+          try{if(creativeSeam.current.present(g,regionForPaint!,regionDecoded,x,y,w,h,[bounds[0]*m.a+m.e,bounds[1]*m.d+m.f,bounds[2]*m.a,bounds[3]*m.d],[vp.w,vp.h],isPhotoInteractionBusy()||liveMaskScale.current!==null)){
             const base=seamlessPhotoBase(regionForPaint!);
             if(base&&base!==regionForPaint)paintPhotoRegion(g,regionForPaint!,regionDecoded,x,y,w,h,dim,regionForPaint!.photos.slice(2).map((_,i)=>i+2));
             return;
@@ -10465,7 +10466,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 { t: '複製', on: act(dup), el: <Copy size={14} />, off: false },
                 { t: o.type === 'text' ? (o.sym ? '編輯符號' : '編輯文字') : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => { setColorPickerTarget(null); setActiveTab('objedit'); }), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
-              ].filter(b=>!(o.kind==='mask-negative'&&b.el.type===Sliders)).map(b => (
+              ].filter(b=>!((o.kind==='mask-negative'||o.kind==='mask-negative-mono')&&b.el.type===Sliders)).map(b => (
                 /* 鬆手才觸發。以前綁在 onPointerDown，手指一碰到就動作 ——
                    碰錯了也來不及滑開取消，而且複製／刪除這種不好還原的動作
                    按下去就發生了。改成 onClick：一定要「在同一顆按鈕上按下並放開」
@@ -11941,7 +11942,8 @@ const RegionLiveRange=({value,onChange,onCommit,min=0,max=100,step=1,label='融�
   React.useEffect(()=>()=>release.current?.(),[]);
   React.useEffect(()=>setShown(value),[value]);
   return <div className="slider-wrap w-full" style={{height:16}}>
-    <input aria-label={label} type="range" min={min} max={max} step={step} value={shown} className="premium-slider w-full"
+    {/* 白點連續跟手（step="any"）：無縫、佔比都吃小數，不必一格一格跳 */}
+    <input aria-label={label} type="range" min={min} max={max} step={step===1?"any":step} value={shown} className="premium-slider w-full"
       onChange={e=>{const v=Number(e.target.value);setShown(v);deferHeavyWork();onChange(v);}}
       onPointerDown={e=>{e.stopPropagation();release.current?.();release.current=holdPhotoInteraction();}}
       onPointerUp={finish} onPointerCancel={finish} onTouchEnd={finish} onKeyUp={finish}/></div>;

@@ -24,9 +24,9 @@ class SeamGpu {
   /** Which images each target last drew. A shared renderer serves many
    *  targets; a texture is only "inactive" when no target still shows it. */
   private targetSets=new Map<HTMLCanvasElement,Set<CanvasImageSource>>();
-  constructor(canvas:HTMLCanvasElement,private direct=false,private presentationOnly=false,readonly srgbOutput=false,readonly shared=false){
+  constructor(canvas:HTMLCanvasElement,private direct=false,private presentationOnly=false,readonly srgbOutput=false,readonly shared=false,noTransfer=false){
     const webkit=/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
-    this.transferred=!direct&&!shared&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
+    this.transferred=!direct&&!shared&&!noTransfer&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
     this.canvas=this.transferred?new OffscreenCanvas(canvas.width,canvas.height):canvas;
     const gl=this.canvas.getContext('webgl2',{alpha:true,antialias:false,premultipliedAlpha:false,preserveDrawingBuffer:!presentationOnly}) as WebGL2RenderingContext|null;
     if(!gl)throw new Error('無縫拼圖 GPU 無法啟動');this.gl=gl;
@@ -250,12 +250,14 @@ class SeamGpu {
   }
 }
 const renderers=new WeakMap<HTMLCanvasElement,SeamGpu>();
-export function drawSeamPreview(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView,presentationOnly=false,srgbOutput=false){
+/** noTransfer：畫在 target 自己的 WebGL context 上（不經 OffscreenCanvas 轉交）。
+ *  要直接當 DOM 圖層顯示、而且保留 Display-P3 標記時用。 */
+export function drawSeamPreview(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView,presentationOnly=false,srgbOutput=false,noTransfer=false){
   let gpu=renderers.get(target);
   // A canvas's colour mode is fixed by its first renderer; a mismatch would
   // silently keep the wrong (washed-out on WebKit) output. Fail loudly.
   if(gpu&&!gpu.lost&&gpu.srgbOutput!==srgbOutput)throw new Error('Seam surface colour mode mismatch');
-  if(!gpu||gpu.lost){gpu=new SeamGpu(target,false,presentationOnly,srgbOutput);renderers.set(target,gpu);}gpu.draw(target,cells,rects,sources,amount,view);
+  if(!gpu||gpu.lost){gpu=new SeamGpu(target,false,presentationOnly,srgbOutput,false,noTransfer);renderers.set(target,gpu);}gpu.draw(target,cells,rects,sources,amount,view);
 }
 export function disposeSeamPreview(target:HTMLCanvasElement){renderers.get(target)?.dispose();renderers.delete(target);}
 

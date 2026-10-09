@@ -10,6 +10,8 @@ export class CreativeSeamless {
   private surface:HTMLCanvasElement|null=null;
   private colorTile:HTMLCanvasElement|null=null;
   private presentation:HTMLCanvasElement|null=null;
+  /** 拖滑桿時直接疊在畫面上的那層：跟放開後同一個色彩空間（同一組像素），自己的 context 直接顯示 */
+  private liveLayer:HTMLCanvasElement|null=null;
   private interactive=new CreativeFeatherSurface();
   warm(region:PhotoRegion,decoded:Map<string,HTMLImageElement>){
     const base=seamlessPhotoBase(region);if(!base||this.presentation?.style.display==='block')return;
@@ -22,7 +24,10 @@ export class CreativeSeamless {
   /** Resolve resident original photos INTO the main scene before the mask.
    * Never ask the DOM compositor to filter two complementary alpha layers.
    * Source uploads remain cached; there is no scene upload or CPU readback. */
-  present(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,page:number[],viewport=[ctx.canvas.width,ctx.canvas.height]){
+  /** live：手指還在滑桿上（無縫、佔比）。GPU 這層直接以 DOM 疊在主畫布正下方顯示、
+   *  主畫布把照片那一塊挖空 —— 省掉每一格把 GPU 畫面複製進 2D 畫布（iOS 上那是一次
+   *  同步讀回）。尺寸、像素格與主畫布完全相同；放開後回到下面那條單一畫布的路。 */
+  present(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,page:number[],viewport=[ctx.canvas.width,ctx.canvas.height],live=false){
     const base=seamlessPhotoBase(region);if(!base||base.photos.some(p=>!p.src||!decoded.has(p.src)))return false;
     const m=ctx.getTransform();if(m.b||m.c||m.a<=0||m.d<=0)return false;
     if(this.presentation?.dataset.sourceUploads&&this.presentation.getContext('webgl2')?.isContextLost()){
@@ -44,13 +49,33 @@ export class CreativeSeamless {
     // Photo texels continue under the opaque mask's filter footprint, while
     // its exact half-open clip remains authoritative. No source crop changes.
     const view:SeamView={width:w,height:h,xx:W/m.a,xy:0,x0:(l-m.e)/m.a-x,yx:0,yy:H/m.d,y0:(t-m.f)/m.d-y,clip:[(left-l)/W,(top-t)/H,(right-l)/W,(bottom-t)/H],clipGuard:[2/W,2/H]};
-    drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,view,true,isWebKit());
+    const parent=main.parentElement,liveLayer=live&&!!parent;
+    if(!liveLayer)drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,view,true,isWebKit());
+    const clearLeft=scenePixelEdge(left),clearTop=scenePixelEdge(top);
+    const clearRight=scenePixelEdge(right),clearBottom=scenePixelEdge(bottom);
+    if(liveLayer&&parent){
+      if(this.liveLayer?.dataset.sourceUploads&&this.liveLayer.getContext('webgl2')?.isContextLost()){disposeSeamPreview(this.liveLayer);this.liveLayer.remove();this.liveLayer=null;}
+      const layer=this.liveLayer||(this.liveLayer=document.createElement('canvas'));
+      if(layer.width!==W)layer.width=W;if(layer.height!==H)layer.height=H;
+      layer.dataset.creativeLiveSeam='1';
+      drawSeamPreview(layer,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,view,true,isWebKit(),true);
+      // 小數像素也要一樣（offset* 會取整，差一條像素）
+      const mr=main.getBoundingClientRect(),pr=parent.getBoundingClientRect();
+      Object.assign(layer.style,{display:'block',position:'absolute',pointerEvents:'none',zIndex:'0',margin:'0',
+        left:`${mr.left-pr.left-parent.clientLeft}px`,top:`${mr.top-pr.top-parent.clientTop}px`,width:`${mr.width}px`,height:`${mr.height}px`,
+        transform:main.style.transform||'none',transformOrigin:main.style.transformOrigin||''});
+      if(layer.parentElement!==parent||layer.nextSibling!==main)parent.insertBefore(layer,main);
+      main.dataset.creativePhotoComposition='live-layer';
+      ctx.save();ctx.setTransform(1,0,0,1,0,0);
+      ctx.beginPath();ctx.rect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.clip();
+      ctx.clearRect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.restore();
+      return true;
+    }
     // The GPU buffer is private, not an independently scaled DOM layer.
     // Copy in the same task before its transient framebuffer is discarded.
     surface.remove();surface.style.display='none';
+    if(this.liveLayer){this.liveLayer.remove();this.liveLayer.style.display='none';}
     main.dataset.creativePhotoComposition='single-canvas';
-    const clearLeft=scenePixelEdge(left),clearTop=scenePixelEdge(top);
-    const clearRight=scenePixelEdge(right),clearBottom=scenePixelEdge(bottom);
     ctx.save();ctx.setTransform(1,0,0,1,0,0);
     ctx.beginPath();ctx.rect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.clip();
     // Drawn straight into the 2D scene. On WebKit the surface renders sRGB
@@ -60,7 +85,7 @@ export class CreativeSeamless {
   }
   beginFrame(){}
   flush(){}
-  hide(){if(this.presentation){this.presentation.style.display='none';this.presentation.remove();}}
+  hide(){if(this.presentation){this.presentation.style.display='none';this.presentation.remove();}if(this.liveLayer){this.liveLayer.style.display='none';this.liveLayer.remove();}}
   get shown(){return false;}
   paint(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,dim=-1,preview=false){
     if(!region.seamless||region.photos.length<2)return false;
@@ -109,5 +134,5 @@ export class CreativeSeamless {
       return true;
     }finally{ctx.restore();}
   }
-  dispose(){this.hide();this.interactive.dispose();if(this.presentation){disposeSeamPreview(this.presentation);this.presentation.remove();this.presentation.width=this.presentation.height=1;this.presentation=null;}if(this.surface){disposeSeamPreview(this.surface);this.surface.width=this.surface.height=1;this.surface=null;}if(this.colorTile){this.colorTile.width=this.colorTile.height=1;this.colorTile=null;}}
+  dispose(){this.hide();if(this.liveLayer){disposeSeamPreview(this.liveLayer);this.liveLayer.width=this.liveLayer.height=1;this.liveLayer=null;}this.interactive.dispose();if(this.presentation){disposeSeamPreview(this.presentation);this.presentation.remove();this.presentation.width=this.presentation.height=1;this.presentation=null;}if(this.surface){disposeSeamPreview(this.surface);this.surface.width=this.surface.height=1;this.surface=null;}if(this.colorTile){this.colorTile.width=this.colorTile.height=1;this.colorTile=null;}}
 }

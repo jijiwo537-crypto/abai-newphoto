@@ -3,12 +3,17 @@ import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,getLoadedLut,type PhotoFx}
 import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
 import {subscribeCellPhoto,subscribeCellPrime} from '../utils/liveCellPhoto';
 import {resolveSeamSurface} from '../utils/seamlessSurfaceGeometry';
-import {drawSeamShared,releaseSeamShared,type SeamTexture} from '../utils/seamlessPreview';
+import {drawSeamShared,releaseSeamShared,drawSeamPreview,type SeamTexture} from '../utils/seamlessPreview';
 import {previews as seamlessPreviews} from './SeamlessLayout';
 import {drawCoveredPhoto} from '../utils/coveredPhoto';
 import {get2dWide} from '../utils/colorSpace';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
 
+/* 拖融合程度滑桿的那幾格：共用的 GPU 畫面每格都要複製進這個佈局的 2D 畫布（iOS 上是一次
+   同步讀回）。拖曳中改成整個編輯器共用的一張 WebGL 畫布直接疊在原位顯示，同一組像素；
+   放開後回到原本那條路，這張就收掉。同一時間只會有一個佈局在拖。 */
+let liveSeam:HTMLCanvasElement|null=null;
+const dropLiveSeam=(owner?:HTMLCanvasElement|null)=>{if(liveSeam&&(!owner||liveSeam.previousSibling===owner)){liveSeam.remove();}};
 type Cell={id:string;url:string;naturalWidth?:number;naturalHeight?:number;zoom:number;offsetX:number;offsetY:number;rotation:number;opacity?:number;imgRadius?:number;fx?:PhotoFx};
 type Rect={x:number;y:number;w:number;h:number};
 type Resource={url:string;image:HTMLImageElement;input:HTMLCanvasElement;key:string;output:CanvasImageSource|null;
@@ -32,12 +37,12 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
   const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef(()=>{});
   // The layout canvas is a plain 2D bitmap fed by the editor-wide shared GPU
   // renderer (drawSeamShared), so it can never lose a context or turn grey.
-  const fusionLive=useRef(fusion);
+  const fusionLive=useRef(fusion),liveDrag=useRef(false);
   useLayoutEffect(()=>{fusionLive.current=fusion;},[fusion]);
   // The fusion slider repaints uniforms directly, without a React render.
-  useLayoutEffect(()=>{if(!previewId||fusion===undefined)return;seamlessPreviews.set(previewId,v=>{fusionLive.current=v;drawRef.current();});return()=>{seamlessPreviews.delete(previewId);};},[previewId,fusion===undefined]);
+  useLayoutEffect(()=>{if(!previewId||fusion===undefined)return;seamlessPreviews.set(previewId,(v,isLive)=>{fusionLive.current=v;liveDrag.current=!!isLive;drawRef.current();});return()=>{seamlessPreviews.delete(previewId);};},[previewId,fusion===undefined]);
   const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;drawRef.current();});};
-  useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element)releaseSeamShared(element);};},[]);
+  useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element){releaseSeamShared(element);dropLiveSeam(element);}};},[]);
   useEffect(()=>{
     // Repaint in the SAME transform frame, not a second rAF one frame later.
     // Sources and FX remain cached; zoom only resamples their visible pixels.
@@ -175,7 +180,21 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         });
       }else{
         // Geometry-only frames change GPU uniforms, never re-run effects.
-        if(fused)drawSeamShared(cv,cells,clips,sources,fusionLive.current!,surface.view);
+        let direct=false;
+        if(fused&&liveDrag.current&&cv.parentElement){
+          try{
+            const layer=liveSeam||(liveSeam=document.createElement('canvas'));
+            if(layer.width!==W)layer.width=W;if(layer.height!==H)layer.height=H;
+            Object.assign(layer.style,{position:'absolute',left:'0',top:'0',transformOrigin:'0 0',pointerEvents:'none',zIndex:'0',display:'block',
+              width:cv.style.width,height:cv.style.height,transform:cv.style.transform,clipPath:cv.style.clipPath});
+            if(layer.previousSibling!==cv)cv.after(layer);
+            drawSeamPreview(layer,cells,clips,sources,fusionLive.current!,surface.view,true,true,true);
+            cv.style.visibility='hidden';direct=true;
+          }catch{dropLiveSeam(cv);}
+        }
+        if(!direct){dropLiveSeam(cv);cv.style.visibility='';}
+        if(direct){/* 這一格由上面那層顯示 */}
+        else if(fused)drawSeamShared(cv,cells,clips,sources,fusionLive.current!,surface.view);
         else drawSeamShared(cv,cells,clips,sources,-1,{...surface.view,isolated:true,sealEdges:noVisibleGutter,radii,crops});
       }
       const flatShown=editPresentation.current&&!fused;

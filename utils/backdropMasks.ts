@@ -8,6 +8,7 @@ export const MASK_SHAPE_ITEMS = [
  {id:'mask-frost',kind:'mask-frost',filled:true,label:'方形毛玻璃'},
  {id:'mask-negative',kind:'mask-negative',filled:true,label:'方形負片'},
  {id:'mask-monochrome',kind:'mask-monochrome',filled:true,label:'方形黑白'},
+ {id:'mask-negative-mono',kind:'mask-negative-mono',filled:true,label:'黑白負片'},
 ] as const;
 // Old drafts keep rendering; removed materials are no longer in the picker.
 export const isBackdropMask=(kind?:string)=>MASK_SHAPE_ITEMS.some(s=>s.kind===kind)||kind==='mask-thermal'||kind==='mask-frost-circle'||kind==='mask-frost-feather';
@@ -88,6 +89,7 @@ const material=header+`
   if(mode<.5)c=mosaic(local).rgb;else if(mode<1.5)c=bricks(local).rgb;
   else if(mode<2.5)c=texture2D(softened,uv).rgb;else if(mode<3.5)c=1.-c;
   else if(mode<4.5)c=vec3(dot(c,vec3(.2126,.7152,.0722)));
+  else if(mode>5.5)c=vec3(1.-dot(c,vec3(.2126,.7152,.0722)));
   else{float l=clamp(dot(c,vec3(.2126,.7152,.0722)),0.,1.)*5.;
    vec3 a=vec3(8.,4.,40.),b=vec3(45.,14.,124.);
    if(l>=4.){a=vec3(255.,222.,66.);b=vec3(255.,255.,238.);}
@@ -220,7 +222,7 @@ class MaskGpu {
    const f=(name:string,v:number)=>gl.uniform1f(this.location(program,name),v),v3=(name:string,a:number,b:number,c:number)=>gl.uniform3f(this.location(program,name),a,b,c);
    v3('mapX',m.a,m.c,m.e);v3('mapY',m.b,m.d,m.f);v3('invX',inv.a,inv.c,inv.e);v3('invY',inv.b,inv.d,inv.f);gl.uniform2f(this.location(program,'size'),w,h);gl.uniform2f(this.location(program,'sampleSize'),w,h);gl.uniform2f(this.location(program,'origin'),0,0);gl.uniform2f(this.location(program,'uRes'),layer.w,layer.h);
    const shape=maskGeometry(layer.kind,settings);f('circle',shape==='star'?2:shape==='circle'?1:0);const points=new Float32Array(20);for(let j=0;j<10;j++){const a=-Math.PI/2+j*Math.PI/5,r=j%2?.225:.5;points[j*2]=Math.cos(a)*r;points[j*2+1]=Math.sin(a)*r;}gl.uniform2fv(this.location(program,'starPoints[0]'),points);
-   f('edgeAA',1/Math.max(1,Math.min(layer.w*Math.hypot(m.a,m.b),layer.h*Math.hypot(m.c,m.d))));f('objectOpacity',layer.opacity);f('feather',0);f('mode',layer.kind==='mask-mosaic'?0:layer.kind==='mask-bricks'?1:layer.kind==='mask-negative'?3:layer.kind==='mask-monochrome'?4:layer.kind==='mask-thermal'?5:2);f('amount',layer.kind.includes('frost')||layer.kind==='mask-mosaic'||layer.kind==='mask-bricks'||layer.kind==='mask-negative'?1:(settings.maskAmount??100)/100);
+   f('edgeAA',1/Math.max(1,Math.min(layer.w*Math.hypot(m.a,m.b),layer.h*Math.hypot(m.c,m.d))));f('objectOpacity',layer.opacity);f('feather',0);f('mode',layer.kind==='mask-mosaic'?0:layer.kind==='mask-bricks'?1:layer.kind==='mask-negative'?3:kind==='mask-negative-mono'?6:layer.kind==='mask-negative-mono'?6:layer.kind==='mask-monochrome'?4:layer.kind==='mask-thermal'?5:2);f('amount',layer.kind.includes('frost')||layer.kind==='mask-mosaic'||layer.kind==='mask-bricks'||layer.kind==='mask-negative'||layer.kind==='mask-negative-mono'?1:(settings.maskAmount??100)/100);
    f('fxMosaicBlocks',settings.maskCells??15);f('fxMosaicGap',0);f('fxMosaicShape',0);f('fxGlassBlocks',glassCells(settings));f('fxGlassRound',0);f('fxGlassRefract',(settings.maskRefract??100)/100);f('fxGlassBevel',0);
    const last=i===layers.length-1;gl.bindFramebuffer(gl.FRAMEBUFFER,last?null:this.frame);if(!last){const output=this.batchTextures[1+i%2];gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,output,0);input=output;}
    // Outside the mask, use a cheap exact texture copy. Only its visible
@@ -300,7 +302,7 @@ class MaskGpu {
   v3('mapX',local.a,local.c,local.e);v3('mapY',local.b,local.d,local.f);v3('invX',inverse.a,inverse.c,inverse.e);v3('invY',inverse.b,inverse.d,inverse.f);
   gl.uniform2f(this.location(this.program,'size'),this.width,this.height);gl.uniform2f(this.location(this.program,'uRes'),w,h);
   gl.uniform2f(this.location(this.program,'sampleSize'),source.width,source.height);gl.uniform2f(this.location(this.program,'origin'),b.left,b.top);
-  f('mode',kind==='mask-mosaic'?0:kind==='mask-bricks'?1:kind==='mask-negative'?3:kind==='mask-monochrome'?4:kind==='mask-thermal'?5:2);f('circle',0);f('feather',0);f('amount',kind==='mask-mosaic'||kind==='mask-bricks'||kind==='mask-negative'?1:(settings.maskAmount??maskDefaults(kind).maskAmount!)/100);
+  f('mode',kind==='mask-mosaic'?0:kind==='mask-bricks'?1:kind==='mask-negative'?3:kind==='mask-negative-mono'?6:kind==='mask-monochrome'?4:kind==='mask-thermal'?5:2);f('circle',0);f('feather',0);f('amount',kind==='mask-mosaic'||kind==='mask-bricks'||kind==='mask-negative'||kind==='mask-negative-mono'?1:(settings.maskAmount??maskDefaults(kind).maskAmount!)/100);
   f('edgeAA',1/Math.max(1,Math.min(w*Math.hypot(m.a,m.b),h*Math.hypot(m.c,m.d))));
   f('fxMosaicBlocks',settings.maskCells??15);f('fxMosaicGap',0);f('fxMosaicShape',0);f('fxGlassBlocks',glassCells(settings));f('fxGlassRound',0);f('fxGlassRefract',(settings.maskRefract??100)/100);f('fxGlassBevel',0);
   gl.drawArrays(gl.TRIANGLES,0,6);return this.canvas;
@@ -361,7 +363,7 @@ function fallbackMask(source:HTMLCanvasElement,m:DOMMatrix,w:number,h:number,kin
  const canvas=document.createElement('canvas');canvas.width=b.width;canvas.height=b.height;const g=canvas.getContext('2d',{willReadFrequently:true})!;
  g.drawImage(source,b.left,b.top,b.width,b.height,0,0,b.width,b.height);const data=g.getImageData(0,0,b.width,b.height),original=data.data.slice();
  const softened=kind.includes('frost')&&sigma>.25?blurRGBA(original,b.width,b.height,sigma):original;
- const inv=m.inverse(),circle=false,amount=kind==='mask-mosaic'||kind==='mask-bricks'||kind==='mask-negative'?1:Math.max(0,Math.min(100,settings.maskAmount??maskDefaults(kind).maskAmount!))/100;
+ const inv=m.inverse(),circle=false,amount=kind==='mask-mosaic'||kind==='mask-bricks'||kind==='mask-negative'||kind==='mask-negative-mono'?1:Math.max(0,Math.min(100,settings.maskAmount??maskDefaults(kind).maskAmount!))/100;
  const feather=kind==='mask-frost-feather'?(settings.maskFeather??35)/200:0,aa=1/Math.max(1,Math.min(w*Math.hypot(m.a,m.b),h*Math.hypot(m.c,m.d)));
  const cells=kind==='mask-bricks'?glassCells(settings):Math.max(1,settings.maskCells??15),gy=kind==='mask-bricks'?Math.max(1,Math.floor(cells*h/w+.001)):Math.max(.001,cells*h/w);
  for(let y=0;y<b.height;y++)for(let x=0;x<b.width;x++){
@@ -373,7 +375,7 @@ function fallbackMask(source:HTMLCanvasElement,m:DOMMatrix,w:number,h:number,kin
    const lx=(a-.5)*w,ly=(c-.5)*h,sx=Math.max(0,Math.min(b.width-1,Math.round(m.a*lx+m.c*ly+m.e-b.left-.5))),sy=Math.max(0,Math.min(b.height-1,Math.round(m.b*lx+m.d*ly+m.f-b.top-.5)));sample=(sy*b.width+sx)*4;
   }
   const l=(original[i]*.2126+original[i+1]*.7152+original[i+2]*.0722),heat=kind==='mask-thermal'?thermalRGB(l/255):null;
-  for(let ch=0;ch<3;ch++){const value=kind.includes('frost')?softened[i+ch]:kind==='mask-negative'?255-original[i+ch]:kind==='mask-monochrome'?l:heat?heat[ch]:original[sample+ch];data.data[i+ch]=original[i+ch]+(value-original[i+ch])*(kind.includes('frost')?1:amount);}
+  for(let ch=0;ch<3;ch++){const value=kind.includes('frost')?softened[i+ch]:kind==='mask-negative'?255-original[i+ch]:kind==='mask-negative-mono'?255-l:kind==='mask-monochrome'?l:heat?heat[ch]:original[sample+ch];data.data[i+ch]=original[i+ch]+(value-original[i+ch])*(kind.includes('frost')?1:amount);}
   data.data[i+3]=original[i+3]*alpha;
  }g.putImageData(data,0,0);return canvas;
 }
