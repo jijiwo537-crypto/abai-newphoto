@@ -3603,8 +3603,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
 
 
-  /** 現在一個特效都沒開嗎（「原始」那張卡片要不要亮白框） */
-  const noEffectOn = !hasLiveEffect(params);
+  /* 選中哪一顆是介面狀態，不是「強度是不是 0」：滑桿拉到 0 時那一顆仍然是選中的，
+     白框留在它身上、「原始」不能亮。只有按了「原始」（或一開始什麼都沒選，
+     activeToolId 停在 'softLight' 這個「特效頁、不顯示滑桿」的記號）才亮。 */
+  const pickedFxId = activeCategory === 'effects' && activeToolId !== 'softLight'
+    && EFFECT_TOOLS.some(t => t.id === activeFxId) ? activeFxId : null;
+  /** 現在一個特效都沒開、也沒有選中任何一顆嗎（「原始」那張卡片要不要亮白框） */
+  const noEffectOn = !pickedFxId && !hasLiveEffect(params);
 
   /**
    * 進「特效」分頁。
@@ -8074,13 +8079,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 {/* 選中的那一顆沿用濾鏡那圈內描邊，不佔版面也不會位移 */}
                 {/* 白框＝這一顆正在生效。合併完參數就歸零，選取自然取消 ——
                      使用者才能把同一顆濾鏡／特效再套一次。 */}
-                {isEffectOn(tool.id) && (
+                {(isEffectOn(tool.id) || pickedFxId === tool.id) && (
                   <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />
                 )}
                 {/* 編輯鍵：選中而且真的有細項可調才出現。
                      用 span 不用 button —— 這整張卡片本身就是一顆 button，
                      button 裡面不能再放 button。stopPropagation 讓它不會順便重選卡片。 */}
-                {isEffectOn(tool.id) && effectHasDetail(tool.id) && (
+                {(isEffectOn(tool.id) || pickedFxId === tool.id) && effectHasDetail(tool.id) && (
                   <span
                     role="button"
                     aria-label="調整細項"
