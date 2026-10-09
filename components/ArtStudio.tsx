@@ -133,9 +133,13 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
   setTracking(s=>redistributeRegions(s));randomizeFeedback(e.currentTarget);
  };
  const selectMany=(key:'shapes'|'materials',value:string)=>setTracking(s=>({...s,[key]:value==='none'?[]:s[key].includes(value)?s[key].filter((x:string)=>x!==value):[...s[key],value],...(key==='materials'&&value!=='none'?{count:s.count===0?10:s.count}:{})}));
- const slider=(name:string,value:number,min:number,max:number,change:(v:number)=>void,step=1,unit='')=><label className="art-range"><span>{name}<output>{Number(value.toFixed(2))}{unit}</output></span><LiveRange ariaLabel={name} min={min} max={max} step={step} value={value} onValue={change} className="" wrapClassName="art-range-track" height={24}/></label>;
+ /* 連續的參數（大小、粗細、虛線、霧化…）用很細的刻度：拖的時候畫面跟著一點一點變，
+    不會因為範圍小（例如 2～30）而一格一格跳。數字仍照 shown 的精度顯示。 */
+ const slider=(name:string,value:number,min:number,max:number,change:(v:number)=>void,step=1,unit='',shown=step)=><label className="art-range"><span>{name}<output>{shown>=1?Math.round(value):Number(value.toFixed(String(shown).split('.')[1]?.length||1))}{unit}</output></span><LiveRange ariaLabel={name} min={min} max={max} step={step} value={value} onValue={change} className="" wrapClassName="art-range-track" height={24}/></label>;
  const range=(name:string,key:'columns'|'low',min:number,max:number)=>slider(name,settings[key],min,max,v=>setSettings(s=>({...s,[key]:v,high:100})));
- const tr=(name:string,key:string,min:number,max:number,step=1)=>max===1?slider(name,Math.round(Number(tracking[key])*100),min*100,100,v=>updateTracking(key,v/100)):slider(name,Number(tracking[key]),min,max,v=>updateTracking(key,v),step);
+ // 只有「數量」這種本來就是整數的參數照整數走
+ const DISCRETE=new Set(['circles','count']);
+ const tr=(name:string,key:string,min:number,max:number,step=1)=>max===1?slider(name,Number(tracking[key])*100,min*100,100,v=>updateTracking(key,v/100),0.01,'',1):slider(name,Number(tracking[key]),min,max,v=>updateTracking(key,v),DISCRETE.has(key)?step:step/100,'',step);
  const binary=(name:string,on:boolean,change:(value:boolean)=>void)=><div className="art-color" role="group" aria-label={name}><span>{name}</span><div className="art-presets">{[false,true].map(value=><button key={String(value)} aria-pressed={on===value} onClick={()=>change(value)}>{value?'開啟':'關閉'}</button>)}</div></div>;
  const tt=(name:string,key:string)=>binary(name,!!tracking[key],value=>updateTracking(key,value));
  const groups=(names:string[])=><div className="art-subtabs">{names.map(name=><button key={name} aria-pressed={section===name} onClick={()=>setSection(name)}>{name}</button>)}</div>;

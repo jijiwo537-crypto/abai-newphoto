@@ -318,6 +318,25 @@ export class LutGpu {
     return true;
   }
 
+  /** 上傳來源影像（直接從一張不透明的 sRGB 2D 畫布，GPU 對 GPU，不必先 getImageData）。
+   *  不做色彩轉換、不預乘：alpha 全是 255 時跟 setSource(那張畫布的像素) 位元相同。 */
+  setSourceImage(image: HTMLCanvasElement, w: number, h: number): boolean {
+    if (this.lost || !this.fits(w, h) || image.width !== w || image.height !== h) return false;
+    const gl = this.gl;
+    if (this.shared) this.unpackDefaults();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.imgTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image); }
+    finally { gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.BROWSER_DEFAULT_WEBGL); }
+    this.srcW = w; this.srcH = h; this.srcGen++;
+    if (this.shared) return true;
+    if (this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; }
+    return true;
+  }
+
   /** 換一顆查色表（換濾鏡／動滑桿都走這裡，幾百 KB，很便宜） */
   setLut(tex: Uint8Array, size: number, immutable=false): boolean {
     if (this.lost) return false;

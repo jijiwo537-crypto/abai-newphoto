@@ -115,7 +115,11 @@ function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:
   try{
     const p=toParams(fx),lut=getLoadedLut(fx.lut),amount=(fx.lutAmount??100)/100;
     const key=`${srcToken(source)}|${w}x${h}`;
-    if(gpuSourceKeys.get(g)!==key){const px=sourcePixels(source,w,h,key);if(!px||!g.setSource(px,w,h))return null;gpuSourceKeys.set(g,key);}
+    if(gpuSourceKeys.get(g)!==key){
+      // 「原圖＋光」那張是我們自己畫的不透明畫布：直接上傳，不讀回像素（拖發光滑桿時每一格都換）
+      const direct=glowedCanvases.has(source as object)&&g.setSourceImage(source as HTMLCanvasElement,w,h);
+      if(!direct){const px=sourcePixels(source,w,h,key);if(!px||!g.setSource(px,w,h))return null;}
+      gpuSourceKeys.set(g,key);}
     const baseLut=new Uint8Array(256);generateBaseCorrectionLut(p.exposure,p.contrast,p.brightness,baseLut);
     g.setFront(null);
     if(residentStrength&&lut&&p.hsl.every(b=>!b.h&&!b.s&&!b.l)){
@@ -200,6 +204,8 @@ const gpuColorChain = (
   ctx: CanvasRenderingContext2D, getSrc: () => Uint8ClampedArray | null, w: number, h: number,
   p: EditorParams, lut: { data: Uint8ClampedArray; size: number } | null,
   amount: number, baseLut: Uint8Array, srcKey: string, colorKey: string, residentStrength=false,
+  /** 來源是我們自己畫的「原圖＋光」畫布：直接上傳，不用讀回像素 */
+  srcImage?: HTMLCanvasElement,
 ): boolean => {
   const g = getGpu();
   if (!g || !g.fits(w, h)) return false;
@@ -209,8 +215,10 @@ const gpuColorChain = (
        getImageData 一次再複製一份（1600×1200 就是兩趟 7.7MB），
        那是白花的，而且是連 GPU 這條快路都躲不掉的固定成本。 */
     if (gpuSourceKeys.get(g) !== srcKey) {
-      const src = getSrc();
-      if (!src || !g.setSource(src, w, h)) return false;
+      if (!(srcImage && g.setSourceImage(srcImage, w, h))) {
+        const src = getSrc();
+        if (!src || !g.setSource(src, w, h)) return false;
+      }
       gpuSourceKeys.set(g,srcKey);
     }
     // Film strength is affine when the downstream HSL is unchanged. Cache
@@ -544,6 +552,8 @@ export function bakePhotoFxLut(fx?: PhotoFx, size = 33): { tex: Uint8Array; size
    內容一換就給它新的來源編號，下游以來源編號為鍵的快取（像素、GPU 貼圖）
    自然失效，不會拿到舊的那張。 */
 const glowedSources = new WeakMap<object, { key: string; canvas: HTMLCanvasElement }>();
+/** 這些畫布是 glowedSource 畫出來的（不透明、sRGB），可以直接上傳成貼圖 */
+const glowedCanvases = new WeakSet<object>();
 /* 算光的那一趟大家共用一張工作畫布（也就共用一組 GPU context），
    算好就複製到各自那張 —— 不會因為照片多就多開 context。 */
 let glowWork: HTMLCanvasElement | null = null;
@@ -551,7 +561,7 @@ function glowedSource(source: CanvasImageSource, w: number, h: number, fx: Photo
   opts?: { cacheSource?: boolean; gpuSurface?: boolean; out?: HTMLCanvasElement }): HTMLCanvasElement | null {
   const owner = (opts?.out || source) as object;
   let rec = glowedSources.get(owner);
-  if (!rec) { rec = { key: '', canvas: document.createElement('canvas') }; glowedSources.set(owner, rec); }
+  if (!rec) { rec = { key: '', canvas: document.createElement('canvas') }; glowedSources.set(owner, rec); glowedCanvases.add(rec.canvas); }
   // 來源會變（影片）的時候不能沿用
   const key = opts?.cacheSource ? `${srcToken(source)}|${w}x${h}|${glowSig(fx)}` : '';
   if (key && rec.key === key) return rec.canvas;
@@ -749,7 +759,8 @@ export function applyPhotoFx(
     const k = `${srcToken(source)}|${out.width}x${out.height}`;
     const separable = !lut && !p.temp && !p.tint && !p.sat && !p.vib && !p.shadows && !p.highlights;
     if (!(opts?.preferSeparableCpu && separable))
-      gpuOk = !!gpuColorChain(ctx, readPixels, out.width, out.height, p, lut, amt, baseLut, k, colorKeyOf(fx),!!opts?.scene);
+      gpuOk = !!gpuColorChain(ctx, readPixels, out.width, out.height, p, lut, amt, baseLut, k, colorKeyOf(fx),!!opts?.scene,
+        opts?.afterGlow && source instanceof HTMLCanvasElement ? source : undefined);
   }
 
   if (import.meta.env.DEV) out.dataset.colorBackend = gpuOk ? 'gpu' : 'cpu';

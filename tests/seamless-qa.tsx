@@ -22,6 +22,8 @@ if(params.has('textureZoom')){
  if(params.has('multi'))state.pages.push({...state.pages[0],id:'seam-page-2',layouts:[]});
  if(!params.has('modeAudit'))void import('./texture-zoom-audit');
 }
+// 影片圖層（測縮圖、匯出）：?video=網址
+if(params.get('video'))(state as any).floatingImages=[{id:'qa-video',src:params.get('video'),isVideo:true,x:30,y:20,width:240,height:135,scale:1,rotation:0,opacity:100}];
 if(params.has('modeAudit'))void import('./classic-mode-audit');
 if(params.has('empty')){
  const layout=state.pages[0].layouts[0];layout.images.forEach(c=>{c.url='';});

@@ -98,6 +98,8 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface} from '../utils/photoFx';
+import {videoPoster} from '../utils/videoPoster';
+import {canEncodeFrames,encodeCanvasFrames,seekVideosTo} from '../utils/frameExactVideo';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
 import {useSmoothSlider, snapToStep} from '../utils/smoothSlider';
 import {warmPhotoEffectsWhenIdle} from '../utils/fxWarmup';
@@ -3401,20 +3403,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            存成 blob 網址而不是 data 網址：data 網址是一條四萬字的字串，
            它會被塞進物件的指紋、快取鑰匙與歷史紀錄裡，每一次都要整條比一遍。 */
         const done = (poster: string) => place(v, v.videoWidth, v.videoHeight, poster || url);
-        try {
-          const pk = Math.min(1, 512 / Math.max(v.videoWidth, v.videoHeight));
-          const pc = document.createElement('canvas');
-          pc.width = Math.max(1, Math.round(v.videoWidth * pk));
-          pc.height = Math.max(1, Math.round(v.videoHeight * pk));
-          pc.getContext('2d')?.drawImage(v, 0, 0, pc.width, pc.height);
-          pc.toBlob(bl => {
-            done(bl ? URL.createObjectURL(bl) : '');
-            pc.width = pc.height = 0;
-          }, 'image/jpeg', 0.82);
-        } catch {
-          // 烤不出來就退回用影片本人當 src：卡片會是空的，但功能一項都不少
-          done('');
-        }
+        /* 第一格交給 videoPoster（另開一個影片元素跳到開頭、等畫面真的解出來才畫）。
+           最多等 1.5 秒就先放進畫面；縮圖晚到的話，編輯面板會用同一份結果補上。 */
+        void Promise.race([videoPoster(url), new Promise<undefined>(r => setTimeout(() => r(undefined), 1500))])
+          .then(p => done(p || ''));
       }).catch(() => alert('這段影片讀不進來，換一個格式試試（MP4 最穩）'));
       return;
     }
@@ -9260,17 +9252,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (hasVid) { await rewindVideos(vids); playVideos(vids); }
       animRef.current = buildAnim(0);
       renderToCanvas(cv, scale);          // 先畫第一格，不然開頭會錄到黑畫面
-      const mime = collageVideoMime(videoExportFormat);
-      if(!mime)throw Error('此裝置不支援所選的影片格式');
-      /* 動態成品至少 50fps；高幀率影片素材則保留其來源幀率。 */
-      const stream = (cv as any).captureStream(videoExportFps || preferredVideoFrameRate(vids));
-      exportStream=stream;
-      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoExportQuality });
-      const chunks: Blob[] = [];
-      rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-      const done = new Promise<Blob>(res => { rec.onstop = () => res(new Blob(chunks, { type: mime || 'video/webm' })); });
-      videoAbortRef.current = false;
-      rec.start();
       // 錄兩圈：轉成 GIF 或用播放器 loop 時，接縫處才確定是連續的
       /* 有影片素材的話，長度要蓋得住整段素材 —— 只錄動畫那兩圈的話，
          一段 10 秒的影片會被剪成兩三秒。取兩者較長的那個，並留一個上限
@@ -9278,27 +9259,65 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const span = hasVid
         ? Math.min(MAX_VIDEO_SECONDS, Math.max(motionTotal * 2, longestDuration(vids)))
         : motionTotal * 2;
-      await new Promise<void>(resolve => {
-        const t0 = performance.now();
-        const frame = () => {
-          const el = (performance.now() - t0) / 1000;
-          animRef.current = buildAnim(el % motionTotal);
-          renderToCanvas(cv, scale);
-          setVideoProg(Math.min(0.99, el / span));
-          if (el >= span || videoAbortRef.current) return resolve();
+      videoAbortRef.current = false;
+      let blob: Blob | null = null;
+      /* 逐格輸出（見 utils/frameExactVideo）：每一格先把影片停在那個時間點、畫好才交給
+         編碼器，時間戳是算出來的 —— 合成再慢都不會掉格，存下來的就是順的。
+         沒有 WebCodecs 的裝置才走下面的即時錄影。 */
+      if (canEncodeFrames()) {
+        const fps = videoExportFps || preferredVideoFrameRate(vids);
+        try {
+          blob = await encodeCanvasFrames({
+            canvas: cv, fps, frames: Math.max(1, Math.round(span * fps)), bitrate: videoExportQuality,
+            type: videoExportFormat === 'mov' ? 'video/quicktime' : 'video/mp4',
+            draw: async (_i, t) => {
+              if (hasVid) await seekVideosTo(vids, t + .5 / fps);
+              animRef.current = buildAnim(t % motionTotal);
+              renderToCanvas(cv, scale);
+            },
+            onProgress: f => setVideoProg(Math.min(0.99, f)),
+            aborted: () => videoAbortRef.current,
+          });
+        } catch { blob = null; }
+        if (hasVid) playVideos(vids);
+        if (!blob && !videoAbortRef.current && hasVid) { await rewindVideos(vids); playVideos(vids); }
+        animRef.current = buildAnim(0);
+        renderToCanvas(cv, scale);
+      }
+      if (!blob && !videoAbortRef.current) {
+        const mime = collageVideoMime(videoExportFormat);
+        if(!mime)throw Error('此裝置不支援所選的影片格式');
+        /* 動態成品至少 50fps；高幀率影片素材則保留其來源幀率。 */
+        const stream = (cv as any).captureStream(videoExportFps || preferredVideoFrameRate(vids));
+        exportStream=stream;
+        const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoExportQuality });
+        const chunks: Blob[] = [];
+        rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+        const done = new Promise<Blob>(res => { rec.onstop = () => res(new Blob(chunks, { type: mime || 'video/webm' })); });
+        rec.start();
+        await new Promise<void>(resolve => {
+          const t0 = performance.now();
+          const frame = () => {
+            const el = (performance.now() - t0) / 1000;
+            animRef.current = buildAnim(el % motionTotal);
+            renderToCanvas(cv, scale);
+            setVideoProg(Math.min(0.99, el / span));
+            if (el >= span || videoAbortRef.current) return resolve();
+            requestAnimationFrame(frame);
+          };
           requestAnimationFrame(frame);
-        };
-        requestAnimationFrame(frame);
-      });
-      rec.stop();
-      /* onstop 也有不回來的時候（編碼器被系統收走時就會這樣）。
-         等超過就拿手上已經收到的片段湊一段出來，不要讓進度條停在那裡
-         —— 那一層蓋著返回鍵，卡住就等於退不出去。 */
-      const blob = await Promise.race([
-        done,
-        new Promise<Blob>(res => setTimeout(
-          () => res(new Blob(chunks, { type: mime || 'video/webm' })), 8000)),
-      ]);
+        });
+        rec.stop();
+        /* onstop 也有不回來的時候（編碼器被系統收走時就會這樣）。
+           等超過就拿手上已經收到的片段湊一段出來，不要讓進度條停在那裡
+           —— 那一層蓋著返回鍵，卡住就等於退不出去。 */
+        blob = await Promise.race([
+          done,
+          new Promise<Blob>(res => setTimeout(
+            () => res(new Blob(chunks, { type: mime || 'video/webm' })), 8000)),
+        ]);
+      }
+      if (!blob) return;
       // 取消：錄到一半的東西直接丟掉，什麼都不改
       if (videoAbortRef.current) return;
       if(!blob.size)throw Error('影片編碼沒有產生資料');

@@ -27,6 +27,8 @@ import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
+import { videoPoster } from '../utils/videoPoster';
+import { canEncodeFrames, encodeCanvasFrames, seekVideosTo } from '../utils/frameExactVideo';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
 import { get2dWide } from '../utils/colorSpace';
@@ -257,28 +259,20 @@ const getVideoDimensions = (url: string): Promise<{ width: number; height: numbe
     const finish = (poster?: string) => {
       if (done) return; done = true;
       clearTimeout(timeout);
-      resolve({ ...dimensions(), poster });
       resolvePoster(poster);
-      try { v.removeAttribute('src'); v.load(); } catch { /* 收不掉算了 */ }
+      const release = () => {
+        resolve({ ...dimensions(), poster });
+        try { v.removeAttribute('src'); v.load(); } catch { /* 收不掉算了 */ }
+      };
+      // 縮圖比這裡的 metadata 先到：等尺寸讀到再收掉這個元素
+      if (v.videoWidth || v.error) release(); else { v.addEventListener('loadedmetadata', release, { once: true }); v.addEventListener('error', release, { once: true }); }
     };
-    const bake = () => {
-      try {
-        const w = v.videoWidth, h = v.videoHeight;
-        if (!w || !h) return finish();
-        const k = Math.min(1, 480 / Math.max(w, h));
-        const c = document.createElement('canvas');
-        c.width = Math.max(1, Math.round(w * k));
-        c.height = Math.max(1, Math.round(h * k));
-        const g = c.getContext('2d');
-        if (!g) return finish();
-        g.drawImage(v, 0, 0, c.width, c.height);
-        finish(c.toDataURL('image/jpeg', 0.86));
-      } catch { finish(); }
-    };
-    v.onloadeddata = bake;
+    // 第一格交給 videoPoster（跳到開頭、等畫面真的解出來才畫）；
+    // 尺寸只要 metadata，上面已經先交出去了
+    void videoPoster(url, 480).then(p => finish(p));
     v.onerror = () => finish();
     // 第一格一直等不到也不能卡住匯入
-    const timeout = setTimeout(() => finish(), 4000);
+    const timeout = setTimeout(() => finish(), 9000);
     v.src = url;
   });
 };
@@ -2621,7 +2615,20 @@ const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
    而 <img src="blob:…mp4"> 永遠載不出來，整面卡片會是空的。
    匯入時已經烤了一張第一格（poster），拿它當來源，卡片就跟圖片長得一樣。
    （創意拼圖是在外面就把 src 換成 poster 了，所以那邊照樣走 img.src。） */
-const cardSrc = (img.isVideo && img.poster) ? img.poster : img.src;
+const panelIsVideo = !!(img.isVideo || img.vid || (typeof HTMLVideoElement !== 'undefined' && img.img instanceof HTMLVideoElement));
+const videoUrl = panelIsVideo ? (img.img instanceof HTMLVideoElement ? (img.img.currentSrc || img.img.src) : img.src) || img.src : '';
+/* 沒有縮圖（匯入時第一格還沒解出來、或那時烤失敗）：當場從第一格烤一張。
+   烤好之前先用空白卡，絕不把影片網址塞給 <img>。 */
+const knownPoster = panelIsVideo && img.poster && img.poster !== videoUrl ? img.poster as string : '';
+const [madePoster, setMadePoster] = useState<{ url: string; poster: string } | null>(null);
+useEffect(() => {
+  if (!panelIsVideo || knownPoster || !videoUrl) return;
+  let live = true;
+  void videoPoster(videoUrl).then(p => { if (live && p) setMadePoster({ url: videoUrl, poster: p }); });
+  return () => { live = false; };
+}, [panelIsVideo, knownPoster, videoUrl]);
+const cardSrc = !panelIsVideo ? img.src
+  : knownPoster || (madePoster?.url === videoUrl ? madePoster.poster : BLANK_CARD_SRC);
 useEffect(()=>{
   let cancelled=false;
   const source=getPreviewImg(cardSrc);
@@ -3932,6 +3939,8 @@ const makeCardThumb = (img: HTMLImageElement, fx: PhotoFx): HTMLCanvasElement | 
 };
 
 /** 濾鏡／特效卡片上的那張縮圖。算好之前先畫底圖，不會有空洞。 */
+/** 影片第一格還沒烤好時卡片用的空白圖（1×1 黑） */
+const BLANK_CARD_SRC = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: number }> = ({ src, cacheKey, fx, delay = 0 }) => {
   const ref = useRef<HTMLDivElement | null>(null);
   const [paintedKey, setPaintedKey] = useState(()=>cardThumbCache.has(cacheKey)?cacheKey:'');
@@ -7448,6 +7457,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     seamless?: boolean;
     seamlessAmount?: number;
     overlaySize?: number;
+    /** 動畫：整組佈局當成一張圖片（進場／常駐，跟圖片同一套） */
+    mo?: Partial<ObjectMotionConfig>;
   }
 
   interface PageConfig {
@@ -9447,10 +9458,44 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const frameForItem = useCallback((item: FloatingImage, index: number, time: number) =>
     objectMotionFrame(timedMotionConfig(item), time, motionPhase(item, index)),
   [timedMotionConfig, motionPhase]);
+  /* 佈局也是動畫目標：整組佈局＝一張圖片，套跟圖片同一套（波浪除外 ——
+     那需要把畫面切片變形，佈局是整塊合成的）。 */
+  const motionLayouts = activePage.layouts;
+  const layoutMotionCfg = useCallback((lay: LayoutItem): ObjectMotionConfig => {
+    const raw = classicObjectMotionOf(lay.mo);
+    return raw.idle === 'spin' ? { ...raw, idle: 'image-breathe' } : raw;
+  }, []);
+  const layoutHasMotion = useCallback((lay: LayoutItem) => {
+    const cfg = classicObjectMotionOf(lay.mo);
+    return cfg.in !== 'none' || cfg.idle !== 'none';
+  }, []);
+  const layoutMotionFrame = useCallback((lay: LayoutItem, time: number) => {
+    let hash = 0;
+    for (let i = 0; i < lay.id.length; i++) hash = (hash * 31 + lay.id.charCodeAt(i)) >>> 0;
+    return objectMotionFrame(layoutMotionCfg(lay), time, (hash % 628) / 100);
+  }, [layoutMotionCfg]);
   const anyClassicMotion = useMemo(
-    () => floatingImages.some(hasConfiguredMotion),
-    [floatingImages, hasConfiguredMotion],
+    () => floatingImages.some(hasConfiguredMotion) || pages.some(page => page.layouts.some(layoutHasMotion)),
+    [floatingImages, hasConfiguredMotion, pages, layoutHasMotion],
   );
+  /** 佈局的動畫直接寫在它那一層 DOM 上（data-layout-motion），每一格不重畫 React。
+      只有目前這一頁的佈局會動；其餘（或沒有設定動畫的）一律清回原位。 */
+  const layoutMotionRef = useRef({ pages, activePageIndex, layoutHasMotion, layoutMotionFrame });
+  layoutMotionRef.current = { pages, activePageIndex, layoutHasMotion, layoutMotionFrame };
+  const paintLayoutMotion = useCallback((time: number) => {
+    const { pages: all, activePageIndex: active, layoutHasMotion: on, layoutMotionFrame: frameOf } = layoutMotionRef.current;
+    all.forEach((page, index) => page.layouts.forEach(lay => {
+      const el = document.querySelector<HTMLElement>(`[data-layout-motion="${CSS.escape(lay.id)}"]`);
+      if (!el) return;
+      if (index !== active || !on(lay)) {
+        if (el.style.transform || el.style.opacity) { el.style.transform = ''; el.style.opacity = ''; }
+        return;
+      }
+      const f = frameOf(lay, time), w = el.offsetWidth, h = el.offsetHeight;
+      el.style.transform = `translate3d(${f.dx * w}px, ${f.dy * h}px, 0) scale(${f.k * (f.fx ?? 1)}, ${f.k}) rotate(${f.rot}deg)`;
+      el.style.opacity = String(Math.max(0, Math.min(1, f.a)));
+    }));
+  }, []);
   const sceneMotionFrame = useCallback((item: FloatingImage, index: number) =>
     hasConfiguredMotion(item) ? frameForItem(item, index, motionClockRef.current) : null,
   [hasConfiguredMotion, frameForItem]);
@@ -9492,8 +9537,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const cfg = timedMotionConfig(item);
       if (cfg.in !== 'none') end = Math.max(end, cfg.delay + Math.max(.01, cfg.dur));
     });
+    motionLayouts.forEach((lay) => {
+      const cfg = layoutMotionCfg(lay);
+      if (cfg.in !== 'none') end = Math.max(end, cfg.delay + Math.max(.01, cfg.dur));
+    });
     return end + Math.max(0, motionHold);
-  }, [motionItems, motionHold, pageVideoItems.length, pageVideoDuration, timedMotionConfig]);
+  }, [motionItems, motionLayouts, layoutMotionCfg, motionHold, pageVideoItems.length, pageVideoDuration, timedMotionConfig]);
 
   const replayMotion = useCallback(() => {
     motionClockRef.current = 0;
@@ -9508,12 +9557,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   }, [pageVideoItems]);
 
   const chooseMotionTarget = useCallback((id: string) => {
-    if (!motionItems.some(item => item.id === id)) return;
+    if (!motionItems.some(item => item.id === id) && !motionLayouts.some(lay => lay.id === id)) return;
     setMotionTargetId(id);
     setMotionFlash({ id, nonce: Date.now() });
     if (motionFlashTimerRef.current) window.clearTimeout(motionFlashTimerRef.current);
     motionFlashTimerRef.current = window.setTimeout(() => setMotionFlash(null), 850);
-  }, [motionItems]);
+  }, [motionItems, motionLayouts]);
   useEffect(() => () => {
     if (motionFlashTimerRef.current) window.clearTimeout(motionFlashTimerRef.current);
   }, []);
@@ -9577,11 +9626,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // Canvas-only animation follows the same direct clock-to-paint path as
       // creative collage. Do not rebuild the whole editor for every unit pulse.
       vectorScene.flush();
+      paintLayoutMotion(t);
       if (hasDomMotion) setMotionTime(t);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [activeTab, motionPlaying, motionTotal, motionRunSeq, anyClassicMotion, hasDomMotion, vectorScene]);
+  }, [activeTab, motionPlaying, motionTotal, motionRunSeq, anyClassicMotion, hasDomMotion, vectorScene, paintLayoutMotion]);
+  // 動畫拿掉、換頁或停住時：沒有動畫的佈局要回到原位（不能停在最後一格）
+  useLayoutEffect(() => { paintLayoutMotion(motionClockRef.current); }, [pages, activePageIndex, paintLayoutMotion]);
   useEffect(() => {
     if (activeTab !== 'motion') return;
     setSelectedFloatingId(null);
@@ -9589,10 +9641,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     setSelectedIndex(null);
     setSelectedLayoutId(null);
     setInlineEditId(null);
-    if (!motionTargetId || !motionItems.some(f => f.id === motionTargetId)) {
-      setMotionTargetId(motionItems[0]?.id || null);
+    if (!motionTargetId || (!motionItems.some(f => f.id === motionTargetId) && !motionLayouts.some(l => l.id === motionTargetId))) {
+      setMotionTargetId(motionLayouts[0]?.id || motionItems[0]?.id || null);
     }
-  }, [activeTab, activePageIndex, motionItems, motionTargetId]);
+  }, [activeTab, activePageIndex, motionItems, motionLayouts, motionTargetId]);
 
   /* 每一頁有自己的動畫時間軸。滑到另一頁時從該頁第 0 幀開始，避免沿用
      上一頁的循環位置；影片也一起歸零，畫面與下方播放鍵保持同一時間。 */
@@ -14069,6 +14121,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const drawJobs: {
         z: number; minX: number; maxX: number;
         isVideo?: boolean; src?: string; motionItem?: FloatingImage;
+        /** 設了動畫的佈局（整組當成一張圖片動） */
+        layoutMotion?: LayoutItem;
         /* live 只有影片那條「一秒要畫三十次」的路會傳（見 LiveDraw） */
         run: (c: CanvasRenderingContext2D, live?: LiveDraw, motionAt?: number) => Promise<void>;
       }[] = [];
@@ -14084,7 +14138,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             z: 59 + (lay.z ?? 0) * 2,
             minX: left,
             maxX: left + lbw,
-            run: (c) => drawPageLayout(c, pageIdx, lay),
+            layoutMotion: layoutHasMotion(lay) ? lay : undefined,
+            run: async (c, _live, motionAt) => {
+              const f = motionAt !== undefined && layoutHasMotion(lay) ? layoutMotionFrame(lay, motionAt) : null;
+              if (!f) return drawPageLayout(c, pageIdx, lay);
+              /* 跟預覽同一個變形：佈局中心為軸，先轉到佈局自己的角度，再套動畫的
+                 位移（以佈局寬高為單位）、縮放、旋轉，最後轉回來交給原本的畫法。 */
+              const cx = pageIdx * targetW + targetW / 2 + (lay.t?.x || 0) * scaleFactor;
+              const cy = targetH / 2 + (lay.t?.y || 0) * scaleFactor;
+              const rot = ((lay.t?.rot || 0) * Math.PI) / 180;
+              c.save();
+              try {
+                c.translate(cx, cy);
+                c.rotate(rot);
+                c.translate(f.dx * lb0.w * ls, f.dy * lb0.h * ls);
+                c.scale(f.k * (f.fx ?? 1), f.k);
+                c.rotate((f.rot * Math.PI) / 180);
+                c.rotate(-rot);
+                c.translate(-cx, -cy);
+                c.globalAlpha *= Math.max(0, Math.min(1, f.a));
+                await drawPageLayout(c, pageIdx, lay);
+              } finally { c.restore(); }
+            },
           });
         });
       });
@@ -14208,7 +14283,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const pageJobs = drawJobs.filter(j =>
           j.maxX > pageLeft + 0.5 && j.minX < pageLeft + targetW - 0.5);
         const videoJobs = pageJobs.filter(j => j.isVideo);
-        const animated = pageJobs.filter(j => j.motionItem && hasConfiguredMotion(j.motionItem));
+        const animated = pageJobs.filter(j => (j.motionItem && hasConfiguredMotion(j.motionItem)) || j.layoutMotion);
         /* 正式錄影仍維持長邊 1280，避免 iOS 即時編碼耗盡記憶體；IG 的 live
            預覽不經編碼，必須保留 Retina 所需的實體像素。舊版把兩者一起壓到
            1280，3:4 頁實際只剩 960px 寬，細字、符號與小圖形必然被放糊。 */
@@ -14233,7 +14308,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           setTimeout(on, 3000);
         })));
         const motionEnd = animated.reduce((end, job) => {
-          const cfg = timedMotionConfig(job.motionItem!);
+          const cfg = job.motionItem ? timedMotionConfig(job.motionItem) : layoutMotionCfg(job.layoutMotion!);
           return cfg.in === 'none' ? end : Math.max(end, cfg.delay + Math.max(.01, cfg.dur));
         }, 1.2) + Math.max(0, pages[pageIdx]?.motionHold ?? 4);
         const dur = vids.length
@@ -14298,6 +14373,33 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
       const recordPageVideo = async (pageIdx: number, pageLeft: number): Promise<string> => {
         const { rc, composite, dur, vids } = await preparePageVideo(pageIdx, pageLeft);
+
+        /* 逐格輸出（見 utils/frameExactVideo）：每一格先把影片停在那個時間點、
+           合成完才交給編碼器，時間戳是算出來的 —— 合成多慢都不會掉格，
+           成品頁播的、存下來的都是順的。做不到（沒有 WebCodecs）才走下面的即時錄影。 */
+        if (canEncodeFrames()) {
+          const fps = videoExportFps || preferredVideoFrameRate(vids);
+          const wasPlaying = vids.map(v => !v.paused);
+          try {
+            const blob = await encodeCanvasFrames({
+              canvas: rc, fps, frames: Math.max(1, Math.round(dur * fps)), bitrate: videoExportQuality,
+              type: videoExportFormat === 'mov' ? 'video/quicktime' : 'video/mp4',
+              // 取每一格的正中間，不會因為浮點誤差拿到前一格
+              draw: async (_i, t) => { if (vids.length) await seekVideosTo(vids, t + .5 / fps); await composite(t); },
+              onProgress: f => setVideoProg(Math.max(0, Math.min(1, (vidDone + f) / Math.max(1, vidTotal)))),
+              aborted: () => videoAbortRef.current || cancelled(),
+            });
+            if (blob || videoAbortRef.current || cancelled()) {
+              vidDone++;
+              return blob ? URL.createObjectURL(blob) : '';
+            }
+          } catch { /* 編碼器中途失敗：退回即時錄影 */ }
+          finally {
+            vids.forEach((v, i) => { if (wasPlaying[i]) { try { v.play().catch(() => {}); } catch { /* ignore */ } } });
+          }
+          await seekVideosTo(vids, 0);
+          await composite(0);
+        }
 
         const mime = collageVideoMime(videoExportFormat);
         if(!mime)throw Error('此裝置不支援所選的影片格式');
@@ -14375,7 +14477,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const pageHasVideo = (pageIdx: number) => {
         const left = pageIdx * targetW;
         return drawJobs.some(j =>
-          (j.isVideo || (j.motionItem && hasConfiguredMotion(j.motionItem)))
+          (j.isVideo || (j.motionItem && hasConfiguredMotion(j.motionItem)) || !!j.layoutMotion)
           && j.maxX > left + VIDEO_EDGE_EPS && j.minX < left + targetW - VIDEO_EDGE_EPS);
       };
       /* 先數過一遍：有幾頁是影片。
@@ -15170,6 +15272,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 onTouchEnd={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                                 onTouchCancel={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                               >
+                              {/* 動畫：整組佈局當成一張圖片。動畫時鐘每一格直接改這一層的 transform／opacity（不重畫 React） */}
+                              <div data-layout-motion={layout.id} className="absolute inset-0" style={{ transformOrigin: '50% 50%' }}>
                               {nativeLayout && <LayoutPhotoSurface cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} gap={gap} radius={radius} revision={lutRevision}
                                 fusion={stableSeamless ? (layout.seamlessAmount ?? 0) : undefined} previewId={layout.id}/>}
                               {nativeInset && <svg data-inset-photo-layer="1" width={lw} height={lh}
@@ -15870,6 +15974,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 );
                               })()}
                               </div>
+                              </div>
                               );
                             })}
 
@@ -16556,7 +16661,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           <div className={`flex-1 min-h-0 no-scrollbar ${imageEditMode ? '' : textEditMode ? 'px-4 py-0' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
 
             {activeTab === 'motion' && (() => {
-              const target = motionItems.find(f => f.id === motionTargetId) || null;
+              // 佈局當成一張圖片：同一套面板，寫回去的時候導到佈局上
+              const layoutTarget = motionLayouts.find(l => l.id === motionTargetId) || null;
+              const target = layoutTarget
+                ? ({ id: layoutTarget.id, mo: layoutTarget.mo, x: 0, y: 0, width: 1, height: 1, scale: 1, rotation: 0 } as unknown as FloatingImage)
+                : motionItems.find(f => f.id === motionTargetId) || null;
               const targetIsImage = !!target && target.text === undefined && !target.shape;
               const rawCfg = classicObjectMotionOf(target?.mo);
               const cfg = targetIsImage && rawCfg.idle === 'spin'
@@ -16564,6 +16673,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 : rawCfg;
               const patchMotion = (d: Partial<ObjectMotionConfig>) => {
                 if (!target) return;
+                if (layoutTarget) {
+                  setPages(prev => prev.map(page => ({ ...page, layouts: page.layouts.map(l => l.id === layoutTarget.id ? { ...l, mo: { ...cfg, ...d } } : l) })));
+                  return;
+                }
                 setFloatingImages(v => v.map(f => f.id === target.id ? { ...f, mo: { ...cfg, ...d } } : f));
               };
               const isGridTarget = !!target?.shape && GRID_SHAPE_KINDS.has(target.shape);
@@ -16587,7 +16700,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   ? baseIdle.filter(([id]) => id !== 'spin').flatMap(([id, name]) =>
                       id === 'breathe' ? [[id, '縮放'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
                   : targetIsImage
-                    ? baseIdle.map(([id, name]) => id === 'spin' ? ['image-breathe', '呼吸'] as const : [id, name] as const)
+                    ? baseIdle.filter(([id]) => !layoutTarget || id !== 'grid-wave').map(([id, name]) => id === 'spin' ? ['image-breathe', '呼吸'] as const : [id, name] as const)
                     : baseIdle.map(([id, name]) => id === 'spin' && target?.shape === 'grid-orbits' ? ['signal', '信號'] as const : [id, name] as const);
               const pickIntro = (id: string) => {
                 patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) } : { in: id });
@@ -16602,6 +16715,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               return (
                 <div className="max-w-md mx-auto pb-5 animate-in fade-in duration-300">
                   <div data-classic-motion-targets="1" className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
+                      {motionLayouts.map((l, li) => (
+                        <button key={l.id} onClick={() => chooseMotionTarget(l.id)} className={chip(motionTargetId === l.id)}>
+                          <span>{`佈局${motionLayouts.length > 1 ? li + 1 : ''}`}</span>
+                        </button>
+                      ))}
                       {motionItems.map((f) => {
                         const media = motionItems.filter(x => x.text === undefined && !x.shape);
                         const shapes = motionItems.filter(x => !!x.shape);
