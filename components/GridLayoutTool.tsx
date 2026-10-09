@@ -15422,8 +15422,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 data-seamless={layout.seamless && !insetLayout ? 'true' : undefined}
                                 className="absolute"
                                 style={{
-                                  left: stableSeamless ? 0 : `${lLeft}px`,
-                                  top: stableSeamless ? 0 : `${lTop}px`,
+                                  /* 位置一律用 transform 擺（以前只有無縫這樣做）。用 left/top 時佈局常落在
+                                     22.6px 這種非整數位置，瀏覽器會在「放大之前」先把它取整到整數像素，
+                                     放大後誤差跟著放大：畫面放大時裡面的照片偏掉一兩個像素、邊緣露出白線，
+                                     而且誤差隨倍率一直變 —— 就是縮放時照片在框裡抖。transform 不取整。 */
+                                  left: 0,
+                                  top: 0,
                                   width: `${lw}px`,
                                   height: `${lh}px`,
                                   clipPath: pagesMode || (pagesVisual && !!sortOriginalIndices.current) ? (() => {
@@ -15447,11 +15451,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   /* 兩指旋轉：直接轉整個外框，裡面的格子、照片、
                                      選取框、四個角、那排按鈕全部跟著轉，
                                      連點擊命中判定都是瀏覽器自己算的。 */
-                                  ...(stableSeamless
-                                    ? { transform: `translate(${lLeft}px, ${lTop}px) rotate(${layout.t?.rot || 0}deg)`, transformOrigin: `${lw / 2}px ${lh / 2}px` }
-                                    : (layout.t?.rot || 0) !== 0
-                                    ? { transform: `rotate(${layout.t!.rot}deg)`, transformOrigin: 'center center' }
-                                    : null),
+                                  transform: `translate(${lLeft}px, ${lTop}px)${(layout.t?.rot || 0) !== 0 ? ` rotate(${layout.t!.rot}deg)` : ''}`,
+                                  transformOrigin: `${lw / 2}px ${lh / 2}px`,
                                 }}
                                 onTouchStart={isThisLayoutSelected ? handleLayoutTouchStart : undefined}
                                 onTouchMove={isThisLayoutSelected ? handleLayoutTouchMove : undefined}
@@ -17708,7 +17709,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {cellDragPreview && (
         <div
           id="mobile-drag-floating-thumbnail"
-          className="fixed pointer-events-none z-[9999] border-2 border-white overflow-hidden bg-transparent flex items-center justify-center will-change-transform"
+          className="fixed pointer-events-none z-[9999] overflow-hidden bg-transparent flex items-center justify-center will-change-transform"
           style={{
             left: 0,
             top: 0,

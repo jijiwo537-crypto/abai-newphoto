@@ -33,6 +33,9 @@ export type SceneEntry = {
   paint: (ctx: CanvasRenderingContext2D, pixelsPerUnit: number) => void | SceneBounds;
 };
 
+/** 畫面外多畫的一圈（CSS px）：快速滑動時剛滑進來的部分已經畫好了 */
+const SCENE_MARGIN = 64;
+
 export class ClassicVectorScene {
   private entries = new Map<string, SceneEntry>();
   private surfaces: HTMLCanvasElement[] = [];
@@ -162,9 +165,24 @@ export class ClassicVectorScene {
     // Pinch applies scrollLeft and then synchronously paints the final pose.
     // The browser delivers its scroll event afterwards; repainting that already
     // committed position would render every layer twice for the same gesture.
-    if (viewport && (viewport.scrollLeft !== this.paintedScrollLeft
-      || viewport.scrollTop !== this.paintedScrollTop)) this.invalidate();
+    if (!viewport || (viewport.scrollLeft === this.paintedScrollLeft
+      && viewport.scrollTop === this.paintedScrollTop)) return;
+    /* 單純捲動（倍率沒變）而且畫面外多畫的那圈還蓋得住：不必重畫，畫布本來就跟著內容走。
+       快速滑動時捲動事件常晚一兩格才到，那一圈就是讓剛滑進來的部分不會先空白一下。 */
+    const painted = this.paintedRegion, host = this.host;
+    if (painted && host) {
+      const k = Math.max(.0001, this.scale());
+      if (Math.abs(k - painted.k) <= 1e-9 * k) {
+        const hr = host.getBoundingClientRect(), vr = viewport.getBoundingClientRect(), m = SCENE_MARGIN / 2;
+        const x0 = (vr.left - hr.left - m) / k, y0 = (vr.top - hr.top - m) / k;
+        const x1 = (vr.right - hr.left + m) / k, y1 = (vr.bottom - hr.top + m) / k;
+        if (x0 >= painted.x && y0 >= painted.y && x1 <= painted.x + painted.w && y1 <= painted.y + painted.h) return;
+      }
+    }
+    this.invalidate();
   };
+  /** 上一次畫出來的範圍（host 座標）與當時的倍率 */
+  private paintedRegion: { x: number; y: number; w: number; h: number; k: number } | null = null;
 
   pageBounds() {
     return this.pageRects;
@@ -245,6 +263,7 @@ export class ClassicVectorScene {
     this.pageMatrices = [];
     this.pageRects = [];
     this.paintedScrollLeft = this.paintedScrollTop = NaN;
+    this.paintedRegion = null;
     if (this.alphaSurface) {disposeBackdropMasks(this.alphaSurface);this.alphaSurface.width = this.alphaSurface.height = 1;}
     this.alphaSurface = null;
     this.host = this.viewport = null;
@@ -278,10 +297,11 @@ export class ClassicVectorScene {
     const dpr = Math.max(1, window.devicePixelRatio || 1) * 1.5;
     // Constant screen-sized backing stores, never object-sized textures. A large
     // object therefore does not allocate a huge bitmap or change resolution on up.
-    const w = Math.max(1, Math.ceil(vr.width + 64));
-    const h = Math.max(1, Math.ceil(vr.height + 64));
-    const x = (vr.left - hr.left - 32) / k;
-    const y = (vr.top - hr.top - 32) / k;
+    const w = Math.max(1, Math.ceil(vr.width + SCENE_MARGIN * 2));
+    const h = Math.max(1, Math.ceil(vr.height + SCENE_MARGIN * 2));
+    const x = (vr.left - hr.left - SCENE_MARGIN) / k;
+    const y = (vr.top - hr.top - SCENE_MARGIN) / k;
+    this.paintedRegion = { x, y, w: w / k, h: h / k, k };
     const entries = [...this.entries.values()].sort((a, b) => a.z - b.z);
     const photoIds = new Set(entries.map(e => e.nativePhoto).filter(Boolean));
     for (const [id, photo] of this.photos) if (!photoIds.has(id)) { photo.remove(); this.photos.delete(id); }
@@ -347,8 +367,8 @@ export class ClassicVectorScene {
       if (nativeZoom) {
         const origin = canvas.getBoundingClientRect();
         const localToScreen = origin.width / w;
-        canvas.style.left = `${(vr.left - 32 - origin.left) / localToScreen}px`;
-        canvas.style.top = `${(vr.top - 32 - origin.top) / localToScreen}px`;
+        canvas.style.left = `${(vr.left - SCENE_MARGIN - origin.left) / localToScreen}px`;
+        canvas.style.top = `${(vr.top - SCENE_MARGIN - origin.top) / localToScreen}px`;
       }
       canvas.style.zIndex = String(run[0].z);
       const pw = Math.ceil(w * dpr), ph = Math.ceil(h * dpr);

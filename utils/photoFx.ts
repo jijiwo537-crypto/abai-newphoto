@@ -24,7 +24,7 @@ import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from './fxSurfaceGl'
 import { loadCachedLut, saveCachedLut } from './lutStore';
 import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from './lutAtlasRepair.js';
 import {HalationLayer} from './halationLayer';
-import { hasGlow, glowSig, stripGlow, pickGlow } from './glowFx';
+import { hasGlow, glowSig, stripGlow, pickGlow, GLOW_FX_IDS } from './glowFx';
 
 /* ── 拼圖的 GPU 顏色鏈 ────────────────────────────────────────────────
    上一版我寫壞過一次：每被呼叫一次就重新上傳整張圖、烤兩次 65³ 的表、
@@ -111,11 +111,21 @@ function sourcePixels(source:CanvasImageSource,w:number,h:number,key:string):Uin
 function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:number,h:number,fx:PhotoFx,residentStrength:boolean):GpuImage|null{
   let g=surfaceGpus.get(canvas);
   if(g===undefined||g?.lost){try{const gl=surfaceGl(canvas);g=isWebgl2(gl)?LutGpu.createOn(gl):null;}catch{g=null;}surfaceGpus.set(canvas,g);}
-  if(!g||!g.fits(w,h))return null;
+  if(!g||!g.fits(w,h)){realizeGlow(source);return null;}
   try{
     const p=toParams(fx),lut=getLoadedLut(fx.lut),amount=(fx.lutAmount??100)/100;
+    /* 「原圖＋光」還沒畫出來（見 glowedSource）：光在這個 context 裡從原圖算成一張貼圖，
+       顏色那一段直接吃它 —— 不經過 2D 畫布，不讀回、不重傳。 */
+    const pend=pendingGlows.get(source as HTMLCanvasElement);
+    let glowTex:WebGLTexture|null=null;
+    if(pend){
+      const okey=`${srcToken(pend.source)}|${w}x${h}`;
+      if(gpuSourceKeys.get(g)!==okey){const px=sourcePixels(pend.source,w,h,okey);if(px&&g.setSource(px,w,h))gpuSourceKeys.set(g,okey);}
+      if(gpuSourceKeys.get(g)===okey)glowTex=surfaceGlowTexture(canvas,g,pend.source,w,h,pend.fx);
+      if(!glowTex)realizeGlow(source);
+    }
     const key=`${srcToken(source)}|${w}x${h}`;
-    if(gpuSourceKeys.get(g)!==key){
+    if(!glowTex&&gpuSourceKeys.get(g)!==key){
       // 「原圖＋光」那張是我們自己畫的不透明畫布：直接上傳，不讀回像素（拖發光滑桿時每一格都換）
       const direct=glowedCanvases.has(source as object)&&g.setSourceImage(source as HTMLCanvasElement,w,h);
       if(!direct){const px=sourcePixels(source,w,h,key);if(!px||!g.setSource(px,w,h))return null;}
@@ -147,12 +157,69 @@ function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:
       if(lut&&amount<1){if(!g.setLutMix(full,bake(null,0),33,amount))return null;}
       else if(!g.setLut(full,33,true))return null;
     }
-    return g.drawImage();
-  }catch{return null;}
+    return g.drawImage(glowTex);
+  }catch{realizeGlow(source);return null;}
 }
-// WebKit's noise-texture interpolation does not match its Canvas overlay.
-// Keep grain on the established renderer rather than changing its appearance.
-export const supportsResidentPhotoEffects=(fx:PhotoFx={})=>!fx.colorNoise&&(hasActiveFx(fx)||!!(fx.soft||fx.fringeIntensity||fx.leakOpacity||fx.blur||fx.vignette));
+/* ── 發光在 GPU 上算、直接交給顏色那一段 ─────────────────────────────
+   跟編輯頁（ImageEditor 的 glowGpu）同一套：原圖上傳一次，光畫進同一個 context 的貼圖，
+   翻成與原圖同一種列序，顏色那一段取這張。以前每動一格：光算好 → 複製回 2D 畫布
+   （iPhone 上是整張讀回）→ 再整張上傳給顏色那一段。 */
+type PendingGlow={source:CanvasImageSource;w:number;h:number;fx:PhotoFx;opts?:{cacheSource?:boolean;gpuSurface?:boolean;out?:HTMLCanvasElement}};
+const pendingGlows=new WeakMap<HTMLCanvasElement,PendingGlow>();
+const singleGlowKind=(fx:PhotoFx)=>{const f=fx as any;return Number((fx.soft||0)>0)+Number((fx.fringeIntensity||0)>0)+Number(GLOW_FX_IDS.some(id=>(f[id]||0)>0))===1;};
+/** 真的要用到「原圖＋光」的像素時（2D 那幾條路）才照原本的方式畫出來 */
+function realizeGlow(source:CanvasImageSource){
+  const c=source as HTMLCanvasElement,pend=pendingGlows.get(c);if(!pend)return;
+  pendingGlows.delete(c);
+  glowWork ||= document.createElement('canvas');
+  const r=applyPhotoFx(pend.source,pend.w,pend.h,pickGlow(pend.fx) as PhotoFx,{cacheSource:pend.opts?.cacheSource,gpuSurface:pend.opts?.gpuSurface,out:glowWork});
+  if(c.width!==pend.w||c.height!==pend.h){c.width=pend.w;c.height=pend.h;}
+  const x=c.getContext('2d');if(!x)return;
+  x.globalCompositeOperation='copy';x.drawImage(r,0,0,pend.w,pend.h);x.globalCompositeOperation='source-over';
+}
+const glowTargets=new WeakMap<HTMLCanvasElement,{tex:WebGLTexture;td:WebGLTexture;w:number;h:number;key:string;gl:WebGLRenderingContext;layer?:HalationLayer;scratch:HTMLCanvasElement}>();
+function surfaceGlowTexture(canvas:HTMLCanvasElement,g:LutGpu,source:CanvasImageSource,w:number,h:number,fx:PhotoFx):WebGLTexture|null{
+  if(!singleGlowKind(fx))return null;
+  const gl=surfaceGl(canvas);if(!gl)return null;
+  const id=`${srcToken(source)}|${w}x${h}`,key=`${id}|${glowSig(fx)}`;
+  let t=glowTargets.get(canvas);
+  if(t&&(t.gl!==gl||t.w!==w||t.h!==h)){try{t.gl.deleteTexture(t.tex);t.gl.deleteTexture(t.td);}catch{/* 舊 context */}t.layer?.dispose();glowTargets.delete(canvas);t=undefined;}
+  if(t&&t.key===key)return t.td;
+  const up=g.sourceUpTex();if(!up)return null;
+  if(!t){
+    const mk=(filter:number)=>{const tex=gl.createTexture()!;gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);
+      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+      for(const [k,v] of [[gl.TEXTURE_MIN_FILTER,filter],[gl.TEXTURE_MAG_FILTER,filter],[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]])gl.texParameteri(gl.TEXTURE_2D,k,v);return tex;};
+    t={tex:mk(gl.NEAREST),td:mk(gl.LINEAR),w,h,key:'',gl,scratch:document.createElement('canvas')};glowTargets.set(canvas,t);
+  }
+  const gfx=pickGlow(fx) as PhotoFx,p={...toParams(gfx),...gfx} as any,ctx=t.scratch.getContext('2d')!;
+  let ok=false;
+  try{
+    if((fx.soft||0)>0||(fx.fringeIntensity||0)>0){
+      const layer=(t.layer ||= new HalationLayer(canvas));
+      layer.sourceImage=up;layer.targetTexture=t.tex;
+      try{ok=!!((fx.soft||0)>0?layer.renderSoft(ctx,w,h,`${id}|soft`,p,hslToRgb((gfx.softColor||0)/100,1,.5))
+        :layer.render(ctx,w,h,`${id}|halo`,p,hslToRgb((gfx.fringeHue??8)/360,.8,.35)));}
+      finally{layer.sourceImage=null;layer.targetTexture=null;}
+    }else ok=!!applyGlEffects(ctx,w,h,gfx,`${id}|glow`,canvas,false,undefined,undefined,{image:up,toTexture:t.tex});
+    if(ok)ok=g.flipInto(t.tex,t.td,w,h);
+  }catch{ok=false;}
+  if(!ok){t.key='';return null;}
+  t.key=key;return t.td;
+}
+/* 噪點：WebKit 的貼圖內插跟它 Canvas 的圖樣縮放不一樣，所以噪點層一律先用 2D 畫布照原本的方式
+   鋪好（noiseLayerFor），GPU 只做 overlay、逐像素對應 —— 樣子跟 2D 疊出來的完全相同。 */
+const noiseLayers=new Map<string,HTMLCanvasElement>();
+function noiseLayerFor(w:number,h:number):HTMLCanvasElement|null{
+  const k=`${w}x${h}`;let c=noiseLayers.get(k);if(c)return c;
+  const pattern=getNoisePattern();c=document.createElement('canvas');c.width=w;c.height=h;
+  const g=c.getContext('2d')!,fill=g.createPattern(pattern,'repeat'),scale=Math.max(w,h)/1080;if(!fill)return null;
+  g.scale(scale,scale);g.fillStyle=fill;g.fillRect(0,0,w/scale,h/scale);
+  // 同時開著的照片尺寸不多；舊的放掉（一張一千多萬位元組）
+  while(noiseLayers.size>=3){const first=noiseLayers.keys().next().value!;const old=noiseLayers.get(first)!;old.width=old.height=1;noiseLayers.delete(first);}
+  noiseLayers.set(k,c);return c;
+}
+export const supportsResidentPhotoEffects=(fx:PhotoFx={})=>hasActiveFx(fx)||!!(fx.soft||fx.fringeIntensity||fx.leakOpacity||fx.blur||fx.vignette||fx.colorNoise);
 /** Prime the SAME context used by the selected base photo, not a throwaway
  * thumbnail context. No pixels or effect values are changed by preflight. */
 export function warmPhotoFxSurface(input:HTMLCanvasElement,id:string,scene?:FxScene){
@@ -589,7 +656,18 @@ function glowedSource(source: CanvasImageSource, w: number, h: number, fx: Photo
   if (!rec) { rec = { key: '', canvas: document.createElement('canvas') }; glowedSources.set(owner, rec); glowedCanvases.add(rec.canvas); }
   // 來源會變（影片）的時候不能沿用
   const key = opts?.cacheSource ? `${srcToken(source)}|${w}x${h}|${glowSig(fx)}` : '';
-  if (key && rec.key === key) return rec.canvas;
+  /* GPU 預覽：先不畫，交給顏色那一段在 GPU 上直接算（見 surfaceColourImage）。
+     有哪一條路真的要讀這張的像素，會先 realizeGlow 照原本的方式補畫。 */
+  const defer = !!key && !!opts?.gpuSurface && singleGlowKind(fx);
+  if (key && rec.key === key) { if (!defer) realizeGlow(rec.canvas); return rec.canvas; }
+  if (defer) {
+    rec.key = key;
+    if (rec.canvas.width !== w || rec.canvas.height !== h) { rec.canvas.width = w; rec.canvas.height = h; }
+    pendingGlows.set(rec.canvas, { source, w, h, fx, opts });
+    srcIds.delete(rec.canvas);
+    return rec.canvas;
+  }
+  pendingGlows.delete(rec.canvas);
   rec.key = '';
   const c = rec.canvas;
   glowWork ||= document.createElement('canvas');
@@ -625,6 +703,8 @@ export function applyPhotoFx(
     /** 只有顏色、要畫進 scene：在效果表面自己的 context 裡算顏色、直接合成進場景（同上面那條） */
     sceneColour?: boolean },
 ): HTMLCanvasElement {
+  // 還沒畫出來的「原圖＋光」被當成一般來源（不是發光那一趟）：先照原本的方式畫出來
+  if (!opts?.afterGlow) realizeGlow(source);
   const out = opts?.out || document.createElement('canvas');
   const oW = Math.max(1, Math.round(w)), oH = Math.max(1, Math.round(h));
   /* 尺寸沒變就一個字都不要寫 —— 寫 width 等於重新配置一張畫布，
@@ -657,7 +737,8 @@ export function applyPhotoFx(
       }
     }
   }
-  if(opts?.gpuSurface&&opts.cacheSource&&!fx.colorNoise&&!hasActiveFx(fx)&&[fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.vignette].filter(Boolean).length===1){
+  // 一種光學特效（柔光／光暈／漏光／朦朧），或只有噪點＋暗角（simple）
+  if(opts?.gpuSurface&&opts.cacheSource&&!hasActiveFx(fx)&&((n:number,simple:boolean)=>n===1&&!simple||!n&&simple)([fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur].filter(Boolean).length,!!(fx.colorNoise||fx.vignette))){
     const kind=fx.soft?'soft':fx.fringeIntensity?'halo':fx.leakOpacity?'leak':fx.blur?'blur':'simple';
     // The optical family shares one source and one context. The active kind
     // belongs to the render key, NOT the allocation key: switching soft/halo/
@@ -688,7 +769,7 @@ export function applyPhotoFx(
       result=kind==='soft'?layer.renderSoft(ctx,oW,oH,key,p,hslToRgb((fx.softColor||0)/100,1,.5)):
         kind==='halo'?layer.render(ctx,oW,oH,key,p,hslToRgb((fx.fringeHue??8)/360,.8,.35)):
         kind==='leak'?layer.renderLeak(ctx,oW,oH,key,p,hslToRgb((fx.leakHue??15)/360,1,.5)):
-        kind==='blur'?layer.renderBlur(ctx,oW,oH,key,fx.blur!):layer.renderSimple(ctx,oW,oH,key,p,getNoisePattern());
+        kind==='blur'?layer.renderBlur(ctx,oW,oH,key,fx.blur!):layer.renderSimple(ctx,oW,oH,key,p,getNoisePattern(),fx.colorNoise?noiseLayerFor(oW,oH):null);
     }finally{layer.sourceImage=null;}
     if(result)return result;
   }
@@ -710,7 +791,7 @@ export function applyPhotoFx(
     const pairKey=JSON.stringify(params)+'|'+srcToken(residentFilm.data);
     let pair=strengthPairCache.get(pairKey);
     if(!pair){const bake=(film:Uint8ClampedArray|null)=>bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,params,film,film?residentFilm.size:0,base,null,false,IDENTITY_CURVE_LUTS),33));pair={full:bake(residentFilm.data),plain:bake(null)};strengthPairCache.set(pairKey,pair);while(strengthPairCache.size>8)strengthPairCache.delete(strengthPairCache.keys().next().value!);}
-    if(record.rawKey!==rawKey){record.source.width=oW;record.source.height=oH;record.source.getContext('2d')!.drawImage(source,0,0,oW,oH);record.rawKey=rawKey;}
+    if(record.rawKey!==rawKey){realizeGlow(source);record.source.width=oW;record.source.height=oH;record.source.getContext('2d')!.drawImage(source,0,0,oW,oH);record.rawKey=rawKey;}
     record.colourInput={...pair,amount:((fx.lutAmount??100)/100)**2,sourceKey:rawKey};record.key=inputKey;record.viaImage=false;effectInputs.set(out,record);
     const result=applyGlEffects(record.source.getContext('2d')!,oW,oH,fx,inputKey,record.surface,false,opts!.scene,record.colourInput);
     if(result){if(import.meta.env.DEV)result.dataset.colourFxTiming=JSON.stringify({total:performance.now()-started,phases:result.dataset.fxPhases});return result;}
@@ -743,6 +824,7 @@ export function applyPhotoFx(
   // A CPU-backed output forces GPU results back to main memory on every
   // slider frame. Cached photo sources are read once; their live output must
   // remain GPU-backed. Other callers keep their established CPU behaviour.
+  realizeGlow(source);
   const ctx = out.getContext('2d', { willReadFrequently: !opts?.gpuSurface })!;
   /* 沿用上一輪那張畫布時，裡面的東西還在。下面的 drawImage 是「整張鋪滿」，
      不透明的來源會自己蓋掉，但去背的 PNG 會疊在舊的上面 —— 所以要先清乾淨。

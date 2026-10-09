@@ -24,6 +24,8 @@ type Resource={url:string;image:HTMLImageElement;input:HTMLCanvasElement;key:str
 // The home editor previews at 1800px. Matching it keeps every slider frame
 // independent of the photo's native size (12MP+ on phones).
 const LIVE_PREVIEW=1800;
+/** 每個佈局畫布（含畫面外多畫的那一圈）最多幾個實體像素 */
+const OVERSCAN_PIXELS=9_000_000;
 const previewSize=(im:HTMLImageElement)=>{const k=Math.min(1,LIVE_PREVIEW/Math.max(im.naturalWidth,im.naturalHeight));return [Math.max(1,Math.round(im.naturalWidth*k)),Math.max(1,Math.round(im.naturalHeight*k))];};
 // Effect pixels depend on the cell's own LUT being decoded, not on every
 // unrelated background LUT load that bumps the editor-wide revision.
@@ -36,7 +38,9 @@ const releaseResource=(r:Resource)=>{r.image.onload=null;r.pending=undefined;rel
  * Both modes share this one GPU surface and its resident textures, so
  * toggling seamless only changes shader uniforms (no re-decode/re-upload). */
 export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision,fusion,previewId}:{cells:Cell[];rects:Rect[];width:number;height:number;gap:number;radius:number;revision:number;fusion?:number;previewId?:string}){
-  const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef(()=>{});
+  const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef<(viewOnly?:boolean)=>void>(()=>{});
+  /** 上一次真的畫出來的範圍（佈局座標）與當時的倍率／旋轉：純平移時拿來判斷要不要重畫 */
+  const paintedView=useRef<{fwd:number[];cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0);
   // The layout canvas is a plain 2D bitmap fed by the editor-wide shared GPU
   // renderer (drawSeamShared), so it can never lose a context or turn grey.
   const fusionLive=useRef(fusion),liveDrag=useRef(false);
@@ -49,11 +53,11 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
   // The fusion slider repaints uniforms directly, without a React render.
   useLayoutEffect(()=>{if(!previewId||fusion===undefined)return;seamlessPreviews.set(previewId,(v,isLive)=>{fusionLive.current=v;liveDrag.current=!!isLive;drawRef.current();});return()=>{seamlessPreviews.delete(previewId);};},[previewId,fusion===undefined]);
   const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;drawRef.current();});};
-  useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element){releaseSeamShared(element);dropLiveSeam(element);}dropLiveCell();};},[]);
+  useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);if(settleTimer.current)clearTimeout(settleTimer.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element){releaseSeamShared(element);dropLiveSeam(element);}dropLiveCell();};},[]);
   useEffect(()=>{
     // Repaint in the SAME transform frame, not a second rAF one frame later.
     // Sources and FX remain cached; zoom only resamples their visible pixels.
-    const paint=()=>drawRef.current();
+    const paint=()=>drawRef.current(true);
     window.addEventListener('abai-preview-transform',paint,true);
     window.addEventListener('scroll',paint,true);window.addEventListener('resize',paint);
     const observer=new ResizeObserver(paint);if(plane.current)observer.observe(plane.current);
@@ -84,7 +88,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       const image=new Image();image.onload=schedule;image.src=c.url;
       resources.current.set(c.id,{url:c.url,image,input:document.createElement('canvas'),key:'',output:null});
     });
-    drawRef.current=()=>{
+    drawRef.current=(viewOnly=false)=>{
       const cv=ref.current,flat=editSurface.current,root=plane.current;if(!cv||!flat||!root||width<=0||height<=0)return;
       const aw=Math.max(1,width-gap),ah=Math.max(1,height-gap);
       const points=Array.from(root.querySelectorAll<SVGCircleElement>('[data-layout-probe]')).map(n=>{const b=n.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2};});
@@ -92,7 +96,45 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       // Always render at physical screen density directly from full originals,
       // never a fixed-size intermediate stretched by CSS. Bound allocation to
       // the visible viewport, rather than to the possibly huge layout.
-      const surface=resolveSeamSurface(points,width,height,width,height,bounds,{left:Math.max(0,clip?.left??0),top:Math.max(0,clip?.top??0),right:Math.min(innerWidth,clip?.right??innerWidth),bottom:Math.min(innerHeight,clip?.bottom??innerHeight)},devicePixelRatio||1);
+      const dpr=devicePixelRatio||1;
+      const vis={left:Math.max(0,clip?.left??0),top:Math.max(0,clip?.top??0),right:Math.min(innerWidth,clip?.right??innerWidth),bottom:Math.min(innerHeight,clip?.bottom??innerHeight)};
+      /* 看得到的範圍外面多畫一圈：
+         ① 快速滑動時瀏覽器先把畫面捲過去、捲動事件晚一兩格才到 —— 以前剛滑進來的那一條
+            是空的（白的），等重畫才出來。
+         ② 放大到頁面被畫面邊緣切到時，瀏覽器實際擺放這張畫布會跟量到的位置差到 1px，
+            邊緣就露出一條底色（白線）。多畫一圈之後邊緣永遠落在畫好的像素裡。
+         ③ 單純平移、而且多畫的那圈還夠用時就不重畫（見 viewOnly），滑動也更省。 */
+      const [pa,pb,pc]=points;
+      const fwd=pa&&pb&&pc?[(pb.x-pa.x)/width,(pb.y-pa.y)/width,(pc.x-pa.x)/height,(pc.y-pa.y)/height]:null;
+      const painted=paintedView.current;
+      const sameScale=!!fwd&&!!painted&&fwd.every((v,i)=>Math.abs(v-painted.fwd[i])<=1e-7*Math.max(1,Math.abs(v)));
+      /* 正在縮放（倍率每一格都在變、每一格都同步重畫）時只多畫一小圈，手勢才不會變重；
+         停下來之後再補畫完整的那一圈。 */
+      const zooming=!!fwd&&!!painted&&!sameScale;
+      const vw=Math.max(0,vis.right-vis.left),vh=Math.max(0,vis.bottom-vis.top);
+      const grow=!zooming&&vw*vh>0?Math.max(1,Math.min(1.8,Math.sqrt(OVERSCAN_PIXELS/(vw*vh*dpr*dpr)))):1;
+      const mx=Math.max(8,vw*(grow-1)/2),my=Math.max(8,vh*(grow-1)/2);
+      if(viewOnly&&sameScale){
+        // 同一個倍率、只是平移：看得到的範圍（再多留半圈）還在畫好的範圍裡就不必重畫
+        const inv=new DOMMatrix([fwd[0],fwd[1],fwd[2],fwd[3],pa.x,pa.y]).inverse();
+        const need=[[vis.left-mx/2,vis.top-my/2],[vis.right+mx/2,vis.top-my/2],[vis.left-mx/2,vis.bottom+my/2],[vis.right+mx/2,vis.bottom+my/2]].map(([x,y])=>({x:inv.a*x+inv.c*y+inv.e,y:inv.b*x+inv.d*y+inv.f}));
+        const nx0=Math.max(0,Math.min(...need.map(q=>q.x))),nx1=Math.min(width,Math.max(...need.map(q=>q.x))),ny0=Math.max(0,Math.min(...need.map(q=>q.y))),ny1=Math.min(height,Math.max(...need.map(q=>q.y)));
+        const c=painted.cover;
+        if(nx0>=c.x0-1e-6&&ny0>=c.y0-1e-6&&nx1<=c.x1+1e-6&&ny1<=c.y1+1e-6){
+          // 停下來之後再對齊一次實體像素（平移了非整數像素時，畫面會被瀏覽器重新取樣）
+          if(settleTimer.current)clearTimeout(settleTimer.current);
+          settleTimer.current=setTimeout(()=>{settleTimer.current=0;drawRef.current();},160);
+          return;
+        }
+      }
+      if(settleTimer.current){clearTimeout(settleTimer.current);settleTimer.current=0;}
+      if(zooming)settleTimer.current=setTimeout(()=>{settleTimer.current=0;drawRef.current();},160);
+      const surface=resolveSeamSurface(points,width,height,width,height,bounds,{left:vis.left-mx,top:vis.top-my,right:vis.right+mx,bottom:vis.bottom+my},dpr);
+      if(surface&&fwd){
+        const [ia,ib,ic,id,ie,iff]=surface.rasterView;const sw=surface.width,sh=surface.height;
+        const cs=[[0,0],[sw,0],[0,sh],[sw,sh]].map(([x,y])=>({x:ia*x+ic*y+ie,y:ib*x+id*y+iff}));
+        paintedView.current={fwd,cover:{x0:Math.min(...cs.map(q=>q.x)),y0:Math.min(...cs.map(q=>q.y)),x1:Math.max(...cs.map(q=>q.x)),y1:Math.max(...cs.map(q=>q.y))}};
+      }else paintedView.current=null;
       if(!surface){cv.style.display='none';flat.style.display='none';return;}cv.style.display='block';
       const W=surface.pixelWidth,H=surface.pixelHeight;
       const viewKey=JSON.stringify(surface.rasterView);

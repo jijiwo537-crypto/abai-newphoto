@@ -11,7 +11,7 @@ globalThis.requestAnimationFrame = () => ++nextFrame;
 globalThis.cancelAnimationFrame = () => {};
 globalThis.window = {devicePixelRatio:3};
 globalThis.ResizeObserver = class {observe(){} disconnect(){}};
-let actualRect={left:-32,top:48,width:454,height:564};
+let actualRect={left:-64,top:16,width:518,height:628};
 let frameOperations=[];
 class Canvas {
   dataset={};style={};width=0;height=0;
@@ -40,7 +40,8 @@ const host={children:[],parentElement:{addEventListener:(name,fn)=>listeners.set
   getBoundingClientRect:()=>({left:20,top:100})};
 const scrollListeners=new Map();
 const viewport={scrollLeft:0,scrollTop:0,addEventListener:(name,fn)=>scrollListeners.set(name,fn),removeEventListener:(name)=>scrollListeners.delete(name),
-  getBoundingClientRect:()=>({left:0,top:80,width:390,height:500})};
+  getBoundingClientRect:()=>viewportRect};
+let viewportRect={left:0,top:80,width:390,height:500,right:390,bottom:580};
 let zoom=1;
 const scene=new ClassicVectorScene();
 const detach=scene.attach(host,viewport,()=>zoom);
@@ -49,17 +50,17 @@ scene.set('text',{z:60,paint:(ctx,density)=>{matrices.push({matrix:ctx.matrix,de
 scene.set('symbol',{z:62,paint:noop});
 scene.flush();
 assert.equal(host.children.length,1,'adjacent vectors share one scene canvas');
-assert.equal(host.children[0].width,454*4.5);
-assert.equal(host.children[0].height,564*4.5);
+assert.equal(host.children[0].width,518*4.5);
+assert.equal(host.children[0].height,628*4.5);
 for(const value of [.25,.75,1,1.5,3,6]){
   zoom=value; scene.flush();
   const last=matrices.at(-1);
   assert.equal(last.density,4.5*value);
   assert.equal(last.matrix[0],4.5*value);
-  assert.equal(last.matrix[4],234,'screen origin stays exact at every zoom');
-  assert.equal(host.children[0].width,454*4.5,'pinch never reallocates an object bitmap');
-  assert.equal(parseFloat(host.children[0].style.width),454,'CSS bitmap size stays constant during pinch');
-  assert.equal(host.children[0].style.transform,`translate(${-52/value}px, ${-52/value}px) scale(${1/value})`,'one inverse affine transform cancels parent scale and translation');
+  assert.equal(last.matrix[4],378,'screen origin stays exact at every zoom');
+  assert.equal(host.children[0].width,518*4.5,'pinch never reallocates an object bitmap');
+  assert.equal(parseFloat(host.children[0].style.width),518,'CSS bitmap size stays constant during pinch');
+  assert.equal(host.children[0].style.transform,`translate(${-84/value}px, ${-84/value}px) scale(${1/value})`,'one inverse affine transform cancels parent scale and translation');
 }
 zoom=2;
 listeners.get('abai-preview-transform')();
@@ -67,11 +68,14 @@ assert.equal(matrices.at(-1).density,9,'geometry event repaints synchronously, n
 let frameCount=nextFrame;
 scrollListeners.get('scroll')();
 assert.equal(nextFrame,frameCount,'delayed scroll event for an already painted pinch position schedules no duplicate frame');
-viewport.scrollLeft=20;scrollListeners.get('scroll')();
-assert.equal(nextFrame,frameCount+1,'new native scroll position still requests a paint');
+viewport.scrollLeft=20;viewportRect={...viewportRect,left:20,right:410};scrollListeners.get('scroll')();
+assert.equal(nextFrame,frameCount,'a pan that stays inside the painted margin needs no repaint');
+viewport.scrollLeft=200;viewportRect={...viewportRect,left:200,right:590};scrollListeners.get('scroll')();
+assert.equal(nextFrame,frameCount+1,'a pan past the painted margin still requests a paint');
+viewportRect={left:0,top:80,width:390,height:500,right:390,bottom:580};
 scene.flush();frameCount=nextFrame;scrollListeners.get('scroll')();
 assert.equal(nextFrame,frameCount,'paint commits the new scroll position');
-actualRect={left:-32.0078125,top:48.015625,width:454.015625,height:563.984375};
+actualRect={left:-64.0078125,top:16.015625,width:518.015625,height:627.984375};
 for(const value of [.25,.75,1,1.5,3,6]){
   zoom=value;scene.flush();const m=matrices.at(-1).matrix,c=host.children[0];
   const screenX=actualRect.left+(m[0]*85+m[4])*actualRect.width/c.width;
@@ -79,14 +83,14 @@ for(const value of [.25,.75,1,1.5,3,6]){
   assert.ok(Math.abs(screenX-(20+85*value))<1e-9,'fractional CSS width cannot shift ink horizontally');
   assert.ok(Math.abs(screenY-(100+60*value))<1e-9,'fractional CSS height cannot shift ink vertically');
 }
-actualRect={left:-32,top:48,width:454,height:564};
+actualRect={left:-64,top:16,width:518,height:628};
 host.parentElement.style={};
 for(const value of [.25,.75,1,1.5,3,6]){
   zoom=value;host.parentElement.style.zoom=String(value);scene.flush();
   const canvas=host.children[0],r=canvas.getBoundingClientRect();
-  assert.ok(Math.abs(r.left+32)<1e-9,'native-zoom framebuffer stays at viewport origin');
-  assert.ok(Math.abs(r.width-454)<1e-9,'native-zoom framebuffer has constant physical width');
-  assert.equal(parseFloat(canvas.style.width),454,'pinch does not resize CSS bitmap layout');
+  assert.ok(Math.abs(r.left+64)<1e-9,'native-zoom framebuffer stays at viewport origin');
+  assert.ok(Math.abs(r.width-518)<1e-9,'native-zoom framebuffer has constant physical width');
+  assert.equal(parseFloat(canvas.style.width),518,'pinch does not resize CSS bitmap layout');
 }
 host.parentElement.style={};
 let animationTime=0,paintedTime=-1,opacityReads=0;
@@ -128,7 +132,7 @@ footprint={x:70,y:80,width:18,height:16};bounded.flush();
 assert.deepEqual(host.children[0].ctx.lastClear,[20,30,15,12],'old footprint is erased before moving small ink');
 bounded.remove('tiny');bounded.set('unknown',{z:1,paint:noop});bounded.flush();
 assert.deepEqual(host.children[0].ctx.lastClear,[70,80,18,16],'old bounded ink is removed when changing painter');
-bounded.flush();assert.deepEqual(host.children[0].ctx.lastClear,[0,0,454*4.5,564*4.5],'unknown painters retain full clear');
+bounded.flush();assert.deepEqual(host.children[0].ctx.lastClear,[0,0,518*4.5,628*4.5],'unknown painters retain full clear');
 const b=sceneRectBounds({getTransform:()=>({a:0,b:2,c:-2,d:0,e:100,f:80})},-10,-5,20,10,3);
 assert.deepEqual(b,{x:87,y:57,width:26,height:46},'rotated bounds include every corner and pixel padding');
 assert.deepEqual(unionSceneBounds({x:0,y:0,width:0,height:0},b),b);
