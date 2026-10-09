@@ -29,7 +29,7 @@ import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, seekVideosTo } from '../utils/frameExactVideo';
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, settlePhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
@@ -5675,17 +5675,50 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   const drawRef = useRef<(() => void) | null>(null);
   useEffect(() => () => { if (fxIdleRef.current) clearTimeout(fxIdleRef.current); }, []);
 
+  /* 拖滑桿時的即時效果值（見面板的 pendingFloatFx）：不經過 React，只重畫這一張。
+     文件寫回（放開）之後就以文件為準。 */
+  const liveFxRef = useRef<PhotoFx | null>(null);
+  const liveFxFrame = useRef(0);
+  /** 效果在 GPU 上算（跟佈局格子同一條管線）；閒下來而且沒被選取時收成一張 2D、放掉 GPU */
+  const fxInputRef = useRef<HTMLCanvasElement | null>(null);
+  const selectedRef = useRef(isSelected);
+  selectedRef.current = isSelected;
+  useLayoutEffect(() => { liveFxRef.current = null; }, [image.fx]);
+  useEffect(() => subscribeCellPhoto(image.id, fx => {
+    liveFxRef.current = fx;
+    if (liveFxFrame.current) return;
+    liveFxFrame.current = requestAnimationFrame(() => { liveFxFrame.current = 0; drawRef.current?.(); });
+  }), [image.id]);
+  useEffect(() => () => {
+    cancelAnimationFrame(liveFxFrame.current);
+    const c = fxInputRef.current;
+    if (c) { releasePhotoFxSurface(c); c.width = c.height = 1; }
+  }, []);
+  const settleFx = () => {
+    void awaitPhotoIdle().then(() => {
+      const hit = fxCacheRef.current, input = fxInputRef.current;
+      if (!hit || !input || liveFxRef.current || selectedRef.current || hit.canvas.dataset.fxSettled === '1') return;
+      const settled = settlePhotoFx(hit.canvas, input);
+      settled.dataset.fxSettled = '1';
+      fxCacheRef.current = { key: hit.key, canvas: settled };
+    });
+  };
+  useEffect(() => { if (!isSelected) settleFx(); }, [isSelected]);
   const fxSourceFor = (img: HTMLImageElement) => {
-    if (!hasPhotoFx(image.fx)) return img as CanvasImageSource;
+    const fx = liveFxRef.current ?? image.fx;
+    if (!hasPhotoFx(fx)) return img as CanvasImageSource;
     const MAX = fxFullMax();
-    const key = `${image.src}|${JSON.stringify(image.fx)}|${lutRevision}|${MAX}`;
+    const key = `${image.src}|${JSON.stringify(fx)}|${lutRevision}|${MAX}`;
     const hit = fxCacheRef.current;
     if (hit && hit.key === key) return hit.canvas;
     const aspect = (image.width || 1) / (image.height || 1);
     const fw = aspect >= 1 ? MAX : Math.max(16, Math.round(MAX * aspect));
     const fh = aspect >= 1 ? Math.max(16, Math.round(MAX / aspect)) : MAX;
-    const canvas = applyPhotoFx(img, fw, fh, image.fx!);
+    const input = fxInputRef.current ?? (fxInputRef.current = document.createElement('canvas'));
+    const canvas = applyPhotoFx(img, fw, fh, fx!, { cacheSource: true, gpuSurface: true, out: input });
+    delete canvas.dataset.fxSettled;
     fxCacheRef.current = { key, canvas };
+    settleFx();
     return canvas;
   };
 
@@ -8599,6 +8632,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     patchActiveLayout(l => ({ ...l, images: typeof newImages === 'function' ? newImages(l.images) : newImages }));
   };
   const pendingCellFx=useRef(new Map<string,PhotoFx>());
+  /* 一般圖片也一樣：拖滑桿時只更新那一張圖的畫布（見 FloatingImageLayer 的訂閱），
+     整個編輯器不跟著每一格重建；放開時才寫回文件一次（也只算一步上一步）。 */
+  const pendingFloatFx=useRef(new Map<string,PhotoFx>());
+  const commitFloatFx=()=>{
+    if(!pendingFloatFx.current.size)return;
+    const changes=new Map(pendingFloatFx.current);pendingFloatFx.current.clear();
+    setFloatingImages(prev=>prev.map(f=>changes.has(f.id)?{...f,fx:changes.get(f.id)}:f));
+  };
   const commitCellFx=()=>{
     if(!pendingCellFx.current.size)return;
     const changes=new Map(pendingCellFx.current);pendingCellFx.current.clear();
@@ -16956,7 +16997,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               /* ── 選到圖片：跟「編輯」完全一樣的三段式操作欄 ───────────────
                  上：一根滑桿（5rem）／中：工具列（6rem）／下：分類列（h-16＋底部空隙） */
               const img = layer;
+              // 影片有自己的 GPU 路（useVideoFxGl），照舊走文件
+              const liveFloat = !selCell && !img.isVideo;
               const set = (patch: Partial<FloatingImage>) => {
+                if (liveFloat && 'fx' in patch && Object.keys(patch).length === 1) {
+                  const next = (patch as any).fx as PhotoFx;
+                  // 只在「本來就有效果、改完也還有」時走即時通道；從無到有（或歸零）要換畫法，交給文件
+                  if (hasPhotoFx(img.fx) && hasPhotoFx(next)) {
+                    pendingFloatFx.current.set(img.id, next);updateCellPhoto(img.id, next);return;
+                  }
+                  pendingFloatFx.current.delete(img.id);
+                }
                 if (selCell) {
                   // 只有格子真的有的欄位才寫回去，其餘忽略
                   const cellPatch: Partial<ImageCell> = {};
@@ -16981,8 +17032,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   setTuningEdge={setTuningEdge} openComposeFor={openComposeFor}
                   composeOpen={!!composeState} onLeaveCompose={applyComposeToLayer}
                   hideShape={!!selCell}
-                  isolateFxUpdates={!!selCell}
-                  onAdjustmentCommit={selCell?commitCellFx:undefined}
+                  isolateFxUpdates={!!selCell||liveFloat}
+                  onAdjustmentCommit={selCell?commitCellFx:liveFloat?commitFloatFx:undefined}
                 />
               );
             })()}
@@ -17165,7 +17216,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               <div data-layout-panel="1" className="w-full min-w-0 mx-auto h-full flex flex-row animate-in fade-in duration-300">
                 <div
                   key={activeTab === 'layout' ? 'layout-create' : `layout-edit-${selectedLayoutId}`}
-                  className={`w-full min-w-0 flex-1 h-full ${activeTab === 'layout' ? 'overflow-y-auto overflow-x-hidden no-scrollbar' : 'overflow-hidden'}`}
+                  /* -mx-2 px-2：內容位置不變，但裁切範圍左右各多 8px —— 滑桿白點拉到兩端時
+                     會超出滑桿本身 7px，以前剛好被這層的 overflow 切掉半顆。 */
+                  className={`w-full min-w-0 flex-1 h-full -mx-2 px-2 ${activeTab === 'layout' ? 'overflow-y-auto overflow-x-hidden no-scrollbar' : 'overflow-hidden'}`}
                   data-layout-editor={layoutEditMode ? 'true' : undefined}
                   style={{ overscrollBehavior: 'none' }}
                 >

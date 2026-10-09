@@ -1500,6 +1500,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const fxSettleRef = useRef<number | null>(null);
   /** 影片物件固定用的那幾張離屏畫布（每顆一組，不重複配置） */
   const vidScratchRef = useRef<Map<string, VidScratch>>(new Map());
+  /** 圖片物件 GPU 效果的 2D 成品，以及目前還留著 GPU 管線的物件 */
+  const objFxSnapRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  const objFxPaintFrame = useRef(0);
+  const objGpuIdsRef = useRef<Set<string>>(new Set());
+  const releaseObjGpu = (id: string) => {
+    if (!objGpuIdsRef.current.delete(id)) return;
+    const base = vidScratchRef.current.get(id)?.base;
+    if (base) releasePhotoFxSurface(base);
+  };
   /** 這次工作階段讀進來過的每一段影片 —— 離開時要一段不漏地收掉。
       只看「現在還在畫面上的」是不夠的：刪掉的物件被上一步救得回來，
       所以它的 <video> 一直留著，那一段也要有人負責收。 */
@@ -1622,7 +1631,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // The very first change counts too: an image that never had effects has
     // no previous key, and its first slider frame used to run at full 1600px.
     if (isMain && !regionPhoto && lv.key !== baseKey && (lv.key || hasPhotoFx(o.fx))) lv.liveUntil = now + 300;
-    const live = isMain && !regionPhoto && lv.liveUntil > now;
+    /* 圖片物件的效果現在在 GPU 上算（見下面 gpuSurface），拖曳中直接用正式尺寸與正式取樣：
+       以前拖滑桿時先算 640 的近似版、停手再補 1600 的 —— 拖曳中看到的是糊的、放開還會跳一下。
+       影片每一格都要重算，仍保留原本的做法。 */
+    const objectGpu = isMain && !regionPhoto && !isVideoEl(o.img);
+    const live = isMain && !regionPhoto && !objectGpu && lv.liveUntil > now;
     /* 匯出時工作尺寸放寬到 2400：成品現在最少也有 2400px 長邊（見 EXPORT_MIN_DIM），
        圖片物件如果還卡在 1600，畫上去等於被放大過 —— 那一顆就會比旁邊的
        圖形與文字糊。預覽維持 1600（拖曳中 640），手感完全沒動到。 */
@@ -1753,8 +1766,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(!reuse){reuse=document.createElement('canvas');regionFxSurfaces.current.set(o.id,reuse);}
     }
     const base = applyPhotoFx(srcEl, iw, ih, o.fx || {}, {
-      cacheSource: !isVid, fast: live, out: reuse, gpuSurface: regionPhoto,
+      cacheSource: !isVid, fast: live, out: reuse, gpuSurface: regionPhoto || objectGpu,
     });
+    if (objectGpu && base !== reuse) objGpuIdsRef.current.add(o.id);
     const finish = () => {
       if (!isMain) return;
       lv!.key = baseKey;
@@ -1772,6 +1786,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     if (!hasShape) {
       let result=base;
+      if(objectGpu&&base!==reuse){
+        /* GPU 算好的那張複製一份 2D 留著：之後拖動、重畫都直接用這張，不必每一格再從
+           GPU 讀回（iOS 上那是一次同步讀回）。GPU 管線本身留到取消選取再收。 */
+        let snap=objFxSnapRef.current.get(o.id);
+        if(!snap){snap=document.createElement('canvas');objFxSnapRef.current.set(o.id,snap);}
+        if(snap.width!==base.width)snap.width=base.width;if(snap.height!==base.height)snap.height=base.height;
+        const sg=snap.getContext('2d')!;sg.globalCompositeOperation='copy';sg.drawImage(base,0,0);sg.globalCompositeOperation='source-over';
+        result=snap;
+      }
       if(regionPhoto&&isMain&&reuse&&base!==reuse&&!regionSliderHeld.current&&!regionTouches.current.size&&(!regionPhotoEditingRef.current||prepareNative)){
         // Geometry-only rendering needs immutable photo pixels, not an entire
         // native-size shader pool. Release the pool immediately after copying,
@@ -4451,6 +4474,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       interactionRef.current = null;
       lastDrawPosRef.current = null;
+      /* 第一根手指按在物件上（大遮罩幾乎一定會）就開始了「拖物件／點選」；第二根手指
+         落下變成縮放預覽時要收掉 —— 以前它一直留著，整段縮放都被當成「正在編輯」，
+         每一格把整個場景連遮罩重算一次（不能用縮放快照），放大縮小特別卡。
+         拖曳是即時寫回的，收掉不會丟東西；放開時也不會再誤選那個物件。 */
+      if (objDragRef.current) {
+        flushMoveNow();
+        objDragRef.current = null;
+        if (objDraggingRef.current) { objDraggingRef.current = false; setObjDragging(false); }
+        guidesRef.current = []; setGuides([]);
+      }
       if (motionLockRef.current) { viewPinchRef.current = null; return; }
       const pts: any[] = Array.from(activePointers.current.values());
       const c = stageBox();
@@ -5740,10 +5773,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const hover=swapHoverRef.current;
         const dim=isMain && allowDim && hover?.kind==='region' ? hover.index : -1;
         creativeSeam.current ||= new CreativeSeamless();
-        if(photoRegion.seamless&&g===ctx&&targetCanvas===canvasRef.current&&!previewCapture&&layout!==AROUND&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&dim<0){
+        /* 有遮罩時也走 GPU：照片先畫進主畫布、遮罩再取主畫布當底，看到的就是正確的照片。
+             只有「拖曳中疊在畫布底下的那一層」不能用（遮罩取不到照片），所以有遮罩時不開那層。
+             以前有遮罩就退回逐格在原圖尺寸重新羽化的 2D 路，每動一下就重算每一格，非常卡。 */
+          if(photoRegion.seamless&&g===ctx&&targetCanvas===canvasRef.current&&!previewCapture&&layout!==AROUND&&!animRef.current&&!regionHold.current?.active&&dim<0){
           const m=g.getTransform(),bounds=clip||[0,0,tW,tH];
           // 拖滑桿（無縫、佔比…）的那幾格：GPU 那層直接疊在畫布底下顯示，不複製進 2D 畫布
-          try{if(creativeSeam.current.present(g,regionForPaint!,regionDecoded,x,y,w,h,[bounds[0]*m.a+m.e,bounds[1]*m.d+m.f,bounds[2]*m.a,bounds[3]*m.d],[vp.w,vp.h],seamLiveRef.current)){
+          try{if(creativeSeam.current.present(g,regionForPaint!,regionDecoded,x,y,w,h,[bounds[0]*m.a+m.e,bounds[1]*m.d+m.f,bounds[2]*m.a,bounds[3]*m.d],[vp.w,vp.h],seamLiveRef.current&&!hasBackdrop)){
             const base=seamlessPhotoBase(regionForPaint!);
             if(base&&base!==regionForPaint)paintPhotoRegion(g,regionForPaint!,regionDecoded,x,y,w,h,dim,regionForPaint!.photos.slice(2).map((_,i)=>i+2));
             return;
@@ -6875,7 +6911,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const maskIndex=objIndex.get(o.id)??0;
         const lower=objects.filter((item,index)=>o.below?item.below&&index<maskIndex:item.below||index<maskIndex).map(item=>{const map=backdropObjectTokens.current;if(!map.has(item))map.set(item,++backdropObjectSerial.current);return map.get(item);});
         const sourceStamp=isMain&&!animRef.current&&!f&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img))
-          ? `${backdropSceneFingerprint}|${JSON.stringify(photoRegion,compactSceneValue)}|${lower.join(',')}|${o.below?'below':'above'}|${s}|${vp.x},${vp.y}|${targetCanvas.width}x${targetCanvas.height}`:undefined;
+          ? `${backdropSceneFingerprint}|${JSON.stringify(photoRegion,compactSceneValue)}|${lower.join(',')}|${o.below?'below':'above'}|${s}|${vp.x},${vp.y}|${targetCanvas.width}x${targetCanvas.height}|${maskScale}|${JSON.stringify(imageTransform)}|${JSON.stringify(holes)}`:undefined;
         drawBackdropMask(ctx,o.kind,o.w*s,o.h*s,o,ctx.canvas,sourceStamp,o.id);
       } else if (o.type === 'image' && o.img) {
         /* 虛線描邊有常駐動畫時，描邊不能烤進快取那張（快取是靠參數當 key 的，
@@ -7571,7 +7607,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       for(let i=0;i<list.length;){
         let end=i;while(end<list.length&&list[end].type==='shape'&&isBackdropMask(list[end].kind)&&list[end].kind!=='mask-frost-feather')end++;
         if(isMain&&!animRef.current&&(end-i>1||end>i&&directMaskPhotos?.length)){
-          maskBatch=[];try{for(let j=i;j<end;j++)drawObject(list[j]);drawBackdropMaskBatch(ctx,maskBatch,directMaskPhotos?.length?directMaskPhotos:undefined);}finally{maskBatch=null;}i=end;
+          maskBatch=[];try{for(let j=i;j<end;j++)drawObject(list[j]);drawBackdropMaskBatch(ctx,maskBatch,directMaskPhotos?.length?directMaskPhotos:undefined,{w:vp.w+1,h:vp.h+1});}finally{maskBatch=null;}i=end;
         }else{drawObject(list[i]);i++;}
       }
     };
@@ -8968,8 +9004,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      這裡**不**收影片本人 —— 上一步會把剛刪掉的那顆原封不動放回來，
      連同 img 指向的那個 <video>；先收掉的話按上一步就會變成一個空框。
      暫存畫布純粹是快取，丟了下一格自己會再開一份，所以丟得很安全。 */
+  useEffect(() => () => { for (const id of [...objGpuIdsRef.current]) releaseObjGpu(id); }, []);
+  // 取消選取：那張圖的 GPU 管線收掉（成品已經是 2D 了），下次再編輯時重新開
+  useEffect(() => {
+    for (const id of [...objGpuIdsRef.current]) if (id !== selectedObj) releaseObjGpu(id);
+  }, [selectedObj]);
   useEffect(() => {
     const ids = new Set(objects.map((o: any) => o.id));
+    for (const [id, snap] of objFxSnapRef.current) if (!ids.has(id.split('@')[0])) { releaseObjGpu(id); snap.width = snap.height = 1; objFxSnapRef.current.delete(id); objFxCache.current.delete(id); }
     vidScratchRef.current.forEach((scratch, id) => {
       // 底圖照片的那幾組由選取／版面自己管；@nodash、@nog 這類跟著本體走
       if (id.startsWith('region-fx-') || ids.has(id.split('@')[0])) return;
@@ -11217,6 +11259,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)},!!d.fx);
                   } else setObjects(prev => prev.map(o => o.id === sel.id ? { ...o, ...d } : o));
                 };
+                // 圖片物件（不是影片、不是底圖格子）的效果滑桿走即時通道
+                const liveObjFx = !regionEditing && sel?.type === 'image' && !isVideoEl(sel.img);
+                const commitObjFxLive = () => {
+                  const held = maskSliderLive.current; maskSliderLive.current = null;
+                  if (held && Object.keys(held.patch).length) setObjects(prev => prev.map(o => o.id === held.id ? { ...o, ...held.patch } : o));
+                };
                 const move = (dir: number) => setObjects(prev => {
                   const i = prev.findIndex(o => o.id === sel.id);
                   const j = i + dir;
@@ -11457,10 +11505,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                          只有面板看的那條網址。 */
                       img={panelImgOf(sel)}
                       hideShape={regionEditing}
-                      isolateFxUpdates={regionEditing}
-                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : undefined}
-                      onAdjustmentCommit={regionEditing ? finishRegionEdit : undefined}
-                      set={(d: any) => patch(d)} lutList={lutList}
+                      isolateFxUpdates={regionEditing||liveObjFx}
+                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : liveObjFx ? ()=>{maskSliderLive.current={id:sel.id,patch:{}};} : undefined}
+                      onAdjustmentCommit={regionEditing ? finishRegionEdit : liveObjFx ? commitObjFxLive : undefined}
+                      set={(d: any) => {
+                        /* 圖片物件拖效果滑桿：跟遮罩滑桿同一招 —— 只改 objectsRef、直接重畫畫布，
+                           放開才寫回 state（整個創意拼圖不必每一格重新 render）。
+                           從無到有、或歸零（要換畫法）照舊寫回 state。 */
+                        const held=maskSliderLive.current;
+                        if(liveObjFx&&held?.id===sel.id&&'fx' in d&&Object.keys(d).length===1&&hasPhotoFx(sel.fx)&&hasPhotoFx(d.fx)){
+                          held.patch={...held.patch,fx:d.fx};
+                          objectsRef.current=objectsRef.current.map(o=>o.id===sel.id?{...o,fx:d.fx}:o);
+                          // 一格畫面只重畫一次（一次拖動可能送好幾個 input）
+                          if(!objFxPaintFrame.current)objFxPaintFrame.current=requestAnimationFrame(()=>{objFxPaintFrame.current=0;regionPaintRef.current?.();});
+                          return;
+                        }
+                        patch(d);
+                      }} lutList={lutList}
                       loadingLut={loadingLut} setLoadingLut={setLoadingLut}
                       lutRevision={lutRevision} setLutRevision={setLutRevision}
                       adjustSub={adjustSub} setAdjustSub={setAdjustSub}

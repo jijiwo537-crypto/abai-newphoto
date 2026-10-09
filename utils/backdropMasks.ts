@@ -174,8 +174,12 @@ class MaskGpu {
   gl.useProgram(material);gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.cells);gl.activeTexture(gl.TEXTURE0);
   gl.uniform1i(this.location(material,'cellColors'),2);gl.uniform2f(this.location(material,'cellCount'),cols,rows);
  }
- renderBatch(source:HTMLCanvasElement,layers:BackdropMaskLayer[],photos?:BackdropPhotoLayer[]){
-  const gl=this.gl,w=source.width,h=source.height;if(gl.isContextLost()||w>this.maxTextureSize||h>this.maxTextureSize)throw Error('mask batch unavailable');
+ renderBatch(source:HTMLCanvasElement,layers:BackdropMaskLayer[],photos?:BackdropPhotoLayer[],limit?:{w:number;h:number}){
+  const gl=this.gl,w=source.width,h=source.height;
+  /* limit：畫布左上角真正有畫面的那一塊（捏合縮放時畫布會留預留空間，外面本來就清成透明）。
+     遮罩只算這一塊：每一道全畫面的 pass 都用 scissor 限在裡面，結果在這一塊裡逐像素相同。 */
+  const LW=Math.max(1,Math.min(w,Math.ceil(limit?.w??w))),LH=Math.max(1,Math.min(h,Math.ceil(limit?.h??h)));
+  const limited=LW<w||LH<h;if(gl.isContextLost()||w>this.maxTextureSize||h>this.maxTextureSize)throw Error('mask batch unavailable');
   if(!this.batchTextures.length)for(let i=0;i<3;i++){const t=gl.createTexture()!;this.batchTextures.push(t);gl.bindTexture(gl.TEXTURE_2D,t);for(const [k,v]of [[gl.TEXTURE_MIN_FILTER,gl.LINEAR],[gl.TEXTURE_MAG_FILTER,gl.LINEAR],[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]])gl.texParameteri(gl.TEXTURE_2D,k,v);}
   if(this.batchWidth!==w||this.batchHeight!==h){this.batchWidth=w;this.batchHeight=h;for(const t of this.batchTextures){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}}
   if(this.canvas.width!==w)this.canvas.width=w;if(this.canvas.height!==h)this.canvas.height=h;
@@ -214,8 +218,12 @@ class MaskGpu {
     if(bw!==this.blurWidth||bh!==this.blurHeight){this.blurWidth=bw;this.blurHeight=bh;for(const t of [this.first,this.second]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,bw,bh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}}
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,input);use(this.blurProgram);gl.viewport(0,0,bw,bh);
     const radius=Math.max(.25,sigma*bandwidth),step=Math.max(1,radius/8),weights=new Float32Array(25);let total=0;for(let j=0;j<=24;j++){weights[j]=Math.exp(-((j*step)**2)/(2*radius*radius));total+=weights[j]*(j?2:1);}for(let j=0;j<=24;j++)weights[j]/=total;
-    gl.uniform1f(this.location(this.blurProgram,'stepSize'),step);gl.uniform1fv(this.location(this.blurProgram,'weights[0]'),weights);gl.bindFramebuffer(gl.FRAMEBUFFER,this.frame);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.first,0);gl.uniform2f(this.location(this.blurProgram,'direction'),1/bw,0);gl.drawArrays(gl.TRIANGLES,0,6);
+    gl.uniform1f(this.location(this.blurProgram,'stepSize'),step);gl.uniform1fv(this.location(this.blurProgram,'weights[0]'),weights);
+    // 模糊兩道只算可見那一塊再加上模糊半徑（第二道會往外取樣第一道的結果）
+    if(limited){const margin=Math.ceil(24*step)+2,sw=Math.min(bw,Math.ceil(LW*bw/w)+margin),sh=Math.min(bh,Math.ceil(LH*bh/h)+margin);gl.enable(gl.SCISSOR_TEST);gl.scissor(0,bh-sh,sw,sh);}
+    gl.bindFramebuffer(gl.FRAMEBUFFER,this.frame);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.first,0);gl.uniform2f(this.location(this.blurProgram,'direction'),1/bw,0);gl.drawArrays(gl.TRIANGLES,0,6);
     gl.bindTexture(gl.TEXTURE_2D,this.first);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.second,0);gl.uniform2f(this.location(this.blurProgram,'direction'),0,1/bh);gl.drawArrays(gl.TRIANGLES,0,6);
+    gl.disable(gl.SCISSOR_TEST);
    }
    if(layer.kind==='mask-mosaic')this.mosaicCells(this.batchCellProgram,program,input,m,layer.w,layer.h,settings,w,h,0,0);
    use(program);gl.viewport(0,0,w,h);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,input);gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,sigma>.25?this.second:input);gl.uniform1i(this.location(program,'softened'),1);gl.activeTexture(gl.TEXTURE0);
@@ -227,9 +235,11 @@ class MaskGpu {
    const last=i===layers.length-1;gl.bindFramebuffer(gl.FRAMEBUFFER,last?null:this.frame);if(!last){const output=this.batchTextures[1+i%2];gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,output,0);input=output;}
    // Outside the mask, use a cheap exact texture copy. Only its visible
    // physical bounds need the material shader (including analytic edges).
-   use(this.batchCopyProgram);gl.drawArrays(gl.TRIANGLES,0,6);use(program);
-   const bounds=maskPhysicalBounds(m,layer.w,layer.h,w,h,2);
-   if(bounds.width&&bounds.height){gl.enable(gl.SCISSOR_TEST);gl.scissor(bounds.left,h-bounds.top-bounds.height,bounds.width,bounds.height);gl.drawArrays(gl.TRIANGLES,0,6);gl.disable(gl.SCISSOR_TEST);}
+   if(limited){gl.enable(gl.SCISSOR_TEST);gl.scissor(0,h-LH,LW,LH);}
+   use(this.batchCopyProgram);gl.drawArrays(gl.TRIANGLES,0,6);gl.disable(gl.SCISSOR_TEST);use(program);
+   const full=maskPhysicalBounds(m,layer.w,layer.h,w,h,2);
+   const bl=full.left,bt=full.top,br=Math.min(full.left+full.width,LW),bb=Math.min(full.top+full.height,LH);
+   if(br>bl&&bb>bt){gl.enable(gl.SCISSOR_TEST);gl.scissor(bl,h-bb,br-bl,bb-bt);gl.drawArrays(gl.TRIANGLES,0,6);gl.disable(gl.SCISSOR_TEST);}
   }
   this.lastBlur='';this.activeSource=null;return this.canvas;
  }
@@ -340,19 +350,20 @@ export const warmBackdropMasks=()=>{try{maskRenderer();}catch{}};
 export const backdropMaskDiagnostics={gpuFrames:0,cpuFrames:0,uploads:0,reuses:0,lastError:'',renderMs:0,compositeMs:0,uploadMs:0};
 const featherSurfaces=new WeakMap<HTMLCanvasElement,HTMLCanvasElement>();
 export const disposeBackdropMasks=(canvas:HTMLCanvasElement)=>{renderers.shared?.release(canvas);const f=featherSurfaces.get(canvas);if(f)f.width=f.height=1;featherSurfaces.delete(canvas);};
-export function drawBackdropMaskBatch(ctx:CanvasRenderingContext2D,layers:BackdropMaskLayer[],photos?:BackdropPhotoLayer[]){
+export function drawBackdropMaskBatch(ctx:CanvasRenderingContext2D,layers:BackdropMaskLayer[],photos?:BackdropPhotoLayer[],limit?:{w:number;h:number}){
  layers=layers.filter(layer=>layer.opacity>0);
  if(!layers.length)return;let renderer:MaskGpu|null=null;const start=performance.now();
  try{
   renderer=maskRenderer();
-  if(!renderer)throw Error('mask batch fallback');const output=renderer.renderBatch(ctx.canvas,layers,photos);backdropMaskDiagnostics.gpuFrames+=layers.length;backdropMaskDiagnostics.renderMs=performance.now()-start;
+  if(!renderer)throw Error('mask batch fallback');const output=renderer.renderBatch(ctx.canvas,layers,photos,limit);backdropMaskDiagnostics.gpuFrames+=layers.length;backdropMaskDiagnostics.renderMs=performance.now()-start;
   const t=performance.now();ctx.save();try{
    // Preserve untouched wide-gamut pixels outside the material footprints.
    // Union contours all share winding even when an object was mirrored.
    ctx.beginPath();for(const layer of layers){const m=layer.matrix;ctx.setTransform(m.a,m.b,m.c,m.d,m.e,m.f);const shape=maskGeometry(layer.kind,layer.settings),reverse=m.a*m.d-m.b*m.c<0;
     if(shape==='circle'){ctx.moveTo(layer.w/2,0);ctx.ellipse(0,0,layer.w/2,layer.h/2,0,0,Math.PI*2,reverse);ctx.closePath();}
     else {const points=shape==='star'?Array.from({length:10},(_,i)=>{const a=-Math.PI/2+i*Math.PI/5,r=i%2?.45:1;return[Math.cos(a)*layer.w/2*r,Math.sin(a)*layer.h/2*r];}):[[-layer.w/2,-layer.h/2],[layer.w/2,-layer.h/2],[layer.w/2,layer.h/2],[-layer.w/2,layer.h/2]];if(reverse)points.reverse();points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();}
-   }ctx.setTransform(1,0,0,1,0,0);ctx.clip();ctx.globalAlpha=1;ctx.globalCompositeOperation='copy';ctx.drawImage(output,0,0);
+   }ctx.setTransform(1,0,0,1,0,0);ctx.clip();ctx.globalAlpha=1;ctx.globalCompositeOperation='copy';
+   if(limit){const lw=Math.max(1,Math.min(output.width,Math.ceil(limit.w))),lh=Math.max(1,Math.min(output.height,Math.ceil(limit.h)));ctx.drawImage(output,0,0,lw,lh,0,0,lw,lh);}else ctx.drawImage(output,0,0);
   }finally{ctx.restore();}backdropMaskDiagnostics.compositeMs=performance.now()-t;
  }catch(error){
   dropRenderer(renderer);backdropMaskDiagnostics.lastError=String(error);

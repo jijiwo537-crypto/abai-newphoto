@@ -20,7 +20,8 @@ for(const [i,color] of fixtureColors.entries()){
  if(params.has('detail')){for(let row=0;row<10;row++)for(let col=0;col<12;col++){g.fillStyle=(row+col)%2?'#fed298':'#26305c';g.fillRect(col*c.width/12,row*c.height/10,c.width/30,c.height/24);}}
  const blob=await new Promise<Blob>(r=>c.toBlob(b=>r(b!),'image/png'));c.width=c.height=1;files.push(new File([blob],`photo-${i+1}.png`,{type:'image/png'}));
 }
-const floating=params.has('swaps')||params.has('floats')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[files.length-1]),x:500,y:220,w:120,h:90,rot:0,opacity:100},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
+const floating0=params.has('swaps')||params.has('floats')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[files.length-1]),x:500,y:220,w:120,h:90,rot:0,opacity:100},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
+const floating=params.has('maskObj')?[...floating0,{id:'qa-mask-obj',type:'shape',kind:params.get('maskObj')||'mask-frost',filled:true,x:300,y:150,w:300,h:250,rot:0,opacity:100,maskShape:'square',maskAmount:50,maskCells:15}]:floating0;
 const glowKinds=params.has('solid')?['circle','square','rounded','star','star-rounded','star-double','heart','diamond','square-star-dual','square-heart-dual','square-star-cutout','square-heart-cutout']:['grid-h','grid-cross','grid-frame','grid-dots-staggered','grid-dots','grid-dots-fade','grid-dots-fade-diagonal','grid-diag','grid-diag-cross','grid-plus','grid-orbits','grid-chevron'];
 createRoot(document.getElementById('root')!).render(params.has('occupancyLiveAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={params.has('single')?[]:files.slice(1,3)} initialState={{layout:params.has('around')?'mask-around':'mask-right',canvasRatio:'3:2',holeCount:0}}/>
@@ -60,7 +61,7 @@ createRoot(document.getElementById('root')!).render(params.has('occupancyLiveAud
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={params.has('stress')?files.slice(1):files.slice(1,2)} initialState={{holeCount:0,layout:'image-full',canvasRatio:'3:2'}}/>
  : params.has('ig')
  ? <IgPreview shots={files.slice(0,2).map(f=>URL.createObjectURL(f))} frame={{w:3,h:2}} pageCount={2} faces={[]} onClose={()=>{}}/>
- : <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={params.has('direction')?{layout:'image-full',canvasRatio:'3:2',holeCount:4,holeSize:15,maskColor:'#FFFFFF',holes:[{id:'right',x:700,y:100,side:'image'},{id:'left',x:100,y:200,side:'image'},{id:'middle',x:400,y:500,side:'image'},{id:'absent',x:-200,y:200,side:'mask'}]}:params.has('audit')||params.has('four')?{holeCount:0,layout:'image-full',canvasRatio:'3:2',objects:floating}:{holeCount:0}}/>);
+ : <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={params.has('direction')?{layout:'image-full',canvasRatio:'3:2',holeCount:4,holeSize:15,maskColor:'#FFFFFF',holes:[{id:'right',x:700,y:100,side:'image'},{id:'left',x:100,y:200,side:'image'},{id:'middle',x:400,y:500,side:'image'},{id:'absent',x:-200,y:200,side:'mask'}]}:params.has('audit')||params.has('four')?{holeCount:0,layout:params.has('sideLayout')?'mask-right':'image-full',canvasRatio:'3:2',objects:floating}:{holeCount:0}}/>);
 if(params.has('selectionAudit'))void import('./creative-selection-latency-audit');
 else if(params.has('occupancyLiveAudit'))void import('./creative-occupancy-live-audit');
 else if(params.has('snapshotAudit'))void import('./creative-snapshot-audit');

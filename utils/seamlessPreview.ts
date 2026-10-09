@@ -238,6 +238,16 @@ class SeamGpu {
       gl.uniform1f(uniform(`radius${i}`),view.radii?.[i]||0);
     }
     if(view.viewport){gl.disable(gl.SCISSOR_TEST);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.enable(gl.SCISSOR_TEST);gl.scissor(view.viewport[0],view.viewport[1],view.viewport[2],view.viewport[3]);}
+    else if(view.clip&&!view.other){
+      /* 有裁切範圍時，範圍外著色器本來就輸出全透明：只讓 GPU 算範圍（含濾波護邊）裡的像素，
+         外面直接清成透明 —— 結果逐像素相同。創意拼圖的畫布含捏合預留空間，
+         以前整張（將近兩倍可見面積）每一格都跑完整個著色器。 */
+      const W=target.width,H=target.height,c=view.clip,g=view.clipGuard||[0,0];
+      const x0=Math.max(0,Math.floor((c[0]-g[0])*W)-1),x1=Math.min(W,Math.ceil((c[2]+g[0])*W)+1);
+      const top=Math.max(0,Math.floor((c[1]-g[1])*H)-1),bottom=Math.min(H,Math.ceil((c[3]+g[1])*H)+1);
+      gl.disable(gl.SCISSOR_TEST);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.enable(gl.SCISSOR_TEST);gl.scissor(x0,H-bottom,Math.max(0,x1-x0),Math.max(0,bottom-top));
+    }
     gl.drawArrays(gl.TRIANGLE_STRIP,0,4);gl.disable(gl.SCISSOR_TEST);
     if(this.transferred){const bitmap=(this.canvas as OffscreenCanvas).transferToImageBitmap();target.getContext('bitmaprenderer')!.transferFromImageBitmap(bitmap);bitmap.close();}
     target.dataset.sourceUploads=String(this.uploads);
