@@ -6677,14 +6677,14 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           <Copy size={14 * previewInv} />
         </button>
         {/* 編輯鍵：文字與圖片都用同一顆（跟佈局那顆同款） */}
-        {image.shape!=='mask-negative'&&image.shape!=='mask-negative-mono'&&<button
+        <button
           onClick={(e) => { e.stopPropagation(); onLayerAction('edit'); }}
           title={image.text !== undefined ? '編輯文字' : image.shape ? '圖形調整' : '圖片調整'}
           style={{ width: 28 * previewInv, height: 28 * previewInv }}
           className="rounded-full hover:bg-black/10 flex items-center justify-center text-black"
         >
           <Sliders size={14 * previewInv} />
-        </button>}
+        </button>
         <button onClick={(e) => { e.stopPropagation(); onLayerAction('delete'); }} title="刪除" style={{ width: 28 * previewInv, height: 28 * previewInv }}
           className="rounded-full hover:bg-black/10 flex items-center justify-center text-black">
           <Trash2 size={14 * previewInv} />

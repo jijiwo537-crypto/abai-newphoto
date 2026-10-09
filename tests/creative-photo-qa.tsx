@@ -20,7 +20,7 @@ for(const [i,color] of fixtureColors.entries()){
  if(params.has('detail')){for(let row=0;row<10;row++)for(let col=0;col<12;col++){g.fillStyle=(row+col)%2?'#fed298':'#26305c';g.fillRect(col*c.width/12,row*c.height/10,c.width/30,c.height/24);}}
  const blob=await new Promise<Blob>(r=>c.toBlob(b=>r(b!),'image/png'));c.width=c.height=1;files.push(new File([blob],`photo-${i+1}.png`,{type:'image/png'}));
 }
-const floating=params.has('swaps')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[9]),x:500,y:220,w:120,h:90,rot:0,opacity:100},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
+const floating=params.has('swaps')||params.has('floats')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[files.length-1]),x:500,y:220,w:120,h:90,rot:0,opacity:100},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
 const glowKinds=params.has('solid')?['circle','square','rounded','star','star-rounded','star-double','heart','diamond','square-star-dual','square-heart-dual','square-star-cutout','square-heart-cutout']:['grid-h','grid-cross','grid-frame','grid-dots-staggered','grid-dots','grid-dots-fade','grid-dots-fade-diagonal','grid-diag','grid-diag-cross','grid-plus','grid-orbits','grid-chevron'];
 createRoot(document.getElementById('root')!).render(params.has('occupancyLiveAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={params.has('single')?[]:files.slice(1,3)} initialState={{layout:params.has('around')?'mask-around':'mask-right',canvasRatio:'3:2',holeCount:0}}/>

@@ -1681,7 +1681,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          cv／off —— 只有套了形狀才會用到的那兩張（見下面）
        尺寸一樣就連 width 都不重設，等於整段完全不配置記憶體。 */
     let scratch: VidScratch | null = null;
-    if (isVid || o.id?.startsWith('region-fx-')) {
+    /* 圖片物件在預覽時也固定用這一組：以前每動一下滑桿就開一張新畫布（停手再開一張
+       1600px 的），舊的留給垃圾回收 —— iOS 收畫布記憶體很慢，反覆套用、調整特效時
+       幾十張堆在記憶體裡，分頁就被系統砍掉重開。匯出（isMain=false）照舊各自一張。 */
+    if (isVid || o.id?.startsWith('region-fx-') || isMain) {
       scratch = vidScratchRef.current.get(o.id) || null;
       if (!scratch) {
         scratch = {
@@ -8967,7 +8970,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      暫存畫布純粹是快取，丟了下一格自己會再開一份，所以丟得很安全。 */
   useEffect(() => {
     const ids = new Set(objects.map((o: any) => o.id));
-    vidScratchRef.current.forEach((_, id) => { if (!ids.has(id)) vidScratchRef.current.delete(id); });
+    vidScratchRef.current.forEach((scratch, id) => {
+      // 底圖照片的那幾組由選取／版面自己管；@nodash、@nog 這類跟著本體走
+      if (id.startsWith('region-fx-') || ids.has(id.split('@')[0])) return;
+      vidScratchRef.current.delete(id);
+      // 真的被刪掉的物件：明確釋放（上一步要放回來時快取已清，會重新算）
+      objFxCache.current.delete(id);fxLiveRef.current.delete(id);
+      for (const cv of Object.values(scratch)) if (cv instanceof HTMLCanvasElement) cv.width = cv.height = 1;
+    });
   }, [objects]);
 
   /* 離開這個工具時把影片收乾淨（解碼器不收會一直佔著記憶體） */
@@ -10468,7 +10478,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 { t: '複製', on: act(dup), el: <Copy size={14} />, off: false },
                 { t: o.type === 'text' ? (o.sym ? '編輯符號' : '編輯文字') : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => { setColorPickerTarget(null); setActiveTab('objedit'); }), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
-              ].filter(b=>!((o.kind==='mask-negative'||o.kind==='mask-negative-mono')&&b.el.type===Sliders)).map(b => (
+              ].map(b => (
                 /* 鬆手才觸發。以前綁在 onPointerDown，手指一碰到就動作 ——
                    碰錯了也來不及滑開取消，而且複製／刪除這種不好還原的動作
                    按下去就發生了。改成 onClick：一定要「在同一顆按鈕上按下並放開」

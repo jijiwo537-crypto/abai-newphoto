@@ -3,7 +3,7 @@ import { prepareSeamSource, type SeamSource, type SeamPhoto, type SeamRect } fro
 import { drawSeamPreview, disposeSeamPreview } from '../utils/seamlessPreview';
 import { resolveSeamSurface } from '../utils/seamlessSurfaceGeometry';
 import {subscribeCellPhoto} from '../utils/liveCellPhoto';
-import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,getLoadedLut,type PhotoFx} from '../utils/photoFx';
+import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,settlePhotoFx,getLoadedLut,type PhotoFx} from '../utils/photoFx';
 import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
 
 // Live slider frames use the home editor's 1800px preview size. The texture
@@ -117,7 +117,7 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
       if(liveKeys.current.get(id)===key){await awaitPhotoIdle();if(cancelled)return original;}
       let input=effectSurfaces.current.get(id);
       if(!input){input=document.createElement('canvas');effectSurfaces.current.set(id,input);}
-      const image=applyPhotoFx(original.image,original.width,original.height,c.fx!,{cacheSource:true,gpuSurface:true,out:input});
+      const image=settlePhotoFx(applyPhotoFx(original.image,original.width,original.height,c.fx!,{cacheSource:true,gpuSurface:true,out:input}),input);
       image.dataset.seamRevision=key;
       return {...original,image};
     })).then(sources=>{if(!cancelled){sourcesRef.current=sources;setPrepared({key:sourceKey,sources});}}).catch(error=>{if(!cancelled)console.error('Seamless sources:',error);});

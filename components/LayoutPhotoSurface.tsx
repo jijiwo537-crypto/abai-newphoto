@@ -1,5 +1,5 @@
 import React,{useLayoutEffect,useEffect,useRef} from 'react';
-import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,getLoadedLut,type PhotoFx} from '../utils/photoFx';
+import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,settlePhotoFx,getLoadedLut,type PhotoFx} from '../utils/photoFx';
 import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
 import {subscribeCellPhoto,subscribeCellPrime} from '../utils/liveCellPhoto';
 import {resolveSeamSurface} from '../utils/seamlessSurfaceGeometry';
@@ -113,7 +113,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         const liveFx=live.current.get(c.id),fx=liveFx||c.fx||{},key=fxKey(fx),r0=resource!;
         const bake=()=>{
           r0.pending=undefined;
-          r0.output=hasPhotoFx(fx)?applyPhotoFx(im,im.naturalWidth,im.naturalHeight,fx,{cacheSource:true,gpuSurface:true,out:r0.input}):im;
+          r0.output=hasPhotoFx(fx)?settlePhotoFx(applyPhotoFx(im,im.naturalWidth,im.naturalHeight,fx,{cacheSource:true,gpuSurface:true,out:r0.input}),r0.input):im;
           if(r0.output instanceof HTMLCanvasElement)r0.output.dataset.seamRevision=key;
           r0.key=key;
         };

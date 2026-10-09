@@ -176,6 +176,19 @@ export function releasePhotoFxSurface(input:HTMLCanvasElement){
   const retained=effectInputs.get(input);if(!retained)return;
   retained.surface.remove();disposeFxSurface(retained.surface);retained.source.width=retained.source.height=1;effectInputs.delete(input);
 }
+/** 一次性的原尺寸成品（放開滑桿後、閒下來才算的那張）：把結果留在呼叫端自己那張
+ *  2D 畫布上，然後把這一趟開的 GPU 管線（WebGL context、原尺寸貼圖）立刻收掉。
+ *  以前每一張編輯過的照片都各自留著一兩個原尺寸的 WebGL context：編輯幾張就超過
+ *  iOS 的 context 上限、記憶體也爆掉，分頁被系統重開。下次再改時重新開就好。 */
+export function settlePhotoFx(result:HTMLCanvasElement,out:HTMLCanvasElement):HTMLCanvasElement{
+  if(result!==out){
+    if(out.width!==result.width)out.width=result.width;if(out.height!==result.height)out.height=result.height;
+    const g=out.getContext('2d');if(!g)return result;
+    g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='copy';g.drawImage(result,0,0);g.globalCompositeOperation='source-over';
+  }
+  releasePhotoFxSurface(out);releasePhotoFxReadbacks(out);
+  return out;
+}
 /** Native-resolution baking is finished once the caller has its immutable
  * result. Drop CPU readbacks and duplicate blend canvases, not result pixels
  * or the live editing compositor. */

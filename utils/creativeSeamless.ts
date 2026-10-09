@@ -50,15 +50,27 @@ export class CreativeSeamless {
     // its exact half-open clip remains authoritative. No source crop changes.
     const view:SeamView={width:w,height:h,xx:W/m.a,xy:0,x0:(l-m.e)/m.a-x,yx:0,yy:H/m.d,y0:(t-m.f)/m.d-y,clip:[(left-l)/W,(top-t)/H,(right-l)/W,(bottom-t)/H],clipGuard:[2/W,2/H]};
     const parent=main.parentElement,liveLayer=live&&!!parent;
-    if(!liveLayer)drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,view,true,isWebKit());
+    /* WebKit（iPhone）：拖曳中直接把「已經有照片貼圖的那張 GPU 畫面」疊上去，不再另開一個
+       WebGL context 把每張原圖重新上傳一次 —— 手機上那個新 context 常常畫不出來（一片黑）
+       或被系統收掉，還會多吃一份原圖大小的記憶體。這張本來就輸出 sRGB，直接顯示跟複製進
+       主畫布看到的是同一組顏色。 */
+    const reuseSurface=liveLayer&&isWebKit();
+    const paintSurface=(target:HTMLCanvasElement,noTransfer=false)=>drawSeamPreview(target,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,view,true,isWebKit(),noTransfer);
+    if(!liveLayer)paintSurface(surface);
     const clearLeft=scenePixelEdge(left),clearTop=scenePixelEdge(top);
     const clearRight=scenePixelEdge(right),clearBottom=scenePixelEdge(bottom);
-    if(liveLayer&&parent){
-      if(this.liveLayer?.dataset.sourceUploads&&this.liveLayer.getContext('webgl2')?.isContextLost()){disposeSeamPreview(this.liveLayer);this.liveLayer.remove();this.liveLayer=null;}
-      const layer=this.liveLayer||(this.liveLayer=document.createElement('canvas'));
-      if(layer.width!==W)layer.width=W;if(layer.height!==H)layer.height=H;
+    if(liveLayer&&parent&&!(reuseSurface&&surface.getContext('webgl2')?.isContextLost())){
+      let layer:HTMLCanvasElement;
+      if(reuseSurface){
+        layer=surface;
+        if(this.liveLayer){this.liveLayer.remove();this.liveLayer.style.display='none';}
+      }else{
+        if(this.liveLayer?.dataset.sourceUploads&&this.liveLayer.getContext('webgl2')?.isContextLost()){disposeSeamPreview(this.liveLayer);this.liveLayer.remove();this.liveLayer=null;}
+        layer=this.liveLayer||(this.liveLayer=document.createElement('canvas'));
+        if(layer.width!==W)layer.width=W;if(layer.height!==H)layer.height=H;
+        surface.remove();surface.style.display='none';
+      }
       layer.dataset.creativeLiveSeam='1';
-      drawSeamPreview(layer,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,view,true,isWebKit(),true);
       // 小數像素也要一樣（offset* 會取整，差一條像素）
       const mr=main.getBoundingClientRect(),pr=parent.getBoundingClientRect();
       // 跟主畫布同一層級、緊貼在它下面：中間不能夾任何別的圖層把它蓋住
@@ -66,6 +78,8 @@ export class CreativeSeamless {
         left:`${mr.left-pr.left-parent.clientLeft}px`,top:`${mr.top-pr.top-parent.clientTop}px`,width:`${mr.width}px`,height:`${mr.height}px`,
         transform:main.style.transform||'none',transformOrigin:main.style.transformOrigin||''});
       if(layer.parentElement!==parent||layer.nextSibling!==main)parent.insertBefore(layer,main);
+      // 先放進畫面再畫：WebKit 對「離開畫面時畫好、之後才接上」的 WebGL 畫布可能整片不顯示
+      paintSurface(layer,!reuseSurface);
       main.dataset.creativePhotoComposition='live-layer';
       ctx.save();ctx.setTransform(1,0,0,1,0,0);
       ctx.beginPath();ctx.rect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.clip();
@@ -74,7 +88,8 @@ export class CreativeSeamless {
     }
     // The GPU buffer is private, not an independently scaled DOM layer.
     // Copy in the same task before its transient framebuffer is discarded.
-    surface.remove();surface.style.display='none';
+    if(liveLayer)paintSurface(surface);
+    surface.remove();surface.style.display='none';delete surface.dataset.creativeLiveSeam;
     if(this.liveLayer){this.liveLayer.remove();this.liveLayer.style.display='none';}
     main.dataset.creativePhotoComposition='single-canvas';
     ctx.save();ctx.setTransform(1,0,0,1,0,0);
