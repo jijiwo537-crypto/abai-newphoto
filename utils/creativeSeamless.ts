@@ -61,7 +61,8 @@ export class CreativeSeamless {
       drawSeamPreview(layer,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,view,true,isWebKit(),true);
       // 小數像素也要一樣（offset* 會取整，差一條像素）
       const mr=main.getBoundingClientRect(),pr=parent.getBoundingClientRect();
-      Object.assign(layer.style,{display:'block',position:'absolute',pointerEvents:'none',zIndex:'0',margin:'0',
+      // 跟主畫布同一層級、緊貼在它下面：中間不能夾任何別的圖層把它蓋住
+      Object.assign(layer.style,{display:'block',position:'absolute',pointerEvents:'none',zIndex:getComputedStyle(main).zIndex==='auto'?'0':getComputedStyle(main).zIndex,margin:'0',
         left:`${mr.left-pr.left-parent.clientLeft}px`,top:`${mr.top-pr.top-parent.clientTop}px`,width:`${mr.width}px`,height:`${mr.height}px`,
         transform:main.style.transform||'none',transformOrigin:main.style.transformOrigin||''});
       if(layer.parentElement!==parent||layer.nextSibling!==main)parent.insertBefore(layer,main);

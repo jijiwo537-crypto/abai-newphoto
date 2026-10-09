@@ -42,7 +42,7 @@ test('native photos preserve stacking barriers and bypass 2D photo painting',()=
  assert.ok(scene.includes('if (entry.nativePhoto) continue;'));
  assert.ok(scene.includes('barriers.push(...entries.filter(e => e.nativePhoto).map(e => e.z))'));
  const tool=fs.readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
- assert.match(tool,/if \(pages.length < 2\) \{[\s\S]*?vectorScene.remove\('__page-seams'\);[\s\S]*?vectorScene.flush\(\);[\s\S]*?return;/);
+ assert.match(tool,/if \(pages.length < 2\) \{[\s\S]*?vectorScene.remove\('__page-seams'\);[\s\S]*?vectorScene.flush(?:Soon)?\(\);[\s\S]*?return;/);
  assert.ok(tool.includes('if (!anim) { raf = requestAnimationFrame(tick); return; }'));
  assert.ok(tool.includes('nativePhoto: isScenePhoto ? image.id : undefined'));
 });

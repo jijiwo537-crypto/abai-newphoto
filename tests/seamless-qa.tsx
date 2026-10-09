@@ -22,6 +22,8 @@ if(params.has('textureZoom')){
  if(params.has('multi'))state.pages.push({...state.pages[0],id:'seam-page-2',layouts:[]});
  if(!params.has('modeAudit'))void import('./texture-zoom-audit');
 }
+// 遮罩圖形（測拖曳流暢度）：?mask=mask-frost&maskCount=2
+if(params.get('mask')){const kind=params.get('mask')!,n=Number(params.get('maskCount')||1);(state as any).floatingImages=Array.from({length:n},(_,i)=>({id:`qa-mask-${i}`,src:'',x:30+i*90,y:60+i*70,width:150,height:150,scale:1,rotation:0,opacity:100,shape:kind,shapeFilled:true,maskShape:'square',maskAmount:kind.includes('frost')?50:100,maskCells:kind==='mask-mosaic'?15:20,maskRefract:100,maskFeather:0}));}
 // 一張浮動照片（測動畫、選取框）：?floatPhoto
 if(params.has('floatPhoto'))(state as any).floatingImages=[{id:'photo-float',src:photo('#728791'),x:40,y:40,width:150,height:200,scale:1,rotation:15,opacity:100}];
 // 影片圖層（測縮圖、匯出）：?video=網址

@@ -1490,7 +1490,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     <g clipPath={`url(#material-${maskId})`}>
       {item.kind==='mask-mosaic'||item.kind==='mask-bricks'?Array.from({length:25},(_,i)=><rect key={i} x={2+i%5*4} y={2+Math.floor(i/5)*4} width={item.kind==='mask-bricks'?3.2:4} height={item.kind==='mask-bricks'?3.2:4} fill="currentColor" opacity={.2+(i*7%11)/14}/> ):<>
       <rect x="2" y="2" width="20" height="20" fill="currentColor" opacity=".18"/>
-      {item.kind==='mask-negative-mono'?<><path d='M12 2H22V22H12Z' fill="currentColor"/><path d='M2 22L12 12' stroke="currentColor" strokeWidth="1.6" opacity=".55"/></>:item.kind==='mask-negative'||item.kind==='mask-monochrome'?<path d={item.kind==='mask-monochrome'?'M2 22L22 2V22Z':'M12 2H22V22H12Z'} fill="currentColor"/>:item.kind==='mask-thermal'?<rect x="2" y="2" width="20" height="20" fill={`url(#heat-${maskId})`}/>:<>{[5,9,13,17].map((y,i)=><path key={y} d={`M2 ${y}H22`} stroke="currentColor" strokeWidth="2" opacity={item.kind==='mask-frost-feather'?.25+i*.1:.5}/>)}</>}
+      {item.kind==='mask-negative-mono'?<path d='M2 2H12V22H2Z' fill="currentColor"/>:item.kind==='mask-negative'||item.kind==='mask-monochrome'?<path d={item.kind==='mask-monochrome'?'M2 22L22 2V22Z':'M12 2H22V22H12Z'} fill="currentColor"/>:item.kind==='mask-thermal'?<rect x="2" y="2" width="20" height="20" fill={`url(#heat-${maskId})`}/>:<>{[5,9,13,17].map((y,i)=><path key={y} d={`M2 ${y}H22`} stroke="currentColor" strokeWidth="2" opacity={item.kind==='mask-frost-feather'?.25+i*.1:.5}/>)}</>}
       </>}
     </g><path d={maskGeometry(item.kind)==='circle'?'M22 12A10 10 0 1 1 2 12A10 10 0 1 1 22 12':'M2 2H22V22H2Z'} fill="none" stroke="currentColor" strokeWidth=".8" opacity={item.kind==='mask-frost-feather'?.4:1}/>
   </svg>;
@@ -4309,6 +4309,8 @@ interface FloatingImageComponentProps {
   hideToolbar?: boolean;
   /** 文字／符號／圖形正在雙指縮放：改用固定畫布、逐幀重畫內容。 */
   gestureRendering?: boolean;
+  /** 遮罩：這段手勢期間它底下的東西不會變（沿用同一張底圖） */
+  backdropFrozen?: boolean;
   /** 編輯滑桿正在拖動：即時預覽維持螢幕級高清，放手才建立最終超取樣快照。 */
   liveTuning?: boolean;
   /** 正在拖形狀的滑桿：選取框、四角圓球、工具列全部收起來，邊緣的效果才看得清楚 */
@@ -5241,6 +5243,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   onTextEditEnd,
   hideToolbar = false,
   gestureRendering = false,
+  backdropFrozen = false,
   liveTuning = false,
   hideChrome = false,
   lutRevision = 0,
@@ -6499,7 +6502,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         ctx.rotate((image.rotation + (motionFrame?.rot ?? 0)) * Math.PI / 180);
         ctx.scale(scale * (motionFrame?.fx ?? 1), scale);
         if(isBackdropMask(image.shape)){
-          const source=scene.backdrop(ctx,(dragShift?.live?450100:60)+stackIndex*2,density,backdropRoot);
+          const source=scene.backdrop(ctx,(dragShift?.live?450100:60)+stackIndex*2,density,backdropRoot,!!dragShift?.live||backdropFrozen||gestureRendering||isDragging||isScaling);
           drawBackdropMask(ctx,image.shape!,image.width,image.height,image,source,scene.backdropCacheStamp);
         } else if (isScenePhoto) {
           const source = getPreviewImg(image.src);
@@ -7409,6 +7412,7 @@ const FloatingImageComponent = React.memo(FloatingImageComponentBase, (a, b) =>
   && a.isTextEditing === b.isTextEditing
   && a.hideToolbar === b.hideToolbar
   && a.gestureRendering === b.gestureRendering
+  && a.backdropFrozen === b.backdropFrozen
   && a.liveTuning === b.liveTuning
   && a.hideChrome === b.hideChrome
   && a.lutRevision === b.lutRevision
@@ -10420,7 +10424,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       vectorScene.remove('__page-seams');
       // Single pages need the same atomic photo/page commit during drag settle;
       // removing the separator must not defer their ink until the next frame.
-      vectorScene.flush();
+      // (flushSoon still paints before this frame is composited, once per commit.)
+      vectorScene.flushSoon();
       return;
     }
     vectorScene.set('__page-seams', {
@@ -10475,14 +10480,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         return bounds;
       },
     });
-    vectorScene.flush();
+    vectorScene.flushSoon();
   });
 
   // Guides use the same frame transform as seams, with an independent width.
   useLayoutEffect(() => {
     if (!activeGuidelines.length) {
       vectorScene.remove('__alignment-guides');
-      vectorScene.flush();
+      vectorScene.flushSoon();
       return;
     }
     vectorScene.set('__alignment-guides', {
@@ -10512,7 +10517,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ctx.setLineDash([]);ctx.lineDashOffset=0;return bounds;
       },
     });
-    vectorScene.flush();
+    vectorScene.flushSoon();
   }, [activeGuidelines, pages.length, previewW, previewH, vectorScene]);
 
   // Measure container size dynamically
@@ -16141,6 +16146,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                            不再切換 PNG 快照。只有必須用 Canvas 畫的借用圖案保留
                            手勢旗標；它也不會影響一般向量物件的幾何或選中框。 */
                         gestureRendering={pinchFloatingId === fImg.id && (!!fImg.shape || fImg.text !== undefined)}
+                        /* 手指正在拖／縮放／拉邊某一顆物件時，在它「底下或就是它」的遮罩，
+                           底下的東西都不會變：沿用同一張底圖（見 ClassicVectorScene.backdrop）。 */
+                        backdropFrozen={isBackdropMask(fImg.shape) && (() => {
+                          const id = pinchFloatingId || ((selectionDragging || !!tuningEdge) ? selectedFloatingId : null);
+                          const g = id ? floatingImages.findIndex(f => f.id === id) : -1;
+                          return g >= 0 && fIdx <= g;
+                        })()}
                         liveTuning={vectorTuningId === fImg.id}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}

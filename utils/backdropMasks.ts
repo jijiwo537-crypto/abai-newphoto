@@ -7,8 +7,8 @@ export const MASK_SHAPE_ITEMS = [
  {id:'mask-bricks',kind:'mask-bricks',filled:true,label:'方形玻璃磚'},
  {id:'mask-frost',kind:'mask-frost',filled:true,label:'方形毛玻璃'},
  {id:'mask-negative',kind:'mask-negative',filled:true,label:'方形負片'},
- {id:'mask-monochrome',kind:'mask-monochrome',filled:true,label:'方形黑白'},
  {id:'mask-negative-mono',kind:'mask-negative-mono',filled:true,label:'黑白負片'},
+ {id:'mask-monochrome',kind:'mask-monochrome',filled:true,label:'方形黑白'},
 ] as const;
 // Old drafts keep rendering; removed materials are no longer in the picker.
 export const isBackdropMask=(kind?:string)=>MASK_SHAPE_ITEMS.some(s=>s.kind===kind)||kind==='mask-thermal'||kind==='mask-frost-circle'||kind==='mask-frost-feather';
@@ -222,7 +222,7 @@ class MaskGpu {
    const f=(name:string,v:number)=>gl.uniform1f(this.location(program,name),v),v3=(name:string,a:number,b:number,c:number)=>gl.uniform3f(this.location(program,name),a,b,c);
    v3('mapX',m.a,m.c,m.e);v3('mapY',m.b,m.d,m.f);v3('invX',inv.a,inv.c,inv.e);v3('invY',inv.b,inv.d,inv.f);gl.uniform2f(this.location(program,'size'),w,h);gl.uniform2f(this.location(program,'sampleSize'),w,h);gl.uniform2f(this.location(program,'origin'),0,0);gl.uniform2f(this.location(program,'uRes'),layer.w,layer.h);
    const shape=maskGeometry(layer.kind,settings);f('circle',shape==='star'?2:shape==='circle'?1:0);const points=new Float32Array(20);for(let j=0;j<10;j++){const a=-Math.PI/2+j*Math.PI/5,r=j%2?.225:.5;points[j*2]=Math.cos(a)*r;points[j*2+1]=Math.sin(a)*r;}gl.uniform2fv(this.location(program,'starPoints[0]'),points);
-   f('edgeAA',1/Math.max(1,Math.min(layer.w*Math.hypot(m.a,m.b),layer.h*Math.hypot(m.c,m.d))));f('objectOpacity',layer.opacity);f('feather',0);f('mode',layer.kind==='mask-mosaic'?0:layer.kind==='mask-bricks'?1:layer.kind==='mask-negative'?3:kind==='mask-negative-mono'?6:layer.kind==='mask-negative-mono'?6:layer.kind==='mask-monochrome'?4:layer.kind==='mask-thermal'?5:2);f('amount',layer.kind.includes('frost')||layer.kind==='mask-mosaic'||layer.kind==='mask-bricks'||layer.kind==='mask-negative'||layer.kind==='mask-negative-mono'?1:(settings.maskAmount??100)/100);
+   f('edgeAA',1/Math.max(1,Math.min(layer.w*Math.hypot(m.a,m.b),layer.h*Math.hypot(m.c,m.d))));f('objectOpacity',layer.opacity);f('feather',0);f('mode',layer.kind==='mask-mosaic'?0:layer.kind==='mask-bricks'?1:layer.kind==='mask-negative'?3:layer.kind==='mask-negative-mono'?6:layer.kind==='mask-monochrome'?4:layer.kind==='mask-thermal'?5:2);f('amount',layer.kind.includes('frost')||layer.kind==='mask-mosaic'||layer.kind==='mask-bricks'||layer.kind==='mask-negative'||layer.kind==='mask-negative-mono'?1:(settings.maskAmount??100)/100);
    f('fxMosaicBlocks',settings.maskCells??15);f('fxMosaicGap',0);f('fxMosaicShape',0);f('fxGlassBlocks',glassCells(settings));f('fxGlassRound',0);f('fxGlassRefract',(settings.maskRefract??100)/100);f('fxGlassBevel',0);
    const last=i===layers.length-1;gl.bindFramebuffer(gl.FRAMEBUFFER,last?null:this.frame);if(!last){const output=this.batchTextures[1+i%2];gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,output,0);input=output;}
    // Outside the mask, use a cheap exact texture copy. Only its visible

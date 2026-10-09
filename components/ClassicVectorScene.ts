@@ -53,7 +53,8 @@ export class ClassicVectorScene {
   imageResolver: (src: string) => HTMLImageElement = src => { const image=new Image();image.src=src;return image; };
   pagePatternPainter?: (ctx:CanvasRenderingContext2D,id:string,width:number,height:number)=>void;
   pagePatternKey?: (id:string)=>unknown;
-  private backdropSurface: HTMLCanvasElement | null = null;
+  /** 每一層（z）各自一張底圖：多個遮罩互相不會把對方抓好的那張蓋掉 */
+  private backdropSlots = new Map<number,{canvas:HTMLCanvasElement;view:string;stamp:string|undefined}>();
   private capturingBackdrop = false;
   backdropCacheStamp: string | undefined;
   private backdropTokens = new WeakMap<object,number>();
@@ -61,10 +62,23 @@ export class ClassicVectorScene {
 
   /** Replay lower ink into the same physical viewport. DOM photos/layouts and
    * vector entries share this snapshot; UI, guides and higher ink are excluded. */
-  backdrop(target: CanvasRenderingContext2D, z: number, density: number, root: DOMMatrix) {
+  /** frozen：手指正拖著／縮放這個遮罩本身 —— 它底下的東西不可能變，同一個視角就沿用
+      上一格抓好的底圖，不再每一格把整個下層場景重畫一次（多遮罩時這是最大的成本）。 */
+  backdrop(target: CanvasRenderingContext2D, z: number, density: number, root: DOMMatrix, frozen=false) {
     if(this.capturingBackdrop || !this.host)return target.canvas;
     const host=this.host, hr=host.getBoundingClientRect(), k=Math.max(.0001,this.scale());
-    const canvas=this.backdropSurface??(this.backdropSurface=document.createElement('canvas'));
+    const view=JSON.stringify([z,density,root.toString(),hr.left,hr.top,k,target.canvas.width,target.canvas.height]);
+    
+    let slot=this.backdropSlots.get(z);
+    if(frozen&&slot&&slot.view===view){this.backdropSlots.delete(z);this.backdropSlots.set(z,slot);this.backdropCacheStamp=slot.stamp;return slot.canvas;}
+    if(!slot){
+      // 最多留四層；最舊的那張收掉
+      while(this.backdropSlots.size>=4){const [oldZ,old]=this.backdropSlots.entries().next().value!;disposeBackdropMasks(old.canvas);old.canvas.width=old.canvas.height=1;this.backdropSlots.delete(oldZ);}
+      slot={canvas:document.createElement('canvas'),view:'',stamp:undefined};
+    }
+    this.backdropSlots.delete(z);this.backdropSlots.set(z,slot);
+    slot.view=frozen?view:'';
+    const canvas=slot.canvas;
     if(canvas.width!==target.canvas.width)canvas.width=target.canvas.width;
     if(canvas.height!==target.canvas.height)canvas.height=target.canvas.height;
     const g=canvas.getContext('2d')!;
@@ -134,7 +148,9 @@ export class ClassicVectorScene {
       keys.push([token(entry),entry.z,revision,typeof entry.opacity==='function'?entry.opacity():entry.opacity??1]);
       jobs.push({z:entry.z,paint:()=>{g.setTransform(root);g.globalAlpha=typeof entry.opacity==='function'?entry.opacity():entry.opacity??1;entry.paint(g,density);}});
     }
-    this.backdropCacheStamp=cacheable?JSON.stringify(keys):undefined;
+    // 凍住的底圖整段手勢都不變：給它一個固定戳記，遮罩就不必每格重新上傳、重算模糊
+    this.backdropCacheStamp=cacheable?JSON.stringify(keys):frozen?`frozen#${++this.backdropSerial}`:undefined;
+    slot.stamp=this.backdropCacheStamp;
     const active=this.activePhoto;this.activePhoto=null;this.capturingBackdrop=true;
     try{for(const job of jobs.sort((a,b)=>a.z-b.z)){g.save();try{job.paint();}finally{g.restore();}}}
     finally{this.capturingBackdrop=false;this.activePhoto=active;}
@@ -199,6 +215,21 @@ export class ClassicVectorScene {
     this.draw();
   };
 
+  /* 同一個工作裡（一次 React commit 會有好幾個 layout effect 各自要求重畫）只畫一次：
+     排在 microtask 裡，仍然在瀏覽器合成這一格之前畫完，不會晚一格；但多個遮罩時，
+     不會每一個 effect 都把每個遮罩的底圖重抓、重算一次。之後若有同步 flush 已經畫過，
+     這一次就省掉。 */
+  private soonQueued = false;
+  flushSoon = () => {
+    if (this.soonQueued) return;
+    this.soonQueued = true;
+    queueMicrotask(() => {
+      if (!this.soonQueued) return;
+      this.soonQueued = false;
+      this.flush();
+    });
+  };
+
   private detach() {
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = 0;
@@ -206,7 +237,8 @@ export class ClassicVectorScene {
     this.host?.parentElement?.removeEventListener('abai-preview-transform', this.flush);
     this.observer?.disconnect();
     this.surfaces.forEach(canvas => { disposeBackdropMasks(canvas);canvas.remove(); canvas.width = canvas.height = 1; });
-    if(this.backdropSurface){disposeBackdropMasks(this.backdropSurface);this.backdropSurface.width=this.backdropSurface.height=1;this.backdropSurface=null;}
+    for(const slot of this.backdropSlots.values()){disposeBackdropMasks(slot.canvas);slot.canvas.width=slot.canvas.height=1;}
+    this.backdropSlots.clear();
     this.surfaces = [];
     this.photos.forEach(photo => photo.remove()); this.photos.clear();
     this.photoContext = null; this.activePhoto = null;
@@ -220,6 +252,7 @@ export class ClassicVectorScene {
 
   private draw = () => {
     this.frame = 0;
+    this.soonQueued = false;
     const host = this.host, viewport = this.viewport;
     if (!host || !viewport) return;
     const k = Math.max(.0001, this.scale());

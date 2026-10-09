@@ -1356,6 +1356,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
   const liveMaskScale=useRef<number|null>(null);
+  /** 只有手指正按在「無縫／佔比」滑桿上才是 true：這時 GPU 那層直接疊在畫布下顯示（見 CreativeSeamless.present）。 */
+  const seamLiveRef=useRef(false);
   const maskScaleValue=useRef(maskScale);maskScaleValue.current=maskScale;
   const occupancyFrame=useRef(0);
   useEffect(()=>()=>cancelAnimationFrame(occupancyFrame.current),[]);
@@ -5738,7 +5740,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(photoRegion.seamless&&g===ctx&&targetCanvas===canvasRef.current&&!previewCapture&&layout!==AROUND&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&dim<0){
           const m=g.getTransform(),bounds=clip||[0,0,tW,tH];
           // 拖滑桿（無縫、佔比…）的那幾格：GPU 那層直接疊在畫布底下顯示，不複製進 2D 畫布
-          try{if(creativeSeam.current.present(g,regionForPaint!,regionDecoded,x,y,w,h,[bounds[0]*m.a+m.e,bounds[1]*m.d+m.f,bounds[2]*m.a,bounds[3]*m.d],[vp.w,vp.h],isPhotoInteractionBusy()||liveMaskScale.current!==null)){
+          try{if(creativeSeam.current.present(g,regionForPaint!,regionDecoded,x,y,w,h,[bounds[0]*m.a+m.e,bounds[1]*m.d+m.f,bounds[2]*m.a,bounds[3]*m.d],[vp.w,vp.h],seamLiveRef.current)){
             const base=seamlessPhotoBase(regionForPaint!);
             if(base&&base!==regionForPaint)paintPhotoRegion(g,regionForPaint!,regionDecoded,x,y,w,h,dim,regionForPaint!.photos.slice(2).map((_,i)=>i+2));
             return;
@@ -10810,7 +10812,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         renderToCanvasRef.current(canvas,scale);
                       });
                     };
-                    const commit=()=>{cancelAnimationFrame(occupancyFrame.current);occupancyFrame.current=0;const next=liveMaskScale.current;liveMaskScale.current=null;if(next!==null)setMaskScale(next);};
+                    // 放開：回到單一畫布那條路（GPU 層收掉），數值沒變也要重畫這一次
+                    const commit=()=>{seamLiveRef.current=false;cancelAnimationFrame(occupancyFrame.current);occupancyFrame.current=0;const next=liveMaskScale.current;liveMaskScale.current=null;if(next!==null&&next!==maskScale)setMaskScale(next);else regionPaintRef.current();};
                     return (
                       <div data-creative-occupancy className={`flex flex-col w-full ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`}>
                         <div className="flex items-baseline justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
@@ -10824,6 +10827,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           <RegionLiveRange
                             min={0} max={max} step={1}
                             value={value}
+                            onStart={()=>{seamLiveRef.current=true;}}
                             onChange={apply}
                             onCommit={commit}
                             label="佔比"
@@ -10836,7 +10840,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   {photoRegion && photoRegion.photos.length>1 && seamlessPhotoBase(photoRegion) && <div className="space-y-3" data-creative-seamless>
                     <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
                     <div>
-                      <RegionLiveRange value={creativeSeamlessSliderValue(photoRegion)} onChange={v=>commitRegion(withCreativeSeamlessAmount(photoRegionRef.current!,v),true)} onCommit={finishRegionEdit}/>
+                      <RegionLiveRange value={creativeSeamlessSliderValue(photoRegion)} onStart={()=>{seamLiveRef.current=true;}} onChange={v=>commitRegion(withCreativeSeamlessAmount(photoRegionRef.current!,v),true)} onCommit={()=>{seamLiveRef.current=false;finishRegionEdit();}}/>
                     </div>
                   </div>}
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
@@ -11935,7 +11939,7 @@ const useRafOnChange = (onChange: (v: number) => void) => {
 
 /** This leaf owns the slider feedback. The large editor only commits state
  * at gesture end; its paint scheduler consumes the latest value each frame. */
-const RegionLiveRange=({value,onChange,onCommit,min=0,max=100,step=1,label='融合程度'}:{value:number;onChange:(v:number)=>void;onCommit:()=>void;min?:number;max?:number;step?:number;label?:string})=>{
+const RegionLiveRange=({value,onChange,onCommit,onStart,min=0,max=100,step=1,label='融合程度'}:{value:number;onChange:(v:number)=>void;onCommit:()=>void;onStart?:()=>void;min?:number;max?:number;step?:number;label?:string})=>{
   const [shown,setShown]=React.useState(value);
   const release=React.useRef<(()=>void)|null>(null);
   const finish=()=>{release.current?.();release.current=null;onCommit();};
@@ -11945,7 +11949,7 @@ const RegionLiveRange=({value,onChange,onCommit,min=0,max=100,step=1,label='融�
     {/* 白點連續跟手（step="any"）：無縫、佔比都吃小數，不必一格一格跳 */}
     <input aria-label={label} type="range" min={min} max={max} step={step===1?"any":step} value={shown} className="premium-slider w-full"
       onChange={e=>{const v=Number(e.target.value);setShown(v);deferHeavyWork();onChange(v);}}
-      onPointerDown={e=>{e.stopPropagation();release.current?.();release.current=holdPhotoInteraction();}}
+      onPointerDown={e=>{e.stopPropagation();release.current?.();release.current=holdPhotoInteraction();onStart?.();}}
       onPointerUp={finish} onPointerCancel={finish} onTouchEnd={finish} onKeyUp={finish}/></div>;
 };
 

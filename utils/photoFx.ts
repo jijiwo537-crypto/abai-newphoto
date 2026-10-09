@@ -236,7 +236,7 @@ const gpuColorChain = (
       const drawn=g.draw();if(!drawn)return false;
       ctx.clearRect(0,0,w,h);ctx.drawImage(drawn,0,0);return true;
     }
-    const paint = (film: Uint8ClampedArray | null, filmSize: number, into: HTMLCanvasElement) => {
+    const paint = (film: Uint8ClampedArray | null, filmSize: number, into: HTMLCanvasElement | null) => {
       const bakeKey = colorKey + '|' + (film ? srcToken(film) : 'none') + '|' + filmSize;
       let texture = colorBakeCache.get(bakeKey);
       if (!texture) {
@@ -249,11 +249,14 @@ const gpuColorChain = (
       const drawn = g.draw();
       if (!drawn) return false;
       // GPU 的畫布下一次 draw 就會被蓋掉，先拓到自己的畫布上
-      into.getContext('2d')!.drawImage(drawn, 0, 0);
+      if (into) into.getContext('2d')!.drawImage(drawn, 0, 0);
+      // 只畫一次的時候直接畫進成品：不必先拓一張中間畫布再複製一次（每格少一次整張複製）
+      else { ctx.clearRect(0, 0, w, h); ctx.drawImage(drawn, 0, 0); }
       return true;
     };
     const needBlend = !!lut && amount < 1;
-    if (needBlend) { gpuC0 = reuse(gpuC0, w, h); if(!paint(null, 0, gpuC0)) return false; }
+    if (!needBlend) return paint(lut ? lut.data : null, lut ? lut.size : 0, null);
+    gpuC0 = reuse(gpuC0, w, h); if(!paint(null, 0, gpuC0)) return false;
     gpuC1 = reuse(gpuC1, w, h);
     if (!paint(lut ? lut.data : null, lut ? lut.size : 0, gpuC1)) return false;
     ctx.clearRect(0, 0, w, h);
@@ -718,7 +721,11 @@ export function applyPhotoFx(
   const hit = ck ? srcPxCache.get(ck) : undefined;
   /* 有快取而且等一下整張都會被 putImageData 蓋掉，就連這一次 drawImage
      都可以省。沒有要跑管線時當然還是得把原圖畫上去。 */
-  if (!hit || !px) ctx.drawImage(source, 0, 0, out.width, out.height);
+  /* 「原圖＋光」那張會直接上傳給 GPU 顏色鏈，成品整張蓋掉這張畫布：先畫進來是白做的一次
+     整張複製。真的要讀像素（退回 CPU）時才補畫。 */
+  let deferredSource = !!px && !hit && !!opts?.afterGlow && glowedCanvases.has(source as object);
+  if ((!hit || !px) && !deferredSource) ctx.drawImage(source, 0, 0, out.width, out.height);
+  const drawDeferred = () => { if (deferredSource) { deferredSource = false; ctx.drawImage(source, 0, 0, out.width, out.height); } };
   if (!px) return out;
 
   const p = toParams(fx);
@@ -730,6 +737,7 @@ export function applyPhotoFx(
   const readPixels = () => {
     if (src) return src;
     if (hit) { src = hit.px; return src; }
+    drawDeferred();
     img = ctx.getImageData(0, 0, out.width, out.height);
     src = new Uint8ClampedArray(img.data);
     if (ck) putSrcPx(ck, { px: src, scratch: null, plain: null });
@@ -743,6 +751,7 @@ export function applyPhotoFx(
   const identityColour = !lut && ADJUST_KEYS.every(([k]) => !fx[k]);
   let gpuOk = identityColour;
   if (identityColour && hit) ctx.drawImage(source, 0, 0, out.width, out.height);
+  if (identityColour) drawDeferred();
 
   /* 先試 GPU。這條路完全不需要把像素讀回來 ——
      後面的噪點、模糊、柔光全部在畫布上合成，沒有人要 dest 那份陣列。
