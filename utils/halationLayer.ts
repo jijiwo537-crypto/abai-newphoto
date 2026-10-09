@@ -153,9 +153,11 @@ export class HalationLayer {
     // forces WebKit to synchronize its 2D and GPU queues unnecessarily.
     const sourceKey=key.replace(/\|(soft|halo|leak|blur|simple)$/,'');
     if(this.presentation){
-      invalidateFxSurface(this.canvas);
-      const ow=this.scene?.black.width||w,oh=this.scene?.black.height||h;
-      if(this.canvas.width!==ow)this.canvas.width=ow;if(this.canvas.height!==oh)this.canvas.height=oh;
+      if(!this.targetTexture){
+        invalidateFxSurface(this.canvas);
+        const ow=this.scene?.black.width||w,oh=this.scene?.black.height||h;
+        if(this.canvas.width!==ow)this.canvas.width=ow;if(this.canvas.height!==oh)this.canvas.height=oh;
+      }
       this.ensureBase(ctx,sourceKey);
       if(this.layerSize!==`${mw}x${mh}`){
         gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_2D,this.layerTex!);
@@ -165,8 +167,12 @@ export class HalationLayer {
       gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer!);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.layerTex!,0);
     }else gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   }
+  /** When set (presentation mode), the photo with the layer composited is
+   *  written into this texture of the same context instead of the screen. */
+  targetTexture:WebGLTexture|null=null;
   private resultTarget(w:number,h:number){
     const gl=this.gl!;
+    if(this.targetTexture){gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer!);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.targetTexture,0);return;}
     if(!this.scene){gl.bindFramebuffer(gl.FRAMEBUFFER,null);return;}
     this.sceneResult ||=gl.createTexture()!;
     gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D,this.sceneResult);
@@ -182,7 +188,8 @@ export class HalationLayer {
       gl.uniform1f(uniformLocation(gl,this.composite!,'strength'),strength>1?1:strength);
       gl.uniform1f(uniformLocation(gl,this.composite!,'mixLayer'),this.mixLayer?1:0);
       this.resultTarget(w,h);gl.viewport(0,0,w,h);gl.drawArrays(gl.TRIANGLES,0,3);
-      if(this.scene)composeFxScene(gl,this.sceneResult!,this.scene);
+      if(this.targetTexture)gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+      else if(this.scene)composeFxScene(gl,this.sceneResult!,this.scene);
     }
     return this.canvas;
   }

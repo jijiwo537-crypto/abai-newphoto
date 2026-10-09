@@ -1,6 +1,7 @@
 
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
+import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
 import { isIdentityCurve, boundedCurvePath } from '../utils/editorCurveGeometry';
 import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
 import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from '../utils/lutAtlasRepair.js';
@@ -276,6 +277,13 @@ const EFFECT_OWN_KEYS: Record<string, string[]> = {
 
 /** 現在畫面上還有沒有「還沒合併」的特效（合併過的參數是 0，所以自然不算） */
 const hasLiveEffect = (p: any) => Object.keys(NO_EFFECT_PARAMS).some(k => (p?.[k] || 0) !== 0);
+
+/* 發光類特效在原圖上算：定義見 utils/glowFx.ts */
+/** 只留發光類、其餘（含所有顏色）都是預設：在原圖上算光用 */
+const glowOnly = (p: EditorParams): EditorParams => ({
+  ...DEFAULT_PARAMS, ...NO_EFFECT_PARAMS,
+  ...pickGlow(p),
+} as EditorParams);
 
 /**
  * 特效牽涉到的「所有」參數鍵 —— 強度之外，連細項也算進來
@@ -603,7 +611,13 @@ interface HistoryItem {
 }
 
 interface BufferSet {
+    /** 交給顏色那一段的像素：沒有發光類特效時就是原圖；有的話是「原圖＋光」
+        （見 syncGlowSource）。 */
     source: Uint8ClampedArray | null;
+    /** 原圖本身（第一次需要時從 source 記下來） */
+    original?: Uint8ClampedArray | null;
+    /** source 目前是哪一組發光參數算出來的（'' ＝ 原圖） */
+    glowKey?: string;
     dest: Uint8ClampedArray | null;
     shared: Uint8ClampedArray | null;
     lutted: Uint8ClampedArray | null;
@@ -1929,6 +1943,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   // A cache for pixel processing results of each filter to make switching instantaneous
   /** 目前緩衝區裡裝的是哪一張照片的像素（批量編輯換照片時會變） */
   const buffersSrcRef = useRef<string>('');
+  /** 預覽緩衝區的 source 目前混進的是哪一組發光（每換一組加一號；0 ＝ 原圖） */
+  const glowGenRef = useRef(0);
+  const glowSerialRef = useRef(0);
+  /** 「顏色那一段的輸入是哪一份像素」：照片＋（若有）發光那一組。快取鍵一律用它。 */
+  const srcIdent = () => srcIdOf(buffersSrcRef.current) + (glowGenRef.current ? `|g${glowGenRef.current}` : '');
   /** 緩衝區換人了。縮圖那兩支 effect 靠這個知道「可以重算了」——
       連結中的照片參數一模一樣，光看 params 是看不出換過照片的。 */
   const [buffersTick, setBuffersTick] = useState(0);
@@ -2570,9 +2589,118 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (g && (g.lost || g.canvas !== surface)) { surfaceGpuRef.current = undefined; surfaceSrcKeyRef.current = ''; return null; }
     return g || null;
   };
-  const gpuFinalImage = (p: EditorParams, film: Uint8ClampedArray | null, filmSize: number, filmKey: string, srcKey: string, b: { source: Uint8ClampedArray | null; w: number; h: number }): GpuImage | null => {
+  /** b 是預覽緩衝區：這條路上傳的永遠是原圖（original），發光在 GPU 上另外算成
+      一張貼圖再交給顏色那一段 —— 拖發光滑桿時不必把像素讀回來。 */
+  const gpuFinalImage = (p: EditorParams, film: Uint8ClampedArray | null, filmSize: number, filmKey: string, _srcKey: string, b: BufferSet): GpuImage | null => {
     const g = getSurfaceGpu();
-    return g && gpuColourOn(g, surfaceSrcKeyRef, p, film, filmSize, filmKey, srcKey, b) ? g.drawImage() : null;
+    if (!g || !b.source) return null;
+    const original = b.original || b.source;
+    const origKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
+    if (!gpuColourOn(g, surfaceSrcKeyRef, p, film, filmSize, filmKey, origKey, { source: original, w: b.w, h: b.h })) return null;
+    let glow: WebGLTexture | null = null;
+    if (hasGlow(p)) { glow = glowGpu(p, { original, w: b.w, h: b.h }, origKey); if (!glow) return null; }
+    return g.drawImage(glow);
+  };
+
+  /* ── 發光：GPU 上從原圖算成一張「原圖＋光」的貼圖（與畫面同一個 context） ── */
+  /** tex：特效畫進去的那張（由下往上）；td：翻回由上往下、與上傳的原圖同一種排法的那張 */
+  const glowTexRef = useRef<{ tex: WebGLTexture; td: WebGLTexture; w: number; h: number; key: string; gl: WebGLRenderingContext } | null>(null);
+  const glowLayerRef = useRef<HalationLayer | null>(null);
+  const glowGpu = (p: EditorParams, b: { original: Uint8ClampedArray; w: number; h: number }, origKey: string): WebGLTexture | null => {
+    const surface = fxSurfaceRef.current, g = getSurfaceGpu();
+    if (!surface || !g || !g.fits(b.w, b.h)) return null;
+    const softOn = p.soft > 0, haloOn = p.fringeIntensity > 0, fxOn = GLOW_FX_IDS.some(id => ((p as any)[id] || 0) > 0);
+    // 編輯一次只開一個特效；萬一同時有兩種，交給 CPU 那條依序疊。
+    if (Number(softOn) + Number(haloOn) + Number(fxOn) !== 1) return null;
+    const gl = surfaceGl(surface);
+    if (!gl) return null;
+    const key = `${origKey}|${glowSig(p)}`;
+    let t = glowTexRef.current;
+    if (t && (t.gl !== gl || t.w !== b.w || t.h !== b.h)) { try { t.gl.deleteTexture(t.tex); t.gl.deleteTexture(t.td); } catch { /* 舊 context */ } t = glowTexRef.current = null; }
+    if (t && t.key === key) return t.td;
+    if (surfaceSrcKeyRef.current !== origKey) { if (!g.setSource(b.original, b.w, b.h)) return null; surfaceSrcKeyRef.current = origKey; }
+    const up = g.sourceUpTex();
+    const ctx = displayCanvasRef.current?.getContext('2d');
+    if (!up || !ctx) return null;
+    if (!t) {
+      // td 的取樣設定要跟上傳原圖的那張一樣（LINEAR），顏色那段取出來才一模一樣
+      const mk = (filter: number) => {
+        const tex = gl.createTexture()!;
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, b.w, b.h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, filter], [gl.TEXTURE_MAG_FILTER, filter], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+        return tex;
+      };
+      t = glowTexRef.current = { tex: mk(gl.NEAREST), td: mk(gl.LINEAR), w: b.w, h: b.h, key: '', gl };
+    }
+    const pg = glowOnly(p);
+    let ok = false;
+    try {
+      if (softOn || haloOn) {
+        const layer = (glowLayerRef.current ||= new HalationLayer(surface));
+        layer.sourceImage = up; layer.targetTexture = t.tex;
+        try {
+          ok = !!(softOn
+            ? layer.renderSoft(ctx, b.w, b.h, `${origKey}|soft`, pg, hslToRgb(pg.softColor / 100, 1, .5), null)
+            : layer.render(ctx, b.w, b.h, `${origKey}|halo`, pg, hslToRgb(pg.fringeHue / 360, .8, .35)));
+        } finally { layer.sourceImage = null; layer.targetTexture = null; }
+      } else {
+        ok = !!applyGlEffects(ctx, b.w, b.h, pg, `${origKey}|glow`, surface, false, undefined, undefined, { image: up, toTexture: t.tex });
+      }
+      /* 翻回與原圖相同的列序：拖曳時顏色那段取這張、放手後取讀回來的像素，
+         兩邊用同一組座標取同一格，所以拖曳中與放手後逐像素一樣。 */
+      if (ok) ok = g.flipInto(t.tex, t.td, b.w, b.h);
+    } catch { ok = false; }
+    if (!ok) { t.key = ''; return null; }
+    t.key = key;
+    return t.td;
+  };
+  /** 把那張貼圖（已是由上往下）讀回來。只在放手後做一次。 */
+  const readGlowPixels = (tex: WebGLTexture, gl: WebGLRenderingContext, w: number, h: number): Uint8ClampedArray | null => {
+    try {
+      const fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      const out = new Uint8ClampedArray(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(out.buffer));
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.deleteFramebuffer(fb);
+      return out;
+    } catch { return null; }
+  };
+  /** 沒有 GPU 表面時：在一張離屏畫布上對原圖跑同一套特效（匯出也是這條） */
+  const glowCpu = (p: EditorParams, original: Uint8ClampedArray, w: number, h: number): Uint8ClampedArray | null => {
+    try {
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const x = c.getContext('2d', { willReadFrequently: true })!;
+      x.putImageData(new ImageData(original as Uint8ClampedArray<ArrayBuffer>, w, h), 0, 0);   // 只讀，不必複製
+      applyComplexEffectsRef.current(x, w, h, glowOnly(p), Math.max(w, h) / 1080, null, false, true, original);
+      const d = x.getImageData(0, 0, w, h).data;
+      c.width = c.height = 1;
+      return d;
+    } catch { return null; }
+  };
+  /** 讓 b.source 對上這組參數的發光：沒有發光＝原圖，有的話＝原圖＋光。
+      同一組就什麼都不做；只有換了發光參數（或換照片）才重算。 */
+  const syncGlowSource = (b: BufferSet, p: EditorParams): boolean => {
+    if (!b.source) return false;
+    if (!b.original) b.original = b.source;
+    const origKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
+    const sig = glowSig(p), key = sig ? `${origKey}|${sig}` : '';
+    if (key === (b.glowKey || '')) return true;
+    if (!key) b.source = b.original;
+    else {
+      let out: Uint8ClampedArray | null = null;
+      // GPU 那張貼圖只給預覽用；縮圖等其他緩衝區走 CPU，才不會把預覽那張擠掉
+      const tex = b === buffers.current.preview ? glowGpu(p, { original: b.original, w: b.w, h: b.h }, origKey) : null;
+      if (tex && glowTexRef.current) out = readGlowPixels(tex, glowTexRef.current.gl, b.w, b.h);
+      if (!out) out = glowCpu(p, b.original, b.w, b.h);
+      if (!out) return false;
+      b.source = out;
+    }
+    b.glowKey = key;
+    // 號碼只往上加、不重複用：關掉再開另一組發光時，舊快取的鍵不能剛好對上
+    if (b === buffers.current.preview) glowGenRef.current = key ? ++glowSerialRef.current : 0;
+    lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0 };
+    return true;
   };
   const gpuColourOn = (g: LutGpu, srcKeyRef: React.MutableRefObject<string>, p: EditorParams, film: Uint8ClampedArray | null, filmSize: number, filmKey: string, srcKey: string, b: { source: Uint8ClampedArray | null; w: number; h: number }): boolean => {
     if (!b.source || !g.fits(b.w, b.h)) return false;
@@ -3081,7 +3209,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const W = THUMB_W, H = THUMB_H;
       const src = document.createElement('canvas');
       src.width = b.w; src.height = b.h;
-      src.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(b.source), b.w, b.h), 0, 0);
+      src.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(b.original || b.source), b.w, b.h), 0, 0);
       const small = document.createElement('canvas');
       small.width = W; small.height = H;
       const sctx = small.getContext('2d', { willReadFrequently: true })!;
@@ -3160,7 +3288,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const W = THUMB_W, H = THUMB_H;
       const src = document.createElement('canvas');
       src.width = b.w; src.height = b.h;
-      src.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(b.source), b.w, b.h), 0, 0);
+      src.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(b.original || b.source), b.w, b.h), 0, 0);
 
       // 底圖固定是原圖：不套濾鏡也不套調整
       const flat = DEFAULT_PARAMS;
@@ -3571,7 +3699,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const effectHasDetail = (toolId: string) =>
     !!EFFECT_DETAIL_CAT[toolId] || !!(FX_TOOLS[toolId] && FX_TOOLS[toolId].length > 1);
 
-  const fxInputKey=(p:EditorParams)=>`${srcIdOf(buffersSrcRef.current)}|${selectedLutIdx}|${!!lutDataRef.current[lutList[selectedLutIdx]?.id]}|${activeCategory}|${JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('fx'))))}|${forceRecalculateEffectsRef.current}`;
+  const fxInputKey=(p:EditorParams)=>`${srcIdent()}|${selectedLutIdx}|${!!lutDataRef.current[lutList[selectedLutIdx]?.id]}|${activeCategory}|${JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('fx'))))}|${forceRecalculateEffectsRef.current}`;
   /* Luminance histogram of the colour-processed photo (for soft light).
      Source data, in order of preference:
        · colourSampleRef — 128px reads of the GPU colour result without and
@@ -3584,7 +3712,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const colourSampleRef = useRef<{ key: string; d0: Uint8Array | null; d1: Uint8Array | null }>({ key: '', d0: null, d1: null });
   const cpuColourKeyRef = useRef('');
   const colourBinsRef = useRef<{ key: string; bins: Float64Array | null }>({ key: '', bins: null });
-  const colourKeyOf = (p: EditorParams) => `${srcIdOf(buffersSrcRef.current)}|${lutList[selectedLutIdx]?.id}|${bakeSigRef.current({ ...p, lutAmount: 0 })}`;
+  const colourKeyOf = (p: EditorParams) => `${srcIdent()}|${lutList[selectedLutIdx]?.id}|${bakeSigRef.current({ ...p, lutAmount: 0 })}`;
   const colourBinsFor = (p: EditorParams): Float64Array | null => {
     const key = colourKeyOf(p);
     const lut = lutList[selectedLutIdx], hasFilm = !!(lut?.url && lutDataRef.current[lut.id]);
@@ -3616,7 +3744,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const legacyInputKey=(p:EditorParams,w:number,h:number,kind:'soft'|'halation'|'leak')=>{
     const excluded=kind==='soft'?['soft','softThreshold','softRadius','softColor']:kind==='leak'?['leakOpacity','leakAngle','leakHue']:['fringeIntensity','fringeSize','fringeFeather','fringeHue'];
-    return JSON.stringify([srcIdOf(buffersSrcRef.current),w,h,lutList[selectedLutIdx]?.id,!!lutDataRef.current[lutList[selectedLutIdx]?.id],toneSig(p),Object.fromEntries(Object.entries(p).filter(([k])=>!excluded.includes(k)))]);
+    return JSON.stringify([srcIdent(),w,h,lutList[selectedLutIdx]?.id,!!lutDataRef.current[lutList[selectedLutIdx]?.id],toneSig(p),Object.fromEntries(Object.entries(p).filter(([k])=>!excluded.includes(k)))]);
   };
   const applyComplexEffects = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number, p: EditorParams, scale: number, sharedBuf: Uint8ClampedArray | null, isInteracting: boolean, baking: boolean, sourcePixelData: Uint8ClampedArray | null) => {
     const lut = lutList[selectedLutIdx];
@@ -3866,7 +3994,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const {soft,softThreshold,softRadius,softColor,fringeIntensity,fringeSize,fringeFeather,fringeHue,leakOpacity,leakAngle,leakHue,vignette,...upstream}=p;
         const input=Object.fromEntries(Object.entries(upstream).filter(([key])=>!key.startsWith('fx')));
         softLayerRef.current ||= new HalationLayer();
-        acceleratedSoft=softLayerRef.current.renderSoft(ctx,w,h,JSON.stringify([srcIdOf(buffersSrcRef.current),w,h,lutId,toneStr,input]),p,hslToRgb(p.softColor/100,1,.5),colourBinsFor(p));
+        acceleratedSoft=softLayerRef.current.renderSoft(ctx,w,h,JSON.stringify([srcIdent(),w,h,lutId,toneStr,input]),p,hslToRgb(p.softColor/100,1,.5),colourBinsFor(p));
       }
       if(acceleratedSoft){
         ctx.drawImage(acceleratedSoft,0,0,w,h);
@@ -3990,7 +4118,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const {fringeIntensity,fringeSize,fringeFeather,fringeHue,...upstream}=p;
         // Parameters after this layer do not alter its source pixels.
         const input=Object.fromEntries(Object.entries(upstream).filter(([key])=>!key.startsWith('fx')&&key!=='vignette'));
-        const key=JSON.stringify([srcIdOf(buffersSrcRef.current),w,h,lutId,toneStr,input]);
+        const key=JSON.stringify([srcIdent(),w,h,lutId,toneStr,input]);
         halationLayerRef.current ||= new HalationLayer();
         acceleratedHalation=halationLayerRef.current.render(ctx,w,h,key,p,hslToRgb(p.fringeHue/360,.8,.35));
     }
@@ -4016,7 +4144,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             const hCtx = hCanvas.getContext('2d', { willReadFrequently: true })!;
             
             const { fringeIntensity: _strength, fringeHue: _hue, fringeFeather: _feather, ...sourceParams } = p;
-            const preparationKey = JSON.stringify([srcIdOf(buffersSrcRef.current), w, h, hw, hh, lutId, toneStr, sourceParams]);
+            const preparationKey = JSON.stringify([srcIdent(), w, h, hw, hh, lutId, toneStr, sourceParams]);
             const prepared = !baking && !forceRecalculateEffectsRef.current && halationPreparedRef.current?.key === preparationKey
               ? halationPreparedRef.current : null;
             let srcData: Uint8ClampedArray;
@@ -4412,6 +4540,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const renderParamsToCanvas = useCallback((p: EditorParams, targetCanvas: HTMLCanvasElement) => {
     const b = buffers.current.preview;
     if (!b.source) return;
+    syncGlowSource(b, p);
+    p = stripGlow(p);
     
     targetCanvas.width = b.w;
     targetCanvas.height = b.h;
@@ -4439,7 +4569,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
          · colorNoise2 —— 它的雜訊遮罩要吃 tempDest 的像素
        任何一步失敗都原封不動走回下面的 CPU 路徑。 */
     if (!p.sharpen && !p.colorNoise2) {
-      const srcKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
+      const srcKey = `${b.w}x${b.h}|${srcIdent()}`;
       if (!exportC0Ref.current) exportC0Ref.current = document.createElement('canvas');
       const ok0 = gpuPaint(exportC0Ref.current, b.source, b.w, b.h,
         { ...p, lutAmount: 0 }, null, 0, 65, srcKey, null);
@@ -4521,7 +4651,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const b = buffers.current.preview;
     const pBase = { ...paramsRef.current, [toolId]: 0 } as EditorParams;
     const lut = lutList[selectedLutIdx];
-    return `${toolId}|${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}|${lut?.id || 'none'}|${pBase.sharpen}|${bakeSigRef.current(pBase)}`;
+    return `${toolId}|${b.w}x${b.h}|${srcIdent()}|${lut?.id || 'none'}|${pBase.sharpen}|${bakeSigRef.current(pBase)}`;
   }, [lutList, selectedLutIdx]);
 
   /** 算三份裡的下一份。回傳 true 代表這一次真的有做事（沒事做就回 false）。 */
@@ -4622,7 +4752,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        drag shows exactly what release will show. */
     const pb = buffers.current.preview;
     const gpuLiveColour = !p.sharpen && !p.colorNoise2 && !!pb.source && !!getGpu()?.fits(pb.w, pb.h);
-    const isFastBlendActive = isInteracting && !gpuLiveColour &&
+    const isFastBlendActive = isInteracting && !gpuLiveColour && !hasGlow(p) &&
         extremeBuffersRef.current.activeToolId === activeToolId &&
         FAST_BLEND_TOOLS.includes(activeToolId) &&
         cache.active && cache.toolId === activeToolId &&
@@ -4663,6 +4793,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        （烤表 2.2ms ＋ 畫 0.1ms），全解析度本來就跑得動。 */
     /* 剛換濾鏡時先用低解析度那份畫一張（運算量只有 1/4，按下去馬上看得到），
        同一拍再標記 dirty，下一幀用全解析度重畫蓋上去 —— 最終畫質沒有妥協。 */
+    /* 有發光時不走低解析度那張（那張沒有對應的發光），直接全解析度 ——
+       旗標也在這裡收掉，不能留到之後（例如合併完沒有發光了）才突然觸發。 */
+    if (quickFilterRef.current && hasGlow(p)) quickFilterRef.current = false;
     const quickPass = quickFilterRef.current && !!proxy.source && !isInteracting;
     const useProxy = quickPass;
     const b = useProxy ? proxy : buffers.current.preview;
@@ -4676,19 +4809,25 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     
     const ctx = cvs.getContext('2d')!;
+    /* 發光類特效在原圖上算（見 syncGlowSource）。拖曳中而且有 GPU 表面時，
+       發光參數變了交給下面的 GPU 直通路線（不讀回像素）；其他情況先在這裡對齊。 */
+    const glowPending = glowSig(p) ? `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}|${glowSig(p)}` !== (b.glowKey || '') : !!b.glowKey;
+    if (!(isInteracting && glowPending && getSurfaceGpu())) syncGlowSource(b, p);
+    const glowStale = glowPending && b.glowKey !== (glowSig(p) ? `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}|${glowSig(p)}` : '');
+    const pPost0 = stripGlow(p);
     const legacy=legacyPreviewRef.current;
-    if(!showOriginalRef.current&&!forceRecalculateEffectsRef.current&&!displayStaleRef.current&&legacy&&legacy.key===legacyInputKey(p,b.w,b.h,legacy.kind)){
-      const painted=legacy.kind==='soft'&&p.soft>0
-        ? softPresentRef.current?.renderSoft(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.softColor/100,1,.5),colourBinsFor(p))
-        : legacy.kind==='halation'&&p.fringeIntensity>0
-          ? halationPresentRef.current?.render(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.fringeHue/360,.8,.35))
-          : legacy.kind==='leak'&&p.leakOpacity>0?leakPresentRef.current?.renderLeak(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.leakHue/360,1,.5)):null;
+    if(!glowStale&&!showOriginalRef.current&&!forceRecalculateEffectsRef.current&&!displayStaleRef.current&&legacy&&legacy.key===legacyInputKey(pPost0,b.w,b.h,legacy.kind)){
+      const painted=legacy.kind==='soft'&&pPost0.soft>0
+        ? softPresentRef.current?.renderSoft(ctx,b.w,b.h,legacy.key,pPost0,hslToRgb(pPost0.softColor/100,1,.5),colourBinsFor(pPost0))
+        : legacy.kind==='halation'&&pPost0.fringeIntensity>0
+          ? halationPresentRef.current?.render(ctx,b.w,b.h,legacy.key,pPost0,hslToRgb(pPost0.fringeHue/360,.8,.35))
+          : legacy.kind==='leak'&&pPost0.leakOpacity>0?leakPresentRef.current?.renderLeak(ctx,b.w,b.h,legacy.key,pPost0,hslToRgb(pPost0.leakHue/360,1,.5)):null;
       if(painted){showFxSurface(true);return;}
     }
     legacyPreviewRef.current=null;
-    const fastKey=`${b.w}x${b.h}|${fxInputKey(p)}`;
-    if(!showOriginalRef.current && hasActiveFx(p) && fxInputKeyRef.current===fastKey && fxSurfaceRef.current){
-      if(applyGlEffects(ctx,b.w,b.h,p,fxInputKey(p),fxSurfaceRef.current)){showFxSurface(true);return;}
+    const fastKey=`${b.w}x${b.h}|${fxInputKey(pPost0)}`;
+    if(!glowStale && !showOriginalRef.current && hasActiveFx(pPost0) && fxInputKeyRef.current===fastKey && fxSurfaceRef.current){
+      if(applyGlEffects(ctx,b.w,b.h,pPost0,fxInputKey(pPost0),fxSurfaceRef.current)){showFxSurface(true);return;}
     }
     showFxSurface(false);fxInputKeyRef.current='';
 
@@ -4705,6 +4844,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
     const currentIdx = overrideLutIdx !== undefined ? overrideLutIdx : selectedLutIdx;
     const pRender = { ...p };
+    /** 顏色之後要套的特效：發光類已經混在 b.source（或 GPU 那張貼圖）裡了 */
+    const pPost = stripGlow(pRender);
 
     // Check if we are at effectively original state (No edits)
     const isNoEdits = currentIdx === 0 && 
@@ -4736,7 +4877,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             ctx.drawImage(pristine, (b.w - dw) / 2, (b.h - dh) / 2, dw, dh);
             ctx.restore();
         } else {
-            pixelBufferCtx.putImageData(new ImageData(b.source, b.w, b.h), 0, 0);
+            pixelBufferCtx.putImageData(new ImageData(b.original || b.source, b.w, b.h), 0, 0);
             ctx.drawImage(pixelBufferCanvas, 0, 0);
         }
         cvs.style.filter = 'none';
@@ -4757,9 +4898,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        (WebGL → 2D → 2D → WebGL) that a phone pays for on every slider step.
        The pixels are the same 8-bit values the normal path produces; after
        release one normal render brings the 2D buffers up to date. */
-    if (isInteracting && !isFastBlendActive && fxSurfaceRef.current && b.source && !pRender.sharpen && !pRender.colorNoise2 && !uses2dEffects(pRender)) {
-        const srcKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
-        const spill = !!pRender.fxExposureSpill;
+    if (isInteracting && !isFastBlendActive && fxSurfaceRef.current && b.source && !pRender.sharpen && !pRender.colorNoise2 && !uses2dEffects(pPost)) {
+        const srcKey = `${b.w}x${b.h}|${srcIdent()}`;
+        const spill = !!pPost.fxExposureSpill;
         const filmKey = activeLut ? `${lut.id}#${lutSize}` : '';
         /* Colour stage in the surface's own context: the effects read its
            texture, nothing crosses between GPU contexts, nothing is read
@@ -4768,18 +4909,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const image = !(pRender as any).fxLowfi ? gpuFinalImage(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b) : null;
         if (image) {
             const surface = fxSurfaceRef.current;
-            const imageKey = `${srcKey}|${colourKeyOf(pRender)}|${activeLut ? pRender.lutAmount : 0}|${filmKey}`;
-            const shown = hasActiveFx(pRender)
-                ? !!applyGlEffects(ctx, b.w, b.h, pRender, imageKey, surface, false, undefined, undefined, { image })
+            const imageKey = `${srcKey}|${colourKeyOf(pRender)}|${activeLut ? pRender.lutAmount : 0}|${filmKey}|${glowSig(pRender)}`;
+            const shown = hasActiveFx(pPost)
+                ? !!applyGlEffects(ctx, b.w, b.h, pPost, imageKey, surface, false, undefined, undefined, { image })
                 : presentFxSource(ctx, b.w, b.h, surface, image);
             if (shown) { showFxSurface(true); displayStaleRef.current = true; cvs.style.filter = 'none'; return; }
         }
-        const out = gpuFinal(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b);
+        syncGlowSource(b, pRender);
+        const out = gpuFinal(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, `${b.w}x${b.h}|${srcIdent()}`, b);
         if (out) {
             const bins = spill ? (() => { const sm = getGpu()?.readSmall(); if (!sm) return null; const d = new Uint8ClampedArray(sm.data); for (let i = 3; i < d.length; i += 4) d[i] = 255; return highlightHistogram(d); })() : null;
             const surface = fxSurfaceRef.current;
-            const shown = hasActiveFx(pRender)
-                ? !!applyGlEffects(ctx, b.w, b.h, pRender, undefined, surface, false, undefined, undefined, { canvas: out, bins })
+            const shown = hasActiveFx(pPost)
+                ? !!applyGlEffects(ctx, b.w, b.h, pPost, undefined, surface, false, undefined, undefined, { canvas: out, bins })
                 : presentFxSource(ctx, b.w, b.h, surface, out);
             if (shown) { showFxSurface(true); displayStaleRef.current = true; cvs.style.filter = 'none'; return; }
         }
@@ -4787,13 +4929,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     /* Same while dragging with 2D effects on: the colour result reaches the
        2D canvas in one copy (instead of two full-size intermediate canvases),
        then the effects run as usual. */
-    if (isInteracting && !isFastBlendActive && b.source && !pRender.sharpen && !pRender.colorNoise2 && uses2dEffects(pRender)) {
-        const srcKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
+    if (isInteracting && !isFastBlendActive && b.source && !pRender.sharpen && !pRender.colorNoise2 && uses2dEffects(pPost)) {
+        const srcKey = `${b.w}x${b.h}|${srcIdent()}`;
         const filmKey = activeLut ? `${lut.id}#${lutSize}` : '';
         /* Only soft light, halation or light leak on: its GPU layer presents
            on the effect surface. With the colour stage in that same context
            it takes the colour result as a texture — no copy, no readback. */
-        const p0 = pRender, others = !!(p0.grain || p0.colorNoise || p0.blur || p0.vignette || p0.maskCreated) || hasActiveFx(p0);
+        const p0 = pPost, others = !!(p0.grain || p0.colorNoise || p0.blur || p0.vignette || p0.maskCreated) || hasActiveFx(p0);
         const single = others ? null : [p0.soft > 0 && 'soft', p0.fringeIntensity > 0 && 'halation', p0.leakOpacity > 0 && 'leak'].filter(Boolean);
         if (single && single.length === 1 && fxSurfaceRef.current) {
             const image = gpuFinalImage(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b);
@@ -4813,9 +4955,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 if (painted) { legacyPreviewRef.current = { kind, key }; showFxSurface(true); displayStaleRef.current = true; cvs.style.filter = 'none'; return; }
             }
         }
-        const out = gpuFinal(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b);
+        syncGlowSource(b, pRender);
+        const out = gpuFinal(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, `${b.w}x${b.h}|${srcIdent()}`, b);
         if (out) {
-            if (pRender.soft > 0 || pRender.fxExposureSpill) {
+            if (pPost.soft > 0 || pPost.fxExposureSpill) {
                 const sm = getGpu()?.readSmall();
                 if (sm) {
                     const d = new Uint8ClampedArray(sm.data); for (let i = 3; i < d.length; i += 4) d[i] = 255;
@@ -4844,12 +4987,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             ctx.globalCompositeOperation = 'copy'; ctx.drawImage(out, 0, 0); ctx.globalCompositeOperation = 'source-over';
             cvs.style.filter = 'none';
             displayStaleRef.current = true;
-            applyComplexEffects(ctx, b.w, b.h, pRender, Math.max(b.w, b.h) / 1080, b.shared, isInteracting, false, b.dest);
+            applyComplexEffects(ctx, b.w, b.h, pPost, Math.max(b.w, b.h) / 1080, b.shared, isInteracting, false, b.dest);
             if (!fxSurfaceShownRef.current) presentEditorSource(ctx, b.w, b.h);
             return;
         }
     }
 
+    // 一般路線：顏色那一段吃的是「原圖＋光」（放手後在這裡從 GPU 那張讀回一次）
+    syncGlowSource(b, pRender);
     if (isFastBlendActive) {
         // Fast proxy GPU-accelerated blending: handled entirely on the GPU in the drawing step below for maximum FPS.
     } else {
@@ -4907,7 +5052,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         if (shouldReprocessPixels && gpuEligible) {
             const tGpu = performance.now();
             const grid = isInteracting ? 33 : 65;
-            const srcKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
+            const srcKey = `${b.w}x${b.h}|${srcIdent()}`;
             if (!lut0CanvasRef.current) lut0CanvasRef.current = document.createElement('canvas');
             /* 調節那一份完全不看濾鏡，所以濾鏡鍵固定是 'none' ——
                換濾鏡時這張表就會直接命中快取，一次都不用重烤。 */
@@ -5136,7 +5281,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     
     const scale = Math.max(b.w, b.h) / 1080;
     // Pass b.dest as sourcePixelData for noise masking
-    applyComplexEffects(ctx, b.w, b.h, pRender, scale, b.shared, isInteracting, false, b.dest);
+    applyComplexEffects(ctx, b.w, b.h, pPost, scale, b.shared, isInteracting, false, b.dest);
     if(!fxSurfaceShownRef.current)presentEditorSource(ctx,b.w,b.h);
 
     if (quickPass) {
@@ -5625,7 +5770,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         /* 閒著的時候先把 GPU 暖起來（上傳貼圖、建表、跑一次空 draw）。
            不先做的話這些一次性成本會落在手指按下滑桿的第一幀，就是「抖一下」。 */
         if (!isDirtyRef.current && !isInteractingRef.current && performance.now() - lastUiInputRef.current > 800 && b?.source && b.w && b.h) {
-            warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`);
+            warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdent()}`);
             /* 貼圖暖好之後，接著一顆一顆把濾鏡的查色表也烤起來。
                每次閒置只烤一顆，主執行緒馬上還回去。 */
             const baked = gpuWarmKeyRef.current ? warmBakes(paramsRef.current) : false;
@@ -5653,7 +5798,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                放開  ：按著的期間如果什麼都沒變（isDirtyRef 是乾淨的），
                        直接把那份貼回來就好，一次搬移，不必重算。 */
             if (flipped) {
-                const snapKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
+                const snapKey = `${b.w}x${b.h}|${srcIdent()}`;
                 if (currentShowOriginal) {
                     if (!compareSnapRef.current) compareSnapRef.current = document.createElement('canvas');
                     const snap = compareSnapRef.current;
@@ -5810,7 +5955,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     c.width = w; c.height = h;
     const ctxOriginal = c.getContext('2d', { willReadFrequently: true })!;
     ctxOriginal.drawImage(geoSource, 0, 0, w, h);
-    const sourceData = ctxOriginal.getImageData(0, 0, w, h).data;
+    const originalData = ctxOriginal.getImageData(0, 0, w, h).data;
+    /* 發光類特效先在原圖上算（跟預覽同一個順序），濾鏡與調節再套在「原圖＋光」上 */
+    const sourceData = hasGlow(p) ? (glowCpu(p, originalData, w, h) || originalData) : originalData;
     const len = sourceData.length;
     /* 像素已經讀出來後立即釋放來源畫布。12MP 的一張 RGBA 畫布約 48MB；
        舊版匯出時同時保留多份，iOS 會因此收走 WebGL context。 */
@@ -5887,7 +6034,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       ctx.putImageData(new ImageData(destData, w, h), 0, 0);
     }
     const scale = Math.max(w, h) / 1080;
-    applyComplexEffects(ctx, w, h, p, scale, null, false, true, gpuOk ? null : destData);
+    applyComplexEffects(ctx, w, h, stripGlow(p), scale, null, false, true, gpuOk ? null : destData);
     return canvas;
   };
 

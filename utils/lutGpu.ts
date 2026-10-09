@@ -310,7 +310,7 @@ export class LutGpu {
     gl.bindTexture(gl.TEXTURE_2D, this.imgTex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE,
       new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
-    this.srcW = w; this.srcH = h;
+    this.srcW = w; this.srcH = h; this.srcGen++;
     if (this.shared) return true;
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w; this.canvas.height = h;
@@ -425,8 +425,11 @@ export class LutGpu {
    * shared context and return it (rows bottom-up, like a canvas uploaded with
    * UNPACK_FLIP_Y_WEBGL). Same shader, inputs and 8-bit output as draw().
    * All state it relies on is bound here, since the context is shared.
+   * `source` replaces the uploaded photo: a texture of this context with the
+   * same size and the same row order as setSource() (top-down), e.g. one made
+   * by flipInto(); it is sampled exactly as the uploaded photo would be.
    */
-  drawImage(): { texture: WebGLTexture; w: number; h: number } | null {
+  drawImage(source?: WebGLTexture | null): { texture: WebGLTexture; w: number; h: number } | null {
     if (!this.shared || this.lost || !this.srcW || (!this.lutSize && !(this.frontOn && !this.backOn))) return null;
     const gl = this.gl, w = this.srcW, h = this.srcH;
     if (!this.outTex) { this.outTex = gl.createTexture(); this.outFbo = gl.createFramebuffer(); }
@@ -439,7 +442,7 @@ export class LutGpu {
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.outFbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.outTex, 0);
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.imgTex);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, source || this.imgTex);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_3D, this.plainTex);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.toneTex);
@@ -451,6 +454,52 @@ export class LutGpu {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     return { texture: this.outTex!, w, h };
+  }
+
+  /** Shared mode: the unedited source photo as a texture of this context with
+   *  rows bottom-up (as a canvas uploaded with UNPACK_FLIP_Y), the input the
+   *  effects expect. Made once per source (setSource clears it). */
+  private upTex: WebGLTexture | null = null;
+  private upValid = '';
+  private upProg: WebGLProgram | null = null;
+  sourceUpTex(): { texture: WebGLTexture; w: number; h: number } | null {
+    if (!this.shared || this.lost || !this.srcW) return null;
+    const gl = this.gl, w = this.srcW, h = this.srcH, key = `${w}x${h}#${this.srcGen}`;
+    if (this.upValid === key && this.upTex) return { texture: this.upTex, w, h };
+    if (!this.upTex) this.upTex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.upTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    if (!this.flipInto(this.imgTex!, this.upTex!, w, h)) return null;
+    this.upValid = key;
+    return { texture: this.upTex!, w, h };
+  }
+  private srcGen = 0;
+  /** Copy a w×h texture of this context into another one with the rows in
+   *  the opposite order (top-down ⇄ bottom-up). dst must be allocated. */
+  private flipFbo: WebGLFramebuffer | null = null;
+  flipInto(src: WebGLTexture, dst: WebGLTexture, w: number, h: number): boolean {
+    if (!this.shared || this.lost) return false;
+    const gl = this.gl;
+    if (!this.upProg) {
+      const vs = compile(gl, gl.VERTEX_SHADER, VERT), fs = compile(gl, gl.FRAGMENT_SHADER, `#version 300 es
+precision highp float;uniform sampler2D uImage;in vec2 vUv;out vec4 fragColor;void main(){fragColor=texture(uImage,vUv);}`);
+      if (!vs || !fs) return false;
+      const pr = gl.createProgram()!; gl.attachShader(pr, vs); gl.attachShader(pr, fs); gl.bindAttribLocation(pr, 0, 'aPos'); gl.linkProgram(pr);
+      if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) return false;
+      this.upProg = pr;
+    }
+    this.flipFbo ||= gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.flipFbo); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dst, 0);
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, src);
+    gl.bindVertexArray(null);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST);
+    gl.viewport(0, 0, w, h); gl.useProgram(this.upProg);
+    gl.uniform1i(gl.getUniformLocation(this.upProg, 'uImage'), 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return true;
   }
 
   /** The current colour result at ≤maxSide px (RGBA, rows bottom-up), read
@@ -497,8 +546,9 @@ export class LutGpu {
     if (this.shared) {
       // The context belongs to the surface; release only this stage's storage.
       const gl = this.gl;
-      for (const t of [this.imgTex, this.lutTex, this.plainTex, this.toneTex, this.curveTex, this.outTex, this.smallTex]) if (t) gl.deleteTexture(t);
-      if (this.outFbo) gl.deleteFramebuffer(this.outFbo); if (this.smallFbo) gl.deleteFramebuffer(this.smallFbo);
+      for (const t of [this.imgTex, this.lutTex, this.plainTex, this.toneTex, this.curveTex, this.outTex, this.smallTex, this.upTex]) if (t) gl.deleteTexture(t);
+      for (const f of [this.outFbo, this.smallFbo, this.flipFbo]) if (f) gl.deleteFramebuffer(f);
+      if (this.upProg) gl.deleteProgram(this.upProg);
       if (this.quad) gl.deleteBuffer(this.quad); gl.deleteProgram(this.prog);
       this.lost = true; return;
     }

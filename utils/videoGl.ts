@@ -42,6 +42,10 @@
 import { FX_DEFS, fxActive, fxPassSource, FX_BLEND_FS, FX_VS, FX_REF, type FxDef } from './glEffects';
 import {bindLowfiLut} from './lowfiLut';
 import { activeCpuFx, CPU_FX_DEFAULTS, type CpuFxDef } from './videoFxCpu';
+import { GLOW_FX_IDS } from './glowFx';
+
+/** 影片這條路上屬於發光類的那兩支（其餘發光類在 GLOW_FX_IDS） */
+const GLOW_CPU_IDS = ['soft', 'halation'];
 
 /* ── 特效（那一整排「朦朧／動態模糊／VHS／馬賽克…」）─────────────────
    這些不是顏色，是「看鄰居的像素」的效果，塞不進一顆查色表 ——
@@ -477,6 +481,50 @@ export class VideoGl {
     gl.uniform1f(gl.getUniformLocation(prog, 'uTime'), 0);
   }
 
+  /** 跑完一支 glEffects 的特效（幾趟＋按強度混回去），回傳結果在哪一張材質 */
+  private runGlFx(d: (typeof FX_DEFS)[number], T: WebGLTexture[], cur: number, W: number, H: number): number {
+    const gl = this.gl;
+    const layerIn = cur;
+    let from = cur;
+    for (let i = 0; i < d.passes.length; i++) {
+      const pass = d.passes[i];
+      const prog = this.fxProg(`${d.id}#${i}`, fxPassSource(d, pass));
+      // 這一支臨時編不出來：這一顆特效跳過，畫面維持上一層的結果
+      if (!prog) { from = layerIn; break; }
+      let to = 0;
+      while (to === from || to === layerIn) to++;
+      gl.useProgram(prog);
+      this.fxBind(prog, T[pass.fromSource ? layerIn : from], T[layerIn], W, H);
+      gl.uniform1f(gl.getUniformLocation(prog,'uEffectAmount'),Math.max(0,Math.min(1,(this.fxParams?.[d.id]||0)/100)));
+      if(this.fxAux){gl.activeTexture(gl.TEXTURE6);gl.bindTexture(gl.TEXTURE_2D,this.fxAux);gl.uniform1i(gl.getUniformLocation(prog,'uAux'),6);}
+      if(d.id==='fxLowfi')bindLowfiLut(gl,prog);
+      gl.uniform2f(gl.getUniformLocation(prog, 'uDir'),
+        pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
+      for (const pp of d.params) {
+        const raw = this.fxParams ? this.fxParams[pp.id] : undefined;
+        const v = (typeof raw === 'number' ? raw : pp.def) * (pp.scale ?? 1);
+        gl.uniform1f(gl.getUniformLocation(prog, pp.id), v);
+      }
+      this.fxDrawTo(T[to]);
+      if(pass.preserveOutput){
+        gl.activeTexture(gl.TEXTURE6);
+        if(!this.fxAux){this.fxAux=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,this.fxAux);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);}
+        gl.bindTexture(gl.TEXTURE_2D,this.fxAux);gl.copyTexSubImage2D(gl.TEXTURE_2D,0,0,0,0,0,W,H);
+      }
+      from = to;
+    }
+    const blend = this.fxProg('__blend', FX_BLEND_FS);
+    if (!blend) return from;        // 混不了就直接用這一層的結果
+    let to = 0;
+    while (to === from || to === layerIn) to++;
+    gl.useProgram(blend);
+    this.fxBind(blend, T[from], T[layerIn], W, H);
+    const amt = Math.max(0, Math.min(1, ((this.fxParams?.[d.id]) || 0) / 100));
+    gl.uniform1f(gl.getUniformLocation(blend, 'uAmount'), d.handlesAmount ? 1 : amt);
+    this.fxDrawTo(T[to]);
+    return to;
+  }
+
   private fxDrawTo(target: WebGLTexture | null): void {
     const gl = this.gl;
     if (target) {
@@ -536,55 +584,43 @@ export class VideoGl {
          ② 每一個特效跑完自己的幾趟，再跟「這一層的輸入」按強度插值
          ③ 最後一趟套上形狀遮罩、預乘 alpha，畫到畫面上 */
       const T = this.fxTex;
+      /* 發光類（柔光、光暈、霓虹、柔光ll、變形光斑）跟照片同一個順序：先在還沒
+         調色的影格上算光，再把「影格＋光」整張調色，最後才是其他特效。 */
+      const glowCpu = this.cpuFx.filter(d => GLOW_CPU_IDS.includes(d.id));
+      const glowGl = this.fxDefs.filter(d => GLOW_FX_IDS.includes(d.id));
+      const glowFirst = glowCpu.length + glowGl.length > 0 && this.hasLut;
+      if (glowFirst) gl.uniform1i(this.u.uHasLut, 0);
       this.fxDrawTo(T[0]);
 
       let cur = 0;
+      if (glowFirst) {
+        for (const d of glowCpu) cur = this.runCpuFx(d, T, cur, W, H);
+        for (const d of glowGl) cur = this.runGlFx(d, T, cur, W, H);
+        // 調色：取剛剛那張（已裁切、列序由下往上，所以裁切框改成上下翻轉）
+        let to = 0;
+        while (to === cur) to++;
+        gl.useProgram(this.prog);
+        gl.uniform1i(this.u.uHasLut, 1);
+        gl.uniform1i(this.u.uHasMask, 0);
+        gl.uniform4f(this.u.uCrop, 0, 1, 1, -1);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, T[cur]);
+        gl.viewport(0, 0, W, H);
+        this.fxDrawTo(T[to]);
+        gl.bindTexture(gl.TEXTURE_2D, this.imgTex);
+        gl.uniform4f(this.u.uCrop, c.x, c.y, c.w, c.h);
+        cur = to;
+      }
       /* ① 先跑「原本只有 CPU 版」那幾支（噪點／朦朧／柔光／漏光／光暈／暗角），
             順序跟 applyPhotoFx 裡一模一樣，然後才輪到 glEffects 那批 —— 
             跟照片、跟匯出走的是同一個順序。 */
       for (const d of this.cpuFx) {
+        if (glowFirst && glowCpu.includes(d)) continue;
         cur = this.runCpuFx(d, T, cur, W, H);
       }
       for (const d of this.fxDefs) {
-        const layerIn = cur;
-        let from = cur;
-        for (let i = 0; i < d.passes.length; i++) {
-          const pass = d.passes[i];
-          const prog = this.fxProg(`${d.id}#${i}`, fxPassSource(d, pass));
-          // 這一支臨時編不出來：這一顆特效跳過，畫面維持上一層的結果
-          if (!prog) { from = layerIn; break; }
-          let to = 0;
-          while (to === from || to === layerIn) to++;
-          gl.useProgram(prog);
-          this.fxBind(prog, T[pass.fromSource ? layerIn : from], T[layerIn], W, H);
-          gl.uniform1f(gl.getUniformLocation(prog,'uEffectAmount'),Math.max(0,Math.min(1,(this.fxParams?.[d.id]||0)/100)));
-          if(this.fxAux){gl.activeTexture(gl.TEXTURE6);gl.bindTexture(gl.TEXTURE_2D,this.fxAux);gl.uniform1i(gl.getUniformLocation(prog,'uAux'),6);}
-          if(d.id==='fxLowfi')bindLowfiLut(gl,prog);
-          gl.uniform2f(gl.getUniformLocation(prog, 'uDir'),
-            pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
-          for (const pp of d.params) {
-            const raw = this.fxParams ? this.fxParams[pp.id] : undefined;
-            const v = (typeof raw === 'number' ? raw : pp.def) * (pp.scale ?? 1);
-            gl.uniform1f(gl.getUniformLocation(prog, pp.id), v);
-          }
-          this.fxDrawTo(T[to]);
-          if(pass.preserveOutput){
-            gl.activeTexture(gl.TEXTURE6);
-            if(!this.fxAux){this.fxAux=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,this.fxAux);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);}
-            gl.bindTexture(gl.TEXTURE_2D,this.fxAux);gl.copyTexSubImage2D(gl.TEXTURE_2D,0,0,0,0,0,W,H);
-          }
-          from = to;
-        }
-        const blend = this.fxProg('__blend', FX_BLEND_FS);
-        if (!blend) { cur = from; continue; }        // 混不了就直接用這一層的結果
-        let to = 0;
-        while (to === from || to === layerIn) to++;
-        gl.useProgram(blend);
-        this.fxBind(blend, T[from], T[layerIn], W, H);
-        const amt = Math.max(0, Math.min(1, ((this.fxParams?.[d.id]) || 0) / 100));
-        gl.uniform1f(gl.getUniformLocation(blend, 'uAmount'), d.handlesAmount ? 1 : amt);
-        this.fxDrawTo(T[to]);
-        cur = to;
+        if (glowFirst && glowGl.includes(d)) continue;
+        cur = this.runGlFx(d, T, cur, W, H);
       }
 
       const out = this.fxProg('__out', FX_OUT_FS);

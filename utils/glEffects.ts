@@ -976,7 +976,10 @@ export function applyGlEffects(
   colour?:FxColourInput,
   /** Read the photo from this canvas instead of ctx2d.canvas (e.g. the colour
    *  GPU's own canvas during a drag), with its luminance histogram if known. */
-  sourceOverride?:{canvas?:HTMLCanvasElement;image?:GpuImage;bins?:Float64Array|null},
+  sourceOverride?:{canvas?:HTMLCanvasElement;image?:GpuImage;bins?:Float64Array|null;
+    /** Write the result into this texture of the surface's context (same size)
+     *  instead of presenting it. */
+    toTexture?:WebGLTexture},
 ): HTMLCanvasElement | undefined {
   const active = FX_DEFS.filter(d => fxActive(params, d));
   if (!active.length || w < 2 || h < 2) return;
@@ -992,9 +995,12 @@ export function applyGlEffects(
   const renderKey=sourceKey?`${sourceKey}|${w}x${h}|${JSON.stringify(params)}|${JSON.stringify(scene?.placements)}`:undefined;
   // A tab/selection repaint is not an effect change. Keep the already drawn
   // full-quality frame instead of running every effect pass a second time.
-  if(renderKey&&c.renderedKey===renderKey&&c.renderedScene===scene&&c.renderedColour===colour&&c.canvas.width===outputW&&c.canvas.height===outputH)return c.canvas;
-  if(c.canvas.width!==outputW)c.canvas.width = outputW;
-  if(c.canvas.height!==outputH)c.canvas.height = outputH;
+  const toTexture=sourceOverride?.toTexture;
+  if(!toTexture&&renderKey&&c.renderedKey===renderKey&&c.renderedScene===scene&&c.renderedColour===colour&&c.canvas.width===outputW&&c.canvas.height===outputH)return c.canvas;
+  if(!toTexture){
+    if(c.canvas.width!==outputW)c.canvas.width = outputW;
+    if(c.canvas.height!==outputH)c.canvas.height = outputH;
+  }
   if(scene&&!auditReference&&photoKey&&c.photoResult?.key===photoKey&&c.photoResult.full===colour?.full&&c.photoResult.plain===colour?.plain&&c.photoResult.amount===colour?.amount&&c.pool?.w===w&&c.pool.h===h){
     if(composeFxScene(gl,c.photoResult.texture,scene)){
       c.renderedKey=renderKey;c.renderedScene=scene;c.renderedColour=colour;
@@ -1227,6 +1233,12 @@ export function applyGlEffects(
     }
     }
 
+    if(toTexture){
+      gl.useProgram(copy);bind(copy, texs[cur], texs[cur]);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,fb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,toTexture,0);
+      gl.viewport(0,0,w,h);gl.drawArrays(gl.TRIANGLES,0,3);
+      return c.canvas;
+    }
     // 畫到預設 framebuffer，再貼回 2D 畫布
     if(scene){
       if(!composeFxScene(gl,texs[cur],scene))return;

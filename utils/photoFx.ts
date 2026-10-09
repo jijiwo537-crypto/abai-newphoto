@@ -15,7 +15,7 @@ import {
   DEFAULT_PARAMS,
   type EditorParams,
 } from '../components/ImageEditor';
-import { applyGlEffects, hasActiveFx, FX_DEFS, disposeFxSurface, compactFxSurface, warmFx, warmFxScene, type FxScene } from './glEffects';
+import { applyGlEffects, hasActiveFx, FX_DEFS, disposeFxSurface, compactFxSurface, warmFx, warmFxScene, composeFxScene, invalidateFxSurface, type FxScene } from './glEffects';
 import type {FxColourInput} from './fxColourInput';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from './highlightSelection';
 import { bakeColorLut, bakedToTexture } from './lutBake';
@@ -24,6 +24,7 @@ import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from './fxSurfaceGl'
 import { loadCachedLut, saveCachedLut } from './lutStore';
 import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from './lutAtlasRepair.js';
 import {HalationLayer} from './halationLayer';
+import { hasGlow, glowSig, stripGlow, pickGlow } from './glowFx';
 
 /* ── 拼圖的 GPU 顏色鏈 ────────────────────────────────────────────────
    上一版我寫壞過一次：每被呼叫一次就重新上傳整張圖、烤兩次 65³ 的表、
@@ -538,6 +539,35 @@ export function bakePhotoFxLut(fx?: PhotoFx, size = 33): { tex: Uint8Array; size
   return { tex: bakedToTexture({ size: n, data: mixed }), size: n };
 }
 
+/* 「原圖＋光」那張，跟著輸出畫布（沒有的話跟著來源）各留一張。
+   同一張來源、同一組發光參數就直接重用 —— 調色、換濾鏡時光不重算。
+   內容一換就給它新的來源編號，下游以來源編號為鍵的快取（像素、GPU 貼圖）
+   自然失效，不會拿到舊的那張。 */
+const glowedSources = new WeakMap<object, { key: string; canvas: HTMLCanvasElement }>();
+/* 算光的那一趟大家共用一張工作畫布（也就共用一組 GPU context），
+   算好就複製到各自那張 —— 不會因為照片多就多開 context。 */
+let glowWork: HTMLCanvasElement | null = null;
+function glowedSource(source: CanvasImageSource, w: number, h: number, fx: PhotoFx,
+  opts?: { cacheSource?: boolean; gpuSurface?: boolean; out?: HTMLCanvasElement }): HTMLCanvasElement | null {
+  const owner = (opts?.out || source) as object;
+  let rec = glowedSources.get(owner);
+  if (!rec) { rec = { key: '', canvas: document.createElement('canvas') }; glowedSources.set(owner, rec); }
+  // 來源會變（影片）的時候不能沿用
+  const key = opts?.cacheSource ? `${srcToken(source)}|${w}x${h}|${glowSig(fx)}` : '';
+  if (key && rec.key === key) return rec.canvas;
+  rec.key = '';
+  const c = rec.canvas;
+  glowWork ||= document.createElement('canvas');
+  const r = applyPhotoFx(source, w, h, pickGlow(fx) as PhotoFx, { cacheSource: opts?.cacheSource, gpuSurface: opts?.gpuSurface, out: glowWork });
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const x = c.getContext('2d');
+  if (!x) return null;
+  x.globalCompositeOperation = 'copy'; x.drawImage(r, 0, 0, w, h); x.globalCompositeOperation = 'source-over';
+  srcIds.delete(c);
+  rec.key = key;
+  return c;
+}
+
 /**
  * 把調整套到來源圖上，回傳一張畫好的 canvas。
  * w / h 是要輸出的像素大小（呼叫端自己決定預覽用小張、匯出用大張）。
@@ -554,7 +584,9 @@ export function applyPhotoFx(
    *       來源是影片的時候一秒要跑幾十次，每次開一張幾百萬像素的畫布，
    *       手機的畫布記憶體幾秒就會被系統收走（＝閃退回主畫面）。
    *       尺寸一樣就直接沿用，連 width 都不重設（重設等於重新配置一次）。 */
-  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean; gpuSurface?: boolean; scene?: FxScene },
+  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean; gpuSurface?: boolean; scene?: FxScene;
+    /** 內部用：這一趟的來源已經是「原圖＋光」 */
+    afterGlow?: boolean },
 ): HTMLCanvasElement {
   const out = opts?.out || document.createElement('canvas');
   const oW = Math.max(1, Math.round(w)), oH = Math.max(1, Math.round(h));
@@ -562,6 +594,32 @@ export function applyPhotoFx(
      那正是「來源是影片」時每一格都會發生、又完全不必要的那一次配置。 */
   const resized = out.width !== oW || out.height !== oH;
   if (resized) { out.width = oW; out.height = oH; }
+  /* 發光類在原圖上算（見 utils/glowFx.ts）：先做一張「原圖＋光」，濾鏡、調節與
+     其他特效再套在那張上。只有發光、沒有別的時，兩種順序本來就一樣，照舊一趟。 */
+  if (hasGlow(fx) && hasPhotoFx(stripGlow(fx))) {
+    const glowed = glowedSource(source, oW, oH, fx, opts);
+    if (glowed) return applyPhotoFx(glowed, oW, oH, stripGlow(fx), { ...opts, afterGlow: true });
+  }
+  /* 「原圖＋光」之後只剩顏色、又要畫進場景（拼圖編輯底圖）：顏色在效果表面自己的
+     GPU context 裡算，直接合成進場景 —— 跟只有顏色的照片走的那條一樣，不經過 2D。 */
+  const fxl = fx as any;
+  if (opts?.afterGlow && opts.scene && opts.gpuSurface && opts.cacheSource && !hasActiveFx(fx) && !fxl.fxLowfi
+    && ![fx.blur, fx.colorNoise, fx.vignette, fx.leakOpacity].some(Boolean)) {
+    const record: EffectInput = effectInputs.get(out) || { key: '', source: document.createElement('canvas'), surface: newSurface() };
+    const image = surfaceColourImage(record.surface, source, oW, oH, fx, true);
+    const gl = image ? surfaceGl(record.surface) : null;
+    if (image && gl) {
+      const sc = opts.scene;
+      if (record.surface.width !== sc.black.width) record.surface.width = sc.black.width;
+      if (record.surface.height !== sc.black.height) record.surface.height = sc.black.height;
+      invalidateFxSurface(record.surface);
+      if (composeFxScene(gl, image.texture, sc)) {
+        record.key = ''; record.viaImage = true; record.colourInput = undefined; record.rawKey = undefined;
+        effectInputs.set(out, record);
+        return record.surface;
+      }
+    }
+  }
   if(opts?.gpuSurface&&opts.cacheSource&&!fx.colorNoise&&!hasActiveFx(fx)&&[fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.vignette].filter(Boolean).length===1){
     const kind=fx.soft?'soft':fx.fringeIntensity?'halo':fx.leakOpacity?'leak':fx.blur?'blur':'simple';
     // The optical family shares one source and one context. The active kind
