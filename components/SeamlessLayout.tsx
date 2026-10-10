@@ -27,10 +27,10 @@ export function SeamlessAmountSlider({ previewId, value, onCommit }: { previewId
   // keeps the dragged value (2 decimals): snapping to an integer on release
   // visibly shifted the blend band after letting go.
   const commit=()=>{cancelAnimationFrame(frame.current);frame.current=0;const v=Math.round(latest.current*100)/100;latest.current=v;setLive(v);previews.get(previewId)?.(v,false);if(committed.current!==v){committed.current=v;onCommit(v);}};
-  return <div className="space-y-1.5 col-span-2">
-    <div className="flex justify-between text-[11px] font-bold text-white/70"><span>融合程度</span><span className="font-mono text-white">{Math.round(live)}</span></div>
+  return <div className="space-y-3 col-span-2">
+    <div className="flex justify-between text-[12px] font-bold text-white/70"><span>融合程度</span><span className="font-mono text-white">{Math.round(live)}</span></div>
     {/* 跟其他滑桿同一套：同樣大的觸控範圍，拖動時頁面不會跟著捲 */}
-    <div className="slider-wrap w-full" style={{height:16}}>
+    <div className="slider-wrap w-full" style={{height:28}}>
     <input aria-label="融合程度" type="range" min={0} max={100} step="any" value={live} className="premium-slider w-full"
       onChange={e=>update(Number(e.target.value))} onPointerUp={commit} onPointerCancel={commit} onTouchEnd={commit} onKeyUp={commit} onBlur={commit}/>
     </div>

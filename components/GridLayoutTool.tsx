@@ -17872,17 +17872,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         <LiveRange ariaLabel="大小" min={0} max={100} step={1} value={(Math.max(50, activeLayout?.overlaySize ?? 80) - 50) * 2}
                           onValue={v => patchActiveLayout(l => ({...l, overlaySize: 50 + v / 2}))} />
                       </div> : <>
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between text-[11px] font-bold text-white/70">
+                      {/* 開關那排與下面的滑桿往內收、拉高：貼著左右兩側又太矮時很難按、很難拖 */}
+                      <div className="px-3">
+                        <div className="min-h-11 flex items-center justify-between text-[12px] font-bold text-white/70">
                           <span>無縫拼圖</span>
                           <button role="switch" aria-label="無縫拼圖" aria-checked={!!activeLayout?.seamless}
                             onClick={() => patchActiveLayout(l => ({...l, seamless: !l.seamless, seamlessAmount: l.seamlessAmount ?? 0}))}
-                            className={`w-10 h-6 rounded-full p-1 transition-colors ${activeLayout?.seamless ? 'bg-white' : 'bg-white/20'}`}>
-                            <span className={`block w-4 h-4 rounded-full transition-transform ${activeLayout?.seamless ? 'translate-x-4 bg-black' : 'bg-white'}`} />
+                            className={`w-12 h-7 rounded-full p-1 transition-colors ${activeLayout?.seamless ? 'bg-white' : 'bg-white/20'}`}>
+                            <span className={`block w-5 h-5 rounded-full transition-transform ${activeLayout?.seamless ? 'translate-x-5 bg-black' : 'bg-white'}`} />
                           </button>
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-5">
+                      <div className="grid grid-cols-2 gap-5 px-3">
                         {activeLayout?.seamless && <SeamlessAmountSlider key={activeLayout.id} previewId={activeLayout.id} value={activeLayout.seamlessAmount??0}
                           onCommit={value=>patchActiveLayout(l=>({...l,seamlessAmount:value}))}/>}
                       {!activeLayout?.seamless && <>
