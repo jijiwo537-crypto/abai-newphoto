@@ -18,7 +18,7 @@ import { paintCachedClassicGlow } from './ClassicGlowCache';
 import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessAmountSlider } from './SeamlessLayout';
-import {LayoutPhotoSurface} from './LayoutPhotoSurface';
+import {LayoutPhotoSurface,layoutGeomPreviews} from './LayoutPhotoSurface';
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import {drawStableText} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle} from '../utils/fxWarmup';
@@ -7723,6 +7723,38 @@ interface GridLayoutToolProps {
   initialState?: any;
   /** 濾鏡清單，跟「編輯」用的是同一份 */
   lutList?: { id: string; name: string; url: string }[];
+}
+
+/** 佈局的間距／圓角滑桿。格子全都有照片時，畫面上看得到的只有佈局那張照片畫布（格子本身是透明的觸控範圍），
+ *  所以拖動中直接把值交給那張畫布重畫（layoutGeomPreviews），整個編輯器不必每一格重新渲染；
+ *  旁邊的數字由這個小元件自己更新。放開才寫回佈局（一次）。有空格子時空格子的外觀要跟著變，照舊每一格寫回。 */
+function LayoutGeomSlider({ label, field, min, max, value, previewId, live, onStart, onValue }: {
+  label: string; field: 'gap' | 'radius'; min: number; max: number; value: number; previewId?: string;
+  live: boolean; onStart: () => void; onValue: (v: number) => void;
+}) {
+  const [shown, setShown] = useState(value);
+  const last = useRef(value), started = useRef(false);
+  useEffect(() => { setShown(value); last.current = value; }, [value]);
+  return (
+    <div className="space-y-1.5">
+      <div className="flex justify-between text-[11px] font-bold text-white/70">
+        <span>{label}</span>
+        <span className="font-mono text-white">{shown}px</span>
+      </div>
+      <LiveRange ariaLabel={label} min={min} max={max} step={1} value={value}
+        onValue={v => {
+          if (!started.current) { started.current = true; onStart(); }
+          last.current = v; setShown(v);
+          const preview = live && previewId ? layoutGeomPreviews.get(previewId) : undefined;
+          if (preview) preview({ [field]: v });
+          else onValue(v);
+        }}
+        onCommit={() => {
+          started.current = false;
+          if (live && previewId && layoutGeomPreviews.has(previewId)) onValue(last.current);
+        }} />
+    </div>
+  );
 }
 
 export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onRequestExit, onImportNew, initialFiles, initialState, lutList = [] }) => {
@@ -15930,7 +15962,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 const wholeSel = isThisLayoutSelected && selectedIndex === null && !swappingL;
                                 const dims = layout.images.map((_, i) => ((isThisLayoutSelected && !wholeSel && (dragOverIndex === i || hoveredSwapTargetIndex === i || touchDraggedIndex === i || touchDragOverIndex === i))
                                   || (swapOver?.kind === 'cell' && swapOver.idx === i && swapOver.layoutId === layout.id)) ? 0.4 : 1);
-                                return <LayoutPhotoSurface cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} gap={gap} radius={radius} revision={lutRevision}
+                                return <LayoutPhotoSurface cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} gap={gap} radius={radius} geomScale={ls} revision={lutRevision}
                                   fusion={stableSeamless ? (layout.seamlessAmount ?? 0) : undefined} previewId={layout.id} dims={dims}/>;
                               })()}
                               {nativeInset && <svg data-inset-photo-layer="1" width={lw} height={lh}
@@ -17872,14 +17904,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         <LiveRange ariaLabel="大小" min={0} max={100} step={1} value={(Math.max(50, activeLayout?.overlaySize ?? 80) - 50) * 2}
                           onValue={v => patchActiveLayout(l => ({...l, overlaySize: 50 + v / 2}))} />
                       </div> : <>
-                      {/* 開關那排與下面的滑桿往內收、拉高：貼著左右兩側又太矮時很難按、很難拖 */}
-                      <div className="px-3">
-                        <div className="min-h-11 flex items-center justify-between text-[12px] font-bold text-white/70">
+                      {/* 開關那排與下面的滑桿左右往內收（大小、上下位置都不變）：貼著左右兩側很難按、很難拖 */}
+                      <div className="space-y-3 px-3">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-white/70">
                           <span>無縫拼圖</span>
                           <button role="switch" aria-label="無縫拼圖" aria-checked={!!activeLayout?.seamless}
                             onClick={() => patchActiveLayout(l => ({...l, seamless: !l.seamless, seamlessAmount: l.seamlessAmount ?? 0}))}
-                            className={`w-12 h-7 rounded-full p-1 transition-colors ${activeLayout?.seamless ? 'bg-white' : 'bg-white/20'}`}>
-                            <span className={`block w-5 h-5 rounded-full transition-transform ${activeLayout?.seamless ? 'translate-x-5 bg-black' : 'bg-white'}`} />
+                            className={`w-10 h-6 rounded-full p-1 transition-colors ${activeLayout?.seamless ? 'bg-white' : 'bg-white/20'}`}>
+                            <span className={`block w-4 h-4 rounded-full transition-transform ${activeLayout?.seamless ? 'translate-x-4 bg-black' : 'bg-white'}`} />
                           </button>
                         </div>
                       </div>
@@ -17887,32 +17919,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         {activeLayout?.seamless && <SeamlessAmountSlider key={activeLayout.id} previewId={activeLayout.id} value={activeLayout.seamlessAmount??0}
                           onCommit={value=>patchActiveLayout(l=>({...l,seamlessAmount:value}))}/>}
                       {!activeLayout?.seamless && <>
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between text-[11px] font-bold text-white/70">
-                          <span>間距</span>
-                          <span className="font-mono text-white">{gap}px</span>
-                        </div>
-                        <LiveRange ariaLabel="間距" min={0} max={25} step={1} value={gap}
-                          onValue={v => {
-                            if (selectedIndex !== null) setSelectedIndex(null);
-                            setGap(v);
-                          }} />
-                      </div>
-
-                      {/* Radius slider */}
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between text-[11px] font-bold text-white/70">
-                          <span>圓角</span>
-                          <span className="font-mono text-white">{radius}px</span>
-                        </div>
-                        <LiveRange ariaLabel="圓角" min={0} max={30} step={1} value={radius}
-                          onValue={v => {
-                            if (selectedIndex !== null) setSelectedIndex(null);
-                            setRadius(v);
-                          }}
-                          className="premium-slider w-full"
-                        />
-                      </div>
+                      {(() => {
+                        const liveGeom = !!activeLayout && !isInsetLayout(activeLayout) && activeLayout.images.every(c => !!c?.url);
+                        const clearCell = () => { if (selectedIndex !== null) setSelectedIndex(null); };
+                        return <>
+                          <LayoutGeomSlider label="間距" field="gap" min={0} max={25} value={gap} previewId={activeLayout?.id}
+                            live={liveGeom} onStart={clearCell} onValue={setGap} />
+                          {/* Radius slider */}
+                          <LayoutGeomSlider label="圓角" field="radius" min={0} max={30} value={radius} previewId={activeLayout?.id}
+                            live={liveGeom} onStart={clearCell} onValue={setRadius} />
+                        </>;
+                      })()}
                       </>}
                       </div>
                       </>}

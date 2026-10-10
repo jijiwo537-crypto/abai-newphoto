@@ -30,6 +30,9 @@ const OVERSCAN_PIXELS=5_000_000;
 const GESTURE_PIXELS=6_000_000;
 /* 底圖（整個佈局一張、跟著佈局一起縮放、不因視角重畫）：所有佈局共用的總像素預算。
    一個佈局最多 6M，佈局多時平分 16M（每張 2D 畫布 4 bytes/px）。 */
+/** 間距／圓角滑桿拖動中：直接把值交給這個佈局重畫（不經過 React，整個編輯器不必每一格重新渲染）。
+ *  傳的是佈局本身的值（還沒乘佈局縮放），null＝放開、回到 props。 */
+export const layoutGeomPreviews=new Map<string,(g:{gap?:number;radius?:number}|null)=>void>();
 const BASE_PIXELS=6_000_000,BASE_TOTAL=16_000_000;
 let liveBases=0;
 const previewSize=(im:HTMLImageElement)=>{const k=Math.min(1,LIVE_PREVIEW/Math.max(im.naturalWidth,im.naturalHeight));return [Math.max(1,Math.round(im.naturalWidth*k)),Math.max(1,Math.round(im.naturalHeight*k))];};
@@ -43,7 +46,9 @@ const releaseResource=(r:Resource)=>{r.image.onload=null;r.pending=undefined;rel
 /** fusion: seamless blend amount (0..100), or undefined for separate cells.
  * Both modes share this one GPU surface and its resident textures, so
  * toggling seamless only changes shader uniforms (no re-decode/re-upload). */
-export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision,fusion,previewId,dims}:{cells:Cell[];rects:Rect[];width:number;height:number;gap:number;radius:number;revision:number;fusion?:number;previewId?:string;
+export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:radiusProp,geomScale=1,revision,fusion,previewId,dims}:{cells:Cell[];rects:Rect[];width:number;height:number;gap:number;radius:number;
+  /** 佈局縮放（props 的 gap／radius 已經乘過；滑桿直接傳來的值要乘這個） */
+  geomScale?:number;revision:number;fusion?:number;previewId?:string;
   /** 每一格的亮度倍率（長按互換時被懸停的那一格 < 1）。直接在畫照片時變暗，範圍跟照片完全一致。 */
   dims?:number[]}){
   const baseRef=useRef<HTMLCanvasElement>(null);
@@ -52,9 +57,15 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
   const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef<(viewOnly?:boolean)=>void>(()=>{});
   /** 上一次真的畫出來的範圍（佈局座標）與當時的倍率／旋轉：純平移時拿來判斷要不要重畫 */
   const paintedView=useRef<{fwd:number[];gesture:boolean;headroom?:number;cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastPaintAt=useRef(-1e9);
+  /** 底圖重畫的計時：最後一次內容變動後 400ms 都沒再動才畫（拖滑桿中間停一下不會突然卡一下） */
+  const baseTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastEditAt=useRef(-1e9);
   // The layout canvas is a plain 2D bitmap fed by the editor-wide shared GPU
   // renderer (drawSeamShared), so it can never lose a context or turn grey.
   const fusionLive=useRef(fusion),liveDrag=useRef(false);
+  const geomLive=useRef<{gap?:number;radius?:number}|null>(null),geomScaleRef=useRef(geomScale);geomScaleRef.current=geomScale;
+  // React 已經把放開時的值寫進 props：拖動中的暫時值就不需要了（同一次 render，不會閃回舊值）
+  useLayoutEffect(()=>{geomLive.current=null;},[gapProp,radiusProp]);
+  useLayoutEffect(()=>{if(!previewId)return;layoutGeomPreviews.set(previewId,g=>{geomLive.current=g?{...geomLive.current,...g}:null;drawRef.current();});return()=>{layoutGeomPreviews.delete(previewId);};},[previewId]);
   // What the flat (effect-editing) canvas currently holds: its geometry and each cell's pixels.
   const flatState=useRef<{geom:string;sigs:string[]}|null>(null);
   /** 拖特效時直接疊在原位的那一格 GPU 預覽（見 flat 那一段） */
@@ -64,7 +75,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
   // The fusion slider repaints uniforms directly, without a React render.
   useLayoutEffect(()=>{if(!previewId||fusion===undefined)return;seamlessPreviews.set(previewId,(v,isLive)=>{fusionLive.current=v;liveDrag.current=!!isLive;drawRef.current();});return()=>{seamlessPreviews.delete(previewId);};},[previewId,fusion===undefined]);
   const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;drawRef.current();});};
-  useEffect(()=>{liveBases++;const b=baseRef.current;return()=>{liveBases--;if(b){releaseSeamShared(b);b.width=b.height=1;}};},[]);
+  useEffect(()=>{liveBases++;const b=baseRef.current;return()=>{liveBases--;if(baseTimer.current)clearTimeout(baseTimer.current);if(b){releaseSeamShared(b);b.width=b.height=1;}};},[]);
   useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);if(settleTimer.current)clearTimeout(settleTimer.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element){releaseSeamShared(element);dropLiveSeam(element);}dropLiveCell();};},[]);
   useEffect(()=>{
     // Repaint in the SAME transform frame, not a second rAF one frame later.
@@ -103,6 +114,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       resources.current.set(c.id,{url:c.url,image,input:document.createElement('canvas'),key:'',output:null});
     });
     drawRef.current=(viewOnly=false,settle=false)=>{
+      const gl=geomLive.current;
+      const gap=gl?.gap!==undefined?gl.gap*geomScaleRef.current:gapProp,radius=gl?.radius!==undefined?gl.radius*geomScaleRef.current:radiusProp;
       const cv=ref.current,flat=editSurface.current,root=plane.current;if(!cv||!flat||!root||width<=0||height<=0)return;
       const aw=Math.max(1,width-gap),ah=Math.max(1,height-gap);
       const points=Array.from(root.querySelectorAll<SVGCircleElement>('[data-layout-probe]')).map(n=>{const b=n.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2};});
@@ -146,7 +159,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       const scr=fwd?Math.hypot(fwd[0],fwd[1]):0;
       const baseEdgesOk=!!bs&&bs.edges===edges;
       // 邊緣狀態變了（佈局被拖離頁面邊緣等）：舊的底圖多蓋的那一圈會跑到佈局外面，先藏起來，停下來重畫
-      if(bc)bc.style.visibility=baseEdgesOk?'':'hidden';
+      // 底圖過期（內容改了還沒重畫）也藏起來：不然清晰那張透明的地方（間距、圓角）會透出舊的那張 —— 看起來像兩張圖
+      if(bc)bc.style.visibility=baseEdgesOk&&!baseDirty.current?'':'hidden';
       const baseSharp=baseEdgesOk&&!baseDirty.current&&bs!.s>=dpr*scr*.999;
       let basePainted=false;
       const detailOff=()=>{
@@ -285,9 +299,15 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
          正在連續編輯（拖滑桿、拖照片、拖融合程度）時先不畫，只標記過期，停下來（settle）再畫一次。 */
       if(bc&&!viewOnly){
         const key=JSON.stringify([width,height,gap,radius,rects,crops,radii,contents,dims||[],fused?fusionLive.current:-1,cells.map(c=>c.opacity??100),noVisibleGutter]);
-        const busy=liveEdit||live.current.size>0||liveDrag.current;
+        if(!settle)lastEditAt.current=performance.now();
+        const busy=!settle||performance.now()-lastEditAt.current<350||live.current.size>0||liveDrag.current;
+        const baseLater=()=>{if(baseTimer.current)clearTimeout(baseTimer.current);baseTimer.current=setTimeout(()=>{baseTimer.current=0;drawRef.current(false,true);},400);};
         if(bs&&bs.key===key&&bs.edges===edges)baseDirty.current=false;
-        else if(busy){baseDirty.current=true;settleLater();}
+        else if(busy){
+          /* 內容變了：舊的底圖立刻藏起來（這一格由清晰那張顯示新的內容），底圖等真的停下來才畫 ——
+             不在拖滑桿、拖照片的任何一格裡多畫一張整個佈局的大圖。 */
+          baseDirty.current=true;bc.style.visibility='hidden';baseLater();
+        }
         else{
           /* 密度：每個佈局單位幾個像素。預算內盡量高（最多螢幕密度的 6 倍），單邊不超過 4096（GPU 上限）。
              往外多蓋的量用佈局單位：最外圈 12（縮到 0.33 倍仍有 4 個螢幕像素），頁與頁交界 3（裁切線在半個螢幕像素外）。 */
@@ -452,6 +472,6 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       if(settleAfterPaint||(!basePainted&&baseDirty.current))settleLater();
     };
     drawRef.current();
-  },[cells,rects,width,height,gap,radius,revision,fusion,(dims||[]).join(',')]);
+  },[cells,rects,width,height,gapProp,radiusProp,revision,fusion,(dims||[]).join(',')]);
   return <><svg ref={plane} data-layout-photo-plane viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" aria-hidden style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,overflow:'hidden'}}><g opacity={0}><circle data-layout-probe cx={0} cy={0} r={.005}/><circle data-layout-probe cx={width} cy={0} r={.005}/><circle data-layout-probe cx={0} cy={height} r={.005}/></g></svg><canvas ref={baseRef} data-layout-base style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/><canvas ref={ref} data-layout-photo-surface style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0}}/><canvas ref={editSurface} style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/></>;
 }
