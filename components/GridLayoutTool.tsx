@@ -9618,7 +9618,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       });
     };
     const down = (e: PointerEvent) => {
-      armed = null;
+      if (armed) { armed = null; clearTimeout(longTimer); show(); }
       const sel = zoomTapSel.current;
       if (!e.isPrimary || !sel.anySelected || !pageCovers()) return;
       const t = e.target as Element | null;
@@ -9632,21 +9632,64 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         if (cell && Number(cell.getAttribute('data-cell-id')) === sel.selectedIndex) return;
       }
       armed = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() };
+      /* 按下的這一刻，原本的處理器已經在選別的東西了，下一幀它的選中框就會畫出來，
+         放開後才被取消 → 閃一幀。所以按著的期間整層選中框先藏起來（opacity，子層無法蓋過），
+         確定是點擊就等取消選取真的畫完才放回來；變成拖曳／長按就立刻放回來。 */
+      hide();
+      clearTimeout(longTimer);
+      longTimer = window.setTimeout(() => { if (armed) { armed = null; show(); } }, 600);
+    };
+    let hidden = false;
+    let longTimer = 0;
+    let restoreGen = 0;
+    const hide = () => {
+      const c = chromeLayerRef.current;
+      restoreGen++;
+      if (!c || hidden) return;
+      hidden = true;
+      c.style.opacity = '0';
+    };
+    const show = () => {
+      restoreGen++;
+      if (!hidden) return;
+      hidden = false;
+      const c = chromeLayerRef.current;
+      if (c) c.style.opacity = '';
+    };
+    const showAfterPaint = () => {
+      const gen = ++restoreGen;
+      requestAnimationFrame(() => requestAnimationFrame(() => { if (gen === restoreGen) show(); }));
+    };
+    const move = (e: PointerEvent) => {
+      const a = armed;
+      if (!a || a.id !== e.pointerId) return;
+      if (Math.hypot(e.clientX - a.x, e.clientY - a.y) > 8) { armed = null; clearTimeout(longTimer); show(); }
     };
     const up = (e: PointerEvent) => {
-      const a = armed; armed = null;
+      const a = armed;
       if (!a || a.id !== e.pointerId) return;
-      if (Math.hypot(e.clientX - a.x, e.clientY - a.y) > 8 || performance.now() - a.t > 600) return;
+      armed = null; clearTimeout(longTimer);
+      if (Math.hypot(e.clientX - a.x, e.clientY - a.y) > 8 || performance.now() - a.t > 600) { show(); return; }
       // 等這一次點擊原本的處理（可能已經選了別的東西）都跑完，再一起取消
       setTimeout(() => {
-        setSelectedFloatingId(null); setSelectedIndex(null); setSelectedLayoutId(null); setSelectedBrushId(null);
+        flushSync(() => {
+          setSelectedFloatingId(null); setSelectedIndex(null); setSelectedLayoutId(null); setSelectedBrushId(null);
+        });
+        showAfterPaint();
       }, 0);
     };
-    const cancel = () => { armed = null; };
+    const cancel = (e: PointerEvent) => {
+      if (!armed || armed.id !== e.pointerId) return;
+      armed = null; clearTimeout(longTimer); show();
+    };
     host.addEventListener('pointerdown', down, true);
+    window.addEventListener('pointermove', move, true);
     window.addEventListener('pointerup', up, true);
     window.addEventListener('pointercancel', cancel, true);
-    return () => { host.removeEventListener('pointerdown', down, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', cancel, true); };
+    return () => {
+      clearTimeout(longTimer); show();
+      host.removeEventListener('pointerdown', down, true); window.removeEventListener('pointermove', move, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', cancel, true);
+    };
   }, []);
   const [exportState, setExportState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [exportOptionsOpen,setExportOptionsOpen]=useState(false);
@@ -15762,7 +15805,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               return {
                                 width: `${previewW}px`,
                                 height: `${previewH}px`,
-                                backgroundColor: page.bgColor,
+                                // 底色改由下面那一層畫（見 data-page-bg）
                                 position: 'relative' as const,
                                 transform: mv
                                   ? `translateX(${mv.dx}px)${lifted ? ` scale(${mv.s})` : ''}`
@@ -15776,8 +15819,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               };
                             })()}
                           >
-                            {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
-                            <PatternLayer w={previewW} h={previewH} opts={pagePattern(page)} />
+                            {/* 頁面底色＋背景紋理，獨立成一個 GPU 合成層。
+                                佈局（GPU 畫布）、圖形畫布都是獨立合成層，iOS 裁它們用的是整條頁面外框
+                                取整到「整顆裝置像素」的硬邊；以前底色是畫在頁面本身上、邊緣做抗鋸齒。
+                                縮放預覽、排頁面縮小時頁面邊緣常落在半顆像素上：畫布被硬切掉那一排，
+                                底色卻還畫了四成 —— 佈局／圖形貼滿頁面時邊上就閃出一條底色縫隙。
+                                一般圖片跟底色畫在同一層，切法一致，所以從來沒有這問題。
+                                底色也當成合成層後，跟畫布被同一條硬邊切、落在同一排像素，縫隙無從出現。
+                                pointer-events 關掉：點擊照舊落在頁面本身上。 */}
+                            <div
+                              data-page-bg=""
+                              aria-hidden
+                              className="absolute inset-0 pointer-events-none"
+                              style={{ backgroundColor: page.bgColor, transform: 'translateZ(0)' }}
+                            >
+                              {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
+                              <PatternLayer w={previewW} h={previewH} opts={pagePattern(page)} />
+                            </div>
                             {page.layouts.map((layout) => {
                               const pageTemplates = TEMPLATE_MAP[layout.images.length] || [];
                               const pageActiveTemplate = pageTemplates[layout.templateIndex] || pageTemplates[0] || { name: '預設', rects: [] };
