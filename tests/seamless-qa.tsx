@@ -37,6 +37,8 @@ if(params.has('emptyAudit'))void import('./empty-layout-audit');
 if(params.has('layoutRasterAudit')){state.pages[0].layouts[0].gap=0;state.pages[0].layouts[0].radius=0;}
 if(params.has('fillShape')){(state as any).pages[0].layouts=[];(state as any).floatingImages=[{id:'qa-fill-shape',src:'',x:0,y:0,width:339,height:452,scale:1,rotation:0,opacity:100,shape:'square',shapeFilled:true,color:'#22aa44'}];}
 if(params.has('fill')){const l=state.pages[0].layouts[0] as any;l.t={x:0,y:0,scale:1};if(params.has('nogap')){l.gap=0;l.radius=0;}}
+// 第二頁（測頁與頁中間的交界）：?twoPages
+if(params.has('twoPages'))(state as any).pages.push({id:'seam-page-2',bgColor:'#ff00ff',layouts:[]});
 if(params.has('cellEditAudit')){state.pages[0].layouts[0].gap=0;state.pages[0].layouts[0].radius=0;void import('./layout-photo-edit-audit');}
 if(params.has('exportAudit'))void import('./collage-export-audit');
 if(params.has('chromeAudit'))void import('./collage-chrome-audit');

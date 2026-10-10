@@ -4,7 +4,8 @@ type Bounds={left:number;top:number;right:number;bottom:number};
  *  外框的裁切線在 iOS 會做抗鋸齒，邊上那一排像素只蓋住一部分，底下頁面的白底就透出來
  *  —— 放大縮小預覽時四周一直閃白線。往外多蓋一個裝置像素，頁面底色就完全被蓋住；
  *  多出來的那一點由著色器延伸最外圈的照片像素補上（sealEdges）。只處理沒有轉角度的佈局。 */
-export type SeamGrow={l:number;t:number;r:number;b:number};
+/** open：這幾邊在整條頁面的最外圈，交給整條頁面去裁，這張自己不裁（裁切線放到多畫出來的最外緣）。 */
+export type SeamGrow={l:number;t:number;r:number;b:number;open?:{l:boolean;t:boolean;r:boolean;b:boolean}};
 export function resolveSeamSurface(points:Point[],worldW:number,worldH:number,layoutW:number,layoutH:number,bounds:Bounds,clip:Bounds,dpr:number,grow?:SeamGrow){
   const [a,b,c]=points;
   const axis=!!grow&&!!a&&!!b&&!!c&&Math.abs(b.y-a.y)<1e-3&&Math.abs(c.x-a.x)<1e-3&&b.x>a.x&&c.y>a.y;
@@ -30,7 +31,9 @@ export function resolveSeamSurface(points:Point[],worldW:number,worldH:number,la
       const K=1/Math.max(1e-9,Math.hypot(inverse.a,inverse.b));
       const out=(v:number,sign:number,on:number)=>on>0?`calc(${v}px ${sign<0?'-':'+'} var(--preview-inverse-half, 0.5px) * ${K})`:`${v}px`;
       const x0=a.x-left,x1=b.x-left,y0=a.y-top,y1=c.y-top;
-      const L=out(x0,-1,grow!.l),R=out(x1,1,grow!.r),T=out(y0,-1,grow!.t),B=out(y1,1,grow!.b);
+      const o=grow!.open;
+      const L=o?.l?`${bounds.left-left}px`:out(x0,-1,grow!.l),R=o?.r?`${bounds.right-left}px`:out(x1,1,grow!.r);
+      const T=o?.t?`${bounds.top-top}px`:out(y0,-1,grow!.t),B=o?.b?`${bounds.bottom-top}px`:out(y1,1,grow!.b);
       return `${L} ${T},${R} ${T},${R} ${B},${L} ${B}`;
     })(),
     rasterView:[inverse.a,inverse.b,inverse.c,inverse.d,x0,y0,width,height],

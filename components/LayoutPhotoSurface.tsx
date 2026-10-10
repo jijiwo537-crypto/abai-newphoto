@@ -174,8 +174,16 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       /* 內容往外多畫 1.5 個螢幕像素（裁切線另外只開到半個螢幕像素，見 resolveSeamSurface）：
          排頁面時整頁縮到 0.4 倍、這張還沒重畫就先被瀏覽器縮小，1.5 縮完仍有 0.6，蓋得住那半個像素。 */
       const edgeTol=1/dpr,g1=1.5,sealed=gap<=.001&&radius<=.001;
-      const grow=pageBox&&sealed?{l:bounds.left<=pageBox.left+edgeTol?g1:0,t:bounds.top<=pageBox.top+edgeTol?g1:0,
-        r:bounds.right>=pageBox.right-edgeTol?g1:0,b:bounds.bottom>=pageBox.bottom-edgeTol?g1:0}:undefined;
+      /* 整條頁面的最外圈（第一頁左邊、最後一頁右邊、上下）跟照片同一招：內容往外多蓋 4 個螢幕像素，
+         而且這幾邊「自己不裁」，只讓整條頁面那一刀去切。同一條邊裁兩次，兩刀的抗鋸齒會疊在一起，
+         邊上那一排蓋不滿、頁面底色就透出來 —— 這就是照片從來沒縫、佈局一直有縫的差別。
+         4 個像素：排頁面縮到 0.4 倍、這張還沒重畫時仍剩 1.6 個像素。
+         頁與頁中間的交界不能壓到隔壁頁，照舊只多蓋一點點、裁在半個像素外。 */
+      const strip=root.closest('[data-page-id]')?.parentElement?.getBoundingClientRect();
+      const G=4;
+      const outer=strip&&sealed?{l:bounds.left<=strip.left+edgeTol,t:bounds.top<=strip.top+edgeTol,r:bounds.right>=strip.right-edgeTol,b:bounds.bottom>=strip.bottom-edgeTol}:undefined;
+      const grow=pageBox&&sealed?{l:outer?.l?G:bounds.left<=pageBox.left+edgeTol?g1:0,t:outer?.t?G:bounds.top<=pageBox.top+edgeTol?g1:0,
+        r:outer?.r?G:bounds.right>=pageBox.right-edgeTol?g1:0,b:outer?.b?G:bounds.bottom>=pageBox.bottom-edgeTol?g1:0,open:outer}:undefined;
       const surface=resolveSeamSurface(points,width,height,width,height,bounds,{left:area.left-mx,top:area.top-my,right:area.right+mx,bottom:area.bottom+my},density,grow);
       if(surface&&fwd){
         const [ia,ib,ic,id,ie,iff]=surface.rasterView;const sw=surface.width,sh=surface.height;

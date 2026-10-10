@@ -6832,8 +6832,15 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             const hw = image.width * image.scale / 2, hh = image.height * image.scale / 2;
             const edgeX = (x: number) => Math.abs(x / maxTextWidth - Math.round(x / maxTextWidth)) < 1e-4;
             const pad = 1.5 / Math.max(.001, density * Math.abs(scale));
-            const pl = edgeX(cx - hw) || cx - hw < 0 ? pad : 0, pr = edgeX(cx + hw) ? pad : 0;
-            const pt = Math.abs(cy - hh) < 1e-4 || cy - hh < 0 ? pad : 0, pb = Math.abs(cy + hh - canvasHeight) < 1e-4 || cy + hh > canvasHeight ? pad : 0;
+            /* 整條頁面最外圈（第一頁左邊、最後一頁右邊、上下兩邊）：跟照片完全同一個量 ——
+               往外多蓋三個螢幕像素，只讓整條頁面那一刀去切（照片的 coverage／edgePads）。
+               以前只多蓋 1.5 個裝置像素（約半個螢幕像素），縮放時頁面邊緣一落在小數像素上就蓋不滿。
+               頁與頁中間的交界照舊只多蓋一點點，不能壓到隔壁那一頁。 */
+            const cover = 2 * Math.max(1, window.devicePixelRatio || 1) * 1.5 / Math.max(.001, density * Math.abs(scale));
+            const stripW = maxTextWidth * (pagesContainerRef.current?.querySelectorAll(':scope > [data-page-id]').length || 1);
+            const pl = Math.abs(cx - hw) < 1e-4 || cx - hw < 0 ? cover : edgeX(cx - hw) ? pad : 0;
+            const pr = Math.abs(cx + hw - stripW) < 1e-4 || cx + hw > stripW ? cover : edgeX(cx + hw) ? pad : 0;
+            const pt = Math.abs(cy - hh) < 1e-4 || cy - hh < 0 ? cover : 0, pb = Math.abs(cy + hh - canvasHeight) < 1e-4 || cy + hh > canvasHeight ? cover : 0;
             if (pl || pr || pt || pb) {
               ctx.translate((pr - pl) / 2, (pb - pt) / 2);
               ctx.scale((image.width + pl + pr) / image.width, (image.height + pt + pb) / image.height);
@@ -15805,7 +15812,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               return {
                                 width: `${previewW}px`,
                                 height: `${previewH}px`,
-                                // 底色改由下面那一層畫（見 data-page-bg）
+                                backgroundColor: page.bgColor,
                                 position: 'relative' as const,
                                 transform: mv
                                   ? `translateX(${mv.dx}px)${lifted ? ` scale(${mv.s})` : ''}`
@@ -15819,23 +15826,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               };
                             })()}
                           >
-                            {/* 頁面底色＋背景紋理，獨立成一個 GPU 合成層。
-                                佈局（GPU 畫布）、圖形畫布都是獨立合成層，iOS 裁它們用的是整條頁面外框
-                                取整到「整顆裝置像素」的硬邊；以前底色是畫在頁面本身上、邊緣做抗鋸齒。
-                                縮放預覽、排頁面縮小時頁面邊緣常落在半顆像素上：畫布被硬切掉那一排，
-                                底色卻還畫了四成 —— 佈局／圖形貼滿頁面時邊上就閃出一條底色縫隙。
-                                一般圖片跟底色畫在同一層，切法一致，所以從來沒有這問題。
-                                底色也當成合成層後，跟畫布被同一條硬邊切、落在同一排像素，縫隙無從出現。
-                                pointer-events 關掉：點擊照舊落在頁面本身上。 */}
-                            <div
-                              data-page-bg=""
-                              aria-hidden
-                              className="absolute inset-0 pointer-events-none"
-                              style={{ backgroundColor: page.bgColor, transform: 'translateZ(0)' }}
-                            >
-                              {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
-                              <PatternLayer w={previewW} h={previewH} opts={pagePattern(page)} />
-                            </div>
+                            {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
+                            <PatternLayer w={previewW} h={previewH} opts={pagePattern(page)} />
                             {page.layouts.map((layout) => {
                               const pageTemplates = TEMPLATE_MAP[layout.images.length] || [];
                               const pageActiveTemplate = pageTemplates[layout.templateIndex] || pageTemplates[0] || { name: '預設', rects: [] };
@@ -15883,7 +15875,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   top: 0,
                                   width: `${lw}px`,
                                   height: `${lh}px`,
+                                  /* 只有拖著頁面排序（整條頁面的裁切暫時關掉）時才需要自己裁。
+                                     平常整條頁面已經裁一次了，再在同一條邊上自己裁一次，兩刀的抗鋸齒疊在一起，
+                                     邊上那一排就蓋不滿、露出頁面底色 —— 照片就是因為不重複裁才沒有縫。 */
                                   clipPath: pagesMode || (pagesVisual && !!sortOriginalIndices.current) ? (() => {
+                                    if (pageDragIdx === null && !dragSettle) return undefined;
                                     const left = -pageIdx * previewW, right = (pages.length - pageIdx) * previewW;
                                     const cx = lLeft + lw / 2, cy = lTop + lh / 2;
                                     const rad = -(layout.t?.rot || 0) * Math.PI / 180;
