@@ -164,7 +164,9 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       /* 佈局貼齊（或超出）頁面邊緣的那幾邊往外多蓋一個裝置像素（見 resolveSeamSurface 的 grow）。
          只在沒有外圈間距時做：有間距時邊上本來就該露出頁面底色。 */
       const pageBox=root.closest('[data-page-id]')?.getBoundingClientRect();
-      const edgeTol=1/dpr,g1=1/dpr,sealed=gap<=.001&&radius<=.001;
+      /* 多蓋 2.5 個裝置像素：排頁面時整頁縮到 0.4 倍，這張先被瀏覽器直接縮小、還沒重畫 ——
+         只蓋 1 個像素的話縮小後只剩 0.4 個，邊上又會透出白底。2.5 縮到 0.4 倍仍有 1 個。 */
+      const edgeTol=1/dpr,g1=2.5/dpr,sealed=gap<=.001&&radius<=.001;
       const grow=pageBox&&sealed?{l:bounds.left<=pageBox.left+edgeTol?g1:0,t:bounds.top<=pageBox.top+edgeTol?g1:0,
         r:bounds.right>=pageBox.right-edgeTol?g1:0,b:bounds.bottom>=pageBox.bottom-edgeTol?g1:0}:undefined;
       const surface=resolveSeamSurface(points,width,height,width,height,bounds,{left:area.left-mx,top:area.top-my,right:area.right+mx,bottom:area.bottom+my},density,grow);

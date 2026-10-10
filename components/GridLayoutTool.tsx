@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/classicTextureSize';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
@@ -2528,11 +2528,20 @@ export type ImageAdjustPanelProps = {
 
 export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   img, set, lutList, loadingLut, setLoadingLut, lutRevision, setLutRevision,
-  adjustSub, setAdjustSub, effectCard, setEffectCard, effectDetail, setEffectDetail,
+  adjustSub, setAdjustSub, effectCard: effectCardProp, setEffectCard: setEffectCardProp, effectDetail: effectDetailProp, setEffectDetail: setEffectDetailProp,
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
   setTuningEdge, openComposeFor, composeOpen, onLeaveCompose, hideShape, hideCompose, deferSlider, onSliderOpenChange, inlineSlider,
   isolateFxUpdates, onAdjustmentStart, onAdjustmentCommit,
 }) => {
+/* 選中哪一顆特效、細項有沒有打開：面板自己先記一份、馬上換。
+   這兩個值放在整個跨頁拼圖那一層 —— 每點一次卡片整個編輯器都要重新 render，
+   滑桿就比按鈕慢一拍。現在面板自己的狀態先變（只重畫面板），上層低優先度跟上。 */
+const [effectCard, setEffectCardLocal] = useState(effectCardProp);
+const [effectDetail, setEffectDetailLocal] = useState(effectDetailProp);
+useLayoutEffect(() => { setEffectCardLocal(effectCardProp); }, [effectCardProp]);
+useLayoutEffect(() => { setEffectDetailLocal(effectDetailProp); }, [effectDetailProp]);
+const setEffectCard = (id: string) => { setEffectCardLocal(id); startTransition(() => setEffectCardProp(id)); };
+const setEffectDetail = (v: boolean) => { setEffectDetailLocal(v); startTransition(() => setEffectDetailProp(v)); };
 const [detailTool,setDetailTool] = useState('');
 useEffect(() => { setDetailTool(''); }, [effectCard,img.id]);
 const [,setLocalFx] = useState<PhotoFx>(img.fx || {});
@@ -2950,7 +2959,7 @@ return (
           >
             <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
               <div className="absolute inset-0 bg-[#1a1a1a]" />
-              <CardThumb src={cardSrc} delay={li * 24}
+              <CardThumbFast src={cardSrc} delay={li * 24}
                          cacheKey={`${cardSrc}|lut:${l.id}|${getLoadedLut(l.id)?'ready':'pending'}`}
                          fx={{ lut: l.id, lutAmount: lutDefaultAmount(l.id) }} />
               {loadingLut === l.id && (
@@ -3007,7 +3016,7 @@ return (
           >
             <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
               <div className="absolute inset-0 bg-[#1a1a1a]" />
-              <CardThumb src={cardSrc} delay={0} cacheKey={`${cardSrc}|fx:none`} fx={{} as PhotoFx} />
+              <CardThumbFast src={cardSrc} delay={0} cacheKey={`${cardSrc}|fx:none`} fx={{} as PhotoFx} />
               <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
                 <span style={{textTransform:'none'}} className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap ${none ? 'text-white' : 'text-white/60'}`}>原始</span>
               </div>
@@ -3034,7 +3043,7 @@ return (
           >
             <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
               <div className="absolute inset-0 bg-[#1a1a1a]" />
-              <CardThumb src={cardSrc} delay={fi * 24}
+              <CardThumbFast src={cardSrc} delay={fi * 24}
                          cacheKey={`${cardSrc}|fx:${id}`}
                          fx={effectPreset(id,FX_DEFS) as PhotoFx} />
               <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
@@ -4159,6 +4168,9 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
     <div ref={ref} className="absolute inset-0 w-full h-full object-cover" style={{ visibility: paintedKey === cacheKey ? 'visible' : 'hidden' }} />
   </>;
 };
+/* 卡片縮圖只跟 cacheKey（來源＋哪一顆效果／濾鏡）有關：點選別張卡片時整排不必重新 render。
+   fx 每次都是新的物件，不能拿來比。 */
+const CardThumbFast = React.memo(CardThumb, (a, b) => a.src === b.src && a.cacheKey === b.cacheKey && a.delay === b.delay);
 
 /** 預覽重畫時要馬上有圖可以畫，所以原圖載過一次就留著。 */
 const previewImgCache = new Map<string, HTMLImageElement>();
@@ -7778,7 +7790,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   useEffect(() => () => {
     if (interactionRafRef.current != null) cancelAnimationFrame(interactionRafRef.current);
   }, []);
-  const [activeGuidelines, setActiveGuidelines] = useState<AlignmentGuideline[]>([]);
+  const [activeGuidelines, setActiveGuidelinesRaw] = useState<AlignmentGuideline[]>([]);
+  /* 拖、縮放物件時每一格都會算一次對齊線，算出來大多跟上一格一樣 —— 一樣就不要設狀態，
+     不然整個跨頁拼圖每一格都要重新 render 一次。 */
+  const guideKeyRef = useRef('[]');
+  const setActiveGuidelines = useCallback((next: AlignmentGuideline[]) => {
+    const key = JSON.stringify(next);
+    if (key === guideKeyRef.current) return;
+    guideKeyRef.current = key;
+    setActiveGuidelinesRaw(next);
+  }, []);
   const [enableSnapping, setEnableSnapping] = useState(true);
   /** 上方那顆三個點的選單 */
   const [moreOpen, setMoreOpen] = useState(false);
@@ -12397,15 +12418,73 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 不要靠當下的 selectedLayoutId：手指放開的瞬間選取狀態可能已經被別的
    * handler 清掉，那樣這一筆就會寫不進去，看起來就是「縮放完自己彈回原大小」。
    */
+  /* 拖、捏、轉整組佈局：手勢中每一格不再寫進 React 狀態（那會讓整個跨頁拼圖每一格重新 render，
+     佈局裡有照片時就是「縮放佈局非常卡」）。改成直接改畫面上那幾個元素的位置與倍率
+     （佈局本體、外框層的框／角球、白色藥丸），手指放開才寫回狀態一次。
+     保險：停下來 200ms 沒有新的變化也會先寫回（比 holdLayoutVisual 的 300ms 早），
+     手勢被瀏覽器中斷、收不到放開事件時也不會彈回原大小。 */
+  const liveLayoutT = useRef<{ id: string; t: { x: number; y: number; scale: number; rot?: number } } | null>(null);
+  const liveLayoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushLayoutT = () => {
+    if (liveLayoutTimer.current) { clearTimeout(liveLayoutTimer.current); liveLayoutTimer.current = null; }
+    const live = liveLayoutT.current; if (!live) return;
+    liveLayoutT.current = null;
+    setPages(prev => prev.map(p => p.layouts.some(l => l.id === live.id) ? ({
+      ...p,
+      layouts: p.layouts.map(l => l.id === live.id ? { ...l, t: { ...l.t, ...live.t } } : l),
+    }) : p));
+  };
+  const flushLayoutTRef = useRef(flushLayoutT); flushLayoutTRef.current = flushLayoutT;
+  useEffect(() => {
+    const end = () => flushLayoutTRef.current();
+    window.addEventListener('touchend', end, true); window.addEventListener('touchcancel', end, true);
+    window.addEventListener('pointerup', end, true); window.addEventListener('pointercancel', end, true);
+    return () => {
+      window.removeEventListener('touchend', end, true); window.removeEventListener('touchcancel', end, true);
+      window.removeEventListener('pointerup', end, true); window.removeEventListener('pointercancel', end, true);
+    };
+  }, []);
+  /** 白色藥丸：掛在佈局中心，沿畫面的 Y 軸推到（轉完的）外接框外面；下面放不下就放上面。 */
+  const layoutPillTransform = (lwT: number, lhT: number, ty: number, lrot: number) => {
+    const ui = 1 / Math.max(0.0001, kRef.current);
+    const rad = (lrot * Math.PI) / 180;
+    const halfSpan = (lwT * Math.abs(Math.sin(rad)) + lhT * Math.abs(Math.cos(rad))) / 2;
+    const cy = previewH / 2 + ty;
+    const dir = cy + halfSpan + 52 > previewH ? -1 : 1;
+    const d = dir * (halfSpan + 26 * ui);
+    return `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-lrot}deg)`;
+  };
+  const applyLiveLayoutDom = (layout: LayoutItem, t: { x: number; y: number; scale: number; rot?: number }) => {
+    const lbox = layoutBox(layout, previewW, previewH);
+    const ls = layoutVisualBase.current.get(layout.id) ?? (layout.t?.scale ?? 1);
+    const lw = lbox.w * ls, lh = lbox.h * ls, k = t.scale / Math.max(1e-9, ls), rot = t.rot || 0;
+    const lwT = lbox.w * t.scale, lhT = lbox.h * t.scale;
+    const lLeft = (previewW - lw) / 2 + (t.x || 0), lTop = (previewH - lh) / 2 + (t.y || 0);
+    document.querySelectorAll<HTMLElement>(`[data-layout-content-wrapper][data-layout-id="${layout.id}"]`).forEach(el => {
+      el.style.transform = `translate(${lLeft}px, ${lTop}px)${rot !== 0 ? ` rotate(${rot}deg)` : ''}${Math.abs(k - 1) > 1e-9 ? ` scale(${k})` : ''}`;
+    });
+    document.querySelectorAll<HTMLElement>(`[data-layout-chrome-box][data-layout-id="${layout.id}"]`).forEach(el => {
+      el.style.left = `${(previewW - lwT) / 2 + (t.x || 0)}px`; el.style.top = `${(previewH - lhT) / 2 + (t.y || 0)}px`;
+      el.style.width = `${lwT}px`; el.style.height = `${lhT}px`;
+      el.style.transform = rot !== 0 ? `rotate(${rot}deg)` : '';
+    });
+    document.querySelectorAll<HTMLElement>(`[data-layout-pill="${layout.id}"]`).forEach(el => { el.style.transform = layoutPillTransform(lwT, lhT, t.y || 0, rot); });
+    window.dispatchEvent(new Event('abai-layout-visual'));
+  };
   const patchLayoutT = (patch: Partial<{ x: number; y: number; scale: number; rot: number }>, targetId?: string | null) => {
     const id = targetId ?? selectedLayoutId;
     if (!id) return;
+    const layout = pages.flatMap(p => p.layouts).find(l => l.id === id);
+    if (!layout) return;
     if (patch.scale !== undefined) holdLayoutVisual(id);
     markLayoutMotion(id);
-    setPages(prev => prev.map(p => p.layouts.some(l => l.id === id) ? ({
-      ...p,
-      layouts: p.layouts.map(l => l.id === id ? { ...l, t: { ...l.t, ...patch } } : l),
-    }) : p));
+    if (liveLayoutT.current && liveLayoutT.current.id !== id) flushLayoutT();
+    const base = liveLayoutT.current?.t ?? { x: layout.t?.x || 0, y: layout.t?.y || 0, scale: layout.t?.scale ?? 1, rot: layout.t?.rot || 0 };
+    const t = { ...base, ...patch };
+    liveLayoutT.current = { id, t };
+    applyLiveLayoutDom(layout, t);
+    if (liveLayoutTimer.current) clearTimeout(liveLayoutTimer.current);
+    liveLayoutTimer.current = setTimeout(() => flushLayoutTRef.current(), 200);
   };
 
   /**
@@ -15659,6 +15738,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 key={layout.id}
                                 data-layout-wrapper={pageIdx}
                                 data-layout-id={layout.id}
+                                data-layout-content-wrapper=""
                                 data-layout-z={layout.z ?? 0}
                                 data-seamless={layout.seamless && !insetLayout ? 'true' : undefined}
                                 className="absolute"
@@ -15675,7 +15755,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     const left = -pageIdx * previewW, right = (pages.length - pageIdx) * previewW;
                                     const cx = lLeft + lw / 2, cy = lTop + lh / 2;
                                     const rad = -(layout.t?.rot || 0) * Math.PI / 180;
-                                    return `polygon(${[[left, 0], [right, 0], [right, previewH], [left, previewH]].map(([x, y]) => {
+                                    /* 上下邊往外讓約 3 個裝置像素：佈局貼齊頁面時，照片本來就往外多蓋一點
+                                       （見 LayoutPhotoSurface 的 grow），剛好切在頁面邊上的話那一點又被切掉，
+                                       iOS 的抗鋸齒裁切線會讓頁面白底透出來 —— 排頁面縮小的過程中就會閃白線。 */
+                                    const m = 3 / ((typeof devicePixelRatio === 'number' ? devicePixelRatio : 2) * Math.max(0.05, kRef.current));
+                                    return `polygon(${[[left, -m], [right, -m], [right, previewH + m], [left, previewH + m]].map(([x, y]) => {
                                       const dx = x - cx, dy = y - cy;
                                       return `${dx * Math.cos(rad) - dy * Math.sin(rad) + lw / 2}px ${dx * Math.sin(rad) + dy * Math.cos(rad) + lh / 2}px`;
                                     }).join(',')})`;
@@ -16295,16 +16379,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         按鈕仍然是正的（只有選取框跟角球跟著轉）。 */}
                                     <div
                                       className="absolute left-1/2 top-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 pointer-events-auto z-[60]"
+                                      data-layout-pill={layout.id}
                                       style={(() => {
-                                        const lrot = layout.t?.rot || 0;
-                                        const rad = (lrot * Math.PI) / 180;
-                                        const halfSpan =
-                                          (lw * Math.abs(Math.sin(rad)) + lh * Math.abs(Math.cos(rad))) / 2;
-                                        const cy = (previewH - lh) / 2 + (layout.t?.y || 0) + lh / 2;
-                                        const dir = cy + halfSpan + 52 > previewH ? -1 : 1;
-                                        const d = dir * (halfSpan + 26 * layoutUiInv);
+                                        // 用「現在真正的」尺寸算（縮放手勢中 lw／lh 是手勢開始時的尺寸，藥丸會停在原地）
                                         return {
-                                          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-lrot}deg)`,
+                                          transform: layoutPillTransform(lwTrue, lhTrue, layout.t?.y || 0, layout.t?.rot || 0),
                                           gap: 2 * layoutUiInv,
                                           padding: 2 * layoutUiInv,
                                           boxShadow: `0 ${3 * layoutUiInv}px ${10 * layoutUiInv}px rgba(0,0,0,0.22), 0 0 0 ${0.5 * layoutUiInv}px rgba(0,0,0,0.06)`,
@@ -16394,6 +16473,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     <div
                                       data-layout-wrapper={pageIdx}
                                       data-layout-id={layout.id}
+                                      data-layout-chrome-box=""
                                       className="absolute pointer-events-none"
                                       style={{
                                         left: `${lLeftTrue}px`,
@@ -17352,6 +17432,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   setTuningEdge={setTuningEdge} openComposeFor={openComposeFor}
                   composeOpen={!!composeState} onLeaveCompose={applyComposeToLayer}
                   hideShape={!!selCell}
+                  /* 滑桿那一欄跟創意拼圖同一款：名稱、軌道、數字排成一排 */
+                  inlineSlider
                   isolateFxUpdates={!!selCell||liveFloat}
                   onAdjustmentCommit={selCell?commitCellFx:liveFloat?commitFloatFx:undefined}
                 />
