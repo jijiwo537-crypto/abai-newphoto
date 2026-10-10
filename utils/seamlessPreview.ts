@@ -69,6 +69,9 @@ class SeamGpu {
   private targetSets=new Map<HTMLCanvasElement,Set<CanvasImageSource>>();
   /** 正在分條準備完整解析度的原圖（這段期間先用 1024 的小材質頂著） */
   private pendingFull=new Map<CanvasImageSource,string>();
+  /** 還只是一格底色的材質（背景解碼還沒好）。這一次 draw 用到了就是 incomplete：結果不能拿去蓋畫面 */
+  private placeholder=new Set<CanvasImageSource>();
+  incomplete=false;
   constructor(canvas:HTMLCanvasElement,private direct=false,private presentationOnly=false,readonly srgbOutput=false,readonly shared=false,noTransfer=false){
     const webkit=/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
     this.transferred=!direct&&!shared&&!noTransfer&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
@@ -187,6 +190,7 @@ class SeamGpu {
   draw(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView){
     if(this.presentationOnly)this.lastPresentation=()=>this.draw(target,cells,rects,sources,amount,view);
     const gl=this.gl,w=view.width,h=view.height,count=rects.length;
+    this.incomplete=false;
     this.targetSets.set(target,new Set(sources.map(s=>s?.image||this.blank)));
     const active=new Set<CanvasImageSource>();for(const set of this.targetSets.values())for(const image of set)active.add(image);
     const incoming=sources.reduce((n,s)=>n+(s&&!this.textures.has(s.image)?s.width*s.height*4*4/3:0),0);
@@ -253,11 +257,12 @@ class SeamGpu {
           const g2=small.getContext('2d',{colorSpace:this.color.colorSpace})!;g2.imageSmoothingQuality='high';g2.drawImage(image,0,0,uploadW,uploadH);
           gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,small);
           small.width=small.height=1;
-        }else if(!this.direct&&uploadW*uploadH>1_200_000&&!(image instanceof HTMLCanvasElement)&&typeof createImageBitmap==='function'){
+        }else if(this.shared&&!this.direct&&uploadW*uploadH>1_200_000&&!(image instanceof HTMLCanvasElement)&&typeof createImageBitmap==='function'){
           /* 大張原圖：主執行緒上完全不解碼、不縮放。先放一格空格子的底色，
              背景解碼（createImageBitmap）好了先換上最長邊 1024 的，再分條準備完整解析度，各換一次並通知重畫。 */
           gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
           gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([18,18,18,255]));
+          this.placeholder.add(image);this.incomplete=true;
           const job=`${revision}|${uploadW}x${uploadH}`;
           this.pendingFull.set(image,job);
           const alive=()=>!this.lost&&this.pendingFull.get(image)===job&&this.textures.get(image)===tex;
@@ -276,7 +281,7 @@ class SeamGpu {
               const src:CanvasImageSource=bmp||image;
               if(!alive())return;
               const k=1024/Math.max(uploadW,uploadH),pw=Math.max(1,Math.round(uploadW*k)),ph=Math.max(1,Math.round(uploadH*k));
-              put(pw,ph,smallPixels(src,pw,ph,space));
+              this.placeholder.delete(image);put(pw,ph,smallPixels(src,pw,ph,space));
               await yieldTask();
               const full=await stripPixels(src,sw,sh,uploadW,uploadH,space,alive);
               if(full&&alive()){this.pendingFull.delete(image);put(uploadW,uploadH,full);}
@@ -303,7 +308,7 @@ class SeamGpu {
         // Forcing maximum anisotropy adds work without additional image detail.
         gl.generateMipmap(gl.TEXTURE_2D);
         this.uploads++;this.textures.set(image,tex);this.revisions.set(image,revision);this.textureBytes.set(image,(srgbCanvas?(source?.width||1)*(source?.height||1):uploadW*uploadH)*4*4/3);
-      }else {gl.bindTexture(gl.TEXTURE_2D,tex);this.textures.delete(image);this.textures.set(image,tex);}
+      }else {gl.bindTexture(gl.TEXTURE_2D,tex);this.textures.delete(image);this.textures.set(image,tex);if(this.placeholder.has(image))this.incomplete=true;}
       gl.uniform1i(uniform(`photo${i}`),i);
       gl.uniform1i(uniform(`srgb${i}`),srgbCanvas&&this.color.colorSpace==='display-p3'?1:0);
       gl.uniform4f(uniform(`box${i}`),g.ex,g.ey,g.ew,g.eh);
@@ -365,7 +370,8 @@ export function drawSeamShared(target:HTMLCanvasElement,cells:SeamPhoto[],rects:
   if(sharedGpu?.lost){sharedGpu.dispose();sharedGpu=null;}
   try{sharedGpu??=new SeamGpu(document.createElement('canvas'),false,false,true,true);}catch{return false;}
   try{sharedGpu.draw(target,cells,rects,sources,amount,view);}catch{return false;}
-  if(sharedGpu.lost)return false;
+  // 還有照片只是一格底色（背景解碼中）：不蓋上去，畫面保留上一張（新加的照片在那之前就是原本的空格子），好了會再通知重畫
+  if(sharedGpu.lost||sharedGpu.incomplete)return false;
   const g=get2dWide(target),src=sharedGpu.surface,w=target.width,h=target.height;
   if(!g)return false;
   g.save();g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='copy';g.imageSmoothingEnabled=false;
