@@ -39,10 +39,12 @@ const releaseResource=(r:Resource)=>{r.image.onload=null;r.pending=undefined;rel
 /** fusion: seamless blend amount (0..100), or undefined for separate cells.
  * Both modes share this one GPU surface and its resident textures, so
  * toggling seamless only changes shader uniforms (no re-decode/re-upload). */
-export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision,fusion,previewId}:{cells:Cell[];rects:Rect[];width:number;height:number;gap:number;radius:number;revision:number;fusion?:number;previewId?:string}){
+export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision,fusion,previewId,dims}:{cells:Cell[];rects:Rect[];width:number;height:number;gap:number;radius:number;revision:number;fusion?:number;previewId?:string;
+  /** 每一格的亮度倍率（長按互換時被懸停的那一格 < 1）。直接在畫照片時變暗，範圍跟照片完全一致。 */
+  dims?:number[]}){
   const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef<(viewOnly?:boolean)=>void>(()=>{});
   /** 上一次真的畫出來的範圍（佈局座標）與當時的倍率／旋轉：純平移時拿來判斷要不要重畫 */
-  const paintedView=useRef<{fwd:number[];gesture:boolean;cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastPaintAt=useRef(-1e9);
+  const paintedView=useRef<{fwd:number[];gesture:boolean;headroom?:number;cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastPaintAt=useRef(-1e9);
   // The layout canvas is a plain 2D bitmap fed by the editor-wide shared GPU
   // renderer (drawSeamShared), so it can never lose a context or turn grey.
   const fusionLive=useRef(fusion),liveDrag=useRef(false);
@@ -118,8 +120,11 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       if(viewOnly&&fwd&&painted){
         const inv=new DOMMatrix([fwd[0],fwd[1],fwd[2],fwd[3],pa.x,pa.y]).inverse();
         const n=worldBox([[vis.left,vis.top],[vis.right,vis.top],[vis.left,vis.bottom],[vis.right,vis.bottom]],inv),c=painted.cover;
-        if(n.x0>=c.x0-1e-6&&n.y0>=c.y0-1e-6&&n.x1<=c.x1+1e-6&&n.y1<=c.y1+1e-6){
-          // 畫好的那張還蓋得住：手勢中不重畫。倍率變了（或那張是手勢中的整張）停下來再畫清楚的
+        /* 現在比畫好的那張「放大」了多少。瀏覽器把它拉大超過它多畫的那份解析度（headroom）
+           就會糊 —— 那就是快速放大時看到的「先糊再變清楚」。縮小時拉小不會糊，直接沿用。 */
+        const mag=Math.hypot(fwd[0],fwd[1])/Math.max(1e-9,Math.hypot(painted.fwd[0],painted.fwd[1]));
+        if(n.x0>=c.x0-1e-6&&n.y0>=c.y0-1e-6&&n.x1<=c.x1+1e-6&&n.y1<=c.y1+1e-6&&mag<=(painted.headroom||1)*1.0005){
+          // 畫好的那張還蓋得住、也夠清楚：手勢中不重畫。倍率變了停下來再照實際倍率畫一張
           if(!sameScale||painted.gesture)settleLater();
           return;
         }
@@ -128,11 +133,25 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       /* 手勢中真的要補畫（畫好的範圍蓋不住了）：盡量一次畫整個佈局，之後整段手勢都不必再畫。 */
       const gesture=viewOnly&&!!painted&&!sameScale;
       let density=dpr,area={left:vis.left,top:vis.top,right:vis.right,bottom:vis.bottom},mx=8,my=8;
+      let headroom=1,settleAfterPaint=false;
       if(gesture){
-        const whole=bounds.width*bounds.height*dpr*dpr,k=whole>0?Math.min(1,Math.sqrt(GESTURE_PIXELS/whole)):1;
-        if(k>=.5){density=dpr*k;area={left:bounds.left,top:bounds.top,right:bounds.right,bottom:bounds.bottom};mx=my=0;}
-        else{const g=vw*vh>0?Math.max(1,Math.min(2.2,Math.sqrt(GESTURE_PIXELS/(vw*vh*dpr*dpr)))):1;mx=Math.max(8,vw*(g-1)/2);my=Math.max(8,vh*(g-1)/2);}
-        settleLater();
+        const zoomingIn=!!painted&&Math.hypot(fwd![0],fwd![1])>Math.hypot(painted.fwd[0],painted.fwd[1])*1.0005;
+        if(zoomingIn){
+          /* 正在放大：只畫看得到的那一塊，但密度一次多給到 GESTURE_PIXELS 的上限（最多 2.5 倍）——
+             接下來放大到那個倍數之前，瀏覽器拉大這張都還是清楚的，不必每一格重畫
+             （每重畫一次都要把整張從共用的 GPU 畫面抄過來，iPhone 上很貴）。 */
+          headroom=vw*vh>0?Math.max(1,Math.min(2.5,Math.sqrt(GESTURE_PIXELS/(vw*vh*dpr*dpr)))):1;
+          density=dpr*headroom;mx=my=8/headroom;
+        }else{
+          /* 縮小或平移到畫好的範圍外：一律照螢幕密度（清楚）。整個佈局畫得下就一次畫完，
+             接下來整段手勢都蓋得住；畫不下就畫看得到的那塊再往外多一大圈（最多 2.5 倍），
+             要再縮小 2.5 倍才需要補下一次。 */
+          const whole=bounds.width*bounds.height*dpr*dpr;
+          if(whole>0&&whole<=GESTURE_PIXELS){area={left:bounds.left,top:bounds.top,right:bounds.right,bottom:bounds.bottom};mx=my=0;}
+          else{const g=vw*vh>0?Math.max(1,Math.min(2.5,Math.sqrt(GESTURE_PIXELS/(vw*vh*dpr*dpr)))):1;mx=Math.max(8,vw*(g-1)/2);my=Math.max(8,vh*(g-1)/2);}
+        }
+        // 「停下來再畫清楚」的計時要從這次畫完才開始算（見最後），不然畫得久一點計時就先到了
+        settleAfterPaint=true;
       }else if(!settle&&performance.now()-lastPaintAt.current<250){
         /* 內容連續在變（拖照片、在格子裡縮放照片、拖滑桿）：每一格都得重畫，只畫看得到的
            那一塊加一小圈，停下來再補完整的那圈 —— 不然每一格都要多畫三倍的像素。 */
@@ -142,13 +161,21 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         mx=Math.max(8,vw*(g-1)/2);my=Math.max(8,vh*(g-1)/2);
       }
       lastPaintAt.current=performance.now();
-      const surface=resolveSeamSurface(points,width,height,width,height,bounds,{left:area.left-mx,top:area.top-my,right:area.right+mx,bottom:area.bottom+my},density);
+      /* 佈局貼齊（或超出）頁面邊緣的那幾邊往外多蓋一個裝置像素（見 resolveSeamSurface 的 grow）。
+         只在沒有外圈間距時做：有間距時邊上本來就該露出頁面底色。 */
+      const pageBox=root.closest('[data-page-id]')?.getBoundingClientRect();
+      const edgeTol=1/dpr,g1=1/dpr,sealed=gap<=.001&&radius<=.001;
+      const grow=pageBox&&sealed?{l:bounds.left<=pageBox.left+edgeTol?g1:0,t:bounds.top<=pageBox.top+edgeTol?g1:0,
+        r:bounds.right>=pageBox.right-edgeTol?g1:0,b:bounds.bottom>=pageBox.bottom-edgeTol?g1:0}:undefined;
+      const surface=resolveSeamSurface(points,width,height,width,height,bounds,{left:area.left-mx,top:area.top-my,right:area.right+mx,bottom:area.bottom+my},density,grow);
       if(surface&&fwd){
         const [ia,ib,ic,id,ie,iff]=surface.rasterView;const sw=surface.width,sh=surface.height;
         const cs=[[0,0],[sw,0],[0,sh],[sw,sh]].map(([x,y])=>({x:ia*x+ic*y+ie,y:ib*x+id*y+iff}));
-        paintedView.current={fwd,gesture,cover:{x0:Math.min(...cs.map(q=>q.x)),y0:Math.min(...cs.map(q=>q.y)),x1:Math.max(...cs.map(q=>q.x)),y1:Math.max(...cs.map(q=>q.y))}};
+        paintedView.current={fwd,gesture,headroom,cover:{x0:Math.min(...cs.map(q=>q.x)),y0:Math.min(...cs.map(q=>q.y)),x1:Math.max(...cs.map(q=>q.x)),y1:Math.max(...cs.map(q=>q.y))}};
       }else paintedView.current=null;
       if(!surface){cv.style.display='none';flat.style.display='none';return;}cv.style.display='block';
+      // 長按互換時要變暗的格子跟著這一次的畫面參數一起交給著色器（見 seamlessPreview 的 dim）
+      (surface.view as {dims?:number[]}).dims=dims;
       const W=surface.pixelWidth,H=surface.pixelHeight;
       const viewKey=JSON.stringify(surface.rasterView);
       if(lastView.current!==viewKey){editPresentation.current=false;lastView.current=viewKey;}
@@ -245,7 +272,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         const overlayIdx=previewCells.length===1&&sources[previewCells[0]]?.image instanceof HTMLCanvasElement?previewCells[0]:-1;
         if(overlayIdx>=0)contents[overlayIdx]='overlay';
         const geom=JSON.stringify([W,H,v,gap,radius,noVisibleGutter,rects,crops,radii,sources.map((t,i)=>i===overlayIdx?'overlay':t&&[t.width,t.height]),cells.map(c=>[c.opacity??100])]);
-        const prev=flatState.current,sigs=contents;
+        const prev=flatState.current,sigs=contents.map((c,i)=>c+'|d'+(dims?.[i]??1));
         let region:{l:number;t:number;r:number;b:number}|null={l:0,t:0,r:W,b:H};
         if(!resized&&prev&&prev.geom===geom&&prev.sigs.length===sigs.length){
           region=null;
@@ -278,6 +305,9 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
           if(radii[i]>0||crop.angle){g.beginPath();g.roundRect(x,y,cw,ch,radii[i]);g.clip();g.translate(cx,cy);g.rotate(crop.angle);g.drawImage(image,-iw*crop.scale/2,-ih*crop.scale/2,iw*crop.scale,ih*crop.scale);}
           else drawCoveredPhoto(g,image,(x-cx)/crop.scale+iw/2,(y-cy)/crop.scale+ih/2,cw/crop.scale,ch/crop.scale,x,y,cw,ch);
           g.restore();
+          // 被懸停的那一格：同一個裁切範圍裡蓋一層黑（source-atop＝只蓋在剛畫上去的像素上）
+          const dm=dims?.[i]??1;
+          if(dm<1){g.save();g.globalCompositeOperation='source-atop';g.fillStyle=`rgba(0,0,0,${1-dm})`;g.beginPath();if(radii[i]>0)g.roundRect(x,y,cw,ch,radii[i]);else g.rect(x,y,cw,ch);g.fill();g.restore();}
         });
         g.restore();
         }
@@ -329,8 +359,9 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       flat.toggleAttribute('data-layout-photo-surface',flatShown);cv.toggleAttribute('data-layout-photo-surface',!flatShown);
       const shown=flatShown?flat:cv;
       if(import.meta.env.DEV){shown.dataset.paintCount=String(Number(shown.dataset.paintCount||0)+1);shown.dataset.rasterView=JSON.stringify(surface.rasterView);shown.dataset.sourceKeys=JSON.stringify([...resources.current.values()].map(r=>r.key));}
+      if(settleAfterPaint)settleLater();
     };
     drawRef.current();
-  },[cells,rects,width,height,gap,radius,revision,fusion]);
+  },[cells,rects,width,height,gap,radius,revision,fusion,(dims||[]).join(',')]);
   return <><svg ref={plane} data-layout-photo-plane viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" aria-hidden style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,overflow:'hidden'}}><g opacity={0}><circle data-layout-probe cx={0} cy={0} r={.005}/><circle data-layout-probe cx={width} cy={0} r={.005}/><circle data-layout-probe cx={0} cy={height} r={.005}/></g></svg><canvas ref={ref} data-layout-photo-surface style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0}}/><canvas ref={editSurface} style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/></>;
 }

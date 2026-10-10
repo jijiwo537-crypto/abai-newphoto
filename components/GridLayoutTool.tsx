@@ -3592,7 +3592,12 @@ const boxBlurV = (src: Float32Array, dst: Float32Array, w: number, h: number, r:
 /* 三次盒狀模糊（半徑 r）合起來就是一顆長 6r+1 的卷積核。 */
 const tripleBoxKernel = (r: number) => {
   let k = [1];
-  const box = new Array(2 * r + 1).fill(1 / (2 * r + 1));
+  /* r 可以是小數：中間 floor(r) 格權重 1，最外面那一格權重是小數部分 —— 盒子的寬度
+     就連續地等於 2r+1（在縮小的那張上算時，半徑幾乎都不是整數）。 */
+  const ri = Math.floor(r), fr = r - ri;
+  const box = fr > 1e-6
+    ? [fr, ...new Array(2 * ri + 1).fill(1), fr].map(v => v / (2 * r + 1))
+    : new Array(2 * ri + 1).fill(1 / (2 * ri + 1));
   for (let pass = 0; pass < 3; pass++) {
     const out = new Array(k.length + box.length - 1).fill(0);
     for (let i = 0; i < k.length; i++) for (let j = 0; j < box.length; j++) out[i + j] += k[i] * box[j];
@@ -3613,11 +3618,25 @@ const featherBlurPixels = (px: ImageData, w: number, h: number, r: number) => {
   const u = new Uint32Array(px.data.buffer, px.data.byteOffset, n);
   const b = new Float32Array(n);
   // ── 橫向：整列先照抄，再把變化點附近那幾段重算 ──
+  const spans = new Int32Array(Math.max(16, w * 2));
   for (let y = 0; y < h; y++) {
     const row = y * w;
-    let lo = -1, hi = -2;
-    const flush = () => {
-      for (let j = lo; j <= hi; j++) {
+    let ns = 0, lo = -1, hi = -2;
+    let prev = u[row] >>> 24;
+    b[row] = prev;
+    for (let x = 1; x < w; x++) {
+      const cur = u[row + x] >>> 24;
+      b[row + x] = cur;
+      if (cur !== prev) {
+        const s0 = x - R > 0 ? x - R : 0, s1 = x - 1 + R < w - 1 ? x - 1 + R : w - 1;
+        if (s0 <= hi + 1) { if (s1 > hi) hi = s1; }
+        else { if (hi >= lo && lo >= 0) { spans[ns++] = lo; spans[ns++] = hi; } lo = s0; hi = s1; }
+        prev = cur;
+      }
+    }
+    if (hi >= lo && lo >= 0) { spans[ns++] = lo; spans[ns++] = hi; }
+    for (let i = 0; i < ns; i += 2) {
+      for (let j = spans[i], e = spans[i + 1]; j <= e; j++) {
         let acc = 0;
         for (let k = 0; k < L; k++) {
           const q = j - R + k;
@@ -3625,28 +3644,15 @@ const featherBlurPixels = (px: ImageData, w: number, h: number, r: number) => {
         }
         b[row + j] = acc;
       }
-    };
-    let prev = u[row] >>> 24;
-    for (let x = 0; x < w; x++) {
-      const cur = u[row + x] >>> 24;
-      b[row + x] = cur;
-      if (x > 0 && cur !== prev) {
-        const s0 = Math.max(0, x - R), s1 = Math.min(w - 1, x - 1 + R);
-        if (s0 <= hi + 1) hi = Math.max(hi, s1); else { if (hi >= lo && lo >= 0) pending.push(lo, hi); lo = s0; hi = s1; }
-      }
-      prev = cur;
     }
-    if (hi >= lo && lo >= 0) pending.push(lo, hi);
-    for (let i = 0; i < pending.length; i += 2) { lo = pending[i]; hi = pending[i + 1]; flush(); }
     /* 橫向改過的那幾段先寫回 u：直向那一趟只重算「上下有變化」的點，其他點保持 u 現在的值，
        所以 u 必須已經是橫向模糊後的結果。整列的卷積都算完了才寫（卷積讀的是原本的 u）。 */
-    for (let i = 0; i < pending.length; i += 2) {
-      for (let j = pending[i]; j <= pending[i + 1]; j++) {
+    for (let i = 0; i < ns; i += 2) {
+      for (let j = spans[i], e = spans[i + 1]; j <= e; j++) {
         const v = b[row + j], al = v <= 0 ? 0 : v >= 255 ? 255 : (v + 0.5) | 0;
         u[row + j] = al ? ((al << 24) | 0xFFFFFF) >>> 0 : 0;
       }
     }
-    pending.length = 0;
   }
   // ── 直向 ──
   /* cnt[x] ＞ 0 ＝ 第 x 欄在這一列上下 R 之內有變化，要重算；用滑動計數，整趟照列走。
@@ -3673,9 +3679,7 @@ const featherBlurPixels = (px: ImageData, w: number, h: number, r: number) => {
     if (sub > 0) { const o = sub * w; for (let x = 0; x < w; x++) cnt[x] -= dif[o + x]; }
   }
 };
-const pending: number[] = [];
-// 縮小那張只在 makeShapeMask 裡面用一下，固定重複使用同一張
-let maskSmallScratch: HTMLCanvasElement | null = null;
+
 
 /**
  * 產生一張遮罩（白色、alpha 就是可見度）。
@@ -3712,6 +3716,7 @@ export const makeShapeMask = (
      模糊是三次盒狀模糊：半徑 r 疊三次會把一條硬邊抹開到 ±3r，
      所以帶寬 = 2 × 3r；形狀再往內縮 3r，最外緣才會剛好收斂到 0。
      反推就是 r = 帶寬 / 6。 */
+  const w0 = c.width, h0 = c.height;
   const half = Math.min(c.width, c.height) / 2;
   /* 滑桿的數字＝「淡出帶從邊緣往內走多少」，直接對應、不加任何曲線：
        10  → 走到「邊緣到中心」的 10%
@@ -3724,39 +3729,33 @@ export const makeShapeMask = (
   const inset = r > 0 ? r * 3 + 1 : 0;
   g.fillStyle = '#fff';
   const R = Math.max(0, cornerR(rp, c.width, c.height) - inset);
-  /* 羽化帶寬一點的時候，模糊在縮小 d 倍的那一張上算，再平滑放大回來。
-     三次盒狀模糊出來的是一條很平緩的漸層，縮小再放大幾乎沒有差（實測最大差 1～2 階），
-     但要算的像素少 d² 倍 —— 拖羽化滑桿時每一格都要重算一次這張遮罩。 */
-  /* 縮小倍率 d 與縮小後的半徑 sr：挑「盒子實際寬度 (2·sr+1)·d 最接近原本 2r+1」的那一組，
-     模糊出來的寬度才跟原尺寸算的一樣。 */
-  let d = 1, sr = r;
-  if (!exact && r >= 10) {
-    let best = Infinity;
-    for (let k = 2; k <= 8; k++) {
-      const s0 = Math.round(((2 * r + 1) / k - 1) / 2);
-      if (s0 < 3) continue;
-      const err = Math.abs((2 * s0 + 1) * k - (2 * r + 1)) / (2 * r + 1) + k * 1e-4;
-      if (err < best) { best = err; d = k; sr = s0; }
-    }
-  }
+  /* 羽化帶寬一點的時候，模糊在縮小 d 倍的那一張上算，而且**直接把那張小的交回去**，
+     由呼叫端畫上去時讓 GPU 一次放大（呼叫端本來就是照目標尺寸 drawImage）。
+     以前是在 CPU 上把小張用高品質平滑放大回原尺寸 —— iPhone 上那一步本身就要幾十毫秒，
+     羽化越大越常走這條，就是「接近 100 特別卡」。
+     縮小後的半徑通常不是整數，用小數半徑的盒狀模糊（tripleBoxKernel），模糊寬度連續；
+     再扣掉「縮小時的平均」與「放大時的雙線性內插」本身帶來的那一點點模糊
+     （變異數各 d²/12、d²/6），整體跟原尺寸算的同一個寬度。 */
+  let d = 1;
+  if (!exact && r >= 6) d = Math.max(1, Math.floor(r / 3));
   if (d > 1) {
     const sw = Math.max(4, Math.ceil(c.width / d)), sh = Math.max(4, Math.ceil(c.height / d));
-    const small = maskSmallScratch || (maskSmallScratch = document.createElement('canvas'));
-    small.width = sw; small.height = sh;
-    const sg = small.getContext('2d', { willReadFrequently: true })!;
-    sg.setTransform(1, 0, 0, 1, 0, 0); sg.clearRect(0, 0, sw, sh);
-    sg.setTransform(sw / c.width, 0, 0, sh / c.height, 0, 0);
+    const kx = sw / c.width, ky = sh / c.height, dd = 1 / Math.min(kx, ky);
+    // 原尺寸的三次盒狀模糊變異數 = r(r+1)；減去縮放本身的 d²/4，再換回縮小後的半徑 ρ（ρ(ρ+1)=σ²/d²）
+    const target = Math.max(1, r * (r + 1) - dd * dd / 4) / (dd * dd);
+    const rho = (-1 + Math.sqrt(1 + 4 * target)) / 2;
+    c.width = sw; c.height = sh;
+    const sg = c.getContext('2d', { willReadFrequently: true })!;
+    sg.setTransform(kx, 0, 0, ky, 0, 0);
     sg.fillStyle = '#fff';
     withImgOutline(
-      sg, inset, inset, c.width - inset * 2, c.height - inset * 2, kind, R, R,
+      sg, inset, inset, w0 - inset * 2, h0 - inset * 2, kind, R, R,
       p => { p ? sg.fill(p) : sg.fill(); },
     );
     sg.setTransform(1, 0, 0, 1, 0, 0);
     const px = sg.getImageData(0, 0, sw, sh);
-    featherBlurPixels(px, sw, sh, sr);
+    featherBlurPixels(px, sw, sh, rho);
     sg.putImageData(px, 0, 0);
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-    g.drawImage(small, 0, 0, c.width, c.height);
     return c;
   }
   withImgOutline(
@@ -5803,6 +5802,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   /** 只有效果的照片：效果畫布直接掛在這裡顯示（見 shape 畫布的 draw） */
   const fxHostRef = useRef<HTMLDivElement>(null);
   const shapeScratchRef = useRef<HTMLCanvasElement | null>(null);
+  const fxFlatRef = useRef<{ key: string; cv: HTMLCanvasElement; ready: boolean } | null>(null);
+  useEffect(() => () => { const f = fxFlatRef.current; if (f) { f.cv.width = f.cv.height = 1; fxFlatRef.current = null; } }, []);
   useEffect(() => () => { const c = shapeScratchRef.current; if (c) { c.width = c.height = 1; shapeScratchRef.current = null; } }, []);
   const plainFxDisplay = !image.feather && !image.imgRadius && !image.imgGlow && !image.imgStrokeWidth && !isImgShaped(image.imgShape);
   /** 這一層身上有沒有「需要 canvas 才畫得出來」的東西 */
@@ -6018,8 +6019,22 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         if (!oc) return;
         oc.setTransform(1, 0, 0, 1, 0, 0); oc.globalCompositeOperation = 'source-over'; oc.globalAlpha = 1;
         oc.clearRect(0, 0, ow, ohh);
+        /* 效果的成品是 GPU 那張：拖造型滑桿（羽化、圓角…）時效果沒變，以前每一格都要把它整張抄進
+           2D 畫布（iPhone 上等於整張讀回）。同一份效果第二次用到時抄一張 2D 的留著，之後直接用。 */
+        let src3: CanvasImageSource = base;
+        const fxHit = fxCacheRef.current;
+        if (base !== img && fxHit && fxHit.canvas === base && base instanceof HTMLCanvasElement) {
+          const fl = fxFlatRef.current;
+          if (fl && fl.key === fxHit.key && fl.ready) src3 = fl.cv;
+          else if (fl && fl.key === fxHit.key) {
+            if (fl.cv.width !== base.width || fl.cv.height !== base.height) { fl.cv.width = base.width; fl.cv.height = base.height; }
+            const gf = fl.cv.getContext('2d')!;
+            gf.setTransform(1, 0, 0, 1, 0, 0); gf.globalCompositeOperation = 'copy'; gf.drawImage(base, 0, 0); gf.globalCompositeOperation = 'source-over';
+            fl.ready = true; src3 = fl.cv;
+          } else fxFlatRef.current = { key: fxHit.key, cv: fl?.cv || document.createElement('canvas'), ready: false };
+        }
         // 圖片畫在中間，四周留給描邊
-        drawImgBase(oc, base, strokeExtent, strokeExtent, iw, ih, image);
+        drawImgBase(oc, src3, strokeExtent, strokeExtent, iw, ih, image);
         if (image.feather || image.imgRadius || isImgShaped(kind)) {
           oc.globalCompositeOperation = 'destination-in';
           if (image.feather) {
@@ -11295,6 +11310,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
   };
 
+  const swapAutoSelectRef = useRef(false);
   const handleCellTouchStart = (e: React.TouchEvent<HTMLDivElement>, idx: number, layoutId: string) => {
     const isSelected = selectedIndex === idx;
 
@@ -11367,6 +11383,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         if (navigator.vibrate) {
           navigator.vibrate(40);
         }
+
+        /* 沒有先選這個佈局也能直接長按互換：互換的那一套（找手指下面是哪一格、讓那一格變暗、
+           放手時交換）都是對「選中的佈局」做的，所以這裡把它暫時選起來，放手後再取消。 */
+        if (selectedLayoutId !== layoutId) { swapAutoSelectRef.current = true; setSelectedLayoutId(layoutId); setSelectedIndex(null); }
 
         // Initialize custom touch drag state
         touchPosRef.current = point;
@@ -11556,6 +11576,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           selectCellOrLayout(layoutId, idx);
         }
       }
+      // 為了互換暫時選起來的佈局：放手後回到原本「什麼都沒選」
+      if (swapAutoSelectRef.current) { swapAutoSelectRef.current = false; setSelectedLayoutId(null); setSelectedIndex(null); }
 
       touchDragState.current = null;
       touchDragOverIndexRef.current = null;
@@ -15682,8 +15704,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               >
                               {/* 動畫：整組佈局當成一張圖片。動畫時鐘每一格直接改這一層的 transform／opacity（不重畫 React） */}
                               <div data-layout-motion={layout.id} className="absolute inset-0" style={{ transformOrigin: '50% 50%' }}>
-                              {nativeLayout && <LayoutPhotoSurface cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} gap={gap} radius={radius} revision={lutRevision}
-                                fusion={stableSeamless ? (layout.seamlessAmount ?? 0) : undefined} previewId={layout.id}/>}
+                              {nativeLayout && (() => {
+                                /* 長按互換：被拿起、被懸停的那一格直接在畫照片時變暗（跟下面格子上那層黑同一個條件）。
+                                   暗掉的範圍就是照片實際畫到的範圍 —— 無縫的融合帶、圓角、邊緣抗鋸齒都一致，
+                                   不會像另外疊一層黑框那樣邊上留一圈沒暗到。 */
+                                const swappingL = touchDraggedIndex !== null || draggedIndex !== null || floatDragSrc !== null;
+                                const wholeSel = isThisLayoutSelected && selectedIndex === null && !swappingL;
+                                const dims = layout.images.map((_, i) => ((isThisLayoutSelected && !wholeSel && (dragOverIndex === i || hoveredSwapTargetIndex === i || touchDraggedIndex === i || touchDragOverIndex === i))
+                                  || (swapOver?.kind === 'cell' && swapOver.idx === i && swapOver.layoutId === layout.id)) ? 0.4 : 1);
+                                return <LayoutPhotoSurface cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} gap={gap} radius={radius} revision={lutRevision}
+                                  fusion={stableSeamless ? (layout.seamlessAmount ?? 0) : undefined} previewId={layout.id} dims={dims}/>;
+                              })()}
                               {nativeInset && <svg data-inset-photo-layer="1" width={lw} height={lh}
                                 className="absolute inset-0 pointer-events-none" style={{zIndex: 15, overflow: 'visible'}}>
                                 {pageActiveTemplate.rects.map((raw, idx) => {
@@ -16022,7 +16053,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         })()}
 
                                         {/* Thin solid outline on top of the image */}
-                                        {isSelected && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (() => {
+                                        {isSelected && !chromeLayer && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (() => {
                                           /* 跟創意拼圖選中底圖同一款：1 螢幕像素的白色虛線（4／4），
                                              整條線畫在格子內側，不加陰影。 */
                                           const ui = 1 / Math.max(0.0001, kRef.current);
@@ -16044,7 +16075,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           className="absolute inset-0 bg-black/60 z-30 pointer-events-none border-0"
                                           style={{
                                             borderRadius: `${radius}px`,
-                                            opacity: (isThisLayoutSelected && !wholeLayoutSelected && (isDragOver || hoveredSwapTargetIndex === idx || touchDraggedIndex === idx || touchDragOverIndex === idx)) || isFloatSwapOver ? 1 : 0
+                                            // 原生佈局改在畫照片時變暗（見 LayoutPhotoSurface 的 dims），這層只給其他佈局用
+                                            opacity: !nativeLayout && ((isThisLayoutSelected && !wholeLayoutSelected && (isDragOver || hoveredSwapTargetIndex === idx || touchDraggedIndex === idx || touchDragOverIndex === idx)) || isFloatSwapOver) ? 1 : 0
                                           }}
                                         />
                                           );
@@ -16208,7 +16240,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 );
                               })()}
 
-                              {isThisLayoutSelected && selectedIndex === null && (() => {
+                              {/* 長按互換拖曳中不畫整組佈局的選取框（沒選佈局時長按，會暫時選起來給互換用，框不該跳出來） */}
+                              {isThisLayoutSelected && selectedIndex === null && touchDraggedIndex === null && (() => {
                                 const dot = 'absolute w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] z-[60] pointer-events-auto touch-none';
                                 /* 整組佈局放大到超出畫布時，四個角跟按鈕本來會被頁面容器的
                                    overflow-hidden 切掉 —— 抓不到角、也按不到刪除。
@@ -16378,6 +16411,43 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                       }}
                                     >
                                       {layoutChrome}
+                                    </div>
+                                  </div>,
+                                  chromeLayer,
+                                );
+                              })()}
+                              {/* 選中佈局裡的一格照片：虛線框畫在外框層（跟整組佈局的框同一層），
+                                  不再畫在格子裡面 —— 格子是內容的一部分，放大預覽時被當成一張圖拉大，線就糊了；
+                                  而且以前線是壓在照片內側最外圈的。現在框線的內緣剛好貼著照片外緣，
+                                  不管放多大都是 1 個螢幕像素、清楚的。 */}
+                              {chromeLayer && isThisLayoutSelected && selectedIndex !== null && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && !!layout.images[selectedIndex]?.url && (() => {
+                                const raw = pageActiveTemplate.rects[selectedIndex];
+                                if (!raw) return null;
+                                const inset = gap / 2, areaW = Math.max(1, lw - gap), areaH = Math.max(1, lh - gap);
+                                const rr = resolveLayoutRect(raw, areaW, areaH, layout.overlaySize);
+                                const px = inset + rr.x * areaW + gap / 2, py = inset + rr.y * areaH + gap / 2;
+                                const pw = Math.max(0, rr.w * areaW - gap), ph = Math.max(0, rr.h * areaH - gap);
+                                const ui = 1 / Math.max(0.0001, kRef.current), off = ui / 2;
+                                const cr = Math.min(radius, pw / 2, ph / 2) * (lwTrue / Math.max(1e-6, lw));
+                                const mvC = pageContentShift(pageIdx);
+                                return createPortal(
+                                  <div className="absolute pointer-events-none" style={{
+                                    left: `${pageIdx * previewW}px`, top: 0, width: `${previewW}px`, height: `${previewH}px`,
+                                    transformOrigin: 'center center', zIndex: 100000 + (layout.z ?? 0) * 2 + 1,
+                                    transform: mvC ? `translateX(${mvC.dx}px)${mvC.s !== 1 ? ` scale(${mvC.s})` : ''}` : undefined,
+                                  }}>
+                                    <div className="absolute pointer-events-none" style={{
+                                      left: `${lLeftTrue}px`, top: `${lTopTrue}px`, width: `${lwTrue}px`, height: `${lhTrue}px`,
+                                      ...((layout.t?.rot || 0) !== 0 ? { transform: `rotate(${layout.t!.rot}deg)`, transformOrigin: 'center center' } : null),
+                                    }}>
+                                      <svg data-cell-selection-frame aria-hidden className="absolute pointer-events-none" style={{
+                                        left: `calc(${(px / lw) * 100}% - ${off}px)`, top: `calc(${(py / lh) * 100}% - ${off}px)`,
+                                        width: `calc(${(pw / lw) * 100}% + ${off * 2}px)`, height: `calc(${(ph / lh) * 100}% + ${off * 2}px)`,
+                                        overflow: 'visible',
+                                      }}>
+                                        <rect x="0" y="0" width="100%" height="100%" rx={cr > 0 ? cr + off : 0} fill="none" stroke="white"
+                                          strokeWidth={ui} strokeDasharray={`${4 * ui} ${4 * ui}`} />
+                                      </svg>
                                     </div>
                                   </div>,
                                   chromeLayer,

@@ -1,7 +1,7 @@
 import { seamGeometry, seamImageTransform, type SeamPhoto, type SeamRect } from './seamlessLayout';
 import { configureWebglWide, get2dWide } from './colorSpace';
 export type SeamTexture = { image: CanvasImageSource; width: number; height: number } | null;
-export type SeamView = { width:number;height:number;xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;isolated?:boolean;sealEdges?:boolean;radii?:number[];crops?:{tx:number;ty:number;scale:number;angle:number}[];viewport?:number[];clip?:number[];clipGuard?:[number,number];other?:{xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;clip:number[]} };
+export type SeamView = { width:number;height:number;xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;isolated?:boolean;sealEdges?:boolean;radii?:number[];dims?:number[];crops?:{tx:number;ty:number;scale:number;angle:number}[];viewport?:number[];clip?:number[];clipGuard?:[number,number];other?:{xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;clip:number[]} };
 
 /** Original-size source textures + physical-pixel viewport rendering. Fusion
  * changes uniforms only; dragging and resting use the identical quality path. */
@@ -68,7 +68,7 @@ class SeamGpu {
     const shader=(type:number,source:string)=>{const s=gl.createShader(type)!;gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s)||'Shader');return s;};
     const vs=shader(gl.VERTEX_SHADER,`#version 300 es
       in vec2 position;out vec2 uv;void main(){uv=vec2((position.x+1.)*.5,(1.-position.y)*.5);gl_Position=vec4(position,0.,1.);}`);
-    const uniforms=Array.from({length:count},(_,i)=>`uniform sampler2D photo${i};uniform vec4 box${i};uniform vec4 limits${i};uniform vec4 edges${i};uniform vec4 crop${i};uniform vec4 source${i};uniform float opacity${i};uniform float radius${i};uniform bool srgb${i};`).join('\n');
+    const uniforms=Array.from({length:count},(_,i)=>`uniform sampler2D photo${i};uniform vec4 box${i};uniform vec4 limits${i};uniform vec4 edges${i};uniform vec4 crop${i};uniform vec4 source${i};uniform float opacity${i};uniform float radius${i};uniform float dim${i};uniform bool srgb${i};`).join('\n');
     const owners=Array.from({length:count},(_,i)=>`{vec4 b=box${i},bounds=limits${i};vec2 outside=max(max(b.xy-p,p-(b.xy+b.zw)),vec2(0.));float distance=dot(outside,outside);bool inside=all(greaterThanEqual(p,bounds.xy))&&all(lessThan(p,bounds.zw));if(isolated&&!sealEdges?inside:distance<nearest){nearest=distance;owner=${i};}}`).join('\n');
     const layers=Array.from({length:count},(_,i)=>`{
       vec4 b=box${i},e=edges${i},c=crop${i},s=source${i};
@@ -89,6 +89,9 @@ class SeamGpu {
         vec4 tex=textureGrad(photo${i},d/st+.5,gx,gy);
         vec3 encoded=tex.a>0.?tex.rgb/tex.a:vec3(0.);
         if(srgb${i})encoded=toP3(encoded);
+        // 長按互換時被懸停的那一格：在這一格自己的權重上變暗 —— 暗掉的範圍就是這張照片
+        // 實際畫到的範圍（含無縫的融合帶、圓角、邊緣抗鋸齒），跟另外疊一層黑框不一樣。
+        encoded*=dim${i};
         vec3 linearSource=toLinear(encoded);
         float a=tex.a*opacity${i};
         // Match the app's established canvas source-over appearance. Linear-light
@@ -236,6 +239,7 @@ class SeamGpu {
       gl.uniform4f(uniform(`source${i}`),source?.width||1,source?.height||1,Math.cos(t.angle),Math.sin(t.angle));
       gl.uniform1f(uniform(`opacity${i}`),(c.opacity??100)/100);
       gl.uniform1f(uniform(`radius${i}`),view.radii?.[i]||0);
+      gl.uniform1f(uniform(`dim${i}`),view.dims?.[i]??1);
     }
     if(view.viewport){gl.disable(gl.SCISSOR_TEST);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT);gl.enable(gl.SCISSOR_TEST);gl.scissor(view.viewport[0],view.viewport[1],view.viewport[2],view.viewport[3]);}
     else if(view.clip&&!view.other){

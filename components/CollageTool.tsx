@@ -1611,6 +1611,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
   };
   const maskScratchRef = useRef<HTMLCanvasElement | null>(null);
+  const objFlatRef = useRef<{ id: string; key: string; src: any; cv: HTMLCanvasElement; ready: boolean } | null>(null);
   const fxCanvasOf = useCallback((o: any, isMain = false, onScreenPx = 0, prepareNative = false): CanvasImageSource | null => {
     if (!o.img) return null;
     const warm=regionWarmStage.current;
@@ -1914,7 +1915,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (scratch) reuseCv(off, offW, offH);
       else { off.width = offW; off.height = offH; }
       const oc = off.getContext('2d')!;
-      drawImgBase(oc, base, strokeExtent, strokeExtent, iw, ih, o);
+      /* 效果的成品（GPU 那張）先抄成一張 2D 的留著：拖羽化、圓角、描邊這些「造型」滑桿時，
+         效果本身沒有變，以前每一格都要把 GPU 那張整張抄進 2D 畫布 —— iPhone 上那一下等於
+         整張讀回，就是拖造型滑桿卡的主因。現在效果沒變就直接用這張，只重做遮罩那一步。
+         只留目前這一顆（一張畫布），效果一變就重抄。 */
+      let src3: CanvasImageSource = base;
+      if (isMain && objectGpu && base !== srcEl && !isVid) {
+        const fk = JSON.stringify(o.fx || {}) + '|' + iw + 'x' + ih + '|' + !!getLoadedLut(o.fx?.lut);
+        // 拖的是效果滑桿（效果每一格都在變）：抄了也用不到，直接畫。同一份效果第二次出現才抄。
+        const fl = objFlatRef.current;
+        const same = !!fl && fl.id === o.id && fl.key === fk && fl.src === o.img;
+        if (same && fl!.ready) src3 = fl!.cv;
+        else if (same) {
+          const cvf = fl!.cv;
+          if (cvf.width !== iw || cvf.height !== ih) { cvf.width = iw; cvf.height = ih; }
+          const gf = cvf.getContext('2d')!;
+          gf.setTransform(1, 0, 0, 1, 0, 0); gf.globalCompositeOperation = 'copy'; gf.globalAlpha = 1;
+          gf.drawImage(base, 0, 0, iw, ih); gf.globalCompositeOperation = 'source-over';
+          fl!.ready = true; src3 = cvf;
+        } else objFlatRef.current = { id: o.id, key: fk, src: o.img, cv: fl?.cv || document.createElement('canvas'), ready: false };
+      }
+      drawImgBase(oc, src3, strokeExtent, strokeExtent, iw, ih, o);
       if (shape.f || shape.r || isImgShaped(shape.k)) {
         oc.globalCompositeOperation = 'destination-in';
         if (shape.f) {
