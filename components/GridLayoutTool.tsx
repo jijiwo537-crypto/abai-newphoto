@@ -2586,9 +2586,14 @@ useLayoutEffect(() => {
   setLocalFx(liveFx.current);
 },[img.id,img.fx,isolateFxUpdates]);
 const finishAdjustment = () => {
+  /* 造型分頁的滑桿（羽化、圓角…）不走 setFx，pendingCommit 一直是 null —— 以前放手時
+     就直接 return，拖的值從來沒寫回文件：畫面上有羽化，但面板讀到的還是 0，
+     下一次一碰滑桿白點就跳回 0。按下過滑桿就一定要寫回。 */
+  const started=sliderHeld.current;
   sliderHeld.current=false;
   releaseBackgroundHold.current?.();releaseBackgroundHold.current=null;
-  if(pendingCommit.current === null)return;
+  if(pendingCommit.current === null){if(started)commitAdjustmentRef.current?.();return;}
+  deliverDeferredFx();
   clearTimeout(pendingCommit.current);pendingCommit.current=null;
   setLocalFx(liveFx.current);
   commitAdjustmentRef.current?.();
@@ -2598,15 +2603,35 @@ useEffect(() => () => {
   if(pendingCommit.current !== null){clearTimeout(pendingCommit.current);pendingCommit.current=null;commitAdjustmentRef.current?.();}
 },[]);
 const fx = isolateFxUpdates ? liveFx.current : (img.fx || {});
-const setFx = (patch: Partial<PhotoFx>) => {
+/* 點卡片（特效、濾鏡、原始）時：面板（卡片的框、下面那根滑桿）先換好、先畫出來，
+   照片的效果下一格才套。以前是同一個點擊裡先把效果整個算完、面板才跟著重畫 ——
+   手指一按卡片的按壓動畫就出來了，滑桿卻要等效果算完才換，看起來就是「慢一拍」。 */
+// 排程時記下當時那一張的 set：換選別張照片時也只會寫回原本那一張
+const deferredFx = useRef<{ raf: number; next: PhotoFx; set: (d: any) => void } | null>(null);
+const deliverDeferredFx = () => {
+  const d = deferredFx.current; if (!d) return;
+  cancelAnimationFrame(d.raf); deferredFx.current = null;
+  d.set({fx:d.next});
+};
+useEffect(() => () => deliverDeferredFx(), []);
+const setFx = (patch: Partial<PhotoFx>, deferApply = false) => {
   deferHeavyWork();
   const next = {...(isolateFxUpdates ? liveFx.current : fx),...patch};
   if(isolateFxUpdates){
     liveFx.current=next;
     if(!sliderInput.current)setLocalFx(next);
     if(pendingCommit.current !== null)clearTimeout(pendingCommit.current);
-    pendingCommit.current=setTimeout(()=>{if(!sliderHeld.current)finishAdjustment();},180);
+    pendingCommit.current=setTimeout(()=>{if(!sliderHeld.current){deliverDeferredFx();finishAdjustment();}},180);
+    if(deferApply){
+      // 兩格之後：第一格讓 React 把面板畫出來，第二格再算效果
+      if(deferredFx.current)cancelAnimationFrame(deferredFx.current.raf);
+      const job={raf:0,next,set};
+      job.raf=requestAnimationFrame(()=>{job.raf=requestAnimationFrame(()=>{if(deferredFx.current===job)deliverDeferredFx();});});
+      deferredFx.current=job;
+      return;
+    }
   }
+  deliverDeferredFx();
   set({fx:next});
 };
 const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
@@ -2671,7 +2696,7 @@ const pickEffect = (id: string) => {
   const patch: any = { ...FX_PARAM_DEFAULTS };
   if (on) for (const k of (FX_CARD_KEYS[id] || [amountId])) delete patch[k];
   else patch[amountId] = FX_ON_AMOUNT[id] ?? 100;
-  setFx(patch);
+  setFx(patch, true);
 };
 
 /* 長按 450ms＝疊加，並把接著那一次 click 吃掉 */
@@ -2855,10 +2880,10 @@ const sliderArea = (() => {
     const t = SHAPE_TOOLS.find(x => x[0] === shapeTool);
     if (t && (t[0] === 'imgRadius' || t[0] === 'feather')) {
       const key = t[0] as 'imgRadius' | 'feather';
-      // 羽化一格 0.5，低段位才調得準
+      // 數字一律整數（不顯示小數點）
       return editorSlider(
-        t[1], (img[key] as number) || 0, t[3], t[4],
-        v => set({ [key]: v }), undefined, true, key === 'feather' ? 0.5 : 1,
+        t[1], Math.round((img[key] as number) || 0), t[3], t[4],
+        v => set({ [key]: v }), undefined, true, 1,
       );
     }
     return null;
@@ -2918,7 +2943,7 @@ return (
               } else setLoadingLut(null);
               /* 強度用跟編輯頁同一份預設值（F3 是 70、F12 是 50…）——
                  以前這裡一律 100，同一顆濾鏡在拼圖裡就比編輯頁濃。 */
-              setFx({ lut: l.id, lutAmount: lutDefaultAmount(l.id) });
+              setFx({ lut: l.id, lutAmount: lutDefaultAmount(l.id) }, true);
               setLutRevision(n => n + 1);
             }}
             className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
@@ -2977,7 +3002,7 @@ return (
             key="__fx-none"
             data-fx-card=""
             aria-pressed={none}
-            onClick={() => { setEffectCard(''); setEffectDetail(false); if (!none) setFx({ ...FX_PARAM_DEFAULTS }); }}
+            onClick={() => { setEffectCard(''); setEffectDetail(false); if (!none) setFx({ ...FX_PARAM_DEFAULTS }, true); }}
             className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
           >
             <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
@@ -3564,6 +3589,94 @@ const boxBlurV = (src: Float32Array, dst: Float32Array, w: number, h: number, r:
   }
 };
 
+/* 三次盒狀模糊（半徑 r）合起來就是一顆長 6r+1 的卷積核。 */
+const tripleBoxKernel = (r: number) => {
+  let k = [1];
+  const box = new Array(2 * r + 1).fill(1 / (2 * r + 1));
+  for (let pass = 0; pass < 3; pass++) {
+    const out = new Array(k.length + box.length - 1).fill(0);
+    for (let i = 0; i < k.length; i++) for (let j = 0; j < box.length; j++) out[i + j] += k[i] * box[j];
+    k = out;
+  }
+  return Float32Array.from(k);
+};
+/* 只在「值有變化」的地方附近做卷積：離任何一個變化點超過 3r 的像素，
+   模糊前後一模一樣（整段都是同一個值），直接照抄。羽化的遮罩只有邊緣那一圈
+   在變，所以低羽化值時要算的像素從整張變成邊上薄薄一圈（以前拖到接近 0
+   反而最卡：每一格都把一百萬個像素整張模糊六次）。結果跟逐格做三次是同一個數學式
+   （形狀往內縮了 3r+1，四邊永遠是 0，橫直的先後順序不影響結果）。
+   兩個方向都照列（row-major）順著記憶體走，不跳著讀。 */
+/** 把 ImageData 的 alpha 做三次盒狀模糊（半徑 r），有覆蓋到的地方 RGB 填白。 */
+const featherBlurPixels = (px: ImageData, w: number, h: number, r: number) => {
+  const K = tripleBoxKernel(r), L = K.length, R = (L - 1) >> 1;
+  const n = w * h;
+  const u = new Uint32Array(px.data.buffer, px.data.byteOffset, n);
+  const b = new Float32Array(n);
+  // ── 橫向：整列先照抄，再把變化點附近那幾段重算 ──
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let lo = -1, hi = -2;
+    const flush = () => {
+      for (let j = lo; j <= hi; j++) {
+        let acc = 0;
+        for (let k = 0; k < L; k++) {
+          const q = j - R + k;
+          acc += K[k] * (u[row + (q < 0 ? 0 : q >= w ? w - 1 : q)] >>> 24);
+        }
+        b[row + j] = acc;
+      }
+    };
+    let prev = u[row] >>> 24;
+    for (let x = 0; x < w; x++) {
+      const cur = u[row + x] >>> 24;
+      b[row + x] = cur;
+      if (x > 0 && cur !== prev) {
+        const s0 = Math.max(0, x - R), s1 = Math.min(w - 1, x - 1 + R);
+        if (s0 <= hi + 1) hi = Math.max(hi, s1); else { if (hi >= lo && lo >= 0) pending.push(lo, hi); lo = s0; hi = s1; }
+      }
+      prev = cur;
+    }
+    if (hi >= lo && lo >= 0) pending.push(lo, hi);
+    for (let i = 0; i < pending.length; i += 2) { lo = pending[i]; hi = pending[i + 1]; flush(); }
+    /* 橫向改過的那幾段先寫回 u：直向那一趟只重算「上下有變化」的點，其他點保持 u 現在的值，
+       所以 u 必須已經是橫向模糊後的結果。整列的卷積都算完了才寫（卷積讀的是原本的 u）。 */
+    for (let i = 0; i < pending.length; i += 2) {
+      for (let j = pending[i]; j <= pending[i + 1]; j++) {
+        const v = b[row + j], al = v <= 0 ? 0 : v >= 255 ? 255 : (v + 0.5) | 0;
+        u[row + j] = al ? ((al << 24) | 0xFFFFFF) >>> 0 : 0;
+      }
+    }
+    pending.length = 0;
+  }
+  // ── 直向 ──
+  /* cnt[x] ＞ 0 ＝ 第 x 欄在這一列上下 R 之內有變化，要重算；用滑動計數，整趟照列走。
+     dif 是「這一列跟上一列在第 x 欄不一樣」（0／1）。 */
+  const dif = new Uint8Array(n);
+  for (let i = w; i < n; i++) dif[i] = b[i] !== b[i - w] ? 1 : 0;
+  const cnt = new Int32Array(w);
+  for (let y = 1; y <= Math.min(h - 1, R); y++) { const o = y * w; for (let x = 0; x < w; x++) cnt[x] += dif[o + x]; }
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      if (cnt[x] === 0) continue;   // 這一點上下都一樣：保持原樣（u 裡就是原本的值）
+      let acc = 0;
+      for (let k = 0; k < L; k++) {
+        const q = y - R + k;
+        acc += K[k] * b[(q < 0 ? 0 : q >= h ? h - 1 : q) * w + x];
+      }
+      const al = acc <= 0 ? 0 : acc >= 255 ? 255 : (acc + 0.5) | 0;
+      u[row + x] = al ? ((al << 24) | 0xFFFFFF) >>> 0 : 0;
+    }
+    // 視窗往下移一列：加進 y+1+R 那一條差、拿掉 y+1−R 那一條
+    const add = y + 1 + R, sub = y + 1 - R;
+    if (add < h) { const o = add * w; for (let x = 0; x < w; x++) cnt[x] += dif[o + x]; }
+    if (sub > 0) { const o = sub * w; for (let x = 0; x < w; x++) cnt[x] -= dif[o + x]; }
+  }
+};
+const pending: number[] = [];
+// 縮小那張只在 makeShapeMask 裡面用一下，固定重複使用同一張
+let maskSmallScratch: HTMLCanvasElement | null = null;
+
 /**
  * 產生一張遮罩（白色、alpha 就是可見度）。
  * radiusPct 是圓角，佔短邊的百分比 0~50。
@@ -3580,11 +3693,16 @@ export const makeShapeMask = (
   kind?: string,
   /** 一律在原尺寸上算模糊（比對用） */
   exact = false,
+  /* 畫進這張（呼叫端馬上就用掉、不留著的時候傳）。拖羽化滑桿每一格都要一張新遮罩：
+     每次開新畫布，iOS 回收畫布記憶體又很慢，連續拖一陣子分頁就被系統砍掉重開。 */
+  into?: HTMLCanvasElement,
 ) => {
-  const c = document.createElement('canvas');
+  const c = into || document.createElement('canvas');
   c.width = Math.max(4, Math.round(w));
   c.height = Math.max(4, Math.round(h));
-  const g = c.getContext('2d')!;
+  const g = c.getContext('2d', { willReadFrequently: featherPct > 0 })!;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
+  g.clearRect(0, 0, c.width, c.height);
   const fp = Math.max(0, Math.min(100, featherPct));
   const rp = Math.max(0, Math.min(50, radiusPct));
   /* 淡出帶要多寬。
@@ -3623,8 +3741,10 @@ export const makeShapeMask = (
   }
   if (d > 1) {
     const sw = Math.max(4, Math.ceil(c.width / d)), sh = Math.max(4, Math.ceil(c.height / d));
-    const small = document.createElement('canvas'); small.width = sw; small.height = sh;
+    const small = maskSmallScratch || (maskSmallScratch = document.createElement('canvas'));
+    small.width = sw; small.height = sh;
     const sg = small.getContext('2d', { willReadFrequently: true })!;
+    sg.setTransform(1, 0, 0, 1, 0, 0); sg.clearRect(0, 0, sw, sh);
     sg.setTransform(sw / c.width, 0, 0, sh / c.height, 0, 0);
     sg.fillStyle = '#fff';
     withImgOutline(
@@ -3633,18 +3753,10 @@ export const makeShapeMask = (
     );
     sg.setTransform(1, 0, 0, 1, 0, 0);
     const px = sg.getImageData(0, 0, sw, sh);
-    const n = sw * sh;
-    let a = new Float32Array(n), b = new Float32Array(n);
-    for (let i = 0; i < n; i++) a[i] = px.data[i * 4 + 3];
-    for (let pass = 0; pass < 3; pass++) {
-      boxBlurH(a, b, sw, sh, sr); [a, b] = [b, a];
-      boxBlurV(a, b, sw, sh, sr); [a, b] = [b, a];
-    }
-    for (let i = 0; i < n; i++) { px.data[i * 4] = 255; px.data[i * 4 + 1] = 255; px.data[i * 4 + 2] = 255; px.data[i * 4 + 3] = a[i]; }
+    featherBlurPixels(px, sw, sh, sr);
     sg.putImageData(px, 0, 0);
     g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
     g.drawImage(small, 0, 0, c.width, c.height);
-    small.width = small.height = 1;
     return c;
   }
   withImgOutline(
@@ -3654,19 +3766,7 @@ export const makeShapeMask = (
 
   if (r >= 1) {
     const px = g.getImageData(0, 0, c.width, c.height);
-    const n = c.width * c.height;
-    let a = new Float32Array(n);
-    let b = new Float32Array(n);
-    for (let i = 0; i < n; i++) a[i] = px.data[i * 4 + 3];
-    for (let pass = 0; pass < 3; pass++) {
-      boxBlurH(a, b, c.width, c.height, r); [a, b] = [b, a];
-      boxBlurV(a, b, c.width, c.height, r); [a, b] = [b, a];
-    }
-    for (let i = 0; i < n; i++) {
-      // RGB 全部填白，這樣不管遮罩被當成 alpha 還是亮度都成立
-      px.data[i * 4] = 255; px.data[i * 4 + 1] = 255; px.data[i * 4 + 2] = 255;
-      px.data[i * 4 + 3] = a[i];
-    }
+    featherBlurPixels(px, c.width, c.height, r);
     g.putImageData(px, 0, 0);
   }
   return c;
@@ -5702,6 +5802,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   const usedCanvasRef = useRef(false);
   /** 只有效果的照片：效果畫布直接掛在這裡顯示（見 shape 畫布的 draw） */
   const fxHostRef = useRef<HTMLDivElement>(null);
+  const shapeScratchRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => () => { const c = shapeScratchRef.current; if (c) { c.width = c.height = 1; shapeScratchRef.current = null; } }, []);
   const plainFxDisplay = !image.feather && !image.imgRadius && !image.imgGlow && !image.imgStrokeWidth && !isImgShaped(image.imgShape);
   /** 這一層身上有沒有「需要 canvas 才畫得出來」的東西 */
   const hasShapeWork = !!(image.feather || image.imgRadius || image.imgGlow || image.imgStrokeWidth
@@ -5908,11 +6010,14 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       let drawW = iw, drawH = ih, drawX = (W - iw) / 2, drawY = (H - ih) / 2;
       const kind = image.imgShape;
       if (image.feather || image.imgRadius || image.imgStrokeWidth || isImgShaped(kind)) {
-        const off = document.createElement('canvas');
-        off.width = Math.max(1, Math.round(sw));
-        off.height = Math.max(1, Math.round(sh));
+        // 固定重複使用同一張（拖造型滑桿每一格都會重畫；每次開新畫布 iOS 會記憶體吃緊）
+        const off = shapeScratchRef.current || (shapeScratchRef.current = document.createElement('canvas'));
+        const ow = Math.max(1, Math.round(sw)), ohh = Math.max(1, Math.round(sh));
+        if (off.width !== ow || off.height !== ohh) { off.width = ow; off.height = ohh; }
         const oc = off.getContext('2d');
         if (!oc) return;
+        oc.setTransform(1, 0, 0, 1, 0, 0); oc.globalCompositeOperation = 'source-over'; oc.globalAlpha = 1;
+        oc.clearRect(0, 0, ow, ohh);
         // 圖片畫在中間，四周留給描邊
         drawImgBase(oc, base, strokeExtent, strokeExtent, iw, ih, image);
         if (image.feather || image.imgRadius || isImgShaped(kind)) {
@@ -12189,6 +12294,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }, 300);
   };
   useEffect(() => () => { if (layoutVisualTimer.current) clearTimeout(layoutVisualTimer.current); }, []);
+  /* 拖、捏、轉整組佈局的期間，佈局外框自己升成一個合成層（will-change: transform）。
+     iOS Safari 對「沒有自己合成層」的容器，會把裡面那張照片畫布的位置每一格重新取整到整數像素
+     （外框、間距卻是平滑移動的）——佈局裡的照片看起來就在框裡抖。升成一層之後，畫布在這一層
+     裡的位置固定不動，整組由 GPU 一起位移縮放，就像一張圖片。停下來 300ms 再拿掉，
+     讓瀏覽器照實際倍率重畫清楚（平常不升層，放大預覽時框線、圓點才不會糊）。 */
+  const layoutMotion = useRef(new Set<string>());
+  const layoutMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [, bumpLayoutMotion] = useState(0);
+  const markLayoutMotion = (id: string) => {
+    if (!layoutMotion.current.has(id)) { layoutMotion.current.add(id); bumpLayoutMotion(v => v + 1); }
+    if (layoutMotionTimer.current) clearTimeout(layoutMotionTimer.current);
+    layoutMotionTimer.current = setTimeout(() => {
+      layoutMotionTimer.current = null;
+      layoutMotion.current.clear();
+      bumpLayoutMotion(v => v + 1);
+    }, 300);
+  };
+  useEffect(() => () => { if (layoutMotionTimer.current) clearTimeout(layoutMotionTimer.current); }, []);
   const scaleLayoutSnapped = (next: number, targetId: string | null) => {
     let ns = Math.max(MIN_LAYOUT_SCALE, Math.min(4, next));
     const rect = getPageRect(selectedLayoutPageIdx >= 0 ? selectedLayoutPageIdx : activePageIndex);
@@ -12256,6 +12379,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const id = targetId ?? selectedLayoutId;
     if (!id) return;
     if (patch.scale !== undefined) holdLayoutVisual(id);
+    markLayoutMotion(id);
     setPages(prev => prev.map(p => p.layouts.some(l => l.id === id) ? ({
       ...p,
       layouts: p.layouts.map(l => l.id === id ? { ...l, t: { ...l.t, ...patch } } : l),
@@ -15542,6 +15666,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   isolation: 'isolate',
                                   backfaceVisibility: stableSeamless || nativeLayout ? undefined : 'hidden',
                                   willChange: stableSeamless || nativeLayout ? undefined : 'transform',
+                                  // 拖、捏、轉的期間才升成合成層（見 markLayoutMotion），平常不升
+                                  ...(layoutMotion.current.has(layout.id) ? { willChange: 'transform' } : null),
                                   pointerEvents: activeTab === 'motion' ? 'none' : undefined,
                                   /* 兩指旋轉：直接轉整個外框，裡面的格子、照片、
                                      選取框、四個角、那排按鈕全部跟著轉，

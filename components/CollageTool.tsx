@@ -19,7 +19,7 @@ import { patternEntranceRanks, type PatternDirection } from '../utils/patternEnt
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import { exportHeic } from '../utils/heicExport';
 import { CreativeSeamless } from '../utils/creativeSeamless';
-import { StableSceneTiles, type SceneWindow } from '../utils/stableSceneTiles';
+import { StableSceneTiles, SCENE_TILE_MAX_PIXELS, type SceneWindow } from '../utils/stableSceneTiles';
 import {drawCoveredPhoto} from '../utils/coveredPhoto';
 import { scenePixelEdge } from '../utils/scenePixelGrid';
 import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
@@ -1610,6 +1610,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       objFxCache.current.delete(key);
     }
   };
+  const maskScratchRef = useRef<HTMLCanvasElement | null>(null);
   const fxCanvasOf = useCallback((o: any, isMain = false, onScreenPx = 0, prepareNative = false): CanvasImageSource | null => {
     if (!o.img) return null;
     const warm=regionWarmStage.current;
@@ -1921,7 +1922,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              照片在畫面上通常只有幾百個實體像素，用 1600px 算等於多算好幾倍 —— 拖羽化滑桿
              每一格都要重算這張。匯出（isMain=false）照舊用全尺寸。 */
           const mk = isMain && onScreenPx > 0 ? Math.min(1, maskPxFor(onScreenPx) / Math.max(iw, ih)) : 1;
-          oc.drawImage(makeShapeMask(Math.max(4, iw * mk), Math.max(4, ih * mk), shape.r, shape.f, shape.k), strokeExtent, strokeExtent, iw, ih);
+          // 預覽固定重複用同一張遮罩畫布（畫完馬上就用掉）；匯出照舊每次一張
+          oc.drawImage(makeShapeMask(Math.max(4, iw * mk), Math.max(4, ih * mk), shape.r, shape.f, shape.k, false, isMain ? (maskScratchRef.current ??= document.createElement('canvas')) : undefined), strokeExtent, strokeExtent, iw, ih);
         } else {
           const R = cornerR(shape.r, iw, ih);
           withImgOutline(oc, strokeExtent, strokeExtent, iw, ih, shape.k, R, R, p => {
@@ -5516,7 +5518,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         &&!objDragRef.current&&!objPinchRef.current&&!objStretchRef.current&&!baseDragRef.current&&!basePinchRef.current&&!viewPinchRef.current&&performance.now()>=wheelUntilRef.current
         &&targetCanvas.width*targetCanvas.height<=4_000_000&&(!sel.fx||supportsSceneColour(sel.fx)||supportsResidentPhotoEffects(sel.fx));
       const key=plain?objCompositeBaseRef.current+'|'+JSON.stringify(objectsRef.current.map(v=>v.id===sel.id?{...v,fx:0}:v),compactSceneValue):'';
-      const engaged=plain&&(maskSliderLive.current?.id===sel.id||objCompositePrewarm.current===sel.id||(composite?.id===sel.id&&composite.key===key&&composite.scale===renderScale));
+      /* 造型分頁的滑桿（羽化、圓角…）拖到 0 時物件會變回「plain」：那不是效果滑桿，
+         不要為了它臨時拍黑白兩張整個場景（實測那一格卡 270ms）。 */
+      const fxSliderLive=maskSliderLive.current?.id===sel?.id&&!Object.keys(maskSliderLive.current?.patch||{}).some(k=>k!=='fx');
+      const engaged=plain&&(fxSliderLive||objCompositePrewarm.current===sel.id||(composite?.id===sel.id&&composite.key===key&&composite.scale===renderScale));
       let shownNow=false;
       if(engaged){
         let c=composite;
@@ -5695,7 +5700,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        visible delay after tapping an item. Pixels match the tile view the
        user was already looking at. */
     let tilePrefix:any[]|null=null;
-    if(targetCanvas===canvasRef.current&&!previewCapture&&sceneIsStatic&&stableScene.current.key&&objects.length){
+    // 磚塊解析度不夠這個倍率（放很大）時不用它：會糊，改畫即時的
+    const tilesSharp=(()=>{ctx.save();ctx.setTransform(rasterX,0,0,rasterY,0,0);const ok=stableScene.current.sharpFor(ctx,offs.cw,offs.ch);ctx.restore();return ok;})();
+    if(targetCanvas===canvasRef.current&&!previewCapture&&sceneIsStatic&&stableScene.current.key&&objects.length&&tilesSharp){
       for(let k=1;k<=Math.min(3,objects.length);k++){
         const tail=objects.slice(objects.length-k);
         if(tail.some(o=>o.below||isVideoEl(o.img)))break;
@@ -8913,7 +8920,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       &&!editingTextId&&!swapSource&&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
     void awaitPhotoIdle().then(()=>{
       if(!valid())return;
-      const scale=maxPreviewScale();
+      /* 磚塊最多 SCENE_TILE_MAX_PIXELS（約 48MB）。以前直接用預覽的最高倍率 —— 靜止時就佔一百多 MB，
+         iPhone 上是分頁被系統砍掉重開的主因之一。放得比磚塊還大時改畫即時的（見 sharpFor），畫質不變。 */
+      const g1=layoutGeometry(layout,imageState.baseW,imageState.baseH,maskScale,canvasRatio);
+      const scale=Math.min(maxPreviewScale(),Math.sqrt(SCENE_TILE_MAX_PIXELS/Math.max(1,g1.cw*g1.ch)));
       const g=layoutGeometry(layout,imageState.baseW*scale,imageState.baseH*scale,maskScale,canvasRatio);
       void stableScene.current.prepare(stableSceneKey,Math.floor(g.cw),Math.floor(g.ch),scale,(tile,v)=>{
         const prior=hideChromeRef.current;

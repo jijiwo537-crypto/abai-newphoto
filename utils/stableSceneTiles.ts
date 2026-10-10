@@ -8,6 +8,8 @@ export type SceneWindow={x:number;y:number;w:number;h:number};
 type Tile=SceneWindow&{canvas:HTMLCanvasElement;show:SceneWindow};
 /** Margins above this cost more than drawing the scene live. */
 export const SCENE_TILE_MAX_REACH=384;
+/** 整組磚塊最多幾個像素（4 bytes/px ⇒ 12M ≈ 48MB）。 */
+export const SCENE_TILE_MAX_PIXELS=12_000_000;
 /** A single immutable raster coordinate system. Tiles include a filter guard;
  * they are storage partitions, never independently transformed scene objects. */
 export class StableSceneTiles {
@@ -29,7 +31,10 @@ export class StableSceneTiles {
     if(!(extra<=SCENE_TILE_MAX_REACH)){this.dropPartial();this.status='sampling reach';return false;}
     // Independent of browser/app memory: refuse an oversized scene instead of
     // lowering its density or allocating an unbounded background cache.
-    const budget=256*1024*1024;
+    /* 以前上限 256MB：預覽靜止時這組磚塊在 iPhone 上就吃掉一百多 MB，再加上解碼的原圖、
+       GPU 畫面，分頁很容易被系統砍掉重開。磚塊只是「靜止時的快取」，呼叫端已經把解析度
+       壓在 SCENE_TILE_MAX_PIXELS 以內；這裡留一個同量級的保險。 */
+    const budget=SCENE_TILE_MAX_PIXELS*4*1.25;
     if(!Number.isFinite(width*height)||width<=0||height<=0||width*height*4>budget){this.dropPartial();this.status='size budget';return false;}
     const partial=this.partial??={key,width,height,scale,tiles:new Map()};
     const done=partial.tiles,ordered:Tile[]=[];
@@ -65,8 +70,15 @@ export class StableSceneTiles {
       this.partial=null;this.tiles=ordered;this.key=key;this.width=width;this.height=height;this.scale=scale;this.status='ready';return true;
     }catch(e){this.dropPartial();this.status=String(e);return false;}
   }
+  /** 照目前的畫布矩陣，磚塊的解析度夠不夠（不用放大就畫得出來）。不夠就該畫即時的，不要糊。 */
+  sharpFor(ctx:CanvasRenderingContext2D,width:number,height:number){
+    if(!this.tiles.length)return false;
+    const m=ctx.getTransform(),kx=width/this.width,ky=height/this.height;
+    const a=m.a??1,b=m.b??0,c=m.c??0,d=m.d??1;
+    return Math.hypot(a,b)*kx<=1.001&&Math.hypot(c,d)*ky<=1.001;
+  }
   paint(ctx:CanvasRenderingContext2D,key:string,width:number,height:number){
-    if(this.key!==key||!this.tiles.length)return false;
+    if(this.key!==key||!this.tiles.length||!this.sharpFor(ctx,width,height))return false;
     const kx=width/this.width,ky=height/this.height,m=ctx.getTransform();ctx.save();ctx.scale(kx,ky);
     // All tiles have the same parent matrix and guarded original samples.
     // The scene is opaque inside the page; overlaps therefore do not add alpha.
