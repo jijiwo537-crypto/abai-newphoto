@@ -41,7 +41,7 @@ import {
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
   /* 圖片外形（形狀）：圓形／星型／愛心也共用同一份路徑與同一支算圖 */
-  isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter,
+  isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter, imgShapePathIn,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
@@ -204,6 +204,8 @@ const MOTION_MAX_PIXELS_VIDEO = 5_000_000;
 /** 導出影片最長錄幾秒。素材再長也要有個底，不然一按下去就回不來了 */
 const MAX_VIDEO_SECONDS = 60;
 /** 影片物件跑效果管線時固定重複使用的那幾張離屏畫布 */
+/** 預覽羽化遮罩的邊長：螢幕上的實體像素多留 25%，取 64 的倍數（放大縮小一點點不必重算） */
+const maskPxFor = (onScreenPx: number) => Math.ceil(onScreenPx * 1.25 / 64) * 64;
 type VidScratch = { geo: HTMLCanvasElement; base: HTMLCanvasElement; cv: HTMLCanvasElement; off: HTMLCanvasElement };
 /**
  * 播動畫時「一格」能用掉的像素上限。
@@ -481,6 +483,32 @@ export const selectionFrameGap = (o: any) => o?.type === 'image' ? 0.375 : hugsS
 const measuredShapeInk = (o: any) =>
   hugsShapeInk(o) && !(o.kind === 'hole' && isTextHole(o.hole)) ? measureShapeInk(o) : null;
 
+/** 圖片形狀的「參考尺寸」：形狀與圖片在形狀裡的位移，都是照圖片本身的比例
+    烤進那張成品的（見 fxCanvasOf），成品再整張鋪進物件框。四邊擠壓改了物件框
+    的長寬比之後，形狀也就跟著被拉伸 —— 選取框、命中判斷、拖動範圍都要照這個
+    比例算，再縮放回物件框，才會跟畫面上的形狀一致。影片不能擠壓，沿用物件框。 */
+const imgShapeRef = (o: any) => {
+  const i = o?.img;
+  const w = i && !isVideoEl(i) ? (i.naturalWidth || i.width || 0) : 0;
+  const h = i && !isVideoEl(i) ? (i.naturalHeight || i.height || 0) : 0;
+  return w > 0 && h > 0 ? { w, h } : { w: o?.w || 1, h: o?.h || 1 };
+};
+/** 形狀（拉伸後）在物件框裡真正佔的那一塊，單位跟 bw／bh 一樣。 */
+const imgShapeInkOf = (o: any, bw: number, bh: number) => {
+  const R = imgShapeRef(o);
+  const b = imgShapeInk(o.imgShape, R.w, R.h);
+  const fx = bw / R.w, fy = bh / R.h;
+  return { x: b.x * fx, y: b.y * fy, w: b.w * fx, h: b.h * fy };
+};
+/** 沿著（拉伸後的）形狀描一圈，往外讓 gp。 */
+const strokeImgShapeOutline = (ctx: CanvasRenderingContext2D, o: any, bw: number, bh: number, gp: number) => {
+  const ink = imgShapeInkOf(o, bw, bh);
+  const p = imgShapePathIn(o.imgShape, -bw / 2 + ink.x - gp, -bh / 2 + ink.y - gp, ink.w + gp * 2, ink.h + gp * 2);
+  if (p) { ctx.stroke(p); return; }
+  withImgOutline(ctx as any, -bw / 2 - gp, -bh / 2 - gp, bw + gp * 2, bh + gp * 2, o.imgShape, 0, 0,
+    pp => { if (pp) ctx.stroke(pp); });
+};
+
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
   const hug = measuredShapeInk(o);
@@ -527,7 +555,7 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     const edge = gap + (o.filled === false ? (o.lineW ?? 6)*unit/2 : 0) + Math.min(4,o.strokeW || 0)*unit;
     return {x:bw/2+ink.x-edge,y:bh/2+ink.y-edge,w:ink.w+2*edge,h:ink.h+2*edge};
   }
-  const ink = imgShapeInk(o.imgShape, bw, bh);
+  const ink = isImgShaped(o.imgShape) ? imgShapeInkOf(o, bw, bh) : imgShapeInk(o.imgShape, bw, bh);
   return { x: ink.x - gap, y: ink.y - gap, w: ink.w + gap * 2, h: ink.h + gap * 2 };
 };
 
@@ -1446,7 +1474,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const ax = px - (o.x + o.w / 2), ay = py - (o.y + o.h / 2);
     const ux = ax * Math.cos(-r0) - ay * Math.sin(-r0) + o.w / 2;
     const uy = ax * Math.sin(-r0) + ay * Math.cos(-r0) + o.h / 2;
-    return isPointInImgShape(o.imgShape, o.w, o.h, ux, uy);
+    const R = imgShapeRef(o);
+    return isPointInImgShape(o.imgShape, R.w, R.h, ux * R.w / Math.max(1e-6, o.w), uy * R.h / Math.max(1e-6, o.h));
   };
   const objPinchRef = useRef<any>(null);
   /* 每個圖片物件跑完管線之後的成品，快取起來 —— 參數沒變就不重跑。
@@ -1687,7 +1716,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        暫停時 videoToken 不會變，那些快取一樣全部命中，一格都不會白算。 */
     const vTok = isVideoEl(o.img) ? videoToken(o.img) : 0;
     const isVid = vTok !== 0 || isVideoEl(o.img);
-    const key = baseKey + '|' + cap + '|lutReady:' + !!getLoadedLut(o.fx?.lut) + (isVid ? '|v' + vTok : '');
+    const key = baseKey + '|' + cap + '|lutReady:' + !!getLoadedLut(o.fx?.lut) + (isVid ? '|v' + vTok : '') + (isMain && shape.f && onScreenPx > 0 ? '|m' + maskPxFor(onScreenPx) : '');
     const hit = objFxCache.current.get(o.id);
     // An immutable original-resolution result is independent of the display
     // footprint. Zoom/occupancy changes sample it; they never rebake effects.
@@ -1888,7 +1917,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (shape.f || shape.r || isImgShaped(shape.k)) {
         oc.globalCompositeOperation = 'destination-in';
         if (shape.f) {
-          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f, shape.k), strokeExtent, strokeExtent, iw, ih);
+          /* 預覽的羽化遮罩只要跟螢幕上實際的像素一樣細就好（羽化帶本來就是一片平滑的漸層）：
+             照片在畫面上通常只有幾百個實體像素，用 1600px 算等於多算好幾倍 —— 拖羽化滑桿
+             每一格都要重算這張。匯出（isMain=false）照舊用全尺寸。 */
+          const mk = isMain && onScreenPx > 0 ? Math.min(1, maskPxFor(onScreenPx) / Math.max(iw, ih)) : 1;
+          oc.drawImage(makeShapeMask(Math.max(4, iw * mk), Math.max(4, ih * mk), shape.r, shape.f, shape.k), strokeExtent, strokeExtent, iw, ih);
         } else {
           const R = cornerR(shape.r, iw, ih);
           withImgOutline(oc, strokeExtent, strokeExtent, iw, ih, shape.k, R, R, p => {
@@ -4916,7 +4949,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const nz = clampImgZoom(pin.z0 * (dist / pin.d0));
         queueMove(() => setObjects(prev => prev.map(o => {
           if (o.id !== pin.id) return o;
-          const n = zoomAboutShapeCenter(o.w || 1, o.h || 1, pin.z0, nz, pin.sx0, pin.sy0);
+          const R = imgShapeRef(o);
+          const n = zoomAboutShapeCenter(R.w, R.h, pin.z0, nz, pin.sx0, pin.sy0);
           return { ...o, imgShapeZoom: nz, imgShapeX: n.x, imgShapeY: n.y };
         })));
         return;
@@ -5005,10 +5039,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const ddx = x - d.startX, ddy = y - d.startY;
           const lx = ddx * Math.cos(-rot) - ddy * Math.sin(-rot);
           const ly = ddx * Math.sin(-rot) + ddy * Math.cos(-rot);
-          const { rx, ry } = imgShapePan(oPan.w || 1, oPan.h || 1, oPan.imgShapeZoom);
+          // 範圍照烤圖時的參考尺寸算（擠壓過的物件框不是圖片原本的比例），再換回物件座標。
+          const R = imgShapeRef(oPan);
+          const { rx, ry } = imgShapePan(R.w, R.h, oPan.imgShapeZoom);
+          const ox = rx * (oPan.w || 1) / R.w, oy = ry * (oPan.h || 1) / R.h;
           const cl = (v: number) => Math.max(-1, Math.min(1, v));
-          const px = rx > 0.5 ? cl(d.px0 + lx / rx) : (d.px0 || 0);
-          const py = ry > 0.5 ? cl(d.py0 + ly / ry) : (d.py0 || 0);
+          const px = ox > 0.5 ? cl(d.px0 + lx / ox) : (d.px0 || 0);
+          const py = oy > 0.5 ? cl(d.py0 + ly / oy) : (d.py0 || 0);
           queueMove(() => setObjects(prev => prev.map(o =>
             o.id === d.id ? { ...o, imgShapeX: px, imgShapeY: py } : o)));
           return;
@@ -7081,7 +7118,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            以圖片外緣往外讓半個線寬，圓角再加半個線寬。
            粗細的單位也照 fxCanvasOf 那條（長邊 / 160）。 */
         if (liveStroke) {
-          const bw = o.w * s, bh = o.h * s;
+          /* 有形狀時描邊跟成品一樣是照圖片本身的比例算、再整張拉伸進物件框
+             （四邊擠壓過就不是同一個比例）：先在參考比例的框裡算，再單軸縮放回去。 */
+          const shR = isImgShaped(o.imgShape) ? imgShapeRef(o) : null;
+          const bw = o.w * s, bh = shR ? o.w * s * shR.h / shR.w : o.h * s;
+          const stretchY = shR ? (o.h * s) / Math.max(1e-6, bh) : 1;
           const unit = Math.max(bw, bh) / 160;
           const lw2 = (o.imgStrokeWidth || 0) * unit;
           const strokeGap2 = (o.imgStrokeGap || 0) * unit;
@@ -7095,6 +7136,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const tt = animRef.current ? animRef.current.t : 0;
           const sp = Math.max(0.05, (o.dashSpeed ?? 100) / 100);
           ctx.save();
+          if (stretchY !== 1) ctx.scale(1, stretchY);
           ctx.beginPath();
           /* 有選形狀的話，這條會動的虛線也要沿著形狀跑，不然預覽是星星、
              描邊卻是一個方框。dashPath 有值就代表要用它來 stroke。
@@ -7619,12 +7661,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if (!flashingTarget && shapeSel === o.id && isImgShaped(o.imgShape)) {
           /* 第二段：選中的是「形狀」—— 方框收起來，改成沿著形狀本身描一圈。
              往外讓 2 個螢幕像素，線才不會壓在圖案的邊上。 */
-          const gp = 2 * uiPx;
-          withImgOutline(
-            ctx as any, -o.w * s / 2 - gp, -o.h * s / 2 - gp,
-            o.w * s + gp * 2, o.h * s + gp * 2, o.imgShape, 0, 0,
-            p => { if (p) ctx.stroke(p); },
-          );
+          strokeImgShapeOutline(ctx, o, o.w * s, o.h * s, 2 * uiPx);
         } else {
           /* 第一段：選中的是「圖片」。有形狀的話框要縮到剛好包住那個圖案 ——
              不然愛心上面那片空白、星星底下那條也會被框進去。
@@ -8101,10 +8138,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.shadowColor = 'rgba(0, 0, 0, 0.22)';
         ctx.shadowBlur = 2 * uiPx;
         ctx.setLineDash([]);
-        const gp = 2 * uiPx;
-        withImgOutline(ctx as any, -o.w * s / 2 - gp, -o.h * s / 2 - gp,
-          o.w * s + gp * 2, o.h * s + gp * 2, o.imgShape, 0, 0,
-          p => { if (p) ctx.stroke(p); });
+        strokeImgShapeOutline(ctx, o, o.w * s, o.h * s, 2 * uiPx);
         ctx.restore();
       }
     }
@@ -11641,9 +11675,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                            拖到 0（變回沒有效果）或從 0 拖出來也一樣走這條：以前那一格要整個
                            創意拼圖重新 render，就是「拖到最邊邊會卡一下」。 */
                         const held=maskSliderLive.current;
-                        if(liveObjFx&&held?.id===sel.id&&'fx' in d&&Object.keys(d).length===1){
-                          held.patch={...held.patch,fx:d.fx};
-                          objectsRef.current=objectsRef.current.map(o=>o.id===sel.id?{...o,fx:d.fx}:o);
+                        /* 造型分頁的滑桿（羽化、圓角、描邊、發光…）也走同一條：拖的時候只改
+                           objectsRef、直接重畫，放開才寫回 state。以前每一格都讓整個創意拼圖重新
+                           render、整張重畫好幾次。 */
+                        const liveKeys=Object.keys(d).length>0&&Object.entries(d).every(([k,v])=>k==='fx'||typeof v==='number');
+                        if(liveObjFx&&held?.id===sel.id&&liveKeys){
+                          held.patch={...held.patch,...d};
+                          objectsRef.current=objectsRef.current.map(o=>o.id===sel.id?{...o,...d}:o);
                           // 一格畫面只重畫一次（一次拖動可能送好幾個 input）
                           if(!objFxPaintFrame.current)objFxPaintFrame.current=requestAnimationFrame(()=>{objFxPaintFrame.current=0;regionPaintRef.current?.();});
                           return;

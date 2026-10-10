@@ -3427,6 +3427,26 @@ export const imgShapeInk = (kind: string | undefined, w: number, h: number) => {
   return { x: b.x, y: b.y, w: b.s, h: b.s };
 };
 
+/**
+ * 形狀的外框路徑，鋪進任意一個 (x,y,w,h) 的矩形裡。
+ *
+ * 創意拼圖的形狀是照「圖片本身的比例」烤好、再整張鋪進物件框的；
+ * 四邊擠壓之後物件框的長寬比變了，形狀也跟著被拉寬或拉高。
+ * 選取框要描的就是這個拉伸後的形狀，所以這裡把「填滿正方形」的那條路徑
+ * 照矩形的寬、高各自縮放。矩形是正方形時跟 withImgOutline 畫出來的一模一樣。
+ */
+export const imgShapePathIn = (kind: string, x: number, y: number, w: number, h: number): Path2D | null => {
+  const R = 1000;
+  const t = imgShapeXform(kind, R, R);
+  const sx = w / R, sy = h / R;
+  try {
+    const p = new Path2D();
+    if (typeof (p as any).addPath !== 'function' || typeof DOMMatrix === 'undefined') return null;
+    p.addPath(new Path2D(shapePathD(kind, t.S, t.S)), new DOMMatrix([sx, 0, 0, sy, x + t.tx * sx, y + t.ty * sy]));
+    return p;
+  } catch { return null; }   // 不支援帶矩陣的 addPath：呼叫端退回 withImgOutline
+};
+
 /** 這個點落在圖片「看得見的那一塊」裡面嗎？（形狀之外的角落不算） */
 let hitCtx: CanvasRenderingContext2D | null = null;
 export const isPointInImgShape = (
@@ -3558,6 +3578,8 @@ export const makeShapeMask = (
   w: number, h: number, radiusPct: number, featherPct: number,
   /** 圖片的外形。沒給就是原本的圓角矩形 */
   kind?: string,
+  /** 一律在原尺寸上算模糊（比對用） */
+  exact = false,
 ) => {
   const c = document.createElement('canvas');
   c.width = Math.max(4, Math.round(w));
@@ -3584,6 +3606,47 @@ export const makeShapeMask = (
   const inset = r > 0 ? r * 3 + 1 : 0;
   g.fillStyle = '#fff';
   const R = Math.max(0, cornerR(rp, c.width, c.height) - inset);
+  /* 羽化帶寬一點的時候，模糊在縮小 d 倍的那一張上算，再平滑放大回來。
+     三次盒狀模糊出來的是一條很平緩的漸層，縮小再放大幾乎沒有差（實測最大差 1～2 階），
+     但要算的像素少 d² 倍 —— 拖羽化滑桿時每一格都要重算一次這張遮罩。 */
+  /* 縮小倍率 d 與縮小後的半徑 sr：挑「盒子實際寬度 (2·sr+1)·d 最接近原本 2r+1」的那一組，
+     模糊出來的寬度才跟原尺寸算的一樣。 */
+  let d = 1, sr = r;
+  if (!exact && r >= 10) {
+    let best = Infinity;
+    for (let k = 2; k <= 8; k++) {
+      const s0 = Math.round(((2 * r + 1) / k - 1) / 2);
+      if (s0 < 3) continue;
+      const err = Math.abs((2 * s0 + 1) * k - (2 * r + 1)) / (2 * r + 1) + k * 1e-4;
+      if (err < best) { best = err; d = k; sr = s0; }
+    }
+  }
+  if (d > 1) {
+    const sw = Math.max(4, Math.ceil(c.width / d)), sh = Math.max(4, Math.ceil(c.height / d));
+    const small = document.createElement('canvas'); small.width = sw; small.height = sh;
+    const sg = small.getContext('2d', { willReadFrequently: true })!;
+    sg.setTransform(sw / c.width, 0, 0, sh / c.height, 0, 0);
+    sg.fillStyle = '#fff';
+    withImgOutline(
+      sg, inset, inset, c.width - inset * 2, c.height - inset * 2, kind, R, R,
+      p => { p ? sg.fill(p) : sg.fill(); },
+    );
+    sg.setTransform(1, 0, 0, 1, 0, 0);
+    const px = sg.getImageData(0, 0, sw, sh);
+    const n = sw * sh;
+    let a = new Float32Array(n), b = new Float32Array(n);
+    for (let i = 0; i < n; i++) a[i] = px.data[i * 4 + 3];
+    for (let pass = 0; pass < 3; pass++) {
+      boxBlurH(a, b, sw, sh, sr); [a, b] = [b, a];
+      boxBlurV(a, b, sw, sh, sr); [a, b] = [b, a];
+    }
+    for (let i = 0; i < n; i++) { px.data[i * 4] = 255; px.data[i * 4 + 1] = 255; px.data[i * 4 + 2] = 255; px.data[i * 4 + 3] = a[i]; }
+    sg.putImageData(px, 0, 0);
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(small, 0, 0, c.width, c.height);
+    small.width = small.height = 1;
+    return c;
+  }
   withImgOutline(
     g, inset, inset, c.width - inset * 2, c.height - inset * 2, kind, R, R,
     p => { p ? g.fill(p) : g.fill(); },
@@ -8655,10 +8718,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /* 一般圖片也一樣：拖滑桿時只更新那一張圖的畫布（見 FloatingImageLayer 的訂閱），
      整個編輯器不跟著每一格重建；放開時才寫回文件一次（也只算一步上一步）。 */
   const pendingFloatFx=useRef(new Map<string,PhotoFx>());
+  const pendingFloatShape=useRef(new Map<string,Partial<FloatingImage>>());
   const commitFloatFx=()=>{
-    if(!pendingFloatFx.current.size)return;
+    const shapes=new Map<string,Partial<FloatingImage>>(pendingFloatShape.current);pendingFloatShape.current.clear();
+    if(!pendingFloatFx.current.size&&!shapes.size)return;
     const changes=new Map(pendingFloatFx.current);pendingFloatFx.current.clear();
-    setFloatingImages(prev=>prev.map(f=>changes.has(f.id)?{...f,fx:changes.get(f.id)}:f));
+    setFloatingImages(prev=>prev.map(f=>changes.has(f.id)||shapes.has(f.id)?{...f,...(shapes.get(f.id)||{}),...(changes.has(f.id)?{fx:changes.get(f.id)}:{})}:f));
+    // 草稿等正式資料畫上去之後再收，中間不會閃回舊的
+    if(shapes.size)requestAnimationFrame(()=>shapes.forEach((_,id)=>clearClassicVectorDraft(id)));
   };
   const commitCellFx=()=>{
     if(!pendingCellFx.current.size)return;
@@ -17057,6 +17124,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     pendingFloatFx.current.set(img.id, next);updateCellPhoto(img.id, next);return;
                   }
                   pendingFloatFx.current.delete(img.id);
+                }
+                /* 造型分頁的滑桿（羽化、圓角、描邊、發光…）：拖的時候只更新這一張圖層
+                   （跟向量圖形同一個即時草稿），放開才寫回文件 —— 以前每一格整個編輯器重新 render。 */
+                if (liveFloat && !('fx' in patch) && Object.keys(patch).length > 0 && Object.values(patch).every(v => typeof v === 'number')) {
+                  pendingFloatShape.current.set(img.id, { ...(pendingFloatShape.current.get(img.id) || {}), ...patch });
+                  publishClassicVectorDraft(img.id, patch);
+                  return;
                 }
                 if (selCell) {
                   // 只有格子真的有的欄位才寫回去，其餘忽略
