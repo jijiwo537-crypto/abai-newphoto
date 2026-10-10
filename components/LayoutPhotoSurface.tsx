@@ -25,7 +25,9 @@ type Resource={url:string;image:HTMLImageElement;input:HTMLCanvasElement;key:str
 // independent of the photo's native size (12MP+ on phones).
 const LIVE_PREVIEW=1800;
 /** 每個佈局畫布（含畫面外多畫的那一圈）最多幾個實體像素 */
-const OVERSCAN_PIXELS=9_000_000;
+const OVERSCAN_PIXELS=5_000_000;
+/** 手勢中補畫的那一張（盡量是整個佈局）最多幾個實體像素；不夠就降一點解析度，停下來再畫清楚 */
+const GESTURE_PIXELS=6_000_000;
 const previewSize=(im:HTMLImageElement)=>{const k=Math.min(1,LIVE_PREVIEW/Math.max(im.naturalWidth,im.naturalHeight));return [Math.max(1,Math.round(im.naturalWidth*k)),Math.max(1,Math.round(im.naturalHeight*k))];};
 // Effect pixels depend on the cell's own LUT being decoded, not on every
 // unrelated background LUT load that bumps the editor-wide revision.
@@ -40,7 +42,7 @@ const releaseResource=(r:Resource)=>{r.image.onload=null;r.pending=undefined;rel
 export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision,fusion,previewId}:{cells:Cell[];rects:Rect[];width:number;height:number;gap:number;radius:number;revision:number;fusion?:number;previewId?:string}){
   const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef<(viewOnly?:boolean)=>void>(()=>{});
   /** 上一次真的畫出來的範圍（佈局座標）與當時的倍率／旋轉：純平移時拿來判斷要不要重畫 */
-  const paintedView=useRef<{fwd:number[];cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0);
+  const paintedView=useRef<{fwd:number[];gesture:boolean;cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastPaintAt=useRef(-1e9);
   // The layout canvas is a plain 2D bitmap fed by the editor-wide shared GPU
   // renderer (drawSeamShared), so it can never lose a context or turn grey.
   const fusionLive=useRef(fusion),liveDrag=useRef(false);
@@ -58,10 +60,10 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
     // Repaint in the SAME transform frame, not a second rAF one frame later.
     // Sources and FX remain cached; zoom only resamples their visible pixels.
     const paint=()=>drawRef.current(true);
-    window.addEventListener('abai-preview-transform',paint,true);
+    window.addEventListener('abai-preview-transform',paint,true);window.addEventListener('abai-layout-visual',paint);
     window.addEventListener('scroll',paint,true);window.addEventListener('resize',paint);
     const observer=new ResizeObserver(paint);if(plane.current)observer.observe(plane.current);
-    return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);};
+    return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('abai-layout-visual',paint);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);};
   },[]);
   useLayoutEffect(()=>{
     const clean=cells.map(c=>subscribeCellPhoto(c.id,fx=>{live.current.set(c.id,fx);schedule();}));
@@ -88,7 +90,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       const image=new Image();image.onload=schedule;image.src=c.url;
       resources.current.set(c.id,{url:c.url,image,input:document.createElement('canvas'),key:'',output:null});
     });
-    drawRef.current=(viewOnly=false)=>{
+    drawRef.current=(viewOnly=false,settle=false)=>{
       const cv=ref.current,flat=editSurface.current,root=plane.current;if(!cv||!flat||!root||width<=0||height<=0)return;
       const aw=Math.max(1,width-gap),ah=Math.max(1,height-gap);
       const points=Array.from(root.querySelectorAll<SVGCircleElement>('[data-layout-probe]')).map(n=>{const b=n.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2};});
@@ -98,42 +100,53 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       // the visible viewport, rather than to the possibly huge layout.
       const dpr=devicePixelRatio||1;
       const vis={left:Math.max(0,clip?.left??0),top:Math.max(0,clip?.top??0),right:Math.min(innerWidth,clip?.right??innerWidth),bottom:Math.min(innerHeight,clip?.bottom??innerHeight)};
-      /* 看得到的範圍外面多畫一圈：
-         ① 快速滑動時瀏覽器先把畫面捲過去、捲動事件晚一兩格才到 —— 以前剛滑進來的那一條
-            是空的（白的），等重畫才出來。
-         ② 放大到頁面被畫面邊緣切到時，瀏覽器實際擺放這張畫布會跟量到的位置差到 1px，
-            邊緣就露出一條底色（白線）。多畫一圈之後邊緣永遠落在畫好的像素裡。
-         ③ 單純平移、而且多畫的那圈還夠用時就不重畫（見 viewOnly），滑動也更省。 */
+      /* 整個佈局在手勢中當成「一張圖片」：
+         放大縮小、平移時，已經畫好的這張畫布直接跟著頁面一起縮放移動（純合成，不重畫）——
+         以前每動一格都整張重畫三次，每次還要從 GPU 讀回幾百萬像素：拖起來卡，而且每一格
+         重新對齊像素，佈局裡的照片看起來會抖。只有畫好的範圍蓋不住畫面時才補畫一次，
+         手勢停下來（160ms 沒有新的變化）再照實際倍率畫一張最清楚的。
+         平常（停著）在看得到的範圍外多畫一圈：快速滑動時剛滑進來的部分已經畫好；
+         放大到頁面被切到時，瀏覽器擺放畫布的那 1px 誤差也不會露出底色。 */
       const [pa,pb,pc]=points;
       const fwd=pa&&pb&&pc?[(pb.x-pa.x)/width,(pb.y-pa.y)/width,(pc.x-pa.x)/height,(pc.y-pa.y)/height]:null;
       const painted=paintedView.current;
       const sameScale=!!fwd&&!!painted&&fwd.every((v,i)=>Math.abs(v-painted.fwd[i])<=1e-7*Math.max(1,Math.abs(v)));
-      /* 正在縮放（倍率每一格都在變、每一格都同步重畫）時只多畫一小圈，手勢才不會變重；
-         停下來之後再補畫完整的那一圈。 */
-      const zooming=!!fwd&&!!painted&&!sameScale;
       const vw=Math.max(0,vis.right-vis.left),vh=Math.max(0,vis.bottom-vis.top);
-      const grow=!zooming&&vw*vh>0?Math.max(1,Math.min(1.8,Math.sqrt(OVERSCAN_PIXELS/(vw*vh*dpr*dpr)))):1;
-      const mx=Math.max(8,vw*(grow-1)/2),my=Math.max(8,vh*(grow-1)/2);
-      if(viewOnly&&sameScale){
-        // 同一個倍率、只是平移：看得到的範圍（再多留半圈）還在畫好的範圍裡就不必重畫
+      const settleLater=()=>{if(settleTimer.current)clearTimeout(settleTimer.current);settleTimer.current=setTimeout(()=>{settleTimer.current=0;drawRef.current(false,true);},160);};
+      const worldBox=(corners:number[][],m:DOMMatrix)=>{const q=corners.map(([x,y])=>({x:m.a*x+m.c*y+m.e,y:m.b*x+m.d*y+m.f}));
+        return {x0:Math.max(0,Math.min(...q.map(v=>v.x))),y0:Math.max(0,Math.min(...q.map(v=>v.y))),x1:Math.min(width,Math.max(...q.map(v=>v.x))),y1:Math.min(height,Math.max(...q.map(v=>v.y)))};};
+      if(viewOnly&&fwd&&painted){
         const inv=new DOMMatrix([fwd[0],fwd[1],fwd[2],fwd[3],pa.x,pa.y]).inverse();
-        const need=[[vis.left-mx/2,vis.top-my/2],[vis.right+mx/2,vis.top-my/2],[vis.left-mx/2,vis.bottom+my/2],[vis.right+mx/2,vis.bottom+my/2]].map(([x,y])=>({x:inv.a*x+inv.c*y+inv.e,y:inv.b*x+inv.d*y+inv.f}));
-        const nx0=Math.max(0,Math.min(...need.map(q=>q.x))),nx1=Math.min(width,Math.max(...need.map(q=>q.x))),ny0=Math.max(0,Math.min(...need.map(q=>q.y))),ny1=Math.min(height,Math.max(...need.map(q=>q.y)));
-        const c=painted.cover;
-        if(nx0>=c.x0-1e-6&&ny0>=c.y0-1e-6&&nx1<=c.x1+1e-6&&ny1<=c.y1+1e-6){
-          // 停下來之後再對齊一次實體像素（平移了非整數像素時，畫面會被瀏覽器重新取樣）
-          if(settleTimer.current)clearTimeout(settleTimer.current);
-          settleTimer.current=setTimeout(()=>{settleTimer.current=0;drawRef.current();},160);
+        const n=worldBox([[vis.left,vis.top],[vis.right,vis.top],[vis.left,vis.bottom],[vis.right,vis.bottom]],inv),c=painted.cover;
+        if(n.x0>=c.x0-1e-6&&n.y0>=c.y0-1e-6&&n.x1<=c.x1+1e-6&&n.y1<=c.y1+1e-6){
+          // 畫好的那張還蓋得住：手勢中不重畫。倍率變了（或那張是手勢中的整張）停下來再畫清楚的
+          if(!sameScale||painted.gesture)settleLater();
           return;
         }
       }
       if(settleTimer.current){clearTimeout(settleTimer.current);settleTimer.current=0;}
-      if(zooming)settleTimer.current=setTimeout(()=>{settleTimer.current=0;drawRef.current();},160);
-      const surface=resolveSeamSurface(points,width,height,width,height,bounds,{left:vis.left-mx,top:vis.top-my,right:vis.right+mx,bottom:vis.bottom+my},dpr);
+      /* 手勢中真的要補畫（畫好的範圍蓋不住了）：盡量一次畫整個佈局，之後整段手勢都不必再畫。 */
+      const gesture=viewOnly&&!!painted&&!sameScale;
+      let density=dpr,area={left:vis.left,top:vis.top,right:vis.right,bottom:vis.bottom},mx=8,my=8;
+      if(gesture){
+        const whole=bounds.width*bounds.height*dpr*dpr,k=whole>0?Math.min(1,Math.sqrt(GESTURE_PIXELS/whole)):1;
+        if(k>=.5){density=dpr*k;area={left:bounds.left,top:bounds.top,right:bounds.right,bottom:bounds.bottom};mx=my=0;}
+        else{const g=vw*vh>0?Math.max(1,Math.min(2.2,Math.sqrt(GESTURE_PIXELS/(vw*vh*dpr*dpr)))):1;mx=Math.max(8,vw*(g-1)/2);my=Math.max(8,vh*(g-1)/2);}
+        settleLater();
+      }else if(!settle&&performance.now()-lastPaintAt.current<250){
+        /* 內容連續在變（拖照片、在格子裡縮放照片、拖滑桿）：每一格都得重畫，只畫看得到的
+           那一塊加一小圈，停下來再補完整的那圈 —— 不然每一格都要多畫三倍的像素。 */
+        settleLater();
+      }else{
+        const g=vw*vh>0?Math.max(1,Math.min(1.8,Math.sqrt(OVERSCAN_PIXELS/(vw*vh*dpr*dpr)))):1;
+        mx=Math.max(8,vw*(g-1)/2);my=Math.max(8,vh*(g-1)/2);
+      }
+      lastPaintAt.current=performance.now();
+      const surface=resolveSeamSurface(points,width,height,width,height,bounds,{left:area.left-mx,top:area.top-my,right:area.right+mx,bottom:area.bottom+my},density);
       if(surface&&fwd){
         const [ia,ib,ic,id,ie,iff]=surface.rasterView;const sw=surface.width,sh=surface.height;
         const cs=[[0,0],[sw,0],[0,sh],[sw,sh]].map(([x,y])=>({x:ia*x+ic*y+ie,y:ib*x+id*y+iff}));
-        paintedView.current={fwd,cover:{x0:Math.min(...cs.map(q=>q.x)),y0:Math.min(...cs.map(q=>q.y)),x1:Math.max(...cs.map(q=>q.x)),y1:Math.max(...cs.map(q=>q.y))}};
+        paintedView.current={fwd,gesture,cover:{x0:Math.min(...cs.map(q=>q.x)),y0:Math.min(...cs.map(q=>q.y)),x1:Math.max(...cs.map(q=>q.x)),y1:Math.max(...cs.map(q=>q.y))}};
       }else paintedView.current=null;
       if(!surface){cv.style.display='none';flat.style.display='none';return;}cv.style.display='block';
       const W=surface.pixelWidth,H=surface.pixelHeight;

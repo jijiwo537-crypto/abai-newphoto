@@ -12102,6 +12102,26 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 捏合是兩根手指、位移量大得多，4px 的黏著範圍推得過去，不會卡住。
    */
   const layoutScaleSnapRef = useRef<{id: string | null; scale: number; extent: number} | null>(null);
+  /* 縮放整組佈局的手勢中，佈局維持「手勢開始時」的實際尺寸，只用 transform 等比例放大縮小
+     ——整組就像一張圖片：格子、間距、照片不會每一格重新排版、重新對齊像素（那就是縮放時
+     佈局裡照片在抖），也不必每一格重畫。停下來（300ms 沒有新的縮放）才換成真正的尺寸畫清楚。 */
+  const layoutVisualBase = useRef(new Map<string, number>());
+  const layoutVisualTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [, bumpLayoutVisual] = useState(0);
+  const holdLayoutVisual = (id: string | null) => {
+    const layout = id ? pages.flatMap(p => p.layouts).find(l => l.id === id) : activeLayout;
+    if (!layout) return;
+    if (!layoutVisualBase.current.has(layout.id)) layoutVisualBase.current.set(layout.id, layout.t?.scale ?? 1);
+    // 縮小時原本在畫面外的部分會露出來：通知佈局畫布檢查一下（蓋得住就什麼都不做）
+    requestAnimationFrame(() => window.dispatchEvent(new Event('abai-layout-visual')));
+    if (layoutVisualTimer.current) clearTimeout(layoutVisualTimer.current);
+    layoutVisualTimer.current = setTimeout(() => {
+      layoutVisualTimer.current = null;
+      layoutVisualBase.current.clear();
+      bumpLayoutVisual(v => v + 1);
+    }, 300);
+  };
+  useEffect(() => () => { if (layoutVisualTimer.current) clearTimeout(layoutVisualTimer.current); }, []);
   const scaleLayoutSnapped = (next: number, targetId: string | null) => {
     let ns = Math.max(MIN_LAYOUT_SCALE, Math.min(4, next));
     const rect = getPageRect(selectedLayoutPageIdx >= 0 ? selectedLayoutPageIdx : activePageIndex);
@@ -12168,6 +12188,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const patchLayoutT = (patch: Partial<{ x: number; y: number; scale: number; rot: number }>, targetId?: string | null) => {
     const id = targetId ?? selectedLayoutId;
     if (!id) return;
+    if (patch.scale !== undefined) holdLayoutVisual(id);
     setPages(prev => prev.map(p => p.layouts.some(l => l.id === id) ? ({
       ...p,
       layouts: p.layouts.map(l => l.id === id ? { ...l, t: { ...l.t, ...patch } } : l),
@@ -15399,7 +15420,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               // 整組佈局＝一張圖片：縮放時所有東西（格子、間距、圓角、
                               // 格內照片）等比例一起變，看起來完全一樣。
                               // 而且是用真實尺寸而不是 transform: scale()，放大才不會糊。
-                              const ls = layout.t?.scale ?? 1;
+                              const trueScale = layout.t?.scale ?? 1;
+                              // 縮放手勢中用手勢開始時的尺寸排版，差的倍率交給 transform（見 holdLayoutVisual）
+                              const ls = layoutVisualBase.current.get(layout.id) ?? trueScale;
+                              const visualK = trueScale / ls;
                               const lbox = layoutBox(layout, previewW, previewH);
                               const lw = lbox.w * ls;
                               const lh = lbox.h * ls;
@@ -15413,6 +15437,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const radius = layout.seamless || insetLayout ? 0 : layout.radius * ls;
                               const lLeft = (previewW - lw) / 2 + (layout.t?.x || 0);
                               const lTop = (previewH - lh) / 2 + (layout.t?.y || 0);
+                              // 選取框／四角用「現在真正的」尺寸（縮放手勢中佈局本體是用 transform 放大縮小的）
+                              const lwTrue = lbox.w * trueScale, lhTrue = lbox.h * trueScale;
+                              const lLeftTrue = (previewW - lwTrue) / 2 + (layout.t?.x || 0);
+                              const lTopTrue = (previewH - lhTrue) / 2 + (layout.t?.y || 0);
                               return (
                               <div
                                 key={layout.id}
@@ -15451,7 +15479,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   /* 兩指旋轉：直接轉整個外框，裡面的格子、照片、
                                      選取框、四個角、那排按鈕全部跟著轉，
                                      連點擊命中判定都是瀏覽器自己算的。 */
-                                  transform: `translate(${lLeft}px, ${lTop}px)${(layout.t?.rot || 0) !== 0 ? ` rotate(${layout.t!.rot}deg)` : ''}`,
+                                  transform: `translate(${lLeft}px, ${lTop}px)${(layout.t?.rot || 0) !== 0 ? ` rotate(${layout.t!.rot}deg)` : ''}${Math.abs(visualK - 1) > 1e-9 ? ` scale(${visualK})` : ''}`,
                                   transformOrigin: `${lw / 2}px ${lh / 2}px`,
                                 }}
                                 onTouchStart={isThisLayoutSelected ? handleLayoutTouchStart : undefined}
@@ -15819,9 +15847,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           const isFloatSwapOver = swapOver?.kind === 'cell' && swapOver.idx === idx && swapOver.layoutId === layout.id;
                                           return (
                                         <div
-                                          className={`absolute inset-0 bg-black/60 z-30 pointer-events-none ${
-                                            (isThisLayoutSelected && !wholeLayoutSelected && (touchDragOverIndex === idx || isDragOver || hoveredSwapTargetIndex === idx)) || isFloatSwapOver ? 'border-[0.75px] border-solid border-white/90' : 'border-0'
-                                          }`}
+                                          /* 長按互換時被懸停的那一格只變暗，不加白框 */
+                                          className="absolute inset-0 bg-black/60 z-30 pointer-events-none border-0"
                                           style={{
                                             borderRadius: `${radius}px`,
                                             opacity: (isThisLayoutSelected && !wholeLayoutSelected && (isDragOver || hoveredSwapTargetIndex === idx || touchDraggedIndex === idx || touchDragOverIndex === idx)) || isFloatSwapOver ? 1 : 0
@@ -16143,10 +16170,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                       data-layout-id={layout.id}
                                       className="absolute pointer-events-none"
                                       style={{
-                                        left: `${lLeft}px`,
-                                        top: `${lTop}px`,
-                                        width: `${lw}px`,
-                                        height: `${lh}px`,
+                                        left: `${lLeftTrue}px`,
+                                        top: `${lTopTrue}px`,
+                                        width: `${lwTrue}px`,
+                                        height: `${lhTrue}px`,
                                         // 佈局轉了角度時，這層也要一起轉，
                                         // 不然選取框、角球、按鈕列會留在原地不跟著轉。
                                         ...((layout.t?.rot || 0) !== 0
@@ -17709,7 +17736,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {cellDragPreview && (
         <div
           id="mobile-drag-floating-thumbnail"
-          className="fixed pointer-events-none z-[9999] overflow-hidden bg-transparent flex items-center justify-center will-change-transform"
+          className="fixed pointer-events-none z-[9999] border-2 border-white overflow-hidden bg-transparent flex items-center justify-center will-change-transform"
           style={{
             left: 0,
             top: 0,
