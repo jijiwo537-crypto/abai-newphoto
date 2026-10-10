@@ -2768,7 +2768,9 @@ const editorSlider = (
 ) => {
   const input = (cls: string) => (
     <input
-      key={`${img.id}|${adjustSub}|${tuneTool}|${shapeTool}|${effectCard}|${detailTool}`}
+      /* 換濾鏡＝換一根新的滑桿（白點直接在新的強度）。以前 key 沒有濾鏡，同一根滑桿沿用，
+         而點卡片時剛排了寫回的計時，下面那行 ref 不會去更新白點 —— 白點要等寫回之後才跳過去。 */
+      key={`${img.id}|${adjustSub}|${tuneTool}|${shapeTool}|${effectCard}|${detailTool}|${adjustSub === 'filter' ? (fx.lut || '') : ''}`}
       type="range" aria-label={label} min={min} max={max} step="any"
       defaultValue={value}
       ref={el=>{if(el && !editorDrag.current && (!isolateFxUpdates || pendingCommit.current===null))el.value=String(value);}}
@@ -2953,7 +2955,9 @@ return (
               /* 強度用跟編輯頁同一份預設值（F3 是 70、F12 是 50…）——
                  以前這裡一律 100，同一顆濾鏡在拼圖裡就比編輯頁濃。 */
               setFx({ lut: l.id, lutAmount: lutDefaultAmount(l.id) }, true);
-              setLutRevision(n => n + 1);
+              /* lutRevision 在整個跨頁拼圖那一層：同一次點擊裡一起更新的話，面板（卡片框、滑桿）要等整個
+                 編輯器重畫完才一起出來。低優先度：面板先換好，其他的下一刻跟上（跟特效卡片同一招）。 */
+              startTransition(() => setLutRevision(n => n + 1));
             }}
             className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
           >
