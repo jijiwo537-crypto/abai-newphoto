@@ -142,7 +142,12 @@ export class ClassicVectorScene {
       jobs.push({z:level(node),paint:()=>{
         if(node instanceof HTMLImageElement&&(!node.complete||!node.naturalWidth))return;
         if(node instanceof HTMLVideoElement&&node.readyState<2)return;
-        for(let n:HTMLElement|null=node.parentElement;n&&n!==host;n=n.parentElement){const style=getComputedStyle(n);if(style.overflow==='hidden'||style.overflow==='clip'){const c=cssMatrix(n);setScreen(c.m);g.beginPath();g.roundRect(0,0,c.w,c.h,Math.min(parseFloat(style.borderRadius)||0,c.w/2,c.h/2));g.clip();}}
+        for(let n:HTMLElement|null=node.parentElement;n&&n!==host;n=n.parentElement){const style=getComputedStyle(n);if(style.overflow==='hidden'||style.overflow==='clip'){const c=cssMatrix(n);setScreen(c.m);g.beginPath();const br=Math.min(parseFloat(style.borderRadius)||0,c.w/2,c.h/2);
+          // 直角的裁切框往外對齊到整數像素：小數位置的裁切線會被抗鋸齒，邊上那一排透出底下的頁面白底
+          const mm=g.getTransform();
+          if(!br&&Math.abs(mm.b)<1e-9&&Math.abs(mm.c)<1e-9&&mm.a>0&&mm.d>0){const X0=Math.floor(mm.e),Y0=Math.floor(mm.f),X1=Math.ceil(mm.a*c.w+mm.e),Y1=Math.ceil(mm.d*c.h+mm.f);g.rect((X0-mm.e)/mm.a,(Y0-mm.f)/mm.d,(X1-X0)/mm.a,(Y1-Y0)/mm.d);}
+          else g.roundRect(0,0,c.w,c.h,br);
+          g.clip();}}
         const {m,w,h}=cssMatrix(node);setScreen(m);g.globalAlpha=alpha(node);g.drawImage(node,0,0,w,h);
       }});
     }

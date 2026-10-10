@@ -1,7 +1,7 @@
 import React,{useLayoutEffect,useEffect,useRef} from 'react';
 import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,settlePhotoFx,getLoadedLut,type PhotoFx} from '../utils/photoFx';
 import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
-import {subscribeCellPhoto,subscribeCellPrime} from '../utils/liveCellPhoto';
+import {subscribeCellPhoto,subscribeCellPrime,isEditingCell,subscribeEditingCell} from '../utils/liveCellPhoto';
 import {resolveSeamSurface} from '../utils/seamlessSurfaceGeometry';
 import {drawSeamShared,releaseSeamShared,drawSeamPreview,type SeamTexture} from '../utils/seamlessPreview';
 import {previews as seamlessPreviews} from './SeamlessLayout';
@@ -82,6 +82,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
     return()=>{clean.forEach(fn=>fn());primes.forEach(fn=>fn());};
   },[cells.map(c=>c.id).join('|')]);
   useLayoutEffect(()=>{live.current.clear();},[cells]);
+  // 編輯結束（或換編輯別格）：之前延後的原尺寸成品現在排進去
+  useEffect(()=>subscribeEditingCell(()=>schedule()),[]);
   useLayoutEffect(()=>{
     const active=new Set(cells.map(c=>c.id));
     for(const [id,r] of resources.current)if(!active.has(id)){releaseResource(r);resources.current.delete(id);}
@@ -123,7 +125,11 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
         /* 現在比畫好的那張「放大」了多少。瀏覽器把它拉大超過它多畫的那份解析度（headroom）
            就會糊 —— 那就是快速放大時看到的「先糊再變清楚」。縮小時拉小不會糊，直接沿用。 */
         const mag=Math.hypot(fwd[0],fwd[1])/Math.max(1e-9,Math.hypot(painted.fwd[0],painted.fwd[1]));
-        if(n.x0>=c.x0-1e-6&&n.y0>=c.y0-1e-6&&n.x1<=c.x1+1e-6&&n.y1<=c.y1+1e-6&&mag<=(painted.headroom||1)*1.0005){
+        /* 提早補畫：不是等看得到的範圍「已經」超出畫好的那張（那一格邊上就是白的）才畫，
+           而是快要碰到時（還差一成）就先補 —— 剛滑進畫面的部分一出現就已經畫好了。 */
+        const ex=(n.x1-n.x0)*.1,ey=(n.y1-n.y0)*.1;
+        const need={x0:Math.max(0,n.x0-ex),y0:Math.max(0,n.y0-ey),x1:Math.min(width,n.x1+ex),y1:Math.min(height,n.y1+ey)};
+        if(need.x0>=c.x0-1e-6&&need.y0>=c.y0-1e-6&&need.x1<=c.x1+1e-6&&need.y1<=c.y1+1e-6&&mag<=(painted.headroom||1)*1.0005){
           // 畫好的那張還蓋得住、也夠清楚：手勢中不重畫。倍率變了停下來再照實際倍率畫一張
           if(!sameScale||painted.gesture)settleLater();
           return;
@@ -140,8 +146,9 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
           /* 正在放大：只畫看得到的那一塊，但密度一次多給到 GESTURE_PIXELS 的上限（最多 2.5 倍）——
              接下來放大到那個倍數之前，瀏覽器拉大這張都還是清楚的，不必每一格重畫
              （每重畫一次都要把整張從共用的 GPU 畫面抄過來，iPhone 上很貴）。 */
-          headroom=vw*vh>0?Math.max(1,Math.min(2.5,Math.sqrt(GESTURE_PIXELS/(vw*vh*dpr*dpr)))):1;
-          density=dpr*headroom;mx=my=8/headroom;
+          // 範圍＝看得到的那塊四周再多兩成（手勢中邊放大邊移動，剛移進來的地方已經畫好）
+          headroom=vw*vh>0?Math.max(1,Math.min(2.5,Math.sqrt(GESTURE_PIXELS/(vw*vh*1.96*dpr*dpr)))):1;
+          density=dpr*headroom;mx=vw*.2;my=vh*.2;
         }else{
           /* 縮小或平移到畫好的範圍外：一律照螢幕密度（清楚）。整個佈局畫得下就一次畫完，
              接下來整段手勢都蓋得住；畫不下就畫看得到的那塊再往外多一大圈（最多 2.5 倍），
@@ -164,9 +171,9 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
       /* 佈局貼齊（或超出）頁面邊緣的那幾邊往外多蓋一個裝置像素（見 resolveSeamSurface 的 grow）。
          只在沒有外圈間距時做：有間距時邊上本來就該露出頁面底色。 */
       const pageBox=root.closest('[data-page-id]')?.getBoundingClientRect();
-      /* 多蓋 2.5 個裝置像素：排頁面時整頁縮到 0.4 倍，這張先被瀏覽器直接縮小、還沒重畫 ——
-         只蓋 1 個像素的話縮小後只剩 0.4 個，邊上又會透出白底。2.5 縮到 0.4 倍仍有 1 個。 */
-      const edgeTol=1/dpr,g1=2.5/dpr,sealed=gap<=.001&&radius<=.001;
+      /* 內容往外多畫 1.5 個螢幕像素（裁切線另外只開到半個螢幕像素，見 resolveSeamSurface）：
+         排頁面時整頁縮到 0.4 倍、這張還沒重畫就先被瀏覽器縮小，1.5 縮完仍有 0.6，蓋得住那半個像素。 */
+      const edgeTol=1/dpr,g1=1.5,sealed=gap<=.001&&radius<=.001;
       const grow=pageBox&&sealed?{l:bounds.left<=pageBox.left+edgeTol?g1:0,t:bounds.top<=pageBox.top+edgeTol?g1:0,
         r:bounds.right>=pageBox.right-edgeTol?g1:0,b:bounds.bottom>=pageBox.bottom-edgeTol?g1:0}:undefined;
       const surface=resolveSeamSurface(points,width,height,width,height,bounds,{left:area.left-mx,top:area.top-my,right:area.right+mx,bottom:area.bottom+my},density,grow);
@@ -222,6 +229,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap,radius,revision
             editPresentation.current=true;shown=r0.previewOutput;
             if(r0.pending!==key){r0.pending=key;void awaitPhotoIdle().then(()=>{
               if(r0.pending!==key||resources.current.get(c.id)!==r0||live.current.has(c.id))return;
+              // 還在編輯這一格：先不算原尺寸成品（見 liveCellPhoto 的 setEditingCell），編輯結束會再排一次
+              if(isEditingCell(c.id)){r0.pending=undefined;return;}
               bake();schedule();
             });}
           }else{

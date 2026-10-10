@@ -19,7 +19,7 @@ import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface} from './LayoutPhotoSurface';
-import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto} from '../utils/liveCellPhoto';
+import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import {drawStableText} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle} from '../utils/fxWarmup';
 import { ExportActionLift } from './ExportActionLift';
@@ -6734,8 +6734,18 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             ctx.beginPath();
             photoClip = { x: sortPage.clipLeft * shiftS + matrix.e + (1 - shiftS) * cx,
               y: matrix.f + (1 - shiftS) * cy, width: sortPage.totalWidth * shiftS, height: sortPage.height * shiftS };
-            ctx.rect(sortPage.clipLeft * shiftS + matrix.e + (1 - shiftS) * cx, matrix.f + (1 - shiftS) * cy,
-              sortPage.totalWidth * shiftS, sortPage.height * shiftS);
+            {
+              /* 裁切框往外對齊到整數裝置像素：裁切線落在小數像素上會被抗鋸齒，邊上那一排只畫一部分，
+                 頁面白底就從那裡透出來（排頁面時左右兩側閃縫）。對齊到像素格線上就是一刀切齊。 */
+              const rx = sortPage.clipLeft * shiftS + matrix.e + (1 - shiftS) * cx, ry = matrix.f + (1 - shiftS) * cy;
+              const rw = sortPage.totalWidth * shiftS, rh = sortPage.height * shiftS;
+              const m = ctx.getTransform();
+              if (Math.abs(m.b) < 1e-9 && Math.abs(m.c) < 1e-9 && m.a > 0 && m.d > 0) {
+                const X0 = Math.floor(m.a * rx + m.e), X1 = Math.ceil(m.a * (rx + rw) + m.e);
+                const Y0 = Math.floor(m.d * ry + m.f), Y1 = Math.ceil(m.d * (ry + rh) + m.f);
+                ctx.rect((X0 - m.e) / m.a, (Y0 - m.f) / m.d, (X1 - X0) / m.a, (Y1 - Y0) / m.d);
+              } else ctx.rect(rx, ry, rw, rh);
+            }
             ctx.clip();
           }
         }
@@ -6814,6 +6824,21 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             }
           }
         } else {
+          /* 圖形貼齊頁面邊緣時，跟照片同一招：貼齊的那幾邊往外多畫一個裝置像素（每一格照當下倍率算，
+             縮放、排頁面縮小的過程中都一直是一個像素）。不然圖形邊緣抗鋸齒的那一排只蓋住一部分，
+             底下頁面的白底就透出來 —— 填滿頁面時四周一直閃細縫。圖形本身的座標、吸附、匯出都不變。 */
+          if (image.rotation % 360 === 0 && !motionFrame && maxTextWidth && canvasHeight) {
+            const cx = image.x + image.width / 2, cy = image.y + image.height / 2;
+            const hw = image.width * image.scale / 2, hh = image.height * image.scale / 2;
+            const edgeX = (x: number) => Math.abs(x / maxTextWidth - Math.round(x / maxTextWidth)) < 1e-4;
+            const pad = 1.5 / Math.max(.001, density * Math.abs(scale));
+            const pl = edgeX(cx - hw) || cx - hw < 0 ? pad : 0, pr = edgeX(cx + hw) ? pad : 0;
+            const pt = Math.abs(cy - hh) < 1e-4 || cy - hh < 0 ? pad : 0, pb = Math.abs(cy + hh - canvasHeight) < 1e-4 || cy + hh > canvasHeight ? pad : 0;
+            if (pl || pr || pt || pb) {
+              ctx.translate((pr - pl) / 2, (pb - pt) / 2);
+              ctx.scale((image.width + pl + pr) / image.width, (image.height + pt + pb) / image.height);
+            }
+          }
           paintClassicAnimatedVector(ctx, image, motionFrame, density * Math.abs(scale), !motionFrame);
           if (image.shape === 'grid-orbits' && !motionFrame) {
             const lineBase=image.shapeLineBase || Math.max(image.width,image.height);
@@ -9546,7 +9571,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   // Warm the selected cell's live effect pipeline as soon as its editor opens.
   const primedCellId=activeTab==='adjust'&&!selectedFloatingId&&selectedIndex!==null&&selectedLayoutId
     ?activePage?.layouts.find(l=>l.id===selectedLayoutId)?.images[selectedIndex]?.id:undefined;
-  useEffect(()=>{if(primedCellId)primeCellPhoto(primedCellId);},[primedCellId]);
+  useEffect(()=>{if(primedCellId)primeCellPhoto(primedCellId);setEditingCell(primedCellId||null);},[primedCellId]);
+  useEffect(()=>()=>setEditingCell(null),[]);
   const normalPreviewSize = useRef<{ width: number; height: number } | null>(null);
   const getRatioDimensions = (ratio = selectedRatio, landscape = isLandscape) => {
     if (activeTab === 'pages' && normalPreviewSize.current) return normalPreviewSize.current;
@@ -9574,6 +9600,54 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const touchHandledAtRef = useRef(0);
   /** 有東西被選取時，畫布就進入編輯狀態：手勢全部給選取物，不再左右滑動 */
   const anySelected = selectedIndex !== null || selectedFloatingId !== null || layoutSelected;
+  /* 預覽放大到頁面幾乎蓋滿整個畫面（看不到旁邊的黑邊）時，已經沒有「空白處」可以點來取消選取：
+     有東西選著的時候，下一次點擊（不是拖曳）先取消選取，再點一次才選東西。
+     點在選中的那個東西本身、或它的按鈕／控制點上照舊（例如選了佈局再點格子）。 */
+  const zoomTapSel = useRef({ selectedIndex, selectedFloatingId, selectedLayoutId, anySelected });
+  zoomTapSel.current = { selectedIndex, selectedFloatingId, selectedLayoutId, anySelected };
+  useEffect(() => {
+    const host = containerRef.current;
+    if (!host) return;
+    let armed: { id: number; x: number; y: number; t: number } | null = null;
+    const pageCovers = () => {
+      const vr = host.getBoundingClientRect();
+      const tol = 6;
+      return Array.from(host.querySelectorAll<HTMLElement>('[data-page-id]')).some((pg: HTMLElement) => {
+        const r = pg.getBoundingClientRect();
+        return r.left <= vr.left + tol && r.right >= vr.right - tol && r.top <= vr.top + tol && r.bottom >= vr.bottom - tol;
+      });
+    };
+    const down = (e: PointerEvent) => {
+      armed = null;
+      const sel = zoomTapSel.current;
+      if (!e.isPrimary || !sel.anySelected || !pageCovers()) return;
+      const t = e.target as Element | null;
+      if (!t) return;
+      if (t.closest('button,[role="button"],[data-stretch-handle],.cursor-nwse-resize,.cursor-nesw-resize,input,textarea')) return;
+      if (sel.selectedFloatingId && t.closest(`[data-floating-id="${sel.selectedFloatingId}"]`)) return;
+      if (sel.selectedLayoutId && t.closest(`[data-layout-id="${sel.selectedLayoutId}"]`)) {
+        // 選中的是格子：點同一格照舊，點同一佈局的別格才算「別的東西」
+        if (sel.selectedIndex === null) return;
+        const cell = t.closest('[data-cell-id]');
+        if (cell && Number(cell.getAttribute('data-cell-id')) === sel.selectedIndex) return;
+      }
+      armed = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() };
+    };
+    const up = (e: PointerEvent) => {
+      const a = armed; armed = null;
+      if (!a || a.id !== e.pointerId) return;
+      if (Math.hypot(e.clientX - a.x, e.clientY - a.y) > 8 || performance.now() - a.t > 600) return;
+      // 等這一次點擊原本的處理（可能已經選了別的東西）都跑完，再一起取消
+      setTimeout(() => {
+        setSelectedFloatingId(null); setSelectedIndex(null); setSelectedLayoutId(null); setSelectedBrushId(null);
+      }, 0);
+    };
+    const cancel = () => { armed = null; };
+    host.addEventListener('pointerdown', down, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', cancel, true);
+    return () => { host.removeEventListener('pointerdown', down, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', cancel, true); };
+  }, []);
   const [exportState, setExportState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [exportOptionsOpen,setExportOptionsOpen]=useState(false);
   const [imageExportFormat,setImageExportFormat]=useState<'png'|'jpg'|'heic'>('png');
@@ -15759,6 +15833,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                        （見 LayoutPhotoSurface 的 grow），剛好切在頁面邊上的話那一點又被切掉，
                                        iOS 的抗鋸齒裁切線會讓頁面白底透出來 —— 排頁面縮小的過程中就會閃白線。 */
                                     const m = 3 / ((typeof devicePixelRatio === 'number' ? devicePixelRatio : 2) * Math.max(0.05, kRef.current));
+                                    // 沒轉角度：上下邊跟一般圖片一樣用每一格更新的半個螢幕像素（縮放過程中也一直是半個像素）
+                                    if (!(layout.t?.rot)) {
+                                      const yTop = -lTop, yBot = previewH - lTop, xl = left - lLeft, xr = right - lLeft;
+                                      const hv = 'var(--preview-inverse-half, 0.5px)';
+                                      return `polygon(${xl}px calc(${yTop}px - ${hv}), ${xr}px calc(${yTop}px - ${hv}), ${xr}px calc(${yBot}px + ${hv}), ${xl}px calc(${yBot}px + ${hv}))`;
+                                    }
                                     return `polygon(${[[left, -m], [right, -m], [right, previewH + m], [left, previewH + m]].map(([x, y]) => {
                                       const dx = x - cx, dy = y - cy;
                                       return `${dx * Math.cos(rad) - dy * Math.sin(rad) + lw / 2}px ${dx * Math.sin(rad) + dy * Math.cos(rad) + lh / 2}px`;

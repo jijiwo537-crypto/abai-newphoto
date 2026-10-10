@@ -18,3 +18,13 @@ export function subscribeCellPrime(id:string,listener:()=>void){
 /** The photo was opened for editing: prepare its live preview pipeline while
  * idle, so the first slider frame does not pay for decode/upload/compile. */
 export function primeCellPhoto(id:string){primers.get(id)?.forEach(fn=>fn());}
+
+/* 正在編輯（調整面板開著）的那一格。編輯中先用 1800px 的預覽顯示（比螢幕需要的還細），
+   不在每次點特效、閒下來時就算原圖尺寸的成品 —— 那一步每次都要開一個新的 GPU 管線、
+   算完又馬上收掉，連續切換特效時就是一直開、一直關（iPhone 上很貴，也會頓一下）。
+   關掉編輯（換選別格、離開調整）時才算一次。 */
+let editingCell:string|null=null;
+const editingListeners=new Set<()=>void>();
+export function setEditingCell(id:string|null){if(editingCell===id)return;editingCell=id;editingListeners.forEach(fn=>fn());}
+export function isEditingCell(id:string){return editingCell===id;}
+export function subscribeEditingCell(fn:()=>void){editingListeners.add(fn);return()=>{editingListeners.delete(fn);};}
