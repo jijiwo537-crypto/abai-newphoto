@@ -3,7 +3,7 @@ import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,settlePhotoFx,getLoadedLut
 import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
 import {subscribeCellPhoto,subscribeCellPrime,isEditingCell,subscribeEditingCell} from '../utils/liveCellPhoto';
 import {resolveSeamSurface} from '../utils/seamlessSurfaceGeometry';
-import {drawSeamShared,releaseSeamShared,drawSeamPreview,type SeamTexture} from '../utils/seamlessPreview';
+import {drawSeamShared,releaseSeamShared,drawSeamPreview,seamTextureEpoch,type SeamTexture} from '../utils/seamlessPreview';
 import {previews as seamlessPreviews} from './SeamlessLayout';
 import {drawCoveredPhoto} from '../utils/coveredPhoto';
 import {get2dWide} from '../utils/colorSpace';
@@ -28,12 +28,13 @@ const LIVE_PREVIEW=1800;
 const OVERSCAN_PIXELS=5_000_000;
 /** 手勢中補畫的那一張（盡量是整個佈局）最多幾個實體像素；不夠就降一點解析度，停下來再畫清楚 */
 const GESTURE_PIXELS=6_000_000;
-/* 底圖（整個佈局一張、跟著佈局一起縮放、不因視角重畫）：所有佈局共用的總像素預算。
-   一個佈局最多 6M，佈局多時平分 16M（每張 2D 畫布 4 bytes/px）。 */
 /** 間距／圓角滑桿拖動中：直接把值交給這個佈局重畫（不經過 React，整個編輯器不必每一格重新渲染）。
  *  傳的是佈局本身的值（還沒乘佈局縮放），null＝放開、回到 props。 */
 export const layoutGeomPreviews=new Map<string,(g:{gap?:number;radius?:number}|null)=>void>();
-const BASE_PIXELS=6_000_000,BASE_TOTAL=16_000_000;
+/* 底圖（整個佈局一張、跟著佈局一起縮放、不因視角重畫）：所有佈局共用的總像素預算。
+   一個佈局最多 4M，佈局多時平分 12M（每張 2D 畫布 4 bytes/px）。iOS Safari 所有畫布加起來有記憶體上限，
+   超過時畫布會默默畫不出來（整個佈局消失），所以底圖夠用時，上面那張清晰畫布的點陣也會釋放掉。 */
+const BASE_PIXELS=4_000_000,BASE_TOTAL=12_000_000;
 let liveBases=0;
 const previewSize=(im:HTMLImageElement)=>{const k=Math.min(1,LIVE_PREVIEW/Math.max(im.naturalWidth,im.naturalHeight));return [Math.max(1,Math.round(im.naturalWidth*k)),Math.max(1,Math.round(im.naturalHeight*k))];};
 // Effect pixels depend on the cell's own LUT being decoded, not on every
@@ -58,7 +59,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
   /** 上一次真的畫出來的範圍（佈局座標）與當時的倍率／旋轉：純平移時拿來判斷要不要重畫 */
   const paintedView=useRef<{fwd:number[];gesture:boolean;headroom?:number;cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastPaintAt=useRef(-1e9);
   /** 底圖重畫的計時：最後一次內容變動後 400ms 都沒再動才畫（拖滑桿中間停一下不會突然卡一下） */
-  const baseTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastEditAt=useRef(-1e9);
+  const baseTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastEditAt=useRef(-1e9),retries=useRef(0);
   // The layout canvas is a plain 2D bitmap fed by the editor-wide shared GPU
   // renderer (drawSeamShared), so it can never lose a context or turn grey.
   const fusionLive=useRef(fusion),liveDrag=useRef(false);
@@ -82,9 +83,11 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
     // Sources and FX remain cached; zoom only resamples their visible pixels.
     const paint=()=>drawRef.current(true);
     window.addEventListener('abai-preview-transform',paint,true);window.addEventListener('abai-layout-visual',paint);
+    // 原圖的完整解析度材質剛準備好（見 seamlessPreview 的 stripPixels）：照新的材質重畫
+    const texReady=()=>schedule();window.addEventListener('abai-seam-texture',texReady);
     window.addEventListener('scroll',paint,true);window.addEventListener('resize',paint);
     const observer=new ResizeObserver(paint);if(plane.current)observer.observe(plane.current);
-    return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('abai-layout-visual',paint);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);};
+    return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('abai-layout-visual',paint);window.removeEventListener('abai-seam-texture',texReady);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);};
   },[]);
   useLayoutEffect(()=>{
     const clean=cells.map(c=>subscribeCellPhoto(c.id,fx=>{live.current.set(c.id,fx);schedule();}));
@@ -110,10 +113,12 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       if(!c.url)return;
       const old=resources.current.get(c.id);if(old?.url===c.url)return;
       if(old)releaseResource(old);
-      const image=new Image();image.onload=schedule;image.src=c.url;
+      // decode()：解碼在背景執行緒做完才通知重畫，第一次畫這張時主執行緒不必同步解碼整張原圖
+      const image=new Image();image.src=c.url;
+      void image.decode().catch(()=>{}).then(()=>{if(resources.current.get(c.id)?.image===image)schedule();});
       resources.current.set(c.id,{url:c.url,image,input:document.createElement('canvas'),key:'',output:null});
     });
-    drawRef.current=(viewOnly=false,settle=false)=>{
+    const drawImpl=(viewOnly=false,settle=false)=>{
       const gl=geomLive.current;
       const gap=gl?.gap!==undefined?gl.gap*geomScaleRef.current:gapProp,radius=gl?.radius!==undefined?gl.radius*geomScaleRef.current:radiusProp;
       const cv=ref.current,flat=editSurface.current,root=plane.current;if(!cv||!flat||!root||width<=0||height<=0)return;
@@ -158,14 +163,19 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       const bc=baseRef.current,bs=baseState.current;
       const scr=fwd?Math.hypot(fwd[0],fwd[1]):0;
       const baseEdgesOk=!!bs&&bs.edges===edges;
-      // 邊緣狀態變了（佈局被拖離頁面邊緣等）：舊的底圖多蓋的那一圈會跑到佈局外面，先藏起來，停下來重畫
-      // 底圖過期（內容改了還沒重畫）也藏起來：不然清晰那張透明的地方（間距、圓角）會透出舊的那張 —— 看起來像兩張圖
-      if(bc)bc.style.visibility=baseEdgesOk&&!baseDirty.current?'':'hidden';
+      /* 邊緣狀態變了（佈局被拖離頁面邊緣等）或內容改了還沒重畫：底圖要藏起來（不然清晰那張透明的地方 ——
+         間距、圓角 —— 會透出舊的那張，看起來像兩張圖）。但一定要等清晰那張「這一格真的畫成功」才藏（見最後），
+         兩張絕不能同時看不到。清晰那張已經顯示著有效的畫面時，可以馬上藏。 */
+      if(bc&&!(baseEdgesOk&&!baseDirty.current)&&cv.style.display==='block'&&cv.style.visibility!=='hidden'&&paintedView.current)bc.style.visibility='hidden';
       const baseSharp=baseEdgesOk&&!baseDirty.current&&bs!.s>=dpr*scr*.999;
       let basePainted=false;
       const detailOff=()=>{
+        if(bc)bc.style.visibility='';
         cv.style.display='none';flat.style.display='none';dropLiveSeam(cv);cv.style.visibility='';dropLiveCell();
         paintedView.current=null;flatState.current=null;
+        // 只顯示底圖時，清晰那兩張的點陣放掉（各可能是幾 MB 到二十幾 MB），要用時再配置
+        if(cv.width>1||cv.height>1){cv.width=cv.height=1;lastView.current='';}
+        if(flat.width>1||flat.height>1)flat.width=flat.height=1;
         cv.removeAttribute('data-layout-photo-surface');flat.removeAttribute('data-layout-photo-surface');bc?.setAttribute('data-layout-photo-surface','');
       };
       if(viewOnly&&baseSharp&&!editPresentation.current&&!liveDrag.current){detailOff();return;}
@@ -298,7 +308,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       /* 底圖：內容（照片、特效成品、裁切、融合程度、變暗）或邊緣狀態變了才重畫。
          正在連續編輯（拖滑桿、拖照片、拖融合程度）時先不畫，只標記過期，停下來（settle）再畫一次。 */
       if(bc&&!viewOnly){
-        const key=JSON.stringify([width,height,gap,radius,rects,crops,radii,contents,dims||[],fused?fusionLive.current:-1,cells.map(c=>c.opacity??100),noVisibleGutter]);
+        const key=JSON.stringify([width,height,gap,radius,rects,crops,radii,contents,dims||[],fused?fusionLive.current:-1,cells.map(c=>c.opacity??100),noVisibleGutter,seamTextureEpoch()]);
         if(!settle)lastEditAt.current=performance.now();
         const busy=!settle||performance.now()-lastEditAt.current<350||live.current.size>0||liveDrag.current;
         const baseLater=()=>{if(baseTimer.current)clearTimeout(baseTimer.current);baseTimer.current=setTimeout(()=>{baseTimer.current=0;drawRef.current(false,true);},400);};
@@ -306,7 +316,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
         else if(busy){
           /* 內容變了：舊的底圖立刻藏起來（這一格由清晰那張顯示新的內容），底圖等真的停下來才畫 ——
              不在拖滑桿、拖照片的任何一格裡多畫一張整個佈局的大圖。 */
-          baseDirty.current=true;bc.style.visibility='hidden';baseLater();
+          baseDirty.current=true;baseLater();
         }
         else{
           /* 密度：每個佈局單位幾個像素。預算內盡量高（最多螢幕密度的 6 倍），單邊不超過 4096（GPU 上限）。
@@ -320,15 +330,22 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
           const bsurf=resolveSeamSurface(pts,width,height,width,height,{left:0,top:0,right:width*d,bottom:height*d},{left:-1e7,top:-1e7,right:1e7,bottom:1e7},1,
             onPage?{l:gu.l*d,t:gu.t*d,r:gu.r*d,b:gu.b*d,open:outer}:undefined);
           if(bsurf){
-            if(bc.width!==bsurf.pixelWidth)bc.width=bsurf.pixelWidth;if(bc.height!==bsurf.pixelHeight)bc.height=bsurf.pixelHeight;
-            bc.style.width=`${bsurf.width}px`;bc.style.height=`${bsurf.height}px`;
-            bc.style.transform=`matrix(${bsurf.transform.join(',')})`;bc.style.clipPath=`polygon(${bsurf.clip})`;
+            // 尺寸要變時先記下：畫失敗的話這張的像素已被清空，要當成沒有底圖
+            const resized=bc.width!==bsurf.pixelWidth||bc.height!==bsurf.pixelHeight;
             (bsurf.view as {dims?:number[]}).dims=dims;
-            if(fused)drawSeamShared(bc,cells,clips,sources,fusionLive.current!,bsurf.view);
-            else drawSeamShared(bc,cells,clips,sources,-1,{...bsurf.view,isolated:true,sealEdges:noVisibleGutter,radii,crops});
-            bc.style.visibility='';bc.style.display='block';
-            baseState.current={key,s:d,edges};baseDirty.current=false;basePainted=true;
-            if((import.meta as any).env?.DEV)bc.dataset.paintCount=String(Number(bc.dataset.paintCount||0)+1);
+            const style={width:`${bsurf.width}px`,height:`${bsurf.height}px`,transform:`matrix(${bsurf.transform.join(',')})`,clipPath:`polygon(${bsurf.clip})`};
+            if(resized){bc.width=bsurf.pixelWidth;bc.height=bsurf.pixelHeight;}
+            const ok=fused?drawSeamShared(bc,cells,clips,sources,fusionLive.current!,bsurf.view)
+              :drawSeamShared(bc,cells,clips,sources,-1,{...bsurf.view,isolated:true,sealEdges:noVisibleGutter,radii,crops});
+            if(ok){
+              Object.assign(bc.style,style);bc.style.display='block';
+              baseState.current={key,s:d,edges};baseDirty.current=false;basePainted=true;
+              if((import.meta as any).env?.DEV)bc.dataset.paintCount=String(Number(bc.dataset.paintCount||0)+1);
+            }else{
+              // 沒畫成：尺寸沒變的話原本的像素還在，照舊；尺寸變了就當作沒有底圖。等一下再試
+              if(resized){baseState.current=null;bc.style.display='none';}
+              baseDirty.current=true;baseLater();
+            }
           }
         }
       }
@@ -344,6 +361,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       // 長按互換時要變暗的格子跟著這一次的畫面參數一起交給著色器（見 seamlessPreview 的 dim）
       (surface.view as {dims?:number[]}).dims=dims;
       const W=surface.pixelWidth,H=surface.pixelHeight;
+      let detailOk=true;const detailResized=cv.width!==W||cv.height!==H;
       if(cv.width!==W)cv.width=W;if(cv.height!==H)cv.height=H;
       cv.style.width=`${surface.width}px`;cv.style.height=`${surface.height}px`;
       cv.style.transform=`matrix(${surface.transform.join(',')})`;cv.style.clipPath=`polygon(${surface.clip})`;
@@ -461,8 +479,10 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
         }
         if(!direct){dropLiveSeam(cv);cv.style.visibility='';}
         if(direct){/* 這一格由上面那層顯示 */}
-        else if(fused)drawSeamShared(cv,cells,clips,sources,fusionLive.current!,surface.view);
-        else drawSeamShared(cv,cells,clips,sources,-1,{...surface.view,isolated:true,sealEdges:noVisibleGutter,radii,crops});
+        else if(fused)drawSeamShared(cv,cells,clips,sources,fusionLive.current!,surface.view)||(detailOk=false);
+        else drawSeamShared(cv,cells,clips,sources,-1,{...surface.view,isolated:true,sealEdges:noVisibleGutter,radii,crops})||(detailOk=false);
+        // 沒畫成而且這張剛換過尺寸（像素已經被清空）：這張先不要顯示，讓底圖頂著
+        if(!detailOk&&detailResized)cv.style.visibility='hidden';
       }
       const flatShown=editPresentation.current&&!fused;
       flat.style.display=flatShown?'block':'none';cv.style.display=flatShown?'none':'block';
@@ -470,6 +490,14 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       const shown=flatShown?flat:cv;
       if(import.meta.env.DEV){shown.dataset.paintCount=String(Number(shown.dataset.paintCount||0)+1);shown.dataset.rasterView=JSON.stringify(surface.rasterView);shown.dataset.sourceKeys=JSON.stringify([...resources.current.values()].map(r=>r.key));}
       if(settleAfterPaint||(!basePainted&&baseDirty.current))settleLater();
+      // 清晰那張這一格畫成功，過期的底圖才藏；沒畫成就讓底圖（就算舊一點）繼續顯示，下一格再試
+      if(bc){const b=baseState.current,stale=!b||baseDirty.current||b.edges!==edges;bc.style.visibility=detailOk&&stale?'hidden':'';}
+      if(!detailOk&&retries.current++<5)schedule();else if(detailOk)retries.current=0;
+    };
+    // 任何一格出錯（例如畫布記憶體不夠）都不能讓佈局整個不見：底圖留著，下一格再試
+    drawRef.current=(viewOnly=false,settle=false)=>{
+      try{drawImpl(viewOnly,settle);}
+      catch(e){const b=baseRef.current;if(b&&baseState.current)b.style.visibility='';console.warn('layout paint failed',e);if(retries.current++<5)schedule();}
     };
     drawRef.current();
   },[cells,rects,width,height,gapProp,radiusProp,revision,fusion,(dims||[]).join(',')]);

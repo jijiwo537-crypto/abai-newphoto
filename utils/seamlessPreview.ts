@@ -5,6 +5,49 @@ export type SeamView = { width:number;height:number;xx:number;xy:number;x0:numbe
 
 /** Original-size source textures + physical-pixel viewport rendering. Fusion
  * changes uniforms only; dragging and resting use the identical quality path. */
+/* Safari 的原圖要自己做一次色彩管理再上傳（見下面 draw 的最後一條路）：畫進 2D 畫布 → getImageData →
+   預乘透明度 → 上傳原始位元組。一張 12MP 照片這樣做在主執行緒上一口氣要好幾百毫秒，拉照片進佈局時
+   整個畫面會停住。改成「一次一條」：每條約 40 萬像素（一格內就做完），中間讓出主執行緒，畫面照常更新；
+   做完才一次上傳。每條上下多畫幾排再只取中間，縮小取樣不會在條與條的交界留下接縫。算法、色彩空間完全相同。 */
+let seamTextureEpochValue=0;
+/** 有原圖的完整解析度材質剛換上：佈局要重畫（底圖的內容簽章也要跟著變） */
+export const seamTextureEpoch=()=>seamTextureEpochValue;
+const yieldTask=()=>new Promise<void>(r=>setTimeout(r,0));
+function premultiplyRows(data:Uint8ClampedArray){
+  // 照片幾乎都不透明：先用 32 位元快速確認，有透明像素才逐點預乘
+  const u32=new Uint32Array(data.buffer,data.byteOffset,data.byteLength>>2);let opaque=true;
+  for(let k=0;k<u32.length;k++)if((u32[k]>>>24)!==255){opaque=false;break;}
+  if(opaque)return;
+  for(let k=0;k<data.length;k+=4){const a=data[k+3]/255;if(a!==1){data[k]*=a;data[k+1]*=a;data[k+2]*=a;}}
+}
+/** 小的那張（最長邊 1024）：一次做完，給完整解析度還沒好之前先頂著 */
+function smallPixels(image:CanvasImageSource,w:number,h:number,colorSpace:'srgb'|'display-p3'){
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  const g=c.getContext('2d',{colorSpace,willReadFrequently:true}) as CanvasRenderingContext2D;g.imageSmoothingQuality='high';g.drawImage(image,0,0,w,h);
+  const data=g.getImageData(0,0,w,h).data;premultiplyRows(data);c.width=c.height=1;return data;
+}
+async function stripPixels(image:CanvasImageSource,sw:number,sh:number,w:number,h:number,colorSpace:'srgb'|'display-p3',alive:()=>boolean){
+  const out=new Uint8Array(w*h*4),rows=Math.max(16,Math.floor(400_000/w)),pad=4;
+  const strip=document.createElement('canvas');strip.width=w;
+  const ctx=()=>{const g=strip.getContext('2d',{colorSpace,willReadFrequently:true}) as CanvasRenderingContext2D;g.imageSmoothingQuality='high';return g;};
+  try{
+    // 先讓出一次：呼叫的那一格要先把（小的）材質登記好，alive() 才會成立
+    await yieldTask();
+    for(let y0=0;y0<h;y0+=rows){
+      if(!alive())return null;
+      const y1=Math.min(h,y0+rows),a=Math.max(0,y0-pad),b=Math.min(h,y1+pad);
+      if(strip.height!==b-a)strip.height=b-a;
+      const g=ctx();g.clearRect(0,0,w,b-a);
+      // 輸出第 a～b 排對應原圖的 a/h～b/h：跟整張一次縮小的取樣位置相同
+      g.drawImage(image,0,sh*a/h,sw,sh*(b-a)/h,0,0,w,b-a);
+      const data=g.getImageData(0,y0-a,w,y1-y0).data;premultiplyRows(data);
+      out.set(data,y0*w*4);
+      await yieldTask();
+    }
+    return out;
+  }finally{strip.width=strip.height=1;}
+}
+
 class SeamGpu {
   private canvas:HTMLCanvasElement|OffscreenCanvas;
   private transferred:boolean;
@@ -24,6 +67,8 @@ class SeamGpu {
   /** Which images each target last drew. A shared renderer serves many
    *  targets; a texture is only "inactive" when no target still shows it. */
   private targetSets=new Map<HTMLCanvasElement,Set<CanvasImageSource>>();
+  /** 正在分條準備完整解析度的原圖（這段期間先用 1024 的小材質頂著） */
+  private pendingFull=new Map<CanvasImageSource,string>();
   constructor(canvas:HTMLCanvasElement,private direct=false,private presentationOnly=false,readonly srgbOutput=false,readonly shared=false,noTransfer=false){
     const webkit=/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
     this.transferred=!direct&&!shared&&!noTransfer&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
@@ -208,6 +253,35 @@ class SeamGpu {
           const g2=small.getContext('2d',{colorSpace:this.color.colorSpace})!;g2.imageSmoothingQuality='high';g2.drawImage(image,0,0,uploadW,uploadH);
           gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,small);
           small.width=small.height=1;
+        }else if(!this.direct&&uploadW*uploadH>1_200_000&&!(image instanceof HTMLCanvasElement)&&typeof createImageBitmap==='function'){
+          /* 大張原圖：主執行緒上完全不解碼、不縮放。先放一格空格子的底色，
+             背景解碼（createImageBitmap）好了先換上最長邊 1024 的，再分條準備完整解析度，各換一次並通知重畫。 */
+          gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+          gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([18,18,18,255]));
+          const job=`${revision}|${uploadW}x${uploadH}`;
+          this.pendingFull.set(image,job);
+          const alive=()=>!this.lost&&this.pendingFull.get(image)===job&&this.textures.get(image)===tex;
+          const put=(w:number,h:number,data:ArrayBufferView)=>{
+            gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+            gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,data);gl.generateMipmap(gl.TEXTURE_2D);
+            seamTextureEpochValue++;window.dispatchEvent(new Event('abai-seam-texture'));
+          };
+          const space=this.color.colorSpace;
+          void (async()=>{
+            await yieldTask();if(!alive())return;
+            let bmp=await createImageBitmap(image as ImageBitmapSource,{imageOrientation:'from-image'}).catch(()=>null);
+            // 尺寸跟原圖對不上（例如沒照 EXIF 轉向）就不用它，照舊直接畫原圖，方向與色彩跟以前完全一樣
+            if(bmp&&(bmp.width!==sw||bmp.height!==sh)){bmp.close();bmp=null;}
+            try{
+              const src:CanvasImageSource=bmp||image;
+              if(!alive())return;
+              const k=1024/Math.max(uploadW,uploadH),pw=Math.max(1,Math.round(uploadW*k)),ph=Math.max(1,Math.round(uploadH*k));
+              put(pw,ph,smallPixels(src,pw,ph,space));
+              await yieldTask();
+              const full=await stripPixels(src,sw,sh,uploadW,uploadH,space,alive);
+              if(full&&alive()){this.pendingFull.delete(image);put(uploadW,uploadH,full);}
+            }finally{bmp?.close();}
+          })();
         }else{
           // Safari's DOM texture importer can apply the profile twice. Manage
           // ICC conversion explicitly once at original resolution, then upload
@@ -284,14 +358,20 @@ export function disposeSeamPreview(target:HTMLCanvasElement){renderers.get(targe
    simply recreates the renderer). The renderer outputs sRGB, which is how
    WebKit reads a WebGL canvas in drawImage (see srgbOutput). */
 let sharedGpu:SeamGpu|null=null;
-export function drawSeamShared(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView){
+/** 回傳 false＝這次沒畫成（GPU 掉了、畫布記憶體不夠拿不到 2D）：目標畫布保留原本的像素，
+ *  呼叫的一方要讓上一張繼續顯示。以前在 GPU 掉了的那一格照樣用 copy 把（全透明的）結果蓋上去，
+ *  整個佈局就一下子消失。 */
+export function drawSeamShared(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView):boolean{
   if(sharedGpu?.lost){sharedGpu.dispose();sharedGpu=null;}
-  sharedGpu??=new SeamGpu(document.createElement('canvas'),false,false,true,true);
-  sharedGpu.draw(target,cells,rects,sources,amount,view);
-  const g=get2dWide(target)!,src=sharedGpu.surface,w=target.width,h=target.height;
+  try{sharedGpu??=new SeamGpu(document.createElement('canvas'),false,false,true,true);}catch{return false;}
+  try{sharedGpu.draw(target,cells,rects,sources,amount,view);}catch{return false;}
+  if(sharedGpu.lost)return false;
+  const g=get2dWide(target),src=sharedGpu.surface,w=target.width,h=target.height;
+  if(!g)return false;
   g.save();g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='copy';g.imageSmoothingEnabled=false;
   // WebGL's origin is bottom-left: the viewport rows are the LAST h rows.
   g.drawImage(src,0,src.height-h,w,h,0,0,w,h);g.restore();
+  return true;
 }
 export function releaseSeamShared(target:HTMLCanvasElement){sharedGpu?.forget(target);}
 /** A 2D collage composition cannot display the WebGL layer directly. On
