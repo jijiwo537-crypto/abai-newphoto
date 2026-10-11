@@ -147,6 +147,31 @@ const forwardTap = (wrap: HTMLElement, x: number, y: number) => {
   }));
 };
 
+/* ── 從滑桿區開始、其實是要上下捲面板的那一下 ─────────────────────────
+ * touchstart 已經 preventDefault（見下面），瀏覽器自己不會捲。以前判定成「在捲面板」
+ * 之後就什麼都不做 —— 結果滑桿多的面板，手指剛好落在滑桿那 56px 高的透明區上就怎麼滑都不動。
+ * 現在由這裡接手：找到最近一層可以直向捲動的容器，跟著手指捲，放手後照手指速度慣性滑一段。 */
+const scrollParent = (from: Element | null): HTMLElement | null => {
+  for (let n = from?.parentElement || null; n; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 1) return n;
+  }
+  const doc = document.scrollingElement as HTMLElement | null;
+  return doc && doc.scrollHeight > doc.clientHeight + 1 ? doc : null;
+};
+const glide = (el: HTMLElement, v0: number) => {
+  // v0：px/ms，正＝內容往上（scrollTop 變大）。每 16ms 衰減到 0.95 倍，跟 iOS 捲動的手感接近
+  let v = v0, last = performance.now();
+  const step = (t: number) => {
+    const dt = Math.min(48, t - last); last = t;
+    const before = el.scrollTop;
+    el.scrollTop += v * dt;
+    v *= Math.pow(0.95, dt / 16);
+    if (Math.abs(v) > 0.02 && el.scrollTop !== before) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+};
+
 let installed = false;
 
 /** Any slider is being dragged right now. Background work that would compete
@@ -194,6 +219,9 @@ export const installSliderTouch = () => {
     let dead = false;   // 已經認定使用者是在捲面板，這一下從頭到尾不關滑桿的事
     let done = false;
     let notifiedStart = false;
+    // 判成「在捲面板」之後由這裡捲（見 scrollParent）
+    let scroller: HTMLElement | null = null, scrollTop0 = 0;
+    const samples: { y: number; t: number }[] = [];
 
     /* input 本體是 pointer-events:none，iPhone 上真正接到按下的是
        .slider-wrap。經典拼圖的「只重畫當前物件」模式原本等在 input
@@ -230,7 +258,10 @@ export const installSliderTouch = () => {
              事件都只會送到這裡，別人不會亮起來、也不會被按到。 */
           try { wrap.setPointerCapture(id); } catch { /* 抓不到就算了，事件還是收得到 */ }
         } else if (dy > SCROLL_SLOP && dy > dx * 2) {
-          dead = true; return false;
+          dead = true;
+          scroller = scrollParent(wrap);
+          if (scroller) scrollTop0 = scroller.scrollTop;
+          return false;
         } else return false;
       }
       setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel,el.dataset.smoothRange==='true')) : valueAt(el, onThumb ? cx-x0+center : cx));
@@ -249,6 +280,14 @@ export const installSliderTouch = () => {
       if (t.touches.length !== 1) return;          // 兩指以上是縮放，不要碰
       const f = t.touches[0];
       if (advance(f.clientX, f.clientY) && t.cancelable) t.preventDefault();
+      else if (dead && scroller) {
+        // 從按下的那一點算：內容跟著手指走（判定前那十幾像素也補上，不會滑了才開始動）
+        scroller.scrollTop = scrollTop0 - (f.clientY - y0);
+        const now = performance.now();
+        samples.push({ y: f.clientY, t: now });
+        while (samples.length > 2 && now - samples[0].t > 80) samples.shift();
+        if (t.cancelable) t.preventDefault();
+      }
     };
 
     const end = (cancelled: boolean, cx: number, cy: number) => {
@@ -262,7 +301,12 @@ export const installSliderTouch = () => {
       window.removeEventListener('touchend', onTouchEnd, true);
       window.removeEventListener('touchcancel', onTouchEnd, true);
       try { wrap.releasePointerCapture(id); } catch { /* 同上 */ }
-      // 手指明顯在直向滑、或整段被取消：這一下跟滑桿無關
+      // 手指明顯在直向滑、或整段被取消：這一下跟滑桿無關（直向滑的話照手指最後的速度慣性滑一段）
+      if (dead && scroller && !cancelled && samples.length >= 2) {
+        const a = samples[0], b = samples[samples.length - 1];
+        const v = -(b.y - a.y) / Math.max(1, b.t - a.t);
+        if (performance.now() - b.t < 100 && Math.abs(v) > 0.15) glide(scroller, v);
+      }
       if (dead || (cancelled && !live)) return;
       // 沒拖過、又是按在看得見的那一條上：跟原生一樣，值跳到手指的位置
       if (!live && inCore) { live = true; notifyStart(cx, cy); if(!fine)setValue(el, valueAt(el, cx)); }

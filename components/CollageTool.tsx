@@ -11086,7 +11086,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </div>
                   {photoRegion && photoRegion.photos.length>1 && seamlessPhotoBase(photoRegion) && <div className="space-y-3" data-creative-seamless>
                     <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
-                    <div>
+                    {/* 只有軌道左右往內收（標題、上下位置不變）：貼滿整排太長，兩端也難拖 */}
+                    <div className="px-3">
                       <RegionLiveRange value={creativeSeamlessSliderValue(photoRegion)} onStart={()=>{seamLiveRef.current=true;}} onChange={v=>commitRegion(withCreativeSeamlessAmount(photoRegionRef.current!,v),true)} onCommit={()=>{seamLiveRef.current=false;finishRegionEdit();}}/>
                     </div>
                   </div>}
