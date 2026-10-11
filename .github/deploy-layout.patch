@@ -195,7 +195,7 @@ index f36ce57..46bb478 100644
 + assert.equal(prevented,0);assert.equal(input.value,'50');assert.equal(events.includes('capture'),false);
 +});
 diff --git a/utils/sliderTouch.ts b/utils/sliderTouch.ts
-index 32ad752..56611a1 100644
+index d477fce..efd2f75 100644
 --- a/utils/sliderTouch.ts
 +++ b/utils/sliderTouch.ts
 @@ -9,8 +9,8 @@
@@ -223,7 +223,28 @@ index 32ad752..56611a1 100644
  /** touchmove 一定要非被動，不然 preventDefault 沒有作用 */
  const TM_OPT = { passive: false, capture: true } as AddEventListenerOptions;
  /** 轉交點擊時最多往下找幾層（底下可能又是另一根滑桿的透明區） */
-@@ -184,7 +185,9 @@ export const installSliderTouch = () => {
+@@ -148,15 +149,16 @@ const forwardTap = (wrap: HTMLElement, x: number, y: number) => {
+ };
+ 
+ /* ── 從滑桿區開始、其實是要上下捲面板的那一下 ─────────────────────────
+- * touchstart 已經 preventDefault（見下面），瀏覽器自己不會捲。以前判定成「在捲面板」
+- * 之後就什麼都不做 —— 結果滑桿多的面板，手指剛好落在滑桿那 56px 高的透明區上就怎麼滑都不動。
+- * 現在由這裡接手：找到最近一層可以直向捲動的容器，跟著手指捲，放手後照手指速度慣性滑一段。 */
++ * touchstart 已經 preventDefault（見下面），所以就算滑桿區是 pan-y，瀏覽器自己也不會捲。
++ * 以前判定成「在捲面板」之後就什麼都不做 —— 滑桿多的面板，手指剛好落在滑桿那 56px 高的
++ * 透明區上就怎麼滑都不動。現在由這裡接手：找到最近一層可以直向捲動的容器，跟著手指捲，
++ * 放手後照手指速度慣性滑一段。 */
+ const scrollParent = (from: Element | null): HTMLElement | null => {
+   for (let n = from?.parentElement || null; n; n = n.parentElement) {
+     const oy = getComputedStyle(n).overflowY;
+     if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight + 1) return n;
+   }
+-  const doc = document.scrollingElement as HTMLElement | null;
++  const doc = typeof document !== 'undefined' ? document.scrollingElement as HTMLElement | null : null;
+   return doc && doc.scrollHeight > doc.clientHeight + 1 ? doc : null;
+ };
+ const glide = (el: HTMLElement, v0: number) => {
+@@ -215,7 +217,9 @@ export const installSliderTouch = () => {
      // 白點周圍至少44px的觸控區立即取得手勢，但不跳值。
      // 其他透明區仍等待橫向拖動，避免遮住相鄰按鈕的點擊。
      const onThumb = Math.abs(x0-center)<=22 && Math.abs(y0-(r.top+r.height/2))<=22;
@@ -234,7 +255,7 @@ index 32ad752..56611a1 100644
      let dead = false;   // 已經認定使用者是在捲面板，這一下從頭到尾不關滑桿的事
      let done = false;
      let notifiedStart = false;
-@@ -209,21 +212,18 @@ export const installSliderTouch = () => {
+@@ -244,24 +248,21 @@ export const installSliderTouch = () => {
        if (dead) return false;
        if (!live) {
          const dx = Math.abs(cx - x0), dy = Math.abs(cy - y0);
@@ -251,7 +272,10 @@ index 32ad752..56611a1 100644
 +           pan-y 由 CSS 預先允許，縱向意圖一旦成立便不 preventDefault，
 +           瀏覽器可自然接手；橫向手勢仍使用同一個精確值映射。 */
 +        if (dy > SCROLL_SLOP && dy > dx * INTENT_RATIO) {
-+          dead = true; return false;
++          dead = true;
++          scroller = scrollParent(wrap);
++          if (scroller) scrollTop0 = scroller.scrollTop;
++          return false;
 +        } else if (dx > (fine ? .5 : DRAG_SLOP) && dx > dy * INTENT_RATIO) {
            live = true;
            notifyStart(cx, cy);
@@ -259,11 +283,14 @@ index 32ad752..56611a1 100644
               事件都只會送到這裡，別人不會亮起來、也不會被按到。 */
            try { wrap.setPointerCapture(id); } catch { /* 抓不到就算了，事件還是收得到 */ }
 -        } else if (dy > SCROLL_SLOP && dy > dx * 2) {
--          dead = true; return false;
+-          dead = true;
+-          scroller = scrollParent(wrap);
+-          if (scroller) scrollTop0 = scroller.scrollTop;
+-          return false;
          } else return false;
        }
        setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel,el.dataset.smoothRange==='true')) : valueAt(el, onThumb ? cx-x0+center : cx));
-@@ -235,9 +235,8 @@ export const installSliderTouch = () => {
+@@ -273,15 +274,14 @@ export const installSliderTouch = () => {
        if (advance(m.clientX, m.clientY) && m.cancelable) m.preventDefault();
      };
  
@@ -275,7 +302,14 @@ index 32ad752..56611a1 100644
      const onTouchMove = (t: TouchEvent) => {
        if (t.touches.length !== 1) return;          // 兩指以上是縮放，不要碰
        const f = t.touches[0];
-@@ -288,7 +287,7 @@ export const installSliderTouch = () => {
+       if (advance(f.clientX, f.clientY) && t.cancelable) t.preventDefault();
+       else if (dead && scroller) {
+-        // 從按下的那一點算：內容跟著手指走（判定前那十幾像素也補上，不會滑了才開始動）
++        // 從按下的那一點算：內容跟著手指走（判定前那幾像素也補上，不會滑了才開始動）
+         scroller.scrollTop = scrollTop0 - (f.clientY - y0);
+         const now = performance.now();
+         samples.push({ y: f.clientY, t: now });
+@@ -340,7 +340,7 @@ export const installSliderTouch = () => {
        window.addEventListener('touchend', onTouchEnd, true);
        window.addEventListener('touchcancel', onTouchEnd, true);
      }
