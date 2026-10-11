@@ -11693,9 +11693,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           touchDragOverIndexRef.current = hoveredIdx;
           setTouchDragOverIndex(hoveredIdx);
         }
-        // A cell can also be dropped onto a free-standing image.
+        // A cell can also be dropped onto a free-standing image, or onto a cell of ANOTHER layout.
         const swapTarget = getSwapTargetFromPoint(touch.clientX, touch.clientY);
-        setSwapOverTarget(swapTarget && swapTarget.kind === 'floating' ? swapTarget : null);
+        const otherLayoutCell = !!swapTarget && swapTarget.kind === 'cell' && !!swapTarget.layoutId && swapTarget.layoutId !== layoutId;
+        setSwapOverTarget(swapTarget && (swapTarget.kind === 'floating' || otherLayoutCell) ? swapTarget : null);
       }
     }
   };
@@ -11724,6 +11725,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
         if (floatTarget && floatTarget.kind === 'floating') {
           void applySwap({ kind: 'cell', idx: fromIdx, src: images[fromIdx]?.url || '' }, floatTarget);
+        } else if (floatTarget && floatTarget.kind === 'cell' && floatTarget.layoutId && floatTarget.layoutId !== layoutId) {
+          /* 拖到「另一個佈局」的格子：兩格整個對調（跟同一個佈局裡互換一樣，裁切位置歸零）。
+             以前只找得到同一個佈局的格子，拖到別的佈局上放手什麼都不會發生。 */
+          const toLayout = floatTarget.layoutId, toIdx = floatTarget.idx;
+          setPages(prev => {
+            const all = prev.flatMap(p => p.layouts);
+            const src = all.find(l => l.id === layoutId)?.images[fromIdx];
+            const dst = all.find(l => l.id === toLayout)?.images[toIdx];
+            if (!src || !dst) return prev;
+            const reset = { zoom: 1.0, offsetX: 0, offsetY: 0 };
+            return prev.map(p => p.layouts.some(l => l.id === layoutId || l.id === toLayout)
+              ? { ...p, layouts: p.layouts.map(l => l.id === layoutId
+                  ? { ...l, images: l.images.map((c, i) => i === fromIdx ? { ...dst, ...reset } : c) }
+                  : l.id === toLayout
+                    ? { ...l, images: l.images.map((c, i) => i === toIdx ? { ...src, ...reset } : c) }
+                    : l) }
+              : p);
+          });
+          if (selectedIndex === fromIdx) setSelectedIndex(null);
         } else if (targetOverIndex !== null && targetOverIndex !== fromIdx) {
           const toIdx = targetOverIndex;
 

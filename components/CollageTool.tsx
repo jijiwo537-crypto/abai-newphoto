@@ -5974,7 +5974,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             return;
           }}
           catch{creativeSeam.current.hide();}
-        }
+        }else if(g===ctx&&targetCanvas===canvasRef.current&&!previewCapture)creativeSeam.current.hide();
+        /* ↑ 這一格不走「直接顯示的 GPU 層」（動畫中、切排版的過渡、長按中…）：照片整塊畫進主畫布，
+           上一次拖滑桿留下的那一層一定要收掉。iPhone 上那一層最後畫的是遮罩底下那份照片，
+           主畫布在動畫中變透明時就從下面透出來 —— 看起來像下方多了一張一樣的圖。 */
         if(!creativeSeam.current.paint(g,regionForPaint!,regionDecoded,x,y,w,h,dim,isMain))
           paintPhotoRegion(g, regionForPaint!, regionDecoded, x, y, w, h, dim);
       } else {
@@ -8058,7 +8061,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }else if(tilePrefix){
       ctx.save();ctx.setTransform(rasterX,0,0,rasterY,-vp.x,-vp.y);ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';
       stableScene.current.paint(ctx,stableScene.current.key,offs.cw,offs.ch);ctx.restore();
-      regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
+      regionColour.current?.hide();creativeSeam.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
     }else if (layout === FULL) {
       /* 滿版本身沒有遮罩區，但仍保留「圖案」層。圖案直接使用圖片側既有
          的同一支繪製器覆在底圖上，數量、位置、動畫、發光與其他排版一致；

@@ -37,6 +37,9 @@ if(params.has('emptyAudit'))void import('./empty-layout-audit');
 if(params.has('layoutRasterAudit')){state.pages[0].layouts[0].gap=0;state.pages[0].layouts[0].radius=0;}
 if(params.has('fillShape')){(state as any).pages[0].layouts=[];(state as any).floatingImages=[{id:'qa-fill-shape',src:'',x:0,y:0,width:339,height:452,scale:1,rotation:0,opacity:100,shape:'square',shapeFilled:true,color:'#22aa44'}];}
 if(params.has('fill')){const l=state.pages[0].layouts[0] as any;l.t={x:0,y:0,scale:1};if(params.has('nogap')){l.gap=0;l.radius=0;}}
+// 同一頁兩個佈局（測跨佈局長按互換）：?twoLayouts —— 上面一個、下面一個，第二個的照片顏色順序相反
+if(params.has('twoLayouts')){const a=(state as any).pages[0].layouts[0];a.t={x:0,y:-115,scale:.48};a.seamless=false;
+ (state as any).pages[0].layouts.push({...a,id:'seam-layout-b',t:{x:0,y:115,scale:.48},images:a.images.map((c:any,i:number)=>({...a.images[a.images.length-1-i],id:`seam-photo-b${i}`}))});}
 // 第二頁（測頁與頁中間的交界）：?twoPages
 if(params.has('twoPages'))(state as any).pages.push({id:'seam-page-2',bgColor:'#ff00ff',layouts:[]});
 if(params.has('cellEditAudit')){state.pages[0].layouts[0].gap=0;state.pages[0].layouts[0].radius=0;void import('./layout-photo-edit-audit');}

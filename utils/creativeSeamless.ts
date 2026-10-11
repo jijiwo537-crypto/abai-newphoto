@@ -12,6 +12,8 @@ export class CreativeSeamless {
   private presentation:HTMLCanvasElement|null=null;
   /** 拖滑桿時直接疊在畫面上的那層：跟放開後同一個色彩空間（同一組像素），自己的 context 直接顯示 */
   private liveLayer:HTMLCanvasElement|null=null;
+  /** 這一次畫面（同一個同步的繪製過程）裡直接顯示的 GPU 層已經被一塊照片區用掉了 */
+  private liveTaken=false;
   private interactive=new CreativeFeatherSurface();
   warm(region:PhotoRegion,decoded:Map<string,HTMLImageElement>){
     const base=seamlessPhotoBase(region);if(!base||this.presentation?.style.display==='block')return;
@@ -30,6 +32,13 @@ export class CreativeSeamless {
   present(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,page:number[],viewport=[ctx.canvas.width,ctx.canvas.height],live=false){
     const base=seamlessPhotoBase(region);if(!base||base.photos.some(p=>!p.src||!decoded.has(p.src)))return false;
     const m=ctx.getTransform();if(m.b||m.c||m.a<=0||m.d<=0)return false;
+    /* 直接顯示的 GPU 層只有一張，每畫一次整張都會重來。同一格畫面裡如果還有第二塊要畫（例如遮罩排版下方那一條），
+       用同一層的話後畫的會把先畫的整個清掉 —— 拖無縫滑桿時照片整塊變黑就是這樣。第二塊之後改走一般的路
+       （畫進主畫布），各畫各的範圍。同步繪製結束（microtask）就放開，下一格重新來。 */
+    if(live){
+      if(this.liveTaken)return false;
+      this.liveTaken=true;queueMicrotask(()=>{this.liveTaken=false;});
+    }
     if(this.presentation?.dataset.sourceUploads&&this.presentation.getContext('webgl2')?.isContextLost()){
       disposeSeamPreview(this.presentation);this.presentation.remove();this.presentation.width=this.presentation.height=1;this.presentation=null;
     }

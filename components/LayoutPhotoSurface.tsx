@@ -174,7 +174,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
         cv.style.display='none';flat.style.display='none';dropLiveSeam(cv);cv.style.visibility='';dropLiveCell();
         paintedView.current=null;flatState.current=null;
         // 只顯示底圖時，清晰那兩張的點陣放掉（各可能是幾 MB 到二十幾 MB），要用時再配置
-        if(cv.width>1||cv.height>1){cv.width=cv.height=1;lastView.current='';}
+        if(cv.width>1||cv.height>1){cv.width=cv.height=1;lastView.current='';delete cv.dataset.seamPainted;}
         if(flat.width>1||flat.height>1)flat.width=flat.height=1;
         cv.removeAttribute('data-layout-photo-surface');flat.removeAttribute('data-layout-photo-surface');bc?.setAttribute('data-layout-photo-surface','');
       };
@@ -334,7 +334,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
             const resized=bc.width!==bsurf.pixelWidth||bc.height!==bsurf.pixelHeight;
             (bsurf.view as {dims?:number[]}).dims=dims;
             const style={width:`${bsurf.width}px`,height:`${bsurf.height}px`,transform:`matrix(${bsurf.transform.join(',')})`,clipPath:`polygon(${bsurf.clip})`};
-            if(resized){bc.width=bsurf.pixelWidth;bc.height=bsurf.pixelHeight;}
+            if(resized){bc.width=bsurf.pixelWidth;bc.height=bsurf.pixelHeight;delete bc.dataset.seamPainted;}
             const ok=fused?drawSeamShared(bc,cells,clips,sources,fusionLive.current!,bsurf.view)
               :drawSeamShared(bc,cells,clips,sources,-1,{...bsurf.view,isolated:true,sealEdges:noVisibleGutter,radii,crops});
             if(ok){
@@ -363,6 +363,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       const W=surface.pixelWidth,H=surface.pixelHeight;
       let detailOk=true;const detailResized=cv.width!==W||cv.height!==H;
       if(cv.width!==W)cv.width=W;if(cv.height!==H)cv.height=H;
+      if(detailResized)delete cv.dataset.seamPainted;
       cv.style.width=`${surface.width}px`;cv.style.height=`${surface.height}px`;
       cv.style.transform=`matrix(${surface.transform.join(',')})`;cv.style.clipPath=`polygon(${surface.clip})`;
       if(editPresentation.current&&!fused){

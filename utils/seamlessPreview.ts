@@ -370,13 +370,18 @@ export function drawSeamShared(target:HTMLCanvasElement,cells:SeamPhoto[],rects:
   if(sharedGpu?.lost){sharedGpu.dispose();sharedGpu=null;}
   try{sharedGpu??=new SeamGpu(document.createElement('canvas'),false,false,true,true);}catch{return false;}
   try{sharedGpu.draw(target,cells,rects,sources,amount,view);}catch{return false;}
-  // 還有照片只是一格底色（背景解碼中）：不蓋上去，畫面保留上一張（新加的照片在那之前就是原本的空格子），好了會再通知重畫
-  if(sharedGpu.lost||sharedGpu.incomplete)return false;
+  if(sharedGpu.lost)return false;
+  /* 還有照片只是一格底色（背景解碼中）：目標畫布上已經有有效的畫面就不蓋上去，保留上一張，好了會再通知重畫。
+     但畫布是剛配置、剛換尺寸的（裡面是空的）就照樣蓋上去：還沒好的那一格先是空格子的深色，
+     其他格子照常 —— 不然整塊佈局透明，底下的頁面白底就露出來（第一次把照片換進佈局時那一下變白）。
+     呼叫的一方換尺寸時要刪掉 data-seam-painted。 */
+  if(sharedGpu.incomplete&&target.dataset.seamPainted==='1')return false;
   const g=get2dWide(target),src=sharedGpu.surface,w=target.width,h=target.height;
   if(!g)return false;
   g.save();g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='copy';g.imageSmoothingEnabled=false;
   // WebGL's origin is bottom-left: the viewport rows are the LAST h rows.
   g.drawImage(src,0,src.height-h,w,h,0,0,w,h);g.restore();
+  target.dataset.seamPainted='1';
   return true;
 }
 export function releaseSeamShared(target:HTMLCanvasElement){sharedGpu?.forget(target);}
