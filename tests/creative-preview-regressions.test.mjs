@@ -12,11 +12,15 @@ test('animation tab locks preview gestures, not object gestures',()=>{
   assert.ok(creative.includes('if (motionLockRef.current) { viewPinchRef.current = null; return; }'));
   assert.ok(creative.includes('if (motionLockRef.current) return;'));
 });
-test('animation captures the actual starting rectangle and uses one transform animation',()=>{
+test('animation captures the actual starting rectangle and glides with one transform toward the live end rectangle',()=>{
   assert.ok(creative.includes('motionStartRectRef.current = motionFrameRef.current?.getBoundingClientRect()'));
-  assert.ok(creative.includes('motionFrameAnimationRef.current = frame.animate(['));
-  assert.ok(creative.includes('first.width/last.width'));
-  assert.ok(creative.includes("{transform:'translate(0px,0px) scale(1,1)'}"));
+  // One transform on the frame, re-aimed every frame at the CURRENT layout box (the footer may still be resizing),
+  // and re-aligned in the same frame when the layout box changes size.
+  assert.ok(creative.includes('const w = first.width + (nw - first.width) * e, h = first.height + (nh - first.height) * e;'));
+  assert.ok(creative.includes('frame.style.transform = `translate(${dx}px,${dy}px) scale(${w / nw},${h / nh})`;'));
+  assert.ok(creative.includes('observer = new ResizeObserver(() => { apply(); });'));
+  // Leaving the layout catalog through a tab: the footer height snaps, so the end rectangle is fixed.
+  assert.ok(creative.includes('footerSnapRef.current ?'));
 });
 test('playback block restores sliding entry with equal shorter entry/exit timing',()=>{
   assert.ok(creative.includes("transform: barIn ? 'translateY(0)' : 'translateY(130px)'"));

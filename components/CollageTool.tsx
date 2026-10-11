@@ -1363,6 +1363,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const creativeSeam = useRef<CreativeSeamless|null>(null);
   useEffect(()=>()=>creativeSeam.current?.dispose(),[]);
   const [photoLayoutOpen, setPhotoLayoutOpen] = useState(false);
+  /** 從「更多圖片排版」直接切到別的分頁：工具欄高度這一次不做動畫（見 footer 的 transition） */
+  const footerSnapRef = useRef(false);
   const [selectedRegionPhoto, setSelectedRegionPhoto] = useState<number | null>(null);
   const selectedRegionPhotoRef = useRef<number | null>(null);
   selectedRegionPhotoRef.current = selectedRegionPhoto;
@@ -2384,7 +2386,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [maskTransform, setMaskTransform] = useState<{x:number;y:number;w:number;h:number;frameW?:number;frameH?:number}>({ x: 0, y: 0, w: 0, h: 0 });
   const motionFrameRef = useRef<HTMLDivElement>(null);
   const motionStartRectRef = useRef<DOMRect | null>(null);
-  const motionFrameAnimationRef = useRef<Animation | null>(null);
+  const motionFrameAnimationRef = useRef<{ cancel: () => void } | null>(null);
   const [activeTab, setActiveTabState] = useState('setting');
   const setActiveTab = useCallback((next: React.SetStateAction<string>) => {
     motionStartRectRef.current = motionFrameRef.current?.getBoundingClientRect() || null;
@@ -9380,13 +9382,51 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const first = motionStartRectRef.current;
     motionFrameAnimationRef.current?.cancel();
     if (frame && first && first.width > 0 && first.height > 0) {
-      const last = frame.getBoundingClientRect();
-      if (last.width > 0 && last.height > 0) {
-        motionFrameAnimationRef.current = frame.animate([
-          {transform:`translate(${first.left-last.left}px,${first.top-last.top}px) scale(${first.width/last.width},${first.height/last.height})`},
-          {transform:'translate(0px,0px) scale(1,1)'},
-        ],{duration:420,easing:'cubic-bezier(0.42, 0, 0.58, 1)'});
+      /* 每一格重新量「現在真正的終點」，畫面從出發的框往它內插。
+         以前是一開始量一次終點、用固定的 transform 動畫 —— 但從「更多圖片排版」切過來時，
+         工具欄還在從 48dvh 縮回 34dvh（300ms），預覽的版面一路在變大，固定的縮放再乘上去，
+         畫面就先放大過頭再縮回來（像打了兩個關鍵幀）。改成每格對準當下的終點，
+         版面怎麼變都只會是一段順的過場。 */
+      const bez = (t: number) => {
+        // cubic-bezier(0.42, 0, 0.58, 1)：解 x(u)=t 再取 y(u)
+        let u = t;
+        for (let i = 0; i < 6; i++) {
+          const x = 3 * (1 - u) * (1 - u) * u * .42 + 3 * (1 - u) * u * u * .58 + u * u * u - t;
+          const dx = 3 * (1 - u) * (1 - u) * .42 + 6 * (1 - u) * u * (.58 - .42) + 3 * u * u * (1 - .58);
+          if (Math.abs(dx) < 1e-6) break;
+          u = Math.min(1, Math.max(0, u - x / dx));
+        }
+        return 3 * (1 - u) * u * u + u * u * u;
+      };
+      const t0 = performance.now();
+      let raf = 0, dx = 0, dy = 0, stopped = false;
+      // 版面尺寸一變（工具欄還在縮、底圖尺寸重算），在同一格畫面裡就把 transform 重新對準 ——
+      // ResizeObserver 在排版之後、繪製之前執行，所以新尺寸跟對應的縮放一定落在同一格
+      let observer: ResizeObserver | null = null;
+      const clear = () => { stopped = true; cancelAnimationFrame(raf); observer?.disconnect(); frame.style.transform = ''; motionFrameAnimationRef.current = null; };
+      const apply = () => {
+        if (stopped) return false;
+        const p = Math.min(1, (performance.now() - t0) / 420);
+        // 目前（不含我們這層 transform）的框：位置扣掉自己加的位移（transform-origin 在左上，縮放不動左上角），大小用版面尺寸
+        const r = frame.getBoundingClientRect();
+        const nl = r.left - dx, nt = r.top - dy, nw = frame.offsetWidth, nh = frame.offsetHeight;
+        if (p >= 1 || nw <= 0 || nh <= 0) { clear(); return false; }
+        const e = bez(p);
+        const l = first.left + (nl - first.left) * e, t = first.top + (nt - first.top) * e;
+        const w = first.width + (nw - first.width) * e, h = first.height + (nh - first.height) * e;
+        dx = l - nl; dy = t - nt;
+        frame.style.transform = `translate(${dx}px,${dy}px) scale(${w / nw},${h / nh})`;
+        return true;
+      };
+      const step = () => { if (apply()) raf = requestAnimationFrame(step); };
+      if (typeof ResizeObserver !== 'undefined') {
+        observer = new ResizeObserver(() => { apply(); });
+        observer.observe(frame);
+        const stage = frame.parentElement?.parentElement;
+        if (stage) observer.observe(stage);
       }
+      step();
+      motionFrameAnimationRef.current = { cancel: clear };
     }
     motionTransitionUntilRef.current = performance.now() + 420;
     setMotionTransitioning(true);
@@ -10839,7 +10879,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              用 transform 而不是改高度：transform 走合成執行緒，
              升起與收回都是滑順的動畫，不會硬切。 */
           transform: undefined,
-          transition: 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1), height 300ms ease-out',
+          /* 從「更多圖片排版」直接切到別的分頁時，高度這一次直接到位：工具欄的內容整個換掉了，
+             高度若再花 300ms 慢慢縮，上面預覽的終點就一路在變 —— 切到動畫頁的預覽過場會先放大再縮小。
+             高度一次到位，預覽只有一段直接滑到終點的過場。 */
+          transition: footerSnapRef.current ? 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1)' : 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1), height 300ms ease-out',
         }}>
         {!colorPickerTarget && (
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a]">
@@ -10848,6 +10891,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 key={id} 
                 data-creative-tab={id}
                 onClick={() => {
+                  if(photoLayoutOpen&&id!==activeTab){footerSnapRef.current=true;requestAnimationFrame(()=>requestAnimationFrame(()=>{footerSnapRef.current=false;}));}
                   if(photoLayoutOpen)changePhotoLayoutOpen(false);
                   setActiveTab(id);
                   /* 已經點進「新增符號／新增圖形」的時候再點一次加號，
