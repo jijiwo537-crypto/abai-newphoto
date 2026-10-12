@@ -862,6 +862,10 @@ export const shapePathD = (
   };
   switch (kind) {
     case 'circle':
+    case 'circle-star-dual':
+    case 'circle-heart-dual':
+    case 'circle-star-cutout':
+    case 'circle-heart-cutout':
       // 兩段半橢圓弧接成一圈（單一 A 指令畫不了整圈）
       return `M ${P(0, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(w, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(0, cy)} Z`;
     case 'square':
@@ -884,6 +888,9 @@ export const shapePathD = (
     }
     case 'diamond':
       return poly([[cx, 0], [w, cy], [cx, h], [0, cy]]);
+    /* 弧形四角星：四個尖角之間用往中心彎的曲線連起來（之前十字星按鈕上那個樣子）。 */
+    case 'sparkle4':
+      return `M ${P(cx, 0)} Q ${P(cx, cy)} ${P(0, cy)} Q ${P(cx, cy)} ${P(cx, h)} Q ${P(cx, cy)} ${P(w, cy)} Q ${P(cx, cy)} ${P(cx, 0)} Z`;
     /* 箭頭：朝右。箭身佔中間 36% 高，箭頭從一半寬開始、撐滿整個高度。
        四邊擠壓時跟著外框一起變形（拉長就是細長箭頭）。 */
     case 'arrow':
@@ -1168,8 +1175,12 @@ export const GRID_SHAPE_KINDS = new Set([
   'grid-dots-staggered', 'grid-dots-fade-diagonal', 'grid-diag-cross', 'grid-plus', 'grid-orbits', 'grid-chevron',
 ]);
 export const GRID_DOT_KINDS = new Set(['grid-dots', 'grid-dots-fade', 'grid-dots-staggered', 'grid-dots-fade-diagonal']);
-export const DUAL_COLOR_SHAPE_KINDS = new Set(['square-star-dual', 'square-heart-dual']);
-export const CUTOUT_SHAPE_KINDS = new Set(['square-star-cutout', 'square-heart-cutout']);
+export const DUAL_COLOR_SHAPE_KINDS = new Set(['square-star-dual', 'square-heart-dual', 'circle-star-dual', 'circle-heart-dual']);
+export const CUTOUT_SHAPE_KINDS = new Set(['square-star-cutout', 'square-heart-cutout', 'circle-star-cutout', 'circle-heart-cutout']);
+/** 雙色／挖空複合圖形的外框：circle- 開頭的是圓形，其餘是方形。 */
+const compositeOuterKind = (kind: string) => kind.startsWith('circle-') ? 'circle' : 'square';
+/** 內層圖案預設大小（%）。圓形外框的可用空間比方形少，預設小一點，愛心才不會貼到圓邊。 */
+export const compositeInnerDefault = (kind: string) => compositeOuterKind(kind) === 'circle' ? 54 : 64;
 export const DOUBLE_CONTOUR_SHAPE_KINDS = new Set(['heart-double', 'star-double']);
 export const COMPOSITE_SHAPE_KINDS = new Set([
   ...DUAL_COLOR_SHAPE_KINDS, ...CUTOUT_SHAPE_KINDS, ...DOUBLE_CONTOUR_SHAPE_KINDS,
@@ -1190,11 +1201,12 @@ const STRETCH_SOLID_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
   'pentagon', 'hexagon', 'star', 'star-rounded', 'heart',
   'square-star-dual', 'square-heart-dual', 'square-star-cutout', 'square-heart-cutout',
-  'heart-double', 'star-double', 'arrow',
+  'circle-star-dual', 'circle-heart-dual', 'circle-star-cutout', 'circle-heart-cutout',
+  'heart-double', 'star-double', 'arrow', 'sparkle4',
 ]);
 const STRETCH_OUTLINE_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
-  'pentagon', 'hexagon', 'star', 'star8', 'heart', 'ellipse', 'arrow',
+  'pentagon', 'hexagon', 'star', 'star8', 'heart', 'ellipse', 'arrow', 'sparkle4',
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if(isBackdropMask(shape))return true;
@@ -1255,12 +1267,18 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'star-double-f', kind: 'star-double', filled: true },
   { id: 'heart-f', kind: 'heart', filled: true },
   { id: 'arrow-f', kind: 'arrow', filled: true },
+  { id: 'sparkle4-f', kind: 'sparkle4', filled: true },
   /* 最後一排複合實心圖形。前兩顆是雙色實心、接著兩顆挖空，最後兩顆
      是原本愛心／星星外面再加一圈同形細線。 */
   { id: 'square-star-dual-f', kind: 'square-star-dual', filled: true },
   { id: 'square-heart-dual-f', kind: 'square-heart-dual', filled: true },
   { id: 'square-star-cutout-f', kind: 'square-star-cutout', filled: true },
   { id: 'square-heart-cutout-f', kind: 'square-heart-cutout', filled: true },
+  // 同上四顆，外框換成圓形
+  { id: 'circle-star-dual-f', kind: 'circle-star-dual', filled: true },
+  { id: 'circle-heart-dual-f', kind: 'circle-heart-dual', filled: true },
+  { id: 'circle-star-cutout-f', kind: 'circle-star-cutout', filled: true },
+  { id: 'circle-heart-cutout-f', kind: 'circle-heart-cutout', filled: true },
   // 細框
   { id: 'circle-o', kind: 'circle', filled: false },
   { id: 'square-o', kind: 'square', filled: false },
@@ -1276,6 +1294,7 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'diamond-n-o', kind: 'diamond-n', filled: false },
   { id: 'ellipse-o', kind: 'ellipse', filled: false, ratio: 0.68 },
   { id: 'arrow-o', kind: 'arrow', filled: false },
+  { id: 'sparkle4-o', kind: 'sparkle4', filled: false },
   { id: 'cloud-oval-o', kind: 'cloud-oval', filled: false, ratio: 0.68 },
   { id: 'cloud-o', kind: 'cloud', filled: false, ratio: 0.62 },
   { id: 'bubble-o', kind: 'bubble', filled: false, ratio: 0.82 },
@@ -1342,6 +1361,11 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   'square-heart-dual': [0, 0, 1, 1],
   'square-star-cutout': [0, 0, 1, 1],
   'square-heart-cutout': [0, 0, 1, 1],
+  'circle-star-dual': [0, 0, 1, 1],
+  'circle-heart-dual': [0, 0, 1, 1],
+  'circle-star-cutout': [0, 0, 1, 1],
+  'circle-heart-cutout': [0, 0, 1, 1],
+  sparkle4: [0, 0, 1, 1],
   'heart-double': [0, 0, 1, 1],
   'star-double': [0, 0, 1, 1],
 };
@@ -1414,12 +1438,12 @@ export const drawCompositeShapeBody = (
   if (!COMPOSITE_SHAPE_KINDS.has(kind)) return false;
   const innerKind = compositeInnerKind(kind)!;
   if (DUAL_COLOR_SHAPE_KINDS.has(kind) || CUTOUT_SHAPE_KINDS.has(kind)) {
-    const outer = new Path2D(shapePathD('square', w, h));
+    const outer = new Path2D(shapePathD(compositeOuterKind(kind), w, h));
     /* insetShapePath 以實際墨水邊界（不是字框）置中，因此愛心尖底與頂部
        到方形的距離會精確相等。 */
     /* 愛心的視覺重心比幾何外接框稍高；只在方形複合款往下補 1%，
        讓上下看起來的留白一致，星星與所有其他圖形完全不動。 */
-    const inner = insetShapePath(innerKind, w, h, Math.max(.1, Math.min(.9, (style.innerSize ?? 64) / 100)), innerKind === 'heart' ? 0.01 : 0);
+    const inner = insetShapePath(innerKind, w, h, Math.max(.1, Math.min(.9, (style.innerSize ?? compositeInnerDefault(kind)) / 100)), innerKind === 'heart' ? 0.01 : 0);
     target.fillStyle = color;
     if (DUAL_COLOR_SHAPE_KINDS.has(kind)) {
       target.fill(outer);
@@ -1472,12 +1496,13 @@ export const drawCompositeShapeBody = (
 /** 複合圖形的描邊路徑；讓描邊跟真正可見的每一層輪廓一致。 */
 export const strokeCompositeShape = (
   target: CanvasRenderingContext2D, kind: string, w: number, h: number,
-  innerSize = 64,
+  innerSizeIn?: number,
 ) => {
+  const innerSize = innerSizeIn ?? compositeInnerDefault(kind);
   if (!COMPOSITE_SHAPE_KINDS.has(kind)) return false;
   const innerKind = compositeInnerKind(kind)!;
   if (DUAL_COLOR_SHAPE_KINDS.has(kind) || CUTOUT_SHAPE_KINDS.has(kind)) {
-    target.stroke(new Path2D(shapePathD('square', w, h)));
+    target.stroke(new Path2D(shapePathD(compositeOuterKind(kind), w, h)));
     /* 挖空款的孔洞也是實際邊緣；雙色款的內層不是外描邊，不額外套黑框。 */
     if (CUTOUT_SHAPE_KINDS.has(kind)) target.stroke(insetShapePath(innerKind, w, h, Math.max(.1, Math.min(.9, innerSize / 100)), innerKind === 'heart' ? .01 : 0));
     return true;
@@ -1533,14 +1558,16 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     const innerD = shapePathD(innerKind, 100, 100);
     if (DUAL_COLOR_SHAPE_KINDS.has(item.kind)) return (
       <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} aria-hidden>
-        <rect width={VB} height={VB} fill="#C4D1C6" />
-        <path d={innerD} transform={tf(0.64, innerKind === 'heart' ? 0.01 : 0)} fill="#fff" />
+        {compositeOuterKind(item.kind) === 'circle' ? <circle cx={VB / 2} cy={VB / 2} r={VB / 2} fill="#C4D1C6" /> : <rect width={VB} height={VB} fill="#C4D1C6" />}
+        <path d={innerD} transform={tf(compositeInnerDefault(item.kind) / 100, innerKind === 'heart' ? 0.01 : 0)} fill="#fff" />
       </svg>
     );
     if (CUTOUT_SHAPE_KINDS.has(item.kind)) return (
       <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} aria-hidden>
-        <defs><mask id={maskId}><rect width={VB} height={VB} fill="#fff" /><path d={innerD} transform={tf(0.64, innerKind === 'heart' ? 0.01 : 0)} fill="#000" /></mask></defs>
-        <rect width={VB} height={VB} fill="currentColor" mask={`url(#${maskId})`} />
+        <defs><mask id={maskId}><rect width={VB} height={VB} fill="#fff" /><path d={innerD} transform={tf(compositeInnerDefault(item.kind) / 100, innerKind === 'heart' ? 0.01 : 0)} fill="#000" /></mask></defs>
+        {compositeOuterKind(item.kind) === 'circle'
+          ? <circle cx={VB / 2} cy={VB / 2} r={VB / 2} fill="currentColor" mask={`url(#${maskId})`} />
+          : <rect width={VB} height={VB} fill="currentColor" mask={`url(#${maskId})`} />}
       </svg>
     );
     return (
@@ -1682,7 +1709,10 @@ export const CrossStarIcon = ({ size = 20, strokeWidth = 1.5, filled = false }) 
     stroke={filled ? 'none' : 'currentColor'}
     strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
   >
-    <path d="M12 2 Q12 12 2 12 Q12 12 12 22 Q12 12 22 12 Q12 12 12 2 Z" />
+    {/* 跟畫面上真正畫出來的十字星（holeShapes.ts 的 drawShapePath 'cross-star'：
+        直線四角星、內圈半徑 0.25）同一個形狀。以前按鈕上是弧形的，跟生成出來的不一樣；
+        那個弧形的樣子現在是獨立的圖形 sparkle4。 */}
+    <path d="M 12 2 L 13.768 10.232 L 22 12 L 13.768 13.768 L 12 22 L 10.232 13.768 L 2 12 L 10.232 10.232 Z" />
   </svg>
 );
 
@@ -1698,7 +1728,7 @@ export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
    圖示少很多、看起來小一號 —— 所以實心版單獨放大到 28px。 */
 export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled }) => (
   <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 28 : 22} filled={filled} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 24 : 22} filled={filled} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
                            沒選中時是暗的（#555），選中才變白。
@@ -2338,7 +2368,7 @@ export const ShapeEditorPanel: React.FC<{
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c, shapeGlowColor: c }), true)}
           {(DUAL_COLOR_SHAPE_KINDS.has(layer.shape || '') || CUTOUT_SHAPE_KINDS.has(layer.shape || '')) && (
             <div className="flex items-center gap-3 px-2">
-              <div className="flex-1 min-w-0">{slider('圖案大小', layer.shapeInnerSize ?? 64, 10, 90,
+              <div className="flex-1 min-w-0">{slider('圖案大小', layer.shapeInnerSize ?? compositeInnerDefault(layer.shape || ''), 10, 90,
                 v => onChange({ shapeInnerSize: v }))}</div>
               {DUAL_COLOR_SHAPE_KINDS.has(layer.shape || '') && <button
                 title="圖案顏色" className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10"

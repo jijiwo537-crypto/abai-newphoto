@@ -23,7 +23,11 @@ for(const [i,color] of fixtureColors.entries()){
 const floating0=params.has('swaps')||params.has('floats')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[files.length-1]),x:500,y:220,w:120,h:90,rot:Number(params.get('rot')||0),opacity:Number(params.get('opacity')||100)},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
 const floating=params.has('maskObj')?[...floating0,{id:'qa-mask-obj',type:'shape',kind:params.get('maskObj')||'mask-frost',filled:true,x:300,y:150,w:300,h:250,rot:0,opacity:100,maskShape:'square',maskAmount:50,maskCells:15}]:floating0;
 const glowKinds=params.has('solid')?['circle','square','rounded','star','star-rounded','star-double','heart','diamond','square-star-dual','square-heart-dual','square-star-cutout','square-heart-cutout']:['grid-h','grid-cross','grid-frame','grid-dots-staggered','grid-dots','grid-dots-fade','grid-dots-fade-diagonal','grid-diag','grid-diag-cross','grid-plus','grid-orbits','grid-chevron'];
-createRoot(document.getElementById('root')!).render(params.has('occupancyLiveAudit')
+// ?shapeKinds=circle-star-dual,hole:cross-star,sparkle4~o …：把指定的圖形排成一格一格（~o 是邊框版）
+const shapeKinds=(params.get('shapeKinds')||'').split(',').filter(Boolean).map((t,i)=>{const [k,o]=t.split('~');const hole=k.startsWith('hole:')?k.slice(5):undefined;return {id:`qa-shape-${i}`,type:'shape',kind:hole?'hole':k,hole,filled:o!=='o',color:'#DCE7DB',innerColor:'#FFFFFF',x:20+i%3*195,y:20+Math.floor(i/3)*150,w:130,h:130,lineW:6,rot:0,opacity:100};});
+createRoot(document.getElementById('root')!).render(shapeKinds.length
+ ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialState={{layout:'image-full',canvasRatio:'1:1',holeCount:0,objects:shapeKinds}}/>
+ : params.has('occupancyLiveAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={params.has('single')?[]:files.slice(1,3)} initialState={{layout:params.has('around')?'mask-around':'mask-right',canvasRatio:'3:2',holeCount:0}}/>
  : params.has('snapshotAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,3)} initialState={{layout:'mask-right',canvasRatio:'3:2',holeCount:0,maskColor:'#000000',objects:[{id:'affine-marker',type:'shape',kind:'rect',filled:true,color:'#00FF00',x:420,y:250,w:100,h:100,rot:0}]}}/>

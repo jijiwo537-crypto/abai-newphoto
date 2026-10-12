@@ -47,7 +47,7 @@ import {
   ADD_SHAPE_ITEMS, shapePickerSections, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
-  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
+  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -11552,9 +11552,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         <div className="flex flex-col gap-3.5 pt-1 pb-14">
                           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
                           {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c, glowColor: c }), true)}
-                          {(DUAL_COLOR_SHAPE_KINDS.has(sel.kind || '') || /^square-(star|heart)-cutout$/.test(sel.kind || '')) && (
+                          {(DUAL_COLOR_SHAPE_KINDS.has(sel.kind || '') || /^(square|circle)-(star|heart)-cutout$/.test(sel.kind || '')) && (
                             <div className="flex items-center gap-3 px-2">
-                              <div className="flex-1 min-w-0">{shapeSlider('圖案大小', sel.innerSize ?? 64, 10, 90,
+                              <div className="flex-1 min-w-0">{shapeSlider('圖案大小', sel.innerSize ?? compositeInnerDefault(sel.kind || ''), 10, 90,
                                 (v: number) => patch({ innerSize: v }))}</div>
                               {DUAL_COLOR_SHAPE_KINDS.has(sel.kind || '') && <button
                                 title="圖案顏色" className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10"
