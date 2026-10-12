@@ -11,6 +11,7 @@ import { idleDefaults } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
+import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints } from '../utils/heartShapes';
 import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,warmBackdropMasks} from '../utils/backdropMasks';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
@@ -965,11 +966,21 @@ export const shapePathD = (
       }
       return d + ' Z';
     }
+    /* 愛心：主人提供的那張圖的樣子（utils/heartShapes.ts），撐滿整個框 */
     case 'heart':
     case 'heart-double':
+      return unitShapeD(HEART_MAIN, 0, 0, w, h, true);
+    /* 弧線比較尖、兩瓣比較窄的原本那顆愛心（保留下來當另一個選項） */
+    case 'heart-classic':
       return `M ${P(cx, cy - b * 0.25)} `
         + `C ${P(cx + a * 0.6, cy - b)} ${P(cx + a * 1.3, cy - b * 0.1)} ${P(cx, cy + b * 0.9)} `
         + `C ${P(cx - a * 1.3, cy - b * 0.1)} ${P(cx - a * 0.6, cy - b)} ${P(cx, cy - b * 0.25)} Z`;
+    /* 以前圖案按鈕上那顆愛心（lucide 圖示）的樣子 */
+    case 'heart-icon':
+      return unitShapeD(HEART_ICON, 0, 0, w, h, true);
+    /* 六角星：兩個正三角形疊起來 */
+    case 'hexstar':
+      return poly(hexStarPoints(cx, cy, a, b));
     /* 橢圓：跟圓形同一條路徑 —— 框不是正方形時它自然就是橢圓 */
     case 'ellipse':
       return `M ${P(0, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(w, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(0, cy)} Z`;
@@ -1199,14 +1210,14 @@ export const shapeDefaultColorFor = (kind: string) =>
 /** 四邊擠壓白名單：實心前 11 顆、邊框前 16 顆。 */
 const STRETCH_SOLID_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
-  'pentagon', 'hexagon', 'star', 'star-rounded', 'heart',
+  'pentagon', 'hexagon', 'star', 'star-rounded', 'heart', 'heart-classic', 'heart-icon', 'hexstar',
   'square-star-dual', 'square-heart-dual', 'square-star-cutout', 'square-heart-cutout',
   'circle-star-dual', 'circle-heart-dual', 'circle-star-cutout', 'circle-heart-cutout',
   'heart-double', 'star-double', 'arrow', 'sparkle4',
 ]);
 const STRETCH_OUTLINE_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
-  'pentagon', 'hexagon', 'star', 'star8', 'heart', 'ellipse', 'arrow', 'sparkle4',
+  'pentagon', 'hexagon', 'star', 'star8', 'heart', 'heart-classic', 'heart-icon', 'hexstar', 'ellipse', 'arrow', 'sparkle4',
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if(isBackdropMask(shape))return true;
@@ -1265,7 +1276,10 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'star-f', kind: 'star', filled: true },
   { id: 'star-rounded-f', kind: 'star-rounded', filled: true },
   { id: 'star-double-f', kind: 'star-double', filled: true },
-  { id: 'heart-f', kind: 'heart', filled: true },
+  { id: 'heart-f', kind: 'heart', filled: true, ratio: 0.93 },
+  { id: 'heart-icon-f', kind: 'heart-icon', filled: true, ratio: 0.9 },
+  { id: 'heart-classic-f', kind: 'heart-classic', filled: true },
+  { id: 'hexstar-f', kind: 'hexstar', filled: true },
   { id: 'arrow-f', kind: 'arrow', filled: true },
   { id: 'sparkle4-f', kind: 'sparkle4', filled: true },
   /* 最後一排複合實心圖形。前兩顆是雙色實心、接著兩顆挖空，最後兩顆
@@ -1290,7 +1304,10 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'star-o', kind: 'star', filled: false },
   { id: 'star8-o', kind: 'star8', filled: false },
   { id: 'star8-oval-o', kind: 'star8', filled: false, ratio: 0.62 },
-  { id: 'heart-o', kind: 'heart', filled: false },
+  { id: 'heart-o', kind: 'heart', filled: false, ratio: 0.93 },
+  { id: 'heart-icon-o', kind: 'heart-icon', filled: false, ratio: 0.9 },
+  { id: 'heart-classic-o', kind: 'heart-classic', filled: false },
+  { id: 'hexstar-o', kind: 'hexstar', filled: false },
   { id: 'diamond-n-o', kind: 'diamond-n', filled: false },
   { id: 'ellipse-o', kind: 'ellipse', filled: false, ratio: 0.68 },
   { id: 'arrow-o', kind: 'arrow', filled: false },
@@ -1341,7 +1358,10 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   hexagon: [0.067, 0, 0.866, 1],
   star: [0.0245, 0, 0.9511, 0.9045],
   'star-rounded': [0.0245, 0, 0.9511, 0.9045],
-  heart: [0.1324, 0.2362, 0.7352, 0.7138],
+  heart: [0, 0, 1, 1],
+  'heart-classic': [0.1324, 0.2362, 0.7352, 0.7138],
+  'heart-icon': [0, 0, 1, 1],
+  hexstar: [0.067, 0, 0.866, 1],
   ellipse: [0, 0, 1, 1],
   cloud: [0, 0, 1, 1],
   bubble: [0, 0, 1, 1],
@@ -1716,6 +1736,21 @@ export const CrossStarIcon = ({ size = 20, strokeWidth = 1.5, filled = false }) 
   </svg>
 );
 
+/** 圖案按鈕上用的線條小圖：直接拿 shapePathD 的路徑畫，所以跟生成出來的形狀一樣 */
+export const ShapeLineIcon = ({ kind, size = 18, strokeWidth = 2 }: { kind: string; size?: number; strokeWidth?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+    <path d={kind === 'heart' ? unitShapeD(HEART_MAIN, 2, 2, 20, 20) : kind === 'heart-icon' ? unitShapeD(HEART_ICON, 2, 2, 20, 20)
+      : kind === 'hexstar' ? `M ${hexStarPoints(12, 12, 10, 10).map(p => p.map(n => Math.round(n * 100) / 100).join(' ')).join(' L ')} Z`
+      : (() => { // 原本那顆愛心：路徑本身沒撐滿框，照 SHAPE_FIT 放大到 20px 置中
+        const f = SHAPE_FIT['heart-classic'], k = 20 / Math.max(f[2], f[3]);
+        return shapePathD('heart-classic', k, k); })()}
+      transform={kind === 'heart-classic' ? (() => { const f = SHAPE_FIT['heart-classic'], k = 20 / Math.max(f[2], f[3]);
+        return `translate(${12 - (f[0] + f[2] / 2) * k} ${12 - (f[1] + f[3] / 2) * k})`; })() : undefined} />
+  </svg>
+);
+export const PATTERN_LINE_ICON_KINDS = new Set(['heart', 'heart-icon', 'heart-classic', 'hexstar']);
+
 // --- 自製單線旋渦圖標 ---
 export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round">
@@ -1728,7 +1763,7 @@ export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
    圖示少很多、看起來小一號 —— 所以實心版單獨放大到 28px。 */
 export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled }) => (
   <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 24 : 22} filled={filled} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 24 : 22} filled={filled} /> : PATTERN_LINE_ICON_KINDS.has(s) ? <ShapeLineIcon kind={s} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
                            沒選中時是暗的（#555），選中才變白。

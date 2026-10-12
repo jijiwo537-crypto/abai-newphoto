@@ -1,3 +1,4 @@
+import { HEART_MAIN, HEART_ICON, traceUnitShape, hexStarPoints } from './heartShapes';
 /**
  * 「圖案」的畫法：路徑、字符、去背圖，全部收在這裡。
  *
@@ -415,7 +416,20 @@ export const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: n
   switch (type) {
     case 'circle': ctx.arc(cx, cy, r, 0, Math.PI * 2); break;
     case 'square': ctx.rect(cx - r, cy - r, size, size); break;
+    /* 愛心：主人提供的那張圖（utils/heartShapes.ts）。寬 1.5r，跟原本那顆看起來一樣大 */
     case 'heart':
+      traceUnitShape(ctx, HEART_MAIN, cx - r * 0.75, cy - r * 0.75, r * 1.5, r * 1.5);
+      break;
+    case 'heart-icon':
+      traceUnitShape(ctx, HEART_ICON, cx - r * 0.75, cy - r * 0.75, r * 1.5, r * 1.5);
+      break;
+    case 'hexstar': {
+      const pts = hexStarPoints(cx, cy, r, r);
+      ctx.moveTo(...pts[0]); for (const p of pts.slice(1)) ctx.lineTo(...p);
+      break;
+    }
+    /* 原本那顆愛心，保留下來當另一個選項 */
+    case 'heart-classic':
       ctx.moveTo(cx, cy - r * 0.25);
       ctx.bezierCurveTo(cx + r * 0.6, cy - r * 1.0, cx + r * 1.3, cy - r * 0.1, cx, cy + r * 0.9);
       ctx.bezierCurveTo(cx - r * 1.3, cy - r * 0.1, cx - r * 0.6, cy - r * 1.0, cx, cy - r * 0.25);

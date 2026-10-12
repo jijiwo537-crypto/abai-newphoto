@@ -9,6 +9,7 @@
  */
 export const PATTERN_ORDER: string[] = [
   'circle', 'square', 'cross-star', 'heart', 'star',
+  'heart-icon', 'heart-classic', 'hexstar',
   'flower', 'snow', 'burst', 'love', 'love3',
   'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar',
   'sparkle', 'aster', 'theta', 'zzz', 'text',
@@ -27,6 +28,7 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
   solid: [
     'circle-f', 'square-f', 'rounded-f', 'triangle-f', 'diamond-f', 'diamond-n-f',
     'pentagon-f', 'hexagon-f', 'heart-f', 'star-f', 'star-rounded-f', 'star-double-f',
+    'heart-icon-f', 'heart-classic-f', 'hexstar-f',
     'square-star-dual-f', 'square-heart-dual-f', 'square-star-cutout-f', 'square-heart-cutout-f',
     'circle-star-dual-f', 'circle-heart-dual-f', 'circle-star-cutout-f', 'circle-heart-cutout-f', 'hole-cross-star-f', 'sparkle4-f', 'arrow-f',
     'hole-flower', 'hole-snow', 'hole-burst', 'hole-love', 'hole-love3', 'hole-pic333',
@@ -36,6 +38,7 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
   outline: [
     'circle-o', 'square-o', 'rounded-o', 'triangle-o', 'diamond-o', 'diamond-n-o',
     'pentagon-o', 'hexagon-o', 'heart-o', 'star-o', 'star8-o', 'star8-oval-o',
+    'heart-icon-o', 'heart-classic-o', 'hexstar-o',
     'cloud-oval-o', 'hole-cross-star-o', 'sparkle4-o', 'arrow-o', 'ellipse-o', 'cloud-o', 'bubble-o',
     'bubble-mirror-o',
   ],

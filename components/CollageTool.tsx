@@ -3196,8 +3196,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       nextSize = 45;
     } else if (id === 'vortex') {
       nextSize = 35;
-    } else if (id === 'heart') {
+    } else if (id === 'heart' || id === 'heart-icon' || id === 'heart-classic') {
       nextSize = 30;
+    } else if (id === 'hexstar') {
+      nextSize = 35;
     } else if (id === 'love') {
       nextSize = 25;
     } else if (id === 'love3') {
