@@ -8,11 +8,11 @@
  * 清單裡沒寫到的項目（例如之後新加的圖形）會自動接在該區的最後面，不會消失。
  */
 export const PATTERN_ORDER: string[] = [
-  'circle', 'square', 'cross-star', 'heart', 'star',
-  'sparkle4', 'hexstar',
-  'flower', 'snow', 'burst', 'love', 'love3',
-  'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar',
-  'sparkle', 'aster', 'theta', 'zzz', 'text',
+  'circle', 'square', 'heart', 'star', 'cross-star',
+  'hexstar', 'burst', 'snow', 'flower', 'love',
+  'love3', 'pic333', 'vortex', 'seagrass', 'random-num',
+  'darkstar', 'sparkle', 'aster', 'theta', 'zzz',
+  'text', 'sparkle4',
 ];
 
 export const SHAPE_SECTIONS = [
@@ -26,29 +26,31 @@ export type ShapeSection = typeof SHAPE_SECTIONS[number][0];
 
 export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
   solid: [
-    'circle-f', 'square-f', 'rounded-f', 'triangle-f', 'diamond-f', 'diamond-n-f',
-    'pentagon-f', 'hexagon-f', 'heart-f', 'star-f', 'star-rounded-f', 'star-double-f',
-    'hexstar-f',
-    'square-star-dual-f', 'square-heart-dual-f', 'square-star-cutout-f', 'square-heart-cutout-f',
-    'circle-star-dual-f', 'circle-heart-dual-f', 'circle-star-cutout-f', 'circle-heart-cutout-f', 'hole-cross-star-f', 'sparkle4-f', 'arrow-f',
-    'blur-star-f', 'blur-star-rounded-f', 'blur-heart-f', 'blur-circle-f', 'blur-cross-star-f', 'blur-square-f',
-    'hole-flower', 'hole-snow', 'hole-burst', 'hole-love', 'hole-love3', 'hole-pic333',
+    'circle-f', 'square-f', 'rounded-f', 'diamond-f', 'triangle-f', 'diamond-n-f',
+    'pentagon-f', 'hexagon-f', 'heart-f', 'hexstar-f', 'star-f', 'star-rounded-f',
+    'star-double-f', 'hole-cross-star-f', 'sparkle4-f', 'hole-love', 'hole-love3', 'hole-pic333',
+    'blur-star-f', 'blur-star-rounded-f', 'blur-cross-star-f', 'blur-heart-f', 'blur-circle-f', 'blur-square-f',
+    'square-star-dual-f', 'square-heart-dual-f', 'square-star-cutout-f', 'square-heart-cutout-f', 'circle-star-cutout-f', 'circle-heart-cutout-f',
+    'circle-heart-dual-f', 'circle-star-dual-f', 'arrow-f', 'hole-flower', 'hole-snow', 'hole-burst',
     'hole-vortex', 'hole-seagrass', 'hole-darkstar', 'hole-sparkle', 'hole-aster', 'hole-theta',
     'hole-abai',
   ],
   outline: [
-    'circle-o', 'square-o', 'rounded-o', 'triangle-o', 'diamond-o', 'diamond-n-o',
-    'pentagon-o', 'hexagon-o', 'heart-o', 'star-o', 'star8-o', 'star8-oval-o',
-    'hexstar-o',
-    'cloud-oval-o', 'hole-cross-star-o', 'sparkle4-o', 'arrow-o', 'ellipse-o', 'cloud-o', 'bubble-o',
-    'bubble-mirror-o',
+    'circle-o', 'square-o', 'rounded-o', 'diamond-o', 'triangle-o', 'diamond-n-o',
+    'pentagon-o', 'hexagon-o', 'heart-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o',
+    'hexstar-o', 'star8-o', 'star8-oval-o', 'cloud-oval-o', 'arrow-o', 'ellipse-o',
+    'cloud-o', 'bubble-mirror-o', 'bubble-o',
   ],
-  line: ['line-h', 'line-v', 'line-d1', 'line-d2', 'line-wave', 'line-lightning-wave'],
+  line: [
+    'line-h', 'line-v', 'line-d1', 'line-d2', 'line-wave', 'line-lightning-wave',
+  ],
   grid: [
-    'grid-horizontal', 'grid-cross', 'grid-frame', 'grid-dots-staggered', 'grid-dots', 'grid-dots-fade',
-    'grid-dots-fade-diagonal', 'grid-diagonal', 'grid-diag-cross', 'grid-plus', 'grid-orbits', 'grid-chevron',
+    'grid-horizontal', 'grid-diagonal', 'grid-diag-cross', 'grid-cross', 'grid-frame', 'grid-chevron',
+    'grid-orbits', 'grid-plus', 'grid-dots-staggered', 'grid-dots', 'grid-dots-fade', 'grid-dots-fade-diagonal',
   ],
-  mask: ['mask-mosaic', 'mask-bricks', 'mask-frost', 'mask-negative', 'mask-negative-mono', 'mask-monochrome'],
+  mask: [
+    'mask-mosaic', 'mask-bricks', 'mask-frost', 'mask-negative', 'mask-negative-mono', 'mask-monochrome',
+  ],
 };
 
 /** 依照 order 排列 items；order 沒提到的照原本順序接在最後面。 */
