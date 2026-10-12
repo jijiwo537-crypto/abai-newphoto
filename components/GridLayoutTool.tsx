@@ -12,7 +12,7 @@ import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, Slid
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
 import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints } from '../utils/heartShapes';
-import { isBlurShape, blurShapeBaseD, blurShapeRadius, fillBlurredPath, fillBlurredTextured, BLUR_SHAPE_DEFAULT } from '../utils/blurShapes';
+import { isBlurShape, blurShapeBaseD, drawBlurredShape, BLUR_SHAPE_DEFAULT } from '../utils/blurShapes';
 import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,warmBackdropMasks} from '../utils/backdropMasks';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
@@ -1246,18 +1246,13 @@ export const drawFeatheredShapeBody = (
   color: string,
   paintTexture?: (ctx: CanvasRenderingContext2D, path: Path2D) => void,
   innerColor = '#FFFFFF',
-  /** textureKey：有紋理時傳一串描述紋理的字（模糊圖形拿它當快取鍵）；沒有紋理就不傳 */
-  compositeStyle: { innerSize?: number; outlineWidth?: number; textureKey?: string } = {},
+  compositeStyle: { innerSize?: number; outlineWidth?: number } = {},
 ) => {
   if (drawCompositeShapeBody(target, kind, w, h, color, innerColor, paintTexture, compositeStyle)) return;
   // 圖形羽化已移除；保留同一個繪製入口以相容既有草稿資料。
   const path = new Path2D(shapePathD(kind, w, h));
-  if (isBlurShape(kind)) {
-    const r = blurShapeRadius(w, h, _feather);
-    if (compositeStyle.textureKey && paintTexture) fillBlurredTextured(target, path, color, r, w, h, paintTexture, `${kind}|${compositeStyle.textureKey}`);
-    else fillBlurredPath(target, path, color, r);
-    return;
-  }
+  // 模糊圖形不吃紋理（編輯頁也沒有紋理那一格）
+  if (isBlurShape(kind)) { drawBlurredShape(target, kind, w, h, color, _feather, shapePathD); return; }
   target.fillStyle = color;
   target.fill(path);
   paintTexture?.(target, path);
@@ -2463,7 +2458,7 @@ export const ShapeEditorPanel: React.FC<{
     <div
       className="max-w-md mx-auto h-full animate-in fade-in duration-300"
     >
-      <div className={`h-full ${colorPage ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden no-scrollbar px-2`}>
+      <div className={`h-full ${colorPage || isBlurShape(layer.shape) ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden no-scrollbar px-2`}>
         {colorPage && (
           <ColorPickerPage
             value={colorPage.value}
@@ -2531,7 +2526,7 @@ export const ShapeEditorPanel: React.FC<{
           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
               （跟「背景紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。
               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-          {!isLine && !isGridShape && (() => {
+          {!isLine && !isGridShape && !isBlurShape(layer.shape) && (() => {
             const tex = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
             return (
           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3 w-full">
@@ -5416,8 +5411,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
               image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
             tc.restore();
-          }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth,
-            textureKey: tx === 'none' ? undefined : JSON.stringify([tx, image.shapeDotSize, image.shapeDotGap, image.shapeDotSquash, image.shapeDotColor, image.shapeStripeN, image.shapeStripeDir, image.shapeStripeA, image.shapeStripeB, image.shapeTextureBaseW, image.shapeTextureBaseH]) });
+          }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth });
         } else {
           ctx.stroke(path);
         }
@@ -14291,10 +14285,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
     };
     if (solid) {
-      const exportTex = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
       drawFeatheredShapeBody(ctx, fImg.shape!, fw, fh, fImg.shapeFeather, color, paintShapeTexture,
-        fImg.shapeInnerColor || '#FFFFFF', { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth,
-          textureKey: exportTex === 'none' ? undefined : JSON.stringify(['export', exportTex, fImg.shapeDotSize, fImg.shapeDotGap, fImg.shapeDotSquash, fImg.shapeDotColor, fImg.shapeStripeN, fImg.shapeStripeDir, fImg.shapeStripeA, fImg.shapeStripeB, fImg.shapeTextureBaseW, fImg.shapeTextureBaseH, scaleFactor]) });
+        fImg.shapeInnerColor || '#FFFFFF', { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth });
     } else ctx.stroke(path);
     ctx.setLineDash([]);
     ctx.restore();

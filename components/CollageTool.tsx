@@ -7411,8 +7411,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               textureBaseH: ((o as any).textureBaseH || o.h) * s,
             });
             tc.restore();
-          }, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth,
-            textureKey: texOf(o) === 'none' ? undefined : JSON.stringify([texOf(o), o.dotSize, o.dotGap, o.dotSquash, o.dotColor, o.stripeN, o.stripeDir, o.stripeA, o.stripeB, (o as any).textureBaseW, (o as any).textureBaseH, s]) });
+          }, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth });
         } else paintShapePath(false);
         ctx.setLineDash([]);
         ctx.restore();
@@ -11550,7 +11549,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                      圖層上下不放這裡 —— 選中時畫面上那排工具列本來就有。 */
                   return (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
-                      <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-2">
+                      {/* 模糊圖形的面板很短，整頁固定不捲動 */}
+                      <div className={`h-full ${isBlurShape(sel.kind) ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden no-scrollbar px-2`}>
                         {/* 底下留一段（跟經典拼圖的圖形編輯一樣的 pb-14）——
                             捲到最底時最後那一格不會貼著邊，也比較好按。 */}
                         <div className="flex flex-col gap-3.5 pt-1 pb-14">
@@ -11605,7 +11605,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
                               （跟經典拼圖的「背景紋理」同一種排法）。顏色常駐。
                               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-                          {!isLine && !GRID_SHAPE_KINDS.has(sel.kind) && (() => {
+                          {!isLine && !GRID_SHAPE_KINDS.has(sel.kind) && !isBlurShape(sel.kind) && (() => {
                             const tex = texOf(sel);
                             return (
                           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3">

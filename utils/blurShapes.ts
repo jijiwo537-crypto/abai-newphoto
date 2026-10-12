@@ -4,8 +4,8 @@
  * 這裡是像整張拍糊那樣，邊緣同時往外暈開、往內變淡，一半透明的地方剛好落在原本的邊上，
  * 所以看起來大小不變。
  *
- * 畫法用陰影：把圖形畫到畫布外面很遠的地方，只讓它的陰影（shadowBlur）落回原位。
- * iPhone 的 Safari 對 ctx.filter = 'blur()' 支援不穩，陰影模糊則是每一台都一樣。 */
+ * 畫法：在一張小畫布上用三次盒狀模糊（≈ 高斯）糊一次再拉大貼上（見 drawBlurredShape）。
+ * 不用 ctx.filter = 'blur()'：iPhone 的 Safari 對它支援不穩。 */
 export const BLUR_SHAPE_KINDS = new Set(['blur-star', 'blur-star-rounded', 'blur-heart', 'blur-circle', 'blur-cross-star', 'blur-square']);
 export const isBlurShape = (kind?: string) => !!kind && BLUR_SHAPE_KINDS.has(kind);
 /** 模糊滑桿的預設值（畫面上的 0～100） */
@@ -31,10 +31,6 @@ export const blurShapeBaseD = (kind: string, w: number, h: number, pathD: (k: st
   return pathD(base, w, h);
 };
 
-/* 有紋理（點點、條紋…）時陰影只能畫單色，所以改成：先把圖形連同紋理畫到一張小畫布，
-   用三次盒狀模糊（≈ 高斯）把像素糊開，再貼回去。結果依「外形＋紋理＋大小」快取，
-   拖曳時不用每格重算。 */
-const texturedCache = new Map<string, { canvas: HTMLCanvasElement; pad: number; k: number }>();
 const boxBlur = (src: Float32Array, dst: Float32Array, w: number, h: number, r: number, horizontal: boolean) => {
   const len = horizontal ? w : h, lines = horizontal ? h : w, step = horizontal ? 4 : w * 4, inv = 1 / (2 * r + 1);
   for (let l = 0; l < lines; l++) {
@@ -58,42 +54,44 @@ const blurCanvas = (c: HTMLCanvasElement, sigma: number) => {
   for (let i = 0; i < n; i += 4) { const al = a[i + 3]; const m = al > 0 ? 255 / al : 0; d[i] = a[i] * m; d[i + 1] = a[i + 1] * m; d[i + 2] = a[i + 2] * m; d[i + 3] = al; }
   g.putImageData(img, 0, 0);
 };
-export const fillBlurredTextured = (
-  ctx: CanvasRenderingContext2D, path: Path2D, color: string, radius: number, w: number, h: number,
-  paintTexture: (ctx: CanvasRenderingContext2D, path: Path2D) => void, key: string,
+/* 放大不卡：模糊後的圖形本來就沒有銳利細節，所以只在一張固定大小的小畫布上糊一次
+   （長邊最多 512px），之後不管畫面放多大，都只是把這張圖拉大貼上去 —— 每一格的成本固定。
+   以前是每畫一次就用陰影即時模糊，放很大時模糊半徑跟著變成幾百像素，手機每格都要重算。
+   快取鍵是「圖形、寬高比、顏色、模糊值」，拖曳、縮放都直接命中。 */
+const blurredCache = new Map<string, { canvas: HTMLCanvasElement; img?: ImageBitmap; pad: number; scale: number }>();
+export const drawBlurredShape = (
+  ctx: CanvasRenderingContext2D, kind: string, w: number, h: number, color: string, value: number | undefined,
+  pathD: (k: string, w: number, h: number) => string,
 ) => {
-  const m = ctx.getTransform();
-  let k = Math.hypot(m.a, m.b) || 1;
-  k = Math.min(k, 1400 / Math.max(1, Math.abs(w) + radius * 6), 1400 / Math.max(1, Math.abs(h) + radius * 6));
-  const cacheKey = `${key}|${w.toFixed(1)}|${h.toFixed(1)}|${radius.toFixed(2)}|${k.toFixed(2)}|${color}`;
-  let hit = texturedCache.get(cacheKey);
+  const aw = Math.abs(w), ah = Math.abs(h);
+  if (aw < 0.5 || ah < 0.5) return;
+  const aspect = Math.round(aw / ah * 100) / 100;
+  const v = Math.max(0, Math.min(100, value ?? BLUR_SHAPE_DEFAULT));
+  const key = `${kind}|${aspect}|${color}|${Math.round(v * 10) / 10}`;
+  let hit = blurredCache.get(key);
   if (!hit) {
-    const pad = Math.ceil(radius * 3 * k) + 2;
+    // 光柵：短邊至少 160px、長邊最多 512px
+    const L = Math.min(512, Math.max(160, 160 * Math.max(aspect, 1 / aspect)));
+    const rw = aspect >= 1 ? L : L * aspect, rh = aspect >= 1 ? L / aspect : L;
+    const radius = blurShapeRadius(rw, rh, v);
+    const pad = Math.ceil(radius * 3) + 2;
     const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(Math.abs(w) * k) + pad * 2; canvas.height = Math.ceil(Math.abs(h) * k) + pad * 2;
+    canvas.width = Math.ceil(rw) + pad * 2; canvas.height = Math.ceil(rh) + pad * 2;
     const g = canvas.getContext('2d')!;
-    g.setTransform(k, 0, 0, k, pad, pad);
-    g.fillStyle = color; g.fill(path); paintTexture(g, path);
-    blurCanvas(canvas, radius * k);
-    hit = { canvas, pad, k };
-    texturedCache.set(cacheKey, hit);
-    if (texturedCache.size > 24) texturedCache.delete(texturedCache.keys().next().value!);
+    g.translate(pad, pad);
+    g.fillStyle = color;
+    g.fill(new Path2D(pathD(kind, rw, rh)));
+    blurCanvas(canvas, radius);
+    const entry: { canvas: HTMLCanvasElement; img?: ImageBitmap; pad: number; scale: number } = { canvas, pad, scale: rw };
+    hit = entry;
+    blurredCache.set(key, entry);
+    // 轉成 ImageBitmap 讓它留在顯示卡上，之後每格貼圖不用再從記憶體搬一次
+    if (typeof createImageBitmap === 'function') void createImageBitmap(canvas).then(bm => { entry.img = bm; }).catch(() => {});
+    if (blurredCache.size > 48) { const old = blurredCache.keys().next().value!; blurredCache.get(old)?.img?.close(); blurredCache.delete(old); }
   }
-  ctx.drawImage(hit.canvas, -hit.pad / hit.k, -hit.pad / hit.k, hit.canvas.width / hit.k, hit.canvas.height / hit.k);
-};
-
-/** 用陰影畫出模糊的實心圖形。radius 是圖形座標；會換算成目前縮放下的實際像素。 */
-export const fillBlurredPath = (ctx: CanvasRenderingContext2D, path: Path2D, color: string, radius: number) => {
-  if (radius <= 0.01) { ctx.fillStyle = color; ctx.fill(path); return; }
-  const m = ctx.getTransform(), k = Math.hypot(m.a, m.b) || 1;
-  const off = 20000 + Math.abs(m.e);
-  ctx.save();
-  ctx.setTransform(m.a, m.b, m.c, m.d, m.e + off, m.f);
-  ctx.shadowColor = color;
-  ctx.shadowBlur = radius * k * 2;   // shadowBlur ≈ 2σ
-  ctx.shadowOffsetX = -off;
-  ctx.shadowOffsetY = 0;
-  ctx.fillStyle = color;
-  ctx.fill(path);
-  ctx.restore();
+  const k = aw / hit.scale;   // 光柵像素 → 圖形座標
+  const prev = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(hit.img ?? hit.canvas, -hit.pad * k, -hit.pad * k, hit.canvas.width * k, hit.canvas.height * k);
+  ctx.imageSmoothingEnabled = prev;
 };
