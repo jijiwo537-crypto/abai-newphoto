@@ -56,6 +56,7 @@ import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount,
   texOf, paintStripes,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
+  isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
@@ -2653,7 +2654,9 @@ export const ShapeEditorPanel: React.FC<{
                  不留的話畫出來的線會比自己那一欄長、伸進隔壁的間隙。 */
               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
                 <div className="px-2">
-                  {slider('數量', layer.shapeStripeN ?? STRIPE_N_DEFAULT, 0, STRIPE_N_MAX, v => onChange({ shapeStripeN: v }))}
+                  {isClefTex(layer.holeType)
+                    ? slider('數量', clefStripeToUi(layer.shapeStripeN ?? CLEF_TEX_DEFAULTS.stripeN), 0, CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, v => onChange({ shapeStripeN: clefStripeFromUi(v) }))
+                    : slider('數量', layer.shapeStripeN ?? STRIPE_N_DEFAULT, 0, STRIPE_N_MAX, v => onChange({ shapeStripeN: v }))}
                 </div>
                 <div className="space-y-1.5">
                   <span className="text-[11px] font-bold text-white/70">方向</span>
@@ -2675,7 +2678,9 @@ export const ShapeEditorPanel: React.FC<{
             ) : (
               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                 {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
-                {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
+                {isClefTex(layer.holeType)
+                  ? slider('間距', clefGapToUi(layer.shapeDotGap ?? CLEF_TEX_DEFAULTS.gap), 0, 100, v => onChange({ shapeDotGap: clefGapFromUi(v) }))
+                  : slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
                 {isGridTex(tex) && <div className="col-span-2">{slider('壓扁', maskTextureSquashToUi(layer.shapeDotSquash ?? 50), 0, 100, v => onChange({ shapeDotSquash: maskTextureSquashFromUi(v) }))}</div>}
               </div>
             )}
@@ -9330,6 +9335,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       shapeItemId: it.id,
       // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
       holeType: (it as HoleShapeItem).hole,
+      ...(isClefTex((it as HoleShapeItem).hole) ? { shapeDotGap: CLEF_TEX_DEFAULTS.gap, shapeStripeN: CLEF_TEX_DEFAULTS.stripeN } : {}),
       shapeFilled: it.filled,
       shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
       shapeLineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')

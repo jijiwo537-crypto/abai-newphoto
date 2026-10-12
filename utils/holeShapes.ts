@@ -609,6 +609,18 @@ export const paintStripes = (
 };
 
 /** 一次把這顆圖形該有的紋理畫好（原點在中心，呼叫端已經剪裁好） */
+/* ── 高音譜號的紋理：線條細，紋理要比一般圖形密 ─────────────────────
+   間距實際是 -30～0（預設 0），滑桿照樣顯示 0～100；
+   條紋實際是 15～40 條（預設 30），滑桿從 0 開始（顯示 0～25）。
+   新增時就把預設值寫進物件，所以每一支繪製器讀到的都是同一個數字。 */
+export const isClefTex = (hole?: string) => hole === 'music-clef';
+export const CLEF_TEX_DEFAULTS = { gap: 0, stripeN: 30 };
+export const CLEF_STRIPE_MIN = 15, CLEF_STRIPE_MAX = 40;
+export const clefGapToUi = (g: number) => Math.round((Math.max(-30, Math.min(0, g)) + 30) / 30 * 100);
+export const clefGapFromUi = (v: number) => -30 + Math.max(0, Math.min(100, v)) * 0.3;
+export const clefStripeToUi = (n: number) => Math.max(0, Math.min(CLEF_STRIPE_MAX, n) - CLEF_STRIPE_MIN);
+export const clefStripeFromUi = (v: number) => CLEF_STRIPE_MIN + Math.max(0, Math.min(CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, Math.round(v)));
+
 export const paintTex = (
   c: CanvasRenderingContext2D,
   unitW: number, unitH: number, covW: number, covH: number,

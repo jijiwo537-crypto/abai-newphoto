@@ -78,6 +78,8 @@ export const patternGlyph = (
     全 App 只有這一個地方定義 —— 遮罩、圖形、頁面背景都是讀它。 */
 export const STRIPE_N_MAX = 30;
 export const STRIPE_N_DEFAULT = 13;
+/** 畫的時候最多幾條：一般滑桿只到 30，高音譜號的紋理可以到 40（utils/holeShapes 的 CLEF_STRIPE_MAX） */
+const STRIPE_N_DRAW_MAX = 40;
 
 /**
  * 條紋改成直接指定「有幾條」，不是指定粗細。
@@ -91,7 +93,7 @@ export const STRIPE_N_DEFAULT = 13;
  * 0 條在畫面上沒有意義，所以夾成 1 條（＝整片都是第一個顏色）。
  */
 export const stripeBand = (span: number, count = STRIPE_N_DEFAULT) => {
-  const n = Math.max(1, Math.min(STRIPE_N_MAX, Math.round(count || 0)));
+  const n = Math.max(1, Math.min(STRIPE_N_DRAW_MAX, Math.round(count || 0)));
   return { band: span > 0 ? span / n : 0, n };
 };
 

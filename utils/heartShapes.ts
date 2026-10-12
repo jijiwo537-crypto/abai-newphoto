@@ -78,19 +78,18 @@ const capsule = (theta: number, r0: number, r1: number, hw: number): Pt[] => {
   for (let i = 0; i <= N; i++) { const t = theta + Math.PI / 2 + Math.PI * i / N; pts.push([c * r0 + Math.cos(t) * hw, s * r0 + Math.sin(t) * hw]); }
   return pts;
 };
-/** 直角的細長方塊（虛線的一小段），從半徑 r0 到 r1、半寬 hw；繞向跟 capsule 一樣，重疊時用 nonzero 填色會合在一起 */
-const bar = (theta: number, r0: number, r1: number, hw: number): Pt[] => {
-  const c = Math.cos(theta), s = Math.sin(theta), nx = -s * hw, ny = c * hw;
-  return [[c * r1 - nx, s * r1 - ny], [c * r1 + nx, s * r1 + ny], [c * r0 + nx, s * r0 + ny], [c * r0 - nx, s * r0 - ny]];
-};
-/** 虛線星芒（像圖案的 ✳︎，但每一根是虛線）：8 根，每根 4 段直角短線，段與段之間留空；
-   最內那段從圓心開始，8 根在中心直接疊在一起，不留空洞 */
+/** 虛線星芒（照主人給的點陣圖）：全部是正方形、彼此留間距，排在同一張方格上。
+   正中心是 3×3 九格；上下左右四根各往外再 6 格，四條斜線各往外再 3 格。
+   方格一格寬 1/7.33（最外那一格的外緣剛好碰到半徑 1），正方形佔一格的 66%。 */
 const BURST_DASH: Pt[][] = (() => {
-  const hw = 0.05, out: Pt[][] = [];
-  for (let i = 0; i < 8; i++) {
-    const th = -Math.PI / 2 + i * Math.PI / 4;
-    for (const [a, b] of [[0, 0.2], [0.32, 0.48], [0.6, 0.76], [0.88, 1]] as const) out.push(bar(th, a, b, hw));
-  }
+  const pitch = 1 / 7.33, hs = pitch * 0.33, out: Pt[][] = [];
+  const sq = (i: number, j: number) => {
+    const x = i * pitch, y = j * pitch;
+    out.push([[x - hs, y - hs], [x + hs, y - hs], [x + hs, y + hs], [x - hs, y + hs]]);
+  };
+  for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) sq(i, j);
+  for (let k = 2; k <= 7; k++) { sq(0, -k); sq(k, 0); sq(0, k); sq(-k, 0); }
+  for (let k = 2; k <= 4; k++) { sq(k, -k); sq(k, k); sq(-k, k); sq(-k, -k); }
   return out;
 })();
 /** 載入中的圓圈（像 iPhone 的轉圈圈）：12 根圓頭短棒，從 12 點鐘方向開始順時針排 */
