@@ -71,7 +71,7 @@ import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolStickerInk, m
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
 import {
   getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio,
-  isTextHole, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, patternPathBounds,
+  isTextHole, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, fillShapePath, clipShapePieces, patternPathBounds,
   drawHoleShape, paintDots, paintTex, texOf, glowAmount,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
@@ -6364,8 +6364,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         g.translate(gx, gy);
         g.rotate((angle * Math.PI) / 180);
         if (fill) g.fillStyle = fill;
-        drawShapePath(g, holeType, 0, 0, sz);
-        g.fill();
+        fillShapePath(g, holeType, 0, 0, sz);
         g.restore();
       }
     };
@@ -6858,8 +6857,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.translate(mxp, myp);
           ctx.rotate(currentAngle * Math.PI / 180);
           ctx.translate(-mxp, -myp);
-          drawShapePath(ctx, holeType, mxp, myp, sz);
-          ctx.fill();
+          fillShapePath(ctx, holeType, mxp, myp, sz);
         }
         drawBurst(ctx, h, sz, mxp, myp, A.burst, patternFill);
         ctx.restore();
@@ -6987,15 +6985,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       } else {
         lmx.translate(A.x * s, A.y * s);
         lmx.rotate(currentAngle * Math.PI / 180);
-        drawShapePath(lmx, holeType, 0, 0, sz);
-        lmx.fill();
         /* 填色挖孔的反鋸齒邊緣會殘留約半個像素的遮罩色，
            預覽倍率改變時那圈殘色就像多出邊框。用同一路徑擦掉
            極細外緣，只消除殘色，不改圖案本身的幾何大小。 */
         lmx.lineWidth = Math.max(0.75, 0.8 * s);
         lmx.lineJoin = 'round';
         lmx.strokeStyle = '#000';
-        lmx.stroke();
+        fillShapePath(lmx, holeType, 0, 0, sz, () => lmx.stroke());
       }
       lmx.restore();
       if (A.burst > 0.01) {
@@ -7069,8 +7065,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.translate(hx, hy);
           ctx.rotate(currentAngle * Math.PI / 180);
           ctx.translate(-hx, -hy);
-          drawShapePath(ctx, holeType, hx, hy, sz);
-          ctx.fill();
+          fillShapePath(ctx, holeType, hx, hy, sz);
         }
         drawBurst(ctx, h, sz, hx, hy, A.burst, pat);
         ctx.restore();
@@ -8019,24 +8014,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx2.translate(hx, hy);
         ctx2.rotate(ang2 * Math.PI / 180);
         ctx2.translate(-hx, -hy);
-        drawShapePath(ctx2, holeType, hx, hy, sz);
-        ctx2.clip();
-        /* 形狀可以轉，但貼進去的圖不能跟著轉 —— 先把旋轉拿掉再貼。
-           ⚠ 這裡不能重設成「單位矩陣」：開了暫存層的時候，整個座標系本來就
-           往回平移了 (-rx0, -ry0)，重設成單位矩陣會讓貼上去的圖整個偏移
-           (rx0, ry0) —— 剪裁範圍還在原位，所以幾乎什麼都貼不進去，
-           整層等於空的。那正是「物件怎麼往下移都壓不到遮罩區的圖案下面」的原因：
-           補畫這一層根本沒畫出東西。要還原成「這一層自己的原點」。 */
-        ctx2.setTransform(1, 0, 0, 1, useLayer ? -rx0 : -vp.x, useLayer ? -ry0 : -vp.y);
-        /* 只貼這個洞蓋得到的那一小塊。以前是整張貼（幾百萬像素）再靠 clip 蓋掉，
-           一個洞一次、十幾個洞就是十幾次。剪裁範圍本來就把外面擋掉了，
-           所以貼出來的像素完全一樣。 */
-        const r0 = sz;   // 旋轉之後最遠也不會超過 sz（半徑 0.71×sz）
-        const sx0 = Math.max(0, Math.floor(hx - r0)), sy0 = Math.max(0, Math.floor(hy - r0));
-        const sx1 = Math.min(bd.width, Math.ceil(hx + r0)), sy1 = Math.min(bd.height, Math.ceil(hy + r0));
-        if (sx1 > sx0 && sy1 > sy0) {
-          ctx2.drawImage(bd, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0, sy0, sx1 - sx0, sy1 - sy0);
-        }
+        /* 轉圈圈每一根濃淡不同，要一根一根剪、一根一根貼（clipShapePieces） */
+        clipShapePieces(ctx2, holeType, hx, hy, sz, () => {
+          /* 形狀可以轉，但貼進去的圖不能跟著轉 —— 先把旋轉拿掉再貼。
+             ⚠ 這裡不能重設成「單位矩陣」：開了暫存層的時候，整個座標系本來就
+             往回平移了 (-rx0, -ry0)，重設成單位矩陣會讓貼上去的圖整個偏移
+             (rx0, ry0) —— 剪裁範圍還在原位，所以幾乎什麼都貼不進去，
+             整層等於空的。那正是「物件怎麼往下移都壓不到遮罩區的圖案下面」的原因：
+             補畫這一層根本沒畫出東西。要還原成「這一層自己的原點」。 */
+          ctx2.setTransform(1, 0, 0, 1, useLayer ? -rx0 : -vp.x, useLayer ? -ry0 : -vp.y);
+          /* 只貼這個洞蓋得到的那一小塊。以前是整張貼（幾百萬像素）再靠 clip 蓋掉，
+             一個洞一次、十幾個洞就是十幾次。剪裁範圍本來就把外面擋掉了，
+             所以貼出來的像素完全一樣。 */
+          const r0 = sz;   // 旋轉之後最遠也不會超過 sz（半徑 0.71×sz）
+          const sx0 = Math.max(0, Math.floor(hx - r0)), sy0 = Math.max(0, Math.floor(hy - r0));
+          const sx1 = Math.min(bd.width, Math.ceil(hx + r0)), sy1 = Math.min(bd.height, Math.ceil(hy + r0));
+          if (sx1 > sx0 && sy1 > sy0) {
+            ctx2.drawImage(bd, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0, sy0, sx1 - sx0, sy1 - sy0);
+          }
+        });
         ctx2.restore();
       });
       if (maskLinks.length && (linkColor || pat)) {

@@ -1,4 +1,4 @@
-import { HEART_MAIN, HEART_ICON, traceUnitShape, hexStarPoints, traceRadial } from './heartShapes';
+import { HEART_MAIN, HEART_ICON, traceUnitShape, hexStarPoints, traceRadial, radialParts, spinnerAlpha } from './heartShapes';
 /**
  * 「圖案」的畫法：路徑、字符、去背圖，全部收在這裡。
  *
@@ -421,6 +421,45 @@ export const drawTextShape = (
   targetCtx.restore();
 };
 
+/** 轉圈圈每一根的濃淡不同（跟圖形、圖標一樣），整條路徑一次填色做不到，
+   所以要一根一根填：每填完一根就呼叫一次 each（例如要再描同一條邊）。
+   其他圖案就是 drawShapePath + fill。 */
+export const fillShapePath = (
+  ctx: CanvasRenderingContext2D, type: string, cx: number, cy: number, size: number,
+  each?: () => void,
+) => {
+  if (type !== 'spinner') { drawShapePath(ctx, type, cx, cy, size); ctx.fill(); each?.(); return; }
+  const a0 = ctx.globalAlpha, r = size / 2;
+  radialParts(type).forEach((part, i) => {
+    ctx.beginPath();
+    ctx.moveTo(cx + part[0][0] * r, cy + part[0][1] * r);
+    for (const p of part.slice(1)) ctx.lineTo(cx + p[0] * r, cy + p[1] * r);
+    ctx.closePath();
+    ctx.globalAlpha = a0 * spinnerAlpha(i);
+    ctx.fill();
+    each?.();
+  });
+  ctx.globalAlpha = a0;
+};
+/** 照片透過圖案的形狀貼上來（clip + 貼圖）時的同一件事：轉圈圈每一根各自的濃淡 */
+export const clipShapePieces = (
+  ctx: CanvasRenderingContext2D, type: string, cx: number, cy: number, size: number,
+  paint: () => void,
+) => {
+  if (type !== 'spinner') { ctx.save(); drawShapePath(ctx, type, cx, cy, size); ctx.clip(); paint(); ctx.restore(); return; }
+  const a0 = ctx.globalAlpha, r = size / 2;
+  radialParts(type).forEach((part, i) => {
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx + part[0][0] * r, cy + part[0][1] * r);
+    for (const p of part.slice(1)) ctx.lineTo(cx + p[0] * r, cy + p[1] * r);
+    ctx.closePath();
+    ctx.clip();
+    ctx.globalAlpha = a0 * spinnerAlpha(i);
+    paint();
+    ctx.restore();
+  });
+};
 export const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: number, cy: number, size: number) => {
   ctx.beginPath();
   const r = size / 2;
