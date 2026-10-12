@@ -823,7 +823,7 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
           if (!strokeCompositeShape(g, o.kind, bw, bh, o.innerSize)) g.stroke(path);
           g.restore();
         }
-        if (solid) drawFeatheredShapeBody(g, o.kind, bw, bh, undefined, '#fff', undefined, '#fff', { innerSize: o.innerSize, outlineWidth: o.outlineWidth });
+        if (solid) drawFeatheredShapeBody(g, o.kind, bw, bh, undefined, '#fff', undefined, '#fff', { innerSize: o.innerSize, outlineWidth: o.outlineWidth, baseW: (o.textureBaseW || o.w) * k, baseH: (o.textureBaseH || o.h) * k });
         else g.stroke(path);
       }
       const { data } = g.getImageData(0, 0, cv.width, cv.height);
@@ -896,17 +896,18 @@ export const shapePathD = (
       return `M ${P(cx, 0)} Q ${P(cx, cy)} ${P(0, cy)} Q ${P(cx, cy)} ${P(cx, h)} Q ${P(cx, cy)} ${P(w, cy)} Q ${P(cx, cy)} ${P(cx, 0)} Z`;
     /* 箭頭：朝右。箭身佔中間 36% 高，箭頭從一半寬開始、撐滿整個高度。
        四邊擠壓時跟著外框一起變形（拉長就是細長箭頭）。 */
-    /* 箭頭（單頭／雙頭）：箭頭長度＝高度的一半，但最多只佔寬度的一定比例
-       （單頭 50%、雙頭每個 25%）。所以：
-       - 左右拉長：只有箭身變長；
-       - 上下拉高：箭頭變鈍一點，但箭身長度不會被吃掉（以前拉高雙頭箭頭會整個變成菱形）；
-       - 左右擠窄：整支箭頭等比例變短，不會塌成一顆窄菱形。 */
-    case 'arrow': {
-      const hl = arrowHeadLen('arrow', w, h), sx = w - hl;
-      return poly([[0, h * 0.32], [sx, h * 0.32], [sx, 0], [w, cy], [sx, h], [sx, h * 0.68], [0, h * 0.68]]);
-    }
+    /* 箭頭（單頭／雙頭）。gbw／gbh 是「沒被擠壓過」的原始框（等比例縮放會跟著變，四邊擠壓不會）：
+       箭頭先照原始框畫好（箭頭長度＝原始高度的一半），再整支跟著擠壓一起變形 ——
+       所以左右擠壓是整支箭頭一起變長變短，箭身只有「箭身長度」滑桿能改。 */
+    case 'arrow':
     case 'arrow-double': {
-      const hl = arrowHeadLen('arrow-double', w, h);
+      const n = kind === 'arrow-double' ? 2 : 1;
+      const hl0 = Math.min(gbh * 0.5, gbw * (n === 2 ? 0.5 : 1));
+      const kx = w / gbw, hl = hl0 * kx;
+      if (n === 1) {
+        const sx = w - hl;
+        return poly([[0, h * 0.32], [sx, h * 0.32], [sx, 0], [w, cy], [sx, h], [sx, h * 0.68], [0, h * 0.68]]);
+      }
       return poly([[0, cy], [hl, 0], [hl, h * 0.32], [w - hl, h * 0.32], [w - hl, 0], [w, cy], [w - hl, h], [w - hl, h * 0.68], [hl, h * 0.68], [hl, h]]);
     }
     /* 窄菱形：一樣的四個角，只是左右往內收 —— 直立、細長的那種 */
@@ -1257,13 +1258,19 @@ export const drawFeatheredShapeBody = (
   color: string,
   paintTexture?: (ctx: CanvasRenderingContext2D, path: Path2D) => void,
   innerColor = '#FFFFFF',
-  compositeStyle: { innerSize?: number; outlineWidth?: number } = {},
+  /** baseW/baseH：沒被擠壓過的原始框（箭頭用） */
+  compositeStyle: { innerSize?: number; outlineWidth?: number; baseW?: number; baseH?: number } = {},
 ) => {
   if (drawCompositeShapeBody(target, kind, w, h, color, innerColor, paintTexture, compositeStyle)) return;
   // 圖形羽化已移除；保留同一個繪製入口以相容既有草稿資料。
   const path = new Path2D(shapePathD(kind, w, h));
   // 模糊圖形不吃紋理（編輯頁也沒有紋理那一格）
   if (isBlurShape(kind)) { drawBlurredShape(target, kind, w, h, color, _feather, shapePathD); return; }
+  // 箭頭要知道「沒被擠壓過」的原始框才畫得對（見 shapePathD 的 arrow）
+  if (isArrowShape(kind) && compositeStyle.baseW && compositeStyle.baseH) {
+    const p = new Path2D(shapePathD(kind, w, h, compositeStyle.baseW, compositeStyle.baseH));
+    target.fillStyle = color; target.fill(p); paintTexture?.(target, p); return;
+  }
   // 轉圈圈：每一根的濃淡不同（12 點鐘最淡，順時針一路變深）
   if (kind === 'spinner') {
     const a0 = target.globalAlpha;
@@ -1280,18 +1287,23 @@ export const drawFeatheredShapeBody = (
   paintTexture?.(target, path);
 };
 
-/** 箭頭長度：高度的一半，但單頭最多佔寬度 50%、雙頭每個最多 25%（見 shapePathD 的 arrow） */
-const arrowCap = (kind?: string) => kind === 'arrow-double' ? 0.25 : 0.5;
-const arrowCount = (kind?: string) => kind === 'arrow-double' ? 2 : 1;
-export const arrowHeadLen = (kind: string, w: number, h: number) => Math.min(h * 0.5, w * arrowCap(kind));
 export const isArrowShape = (kind?: string) => kind === 'arrow' || kind === 'arrow-double';
-/** 「箭身長度」滑桿：箭身長度＝高度的百分之幾（就是畫面上那根矩形實際的長度） */
-export const arrowShaftUi = (w: number, h: number, kind?: string) =>
-  Math.max(0, Math.round((w - arrowCount(kind) * arrowHeadLen(kind || 'arrow', w, h)) / Math.max(1e-6, h) * 100));
-export const arrowWidthFor = (h: number, shaftUi: number, kind?: string) => {
-  const c = arrowCap(kind), n = arrowCount(kind), S = Math.max(0, shaftUi) / 100;
-  const s0 = (1 - n * c) * 0.5 / c;   // 箭頭剛好是高度一半時的箭身長度
-  return Math.max(h * 0.2, S >= s0 ? h * (S + n * 0.5) : S * h / (1 - n * c));
+/** 「箭身長度」滑桿（畫面上箭身的長度＝高度的百分之幾）。
+    w,h 是現在的框；bw,bh 是沒被擠壓過的原始框（textureBase）。 */
+const arrowGeom = (kind: string | undefined, w: number, h: number, bw: number, bh: number) => {
+  const n = kind === 'arrow-double' ? 2 : 1, kx = w / Math.max(1e-6, bw);
+  const hl0 = Math.min(bh * 0.5, bw * (n === 2 ? 0.5 : 1));
+  return { n, kx, hl0, head: hl0 * kx };
+};
+export const arrowShaftUi = (w: number, h: number, kind?: string, bw = w, bh = h) => {
+  const g = arrowGeom(kind, w, h, bw, bh);
+  return Math.max(0, Math.round((w - g.n * g.head) / Math.max(1e-6, h) * 100));
+};
+/** 拉滑桿：箭頭（畫面上的長度）不變，只改箭身 → 回傳新的寬度與新的原始寬度 */
+export const arrowResize = (w: number, h: number, shaftUi: number, kind?: string, bw = w, bh = h) => {
+  const g = arrowGeom(kind, w, h, bw, bh);
+  const nw = Math.max(h * 0.05, g.n * g.head + Math.max(0, shaftUi) / 100 * h);
+  return { w: nw, baseW: nw / g.kx };
 };
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
@@ -2682,9 +2694,9 @@ export const ShapeEditorPanel: React.FC<{
           )}
           {isArrowShape(layer.shape) && (
             <div className="px-2 order-5 w-full">
-              {slider('箭身長度', arrowShaftUi(layer.width, layer.height, layer.shape), 0, 400, v => {
-                const width = arrowWidthFor(layer.height, v, layer.shape);
-                onChange({ width, x: layer.x + (layer.width - width) / 2 });
+              {slider('箭身長度', arrowShaftUi(layer.width, layer.height, layer.shape, layer.shapeTextureBaseW || layer.width, layer.shapeTextureBaseH || layer.height), 0, 400, v => {
+                const r = arrowResize(layer.width, layer.height, v, layer.shape, layer.shapeTextureBaseW || layer.width, layer.shapeTextureBaseH || layer.height);
+                onChange({ width: r.w, x: layer.x + (layer.width - r.w) / 2, shapeTextureBaseW: r.baseW, shapeTextureBaseH: layer.shapeTextureBaseH || layer.height });
               })}
             </div>
           )}
@@ -5464,7 +5476,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
               image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
             tc.restore();
-          }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth });
+          }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth,
+            baseW: (image.shapeTextureBaseW || image.width) * contentScale, baseH: (image.shapeTextureBaseH || image.height) * contentScale });
         } else {
           ctx.stroke(path);
         }
@@ -14339,7 +14352,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
     if (solid) {
       drawFeatheredShapeBody(ctx, fImg.shape!, fw, fh, fImg.shapeFeather, color, paintShapeTexture,
-        fImg.shapeInnerColor || '#FFFFFF', { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth });
+        fImg.shapeInnerColor || '#FFFFFF', { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth,
+          baseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, baseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor });
     } else ctx.stroke(path);
     ctx.setLineDash([]);
     ctx.restore();
