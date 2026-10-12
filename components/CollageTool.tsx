@@ -2702,6 +2702,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const motionLockRef = useRef(false);
   const interactionRef = useRef<any>(null);
   const holesRef = useRef<any[]>([]);
+  /* 拖曳／雙指縮放圖案時的即時位置。以前每一格都 setHoles，整個編輯器（一萬多行的元件）
+     跟著重畫一次 —— 手機上這就是拖圖案「有點卡」的來源。現在手指在動時只改這裡、
+     直接重畫畫布與選取框，放手時才交給 React（見 flushMoveNow）。 */
+  const liveHolesRef = useRef<any[]|null>(null);
+  const livePatternPaintRef = useRef<()=>void>(()=>{});
+  const patternFrameRectRef = useRef<SVGRectElement|null>(null);
+  const patternFrameGroupRef = useRef<SVGGElement|null>(null);
   /* ── 發光用的暫存畫布，一定要活在畫面之外 ──────────────────────────
      這兩個原本是宣告在「畫一張」那支函式裡面的區域變數，所以**每畫一格
      就重新 new 一張 canvas**：整層那張是整個預覽那麼大（例如 1571×1350），
@@ -3863,7 +3870,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         return photo?{kind:'object',id:o.id}:null;
       }
     }
-    if(!forSwap&&layout!==FULL&&holesRef.current.some(h=>checkHitHole(p.x,p.y,h,imageState?.globalScale||1,p.off,'image')))return null;
+    if(!forSwap&&holesRef.current.some(h=>checkHitHole(p.x,p.y,h,imageState?.globalScale||1,p.off,'image')))return null;
     const index=hitRegionPhoto(clientX,clientY);
     return index<0?null:{kind:'region',index};
   };
@@ -4439,7 +4446,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           && y >= offs.iy && y <= offs.iy + offs.ih;
         const inMaskPhoto = !!maskImageState?.img && !inPhoto
           && x >= offs.mx && x <= offs.mx + offs.mw && y >= offs.my && y <= offs.my + offs.mh;
-        if (maskSelectedRef.current && inMaskPhoto) {
+        // 動畫頁：底圖（和遮罩那張照片）不能被選中、拖動、縮放 —— 點到它就跟點空白一樣
+        const baseLocked = motionLockRef.current;
+        if (baseLocked) {
+          interactionRef.current = { type: 'deselect_base', isClick: true, hitItself: false };
+        } else if (maskSelectedRef.current && inMaskPhoto) {
           const t = currentMaskPhoto(offs);
           baseDragRef.current = { startX: x, startY: y, x: t.x, y: t.y, t, moved: false, mask: true };
           interactionRef.current = { type: 'base_drag', isClick: true, hitItself: true };
@@ -4514,7 +4525,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const hole = holesRef.current.find(h => h.id === selectedTarget);
       // 捏不是點擊：isClick 留著的話放開時會被當成「點了旁邊」而取消選取
       if (hole) interactionRef.current = { type: 'pinch_hole', id: selectedTarget, isClick: false, hitItself: true, startDist: Math.max(1, Math.hypot(p1.x - p2.x, p1.y - p2.y)) };
-    } else if (activePointers.current.size === 2 && !regionScenePinch.current && (baseSelectedRef.current || maskSelectedRef.current)) {
+    } else if (activePointers.current.size === 2 && !regionScenePinch.current && !motionLockRef.current && (baseSelectedRef.current || maskSelectedRef.current)) {
       e.stopPropagation();
       const pts: any[] = Array.from(activePointers.current.values());
       const p1 = { x: (pts[0].clientX - rect.left) * sx, y: (pts[0].clientY - rect.top) * sy };
@@ -4886,6 +4897,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const job = movePending.current;
     movePending.current = null;
     if (job) job();
+    // 拖圖案時的位置只放在 liveHolesRef（不經過 React），放手或手勢換人時才一次交給 React
+    const live = liveHolesRef.current;
+    if (live) { liveHolesRef.current = null; holesRef.current = live; setHoles(live); }
   }, []);
   useEffect(() => () => { if (moveRaf.current != null) cancelAnimationFrame(moveRaf.current); }, []);
 
@@ -5178,37 +5192,50 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const limY = layout === AROUND ? fld.mh : fld.ih;
       const nx = Math.max(0, Math.min(limX, intr.initX + dx));
       const ny = Math.max(0, Math.min(limY, intr.initY + dy));
-      queueMove(() => setHoles(prev => prev.flatMap(h => {
+      queueMove(() => { liveHolesRef.current = (liveHolesRef.current ?? holesRef.current).flatMap(h => {
         if (h.id !== intr.id) return [h];
         const side = h.side && h.side !== 'both' ? h.side : intr.clickedSide || selectedPatternSide;
         const moved = { ...h, side, x: nx, y: ny, manuallyPlaced: true };
         return !h.side || h.side === 'both'
           ? [moved, { ...h, id: h.id + '_paired', side: side === 'image' ? 'mask' : 'image' }]
           : [moved];
-      })));
+      }); livePatternPaintRef.current(); });
     } else if (intr.type === 'pinch_hole') {
       const pts: any[] = Array.from(activePointers.current.values());
       if (pts.length < 2) return;
       const p1 = { x: (pts[0].clientX - rect.left) * sx, y: (pts[0].clientY - rect.top) * sy };
       const p2 = { x: (pts[1].clientX - rect.left) * sx, y: (pts[1].clientY - rect.top) * sy };
       const scale = Math.hypot(p1.x - p2.x, p1.y - p2.y) / intr.startDist;
-      const currentScale = intr.pendingScale ?? (holesRef.current.find(h => h.id === intr.id)?.localScale || 1);
+      const currentScale = intr.pendingScale ?? ((liveHolesRef.current ?? holesRef.current).find(h => h.id === intr.id)?.localScale || 1);
       const nextScale = Math.max(0.2, Math.min(10, currentScale * scale));
       intr.pendingScale = nextScale;
-      queueMove(() => setHoles(prev => prev.flatMap(h => {
+      queueMove(() => { liveHolesRef.current = (liveHolesRef.current ?? holesRef.current).flatMap(h => {
         if (h.id !== intr.id) return [h];
         const side = h.side && h.side !== 'both' ? h.side : selectedPatternSide;
         const resized = { ...h, side, localScale: nextScale };
         return !h.side || h.side === 'both'
           ? [resized, { ...h, id: h.id + '_paired', side: side === 'image' ? 'mask' : 'image' }]
           : [resized];
-      })));
+      }); livePatternPaintRef.current(); });
       // Update start distance to allow continuous pinch
       intr.startDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
     }
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    /* 動畫頁：每一次「點一下」物件或圖案（沒有拖動）都重新閃一次虛線框，同一個物件反覆點也一樣。
+       以前只在「選取換了人」時才閃 —— 點已經選著的那個、或閃完之後再點同一個，就什麼都不出現。 */
+    const motionTapTarget = motionLockRef.current ? (() => {
+      const d = objDragRef.current;
+      if (d && !d.moved && !d.fromBlank) return (d.pickId ?? d.id) as string;
+      const it = interactionRef.current;
+      if (it && it.isClick) {
+        if (it.type === 'move_hole' && it.pickObjId) return it.pickObjId as string;
+        if (it.type === 'select_hole' || (it.type === 'move_hole' && it.hitItself)) return 'shape';
+      }
+      return null;
+    })() : null;
+    if (motionTapTarget) queueMicrotask(() => chooseMotionTarget(motionTapTarget));
     flushView(true);
     // 還沒送出的那一格先補上，物件才不會停在上一格的位置
     flushMoveNow();
@@ -5364,7 +5391,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const maskScale=liveMaskScale.current??maskScaleValue.current;
     const photoRegion=photoRegionRef.current;
     let objects=objectsRef.current;
-    let imageTransform=committedImageTransform,holes=committedHoles;
+    let imageTransform=committedImageTransform,holes=liveHolesRef.current??committedHoles;
     if(liveMaskScale.current!==null&&imageState){
       const {baseW,baseH}=imageState;
       const prev=layoutGeometry(layout,baseW,baseH,maskScaleValue.current,canvasRatio);
@@ -5766,7 +5793,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     }
     ctx.save();
-    if(dirtyPatternRect){const r=dirtyPatternRect;ctx.beginPath();ctx.rect(r.x,r.y,r.w,r.h);ctx.clip();}
+    /* 局部重畫的裁切框要對齊實際像素。以前直接用場景座標裁（底下還有 rasterX 的小數縮放），
+       框的邊緣落在半個像素上 → 每拖一格就在舊框的邊上留一條淡淡的線，拖過的地方一圈圈殘影。 */
+    if(dirtyPatternRect){const r=dirtyPatternRect;
+      const x0=Math.floor(r.x*rasterX-vp.x),y0=Math.floor(r.y*rasterY-vp.y),x1=Math.ceil((r.x+r.w)*rasterX-vp.x),y1=Math.ceil((r.y+r.h)*rasterY-vp.y);
+      ctx.setTransform(1,0,0,1,0,0);ctx.beginPath();ctx.rect(x0,y0,x1-x0,y1-y0);ctx.clip();ctx.setTransform(rasterX,0,0,rasterY,-vp.x,-vp.y);}
     ctx.fillStyle = '#0A0A0A'; ctx.fillRect(0, 0, offs.cw, offs.ch);
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, iw, ih); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
 
@@ -8710,7 +8741,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 重播用的流水號：改動畫種類時 +1，讓播放迴圈從頭跑一次 */
   const [motionSeq, setMotionSeq] = useState(0);
   /** 全部跑完之後多停幾秒再從頭（循環才不會像在抽搐） */
-  const [motionHold, setMotionHold] = useState(4);
+  const [motionHold, setMotionHold] = useState(8);
   /** 圖案這一群的動畫設定；每顆圖案再依序錯開 */
   /* 圖案是一整群：「進場耗時」給 3 秒才看得出一顆一顆冒出來，
      常駐維持上下飄（圖片與文字才是預設靜止）。 */
@@ -9709,6 +9740,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const displayY = motionUiOn ? -mLift - (baseCss?.h || 0) * (1 - mScale) / 2 : viewT.ty;
 
   const selectedPattern = holes.find(h => h.id === selectedTarget);
+  /** 圖案選取虛線框的幾何。React 畫框與拖曳中直接改框（livePatternPaintRef）共用同一份算法，放手時不會跳一下 */
+  const patternFrame = (h: any, off: NonNullable<ReturnType<typeof getLayoutOffsets>>) => {
+    const size=getHoleSize(h);
+    const px=off.cw/Math.max(1,(baseCss?.w || off.cw)*displayScale);
+    const ink=isTextHole(holeType) ? glyphInk(holeType,holeGlyph(holeType,customText,h),size) : null;
+    const box=ink ? {x:-ink.w/2,y:-ink.h/2,w:ink.w,h:ink.h} : patternPathBounds(holeType,size);
+    const side=!h.side || h.side==='both' ? selectedPatternSide : h.side;
+    const mask=side==='mask', pad=ink ? 8*(imageState?.globalScale || 1) : 4*px;
+    return {box,pad,mask,angle:h.angle ?? holeAngle,x:h.x+(mask?off.mx:off.ix),y:h.y+(mask?off.my:off.iy)};
+  };
+  livePatternPaintRef.current = () => {
+    if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current);
+    const rect = patternFrameRectRef.current, live = liveHolesRef.current, off = getLayoutOffsets();
+    const h = live && off ? live.find(z => z.id === chromeSelectionRef.current.selectedTarget) : null;
+    if (!rect || !h || !off) return;
+    const f = patternFrame(h, off);
+    rect.setAttribute('x', String(f.box.x-f.pad)); rect.setAttribute('y', String(f.box.y-f.pad));
+    rect.setAttribute('width', String(f.box.w+f.pad*2)); rect.setAttribute('height', String(f.box.h+f.pad*2));
+    rect.setAttribute('transform', `translate(${f.x} ${f.y}) rotate(${f.angle})`);
+    const g = patternFrameGroupRef.current;
+    if (g) { if (f.mask) g.setAttribute('mask', 'url(#creative-pattern-selection-clip)'); else g.removeAttribute('mask'); }
+  };
   const displayAngle = selectedPattern?.angle ?? holeAngle;
   const displayHoleSize = selectedPattern
     ? Math.max(0, Math.min(100, ((25 + holeSize * 1.25) * (selectedPattern.localScale || 1) - 25) / 1.25))
@@ -10437,22 +10490,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               })()}
               {activeTab !== 'motion' && selectedPattern && !animRef.current && !composeState && (() => {
                 const off=getLayoutOffsets(); if(!off) return null;
-                const h=selectedPattern, size=getHoleSize(h);
-                const px=off.cw/Math.max(1,(baseCss?.w || off.cw)*displayScale);
-                const ink=isTextHole(holeType) ? glyphInk(holeType,holeGlyph(holeType,customText,h),size) : null;
-                const box=ink ? {x:-ink.w/2,y:-ink.h/2,w:ink.w,h:ink.h} : patternPathBounds(holeType,size);
-                const side=!h.side || h.side==='both' ? selectedPatternSide : h.side;
-                const mask=side==='mask', pad=ink ? 8*(imageState?.globalScale || 1) : 4*px;
-                const x=h.x+(mask?off.mx:off.ix),y=h.y+(mask?off.my:off.iy);
+                const {box,pad,x,y,mask,angle}=patternFrame(selectedPattern,off);
                 return <svg aria-hidden="true" viewBox={`0 0 ${off.cw} ${off.ch}`} className="absolute inset-0 pointer-events-none"
                   style={{width:'100%',height:'100%',zIndex:6,overflow:'visible'}}>
                   <defs><mask id="creative-pattern-selection-clip" maskUnits="userSpaceOnUse" x="0" y="0" width={off.cw} height={off.ch}>
                     <rect x={off.mx} y={off.my} width={off.mw} height={off.mh} fill="white" />
                     <rect x={off.ix} y={off.iy} width={off.iw} height={off.ih} fill="black" />
                   </mask></defs>
-                  <g mask={mask?'url(#creative-pattern-selection-clip)':undefined}>
-                    <rect x={box.x-pad} y={box.y-pad} width={box.w+pad*2} height={box.h+pad*2}
-                      transform={`translate(${x} ${y}) rotate(${h.angle ?? holeAngle})`} fill="none" stroke="white"
+                  <g ref={patternFrameGroupRef} mask={mask?'url(#creative-pattern-selection-clip)':undefined}>
+                    <rect ref={patternFrameRectRef} x={box.x-pad} y={box.y-pad} width={box.w+pad*2} height={box.h+pad*2}
+                      transform={`translate(${x} ${y}) rotate(${angle})`} fill="none" stroke="white"
                       strokeWidth="0.9" strokeDasharray="4.8 4.8" vectorEffect="non-scaling-stroke" />
                   </g>
                 </svg>;

@@ -9867,7 +9867,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const pageVideoItems = useMemo(() => floatingImages.filter(item =>
     item.isVideo && pageOfFloating(item, previewW, pages.length) === activePageIndex,
   ), [floatingImages, previewW, pages.length, activePageIndex]);
-  const motionHold = activePage.motionHold ?? 4;
+  const motionHold = activePage.motionHold ?? 8;
   const setMotionHold = useCallback((seconds: number) => {
     setPages(prev => prev.map((page, index) => index === activePageIndex
       ? { ...page, motionHold: seconds }
@@ -14989,7 +14989,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const motionEnd = animated.reduce((end, job) => {
           const cfg = job.motionItem ? timedMotionConfig(job.motionItem) : layoutMotionCfg(job.layoutMotion!);
           return cfg.in === 'none' ? end : Math.max(end, cfg.delay + Math.max(.01, cfg.dur));
-        }, 1.2) + Math.max(0, pages[pageIdx]?.motionHold ?? 4);
+        }, 1.2) + Math.max(0, pages[pageIdx]?.motionHold ?? 8);
         const dur = vids.length
           ? Math.min(15, Math.max(...vids.map(v => (isFinite(v.duration) && v.duration > 0 ? v.duration : 3))))
           : motionEnd;

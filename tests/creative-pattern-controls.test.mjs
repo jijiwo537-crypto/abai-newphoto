@@ -12,16 +12,17 @@ test('rapid pinch events accumulate distance but commit only the latest frame',(
   let holes=[{id:'a',side:'mask',localScale:1}], pending;
   const pointers=new Map([[1,{clientX:0,clientY:0}],[2,{clientX:20,clientY:0}]]);
   const scope={activePointers:{current:pointers},rect:{left:0,top:0},sx:1,sy:1,
-    intr:{id:'a',startDist:20},holesRef:{current:holes},selectedPatternSide:'mask',
+    intr:{id:'a',startDist:20},holesRef:{current:holes},liveHolesRef:{current:null},livePatternPaintRef:{current(){}},selectedPatternSide:'mask',
     queueMove(fn){pending=fn;},setHoles(fn){holes=fn(holes);}};
   vm.runInNewContext(compile('globalThis.move=()=>{'+creative.slice(start,end)+'};'),scope);
   for(let x=21;x<=40;x++){pointers.set(2,{clientX:x,clientY:0});scope.move();}
-  assert.equal(holes[0].localScale,1);
-  pending();assert.ok(Math.abs(holes[0].localScale-2)<1e-10);
+  assert.equal(holes[0].localScale,1);assert.equal(scope.liveHolesRef.current,null);
+  // 手指在動時只更新 liveHolesRef（不經過 React），放手時才 setHoles
+  pending();assert.ok(Math.abs(scope.liveHolesRef.current[0].localScale-2)<1e-10);assert.equal(holes[0].localScale,1);
 });
 test('selected pattern controls split mirrored copies and change only the selected side',()=>{
   let holes=[{id:'a',x:40,y:50,side:'both'},{id:'b',x:90,y:80,angle:30}];
-  const scope={selectedTarget:'a',selectedPatternSide:'mask',holes,holeSize:25,holeAngle:0,
+  const scope={selectedTarget:'a',selectedPatternSide:'mask',holes,holeSize:25,holeAngle:0,livePatternPaintRef:{current:null},
     setHoles(fn){holes=fn(holes);},setHoleSize(){throw Error('must not change group');},setHoleAngle(){throw Error('must not change group');}};
   const start=creative.indexOf('  const selectedPattern = holes.find');
   const end=creative.indexOf('\n  const ratioControls',start);
