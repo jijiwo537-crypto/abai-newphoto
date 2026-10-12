@@ -423,6 +423,14 @@ export const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: n
     case 'heart-icon':
       traceUnitShape(ctx, HEART_ICON, cx - r * 0.75, cy - r * 0.75, r * 1.5, r * 1.5);
       break;
+    /* 弧形四角星：跟圖形裡的 sparkle4 同一個樣子（四個尖角之間是往中心彎的曲線） */
+    case 'sparkle4':
+      ctx.moveTo(cx, cy - r);
+      ctx.quadraticCurveTo(cx, cy, cx - r, cy);
+      ctx.quadraticCurveTo(cx, cy, cx, cy + r);
+      ctx.quadraticCurveTo(cx, cy, cx + r, cy);
+      ctx.quadraticCurveTo(cx, cy, cx, cy - r);
+      break;
     case 'hexstar': {
       const pts = hexStarPoints(cx, cy, r, r);
       ctx.moveTo(...pts[0]); for (const p of pts.slice(1)) ctx.lineTo(...p);

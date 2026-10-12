@@ -9,7 +9,7 @@
  */
 export const PATTERN_ORDER: string[] = [
   'circle', 'square', 'cross-star', 'heart', 'star',
-  'hexstar',
+  'sparkle4', 'hexstar',
   'flower', 'snow', 'burst', 'love', 'love3',
   'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar',
   'sparkle', 'aster', 'theta', 'zzz', 'text',

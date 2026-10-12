@@ -12,7 +12,7 @@ import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, Slid
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
 import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints } from '../utils/heartShapes';
-import { isBlurShape, blurShapeBaseD, blurShapeRadius, fillBlurredPath, BLUR_SHAPE_DEFAULT } from '../utils/blurShapes';
+import { isBlurShape, blurShapeBaseD, blurShapeRadius, fillBlurredPath, fillBlurredTextured, BLUR_SHAPE_DEFAULT } from '../utils/blurShapes';
 import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,warmBackdropMasks} from '../utils/backdropMasks';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
@@ -1197,7 +1197,7 @@ export const CUTOUT_SHAPE_KINDS = new Set(['square-star-cutout', 'square-heart-c
 /** 雙色／挖空複合圖形的外框：circle- 開頭的是圓形，其餘是方形。 */
 const compositeOuterKind = (kind: string) => kind.startsWith('circle-') ? 'circle' : 'square';
 /** 內層圖案預設大小（%）。圓形外框的可用空間比方形少，預設小一點，愛心才不會貼到圓邊。 */
-export const compositeInnerDefault = (kind: string) => compositeOuterKind(kind) === 'circle' ? 54 : 64;
+export const compositeInnerDefault = (kind: string) => compositeOuterKind(kind) === 'circle' ? 62 : 64;
 export const DOUBLE_CONTOUR_SHAPE_KINDS = new Set(['heart-double', 'star-double']);
 export const COMPOSITE_SHAPE_KINDS = new Set([
   ...DUAL_COLOR_SHAPE_KINDS, ...CUTOUT_SHAPE_KINDS, ...DOUBLE_CONTOUR_SHAPE_KINDS,
@@ -1246,12 +1246,18 @@ export const drawFeatheredShapeBody = (
   color: string,
   paintTexture?: (ctx: CanvasRenderingContext2D, path: Path2D) => void,
   innerColor = '#FFFFFF',
-  compositeStyle: { innerSize?: number; outlineWidth?: number } = {},
+  /** textureKey：有紋理時傳一串描述紋理的字（模糊圖形拿它當快取鍵）；沒有紋理就不傳 */
+  compositeStyle: { innerSize?: number; outlineWidth?: number; textureKey?: string } = {},
 ) => {
   if (drawCompositeShapeBody(target, kind, w, h, color, innerColor, paintTexture, compositeStyle)) return;
   // 圖形羽化已移除；保留同一個繪製入口以相容既有草稿資料。
   const path = new Path2D(shapePathD(kind, w, h));
-  if (isBlurShape(kind)) { fillBlurredPath(target, path, color, blurShapeRadius(w, h, _feather)); return; }
+  if (isBlurShape(kind)) {
+    const r = blurShapeRadius(w, h, _feather);
+    if (compositeStyle.textureKey && paintTexture) fillBlurredTextured(target, path, color, r, w, h, paintTexture, `${kind}|${compositeStyle.textureKey}`);
+    else fillBlurredPath(target, path, color, r);
+    return;
+  }
   target.fillStyle = color;
   target.fill(path);
   paintTexture?.(target, path);
@@ -1430,6 +1436,52 @@ export const insetShapePath = (
   return out;
 };
 
+/* 圓形外框裡的愛心／星星：用「離中心最遠的那一點」決定大小，中心也取讓最遠點最近的位置。
+   以前沿用方形的算法（照外接方框置中、照方框寬度縮放），愛心兩瓣的角落會先碰到圓邊，
+   放大一點就超出圓形，看起來也偏下。 */
+const pathSamples = (d: string) => {
+  const t = d.match(/[MLCQZ]|-?\d*\.?\d+(?:e-?\d+)?/g) || [];
+  const pts: [number, number][] = [];
+  let i = 0, cmd = '', x = 0, y = 0;
+  const n = () => Number(t[i++]);
+  while (i < t.length) {
+    if (/[MLCQZ]/.test(t[i])) cmd = t[i++];
+    if (cmd === 'Z') continue;
+    if (cmd === 'M' || cmd === 'L') { x = n(); y = n(); pts.push([x, y]); }
+    else if (cmd === 'Q') { const a = n(), b = n(), ex = n(), ey = n();
+      for (let k = 1; k <= 12; k++) { const s = k / 12, u = 1 - s; pts.push([u * u * x + 2 * u * s * a + s * s * ex, u * u * y + 2 * u * s * b + s * s * ey]); } x = ex; y = ey; }
+    else if (cmd === 'C') { const a = n(), b = n(), c = n(), e = n(), ex = n(), ey = n();
+      for (let k = 1; k <= 16; k++) { const s = k / 16, u = 1 - s; pts.push([u*u*u*x + 3*u*u*s*a + 3*u*s*s*c + s*s*s*ex, u*u*u*y + 3*u*u*s*b + 3*u*s*s*e + s*s*s*ey]); } x = ex; y = ey; }
+    else i++;
+  }
+  return pts;
+};
+const circleFits = new Map<string, { cy: number; r: number }>();
+const circleFitOf = (kind: 'star' | 'heart') => {
+  let f = circleFits.get(kind);
+  if (f) return f;
+  const pts = pathSamples(shapePathD(kind, 100, 100));
+  f = { cy: 50, r: Infinity };
+  for (let cy = 25; cy <= 75; cy += 0.25) {
+    const r = Math.max(...pts.map(p => Math.hypot(p[0] - 50, p[1] - cy)));
+    if (r < f.r) f = { cy, r };
+  }
+  circleFits.set(kind, f);
+  return f;
+};
+/** 圓形外框內層的變換：inkFraction 是「最遠點到中心」佔圓半徑的比例 */
+const circleInsetMatrix = (kind: 'star' | 'heart', w: number, h: number, inkFraction: number) => {
+  const { cy, r } = circleFitOf(kind);
+  const sx = inkFraction * (w / 2) / r, sy = inkFraction * (h / 2) / r;
+  return [sx, 0, 0, sy, w / 2 - 50 * sx, h / 2 - cy * sy] as const;
+};
+const compositeInnerPath = (kind: string, innerKind: 'star' | 'heart', w: number, h: number, inkFraction: number) => {
+  if (compositeOuterKind(kind) !== 'circle') return insetShapePath(innerKind, w, h, inkFraction, innerKind === 'heart' ? 0.01 : 0);
+  const out = new Path2D();
+  out.addPath(new Path2D(shapePathD(innerKind, 100, 100)), new DOMMatrix([...circleInsetMatrix(innerKind, w, h, inkFraction)]));
+  return out;
+};
+
 /** 與 insetShapePath 完全同一組幾何，供預覽的 SVG 直接使用。 */
 const insetShapeSvgTransform = (
   kind: 'star' | 'heart', w: number, h: number, inkFraction: number, offsetYFraction = 0,
@@ -1484,7 +1536,7 @@ export const drawCompositeShapeBody = (
        到方形的距離會精確相等。 */
     /* 愛心的視覺重心比幾何外接框稍高；只在方形複合款往下補 1%，
        讓上下看起來的留白一致，星星與所有其他圖形完全不動。 */
-    const inner = insetShapePath(innerKind, w, h, Math.max(.1, Math.min(.9, (style.innerSize ?? compositeInnerDefault(kind)) / 100)), innerKind === 'heart' ? 0.01 : 0);
+    const inner = compositeInnerPath(kind, innerKind, w, h, Math.max(.1, Math.min(.9, (style.innerSize ?? compositeInnerDefault(kind)) / 100)));
     target.fillStyle = color;
     if (DUAL_COLOR_SHAPE_KINDS.has(kind)) {
       target.fill(outer);
@@ -1545,7 +1597,7 @@ export const strokeCompositeShape = (
   if (DUAL_COLOR_SHAPE_KINDS.has(kind) || CUTOUT_SHAPE_KINDS.has(kind)) {
     target.stroke(new Path2D(shapePathD(compositeOuterKind(kind), w, h)));
     /* 挖空款的孔洞也是實際邊緣；雙色款的內層不是外描邊，不額外套黑框。 */
-    if (CUTOUT_SHAPE_KINDS.has(kind)) target.stroke(insetShapePath(innerKind, w, h, Math.max(.1, Math.min(.9, innerSize / 100)), innerKind === 'heart' ? .01 : 0));
+    if (CUTOUT_SHAPE_KINDS.has(kind)) target.stroke(compositeInnerPath(kind, innerKind, w, h, Math.max(.1, Math.min(.9, innerSize / 100))));
     return true;
   }
   target.stroke(insetShapePath(innerKind, w, h, 0.44, innerKind === 'star' ? 0.018 : 0));
@@ -1590,6 +1642,8 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     const innerKind = compositeInnerKind(item.kind)!;
     const fit = SHAPE_FIT[innerKind];
     const tf = (fraction: number, offsetYFraction = 0) => {
+      if (compositeOuterKind(item.kind) === 'circle' && fraction < 0.9 + 1e-6 && (DUAL_COLOR_SHAPE_KINDS.has(item.kind) || CUTOUT_SHAPE_KINDS.has(item.kind)))
+        return `matrix(${circleInsetMatrix(innerKind, VB, VB, fraction).map(r3).join(' ')})`;
       const sx = (VB * fraction) / (fit[2] * 100);
       const sy = (VB * fraction) / (fit[3] * 100);
       const cx = (fit[0] + fit[2] / 2) * 100;
@@ -1649,7 +1703,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
   return (
     <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
       {isBlurShape(item.kind) && <defs><filter id={`blur-${maskId}`} x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur stdDeviation={r3(VB * 0.3 * BLUR_SHAPE_DEFAULT / 100 * 0.62)} /></filter></defs>}
+        <feGaussianBlur stdDeviation={r3(VB * 0.3 * (5 + 0.15 * BLUR_SHAPE_DEFAULT) / 100 * 0.62)} /></filter></defs>}
       <g transform={tf} filter={isBlurShape(item.kind) ? `url(#blur-${maskId})` : undefined}>
         <path
           d={src}
@@ -1764,6 +1818,7 @@ export const ShapeLineIcon = ({ kind, size = 18, strokeWidth = 2 }: { kind: stri
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
     strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
     <path d={kind === 'heart' ? unitShapeD(HEART_MAIN, 2, 2, 20, 20) : kind === 'heart-icon' ? unitShapeD(HEART_ICON, 2, 2, 20, 20)
+      : kind === 'sparkle4' ? 'M 12 2 Q 12 12 2 12 Q 12 12 12 22 Q 12 12 22 12 Q 12 12 12 2 Z'
       : kind === 'hexstar' ? `M ${hexStarPoints(12, 12, 10, 10).map(p => p.map(n => Math.round(n * 100) / 100).join(' ')).join(' L ')} Z`
       : (() => { // 原本那顆愛心：路徑本身沒撐滿框，照 SHAPE_FIT 放大到 20px 置中
         const f = SHAPE_FIT['heart-classic'], k = 20 / Math.max(f[2], f[3]);
@@ -1772,7 +1827,7 @@ export const ShapeLineIcon = ({ kind, size = 18, strokeWidth = 2 }: { kind: stri
         return `translate(${12 - (f[0] + f[2] / 2) * k} ${12 - (f[1] + f[3] / 2) * k})`; })() : undefined} />
   </svg>
 );
-export const PATTERN_LINE_ICON_KINDS = new Set(['heart', 'heart-icon', 'heart-classic', 'hexstar']);
+export const PATTERN_LINE_ICON_KINDS = new Set(['heart', 'heart-icon', 'heart-classic', 'hexstar', 'sparkle4']);
 
 // --- 自製單線旋渦圖標 ---
 export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
@@ -2442,7 +2497,7 @@ export const ShapeEditorPanel: React.FC<{
             {hasDash && slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
           </div>}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
-          <div className="flex items-center gap-3 px-2 order-1 w-full">
+          {!isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
               {slider('發光', Math.min(100, Math.round(glowAmount(layer.shapeGlow as any) * 200)), 0, 100,
                 v => onChange({ shapeGlow: v / 2 } as any))}
@@ -2453,8 +2508,8 @@ export const ShapeEditorPanel: React.FC<{
                 value: layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR, colors: GLOW_COLORS,
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
-          </div>
-          {!isDoubleContour && !isGridShape && <div className="flex items-center gap-3 px-2 order-2 w-full">
+          </div>}
+          {!isDoubleContour && !isGridShape && !isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round(Math.min(8, layer.shapeStrokeW ?? 0) * 12.5), 0, 100,
                 v => onChange({ shapeStrokeW: v / 12.5 }))}
@@ -2573,7 +2628,7 @@ export const ShapeEditorPanel: React.FC<{
             </div>
           )}
           {isBlurShape(layer.shape) && (
-            <div className="px-2 order-5 w-full">
+            <div className="px-2 order-1 w-full">
               {slider('模糊', layer.shapeFeather ?? BLUR_SHAPE_DEFAULT, 0, 100, v => onChange({ shapeFeather: v }))}
             </div>
           )}
@@ -5361,7 +5416,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
               image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
             tc.restore();
-          }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth });
+          }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth,
+            textureKey: tx === 'none' ? undefined : JSON.stringify([tx, image.shapeDotSize, image.shapeDotGap, image.shapeDotSquash, image.shapeDotColor, image.shapeStripeN, image.shapeStripeDir, image.shapeStripeA, image.shapeStripeB, image.shapeTextureBaseW, image.shapeTextureBaseH]) });
         } else {
           ctx.stroke(path);
         }
@@ -14235,8 +14291,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
     };
     if (solid) {
+      const exportTex = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
       drawFeatheredShapeBody(ctx, fImg.shape!, fw, fh, fImg.shapeFeather, color, paintShapeTexture,
-        fImg.shapeInnerColor || '#FFFFFF', { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth });
+        fImg.shapeInnerColor || '#FFFFFF', { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth,
+          textureKey: exportTex === 'none' ? undefined : JSON.stringify(['export', exportTex, fImg.shapeDotSize, fImg.shapeDotGap, fImg.shapeDotSquash, fImg.shapeDotColor, fImg.shapeStripeN, fImg.shapeStripeDir, fImg.shapeStripeA, fImg.shapeStripeB, fImg.shapeTextureBaseW, fImg.shapeTextureBaseH, scaleFactor]) });
     } else ctx.stroke(path);
     ctx.setLineDash([]);
     ctx.restore();

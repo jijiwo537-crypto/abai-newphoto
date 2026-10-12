@@ -57,11 +57,11 @@ export const traceUnitShape = (ctx: CanvasRenderingContext2D, s: UnitShape, x: n
   ctx.moveTo(...m(...s.start));
   for (const g of s.segs) ctx.bezierCurveTo(...m(g[0], g[1]), ...m(g[2], g[3]), ...m(g[4], g[5]));
 };
-/** 六角星（兩個正三角形疊起來那種）：12 個頂點，內圈半徑 = 外圈 / √3，尖角朝上 */
+/** 六角星：12 個頂點，尖角朝上。內圈半徑 0.45（比兩個正三角形疊起來的 1/√3 小），尖角比較細、比較尖 */
 export const hexStarPoints = (cx: number, cy: number, rx: number, ry: number): [number, number][] => {
   const pts: [number, number][] = [];
   for (let i = 0; i < 12; i++) {
-    const t = -Math.PI / 2 + i * Math.PI / 6, k = i % 2 ? 1 / Math.sqrt(3) : 1;
+    const t = -Math.PI / 2 + i * Math.PI / 6, k = i % 2 ? 0.45 : 1;
     pts.push([cx + Math.cos(t) * rx * k, cy + Math.sin(t) * ry * k]);
   }
   return pts;

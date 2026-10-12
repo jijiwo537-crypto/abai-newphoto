@@ -3189,7 +3189,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       panel?.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' });
     });
     let nextSize = holeSize;
-    if (id === 'cross-star') {
+    if (id === 'cross-star' || id === 'sparkle4') {
       nextSize = 30;
     } else if (id === 'star') {
       nextSize = 35;
@@ -7411,7 +7411,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               textureBaseH: ((o as any).textureBaseH || o.h) * s,
             });
             tc.restore();
-          }, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth });
+          }, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth,
+            textureKey: texOf(o) === 'none' ? undefined : JSON.stringify([texOf(o), o.dotSize, o.dotGap, o.dotSquash, o.dotColor, o.stripeN, o.stripeDir, o.stripeA, o.stripeB, (o as any).textureBaseW, (o as any).textureBaseH, s]) });
         } else paintShapePath(false);
         ctx.setLineDash([]);
         ctx.restore();
@@ -11574,7 +11575,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
-                          <div className="flex items-center gap-3 px-2 order-1 w-full">
+                          {!isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-1 w-full">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('發光', Math.min(100, Math.round(glowAmount(sel.glow) * 200)), 0, 100,
                                 (v: number) => patch(v > 0 && !sel.glowInit
@@ -11585,8 +11586,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             <ColorPick compact label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
-                          </div>
-                          {!isDoubleContour && !isGrid && <div className="flex items-center gap-3 px-2 order-2 w-full">
+                          </div>}
+                          {!isDoubleContour && !isGrid && !isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('描邊', Math.round(Math.min(8, sel.strokeW ?? 0) * 12.5), 0, 100,
                                 (v: number) => patch({ strokeW: v / 12.5 }))}
@@ -11692,7 +11693,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             </div>
                           )}
                           {isBlurShape(sel.kind) && (
-                            <div className="px-2 order-5 w-full">
+                            <div className="px-2 order-1 w-full">
                               {shapeSlider('模糊', sel.shapeFeather ?? BLUR_SHAPE_DEFAULT, 0, 100,
                                 (v: number) => patch({ shapeFeather: v }))}
                             </div>
