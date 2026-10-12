@@ -14,6 +14,8 @@ export default {
   content: [
     './index.html',
     './index.tsx',
+    './order.html',
+    './order.tsx',
     './App.tsx',
     './components/**/*.{ts,tsx}',
     './utils/**/*.{ts,tsx}',

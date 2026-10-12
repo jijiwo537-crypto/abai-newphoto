@@ -1,0 +1,59 @@
+import React from 'react';
+import { Circle, Heart, Star, Square, Type } from 'lucide-react';
+import { CrossStarIcon, VortexIcon } from './GridLayoutTool';
+import { SHAPE_IMAGES } from '../utils/shapeImages';
+import { GLYPH_HOLES, GLYPH_BTN, holeImgRatio } from '../utils/holeShapes';
+
+// Keep embedded icon bytes intact, but never reparse a huge base64 CSS mask
+// on each first panel layout. These tiny immutable asset URLs live with module.
+const patternIconUrls=new Map<string,string>();
+export const patternIconUrl=(source:string)=>{
+  if(!source.startsWith('data:'))return source;
+  let url=patternIconUrls.get(source);if(url)return url;
+  const split=source.indexOf(','),header=source.slice(0,split),bytes=atob(source.slice(split+1));
+  url=URL.createObjectURL(new Blob([Uint8Array.from(bytes,c=>c.charCodeAt(0))],{type:header.slice(5).split(';')[0]}));
+  patternIconUrls.set(source,url);return url;
+};
+
+/** 創意拼圖「圖案」按鈕上的小圖示。圖案選單與 order.html（排順序的小工具）共用。 */
+export const PatternIcon = ({ s }: { s: string }) => (
+  <>
+    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+      /* 去背的圖：拿它當遮罩、底色用 currentColor，
+         顏色就跟旁邊那些圖示走同一條規則 ——
+         沒選中時是暗的（#555），選中才變白。
+         （原本是用 filter 硬染成白色，所以永遠亮著。） */
+      <span
+        aria-hidden
+        style={{
+          display: 'block',
+          width: 26,
+          height: 26 / holeImgRatio(s),
+          maxWidth: 26,
+          maxHeight: 26,
+          backgroundColor: 'currentColor',
+          WebkitMaskImage: `url(${patternIconUrl(SHAPE_IMAGES[s])})`,
+          maskImage: `url(${patternIconUrl(SHAPE_IMAGES[s])})`,
+          WebkitMaskSize: 'contain',
+          maskSize: 'contain',
+          WebkitMaskRepeat: 'no-repeat',
+          maskRepeat: 'no-repeat',
+          WebkitMaskPosition: 'center',
+          maskPosition: 'center',
+        }}
+      />
+    ) : GLYPH_HOLES[s] ? (
+      <span
+        className="font-bold font-sans leading-none inline-block whitespace-nowrap"
+        style={{
+          fontSize: `${GLYPH_BTN[s]?.size ?? 18}px`,
+          transform: (GLYPH_BTN[s]?.dx || GLYPH_BTN[s]?.dy)
+            ? `translate(${GLYPH_BTN[s]?.dx ?? 0}px, ${GLYPH_BTN[s]?.dy ?? 0}px)`
+            : undefined,
+        }}
+      >
+        {GLYPH_HOLES[s]}
+      </span>
+    ) : <Type size={18} />}
+  </>
+);

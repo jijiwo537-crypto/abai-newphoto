@@ -11,6 +11,7 @@ import { idleDefaults } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
+import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,warmBackdropMasks} from '../utils/backdropMasks';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
 import {BackdropMaskControls} from './BackdropMaskControls';
@@ -883,6 +884,10 @@ export const shapePathD = (
     }
     case 'diamond':
       return poly([[cx, 0], [w, cy], [cx, h], [0, cy]]);
+    /* 箭頭：朝右。箭身佔中間 36% 高，箭頭從一半寬開始、撐滿整個高度。
+       四邊擠壓時跟著外框一起變形（拉長就是細長箭頭）。 */
+    case 'arrow':
+      return poly([[0, h * 0.32], [w * 0.5, h * 0.32], [w * 0.5, 0], [w, cy], [w * 0.5, h], [w * 0.5, h * 0.68], [0, h * 0.68]]);
     /* 窄菱形：一樣的四個角，只是左右往內收 —— 直立、細長的那種 */
     case 'diamond-n':
       return poly([[cx, 0], [cx + w * 0.28, cy], [cx, h], [cx - w * 0.28, cy]]);
@@ -1185,11 +1190,11 @@ const STRETCH_SOLID_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
   'pentagon', 'hexagon', 'star', 'star-rounded', 'heart',
   'square-star-dual', 'square-heart-dual', 'square-star-cutout', 'square-heart-cutout',
-  'heart-double', 'star-double',
+  'heart-double', 'star-double', 'arrow',
 ]);
 const STRETCH_OUTLINE_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
-  'pentagon', 'hexagon', 'star', 'star8', 'heart', 'ellipse',
+  'pentagon', 'hexagon', 'star', 'star8', 'heart', 'ellipse', 'arrow',
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if(isBackdropMask(shape))return true;
@@ -1223,6 +1228,18 @@ export const drawFeatheredShapeBody = (
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number; glyphRatio?: number };
+/** 「新增圖形」選單的五個區塊。創意拼圖與跨頁拼圖都用這一個，順序寫在 utils/pickerOrder.ts。 */
+export const shapePickerSections = () => {
+  const A = ADD_SHAPE_ITEMS, plain = (i: ShapeItem) => !GRID_SHAPE_KINDS.has(i.kind) && !SPECIAL_LINE_KINDS.has(i.kind);
+  const pools: Record<ShapeSection, any[]> = {
+    solid: [...A.filter(i => i.filled && plain(i)), HOLE_ITEM_CROSS, ...HOLE_ITEMS_EXTRA],
+    outline: [...A.filter(i => !i.filled && plain(i)), HOLE_ITEM_CROSS_O],
+    line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind)),
+    grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
+    mask: [...MASK_SHAPE_ITEMS],
+  };
+  return SHAPE_SECTIONS.map(([key, label]) => [label, orderBy(pools[key], SHAPE_ORDER[key])] as const);
+};
 export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   // 實心
   { id: 'circle-f', kind: 'circle', filled: true },
@@ -1237,6 +1254,7 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'star-rounded-f', kind: 'star-rounded', filled: true },
   { id: 'star-double-f', kind: 'star-double', filled: true },
   { id: 'heart-f', kind: 'heart', filled: true },
+  { id: 'arrow-f', kind: 'arrow', filled: true },
   /* 最後一排複合實心圖形。前兩顆是雙色實心、接著兩顆挖空，最後兩顆
      是原本愛心／星星外面再加一圈同形細線。 */
   { id: 'square-star-dual-f', kind: 'square-star-dual', filled: true },
@@ -1257,6 +1275,7 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'heart-o', kind: 'heart', filled: false },
   { id: 'diamond-n-o', kind: 'diamond-n', filled: false },
   { id: 'ellipse-o', kind: 'ellipse', filled: false, ratio: 0.68 },
+  { id: 'arrow-o', kind: 'arrow', filled: false },
   { id: 'cloud-oval-o', kind: 'cloud-oval', filled: false, ratio: 0.68 },
   { id: 'cloud-o', kind: 'cloud', filled: false, ratio: 0.62 },
   { id: 'bubble-o', kind: 'bubble', filled: false, ratio: 0.82 },
@@ -1297,6 +1316,7 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   rounded: [0, 0, 1, 1],
   triangle: [0, 0, 1, 1],
   diamond: [0, 0, 1, 1],
+  arrow: [0, 0, 1, 1],
   'diamond-n': [0.22, 0, 0.56, 1],
   pentagon: [0.0245, 0, 0.9511, 0.9045],
   hexagon: [0.067, 0, 0.866, 1],
@@ -17730,56 +17750,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       </button>
                       <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
                     </div>
-                    {(() => {
-                      /* 清單跟創意拼圖同一份：實心那排把十字星插在倒數第二，
-                         後面接上從圖案借過來的那幾顆；邊框那排接空心版的十字星。
-                         再用 moveTo 把兩排排成同樣的順序（愛心第 9、十字星第 11）。 */
-                      const ins = (arr: any[], item: any) => {
-                        const n = arr.slice();
-                        n.splice(Math.max(0, n.length - 1), 0, item);
-                        return n;
-                      };
-                      /** 把 id 是這個的那一顆搬到第 m 個位置（從 1 算起）。用 id 找而不是用
-                          位置找 —— 清單中間再插新圖形時才不會位移到別顆身上。 */
-                      const moveTo = (arr: any[], id: string, m: number) => {
-                        const i = arr.findIndex(z => z.id === id);
-                        if (i < 0) return arr;
-                        const n = arr.slice();
-                        const [x] = n.splice(i, 1);
-                        n.splice(Math.max(0, m - 1), 0, x);
-                        return n;
-                      };
-                      /* 外圈星星是使用者指定的第二排星星序列之一，不跟其餘
-                         複合圖形一起搬到清單尾端。舊草稿中的外圈愛心仍可讀取，
-                         但新增清單已移除。 */
-                      const compositeItems = ADD_SHAPE_ITEMS.filter(i => i.filled
-                        && COMPOSITE_SHAPE_KINDS.has(i.kind) && i.kind !== 'star-double');
-                      const ordinarySolid = moveTo(
-                        ins(ADD_SHAPE_ITEMS.filter(i => i.filled
-                          && (!COMPOSITE_SHAPE_KINDS.has(i.kind) || i.kind === 'star-double')), HOLE_ITEM_CROSS),
-                        'heart-f', 9);
-                      /* 四顆方形複合圖形固定放在第三排前四格（第 13–16 顆）。
-                         借用圖案的額外項目排在它們後面，之後新增項目也不會再
-                         把這四顆推到清單尾端。 */
-                      const solidList = [
-                        ...ordinarySolid.slice(0, 12),
-                        ...compositeItems,
-                        ...ordinarySolid.slice(12),
-                        ...HOLE_ITEMS_EXTRA,
-                      ];
-                      /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
-                         第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
-                      const lineList = moveTo(moveTo(moveTo(moveTo(
-                        [...ADD_SHAPE_ITEMS.filter(i => !i.filled && !SPECIAL_LINE_KINDS.has(i.kind)), HOLE_ITEM_CROSS_O],
-                        'diamond-n-o', 6), 'heart-o', 9), 'cloud-oval-o', 13), 'hole-cross-star-o', 14);
-                      return ([
-                        ['實心', solidList.filter(i => !GRID_SHAPE_KINDS.has(i.kind))],
-                        ['邊框', lineList.filter(i => !GRID_SHAPE_KINDS.has(i.kind))],
-                        ['線條', ADD_SHAPE_ITEMS.filter(i => SPECIAL_LINE_KINDS.has(i.kind))],
-                        ['網格', ADD_SHAPE_ITEMS.filter(i => GRID_SHAPE_KINDS.has(i.kind))],
-                        ['遮罩', MASK_SHAPE_ITEMS],
-                      ] as const);
-                    })().map(([label, list]) => (
+                    {shapePickerSections().map(([label, list]) => (
                       <div key={label} className="mb-3">
                         <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
                         <div className="grid grid-cols-6 gap-2">

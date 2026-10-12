@@ -44,7 +44,7 @@ import {
   isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter, imgShapePathIn,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, shapePickerSections, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
   shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
@@ -108,20 +108,14 @@ import {FX_DEFS} from '../utils/glEffects';
 import {PhotoSceneColour,supportsSceneColour} from '../utils/photoSceneColour';
 import {PhotoAdjustmentBlend,BLEND_ADJUSTMENTS} from '../utils/photoAdjustmentBlend';
 import { SaveButton } from './SaveButton';
+import { PatternIcon, patternIconUrl } from './PatternIcon';
+import { PATTERN_ORDER } from '../utils/pickerOrder';
 import { ExportActionLift } from './ExportActionLift';
 import type { ExitChoice } from '../types';
 
 // Keep embedded icon bytes intact, but never reparse a huge base64 CSS mask
 // on each first panel layout. These tiny immutable asset URLs live with module.
-const patternIconUrls=new Map<string,string>();
 const warmedPatternIcons=new Set<string>();
-const patternIconUrl=(source:string)=>{
-  if(!source.startsWith('data:'))return source;
-  let url=patternIconUrls.get(source);if(url)return url;
-  const split=source.indexOf(','),header=source.slice(0,split),bytes=atob(source.slice(split+1));
-  url=URL.createObjectURL(new Blob([Uint8Array.from(bytes,c=>c.charCodeAt(0))],{type:header.slice(5).split(';')[0]}));
-  patternIconUrls.set(source,url);return url;
-};
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
 import { preferredVideoFrameRate } from '../utils/videoFrameRate';
@@ -11461,47 +11455,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </button>
                           <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
                         </div>
-                        {(() => {
-                          const ins = (arr: any[], item: any) => {
-                            // 放在倒數第二個
-                            const n = arr.slice();
-                            n.splice(Math.max(0, n.length - 1), 0, item);
-                            return n;
-                          };
-                          /** 把第 n 顆搬到第 m 個位置（都是從 1 算起） */
-                          /** 把 id 是這個的那一顆搬到第 m 個位置（從 1 算起）。
-                              用 id 找而不是用位置找 —— 清單中間再插新圖形時，
-                              這條規則才不會跟著位移到別顆身上。 */
-                          const moveTo = (arr: any[], id: string, m: number) => {
-                            const i = arr.findIndex(z => z.id === id);
-                            if (i < 0) return arr;
-                            const a = arr.slice();
-                            const [x] = a.splice(i, 1);
-                            a.splice(Math.max(0, m - 1), 0, x);
-                            return a;
-                          };
-                          const compositeItems = ADD_SHAPE_ITEMS.filter(i2 => i2.filled
-                            && COMPOSITE_SHAPE_KINDS.has(i2.kind) && i2.kind !== 'star-double');
-                          const solidList = [
-                            ...moveTo(
-                              [...ins(ADD_SHAPE_ITEMS.filter(i2 => i2.filled
-                                && (!COMPOSITE_SHAPE_KINDS.has(i2.kind) || i2.kind === 'star-double')), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
-                              'heart-f', 9),
-                            ...compositeItems,
-                          ];
-                          /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
-                             第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
-                          const lineList = moveTo(moveTo(moveTo(moveTo(
-                            [...ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && !SPECIAL_LINE_KINDS.has(i2.kind)), HOLE_ITEM_CROSS_O],
-                            'diamond-n-o', 6), 'heart-o', 9), 'cloud-oval-o', 13), 'hole-cross-star-o', 14);
-                          return ([
-                            ['實心', solidList.filter(i2 => !GRID_SHAPE_KINDS.has(i2.kind))],
-                            ['邊框', lineList.filter(i2 => !GRID_SHAPE_KINDS.has(i2.kind))],
-                            ['線條', ADD_SHAPE_ITEMS.filter(i2 => SPECIAL_LINE_KINDS.has(i2.kind))],
-                            ['網格', ADD_SHAPE_ITEMS.filter(i2 => GRID_SHAPE_KINDS.has(i2.kind))],
-                            ['遮罩', MASK_SHAPE_ITEMS],
-                          ] as const);
-                        })().map(([label, list]) => (
+                        {shapePickerSections().map(([label, list]) => (
                           <div key={label} className="mb-3">
                             <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
                             <div className="grid grid-cols-6 gap-2">
@@ -12113,45 +12067,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 <div ref={patternPanelRef} data-pattern-panel className="flex-1 min-h-0 min-w-0 no-scrollbar pl-3 pr-2 h-full py-5 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
-                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'burst', 'love', 'love3', 'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'zzz', 'text'].map(s => (
+                  {PATTERN_ORDER.map(s => (
                     <button key={s} data-pattern-choice={s} aria-label={`圖案 ${s}`} onClick={() => handleShapeClick(s)} className={`h-11 min-w-0 overflow-hidden flex items-center justify-center rounded-[8px] border transition-colors ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
-                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
-                        /* 去背的圖：拿它當遮罩、底色用 currentColor，
-                           顏色就跟旁邊那些圖示走同一條規則 ——
-                           沒選中時是暗的（#555），選中才變白。
-                           （原本是用 filter 硬染成白色，所以永遠亮著。） */
-                        <span
-                          aria-hidden
-                          style={{
-                            display: 'block',
-                            width: 26,
-                            height: 26 / holeImgRatio(s),
-                            maxWidth: 26,
-                            maxHeight: 26,
-                            backgroundColor: 'currentColor',
-                            WebkitMaskImage: `url(${patternIconUrl(SHAPE_IMAGES[s])})`,
-                            maskImage: `url(${patternIconUrl(SHAPE_IMAGES[s])})`,
-                            WebkitMaskSize: 'contain',
-                            maskSize: 'contain',
-                            WebkitMaskRepeat: 'no-repeat',
-                            maskRepeat: 'no-repeat',
-                            WebkitMaskPosition: 'center',
-                            maskPosition: 'center',
-                          }}
-                        />
-                      ) : GLYPH_HOLES[s] ? (
-                        <span
-                          className="font-bold font-sans leading-none inline-block whitespace-nowrap"
-                          style={{
-                            fontSize: `${GLYPH_BTN[s]?.size ?? 18}px`,
-                            transform: (GLYPH_BTN[s]?.dx || GLYPH_BTN[s]?.dy)
-                              ? `translate(${GLYPH_BTN[s]?.dx ?? 0}px, ${GLYPH_BTN[s]?.dy ?? 0}px)`
-                              : undefined,
-                          }}
-                        >
-                          {GLYPH_HOLES[s]}
-                        </span>
-                      ) : <Type size={18} />}
+                      <PatternIcon s={s} />
                     </button>
                   ))}
                 </div>
