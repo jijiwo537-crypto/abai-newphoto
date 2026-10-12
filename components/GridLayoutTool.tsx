@@ -1288,6 +1288,45 @@ export const drawFeatheredShapeBody = (
   paintTexture?.(target, path);
 };
 
+/** 邊框圖形的紋理（目前只開給箭頭）：先用本色描一次邊，再把紋理畫成一張小圖、
+   當作描邊的顏色再描一次 —— 紋理只會出現在線條上。
+   座標原點是圖形框的左上角，跟實心的紋理同一套；paint 拿到的 tc 原點在框心，
+   要鋪滿 covW×covH（比框大一圈，蓋住伸出框外的半條線）。
+   小圖照當下畫布的放大倍率畫，放大檢視也不會糊；同一組參數只畫一次。 */
+const strokeTexCache = new Map<string, HTMLCanvasElement>();
+export const strokeWithTexture = (
+  ctx: CanvasRenderingContext2D, path: Path2D, w: number, h: number, key: string,
+  paint: (tc: CanvasRenderingContext2D, covW: number, covH: number) => void,
+) => {
+  ctx.stroke(path);
+  const pad = Math.max(1, ctx.lineWidth) * 2;
+  const m = ctx.getTransform();
+  const k = Math.max(0.25, Math.min(4, Math.hypot(m.a, m.b)));
+  const cw = Math.max(1, Math.min(4096, Math.ceil((w + pad * 2) * k)));
+  const ch = Math.max(1, Math.min(4096, Math.ceil((h + pad * 2) * k)));
+  const ck = [key, Math.round(w * 10), Math.round(h * 10), Math.round(pad * 10), cw, ch].join('|');
+  let c = strokeTexCache.get(ck);
+  if (!c) {
+    c = document.createElement('canvas'); c.width = cw; c.height = ch;
+    const tc = c.getContext('2d');
+    if (!tc) return;
+    tc.scale(cw / (w + pad * 2), ch / (h + pad * 2));
+    tc.translate(pad + w / 2, pad + h / 2);
+    paint(tc, w + pad * 2, h + pad * 2);
+    if (strokeTexCache.size >= 24) { const first = strokeTexCache.keys().next().value; if (first !== undefined) strokeTexCache.delete(first); }
+    strokeTexCache.set(ck, c);
+  }
+  const pat = ctx.createPattern(c, 'no-repeat');
+  if (!pat) return;
+  pat.setTransform(new DOMMatrix().translate(-pad, -pad).scale((w + pad * 2) / cw, (h + pad * 2) / ch));
+  const prev = ctx.strokeStyle;
+  ctx.strokeStyle = pat;
+  ctx.stroke(path);
+  ctx.strokeStyle = prev;
+};
+/** 條紋鋪在比框大的範圍時，條數要跟著放大，條寬才會跟實心的一樣 */
+export const stripeCountFor = (n: number, dir: string | undefined, w: number, h: number, covW: number, covH: number) =>
+  dir === 'h' ? n * covH / Math.max(1e-6, h) : n * covW / Math.max(1e-6, w);
 export const isArrowShape = (kind?: string) => kind === 'arrow' || kind === 'arrow-double';
 /** 「箭身長度」滑桿（畫面上箭身的長度＝高度的百分之幾）。
     w,h 是現在的框；bw,bh 是沒被擠壓過的原始框（textureBase）。 */
@@ -5483,6 +5522,18 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             tc.restore();
           }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth,
             baseW: (image.shapeTextureBaseW || image.width) * contentScale, baseH: (image.shapeTextureBaseH || image.height) * contentScale });
+        } else if (isArrowShape(image.shape) && tx !== 'none') {
+          strokeWithTexture(ctx, path, drawW, drawH, JSON.stringify([tx, image.shapeDotSize, image.shapeDotGap, image.shapeDotSquash, image.shapeDotColor,
+            image.shapeStripeN, image.shapeStripeDir, image.shapeStripeA || color, image.shapeStripeB, image.shapeTextureBaseW, image.shapeTextureBaseH, contentScale]), (tc, cw, ch) => {
+            if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, cw, ch, {
+              tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
+              textureBaseW: (image.shapeTextureBaseW || image.width) * contentScale,
+              textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
+            });
+            else paintStripes(tc, drawW, drawH, cw, ch,
+              stripeCountFor(image.shapeStripeN ?? STRIPE_N_DEFAULT, image.shapeStripeDir, drawW, drawH, cw, ch),
+              image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
+          });
         } else {
           ctx.stroke(path);
         }
@@ -14360,7 +14411,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       drawFeatheredShapeBody(ctx, fImg.shape!, fw, fh, fImg.shapeFeather, color, paintShapeTexture,
         fImg.shapeInnerColor || '#FFFFFF', { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth,
           baseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, baseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor });
-    } else ctx.stroke(path);
+    } else {
+      const tx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
+      if (isArrowShape(fImg.shape) && tx !== 'none') {
+        const stA = fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR;
+        strokeWithTexture(ctx, path, fw, fh, JSON.stringify([tx, fImg.shapeDotSize, fImg.shapeDotGap, fImg.shapeDotSquash, fImg.shapeDotColor,
+          fImg.shapeStripeN, fImg.shapeStripeDir, stA, fImg.shapeStripeB, fImg.shapeTextureBaseW, fImg.shapeTextureBaseH, scaleFactor]), (tc, cw, ch) => {
+          if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, fw, fh, cw, ch, {
+            tex: tx,
+            dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
+            textureBaseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
+            textureBaseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
+          });
+          else paintStripes(tc, fw, fh, cw, ch,
+            stripeCountFor(fImg.shapeStripeN ?? STRIPE_N_DEFAULT, fImg.shapeStripeDir, fw, fh, cw, ch),
+            fImg.shapeStripeDir === 'h' ? 'h' : 'v', stA, fImg.shapeStripeB || '#FFFFFF');
+        });
+      } else ctx.stroke(path);
+    }
     ctx.setLineDash([]);
     ctx.restore();
   };

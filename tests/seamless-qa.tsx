@@ -35,6 +35,7 @@ if(params.has('empty')){
 }
 if(params.has('emptyAudit'))void import('./empty-layout-audit');
 if(params.has('layoutRasterAudit')){state.pages[0].layouts[0].gap=0;state.pages[0].layouts[0].radius=0;}
+if(params.get('shapeTex')){(state as any).pages[0].layouts=[];(state as any).floatingImages=[{id:'qa-tex-shape',src:'',x:40,y:60,width:200,height:100,scale:1,rotation:0,opacity:100,shape:params.get('shapeTex'),shapeFilled:!params.has('outline'),shapeTex:'stripe',shapeTextureBaseW:Number(params.get('bw')||200),shapeTextureBaseH:100,color:'#22aa44'}];}
 if(params.has('fillShape')){(state as any).pages[0].layouts=[];(state as any).floatingImages=[{id:'qa-fill-shape',src:'',x:0,y:0,width:339,height:452,scale:1,rotation:0,opacity:100,shape:'square',shapeFilled:true,color:'#22aa44'}];}
 if(params.has('fill')){const l=state.pages[0].layouts[0] as any;l.t={x:0,y:0,scale:1};if(params.has('nogap')){l.gap=0;l.radius=0;}}
 // 同一頁兩個佈局（測跨佈局長按互換）：?twoLayouts —— 上面一個、下面一個，第二個的照片顏色順序相反

@@ -44,7 +44,7 @@ import {
   isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter, imgShapePathIn,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, shapePickerSections, arrowShaftUi, arrowResize, isArrowShape, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, shapePickerSections, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
   shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
@@ -7411,6 +7411,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             tc.restore();
           }, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth,
             baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s });
+        } else if (isArrowShape(o.kind) && texOf(o) !== 'none') {
+          /* 邊框箭頭的紋理畫在線條上（strokeWithTexture） */
+          const tb = { textureBaseW: ((o as any).textureBaseW || o.w) * s, textureBaseH: ((o as any).textureBaseH || o.h) * s };
+          strokeWithTexture(ctx, shapeP, bw, bh, JSON.stringify([texOf(o), o.dotSize, o.dotGap, o.dotSquash, o.dotColor,
+            o.stripeN, o.stripeDir, o.stripeA, o.stripeB, tb.textureBaseW, tb.textureBaseH]), (tc, cw, ch) =>
+            paintTex(tc, bw, bh, cw, ch, { ...o, ...tb,
+              stripeN: stripeCountFor(o.stripeN ?? STRIPE_N_DEFAULT, o.stripeDir, bw, bh, cw, ch) }));
         } else paintShapePath(false);
         ctx.setLineDash([]);
         ctx.restore();
