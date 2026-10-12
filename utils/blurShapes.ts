@@ -31,33 +31,37 @@ export const blurShapeBaseD = (kind: string, w: number, h: number, pathD: (k: st
   return pathD(base, w, h);
 };
 
-const boxBlur = (src: Float32Array, dst: Float32Array, w: number, h: number, r: number, horizontal: boolean) => {
-  const len = horizontal ? w : h, lines = horizontal ? h : w, step = horizontal ? 4 : w * 4, inv = 1 / (2 * r + 1);
+/* 只糊透明度：模糊圖形整顆只有一個顏色，RGB 不用算，最後整張補上顏色就好（比四個通道一起糊快 4 倍）。 */
+const boxBlurA = (src: Float32Array, dst: Float32Array, w: number, h: number, r: number, horizontal: boolean) => {
+  const len = horizontal ? w : h, lines = horizontal ? h : w, step = horizontal ? 1 : w, inv = 1 / (2 * r + 1);
   for (let l = 0; l < lines; l++) {
-    const base = horizontal ? l * w * 4 : l * 4;
-    for (let c = 0; c < 4; c++) {
-      let acc = 0;
-      for (let i = -r; i <= r; i++) acc += src[base + Math.min(len - 1, Math.max(0, i)) * step + c];
-      for (let i = 0; i < len; i++) {
-        dst[base + i * step + c] = acc * inv;
-        acc += src[base + Math.min(len - 1, i + r + 1) * step + c] - src[base + Math.max(0, i - r) * step + c];
-      }
+    const base = horizontal ? l * w : l;
+    let acc = 0;
+    for (let i = -r; i <= r; i++) acc += src[base + Math.min(len - 1, Math.max(0, i)) * step];
+    for (let i = 0; i < len; i++) {
+      dst[base + i * step] = acc * inv;
+      acc += src[base + Math.min(len - 1, i + r + 1) * step] - src[base + Math.max(0, i - r) * step];
     }
   }
 };
-const blurCanvas = (c: HTMLCanvasElement, sigma: number) => {
-  const g = c.getContext('2d')!, img = g.getImageData(0, 0, c.width, c.height), d = img.data, n = d.length;
+const blurAlpha = (c: HTMLCanvasElement, r: number, color: string) => {
+  const g = c.getContext('2d')!, img = g.getImageData(0, 0, c.width, c.height), d = img.data, n = c.width * c.height;
   let a = new Float32Array(n), b = new Float32Array(n);
-  for (let i = 0; i < n; i += 4) { const al = d[i + 3] / 255; a[i] = d[i] * al; a[i + 1] = d[i + 1] * al; a[i + 2] = d[i + 2] * al; a[i + 3] = d[i + 3]; }
-  const r = Math.max(1, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2));
-  for (let p = 0; p < 3; p++) { boxBlur(a, b, c.width, c.height, r, true); boxBlur(b, a, c.width, c.height, r, false); }
-  for (let i = 0; i < n; i += 4) { const al = a[i + 3]; const m = al > 0 ? 255 / al : 0; d[i] = a[i] * m; d[i + 1] = a[i + 1] * m; d[i + 2] = a[i + 2] * m; d[i + 3] = al; }
+  for (let i = 0; i < n; i++) a[i] = d[i * 4 + 3];
+  for (let p = 0; p < 3; p++) { boxBlurA(a, b, c.width, c.height, r, true); boxBlurA(b, a, c.width, c.height, r, false); }
+  for (let i = 0; i < n; i++) { d[i * 4] = 0; d[i * 4 + 1] = 0; d[i * 4 + 2] = 0; d[i * 4 + 3] = a[i]; }
   g.putImageData(img, 0, 0);
+  // 透明度糊好了，再整張染成圖形的顏色
+  g.setTransform(1, 0, 0, 1, 0, 0);   // source-in 會清掉蓋不到的地方，一定要整張蓋滿
+  g.globalCompositeOperation = 'source-in';
+  g.fillStyle = color;
+  g.fillRect(0, 0, c.width, c.height);
+  g.globalCompositeOperation = 'source-over';
 };
-/* 放大不卡：模糊後的圖形本來就沒有銳利細節，所以只在一張固定大小的小畫布上糊一次
-   （長邊最多 512px），之後不管畫面放多大，都只是把這張圖拉大貼上去 —— 每一格的成本固定。
-   以前是每畫一次就用陰影即時模糊，放很大時模糊半徑跟著變成幾百像素，手機每格都要重算。
-   快取鍵是「圖形、寬高比、顏色、模糊值」，拖曳、縮放都直接命中。 */
+/* 拖滑桿不會一格一格跳：盒狀模糊的半徑只能是整數像素，以前光柵大小固定、半徑跟著滑桿變，
+   半徑一取整數，糊的程度就一階一階地跳。現在反過來 —— 盒狀半徑固定（BOX_R 像素），
+   改成讓「光柵有多大」跟著模糊值連續變化：糊得越多，光柵越小（也越快算）。 */
+const BOX_R = 5, BOX_SIGMA = Math.sqrt(BOX_R * (BOX_R + 1));   // 三次盒狀模糊 ≈ 這個 σ 的高斯
 const blurredCache = new Map<string, { canvas: HTMLCanvasElement; img?: ImageBitmap; pad: number; scale: number }>();
 export const drawBlurredShape = (
   ctx: CanvasRenderingContext2D, kind: string, w: number, h: number, color: string, value: number | undefined,
@@ -70,18 +74,20 @@ export const drawBlurredShape = (
   const key = `${kind}|${aspect}|${color}|${Math.round(v * 10) / 10}`;
   let hit = blurredCache.get(key);
   if (!hit) {
-    // 光柵：短邊至少 160px、長邊最多 512px
-    const L = Math.min(512, Math.max(160, 160 * Math.max(aspect, 1 / aspect)));
-    const rw = aspect >= 1 ? L : L * aspect, rh = aspect >= 1 ? L / aspect : L;
+    // 光柵大小跟著模糊值連續變化（見上面 BOX_R 的說明），長邊最多 768px
+    let short = BOX_SIGMA / Math.max(1e-6, blurShapeRadius(1, 1, v));
+    short = Math.min(short, 768 / Math.max(aspect, 1 / aspect));
+    const rw = aspect >= 1 ? short * aspect : short, rh = aspect >= 1 ? short : short / aspect;
     const radius = blurShapeRadius(rw, rh, v);
+    const r = Math.max(1, Math.round((Math.sqrt(4 * radius * radius + 1) - 1) / 2));
     const pad = Math.ceil(radius * 3) + 2;
     const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(rw) + pad * 2; canvas.height = Math.ceil(rh) + pad * 2;
+    canvas.width = Math.ceil(rw + pad * 2); canvas.height = Math.ceil(rh + pad * 2);
     const g = canvas.getContext('2d')!;
     g.translate(pad, pad);
-    g.fillStyle = color;
+    g.fillStyle = '#000';
     g.fill(new Path2D(pathD(kind, rw, rh)));
-    blurCanvas(canvas, radius);
+    blurAlpha(canvas, r, color);
     const entry: { canvas: HTMLCanvasElement; img?: ImageBitmap; pad: number; scale: number } = { canvas, pad, scale: rw };
     hit = entry;
     blurredCache.set(key, entry);
