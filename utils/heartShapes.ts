@@ -78,12 +78,18 @@ const capsule = (theta: number, r0: number, r1: number, hw: number): Pt[] => {
   for (let i = 0; i <= N; i++) { const t = theta + Math.PI / 2 + Math.PI * i / N; pts.push([c * r0 + Math.cos(t) * hw, s * r0 + Math.sin(t) * hw]); }
   return pts;
 };
-/** 虛線星芒（像圖案的 ✳︎，但每一根是三段虛線）：8 根 × 3 段 */
+/** 直角的細長方塊（虛線的一小段），從半徑 r0 到 r1、半寬 hw；繞向跟 capsule 一樣，重疊時用 nonzero 填色會合在一起 */
+const bar = (theta: number, r0: number, r1: number, hw: number): Pt[] => {
+  const c = Math.cos(theta), s = Math.sin(theta), nx = -s * hw, ny = c * hw;
+  return [[c * r1 - nx, s * r1 - ny], [c * r1 + nx, s * r1 + ny], [c * r0 + nx, s * r0 + ny], [c * r0 - nx, s * r0 - ny]];
+};
+/** 虛線星芒（像圖案的 ✳︎，但每一根是虛線）：8 根，每根 4 段直角短線，段與段之間留空；
+   最內那段從圓心開始，8 根在中心直接疊在一起，不留空洞 */
 const BURST_DASH: Pt[][] = (() => {
-  const hw = 0.075, out: Pt[][] = [];
+  const hw = 0.05, out: Pt[][] = [];
   for (let i = 0; i < 8; i++) {
     const th = -Math.PI / 2 + i * Math.PI / 4;
-    for (const [a, b] of [[0.24, 0.38], [0.53, 0.66], [0.81, 1 - hw]] as const) out.push(capsule(th, a, b, hw));
+    for (const [a, b] of [[0, 0.2], [0.32, 0.48], [0.6, 0.76], [0.88, 1]] as const) out.push(bar(th, a, b, hw));
   }
   return out;
 })();

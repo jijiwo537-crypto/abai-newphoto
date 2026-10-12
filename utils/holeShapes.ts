@@ -37,14 +37,10 @@ export const GLYPH_HOLES: Record<string, string> = {
   // 問號：用 iPhone 的系統字型畫（見 glyphFont），看起來就跟手機上打出來的一樣
   question: '?',
   // 音樂符號（\uFE0E：固定用文字樣式畫，不要變成彩色 emoji）
-  'music-quarter': '\u2669\uFE0E',   // ♩ 四分音符
   'music-eighth':  '\u266A\uFE0E',   // ♪ 八分音符
   'music-beamed':  '\u266B\uFE0E',   // ♫ 連結八分音符
   'music-sixteenth': '\u266C\uFE0E', // ♬ 連結十六分音符
   'music-clef':    '\uD834\uDD1E',   // 𝄞 高音譜號
-  'music-flat':    '\u266D\uFE0E',   // ♭ 降記號
-  'music-natural': '\u266E\uFE0E',   // ♮ 還原記號
-  'music-sharp':   '\u266F\uFE0E',   // ♯ 升記號
 };
 
 /** 這個洞是用文字畫的（而不是用路徑畫的）嗎 */
@@ -773,8 +769,8 @@ export const HOLE_ITEMS_EXTRA: HoleShapeItem[] =
   ['flower', 'snow', 'burst', 'love', 'love3', 'pic333', 'vortex',
    'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'abai',
    // 問號與音樂符號（音樂符號只做圖形，不放進圖案選單）
-   'question', 'music-quarter', 'music-eighth', 'music-beamed', 'music-sixteenth',
-   'music-clef', 'music-flat', 'music-natural', 'music-sharp']
+   'question', 'music-eighth', 'music-beamed', 'music-sixteenth',
+   'music-clef']
     .map(h => ({ id: `hole-${h}`, kind: 'hole' as const, hole: h, filled: true }));
 
 /**
