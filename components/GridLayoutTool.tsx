@@ -896,18 +896,17 @@ export const shapePathD = (
       return `M ${P(cx, 0)} Q ${P(cx, cy)} ${P(0, cy)} Q ${P(cx, cy)} ${P(cx, h)} Q ${P(cx, cy)} ${P(w, cy)} Q ${P(cx, cy)} ${P(cx, 0)} Z`;
     /* 箭頭：朝右。箭身佔中間 36% 高，箭頭從一半寬開始、撐滿整個高度。
        四邊擠壓時跟著外框一起變形（拉長就是細長箭頭）。 */
+    /* 箭頭（單頭／雙頭）：箭頭長度＝高度的一半，但最多只佔寬度的一定比例
+       （單頭 50%、雙頭每個 25%）。所以：
+       - 左右拉長：只有箭身變長；
+       - 上下拉高：箭頭變鈍一點，但箭身長度不會被吃掉（以前拉高雙頭箭頭會整個變成菱形）；
+       - 左右擠窄：整支箭頭等比例變短，不會塌成一顆窄菱形。 */
     case 'arrow': {
-      /* 箭頭的長度固定是高度的一半，剩下的寬度都是箭身 ——
-         「箭身長度」滑桿與左右拉長都只會讓箭身變長，箭頭不會跟著變形。 */
-      const sx = w - Math.min(h * 0.5, w);
-      // 箭身長度 0：只剩箭頭本身，少掉那幾個重疊的點，邊框才不會多出線頭
-      if (sx < 0.5) return poly([[0, 0], [w, cy], [0, h]]);
+      const hl = arrowHeadLen('arrow', w, h), sx = w - hl;
       return poly([[0, h * 0.32], [sx, h * 0.32], [sx, 0], [w, cy], [sx, h], [sx, h * 0.68], [0, h * 0.68]]);
     }
-    /* 雙頭箭頭：兩端各一個箭頭（長度＝高度的一半），中間是箭身 */
     case 'arrow-double': {
-      const hl = Math.min(h * 0.5, w / 2);
-      if (w - hl * 2 < 0.5) return poly([[0, cy], [w / 2, 0], [w, cy], [w / 2, h]]);
+      const hl = arrowHeadLen('arrow-double', w, h);
       return poly([[0, cy], [hl, 0], [hl, h * 0.32], [w - hl, h * 0.32], [w - hl, 0], [w, cy], [w - hl, h], [w - hl, h * 0.68], [hl, h * 0.68], [hl, h]]);
     }
     /* 窄菱形：一樣的四個角，只是左右往內收 —— 直立、細長的那種 */
@@ -1266,12 +1265,19 @@ export const drawFeatheredShapeBody = (
   paintTexture?.(target, path);
 };
 
-/** 箭頭「箭身長度」滑桿：箭身長度＝高度的百分之幾（箭頭本身固定是高度的一半）。
-    雙頭箭頭有兩個箭頭，所以箭頭本身佔高度的 1 倍。 */
-const arrowHeads = (kind?: string) => kind === 'arrow-double' ? 1 : 0.5;
+/** 箭頭長度：高度的一半，但單頭最多佔寬度 50%、雙頭每個最多 25%（見 shapePathD 的 arrow） */
+const arrowCap = (kind?: string) => kind === 'arrow-double' ? 0.25 : 0.5;
+const arrowCount = (kind?: string) => kind === 'arrow-double' ? 2 : 1;
+export const arrowHeadLen = (kind: string, w: number, h: number) => Math.min(h * 0.5, w * arrowCap(kind));
 export const isArrowShape = (kind?: string) => kind === 'arrow' || kind === 'arrow-double';
-export const arrowShaftUi = (w: number, h: number, kind?: string) => Math.max(0, Math.round((w / Math.max(1e-6, h) - arrowHeads(kind)) * 100));
-export const arrowWidthFor = (h: number, shaftUi: number, kind?: string) => h * (arrowHeads(kind) + Math.max(0, shaftUi) / 100);
+/** 「箭身長度」滑桿：箭身長度＝高度的百分之幾（就是畫面上那根矩形實際的長度） */
+export const arrowShaftUi = (w: number, h: number, kind?: string) =>
+  Math.max(0, Math.round((w - arrowCount(kind) * arrowHeadLen(kind || 'arrow', w, h)) / Math.max(1e-6, h) * 100));
+export const arrowWidthFor = (h: number, shaftUi: number, kind?: string) => {
+  const c = arrowCap(kind), n = arrowCount(kind), S = Math.max(0, shaftUi) / 100;
+  const s0 = (1 - n * c) * 0.5 / c;   // 箭頭剛好是高度一半時的箭身長度
+  return Math.max(h * 0.2, S >= s0 ? h * (S + n * 0.5) : S * h / (1 - n * c));
+};
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number; glyphRatio?: number };
@@ -1714,7 +1720,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
   return (
     <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
       {isBlurShape(item.kind) && <defs><filter id={`blur-${maskId}`} x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur stdDeviation={r3(VB * 0.3 * (5 + 0.15 * BLUR_SHAPE_DEFAULT) / 100 * 0.62)} /></filter></defs>}
+        <feGaussianBlur stdDeviation={r3(VB * 0.3 * (5 + 0.15 * BLUR_SHAPE_DEFAULT) / 100 * 0.62 * 2)} /></filter></defs>}
       <g transform={tf} filter={isBlurShape(item.kind) ? `url(#blur-${maskId})` : undefined}>
         <path
           d={src}

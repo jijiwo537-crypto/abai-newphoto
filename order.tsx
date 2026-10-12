@@ -10,7 +10,7 @@ import { ShapeGlyph, HoleGlyph, shapePickerSections } from './components/GridLay
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
-const NEW_IDS = new Set<string>(['blur-sparkle4-f', 'arrow-double-f', 'arrow-double-o']);
+const NEW_IDS = new Set<string>([]);
 const STORE = 'abai-order-tool-v1';
 const HOLD_MS = 280;
 

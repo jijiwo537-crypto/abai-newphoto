@@ -26,27 +26,27 @@ export type ShapeSection = typeof SHAPE_SECTIONS[number][0];
 
 export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
   solid: [
-    'circle-f', 'square-f', 'rounded-f', 'diamond-f', 'triangle-f', 'diamond-n-f',
-    'pentagon-f', 'hexagon-f', 'heart-f', 'hexstar-f', 'star-f', 'star-rounded-f',
-    'star-double-f', 'hole-cross-star-f', 'sparkle4-f', 'hole-love', 'hole-love3', 'hole-pic333',
-    'blur-star-f', 'blur-star-rounded-f', 'blur-cross-star-f', 'blur-heart-f', 'blur-circle-f', 'blur-sparkle4-f',
-    'square-star-dual-f', 'square-heart-dual-f', 'square-star-cutout-f', 'square-heart-cutout-f', 'circle-star-cutout-f', 'circle-heart-cutout-f',
-    'circle-heart-dual-f', 'circle-star-dual-f', 'arrow-f', 'arrow-double-f', 'hole-flower', 'hole-snow', 'hole-burst',
-    'hole-vortex', 'hole-seagrass', 'hole-darkstar', 'hole-sparkle', 'hole-aster', 'hole-theta',
-    'hole-abai',
+    'star-f', 'star-rounded-f', 'star-double-f', 'hole-cross-star-f', 'sparkle4-f', 'hexstar-f',
+    'heart-f', 'triangle-f', 'circle-f', 'square-f', 'rounded-f', 'diamond-f',
+    'pentagon-f', 'hexagon-f', 'diamond-n-f', 'hole-love', 'hole-love3', 'hole-pic333',
+    'blur-star-f', 'blur-star-rounded-f', 'blur-cross-star-f', 'blur-sparkle4-f', 'blur-heart-f', 'blur-circle-f',
+    'square-star-dual-f', 'square-heart-dual-f', 'square-star-cutout-f', 'square-heart-cutout-f', 'arrow-f', 'arrow-double-f',
+    'circle-star-dual-f', 'circle-heart-dual-f', 'circle-star-cutout-f', 'circle-heart-cutout-f', 'hole-burst', 'hole-snow',
+    'hole-flower', 'hole-darkstar', 'hole-aster', 'hole-vortex', 'hole-sparkle', 'hole-seagrass',
+    'hole-theta', 'hole-abai',
   ],
   outline: [
     'circle-o', 'square-o', 'rounded-o', 'diamond-o', 'triangle-o', 'diamond-n-o',
     'pentagon-o', 'hexagon-o', 'heart-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o',
-    'hexstar-o', 'star8-o', 'star8-oval-o', 'cloud-oval-o', 'arrow-o', 'arrow-double-o', 'ellipse-o',
-    'cloud-o', 'bubble-mirror-o', 'bubble-o',
+    'hexstar-o', 'star8-o', 'star8-oval-o', 'cloud-oval-o', 'arrow-o', 'arrow-double-o',
+    'ellipse-o', 'cloud-o', 'bubble-mirror-o', 'bubble-o',
   ],
   line: [
     'line-h', 'line-v', 'line-d1', 'line-d2', 'line-wave', 'line-lightning-wave',
   ],
   grid: [
     'grid-horizontal', 'grid-diagonal', 'grid-diag-cross', 'grid-cross', 'grid-frame', 'grid-chevron',
-    'grid-orbits', 'grid-plus', 'grid-dots-staggered', 'grid-dots', 'grid-dots-fade', 'grid-dots-fade-diagonal',
+    'grid-dots-staggered', 'grid-dots', 'grid-dots-fade', 'grid-dots-fade-diagonal', 'grid-plus', 'grid-orbits',
   ],
   mask: [
     'mask-mosaic', 'mask-bricks', 'mask-frost', 'mask-negative', 'mask-negative-mono', 'mask-monochrome',
