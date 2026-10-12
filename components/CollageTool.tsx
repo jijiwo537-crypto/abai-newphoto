@@ -44,7 +44,7 @@ import {
   isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter, imgShapePathIn,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, shapePickerSections, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, shapePickerSections, arrowShaftUi, arrowWidthFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
   shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
@@ -110,6 +110,7 @@ import {PhotoAdjustmentBlend,BLEND_ADJUSTMENTS} from '../utils/photoAdjustmentBl
 import { SaveButton } from './SaveButton';
 import { PatternIcon, patternIconUrl } from './PatternIcon';
 import { PATTERN_ORDER } from '../utils/pickerOrder';
+import { isBlurShape, BLUR_SHAPE_DEFAULT } from '../utils/blurShapes';
 import { ExportActionLift } from './ExportActionLift';
 import type { ExitChoice } from '../types';
 
@@ -11688,6 +11689,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             <div className="px-2 order-5 w-full">
                               {shapeSlider('羽化', sel.shapeFeather || 0, 0, 100,
                                 (v: number) => patch({ shapeFeather: v }))}
+                            </div>
+                          )}
+                          {isBlurShape(sel.kind) && (
+                            <div className="px-2 order-5 w-full">
+                              {shapeSlider('模糊', sel.shapeFeather ?? BLUR_SHAPE_DEFAULT, 0, 100,
+                                (v: number) => patch({ shapeFeather: v }))}
+                            </div>
+                          )}
+                          {sel.kind === 'arrow' && (
+                            <div className="px-2 order-5 w-full">
+                              {shapeSlider('箭身長度', arrowShaftUi(sel.w, sel.h), 0, 400,
+                                (v: number) => setObjects(prev => prev.map(o => {
+                                  if (o.id !== sel.id) return o;
+                                  const w = arrowWidthFor(o.h, v);
+                                  return { ...o, w, x: o.x + (o.w - w) / 2 };
+                                })))}
                             </div>
                           )}
                           {/* 粗細與虛線只有空心／線條才有，放在最後面 */}

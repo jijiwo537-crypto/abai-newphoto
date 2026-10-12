@@ -12,6 +12,7 @@ import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, Slid
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
 import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints } from '../utils/heartShapes';
+import { isBlurShape, blurShapeBaseD, blurShapeRadius, fillBlurredPath, BLUR_SHAPE_DEFAULT } from '../utils/blurShapes';
 import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,warmBackdropMasks} from '../utils/backdropMasks';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
@@ -845,6 +846,7 @@ export const shapePathD = (
   ringReveal = 1,
 ): string => {
   if(kind.startsWith('mask-'))kind=kind.includes('circle')||kind.includes('feather')?'circle':'square';
+  if (kind.startsWith('blur-')) return blurShapeBaseD(kind, w, h, shapePathD);
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
      因此縮放只會把整張網格等比放大；只有變形才會增加重複單位。 */
@@ -894,8 +896,12 @@ export const shapePathD = (
       return `M ${P(cx, 0)} Q ${P(cx, cy)} ${P(0, cy)} Q ${P(cx, cy)} ${P(cx, h)} Q ${P(cx, cy)} ${P(w, cy)} Q ${P(cx, cy)} ${P(cx, 0)} Z`;
     /* 箭頭：朝右。箭身佔中間 36% 高，箭頭從一半寬開始、撐滿整個高度。
        四邊擠壓時跟著外框一起變形（拉長就是細長箭頭）。 */
-    case 'arrow':
-      return poly([[0, h * 0.32], [w * 0.5, h * 0.32], [w * 0.5, 0], [w, cy], [w * 0.5, h], [w * 0.5, h * 0.68], [0, h * 0.68]]);
+    case 'arrow': {
+      /* 箭頭的長度固定是高度的一半，剩下的寬度都是箭身 ——
+         「箭身長度」滑桿與左右拉長都只會讓箭身變長，箭頭不會跟著變形。 */
+      const sx = w - Math.min(h * 0.5, w);
+      return poly([[0, h * 0.32], [sx, h * 0.32], [sx, 0], [w, cy], [sx, h], [sx, h * 0.68], [0, h * 0.68]]);
+    }
     /* 窄菱形：一樣的四個角，只是左右往內收 —— 直立、細長的那種 */
     case 'diamond-n':
       return poly([[cx, 0], [cx + w * 0.28, cy], [cx, h], [cx - w * 0.28, cy]]);
@@ -1214,6 +1220,7 @@ const STRETCH_SOLID_KINDS = new Set([
   'square-star-dual', 'square-heart-dual', 'square-star-cutout', 'square-heart-cutout',
   'circle-star-dual', 'circle-heart-dual', 'circle-star-cutout', 'circle-heart-cutout',
   'heart-double', 'star-double', 'arrow', 'sparkle4',
+  'blur-star', 'blur-star-rounded', 'blur-heart', 'blur-circle', 'blur-cross-star', 'blur-square',
 ]);
 const STRETCH_OUTLINE_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
@@ -1244,10 +1251,15 @@ export const drawFeatheredShapeBody = (
   if (drawCompositeShapeBody(target, kind, w, h, color, innerColor, paintTexture, compositeStyle)) return;
   // 圖形羽化已移除；保留同一個繪製入口以相容既有草稿資料。
   const path = new Path2D(shapePathD(kind, w, h));
+  if (isBlurShape(kind)) { fillBlurredPath(target, path, color, blurShapeRadius(w, h, _feather)); return; }
   target.fillStyle = color;
   target.fill(path);
   paintTexture?.(target, path);
 };
+
+/** 箭頭「箭身長度」滑桿：箭身長度＝高度的百分之幾（箭頭本身固定是高度的一半）。 */
+export const arrowShaftUi = (w: number, h: number) => Math.max(0, Math.round((w / Math.max(1e-6, h) - 0.5) * 100));
+export const arrowWidthFor = (h: number, shaftUi: number) => h * (0.5 + Math.max(0, shaftUi) / 100);
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number; glyphRatio?: number };
@@ -1277,11 +1289,16 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'star-rounded-f', kind: 'star-rounded', filled: true },
   { id: 'star-double-f', kind: 'star-double', filled: true },
   { id: 'heart-f', kind: 'heart', filled: true, ratio: 0.93 },
-  { id: 'heart-icon-f', kind: 'heart-icon', filled: true, ratio: 0.9 },
-  { id: 'heart-classic-f', kind: 'heart-classic', filled: true },
   { id: 'hexstar-f', kind: 'hexstar', filled: true },
   { id: 'arrow-f', kind: 'arrow', filled: true },
   { id: 'sparkle4-f', kind: 'sparkle4', filled: true },
+  // 整顆高斯模糊的版本（不是羽化：羽化會把邊緣往內吃，圖形看起來變小）
+  { id: 'blur-star-f', kind: 'blur-star', filled: true },
+  { id: 'blur-star-rounded-f', kind: 'blur-star-rounded', filled: true },
+  { id: 'blur-heart-f', kind: 'blur-heart', filled: true, ratio: 0.93 },
+  { id: 'blur-circle-f', kind: 'blur-circle', filled: true },
+  { id: 'blur-cross-star-f', kind: 'blur-cross-star', filled: true },
+  { id: 'blur-square-f', kind: 'blur-square', filled: true },
   /* 最後一排複合實心圖形。前兩顆是雙色實心、接著兩顆挖空，最後兩顆
      是原本愛心／星星外面再加一圈同形細線。 */
   { id: 'square-star-dual-f', kind: 'square-star-dual', filled: true },
@@ -1305,8 +1322,6 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'star8-o', kind: 'star8', filled: false },
   { id: 'star8-oval-o', kind: 'star8', filled: false, ratio: 0.62 },
   { id: 'heart-o', kind: 'heart', filled: false, ratio: 0.93 },
-  { id: 'heart-icon-o', kind: 'heart-icon', filled: false, ratio: 0.9 },
-  { id: 'heart-classic-o', kind: 'heart-classic', filled: false },
   { id: 'hexstar-o', kind: 'hexstar', filled: false },
   { id: 'diamond-n-o', kind: 'diamond-n', filled: false },
   { id: 'ellipse-o', kind: 'ellipse', filled: false, ratio: 0.68 },
@@ -1353,6 +1368,12 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   triangle: [0, 0, 1, 1],
   diamond: [0, 0, 1, 1],
   arrow: [0, 0, 1, 1],
+  'blur-star': [0.0245, 0, 0.9511, 0.9045],
+  'blur-star-rounded': [0.0245, 0, 0.9511, 0.9045],
+  'blur-heart': [0, 0, 1, 1],
+  'blur-circle': [0, 0, 1, 1],
+  'blur-cross-star': [0, 0, 1, 1],
+  'blur-square': [0, 0, 1, 1],
   'diamond-n': [0.22, 0, 0.56, 1],
   pentagon: [0.0245, 0, 0.9511, 0.9045],
   hexagon: [0.067, 0, 0.866, 1],
@@ -1627,7 +1648,9 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
 
   return (
     <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
-      <g transform={tf}>
+      {isBlurShape(item.kind) && <defs><filter id={`blur-${maskId}`} x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation={r3(VB * 0.3 * BLUR_SHAPE_DEFAULT / 100 * 0.62)} /></filter></defs>}
+      <g transform={tf} filter={isBlurShape(item.kind) ? `url(#blur-${maskId})` : undefined}>
         <path
           d={src}
           fill={solid ? 'currentColor' : 'none'}
@@ -2547,6 +2570,19 @@ export const ShapeEditorPanel: React.FC<{
           {canFeather && (
             <div className="px-2 order-5 w-full">
               {slider('羽化', layer.shapeFeather || 0, 0, 100, v => onChange({ shapeFeather: v }))}
+            </div>
+          )}
+          {isBlurShape(layer.shape) && (
+            <div className="px-2 order-5 w-full">
+              {slider('模糊', layer.shapeFeather ?? BLUR_SHAPE_DEFAULT, 0, 100, v => onChange({ shapeFeather: v }))}
+            </div>
+          )}
+          {layer.shape === 'arrow' && (
+            <div className="px-2 order-5 w-full">
+              {slider('箭身長度', arrowShaftUi(layer.width, layer.height), 0, 400, v => {
+                const width = arrowWidthFor(layer.height, v);
+                onChange({ width, x: layer.x + (layer.width - width) / 2 });
+              })}
             </div>
           )}
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
@@ -14199,11 +14235,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
     };
     if (solid) {
-      if (!drawCompositeShapeBody(ctx, fImg.shape!, fw, fh, color,
-        fImg.shapeInnerColor || '#FFFFFF', paintShapeTexture, { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth })) {
-        ctx.fill(path);
-        paintShapeTexture(ctx, path);
-      }
+      drawFeatheredShapeBody(ctx, fImg.shape!, fw, fh, fImg.shapeFeather, color, paintShapeTexture,
+        fImg.shapeInnerColor || '#FFFFFF', { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth });
     } else ctx.stroke(path);
     ctx.setLineDash([]);
     ctx.restore();
