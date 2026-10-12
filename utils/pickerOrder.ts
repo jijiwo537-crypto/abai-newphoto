@@ -41,7 +41,6 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'circle-o', 'square-o', 'rounded-o', 'diamond-o', 'triangle-o', 'diamond-n-o',
     'pentagon-o', 'hexagon-o', 'heart-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o',
     'hexstar-o', 'star8-o', 'star8-oval-o', 'cloud-oval-o', 'arrow-o', 'arrow-double-o',
-    'ellipse-o', 'cloud-o', 'bubble-mirror-o', 'bubble-o',
   ],
   line: [
     'line-h', 'line-v', 'line-d1', 'line-d2', 'line-wave', 'line-lightning-wave',
