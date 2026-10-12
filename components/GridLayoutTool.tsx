@@ -56,6 +56,7 @@ import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount,
   texOf, paintStripes,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
+  glyphInk, glyphFont, clefSizeToUi, clefSizeFromUi,
   isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -1938,6 +1939,49 @@ export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
 /** 一顆「圖案」的小圖（形狀分頁的選單與『新增圖形』清單共用同一份）。 */
 /* 實心版的十字星是「凹進去」的四角星，同樣 18px 畫出來的墨水比旁邊那些
    圖示少很多、看起來小一號 —— 所以實心版單獨放大到 28px。 */
+/* 音樂符號的按鈕小圖：這些字在每台裝置上用的系統字型都不一樣，
+   字身在字框裡的位置也不一樣（iPhone 上明顯偏一邊），用固定的 dx/dy 對不準。
+   改成在這台裝置上真的量一次墨水（glyphInk），把字畫到一張以墨水為中心的
+   小圖上，再拿它當遮罩、底色用 currentColor —— 顏色規則跟旁邊的圖示一樣。 */
+const GLYPH_ICON_BOX = 26;
+const glyphIconCache = new Map<string, string | null>();
+const centeredGlyphIcon = (s: string): string | null => {
+  if (glyphIconCache.has(s)) return glyphIconCache.get(s)!;
+  let url: string | null = null;
+  try {
+    const str = GLYPH_HOLES[s];
+    let fs = GLYPH_BTN[s]?.size ?? 18;
+    let ink = glyphInk(s, str, fs);
+    if (ink.ok) {
+      const fit = Math.min(1, (GLYPH_ICON_BOX - 2) / Math.max(ink.w, ink.h, 1e-6));
+      if (fit < 1) { fs *= fit; ink = glyphInk(s, str, fs); }
+      const D = 4, c = document.createElement('canvas');
+      c.width = c.height = GLYPH_ICON_BOX * D;
+      const g = c.getContext('2d')!;
+      g.scale(D, D);
+      g.fillStyle = '#000';
+      g.font = glyphFont(s, fs);
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(str, GLYPH_ICON_BOX / 2 + ink.ox, GLYPH_ICON_BOX / 2 + ink.oy);
+      url = c.toDataURL();
+    }
+  } catch { url = null; }
+  glyphIconCache.set(s, url);
+  return url;
+};
+const CenteredGlyphIcon: React.FC<{ s: string }> = ({ s }) => {
+  const url = centeredGlyphIcon(s);
+  if (!url) return <span className="font-bold font-sans leading-none inline-block whitespace-nowrap" style={{ fontSize: `${GLYPH_BTN[s]?.size ?? 18}px` }}>{GLYPH_HOLES[s]}</span>;
+  return (
+    <span aria-hidden style={{
+      display: 'block', width: GLYPH_ICON_BOX, height: GLYPH_ICON_BOX, backgroundColor: 'currentColor',
+      WebkitMaskImage: `url(${url})`, maskImage: `url(${url})`,
+      WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+      WebkitMaskPosition: 'center', maskPosition: 'center',
+    }} />
+  );
+};
 export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled }) => (
   <>
     {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 24 : 22} filled={filled} /> : PATTERN_LINE_ICON_KINDS.has(s) ? <ShapeLineIcon kind={s} /> : (s === 'burst-dash' || s === 'spinner') ? <RadialIcon kind={s} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
@@ -1962,7 +2006,7 @@ export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled
                             maskPosition: 'center',
                           }}
                         />
-                      ) : GLYPH_HOLES[s] ? (
+                      ) : s.startsWith('music-') && GLYPH_HOLES[s] ? <CenteredGlyphIcon s={s} /> : GLYPH_HOLES[s] ? (
                         <span
                           className="font-bold font-sans leading-none inline-block whitespace-nowrap"
                           style={{
@@ -2716,7 +2760,9 @@ export const ShapeEditorPanel: React.FC<{
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
-                {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
+                {isClefTex(layer.holeType)
+                  ? slider('大小', clefSizeToUi(layer.shapeDotSize ?? CLEF_TEX_DEFAULTS.size), 0, 100, v => onChange({ shapeDotSize: clefSizeFromUi(v) }))
+                  : slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
                 {isClefTex(layer.holeType)
                   ? slider('間距', clefGapToUi(layer.shapeDotGap ?? CLEF_TEX_DEFAULTS.gap), 0, 100, v => onChange({ shapeDotGap: clefGapFromUi(v) }))
                   : slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
@@ -9386,7 +9432,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       shapeItemId: it.id,
       // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
       holeType: (it as HoleShapeItem).hole,
-      ...(isClefTex((it as HoleShapeItem).hole) ? { shapeDotGap: CLEF_TEX_DEFAULTS.gap, shapeStripeN: CLEF_TEX_DEFAULTS.stripeN } : {}),
+      ...(isClefTex((it as HoleShapeItem).hole) ? { shapeDotSize: CLEF_TEX_DEFAULTS.size, shapeDotGap: CLEF_TEX_DEFAULTS.gap, shapeStripeN: CLEF_TEX_DEFAULTS.stripeN } : {}),
       shapeFilled: it.filled,
       shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
       shapeLineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')

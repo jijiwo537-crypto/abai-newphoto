@@ -72,7 +72,7 @@ import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolStickerInk, m
 import {
   getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio,
   isTextHole, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, fillShapePath, clipShapePieces, patternPathBounds,
-  isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
+  isClefTex, CLEF_TEX_DEFAULTS, clefSizeToUi, clefSizeFromUi, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
   drawHoleShape, paintDots, paintTex, texOf, glowAmount,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
@@ -3425,7 +3425,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
       return {
         id, type: 'shape', kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
-        ...(isClefTex(it.hole) ? { dotGap: CLEF_TEX_DEFAULTS.gap, stripeN: CLEF_TEX_DEFAULTS.stripeN } : null),
+        ...(isClefTex(it.hole) ? { dotSize: CLEF_TEX_DEFAULTS.size, dotGap: CLEF_TEX_DEFAULTS.gap, stripeN: CLEF_TEX_DEFAULTS.stripeN } : null),
         ...(isBackdropMask(it.kind)?maskDefaults(it.kind):{}),
         lineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
@@ -11368,7 +11368,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   setObjects(prev => [...prev, {
                     id, type: 'shape',
                     kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
-                    ...(isClefTex(it.hole) ? { dotGap: CLEF_TEX_DEFAULTS.gap, stripeN: CLEF_TEX_DEFAULTS.stripeN } : {}),
+                    ...(isClefTex(it.hole) ? { dotSize: CLEF_TEX_DEFAULTS.size, dotGap: CLEF_TEX_DEFAULTS.gap, stripeN: CLEF_TEX_DEFAULTS.stripeN } : {}),
                     /* 框線的粗細以「新增時的長邊」為準，之後拉大拉小都不變 */
                     lineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
@@ -11688,7 +11688,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               </div>
                             ) : (
                               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
-                                {shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
+                                {isClefTex(sel.hole)
+                                  ? shapeSlider('大小', clefSizeToUi(sel.dotSize ?? CLEF_TEX_DEFAULTS.size), 0, 100, (v: number) => patch({ dotSize: clefSizeFromUi(v) }))
+                                  : shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
                                 {isClefTex(sel.hole)
                                   ? shapeSlider('間距', clefGapToUi(sel.dotGap ?? CLEF_TEX_DEFAULTS.gap), 0, 100, (v: number) => patch({ dotGap: clefGapFromUi(v) }))
                                   : shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }))}
