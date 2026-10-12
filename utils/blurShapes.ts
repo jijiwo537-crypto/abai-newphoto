@@ -6,10 +6,10 @@
  *
  * 畫法：在一張小畫布上用三次盒狀模糊（≈ 高斯）糊一次再拉大貼上（見 drawBlurredShape）。
  * 不用 ctx.filter = 'blur()'：iPhone 的 Safari 對它支援不穩。 */
-export const BLUR_SHAPE_KINDS = new Set(['blur-star', 'blur-star-rounded', 'blur-heart', 'blur-circle', 'blur-cross-star', 'blur-square']);
+export const BLUR_SHAPE_KINDS = new Set(['blur-star', 'blur-star-rounded', 'blur-heart', 'blur-circle', 'blur-cross-star', 'blur-square', 'blur-sparkle4']);
 export const isBlurShape = (kind?: string) => !!kind && BLUR_SHAPE_KINDS.has(kind);
 /** 模糊滑桿的預設值（畫面上的 0～100） */
-export const BLUR_SHAPE_DEFAULT = 10;
+export const BLUR_SHAPE_DEFAULT = 30;
 
 /** 模糊半徑（圖形自己的座標單位）。
  *  滑桿看起來是 0～100，實際對應舊版滑桿的 5～20（0 ＝ 一點點糊，100 ＝ 短邊的 6%）。 */
