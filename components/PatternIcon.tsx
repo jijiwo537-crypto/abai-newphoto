@@ -1,6 +1,6 @@
 import React from 'react';
 import { Circle, Star, Square, Type } from 'lucide-react';
-import { CrossStarIcon, VortexIcon, ShapeLineIcon, PATTERN_LINE_ICON_KINDS } from './GridLayoutTool';
+import { CrossStarIcon, VortexIcon, ShapeLineIcon, RadialIcon, PATTERN_LINE_ICON_KINDS } from './GridLayoutTool';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
 import { GLYPH_HOLES, GLYPH_BTN, holeImgRatio } from '../utils/holeShapes';
 
@@ -18,7 +18,7 @@ export const patternIconUrl=(source:string)=>{
 /** 創意拼圖「圖案」按鈕上的小圖示。圖案選單與 order.html（排順序的小工具）共用。 */
 export const PatternIcon = ({ s }: { s: string }) => (
   <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : PATTERN_LINE_ICON_KINDS.has(s) ? <ShapeLineIcon kind={s} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : PATTERN_LINE_ICON_KINDS.has(s) ? <ShapeLineIcon kind={s} /> : (s === 'burst-dash' || s === 'spinner') ? <RadialIcon kind={s} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
       /* 去背的圖：拿它當遮罩、底色用 currentColor，
          顏色就跟旁邊那些圖示走同一條規則 ——
          沒選中時是暗的（#555），選中才變白。
@@ -47,6 +47,7 @@ export const PatternIcon = ({ s }: { s: string }) => (
         className="font-bold font-sans leading-none inline-block whitespace-nowrap"
         style={{
           fontSize: `${GLYPH_BTN[s]?.size ?? 18}px`,
+          ...(s === "question" ? { fontFamily: "-apple-system, \"SF Pro Text\", \"Helvetica Neue\", sans-serif", fontWeight: 500 } : {}),
           transform: (GLYPH_BTN[s]?.dx || GLYPH_BTN[s]?.dy)
             ? `translate(${GLYPH_BTN[s]?.dx ?? 0}px, ${GLYPH_BTN[s]?.dy ?? 0}px)`
             : undefined,

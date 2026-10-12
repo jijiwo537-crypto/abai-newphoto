@@ -1,4 +1,4 @@
-import { HEART_MAIN, HEART_ICON, traceUnitShape, hexStarPoints } from './heartShapes';
+import { HEART_MAIN, HEART_ICON, traceUnitShape, hexStarPoints, traceRadial } from './heartShapes';
 /**
  * 「圖案」的畫法：路徑、字符、去背圖，全部收在這裡。
  *
@@ -34,6 +34,17 @@ export const GLYPH_HOLES: Record<string, string> = {
   theta:    '𝝑𝝔',  // 𝝑𝝔
   yaya:     'ॽ͙ॽ͙ॽ͙',  // ॽ͙ॽ͙ॽ͙
   zzz:      '☡zᶻ',  // ☡zᶻ
+  // 問號：用 iPhone 的系統字型畫（見 glyphFont），看起來就跟手機上打出來的一樣
+  question: '?',
+  // 音樂符號（\uFE0E：固定用文字樣式畫，不要變成彩色 emoji）
+  'music-quarter': '\u2669\uFE0E',   // ♩ 四分音符
+  'music-eighth':  '\u266A\uFE0E',   // ♪ 八分音符
+  'music-beamed':  '\u266B\uFE0E',   // ♫ 連結八分音符
+  'music-sixteenth': '\u266C\uFE0E', // ♬ 連結十六分音符
+  'music-clef':    '\uD834\uDD1E',   // 𝄞 高音譜號
+  'music-flat':    '\u266D\uFE0E',   // ♭ 降記號
+  'music-natural': '\u266E\uFE0E',   // ♮ 還原記號
+  'music-sharp':   '\u266F\uFE0E',   // ♯ 升記號
 };
 
 /** 這個洞是用文字畫的（而不是用路徑畫的）嗎 */
@@ -46,6 +57,8 @@ export const GLYPH_BTN: Record<string, { size?: number; dx?: number; dy?: number
   darkstar: { size: 19.8, dx: 0.1 },            // 18 × 1.1
   // ⊹ 的字身在字框裡本來就偏小，放大 1.5 倍（18 → 27）才看得清楚
   sparkle:  { size: 27 },
+  'music-clef': { size: 22 },
+  question: { size: 21 },
   // 下面這幾顆是多個字組成的，照 18px 畫會撐出格子
   theta:    { size: 15, dx: 0.2, dy: -0.3 },
   yaya:     { size: 13, dx: 0.5, dy: -1 },
@@ -93,7 +106,9 @@ export const holeGlyph = (holeType: string, customText: string, h?: any) =>
 /** 字符圖案要用的字型 —— 畫、量、選取框、命中判定全部共用這一支，
  *  不然「畫的是這支字型、量的是另一支」，框跟圖案就對不起來。 */
 export const glyphFont = (holeType: string, sz: number) =>
-  (holeType === 'love' || holeType === 'love3')
+  holeType === 'question'
+    ? `500 ${sz}px -apple-system, "SF Pro Text", "SF Pro Display", "Helvetica Neue", "Inter", sans-serif`
+  : (holeType === 'love' || holeType === 'love3')
     ? `bold ${sz * 1.05}px "Inter", "Segoe UI", sans-serif`
     : `500 ${sz}px "Inter", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
 
@@ -431,6 +446,11 @@ export const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: n
       ctx.quadraticCurveTo(cx, cy, cx + r, cy);
       ctx.quadraticCurveTo(cx, cy, cx, cy - r);
       break;
+    /* 虛線星芒、轉圈圈（utils/heartShapes.ts 的 radialParts） */
+    case 'burst-dash':
+    case 'spinner':
+      traceRadial(ctx, type, cx, cy, r);
+      return;
     case 'hexstar': {
       const pts = hexStarPoints(cx, cy, r, r);
       ctx.moveTo(...pts[0]); for (const p of pts.slice(1)) ctx.lineTo(...p);
@@ -751,7 +771,10 @@ export const HOLE_ITEM_CROSS_O: HoleShapeItem = { id: 'hole-cross-star-o', kind:
 export const HOLE_ITEMS_EXTRA: HoleShapeItem[] =
   /* random-num（那顆「(9)」）拿掉了 —— 圖形不需要一顆會變的編號 */
   ['flower', 'snow', 'burst', 'love', 'love3', 'pic333', 'vortex',
-   'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'abai']
+   'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'abai',
+   // 問號與音樂符號（音樂符號只做圖形，不放進圖案選單）
+   'question', 'music-quarter', 'music-eighth', 'music-beamed', 'music-sixteenth',
+   'music-clef', 'music-flat', 'music-natural', 'music-sharp']
     .map(h => ({ id: `hole-${h}`, kind: 'hole' as const, hole: h, filled: true }));
 
 /**

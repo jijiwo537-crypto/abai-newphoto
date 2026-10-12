@@ -11,7 +11,7 @@ import { idleDefaults } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
-import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints } from '../utils/heartShapes';
+import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints, radialD, radialParts, radialPartD, spinnerAlpha } from '../utils/heartShapes';
 import { isBlurShape, blurShapeBaseD, drawBlurredShape, BLUR_SHAPE_DEFAULT } from '../utils/blurShapes';
 import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,warmBackdropMasks} from '../utils/backdropMasks';
@@ -991,6 +991,10 @@ export const shapePathD = (
     /* 以前圖案按鈕上那顆愛心（lucide 圖示）的樣子 */
     case 'heart-icon':
       return unitShapeD(HEART_ICON, 0, 0, w, h, true);
+    /* 虛線星芒、轉圈圈：一根根圓頭膠囊（utils/heartShapes.ts） */
+    case 'burst-dash':
+    case 'spinner':
+      return radialD(kind, cx, cy, a, b);
     /* 六角星：兩個正三角形疊起來 */
     case 'hexstar':
       return poly(hexStarPoints(cx, cy, a, b));
@@ -1260,6 +1264,17 @@ export const drawFeatheredShapeBody = (
   const path = new Path2D(shapePathD(kind, w, h));
   // 模糊圖形不吃紋理（編輯頁也沒有紋理那一格）
   if (isBlurShape(kind)) { drawBlurredShape(target, kind, w, h, color, _feather, shapePathD); return; }
+  // 轉圈圈：每一根的濃淡不同（12 點鐘最淡，順時針一路變深）
+  if (kind === 'spinner') {
+    const a0 = target.globalAlpha;
+    target.fillStyle = color;
+    radialParts('spinner').forEach((part, i) => {
+      target.globalAlpha = a0 * spinnerAlpha(i);
+      target.fill(new Path2D(radialPartD(part, w / 2, h / 2, w / 2, h / 2)));
+    });
+    target.globalAlpha = a0;
+    return;
+  }
   target.fillStyle = color;
   target.fill(path);
   paintTexture?.(target, path);
@@ -1310,6 +1325,8 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'hexstar-f', kind: 'hexstar', filled: true },
   { id: 'arrow-f', kind: 'arrow', filled: true },
   { id: 'arrow-double-f', kind: 'arrow-double', filled: true, ratio: 0.5 },
+  { id: 'burst-dash-f', kind: 'burst-dash', filled: true },
+  { id: 'spinner-f', kind: 'spinner', filled: true },
   { id: 'sparkle4-f', kind: 'sparkle4', filled: true },
   // 整顆高斯模糊的版本（不是羽化：羽化會把邊緣往內吃，圖形看起來變小）
   { id: 'blur-star-f', kind: 'blur-star', filled: true },
@@ -1390,6 +1407,8 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   diamond: [0, 0, 1, 1],
   arrow: [0, 0, 1, 1],
   'arrow-double': [0, 0, 1, 1],
+  'burst-dash': [0, 0, 1, 1],
+  spinner: [0, 0, 1, 1],
   'blur-sparkle4': [0, 0, 1, 1],
   'blur-star': [0.0245, 0, 0.9511, 0.9045],
   'blur-star-rounded': [0.0245, 0, 0.9511, 0.9045],
@@ -1717,6 +1736,11 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     + (item.rot ? ` rotate(${item.rot})` : '')
     + ` translate(${r3(-ccx)} ${r3(-ccy)})`;
 
+  if (item.kind === 'spinner') return (
+    <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} aria-hidden>
+      {radialParts('spinner').map((p, i) => <path key={i} d={radialPartD(p, VB / 2, VB / 2, VB / 2 - 1, VB / 2 - 1)} fill="currentColor" opacity={spinnerAlpha(i)} />)}
+    </svg>
+  );
   return (
     <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
       {isBlurShape(item.kind) && <defs><filter id={`blur-${maskId}`} x="-50%" y="-50%" width="200%" height="200%">
@@ -1845,6 +1869,12 @@ export const ShapeLineIcon = ({ kind, size = 18, strokeWidth = 2 }: { kind: stri
   </svg>
 );
 export const PATTERN_LINE_ICON_KINDS = new Set(['heart', 'heart-icon', 'heart-classic', 'hexstar', 'sparkle4']);
+/** 虛線星芒、轉圈圈的圖案按鈕：實心小圖（線條版看不清楚） */
+export const RadialIcon = ({ kind, size = 24 }: { kind: string; size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+    {radialParts(kind).map((p, i) => <path key={i} d={radialPartD(p, 12, 12, 11, 11)} fill="currentColor" opacity={kind === 'spinner' ? spinnerAlpha(i) : 1} />)}
+  </svg>
+);
 
 // --- 自製單線旋渦圖標 ---
 export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
@@ -1858,7 +1888,7 @@ export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
    圖示少很多、看起來小一號 —— 所以實心版單獨放大到 28px。 */
 export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled }) => (
   <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 24 : 22} filled={filled} /> : PATTERN_LINE_ICON_KINDS.has(s) ? <ShapeLineIcon kind={s} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 24 : 22} filled={filled} /> : PATTERN_LINE_ICON_KINDS.has(s) ? <ShapeLineIcon kind={s} /> : (s === 'burst-dash' || s === 'spinner') ? <RadialIcon kind={s} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
                            沒選中時是暗的（#555），選中才變白。
@@ -1885,6 +1915,7 @@ export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled
                           className="font-bold font-sans leading-none inline-block whitespace-nowrap"
                           style={{
                             fontSize: `${GLYPH_BTN[s]?.size ?? 18}px`,
+                            ...(s === "question" ? { fontFamily: "-apple-system, \"SF Pro Text\", \"Helvetica Neue\", sans-serif", fontWeight: 500 } : {}),
                             transform: (GLYPH_BTN[s]?.dx || GLYPH_BTN[s]?.dy)
                               ? `translate(${GLYPH_BTN[s]?.dx ?? 0}px, ${GLYPH_BTN[s]?.dy ?? 0}px)`
                               : undefined,

@@ -66,3 +66,46 @@ export const hexStarPoints = (cx: number, cy: number, rx: number, ry: number): [
   }
   return pts;
 };
+
+/* ── 放射狀的膠囊：「虛線星芒」與「載入中圓圈」 ─────────────────────────
+   座標在 -1..1 的單位圓裡，每一個膠囊是一圈多邊形（兩端是半圓）。
+   圖形（shapePathD）與圖案（drawShapePath）都從這裡取點，所以兩邊長得一樣。 */
+type Pt = [number, number];
+const capsule = (theta: number, r0: number, r1: number, hw: number): Pt[] => {
+  const c = Math.cos(theta), s = Math.sin(theta), pts: Pt[] = [];
+  const N = 14;
+  for (let i = 0; i <= N; i++) { const t = theta - Math.PI / 2 + Math.PI * i / N; pts.push([c * r1 + Math.cos(t) * hw, s * r1 + Math.sin(t) * hw]); }
+  for (let i = 0; i <= N; i++) { const t = theta + Math.PI / 2 + Math.PI * i / N; pts.push([c * r0 + Math.cos(t) * hw, s * r0 + Math.sin(t) * hw]); }
+  return pts;
+};
+/** 虛線星芒（像圖案的 ✳︎，但每一根是三段虛線）：8 根 × 3 段 */
+const BURST_DASH: Pt[][] = (() => {
+  const hw = 0.075, out: Pt[][] = [];
+  for (let i = 0; i < 8; i++) {
+    const th = -Math.PI / 2 + i * Math.PI / 4;
+    for (const [a, b] of [[0.24, 0.38], [0.53, 0.66], [0.81, 1 - hw]] as const) out.push(capsule(th, a, b, hw));
+  }
+  return out;
+})();
+/** 載入中的圓圈（像 iPhone 的轉圈圈）：12 根圓頭短棒，從 12 點鐘方向開始順時針排 */
+const SPINNER: Pt[][] = (() => {
+  const hw = 0.085, out: Pt[][] = [];
+  for (let i = 0; i < 12; i++) out.push(capsule(-Math.PI / 2 + i * Math.PI / 6, 0.5, 1 - hw, hw));
+  return out;
+})();
+export const RADIAL_KINDS = new Set(['burst-dash', 'spinner']);
+export const radialParts = (kind: string): Pt[][] => kind === 'spinner' ? SPINNER : BURST_DASH;
+/** 轉圈圈每一根的濃淡：12 點鐘最淡，順時針一路變深，11 點鐘最深 */
+export const spinnerAlpha = (i: number) => 0.22 + 0.78 * i / 11;
+/** 某一根膠囊的 SVG 路徑（放進 cx,cy 為中心、半徑 rx,ry 的橢圓） */
+export const radialPartD = (part: Pt[], cx: number, cy: number, rx: number, ry: number) =>
+  'M ' + part.map(p => `${Math.round((cx + p[0] * rx) * 1000) / 1000} ${Math.round((cy + p[1] * ry) * 1000) / 1000}`).join(' L ') + ' Z';
+export const radialD = (kind: string, cx: number, cy: number, rx: number, ry: number) =>
+  radialParts(kind).map(p => radialPartD(p, cx, cy, rx, ry)).join(' ');
+export const traceRadial = (ctx: CanvasRenderingContext2D, kind: string, cx: number, cy: number, r: number) => {
+  for (const part of radialParts(kind)) {
+    ctx.moveTo(cx + part[0][0] * r, cy + part[0][1] * r);
+    for (const p of part.slice(1)) ctx.lineTo(cx + p[0] * r, cy + p[1] * r);
+    ctx.closePath();
+  }
+};

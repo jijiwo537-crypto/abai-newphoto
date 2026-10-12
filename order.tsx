@@ -10,7 +10,7 @@ import { ShapeGlyph, HoleGlyph, shapePickerSections } from './components/GridLay
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
-const NEW_IDS = new Set<string>([]);
+const NEW_IDS = new Set<string>(['question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-quarter', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-music-flat', 'hole-music-natural', 'hole-music-sharp']);
 const STORE = 'abai-order-tool-v1';
 const HOLD_MS = 280;
 

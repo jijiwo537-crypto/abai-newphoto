@@ -12,7 +12,8 @@ export const PATTERN_ORDER: string[] = [
   'hexstar', 'burst', 'snow', 'flower', 'love',
   'love3', 'pic333', 'vortex', 'seagrass', 'random-num',
   'darkstar', 'sparkle', 'aster', 'theta', 'zzz',
-  'text', 'sparkle4',
+  'text', 'sparkle4', 'question', 'burst-dash',
+  'spinner',
 ];
 
 export const SHAPE_SECTIONS = [
@@ -33,7 +34,9 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'square-star-dual-f', 'square-heart-dual-f', 'square-star-cutout-f', 'square-heart-cutout-f', 'arrow-f', 'arrow-double-f',
     'circle-star-dual-f', 'circle-heart-dual-f', 'circle-star-cutout-f', 'circle-heart-cutout-f', 'hole-burst', 'hole-snow',
     'hole-flower', 'hole-darkstar', 'hole-aster', 'hole-vortex', 'hole-sparkle', 'hole-seagrass',
-    'hole-theta', 'hole-abai',
+    'hole-theta', 'hole-abai', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-quarter',
+    'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-music-flat', 'hole-music-natural',
+    'hole-music-sharp',
   ],
   outline: [
     'circle-o', 'square-o', 'rounded-o', 'diamond-o', 'triangle-o', 'diamond-n-o',
