@@ -53,7 +53,7 @@ import {
 } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
-  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount,
+  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount, glowToUi, glowFromUi,
   texOf, paintStripes,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
   glyphInk, glyphFont, clefSizeToUi, clefSizeFromUi,
@@ -2649,9 +2649,9 @@ export const ShapeEditorPanel: React.FC<{
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
           {!isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
-              {/* 滑桿 100 ＝ 發光強度 1（最大值是以前的兩倍）；已放好的圖形外觀不變 */}
-              {slider('發光', Math.min(100, Math.round(glowAmount(layer.shapeGlow as any) * 100)), 0, 100,
-                v => onChange({ shapeGlow: v } as any))}
+              {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
+              {slider('發光', glowToUi(layer.shapeGlow as any), 0, 100,
+                v => onChange({ shapeGlow: glowFromUi(v) } as any))}
             </div>
             <ColorPick compact label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
               colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })}

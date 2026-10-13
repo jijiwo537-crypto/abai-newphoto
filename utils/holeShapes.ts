@@ -840,5 +840,10 @@ export const glowAmount = (g: number | boolean | undefined): number => {
   if (!g) return 0;
   const v = Number(g);
   if (!isFinite(v) || v <= 0) return 0;
-  return Math.min(100, v) / 100;
+  return Math.min(GLOW_STORE_MAX, v) / 100;
 };
+/** 發光存的值最大到 300（＝強度 3）：圖形的發光滑桿 100 對應這裡的 300 */
+export const GLOW_STORE_MAX = 300;
+/** 發光滑桿（畫面上 0～100）↔ 存的值（0～300） */
+export const glowToUi = (g: number | boolean | undefined) => Math.min(100, Math.round(glowAmount(g) * 100 / 3));
+export const glowFromUi = (v: number) => Math.max(0, Math.min(100, v)) * 3;

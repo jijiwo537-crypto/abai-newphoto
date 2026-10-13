@@ -73,7 +73,7 @@ import {
   getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio,
   isTextHole, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, fillShapePath, clipShapePieces, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, clefSizeToUi, clefSizeFromUi, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
-  drawHoleShape, paintDots, paintTex, texOf, glowAmount,
+  drawHoleShape, paintDots, paintTex, texOf, glowAmount, glowToUi, glowFromUi,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 const drawTextShape: typeof drawTextShapeRaw = (ctx,type,text,x,y,size,fill,out=false,angle=0) =>
@@ -576,6 +576,8 @@ const shapeColorRow = (label: string, value: string, onOpen: () => void) => (
   </div>
 );
 
+/** 舊草稿的圖案發光只有「開」：換成滑桿上的 50，光暈大小跟改版前開啟時一樣 */
+const HOLE_GLOW_LEGACY_ON = 50;
 /* 創意拼圖的圖形一律預設白色（跨頁拼圖維持原本的預設色）。
    雙色圖形外面白色、裡面的圖案改用原本外框那個灰綠色，兩層才分得出來。
    遮罩類圖形不吃這個顏色，維持原本的預設。 */
@@ -2742,7 +2744,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [symmetryEnabled, setSymmetryEnabled] = useState(true);
   /* 圖案發光：預設關閉。開啟後每個圖案周圍散出一圈光，
      跟圖片、文字的發光同一種感覺（同一套「三段模糊疊起來」的做法）。 */
-  const [glowMode, setGlowMode] = useState<'off' | 'both' | 'mask' | 'image'>('off');
+  /* 圖案發光改成一根滑桿（畫面上 0～100，0 ＝ 關閉），強度跟圖形的發光同一套：
+     滑桿 v → 強度 v×3/100（glowFromUi），光暈半徑 ＝ 圖案大小 × 0.045 × (1,2,3) × 強度。
+     glowMode 只是由它推出來的「有沒有開」，舊草稿存的是 glowMode，讀到「開」就當 50
+     （跟改版前開啟時的光一模一樣大）。 */
+  const [holeGlow, setHoleGlow] = useState(0);
+  const glowMode = (holeGlow > 0 ? 'image' : 'off') as 'off' | 'both' | 'mask' | 'image';
   /* 預設就跟遮罩同色 —— 一開就是同步的，
      使用者不必先去動一次遮罩顏色才對得起來。 */
   const [holeGlowColor, setHoleGlowColor] = useState(CREATIVE_MASK_DEFAULT);
@@ -2974,7 +2981,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (st.stripeB !== undefined) setStripeB(st.stripeB);
     if (st.symmetryEnabled !== undefined) setSymmetryEnabled(st.symmetryEnabled);
     // 'mask' 是舊版才有的選項，讀到就當「開啟」
-    if (st.glowMode !== undefined) setGlowMode(st.glowMode === 'off' ? 'off' : 'image');
+    if (st.holeGlow !== undefined) setHoleGlow(st.holeGlow);
+    else if (st.glowMode !== undefined) setHoleGlow(st.glowMode === 'off' ? 0 : HOLE_GLOW_LEGACY_ON);
     if (st.holeGlowColor !== undefined) setHoleGlowColor(st.holeGlowColor);
     if (st.glowIdle !== undefined) setGlowIdle(st.glowIdle);
     if (st.glowAmp !== undefined) setGlowAmp(st.glowAmp);
@@ -5328,7 +5336,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
     stripeN, stripeDir, stripeA, stripeB, holeType, customText, getHoleSize, holeAngle, maskScale,
     objects, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching,
-    fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+    fxTick, linkMode, linkColor, glowMode, holeGlow, holeGlowColor, glowIdle]);
   // Committing the selected slider changes React's callback identity, but not
   // the cached scene endpoints. Only actual scene edits invalidate those.
   const regionSceneValue=[imageState,imageState?.img?.src,maskImageState?.img?.src,
@@ -5336,7 +5344,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     swapSource,selectedRegionPhoto,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,
     patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,
     objects,shapeSel,selectedObj,selectedTarget,selectedPatternSide,baseSelected,editingTextId,guides,tuningEdge,objDragging,objPinching,objStretching,
-    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle];
+    fxTick,linkMode,linkColor,glowMode,holeGlow,holeGlowColor,glowIdle];
   regionSceneKey.current=JSON.stringify(regionSceneValue,compactSceneValue);
   // Selection, pills, gestures and tabs are UI, not scene pixels. Including
   // them invalidated 2/3 full-scene endpoint captures on every navigation.
@@ -5347,18 +5355,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     photoRegion&&{...photoRegion,photos:photoRegion.photos.map((p,j)=>j===(selectedRegionPhotoRef.current??0)?{...p,fx:{},zoom:1,offsetX:0,offsetY:0}:p)},
     layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,
     stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,
-    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,selectedRegionPhoto,baseSelected
+    fxTick,linkMode,linkColor,glowMode,holeGlow,holeGlowColor,glowIdle,selectedRegionPhoto,baseSelected
   ],compactSceneValue),
-  [imageState,photoRegion,selectedRegionPhoto,baseSelected,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle]);
+  [imageState,photoRegion,selectedRegionPhoto,baseSelected,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,fxTick,linkMode,linkColor,glowMode,holeGlow,holeGlowColor,glowIdle]);
   regionGpuSceneKey.current=gpuSceneFingerprint;
   // 圖片物件那一條（objComposite）用的場景鑰匙：物件另外逐顆比（被選的那顆不含效果）
   const objCompositeBase=useMemo(()=>JSON.stringify([
     imageState,imageState?.img?.src,maskImageState?.img?.src,photoRegion,
     layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,
     stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,
-    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,selectedRegionPhoto,baseSelected
+    fxTick,linkMode,linkColor,glowMode,holeGlow,holeGlowColor,glowIdle,selectedRegionPhoto,baseSelected
   ],compactSceneValue),
-  [imageState,photoRegion,selectedRegionPhoto,baseSelected,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle]);
+  [imageState,photoRegion,selectedRegionPhoto,baseSelected,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,fxTick,linkMode,linkColor,glowMode,holeGlow,holeGlowColor,glowIdle]);
   objCompositeBaseRef.current=objCompositeBase;
   /* 選到圖片物件、在編輯分頁而且閒著：先把黑／白兩張場景拍好（見 objComposite），
      第一次碰滑桿才不用當場重拍兩次整個拼圖。 */
@@ -5377,8 +5385,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const backdropSceneFingerprint=useMemo(()=>JSON.stringify([
     imageState,photoRegion,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,
     stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,
-    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,swapSource
-  ],compactSceneValue),[imageState,photoRegion,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,swapSource]);
+    fxTick,linkMode,linkColor,glowMode,holeGlow,holeGlowColor,glowIdle,swapSource
+  ],compactSceneValue),[imageState,photoRegion,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,fxTick,linkMode,linkColor,glowMode,holeGlow,holeGlowColor,glowIdle,swapSource]);
   const lastPatternPaintRef = useRef<{identity:object;holes:any[];scale:number}|null>(null);
   const backdropPrefix=useRef<{key:string;canvas:HTMLCanvasElement}|null>(null);
   useEffect(()=>()=>{if(backdropPrefix.current)backdropPrefix.current.canvas.width=backdropPrefix.current.canvas.height=1;},[]);
@@ -6412,11 +6420,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // evicted one another within the same frame, recomputing blur continuously.
     // The master is always at least as large as the largest drawn instance.
     let glowRasterSize = 0;
-    /** 圖案發光的強度：光暈半徑是原本的 3 倍 */
-    const PATTERN_GLOW_GAIN = 3;
+    /** 圖案發光的強度（跟圖形同一套：滑桿 100 ＝ 3） */
+    const holeGlowAmt = glowAmount(glowFromUi(holeGlow));
+    /** 光暈的半邊要裝得下：本體 0.5×sz ＋ 3σ（σ ＝ 最大那段模糊的一半 ＝ 0.0675×強度×sz） */
+    const glowHalf = (sz: number) => sz * ((isTextHole(holeType) ? 0.8 : 0.55) + 0.21 * holeGlowAmt);
     const glowBmp = (h: any, sz: number, gcol: string) => {
       const szQ = Math.pow(SZ_STEP, Math.ceil(Math.log(Math.max(sz, glowRasterSize)) / Math.log(SZ_STEP)));
-      const key = `${holeType}|${isTextHole(holeType) ? holeGlyph(holeType, customText, h) : ''}|${szQ.toFixed(3)}|${gcol}`;
+      const key = `${holeType}|${isTextHole(holeType) ? holeGlyph(holeType, customText, h) : ''}|${szQ.toFixed(3)}|${gcol}|${holeGlowAmt.toFixed(3)}`;
       const cache = glowBmpRef.current;
       const hit = cache.get(key);
       if (hit) { cache.delete(key); cache.set(key, hit); return hit; }   // 用到就移到最後（LRU）
@@ -6425,9 +6435,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          再往外**透明度就是 0**（Skia 的模糊是有限支撐的盒狀近似）。
          本體最寬到 sz/2，所以半邊 0.95×sz 已經多留 6% 的餘裕。
          文字類的字符可能比 sz 還寬，維持原本的寬鬆值。 */
-      /* 光暈改成原本的 3 倍寬（PATTERN_GLOW_GAIN），半邊也跟著留大：
-         最遠那顆有顏色的像素約在 0.5×sz（本體）＋ 3σ（≈0.3×sz），留到 1.2×sz。 */
-      const half = isTextHole(holeType) ? szQ * 1.5 : szQ * 1.2;
+      const half = glowHalf(szQ);
       const side = Math.ceil(half * 2) + 8;
       const tmp = document.createElement('canvas');
       tmp.width = side; tmp.height = side;
@@ -6440,7 +6448,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       tg.shadowColor = gcol;
       tg.shadowOffsetX = casterOffset;
       for (const kk of [1, 2, 3]) {
-        tg.shadowBlur = szQ * 0.045 * 0.5 * kk * PATTERN_GLOW_GAIN;
+        tg.shadowBlur = szQ * 0.045 * kk * holeGlowAmt;   // 跟圖形的 shapeGlowBlurs × 強度 同一條式子
         strokeHoleShape(tg, h, szQ, 0, side / 2 - casterOffset, side / 2, gcol);
       }
       /* 本體在這裡就先挖掉（滿透明度），剩下的才是純粹的一圈光暈。
@@ -6582,7 +6590,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if (x + pad > bx1) bx1 = x + pad;
         if (y + pad > by1) by1 = y + pad;
       };
-      const halfOf = (sz: number) => (isTextHole(holeType) ? sz * 1.5 : sz * 1.2) + 6;
+      const halfOf = (sz: number) => glowHalf(sz) + 6;
       items.forEach(it => grow(it.x, it.y, halfOf(it.sz)));
       if (pairs.length) {
         const pad = LINK_W * 8;
@@ -6607,7 +6615,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
          現在先算一個簽名，一樣就直接把上一次畫好的那一層貼回去（一次 drawImage）。
          圖案真的動了（大小／數量／角度）簽名才會變，那時候本來就該重算。 */
-      const sig = `${side}|${glowMode}|${glowColorOf(side)}|${linkMode}|${linkColor || ''}|${linkGlowColor}`
+      const sig = `${side}|${glowMode}|${holeGlow}|${glowColorOf(side)}|${linkMode}|${linkColor || ''}|${linkGlowColor}`
         + `|${LINK_W.toFixed(3)}|${holeType}|${isTextHole(holeType) ? customText : ''}|${s.toFixed(4)}`
         + `|${g.canvas.width}x${g.canvas.height}|${g.getTransform().e},${g.getTransform().f}`
         + '|I' + items.map(it => `${it.x.toFixed(1)},${it.y.toFixed(1)},${it.sz.toFixed(1)},${it.ang.toFixed(1)},${(it.a * glowBeat(it.h)).toFixed(3)}`).join(';')
@@ -6924,7 +6932,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.drawImage(lmc,0,0,maskStorageW,maskStorageH,offs.mx+maskX-maskGuard,offs.my+maskY-maskGuard,maskStorageW,maskStorageH);
       ctx.restore();
     };
-    const cutMaskKey = isMain ? JSON.stringify([maskKey, maskX,maskY,lmW,lmH,layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlowColor,
+    const cutMaskKey = isMain ? JSON.stringify([maskKey, maskX,maskY,lmW,lmH,layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlow, holeGlowColor,
       linkMode !== 'none' ? animRef.current?.t : null,
       holes.filter(h => !h.side || h.side === 'both' || h.side === 'mask')
         .map(h => [h.id,h.side,h.manuallyPlaced,h.randomNumber,getHoleSize(h),h.angle,hA(h),glowBeat(h),glowBeatLink(h)])]) : '';
@@ -8380,7 +8388,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
   }, [imageState, photoRegion, swapSource, selectedRegionPhoto, activeTab, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
-      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle, patternSceneIdentity,backdropSceneFingerprint,lutRevision,stableSceneKey]);
+      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlow, holeGlowColor, glowIdle, patternSceneIdentity,backdropSceneFingerprint,lutRevision,stableSceneKey]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
      離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話
@@ -8431,7 +8439,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash, symmetryEnabled,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
-        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
+        glowMode, holeGlow, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
         objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
         __histKey: histKey || initialState?.__histKey || null,
       });
@@ -8440,7 +8448,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     onHome(choice === 'save');
   }, [onRequestExit, onHome, initialState, histKey, layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter,
       holeAngle, holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash,
-      symmetryEnabled, stripeN, stripeDir, stripeAPick, stripeB, glowMode, holeGlowColor,
+      symmetryEnabled, stripeN, stripeDir, stripeAPick, stripeB, glowMode, holeGlow, holeGlowColor,
       glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor]);
 
   const recordHistory = useCallback(async () => {
@@ -8495,7 +8503,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash, symmetryEnabled,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
-        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
+        glowMode, holeGlow, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
         /* 新增進來的內容（圖片／文字／圖形）也要一起記 —— 以前這一項不存在，
            所以從歷史紀錄點回來時，設定都在、但「先前導入的東西」整批不見。
 
@@ -8509,7 +8517,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     } catch { /* 記錄失敗不能影響離開 */ }
   }, [imageState, getLayoutOffsets, renderToCanvas, layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText,
       holeSize, sizeJitter, holeAngle, holeCount, holes, maskColor, patternType, dotColor,
-      dotSize, dotGap, dotSquash, symmetryEnabled, glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
+      dotSize, dotGap, dotSquash, symmetryEnabled, glowMode, holeGlow, holeGlowColor, glowIdle, glowAmp, glowSpeed,
       glowMoImg, glowMoText, linkColor]);
   /* leaveToHome 定義在 recordHistory 前面（它要先煞車再記錄），所以走 ref */
   const recordHistoryRef = useRef(recordHistory);
@@ -9340,7 +9348,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     stripeN, stripeDir, stripeA: stripeAPick, stripeB,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
+    glowMode, holeGlow, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
     linkMode, linkColor,
     moShape, moLink, motionHold,
     /* 選取不是作品內容：不記進復原紀錄（以前選一下東西也算一步，按復原
@@ -9372,7 +9380,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setHoleSize(e.holeSize); setSizeJitter(e.sizeJitter);
     setHoleAngle(e.holeAngle); setHoleCount(Math.min(30, Math.max(0, e.holeCount)));
     setSymmetryEnabled(e.symmetryEnabled);
-    setGlowMode(e.glowMode && e.glowMode !== 'off' ? 'image' : 'off'); setHoleGlowColor(e.holeGlowColor || GLOW_BASE);
+    setHoleGlow(e.holeGlow !== undefined ? e.holeGlow : e.glowMode && e.glowMode !== 'off' ? HOLE_GLOW_LEGACY_ON : 0); setHoleGlowColor(e.holeGlowColor || GLOW_BASE);
     setGlowIdle(e.glowIdle || 'none');
     setGlowAmp(e.glowAmp ?? 100); setGlowSpeed(e.glowSpeed ?? 100);
     setGlowMoImg(e.glowMoImg || { idle: 'none', amp: 100, speed: 100 });
@@ -9402,7 +9410,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     layout, maskScale, canvasRatio, canvasRatioBeforeFull, photoRegion, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
+    glowMode, holeGlow, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
     linkMode, linkColor, moShape, moLink, motionHold,
   ]);
 
@@ -11596,12 +11604,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               不會有欄位突然冒出來閃一下。 */}
                           {!isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-1 w-full">
                             <div className="flex-1 min-w-0">
-                              {/* 滑桿 100 ＝ 發光強度 1（以前滑桿 100 只到 0.5，最大值提升為兩倍）；已放好的圖形外觀不變 */}
-                              {shapeSlider('發光', Math.min(100, Math.round(glowAmount(sel.glow) * 100)), 0, 100,
+                              {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
+                              {shapeSlider('發光', glowToUi(sel.glow), 0, 100,
                                 (v: number) => patch(v > 0 && !sel.glowInit
                                   /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
-                                  ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
-                                  : { glow: v }))}
+                                  ? { glow: glowFromUi(v), glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                                  : { glow: glowFromUi(v) }))}
                             </div>
                             <ColorPick compact label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
@@ -12187,22 +12195,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </div>
 
                   <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] mt-3">
-                    <span className="text-[10px] font-bold text-[#888]">發光</span>
-                    <div className="flex items-center gap-2">
-                      <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                        {([['off', '關閉'], ['image', '開啟']] as const).map(([mode, name]) => (
-                          <button
-                            key={mode}
-                            onClick={() => setGlowMode(mode)}
-                            title={mode === 'image' ? '只有落在圖片上的那一段發光' : '不發光'}
-                            className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
-                              glowMode === mode ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
-                            }`}
-                          >
-                            {name}
-                          </button>
-                        ))}
+                    <span className="text-[10px] font-bold text-[#888] shrink-0">發光</span>
+                    <div className="flex items-center gap-3 flex-1 min-w-0 pl-4">
+                      {/* 一根滑桿：0 ＝ 關閉，跟圖形的發光同一套強度（滑桿看起來都從 0 開始） */}
+                      <div className="flex-1 min-w-0 slider-wrap" style={{ height: 16 }}>
+                        <SmoothRange min={0} max={100} step={1} value={holeGlow}
+                          onValue={v => setHoleGlow(Math.round(v))}
+                          className="premium-slider w-full" style={{ touchAction: 'none' }} />
                       </div>
+                      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white w-9 text-center shrink-0">{holeGlow}</span>
                       <button
                         onClick={() => setColorPickerTarget('holeGlow')}
                         title="發光顏色"
