@@ -56,7 +56,7 @@ createRoot(document.getElementById('root')!).render(shapeKinds.length
  : params.has('busyEdit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{holeCount:30,layout:'mask-right',holeSize:15,holeType:'star',glowMode:'image',holes:Array.from({length:30},(_,i)=>({id:`busy-${i}`,x:30+(i%5)*48,y:55+Math.floor(i/5)*140,side:'mask'}))}}/>
  : params.has('patternAudit')
- ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,2)} initialState={{holeCount:4,layout:'mask-right',holeSize:40,holeType:params.get('patternAudit')||'spinner',holes:[{id:'pm',x:150,y:150,side:'mask'},{id:'pi',x:300,y:420,side:'image'},{id:'pm2',x:150,y:420,side:'mask'},{id:'pi2',x:300,y:150,side:'image'}]}}/>
+ ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,2)} initialState={{holeCount:4,layout:'mask-right',holeSize:40,holeType:params.get('patternAudit')||'spinner',...(params.has('glow')?{glowMode:'both'}:{}),holes:[{id:'pm',x:150,y:150,side:'mask'},{id:'pi',x:300,y:420,side:'image'},{id:'pm2',x:150,y:420,side:'mask'},{id:'pi2',x:300,y:150,side:'image'}]}}/>
  : params.has('baseAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,2)} initialState={{holeCount:1,layout:'mask-right',holeSize:65,holeType:'circle',holes:[{id:'mask-hole',x:100,y:100,side:'mask'}],objects:[{id:'cover',type:'shape',kind:'rect',filled:true,color:'#121212',x:350,y:200,w:100,h:200,rot:0}]}}/>
  : params.has('v10')

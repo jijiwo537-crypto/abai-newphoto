@@ -1196,6 +1196,8 @@ export const shapeLineWidth = (lineW: number | undefined, w: number, h: number) 
  * 圖形的發光：三段模糊疊起來（跟文字、圖片的發光同一套做法），
  * 顏色就用圖形自己的顏色。半徑跟著圖形大小走，放大縮小時觀感一致。
  */
+/** 符號（emoji／特殊字）的發光上限：文字是 15，符號減半 */
+const SYMBOL_GLOW_MAX = 7.5;
 export const shapeGlowBlurs = (w: number, h: number) =>
   [1, 2, 3].map(k => Math.max(w, h) * 0.045 * k);
 
@@ -2467,8 +2469,9 @@ export const TextEditorPanel: React.FC<{
                     所以不會有「拉到 1 的瞬間欄位冒出來閃一下」。 */}
                 <div className="flex items-center gap-3 px-2">
                   <div className="flex-1 min-w-0">
-                    {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / 15) * 100)), 0, 100,
-                      v => onChange({ glow: (v / 100) * 15 }), '', 1)}
+                    {/* 符號的發光最大值是文字的一半（滑桿 100 ＝ 7.5） */}
+                    {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / SYMBOL_GLOW_MAX) * 100)), 0, 100,
+                      v => onChange({ glow: (v / 100) * SYMBOL_GLOW_MAX }), '', 1)}
                   </div>
                   <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
                     onPick={c => onChange({ glowColor: c })}
@@ -2646,8 +2649,9 @@ export const ShapeEditorPanel: React.FC<{
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
           {!isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
-              {slider('發光', Math.min(100, Math.round(glowAmount(layer.shapeGlow as any) * 200)), 0, 100,
-                v => onChange({ shapeGlow: v / 2 } as any))}
+              {/* 滑桿 100 ＝ 發光強度 1（最大值是以前的兩倍）；已放好的圖形外觀不變 */}
+              {slider('發光', Math.min(100, Math.round(glowAmount(layer.shapeGlow as any) * 100)), 0, 100,
+                v => onChange({ shapeGlow: v } as any))}
             </div>
             <ColorPick compact label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
               colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })}

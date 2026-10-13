@@ -576,6 +576,12 @@ const shapeColorRow = (label: string, value: string, onOpen: () => void) => (
   </div>
 );
 
+/* 創意拼圖的圖形一律預設白色（跨頁拼圖維持原本的預設色）。
+   雙色圖形外面白色、裡面的圖案改用原本外框那個灰綠色，兩層才分得出來。
+   遮罩類圖形不吃這個顏色，維持原本的預設。 */
+const CREATIVE_DUAL_INNER = '#C4D1C6';
+const creativeShapeColorFor = (kind: string) => isBackdropMask(kind) ? shapeDefaultColorFor(kind) : '#FFFFFF';
+
 /** 圖形調整面板用的滑桿，樣式跟經典拼圖那顆 ShapeEditorPanel 逐項相同 */
 const shapeSlider = (label: string, value: number, min: number, max: number, onVal: (v: number) => void) => (
   <div className="space-y-1.5" key={label}>
@@ -3420,7 +3426,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     if (choice.type === 'shape') {
       const it = choice.item;
-      const initialColor = shapeDefaultColorFor(it.kind);
+      const initialColor = creativeShapeColorFor(it.kind);
       const short = Math.min(off.cw, off.ch);
       const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
       const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
@@ -3433,7 +3439,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         textureBaseW: w, textureBaseH: h,
         lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
         color: initialColor, glow: 0, glowColor: initialColor,
-        ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: '#FFFFFF' } : null),
+        ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: CREATIVE_DUAL_INNER } : null),
         x: cx - w / 2, y: cy - h / 2, w, h, rot: it.rot || 0,
         ...(SPECIAL_LINE_KINDS.has(it.kind)
           ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } }
@@ -6406,6 +6412,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // evicted one another within the same frame, recomputing blur continuously.
     // The master is always at least as large as the largest drawn instance.
     let glowRasterSize = 0;
+    /** 圖案發光的強度：光暈半徑是原本的 3 倍 */
+    const PATTERN_GLOW_GAIN = 3;
     const glowBmp = (h: any, sz: number, gcol: string) => {
       const szQ = Math.pow(SZ_STEP, Math.ceil(Math.log(Math.max(sz, glowRasterSize)) / Math.log(SZ_STEP)));
       const key = `${holeType}|${isTextHole(holeType) ? holeGlyph(holeType, customText, h) : ''}|${szQ.toFixed(3)}|${gcol}`;
@@ -6417,7 +6425,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          再往外**透明度就是 0**（Skia 的模糊是有限支撐的盒狀近似）。
          本體最寬到 sz/2，所以半邊 0.95×sz 已經多留 6% 的餘裕。
          文字類的字符可能比 sz 還寬，維持原本的寬鬆值。 */
-      const half = isTextHole(holeType) ? szQ * 1.2 : szQ * 0.95;
+      /* 光暈改成原本的 3 倍寬（PATTERN_GLOW_GAIN），半邊也跟著留大：
+         最遠那顆有顏色的像素約在 0.5×sz（本體）＋ 3σ（≈0.3×sz），留到 1.2×sz。 */
+      const half = isTextHole(holeType) ? szQ * 1.5 : szQ * 1.2;
       const side = Math.ceil(half * 2) + 8;
       const tmp = document.createElement('canvas');
       tmp.width = side; tmp.height = side;
@@ -6430,7 +6440,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       tg.shadowColor = gcol;
       tg.shadowOffsetX = casterOffset;
       for (const kk of [1, 2, 3]) {
-        tg.shadowBlur = szQ * 0.045 * 0.5 * kk;
+        tg.shadowBlur = szQ * 0.045 * 0.5 * kk * PATTERN_GLOW_GAIN;
         strokeHoleShape(tg, h, szQ, 0, side / 2 - casterOffset, side / 2, gcol);
       }
       /* 本體在這裡就先挖掉（滿透明度），剩下的才是純粹的一圈光暈。
@@ -6572,7 +6582,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if (x + pad > bx1) bx1 = x + pad;
         if (y + pad > by1) by1 = y + pad;
       };
-      const halfOf = (sz: number) => (isTextHole(holeType) ? sz * 1.2 : sz * 0.95) + 6;
+      const halfOf = (sz: number) => (isTextHole(holeType) ? sz * 1.5 : sz * 1.2) + 6;
       items.forEach(it => grow(it.x, it.y, halfOf(it.sz)));
       if (pairs.length) {
         const pad = LINK_W * 8;
@@ -11365,7 +11375,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
                   const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
                   const id = Math.random().toString(36).slice(2, 9);
-                  const initialColor = shapeDefaultColorFor(it.kind);
+                  const initialColor = creativeShapeColorFor(it.kind);
                   setObjects(prev => [...prev, {
                     id, type: 'shape',
                     kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
@@ -11377,7 +11387,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
                     color: initialColor,
                     glow: 0, glowColor: initialColor,
-                    ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: '#FFFFFF' } : {}),
+                    ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: CREATIVE_DUAL_INNER } : {}),
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
                     ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } } : {}),
@@ -11586,11 +11596,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               不會有欄位突然冒出來閃一下。 */}
                           {!isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-1 w-full">
                             <div className="flex-1 min-w-0">
-                              {shapeSlider('發光', Math.min(100, Math.round(glowAmount(sel.glow) * 200)), 0, 100,
+                              {/* 滑桿 100 ＝ 發光強度 1（以前滑桿 100 只到 0.5，最大值提升為兩倍）；已放好的圖形外觀不變 */}
+                              {shapeSlider('發光', Math.min(100, Math.round(glowAmount(sel.glow) * 100)), 0, 100,
                                 (v: number) => patch(v > 0 && !sel.glowInit
                                   /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
-                                  ? { glow: v / 2, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
-                                  : { glow: v / 2 }))}
+                                  ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                                  : { glow: v }))}
                             </div>
                             <ColorPick compact label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
