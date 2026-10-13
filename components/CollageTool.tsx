@@ -3209,7 +3209,39 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     e.target.value = '';
   };
 
+  /* 第一次選到某些圖案會閃一下：圖片類（從圖形借來的模糊圖案等）的圖要先解碼、
+     字形類要等字型載入 —— 在 iPhone 上這兩件事都是非同步的，換過去的那一格畫面
+     還沒有圖、字，挖空的洞整個消失，下一格才又出現。所以先把它準備好再換。
+     手指一按下（pointerdown）就開始準備，通常放開時已經好了，感覺不到等待。 */
+  const patternPrepRef = useRef(new Map<string, Promise<void>>());
+  const latestPatternPickRef = useRef('');
+  const preparePatternRef = useRef<((id: string) => Promise<void> | null) | null>(null);
+  const preparePattern = (id: string): Promise<void> | null => {
+    const cached = patternPrepRef.current.get(id);
+    if (cached) return cached;
+    const jobs: Promise<unknown>[] = [];
+    if (isImageHole(id)) {
+      const im = getHoleImg(id);
+      if (im && !(im.complete && im.naturalWidth)) jobs.push(im.decode ? im.decode().catch(() => {}) : new Promise(r => { im.addEventListener('load', r, { once: true }); im.addEventListener('error', r, { once: true }); }));
+    } else if (isTextHole(id) && id !== 'text') {
+      const fonts = (document as any).fonts;
+      const font = glyphFont(id, 40);
+      if (fonts?.check && !fonts.check(font)) jobs.push(fonts.load(font).catch(() => {}));
+    }
+    if (!jobs.length) return null;
+    // 最多等 600ms：字型或圖真的載不到時也不能卡住選單
+    const p = Promise.race([Promise.all(jobs).then(() => {}), new Promise<void>(r => setTimeout(r, 600))]);
+    patternPrepRef.current.set(id, p);
+    return p;
+  };
+  preparePatternRef.current = preparePattern;
   const handleShapeClick = (id: string) => {
+    const prep = preparePattern(id);
+    latestPatternPickRef.current = id;
+    if (prep) { void prep.then(() => { if (latestPatternPickRef.current === id) applyShapeClick(id); }); return; }
+    applyShapeClick(id);
+  };
+  const applyShapeClick = (id: string) => {
     if (id === 'text') requestAnimationFrame(() => {
       const panel = patternPanelRef.current;
       panel?.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' });
@@ -8744,6 +8776,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [renderCanvas, saveState]);
 
 
+  /* 打開「圖案」分頁之後，趁空檔把從圖形借來的那幾個圖片圖案一個一個先畫好、解碼好
+     （第一次選才畫的話，在 iPhone 上會先空一格才出現 —— 看起來就是閃一下）。 */
+  useEffect(() => {
+    if (activeTab !== 'shape') return;
+    let alive = true;
+    // 用 hasOwnProperty 判斷：直接讀 SHAPE_IMAGES[k] 會當場把圖畫出來（那正是要分散到空檔做的事）
+    const ids = PATTERN_ORDER.filter(k => k.startsWith('p-') && Object.prototype.hasOwnProperty.call(SHAPE_IMAGES, k));
+    const next = (i: number) => {
+      if (!alive || i >= ids.length) return;
+      whenIdle(() => { if (!alive) return; void preparePatternRef.current?.(ids[i]); next(i + 1); });
+    };
+    next(0);
+    return () => { alive = false; };
+  }, [activeTab]);
+
   /* 圖片形狀的圖要先解碼好。雖然是內嵌的（不用連網），解碼還是非同步的 ——
      解完再重畫一次，第一次選到它才不會是空的。 */
   useEffect(() => {
@@ -12271,7 +12318,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {PATTERN_ORDER.map(s => (
-                    <button key={s} data-pattern-choice={s} aria-label={`圖案 ${s}`} onClick={() => handleShapeClick(s)} className={`h-11 min-w-0 overflow-hidden flex items-center justify-center rounded-[8px] border transition-colors ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
+                    <button key={s} data-pattern-choice={s} aria-label={`圖案 ${s}`} onPointerDown={() => { preparePattern(s); }} onClick={() => handleShapeClick(s)} className={`h-11 min-w-0 overflow-hidden flex items-center justify-center rounded-[8px] border transition-colors ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
                       <PatternIcon s={s} />
                     </button>
                   ))}
