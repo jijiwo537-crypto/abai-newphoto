@@ -1,7 +1,7 @@
 
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { reframeBasePhoto } from '../utils/reframeBasePhoto';
-import {MASK_SHAPE_ITEMS,isBackdropMask,maskSampleReach,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,warmBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
+import {MASK_SHAPE_ITEMS,isBackdropMask,maskSampleReach,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
 import {sliderHeld,SLIDER_RELEASE_EVENT} from '../utils/sliderTouch';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { previewViewport } from '../utils/previewViewport';
@@ -44,7 +44,7 @@ import {
   isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter, imgShapePathIn,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, shapePickerSections, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
   shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
@@ -103,7 +103,7 @@ import {videoPoster} from '../utils/videoPoster';
 import {canEncodeFrames,encodeCanvasFrames,seekVideosTo} from '../utils/frameExactVideo';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
 import {useSmoothSlider, snapToStep} from '../utils/smoothSlider';
-import {warmPhotoEffectsWhenIdle} from '../utils/fxWarmup';
+import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
 import {warmLowfiLut} from '../utils/lowfiLut';
 import {FX_DEFS} from '../utils/glEffects';
 import {PhotoSceneColour,supportsSceneColour} from '../utils/photoSceneColour';
@@ -2392,7 +2392,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (selectedObj || selectedTarget) { setBaseSelected(false); setMaskSelected(false); }
   }, [selectedObj, selectedTarget]);
   useEffect(() => { if (!maskImageState) setMaskSelected(false); }, [maskImageState]);
-  useEffect(() => { warmPhotoEffectsWhenIdle(); }, []);
+  useEffect(() => { warmPhotoEffectsWhenIdle(); warmGlyphIconsWhenIdle(); }, []);
   /* 一般文字的選中框永遠包住文字：內容、字型、字級、粗斜體、字距或描邊一改，
      就照實際排版重新量，框心固定；被四邊擠壓過的維持原本的擠壓比例。
      兩指縮放／四邊擠壓進行中不量（手勢自己在改框），放開後才量一次。 */
@@ -2588,7 +2588,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
   // Compile the shared mask programs while the shape list is merely open,
   // so tapping a mask does not wait on shader compilation.
-  useEffect(()=>{if(addSub!=='shape')return;const ric=(window as any).requestIdleCallback as undefined|((f:()=>void,o?:any)=>number);const id=ric?ric(warmBackdropMasks,{timeout:600}):window.setTimeout(warmBackdropMasks,120);return()=>{if(ric)(window as any).cancelIdleCallback(id);else clearTimeout(id);};},[addSub]);
+  // 遮罩著色器開場就在空檔暖好了；這裡只是保險，而且會等面板滑出來之後才做（見 fxWarmup）
+  useEffect(()=>{if(addSub==='shape')warmMasksAfterPanelOpens();},[addSub]);
   /** 新增清單目前亮白框的選項，以及真正交給上方畫筆連續生成的選項。 */
   const [addPaletteChoice, setAddPaletteChoice] = useState<any>(null);
   const [objectBrushChoice, setObjectBrushChoice] = useState<any>(null);

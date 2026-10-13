@@ -14,7 +14,7 @@ import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds
 import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints, radialD, radialParts, radialPartD, spinnerAlpha } from '../utils/heartShapes';
 import { isBlurShape, blurShapeBaseD, drawBlurredShape, BLUR_SHAPE_DEFAULT } from '../utils/blurShapes';
 import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
-import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask,warmBackdropMasks} from '../utils/backdropMasks';
+import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask} from '../utils/backdropMasks';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { paintCachedClassicGlow } from './ClassicGlowCache';
@@ -24,7 +24,7 @@ import { SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface,layoutGeomPreviews} from './LayoutPhotoSurface';
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import {drawStableText} from '../utils/stableText';
-import {warmPhotoEffectsWhenIdle} from '../utils/fxWarmup';
+import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
 import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
@@ -1793,7 +1793,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
   return (
     <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
       {isBlurShape(item.kind) && <defs><filter id={`blur-${maskId}`} x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur stdDeviation={r3(VB * 0.3 * (5 + 0.15 * BLUR_SHAPE_DEFAULT) / 100 * 0.62 * 2)} /></filter></defs>}
+        <feGaussianBlur stdDeviation={r3(VB * 0.3 * (5 + 0.18 * BLUR_SHAPE_DEFAULT) / 100 * 0.62 * 2)} /></filter></defs>}
       <g transform={tf} filter={isBlurShape(item.kind) ? `url(#blur-${maskId})` : undefined}>
         <path
           d={src}
@@ -1965,6 +1965,13 @@ const centeredGlyphIcon = (s: string): string | null => {
   } catch { url = null; }
   glyphIconCache.set(s, url);
   return url;
+};
+/** 音樂符號的小圖要量字、畫圖、轉成圖片（幾十毫秒）—— 開場空檔先做好，點「新增圖形」時就不用等 */
+export const warmGlyphIconsWhenIdle = () => {
+  void (async () => {
+    await new Promise(r => setTimeout(r, 1500));
+    for (const s of Object.keys(GLYPH_HOLES)) if (s.startsWith('music-')) { await awaitPhotoIdle(); centeredGlyphIcon(s); }
+  })();
 };
 const CenteredGlyphIcon: React.FC<{ s: string }> = ({ s }) => {
   const url = centeredGlyphIcon(s);
@@ -10926,7 +10933,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   // Decode the filter tables while the editor is idle (like the creative
   // collage and home editor), so the first filter tap applies immediately
   // instead of waiting for its LUT to download, decode and repair.
-  useEffect(() => { warmPhotoEffectsWhenIdle(); }, []);
+  useEffect(() => { warmPhotoEffectsWhenIdle(); warmGlyphIconsWhenIdle(); }, []);
   useEffect(() => {
     let alive = true;
     void awaitPhotoIdle().then(() => { if (alive) void warmEditorLuts(lutList); });
@@ -10957,7 +10964,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
   // Compile the shared mask programs while the shape list is merely open,
   // so tapping a mask does not wait on shader compilation.
-  useEffect(()=>{if(addSub!=='shape')return;const ric=(window as any).requestIdleCallback as undefined|((f:()=>void,o?:any)=>number);const id=ric?ric(warmBackdropMasks,{timeout:600}):window.setTimeout(warmBackdropMasks,120);return()=>{if(ric)(window as any).cancelIdleCallback(id);else clearTimeout(id);};},[addSub]);
+  // 遮罩著色器開場就在空檔暖好了；這裡只是保險，而且會等面板滑出來之後才做（見 fxWarmup）
+  useEffect(()=>{if(addSub==='shape')warmMasksAfterPanelOpens();},[addSub]);
   /* 離開「新增」分頁就回到最外層：下次再進來看到的是那幾顆大按鈕，
      而不是上次停在的圖形／符號清單。 */
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);

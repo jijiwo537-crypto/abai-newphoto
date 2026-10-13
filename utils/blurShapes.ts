@@ -8,13 +8,14 @@
  * 不用 ctx.filter = 'blur()'：iPhone 的 Safari 對它支援不穩。 */
 export const BLUR_SHAPE_KINDS = new Set(['blur-star', 'blur-star-rounded', 'blur-heart', 'blur-circle', 'blur-cross-star', 'blur-square', 'blur-sparkle4']);
 export const isBlurShape = (kind?: string) => !!kind && BLUR_SHAPE_KINDS.has(kind);
-/** 模糊滑桿的預設值（畫面上的 0～100） */
-export const BLUR_SHAPE_DEFAULT = 30;
+/** 模糊滑桿的預設值（畫面上的 0～100）。25 糊的程度跟改範圍之前的預設 30 一模一樣。 */
+export const BLUR_SHAPE_DEFAULT = 25;
 
 /** 模糊半徑（圖形自己的座標單位）。
- *  滑桿看起來是 0～100，實際對應舊版滑桿的 5～20（0 ＝ 一點點糊，100 ＝ 短邊的 6%）。 */
+ *  滑桿看起來是 0～100，實際對應最早那版滑桿的 5～23（＝改範圍之前那根滑桿的 0～120）：
+ *  0 ＝ 一點點糊，100 ＝ 短邊的 6.9%。 */
 export const blurShapeRadius = (w: number, h: number, value?: number) =>
-  Math.min(Math.abs(w), Math.abs(h)) * 0.3 * (5 + 0.15 * Math.max(0, Math.min(100, value ?? BLUR_SHAPE_DEFAULT))) / 100;
+  Math.min(Math.abs(w), Math.abs(h)) * 0.3 * (5 + 0.18 * Math.max(0, Math.min(100, value ?? BLUR_SHAPE_DEFAULT))) / 100;
 
 /** 模糊之前那顆清楚的圖形長怎樣 —— 跟原本那顆實心圖形同一條路徑 */
 export const blurShapeBaseD = (kind: string, w: number, h: number, pathD: (k: string, w: number, h: number) => string) => {
