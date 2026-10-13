@@ -18643,6 +18643,12 @@ for (const [id, kind] of Object.entries(SHAPE_PATTERNS)) {
   });
 }
 /** 從圖形借來的圖案，按鈕上用那個圖形自己的小圖（跟圖形選單一模一樣） */
+/* 從圖形借來的圖案在按鈕上的大小（傳給 ShapeGlyph 的 size）。
+   模糊的那幾個有一圈淡淡的光暈，看得見的本體比較小，要給大一點才跟旁邊一樣大。 */
+export const SHAPE_PATTERN_ICON_SIZE: Record<string, number> = {
+  'star-rounded': 20, 'p-star-double': 18.5, 'p-blur-star': 19.5, 'p-blur-star-rounded': 20,
+  'p-blur-cross-star': 22.5, 'p-blur-sparkle4': 25, 'p-blur-heart': 14.5,
+};
 export const shapePatternIconItem = (s: string): ShapeItem | null =>
   s === 'star-rounded' ? { id: 'pat-star-rounded', kind: 'star-rounded', filled: true }
   : SHAPE_PATTERNS[s] ? { id: 'pat-' + s, kind: SHAPE_PATTERNS[s], filled: true } : null;
@@ -18691,8 +18697,14 @@ const pathPatternIconParts = (s: string) => {
   pathPatternIconCache.set(s, parts);
   return parts;
 };
+/* 每顆圖標的長邊（px）。實心又飽滿的（圓、方、愛心）同樣長邊看起來會大很多，
+   所以照「看起來一樣大」個別縮 —— 對齊旁邊那些符號圖標（大約 15～17px）。 */
+const PATH_PATTERN_ICON_FIT: Record<string, number> = {
+  circle: 14, square: 12.5, heart: 15.5, star: 17, 'star-rounded': 17,
+  sparkle4: 19.5, 'cross-star': 18, hexstar: 16.5, 'burst-dash': 18, spinner: 17,
+};
 export const PathPatternIcon: React.FC<{ s: string }> = ({ s }) => {
-  const BOX = 26, FIT = 20;
+  const BOX = 26, FIT = PATH_PATTERN_ICON_FIT[s] ?? 16;
   const b = patternPathBounds(s, 100), side = Math.max(b.w, b.h, 1e-6) * BOX / FIT;
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
   return (
