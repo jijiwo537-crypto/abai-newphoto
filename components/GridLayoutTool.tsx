@@ -12,7 +12,7 @@ import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, Slid
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
 import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints, radialD, radialParts, radialPartD, spinnerAlpha } from '../utils/heartShapes';
-import { isBlurShape, blurShapeBaseD, drawBlurredShape, BLUR_SHAPE_DEFAULT, blurShapeDefault } from '../utils/blurShapes';
+import { isBlurShape, blurShapeBaseD, drawBlurredShape, blurShapeDefault, blurLookValue } from '../utils/blurShapes';
 import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask} from '../utils/backdropMasks';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
@@ -1796,7 +1796,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
   return (
     <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
       {isBlurShape(item.kind) && <defs><filter id={`blur-${maskId}`} x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur stdDeviation={r3(VB * 0.3 * (5 + 0.18 * BLUR_SHAPE_DEFAULT) / 100 * 0.62 * 2)} /></filter></defs>}
+        <feGaussianBlur stdDeviation={r3(VB * 0.3 * (5 + 0.18 * blurLookValue(item.kind)) / 100 * 0.62 * 2)} /></filter></defs>}
       <g transform={tf} filter={isBlurShape(item.kind) ? `url(#blur-${maskId})` : undefined}>
         <path
           d={src}
@@ -18630,7 +18630,7 @@ const shapePatternUrl = (kind: string) => {
   const c = document.createElement('canvas'); c.width = c.height = S;
   const g = c.getContext('2d')!;
   g.translate(pad, pad);
-  drawFeatheredShapeBody(g, kind, body, body, undefined, '#000000');
+  drawFeatheredShapeBody(g, kind, body, body, blurLookValue(kind), '#000000');
   // 裁到看得見的那一塊（圖片圖案的大小與點選範圍都以圖的外框為準）
   const d = g.getImageData(0, 0, S, S).data;
   let x0 = S, y0 = S, x1 = -1, y1 = -1;

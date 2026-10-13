@@ -11,6 +11,10 @@ export const isBlurShape = (kind?: string) => !!kind && BLUR_SHAPE_KINDS.has(kin
 /** 模糊滑桿的預設值（畫面上的 0～100）。圖案裡借來的模糊圖案也照這個值畫。 */
 export const BLUR_SHAPE_DEFAULT = 50;
 /** 每種模糊圖形自己的預設模糊值：模糊圓形預設糊到最滿（100），其他照 BLUR_SHAPE_DEFAULT。 */
+/** 按鈕小圖與「圖案」裡模糊圖形的模糊程度：兩個星星、兩個十字星照滑桿 20 的樣子，
+ *  其他（愛心、圓形）照預設。圖形本身的預設值不受影響（blurShapeDefault）。 */
+const BLUR_LOOK_20 = new Set(['blur-star', 'blur-star-rounded', 'blur-cross-star', 'blur-sparkle4']);
+export const blurLookValue = (kind?: string) => kind && BLUR_LOOK_20.has(kind) ? 20 : BLUR_SHAPE_DEFAULT;
 export const blurShapeDefault = (kind?: string) => kind === 'blur-circle' ? 100 : BLUR_SHAPE_DEFAULT;
 
 /** 模糊半徑（圖形自己的座標單位）。
