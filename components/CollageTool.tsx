@@ -6819,8 +6819,44 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     }
 
+    /* ── 並排的四種排版（2～5）：圖案跨過兩邊交界時切成一半一半 ──────────
+       每顆圖案還是成對的（遮罩上挖空一顆、圖片上實心一顆，位置一樣）。
+       但一顆碰到交界時，越過去的那一半要換成「另一邊」的樣子：
+       遮罩上那顆伸進圖片的部分畫成實心，圖片上那顆伸進遮罩的部分挖空。
+       做法：每一側除了畫自己那一顆，也把另一側那一顆「伸過來的部分」畫上去，
+       各自剪在自己那一塊裡面 —— 兩半剛好在交界接起來。
+       四周包圍（6）本來就是這樣，滿版（1）沒有遮罩，兩個都不走這裡。 */
+    const seamSplit = layout !== AROUND && layout !== FULL && maskW > 0 && maskH > 0 && iw > 0 && ih > 0;
+    const reachOf = (sz: number) => isTextHole(holeType) ? sz * 1.3 : sz * 0.75;
+    /** 這顆圖案在「遮罩那一側」要畫在哪些位置（遮罩自己的座標，回傳的是位移量） */
+    const maskPlacements = (h: any, sz: number, x: number, y: number) => {
+      const out: [number, number][] = [];
+      const side = h.side || 'both';
+      if ((side === 'both' || side === 'mask') && (layout === AROUND || isHoleFullyInsideMask(h, s, maskW, maskH))) out.push([0, 0]);
+      if (seamSplit && (side === 'both' || side === 'image')) {
+        const dx = offs.ix - offs.mx, dy = offs.iy - offs.my, r = reachOf(sz);
+        const cx = x + dx, cy = y + dy;
+        if (cx + r > 0 && cx - r < maskW && cy + r > 0 && cy - r < maskH) out.push([dx, dy]);
+      }
+      return out;
+    };
+    /** 這顆圖案在「圖片那一側」要畫在哪些位置（圖片自己的座標，回傳的是位移量） */
+    const imagePlacements = (h: any, sz: number, x: number, y: number) => {
+      const out: [number, number][] = [];
+      const side = h.side || 'both';
+      if (side === 'both' || side === 'image') out.push([0, 0]);
+      if (seamSplit && (side === 'both' || side === 'mask') && isHoleFullyInsideMask(h, s, maskW, maskH)) {
+        const dx = offs.mx - offs.ix, dy = offs.my - offs.iy, r = reachOf(sz);
+        const cx = x + dx, cy = y + dy;
+        if (cx + r > 0 && cx - r < iw && cy + r > 0 && cy - r < ih) out.push([dx, dy]);
+      }
+      return out;
+    };
+
     const drawImageSideHoles = () => {
     ctx.save(); ctx.translate(offs.ix, offs.iy);
+    // 並排排版：圖片這一側的圖案只畫在圖片那一塊裡（伸出去的那一半交給遮罩那一側挖空）
+    if (seamSplit) { ctx.beginPath(); ctx.rect(0, 0, iw, ih); ctx.clip(); }
     const basePat = plainMask ? maskColor : basePatCached || ctx.createPattern(bCanvas, 'repeat');
     if (basePat) {
       ctx.fillStyle = basePat;
@@ -6836,15 +6872,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const ry = layout === FULL ? 1 : (ih > 0 ? maskH / ih : 1);
       const imgItems: { h: any; a: number; sz: number; ang: number; x: number; y: number }[] = [];
       holes.forEach(h => {
-        const sd0 = h.side || 'both';
-        if (sd0 !== 'both' && sd0 !== 'image') return;
         const A0 = hA(h);
         if (!A0.on) return;
-        imgItems.push({
-          h, a: A0.a, sz: getHoleSize(h) * A0.k * s,
+        const sz0 = getHoleSize(h) * A0.k * s;
+        imagePlacements(h, sz0, A0.x * s, A0.y * s).forEach(([dx, dy]) => imgItems.push({
+          h, a: A0.a, sz: sz0,
           ang: (h.angle !== undefined ? h.angle : holeAngle) + A0.rot,
-          x: A0.x * s, y: A0.y * s,
-        });
+          x: A0.x * s + dx, y: A0.y * s + dy,
+        }));
       });
       const imgPairs = linksFor('image');
       // 光在最底下（自成一層，本體已經挖掉），接著是線，最後才是圖案本體
@@ -6852,16 +6887,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.strokeStyle = linkColor || basePat;
       strokeLinks(ctx, imgPairs);
       holes.forEach(h => {
-        const side = h.side || 'both';
-        if (side !== 'both' && side !== 'image') return; // Only show on image side
-
         const A = hA(h);
         if (!A.on) return;
         const sz = getHoleSize(h) * A.k * s;
         // 五角星与十字星的可见墨水重心略偏上，方形选中框同步上提一点。
         const currentAngle = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
-        const hx = A.x * s, hy = A.y * s;
-        const mxp = hx * rx, myp = hy * ry;     // 遮罩上的對應點
+        imagePlacements(h, sz, A.x * s, A.y * s).forEach(([dx, dy]) => {
+        const hx = A.x * s + dx, hy = A.y * s + dy;
+        /* 遮罩上的對應點。從遮罩那一側伸過來的那一半（dx/dy 不是 0）要接上遮罩的花色：
+           它在遮罩上的位置就是自己原本的座標，花色才會跟旁邊的遮罩連在一起。 */
+        const mxp = dx || dy ? A.x * s : hx * rx, myp = dx || dy ? A.y * s : hy * ry;
         ctx.save();
         ctx.globalAlpha = A.a;
         // Stable per-pattern assignment: changing zoom or redrawing must not reroll colors.
@@ -6882,6 +6917,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }
         drawBurst(ctx, h, sz, mxp, myp, A.burst, patternFill);
         ctx.restore();
+        });
       });
     }
     ctx.restore();
@@ -6968,16 +7004,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       lmx.globalCompositeOperation = 'source-over';
       const mskItems: { h: any; a: number; sz: number; ang: number; x: number; y: number }[] = [];
       holes.forEach(h => {
-        const side = h.side || 'both';
-        if (side !== 'both' && side !== 'mask') return;
-        if (layout !== AROUND && !isHoleFullyInsideMask(h, s, maskW, maskH)) return;
         const A = hA(h);
         if (!A.on) return;
-        mskItems.push({
-          h, a: A.a, sz: getHoleSize(h) * A.k * s,
+        const sz0 = getHoleSize(h) * A.k * s;
+        maskPlacements(h, sz0, A.x * s, A.y * s).forEach(([dx, dy]) => mskItems.push({
+          h, a: A.a, sz: sz0,
           ang: (h.angle !== undefined ? h.angle : holeAngle) + A.rot,
-          x: A.x * s, y: A.y * s,
-        });
+          x: A.x * s + dx, y: A.y * s + dy,
+        }));
       });
       glowPass(lmx, 'mask', mskItems, maskPairs);
     }
@@ -6988,23 +7022,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       strokeLinks(lmx, maskPairs);
     }
     holes.forEach(h => {
-      const side = h.side || 'both';
-      if (side !== 'both' && side !== 'mask') return; // Only show on mask side
-
-      if (layout !== AROUND && !isHoleFullyInsideMask(h, s, maskW, maskH)) {
-        return;
-      }
       const A = hA(h);
       if (!A.on) return;
       const sz = getHoleSize(h) * A.k * s;
       const currentAngle = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
+      // 自己這一顆，加上圖片那一顆伸進遮罩的那一半（見 maskPlacements）
+      maskPlacements(h, sz, A.x * s, A.y * s).forEach(([dx, dy]) => {
+      const px = A.x * s + dx, py = A.y * s + dy;
       lmx.save();
       lmx.globalAlpha = A.a;
       if (isTextHole(holeType)) {
         const tText = holeGlyph(holeType, customText, h);
-        drawTextShape(lmx, holeType, tText, A.x * s, A.y * s, sz, null, true, currentAngle);
+        drawTextShape(lmx, holeType, tText, px, py, sz, null, true, currentAngle);
       } else {
-        lmx.translate(A.x * s, A.y * s);
+        lmx.translate(px, py);
         lmx.rotate(currentAngle * Math.PI / 180);
         /* 填色挖孔的反鋸齒邊緣會殘留約半個像素的遮罩色，
            預覽倍率改變時那圈殘色就像多出邊框。用同一路徑擦掉
@@ -7018,9 +7049,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (A.burst > 0.01) {
         lmx.save();
         lmx.globalAlpha = 1;
-        drawBurst(lmx, h, sz, A.x * s, A.y * s, A.burst, '#000');
+        drawBurst(lmx, h, sz, px, py, A.burst, '#000');
         lmx.restore();
       }
+      });
     });
     lmx.globalCompositeOperation = 'source-over';
     /* 指定了顏色的線：在遮罩上是「畫上去」而不是挖穿，
@@ -7964,15 +7996,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          但真正有洞的那一塊通常只有其中一小部分。 */
       let tx0 = Infinity, ty0 = Infinity, tx1 = -Infinity, ty1 = -Infinity;
       holes.forEach(h => {
-        const sd = h.side || 'both';
-        if (sd !== 'both' && sd !== 'mask') return;
-        if (layout !== AROUND && !isHoleFullyInsideMask(h, s, maskW, maskH)) return;
         const A = hA(h);
         if (!A.on) return;
         const sz = getHoleSize(h) * A.k * s;
-        const hx = A.x * s + offs.mx, hy = A.y * s + offs.my;
-        tx0 = Math.min(tx0, hx - sz); ty0 = Math.min(ty0, hy - sz);
-        tx1 = Math.max(tx1, hx + sz); ty1 = Math.max(ty1, hy + sz);
+        maskPlacements(h, sz, A.x * s, A.y * s).forEach(([dx, dy]) => {
+          const hx = A.x * s + dx + offs.mx, hy = A.y * s + dy + offs.my;
+          tx0 = Math.min(tx0, hx - sz); ty0 = Math.min(ty0, hy - sz);
+          tx1 = Math.max(tx1, hx + sz); ty1 = Math.max(ty1, hy + sz);
+        });
       });
       maskLinksSig.forEach(pr => {
         const pa = hA(pr[0]), pb = hA(pr[1]);
@@ -8025,20 +8056,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const needPat = isTextHole(holeType) || (maskLinks.length > 0 && !linkColor);
       const pat = needPat ? ctx2.createPattern(bd, 'no-repeat') : null;
       holes.forEach(h => {
-        const side = h.side || 'both';
-        if (side !== 'both' && side !== 'mask') return;
-        // 並排的四種：只有完全落在遮罩裡的那些洞才會被挖穿（跟 drawMaskLayer 同一條規則）
-        if (layout !== AROUND && !isHoleFullyInsideMask(h, s, maskW, maskH)) return;
         const A = hA(h);
         if (!A.on) return;
         const sz = getHoleSize(h) * A.k * s;
         const ang2 = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
-        const hx = A.x * s + offs.mx, hy = A.y * s + offs.my;
+        // 跟 drawMaskLayer 同一套位置（maskPlacements），而且只補在遮罩那一塊裡
+        maskPlacements(h, sz, A.x * s, A.y * s).forEach(([dx, dy]) => {
+        const hx = A.x * s + dx + offs.mx, hy = A.y * s + dy + offs.my;
         if (isTextHole(holeType)) {
-          if (pat) drawTextShape(ctx2, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, ang2);
+          if (pat) {
+            ctx2.save();
+            if (seamSplit) { ctx2.beginPath(); ctx2.rect(offs.mx, offs.my, maskW, maskH); ctx2.clip(); }
+            drawTextShape(ctx2, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, ang2);
+            ctx2.restore();
+          }
           return;
         }
         ctx2.save();
+        if (seamSplit) { ctx2.beginPath(); ctx2.rect(offs.mx, offs.my, maskW, maskH); ctx2.clip(); }
         ctx2.translate(hx, hy);
         ctx2.rotate(ang2 * Math.PI / 180);
         ctx2.translate(-hx, -hy);
@@ -8062,6 +8097,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
         });
         ctx2.restore();
+        });
       });
       if (maskLinks.length && (linkColor || pat)) {
         /* 連線也要一起補畫，不然 below 的物件會壓在線上面。
