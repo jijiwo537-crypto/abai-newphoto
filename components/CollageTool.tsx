@@ -5445,6 +5445,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   ],compactSceneValue),[imageState,photoRegion,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,fxTick,linkMode,linkColor,glowMode,holeGlow,holeGlowColor,glowIdle,swapSource]);
   const lastPatternPaintRef = useRef<{identity:object;holes:any[];scale:number}|null>(null);
   const backdropPrefix=useRef<{key:string;canvas:HTMLCanvasElement}|null>(null);
+  /** 拖／捏圖案時，圖案底下那一層的快照（見 renderToCanvas 裡的 patternGestureBase） */
+  const patternBaseRef=useRef<{key:string;canvas:HTMLCanvasElement}|null>(null);
   useEffect(()=>()=>{if(backdropPrefix.current)backdropPrefix.current.canvas.width=backdropPrefix.current.canvas.height=1;},[]);
   const forceFullPreviewRef = useRef(false);
   const stableScene=useRef(new StableSceneTiles());
@@ -5868,8 +5870,37 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(dirtyPatternRect){const r=dirtyPatternRect;
       const x0=Math.floor(r.x*rasterX-vp.x),y0=Math.floor(r.y*rasterY-vp.y),x1=Math.ceil((r.x+r.w)*rasterX-vp.x),y1=Math.ceil((r.y+r.h)*rasterY-vp.y);
       ctx.setTransform(1,0,0,1,0,0);ctx.beginPath();ctx.rect(x0,y0,x1-x0,y1-y0);ctx.clip();ctx.setTransform(rasterX,0,0,rasterY,-vp.x,-vp.y);}
+    /* ── 拖／捏圖案時，圖案底下那一層（底色、照片、遮罩底下那張）完全不會變 ──────────
+       放大預覽之後畫布有幾百萬像素，而圖案一放大，局部重畫的範圍就變成整張；
+       每一格都把底色鋪三次、照片畫兩次，手機就卡。手勢開始後的第一格把這一層
+       拍下來，之後每一格只貼一次。手勢一結束就丟掉，下一次重新拍。 */
+    const intrType = interactionRef.current?.type;
+    const patternGestureBase = isMain && !previewCapture && targetCanvas === canvasRef.current
+      && (intrType === 'move_hole' || intrType === 'pinch_hole') && layout !== AROUND
+      && !animRef.current && !photoRegion?.seamless && !regionColourActive.current && !regionSpatialActive.current
+      && !isVideoEl(imageState.img) && selectedRegionPhotoRef.current === null && !baseSelected && !swapSource;
+    const patternBaseKey = patternGestureBase
+      ? `${backdropSceneFingerprint}|${JSON.stringify(photoRegion, compactSceneValue)}|${s}|${vp.x},${vp.y},${vp.w},${vp.h}|${targetCanvas.width}x${targetCanvas.height}|${rasterX},${rasterY}` : '';
+    const patternBaseHit = patternGestureBase && patternBaseRef.current?.key === patternBaseKey ? patternBaseRef.current : null;
+    if (!patternGestureBase && patternBaseRef.current && isMain) { patternBaseRef.current.canvas.width = 0; patternBaseRef.current = null; }
+    if (patternBaseHit) {
+      // 快照本身就有不透明的底色，一般疊上去就好（'copy' 在顯示卡畫布上會走很慢的那條路）
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(patternBaseHit.canvas, 0, 0); ctx.restore();
+    } else {
     ctx.fillStyle = '#0A0A0A'; ctx.fillRect(0, 0, offs.cw, offs.ch);
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, iw, ih); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
+    }
+    /** 照片＋遮罩底下那張畫完之後（還沒畫遮罩與圖案），拍下來給同一個手勢之後的每一格用 */
+    const snapPatternBase = () => {
+      if (!patternGestureBase || patternBaseHit || dirtyPatternRect) return;
+      const c = patternBaseRef.current?.canvas || document.createElement('canvas');
+      if (c.width !== targetCanvas.width) c.width = targetCanvas.width;
+      if (c.height !== targetCanvas.height) c.height = targetCanvas.height;
+      const g = get2dWide(c); if (!g) return;
+      g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'copy'; g.drawImage(targetCanvas, 0, 0); g.globalCompositeOperation = 'source-over';
+      patternBaseRef.current = { key: patternBaseKey, canvas: c };
+    };
 
     /* 中間那塊交給底下的 <video> 時，畫布這一層要把它挖成透明。
        上面剛用 #1A1A1A 鋪過底色，所以一定要挖，不然影片被蓋住。
@@ -7028,7 +7059,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       linkMode !== 'none' ? animRef.current?.t : null,
       /* 並排排版的圖片側圖案伸進遮罩時也要挖遮罩（maskPlacements），所以那些也要算進來，
          不然拖圖片上的圖案時遮罩這一層一直用舊的快取，伸過去的那一半就不會被挖空。 */
-      holes.filter(h => seamSplit || !h.side || h.side === 'both' || h.side === 'mask')
+      /* 只算「真的會在遮罩上畫東西」的那些：圖片上的圖案只有伸進遮罩時才算。
+         不然放大圖片上的圖案時（就算離交界很遠），遮罩這一層每一格都要整片重挖一次 —— 那就是卡頓。 */
+      holes.filter(h => {
+        if (!seamSplit) return !h.side || h.side === 'both' || h.side === 'mask';
+        if (h.side === 'mask' || h.side === 'both' || !h.side) return true;
+        const A = hA(h);
+        return A.on && maskPlacements(h, getHoleSize(h) * A.k * s, A.x * s, A.y * s).length > 0;
+      })
         .map(h => [h.id,h.side,h.manuallyPlaced,h.randomNumber,getHoleSize(h),h.angle,hA(h),glowBeat(h),glowBeatLink(h)])]) : '';
     if (isMain && cutMaskKey === cutMaskCacheKeyRef.current && lmc.width === maskStorageW && lmc.height === maskStorageH) {
       pasteMask();
@@ -8220,7 +8258,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 滿版本身沒有遮罩區，但仍保留「圖案」層。圖案直接使用圖片側既有
          的同一支繪製器覆在底圖上，數量、位置、動畫、發光與其他排版一致；
          只是不再建立或顯示任何遮罩色塊。 */
-      drawCentreImage();
+      if (!patternBaseHit) { drawCentreImage(); snapPatternBase(); }
       drawObjects(belowObjs);
       drawImageSideHoles();
     } else if (layout === AROUND) {
@@ -8236,8 +8274,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          先鋪底圖與遮罩色塊 → 畫物件 → 再把兩側的圖案補回最上層。
          以前物件是畫在 drawMaskLayer 之前，所以整個沉到遮罩色塊底下、
          在遮罩那一半完全看不見 —— 那是不對的。 */
-      drawCentreImage();
-      drawBackdrop();
+      if (!patternBaseHit) { drawCentreImage(); drawBackdrop(); snapPatternBase(); }
       debugSection('photographs');
       drawMaskLayer();
       debugSection('mask-patterns');
