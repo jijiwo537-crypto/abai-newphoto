@@ -3211,16 +3211,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const panel = patternPanelRef.current;
       panel?.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' });
     });
-    let nextSize = holeSize;
-    if (id === 'cross-star' || id === 'sparkle4') {
+    /* 每種圖案都有自己固定的起始大小。沒列到的以前是「沿用上一個圖案的大小」，
+       結果從大的（例如 sparkle 70）切過去就一直是大的，來回切換看起來越變越大；
+       現在沒列到的一律回到預設 25。 */
+    let nextSize = 25;
+    if (id === 'cross-star' || id === 'sparkle4' || id === 'p-blur-cross-star' || id === 'p-blur-sparkle4') {
       nextSize = 30;
-    } else if (id === 'star') {
+    } else if (id === 'star' || id === 'star-rounded' || id === 'p-star-double' || id === 'p-blur-star' || id === 'p-blur-star-rounded') {
       nextSize = 35;
     } else if (id === 'flower') {
       nextSize = 45;
     } else if (id === 'vortex') {
       nextSize = 35;
-    } else if (id === 'heart' || id === 'heart-icon' || id === 'heart-classic') {
+    } else if (id === 'heart' || id === 'heart-icon' || id === 'heart-classic' || id === 'p-blur-heart') {
       nextSize = 30;
     } else if (id === 'hexstar') {
       nextSize = 35;
@@ -3258,6 +3261,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       nextSize = 22;
     } else if (id === 'text') {
       nextSize = 15;
+    } else if (id.startsWith('music-')) {
+      // 音符的字身細長，給大一點才跟星星那些看起來差不多大
+      nextSize = 40;
     }
     setHoleSize(nextSize);
     setHoleType(id);
