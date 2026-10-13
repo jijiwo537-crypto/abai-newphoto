@@ -1975,7 +1975,7 @@ export const warmGlyphIconsWhenIdle = () => {
     for (const s of Object.keys(GLYPH_HOLES)) if (s.startsWith('music-')) { await awaitPhotoIdle(); centeredGlyphIcon(s); }
   })();
 };
-const CenteredGlyphIcon: React.FC<{ s: string }> = ({ s }) => {
+export const CenteredGlyphIcon: React.FC<{ s: string }> = ({ s }) => {
   const url = centeredGlyphIcon(s);
   if (!url) return <span className="font-bold font-sans leading-none inline-block whitespace-nowrap" style={{ fontSize: `${GLYPH_BTN[s]?.size ?? 18}px` }}>{GLYPH_HOLES[s]}</span>;
   return (
@@ -18608,3 +18608,41 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     </div>
   );
 };
+
+
+/* ── 圖形當圖案用（排序工具裡「加到圖案」選的那幾個） ───────────────────
+   雙層星星與幾個模糊圖形沒辦法用一條路徑表示（一個有兩圈、一個是糊的），
+   所以照圖形自己的畫法畫成一張「只有透明度」的圖，交給圖案現成的圖片圖案那一套
+   （挖空、實心、發光、點選範圍全部都是同一條路）。第一次用到才畫，畫好就留著。 */
+export const SHAPE_PATTERNS: Record<string, string> = {
+  'p-star-double': 'star-double', 'p-blur-star': 'blur-star', 'p-blur-star-rounded': 'blur-star-rounded',
+  'p-blur-cross-star': 'blur-cross-star', 'p-blur-sparkle4': 'blur-sparkle4', 'p-blur-heart': 'blur-heart',
+};
+const shapePatternUrl = (kind: string) => {
+  const S = 1024, blur = isBlurShape(kind), pad = blur ? Math.round(S * 0.12) : 4, body = S - pad * 2;
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d')!;
+  g.translate(pad, pad);
+  drawFeatheredShapeBody(g, kind, body, body, undefined, '#000000');
+  // 裁到看得見的那一塊（圖片圖案的大小與點選範圍都以圖的外框為準）
+  const d = g.getImageData(0, 0, S, S).data;
+  let x0 = S, y0 = S, x1 = -1, y1 = -1;
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) if (d[(y * S + x) * 4 + 3] > 6) {
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  if (x1 < 0) return c.toDataURL();
+  const o = document.createElement('canvas'); o.width = x1 - x0 + 1; o.height = y1 - y0 + 1;
+  o.getContext('2d')!.drawImage(c, -x0, -y0);
+  return o.toDataURL();
+};
+for (const [id, kind] of Object.entries(SHAPE_PATTERNS)) {
+  let url = '';
+  Object.defineProperty(SHAPE_IMAGES, id, {
+    enumerable: true, configurable: true,
+    get: () => url || (typeof document === 'undefined' ? '' : (url = shapePatternUrl(kind))),
+  });
+}
+/** 從圖形借來的圖案，按鈕上用那個圖形自己的小圖（跟圖形選單一模一樣） */
+export const shapePatternIconItem = (s: string): ShapeItem | null =>
+  s === 'star-rounded' ? { id: 'pat-star-rounded', kind: 'star-rounded', filled: true }
+  : SHAPE_PATTERNS[s] ? { id: 'pat-' + s, kind: SHAPE_PATTERNS[s], filled: true } : null;

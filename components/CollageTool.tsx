@@ -8738,13 +8738,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => {
     let alive = true;
     Object.keys(SHAPE_IMAGES).forEach(k => {
+      // 從圖形借來的那幾個是第一次用到才畫的（見 GridLayoutTool 的 SHAPE_PATTERNS），沒選到就不要先畫
+      if (k.startsWith('p-') && k !== holeType) return;
       if(!warmedPatternIcons.has(k)){warmedPatternIcons.add(k);const icon=new Image();icon.src=patternIconUrl(SHAPE_IMAGES[k]);void icon.decode?.().catch(()=>{});}
       const im = getHoleImg(k);
       if (!im || (im.complete && im.naturalWidth)) return;
       im.addEventListener('load', () => { if (alive) renderCanvas(); }, { once: true });
     });
     return () => { alive = false; };
-  }, [renderCanvas]);
+  }, [renderCanvas, holeType]);
 
   /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了。
      這裡要做兩件事，而且都必須在「瀏覽器畫下一格之前」完成：

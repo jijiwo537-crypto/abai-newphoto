@@ -486,6 +486,26 @@ export const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: n
     case 'spinner':
       traceRadial(ctx, type, cx, cy, r);
       return;
+    /* 圓角星星（跟圖形「圓角星星」同一個樣子：只磨圓五個尖角，凹進去的五個轉折保持銳利） */
+    case 'star-rounded': {
+      const pts: [number, number][] = [];
+      for (let i = 0; i < 10; i++) {
+        const t = -Math.PI / 2 + (i / 10) * Math.PI * 2, k = i % 2 ? 0.42 : 1;
+        pts.push([cx + Math.cos(t) * r * k, cy + Math.sin(t) * r * k]);
+      }
+      const cut = 0.38;
+      const toward = (f: [number, number], to: [number, number]): [number, number] => [f[0] + (to[0] - f[0]) * cut, f[1] + (to[1] - f[1]) * cut];
+      const first = toward(pts[0], pts[pts.length - 1]);
+      ctx.moveTo(first[0], first[1]);
+      for (let i = 0; i < pts.length; i += 2) {
+        const tip = pts[i], inner = pts[(i + 1) % pts.length], nextTip = pts[(i + 2) % pts.length];
+        const after = toward(tip, inner), before = toward(nextTip, inner);
+        ctx.quadraticCurveTo(tip[0], tip[1], after[0], after[1]);
+        ctx.lineTo(inner[0], inner[1]); ctx.lineTo(before[0], before[1]);
+      }
+      ctx.closePath();
+      break;
+    }
     case 'hexstar': {
       const pts = hexStarPoints(cx, cy, r, r);
       ctx.moveTo(...pts[0]); for (const p of pts.slice(1)) ctx.lineTo(...p);

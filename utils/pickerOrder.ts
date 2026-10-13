@@ -8,12 +8,14 @@
  * 清單裡沒寫到的項目（例如之後新加的圖形）會自動接在該區的最後面，不會消失。
  */
 export const PATTERN_ORDER: string[] = [
-  'circle', 'square', 'heart', 'star', 'cross-star',
-  'hexstar', 'burst', 'snow', 'flower', 'love',
-  'love3', 'pic333', 'vortex', 'seagrass', 'random-num',
-  'darkstar', 'sparkle', 'aster', 'theta', 'zzz',
-  'text', 'sparkle4', 'question', 'burst-dash',
-  'spinner',
+  'circle', 'square', 'heart', 'star', 'star-rounded',
+  'sparkle4', 'cross-star', 'hexstar', 'p-star-double', 'burst-dash',
+  'darkstar', 'burst', 'snow', 'flower', 'vortex',
+  'love', 'love3', 'pic333', 'spinner', 'seagrass',
+  'question', 'aster', 'sparkle', 'theta', 'zzz',
+  'p-blur-star', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart',
+  'random-num', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef',
+  'text',
 ];
 
 export const SHAPE_SECTIONS = [

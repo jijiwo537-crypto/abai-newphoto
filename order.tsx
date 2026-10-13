@@ -10,14 +10,20 @@ import { ShapeGlyph, HoleGlyph, shapePickerSections } from './components/GridLay
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
-const NEW_IDS = new Set<string>(['question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef']);
+const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef']);
 const STORE = 'abai-order-tool-v1';
 /** 「這個圖形也想當圖案用」的清單（圖形的 id）。存在這台裝置上，複製順序時一起帶出去 */
 const STORE_ADD = 'abai-order-tool-shape-as-pattern-v1';
 const ADD_PREFIX = 'shape:';
 const allShapeItems = () => shapePickerSections().flatMap(([, items]) => items as any[]);
 const asPatternItem = (shape: any) => ({ id: ADD_PREFIX + shape.id, fromShape: shape });
-const loadAdded = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_ADD) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
+/** 已經正式變成圖案的圖形（之前用「加到圖案」選過的，就不要再重複出現一次） */
+const patternIdOfShape = (shapeId: string) => {
+  const kind = shapeId.replace(/-f$/, '');
+  return kind === 'star-rounded' ? 'star-rounded' : kind.startsWith('hole-music-') ? kind.slice(5) : 'p-' + kind;
+};
+const ALREADY_PATTERN = (shapeId: string) => PATTERN_ORDER.includes(patternIdOfShape(shapeId));
+const loadAdded = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_ADD) || '[]'); return Array.isArray(v) ? v.filter((id: string) => !ALREADY_PATTERN(id)) : []; } catch { return []; } };
 const HOLD_MS = 280;
 
 type Group = { key: string; label: string; cols: number; items: any[] };
@@ -40,7 +46,8 @@ const load = (base0: Group[]): Group[] => {
     if (!saved) return base;
     return base.map(g => {
       const order = saved[g.key]; if (!order) return g;
-      const rank = new Map(order.map((id, i) => [id, i]));
+      // 存下來的「shape:圖形」如果已經正式變成圖案，就當成那個圖案的位置
+      const rank = new Map(order.map((id, i) => [id.startsWith(ADD_PREFIX) && ALREADY_PATTERN(id.slice(ADD_PREFIX.length)) ? patternIdOfShape(id.slice(ADD_PREFIX.length)) : id, i]));
       return { ...g, items: [...g.items].sort((a, b) => (rank.get(a.id) ?? 1e6 + g.items.indexOf(a)) - (rank.get(b.id) ?? 1e6 + g.items.indexOf(b))) };
     });
   } catch { return base; }
