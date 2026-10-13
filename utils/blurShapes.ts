@@ -8,8 +8,8 @@
  * 不用 ctx.filter = 'blur()'：iPhone 的 Safari 對它支援不穩。 */
 export const BLUR_SHAPE_KINDS = new Set(['blur-star', 'blur-star-rounded', 'blur-heart', 'blur-circle', 'blur-cross-star', 'blur-square', 'blur-sparkle4']);
 export const isBlurShape = (kind?: string) => !!kind && BLUR_SHAPE_KINDS.has(kind);
-/** 模糊滑桿的預設值（畫面上的 0～100）。25 糊的程度跟改範圍之前的預設 30 一模一樣。 */
-export const BLUR_SHAPE_DEFAULT = 25;
+/** 模糊滑桿的預設值（畫面上的 0～100）。圖案裡借來的模糊圖案也照這個值畫。 */
+export const BLUR_SHAPE_DEFAULT = 50;
 
 /** 模糊半徑（圖形自己的座標單位）。
  *  滑桿看起來是 0～100，實際對應最早那版滑桿的 5～23（＝改範圍之前那根滑桿的 0～120）：

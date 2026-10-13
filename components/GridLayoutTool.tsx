@@ -1943,9 +1943,8 @@ export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
    小圖上，再拿它當遮罩、底色用 currentColor —— 顏色規則跟旁邊的圖示一樣。 */
 const GLYPH_ICON_BOX = 26;
 /* 高音譜號又高又細，塞進 26px 的框裡看起來小一大截 —— 給它高一點的框，
-   線條也加粗一點，看起來才跟旁邊的音符一樣大 */
+   看起來才跟旁邊的音符一樣大（線條照字本來的粗細，不另外加粗） */
 const glyphIconBox = (s: string) => s === 'music-clef' ? 34 : GLYPH_ICON_BOX;
-const GLYPH_ICON_BOLD: Record<string, number> = { 'music-clef': 0.045 };
 const glyphIconCache = new Map<string, string | null>();
 const centeredGlyphIcon = (s: string): string | null => {
   if (glyphIconCache.has(s)) return glyphIconCache.get(s)!;
@@ -1967,8 +1966,6 @@ const centeredGlyphIcon = (s: string): string | null => {
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.fillText(str, BOX / 2 + ink.ox, BOX / 2 + ink.oy);
-      const bold = GLYPH_ICON_BOLD[s];
-      if (bold) { g.strokeStyle = '#000'; g.lineWidth = fs * bold; g.lineJoin = 'round'; g.strokeText(str, BOX / 2 + ink.ox, BOX / 2 + ink.oy); }
       url = c.toDataURL();
     }
   } catch { url = null; }
