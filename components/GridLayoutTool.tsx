@@ -18650,34 +18650,54 @@ export const shapePatternIconItem = (s: string): ShapeItem | null =>
 /* ── 用路徑畫的圖案（圓、方、愛心、星星…）的按鈕小圖 ──────────────────
    以前這幾顆用的是圖示庫的「空心外框」圖示，跟真正灑出來的實心圖案長得不一樣。
    改成直接拿畫圖案的那一支（fillShapePath）畫一次，縮到按鈕大小 ——
-   按鈕上看到的就是畫面上會出現的樣子。顏色一樣跟著按鈕走（遮罩＋currentColor）。 */
+   按鈕上看到的就是畫面上會出現的樣子。顏色一樣跟著按鈕走（currentColor）。 */
 export const PATH_PATTERN_ICONS = new Set(['circle', 'square', 'heart', 'star', 'star-rounded', 'sparkle4', 'cross-star', 'hexstar', 'burst-dash', 'spinner']);
-const pathPatternIconCache = new Map<string, string>();
-const pathPatternIconUrl = (s: string) => {
-  let url = pathPatternIconCache.get(s);
-  if (url) return url;
-  const BOX = 26, FIT = 20, D = 4, ref = 100;
-  const b = patternPathBounds(s, ref), k = FIT / Math.max(b.w, b.h, 1e-6);
-  const c = document.createElement('canvas'); c.width = c.height = BOX * D;
-  const g = c.getContext('2d')!;
-  g.scale(D, D);
-  // 把看得見的那一塊放到正中間
-  g.translate(BOX / 2 - (b.x + b.w / 2) * k, BOX / 2 - (b.y + b.h / 2) * k);
-  g.scale(k, k);
-  g.fillStyle = '#000';
-  fillShapePath(g, s, 0, 0, ref);
-  url = c.toDataURL();
-  pathPatternIconCache.set(s, url);
-  return url;
+/* 以前是畫在 canvas 上、再當 CSS 遮罩貼到按鈕上 —— 有些手機遮罩沒載到，
+   按鈕上就只剩一整塊方框。改成跟圖形的圖標一樣用 SVG：
+   拿一個「只記錄路徑」的假畫布跑一次畫圖案的那一支（fillShapePath），
+   把路徑原封不動轉成 SVG 的 path，形狀還是跟畫面上灑出來的一模一樣。 */
+type PatternIconPart = { d: string; alpha: number };
+const pathPatternIconCache = new Map<string, PatternIconPart[]>();
+const pathPatternIconParts = (s: string) => {
+  const cached = pathPatternIconCache.get(s);
+  if (cached) return cached;
+  const parts: PatternIconPart[] = [];
+  const f = (v: number) => String(Math.round(v * 1000) / 1000);
+  let d = '';
+  const rec = {
+    globalAlpha: 1,
+    beginPath() { d = ''; },
+    moveTo(x: number, y: number) { d += `M${f(x)} ${f(y)}`; },
+    lineTo(x: number, y: number) { d += `L${f(x)} ${f(y)}`; },
+    quadraticCurveTo(a: number, b: number, x: number, y: number) { d += `Q${f(a)} ${f(b)} ${f(x)} ${f(y)}`; },
+    bezierCurveTo(a: number, b: number, c: number, e: number, x: number, y: number) { d += `C${f(a)} ${f(b)} ${f(c)} ${f(e)} ${f(x)} ${f(y)}`; },
+    closePath() { d += 'Z'; },
+    rect(x: number, y: number, w: number, h: number) { d += `M${f(x)} ${f(y)}h${f(w)}v${f(h)}h${f(-w)}Z`; },
+    arc(cx: number, cy: number, r: number, a0: number, a1: number, ccw = false) {
+      const pt = (a: number) => `${f(cx + r * Math.cos(a))} ${f(cy + r * Math.sin(a))}`;
+      d += (d ? 'L' : 'M') + pt(a0);
+      const span = ccw ? a0 - a1 : a1 - a0, sweep = ccw ? 0 : 1;
+      if (span >= Math.PI * 2 - 1e-9) {
+        const mid = a0 + (ccw ? -Math.PI : Math.PI);
+        d += `A${f(r)} ${f(r)} 0 1 ${sweep} ${pt(mid)}A${f(r)} ${f(r)} 0 1 ${sweep} ${pt(a0)}`;
+      } else {
+        const sp = ((span % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        d += `A${f(r)} ${f(r)} 0 ${sp > Math.PI ? 1 : 0} ${sweep} ${pt(a1)}`;
+      }
+    },
+    fill() { parts.push({ d, alpha: rec.globalAlpha }); },
+  };
+  fillShapePath(rec as unknown as CanvasRenderingContext2D, s, 0, 0, 100);
+  pathPatternIconCache.set(s, parts);
+  return parts;
 };
 export const PathPatternIcon: React.FC<{ s: string }> = ({ s }) => {
-  const url = pathPatternIconUrl(s);
+  const BOX = 26, FIT = 20;
+  const b = patternPathBounds(s, 100), side = Math.max(b.w, b.h, 1e-6) * BOX / FIT;
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
   return (
-    <span aria-hidden style={{
-      display: 'block', width: 26, height: 26, backgroundColor: 'currentColor',
-      WebkitMaskImage: `url(${url})`, maskImage: `url(${url})`,
-      WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
-      WebkitMaskPosition: 'center', maskPosition: 'center',
-    }} />
+    <svg aria-hidden width={BOX} height={BOX} viewBox={`${cx - side / 2} ${cy - side / 2} ${side} ${side}`} style={{ display: 'block' }}>
+      {pathPatternIconParts(s).map((p, i) => <path key={i} d={p.d} fill="currentColor" opacity={p.alpha < 1 ? p.alpha : undefined} />)}
+    </svg>
   );
 };
