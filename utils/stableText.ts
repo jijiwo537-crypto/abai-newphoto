@@ -7,6 +7,28 @@
    之後只用目前矩陣 drawImage —— 位置是連續的，不會再逐幀重新排字。
    貼圖解析度只在倍率跨過 2 的次方時才換一張（清晰度改變，位置不變）。 */
 
+/* 表情符號：iPhone 的 Safari 量字（measureText 的 actualBoundingBox）只照主要字型的
+   上下緣算，蘋果的彩色表情符號比那個高、也比較寬一點 —— 照量到的大小開畫布，
+   表情符號的頭頂、底部和最右邊就會被切掉。字串裡有表情符號時，墨水範圍至少撐到
+   表情符號實際會畫到的大小（約 1em 高，左右各多留一點）。 */
+const EMOJI_RE = /\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
+export const hasEmoji = (text: string) => EMOJI_RE.test(text);
+/** 量到的墨水範圍（皆為正值，相對於繪製原點）依表情符號撐開。baseline 是目前 textBaseline。 */
+/** 依 textAlign 把前進寬度分成原點左、右兩邊 */
+export const advanceSplit = (align: CanvasTextAlign, width: number): [number, number] =>
+  align === 'center' ? [width / 2, width / 2] : align === 'right' || align === 'end' ? [width, 0] : [0, width];
+/** leftAdv／rightAdv：字的前進寬度在原點左邊／右邊各佔多少（看 textAlign）。 */
+export const emojiSafeInk = (text: string, fontPx: number, ink: { left: number; right: number; top: number; bottom: number }, leftAdv: number, rightAdv: number, baseline: CanvasTextBaseline = 'alphabetic') => {
+  if (!hasEmoji(text)) return ink;
+  const mid = baseline === 'middle';
+  return {
+    left: Math.max(ink.left, leftAdv + fontPx * .12),
+    right: Math.max(ink.right, rightAdv + fontPx * .12),
+    top: Math.max(ink.top, fontPx * (mid ? .62 : 1.0)),
+    bottom: Math.max(ink.bottom, fontPx * (mid ? .62 : .32)),
+  };
+};
+
 type Entry = { canvas: HTMLCanvasElement; x: number; y: number; w: number; h: number; px: number };
 const cache = new Map<string, Entry>();
 const MAX_ENTRIES = 48;
@@ -68,10 +90,13 @@ export function drawStableText(ctx: CanvasRenderingContext2D, mode: 'fill' | 'st
     const metrics = g.measureText(text);
     const fontPx = parseFloat(/(\d+(?:\.\d+)?)px/.exec(ctx.font)?.[1] || '16');
     const margin = Math.ceil((mode === 'stroke' ? ctx.lineWidth : 0) + fontPx * .15 + 2);
-    const left = Math.max(0, metrics.actualBoundingBoxLeft || 0) + margin;
-    const right = Math.max(0, metrics.actualBoundingBoxRight || metrics.width) + margin;
-    const top = Math.max(0, metrics.actualBoundingBoxAscent || fontPx) + margin;
-    const bottom = Math.max(0, metrics.actualBoundingBoxDescent || fontPx * .3) + margin;
+    const ink = emojiSafeInk(text, fontPx, {
+      left: Math.max(0, metrics.actualBoundingBoxLeft || 0),
+      right: Math.max(0, metrics.actualBoundingBoxRight || metrics.width),
+      top: Math.max(0, metrics.actualBoundingBoxAscent || fontPx),
+      bottom: Math.max(0, metrics.actualBoundingBoxDescent || fontPx * .3),
+    }, ...advanceSplit(ctx.textAlign, metrics.width), ctx.textBaseline);
+    const left = ink.left + margin, right = ink.right + margin, top = ink.top + margin, bottom = ink.bottom + margin;
     const w = left + right, h = top + bottom;
     const lv = Math.max(.25, Math.min(level, MAX_SIDE / Math.max(w, h), Math.sqrt(MAX_ENTRY_PX / Math.max(1, w * h))));
     canvas.width = Math.max(1, Math.ceil(w * lv));

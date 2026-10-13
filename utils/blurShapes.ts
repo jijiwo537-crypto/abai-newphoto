@@ -10,6 +10,8 @@ export const BLUR_SHAPE_KINDS = new Set(['blur-star', 'blur-star-rounded', 'blur
 export const isBlurShape = (kind?: string) => !!kind && BLUR_SHAPE_KINDS.has(kind);
 /** 模糊滑桿的預設值（畫面上的 0～100）。圖案裡借來的模糊圖案也照這個值畫。 */
 export const BLUR_SHAPE_DEFAULT = 50;
+/** 每種模糊圖形自己的預設模糊值：模糊圓形預設糊到最滿（100），其他照 BLUR_SHAPE_DEFAULT。 */
+export const blurShapeDefault = (kind?: string) => kind === 'blur-circle' ? 100 : BLUR_SHAPE_DEFAULT;
 
 /** 模糊半徑（圖形自己的座標單位）。
  *  滑桿看起來是 0～100，實際對應最早那版滑桿的 5～23（＝改範圍之前那根滑桿的 0～120）：
@@ -71,7 +73,7 @@ export const drawBlurredShape = (
   const aw = Math.abs(w), ah = Math.abs(h);
   if (aw < 0.5 || ah < 0.5) return;
   const aspect = Math.round(aw / ah * 100) / 100;
-  const v = Math.max(0, Math.min(100, value ?? BLUR_SHAPE_DEFAULT));
+  const v = Math.max(0, Math.min(100, value ?? blurShapeDefault(kind)));
   const key = `${kind}|${aspect}|${color}|${Math.round(v * 10) / 10}`;
   let hit = blurredCache.get(key);
   if (!hit) {

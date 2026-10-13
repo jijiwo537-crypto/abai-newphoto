@@ -61,7 +61,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
 );
 
 import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { drawStableText } from '../utils/stableText';
+import { drawStableText, hasEmoji } from '../utils/stableText';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -111,7 +111,7 @@ import {PhotoAdjustmentBlend,BLEND_ADJUSTMENTS} from '../utils/photoAdjustmentBl
 import { SaveButton } from './SaveButton';
 import { PatternIcon, patternIconUrl } from './PatternIcon';
 import { PATTERN_ORDER } from '../utils/pickerOrder';
-import { isBlurShape, BLUR_SHAPE_DEFAULT } from '../utils/blurShapes';
+import { isBlurShape, blurShapeDefault } from '../utils/blurShapes';
 import { ExportActionLift } from './ExportActionLift';
 import type { ExitChoice } from '../types';
 
@@ -451,7 +451,8 @@ const plainTextBox = (o: any, force = false): { w: number; h: number } | null =>
   g.textAlign = 'center'; g.textBaseline = 'middle';
   const m = g.measureText(o.text || ' ');
   const pad = Math.max(8, size * .12), stroke = (o.strokeWidth || 0) * size / 40;
-  const half = Math.max(m.actualBoundingBoxAscent || size * .6, m.actualBoundingBoxDescent || size * .4);
+  // 表情符號 iPhone 量得偏小（見 utils/stableText 的 emojiSafeInk），框至少撐到它真正的高度
+  const half = Math.max(m.actualBoundingBoxAscent || size * .6, m.actualBoundingBoxDescent || size * .4, hasEmoji(o.text || '') ? size * .62 : 0);
   return {
     w: Math.max(12, m.width - spacing + (pad + stroke) * 2),
     h: Math.max(12, half * 2 + (pad + stroke) * 2),
@@ -11874,7 +11875,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           )}
                           {isBlurShape(sel.kind) && (
                             <div className="px-2 order-1 w-full">
-                              {shapeSlider('模糊', sel.shapeFeather ?? BLUR_SHAPE_DEFAULT, 0, 100,
+                              {shapeSlider('模糊', sel.shapeFeather ?? blurShapeDefault(sel.kind), 0, 100,
                                 (v: number) => patch({ shapeFeather: v }))}
                             </div>
                           )}

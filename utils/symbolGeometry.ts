@@ -1,5 +1,6 @@
 import { fontStack } from './fonts';
 import { SYMBOLS } from './symbols';
+import { hasEmoji, emojiSafeInk } from './stableText';
 
 /* iOS 對部分星星、愛心、天體等碼位會優先選 Apple Color Emoji。符號在
    產品裡是可改色的單色裝飾，不是 Emoji；為每個 pictograph 明確補上
@@ -840,10 +841,18 @@ export const rasterizeSymbolAnimationLayers = (
     const metrics = probe.measureText(renderText);
     /* 一般文字直接採用同一個 Canvas 字型的實際墨水邊界，不能借用符號字型
        的固定 em 框；否則粗體、斜體與字距一換，切片就可能被裁掉。 */
-    const measuredLeft = Number(metrics.actualBoundingBoxLeft);
-    const measuredRight = Number(metrics.actualBoundingBoxRight);
-    const measuredTop = Number(metrics.actualBoundingBoxAscent);
-    const measuredBottom = Number(metrics.actualBoundingBoxDescent);
+    let measuredLeft = Number(metrics.actualBoundingBoxLeft);
+    let measuredRight = Number(metrics.actualBoundingBoxRight);
+    let measuredTop = Number(metrics.actualBoundingBoxAscent);
+    let measuredBottom = Number(metrics.actualBoundingBoxDescent);
+    /* iPhone 量表情符號會量小（見 stableText 的 emojiSafeInk），切片會把它切掉 */
+    if (plainText && hasEmoji(renderText)) {
+      const e = emojiSafeInk(renderText, px, {
+        left: Number.isFinite(measuredLeft) ? measuredLeft : 0, right: Number.isFinite(measuredRight) ? measuredRight : 0,
+        top: Number.isFinite(measuredTop) ? measuredTop : 0, bottom: Number.isFinite(measuredBottom) ? measuredBottom : 0,
+      }, logicalAdvance / 2, logicalAdvance / 2, 'middle');
+      measuredLeft = e.left; measuredRight = e.right; measuredTop = e.top; measuredBottom = e.bottom;
+    }
     const inkW = plainText
       ? Math.max(px * .05, Number.isFinite(measuredLeft + measuredRight) ? measuredLeft + measuredRight : logicalAdvance)
       : Math.max(px * .05, stickerInk!.w * px);

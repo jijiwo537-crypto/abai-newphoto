@@ -12,7 +12,7 @@ import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, Slid
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
 import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints, radialD, radialParts, radialPartD, spinnerAlpha } from '../utils/heartShapes';
-import { isBlurShape, blurShapeBaseD, drawBlurredShape, BLUR_SHAPE_DEFAULT } from '../utils/blurShapes';
+import { isBlurShape, blurShapeBaseD, drawBlurredShape, BLUR_SHAPE_DEFAULT, blurShapeDefault } from '../utils/blurShapes';
 import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask} from '../utils/backdropMasks';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
@@ -23,7 +23,7 @@ import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface,layoutGeomPreviews} from './LayoutPhotoSurface';
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
-import {drawStableText} from '../utils/stableText';
+import {drawStableText, hasEmoji} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
 import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
@@ -59,7 +59,7 @@ import {
   glyphInk, glyphFont, clefSizeToUi, clefSizeFromUi, fillShapePath, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
 } from '../utils/holeShapes';
-import { SHAPE_IMAGES } from '../utils/shapeImages';
+import { SHAPE_IMAGES, ICON_IMAGES } from '../utils/shapeImages';
 import { isVectorShape } from '../utils/vectorShapes';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -1994,7 +1994,7 @@ export const CenteredGlyphIcon: React.FC<{ s: string }> = ({ s }) => {
 };
 export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled }) => (
   <>
-    {isVectorShape(s) ? <PathPatternIcon s={s} /> : s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 24 : 22} filled={filled} /> : PATTERN_LINE_ICON_KINDS.has(s) ? <ShapeLineIcon kind={s} /> : (s === 'burst-dash' || s === 'spinner') ? <RadialIcon kind={s} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+    {isVectorShape(s) && !ICON_IMAGES[s] ? <PathPatternIcon s={s} /> : s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 24 : 22} filled={filled} /> : PATTERN_LINE_ICON_KINDS.has(s) ? <ShapeLineIcon kind={s} /> : (s === 'burst-dash' || s === 'spinner') ? <RadialIcon kind={s} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : (ICON_IMAGES[s] || SHAPE_IMAGES[s]) ? (
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
                            沒選中時是暗的（#555），選中才變白。
@@ -2004,10 +2004,10 @@ export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled
                           style={{
                             display: 'block',
                             width: s === 'abai' ? 29 : 26,
-                            height: (s === 'abai' ? 29 : 26) / holeImgRatio(s),
+                            height: (s === 'abai' ? 29 : 26) / (ICON_IMAGES[s]?.ratio ?? holeImgRatio(s)),
                             backgroundColor: 'currentColor',
-                            WebkitMaskImage: `url(${SHAPE_IMAGES[s]})`,
-                            maskImage: `url(${SHAPE_IMAGES[s]})`,
+                            WebkitMaskImage: `url(${ICON_IMAGES[s]?.src ?? SHAPE_IMAGES[s]})`,
+                            maskImage: `url(${ICON_IMAGES[s]?.src ?? SHAPE_IMAGES[s]})`,
                             WebkitMaskSize: 'contain',
                             maskSize: 'contain',
                             WebkitMaskRepeat: 'no-repeat',
@@ -2791,7 +2791,7 @@ export const ShapeEditorPanel: React.FC<{
           )}
           {isBlurShape(layer.shape) && (
             <div className="px-2 order-1 w-full">
-              {slider('模糊', layer.shapeFeather ?? BLUR_SHAPE_DEFAULT, 0, 100, v => onChange({ shapeFeather: v }))}
+              {slider('模糊', layer.shapeFeather ?? blurShapeDefault(layer.shape), 0, 100, v => onChange({ shapeFeather: v }))}
             </div>
           )}
           {isArrowShape(layer.shape) && (
@@ -6009,8 +6009,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         const glyphs = Array.from(line);
         return metrics[index].width + glyphs.length * spacing;
       })) + 8;
-      const ascent = Math.max(size * .7, ...metrics.map(m => m.actualBoundingBoxAscent || 0));
-      const descent = Math.max(size * .15, ...metrics.map(m => m.actualBoundingBoxDescent || 0));
+      /* 有表情符號時 iPhone 量出來偏小（見 utils/stableText 的 emojiSafeInk），框要撐到表情符號真正的高度 */
+      const emoji = lines.some(hasEmoji);
+      const ascent = Math.max(size * (emoji ? 1 : .7), ...metrics.map(m => m.actualBoundingBoxAscent || 0));
+      const descent = Math.max(size * (emoji ? .32 : .15), ...metrics.map(m => m.actualBoundingBoxDescent || 0));
       /* 行盒不再用整個 font-size × 1.12 當成字形高度。真正選中框只包住
          actualBoundingBox 的頂／底，再加對稱 4px，所以下方不會多留一截。 */
       const h = Math.max(6, (lines.length - 1) * size * 1.12 + ascent + descent) + 8;
@@ -18651,11 +18653,13 @@ for (const [id, kind] of Object.entries(SHAPE_PATTERNS)) {
 /* 從圖形借來的圖案在按鈕上的大小（傳給 ShapeGlyph 的 size）。
    模糊的那幾個有一圈淡淡的光暈，看得見的本體比較小，要給大一點才跟旁邊一樣大。 */
 export const SHAPE_PATTERN_ICON_SIZE: Record<string, number> = {
-  'star-rounded': 20, 'p-blur-star': 19.5, 'p-blur-star-rounded': 20,
+  'star-rounded': 20, 'p-star-double': 18.5, 'p-blur-star': 19.5, 'p-blur-star-rounded': 20,
   'p-blur-cross-star': 22.5, 'p-blur-sparkle4': 25, 'p-blur-heart': 14.5,
 };
 export const shapePatternIconItem = (s: string): ShapeItem | null =>
   s === 'star-rounded' ? { id: 'pat-star-rounded', kind: 'star-rounded', filled: true }
+  // 雙層星星圖案已經改成向量，按鈕小圖照舊用「雙層星星」圖形自己的那一顆
+  : s === 'p-star-double' ? { id: 'pat-p-star-double', kind: 'star-double', filled: true }
   : SHAPE_PATTERNS[s] ? { id: 'pat-' + s, kind: SHAPE_PATTERNS[s], filled: true } : null;
 
 /* ── 用路徑畫的圖案（圓、方、愛心、星星…）的按鈕小圖 ──────────────────
@@ -18663,7 +18667,7 @@ export const shapePatternIconItem = (s: string): ShapeItem | null =>
    改成直接拿畫圖案的那一支（fillShapePath）畫一次，縮到按鈕大小 ——
    按鈕上看到的就是畫面上會出現的樣子。顏色一樣跟著按鈕走（currentColor）。 */
 export const PATH_PATTERN_ICONS = new Set(['circle', 'square', 'heart', 'star', 'star-rounded', 'sparkle4', 'cross-star', 'hexstar', 'burst-dash', 'spinner',
-  'pic333', 'abai', 'p-star-double', 'q-mark', 'anger-mark', 'excl-mark']);
+  'q-mark', 'anger-mark', 'excl-mark']);
 /* 以前是畫在 canvas 上、再當 CSS 遮罩貼到按鈕上 —— 有些手機遮罩沒載到，
    按鈕上就只剩一整塊方框。改成跟圖形的圖標一樣用 SVG：
    拿一個「只記錄路徑」的假畫布跑一次畫圖案的那一支（fillShapePath），
@@ -18708,7 +18712,7 @@ const pathPatternIconParts = (s: string) => {
 const PATH_PATTERN_ICON_FIT: Record<string, number> = {
   circle: 14, square: 12.5, heart: 15.5, star: 17, 'star-rounded': 17,
   sparkle4: 19.5, 'cross-star': 18, hexstar: 16.5, 'burst-dash': 18, spinner: 17,
-  pic333: 24, abai: 25, 'p-star-double': 17.5, 'q-mark': 16, 'anger-mark': 17, 'excl-mark': 18,
+  'q-mark': 16, 'anger-mark': 17, 'excl-mark': 18,
 };
 export const PathPatternIcon: React.FC<{ s: string }> = ({ s }) => {
   const BOX = 26, FIT = PATH_PATTERN_ICON_FIT[s] ?? 16;
