@@ -12160,6 +12160,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   {/* 連線與發光都改成跟「紋理」同一種排法：
                       一格之內就把「名稱＋所有選項＋顏色」全部放完，
                       顏色點下去一樣是進獨立的調色頁。 */}
+                  {/* 發光：跟上面那幾根一樣，名稱在滑桿上方、不加外框；0 ＝ 關閉。
+                      強度跟圖形的發光同一套。右邊是發光顏色。 */}
+                  <div className="flex items-end gap-4 mt-6">
+                    <div className="flex-1 min-w-0">
+                      <CompactSlider wide label="發光" value={holeGlow} min={0} max={100} step={1} onChange={(v: number) => setHoleGlow(Math.round(v))} />
+                    </div>
+                    <button
+                      onClick={() => setColorPickerTarget('holeGlow')}
+                      title="發光顏色"
+                      className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors -mb-1"
+                      style={{ backgroundColor: holeGlowColor }}
+                    />
+                  </div>
                   <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] mt-6">
                     <span className="text-[10px] font-bold text-[#888]">連線</span>
                     <div className="flex items-center gap-2">
@@ -12194,24 +12207,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     </div>
                   </div>
 
-                  <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] mt-3">
-                    <span className="text-[10px] font-bold text-[#888] shrink-0">發光</span>
-                    <div className="flex items-center gap-3 flex-1 min-w-0 pl-4">
-                      {/* 一根滑桿：0 ＝ 關閉，跟圖形的發光同一套強度（滑桿看起來都從 0 開始） */}
-                      <div className="flex-1 min-w-0 slider-wrap" style={{ height: 16 }}>
-                        <SmoothRange min={0} max={100} step={1} value={holeGlow}
-                          onValue={v => setHoleGlow(Math.round(v))}
-                          className="premium-slider w-full" style={{ touchAction: 'none' }} />
-                      </div>
-                      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white w-9 text-center shrink-0">{holeGlow}</span>
-                      <button
-                        onClick={() => setColorPickerTarget('holeGlow')}
-                        title="發光顏色"
-                        className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                        style={{ backgroundColor: holeGlowColor }}
-                      />
-                    </div>
-                  </div>
                 </div>}
                 </div>
               </div>}
