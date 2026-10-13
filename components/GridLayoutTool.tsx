@@ -56,7 +56,7 @@ import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount, glowToUi, glowFromUi,
   texOf, paintStripes,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
-  glyphInk, glyphFont, clefSizeToUi, clefSizeFromUi,
+  glyphInk, glyphFont, clefSizeToUi, clefSizeFromUi, fillShapePath, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -18646,3 +18646,38 @@ for (const [id, kind] of Object.entries(SHAPE_PATTERNS)) {
 export const shapePatternIconItem = (s: string): ShapeItem | null =>
   s === 'star-rounded' ? { id: 'pat-star-rounded', kind: 'star-rounded', filled: true }
   : SHAPE_PATTERNS[s] ? { id: 'pat-' + s, kind: SHAPE_PATTERNS[s], filled: true } : null;
+
+/* ── 用路徑畫的圖案（圓、方、愛心、星星…）的按鈕小圖 ──────────────────
+   以前這幾顆用的是圖示庫的「空心外框」圖示，跟真正灑出來的實心圖案長得不一樣。
+   改成直接拿畫圖案的那一支（fillShapePath）畫一次，縮到按鈕大小 ——
+   按鈕上看到的就是畫面上會出現的樣子。顏色一樣跟著按鈕走（遮罩＋currentColor）。 */
+export const PATH_PATTERN_ICONS = new Set(['circle', 'square', 'heart', 'star', 'star-rounded', 'sparkle4', 'cross-star', 'hexstar', 'burst-dash', 'spinner']);
+const pathPatternIconCache = new Map<string, string>();
+const pathPatternIconUrl = (s: string) => {
+  let url = pathPatternIconCache.get(s);
+  if (url) return url;
+  const BOX = 26, FIT = 20, D = 4, ref = 100;
+  const b = patternPathBounds(s, ref), k = FIT / Math.max(b.w, b.h, 1e-6);
+  const c = document.createElement('canvas'); c.width = c.height = BOX * D;
+  const g = c.getContext('2d')!;
+  g.scale(D, D);
+  // 把看得見的那一塊放到正中間
+  g.translate(BOX / 2 - (b.x + b.w / 2) * k, BOX / 2 - (b.y + b.h / 2) * k);
+  g.scale(k, k);
+  g.fillStyle = '#000';
+  fillShapePath(g, s, 0, 0, ref);
+  url = c.toDataURL();
+  pathPatternIconCache.set(s, url);
+  return url;
+};
+export const PathPatternIcon: React.FC<{ s: string }> = ({ s }) => {
+  const url = pathPatternIconUrl(s);
+  return (
+    <span aria-hidden style={{
+      display: 'block', width: 26, height: 26, backgroundColor: 'currentColor',
+      WebkitMaskImage: `url(${url})`, maskImage: `url(${url})`,
+      WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+      WebkitMaskPosition: 'center', maskPosition: 'center',
+    }} />
+  );
+};
