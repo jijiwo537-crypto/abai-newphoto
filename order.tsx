@@ -10,7 +10,7 @@ import { ShapeGlyph, HoleGlyph, shapePickerSections } from './components/GridLay
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
-const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef']);
+const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef']);
 const STORE = 'abai-order-tool-v1';
 /** 「這個圖形也想當圖案用」的清單（圖形的 id）。存在這台裝置上，複製順序時一起帶出去 */
 const STORE_ADD = 'abai-order-tool-shape-as-pattern-v1';

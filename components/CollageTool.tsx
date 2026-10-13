@@ -3217,13 +3217,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     let nextSize = 25;
     if (id === 'cross-star' || id === 'sparkle4' || id === 'p-blur-cross-star' || id === 'p-blur-sparkle4') {
       nextSize = 30;
-    } else if (id === 'star' || id === 'star-rounded' || id === 'p-star-double' || id === 'p-blur-star' || id === 'p-blur-star-rounded') {
+    } else if (id === 'star' || id === 'star-rounded' || id === 'p-star-double' || id === 'p-blur-star') {
       nextSize = 35;
     } else if (id === 'flower') {
       nextSize = 45;
     } else if (id === 'vortex') {
       nextSize = 35;
-    } else if (id === 'heart' || id === 'heart-icon' || id === 'heart-classic' || id === 'p-blur-heart') {
+    } else if (id === 'heart' || id === 'heart-icon' || id === 'heart-classic') {
       nextSize = 30;
     } else if (id === 'hexstar') {
       nextSize = 35;
@@ -3261,6 +3261,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       nextSize = 22;
     } else if (id === 'text') {
       nextSize = 15;
+    } else if (id === 'p-blur-star-rounded' || id === 'p-blur-heart') {
+      nextSize = 20;
     } else if (id.startsWith('music-')) {
       // 音符的字身細長，給大一點才跟星星那些看起來差不多大
       nextSize = 40;

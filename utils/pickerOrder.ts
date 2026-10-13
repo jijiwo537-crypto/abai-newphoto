@@ -13,7 +13,7 @@ export const PATTERN_ORDER: string[] = [
   'darkstar', 'burst', 'snow', 'flower', 'vortex',
   'love', 'love3', 'pic333', 'spinner', 'seagrass',
   'question', 'aster', 'sparkle', 'theta', 'zzz',
-  'p-blur-star', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart',
+  'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart',
   'random-num', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef',
   'text',
 ];

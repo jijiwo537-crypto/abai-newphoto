@@ -55,7 +55,7 @@ export const GLYPH_BTN: Record<string, { size?: number; dx?: number; dy?: number
   sparkle:  { size: 27 },
   // 音符字身小，按鈕上放大一點；高音譜號很高，縮一點 —— 跟旁邊的圖標看起來一樣大
   'music-eighth': { size: 27 }, 'music-beamed': { size: 26 }, 'music-sixteenth': { size: 25 },
-  'music-clef': { size: 16 },
+  'music-clef': { size: 32 },
   question: { size: 21 },
   // 下面這幾顆是多個字組成的，照 18px 畫會撐出格子
   theta:    { size: 15, dx: 0.2, dy: -0.3 },

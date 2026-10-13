@@ -1942,6 +1942,10 @@ export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
    改成在這台裝置上真的量一次墨水（glyphInk），把字畫到一張以墨水為中心的
    小圖上，再拿它當遮罩、底色用 currentColor —— 顏色規則跟旁邊的圖示一樣。 */
 const GLYPH_ICON_BOX = 26;
+/* 高音譜號又高又細，塞進 26px 的框裡看起來小一大截 —— 給它高一點的框，
+   線條也加粗一點，看起來才跟旁邊的音符一樣大 */
+const glyphIconBox = (s: string) => s === 'music-clef' ? 34 : GLYPH_ICON_BOX;
+const GLYPH_ICON_BOLD: Record<string, number> = { 'music-clef': 0.045 };
 const glyphIconCache = new Map<string, string | null>();
 const centeredGlyphIcon = (s: string): string | null => {
   if (glyphIconCache.has(s)) return glyphIconCache.get(s)!;
@@ -1951,17 +1955,20 @@ const centeredGlyphIcon = (s: string): string | null => {
     let fs = GLYPH_BTN[s]?.size ?? 18;
     let ink = glyphInk(s, str, fs);
     if (ink.ok) {
-      const fit = Math.min(1, (GLYPH_ICON_BOX - 2) / Math.max(ink.w, ink.h, 1e-6));
+      const BOX = glyphIconBox(s);
+      const fit = Math.min(1, (BOX - 2) / Math.max(ink.w, ink.h, 1e-6));
       if (fit < 1) { fs *= fit; ink = glyphInk(s, str, fs); }
       const D = 4, c = document.createElement('canvas');
-      c.width = c.height = GLYPH_ICON_BOX * D;
+      c.width = c.height = BOX * D;
       const g = c.getContext('2d')!;
       g.scale(D, D);
       g.fillStyle = '#000';
       g.font = glyphFont(s, fs);
       g.textAlign = 'center';
       g.textBaseline = 'middle';
-      g.fillText(str, GLYPH_ICON_BOX / 2 + ink.ox, GLYPH_ICON_BOX / 2 + ink.oy);
+      g.fillText(str, BOX / 2 + ink.ox, BOX / 2 + ink.oy);
+      const bold = GLYPH_ICON_BOLD[s];
+      if (bold) { g.strokeStyle = '#000'; g.lineWidth = fs * bold; g.lineJoin = 'round'; g.strokeText(str, BOX / 2 + ink.ox, BOX / 2 + ink.oy); }
       url = c.toDataURL();
     }
   } catch { url = null; }
@@ -1980,7 +1987,7 @@ export const CenteredGlyphIcon: React.FC<{ s: string }> = ({ s }) => {
   if (!url) return <span className="font-bold font-sans leading-none inline-block whitespace-nowrap" style={{ fontSize: `${GLYPH_BTN[s]?.size ?? 18}px` }}>{GLYPH_HOLES[s]}</span>;
   return (
     <span aria-hidden style={{
-      display: 'block', width: GLYPH_ICON_BOX, height: GLYPH_ICON_BOX, backgroundColor: 'currentColor',
+      display: 'block', width: glyphIconBox(s), height: glyphIconBox(s), margin: (GLYPH_ICON_BOX - glyphIconBox(s)) / 2, backgroundColor: 'currentColor',
       WebkitMaskImage: `url(${url})`, maskImage: `url(${url})`,
       WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
       WebkitMaskPosition: 'center', maskPosition: 'center',
