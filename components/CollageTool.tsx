@@ -1425,7 +1425,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     glowObj: (o: any) => number;
     obj: (o: any, i: number) => MoFrame & { fx: number };
   } | null>(null);
-  const [holeCount, setHoleCount] = useState(11);
+  const [holeCount, setHoleCount] = useState(15);
   /** 滿版本身沒有遮罩圖案，但數量欄不能被重設成 0；離開滿版時精準還原。 */
   const [holes, setHoles] = useState<any[]>([]); 
   /* 浮動物件：疊在拼圖最上層的圖片與文字。
@@ -3298,6 +3298,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       let att = 0, valid = false, hx = 0, hy = 0;
       while (!valid && att < 500) {
         hx = p + Math.random() * (fieldW - p * 2); hy = p + Math.random() * (fieldH - p * 2); valid = true;
+        /* 並排排版：隨機灑的時候不放在交界上 —— 跟以前一樣，每一顆都完整落在
+           自己那一塊裡、離那一塊的四邊至少 p（自己拖過去跨在交界上則可以）。 */
+        if (spread) {
+          const inImg = hx >= geo.ix && hx <= geo.ix + geo.iw && hy >= geo.iy && hy <= geo.iy + geo.ih;
+          const bx = inImg ? geo.ix : geo.mx, by = inImg ? geo.iy : geo.my, bw = inImg ? geo.iw : geo.mw, bh = inImg ? geo.ih : geo.mh;
+          if (hx - bx < p || bx + bw - hx < p || hy - by < p || by + bh - hy < p) { valid = false; att++; continue; }
+        }
         for (let ex of newHoles) if (Math.hypot((ex.canvasX ?? ex.x) - hx, (ex.canvasY ?? ex.y) - hy) < drawnS * 1.2) { valid = false; break; }
         att++;
       }
@@ -5240,10 +5247,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const dy = y - intr.startY;
       // 四周包圍時圖案活動範圍是整張畫布，用原圖尺寸夾會把它擠回左上角
       const fld = layoutGeometry(layout, imageState.baseW, imageState.baseH, maskScale, canvasRatio);
-      const limX = layout === AROUND ? fld.mw : fld.iw;
-      const limY = layout === AROUND ? fld.mh : fld.ih;
-      const nx = Math.max(0, Math.min(limX, intr.initX + dx));
-      const ny = Math.max(0, Math.min(limY, intr.initY + dy));
+      /* 並排排版：圖案可以拖過交界、在整張畫布上自由移動（座標仍是自己那一側的，
+         所以範圍是「整張畫布減掉自己那一側的原點」）。 */
+      const movingHole = (liveHolesRef.current ?? holesRef.current).find(h => h.id === intr.id);
+      const ownSide = movingHole?.side && movingHole.side !== 'both' ? movingHole.side : intr.clickedSide || selectedPatternSide;
+      const free = layout !== AROUND && layout !== FULL;
+      const ox = free ? (ownSide === 'mask' ? fld.mx : fld.ix) : 0, oy = free ? (ownSide === 'mask' ? fld.my : fld.iy) : 0;
+      const limX = layout === AROUND ? fld.mw : free ? fld.cw : fld.iw;
+      const limY = layout === AROUND ? fld.mh : free ? fld.ch : fld.ih;
+      const nx = Math.max(-ox, Math.min(limX - ox, intr.initX + dx));
+      const ny = Math.max(-oy, Math.min(limY - oy, intr.initY + dy));
       queueMove(() => { liveHolesRef.current = (liveHolesRef.current ?? holesRef.current).flatMap(h => {
         if (h.id !== intr.id) return [h];
         const side = h.side && h.side !== 'both' ? h.side : intr.clickedSide || selectedPatternSide;
@@ -7013,7 +7026,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     const cutMaskKey = isMain ? JSON.stringify([maskKey, maskX,maskY,lmW,lmH,layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlow, holeGlowColor,
       linkMode !== 'none' ? animRef.current?.t : null,
-      holes.filter(h => !h.side || h.side === 'both' || h.side === 'mask')
+      /* 並排排版的圖片側圖案伸進遮罩時也要挖遮罩（maskPlacements），所以那些也要算進來，
+         不然拖圖片上的圖案時遮罩這一層一直用舊的快取，伸過去的那一半就不會被挖空。 */
+      holes.filter(h => seamSplit || !h.side || h.side === 'both' || h.side === 'mask')
         .map(h => [h.id,h.side,h.manuallyPlaced,h.randomNumber,getHoleSize(h),h.angle,hA(h),glowBeat(h),glowBeatLink(h)])]) : '';
     if (isMain && cutMaskKey === cutMaskCacheKeyRef.current && lmc.width === maskStorageW && lmc.height === maskStorageH) {
       pasteMask();
@@ -7026,7 +7041,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const lmx = get2dWide(lmc)!;
     lmx.setTransform(1, 0, 0, 1, maskGuard-maskX, maskGuard-maskY);
     lmx.save();
-    if(dirtyPatternRect){const r=dirtyPatternRect;lmx.beginPath();lmx.rect(r.x-offs.mx,r.y-offs.my,r.w,r.h);lmx.clip();}
+    /* 局部重畫的裁切框要對齊遮罩這張畫布的像素（它本身有 maskGuard-maskX 的小數位移），
+       不然框的邊落在半個像素上，拖過的地方會留一條淡淡的線（跟主畫布那邊同一個問題）。 */
+    if(dirtyPatternRect){const r=dirtyPatternRect,tx=maskGuard-maskX-offs.mx,ty=maskGuard-maskY-offs.my;
+      const x0=Math.floor(r.x+tx),y0=Math.floor(r.y+ty),x1=Math.ceil(r.x+r.w+tx),y1=Math.ceil(r.y+r.h+ty);
+      lmx.setTransform(1,0,0,1,0,0);lmx.beginPath();lmx.rect(x0,y0,x1-x0,y1-y0);lmx.clip();lmx.setTransform(1,0,0,1,maskGuard-maskX,maskGuard-maskY);}
     lmx.globalAlpha = 1;
     lmx.globalCompositeOperation = 'copy';
     // 純色的底稿只有 8×8（見上面 plainMask），這裡直接填色，不要把小塊拉大
