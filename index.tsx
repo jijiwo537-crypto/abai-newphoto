@@ -6,6 +6,7 @@ import App from './App';
 import { installSliderTouch } from './utils/sliderTouch';
 import { installTapOnly } from './utils/tapOnly';
 import { setupNativeShell } from './utils/native';
+import { installCanvasShadowSpace } from './utils/canvasShadowSpace';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -19,6 +20,10 @@ installSliderTouch();
 /* 按鈕只認「點一下」：按著不放很久才鬆手的那一次不算數。
    跟上面一樣裝在 document 上、只裝一次。 */
 installTapOnly();
+
+/* 有的瀏覽器的畫布陰影會跟著矩陣縮放（不照規格），預覽的發光就散到看不見。
+   開頭量一次，需要時改成照規格的行為（見 utils/canvasShadowSpace）。 */
+installCanvasShadowSpace();
 
 /* 包成 App 時的原生設定（目前只有狀態列的字色）。
    網頁版在函式第一行就會回去，什麼都不會載、什麼都不會做。 */

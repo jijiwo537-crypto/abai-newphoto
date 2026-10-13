@@ -65,6 +65,8 @@ import { drawStableText, hasEmoji } from '../utils/stableText';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
+import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
+installCanvasShadowSpace();
 import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolStickerInk, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, rasterizeSymbolSticker, symbolBreatheScale, symbolStickerFontPx, symbolStickerOversample, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。

@@ -60,6 +60,8 @@ import {
   isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES, ICON_IMAGES } from '../utils/shapeImages';
+import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
+installCanvasShadowSpace();
 import { isVectorShape } from '../utils/vectorShapes';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';

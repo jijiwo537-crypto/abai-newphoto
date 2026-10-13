@@ -1,7 +1,8 @@
 import React from 'react';
 import {createRoot} from 'react-dom/client';
 import '../styles.css';
-import {GridLayoutTool} from '../components/GridLayoutTool';
+import {GridLayoutTool, ADD_SHAPE_ITEMS} from '../components/GridLayoutTool';
+import {HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA} from '../utils/holeShapes';
 import {installSliderTouch} from '../utils/sliderTouch';
 installSliderTouch();
 import {renderSeamlessLayout} from '../utils/seamlessLayout';
@@ -36,6 +37,9 @@ if(params.has('empty')){
 if(params.has('emptyAudit'))void import('./empty-layout-audit');
 if(params.has('layoutRasterAudit')){state.pages[0].layouts[0].gap=0;state.pages[0].layouts[0].radius=0;}
 if(params.get('shapeTex')){(state as any).pages[0].layouts=[];(state as any).floatingImages=[{id:'qa-tex-shape',src:'',x:40,y:60,width:200,height:100,scale:1,rotation:0,opacity:100,shape:params.get('shapeTex'),shapeFilled:!params.has('outline'),shapeTex:'stripe',shapeTextureBaseW:Number(params.get('bw')||200),shapeTextureBaseH:100,color:'#22aa44',...(params.get('glow')?{shapeGlow:Number(params.get('glow')),shapeGlowColor:'#ffff00'}:{})}];}
+/* glowGrid=<起始序號>：一頁排 20 個圖形（實心＋邊框＋借來的圖案），全部開發光，檢查預覽有沒有畫出光 */
+if(params.has('glowGrid')){const all=[...ADD_SHAPE_ITEMS.filter(i=>!/^(line|grid|mask)/.test(i.kind)&&!/^grid|^mask|^line/.test(i.id)),HOLE_ITEM_CROSS,HOLE_ITEM_CROSS_O,...HOLE_ITEMS_EXTRA];const from=Number(params.get('glowGrid')||0),list=all.slice(from,from+20);(window as any).__glowGridIds=list.map(i=>i.id);
+ (state as any).pages[0].layouts=[];(state as any).floatingImages=list.map((it:any,i)=>({id:'g-'+it.id,src:'',x:12+(i%4)*76,y:12+Math.floor(i/4)*80,width:56,height:56,scale:1,rotation:0,opacity:100,shape:it.kind,shapeItemId:it.id,holeType:it.hole,shapeFilled:it.filled,shapeLineW:6,shapeLineBase:56,shapeTextureBaseW:56,shapeTextureBaseH:56,color:'#22aa44',...(params.has('noglow')?{}:{shapeGlow:Number(params.get('glow')||80),shapeGlowColor:'#ffff00'})}));}
 if(params.has('fillShape')){(state as any).pages[0].layouts=[];(state as any).floatingImages=[{id:'qa-fill-shape',src:'',x:0,y:0,width:339,height:452,scale:1,rotation:0,opacity:100,shape:'square',shapeFilled:true,color:'#22aa44'}];}
 if(params.has('fill')){const l=state.pages[0].layouts[0] as any;l.t={x:0,y:0,scale:1};if(params.has('nogap')){l.gap=0;l.radius=0;}}
 // 同一頁兩個佈局（測跨佈局長按互換）：?twoLayouts —— 上面一個、下面一個，第二個的照片顏色順序相反
