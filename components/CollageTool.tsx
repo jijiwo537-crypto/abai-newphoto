@@ -3822,7 +3822,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionThumbRef=useRef<HTMLCanvasElement>(null);
   const regionThumbPoint=useRef({x:0,y:0});
   const regionTouches=useRef(new Map<number,{x:number;y:number}>());
-  const regionEditTap=useRef<{x:number;y:number;away:boolean;moved:boolean}|null>(null);
+  const regionEditTap=useRef<{x:number;y:number;away:boolean;moved:boolean;pickHoleId?:string|null;pickSide?:'image'|'mask'|null}|null>(null);
   const regionTap=useRef<{id:number;index:number|null;x:number;y:number;moved:boolean}|null>(null);
   const emptyCellTap=useRef<{id:number;index:number;x:number;y:number;moved:boolean}|null>(null);
   const regionScenePinch=useRef(false);
@@ -3980,7 +3980,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(!regionTouches.current.size){
         const index=selectedRegionPhotoRef.current;
         if(index===null||!photoRegionRef.current?.photos[index]?.src)return;
-        regionEditTap.current={x:e.clientX,y:e.clientY,away:source?.kind!=='region'||source.index!==index,moved:false};
+        /* 選中某一格照片時，輕點到圖案（圖片上的或遮罩上的都算）要能換成選中那顆圖案。
+           拖動仍然是在調這張照片，所以只先記下來，放開時沒移動才換。 */
+        let pickHoleId:string|null=null,pickSide:'image'|'mask'|null=null;
+        if(source?.kind!=='region'||source.index!==index){
+          const o=p.off,inImg=p.x>=o.ix&&p.x<=o.ix+o.iw&&p.y>=o.iy&&p.y<=o.iy+o.ih;
+          const side:'image'|'mask'=layout===AROUND||!inImg?'mask':'image';
+          for(let i=holesRef.current.length-1;i>=0;i--){const h=holesRef.current[i];if(checkHitHole(p.x,p.y,h,imageState?.globalScale||1,o,side)){pickHoleId=h.id;pickSide=side;break;}}
+        }
+        regionEditTap.current={x:e.clientX,y:e.clientY,away:source?.kind!=='region'||source.index!==index,moved:false,pickHoleId,pickSide};
         setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);
       }else if(regionEditTap.current)regionEditTap.current.moved=true;
       regionTouches.current.set(e.pointerId,{x:p.x,y:p.y});resetRegionGesture();
@@ -4102,7 +4110,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(owned){e.stopPropagation();e.preventDefault();regionTouches.current.delete(e.pointerId);resetRegionGesture();
       if(!regionTouches.current.size){
         finishRegionEdit();
-        if(e.type!=='pointercancel'&&regionEditTap.current?.away&&!regionEditTap.current.moved){selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);}
+        if(e.type!=='pointercancel'&&regionEditTap.current?.away&&!regionEditTap.current.moved){
+          selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);
+          // 點到的是圖案：換成選中那顆圖案
+          const pk=regionEditTap.current.pickHoleId;
+          if(pk){if(regionEditTap.current.pickSide)setSelectedPatternSide(regionEditTap.current.pickSide);setSelectedTarget(pk);}
+        }
         regionEditTap.current=null;
       }
       try{e.currentTarget.releasePointerCapture(e.pointerId);}catch{}}
@@ -4232,7 +4245,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const mask=maskSelectedRef.current&&!!maskImageState?.img;
         const t=mask?currentMaskPhoto(offs):imageTransform;
         baseDragRef.current={startX:x,startY:y,x:t.x,y:t.y,t,moved:false,mask};
-        interactionRef.current={type:'base_drag',isClick:true,hitItself:mask?clickedSide==='mask':clickedSide==='image'};
+        /* 底圖選中時，拖動一律是在移底圖；但「沒移動的輕點」如果落在圖案上，
+           就改成選中那顆圖案（以前會被底圖吃掉，圖案永遠點不到）。 */
+        let pickHole:any=null;
+        if(activePointers.current.size===1)for(let i=holesRef.current.length-1;i>=0;i--){const h=holesRef.current[i];if(hitCurrentHole(h,clickedSide)){pickHole=h;break;}}
+        interactionRef.current={type:'base_drag',isClick:true,hitItself:mask?clickedSide==='mask':clickedSide==='image',pickHoleId:pickHole?.id,pickSide:clickedSide};
         return;
       }
 
@@ -5302,14 +5319,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         setSelectedObj(null); setSelectedTarget(null); setBaseSelected(false); setMaskSelected(true);
       }
       if (intr.type === 'deselect_base' && intr.isClick) { setBaseSelected(false); setMaskSelected(false); }
-      if (intr.type === 'base_drag' && intr.isClick && !intr.hitItself) { setBaseSelected(false); setMaskSelected(false); }
+      if (intr.type === 'base_drag' && intr.isClick && intr.pickHoleId) {
+        // 選中底圖時輕點到圖案：換成選中那顆圖案
+        setBaseSelected(false); setMaskSelected(false); setSelectedObj(null);
+        if (intr.pickSide) setSelectedPatternSide(intr.pickSide);
+        setSelectedTarget(intr.pickHoleId);
+      } else if (intr.type === 'base_drag' && intr.isClick && !intr.hitItself) { setBaseSelected(false); setMaskSelected(false); }
       // 按在別顆圖案上但沒拖動 → 把選取換到那一顆
       if (intr.type === 'move_hole' && intr.isClick && intr.pickId) setSelectedTarget(intr.pickId);
       // 已選圖案上方剛好有物件：拖動仍是圖案；只有輕點才切換到該物件。
       if (intr.type === 'move_hole' && intr.isClick && intr.pickObjId) {
         setSelectedObj(intr.pickObjId);
         setSelectedTarget(null);
-      } else if (intr.isClick && !intr.hitItself) {
+      } else if (intr.isClick && !intr.hitItself && !intr.pickHoleId) {
         setSelectedTarget(null);
       }
       if (intr.type === 'brush_draw' || intr.type === 'brush_object' || intr.type === 'brush_object_erase' || intr.type === 'brush_erase' || intr.type === 'move_hole' || intr.type === 'pinch_hole') {
