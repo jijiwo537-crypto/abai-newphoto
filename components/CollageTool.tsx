@@ -2968,7 +2968,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (st.sizeJitter !== undefined) setSizeJitter(st.sizeJitter);
     if (st.holeAngle !== undefined) setHoleAngle(st.holeAngle);
     if (st.holeCount !== undefined) setHoleCount(Math.min(30, Math.max(0, st.holeCount)));
-    if (Array.isArray(st.holes)) setHoles(st.holes);
+    /* 以前並排排版的圖案是成對的（side 'both'）。現在不成對了，讀到舊作品時
+       拆成一顆挖空、一顆實心兩顆獨立的圖案 —— 畫面跟以前一模一樣。 */
+    const lay0 = st.layout || layout;
+    const loadedHoles = !Array.isArray(st.holes) ? null : lay0 !== AROUND && lay0 !== FULL
+      ? st.holes.flatMap((h: any) => (h.side || 'both') === 'both'
+        ? [{ ...h, id: h.id + '_img', side: 'image' }, { ...h, id: h.id + '_msk', side: 'mask' }] : [h])
+      : st.holes;
+    if (loadedHoles) setHoles(loadedHoles);
     if (st.maskColor !== undefined) setMaskColor(st.maskColor);
     if (st.patternType !== undefined) setPatternType(st.patternType);
     if (st.dotColor !== undefined) setDotColor(st.dotColor);
@@ -3019,7 +3026,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        之后只有真正的新编辑会让返回键询问是否保存。 */
     const settle = window.setTimeout(() => {
       resetHistory(
-        Array.isArray(st.holes) ? st.holes : holesRef.current,
+        loadedHoles || holesRef.current,
         Array.isArray(st.objects) ? st.objects : objectsRef.current,
       );
       restoringRef.current = false;
@@ -3279,29 +3286,36 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const drawnS = around ? s * AROUND_SCALE : s;
     const p = around ? drawnS * 0.75 + 25 * gs : s / 2 + 25 * gs;
     const geo = layoutGeometry(lay, baseW, baseH, maskScale, ratioOverride||canvasRatio);
-    const fieldW = around ? geo.mw : geo.iw;
-    const fieldH = around ? geo.mh : geo.ih;
+    /* 並排的四種（2～5）也跟四周包圍一樣不再成對：圖案灑在整張畫布上，
+       落在遮罩那一塊就是挖空、落在圖片那一塊就是實心（跨在交界上就一半一半）。 */
+    const spread = lay !== FULL && !around;
+    const fieldW = around ? geo.mw : spread ? geo.cw : geo.iw;
+    const fieldH = around ? geo.mh : spread ? geo.ch : geo.ih;
 
-    const newHoles = [];
+    const newHoles: any[] = [];
     const count = Math.min(30, Math.max(0, countOverride ?? holeCount));
     for (let i = 0; i < count; i++) {
       let att = 0, valid = false, hx = 0, hy = 0;
       while (!valid && att < 500) {
         hx = p + Math.random() * (fieldW - p * 2); hy = p + Math.random() * (fieldH - p * 2); valid = true;
-        for (let ex of newHoles) if (Math.hypot(ex.x - hx, ex.y - hy) < drawnS * 1.2) { valid = false; break; }
+        for (let ex of newHoles) if (Math.hypot((ex.canvasX ?? ex.x) - hx, (ex.canvasY ?? ex.y) - hy) < drawnS * 1.2) { valid = false; break; }
         att++;
       }
+      // 並排排版：看落在哪一塊，就換成那一塊自己的座標
+      const onImage = spread && hx >= geo.ix && hx <= geo.ix + geo.iw && hy >= geo.iy && hy <= geo.iy + geo.ih;
+      const ox = spread ? (onImage ? geo.ix : geo.mx) : 0, oy = spread ? (onImage ? geo.iy : geo.my) : 0;
       newHoles.push({
-        id: Math.random().toString(36).substr(2, 9), x: hx, y: hy,
+        id: Math.random().toString(36).substr(2, 9), x: hx - ox, y: hy - oy, canvasX: hx, canvasY: hy,
         randomFactor: Math.random() * 2 - 1, randomNumber: Math.floor(Math.random() * 10),
         /* 對稱關閉時不再全部堆在圖片上 —— 兩邊隨機各半，遮罩上也會有圖案 */
         /* 滿版沒有遮罩側，八顆圖案全部屬於底圖；不能沿用隨機 image/mask，
            否則資料裡雖然是 8，實際最多只看得到其中一半。 */
         side: lay === FULL
           ? 'image'
-          : around ? 'mask' : 'both',
+          : around ? 'mask' : onImage ? 'image' : 'mask',
       });
     }
+    newHoles.forEach((h: any) => { delete h.canvasX; delete h.canvasY; });
     setHoles(newHoles);
     if (record === 'reset') resetHistory(newHoles);
     else if (record === 'push') pushHistory(newHoles);
@@ -3668,6 +3682,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Generated patterns retain the inset rule. A manually placed pattern is
     // clipped at the canvas boundary, never removed as a whole on contact.
     if (h.manuallyPlaced) return true;
+    /* 並排的四種（2～5）跟四周包圍一樣：圖案可以跨過遮罩的邊，跨出去的那一半由另一側畫
+       （見 render 裡的 maskPlacements），所以不再因為沒完全落在遮罩裡就整顆拿掉。 */
+    if (layout !== AROUND && layout !== FULL) return true;
     const sz = getHoleSize(h) * s;
     const hx = h.x * s;
     const hy = h.y * s;
@@ -3699,7 +3716,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const { mw, mh } = layoutGeometry(layout, imageState.baseW, imageState.baseH, maskScale, canvasRatio);
 
     const side = h.side || 'both';
-    if (clickedSide) {
+    /* 並排排版：圖案只屬於自己那一側，但跨到另一側的那一半也要點得到 ——
+       一律用它自己那一側的原點來判斷，不管手指落在哪一側。 */
+    if (layout !== AROUND && layout !== FULL && side !== 'both') clickedSide = side;
+    else if (clickedSide) {
       if (side !== 'both' && side !== clickedSide) {
         return false;
       }
@@ -3754,7 +3774,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
 
     const side = h.side || 'both';
-    if (clickedSide) {
+    if (layout !== AROUND && layout !== FULL && side !== 'both') clickedSide = side;   // 同 checkHitHole
+    else if (clickedSide) {
       if (side !== 'both' && side !== clickedSide) {
         return false;
       }
@@ -4404,7 +4425,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 y: localY,
                 randomFactor: Math.random() * 2 - 1,
                 randomNumber: Math.floor(Math.random() * 10),
-                side: layout === AROUND ? clickedSide : 'both'
+                side: layout === FULL ? 'image' : clickedSide   // 2～6 都不成對：畫在哪一側就是哪一側
               };
               const nextHoles = [...holesRef.current, newHole];
               holesRef.current = nextHoles;setHoles(nextHoles);
@@ -5175,7 +5196,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               x: localX,
               y: localY,
               randomFactor: Math.random() * 2 - 1,
-              side: layout === AROUND ? intr.clickedSide : 'both'
+              side: layout === FULL ? 'image' : intr.clickedSide
             };
             const bounds=brushStampBounds(newHole);
             if (!lastPatternStampRef.current || brushStepReached(lastPatternStampRef.current,bounds)) {
@@ -9829,7 +9850,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const box=ink ? {x:-ink.w/2,y:-ink.h/2,w:ink.w,h:ink.h} : patternPathBounds(holeType,size);
     const side=!h.side || h.side==='both' ? selectedPatternSide : h.side;
     const mask=side==='mask', pad=ink ? 8*(imageState?.globalScale || 1) : 4*px;
-    return {box,pad,mask,angle:h.angle ?? holeAngle,x:h.x+(mask?off.mx:off.ix),y:h.y+(mask?off.my:off.iy)};
+    // clip：只有四周包圍要把框剪在遮罩那一圈裡；並排排版的圖案可以跨過交界，框要整個看得到
+    return {box,pad,mask,clip:mask&&layout===AROUND,angle:h.angle ?? holeAngle,x:h.x+(mask?off.mx:off.ix),y:h.y+(mask?off.my:off.iy)};
   };
   livePatternPaintRef.current = () => {
     if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current);
@@ -9841,7 +9863,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     rect.setAttribute('width', String(f.box.w+f.pad*2)); rect.setAttribute('height', String(f.box.h+f.pad*2));
     rect.setAttribute('transform', `translate(${f.x} ${f.y}) rotate(${f.angle})`);
     const g = patternFrameGroupRef.current;
-    if (g) { if (f.mask) g.setAttribute('mask', 'url(#creative-pattern-selection-clip)'); else g.removeAttribute('mask'); }
+    if (g) { if (f.clip) g.setAttribute('mask', 'url(#creative-pattern-selection-clip)'); else g.removeAttribute('mask'); }
   };
   const displayAngle = selectedPattern?.angle ?? holeAngle;
   const displayHoleSize = selectedPattern
@@ -10571,14 +10593,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               })()}
               {activeTab !== 'motion' && selectedPattern && !animRef.current && !composeState && (() => {
                 const off=getLayoutOffsets(); if(!off) return null;
-                const {box,pad,x,y,mask,angle}=patternFrame(selectedPattern,off);
+                const {box,pad,x,y,clip,angle}=patternFrame(selectedPattern,off);
                 return <svg aria-hidden="true" viewBox={`0 0 ${off.cw} ${off.ch}`} className="absolute inset-0 pointer-events-none"
                   style={{width:'100%',height:'100%',zIndex:6,overflow:'visible'}}>
                   <defs><mask id="creative-pattern-selection-clip" maskUnits="userSpaceOnUse" x="0" y="0" width={off.cw} height={off.ch}>
                     <rect x={off.mx} y={off.my} width={off.mw} height={off.mh} fill="white" />
                     <rect x={off.ix} y={off.iy} width={off.iw} height={off.ih} fill="black" />
                   </mask></defs>
-                  <g ref={patternFrameGroupRef} mask={mask?'url(#creative-pattern-selection-clip)':undefined}>
+                  <g ref={patternFrameGroupRef} mask={clip?'url(#creative-pattern-selection-clip)':undefined}>
                     <rect ref={patternFrameRectRef} x={box.x-pad} y={box.y-pad} width={box.w+pad*2} height={box.h+pad*2}
                       transform={`translate(${x} ${y}) rotate(${angle})`} fill="none" stroke="white"
                       strokeWidth="0.9" strokeDasharray="4.8 4.8" vectorEffect="non-scaling-stroke" />
