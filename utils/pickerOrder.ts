@@ -36,7 +36,7 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'square-star-dual-f', 'square-heart-dual-f', 'square-star-cutout-f', 'square-heart-cutout-f', 'arrow-f', 'arrow-double-f',
     'circle-star-dual-f', 'circle-heart-dual-f', 'circle-star-cutout-f', 'circle-heart-cutout-f', 'hole-burst', 'hole-snow',
     'hole-flower', 'hole-darkstar', 'hole-aster', 'hole-vortex', 'hole-sparkle', 'hole-seagrass',
-    'hole-theta', 'hole-abai', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth',
+    'hole-theta', 'hole-abai', 'hole-question', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark', 'burst-dash-f', 'spinner-f', 'hole-music-eighth',
     'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef',
   ],
   outline: [

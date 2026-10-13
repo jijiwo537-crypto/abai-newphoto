@@ -60,6 +60,7 @@ import {
   isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
+import { isVectorShape } from '../utils/vectorShapes';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
@@ -1993,7 +1994,7 @@ export const CenteredGlyphIcon: React.FC<{ s: string }> = ({ s }) => {
 };
 export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled }) => (
   <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 24 : 22} filled={filled} /> : PATTERN_LINE_ICON_KINDS.has(s) ? <ShapeLineIcon kind={s} /> : (s === 'burst-dash' || s === 'spinner') ? <RadialIcon kind={s} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+    {isVectorShape(s) ? <PathPatternIcon s={s} /> : s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 24 : 22} filled={filled} /> : PATTERN_LINE_ICON_KINDS.has(s) ? <ShapeLineIcon kind={s} /> : (s === 'burst-dash' || s === 'spinner') ? <RadialIcon kind={s} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
                            沒選中時是暗的（#555），選中才變白。
@@ -18619,7 +18620,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    所以照圖形自己的畫法畫成一張「只有透明度」的圖，交給圖案現成的圖片圖案那一套
    （挖空、實心、發光、點選範圍全部都是同一條路）。第一次用到才畫，畫好就留著。 */
 export const SHAPE_PATTERNS: Record<string, string> = {
-  'p-star-double': 'star-double', 'p-blur-star': 'blur-star', 'p-blur-star-rounded': 'blur-star-rounded',
+  'p-blur-star': 'blur-star', 'p-blur-star-rounded': 'blur-star-rounded',
   'p-blur-cross-star': 'blur-cross-star', 'p-blur-sparkle4': 'blur-sparkle4', 'p-blur-heart': 'blur-heart',
 };
 const shapePatternUrl = (kind: string) => {
@@ -18650,7 +18651,7 @@ for (const [id, kind] of Object.entries(SHAPE_PATTERNS)) {
 /* 從圖形借來的圖案在按鈕上的大小（傳給 ShapeGlyph 的 size）。
    模糊的那幾個有一圈淡淡的光暈，看得見的本體比較小，要給大一點才跟旁邊一樣大。 */
 export const SHAPE_PATTERN_ICON_SIZE: Record<string, number> = {
-  'star-rounded': 20, 'p-star-double': 18.5, 'p-blur-star': 19.5, 'p-blur-star-rounded': 20,
+  'star-rounded': 20, 'p-blur-star': 19.5, 'p-blur-star-rounded': 20,
   'p-blur-cross-star': 22.5, 'p-blur-sparkle4': 25, 'p-blur-heart': 14.5,
 };
 export const shapePatternIconItem = (s: string): ShapeItem | null =>
@@ -18661,7 +18662,8 @@ export const shapePatternIconItem = (s: string): ShapeItem | null =>
    以前這幾顆用的是圖示庫的「空心外框」圖示，跟真正灑出來的實心圖案長得不一樣。
    改成直接拿畫圖案的那一支（fillShapePath）畫一次，縮到按鈕大小 ——
    按鈕上看到的就是畫面上會出現的樣子。顏色一樣跟著按鈕走（currentColor）。 */
-export const PATH_PATTERN_ICONS = new Set(['circle', 'square', 'heart', 'star', 'star-rounded', 'sparkle4', 'cross-star', 'hexstar', 'burst-dash', 'spinner']);
+export const PATH_PATTERN_ICONS = new Set(['circle', 'square', 'heart', 'star', 'star-rounded', 'sparkle4', 'cross-star', 'hexstar', 'burst-dash', 'spinner',
+  'pic333', 'abai', 'p-star-double', 'q-mark', 'anger-mark', 'excl-mark']);
 /* 以前是畫在 canvas 上、再當 CSS 遮罩貼到按鈕上 —— 有些手機遮罩沒載到，
    按鈕上就只剩一整塊方框。改成跟圖形的圖標一樣用 SVG：
    拿一個「只記錄路徑」的假畫布跑一次畫圖案的那一支（fillShapePath），
@@ -18706,6 +18708,7 @@ const pathPatternIconParts = (s: string) => {
 const PATH_PATTERN_ICON_FIT: Record<string, number> = {
   circle: 14, square: 12.5, heart: 15.5, star: 17, 'star-rounded': 17,
   sparkle4: 19.5, 'cross-star': 18, hexstar: 16.5, 'burst-dash': 18, spinner: 17,
+  pic333: 24, abai: 25, 'p-star-double': 17.5, 'q-mark': 16, 'anger-mark': 17, 'excl-mark': 18,
 };
 export const PathPatternIcon: React.FC<{ s: string }> = ({ s }) => {
   const BOX = 26, FIT = PATH_PATTERN_ICON_FIT[s] ?? 16;

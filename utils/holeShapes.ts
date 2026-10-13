@@ -9,6 +9,7 @@ import { HEART_MAIN, HEART_ICON, traceUnitShape, hexStarPoints, traceRadial, rad
  * 這裡只做「畫」這件事：沒有 React、沒有任何工具自己的狀態。
  */
 import { SHAPE_IMAGES } from './shapeImages';
+import { isVectorShape, traceVectorShape } from './vectorShapes';
 
 export const getHoleNumber = (h: any) => {
   if (h && h.randomNumber !== undefined) return h.randomNumber;
@@ -464,6 +465,8 @@ export const clipShapePieces = (
 };
 export const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: number, cy: number, size: number) => {
   ctx.beginPath();
+  // 描成向量的那幾顆（<333*、Abai、雙層星星、問號／生氣／驚嘆號）：長邊 = size、置中
+  if (isVectorShape(type)) { traceVectorShape(ctx, type, cx, cy, size); return; }
   const r = size / 2;
   switch (type) {
     case 'circle': ctx.arc(cx, cy, r, 0, Math.PI * 2); break;
@@ -848,7 +851,9 @@ export const HOLE_ITEMS_EXTRA: HoleShapeItem[] =
    'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'abai',
    // 問號與音樂符號（音樂符號只做圖形，不放進圖案選單）
    'question', 'music-eighth', 'music-beamed', 'music-sixteenth',
-   'music-clef']
+   'music-clef',
+   // 主人提供的圖描成的向量：問號、生氣符號、驚嘆號
+   'q-mark', 'anger-mark', 'excl-mark']
     .map(h => ({ id: `hole-${h}`, kind: 'hole' as const, hole: h, filled: true }));
 
 /**
