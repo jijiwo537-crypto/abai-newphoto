@@ -10,6 +10,8 @@ import { ShapeGlyph, HoleGlyph, shapePickerSections, shapeSupportsStretch } from
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
 import { patternDefaultSize } from './utils/patternDefaults';
 import { CollageTool } from './components/CollageTool';
+import { StarBurstLab } from './components/StarBurstLab';
+import { STAR_BURSTS } from './utils/starBursts';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
 const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o', 'track-select-o', 'track-cross-o']);
@@ -56,6 +58,9 @@ const sampleFile = (): Promise<File> => new Promise(resolve => {
   }
   c.toBlob(b => resolve(new File([b!], 'sample.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.9);
 });
+/** 「星芒」頁勾選想加進 App 的那幾種 */
+const STORE_BURST = 'abai-order-tool-starburst-v1';
+const loadBursts = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_BURST) || '[]'); return Array.isArray(v) ? v.filter((id: string) => STAR_BURSTS.some(b => b.id === id)) : []; } catch { return []; } };
 const loadStretch = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_STRETCH) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
 
 type Group = { key: string; label: string; cols: number; items: any[] };
@@ -93,7 +98,9 @@ type Drag = { group: string; id: string; pointerId: number; dx: number; dy: numb
 function OrderTool() {
   const base = useMemo(defaultGroups, []);
   const [groups, setGroups] = useState<Group[]>(() => load(base));
-  const [tab, setTab] = useState<'pattern' | 'shape' | 'size'>('pattern');
+  const [tab, setTab] = useState<'pattern' | 'shape' | 'size' | 'burst'>('pattern');
+  const [bursts, setBursts] = useState<string[]>(loadBursts);
+  useEffect(() => { try { localStorage.setItem(STORE_BURST, JSON.stringify(bursts)); } catch {} }, [bursts]);
   /** 圖案起始大小：只存「跟 App 不一樣」的那些 */
   const [sizes, setSizes] = useState<Record<string, number>>(loadSizes);
   useEffect(() => { try { localStorage.setItem(STORE_SIZE, JSON.stringify(sizes)); } catch {} }, [sizes]);
@@ -232,6 +239,7 @@ function OrderTool() {
     if (stretchIds.length) lines.push('要改成可以變形（四邊擠壓）的圖形', stretchIds.join(', '));
     if (deleteIds.length) lines.push('要刪除的圖形', deleteIds.join(', '));
     const sized = PATTERN_ORDER.filter(id => id in sizes);
+    if (bursts.length) lines.push('想加進去的星芒（新圖形「星芒」）', STAR_BURSTS.filter(b => bursts.includes(b.id)).map(b => `${STAR_BURSTS.indexOf(b) + 1}. ${b.name}（${b.id}）`).join(', '));
     if (sized.length) lines.push('圖案起始大小（創意拼圖的「大小」0~100）', sized.map(id => `${id}: ${sizes[id]}（原本 ${patternDefaultSize(id)}）`).join(', '));
     return lines.join('\n');
   };
@@ -245,11 +253,11 @@ function OrderTool() {
       ta.remove();
     }
   };
-  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setSizes({}); } };
+  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小、勾選的星芒也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setSizes({}); setBursts([]); } };
 
-  const shown = tab === 'size' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
+  const shown = tab === 'size' || tab === 'burst' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
   const dragged = drag && groups.find(g => g.key === drag.group)?.items.find(i => i.id === drag.id);
-  const anyChanged = groups.some(changed) || stretchIds.length > 0 || deleteIds.length > 0 || Object.keys(sizes).length > 0;
+  const anyChanged = groups.some(changed) || stretchIds.length > 0 || deleteIds.length > 0 || Object.keys(sizes).length > 0 || bursts.length > 0;
   const sizeList = (groups.find(g => g.key === 'pattern')?.items || []).filter(i => !i.fromShape);
 
   /* 預覽時整頁就是一個真正的創意拼圖（跟 App 裡一樣全螢幕，選單、彈出層都照原本的方式疊） */
@@ -273,10 +281,10 @@ function OrderTool() {
               <button onClick={copy} className={`h-9 px-4 rounded-full text-[13px] font-bold active:scale-95 ${anyChanged ? 'bg-white text-black' : 'bg-white/15 text-white'}`}>複製順序</button>
             </div>
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-1 p-1 rounded-full bg-white/[0.06]">
-            {(['pattern', 'shape', 'size'] as const).map(k => (
+          <div className="mt-3 grid grid-cols-4 gap-1 p-1 rounded-full bg-white/[0.06]">
+            {(['pattern', 'shape', 'size', 'burst'] as const).map(k => (
               <button key={k} onClick={() => setTab(k)} className={`h-8 rounded-full text-[13px] font-bold transition-colors ${tab === k ? 'bg-white text-black' : 'text-white/55'}`}>
-                {k === 'pattern' ? '圖案' : k === 'shape' ? '圖形' : '圖案大小'}
+                {k === 'pattern' ? '圖案' : k === 'shape' ? '圖形' : k === 'size' ? '圖案大小' : '星芒'}
               </button>
             ))}
           </div>
@@ -321,6 +329,10 @@ function OrderTool() {
           </div>
         )}
         {tab === 'shape' && <div className="mt-3 text-[10px] text-white/35">圖形是創意拼圖與跨頁拼圖共用的</div>}
+        {tab === 'burst' && (
+          <StarBurstLab photo={photo} onPickPhoto={setPhoto} picked={bursts}
+            onTogglePick={id => { setBursts(b => b.includes(id) ? b.filter(x => x !== id) : [...b, id]); flash(bursts.includes(id) ? '已取消' : '已勾選：想加進去'); }} />
+        )}
         {tab === 'size' && (() => {
           const cur = sizeOf(sizeSel), app = patternDefaultSize(sizeSel);
           return (
