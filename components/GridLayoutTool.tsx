@@ -965,6 +965,22 @@ export const shapePathD = (
       }
       return poly(pts);
     }
+    /* 藝術效果「視覺追蹤」裡的兩種框：
+       選中框＝方框＋四個角的實心小方塊；交叉框＝方框＋兩條對角線。
+       小方塊的大小照「沒被擠壓過」的框（gbw／gbh）算，四邊擠壓時維持正方形。
+       這是邊框類（只描邊）的圖形，小方塊用一大一小兩圈再加十字描出來，描完就是實心的。 */
+    case 'track-select': {
+      const s = Math.min(gbw, gbh) * 0.1, hs = s / 2, q = s / 4;
+      let d = `M 0 0 L ${P(w, 0)} L ${P(w, h)} L ${P(0, h)} Z`;
+      for (const [x, y] of [[0, 0], [w, 0], [w, h], [0, h]] as const) {
+        d += ` M ${P(x - hs, y - hs)} L ${P(x + hs, y - hs)} L ${P(x + hs, y + hs)} L ${P(x - hs, y + hs)} Z`
+          + ` M ${P(x - q, y - q)} L ${P(x + q, y - q)} L ${P(x + q, y + q)} L ${P(x - q, y + q)} Z`
+          + ` M ${P(x - hs, y)} L ${P(x + hs, y)} M ${P(x, y - hs)} L ${P(x, y + hs)}`;
+      }
+      return d;
+    }
+    case 'track-cross':
+      return `M 0 0 L ${P(w, 0)} L ${P(w, h)} L ${P(0, h)} Z M 0 0 L ${P(w, h)} M ${P(w, 0)} L ${P(0, h)}`;
     case 'cloud-oval': {
       // 八瓣橢圓雲：以完全對稱的週期函數建立八個相同圓頂，
       // 谷底刻意加深，讓每一個凸起在小尺寸按鈕上也清楚可辨。
@@ -1244,6 +1260,7 @@ const STRETCH_SOLID_KINDS = new Set([
 const STRETCH_OUTLINE_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
   'pentagon', 'hexagon', 'star', 'star8', 'heart', 'heart-classic', 'heart-icon', 'hexstar', 'ellipse', 'arrow', 'arrow-double', 'sparkle4',
+  'track-select', 'track-cross',
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if(isBackdropMask(shape))return true;
@@ -1415,14 +1432,15 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'hexagon-o', kind: 'hexagon', filled: false },
   { id: 'star-o', kind: 'star', filled: false },
   { id: 'star8-o', kind: 'star8', filled: false },
-  { id: 'star8-oval-o', kind: 'star8', filled: false, ratio: 0.62 },
   { id: 'heart-o', kind: 'heart', filled: false, ratio: 0.93 },
   { id: 'hexstar-o', kind: 'hexstar', filled: false },
   { id: 'diamond-n-o', kind: 'diamond-n', filled: false },
   { id: 'arrow-o', kind: 'arrow', filled: false },
   { id: 'arrow-double-o', kind: 'arrow-double', filled: false, ratio: 0.5 },
   { id: 'sparkle4-o', kind: 'sparkle4', filled: false },
-  { id: 'cloud-oval-o', kind: 'cloud-oval', filled: false, ratio: 0.68 },
+  // 藝術效果「視覺追蹤」的選中框與交叉框（星形橢圓、雲朵已從清單拿掉；舊作品照樣畫得出來）
+  { id: 'track-select-o', kind: 'track-select', filled: false },
+  { id: 'track-cross-o', kind: 'track-cross', filled: false },
   // 線條
   { id: 'line-h', kind: 'line', filled: false, rot: 0, ratio: 0.08 },
   { id: 'line-v', kind: 'line', filled: false, rot: 90, ratio: 0.08 },
@@ -1485,6 +1503,8 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   'bubble-mirror': [0, 0, 1, 1],
   star8: [0, 0, 1, 1],
   'cloud-oval': [0, 0, 1, 1],
+  // 四個角的小方塊各凸出框外半顆（框短邊的 5%）
+  'track-select': [-0.05, -0.05, 1.1, 1.1],
   line: [0, 0.5, 1, 0],
   wave: [0, 0.08, 1, 0.84],
   'lightning-wave': [0, 0.06, 1, 0.88],
@@ -18674,7 +18694,7 @@ export const shapePatternIconItem = (s: string): ShapeItem | null =>
    改成直接拿畫圖案的那一支（fillShapePath）畫一次，縮到按鈕大小 ——
    按鈕上看到的就是畫面上會出現的樣子。顏色一樣跟著按鈕走（currentColor）。 */
 export const PATH_PATTERN_ICONS = new Set(['circle', 'square', 'heart', 'star', 'star-rounded', 'sparkle4', 'cross-star', 'hexstar', 'burst-dash', 'spinner',
-  'q-mark', 'anger-mark', 'excl-mark']);
+  'q-mark', 'anger-mark', 'excl-mark', 'p-star-o', 'p-sparkle4-o']);
 /* 以前是畫在 canvas 上、再當 CSS 遮罩貼到按鈕上 —— 有些手機遮罩沒載到，
    按鈕上就只剩一整塊方框。改成跟圖形的圖標一樣用 SVG：
    拿一個「只記錄路徑」的假畫布跑一次畫圖案的那一支（fillShapePath），
@@ -18719,6 +18739,7 @@ const pathPatternIconParts = (s: string) => {
 const PATH_PATTERN_ICON_FIT: Record<string, number> = {
   circle: 14, square: 12.5, heart: 15.5, star: 17, 'star-rounded': 17,
   sparkle4: 19.5, 'cross-star': 18, hexstar: 16.5, 'burst-dash': 18, spinner: 17,
+  'p-star-o': 17, 'p-sparkle4-o': 19.5,
   'q-mark': 16, 'anger-mark': 17, 'excl-mark': 18,
 };
 export const PathPatternIcon: React.FC<{ s: string }> = ({ s }) => {

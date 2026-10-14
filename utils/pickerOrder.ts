@@ -9,13 +9,13 @@
  */
 export const PATTERN_ORDER: string[] = [
   'circle', 'square', 'heart', 'star', 'star-rounded',
-  'sparkle4', 'cross-star', 'hexstar', 'p-star-double', 'burst-dash',
-  'darkstar', 'burst', 'snow', 'flower', 'vortex',
-  'love', 'love3', 'pic333', 'spinner', 'seagrass',
-  'question', 'aster', 'sparkle', 'theta', 'zzz',
+  'sparkle4', 'cross-star', 'hexstar', 'p-star-double', 'darkstar',
+  'burst-dash', 'burst', 'snow', 'flower', 'aster',
+  'love', 'love3', 'pic333', 'spinner', 'vortex',
+  'seagrass', 'sparkle', 'question', 'theta', 'zzz',
   'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart',
   'random-num', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef',
-  'text',
+  'text', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o',
 ];
 
 export const SHAPE_SECTIONS = [
@@ -36,13 +36,13 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'square-star-dual-f', 'square-heart-dual-f', 'square-star-cutout-f', 'square-heart-cutout-f', 'arrow-f', 'arrow-double-f',
     'circle-star-dual-f', 'circle-heart-dual-f', 'circle-star-cutout-f', 'circle-heart-cutout-f', 'hole-vortex', 'spinner-f',
     'burst-dash-f', 'hole-burst', 'hole-snow', 'hole-flower', 'hole-aster', 'hole-seagrass',
-    'hole-darkstar', 'hole-sparkle', 'hole-abai', 'hole-question', 'hole-q-mark', 'hole-excl-mark',
-    'hole-anger-mark', 'hole-theta', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef',
+    'hole-darkstar', 'hole-sparkle', 'hole-question', 'hole-q-mark', 'hole-excl-mark', 'hole-anger-mark',
+    'hole-abai', 'hole-theta', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef',
   ],
   outline: [
     'circle-o', 'square-o', 'rounded-o', 'diamond-o', 'triangle-o', 'diamond-n-o',
     'pentagon-o', 'hexagon-o', 'heart-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o',
-    'hexstar-o', 'star8-o', 'star8-oval-o', 'cloud-oval-o', 'arrow-o', 'arrow-double-o',
+    'hexstar-o', 'star8-o', 'arrow-o', 'arrow-double-o', 'track-select-o', 'track-cross-o',
   ],
   line: [
     'line-h', 'line-v', 'line-d1', 'line-d2', 'line-wave', 'line-lightning-wave',

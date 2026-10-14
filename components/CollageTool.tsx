@@ -3301,6 +3301,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       nextSize = 15;
     } else if (id === 'p-blur-star-rounded' || id === 'p-blur-heart') {
       nextSize = 20;
+    } else if (id === 'p-star-o') {
+      nextSize = 35;
+    } else if (id === 'p-sparkle4-o' || id === 'q-mark' || id === 'anger-mark') {
+      nextSize = 30;
+    } else if (id === 'excl-mark') {
+      // 驚嘆號又細又高，長邊當大小的話看起來比較小
+      nextSize = 35;
     } else if (id.startsWith('music-')) {
       // 音符的字身細長，給大一點才跟星星那些看起來差不多大
       nextSize = 40;

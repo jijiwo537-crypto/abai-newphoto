@@ -10,7 +10,7 @@ import { ShapeGlyph, HoleGlyph, shapePickerSections, shapeSupportsStretch } from
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
-const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark']);
+const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o', 'track-select-o', 'track-cross-o']);
 const STORE = 'abai-order-tool-v1';
 /** 「這個圖形也想當圖案用」的清單（圖形的 id）。存在這台裝置上，複製順序時一起帶出去 */
 const STORE_ADD = 'abai-order-tool-shape-as-pattern-v1';
@@ -20,7 +20,8 @@ const asPatternItem = (shape: any) => ({ id: ADD_PREFIX + shape.id, fromShape: s
 /** 已經正式變成圖案的圖形（之前用「加到圖案」選過的，就不要再重複出現一次） */
 const patternIdOfShape = (shapeId: string) => {
   const kind = shapeId.replace(/-f$/, '');
-  return kind === 'star-rounded' ? 'star-rounded' : kind.startsWith('hole-music-') ? kind.slice(5) : 'p-' + kind;
+  // 借來的圖案（hole-xxx）在圖案裡就叫 xxx；邊框圖形（xxx-o）叫 p-xxx-o
+  return kind === 'star-rounded' ? 'star-rounded' : kind.startsWith('hole-') ? kind.slice(5) : 'p-' + kind;
 };
 const ALREADY_PATTERN = (shapeId: string) => PATTERN_ORDER.includes(patternIdOfShape(shapeId));
 const loadAdded = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_ADD) || '[]'); return Array.isArray(v) ? v.filter((id: string) => !ALREADY_PATTERN(id)) : []; } catch { return []; } };
