@@ -684,6 +684,40 @@ export const paintTex = (
  *
  * blurs 是發光的三段模糊半徑，由呼叫端給（兩個工具本來就用同一支算）。
  */
+/* ── 邊框圖形的紋理：懸空畫在框裡面 ─────────────────────────────────
+   紋理只出現在邊框圍起來的那一塊裡，而且跟線條之間留一段空隙（不壓到線）。
+   做法：在一張小圖上鋪滿紋理 → 只留路徑裡面（destination-in）→ 再沿著路徑用
+   比線粗兩倍多的筆把靠近線的那一圈擦掉（destination-out），最後整張貼回去。
+   小圖照當下畫布的放大倍率畫，同一組參數只畫一次。 */
+const insetTexCache = new Map<string, HTMLCanvasElement>();
+export const paintTextureInsideOutline = (
+  ctx: CanvasRenderingContext2D, path: Path2D, x: number, y: number, w: number, h: number, lineWidth: number,
+  key: string, paint: (tc: CanvasRenderingContext2D, w: number, h: number) => void,
+) => {
+  if (!(w > 0) || !(h > 0) || typeof document === 'undefined') return;
+  const m = ctx.getTransform();
+  const k = Math.max(0.25, Math.min(4, Math.hypot(m.a, m.b)));
+  const cw = Math.max(1, Math.min(4096, Math.ceil(w * k))), ch = Math.max(1, Math.min(4096, Math.ceil(h * k)));
+  const ck = [key, Math.round(x * 10), Math.round(y * 10), Math.round(w * 10), Math.round(h * 10), Math.round(lineWidth * 100), cw, ch].join('|');
+  let c = insetTexCache.get(ck);
+  if (!c) {
+    c = document.createElement('canvas'); c.width = cw; c.height = ch;
+    const g = c.getContext('2d');
+    if (!g) return;
+    g.scale(cw / w, ch / h);
+    g.translate(-x, -y);
+    g.save(); g.translate(x + w / 2, y + h / 2); paint(g, w, h); g.restore();
+    g.globalCompositeOperation = 'destination-in';
+    g.fillStyle = '#000'; g.fill(path);
+    g.globalCompositeOperation = 'destination-out';
+    g.lineJoin = 'round'; g.lineCap = 'round'; g.lineWidth = Math.max(0.5, lineWidth) * 2.6; g.setLineDash([]);
+    g.stroke(path);
+    if (insetTexCache.size >= 32) { const first = insetTexCache.keys().next().value; if (first !== undefined) insetTexCache.delete(first); }
+    insetTexCache.set(ck, c);
+  }
+  ctx.drawImage(c, x, y, w, h);
+};
+
 /* ── 可以「四邊擠壓」的借來圖形 ──────────────────────────────────────
    這幾顆本來只能等比例縮放（畫的時候取外框短邊當大小、置中）。
    改成可變形：新增時的框（textureBaseW／H，四邊擠壓不會改它）當成「沒變形」的樣子，
@@ -810,6 +844,17 @@ export const drawHoleShape = (
   }
   if (solid) { ctx.fillStyle = col; ctx.fill(); }
   else { ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.stroke(); }
+  if (!solid) {
+    // 邊框：紋理懸空畫在框裡面，不碰到線（見 paintTextureInsideOutline）。條紋不給邊框用。
+    const t = texOf(o);
+    if (t === 'none' || t === 'stripe') return;
+    const rec = new Path2D(), proxy: any = new Proxy(rec, { get: (r, k) => k === 'beginPath' ? () => {} : typeof (r as any)[k] === 'function' ? (r as any)[k].bind(r) : (r as any)[k] });
+    drawShapePath(proxy, o.hole, 0, 0, size);
+    paintTextureInsideOutline(ctx, rec, -bw / 2, -bh / 2, bw, bh, lw,
+      JSON.stringify(['hole', o.hole, t, o.dotSize, o.dotGap, o.dotSquash, o.dotColor, o.texSize, o.texGap, o.texColor, o.textureBaseW, o.textureBaseH]),
+      (tc, w, h) => paintTex(tc, w, h, w, h, o));
+    return;
+  }
   if (texOf(o) !== 'none') {
     // 路徑還在，直接拿來當剪裁範圍
     ctx.save();

@@ -55,7 +55,7 @@ import {
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount, glowToUi, glowFromUi,
   texOf, paintStripes,
-  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex, holeCanStretch,
+  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex, holeCanStretch, paintTextureInsideOutline,
   glyphInk, glyphFont, clefSizeToUi, clefSizeFromUi, fillShapePath, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
 } from '../utils/holeShapes';
@@ -1351,6 +1351,19 @@ export const strokeWithTexture = (
 export const stripeCountFor = (n: number, dir: string | undefined, w: number, h: number, covW: number, covH: number) =>
   dir === 'h' ? n * covH / Math.max(1e-6, h) : n * covW / Math.max(1e-6, w);
 export const isArrowShape = (kind?: string) => kind === 'arrow' || kind === 'arrow-double';
+/** 邊框類圖形（不含線條、網格、遮罩） */
+export const isOutlineShape = (kind?: string, filled?: boolean) =>
+  filled === false && !!kind && !SPECIAL_LINE_KINDS.has(kind) && !GRID_SHAPE_KINDS.has(kind) && !isBackdropMask(kind);
+/** 邊框類的發光上限是實心的六成；滑桿看起來一樣是 0～100 */
+export const OUTLINE_GLOW_SCALE = 0.6;
+export const shapeGlowToUi = (g: number | boolean | undefined, outline: boolean) =>
+  outline ? Math.min(100, Math.round(glowAmount(g) * 100 / (3 * OUTLINE_GLOW_SCALE))) : glowToUi(g);
+export const shapeGlowFromUi = (v: number, outline: boolean) => outline ? Math.max(0, Math.min(100, v)) * 3 * OUTLINE_GLOW_SCALE : glowFromUi(v);
+/** 邊框箭頭不給紋理；其他邊框的紋理沒有條紋 */
+export const shapeTexOptions = (kind?: string, filled?: boolean) =>
+  isOutlineShape(kind, filled) ? (isArrowShape(kind) ? [] : TEX_OPTIONS.filter(([id]) => id !== 'stripe')) : TEX_OPTIONS;
+/** 選中框（四角實心小方塊）不給虛線 */
+export const shapeHasNoDash = (kind?: string) => kind === 'track-select';
 /** 「箭身長度」滑桿（畫面上箭身的長度＝高度的百分之幾）。
     w,h 是現在的框；bw,bh 是沒被擠壓過的原始框（textureBase）。 */
 const arrowGeom = (kind: string | undefined, w: number, h: number, bw: number, bh: number) => {
@@ -2611,7 +2624,9 @@ export const ShapeEditorPanel: React.FC<{
   const isDoubleContour = DOUBLE_CONTOUR_SHAPE_KINDS.has(layer.shape || '');
   const hasOutline = (!layer.shapeFilled || isLine) && !isGridShape;
   const hasWidth = hasOutline || isGridShape;
-  const hasDash = !layer.shapeFilled && (!isLine || layer.shape === 'line') && layer.shape !== 'grid-plus';
+  const hasDash = !layer.shapeFilled && (!isLine || layer.shape === 'line') && layer.shape !== 'grid-plus' && !shapeHasNoDash(layer.shape);
+  const outlineShape = isOutlineShape(layer.shape === 'hole' ? 'hole' : layer.shape, !!layer.shapeFilled);
+  const texChoices = shapeTexOptions(layer.shape, !!layer.shapeFilled);
   const canFeather = shapeSupportsFeather(layer.shape, layer.shapeFilled, layer.holeType);
   /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
   const [colorPage, setColorPage] = useState<
@@ -2677,8 +2692,8 @@ export const ShapeEditorPanel: React.FC<{
           {!isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
-              {slider('發光', glowToUi(layer.shapeGlow as any), 0, 100,
-                v => onChange({ shapeGlow: glowFromUi(v) } as any))}
+              {slider('發光', shapeGlowToUi(layer.shapeGlow as any, outlineShape), 0, 100,
+                v => onChange({ shapeGlow: shapeGlowFromUi(v, outlineShape) } as any))}
             </div>
             <ColorPick compact label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
               colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })}
@@ -2709,15 +2724,16 @@ export const ShapeEditorPanel: React.FC<{
           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
               （跟「背景紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。
               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-          {!isLine && !isGridShape && !isBlurShape(layer.shape) && (() => {
-            const tex = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
+          {!isLine && !isGridShape && !isBlurShape(layer.shape) && texChoices.length > 0 && (() => {
+            const tex0 = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
+            const tex = texChoices.some(([id]) => id === tex0) ? tex0 : 'none';
             return (
           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3 w-full">
             <div className="h-[47px] flex items-center justify-between px-3">
               <span className="text-[10px] font-bold text-[#888]">紋理</span>
               <div className="flex items-center gap-2">
                 <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                  {TEX_OPTIONS.map(([id, label]) => (
+                  {texChoices.map(([id, label]) => (
                     <button
                       key={id}
                       onClick={() => onChange({ shapeTex: id, shapeDots: id === 'dot' })}
@@ -5619,6 +5635,12 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           });
         } else {
           ctx.stroke(path);
+          // 邊框：紋理懸空在框裡面（條紋不給邊框用）
+          if (tx === 'dot' || tx === 'star' || tx === 'heart') {
+            const opts = { tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
+              textureBaseW: (image.shapeTextureBaseW || image.width) * contentScale, textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale };
+            paintTextureInsideOutline(ctx, path, 0, 0, drawW, drawH, lw, JSON.stringify([image.shape, opts]), (tc, w, h) => paintTex(tc, w, h, w, h, opts));
+          }
         }
         ctx.restore();
 
@@ -14515,7 +14537,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             stripeCountFor(fImg.shapeStripeN ?? STRIPE_N_DEFAULT, fImg.shapeStripeDir, fw, fh, cw, ch),
             fImg.shapeStripeDir === 'h' ? 'h' : 'v', stA, fImg.shapeStripeB || '#FFFFFF');
         });
-      } else ctx.stroke(path);
+      } else {
+        ctx.stroke(path);
+        // 邊框：紋理懸空在框裡面（條紋不給邊框用）
+        if (tx === 'dot' || tx === 'star' || tx === 'heart') {
+          const opts = { tex: tx, dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
+            textureBaseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, textureBaseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor };
+          paintTextureInsideOutline(ctx, path, 0, 0, fw, fh, ctx.lineWidth, JSON.stringify([fImg.shape, opts]), (tc, w, h) => paintTex(tc, w, h, w, h, opts));
+        }
+      }
     }
     ctx.setLineDash([]);
     ctx.restore();

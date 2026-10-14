@@ -44,7 +44,7 @@ import {
   isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter, imgShapePathIn,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
   shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
@@ -73,7 +73,7 @@ import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolStickerInk, m
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
 import {
   getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio,
-  isTextHole, holeStretch, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, fillShapePath, clipShapePieces, patternPathBounds,
+  isTextHole, holeStretch, paintTextureInsideOutline, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, fillShapePath, clipShapePieces, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, clefSizeToUi, clefSizeFromUi, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
   drawHoleShape, paintDots, paintTex, texOf, glowAmount, glowToUi, glowFromUi,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
@@ -7622,7 +7622,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             o.stripeN, o.stripeDir, o.stripeA, o.stripeB, tb.textureBaseW, tb.textureBaseH]), (tc, cw, ch) =>
             paintTex(tc, bw, bh, cw, ch, { ...o, ...tb,
               stripeN: stripeCountFor(o.stripeN ?? STRIPE_N_DEFAULT, o.stripeDir, bw, bh, cw, ch) }));
-        } else paintShapePath(false);
+        } else {
+          paintShapePath(false);
+          // 邊框：紋理懸空在框裡面（條紋不給邊框用）
+          const t = texOf(o);
+          if (!solid && isOutlineShape(o.kind, false) && (t === 'dot' || t === 'star' || t === 'heart') && shapeP) {
+            const opts = { ...o, tex: t, textureBaseW: ((o as any).textureBaseW || o.w) * s, textureBaseH: ((o as any).textureBaseH || o.h) * s };
+            paintTextureInsideOutline(ctx, shapeP, 0, 0, bw, bh, lw,
+              JSON.stringify([o.kind, t, o.dotSize, o.dotGap, o.dotSquash, o.dotColor, opts.textureBaseW, opts.textureBaseH]),
+              (tc, w, h) => paintTex(tc, w, h, w, h, opts));
+          }
+        }
         ctx.setLineDash([]);
         ctx.restore();
         }
@@ -11776,7 +11786,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const isLine = SPECIAL_LINE_KINDS.has(sel.kind || '');
                   const isGrid = GRID_SHAPE_KINDS.has(sel.kind);
                   const hasWidth = isLine || isGrid || !sel.filled;
-                  const hasDash = !sel.filled && (!isLine || sel.kind === 'line') && sel.kind !== 'grid-plus';
+                  const hasDash = !sel.filled && (!isLine || sel.kind === 'line') && sel.kind !== 'grid-plus' && !shapeHasNoDash(sel.kind);
+                  const outlineShape = isOutlineShape(sel.kind, sel.filled === false ? false : !!sel.filled);
+                  const texChoices = shapeTexOptions(sel.kind, sel.filled === false ? false : !!sel.filled);
                   const isDoubleContour = DOUBLE_CONTOUR_SHAPE_KINDS.has(sel.kind || '');
                   /* 圖形調整：欄位與經典拼圖那顆 ShapeEditorPanel 一致。
                      圖層上下不放這裡 —— 選中時畫面上那排工具列本來就有。 */
@@ -11811,11 +11823,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {!isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-1 w-full">
                             <div className="flex-1 min-w-0">
                               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
-                              {shapeSlider('發光', glowToUi(sel.glow), 0, 100,
+                              {/* 邊框類的上限是實心的六成（shapeGlowFromUi） */}
+                              {shapeSlider('發光', shapeGlowToUi(sel.glow, outlineShape), 0, 100,
                                 (v: number) => patch(v > 0 && !sel.glowInit
                                   /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
-                                  ? { glow: glowFromUi(v), glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
-                                  : { glow: glowFromUi(v) }))}
+                                  ? { glow: shapeGlowFromUi(v, outlineShape), glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                                  : { glow: shapeGlowFromUi(v, outlineShape) }))}
                             </div>
                             <ColorPick compact label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
@@ -11839,15 +11852,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
                               （跟經典拼圖的「背景紋理」同一種排法）。顏色常駐。
                               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-                          {!isLine && !GRID_SHAPE_KINDS.has(sel.kind) && !isBlurShape(sel.kind) && (() => {
-                            const tex = texOf(sel);
+                          {!isLine && !GRID_SHAPE_KINDS.has(sel.kind) && !isBlurShape(sel.kind) && texChoices.length > 0 && (() => {
+                            const tex0 = texOf(sel);
+                            const tex = texChoices.some(([id]) => id === tex0) ? tex0 : 'none';
                             return (
                           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3">
                             <div className="h-[47px] flex items-center justify-between px-3">
                               <span className="text-[10px] font-bold text-[#888]">紋理</span>
                               <div className="flex items-center gap-2">
                                 <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                                  {TEX_OPTIONS.map(([id, label]) => (
+                                  {texChoices.map(([id, label]) => (
                                     <button
                                       key={id}
                                       onClick={() => patch({ tex: id, dots: id === 'dot' })}
