@@ -1,7 +1,10 @@
 /* 排序工具的「星芒」頁：30 種星芒並排看，選一個可以疊在照片上看實際效果，
-   覺得可以的就勾「想加進去」，複製順序時一起帶出去。 */
-import React, { useEffect, useRef, useState } from 'react';
+   也可以把它的每個參數拿出來自己調、存成「我的星芒」。
+   覺得可以的就勾「想加進去」，複製順序時一起帶出去（自訂的會連參數一起）。
+   預覽黏在畫面上方（標題列下面）：往下捲去調參數、選別的星芒時一直看得到。 */
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { STAR_BURSTS, drawStarBurst, type StarBurstSpec } from '../utils/starBursts';
+import { paramsToSpec, specToParams, type BurstParams, type RayGroup } from '../utils/starBurstParams';
 
 const COLORS = [
   { c: '#ffffff', n: '白' },
@@ -11,7 +14,14 @@ const COLORS = [
   { c: '#d8c4ff', n: '淡紫' },
 ];
 
-/* 星芒是逐像素算的，30 格一次算完會卡住畫面一下 —— 排隊一格一格算，每格之間讓畫面喘口氣 */
+/** 自訂的星芒存在這台裝置上 */
+export const STORE_CUSTOM_BURST = 'abai-order-tool-starburst-custom-v1';
+export type CustomBurst = { id: string; name: string; params: BurstParams };
+export const loadCustomBursts = (): CustomBurst[] => {
+  try { const v = JSON.parse(localStorage.getItem(STORE_CUSTOM_BURST) || '[]'); return Array.isArray(v) ? v.filter(x => x && x.id && x.params) : []; } catch { return []; }
+};
+
+/* 星芒是逐像素算的，一次算完全部會卡住畫面一下 —— 排隊一格一格算，每格之間讓畫面喘口氣 */
 const queue: (() => void)[] = [];
 let pumping = false;
 const pump = () => {
@@ -38,20 +48,60 @@ const Thumb = ({ spec, color }: { spec: StarBurstSpec; color: string }) => {
   return <canvas ref={ref} className="block w-full aspect-square rounded-[10px]" />;
 };
 
+/** 一列滑桿：名稱、滑桿、數值 */
+const Row = ({ label, value, min, max, step = 1, onChange, unit = '' }: {
+  label: string; value: number; min: number; max: number; step?: number; unit?: string; onChange: (v: number) => void;
+}) => (
+  <div className="flex items-center gap-2 py-1">
+    <span className="text-[11px] text-white/60 w-[64px] shrink-0">{label}</span>
+    <input type="range" min={min} max={max} step={step} value={value} aria-label={label}
+      onChange={e => onChange(Number(e.target.value))} className="flex-1 min-w-0 accent-white" style={{ touchAction: 'pan-y' }} />
+    <span className="text-[11px] tabular-nums w-10 text-right text-white/85">{value}{unit}</span>
+  </div>
+);
+
+/** 一個可以收起來的參數區塊 */
+const Section: React.FC<{ title: string; on?: boolean; children: React.ReactNode; open: boolean; onToggle: () => void }> = ({ title, on, children, open, onToggle }) => (
+  <div className="border-t border-white/10">
+    <button onClick={onToggle} className="w-full flex items-center justify-between py-2.5 text-left">
+      <span className="text-[12px] font-bold text-white/85">{title}{on === false && <span className="ml-1.5 text-[10px] font-normal text-white/35">（關）</span>}</span>
+      <span className="text-[11px] text-white/40">{open ? '收起' : '展開'}</span>
+    </button>
+    {open && <div className="pb-2">{children}</div>}
+  </div>
+);
+
 export function StarBurstLab({ photo, onPickPhoto, picked, onTogglePick }: {
   photo: File | null;
   onPickPhoto: (f: File) => void;
   picked: string[];
   onTogglePick: (id: string) => void;
 }) {
+  const [customs, setCustoms] = useState<CustomBurst[]>(loadCustomBursts);
+  useEffect(() => { try { localStorage.setItem(STORE_CUSTOM_BURST, JSON.stringify(customs)); } catch {} }, [customs]);
+  const customSpecs = useMemo(() => customs.map(c => ({ ...paramsToSpec(c.params, c.name), id: c.id })), [customs]);
+
+  /** 選中的那一顆（現成的或我的星芒）＋目前的參數；edited＝已經改過、還沒存 */
   const [sel, setSel] = useState(STAR_BURSTS[0].id);
+  const base = STAR_BURSTS.find(s => s.id === sel) || customSpecs.find(s => s.id === sel) || STAR_BURSTS[0];
+  const baseParams = useMemo(() => customs.find(c => c.id === sel)?.params ?? specToParams(base), [sel, customs, base]);
+  const [params, setParams] = useState<BurstParams>(baseParams);
+  const [edited, setEdited] = useState(false);
+  const choose = (id: string) => {
+    setSel(id); setEdited(false);
+    const c = customs.find(x => x.id === id);
+    setParams(c ? c.params : specToParams(STAR_BURSTS.find(s => s.id === id) || STAR_BURSTS[0]));
+  };
+  const spec = useMemo(() => edited ? paramsToSpec(params, `${base.name}（改）`) : base, [edited, params, base]);
+
   const [color, setColor] = useState('#ffffff');
   const [size, setSize] = useState(45);
-  const [pos, setPos] = useState({ x: .5, y: .45 });
-  const spec = STAR_BURSTS.find(s => s.id === sel)!;
+  const [pos, setPos] = useState({ x: .5, y: .5 });
   const input = useRef<HTMLInputElement>(null);
   const cvRef = useRef<HTMLCanvasElement>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
+  const [open, setOpen] = useState<Record<string, boolean>>({ core: true, g0: true });
+  const tog = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }));
 
   useEffect(() => {
     if (!photo) { setImg(null); return; }
@@ -60,21 +110,44 @@ export function StarBurstLab({ photo, onPickPhoto, picked, onTogglePick }: {
     return () => URL.revokeObjectURL(u);
   }, [photo]);
 
-  /* 照片預覽：照片蓋滿 3:4 的框，星芒用相加的方式疊上去。
-     拖大小滑桿時先拿算好的圖縮放頂著（fast），停 120ms 再算精確大小的那張重畫一次。 */
+  /* 預覽黏在標題列正下方：量標題列的高度（它會因為瀏海、字型而不同） */
+  const [stickTop, setStickTop] = useState(0);
+  useLayoutEffect(() => {
+    const h = document.querySelector('[data-order-header]') as HTMLElement | null;
+    if (!h) return;
+    const upd = () => setStickTop(h.getBoundingClientRect().height);
+    upd();
+    const ro = new ResizeObserver(upd); ro.observe(h);
+    return () => ro.disconnect();
+  }, []);
+
+  /* 畫預覽。拖大小滑桿：先拿算好的圖縮放頂著（fast）；拖參數滑桿：先用低解析度頂著（draft）；
+     停 150ms 再算精確的那張重畫。 */
   const [exactTick, setExactTick] = useState(0);
   const settle = useRef(0);
+  const lastKind = useRef<'fast' | 'draft'>('fast');
+  const prevSpec = useRef(spec.id);
   useEffect(() => {
+    lastKind.current = prevSpec.current !== spec.id && edited ? 'draft' : 'fast';
+    prevSpec.current = spec.id;
     window.clearTimeout(settle.current);
-    settle.current = window.setTimeout(() => setExactTick(t => t + 1), 120);
+    settle.current = window.setTimeout(() => setExactTick(t => t + 1), 150);
     return () => window.clearTimeout(settle.current);
-  }, [spec, color, size]);
+  }, [spec, color, size, edited]);
   const lastExact = useRef(-1);
+  const [boxTick, setBoxTick] = useState(0);
   useEffect(() => {
     const cv = cvRef.current; if (!cv) return;
-    const css = cv.clientWidth || 300, dpr = Math.min(3, window.devicePixelRatio || 1);
-    cv.width = Math.round(css * dpr); cv.height = Math.round(css * 4 / 3 * dpr);
-    const g = cv.getContext('2d')!, W = cv.width, H = cv.height;
+    const ro = new ResizeObserver(() => setBoxTick(t => t + 1)); ro.observe(cv);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    const cv = cvRef.current; if (!cv) return;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const W = Math.round((cv.clientWidth || 300) * dpr), H = Math.round((cv.clientHeight || 300) * dpr);
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const g = cv.getContext('2d')!;
+    g.globalCompositeOperation = 'source-over';
     if (img) {
       const k = Math.max(W / img.naturalWidth, H / img.naturalHeight), w = img.naturalWidth * k, h = img.naturalHeight * k;
       g.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
@@ -85,46 +158,141 @@ export function StarBurstLab({ photo, onPickPhoto, picked, onTogglePick }: {
     }
     const exact = lastExact.current !== exactTick;
     lastExact.current = exactTick;
-    drawStarBurst(g, spec, pos.x * W, pos.y * H, Math.round(Math.min(W, H) * (size / 100) * 1.6), color, 1, !exact);
-  }, [img, spec, color, size, pos, exactTick]);
+    drawStarBurst(g, spec, pos.x * W, pos.y * H, Math.round(Math.min(W, H) * (size / 100) * 1.6), color, 1, exact ? 'exact' : lastKind.current);
+  }, [img, spec, color, size, pos, exactTick, boxTick]);
 
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.type === 'pointermove' && !e.buttons && e.pointerType === 'mouse') return;
     const r = e.currentTarget.getBoundingClientRect();
     setPos({ x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) });
   };
+
+  const set = (patch: Partial<BurstParams>) => { setParams(p => ({ ...p, ...patch })); setEdited(true); };
+  const setGroup = (i: number, patch: Partial<RayGroup>) => {
+    setParams(p => { const gs = [...p.groups] as BurstParams['groups']; gs[i] = { ...gs[i], ...patch }; return { ...p, groups: gs }; });
+    setEdited(true);
+  };
+  const setRing = (i: number, patch: Partial<BurstParams['rings'][0]>) => {
+    setParams(p => { const rs = [...p.rings] as BurstParams['rings']; rs[i] = { ...rs[i], ...patch }; return { ...p, rings: rs }; });
+    setEdited(true);
+  };
+  const isCustom = customs.some(c => c.id === sel);
+  const saveNew = () => {
+    const n = customs.length ? Math.max(...customs.map(c => Number(c.name.replace(/\D/g, '')) || 0)) + 1 : 1;
+    const id = 'my-' + Date.now().toString(36);
+    setCustoms(cs => [...cs, { id, name: `我的星芒 ${n}`, params }]);
+    setSel(id); setEdited(false);
+  };
+  const saveOver = () => { setCustoms(cs => cs.map(c => c.id === sel ? { ...c, params } : c)); setEdited(false); };
+  const remove = () => {
+    if (!confirm('刪除這個自訂星芒？')) return;
+    setCustoms(cs => cs.filter(c => c.id !== sel));
+    if (picked.includes(sel)) onTogglePick(sel);
+    choose(STAR_BURSTS[0].id);
+  };
+  const revert = () => { setParams(baseParams); setEdited(false); };
+
   const on = picked.includes(sel);
+  const label = edited ? `${base.name}（調整中）` : base.name;
+  const groupName = ['主芒', '副芒', '第三組芒'];
 
   return (
     <>
-      <div className="mt-4 rounded-[12px] border border-white/15 bg-white/[0.06] p-3">
+      {/* 黏在上面的預覽 */}
+      <div className="sticky z-10 -mx-4 px-4 pt-3 pb-2 bg-black" style={{ top: stickTop }}>
         <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="min-w-0">
-            <div className="text-[13px] font-bold">{STAR_BURSTS.indexOf(spec) + 1}. {spec.name}</div>
-            <div className="text-[10px] text-white/40">點照片可以移動星芒的位置</div>
-          </div>
-          <button onClick={() => input.current?.click()} className="shrink-0 h-8 px-3 rounded-full bg-white text-black text-[12px] font-bold active:scale-95">{photo ? '換照片' : '導入照片'}</button>
+          <div className="min-w-0 text-[13px] font-bold truncate">{label}</div>
+          <button onClick={() => input.current?.click()} className="shrink-0 h-7 px-3 rounded-full bg-white text-black text-[11px] font-bold active:scale-95">{photo ? '換照片' : '導入照片'}</button>
           <input ref={input} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) onPickPhoto(f); e.target.value = ''; }} />
         </div>
         <canvas ref={cvRef} data-starburst-preview onPointerDown={move} onPointerMove={move}
-          className="block w-full rounded-[8px]" style={{ aspectRatio: '3 / 4', touchAction: 'none' }} />
-        <div className="mt-3 flex items-center gap-3">
-          <span className="text-[11px] text-white/60 shrink-0">大小</span>
-          <input type="range" min={5} max={100} value={size} onChange={e => setSize(Number(e.target.value))} className="flex-1 accent-white" style={{ touchAction: 'pan-y' }} aria-label="星芒大小" />
-          <span className="text-[12px] tabular-nums w-7 text-right">{size}</span>
-        </div>
-        <div className="mt-2 flex items-center gap-2">
-          <span className="text-[11px] text-white/60 shrink-0">顏色</span>
+          className="block w-full rounded-[8px]" style={{ height: 'min(36vh, 300px)', touchAction: 'none' }} />
+        <div className="mt-1 text-[10px] text-white/35">點預覽可以移動星芒的位置</div>
+      </div>
+
+      <div className="mt-2 rounded-[12px] border border-white/15 bg-white/[0.06] px-3 pt-2 pb-3">
+        <Row label="大小" value={size} min={5} max={100} onChange={setSize} />
+        <div className="flex items-center gap-2 py-1">
+          <span className="text-[11px] text-white/60 w-[64px] shrink-0">顏色</span>
           {COLORS.map(k => (
             <button key={k.c} onClick={() => setColor(k.c)} aria-label={k.n} title={k.n}
               className={`w-7 h-7 rounded-full border-2 ${color === k.c ? 'border-white' : 'border-transparent'}`} style={{ background: k.c }} />
           ))}
         </div>
-        <button onClick={() => onTogglePick(sel)}
-          className={`mt-3 w-full h-9 rounded-full text-[13px] font-bold active:scale-95 ${on ? 'bg-[#f2c46d] text-black' : 'border border-white/25 text-white/85'}`}>
-          {on ? '✓ 想加進去（再點一下取消）' : '想加進去'}
+        <button onClick={() => onTogglePick(sel)} disabled={edited}
+          className={`mt-2 w-full h-9 rounded-full text-[13px] font-bold active:scale-95 disabled:opacity-35 ${on ? 'bg-[#f2c46d] text-black' : 'border border-white/25 text-white/85'}`}>
+          {edited ? '調整過的要先存起來才能勾' : on ? '✓ 想加進去（再點一下取消）' : '想加進去'}
         </button>
       </div>
+
+      {/* 自訂參數 */}
+      <div className="mt-3 rounded-[12px] border border-white/15 bg-white/[0.04] px-3 pb-1" data-starburst-editor>
+        <div className="flex items-center justify-between gap-2 pt-3 pb-2">
+          <div>
+            <div className="text-[13px] font-bold">自訂參數</div>
+            <div className="text-[10px] text-white/40">從目前這顆開始調；長度、半徑以框的一半為 100</div>
+          </div>
+          <div className="flex gap-1.5 shrink-0">
+            {edited && <button onClick={revert} className="h-8 px-3 rounded-full border border-white/20 text-[11px] text-white/75 active:scale-95">還原</button>}
+            {edited && isCustom && <button onClick={saveOver} className="h-8 px-3 rounded-full border border-white/30 text-[11px] font-bold active:scale-95">存回</button>}
+            {(edited || !isCustom) && <button onClick={saveNew} className="h-8 px-3 rounded-full bg-[#7ab8ff] text-black text-[11px] font-bold active:scale-95">存成新的</button>}
+            {!edited && isCustom && <button onClick={remove} className="h-8 px-3 rounded-full border border-[#ff7a7a]/60 text-[#ff9a9a] text-[11px] font-bold active:scale-95">刪除</button>}
+          </div>
+        </div>
+        <Section title="光核" open={!!open.core} onToggle={() => tog('core')}>
+          <Row label="光核大小" value={params.core} min={0} max={30} step={.5} onChange={v => set({ core: v })} />
+          <Row label="柔光範圍" value={params.glow} min={0} max={80} onChange={v => set({ glow: v })} />
+          <Row label="亮度" value={params.glowAlpha} min={0} max={200} onChange={v => set({ glowAlpha: v })} unit="%" />
+        </Section>
+        {params.groups.map((g, i) => (
+          <Section key={i} title={groupName[i]} on={g.n > 0} open={!!open['g' + i]} onToggle={() => tog('g' + i)}>
+            <Row label="條數" value={g.n} min={0} max={32} step={2} onChange={v => setGroup(i, { n: v })} />
+            <Row label="長度" value={g.len} min={0} max={100} onChange={v => setGroup(i, { len: v })} />
+            <Row label="橫的長度" value={g.aspect} min={10} max={200} onChange={v => setGroup(i, { aspect: v })} unit="%" />
+            <Row label="粗細" value={g.w} min={4} max={150} onChange={v => setGroup(i, { w: v })} />
+            <Row label="亮度" value={g.alpha} min={0} max={150} onChange={v => setGroup(i, { alpha: v })} unit="%" />
+            <Row label="角度" value={g.rot} min={0} max={g.n > 0 ? Math.max(1, Math.floor(360 / g.n)) : 90} step={.5} onChange={v => setGroup(i, { rot: v })} unit="°" />
+          </Section>
+        ))}
+        <Section title="細芒" on={params.fineN > 0} open={!!open.fine} onToggle={() => tog('fine')}>
+          <Row label="條數" value={params.fineN} min={0} max={96} step={4} onChange={v => set({ fineN: v })} />
+          <Row label="長度" value={params.fineLen} min={0} max={100} onChange={v => set({ fineLen: v })} />
+          <Row label="長短差" value={params.fineVar} min={0} max={100} onChange={v => set({ fineVar: v })} unit="%" />
+          <Row label="粗細" value={params.fineW} min={4} max={60} onChange={v => set({ fineW: v })} />
+          <Row label="亮度" value={params.fineAlpha} min={0} max={120} onChange={v => set({ fineAlpha: v })} unit="%" />
+          <Row label="角度" value={params.fineRot} min={0} max={params.fineN > 0 ? Math.max(1, Math.floor(360 / params.fineN)) : 10} step={.25} onChange={v => set({ fineRot: v })} unit="°" />
+        </Section>
+        {params.rings.map((r, i) => (
+          <Section key={i} title={`光環 ${i + 1}`} on={r.r > 0} open={!!open['r' + i]} onToggle={() => tog('r' + i)}>
+            <Row label="半徑" value={r.r} min={0} max={90} onChange={v => setRing(i, { r: v })} />
+            <Row label="粗細" value={r.w} min={10} max={300} onChange={v => setRing(i, { w: v })} />
+            <Row label="亮度" value={r.alpha} min={0} max={120} onChange={v => setRing(i, { alpha: v })} unit="%" />
+          </Section>
+        ))}
+        <Section title="橫向光條" on={params.streakLen > 0} open={!!open.streak} onToggle={() => tog('streak')}>
+          <Row label="長度" value={params.streakLen} min={0} max={100} onChange={v => set({ streakLen: v })} />
+          <Row label="粗細" value={params.streakW} min={10} max={150} onChange={v => set({ streakW: v })} />
+          <Row label="亮度" value={params.streakAlpha} min={0} max={150} onChange={v => set({ streakAlpha: v })} unit="%" />
+        </Section>
+      </div>
+
+      {customSpecs.length > 0 && (
+        <section className="mt-5">
+          <div className="text-[11px] font-bold text-white/50 tracking-widest mb-2">我的星芒（{customSpecs.length}）</div>
+          <div className="grid grid-cols-3 gap-2">
+            {customSpecs.map(s => (
+              <button key={s.id} data-starburst={s.id} onClick={() => choose(s.id)}
+                className={`relative rounded-[12px] border p-1 text-left ${s.id === sel ? 'border-white' : picked.includes(s.id) ? 'border-[#f2c46d]/80' : 'border-white/10'}`}>
+                <Thumb spec={s} color={color} />
+                <div className="px-1 pt-1 pb-0.5 flex items-center justify-between">
+                  <span className="text-[10px] text-white/70 truncate">{s.name}</span>
+                  {picked.includes(s.id) && <span className="text-[9px] px-1 rounded bg-[#f2c46d] text-black font-bold">要</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       <section className="mt-5">
         <div className="flex items-baseline justify-between mb-2">
           <div className="text-[11px] font-bold text-white/50 tracking-widest">星芒（{STAR_BURSTS.length} 種）</div>
@@ -132,7 +300,7 @@ export function StarBurstLab({ photo, onPickPhoto, picked, onTogglePick }: {
         </div>
         <div className="grid grid-cols-3 gap-2">
           {STAR_BURSTS.map((s, i) => (
-            <button key={s.id} data-starburst={s.id} onClick={() => { setSel(s.id); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+            <button key={s.id} data-starburst={s.id} onClick={() => choose(s.id)}
               className={`relative rounded-[12px] border p-1 text-left ${s.id === sel ? 'border-white' : picked.includes(s.id) ? 'border-[#f2c46d]/80' : 'border-white/10'}`}>
               <Thumb spec={s} color={color} />
               <div className="px-1 pt-1 pb-0.5 flex items-center justify-between">

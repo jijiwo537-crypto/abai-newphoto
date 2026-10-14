@@ -10,7 +10,7 @@ import { ShapeGlyph, HoleGlyph, shapePickerSections, shapeSupportsStretch } from
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
 import { patternDefaultSize } from './utils/patternDefaults';
 import { CollageTool } from './components/CollageTool';
-import { StarBurstLab } from './components/StarBurstLab';
+import { StarBurstLab, loadCustomBursts } from './components/StarBurstLab';
 import { STAR_BURSTS } from './utils/starBursts';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
@@ -60,7 +60,7 @@ const sampleFile = (): Promise<File> => new Promise(resolve => {
 });
 /** 「星芒」頁勾選想加進 App 的那幾種 */
 const STORE_BURST = 'abai-order-tool-starburst-v1';
-const loadBursts = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_BURST) || '[]'); return Array.isArray(v) ? v.filter((id: string) => STAR_BURSTS.some(b => b.id === id)) : []; } catch { return []; } };
+const loadBursts = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_BURST) || '[]'); return Array.isArray(v) ? v.filter((id: string) => STAR_BURSTS.some(b => b.id === id) || loadCustomBursts().some(c => c.id === id)) : []; } catch { return []; } };
 const loadStretch = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_STRETCH) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
 
 type Group = { key: string; label: string; cols: number; items: any[] };
@@ -239,7 +239,12 @@ function OrderTool() {
     if (stretchIds.length) lines.push('要改成可以變形（四邊擠壓）的圖形', stretchIds.join(', '));
     if (deleteIds.length) lines.push('要刪除的圖形', deleteIds.join(', '));
     const sized = PATTERN_ORDER.filter(id => id in sizes);
-    if (bursts.length) lines.push('想加進去的星芒（新圖形「星芒」）', STAR_BURSTS.filter(b => bursts.includes(b.id)).map(b => `${STAR_BURSTS.indexOf(b) + 1}. ${b.name}（${b.id}）`).join(', '));
+    if (bursts.length) {
+      const preset = STAR_BURSTS.filter(b => bursts.includes(b.id));
+      const mine = loadCustomBursts().filter(c => bursts.includes(c.id));
+      lines.push('想加進去的星芒（新圖形「星芒」）', [...preset.map(b => `${STAR_BURSTS.indexOf(b) + 1}. ${b.name}（${b.id}）`), ...mine.map(c => c.name)].join(', '));
+      for (const c of mine) lines.push(`${c.name} 的參數`, JSON.stringify(c.params));
+    }
     if (sized.length) lines.push('圖案起始大小（創意拼圖的「大小」0~100）', sized.map(id => `${id}: ${sizes[id]}（原本 ${patternDefaultSize(id)}）`).join(', '));
     return lines.join('\n');
   };
@@ -269,7 +274,7 @@ function OrderTool() {
 
   return (
     <div className="min-h-[100dvh] bg-black text-white select-none" style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}>
-      <div className="sticky top-0 z-20 bg-black/95 backdrop-blur border-b border-white/10" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+      <div data-order-header className="sticky top-0 z-20 bg-black/95 backdrop-blur border-b border-white/10" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
         <div className="max-w-[560px] mx-auto px-4 pt-3 pb-3">
           <div className="flex items-center justify-between gap-3">
             <div>

@@ -204,9 +204,11 @@ export const nearestStarBurstSprite = (spec: StarBurstSpec, sizePx: number, colo
 };
 
 /** 在 (cx,cy) 畫一顆星芒，size 是外框的邊長（實際像素）。color 是光的顏色（光核永遠偏白，像真的光）。
-    fast：只用已經算好的圖縮放頂著（拖曳中用），沒有的話才現算。 */
-export const drawStarBurst = (g: CanvasRenderingContext2D, spec: StarBurstSpec, cx: number, cy: number, size: number, color = '#ffffff', alpha = 1, fast = false) => {
-  const cv = (fast && nearestStarBurstSprite(spec, size, color)) || starBurstSprite(spec, size, color);
+    mode：'exact' 算精確大小那張；'fast' 拿已經算好、大小最接近的那張縮放頂著（拖大小滑桿時）；
+    'draft' 先算三分之一解析度的放大頂著（拖參數滑桿時，每格都是新的星芒，算全尺寸來不及）。 */
+export const drawStarBurst = (g: CanvasRenderingContext2D, spec: StarBurstSpec, cx: number, cy: number, size: number, color = '#ffffff', alpha = 1, mode: 'exact' | 'fast' | 'draft' = 'exact') => {
+  const cv = (mode === 'fast' && nearestStarBurstSprite(spec, size, color))
+    || (mode === 'draft' && size > 120 ? starBurstSprite(spec, size / 3, color) : starBurstSprite(spec, size, color));
   g.save();
   g.globalCompositeOperation = 'lighter';
   g.globalAlpha = alpha;
