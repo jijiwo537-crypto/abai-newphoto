@@ -2,7 +2,13 @@
    放大不會糊、顏色可以換。全部用 'lighter'（相加）疊上去，跟真的光一樣越疊越亮。
    座標：以中心為原點，R＝框的一半；ray.len 1 就是剛好碰到框邊。
    規則（主人定的）：每一種都要上下左右對稱、不能只是別種轉個角度；
-   漸層一律用平滑曲線取很多個點，芒的兩側用柔焦散開，不能有硬邊。 */
+   要高畫質：不能有鋸齒、漸層要自然。
+
+   畫法：不用瀏覽器的漸層與陰影一筆一筆疊（細芒不到 1px 會出鋸齒、陰影模糊精度差、
+   很多層淡色疊起來每層都被捨入成 256 階 → 暗處一段一段的）。改成「逐像素算」：
+   每個像素直接用公式算出亮度（芒的剖面是高斯曲線、沿長度平滑淡出），全程小數精度，
+   最後加一點看不出來的細微雜點（dithering）才轉成 8 位元，接縫就被打散。
+   算好的結果快取成一張圖，之後只要貼上去。 */
 
 export type BurstRay = { a: number; len: number; w: number; alpha?: number };
 export type StarBurstSpec = {
@@ -64,92 +70,145 @@ export const STAR_BURSTS: StarBurstSpec[] = [
   { id: 'sb-streak-cross', name: '光條十字', core: .065, glow: .28, streaks: [{ a: 0, len: 1, w: .045, alpha: .6 }], rays: cross(1, .7, .028) },
 ];
 
+
 const rgb = (hex: string) => {
   const h = hex.replace('#', '');
   const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-};
-const rgba = (c: number[], a: number) => `rgba(${c[0]},${c[1]},${c[2]},${Math.max(0, Math.min(1, a)).toFixed(4)})`;
-/** 照一條平滑曲線取很多個停點 —— 只放三四個點的話，轉折的地方會看得出一圈一圈的接縫 */
-const smoothStops = (gr: CanvasGradient, f: (t: number) => number, c: number[] | ((t: number) => number[]), steps = 24) => {
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    gr.addColorStop(t, rgba(typeof c === 'function' ? c(t) : c, f(t)));
-  }
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 };
 
-/** 一條芒：細細的光針，亮度沿著長度平滑地淡掉；兩側用陰影柔焦散開（高斯那種），不會有硬邊。 */
-const drawRay = (g: CanvasRenderingContext2D, ang: number, L: number, W: number, a: number, c: number[], soft = 2.6) => {
-  if (L <= 0 || W <= 0 || a <= 0) return;
-  g.save();
-  g.rotate(ang);
-  const gr = g.createLinearGradient(0, 0, L, 0);
-  smoothStops(gr, t => a * Math.pow(1 - t, 1.6) * (1 - .25 * t), c, 16);
-  g.fillStyle = gr;
-  g.shadowColor = rgba(c, .9);
-  g.shadowBlur = Math.max(1, W * soft);
-  g.beginPath();
-  g.moveTo(0, -W / 2);
-  g.quadraticCurveTo(L * .3, -W * .2, L, 0);
-  g.quadraticCurveTo(L * .3, W * .2, 0, W / 2);
-  g.closePath();
-  g.fill();
-  g.restore();
-};
+type Ray = { ux: number; uy: number; L: number; sig: number; a: number };
 
-/** 光核：中間一小塊純白，外面是帶顏色的柔光，兩段都用平滑曲線 */
-const drawGlow = (g: CanvasRenderingContext2D, core: number, glow: number, a: number, c: number[]) => {
-  const halo = g.createRadialGradient(0, 0, 0, 0, 0, glow);
-  smoothStops(halo, t => a * .55 * Math.pow(1 - t, 2.4), c, 24);
-  g.fillStyle = halo;
-  g.beginPath(); g.arc(0, 0, glow, 0, Math.PI * 2); g.fill();
-  const cr = core * 2.2;
-  const hot = g.createRadialGradient(0, 0, 0, 0, 0, cr);
-  smoothStops(hot, t => a * Math.exp(-Math.pow(t * 2.2, 2) * 1.1), [255, 255, 255], 24);
-  g.fillStyle = hot;
-  g.beginPath(); g.arc(0, 0, cr, 0, Math.PI * 2); g.fill();
-};
-
-/** 光環：剖面是柔和的光帶（中間亮、兩側平滑淡掉），內緣偏暖、外緣偏冷一點點，像鏡頭裡的光暈 */
-const drawRing = (g: CanvasRenderingContext2D, r: number, w: number, a: number, c: number[]) => {
-  const E = 3.2, r0 = Math.max(0, r - w * E), r1 = r + w * E;
-  const gr = g.createRadialGradient(0, 0, r0, 0, 0, r1);
-  const warm = [c[0], Math.round(c[1] * .96), Math.round(c[2] * .9)];
-  const cool = [Math.round(c[0] * .9), Math.round(c[1] * .96), c[2]];
-  const mid = (r - r0) / (r1 - r0), hw = w / (r1 - r0);
-  const mix = (t: number) => {
-    const k = Math.max(0, Math.min(1, (t - mid) / (hw * 2) + .5));
-    return [0, 1, 2].map(i => Math.round(warm[i] * (1 - k) + cool[i] * k));
+/** 把一種星芒算成 N×N 的圖（N＝框的邊長，實際像素）。回傳的是「預乘過的光」，用 'lighter' 貼上去。 */
+const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvasElement => {
+  const R = N / 2, c = rgb(color);
+  const rays: Ray[] = [];
+  /* 芒的剖面：高斯，σ 從根部往尖端收細。太細的芒 σ 至少留 0.55px —— 再細就一定鋸齒，
+     亮度照比例調低，看起來一樣細但邊緣是柔的。 */
+  const addRay = (deg: number, len: number, w: number, a: number) => {
+    if (len <= 0 || w <= 0 || a <= 0) return;
+    const t = (deg * Math.PI) / 180, raw = (w * R) / 2;
+    const sig = Math.max(raw, .55);
+    rays.push({ ux: Math.cos(t), uy: Math.sin(t), L: len * R, sig, a: a * Math.min(1, Math.sqrt(raw / sig) * 1.05) });
   };
-  // 高斯剖面＋一層更寬更淡的光；兩頭再乘一個平滑的窗，到內外邊緣剛好是 0（不然會看到一圈硬邊）
-  smoothStops(gr, t => {
-    const d = (t - mid) / hw, win = Math.cos(Math.min(1, Math.abs(d) / E) * Math.PI / 2) ** 2;
-    return a * win * (Math.exp(-d * d * 1.2) * .8 + Math.exp(-d * d * .3) * .25);
-  }, mix, 48);
-  g.fillStyle = gr;
-  g.beginPath(); g.arc(0, 0, r1, 0, Math.PI * 2); g.fill();
-};
-
-/** 在 (cx,cy) 畫一顆星芒，size 是外框的邊長。color 是光的顏色（光核永遠偏白，像真的光）。 */
-export const drawStarBurst = (g: CanvasRenderingContext2D, spec: StarBurstSpec, cx: number, cy: number, size: number, color = '#ffffff', alpha = 1) => {
-  const R = size / 2, c = rgb(color);
-  g.save();
-  g.translate(cx, cy);
-  g.globalCompositeOperation = 'lighter';
-  for (const ring of spec.rings || []) drawRing(g, ring.r * R, ring.w * R, ring.alpha * alpha, c);
+  for (const r of spec.rays || []) addRay(r.a, r.len, r.w, r.alpha ?? 1);
   if (spec.fine) {
     const f = spec.fine;
+    const step = 360 / f.n;
     for (let i = 0; i < f.n; i++) {
-      const k = f.pattern[i % f.pattern.length];
-      drawRay(g, ((f.off ?? 0) + (360 / f.n) * i) * Math.PI / 180, f.len * k * R, f.w * R, f.alpha * alpha * (.55 + .45 * k), c);
+      const deg = (f.off ?? 0) + step * i;
+      /* 長短照「離最近的軸線幾度」決定，不照編號輪流 —— 這樣上下、左右、斜對角都一定對稱 */
+      const m = ((deg % 90) + 90) % 90, fold = Math.min(m, 90 - m);
+      const k = f.pattern[Math.round(fold / step) % f.pattern.length];
+      addRay(deg, f.len * k, f.w, f.alpha * (.55 + .45 * k));
     }
   }
-  for (const s of spec.streaks || []) {
-    const ang = s.a * Math.PI / 180;
-    drawRay(g, ang, s.len * R, s.w * R, s.alpha * alpha, c, 3.5);
-    drawRay(g, ang + Math.PI, s.len * R, s.w * R, s.alpha * alpha, c, 3.5);
+  for (const s of spec.streaks || []) { addRay(s.a, s.len, s.w * 1.25, s.alpha); addRay(s.a + 180, s.len, s.w * 1.25, s.alpha); }
+  const rings = (spec.rings || []).map(r => ({ r: r.r * R, w: Math.max(.8, r.w * R), a: r.alpha }));
+  const hasGlow = !!(spec.core || spec.glow);
+  const core = Math.max(.6, (spec.core ?? .05) * R), G = (spec.glow ?? .22) * R, GA = spec.glowAlpha ?? 1;
+  // 光環內緣偏暖、外緣偏冷一點點
+  const warm = [c[0], c[1] * .96, c[2] * .9], cool = [c[0] * .9, c[1] * .96, c[2]];
+
+  const out = new ImageData(N, N), d = out.data;
+  let seed = 12345;
+  const noise = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  // 像底片那樣平滑地「接近」全白：暗處幾乎線性，亮處越來越慢地飽和，光核不會變成一塊邊緣很硬的白餅
+  const tone = (v: number) => 1 - Math.exp(-1.15 * v);
+  /* 每一種都上下、左右對稱，所以只算左上四分之一，再鏡像到另外三塊（快四倍） */
+  const H = Math.ceil(N / 2);
+  for (let py = 0; py < H; py++) {
+    const y = py + .5 - R;
+    for (let px = 0; px < H; px++) {
+      const x = px + .5 - R;
+      let lr = 0, lg = 0, lb = 0, white = 0;
+      for (let i = 0; i < rays.length; i++) {
+        const ry = rays[i];
+        const along = x * ry.ux + y * ry.uy;
+        if (along < -ry.sig * 2 || along > ry.L) continue;
+        const perp = Math.abs(-x * ry.uy + y * ry.ux);
+        const tp = Math.max(0, 1 - Math.max(0, along) / ry.L);           // 1＝根部、0＝尖端
+        const s = ry.sig * (.35 + .65 * tp);
+        if (perp > s * 10) continue;
+        const q = perp / s;
+        const lat = Math.exp(-.5 * q * q) + .28 * Math.exp(-.5 * (q / 3.2) * (q / 3.2));
+        const fall = Math.pow(tp, 1.6) * (1 - .25 * (1 - tp));
+        const v = ry.a * fall * lat;
+        lr += v * c[0]; lg += v * c[1]; lb += v * c[2];
+      }
+      if (rings.length || hasGlow) {
+        const r = Math.sqrt(x * x + y * y);
+        for (const rg of rings) {
+          const dd = (r - rg.r) / rg.w;
+          if (dd <= -3.2 || dd >= 3.2) continue;
+          const win = Math.cos((Math.abs(dd) / 3.2) * Math.PI / 2) ** 2;
+          const v = rg.a * win * (Math.exp(-1.2 * dd * dd) * .8 + Math.exp(-.3 * dd * dd) * .25);
+          const k = Math.max(0, Math.min(1, dd / 2 + .5));
+          lr += v * (warm[0] * (1 - k) + cool[0] * k); lg += v * (warm[1] * (1 - k) + cool[1] * k); lb += v * (warm[2] * (1 - k) + cool[2] * k);
+        }
+        if (hasGlow) {
+          if (r < G) { const v = GA * .55 * Math.pow(1 - r / G, 2.4); lr += v * c[0]; lg += v * c[1]; lb += v * c[2]; }
+          const q = r / core;
+          if (q < 4) white += GA * Math.exp(-q * q * 1.1);
+        }
+      }
+      // 光核那一點偏白（真的光最亮的地方都是白的）
+      lr = tone(lr + white); lg = tone(lg + white); lb = tone(lb + white);
+      const A = Math.max(lr, lg, lb);
+      if (A <= 0) continue;
+      // 預乘：alpha＝最亮那個通道，顏色＝光/alpha；四個鏡像點各自加雜點再取整 → 沒有色階
+      for (const [qx, qy] of [[px, py], [N - 1 - px, py], [px, N - 1 - py], [N - 1 - px, N - 1 - py]]) {
+        const o = (qy * N + qx) * 4;
+        const a8 = Math.min(255, Math.floor(A * 255 + noise()));
+        if (a8 <= 0) continue;
+        const k = 255 / a8;
+        d[o] = Math.min(255, Math.floor(lr * 255 * k + noise()));
+        d[o + 1] = Math.min(255, Math.floor(lg * 255 * k + noise()));
+        d[o + 2] = Math.min(255, Math.floor(lb * 255 * k + noise()));
+        d[o + 3] = a8;
+      }
+    }
   }
-  for (const r of spec.rays || []) drawRay(g, (r.a * Math.PI) / 180, r.len * R, r.w * R, (r.alpha ?? 1) * alpha, c);
-  if (spec.core || spec.glow) drawGlow(g, (spec.core ?? .05) * R, (spec.glow ?? .22) * R, (spec.glowAlpha ?? 1) * alpha, c);
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = N;
+  cv.getContext('2d')!.putImageData(out, 0, 0);
+  return cv;
+};
+
+const spriteCache = new Map<string, HTMLCanvasElement>();
+const keyOf = (spec: StarBurstSpec, N: number, color: string) => `${spec.id}|${N}|${color}`;
+/** 這種星芒、這個大小（實際像素）的圖；算過就直接拿 */
+export const starBurstSprite = (spec: StarBurstSpec, sizePx: number, color = '#ffffff') => {
+  const N = Math.max(8, Math.min(2400, Math.round(sizePx)));
+  const k = keyOf(spec, N, color);
+  let cv = spriteCache.get(k);
+  if (!cv) {
+    cv = renderSprite(spec, N, color);
+    spriteCache.set(k, cv);
+    if (spriteCache.size > 80) spriteCache.delete(spriteCache.keys().next().value!);
+  }
+  return cv;
+};
+/** 已經算好的、最接近這個大小的圖（拖滑桿時先拿它放大縮小頂著，停下來再算精確的） */
+export const nearestStarBurstSprite = (spec: StarBurstSpec, sizePx: number, color = '#ffffff') => {
+  let best: HTMLCanvasElement | null = null, bd = Infinity;
+  for (const [k, cv] of spriteCache) {
+    if (!k.startsWith(spec.id + '|') || !k.endsWith('|' + color)) continue;
+    const dd = Math.abs(Math.log(cv.width / sizePx));
+    if (dd < bd) { bd = dd; best = cv; }
+  }
+  return best;
+};
+
+/** 在 (cx,cy) 畫一顆星芒，size 是外框的邊長（實際像素）。color 是光的顏色（光核永遠偏白，像真的光）。
+    fast：只用已經算好的圖縮放頂著（拖曳中用），沒有的話才現算。 */
+export const drawStarBurst = (g: CanvasRenderingContext2D, spec: StarBurstSpec, cx: number, cy: number, size: number, color = '#ffffff', alpha = 1, fast = false) => {
+  const cv = (fast && nearestStarBurstSprite(spec, size, color)) || starBurstSprite(spec, size, color);
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  g.globalAlpha = alpha;
+  g.imageSmoothingEnabled = true;
+  (g as any).imageSmoothingQuality = 'high';
+  g.drawImage(cv, cx - size / 2, cy - size / 2, size, size);
   g.restore();
 };

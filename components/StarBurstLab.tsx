@@ -11,6 +11,17 @@ const COLORS = [
   { c: '#d8c4ff', n: '淡紫' },
 ];
 
+/* 星芒是逐像素算的，30 格一次算完會卡住畫面一下 —— 排隊一格一格算，每格之間讓畫面喘口氣 */
+const queue: (() => void)[] = [];
+let pumping = false;
+const pump = () => {
+  const job = queue.shift();
+  if (!job) { pumping = false; return; }
+  job();
+  setTimeout(pump, 0);
+};
+const enqueue = (job: () => void) => { queue.push(job); if (!pumping) { pumping = true; setTimeout(pump, 0); } };
+
 /** 一格的小圖：黑底上畫一顆，跟參考圖一樣 */
 const Thumb = ({ spec, color }: { spec: StarBurstSpec; color: string }) => {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -20,7 +31,9 @@ const Thumb = ({ spec, color }: { spec: StarBurstSpec; color: string }) => {
     cv.width = cv.height = Math.round(css * dpr);
     const g = cv.getContext('2d')!;
     g.fillStyle = '#000'; g.fillRect(0, 0, cv.width, cv.height);
-    drawStarBurst(g, spec, cv.width / 2, cv.height / 2, cv.width * .92, color);
+    let live = true;
+    enqueue(() => { if (live) drawStarBurst(g, spec, cv.width / 2, cv.height / 2, cv.width * .92, color); });
+    return () => { live = false; };
   }, [spec, color]);
   return <canvas ref={ref} className="block w-full aspect-square rounded-[10px]" />;
 };
@@ -47,7 +60,16 @@ export function StarBurstLab({ photo, onPickPhoto, picked, onTogglePick }: {
     return () => URL.revokeObjectURL(u);
   }, [photo]);
 
-  // 照片預覽：照片蓋滿 3:4 的框，星芒用相加的方式疊上去
+  /* 照片預覽：照片蓋滿 3:4 的框，星芒用相加的方式疊上去。
+     拖大小滑桿時先拿算好的圖縮放頂著（fast），停 120ms 再算精確大小的那張重畫一次。 */
+  const [exactTick, setExactTick] = useState(0);
+  const settle = useRef(0);
+  useEffect(() => {
+    window.clearTimeout(settle.current);
+    settle.current = window.setTimeout(() => setExactTick(t => t + 1), 120);
+    return () => window.clearTimeout(settle.current);
+  }, [spec, color, size]);
+  const lastExact = useRef(-1);
   useEffect(() => {
     const cv = cvRef.current; if (!cv) return;
     const css = cv.clientWidth || 300, dpr = Math.min(3, window.devicePixelRatio || 1);
@@ -61,8 +83,10 @@ export function StarBurstLab({ photo, onPickPhoto, picked, onTogglePick }: {
       lg.addColorStop(0, '#1c2440'); lg.addColorStop(.55, '#3b2f4f'); lg.addColorStop(1, '#0e1a2a');
       g.fillStyle = lg; g.fillRect(0, 0, W, H);
     }
-    drawStarBurst(g, spec, pos.x * W, pos.y * H, Math.min(W, H) * (size / 100) * 1.6, color);
-  }, [img, spec, color, size, pos]);
+    const exact = lastExact.current !== exactTick;
+    lastExact.current = exactTick;
+    drawStarBurst(g, spec, pos.x * W, pos.y * H, Math.round(Math.min(W, H) * (size / 100) * 1.6), color, 1, !exact);
+  }, [img, spec, color, size, pos, exactTick]);
 
   const move = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (e.type === 'pointermove' && !e.buttons && e.pointerType === 'mouse') return;
