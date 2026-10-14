@@ -8,6 +8,8 @@ import ReactDOM from 'react-dom/client';
 import { PatternIcon } from './components/PatternIcon';
 import { ShapeGlyph, HoleGlyph, shapePickerSections, shapeSupportsStretch } from './components/GridLayoutTool';
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
+import { patternDefaultSize } from './utils/patternDefaults';
+import { CollageTool } from './components/CollageTool';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
 const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o', 'track-select-o', 'track-cross-o']);
@@ -33,6 +35,27 @@ const CAN_STRETCH = (it: any) => shapeSupportsStretch(it.kind, it.filled, it.hol
 /** 「這些圖形想刪掉」的清單（圖形的 id），一樣存在這台裝置上 */
 const STORE_DELETE = 'abai-order-tool-delete-v1';
 const loadDelete = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_DELETE) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
+/** 「圖案大小」頁試調的起始大小（圖案 id → 0～100），一樣存在這台裝置上 */
+const STORE_SIZE = 'abai-order-tool-pattern-size-v1';
+const loadSizes = (): Record<string, number> => {
+  try {
+    const v = JSON.parse(localStorage.getItem(STORE_SIZE) || '{}');
+    if (!v || typeof v !== 'object') return {};
+    return Object.fromEntries(Object.entries(v).filter(([id, n]) => PATTERN_ORDER.includes(id) && typeof n === 'number' && n !== patternDefaultSize(id))) as Record<string, number>;
+  } catch { return {}; }
+};
+/** 沒導入圖片時預覽用的示範照片（漸層＋幾塊色塊，看得出圖案挖在照片上的樣子） */
+const sampleFile = (): Promise<File> => new Promise(resolve => {
+  const c = document.createElement('canvas'); c.width = 1200; c.height = 1600;
+  const g = c.getContext('2d')!;
+  const lg = g.createLinearGradient(0, 0, 1200, 1600);
+  lg.addColorStop(0, '#f4a6a0'); lg.addColorStop(0.5, '#f7d9a8'); lg.addColorStop(1, '#8fb9d8');
+  g.fillStyle = lg; g.fillRect(0, 0, 1200, 1600);
+  for (const [x, y, r, col] of [[300, 420, 260, '#ffffff55'], [880, 980, 340, '#3a5f8a66'], [420, 1250, 200, '#e8735a66']] as const) {
+    g.fillStyle = col; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  }
+  c.toBlob(b => resolve(new File([b!], 'sample.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.9);
+});
 const loadStretch = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_STRETCH) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
 
 type Group = { key: string; label: string; cols: number; items: any[] };
@@ -70,7 +93,41 @@ type Drag = { group: string; id: string; pointerId: number; dx: number; dy: numb
 function OrderTool() {
   const base = useMemo(defaultGroups, []);
   const [groups, setGroups] = useState<Group[]>(() => load(base));
-  const [tab, setTab] = useState<'pattern' | 'shape'>('pattern');
+  const [tab, setTab] = useState<'pattern' | 'shape' | 'size'>('pattern');
+  /** 圖案起始大小：只存「跟 App 不一樣」的那些 */
+  const [sizes, setSizes] = useState<Record<string, number>>(loadSizes);
+  useEffect(() => { try { localStorage.setItem(STORE_SIZE, JSON.stringify(sizes)); } catch {} }, [sizes]);
+  const sizeOf = (id: string) => patternDefaultSize(id, sizes);
+  const setSize = (id: string, v: number) => setSizes(m => {
+    const n = { ...m };
+    if (Math.round(v) === patternDefaultSize(id)) delete n[id]; else n[id] = Math.round(v);
+    return n;
+  });
+  const [sizeSel, setSizeSel] = useState<string>('star');
+  /** 主人自己導入的照片（只留在這個分頁裡，不會上傳也不會存起來） */
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [photoUrl, setPhotoUrl] = useState('');
+  useEffect(() => { if (!photo) { setPhotoUrl(''); return; } const u = URL.createObjectURL(photo); setPhotoUrl(u); return () => URL.revokeObjectURL(u); }, [photo]);
+  const photoInput = useRef<HTMLInputElement>(null);
+  /** 開著時整頁換成真正的創意拼圖（照片、圖案、大小都是實際的畫法） */
+  const [preview, setPreview] = useState<{ file: File; pattern: string; key: number } | null>(null);
+  /* 預覽裡拖「大小」滑桿每一格都會回報；直接 setState 的話整頁（連同創意拼圖）每格重畫一次，
+     所以先記在這份物件上（創意拼圖換圖案時讀的也是它），回到這裡才一次寫回。 */
+  const previewSizes = useRef<Record<string, number>>({});
+  const scrollBack = useRef(0);
+  const openPreview = async (pattern: string) => {
+    previewSizes.current = { ...sizes };
+    scrollBack.current = window.scrollY;
+    const file = photo || await sampleFile();
+    window.scrollTo(0, 0);
+    setPreview({ file, pattern, key: Date.now() });
+  };
+  const closePreview = () => {
+    const tuned = previewSizes.current;
+    setSizes(Object.fromEntries((Object.entries(tuned) as [string, number][]).filter(([id, v]) => Math.round(v) !== patternDefaultSize(id)).map(([id, v]) => [id, Math.round(v)])));
+    setPreview(null);
+    requestAnimationFrame(() => window.scrollTo(0, scrollBack.current));
+  };
   const [drag, setDrag] = useState<Drag | null>(null);
   const [toast, setToast] = useState('');
   /** 開著的時候，在「圖形」那一頁點一下圖形 → 加進圖案（再點一下取消） */
@@ -174,6 +231,8 @@ function OrderTool() {
     if (added.length) lines.push('要加到圖案的圖形（上面圖案順序裡 shape: 開頭的就是這些）', added.map(i => i.fromShape.id).join(', '));
     if (stretchIds.length) lines.push('要改成可以變形（四邊擠壓）的圖形', stretchIds.join(', '));
     if (deleteIds.length) lines.push('要刪除的圖形', deleteIds.join(', '));
+    const sized = PATTERN_ORDER.filter(id => id in sizes);
+    if (sized.length) lines.push('圖案起始大小（創意拼圖的「大小」0~100）', sized.map(id => `${id}: ${sizes[id]}（原本 ${patternDefaultSize(id)}）`).join(', '));
     return lines.join('\n');
   };
   const flash = (m: string) => { setToast(m); window.setTimeout(() => setToast(''), 1600); };
@@ -186,11 +245,19 @@ function OrderTool() {
       ta.remove();
     }
   };
-  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); } };
+  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setSizes({}); } };
 
-  const shown = groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
+  const shown = tab === 'size' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
   const dragged = drag && groups.find(g => g.key === drag.group)?.items.find(i => i.id === drag.id);
-  const anyChanged = groups.some(changed) || stretchIds.length > 0 || deleteIds.length > 0;
+  const anyChanged = groups.some(changed) || stretchIds.length > 0 || deleteIds.length > 0 || Object.keys(sizes).length > 0;
+  const sizeList = (groups.find(g => g.key === 'pattern')?.items || []).filter(i => !i.fromShape);
+
+  /* 預覽時整頁就是一個真正的創意拼圖（跟 App 裡一樣全螢幕，選單、彈出層都照原本的方式疊） */
+  if (preview) return (
+    <CollageTool key={preview.key} sandbox initialFile={preview.file} initialPattern={preview.pattern}
+      patternSizes={previewSizes.current} onPatternSizeTuned={(id, v) => { previewSizes.current[id] = v; }}
+      onHome={closePreview} onImportNew={() => {}} />
+  );
 
   return (
     <div className="min-h-[100dvh] bg-black text-white select-none" style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}>
@@ -206,10 +273,10 @@ function OrderTool() {
               <button onClick={copy} className={`h-9 px-4 rounded-full text-[13px] font-bold active:scale-95 ${anyChanged ? 'bg-white text-black' : 'bg-white/15 text-white'}`}>複製順序</button>
             </div>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-1 p-1 rounded-full bg-white/[0.06]">
-            {(['pattern', 'shape'] as const).map(k => (
+          <div className="mt-3 grid grid-cols-3 gap-1 p-1 rounded-full bg-white/[0.06]">
+            {(['pattern', 'shape', 'size'] as const).map(k => (
               <button key={k} onClick={() => setTab(k)} className={`h-8 rounded-full text-[13px] font-bold transition-colors ${tab === k ? 'bg-white text-black' : 'text-white/55'}`}>
-                {k === 'pattern' ? '圖案' : '圖形（兩個工具共用）'}
+                {k === 'pattern' ? '圖案' : k === 'shape' ? '圖形' : '圖案大小'}
               </button>
             ))}
           </div>
@@ -253,6 +320,65 @@ function OrderTool() {
             )}
           </div>
         )}
+        {tab === 'shape' && <div className="mt-3 text-[10px] text-white/35">圖形是創意拼圖與跨頁拼圖共用的</div>}
+        {tab === 'size' && (() => {
+          const cur = sizeOf(sizeSel), app = patternDefaultSize(sizeSel);
+          return (
+            <>
+              <div className="mt-4 rounded-[12px] border border-white/10 bg-white/[0.04] p-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-14 h-14 shrink-0 rounded-[8px] bg-white/5 border border-white/10 overflow-hidden flex items-center justify-center">
+                    {photoUrl ? <img src={photoUrl} alt="" className="w-full h-full object-cover" /> : <span className="text-[10px] text-white/35">示範照</span>}
+                  </div>
+                  <div className="flex-1 min-w-0 text-[11px] text-white/55 leading-snug">
+                    {photo ? '預覽會用這張照片' : '還沒導入照片，預覽會先用一張示範照'}
+                    <div className="text-[10px] text-white/30 mt-0.5">照片只在這個頁面裡用，不會上傳、不會存起來</div>
+                  </div>
+                  <button onClick={() => photoInput.current?.click()} className="shrink-0 h-8 px-3 rounded-full bg-white text-black text-[12px] font-bold active:scale-95">{photo ? '換照片' : '導入照片'}</button>
+                  <input ref={photoInput} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) setPhoto(f); e.target.value = ''; }} />
+                </div>
+              </div>
+              <div className="mt-4 rounded-[12px] border border-white/15 bg-white/[0.06] p-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 shrink-0 rounded-[10px] border border-white/20 bg-white/5 flex items-center justify-center"><PatternIcon s={sizeSel} /></div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[12px] font-bold text-white/80">起始大小</span>
+                      <span className="text-[18px] font-bold tabular-nums">{cur}</span>
+                    </div>
+                    <div className="text-[10px] text-white/40">{cur === app ? `跟 App 一樣（${app}）` : `App 目前是 ${app}`}</div>
+                  </div>
+                </div>
+                <input type="range" min={0} max={100} step={1} value={cur} onChange={e => setSize(sizeSel, Number(e.target.value))}
+                  className="w-full mt-3 accent-white" style={{ touchAction: 'pan-y' }} aria-label="起始大小" />
+                <div className="mt-2 flex gap-2">
+                  <button onClick={() => setSize(sizeSel, app)} disabled={cur === app}
+                    className="h-9 px-3 rounded-full border border-white/15 text-[12px] text-white/70 disabled:opacity-30 active:scale-95">還原</button>
+                  <button onClick={() => openPreview(sizeSel)} className="flex-1 h-9 rounded-full bg-[#7ab8ff] text-black text-[13px] font-bold active:scale-95">預覽實際效果</button>
+                </div>
+                <div className="mt-2 text-[10px] text-white/35 leading-snug">預覽是真正的創意拼圖。在裡面換圖案會用這裡調的大小；直接拖「大小」滑桿（沒選中單一圖案時），那個圖案的起始大小也會跟著記下來。按左上角返回就回到這裡。</div>
+              </div>
+              <section className="mt-5">
+                <div className="flex items-baseline justify-between mb-2">
+                  <div className="text-[11px] font-bold text-white/50 tracking-widest">點一個圖案來調整</div>
+                  {Object.keys(sizes).length > 0 && <div className="text-[10px] text-[#7ab8ff]">已調整 {Object.keys(sizes).length} 個</div>}
+                </div>
+                <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(5, minmax(0, 1fr))' }}>
+                  {sizeList.map(it => {
+                    const tuned = it.id in sizes, on = it.id === sizeSel;
+                    return (
+                      <button key={it.id} data-size-cell={it.id} onClick={() => setSizeSel(it.id)} title={it.id}
+                        className={`relative h-12 rounded-[10px] border flex items-center justify-center text-white/85 ${on ? 'border-white bg-white/15' : tuned ? 'border-[#7ab8ff]/70 bg-[#7ab8ff]/10' : 'border-white/10 bg-white/5'}`}>
+                        <span className="pointer-events-none flex items-center justify-center"><PatternIcon s={it.id} /></span>
+                        <span className={`pointer-events-none absolute right-1 bottom-0.5 text-[9px] tabular-nums font-bold ${tuned ? 'text-[#7ab8ff]' : 'text-white/35'}`}>{sizeOf(it.id)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            </>
+          );
+        })()}
         {shown.map(g => (
           <section key={g.key} className="mt-5">
             <div className="flex items-baseline justify-between mb-2">

@@ -28,7 +28,8 @@ import { createPortal, flushSync } from 'react-dom';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes.js';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
-import { saveDraft as saveToolDraft } from '../utils/toolDraft';
+import { saveDraft as saveToolDraftImpl } from '../utils/toolDraft';
+import { patternDefaultSize } from '../utils/patternDefaults';
 import { addExport } from '../utils/exportHistory';
 import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Hexagon, Blocks, Sparkles, Asterisk, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
@@ -1315,9 +1316,18 @@ interface CollageToolProps {
   initialState?: any;
   /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
   histKey?: string | null;
+  /** 排序工具的預覽用：不存草稿、不記到首頁的紀錄（跟 App 同一個網域，不能蓋掉主人的作品） */
+  sandbox?: boolean;
+  /** 排序工具試調的圖案起始大小（圖案 id → 0～100），沒給的照 App 的表 */
+  patternSizes?: Record<string, number> | null;
+  /** 一開始用哪個圖案（預設星星） */
+  initialPattern?: string;
+  /** 沒選中單一圖案時拖「大小」滑桿：告訴排序工具這個圖案現在調到多少 */
+  onPatternSizeTuned?: (id: string, size: number) => void;
 }
 
-export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [] }) => {
+export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned }) => {
+  const saveToolDraft: typeof saveToolDraftImpl = (...args) => sandbox ? Promise.resolve() as any : saveToolDraftImpl(...args);
   useKeyboardRecovery();
   const [imageState, setImageState] = useState<any>(null);
   const [photoRegion, setPhotoRegion] = useState<PhotoRegion | null>(null);
@@ -1403,9 +1413,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>()=>cancelAnimationFrame(occupancyFrame.current),[]);
   const [canvasRatio, setCanvasRatio] = useState<CanvasRatio>('1:1');
   const [canvasRatioBeforeFull, setCanvasRatioBeforeFull] = useState<CanvasRatio|null>(null);
-  const [holeType, setHoleType] = useState('star'); 
+  const [holeType, setHoleType] = useState(initialPattern); 
   const [customText, setCustomText] = useState('Abai'); 
-  const [holeSize, setHoleSize] = useState(25); 
+  // 開場的圖案也照每個圖案自己的起始大小（以前固定 25，星星切走再切回來就變成 35）
+  const [holeSize, setHoleSize] = useState(() => patternDefaultSize(initialPattern, patternSizes)); 
   const [sizeJitter, setSizeJitter] = useState(0); 
   const [holeAngle, setHoleAngle] = useState(0);
   /* 連線：每個圖案拉一條極細的線到最近的鄰居。只有前六種圖案支援。
@@ -3249,69 +3260,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const panel = patternPanelRef.current;
       panel?.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' });
     });
-    /* 每種圖案都有自己固定的起始大小。沒列到的以前是「沿用上一個圖案的大小」，
-       結果從大的（例如 sparkle 70）切過去就一直是大的，來回切換看起來越變越大；
-       現在沒列到的一律回到預設 25。 */
-    let nextSize = 25;
-    if (id === 'cross-star' || id === 'sparkle4' || id === 'p-blur-cross-star' || id === 'p-blur-sparkle4') {
-      nextSize = 30;
-    } else if (id === 'star' || id === 'star-rounded' || id === 'p-star-double' || id === 'p-blur-star') {
-      nextSize = 35;
-    } else if (id === 'flower') {
-      nextSize = 45;
-    } else if (id === 'vortex') {
-      nextSize = 35;
-    } else if (id === 'heart' || id === 'heart-icon' || id === 'heart-classic') {
-      nextSize = 30;
-    } else if (id === 'hexstar') {
-      nextSize = 35;
-    } else if (id === 'love') {
-      nextSize = 25;
-    } else if (id === 'love3') {
-      // 字更長，同樣的「大小」值看起來會比較大，所以預設調小一點
-      nextSize = 18;
-    } else if (id === 'circle') {
-      nextSize = 20;
-    } else if (id === 'square') {
-      nextSize = 15;
-    } else if (id === 'random-num') {
-      nextSize = 15;
-    } else if (id === 'seagrass') {
-      nextSize = 40;
-    } else if (id === 'darkstar') {
-      nextSize = 45;
-    } else if (id === 'sparkle') {
-      // 字身在字框裡本來就偏小，起始尺寸給大一點才跟其他圖案差不多大
-      nextSize = 70;
-    } else if (id === 'aster') {
-      nextSize = 40;
-    } else if (id === 'snow') {
-      nextSize = 50;
-    } else if (id === 'burst') {
-      nextSize = 45;
-    } else if (id === 'pic333') {
-      // 橫的一長條，長邊當大小，所以要給大一點才看得清楚
-      nextSize = 60;
-    } else if (id === 'theta') {
-      nextSize = 30;
-    } else if (id === 'yaya' || id === 'zzz') {
-      // 一顆是三個字連在一起，同樣的「大小」值看起來會比較大
-      nextSize = 22;
-    } else if (id === 'text') {
-      nextSize = 15;
-    } else if (id === 'p-blur-star-rounded' || id === 'p-blur-heart') {
-      nextSize = 20;
-    } else if (id === 'p-star-o') {
-      nextSize = 35;
-    } else if (id === 'p-sparkle4-o' || id === 'q-mark' || id === 'anger-mark') {
-      nextSize = 30;
-    } else if (id === 'excl-mark') {
-      // 驚嘆號又細又高，長邊當大小的話看起來比較小
-      nextSize = 35;
-    } else if (id.startsWith('music-')) {
-      // 音符的字身細長，給大一點才跟星星那些看起來差不多大
-      nextSize = 40;
-    }
+    /* 每種圖案都有自己固定的起始大小（utils/patternDefaults.ts）。
+       沒列到的以前是「沿用上一個圖案的大小」，從大的切過去就一直是大的，
+       來回切換看起來越變越大；現在沒列到的一律回到 25。
+       四周包圍進來時大小會補 +10（見排版按鈕），換圖案也要照樣補上 ——
+       不然在包圍裡換一次圖案、再離開，就會比原本小 10。 */
+    const nextSize = Math.min(100, patternDefaultSize(id, patternSizes) + (layout === AROUND ? 10 : 0));
     setHoleSize(nextSize);
     setHoleType(id);
   };
@@ -8650,7 +8604,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor]);
 
   const recordHistory = useCallback(async () => {
-    if (!imageState) return;
+    if (!imageState || sandbox) return;
     try {
       const off = getLayoutOffsets();
       if (!off) return;
@@ -10014,7 +9968,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }));
   };
   const handleHoleSizeChange = (val: number) => {
-    if (!selectedPattern) { setHoleSize(val); return; }
+    if (!selectedPattern) { setHoleSize(val); onPatternSizeTuned?.(holeType, val); return; }
     const localScale = (25 + val * 1.25) / (25 + holeSize * 1.25);
     patchSelectedPattern({ localScale });
   };
