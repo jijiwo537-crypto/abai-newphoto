@@ -64,7 +64,7 @@ export const STAR_BURSTS: StarBurstSpec[] = [
   { id: 'sb-ring', name: '光環十字', core: .045, glow: .18, rays: cross(1, 1, .02), rings: [{ r: .46, w: .075, alpha: .6 }] },
   { id: 'sb-ring-eight', name: '光環八芒', core: .05, glow: .22, rays: [...cross(1, 1, .026), ...even(4, .5, .02, 45, .8)], rings: [{ r: .58, w: .07, alpha: .5 }] },
   { id: 'sb-double-ring', name: '雙環', core: .045, glow: .2, rays: cross(.95, .95, .022), rings: [{ r: .3, w: .055, alpha: .55 }, { r: .64, w: .065, alpha: .4 }] },
-  { id: 'sb-ring-orb', name: '光環光球', core: .11, glow: .36, glowAlpha: .9, rings: [{ r: .62, w: .08, alpha: .5 }] },
+  { id: 'sb-ring-orb', name: '光環光球', core: .11, glow: .36, glowAlpha: 1.4, rings: [{ r: .62, w: .08, alpha: .5 }] },
   { id: 'sb-halo-wide', name: '大光暈', core: .06, glow: .26, rays: even(8, .78, .022), rings: [{ r: .45, w: .13, alpha: .28 }] },
   { id: 'sb-anamorphic', name: '橫向光條', core: .06, glow: .26, streaks: [{ a: 0, len: 1, w: .05, alpha: .85 }], rays: cross(.32, .2, .028, .8) },
   { id: 'sb-streak-cross', name: '光條十字', core: .065, glow: .28, streaks: [{ a: 0, len: 1, w: .045, alpha: .6 }], rays: cross(1, .7, .028) },
@@ -79,7 +79,7 @@ const rgb = (hex: string) => {
 
 type Ray = { ux: number; uy: number; L: number; sig: number; a: number };
 
-/** 把一種星芒算成 N×N 的圖（N＝框的邊長，實際像素）。回傳的是「預乘過的光」，用 'lighter' 貼上去。 */
+/** 把一種星芒算成 N×N 的圖（N＝框的邊長，實際像素）。回傳的是黑底不透明的光，用 'lighter' 貼上去。 */
 const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvasElement => {
   const R = N / 2, c = rgb(color);
   const rays: Ray[] = [];
@@ -111,10 +111,12 @@ const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvas
   const warm = [c[0], c[1] * .96, c[2] * .9], cool = [c[0] * .9, c[1] * .96, c[2]];
 
   const out = new ImageData(N, N), d = out.data;
+  for (let i = 3; i < d.length; i += 4) d[i] = 255;
   let seed = 12345;
   const noise = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-  // 像底片那樣平滑地「接近」全白：暗處幾乎線性，亮處越來越慢地飽和，光核不會變成一塊邊緣很硬的白餅
-  const tone = (v: number) => 1 - Math.exp(-1.15 * v);
+  /* 像底片那樣平滑地「接近」全白：0.6 以下原樣（暗部、中間調亮度不變），
+     再亮就越來越慢地逼近全白 —— 光核還是亮白的，但不會變成一塊邊緣很硬的白餅 */
+  const tone = (v: number) => v < .6 ? v : .6 + .4 * (1 - Math.exp(-(v - .6) / .4));
   /* 每一種都上下、左右對稱，所以只算左上四分之一，再鏡像到另外三塊（快四倍） */
   const H = Math.ceil(N / 2);
   for (let py = 0; py < H; py++) {
@@ -125,11 +127,15 @@ const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvas
       for (let i = 0; i < rays.length; i++) {
         const ry = rays[i];
         const along = x * ry.ux + y * ry.uy;
-        if (along < -ry.sig * 2 || along > ry.L) continue;
-        const perp = Math.abs(-x * ry.uy + y * ry.ux);
+        if (along > ry.L || along < -ry.sig * 14) continue;
+        /* 根部是圓頭：中心後面那一段用「到中心的距離」算，平滑淡掉。
+           以前在根部後面直接切一刀，寬的芒（柔光十字、光條）兩側柔光散得開，
+           切口就成了一條直直的硬邊，中心附近看起來像色塊。 */
+        const side = -x * ry.uy + y * ry.ux;
+        const perp = along >= 0 ? Math.abs(side) : Math.sqrt(side * side + along * along);
         const tp = Math.max(0, 1 - Math.max(0, along) / ry.L);           // 1＝根部、0＝尖端
         const s = ry.sig * (.35 + .65 * tp);
-        if (perp > s * 10) continue;
+        if (perp > s * 14) continue;
         const q = perp / s;
         const lat = Math.exp(-.5 * q * q) + .28 * Math.exp(-.5 * (q / 3.2) * (q / 3.2));
         const fall = Math.pow(tp, 1.6) * (1 - .25 * (1 - tp));
@@ -154,18 +160,15 @@ const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvas
       }
       // 光核那一點偏白（真的光最亮的地方都是白的）
       lr = tone(lr + white); lg = tone(lg + white); lb = tone(lb + white);
-      const A = Math.max(lr, lg, lb);
-      if (A <= 0) continue;
-      // 預乘：alpha＝最亮那個通道，顏色＝光/alpha；四個鏡像點各自加雜點再取整 → 沒有色階
+      if (lr <= 0 && lg <= 0 && lb <= 0) continue;
+      /* 存成「黑底、不透明」的光：用 'lighter' 貼上去，黑色（0）等於什麼都不加。
+         以前存成「透明度＝亮度」，暗的地方透明度只剩 1～2 階，手機瀏覽器內部預乘時
+         把顏色算歪 → 一小塊一小塊的彩色雜點。三個通道共用同一個雜點，也不會有彩色雜訊。 */
       for (const [qx, qy] of [[px, py], [N - 1 - px, py], [px, N - 1 - py], [N - 1 - px, N - 1 - py]]) {
-        const o = (qy * N + qx) * 4;
-        const a8 = Math.min(255, Math.floor(A * 255 + noise()));
-        if (a8 <= 0) continue;
-        const k = 255 / a8;
-        d[o] = Math.min(255, Math.floor(lr * 255 * k + noise()));
-        d[o + 1] = Math.min(255, Math.floor(lg * 255 * k + noise()));
-        d[o + 2] = Math.min(255, Math.floor(lb * 255 * k + noise()));
-        d[o + 3] = a8;
+        const o = (qy * N + qx) * 4, n = noise();
+        d[o] = Math.min(255, Math.floor(lr * 255 + n));
+        d[o + 1] = Math.min(255, Math.floor(lg * 255 + n));
+        d[o + 2] = Math.min(255, Math.floor(lb * 255 + n));
       }
     }
   }
