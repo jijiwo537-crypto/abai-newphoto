@@ -73,7 +73,7 @@ import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolStickerInk, m
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
 import {
   getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio,
-  isTextHole, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, fillShapePath, clipShapePieces, patternPathBounds,
+  isTextHole, holeStretch, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, fillShapePath, clipShapePieces, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, clefSizeToUi, clefSizeFromUi, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
   drawHoleShape, paintDots, paintTex, texOf, glowAmount, glowToUi, glowFromUi,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
@@ -546,10 +546,13 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     };
   }
   if (o.type === 'shape') {
-    const size = Math.min(bw, bh);
-    const ink = isTextHole(o.hole)
+    // 四邊擠壓過的借來圖形：照沒變形的框量，再跟著拉伸（見 holeStretch）
+    const st = holeStretch({ hole: o.hole, filled: o.filled, textureBaseW: ((o as any).textureBaseW || o.w) * scale, textureBaseH: ((o as any).textureBaseH || o.h) * scale }, bw, bh);
+    const size = Math.min(bw / st.sx, bh / st.sy);
+    const ink0 = isTextHole(o.hole)
       ? (() => { const b = glyphInk(o.hole, holeGlyph(o.hole, o.text || '', o), size); return {x:-b.w/2,y:-b.h/2,w:b.w,h:b.h}; })()
       : patternPathBounds(o.hole, size);
+    const ink = { x: ink0.x * st.sx, y: ink0.y * st.sy, w: ink0.w * st.sx, h: ink0.h * st.sy };
     const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * scale / 160;
     const edge = gap + (o.filled === false ? (o.lineW ?? 6)*unit/2 : 0) + Math.min(4,o.strokeW || 0)*unit;
     return {x:bw/2+ink.x-edge,y:bh/2+ink.y-edge,w:ink.w+2*edge,h:ink.h+2*edge};

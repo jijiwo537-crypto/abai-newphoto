@@ -684,6 +684,24 @@ export const paintTex = (
  *
  * blurs 是發光的三段模糊半徑，由呼叫端給（兩個工具本來就用同一支算）。
  */
+/* ── 可以「四邊擠壓」的借來圖形 ──────────────────────────────────────
+   這幾顆本來只能等比例縮放（畫的時候取外框短邊當大小、置中）。
+   改成可變形：新增時的框（textureBaseW／H，四邊擠壓不會改它）當成「沒變形」的樣子，
+   框被拉長幾倍，圖形就跟著那個方向拉長幾倍 —— 跟路徑圖形四邊擠壓的行為一樣。
+   只開放實心版（十字星的空心版維持不變形）。 */
+export const HOLE_STRETCH_TYPES = new Set([
+  'cross-star', 'love', 'love3', 'pic333', 'vortex', 'q-mark', 'anger-mark', 'excl-mark',
+  'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef',
+]);
+export const holeCanStretch = (hole?: string, filled?: boolean) => filled !== false && !!hole && HOLE_STRETCH_TYPES.has(hole);
+/** 目前的框相對於「沒變形」的框被拉了多少：畫的時候先照 (bw/sx, bh/sy) 這個沒變形的框畫，再 scale(sx, sy) */
+export const holeStretch = (o: { hole?: string; filled?: boolean; textureBaseW?: number; textureBaseH?: number }, bw: number, bh: number) => {
+  if ((o as any)._noStretch || !holeCanStretch(o.hole, o.filled) || !(o.textureBaseW! > 0) || !(o.textureBaseH! > 0) || !(bw > 0) || !(bh > 0)) return { sx: 1, sy: 1 };
+  const fx = bw / o.textureBaseW!, fy = bh / o.textureBaseH!, k = Math.min(fx, fy);
+  const sx = fx / k, sy = fy / k;
+  return Math.abs(sx - 1) < 1e-3 && Math.abs(sy - 1) < 1e-3 ? { sx: 1, sy: 1 } : { sx, sy };
+};
+
 export const drawHoleShape = (
   ctx: CanvasRenderingContext2D,
   o: {
@@ -704,6 +722,15 @@ export const drawHoleShape = (
   bw: number, bh: number,
   blurs: number[],
 ) => {
+  const st = holeStretch(o as any, bw, bh);
+  if (st.sx !== 1 || st.sy !== 1) {
+    ctx.save();
+    ctx.scale(st.sx, st.sy);
+    drawHoleShape(ctx, { ...o, _noStretch: true } as any,
+      bw / st.sx, bh / st.sy, blurs);
+    ctx.restore();
+    return;
+  }
   const col = o.color || '#FFFFFF';
   const size = Math.min(bw, bh);
   const unit = (o.lineUnit && o.lineUnit > 0) ? o.lineUnit : Math.max(bw, bh) / 160;

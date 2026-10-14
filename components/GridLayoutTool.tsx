@@ -55,7 +55,7 @@ import {
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount, glowToUi, glowFromUi,
   texOf, paintStripes,
-  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
+  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex, holeCanStretch,
   glyphInk, glyphFont, clefSizeToUi, clefSizeFromUi, fillShapePath, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
 } from '../utils/holeShapes';
@@ -1238,7 +1238,7 @@ const STRETCH_SOLID_KINDS = new Set([
   'pentagon', 'hexagon', 'star', 'star-rounded', 'heart', 'heart-classic', 'heart-icon', 'hexstar',
   'square-star-dual', 'square-heart-dual', 'square-star-cutout', 'square-heart-cutout',
   'circle-star-dual', 'circle-heart-dual', 'circle-star-cutout', 'circle-heart-cutout',
-  'heart-double', 'star-double', 'arrow', 'arrow-double', 'sparkle4',
+  'heart-double', 'star-double', 'arrow', 'arrow-double', 'sparkle4', 'spinner',
   'blur-star', 'blur-star-rounded', 'blur-heart', 'blur-circle', 'blur-cross-star', 'blur-square', 'blur-sparkle4',
 ]);
 const STRETCH_OUTLINE_KINDS = new Set([
@@ -1249,7 +1249,7 @@ export const shapeSupportsStretch = (shape: string | undefined, filled: boolean 
   if(isBackdropMask(shape))return true;
   if (!shape || shape === 'line') return false;
   if (shape === 'wave' || shape === 'lightning-wave' || GRID_SHAPE_KINDS.has(shape)) return true;
-  if (shape === 'hole') return false;
+  if (shape === 'hole') return holeCanStretch(holeType, filled);
   return filled ? STRETCH_SOLID_KINDS.has(shape) : STRETCH_OUTLINE_KINDS.has(shape);
 };
 /** 羽化只开放给前十个基础实心路径图形；第十一个实心十字星不支持。 */
@@ -5507,6 +5507,9 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       stripeA: image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR,
       stripeB: image.shapeStripeB || '#FFFFFF', id: image.id,
       lineUnit: Math.max(drawW, drawH) / 160 * rasterScale,
+      // 四邊擠壓用：新增時的框（見 holeStretch）
+      textureBaseW: (image.shapeTextureBaseW || image.width) * rasterScale,
+      textureBaseH: (image.shapeTextureBaseH || image.height) * rasterScale,
     }, drawW * rasterScale, drawH * rasterScale,
       shapeGlowBlurs(drawW, drawH).map(r => r * rasterScale * glowAmount(image.shapeGlow as any)));
     ctx.restore();
@@ -14382,6 +14385,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           // 線寬的單位不含 scale（上面已經 ctx.scale 過了）—— 跟預覽同一條規則
           lineUnit: ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor)
             / 160 / (fImg.scale || 1),
+          textureBaseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
+          textureBaseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
         },
         fw, fh, shapeGlowBlurs(fw, fh).map(r => r * glowAmount(fImg.shapeGlow as any)),
       );
