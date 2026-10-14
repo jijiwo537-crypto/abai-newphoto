@@ -33,9 +33,10 @@ export const PATTERN_DEFAULT_SIZES: Record<string, number> = {
   text: 15,
   'p-blur-star-rounded': 20, 'p-blur-heart': 20,
   'p-star-o': 35,
-  'p-sparkle4-o': 30, 'q-mark': 30, 'anger-mark': 30,
+  'p-sparkle4-o': 30, 'anger-mark': 30,
+  'q-mark': 25,
   // 驚嘆號又細又高，長邊當大小的話看起來比較小
-  'excl-mark': 35,
+  'excl-mark': 30,
 };
 
 /** 音符的字身細長，給大一點才跟星星那些看起來差不多大 */
