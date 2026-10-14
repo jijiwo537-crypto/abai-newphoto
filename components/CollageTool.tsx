@@ -7615,7 +7615,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             tc.restore();
           }, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth,
             baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s });
-        } else if (isArrowShape(o.kind) && texOf(o) !== 'none') {
+        } else if (isArrowShape(o.kind) && texOf(o) === 'stripe') {
           /* 邊框箭頭的紋理畫在線條上（strokeWithTexture） */
           const tb = { textureBaseW: ((o as any).textureBaseW || o.w) * s, textureBaseH: ((o as any).textureBaseH || o.h) * s };
           strokeWithTexture(ctx, shapeP, bw, bh, JSON.stringify([texOf(o), o.dotSize, o.dotGap, o.dotSquash, o.dotColor,
@@ -11952,8 +11952,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 (v: number) => patch({ shapeFeather: v }))}
                             </div>
                           )}
+                          {/* 箭身長度放在發光上面（order-0 排在發光的 order-1 前面） */}
                           {isArrowShape(sel.kind) && (
-                            <div className="px-2 order-5 w-full">
+                            <div className="px-2 order-0 w-full">
                               {shapeSlider('箭身長度', arrowShaftUi(sel.w, sel.h, sel.kind, sel.textureBaseW || sel.w, sel.textureBaseH || sel.h), 0, 400,
                                 (v: number) => setObjects(prev => prev.map(o => {
                                   if (o.id !== sel.id) return o;

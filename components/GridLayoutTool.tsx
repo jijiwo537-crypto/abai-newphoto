@@ -1359,13 +1359,15 @@ export const OUTLINE_GLOW_SCALE = 0.6;
 export const shapeGlowToUi = (g: number | boolean | undefined, outline: boolean) =>
   outline ? Math.min(100, Math.round(glowAmount(g) * 100 / (3 * OUTLINE_GLOW_SCALE))) : glowToUi(g);
 export const shapeGlowFromUi = (v: number, outline: boolean) => outline ? Math.max(0, Math.min(100, v)) * 3 * OUTLINE_GLOW_SCALE : glowFromUi(v);
-/** 邊框箭頭不給紋理；其他邊框的紋理沒有條紋 */
+/** 邊框類的紋理沒有條紋（懸空在框裡面，見 paintTextureInsideOutline） */
 export const shapeTexOptions = (kind?: string, filled?: boolean) =>
-  isOutlineShape(kind, filled) ? (isArrowShape(kind) ? [] : TEX_OPTIONS.filter(([id]) => id !== 'stripe')) : TEX_OPTIONS;
+  isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe') : TEX_OPTIONS;
 /** 選中框（四角實心小方塊）不給虛線 */
 export const shapeHasNoDash = (kind?: string) => kind === 'track-select';
-/** 「箭身長度」滑桿（畫面上箭身的長度＝高度的百分之幾）。
-    w,h 是現在的框；bw,bh 是沒被擠壓過的原始框（textureBase）。 */
+/** 「箭身長度」滑桿。跟四邊擠壓是分開的兩件事：
+    滑桿量的是「沒被擠壓過」的那支箭（bw,bh＝textureBase）——箭身長度＝原始高度的百分之幾。
+    四邊擠壓只改現在的框（w,h），整支箭一起拉長拉扁，滑桿的數字不會跟著變；
+    拉滑桿只改原始箭身，擠壓的比例原封不動。 */
 const arrowGeom = (kind: string | undefined, w: number, h: number, bw: number, bh: number) => {
   const n = kind === 'arrow-double' ? 2 : 1, kx = w / Math.max(1e-6, bw);
   const hl0 = Math.min(bh * 0.5, bw * (n === 2 ? 0.5 : 1));
@@ -1373,13 +1375,14 @@ const arrowGeom = (kind: string | undefined, w: number, h: number, bw: number, b
 };
 export const arrowShaftUi = (w: number, h: number, kind?: string, bw = w, bh = h) => {
   const g = arrowGeom(kind, w, h, bw, bh);
-  return Math.max(0, Math.round((w - g.n * g.head) / Math.max(1e-6, h) * 100));
+  return Math.max(0, Math.round((bw - g.n * g.hl0) / Math.max(1e-6, bh) * 100));
 };
-/** 拉滑桿：箭頭（畫面上的長度）不變，只改箭身 → 回傳新的寬度與新的原始寬度 */
+/** 拉滑桿：原始箭頭不變、只改原始箭身，再套回同一個擠壓比例 → 回傳新的寬度與新的原始寬度 */
 export const arrowResize = (w: number, h: number, shaftUi: number, kind?: string, bw = w, bh = h) => {
   const g = arrowGeom(kind, w, h, bw, bh);
-  const nw = Math.max(h * 0.05, g.n * g.head + Math.max(0, shaftUi) / 100 * h);
-  return { w: nw, baseW: nw / g.kx };
+  const hl0 = bh * 0.5;
+  const nb = Math.max(bh * 0.05, g.n * hl0 + Math.max(0, shaftUi) / 100 * bh);
+  return { w: nb * g.kx, baseW: nb };
 };
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
@@ -2832,8 +2835,9 @@ export const ShapeEditorPanel: React.FC<{
               {slider('模糊', layer.shapeFeather ?? blurShapeDefault(layer.shape), 0, 100, v => onChange({ shapeFeather: v }))}
             </div>
           )}
+          {/* 箭身長度放在發光上面（order-0 排在發光的 order-1 前面） */}
           {isArrowShape(layer.shape) && (
-            <div className="px-2 order-5 w-full">
+            <div className="px-2 order-0 w-full">
               {slider('箭身長度', arrowShaftUi(layer.width, layer.height, layer.shape, layer.shapeTextureBaseW || layer.width, layer.shapeTextureBaseH || layer.height), 0, 400, v => {
                 const r = arrowResize(layer.width, layer.height, v, layer.shape, layer.shapeTextureBaseW || layer.width, layer.shapeTextureBaseH || layer.height);
                 onChange({ width: r.w, x: layer.x + (layer.width - r.w) / 2, shapeTextureBaseW: r.baseW, shapeTextureBaseH: layer.shapeTextureBaseH || layer.height });
@@ -5621,10 +5625,10 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             tc.restore();
           }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth,
             baseW: (image.shapeTextureBaseW || image.width) * contentScale, baseH: (image.shapeTextureBaseH || image.height) * contentScale });
-        } else if (isArrowShape(image.shape) && tx !== 'none') {
+        } else if (isArrowShape(image.shape) && tx === 'stripe') {
           strokeWithTexture(ctx, path, drawW, drawH, JSON.stringify([tx, image.shapeDotSize, image.shapeDotGap, image.shapeDotSquash, image.shapeDotColor,
             image.shapeStripeN, image.shapeStripeDir, image.shapeStripeA || color, image.shapeStripeB, image.shapeTextureBaseW, image.shapeTextureBaseH, contentScale]), (tc, cw, ch) => {
-            if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, cw, ch, {
+            if ((tx as string) === 'dot' || (tx as string) === 'star' || (tx as string) === 'heart') paintTex(tc, drawW, drawH, cw, ch, {
               tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
               textureBaseW: (image.shapeTextureBaseW || image.width) * contentScale,
               textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
@@ -14523,11 +14527,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           baseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, baseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor });
     } else {
       const tx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
-      if (isArrowShape(fImg.shape) && tx !== 'none') {
+      if (isArrowShape(fImg.shape) && tx === 'stripe') {
         const stA = fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR;
         strokeWithTexture(ctx, path, fw, fh, JSON.stringify([tx, fImg.shapeDotSize, fImg.shapeDotGap, fImg.shapeDotSquash, fImg.shapeDotColor,
           fImg.shapeStripeN, fImg.shapeStripeDir, stA, fImg.shapeStripeB, fImg.shapeTextureBaseW, fImg.shapeTextureBaseH, scaleFactor]), (tc, cw, ch) => {
-          if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, fw, fh, cw, ch, {
+          if ((tx as string) === 'dot' || (tx as string) === 'star' || (tx as string) === 'heart') paintTex(tc, fw, fh, cw, ch, {
             tex: tx,
             dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
             textureBaseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
