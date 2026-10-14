@@ -803,10 +803,16 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
   const long = Math.max(o.w, o.h), base = (o.lineBase || long);
   const key = JSON.stringify([o.kind, o.hole, o.text, o.hole === 'random-num' ? o.id : '', o.miterLimit, !!o.filled, Math.round(o.w / o.h * 1e4), o.lineW ?? 6, Math.round(base / long * 1e4),
     Math.round((o.textureBaseW || o.w) / o.w * 1e3), Math.round((o.textureBaseH || o.h) / o.h * 1e3), o.strokeW || 0, o.innerSize, o.outlineWidth]);
-  if (shapeInkCache.has(key)) return shapeInkCache.get(key)!;
+  /* 快取存的是「長邊＝1」的比例：key 只看長寬比，同比例、不同大小的圖形共用同一份，
+     取出來再乘回這顆的長邊（以前直接存物件座標，換一顆大小不同的就套到別人的框）。 */
+  const scaled = (u: { x: number; y: number; w: number; h: number } | null) =>
+    u && { x: u.x * long, y: u.y * long, w: u.w * long, h: u.h * long };
+  if (shapeInkCache.has(key)) return scaled(shapeInkCache.get(key)!);
   let ink: { x: number; y: number; w: number; h: number } | null = null;
   try {
-    const k = 480 / long, bw = o.w * k, bh = o.h * k, unit = base * k / 160;
+    /* 量的解析度跟著「短邊」走（短邊 480px，長邊最多 2400px）：
+       只拉長一個方向時（箭身長度），另一個方向的取樣格子不變，邊緣才不會每格亂跳。 */
+    const k = Math.min(480 / Math.min(o.w, o.h), 2400 / long), bw = o.w * k, bh = o.h * k, unit = base * k / 160;
     const lw = Math.max(0.4 * k, (o.lineW ?? 6) * unit), sw = Math.min(8, Math.max(0, o.strokeW || 0)) * unit;
     const solid = o.filled && o.kind !== 'line';
     // Glyph patterns can be several times wider than their box (`<333`).
@@ -835,13 +841,26 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
       let x0 = cv.width, y0 = cv.height, x1 = -1, y1 = -1;
       for (let y = 0; y < cv.height; y++) for (let x = 0, i = y * cv.width * 4 + 3; x < cv.width; x++, i += 4)
         if (data[i] > 6) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-      if (x1 >= x0 && y1 >= y0) ink = { x: (x0 - pad) / k, y: (y0 - pad) / k, w: (x1 + 1 - x0) / k, h: (y1 + 1 - y0) / k };
+      if (x1 >= x0 && y1 >= y0) {
+        /* 邊緣只量到整格像素的話，圖形一變長（箭身長度滑桿）量的比例就跟著變，
+           上下邊每一格在相鄰兩排像素之間跳 —— 選取框跟下面那排白色鍵就一直抖。
+           最外那一排抗鋸齒像素的透明度就是它被蓋住的比例，拿來補上不到一格的位置。 */
+        const cover = (xa: number, xb: number, ya: number, yb: number) => {
+          let m = 0;
+          for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) { const a = data[(y * cv.width + x) * 4 + 3]; if (a > m) m = a; }
+          return m / 255;
+        };
+        const fx0 = x0 + 1 - cover(x0, x0, y0, y1), fx1 = x1 + cover(x1, x1, y0, y1);
+        const fy0 = y0 + 1 - cover(x0, x1, y0, y0), fy1 = y1 + cover(x0, x1, y1, y1);
+        const u = k * long;
+        ink = { x: (fx0 - pad) / u, y: (fy0 - pad) / u, w: (fx1 - fx0) / u, h: (fy1 - fy0) / u };
+      }
     }
     cv.width = cv.height = 1;
   } catch { ink = null; }
   shapeInkCache.set(key, ink);
   if (shapeInkCache.size > 256) shapeInkCache.delete(shapeInkCache.keys().next().value!);
-  return ink;
+  return scaled(ink);
 };
 
 export const shapePathD = (
