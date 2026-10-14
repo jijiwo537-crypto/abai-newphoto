@@ -6,7 +6,7 @@ import './styles.css';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { PatternIcon } from './components/PatternIcon';
-import { ShapeGlyph, HoleGlyph, shapePickerSections } from './components/GridLayoutTool';
+import { ShapeGlyph, HoleGlyph, shapePickerSections, shapeSupportsStretch } from './components/GridLayoutTool';
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
@@ -25,6 +25,11 @@ const patternIdOfShape = (shapeId: string) => {
 const ALREADY_PATTERN = (shapeId: string) => PATTERN_ORDER.includes(patternIdOfShape(shapeId));
 const loadAdded = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_ADD) || '[]'); return Array.isArray(v) ? v.filter((id: string) => !ALREADY_PATTERN(id)) : []; } catch { return []; } };
 const HOLD_MS = 280;
+/** 「這些圖形想改成可以變形（四邊擠壓）」的清單（圖形的 id），一樣存在這台裝置上 */
+const STORE_STRETCH = 'abai-order-tool-stretch-v1';
+/** App 目前就已經可以變形的圖形 */
+const CAN_STRETCH = (it: any) => shapeSupportsStretch(it.kind, it.filled, it.hole);
+const loadStretch = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_STRETCH) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
 
 type Group = { key: string; label: string; cols: number; items: any[] };
 
@@ -65,7 +70,19 @@ function OrderTool() {
   const [drag, setDrag] = useState<Drag | null>(null);
   const [toast, setToast] = useState('');
   /** 開著的時候，在「圖形」那一頁點一下圖形 → 加進圖案（再點一下取消） */
-  const [addMode, setAddMode] = useState(false);
+  const [mode, setMode] = useState<'none' | 'add' | 'stretch'>('none');
+  const addMode = mode === 'add', stretchMode = mode === 'stretch';
+  /** 勾選「要改成可變形」的圖形 */
+  const [stretchIds, setStretchIds] = useState<string[]>(() => {
+    const all = new Map(allShapeItems().map(it => [it.id, it]));
+    return loadStretch().filter(id => all.has(id) && !CAN_STRETCH(all.get(id)));
+  });
+  useEffect(() => { try { localStorage.setItem(STORE_STRETCH, JSON.stringify(stretchIds)); } catch {} }, [stretchIds]);
+  const toggleStretch = (it: any) => {
+    if (CAN_STRETCH(it)) { flash('這個圖形本來就可以變形'); return; }
+    setStretchIds(ids => ids.includes(it.id) ? ids.filter(x => x !== it.id) : [...ids, it.id]);
+    flash(stretchIds.includes(it.id) ? '已取消' : '已勾選：改成可變形');
+  };
   const patternIds = new Set((groups.find(g => g.key === 'pattern')?.items || []).map(i => i.id));
   const toggleAsPattern = (shape: any) => {
     const pid = ADD_PREFIX + shape.id;
@@ -141,6 +158,7 @@ function OrderTool() {
     for (const g of groups) lines.push(`${g.label}${changed(g) ? '（有改）' : ''}`, g.items.map(i => i.id).join(', '));
     const added = (groups.find(g => g.key === 'pattern')?.items || []).filter(i => i.fromShape);
     if (added.length) lines.push('要加到圖案的圖形（上面圖案順序裡 shape: 開頭的就是這些）', added.map(i => i.fromShape.id).join(', '));
+    if (stretchIds.length) lines.push('要改成可以變形（四邊擠壓）的圖形', stretchIds.join(', '));
     return lines.join('\n');
   };
   const flash = (m: string) => { setToast(m); window.setTimeout(() => setToast(''), 1600); };
@@ -153,11 +171,11 @@ function OrderTool() {
       ta.remove();
     }
   };
-  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案的圖形也會清掉）')) setGroups(base.map(g => ({ ...g, items: [...g.items] }))); };
+  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、要改成可變形的勾選也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); } };
 
   const shown = groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
   const dragged = drag && groups.find(g => g.key === drag.group)?.items.find(i => i.id === drag.id);
-  const anyChanged = groups.some(changed);
+  const anyChanged = groups.some(changed) || stretchIds.length > 0;
 
   return (
     <div className="min-h-[100dvh] bg-black text-white select-none" style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}>
@@ -184,12 +202,30 @@ function OrderTool() {
       </div>
       <div className="max-w-[560px] mx-auto px-4 pb-16" style={{ paddingBottom: 'calc(64px + env(safe-area-inset-bottom))' }}>
         {tab === 'shape' && (
-          <div className="mt-4 flex items-center justify-between gap-3 rounded-[12px] border border-white/10 bg-white/[0.04] px-3 py-2.5">
-            <div className="text-[11px] text-white/55 leading-snug">{addMode ? '點一下圖形就加到圖案，再點一下取消' : '想讓某些圖形也能當圖案用？'}</div>
-            <button onClick={() => setAddMode(v => !v)}
-              className={`shrink-0 h-8 px-3 rounded-full text-[12px] font-bold active:scale-95 ${addMode ? 'bg-[#9fd3a8] text-black' : 'border border-white/20 text-white/80'}`}>
-              {addMode ? '完成' : '加到圖案'}
-            </button>
+          <div className="mt-4 rounded-[12px] border border-white/10 bg-white/[0.04] px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] text-white/55 leading-snug">
+                {addMode ? '點一下圖形就加到圖案，再點一下取消'
+                  : stretchMode ? '點一下勾選「要改成可以變形」，再點一下取消'
+                  : '想讓圖形也能當圖案用，或改成可以變形？'}
+              </div>
+              <div className="shrink-0 flex gap-1.5">
+                <button onClick={() => setMode(m => m === 'add' ? 'none' : 'add')}
+                  className={`h-8 px-3 rounded-full text-[12px] font-bold active:scale-95 ${addMode ? 'bg-[#9fd3a8] text-black' : 'border border-white/20 text-white/80'}`}>
+                  {addMode ? '完成' : '加到圖案'}
+                </button>
+                <button onClick={() => setMode(m => m === 'stretch' ? 'none' : 'stretch')}
+                  className={`h-8 px-3 rounded-full text-[12px] font-bold active:scale-95 ${stretchMode ? 'bg-[#f2c46d] text-black' : 'border border-white/20 text-white/80'}`}>
+                  {stretchMode ? '完成' : '變形'}
+                </button>
+              </div>
+            </div>
+            {stretchMode && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-white/50">
+                <span className="flex items-center gap-1"><span className="px-1 rounded-[4px] bg-white/15 text-white/70 font-bold leading-[12px]">已可</span>本來就可以變形（不用選）</span>
+                <span className="flex items-center gap-1"><span className="px-1 rounded-[4px] bg-[#f2c46d] text-black font-bold leading-[12px]">改</span>你勾選要改成可以變形（{stretchIds.length}）</span>
+              </div>
+            )}
           </div>
         )}
         {shown.map(g => (
@@ -203,16 +239,18 @@ function OrderTool() {
                 const lifted = drag?.group === g.key && drag.id === it.id;
                 return (
                   <div key={it.id} data-cell={it.id} data-group={g.key}
-                    onPointerDown={e => { if (!(addMode && g.key !== 'pattern')) onDown(e, g.key, it.id); }} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
-                    onClick={() => { if (addMode && g.key !== 'pattern' && !dragRef.current) toggleAsPattern(it); }}
+                    onPointerDown={e => { if (!((addMode || stretchMode) && g.key !== 'pattern')) onDown(e, g.key, it.id); }} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+                    onClick={() => { if (g.key === 'pattern' || dragRef.current) return; if (addMode) toggleAsPattern(it); else if (stretchMode) toggleStretch(it); }}
                     onContextMenu={e => e.preventDefault()}
                     title={it.label || it.id}
-                    className={`relative h-12 rounded-[10px] border flex items-center justify-center text-white/85 transition-[opacity,border-color] duration-150 ${lifted ? 'opacity-25 border-dashed border-white/40' : g.key !== 'pattern' && patternIds.has(ADD_PREFIX + it.id) ? 'border-[#9fd3a8]/70 bg-[#9fd3a8]/10' : 'border-white/10 bg-white/5'}`}
+                    className={`relative h-12 rounded-[10px] border flex items-center justify-center text-white/85 transition-[opacity,border-color] duration-150 ${lifted ? 'opacity-25 border-dashed border-white/40' : stretchMode && g.key !== 'pattern' ? (CAN_STRETCH(it) ? 'border-white/5 bg-white/[0.02] opacity-45' : stretchIds.includes(it.id) ? 'border-[#f2c46d]/80 bg-[#f2c46d]/10' : 'border-white/10 bg-white/5') : g.key !== 'pattern' && patternIds.has(ADD_PREFIX + it.id) ? 'border-[#9fd3a8]/70 bg-[#9fd3a8]/10' : 'border-white/10 bg-white/5'}`}
                     style={{ touchAction: drag ? 'none' : 'manipulation' }}>
                     <span className="pointer-events-none flex items-center justify-center"><Icon it={it} /></span>
                     <span className="pointer-events-none absolute left-1 top-0.5 text-[8px] text-white/30 tabular-nums">{i + 1}</span>
                     {NEW_IDS.has(it.id) && <span className="pointer-events-none absolute right-1 top-1 w-1.5 h-1.5 rounded-full bg-[#9fd3a8]" />}
-                    {g.key !== 'pattern' && patternIds.has(ADD_PREFIX + it.id) && <span className="pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] bg-[#9fd3a8] text-black text-[8px] font-bold leading-[12px]">圖案</span>}
+                    {stretchMode && g.key !== 'pattern' && CAN_STRETCH(it) && <span className="pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] bg-white/15 text-white/70 text-[8px] font-bold leading-[12px]">已可</span>}
+                    {stretchMode && g.key !== 'pattern' && stretchIds.includes(it.id) && <span className="pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] bg-[#f2c46d] text-black text-[8px] font-bold leading-[12px]">改</span>}
+                    {!stretchMode && g.key !== 'pattern' && patternIds.has(ADD_PREFIX + it.id) && <span className="pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] bg-[#9fd3a8] text-black text-[8px] font-bold leading-[12px]">圖案</span>}
                     {it.fromShape && <span className="pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] bg-white/15 text-white/70 text-[8px] font-bold leading-[12px]">圖形</span>}
                   </div>
                 );
