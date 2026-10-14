@@ -13,9 +13,10 @@ export const PATTERN_ORDER: string[] = [
   'burst-dash', 'burst', 'snow', 'flower', 'aster',
   'love', 'love3', 'pic333', 'spinner', 'vortex',
   'seagrass', 'sparkle', 'question', 'theta', 'zzz',
+  'p-star-o', 'p-sparkle4-o', 'q-mark', 'excl-mark', 'anger-mark',
   'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart',
   'random-num', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef',
-  'text', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o',
+  'text',
 ];
 
 export const SHAPE_SECTIONS = [
@@ -42,7 +43,7 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
   outline: [
     'circle-o', 'square-o', 'rounded-o', 'diamond-o', 'triangle-o', 'diamond-n-o',
     'pentagon-o', 'hexagon-o', 'heart-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o',
-    'hexstar-o', 'star8-o', 'arrow-o', 'arrow-double-o', 'track-select-o', 'track-cross-o',
+    'track-select-o', 'track-cross-o', 'hexstar-o', 'star8-o', 'arrow-o', 'arrow-double-o',
   ],
   line: [
     'line-h', 'line-v', 'line-d1', 'line-d2', 'line-wave', 'line-lightning-wave',
