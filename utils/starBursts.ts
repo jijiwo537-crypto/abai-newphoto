@@ -286,30 +286,50 @@ const scaleSpec = (s: StarBurstSpec, k: number): StarBurstSpec => ({
   ...(s.bloom ? { bloom: { ...s.bloom, r: s.bloom.r * k } } : {}),
 });
 
-/** 看得見的部分佔框的比例（框的一半＝1）：亮度超過這個值才算「看得到」 */
-const VISIBLE_LEVEL = 0.22 * 255;
-/** 每一顆星芒看得見的部分都撐到框的這麼多 */
-const VISIBLE_TARGET = 0.9;
+/** 亮度低過這個就當作看不到了（8 位元的 6 階） */
+const EDGE_LEVEL = 6 / 255;
+/** 每一顆星芒「整顆」（連淡淡的芒尖、柔光）都收在框的這麼多以內，最外面那一點點再平滑淡到 0 */
+const FIT_TARGET = 0.95;
 const fitCache = new Map<string, number>();
-/** 星芒有長有短（小十字、光環那種看起來就很小），放進 App 時先量「看得見的部分」有多大，
-   再等比例放大／縮小到一樣大 —— 按鈕上的小圖、新增時的預設大小看起來才會都一樣大。 */
+/** 這顆星芒（原本大小）在 (x,y) 的亮度，座標以框的一半＝R 像素 */
+const sampler = (spec: StarBurstSpec, R: number, G?: number) => {
+  const rays = buildRays(spec, R);
+  const rings = (spec.rings || []).map(r => ({ r: r.r * R, w: Math.max(.8, r.w * R), a: r.alpha }));
+  const g = (G ?? (spec.glow ?? .22)) * R;
+  const hasGlow = !!(spec.core || g > 0);
+  const core = Math.max(.6, (spec.core ?? .05) * R), GA = spec.glowAlpha ?? 1;
+  const GP = 1 + 7 * Math.max(0, Math.min(1, spec.glowConc ?? .2));
+  return (x: number, y: number) => {
+    let v = raysAt(rays, x, y);
+    const r = Math.sqrt(x * x + y * y);
+    for (const rg of rings) {
+      const dd = (r - rg.r) / rg.w;
+      if (dd <= -3.2 || dd >= 3.2) continue;
+      const win = Math.cos((Math.abs(dd) / 3.2) * Math.PI / 2) ** 2;
+      v += rg.a * win * (Math.exp(-1.2 * dd * dd) * .8 + Math.exp(-.3 * dd * dd) * .25);
+    }
+    if (hasGlow) {
+      if (r < g) v += GA * .5 * Math.pow(1 - r / g, GP);
+      const q = r / core;
+      if (q < 4) v += GA * Math.exp(-q * q * 1.1);
+    }
+    return v;
+  };
+};
+/** 星芒有長有短（小十字、光環那種看起來就很小），放進 App 時先量「整顆連芒尖」有多大，
+   再等比例放大／縮小到剛好收進框裡 —— 每一顆看起來一樣大，選取框也一定整顆包住。 */
 const fitScale = (spec: StarBurstSpec): number => {
   let k = fitCache.get(spec.id);
   if (k === undefined) {
-    k = 1;
-    for (let pass = 0; pass < 2; pass++) {
-      const M = 200, cv = renderSprite(scaleSpec(spec, k), M, '#ffffff');
-      const d = cv.getContext('2d')!.getImageData(0, 0, M, M).data;
-      cv.width = cv.height = 1;
-      let ext = 0;
-      for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
-        const i = (y * M + x) * 4;
-        if (Math.max(d[i], d[i + 1], d[i + 2]) > VISIBLE_LEVEL)
-          ext = Math.max(ext, Math.abs(x + .5 - M / 2), Math.abs(y + .5 - M / 2));
-      }
-      if (ext <= 0) break;
-      k *= VISIBLE_TARGET / (ext / (M / 2));
+    // 在比框大三倍的範圍裡量（框的一半＝60px），找最外面還看得到的那一點
+    const R = 60, at = sampler(spec, R);
+    let ext = 0;
+    for (let y = 0; y < R * 3; y++) for (let x = 0; x < R * 3; x++) {
+      const px = x + .5, py = y + .5;
+      if (Math.max(px, py) <= ext) continue;
+      if (at(px, py) > EDGE_LEVEL) ext = Math.max(px, py);
     }
+    k = ext > 0 ? FIT_TARGET / (ext / R) : 1;
     fitCache.set(spec.id, k);
   }
   return k;
@@ -320,7 +340,7 @@ export const fitStarBurst = (spec: StarBurstSpec): StarBurstSpec => {
 };
 
 /** App 裡星芒圖的四周多留這麼多（框的倍數）：芒尖、柔光散到框外也不會被切掉 */
-export const GLINT_PAD = 1.4;
+export const GLINT_PAD = 1;
 
 /* App 用的星芒遮罩分兩步：
    ① 芒與光環（調「發光」時不會變的部分）算一次就存起來（只存左上四分之一，其餘鏡像）；
@@ -367,10 +387,15 @@ export const warmGlint = (spec: StarBurstSpec) => { if (typeof document !== 'und
 /** App 用的遮罩（畫布，rgb 0、亮度當透明度）。框是中間的 N×N，四周多留 GLINT_PAD 倍。
    glow：App 裡「發光」調過的柔光範圍（跟排序工具的「柔光範圍」同一個數，0～80）；沒給＝星芒原本的。
    撐大的倍數一律照原本那顆量 —— 調發光時星芒本身的大小不會跟著跳。 */
+/** 柔光最多散到框的這麼多 */
+const GLOW_CAP = 0.96;
 export const glintMaskCanvas = (base: StarBurstSpec, N = GLINT_N, glow?: number): HTMLCanvasElement => {
   const { spec, M, F } = glintField(base, N);
   const R = N / 2, H = M / 2, k = fitScale(base);
-  const G = (glow === undefined ? (spec.glow ?? .22) : (glow / 100) * k) * R;
+  /* 調大「發光」時柔光不能散到框外（選取框要整顆包住）：小的時候照原值，
+     越接近框邊越慢地逼近框邊（tanh），不會在哪一格突然停住 */
+  const G0 = glow === undefined ? (spec.glow ?? .22 * k) : (glow / 100) * k;
+  const G = GLOW_CAP * Math.tanh(G0 / GLOW_CAP) * R;
   const hasGlow = !!(spec.core || G > 0);
   const core = Math.max(.6, (spec.core ?? .05) * R), GA = spec.glowAlpha ?? 1;
   const GP = 1 + 7 * Math.max(0, Math.min(1, spec.glowConc ?? .2));
@@ -388,6 +413,10 @@ export const glintMaskCanvas = (base: StarBurstSpec, N = GLINT_N, glow?: number)
         if (q < 4) v += GA * Math.exp(-q * q * 1.1);
       }
       if (v <= 0) continue;
+      /* 最外面那一圈（框的 90%～100%）平滑淡到 0：就算還有一點點光，也不會在框邊被切出一條硬邊 */
+      const e = Math.max(Math.abs(px + .5 - H), Math.abs(y)) / R;
+      if (e >= 1) continue;
+      if (e > .9) { const t = (1 - e) / .1; v *= t * t * (3 - 2 * t); }
       seed = (seed * 1664525 + 1013904223) >>> 0;
       const a = Math.min(255, Math.floor(tone(v) * 255 + seed / 4294967296));
       if (a <= 0) continue;
