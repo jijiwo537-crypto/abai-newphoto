@@ -7580,7 +7580,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               stripeN: stripeCountFor(o.stripeN ?? STRIPE_N_DEFAULT, o.stripeDir, bw, bh, cw, ch) }));
         } else {
           paintShapePath(false);
-          fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s);
+          fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s, lw,
+            { w: sw, color: o.strokeColor || '#000000' });
           // 邊框：紋理懸空在框裡面（條紋不給邊框用）
           const t = texOf(o);
           if (!solid && isOutlineShape(o.kind, false) && (t === 'dot' || t === 'star' || t === 'heart') && shapeP) {

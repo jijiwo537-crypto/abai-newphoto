@@ -837,7 +837,7 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
           g.restore();
         }
         if (solid) drawFeatheredShapeBody(g, o.kind, bw, bh, undefined, '#fff', undefined, '#fff', { innerSize: o.innerSize, outlineWidth: o.outlineWidth, baseW: (o.textureBaseW || o.w) * k, baseH: (o.textureBaseH || o.h) * k });
-        else strokeOutlineBody(g, path, o.kind, bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k);
+        else strokeOutlineBody(g, path, o.kind, bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k, { w: sw, color: '#fff' });
       }
       const { data } = g.getImageData(0, 0, cv.width, cv.height);
       let x0 = cv.width, y0 = cv.height, x1 = -1, y1 = -1;
@@ -878,18 +878,33 @@ export const trackSquaresD = (kind: string, w: number, h: number, gbw = w, gbh =
   return trackSquareCenters(kind, w, h).map(([x, y]) =>
     `M ${f(x - hs)} ${f(y - hs)} L ${f(x + hs)} ${f(y - hs)} L ${f(x + hs)} ${f(y + hs)} L ${f(x - hs)} ${f(y + hs)} Z`).join(' ');
 };
-/** 邊框類的選中框：描完線之後，用同一個顏色把小方塊裡面填滿。其他圖形什麼都不做。 */
-export const fillTrackSquares = (ctx: CanvasRenderingContext2D, kind: string | undefined, w: number, h: number, gbw = w, gbh = h) => {
+/** 描邊（外描邊）的寬度與顏色；寬度 0＝沒有描邊 */
+export type TrackOutline = { w: number; color: string } | null | undefined;
+/** 外框類的選中框：線畫完之後，最後再把每個小方塊疊在最上面 ——
+    有描邊的話，每個方塊先墊一個大一圈的描邊色方塊，所以每個方塊四周都有自己的一圈描邊，
+    連跟線條接起來的地方也會有一條描邊把方塊和線隔開。其他圖形什麼都不做。
+    方塊的大小＝路徑上那個方塊外框再加半條線寬（跟以前描線描出來的大小一樣）。 */
+export const fillTrackSquares = (ctx: CanvasRenderingContext2D, kind: string | undefined, w: number, h: number, gbw = w, gbh = h,
+  lw = ctx.lineWidth, outline?: TrackOutline) => {
   if (!kind || !TRACK_SQUARE_KINDS.has(kind)) return;
+  const hs = Math.min(gbw, gbh) * 0.05 + lw / 2;
+  const sq = (half: number) => {
+    const p = new Path2D();
+    for (const [x, y] of trackSquareCenters(kind, w, h)) p.rect(x - half, y - half, half * 2, half * 2);
+    return p;
+  };
   ctx.save();
+  ctx.setLineDash([]);
+  if (outline && outline.w > 0) { ctx.fillStyle = outline.color; ctx.fill(sq(hs + outline.w)); }
   ctx.fillStyle = ctx.strokeStyle;
-  ctx.fill(new Path2D(trackSquaresD(kind, w, h, gbw, gbh)));
+  ctx.fill(sq(hs));
   ctx.restore();
 };
-/** 邊框類圖形的本體：描線（選中框再把小方塊填滿） */
-export const strokeOutlineBody = (ctx: CanvasRenderingContext2D, path: Path2D, kind: string | undefined, w: number, h: number, gbw = w, gbh = h) => {
+/** 外框類圖形的本體：描線（選中框再把小方塊疊上去） */
+export const strokeOutlineBody = (ctx: CanvasRenderingContext2D, path: Path2D, kind: string | undefined, w: number, h: number, gbw = w, gbh = h,
+  outline?: TrackOutline) => {
   ctx.stroke(path);
-  fillTrackSquares(ctx, kind, w, h, gbw, gbh);
+  fillTrackSquares(ctx, kind, w, h, gbw, gbh, ctx.lineWidth, outline);
 };
 
 export const shapePathD = (
@@ -5687,7 +5702,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
               image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
           });
         } else {
-          strokeOutlineBody(ctx, path, image.shape, drawW, drawH, (image.shapeTextureBaseW || image.width) * contentScale, (image.shapeTextureBaseH || image.height) * contentScale);
+          strokeOutlineBody(ctx, path, image.shape, drawW, drawH, (image.shapeTextureBaseW || image.width) * contentScale, (image.shapeTextureBaseH || image.height) * contentScale,
+            { w: outer, color: image.shapeStrokeColor || '#000000' });
           // 邊框：紋理懸空在框裡面（條紋不給邊框用）
           if (tx === 'dot' || tx === 'star' || tx === 'heart') {
             const opts = { tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
@@ -14593,7 +14609,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             fImg.shapeStripeDir === 'h' ? 'h' : 'v', stA, fImg.shapeStripeB || '#FFFFFF');
         });
       } else {
-        strokeOutlineBody(ctx, path, fImg.shape, fw, fh, (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, (fImg.shapeTextureBaseH || fImg.height) * scaleFactor);
+        strokeOutlineBody(ctx, path, fImg.shape, fw, fh, (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
+          { w: strokeW, color: fImg.shapeStrokeColor || '#000000' });
         // 邊框：紋理懸空在框裡面（條紋不給邊框用）
         if (tx === 'dot' || tx === 'star' || tx === 'heart') {
           const opts = { tex: tx, dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
