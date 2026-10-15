@@ -11,6 +11,7 @@ import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import { idleDefaults } from '../utils/animationDefaults';
+import { glintBreath, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
 import { hasActiveFx, type FxScene, type FxPlacement } from '../utils/glEffects';
@@ -666,7 +667,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; ringReveal?: number; waveMix?: number; idleT?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; ringReveal?: number; waveMix?: number; idleT?: number; rayK?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -918,6 +919,8 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'jitter', name: '抖動' },
 ];
 const GRID_IDLE_KINDS = IDLE_KINDS;
+/* 星芒：沒有繞圈、抖動；波浪的位置換成呼吸，縮放旁邊多一個縮放II（芒忽長忽短） */
+const GLINT_IDLE_KINDS_C = GLINT_IDLE_KINDS.map(([id, name]) => ({ id, name }));
 /* 圖案是一群遮罩圖案，不再提供位置波浪；改成每顆各自錯開時間的透明度呼吸。 */
 const PATTERN_IDLE_KINDS = IDLE_KINDS.map(k =>
   k.id === 'grid-wave' ? { id: 'pattern-breathe', name: '呼吸' } : k
@@ -1007,6 +1010,9 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
        那正是主人看到的「開頭莫名其妙轉很多圈」。這裡一律從 0 開始轉。 */
     case 'spin':    return { k: 1, dx: 0, dy: 0, rot: t * speed * A * 90, a: 1 };
     case 'wobble':  return { k: 1, dx: 0, dy: 0, rot: Math.sin(w * 2.4) * A * 22, a: 1 };
+    // 星芒：跟發光一樣的呼吸（透明度），以及芒忽長忽短（縮放II），兩個同一個節奏
+    case 'glint-breathe': return { ...FLAT, a: 1 - A * (1 - glintBreath(t, speed)) };
+    case 'glint-rays': return { ...FLAT, rayK: 1 - Math.min(1, A) * 0.55 * (1 - glintBreath(t, speed)) };
     case 'orbit':   return { k: 1, dx: Math.cos(w * 1.6) * A * 0.2, dy: Math.sin(w * 1.6) * A * 0.2, rot: 0, a: 1 };
     /* 抖動：三個互為無理數比的高頻正弦疊起來，永遠不會回到同一個位置，
        所以看起來是真的在抖，不是在打拍子。 */
@@ -1109,6 +1115,7 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
        才能讓幅度 100 的第一個低點真正到 0；其他動畫維持既有交接。 */
     a: cfg.idle === 'image-breathe' ? g.a : 1 + (g.a - 1) * blend, fx: 1, burst: 0,
     gridWave: g.gridWave, waveMix: blend, ringReveal: g.ringReveal,
+    rayK: g.rayK === undefined ? undefined : 1 + (g.rayK - 1) * blend,
     /* 常駐的本地時間明確交給符號分單位動畫；進場期間不存在，交棒第一幀為 0。 */
     idleT: after,
   };
@@ -7478,6 +7485,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (holeFeather > 0) ctx.filter = `blur(${holeFeather}px)`;
           drawHoleShape(ctx, {
             ...o,
+            // 星芒「縮放II」：只有芒的長度跟著動畫變
+            glintRayK: f?.rayK,
             lineUnit: unit,
             textureBaseW: ((o as any).textureBaseW || o.w) * s,
             textureBaseH: ((o as any).textureBaseH || o.h) * s,
@@ -11065,7 +11074,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               className="p-3 bg-transparent border-0 text-white active:scale-90 transition-transform flex items-center justify-center select-none touch-none"
               title="隨機圖形"
             >
-              <RefreshCw size={24} strokeWidth={1.5} className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]" />
+              {/* 影子跟圖示同一個形狀：不糊開、只往下偏一點點，看起來就是圖示自己的影子，不是一團黑霧 */}
+              <RefreshCw size={24} strokeWidth={1.5} className="drop-shadow-[0_1px_0.5px_rgba(0,0,0,0.5)]" />
             </button>
           </div>
         )}
@@ -12149,6 +12159,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const isImageTarget = selObj?.type === 'image';
                 const isSpecialLineTarget = !!selObj && selObj.type === 'shape' && SPECIAL_LINE_KINDS.has(selObj.kind);
                 const isGridTarget = !!selObj && selObj.type === 'shape' && GRID_SHAPE_KINDS.has(selObj.kind);
+                const isGlintTarget = !!selObj && selObj.type === 'shape' && selObj.kind === 'hole' && String(selObj.hole || '').startsWith('sb-');
                 const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
@@ -12228,7 +12239,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {(moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
+                          {(moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : isGlintTarget ? GLINT_IDLE_KINDS_C : IDLE_KINDS).map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>

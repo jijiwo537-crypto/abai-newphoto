@@ -79,7 +79,7 @@ import type { ExitChoice } from '../types';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas, geoCssBox } from '../utils/compose';
 import {
   ObjectMotionConfig, ObjectMotionFrame, CLASSIC_OBJECT_MOTION_DEFAULT, OBJECT_IN_KINDS,
-  SYMBOL_OBJECT_IN_KINDS, OBJECT_IDLE_KINDS, classicObjectMotionOf, objectMotionFrame,
+  SYMBOL_OBJECT_IN_KINDS, OBJECT_IDLE_KINDS, GLINT_IDLE_KINDS, classicObjectMotionOf, objectMotionFrame,
   motionDurationFromUi, motionUiFromDuration,
 } from '../utils/objectMotion';
 import { preferredVideoFrameRate } from '../utils/videoFrameRate';
@@ -5618,6 +5618,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       color: image.color || SHAPE_DEFAULT_COLOR,
       lineW: image.shapeLineW, glow: image.shapeGlow as any,
       glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW, glintGlow: image.shapeGlintGlow,
+      glintRayK: motionFrame?.rayK,
       strokeColor: image.shapeStrokeColor, dots: image.shapeDots,
       dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
       tex: image.shapeTex, stripeN: image.shapeStripeN, stripeDir: image.shapeStripeDir,
@@ -17965,7 +17966,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const baseIdle = OBJECT_IDLE_KINDS
                 .filter(([id]) => id !== 'symbol-breathe2')
                 .map(([id, name]) => id === 'breathe' ? [id, '縮放'] as const : [id, name] as const);
-              const idleKinds = target?.sym
+              // 星芒：沒有繞圈、抖動；多了呼吸、縮放II（芒忽長忽短）
+              const isGlintTarget = target?.shape === 'hole' && String(target?.holeType || '').startsWith('sb-');
+              const idleKinds = isGlintTarget ? GLINT_IDLE_KINDS.map(([id, name]) => [id, name] as const) : target?.sym
                 ? baseIdle.filter(([id]) => id !== 'grid-wave').flatMap(([id, name]) =>
                     id === 'breathe' ? [[id, '縮放I'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
                 : isTextTarget

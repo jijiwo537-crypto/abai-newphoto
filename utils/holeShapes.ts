@@ -78,7 +78,8 @@ const holeImgCache = new Map<string, HTMLImageElement>();
    只留最近用過的幾張，不然一路拉滑桿會把記憶體吃光。
    畫布四周多留了 GLINT_PAD 倍（inkPad），芒尖、柔光散到框外也不會被切掉。 */
 const GLINT_SEP = '~g';
-export const glintBase = (t: string) => { const i = t.indexOf(GLINT_SEP); return i < 0 ? t : t.slice(0, i); };
+/** 星芒鍵的第一個 ~ 之前是哪一顆 */
+export const glintBase = (t: string) => { const i = t.indexOf('~'); return i < 0 ? t : t.slice(0, i); };
 /** 這顆星芒「發光」調成 glow（0～80）時要用的鍵 */
 export const glintVariantKey = (hole: string, glow: number) =>
   `${hole}${GLINT_SEP}${Math.round(Math.max(0, Math.min(80, glow)) * 2) / 2}`;
@@ -89,13 +90,15 @@ const GLINT_VARIANT_MAX = 8;
 const glintBases = new Map<string, HTMLImageElement>();
 const glintVariants = new Map<string, HTMLImageElement>();
 const glintImg = (t: string): HTMLImageElement | null => {
-  const variant = t.includes(GLINT_SEP);
+  // 鍵：sb-xxx[~g發光][~L層]（層：r＝只有芒、c＝芒以外）。調過發光的才會被汰換
+  const gm = /~g([\d.]+)/.exec(t), lm = /~L([rc])/.exec(t);
+  const variant = !!gm;
   const hit = (variant ? glintVariants : glintBases).get(t);
   if (hit) { if (variant) { glintVariants.delete(t); glintVariants.set(t, hit); } return hit; }
   const spec = STAR_BURSTS.find(b => b.id === glintBase(t));
   if (!spec || typeof document === 'undefined') return null;
-  const cv: any = glintMaskCanvas(spec, GLINT_N,
-    variant ? Number(t.slice(t.indexOf(GLINT_SEP) + GLINT_SEP.length)) : undefined);
+  const cv: any = glintMaskCanvas(spec, GLINT_N, gm ? Number(gm[1]) : undefined,
+    lm ? (lm[1] === 'r' ? 'rays' : 'core') : 'all');
   // 畫布當圖片用：drawImage 一樣吃，其他地方看的是 complete / naturalWidth（＝框，不含四周留白）
   cv.complete = true; cv.naturalWidth = cv.naturalHeight = GLINT_N; cv.inkPad = cv.width / GLINT_N;
   if (!variant) { glintBases.set(t, cv); return cv; }
@@ -122,7 +125,7 @@ export const getHoleImg = (t: string): HTMLImageElement | null => {
   return im;
 };
 // 只看「有沒有登記」，不讀值：星芒與模糊圖案的圖是第一次讀值時才畫的，判斷類型不該順手把圖畫出來
-export const isImageHole = (t: string) => Object.prototype.hasOwnProperty.call(SHAPE_IMAGES, t.includes(GLINT_SEP) ? glintBase(t) : t);
+export const isImageHole = (t: string) => Object.prototype.hasOwnProperty.call(SHAPE_IMAGES, t.startsWith('sb-') ? glintBase(t) : t);
 /** 圖片形狀的長寬比（寬 / 高）。還沒解碼完先給個合理值，解碼完自然會校正。 */
 export const holeImgRatio = (t: string) => {
   const im = getHoleImg(t);
@@ -340,6 +343,13 @@ export const drawTextShape = (
     const unit = glyphInk(holeType, str, 100);
     if (unit.r > 0) resolution = Math.min(resolution, Math.max(8, (PATTERN_TILE_MAX / 2 - 3) / (unit.r / 100)));
     if (image && unit.w > 0) resolution = Math.min(resolution, Math.max(8, 100 * Math.max(image.naturalWidth, 1) / unit.w * 1.25));
+    /* 星芒的貼圖只分幾級（32、64、128…，最大跟遮罩一樣 640）：進場動畫（果凍、旋轉…）每一格大小都不同，
+       照 12% 一級分的話每長大一點就要重做一張，十幾顆不同的星芒一起進場就卡住了。
+       分成兩倍一級，一種星芒最多五六張、做過就一直重用，貼上去最多縮小一半，畫起來也快。 */
+    if (image && holeType.startsWith('sb-') && unit.w > 0) {
+      const cap = Math.max(8, 100 * Math.max(image.naturalWidth, 1) / unit.w);
+      resolution = Math.min(cap, Math.pow(2, Math.max(5, Math.ceil(Math.log2(Math.max(1, sz * density))))));
+    }
     const bounds = glyphInk(holeType,str,resolution);
     const p = Math.max(2, Math.ceil(bounds.r)+3);
     const tileSide = p*2;
@@ -796,6 +806,8 @@ export const drawHoleShape = (
     lineUnit?: number;
     /** 星芒的「中心發光」（0～80）；沒給就用星芒原本的 */
     glintGlow?: number;
+    /** 星芒「縮放II」：芒的長度倍率（1＝原本）；有給就把芒和其餘部分分兩層畫 */
+    glintRayK?: number;
   },
   bw: number, bh: number,
   blurs: number[],
@@ -865,6 +877,14 @@ export const drawHoleShape = (
         ctx.drawImage(tmp, -side / 2, -side / 2);
         return;
       }
+    }
+    if (glint && typeof o.glintRayK === 'number' && Number.isFinite(o.glintRayK)) {
+      /* 縮放II：芒以外（光核、柔光、光環）原地不動，只有芒那一層跟著縮放 —— 看起來就是芒忽長忽短。
+         整段動畫都走兩層（就算倍率剛好是 1），切換的那一格才不會跳一下。 */
+      const rk = Math.max(.2, Math.min(1, o.glintRayK));
+      drawTextShape(ctx, o.hole + '~Lc', gly, 0, 0, size, col, false, 0);
+      drawTextShape(ctx, o.hole + '~Lr', gly, 0, 0, size * rk, col, false, 0);
+      return;
     }
     drawTextShape(ctx, o.hole, gly, 0, 0, size, col, false, 0);
     return;

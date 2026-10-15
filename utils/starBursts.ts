@@ -342,7 +342,7 @@ export const GLINT_PAD = 1;
    ① 芒與光環（調「發光」時不會變的部分）算一次就存起來（只存左上四分之一，其餘鏡像）；
    ② 每次「發光」變了，只重算柔光、光核與壓高光這一步 —— 一個像素只要幾個加減乘除，
       拉滑桿時每一格都跟得上，不必整顆星芒從頭算。 */
-type GlintField = { spec: StarBurstSpec; N: number; M: number; F: Float32Array };
+type GlintField = { spec: StarBurstSpec; N: number; M: number; F: Float32Array; Fr: Float32Array };
 const fieldCache = new Map<string, GlintField>();
 const glintField = (base: StarBurstSpec, N: number): GlintField => {
   const key = base.id + '|' + N;
@@ -352,12 +352,14 @@ const glintField = (base: StarBurstSpec, N: number): GlintField => {
   const R = N / 2, M = Math.ceil(N * GLINT_PAD / 2) * 2, H = M / 2;
   const rays = buildRays(spec, R);
   const rings = (spec.rings || []).map(r => ({ r: r.r * R, w: Math.max(.8, r.w * R), a: r.alpha }));
-  const F = new Float32Array(H * H);
+  // F：芒＋光環；Fr：只有芒（「縮放II」把芒和其餘部分分成兩層畫）
+  const F = new Float32Array(H * H), Fr = new Float32Array(H * H);
   for (let py = 0; py < H; py++) {
     const y = py + .5 - H;
     for (let px = 0; px < H; px++) {
       const x = px + .5 - H;
       let v = raysAt(rays, x, y);
+      Fr[py * H + px] = v;
       if (rings.length) {
         const r = Math.sqrt(x * x + y * y);
         for (const rg of rings) {
@@ -370,7 +372,7 @@ const glintField = (base: StarBurstSpec, N: number): GlintField => {
       F[py * H + px] = v;
     }
   }
-  const f = { spec, N, M, F };
+  const f = { spec, N, M, F, Fr };
   fieldCache.set(key, f);
   return f;
 };
@@ -385,14 +387,19 @@ export const warmGlint = (spec: StarBurstSpec) => { if (typeof document !== 'und
    撐大的倍數一律照原本那顆量 —— 調發光時星芒本身的大小不會跟著跳。 */
 /** 柔光最多散到框的這麼多 */
 const GLOW_CAP = 0.96;
-export const glintMaskCanvas = (base: StarBurstSpec, N = GLINT_N, glow?: number): HTMLCanvasElement => {
-  const { spec, M, F } = glintField(base, N);
+/* layer：'all' 整顆；'rays' 只有芒；'core' 芒以外的部分（光核、柔光、光環）。
+   「縮放II」時把 rays 縮放、core 不動，兩層疊起來就是芒忽長忽短。 */
+export const glintMaskCanvas = (base: StarBurstSpec, N = GLINT_N, glow?: number, layer: 'all' | 'rays' | 'core' = 'all'): HTMLCanvasElement => {
+  const { spec, M, F: Fall, Fr } = glintField(base, N);
+  let F = Fall;
+  if (layer === 'rays') F = Fr;
+  else if (layer === 'core') { F = new Float32Array(Fall.length); for (let i = 0; i < F.length; i++) F[i] = Fall[i] - Fr[i]; }
   const R = N / 2, H = M / 2, k = fitScale(base);
   /* 調大「發光」時柔光不能散到框外（選取框要整顆包住）：小的時候照原值，
      越接近框邊越慢地逼近框邊（tanh），不會在哪一格突然停住 */
   const G0 = glow === undefined ? (spec.glow ?? .22 * k) : (glow / 100) * k;
   const G = GLOW_CAP * Math.tanh(G0 / GLOW_CAP) * R;
-  const hasGlow = !!(spec.core || G > 0);
+  const hasGlow = layer !== 'rays' && !!(spec.core || G > 0);
   const core = Math.max(.6, (spec.core ?? .05) * R), GA = spec.glowAlpha ?? 1;
   const GP = 1 + 7 * Math.max(0, Math.min(1, spec.glowConc ?? .2));
   const out = new ImageData(M, M), d = out.data;

@@ -17,6 +17,8 @@ export type ObjectMotionFrame = {
   /** 波浪進場由左至右的揭露量。 */
   gridReveal?: number;
   ringReveal?: number;
+  /** 星芒「縮放II」：芒的長度倍率（1＝原本長度）；只有星芒會看 */
+  rayK?: number;
 };
 
 export type ObjectMotionConfig = {
@@ -64,6 +66,21 @@ export const OBJECT_IDLE_KINDS = [
 ] as const;
 
 const flat: ObjectMotionFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
+
+/** 星芒的「呼吸」與「縮放II」共用的節奏：跟發光的呼吸同一條 exp(sin) 曲線
+   （慢慢亮、慢慢暗，兩端都收得住），但從最亮開始 —— 剛進入常駐時不會先掉暗一下。
+   回傳 0～1（1＝最亮／芒最長）。 */
+export const glintBreath = (t: number, speed: number) => {
+  const CYCLE = 3.2 / Math.max(.05, speed);
+  const w = ((((t % CYCLE) + CYCLE) % CYCLE) / CYCLE) * Math.PI * 2;
+  const E = Math.E, IE = 1 / Math.E;
+  return (Math.exp(Math.cos(w)) - IE) / (E - IE);
+};
+/** 星芒專用的常駐動畫：沒有繞圈、抖動；波浪的位置換成呼吸，縮放旁邊多一個縮放II（芒忽長忽短） */
+export const GLINT_IDLE_KINDS = [
+  ['none', '靜止'], ['float', '漂浮'], ['glint-breathe', '呼吸'], ['breathe', '縮放I'],
+  ['glint-rays', '縮放II'], ['spin', '旋轉'], ['wobble', '搖擺'],
+] as const;
 const clamp = (v: number) => Math.max(0, Math.min(1, v));
 const cubic = (p: number) => 1 - Math.pow(1 - p, 3);
 const smooth = (p: number) => p * p * (3 - 2 * p);
@@ -153,6 +170,8 @@ export const objectMotionFrame = (
     const pulse = (Math.cos(t * cfg.speed * 1.75) + 1) / 2;
     idle = { ...flat, a: 1 - A * (1 - pulse) };
   }
+  else if (cfg.idle === 'glint-breathe') idle = { ...flat, a: 1 - A * (1 - glintBreath(t, cfg.speed)) };
+  else if (cfg.idle === 'glint-rays') idle = { ...flat, rayK: 1 - Math.min(1, A) * .55 * (1 - glintBreath(t, cfg.speed)) };
   else if (cfg.idle === 'signal') idle = { ...flat, ringReveal: (1 + Math.cos(t * cfg.speed * Math.PI / 2)) / 2 };
   else if (cfg.idle === 'spin') idle = { ...flat, rot: t * cfg.speed * A * 90 };
   else if (cfg.idle === 'wobble') idle = { ...flat, rot: Math.sin(w * 2.4) * A * 22 };
@@ -175,6 +194,7 @@ export const objectMotionFrame = (
     gridWave: idle.gridWave,
     gridReveal: idle.gridReveal,
     ringReveal: idle.ringReveal,
+    rayK: idle.rayK === undefined ? undefined : 1 + (idle.rayK - 1) * blend,
   };
 };
 
