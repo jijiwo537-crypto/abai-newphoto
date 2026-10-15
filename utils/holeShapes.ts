@@ -776,13 +776,35 @@ export const drawHoleShape = (
   const gcol = o.glowColor || col;
   /* 圖形描邊的實際上限固定為舊滑桿 40%（內部值 4）。面板仍顯示
      0～100，舊草稿若存過更大的數值也在繪製端安全收斂。 */
-  const sw = Math.min(4, Math.max(0, o.strokeW || 0)) * unit;
+  // 星芒不吃描邊、紋理（面板上也沒有），舊草稿存過的值一律不畫
+  const glint = o.hole.startsWith('sb-');
+  const sw = glint ? 0 : Math.min(4, Math.max(0, o.strokeW || 0)) * unit;
 
   if (isTextHole(o.hole)) {
     const gly = holeGlyph(o.hole, o.text || '', o);
     /* 發光：drawTextShape 最後是一次 drawImage，所以直接開 canvas 的陰影，
        光就會沿著字（或去背圖）真正的輪廓散出去。 */
-    if (o.glow) {
+    if (o.glow && o.hole.startsWith('sb-')) {
+      /* 星芒本身就是半透明的光：舊做法每一圈發光都把星芒本體再疊一次，
+         發光從 0 拉到 1 的瞬間星芒就被疊成三倍亮、整顆變粗變白，跳得很突兀。
+         改成只畫「光」：本體畫到畫布外面很遠的地方，用陰影位移把光拉回來；
+         光的濃度也跟著強度慢慢升上來（強度 0.6 以上才是滿的）。 */
+      const amt = blurs.length ? blurs[0] / Math.max(1e-6, Math.max(bw, bh) * 0.045) : 0;
+      const t = Math.min(1, amt / 0.6), ramp = t * t * (3 - 2 * t);
+      if (ramp > 0.001) {
+        ctx.save();
+        const m = ctx.getTransform();
+        const far = 20000 / Math.max(1e-6, Math.hypot(m.a, m.b));
+        ctx.shadowColor = gcol;
+        ctx.shadowOffsetX = far * m.a; ctx.shadowOffsetY = far * m.b;
+        ctx.globalAlpha *= ramp;
+        for (const r of blurs) {
+          ctx.shadowBlur = r;
+          drawTextShape(ctx, o.hole, gly, -far, 0, size, col, false, 0);
+        }
+        ctx.restore();
+      }
+    } else if (o.glow) {
       ctx.save();
       ctx.shadowColor = gcol;
       for (const r of blurs) {
@@ -801,7 +823,7 @@ export const drawHoleShape = (
       }
       ctx.restore();
     }
-    if (texOf(o) !== 'none') {
+    if (!glint && texOf(o) !== 'none') {
       /* 暫存畫布開大一點（長邊 ×1.6），字的墨水比框大時也不會被切掉。
          「長邊」要連墨水一起算 —— 像 `<333` 的墨水有外框的 2.9 倍寬，
          只看外框的話紋理會在框的邊緣就被切斷。 */

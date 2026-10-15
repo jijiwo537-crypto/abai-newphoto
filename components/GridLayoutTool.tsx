@@ -2693,6 +2693,8 @@ export const ShapeEditorPanel: React.FC<{
   const hasDash = !layer.shapeFilled && (!isLine || layer.shape === 'line') && layer.shape !== 'grid-plus' && !shapeHasNoDash(layer.shape);
   const outlineShape = isOutlineShape(layer.shape === 'hole' ? 'hole' : layer.shape, !!layer.shapeFilled);
   const texChoices = shapeTexOptions(layer.shape, !!layer.shapeFilled);
+  /* 星芒是一束光，描邊、紋理都不合理，不給調 */
+  const isGlint = layer.shape === 'hole' && String(layer.holeType || '').startsWith('sb-');
   const canFeather = shapeSupportsFeather(layer.shape, layer.shapeFilled, layer.holeType);
   /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
   const [colorPage, setColorPage] = useState<
@@ -2768,7 +2770,7 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>}
-          {!isDoubleContour && !isGridShape && !isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">
+          {!isDoubleContour && !isGridShape && !isGlint && !isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round(Math.min(8, layer.shapeStrokeW ?? 0) * 12.5), 0, 100,
                 v => onChange({ shapeStrokeW: v / 12.5 }))}
@@ -2790,7 +2792,7 @@ export const ShapeEditorPanel: React.FC<{
           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
               （跟「背景紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。
               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-          {!isLine && !isGridShape && !isBlurShape(layer.shape) && texChoices.length > 0 && (() => {
+          {!isLine && !isGlint && !isGridShape && !isBlurShape(layer.shape) && texChoices.length > 0 && (() => {
             const tex0 = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
             const tex = texChoices.some(([id]) => id === tex0) ? tex0 : 'none';
             return (

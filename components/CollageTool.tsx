@@ -11768,6 +11768,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const outlineShape = isOutlineShape(sel.kind, sel.filled === false ? false : !!sel.filled);
                   const texChoices = shapeTexOptions(sel.kind, sel.filled === false ? false : !!sel.filled);
                   const isDoubleContour = DOUBLE_CONTOUR_SHAPE_KINDS.has(sel.kind || '');
+                  /* 星芒是一束光，描邊、紋理都不合理，不給調 */
+                  const isGlint = sel.kind === 'hole' && String(sel.hole || '').startsWith('sb-');
                   /* 圖形調整：欄位與經典拼圖那顆 ShapeEditorPanel 一致。
                      圖層上下不放這裡 —— 選中時畫面上那排工具列本來就有。 */
                   return (
@@ -11812,7 +11814,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>}
-                          {!isDoubleContour && !isGrid && !isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
+                          {!isDoubleContour && !isGrid && !isGlint && !isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('描邊', Math.round(Math.min(8, sel.strokeW ?? 0) * 12.5), 0, 100,
                                 (v: number) => patch({ strokeW: v / 12.5 }))}
@@ -11830,7 +11832,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
                               （跟經典拼圖的「背景紋理」同一種排法）。顏色常駐。
                               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-                          {!isLine && !GRID_SHAPE_KINDS.has(sel.kind) && !isBlurShape(sel.kind) && texChoices.length > 0 && (() => {
+                          {!isLine && !isGlint && !GRID_SHAPE_KINDS.has(sel.kind) && !isBlurShape(sel.kind) && texChoices.length > 0 && (() => {
                             const tex0 = texOf(sel);
                             const tex = texChoices.some(([id]) => id === tex0) ? tex0 : 'none';
                             return (
