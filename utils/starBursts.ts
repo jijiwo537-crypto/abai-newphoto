@@ -21,6 +21,8 @@ export type StarBurstSpec = {
   /** 光核外面那圈柔光的半徑與亮度 */
   glow?: number;
   glowAlpha?: number;
+  /** 柔光集中度 0～1：越大越集中在光核附近（細細一圈），越小越平、散得越開（沒給＝0.2） */
+  glowConc?: number;
   rays?: BurstRay[];
   /** 一大把細芒：n 條平均分佈，長度照 pattern 輪流（所以一定對稱） */
   fine?: { n: number; len: number; pattern: number[]; w: number; alpha: number; off?: number };
@@ -39,43 +41,19 @@ const even = (n: number, len: number, w: number, off = 0, alpha = 1): BurstRay[]
 const cross = (v: number, h: number, w: number, alpha = 1): BurstRay[] =>
   [{ a: -90, len: v, w, alpha }, { a: 90, len: v, w, alpha }, { a: 0, len: h, w, alpha }, { a: 180, len: h, w, alpha }];
 
-/* 排列：越像的放越近 —— 十字類、光條、多芒、閃光、放射／光球、光環 */
+/* 主人從 31 種裡挑剩的 4 種，加上主人自己調的 6 種（「我的星芒」轉成正式的）。
+   排列：越像的放越近 —— 十字類 → 六芒 → 八芒 */
 export const STAR_BURSTS: StarBurstSpec[] = [
   { id: 'sb-cross-thin', name: '細長十字', core: .05, glow: .24, rays: cross(1, 1, .03) },
-  { id: 'sb-cross-tall', name: '長直十字', core: .05, glow: .22, rays: cross(1, .6, .03) },
-  { id: 'sb-needle', name: '針芒', core: .035, glow: .15, rays: cross(1, 1, .013) },
-  { id: 'sb-cross-soft', name: '柔光十字', core: .07, glow: .34, glowAlpha: .8, rays: [...cross(.85, .85, .09, .35), ...cross(1, 1, .026)] },
-  { id: 'sb-cross-short', name: '短芒十字', core: .08, glow: .36, glowAlpha: .85, rays: cross(.55, .55, .055) },
-  { id: 'sb-cross-double', name: '雙層十字', core: .06, glow: .26, rays: [...cross(1, 1, .022), ...cross(.42, .42, .07, .7)] },
-  { id: 'sb-diamond', name: '鑽石光', core: .06, glow: .26, rays: [...cross(1, 1, .028), ...even(4, .24, .09, 45, .55)] },
-  { id: 'sb-dot', name: '光點', core: .09, glow: .42, glowAlpha: .9, rays: cross(.4, .4, .028, .8) },
-  { id: 'sb-anamorphic', name: '橫向光條', core: .06, glow: .26, streaks: [{ a: 0, len: 1, w: .05, alpha: .85 }], rays: cross(.32, .2, .028, .8) },
-  { id: 'sb-streak-cross', name: '光條十字', core: .065, glow: .28, streaks: [{ a: 0, len: 1, w: .045, alpha: .6 }], rays: cross(1, .7, .028) },
+  {id: 'sb-soft-cross', name: '柔光十字', core: 0,glow: 0.35,glowAlpha: 0.59,rays: [{a: -90,len: 1,w: 0.028,alpha: 1},{a: 0,len: 0.7,w: 0.028,alpha: 1},{a: 90,len: 1,w: 0.028,alpha: 1},{a: 180,len: 0.7,w: 0.028,alpha: 1}],rings: []},
+  {id: 'sb-gap-cross-streak', name: '斷層光條十字', core: 0.065,glow: 0.28,glowAlpha: 1,rays: [{a: -90,len: 1,w: 0.028,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 0,len: 0.7,w: 0.028,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 90,len: 1,w: 0.028,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 180,len: 0.7,w: 0.028,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}}],rings: [],streaks: [{a: 0,len: 1,w: 0.01,alpha: 0.3}]},
   { id: 'sb-six', name: '六芒', core: .05, glow: .24, rays: even(6, .95, .03, 90) },
+  {id: 'sb-gap-six', name: '斷層六芒', core: 0,glow: 0,glowAlpha: 1,rays: [{a: -90,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: -30,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 30,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 90,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 150,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 210,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}}],rings: []},
   { id: 'sb-eight', name: '八芒', core: .055, glow: .25, rays: [...cross(1, 1, .03), ...even(4, .55, .026, 45, .85)] },
   { id: 'sb-eight-even', name: '均勻八芒', core: .055, glow: .25, rays: even(8, .9, .027) },
-  // 斷層八芒：直橫四條長芒，斜的四條中間淡掉一段（斷層），整體再罩一層柔光
-  { id: 'sb-gap-eight', name: '斷層八芒', core: .07, glow: .3, bloom: { r: .4, a: .55 },
-    rays: [...cross(1, 1, .026), ...even(4, 1, .022, 45, 1).map(r => ({ ...r, gap: { pos: .42, w: .1, depth: 1 } }))] },
-  { id: 'sb-ten', name: '十芒', core: .055, glow: .25, rays: even(10, .85, .025, 90) },
-  { id: 'sb-twelve', name: '十二芒', core: .06, glow: .27, rays: [...cross(1, 1, .032), ...even(8, .62, .021, 22.5, .8)] },
-  { id: 'sb-twelve-even', name: '均勻十二芒', core: .06, glow: .27, rays: even(12, .8, .022) },
-  { id: 'sb-sixteen', name: '十六芒', core: .06, glow: .27, rays: [...cross(1, 1, .028), ...even(4, .7, .022, 45, .85), ...even(8, .45, .017, 22.5, .7)] },
-  { id: 'sb-flash', name: '閃光', core: .07, glow: .32, rays: [...cross(1, 1, .036), ...even(4, .6, .026, 45, .8)],
-    fine: { n: 32, len: .48, pattern: [1, .55, .8, .6], w: .012, alpha: .4, off: 5.625 } },
-  { id: 'sb-burst', name: '星爆', core: .09, glow: .38, rays: [...cross(1, 1, .036), ...even(4, .72, .028, 45, .9), ...even(8, .5, .018, 22.5, .7)],
-    fine: { n: 48, len: .4, pattern: [1, .7, .85, .6], w: .011, alpha: .35, off: 3.75 } },
-  { id: 'sb-fine', name: '細芒放射', core: .06, glow: .27, fine: { n: 48, len: .85, pattern: [1, .62, .82, .55, .9, .6], w: .013, alpha: .55 } },
-  { id: 'sb-soft-rays', name: '柔芒放射', core: .08, glow: .34, rays: even(16, .62, .06, 0, .4) },
-  { id: 'sb-sun', name: '放射球', core: .12, glow: .4, rays: even(24, .62, .018, 0, .7) },
-  { id: 'sb-orb', name: '光球', core: .14, glow: .44, glowAlpha: .95, fine: { n: 48, len: .66, pattern: [1, .7, .85, .62], w: .015, alpha: .38 } },
-  { id: 'sb-orb-cross', name: '光球十字', core: .1, glow: .38, rays: cross(1, 1, .028), fine: { n: 32, len: .52, pattern: [1, .65, .8, .6], w: .014, alpha: .38, off: 5.625 } },
-  { id: 'sb-ring', name: '光環十字', core: .045, glow: .18, rays: cross(1, 1, .02), rings: [{ r: .46, w: .075, alpha: .6 }] },
-  { id: 'sb-ring-eight', name: '光環八芒', core: .05, glow: .22, rays: [...cross(1, 1, .026), ...even(4, .5, .02, 45, .8)], rings: [{ r: .58, w: .07, alpha: .5 }] },
-  { id: 'sb-six-ring', name: '六芒光環', core: .05, glow: .22, rays: even(6, .9, .026, 90), rings: [{ r: .5, w: .07, alpha: .55 }] },
-  { id: 'sb-double-ring', name: '雙環', core: .045, glow: .2, rays: cross(.95, .95, .022), rings: [{ r: .3, w: .055, alpha: .55 }, { r: .64, w: .065, alpha: .4 }] },
-  { id: 'sb-ring-orb', name: '光環光球', core: .11, glow: .36, glowAlpha: 1.4, rings: [{ r: .62, w: .08, alpha: .5 }] },
-  { id: 'sb-halo-wide', name: '大光暈', core: .06, glow: .26, rays: even(8, .78, .022), rings: [{ r: .45, w: .13, alpha: .28 }] },
+  {id: 'sb-gap-cross8', name: '斷層米字', core: 0.055,glow: 0.25,glowAlpha: 1,rays: [{a: -90,len: 1,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.15,depth: 1}},{a: 0,len: 1,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.15,depth: 1}},{a: 90,len: 1,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.15,depth: 1}},{a: 180,len: 1,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.15,depth: 1}},{a: -45,len: 0.55,w: 0.026,alpha: 0.85},{a: 45,len: 0.55,w: 0.026,alpha: 0.85},{a: 135,len: 0.55,w: 0.026,alpha: 0.85},{a: 225,len: 0.55,w: 0.026,alpha: 0.85}],rings: []},
+  {id: 'sb-thin-gap8', name: '細斷層八芒', core: 0,glow: 0.47,glowAlpha: 0.8,rays: [{a: -90,len: 1,w: 0.013,alpha: 1},{a: 0,len: 0.9,w: 0.013,alpha: 1},{a: 90,len: 1,w: 0.013,alpha: 1},{a: 180,len: 0.9,w: 0.013,alpha: 1},{a: -45,len: 0.9,w: 0.025,alpha: 0.8,gap: {pos: 0.66,w: 0.07,depth: 1}},{a: 45,len: 0.9,w: 0.025,alpha: 0.8,gap: {pos: 0.66,w: 0.07,depth: 1}},{a: 135,len: 0.9,w: 0.025,alpha: 0.8,gap: {pos: 0.66,w: 0.07,depth: 1}},{a: 225,len: 0.9,w: 0.025,alpha: 0.8,gap: {pos: 0.66,w: 0.07,depth: 1}}],rings: []},
+  {id: 'sb-wide-gap8', name: '橫長斷層八芒', core: 0,glow: 0.6,glowAlpha: 0.8,rays: [{a: -90,len: 1,w: 0.02,alpha: 1.5},{a: 0,len: 1,w: 0.02,alpha: 1.5},{a: 90,len: 1,w: 0.02,alpha: 1.5},{a: 180,len: 1,w: 0.02,alpha: 1.5},{a: -45,len: 0.9,w: 0.025,alpha: 0.95,gap: {pos: 0.64,w: 0.07,depth: 1}},{a: 45,len: 0.9,w: 0.025,alpha: 0.95,gap: {pos: 0.64,w: 0.07,depth: 1}},{a: 135,len: 0.9,w: 0.025,alpha: 0.95,gap: {pos: 0.64,w: 0.07,depth: 1}},{a: 225,len: 0.9,w: 0.025,alpha: 0.95,gap: {pos: 0.64,w: 0.07,depth: 1}}],rings: []},
 ];
 
 
@@ -117,6 +95,8 @@ const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvas
   const rings = (spec.rings || []).map(r => ({ r: r.r * R, w: Math.max(.8, r.w * R), a: r.alpha }));
   const hasGlow = !!(spec.core || spec.glow);
   const core = Math.max(.6, (spec.core ?? .05) * R), G = (spec.glow ?? .22) * R, GA = spec.glowAlpha ?? 1;
+  // 柔光的衰減指數：集中度 0 → 1（平平地散開），1 → 8（緊貼光核）
+  const GP = 1 + 7 * Math.max(0, Math.min(1, spec.glowConc ?? .2));
   // 光環內緣偏暖、外緣偏冷一點點
   const warm = [c[0], c[1] * .96, c[2] * .9], cool = [c[0] * .9, c[1] * .96, c[2]];
 
@@ -126,9 +106,10 @@ const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvas
   const LR = new Float32Array(N * N), LG = new Float32Array(N * N), LB = new Float32Array(N * N);
   let seed = 12345;
   const noise = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-  /* 像底片那樣平滑地「接近」全白：0.6 以下原樣（暗部、中間調亮度不變），
-     再亮就越來越慢地逼近全白 —— 光核還是亮白的，但不會變成一塊邊緣很硬的白餅 */
-  const tone = (v: number) => v < .6 ? v : .6 + .4 * (1 - Math.exp(-(v - .6) / .4));
+  /* 像底片那樣平滑地「接近」全白：0.5 以下原樣（暗部、中間調亮度不變），
+     再亮就越來越慢地逼近全白 —— 光芯與柔光疊在一起也還分得出層次，
+     不會整片死白、把光核撐得很大（亮度 1 → 0.82、2 → 0.98） */
+  const tone = (v: number) => v < .5 ? v : .5 + .5 * (1 - Math.exp(-(v - .5) / .5));
   /* 每一種都上下、左右對稱，所以只算左上四分之一，再鏡像到另外三塊（快四倍） */
   const H = Math.ceil(N / 2);
   for (let py = 0; py < H; py++) {
@@ -167,7 +148,7 @@ const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvas
           lr += v * (warm[0] * (1 - k) + cool[0] * k); lg += v * (warm[1] * (1 - k) + cool[1] * k); lb += v * (warm[2] * (1 - k) + cool[2] * k);
         }
         if (hasGlow) {
-          if (r < G) { const v = GA * .55 * Math.pow(1 - r / G, 2.4); lr += v * c[0]; lg += v * c[1]; lb += v * c[2]; }
+          if (r < G) { const v = GA * .5 * Math.pow(1 - r / G, GP); lr += v * c[0]; lg += v * c[1]; lb += v * c[2]; }
           const q = r / core;
           if (q < 4) white += GA * Math.exp(-q * q * 1.1);
         }
@@ -207,8 +188,13 @@ const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvas
       }
       return a;
     };
-    const k = spec.bloom.a * 2.2;
-    for (const ch of [LR, LG, LB]) { const b = blur(ch); for (let i = 0; i < ch.length; i++) ch[i] += b[i] * k; }
+    /* 糊開之前先把超亮的地方壓到 1：光核本來就過曝，不壓的話它的亮度會被糊成一大片白，
+       看起來像光核變大；壓了之後發光只是一層柔柔的光暈 */
+    const k = spec.bloom.a * 1.3;
+    for (const ch of [LR, LG, LB]) {
+      const src = ch.map(v => Math.min(1, v));
+      const b = blur(src); for (let i = 0; i < ch.length; i++) ch[i] += b[i] * k;
+    }
   }
   /* 存成「黑底、不透明」的光：用 'lighter' 貼上去，黑色（0）等於什麼都不加。
      以前存成「透明度＝亮度」，暗的地方透明度只剩 1～2 階，手機瀏覽器內部預乘時

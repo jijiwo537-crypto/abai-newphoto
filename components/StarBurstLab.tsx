@@ -288,7 +288,8 @@ export function StarBurstLab({ photo, onPickPhoto, picked, onTogglePick, onChang
         </div>
         <Section title="光核" open={!!open.core} onToggle={() => tog('core')}>
           <Row label="光核大小" value={params.core} min={0} max={30} step={.5} onChange={v => set({ core: v })} />
-          <Row label="柔光範圍" value={params.glow} min={0} max={80} onChange={v => set({ glow: v })} />
+          <Row label="柔光範圍" value={params.glow} min={0} max={80} step={.5} onChange={v => set({ glow: v })} />
+          <Row label="柔光集中" value={params.glowConc ?? 20} min={0} max={100} onChange={v => set({ glowConc: v })} />
           <Row label="亮度" value={params.glowAlpha} min={0} max={200} onChange={v => set({ glowAlpha: v })} unit="%" />
         </Section>
         {params.groups.map((g, i) => (

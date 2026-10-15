@@ -21,6 +21,8 @@ export type RayGroup = {
 };
 export type BurstParams = {
   core: number; glow: number; glowAlpha: number;
+  /** 柔光集中度 0～100（越大越貼著光核） */
+  glowConc?: number;
   groups: [RayGroup, RayGroup, RayGroup];
   fineN: number; fineLen: number; fineVar: number; fineW: number; fineAlpha: number; fineRot: number;
   /** 從現成星芒帶過來的細芒長短規律，跟當時的長短差；「長短差」照比例放大縮小這個規律 */
@@ -51,7 +53,7 @@ export const paramsToSpec = (p: BurstParams, name = '自訂'): StarBurstSpec => 
   const spec: StarBurstSpec = {
     id: 'custom-' + JSON.stringify(p).split('').reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) | 0, 7).toString(36),
     name,
-    core: p.core / 100, glow: p.glow / 100, glowAlpha: p.glowAlpha / 100,
+    core: p.core / 100, glow: p.glow / 100, glowAlpha: p.glowAlpha / 100, glowConc: (p.glowConc ?? 20) / 100,
     rays,
     rings: p.rings.filter(r => r.r > 0 && r.w > 0 && r.alpha > 0).map(r => ({ r: r.r / 100, w: r.w / 1000, alpha: r.alpha / 100 })),
   };
@@ -94,7 +96,7 @@ export const specToParams = (s: StarBurstSpec): BurstParams => {
   const ring = (i: number) => s.rings?.[i] ? { r: r0(s.rings[i].r * 100), w: r0(s.rings[i].w * 1000), alpha: r0(s.rings[i].alpha * 100) } : { r: 0, w: 70, alpha: 50 };
   const st = s.streaks?.[0];
   return {
-    core: r0((s.core ?? .05) * 100 * 10) / 10, glow: r0((s.glow ?? .22) * 100), glowAlpha: r0((s.glowAlpha ?? 1) * 100),
+    core: r0((s.core ?? .05) * 100 * 10) / 10, glow: r0((s.glow ?? .22) * 100), glowAlpha: r0((s.glowAlpha ?? 1) * 100), glowConc: r0((s.glowConc ?? .2) * 100),
     groups: groups as BurstParams['groups'],
     fineN: f?.n ?? 0, fineLen: f ? r0(f.len * 100) : 60, fineVar: f ? r0(((1 - Math.min(...f.pattern)) / .45) * 100) : 60,
     fineW: f ? r0(f.w * 1000) : 13, fineAlpha: f ? r0(f.alpha * 100) : 45, fineRot: f?.off ?? 0,
