@@ -127,6 +127,14 @@ export function StarBurstLab({ photo, onPickPhoto, picked, onTogglePick, onChang
     return () => URL.revokeObjectURL(u);
   }, [photo]);
 
+  /** 寬螢幕（≥768px）：左邊預覽、右邊調整 */
+  const [wide, setWide] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const on = () => setWide(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
   /* 預覽黏在標題列正下方：量標題列的高度（它會因為瀏海、字型而不同） */
   const [stickTop, setStickTop] = useState(0);
   useLayoutEffect(() => {
@@ -230,18 +238,21 @@ export function StarBurstLab({ photo, onPickPhoto, picked, onTogglePick, onChang
   const groupName = ['主芒', '副芒', '第三組芒'];
 
   return (
-    <>
-      {/* 黏在上面的預覽 */}
-      <div className="sticky z-10 -mx-4 px-4 pt-3 pb-2 bg-black" style={{ top: stickTop }}>
+    <div className="md:grid md:grid-cols-2 md:gap-6 md:items-start">
+      {/* 預覽：手機上黏在標題列下面；寬螢幕上放左邊、黏住不動，右邊捲動調整 */}
+      <div className="sticky z-10 -mx-4 px-4 pt-3 pb-2 bg-black md:mx-0 md:px-0 md:pt-4" style={{ top: stickTop }}>
         <div className="flex items-center justify-between gap-2 mb-2">
           <div className="min-w-0 text-[13px] font-bold truncate">{visible.findIndex(b => b.id === sel) >= 0 ? `${visible.findIndex(b => b.id === sel) + 1}. ` : ''}{label}</div>
           <button onClick={() => input.current?.click()} className="shrink-0 h-7 px-3 rounded-full bg-white text-black text-[11px] font-bold active:scale-95">{photo ? '換照片' : '導入照片'}</button>
           <input ref={input} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) onPickPhoto(f); e.target.value = ''; }} />
         </div>
         <canvas ref={cvRef} data-starburst-preview onPointerDown={move} onPointerMove={move}
-          className="block w-full rounded-[8px]" style={{ height: 'min(36vh, 300px)', touchAction: 'none' }} />
+          className="block w-full rounded-[8px]" style={{ height: wide ? `calc(100dvh - ${stickTop + 190}px)` : 'min(36vh, 300px)', touchAction: 'none' }} />
         <div className="mt-1 text-[10px] text-white/35">點預覽可以移動星芒的位置</div>
       </div>
+
+      {/* 右邊：所有調整 */}
+      <div className="min-w-0 md:pt-2">
 
       <div className="mt-2 rounded-[12px] border border-white/15 bg-white/[0.06] px-3 pt-2 pb-3">
         <Row label="大小" value={size} min={5} max={100} onChange={setSize} />
@@ -352,6 +363,7 @@ export function StarBurstLab({ photo, onPickPhoto, picked, onTogglePick, onChang
           </div>
         </section>
       )}
-    </>
+      </div>
+    </div>
   );
 }

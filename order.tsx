@@ -278,7 +278,7 @@ function OrderTool() {
   return (
     <div className="min-h-[100dvh] bg-black text-white select-none" style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}>
       <div data-order-header className="sticky top-0 z-20 bg-black/95 backdrop-blur border-b border-white/10" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
-        <div className="max-w-[560px] mx-auto px-4 pt-3 pb-3">
+        <div className={`${tab === 'burst' ? 'max-w-[1100px]' : 'max-w-[560px]'} mx-auto px-4 pt-3 pb-3`}>
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-[15px] font-bold tracking-wide">排序工具</div>
@@ -298,7 +298,7 @@ function OrderTool() {
           </div>
         </div>
       </div>
-      <div className="max-w-[560px] mx-auto px-4 pb-16" style={{ paddingBottom: 'calc(64px + env(safe-area-inset-bottom))' }}>
+      <div className={`${tab === 'burst' ? 'max-w-[1100px]' : 'max-w-[560px]'} mx-auto px-4 pb-16`} style={{ paddingBottom: 'calc(64px + env(safe-area-inset-bottom))' }}>
         {tab === 'shape' && (
           <div className="mt-4 rounded-[12px] border border-white/10 bg-white/[0.04] px-3 py-2.5">
             <div className="flex items-center justify-between gap-2">
