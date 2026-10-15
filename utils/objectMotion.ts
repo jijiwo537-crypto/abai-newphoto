@@ -36,8 +36,8 @@ export const OBJECT_MOTION_DEFAULT: ObjectMotionConfig = {
   in: 'pop',
   idle: 'none',
   amp: 50,
-  // 面板上的 45（見 animationDefaults 的 IDLE_SPEED_DEFAULT）
-  speed: 0.92,
+  // 面板上的 40（見 animationDefaults 的 IDLE_SPEED_DEFAULT）
+  speed: 0.84,
 };
 
 /** 經典拼圖的新物件預設完全靜止；保留其餘參數只是讓使用者首次切換時有合理值。 */
@@ -196,7 +196,9 @@ export const objectMotionFrame = (
     dx: idle.dx * blend,
     dy: idle.dy * blend,
     rot: idle.rot * blend,
-    a: cfg.idle === 'image-breathe' ? idle.a : 1 + (idle.a - 1) * blend,
+    /* 圖片呼吸、星芒的呼吸與閃爍本身就從全亮開始，不再套第二層交接 ——
+       套了的話閃爍頭一秒每次「暗」都只暗一點點，看起來像一段怪怪的淡出 */
+    a: cfg.idle === 'image-breathe' || cfg.idle === 'glint-blink' || cfg.idle === 'glint-breathe' ? idle.a : 1 + (idle.a - 1) * blend,
     idleT: idle.idleT,
     waveMix: blend,
     gridWave: idle.gridWave,

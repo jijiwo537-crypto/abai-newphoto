@@ -10,7 +10,7 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
@@ -1051,8 +1051,8 @@ export type MoCfg = {
 };
 export const MO_DEFAULT: MoCfg = {
   delay: 0, dur: durFromSpeed(70), in: 'pop',
-  // 速度 0.92＝面板上的 45（舊的 0.9 換算不是 5 的倍數）
-  idle: 'none', amp: 50, speed: 0.92,
+  // 速度 0.84＝面板上的 40
+  idle: 'none', amp: 50, speed: 0.84,
 };
 const GRID_WAVE_DEFAULT = { amp: 50, speed: 0.9 } as const;
 /* 非網格物件的波浪滑桿仍映射 100～250 的實際速度；介面 50 對應 175。 */
@@ -1115,7 +1115,8 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
     /* 圖片呼吸本身從 a=1 起步，不需要再套第二層 attack。直接採用其 alpha
        才能讓幅度 100 的第一個低點真正到 0；其他動畫維持既有交接。 */
-    a: cfg.idle === 'image-breathe' ? g.a : 1 + (g.a - 1) * blend, fx: 1, burst: 0,
+    /* 星芒的呼吸、閃爍本身就從全亮開始，跟圖片呼吸一樣直接用，不再套交接（套了閃爍頭一秒像在淡出） */
+    a: cfg.idle === 'image-breathe' || cfg.idle === 'glint-blink' || cfg.idle === 'glint-breathe' ? g.a : 1 + (g.a - 1) * blend, fx: 1, burst: 0,
     gridWave: g.gridWave, waveMix: blend, ringReveal: g.ringReveal,
     rayK: g.rayK === undefined ? undefined : 1 + (g.rayK - 1) * blend,
     /* 常駐的本地時間明確交給符號分單位動畫；進場期間不存在，交棒第一幀為 0。 */
@@ -9326,13 +9327,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => {
     if (!motionOn || !motionPlaying || !imageState || videoProg !== null) return;
     let raf = 0;
-    const t0 = Math.max(performance.now(), motionTransitionUntilRef.current) - motionClockRef.current * 1000;
+    let t0 = Math.max(performance.now(), motionTransitionUntilRef.current) - motionClockRef.current * 1000;
+    let last = performance.now();
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const now = performance.now();
-      if (now < motionTransitionUntilRef.current) return;
+      if (now < motionTransitionUntilRef.current) { last = now; return; }
+      /* 有一格畫很久（第一次畫很多顆星芒、要先做貼圖）時，時鐘不跟著跳過去：
+         一格最多只往前走 1/30 秒，多出來的時間從起點扣掉。不然進場動畫的時間
+         都花在那幾格上，畫面上只看得到頭尾兩格，像沒播出來。 */
+      if (now - last > 1000 / 30) t0 += now - last - 1000 / 30;
+      last = now;
       try {
-        motionClockRef.current = ((now - t0) / 1000) % motionTotal;
+        motionClockRef.current = (Math.max(0, now - t0) / 1000) % motionTotal;
         animRef.current = buildAnim(motionClockRef.current);
         if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, motionScaleRef.current);
       } catch (err) {
@@ -12078,7 +12085,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 };
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
                 const pickKind = (d: Partial<MoCfg>) => {
-                  if (d.idle && selObj) setCur({ ...d, ...idleDefaults(d.idle, { symbol: !!selObj.sym, text: selObj.type === 'text', image: selObj.type === 'image', shape: selObj.type === 'shape', grid: isGridTarget, line: isSpecialLineTarget }) });
+                  if (d.idle && selObj) setCur({ ...d, ...idleDefaults(d.idle, { symbol: !!selObj.sym, text: selObj.type === 'text', image: selObj.type === 'image', shape: selObj.type === 'shape', grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget }) });
                   else if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
                   else if (d.idle === 'symbol-breathe2' && selObj?.type === 'text') setCur({ ...d, amp: 60, speed: 1.2 });
                   else if (d.idle === 'breathe' && selObj?.sym) setCur({ ...d, amp: 30 });
@@ -12266,6 +12273,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                   ? nonGridWaveSpeedToUi(cur.speed)
                                   : cur.idle === 'grid-wave' ? Math.round(Math.max(0, Math.min(100, (cur.speed - .2) / 1.8 * 100)))
                                   : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedToUi(cur.speed)
+                                  : cur.idle === 'breathe' && isGlintTarget ? glintZoomSpeedToUi(cur.speed)
                                   : cur.idle === 'glint-blink' ? blinkSpeedToUi(cur.speed)
                                   : idleSpeedToUi(cur.speed)}
                               min={0} max={100}
@@ -12279,6 +12287,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                     ? nonGridWaveSpeedFromUi(v)
                                     : cur.idle === 'grid-wave' ? .2 + v * .018
                                     : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedFromUi(v)
+                                    : cur.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
                                     : cur.idle === 'glint-blink' ? blinkSpeedFromUi(v)
                                     : idleSpeedFromUi(v),
                               })} />

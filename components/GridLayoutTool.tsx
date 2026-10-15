@@ -7,7 +7,7 @@ import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import {exportHeic} from '../utils/heicExport';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
@@ -10620,9 +10620,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   useEffect(() => {
     if ((!anyClassicMotion && activeTab !== 'motion') || !motionPlaying) return;
     let raf = 0;
-    const started = performance.now() - motionClockRef.current * 1000;
+    let started = performance.now() - motionClockRef.current * 1000;
+    let last = performance.now();
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
+      /* 某一格畫很久（第一次做星芒貼圖等）時，一格最多只往前走 1/30 秒，
+         進場動畫才不會被那幾格吃掉、只剩頭尾兩格。 */
+      if (now - last > 1000 / 30) started += now - last - 1000 / 30;
+      last = now;
       /* 預覽不再鎖 30fps，每一個螢幕刷新都更新：一般 iPhone 為 60fps，
          ProMotion 與高幀影片所在裝置則可跟到 120fps。 */
       const t = ((now - started) / 1000) % motionTotal;
@@ -17983,7 +17988,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 replayMotion();
               };
               const pickIdle = (id: string) => {
-                patchMotion({ idle: id, ...idleDefaults(id, { symbol: !!target.sym, text: isTextTarget, image: targetIsImage, shape: !!target.shape, grid: isGridTarget, line: isSpecialLineTarget }) });
+                patchMotion({ idle: id, ...idleDefaults(id, { symbol: !!target.sym, text: isTextTarget, image: targetIsImage, shape: !!target.shape, grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget }) });
                 replayMotion();
               };
               const chip = (on: boolean) => `px-3 h-8 shrink-0 rounded-[8px] border text-[11px] font-bold tracking-wider transition-all flex items-center gap-1.5 ${on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
@@ -18036,6 +18041,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 100) / 1.5)))
                             : cfg.idle === 'grid-wave' ? Math.round(Math.max(0, Math.min(100, (cfg.speed - .2) / 1.8 * 100)))
                             : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedToUi(cfg.speed)
+                            : cfg.idle === 'breathe' && isGlintTarget ? glintZoomSpeedToUi(cfg.speed)
                             : cfg.idle === 'glint-blink' ? blinkSpeedToUi(cfg.speed)
                             : idleSpeedToUi(cfg.speed)}
                         min={0} max={100}
@@ -18045,6 +18051,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           : cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) ? (70 + v * 1.1) / 100
                           : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : cfg.idle === 'grid-wave' ? .2 + v * .018
                           : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedFromUi(v)
+                          : cfg.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
                           : cfg.idle === 'glint-blink' ? blinkSpeedFromUi(v) : idleSpeedFromUi(v)})}/>
                     </div>}
                   </>}
