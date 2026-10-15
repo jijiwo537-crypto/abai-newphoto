@@ -10,7 +10,7 @@ import { ShapeGlyph, HoleGlyph, shapePickerSections, shapeSupportsStretch } from
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
 import { patternDefaultSize } from './utils/patternDefaults';
 import { CollageTool } from './components/CollageTool';
-import { StarBurstLab, loadCustomBursts } from './components/StarBurstLab';
+import { StarBurstLab, loadCustomBursts, loadDeletedBursts } from './components/StarBurstLab';
 import { STAR_BURSTS } from './utils/starBursts';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
@@ -100,6 +100,7 @@ function OrderTool() {
   const [groups, setGroups] = useState<Group[]>(() => load(base));
   const [tab, setTab] = useState<'pattern' | 'shape' | 'size' | 'burst'>('pattern');
   const [bursts, setBursts] = useState<string[]>(loadBursts);
+  const [, setBurstTick] = useState(0);
   useEffect(() => { try { localStorage.setItem(STORE_BURST, JSON.stringify(bursts)); } catch {} }, [bursts]);
   /** 圖案起始大小：只存「跟 App 不一樣」的那些 */
   const [sizes, setSizes] = useState<Record<string, number>>(loadSizes);
@@ -245,6 +246,8 @@ function OrderTool() {
       lines.push('想加進去的星芒（新圖形「星芒」）', [...preset.map(b => `${STAR_BURSTS.indexOf(b) + 1}. ${b.name}（${b.id}）`), ...mine.map(c => c.name)].join(', '));
       for (const c of mine) lines.push(`${c.name} 的參數`, JSON.stringify(c.params));
     }
+    const delBursts = loadDeletedBursts();
+    if (delBursts.length) lines.push('要刪除的星芒', STAR_BURSTS.filter(b => delBursts.includes(b.id)).map(b => `${b.name}（${b.id}）`).join(', '));
     if (sized.length) lines.push('圖案起始大小（創意拼圖的「大小」0~100）', sized.map(id => `${id}: ${sizes[id]}（原本 ${patternDefaultSize(id)}）`).join(', '));
     return lines.join('\n');
   };
@@ -258,7 +261,7 @@ function OrderTool() {
       ta.remove();
     }
   };
-  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小、勾選的星芒也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setSizes({}); setBursts([]); } };
+  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小、星芒的勾選、刪除和自訂也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setSizes({}); setBursts([]); try { localStorage.removeItem('abai-order-tool-starburst-deleted-v1'); localStorage.removeItem('abai-order-tool-starburst-custom-v1'); } catch {} window.dispatchEvent(new Event('abai-burst-reset')); } };
 
   const shown = tab === 'size' || tab === 'burst' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
   const dragged = drag && groups.find(g => g.key === drag.group)?.items.find(i => i.id === drag.id);
@@ -335,7 +338,7 @@ function OrderTool() {
         )}
         {tab === 'shape' && <div className="mt-3 text-[10px] text-white/35">圖形是創意拼圖與跨頁拼圖共用的</div>}
         {tab === 'burst' && (
-          <StarBurstLab photo={photo} onPickPhoto={setPhoto} picked={bursts}
+          <StarBurstLab photo={photo} onPickPhoto={setPhoto} picked={bursts} onChanged={() => setBurstTick(t => t + 1)}
             onTogglePick={id => { setBursts(b => b.includes(id) ? b.filter(x => x !== id) : [...b, id]); flash(bursts.includes(id) ? '已取消' : '已勾選：想加進去'); }} />
         )}
         {tab === 'size' && (() => {
