@@ -262,7 +262,50 @@ export const drawStarBurst = (g: CanvasRenderingContext2D, spec: StarBurstSpec, 
 
 /** 星芒當成 App 裡的「圖片形狀」用：白光的亮度直接變成透明度，RGB 全黑（顏色由圖形自己的顏色上），
     存成 PNG 的 data URL。N 是邊長（像素）。 */
-export const starBurstMaskURL = (spec: StarBurstSpec, N = 640): string => {
+/** 整顆星芒等比例放大／縮小 k 倍（所有長度、粗細、半徑一起乘） */
+const scaleSpec = (s: StarBurstSpec, k: number): StarBurstSpec => ({
+  ...s,
+  ...(s.core !== undefined ? { core: s.core * k } : {}),
+  ...(s.glow !== undefined ? { glow: s.glow * k } : {}),
+  rays: s.rays?.map(r => ({ ...r, len: r.len * k, w: r.w * k })),
+  ...(s.fine ? { fine: { ...s.fine, len: s.fine.len * k, w: s.fine.w * k } } : {}),
+  rings: s.rings?.map(r => ({ ...r, r: r.r * k, w: r.w * k })),
+  streaks: s.streaks?.map(r => ({ ...r, len: r.len * k, w: r.w * k })),
+  ...(s.bloom ? { bloom: { ...s.bloom, r: s.bloom.r * k } } : {}),
+});
+
+/** 看得見的部分佔框的比例（框的一半＝1）：亮度超過這個值才算「看得到」 */
+const VISIBLE_LEVEL = 0.22 * 255;
+/** 每一顆星芒看得見的部分都撐到框的這麼多 */
+const VISIBLE_TARGET = 0.9;
+const fitCache = new Map<string, number>();
+/** 星芒有長有短（小十字、光環那種看起來就很小），放進 App 時先量「看得見的部分」有多大，
+   再等比例放大／縮小到一樣大 —— 按鈕上的小圖、新增時的預設大小看起來才會都一樣大。 */
+export const fitStarBurst = (spec: StarBurstSpec): StarBurstSpec => {
+  let k = fitCache.get(spec.id);
+  if (k === undefined) {
+    k = 1;
+    for (let pass = 0; pass < 2; pass++) {
+      const M = 200, cv = renderSprite(scaleSpec(spec, k), M, '#ffffff');
+      const d = cv.getContext('2d')!.getImageData(0, 0, M, M).data;
+      cv.width = cv.height = 1;
+      let ext = 0;
+      for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
+        const i = (y * M + x) * 4;
+        if (Math.max(d[i], d[i + 1], d[i + 2]) > VISIBLE_LEVEL)
+          ext = Math.max(ext, Math.abs(x + .5 - M / 2), Math.abs(y + .5 - M / 2));
+      }
+      if (ext <= 0) break;
+      k *= VISIBLE_TARGET / (ext / (M / 2));
+    }
+    fitCache.set(spec.id, k);
+  }
+  return Math.abs(k - 1) < 1e-3 ? spec : scaleSpec(spec, k);
+};
+
+/** App 用的遮罩圖：先 fitStarBurst 撐到一樣大，再畫 */
+export const starBurstMaskURL = (spec0: StarBurstSpec, N = 640): string => {
+  const spec = fitStarBurst(spec0);
   const src = renderSprite(spec, N, '#ffffff');
   const g = src.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D;
   const img = g.getImageData(0, 0, N, N), d = img.data;
