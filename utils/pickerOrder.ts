@@ -21,7 +21,7 @@ export const PATTERN_ORDER: string[] = [
 
 export const SHAPE_SECTIONS = [
   ['solid', '實心'],
-  ['outline', '邊框'],
+  ['outline', '外框'],
   ['line', '線條'],
   ['grid', '網格'],
   ['mask', '遮罩'],
