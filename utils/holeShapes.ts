@@ -9,7 +9,7 @@ import { HEART_MAIN, HEART_ICON, traceUnitShape, hexStarPoints, traceRadial, rad
  * 這裡只做「畫」這件事：沒有 React、沒有任何工具自己的狀態。
  */
 import { SHAPE_IMAGES } from './shapeImages';
-import { STAR_BURSTS } from './starBursts';
+import { STAR_BURSTS, starBurstMaskCanvas } from './starBursts';
 import { isVectorShape, traceVectorShape } from './vectorShapes';
 
 export const getHoleNumber = (h: any) => {
@@ -72,7 +72,39 @@ export const GLYPH_BTN: Record<string, { size?: number; dx?: number; dy?: number
    它走的是跟文字圖案完全同一條管線（量墨水 → 畫進暫存畫布 → source-in 上色），
    所以選取框、命中判定、發光、匯出全部自動比照辦理。 */
 const holeImgCache = new Map<string, HTMLImageElement>();
+
+/* 星芒的「中心發光」：調過的那一顆用自己的鍵（例如 sb-six~g35），
+   第一次用到時直接畫成一張畫布（同步、不用等圖解碼，拉滑桿時不會閃一下空白）。
+   只留最近用過的幾張，不然一路拉滑桿會把記憶體吃光。 */
+const GLINT_SEP = '~g';
+export const glintBase = (t: string) => { const i = t.indexOf(GLINT_SEP); return i < 0 ? t : t.slice(0, i); };
+/** 這顆星芒「中心發光」調成 glow（0～80）時要用的鍵 */
+export const glintVariantKey = (hole: string, glow: number) =>
+  `${hole}${GLINT_SEP}${Math.round(Math.max(0, Math.min(80, glow)) * 2) / 2}`;
+/** 星芒原本的中心發光（0～80），面板上的滑桿沒調過時就顯示這個 */
+export const glintDefaultGlow = (hole: string) =>
+  Math.round(((STAR_BURSTS.find(b => b.id === glintBase(hole))?.glow ?? .22) * 100) * 2) / 2;
+const GLINT_VARIANT_MAX = 16;
+const glintVariants = new Map<string, HTMLImageElement>();
+const glintVariantImg = (t: string): HTMLImageElement | null => {
+  const hit = glintVariants.get(t);
+  if (hit) { glintVariants.delete(t); glintVariants.set(t, hit); return hit; }
+  const spec = STAR_BURSTS.find(b => b.id === glintBase(t));
+  if (!spec || typeof document === 'undefined') return null;
+  const cv: any = starBurstMaskCanvas(spec, 640, Number(t.slice(t.indexOf(GLINT_SEP) + GLINT_SEP.length)));
+  // 畫布當圖片用：drawImage 一樣吃，其他地方看的是 complete / naturalWidth
+  cv.complete = true; cv.naturalWidth = cv.width; cv.naturalHeight = cv.height;
+  glintVariants.set(t, cv);
+  while (glintVariants.size > GLINT_VARIANT_MAX) {
+    const old = glintVariants.keys().next().value as string;
+    const c: any = glintVariants.get(old); glintVariants.delete(old);
+    if (c) c.width = c.height = 1;
+  }
+  return cv;
+};
+
 export const getHoleImg = (t: string): HTMLImageElement | null => {
+  if (t.includes(GLINT_SEP)) return glintVariantImg(t);
   const src = SHAPE_IMAGES[t];
   if (!src) return null;
   let im = holeImgCache.get(t);
@@ -85,7 +117,7 @@ export const getHoleImg = (t: string): HTMLImageElement | null => {
   return im;
 };
 // 只看「有沒有登記」，不讀值：星芒與模糊圖案的圖是第一次讀值時才畫的，判斷類型不該順手把圖畫出來
-export const isImageHole = (t: string) => Object.prototype.hasOwnProperty.call(SHAPE_IMAGES, t);
+export const isImageHole = (t: string) => Object.prototype.hasOwnProperty.call(SHAPE_IMAGES, t.includes(GLINT_SEP) ? glintBase(t) : t);
 /** 圖片形狀的長寬比（寬 / 高）。還沒解碼完先給個合理值，解碼完自然會校正。 */
 export const holeImgRatio = (t: string) => {
   const im = getHoleImg(t);
@@ -755,6 +787,8 @@ export const drawHoleShape = (
     /** 線寬的單位。不給就照外框的長邊 / 160 —— 那會讓「圖形拉大」連框線
      *  也跟著變粗，所以呼叫端想要「粗細固定」時就把不含縮放的那個值傳進來。 */
     lineUnit?: number;
+    /** 星芒的「中心發光」（0～80）；沒給就用星芒原本的 */
+    glintGlow?: number;
   },
   bw: number, bh: number,
   blurs: number[],
@@ -778,6 +812,9 @@ export const drawHoleShape = (
      0～100，舊草稿若存過更大的數值也在繪製端安全收斂。 */
   // 星芒不吃描邊、紋理（面板上也沒有），舊草稿存過的值一律不畫
   const glint = o.hole.startsWith('sb-');
+  if (glint && typeof o.glintGlow === 'number' && Number.isFinite(o.glintGlow)
+      && Math.abs(o.glintGlow - glintDefaultGlow(o.hole)) > 1e-6)
+    o = { ...o, hole: glintVariantKey(o.hole, o.glintGlow) };
   const sw = glint ? 0 : Math.min(4, Math.max(0, o.strokeW || 0)) * unit;
 
   if (isTextHole(o.hole)) {

@@ -50,7 +50,6 @@ export const STAR_BURSTS: StarBurstSpec[] = [
   { id: 'sb-ring-cross',name: '光環十字',core: 0.05,glow: 0.24,glowAlpha: 1,glowConc: 0.2,rays: [{a: -90,len: 1,w: 0.03,alpha: 1},{a: 0,len: 1,w: 0.03,alpha: 1},{a: 90,len: 1,w: 0.03,alpha: 1},{a: 180,len: 1,w: 0.03,alpha: 1}],rings: [{r: 0.37,w: 0.087,alpha: 0.51}]},
   { id: 'sb-ring-soft-cross',name: '光環柔光十字',core: 0,glow: 0.35,glowAlpha: 0.59,glowConc: 0.2,rays: [{a: -90,len: 1,w: 0.028,alpha: 1},{a: 0,len: 0.7,w: 0.028,alpha: 1},{a: 90,len: 1,w: 0.028,alpha: 1},{a: 180,len: 0.7,w: 0.028,alpha: 1}],rings: [{r: 0.24,w: 0.055,alpha: 0.42}]},
   { id: 'sb-six', name: '六芒', core: .05, glow: .24, rays: even(6, .95, .03, 90) },
-  {id: 'sb-gap-six', name: '斷層六芒', core: 0,glow: 0,glowAlpha: 1,rays: [{a: -90,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: -30,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 30,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 90,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 150,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}},{a: 210,len: 0.95,w: 0.03,alpha: 1,gap: {pos: 0.55,w: 0.12,depth: 1}}],rings: []},
   { id: 'sb-flat-six',name: '扁六芒',core: 0.05,glow: 0.24,glowAlpha: 1,glowConc: 0.2,rays: [{a: -90,len: 0.95,w: 0.03,alpha: 1},{a: -30,len: 0.6284,w: 0.03,alpha: 1},{a: 30,len: 0.6284,w: 0.03,alpha: 1},{a: 90,len: 0.95,w: 0.03,alpha: 1},{a: 150,len: 0.6284,w: 0.03,alpha: 1},{a: 210,len: 0.6284,w: 0.03,alpha: 1}],rings: []},
   { id: 'sb-ring-six',name: '光環六芒',core: 0.05,glow: 0.24,glowAlpha: 1,glowConc: 0.2,rays: [{a: -90,len: 0.95,w: 0.03,alpha: 1},{a: -30,len: 0.95,w: 0.03,alpha: 1},{a: 30,len: 0.95,w: 0.03,alpha: 1},{a: 90,len: 0.95,w: 0.03,alpha: 1},{a: 150,len: 0.95,w: 0.03,alpha: 1},{a: 210,len: 0.95,w: 0.03,alpha: 1}],rings: [{r: 0.37,w: 0.087,alpha: 0.5}]},
   { id: 'sb-ring-flat-six',name: '光環扁六芒',core: 0.05,glow: 0.24,glowAlpha: 1,glowConc: 0.2,rays: [{a: -90,len: 0.95,w: 0.03,alpha: 1},{a: -30,len: 0.6284,w: 0.03,alpha: 1},{a: 30,len: 0.6284,w: 0.03,alpha: 1},{a: 90,len: 0.95,w: 0.03,alpha: 1},{a: 150,len: 0.6284,w: 0.03,alpha: 1},{a: 210,len: 0.6284,w: 0.03,alpha: 1}],rings: [{r: 0.26,w: 0.047,alpha: 0.43}]},
@@ -280,7 +279,7 @@ const VISIBLE_TARGET = 0.9;
 const fitCache = new Map<string, number>();
 /** 星芒有長有短（小十字、光環那種看起來就很小），放進 App 時先量「看得見的部分」有多大，
    再等比例放大／縮小到一樣大 —— 按鈕上的小圖、新增時的預設大小看起來才會都一樣大。 */
-export const fitStarBurst = (spec: StarBurstSpec): StarBurstSpec => {
+const fitScale = (spec: StarBurstSpec): number => {
   let k = fitCache.get(spec.id);
   if (k === undefined) {
     k = 1;
@@ -299,10 +298,27 @@ export const fitStarBurst = (spec: StarBurstSpec): StarBurstSpec => {
     }
     fitCache.set(spec.id, k);
   }
+  return k;
+};
+export const fitStarBurst = (spec: StarBurstSpec): StarBurstSpec => {
+  const k = fitScale(spec);
   return Math.abs(k - 1) < 1e-3 ? spec : scaleSpec(spec, k);
 };
 
-/** App 用的遮罩圖：先 fitStarBurst 撐到一樣大，再畫 */
+/** App 用的遮罩（畫布，rgb 0、亮度當透明度）：先撐到一樣大再畫。
+   glow：App 裡「中心發光」調過的柔光範圍（跟排序工具的「柔光範圍」同一個數，0～80）。
+   撐大的倍數一律照原本那顆量 —— 調中心發光時星芒本身的大小不會跟著跳。 */
+export const starBurstMaskCanvas = (base: StarBurstSpec, N = 640, glow?: number): HTMLCanvasElement => {
+  const k = fitScale(base);
+  const spec = scaleSpec(glow === undefined ? base : { ...base, glow: glow / 100 }, k);
+  const out = renderSprite(spec, N, '#ffffff');
+  const g = out.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D;
+  const img = g.getImageData(0, 0, N, N), d = img.data;
+  for (let i = 0; i < d.length; i += 4) { const a = Math.max(d[i], d[i + 1], d[i + 2]); d[i] = d[i + 1] = d[i + 2] = 0; d[i + 3] = a; }
+  g.putImageData(img, 0, 0);
+  return out;
+};
+
 export const starBurstMaskURL = (spec0: StarBurstSpec, N = 640): string => {
   const spec = fitStarBurst(spec0);
   const src = renderSprite(spec, N, '#ffffff');

@@ -55,7 +55,7 @@ import {
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount, glowToUi, glowFromUi,
   texOf, paintStripes,
-  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, STAR_BURST_ITEMS, paintTex, holeCanStretch, paintTextureInsideOutline,
+  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, STAR_BURST_ITEMS, glintDefaultGlow, paintTex, holeCanStretch, paintTextureInsideOutline,
   glyphInk, glyphFont, clefSizeToUi, clefSizeFromUi, fillShapePath, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
 } from '../utils/holeShapes';
@@ -2772,6 +2772,11 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>}
+          {/* 星芒的「中心發光」：排序工具裡叫「柔光範圍」，同一個數（0～80） */}
+          {isGlint && <div className="px-2 order-1 w-full">
+            {slider('中心發光', Math.round(layer.shapeGlintGlow ?? glintDefaultGlow(layer.holeType || '')), 0, 80,
+              v => onChange({ shapeGlintGlow: Math.round(v) }))}
+          </div>}
           {!isDoubleContour && !isGridShape && !isGlint && !isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round(Math.min(8, layer.shapeStrokeW ?? 0) * 12.5), 0, 100,
@@ -4772,6 +4777,8 @@ interface FloatingImage {
   glowInit?: boolean;
   /** 圖形的外描邊寬度（跟粗細同一種刻度：存 0~10，滑桿顯示 0~100），0＝不描邊 */
   shapeStrokeW?: number;
+  /** 星芒的「中心發光」（0～80，排序工具的「柔光範圍」）；沒給就用星芒原本的 */
+  shapeGlintGlow?: number;
   /** 外描邊的顏色，預設黑 */
   shapeStrokeColor?: string;
   /* 圖形上的「點點」。跟創意拼圖那邊同一組參數、同一套網格，
@@ -5607,7 +5614,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       hole: image.holeType || 'circle', filled: image.shapeFilled,
       color: image.color || SHAPE_DEFAULT_COLOR,
       lineW: image.shapeLineW, glow: image.shapeGlow as any,
-      glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW,
+      glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW, glintGlow: image.shapeGlintGlow,
       strokeColor: image.shapeStrokeColor, dots: image.shapeDots,
       dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
       tex: image.shapeTex, stripeN: image.shapeStripeN, stripeDir: image.shapeStripeDir,
@@ -7103,7 +7110,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     hole: image.holeType || 'circle', filled: image.shapeFilled,
     color: image.color || SHAPE_DEFAULT_COLOR,
     lineW: image.shapeLineW, glow: image.shapeGlow as any,
-    glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW,
+    glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW, glintGlow: image.shapeGlintGlow,
     strokeColor: image.shapeStrokeColor,
     dots: image.shapeDots, dotSize: image.shapeDotSize,
     dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
@@ -14491,7 +14498,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           hole: fImg.holeType || 'circle', filled: fImg.shapeFilled,
           color: fImg.color || SHAPE_DEFAULT_COLOR,
           lineW: fImg.shapeLineW, glow: fImg.shapeGlow as any,
-          glowColor: fImg.shapeGlowColor, strokeW: fImg.shapeStrokeW,
+          glowColor: fImg.shapeGlowColor, strokeW: fImg.shapeStrokeW, glintGlow: fImg.shapeGlintGlow,
           strokeColor: fImg.shapeStrokeColor,
           tex: fImg.shapeTex, stripeN: fImg.shapeStripeN, stripeDir: fImg.shapeStripeDir,
           stripeA: fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR,

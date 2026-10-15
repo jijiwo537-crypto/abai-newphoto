@@ -73,7 +73,7 @@ import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolStickerInk, m
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
 import {
-  getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio,
+  getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio, glintDefaultGlow,
   isTextHole, holeStretch, paintTextureInsideOutline, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, fillShapePath, clipShapePieces, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, clefSizeToUi, clefSizeFromUi, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
   drawHoleShape, paintDots, paintTex, texOf, glowAmount, glowToUi, glowFromUi,
@@ -11813,6 +11813,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             <ColorPick compact label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
+                          </div>}
+                          {/* 星芒的「中心發光」：排序工具裡叫「柔光範圍」，同一個數（0～80） */}
+                          {isGlint && <div className="px-2 order-1 w-full">
+                            {shapeSlider('中心發光', Math.round(sel.glintGlow ?? glintDefaultGlow(sel.hole)), 0, 80,
+                              (v: number) => patch({ glintGlow: v }))}
                           </div>}
                           {!isDoubleContour && !isGrid && !isGlint && !isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
