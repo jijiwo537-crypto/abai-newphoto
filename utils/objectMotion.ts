@@ -36,7 +36,8 @@ export const OBJECT_MOTION_DEFAULT: ObjectMotionConfig = {
   in: 'pop',
   idle: 'none',
   amp: 50,
-  speed: 0.9,
+  // 面板上的 45（見 animationDefaults 的 IDLE_SPEED_DEFAULT）
+  speed: 0.92,
 };
 
 /** 經典拼圖的新物件預設完全靜止；保留其餘參數只是讓使用者首次切換時有合理值。 */
@@ -76,10 +77,16 @@ export const glintBreath = (t: number, speed: number) => {
   const E = Math.E, IE = 1 / Math.E;
   return (Math.exp(Math.cos(w)) - IE) / (E - IE);
 };
+/** 星芒的「閃爍」：跟發光的閃爍一樣的方波 —— 亮一半、暗一半，速度 1 時 0.5 秒一次 */
+export const glintBlink = (t: number, speed: number, A: number) => {
+  const CYCLE = .5 / Math.max(.05, speed);
+  const q = ((t % CYCLE) + CYCLE) % CYCLE;
+  return q < CYCLE / 2 ? 1 : Math.max(0, 1 - Math.min(1, A));
+};
 /** 星芒專用的常駐動畫：沒有繞圈、抖動；波浪的位置換成呼吸，縮放旁邊多一個縮放II（芒忽長忽短） */
 export const GLINT_IDLE_KINDS = [
-  ['none', '靜止'], ['float', '漂浮'], ['glint-breathe', '呼吸'], ['breathe', '縮放I'],
-  ['glint-rays', '縮放II'], ['spin', '旋轉'], ['wobble', '搖擺'],
+  ['none', '靜止'], ['float', '漂浮'], ['glint-breathe', '呼吸'], ['glint-blink', '閃爍'],
+  ['breathe', '縮放I'], ['glint-rays', '縮放II'], ['spin', '旋轉'], ['wobble', '搖擺'],
 ] as const;
 const clamp = (v: number) => Math.max(0, Math.min(1, v));
 const cubic = (p: number) => 1 - Math.pow(1 - p, 3);
@@ -171,6 +178,7 @@ export const objectMotionFrame = (
     idle = { ...flat, a: 1 - A * (1 - pulse) };
   }
   else if (cfg.idle === 'glint-breathe') idle = { ...flat, a: 1 - A * (1 - glintBreath(t, cfg.speed)) };
+  else if (cfg.idle === 'glint-blink') idle = { ...flat, a: glintBlink(t, cfg.speed, A) };
   else if (cfg.idle === 'glint-rays') idle = { ...flat, rayK: 1 - Math.min(1, A) * .55 * (1 - glintBreath(t, cfg.speed)) };
   else if (cfg.idle === 'signal') idle = { ...flat, ringReveal: (1 + Math.cos(t * cfg.speed * Math.PI / 2)) / 2 };
   else if (cfg.idle === 'spin') idle = { ...flat, rot: t * cfg.speed * A * 90 };

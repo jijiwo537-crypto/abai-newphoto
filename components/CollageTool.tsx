@@ -10,8 +10,8 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
-import { idleDefaults } from '../utils/animationDefaults';
-import { glintBreath, GLINT_IDLE_KINDS } from '../utils/objectMotion';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
+import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
 import { hasActiveFx, type FxScene, type FxPlacement } from '../utils/glEffects';
@@ -1012,6 +1012,7 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
     case 'wobble':  return { k: 1, dx: 0, dy: 0, rot: Math.sin(w * 2.4) * A * 22, a: 1 };
     // 星芒：跟發光一樣的呼吸（透明度），以及芒忽長忽短（縮放II），兩個同一個節奏
     case 'glint-breathe': return { ...FLAT, a: 1 - A * (1 - glintBreath(t, speed)) };
+    case 'glint-blink': return { ...FLAT, a: glintBlink(t, speed, A) };
     case 'glint-rays': return { ...FLAT, rayK: 1 - Math.min(1, A) * 0.55 * (1 - glintBreath(t, speed)) };
     case 'orbit':   return { k: 1, dx: Math.cos(w * 1.6) * A * 0.2, dy: Math.sin(w * 1.6) * A * 0.2, rot: 0, a: 1 };
     /* 抖動：三個互為無理數比的高頻正弦疊起來，永遠不會回到同一個位置，
@@ -1050,7 +1051,8 @@ export type MoCfg = {
 };
 export const MO_DEFAULT: MoCfg = {
   delay: 0, dur: durFromSpeed(70), in: 'pop',
-  idle: 'none', amp: 50, speed: 0.9,
+  // 速度 0.92＝面板上的 45（舊的 0.9 換算不是 5 的倍數）
+  idle: 'none', amp: 50, speed: 0.92,
 };
 const GRID_WAVE_DEFAULT = { amp: 50, speed: 0.9 } as const;
 /* 非網格物件的波浪滑桿仍映射 100～250 的實際速度；介面 50 對應 175。 */
@@ -11119,8 +11121,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               <ReplayIcon size={15} />
             </button>
             <div className="flex-1 min-w-0">
-              <CompactSlider label="循環間隔" value={Math.round(motionHold)} min={0} max={20} step={1}
-                onChange={(v: number) => setMotionHold(v)} />
+              <CompactSlider label="循環間隔" value={holdToUi(motionHold)} min={0} max={100} step={1}
+                onChange={(v: number) => setMotionHold(holdFromUi(v))} />
             </div>
           </div>
         )}
@@ -12195,9 +12197,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     {moTarget === 'link' ? (
                       <>
                         <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-4">
-                          <CompactSlider label="起始" value={Number(moLink.delay.toFixed(1))} min={0} max={3} step={0.1} decimals={1} fixedDecimals
+                          <CompactSlider label="起始" value={delayToUi(moLink.delay)} min={0} max={100} step={1}
                             onCommit={replayMotion}
-                            onChange={(v: number) => setMoLink(m => ({ ...m, delay: v }))} />
+                            onChange={(v: number) => setMoLink(m => ({ ...m, delay: delayFromUi(v) }))} />
                           {/* 面板上調速度（越大越快），內部照樣存秒數 */}
                           <CompactSlider label="速度" value={speedFromDur(moLink.dur)} min={0} max={100} step={1}
                             onCommit={replayMotion}
@@ -12227,9 +12229,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {([['random','隨機'],['left-right','左至右'],['right-left','右至左'],['top-bottom','上至下'],['bottom-top','下至上']] as const).map(([direction,name])=><button key={direction} aria-pressed={(cur.direction||'left-right')===direction} className={cell((cur.direction||'left-right')===direction)} onClick={()=>{setCur({direction});replayMotion();}}>{name}</button>)}
                         </div></>}
                         <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                          <CompactSlider label="起始" value={Number(cur.delay.toFixed(1))} min={0} max={3} step={0.1} decimals={1} fixedDecimals
+                          <CompactSlider label="起始" value={delayToUi(cur.delay)} min={0} max={100} step={1}
                             onCommit={replayMotion}
-                            onChange={(v: number) => setCur({ delay: v })} />
+                            onChange={(v: number) => setCur({ delay: delayFromUi(v) })} />
                           <CompactSlider label="速度"
                             value={cur.in === 'bubble' ? Math.round((speedFromDur(cur.dur) - 50) * 2) : speedFromDur(cur.dur)}
                             min={0} max={100} step={1}
@@ -12263,13 +12265,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 : cur.idle === 'grid-wave' && selObj?.type !== 'shape' && !isGridTarget
                                   ? nonGridWaveSpeedToUi(cur.speed)
                                   : cur.idle === 'grid-wave' ? Math.round(Math.max(0, Math.min(100, (cur.speed - .2) / 1.8 * 100)))
-                                  : Math.round(cur.speed * 100)}
-                              min={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
-                                || cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
-                                || cur.idle === 'grid-wave' ? 0 : 20}
-                              max={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
-                                || cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
-                                || cur.idle === 'grid-wave' ? 100 : 180}
+                                  : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedToUi(cur.speed)
+                                  : cur.idle === 'glint-blink' ? blinkSpeedToUi(cur.speed)
+                                  : idleSpeedToUi(cur.speed)}
+                              min={0} max={100}
                               step={1}
                               onChange={(v: number) => setCur({
                                 speed: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
@@ -12279,7 +12278,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                   : cur.idle === 'grid-wave' && selObj?.type !== 'shape' && !isGridTarget
                                     ? nonGridWaveSpeedFromUi(v)
                                     : cur.idle === 'grid-wave' ? .2 + v * .018
-                                    : v / 100,
+                                    : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedFromUi(v)
+                                    : cur.idle === 'glint-blink' ? blinkSpeedFromUi(v)
+                                    : idleSpeedFromUi(v),
                               })} />
                           </div>
                         )}
@@ -12312,8 +12313,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               </div>
                               {dk !== 'none' && (
                                 <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-4">
-                                  <CompactSlider label="速度" value={dsp} min={20} max={180} step={1}
-                                    onChange={(v: number) => setDash({ dashSpeed: v })} />
+                                  <CompactSlider label="速度" value={dashSpeedToUi(dsp)} min={0} max={100} step={1}
+                                    onChange={(v: number) => setDash({ dashSpeed: dashSpeedFromUi(v) })} />
                                 </div>
                               )}
                             </>

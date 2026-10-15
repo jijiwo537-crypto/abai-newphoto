@@ -1,9 +1,41 @@
 export function idleDefaults(kind: string, target: { symbol?: boolean; text?: boolean; image?: boolean; shape?: boolean; grid?: boolean; line?: boolean }) {
   if (kind === 'symbol-breathe2') return { amp: 60, speed: 1.2 };
-  // 星芒的呼吸、縮放II：跟發光的呼吸一樣的節奏（速度 1 ＝ 3.2 秒一次）
-  if (kind === 'glint-breathe') return { amp: 70, speed: 1 };
-  if (kind === 'glint-rays') return { amp: 60, speed: 1 };
+  // 星芒的呼吸、縮放II：幅度拉滿，速度是面板上的 85（＝舊刻度的 160）
+  if (kind === 'glint-breathe' || kind === 'glint-rays') return { amp: 100, speed: glintSpeedFromUi(GLINT_SPEED_UI_DEFAULT) };
+  // 星芒的閃爍：跟發光的閃爍一樣（速度 0.84 ＝ 面板上的 20）
+  if (kind === 'glint-blink') return { amp: 100, speed: .84 };
   if (kind === 'image-breathe' && target.image) return { amp: 100, speed: (70 + 70 * 1.8) / 100 };
   if (kind === 'grid-wave') return { amp: target.grid ? 50 : 30, speed: target.shape ? 1.8 : 1.75 };
-  return { amp: target.line ? 20 : kind === 'breathe' && target.symbol ? 30 : 50, speed: .9 };
+  return { amp: target.line ? 20 : kind === 'breathe' && target.symbol ? 30 : 50, speed: IDLE_SPEED_DEFAULT };
 }
+
+/* ── 動畫滑桿一律顯示 0～100 ───────────────────────────────────────
+   內部存的值不變（舊作品打開來動起來一模一樣），只是面板上的刻度換算成 0～100。 */
+const clampUi = (u: number) => Math.max(0, Math.min(100, u));
+
+/** 常駐動畫的一般速度：內部倍率 0.2～1.8（舊面板 20～180） */
+export const idleSpeedToUi = (speed: number) => Math.round(clampUi((speed * 100 - 20) / 1.6));
+export const idleSpeedFromUi = (ui: number) => (20 + clampUi(ui) * 1.6) / 100;
+/** 預設速度：舊的 0.9 換算是 43.75，取最接近的 5 的倍數 45（＝0.92） */
+export const IDLE_SPEED_DEFAULT = idleSpeedFromUi(45);
+
+/** 星芒呼吸、縮放II 的速度：0.5～1.8（舊刻度 50～180），預設 85（＝舊的 160，取最接近的 5 的倍數） */
+export const glintSpeedToUi = (speed: number) => Math.round(clampUi((speed * 100 - 50) / 1.3));
+export const glintSpeedFromUi = (ui: number) => (50 + clampUi(ui) * 1.3) / 100;
+export const GLINT_SPEED_UI_DEFAULT = 85;
+
+/** 發光同款的閃爍速度：0.2～3.4（跟發光面板同一條刻度） */
+export const blinkSpeedToUi = (speed: number) => Math.round(clampUi((speed * 100 - 20) / 3.2));
+export const blinkSpeedFromUi = (ui: number) => (20 + clampUi(ui) * 3.2) / 100;
+
+/** 起始（延遲）：0～3 秒 */
+export const delayToUi = (delay: number) => Math.round(clampUi(delay / .03));
+export const delayFromUi = (ui: number) => clampUi(ui) * .03;
+
+/** 虛線描邊的常駐動畫速度：內部 20～180（舊面板就是這個數），預設 100 剛好是 50 */
+export const dashSpeedToUi = (v: number) => Math.round(clampUi((v - 20) / 1.6));
+export const dashSpeedFromUi = (ui: number) => Math.round(20 + clampUi(ui) * 1.6);
+
+/** 循環間隔：0～20 秒；預設 8 秒剛好是 40 */
+export const holdToUi = (sec: number) => Math.round(clampUi(sec / .2));
+export const holdFromUi = (ui: number) => clampUi(ui) * .2;

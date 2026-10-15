@@ -7,7 +7,7 @@ import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import {exportHeic} from '../utils/heicExport';
-import { idleDefaults } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
@@ -17858,13 +17858,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             <div className="flex-1 min-w-0">
               <CompactSlider
                 label="循環間隔"
-                value={pageVideoItems.length ? Number(pageVideoDuration.toFixed(1)) : Math.round(motionHold)}
-                min={0} max={pageVideoItems.length ? Math.max(1, Math.ceil(pageVideoDuration)) : 20}
+                /* 一般情況顯示 0～100（＝0～20 秒）；有影片時是鎖住的，直接顯示影片長度（秒） */
+                value={pageVideoItems.length ? Number(pageVideoDuration.toFixed(1)) : holdToUi(motionHold)}
+                min={0} max={pageVideoItems.length ? Math.max(1, Math.ceil(pageVideoDuration)) : 100}
                 step={pageVideoItems.length ? .1 : 1}
                 decimals={pageVideoItems.length ? 1 : 0}
                 fixedDecimals={pageVideoItems.length > 0}
                 disabled={pageVideoItems.length > 0}
-                onChange={(v: number) => { if (!pageVideoItems.length) setMotionHold(v); }}
+                onChange={(v: number) => { if (!pageVideoItems.length) setMotionHold(holdFromUi(v)); }}
               />
             </div>
           </div>
@@ -18011,7 +18012,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-4">進場動畫</p>
                     <div className="grid grid-cols-4 gap-2">{introKinds.map(([id,name]) => <button key={id} className={cell(cfg.in===id)} onClick={()=>pickIntro(id)}>{name}</button>)}</div>
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                      <CompactSlider label="起始" value={Number(cfg.delay.toFixed(1))} min={0} max={3} step={.1} decimals={1} fixedDecimals onCommit={replayMotion} onChange={(v:number)=>patchMotion({delay:v})}/>
+                      <CompactSlider label="起始" value={delayToUi(cfg.delay)} min={0} max={100} step={1} onCommit={replayMotion} onChange={(v:number)=>patchMotion({delay:delayFromUi(v)})}/>
                       <CompactSlider label="速度"
                         value={cfg.in === 'bubble' && target.sym
                           ? Math.round((motionUiFromDuration(cfg.dur) - 50) * 2)
@@ -18034,14 +18035,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget
                             ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 100) / 1.5)))
                             : cfg.idle === 'grid-wave' ? Math.round(Math.max(0, Math.min(100, (cfg.speed - .2) / 1.8 * 100)))
-                            : Math.round(cfg.speed*100)}
-                        min={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' ? 0 : 20}
-                        max={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' ? 100 : 180}
+                            : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedToUi(cfg.speed)
+                            : cfg.idle === 'glint-blink' ? blinkSpeedToUi(cfg.speed)
+                            : idleSpeedToUi(cfg.speed)}
+                        min={0} max={100}
                         step={1} onCommit={replayMotion}
                         onChange={(v:number)=>patchMotion({speed: cfg.idle === 'image-breathe' && targetIsImage
                           ? imageBreathSpeedFromUi(v)
                           : cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) ? (70 + v * 1.1) / 100
-                          : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : cfg.idle === 'grid-wave' ? .2 + v * .018 : v/100})}/>
+                          : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : cfg.idle === 'grid-wave' ? .2 + v * .018
+                          : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedFromUi(v)
+                          : cfg.idle === 'glint-blink' ? blinkSpeedFromUi(v) : idleSpeedFromUi(v)})}/>
                     </div>}
                   </>}
                 </div>
