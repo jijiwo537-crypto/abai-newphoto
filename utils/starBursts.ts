@@ -45,7 +45,6 @@ const cross = (v: number, h: number, w: number, alpha = 1): BurstRay[] =>
    排列：越像的放越近 —— 十字類 → 六芒 → 八芒 */
 export const STAR_BURSTS: StarBurstSpec[] = [
   { id: 'sb-cross-thin', name: '細長十字', core: .05, glow: .24, rays: cross(1, 1, .03) },
-  {id: 'sb-soft-cross', name: '柔光十字', core: 0,glow: 0.35,glowAlpha: 0.59,rays: [{a: -90,len: 1,w: 0.028,alpha: 1},{a: 0,len: 0.7,w: 0.028,alpha: 1},{a: 90,len: 1,w: 0.028,alpha: 1},{a: 180,len: 0.7,w: 0.028,alpha: 1}],rings: []},
   { id: 'sb-tiny-cross',name: '小十字',core: 0,glow: 0.03,glowAlpha: 0.28,glowConc: 0.6,rays: [{a: -90,len: 0.5,w: 0.015,alpha: 1},{a: 0,len: 0.35,w: 0.015,alpha: 1},{a: 90,len: 0.5,w: 0.015,alpha: 1},{a: 180,len: 0.35,w: 0.015,alpha: 1}],rings: []},
   { id: 'sb-gap-cross-line',name: '斷層光條十字',core: 0.065,glow: 0.28,glowAlpha: 1,glowConc: 0.2,rays: [{a: -90,len: 1,w: 0.028,alpha: 1,gap: {pos: 0.62,w: 0.12,depth: 1}},{a: 0,len: 0.7,w: 0.028,alpha: 1,gap: {pos: 0.62,w: 0.12,depth: 1}},{a: 90,len: 1,w: 0.028,alpha: 1,gap: {pos: 0.62,w: 0.12,depth: 1}},{a: 180,len: 0.7,w: 0.028,alpha: 1,gap: {pos: 0.62,w: 0.12,depth: 1}}],rings: [],streaks: [{a: 0,len: 1,w: 0.01,alpha: 0.3}]},
   { id: 'sb-ring-cross',name: '光環十字',core: 0.05,glow: 0.24,glowAlpha: 1,glowConc: 0.2,rays: [{a: -90,len: 1,w: 0.03,alpha: 1},{a: 0,len: 1,w: 0.03,alpha: 1},{a: 90,len: 1,w: 0.03,alpha: 1},{a: 180,len: 1,w: 0.03,alpha: 1}],rings: [{r: 0.37,w: 0.087,alpha: 0.51}]},

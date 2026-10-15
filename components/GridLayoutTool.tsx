@@ -2104,9 +2104,9 @@ export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled
                           aria-hidden
                           style={{
                             display: 'block',
-                            /* 星芒是一束光，芒尖是淡的：跟其他圖示一樣 26px 看起來只剩一小點，給兩倍大 */
-                            width: s === 'abai' ? 29 : s.startsWith('sb-') ? 42 : 26,
-                            height: (s === 'abai' ? 29 : s.startsWith('sb-') ? 42 : 26) / (ICON_IMAGES[s]?.ratio ?? holeImgRatio(s)),
+                            /* 星芒是一束光，芒尖是淡的：跟其他圖示一樣 26px 看起來只剩一小點，給 1.4 倍大 */
+                            width: s === 'abai' ? 29 : s.startsWith('sb-') ? 36 : 26,
+                            height: (s === 'abai' ? 29 : s.startsWith('sb-') ? 36 : 26) / (ICON_IMAGES[s]?.ratio ?? holeImgRatio(s)),
                             ...(s.startsWith('sb-') ? { flexShrink: 0 } : {}),
                             backgroundColor: 'currentColor',
                             WebkitMaskImage: `url(${ICON_IMAGES[s]?.src ?? SHAPE_IMAGES[s]})`,
