@@ -41,9 +41,9 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'hole-abai', 'hole-theta', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef',
   ],
   outline: [
-    'circle-o', 'square-o', 'rounded-o', 'diamond-o', 'triangle-o', 'diamond-n-o',
-    'pentagon-o', 'heart-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o', 'hexstar-o',
-    'star8-o', 'track-select-o', 'track-select8-o', 'track-cross-o', 'arrow-o', 'arrow-double-o',
+    'circle-o', 'square-o', 'diamond-o', 'heart-o', 'triangle-o', 'pentagon-o',
+    'diamond-n-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o', 'hexstar-o', 'star8-o',
+    'rounded-o', 'track-select-o', 'track-select8-o', 'track-cross-o', 'arrow-o', 'arrow-double-o',
   ],
   line: [
     'line-h', 'line-v', 'line-d1', 'line-d2', 'line-wave', 'line-lightning-wave',
