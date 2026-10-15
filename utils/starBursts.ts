@@ -251,3 +251,17 @@ export const drawStarBurst = (g: CanvasRenderingContext2D, spec: StarBurstSpec, 
   g.drawImage(cv, cx - size / 2, cy - size / 2, size, size);
   g.restore();
 };
+
+/** 星芒當成 App 裡的「圖片形狀」用：白光的亮度直接變成透明度，RGB 全黑（顏色由圖形自己的顏色上），
+    存成 PNG 的 data URL。N 是邊長（像素）。 */
+export const starBurstMaskURL = (spec: StarBurstSpec, N = 640): string => {
+  const src = renderSprite(spec, N, '#ffffff');
+  const g = src.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D;
+  const img = g.getImageData(0, 0, N, N), d = img.data;
+  for (let i = 0; i < d.length; i += 4) { const a = Math.max(d[i], d[i + 1], d[i + 2]); d[i] = d[i + 1] = d[i + 2] = 0; d[i + 3] = a; }
+  const out = document.createElement('canvas'); out.width = out.height = N;
+  out.getContext('2d')!.putImageData(img, 0, 0);
+  const url = out.toDataURL('image/png');
+  src.width = src.height = out.width = out.height = 1;
+  return url;
+};

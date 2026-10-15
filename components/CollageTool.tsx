@@ -8794,7 +8794,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     let alive = true;
     Object.keys(SHAPE_IMAGES).forEach(k => {
       // 從圖形借來的那幾個是第一次用到才畫的（見 GridLayoutTool 的 SHAPE_PATTERNS），沒選到就不要先畫
-      if (k.startsWith('p-') && k !== holeType) return;
+      // 星芒也一樣：用到才畫（每一顆都要逐像素算，開頁就全畫會卡一下）
+      if ((k.startsWith('p-') || k.startsWith('sb-')) && k !== holeType) return;
       if(!warmedPatternIcons.has(k)){warmedPatternIcons.add(k);const icon=new Image();icon.src=patternIconUrl(SHAPE_IMAGES[k]);void icon.decode?.().catch(()=>{});}
       const im = getHoleImg(k);
       if (!im || (im.complete && im.naturalWidth)) return;

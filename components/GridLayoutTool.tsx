@@ -55,7 +55,7 @@ import {
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount, glowToUi, glowFromUi,
   texOf, paintStripes,
-  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex, holeCanStretch, paintTextureInsideOutline,
+  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, STAR_BURST_ITEMS, paintTex, holeCanStretch, paintTextureInsideOutline,
   glyphInk, glyphFont, clefSizeToUi, clefSizeFromUi, fillShapePath, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
 } from '../utils/holeShapes';
@@ -1453,6 +1453,7 @@ export const shapePickerSections = () => {
   const pools: Record<ShapeSection, any[]> = {
     solid: [...A.filter(i => i.filled && plain(i)), HOLE_ITEM_CROSS, ...HOLE_ITEMS_EXTRA],
     outline: [...A.filter(i => !i.filled && plain(i)), HOLE_ITEM_CROSS_O],
+    burst: [...STAR_BURST_ITEMS],
     line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind)),
     grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
     mask: [...MASK_SHAPE_ITEMS],
@@ -9551,7 +9552,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
     const h = (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
     const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
-    const initialColor = shapeDefaultColorFor(it.kind);
+    // 星芒是光：預設白色（其他圖形照原本的預設色）
+    const initialColor = it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-') ? '#FFFFFF' : shapeDefaultColorFor(it.kind);
     const item: FloatingImage = {
       id, src: '',
       x: (rect ? rect.centerX : previewW / 2) - w / 2,

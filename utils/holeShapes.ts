@@ -9,6 +9,7 @@ import { HEART_MAIN, HEART_ICON, traceUnitShape, hexStarPoints, traceRadial, rad
  * 這裡只做「畫」這件事：沒有 React、沒有任何工具自己的狀態。
  */
 import { SHAPE_IMAGES } from './shapeImages';
+import { STAR_BURSTS } from './starBursts';
 import { isVectorShape, traceVectorShape } from './vectorShapes';
 
 export const getHoleNumber = (h: any) => {
@@ -83,11 +84,13 @@ export const getHoleImg = (t: string): HTMLImageElement | null => {
   }
   return im;
 };
-export const isImageHole = (t: string) => !!SHAPE_IMAGES[t];
+// 只看「有沒有登記」，不讀值：星芒與模糊圖案的圖是第一次讀值時才畫的，判斷類型不該順手把圖畫出來
+export const isImageHole = (t: string) => Object.prototype.hasOwnProperty.call(SHAPE_IMAGES, t);
 /** 圖片形狀的長寬比（寬 / 高）。還沒解碼完先給個合理值，解碼完自然會校正。 */
 export const holeImgRatio = (t: string) => {
   const im = getHoleImg(t);
-  return im && im.naturalWidth && im.naturalHeight ? im.naturalWidth / im.naturalHeight : 1.476;
+  // 星芒是正方形的，還沒解碼完也先當正方形（不然第一格會照 1.476 畫歪）
+  return im && im.naturalWidth && im.naturalHeight ? im.naturalWidth / im.naturalHeight : t.startsWith('sb-') ? 1 : 1.476;
 };
 
 /** 這個洞是用文字或圖片畫的（而不是用路徑畫的）嗎 */
@@ -927,6 +930,10 @@ export const HOLE_ITEMS_EXTRA: HoleShapeItem[] =
    // 主人提供的圖描成的向量：問號、生氣符號、驚嘆號
    'q-mark', 'anger-mark', 'excl-mark']
     .map(h => ({ id: `hole-${h}`, kind: 'hole' as const, hole: h, filled: true }));
+
+/** 新圖形「星芒」：每一顆都是圖片形狀（亮度當透明度），顏色跟著圖形的顏色走 */
+export const STAR_BURST_ITEMS: HoleShapeItem[] = STAR_BURSTS
+  .map(b => ({ id: `hole-${b.id}`, kind: 'hole' as const, hole: b.id, filled: true }));
 
 /**
  * 圖形發光的強度換算。面板上是一根 0～100 的滑桿，畫的時候拿它去乘發光的半徑。

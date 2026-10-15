@@ -22,6 +22,7 @@ export const PATTERN_ORDER: string[] = [
 export const SHAPE_SECTIONS = [
   ['solid', '實心'],
   ['outline', '外框'],
+  ['burst', '星芒'],
   ['line', '線條'],
   ['grid', '網格'],
   ['mask', '遮罩'],
@@ -44,6 +45,10 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'circle-o', 'square-o', 'diamond-o', 'heart-o', 'triangle-o', 'pentagon-o',
     'diamond-n-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o', 'hexstar-o', 'star8-o',
     'rounded-o', 'track-select-o', 'track-select8-o', 'track-cross-o', 'arrow-o', 'arrow-double-o',
+  ],
+  burst: [
+    'hole-sb-cross-thin', 'hole-sb-soft-cross', 'hole-sb-gap-cross-streak', 'hole-sb-six', 'hole-sb-gap-six',
+    'hole-sb-eight', 'hole-sb-eight-even', 'hole-sb-gap-cross8', 'hole-sb-thin-gap8', 'hole-sb-wide-gap8',
   ],
   line: [
     'line-h', 'line-v', 'line-d1', 'line-d2', 'line-wave', 'line-lightning-wave',
