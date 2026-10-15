@@ -45,7 +45,7 @@ import {
   isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter, imgShapePathIn,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, fillTrackSquares, TRACK_SQUARE_KINDS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
   shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
@@ -7536,7 +7536,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               drawFeatheredShapeBody(ctx, o.kind, bw, bh, o.shapeFeather, col,
                 undefined, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth,
                   baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s });
-            } else paintShapePath(!!solid);
+            } else { paintShapePath(!!solid); if (!solid) fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s); }
           }
           ctx.restore();
         }
@@ -7551,6 +7551,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#000000';
           ctx.lineWidth = solid ? sw * 2 : lw + sw * 2;
+          // 選中框的小方塊是方的，描邊轉角也要是直角（其他圖形維持圓角）
+          if (TRACK_SQUARE_KINDS.has(o.kind as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
           if (!strokeCompositeShape(ctx, o.kind, bw, bh, o.innerSize)) paintShapePath(false);
           ctx.restore();
         }
@@ -7578,6 +7580,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               stripeN: stripeCountFor(o.stripeN ?? STRIPE_N_DEFAULT, o.stripeDir, bw, bh, cw, ch) }));
         } else {
           paintShapePath(false);
+          fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s);
           // 邊框：紋理懸空在框裡面（條紋不給邊框用）
           const t = texOf(o);
           if (!solid && isOutlineShape(o.kind, false) && (t === 'dot' || t === 'star' || t === 'heart') && shapeP) {

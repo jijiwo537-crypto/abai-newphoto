@@ -14,7 +14,7 @@ import { StarBurstLab, loadCustomBursts } from './components/StarBurstLab';
 import { STAR_BURSTS } from './utils/starBursts';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
-const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o', 'track-select-o', 'track-cross-o']);
+const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o', 'track-select-o', 'track-select8-o', 'track-cross-o']);
 const STORE = 'abai-order-tool-v1';
 /** 「這個圖形也想當圖案用」的清單（圖形的 id）。存在這台裝置上，複製順序時一起帶出去 */
 const STORE_ADD = 'abai-order-tool-shape-as-pattern-v1';

@@ -831,11 +831,13 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
         const path = new Path2D(shapePathD(o.kind, bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k));
         if (sw > 0) {
           g.save(); g.lineJoin = 'round'; g.miterLimit = 2; g.lineWidth = solid ? sw * 2 : lw + sw * 2;
+          // 選中框的小方塊是方的，描邊轉角也要是直角（其他圖形維持圓角）
+          if (TRACK_SQUARE_KINDS.has(o.kind as string)) { g.lineJoin = 'miter'; g.miterLimit = 4; }
           if (!strokeCompositeShape(g, o.kind, bw, bh, o.innerSize)) g.stroke(path);
           g.restore();
         }
         if (solid) drawFeatheredShapeBody(g, o.kind, bw, bh, undefined, '#fff', undefined, '#fff', { innerSize: o.innerSize, outlineWidth: o.outlineWidth, baseW: (o.textureBaseW || o.w) * k, baseH: (o.textureBaseH || o.h) * k });
-        else g.stroke(path);
+        else strokeOutlineBody(g, path, o.kind, bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k);
       }
       const { data } = g.getImageData(0, 0, cv.width, cv.height);
       let x0 = cv.width, y0 = cv.height, x1 = -1, y1 = -1;
@@ -861,6 +863,33 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
   shapeInkCache.set(key, ink);
   if (shapeInkCache.size > 256) shapeInkCache.delete(shapeInkCache.keys().next().value!);
   return scaled(ink);
+};
+
+/** 選中框的小方塊在哪裡：四個角（track-select8 再加四邊中點） */
+export const TRACK_SQUARE_KINDS = new Set(['track-select', 'track-select8']);
+const trackSquareCenters = (kind: string, w: number, h: number): [number, number][] => {
+  const c: [number, number][] = [[0, 0], [w, 0], [w, h], [0, h]];
+  return kind === 'track-select8' ? [...c, [w / 2, 0], [w, h / 2], [w / 2, h], [0, h / 2]] : c;
+};
+/** 選中框的小方塊（每個都是一個封閉的正方形） */
+export const trackSquaresD = (kind: string, w: number, h: number, gbw = w, gbh = h) => {
+  const hs = Math.min(gbw, gbh) * 0.05;
+  const f = (n: number) => Math.round(n * 1000) / 1000;
+  return trackSquareCenters(kind, w, h).map(([x, y]) =>
+    `M ${f(x - hs)} ${f(y - hs)} L ${f(x + hs)} ${f(y - hs)} L ${f(x + hs)} ${f(y + hs)} L ${f(x - hs)} ${f(y + hs)} Z`).join(' ');
+};
+/** 邊框類的選中框：描完線之後，用同一個顏色把小方塊裡面填滿。其他圖形什麼都不做。 */
+export const fillTrackSquares = (ctx: CanvasRenderingContext2D, kind: string | undefined, w: number, h: number, gbw = w, gbh = h) => {
+  if (!kind || !TRACK_SQUARE_KINDS.has(kind)) return;
+  ctx.save();
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.fill(new Path2D(trackSquaresD(kind, w, h, gbw, gbh)));
+  ctx.restore();
+};
+/** 邊框類圖形的本體：描線（選中框再把小方塊填滿） */
+export const strokeOutlineBody = (ctx: CanvasRenderingContext2D, path: Path2D, kind: string | undefined, w: number, h: number, gbw = w, gbh = h) => {
+  ctx.stroke(path);
+  fillTrackSquares(ctx, kind, w, h, gbw, gbh);
 };
 
 export const shapePathD = (
@@ -985,18 +1014,15 @@ export const shapePathD = (
       return poly(pts);
     }
     /* 藝術效果「視覺追蹤」裡的兩種框：
-       選中框＝方框＋四個角的實心小方塊；交叉框＝方框＋兩條對角線。
+       選中框＝方框＋四個角的實心小方塊（track-select8 四邊中間也有）；交叉框＝方框＋兩條對角線。
        小方塊的大小照「沒被擠壓過」的框（gbw／gbh）算，四邊擠壓時維持正方形。
-       這是邊框類（只描邊）的圖形，小方塊用一大一小兩圈再加十字描出來，描完就是實心的。 */
-    case 'track-select': {
-      const s = Math.min(gbw, gbh) * 0.1, hs = s / 2, q = s / 4;
+       這是邊框類（只描邊）的圖形：路徑只有方框和每個小方塊的「外框」，
+       小方塊的裡面由 fillTrackSquares 另外填滿（以前用一大一小兩圈加十字描出來，
+       放大之後線條之間就露出縫，看得出是線拼的）。描邊沿著小方塊外框走，跟方框連成一圈。 */
+    case 'track-select':
+    case 'track-select8': {
       let d = `M 0 0 L ${P(w, 0)} L ${P(w, h)} L ${P(0, h)} Z`;
-      for (const [x, y] of [[0, 0], [w, 0], [w, h], [0, h]] as const) {
-        d += ` M ${P(x - hs, y - hs)} L ${P(x + hs, y - hs)} L ${P(x + hs, y + hs)} L ${P(x - hs, y + hs)} Z`
-          + ` M ${P(x - q, y - q)} L ${P(x + q, y - q)} L ${P(x + q, y + q)} L ${P(x - q, y + q)} Z`
-          + ` M ${P(x - hs, y)} L ${P(x + hs, y)} M ${P(x, y - hs)} L ${P(x, y + hs)}`;
-      }
-      return d;
+      return d + ' ' + trackSquaresD(kind, w, h, gbw, gbh);
     }
     case 'track-cross':
       return `M 0 0 L ${P(w, 0)} L ${P(w, h)} L ${P(0, h)} Z M 0 0 L ${P(w, h)} M ${P(w, 0)} L ${P(0, h)}`;
@@ -1279,7 +1305,7 @@ const STRETCH_SOLID_KINDS = new Set([
 const STRETCH_OUTLINE_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
   'pentagon', 'hexagon', 'star', 'star8', 'heart', 'heart-classic', 'heart-icon', 'hexstar', 'ellipse', 'arrow', 'arrow-double', 'sparkle4',
-  'track-select', 'track-cross',
+  'track-select', 'track-select8', 'track-cross',
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if(isBackdropMask(shape))return true;
@@ -1382,7 +1408,7 @@ export const shapeGlowFromUi = (v: number, outline: boolean) => outline ? Math.m
 export const shapeTexOptions = (kind?: string, filled?: boolean) =>
   isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe') : TEX_OPTIONS;
 /** 選中框（四角實心小方塊）不給虛線 */
-export const shapeHasNoDash = (kind?: string) => kind === 'track-select';
+export const shapeHasNoDash = (kind?: string) => kind === 'track-select' || kind === 'track-select8';
 /** 「箭身長度」滑桿。跟四邊擠壓是分開的兩件事：
     滑桿量的是「沒被擠壓過」的那支箭（bw,bh＝textureBase）——箭身長度＝原始高度的百分之幾。
     四邊擠壓只改現在的框（w,h），整支箭一起拉長拉扁，滑桿的數字不會跟著變；
@@ -1464,7 +1490,6 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'triangle-o', kind: 'triangle', filled: false },
   { id: 'diamond-o', kind: 'diamond', filled: false },
   { id: 'pentagon-o', kind: 'pentagon', filled: false },
-  { id: 'hexagon-o', kind: 'hexagon', filled: false },
   { id: 'star-o', kind: 'star', filled: false },
   { id: 'star8-o', kind: 'star8', filled: false },
   { id: 'heart-o', kind: 'heart', filled: false, ratio: 0.93 },
@@ -1475,6 +1500,7 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'sparkle4-o', kind: 'sparkle4', filled: false },
   // 藝術效果「視覺追蹤」的選中框與交叉框（星形橢圓、雲朵已從清單拿掉；舊作品照樣畫得出來）
   { id: 'track-select-o', kind: 'track-select', filled: false },
+  { id: 'track-select8-o', kind: 'track-select8', filled: false },
   { id: 'track-cross-o', kind: 'track-cross', filled: false },
   // 線條
   { id: 'line-h', kind: 'line', filled: false, rot: 0, ratio: 0.08 },
@@ -1540,6 +1566,7 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   'cloud-oval': [0, 0, 1, 1],
   // 四個角的小方塊各凸出框外半顆（框短邊的 5%）
   'track-select': [-0.05, -0.05, 1.1, 1.1],
+  'track-select8': [-0.05, -0.05, 1.1, 1.1],
   line: [0, 0.5, 1, 0],
   wave: [0, 0.08, 1, 0.84],
   'lightning-wave': [0, 0.06, 1, 0.88],
@@ -1863,6 +1890,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
           strokeLinecap="butt"
           strokeLinejoin={isLine ? 'round' : 'miter'}
         />
+        {!solid && TRACK_SQUARE_KINDS.has(item.kind) && <path d={trackSquaresD(item.kind, bw, bh)} fill="currentColor" />}
       </g>
     </svg>
   );
@@ -5612,7 +5640,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             if (solid && COMPOSITE_SHAPE_KINDS.has(image.shape)) {
               drawCompositeShapeBody(ctx, image.shape, drawW, drawH, color,
                 image.shapeInnerColor || '#FFFFFF', undefined, { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth });
-            } else if (solid) ctx.fill(path); else ctx.stroke(path);
+            } else if (solid) ctx.fill(path); else strokeOutlineBody(ctx, path, image.shape, drawW, drawH, (image.shapeTextureBaseW || image.width) * contentScale, (image.shapeTextureBaseH || image.height) * contentScale);
           }
           ctx.restore();
           }
@@ -5622,6 +5650,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           ctx.setLineDash([]);
           ctx.strokeStyle = image.shapeStrokeColor || '#000000';
           ctx.lineWidth = (solid ? 0 : lw) + outer * 2;
+          // 選中框的小方塊是方的，描邊轉角也要是直角（其他圖形維持圓角）
+          if (TRACK_SQUARE_KINDS.has(image.shape as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
           if (!strokeCompositeShape(ctx, image.shape, drawW, drawH, image.shapeInnerSize)) ctx.stroke(path);
           ctx.restore();
         }
@@ -5657,7 +5687,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
               image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
           });
         } else {
-          ctx.stroke(path);
+          strokeOutlineBody(ctx, path, image.shape, drawW, drawH, (image.shapeTextureBaseW || image.width) * contentScale, (image.shapeTextureBaseH || image.height) * contentScale);
           // 邊框：紋理懸空在框裡面（條紋不給邊框用）
           if (tx === 'dot' || tx === 'star' || tx === 'heart') {
             const opts = { tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
@@ -14502,7 +14532,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ctx.shadowBlur = r * gAmt;
         if (solid && COMPOSITE_SHAPE_KINDS.has(fImg.shape!)) {
           drawCompositeShapeBody(ctx, fImg.shape!, fw, fh, color, fImg.shapeInnerColor || '#FFFFFF', undefined, { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth });
-        } else if (solid) ctx.fill(path); else ctx.stroke(path);
+        } else if (solid) ctx.fill(path); else strokeOutlineBody(ctx, path, fImg.shape, fw, fh, (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, (fImg.shapeTextureBaseH || fImg.height) * scaleFactor);
       }
       ctx.restore();
     }
@@ -14516,6 +14546,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.miterLimit = 2;
       ctx.strokeStyle = fImg.shapeStrokeColor || '#000000';
       ctx.lineWidth = (solid ? 0 : lw) + strokeW * 2;
+      // 選中框的小方塊是方的，描邊轉角也要是直角（其他圖形維持圓角）
+      if (TRACK_SQUARE_KINDS.has(fImg.shape! as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
       if (!strokeCompositeShape(ctx, fImg.shape!, fw, fh, fImg.shapeInnerSize)) ctx.stroke(path);
       ctx.restore();
     }
@@ -14561,7 +14593,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             fImg.shapeStripeDir === 'h' ? 'h' : 'v', stA, fImg.shapeStripeB || '#FFFFFF');
         });
       } else {
-        ctx.stroke(path);
+        strokeOutlineBody(ctx, path, fImg.shape, fw, fh, (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, (fImg.shapeTextureBaseH || fImg.height) * scaleFactor);
         // 邊框：紋理懸空在框裡面（條紋不給邊框用）
         if (tx === 'dot' || tx === 'star' || tx === 'heart') {
           const opts = { tex: tx, dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
