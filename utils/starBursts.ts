@@ -71,9 +71,8 @@ const rgb = (hex: string) => {
 
 type Ray = { ux: number; uy: number; L: number; sig: number; a: number; gp: number; gw: number; gd: number };
 
-/** 把一種星芒算成 N×N 的圖（N＝框的邊長，實際像素）。回傳的是黑底不透明的光，用 'lighter' 貼上去。 */
-const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvasElement => {
-  const R = N / 2, c = rgb(color);
+/** 芒（含細芒、光條）換算成像素座標：R＝框的一半（像素） */
+const buildRays = (spec: StarBurstSpec, R: number): Ray[] => {
   const rays: Ray[] = [];
   /* 芒的剖面：高斯，σ 從根部往尖端收細。太細的芒 σ 至少留 0.55px —— 再細就一定鋸齒，
      亮度照比例調低，看起來一樣細但邊緣是柔的。 */
@@ -98,6 +97,39 @@ const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvas
     }
   }
   for (const s of spec.streaks || []) { addRay(s.a, s.len, s.w * 1.25, s.alpha); addRay(s.a + 180, s.len, s.w * 1.25, s.alpha); }
+  return rays;
+};
+
+/** 這一點 (x,y)（以中心為原點的像素座標）所有芒加起來的亮度 */
+const raysAt = (rays: Ray[], x: number, y: number): number => {
+  let sum = 0;
+  for (let i = 0; i < rays.length; i++) {
+    const ry = rays[i];
+    const along = x * ry.ux + y * ry.uy;
+    if (along > ry.L || along < -ry.sig * 14) continue;
+    /* 根部是圓頭：中心後面那一段用「到中心的距離」算，平滑淡掉。
+       以前在根部後面直接切一刀，寬的芒（柔光十字、光條）兩側柔光散得開，
+       切口就成了一條直直的硬邊，中心附近看起來像色塊。 */
+    const side = -x * ry.uy + y * ry.ux;
+    const perp = along >= 0 ? Math.abs(side) : Math.sqrt(side * side + along * along);
+    const tp = Math.max(0, 1 - Math.max(0, along) / ry.L);           // 1＝根部、0＝尖端
+    const s = ry.sig * (.35 + .65 * tp);
+    if (perp > s * 14) continue;
+    const q = perp / s;
+    const lat = Math.exp(-.5 * q * q) + .28 * Math.exp(-.5 * (q / 3.2) * (q / 3.2));
+    let fall = Math.pow(tp, 1.6) * (1 - .25 * (1 - tp));
+    // 斷層：在芒的某一段平滑地淡下去再亮回來
+    if (ry.gd > 0) { const u = (1 - tp - ry.gp) / ry.gw; fall *= 1 - ry.gd * Math.exp(-u * u); }
+    const v = ry.a * fall * lat;
+    sum += v;
+  }
+  return sum;
+};
+
+/** 把一種星芒算成 N×N 的圖（N＝框的邊長，實際像素）。回傳的是黑底不透明的光，用 'lighter' 貼上去。 */
+const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvasElement => {
+  const R = N / 2, c = rgb(color);
+  const rays = buildRays(spec, R);
   const rings = (spec.rings || []).map(r => ({ r: r.r * R, w: Math.max(.8, r.w * R), a: r.alpha }));
   const hasGlow = !!(spec.core || spec.glow);
   const core = Math.max(.6, (spec.core ?? .05) * R), G = (spec.glow ?? .22) * R, GA = spec.glowAlpha ?? 1;
@@ -123,26 +155,8 @@ const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvas
     for (let px = 0; px < H; px++) {
       const x = px + .5 - R;
       let lr = 0, lg = 0, lb = 0, white = 0;
-      for (let i = 0; i < rays.length; i++) {
-        const ry = rays[i];
-        const along = x * ry.ux + y * ry.uy;
-        if (along > ry.L || along < -ry.sig * 14) continue;
-        /* 根部是圓頭：中心後面那一段用「到中心的距離」算，平滑淡掉。
-           以前在根部後面直接切一刀，寬的芒（柔光十字、光條）兩側柔光散得開，
-           切口就成了一條直直的硬邊，中心附近看起來像色塊。 */
-        const side = -x * ry.uy + y * ry.ux;
-        const perp = along >= 0 ? Math.abs(side) : Math.sqrt(side * side + along * along);
-        const tp = Math.max(0, 1 - Math.max(0, along) / ry.L);           // 1＝根部、0＝尖端
-        const s = ry.sig * (.35 + .65 * tp);
-        if (perp > s * 14) continue;
-        const q = perp / s;
-        const lat = Math.exp(-.5 * q * q) + .28 * Math.exp(-.5 * (q / 3.2) * (q / 3.2));
-        let fall = Math.pow(tp, 1.6) * (1 - .25 * (1 - tp));
-        // 斷層：在芒的某一段平滑地淡下去再亮回來
-        if (ry.gd > 0) { const u = (1 - tp - ry.gp) / ry.gw; fall *= 1 - ry.gd * Math.exp(-u * u); }
-        const v = ry.a * fall * lat;
-        lr += v * c[0]; lg += v * c[1]; lb += v * c[2];
-      }
+      const rv = raysAt(rays, x, y);
+      lr += rv * c[0]; lg += rv * c[1]; lb += rv * c[2];
       if (rings.length || hasGlow) {
         const r = Math.sqrt(x * x + y * y);
         for (const rg of rings) {
@@ -305,18 +319,87 @@ export const fitStarBurst = (spec: StarBurstSpec): StarBurstSpec => {
   return Math.abs(k - 1) < 1e-3 ? spec : scaleSpec(spec, k);
 };
 
-/** App 用的遮罩（畫布，rgb 0、亮度當透明度）：先撐到一樣大再畫。
-   glow：App 裡「中心發光」調過的柔光範圍（跟排序工具的「柔光範圍」同一個數，0～80）。
-   撐大的倍數一律照原本那顆量 —— 調中心發光時星芒本身的大小不會跟著跳。 */
-export const starBurstMaskCanvas = (base: StarBurstSpec, N = 640, glow?: number): HTMLCanvasElement => {
-  const k = fitScale(base);
-  const spec = scaleSpec(glow === undefined ? base : { ...base, glow: glow / 100 }, k);
-  const out = renderSprite(spec, N, '#ffffff');
-  const g = out.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D;
-  const img = g.getImageData(0, 0, N, N), d = img.data;
-  for (let i = 0; i < d.length; i += 4) { const a = Math.max(d[i], d[i + 1], d[i + 2]); d[i] = d[i + 1] = d[i + 2] = 0; d[i + 3] = a; }
-  g.putImageData(img, 0, 0);
-  return out;
+/** App 裡星芒圖的四周多留這麼多（框的倍數）：芒尖、柔光散到框外也不會被切掉 */
+export const GLINT_PAD = 1.4;
+
+/* App 用的星芒遮罩分兩步：
+   ① 芒與光環（調「發光」時不會變的部分）算一次就存起來（只存左上四分之一，其餘鏡像）；
+   ② 每次「發光」變了，只重算柔光、光核與壓高光這一步 —— 一個像素只要幾個加減乘除，
+      拉滑桿時每一格都跟得上，不必整顆星芒從頭算。 */
+type GlintField = { spec: StarBurstSpec; N: number; M: number; F: Float32Array };
+const fieldCache = new Map<string, GlintField>();
+const glintField = (base: StarBurstSpec, N: number): GlintField => {
+  const key = base.id + '|' + N;
+  const hit = fieldCache.get(key);
+  if (hit) return hit;
+  const spec = scaleSpec(base, fitScale(base));
+  const R = N / 2, M = Math.ceil(N * GLINT_PAD / 2) * 2, H = M / 2;
+  const rays = buildRays(spec, R);
+  const rings = (spec.rings || []).map(r => ({ r: r.r * R, w: Math.max(.8, r.w * R), a: r.alpha }));
+  const F = new Float32Array(H * H);
+  for (let py = 0; py < H; py++) {
+    const y = py + .5 - H;
+    for (let px = 0; px < H; px++) {
+      const x = px + .5 - H;
+      let v = raysAt(rays, x, y);
+      if (rings.length) {
+        const r = Math.sqrt(x * x + y * y);
+        for (const rg of rings) {
+          const dd = (r - rg.r) / rg.w;
+          if (dd <= -3.2 || dd >= 3.2) continue;
+          const win = Math.cos((Math.abs(dd) / 3.2) * Math.PI / 2) ** 2;
+          v += rg.a * win * (Math.exp(-1.2 * dd * dd) * .8 + Math.exp(-.3 * dd * dd) * .25);
+        }
+      }
+      F[py * H + px] = v;
+    }
+  }
+  const f = { spec, N, M, F };
+  fieldCache.set(key, f);
+  return f;
+};
+
+/** App 裡星芒遮罩的框邊長（像素） */
+export const GLINT_N = 640;
+/** 先把這顆星芒「不會變的部分」算好（閒置時呼叫）：點了新增時就只剩最後一步，馬上出現 */
+export const warmGlint = (spec: StarBurstSpec) => { if (typeof document !== 'undefined') glintField(spec, GLINT_N); };
+
+/** App 用的遮罩（畫布，rgb 0、亮度當透明度）。框是中間的 N×N，四周多留 GLINT_PAD 倍。
+   glow：App 裡「發光」調過的柔光範圍（跟排序工具的「柔光範圍」同一個數，0～80）；沒給＝星芒原本的。
+   撐大的倍數一律照原本那顆量 —— 調發光時星芒本身的大小不會跟著跳。 */
+export const glintMaskCanvas = (base: StarBurstSpec, N = GLINT_N, glow?: number): HTMLCanvasElement => {
+  const { spec, M, F } = glintField(base, N);
+  const R = N / 2, H = M / 2, k = fitScale(base);
+  const G = (glow === undefined ? (spec.glow ?? .22) : (glow / 100) * k) * R;
+  const hasGlow = !!(spec.core || G > 0);
+  const core = Math.max(.6, (spec.core ?? .05) * R), GA = spec.glowAlpha ?? 1;
+  const GP = 1 + 7 * Math.max(0, Math.min(1, spec.glowConc ?? .2));
+  const out = new ImageData(M, M), d = out.data;
+  let seed = 12345;
+  const tone = (v: number) => v < .5 ? v : .5 + .5 * (1 - Math.exp(-(v - .5) / .5));
+  for (let py = 0; py < H; py++) {
+    const y = py + .5 - H;
+    for (let px = 0; px < H; px++) {
+      let v = F[py * H + px];
+      if (hasGlow) {
+        const x = px + .5 - H, r = Math.sqrt(x * x + y * y);
+        if (r < G) v += GA * .5 * Math.pow(1 - r / G, GP);
+        const q = r / core;
+        if (q < 4) v += GA * Math.exp(-q * q * 1.1);
+      }
+      if (v <= 0) continue;
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      const a = Math.min(255, Math.floor(tone(v) * 255 + seed / 4294967296));
+      if (a <= 0) continue;
+      const qx = M - 1 - px, qy = M - 1 - py;
+      d[(py * M + px) * 4 + 3] = a; d[(py * M + qx) * 4 + 3] = a;
+      d[(qy * M + px) * 4 + 3] = a; d[(qy * M + qx) * 4 + 3] = a;
+    }
+  }
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = M;
+  cv.getContext('2d')!.putImageData(out, 0, 0);
+  return cv;
 };
 
 export const starBurstMaskURL = (spec0: StarBurstSpec, N = 640): string => {

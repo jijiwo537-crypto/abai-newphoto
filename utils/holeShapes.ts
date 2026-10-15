@@ -9,7 +9,7 @@ import { HEART_MAIN, HEART_ICON, traceUnitShape, hexStarPoints, traceRadial, rad
  * 這裡只做「畫」這件事：沒有 React、沒有任何工具自己的狀態。
  */
 import { SHAPE_IMAGES } from './shapeImages';
-import { STAR_BURSTS, starBurstMaskCanvas } from './starBursts';
+import { STAR_BURSTS, glintMaskCanvas, GLINT_PAD, GLINT_N } from './starBursts';
 import { isVectorShape, traceVectorShape } from './vectorShapes';
 
 export const getHoleNumber = (h: any) => {
@@ -73,27 +73,32 @@ export const GLYPH_BTN: Record<string, { size?: number; dx?: number; dy?: number
    所以選取框、命中判定、發光、匯出全部自動比照辦理。 */
 const holeImgCache = new Map<string, HTMLImageElement>();
 
-/* 星芒的「中心發光」：調過的那一顆用自己的鍵（例如 sb-six~g35），
-   第一次用到時直接畫成一張畫布（同步、不用等圖解碼，拉滑桿時不會閃一下空白）。
-   只留最近用過的幾張，不然一路拉滑桿會把記憶體吃光。 */
+/* 星芒：直接畫成畫布當圖片用（同步、不用等 PNG 解碼 —— 點了馬上就出現，拉「發光」也不會閃空白）。
+   原本那一顆一直留著；「發光」調過的那一顆用自己的鍵（例如 sb-six~g35），
+   只留最近用過的幾張，不然一路拉滑桿會把記憶體吃光。
+   畫布四周多留了 GLINT_PAD 倍（inkPad），芒尖、柔光散到框外也不會被切掉。 */
 const GLINT_SEP = '~g';
 export const glintBase = (t: string) => { const i = t.indexOf(GLINT_SEP); return i < 0 ? t : t.slice(0, i); };
-/** 這顆星芒「中心發光」調成 glow（0～80）時要用的鍵 */
+/** 這顆星芒「發光」調成 glow（0～80）時要用的鍵 */
 export const glintVariantKey = (hole: string, glow: number) =>
   `${hole}${GLINT_SEP}${Math.round(Math.max(0, Math.min(80, glow)) * 2) / 2}`;
-/** 星芒原本的中心發光（0～80），面板上的滑桿沒調過時就顯示這個 */
+/** 星芒原本的發光（0～80），面板上的滑桿沒調過時就顯示這個 */
 export const glintDefaultGlow = (hole: string) =>
   Math.round(((STAR_BURSTS.find(b => b.id === glintBase(hole))?.glow ?? .22) * 100) * 2) / 2;
-const GLINT_VARIANT_MAX = 16;
+const GLINT_VARIANT_MAX = 8;
+const glintBases = new Map<string, HTMLImageElement>();
 const glintVariants = new Map<string, HTMLImageElement>();
-const glintVariantImg = (t: string): HTMLImageElement | null => {
-  const hit = glintVariants.get(t);
-  if (hit) { glintVariants.delete(t); glintVariants.set(t, hit); return hit; }
+const glintImg = (t: string): HTMLImageElement | null => {
+  const variant = t.includes(GLINT_SEP);
+  const hit = (variant ? glintVariants : glintBases).get(t);
+  if (hit) { if (variant) { glintVariants.delete(t); glintVariants.set(t, hit); } return hit; }
   const spec = STAR_BURSTS.find(b => b.id === glintBase(t));
   if (!spec || typeof document === 'undefined') return null;
-  const cv: any = starBurstMaskCanvas(spec, 640, Number(t.slice(t.indexOf(GLINT_SEP) + GLINT_SEP.length)));
-  // 畫布當圖片用：drawImage 一樣吃，其他地方看的是 complete / naturalWidth
-  cv.complete = true; cv.naturalWidth = cv.width; cv.naturalHeight = cv.height;
+  const cv: any = glintMaskCanvas(spec, GLINT_N,
+    variant ? Number(t.slice(t.indexOf(GLINT_SEP) + GLINT_SEP.length)) : undefined);
+  // 畫布當圖片用：drawImage 一樣吃，其他地方看的是 complete / naturalWidth（＝框，不含四周留白）
+  cv.complete = true; cv.naturalWidth = cv.naturalHeight = GLINT_N; cv.inkPad = cv.width / GLINT_N;
+  if (!variant) { glintBases.set(t, cv); return cv; }
   glintVariants.set(t, cv);
   while (glintVariants.size > GLINT_VARIANT_MAX) {
     const old = glintVariants.keys().next().value as string;
@@ -104,7 +109,7 @@ const glintVariantImg = (t: string): HTMLImageElement | null => {
 };
 
 export const getHoleImg = (t: string): HTMLImageElement | null => {
-  if (t.includes(GLINT_SEP)) return glintVariantImg(t);
+  if (t.startsWith('sb-')) return glintImg(t);
   const src = SHAPE_IMAGES[t];
   if (!src) return null;
   let im = holeImgCache.get(t);
@@ -430,7 +435,9 @@ export const drawTextShape = (
        顏色下一步才由 source-in 決定，所以原圖是什麼顏色都無所謂。 */
     const im = getHoleImg(holeType);
     if (im && im.complete && im.naturalWidth) {
-      tempCtx.drawImage(im, -ink.w / 2, -ink.h / 2, ink.w, ink.h);
+      // 星芒的畫布四周有留白（inkPad），框還是中間那一塊
+      const ip = (im as any).inkPad || 1;
+      tempCtx.drawImage(im, -ink.w / 2 * ip, -ink.h / 2 * ip, ink.w * ip, ink.h * ip);
     }
   } else {
     tempCtx.fillText(str, o.ox, o.oy);
@@ -821,27 +828,8 @@ export const drawHoleShape = (
     const gly = holeGlyph(o.hole, o.text || '', o);
     /* 發光：drawTextShape 最後是一次 drawImage，所以直接開 canvas 的陰影，
        光就會沿著字（或去背圖）真正的輪廓散出去。 */
-    if (o.glow && o.hole.startsWith('sb-')) {
-      /* 星芒本身就是半透明的光：舊做法每一圈發光都把星芒本體再疊一次，
-         發光從 0 拉到 1 的瞬間星芒就被疊成三倍亮、整顆變粗變白，跳得很突兀。
-         改成只畫「光」：本體畫到畫布外面很遠的地方，用陰影位移把光拉回來；
-         光的濃度也跟著強度慢慢升上來（強度 0.6 以上才是滿的）。 */
-      const amt = blurs.length ? blurs[0] / Math.max(1e-6, Math.max(bw, bh) * 0.045) : 0;
-      const t = Math.min(1, amt / 0.6), ramp = t * t * (3 - 2 * t);
-      if (ramp > 0.001) {
-        ctx.save();
-        const m = ctx.getTransform();
-        const far = 20000 / Math.max(1e-6, Math.hypot(m.a, m.b));
-        ctx.shadowColor = gcol;
-        ctx.shadowOffsetX = far * m.a; ctx.shadowOffsetY = far * m.b;
-        ctx.globalAlpha *= ramp;
-        for (const r of blurs) {
-          ctx.shadowBlur = r;
-          drawTextShape(ctx, o.hole, gly, -far, 0, size, col, false, 0);
-        }
-        ctx.restore();
-      }
-    } else if (o.glow) {
+    /* 星芒的「發光」是星芒自己的柔光（glintGlow），不吃這種陰影式的發光 */
+    if (o.glow && !glint) {
       ctx.save();
       ctx.shadowColor = gcol;
       for (const r of blurs) {
@@ -952,12 +940,14 @@ export const holeOverflow = (
   const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
   const sw = Math.min(4, Math.max(0, o.strokeW || 0)) * unit;
   /* 發光是 canvas 的 shadowBlur：模糊半徑 r 大約散到 1.5r 才看不見 */
-  const glow = o.glow ? Math.max(0, ...blurs) * 1.5 : 0;
+  const glow = o.glow && !o.hole.startsWith('sb-') ? Math.max(0, ...blurs) * 1.5 : 0;
   // 中心到墨水外緣：字符／去背圖量墨水，路徑類的半徑就是 size/2
   let ix = size / 2, iy = size / 2;
   if (isTextHole(o.hole)) {
     const ink = glyphInk(o.hole, holeGlyph(o.hole, o.text || '', o), size);
     ix = ink.w / 2; iy = ink.h / 2;
+    // 星芒的芒尖、柔光會散到框外（見 GLINT_PAD）
+    if (o.hole.startsWith('sb-')) { ix *= GLINT_PAD; iy *= GLINT_PAD; }
   }
   // 描邊往外加寬一圈，發光再往外散
   const ex = ix + lw / 2 + sw + glow;

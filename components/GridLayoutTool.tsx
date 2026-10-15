@@ -800,6 +800,8 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
     const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
     return { x: (Math.min(...xs) + 1) / 2 * o.w, y: (Math.min(...ys) + 1) / 2 * o.h, w: (Math.max(...xs) - Math.min(...xs)) / 2 * o.w, h: (Math.max(...ys) - Math.min(...ys)) / 2 * o.h };
   }
+  // 星芒的芒尖、柔光是淡淡散開的，量墨水會把框撐得比看到的大；選取框就用它自己的框
+  if (o.kind === 'hole' && String(o.hole || '').startsWith('sb-')) return { x: 0, y: 0, w: o.w, h: o.h };
   const long = Math.max(o.w, o.h), base = (o.lineBase || long);
   const key = JSON.stringify([o.kind, o.hole, o.text, o.hole === 'random-num' ? o.id : '', o.miterLimit, !!o.filled, Math.round(o.w / o.h * 1e4), o.lineW ?? 6, Math.round(base / long * 1e4),
     Math.round((o.textureBaseW || o.w) / o.w * 1e3), Math.round((o.textureBaseH || o.h) / o.h * 1e3), o.strokeW || 0, o.innerSize, o.outlineWidth]);
@@ -2759,7 +2761,7 @@ export const ShapeEditorPanel: React.FC<{
             {hasDash && slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
           </div>}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
-          {!isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-1 w-full">
+          {!isBlurShape(layer.shape) && !isGlint && <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
               {slider('發光', shapeGlowToUi(layer.shapeGlow as any, outlineShape), 0, 100,
@@ -2772,9 +2774,10 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>}
-          {/* 星芒的「中心發光」：排序工具裡叫「柔光範圍」，同一個數（0～80） */}
+          {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
+              一般圖形那種陰影式的發光不給星芒用 */}
           {isGlint && <div className="px-2 order-1 w-full">
-            {slider('中心發光', Math.round(layer.shapeGlintGlow ?? glintDefaultGlow(layer.holeType || '')), 0, 80,
+            {slider('發光', Math.round(layer.shapeGlintGlow ?? glintDefaultGlow(layer.holeType || '')), 0, 80,
               v => onChange({ shapeGlintGlow: Math.round(v) }))}
           </div>}
           {!isDoubleContour && !isGridShape && !isGlint && !isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">

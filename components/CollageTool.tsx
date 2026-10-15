@@ -11800,7 +11800,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
-                          {!isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-1 w-full">
+                          {!isBlurShape(sel.kind) && !isGlint && <div className="flex items-center gap-3 px-2 order-1 w-full">
                             <div className="flex-1 min-w-0">
                               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
                               {/* 邊框類的上限是實心的六成（shapeGlowFromUi） */}
@@ -11814,9 +11814,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>}
-                          {/* 星芒的「中心發光」：排序工具裡叫「柔光範圍」，同一個數（0～80） */}
+                          {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
+                              一般圖形那種陰影式的發光不給星芒用 */}
                           {isGlint && <div className="px-2 order-1 w-full">
-                            {shapeSlider('中心發光', Math.round(sel.glintGlow ?? glintDefaultGlow(sel.hole)), 0, 80,
+                            {shapeSlider('發光', Math.round(sel.glintGlow ?? glintDefaultGlow(sel.hole)), 0, 80,
                               (v: number) => patch({ glintGlow: v }))}
                           </div>}
                           {!isDoubleContour && !isGrid && !isGlint && !isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
