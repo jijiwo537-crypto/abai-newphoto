@@ -3857,7 +3857,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionThumbRef=useRef<HTMLCanvasElement>(null);
   const regionThumbPoint=useRef({x:0,y:0});
   const regionTouches=useRef(new Map<number,{x:number;y:number}>());
-  const regionEditTap=useRef<{x:number;y:number;away:boolean;moved:boolean;pickHoleId?:string|null;pickSide?:'image'|'mask'|null}|null>(null);
+  const regionEditTap=useRef<{x:number;y:number;away:boolean;moved:boolean;pickHoleId?:string|null;pickSide?:'image'|'mask'|null;pickObjId?:string|null}|null>(null);
   const regionTap=useRef<{id:number;index:number|null;x:number;y:number;moved:boolean}|null>(null);
   const emptyCellTap=useRef<{id:number;index:number;x:number;y:number;moved:boolean}|null>(null);
   const regionScenePinch=useRef(false);
@@ -3988,6 +3988,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(g){const thumb=swapThumb(regionSwapPhoto!,img,size);g.drawImage(thumb,0,0,size,size);}
     const p=regionThumbPoint.current;c.style.transform=`translate3d(${p.x}px,${p.y}px,0) translate(-50%,-50%)`;
   },[regionSwapPhoto]);
+  /** 畫布座標 (x,y) 底下最上面的那個物件。wantBelow：只找「圖案之下」的（true）或「之上」的（false）。
+      跟著動態的位移／縮放／旋轉一起算，跟畫面上看到的位置一致。 */
+  const objectAt=(x:number,y:number,wantBelow:boolean):any=>{
+    const list=objectsRef.current;
+    for(let i=list.length-1;i>=0;i--){
+      const o=list[i];
+      if(!!o.below!==wantBelow)continue;
+      const f:any=animRef.current?.obj(o,i);
+      if(f&&(f.k<=.002||f.a<=.004))continue;
+      const kx=Math.max(.002,Math.abs((f?.k??1)*(f?.fx??1))),ky=Math.max(.002,Math.abs(f?.k??1));
+      const cxo=o.x+o.w/2+(f?.dx??0)*o.w,cyo=o.y+o.h/2+(f?.dy??0)*o.h;
+      const rad=-((o.rot||0)+(f?.rot??0))*Math.PI/180,dx0=x-cxo,dy0=y-cyo;
+      const lx=(dx0*Math.cos(rad)-dy0*Math.sin(rad))/kx,ly=(dx0*Math.sin(rad)+dy0*Math.cos(rad))/ky;
+      if(Math.abs(lx)<=o.w/2&&Math.abs(ly)<=o.h/2)return o;
+    }
+    return null;
+  };
   const regionPointerDown=(e:React.PointerEvent)=>{
     if(motionLockRef.current||brushMode!=='off'||(e.target as Element).closest('button,input,.no-pointer-events'))return;
     // A second finger turns a pending empty-cell tap into a gesture.
@@ -4018,12 +4035,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 選中某一格照片時，輕點到圖案（圖片上的或遮罩上的都算）要能換成選中那顆圖案。
            拖動仍然是在調這張照片，所以只先記下來，放開時沒移動才換。 */
         let pickHoleId:string|null=null,pickSide:'image'|'mask'|null=null;
-        if(source?.kind!=='region'||source.index!==index){
+        /* 輕點到上面的物件（不管在不在這一格上）就換成選中那個物件 */
+        const aboveObj=objectAt(p.x,p.y,false);
+        if(!aboveObj&&(source?.kind!=='region'||source.index!==index)){
           const o=p.off,inImg=p.x>=o.ix&&p.x<=o.ix+o.iw&&p.y>=o.iy&&p.y<=o.iy+o.ih;
           const side:'image'|'mask'=layout===AROUND||!inImg?'mask':'image';
           for(let i=holesRef.current.length-1;i>=0;i--){const h=holesRef.current[i];if(checkHitHole(p.x,p.y,h,imageState?.globalScale||1,o,side)){pickHoleId=h.id;pickSide=side;break;}}
         }
-        regionEditTap.current={x:e.clientX,y:e.clientY,away:source?.kind!=='region'||source.index!==index,moved:false,pickHoleId,pickSide};
+        const pickObjId=aboveObj?.id??(!pickHoleId&&(source?.kind!=='region'||source.index!==index)?objectAt(p.x,p.y,true)?.id:null)??null;
+        regionEditTap.current={x:e.clientX,y:e.clientY,away:source?.kind!=='region'||source.index!==index,moved:false,pickHoleId,pickSide,pickObjId};
         setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);
       }else if(regionEditTap.current)regionEditTap.current.moved=true;
       regionTouches.current.set(e.pointerId,{x:p.x,y:p.y});resetRegionGesture();
@@ -4145,7 +4165,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(owned){e.stopPropagation();e.preventDefault();regionTouches.current.delete(e.pointerId);resetRegionGesture();
       if(!regionTouches.current.size){
         finishRegionEdit();
-        if(e.type!=='pointercancel'&&regionEditTap.current?.away&&!regionEditTap.current.moved){
+        const tapObj=regionEditTap.current;
+        if(e.type!=='pointercancel'&&tapObj&&!tapObj.moved&&tapObj.pickObjId){
+          // 點到物件：換成選中那個物件
+          selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);
+          selectedObjRef.current=tapObj.pickObjId;setSelectedTarget(null);setSelectedObj(tapObj.pickObjId);
+        }else if(e.type!=='pointercancel'&&regionEditTap.current?.away&&!regionEditTap.current.moved){
           selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);
           // 點到的是圖案：換成選中那顆圖案
           const pk=regionEditTap.current.pickHoleId;
@@ -4282,9 +4307,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         baseDragRef.current={startX:x,startY:y,x:t.x,y:t.y,t,moved:false,mask};
         /* 底圖選中時，拖動一律是在移底圖；但「沒移動的輕點」如果落在圖案上，
            就改成選中那顆圖案（以前會被底圖吃掉，圖案永遠點不到）。 */
-        let pickHole:any=null;
-        if(activePointers.current.size===1)for(let i=holesRef.current.length-1;i>=0;i--){const h=holesRef.current[i];if(hitCurrentHole(h,clickedSide)){pickHole=h;break;}}
-        interactionRef.current={type:'base_drag',isClick:true,hitItself:mask?clickedSide==='mask':clickedSide==='image',pickHoleId:pickHole?.id,pickSide:clickedSide};
+        /* 物件也一樣：輕點到上面的物件就換成選中那個物件（以前選中底圖時物件永遠點不到）。
+           順序照真正的疊放：圖案之上的物件 → 圖案 → 圖案之下的物件。 */
+        let pickHole:any=null,pickObj:any=null;
+        if(activePointers.current.size===1){
+          pickObj=objectAt(x,y,false);
+          if(!pickObj)for(let i=holesRef.current.length-1;i>=0;i--){const h=holesRef.current[i];if(hitCurrentHole(h,clickedSide)){pickHole=h;break;}}
+          if(!pickObj&&!pickHole)pickObj=objectAt(x,y,true);
+        }
+        interactionRef.current={type:'base_drag',isClick:true,hitItself:mask?clickedSide==='mask':clickedSide==='image',pickHoleId:pickHole?.id,pickSide:clickedSide,pickObjId:pickObj?.id};
         return;
       }
 
@@ -4297,24 +4328,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            ③ 都沒有，才找在圖案之下的物件 */
       if (brushMode === 'off') {
         const list = objectsRef.current;
-        const hitObj = (wantBelow: boolean) => {
-          for (let i = list.length - 1; i >= 0; i--) {
-            const o = list[i];
-            if (!!o.below !== wantBelow) continue;
-            const f: any = animRef.current?.obj(o, i);
-            if (f && (f.k <= .002 || f.a <= .004)) continue;
-            const kx = Math.max(.002, Math.abs((f?.k ?? 1) * (f?.fx ?? 1)));
-            const ky = Math.max(.002, Math.abs(f?.k ?? 1));
-            const cxo = o.x + o.w / 2 + (f?.dx ?? 0) * o.w;
-            const cyo = o.y + o.h / 2 + (f?.dy ?? 0) * o.h;
-            const rad = -((o.rot || 0) + (f?.rot ?? 0)) * Math.PI / 180;
-            const dx0 = x - cxo, dy0 = y - cyo;
-            const lx = (dx0 * Math.cos(rad) - dy0 * Math.sin(rad)) / kx;
-            const ly = (dx0 * Math.sin(rad) + dy0 * Math.cos(rad)) / ky;
-            if (Math.abs(lx) <= o.w / 2 && Math.abs(ly) <= o.h / 2) return o;
-          }
-          return null;
-        };
+        const hitObj = (wantBelow: boolean) => objectAt(x, y, wantBelow);
         const takeObj = (o: any) => {
           e.stopPropagation();
           /* 圖案已選中時，整個畫布都是它的拖曳區。
@@ -5360,7 +5374,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         setSelectedObj(null); setSelectedTarget(null); setBaseSelected(false); setMaskSelected(true);
       }
       if (intr.type === 'deselect_base' && intr.isClick) { setBaseSelected(false); setMaskSelected(false); }
-      if (intr.type === 'base_drag' && intr.isClick && intr.pickHoleId) {
+      if (intr.type === 'base_drag' && intr.isClick && intr.pickObjId) {
+        // 選中底圖時輕點到物件：換成選中那個物件
+        baseSelectedRef.current = false; maskSelectedRef.current = false; selectedObjRef.current = intr.pickObjId;
+        setBaseSelected(false); setMaskSelected(false); setSelectedTarget(null);
+        setSelectedObj(intr.pickObjId);
+      } else if (intr.type === 'base_drag' && intr.isClick && intr.pickHoleId) {
         // 選中底圖時輕點到圖案：換成選中那顆圖案
         setBaseSelected(false); setMaskSelected(false); setSelectedObj(null);
         if (intr.pickSide) setSelectedPatternSide(intr.pickSide);
