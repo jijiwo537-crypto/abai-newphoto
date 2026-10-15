@@ -6,7 +6,7 @@ export function idleDefaults(kind: string, target: { symbol?: boolean; text?: bo
   if (kind === 'glint-breathe' || kind === 'glint-rays') return { amp: 100, speed: glintSpeedFromUi(GLINT_SPEED_UI_DEFAULT) };
   // 星芒的縮放I：幅度拉滿，速度 70（＝1.56）
   if (kind === 'breathe' && target.glint) return { amp: 100, speed: glintZoomSpeedFromUi(70) };
-  // 星芒的閃爍：跟發光的閃爍一樣（速度 0.84 ＝ 面板上的 20）
+  // 星芒的閃爍：跟發光的閃爍一樣（速度 0.84 ＝ 面板上的 0）
   if (kind === 'glint-blink') return { amp: 100, speed: .84 };
   if (kind === 'image-breathe' && target.image) return { amp: 100, speed: (70 + 70 * 1.8) / 100 };
   // 波浪：圖形用 0.2～2.0 的刻度（90＝1.82），文字、圖片用 1.0～2.5 的刻度（50＝1.75）
@@ -33,9 +33,9 @@ export const GLINT_SPEED_UI_DEFAULT = 80;
 export const glintZoomSpeedToUi = (speed: number) => Math.round(clampUi((speed * 100 - 100) / .8));
 export const glintZoomSpeedFromUi = (ui: number) => (100 + clampUi(ui) * .8) / 100;
 
-/** 發光同款的閃爍速度：0.2～3.4（跟發光面板同一條刻度） */
-export const blinkSpeedToUi = (speed: number) => Math.round(clampUi((speed * 100 - 20) / 3.2));
-export const blinkSpeedFromUi = (ui: number) => (20 + clampUi(ui) * 3.2) / 100;
+/** 星芒閃爍的速度：0.84～4.04（＝發光刻度的 20～120），面板顯示 0～100；預設 0.84 剛好是 0 */
+export const blinkSpeedToUi = (speed: number) => Math.round(clampUi((speed * 100 - 84) / 3.2));
+export const blinkSpeedFromUi = (ui: number) => (84 + clampUi(ui) * 3.2) / 100;
 
 /** 起始（延遲）：0～3 秒 */
 export const delayToUi = (delay: number) => Math.round(clampUi(delay / .03));

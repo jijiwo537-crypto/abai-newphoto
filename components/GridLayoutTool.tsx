@@ -62,7 +62,9 @@ import {
 import { SHAPE_IMAGES, ICON_IMAGES } from '../utils/shapeImages';
 import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
-import { isVectorShape } from '../utils/vectorShapes';
+import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
+import { STAR_BURSTS } from '../utils/starBursts';
+import { isMistFrame, paintMistFrame, MIST_FRAME_KIND } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
@@ -916,6 +918,8 @@ export const shapePathD = (
   ringReveal = 1,
 ): string => {
   if(kind.startsWith('mask-'))kind=kind.includes('circle')||kind.includes('feather')?'circle':'square';
+  // 霧白邊框的「形狀」就是它的框（選取、點選都照方形）
+  if (isMistFrame(kind)) kind = 'square';
   if (kind.startsWith('blur-')) return blurShapeBaseD(kind, w, h, shapePathD);
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
@@ -1326,6 +1330,7 @@ const STRETCH_OUTLINE_KINDS = new Set([
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if(isBackdropMask(shape))return true;
+  if (isMistFrame(shape)) return true;
   if (!shape || shape === 'line') return false;
   if (shape === 'wave' || shape === 'lightning-wave' || GRID_SHAPE_KINDS.has(shape)) return true;
   if (shape === 'hole') return holeCanStretch(holeType, filled);
@@ -1424,6 +1429,23 @@ export const shapeGlowFromUi = (v: number, outline: boolean) => outline ? Math.m
 /** 邊框類的紋理沒有條紋（懸空在框裡面，見 paintTextureInsideOutline） */
 export const shapeTexOptions = (kind?: string, filled?: boolean) =>
   isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe') : TEX_OPTIONS;
+/** 不給調紋理的圖形（圖形選單上的 id，例如 'star-f'、'hole-love'）。排序工具的「紋理」頁可以挑，複製給 Claude 改這裡 */
+export const NO_TEXTURE_SHAPE_IDS: string[] = [];
+const texKey = (kind?: string, filled?: boolean, hole?: string) =>
+  `${kind || ''}|${filled === false ? 0 : 1}|${kind === 'hole' ? hole || '' : ''}`;
+let noTexKeys: Set<string> | null = null;
+/** 這個圖形是不是被設成「不給調紋理」 */
+export const shapeTexDisabled = (kind?: string, filled?: boolean, hole?: string) => {
+  if (!NO_TEXTURE_SHAPE_IDS.length) return false;
+  if (!noTexKeys) noTexKeys = new Set(shapePickerSections().flatMap(([, items]) => items as any[])
+    .filter(it => NO_TEXTURE_SHAPE_IDS.includes(it.id)).map(it => texKey(it.kind, it.filled, it.hole)));
+  return noTexKeys.has(texKey(kind, filled, hole));
+};
+/** 面板上會不會出現「紋理」那一格（不算 NO_TEXTURE_SHAPE_IDS）—— 跟兩個工具的圖形面板同一組條件 */
+export const shapeTexAvailable = (kind?: string, filled?: boolean, hole?: string) =>
+  !SPECIAL_LINE_KINDS.has(kind || '') && !GRID_SHAPE_KINDS.has(kind || '') && !isBlurShape(kind)
+  && !(kind === 'hole' && String(hole || '').startsWith('sb-')) && !isBackdropMask(kind || '') && !isMistFrame(kind)
+  && shapeTexOptions(kind, filled === false ? false : !!filled).length > 0;
 /** 選中框（四角實心小方塊）不給虛線 */
 export const shapeHasNoDash = (kind?: string) => kind === 'track-select' || kind === 'track-select8';
 /** 「箭身長度」滑桿。跟四邊擠壓是分開的兩件事：
@@ -1450,11 +1472,14 @@ export const arrowResize = (w: number, h: number, shaftUi: number, kind?: string
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number; glyphRatio?: number };
 /** 「新增圖形」選單的五個區塊。創意拼圖與跨頁拼圖都用這一個，順序寫在 utils/pickerOrder.ts。 */
+/** 新分類「邊框」：霧白邊框（亮角那種霧，但四個邊也有） */
+export const MIST_FRAME_ITEM: ShapeItem = { id: MIST_FRAME_KIND, kind: MIST_FRAME_KIND, filled: true, label: '霧白邊框' } as ShapeItem;
 export const shapePickerSections = () => {
   const A = ADD_SHAPE_ITEMS, plain = (i: ShapeItem) => !GRID_SHAPE_KINDS.has(i.kind) && !SPECIAL_LINE_KINDS.has(i.kind);
   const pools: Record<ShapeSection, any[]> = {
     solid: [...A.filter(i => i.filled && plain(i)), HOLE_ITEM_CROSS, ...HOLE_ITEMS_EXTRA],
     outline: [...A.filter(i => !i.filled && plain(i)), HOLE_ITEM_CROSS_O],
+    frame: [MIST_FRAME_ITEM],
     burst: [...STAR_BURST_ITEMS],
     line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind)),
     grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
@@ -1822,6 +1847,19 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
       </>}
     </g><path d={maskGeometry(item.kind)==='circle'?'M22 12A10 10 0 1 1 2 12A10 10 0 1 1 22 12':'M2 2H22V22H2Z'} fill="none" stroke="currentColor" strokeWidth=".8" opacity={item.kind==='mask-frost-feather'?.4:1}/>
   </svg>;
+  if (isMistFrame(item.kind)) return (
+    // 霧白邊框：四邊、四角往外越來越白，中間空的
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <defs>
+        <filter id={`mist-${maskId}`} x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.6" /></filter>
+        <clipPath id={`mistc-${maskId}`}><rect x="2" y="2" width="20" height="20" /></clipPath>
+      </defs>
+      <g clipPath={`url(#mistc-${maskId})`}>
+        <rect x="2" y="2" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="7" filter={`url(#mist-${maskId})`} />
+      </g>
+      <rect x="2" y="2" width="20" height="20" fill="none" stroke="currentColor" strokeWidth=".6" opacity=".35" />
+    </svg>
+  );
   const isLine = item.kind === 'line';
   const isGridGlyph = GRID_SHAPE_KINDS.has(item.kind);
   /* viewBox 與圖案的框一樣大 —— 每一顆圖案的長邊都剛好等於 size（預設 20px），
@@ -2081,6 +2119,19 @@ export const warmGlyphIconsWhenIdle = () => {
   void (async () => {
     await new Promise(r => setTimeout(r, 1500));
     for (const s of Object.keys(GLYPH_HOLES)) if (s.startsWith('music-')) { await awaitPhotoIdle(); centeredGlyphIcon(s); }
+    /* 第一次打開「新增圖形／新增符號」會卡一下：按鈕上的星芒小圖要逐像素畫、
+       向量圖案的小圖要先量外框，全部擠在點下去的那一格。趁閒置先一顆一顆做好。 */
+    for (const spec of STAR_BURSTS) { await awaitPhotoIdle(); void ICON_IMAGES[spec.id]; }
+    // 新增符號：每一顆按鈕都要先量字寬；字型好了之後一批一批先量進快取
+    await symbolFontReady;
+    for (let i = 0; i < SYMBOLS.length; i += 40) {
+      await awaitPhotoIdle();
+      for (const sym of SYMBOLS.slice(i, i + 40)) measureSymbolAdvance(symbolTextPresentation(sym), SYMBOL_FONT, 15);
+    }
+    for (const s of new Set([...Object.keys(VECTOR_SHAPES), ...PATH_PATTERN_ICONS])) {
+      await awaitPhotoIdle();
+      try { patternPathBounds(s, 100); pathPatternIconParts(s); } catch { /* 用到時再算 */ }
+    }
   })();
 };
 export const CenteredGlyphIcon: React.FC<{ s: string }> = ({ s }) => {
@@ -2699,6 +2750,8 @@ export const ShapeEditorPanel: React.FC<{
   const texChoices = shapeTexOptions(layer.shape, !!layer.shapeFilled);
   /* 星芒是一束光，描邊、紋理都不合理，不給調 */
   const isGlint = layer.shape === 'hole' && String(layer.holeType || '').startsWith('sb-');
+  // 霧白邊框也沒有描邊、紋理、發光
+  const noDecor = isGlint || isMistFrame(layer.shape);
   const canFeather = shapeSupportsFeather(layer.shape, layer.shapeFilled, layer.holeType);
   /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
   const [colorPage, setColorPage] = useState<
@@ -2761,7 +2814,7 @@ export const ShapeEditorPanel: React.FC<{
             {hasDash && slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
           </div>}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
-          {!isBlurShape(layer.shape) && !isGlint && <div className="flex items-center gap-3 px-2 order-1 w-full">
+          {!isBlurShape(layer.shape) && !noDecor && <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
               {slider('發光', shapeGlowToUi(layer.shapeGlow as any, outlineShape), 0, 100,
@@ -2780,7 +2833,7 @@ export const ShapeEditorPanel: React.FC<{
             {slider('發光', Math.round(layer.shapeGlintGlow ?? glintDefaultGlow(layer.holeType || '')), 0, 80,
               v => onChange({ shapeGlintGlow: Math.round(v) }))}
           </div>}
-          {!isDoubleContour && !isGridShape && !isGlint && !isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">
+          {!isDoubleContour && !isGridShape && !noDecor && !isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round(Math.min(8, layer.shapeStrokeW ?? 0) * 12.5), 0, 100,
                 v => onChange({ shapeStrokeW: v / 12.5 }))}
@@ -2802,7 +2855,7 @@ export const ShapeEditorPanel: React.FC<{
           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
               （跟「背景紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。
               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-          {!isLine && !isGlint && !isGridShape && !isBlurShape(layer.shape) && texChoices.length > 0 && (() => {
+          {!isLine && !noDecor && !isGridShape && !isBlurShape(layer.shape) && texChoices.length > 0 && !shapeTexDisabled(layer.shape, !!layer.shapeFilled, layer.holeType) && (() => {
             const tex0 = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
             const tex = texChoices.some(([id]) => id === tex0) ? tex0 : 'none';
             return (
@@ -5633,6 +5686,13 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
     ctx.restore();
     return;
   }
+      if (image.shape && isMistFrame(image.shape)) {
+        // 邊框・霧白：一張平滑的遮罩，沒有描邊、紋理、發光
+        ctx.translate(-drawW / 2, -drawH / 2);
+        paintMistFrame(ctx, drawW, drawH, image.color || SHAPE_DEFAULT_COLOR);
+        ctx.restore();
+        return;
+      }
       if (image.shape) {
         ctx.translate(-drawW / 2, -drawH / 2);
         const path = classicScenePath(image, motionFrame?.ringReveal ?? 1);
@@ -9564,8 +9624,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem) => {
     const rect = getClosestPageRect();
     const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
-    const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
-    const h = (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
+    // 邊框：一放進來就是整頁的框
+    const frame = isMistFrame(it.kind);
+    const w = frame ? Math.round(rect?.width ?? previewW) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+    const h = frame ? Math.round(rect?.height ?? previewH) : (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
     const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
     // 星芒是光：預設白色（其他圖形照原本的預設色）
     const initialColor = it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-') ? '#FFFFFF' : shapeDefaultColorFor(it.kind);
@@ -10604,6 +10666,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const wasMotionTabRef = useRef(false);
   useEffect(() => {
     const entering = activeTab === 'motion' && !wasMotionTabRef.current;
+    // 進入、離開動畫頁都把目前選中的東西放掉
+    if ((activeTab === 'motion') !== wasMotionTabRef.current) {
+      setSelectedFloatingId(null); setSelectedBrushId(null); setSelectedIndex(null); setSelectedLayoutId(null);
+    }
     if (entering) {
       motionClockRef.current = 0;
       setMotionTime(0);
@@ -14524,6 +14590,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         fw, fh, shapeGlowBlurs(fw, fh).map(r => r * glowAmount(fImg.shapeGlow as any)),
       );
       ctx.restore();
+      ctx.restore();
+      return;
+    }
+    if (isMistFrame(fImg.shape)) {
+      // 邊框・霧白：跟預覽同一張遮罩
+      paintMistFrame(ctx, fw, fh, fImg.color || SHAPE_DEFAULT_COLOR);
       ctx.restore();
       return;
     }

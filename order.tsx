@@ -6,7 +6,7 @@ import './styles.css';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { PatternIcon } from './components/PatternIcon';
-import { ShapeGlyph, HoleGlyph, shapePickerSections, shapeSupportsStretch } from './components/GridLayoutTool';
+import { ShapeGlyph, HoleGlyph, shapePickerSections, shapeSupportsStretch, shapeTexAvailable, NO_TEXTURE_SHAPE_IDS } from './components/GridLayoutTool';
 import { PATTERN_ORDER, SHAPE_SECTIONS, type ShapeSection } from './utils/pickerOrder';
 import { patternDefaultSize } from './utils/patternDefaults';
 import { CollageTool } from './components/CollageTool';
@@ -61,6 +61,13 @@ const sampleFile = (): Promise<File> => new Promise(resolve => {
 /** 「星芒」頁勾選想加進 App 的那幾種 */
 const STORE_BURST = 'abai-order-tool-starburst-v1';
 const loadBursts = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_BURST) || '[]'); return Array.isArray(v) ? v.filter((id: string) => STAR_BURSTS.some(b => b.id === id) || loadCustomBursts().some(c => c.id === id)) : []; } catch { return []; } };
+/** 「紋理」：跟 App 現在不一樣的那些圖形（本來有紋理 → 想拿掉；App 已經拿掉 → 想恢復），一樣存在這台裝置上 */
+const STORE_TEX = 'abai-order-tool-texture-v1';
+/** App 現在面板上有沒有「紋理」那一格 */
+const TEX_IN_APP = (it: any) => shapeTexAvailable(it.kind, it.filled, it.hole) && !NO_TEXTURE_SHAPE_IDS.includes(it.id);
+/** 這個圖形有沒有可能有紋理（App 拿掉的也算，才能選擇恢復） */
+const TEX_POSSIBLE = (it: any) => shapeTexAvailable(it.kind, it.filled, it.hole);
+const loadTex = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_TEX) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
 const loadStretch = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_STRETCH) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; } };
 
 type Group = { key: string; label: string; cols: number; items: any[] };
@@ -139,8 +146,22 @@ function OrderTool() {
   const [drag, setDrag] = useState<Drag | null>(null);
   const [toast, setToast] = useState('');
   /** 開著的時候，在「圖形」那一頁點一下圖形 → 加進圖案（再點一下取消） */
-  const [mode, setMode] = useState<'none' | 'add' | 'stretch' | 'delete'>('none');
-  const addMode = mode === 'add', stretchMode = mode === 'stretch', deleteMode = mode === 'delete';
+  const [mode, setMode] = useState<'none' | 'add' | 'stretch' | 'delete' | 'tex'>('none');
+  const addMode = mode === 'add', stretchMode = mode === 'stretch', deleteMode = mode === 'delete', texMode = mode === 'tex';
+  /** 「紋理」頁點過、要跟 App 現在相反的圖形 */
+  const [texIds, setTexIds] = useState<string[]>(() => {
+    const all = new Map(allShapeItems().map(it => [it.id, it]));
+    return loadTex().filter(id => all.has(id) && TEX_POSSIBLE(all.get(id)));
+  });
+  useEffect(() => { try { localStorage.setItem(STORE_TEX, JSON.stringify(texIds)); } catch {} }, [texIds]);
+  /** 照這台裝置上的勾選，這個圖形最後有沒有紋理 */
+  const texWanted = (it: any) => TEX_IN_APP(it) !== texIds.includes(it.id);
+  const toggleTex = (it: any) => {
+    if (!TEX_POSSIBLE(it)) { flash('這個圖形本來就不能調紋理'); return; }
+    const willHave = !texWanted(it);
+    setTexIds(ids => ids.includes(it.id) ? ids.filter(x => x !== it.id) : [...ids, it.id]);
+    flash(willHave ? '已勾選：恢復紋理' : '已勾選：不要紋理');
+  };
   /** 勾選「要刪掉」的圖形 */
   const [deleteIds, setDeleteIds] = useState<string[]>(() => {
     const all = new Set(allShapeItems().map(it => it.id));
@@ -233,8 +254,14 @@ function OrderTool() {
   };
 
   const text = () => {
-    const lines = ['【ABAI 排序 v1】'];
-    for (const g of groups) lines.push(`${g.label}${changed(g) ? '（有改）' : ''}`, g.items.map(i => i.id).join(', '));
+    const lines = ['【ABAI 排序 v1】（只列有改的部分）'];
+    // 只帶有改過順序的那幾區，沒動的不用每次都整串貼過去
+    for (const g of groups) if (changed(g)) lines.push(g.label, g.items.map(i => i.id).join(', '));
+    const items = new Map(allShapeItems().map(it => [it.id, it]));
+    const texOff = texIds.filter(id => items.has(id) && TEX_IN_APP(items.get(id)));
+    const texOn = texIds.filter(id => items.has(id) && !TEX_IN_APP(items.get(id)));
+    if (texOff.length) lines.push('要拿掉紋理的圖形（面板上不要有「紋理」）', texOff.join(', '));
+    if (texOn.length) lines.push('要恢復紋理的圖形', texOn.join(', '));
     const added = (groups.find(g => g.key === 'pattern')?.items || []).filter(i => i.fromShape);
     if (added.length) lines.push('要加到圖案的圖形（上面圖案順序裡 shape: 開頭的就是這些）', added.map(i => i.fromShape.id).join(', '));
     if (stretchIds.length) lines.push('要改成可以變形（四邊擠壓）的圖形', stretchIds.join(', '));
@@ -249,6 +276,7 @@ function OrderTool() {
     const delBursts = loadDeletedBursts();
     if (delBursts.length) lines.push('要刪除的星芒', STAR_BURSTS.filter(b => delBursts.includes(b.id)).map(b => `${b.name}（${b.id}）`).join(', '));
     if (sized.length) lines.push('圖案起始大小（創意拼圖的「大小」0~100）', sized.map(id => `${id}: ${sizes[id]}（原本 ${patternDefaultSize(id)}）`).join(', '));
+    if (lines.length === 1) lines.push('（目前沒有改任何東西）');
     return lines.join('\n');
   };
   const flash = (m: string) => { setToast(m); window.setTimeout(() => setToast(''), 1600); };
@@ -261,11 +289,11 @@ function OrderTool() {
       ta.remove();
     }
   };
-  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小、星芒的勾選、刪除和自訂也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setSizes({}); setBursts([]); try { localStorage.removeItem('abai-order-tool-starburst-deleted-v1'); localStorage.removeItem('abai-order-tool-starburst-custom-v1'); } catch {} window.dispatchEvent(new Event('abai-burst-reset')); } };
+  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小、星芒的勾選、刪除和自訂也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setTexIds([]); setSizes({}); setBursts([]); try { localStorage.removeItem('abai-order-tool-starburst-deleted-v1'); localStorage.removeItem('abai-order-tool-starburst-custom-v1'); } catch {} window.dispatchEvent(new Event('abai-burst-reset')); } };
 
   const shown = tab === 'size' || tab === 'burst' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
   const dragged = drag && groups.find(g => g.key === drag.group)?.items.find(i => i.id === drag.id);
-  const anyChanged = groups.some(changed) || stretchIds.length > 0 || deleteIds.length > 0 || Object.keys(sizes).length > 0 || bursts.length > 0;
+  const anyChanged = groups.some(changed) || texIds.length > 0 || stretchIds.length > 0 || deleteIds.length > 0 || Object.keys(sizes).length > 0 || bursts.length > 0;
   const sizeList = (groups.find(g => g.key === 'pattern')?.items || []).filter(i => !i.fromShape);
 
   /* 預覽時整頁就是一個真正的創意拼圖（跟 App 裡一樣全螢幕，選單、彈出層都照原本的方式疊） */
@@ -286,7 +314,7 @@ function OrderTool() {
             </div>
             <div className="flex gap-2">
               <button onClick={reset} className="h-9 px-3 rounded-full border border-white/15 text-[12px] text-white/70 active:scale-95">重設</button>
-              <button onClick={copy} className={`h-9 px-4 rounded-full text-[13px] font-bold active:scale-95 ${anyChanged ? 'bg-white text-black' : 'bg-white/15 text-white'}`}>複製順序</button>
+              <button onClick={copy} className={`h-9 px-4 rounded-full text-[13px] font-bold active:scale-95 ${anyChanged ? 'bg-white text-black' : 'bg-white/15 text-white'}`}>複製有改的</button>
             </div>
           </div>
           <div className="mt-3 grid grid-cols-4 gap-1 p-1 rounded-full bg-white/[0.06]">
@@ -306,9 +334,10 @@ function OrderTool() {
                 {addMode ? '點一下圖形就加到圖案，再點一下取消'
                   : stretchMode ? '點一下勾選「要改成可以變形」，再點一下取消'
                   : deleteMode ? '點一下勾選「要刪除」，再點一下取消'
-                  : '加到圖案、改成可變形、或刪除圖形'}
+                  : texMode ? '有「紋」的是現在可以調紋理的；點一下改成不要紋理，再點一下取消'
+                  : '加到圖案、改成可變形、刪除圖形、或拿掉紋理'}
               </div>
-              <div className="shrink-0 flex gap-1.5">
+              <div className="shrink-0 flex flex-wrap justify-end gap-1.5">
                 <button onClick={() => setMode(m => m === 'add' ? 'none' : 'add')}
                   className={`h-8 px-3 rounded-full text-[12px] font-bold active:scale-95 ${addMode ? 'bg-[#9fd3a8] text-black' : 'border border-white/20 text-white/80'}`}>
                   {addMode ? '完成' : '加到圖案'}
@@ -321,11 +350,23 @@ function OrderTool() {
                   className={`h-8 px-3 rounded-full text-[12px] font-bold active:scale-95 ${deleteMode ? 'bg-[#ff7a7a] text-black' : 'border border-white/20 text-white/80'}`}>
                   {deleteMode ? '完成' : '刪除'}
                 </button>
+                <button onClick={() => setMode(m => m === 'tex' ? 'none' : 'tex')}
+                  className={`h-8 px-3 rounded-full text-[12px] font-bold active:scale-95 ${texMode ? 'bg-[#c9a7ff] text-black' : 'border border-white/20 text-white/80'}`}>
+                  {texMode ? '完成' : '紋理'}
+                </button>
               </div>
             </div>
             {deleteMode && (
               <div className="mt-2 flex items-center gap-1 text-[10px] text-white/50">
                 <span className="px-1 rounded-[4px] bg-[#ff7a7a] text-black font-bold leading-[12px]">刪</span>你勾選要刪除的圖形（{deleteIds.length}）
+              </div>
+            )}
+            {texMode && (
+              <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-white/50">
+                <span className="flex items-center gap-1"><span className="px-1 rounded-[4px] bg-white/15 text-white/70 font-bold leading-[12px]">紋</span>現在可以調紋理</span>
+                <span className="flex items-center gap-1"><span className="px-1 rounded-[4px] bg-[#c9a7ff] text-black font-bold leading-[12px]">無紋</span>你勾選不要紋理</span>
+                <span className="flex items-center gap-1"><span className="px-1 rounded-[4px] bg-[#9fd3a8] text-black font-bold leading-[12px]">恢復</span>App 已拿掉、你勾選恢復</span>
+                <span>（暗掉的是本來就不能調紋理）</span>
               </div>
             )}
             {stretchMode && (
@@ -410,19 +451,25 @@ function OrderTool() {
                 const lifted = drag?.group === g.key && drag.id === it.id;
                 return (
                   <div key={it.id} data-cell={it.id} data-group={g.key}
-                    onPointerDown={e => { if (!((addMode || stretchMode || deleteMode) && g.key !== 'pattern')) onDown(e, g.key, it.id); }} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
-                    onClick={() => { if (g.key === 'pattern' || dragRef.current) return; if (addMode) toggleAsPattern(it); else if (stretchMode) toggleStretch(it); else if (deleteMode) toggleDelete(it); }}
+                    onPointerDown={e => { if (!((addMode || stretchMode || deleteMode || texMode) && g.key !== 'pattern')) onDown(e, g.key, it.id); }} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+                    onClick={() => { if (g.key === 'pattern' || dragRef.current) return; if (addMode) toggleAsPattern(it); else if (stretchMode) toggleStretch(it); else if (deleteMode) toggleDelete(it); else if (texMode) toggleTex(it); }}
                     onContextMenu={e => e.preventDefault()}
                     title={it.label || it.id}
-                    className={`relative h-12 rounded-[10px] border flex items-center justify-center text-white/85 transition-[opacity,border-color] duration-150 ${lifted ? 'opacity-25 border-dashed border-white/40' : g.key !== 'pattern' && deleteIds.includes(it.id) ? 'border-[#ff7a7a]/80 bg-[#ff7a7a]/10' : stretchMode && g.key !== 'pattern' ? (CAN_STRETCH(it) ? 'border-white/5 bg-white/[0.02] opacity-45' : stretchIds.includes(it.id) ? 'border-[#f2c46d]/80 bg-[#f2c46d]/10' : 'border-white/10 bg-white/5') : g.key !== 'pattern' && patternIds.has(ADD_PREFIX + it.id) ? 'border-[#9fd3a8]/70 bg-[#9fd3a8]/10' : 'border-white/10 bg-white/5'}`}
+                    className={`relative h-12 rounded-[10px] border flex items-center justify-center text-white/85 transition-[opacity,border-color] duration-150 ${lifted ? 'opacity-25 border-dashed border-white/40' : texMode && g.key !== 'pattern' ? (!TEX_POSSIBLE(it) ? 'border-white/5 bg-white/[0.02] opacity-35' : texIds.includes(it.id) ? 'border-[#c9a7ff]/80 bg-[#c9a7ff]/10' : 'border-white/10 bg-white/5') : g.key !== 'pattern' && deleteIds.includes(it.id) ? 'border-[#ff7a7a]/80 bg-[#ff7a7a]/10' : stretchMode && g.key !== 'pattern' ? (CAN_STRETCH(it) ? 'border-white/5 bg-white/[0.02] opacity-45' : stretchIds.includes(it.id) ? 'border-[#f2c46d]/80 bg-[#f2c46d]/10' : 'border-white/10 bg-white/5') : g.key !== 'pattern' && patternIds.has(ADD_PREFIX + it.id) ? 'border-[#9fd3a8]/70 bg-[#9fd3a8]/10' : 'border-white/10 bg-white/5'}`}
                     style={{ touchAction: drag ? 'none' : 'manipulation' }}>
                     <span className="pointer-events-none flex items-center justify-center"><Icon it={it} /></span>
                     <span className="pointer-events-none absolute left-1 top-0.5 text-[8px] text-white/30 tabular-nums">{i + 1}</span>
                     {NEW_IDS.has(it.id) && <span className="pointer-events-none absolute right-1 top-1 w-1.5 h-1.5 rounded-full bg-[#9fd3a8]" />}
                     {g.key !== 'pattern' && deleteIds.includes(it.id) && <span className="pointer-events-none absolute left-0.5 bottom-0.5 px-1 rounded-[4px] bg-[#ff7a7a] text-black text-[8px] font-bold leading-[12px]">刪</span>}
+                    {texMode && g.key !== 'pattern' && TEX_POSSIBLE(it) && (() => {
+                      const want = texWanted(it), flip = texIds.includes(it.id);
+                      const [txt, cls] = !flip ? (want ? ['紋', 'bg-white/15 text-white/70'] : ['已無', 'bg-white/10 text-white/45'])
+                        : want ? ['恢復', 'bg-[#9fd3a8] text-black'] : ['無紋', 'bg-[#c9a7ff] text-black'];
+                      return <span className={`pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] text-[8px] font-bold leading-[12px] ${cls}`}>{txt}</span>;
+                    })()}
                     {stretchMode && g.key !== 'pattern' && CAN_STRETCH(it) && <span className="pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] bg-white/15 text-white/70 text-[8px] font-bold leading-[12px]">已可</span>}
                     {stretchMode && g.key !== 'pattern' && stretchIds.includes(it.id) && <span className="pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] bg-[#f2c46d] text-black text-[8px] font-bold leading-[12px]">改</span>}
-                    {!stretchMode && g.key !== 'pattern' && patternIds.has(ADD_PREFIX + it.id) && <span className="pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] bg-[#9fd3a8] text-black text-[8px] font-bold leading-[12px]">圖案</span>}
+                    {!stretchMode && !texMode && g.key !== 'pattern' && patternIds.has(ADD_PREFIX + it.id) && <span className="pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] bg-[#9fd3a8] text-black text-[8px] font-bold leading-[12px]">圖案</span>}
                     {it.fromShape && <span className="pointer-events-none absolute right-0.5 bottom-0.5 px-1 rounded-[4px] bg-white/15 text-white/70 text-[8px] font-bold leading-[12px]">圖形</span>}
                   </div>
                 );

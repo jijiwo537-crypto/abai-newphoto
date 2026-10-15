@@ -12,6 +12,7 @@ import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
+import { isMistFrame, paintMistFrame } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
 import { hasActiveFx, type FxScene, type FxPlacement } from '../utils/glEffects';
@@ -46,7 +47,7 @@ import {
   isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter, imgShapePathIn,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, fillTrackSquares, TRACK_SQUARE_KINDS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, fillTrackSquares, TRACK_SQUARE_KINDS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeTexDisabled, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
   shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
@@ -7496,6 +7497,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }, bw, bh, shapeGlowBlurs(bw, bh).map(r => r * ga));
           ctx.setLineDash([]);
           ctx.restore();
+        } else if (isMistFrame(o.kind)) {
+          // 邊框・霧白：一張平滑的遮罩，沒有描邊、紋理、發光
+          paintMistFrame(ctx, bw, bh, col);
+          ctx.restore();
         } else {
         const shapeP = shapePathBox(
           o.kind, bw, bh,
@@ -9639,6 +9644,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     previousMotionTabRef.current = entering;
     motionLockRef.current = entering;
     if (!changed) return;
+    // 進入、離開動畫頁都把目前選中的東西放掉（不然面板跟畫面還停在上一頁選的那個）
+    selectedObjRef.current = null; baseSelectedRef.current = false; maskSelectedRef.current = false;
+    selectedRegionPhotoRef.current = null;
+    setSelectedObj(null); setSelectedTarget(null); setBaseSelected(false); setMaskSelected(false);
+    setSelectedRegionPhoto(null);
     // The FLIP transition must start with a complete scene, never a viewport tile.
     forceFullPreviewRef.current=true;
     if(canvasRef.current)renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);
@@ -11593,8 +11603,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const offs2 = getLayoutOffsets();
                   if (!offs2) return;
                   const short = Math.min(offs2.cw, offs2.ch);
-                  const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
-                  const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
+                  // 邊框：一放進來就是整張畫面的框
+                  const frame = isMistFrame(it.kind);
+                  const w = frame ? Math.round(offs2.cw) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+                  const h = frame ? Math.round(offs2.ch) : it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
                   const id = Math.random().toString(36).slice(2, 9);
                   const initialColor = creativeShapeColorFor(it.kind);
                   setObjects(prev => [...prev, {
@@ -11789,6 +11801,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const isDoubleContour = DOUBLE_CONTOUR_SHAPE_KINDS.has(sel.kind || '');
                   /* 星芒是一束光，描邊、紋理都不合理，不給調 */
                   const isGlint = sel.kind === 'hole' && String(sel.hole || '').startsWith('sb-');
+                  // 霧白邊框也沒有描邊、紋理、發光
+                  const noDecor = isGlint || isMistFrame(sel.kind);
                   /* 圖形調整：欄位與經典拼圖那顆 ShapeEditorPanel 一致。
                      圖層上下不放這裡 —— 選中時畫面上那排工具列本來就有。 */
                   return (
@@ -11819,7 +11833,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
-                          {!isBlurShape(sel.kind) && !isGlint && <div className="flex items-center gap-3 px-2 order-1 w-full">
+                          {!isBlurShape(sel.kind) && !noDecor && <div className="flex items-center gap-3 px-2 order-1 w-full">
                             <div className="flex-1 min-w-0">
                               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
                               {/* 邊框類的上限是實心的六成（shapeGlowFromUi） */}
@@ -11839,7 +11853,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             {shapeSlider('發光', Math.round(sel.glintGlow ?? glintDefaultGlow(sel.hole)), 0, 80,
                               (v: number) => patch({ glintGlow: v }))}
                           </div>}
-                          {!isDoubleContour && !isGrid && !isGlint && !isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
+                          {!isDoubleContour && !isGrid && !noDecor && !isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('描邊', Math.round(Math.min(8, sel.strokeW ?? 0) * 12.5), 0, 100,
                                 (v: number) => patch({ strokeW: v / 12.5 }))}
@@ -11857,7 +11871,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
                               （跟經典拼圖的「背景紋理」同一種排法）。顏色常駐。
                               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-                          {!isLine && !isGlint && !GRID_SHAPE_KINDS.has(sel.kind) && !isBlurShape(sel.kind) && texChoices.length > 0 && (() => {
+                          {!isLine && !noDecor && !GRID_SHAPE_KINDS.has(sel.kind) && !isBlurShape(sel.kind) && texChoices.length > 0 && !shapeTexDisabled(sel.kind, sel.filled === false ? false : !!sel.filled, sel.hole) && (() => {
                             const tex0 = texOf(sel);
                             const tex = texChoices.some(([id]) => id === tex0) ? tex0 : 'none';
                             return (
