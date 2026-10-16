@@ -14,7 +14,7 @@ import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpee
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault } from '../utils/frameShapes';
-import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi } from '../utils/mistFrame';
+import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
 import { hasActiveFx, type FxScene, type FxPlacement } from '../utils/glEffects';
@@ -80,7 +80,7 @@ import {
   getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio, glintDefaultGlow,
   isTextHole, holeStretch, paintTextureInsideOutline, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, fillShapePath, clipShapePieces, patternPathBounds,
   isClefTex, CLEF_TEX_DEFAULTS, clefSizeToUi, clefSizeFromUi, CLEF_STRIPE_MAX, CLEF_STRIPE_MIN, clefGapToUi, clefGapFromUi, clefStripeToUi, clefStripeFromUi,
-  drawHoleShape, paintDots, paintTex, texOf, glowAmount, glowToUi, glowFromUi,
+  drawHoleShape, paintDots, paintTex, SHAPE_TEX_COLOR, texOf, glowAmount, glowToUi, glowFromUi,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 const drawTextShape: typeof drawTextShapeRaw = (ctx,type,text,x,y,size,fill,out=false,angle=0) =>
@@ -11297,7 +11297,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 : colorPickerTarget === 'shapeInner'
                   ? ((objects.find(o => o.id === selectedObj)?.innerColor) || '#FFFFFF')
                 : colorPickerTarget === 'shapeDot'
-                  ? ((objects.find(o => o.id === selectedObj)?.dotColor) || '#FFFFFF')
+                  ? ((objects.find(o => o.id === selectedObj)?.dotColor) || SHAPE_TEX_COLOR)
                 : colorPickerTarget === 'shapeStripeA'
                   ? ((objects.find(o => o.id === selectedObj)?.stripeA)
                     || (objects.find(o => o.id === selectedObj)?.color) || SHAPE_DEFAULT_COLOR)
@@ -11922,14 +11922,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               (v: number) => patch({ frameRange: v } as any))}
                           </div>}
                           {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
-                            {shapeSlider('範圍', Math.round((sel as any).frameRange ?? MIST_RANGE_DEFAULT), 0, 100,
-                              (v: number) => patch({ frameRange: v } as any))}
+                            {shapeSlider('範圍', mistRangeToUi((sel as any).frameRange ?? MIST_RANGE_DEFAULT), 0, 100,
+                              (v: number) => patch({ frameRange: mistRangeFromUi(v) } as any))}
                             {shapeSlider('羽化', Math.round((sel as any).frameFeather ?? MIST_FEATHER_DEFAULT), 0, 100,
                               (v: number) => patch({ frameFeather: v } as any))}
                           </div>}
-                          {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full">
+                          {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('圓角', Math.round((sel as any).frameRound ?? MIST_ROUND_DEFAULT), 0, 100,
                               (v: number) => patch({ frameRound: v } as any))}
+                            {shapeSlider('透明度', Math.round(sel.opacity ?? 100), 0, 100,
+                              (v: number) => patch({ opacity: v }))}
                           </div>}
                           {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
                               一般圖形那種陰影式的發光不給星芒用 */}
@@ -11997,7 +11999,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                     onClick={() => setColorPickerTarget('shapeDot')}
                                     title="紋理顏色"
                                     className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                                    style={{ backgroundColor: sel.dotColor || '#FFFFFF' }}
+                                    style={{ backgroundColor: sel.dotColor || SHAPE_TEX_COLOR }}
                                   />
                                 )}
                               </div>
@@ -12033,7 +12035,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                                 {isClefTex(sel.hole)
                                   ? shapeSlider('大小', clefSizeToUi(sel.dotSize ?? CLEF_TEX_DEFAULTS.size), 0, 100, (v: number) => patch({ dotSize: clefSizeFromUi(v) }))
-                                  : shapeSlider('大小', sel.dotSize ?? (isFrameShape(sel.kind) ? MIST_TEX_SIZE_DEFAULT : 50), 0, 100, (v: number) => patch({ dotSize: v }))}
+                                  : isFrameShape(sel.kind)
+                                  ? shapeSlider('大小', mistSizeToUi(sel.dotSize ?? MIST_TEX_SIZE_DEFAULT), 0, 100, (v: number) => patch({ dotSize: mistSizeFromUi(v) }))
+                                  : shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
                                 {isClefTex(sel.hole)
                                   ? shapeSlider('間距', clefGapToUi(sel.dotGap ?? CLEF_TEX_DEFAULTS.gap), 0, 100, (v: number) => patch({ dotGap: clefGapFromUi(v) }))
                                   : isFrameShape(sel.kind)

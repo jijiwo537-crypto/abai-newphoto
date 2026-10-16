@@ -53,7 +53,7 @@ import {
 } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
-  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount, glowToUi, glowFromUi,
+  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, isTextHole, drawHoleShape, holeOverflow, glowAmount, glowToUi, glowFromUi, SHAPE_TEX_COLOR,
   texOf, paintStripes,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, STAR_BURST_ITEMS, glintDefaultGlow, paintTex, holeCanStretch, paintTextureInsideOutline,
   glyphInk, glyphFont, clefSizeToUi, clefSizeFromUi, fillShapePath, patternPathBounds,
@@ -65,7 +65,7 @@ installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL } from '../utils/frameShapes';
-import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi } from '../utils/mistFrame';
+import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
@@ -1479,7 +1479,8 @@ export const shapePickerSections = () => {
   const pools: Record<ShapeSection, any[]> = {
     solid: [...A.filter(i => i.filled && plain(i)), HOLE_ITEM_CROSS, ...HOLE_ITEMS_EXTRA],
     outline: [...A.filter(i => !i.filled && plain(i)), HOLE_ITEM_CROSS_O],
-    frame: FRAME_ITEMS as ShapeItem[],
+    // 新的五種邊框先放在排序工具的「邊框」頁試，App 裡先只有霧白邊框
+    frame: FRAME_ITEMS.filter(i => i.kind === 'mist-frame') as ShapeItem[],
     burst: [...STAR_BURST_ITEMS],
     line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind)),
     grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
@@ -2841,11 +2842,12 @@ export const ShapeEditorPanel: React.FC<{
             {slider('範圍', Math.round(layer.shapeFrameRange ?? frameRangeDefault(layer.shape)), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
           </div>}
           {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
-            {slider('範圍', Math.round(layer.shapeFrameRange ?? MIST_RANGE_DEFAULT), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
+            {slider('範圍', mistRangeToUi(layer.shapeFrameRange ?? MIST_RANGE_DEFAULT), 0, 100, v => onChange({ shapeFrameRange: mistRangeFromUi(v) }))}
             {slider('羽化', Math.round(layer.shapeFrameFeather ?? MIST_FEATHER_DEFAULT), 0, 100, v => onChange({ shapeFrameFeather: Math.round(v) }))}
           </div>}
-          {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full">
+          {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
             {slider('圓角', Math.round(layer.shapeFrameRound ?? MIST_ROUND_DEFAULT), 0, 100, v => onChange({ shapeFrameRound: Math.round(v) }))}
+            {slider('透明度', Math.round(layer.opacity ?? 100), 0, 100, v => onChange({ opacity: Math.round(v) }))}
           </div>}
           {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
               一般圖形那種陰影式的發光不給星芒用 */}
@@ -2921,12 +2923,12 @@ export const ShapeEditorPanel: React.FC<{
                 ) : (
                   <button
                     onClick={() => setColorPage({
-                      value: layer.shapeDotColor || '#FFFFFF', colors: TEX_SWATCHES,
+                      value: layer.shapeDotColor || SHAPE_TEX_COLOR, colors: TEX_SWATCHES,
                       onPick: c => onChange({ shapeDotColor: c }),
                     })}
                     title="紋理顏色"
                     className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                    style={{ backgroundColor: layer.shapeDotColor || '#FFFFFF' }}
+                    style={{ backgroundColor: layer.shapeDotColor || SHAPE_TEX_COLOR }}
                   />
                 )}
               </div>
@@ -2963,7 +2965,9 @@ export const ShapeEditorPanel: React.FC<{
               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                 {isClefTex(layer.holeType)
                   ? slider('大小', clefSizeToUi(layer.shapeDotSize ?? CLEF_TEX_DEFAULTS.size), 0, 100, v => onChange({ shapeDotSize: clefSizeFromUi(v) }))
-                  : slider('大小', layer.shapeDotSize ?? (isFrameShape(layer.shape) ? MIST_TEX_SIZE_DEFAULT : 50), 0, 100, v => onChange({ shapeDotSize: v }))}
+                  : isFrameShape(layer.shape)
+                  ? slider('大小', mistSizeToUi(layer.shapeDotSize ?? MIST_TEX_SIZE_DEFAULT), 0, 100, v => onChange({ shapeDotSize: mistSizeFromUi(v) }))
+                  : slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
                 {isClefTex(layer.holeType)
                   ? slider('間距', clefGapToUi(layer.shapeDotGap ?? CLEF_TEX_DEFAULTS.gap), 0, 100, v => onChange({ shapeDotGap: clefGapFromUi(v) }))
                   : isFrameShape(layer.shape)
@@ -4941,7 +4945,7 @@ export const shapeDotGrid = (w: number, h: number, l: {
   const unit = Math.max(w, h) / 600;
   const dsz = (5 + ((l.shapeDotSize ?? 50) / 100) * 15) * unit;
   const dgap = (40 + (l.shapeDotGap ?? 20)) * unit;
-  return { r: dsz / 2, dx: dgap, dy: dgap * Math.sqrt(3) / 2, color: l.shapeDotColor || '#FFFFFF' };
+  return { r: dsz / 2, dx: dgap, dy: dgap * Math.sqrt(3) / 2, color: l.shapeDotColor || SHAPE_TEX_COLOR };
 };
 
 /** 匯出時把點點畫上去（原點在圖形中心）。呼叫端負責先剪裁在圖形裡面。 */

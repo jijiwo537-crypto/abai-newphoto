@@ -703,6 +703,8 @@ export const clefSizeFromUi = (v: number) => Math.max(0, Math.min(100, v)) / 100
 export const clefStripeToUi = (n: number) => Math.max(0, Math.min(CLEF_STRIPE_MAX, n) - CLEF_STRIPE_MIN);
 export const clefStripeFromUi = (v: number) => CLEF_STRIPE_MIN + Math.max(0, Math.min(CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, Math.round(v)));
 
+/** 圖形紋理（點點／星星／愛心）的預設顏色 */
+export const SHAPE_TEX_COLOR = '#A8C3E6';
 export const paintTex = (
   c: CanvasRenderingContext2D,
   unitW: number, unitH: number, covW: number, covH: number,
@@ -719,7 +721,7 @@ export const paintTex = (
        座標基準，因此每顆圖案與網格節奏都能保持完全一致。 */
     paintDots(c, baseW, baseH, covW, covH,
       o.texSize ?? o.dotSize ?? 50, o.texGap ?? o.dotGap ?? 20,
-      o.texColor || o.dotColor || '#FFFFFF', t, o.texSquash ?? o.dotSquash ?? 50);
+      o.texColor || o.dotColor || SHAPE_TEX_COLOR, t, o.texSquash ?? o.dotSquash ?? 50);
   } else if (t === 'stripe') {
     paintStripes(c, unitW, unitH, covW, covH,
       o.stripeN ?? SN_DEF, o.stripeDir === 'h' ? 'h' : 'v',

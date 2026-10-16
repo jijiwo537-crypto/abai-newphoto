@@ -24,8 +24,11 @@ export const MIST_FEATHER_DEFAULT = 50;
 export const MIST_ROUND_DEFAULT = 100;
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
-/** 全白的邊界（以框的一半為 1）：範圍 0 → 1（框邊）、100 → 0.1 */
-const edgeOf = (range = MIST_RANGE_DEFAULT) => 1 - clamp01(range / 100) * .9;
+/** 全白的邊界（以框的一半為 1）：範圍 0 → 1（框邊）；負的往框外推（霧變淡）、正的往內吃 */
+const edgeOf = (range = MIST_RANGE_DEFAULT) => 1 - Math.max(-30, Math.min(100, range)) / 100 * .9;
+/** 「範圍」滑桿 0～100 對應 -30～20（舊刻度）；預設 0 剛好是 60 */
+export const mistRangeToUi = (range: number) => Math.round(Math.max(0, Math.min(100, (range + 30) / .5)));
+export const mistRangeFromUi = (ui: number) => -30 + Math.max(0, Math.min(100, ui)) * .5;
 /** 羽化的寬度（以框的一半為 1）：0 → 0.05、100 → 1 */
 const featherOf = (feather = MIST_FEATHER_DEFAULT) => .05 + clamp01(feather / 100) * .95;
 /** 超橢圓的次方：形狀 100 → 2（橢圓）、0 → 9（接近方形的圓角） */
@@ -126,8 +129,11 @@ export const paintMistFrame = (
   ctx.drawImage(cv, 0, 0, W, H, 0, 0, w, h);
 };
 
-/* 邊框的紋理：預設大小 0；間距滑桿 0～100 對應 -30～100（-30 是點點最密的地方），預設停在 10（＝-17） */
-export const MIST_TEX_SIZE_DEFAULT = 0;
+/* 邊框的紋理：大小滑桿 0～100 對應 -20～100，預設停在 20（＝4，最接近原本的 0）；
+   間距滑桿 0～100 對應 -30～100（-30 是點點最密的地方），預設停在 10（＝-17） */
+export const mistSizeToUi = (size: number) => Math.round(Math.max(0, Math.min(100, (size + 20) / 1.2)));
+export const mistSizeFromUi = (ui: number) => -20 + Math.max(0, Math.min(100, ui)) * 1.2;
+export const MIST_TEX_SIZE_DEFAULT = mistSizeFromUi(20);
 export const MIST_TEX_GAP_DEFAULT = -30 + 10 * 1.3;
 export const mistGapToUi = (gap: number) => Math.round(Math.max(0, Math.min(100, (gap + 30) / 1.3)));
 export const mistGapFromUi = (ui: number) => -30 + Math.max(0, Math.min(100, ui)) * 1.3;
