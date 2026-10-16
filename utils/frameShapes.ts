@@ -156,15 +156,12 @@ const scatterItems = (w: number, h: number, o: FrameParams) => {
   // 大小滑桿 0～100 對應舊刻度 0～60
   const m = Math.min(w, h), S = m * (.02 + ((o.size ?? 70) / 100 * .6) ** 2 * .42);
   const sv = (o.sizeVar ?? 100) / 100, av = (o.angleVar ?? 20) / 100, base = (o.angle ?? 0) / 100 * 360;
-  const seen = new Array(kinds.length).fill(0);
   return spots.map(p => {
-    /* 每一種圖形裡固定有大約四成不動、六成會歪（照順序輪流，所以每一種都有歪有不歪）；
-       角度變化只決定歪的那些歪多少，從 0 慢慢加大到 ±45°，不會一下跳來跳去。 */
-    const c = seen[p.ki]++, ph = (p.ki * .618) % 1;
-    const tilt = Math.floor((c + 1) * .6 + ph) > Math.floor(c * .6 + ph);
-    const rot = base + (tilt ? (p.uRot * 2 - 1) * 45 * av : 0);
-    // 大小變化：大部分放大（最多 1+1.2×變化 倍），少部分稍微縮小（最少 1-0.3×變化 倍）
-    const d = S * (1 + sv * (p.uSize * 1.5 - .3));
+    // 角度變化：每一顆都會轉，只是轉多少不一樣（各自的亂數 × 變化量，最多 ±45°）
+    const rot = base + (p.uRot * 2 - 1) * 45 * av;
+    /* 大小變化：用「倍率的對數」平均分佈，大小一顆顆拉開、不會一堆看起來一樣大；
+       再把大的那頭壓少一點（次方 1.4），大的是少數。整體再放大一點點，變化 100 時約 0.63～2.1 倍 */
+    const d = S * (1 + sv * .15) * Math.exp(sv * .6 * (2 * Math.pow(p.uSize, 1.4) - 1));
     /* 每一顆都完整留在選中框裡：靠邊的往內推到剛好整顆看得到（靜止、動畫都一樣，
        所以不會有被切一半的圖形，動起來也不會露出切口） */
     const r = d * .55;
