@@ -107,6 +107,102 @@ const polaroidPath = (w: number, h: number, r: number) => {
   return p;
 };
 
+/* 拍立得的相紙紋理。真的拍立得框是一層微微帶暖灰的霧面相紙，不是純白：
+   近看有很細的顆粒、淡淡的纖維起伏，下緣厚的那塊稍微偏冷一點，
+   照片窗口的內緣有一道很淺的壓痕。
+   做法跟網路上常見的「SVG feTurbulence + feDiffuseLighting 做紙紋」同一個原理，
+   只是改用 canvas 自己算：
+     1. 幾層可無縫拼接的 value noise 疊成高度圖（大起伏＋細顆粒），再撒一些細短的纖維；
+     2. 對高度圖求斜率、用左上方的光打 Lambert 光 → 出現霧面紙那種凹凸；
+     3. 顏色＝挑的顏色 × 相紙色（白色會變成 #F3F1EC 左右的暖白）× 光影。
+   紋理只算一次（256px、可拼接），之後當 pattern 鋪上去。 */
+const PAPER_TONE = [.953, .945, .925];
+const paperCache = new Map<string, HTMLCanvasElement>();
+const hexRgb = (hex: string) => {
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h.slice(0, 6), 16);
+  return Number.isFinite(n) ? [(n >> 16) & 255, (n >> 8) & 255, n & 255] : [255, 255, 255];
+};
+const paperTile = (color: string) => {
+  const hit = paperCache.get(color);
+  if (hit) return hit;
+  const N = 256, hgt = new Float32Array(N * N);
+  let seed = 1337;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  // 可拼接的 value noise：格點值在邊界繞回來，所以貼成 pattern 不會有接縫
+  for (const [cells, amp] of [[4, 1], [8, .6], [16, .35], [32, .25], [64, .22], [128, .18]] as const) {
+    const g = new Float32Array(cells * cells).map(() => rnd() * 2 - 1);
+    const step = N / cells;
+    for (let y = 0; y < N; y++) {
+      const fy = y / step, y0 = Math.floor(fy), ty = fy - y0, sy = ty * ty * (3 - 2 * ty);
+      const r0 = (y0 % cells) * cells, r1 = ((y0 + 1) % cells) * cells;
+      for (let x = 0; x < N; x++) {
+        const fx = x / step, x0 = Math.floor(fx), tx = fx - x0, sx = tx * tx * (3 - 2 * tx);
+        const c0 = x0 % cells, c1 = (x0 + 1) % cells;
+        const a = g[r0 + c0] + (g[r0 + c1] - g[r0 + c0]) * sx;
+        const b = g[r1 + c0] + (g[r1 + c1] - g[r1 + c0]) * sx;
+        hgt[y * N + x] += (a + (b - a) * sy) * amp;
+      }
+    }
+  }
+  // 纖維：很細的短線，稍微凸起
+  for (let i = 0; i < 140; i++) {
+    let x = rnd() * N, y = rnd() * N;
+    const ang = rnd() * Math.PI, len = 3 + rnd() * 9, v = (rnd() < .5 ? -1 : 1) * (.25 + rnd() * .35);
+    for (let k = 0; k < len; k++) {
+      hgt[(((y | 0) % N + N) % N) * N + (((x | 0) % N + N) % N)] += v;
+      x += Math.cos(ang); y += Math.sin(ang);
+    }
+  }
+  const [cr, cg, cb] = hexRgb(color);
+  const base = [cr * PAPER_TONE[0], cg * PAPER_TONE[1], cb * PAPER_TONE[2]];
+  const cv = document.createElement('canvas'); cv.width = cv.height = N;
+  const g = cv.getContext('2d')!, img = g.createImageData(N, N), d = img.data;
+  const L = [-.55, -.65, .52]; // 左上方打光
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const i = y * N + x;
+    const dx = hgt[y * N + (x + 1) % N] - hgt[y * N + (x + N - 1) % N];
+    const dy = hgt[((y + 1) % N) * N + x] - hgt[((y + N - 1) % N) * N + x];
+    const nx = -dx * .35, ny = -dy * .35, nz = 1, nl = Math.hypot(nx, ny, nz);
+    const lam = (nx * L[0] + ny * L[1] + nz * L[2]) / nl / .52; // 平的地方＝1
+    const grain = (rnd() - .5) * .012;
+    const k = Math.max(.95, Math.min(1.03, 1 + (lam - 1) * .14 + grain + hgt[i] * .006));
+    const o = i * 4;
+    d[o] = Math.min(255, base[0] * k); d[o + 1] = Math.min(255, base[1] * k); d[o + 2] = Math.min(255, base[2] * k); d[o + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  paperCache.set(color, cv);
+  if (paperCache.size > 8) paperCache.delete(paperCache.keys().next().value as string);
+  return cv;
+};
+
+/** 拍立得：相紙色＋紋理、下緣微微偏冷、窗口內緣一道淺壓痕 */
+const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color: string, r: number) => {
+  const t = Math.min(w, h) * (.025 + r * .09);
+  const bottom = Math.min(h * .45, t * 3.2);
+  const iw = Math.max(1, w - 2 * t), ih = Math.max(1, h - t - bottom);
+  const body = new Path2D(); body.rect(0, 0, w, h); body.rect(t, t, iw, ih);
+  g.save();
+  g.beginPath(); g.rect(0, 0, w, h); g.clip();
+  g.clip(body, 'evenodd');
+  const pat = g.createPattern(paperTile(color), 'repeat')!;
+  const sc = Math.max(1e-3, Math.min(w, h) * .45 / 256);
+  pat.setTransform(new DOMMatrix([sc, 0, 0, sc, 0, 0]));
+  g.fillStyle = pat; g.fillRect(0, 0, w, h);
+  // 大範圍的明暗：上面略暖、下緣那塊略冷略亮，跟真的相紙一樣不是一整片死白
+  const lg = g.createLinearGradient(0, 0, 0, h);
+  lg.addColorStop(0, 'rgba(120,100,70,0.035)'); lg.addColorStop(.75, 'rgba(0,0,0,0)'); lg.addColorStop(1, 'rgba(150,170,210,0.05)');
+  g.fillStyle = lg; g.fillRect(0, 0, w, h);
+  const vg = g.createLinearGradient(0, 0, w, 0);
+  vg.addColorStop(0, 'rgba(0,0,0,0.025)'); vg.addColorStop(.5, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.02)');
+  g.fillStyle = vg; g.fillRect(0, 0, w, h);
+  // 窗口內緣的壓痕：一道暗線＋外側一道亮線
+  const e = Math.max(.6, t * .035);
+  g.lineWidth = e; g.strokeStyle = 'rgba(0,0,0,0.10)'; g.strokeRect(t - e / 2, t - e / 2, iw + e, ih + e);
+  g.strokeStyle = 'rgba(255,255,255,0.35)'; g.strokeRect(t - e * 1.5, t - e * 1.5, iw + e * 3, ih + e * 3);
+  g.restore();
+};
+
 type Fill = [Path2D, CanvasFillRule];
 
 /** 蕾絲花邊：一圈框（中間挖一排小圓點），框的內緣再接一顆一顆往內鼓的半圓 */
@@ -198,6 +294,7 @@ export const paintFrameShape = (
   if (kind === MIST_FRAME_KIND || !PATHS[kind]) { paintMistFrame(ctx, w, h, color, params, texture); return; }
   const path = framePath(kind, w, h, r01(params.range, kind));
   const draw = (g: CanvasRenderingContext2D) => {
+    if (kind === FRAME_POLAROID) { paintPolaroid(g, w, h, color, r01(params.range, kind)); return; }
     g.save();
     g.beginPath(); g.rect(0, 0, w, h); g.clip();
     g.fillStyle = color;
