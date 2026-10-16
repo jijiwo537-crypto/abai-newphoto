@@ -27,9 +27,8 @@ export const TEX_OPTIONS: [TexKind, string][] = [
   ['stripe', '條紋'],
 ];
 
-/** 條紋預設的兩個顏色。第一個顏色實際上會用「那個東西當下的顏色」
-    （遮罩就是遮罩色、圖形就是圖形色），這裡只是最後的退路；第二個固定純白。 */
-export const STRIPE_A = '#D2E8E1';
+/** 條紋預設的兩個顏色：第一個統一淡藍 #A8C3E6（遮罩、圖形、文字都一樣），第二個純白。 */
+export const STRIPE_A = '#A8C3E6';
 export const STRIPE_B = '#FFFFFF';
 
 /** 條紋的方向選單。直式在前 —— 預設就是直式。 */

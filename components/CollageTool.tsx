@@ -759,7 +759,9 @@ export const GLOW_SWATCHES: string[] = (() => {
    深一點的那一圈以 #B8E3D8 為基準，兩種濃淡都給得到。
    第一顆固定純白。 */
 const MASK_BASE_LIGHT = '#D2E8E1';
-const CREATIVE_MASK_DEFAULT = '#CFE6DE';
+const CREATIVE_MASK_DEFAULT = '#A8C3E6';
+/** 遮罩光暈原本的預設色（跟著舊的遮罩色，不跟著改） */
+const CREATIVE_GLOW_DEFAULT = '#CFE6DE';
 const MASK_BASE_DEEP = '#B8E3D8';
 /** 把一個顏色拆成 HSL，只換色相繞一圈，回傳 n 顆照色相排好的顏色 */
 const hueRing = (baseHex: string, n: number): string[] => {
@@ -2682,7 +2684,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      第二個固定從純白開始。 */
   const [stripeAPick, setStripeAPick] = useState<string | null>(null);
   const [stripeB, setStripeB] = useState('#FFFFFF');
-  const stripeA = stripeAPick || maskColor;
+  const stripeA = stripeAPick || STRIPE_A;
   const setStripeA = (c: string) => setStripeAPick(c);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [finalImage, setFinalImage] = useState<string | null>(null);
@@ -2782,7 +2784,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const glowMode = (holeGlow > 0 ? 'image' : 'off') as 'off' | 'both' | 'mask' | 'image';
   /* 預設就跟遮罩同色 —— 一開就是同步的，
      使用者不必先去動一次遮罩顏色才對得起來。 */
-  const [holeGlowColor, setHoleGlowColor] = useState(CREATIVE_MASK_DEFAULT);
+  const [holeGlowColor, setHoleGlowColor] = useState(CREATIVE_GLOW_DEFAULT);
   /** 發光自己的常駐動畫（'none' | 'twinkle' | 'blink' | 'glitch'） */
   const [glowIdle, setGlowIdle] = useState('none');
   /** 發光常駐動畫的幅度（0～100）與速度（20～180，100＝原速） */
@@ -11299,8 +11301,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 : colorPickerTarget === 'shapeDot'
                   ? ((objects.find(o => o.id === selectedObj)?.dotColor) || SHAPE_TEX_COLOR)
                 : colorPickerTarget === 'shapeStripeA'
-                  ? ((objects.find(o => o.id === selectedObj)?.stripeA)
-                    || (objects.find(o => o.id === selectedObj)?.color) || SHAPE_DEFAULT_COLOR)
+                  ? ((objects.find(o => o.id === selectedObj)?.stripeA) || STRIPE_A)
                 : colorPickerTarget === 'shapeStripeB'
                   ? ((objects.find(o => o.id === selectedObj)?.stripeB) || '#FFFFFF')
                 : colorPickerTarget === 'shapeStroke'
@@ -11985,7 +11986,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                       onClick={() => setColorPickerTarget('shapeStripeA')}
                                       title="條紋顏色一"
                                       className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                                      style={{ backgroundColor: sel.stripeA || sel.color || SHAPE_DEFAULT_COLOR }}
+                                      style={{ backgroundColor: sel.stripeA || STRIPE_A }}
                                     />
                                     <button
                                       onClick={() => setColorPickerTarget('shapeStripeB')}

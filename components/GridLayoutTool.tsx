@@ -2903,12 +2903,12 @@ export const ShapeEditorPanel: React.FC<{
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setColorPage({
-                        value: layer.shapeStripeA || layer.color || SHAPE_DEFAULT_COLOR, colors: TEX_SWATCHES,
+                        value: layer.shapeStripeA || STRIPE_A, colors: TEX_SWATCHES,
                         onPick: c => onChange({ shapeStripeA: c }),
                       })}
                       title="條紋顏色一"
                       className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                      style={{ backgroundColor: layer.shapeStripeA || layer.color || SHAPE_DEFAULT_COLOR }}
+                      style={{ backgroundColor: layer.shapeStripeA || STRIPE_A }}
                     />
                     <button
                       onClick={() => setColorPage({
@@ -5707,7 +5707,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       strokeColor: image.shapeStrokeColor, dots: image.shapeDots,
       dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
       tex: image.shapeTex, stripeN: image.shapeStripeN, stripeDir: image.shapeStripeDir,
-      stripeA: image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR,
+      stripeA: image.shapeStripeA || STRIPE_A,
       stripeB: image.shapeStripeB || '#FFFFFF', id: image.id,
       lineUnit: Math.max(drawW, drawH) / 160 * rasterScale,
       // 四邊擠壓用：新增時的框（見 holeStretch）
@@ -5731,7 +5731,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
           });
           else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
-            image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
+            image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || STRIPE_A, image.shapeStripeB || '#FFFFFF');
           tc.restore();
         });
         ctx.restore();
@@ -5805,13 +5805,13 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
               textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
             });
             else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
-              image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
+              image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || STRIPE_A, image.shapeStripeB || '#FFFFFF');
             tc.restore();
           }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth,
             baseW: (image.shapeTextureBaseW || image.width) * contentScale, baseH: (image.shapeTextureBaseH || image.height) * contentScale });
         } else if (isArrowShape(image.shape) && tx === 'stripe') {
           strokeWithTexture(ctx, path, drawW, drawH, JSON.stringify([tx, image.shapeDotSize, image.shapeDotGap, image.shapeDotSquash, image.shapeDotColor,
-            image.shapeStripeN, image.shapeStripeDir, image.shapeStripeA || color, image.shapeStripeB, image.shapeTextureBaseW, image.shapeTextureBaseH, contentScale]), (tc, cw, ch) => {
+            image.shapeStripeN, image.shapeStripeDir, image.shapeStripeA || STRIPE_A, image.shapeStripeB, image.shapeTextureBaseW, image.shapeTextureBaseH, contentScale]), (tc, cw, ch) => {
             if ((tx as string) === 'dot' || (tx as string) === 'star' || (tx as string) === 'heart') paintTex(tc, drawW, drawH, cw, ch, {
               tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
               textureBaseW: (image.shapeTextureBaseW || image.width) * contentScale,
@@ -5819,7 +5819,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             });
             else paintStripes(tc, drawW, drawH, cw, ch,
               stripeCountFor(image.shapeStripeN ?? STRIPE_N_DEFAULT, image.shapeStripeDir, drawW, drawH, cw, ch),
-              image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
+              image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || STRIPE_A, image.shapeStripeB || '#FFFFFF');
           });
         } else {
           strokeOutlineBody(ctx, path, image.shape, drawW, drawH, (image.shapeTextureBaseW || image.width) * contentScale, (image.shapeTextureBaseH || image.height) * contentScale,
@@ -7223,7 +7223,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     dots: image.shapeDots, dotSize: image.shapeDotSize,
     dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
     tex: image.shapeTex, stripeN: image.shapeStripeN, stripeDir: image.shapeStripeDir,
-    stripeA: image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR,
+    stripeA: image.shapeStripeA || STRIPE_A,
     stripeB: image.shapeStripeB || '#FFFFFF',
     id: image.id,
     /* 線寬的單位刻意不含 scale：不然「把圖案拉大」框線也跟著變粗。
@@ -9480,7 +9480,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const stripeN = patternOpts.stripeN ?? STRIPE_N_DEFAULT;
   const stripeDir: 'h' | 'v' = patternOpts.stripeDir === 'h' ? 'h' : 'v';
   // 第一個顏色沒挑過就跟著「紋理當下的顏色」走，第二個從純白開始
-  const stripeA = patternOpts.stripeA || patternColor;
+  const stripeA = patternOpts.stripeA || STRIPE_A;
   const stripeB = patternOpts.stripeB || '#FFFFFF';
 
   /* 紋理的兩根滑桿。其他面板那幾支同名 helper 都關在各自的元件裡，
@@ -14627,7 +14627,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           glowColor: fImg.shapeGlowColor, strokeW: fImg.shapeStrokeW, glintGlow: fImg.shapeGlintGlow,
           strokeColor: fImg.shapeStrokeColor,
           tex: fImg.shapeTex, stripeN: fImg.shapeStripeN, stripeDir: fImg.shapeStripeDir,
-          stripeA: fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR,
+          stripeA: fImg.shapeStripeA || STRIPE_A,
           stripeB: fImg.shapeStripeB || '#FFFFFF',
           dots: fImg.shapeDots, dotSize: fImg.shapeDotSize,
           dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
@@ -14656,7 +14656,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           textureBaseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
         });
         else paintStripes(tc, fw, fh, fw, fh, fImg.shapeStripeN ?? STRIPE_N_DEFAULT,
-          fImg.shapeStripeDir === 'h' ? 'h' : 'v', fImg.shapeStripeA || mColor, fImg.shapeStripeB || '#FFFFFF');
+          fImg.shapeStripeDir === 'h' ? 'h' : 'v', fImg.shapeStripeA || STRIPE_A, fImg.shapeStripeB || '#FFFFFF');
         tc.restore();
       });
       ctx.restore();
@@ -14741,7 +14741,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         });
         else paintStripes(tc, fw, fh, fw, fh,
           fImg.shapeStripeN ?? STRIPE_N_DEFAULT, fImg.shapeStripeDir === 'h' ? 'h' : 'v',
-          fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR, fImg.shapeStripeB || '#FFFFFF');
+          fImg.shapeStripeA || STRIPE_A, fImg.shapeStripeB || '#FFFFFF');
         tc.restore();
       }
     };
@@ -14752,7 +14752,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     } else {
       const tx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
       if (isArrowShape(fImg.shape) && tx === 'stripe') {
-        const stA = fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR;
+        const stA = fImg.shapeStripeA || STRIPE_A;
         strokeWithTexture(ctx, path, fw, fh, JSON.stringify([tx, fImg.shapeDotSize, fImg.shapeDotGap, fImg.shapeDotSquash, fImg.shapeDotColor,
           fImg.shapeStripeN, fImg.shapeStripeDir, stA, fImg.shapeStripeB, fImg.shapeTextureBaseW, fImg.shapeTextureBaseH, scaleFactor]), (tc, cw, ch) => {
           if ((tx as string) === 'dot' || (tx as string) === 'star' || (tx as string) === 'heart') paintTex(tc, fw, fh, cw, ch, {
