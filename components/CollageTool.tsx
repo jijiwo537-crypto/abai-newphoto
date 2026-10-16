@@ -11928,7 +11928,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </div>}
                           {sel.kind === FRAME_SCATTER && <div className="px-2 order-1 w-full">
                             <ScatterKindsPicker value={(sel as any).frameOpts?.kinds}
-                              onChange={kinds => patch({ frameOpts: { ...(sel as any).frameOpts, kinds } } as any)} />
+                              onChange={kinds => patch({ frameOpts: { ...(sel as any).frameOpts, kinds } } as any)}
+                              onShuffle={() => patch({ frameOpts: { ...(sel as any).frameOpts, seed: Math.floor(Math.random() * 1e6) } } as any)} />
                           </div>}
                           {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('範圍', mistRangeToUi((sel as any).frameRange ?? MIST_RANGE_DEFAULT), 0, 100,

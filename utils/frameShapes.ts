@@ -10,7 +10,7 @@
 import { MIST_FRAME_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, type MistParams } from './mistFrame';
 
 /** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
-export type FrameParams = MistParams & { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number;
+export type FrameParams = MistParams & { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
   kinds?: string[]; shapeD?: (kind: string, w: number, h: number) => string };
 
 export const FRAME_SPEED = 'frame-speed';
@@ -102,13 +102,13 @@ export const setFrameShapeD = (f: (kind: string, w: number, h: number) => string
 let frameShapeItem: ((id: string) => { kind: string; filled: boolean } | null) | null = null;
 export const setFrameShapeItem = (f: (id: string) => { kind: string; filled: boolean } | null) => { frameShapeItem = f; };
 /** 集中線、散落圖形的額外滑桿（全部 0～100） */
-export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'size' | 'sizeVar' | 'angle' | 'angleVar'; label: string; def: number }[]> = {
+export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'size' | 'sizeVar' | 'angle' | 'angleVar' | 'glow'; label: string; def: number }[]> = {
   'frame-speed': [{ key: 'gap', label: '間距', def: 50 }, { key: 'thick', label: '粗細', def: 50 }, { key: 'vary', label: '變化', def: 100 }],
   'frame-scatter': [{ key: 'gap', label: '間距', def: 30 }, { key: 'size', label: '大小', def: 40 },
-    { key: 'sizeVar', label: '大小變化', def: 50 }, { key: 'angle', label: '角度', def: 0 }, { key: 'angleVar', label: '角度變化', def: 30 }],
+    { key: 'sizeVar', label: '大小變化', def: 50 }, { key: 'angle', label: '角度', def: 0 }, { key: 'angleVar', label: '角度變化', def: 30 }, { key: 'glow', label: '發光', def: 0 }],
 };
 /** 存在物件上的那一包（滑桿值＋散落的圖形種類） */
-export type FrameOpts = { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; kinds?: string[] };
+export type FrameOpts = { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number; kinds?: string[] };
 /** 散落圖形的版面：只跟比例、範圍、間距、選了哪些圖形有關 ——
    調大小、大小變化、角度、角度變化時位置都不會重排，只是每顆照自己記住的亂數改大小／角度。 */
 type ScatterSpot = { x: number; y: number; ki: number; uSize: number; uRot: number; tilt: boolean };
@@ -116,10 +116,11 @@ const scatterCache = new Map<string, ScatterSpot[]>();
 const scatterLayout = (w: number, h: number, o: FrameParams): ScatterSpot[] => {
   const kinds = o.kinds?.length ? o.kinds : SCATTER_KINDS_DEFAULT;
   const ui = o.range ?? 60, gap = o.gap ?? 30;
-  const key = `${Math.round(w)}|${Math.round(h)}|${ui}|${gap}|${kinds.join(',')}`;
+  const key = `${Math.round(w)}|${Math.round(h)}|${ui}|${gap}|${o.seed ?? 0}|${kinds.join(',')}`;
   const hit = scatterCache.get(key);
   if (hit) return hit;
-  const rand = rng(77001);
+  // 「隨機分佈」按鈕換的就是這個種子
+  const rand = rng(77001 + (o.seed ?? 0) * 7919);
   const edge = 1 - mistRangeFromUi(ui) / 100 * .9, inner = edge - .32;
   const m = Math.min(w, h), R0 = m * .045, minD = R0 * 2 * (.9 + gap / 100 * 2.2);
   const spots: ScatterSpot[] = [], count = new Array(kinds.length).fill(0);
@@ -162,13 +163,35 @@ const scatterItems = (w: number, h: number, o: FrameParams) => {
 export type FrameSprite = { canvas: HTMLCanvasElement; w: number; h: number; pad: number };
 let frameSprite: ((id: string, color: string, px: number) => FrameSprite | null) | null = null;
 export const setFrameSprite = (f: (id: string, color: string, px: number) => FrameSprite | null) => { frameSprite = f; };
+/* 發光：把同一張小圖放在大一點的畫布上、用跟圖形一樣顏色的 shadowBlur 畫兩層，
+   結果快取起來（每一顆小圖、每一種強度只算一次），平常貼圖就好，不會每一幀做模糊。 */
+const glowCache = new WeakMap<HTMLCanvasElement, Map<string, FrameSprite>>();
+const glowSprite = (sp: FrameSprite, color: string, glow: number): FrameSprite => {
+  const q = Math.round(glow / 5) * 5;
+  let m = glowCache.get(sp.canvas);
+  if (!m) { m = new Map(); glowCache.set(sp.canvas, m); }
+  const key = `${q}|${color}`;
+  const hit = m.get(key);
+  if (hit) return hit;
+  const blur = sp.w * (.04 + q / 100 * .32), extra = Math.ceil(blur * 2);
+  const cv = document.createElement('canvas');
+  cv.width = sp.canvas.width + extra * 2; cv.height = sp.canvas.height + extra * 2;
+  const g = cv.getContext('2d')!;
+  g.shadowColor = color;
+  for (const b of [blur, blur * .4]) { g.shadowBlur = b; g.drawImage(sp.canvas, extra, extra); }
+  g.shadowBlur = 0; g.drawImage(sp.canvas, extra, extra);
+  const out = { canvas: cv, w: sp.w, h: sp.h, pad: sp.pad + extra };
+  m.set(key, out);
+  return out;
+};
 const paintScatter = (g: CanvasRenderingContext2D, w: number, h: number, color: string, o: FrameParams) => {
-  const m = g.getTransform(), k = Math.max(.25, Math.hypot(m.a, m.b));
+  const m = g.getTransform(), k = Math.max(.25, Math.hypot(m.a, m.b)), glow = o.glow ?? 0;
   g.save();
   g.beginPath(); g.rect(0, 0, w, h); g.clip();
   g.imageSmoothingEnabled = true;
   for (const it of scatterItems(w, h, o)) {
-    const sp = frameSprite?.(it.id, color, it.d * k);
+    const raw = frameSprite?.(it.id, color, it.d * k);
+    const sp = raw && glow > 0 ? glowSprite(raw, color, glow) : raw;
     g.save();
     g.translate(it.x, it.y); g.rotate(it.rot * Math.PI / 180);
     if (sp) {

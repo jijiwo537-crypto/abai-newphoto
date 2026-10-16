@@ -1838,7 +1838,7 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval
  * 縮放並平移到 24×24 的正中央 —— 所以每一顆按鈕的圖案都在正中心。
  */
 /** 散落圖形邊框：多選要散在四周的圖形（至少留一種） */
-export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: string[]) => void }> = React.memo(({ value, onChange }) => {
+export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: string[]) => void; onShuffle?: () => void }> = React.memo(({ value, onChange, onShuffle }) => {
   // 舊資料只存形狀名（star），當成實心那顆（star-f）
   const groups = React.useMemo(() => shapePickerSections().filter(([label]) => label === '實心' || label === '外框')
     .map(([label, items]) => [label, items as ShapeItem[]] as const), []);
@@ -1846,6 +1846,8 @@ export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: stri
   const kinds = (value?.length ? value : SCATTER_KINDS_DEFAULT).map(k => all.has(k) ? k : `${k}-f`);
   return (
     <div className="pt-1 pb-2" data-scatter-kinds>
+      {onShuffle && <button data-scatter-shuffle onClick={onShuffle}
+        className="w-full h-10 mb-3 rounded-[12px] bg-white/[0.08] text-[13px] font-bold text-white/85 active:scale-[.98]">隨機分佈</button>}
       {groups.map(([label, items]) => (
         <div key={label} className="mb-2">
           <div className="text-[11px] text-white/45 mb-1.5">{label}（可多選）</div>
@@ -2874,7 +2876,8 @@ export const ShapeEditorPanel: React.FC<{
             </React.Fragment>)}
           </div>}
           {layer.shape === FRAME_SCATTER && <div className="px-2 order-1 w-full">
-            <ScatterKindsPicker value={layer.shapeFrameOpts?.kinds} onChange={kinds => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, kinds } })} />
+            <ScatterKindsPicker value={layer.shapeFrameOpts?.kinds} onChange={kinds => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, kinds } })}
+              onShuffle={() => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, seed: Math.floor(Math.random() * 1e6) } })} />
           </div>}
           {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
             {slider('範圍', mistRangeToUi(layer.shapeFrameRange ?? MIST_RANGE_DEFAULT), 0, 100, v => onChange({ shapeFrameRange: mistRangeFromUi(v) }))}
