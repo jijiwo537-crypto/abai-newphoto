@@ -12,7 +12,7 @@ import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
-import { isMistFrame, paintMistFrame, MIST_RANGE_DEFAULT } from '../utils/mistFrame';
+import { isMistFrame, paintMistFrame, MIST_RANGE_DEFAULT, MIST_ROUND_DEFAULT } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
 import { hasActiveFx, type FxScene, type FxPlacement } from '../utils/glEffects';
@@ -7271,7 +7271,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        細直片套用同一條連續正弦；網格圖形仍走既有向量切片。 */
     let waveObjectCanvas: HTMLCanvasElement | null = isMain ? waveObjectCanvasRef.current : null;
     let waveObjectCtx: CanvasRenderingContext2D | null = null;
-    const waveLayer = () => {
+    // 半透明圖形用的小暫存畫布（見 waveLayer）：一次畫面裡輪流給每一顆用
+    let flatObjectCanvas: HTMLCanvasElement | null = null;
+    let flatObjectCtx: CanvasRenderingContext2D | null = null;
+    const waveLayer = (box?: { x: number; y: number; w: number; h: number }) => {
+      /* 半透明圖形（進場淡入時每一顆都是）：用一張剛好框住這一顆的小畫布。
+         同一張大畫布輪流給每一顆用的話，上一顆貼回去之後瀏覽器得先把整張大畫布
+         複製一份才能清掉給下一顆 —— 四十顆就是每一格複製四十次全螢幕。 */
+      if (box) {
+        const c = flatObjectCanvas ??= document.createElement('canvas');
+        if (c.width !== box.w || c.height !== box.h) { c.width = box.w; c.height = box.h; }
+        const g = flatObjectCtx ??= c.getContext('2d');
+        if (!g) return null;
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.clearRect(0, 0, box.w, box.h);
+        g.translate(-vp.x - box.x, -vp.y - box.y);
+        return { canvas: c, ctx: g };
+      }
       if (!waveObjectCanvas) {
         waveObjectCanvas = document.createElement('canvas');
       }
@@ -7303,8 +7319,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 半透明圖形必須先以不透明狀態合成完整本體、紋理、描邊與三層光，
          最後整張只套一次 alpha。若直接讓每一道筆畫各自半透明，重疊處會
          累加變深，甚至看見暫存畫布的矩形邊界。 */
-      const flattenShapeAlpha = o.type === 'shape' && !isBackdropMask(o.kind) && objectAlpha < 0.999;
-      const layer = (internalWave || flattenShapeAlpha) ? waveLayer() : null;
+      /* 只畫一筆（一個填色或一條線）的圖形，直接帶著透明度畫跟先疊好再套透明度是一樣的，
+         不用暫存層；有描邊、發光、紋理、組合圖形這種會疊好幾筆的才需要。 */
+      const singleStroke = o.type === 'shape' && glowAmount(o.glow) <= 0 && !((o.strokeW || 0) > 0)
+        && texOf(o) === 'none' && !COMPOSITE_SHAPE_KINDS.has(o.kind) && !TRACK_SQUARE_KINDS.has(o.kind as string)
+        && !GRID_SHAPE_KINDS.has(o.kind) && !(o.kind === 'hole' && f?.rayK !== undefined);
+      const flattenShapeAlpha = o.type === 'shape' && !isBackdropMask(o.kind) && objectAlpha < 0.999 && !singleStroke;
+      /* 半透明圖形的暫存層只用到它自己那一塊：以前每一顆都清一整張畫布、再把整張畫布
+         貼回來 —— 進場動畫時每一顆都在淡入，四十顆就是每一格清＋貼四十次全螢幕，
+         物件一多就卡到幾乎不動。改成只算這一顆的外框（含發光、描邊的餘裕）。 */
+      const flatBox = flattenShapeAlpha && !internalWave ? (() => {
+        const k = Math.max(0, f?.k ?? 1), fx = f?.fx ?? 1;
+        const rot = aabbOf((o.w || 1) * k * fx, (o.h || 1) * k, (o.rot || 0) + (f?.rot || 0));
+        // 留給描邊與發光的餘裕：發光最大的那一層模糊半徑是長邊 × 0.135 × 強度，散到約 1.5 倍
+        const long = Math.max(o.w || 1, o.h || 1) * k * s;
+        const pad = long * (.08 + .21 * glowAmount(o.glow)) + 6 * s;
+        const cx = (o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s - vp.x;
+        const cy = (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s - vp.y;
+        const x0 = Math.max(0, Math.floor(cx - rot.bw * s / 2 - pad)), y0 = Math.max(0, Math.floor(cy - rot.bh * s / 2 - pad));
+        const x1 = Math.min(targetCanvas.width, Math.ceil(cx + rot.bw * s / 2 + pad));
+        const y1 = Math.min(targetCanvas.height, Math.ceil(cy + rot.bh * s / 2 + pad));
+        return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+      })() : undefined;
+      if (flatBox && (flatBox.w <= 0 || flatBox.h <= 0)) return;
+      const layer = (internalWave || flattenShapeAlpha) ? waveLayer(flatBox) : null;
       const paintObject = (ctx: CanvasRenderingContext2D, flattened = false) => {
       ctx.save();
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
@@ -7499,7 +7537,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else if (isMistFrame(o.kind)) {
           // 邊框・霧白：沒有描邊、發光；紋理只疊在霧上
-          paintMistFrame(ctx, bw, bh, col, (o as any).frameRange, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
+          paintMistFrame(ctx, bw, bh, col, (o as any).frameRange, (o as any).frameRound, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
               ...o,
@@ -8006,7 +8044,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!f || f.gridWave === undefined) {
         ctx.save();
         ctx.globalAlpha = objectAlpha;
-        ctx.drawImage(layer.canvas, vp.x, vp.y);
+        if (flatBox) ctx.drawImage(layer.canvas, vp.x + flatBox.x, vp.y + flatBox.y);
+        else ctx.drawImage(layer.canvas, vp.x, vp.y);
         ctx.restore();
         return;
       }
@@ -9345,12 +9384,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const now = performance.now();
-      if (now < motionTransitionUntilRef.current) { last = now; return; }
+      if (now < motionTransitionUntilRef.current) { last = now; deferHeavyWork(400); return; }
       /* 有一格畫很久（第一次畫很多顆星芒、要先做貼圖）時，時鐘不跟著跳過去：
          一格最多只往前走 1/30 秒，多出來的時間從起點扣掉。不然進場動畫的時間
          都花在那幾格上，畫面上只看得到頭尾兩格，像沒播出來。 */
       if (now - last > 1000 / 30) t0 += now - last - 1000 / 30;
       last = now;
+      /* 動畫播放中，背景的暖機工作（特效著色器編譯等，一支就卡主執行緒幾百毫秒）
+         一律延後 —— 不然它會剛好插在進場動畫中間，物件一多就整段卡住。 */
+      deferHeavyWork(400);
       try {
         motionClockRef.current = (Math.max(0, now - t0) / 1000) % motionTotal;
         animRef.current = buildAnim(motionClockRef.current);
@@ -11196,6 +11238,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   if(photoLayoutOpen)changePhotoLayoutOpen(false);
                   /* 進出動畫頁：在切頁的同一下就把選中放掉。動畫頁第一格是在切頁當下畫的
                      （之後有 0.4 秒的過場不重畫），等到 effect 才放掉的話那一格會帶著選中框。 */
+                  // 進動畫頁：先把背景暖機（著色器編譯）往後推，進場動畫播完再說
+                  if (id === 'motion') deferHeavyWork(1500);
                   if ((id === 'motion') !== (activeTab === 'motion')) {
                     selectedObjRef.current = null; baseSelectedRef.current = false; maskSelectedRef.current = false;
                     selectedRegionPhotoRef.current = null;
@@ -11641,8 +11685,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     y: frame ? offs2.iy + offs2.ih / 2 - h / 2 : offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
                     ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } } : {}),
+                    // 星芒：常駐動畫預設是縮放
+                    ...(it.kind === 'hole' && String(it.hole || '').startsWith('sb-')
+                      ? { mo: { ...MO_DEFAULT, idle: 'breathe', ...idleDefaults('breathe', { shape: true, glint: true }) } } : {}),
                     // 邊框：沒有預設動畫（不進場、不常駐）
-                    ...(frame ? { mo: { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: MIST_RANGE_DEFAULT } : {}),
+                    ...(frame ? { mo: { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: MIST_RANGE_DEFAULT, frameRound: MIST_ROUND_DEFAULT } : {}),
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
@@ -11870,6 +11917,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full">
                             {shapeSlider('範圍', Math.round((sel as any).frameRange ?? MIST_RANGE_DEFAULT), 0, 100,
                               (v: number) => patch({ frameRange: v } as any))}
+                          </div>}
+                          {/* 霧白邊框：中間透明那塊的形狀（0 圓角方形、100 橢圓） */}
+                          {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full">
+                            {shapeSlider('形狀', Math.round((sel as any).frameRound ?? MIST_ROUND_DEFAULT), 0, 100,
+                              (v: number) => patch({ frameRound: v } as any))}
                           </div>}
                           {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
                               一般圖形那種陰影式的發光不給星芒用 */}
