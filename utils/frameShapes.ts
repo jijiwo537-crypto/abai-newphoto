@@ -195,8 +195,20 @@ const paperTile = (color: string) => {
       }
     }
   }
+  /* 拍立得（寶麗來／富士 instax）的框是壓紋相紙：近看是一格一格很整齊的小凸點。
+     在 256px 裡排 48×48 格（整除才能無縫拼接），每格一顆柔邊的小方凸點，
+     打光後就是那種隱約、規律的格紋；上面的雜訊只留一點點，讓它不會太死板。 */
+  for (let i = 0; i < hgt.length; i++) hgt[i] *= .35;
+  const C = 48, cell = N / C;
+  for (let y = 0; y < N; y++) {
+    const fy = (y + .5) / cell % 1, by = Math.sin(Math.PI * fy);
+    for (let x = 0; x < N; x++) {
+      const fx = (x + .5) / cell % 1, bx = Math.sin(Math.PI * fx);
+      hgt[y * N + x] += Math.pow(bx * by, .6) * 2.2;
+    }
+  }
   // 纖維：很細的短線，稍微凸起
-  for (let i = 0; i < 140; i++) {
+  for (let i = 0; i < 40; i++) {
     let x = rnd() * N, y = rnd() * N;
     const ang = rnd() * Math.PI, len = 3 + rnd() * 9, v = (rnd() < .5 ? -1 : 1) * (.25 + rnd() * .35);
     for (let k = 0; k < len; k++) {
@@ -215,7 +227,7 @@ const paperTile = (color: string) => {
     const dy = hgt[((y + 1) % N) * N + x] - hgt[((y + N - 1) % N) * N + x];
     const nx = -dx * .35, ny = -dy * .35, nz = 1, nl = Math.hypot(nx, ny, nz);
     const lam = (nx * L[0] + ny * L[1] + nz * L[2]) / nl / .52; // 平的地方＝1
-    const grain = (rnd() - .5) * .012;
+    const grain = (rnd() - .5) * .008;
     const k = Math.max(.95, Math.min(1.03, 1 + (lam - 1) * .14 + grain + hgt[i] * .006));
     const o = i * 4;
     d[o] = Math.min(255, base[0] * k); d[o + 1] = Math.min(255, base[1] * k); d[o + 2] = Math.min(255, base[2] * k); d[o + 3] = 255;
@@ -236,7 +248,7 @@ const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color:
   g.beginPath(); g.rect(0, 0, w, h); g.clip();
   g.clip(body, 'evenodd');
   const pat = g.createPattern(paperTile(color), 'repeat')!;
-  const sc = Math.max(1e-3, Math.min(w, h) * .45 / 256);
+  const sc = Math.max(1e-3, Math.min(w, h) * .32 / 256);
   pat.setTransform(new DOMMatrix([sc, 0, 0, sc, 0, 0]));
   g.fillStyle = pat; g.fillRect(0, 0, w, h);
   // 大範圍的明暗：上面略暖、下緣那塊略冷略亮，跟真的相紙一樣不是一整片死白
