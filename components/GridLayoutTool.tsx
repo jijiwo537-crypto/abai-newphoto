@@ -2594,8 +2594,8 @@ export const TextEditorPanel: React.FC<{
         )}
         {!colorPage && sub === 'font' && !symbol && (
           /* 頂部留一段安全距離：內容不要貼著上面那排分頁按鈕；
-             底部也留一段，捲到底時最後一排字體不要貼著下緣（跟「樣式」頁一樣 pb-12） */
-          <div className="space-y-2.5 pt-4 pb-12">
+             底部也留一段，捲到底時最後一排字體不要貼著下緣（pb-6） */
+          <div className="space-y-2.5 pt-4 pb-6">
             <div className="flex items-center gap-1 bg-white/[0.06] rounded-full p-0.5">
               {FONT_CATEGORIES.map(c => (
                 <button
