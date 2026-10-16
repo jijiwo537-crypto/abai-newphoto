@@ -94,7 +94,10 @@ const speedPath = (w: number, h: number, r: number, o: FrameParams = {}) => {
    範圍跟霧白邊框同一套（0～100、預設 60）：用橢圓距離量，越往中間越空。
    放法是「丟飛鏢」：隨機丟一個點，在範圍內、而且跟已經放好的都保持間距才留下；
    圖形種類照輪流的順序給，所以每一種的數量差不多。 */
-export const SCATTER_KINDS_DEFAULT = ['star-f', 'heart-f', 'circle-f'];
+export const SCATTER_KINDS_DEFAULT = ['hole-sb-cross-thin', 'hole-sb-eight', 'star-double-f', 'blur-star-rounded-f'];
+/** 這種圖形本來就不能調發光（模糊類）：散落圖形裡也不發光 */
+export const scatterKindNoGlow = (id: string) => id.startsWith('blur-');
+export const scatterAllNoGlow = (kinds?: string[]) => (kinds?.length ? kinds : SCATTER_KINDS_DEFAULT).every(scatterKindNoGlow);
 /** 畫圖形用的函式（GridLayoutTool 載入時註冊 shapePathD，避免循環引用） */
 let frameShapeD: ((kind: string, w: number, h: number) => string) | null = null;
 export const setFrameShapeD = (f: (kind: string, w: number, h: number) => string) => { frameShapeD = f; };
@@ -105,7 +108,7 @@ export const setFrameShapeItem = (f: (id: string) => { kind: string; filled: boo
 export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'size' | 'sizeVar' | 'angle' | 'angleVar' | 'glow'; label: string; def: number }[]> = {
   'frame-speed': [{ key: 'gap', label: '間距', def: 50 }, { key: 'thick', label: '粗細', def: 50 }, { key: 'vary', label: '變化', def: 100 }],
   'frame-scatter': [{ key: 'gap', label: '間距', def: 30 }, { key: 'size', label: '大小', def: 70 },
-    { key: 'sizeVar', label: '大小變化', def: 50 }, { key: 'angle', label: '角度', def: 0 }, { key: 'angleVar', label: '角度變化', def: 30 }, { key: 'glow', label: '發光', def: 0 }],
+    { key: 'sizeVar', label: '大小變化', def: 100 }, { key: 'angle', label: '角度', def: 0 }, { key: 'angleVar', label: '角度變化', def: 20 }, { key: 'glow', label: '發光', def: 0 }],
 };
 /** 存在物件上的那一包（滑桿值＋散落的圖形種類） */
 export type FrameOpts = { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number; kinds?: string[] };
@@ -149,7 +152,7 @@ const scatterItems = (w: number, h: number, o: FrameParams) => {
   const spots = scatterLayout(w, h, o);
   // 大小滑桿 0～100 對應舊刻度 0～60
   const m = Math.min(w, h), S = m * (.02 + ((o.size ?? 70) / 100 * .6) ** 2 * .42);
-  const sv = (o.sizeVar ?? 50) / 100, av = (o.angleVar ?? 30) / 100, base = (o.angle ?? 0) / 100 * 360;
+  const sv = (o.sizeVar ?? 100) / 100, av = (o.angleVar ?? 20) / 100, base = (o.angle ?? 0) / 100 * 360;
   const seen = new Array(kinds.length).fill(0);
   return spots.map(p => {
     /* 每一種圖形裡固定有大約四成不動、六成會歪（照順序輪流，所以每一種都有歪有不歪）；
@@ -195,7 +198,7 @@ const paintScatter = (g: CanvasRenderingContext2D, w: number, h: number, color: 
   g.imageSmoothingEnabled = true;
   for (const it of scatterItems(w, h, o)) {
     const raw = frameSprite?.(it.id, color, it.d * k);
-    const sp = raw && glow > 0 ? glowSprite(raw, color, glow) : raw;
+    const sp = raw && glow > 0 && !scatterKindNoGlow(it.id) ? glowSprite(raw, color, glow) : raw;
     g.save();
     g.translate(it.x, it.y); g.rotate(it.rot * Math.PI / 180);
     if (sp) {

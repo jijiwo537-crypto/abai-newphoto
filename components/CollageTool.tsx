@@ -13,7 +13,7 @@ import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFor
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, scatterAllNoGlow } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
@@ -11958,7 +11958,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             </React.Fragment>)}
                           </div>}
                           {/* 發光自己一整排（長的滑桿） */}
-                          {sel.kind === FRAME_SCATTER && <div className="px-2 order-1 w-full">
+                          {sel.kind === FRAME_SCATTER && <div className={`px-2 order-1 w-full ${scatterAllNoGlow((sel as any).frameOpts?.kinds) ? 'opacity-35 pointer-events-none' : ''}`}
+                            aria-disabled={scatterAllNoGlow((sel as any).frameOpts?.kinds) || undefined}>
                             {shapeSlider('發光', Math.round((sel as any).frameOpts?.glow ?? 0), 0, 100,
                               (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, glow: Math.round(v) } } as any))}
                           </div>}

@@ -64,7 +64,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, scatterAllNoGlow, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -2882,7 +2882,8 @@ export const ShapeEditorPanel: React.FC<{
             </React.Fragment>)}
           </div>}
           {/* 發光自己一整排（長的滑桿） */}
-          {layer.shape === FRAME_SCATTER && <div className="px-2 order-1 w-full">
+          {layer.shape === FRAME_SCATTER && <div className={`px-2 order-1 w-full ${scatterAllNoGlow(layer.shapeFrameOpts?.kinds) ? 'opacity-35 pointer-events-none' : ''}`}
+            aria-disabled={scatterAllNoGlow(layer.shapeFrameOpts?.kinds) || undefined}>
             {slider('發光', Math.round(layer.shapeFrameOpts?.glow ?? 0), 0, 100, v => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, glow: Math.round(v) } }))}
           </div>}
           {layer.shape === FRAME_SCATTER && <div className="px-2 order-1 w-full">
