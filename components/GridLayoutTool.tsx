@@ -1838,30 +1838,36 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval
  * 縮放並平移到 24×24 的正中央 —— 所以每一顆按鈕的圖案都在正中心。
  */
 /** 散落圖形邊框：多選要散在四周的圖形（至少留一種） */
+const SCATTER_SECTION_LABELS: string[] = ['實心', '外框', '星芒'];
+/** 跟「新增圖形」選單同一顆按鈕的樣子（同大小、同圖示），選中的是白底 */
+const ScatterKindBtn = React.memo(({ it, on, toggle }: { it: ShapeItem; on: boolean; toggle: (id: string) => void }) => (
+  <button aria-label={it.id} aria-pressed={on} onClick={() => toggle(it.id)}
+    className={`h-11 rounded-[10px] border active:scale-95 transition-colors flex items-center justify-center ${on ? 'bg-white border-white text-black' : 'bg-white/5 border-white/10 text-white/85'}`}>
+    {(it as any).hole ? <HoleGlyph s={(it as any).hole} filled={(it as any).filled} /> : <ShapeGlyph item={it} />}
+  </button>
+));
 export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: string[]) => void; onShuffle?: () => void }> = React.memo(({ value, onChange, onShuffle }) => {
   // 舊資料只存形狀名（star），當成實心那顆（star-f）
-  const groups = React.useMemo(() => shapePickerSections().filter(([label]) => label === '實心' || label === '外框')
+  const groups = React.useMemo(() => shapePickerSections().filter(([label]) => SCATTER_SECTION_LABELS.includes(label))
     .map(([label, items]) => [label, items as ShapeItem[]] as const), []);
   const all = React.useMemo(() => new Set(groups.flatMap(([, items]) => items.map(i => i.id))), [groups]);
   const kinds = (value?.length ? value : SCATTER_KINDS_DEFAULT).map(k => all.has(k) ? k : `${k}-f`);
+  // 按鈕本身不跟著滑桿重畫：點下去才讀最新的選取（存在 ref 裡）
+  const ref = React.useRef({ kinds, onChange });
+  ref.current = { kinds, onChange };
+  const toggle = React.useCallback((id: string) => {
+    const { kinds: ks, onChange: oc } = ref.current, on = ks.includes(id);
+    oc(on ? (ks.length > 1 ? ks.filter(x => x !== id) : ks) : [...ks, id]);
+  }, []);
   return (
     <div className="pt-1 pb-2" data-scatter-kinds>
       {onShuffle && <button data-scatter-shuffle onClick={onShuffle}
         className="w-full h-10 mb-3 rounded-[12px] bg-white/[0.08] text-[13px] font-bold text-white/85 active:scale-[.98]">隨機分佈</button>}
       {groups.map(([label, items]) => (
-        <div key={label} className="mb-2">
-          <div className="text-[11px] text-white/45 mb-1.5">{label}（可多選）</div>
-          <div className="grid grid-cols-6 gap-1.5">
-            {items.map(it => {
-              const on = kinds.includes(it.id), url = scatterIconURL(it.id);
-              return (
-                <button key={it.id} aria-label={it.id} onClick={() => onChange(on ? (kinds.length > 1 ? kinds.filter(x => x !== it.id) : kinds) : [...kinds, it.id])}
-                  className={`aspect-square rounded-[10px] flex items-center justify-center active:scale-95 ${on ? 'bg-white text-black' : 'bg-white/[0.06] text-white/70'}`}>
-                  <span className="block w-[22px] h-[22px]" style={{ backgroundColor: 'currentColor', WebkitMaskImage: `url(${url})`, maskImage: `url(${url})`,
-                    WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center' } as React.CSSProperties} />
-                </button>
-              );
-            })}
+        <div key={label} className="mb-3">
+          <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}（可多選）</div>
+          <div className="grid grid-cols-6 gap-2">
+            {items.map(it => <ScatterKindBtn key={it.id} it={it} on={kinds.includes(it.id)} toggle={toggle} />)}
           </div>
         </div>
       ))}
@@ -19074,7 +19080,7 @@ setFrameShapeItem(id => { const it = ADD_SHAPE_ITEMS.find(i => i.id === id); ret
 const spriteCache = new Map<string, FrameSprite>();
 export const scatterShapeItems = (): ShapeItem[] => {
   const secs = shapePickerSections();
-  return secs.filter(([label]) => label === '實心' || label === '外框').flatMap(([, items]) => items as ShapeItem[]);
+  return secs.filter(([label]) => ['實心', '外框', '星芒'].includes(label)).flatMap(([, items]) => items as ShapeItem[]);
 };
 let scatterItemMap: Map<string, any> | null = null;
 const scatterItemOf = (id: string) => {
@@ -19084,24 +19090,44 @@ const scatterItemOf = (id: string) => {
 const shapeSprite = (id: string, color: string, px: number): FrameSprite | null => {
   const it = scatterItemOf(id);
   if (!it) return null;
-  const q = Math.max(8, Math.min(1024, Math.pow(2, Math.ceil(Math.log2(Math.max(8, px)) * 4) / 4)));
+  const q = Math.max(8, Math.min(768, Math.pow(2, Math.ceil(Math.log2(Math.max(8, px)) * 4) / 4)));
   const key = `${id}|${color}|${q}`;
   const hit = spriteCache.get(key);
   if (hit) return hit;
-  const w = Math.round(q), h = Math.max(4, Math.round(q * (it.ratio || 1))), pad = Math.ceil(q * .08) + 2;
+  const w = Math.round(q), h = Math.max(4, Math.round(q * (it.ratio || 1)));
+  /* 借來的圖案（文字、符號、星芒）畫出來常常比框大（例如「<333」很寬），
+     先開一張大很多的畫布，畫完再把有畫到的範圍裁出來 */
+  const hole = it.kind === 'hole';
+  const pad = hole ? Math.ceil(q * .9) : Math.ceil(q * .08) + 2;
   const cv = document.createElement('canvas');
   cv.width = w + pad * 2; cv.height = h + pad * 2;
-  const g = cv.getContext('2d')!;
+  const g = cv.getContext('2d', { willReadFrequently: hole })!;
   g.translate(pad + w / 2, pad + h / 2);
   const img: any = {
     id: `scatter-${id}`, src: '', x: 0, y: 0, width: w, height: h, scale: 1, rotation: 0,
     shape: it.kind, shapeItemId: it.id, holeType: it.hole, shapeFilled: it.filled,
     shapeLineW: SHAPE_DEFAULT_LINEW(it.kind), shapeLineBase: Math.max(w, h),
     shapeTextureBaseW: w, shapeTextureBaseH: h, shapeDash: 0, shapeGlow: false, color,
-    ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
+    // 雙色圖形裡面那顆：主色是白的時候改用淺灰，才看得出來
+    ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: /^#?f{3,6}$/i.test(color) ? '#D9D9D9' : '#FFFFFF' } : {}),
   };
   try { paintClassicSceneVector(g, img, null, 1); } catch { return null; }
-  const sp = { canvas: cv, w, h, pad };
+  let sp: FrameSprite = { canvas: cv, w, ox: -(pad + w / 2), oy: -(pad + h / 2) };
+  if (hole) {
+    const d = g.getImageData(0, 0, cv.width, cv.height).data;
+    let x0 = cv.width, y0 = cv.height, x1 = -1, y1 = -1;
+    for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) if (d[(y * cv.width + x) * 4 + 3] > 2) {
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    // 圖片還沒載好（畫出來是空的）：先不快取，下次再畫
+    if (x1 < 0) return null;
+    x0 = Math.max(0, x0 - 2); y0 = Math.max(0, y0 - 2); x1 = Math.min(cv.width - 1, x1 + 2); y1 = Math.min(cv.height - 1, y1 + 2);
+    const c2 = document.createElement('canvas');
+    c2.width = x1 - x0 + 1; c2.height = y1 - y0 + 1;
+    c2.getContext('2d')!.drawImage(cv, -x0, -y0);
+    cv.width = 1;
+    sp = { canvas: c2, w, ox: x0 - (pad + w / 2), oy: y0 - (pad + h / 2) };
+  }
   spriteCache.set(key, sp);
   if (spriteCache.size > 300) { const k = spriteCache.keys().next().value as string; const c = spriteCache.get(k); spriteCache.delete(k); if (c) c.canvas.width = 1; }
   return sp;

@@ -66,7 +66,7 @@ const perimeterPoint = (w: number, h: number, t: number) => {
 const speedPath = (w: number, h: number, r: number, o: FrameParams = {}) => {
   const p = new Path2D();
   const rand = rng(20251016);
-  const gap = (o.gap ?? 50) / 100, thick = (o.thick ?? 50) / 100, vary = (o.vary ?? 50) / 100;
+  const gap = (o.gap ?? 50) / 100, thick = (o.thick ?? 50) / 100, vary = (o.vary ?? 100) / 100;
   const N = Math.round(200 - gap * 160), cx = w / 2, cy = h / 2, P = 2 * (w + h), R = 3 * Math.hypot(w, h);
   const ang = (t: number) => { const [x, y] = perimeterPoint(w, h, t); return Math.atan2(y - cy, x - cx); };
   const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -104,7 +104,7 @@ export const setFrameShapeItem = (f: (id: string) => { kind: string; filled: boo
 /** 集中線、散落圖形的額外滑桿（全部 0～100） */
 export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'size' | 'sizeVar' | 'angle' | 'angleVar' | 'glow'; label: string; def: number }[]> = {
   'frame-speed': [{ key: 'gap', label: '間距', def: 50 }, { key: 'thick', label: '粗細', def: 50 }, { key: 'vary', label: '變化', def: 100 }],
-  'frame-scatter': [{ key: 'gap', label: '間距', def: 30 }, { key: 'size', label: '大小', def: 40 },
+  'frame-scatter': [{ key: 'gap', label: '間距', def: 30 }, { key: 'size', label: '大小', def: 70 },
     { key: 'sizeVar', label: '大小變化', def: 50 }, { key: 'angle', label: '角度', def: 0 }, { key: 'angleVar', label: '角度變化', def: 30 }, { key: 'glow', label: '發光', def: 0 }],
 };
 /** 存在物件上的那一包（滑桿值＋散落的圖形種類） */
@@ -147,20 +147,24 @@ const scatterLayout = (w: number, h: number, o: FrameParams): ScatterSpot[] => {
 const scatterItems = (w: number, h: number, o: FrameParams) => {
   const kinds = o.kinds?.length ? o.kinds : SCATTER_KINDS_DEFAULT;
   const spots = scatterLayout(w, h, o);
-  const m = Math.min(w, h), S = m * (.02 + ((o.size ?? 40) / 100) ** 2 * .42);
+  // 大小滑桿 0～100 對應舊刻度 0～60
+  const m = Math.min(w, h), S = m * (.02 + ((o.size ?? 70) / 100 * .6) ** 2 * .42);
   const sv = (o.sizeVar ?? 50) / 100, av = (o.angleVar ?? 30) / 100, base = (o.angle ?? 0) / 100 * 360;
   const seen = new Array(kinds.length).fill(0);
   return spots.map(p => {
+    /* 每一種圖形裡固定有大約四成不動、六成會歪（照順序輪流，所以每一種都有歪有不歪）；
+       角度變化只決定歪的那些歪多少，從 0 慢慢加大到 ±45°，不會一下跳來跳去。 */
     const c = seen[p.ki]++, ph = (p.ki * .618) % 1;
-    const tilt = Math.floor((c + 1) * av + ph) > Math.floor(c * av + ph);
-    const rot = base + (tilt ? (p.uRot < .5 ? -1 : 1) * (10 + Math.abs(p.uRot * 2 - 1) * 35) : 0);
+    const tilt = Math.floor((c + 1) * .6 + ph) > Math.floor(c * .6 + ph);
+    const rot = base + (tilt ? (p.uRot * 2 - 1) * 45 * av : 0);
     // 大小變化：大部分放大（最多 1+1.2×變化 倍），少部分稍微縮小（最少 1-0.3×變化 倍）
     const d = S * (1 + sv * (p.uSize * 1.5 - .3));
     return { x: p.x, y: p.y, d, rot, id: kinds[p.ki] };
   });
 };
 /** 畫圖形的小圖（GridLayoutTool 註冊：用跟一般新增圖形一模一樣的畫法） */
-export type FrameSprite = { canvas: HTMLCanvasElement; w: number; h: number; pad: number };
+/** w＝這張小圖代表的圖形寬（px）；ox、oy＝小圖左上角相對圖形中心的位置（px，文字類的圖形會超出框） */
+export type FrameSprite = { canvas: HTMLCanvasElement; w: number; ox: number; oy: number };
 let frameSprite: ((id: string, color: string, px: number) => FrameSprite | null) | null = null;
 export const setFrameSprite = (f: (id: string, color: string, px: number) => FrameSprite | null) => { frameSprite = f; };
 /* 發光：把同一張小圖放在大一點的畫布上、用跟圖形一樣顏色的 shadowBlur 畫兩層，
@@ -180,7 +184,7 @@ const glowSprite = (sp: FrameSprite, color: string, glow: number): FrameSprite =
   g.shadowColor = color;
   for (const b of [blur, blur * .4]) { g.shadowBlur = b; g.drawImage(sp.canvas, extra, extra); }
   g.shadowBlur = 0; g.drawImage(sp.canvas, extra, extra);
-  const out = { canvas: cv, w: sp.w, h: sp.h, pad: sp.pad + extra };
+  const out = { canvas: cv, w: sp.w, ox: sp.ox - extra, oy: sp.oy - extra };
   m.set(key, out);
   return out;
 };
@@ -196,7 +200,7 @@ const paintScatter = (g: CanvasRenderingContext2D, w: number, h: number, color: 
     g.translate(it.x, it.y); g.rotate(it.rot * Math.PI / 180);
     if (sp) {
       const s = it.d / sp.w;
-      g.drawImage(sp.canvas, -(sp.w / 2 + sp.pad) * s, -(sp.h / 2 + sp.pad) * s, sp.canvas.width * s, sp.canvas.height * s);
+      g.drawImage(sp.canvas, sp.ox * s, sp.oy * s, sp.canvas.width * s, sp.canvas.height * s);
     } else { g.fillStyle = color; g.beginPath(); g.arc(0, 0, it.d / 2, 0, Math.PI * 2); g.fill(); }
     g.restore();
   }
