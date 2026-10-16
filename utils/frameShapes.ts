@@ -7,13 +7,18 @@
      筆刷邊框：像用粗筆刷隨手刷出來的邊，內緣不規則。
    共用的旋鈕只有「範圍」（框有多厚／尖刺刺多深）；顏色跟著圖形顏色，紋理只疊在框上。
    形狀用固定的亂數種子算，所以每一格、每一次打開都長得一樣。 */
-import { MIST_FRAME_KIND, paintMistFrame, MIST_RANGE_DEFAULT, type MistParams } from './mistFrame';
+import { MIST_FRAME_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, type MistParams } from './mistFrame';
+
+/** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
+export type FrameParams = MistParams & { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angleVar?: number;
+  kinds?: string[]; shapeD?: (kind: string, w: number, h: number) => string };
 
 export const FRAME_SPEED = 'frame-speed';
 export const FRAME_FILM = 'frame-film';
 export const FRAME_POLAROID = 'frame-polaroid';
 export const FRAME_LACE = 'frame-lace';
 export const FRAME_BRUSH = 'frame-brush';
+export const FRAME_SCATTER = 'frame-scatter';
 
 /** 邊框分類裡的全部（圖形選單上的順序） */
 export const FRAME_ITEMS = [
@@ -23,13 +28,14 @@ export const FRAME_ITEMS = [
   { id: FRAME_POLAROID, kind: FRAME_POLAROID, filled: true, label: '拍立得' },
   { id: FRAME_LACE, kind: FRAME_LACE, filled: true, label: '蕾絲花邊' },
   { id: FRAME_BRUSH, kind: FRAME_BRUSH, filled: true, label: '筆刷邊框' },
+  { id: FRAME_SCATTER, kind: FRAME_SCATTER, filled: true, label: '散落圖形' },
 ];
 const FRAME_KIND_SET = new Set(FRAME_ITEMS.map(i => i.kind));
 /** 是不是邊框分類的圖形（霧白邊框也算） */
 export const isFrameShape = (kind?: string) => !!kind && FRAME_KIND_SET.has(kind);
 
 /** 「範圍」的預設：霧白邊框 0（全白只在框邊），其他 50 */
-export const frameRangeDefault = (kind?: string) => kind === MIST_FRAME_KIND ? MIST_RANGE_DEFAULT : 50;
+export const frameRangeDefault = (kind?: string) => kind === MIST_FRAME_KIND ? MIST_RANGE_DEFAULT : kind === FRAME_SCATTER ? 60 : 50;
 
 const r01 = (range: number | undefined, kind: string) =>
   Math.max(0, Math.min(1, (range ?? frameRangeDefault(kind)) / 100));
@@ -52,26 +58,70 @@ const perimeterPoint = (w: number, h: number, t: number) => {
   d -= w; return [0, h - d];
 };
 
-/** 集中線：尖刺一根一根的三角形（只有尖刺，所以照片大部分都看得到） */
-const speedPath = (w: number, h: number, r: number) => {
+/** 集中線（漫畫張力框）。每一根尖刺都正對著畫面正中心，而且互相不重疊：
+   先沿著框邊平均（或照「變化」稍微打亂）放好每根的位置，換成「從中心看過去的角度」；
+   每根只能待在自己那一片扇形裡（左右鄰居角度的中線為界），所以永遠不會壓到旁邊那根。
+   三角形的尖端在中心那條射線上、底邊推到框外很遠（被框裁掉），看起來就是從框邊刺進來。
+   旋鈕：範圍＝刺多深；間距＝根數；粗細＝每根在框邊上有多寬；變化＝粗細與長短的亂度（0＝全部一樣）。 */
+const speedPath = (w: number, h: number, r: number, o: FrameParams = {}) => {
   const p = new Path2D();
   const rand = rng(20251016);
-  const N = 150, cx = w / 2, cy = h / 2, P = 2 * (w + h);
+  const gap = (o.gap ?? 50) / 100, thick = (o.thick ?? 50) / 100, vary = (o.vary ?? 50) / 100;
+  const N = Math.round(200 - gap * 160), cx = w / 2, cy = h / 2, P = 2 * (w + h), R = 3 * Math.hypot(w, h);
+  const ang = (t: number) => { const [x, y] = perimeterPoint(w, h, t); return Math.atan2(y - cy, x - cx); };
+  const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+  const ts = Array.from({ length: N }, (_, i) => (i + .5 + (rand() - .5) * .6 * vary) / N);
+  const th = ts.map(ang);
   for (let i = 0; i < N; i++) {
-    const t = (i + (rand() - .5) * .8) / N;
+    const t = ts[i], a = th[i];
     const [x, y] = perimeterPoint(w, h, t);
-    const dx = cx - x, dy = cy - y, dist = Math.hypot(dx, dy) || 1;
-    const ux = dx / dist, uy = dy / dist;
-    // 長短：大部分短、少數特別長，才有「爆」的張力
-    const k = rand();
-    const len = dist * (.08 + r * .5) * (.25 + .75 * k * k + (k > .9 ? .35 : 0));
-    const half = (P / N) * (.18 + rand() * .7);
-    // 底邊往框外多推一點，邊上不會露出縫
-    const bx = x - ux * half, by = y - uy * half;
-    p.moveTo(bx - uy * half, by + ux * half);
-    p.lineTo(x + ux * len, y + uy * len);
-    p.lineTo(bx + uy * half, by - ux * half);
+    const dist = Math.hypot(x - cx, y - cy) || 1;
+    // 自己那片扇形的左右界（跟鄰居角度的中點），稍微留一點縫
+    const lo = wrap(th[(i + N - 1) % N] - a) / 2 * .96, hi = wrap(th[(i + 1) % N] - a) / 2 * .96;
+    const half = P / N / 2 * (.2 + thick * .75) * (1 - vary * rand() * .8);
+    const da = Math.max(lo, wrap(ang(t - half / P) - a)), db = Math.min(hi, wrap(ang(t + half / P) - a));
+    const len = dist * (.08 + r * .55) * (1 - vary * rand() * .75);
+    const ax = cx + Math.cos(a) * (dist - len), ay = cy + Math.sin(a) * (dist - len);
+    p.moveTo(ax, ay);
+    p.lineTo(cx + Math.cos(a + da) * R, cy + Math.sin(a + da) * R);
+    p.lineTo(cx + Math.cos(a + db) * R, cy + Math.sin(a + db) * R);
     p.closePath();
+  }
+  return p;
+};
+
+/** 散落圖形框：沒有遮罩，選好的幾種圖形以隨機大小、盡量平均的數量散在四周。
+   範圍跟霧白邊框同一套（0～100、預設 60）：用橢圓距離量，越往中間越空。
+   放法是「丟飛鏢」：隨機丟一個點，在範圍內、而且跟已經放好的都保持間距才留下；
+   圖形種類照輪流的順序給，所以每一種的數量差不多。 */
+export const SCATTER_KINDS_DEFAULT = ['star', 'heart', 'circle'];
+const scatterPath = (w: number, h: number, _r: number, o: FrameParams = {}) => {
+  const p = new Path2D();
+  const rand = rng(77001);
+  const kinds = o.kinds?.length ? o.kinds : SCATTER_KINDS_DEFAULT;
+  const ui = o.range ?? 60;
+  const edge = 1 - mistRangeFromUi(ui) / 100 * .9, inner = edge - .32;
+  const m = Math.min(w, h), S = m * (.035 + (o.size ?? 40) / 100 * .14);
+  const sv = (o.sizeVar ?? 50) / 100, av = (o.angleVar ?? 30) / 100, sp = .9 + (o.gap ?? 30) / 100 * 2.2;
+  const placed: [number, number, number][] = [];
+  const placedKind: number[] = [], count = new Array(kinds.length).fill(0);
+  for (let tries = 0; tries < 6000 && placed.length < 400; tries++) {
+    const x = (rand() * 1.04 - .02) * w, y = (rand() * 1.04 - .02) * h;
+    const u = (x - w / 2) / (w / 2), v = (y - h / 2) / (h / 2);
+    if (Math.hypot(u, v) < inner) continue;
+    const rad = S / 2 * (1 - sv * rand() * .75);
+    if (placed.some(([px, py, pr]) => Math.hypot(px - x, py - y) < (pr + rad) * sp)) continue;
+    // 附近最少出現的那一種優先（同分再看整體數量），所以每一種都平均散開、不會擠成一團
+    const near = new Array(kinds.length).fill(0);
+    placed.forEach(([px, py], j) => { if (Math.hypot(px - x, py - y) < S * 3.2) near[placedKind[j]]++; });
+    let ki = 0;
+    for (let j = 1; j < kinds.length; j++) if (near[j] < near[ki] || (near[j] === near[ki] && count[j] < count[ki])) ki = j;
+    count[ki]++; placedKind.push(ki);
+    placed.push([x, y, rad]);
+    const kind = kinds[ki];
+    const d = rad * 2, rot = (rand() * 2 - 1) * av * Math.PI / 4;
+    const sh = o.shapeD ? new Path2D(o.shapeD(kind, d, d)) : (() => { const c = new Path2D(); c.arc(rad, rad, rad, 0, Math.PI * 2); return c; })();
+    p.addPath(sh, new DOMMatrix().translate(x, y).rotate(rot * 180 / Math.PI).translate(-rad, -rad));
   }
   return p;
 };
@@ -263,18 +313,19 @@ const brushPath = (w: number, h: number, r: number): Fill[] => {
   return [[p, 'evenodd']];
 };
 
-const one = (f: (w: number, h: number, r: number) => Path2D) => (w: number, h: number, r: number): Fill[] => [[f(w, h, r), 'evenodd']];
-const PATHS: Record<string, (w: number, h: number, r: number) => Fill[]> = {
+const one = (f: (w: number, h: number, r: number, o?: FrameParams) => Path2D) => (w: number, h: number, r: number, o?: FrameParams): Fill[] => [[f(w, h, r, o), 'evenodd']];
+const PATHS: Record<string, (w: number, h: number, r: number, o?: FrameParams) => Fill[]> = {
   [FRAME_SPEED]: one(speedPath), [FRAME_FILM]: one(filmPath), [FRAME_POLAROID]: one(polaroidPath),
   [FRAME_LACE]: lacePath, [FRAME_BRUSH]: brushPath,
+  [FRAME_SCATTER]: (w, h, r, o) => [[scatterPath(w, h, r, o), 'nonzero']],
 };
 /** 路徑快取：同一個比例、同一個範圍就不用再算（拖動、縮放時每一格都用得到） */
 const pathCache = new Map<string, Fill[]>();
-const framePath = (kind: string, w: number, h: number, r: number) => {
-  const key = `${kind}|${Math.round(w)}|${Math.round(h)}|${r.toFixed(3)}`;
+const framePath = (kind: string, w: number, h: number, r: number, o: FrameParams = {}) => {
+  const key = `${kind}|${Math.round(w)}|${Math.round(h)}|${r.toFixed(3)}|${o.gap}|${o.thick}|${o.vary}|${o.size}|${o.sizeVar}|${o.angleVar}|${o.range}|${(o.kinds || []).join(',')}`;
   let path = pathCache.get(key);
   if (!path) {
-    path = PATHS[kind](w, h, r);
+    path = PATHS[kind](w, h, r, o);
     pathCache.set(key, path);
     if (pathCache.size > 40) pathCache.delete(pathCache.keys().next().value as string);
   }
@@ -288,11 +339,11 @@ let texSurface: HTMLCanvasElement | null = null;
  */
 export const paintFrameShape = (
   ctx: CanvasRenderingContext2D, kind: string, w: number, h: number, color = '#FFFFFF',
-  params: MistParams = {}, texture?: (tc: CanvasRenderingContext2D, bodyPath: Path2D) => void,
+  params: FrameParams = {}, texture?: (tc: CanvasRenderingContext2D, bodyPath: Path2D) => void,
 ) => {
   if (!(w > 0) || !(h > 0)) return;
   if (kind === MIST_FRAME_KIND || !PATHS[kind]) { paintMistFrame(ctx, w, h, color, params, texture); return; }
-  const path = framePath(kind, w, h, r01(params.range, kind));
+  const path = framePath(kind, w, h, r01(params.range, kind), params);
   const draw = (g: CanvasRenderingContext2D) => {
     if (kind === FRAME_POLAROID) { paintPolaroid(g, w, h, color, r01(params.range, kind)); return; }
     g.save();

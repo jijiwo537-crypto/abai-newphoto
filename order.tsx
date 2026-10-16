@@ -12,8 +12,8 @@ import { patternDefaultSize } from './utils/patternDefaults';
 import { CollageTool } from './components/CollageTool';
 import { StarBurstLab, loadCustomBursts, loadDeletedBursts } from './components/StarBurstLab';
 import { STAR_BURSTS } from './utils/starBursts';
-import { FrameLab, LAB_FRAMES, STORE_FRAME_PICK, STORE_FRAME_RANGE, loadFramePicks, loadFrameRanges } from './components/FrameLab';
-import { frameRangeDefault } from './utils/frameShapes';
+import { FrameLab, LAB_FRAMES, STORE_FRAME_PICK, STORE_FRAME_RANGE, loadFramePicks, loadFrameRanges, FRAME_SLIDERS, loadScatterKinds } from './components/FrameLab';
+import { frameRangeDefault, FRAME_SCATTER } from './utils/frameShapes';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
 const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o', 'track-select-o', 'track-select8-o', 'track-cross-o']);
@@ -285,8 +285,15 @@ function OrderTool() {
     if (sized.length) lines.push('圖案起始大小（創意拼圖的「大小」0~100）', sized.map(id => `${id}: ${sizes[id]}（原本 ${patternDefaultSize(id)}）`).join(', '));
     const picks = LAB_FRAMES.filter(f => framePicks.includes(f.id));
     if (picks.length) lines.push('想加進 App 的邊框（圖形・邊框）', picks.map(f => {
+      const parts: string[] = [];
       const r = frameRanges[f.id];
-      return r !== undefined && r !== frameRangeDefault(f.kind) ? `${f.label}（${f.id}，範圍 ${r}）` : `${f.label}（${f.id}）`;
+      if (r !== undefined && r !== frameRangeDefault(f.kind)) parts.push(`範圍 ${r}`);
+      for (const sl of FRAME_SLIDERS[f.kind] || []) {
+        const v = frameRanges[`${f.id}.${sl.key}`];
+        if (v !== undefined && v !== sl.def) parts.push(`${sl.label} ${v}`);
+      }
+      if (f.kind === FRAME_SCATTER) parts.push(`圖形 ${loadScatterKinds().join('/')}`);
+      return `${f.label}（${[f.id, ...parts].join('，')}）`;
     }).join(', '));
     if (lines.length === 1) lines.push('（目前沒有改任何東西）');
     return lines.join('\n');

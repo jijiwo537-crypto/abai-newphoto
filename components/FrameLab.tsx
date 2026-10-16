@@ -2,7 +2,20 @@
    每一顆都用 App 裡同一支畫法（utils/frameShapes.ts）畫在示範照片上，
    「範圍」跟 App 的滑桿一樣是 0～100，顏色可以切換。 */
 import React, { useEffect, useRef, useState } from 'react';
-import { FRAME_ITEMS, paintFrameShape, frameRangeDefault } from '../utils/frameShapes';
+import { FRAME_ITEMS, paintFrameShape, frameRangeDefault, FRAME_SPEED, FRAME_SCATTER, SCATTER_KINDS_DEFAULT, type FrameParams } from '../utils/frameShapes';
+import { shapePathD, ShapeGlyph } from './GridLayoutTool';
+
+/** 每種邊框的滑桿（全部 0～100）。「範圍」存在 ranges[id]，其他存在 ranges[`${id}.${key}`] */
+export const FRAME_SLIDERS: Record<string, { key: string; label: string; def: number }[]> = {
+  [FRAME_SPEED]: [{ key: 'gap', label: '間距', def: 50 }, { key: 'thick', label: '粗細', def: 50 }, { key: 'vary', label: '變化', def: 50 }],
+  [FRAME_SCATTER]: [{ key: 'gap', label: '間距', def: 30 }, { key: 'size', label: '大小', def: 40 },
+    { key: 'sizeVar', label: '大小變化', def: 50 }, { key: 'angleVar', label: '角度變化', def: 30 }],
+};
+/** 散落圖形可以選的圖形 */
+const SCATTER_CHOICES = ['star', 'heart', 'circle', 'sparkle4', 'star-rounded', 'hexstar', 'diamond', 'triangle', 'square', 'rounded', 'pentagon', 'hexagon'];
+export const STORE_FRAME_KINDS = 'abai-order-tool-frame-kinds-v1';
+export const loadScatterKinds = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_FRAME_KINDS) || 'null'); return Array.isArray(v) && v.length ? v : SCATTER_KINDS_DEFAULT; } catch { return SCATTER_KINDS_DEFAULT; } };
+const shapeD = (kind: string, w: number, h: number) => shapePathD(kind, w, h);
 
 /** 還沒加進 App、要先在這裡試的那幾種 */
 export const LAB_FRAMES = FRAME_ITEMS.filter(i => i.kind !== 'mist-frame');
@@ -28,7 +41,7 @@ const paintSample = (g: CanvasRenderingContext2D, w: number, h: number, img: HTM
   }
 };
 
-const Preview: React.FC<{ kind: string; range: number; color: string; img: HTMLImageElement | null }> = ({ kind, range, color, img }) => {
+const Preview: React.FC<{ kind: string; params: FrameParams; color: string; img: HTMLImageElement | null }> = ({ kind, params, color, img }) => {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const cv = ref.current; if (!cv) return;
@@ -36,8 +49,8 @@ const Preview: React.FC<{ kind: string; range: number; color: string; img: HTMLI
     cv.width = Math.max(1, Math.round(W)); cv.height = Math.max(1, Math.round(H));
     const g = cv.getContext('2d')!;
     paintSample(g, cv.width, cv.height, img);
-    paintFrameShape(g, kind, cv.width, cv.height, color, { range });
-  }, [kind, range, color, img]);
+    paintFrameShape(g, kind, cv.width, cv.height, color, { ...params, shapeD });
+  }, [kind, JSON.stringify(params), color, img]);
   return <canvas ref={ref} className="w-full rounded-[10px] block" style={{ aspectRatio: '3 / 4' }} />;
 };
 
@@ -48,6 +61,8 @@ export function FrameLab({ photo, onPickPhoto, picked, onTogglePick, ranges, onR
 }) {
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const [color, setColor] = useState(COLORS[0]);
+  const [kinds, setKinds] = useState<string[]>(loadScatterKinds);
+  useEffect(() => { try { localStorage.setItem(STORE_FRAME_KINDS, JSON.stringify(kinds)); } catch {} }, [kinds]);
   useEffect(() => {
     if (!photo) { setImg(null); return; }
     const u = URL.createObjectURL(photo), im = new Image();
@@ -72,9 +87,20 @@ export function FrameLab({ photo, onPickPhoto, picked, onTogglePick, ranges, onR
       <div className="grid grid-cols-2 gap-3">
         {LAB_FRAMES.map(f => {
           const range = ranges[f.id] ?? frameRangeDefault(f.kind), on = picked.includes(f.id);
+          const extra = FRAME_SLIDERS[f.kind] || [];
+          const params: FrameParams = { range };
+          for (const sl of extra) (params as any)[sl.key] = ranges[`${f.id}.${sl.key}`] ?? sl.def;
+          if (f.kind === FRAME_SCATTER) params.kinds = kinds;
+          const row = (label: string, v: number, set: (v: number) => void) => (
+            <div key={label} className="mt-1.5 flex items-center gap-2">
+              <span className="text-[10px] text-white/50 shrink-0 w-12">{label}</span>
+              <input type="range" min={0} max={100} step={1} value={v} onChange={e => set(Number(e.target.value))} className="flex-1 min-w-0 accent-white" />
+              <span className="text-[10px] tabular-nums w-6 shrink-0 text-right">{v}</span>
+            </div>
+          );
           return (
             <div key={f.id} data-frame-card={f.id} className={`rounded-[12px] border p-2 ${on ? 'border-[#9fd3a8] bg-[#9fd3a8]/10' : 'border-white/10 bg-white/[0.03]'}`}>
-              <Preview kind={f.kind} range={range} color={color} img={img} />
+              <Preview kind={f.kind} params={params} color={color} img={img} />
               <div className="flex items-center justify-between mt-2">
                 <span className="text-[12px] font-bold">{f.label}</span>
                 <button onClick={() => onTogglePick(f.id)}
@@ -82,12 +108,21 @@ export function FrameLab({ photo, onPickPhoto, picked, onTogglePick, ranges, onR
                   {on ? '已勾選' : '想加進去'}
                 </button>
               </div>
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-[10px] text-white/50 shrink-0">範圍</span>
-                <input type="range" min={0} max={100} step={1} value={range} onChange={e => onRange(f.id, Number(e.target.value))}
-                  className="flex-1 min-w-0 accent-white" />
-                <span className="text-[10px] tabular-nums w-6 shrink-0 text-right">{range}</span>
-              </div>
+              {row('範圍', range, v => onRange(f.id, v))}
+              {extra.map(sl => row(sl.label, (params as any)[sl.key], v => onRange(`${f.id}.${sl.key}`, v)))}
+              {f.kind === FRAME_SCATTER && (
+                <div className="mt-2 grid grid-cols-6 gap-1" data-scatter-kinds>
+                  {SCATTER_CHOICES.map(k => {
+                    const sel = kinds.includes(k);
+                    return (
+                      <button key={k} aria-label={k} onClick={() => setKinds(p => sel ? (p.length > 1 ? p.filter(x => x !== k) : p) : [...p, k])}
+                        className={`aspect-square rounded-[8px] flex items-center justify-center ${sel ? 'bg-white text-black' : 'bg-white/[0.06] text-white/70'}`}>
+                        <ShapeGlyph item={{ id: k, kind: k, filled: true } as any} size={16} />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
