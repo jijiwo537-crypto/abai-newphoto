@@ -2,17 +2,10 @@
    每一顆都用 App 裡同一支畫法（utils/frameShapes.ts）畫在示範照片上，
    「範圍」跟 App 的滑桿一樣是 0～100，顏色可以切換。 */
 import React, { useEffect, useRef, useState } from 'react';
-import { FRAME_ITEMS, paintFrameShape, frameRangeDefault, FRAME_SPEED, FRAME_SCATTER, SCATTER_KINDS_DEFAULT, type FrameParams } from '../utils/frameShapes';
+import { FRAME_ITEMS, paintFrameShape, frameRangeDefault, FRAME_SPEED, FRAME_SCATTER, SCATTER_KINDS_DEFAULT, SCATTER_CHOICES, FRAME_SLIDERS, type FrameParams } from '../utils/frameShapes';
 import { shapePathD, ShapeGlyph } from './GridLayoutTool';
 
-/** 每種邊框的滑桿（全部 0～100）。「範圍」存在 ranges[id]，其他存在 ranges[`${id}.${key}`] */
-export const FRAME_SLIDERS: Record<string, { key: string; label: string; def: number }[]> = {
-  [FRAME_SPEED]: [{ key: 'gap', label: '間距', def: 50 }, { key: 'thick', label: '粗細', def: 50 }, { key: 'vary', label: '變化', def: 50 }],
-  [FRAME_SCATTER]: [{ key: 'gap', label: '間距', def: 30 }, { key: 'size', label: '大小', def: 40 },
-    { key: 'sizeVar', label: '大小變化', def: 50 }, { key: 'angleVar', label: '角度變化', def: 30 }],
-};
-/** 散落圖形可以選的圖形 */
-const SCATTER_CHOICES = ['star', 'heart', 'circle', 'sparkle4', 'star-rounded', 'hexstar', 'diamond', 'triangle', 'square', 'rounded', 'pentagon', 'hexagon'];
+export { FRAME_SLIDERS };
 export const STORE_FRAME_KINDS = 'abai-order-tool-frame-kinds-v1';
 export const loadScatterKinds = (): string[] => { try { const v = JSON.parse(localStorage.getItem(STORE_FRAME_KINDS) || 'null'); return Array.isArray(v) && v.length ? v : SCATTER_KINDS_DEFAULT; } catch { return SCATTER_KINDS_DEFAULT; } };
 const shapeD = (kind: string, w: number, h: number) => shapePathD(kind, w, h);

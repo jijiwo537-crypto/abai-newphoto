@@ -78,7 +78,7 @@ const speedPath = (w: number, h: number, r: number, o: FrameParams = {}) => {
     const dist = Math.hypot(x - cx, y - cy) || 1;
     // 自己那片扇形的左右界（跟鄰居角度的中點），稍微留一點縫
     const lo = wrap(th[(i + N - 1) % N] - a) / 2 * .96, hi = wrap(th[(i + 1) % N] - a) / 2 * .96;
-    const half = P / N / 2 * (.2 + thick * .75) * (1 - vary * rand() * .8);
+    const half = P / N / 2 * (.2 + thick * 1.7) * (1 - vary * rand() * .8);
     const da = Math.max(lo, wrap(ang(t - half / P) - a)), db = Math.min(hi, wrap(ang(t + half / P) - a));
     const len = dist * (.08 + r * .55) * (1 - vary * rand() * .75);
     const ax = cx + Math.cos(a) * (dist - len), ay = cy + Math.sin(a) * (dist - len);
@@ -95,13 +95,26 @@ const speedPath = (w: number, h: number, r: number, o: FrameParams = {}) => {
    放法是「丟飛鏢」：隨機丟一個點，在範圍內、而且跟已經放好的都保持間距才留下；
    圖形種類照輪流的順序給，所以每一種的數量差不多。 */
 export const SCATTER_KINDS_DEFAULT = ['star', 'heart', 'circle'];
+/** 散落圖形可以選的圖形 */
+export const SCATTER_CHOICES = ['star', 'heart', 'circle', 'sparkle4', 'star-rounded', 'hexstar', 'diamond', 'triangle', 'square', 'rounded', 'pentagon', 'hexagon'];
+/** 畫圖形用的函式（GridLayoutTool 載入時註冊 shapePathD，避免循環引用） */
+let frameShapeD: ((kind: string, w: number, h: number) => string) | null = null;
+export const setFrameShapeD = (f: (kind: string, w: number, h: number) => string) => { frameShapeD = f; };
+/** 集中線、散落圖形的額外滑桿（全部 0～100） */
+export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'size' | 'sizeVar' | 'angleVar'; label: string; def: number }[]> = {
+  'frame-speed': [{ key: 'gap', label: '間距', def: 50 }, { key: 'thick', label: '粗細', def: 50 }, { key: 'vary', label: '變化', def: 50 }],
+  'frame-scatter': [{ key: 'gap', label: '間距', def: 30 }, { key: 'size', label: '大小', def: 40 },
+    { key: 'sizeVar', label: '大小變化', def: 50 }, { key: 'angleVar', label: '角度變化', def: 30 }],
+};
+/** 存在物件上的那一包（滑桿值＋散落的圖形種類） */
+export type FrameOpts = { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angleVar?: number; kinds?: string[] };
 const scatterPath = (w: number, h: number, _r: number, o: FrameParams = {}) => {
   const p = new Path2D();
   const rand = rng(77001);
   const kinds = o.kinds?.length ? o.kinds : SCATTER_KINDS_DEFAULT;
   const ui = o.range ?? 60;
   const edge = 1 - mistRangeFromUi(ui) / 100 * .9, inner = edge - .32;
-  const m = Math.min(w, h), S = m * (.035 + (o.size ?? 40) / 100 * .14);
+  const m = Math.min(w, h), S = m * (.02 + ((o.size ?? 40) / 100) ** 2 * .42);
   const sv = (o.sizeVar ?? 50) / 100, av = (o.angleVar ?? 30) / 100, sp = .9 + (o.gap ?? 30) / 100 * 2.2;
   const placed: [number, number, number][] = [];
   const placedKind: number[] = [], count = new Array(kinds.length).fill(0);
@@ -109,7 +122,8 @@ const scatterPath = (w: number, h: number, _r: number, o: FrameParams = {}) => {
     const x = (rand() * 1.04 - .02) * w, y = (rand() * 1.04 - .02) * h;
     const u = (x - w / 2) / (w / 2), v = (y - h / 2) / (h / 2);
     if (Math.hypot(u, v) < inner) continue;
-    const rad = S / 2 * (1 - sv * rand() * .75);
+    // 大小變化只會放大：每顆是基本大小的 1～(1+1.5×變化) 倍
+    const rad = S / 2 * (1 + sv * rand() * 1.5);
     if (placed.some(([px, py, pr]) => Math.hypot(px - x, py - y) < (pr + rad) * sp)) continue;
     // 附近最少出現的那一種優先（同分再看整體數量），所以每一種都平均散開、不會擠成一團
     const near = new Array(kinds.length).fill(0);
@@ -120,7 +134,8 @@ const scatterPath = (w: number, h: number, _r: number, o: FrameParams = {}) => {
     placed.push([x, y, rad]);
     const kind = kinds[ki];
     const d = rad * 2, rot = (rand() * 2 - 1) * av * Math.PI / 4;
-    const sh = o.shapeD ? new Path2D(o.shapeD(kind, d, d)) : (() => { const c = new Path2D(); c.arc(rad, rad, rad, 0, Math.PI * 2); return c; })();
+    const sd = o.shapeD || frameShapeD;
+    const sh = sd ? new Path2D(sd(kind, d, d)) : (() => { const c = new Path2D(); c.arc(rad, rad, rad, 0, Math.PI * 2); return c; })();
     p.addPath(sh, new DOMMatrix().translate(x, y).rotate(rot * 180 / Math.PI).translate(-rad, -rad));
   }
   return p;

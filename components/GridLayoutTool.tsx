@@ -64,7 +64,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, FRAME_SLIDERS, SCATTER_CHOICES, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, type FrameOpts } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -1480,7 +1480,7 @@ export const shapePickerSections = () => {
     solid: [...A.filter(i => i.filled && plain(i)), HOLE_ITEM_CROSS, ...HOLE_ITEMS_EXTRA],
     outline: [...A.filter(i => !i.filled && plain(i)), HOLE_ITEM_CROSS_O],
     // 新的五種邊框先放在排序工具的「邊框」頁試，App 裡先只有霧白邊框
-    frame: FRAME_ITEMS.filter(i => i.kind === 'mist-frame') as ShapeItem[],
+    frame: FRAME_ITEMS.filter(i => ['mist-frame', 'frame-speed', 'frame-scatter'].includes(i.kind)) as ShapeItem[],
     burst: [...STAR_BURST_ITEMS],
     line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind)),
     grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
@@ -1837,6 +1837,26 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval
  * 畫法：先照外框畫一次，再用 SHAPE_FIT 把「真正有畫到的那一塊」
  * 縮放並平移到 24×24 的正中央 —— 所以每一顆按鈕的圖案都在正中心。
  */
+/** 散落圖形邊框：多選要散在四周的圖形（至少留一種） */
+export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: string[]) => void }> = ({ value, onChange }) => {
+  const kinds = value?.length ? value : SCATTER_KINDS_DEFAULT;
+  return (
+    <div className="pt-1 pb-2">
+      <div className="text-[11px] text-white/45 mb-1.5">圖形（可多選）</div>
+      <div className="grid grid-cols-6 gap-1.5" data-scatter-kinds>
+        {SCATTER_CHOICES.map(k => {
+          const on = kinds.includes(k);
+          return (
+            <button key={k} aria-label={k} onClick={() => onChange(on ? (kinds.length > 1 ? kinds.filter(x => x !== k) : kinds) : [...kinds, k])}
+              className={`aspect-square rounded-[10px] flex items-center justify-center active:scale-95 ${on ? 'bg-white text-black' : 'bg-white/[0.06] text-white/70'}`}>
+              <ShapeGlyph item={{ id: k, kind: k, filled: true } as ShapeItem} size={18} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const maskId = React.useId().replace(/:/g, '');
   if(isBackdropMask(item.kind))return <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
@@ -2838,8 +2858,14 @@ export const ShapeEditorPanel: React.FC<{
               })} />
           </div>}
           {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
-          {isFrameShape(layer.shape) && !isMistFrame(layer.shape) && <div className="px-2 order-1 w-full">
+          {isFrameShape(layer.shape) && !isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
             {slider('範圍', Math.round(layer.shapeFrameRange ?? frameRangeDefault(layer.shape)), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
+            {(FRAME_SLIDERS[layer.shape!] || []).map(sl => <React.Fragment key={sl.key}>
+              {slider(sl.label, Math.round(layer.shapeFrameOpts?.[sl.key] ?? sl.def), 0, 100, v => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, [sl.key]: Math.round(v) } }))}
+            </React.Fragment>)}
+          </div>}
+          {layer.shape === FRAME_SCATTER && <div className="px-2 order-1 w-full">
+            <ScatterKindsPicker value={layer.shapeFrameOpts?.kinds} onChange={kinds => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, kinds } })} />
           </div>}
           {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
             {slider('範圍', mistRangeToUi(layer.shapeFrameRange ?? MIST_RANGE_DEFAULT), 0, 100, v => onChange({ shapeFrameRange: mistRangeFromUi(v) }))}
@@ -4863,6 +4889,8 @@ interface FloatingImage {
   shapeGlintGlow?: number;
   /** 霧白邊框的「範圍」（0～100） */
   shapeFrameRange?: number;
+  /** 集中線／散落圖形的額外旋鈕 */
+  shapeFrameOpts?: FrameOpts;
   /** 霧白邊框中間透明那塊的形狀（0 圓角方形、100 橢圓） */
   shapeFrameRound?: number;
   /** 霧白邊框的「羽化」（0～100） */
@@ -5723,7 +5751,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         ctx.translate(-drawW / 2, -drawH / 2);
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
-        paintFrameShape(ctx, image.shape, drawW, drawH, color, { range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
+        paintFrameShape(ctx, image.shape, drawW, drawH, color, { ...image.shapeFrameOpts, range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
           tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
           if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
             tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
@@ -14648,7 +14676,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 邊框・霧白：跟預覽同一套畫法（紋理只疊在霧上）
       const mColor = fImg.color || SHAPE_DEFAULT_COLOR;
       const mTx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
-      paintFrameShape(ctx, fImg.shape!, fw, fh, mColor, { range: fImg.shapeFrameRange, feather: fImg.shapeFrameFeather, round: fImg.shapeFrameRound }, mTx === 'none' ? undefined : (tc, bodyPath) => {
+      paintFrameShape(ctx, fImg.shape!, fw, fh, mColor, { ...fImg.shapeFrameOpts, range: fImg.shapeFrameRange, feather: fImg.shapeFrameFeather, round: fImg.shapeFrameRound }, mTx === 'none' ? undefined : (tc, bodyPath) => {
         tc.save(); tc.clip(bodyPath); tc.translate(fw / 2, fh / 2);
         if (mTx === 'dot' || mTx === 'star' || mTx === 'heart') paintTex(tc, fw, fh, fw, fh, {
           tex: mTx, dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
@@ -19025,3 +19053,6 @@ export const PathPatternIcon: React.FC<{ s: string }> = ({ s }) => {
     </svg>
   );
 };
+
+// 散落圖形邊框畫圖形時要用到 shapePathD
+setFrameShapeD((kind, w, h) => shapePathD(kind, w, h));
