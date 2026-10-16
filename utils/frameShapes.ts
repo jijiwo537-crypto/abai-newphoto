@@ -143,8 +143,26 @@ const scatterLayout = (w: number, h: number, o: FrameParams): ScatterSpot[] => {
     count[ki]++;
     spots.push({ x, y, ki, uSize: rand(), uRot: rand(), tilt: false });
   }
-  /* 「要不要歪」先照每一種各自排好：同一種圖形裡，照順序輪流決定，
-     所以角度變化 30 的時候，每一種都大約有三成是歪的、其餘不動（不會整種一起歪）。 */
+  /* 大小的分配（uSize 0～1，越大越大顆）：
+     1. 每一種圖形各自拿到一組「分層」的大小：把 0～1 切成這一種的顆數那麼多格，每格隨機取一個值，
+        所以每一種的大、中、小顆數都差不多（A 有 2 顆最大，B、C 也大約各 2 顆）。
+     2. 發的時候照擺放順序，每一顆從自己那一種剩下的大小裡，挑一個「跟附近已經發好的差最多」的，
+        相近大小就不會擠在一起；但只在最好的前三個裡隨機挑，所以不會死板地大小大小輪流。 */
+  const pools = kinds.map((_, ki) => {
+    const n = spots.filter(p => p.ki === ki).length;
+    return Array.from({ length: n }, (_, j) => (j + .15 + rand() * .7) / Math.max(1, n));
+  });
+  const nearR = minD * 2.6;
+  spots.forEach((p, i) => {
+    const pool = pools[p.ki];
+    if (!pool.length) return;
+    const near = spots.slice(0, i).filter(q => Math.hypot(q.x - p.x, q.y - p.y) < nearR);
+    const score = (u: number) => near.length ? Math.min(...near.map(q => Math.abs(q.uSize - u) + Math.hypot(q.x - p.x, q.y - p.y) / nearR * .25)) : rand();
+    const ranked = pool.map((u, j) => [score(u), j] as const).sort((x, y) => y[0] - x[0]);
+    const pick = ranked[Math.floor(rand() * Math.min(3, ranked.length))][1];
+    p.uSize = pool[pick];
+    pool.splice(pick, 1);
+  });
   scatterCache.set(key, spots);
   if (scatterCache.size > 24) scatterCache.delete(scatterCache.keys().next().value as string);
   return spots;
