@@ -64,7 +64,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS } from '../utils/starBursts';
-import { isMistFrame, paintMistFrame, MIST_FRAME_KIND, MIST_RANGE_DEFAULT, MIST_ROUND_DEFAULT } from '../utils/mistFrame';
+import { isMistFrame, paintMistFrame, MIST_FRAME_KIND, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
@@ -2827,13 +2827,13 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>}
-          {/* 霧白邊框：霧從框邊往內延伸多少 */}
-          {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full">
+          {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
+          {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
             {slider('範圍', Math.round(layer.shapeFrameRange ?? MIST_RANGE_DEFAULT), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
+            {slider('羽化', Math.round(layer.shapeFrameFeather ?? MIST_FEATHER_DEFAULT), 0, 100, v => onChange({ shapeFrameFeather: Math.round(v) }))}
           </div>}
-          {/* 霧白邊框：中間透明那塊的形狀（0 圓角方形、100 橢圓） */}
           {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full">
-            {slider('形狀', Math.round(layer.shapeFrameRound ?? MIST_ROUND_DEFAULT), 0, 100, v => onChange({ shapeFrameRound: Math.round(v) }))}
+            {slider('圓角', Math.round(layer.shapeFrameRound ?? MIST_ROUND_DEFAULT), 0, 100, v => onChange({ shapeFrameRound: Math.round(v) }))}
           </div>}
           {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
               一般圖形那種陰影式的發光不給星芒用 */}
@@ -2951,9 +2951,11 @@ export const ShapeEditorPanel: React.FC<{
               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                 {isClefTex(layer.holeType)
                   ? slider('大小', clefSizeToUi(layer.shapeDotSize ?? CLEF_TEX_DEFAULTS.size), 0, 100, v => onChange({ shapeDotSize: clefSizeFromUi(v) }))
-                  : slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
+                  : slider('大小', layer.shapeDotSize ?? (isMistFrame(layer.shape) ? MIST_TEX_SIZE_DEFAULT : 50), 0, 100, v => onChange({ shapeDotSize: v }))}
                 {isClefTex(layer.holeType)
                   ? slider('間距', clefGapToUi(layer.shapeDotGap ?? CLEF_TEX_DEFAULTS.gap), 0, 100, v => onChange({ shapeDotGap: clefGapFromUi(v) }))
+                  : isMistFrame(layer.shape)
+                  ? slider('間距', mistGapToUi(layer.shapeDotGap ?? MIST_TEX_GAP_DEFAULT), 0, 100, v => onChange({ shapeDotGap: mistGapFromUi(v) }))
                   : slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
                 {isGridTex(tex) && <div className="col-span-2">{slider('壓扁', maskTextureSquashToUi(layer.shapeDotSquash ?? 50), 0, 100, v => onChange({ shapeDotSquash: maskTextureSquashFromUi(v) }))}</div>}
               </div>
@@ -4847,6 +4849,8 @@ interface FloatingImage {
   shapeFrameRange?: number;
   /** 霧白邊框中間透明那塊的形狀（0 圓角方形、100 橢圓） */
   shapeFrameRound?: number;
+  /** 霧白邊框的「羽化」（0～100） */
+  shapeFrameFeather?: number;
   /** 外描邊的顏色，預設黑 */
   shapeStrokeColor?: string;
   /* 圖形上的「點點」。跟創意拼圖那邊同一組參數、同一套網格，
@@ -5703,7 +5707,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         ctx.translate(-drawW / 2, -drawH / 2);
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
-        paintMistFrame(ctx, drawW, drawH, color, image.shapeFrameRange, image.shapeFrameRound, tx === 'none' ? undefined : (tc, bodyPath) => {
+        paintMistFrame(ctx, drawW, drawH, color, { range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
           tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
           if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
             tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
@@ -9677,7 +9681,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       shapeGlowColor: initialColor,
       color: initialColor,
       ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
-      ...(frame ? { shapeFrameRange: MIST_RANGE_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT } : {}),
+      ...(frame ? { shapeFrameRange: MIST_RANGE_DEFAULT, shapeFrameFeather: MIST_FEATHER_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT, shapeDotSize: MIST_TEX_SIZE_DEFAULT, shapeDotGap: MIST_TEX_GAP_DEFAULT } : {}),
       // 星芒：常駐動畫預設是縮放
       ...(it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-')
         ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, idle: 'breathe', ...idleDefaults('breathe', { shape: true, glint: true }) } } : {}),
@@ -14627,7 +14631,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 邊框・霧白：跟預覽同一套畫法（紋理只疊在霧上）
       const mColor = fImg.color || SHAPE_DEFAULT_COLOR;
       const mTx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
-      paintMistFrame(ctx, fw, fh, mColor, fImg.shapeFrameRange, fImg.shapeFrameRound, mTx === 'none' ? undefined : (tc, bodyPath) => {
+      paintMistFrame(ctx, fw, fh, mColor, { range: fImg.shapeFrameRange, feather: fImg.shapeFrameFeather, round: fImg.shapeFrameRound }, mTx === 'none' ? undefined : (tc, bodyPath) => {
         tc.save(); tc.clip(bodyPath); tc.translate(fw / 2, fh / 2);
         if (mTx === 'dot' || mTx === 'star' || mTx === 'heart') paintTex(tc, fw, fh, fw, fh, {
           tex: mTx, dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,

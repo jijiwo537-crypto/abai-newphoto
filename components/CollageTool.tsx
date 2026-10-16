@@ -12,7 +12,7 @@ import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
-import { isMistFrame, paintMistFrame, MIST_RANGE_DEFAULT, MIST_ROUND_DEFAULT } from '../utils/mistFrame';
+import { isMistFrame, paintMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
 import { hasActiveFx, type FxScene, type FxPlacement } from '../utils/glEffects';
@@ -7537,7 +7537,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else if (isMistFrame(o.kind)) {
           // 邊框・霧白：沒有描邊、發光；紋理只疊在霧上
-          paintMistFrame(ctx, bw, bh, col, (o as any).frameRange, (o as any).frameRound, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
+          paintMistFrame(ctx, bw, bh, col, { range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
               ...o,
@@ -11689,7 +11689,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     ...(it.kind === 'hole' && String(it.hole || '').startsWith('sb-')
                       ? { mo: { ...MO_DEFAULT, idle: 'breathe', ...idleDefaults('breathe', { shape: true, glint: true }) } } : {}),
                     // 邊框：沒有預設動畫（不進場、不常駐）
-                    ...(frame ? { mo: { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: MIST_RANGE_DEFAULT, frameRound: MIST_ROUND_DEFAULT } : {}),
+                    ...(frame ? { mo: { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: MIST_RANGE_DEFAULT, frameFeather: MIST_FEATHER_DEFAULT, frameRound: MIST_ROUND_DEFAULT, dotSize: MIST_TEX_SIZE_DEFAULT, dotGap: MIST_TEX_GAP_DEFAULT } : {}),
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
@@ -11913,14 +11913,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>}
-                          {/* 霧白邊框：霧從框邊往內延伸多少 */}
-                          {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full">
+                          {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
+                          {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('範圍', Math.round((sel as any).frameRange ?? MIST_RANGE_DEFAULT), 0, 100,
                               (v: number) => patch({ frameRange: v } as any))}
+                            {shapeSlider('羽化', Math.round((sel as any).frameFeather ?? MIST_FEATHER_DEFAULT), 0, 100,
+                              (v: number) => patch({ frameFeather: v } as any))}
                           </div>}
-                          {/* 霧白邊框：中間透明那塊的形狀（0 圓角方形、100 橢圓） */}
                           {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full">
-                            {shapeSlider('形狀', Math.round((sel as any).frameRound ?? MIST_ROUND_DEFAULT), 0, 100,
+                            {shapeSlider('圓角', Math.round((sel as any).frameRound ?? MIST_ROUND_DEFAULT), 0, 100,
                               (v: number) => patch({ frameRound: v } as any))}
                           </div>}
                           {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
@@ -12025,9 +12026,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                                 {isClefTex(sel.hole)
                                   ? shapeSlider('大小', clefSizeToUi(sel.dotSize ?? CLEF_TEX_DEFAULTS.size), 0, 100, (v: number) => patch({ dotSize: clefSizeFromUi(v) }))
-                                  : shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
+                                  : shapeSlider('大小', sel.dotSize ?? (isMistFrame(sel.kind) ? MIST_TEX_SIZE_DEFAULT : 50), 0, 100, (v: number) => patch({ dotSize: v }))}
                                 {isClefTex(sel.hole)
                                   ? shapeSlider('間距', clefGapToUi(sel.dotGap ?? CLEF_TEX_DEFAULTS.gap), 0, 100, (v: number) => patch({ dotGap: clefGapFromUi(v) }))
+                                  : isMistFrame(sel.kind)
+                                  ? shapeSlider('間距', mistGapToUi(sel.dotGap ?? MIST_TEX_GAP_DEFAULT), 0, 100, (v: number) => patch({ dotGap: mistGapFromUi(v) }))
                                   : shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }))}
                                 {isGridTex(tex) && <div className="col-span-2">{shapeSlider('壓扁',maskTextureSquashToUi(sel.dotSquash??50),0,100,(v:number)=>patch({dotSquash:maskTextureSquashFromUi(v)}))}</div>}
                               </div>
