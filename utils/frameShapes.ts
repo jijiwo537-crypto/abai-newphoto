@@ -94,12 +94,13 @@ const speedPath = (w: number, h: number, r: number, o: FrameParams = {}) => {
    範圍跟霧白邊框同一套（0～100、預設 60）：用橢圓距離量，越往中間越空。
    放法是「丟飛鏢」：隨機丟一個點，在範圍內、而且跟已經放好的都保持間距才留下；
    圖形種類照輪流的順序給，所以每一種的數量差不多。 */
-export const SCATTER_KINDS_DEFAULT = ['star', 'heart', 'circle'];
-/** 散落圖形可以選的圖形 */
-export const SCATTER_CHOICES = ['star', 'heart', 'circle', 'sparkle4', 'star-rounded', 'hexstar', 'diamond', 'triangle', 'square', 'rounded', 'pentagon', 'hexagon'];
+export const SCATTER_KINDS_DEFAULT = ['star-f', 'heart-f', 'circle-f'];
 /** 畫圖形用的函式（GridLayoutTool 載入時註冊 shapePathD，避免循環引用） */
 let frameShapeD: ((kind: string, w: number, h: number) => string) | null = null;
 export const setFrameShapeD = (f: (kind: string, w: number, h: number) => string) => { frameShapeD = f; };
+/** 選單上的圖形 id（例如 star-f／star-o）→ 形狀與實心／空心；舊資料只存形狀名的當實心 */
+let frameShapeItem: ((id: string) => { kind: string; filled: boolean } | null) | null = null;
+export const setFrameShapeItem = (f: (id: string) => { kind: string; filled: boolean } | null) => { frameShapeItem = f; };
 /** 集中線、散落圖形的額外滑桿（全部 0～100） */
 export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'size' | 'sizeVar' | 'angleVar'; label: string; def: number }[]> = {
   'frame-speed': [{ key: 'gap', label: '間距', def: 50 }, { key: 'thick', label: '粗細', def: 50 }, { key: 'vary', label: '變化', def: 50 }],
@@ -108,8 +109,8 @@ export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'si
 };
 /** 存在物件上的那一包（滑桿值＋散落的圖形種類） */
 export type FrameOpts = { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angleVar?: number; kinds?: string[] };
-const scatterPath = (w: number, h: number, _r: number, o: FrameParams = {}) => {
-  const p = new Path2D();
+const scatterPath = (w: number, h: number, _r: number, o: FrameParams = {}): Fill[] => {
+  const p = new Path2D(), out: Fill[] = [[p, 'nonzero']];
   const rand = rng(77001);
   const kinds = o.kinds?.length ? o.kinds : SCATTER_KINDS_DEFAULT;
   const ui = o.range ?? 60;
@@ -122,8 +123,8 @@ const scatterPath = (w: number, h: number, _r: number, o: FrameParams = {}) => {
     const x = (rand() * 1.04 - .02) * w, y = (rand() * 1.04 - .02) * h;
     const u = (x - w / 2) / (w / 2), v = (y - h / 2) / (h / 2);
     if (Math.hypot(u, v) < inner) continue;
-    // 大小變化只會放大：每顆是基本大小的 1～(1+1.5×變化) 倍
-    const rad = S / 2 * (1 + sv * rand() * 1.5);
+    // 大小變化：大部分放大（最多 1+1.2×變化 倍），少部分稍微縮小（最少 1-0.3×變化 倍）
+    const rad = S / 2 * (1 + sv * (rand() * 1.5 - .3));
     if (placed.some(([px, py, pr]) => Math.hypot(px - x, py - y) < (pr + rad) * sp)) continue;
     // 附近最少出現的那一種優先（同分再看整體數量），所以每一種都平均散開、不會擠成一團
     const near = new Array(kinds.length).fill(0);
@@ -132,13 +133,17 @@ const scatterPath = (w: number, h: number, _r: number, o: FrameParams = {}) => {
     for (let j = 1; j < kinds.length; j++) if (near[j] < near[ki] || (near[j] === near[ki] && count[j] < count[ki])) ki = j;
     count[ki]++; placedKind.push(ki);
     placed.push([x, y, rad]);
-    const kind = kinds[ki];
+    const it = frameShapeItem?.(kinds[ki]) || { kind: kinds[ki].replace(/-[fo]$/, ''), filled: !kinds[ki].endsWith('-o') };
     const d = rad * 2, rot = (rand() * 2 - 1) * av * Math.PI / 4;
     const sd = o.shapeD || frameShapeD;
-    const sh = sd ? new Path2D(sd(kind, d, d)) : (() => { const c = new Path2D(); c.arc(rad, rad, rad, 0, Math.PI * 2); return c; })();
-    p.addPath(sh, new DOMMatrix().translate(x, y).rotate(rot * 180 / Math.PI).translate(-rad, -rad));
+    const lw = it.filled ? 0 : d * .08;
+    const inset = lw / 2, dd = Math.max(1, d - lw);
+    const sh = sd ? new Path2D(sd(it.kind, dd, dd)) : (() => { const c = new Path2D(); c.arc(dd / 2, dd / 2, dd / 2, 0, Math.PI * 2); return c; })();
+    const mtx = new DOMMatrix().translate(x, y).rotate(rot * 180 / Math.PI).translate(-rad + inset, -rad + inset);
+    if (it.filled) p.addPath(sh, mtx);
+    else { const q = new Path2D(); q.addPath(sh, mtx); out.push([q, 'nonzero', lw]); }
   }
-  return p;
+  return out;
 };
 
 const rectPath = (p: Path2D, x: number, y: number, w: number, h: number, rad = 0) => {
@@ -280,7 +285,8 @@ const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color:
   g.restore();
 };
 
-type Fill = [Path2D, CanvasFillRule];
+/** 第三格有值＝這一塊是空心圖形，用這個粗細描線 */
+type Fill = [Path2D, CanvasFillRule, number?];
 
 /** 蕾絲花邊：一圈框（中間挖一排小圓點），框的內緣再接一顆一顆往內鼓的半圓 */
 const lacePath = (w: number, h: number, r: number): Fill[] => {
@@ -344,7 +350,7 @@ const one = (f: (w: number, h: number, r: number, o?: FrameParams) => Path2D) =>
 const PATHS: Record<string, (w: number, h: number, r: number, o?: FrameParams) => Fill[]> = {
   [FRAME_SPEED]: one(speedPath), [FRAME_FILM]: one(filmPath), [FRAME_POLAROID]: one(polaroidPath),
   [FRAME_LACE]: lacePath, [FRAME_BRUSH]: brushPath,
-  [FRAME_SCATTER]: (w, h, r, o) => [[scatterPath(w, h, r, o), 'nonzero']],
+  [FRAME_SCATTER]: scatterPath,
 };
 /** 路徑快取：同一個比例、同一個範圍就不用再算（拖動、縮放時每一格都用得到） */
 const pathCache = new Map<string, Fill[]>();
@@ -376,7 +382,8 @@ export const paintFrameShape = (
     g.save();
     g.beginPath(); g.rect(0, 0, w, h); g.clip();
     g.fillStyle = color;
-    for (const [pp, rule] of path) g.fill(pp, rule);
+    g.strokeStyle = color; g.lineJoin = 'round'; g.lineCap = 'round';
+    for (const [pp, rule, lw] of path) { if (lw) { g.lineWidth = lw; g.stroke(pp); } else g.fill(pp, rule); }
     g.restore();
   };
   if (!texture) { draw(ctx); return; }

@@ -64,7 +64,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, FRAME_SLIDERS, SCATTER_CHOICES, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, type FrameOpts } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, type FrameOpts } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -1839,21 +1839,28 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval
  */
 /** 散落圖形邊框：多選要散在四周的圖形（至少留一種） */
 export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: string[]) => void }> = ({ value, onChange }) => {
-  const kinds = value?.length ? value : SCATTER_KINDS_DEFAULT;
+  // 舊資料只存形狀名（star），當成實心那顆（star-f）
+  const kinds = (value?.length ? value : SCATTER_KINDS_DEFAULT).map(k => ADD_SHAPE_ITEMS.some(i => i.id === k) ? k : `${k}-f`);
+  const groups = shapePickerSections().filter(([label]) => label === '實心' || label === '外框')
+    .map(([label, items]) => [label, (items as ShapeItem[]).filter(i => ADD_SHAPE_ITEMS.includes(i) && !i.kind.startsWith('blur-'))] as const);
   return (
-    <div className="pt-1 pb-2">
-      <div className="text-[11px] text-white/45 mb-1.5">圖形（可多選）</div>
-      <div className="grid grid-cols-6 gap-1.5" data-scatter-kinds>
-        {SCATTER_CHOICES.map(k => {
-          const on = kinds.includes(k);
-          return (
-            <button key={k} aria-label={k} onClick={() => onChange(on ? (kinds.length > 1 ? kinds.filter(x => x !== k) : kinds) : [...kinds, k])}
-              className={`aspect-square rounded-[10px] flex items-center justify-center active:scale-95 ${on ? 'bg-white text-black' : 'bg-white/[0.06] text-white/70'}`}>
-              <ShapeGlyph item={{ id: k, kind: k, filled: true } as ShapeItem} size={18} />
-            </button>
-          );
-        })}
-      </div>
+    <div className="pt-1 pb-2" data-scatter-kinds>
+      {groups.map(([label, items]) => (
+        <div key={label} className="mb-2">
+          <div className="text-[11px] text-white/45 mb-1.5">{label}（可多選）</div>
+          <div className="grid grid-cols-6 gap-1.5">
+            {items.map(it => {
+              const on = kinds.includes(it.id);
+              return (
+                <button key={it.id} aria-label={it.id} onClick={() => onChange(on ? (kinds.length > 1 ? kinds.filter(x => x !== it.id) : kinds) : [...kinds, it.id])}
+                  className={`aspect-square rounded-[10px] flex items-center justify-center active:scale-95 ${on ? 'bg-white text-black' : 'bg-white/[0.06] text-white/70'}`}>
+                  <ShapeGlyph item={it} size={18} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 };
@@ -19056,3 +19063,4 @@ export const PathPatternIcon: React.FC<{ s: string }> = ({ s }) => {
 
 // 散落圖形邊框畫圖形時要用到 shapePathD
 setFrameShapeD((kind, w, h) => shapePathD(kind, w, h));
+setFrameShapeItem(id => { const it = ADD_SHAPE_ITEMS.find(i => i.id === id); return it ? { kind: it.kind, filled: it.filled } : null; });

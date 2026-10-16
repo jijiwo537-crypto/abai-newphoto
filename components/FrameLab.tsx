@@ -2,8 +2,8 @@
    每一顆都用 App 裡同一支畫法（utils/frameShapes.ts）畫在示範照片上，
    「範圍」跟 App 的滑桿一樣是 0～100，顏色可以切換。 */
 import React, { useEffect, useRef, useState } from 'react';
-import { FRAME_ITEMS, paintFrameShape, frameRangeDefault, FRAME_SPEED, FRAME_SCATTER, SCATTER_KINDS_DEFAULT, SCATTER_CHOICES, FRAME_SLIDERS, type FrameParams } from '../utils/frameShapes';
-import { shapePathD, ShapeGlyph } from './GridLayoutTool';
+import { FRAME_ITEMS, paintFrameShape, frameRangeDefault, FRAME_SPEED, FRAME_SCATTER, SCATTER_KINDS_DEFAULT, FRAME_SLIDERS, type FrameParams } from '../utils/frameShapes';
+import { shapePathD, ScatterKindsPicker } from './GridLayoutTool';
 
 export { FRAME_SLIDERS };
 export const STORE_FRAME_KINDS = 'abai-order-tool-frame-kinds-v1';
@@ -103,19 +103,7 @@ export function FrameLab({ photo, onPickPhoto, picked, onTogglePick, ranges, onR
               </div>
               {row('範圍', range, v => onRange(f.id, v))}
               {extra.map(sl => row(sl.label, (params as any)[sl.key], v => onRange(`${f.id}.${sl.key}`, v)))}
-              {f.kind === FRAME_SCATTER && (
-                <div className="mt-2 grid grid-cols-6 gap-1" data-scatter-kinds>
-                  {SCATTER_CHOICES.map(k => {
-                    const sel = kinds.includes(k);
-                    return (
-                      <button key={k} aria-label={k} onClick={() => setKinds(p => sel ? (p.length > 1 ? p.filter(x => x !== k) : p) : [...p, k])}
-                        className={`aspect-square rounded-[8px] flex items-center justify-center ${sel ? 'bg-white text-black' : 'bg-white/[0.06] text-white/70'}`}>
-                        <ShapeGlyph item={{ id: k, kind: k, filled: true } as any} size={16} />
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+              {f.kind === FRAME_SCATTER && <div className="mt-2"><ScatterKindsPicker value={kinds} onChange={setKinds} /></div>}
             </div>
           );
         })}
