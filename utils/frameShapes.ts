@@ -180,24 +180,53 @@ let frameSprite: ((id: string, color: string, px: number, glintGlow?: number) =>
 export const setFrameSprite = (f: (id: string, color: string, px: number, glintGlow?: number) => FrameSprite | null) => { frameSprite = f; };
 /* 發光：把同一張小圖放在大一點的畫布上、用跟圖形一樣顏色的 shadowBlur 畫兩層，
    結果快取起來（每一顆小圖、每一種強度只算一次），平常貼圖就好，不會每一幀做模糊。 */
-const glowCache = new WeakMap<HTMLCanvasElement, Map<string, FrameSprite>>();
-const glowSprite = (sp: FrameSprite, color: string, glow: number): FrameSprite => {
-  const q = Math.round(glow / 5) * 5;
+/* 發光要能即時拖：不要每一個數值都重新模糊一次（那會讓每一顆都重畫、一格就好幾十毫秒）。
+   每一顆小圖只先做好兩層光暈（窄的、寬的），拖滑桿的時候只是改這兩層的透明度疊上去 ——
+   一格就是幾次貼圖，非常順。 */
+type GlowPair = { lo: FrameSprite; hi: FrameSprite };
+const glowCache = new WeakMap<HTMLCanvasElement, Map<string, GlowPair>>();
+const glowPair = (sp: FrameSprite, color: string): GlowPair => {
   let m = glowCache.get(sp.canvas);
   if (!m) { m = new Map(); glowCache.set(sp.canvas, m); }
-  const key = `${q}|${color}`;
-  const hit = m.get(key);
+  const hit = m.get(color);
   if (hit) return hit;
-  const blur = sp.w * (.04 + q / 100 * .32), extra = Math.ceil(blur * 2);
-  const cv = document.createElement('canvas');
-  cv.width = sp.canvas.width + extra * 2; cv.height = sp.canvas.height + extra * 2;
-  const g = cv.getContext('2d')!;
-  g.shadowColor = color;
-  for (const b of [blur, blur * .4]) { g.shadowBlur = b; g.drawImage(sp.canvas, extra, extra); }
-  g.shadowBlur = 0; g.drawImage(sp.canvas, extra, extra);
-  const out = { canvas: cv, w: sp.w, ox: sp.ox - extra, oy: sp.oy - extra };
-  m.set(key, out);
+  const halo = (blur: number): FrameSprite => {
+    const extra = Math.ceil(blur * 2);
+    const cv = document.createElement('canvas');
+    cv.width = sp.canvas.width + extra * 2; cv.height = sp.canvas.height + extra * 2;
+    const g = cv.getContext('2d')!;
+    g.shadowColor = color;
+    // 只留光暈本身（圖形畫到畫布外面去，只有影子落進來）
+    g.shadowOffsetX = cv.width; g.shadowBlur = blur;
+    g.drawImage(sp.canvas, extra - cv.width, extra);
+    g.drawImage(sp.canvas, extra - cv.width, extra);
+    return { canvas: cv, w: sp.w, ox: sp.ox - extra, oy: sp.oy - extra };
+  };
+  const out = { lo: halo(sp.w * .1), hi: halo(sp.w * .36) };
+  m.set(color, out);
   return out;
+};
+const glowWarmed = new Set<string>();
+const warmScatterGlow = (list: [string, number][], color: string) => {
+  if (typeof window === 'undefined' || !frameSprite) return;
+  const todo = list.filter(([id, px]) => !scatterKindNoGlow(id) && !glowWarmed.has(`${id}|${color}|${Math.round(px)}`));
+  if (!todo.length) return;
+  for (const [id, px] of todo) glowWarmed.add(`${id}|${color}|${Math.round(px)}`);
+  const idle: (cb: () => void) => void = (window as any).requestIdleCallback
+    ? cb => (window as any).requestIdleCallback(cb, { timeout: 1500 }) : cb => setTimeout(cb, 30);
+  let i = 0;
+  const step = () => {
+    const t0 = performance.now();
+    while (i < todo.length && performance.now() - t0 < 8) {
+      const [id, px] = todo[i++];
+      try {
+        if (id.startsWith('hole-sb-')) frameSprite?.(id, color, px, 100);
+        else { const sp = frameSprite?.(id, color, px); if (sp) glowPair(sp, color); }
+      } catch { /* 用到時再做 */ }
+    }
+    if (i < todo.length) idle(step);
+  };
+  idle(step);
 };
 /** 散落圖形每一顆的動畫（由工具傳進來）：rank＝從左上開始順時針繞一圈的順序，n＝總數，i＝第幾顆 */
 export type ScatterItemFrame = (rank: number, n: number, i: number) => { k: number; dx: number; dy: number; rot: number; a: number; fx?: number } | null;
@@ -223,19 +252,28 @@ const paintScatter = (g: CanvasRenderingContext2D, W: number, H: number, color: 
     /* 星芒的發光跟一般圖形不一樣：用星芒自己的「柔光範圍」（跟星芒編輯裡的發光同一個），
        不是外面再套一圈陰影光 */
     const glint = it.id.startsWith('hole-sb-');
-    const raw = frameSprite?.(it.id, color, it.d * k, glint ? glow : undefined);
-    const sp = raw && glow > 0 && !glint && !scatterKindNoGlow(it.id) ? glowSprite(raw, color, glow) : raw;
+    // 星芒：0 與 100 兩張各畫一次，中間用透明度交叉淡入（不用每個數值都重畫一次星芒）
+    const sp = frameSprite?.(it.id, color, it.d * k, glint ? 0 : undefined);
+    const spHi = glint && glow > 0 ? frameSprite?.(it.id, color, it.d * k, 100) : null;
+    const gl = glow / 100;
+    const halo = sp && glow > 0 && !glint && !scatterKindNoGlow(it.id) ? glowPair(sp, color) : null;
     g.save();
     g.translate(it.x + (f ? f.dx * it.d : 0), it.y + (f ? f.dy * it.d : 0));
     g.rotate((it.rot + (f ? f.rot : 0)) * Math.PI / 180);
     if (f && (f.k !== 1 || (f.fx ?? 1) !== 1)) g.scale(f.k * (f.fx ?? 1), f.k);
     if (f && f.a < 1) g.globalAlpha *= f.a;
     if (sp) {
-      const s = it.d / sp.w;
-      g.drawImage(sp.canvas, sp.ox * s, sp.oy * s, sp.canvas.width * s, sp.canvas.height * s);
+      const s = it.d / sp.w, a0 = g.globalAlpha;
+      const put = (x: FrameSprite, a: number) => { if (a <= .002) return; g.globalAlpha = a0 * a; g.drawImage(x.canvas, x.ox * s, x.oy * s, x.canvas.width * s, x.canvas.height * s); };
+      if (halo) { put(halo.hi, Math.min(1, gl * 1.1)); put(halo.lo, Math.min(1, gl * 1.6)); }
+      if (spHi) { put(sp, 1 - gl); put(spHi, gl); } else put(sp, 1);
+      g.globalAlpha = a0;
     } else { g.fillStyle = color; g.beginPath(); g.arc(0, 0, it.d / 2, 0, Math.PI * 2); g.fill(); }
     g.restore();
   };
+  /* 發光還是 0 的時候，趁閒置把每一顆的兩層光暈（星芒則是發光 100 那張）先做好：
+     第一次拖發光滑桿時就不用在那一格一次做完全部（那一格會卡 0.2 秒） */
+  if (glow <= 0) warmScatterGlow(items.map(it => [it.id, it.d * k] as [string, number]), color);
   // 全部都畫在選中框裡（果凍彈過頭那一點點也不會超出框）
   g.save();
   g.beginPath(); g.rect(0, 0, w, h); g.clip();
