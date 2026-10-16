@@ -17,11 +17,11 @@ export const MIST_FRAME_KIND = 'mist-frame';
 export const isMistFrame = (kind?: string) => kind === MIST_FRAME_KIND;
 
 /** 面板「範圍」0～100。預設 0（全白只在框邊上，跟一開始的樣子一樣） */
-export const MIST_RANGE_DEFAULT = 0;
+export const MIST_RANGE_DEFAULT = -15; // 滑桿上顯示 30（-30 + 30 × 0.5）
 /** 面板「羽化」0～100。預設 50 */
 export const MIST_FEATHER_DEFAULT = 50;
 /** 面板「圓角」0～100（0 圓角方形、100 橢圓）。預設 100 */
-export const MIST_ROUND_DEFAULT = 100;
+export const MIST_ROUND_DEFAULT = 80;
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 /** 全白的邊界（以框的一半為 1）：範圍 0 → 1（框邊）；負的往框外推（霧變淡）、正的往內吃 */
