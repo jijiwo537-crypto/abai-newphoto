@@ -1869,8 +1869,17 @@ export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: stri
   }, []);
   return (
     <div className="pt-1 pb-2" data-scatter-kinds>
-      {onShuffle && <button data-scatter-shuffle onClick={onShuffle}
-        className="w-full h-10 mb-3 rounded-[12px] bg-white/[0.08] text-[13px] font-bold text-white/85 active:scale-[.98]">隨機分佈</button>}
+      {/* 跟藝術效果（遮罩頁）的「隨機分佈」同一顆：細框小按鈕靠右，點下去框線亮一下再淡回去 */}
+      {onShuffle && <div className="flex justify-end mb-2">
+        <button data-scatter-shuffle
+          onClick={e => {
+            const el = e.currentTarget;
+            el.getAnimations().forEach(a => a.cancel());
+            el.animate([{ borderColor: '#ffffffb3' }, { borderColor: '#ffffff16' }], { duration: 260, easing: 'ease-out' });
+            onShuffle();
+          }}
+          className="flex-none h-[26px] px-2 text-[12px] leading-[18px] whitespace-nowrap border border-[#ffffff16] rounded-[5px] text-[#aaa] bg-transparent">隨機分佈</button>
+      </div>}
       {groups.map(([label, items]) => (
         <div key={label} className="mb-3">
           <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}（可多選）</div>
