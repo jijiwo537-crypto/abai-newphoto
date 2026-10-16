@@ -803,6 +803,8 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
     const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
     return { x: (Math.min(...xs) + 1) / 2 * o.w, y: (Math.min(...ys) + 1) / 2 * o.h, w: (Math.max(...xs) - Math.min(...xs)) / 2 * o.w, h: (Math.max(...ys) - Math.min(...ys)) / 2 * o.h };
   }
+  // 邊框類一定是整個框（不用逐像素量；擠壓時每一格都會量到，量一次就要好幾毫秒）
+  if (isFrameShape(o.kind)) return { x: 0, y: 0, w: o.w, h: o.h };
   // 星芒的芒尖、柔光是淡淡散開的，量墨水會把框撐得比看到的大；選取框就用它自己的框
   if (o.kind === 'hole' && String(o.hole || '').startsWith('sb-')) return { x: 0, y: 0, w: o.w, h: o.h };
   const long = Math.max(o.w, o.h), base = (o.lineBase || long);
@@ -1874,6 +1876,32 @@ export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: stri
     </div>
   );
 });
+/** 「新增圖形」整片清單：拖動、擠壓時工具每一格都重畫，清單用 memo 包起來就不會跟著重建 */
+const GridShapePicker = React.memo(({ onPick }: { onPick: (it: any) => void }) => (
+  <>
+    {shapePickerSections().map(([label, list]) => (
+      /* 畫面外的區塊先不排版、不繪製（content-visibility），一點下去就能先顯示上面那幾排 */
+      <div key={label} className="mb-3" style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 240px' } as React.CSSProperties}>
+        <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
+        <div className="grid grid-cols-6 gap-2">
+          {list.map(it => (
+            <button
+              key={it.id}
+              onClick={() => onPick(it)}
+              aria-label={'label' in it ? String(it.label) : it.id}
+              title={'label' in it ? String(it.label) : it.id}
+              className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
+            >
+              {(it as any).hole
+                ? <HoleGlyph s={(it as any).hole} filled={(it as any).filled} />
+                : <ShapeGlyph item={it as any} />}
+            </button>
+          ))}
+        </div>
+      </div>
+    ))}
+  </>
+));
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const maskId = React.useId().replace(/:/g, '');
   if(isBackdropMask(item.kind))return <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
@@ -2164,10 +2192,12 @@ const centeredGlyphIcon = (s: string): string | null => {
 export const warmGlyphIconsWhenIdle = () => {
   void (async () => {
     await new Promise(r => setTimeout(r, 1500));
-    for (const s of Object.keys(GLYPH_HOLES)) if (s.startsWith('music-')) { await awaitPhotoIdle(); centeredGlyphIcon(s); }
-    /* 第一次打開「新增圖形／新增符號」會卡一下：按鈕上的星芒小圖要逐像素畫、
-       向量圖案的小圖要先量外框，全部擠在點下去的那一格。趁閒置先一顆一顆做好。 */
+    /* 第一次打開「新增圖形／新增符號」會卡一下：按鈕上的星芒小圖要逐像素畫（最花時間，排第一）、
+       邊框的小圖要先畫一次（散落圖形還要先畫好幾顆圖形）、向量圖案的小圖要先量外框，
+       全部擠在點下去的那一格。趁閒置先一顆一顆做好。 */
     for (const spec of STAR_BURSTS) { await awaitPhotoIdle(); void ICON_IMAGES[spec.id]; }
+    for (const it of FRAME_ITEMS) { await awaitPhotoIdle(); try { frameIconURL(it.kind); } catch { /* 用到時再畫 */ } }
+    for (const s of Object.keys(GLYPH_HOLES)) if (s.startsWith('music-')) { await awaitPhotoIdle(); centeredGlyphIcon(s); }
     // 新增符號：每一顆按鈕都要先量字寬；字型好了之後一批一批先量進快取
     await symbolFontReady;
     for (let i = 0; i < SYMBOLS.length; i += 40) {
@@ -2374,9 +2404,14 @@ export const SymbolPicker: React.FC<{
         </button>
         <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
       </div>
-      {/* 一次渲染完整清單，避免往下滑到一半才等待下一批。 */}
-      <div className="flex flex-wrap gap-1.5 pb-4">
-        {symbolButtons}
+      {/* 一次渲染完整清單，避免往下滑到一半才等待下一批。
+          但畫面外的那幾段先不排版、不繪製（content-visibility）：一點進來就先看到上面幾排，不用等全部排完 */}
+      <div className="flex flex-col gap-1.5 pb-4">
+        {Array.from({ length: Math.ceil(symbolButtons.length / 48) }, (_, c) => (
+          <div key={c} className="flex flex-wrap gap-1.5" style={{ contentVisibility: c ? 'auto' : undefined, containIntrinsicSize: 'auto 320px' } as React.CSSProperties}>
+            {symbolButtons.slice(c * 48, c * 48 + 48)}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -5774,7 +5809,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         ctx.translate(-drawW / 2, -drawH / 2);
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
-        paintFrameShape(ctx, image.shape, drawW, drawH, color, { ...image.shapeFrameOpts, itemFrame: motionFrame?.scatterItem, range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
+        paintFrameShape(ctx, image.shape, drawW, drawH, color, { ...image.shapeFrameOpts, itemFrame: motionFrame?.scatterItem, baseW: (image.shapeTextureBaseW || image.width) * drawW / Math.max(1e-6, image.width), baseH: (image.shapeTextureBaseH || image.height) * drawH / Math.max(1e-6, image.height), range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
           tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
           if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
             tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
@@ -9716,6 +9751,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 大小預設佔頁面短邊的三成；線條類壓成細長條（高度只有寬度的 8%）。
    * 顏色跟文字一樣預設墨黑 —— 頁面底色預設是白的，白色圖形會看不到。
    */
+  const shapePickRef = useRef<(it: any) => void>(() => {});
+  const onGridShapePick = useCallback((it: any) => shapePickRef.current(it), []);
   const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem) => {
     const rect = getClosestPageRect();
     const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
@@ -14717,7 +14754,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 邊框・霧白：跟預覽同一套畫法（紋理只疊在霧上）
       const mColor = fImg.color || SHAPE_DEFAULT_COLOR;
       const mTx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
-      paintFrameShape(ctx, fImg.shape!, fw, fh, mColor, { ...fImg.shapeFrameOpts, range: fImg.shapeFrameRange, feather: fImg.shapeFrameFeather, round: fImg.shapeFrameRound }, mTx === 'none' ? undefined : (tc, bodyPath) => {
+      paintFrameShape(ctx, fImg.shape!, fw, fh, mColor, { ...fImg.shapeFrameOpts, baseW: (fImg.shapeTextureBaseW || fImg.width) * fw / Math.max(1e-6, fImg.width), baseH: (fImg.shapeTextureBaseH || fImg.height) * fh / Math.max(1e-6, fImg.height), range: fImg.shapeFrameRange, feather: fImg.shapeFrameFeather, round: fImg.shapeFrameRound }, mTx === 'none' ? undefined : (tc, bodyPath) => {
         tc.save(); tc.clip(bodyPath); tc.translate(fw / 2, fh / 2);
         if (mTx === 'dot' || mTx === 'star' || mTx === 'heart') paintTex(tc, fw, fh, fw, fh, {
           tex: mTx, dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
@@ -18479,26 +18516,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       </button>
                       <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
                     </div>
-                    {shapePickerSections().map(([label, list]) => (
-                      <div key={label} className="mb-3">
-                        <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
-                        <div className="grid grid-cols-6 gap-2">
-                          {list.map(it => (
-                            <button
-                              key={it.id}
-                              onClick={() => handleAddShapeLayer(it)}
-                              aria-label={'label' in it ? String(it.label) : it.id}
-                              title={'label' in it ? String(it.label) : it.id}
-                              className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
-                            >
-                              {(it as any).hole
-                                ? <HoleGlyph s={(it as any).hole} filled={(it as any).filled} />
-                                : <ShapeGlyph item={it as any} />}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                    {(shapePickRef.current = handleAddShapeLayer, null)}
+                    <GridShapePicker onPick={onGridShapePick} />
                   </div>
                 )}
               </div>

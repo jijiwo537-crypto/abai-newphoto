@@ -1349,6 +1349,33 @@ interface CollageToolProps {
   onPatternSizeTuned?: (id: string, size: number) => void;
 }
 
+/** 「新增圖形」的整片清單。只在選中的那一顆換了才重畫（見 shapePickRef） */
+const CreativeShapePicker = React.memo(({ selectedId, onPick }: { selectedId?: string; onPick: (it: any) => void }) => (
+  <>
+    {shapePickerSections().map(([label, list]) => (
+      /* 畫面外的區塊先不排版、不繪製（content-visibility），一點下去就能先顯示上面那幾排 */
+      <div key={label} className="mb-3" style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 240px' } as React.CSSProperties}>
+        <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
+        <div className="grid grid-cols-6 gap-2">
+          {list.map(it => (
+            <button
+              key={it.id}
+              onClick={() => onPick(it)}
+              aria-label={'label' in it ? String(it.label) : it.id}
+              title={'label' in it ? String(it.label) : it.id}
+              aria-pressed={selectedId === it.id}
+              className={`h-11 rounded-[10px] bg-white/5 border ${selectedId === it.id ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85`}
+            >
+              {(it as any).hole
+                ? <HoleGlyph s={(it as any).hole} filled={(it as any).filled} />
+                : <ShapeGlyph item={it as any} />}
+            </button>
+          ))}
+        </div>
+      </div>
+    ))}
+  </>
+));
 export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned }) => {
   const saveToolDraft: typeof saveToolDraftImpl = (...args) => sandbox ? Promise.resolve() as any : saveToolDraftImpl(...args);
   useKeyboardRecovery();
@@ -2640,6 +2667,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>{if(addSub==='shape')warmMasksAfterPanelOpens();},[addSub]);
   /** 新增清單目前亮白框的選項，以及真正交給上方畫筆連續生成的選項。 */
   const [addPaletteChoice, setAddPaletteChoice] = useState<any>(null);
+  /* 「新增圖形」清單上的按鈕：點下去時才讀最新的處理函式（存在 ref），
+     清單本身用 memo 包起來 —— 拖動、擠壓圖形時整個工具每一格都在重畫，
+     不然那幾百顆圖示也跟著每一格重建一次，擠壓就會卡。 */
+  const shapePickRef = useRef<(it: any) => void>(() => {});
+  const onShapePick = useCallback((it: any) => shapePickRef.current(it), []);
   const [objectBrushChoice, setObjectBrushChoice] = useState<any>(null);
   const objectBrushChoiceRef = useRef<any>(null);
   objectBrushChoiceRef.current = objectBrushChoice;
@@ -7549,7 +7581,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else if (isFrameShape(o.kind)) {
           // 邊框・霧白：沒有描邊、發光；紋理只疊在霧上
-          paintFrameShape(ctx, o.kind, bw, bh, col, { ...(o as any).frameOpts, itemFrame: (f as any)?.scatterItem, range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
+          paintFrameShape(ctx, o.kind, bw, bh, col, { ...(o as any).frameOpts, itemFrame: (f as any)?.scatterItem, baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s, range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
               ...o,
@@ -11838,32 +11870,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </button>
                           <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
                         </div>
-                        {shapePickerSections().map(([label, list]) => (
-                          <div key={label} className="mb-3">
-                            <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
-                            <div className="grid grid-cols-6 gap-2">
-                              {list.map(it => (
-                                <button
-                                  key={it.id}
-                                  onClick={() => {
-                                    const choice = { type: 'shape', item: it };
-                                    setAddPaletteChoice(choice);
-                                    if (brushMode === 'pen' && objectBrushChoice) setObjectBrushChoice(choice);
-                                    addShape(it);
-                                  }}
-                                  aria-label={'label' in it ? String(it.label) : it.id}
-                                  title={'label' in it ? String(it.label) : it.id}
-                                  aria-pressed={addPaletteChoice?.type === 'shape' && addPaletteChoice.item?.id === it.id}
-                                  className={`h-11 rounded-[10px] bg-white/5 border ${addPaletteChoice?.type === 'shape' && addPaletteChoice.item?.id === it.id ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85`}
-                                >
-                                  {(it as any).hole
-                                    ? <HoleGlyph s={(it as any).hole} filled={(it as any).filled} />
-                                    : <ShapeGlyph item={it as any} />}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
+                        {(shapePickRef.current = (it: any) => {
+                          const choice = { type: 'shape', item: it };
+                          setAddPaletteChoice(choice);
+                          if (brushMode === 'pen' && objectBrushChoice) setObjectBrushChoice(choice);
+                          addShape(it);
+                        }, null)}
+                        <CreativeShapePicker selectedId={addPaletteChoice?.type === 'shape' ? addPaletteChoice.item?.id : undefined} onPick={onShapePick} />
                       </div>
                     )}
                   </div>

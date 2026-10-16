@@ -12,6 +12,8 @@ import { MIST_FRAME_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, t
 /** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
 export type FrameParams = MistParams & { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
   kinds?: string[]; itemFrame?: ScatterItemFrame;
+  /** 散落圖形：新增時的框（四邊擠壓不改這個）—— 版面照它排好，擠壓時整片一起被拉扁，不重新排 */
+  baseW?: number; baseH?: number;
   /** 完整畫出來的那幾顆可以畫到哪裡（創意拼圖：不能蓋到排版的遮罩上） */ shapeD?: (kind: string, w: number, h: number) => string };
 
 export const FRAME_SPEED = 'frame-speed';
@@ -199,8 +201,12 @@ const glowSprite = (sp: FrameSprite, color: string, glow: number): FrameSprite =
 };
 /** 散落圖形每一顆的動畫（由工具傳進來）：rank＝從左上開始順時針繞一圈的順序，n＝總數，i＝第幾顆 */
 export type ScatterItemFrame = (rank: number, n: number, i: number) => { k: number; dx: number; dy: number; rot: number; a: number; fx?: number } | null;
-const paintScatter = (g: CanvasRenderingContext2D, w: number, h: number, color: string, o: FrameParams) => {
-  const m = g.getTransform(), k = Math.max(.25, Math.hypot(m.a, m.b)), glow = o.glow ?? 0;
+const paintScatter = (g: CanvasRenderingContext2D, W: number, H: number, color: string, o: FrameParams) => {
+  // 擠壓：版面照新增時的框排，整片照比例拉扁（圖形跟著變形，位置不重排、也不用重算）
+  const w = o.baseW && o.baseW > 0 ? o.baseW : W, h = o.baseH && o.baseH > 0 ? o.baseH : H;
+  g.save();
+  if (w !== W || h !== H) g.scale(W / w, H / h);
+  const m = g.getTransform(), k = Math.max(.25, Math.hypot(m.a, m.b), Math.hypot(m.c, m.d)), glow = o.glow ?? 0;
   const items = scatterItems(w, h, o);
   // 果凍II 的順序：從左上角那個方向開始，順時針（畫布 y 向下，所以角度變大就是順時針）繞一圈
   let ranks: number[] | null = null;
@@ -234,6 +240,7 @@ const paintScatter = (g: CanvasRenderingContext2D, w: number, h: number, color: 
   g.save();
   g.beginPath(); g.rect(0, 0, w, h); g.clip();
   items.forEach((it, i) => drawOne(it, o.itemFrame && ranks ? o.itemFrame(ranks[i], items.length, i) : null));
+  g.restore();
   g.restore();
 };
 
