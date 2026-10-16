@@ -19,6 +19,8 @@ export type ObjectMotionFrame = {
   ringReveal?: number;
   /** 星芒「縮放II」：芒的長度倍率（1＝原本長度）；只有星芒會看 */
   rayK?: number;
+  /** 散落圖形邊框：每一顆圖形自己的一格（rank＝順時針順序、n＝總數、i＝第幾顆） */
+  scatterItem?: (rank: number, n: number, i: number) => ObjectMotionFrame;
 };
 
 export type ObjectMotionConfig = {

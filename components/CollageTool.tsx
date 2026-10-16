@@ -718,6 +718,9 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'bounce', name: '彈跳' },
   { id: 'spring', name: '流星' },
 ];
+/* 散落圖形邊框：沒有翻轉；果凍分成 I（每顆同時）和 II（從左上順時針一顆一顆） */
+const SCATTER_IN_KINDS = IN_KINDS.filter(k => k.id !== 'flip' && k.id !== 'bounce')
+  .flatMap(k => k.id === 'pop' ? [{ id: 'pop', name: '果凍I' }, { id: 'pop-seq', name: '果凍II' }] : [k]);
 const LINE_IN_KINDS = [...IN_KINDS.filter(k => k.id !== 'spring'), { id: 'draw', name: '畫筆' }];
 const GRID_IN_KINDS = IN_KINDS.map(k => k.id === 'spring' ? { id: 'grid-wave', name: '波浪' } : k);
 const SYMBOL_IN_KINDS = IN_KINDS.map(k => k.id === 'fade' ? { id: 'bubble', name: '泡泡' } : k.id === 'spring' ? { id: 'fade', name: '淡入' } : k);
@@ -7541,7 +7544,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else if (isFrameShape(o.kind)) {
           // 邊框・霧白：沒有描邊、發光；紋理只疊在霧上
-          paintFrameShape(ctx, o.kind, bw, bh, col, { ...(o as any).frameOpts, range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
+          paintFrameShape(ctx, o.kind, bw, bh, col, { ...(o as any).frameOpts, itemFrame: (f as any)?.scatterItem, range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
               ...o,
@@ -9220,6 +9223,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
         const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
         const phase = (hashId(o.id) % 628) / 100 + i * 0.7;
+        /* 散落圖形邊框：整個邊框不動，改成每一顆圖形各自跑同一套進場／常駐。
+           果凍I＝每顆同時各自果凍；果凍II＝從左上開始順時針一顆接一顆（跟圖案那組錯開的算法一樣） */
+        if (o.type === 'shape' && o.kind === FRAME_SCATTER) {
+          const seq = cfg.in === 'pop-seq';
+          const POP = Math.min(0.5, cfg.dur * 0.45);
+          return { ...FLAT, fx: 1, burst: 0, scatterItem: (rank: number, n: number, idx: number) => {
+            const step = seq && n > 1 ? Math.max(0, (cfg.dur - POP) / (n - 1)) : 0;
+            const c: MoCfg = seq ? { ...cfg, in: 'pop', delay: cfg.delay + rank * step, dur: POP } : cfg;
+            return composeMo(c, t, phase + idx * 0.7 + (idx * 2.399) % 6.28);
+          } } as any;
+        }
         const frame = composeMo(timed, t, phase);
         return frame;
       },
@@ -12320,7 +12334,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const isSpecialLineTarget = !!selObj && selObj.type === 'shape' && SPECIAL_LINE_KINDS.has(selObj.kind);
                 const isGridTarget = !!selObj && selObj.type === 'shape' && GRID_SHAPE_KINDS.has(selObj.kind);
                 const isGlintTarget = !!selObj && selObj.type === 'shape' && selObj.kind === 'hole' && String(selObj.hole || '').startsWith('sb-');
-                const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
+                const isScatterTarget = !!selObj && selObj.type === 'shape' && selObj.kind === FRAME_SCATTER;
+                const kinds = isScatterTarget ? SCATTER_IN_KINDS : moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}

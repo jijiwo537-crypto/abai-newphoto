@@ -11,7 +11,7 @@ import { MIST_FRAME_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, t
 
 /** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
 export type FrameParams = MistParams & { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
-  kinds?: string[]; shapeD?: (kind: string, w: number, h: number) => string };
+  kinds?: string[]; itemFrame?: ScatterItemFrame; shapeD?: (kind: string, w: number, h: number) => string };
 
 export const FRAME_SPEED = 'frame-speed';
 export const FRAME_FILM = 'frame-film';
@@ -168,8 +168,8 @@ const scatterItems = (w: number, h: number, o: FrameParams) => {
 /** 畫圖形的小圖（GridLayoutTool 註冊：用跟一般新增圖形一模一樣的畫法） */
 /** w＝這張小圖代表的圖形寬（px）；ox、oy＝小圖左上角相對圖形中心的位置（px，文字類的圖形會超出框） */
 export type FrameSprite = { canvas: HTMLCanvasElement; w: number; ox: number; oy: number };
-let frameSprite: ((id: string, color: string, px: number) => FrameSprite | null) | null = null;
-export const setFrameSprite = (f: (id: string, color: string, px: number) => FrameSprite | null) => { frameSprite = f; };
+let frameSprite: ((id: string, color: string, px: number, glintGlow?: number) => FrameSprite | null) | null = null;
+export const setFrameSprite = (f: (id: string, color: string, px: number, glintGlow?: number) => FrameSprite | null) => { frameSprite = f; };
 /* 發光：把同一張小圖放在大一點的畫布上、用跟圖形一樣顏色的 shadowBlur 畫兩層，
    結果快取起來（每一顆小圖、每一種強度只算一次），平常貼圖就好，不會每一幀做模糊。 */
 const glowCache = new WeakMap<HTMLCanvasElement, Map<string, FrameSprite>>();
@@ -191,23 +191,53 @@ const glowSprite = (sp: FrameSprite, color: string, glow: number): FrameSprite =
   m.set(key, out);
   return out;
 };
+/** 散落圖形每一顆的動畫（由工具傳進來）：rank＝從左上開始順時針繞一圈的順序，n＝總數，i＝第幾顆 */
+export type ScatterItemFrame = (rank: number, n: number, i: number) => { k: number; dx: number; dy: number; rot: number; a: number; fx?: number } | null;
 const paintScatter = (g: CanvasRenderingContext2D, w: number, h: number, color: string, o: FrameParams) => {
   const m = g.getTransform(), k = Math.max(.25, Math.hypot(m.a, m.b)), glow = o.glow ?? 0;
-  g.save();
-  g.beginPath(); g.rect(0, 0, w, h); g.clip();
+  const items = scatterItems(w, h, o);
+  // 果凍II 的順序：從左上角那個方向開始，順時針（畫布 y 向下，所以角度變大就是順時針）繞一圈
+  let ranks: number[] | null = null;
+  if (o.itemFrame) {
+    const a0 = Math.atan2(-h / 2, -w / 2), TAU = Math.PI * 2;
+    const ang = items.map(it => ((Math.atan2(it.y - h / 2, it.x - w / 2) - a0) % TAU + TAU) % TAU);
+    const order = items.map((_, i) => i).sort((p, q) => ang[p] - ang[q]);
+    ranks = new Array(items.length);
+    order.forEach((idx, r) => { ranks![idx] = r; });
+  }
   g.imageSmoothingEnabled = true;
-  for (const it of scatterItems(w, h, o)) {
-    const raw = frameSprite?.(it.id, color, it.d * k);
-    const sp = raw && glow > 0 && !scatterKindNoGlow(it.id) ? glowSprite(raw, color, glow) : raw;
+  const drawOne = (it: typeof items[number], f: ReturnType<ScatterItemFrame>) => {
+    if (f && (f.k <= .002 || f.a <= .004)) return;
+    /* 星芒的發光跟一般圖形不一樣：用星芒自己的「柔光範圍」（跟星芒編輯裡的發光同一個），
+       不是外面再套一圈陰影光 */
+    const glint = it.id.startsWith('hole-sb-');
+    const raw = frameSprite?.(it.id, color, it.d * k, glint ? glow : undefined);
+    const sp = raw && glow > 0 && !glint && !scatterKindNoGlow(it.id) ? glowSprite(raw, color, glow) : raw;
     g.save();
-    g.translate(it.x, it.y); g.rotate(it.rot * Math.PI / 180);
+    g.translate(it.x + (f ? f.dx * it.d : 0), it.y + (f ? f.dy * it.d : 0));
+    g.rotate((it.rot + (f ? f.rot : 0)) * Math.PI / 180);
+    if (f && (f.k !== 1 || (f.fx ?? 1) !== 1)) g.scale(f.k * (f.fx ?? 1), f.k);
+    if (f && f.a < 1) g.globalAlpha *= f.a;
     if (sp) {
       const s = it.d / sp.w;
       g.drawImage(sp.canvas, sp.ox * s, sp.oy * s, sp.canvas.width * s, sp.canvas.height * s);
     } else { g.fillStyle = color; g.beginPath(); g.arc(0, 0, it.d / 2, 0, Math.PI * 2); g.fill(); }
     g.restore();
-  }
+  };
+  /* 被框邊切到的那幾顆：靜止時照樣裁掉；但一動起來（縮放、位移、旋轉）切口會跟著露餡，
+     所以這一格它有在動的話就不裁、整顆完整畫出來 */
+  const free: [typeof items[number], ReturnType<ScatterItemFrame>][] = [];
+  g.save();
+  g.beginPath(); g.rect(0, 0, w, h); g.clip();
+  items.forEach((it, i) => {
+    const f = o.itemFrame && ranks ? o.itemFrame(ranks[i], items.length, i) : null;
+    const moving = !!f && (Math.abs(f.k - 1) > 1e-3 || Math.abs(f.dx) > 1e-4 || Math.abs(f.dy) > 1e-4 || Math.abs(f.rot) > .05 || Math.abs((f.fx ?? 1) - 1) > 1e-3);
+    const r = it.d * .75;
+    const cut = it.x - r < 0 || it.y - r < 0 || it.x + r > w || it.y + r > h;
+    if (moving && cut) free.push([it, f]); else drawOne(it, f);
+  });
   g.restore();
+  for (const [it, f] of free) drawOne(it, f);
 };
 
 const rectPath = (p: Path2D, x: number, y: number, w: number, h: number, rad = 0) => {

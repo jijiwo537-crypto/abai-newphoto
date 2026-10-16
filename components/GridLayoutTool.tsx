@@ -5774,7 +5774,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         ctx.translate(-drawW / 2, -drawH / 2);
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
-        paintFrameShape(ctx, image.shape, drawW, drawH, color, { ...image.shapeFrameOpts, range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
+        paintFrameShape(ctx, image.shape, drawW, drawH, color, { ...image.shapeFrameOpts, itemFrame: motionFrame?.scatterItem, range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
           tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
           if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
             tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
@@ -10543,9 +10543,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     for (let i = 0; i < item.id.length; i++) hash = (hash * 31 + item.id.charCodeAt(i)) >>> 0;
     return (hash % 628) / 100 + index * .7;
   }, []);
-  const frameForItem = useCallback((item: FloatingImage, index: number, time: number) =>
-    objectMotionFrame(timedMotionConfig(item), time, motionPhase(item, index)),
-  [timedMotionConfig, motionPhase]);
+  const frameForItem = useCallback((item: FloatingImage, index: number, time: number): ObjectMotionFrame => {
+    /* 散落圖形邊框：整個邊框不動，每一顆圖形各自跑（果凍I 同時、果凍II 從左上順時針一顆一顆） */
+    if (item.shape === FRAME_SCATTER) {
+      const cfg = timedMotionConfig(item), phase = motionPhase(item, index);
+      const seq = cfg.in === 'pop-seq', POP = Math.min(.5, cfg.dur * .45);
+      return { k: 1, dx: 0, dy: 0, rot: 0, a: 1, fx: 1, scatterItem: (rank: number, n: number, idx: number) => {
+        const step = seq && n > 1 ? Math.max(0, (cfg.dur - POP) / (n - 1)) : 0;
+        const c = seq ? { ...cfg, in: 'pop', delay: cfg.delay + rank * step, dur: POP } : cfg;
+        return objectMotionFrame(c, time, phase + idx * .7 + (idx * 2.399) % 6.28);
+      } } as ObjectMotionFrame;
+    }
+    return objectMotionFrame(timedMotionConfig(item), time, motionPhase(item, index));
+  }, [timedMotionConfig, motionPhase]);
   /* 佈局也是動畫目標：整組佈局＝一張圖片，套跟圖片同一套（波浪由 paintLayoutWave 切片）。 */
   const motionLayouts = activePage.layouts;
   const layoutMotionCfg = useCallback((lay: LayoutItem): ObjectMotionConfig => {
@@ -18154,7 +18164,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const isSpecialLineTarget = !!target?.shape && SPECIAL_LINE_KINDS.has(target.shape);
               const isTextTarget = target?.text !== undefined && !target.sym;
               const baseIntro = OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce');
-              const introKinds = target?.sym
+              const introKinds = target?.shape === FRAME_SCATTER
+                ? baseIntro.filter(([id]) => id !== 'flip').flatMap(([id, name]): (readonly [string, string])[] => id === 'pop' ? [['pop', '果凍I'], ['pop-seq', '果凍II']] : [[id, name]]) as unknown as typeof baseIntro
+                : target?.sym
                 ? SYMBOL_OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce')
                 : isGridTarget
                   ? baseIntro.map(([id, name]) => id === 'spin' && target.shape === 'grid-orbits' ? ['signal', '信號'] as const : id === 'spring' ? ['grid-wave', '波浪'] as const : [id, name] as const)
@@ -19092,11 +19104,14 @@ const scatterItemOf = (id: string) => {
   if (!scatterItemMap) scatterItemMap = new Map(scatterShapeItems().map(i => [i.id, i]));
   return scatterItemMap.get(id) || scatterItemMap.get(`${id}-f`) || null;
 };
-const shapeSprite = (id: string, color: string, px: number): FrameSprite | null => {
+const shapeSprite = (id: string, color: string, px: number, glintGlow?: number): FrameSprite | null => {
   const it = scatterItemOf(id);
   if (!it) return null;
   const q = Math.max(8, Math.min(768, Math.pow(2, Math.ceil(Math.log2(Math.max(8, px)) * 4) / 4)));
-  const key = `${id}|${color}|${q}`;
+  /* 星芒的發光：散落圖形的發光 0～100 → 星芒自己的柔光範圍，0 是星芒原本的預設、100 是上限 80 */
+  const isGlint = String(it.hole || '').startsWith('sb-');
+  const gg = isGlint && glintGlow !== undefined ? Math.round((glintDefaultGlow(it.hole) + (80 - glintDefaultGlow(it.hole)) * Math.max(0, Math.min(100, glintGlow)) / 100) / 2) * 2 : undefined;
+  const key = `${id}|${color}|${q}|${gg ?? ''}`;
   const hit = spriteCache.get(key);
   if (hit) return hit;
   const w = Math.round(q), h = Math.max(4, Math.round(q * (it.ratio || 1)));
@@ -19113,6 +19128,7 @@ const shapeSprite = (id: string, color: string, px: number): FrameSprite | null 
     shape: it.kind, shapeItemId: it.id, holeType: it.hole, shapeFilled: it.filled,
     shapeLineW: SHAPE_DEFAULT_LINEW(it.kind), shapeLineBase: Math.max(w, h),
     shapeTextureBaseW: w, shapeTextureBaseH: h, shapeDash: 0, shapeGlow: false, color,
+    ...(gg !== undefined ? { shapeGlintGlow: gg } : {}),
     // 雙色圖形裡面那顆：主色是白的時候改用淺灰，才看得出來
     ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: /^#?f{3,6}$/i.test(color) ? '#D9D9D9' : '#FFFFFF' } : {}),
   };
