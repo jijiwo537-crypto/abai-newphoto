@@ -51,7 +51,7 @@ const boxBlurA = (src: Float32Array, dst: Float32Array, w: number, h: number, r:
     }
   }
 };
-const blurAlpha = (c: HTMLCanvasElement, r: number, color: string) => {
+export const blurAlpha = (c: HTMLCanvasElement, r: number, color: string) => {
   const g = c.getContext('2d')!, img = g.getImageData(0, 0, c.width, c.height), d = img.data, n = c.width * c.height;
   let a = new Float32Array(n), b = new Float32Array(n);
   for (let i = 0; i < n; i++) a[i] = d[i * 4 + 3];
@@ -65,25 +65,73 @@ const blurAlpha = (c: HTMLCanvasElement, r: number, color: string) => {
   g.fillRect(0, 0, c.width, c.height);
   g.globalCompositeOperation = 'source-over';
 };
+/* 同一顆（形狀、顏色、模糊值）已經糊好的那幾種長寬比 */
+const blurFamilies = new Map<string, Map<number, string>>();
+const nearestBlur = (fam: string, aspect: number) => {
+  const fa = blurFamilies.get(fam);
+  if (!fa) return null;
+  let best: string | null = null, bd = Infinity;
+  fa.forEach((key, a) => {
+    if (!blurredCache.has(key)) { fa.delete(a); return; }
+    const d = Math.abs(Math.log(a / aspect));
+    if (d < bd) { bd = d; best = key; }
+  });
+  // 差太多（拖很快一下跨了好幾格）就不拿來頂，直接當場糊正確的那張，免得畫面上留著拉歪的模糊
+  return best && bd < .25 ? blurredCache.get(best) ?? null : null;
+};
+let scratch: CanvasRenderingContext2D | null = null;
+let forceBlurBuild = false;
+const scratchCtx = () => scratch ??= document.createElement('canvas').getContext('2d')!;
+const blurQueue = new Map<string, () => void>();
+let blurQueueBusy = false;
+let blurListener: (() => void) | null = null;
+/** 背景糊好一張新的之後要不要重畫畫面（工具註冊） */
+export const setBlurRebuildListener = (f: (() => void) | null) => { blurListener = f; };
+const queueBlurBuild = (key: string, build: () => void) => {
+  if (blurQueue.has(key) || blurredCache.has(key)) return;
+  // 只留最新的那一個：拖的時候中間經過的長寬比不用全部糊
+  blurQueue.clear();
+  blurQueue.set(key, build);
+  if (blurQueueBusy) return;
+  blurQueueBusy = true;
+  const run = () => {
+    const next = blurQueue.entries().next().value as [string, () => void] | undefined;
+    if (!next) { blurQueueBusy = false; blurListener?.(); return; }
+    blurQueue.delete(next[0]);
+    try { next[1](); } catch { /* 下次再糊 */ }
+    setTimeout(run, 16);
+  };
+  setTimeout(run, 16);
+};
 /* 拖滑桿不會一格一格跳：盒狀模糊的半徑只能是整數像素，以前光柵大小固定、半徑跟著滑桿變，
    半徑一取整數，糊的程度就一階一階地跳。現在反過來 —— 盒狀半徑固定（BOX_R 像素），
    改成讓「光柵有多大」跟著模糊值連續變化：糊得越多，光柵越小（也越快算）。 */
 const BOX_R = 5, BOX_SIGMA = Math.sqrt(BOX_R * (BOX_R + 1));   // 三次盒狀模糊 ≈ 這個 σ 的高斯
-const blurredCache = new Map<string, { canvas: HTMLCanvasElement; img?: ImageBitmap; pad: number; scale: number }>();
+const blurredCache = new Map<string, { canvas: HTMLCanvasElement; img?: ImageBitmap; pad: number; scale: number; sh: number }>();
 export const drawBlurredShape = (
   ctx: CanvasRenderingContext2D, kind: string, w: number, h: number, color: string, value: number | undefined,
   pathD: (k: string, w: number, h: number) => string,
 ) => {
   const aw = Math.abs(w), ah = Math.abs(h);
   if (aw < 0.5 || ah < 0.5) return;
-  const aspect = Math.round(aw / ah * 100) / 100;
+  /* 長寬比照「對數」分格（每格約 6%），擠壓時只在跨格的那一下才重糊一次，
+     格子裡面就把同一張糊好的圖照實際長寬拉伸貼上 —— 壓得很扁也不會每一格都重算。
+     （以前是 0.01 一格：長寬比 10 的時候幾乎每動一下就要重糊一張大圖） */
+  const ra = aw / ah, aspect = Math.exp(Math.round(Math.log(ra) / 0.06) * 0.06);
   const v = Math.max(0, Math.min(100, value ?? blurShapeDefault(kind)));
-  const key = `${kind}|${aspect}|${color}|${Math.round(v * 10) / 10}`;
+  const key = `${kind}|${aspect.toFixed(4)}|${color}|${Math.round(v * 10) / 10}`;
   let hit = blurredCache.get(key);
+  /* 擠壓中（已經有同一顆、別的長寬比糊好的圖）：這一格先拿最接近的那張拉伸貼上，
+     正確的那張排到下一個空檔再糊，糊好通知畫面重畫一次 —— 拖的那一格不用等。 */
+  const fam = `${kind}|${color}|${Math.round(v * 10) / 10}`;
+  if (!hit) {
+    const near = nearestBlur(fam, aspect);
+    if (near && !forceBlurBuild) { queueBlurBuild(key, () => { forceBlurBuild = true; try { drawBlurredShape(scratchCtx(), kind, w, h, color, value, pathD); } finally { forceBlurBuild = false; } }); hit = near; }
+  }
   if (!hit) {
     // 光柵大小跟著模糊值連續變化（見上面 BOX_R 的說明），長邊最多 768px
     let short = BOX_SIGMA / Math.max(1e-6, blurShapeRadius(1, 1, v));
-    short = Math.min(short, 768 / Math.max(aspect, 1 / aspect));
+    short = Math.min(short, 512 / Math.max(aspect, 1 / aspect));
     const rw = aspect >= 1 ? short * aspect : short, rh = aspect >= 1 ? short : short / aspect;
     const radius = blurShapeRadius(rw, rh, v);
     const r = Math.max(1, Math.round((Math.sqrt(4 * radius * radius + 1) - 1) / 2));
@@ -95,16 +143,20 @@ export const drawBlurredShape = (
     g.fillStyle = '#000';
     g.fill(new Path2D(pathD(kind, rw, rh)));
     blurAlpha(canvas, r, color);
-    const entry: { canvas: HTMLCanvasElement; img?: ImageBitmap; pad: number; scale: number } = { canvas, pad, scale: rw };
+    const entry: { canvas: HTMLCanvasElement; img?: ImageBitmap; pad: number; scale: number; sh: number } = { canvas, pad, scale: rw, sh: rh };
     hit = entry;
     blurredCache.set(key, entry);
+    let fa = blurFamilies.get(fam);
+    if (!fa) { fa = new Map(); blurFamilies.set(fam, fa); }
+    fa.set(aspect, key);
     // 轉成 ImageBitmap 讓它留在顯示卡上，之後每格貼圖不用再從記憶體搬一次
     if (typeof createImageBitmap === 'function') void createImageBitmap(canvas).then(bm => { entry.img = bm; }).catch(() => {});
     if (blurredCache.size > 48) { const old = blurredCache.keys().next().value!; blurredCache.get(old)?.img?.close(); blurredCache.delete(old); }
   }
-  const k = aw / hit.scale;   // 光柵像素 → 圖形座標
+  // 光柵像素 → 圖形座標；橫、直各自算，同一格裡的長寬比差一點點就照實際拉伸
+  const kx = aw / hit.scale, ky = ah / hit.sh;
   const prev = ctx.imageSmoothingEnabled;
   ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(hit.img ?? hit.canvas, -hit.pad * k, -hit.pad * k, hit.canvas.width * k, hit.canvas.height * k);
+  ctx.drawImage(hit.img ?? hit.canvas, -hit.pad * kx, -hit.pad * ky, hit.canvas.width * kx, hit.canvas.height * ky);
   ctx.imageSmoothingEnabled = prev;
 };

@@ -103,6 +103,7 @@ import { IgPreview } from './IgPreview';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } from '../utils/compose';
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
+import { setBlurRebuildListener } from '../utils/blurShapes';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface,warmPhotoSceneColour} from '../utils/photoFx';
@@ -1353,8 +1354,7 @@ interface CollageToolProps {
 const CreativeShapePicker = React.memo(({ selectedId, onPick }: { selectedId?: string; onPick: (it: any) => void }) => (
   <>
     {shapePickerSections().map(([label, list]) => (
-      /* 畫面外的區塊先不排版、不繪製（content-visibility），一點下去就能先顯示上面那幾排 */
-      <div key={label} className="mb-3" style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 240px' } as React.CSSProperties}>
+      <div key={label} className="mb-3">
         <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
         <div className="grid grid-cols-6 gap-2">
           {list.map(it => (
@@ -9305,6 +9305,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 拖滑桿時 holes 每一格都是新陣列 → renderToCanvas 的身分跟著換 →
      播放迴圈會被拆掉重建幾十次。走 ref 就不會，rAF 從頭到尾只有一個。 */
   const renderToCanvasRef = useRef(renderToCanvas);
+  // 模糊圖形在背景糊好正確的那張之後，重畫一次（擠壓時先用最接近的那張頂著）
+  useEffect(() => {
+    setBlurRebuildListener(() => { if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current); });
+    return () => setBlurRebuildListener(null);
+  }, []);
   regionPaintRef.current=()=>{
     if(canvasRef.current){lastPatternPaintRef.current=null;renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);}
     if(import.meta.env.DEV&&stageRef.current)stageRef.current.dataset.photoTransforms=JSON.stringify(photoRegionRef.current?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0})));

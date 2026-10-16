@@ -12,7 +12,7 @@ import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, Slid
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
 import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints, radialD, radialParts, radialPartD, spinnerAlpha } from '../utils/heartShapes';
-import { isBlurShape, blurShapeBaseD, drawBlurredShape, blurShapeDefault, blurLookValue } from '../utils/blurShapes';
+import { blurAlpha, isBlurShape, blurShapeBaseD, drawBlurredShape, blurShapeDefault, blurLookValue } from '../utils/blurShapes';
 import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask} from '../utils/backdropMasks';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
@@ -1876,12 +1876,46 @@ export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: stri
     </div>
   );
 });
+/* 模糊類小圖的快取：同一顆只糊一次（4 倍解析度、白色，拿來當遮罩），跟 SVG 版的位置、糊的程度一樣 */
+const blurGlyphCache = new Map<string, string>();
+const blurGlyphURL = (kind: string, d: string, VB: number, k: number, rot: number, ccx: number, ccy: number, sigma: number) => {
+  const key = `${kind}|${VB}|${k}|${rot}`;
+  const hit = blurGlyphCache.get(key);
+  if (hit !== undefined) return hit;
+  let url = '';
+  try {
+    const SC = 4, S = Math.round(VB * 2 * SC);
+    const c = document.createElement('canvas'); c.width = c.height = S;
+    const g = c.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D;
+    g.translate(S / 2, S / 2); g.scale(SC * k, SC * k);
+    if (rot) g.rotate(rot * Math.PI / 180);
+    g.translate(-ccx, -ccy);
+    g.fillStyle = '#000'; g.fill(new Path2D(d));
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    // 三次盒狀模糊 ≈ 高斯：σ² ≈ r(r+1)，σ 是 SVG 的 stdDeviation 換成畫布像素
+    const sp = sigma * k * SC, rr = Math.max(1, Math.round((Math.sqrt(4 * sp * sp + 1) - 1) / 2));
+    blurAlpha(c, rr, '#FFFFFF');
+    url = c.toDataURL();
+    preDecodeIcon(url);
+  } catch { url = ''; }
+  blurGlyphCache.set(key, url);
+  return url;
+};
+/* 圖片類的小圖（星芒、模糊圖形、<333* 等）先解碼好留著：
+   Safari 對遮罩用的圖片是捲到畫面上才解碼，看起來就是「滑到哪才載到哪」 */
+const decodedIcons: HTMLImageElement[] = [];
+const decodedIconSrc = new Set<string>();
+export const preDecodeIcon = (src?: string) => {
+  if (!src || decodedIconSrc.has(src) || typeof Image === 'undefined') return;
+  decodedIconSrc.add(src);
+  const im = new Image(); im.src = src; decodedIcons.push(im);
+  im.decode?.().catch(() => {});
+};
 /** 「新增圖形」整片清單：拖動、擠壓時工具每一格都重畫，清單用 memo 包起來就不會跟著重建 */
 const GridShapePicker = React.memo(({ onPick }: { onPick: (it: any) => void }) => (
   <>
     {shapePickerSections().map(([label, list]) => (
-      /* 畫面外的區塊先不排版、不繪製（content-visibility），一點下去就能先顯示上面那幾排 */
-      <div key={label} className="mb-3" style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 240px' } as React.CSSProperties}>
+      <div key={label} className="mb-3">
         <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
         <div className="grid grid-cols-6 gap-2">
           {list.map(it => (
@@ -2009,9 +2043,15 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
   );
   return (
     <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
-      {isBlurShape(item.kind) && <defs><filter id={`blur-${maskId}`} x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur stdDeviation={r3(VB * 0.3 * (5 + 0.18 * blurLookValue(item.kind)) / 100 * 0.62 * 2)} /></filter></defs>}
-      <g transform={tf} filter={isBlurShape(item.kind) ? `url(#blur-${maskId})` : undefined}>
+      {isBlurShape(item.kind) && (() => {
+        /* 模糊類的小圖：不用 SVG 的 feGaussianBlur（Safari 捲到那裡才開始算，看起來像滑到哪才載到哪），
+           改成一開始就用畫布糊好一張圖（快取），這裡當遮罩貼上 */
+        const url = blurGlyphURL(item.kind, src, VB, k, item.rot || 0, ccx, ccy, VB * 0.3 * (5 + 0.18 * blurLookValue(item.kind)) / 100 * 0.62 * 2);
+        return <><defs><mask id={`blurm-${maskId}`} maskUnits="userSpaceOnUse" x={-VB / 2} y={-VB / 2} width={VB * 2} height={VB * 2}>
+          <image href={url} x={-VB / 2} y={-VB / 2} width={VB * 2} height={VB * 2} /></mask></defs>
+          <rect x={-VB / 2} y={-VB / 2} width={VB * 2} height={VB * 2} fill="currentColor" mask={`url(#blurm-${maskId})`} /></>;
+      })()}
+      {!isBlurShape(item.kind) && <g transform={tf}>
         <path
           d={src}
           fill={solid ? 'currentColor' : 'none'}
@@ -2021,7 +2061,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
           strokeLinejoin={isLine ? 'round' : 'miter'}
         />
         {!solid && TRACK_SQUARE_KINDS.has(item.kind) && <path d={trackSquaresD(item.kind, bw, bh)} fill="currentColor" />}
-      </g>
+      </g>}
     </svg>
   );
 };
@@ -2196,6 +2236,8 @@ export const warmGlyphIconsWhenIdle = () => {
        邊框的小圖要先畫一次（散落圖形還要先畫好幾顆圖形）、向量圖案的小圖要先量外框，
        全部擠在點下去的那一格。趁閒置先一顆一顆做好。 */
     for (const spec of STAR_BURSTS) { await awaitPhotoIdle(); void ICON_IMAGES[spec.id]; }
+    // 圖片類的小圖先解碼（見 preDecodeIcon）
+    for (const key of Object.keys(ICON_IMAGES)) { const v = ICON_IMAGES[key]; if (v?.src) preDecodeIcon(v.src); }
     for (const it of FRAME_ITEMS) { await awaitPhotoIdle(); try { frameIconURL(it.kind); } catch { /* 用到時再畫 */ } }
     for (const s of Object.keys(GLYPH_HOLES)) if (s.startsWith('music-')) { await awaitPhotoIdle(); centeredGlyphIcon(s); }
     // 新增符號：每一顆按鈕都要先量字寬；字型好了之後一批一批先量進快取
@@ -2335,9 +2377,6 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
         lineHeight: 1.9,
         minHeight: base * 1.9,
         overflow: 'visible',
-        /* 少數碼位在 iOS 沒有單色字身時仍會退回 Color Emoji；選單統一
-           轉成白色輪廓，和新增到畫布後的可改色符號一致。 */
-        filter: 'grayscale(1) brightness(0) invert(1)',
       }}
     >
       {text === "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605" ? (() => {
@@ -2405,13 +2444,11 @@ export const SymbolPicker: React.FC<{
         <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
       </div>
       {/* 一次渲染完整清單，避免往下滑到一半才等待下一批。
-          但畫面外的那幾段先不排版、不繪製（content-visibility）：一點進來就先看到上面幾排，不用等全部排完 */}
-      <div className="flex flex-col gap-1.5 pb-4">
-        {Array.from({ length: Math.ceil(symbolButtons.length / 48) }, (_, c) => (
-          <div key={c} className="flex flex-wrap gap-1.5" style={{ contentVisibility: c ? 'auto' : undefined, containIntrinsicSize: 'auto 320px' } as React.CSSProperties}>
-            {symbolButtons.slice(c * 48, c * 48 + 48)}
-          </div>
-        ))}
+          少數碼位在 iOS 沒有單色字身時仍會退回 Color Emoji；選單統一轉成白色（跟新增到畫布後一致）。
+          濾鏡只套在整片清單這一層：以前每一顆符號各自一個濾鏡，幾百層濾鏡讓 Safari 捲到哪才畫到哪。
+          這一層裡面本來就全是白色（底色、外框都是半透明白），套上去不會變。 */}
+      <div className="flex flex-wrap gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}>
+        {symbolButtons}
       </div>
     </div>
   );
