@@ -64,7 +64,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, type FrameOpts } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -1429,7 +1429,7 @@ export const shapeGlowToUi = (g: number | boolean | undefined, outline: boolean)
 export const shapeGlowFromUi = (v: number, outline: boolean) => outline ? Math.max(0, Math.min(100, v)) * 3 * OUTLINE_GLOW_SCALE : glowFromUi(v);
 /** 邊框類的紋理沒有條紋（懸空在框裡面，見 paintTextureInsideOutline） */
 export const shapeTexOptions = (kind?: string, filled?: boolean) =>
-  isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe') : TEX_OPTIONS;
+  kind === 'frame-speed' || kind === 'frame-scatter' ? [] : isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe') : TEX_OPTIONS;
 /** 不給調紋理的圖形（圖形選單上的 id，例如 'star-f'、'hole-love'）。排序工具的「紋理」頁可以挑，複製給 Claude 改這裡 */
 export const NO_TEXTURE_SHAPE_IDS: string[] = ['spinner-f', 'hole-seagrass', 'burst-dash-f', 'hole-burst', 'hole-snow'];
 const texKey = (kind?: string, filled?: boolean, hole?: string) =>
@@ -1838,11 +1838,12 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval
  * 縮放並平移到 24×24 的正中央 —— 所以每一顆按鈕的圖案都在正中心。
  */
 /** 散落圖形邊框：多選要散在四周的圖形（至少留一種） */
-export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: string[]) => void }> = ({ value, onChange }) => {
+export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: string[]) => void }> = React.memo(({ value, onChange }) => {
   // 舊資料只存形狀名（star），當成實心那顆（star-f）
-  const kinds = (value?.length ? value : SCATTER_KINDS_DEFAULT).map(k => ADD_SHAPE_ITEMS.some(i => i.id === k) ? k : `${k}-f`);
-  const groups = shapePickerSections().filter(([label]) => label === '實心' || label === '外框')
-    .map(([label, items]) => [label, (items as ShapeItem[]).filter(i => ADD_SHAPE_ITEMS.includes(i) && !i.kind.startsWith('blur-'))] as const);
+  const groups = React.useMemo(() => shapePickerSections().filter(([label]) => label === '實心' || label === '外框')
+    .map(([label, items]) => [label, items as ShapeItem[]] as const), []);
+  const all = React.useMemo(() => new Set(groups.flatMap(([, items]) => items.map(i => i.id))), [groups]);
+  const kinds = (value?.length ? value : SCATTER_KINDS_DEFAULT).map(k => all.has(k) ? k : `${k}-f`);
   return (
     <div className="pt-1 pb-2" data-scatter-kinds>
       {groups.map(([label, items]) => (
@@ -1850,11 +1851,12 @@ export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: stri
           <div className="text-[11px] text-white/45 mb-1.5">{label}（可多選）</div>
           <div className="grid grid-cols-6 gap-1.5">
             {items.map(it => {
-              const on = kinds.includes(it.id);
+              const on = kinds.includes(it.id), url = scatterIconURL(it.id);
               return (
                 <button key={it.id} aria-label={it.id} onClick={() => onChange(on ? (kinds.length > 1 ? kinds.filter(x => x !== it.id) : kinds) : [...kinds, it.id])}
                   className={`aspect-square rounded-[10px] flex items-center justify-center active:scale-95 ${on ? 'bg-white text-black' : 'bg-white/[0.06] text-white/70'}`}>
-                  <ShapeGlyph item={it} size={18} />
+                  <span className="block w-[22px] h-[22px]" style={{ backgroundColor: 'currentColor', WebkitMaskImage: `url(${url})`, maskImage: `url(${url})`,
+                    WebkitMaskSize: 'contain', maskSize: 'contain', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat', WebkitMaskPosition: 'center', maskPosition: 'center' } as React.CSSProperties} />
                 </button>
               );
             })}
@@ -1863,7 +1865,7 @@ export const ScatterKindsPicker: React.FC<{ value?: string[]; onChange: (k: stri
       ))}
     </div>
   );
-};
+});
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const maskId = React.useId().replace(/:/g, '');
   if(isBackdropMask(item.kind))return <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
@@ -19064,3 +19066,52 @@ export const PathPatternIcon: React.FC<{ s: string }> = ({ s }) => {
 // 散落圖形邊框畫圖形時要用到 shapePathD
 setFrameShapeD((kind, w, h) => shapePathD(kind, w, h));
 setFrameShapeItem(id => { const it = ADD_SHAPE_ITEMS.find(i => i.id === id); return it ? { kind: it.kind, filled: it.filled } : null; });
+/* 散落圖形邊框裡的每一顆：用跟「新增圖形」完全一樣的畫法（paintClassicSceneVector）先畫成小圖再貼上去，
+   所以長相跟一般生成的一模一樣。尺寸取到 2^(n/4) 的格子快取，縮放時不會每一幀重畫。 */
+const spriteCache = new Map<string, FrameSprite>();
+export const scatterShapeItems = (): ShapeItem[] => {
+  const secs = shapePickerSections();
+  return secs.filter(([label]) => label === '實心' || label === '外框').flatMap(([, items]) => items as ShapeItem[]);
+};
+let scatterItemMap: Map<string, any> | null = null;
+const scatterItemOf = (id: string) => {
+  if (!scatterItemMap) scatterItemMap = new Map(scatterShapeItems().map(i => [i.id, i]));
+  return scatterItemMap.get(id) || scatterItemMap.get(`${id}-f`) || null;
+};
+const shapeSprite = (id: string, color: string, px: number): FrameSprite | null => {
+  const it = scatterItemOf(id);
+  if (!it) return null;
+  const q = Math.max(8, Math.min(1024, Math.pow(2, Math.ceil(Math.log2(Math.max(8, px)) * 4) / 4)));
+  const key = `${id}|${color}|${q}`;
+  const hit = spriteCache.get(key);
+  if (hit) return hit;
+  const w = Math.round(q), h = Math.max(4, Math.round(q * (it.ratio || 1))), pad = Math.ceil(q * .08) + 2;
+  const cv = document.createElement('canvas');
+  cv.width = w + pad * 2; cv.height = h + pad * 2;
+  const g = cv.getContext('2d')!;
+  g.translate(pad + w / 2, pad + h / 2);
+  const img: any = {
+    id: `scatter-${id}`, src: '', x: 0, y: 0, width: w, height: h, scale: 1, rotation: 0,
+    shape: it.kind, shapeItemId: it.id, holeType: it.hole, shapeFilled: it.filled,
+    shapeLineW: SHAPE_DEFAULT_LINEW(it.kind), shapeLineBase: Math.max(w, h),
+    shapeTextureBaseW: w, shapeTextureBaseH: h, shapeDash: 0, shapeGlow: false, color,
+    ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
+  };
+  try { paintClassicSceneVector(g, img, null, 1); } catch { return null; }
+  const sp = { canvas: cv, w, h, pad };
+  spriteCache.set(key, sp);
+  if (spriteCache.size > 300) { const k = spriteCache.keys().next().value as string; const c = spriteCache.get(k); spriteCache.delete(k); if (c) c.canvas.width = 1; }
+  return sp;
+};
+setFrameSprite(shapeSprite);
+/** 選單小圖：同一張小圖（白色）轉成 data URL，當遮罩用；一次做好之後捲動就不用重畫 SVG */
+const scatterIconCache = new Map<string, string>();
+export const scatterIconURL = (id: string) => {
+  let u = scatterIconCache.get(id);
+  if (u === undefined) {
+    const sp = shapeSprite(id, '#FFFFFF', 40);
+    u = sp ? sp.canvas.toDataURL() : '';
+    scatterIconCache.set(id, u);
+  }
+  return u;
+};

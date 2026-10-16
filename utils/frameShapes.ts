@@ -10,7 +10,7 @@
 import { MIST_FRAME_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, type MistParams } from './mistFrame';
 
 /** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
-export type FrameParams = MistParams & { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angleVar?: number;
+export type FrameParams = MistParams & { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number;
   kinds?: string[]; shapeD?: (kind: string, w: number, h: number) => string };
 
 export const FRAME_SPEED = 'frame-speed';
@@ -35,7 +35,7 @@ const FRAME_KIND_SET = new Set(FRAME_ITEMS.map(i => i.kind));
 export const isFrameShape = (kind?: string) => !!kind && FRAME_KIND_SET.has(kind);
 
 /** 「範圍」的預設：霧白邊框 0（全白只在框邊），其他 50 */
-export const frameRangeDefault = (kind?: string) => kind === MIST_FRAME_KIND ? MIST_RANGE_DEFAULT : kind === FRAME_SCATTER ? 60 : 50;
+export const frameRangeDefault = (kind?: string) => kind === MIST_FRAME_KIND ? MIST_RANGE_DEFAULT : kind === FRAME_SCATTER || kind === FRAME_SPEED ? 60 : 50;
 
 const r01 = (range: number | undefined, kind: string) =>
   Math.max(0, Math.min(1, (range ?? frameRangeDefault(kind)) / 100));
@@ -102,48 +102,82 @@ export const setFrameShapeD = (f: (kind: string, w: number, h: number) => string
 let frameShapeItem: ((id: string) => { kind: string; filled: boolean } | null) | null = null;
 export const setFrameShapeItem = (f: (id: string) => { kind: string; filled: boolean } | null) => { frameShapeItem = f; };
 /** 集中線、散落圖形的額外滑桿（全部 0～100） */
-export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'size' | 'sizeVar' | 'angleVar'; label: string; def: number }[]> = {
-  'frame-speed': [{ key: 'gap', label: '間距', def: 50 }, { key: 'thick', label: '粗細', def: 50 }, { key: 'vary', label: '變化', def: 50 }],
+export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'size' | 'sizeVar' | 'angle' | 'angleVar'; label: string; def: number }[]> = {
+  'frame-speed': [{ key: 'gap', label: '間距', def: 50 }, { key: 'thick', label: '粗細', def: 50 }, { key: 'vary', label: '變化', def: 100 }],
   'frame-scatter': [{ key: 'gap', label: '間距', def: 30 }, { key: 'size', label: '大小', def: 40 },
-    { key: 'sizeVar', label: '大小變化', def: 50 }, { key: 'angleVar', label: '角度變化', def: 30 }],
+    { key: 'sizeVar', label: '大小變化', def: 50 }, { key: 'angle', label: '角度', def: 0 }, { key: 'angleVar', label: '角度變化', def: 30 }],
 };
 /** 存在物件上的那一包（滑桿值＋散落的圖形種類） */
-export type FrameOpts = { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angleVar?: number; kinds?: string[] };
-const scatterPath = (w: number, h: number, _r: number, o: FrameParams = {}): Fill[] => {
-  const p = new Path2D(), out: Fill[] = [[p, 'nonzero']];
-  const rand = rng(77001);
+export type FrameOpts = { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; kinds?: string[] };
+/** 散落圖形的版面：只跟比例、範圍、間距、選了哪些圖形有關 ——
+   調大小、大小變化、角度、角度變化時位置都不會重排，只是每顆照自己記住的亂數改大小／角度。 */
+type ScatterSpot = { x: number; y: number; ki: number; uSize: number; uRot: number; tilt: boolean };
+const scatterCache = new Map<string, ScatterSpot[]>();
+const scatterLayout = (w: number, h: number, o: FrameParams): ScatterSpot[] => {
   const kinds = o.kinds?.length ? o.kinds : SCATTER_KINDS_DEFAULT;
-  const ui = o.range ?? 60;
+  const ui = o.range ?? 60, gap = o.gap ?? 30;
+  const key = `${Math.round(w)}|${Math.round(h)}|${ui}|${gap}|${kinds.join(',')}`;
+  const hit = scatterCache.get(key);
+  if (hit) return hit;
+  const rand = rng(77001);
   const edge = 1 - mistRangeFromUi(ui) / 100 * .9, inner = edge - .32;
-  const m = Math.min(w, h), S = m * (.02 + ((o.size ?? 40) / 100) ** 2 * .42);
-  const sv = (o.sizeVar ?? 50) / 100, av = (o.angleVar ?? 30) / 100, sp = .9 + (o.gap ?? 30) / 100 * 2.2;
-  const placed: [number, number, number][] = [];
-  const placedKind: number[] = [], count = new Array(kinds.length).fill(0);
-  for (let tries = 0; tries < 6000 && placed.length < 400; tries++) {
+  const m = Math.min(w, h), R0 = m * .045, minD = R0 * 2 * (.9 + gap / 100 * 2.2);
+  const spots: ScatterSpot[] = [], count = new Array(kinds.length).fill(0);
+  for (let tries = 0; tries < 6000 && spots.length < 400; tries++) {
     const x = (rand() * 1.04 - .02) * w, y = (rand() * 1.04 - .02) * h;
     const u = (x - w / 2) / (w / 2), v = (y - h / 2) / (h / 2);
     if (Math.hypot(u, v) < inner) continue;
-    // 大小變化：大部分放大（最多 1+1.2×變化 倍），少部分稍微縮小（最少 1-0.3×變化 倍）
-    const rad = S / 2 * (1 + sv * (rand() * 1.5 - .3));
-    if (placed.some(([px, py, pr]) => Math.hypot(px - x, py - y) < (pr + rad) * sp)) continue;
-    // 附近最少出現的那一種優先（同分再看整體數量），所以每一種都平均散開、不會擠成一團
+    if (spots.some(p => Math.hypot(p.x - x, p.y - y) < minD)) continue;
+    // 附近最少出現的那一種優先（同分再看整體數量），所以每一種都平均散開
     const near = new Array(kinds.length).fill(0);
-    placed.forEach(([px, py], j) => { if (Math.hypot(px - x, py - y) < S * 3.2) near[placedKind[j]]++; });
+    for (const p of spots) if (Math.hypot(p.x - x, p.y - y) < minD * 2.2) near[p.ki]++;
     let ki = 0;
     for (let j = 1; j < kinds.length; j++) if (near[j] < near[ki] || (near[j] === near[ki] && count[j] < count[ki])) ki = j;
-    count[ki]++; placedKind.push(ki);
-    placed.push([x, y, rad]);
-    const it = frameShapeItem?.(kinds[ki]) || { kind: kinds[ki].replace(/-[fo]$/, ''), filled: !kinds[ki].endsWith('-o') };
-    const d = rad * 2, rot = (rand() * 2 - 1) * av * Math.PI / 4;
-    const sd = o.shapeD || frameShapeD;
-    const lw = it.filled ? 0 : d * .08;
-    const inset = lw / 2, dd = Math.max(1, d - lw);
-    const sh = sd ? new Path2D(sd(it.kind, dd, dd)) : (() => { const c = new Path2D(); c.arc(dd / 2, dd / 2, dd / 2, 0, Math.PI * 2); return c; })();
-    const mtx = new DOMMatrix().translate(x, y).rotate(rot * 180 / Math.PI).translate(-rad + inset, -rad + inset);
-    if (it.filled) p.addPath(sh, mtx);
-    else { const q = new Path2D(); q.addPath(sh, mtx); out.push([q, 'nonzero', lw]); }
+    count[ki]++;
+    spots.push({ x, y, ki, uSize: rand(), uRot: rand(), tilt: false });
   }
-  return out;
+  /* 「要不要歪」先照每一種各自排好：同一種圖形裡，照順序輪流決定，
+     所以角度變化 30 的時候，每一種都大約有三成是歪的、其餘不動（不會整種一起歪）。 */
+  scatterCache.set(key, spots);
+  if (scatterCache.size > 24) scatterCache.delete(scatterCache.keys().next().value as string);
+  return spots;
+};
+/** 每顆的最後位置、大小、角度（度） */
+const scatterItems = (w: number, h: number, o: FrameParams) => {
+  const kinds = o.kinds?.length ? o.kinds : SCATTER_KINDS_DEFAULT;
+  const spots = scatterLayout(w, h, o);
+  const m = Math.min(w, h), S = m * (.02 + ((o.size ?? 40) / 100) ** 2 * .42);
+  const sv = (o.sizeVar ?? 50) / 100, av = (o.angleVar ?? 30) / 100, base = (o.angle ?? 0) / 100 * 360;
+  const seen = new Array(kinds.length).fill(0);
+  return spots.map(p => {
+    const c = seen[p.ki]++, ph = (p.ki * .618) % 1;
+    const tilt = Math.floor((c + 1) * av + ph) > Math.floor(c * av + ph);
+    const rot = base + (tilt ? (p.uRot < .5 ? -1 : 1) * (10 + Math.abs(p.uRot * 2 - 1) * 35) : 0);
+    // 大小變化：大部分放大（最多 1+1.2×變化 倍），少部分稍微縮小（最少 1-0.3×變化 倍）
+    const d = S * (1 + sv * (p.uSize * 1.5 - .3));
+    return { x: p.x, y: p.y, d, rot, id: kinds[p.ki] };
+  });
+};
+/** 畫圖形的小圖（GridLayoutTool 註冊：用跟一般新增圖形一模一樣的畫法） */
+export type FrameSprite = { canvas: HTMLCanvasElement; w: number; h: number; pad: number };
+let frameSprite: ((id: string, color: string, px: number) => FrameSprite | null) | null = null;
+export const setFrameSprite = (f: (id: string, color: string, px: number) => FrameSprite | null) => { frameSprite = f; };
+const paintScatter = (g: CanvasRenderingContext2D, w: number, h: number, color: string, o: FrameParams) => {
+  const m = g.getTransform(), k = Math.max(.25, Math.hypot(m.a, m.b));
+  g.save();
+  g.beginPath(); g.rect(0, 0, w, h); g.clip();
+  g.imageSmoothingEnabled = true;
+  for (const it of scatterItems(w, h, o)) {
+    const sp = frameSprite?.(it.id, color, it.d * k);
+    g.save();
+    g.translate(it.x, it.y); g.rotate(it.rot * Math.PI / 180);
+    if (sp) {
+      const s = it.d / sp.w;
+      g.drawImage(sp.canvas, -(sp.w / 2 + sp.pad) * s, -(sp.h / 2 + sp.pad) * s, sp.canvas.width * s, sp.canvas.height * s);
+    } else { g.fillStyle = color; g.beginPath(); g.arc(0, 0, it.d / 2, 0, Math.PI * 2); g.fill(); }
+    g.restore();
+  }
+  g.restore();
 };
 
 const rectPath = (p: Path2D, x: number, y: number, w: number, h: number, rad = 0) => {
@@ -350,7 +384,6 @@ const one = (f: (w: number, h: number, r: number, o?: FrameParams) => Path2D) =>
 const PATHS: Record<string, (w: number, h: number, r: number, o?: FrameParams) => Fill[]> = {
   [FRAME_SPEED]: one(speedPath), [FRAME_FILM]: one(filmPath), [FRAME_POLAROID]: one(polaroidPath),
   [FRAME_LACE]: lacePath, [FRAME_BRUSH]: brushPath,
-  [FRAME_SCATTER]: scatterPath,
 };
 /** 路徑快取：同一個比例、同一個範圍就不用再算（拖動、縮放時每一格都用得到） */
 const pathCache = new Map<string, Fill[]>();
@@ -375,6 +408,7 @@ export const paintFrameShape = (
   params: FrameParams = {}, texture?: (tc: CanvasRenderingContext2D, bodyPath: Path2D) => void,
 ) => {
   if (!(w > 0) || !(h > 0)) return;
+  if (kind === FRAME_SCATTER) { paintScatter(ctx, w, h, color, params); return; }
   if (kind === MIST_FRAME_KIND || !PATHS[kind]) { paintMistFrame(ctx, w, h, color, params, texture); return; }
   const path = framePath(kind, w, h, r01(params.range, kind), params);
   const draw = (g: CanvasRenderingContext2D) => {
