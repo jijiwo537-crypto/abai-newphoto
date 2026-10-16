@@ -9748,14 +9748,45 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         return true;
       };
       const step = () => { if (apply()) raf = requestAnimationFrame(step); };
+      /* 平常（版面一次就定位）：用 Web Animations 交給合成器跑 —— 主執行緒在這 420ms 裡
+         要換面板、重畫 React，JS 每格算 transform 會被拖慢掉格；合成器動畫不受影響，穩定 60fps 以上。
+         只有版面還在變（例如工具欄正從 48dvh 縮回 34dvh）時，才退回每格重新對準終點的 JS 版本。 */
+      const r0 = frame.getBoundingClientRect(), w0 = frame.offsetWidth, h0 = frame.offsetHeight;
+      const pr0 = frame.offsetParent?.getBoundingClientRect();
+      const L0 = (pr0?.left ?? 0) + frame.offsetLeft, T0 = (pr0?.top ?? 0) + frame.offsetTop;
+      let waapi: Animation | null = null;
+      if (typeof frame.animate === 'function' && w0 > 0 && h0 > 0) {
+        frame.style.willChange = 'transform';
+        waapi = frame.animate([
+          { transform: `translate(${first.left - r0.left}px,${first.top - r0.top}px) scale(${first.width / w0},${first.height / h0})` },
+          { transform: 'translate(0px,0px) scale(1,1)' },
+        ], { duration: 420, easing: 'cubic-bezier(0.42,0,0.58,1)' });
+        /* 先停在起點，等第一格真的畫出來才開始計時：切面板那一格主執行緒很忙，
+           直接開跑的話前面一段會在還沒畫出來時就「播完」，看起來像跳了一下 */
+        waapi.pause();
+        requestAnimationFrame(() => requestAnimationFrame(() => { waapi?.play(); }));
+        waapi.onfinish = () => { frame.style.willChange = ''; observer?.disconnect(); motionFrameAnimationRef.current = null; };
+      }
+      const handoff = () => {
+        // 版面在動畫中又變了：從 WAAPI 交回 JS（同一個起點與時間軸，看起來是同一段）
+        if (!waapi) { apply(); return; }
+        // 量版面位置要避開自己這層動畫的 transform：看父層的框＋自己的 offset
+        if (frame.offsetWidth === w0 && frame.offsetHeight === h0) {
+          const pr = frame.offsetParent?.getBoundingClientRect();
+          const l = (pr?.left ?? 0) + frame.offsetLeft, t = (pr?.top ?? 0) + frame.offsetTop;
+          if (Math.abs(l - L0) < .5 && Math.abs(t - T0) < .5) return;
+        }
+        waapi.cancel(); waapi = null; frame.style.willChange = '';
+        step();
+      };
       if (typeof ResizeObserver !== 'undefined') {
-        observer = new ResizeObserver(() => { apply(); });
+        observer = new ResizeObserver(handoff);
         observer.observe(frame);
         const stage = frame.parentElement?.parentElement;
         if (stage) observer.observe(stage);
       }
-      step();
-      motionFrameAnimationRef.current = { cancel: clear };
+      if (!waapi) step();
+      motionFrameAnimationRef.current = { cancel: () => { waapi?.cancel(); waapi = null; frame.style.willChange = ''; clear(); } };
     }
     motionTransitionUntilRef.current = performance.now() + 420;
     setMotionTransitioning(true);
@@ -11921,10 +11952,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {isFrameShape(sel.kind) && !isMistFrame(sel.kind) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('範圍', Math.round((sel as any).frameRange ?? frameRangeDefault(sel.kind)), 0, 100,
                               (v: number) => patch({ frameRange: v } as any))}
-                            {(FRAME_SLIDERS[sel.kind!] || []).map(sl => <React.Fragment key={sl.key}>
+                            {(FRAME_SLIDERS[sel.kind!] || []).filter(sl => sl.key !== 'glow').map(sl => <React.Fragment key={sl.key}>
                               {shapeSlider(sl.label, Math.round((sel as any).frameOpts?.[sl.key] ?? sl.def), 0, 100,
                                 (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, [sl.key]: Math.round(v) } } as any))}
                             </React.Fragment>)}
+                          </div>}
+                          {/* 發光自己一整排（長的滑桿） */}
+                          {sel.kind === FRAME_SCATTER && <div className="px-2 order-1 w-full">
+                            {shapeSlider('發光', Math.round((sel as any).frameOpts?.glow ?? 0), 0, 100,
+                              (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, glow: Math.round(v) } } as any))}
                           </div>}
                           {sel.kind === FRAME_SCATTER && <div className="px-2 order-1 w-full">
                             <ScatterKindsPicker value={(sel as any).frameOpts?.kinds}

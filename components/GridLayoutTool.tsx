@@ -2877,9 +2877,13 @@ export const ShapeEditorPanel: React.FC<{
           {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
           {isFrameShape(layer.shape) && !isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
             {slider('範圍', Math.round(layer.shapeFrameRange ?? frameRangeDefault(layer.shape)), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
-            {(FRAME_SLIDERS[layer.shape!] || []).map(sl => <React.Fragment key={sl.key}>
+            {(FRAME_SLIDERS[layer.shape!] || []).filter(sl => sl.key !== 'glow').map(sl => <React.Fragment key={sl.key}>
               {slider(sl.label, Math.round(layer.shapeFrameOpts?.[sl.key] ?? sl.def), 0, 100, v => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, [sl.key]: Math.round(v) } }))}
             </React.Fragment>)}
+          </div>}
+          {/* 發光自己一整排（長的滑桿） */}
+          {layer.shape === FRAME_SCATTER && <div className="px-2 order-1 w-full">
+            {slider('發光', Math.round(layer.shapeFrameOpts?.glow ?? 0), 0, 100, v => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, glow: Math.round(v) } }))}
           </div>}
           {layer.shape === FRAME_SCATTER && <div className="px-2 order-1 w-full">
             <ScatterKindsPicker value={layer.shapeFrameOpts?.kinds} onChange={kinds => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, kinds } })}
