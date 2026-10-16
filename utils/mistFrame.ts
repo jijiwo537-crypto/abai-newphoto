@@ -126,8 +126,8 @@ export const paintMistFrame = (
   ctx.drawImage(cv, 0, 0, W, H, 0, 0, w, h);
 };
 
-/* 霧白邊框的紋理：預設大小 0、間距 -20；間距滑桿 0～100 對應 -30～100（-30 是點點最密的地方） */
+/* 邊框的紋理：預設大小 0；間距滑桿 0～100 對應 -30～100（-30 是點點最密的地方），預設停在 10（＝-17） */
 export const MIST_TEX_SIZE_DEFAULT = 0;
-export const MIST_TEX_GAP_DEFAULT = -20;
+export const MIST_TEX_GAP_DEFAULT = -30 + 10 * 1.3;
 export const mistGapToUi = (gap: number) => Math.round(Math.max(0, Math.min(100, (gap + 30) / 1.3)));
 export const mistGapFromUi = (ui: number) => -30 + Math.max(0, Math.min(100, ui)) * 1.3;

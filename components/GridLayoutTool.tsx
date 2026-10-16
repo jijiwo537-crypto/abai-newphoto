@@ -64,7 +64,8 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isMistFrame, paintMistFrame, MIST_FRAME_KIND, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi } from '../utils/mistFrame';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL } from '../utils/frameShapes';
+import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
@@ -919,7 +920,7 @@ export const shapePathD = (
 ): string => {
   if(kind.startsWith('mask-'))kind=kind.includes('circle')||kind.includes('feather')?'circle':'square';
   // 霧白邊框的「形狀」就是它的框（選取、點選都照方形）
-  if (isMistFrame(kind)) kind = 'square';
+  if (isFrameShape(kind)) kind = 'square';
   if (kind.startsWith('blur-')) return blurShapeBaseD(kind, w, h, shapePathD);
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
@@ -1330,7 +1331,7 @@ const STRETCH_OUTLINE_KINDS = new Set([
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if(isBackdropMask(shape))return true;
-  if (isMistFrame(shape)) return true;
+  if (isFrameShape(shape)) return true;
   if (!shape || shape === 'line') return false;
   if (shape === 'wave' || shape === 'lightning-wave' || GRID_SHAPE_KINDS.has(shape)) return true;
   if (shape === 'hole') return holeCanStretch(holeType, filled);
@@ -1473,13 +1474,12 @@ export const arrowResize = (w: number, h: number, shaftUi: number, kind?: string
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number; glyphRatio?: number };
 /** 「新增圖形」選單的五個區塊。創意拼圖與跨頁拼圖都用這一個，順序寫在 utils/pickerOrder.ts。 */
 /** 新分類「邊框」：霧白邊框（亮角那種霧，但四個邊也有） */
-export const MIST_FRAME_ITEM: ShapeItem = { id: MIST_FRAME_KIND, kind: MIST_FRAME_KIND, filled: true, label: '霧白邊框' } as ShapeItem;
 export const shapePickerSections = () => {
   const A = ADD_SHAPE_ITEMS, plain = (i: ShapeItem) => !GRID_SHAPE_KINDS.has(i.kind) && !SPECIAL_LINE_KINDS.has(i.kind);
   const pools: Record<ShapeSection, any[]> = {
     solid: [...A.filter(i => i.filled && plain(i)), HOLE_ITEM_CROSS, ...HOLE_ITEMS_EXTRA],
     outline: [...A.filter(i => !i.filled && plain(i)), HOLE_ITEM_CROSS_O],
-    frame: [MIST_FRAME_ITEM],
+    frame: FRAME_ITEMS as ShapeItem[],
     burst: [...STAR_BURST_ITEMS],
     line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind)),
     grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
@@ -1847,6 +1847,14 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
       </>}
     </g><path d={maskGeometry(item.kind)==='circle'?'M22 12A10 10 0 1 1 2 12A10 10 0 1 1 22 12':'M2 2H22V22H2Z'} fill="none" stroke="currentColor" strokeWidth=".8" opacity={item.kind==='mask-frost-feather'?.4:1}/>
   </svg>;
+  if (isFrameShape(item.kind) && !isMistFrame(item.kind)) return (
+    // 其他邊框：用同一支畫法畫一張小圖，拿來當遮罩、底色用 currentColor
+    <span aria-hidden style={{
+      display: 'block', width: size * .78, height: size * 1.04, backgroundColor: 'currentColor',
+      WebkitMaskImage: `url(${frameIconURL(item.kind)})`, maskImage: `url(${frameIconURL(item.kind)})`,
+      WebkitMaskSize: '100% 100%', maskSize: '100% 100%',
+    }} />
+  );
   if (isMistFrame(item.kind)) return (
     // 霧白邊框：四邊、四角往外越來越白，中間空的
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
@@ -2584,8 +2592,9 @@ export const TextEditorPanel: React.FC<{
           />
         )}
         {!colorPage && sub === 'font' && !symbol && (
-          /* 頂部留一段安全距離：內容不要貼著上面那排分頁按鈕 */
-          <div className="space-y-2.5 pt-4 pb-1">
+          /* 頂部留一段安全距離：內容不要貼著上面那排分頁按鈕；
+             底部也留一段，捲到底時最後一排字體不要貼著下緣（跟「樣式」頁一樣 pb-12） */
+          <div className="space-y-2.5 pt-4 pb-12">
             <div className="flex items-center gap-1 bg-white/[0.06] rounded-full p-0.5">
               {FONT_CATEGORIES.map(c => (
                 <button
@@ -2751,7 +2760,7 @@ export const ShapeEditorPanel: React.FC<{
   /* 星芒是一束光，描邊、紋理都不合理，不給調 */
   const isGlint = layer.shape === 'hole' && String(layer.holeType || '').startsWith('sb-');
   // 霧白邊框也沒有描邊、紋理、發光
-  const noDecor = isGlint || isMistFrame(layer.shape);
+  const noDecor = isGlint || isFrameShape(layer.shape);
   const canFeather = shapeSupportsFeather(layer.shape, layer.shapeFilled, layer.holeType);
   /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
   const [colorPage, setColorPage] = useState<
@@ -2828,6 +2837,9 @@ export const ShapeEditorPanel: React.FC<{
               })} />
           </div>}
           {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
+          {isFrameShape(layer.shape) && !isMistFrame(layer.shape) && <div className="px-2 order-1 w-full">
+            {slider('範圍', Math.round(layer.shapeFrameRange ?? frameRangeDefault(layer.shape)), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
+          </div>}
           {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
             {slider('範圍', Math.round(layer.shapeFrameRange ?? MIST_RANGE_DEFAULT), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
             {slider('羽化', Math.round(layer.shapeFrameFeather ?? MIST_FEATHER_DEFAULT), 0, 100, v => onChange({ shapeFrameFeather: Math.round(v) }))}
@@ -2951,10 +2963,10 @@ export const ShapeEditorPanel: React.FC<{
               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                 {isClefTex(layer.holeType)
                   ? slider('大小', clefSizeToUi(layer.shapeDotSize ?? CLEF_TEX_DEFAULTS.size), 0, 100, v => onChange({ shapeDotSize: clefSizeFromUi(v) }))
-                  : slider('大小', layer.shapeDotSize ?? (isMistFrame(layer.shape) ? MIST_TEX_SIZE_DEFAULT : 50), 0, 100, v => onChange({ shapeDotSize: v }))}
+                  : slider('大小', layer.shapeDotSize ?? (isFrameShape(layer.shape) ? MIST_TEX_SIZE_DEFAULT : 50), 0, 100, v => onChange({ shapeDotSize: v }))}
                 {isClefTex(layer.holeType)
                   ? slider('間距', clefGapToUi(layer.shapeDotGap ?? CLEF_TEX_DEFAULTS.gap), 0, 100, v => onChange({ shapeDotGap: clefGapFromUi(v) }))
-                  : isMistFrame(layer.shape)
+                  : isFrameShape(layer.shape)
                   ? slider('間距', mistGapToUi(layer.shapeDotGap ?? MIST_TEX_GAP_DEFAULT), 0, 100, v => onChange({ shapeDotGap: mistGapFromUi(v) }))
                   : slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
                 {isGridTex(tex) && <div className="col-span-2">{slider('壓扁', maskTextureSquashToUi(layer.shapeDotSquash ?? 50), 0, 100, v => onChange({ shapeDotSquash: maskTextureSquashFromUi(v) }))}</div>}
@@ -5702,12 +5714,12 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
     ctx.restore();
     return;
   }
-      if (image.shape && isMistFrame(image.shape)) {
+      if (image.shape && isFrameShape(image.shape)) {
         // 邊框・霧白：沒有描邊、發光；紋理只疊在霧上
         ctx.translate(-drawW / 2, -drawH / 2);
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
-        paintMistFrame(ctx, drawW, drawH, color, { range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
+        paintFrameShape(ctx, image.shape, drawW, drawH, color, { range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
           tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
           if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
             tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
@@ -9653,7 +9665,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const rect = getClosestPageRect();
     const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
     // 邊框：一放進來就是整頁的框
-    const frame = isMistFrame(it.kind);
+    const frame = isFrameShape(it.kind);
     const w = frame ? Math.round(rect?.width ?? previewW) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
     const h = frame ? Math.round(rect?.height ?? previewH) : (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
     const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
@@ -9681,7 +9693,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       shapeGlowColor: initialColor,
       color: initialColor,
       ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
-      ...(frame ? { shapeFrameRange: MIST_RANGE_DEFAULT, shapeFrameFeather: MIST_FEATHER_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT, shapeDotSize: MIST_TEX_SIZE_DEFAULT, shapeDotGap: MIST_TEX_GAP_DEFAULT } : {}),
+      ...(frame ? { shapeFrameRange: frameRangeDefault(it.kind), shapeFrameFeather: MIST_FEATHER_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT, shapeDotSize: MIST_TEX_SIZE_DEFAULT, shapeDotGap: MIST_TEX_GAP_DEFAULT } : {}),
       // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
       ...(it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-')
         ? (() => { const idle = glintHasRing((it as any).hole) ? 'spin' : 'breathe';
@@ -14628,11 +14640,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
       return;
     }
-    if (isMistFrame(fImg.shape)) {
+    if (isFrameShape(fImg.shape)) {
       // 邊框・霧白：跟預覽同一套畫法（紋理只疊在霧上）
       const mColor = fImg.color || SHAPE_DEFAULT_COLOR;
       const mTx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
-      paintMistFrame(ctx, fw, fh, mColor, { range: fImg.shapeFrameRange, feather: fImg.shapeFrameFeather, round: fImg.shapeFrameRound }, mTx === 'none' ? undefined : (tc, bodyPath) => {
+      paintFrameShape(ctx, fImg.shape!, fw, fh, mColor, { range: fImg.shapeFrameRange, feather: fImg.shapeFrameFeather, round: fImg.shapeFrameRound }, mTx === 'none' ? undefined : (tc, bodyPath) => {
         tc.save(); tc.clip(bodyPath); tc.translate(fw / 2, fh / 2);
         if (mTx === 'dot' || mTx === 'star' || mTx === 'heart') paintTex(tc, fw, fh, fw, fh, {
           tex: mTx, dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
