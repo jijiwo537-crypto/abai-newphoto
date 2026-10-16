@@ -446,3 +446,6 @@ export const starBurstMaskURL = (spec0: StarBurstSpec, N = 640): string => {
   src.width = src.height = out.width = out.height = 1;
   return url;
 };
+
+/** 這顆星芒有沒有光環（有光環的預設常駐動畫是旋轉，其他是縮放） */
+export const glintHasRing = (id: string) => !!STAR_BURSTS.find(b => b.id === id)?.rings?.length;

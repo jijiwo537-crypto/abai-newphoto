@@ -63,7 +63,7 @@ import { SHAPE_IMAGES, ICON_IMAGES } from '../utils/shapeImages';
 import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
-import { STAR_BURSTS } from '../utils/starBursts';
+import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
 import { isMistFrame, paintMistFrame, MIST_FRAME_KIND, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -9682,9 +9682,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       color: initialColor,
       ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
       ...(frame ? { shapeFrameRange: MIST_RANGE_DEFAULT, shapeFrameFeather: MIST_FEATHER_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT, shapeDotSize: MIST_TEX_SIZE_DEFAULT, shapeDotGap: MIST_TEX_GAP_DEFAULT } : {}),
-      // 星芒：常駐動畫預設是縮放
+      // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
       ...(it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-')
-        ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, idle: 'breathe', ...idleDefaults('breathe', { shape: true, glint: true }) } } : {}),
+        ? (() => { const idle = glintHasRing((it as any).hole) ? 'spin' : 'breathe';
+            return { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, idle, ...idleDefaults(idle, { shape: true, glint: true }) } }; })() : {}),
     };
     setFloatingImages(prev => [...prev, item]);
     setSelectedFloatingId(id);

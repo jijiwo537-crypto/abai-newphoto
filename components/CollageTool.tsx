@@ -12,6 +12,7 @@ import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
+import { glintHasRing } from '../utils/starBursts';
 import { isMistFrame, paintMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
@@ -11685,9 +11686,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     y: frame ? offs2.iy + offs2.ih / 2 - h / 2 : offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
                     ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } } : {}),
-                    // 星芒：常駐動畫預設是縮放
+                    // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
                     ...(it.kind === 'hole' && String(it.hole || '').startsWith('sb-')
-                      ? { mo: { ...MO_DEFAULT, idle: 'breathe', ...idleDefaults('breathe', { shape: true, glint: true }) } } : {}),
+                      ? (() => { const idle = glintHasRing(it.hole) ? 'spin' : 'breathe';
+                          return { mo: { ...MO_DEFAULT, idle, ...idleDefaults(idle, { shape: true, glint: true }) } }; })() : {}),
                     // 邊框：沒有預設動畫（不進場、不常駐）
                     ...(frame ? { mo: { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: MIST_RANGE_DEFAULT, frameFeather: MIST_FEATHER_DEFAULT, frameRound: MIST_ROUND_DEFAULT, dotSize: MIST_TEX_SIZE_DEFAULT, dotGap: MIST_TEX_GAP_DEFAULT } : {}),
                   }]);
