@@ -10550,8 +10550,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const seq = cfg.in === 'pop-seq', POP = Math.min(.5, cfg.dur * .45);
       return { k: 1, dx: 0, dy: 0, rot: 0, a: 1, fx: 1, scatterItem: (rank: number, n: number, idx: number) => {
         const step = seq && n > 1 ? Math.max(0, (cfg.dur - POP) / (n - 1)) : 0;
-        const c = seq ? { ...cfg, in: 'pop', delay: cfg.delay + rank * step, dur: POP } : cfg;
-        return objectMotionFrame(c, time, phase + idx * .7 + (idx * 2.399) % 6.28);
+        const breathe = cfg.idle === 'scatter-breathe';
+        const c = { ...(seq ? { ...cfg, in: 'pop', delay: cfg.delay + rank * step, dur: POP } : cfg), ...(breathe ? { idle: 'none' } : {}) };
+        const fr = objectMotionFrame(c, time, phase + idx * .7 + (idx * 2.399) % 6.28);
+        if (!breathe) return fr;
+        // 呼吸：只改透明度；每顆自己的快慢，從全亮開始
+        const end = c.in === 'none' ? 0 : c.delay + Math.max(.01, c.dur);
+        if (time < end) return fr;
+        const rate = .82 + (((idx * 2654435761) >>> 0) % 3600) / 10000;
+        const pulse = (Math.cos((time - end) * Math.max(.35, cfg.speed) * 1.75 * rate) + 1) / 2;
+        return { ...fr, a: fr.a * (1 - Math.min(1, cfg.amp / 100) * (1 - pulse)) };
       } } as ObjectMotionFrame;
     }
     return objectMotionFrame(timedMotionConfig(item), time, motionPhase(item, index));
@@ -18178,7 +18186,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 .map(([id, name]) => id === 'breathe' ? [id, '縮放'] as const : [id, name] as const);
               // 星芒：沒有繞圈、抖動；多了呼吸、縮放II（芒忽長忽短）
               const isGlintTarget = target?.shape === 'hole' && String(target?.holeType || '').startsWith('sb-');
-              const idleKinds = isGlintTarget ? GLINT_IDLE_KINDS.map(([id, name]) => [id, name] as const) : target?.sym
+              const isScatterTarget = target?.shape === FRAME_SCATTER;
+              /* 散落圖形：波浪換成呼吸（每顆各自的透明度呼吸） */
+              const idleKinds = isScatterTarget ? baseIdle.map(([id, name]) => id === 'grid-wave' ? ['scatter-breathe', '呼吸'] as const : [id, name] as const) : isGlintTarget ? GLINT_IDLE_KINDS.map(([id, name]) => [id, name] as const) : target?.sym
                 ? baseIdle.filter(([id]) => id !== 'grid-wave').flatMap(([id, name]) =>
                     id === 'breathe' ? [[id, '縮放I'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
                 : isTextTarget
@@ -18188,7 +18198,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     ? baseIdle.map(([id, name]) => id === 'spin' ? ['image-breathe', '呼吸'] as const : [id, name] as const)
                     : baseIdle.map(([id, name]) => id === 'spin' && target?.shape === 'grid-orbits' ? ['signal', '信號'] as const : [id, name] as const);
               const pickIntro = (id: string) => {
-                patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) } : { in: id });
+                /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
+                patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) }
+                  : id === 'pop-seq' && isScatterTarget ? { in: id, dur: motionDurationFromUi(50) }
+                  : isScatterTarget && cfg.in === 'pop-seq' ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur } : { in: id });
                 replayMotion();
               };
               const pickIdle = (id: string) => {
@@ -18225,9 +18238,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       <CompactSlider label="速度"
                         value={cfg.in === 'bubble' && target.sym
                           ? Math.round((motionUiFromDuration(cfg.dur) - 50) * 2)
-                          : motionUiFromDuration(cfg.dur)}
+                          : cfg.in === 'pop-seq' && isScatterTarget
+                            // 果凍II：滑桿 0～100 對應舊刻度約 3～70（預設 70 ＝ 舊的 50）
+                            ? Math.round(Math.max(0, Math.min(100, (motionUiFromDuration(cfg.dur) - 10 / 3) * 1.5)))
+                            : motionUiFromDuration(cfg.dur)}
                         min={0} max={100} step={1} onCommit={replayMotion}
-                        onChange={(v:number)=>patchMotion({dur:motionDurationFromUi(cfg.in === 'bubble' && target.sym ? 50 + v / 2 : v)})}/>
+                        onChange={(v:number)=>patchMotion({dur:motionDurationFromUi(cfg.in === 'bubble' && target.sym ? 50 + v / 2 : cfg.in === 'pop-seq' && isScatterTarget ? 10 / 3 + v * 2 / 3 : v)})}/>
                     </div>
                     <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2 mt-4">常駐動畫</p>
                     <div className="grid grid-cols-4 gap-2">{idleKinds.map(([id,name]) => <button key={id} className={cell(cfg.idle===id)} onClick={()=>pickIdle(id)}>{name}</button>)}</div>

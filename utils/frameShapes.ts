@@ -11,7 +11,9 @@ import { MIST_FRAME_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, t
 
 /** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
 export type FrameParams = MistParams & { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
-  kinds?: string[]; itemFrame?: ScatterItemFrame; shapeD?: (kind: string, w: number, h: number) => string };
+  kinds?: string[]; itemFrame?: ScatterItemFrame;
+  /** 完整畫出來的那幾顆可以畫到哪裡（創意拼圖：不能蓋到排版的遮罩上） */
+  freeClip?: (g: CanvasRenderingContext2D) => void; shapeD?: (kind: string, w: number, h: number) => string };
 
 export const FRAME_SPEED = 'frame-speed';
 export const FRAME_FILM = 'frame-film';
@@ -237,7 +239,12 @@ const paintScatter = (g: CanvasRenderingContext2D, w: number, h: number, color: 
     if (moving && cut) free.push([it, f]); else drawOne(it, f);
   });
   g.restore();
-  for (const [it, f] of free) drawOne(it, f);
+  if (free.length) {
+    g.save();
+    o.freeClip?.(g);
+    for (const [it, f] of free) drawOne(it, f);
+    g.restore();
+  }
 };
 
 const rectPath = (p: Path2D, x: number, y: number, w: number, h: number, rad = 0) => {

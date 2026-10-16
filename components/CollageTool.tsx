@@ -721,6 +721,9 @@ export const IN_KINDS: { id: string; name: string }[] = [
 /* 散落圖形邊框：沒有翻轉；果凍分成 I（每顆同時）和 II（從左上順時針一顆一顆） */
 const SCATTER_IN_KINDS = IN_KINDS.filter(k => k.id !== 'flip' && k.id !== 'bounce')
   .flatMap(k => k.id === 'pop' ? [{ id: 'pop', name: '果凍I' }, { id: 'pop-seq', name: '果凍II' }] : [k]);
+/* 果凍II 的速度：滑桿 0～100 對應舊刻度約 3～70（預設 70 ＝ 舊的 50） */
+const seqSpeedToUi = (sp: number) => Math.round(Math.max(0, Math.min(100, (sp - 10 / 3) * 1.5)));
+const seqSpeedFromUi = (ui: number) => 10 / 3 + Math.max(0, Math.min(100, ui)) * 2 / 3;
 const LINE_IN_KINDS = [...IN_KINDS.filter(k => k.id !== 'spring'), { id: 'draw', name: '畫筆' }];
 const GRID_IN_KINDS = IN_KINDS.map(k => k.id === 'spring' ? { id: 'grid-wave', name: '波浪' } : k);
 const SYMBOL_IN_KINDS = IN_KINDS.map(k => k.id === 'fade' ? { id: 'bubble', name: '泡泡' } : k.id === 'spring' ? { id: 'fade', name: '淡入' } : k);
@@ -927,6 +930,8 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'jitter', name: '抖動' },
 ];
 const GRID_IDLE_KINDS = IDLE_KINDS;
+/* 散落圖形的常駐：波浪換成呼吸（每顆各自的透明度呼吸，跟圖案那組同一種） */
+const SCATTER_IDLE_KINDS = IDLE_KINDS.map(k => k.id === 'grid-wave' ? { id: 'scatter-breathe', name: '呼吸' } : k);
 /* 星芒：沒有繞圈、抖動；波浪的位置換成呼吸，縮放旁邊多一個縮放II（芒忽長忽短） */
 const GLINT_IDLE_KINDS_C = GLINT_IDLE_KINDS.map(([id, name]) => ({ id, name }));
 /* 圖案是一群遮罩圖案，不再提供位置波浪；改成每顆各自錯開時間的透明度呼吸。 */
@@ -7351,6 +7356,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (flatBox && (flatBox.w <= 0 || flatBox.h <= 0)) return;
       const layer = (internalWave || flattenShapeAlpha) ? waveLayer(flatBox) : null;
       const paintObject = (ctx: CanvasRenderingContext2D, flattened = false) => {
+      /* 散落圖形邊框動起來時完整畫出來的那幾顆：只能畫在照片那一塊，不能蓋到排版的遮罩上
+         （排版有遮罩才需要；滿版就是整張畫布） */
+      const objBase = ctx.getTransform();
+      const scatterFreeClip = (offs.mw > 0 && offs.mh > 0) || layout === AROUND ? (g: CanvasRenderingContext2D) => {
+        const m = g.getTransform(); g.setTransform(objBase);
+        g.beginPath(); g.rect(offs.ix, offs.iy, offs.iw, offs.ih); g.clip();
+        g.setTransform(m);
+      } : undefined;
       ctx.save();
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
@@ -7544,7 +7557,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else if (isFrameShape(o.kind)) {
           // 邊框・霧白：沒有描邊、發光；紋理只疊在霧上
-          paintFrameShape(ctx, o.kind, bw, bh, col, { ...(o as any).frameOpts, itemFrame: (f as any)?.scatterItem, range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
+          paintFrameShape(ctx, o.kind, bw, bh, col, { ...(o as any).frameOpts, itemFrame: (f as any)?.scatterItem, freeClip: scatterFreeClip, range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
               ...o,
@@ -9230,8 +9243,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const POP = Math.min(0.5, cfg.dur * 0.45);
           return { ...FLAT, fx: 1, burst: 0, scatterItem: (rank: number, n: number, idx: number) => {
             const step = seq && n > 1 ? Math.max(0, (cfg.dur - POP) / (n - 1)) : 0;
-            const c: MoCfg = seq ? { ...cfg, in: 'pop', delay: cfg.delay + rank * step, dur: POP } : cfg;
-            return composeMo(c, t, phase + idx * 0.7 + (idx * 2.399) % 6.28);
+            const breathe = cfg.idle === 'scatter-breathe';
+            const c: MoCfg = { ...(seq ? { ...cfg, in: 'pop', delay: cfg.delay + rank * step, dur: POP } : cfg), ...(breathe ? { idle: 'none' } : {}) };
+            const fr = composeMo(c, t, phase + idx * 0.7 + (idx * 2.399) % 6.28);
+            if (!breathe) return fr;
+            // 呼吸：只改透明度；每顆自己的快慢，從全亮開始（跟圖案的呼吸同一套）
+            const end = c.in === 'none' ? 0 : c.delay + c.dur;
+            if (t < end) return fr;
+            const rate = 0.82 + (((idx * 2654435761) >>> 0) % 3600) / 10000;
+            const pulse = (Math.cos((t - end) * Math.max(0.35, cfg.speed) * 1.75 * rate) + 1) / 2;
+            return { ...fr, a: fr.a * (1 - Math.min(1, cfg.amp / 100) * (1 - pulse)) };
           } } as any;
         }
         const frame = composeMo(timed, t, phase);
@@ -12252,6 +12273,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const pickKind = (d: Partial<MoCfg>) => {
                   if (d.idle && selObj) setCur({ ...d, ...idleDefaults(d.idle, { symbol: !!selObj.sym, text: selObj.type === 'text', image: selObj.type === 'image', shape: selObj.type === 'shape', grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget }) });
                   else if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
+                  /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
+                  else if (d.in === 'pop-seq' && isScatterTarget) setCur({ ...d, dur: durFromSpeed(50) });
+                  else if (d.in && isScatterTarget && cur.in === 'pop-seq') setCur({ ...d, dur: MO_DEFAULT.dur });
+                  else if (d.idle === 'scatter-breathe') setCur({ ...d, amp: 100, speed: patternBreathSpeedFromUi(70) });
                   else if (d.idle === 'symbol-breathe2' && selObj?.type === 'text') setCur({ ...d, amp: 60, speed: 1.2 });
                   else if (d.idle === 'breathe' && selObj?.sym) setCur({ ...d, amp: 30 });
                   /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
@@ -12406,15 +12431,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             onCommit={replayMotion}
                             onChange={(v: number) => setCur({ delay: delayFromUi(v) })} />
                           <CompactSlider label="速度"
-                            value={cur.in === 'bubble' ? Math.round((speedFromDur(cur.dur) - 50) * 2) : speedFromDur(cur.dur)}
+                            value={cur.in === 'bubble' ? Math.round((speedFromDur(cur.dur) - 50) * 2) : cur.in === 'pop-seq' && isScatterTarget ? seqSpeedToUi(speedFromDur(cur.dur)) : speedFromDur(cur.dur)}
                             min={0} max={100} step={1}
                             onCommit={replayMotion}
-                            onChange={(v: number) => setCur({ dur: durFromSpeed(cur.in === 'bubble' ? 50 + v / 2 : v) })} />
+                            onChange={(v: number) => setCur({ dur: durFromSpeed(cur.in === 'bubble' ? 50 + v / 2 : cur.in === 'pop-seq' && isScatterTarget ? seqSpeedFromUi(v) : v) })} />
                         </div>
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {(moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : isGlintTarget ? GLINT_IDLE_KINDS_C : IDLE_KINDS).map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
+                          {(isScatterTarget ? SCATTER_IDLE_KINDS : moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : isGlintTarget ? GLINT_IDLE_KINDS_C : IDLE_KINDS).map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>
@@ -12423,15 +12448,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         {cur.idle !== 'none' && (
                           <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                             <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-amp`} label="幅度"
-                              value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
+                              value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
                                 ? patternBreathAmpToUi(cur.amp) : cur.amp}
                               min={0} max={100} step={1}
                               onChange={(v: number) => setCur({
-                                amp: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
+                                amp: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
                                   ? patternBreathAmpFromUi(v) : v,
                               })} />
                             <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-speed`} label="速度"
-                              value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
+                              value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
                                 ? patternBreathSpeedToUi(cur.speed)
                                 : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 ? symbolBreathe2SpeedToUi(cur.speed)
@@ -12445,7 +12470,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               min={0} max={100}
                               step={1}
                               onChange={(v: number) => setCur({
-                                speed: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
+                                speed: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
                                   ? patternBreathSpeedFromUi(v)
                                   : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                   ? symbolBreathe2SpeedFromUi(v)
