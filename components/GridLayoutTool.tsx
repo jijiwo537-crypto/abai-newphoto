@@ -64,7 +64,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS } from '../utils/starBursts';
-import { isMistFrame, paintMistFrame, MIST_FRAME_KIND } from '../utils/mistFrame';
+import { isMistFrame, paintMistFrame, MIST_FRAME_KIND, MIST_RANGE_DEFAULT } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
@@ -1430,7 +1430,7 @@ export const shapeGlowFromUi = (v: number, outline: boolean) => outline ? Math.m
 export const shapeTexOptions = (kind?: string, filled?: boolean) =>
   isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe') : TEX_OPTIONS;
 /** 不給調紋理的圖形（圖形選單上的 id，例如 'star-f'、'hole-love'）。排序工具的「紋理」頁可以挑，複製給 Claude 改這裡 */
-export const NO_TEXTURE_SHAPE_IDS: string[] = [];
+export const NO_TEXTURE_SHAPE_IDS: string[] = ['spinner-f', 'hole-seagrass', 'burst-dash-f', 'hole-burst', 'hole-snow'];
 const texKey = (kind?: string, filled?: boolean, hole?: string) =>
   `${kind || ''}|${filled === false ? 0 : 1}|${kind === 'hole' ? hole || '' : ''}`;
 let noTexKeys: Set<string> | null = null;
@@ -1444,7 +1444,7 @@ export const shapeTexDisabled = (kind?: string, filled?: boolean, hole?: string)
 /** 面板上會不會出現「紋理」那一格（不算 NO_TEXTURE_SHAPE_IDS）—— 跟兩個工具的圖形面板同一組條件 */
 export const shapeTexAvailable = (kind?: string, filled?: boolean, hole?: string) =>
   !SPECIAL_LINE_KINDS.has(kind || '') && !GRID_SHAPE_KINDS.has(kind || '') && !isBlurShape(kind)
-  && !(kind === 'hole' && String(hole || '').startsWith('sb-')) && !isBackdropMask(kind || '') && !isMistFrame(kind)
+  && !(kind === 'hole' && String(hole || '').startsWith('sb-')) && !isBackdropMask(kind || '')
   && shapeTexOptions(kind, filled === false ? false : !!filled).length > 0;
 /** 選中框（四角實心小方塊）不給虛線 */
 export const shapeHasNoDash = (kind?: string) => kind === 'track-select' || kind === 'track-select8';
@@ -2827,6 +2827,10 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>}
+          {/* 霧白邊框：霧從框邊往內延伸多少 */}
+          {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full">
+            {slider('範圍', Math.round(layer.shapeFrameRange ?? MIST_RANGE_DEFAULT), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
+          </div>}
           {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
               一般圖形那種陰影式的發光不給星芒用 */}
           {isGlint && <div className="px-2 order-1 w-full">
@@ -2855,7 +2859,7 @@ export const ShapeEditorPanel: React.FC<{
           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
               （跟「背景紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。
               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-          {!isLine && !noDecor && !isGridShape && !isBlurShape(layer.shape) && texChoices.length > 0 && !shapeTexDisabled(layer.shape, !!layer.shapeFilled, layer.holeType) && (() => {
+          {!isLine && !isGlint && !isGridShape && !isBlurShape(layer.shape) && texChoices.length > 0 && !shapeTexDisabled(layer.shape, !!layer.shapeFilled, layer.holeType) && (() => {
             const tex0 = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
             const tex = texChoices.some(([id]) => id === tex0) ? tex0 : 'none';
             return (
@@ -4835,6 +4839,8 @@ interface FloatingImage {
   shapeStrokeW?: number;
   /** 星芒的「中心發光」（0～80，排序工具的「柔光範圍」）；沒給就用星芒原本的 */
   shapeGlintGlow?: number;
+  /** 霧白邊框的「範圍」（0～100） */
+  shapeFrameRange?: number;
   /** 外描邊的顏色，預設黑 */
   shapeStrokeColor?: string;
   /* 圖形上的「點點」。跟創意拼圖那邊同一組參數、同一套網格，
@@ -5687,9 +5693,21 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
     return;
   }
       if (image.shape && isMistFrame(image.shape)) {
-        // 邊框・霧白：一張平滑的遮罩，沒有描邊、紋理、發光
+        // 邊框・霧白：沒有描邊、發光；紋理只疊在霧上
         ctx.translate(-drawW / 2, -drawH / 2);
-        paintMistFrame(ctx, drawW, drawH, image.color || SHAPE_DEFAULT_COLOR);
+        const color = image.color || SHAPE_DEFAULT_COLOR;
+        const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
+        paintMistFrame(ctx, drawW, drawH, color, image.shapeFrameRange, tx === 'none' ? undefined : (tc, bodyPath) => {
+          tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
+          if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
+            tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
+            textureBaseW: (image.shapeTextureBaseW || image.width) * contentScale,
+            textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
+          });
+          else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
+            image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
+          tc.restore();
+        });
         ctx.restore();
         return;
       }
@@ -9653,6 +9671,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       shapeGlowColor: initialColor,
       color: initialColor,
       ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
+      ...(frame ? { shapeFrameRange: MIST_RANGE_DEFAULT } : {}),
     };
     setFloatingImages(prev => [...prev, item]);
     setSelectedFloatingId(id);
@@ -14594,8 +14613,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return;
     }
     if (isMistFrame(fImg.shape)) {
-      // 邊框・霧白：跟預覽同一張遮罩
-      paintMistFrame(ctx, fw, fh, fImg.color || SHAPE_DEFAULT_COLOR);
+      // 邊框・霧白：跟預覽同一套畫法（紋理只疊在霧上）
+      const mColor = fImg.color || SHAPE_DEFAULT_COLOR;
+      const mTx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
+      paintMistFrame(ctx, fw, fh, mColor, fImg.shapeFrameRange, mTx === 'none' ? undefined : (tc, bodyPath) => {
+        tc.save(); tc.clip(bodyPath); tc.translate(fw / 2, fh / 2);
+        if (mTx === 'dot' || mTx === 'star' || mTx === 'heart') paintTex(tc, fw, fh, fw, fh, {
+          tex: mTx, dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
+          textureBaseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
+          textureBaseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
+        });
+        else paintStripes(tc, fw, fh, fw, fh, fImg.shapeStripeN ?? STRIPE_N_DEFAULT,
+          fImg.shapeStripeDir === 'h' ? 'h' : 'v', fImg.shapeStripeA || mColor, fImg.shapeStripeB || '#FFFFFF');
+        tc.restore();
+      });
       ctx.restore();
       return;
     }
@@ -17991,6 +18022,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   key={id} 
                   onClick={() => {
                     if (id !== activeTab) stopPreviewForModeChange();
+                    // 進出動畫頁：在切頁的同一下就放掉選中，動畫頁第一格才不會帶著選中框
+                    if ((id === 'motion') !== (activeTab === 'motion')) {
+                      setSelectedFloatingId(null); setSelectedBrushId(null); setSelectedIndex(null); setSelectedLayoutId(null);
+                    }
                     setActiveTab(id as any);
                     /* 已經點進「新增符號／新增圖形」的時候再點一次加號，
                        就回到新增的主頁 —— 不必特地去按左上角的返回鍵。 */

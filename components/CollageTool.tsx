@@ -12,7 +12,7 @@ import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
-import { isMistFrame, paintMistFrame } from '../utils/mistFrame';
+import { isMistFrame, paintMistFrame, MIST_RANGE_DEFAULT } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
 import { hasActiveFx, type FxScene, type FxPlacement } from '../utils/glEffects';
@@ -7498,8 +7498,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.setLineDash([]);
           ctx.restore();
         } else if (isMistFrame(o.kind)) {
-          // 邊框・霧白：一張平滑的遮罩，沒有描邊、紋理、發光
-          paintMistFrame(ctx, bw, bh, col);
+          // 邊框・霧白：沒有描邊、發光；紋理只疊在霧上
+          paintMistFrame(ctx, bw, bh, col, (o as any).frameRange, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
+            tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
+            paintTex(tc, bw, bh, bw, bh, {
+              ...o,
+              textureBaseW: ((o as any).textureBaseW || o.w) * s,
+              textureBaseH: ((o as any).textureBaseH || o.h) * s,
+            });
+            tc.restore();
+          });
           ctx.restore();
         } else {
         const shapeP = shapePathBox(
@@ -11186,6 +11194,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 onClick={() => {
                   if(photoLayoutOpen&&id!==activeTab){footerSnapRef.current=true;requestAnimationFrame(()=>requestAnimationFrame(()=>{footerSnapRef.current=false;}));}
                   if(photoLayoutOpen)changePhotoLayoutOpen(false);
+                  /* 進出動畫頁：在切頁的同一下就把選中放掉。動畫頁第一格是在切頁當下畫的
+                     （之後有 0.4 秒的過場不重畫），等到 effect 才放掉的話那一格會帶著選中框。 */
+                  if ((id === 'motion') !== (activeTab === 'motion')) {
+                    selectedObjRef.current = null; baseSelectedRef.current = false; maskSelectedRef.current = false;
+                    selectedRegionPhotoRef.current = null;
+                    setSelectedObj(null); setSelectedTarget(null); setBaseSelected(false); setMaskSelected(false);
+                    setSelectedRegionPhoto(null);
+                  }
                   setActiveTab(id);
                   /* 已經點進「新增符號／新增圖形」的時候再點一次加號，
                      就回到新增的主頁 —— 不必特地去按左上角的返回鍵。 */
@@ -11603,10 +11619,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const offs2 = getLayoutOffsets();
                   if (!offs2) return;
                   const short = Math.min(offs2.cw, offs2.ch);
-                  // 邊框：一放進來就是整張畫面的框
+                  // 邊框：一放進來就跟底圖一樣大（滿版排版時底圖就是整張畫布）
                   const frame = isMistFrame(it.kind);
-                  const w = frame ? Math.round(offs2.cw) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
-                  const h = frame ? Math.round(offs2.ch) : it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
+                  const w = frame ? Math.round(offs2.iw) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+                  const h = frame ? Math.round(offs2.ih) : it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
                   const id = Math.random().toString(36).slice(2, 9);
                   const initialColor = creativeShapeColorFor(it.kind);
                   setObjects(prev => [...prev, {
@@ -11621,9 +11637,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     color: initialColor,
                     glow: 0, glowColor: initialColor,
                     ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: CREATIVE_DUAL_INNER } : {}),
-                    x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2,
+                    x: frame ? offs2.ix + offs2.iw / 2 - w / 2 : offs2.cw / 2 - w / 2,
+                    y: frame ? offs2.iy + offs2.ih / 2 - h / 2 : offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
                     ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } } : {}),
+                    // 邊框：沒有預設動畫（不進場、不常駐）
+                    ...(frame ? { mo: { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: MIST_RANGE_DEFAULT } : {}),
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
@@ -11847,6 +11866,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>}
+                          {/* 霧白邊框：霧從框邊往內延伸多少 */}
+                          {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full">
+                            {shapeSlider('範圍', Math.round((sel as any).frameRange ?? MIST_RANGE_DEFAULT), 0, 100,
+                              (v: number) => patch({ frameRange: v } as any))}
+                          </div>}
                           {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
                               一般圖形那種陰影式的發光不給星芒用 */}
                           {isGlint && <div className="px-2 order-1 w-full">
@@ -11871,7 +11895,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
                               （跟經典拼圖的「背景紋理」同一種排法）。顏色常駐。
                               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-                          {!isLine && !noDecor && !GRID_SHAPE_KINDS.has(sel.kind) && !isBlurShape(sel.kind) && texChoices.length > 0 && !shapeTexDisabled(sel.kind, sel.filled === false ? false : !!sel.filled, sel.hole) && (() => {
+                          {!isLine && !isGlint && !GRID_SHAPE_KINDS.has(sel.kind) && !isBlurShape(sel.kind) && texChoices.length > 0 && !shapeTexDisabled(sel.kind, sel.filled === false ? false : !!sel.filled, sel.hole) && (() => {
                             const tex0 = texOf(sel);
                             const tex = texChoices.some(([id]) => id === tex0) ? tex0 : 'none';
                             return (
