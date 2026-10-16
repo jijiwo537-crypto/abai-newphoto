@@ -12,8 +12,7 @@ import { MIST_FRAME_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, t
 /** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
 export type FrameParams = MistParams & { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
   kinds?: string[]; itemFrame?: ScatterItemFrame;
-  /** 完整畫出來的那幾顆可以畫到哪裡（創意拼圖：不能蓋到排版的遮罩上） */
-  freeClip?: (g: CanvasRenderingContext2D) => void; shapeD?: (kind: string, w: number, h: number) => string };
+  /** 完整畫出來的那幾顆可以畫到哪裡（創意拼圖：不能蓋到排版的遮罩上） */ shapeD?: (kind: string, w: number, h: number) => string };
 
 export const FRAME_SPEED = 'frame-speed';
 export const FRAME_FILM = 'frame-film';
@@ -164,7 +163,12 @@ const scatterItems = (w: number, h: number, o: FrameParams) => {
     const rot = base + (tilt ? (p.uRot * 2 - 1) * 45 * av : 0);
     // 大小變化：大部分放大（最多 1+1.2×變化 倍），少部分稍微縮小（最少 1-0.3×變化 倍）
     const d = S * (1 + sv * (p.uSize * 1.5 - .3));
-    return { x: p.x, y: p.y, d, rot, id: kinds[p.ki] };
+    /* 每一顆都完整留在選中框裡：靠邊的往內推到剛好整顆看得到（靜止、動畫都一樣，
+       所以不會有被切一半的圖形，動起來也不會露出切口） */
+    const r = d * .55;
+    const x = w > 2 * r ? Math.max(r, Math.min(w - r, p.x)) : w / 2;
+    const y = h > 2 * r ? Math.max(r, Math.min(h - r, p.y)) : h / 2;
+    return { x, y, d, rot, id: kinds[p.ki] };
   });
 };
 /** 畫圖形的小圖（GridLayoutTool 註冊：用跟一般新增圖形一模一樣的畫法） */
@@ -226,25 +230,11 @@ const paintScatter = (g: CanvasRenderingContext2D, w: number, h: number, color: 
     } else { g.fillStyle = color; g.beginPath(); g.arc(0, 0, it.d / 2, 0, Math.PI * 2); g.fill(); }
     g.restore();
   };
-  /* 被框邊切到的那幾顆：靜止時照樣裁掉；但一動起來（縮放、位移、旋轉）切口會跟著露餡，
-     所以這一格它有在動的話就不裁、整顆完整畫出來 */
-  const free: [typeof items[number], ReturnType<ScatterItemFrame>][] = [];
+  // 全部都畫在選中框裡（果凍彈過頭那一點點也不會超出框）
   g.save();
   g.beginPath(); g.rect(0, 0, w, h); g.clip();
-  items.forEach((it, i) => {
-    const f = o.itemFrame && ranks ? o.itemFrame(ranks[i], items.length, i) : null;
-    const moving = !!f && (Math.abs(f.k - 1) > 1e-3 || Math.abs(f.dx) > 1e-4 || Math.abs(f.dy) > 1e-4 || Math.abs(f.rot) > .05 || Math.abs((f.fx ?? 1) - 1) > 1e-3);
-    const r = it.d * .75;
-    const cut = it.x - r < 0 || it.y - r < 0 || it.x + r > w || it.y + r > h;
-    if (moving && cut) free.push([it, f]); else drawOne(it, f);
-  });
+  items.forEach((it, i) => drawOne(it, o.itemFrame && ranks ? o.itemFrame(ranks[i], items.length, i) : null));
   g.restore();
-  if (free.length) {
-    g.save();
-    o.freeClip?.(g);
-    for (const [it, f] of free) drawOne(it, f);
-    g.restore();
-  }
 };
 
 const rectPath = (p: Path2D, x: number, y: number, w: number, h: number, rad = 0) => {

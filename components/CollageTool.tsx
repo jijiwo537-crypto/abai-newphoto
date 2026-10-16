@@ -7356,14 +7356,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (flatBox && (flatBox.w <= 0 || flatBox.h <= 0)) return;
       const layer = (internalWave || flattenShapeAlpha) ? waveLayer(flatBox) : null;
       const paintObject = (ctx: CanvasRenderingContext2D, flattened = false) => {
-      /* 散落圖形邊框動起來時完整畫出來的那幾顆：只能畫在照片那一塊，不能蓋到排版的遮罩上
-         （排版有遮罩才需要；滿版就是整張畫布） */
-      const objBase = ctx.getTransform();
-      const scatterFreeClip = (offs.mw > 0 && offs.mh > 0) || layout === AROUND ? (g: CanvasRenderingContext2D) => {
-        const m = g.getTransform(); g.setTransform(objBase);
-        g.beginPath(); g.rect(offs.ix, offs.iy, offs.iw, offs.ih); g.clip();
-        g.setTransform(m);
-      } : undefined;
       ctx.save();
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
@@ -7557,7 +7549,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else if (isFrameShape(o.kind)) {
           // 邊框・霧白：沒有描邊、發光；紋理只疊在霧上
-          paintFrameShape(ctx, o.kind, bw, bh, col, { ...(o as any).frameOpts, itemFrame: (f as any)?.scatterItem, freeClip: scatterFreeClip, range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
+          paintFrameShape(ctx, o.kind, bw, bh, col, { ...(o as any).frameOpts, itemFrame: (f as any)?.scatterItem, range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
               ...o,
