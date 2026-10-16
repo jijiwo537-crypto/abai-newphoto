@@ -9307,8 +9307,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const renderToCanvasRef = useRef(renderToCanvas);
   // 模糊圖形在背景糊好正確的那張之後，重畫一次（擠壓時先用最接近的那張頂著）
   useEffect(() => {
-    setBlurRebuildListener(() => { if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current); });
-    return () => setBlurRebuildListener(null);
+    return setBlurRebuildListener(() => { if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current); });
   }, []);
   regionPaintRef.current=()=>{
     if(canvasRef.current){lastPatternPaintRef.current=null;renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);}

@@ -77,31 +77,31 @@ const nearestBlur = (fam: string, aspect: number) => {
     if (d < bd) { bd = d; best = key; }
   });
   // 差太多（拖很快一下跨了好幾格）就不拿來頂，直接當場糊正確的那張，免得畫面上留著拉歪的模糊
-  return best && bd < .25 ? blurredCache.get(best) ?? null : null;
+  return best ? blurredCache.get(best) ?? null : null;
 };
 let scratch: CanvasRenderingContext2D | null = null;
 let forceBlurBuild = false;
 const scratchCtx = () => scratch ??= document.createElement('canvas').getContext('2d')!;
 const blurQueue = new Map<string, () => void>();
-let blurQueueBusy = false;
-let blurListener: (() => void) | null = null;
-/** 背景糊好一張新的之後要不要重畫畫面（工具註冊） */
-export const setBlurRebuildListener = (f: (() => void) | null) => { blurListener = f; };
+const blurListeners = new Set<() => void>();
+/** 背景糊好一張新的之後要重畫畫面（兩個工具各自註冊；回傳取消註冊） */
+export const setBlurRebuildListener = (f: (() => void) | null) => { if (f) blurListeners.add(f); return () => { if (f) blurListeners.delete(f); }; };
+let blurTimer: ReturnType<typeof setTimeout> | null = null;
+/* 擠壓中完全不重糊：每一格都只是把手上已經糊好的那張照新的長寬拉伸貼上。
+   手停下來 0.2 秒（不再有新的長寬比進來）才糊一次正確的那張，糊好通知畫面重畫。 */
 const queueBlurBuild = (key: string, build: () => void) => {
-  if (blurQueue.has(key) || blurredCache.has(key)) return;
-  // 只留最新的那一個：拖的時候中間經過的長寬比不用全部糊
+  if (blurredCache.has(key)) return;
   blurQueue.clear();
   blurQueue.set(key, build);
-  if (blurQueueBusy) return;
-  blurQueueBusy = true;
-  const run = () => {
+  if (blurTimer) clearTimeout(blurTimer);
+  blurTimer = setTimeout(() => {
+    blurTimer = null;
     const next = blurQueue.entries().next().value as [string, () => void] | undefined;
-    if (!next) { blurQueueBusy = false; blurListener?.(); return; }
-    blurQueue.delete(next[0]);
+    blurQueue.clear();
+    if (!next) return;
     try { next[1](); } catch { /* 下次再糊 */ }
-    setTimeout(run, 16);
-  };
-  setTimeout(run, 16);
+    blurListeners.forEach(f => { try { f(); } catch { /* 忽略 */ } });
+  }, 200);
 };
 /* 拖滑桿不會一格一格跳：盒狀模糊的半徑只能是整數像素，以前光柵大小固定、半徑跟著滑桿變，
    半徑一取整數，糊的程度就一階一階地跳。現在反過來 —— 盒狀半徑固定（BOX_R 像素），

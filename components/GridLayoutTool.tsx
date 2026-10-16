@@ -12,7 +12,7 @@ import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, Slid
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
 import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints, radialD, radialParts, radialPartD, spinnerAlpha } from '../utils/heartShapes';
-import { blurAlpha, isBlurShape, blurShapeBaseD, drawBlurredShape, blurShapeDefault, blurLookValue } from '../utils/blurShapes';
+import { blurAlpha, setBlurRebuildListener, isBlurShape, blurShapeBaseD, drawBlurredShape, blurShapeDefault, blurLookValue } from '../utils/blurShapes';
 import {SHAPE_ORDER,SHAPE_SECTIONS,orderBy,type ShapeSection} from '../utils/pickerOrder';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask} from '../utils/backdropMasks';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
@@ -804,6 +804,12 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
     return { x: (Math.min(...xs) + 1) / 2 * o.w, y: (Math.min(...ys) + 1) / 2 * o.h, w: (Math.max(...xs) - Math.min(...xs)) / 2 * o.w, h: (Math.max(...ys) - Math.min(...ys)) / 2 * o.h };
   }
   // 邊框類一定是整個框（不用逐像素量；擠壓時每一格都會量到，量一次就要好幾毫秒）
+  /* 模糊類：逐像素量要先把整顆糊一次再讀回像素，壓扁時每一個新的長寬比都要重量一次 —— 擠壓卡頓的主因。
+     改成只在正方形量一次（快取），再照現在的長寬換算回來；擠壓時完全不用再量。 */
+  if (isBlurShape(o.kind) && Math.abs(o.w - o.h) > 1e-6) {
+    const u = measureShapeInk({ ...o, w: 100, h: 100, textureBaseW: 100, textureBaseH: 100, lineBase: 100 });
+    return u && { x: u.x / 100 * o.w, y: u.y / 100 * o.h, w: u.w / 100 * o.w, h: u.h / 100 * o.h };
+  }
   if (isFrameShape(o.kind)) return { x: 0, y: 0, w: o.w, h: o.h };
   // 星芒的芒尖、柔光是淡淡散開的，量墨水會把框撐得比看到的大；選取框就用它自己的框
   if (o.kind === 'hole' && String(o.hole || '').startsWith('sb-')) return { x: 0, y: 0, w: o.w, h: o.h };
@@ -8543,6 +8549,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [motionRunSeq, setMotionRunSeq] = useState(0);
   const motionClockRef = useRef(0);
   const vectorScene = useMemo(() => new ClassicVectorScene(), []);
+  // 模糊圖形在手停下來之後才糊正確的那張；糊好重畫一次（擠壓中只是拉伸貼圖）
+  useEffect(() => setBlurRebuildListener(() => vectorScene.flush()), [vectorScene]);
   const [motionTargetId, setMotionTargetId] = useState<string | null>(null);
   const [motionFlash, setMotionFlash] = useState<{ id: string; nonce: number } | null>(null);
   const motionFlashTimerRef = useRef<number | null>(null);
