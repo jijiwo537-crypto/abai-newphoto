@@ -1113,12 +1113,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [srcList, setSrcList] = useState<string[]>(incoming);
   /** 給 addToHistory／撤銷用的最新來源清單（callback 裡讀 state 會是舊的） */
   const srcListRef = useRef<string[]>(incoming);
+  const safeIdxRef = useRef(0);
   srcListRef.current = srcList;
   useEffect(() => { setSrcList(incoming); }, [batchSrcs, imageSrc]);
   const [batchIdx, setBatchIdx] = useState(0);
   /** 再點一次已經選中的那張才會跳出的小選單 */
   const [batchMenu, setBatchMenu] = useState<number | null>(null);
   const safeIdx = Math.min(batchIdx, Math.max(0, srcList.length - 1));
+  safeIdxRef.current = safeIdx;
   const activeSrc = srcList[safeIdx] || imageSrc;
   /** 哪幾張還跟著一起連動（預設全部連動） */
   const [linked, setLinked] = useState<boolean[]>(() => srcList.map(() => true));
@@ -5438,7 +5440,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const ready = takeDecoded(activeSrc);
       const install = (im: HTMLImageElement) => {
         originalImgRef.current = im;
-        setImageDimensions(`${im.naturalWidth}×${im.naturalHeight}`);
+        // 合併後的預覽圖是預覽尺寸，顯示的尺寸維持照片原本的（存檔會烤回原尺寸）
+        if (!fullJobsRef.current[activeSrc]) setImageDimensions(`${im.naturalWidth}×${im.naturalHeight}`);
         const g = geoRef.current;
         const sw = im.naturalWidth, sh = im.naturalHeight;
         // 撤銷回到「有裁切」的那一步時，緩衝區要照那個幾何重算，不然裁切會不見
@@ -6198,6 +6201,35 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     im.src = src;
   });
 
+  /* ── 合併：畫面先換、原尺寸晚點才烤 ───────────────────────────────────
+     合併按下去時只做「預覽尺寸」的那一張（直接拿畫面上現成的結果，幾乎不用算），
+     原尺寸那張（12MP 要算將近一秒、再編碼解碼）記成一筆待辦，等真的要用
+     （存檔、輸出、IG 預覽）時才依序烤出來。這樣合併後不管點什麼都跟沒合併一樣快。
+     key 是合併後那張預覽圖的網址；input 是合併前那張（可能也是待辦，會一路往前接）。 */
+  const fullJobsRef = useRef<Record<string, { input: string; snap: BatchSnap; run?: Promise<string> }>>({});
+  const resolveFullSrc = (u: string): Promise<string> => {
+    const job = fullJobsRef.current[u];
+    if (!job) return Promise.resolve(u);
+    if (!job.run) job.run = (async () => {
+      const input = await resolveFullSrc(job.input);
+      const img = input === srcListRef.current[safeIdxRef.current] && originalImgRef.current?.src === input
+        ? originalImgRef.current : await loadImg(input);
+      if (Number(job.snap.params.fxLowfi) > 0) await warmLowfiLut();
+      const cvs = renderOneCanvas(img, job.snap);
+      const url = await canvasToUrl(cvs);
+      cvs.width = cvs.height = 0;
+      if (!url) return input;
+      mergedUrlsRef.current.push(url);
+      return url;
+    })().catch(() => job.input);
+    return job.run;
+  };
+  /** 存檔／輸出用：這張照片原尺寸的樣子（有待辦就先烤完） */
+  const loadFullImg = async (u: string, fallback: HTMLImageElement | null) => {
+    if (!fullJobsRef.current[u]) return fallback || await loadImg(u);
+    return await loadImg(await resolveFullSrc(u));
+  };
+
   /** 離開編輯器時，如果調整過但沒導出，也記一筆到歷史紀錄。
       縮圖直接用畫面上的預覽（已經是顯示解析度，很小很安全）。 */
   const recordProgress = useCallback(async () => {
@@ -6348,16 +6380,33 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
               : (i === safeIdx ? base.geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
           };
-          const img = i === safeIdx && originalImgRef.current
-            ? originalImgRef.current
-            : await loadImg(srcList[i]);
-          const cvs = renderOneCanvas(img, snap);
+          /* 預覽尺寸那張：畫面上這一張直接複製現成的結果（GPU 已經畫好了，不用再算）；
+             其他張（或畫面不是最新的時候）就把來源縮到預覽尺寸再算，成本約原尺寸的五分之一。 */
+          let cvs: HTMLCanvasElement | null = null;
+          const shown = i === safeIdx ? visibleEditorCanvas() : null;
+          if (shown && shown.width > 0 && !isDirtyRef.current && !showOriginalRef.current && isGeoIdentity(snap.geo) && !(snap.params.maskCreated && snap.params.maskShowOverlay)) {
+            cvs = document.createElement('canvas'); cvs.width = shown.width; cvs.height = shown.height;
+            cvs.getContext('2d')!.drawImage(shown, 0, 0);
+          }
+          if (!cvs) {
+            const src0 = i === safeIdx && originalImgRef.current ? originalImgRef.current : await loadImg(srcList[i]);
+            const ow = src0.naturalWidth || src0.width, oh = src0.naturalHeight || src0.height;
+            const k = Math.min(1, 1800 / Math.max(ow, oh));
+            const small = document.createElement('canvas');
+            small.width = Math.max(1, Math.round(ow * k)); small.height = Math.max(1, Math.round(oh * k));
+            small.getContext('2d')!.drawImage(src0, 0, 0, small.width, small.height);
+            cvs = renderOneCanvas(small as unknown as HTMLImageElement, snap);
+            small.width = small.height = 0;
+          }
           /* 走 canvasToUrl 不直接叫 toBlob：iOS 的 toBlob 在畫布很大又碰上
              記憶體吃緊時有機會永遠不回來（見 utils/blobUrl 的看門狗），
              那會讓整批烤圖停在「正在存檔」，而那一層蓋著返回鍵。 */
           const url = await canvasToUrl(cvs);
+          cvs.width = cvs.height = 0;
           if (!url) continue;               // 這一張烤不出來就維持原樣，不要留半成品
           made.push(url);
+          // 原尺寸那張記成待辦，要用時才烤（resolveFullSrc）
+          fullJobsRef.current[url] = { input: srcList[i], snap: cloneSnap(snap) };
           // 縮圖要一直是最初那張的樣子，所以把血緣接上去（可能已經合併過好幾次）
           thumbOriginRef.current[url] = thumbSrcOf(srcList[i]);
           const was = mergeDepthOf(srcList[i]);
@@ -6445,7 +6494,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           ? JSON.parse(JSON.stringify(ownGeoRef.current[safeIdx]))
           : cloneSnap(live).geo,
       };
-      const url = await renderOne(originalImgRef.current, snap);
+      const url = await renderOne(await loadFullImg(srcListRef.current[safeIdx], originalImgRef.current), snap);
       revokeUrls(igShot && igShot !== url ? [igShot] : []);
       setIgShot(url);
       setIgOpen(true);
@@ -6480,9 +6529,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
                   : (i === safeIdx ? cloneSnap(base).geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
               };
-              const img = i === safeIdx && originalImgRef.current
-                ? originalImgRef.current
-                : await loadImg(srcList[i]);
+              const img = await loadFullImg(srcList[i], i === safeIdx ? originalImgRef.current : null);
               // Only lowfi exports depend on this LUT; other formats/effects
               // must not be blocked by a lookup-image network failure.
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
