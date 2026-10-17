@@ -776,13 +776,18 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
     // WebKit can evict an older context while another effect is being used.
     // Returning that dead cache silently skips the effect on subsequent frames.
     // Recover with fresh storage; do not wait for an optional restored event.
-    disposeFxScene(previous.gl);previous.canvas.remove();previous.canvas.width=previous.canvas.height=1;
-    if(surface)surfaces.delete(surface);else{ctxCache=null;ctxFailed=false;}
+    disposeFxScene(previous.gl);
+    /* 畫面上的那張 surface 被收走 context 時，不能偷偷換成一張不在畫面上的新畫布：
+       之後每一格都畫進那張看不到的畫布、還回報成功，畫面就卡在舊的那一格
+       （按鈕顯示選中但沒套用）。回 null，讓呼叫端走 2D 的備用路徑。 */
+    if(surface){surfaces.delete(surface);return null;}
+    previous.canvas.remove();previous.canvas.width=previous.canvas.height=1;
+    ctxCache=null;ctxFailed=false;
   }
   if (!surface && ctxFailed) return null;
   if (!surface && ctxCache) return ctxCache;
   try {
-    const canvas = !lost&&surface ? surface : document.createElement('canvas');
+    const canvas = surface ? surface : document.createElement('canvas');
     if(!watchedSurfaces.has(canvas)){
       watchedSurfaces.add(canvas);
       canvas.addEventListener('webglcontextlost',e=>e.preventDefault());

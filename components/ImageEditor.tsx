@@ -929,6 +929,8 @@ const formatExifDate = (rawDateStr: string): string => {
  */
 const LUT_CACHE: Record<string, { data: Uint8ClampedArray; size: number }> = {};
 const LUT_LOADING: Record<string, Promise<void>> = {};
+/** 真的還在下載／解碼中的濾鏡（失敗或完成就拿掉）：重畫只在這段期間等它 */
+const LUT_IN_FLIGHT = new Set<string>();
 
 /* ---- 按鈕縮圖 -------------------------------------------------------------
    縮圖不走 data URL，直接把畫布畫到畫布上：
@@ -2142,7 +2144,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     while (viewedImgRef.current.size > VIEWED_IMG_MAX) {
       const oldest = viewedImgRef.current.keys().next().value as string;
       if (oldest === src) break;
+      const old = viewedImgRef.current.get(oldest);
       viewedImgRef.current.delete(oldest);
+      // 讓瀏覽器真的丟掉那張解碼好的大圖（合併越多張，留著的全尺寸圖越多）
+      if (old && old !== originalImgRef.current) old.src = '';
     }
   };
   /** 預熱出來的像素圖跟現在的參數還對得上嗎？對得上才敢用 */
@@ -3102,6 +3107,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const ensureLutData = useCallback(async (lut: { id: string; url: string }) => {
     if (!lut.url || lutDataRef.current[lut.id]) return;
     if (!loadingPromisesRef.current[lut.id]) {
+      LUT_IN_FLIGHT.add(lut.id);
       loadingPromisesRef.current[lut.id] = (async () => {
         // 先問本機：以前解過的表直接讀回來，不用下載也不用重新解碼重排
         const cacheUrl=needsLutAtlasRepair(lut.url)?lut.url+'#'+LUT_ATLAS_REPAIR_REVISION:lut.url;
@@ -3135,14 +3141,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               }
             }
             lutDataRef.current[lut.id] = { data: lutData, size };
+            LUT_IN_FLIGHT.delete(lut.id);
             setLutReadyTick(t => t + 1);
             saveCachedLut(lut.id, cacheUrl, lutData, size);
             resolve();
           };
-          img.onerror = () => resolve();
+          // 載入失敗：不要留下「已完成」的承諾，下次點才會重試；也不再擋住重畫
+          img.onerror = () => { LUT_IN_FLIGHT.delete(lut.id); delete loadingPromisesRef.current[lut.id]; isDirtyRef.current = true; resolve(); };
           img.src = lut.url;
         });
-      })();
+      })().finally(() => LUT_IN_FLIGHT.delete(lut.id));
     }
     await loadingPromisesRef.current[lut.id];
   }, []);
@@ -3689,7 +3697,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   const handleEffectToolSelect = (toolId: string) => {
-    if (mergingRef.current) { pendingTapRef.current = () => tapHandlersRef.current.fx(toolId); setActiveFxId(toolId); setActiveToolId(effectAmountId(toolId)); return; }
+    if (mergingRef.current) { pendingTapRef.current = () => tapHandlersRef.current.fx(toolId); return; }
     uiFirstRef.current = true;
     if (FX_TOOLS[toolId]) warmFx(toolId);   // 先把著色器編好，第一次拖才不會卡
     setActiveFxId(toolId);
@@ -4849,7 +4857,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     /* 選中的濾鏡還在下載：先不畫，畫面留在上一張。不然會先閃一張「沒有濾鏡」的，
        載好才變成有濾鏡的（loadLut 載好會再標記重畫）。 */
     { const l = lutList[overrideLutIdx ?? selectedLutIdx];
-      if (l?.url && !lutDataRef.current[l.id] && loadingPromisesRef.current[l.id]) return; }
+      if (l?.url && !lutDataRef.current[l.id] && LUT_IN_FLIGHT.has(l.id)) return; }
     const activeToolId = activeToolIdRef.current;
     const cache = fastPreviewCacheRef.current;
 
@@ -5407,6 +5415,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const src: CanvasImageSource = isGeoIdentity(g) ? im : composeCanvas(im, sw, sh, g, 2400);
         const w = isGeoIdentity(g) ? sw : (src as HTMLCanvasElement).width;
         const h = isGeoIdentity(g) ? sh : (src as HTMLCanvasElement).height;
+        // 換成合併好的那張：CPU 路徑留著的濾鏡結果是舊來源算的，一定要重算
+        lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, selectedLutIdx: -1 } as any;
+        lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
         buildBuffersFromRef.current(src, w, h, false, activeSrc);
       };
       if (ready) install(ready);
@@ -6287,8 +6298,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       try {
         /* 介面已經在這一拍切成合併完的樣子；烤圖等合併鍵的動畫播完、
            再讓一幀才開始，動畫才不會被烤圖卡在半路。 */
-        if (after) await after;
-        await new Promise<void>(r => requestAnimationFrame(() => setTimeout(r, 0)));
+        /* 每一個等待都有時限：任何一個沒回來（動畫被打斷、分頁切到背景），
+           合併就會一直卡在「進行中」，之後點的濾鏡／特效全部被排隊、看起來選中卻沒套用。 */
+        const race = <T,>(pr: Promise<T>, ms: number) => Promise.race([pr, new Promise<void>(r => setTimeout(r, ms))]);
+        if (after) await race(after, 1000);
+        await race(new Promise<void>(r => requestAnimationFrame(() => setTimeout(r, 0))), 100);
         // 這一次烤進去的是哪一種（按下的當下就記好了，兩邊都套的話兩邊都算）
         const { lut: bakedLut, fx: bakedFx } = mergePendingBakeRef.current;
         const next = [...srcList];
@@ -6340,8 +6354,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           await new Promise<void>(res => {
             const im = new Image();
             im.onload = async () => {
-              try { if (typeof im.decode === 'function') await im.decode(); } catch { /* load 已成功 */ }
-              await new Promise<void>(r => requestAnimationFrame(() => r()));
+              try { if (typeof im.decode === 'function') await Promise.race([im.decode(), new Promise(r => setTimeout(r, 1500))]); } catch { /* load 已成功 */ }
+              await Promise.race([new Promise<void>(r => requestAnimationFrame(() => r())), new Promise(r => setTimeout(r, 100))]);
               rememberDecoded(shownUrl, im); res();
             };
             im.onerror = () => res();
