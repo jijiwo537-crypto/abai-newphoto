@@ -60,7 +60,7 @@ if(query.has('shapeTexture')){
 }else if(query.has('editor')){
  const c=document.createElement('canvas');c.width=query.has('large')?3000:1200;c.height=query.has('long')?5000:query.has('large')?4000:1600;const g=c.getContext('2d')!;g.scale(c.width/1200,c.height/1600);
  const grad=g.createLinearGradient(0,0,1200,1600);grad.addColorStop(0,'#173959');grad.addColorStop(1,'#dfae96');g.fillStyle=grad;g.fillRect(0,0,1200,1600);g.fillStyle='white';g.fillRect(350,150,100,900);g.beginPath();g.arc(800,800,200,0,Math.PI*2);g.fill();
- const first=c.toDataURL();const batch=query.has('batch')?[first,...['#5a1f3d','#1f5a2c'].map(col=>{g.fillStyle=col;g.fillRect(0,0,1200,1600);g.fillStyle='white';g.fillRect(500,500,200,200);return c.toDataURL();})]:undefined;
+ const first=query.has('blob')?URL.createObjectURL(await new Promise<Blob>(r=>c.toBlob(b=>r(b!),'image/jpeg',.92))):c.toDataURL();const batch=query.has('batch')?[first,...['#5a1f3d','#1f5a2c'].map(col=>{g.fillStyle=col;g.fillRect(0,0,1200,1600);g.fillStyle='white';g.fillRect(500,500,200,200);return c.toDataURL();})]:undefined;
  createRoot(document.getElementById('root')!).render(query.has('sharedPanel')?<SharedPanelFixture src={first}/>:<ImageEditor imageSrc={first} batchSrcs={batch} lutList={[{id:'none',name:'原始',url:''},...(query.has('luts')?Array.from({length:4},(_,i)=>({id:`qa-f${i+1}`,name:`F${i+1}`,url:`/luts/f${i+1}.webp`})):[])]} onSave={()=>{}} onCancel={()=>{}}/>);
 }else {
  const c=document.createElement('canvas');c.width=600;c.height=800;

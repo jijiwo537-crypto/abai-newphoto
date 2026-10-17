@@ -3241,7 +3241,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const pristineRef = useRef<{ key: string; canvas: HTMLCanvasElement }[]>([]);
   const PRISTINE_KEEP = 3;   // 批量編輯時最多留幾張（一張預覽尺寸就好幾 MB，不能無限留）
   const pristineOf = (src: string) => pristineRef.current.find(x => x.key === src)?.canvas || null;
-  const thumbKey = (src: string, id: string) => thumbSrcOf(src) + THUMB_SEP + id;
+  /* 鍵裡放照片的短編號，不放網址本身：照片網址可能是好幾 MB 的 data URL，
+     每次重畫 React 比對 25 顆縮圖的 id 字串都要逐字比過一遍，點一下就卡上百毫秒。 */
+  const thumbSrcKey = (src: string) => 's' + srcIdOf(thumbSrcOf(src));
+  const thumbKey = (src: string, id: string) => thumbSrcKey(src) + THUMB_SEP + id;
   const noteThumbSrc = (src: string) => {
     const list = thumbSrcsRef.current;
     const at = list.indexOf(src);
@@ -3249,9 +3252,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     list.unshift(src);
     const drop = list.splice(THUMB_CACHE_SRCS);
     if (!drop.length) return;
+    const dropKeys = drop.map(d => 's' + srcIdOf(d));
     for (const store of [filterThumbStore, fxThumbStore]) {
       for (const k of Object.keys(store.current)) {
-        if (drop.indexOf(k.slice(0, k.indexOf(THUMB_SEP))) >= 0) delete store.current[k];
+        if (dropKeys.indexOf(k.slice(0, k.indexOf(THUMB_SEP))) >= 0) delete store.current[k];
       }
     }
   };
@@ -5032,15 +5036,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
     const lutSize = activeLut ? activeLut.size : 0;
     /* 點濾鏡／特效按鈕：跟拖滑桿一樣先走 GPU 直出，按下去那一格就看到結果。
-       CPU 那條（整張讀回、逐像素算）在換了來源（合併後）快取全空時要將近一秒，
-       之前每次合併完第一次點都要等它。2D 緩衝等閒下來再補算，不擋畫面。 */
+       CPU 那條（整張讀回、逐像素算）在換了來源（合併後）快取全空時要將近一秒。
+       GPU 出來的像素跟 CPU 那條一樣（同一套著色器、同樣 8 位元），所以這張就是最終結果，
+       不再背景補算（補算那將近一秒會卡住下一次點擊）。2D 緩衝標成過期
+       （displayStaleRef），之後真的需要走 2D 的那一次自己會重算。 */
     const tapFast = tapFastRef.current;
     tapFastRef.current = false;
-    if (tapFast) {
-      const ric = (window as any).requestIdleCallback as undefined | ((cb: () => void, o?: { timeout: number }) => number);
-      const refine = () => { if (!tapFastRef.current) { isDirtyRef.current = true; } };
-      if (ric) ric(refine, { timeout: 1500 }); else setTimeout(refine, 600);
-    }
 
     /* ── Direct GPU path while dragging ─────────────────────────────────
        When nothing after the colour stage draws on the 2D canvas (no grain,
