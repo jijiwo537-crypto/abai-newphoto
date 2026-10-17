@@ -1298,45 +1298,28 @@ export const shapeGlowBlurs = (w: number, h: number) =>
 
 /** 新增圖形時的預設值。線條比較細長，所以粗細與大小另外給。 */
 export const SPECIAL_LINE_KINDS = new Set(['line', 'wave', 'lightning-wave']);
-/* 刺繡類的線條（放在「線條」那一區，但本身是實心圖形：可以填色、上紋理、發光）：
-   十字繡（一排 +）、叉叉繡（一排 ×）、麻花（一顆顆斜的橢圓接成繩子）。
-   圖案的大小跟著線的粗細（框的高），長度拉長就多幾顆，不會被拉扁。 */
-export const STITCH_LINE_KINDS = new Set(['stitch-plus', 'stitch-x', 'rope']);
+/* 刺繡類的線條（十字繡、叉叉繡、斜線）：跟波浪一樣是描邊的線，元素大小跟著框的高，
+   左右拉長就多幾個元素，不會被拉扁。 */
+export const STITCH_LINE_KINDS = new Set(['stitch-plus', 'stitch-x', 'slash']);
+/** 波浪類線條：線寬不隨長度變粗、只能左右拉、拉長增加元素。 */
+export const WAVE_LIKE_KINDS = new Set(['wave', 'lightning-wave', ...STITCH_LINE_KINDS]);
+SPECIAL_LINE_KINDS.add('stitch-plus'); SPECIAL_LINE_KINDS.add('stitch-x'); SPECIAL_LINE_KINDS.add('slash');
 const stitchLineD = (kind: string, w: number, h: number) => {
   const r3 = (v: number) => Math.round(v * 1000) / 1000;
-  const polyD = (pts: [number, number][]) => `M ${pts.map(p => `${r3(p[0])} ${r3(p[1])}`).join(' L ')} Z`;
-  // 膠囊（兩頭半圓的長條），中心 (cx,cy)、長 len、寬 th、角度 ang；一律同一個繞向，重疊的地方合在一起
-  const capsule = (cx: number, cy: number, len: number, th: number, ang: number) => {
-    const pts: [number, number][] = [], rr = th / 2, hl = Math.max(0, len / 2 - rr), c = Math.cos(ang), sn = Math.sin(ang);
-    for (let i = 0; i <= 10; i++) { const t = -Math.PI / 2 + Math.PI * i / 10; pts.push([hl + Math.cos(t) * rr, Math.sin(t) * rr]); }
-    for (let i = 0; i <= 10; i++) { const t = Math.PI / 2 + Math.PI * i / 10; pts.push([-hl + Math.cos(t) * rr, Math.sin(t) * rr]); }
-    return polyD(pts.map(([x, y]) => [cx + x * c - y * sn, cy + x * sn + y * c]));
-  };
-  const ellipse = (cx: number, cy: number, rx: number, ry: number, ang: number) => {
-    const pts: [number, number][] = [], c = Math.cos(ang), sn = Math.sin(ang);
-    for (let i = 0; i < 24; i++) { const t = Math.PI * 2 * i / 24, x = Math.cos(t) * rx, y = Math.sin(t) * ry; pts.push([cx + x * c - y * sn, cy + x * sn + y * c]); }
-    return polyD(pts);
-  };
-  const cy = h / 2, parts: string[] = [];
-  if (kind === 'rope') {
-    // 麻花：一顆顆往同一邊斜的橢圓，彼此留一點縫，看起來像兩股扭在一起
-    // 斜 57°：相鄰兩顆之間垂直距離＝間距×sin57° ≈ 0.28h，剛好跟橢圓厚（0.3h）差不多，一顆貼一顆像扭在一起的繩子
-    const pitch = h * .33, pad = h * .3, n = Math.max(1, Math.round((w - pad * 2) / pitch)), p = (w - pad * 2) / n;
-    for (let i = 0; i < n; i++) parts.push(ellipse(pad + p * (i + .5), cy, h * .5, h * .15, -1.0));
+  const seg = (x1: number, y1: number, x2: number, y2: number) => `M ${r3(x1)} ${r3(y1)} L ${r3(x2)} ${r3(y2)}`;
+  const cy = h / 2, a = h * .4, parts: string[] = [];
+  if (kind === 'slash') {
+    // 45° 斜線，間距約半個高
+    const span = Math.max(0, w - a * 2), n = Math.max(1, Math.round(span / (h * .5)) + 1), step = n > 1 ? span / (n - 1) : 0;
+    for (let i = 0; i < n; i++) { const cx = n > 1 ? a + step * i : w / 2; parts.push(seg(cx - a, cy + a, cx + a, cy - a)); }
     return parts.join(' ');
   }
-  // 十字繡、叉叉繡：一格是一個正方形（邊長＝高），格數照長度取整數，平均排滿
-  const n = Math.max(1, Math.round(w / h)), cell = w / n;
+  // 十字、叉叉：一格約一個高，格數取整數平均排滿
+  const n = Math.max(1, Math.round(w / h)), cell = w / n, r = Math.min(a, cell * .4);
   for (let i = 0; i < n; i++) {
     const cx = cell * (i + .5);
-    if (kind === 'stitch-plus') {
-      parts.push(capsule(cx, cy, h * .92, h * .2, Math.PI / 2));
-      parts.push(capsule(cx, cy, Math.min(cell, h) * .96, h * .2, 0));
-    } else {
-      const L = Math.hypot(Math.min(cell, h), h) * .86;
-      parts.push(capsule(cx, cy, L, h * .22, Math.atan2(h, Math.min(cell, h))));
-      parts.push(capsule(cx, cy, L, h * .22, -Math.atan2(h, Math.min(cell, h))));
-    }
+    if (kind === 'stitch-plus') { parts.push(seg(cx, cy - a, cx, cy + a)); parts.push(seg(cx - r, cy, cx + r, cy)); }
+    else { const q = Math.min(r, a) * .8; parts.push(seg(cx - q, cy - q, cx + q, cy + q)); parts.push(seg(cx - q, cy + q, cx + q, cy - q)); }
   }
   return parts.join(' ');
 };
@@ -1356,10 +1339,10 @@ export const COMPOSITE_SHAPE_KINDS = new Set([
   ...DUAL_COLOR_SHAPE_KINDS, ...CUTOUT_SHAPE_KINDS, ...DOUBLE_CONTOUR_SHAPE_KINDS,
 ]);
 export const SHAPE_DEFAULT_LINEW = (kind: string) =>
-  (kind === 'wave' || kind === 'lightning-wave') ? 2.5 : (kind === 'line' ? 4 : 6);
+  WAVE_LIKE_KINDS.has(kind) ? 2.5 : (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
 export const SHAPE_DEFAULT_RATIO = (kind: string) =>
-  (kind === 'wave' || kind === 'lightning-wave') ? 0.576 : (kind === 'line' ? 0.24 : STITCH_LINE_KINDS.has(kind) ? 0.5 : 0.15);
+  WAVE_LIKE_KINDS.has(kind) ? 0.576 : (kind === 'line' ? 0.24 : 0.15);
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 /** 雙色方形的外層略深，白色內圖案在新增後與小按鈕上都能一眼辨認。 */
@@ -1384,7 +1367,7 @@ export const shapeSupportsStretch = (shape: string | undefined, filled: boolean 
   if(isBackdropMask(shape))return true;
   if (isFrameShape(shape)) return true;
   if (!shape || shape === 'line') return false;
-  if (shape === 'wave' || shape === 'lightning-wave' || GRID_SHAPE_KINDS.has(shape)) return true;
+  if (WAVE_LIKE_KINDS.has(shape) || GRID_SHAPE_KINDS.has(shape)) return true;
   if (shape === 'hole') return holeCanStretch(holeType, filled);
   return filled ? STRETCH_SOLID_KINDS.has(shape) : STRETCH_OUTLINE_KINDS.has(shape);
 };
@@ -1526,14 +1509,14 @@ export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: numbe
 /** 「新增圖形」選單的五個區塊。創意拼圖與跨頁拼圖都用這一個，順序寫在 utils/pickerOrder.ts。 */
 /** 新分類「邊框」：霧白邊框（亮角那種霧，但四個邊也有） */
 export const shapePickerSections = () => {
-  const A = ADD_SHAPE_ITEMS, plain = (i: ShapeItem) => !GRID_SHAPE_KINDS.has(i.kind) && !SPECIAL_LINE_KINDS.has(i.kind) && !STITCH_LINE_KINDS.has(i.kind);
+  const A = ADD_SHAPE_ITEMS, plain = (i: ShapeItem) => !GRID_SHAPE_KINDS.has(i.kind) && !SPECIAL_LINE_KINDS.has(i.kind);
   const pools: Record<ShapeSection, any[]> = {
     solid: [...A.filter(i => i.filled && plain(i)), HOLE_ITEM_CROSS, ...HOLE_ITEMS_EXTRA],
     outline: [...A.filter(i => !i.filled && plain(i)), HOLE_ITEM_CROSS_O],
     // 新的五種邊框先放在排序工具的「邊框」頁試，App 裡先只有霧白邊框
     frame: FRAME_ITEMS.filter(i => ['mist-frame', 'frame-speed', 'frame-scatter'].includes(i.kind)) as ShapeItem[],
     burst: [...STAR_BURST_ITEMS],
-    line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind) || STITCH_LINE_KINDS.has(i.kind)),
+    line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind)),
     grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
     mask: [...MASK_SHAPE_ITEMS],
   };
@@ -1600,9 +1583,9 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   // 線條
   { id: 'line-h', kind: 'line', filled: false, rot: 0, ratio: 0.08 },
   // 刺繡類（實心）：一新增就是橫的，長度約 8 顆
-  { id: 'line-stitch-plus', kind: 'stitch-plus', filled: true, rot: 0, ratio: 0.125, glyphRatio: 0.3 },
-  { id: 'line-stitch-x', kind: 'stitch-x', filled: true, rot: 0, ratio: 0.1, glyphRatio: 0.26 },
-  { id: 'line-rope', kind: 'rope', filled: true, rot: 0, ratio: 0.08, glyphRatio: 0.22 },
+  { id: 'line-stitch-plus', kind: 'stitch-plus', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.2 },
+  { id: 'line-stitch-x', kind: 'stitch-x', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.2 },
+  { id: 'line-slash', kind: 'slash', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.36 },
   // 線條一律橫的生成（跟第一條一樣）
   { id: 'line-wave', kind: 'wave', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.17 },
   { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.17 },
@@ -7996,7 +7979,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           ['r', 'right-0 top-1/2', 'translate(50%, -50%)', 'w-2 h-6 cursor-ew-resize'],
           ['b', 'bottom-0 left-1/2', 'translate(-50%, 50%)', 'w-6 h-2 cursor-ns-resize'],
           ['l', 'left-0 top-1/2', 'translate(-50%, -50%)', 'w-2 h-6 cursor-ew-resize'],
-        ] as const).map(([side, pos, tx, size]) => {
+        ] as const).filter(([side]) => !WAVE_LIKE_KINDS.has(image.shape as string) || side === 'l' || side === 'r').map(([side, pos, tx, size]) => {
           // 圖形的選取框依可見墨水縮過，控制點也必須使用同一個 frameRect，
           // 才會確實落在四邊中央而不是停在物件原始方框上。
           const preciseHandle = !!image.shape || (image.text !== undefined && !image.sym);
@@ -9879,7 +9862,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ...(isClefTex((it as HoleShapeItem).hole) ? { shapeDotSize: CLEF_TEX_DEFAULTS.size, shapeDotGap: CLEF_TEX_DEFAULTS.gap, shapeStripeN: CLEF_TEX_DEFAULTS.stripeN } : {}),
       shapeFilled: it.filled,
       shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
-      shapeLineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
+      shapeLineBase: WAVE_LIKE_KINDS.has(it.kind)
         ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
       shapeTextureBaseW: w,
       shapeTextureBaseH: h,

@@ -52,7 +52,7 @@ import {
   ADD_SHAPE_ITEMS, fillTrackSquares, TRACK_SQUARE_KINDS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeTexDisabled, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, ScatterKindsPicker, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
-  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
+  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, WAVE_LIKE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -3525,7 +3525,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         id, type: 'shape', kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
         ...(isClefTex(it.hole) ? { dotSize: CLEF_TEX_DEFAULTS.size, dotGap: CLEF_TEX_DEFAULTS.gap, stripeN: CLEF_TEX_DEFAULTS.stripeN } : null),
         ...(isBackdropMask(it.kind)?maskDefaults(it.kind):{}),
-        lineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
+        lineBase: WAVE_LIKE_KINDS.has(it.kind)
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
         textureBaseW: w, textureBaseH: h,
         lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
@@ -11164,7 +11164,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   ['r','right-0 top-1/2','translate(50%,-50%)','w-8 h-12 cursor-ew-resize'],
                   ['b','left-1/2 bottom-0','translate(-50%,50%)','w-24 h-4 cursor-ns-resize'],
                   ['l','left-0 top-1/2','translate(-50%,-50%)','w-8 h-12 cursor-ew-resize'],
-                ] as const).map(([side,pos,tx,size]) => (
+                ] as const).filter(([side]) => !(o.type === 'shape' && WAVE_LIKE_KINDS.has(o.kind)) || side === 'l' || side === 'r').map(([side,pos,tx,size]) => (
                   <div key={side} data-stretch-handle className={`absolute ${pos} ${size} pointer-events-auto flex items-center justify-center touch-none no-pointer-events`}
                     style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
                     onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
@@ -11774,7 +11774,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
                     ...(isClefTex(it.hole) ? { dotSize: CLEF_TEX_DEFAULTS.size, dotGap: CLEF_TEX_DEFAULTS.gap, stripeN: CLEF_TEX_DEFAULTS.stripeN } : {}),
                     /* 框線的粗細以「新增時的長邊」為準，之後拉大拉小都不變 */
-                    lineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
+                    lineBase: WAVE_LIKE_KINDS.has(it.kind)
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
                     textureBaseW: w, textureBaseH: h,
                     lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,

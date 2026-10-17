@@ -54,7 +54,7 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'hole-sb-ring-soft-cross', 'hole-sb-ring-flat-six', 'hole-sb-ring-cross', 'hole-sb-ring-six', 'hole-sb-ring-star8', 'hole-sb-halo-eight',
   ],
   line: [
-    'line-h', 'line-stitch-plus', 'line-stitch-x', 'line-rope', 'line-wave', 'line-lightning-wave',
+    'line-h', 'line-stitch-plus', 'line-stitch-x', 'line-slash', 'line-wave', 'line-lightning-wave',
   ],
   grid: [
     'grid-horizontal', 'grid-diagonal', 'grid-diag-cross', 'grid-cross', 'grid-frame', 'grid-chevron',
