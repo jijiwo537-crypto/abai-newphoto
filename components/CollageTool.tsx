@@ -86,7 +86,7 @@ import {
 const drawTextShape: typeof drawTextShapeRaw = (ctx,type,text,x,y,size,fill,out=false,angle=0) =>
   drawTextShapeRaw(ctx,type,text,x,y,size,fill,out,angle,true);
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
-import { paintPattern, paintStripesRect, isStripeLikeTex, stripeDirArg, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
+import { paintPattern, paintStripesRect, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
 import { paintMaskTexture, maskTextureSizeFromUi, maskTextureSizeToUi, maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
 import { spacedTextureRadius, maskTextureGapFromUi, maskTextureGapToUi } from '../utils/textureSpacing';
@@ -11656,9 +11656,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           的 .slider-wrap），不留這一點的話畫出來的線會比自己那一欄長，
                           右邊還會伸進「方向」那一欄的間隙裡。 */}
                       <div className="px-2">
-                        <CompactSlider wide label="數量" value={stripeN} min={0} max={STRIPE_N_MAX} step={1} onChange={setStripeN} />
+                        <CompactSlider wide label="數量" value={stripeN} min={0} max={patternType === 'gingham' ? GINGHAM_N_MAX : STRIPE_N_MAX} step={1} onChange={setStripeN} />
                       </div>
-                      <div className="flex flex-col" style={{ visibility: patternType === 'gingham' ? 'hidden' : undefined }}>
+                      {/* 格紋沒有方向，這一格換成角度（直接換掉整格，文字跟按鈕同時換，不會一個先消失） */}
+                      {patternType === 'gingham' ? (
+                        <CompactSlider wide label="角度" value={gingAngleUi(stripeDir)} min={0} max={100} step={1} onChange={(v: number) => setStripeDir(gingDirOf(v) as any)} />
+                      ) : <div className="flex flex-col">
                         <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">方向</div>
                         <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                           {STRIPE_DIRS.map(([d, label]) => (
@@ -11668,7 +11671,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             </button>
                           ))}
                         </div>
-                      </div>
+                      </div>}
                     </div>
                   ) : patternType !== 'none' && (
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
@@ -12103,9 +12106,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 <div className="px-2">
                                   {isClefTex(sel.hole)
                                     ? shapeSlider('數量', clefStripeToUi(sel.stripeN ?? CLEF_TEX_DEFAULTS.stripeN), 0, CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, (v: number) => patch({ stripeN: clefStripeFromUi(v) }))
-                                    : shapeSlider('數量', sel.stripeN ?? STRIPE_N_DEFAULT, 0, STRIPE_N_MAX, (v: number) => patch({ stripeN: v }))}
+                                    : shapeSlider('數量', sel.stripeN ?? STRIPE_N_DEFAULT, 0, tex === 'gingham' ? GINGHAM_N_MAX : STRIPE_N_MAX, (v: number) => patch({ stripeN: v }))}
                                 </div>
-                                <div className="space-y-1.5" style={{ visibility: tex === 'gingham' ? 'hidden' : undefined }}>
+                                {tex === 'gingham' ? (
+                                  <div className="px-2">{shapeSlider('角度', gingAngleUi(sel.stripeDir), 0, 100, (v: number) => patch({ stripeDir: gingDirOf(v) } as any))}</div>
+                                ) : <div className="space-y-1.5">
                                   <span className="text-[11px] font-bold text-white/70">方向</span>
                                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                                     {STRIPE_DIRS.map(([d, label]) => (
@@ -12120,7 +12125,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                       </button>
                                     ))}
                                   </div>
-                                </div>
+                                </div>}
                               </div>
                             ) : (
                               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">

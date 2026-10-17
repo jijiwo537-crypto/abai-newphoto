@@ -1,5 +1,5 @@
 import React, { useId } from 'react';
-import { PatternOpts, stripeBand, STRIPE_A, STRIPE_B } from '../utils/pattern';
+import { PatternOpts, stripeBand, gingAngleUi, STRIPE_A, STRIPE_B } from '../utils/pattern';
 import { spacedTextureRadius } from '../utils/textureSpacing';
 
 /** Logical vector geometry stays unchanged throughout a pinch. The browser
@@ -21,13 +21,18 @@ export const PatternLayer: React.FC<{w:number;h:number;opts:PatternOpts}> = Reac
   </g>;
   return <svg data-pattern-vector="1" className="absolute inset-0 pointer-events-none" width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{maxWidth:'none',overflow:'hidden'}}>
     {o.type==='gingham'?(()=>{
-      /* 格紋：直條、橫條各是第一個顏色的一半透明度，交叉處是完整的第一個顏色，其餘是底色 */
-      const g=stripeBand(w,o.stripeN),ny=Math.max(1,Math.round(h/Math.max(1e-6,g.band))),bh=h/ny,A=o.stripeA||STRIPE_A;
-      const cols=Array.from({length:g.n},(_,i)=>i).filter(i=>i%2),rows=Array.from({length:ny},(_,j)=>j).filter(j=>j%2);
+      /* 格紋：直條、橫條各是第一個顏色的一半透明度，交叉處是完整的第一個顏色，其餘是底色。
+         角度（存在 stripeDir，'g30'）0～100 ＝ 繞中心轉 0～90°，轉了就往外多鋪幾條蓋滿對角線 */
+      const g=stripeBand(w,o.stripeN),ny0=Math.max(1,Math.round(h/Math.max(1e-6,g.band))),bh=h/ny0,A=o.stripeA||STRIPE_A;
+      const deg=gingAngleUi(o.stripeDir)/100*90,D=Math.hypot(w,h);
+      const k=deg>.01?Math.ceil((D-w)/2/g.band/2)*2:0,m=deg>.01?Math.ceil((D-h)/2/bh/2)*2:0;
+      const nx=g.n+k*2,ny=ny0+m*2,X0=-k*g.band,Y0=-m*bh,W=nx*g.band,H=ny*bh;
+      const cols=Array.from({length:nx},(_,i)=>i).filter(i=>i%2),rows=Array.from({length:ny},(_,j)=>j).filter(j=>j%2);
       return <><rect width={w} height={h} fill={o.stripeB||STRIPE_B}/>
-        {cols.map(i=><rect key={'v'+i} x={i*g.band} y={0} width={g.band} height={h} fill={A} fillOpacity={.5}/>)}
-        {rows.map(j=><rect key={'h'+j} x={0} y={j*bh} width={w} height={bh} fill={A} fillOpacity={.5}/>)}
-        {cols.flatMap(i=>rows.map(j=><rect key={i+'-'+j} x={i*g.band} y={j*bh} width={g.band} height={bh} fill={A}/>))}</>;
+        <g transform={deg>.01?`rotate(${deg} ${w/2} ${h/2})`:undefined}>
+        {cols.map(i=><rect key={'v'+i} x={X0+i*g.band} y={Y0} width={g.band} height={H} fill={A} fillOpacity={.5}/>)}
+        {rows.map(j=><rect key={'h'+j} x={X0} y={Y0+j*bh} width={W} height={bh} fill={A} fillOpacity={.5}/>)}
+        {cols.flatMap(i=>rows.map(j=><rect key={i+'-'+j} x={X0+i*g.band} y={Y0+j*bh} width={g.band} height={bh} fill={A}/>))}</g></>;
     })():o.type==='stripe'?<><rect width={w} height={h} fill={o.stripeA||STRIPE_A}/>{Array.from({length:n},(_,i)=>i%2?<rect key={i} x={horizontal?0:i*band} y={horizontal?i*band:0} width={horizontal?w:band} height={horizontal?band:h} fill={o.stripeB||STRIPE_B}/>:null)}</>:<>
       <defs><pattern id={id} patternUnits="userSpaceOnUse" x={w/2} y={h/2} width={dx} height={dy*2}>
         <g fill={o.color||'#FFFFFF'}>{glyph(0,0)}{glyph(dx,0)}{glyph(dx/2,dy)}{glyph(0,dy*2)}{glyph(dx,dy*2)}</g>

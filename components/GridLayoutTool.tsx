@@ -66,7 +66,7 @@ import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, scatterAllNoGlow, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
-import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
+import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
 import { PatternLayer } from './PatternLayer';
@@ -3078,9 +3078,12 @@ export const ShapeEditorPanel: React.FC<{
                 <div className="px-2">
                   {isClefTex(layer.holeType)
                     ? slider('數量', clefStripeToUi(layer.shapeStripeN ?? CLEF_TEX_DEFAULTS.stripeN), 0, CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, v => onChange({ shapeStripeN: clefStripeFromUi(v) }))
-                    : slider('數量', layer.shapeStripeN ?? STRIPE_N_DEFAULT, 0, STRIPE_N_MAX, v => onChange({ shapeStripeN: v }))}
+                    : slider('數量', layer.shapeStripeN ?? STRIPE_N_DEFAULT, 0, tex === 'gingham' ? GINGHAM_N_MAX : STRIPE_N_MAX, v => onChange({ shapeStripeN: v }))}
                 </div>
-                <div className="space-y-1.5" style={{ visibility: tex === 'gingham' ? 'hidden' : undefined }}>
+                {/* 格紋沒有方向，這一格換成角度（整格一起換） */}
+                {tex === 'gingham' ? (
+                  <div className="px-2">{slider('角度', gingAngleUi(layer.shapeStripeDir), 0, 100, v => onChange({ shapeStripeDir: gingDirOf(v) as any }))}</div>
+                ) : <div className="space-y-1.5">
                   <span className="text-[11px] font-bold text-white/70">方向</span>
                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                     {STRIPE_DIRS.map(([d, label]) => (
@@ -3095,7 +3098,7 @@ export const ShapeEditorPanel: React.FC<{
                       </button>
                     ))}
                   </div>
-                </div>
+                </div>}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
@@ -18902,9 +18905,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                          滑桿左右各留 8px，畫出來的線才會收在自己那一欄裡。 */
                       <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
                         <div className="px-2">
-                          {patternSlider('數量', stripeN, (v: number) => patchPattern({ stripeN: v }), STRIPE_N_MAX)}
+                          {patternSlider('數量', stripeN, (v: number) => patchPattern({ stripeN: v }), patternType === 'gingham' ? GINGHAM_N_MAX : STRIPE_N_MAX)}
                         </div>
-                        <div className="flex flex-col gap-1.5" style={{ visibility: patternType === 'gingham' ? 'hidden' : undefined }}>
+                        {patternType === 'gingham' ? (
+                          <div className="px-2">{patternSlider('角度', gingAngleUi(patternOpts.stripeDir), (v: number) => patchPattern({ stripeDir: gingDirOf(v) }), 100)}</div>
+                        ) : <div className="flex flex-col gap-1.5">
                           <span className="text-[9px] font-bold text-[#666] tracking-tighter uppercase">方向</span>
                           <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                             {STRIPE_DIRS.map(([d, label]) => (
@@ -18914,7 +18919,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               </button>
                             ))}
                           </div>
-                        </div>
+                        </div>}
                       </div>
                     ) : patternType !== 'none' && (
                       <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">

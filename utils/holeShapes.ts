@@ -638,7 +638,7 @@ export const paintDots = (
   }
 };
 
-import { patternGlyph, stripeBand, paintGinghamAt, stripeDirArg, STRIPE_A as SA, STRIPE_B as SB,
+import { patternGlyph, stripeBand, paintGinghamAt, stripeDirArg, gingAngleUi, STRIPE_A as SA, STRIPE_B as SB,
   STRIPE_N_DEFAULT as SN_DEF, type TexKind } from './pattern';
 
 /* ── 紋理 ───────────────────────────────────────────────────────────
@@ -666,10 +666,10 @@ export { STRIPE_A, STRIPE_B } from './pattern';
 export const paintStripes = (
   c: CanvasRenderingContext2D,
   unitW: number, unitH: number, covW: number, covH: number,
-  count = SN_DEF, dir: 'h' | 'v' | 'g' = 'v', a = SA, b = SB,
+  count = SN_DEF, dir: string = 'v', a = SA, b = SB,
 ) => {
   // 格紋：原點在中心
-  if (dir === 'g') { paintGinghamAt(c, -covW / 2, -covH / 2, covW, covH, count, a, b); return; }
+  if (dir[0] === 'g') { paintGinghamAt(c, -covW / 2, -covH / 2, covW, covH, count, a, b, gingAngleUi(dir)); return; }
   const span = dir === 'h' ? covH : covW;
   const { band, n } = stripeBand(span, count);
   // 原點在中心，所以從 -span/2 開始鋪

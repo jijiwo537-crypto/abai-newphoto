@@ -30,8 +30,15 @@ export const TEX_OPTIONS: [TexKind, string][] = [
 /** 條紋類（條紋、格紋）：用同一組條數與兩個顏色 */
 export const isStripeLikeTex = (t?: string) => t === 'stripe' || t === 'gingham';
 /** 畫條紋時要傳的方向：格紋固定 'g'（直的、橫的都有） */
-export const stripeDirArg = (tex: string | undefined, dir: string | undefined): 'h' | 'v' | 'g' =>
-  tex === 'gingham' ? 'g' : dir === 'h' ? 'h' : 'v';
+export const stripeDirArg = (tex: string | undefined, dir: string | undefined): string =>
+  tex === 'gingham' ? `g${gingAngleUi(dir)}` : dir === 'h' ? 'h' : 'v';
+/* 格紋沒有方向，所以它的「角度」就借條紋的方向欄位存：'g30' ＝ 角度滑桿 30。
+   這樣存檔、復原、複製都不用多一個欄位；切回條紋時 'g…' 當成直式。 */
+export const gingAngleUi = (dir?: string) => {
+  const v = dir && dir[0] === 'g' ? parseFloat(dir.slice(1)) : 0;
+  return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
+};
+export const gingDirOf = (ui: number) => `g${Math.round(Math.max(0, Math.min(100, ui)))}`;
 
 /** 條紋預設的兩個顏色：第一個統一淡藍 #A8C3E6（遮罩、圖形、文字都一樣），第二個純白。 */
 export const STRIPE_A = '#A8C3E6';
@@ -84,7 +91,9 @@ export const patternGlyph = (
 export const STRIPE_N_MAX = 30;
 export const STRIPE_N_DEFAULT = 13;
 /** 畫的時候最多幾條：一般滑桿只到 30，高音譜號的紋理可以到 40（utils/holeShapes 的 CLEF_STRIPE_MAX） */
-const STRIPE_N_DRAW_MAX = 40;
+const STRIPE_N_DRAW_MAX = 60;
+/** 格紋的數量上限（條紋還是 STRIPE_N_MAX） */
+export const GINGHAM_N_MAX = 50;
 
 /**
  * 條紋改成直接指定「有幾條」，不是指定粗細。
@@ -110,10 +119,10 @@ export const stripeBand = (span: number, count = STRIPE_N_DEFAULT) => {
 export const paintStripesRect = (
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
-  count = STRIPE_N_DEFAULT, dir: 'h' | 'v' | 'g' = STRIPE_DIR_DEFAULT, a = STRIPE_A, b = STRIPE_B,
+  count = STRIPE_N_DEFAULT, dir: string = STRIPE_DIR_DEFAULT, a = STRIPE_A, b = STRIPE_B,
 ) => {
   if (w <= 0 || h <= 0) return;
-  if (dir === 'g') { ctx.save(); paintGinghamAt(ctx, 0, 0, w, h, count, a, b); ctx.restore(); return; }
+  if (dir[0] === 'g') { ctx.save(); paintGinghamAt(ctx, 0, 0, w, h, count, a, b, gingAngleUi(dir)); ctx.restore(); return; }
   const span = dir === 'h' ? h : w;
   const { band, n } = stripeBand(span, count);
   /* ── 為什麼是「先鋪滿 a，再只畫 b」───────────────────────────────
@@ -141,21 +150,35 @@ export const paintStripesRect = (
  */
 export const paintGinghamAt = (
   ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number,
-  count = STRIPE_N_DEFAULT, a = STRIPE_A, b = STRIPE_B,
+  count = STRIPE_N_DEFAULT, a = STRIPE_A, b = STRIPE_B, angleUi = 0,
 ) => {
   const { band, n } = stripeBand(w, count);
   if (!(band > 0)) return;
-  const ny = Math.max(1, Math.round(h / band)), bh = h / ny;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, y0, w, h); ctx.clip();
   ctx.fillStyle = b;
   ctx.fillRect(x0, y0, w, h);
+  /* 角度滑桿 0～100 ＝ 轉 0～90°（格紋轉 90° 就回到原樣）。
+     繞中心轉，鋪的範圍取對角線那麼大，轉了也不會露出空角；格子以中心對齊。 */
+  const deg = angleUi / 100 * 90;
+  const cx = x0 + w / 2, cy = y0 + h / 2;
+  let X0 = x0, Y0 = y0, W = w, H = h, nx = n, ny = Math.max(1, Math.round(h / band)), bw = band, bh = h / ny;
+  if (deg > .01) {
+    ctx.translate(cx, cy); ctx.rotate(deg * Math.PI / 180); ctx.translate(-cx, -cy);
+    // 四邊各往外多鋪偶數條（奇偶順序不變，0° 附近跟沒轉的時候對得上），蓋滿轉過之後的對角線
+    const D = Math.hypot(w, h), k = Math.ceil((D - w) / 2 / band / 2) * 2, m = Math.ceil((D - h) / 2 / bh / 2) * 2;
+    nx = n + k * 2; ny = ny + m * 2;
+    X0 = x0 - k * bw; Y0 = y0 - m * bh; W = nx * bw; H = ny * bh;
+  }
   ctx.fillStyle = a;
   const ga = ctx.globalAlpha;
   // 直條、橫條各半透明；交叉處先被畫兩次，下面再用完整顏色蓋過去
   ctx.globalAlpha = ga * .5;
-  for (let i = 1; i < n; i += 2) ctx.fillRect(x0 + i * band, y0, band, h);
-  for (let j = 1; j < ny; j += 2) ctx.fillRect(x0, y0 + j * bh, w, bh);
+  for (let i = 1; i < nx; i += 2) ctx.fillRect(X0 + i * bw, Y0, bw, H);
+  for (let j = 1; j < ny; j += 2) ctx.fillRect(X0, Y0 + j * bh, W, bh);
   ctx.globalAlpha = ga;
-  for (let i = 1; i < n; i += 2) for (let j = 1; j < ny; j += 2) ctx.fillRect(x0 + i * band, y0 + j * bh, band, bh);
+  for (let i = 1; i < nx; i += 2) for (let j = 1; j < ny; j += 2) ctx.fillRect(X0 + i * bw, Y0 + j * bh, bw, bh);
+  ctx.restore();
 };
 
 export interface PatternOpts {
