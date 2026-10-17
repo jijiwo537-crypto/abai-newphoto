@@ -2006,7 +2006,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 一份 lut0 + lut100 在 1350×1800 就要 19 MB，手機上留太多份會直接把記憶體吃光
      （進而觸發回收、變得更卡）。只留最近用到的幾份，夠涵蓋「兩顆濾鏡來回比較」
      這個最常見的情境。 */
-  const FILTER_CACHE_KEEP = 6;
+  /* 6 份在 1800px 預覽約 117 MB，疊上特效的 GPU 緩衝後會超過 iPhone 給單一分頁的
+     記憶體上限，Safari 直接把頁面重新載入。2 份仍涵蓋「兩顆濾鏡來回比較」。 */
+  const FILTER_CACHE_KEEP = 2;
   const cacheOrderRef = useRef<string[]>([]);
   const cacheFilterPixels = useCallback((lutId: string, p: EditorParams, w: number, h: number, lut0: Uint8ClampedArray, lut100: Uint8ClampedArray | null) => {
     const key = cacheKeyOf(lutId, w);
@@ -4055,6 +4057,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         }
     }
 
+    /* 沒在用的獨立特效層把自己的 WebGL context 與整張大小的貼圖還回去：
+       疊過柔光／光暈再關掉時，它們原本會一直佔著記憶體到離開編輯器。 */
+    if (ctx.canvas === displayCanvasRef.current) {
+      if (!(p.soft > 0) && softLayerRef.current) { softLayerRef.current.dispose(); softLayerRef.current = null; }
+      if (!(p.fringeIntensity > 0) && halationLayerRef.current) { halationLayerRef.current.dispose(); halationLayerRef.current = null; }
+    }
     if (p.soft > 0) {
       const direct=!baking&&!forceRecalculateEffectsRef.current&&ctx.canvas===displayCanvasRef.current&&fxSurfaceRef.current&&!p.leakOpacity&&!p.fringeIntensity&&!p.vignette&&!p.maskCreated&&!hasActiveFx(p);
       if(direct){
@@ -6010,8 +6018,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const oh = img.naturalHeight || img.height;
     // 存檔用原始解析度重跑一次構圖，預覽時的 2400px 版本只是給畫面看的
     const geoSource: CanvasImageSource = isGeoIdentity(g) ? img : composeCanvas(img, ow, oh, g);
-    const w = isGeoIdentity(g) ? ow : (geoSource as HTMLCanvasElement).width;
-    const h = isGeoIdentity(g) ? oh : (geoSource as HTMLCanvasElement).height;
+    const w0 = isGeoIdentity(g) ? ow : (geoSource as HTMLCanvasElement).width;
+    const h0 = isGeoIdentity(g) ? oh : (geoSource as HTMLCanvasElement).height;
+    /* iOS Safari 單張畫布上限約 1677 萬像素，超過時畫布是空的、記憶體也會爆而重新載入
+       （48MP 照片疊特效存檔時）。只有超過上限的照片才等比縮到上限內，其他照片不變。 */
+    const IOS_MAX_PX = 16_000_000;
+    const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const capK = isIOS && w0 * h0 > IOS_MAX_PX ? Math.sqrt(IOS_MAX_PX / (w0 * h0)) : 1;
+    const w = Math.max(1, Math.floor(w0 * capK)), h = Math.max(1, Math.floor(h0 * capK));
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctxOriginal = c.getContext('2d', { willReadFrequently: true })!;
