@@ -129,3 +129,39 @@ export function waveWarp(
   }
   return { canvas: c, padY };
 }
+
+/* 畫筆進場：把線條路徑本身截到 x ≤ tipX（只認 M、L、C；C 先攤平成短直線）。
+   用截好的路徑去畫本體、描邊與發光，發光就不會被一刀切掉。 */
+export function revealPathD(d: string, tipX: number): string {
+  const tok = d.match(/[MLCZmlcz]|-?\d*\.?\d+(?:e[-+]?\d+)?/g) || [];
+  const out: string[] = [];
+  let i = 0, cmd = '', px = 0, py = 0, open = false;
+  const r = (v: number) => Math.round(v * 1000) / 1000;
+  const num = () => Number(tok[i++]);
+  const seg = (x: number, y: number) => {
+    if (px <= tipX && x <= tipX) { if (!open) { out.push(`M ${r(px)} ${r(py)}`); open = true; } out.push(`L ${r(x)} ${r(y)}`); }
+    else if (px <= tipX || x <= tipX) {
+      const t = (tipX - px) / ((x - px) || 1e-9), cx = tipX, cy = py + (y - py) * t;
+      if (px <= tipX) { if (!open) out.push(`M ${r(px)} ${r(py)}`); out.push(`L ${r(cx)} ${r(cy)}`); open = false; }
+      else { out.push(`M ${r(cx)} ${r(cy)}`, `L ${r(x)} ${r(y)}`); open = true; }
+    } else open = false;
+    px = x; py = y;
+  };
+  while (i < tok.length) {
+    if (/[A-Za-z]/.test(tok[i])) cmd = tok[i++].toUpperCase();
+    if (cmd === 'Z') { open = false; continue; }
+    if (cmd === 'M') { px = num(); py = num(); open = false; cmd = 'L'; continue; }
+    if (cmd === 'L') { seg(num(), num()); continue; }
+    if (cmd === 'C') {
+      const x1 = num(), y1 = num(), x2 = num(), y2 = num(), x3 = num(), y3 = num(), x0 = px, y0 = py;
+      for (let k = 1; k <= 24; k++) {
+        const t = k / 24, u = 1 - t;
+        seg(u * u * u * x0 + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * x3,
+          u * u * u * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y3);
+      }
+      continue;
+    }
+    i++;
+  }
+  return out.join(' ');
+}

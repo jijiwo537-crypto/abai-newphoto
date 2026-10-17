@@ -1,5 +1,5 @@
 
-import { waveWarp } from '../utils/waveWarp';
+import { waveWarp, revealPathD } from '../utils/waveWarp';
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { reframeBasePhoto } from '../utils/reframeBasePhoto';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskSampleReach,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
@@ -53,7 +53,7 @@ import {
   ADD_SHAPE_ITEMS, fillTrackSquares, TRACK_SQUARE_KINDS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeTexDisabled, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, ScatterKindsPicker, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
-  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, WAVE_LIKE_KINDS, STITCH_LINE_KINDS, stitchKindD, stitchGapDefault, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
+  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, WAVE_LIKE_KINDS, STITCH_LINE_KINDS, stitchKindD, stitchGapDefault, stitchWidthForGap, GapSlider, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -7388,11 +7388,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       })() : undefined;
       if (flatBox && (flatBox.w <= 0 || flatBox.h <= 0)) return;
       const layer = (internalWave || flattenShapeAlpha) ? waveLayer(flatBox) : null;
-      const paintObject = (ctx: CanvasRenderingContext2D, flattened = false) => {
+      const paintObject = (ctx: CanvasRenderingContext2D, flattened = false, noScale = false) => {
       ctx.save();
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
-      if (f && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
+      if (f && !noScale && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
       ctx.globalAlpha = flattened ? 1 : objectAlpha;
       if (o.type==='shape'&&isBackdropMask(o.kind)) {
         if(maskBatch){maskBatch.push({kind:o.kind,w:o.w*s,h:o.h*s,settings:o,matrix:ctx.getTransform(),opacity:ctx.globalAlpha});ctx.restore();return;}
@@ -7536,11 +7536,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.translate(-bw / 2, -bh / 2);
         /* 畫筆進場只套用在線條：沿著線條自身的長軸逐段揭露。
            物件旋轉後裁切也跟著轉，因此直向線會由上往下畫出。 */
-        if (o.mo?.in === 'draw' && SPECIAL_LINE_KINDS.has(o.kind) && f?.draw !== undefined) {
-          ctx.beginPath();
-          ctx.rect(0, 0, bw * Math.max(0, Math.min(1, f.draw)), bh);
-          ctx.clip();
-        }
+        /* （截路徑而不是裁切畫布：發光、描邊才不會被切掉，見下面 shapeP） */
+        const drawTip = o.mo?.in === 'draw' && SPECIAL_LINE_KINDS.has(o.kind) && f?.draw !== undefined && f.draw < 1
+          ? bw * Math.max(0, f.draw) : undefined;
         ctx.lineJoin = o.kind === 'line' ? 'round' : 'miter';
         // 一律平頭：線條的兩端要切齊，不要圓角
         ctx.lineCap = 'butt';
@@ -7593,7 +7591,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           });
           ctx.restore();
         } else {
-        const shapeP = shapePathBox(
+        const shapeP0 = shapePathBox(
           stitchKindD(o.kind, (o as any).lineGap), bw, bh,
           ((o as any).textureBaseW || o.w) * s,
           ((o as any).textureBaseH || o.h) * s,
@@ -7607,6 +7605,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             ) * (GRID_DOT_KINDS.has(o.kind) ? Math.max(1, Math.min(3, (o.lineW ?? 6) / 6)) : 1),
           f?.ringReveal ?? 1,
         );
+        const shapeP = drawTip === undefined ? shapeP0 : new Path2D(revealPathD(shapePathD(stitchKindD(o.kind, (o as any).lineGap), bw, bh), drawTip));
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
 
@@ -8045,6 +8044,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       ctx.restore();
       };
+      /* 進場／常駐動畫在縮放（果凍、旋轉、翻轉、流星、縮放…）時，發光、描邊、文字光暈
+         都是 canvas 的 shadow。shadow 不吃座標縮放，而且 Safari 遇到非等比縮放
+         （翻轉時 X 被壓扁）會直接不畫 —— 就是「翻轉時發光消失、播完才出現」。
+         所以縮放中的物件先用原尺寸（含發光）畫進一張暫存圖，再把整張圖縮放貼上：
+         發光跟著物件一起縮放，所有瀏覽器都一樣。 */
+      if (f && (f.k !== 1 || f.fx !== 1) && !internalWave && (o.type === 'shape' || o.type === 'text') && !isBackdropMask(o.kind)) {
+        const m = ctx.getTransform(), dpr = Math.max(.01, Math.hypot(m.a, m.b));
+        const cx = (o.x + o.w / 2 + f.dx * o.w) * s, cy = (o.y + o.h / 2 + f.dy * o.h) * s;
+        const rot = aabbOf(o.w || 1, o.h || 1, (o.rot || 0) + (f.rot || 0));
+        const pad = Math.max(o.w || 1, o.h || 1) * s * (.12 + .25 * glowAmount(o.glow)) + 24 * s;
+        const hw = rot.bw * s / 2 + pad, hh = rot.bh * s / 2 + pad;
+        const SW = Math.min(4096, Math.ceil(hw * 2 * dpr)), SH = Math.min(4096, Math.ceil(hh * 2 * dpr));
+        let sp = (drawObject as any).__sprite as HTMLCanvasElement | undefined;
+        if (!sp) sp = (drawObject as any).__sprite = document.createElement('canvas');
+        if (sp.width < SW || sp.height < SH) { sp.width = Math.max(sp.width, SW); sp.height = Math.max(sp.height, SH); }
+        const sc = sp.getContext('2d');
+        if (sc && SW > 0 && SH > 0) {
+          sc.setTransform(1, 0, 0, 1, 0, 0);
+          sc.clearRect(0, 0, SW, SH);
+          sc.setTransform(SW / (hw * 2), 0, 0, SH / (hh * 2), 0, 0);
+          sc.translate(hw - cx, hh - cy);
+          paintObject(sc, true, true);
+          ctx.save();
+          ctx.globalAlpha = objectAlpha;
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          const r = ((o.rot || 0) + (f.rot || 0)) * Math.PI / 180;
+          ctx.translate(cx, cy);
+          ctx.rotate(r);
+          ctx.scale(f.k * f.fx, f.k);
+          ctx.rotate(-r);
+          ctx.drawImage(sp, 0, 0, SW, SH, -hw, -hh, hw * 2, hh * 2);
+          ctx.restore();
+          return;
+        }
+      }
       if (!layer) {
         // Reuse unchanged, unselected vector/text objects at their exact backing
         // resolution. The moving object remains live; exports and animations
@@ -11966,7 +12001,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               (v: number) => patch({ lineW: 6 + v * .12 }))
                               : shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }))}
                             {hasDash && shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
-                            {STITCH_LINE_KINDS.has(sel.kind) && shapeSlider('間距', Math.round((sel as any).lineGap ?? stitchGapDefault(sel.kind)), 0, 100, (v: number) => patch({ lineGap: v } as any))}
+                            {STITCH_LINE_KINDS.has(sel.kind) && <GapSlider value={(sel as any).lineGap ?? stitchGapDefault(sel.kind)}
+                              onValue={(v: number) => {
+                                // 元素數量不變，框的寬度跟著間距變，中心不動
+                                const g0 = (sel as any).lineGap ?? stitchGapDefault(sel.kind);
+                                const nw = stitchWidthForGap(sel.kind, sel.w, sel.h, g0, v);
+                                patch({ lineGap: v, w: nw, x: sel.x + (sel.w - nw) / 2,
+                                  ...((sel as any).textureBaseW ? { textureBaseW: (sel as any).textureBaseW * nw / sel.w } : {}) });
+                              }} />}
                           </div>}
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間

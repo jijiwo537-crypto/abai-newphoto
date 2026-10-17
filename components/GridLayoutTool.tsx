@@ -1307,10 +1307,31 @@ export const STITCH_LINE_KINDS = new Set(['stitch-plus', 'stitch-x', 'slash']);
 export const WAVE_LIKE_KINDS = new Set(['wave', 'lightning-wave', ...STITCH_LINE_KINDS]);
 SPECIAL_LINE_KINDS.add('stitch-plus'); SPECIAL_LINE_KINDS.add('stitch-x'); SPECIAL_LINE_KINDS.add('slash');
 /** 刺繡線條的間距（滑桿 0～100）預設值 */
-export const stitchGapDefault = (kind?: string) => kind === 'stitch-plus' ? 10 : kind === 'stitch-x' ? 18 : 40;
+export const stitchGapDefault = (_kind?: string) => 17;
+const stitchPitch = (kind: string, h: number, gapUi: number) =>
+  kind === 'slash' ? h * .1 + gapUi / 100 * h : (kind === 'stitch-plus' ? h * .8 : h * .64) + gapUi / 100 * h;
+/** 調間距時元素數量不變：回傳新的寬（框跟著變寬變窄） */
+export const stitchWidthForGap = (kind: string, w: number, h: number, oldGap: number, newGap: number) => {
+  const a = h * .4, p0 = stitchPitch(kind, h, oldGap), p1 = stitchPitch(kind, h, newGap);
+  if (kind === 'slash') { const n = Math.max(1, Math.round(Math.max(0, w - a * 2) / p0) + 1); return a * 2 + (n - 1) * p1; }
+  return Math.max(1, Math.round(w / p0)) * p1;
+};
 /** 把間距帶進路徑用的 kind（shapePathD 認得 'stitch-plus~30'）；其他圖形原樣 */
+/** 間距滑桿：連續值（不取整數），拉起來像文字間距一樣順 */
+export const GapSlider = ({ value, onValue, onInteraction }: { value: number; onValue: (v: number) => void; onInteraction?: (b: boolean) => void }) => (
+  <div className="space-y-1.5">
+    <div className="flex justify-between items-center">
+      <span className="text-[11px] font-bold text-white/70">間距</span>
+      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{Math.round(value)}</span>
+    </div>
+    <div className="slider-wrap" style={{ height: 16 }}>
+      <SmoothRange min={0} max={100} step={0.01} value={value} onValue={onValue}
+        onInteractionChange={onInteraction} className="premium-slider w-full" style={{ touchAction: 'none' }} />
+    </div>
+  </div>
+);
 export const stitchKindD = (kind: string, gap?: number) =>
-  gap === undefined || !STITCH_LINE_KINDS.has(kind) ? kind : `${kind}~${Math.round(gap)}`;
+  gap === undefined || !STITCH_LINE_KINDS.has(kind) ? kind : `${kind}~${Math.round(gap * 100) / 100}`;
 const stitchLineD = (kind: string, w: number, h: number, gapUi?: number) => {
   const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const seg = (x1: number, y1: number, x2: number, y2: number) => `M ${r3(x1)} ${r3(y1)} L ${r3(x2)} ${r3(y2)}`;
@@ -1318,14 +1339,14 @@ const stitchLineD = (kind: string, w: number, h: number, gapUi?: number) => {
   const gap = Math.max(0, Math.min(100, gapUi ?? stitchGapDefault(kind))) / 100 * h;
   if (kind === 'slash') {
     // 45° 斜線：間距是相鄰兩條的水平距離
-    const pitch = h * .1 + gap;
+    const pitch = stitchPitch(kind, h, gap / h * 100);
     const span = Math.max(0, w - a * 2), n = Math.max(1, Math.round(span / pitch) + 1), step = n > 1 ? span / (n - 1) : 0;
     for (let i = 0; i < n; i++) { const cx = n > 1 ? a + step * i : w / 2; parts.push(seg(cx - a, cy + a, cx + a, cy - a)); }
     return parts.join(' ');
   }
   // 十字、叉叉：元素大小固定，間距是兩個元素之間空出來的寬，格數取整數平均排滿
   const q = kind === 'stitch-plus' ? a : a * .8;
-  const n = Math.max(1, Math.round(w / (q * 2 + gap))), cell = w / n;
+  const n = Math.max(1, Math.round(w / stitchPitch(kind, h, gap / h * 100))), cell = w / n;
   for (let i = 0; i < n; i++) {
     const cx = cell * (i + .5);
     if (kind === 'stitch-plus') { parts.push(seg(cx, cy - a, cx, cy + a)); parts.push(seg(cx - q, cy, cx + q, cy)); }
@@ -1593,9 +1614,9 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   // 線條
   { id: 'line-h', kind: 'line', filled: false, rot: 0, ratio: 0.08 },
   // 刺繡類（實心）：一新增就是橫的，長度約 8 顆
-  { id: 'line-stitch-plus', kind: 'stitch-plus', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.222 },
-  { id: 'line-stitch-x', kind: 'stitch-x', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.244 },
-  { id: 'line-slash', kind: 'slash', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.36 },
+  { id: 'line-stitch-plus', kind: 'stitch-plus', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.206 },
+  { id: 'line-stitch-x', kind: 'stitch-x', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.247 },
+  { id: 'line-slash', kind: 'slash', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.532 },
   // 線條一律橫的生成（跟第一條一樣）
   { id: 'line-wave', kind: 'wave', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.17 },
   { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.17 },
@@ -2984,7 +3005,14 @@ export const ShapeEditorPanel: React.FC<{
               v => onChange({ shapeLineW: 6 + v * .12 }))
               : slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100, v => onChange({ shapeLineW: v / 10 }))}
             {hasDash && slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
-            {STITCH_LINE_KINDS.has(layer.shape || '') && slider('間距', Math.round(layer.shapeLineGap ?? stitchGapDefault(layer.shape)), 0, 100, v => onChange({ shapeLineGap: v }))}
+            {STITCH_LINE_KINDS.has(layer.shape || '') && <GapSlider value={layer.shapeLineGap ?? stitchGapDefault(layer.shape)} onInteraction={setTuning}
+              onValue={v => {
+                // 元素數量不變，框的寬度跟著間距變，中心不動
+                const g0 = layer.shapeLineGap ?? stitchGapDefault(layer.shape);
+                const nw = stitchWidthForGap(layer.shape!, layer.width, layer.height, g0, v);
+                onChange({ shapeLineGap: v, width: nw, x: layer.x + (layer.width - nw) / 2,
+                  ...(layer.shapeTextureBaseW ? { shapeTextureBaseW: layer.shapeTextureBaseW * nw / layer.width } : {}) });
+              }} />}
           </div>}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
           {!isBlurShape(layer.shape) && !noDecor && <div className="flex items-center gap-3 px-2 order-1 w-full">
@@ -15070,6 +15098,32 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         // GPU 逐像素正弦位移，沒有直條切片（utils/waveWarp）
         const warped = waveWarp(off, 0, 0, W, H, amplitude, 1.1 / W, -frame.gridWave, W * reveal);
         if (warped) ctx.drawImage(warped.canvas, x0, y0 - warped.padY);
+        continue;
+      }
+      /* 縮放中的文字／圖形：發光、描邊是 canvas shadow，不吃座標縮放，Safari 遇到
+         非等比縮放（翻轉）還會整個不畫。先用原尺寸畫進暫存圖，再整張縮放貼上。 */
+      if (frame && (frame.k !== 1 || (frame.fx ?? 1) !== 1) && (fImg.text !== undefined || fImg.shape) && frame.a > 0.004 && frame.k > 0.002) {
+        const fw = fImg.width * scaleFactor, fh = fImg.height * scaleFactor;
+        const cx = fImg.x * scaleFactor + fw / 2, cy = fImg.y * scaleFactor + fh / 2;
+        const half = Math.ceil(Math.hypot(fw, fh) * Math.max(1, fImg.scale || 1) * .5 + Math.max(fw, fh) * .6 + 40 * scaleFactor);
+        const S = Math.min(4096, half * 2);
+        const sp = scratch(`motion-sprite|${fImg.id}`, S, S);
+        const sg = get2dWide(sp)!;
+        sg.setTransform(1, 0, 0, 1, 0, 0);
+        sg.clearRect(0, 0, S, S);
+        sg.setTransform(S / (half * 2), 0, 0, S / (half * 2), 0, 0);
+        sg.translate(half - cx, half - cy);
+        if (fImg.text !== undefined) await drawTextLayer(sg, fImg, scaleFactor, frame);
+        else drawShapeLayer(sg, fImg, scaleFactor, false, frame?.ringReveal ?? 1);
+        ctx.save();
+        ctx.globalAlpha *= frame.a;
+        ctx.translate(cx + frame.dx * fw, cy + frame.dy * fh);
+        ctx.rotate((frame.rot * Math.PI) / 180);
+        ctx.scale(frame.k * (frame.fx ?? 1), frame.k);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(sp, 0, 0, S, S, -half, -half, half * 2, half * 2);
+        ctx.restore();
         continue;
       }
       if (frame) {
