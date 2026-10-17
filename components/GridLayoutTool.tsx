@@ -66,7 +66,7 @@ import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, scatterAllNoGlow, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
-import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
+import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
 import { PatternLayer } from './PatternLayer';
@@ -1437,7 +1437,7 @@ export const shapeGlowToUi = (g: number | boolean | undefined, outline: boolean)
 export const shapeGlowFromUi = (v: number, outline: boolean) => outline ? Math.max(0, Math.min(100, v)) * 3 * OUTLINE_GLOW_SCALE : glowFromUi(v);
 /** 邊框類的紋理沒有條紋（懸空在框裡面，見 paintTextureInsideOutline） */
 export const shapeTexOptions = (kind?: string, filled?: boolean) =>
-  kind === 'frame-speed' || kind === 'frame-scatter' ? [] : isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe') : TEX_OPTIONS;
+  kind === 'frame-speed' || kind === 'frame-scatter' ? [] : isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe' && id !== 'gingham') : TEX_OPTIONS;
 /** 不給調紋理的圖形（圖形選單上的 id，例如 'star-f'、'hole-love'）。排序工具的「紋理」頁可以挑，複製給 Claude 改這裡 */
 export const NO_TEXTURE_SHAPE_IDS: string[] = ['spinner-f', 'hole-seagrass', 'burst-dash-f', 'hole-burst', 'hole-snow'];
 const texKey = (kind?: string, filled?: boolean, hole?: string) =>
@@ -3035,7 +3035,7 @@ export const ShapeEditorPanel: React.FC<{
                   ))}
                 </div>
                 {/* 條紋有兩個顏色，所以放兩塊色票；點點只有一塊 */}
-                {tex === 'stripe' ? (
+                {isStripeLikeTex(tex) ? (
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setColorPage({
@@ -3069,7 +3069,7 @@ export const ShapeEditorPanel: React.FC<{
                 )}
               </div>
             </div>
-            {tex === 'stripe' ? (
+            {isStripeLikeTex(tex) ? (
               /* 條紋沒有間距可以調（一條接著一條），只有條數。
                  右邊那一格放直式／橫式，跟滑桿並排。
                  左右各留 8px：滑桿本人比外框寬 14px（見 styles.css 的 .slider-wrap），
@@ -3080,7 +3080,7 @@ export const ShapeEditorPanel: React.FC<{
                     ? slider('數量', clefStripeToUi(layer.shapeStripeN ?? CLEF_TEX_DEFAULTS.stripeN), 0, CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, v => onChange({ shapeStripeN: clefStripeFromUi(v) }))
                     : slider('數量', layer.shapeStripeN ?? STRIPE_N_DEFAULT, 0, STRIPE_N_MAX, v => onChange({ shapeStripeN: v }))}
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-1.5" style={{ visibility: tex === 'gingham' ? 'hidden' : undefined }}>
                   <span className="text-[11px] font-bold text-white/70">方向</span>
                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                     {STRIPE_DIRS.map(([d, label]) => (
@@ -5869,7 +5869,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
           });
           else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
-            image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || STRIPE_A, image.shapeStripeB || '#FFFFFF');
+            stripeDirArg(image.shapeTex, image.shapeStripeDir), image.shapeStripeA || STRIPE_A, image.shapeStripeB || '#FFFFFF');
           tc.restore();
         });
         ctx.restore();
@@ -5943,11 +5943,11 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
               textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
             });
             else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
-              image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || STRIPE_A, image.shapeStripeB || '#FFFFFF');
+              stripeDirArg(image.shapeTex, image.shapeStripeDir), image.shapeStripeA || STRIPE_A, image.shapeStripeB || '#FFFFFF');
             tc.restore();
           }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth,
             baseW: (image.shapeTextureBaseW || image.width) * contentScale, baseH: (image.shapeTextureBaseH || image.height) * contentScale });
-        } else if (isArrowShape(image.shape) && tx === 'stripe') {
+        } else if (isArrowShape(image.shape) && isStripeLikeTex(tx)) {
           strokeWithTexture(ctx, path, drawW, drawH, JSON.stringify([tx, image.shapeDotSize, image.shapeDotGap, image.shapeDotSquash, image.shapeDotColor,
             image.shapeStripeN, image.shapeStripeDir, image.shapeStripeA || STRIPE_A, image.shapeStripeB, image.shapeTextureBaseW, image.shapeTextureBaseH, contentScale]), (tc, cw, ch) => {
             if ((tx as string) === 'dot' || (tx as string) === 'star' || (tx as string) === 'heart') paintTex(tc, drawW, drawH, cw, ch, {
@@ -5957,7 +5957,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             });
             else paintStripes(tc, drawW, drawH, cw, ch,
               stripeCountFor(image.shapeStripeN ?? STRIPE_N_DEFAULT, image.shapeStripeDir, drawW, drawH, cw, ch),
-              image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || STRIPE_A, image.shapeStripeB || '#FFFFFF');
+              stripeDirArg(image.shapeTex, image.shapeStripeDir), image.shapeStripeA || STRIPE_A, image.shapeStripeB || '#FFFFFF');
           });
         } else {
           strokeOutlineBody(ctx, path, image.shape, drawW, drawH, (image.shapeTextureBaseW || image.width) * contentScale, (image.shapeTextureBaseH || image.height) * contentScale,
@@ -14816,7 +14816,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           textureBaseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
         });
         else paintStripes(tc, fw, fh, fw, fh, fImg.shapeStripeN ?? STRIPE_N_DEFAULT,
-          fImg.shapeStripeDir === 'h' ? 'h' : 'v', fImg.shapeStripeA || STRIPE_A, fImg.shapeStripeB || '#FFFFFF');
+          stripeDirArg(fImg.shapeTex, fImg.shapeStripeDir), fImg.shapeStripeA || STRIPE_A, fImg.shapeStripeB || '#FFFFFF');
         tc.restore();
       });
       ctx.restore();
@@ -14900,7 +14900,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           textureBaseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
         });
         else paintStripes(tc, fw, fh, fw, fh,
-          fImg.shapeStripeN ?? STRIPE_N_DEFAULT, fImg.shapeStripeDir === 'h' ? 'h' : 'v',
+          fImg.shapeStripeN ?? STRIPE_N_DEFAULT, stripeDirArg(fImg.shapeTex, fImg.shapeStripeDir),
           fImg.shapeStripeA || STRIPE_A, fImg.shapeStripeB || '#FFFFFF');
         tc.restore();
       }
@@ -14911,7 +14911,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           baseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, baseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor });
     } else {
       const tx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
-      if (isArrowShape(fImg.shape) && tx === 'stripe') {
+      if (isArrowShape(fImg.shape) && isStripeLikeTex(tx)) {
         const stA = fImg.shapeStripeA || STRIPE_A;
         strokeWithTexture(ctx, path, fw, fh, JSON.stringify([tx, fImg.shapeDotSize, fImg.shapeDotGap, fImg.shapeDotSquash, fImg.shapeDotColor,
           fImg.shapeStripeN, fImg.shapeStripeDir, stA, fImg.shapeStripeB, fImg.shapeTextureBaseW, fImg.shapeTextureBaseH, scaleFactor]), (tc, cw, ch) => {
@@ -14923,7 +14923,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           });
           else paintStripes(tc, fw, fh, cw, ch,
             stripeCountFor(fImg.shapeStripeN ?? STRIPE_N_DEFAULT, fImg.shapeStripeDir, fw, fh, cw, ch),
-            fImg.shapeStripeDir === 'h' ? 'h' : 'v', stA, fImg.shapeStripeB || '#FFFFFF');
+            stripeDirArg(fImg.shapeTex, fImg.shapeStripeDir), stA, fImg.shapeStripeB || '#FFFFFF');
         });
       } else {
         strokeOutlineBody(ctx, path, fImg.shape, fw, fh, (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
@@ -18872,7 +18872,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         {/* 顏色格常駐：關閉時也看得到（可以先挑好顏色再打開），
                             而且切換時這一列的寬度不會變，就不會閃一下。
                             條紋有兩個顏色，所以放兩塊小的。 */}
-                        {patternType === 'stripe' ? (
+                        {isStripeLikeTex(patternType) ? (
                           <div className="flex items-center gap-1">
                             <button
                               onClick={() => setColorSub('stripeA')}
@@ -18897,14 +18897,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         )}
                       </div>
                     </div>
-                    {patternType === 'stripe' ? (
+                    {isStripeLikeTex(patternType) ? (
                       /* 條紋沒有間距（一條接著一條），只有條數；右邊那一格是方向。
                          滑桿左右各留 8px，畫出來的線才會收在自己那一欄裡。 */
                       <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
                         <div className="px-2">
                           {patternSlider('數量', stripeN, (v: number) => patchPattern({ stripeN: v }), STRIPE_N_MAX)}
                         </div>
-                        <div className="flex flex-col gap-1.5">
+                        <div className="flex flex-col gap-1.5" style={{ visibility: patternType === 'gingham' ? 'hidden' : undefined }}>
                           <span className="text-[9px] font-bold text-[#666] tracking-tighter uppercase">方向</span>
                           <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                             {STRIPE_DIRS.map(([d, label]) => (

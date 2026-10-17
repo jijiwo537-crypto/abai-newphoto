@@ -17,7 +17,7 @@ export const MIST_FRAME_KIND = 'mist-frame';
 export const isMistFrame = (kind?: string) => kind === MIST_FRAME_KIND;
 
 /** 面板「範圍」0～100。預設 0（全白只在框邊上，跟一開始的樣子一樣） */
-export const MIST_RANGE_DEFAULT = -15; // 滑桿上顯示 30（-30 + 30 × 0.5）
+export const MIST_RANGE_DEFAULT = -5; // 滑桿上顯示 50（-30 + 50 × 0.5）
 /** 面板「羽化」0～100。預設 50 */
 export const MIST_FEATHER_DEFAULT = 50;
 /** 面板「圓角」0～100（0 圓角方形、100 橢圓）。預設 100 */

@@ -16,7 +16,7 @@ import { spacedTextureRadius } from './textureSpacing';
 const REF_W = 1000;
 
 /** 紋理的種類 */
-export type TexKind = 'none' | 'dot' | 'star' | 'heart' | 'stripe';
+export type TexKind = 'none' | 'dot' | 'star' | 'heart' | 'stripe' | 'gingham';
 
 /** 每個紋理選單都用這一份，順序與字都一致 */
 export const TEX_OPTIONS: [TexKind, string][] = [
@@ -25,7 +25,13 @@ export const TEX_OPTIONS: [TexKind, string][] = [
   ['star', '星星'],
   ['heart', '愛心'],
   ['stripe', '條紋'],
+  ['gingham', '格紋'],
 ];
+/** 條紋類（條紋、格紋）：用同一組條數與兩個顏色 */
+export const isStripeLikeTex = (t?: string) => t === 'stripe' || t === 'gingham';
+/** 畫條紋時要傳的方向：格紋固定 'g'（直的、橫的都有） */
+export const stripeDirArg = (tex: string | undefined, dir: string | undefined): 'h' | 'v' | 'g' =>
+  tex === 'gingham' ? 'g' : dir === 'h' ? 'h' : 'v';
 
 /** 條紋預設的兩個顏色：第一個統一淡藍 #A8C3E6（遮罩、圖形、文字都一樣），第二個純白。 */
 export const STRIPE_A = '#A8C3E6';
@@ -104,9 +110,10 @@ export const stripeBand = (span: number, count = STRIPE_N_DEFAULT) => {
 export const paintStripesRect = (
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
-  count = STRIPE_N_DEFAULT, dir: 'h' | 'v' = STRIPE_DIR_DEFAULT, a = STRIPE_A, b = STRIPE_B,
+  count = STRIPE_N_DEFAULT, dir: 'h' | 'v' | 'g' = STRIPE_DIR_DEFAULT, a = STRIPE_A, b = STRIPE_B,
 ) => {
   if (w <= 0 || h <= 0) return;
+  if (dir === 'g') { ctx.save(); paintGinghamAt(ctx, 0, 0, w, h, count, a, b); ctx.restore(); return; }
   const span = dir === 'h' ? h : w;
   const { band, n } = stripeBand(span, count);
   /* ── 為什麼是「先鋪滿 a，再只畫 b」───────────────────────────────
@@ -125,6 +132,30 @@ export const paintStripesRect = (
     else ctx.fillRect(i * band, 0, band, h);
   }
   ctx.restore();
+};
+
+/**
+ * 格紋（野餐布那種）：直的、橫的條紋各一組，條紋本身是第一個顏色的一半透明度，
+ * 直條與橫條交叉的那一格才是完整的第一個顏色；其餘是第二個顏色（底色）。
+ * 格子是正方形：橫向切成 count 條，直向照同樣的寬度排。
+ */
+export const paintGinghamAt = (
+  ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number,
+  count = STRIPE_N_DEFAULT, a = STRIPE_A, b = STRIPE_B,
+) => {
+  const { band, n } = stripeBand(w, count);
+  if (!(band > 0)) return;
+  const ny = Math.max(1, Math.round(h / band)), bh = h / ny;
+  ctx.fillStyle = b;
+  ctx.fillRect(x0, y0, w, h);
+  ctx.fillStyle = a;
+  const ga = ctx.globalAlpha;
+  // 直條、橫條各半透明；交叉處先被畫兩次，下面再用完整顏色蓋過去
+  ctx.globalAlpha = ga * .5;
+  for (let i = 1; i < n; i += 2) ctx.fillRect(x0 + i * band, y0, band, h);
+  for (let j = 1; j < ny; j += 2) ctx.fillRect(x0, y0 + j * bh, w, bh);
+  ctx.globalAlpha = ga;
+  for (let i = 1; i < n; i += 2) for (let j = 1; j < ny; j += 2) ctx.fillRect(x0 + i * band, y0 + j * bh, band, bh);
 };
 
 export interface PatternOpts {
@@ -150,9 +181,9 @@ export const paintPattern = (
   o: PatternOpts,
 ) => {
   if (!o || o.type === 'none' || w <= 0 || h <= 0) return;
-  if (o.type === 'stripe') {
+  if (isStripeLikeTex(o.type)) {
     paintStripesRect(ctx, w, h, o.stripeN ?? STRIPE_N_DEFAULT,
-      o.stripeDir === 'h' ? 'h' : 'v', o.stripeA || STRIPE_A, o.stripeB || STRIPE_B);
+      stripeDirArg(o.type, o.stripeDir), o.stripeA || STRIPE_A, o.stripeB || STRIPE_B);
     return;
   }
   const s = w / REF_W;

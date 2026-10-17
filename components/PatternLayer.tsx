@@ -20,7 +20,15 @@ export const PatternLayer: React.FC<{w:number;h:number;opts:PatternOpts}> = Reac
     {o.type==='star'?<polygon points={star}/>:o.type==='heart'?<path d={`M0 ${s*.85} C${-s*1.5} ${-s*.2} ${-s*.55} ${-s*1.15} 0 ${-s*.4} C${s*.55} ${-s*1.15} ${s*1.5} ${-s*.2} 0 ${s*.85} Z`}/>:<circle r={r}/>}
   </g>;
   return <svg data-pattern-vector="1" className="absolute inset-0 pointer-events-none" width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{maxWidth:'none',overflow:'hidden'}}>
-    {o.type==='stripe'?<><rect width={w} height={h} fill={o.stripeA||STRIPE_A}/>{Array.from({length:n},(_,i)=>i%2?<rect key={i} x={horizontal?0:i*band} y={horizontal?i*band:0} width={horizontal?w:band} height={horizontal?band:h} fill={o.stripeB||STRIPE_B}/>:null)}</>:<>
+    {o.type==='gingham'?(()=>{
+      /* 格紋：直條、橫條各是第一個顏色的一半透明度，交叉處是完整的第一個顏色，其餘是底色 */
+      const g=stripeBand(w,o.stripeN),ny=Math.max(1,Math.round(h/Math.max(1e-6,g.band))),bh=h/ny,A=o.stripeA||STRIPE_A;
+      const cols=Array.from({length:g.n},(_,i)=>i).filter(i=>i%2),rows=Array.from({length:ny},(_,j)=>j).filter(j=>j%2);
+      return <><rect width={w} height={h} fill={o.stripeB||STRIPE_B}/>
+        {cols.map(i=><rect key={'v'+i} x={i*g.band} y={0} width={g.band} height={h} fill={A} fillOpacity={.5}/>)}
+        {rows.map(j=><rect key={'h'+j} x={0} y={j*bh} width={w} height={bh} fill={A} fillOpacity={.5}/>)}
+        {cols.flatMap(i=>rows.map(j=><rect key={i+'-'+j} x={i*g.band} y={j*bh} width={g.band} height={bh} fill={A}/>))}</>;
+    })():o.type==='stripe'?<><rect width={w} height={h} fill={o.stripeA||STRIPE_A}/>{Array.from({length:n},(_,i)=>i%2?<rect key={i} x={horizontal?0:i*band} y={horizontal?i*band:0} width={horizontal?w:band} height={horizontal?band:h} fill={o.stripeB||STRIPE_B}/>:null)}</>:<>
       <defs><pattern id={id} patternUnits="userSpaceOnUse" x={w/2} y={h/2} width={dx} height={dy*2}>
         <g fill={o.color||'#FFFFFF'}>{glyph(0,0)}{glyph(dx,0)}{glyph(dx/2,dy)}{glyph(0,dy*2)}{glyph(dx,dy*2)}</g>
       </pattern></defs><rect width={w} height={h} fill={`url(#${id})`}/>

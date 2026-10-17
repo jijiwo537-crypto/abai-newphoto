@@ -638,7 +638,7 @@ export const paintDots = (
   }
 };
 
-import { patternGlyph, stripeBand, STRIPE_A as SA, STRIPE_B as SB,
+import { patternGlyph, stripeBand, paintGinghamAt, stripeDirArg, STRIPE_A as SA, STRIPE_B as SB,
   STRIPE_N_DEFAULT as SN_DEF, type TexKind } from './pattern';
 
 /* ── 紋理 ───────────────────────────────────────────────────────────
@@ -648,7 +648,7 @@ import { patternGlyph, stripeBand, STRIPE_A as SA, STRIPE_B as SB,
 export type ShapeTex = TexKind;
 export const texOf = (o: { tex?: string; dots?: boolean } | null | undefined): ShapeTex => {
   const t = o?.tex;
-  if (t === 'dot' || t === 'star' || t === 'heart' || t === 'stripe' || t === 'none') return t;
+  if (t === 'dot' || t === 'star' || t === 'heart' || t === 'stripe' || t === 'gingham' || t === 'none') return t;
   return o?.dots ? 'dot' : 'none';
 };
 
@@ -666,8 +666,10 @@ export { STRIPE_A, STRIPE_B } from './pattern';
 export const paintStripes = (
   c: CanvasRenderingContext2D,
   unitW: number, unitH: number, covW: number, covH: number,
-  count = SN_DEF, dir: 'h' | 'v' = 'v', a = SA, b = SB,
+  count = SN_DEF, dir: 'h' | 'v' | 'g' = 'v', a = SA, b = SB,
 ) => {
+  // 格紋：原點在中心
+  if (dir === 'g') { paintGinghamAt(c, -covW / 2, -covH / 2, covW, covH, count, a, b); return; }
   const span = dir === 'h' ? covH : covW;
   const { band, n } = stripeBand(span, count);
   // 原點在中心，所以從 -span/2 開始鋪
@@ -722,9 +724,9 @@ export const paintTex = (
     paintDots(c, baseW, baseH, covW, covH,
       o.texSize ?? o.dotSize ?? 50, o.texGap ?? o.dotGap ?? 20,
       o.texColor || o.dotColor || SHAPE_TEX_COLOR, t, o.texSquash ?? o.dotSquash ?? 50);
-  } else if (t === 'stripe') {
+  } else if (t === 'stripe' || t === 'gingham') {
     paintStripes(c, unitW, unitH, covW, covH,
-      o.stripeN ?? SN_DEF, o.stripeDir === 'h' ? 'h' : 'v',
+      o.stripeN ?? SN_DEF, stripeDirArg(t, o.stripeDir),
       o.stripeA || SA, o.stripeB || SB);
   }
 };
@@ -919,7 +921,7 @@ export const drawHoleShape = (
   if (!solid) {
     // 邊框：紋理懸空畫在框裡面，不碰到線（見 paintTextureInsideOutline）。條紋不給邊框用。
     const t = texOf(o);
-    if (t === 'none' || t === 'stripe') return;
+    if (t === 'none' || t === 'stripe' || t === 'gingham') return;
     const rec = new Path2D(), proxy: any = new Proxy(rec, { get: (r, k) => k === 'beginPath' ? () => {} : typeof (r as any)[k] === 'function' ? (r as any)[k].bind(r) : (r as any)[k] });
     drawShapePath(proxy, o.hole, 0, 0, size);
     paintTextureInsideOutline(ctx, rec, -bw / 2, -bh / 2, bw, bh, lw,

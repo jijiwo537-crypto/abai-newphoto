@@ -86,7 +86,7 @@ import {
 const drawTextShape: typeof drawTextShapeRaw = (ctx,type,text,x,y,size,fill,out=false,angle=0) =>
   drawTextShapeRaw(ctx,type,text,x,y,size,fill,out,angle,true);
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
-import { paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
+import { paintPattern, paintStripesRect, isStripeLikeTex, stripeDirArg, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
 import { paintMaskTexture, maskTextureSizeFromUi, maskTextureSizeToUi, maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
 import { spacedTextureRadius, maskTextureGapFromUi, maskTextureGapToUi } from '../utils/textureSpacing';
@@ -6095,12 +6095,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       else { fCtx.fillStyle = maskColor; fCtx.fillRect(0, 0, fW, fH); }
     }
 
-    if (patternType === 'stripe' && !maskHit) {
+    if (isStripeLikeTex(patternType) && !maskHit) {
       /* 條紋鋪滿整片遮罩。跟點點那幾種一樣畫在 fCanvas 上，
          所以「圖案挖穿遮罩」那一段完全不用改。 */
       fCtx.save();
       fCtx.beginPath(); fCtx.rect(0, 0, maskW, maskH); fCtx.clip();
-      paintStripesRect(fCtx, maskW, maskH, stripeN, stripeDir, stripeA, stripeB);
+      paintStripesRect(fCtx, maskW, maskH, stripeN, stripeDirArg(patternType, stripeDir), stripeA, stripeB);
       fCtx.restore();
     } else if (patternType !== 'none' && !maskHit) {
       fCtx.fillStyle = dotColor; 
@@ -7069,7 +7069,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.globalAlpha = A.a;
         // Stable per-pattern assignment: changing zoom or redrawing must not reroll colors.
         const stripeSeed = String(h.id).split('').reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
-        const patternFill = patternType === 'stripe' && !maskImageState ? (stripeSeed % 2 ? stripeA : stripeB) : basePat;
+        const patternFill = isStripeLikeTex(patternType) && !maskImageState ? (stripeSeed % 2 ? stripeA : stripeB) : basePat;
         ctx.fillStyle = patternFill;
         // pattern 錨在目前的原點，所以先位移，讓遮罩上的 (mxp,myp) 正好落在圖案位置
         ctx.translate(hx - mxp, hy - myp);
@@ -7697,7 +7697,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             tc.restore();
           }, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth,
             baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s });
-        } else if (isArrowShape(o.kind) && texOf(o) === 'stripe') {
+        } else if (isArrowShape(o.kind) && isStripeLikeTex(texOf(o))) {
           /* 邊框箭頭的紋理畫在線條上（strokeWithTexture） */
           const tb = { textureBaseW: ((o as any).textureBaseW || o.w) * s, textureBaseH: ((o as any).textureBaseH || o.h) * s };
           strokeWithTexture(ctx, shapeP, bw, bh, JSON.stringify([texOf(o), o.dotSize, o.dotGap, o.dotSquash, o.dotColor,
@@ -11624,7 +11624,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       </div>
                       {/* 顏色格常駐：關閉時也看得到，切換時這一列的寬度不變、不會閃。
                           條紋有兩個顏色，所以放兩塊小的；其他三種是一塊大的。 */}
-                      {patternType === 'stripe' ? (
+                      {isStripeLikeTex(patternType) ? (
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => setColorPickerTarget('stripeA')}
@@ -11649,7 +11649,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       )}
                     </div>
                   </div>
-                  {patternType === 'stripe' ? (
+                  {isStripeLikeTex(patternType) ? (
                     /* 條紋沒有間距（一條接著一條），只有條數；右邊那一格是方向 */
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
                       {/* 左右各留 8px：滑桿為了好按，本人比外框寬 14px（見 styles.css
@@ -11658,7 +11658,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       <div className="px-2">
                         <CompactSlider wide label="數量" value={stripeN} min={0} max={STRIPE_N_MAX} step={1} onChange={setStripeN} />
                       </div>
-                      <div className="flex flex-col">
+                      <div className="flex flex-col" style={{ visibility: patternType === 'gingham' ? 'hidden' : undefined }}>
                         <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">方向</div>
                         <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                           {STRIPE_DIRS.map(([d, label]) => (
@@ -12070,7 +12070,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                   ))}
                                 </div>
                                 {/* 條紋有兩個顏色，所以放兩塊色票；點點只有一塊 */}
-                                {tex === 'stripe' ? (
+                                {isStripeLikeTex(tex) ? (
                                   <div className="flex items-center gap-1">
                                     <button
                                       onClick={() => setColorPickerTarget('shapeStripeA')}
@@ -12095,7 +12095,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 )}
                               </div>
                             </div>
-                            {tex === 'stripe' ? (
+                            {isStripeLikeTex(tex) ? (
                               /* 條紋沒有間距可以調（一條接著一條），只有條數。
                                  右邊那一格放直式／橫式，跟滑桿並排。 */
                               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
@@ -12105,7 +12105,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                     ? shapeSlider('數量', clefStripeToUi(sel.stripeN ?? CLEF_TEX_DEFAULTS.stripeN), 0, CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, (v: number) => patch({ stripeN: clefStripeFromUi(v) }))
                                     : shapeSlider('數量', sel.stripeN ?? STRIPE_N_DEFAULT, 0, STRIPE_N_MAX, (v: number) => patch({ stripeN: v }))}
                                 </div>
-                                <div className="space-y-1.5">
+                                <div className="space-y-1.5" style={{ visibility: tex === 'gingham' ? 'hidden' : undefined }}>
                                   <span className="text-[11px] font-bold text-white/70">方向</span>
                                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                                     {STRIPE_DIRS.map(([d, label]) => (
