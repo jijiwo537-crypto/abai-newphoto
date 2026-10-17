@@ -844,6 +844,7 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
         const path = new Path2D(shapePathD(o.kind, bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k));
         if (sw > 0) {
           g.save(); g.lineJoin = 'round'; g.miterLimit = 2; g.lineWidth = solid ? sw * 2 : lw + sw * 2;
+          if (SPECIAL_LINE_KINDS.has(o.kind)) g.lineCap = 'square';
           // 選中框的小方塊是方的，描邊轉角也要是直角（其他圖形維持圓角）
           if (TRACK_SQUARE_KINDS.has(o.kind as string)) { g.lineJoin = 'miter'; g.miterLimit = 4; }
           if (!strokeCompositeShape(g, o.kind, bw, bh, o.innerSize)) g.stroke(path);
@@ -946,7 +947,7 @@ export const shapePathD = (
     }
     return poly(pts);
   };
-  if (STITCH_LINE_KINDS.has(kind)) return stitchLineD(kind, w, h);
+  { const [sk, sg] = kind.split('~'); if (STITCH_LINE_KINDS.has(sk)) return stitchLineD(sk, w, h, sg === undefined ? undefined : Number(sg)); }
   switch (kind) {
     case 'circle':
     case 'circle-star-dual':
@@ -1304,22 +1305,30 @@ export const STITCH_LINE_KINDS = new Set(['stitch-plus', 'stitch-x', 'slash']);
 /** 波浪類線條：線寬不隨長度變粗、只能左右拉、拉長增加元素。 */
 export const WAVE_LIKE_KINDS = new Set(['wave', 'lightning-wave', ...STITCH_LINE_KINDS]);
 SPECIAL_LINE_KINDS.add('stitch-plus'); SPECIAL_LINE_KINDS.add('stitch-x'); SPECIAL_LINE_KINDS.add('slash');
-const stitchLineD = (kind: string, w: number, h: number) => {
+/** 刺繡線條的間距（滑桿 0～100）預設值 */
+export const stitchGapDefault = (kind?: string) => kind === 'stitch-plus' ? 10 : kind === 'stitch-x' ? 18 : 40;
+/** 把間距帶進路徑用的 kind（shapePathD 認得 'stitch-plus~30'）；其他圖形原樣 */
+export const stitchKindD = (kind: string, gap?: number) =>
+  gap === undefined || !STITCH_LINE_KINDS.has(kind) ? kind : `${kind}~${Math.round(gap)}`;
+const stitchLineD = (kind: string, w: number, h: number, gapUi?: number) => {
   const r3 = (v: number) => Math.round(v * 1000) / 1000;
   const seg = (x1: number, y1: number, x2: number, y2: number) => `M ${r3(x1)} ${r3(y1)} L ${r3(x2)} ${r3(y2)}`;
   const cy = h / 2, a = h * .4, parts: string[] = [];
+  const gap = Math.max(0, Math.min(100, gapUi ?? stitchGapDefault(kind))) / 100 * h;
   if (kind === 'slash') {
-    // 45° 斜線，間距約半個高
-    const span = Math.max(0, w - a * 2), n = Math.max(1, Math.round(span / (h * .5)) + 1), step = n > 1 ? span / (n - 1) : 0;
+    // 45° 斜線：間距是相鄰兩條的水平距離
+    const pitch = h * .1 + gap;
+    const span = Math.max(0, w - a * 2), n = Math.max(1, Math.round(span / pitch) + 1), step = n > 1 ? span / (n - 1) : 0;
     for (let i = 0; i < n; i++) { const cx = n > 1 ? a + step * i : w / 2; parts.push(seg(cx - a, cy + a, cx + a, cy - a)); }
     return parts.join(' ');
   }
-  // 十字、叉叉：一格約一個高，格數取整數平均排滿
-  const n = Math.max(1, Math.round(w / h)), cell = w / n, r = Math.min(a, cell * .4);
+  // 十字、叉叉：元素大小固定，間距是兩個元素之間空出來的寬，格數取整數平均排滿
+  const q = kind === 'stitch-plus' ? a : a * .8;
+  const n = Math.max(1, Math.round(w / (q * 2 + gap))), cell = w / n;
   for (let i = 0; i < n; i++) {
     const cx = cell * (i + .5);
-    if (kind === 'stitch-plus') { parts.push(seg(cx, cy - a, cx, cy + a)); parts.push(seg(cx - r, cy, cx + r, cy)); }
-    else { const q = Math.min(r, a) * .8; parts.push(seg(cx - q, cy - q, cx + q, cy + q)); parts.push(seg(cx - q, cy + q, cx + q, cy - q)); }
+    if (kind === 'stitch-plus') { parts.push(seg(cx, cy - a, cx, cy + a)); parts.push(seg(cx - q, cy, cx + q, cy)); }
+    else { parts.push(seg(cx - q, cy - q, cx + q, cy + q)); parts.push(seg(cx - q, cy + q, cx + q, cy - q)); }
   }
   return parts.join(' ');
 };
@@ -1583,8 +1592,8 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   // 線條
   { id: 'line-h', kind: 'line', filled: false, rot: 0, ratio: 0.08 },
   // 刺繡類（實心）：一新增就是橫的，長度約 8 顆
-  { id: 'line-stitch-plus', kind: 'stitch-plus', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.2 },
-  { id: 'line-stitch-x', kind: 'stitch-x', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.2 },
+  { id: 'line-stitch-plus', kind: 'stitch-plus', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.222 },
+  { id: 'line-stitch-x', kind: 'stitch-x', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.244 },
   { id: 'line-slash', kind: 'slash', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.36 },
   // 線條一律橫的生成（跟第一條一樣）
   { id: 'line-wave', kind: 'wave', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.17 },
@@ -2969,18 +2978,19 @@ export const ShapeEditorPanel: React.FC<{
                   onPick:c=>onChange({shapeInnerColor:c})})} />}
             </div>
           )}
-          {hasWidth && <div className={`grid ${hasDash ? 'grid-cols-2' : 'grid-cols-1'} gap-5 px-2`}>
+          {hasWidth && <div className={`grid ${hasDash || STITCH_LINE_KINDS.has(layer.shape || '') ? 'grid-cols-2' : 'grid-cols-1'} gap-5 px-2`}>
             {isGridShape ? slider(GRID_DOT_KINDS.has(layer.shape!) ? '大小' : '粗細', Math.round(((layer.shapeLineW ?? 6) - 6) / 12 * 100), 0, 100,
               v => onChange({ shapeLineW: 6 + v * .12 }))
               : slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100, v => onChange({ shapeLineW: v / 10 }))}
             {hasDash && slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
+            {STITCH_LINE_KINDS.has(layer.shape || '') && slider('間距', Math.round(layer.shapeLineGap ?? stitchGapDefault(layer.shape)), 0, 100, v => onChange({ shapeLineGap: v }))}
           </div>}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
           {!isBlurShape(layer.shape) && !noDecor && <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
-              {slider('發光', shapeGlowToUi(layer.shapeGlow as any, outlineShape), 0, 100,
-                v => onChange({ shapeGlow: shapeGlowFromUi(v, outlineShape) } as any))}
+              {slider('發光', shapeGlowToUi(layer.shapeGlow as any, outlineShape || isLine), 0, 100,
+                v => onChange({ shapeGlow: shapeGlowFromUi(v, outlineShape || isLine) } as any))}
             </div>
             <ColorPick compact label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
               colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })}
@@ -5009,6 +5019,8 @@ interface FloatingImage {
   holeType?: string;
   /** 線寬，1 個單位 = 外框長邊的 1/160（滑桿顯示成 1~100，存進來是 ÷10） */
   shapeLineW?: number;
+  /** 刺繡線條的間距（0～100） */
+  shapeLineGap?: number;
   /** 新增／首次挤压时的线宽基准，挤压只改变轮廓比例、不改变笔画粗细 */
   shapeLineBase?: number;
   /** 点点／星星／爱心纹理的原始坐标系；挤压时整层随宽高变形 */
@@ -5843,10 +5855,10 @@ const GlCanvasHost: React.FC<{ canvas: HTMLCanvasElement; style: React.CSSProper
 const classicScenePaths = new Map<string, Path2D>();
 const classicScenePath = (image: FloatingImage, ringReveal = 1) => {
   const key = [image.shape, image.width, image.height, image.shapeTextureBaseW,
-    image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, ringReveal].join('|');
+    image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, image.shapeLineGap, ringReveal].join('|');
   let path = classicScenePaths.get(key);
   if (!path) {
-    path = new Path2D(shapePathD(image.shape!, image.width, image.height,
+    path = new Path2D(shapePathD(stitchKindD(image.shape!, image.shapeLineGap), image.width, image.height,
       image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height,
       ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325 * (GRID_DOT_KINDS.has(image.shape!) ? Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6)) : 1), ringReveal));
     classicScenePaths.set(key, path);
@@ -5954,6 +5966,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           ctx.setLineDash([]);
           ctx.strokeStyle = image.shapeStrokeColor || '#000000';
           ctx.lineWidth = (solid ? 0 : lw) + outer * 2;
+          // 線條兩端也要描到：本體是平頭，描邊用方頭往外多出一圈
+          if (SPECIAL_LINE_KINDS.has(image.shape)) ctx.lineCap = 'square';
           // 選中框的小方塊是方的，描邊轉角也要是直角（其他圖形維持圓角）
           if (TRACK_SQUARE_KINDS.has(image.shape as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
           if (!strokeCompositeShape(ctx, image.shape, drawW, drawH, image.shapeInnerSize)) ctx.stroke(path);
@@ -14855,7 +14869,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return;
     }
     const path = new Path2D(shapePathD(
-      fImg.shape!, fw, fh,
+      stitchKindD(fImg.shape!, fImg.shapeLineGap), fw, fh,
       (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
       (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
       ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor / 160) * 2.325

@@ -52,7 +52,7 @@ import {
   ADD_SHAPE_ITEMS, fillTrackSquares, TRACK_SQUARE_KINDS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeTexDisabled, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, ScatterKindsPicker, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
-  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, WAVE_LIKE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
+  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, WAVE_LIKE_KINDS, STITCH_LINE_KINDS, stitchKindD, stitchGapDefault, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -7593,7 +7593,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else {
         const shapeP = shapePathBox(
-          o.kind, bw, bh,
+          stitchKindD(o.kind, (o as any).lineGap), bw, bh,
           ((o as any).textureBaseW || o.w) * s,
           ((o as any).textureBaseH || o.h) * s,
           (((o as any).lineBase || Math.max(o.w, o.h)) * s / 160) * 2.325
@@ -7677,6 +7677,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#000000';
           ctx.lineWidth = solid ? sw * 2 : lw + sw * 2;
+          // 線條兩端也要描到：本體是平頭，描邊用方頭往外多出一圈
+          if (SPECIAL_LINE_KINDS.has(o.kind)) ctx.lineCap = 'square';
           // 選中框的小方塊是方的，描邊轉角也要是直角（其他圖形維持圓角）
           if (TRACK_SQUARE_KINDS.has(o.kind as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
           if (!strokeCompositeShape(ctx, o.kind, bw, bh, o.innerSize)) paintShapePath(false);
@@ -11972,11 +11974,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 onClick={()=>setColorPickerTarget('shapeInner')} />}
                             </div>
                           )}
-                          {hasWidth && <div className={`grid ${hasDash ? 'grid-cols-2' : 'grid-cols-1'} gap-5 px-2`}>
+                          {hasWidth && <div className={`grid ${hasDash || STITCH_LINE_KINDS.has(sel.kind) ? 'grid-cols-2' : 'grid-cols-1'} gap-5 px-2`}>
                             {isGrid ? shapeSlider(GRID_DOT_KINDS.has(sel.kind) ? '大小' : '粗細', Math.round(((sel.lineW ?? 6) - 6) / 12 * 100), 0, 100,
                               (v: number) => patch({ lineW: 6 + v * .12 }))
                               : shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }))}
                             {hasDash && shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
+                            {STITCH_LINE_KINDS.has(sel.kind) && shapeSlider('間距', Math.round((sel as any).lineGap ?? stitchGapDefault(sel.kind)), 0, 100, (v: number) => patch({ lineGap: v } as any))}
                           </div>}
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
@@ -11985,11 +11988,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             <div className="flex-1 min-w-0">
                               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
                               {/* 邊框類的上限是實心的六成（shapeGlowFromUi） */}
-                              {shapeSlider('發光', shapeGlowToUi(sel.glow, outlineShape), 0, 100,
+                              {shapeSlider('發光', shapeGlowToUi(sel.glow, outlineShape || isLine), 0, 100,
                                 (v: number) => patch(v > 0 && !sel.glowInit
                                   /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
-                                  ? { glow: shapeGlowFromUi(v, outlineShape), glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
-                                  : { glow: shapeGlowFromUi(v, outlineShape) }))}
+                                  ? { glow: shapeGlowFromUi(v, outlineShape || isLine), glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                                  : { glow: shapeGlowFromUi(v, outlineShape || isLine) }))}
                             </div>
                             <ColorPick compact label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
