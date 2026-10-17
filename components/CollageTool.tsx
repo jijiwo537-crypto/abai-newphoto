@@ -7643,7 +7643,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             ctx.beginPath();
             /* 半像素重疊只負責蓋住 clip 的抗鋸齒縫；兩段位移在交界相同，
                不會再產生較白或較粗的接線。 */
-            ctx.rect(x - .5, -amp - 2 * s, x1 - x + 1, bh + amp * 2 + 4 * s);
+            /* 發光會長到框外：第一片往左、最後一片往右（全部顯示時）、上下都不切 */
+            const far = Math.max(bw, bh) * 2 + 64 * s;
+            const xl = i === 0 ? -far : x - .5, xr = x1 >= bw - 1e-3 ? bw + far : x1 + .5;
+            ctx.rect(xl, -far, xr - xl, bh + far * 2);
             ctx.clip();
             ctx.transform(1, slope, 0, 1, 0, dy0 - slope * x);
             fill ? ctx.fill(shapeP) : ctx.stroke(shapeP);
@@ -8134,7 +8137,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const cx = (o.x + o.w / 2 + f.dx * o.w) * s;
       const cy = (o.y + o.h / 2 + f.dy * o.h) * s;
       const rotated = aabbOf((o.w || 1) * (f.k || 1), (o.h || 1) * (f.k || 1), (o.rot || 0) + (f.rot || 0));
-      const pad = Math.max(12 * s, Math.max(o.w || 1, o.h || 1) * s * .24);
+      // 留給發光的餘裕：最大那層模糊是長邊 × 0.135 × 強度，散到約 1.3 倍
+      const pad = Math.max(12 * s, Math.max(o.w || 1, o.h || 1) * s * (.24 + .19 * glowAmount(o.glow)));
       const x0 = Math.max(0, Math.floor(cx - rotated.bw * s / 2 - pad));
       const x1 = Math.min(targetCanvas.width, Math.ceil(cx + rotated.bw * s / 2 + pad));
       const y0 = Math.max(0, Math.floor(cy - rotated.bh * s / 2 - pad));

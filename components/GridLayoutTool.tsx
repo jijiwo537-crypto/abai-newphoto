@@ -6169,7 +6169,8 @@ const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image: Floati
     return;
   }
   const amp = Math.min(10, image.height * .065) * Math.max(.15, (image.mo?.amp ?? 50) / 100) * mix;
-  const pad = 100, span = image.width + pad * 2;
+  // 發光會長到框外（最大那層模糊＝長邊 × 0.135 × 強度），切片的範圍要包住它，不然發光被切掉
+  const pad = Math.max(100, Math.max(image.width, image.height) * .5 * glowAmount(image.shapeGlow as any) + 40), span = image.width + pad * 2;
   const reveal = Math.max(0, Math.min(1, motionFrame?.gridReveal ?? 1));
   const step = span / 64;
   for (let i = 0; i < 64; i++) {
@@ -15081,7 +15082,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const amplitude = Math.max(2 * scaleFactor,
           Math.min(Math.max(1, bw) * .055, Math.max(1, bh) * .13)
           * Math.max(.15, (fImg.mo?.amp ?? 50) / 100) * (frame.waveMix ?? 1));
-        const pad = Math.max(24 * scaleFactor, Math.max(bw, bh) * .22, amplitude * 2 + 4);
+        // 留給發光：最大那層模糊是長邊 × 0.135 × 強度，散到約 1.3 倍
+        const pad = Math.max(24 * scaleFactor, Math.max(bw, bh) * (.22 + .19 * glowAmount((fImg.shapeGlow ?? (fImg as any).glow) as any)), amplitude * 2 + 4);
         const W = Math.max(2, Math.ceil(bw + pad * 2));
         const H = Math.max(2, Math.ceil(bh + pad * 2));
         const off = scratch(`wave-object|${fImg.id}`, W, H);
