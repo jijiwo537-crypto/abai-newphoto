@@ -1536,7 +1536,7 @@ export const arrowResize = (w: number, h: number, shaftUi: number, kind?: string
 };
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
-export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number; glyphRatio?: number };
+export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number; glyphRatio?: number; glyphGap?: number };
 /** 「新增圖形」選單的五個區塊。創意拼圖與跨頁拼圖都用這一個，順序寫在 utils/pickerOrder.ts。 */
 /** 新分類「邊框」：霧白邊框（亮角那種霧，但四個邊也有） */
 export const shapePickerSections = () => {
@@ -1616,7 +1616,7 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   // 刺繡類（實心）：一新增就是橫的，長度約 8 顆
   { id: 'line-stitch-plus', kind: 'stitch-plus', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.206 },
   { id: 'line-stitch-x', kind: 'stitch-x', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.247 },
-  { id: 'line-slash', kind: 'slash', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.532 },
+  { id: 'line-slash', kind: 'slash', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.222, glyphGap: 64 },
   // 線條一律橫的生成（跟第一條一樣）
   { id: 'line-wave', kind: 'wave', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.17 },
   { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.17 },
@@ -2091,7 +2091,8 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
   const ratio = isLine ? 0 : ((item as any).glyphRatio ?? (item as any).ratio ?? 0);
   const bw = BOX;
   const bh = isLine ? 0 : (ratio ? BOX * ratio : BOX);
-  const src = shapePathD(item.kind, bw, bh);
+  // 圖標可以用自己的間距（斜線預設很密，圖標上元素少一點、高度跟其他線條一致）
+  const src = shapePathD(stitchKindD(item.kind, (item as any).glyphGap), bw, bh);
   const solid = item.filled && (!isLine || GRID_DOT_KINDS.has(item.kind));
 
   const fit = SHAPE_FIT[item.kind] || [0, 0, 1, 1];
