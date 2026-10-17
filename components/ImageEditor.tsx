@@ -1816,6 +1816,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   // Single Canvas for all rendering
   const displayCanvasRef = useRef<HTMLCanvasElement>(null);
   const fxSurfaceRef=useRef<HTMLCanvasElement>(null);
+  /* 手機記憶體吃緊時瀏覽器會收走 GPU 的 context：收走後那張畫布再也不能用，
+     只能走慢很多的 2D 備用路徑（點特效要等一下）。所以一被收走就換一張全新的畫布，
+     下一格就回到 GPU，速度跟平常一樣。 */
+  const [surfaceGen,setSurfaceGen]=useState(0);
+  const onSurfaceLost=useCallback(()=>{
+    requestAnimationFrame(()=>{
+      for(const r of [softPresentRef,halationPresentRef,leakPresentRef,blurPresentRef,simplePresentRef]){try{r.current?.dispose();}catch{}r.current=null;}
+      try{surfaceGpuRef.current?.dispose();}catch{}
+      surfaceGpuRef.current=undefined;surfaceSrcKeyRef.current='';
+      fxInputKeyRef.current='';legacyPreviewRef.current=null;
+      showFxSurface(false);
+      setSurfaceGen(g=>g+1);
+      isDirtyRef.current=true;
+    });
+  },[]);
   const fxSurfaceShownRef=useRef(false);
   const fxInputKeyRef=useRef('');
   const legacyPreviewRef=useRef<{kind:LegacyKind;key:string}|null>(null);
@@ -7219,7 +7234,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     style={{ objectFit: 'fill' }}
                     className="absolute inset-0 w-full h-full pointer-events-auto rounded-sm"
                 />
-                <canvas ref={el=>{(fxSurfaceRef as React.MutableRefObject<HTMLCanvasElement|null>).current=el;if(el)preferWebgl2(el);}} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
+                <canvas key={surfaceGen} ref={el=>{(fxSurfaceRef as React.MutableRefObject<HTMLCanvasElement|null>).current=el;if(el){preferWebgl2(el);el.addEventListener('webglcontextlost',onSurfaceLost,{once:true});}}} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
 
                 {/* 換過去了但還在算的時候，壓暗＋轉圈，別讓人以為沒反應。
                     只留轉圈 —— 「渲染中」三個字反而讓人覺得等很久。 */}
