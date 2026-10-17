@@ -2008,7 +2008,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      這個最常見的情境。 */
   /* 6 份在 1800px 預覽約 117 MB，疊上特效的 GPU 緩衝後會超過 iPhone 給單一分頁的
      記憶體上限，Safari 直接把頁面重新載入。2 份仍涵蓋「兩顆濾鏡來回比較」。 */
-  const FILTER_CACHE_KEEP = 2;
+  /* 依裝置的記憶體決定留幾份，而不是一律砍：iPhone（不公開記憶體大小、單一分頁上限最嚴）
+     給 40 MB，約 2 份；記憶體 ≥8GB 的電腦／手機給 120 MB，約 6 份（跟原本一樣快）；
+     其他給 60 MB，約 3 份。照片小的時候一份小，能留的份數自然變多。 */
+  const FILTER_CACHE_BUDGET = (() => {
+    const ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const mem = (navigator as any).deviceMemory as number | undefined;
+    return (ios ? 40 : mem && mem >= 8 ? 120 : 60) * 1024 * 1024;
+  })();
   const cacheOrderRef = useRef<string[]>([]);
   const cacheFilterPixels = useCallback((lutId: string, p: EditorParams, w: number, h: number, lut0: Uint8ClampedArray, lut100: Uint8ClampedArray | null) => {
     const key = cacheKeyOf(lutId, w);
@@ -2016,8 +2023,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const at = order.indexOf(key);
     if (at >= 0) order.splice(at, 1);
     order.push(key);
-    while (order.length > FILTER_CACHE_KEEP) {
+    // 新的這份加上舊的，總量超過預算就從最久沒用的開始丟（至少留新的這份）
+    const bytesOf = (k: string) => { const e = filterPixelCacheRef.current[k]; return e ? e.lut0.byteLength + (e.lut100?.byteLength || 0) : 0; };
+    let total = lut0.byteLength + (lut100?.byteLength || 0);
+    for (const k of order) if (k !== key) total += bytesOf(k);
+    while (order.length > 1 && total > FILTER_CACHE_BUDGET) {
       const drop = order.shift()!;
+      total -= bytesOf(drop);
       delete filterPixelCacheRef.current[drop];
     }
     filterPixelCacheRef.current[key] = {
@@ -2818,6 +2830,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const halationPreparedRef = useRef<{ key: string; source: Uint8ClampedArray; blurred: ImageData } | null>(null);
   const halationLayerRef = useRef<HalationLayer | null>(null);
   const softLayerRef = useRef<HalationLayer | null>(null);
+  const softIdleTimerRef = useRef(0), halationIdleTimerRef = useRef(0);
   const halationPresentRef=useRef<HalationLayer|null>(null),softPresentRef=useRef<HalationLayer|null>(null);
   const leakPresentRef=useRef<HalationLayer|null>(null),blurPresentRef=useRef<HalationLayer|null>(null),simplePresentRef=useRef<HalationLayer|null>(null);
   /** 按了特效卡片：下一幀先讓按鈕／分頁的變化畫出來，再下一幀才算圖。
@@ -2863,7 +2876,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const cancel = afterPaint(step, 900);
     return () => { dead = true; cancel(); window.clearTimeout(timer); };
   }, [activeSrc, activeCategory]);
-  useEffect(()=>()=>{halationLayerRef.current?.dispose();softLayerRef.current?.dispose();halationPresentRef.current?.dispose();softPresentRef.current?.dispose();leakPresentRef.current?.dispose();blurPresentRef.current?.dispose();simplePresentRef.current?.dispose();},[]);
+  useEffect(()=>()=>{clearTimeout(softIdleTimerRef.current);clearTimeout(halationIdleTimerRef.current);halationLayerRef.current?.dispose();softLayerRef.current?.dispose();halationPresentRef.current?.dispose();softPresentRef.current?.dispose();leakPresentRef.current?.dispose();blurPresentRef.current?.dispose();simplePresentRef.current?.dispose();},[]);
   const halationCacheStateRef = useRef<{
     /** 這份快取是「哪一張照片」算出來的。
         批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
@@ -4059,9 +4072,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
     /* 沒在用的獨立特效層把自己的 WebGL context 與整張大小的貼圖還回去：
        疊過柔光／光暈再關掉時，它們原本會一直佔著記憶體到離開編輯器。 */
+    /* 關掉後等 8 秒都沒再開才釋放：來回切換時不用重建（重建要重新編譯著色器，會頓一下）。 */
     if (ctx.canvas === displayCanvasRef.current) {
-      if (!(p.soft > 0) && softLayerRef.current) { softLayerRef.current.dispose(); softLayerRef.current = null; }
-      if (!(p.fringeIntensity > 0) && halationLayerRef.current) { halationLayerRef.current.dispose(); halationLayerRef.current = null; }
+      const idle = (ref: typeof softLayerRef, on: boolean, timer: React.MutableRefObject<number>) => {
+        if (on) { if (timer.current) { clearTimeout(timer.current); timer.current = 0; } return; }
+        if (!ref.current || timer.current) return;
+        timer.current = window.setTimeout(() => { timer.current = 0; ref.current?.dispose(); ref.current = null; }, 8000);
+      };
+      idle(softLayerRef, p.soft > 0, softIdleTimerRef);
+      idle(halationLayerRef, p.fringeIntensity > 0, halationIdleTimerRef);
     }
     if (p.soft > 0) {
       const direct=!baking&&!forceRecalculateEffectsRef.current&&ctx.canvas===displayCanvasRef.current&&fxSurfaceRef.current&&!p.leakOpacity&&!p.fringeIntensity&&!p.vignette&&!p.maskCreated&&!hasActiveFx(p);
