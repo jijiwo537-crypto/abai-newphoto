@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
+import { waveWarp } from '../utils/waveWarp';
 import { createPortal, flushSync } from 'react-dom';
 import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/classicTextureSize';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
@@ -6734,20 +6735,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       const amp = Math.min(10 * dpr, bodyH * .065)
         * Math.max(.15, (image.mo?.amp ?? 50) / 100) * (motionFrame?.waveMix ?? 1);
       const phase = motionFrame?.gridWave ?? 0;
-      const segments = Math.max(32, Math.min(128, Math.ceil(shownW / 8)));
-      const sw = shownW / segments;
-      for (let i = 0; i < segments; i++) {
-        const x = i * sw;
-        const x1 = i + 1 === segments ? shownW : x + sw;
-        const dy0 = Math.sin((x / Math.max(1, W) - phase) * Math.PI * 2) * amp;
-        const dy1 = Math.sin((x1 / Math.max(1, W) - phase) * Math.PI * 2) * amp;
-        const slope = (dy1 - dy0) / Math.max(.001, x1 - x);
-        ctx.save();
-        ctx.beginPath(); ctx.rect(x - .5, 0, x1 - x + 1, H); ctx.clip();
-        ctx.transform(1, slope, 0, 1, 0, dy0 - slope * x);
-        ctx.drawImage(scratch, x - 1, 0, x1 - x + 2, H, x - 1, 0, x1 - x + 2, H);
-        ctx.restore();
-      }
+      // GPU 逐像素正弦位移，沒有直條切片（utils/waveWarp）
+      const warped = waveWarp(scratch, 0, 0, W, H, amp, 1 / Math.max(1, W), -phase, shownW);
+      if (warped) ctx.drawImage(warped.canvas, 0, -warped.padY);
     };
     if (img.complete && img.naturalWidth) draw();
     else img.addEventListener('load', draw, { once: true });
@@ -10766,16 +10756,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H);
     const reveal = f.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, f.gridReveal));
     const shownW = W * reveal, A = amp * dpr, phase = f.gridWave!;
-    const segments = Math.max(32, Math.min(128, Math.ceil(shownW / 8))), sw = shownW / segments;
-    for (let i = 0; i < segments; i++) {
-      const x = i * sw, x1 = i + 1 === segments ? shownW : x + sw;
-      const dy0 = Math.sin((x / W - phase) * Math.PI * 2) * A, dy1 = Math.sin((x1 / W - phase) * Math.PI * 2) * A;
-      const slope = (dy1 - dy0) / Math.max(.001, x1 - x);
-      ctx.save(); ctx.beginPath(); ctx.rect(x - .5, 0, x1 - x + 1, H); ctx.clip();
-      ctx.transform(1, slope, 0, 1, 0, dy0 - slope * x);
-      ctx.drawImage(scratch, x - 1, 0, x1 - x + 2, H, x - 1, 0, x1 - x + 2, H);
-      ctx.restore();
-    }
+    const warped = waveWarp(scratch, 0, 0, W, H, A, 1 / W, -phase, shownW);
+    if (warped) ctx.drawImage(warped.canvas, 0, -warped.padY);
     el.style.visibility = 'hidden';
   }, [layoutMotionCfg]);
   /** 選中的物件有動畫時，選取框（data-chrome-motion）跟著同一格動；工具列藥丸不在這一層，維持不動。
@@ -15085,21 +15067,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const x0 = cx - W / 2;
         const y0 = cy - H / 2;
         const reveal = frame.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, frame.gridReveal));
-        const slices = Math.max(32, Math.min(128, Math.ceil(W / Math.max(1, 5 * scaleFactor))));
-        const sw = W / slices;
-        ctx.save();
-        if (reveal < 1) {
-          ctx.beginPath();
-          ctx.rect(x0, y0 - amplitude - 2, W * reveal, H + amplitude * 2 + 4);
-          ctx.clip();
-        }
-        for (let i = 0; i < slices; i++) {
-          const sx = i * sw;
-          const sampleX = (sx + sw / 2) / W;
-          const dy = Math.sin(sampleX * Math.PI * 2.2 - frame.gridWave * Math.PI * 2) * amplitude;
-          ctx.drawImage(off, sx, 0, sw + .7, H, x0 + sx, y0 + dy, sw + .7, H);
-        }
-        ctx.restore();
+        // GPU 逐像素正弦位移，沒有直條切片（utils/waveWarp）
+        const warped = waveWarp(off, 0, 0, W, H, amplitude, 1.1 / W, -frame.gridWave, W * reveal);
+        if (warped) ctx.drawImage(warped.canvas, x0, y0 - warped.padY);
         continue;
       }
       if (frame) {
@@ -15671,15 +15641,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 const off = waveRaster;
                 const x0 = cx - W / 2, y0 = cy - H / 2;
                 const reveal = f.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, f.gridReveal));
-                const slices = Math.max(32, Math.min(128, Math.ceil(W / Math.max(1, 5 * scaleFactor)))), sw = W / slices;
                 c.save();
                 try {
                   c.globalAlpha *= Math.max(0, Math.min(1, f.a));
-                  if (reveal < 1) { c.beginPath(); c.rect(x0, y0 - amplitude - 2, W * reveal, H + amplitude * 2 + 4); c.clip(); }
-                  for (let i = 0; i < slices; i++) {
-                    const sx = i * sw, dy = Math.sin(((sx + sw / 2) / W) * Math.PI * 2.2 - f.gridWave * Math.PI * 2) * amplitude;
-                    c.drawImage(off, sx, 0, sw + .7, H, x0 + sx, y0 + dy, sw + .7, H);
-                  }
+                  const warped = waveWarp(off, 0, 0, W, H, amplitude, 1.1 / W, -f.gridWave, W * reveal);
+                  if (warped) c.drawImage(warped.canvas, x0, y0 - warped.padY);
                 } finally { c.restore(); }
                 return;
               }

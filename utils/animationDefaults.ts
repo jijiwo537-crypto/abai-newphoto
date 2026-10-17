@@ -10,7 +10,7 @@ export function idleDefaults(kind: string, target: { symbol?: boolean; text?: bo
   if (kind === 'glint-blink') return { amp: 100, speed: .84 };
   if (kind === 'image-breathe' && target.image) return { amp: 100, speed: (70 + 70 * 1.8) / 100 };
   // 波浪：圖形用 0.2～2.0 的刻度（90＝1.82），文字、圖片用 1.0～2.5 的刻度（50＝1.75）
-  if (kind === 'grid-wave') return { amp: target.grid ? 50 : 30, speed: target.shape ? .2 + 90 * .018 : 1.75 };
+  if (kind === 'grid-wave') return { amp: 50, speed: target.shape ? .2 + 90 * .018 : 1.75 };
   return { amp: target.line ? 20 : kind === 'breathe' && target.symbol ? 30 : 50, speed: IDLE_SPEED_DEFAULT };
 }
 

@@ -1,4 +1,5 @@
 
+import { waveWarp } from '../utils/waveWarp';
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { reframeBasePhoto } from '../utils/reframeBasePhoto';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskSampleReach,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
@@ -1070,7 +1071,7 @@ export const MO_DEFAULT: MoCfg = {
 };
 const GRID_WAVE_DEFAULT = { amp: 50, speed: 0.9 } as const;
 /* 非網格物件的波浪滑桿仍映射 100～250 的實際速度；介面 50 對應 175。 */
-const NON_GRID_WAVE_DEFAULT = { amp: 30, speed: 1.75 } as const;
+const NON_GRID_WAVE_DEFAULT = { amp: 50, speed: 1.75 } as const;
 export const nonGridWaveSpeedToUi = (speed: number) =>
   Math.round(Math.max(0, Math.min(100, (speed * 100 - 100) / 1.5)));
 export const nonGridWaveSpeedFromUi = (ui: number) =>
@@ -8114,25 +8115,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.globalAlpha = objectAlpha;
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      /* 以連續斜率近似正弦，而不是把每條直片整片平移。每個交界的 y 完全
-         相同，因此圖片、文字與一般圖形的外緣不再形成階梯或亮色接縫。 */
-      const segments = Math.max(32, Math.min(128, Math.ceil((x1 - x0) / 8)));
-      const segmentW = (x1 - x0) / segments;
-      for (let index = 0; index < segments; index++) {
-        const x = x0 + index * segmentW;
-        const xx = index + 1 === segments ? x1 : x + segmentW;
-        const dy0 = Math.sin(((x - objectLeft) / objectSpan - f.gridWave) * Math.PI * 2) * amp;
-        const dy1 = Math.sin(((xx - objectLeft) / objectSpan - f.gridWave) * Math.PI * 2) * amp;
-        const slope = (dy1 - dy0) / Math.max(.001, xx - x);
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(x - .5, y0 - amp - 2, xx - x + 1, Math.max(1, y1 - y0) + amp * 2 + 4);
-        ctx.clip();
-        ctx.transform(1, slope, 0, 1, 0, dy0 - slope * x);
-        ctx.drawImage(layer.canvas, x - 1, y0, xx - x + 2, Math.max(1, y1 - y0),
-          x - 1, y0, xx - x + 2, Math.max(1, y1 - y0));
-        ctx.restore();
-      }
+      /* GPU 逐像素正弦位移（utils/waveWarp）：沒有任何直條切片，
+         模糊圖形、發光這類半透明的地方也看不到接縫。 */
+      const warped = waveWarp(layer.canvas, x0, y0, x1 - x0, Math.max(1, y1 - y0),
+        amp, 1 / objectSpan, (x0 - objectLeft) / objectSpan - f.gridWave);
+      if (warped) ctx.drawImage(warped.canvas, x0, y0 - warped.padY);
       ctx.restore();
     };
     const drawObjects=(list:any[])=>{
