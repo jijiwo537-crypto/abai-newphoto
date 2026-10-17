@@ -1816,6 +1816,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   // Single Canvas for all rendering
   const displayCanvasRef = useRef<HTMLCanvasElement>(null);
   const fxSurfaceRef=useRef<HTMLCanvasElement>(null);
+  /** 這一次重畫是按了濾鏡／特效按鈕觸發的：走 GPU 直出 */
+  const tapFastRef=useRef(false);
   /* 手機記憶體吃緊時瀏覽器會收走 GPU 的 context：收走後那張畫布再也不能用，
      只能走慢很多的 2D 備用路徑（點特效要等一下）。所以一被收走就換一張全新的畫布，
      下一格就回到 GPU，速度跟平常一樣。 */
@@ -3412,6 +3414,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [activeCategory, lutList, selectedLutIdx, previewAspect, activeSrc, buffersTick]);
 
   const handleFilterSelect = (idx: number) => {
+    tapFastRef.current = true;
     /* 合併還在背景烤：這時候點的會被烤完的歸零蓋掉（要再按一次），先記著，烤完再套 */
     if (mergingRef.current) { pendingTapRef.current = () => tapHandlersRef.current.lut(idx); return; }
     quickFilterRef.current = true;   // 先出低解析度那張，畫面才會馬上有反應
@@ -3712,6 +3715,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   const handleEffectToolSelect = (toolId: string) => {
+    tapFastRef.current = true;
     if (mergingRef.current) { pendingTapRef.current = () => tapHandlersRef.current.fx(toolId); return; }
     uiFirstRef.current = true;
     if (FX_TOOLS[toolId]) warmFx(toolId);   // 先把著色器編好，第一次拖才不會卡
@@ -5027,6 +5031,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const lut = lutList[currentIdx];
     const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
     const lutSize = activeLut ? activeLut.size : 0;
+    /* 點濾鏡／特效按鈕：跟拖滑桿一樣先走 GPU 直出，按下去那一格就看到結果。
+       CPU 那條（整張讀回、逐像素算）在換了來源（合併後）快取全空時要將近一秒，
+       之前每次合併完第一次點都要等它。2D 緩衝等閒下來再補算，不擋畫面。 */
+    const tapFast = tapFastRef.current;
+    tapFastRef.current = false;
+    if (tapFast) {
+      const ric = (window as any).requestIdleCallback as undefined | ((cb: () => void, o?: { timeout: number }) => number);
+      const refine = () => { if (!tapFastRef.current) { isDirtyRef.current = true; } };
+      if (ric) ric(refine, { timeout: 1500 }); else setTimeout(refine, 600);
+    }
 
     /* ── Direct GPU path while dragging ─────────────────────────────────
        When nothing after the colour stage draws on the 2D canvas (no grain,
@@ -5037,7 +5051,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        (WebGL → 2D → 2D → WebGL) that a phone pays for on every slider step.
        The pixels are the same 8-bit values the normal path produces; after
        release one normal render brings the 2D buffers up to date. */
-    if (isInteracting && !isFastBlendActive && fxSurfaceRef.current && b.source && !pRender.sharpen && !pRender.colorNoise2 && !uses2dEffects(pPost)) {
+    if ((isInteracting || tapFast) && !isFastBlendActive && fxSurfaceRef.current && b.source && !pRender.sharpen && !pRender.colorNoise2 && !uses2dEffects(pPost)) {
         const srcKey = `${b.w}x${b.h}|${srcIdent()}`;
         const spill = !!pPost.fxExposureSpill;
         const filmKey = activeLut ? `${lut.id}#${lutSize}` : '';
@@ -5067,7 +5081,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     /* Same while dragging with 2D effects on: the colour result reaches the
        2D canvas in one copy (instead of two full-size intermediate canvases),
        then the effects run as usual. */
-    if (isInteracting && !isFastBlendActive && b.source && !pRender.sharpen && !pRender.colorNoise2 && uses2dEffects(pPost)) {
+    if ((isInteracting || tapFast) && !isFastBlendActive && b.source && !pRender.sharpen && !pRender.colorNoise2 && uses2dEffects(pPost)) {
         const srcKey = `${b.w}x${b.h}|${srcIdent()}`;
         const filmKey = activeLut ? `${lut.id}#${lutSize}` : '';
         /* Only soft light, halation or light leak on: its GPU layer presents
