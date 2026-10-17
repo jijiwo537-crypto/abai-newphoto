@@ -86,7 +86,7 @@ import {
 const drawTextShape: typeof drawTextShapeRaw = (ctx,type,text,x,y,size,fill,out=false,angle=0) =>
   drawTextShapeRaw(ctx,type,text,x,y,size,fill,out,angle,true);
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
-import { paintPattern, paintStripesRect, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
+import { paintPattern, paintStripesRect, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
 import { paintMaskTexture, maskTextureSizeFromUi, maskTextureSizeToUi, maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
 import { spacedTextureRadius, maskTextureGapFromUi, maskTextureGapToUi } from '../utils/textureSpacing';
@@ -11619,7 +11619,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <div className="flex items-center gap-2">
                       <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                         {TEX_OPTIONS.map(([t, label]) => (
-                          <button key={t} onClick={() => setPatternType(t as any)} className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
+                          <button key={t} onClick={() => { setPatternType(t as any); if (t === 'gingham' && patternType !== 'gingham') setStripeN(GINGHAM_N_DEFAULT); }} className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
                         ))}
                       </div>
                       {/* 顏色格常駐：關閉時也看得到，切換時這一列的寬度不變、不會閃。
@@ -12063,7 +12063,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                   {texChoices.map(([id, label]) => (
                                     <button
                                       key={id}
-                                      onClick={() => patch({ tex: id, dots: id === 'dot' })}
+                                      onClick={() => patch({ tex: id, dots: id === 'dot', ...(id === 'gingham' && tex !== 'gingham' ? { stripeN: ginghamDefaultFor(sel.kind) } : {}) } as any)}
                                       className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
                                         tex === id ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                                       }`}

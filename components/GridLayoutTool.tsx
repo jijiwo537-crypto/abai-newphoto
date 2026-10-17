@@ -66,7 +66,7 @@ import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, scatterAllNoGlow, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
-import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
+import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
 import { PatternLayer } from './PatternLayer';
@@ -946,6 +946,7 @@ export const shapePathD = (
     }
     return poly(pts);
   };
+  if (STITCH_LINE_KINDS.has(kind)) return stitchLineD(kind, w, h);
   switch (kind) {
     case 'circle':
     case 'circle-star-dual':
@@ -1297,6 +1298,48 @@ export const shapeGlowBlurs = (w: number, h: number) =>
 
 /** 新增圖形時的預設值。線條比較細長，所以粗細與大小另外給。 */
 export const SPECIAL_LINE_KINDS = new Set(['line', 'wave', 'lightning-wave']);
+/* 刺繡類的線條（放在「線條」那一區，但本身是實心圖形：可以填色、上紋理、發光）：
+   十字繡（一排 +）、叉叉繡（一排 ×）、麻花（一顆顆斜的橢圓接成繩子）。
+   圖案的大小跟著線的粗細（框的高），長度拉長就多幾顆，不會被拉扁。 */
+export const STITCH_LINE_KINDS = new Set(['stitch-plus', 'stitch-x', 'rope']);
+const stitchLineD = (kind: string, w: number, h: number) => {
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  const polyD = (pts: [number, number][]) => `M ${pts.map(p => `${r3(p[0])} ${r3(p[1])}`).join(' L ')} Z`;
+  // 膠囊（兩頭半圓的長條），中心 (cx,cy)、長 len、寬 th、角度 ang；一律同一個繞向，重疊的地方合在一起
+  const capsule = (cx: number, cy: number, len: number, th: number, ang: number) => {
+    const pts: [number, number][] = [], rr = th / 2, hl = Math.max(0, len / 2 - rr), c = Math.cos(ang), sn = Math.sin(ang);
+    for (let i = 0; i <= 10; i++) { const t = -Math.PI / 2 + Math.PI * i / 10; pts.push([hl + Math.cos(t) * rr, Math.sin(t) * rr]); }
+    for (let i = 0; i <= 10; i++) { const t = Math.PI / 2 + Math.PI * i / 10; pts.push([-hl + Math.cos(t) * rr, Math.sin(t) * rr]); }
+    return polyD(pts.map(([x, y]) => [cx + x * c - y * sn, cy + x * sn + y * c]));
+  };
+  const ellipse = (cx: number, cy: number, rx: number, ry: number, ang: number) => {
+    const pts: [number, number][] = [], c = Math.cos(ang), sn = Math.sin(ang);
+    for (let i = 0; i < 24; i++) { const t = Math.PI * 2 * i / 24, x = Math.cos(t) * rx, y = Math.sin(t) * ry; pts.push([cx + x * c - y * sn, cy + x * sn + y * c]); }
+    return polyD(pts);
+  };
+  const cy = h / 2, parts: string[] = [];
+  if (kind === 'rope') {
+    // 麻花：一顆顆往同一邊斜的橢圓，彼此留一點縫，看起來像兩股扭在一起
+    // 斜 57°：相鄰兩顆之間垂直距離＝間距×sin57° ≈ 0.28h，剛好跟橢圓厚（0.3h）差不多，一顆貼一顆像扭在一起的繩子
+    const pitch = h * .33, pad = h * .3, n = Math.max(1, Math.round((w - pad * 2) / pitch)), p = (w - pad * 2) / n;
+    for (let i = 0; i < n; i++) parts.push(ellipse(pad + p * (i + .5), cy, h * .5, h * .15, -1.0));
+    return parts.join(' ');
+  }
+  // 十字繡、叉叉繡：一格是一個正方形（邊長＝高），格數照長度取整數，平均排滿
+  const n = Math.max(1, Math.round(w / h)), cell = w / n;
+  for (let i = 0; i < n; i++) {
+    const cx = cell * (i + .5);
+    if (kind === 'stitch-plus') {
+      parts.push(capsule(cx, cy, h * .92, h * .2, Math.PI / 2));
+      parts.push(capsule(cx, cy, Math.min(cell, h) * .96, h * .2, 0));
+    } else {
+      const L = Math.hypot(Math.min(cell, h), h) * .86;
+      parts.push(capsule(cx, cy, L, h * .22, Math.atan2(h, Math.min(cell, h))));
+      parts.push(capsule(cx, cy, L, h * .22, -Math.atan2(h, Math.min(cell, h))));
+    }
+  }
+  return parts.join(' ');
+};
 export const GRID_SHAPE_KINDS = new Set([
   'grid-h', 'grid-cross', 'grid-frame', 'grid-dots', 'grid-dots-fade', 'grid-diag',
   'grid-dots-staggered', 'grid-dots-fade-diagonal', 'grid-diag-cross', 'grid-plus', 'grid-orbits', 'grid-chevron',
@@ -1316,7 +1359,7 @@ export const SHAPE_DEFAULT_LINEW = (kind: string) =>
   (kind === 'wave' || kind === 'lightning-wave') ? 2.5 : (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
 export const SHAPE_DEFAULT_RATIO = (kind: string) =>
-  (kind === 'wave' || kind === 'lightning-wave') ? 0.576 : (kind === 'line' ? 0.24 : 0.15);
+  (kind === 'wave' || kind === 'lightning-wave') ? 0.576 : (kind === 'line' ? 0.24 : STITCH_LINE_KINDS.has(kind) ? 0.5 : 0.15);
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 /** 雙色方形的外層略深，白色內圖案在新增後與小按鈕上都能一眼辨認。 */
@@ -1483,14 +1526,14 @@ export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: numbe
 /** 「新增圖形」選單的五個區塊。創意拼圖與跨頁拼圖都用這一個，順序寫在 utils/pickerOrder.ts。 */
 /** 新分類「邊框」：霧白邊框（亮角那種霧，但四個邊也有） */
 export const shapePickerSections = () => {
-  const A = ADD_SHAPE_ITEMS, plain = (i: ShapeItem) => !GRID_SHAPE_KINDS.has(i.kind) && !SPECIAL_LINE_KINDS.has(i.kind);
+  const A = ADD_SHAPE_ITEMS, plain = (i: ShapeItem) => !GRID_SHAPE_KINDS.has(i.kind) && !SPECIAL_LINE_KINDS.has(i.kind) && !STITCH_LINE_KINDS.has(i.kind);
   const pools: Record<ShapeSection, any[]> = {
     solid: [...A.filter(i => i.filled && plain(i)), HOLE_ITEM_CROSS, ...HOLE_ITEMS_EXTRA],
     outline: [...A.filter(i => !i.filled && plain(i)), HOLE_ITEM_CROSS_O],
     // 新的五種邊框先放在排序工具的「邊框」頁試，App 裡先只有霧白邊框
     frame: FRAME_ITEMS.filter(i => ['mist-frame', 'frame-speed', 'frame-scatter'].includes(i.kind)) as ShapeItem[],
     burst: [...STAR_BURST_ITEMS],
-    line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind)),
+    line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind) || STITCH_LINE_KINDS.has(i.kind)),
     grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
     mask: [...MASK_SHAPE_ITEMS],
   };
@@ -1556,11 +1599,13 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'track-cross-o', kind: 'track-cross', filled: false },
   // 線條
   { id: 'line-h', kind: 'line', filled: false, rot: 0, ratio: 0.08 },
-  { id: 'line-v', kind: 'line', filled: false, rot: 90, ratio: 0.08 },
-  { id: 'line-d1', kind: 'line', filled: false, rot: -45, ratio: 0.08 },
-  { id: 'line-d2', kind: 'line', filled: false, rot: 45, ratio: 0.08 },
-  { id: 'line-wave', kind: 'wave', filled: false, rot: 90, ratio: 0.1417, glyphRatio: 0.17 },
-  { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, rot: 90, ratio: 0.1417, glyphRatio: 0.17 },
+  // 刺繡類（實心）：一新增就是橫的，長度約 8 顆
+  { id: 'line-stitch-plus', kind: 'stitch-plus', filled: true, rot: 0, ratio: 0.125, glyphRatio: 0.3 },
+  { id: 'line-stitch-x', kind: 'stitch-x', filled: true, rot: 0, ratio: 0.1, glyphRatio: 0.26 },
+  { id: 'line-rope', kind: 'rope', filled: true, rot: 0, ratio: 0.08, glyphRatio: 0.22 },
+  // 線條一律橫的生成（跟第一條一樣）
+  { id: 'line-wave', kind: 'wave', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.17 },
+  { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, rot: 0, ratio: 0.1417, glyphRatio: 0.17 },
   // 網格：線／點的尺寸固定；改變外框只會增減重複單位
   { id: 'grid-horizontal', kind: 'grid-h', filled: false },
   { id: 'grid-cross', kind: 'grid-cross', filled: false },
@@ -3025,7 +3070,7 @@ export const ShapeEditorPanel: React.FC<{
                   {texChoices.map(([id, label]) => (
                     <button
                       key={id}
-                      onClick={() => onChange({ shapeTex: id, shapeDots: id === 'dot' })}
+                      onClick={() => onChange({ shapeTex: id, shapeDots: id === 'dot', ...(id === 'gingham' && tex !== 'gingham' ? { shapeStripeN: ginghamDefaultFor(layer.shape) } : {}) })}
                       className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
                         tex === id ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                       }`}
@@ -9606,7 +9651,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     i === activePageIndex ? { ...p, pattern: { ...pagePattern(p), ...patch } } : p));
   const patternType = patternOpts.type;
   const patternColor = patternOpts.color;
-  const setPatternType = (t: string) => patchPattern({ type: t });
+  // 換成格紋時，數量給格紋自己的預設（10）
+  const setPatternType = (t: string) => patchPattern(t === 'gingham' && patternOpts.type !== 'gingham' ? { type: t, stripeN: GINGHAM_N_DEFAULT } : { type: t });
   const setPatternColor = (c: string) => patchPattern({ color: c });
   /* 顏色分頁的子頁面：'bg' 是原本的底色挑色器，'pattern' 是點了紋理旁邊那顆
      色塊之後進去的紋理專屬調色頁（跟創意拼圖同一套操作）。 */
