@@ -4879,6 +4879,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [buildFastStage]);
 
   const render = useCallback((p: EditorParams, overrideLutIdx?: number) => {
+    if (p.sharpen > 0) for (const bb of [buffers.current.preview, buffers.current.fast]) {
+      const base = bb.original || bb.source;
+      if (base && !bb.sharpenDetail) bb.sharpenDetail = precomputeSharpenDetail(base, bb.w, bb.h);
+    }
     /* 選中的濾鏡還在下載：先不畫，畫面留在上一張。不然會先閃一張「沒有濾鏡」的，
        載好才變成有濾鏡的（loadLut 載好會再標記重畫）。 */
     { const l = lutList[overrideLutIdx ?? selectedLutIdx];
@@ -5042,7 +5046,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        GPU 出來的像素跟 CPU 那條一樣（同一套著色器、同樣 8 位元），所以這張就是最終結果，
        不再背景補算（補算那將近一秒會卡住下一次點擊）。2D 緩衝標成過期
        （displayStaleRef），之後真的需要走 2D 的那一次自己會重算。 */
-    const tapFast = tapFastRef.current;
+    /* 手放開之後的一般重畫也一樣走 GPU 直出（像素跟 CPU 那條相同）：
+       CPU 那條要整張讀回、逐像素算，換了來源（合併後）快取全空時更要將近一秒。
+       只有遮色片（要畫編輯用的遮罩）與烘焙輸出時才走原本那條。 */
+    const tapFast = tapFastRef.current || (!pRender.maskCreated && !showOriginalRef.current);
     tapFastRef.current = false;
 
     /* ── Direct GPU path while dragging ─────────────────────────────────
@@ -5453,6 +5460,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
         buildBuffersFromRef.current(src, w, h, false, activeSrc);
       };
+      /* 合併剛做好的那張：像素已經在手上（一張普通的 2D 畫布），直接拿來建緩衝區，
+         不用等 JPEG 解碼、也不用從 GPU 讀回 —— 合併後馬上就能點。
+         解碼好的 <img>（構圖、輸出尺寸等要用）在背景接上。 */
+      const fresh = mergeCanvasRef.current;
+      if (!ready && fresh && fresh.url === activeSrc) {
+        mergeCanvasRef.current = null;
+        const c = fresh.cvs;
+        lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, selectedLutIdx: -1 } as any;
+        lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
+        buildBuffersFromRef.current(c, c.width, c.height, false, activeSrc);
+        c.width = c.height = 0;
+        tapFastRef.current = true;   // 換上之後那一次也走 GPU 直出，不跑 CPU 整張重算
+        loadImg(activeSrc).then(im => {
+          rememberDecoded(activeSrc, im);
+          if (srcListRef.current[safeIdxRef.current] === activeSrc) originalImgRef.current = im;
+        }).catch(() => {}).finally(() => { mergeImgPendingRef.current = false; });
+        return;
+      }
       if (ready) install(ready);
       else {
         const im = new Image();
@@ -5840,6 +5865,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       sharpenTimerRef.current = setTimeout(() => {
         sharpenTimerRef.current = null;
         if (buffers.current !== ownedBuffers) return;
+        // 沒開銳化就先不算（合併／換圖後那一下少一大塊工作）；開了銳化時重畫前才補算
+        if (!(paramsRef.current.sharpen > 0)) return;
         ownedBuffers.preview.sharpenDetail = precomputeSharpenDetail(pData, pw, ph);
         const f = ownedBuffers.fast;
         if (f.source) f.sharpenDetail = precomputeSharpenDetail(f.source, f.w, f.h);
@@ -6284,6 +6311,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      烤進去的是整條管線的結果（濾鏡＋調節＋特效），不是只有特效那一段 ——
      特效是接在最後面算的，只抽特效出來烤的話跟畫面上看到的不會一樣。 */
   const mergingRef = useRef(false);
+  /** 合併後那張預覽圖的像素（畫布）與網址：換來源時直接拿來建緩衝區 */
+  const mergeCanvasRef = useRef<{ url: string; cvs: HTMLCanvasElement } | null>(null);
+  /** 合併後的 <img> 還在背景解碼：這段期間不能再合併（要用它當輸入） */
+  const mergeImgPendingRef = useRef(false);
   /** 合併烤圖期間點的濾鏡／特效：烤完、歸零的狀態套用之後再補上 */
   const pendingTapRef = useRef<null | (() => void)>(null);
   const tapHandlersRef = useRef({ fx: handleEffectToolSelect, lut: handleFilterSelect, none: clearAllEffects });
@@ -6317,7 +6348,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   /** after：介面照樣立刻切成合併完的樣子；烤圖等它（合併鍵的動畫）結束才開始 */
   const mergeEffects = (after?: Promise<unknown>) => {
-    if (!originalImgRef.current || mergingRef.current) return;
+    if (!originalImgRef.current || mergingRef.current || mergeImgPendingRef.current) return;
     mergingRef.current = true;
     if (isInteracting) setIsInteracting(false);
 
@@ -6386,7 +6417,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           const shown = i === safeIdx ? visibleEditorCanvas() : null;
           if (shown && shown.width > 0 && !isDirtyRef.current && !showOriginalRef.current && isGeoIdentity(snap.geo) && !(snap.params.maskCreated && snap.params.maskShowOverlay)) {
             cvs = document.createElement('canvas'); cvs.width = shown.width; cvs.height = shown.height;
-            cvs.getContext('2d')!.drawImage(shown, 0, 0);
+            const cx = cvs.getContext('2d', { willReadFrequently: true })!;
+            cx.drawImage(shown, 0, 0);
+            /* GPU 畫布在某些時機（剛被收回 context、剛換新畫布）讀出來是全黑／全透明：
+               抽樣檢查，讀到空的就不要用（會整個黑掉），改走下面重算的路。 */
+            const probe = document.createElement('canvas'); probe.width = probe.height = 8;
+            const pg = probe.getContext('2d', { willReadFrequently: true })!;
+            pg.drawImage(cvs, 0, 0, 8, 8);
+            const d = pg.getImageData(0, 0, 8, 8).data;
+            let mx = 0; for (let k = 0; k < d.length; k += 4) mx = Math.max(mx, d[k], d[k + 1], d[k + 2]);
+            let minA = 255; for (let k = 3; k < d.length; k += 4) minA = Math.min(minA, d[k]);
+            if (mx === 0 || minA < 250) { cvs.width = cvs.height = 0; cvs = null; }
           }
           if (!cvs) {
             const src0 = i === safeIdx && originalImgRef.current ? originalImgRef.current : await loadImg(srcList[i]);
@@ -6401,8 +6442,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           /* 走 canvasToUrl 不直接叫 toBlob：iOS 的 toBlob 在畫布很大又碰上
              記憶體吃緊時有機會永遠不回來（見 utils/blobUrl 的看門狗），
              那會讓整批烤圖停在「正在存檔」，而那一層蓋著返回鍵。 */
-          const url = await canvasToUrl(cvs);
-          cvs.width = cvs.height = 0;
+          /* 預覽用的那張用高品質 JPEG：PNG 編碼在手機上要好幾百毫秒、而且就卡在合併後那一下；
+             這張只給畫面用（存檔走原尺寸那條，不受影響）。 */
+          const url = await canvasToUrl(cvs, 'image/jpeg', 0.98);
+          if (url && i === safeIdx) { mergeCanvasRef.current = { url, cvs }; mergeImgPendingRef.current = true; }
+          else cvs.width = cvs.height = 0;
           if (!url) continue;               // 這一張烤不出來就維持原樣，不要留半成品
           made.push(url);
           // 原尺寸那張記成待辦，要用時才烤（resolveFullSrc）
@@ -6426,7 +6470,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
            不先解好的話，換來源之後緩衝區還是舊的那張、參數卻已經歸零，
            中間就會畫出一張「沒有特效的舊圖」—— 那就是合併時閃的那一下。 */
         const shownUrl = next[safeIdx];
-        if (shownUrl && shownUrl !== srcList[safeIdx]) {
+        if (shownUrl && shownUrl !== srcList[safeIdx] && mergeCanvasRef.current?.url !== shownUrl) {
           /* load 之後還要等 decode()（再跨一幀）：iOS 的 load 只代表檔案讀到了，
              這時拿去建緩衝區可能畫進一張透明的 —— 濾鏡／特效縮圖都從緩衝區算，
              於是合併後整排縮圖變黑。 */
@@ -6464,6 +6508,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       } catch (e) {
         console.error('merge failed', e);
         pendingTapRef.current = null;
+        if (mergeCanvasRef.current) { mergeCanvasRef.current.cvs.width = mergeCanvasRef.current.cvs.height = 0; mergeCanvasRef.current = null; }
+        mergeImgPendingRef.current = false;
         // 烤失敗就把凍住的參數放回去，畫面與介面重新對齊
         const frozen = mergeFreezeRef.current;
         mergeFreezeRef.current = null;
