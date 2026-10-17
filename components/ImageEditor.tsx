@@ -1833,7 +1833,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     showFxSurface(!!surface&&presentFxSource(ctx,w,h,surface));
   };
   useEffect(()=>{const surface=fxSurfaceRef.current;return()=>{if(surface)disposeFxSurface(surface);};},[]);
-  useLayoutEffect(()=>{showFxSurface(false);fxInputKeyRef.current='';},[activeSrc]);
+  /* 合併換來源時不要先切回 2D 畫布（那張還是舊的、沒濾鏡的，會閃一下）；讓新來源的第一次重畫決定 */
+  useLayoutEffect(()=>{if(!srcSwapRef.current)showFxSurface(false);fxInputKeyRef.current='';legacyPreviewRef.current=null;},[activeSrc]);
   const helperCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const originalImgRef = useRef<HTMLImageElement | null>(null);
   
@@ -3388,6 +3389,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [activeCategory, lutList, selectedLutIdx, previewAspect, activeSrc, buffersTick]);
 
   const handleFilterSelect = (idx: number) => {
+    /* 合併還在背景烤：這時候點的會被烤完的歸零蓋掉（要再按一次），先記著，烤完再套 */
+    if (mergingRef.current) { pendingTapRef.current = () => tapHandlersRef.current.lut(idx); return; }
     quickFilterRef.current = true;   // 先出低解析度那張，畫面才會馬上有反應
     if (idx > 0) {
       loadLut(idx);
@@ -3673,6 +3676,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   /** 「原始」：把所有特效關掉 */
   const clearAllEffects = () => {
+    if (mergingRef.current) { pendingTapRef.current = () => tapHandlersRef.current.none(); return; }
     uiFirstRef.current = true;
     const next = { ...paramsRef.current, ...NO_EFFECT_PARAMS } as EditorParams;
     paramsRef.current = next;
@@ -3685,6 +3689,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   const handleEffectToolSelect = (toolId: string) => {
+    if (mergingRef.current) { pendingTapRef.current = () => tapHandlersRef.current.fx(toolId); setActiveFxId(toolId); setActiveToolId(effectAmountId(toolId)); return; }
     uiFirstRef.current = true;
     if (FX_TOOLS[toolId]) warmFx(toolId);   // 先把著色器編好，第一次拖才不會卡
     setActiveFxId(toolId);
@@ -4841,6 +4846,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [buildFastStage]);
 
   const render = useCallback((p: EditorParams, overrideLutIdx?: number) => {
+    /* 選中的濾鏡還在下載：先不畫，畫面留在上一張。不然會先閃一張「沒有濾鏡」的，
+       載好才變成有濾鏡的（loadLut 載好會再標記重畫）。 */
+    { const l = lutList[overrideLutIdx ?? selectedLutIdx];
+      if (l?.url && !lutDataRef.current[l.id] && loadingPromisesRef.current[l.id]) return; }
     const activeToolId = activeToolIdRef.current;
     const cache = fastPreviewCacheRef.current;
 
@@ -4899,7 +4908,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     /* 有發光時不走低解析度那張（那張沒有對應的發光），直接全解析度 ——
        旗標也在這裡收掉，不能留到之後（例如合併完沒有發光了）才突然觸發。 */
     if (quickFilterRef.current && hasGlow(p)) quickFilterRef.current = false;
-    const quickPass = quickFilterRef.current && !!proxy.source && !isInteracting;
+    /* 旗標一定在點完濾鏡後的這一次就收掉：留著的話，下一次（常常是點特效）會先畫一張
+       低解析度的再換全解析度，疊了特效時看起來就是閃一下。有特效時也不走低解析度那張。 */
+    const quickPass = quickFilterRef.current && !!proxy.source && !isInteracting && !hasLiveEffect(p);
+    quickFilterRef.current = false;
     const useProxy = quickPass;
     const b = useProxy ? proxy : buffers.current.preview;
 
@@ -5373,7 +5385,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if(!fxSurfaceShownRef.current)presentEditorSource(ctx,b.w,b.h);
 
     if (quickPass) {
-      quickFilterRef.current = false;
       isDirtyRef.current = true;          // 接著馬上排一次全解析度的
       lastRenderTimeRef.current = 0;
     }
@@ -6200,6 +6211,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      烤進去的是整條管線的結果（濾鏡＋調節＋特效），不是只有特效那一段 ——
      特效是接在最後面算的，只抽特效出來烤的話跟畫面上看到的不會一樣。 */
   const mergingRef = useRef(false);
+  /** 合併烤圖期間點的濾鏡／特效：烤完、歸零的狀態套用之後再補上 */
+  const pendingTapRef = useRef<null | (() => void)>(null);
+  const tapHandlersRef = useRef({ fx: handleEffectToolSelect, lut: handleFilterSelect, none: clearAllEffects });
+  tapHandlersRef.current = { fx: handleEffectToolSelect, lut: handleFilterSelect, none: clearAllEffects };
+  useEffect(() => {
+    if (mergePending || mergingRef.current || !pendingTapRef.current) return;
+    const t = pendingTapRef.current; pendingTapRef.current = null; t();
+  }, [mergePending]);
   /* 合併通常一瞬間就好，這時候閃一下轉圈反而礙眼。
      只有真的等超過 200ms（要載圖、圖很大）才把轉圈放到預覽正中央。 */
   /** 我們自己換來源（合併／撤銷合併）時立起來：換照片那一整套歸零就跳過 */
@@ -6351,6 +6370,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         addToHistory(fresh, 0, false, false, false, false, false, false, false, false);
       } catch (e) {
         console.error('merge failed', e);
+        pendingTapRef.current = null;
         // 烤失敗就把凍住的參數放回去，畫面與介面重新對齊
         const frozen = mergeFreezeRef.current;
         mergeFreezeRef.current = null;
