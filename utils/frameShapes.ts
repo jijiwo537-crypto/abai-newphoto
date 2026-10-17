@@ -38,7 +38,7 @@ const FRAME_KIND_SET = new Set(FRAME_ITEMS.map(i => i.kind));
 export const isFrameShape = (kind?: string) => !!kind && FRAME_KIND_SET.has(kind);
 
 /** 「範圍」的預設：霧白邊框 0（全白只在框邊），其他 50 */
-export const frameRangeDefault = (kind?: string) => kind === MIST_FRAME_KIND ? MIST_RANGE_DEFAULT : kind === FRAME_SCATTER || kind === FRAME_SPEED ? 60 : 50;
+export const frameRangeDefault = (kind?: string) => kind === MIST_FRAME_KIND ? MIST_RANGE_DEFAULT : kind === FRAME_SCATTER ? 60 : 50; // 集中線（漫畫）預設 50
 
 const r01 = (range: number | undefined, kind: string) =>
   Math.max(0, Math.min(1, (range ?? frameRangeDefault(kind)) / 100));
