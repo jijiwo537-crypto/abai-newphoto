@@ -3355,7 +3355,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const t = afterPaint(() => {
       const b = buffers.current.preview;
       if (!b || !b.source || !b.w || !b.h) return;
-      const sig = [thumbSrcOf(buffersSrcRef.current), b.w, b.h, selectedLutIdx].join('|');
+      /* 簽章只放真的會改變縮圖的東西：縮圖畫的是原圖＋特效，跟目前選哪顆濾鏡無關
+         （只有 f22／f23 會改模糊的預設值）。以前放了濾鏡編號，合併濾鏡後編號歸零，
+         整排特效縮圖就在背景全部重算一次 —— 那段期間點什麼都要排隊，縮圖列也會閃一下。 */
+      const lutId0 = lutList[selectedLutIdx]?.id;
+      const sig = [thumbSrcOf(buffersSrcRef.current), b.w, b.h, lutId0 === 'f22' || lutId0 === 'f23' ? 30 : 40].join('|');
       if (sig === fxThumbSigRef.current) return;
       const forSrc = thumbSrcOf(buffersSrcRef.current);
       noteThumbSrc(forSrc);
@@ -5687,15 +5691,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const pData = pctx.getImageData(0, 0, pw, ph).data;
       const pLen = pData.length;
 
+      /* 同尺寸就沿用原本那幾塊大陣列（每塊約 10MB）：合併、構圖後重建緩衝區時不再整批重配，
+         手機上就不會在合併後幾秒冒出一次很久的記憶體回收（那段期間點什麼都卡）。 */
+      const prevBufs = buffers.current;
+      const reuse = (old: Uint8ClampedArray | null | undefined, len: number) => old && old.length === len ? old : new Uint8ClampedArray(len);
       buffers.current = {
           preview: {
               source: pData,
-              dest: new Uint8ClampedArray(pLen),
-              shared: new Uint8ClampedArray(pLen),
-              lutted: new Uint8ClampedArray(pLen),
-              lut0: new Uint8ClampedArray(pLen),
-              lut100: new Uint8ClampedArray(pLen),
-              temp: new Uint8ClampedArray(pLen),
+              dest: reuse(prevBufs.preview.dest, pLen),
+              shared: reuse(prevBufs.preview.shared, pLen),
+              lutted: reuse(prevBufs.preview.lutted, pLen),
+              lut0: reuse(prevBufs.preview.lut0, pLen),
+              lut100: reuse(prevBufs.preview.lut100, pLen),
+              temp: reuse(prevBufs.preview.temp, pLen),
               sharpenDetail: null, 
               w: pw, h: ph
           },
@@ -5740,12 +5748,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           const fLen = fData.length;
           buffers.current.fast = {
               source: fData,
-              dest: new Uint8ClampedArray(fLen),
-              shared: new Uint8ClampedArray(fLen),
-              lutted: new Uint8ClampedArray(fLen),
-              lut0: new Uint8ClampedArray(fLen),
-              lut100: new Uint8ClampedArray(fLen),
-              temp: new Uint8ClampedArray(fLen),
+              dest: reuse(prevBufs.fast.dest, fLen),
+              shared: reuse(prevBufs.fast.shared, fLen),
+              lutted: reuse(prevBufs.fast.lutted, fLen),
+              lut0: reuse(prevBufs.fast.lut0, fLen),
+              lut100: reuse(prevBufs.fast.lut100, fLen),
+              temp: reuse(prevBufs.fast.temp, fLen),
               sharpenDetail: null,
               w: fw, h: fh
           };
