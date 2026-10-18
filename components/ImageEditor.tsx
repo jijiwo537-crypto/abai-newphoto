@@ -7121,6 +7121,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   /* 色相／亮度／飽和度曲線（存在 params.grade.hc）：拖曳中只寫 paramsRef */
   const [hueCurveMode, setHueCurveMode] = useState<HueCurveId | null>(null);
+  // 每次進曲線都先回到原本的 RGB 曲線（色相曲線是另外三個按鈕）
+  useEffect(() => { if (activeToolId === 'curves') setHueCurveMode(null); }, [activeToolId]);
   const onHueCurveChange = (id: HueCurveId, pts: CurvePt[]) => {
     const cur = paramsRef.current, g = normGrade(cur.grade);
     paramsRef.current = { ...cur, grade: { ...g, hc: { ...g.hc, [id]: pts } } };
@@ -8181,18 +8183,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    {/* Curve Box */}
                    {/* 外框就是格線的最外面那一圈：跟裡面的線同色同粗，
                         整塊看起來才是一張完整的 4×4 格線。 */}
-                   {/* 右邊：色相曲線（按顏色調色相／飽和／亮度）。跟左邊的通道點同一種圓點，
-                        圓點本身畫出它調的是什麼：彩虹＝色相、灰到彩色＝飽和、黑到白＝亮度 */}
-                   <div className="absolute left-full top-0 h-[242px] flex flex-col justify-center items-center gap-[16px] pl-3">
-                       {([['hh', '色相', 'conic-gradient(#ff4d4d,#ffd84d,#5cff6e,#4de3ff,#5a6bff,#ff4dd8,#ff4d4d)'],
-                          ['hs', '飽和', 'linear-gradient(90deg,#8a8a8a,#ff4d6a)'],
-                          ['hl', '亮度', 'linear-gradient(90deg,#000,#fff)']] as const).map(([id, label, bg]) => {
+                   {/* 右邊：色相曲線（按顏色調色相／飽和／亮度）。點左邊任一個通道點回到原本的 RGB 曲線 */}
+                   <div className="absolute left-full top-0 h-[242px] flex flex-col justify-center items-start gap-[10px] pl-3">
+                       {([['hh', '色相'], ['hs', '飽和'], ['hl', '亮度']] as const).map(([id, label]) => {
                          const on = hueCurveMode === id;
                          const used = (normGrade(params.grade).hc[id] || []).some(q => Math.abs(q.y - 0.5) > 1e-4);
                          return (
-                           <button key={id} data-hue-curve-mode={id} onClick={() => setHueCurveMode(id)} className="flex flex-col items-center gap-[8px]">
-                             <span className={`channel-dot ${on ? 'active' : ''}`} style={{ background: bg, boxShadow: on ? '0 0 0 2px #fff' : 'none' }} />
-                             <span className={`text-[10px] leading-none ${on ? 'text-white' : 'text-white/60'} ${used ? 'underline underline-offset-2' : ''}`}>{label}</span>
+                           <button key={id} data-hue-curve-mode={id} onClick={() => setHueCurveMode(id)}
+                             className={`relative w-[46px] h-[30px] rounded-[7px] flex items-center justify-center text-[11px] border ${on ? 'bg-white text-black border-white' : 'bg-black/45 text-white border-white/70'}`}>
+                             {label}
+                             {used && <span className={`absolute -right-[3px] -top-[3px] w-[7px] h-[7px] rounded-full ${on ? 'bg-black border border-white' : 'bg-white'}`} />}
                            </button>
                          );
                        })}

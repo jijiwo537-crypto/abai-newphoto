@@ -12,7 +12,10 @@
  * 色彩模型見 ./common：色相＝向量示波器角度，飽和度＝c ÷ 色域邊界，亮度＝Y′。
  *   · 調色相、飽和度時 Y′ 不變，不會順便變亮變暗；超出色域時保留亮度與色相、只收回色差。
  *   · 調亮度是線性光裡三個通道乘同一個增益（＝改曝光），色度不變、不會變髒；
- *     作用量乘上飽和度，灰色不受影響（同 thatcherfreeman 的 Smooth Tetra DCTL 的做法）。
+ *     作用量乘上「這個顏色有多鮮豔」：飽和度（相對色域邊界）再乘上實際彩度的權重 ——
+ *     只看相對飽和度的話，接近純白、純黑時色域邊界很小，一點點偏色就被當成「很鮮豔」，
+ *     雲的邊緣、暗部就會被整塊壓暗，看起來像斷層。
+ *   · 飽和度推高時，接近色域邊界用柔和的肩部收進去，不硬切（硬切會在暗部、鮮豔處出現色塊）。
  *   · 全部乘上灰色保護 n(c)：灰牆、白紙不會冒色斑。
  *   · 色相曲線限制斜率：拉得再誇張，顏色也不會「翻轉」交錯。 */
 
@@ -69,6 +72,12 @@ export function makeHueCurves(h: Partial<HueCurves> | undefined | null): HueCurv
   return { tab, on };
 }
 
+/** 色度超過色域邊界的 80% 之後用指數肩部收進去，永遠不超過邊界、也沒有折角 */
+function softChroma(x: number, m: number) {
+  const k = 0.8 * m;
+  return x <= k ? x : k + (m - k) * (1 - Math.exp(-(x - k) / Math.max(1e-6, m - k)));
+}
+
 /** 套用（0..1 RGB，就地改寫） */
 export function applyHueCurves(F: HueCurvesFast, c: number[]) {
   const T = F.tab, on = F.on;
@@ -84,9 +93,9 @@ export function applyHueCurves(F: HueCurvesFast, c: number[]) {
   const at = (row: number) => tableAt(T, row * TAB_N, TAB_N, hx, true);
   const dh = on[0] ? (at(0) - 0.5) * 2 * Math.PI * gate : 0;
   const sg = on[1] ? 1 + (at(1) * 2 - 1) * gate : 1;
-  const ev = on[2] ? (at(2) - 0.5) * 4 * sat * gate : 0;
+  const ev = on[2] ? (at(2) - 0.5) * 4 * sat * sstep(0, 0.15, C) : 0;
   const a2 = ang + dh, c2 = Math.cos(a2), s2 = Math.sin(a2);
-  const C2 = Math.min(C * Math.max(0, sg), maxChroma(Yc, c2, s2));
+  const C2 = softChroma(C * Math.max(0, sg), maxChroma(Yc, c2, s2));
   fromYcc(Y, c2 * C2, s2 * C2, c);
   if (ev !== 0) {
     const k = Math.pow(2, ev);
@@ -116,9 +125,10 @@ vec3 hueCurves(vec3 c){
   float gate=smoothstep(0.,.05,C);
   float dh=uHCOn.x>.5?(hcAt(0,hx)-.5)*6.28318530718*gate:0.;
   float sg=uHCOn.y>.5?1.+(hcAt(1,hx)*2.-1.)*gate:1.;
-  float ev=uHCOn.z>.5?(hcAt(2,hx)-.5)*4.*sat*gate:0.;
+  float ev=uHCOn.z>.5?(hcAt(2,hx)-.5)*4.*sat*smoothstep(0.,.15,C):0.;
   float a2=ang+dh;vec2 dir=vec2(cos(a2),sin(a2));
-  float C2=min(C*max(0.,sg),gMaxC(Yc,dir.x,dir.y));
+  float m=gMaxC(Yc,dir.x,dir.y),xx=C*max(0.,sg),k=.8*m;
+  float C2=xx<=k?xx:k+(m-k)*(1.-exp(-(xx-k)/max(1e-6,m-k)));
   vec3 o=gFromYcc(Y,dir*C2);
   if(ev!=0.)o=gSrgb(min(gLin(o)*exp2(ev),1.));
   return o;
