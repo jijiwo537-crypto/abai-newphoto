@@ -159,6 +159,9 @@ export interface FxDef {
    *  name (e.g. the screen effect's scanlines are presented as 強度). */
   rootLabel?: string;
   handlesAmount?: boolean;
+  /** 其實是「調節」裡的一項（銳化、中間細節），不算特效：特效列不列它，
+   *  點別的特效卡片、算特效縮圖時也不會把它歸零。 */
+  adjustment?: boolean;
   passes: FxPass[];
 }
 
@@ -622,6 +625,55 @@ export const FX_DEFS: FxDef[] = [
   c += smoothstep(0.34, 0.5, max(abs(f.x), abs(f.y))) * fxGlassBevel * 0.35;
   return vec4(clamp(c, 0.0, 1.0), 1.0);`,
     }],
+  },
+  {
+    /* 中間細節（DaVinci Resolve 的 Mid/Detail）：只動「中等大小」的明暗起伏。
+       往正：把亮度減掉大半徑模糊後的差加回去（局部對比、質感）；
+       差值大的地方（明顯的邊緣）權重往下掉，所以不會冒白邊黑邊；極暗極亮處淡出。
+       往負：朝模糊後的亮度靠攏，但差值大（明顯邊緣）的地方不動 —— 皮膚變柔、輪廓仍清楚。
+       強度固定 100（有調就開），真正的量是有正負的 fxMidDetailAmt。只動亮度，不動顏色。 */
+    id: 'fxMidDetail', label: '中間細節', icon: 'details', adjustment: true,
+    params: [
+      { id: 'fxMidDetailAmt', label: '中間細節', icon: 'details', min: -100, max: 100, def: 0, scale: 0.01, hidden: true },
+    ],
+    passes: [
+      { body: `
+  float y = luma(texture2D(uTex, uv).rgb);
+  return vec4(vec3(y), 1.0);` },
+      { dir: [1, 0], body: `
+  const int K = 12;
+  float sigma = 6.0;
+  vec3 acc = vec3(0.0); float tw = 0.0;
+  for(int i = -K; i <= K; i++){
+    float fi = float(i);
+    float w = exp(-(fi * fi) / (2.0 * sigma * sigma));
+    acc += texture2D(uTex, uv + uDir * uTexel * fi * 1.6).rgb * w;
+    tw += w;
+  }
+  return vec4(acc / tw, 1.0);` },
+      { dir: [0, 1], body: `
+  const int K = 12;
+  float sigma = 6.0;
+  vec3 acc = vec3(0.0); float tw = 0.0;
+  for(int i = -K; i <= K; i++){
+    float fi = float(i);
+    float w = exp(-(fi * fi) / (2.0 * sigma * sigma));
+    acc += texture2D(uTex, uv + uDir * uTexel * fi * 1.6).rgb * w;
+    tw += w;
+  }
+  return vec4(acc / tw, 1.0);` },
+      { body: `
+  vec3 c = texture2D(uSrc, uv).rgb;
+  float y = luma(c);
+  float yb = texture2D(uTex, uv).r;
+  float d = y - yb;
+  float m = smoothstep(0.0, 0.18, y) * (1.0 - smoothstep(0.82, 1.0, y));
+  float a = fxMidDetailAmt;
+  float y2 = a >= 0.0
+    ? y + a * 1.6 * m * d * exp(-(d * d) / (0.09 * 0.09))
+    : y + a * 0.95 * d * exp(-(d * d) / (0.07 * 0.07));
+  return vec4(clamp(c + (y2 - y), 0.0, 1.0), 1.0);` },
+    ],
   },
   {
     id: 'fxSharpen', label: '銳化', icon: 'deblur',

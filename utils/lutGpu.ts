@@ -31,7 +31,7 @@ void main() {
   gl_Position = vec4(aPos, 0.0, 1.0);
 }`;
 
-import { GRADE_GLSL, type GradeFast } from './colorGrade';
+import { GRADE_GLSL, bindGradeUniforms, type GradeFast } from './colorGrade';
 
 const FRAG = `#version 300 es
 precision highp float;
@@ -389,13 +389,7 @@ export class LutGpu {
     gl.uniform1f(this.u('uVib'), f.vib ?? 0);
     gl.uniform1i(this.u('uHasHsl'), f.hsl ? 1 : 0);
     if (f.hsl) { gl.uniform1fv(this.u('uHslH[0]'), f.hsl.h); gl.uniform1fv(this.u('uHslS[0]'), f.hsl.s); gl.uniform1fv(this.u('uHslL[0]'), f.hsl.l); }
-    gl.uniform1i(this.u('uHasGrade'), f.grade ? 1 : 0);
-    if (f.grade) {
-      gl.uniform2fv(this.u('uGradeOff[0]'), f.grade.off);
-      gl.uniform4fv(this.u('uGradeLum'), f.grade.lum);
-      gl.uniform1f(this.u('uGradeP'), f.grade.p);
-      gl.uniform1f(this.u('uGradeGamma'), f.grade.gamma);
-    }
+    bindGradeUniforms(gl, n => this.u(n), f.grade ?? null);
     const table = (unit: number, tex: WebGLTexture | null, make: () => void) => {
       gl.activeTexture(gl.TEXTURE0 + unit);
       if (!tex) { tex = gl.createTexture()!; gl.bindTexture(gl.TEXTURE_2D, tex);

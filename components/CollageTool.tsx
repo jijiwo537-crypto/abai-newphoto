@@ -2607,7 +2607,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       // One shader family per idle slot. Real pointer interactions take
       // priority; shader compilation never changes preview quality.
-      for(const id of ['fxMosaic','softLight','halation','lightLeak',...FX_DEFS.filter(d=>d.id!=='fxMosaic').map(d=>d.id)]){
+      for(const id of ['fxMosaic','softLight','halation','lightLeak',...FX_DEFS.filter(d=>d.id!=='fxMosaic'&&!d.adjustment).map(d=>d.id)]){
         await awaitPhotoIdle();if(cancelled)return;
         regionSpatialInput.current??=document.createElement('canvas');
         warmPhotoFxSurface(regionSpatialInput.current,id,regionSpatial.current?.scene);

@@ -1,10 +1,6 @@
 
-import { DEFAULT_GRADE, isGradeIdentity, makeGrade, type ColorGrade, type GradeFast, type GradeZone } from '../utils/colorGrade';
-const GRADE_TABS: { id: GradeZone | 'blend'; label: string; fill: string }[] = [
-  { id: 'sh', label: '陰影', fill: '#2a2a2a' }, { id: 'mid', label: '中間調', fill: '#777' },
-  { id: 'hi', label: '亮部', fill: '#ddd' }, { id: 'global', label: '全域', fill: 'conic-gradient(#e55,#ee5,#5e5,#5ee,#55e,#e5e,#e55)' },
-  { id: 'blend', label: '混合', fill: 'linear-gradient(90deg,#222,#ddd)' },
-];
+import { freshGrade, isGradeIdentity, makeGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
+import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
@@ -121,8 +117,6 @@ const HSL_MAX_SAT = 0.5;
 /** 明度滑桿推到底時，最多往黑或白靠多少 */
 const HSL_MAX_LUM = 0.1;
 const HSL_CENTERS = Float32Array.from(HSL_BANDS.map(b => b.hue));
-/** HSL 面板的高度（量出來的，見上面的說明） */
-const HSL_PANEL_H = 196;
 const HSL_SLIDERS = [
   { key: 'h' as const, label: '色相' },
   { key: 's' as const, label: '飽和度' },
@@ -156,7 +150,7 @@ export const DEFAULT_PARAMS: EditorParams = {
   fringeIntensity: 0, fringeHue: 8, fringeSize: 10, fringeFeather: 100,
   curves: JSON.parse(JSON.stringify(DEFAULT_CURVES)),
   hsl: JSON.parse(JSON.stringify(DEFAULT_HSL)),
-  grade: JSON.parse(JSON.stringify(DEFAULT_GRADE)),
+  grade: freshGrade(),
   maskExposure: 0,
   maskBrightness: 0,
   maskContrast: 0,
@@ -248,7 +242,7 @@ const GRAIN_TOOLS: ToolDef[] = [
 const NO_EFFECT_PARAMS: Record<string, number> = {
   soft: 0, fringeIntensity: 0, leakOpacity: 0, blur: 0, colorNoise: 0, colorNoise2: 0,
   grain: 0, vignette: 0,
-  ...Object.fromEntries(FX_DEFS.map(d => [d.id, 0])),
+  ...Object.fromEntries(FX_DEFS.filter(d => !d.adjustment).map(d => [d.id, 0])),
 };
 
 const EFFECT_TOOLS: ToolDef[] = orderEffectCards<ToolDef>([
@@ -263,7 +257,7 @@ const EFFECT_TOOLS: ToolDef[] = orderEffectCards<ToolDef>([
      舊作品裡的 params.vignette 仍然照樣算得出來，只是不再從介面調整。 */
   /* 銳化已經搬到「調節」的最後面了，這一排不再列它 */
   /* 與拼圖圖片編輯共用完整特效清單；銳化仍只在調節中。 */
-  ...FX_DEFS.filter(d => d.id !== 'fxSharpen')
+  ...FX_DEFS.filter(d => d.id !== 'fxSharpen' && !d.adjustment)
     .map(d => ({ id: d.id, label: d.label, icon: d.icon, min: 0, max: 100 })),
 ], item => item.id);
 
@@ -284,7 +278,7 @@ const EFFECT_OWN_KEYS: Record<string, string[]> = {
   lightLeak: ['leakOpacity'],
   colorNoise: ['colorNoise', 'grain', 'colorNoise2'],
   blur: ['blur'],
-  ...Object.fromEntries(FX_DEFS.map(d => [d.id, [d.id]])),
+  ...Object.fromEntries(FX_DEFS.filter(d => !d.adjustment).map(d => [d.id, [d.id]])),
 };
 
 /** 現在畫面上還有沒有「還沒合併」的特效（合併過的參數是 0，所以自然不算） */
@@ -311,7 +305,7 @@ const EFFECT_ALL_KEYS: string[] = Array.from(new Set([
   'softThreshold', 'softRadius', 'softColor',
   'leakAngle', 'leakHue',
   'fringeHue', 'fringeSize', 'fringeFeather',
-  ...FX_DEFS.flatMap(d => d.params.map(p => p.id)),
+  ...FX_DEFS.filter(d => !d.adjustment).flatMap(d => d.params.map(p => p.id)),
 ]));
 
 /** 把所有特效參數（含細項）整組打回預設值 */
@@ -677,66 +671,6 @@ interface FastSliderProps {
         兩根並排時那個外擴會互相重疊，中間就會按錯根。 */
     dense?: boolean;
 }
-
-/* ── 調色輪的色輪 ──────────────────────────────────────────────────────────
-   方向＝色相、離中心多遠＝飽和度。拖曳是「相對移動」（手指拖多少、點就走多少，
-   乘上 0.7 讓手指能做細調），所以手指按下去不會讓點跳到手指底下 —— 跟 Lightroom
-   手機版一樣。點兩下回到中心。拖曳中只更新自己（不讓整個編輯器重畫），
-   每一步交給 onChange；放手才 onCommit。 */
-const GRADE_HUE_RING = 'conic-gradient(from 90deg, hsl(0 85% 55%), hsl(330 85% 55%), hsl(300 85% 55%), hsl(270 85% 55%), hsl(240 85% 55%), hsl(210 85% 55%), hsl(180 85% 55%), hsl(150 85% 55%), hsl(120 85% 55%), hsl(90 85% 55%), hsl(60 85% 55%), hsl(30 85% 55%), hsl(0 85% 55%))';
-export const gradeSwatch = (h: number, s: number) => `hsl(${h} ${Math.round(20 + s * 0.65)}% ${Math.round(60 - s * 0.1)}%)`;
-type GradeWheelPadProps = {
-  h: number; s: number; size: number;
-  onChange: (h: number, s: number) => void; onStart: () => void; onCommit: () => void; onReset: () => void;
-};
-const GradeWheelPad: React.FC<GradeWheelPadProps> = ({ h, s, size, onChange, onStart, onCommit, onReset }) => {
-  const knob = useRef<HTMLDivElement>(null);
-  const cur = useRef({ h, s });
-  const drag = useRef<{ x: number; y: number; px: number; py: number; id: number } | null>(null);
-  const lastTap = useRef(0);
-  const R = size / 2 - 6;
-  const place = (hh: number, ss: number) => {
-    const el = knob.current; if (!el) return;
-    const r = (ss / 100) * R, a = (hh * Math.PI) / 180;
-    el.style.transform = `translate(${Math.cos(a) * r}px, ${-Math.sin(a) * r}px)`;
-    el.style.background = ss > 0.5 ? gradeSwatch(hh, ss) : '#fff';
-  };
-  useEffect(() => { if (!drag.current) { cur.current = { h, s }; place(h, s); } });
-  const down = (e: React.PointerEvent) => {
-    e.preventDefault();
-    const now = performance.now();
-    if (now - lastTap.current < 300) { lastTap.current = 0; cur.current = { h: cur.current.h, s: 0 }; place(cur.current.h, 0); onReset(); return; }
-    lastTap.current = now;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    const r = (cur.current.s / 100) * R, a = (cur.current.h * Math.PI) / 180;
-    drag.current = { x: Math.cos(a) * r, y: -Math.sin(a) * r, px: e.clientX, py: e.clientY, id: e.pointerId };
-    onStart();
-  };
-  const move = (e: React.PointerEvent) => {
-    const d = drag.current; if (!d || d.id !== e.pointerId) return;
-    d.x += (e.clientX - d.px) * 0.7; d.y += (e.clientY - d.py) * 0.7; d.px = e.clientX; d.py = e.clientY;
-    let r = Math.hypot(d.x, d.y);
-    if (r > R) { d.x *= R / r; d.y *= R / r; r = R; }
-    const ss = Math.round((r / R) * 1000) / 10;
-    // 太靠近中心時色相不穩：維持原本的色相
-    const hh = r < 2 ? cur.current.h : ((Math.atan2(-d.y, d.x) * 180) / Math.PI + 360) % 360;
-    cur.current = { h: Math.round(hh * 10) / 10, s: ss };
-    place(cur.current.h, cur.current.s);
-    onChange(cur.current.h, cur.current.s);
-  };
-  const up = (e: React.PointerEvent) => { if (drag.current?.id !== e.pointerId) return; drag.current = null; onCommit(); };
-  return (
-    <div data-grade-wheel className="relative shrink-0 rounded-full touch-none select-none"
-      style={{ width: size, height: size, background: GRADE_HUE_RING }}
-      onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-      {/* 中心往外由灰到彩：越靠中心越淡 */}
-      <div className="absolute inset-[2px] rounded-full pointer-events-none"
-        style={{ background: 'radial-gradient(circle, rgba(40,40,40,1) 0%, rgba(40,40,40,.85) 25%, rgba(40,40,40,0) 100%)' }} />
-      <div className="absolute left-1/2 top-1/2 w-1 h-1 -ml-0.5 -mt-0.5 rounded-full bg-white/50 pointer-events-none" />
-      <div ref={knob} className="absolute left-1/2 top-1/2 w-4 h-4 -ml-2 -mt-2 rounded-full border-2 border-white shadow pointer-events-none" />
-    </div>
-  );
-};
 
 const FastSlider = React.memo(({ 
     value, min, max, step, toolId, label, snapZero, 
@@ -6890,29 +6824,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     zoomRef.current?.resetTransform(320, 'easeOut');
   }, [activeCategory]);
 
-  /* ── 調色輪 ── */
-  const [gradeTab, setGradeTab] = useState<GradeZone | 'blend'>('mid');
-  const updateGrade = (zone: GradeZone, patch: Partial<{ h: number; s: number; l: number }>, commit: boolean) => {
+  /* ── 一級調色（調色輪）：拖曳中只寫 paramsRef，放手才進 state 與復原紀錄 ── */
+  const onGradeChange = useCallback((g: ColorGrade, md: number) => {
     const cur = paramsRef.current;
-    const g = cur.grade || DEFAULT_GRADE;
-    const p2 = { ...cur, grade: { ...g, [zone]: { ...g[zone], ...patch } } };
-    paramsRef.current = p2;
+    paramsRef.current = { ...cur, grade: g, fxMidDetailAmt: md, fxMidDetail: md !== 0 ? 100 : 0 } as EditorParams;
     isDirtyRef.current = true;
     lastSliderMoveTimeRef.current = performance.now();
-    if (commit) commitGrade();
-  };
-  const updateGradeGlobal = (patch: Partial<{ blend: number; balance: number }>) => {
-    const cur = paramsRef.current;
-    paramsRef.current = { ...cur, grade: { ...(cur.grade || DEFAULT_GRADE), ...patch } };
-    isDirtyRef.current = true;
-    lastSliderMoveTimeRef.current = performance.now();
-  };
-  const commitGrade = () => {
+  }, []);
+  const onGradeStart = useCallback(() => setupFastPreview('grade'), [setupFastPreview]);
+  const commitGradeRef = useRef<() => void>(() => {});
+  commitGradeRef.current = () => {
     setIsInteracting(false);
     fastPreviewCacheRef.current.active = false;
     setParams({ ...paramsRef.current });
     addToHistory(paramsRef.current, selectedLutIdx);
   };
+  const onGradeCommit = useCallback(() => commitGradeRef.current(), []);
 
   const [hslFit, setHslFit] = useState<{ mb: number; mh: number } | null>(null);
   const measureHslFit = useCallback(() => {
@@ -7026,7 +6953,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       return !isHslIdentity(params.hsl);
     }
     if (id === 'grade') {
-      return !isGradeIdentity(params.grade);
+      return !isGradeIdentity(params.grade) || !!(params as any).fxMidDetailAmt;
     }
     if (id === 'softLight' || id === 'soft' || id === 'softThreshold' || id === 'softRadius' || id === 'softColor') {
       if (params.soft === 0) return false;
@@ -8092,88 +8019,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              底部那兩列（小分類、分頁）因此完全不會被推動。
              進出不做任何動畫：直接掛上、直接拿掉。 */}
         {detailPanelHost && createPortal(<AnimatePresence>
-        {activeToolId === 'grade' && <motion.div key="grade"
+        {/* HSL 與調色輪共用同一個面板外框（同一個 key、固定同一個高度）：
+             兩者之間來回切換時外框不卸載、不做進出場，只換裡面的內容，
+             圖片的位置與大小也就完全不動。 */}
+        {(activeToolId === 'hsl' || activeToolId === 'grade') && <motion.div key="hsl"
            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
            data-hsl-panel
-           className="absolute inset-x-0 bottom-0 z-40 px-8 pt-2 pb-2 bg-[#111]/95 backdrop-blur-xl border-t border-white/5"
+           className="absolute inset-x-0 bottom-0 z-40 bg-[#111]/95 backdrop-blur-xl border-t border-white/5 overflow-hidden"
+           style={{ height: COLOUR_PANEL_H }}
         >
-          <div className="w-full flex flex-col">
-            {/* 陰影／中間調／亮部／全域／混合：圓點顯示該區目前染的顏色 */}
-            <div className="flex items-center justify-center gap-3 py-1.5">
-              {GRADE_TABS.map(t => {
-                const on = gradeTab === t.id;
-                const w = t.id !== 'blend' ? (params.grade || DEFAULT_GRADE)[t.id as GradeZone] : null;
-                const touched = t.id === 'blend'
-                  ? ((params.grade?.blend ?? 50) !== 50 || (params.grade?.balance ?? 0) !== 0)
-                  : !!w && (w.s !== 0 || w.l !== 0);
-                return (
-                  <button key={t.id} onClick={() => setGradeTab(t.id)} className="shrink-0 flex flex-col items-center gap-1">
-                    <span className="block w-7 h-7 rounded-full"
-                      style={{ border: `3px solid ${on ? '#fff' : 'rgba(255,255,255,.25)'}`,
-                        background: w && w.s > 0 ? gradeSwatch(w.h, w.s) : t.fill }} />
-                    <span className={`text-[10px] leading-none ${on ? 'text-white' : 'text-white/45'}`}>{t.label}</span>
-                    <span className={`w-1 h-1 rounded-full bg-white transition-opacity ${touched ? 'opacity-100' : 'opacity-0'}`} />
-                  </button>
-                );
-              })}
-            </div>
-            {gradeTab !== 'blend' ? (
-              <div className="flex items-center gap-4 pt-1">
-                <GradeWheelPad
-                  key={gradeTab}
-                  size={112}
-                  h={(params.grade || DEFAULT_GRADE)[gradeTab as GradeZone].h}
-                  s={(params.grade || DEFAULT_GRADE)[gradeTab as GradeZone].s}
-                  onStart={() => setupFastPreview('grade')}
-                  onChange={(hh, ss) => updateGrade(gradeTab as GradeZone, { h: hh, s: ss }, false)}
-                  onCommit={() => commitGrade()}
-                  onReset={() => { updateGrade(gradeTab as GradeZone, { s: 0 }, false); commitGrade(); }}
-                />
-                <div className="flex-1 min-w-0 flex flex-col">
-                  {([['h', '色相', 0, 360], ['s', '飽和度', 0, 100], ['l', '明亮度', -100, 100]] as const).map(([k, label, mn, mx]) => (
-                    <FastSlider
-                      key={`${gradeTab}-${k}`}
-                      value={(params.grade || DEFAULT_GRADE)[gradeTab as GradeZone][k]}
-                      min={mn} max={mx} step={1}
-                      toolId={`grade.${gradeTab}.${k}`}
-                      label={label}
-                      snapZero={k === 'l'}
-                      compact
-                      onUpdate={(id, val) => { const [, z, kk] = id.split('.'); updateGrade(z as GradeZone, { [kk]: val }, false); }}
-                      onInteractStart={() => setupFastPreview('grade')}
-                      onInteractEnd={() => commitGrade()}
-                      onReset={() => { updateGrade(gradeTab as GradeZone, { [k]: 0 }, false); commitGrade(); }}
-                    />
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col pt-1">
-                {([['blend', '混合', 0, 100, 50], ['balance', '平衡', -100, 100, 0]] as const).map(([k, label, mn, mx, def]) => (
-                  <FastSlider
-                    key={`grade-${k}`}
-                    value={(params.grade ?? DEFAULT_GRADE)[k]}
-                    min={mn} max={mx} step={1}
-                    toolId={`grade.${k}`}
-                    label={label}
-                    snapZero={k === 'balance'}
-                    compact
-                    onUpdate={(_id, val) => updateGradeGlobal({ [k]: val })}
-                    onInteractStart={() => setupFastPreview('grade')}
-                    onInteractEnd={() => commitGrade()}
-                    onReset={() => { updateGradeGlobal({ [k]: def }); commitGrade(); }}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </motion.div>}
-        {activeToolId === 'hsl' && <motion.div key="hsl"
-           initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
-           data-hsl-panel
-           className="absolute inset-x-0 bottom-0 z-40 px-8 pt-2 pb-2 bg-[#111]/95 backdrop-blur-xl border-t border-white/5"
-        >
-<div className="w-full flex flex-col">
+        {activeToolId === 'grade' ? (
+          <PrimariesPanel grade={params.grade} midDetail={(params as any).fxMidDetailAmt || 0}
+            width={detailPanelHost.clientWidth || window.innerWidth}
+            onStart={onGradeStart} onChange={onGradeChange} onCommit={onGradeCommit} />
+        ) : (
+<div className="w-full flex flex-col px-8 pt-2 pb-2">
               {/* 這一排伸進外層的左右內距裡（w = 100%+4rem 配 -mx-8），才排得下。
                   外層的 border box 是整個畫面寬，所以伸出去不會被裁掉。
                   內層用 w-max + mx-auto：排得下的時候自動置中，排不下的時候
@@ -8247,6 +8107,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 />
               ))}
             </div>
+        )}
         </motion.div>}
         </AnimatePresence>, detailPanelHost)}
 

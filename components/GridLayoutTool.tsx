@@ -501,7 +501,7 @@ const FX_ROOT_TOOLS: [string, string, string][] = orderEffectCards<[string, stri
   ['lightLeak', '漏光', 'leak_add'],
   ['colorNoise', '噪點', 'grain'],
   ['blur', '朦朧', 'blur_linear'],
-  ...FX_DEFS.filter(d => d.id !== 'fxSharpen').map(d => [d.id, d.label, d.icon] as [string, string, string]),
+  ...FX_DEFS.filter(d => d.id !== 'fxSharpen' && !d.adjustment).map(d => [d.id, d.label, d.icon] as [string, string, string]),
 ], item => item[0]);
 
 /** 卡片 → 外層那根「強度」滑桿實際調的參數（柔光／光暈／漏光的強度不是卡片 id 本身） */
