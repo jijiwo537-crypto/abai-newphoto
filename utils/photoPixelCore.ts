@@ -1,6 +1,6 @@
 import type { EditorParams } from '../components/ImageEditor';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast } from './photoToneMath';
-import { makeGrade, applyGrade, qualKey, qualBlend } from './colorGrade';
+import { makeGrade, applyGrade } from './colorGrade';
 const HSL_MAX_HUE_SHIFT=15,HSL_MAX_SAT=.5,HSL_MAX_LUM=.1;
 const HSL_CENTERS=Float32Array.from([0,30,60,120,180,240,270,300]);
 const DEFAULT_HSL=Array.from({length:8},()=>({h:0,s:0,l:0}));
@@ -9,8 +9,6 @@ const ditherTable=Float32Array.from({length:4096},()=> (Math.random()-.5)*.75);
 export const copyPixelDither=()=>ditherTable.slice();
 export const setPixelDither=(value:Float32Array)=>ditherTable.set(value);
 const masterLUT_R=new Float32Array(32768),masterLUT_G=new Float32Array(32768),masterLUT_B=new Float32Array(32768);
-/** 限定器開著時的第二張主表：範圍內的調整全部套用（見 applyGrade 的 qualMode） */
-let qualLUT:Float32Array|null=null;
 
 /** Per-channel exposure → brightness → contrast as an 8-bit table.
  *  processPixels no longer reads it (it evaluates photoToneMath directly at
@@ -59,8 +57,6 @@ export const processPixels = (
 
   const stage = makeToneStage(p);
   const tc = new Float32Array(3);
-  /** 這個格點的原始顏色（限定器要用原圖的顏色選範圍） */
-  const origC = new Float32Array(3);
   const toneFast = makeToneFast(stage);
   // The master grid has only 32 input levels per channel: precompute them.
   const wbM = toneFast.wb;
@@ -93,8 +89,6 @@ export const processPixels = (
 
   // 調色輪（陰影／中間調／亮部／全域）—— 在最後，接在 HSL 之後
   const grade = makeGrade((p as any).grade);
-  const qualF = grade?.qual ?? null;
-  if (qualF && !qualLUT) qualLUT = new Float32Array(32768 * 3);
 
   // Sharpen Constants (Multiply amount since Int8 is halved)
   const hasSharpen = p.sharpen > 0 && !!sharpenDetail;
@@ -240,17 +234,8 @@ export const processPixels = (
                   }
               }
 
-              // 9. 調色輪（Oklab，見 utils/colorGrade）
-              if (grade) {
-                  origC[0] = (l_r * 255) / 31; origC[1] = (l_g * 255) / 31; origC[2] = (l_b * 255) / 31;
-                  if (qualF) {
-                      // 限定器：烤「沒調」與「調過」兩張，逐像素再用精確的鍵混合
-                      tc[0] = r; tc[1] = g; tc[2] = b; applyGrade(grade, tc, origC, 2);
-                      qualLUT![masterIdx * 3] = tc[0]; qualLUT![masterIdx * 3 + 1] = tc[1]; qualLUT![masterIdx * 3 + 2] = tc[2];
-                      tc[0] = r; tc[1] = g; tc[2] = b; applyGrade(grade, tc, origC, 1);
-                  } else { tc[0] = r; tc[1] = g; tc[2] = b; applyGrade(grade, tc, origC); }
-                  r = tc[0]; g = tc[1]; b = tc[2];
-              }
+              // 9. 調色（HDR 色輪 → 一級色輪 → 色相曲線，見 utils/colorGrade）
+              if (grade) { tc[0] = r; tc[1] = g; tc[2] = b; applyGrade(grade, tc); r = tc[0]; g = tc[1]; b = tc[2]; }
 
               masterLUT_R[masterIdx] = r; masterLUT_G[masterIdx] = g; masterLUT_B[masterIdx] = b;
               masterIdx++;
@@ -283,42 +268,6 @@ export const processPixels = (
       destData[i+2]=bb[sourceData[i+2]]+d;destData[i+3]=255;
     }
     return;
-  }
-
-  /* 限定器：兩張主表各自四面體內插，鍵用這個像素的原始顏色精確算（邊緣跟 GPU 一樣銳利） */
-  if (qualF && qualLUT) {
-      const Q = qualLUT, K = qualF.k, view = qualF.view;
-      const A = [0, 0, 0], B = [0, 0, 0], out = [0, 0, 0];
-      for (let i = 0; i < len; i += 4) {
-          const sr = sourceData[i], sg = sourceData[i+1], sb = sourceData[i+2];
-          const rf = sr * sLUT, gf = sg * sLUT, bf = sb * sLUT;
-          const r0 = rf | 0, g0 = gf | 0, b0 = bf | 0;
-          const r1 = r0 === 31 ? 31 : r0 + 1, g1 = g0 === 31 ? 31 : g0 + 1, b1 = b0 === 31 ? 31 : b0 + 1;
-          const dr = rf - r0, dg = gf - g0, db = bf - b0;
-          const b0_O = b0 << 10, b1_O = b1 << 10, g0_O = g0 << 5, g1_O = g1 << 5;
-          const i000 = b0_O | g0_O | r0, i111 = b1_O | g1_O | r1;
-          let iA, iB, w0, w1, w2, w3;
-          if (dr > dg) {
-              if (dg > db) { iA = b0_O | g0_O | r1; iB = b0_O | g1_O | r1; w0 = 1 - dr; w1 = dr - dg; w2 = dg - db; w3 = db; }
-              else if (dr > db) { iA = b0_O | g0_O | r1; iB = b1_O | g0_O | r1; w0 = 1 - dr; w1 = dr - db; w2 = db - dg; w3 = dg; }
-              else { iA = b1_O | g0_O | r0; iB = b1_O | g0_O | r1; w0 = 1 - db; w1 = db - dr; w2 = dr - dg; w3 = dg; }
-          } else {
-              if (db > dg) { iA = b1_O | g0_O | r0; iB = b1_O | g1_O | r0; w0 = 1 - db; w1 = db - dg; w2 = dg - dr; w3 = dr; }
-              else if (db > dr) { iA = b0_O | g1_O | r0; iB = b1_O | g1_O | r0; w0 = 1 - dg; w1 = dg - db; w2 = db - dr; w3 = dr; }
-              else { iA = b0_O | g1_O | r0; iB = b0_O | g1_O | r1; w0 = 1 - dg; w1 = dg - dr; w2 = dr - db; w3 = db; }
-          }
-          A[0] = (masterLUT_R[i000] * w0 + masterLUT_R[iA] * w1 + masterLUT_R[iB] * w2 + masterLUT_R[i111] * w3) / 255;
-          A[1] = (masterLUT_G[i000] * w0 + masterLUT_G[iA] * w1 + masterLUT_G[iB] * w2 + masterLUT_G[i111] * w3) / 255;
-          A[2] = (masterLUT_B[i000] * w0 + masterLUT_B[iA] * w1 + masterLUT_B[iB] * w2 + masterLUT_B[i111] * w3) / 255;
-          for (let c = 0; c < 3; c++) B[c] = (Q[i000 * 3 + c] * w0 + Q[iA * 3 + c] * w1 + Q[iB * 3 + c] * w2 + Q[i111 * 3 + c] * w3) / 255;
-          qualBlend(view, qualKey(K, sr / 255, sg / 255, sb / 255), A, B, out);
-          let r = out[0] * 255, g = out[1] * 255, b = out[2] * 255;
-          if (hasSharpen) { const detail = sharpenDetail![i] * sharpenAmount; r += detail; g += detail; b += detail; }
-          const dither = ditherTable[ditherIdx & 4095];
-          ditherIdx++;
-          destData[i] = r + dither; destData[i+1] = g + dither; destData[i+2] = b + dither; destData[i+3] = 255;
-      }
-      return;
   }
 
   // Split into explicit loops to guarantee CPU JIT vectorization and no block de-opts

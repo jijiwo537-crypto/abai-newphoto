@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { clamp, fmt, RING, CH_COLOUR, useDrag, ResetIcon, type Ev } from './grade/controls';
+import { clamp, fmt, RING, useDrag, ResetIcon, type Ev } from './grade/controls';
 import {
   WHEEL_SPEC, rgbToWheel, wheelToRgb, isWheelNeutral, freshWheels, normGrade, freshGrade,
   HDR_ZONES, isHdrWheelNeutral,
@@ -8,10 +8,12 @@ import {
 
 /* 調色輪面板：照 DaVinci Resolve 桌面版的色輪調色板。
  *
- *   上：模式（一級校色輪／一級校色條／Log 色輪／HDR）、HDR 的換頁、重置
- *   一級／Log：四個色輪（或色條）：名稱＋重置鍵、色輪、主轉盤、數值
+ *   上：模式（一級校色輪／Log 色輪／HDR）、HDR 的換頁、重置
+ *   一級／Log：四個色輪：名稱＋重置鍵、色輪（顏色）、底下的亮度滑桿（Resolve 的主轉盤）
  *   HDR：七個色輪分兩頁（黑色、暗部、陰影、亮部｜高光、鏡面高光、全域），
- *        每個：色輪（色彩平衡）、主轉盤（曝光）、曝光／飽和度、範圍／柔化
+ *        每個：色輪（顏色）、曝光滑桿、飽和度／範圍／柔化
+ *
+ * 色輪只管「顏色」（往哪個色偏、偏多少），不會改變亮度；亮度一律由底下那根滑桿調。
  *
  * 所有數字都跟 Resolve 一樣「按住左右拖」來改，點兩下回到預設值。
  * 色輪是相對拖曳（不會跳到手指底下），乘 0.6 方便細調。
@@ -21,8 +23,9 @@ import {
 /** 面板高度：跟 HSL 面板一樣，切換時圖片位置完全不動 */
 export const COLOUR_PANEL_H = 221;
 
-type Mode = 'wheels' | 'bars' | 'log' | 'hdr';
+type Mode = 'wheels' | 'log' | 'hdr';
 let lastMode: Mode = 'wheels';
+if ((lastMode as string) === 'bars') lastMode = 'wheels';
 let lastHdrPage = 0;
 
 /** 色輪盤面（向量示波器方向的細色環、深色盤面、十字線、調整點） */
@@ -49,16 +52,31 @@ const WheelDisc: React.FC<{ D: number; px: number; py: number; drag: ReturnType<
   </div>
 );
 
-/** 主轉盤（jog wheel）：左右拖 */
-const Jog: React.FC<{ W: number; drag: ReturnType<typeof useDrag>; x: number; id: string }> = ({ W, drag, x, id }) => (
-  <div {...drag} data-grade-jog={id} className="mt-[4px] rounded-[3px] touch-none select-none cursor-ew-resize border border-black/70"
-    style={{
-      width: W, height: 10,
-      background: `repeating-linear-gradient(90deg, #3a3a3a 0 1px, #232323 1px 4px) ${x}px 0 / auto, #232323`,
-      boxShadow: 'inset 0 2px 3px rgba(0,0,0,.55), inset 0 -1px 0 rgba(255,255,255,.04)',
-      WebkitMaskImage: 'linear-gradient(90deg, rgba(0,0,0,.35), #000 25%, #000 75%, rgba(0,0,0,.35))',
-    }} />
-);
+/** 色輪底下的滑桿（Resolve 的主轉盤）：左右拖、點兩下回預設。相對拖曳，手指按哪裡都不會跳。 */
+const WheelSlider: React.FC<Ev & { W: number; value: number; def: number; span: number; step: number; min: number; max: number; digits: number; label: string; id: string; onChange: (v: number) => void }> = ({ W, value, def, span, step, min, max, digits, label, id, onChange, onStart, onEnd }) => {
+  const acc = useRef(value);
+  const drag = useDrag({
+    onStart: () => { acc.current = value; onStart(); },
+    onMove: dx => { acc.current = clamp(acc.current + dx * step, min, max); onChange(acc.current); },
+    onEnd,
+    onDouble: () => { onStart(); onChange(def); onEnd(); },
+  });
+  const t = clamp((value - def) / span, -1, 1);
+  const changed = Math.abs(value - def) > 5e-4;
+  return (
+    <div {...drag} data-grade-jog={id} className="flex flex-col items-center touch-none select-none cursor-ew-resize mt-[5px]" style={{ width: W }}>
+      <div className="relative w-full h-[14px]">
+        <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-[3px] rounded-full bg-white/15" />
+        <div className="absolute top-1/2 -translate-y-1/2 h-[3px] rounded-full bg-white/80" style={{ left: `${50 + Math.min(0, t) * 50}%`, width: `${Math.abs(t) * 50}%` }} />
+        <div className="absolute left-1/2 top-1/2 -translate-y-1/2 w-[1px] h-[7px] bg-white/35" />
+        <div className="absolute top-1/2 w-[12px] h-[12px] -ml-[6px] -translate-y-1/2 rounded-full bg-white shadow" style={{ left: `${50 + t * 50}%` }} />
+      </div>
+      <span className="mt-[3px] text-[10px] leading-none whitespace-nowrap tabular-nums" style={{ color: changed ? '#fff' : 'rgba(255,255,255,.45)' }}>
+        {label} {fmt(value, digits)}
+      </span>
+    </div>
+  );
+};
 
 const UnitHead: React.FC<{ label: string; neutral: boolean; onReset: () => void; D: number }> = ({ label, neutral, onReset, D }) => (
   <div className="relative flex items-center justify-center h-[16px]" style={{ width: D }}>
@@ -85,30 +103,9 @@ const Num: React.FC<Ev & { v: number; color: string; def: number; step: number; 
   );
 };
 
-/** 色條模式的一根：中性值在中間，往上加往下減，上下拖 */
-const Bar: React.FC<Ev & { c: string; v: number; neutral: number; min: number; max: number; span: number; H: number; onChange: (v: number) => void }> = ({ c, v, neutral, min, max, span, H, onChange, onStart, onEnd }) => {
-  const acc = useRef(v);
-  const drag = useDrag({
-    onStart: () => { acc.current = v; onStart(); },
-    onMove: (_dx, dy) => { acc.current = clamp(acc.current - dy * (span / (H / 2)), min, max); onChange(acc.current); },
-    onEnd,
-    onDouble: () => { onStart(); onChange(neutral); onEnd(); },
-  });
-  const t = clamp((v - neutral) / span, -1, 1) * (H / 2 - 1);
-  return (
-    <div {...drag} className="relative touch-none select-none cursor-ns-resize rounded-[2px]" data-grade-bar={c}
-      style={{ width: 12, height: H, background: '#1b1b1b', boxShadow: '0 0 0 1px #050505, inset 0 1px 2px rgba(0,0,0,.6)' }}>
-      <div className="absolute left-0 right-0" style={{ top: H / 2 - 0.5, height: 1, background: 'rgba(255,255,255,.18)' }} />
-      <div className="absolute left-[2px] right-[2px] rounded-[1px]" style={{ top: t >= 0 ? H / 2 - t : H / 2, height: Math.abs(t), background: CH_COLOUR[c], opacity: 0.85 }} />
-      <div className="absolute left-[-2px] right-[-2px] h-[3px] rounded-[1px] bg-white" style={{ top: H / 2 - t - 1.5 }} />
-    </div>
-  );
-};
-
 /** 一級／Log 的色輪（或色條）單元 */
-const WheelUnit: React.FC<Ev & { id: WheelId; label: string; w: YRGB; D: number; bars: boolean; onChange: (w: YRGB) => void }> = ({ id, label, w, D, bars, onChange, onStart, onEnd }) => {
+const WheelUnit: React.FC<Ev & { id: WheelId; label: string; w: YRGB; D: number; onChange: (w: YRGB) => void }> = ({ id, label, w, D, onChange, onStart, onEnd }) => {
   const s = WHEEL_SPEC[id];
-  const chans = (s.hasY ? ['y', 'r', 'g', 'b'] : ['r', 'g', 'b']) as (keyof YRGB)[];
   const R = D / 2 - 9;
   const [cb, cr] = rgbToWheel(w, s.neutral);
   let px = (cb / s.edge) * R, py = (-cr / s.edge) * R;
@@ -124,41 +121,21 @@ const WheelUnit: React.FC<Ev & { id: WheelId; label: string; w: YRGB; D: number;
     onEnd,
     onDouble: () => { onStart(); onChange(wheelToRgb(w, s.neutral, 0, 0)); onEnd(); },
   });
-  /* 主轉盤：有 Y 的（暗部／中灰／亮部）改 Y；沒有的（偏移、Log）三個通道一起改 */
-  const [jogX, setJogX] = useState(0);
-  const jog = useDrag({
-    onStart, onEnd,
-    onMove: dx => {
-      setJogX(x => x + dx);
-      const dv = dx * s.jog;
-      onChange(s.hasY ? { ...w, y: clamp(w.y + dv, s.min, s.max) }
-        : { ...w, r: clamp(w.r + dv, s.min, s.max), g: clamp(w.g + dv, s.min, s.max), b: clamp(w.b + dv, s.min, s.max) });
-    },
-    onDouble: () => {
-      onStart();
-      if (s.hasY) onChange({ ...w, y: s.neutral });
-      else { const m = (w.r + w.g + w.b) / 3 - s.neutral; onChange({ ...w, r: w.r - m, g: w.g - m, b: w.b - m }); }
-      onEnd();
-    },
-  });
+  /* 亮度：有 Y 的（暗部／中灰／亮部）改 Y；沒有的（偏移、Log）三個通道一起改 */
+  const level = s.hasY ? w.y : (w.r + w.g + w.b) / 3;
+  const setLevel = (v: number) => {
+    if (s.hasY) { onChange({ ...w, y: clamp(v, s.min, s.max) }); return; }
+    const d = v - level;
+    onChange({ ...w, r: clamp(w.r + d, s.min, s.max), g: clamp(w.g + d, s.min, s.max), b: clamp(w.b + d, s.min, s.max) });
+  };
   const reset = () => { onStart(); onChange({ y: s.neutral, r: s.neutral, g: s.neutral, b: s.neutral }); onEnd(); };
   const span = id === 'gain' ? 1 : id === 'offset' ? 25 : 0.5;
   return (
     <div className="flex-1 min-w-0 flex flex-col items-center" data-grade-unit={id}>
       <UnitHead label={label} neutral={isWheelNeutral(w, id)} onReset={reset} D={D} />
-      <div className="mt-[3px]">
-        {!bars ? <WheelDisc D={D} px={px} py={py} drag={wheel} id={id} /> : (
-          <div className="flex items-end justify-center gap-[5px]" style={{ height: D, width: D }}>
-            {chans.map(c => <Bar key={c} c={c} v={w[c]} neutral={s.neutral} min={s.min} max={s.max} span={span} H={D - 6} onStart={onStart} onEnd={onEnd}
-              onChange={v => onChange({ ...w, [c]: v })} />)}
-          </div>
-        )}
-      </div>
-      <Jog W={D - 6} drag={jog} x={jogX} id={id} />
-      <div className="w-full flex justify-center gap-[1px] mt-[3px]">
-        {chans.map(c => <Num key={c} v={w[c]} color={CH_COLOUR[c]} def={s.neutral} step={s.jog * 0.5} min={s.min} max={s.max} digits={s.digits}
-          onStart={onStart} onEnd={onEnd} onChange={v => onChange({ ...w, [c]: v })} />)}
-      </div>
+      <div className="mt-[4px]"><WheelDisc D={D} px={px} py={py} drag={wheel} id={id} /></div>
+      <WheelSlider W={D - 8} value={level} def={s.neutral} span={span} step={s.jog} min={s.min} max={s.max} digits={s.digits} label="亮度" id={id}
+        onChange={setLevel} onStart={onStart} onEnd={onEnd} />
     </div>
   );
 };
@@ -179,12 +156,6 @@ const HdrUnit: React.FC<Ev & { id: HdrZoneId | 'global'; label: string; w: HdrWh
     onEnd,
     onDouble: () => { onStart(); onChange({ ...w, x: 0, y: 0 }); onEnd(); },
   });
-  const [jogX, setJogX] = useState(0);
-  const jog = useDrag({
-    onStart, onEnd,
-    onMove: dx => { setJogX(x => x + dx); onChange({ ...w, exp: clamp(w.exp + dx * 0.01, -4, 4) }); },
-    onDouble: () => { onStart(); onChange({ ...w, exp: 0 }); onEnd(); },
-  });
   const zone = 'range' in w;
   const reset = () => { onStart(); onChange({ ...def }); onEnd(); };
   const neutral = isHdrWheelNeutral(w) && (!zone || ((w as HdrZone).range === (def as HdrZone).range && (w as HdrZone).falloff === (def as HdrZone).falloff));
@@ -196,20 +167,19 @@ const HdrUnit: React.FC<Ev & { id: HdrZoneId | 'global'; label: string; w: HdrWh
     <div className="flex-1 min-w-0 flex flex-col items-center" data-grade-unit={id}>
       <UnitHead label={label} neutral={neutral} onReset={reset} D={D} />
       <div className="mt-[3px]"><WheelDisc D={D} px={px} py={py} drag={wheel} id={`hdr-${id}`} /></div>
-      <Jog W={D - 6} drag={jog} x={jogX} id={`hdr-${id}`} />
-      <div className="w-full flex justify-center mt-[2px]">
-        {n('exp', '曝光', 0, 0.005, -4, 4)}{n('sat', '飽和度', 1, 0.005, 0, 2)}
+      <WheelSlider W={D - 6} value={w.exp} def={0} span={2} step={0.01} min={-4} max={4} digits={2} label="曝光" id={`hdr-${id}`}
+        onChange={v => onChange({ ...w, exp: v })} onStart={onStart} onEnd={onEnd} />
+      <div className="w-full flex justify-center mt-[4px]">
+        {n('sat', '飽和度', 1, 0.005, 0, 2)}{zone && n('range', '範圍', (def as HdrZone).range, 0.01, -8, 8)}
       </div>
-      {zone && <div className="w-full flex justify-center">
-        {n('range', '範圍', (def as HdrZone).range, 0.01, -8, 8)}{n('falloff', '柔化', (def as HdrZone).falloff, 0.005, 0, 4)}
-      </div>}
+      {zone && <div className="w-full flex justify-center">{n('falloff', '柔化', (def as HdrZone).falloff, 0.005, 0, 4)}</div>}
     </div>
   );
 };
 
 const PRIMARY_UNITS: [WheelId, string][] = [['lift', '暗部'], ['gamma', '中灰'], ['gain', '亮部'], ['offset', '偏移']];
 const LOG_UNITS: [WheelId, string][] = [['logSh', '陰影'], ['logMid', '中間調'], ['logHi', '高光'], ['offset', '偏移']];
-const MODES: [Mode, string][] = [['wheels', '一級校色輪'], ['bars', '一級校色條'], ['log', 'Log 色輪'], ['hdr', 'HDR']];
+const MODES: [Mode, string][] = [['wheels', '一級校色輪'], ['log', 'Log 色輪'], ['hdr', 'HDR 色輪']];
 const HDR_PAGES: (HdrZoneId | 'global')[][] = [['black', 'dark', 'shadow', 'light'], ['highlight', 'specular', 'global']];
 
 export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width, onStart, onChange, onCommit }: {
@@ -237,7 +207,7 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
   const resetAll = () => { ev.onStart(); push({ ...gRef.current, ...freshWheels(), hdr: freshGrade().hdr }); ev.onEnd(); };
 
   const unitW = (width - 12) / 4;
-  const D = Math.round(Math.min(86, unitW - 8));
+  const D = Math.round(Math.min(84, unitW - 10));
   const hdrD = Math.round(Math.min(72, unitW - 12));
   const fresh = freshGrade().hdr;
   return (
@@ -264,7 +234,7 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
       <div className="flex-1 flex items-center">
         <div className="w-full flex">
           {mode !== 'hdr' ? (mode === 'log' ? LOG_UNITS : PRIMARY_UNITS).map(([id, l]) => (
-            <WheelUnit key={`${mode}-${id}`} id={id} label={l} w={g[id]} D={D} bars={mode === 'bars'} onChange={w => setWheel(id, w)} {...ev} />
+            <WheelUnit key={`${mode}-${id}`} id={id} label={l} w={g[id]} D={D} onChange={w => setWheel(id, w)} {...ev} />
           )) : HDR_PAGES[page].map(id => {
             const z = HDR_ZONES.find(q => q.id === id);
             return <HdrUnit key={id} id={id} label={z ? z.label : '全域'} w={g.hdr[id]} def={fresh[id]} D={hdrD} onChange={w => setHdr(id, w)} {...ev} />;

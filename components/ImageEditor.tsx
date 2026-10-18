@@ -4,10 +4,6 @@ import { HUE_CURVE_IDS, type HueCurveId } from '../utils/grade/hueCurves';
 import type { CurvePt } from '../utils/grade/spline';
 import { HueCurveBox } from './grade/HueCurveBox';
 import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
-import { SlicePanel } from './grade/SlicePanel';
-import { WarperPanel } from './grade/WarperPanel';
-import { QualifierPanel, type PickMode } from './grade/QualifierPanel';
-import { pickQual } from '../utils/colorGrade';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
@@ -202,7 +198,7 @@ const MASK_TOOLS: ToolDef[] = [
 ];
 
 /** 共用「HSL 那個面板外框」的工具：同一個外框、同一個高度，彼此切換時圖片完全不動 */
-const COLOUR_PANEL_TOOLS = ['hsl', 'grade', 'slice', 'warper', 'qualifier'];
+const COLOUR_PANEL_TOOLS = ['hsl', 'grade'];
 const isColourPanelTool = (id: string) => COLOUR_PANEL_TOOLS.includes(id);
 
 const ADJUST_TOOLS: ToolDef[] = [
@@ -220,10 +216,6 @@ const ADJUST_TOOLS: ToolDef[] = [
   { id: 'hsl', label: 'HSL', icon: 'invert_colors', min: 0, max: 0 },   // HSL tool
   // 調色輪：陰影／中間調／亮部／全域四個色輪（Lightroom 的顏色分級、達芬奇的色輪）
   { id: 'grade', label: '調色輪', icon: 'grade_wheels', min: 0, max: 0 },
-  // 達芬奇的色彩切片、色彩扭曲器、限定器（見 utils/colourStage）
-  { id: 'slice', label: '色彩切片', icon: 'color_slice', min: 0, max: 0 },
-  { id: 'warper', label: '色彩扭曲器', icon: 'color_warper', min: 0, max: 0 },
-  { id: 'qualifier', label: '限定器', icon: 'qualifier', min: 0, max: 0 },
   /* 銳化本來在特效那一排，搬過來排最後。它底層還是 GLSL 那一層算的
      （params.fxSharpen），只是入口移到調節，圖標用空心三角形。 */
   { id: 'fxSharpen', label: '銳化', icon: 'change_history', min: 0, max: 100 },
@@ -6846,39 +6838,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     isDirtyRef.current = true;
     lastSliderMoveTimeRef.current = performance.now();
   }, []);
-  const handleQualPick = (cx: number, cy: number) => {
-    const cvs = displayCanvasRef.current, b = buffers.current.preview, src = b.source;
-    if (!cvs || !src || !qualPick) return;
-    const r = cvs.getBoundingClientRect();
-    const fx = (cx - r.left) / r.width, fy = (cy - r.top) / r.height;
-    if (fx < 0 || fy < 0 || fx > 1 || fy > 1) return;
-    const x0 = Math.round(fx * (b.w - 1)), y0 = Math.round(fy * (b.h - 1));
-    const px: number[][] = [];
-    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
-      const x = Math.min(b.w - 1, Math.max(0, x0 + dx)), y = Math.min(b.h - 1, Math.max(0, y0 + dy)), i = (y * b.w + x) * 4;
-      px.push([src[i] / 255, src[i + 1] / 255, src[i + 2] / 255]);
-    }
-    const g = normGrade(paramsRef.current.grade);
-    delete g.view;
-    const next = { ...paramsRef.current, grade: { ...g, qual: pickQual(g.qual, px, qualPick) } } as EditorParams;
-    paramsRef.current = next;
-    isDirtyRef.current = true;
-    setParams(next);
-    addToHistory(next, selectedLutIdx);
-    setQualPick(null);
-  };
-  /* 「按住顯示範圍」：只改 paramsRef 讓畫面重畫，不進 state、不進復原紀錄；放手就拿掉 */
-  const onGradePreview = useCallback((g: ColorGrade | null) => {
-    const cur = paramsRef.current;
-    const base = normGrade(cur.grade);
-    delete base.view;
-    paramsRef.current = { ...cur, grade: g ? { ...g, view: g.view } : base } as EditorParams;
-    isDirtyRef.current = true;
-  }, []);
   const onGradeStart = useCallback(() => setupFastPreview(activeToolIdRef.current), [setupFastPreview]);
-  /* 限定器的滴管：選了之後在畫面上點一下取樣 */
-  const [qualPick, setQualPick] = useState<PickMode>(null);
-  useEffect(() => { if (activeToolId !== 'qualifier') setQualPick(null); }, [activeToolId]);
   const commitGradeRef = useRef<() => void>(() => {});
   commitGradeRef.current = () => {
     setIsInteracting(false);
@@ -7001,11 +6961,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     if (id === 'grade') {
       return !isGradeToolIdentity(params.grade, 'wheels') || !isGradeToolIdentity(params.grade, 'hdr');
-    }
-    if (id === 'slice') return !isGradeToolIdentity(params.grade, 'slice');
-    if (id === 'warper') return !isGradeToolIdentity(params.grade, 'warper');
-    if (id === 'qualifier') {
-      return !isGradeToolIdentity(params.grade, 'qualifier');
     }
     if (id === 'softLight' || id === 'soft' || id === 'softThreshold' || id === 'softRadius' || id === 'softColor') {
       if (params.soft === 0) return false;
@@ -7551,11 +7506,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     style={{ objectFit: 'fill' }}
                     className="absolute inset-0 w-full h-full pointer-events-auto rounded-sm"
                 />
-                {/* 限定器的滴管：點一下在原圖上取 5×5 的顏色 */}
-                {activeToolId === 'qualifier' && qualPick && (
-                  <div className="absolute inset-0 z-30 cursor-crosshair touch-none" data-qual-pick-layer
-                    onPointerDown={e => { e.preventDefault(); e.stopPropagation(); handleQualPick(e.clientX, e.clientY); }} />
-                )}
+
                 {/* 合併時的定格畫面：從按下合併到全部做完，畫面完全不變（使用者一操作就收掉） */}
                 <canvas ref={freezeCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{display:'none',objectFit:'fill',zIndex:5}} />
                 <canvas key={surfaceGen} ref={el=>{(fxSurfaceRef as React.MutableRefObject<HTMLCanvasElement|null>).current=el;if(el){preferWebgl2(el);el.addEventListener('webglcontextlost',onSurfaceLost,{once:true});}}} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
@@ -8100,14 +8051,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {activeToolId === 'grade' ? (
           <PrimariesPanel grade={params.grade} width={detailPanelHost.clientWidth || window.innerWidth}
             onStart={onGradeStart} onChange={onGradeChange} onCommit={onGradeCommit} />
-        ) : activeToolId === 'slice' ? (
-          <SlicePanel grade={params.grade} onStart={onGradeStart} onChange={onGradeChange} onCommit={onGradeCommit} onPreview={onGradePreview} />
-        ) : activeToolId === 'warper' ? (
-          <WarperPanel grade={params.grade} width={detailPanelHost.clientWidth || window.innerWidth}
-            onStart={onGradeStart} onChange={onGradeChange} onCommit={onGradeCommit} />
-        ) : activeToolId === 'qualifier' ? (
-          <QualifierPanel grade={params.grade} pick={qualPick} onPick={setQualPick}
-            onStart={onGradeStart} onChange={onGradeChange} onCommit={onGradeCommit} onPreview={onGradePreview} />
         ) : (
 <div className="w-full flex flex-col px-8 pt-2 pb-2">
               {/* 這一排伸進外層的左右內距裡（w = 100%+4rem 配 -mx-8），才排得下。
@@ -8238,17 +8181,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    {/* Curve Box */}
                    {/* 外框就是格線的最外面那一圈：跟裡面的線同色同粗，
                         整塊看起來才是一張完整的 4×4 格線。 */}
-                   {/* 右邊：達芬奇曲線調色板的另外六種（色相對色相…飽和對亮度） */}
-                   <div className="absolute left-full top-0 h-[242px] flex flex-col justify-center items-start gap-[7px] pl-3">
-                       {HUE_CURVE_IDS.map(id => {
-                         const [a1, b1] = ({ hh: ['色相', '色相'], hs: ['色相', '飽和'], hl: ['色相', '亮度'], ls: ['亮度', '飽和'], ss: ['飽和', '飽和'], sl: ['飽和', '亮度'] } as const)[id];
+                   {/* 右邊：色相曲線（按顏色調色相／飽和／亮度）。跟左邊的通道點同一種圓點，
+                        圓點本身畫出它調的是什麼：彩虹＝色相、灰到彩色＝飽和、黑到白＝亮度 */}
+                   <div className="absolute left-full top-0 h-[242px] flex flex-col justify-center items-center gap-[16px] pl-3">
+                       {([['hh', '色相', 'conic-gradient(#ff4d4d,#ffd84d,#5cff6e,#4de3ff,#5a6bff,#ff4dd8,#ff4d4d)'],
+                          ['hs', '飽和', 'linear-gradient(90deg,#8a8a8a,#ff4d6a)'],
+                          ['hl', '亮度', 'linear-gradient(90deg,#000,#fff)']] as const).map(([id, label, bg]) => {
                          const on = hueCurveMode === id;
                          const used = (normGrade(params.grade).hc[id] || []).some(q => Math.abs(q.y - 0.5) > 1e-4);
                          return (
-                           <button key={id} data-hue-curve-mode={id} onClick={() => setHueCurveMode(id)}
-                             className={`relative w-[46px] h-[30px] rounded-[7px] flex flex-col items-center justify-center leading-[11px] text-[9.5px] border ${on ? 'bg-white text-black border-white' : 'bg-black/45 text-white border-white/70'}`}>
-                             <span>{a1}</span><span className={on ? 'text-black/60' : 'text-white/60'}>對{b1}</span>
-                             {used && <span className={`absolute -right-[3px] -top-[3px] w-[7px] h-[7px] rounded-full ${on ? 'bg-black border border-white' : 'bg-white'}`} />}
+                           <button key={id} data-hue-curve-mode={id} onClick={() => setHueCurveMode(id)} className="flex flex-col items-center gap-[8px]">
+                             <span className={`channel-dot ${on ? 'active' : ''}`} style={{ background: bg, boxShadow: on ? '0 0 0 2px #fff' : 'none' }} />
+                             <span className={`text-[10px] leading-none ${on ? 'text-white' : 'text-white/60'} ${used ? 'underline underline-offset-2' : ''}`}>{label}</span>
                            </button>
                          );
                        })}

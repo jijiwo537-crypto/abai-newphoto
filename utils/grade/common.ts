@@ -45,6 +45,10 @@ export const COMMON_GLSL = `
 vec3 gLin(vec3 v){v=clamp(v,0.,1.);return mix(v/12.92,pow((v+.055)/1.055,vec3(2.4)),step(vec3(.04045),v));}
 vec3 gSrgb(vec3 v){v=max(v,0.);return mix(v*12.92,1.055*pow(v,vec3(1./2.4))-.055,step(vec3(.0031308),v));}
 float gLuma(vec3 c){return dot(c,vec3(.2126,.7152,.0722));}
+/* atan(0,0) 在 GLSL 規格裡是「未定義」：測試用的軟體繪圖回傳 0，但手機 GPU（特別是 Apple）
+   可能回傳 NaN，NaN 畫出來就是黑色 —— 灰色、純白、純黑的地方會變成一塊塊黑色。
+   所以凡是從色差取色相，一律走這支：太接近灰色時直接當 0（那裡的作用量本來就會被淡出）。 */
+float gHue(vec2 cc){return dot(abs(cc),vec2(1.))<1e-7?0.:atan(cc.y,cc.x);}
 float gMaxC(float Y,float ca,float sa){
   vec3 d=vec3(1.5748*sa,-(.2126*1.5748*sa+.0722*1.8556*ca)/.7152,1.8556*ca);
   float t=4.;
