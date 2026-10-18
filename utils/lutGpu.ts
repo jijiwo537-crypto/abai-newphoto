@@ -31,6 +31,8 @@ void main() {
   gl_Position = vec4(aPos, 0.0, 1.0);
 }`;
 
+import { GRADE_GLSL, type GradeFast } from './colorGrade';
+
 const FRAG = `#version 300 es
 precision highp float;
 precision highp sampler3D;
@@ -136,6 +138,7 @@ vec3 hslAdjust(vec3 c){
   return clamp(o+(l2-cc*.5),0.,1.);
 }
 
+${GRADE_GLSL}
 void main() {
   vec4 src = texture(uImage, vUv);
   vec3 base = clamp(src.rgb, 0.0, 1.0);
@@ -149,6 +152,7 @@ void main() {
       if(uHasHsl)f=hslAdjust(f);
       o=mix(o,f,uFilmMix);
     }
+    o=colourGrade(o);
     fragColor=vec4(o,src.a);return;
   }
   vec3 c = base * uScale + uOffset;
@@ -365,7 +369,7 @@ export class LutGpu {
    * when a different array object is passed in.
    */
   setFront(f: { wb: number[] | null; k: number; peak: number; tone: Float32Array | null; curves: Uint8Array | null; sat: number;
-    vib?: number; hsl?: { h: Float32Array; s: Float32Array; l: Float32Array } | null } | null, back = true, filmMix = 1): boolean {
+    vib?: number; hsl?: { h: Float32Array; s: Float32Array; l: Float32Array } | null; grade?: GradeFast | null } | null, back = true, filmMix = 1): boolean {
     if (this.lost) return false;
     const gl = this.gl;
     if (this.shared) this.unpackDefaults();
@@ -385,6 +389,13 @@ export class LutGpu {
     gl.uniform1f(this.u('uVib'), f.vib ?? 0);
     gl.uniform1i(this.u('uHasHsl'), f.hsl ? 1 : 0);
     if (f.hsl) { gl.uniform1fv(this.u('uHslH[0]'), f.hsl.h); gl.uniform1fv(this.u('uHslS[0]'), f.hsl.s); gl.uniform1fv(this.u('uHslL[0]'), f.hsl.l); }
+    gl.uniform1i(this.u('uHasGrade'), f.grade ? 1 : 0);
+    if (f.grade) {
+      gl.uniform2fv(this.u('uGradeOff[0]'), f.grade.off);
+      gl.uniform4fv(this.u('uGradeLum'), f.grade.lum);
+      gl.uniform1f(this.u('uGradeP'), f.grade.p);
+      gl.uniform1f(this.u('uGradeGamma'), f.grade.gamma);
+    }
     const table = (unit: number, tex: WebGLTexture | null, make: () => void) => {
       gl.activeTexture(gl.TEXTURE0 + unit);
       if (!tex) { tex = gl.createTexture()!; gl.bindTexture(gl.TEXTURE_2D, tex);

@@ -1,5 +1,6 @@
 import type { EditorParams } from '../components/ImageEditor';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast } from './photoToneMath';
+import { makeGrade, applyGrade } from './colorGrade';
 const HSL_MAX_HUE_SHIFT=15,HSL_MAX_SAT=.5,HSL_MAX_LUM=.1;
 const HSL_CENTERS=Float32Array.from([0,30,60,120,180,240,270,300]);
 const DEFAULT_HSL=Array.from({length:8},()=>({h:0,s:0,l:0}));
@@ -85,6 +86,9 @@ export const processPixels = (
     hslS[k] = hslArr[k].s / 100 * HSL_MAX_SAT;
     hslL[k] = hslArr[k].l / 100 * HSL_MAX_LUM;
   }
+
+  // 調色輪（陰影／中間調／亮部／全域）—— 在最後，接在 HSL 之後
+  const grade = makeGrade((p as any).grade);
 
   // Sharpen Constants (Multiply amount since Int8 is halved)
   const hasSharpen = p.sharpen > 0 && !!sharpenDetail;
@@ -230,6 +234,9 @@ export const processPixels = (
                   }
               }
 
+              // 9. 調色輪（Oklab，見 utils/colorGrade）
+              if (grade) { tc[0] = r; tc[1] = g; tc[2] = b; applyGrade(grade, tc); r = tc[0]; g = tc[1]; b = tc[2]; }
+
               masterLUT_R[masterIdx] = r; masterLUT_G[masterIdx] = g; masterLUT_B[masterIdx] = b;
               masterIdx++;
           }
@@ -246,7 +253,7 @@ export const processPixels = (
   // not recompute RGB tetrahedra for millions of pixels on every slider tick.
   // Tone, exposure, brightness, contrast, shadows and highlights are all
   // per-channel now; only white balance and saturation mix channels.
-  if (!useNearestLut && !hasLut && !hasHsl && !hasCurves && !hasTempTint &&
+  if (!useNearestLut && !hasLut && !hasHsl && !grade && !hasCurves && !hasTempTint &&
       !hasVib && satMult === 1 && !hasSharpen) {
     const rr=new Float64Array(256),gg=new Float64Array(256),bb=new Float64Array(256);
     for(let v=0;v<256;v++){

@@ -23,6 +23,19 @@ const INLINE: Record<string, (fill: boolean) => React.ReactNode> = {
       <path d="M2.5 16.5h3.5M10.25 16.5h3.5M18 16.5h3.5" />
     </svg>
   ),
+  /* 調色輪：上一個、下兩個圓圈（陰影／中間調／亮部），各帶一顆調整點 */
+  grade_wheels: (fill) => (
+    <svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <circle cx="12" cy="7" r="4.6" />
+      <circle cx="6.6" cy="16.6" r="4.6" />
+      <circle cx="17.4" cy="16.6" r="4.6" />
+      <g fill="currentColor" stroke="none" opacity={fill ? 1 : 0.9}>
+        <circle cx="13.6" cy="5.6" r="1.3" />
+        <circle cx="5.2" cy="18" r="1.3" />
+        <circle cx="18.6" cy="15" r="1.3" />
+      </g>
+    </svg>
+  ),
 };
 
 export const Icon: React.FC<IconProps> = ({ name, className = "", onClick, fill = false }) => {

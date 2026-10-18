@@ -1,4 +1,10 @@
 
+import { DEFAULT_GRADE, isGradeIdentity, makeGrade, type ColorGrade, type GradeFast, type GradeZone } from '../utils/colorGrade';
+const GRADE_TABS: { id: GradeZone | 'blend'; label: string; fill: string }[] = [
+  { id: 'sh', label: '陰影', fill: '#2a2a2a' }, { id: 'mid', label: '中間調', fill: '#777' },
+  { id: 'hi', label: '亮部', fill: '#ddd' }, { id: 'global', label: '全域', fill: 'conic-gradient(#e55,#ee5,#5e5,#5ee,#55e,#e5e,#e55)' },
+  { id: 'blend', label: '混合', fill: 'linear-gradient(90deg,#222,#ddd)' },
+];
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
@@ -57,6 +63,8 @@ export interface EditorParams {
   fringeIntensity: number; fringeHue: number; fringeSize: number; fringeFeather: number;
   curves: Curves;
   hsl: HslAdjust;
+  /** 調色輪（陰影／中間調／亮部／全域），見 utils/colorGrade */
+  grade?: ColorGrade;
   maskExposure: number;
   maskBrightness: number;
   maskContrast: number;
@@ -135,7 +143,7 @@ const DEFAULT_CURVES: Curves = {
 
 /** 曲線與 HSL 的變更簽章。兩者都不是單一數字，快取要靠這個字串判斷有沒有變 */
 export const toneSig = (p: EditorParams): string =>
-  JSON.stringify(p.curves) + '#' + JSON.stringify(p.hsl ?? DEFAULT_HSL);
+  JSON.stringify(p.curves) + '#' + JSON.stringify(p.hsl ?? DEFAULT_HSL) + '#' + (isGradeIdentity(p.grade) ? '' : JSON.stringify(p.grade));
 
 export const DEFAULT_PARAMS: EditorParams = {
   brightness: 0,
@@ -148,6 +156,7 @@ export const DEFAULT_PARAMS: EditorParams = {
   fringeIntensity: 0, fringeHue: 8, fringeSize: 10, fringeFeather: 100,
   curves: JSON.parse(JSON.stringify(DEFAULT_CURVES)),
   hsl: JSON.parse(JSON.stringify(DEFAULT_HSL)),
+  grade: JSON.parse(JSON.stringify(DEFAULT_GRADE)),
   maskExposure: 0,
   maskBrightness: 0,
   maskContrast: 0,
@@ -204,6 +213,8 @@ const ADJUST_TOOLS: ToolDef[] = [
   { id: 'curves', label: '曲線', icon: 'show_chart', min: 0, max: 0 }, // Curves tool
   // 不能再用 gradient —— 那是下面「遮色片」分頁在用的圖標，兩個長一樣會混淆
   { id: 'hsl', label: 'HSL', icon: 'invert_colors', min: 0, max: 0 },   // HSL tool
+  // 調色輪：陰影／中間調／亮部／全域四個色輪（Lightroom 的顏色分級、達芬奇的色輪）
+  { id: 'grade', label: '調色輪', icon: 'grade_wheels', min: 0, max: 0 },
   /* 銳化本來在特效那一排，搬過來排最後。它底層還是 GLSL 那一層算的
      （params.fxSharpen），只是入口移到調節，圖標用空心三角形。 */
   { id: 'fxSharpen', label: '銳化', icon: 'change_history', min: 0, max: 100 },
@@ -666,6 +677,66 @@ interface FastSliderProps {
         兩根並排時那個外擴會互相重疊，中間就會按錯根。 */
     dense?: boolean;
 }
+
+/* ── 調色輪的色輪 ──────────────────────────────────────────────────────────
+   方向＝色相、離中心多遠＝飽和度。拖曳是「相對移動」（手指拖多少、點就走多少，
+   乘上 0.7 讓手指能做細調），所以手指按下去不會讓點跳到手指底下 —— 跟 Lightroom
+   手機版一樣。點兩下回到中心。拖曳中只更新自己（不讓整個編輯器重畫），
+   每一步交給 onChange；放手才 onCommit。 */
+const GRADE_HUE_RING = 'conic-gradient(from 90deg, hsl(0 85% 55%), hsl(330 85% 55%), hsl(300 85% 55%), hsl(270 85% 55%), hsl(240 85% 55%), hsl(210 85% 55%), hsl(180 85% 55%), hsl(150 85% 55%), hsl(120 85% 55%), hsl(90 85% 55%), hsl(60 85% 55%), hsl(30 85% 55%), hsl(0 85% 55%))';
+export const gradeSwatch = (h: number, s: number) => `hsl(${h} ${Math.round(20 + s * 0.65)}% ${Math.round(60 - s * 0.1)}%)`;
+type GradeWheelPadProps = {
+  h: number; s: number; size: number;
+  onChange: (h: number, s: number) => void; onStart: () => void; onCommit: () => void; onReset: () => void;
+};
+const GradeWheelPad: React.FC<GradeWheelPadProps> = ({ h, s, size, onChange, onStart, onCommit, onReset }) => {
+  const knob = useRef<HTMLDivElement>(null);
+  const cur = useRef({ h, s });
+  const drag = useRef<{ x: number; y: number; px: number; py: number; id: number } | null>(null);
+  const lastTap = useRef(0);
+  const R = size / 2 - 6;
+  const place = (hh: number, ss: number) => {
+    const el = knob.current; if (!el) return;
+    const r = (ss / 100) * R, a = (hh * Math.PI) / 180;
+    el.style.transform = `translate(${Math.cos(a) * r}px, ${-Math.sin(a) * r}px)`;
+    el.style.background = ss > 0.5 ? gradeSwatch(hh, ss) : '#fff';
+  };
+  useEffect(() => { if (!drag.current) { cur.current = { h, s }; place(h, s); } });
+  const down = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const now = performance.now();
+    if (now - lastTap.current < 300) { lastTap.current = 0; cur.current = { h: cur.current.h, s: 0 }; place(cur.current.h, 0); onReset(); return; }
+    lastTap.current = now;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const r = (cur.current.s / 100) * R, a = (cur.current.h * Math.PI) / 180;
+    drag.current = { x: Math.cos(a) * r, y: -Math.sin(a) * r, px: e.clientX, py: e.clientY, id: e.pointerId };
+    onStart();
+  };
+  const move = (e: React.PointerEvent) => {
+    const d = drag.current; if (!d || d.id !== e.pointerId) return;
+    d.x += (e.clientX - d.px) * 0.7; d.y += (e.clientY - d.py) * 0.7; d.px = e.clientX; d.py = e.clientY;
+    let r = Math.hypot(d.x, d.y);
+    if (r > R) { d.x *= R / r; d.y *= R / r; r = R; }
+    const ss = Math.round((r / R) * 1000) / 10;
+    // 太靠近中心時色相不穩：維持原本的色相
+    const hh = r < 2 ? cur.current.h : ((Math.atan2(-d.y, d.x) * 180) / Math.PI + 360) % 360;
+    cur.current = { h: Math.round(hh * 10) / 10, s: ss };
+    place(cur.current.h, cur.current.s);
+    onChange(cur.current.h, cur.current.s);
+  };
+  const up = (e: React.PointerEvent) => { if (drag.current?.id !== e.pointerId) return; drag.current = null; onCommit(); };
+  return (
+    <div data-grade-wheel className="relative shrink-0 rounded-full touch-none select-none"
+      style={{ width: size, height: size, background: GRADE_HUE_RING }}
+      onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+      {/* 中心往外由灰到彩：越靠中心越淡 */}
+      <div className="absolute inset-[2px] rounded-full pointer-events-none"
+        style={{ background: 'radial-gradient(circle, rgba(40,40,40,1) 0%, rgba(40,40,40,.85) 25%, rgba(40,40,40,0) 100%)' }} />
+      <div className="absolute left-1/2 top-1/2 w-1 h-1 -ml-0.5 -mt-0.5 rounded-full bg-white/50 pointer-events-none" />
+      <div ref={knob} className="absolute left-1/2 top-1/2 w-4 h-4 -ml-2 -mt-2 rounded-full border-2 border-white shadow pointer-events-none" />
+    </div>
+  );
+};
 
 const FastSlider = React.memo(({ 
     value, min, max, step, toolId, label, snapZero, 
@@ -1939,7 +2010,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       bufferWidth: number;
       lutSize: number;
       curvesRef: Curves | null;
-      hslRef: HslAdjust | null;
+      hslRef: HslAdjust | null; gradeRef?: ColorGrade | null;
   }>({
       brightness: 0, exposure: 0, contrast: 0, highlights: 0, shadows: 0,
       temp: 0, tint: 0, sat: 0, vib: 0, sharpen: 0, lutAmount: 0,
@@ -2424,7 +2495,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const bakeSigRef = useRef((p: EditorParams) =>
     `${p.brightness},${p.exposure},${p.contrast},${p.highlights},${p.shadows},`
     + `${p.temp},${p.tint},${p.sat},${p.vib},${p.lutAmount},`
-    + `${JSON.stringify(p.curves)},${JSON.stringify(p.hsl)}`);
+    + `${JSON.stringify(p.curves)},${JSON.stringify(p.hsl)},${isGradeIdentity(p.grade) ? '' : JSON.stringify(p.grade)}`);
   const exportC0Ref = useRef<HTMLCanvasElement | null>(null);
   const exportC100Ref = useRef<HTMLCanvasElement | null>(null);
 
@@ -2518,7 +2589,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* Front-stage parameters for the GPU, with the two 1-D tables cached so
      an exposure / white-balance drag re-uploads nothing but uniforms, and a
      brightness/contrast/shadows/highlights drag only a 1025-entry table. */
-  const gpuFrontCacheRef = useRef<{ toneKey: string; tone: Float32Array | null; curveSrc: unknown; curves: Uint8Array | null; hslKey: string; hsl: { h: Float32Array; s: Float32Array; l: Float32Array } | null }>({ toneKey: '', tone: null, curveSrc: null, curves: null, hslKey: '', hsl: null });
+  const gpuFrontCacheRef = useRef<{ toneKey: string; tone: Float32Array | null; curveSrc: unknown; curves: Uint8Array | null; hslKey: string; hsl: { h: Float32Array; s: Float32Array; l: Float32Array } | null; gradeKey?: string; grade?: GradeFast | null }>({ toneKey: '', tone: null, curveSrc: null, curves: null, hslKey: '', hsl: null, gradeKey: '', grade: null });
   const gpuFrontFor = (p: EditorParams) => {
     const c = gpuFrontCacheRef.current;
     const toneKey = `${p.brightness},${p.contrast},${p.shadows},${p.highlights}`;
@@ -2541,8 +2612,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         l: Float32Array.from(p.hsl, b => b.l / 100 * 0.1),
       };
     }
+    const gradeKey = isGradeIdentity(p.grade) ? '' : JSON.stringify(p.grade);
+    if (c.gradeKey !== gradeKey) { c.gradeKey = gradeKey; c.grade = makeGrade(p.grade); }
     return { wb: stage.wb, k: stage.ev ? Math.pow(2, stage.ev) : 1, peak: stage.peak, tone: c.tone, curves: c.curves, sat: stage.sat,
-      vib: (p.vib * 0.5) / 100, hsl: c.hsl };
+      vib: (p.vib * 0.5) / 100, hsl: c.hsl, grade: c.grade };
   };
   const gpuPaint = (
     target: HTMLCanvasElement, src: Uint8ClampedArray, w: number, h: number,
@@ -5015,7 +5088,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         !hasActiveFx(pRender) &&
         !pRender.maskCreated &&
         Object.values(pRender.curves).every(isIdentityCurve) &&
-        isHslIdentity(pRender.hsl);
+        isHslIdentity(pRender.hsl) && isGradeIdentity(pRender.grade);
 
     /* 拖到 0（整張回到原圖）時不要在拖曳中改走 2D：那一格要把整張原圖寫進 2D 再上傳一次，
        正是「拖到最邊邊就卡一下」的那一下。拖曳中照樣走下面的 GPU 直通（同一張原圖）。 */
@@ -5169,6 +5242,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             lutSize !== lastP.lutSize ||
             pRender.curves !== lastP.curvesRef ||
             pRender.hsl !== lastP.hslRef ||
+            pRender.grade !== (lastP as any).gradeRef ||
             displayStaleRef.current;
         displayStaleRef.current = false;
 
@@ -5267,7 +5341,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     bufferWidth: b.w,
                     lutSize: lutSize,
                     curvesRef: pRender.curves,
-                    hslRef: pRender.hsl
+                    hslRef: pRender.hsl, gradeRef: pRender.grade
                 };
             } else if (gpuDone) {
                 /* GPU 畫好了畫面，但沒有產生 b.lut0／b.lut100 的像素 ——
@@ -5280,7 +5354,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     sat: pRender.sat, vib: pRender.vib, sharpen: pRender.sharpen,
                     lutAmount: pRender.lutAmount, selectedLutIdx: currentIdx,
                     bufferWidth: b.w, lutSize: lutSize,
-                    curvesRef: pRender.curves, hslRef: pRender.hsl,
+                    curvesRef: pRender.curves, hslRef: pRender.hsl, gradeRef: pRender.grade,
                 };
             } else {
                 const tCpu = performance.now();
@@ -5298,7 +5372,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     l0.shadows === pRender.shadows && l0.temp === pRender.temp &&
                     l0.tint === pRender.tint && l0.sat === pRender.sat &&
                     l0.vib === pRender.vib && l0.sharpen === pRender.sharpen &&
-                    l0.curves === pRender.curves && l0.hsl === pRender.hsl &&
+                    l0.curves === pRender.curves && l0.hsl === pRender.hsl && l0.grade === pRender.grade &&
                     l0.detail === b.sharpenDetail;
                 if (!canReuseLut0) {
                     processPixels(b.source, b.lut0!, b.w, b.h, pRender, null, 0, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves));
@@ -5308,7 +5382,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         brightness: pRender.brightness, exposure: pRender.exposure, contrast: pRender.contrast,
                         highlights: pRender.highlights, shadows: pRender.shadows, temp: pRender.temp,
                         tint: pRender.tint, sat: pRender.sat, vib: pRender.vib, sharpen: pRender.sharpen,
-                        curves: pRender.curves, hsl: pRender.hsl, detail: b.sharpenDetail,
+                        curves: pRender.curves, hsl: pRender.hsl, grade: pRender.grade, detail: b.sharpenDetail,
                     };
                 }
                 
@@ -5341,7 +5415,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     bufferWidth: b.w,
                     lutSize: lutSize,
                     curvesRef: pRender.curves,
-                    hslRef: pRender.hsl
+                    hslRef: pRender.hsl, gradeRef: pRender.grade
                 };
             }
 
@@ -6724,7 +6798,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (selectedLutIdx === 0) return null;
       return { id: 'lutAmount' as keyof EditorParams, label: '強度', min: 0, max: 100, step: 0.1 };
     }
-    if (activeToolId === 'curves' || activeToolId === 'hsl') return null; 
+    if (activeToolId === 'curves' || activeToolId === 'hsl' || activeToolId === 'grade') return null; 
     if (activeCategory === 'fx') return (FX_TOOLS[activeFxId] || []).find(t => t.id === activeToolId);
     let tool = [...ADJUST_TOOLS, ...EFFECT_TOOLS].find(t => t.id === activeToolId);
     /* 特效那一頁選中柔光／光暈／漏光時，外層那根滑桿調的是它們各自的強度參數
@@ -6757,7 +6831,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      transition，得知道「這一次 render 是不是跟 HSL 有關」才能把時間關掉：
      ref 在 effect 裡才更新，所以離開 HSL 的那一次 render 讀到的還是舊值。 */
   const prevToolIdRef = useRef(activeToolId);
-  const hslSwitch = activeToolId === 'hsl' || prevToolIdRef.current === 'hsl';
+  const hslSwitch = activeToolId === 'hsl' || prevToolIdRef.current === 'hsl' || activeToolId === 'grade' || prevToolIdRef.current === 'grade';
   /* 從 HSL 直接切到曲線時，曲線不做入場 —— HSL 那一側本來就是瞬間收掉的，
      曲線再慢慢長出來會像是「面板閃了一下又重來」。ref 在 effect 裡才更新，
      所以切過去的那一次 render 讀到的還是 hsl，剛好就是要關掉動畫的那一次。 */
@@ -6816,10 +6890,34 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     zoomRef.current?.resetTransform(320, 'easeOut');
   }, [activeCategory]);
 
+  /* ── 調色輪 ── */
+  const [gradeTab, setGradeTab] = useState<GradeZone | 'blend'>('mid');
+  const updateGrade = (zone: GradeZone, patch: Partial<{ h: number; s: number; l: number }>, commit: boolean) => {
+    const cur = paramsRef.current;
+    const g = cur.grade || DEFAULT_GRADE;
+    const p2 = { ...cur, grade: { ...g, [zone]: { ...g[zone], ...patch } } };
+    paramsRef.current = p2;
+    isDirtyRef.current = true;
+    lastSliderMoveTimeRef.current = performance.now();
+    if (commit) commitGrade();
+  };
+  const updateGradeGlobal = (patch: Partial<{ blend: number; balance: number }>) => {
+    const cur = paramsRef.current;
+    paramsRef.current = { ...cur, grade: { ...(cur.grade || DEFAULT_GRADE), ...patch } };
+    isDirtyRef.current = true;
+    lastSliderMoveTimeRef.current = performance.now();
+  };
+  const commitGrade = () => {
+    setIsInteracting(false);
+    fastPreviewCacheRef.current.active = false;
+    setParams({ ...paramsRef.current });
+    addToHistory(paramsRef.current, selectedLutIdx);
+  };
+
   const [hslFit, setHslFit] = useState<{ mb: number; mh: number } | null>(null);
   const measureHslFit = useCallback(() => {
     const box = previewBoxRef.current;
-    const panel = detailPanelHost?.querySelector(activeToolIdRef.current === 'hsl' ? '[data-hsl-panel]' : '[data-curves-panel]') as HTMLElement | null;
+    const panel = detailPanelHost?.querySelector((activeToolIdRef.current === 'hsl' || activeToolIdRef.current === 'grade') ? '[data-hsl-panel]' : '[data-curves-panel]') as HTMLElement | null;
     if (!box || !panel) return;
     const b = box.getBoundingClientRect();
     const panelTop = detailPanelHost!.getBoundingClientRect().top - panel.offsetHeight - (activeToolIdRef.current === 'curves' ? 12 : 0);
@@ -6830,7 +6928,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setHslFit(prev => (prev && prev.mb === mb && prev.mh === mh) ? prev : { mb, mh });
   }, [detailPanelHost]);
   useLayoutEffect(() => {
-    if (activeToolId !== 'hsl' && activeToolId !== 'curves') { setHslFit(prev => (prev ? null : prev)); return; }
+    if (activeToolId !== 'hsl' && activeToolId !== 'grade' && activeToolId !== 'curves') { setHslFit(prev => (prev ? null : prev)); return; }
     measureHslFit();
     const box = previewBoxRef.current;
     if (!box || typeof ResizeObserver === 'undefined') return;
@@ -6841,7 +6939,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 直接綁 activeToolId 而不是等 state 被清掉：離開 HSL 時 state 要下一次
      render 才會變成 null，而那一次 render 的 hslSwitch 已經翻回 false，
      尺寸就會用 500ms 補間跑回去。用這個值的話同一次 render 就還原了。 */
-  const hslFitNow = activeToolId === 'hsl' ? hslFit : null;
+  const hslFitNow = (activeToolId === 'hsl' || activeToolId === 'grade') ? hslFit : null;
 
   /* iOS WebKit 對「width:100% + aspect-ratio + max-width + max-height」會做兩次
      constraint pass。長圖特別明顯：先按寬度放大，再被高度上限夾小。
@@ -6876,7 +6974,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   /* 遮色片还没建立时，版面跟建立后保持一致，只锁住暂时不能使用的控制项。 */
   const maskLocked = activeCategory === 'mask' && !params.maskCreated;
-  const sliderRowHidden = activeToolId === 'curves' || activeToolId === 'hsl' || activeCategory === 'compose';
+  const sliderRowHidden = activeToolId === 'curves' || activeToolId === 'hsl' || activeToolId === 'grade' || activeCategory === 'compose';
   const subStripHidden = activeCategory === 'compose';
 
   // Every effect detail page uses the same fixed slider + parameter strip.
@@ -6926,6 +7024,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     if (id === 'hsl') {
       return !isHslIdentity(params.hsl);
+    }
+    if (id === 'grade') {
+      return !isGradeIdentity(params.grade);
     }
     if (id === 'softLight' || id === 'soft' || id === 'softThreshold' || id === 'softRadius' || id === 'softColor') {
       if (params.soft === 0) return false;
@@ -7957,7 +8058,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const compareButton = (
         <button
             aria-label="前後對比"
-            style={{ bottom: activeToolId === 'curves' ? 270 : activeToolId === 'hsl' && hslFit ? hslFit.mb + 16 : 8, transition: 'bottom 260ms ease' }}
+            style={{ bottom: activeToolId === 'curves' ? 270 : (activeToolId === 'hsl' || activeToolId === 'grade') && hslFit ? hslFit.mb + 16 : 8, transition: 'bottom 260ms ease' }}
             onPointerDown={(e) => { 
                 e.preventDefault(); 
                 try {
@@ -7991,6 +8092,82 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              底部那兩列（小分類、分頁）因此完全不會被推動。
              進出不做任何動畫：直接掛上、直接拿掉。 */}
         {detailPanelHost && createPortal(<AnimatePresence>
+        {activeToolId === 'grade' && <motion.div key="grade"
+           initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
+           data-hsl-panel
+           className="absolute inset-x-0 bottom-0 z-40 px-8 pt-2 pb-2 bg-[#111]/95 backdrop-blur-xl border-t border-white/5"
+        >
+          <div className="w-full flex flex-col">
+            {/* 陰影／中間調／亮部／全域／混合：圓點顯示該區目前染的顏色 */}
+            <div className="flex items-center justify-center gap-3 py-1.5">
+              {GRADE_TABS.map(t => {
+                const on = gradeTab === t.id;
+                const w = t.id !== 'blend' ? (params.grade || DEFAULT_GRADE)[t.id as GradeZone] : null;
+                const touched = t.id === 'blend'
+                  ? ((params.grade?.blend ?? 50) !== 50 || (params.grade?.balance ?? 0) !== 0)
+                  : !!w && (w.s !== 0 || w.l !== 0);
+                return (
+                  <button key={t.id} onClick={() => setGradeTab(t.id)} className="shrink-0 flex flex-col items-center gap-1">
+                    <span className="block w-7 h-7 rounded-full"
+                      style={{ border: `3px solid ${on ? '#fff' : 'rgba(255,255,255,.25)'}`,
+                        background: w && w.s > 0 ? gradeSwatch(w.h, w.s) : t.fill }} />
+                    <span className={`text-[10px] leading-none ${on ? 'text-white' : 'text-white/45'}`}>{t.label}</span>
+                    <span className={`w-1 h-1 rounded-full bg-white transition-opacity ${touched ? 'opacity-100' : 'opacity-0'}`} />
+                  </button>
+                );
+              })}
+            </div>
+            {gradeTab !== 'blend' ? (
+              <div className="flex items-center gap-4 pt-1">
+                <GradeWheelPad
+                  key={gradeTab}
+                  size={112}
+                  h={(params.grade || DEFAULT_GRADE)[gradeTab as GradeZone].h}
+                  s={(params.grade || DEFAULT_GRADE)[gradeTab as GradeZone].s}
+                  onStart={() => setupFastPreview('grade')}
+                  onChange={(hh, ss) => updateGrade(gradeTab as GradeZone, { h: hh, s: ss }, false)}
+                  onCommit={() => commitGrade()}
+                  onReset={() => { updateGrade(gradeTab as GradeZone, { s: 0 }, false); commitGrade(); }}
+                />
+                <div className="flex-1 min-w-0 flex flex-col">
+                  {([['h', '色相', 0, 360], ['s', '飽和度', 0, 100], ['l', '明亮度', -100, 100]] as const).map(([k, label, mn, mx]) => (
+                    <FastSlider
+                      key={`${gradeTab}-${k}`}
+                      value={(params.grade || DEFAULT_GRADE)[gradeTab as GradeZone][k]}
+                      min={mn} max={mx} step={1}
+                      toolId={`grade.${gradeTab}.${k}`}
+                      label={label}
+                      snapZero={k === 'l'}
+                      compact
+                      onUpdate={(id, val) => { const [, z, kk] = id.split('.'); updateGrade(z as GradeZone, { [kk]: val }, false); }}
+                      onInteractStart={() => setupFastPreview('grade')}
+                      onInteractEnd={() => commitGrade()}
+                      onReset={() => { updateGrade(gradeTab as GradeZone, { [k]: 0 }, false); commitGrade(); }}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col pt-1">
+                {([['blend', '混合', 0, 100, 50], ['balance', '平衡', -100, 100, 0]] as const).map(([k, label, mn, mx, def]) => (
+                  <FastSlider
+                    key={`grade-${k}`}
+                    value={(params.grade ?? DEFAULT_GRADE)[k]}
+                    min={mn} max={mx} step={1}
+                    toolId={`grade.${k}`}
+                    label={label}
+                    snapZero={k === 'balance'}
+                    compact
+                    onUpdate={(_id, val) => updateGradeGlobal({ [k]: val })}
+                    onInteractStart={() => setupFastPreview('grade')}
+                    onInteractEnd={() => commitGrade()}
+                    onReset={() => { updateGradeGlobal({ [k]: def }); commitGrade(); }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </motion.div>}
         {activeToolId === 'hsl' && <motion.div key="hsl"
            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
            data-hsl-panel
@@ -8243,7 +8420,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               borderBottom: sliderRowHidden ? '0px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(255, 255, 255, 0.05)'
           }}
         >
-          {activeTool && !['lightLeak', 'softLight'].includes(activeToolId) && activeToolId !== 'curves' && activeToolId !== 'hsl' && (
+          {activeTool && !['lightLeak', 'softLight'].includes(activeToolId) && activeToolId !== 'curves' && activeToolId !== 'hsl' && activeToolId !== 'grade' && (
               <div className="w-full">
                   <FastSlider 
                       value={typeof params[activeTool.id as keyof EditorParams] === 'number' ? params[activeTool.id as keyof EditorParams] as number : 0}
