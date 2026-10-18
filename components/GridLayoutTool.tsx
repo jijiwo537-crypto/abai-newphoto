@@ -3897,9 +3897,9 @@ return (
         ))}
     </div>
 
-    {/* 3. 分類列：跟編輯一樣的 h-16、上方細線、黑底、底部安全區空隙 */}
-    <div className="flex h-16 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content shrink-0">
-      {CATS.map(([id, icon, label]) => (
+    {/* 3. 分類列：跟編輯一樣只有文字、h-11、上方細線、黑底、底部安全區空隙 */}
+    <div className="flex h-11 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+6px)] box-content shrink-0">
+      {CATS.map(([id, , label]) => (
         <button
           key={id}
           onClick={() => {
@@ -3917,12 +3917,11 @@ return (
             if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
           }}
           /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
-          className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${
-            (composeOpen ? id === 'compose' : adjustSub === id) ? 'text-white' : 'text-white/20'
+          className={`flex-1 flex items-center justify-center transition-colors ${
+            (composeOpen ? id === 'compose' : adjustSub === id) ? 'text-white' : 'text-white/35'
           }`}
         >
-          <Icon name={icon} className="text-xl" fill={composeOpen ? id === 'compose' : adjustSub === id} />
-          <span className="text-[9px] font-black uppercase tracking-[0.2em]">{label}</span>
+          <span className="text-[13px] font-bold tracking-[0.18em]">{label}</span>
         </button>
       ))}
     </div>
@@ -18243,12 +18242,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
       {/* Bottom Tabbed Controller */}
       {/* 高度所有分頁都一樣：切到圖片編輯時畫布不會突然變小。
-          下限是編輯那組操作欄的實際高度（分頁列＋80＋96＋77），
-          螢幕夠高就用 36dvh。 */}
+          下限是編輯那組操作欄的實際高度（分頁列＋80＋96＋51），
+          螢幕夠高就用 36dvh − 26px（分類列改純文字後省下的高度給畫布）。 */}
       <footer
         className="bg-[#0a0a0a] border-t border-[#1a1a1a] flex flex-col z-[50] no-select shrink-0 transition-transform duration-300 ease-out"
         data-classic-controller
-        style={{ height: 'max(36dvh, 310px)', visibility: igPreview ? 'hidden' : undefined }}
+        style={{ height: 'max(calc(36dvh - 26px), 284px)', visibility: igPreview ? 'hidden' : undefined }}
       >
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* Tabs list */}
@@ -18485,7 +18484,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               }
 
               /* ── 選到圖片：跟「編輯」完全一樣的三段式操作欄 ───────────────
-                 上：一根滑桿（5rem）／中：工具列（6rem）／下：分類列（h-16＋底部空隙） */
+                 上：一根滑桿（5rem）／中：工具列（6rem）／下：分類列（h-11＋底部空隙） */
               const img = layer;
               // 影片有自己的 GPU 路（useVideoFxGl），照舊走文件
               const liveFloat = !selCell && !img.isVideo;

@@ -1,9 +1,6 @@
 
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
-import { HUE_CURVE_IDS, type HueCurveId } from '../utils/grade/hueCurves';
-import type { CurvePt } from '../utils/grade/spline';
-import { HueCurveBox } from './grade/HueCurveBox';
-import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
+import { PrimariesPanel, COLOUR_PANEL_H, GRADE_PANEL_H } from './PrimariesPanel';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
@@ -62,7 +59,7 @@ export interface EditorParams {
   fringeIntensity: number; fringeHue: number; fringeSize: number; fringeFeather: number;
   curves: Curves;
   hsl: HslAdjust;
-  /** 調色輪（陰影／中間調／亮部／全域），見 utils/colorGrade */
+  /** 色輪（Log／一級調色／HDR），見 utils/colorGrade */
   grade?: ColorGrade;
   maskExposure: number;
   maskBrightness: number;
@@ -214,8 +211,8 @@ const ADJUST_TOOLS: ToolDef[] = [
   { id: 'curves', label: '曲線', icon: 'show_chart', min: 0, max: 0 }, // Curves tool
   // 不能再用 gradient —— 那是下面「遮色片」分頁在用的圖標，兩個長一樣會混淆
   { id: 'hsl', label: 'HSL', icon: 'invert_colors', min: 0, max: 0 },   // HSL tool
-  // 調色輪：陰影／中間調／亮部／全域四個色輪（Lightroom 的顏色分級、達芬奇的色輪）
-  { id: 'grade', label: '調色輪', icon: 'grade_wheels', min: 0, max: 0 },
+  // 色輪：Log／一級調色／HDR 三種（達芬奇的色輪調色板）
+  { id: 'grade', label: '色輪', icon: 'grade_wheels', min: 0, max: 0 },
   /* 銳化本來在特效那一排，搬過來排最後。它底層還是 GLSL 那一層算的
      （params.fxSharpen），只是入口移到調節，圖標用空心三角形。 */
   { id: 'fxSharpen', label: '銳化', icon: 'change_history', min: 0, max: 100 },
@@ -1111,9 +1108,9 @@ function runThumbChunks<T>(
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false }) => {
   if (import.meta.env.DEV) (window as any).__editorRenders = ((window as any).__editorRenders || 0) + 1;
   const curveClipId = React.useId();
-  /* 主頁入口逐層沿用 ImageAdjustPanel 的 64px 內容 + 12px 底距；相機內的
-     非 compact 編輯器維持既有 48px。這個值也同步參與控制區與構圖舞台計算。 */
-  const footerHeight = compactBottomBar ? 76 : 48;
+  /* 底部分類列只有文字：主頁入口逐層沿用 ImageAdjustPanel 的 44px 內容 + 6px 底距；
+     相機內的非 compact 編輯器是 40px。這個值也同步參與控制區與構圖舞台計算。 */
+  const footerHeight = compactBottomBar ? 50 : 40;
   const [detailPanelHost, setDetailPanelHost] = useState<HTMLDivElement | null>(null);
   const lastUiInputRef = useRef(0);
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
@@ -6831,7 +6828,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     zoomRef.current?.resetTransform(320, 'easeOut');
   }, [activeCategory]);
 
-  /* ── 一級調色（調色輪）：拖曳中只寫 paramsRef，放手才進 state 與復原紀錄 ── */
+  /* ── 色輪：拖曳中只寫 paramsRef，放手才進 state 與復原紀錄 ── */
   const onGradeChange = useCallback((g: ColorGrade) => {
     const cur = paramsRef.current;
     paramsRef.current = { ...cur, grade: g } as EditorParams;
@@ -6954,7 +6951,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       return true;
     }
     if (id === 'curves') {
-      return JSON.stringify(params.curves) !== JSON.stringify(DEFAULT_CURVES) || !isGradeToolIdentity(params.grade, 'curves');
+      return JSON.stringify(params.curves) !== JSON.stringify(DEFAULT_CURVES);
     }
     if (id === 'hsl') {
       return !isHslIdentity(params.hsl);
@@ -7050,11 +7047,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       addToHistory(paramsRef.current, selectedLutIdx);
   };
 
+  /* 手機上一次點擊會先送觸控、再補送一次模擬的滑鼠按下：兩個都算的話，
+     「點一下」會被當成點兩下（節點被誤刪），真的點兩下反而對不上。
+     觸控之後 800ms 內的滑鼠事件一律當成那一次觸控的補送，直接忽略。
+     時間一律用事件自己的 timeStamp（手指碰到的那一刻），不用「處理到的時間」：
+     第一下之後畫面正在重畫、第二下晚一點才被處理，用處理時間算就會以為隔了很久。 */
+  const curveTouchAtRef = useRef(0);
+  const curveTapIdxRef = useRef(-1);
+  const isGhostMouse = (e: React.MouseEvent | React.TouchEvent) => {
+      if ('touches' in e) { curveTouchAtRef.current = e.timeStamp; return false; }
+      return e.timeStamp - curveTouchAtRef.current < 800;
+  };
   const handlePointTap = (e: React.MouseEvent | React.TouchEvent, idx: number) => {
       e.stopPropagation();
-      const now = Date.now();
+      if (isGhostMouse(e)) return;
+      const now = e.timeStamp;
       const isRecentCreate = lastCreatedIdxRef.current === idx && (now - lastCreatedTimeRef.current < 350);
-      if (!isRecentCreate && (now - lastCurveTapRef.current < 300)) {
+      // 點兩下（同一個節點、300ms 內）＝刪掉這個節點；兩端的節點不能刪
+      if (!isRecentCreate && curveTapIdxRef.current === idx && (now - lastCurveTapRef.current < 300)) {
           const currentPoints = [...params.curves[currentCurveChannel]];
           if (currentPoints.length > 2 && idx > 0 && idx < currentPoints.length - 1) {
               currentPoints.splice(idx, 1);
@@ -7063,13 +7073,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               addToHistory({ ...params, curves: newCurves }, selectedLutIdx);
           }
           lastCurveTapRef.current = 0;
+          curveTapIdxRef.current = -1;
       } else {
           lastCurveTapRef.current = now;
+          curveTapIdxRef.current = idx;
           handleCurveStartDrag(e, idx);
       }
   };
   
   const handleCurveBgClick = (e: React.MouseEvent | React.TouchEvent) => {
+    if (isGhostMouse(e)) return;
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
     const svg = document.getElementById('curvesSvg');
@@ -7103,7 +7116,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
          setParams(prev => ({ ...prev, curves: newCurves }));
          paramsRef.current = { ...paramsRef.current, curves: newCurves };
          lastCreatedIdxRef.current = newIdx;
-         lastCreatedTimeRef.current = Date.now();
+         lastCreatedTimeRef.current = e.timeStamp;
          setDragPointIdx(newIdx);
          setIsInteracting(true);
          lastRenderDurationRef.current = 12; // Reset duration to prevent slow throttle carry-over
@@ -7112,22 +7125,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   const resetAllCurves = () => {
       const newCurves = JSON.parse(JSON.stringify(DEFAULT_CURVES));
-      // 「重置全部」連色相／亮度／飽和度那六條也一起歸零
-      const g = normGrade(paramsRef.current.grade);
-      const grade = { ...g, hc: freshGrade().hc };
-      paramsRef.current = { ...paramsRef.current, curves: newCurves, grade };
-      setParams(prev => ({ ...prev, curves: newCurves, grade }));
-      addToHistory({ ...params, curves: newCurves, grade }, selectedLutIdx);
-  };
-  /* 色相／亮度／飽和度曲線（存在 params.grade.hc）：拖曳中只寫 paramsRef */
-  const [hueCurveMode, setHueCurveMode] = useState<HueCurveId | null>(null);
-  // 每次進曲線都先回到原本的 RGB 曲線（色相曲線是另外三個按鈕）
-  useEffect(() => { if (activeToolId === 'curves') setHueCurveMode(null); }, [activeToolId]);
-  const onHueCurveChange = (id: HueCurveId, pts: CurvePt[]) => {
-    const cur = paramsRef.current, g = normGrade(cur.grade);
-    paramsRef.current = { ...cur, grade: { ...g, hc: { ...g.hc, [id]: pts } } };
-    isDirtyRef.current = true;
-    lastSliderMoveTimeRef.current = performance.now();
+      setParams(prev => ({ ...prev, curves: newCurves }));
+      addToHistory({ ...params, curves: newCurves }, selectedLutIdx);
   };
 
   const getCurvePathD = () => {
@@ -8007,7 +8006,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const compareButton = (
         <button
             aria-label="前後對比"
-            style={{ bottom: activeToolId === 'curves' ? 270 : isColourPanelTool(activeToolId) && hslFit ? hslFit.mb + 16 : 8, transition: 'bottom 260ms ease' }}
+            style={{ bottom: activeToolId === 'curves' ? 270 : isColourPanelTool(activeToolId) && hslFit ? hslFit.mb + 16 + (activeToolId === 'grade' ? 38 : 0) : 8, transition: 'bottom 260ms ease' }}
             onPointerDown={(e) => { 
                 e.preventDefault(); 
                 try {
@@ -8041,14 +8040,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              底部那兩列（小分類、分頁）因此完全不會被推動。
              進出不做任何動畫：直接掛上、直接拿掉。 */}
         {detailPanelHost && createPortal(<AnimatePresence>
-        {/* HSL 與調色輪共用同一個面板外框（同一個 key、固定同一個高度）：
-             兩者之間來回切換時外框不卸載、不做進出場，只換裡面的內容，
-             圖片的位置與大小也就完全不動。 */}
+        {/* HSL 與色輪共用同一個面板外框（同一個 key）：
+             兩者之間來回切換時外框不卸載、不做進出場，只換裡面的內容。
+             色輪的模式列懸空在外框上方，外框比 HSL 矮，圖片在色輪裡會大一點。 */}
         {isColourPanelTool(activeToolId) && <motion.div key="hsl"
            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
            data-hsl-panel
-           className="absolute inset-x-0 bottom-0 z-40 bg-[#111]/95 backdrop-blur-xl border-t border-white/5 overflow-hidden"
-           style={{ height: COLOUR_PANEL_H }}
+           className={`absolute inset-x-0 bottom-0 z-40 bg-[#111]/95 backdrop-blur-xl border-t border-white/5 ${activeToolId === 'grade' ? 'overflow-visible' : 'overflow-hidden'}`}
+           /* 色輪的模式列懸空在面板上方，面板本身比較矮 → 圖片縮得比較少 */
+           style={{ height: activeToolId === 'grade' ? GRADE_PANEL_H : COLOUR_PANEL_H }}
         >
         {activeToolId === 'grade' ? (
           <PrimariesPanel grade={params.grade} width={detailPanelHost.clientWidth || window.innerWidth}
@@ -8157,8 +8157,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                          <div
                            key={ch}
                            data-curve-channel={ch}
-                           onClick={() => { setCurrentCurveChannel(ch); setHueCurveMode(null); }}
-                           className={`channel-dot ${currentCurveChannel === ch && !hueCurveMode ? 'active' : ''}`}
+                           onClick={() => setCurrentCurveChannel(ch)}
+                           className={`channel-dot ${currentCurveChannel === ch ? 'active' : ''}`}
                            style={{ color: col }}
                          />
                        ))}
@@ -8183,25 +8183,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    {/* Curve Box */}
                    {/* 外框就是格線的最外面那一圈：跟裡面的線同色同粗，
                         整塊看起來才是一張完整的 4×4 格線。 */}
-                   {/* 右邊：色相曲線（按顏色調色相／飽和／亮度）。點左邊任一個通道點回到原本的 RGB 曲線 */}
-                   <div className="absolute left-full top-0 h-[242px] flex flex-col justify-center items-start gap-[10px] pl-3">
-                       {([['hh', '色相'], ['hs', '飽和'], ['hl', '亮度']] as const).map(([id, label]) => {
-                         const on = hueCurveMode === id;
-                         const used = (normGrade(params.grade).hc[id] || []).some(q => Math.abs(q.y - 0.5) > 1e-4);
-                         return (
-                           <button key={id} data-hue-curve-mode={id} onClick={() => setHueCurveMode(id)}
-                             className={`relative w-[46px] h-[30px] rounded-[7px] flex items-center justify-center text-[11px] border ${on ? 'bg-white text-black border-white' : 'bg-black/45 text-white border-white/70'}`}>
-                             {label}
-                             {used && <span className={`absolute -right-[3px] -top-[3px] w-[7px] h-[7px] rounded-full ${on ? 'bg-black border border-white' : 'bg-white'}`} />}
-                           </button>
-                         );
-                       })}
-                   </div>
-
-                   {hueCurveMode ? (
-                     <HueCurveBox key={hueCurveMode} id={hueCurveMode} pts={normGrade(params.grade).hc[hueCurveMode]}
-                       onStart={() => setupFastPreview('curves')} onChange={pts => onHueCurveChange(hueCurveMode, pts)} onCommit={onGradeCommit} />
-                   ) : (
                    <div className="relative w-[240px] h-[240px] bg-transparent border border-white shrink-0 touch-none rounded-sm"
                         onMouseDown={handleCurveBgClick}
                         onTouchStart={handleCurveBgClick}
@@ -8245,7 +8226,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                            ))}
                        </svg>
                    </div>
-                   )}
                </div>
            </div>
         </motion.div>}
@@ -8634,19 +8614,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           )}
         </div>
         {/* compact 主頁入口與 ImageAdjustPanel 使用完全相同的分類列 class；
-            根容器也已改成相同的 normal-flow 100dvh，因此三條分隔線不再偏移。 */}
+            根容器也已改成相同的 normal-flow 100dvh，因此三條分隔線不再偏移。
+            分類列只放文字（不放圖標），高度從 64px 收到 44px，多出來的空間都給預覽。 */}
         <div
-          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-16 pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content' : ''}`}
+          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-11 pb-[calc(env(safe-area-inset-bottom,0px)+6px)] box-content' : ''}`}
           style={compactBottomBar ? undefined : { height: footerHeight, paddingBottom: 0 }}
         >
-          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
-            <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
+          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex items-center justify-center transition-colors ${activeCategory === 'filter' ? 'text-white' : 'text-white/35'}`}>
+            <span className="text-[13px] font-bold tracking-[0.18em]">濾鏡</span>
           </button>
-          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
-            <Icon name="tune" className="text-xl" fill={activeCategory === 'adjust'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">調節</span>
+          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex items-center justify-center transition-colors ${activeCategory === 'adjust' ? 'text-white' : 'text-white/35'}`}>
+            <span className="text-[13px] font-bold tracking-[0.18em]">調節</span>
           </button>
-          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
-            <Icon name="magic_button" className="text-xl" fill={['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">特效</span>
+          <button onClick={enterEffects} className={`flex-1 flex items-center justify-center transition-colors ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/35'}`}>
+            <span className="text-[13px] font-bold tracking-[0.18em]">特效</span>
           </button>
           <button onClick={() => {
               if (activeCategory === 'compose') return;
@@ -8670,12 +8651,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               }
               setDraftGeo(geo);
               setActiveCategory('compose');
-            }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
+            }} className={`flex-1 flex items-center justify-center transition-colors ${activeCategory === 'compose' ? 'text-white' : 'text-white/35'}`}>
             {/* crop_rotate 兩側各有一支旋轉箭頭，改成單純的裁切符號 */}
-            <Icon name="crop" className="text-xl" fill={activeCategory === 'compose'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">構圖</span>
+            <span className="text-[13px] font-bold tracking-[0.18em]">構圖</span>
           </button>
-          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
-            <Icon name="gradient" className="text-xl" fill={activeCategory === 'mask'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">遮色片</span>
+          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex items-center justify-center transition-colors ${activeCategory === 'mask' ? 'text-white' : 'text-white/35'}`}>
+            <span className="text-[13px] font-bold tracking-[0.18em]">遮色片</span>
           </button>
         </div>
       </div>

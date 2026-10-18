@@ -2514,7 +2514,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return () => { cancelled = true; };
   }, [activeTab, selectedObj]);
   /* 圖片編輯頁是自己排好三段式高度的整頁面板：外面不能再包內距，
-     footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
+     footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-11 分類列 ＋ 分頁列）。 */
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
     && (selectedRegionPhoto !== null || baseSelected || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
   regionPhotoEditingRef.current=objEditImage;
@@ -11340,9 +11340,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       <footer ref={footerRef} className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-[transform,height] duration-300 ease-out flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} /* 高度是固定的：以前是「圖片編輯頁點出滑桿才長高」，
                     工具欄一長高，上面的舞台就矮一截，預覽圖跟著往上跳一下
                     （實測 287px → 300px，畫面位移 6.5px）。
-                    一律用最高的那個值，進哪一頁、開不開滑桿，預覽都不會動。 */
+                    一律用最高的那個值，進哪一頁、開不開滑桿，預覽都不會動。
+                    分類列改成純文字後矮了 26px，整條一起少 26px，省下來的給預覽。 */
                  style={{
-          height: photoLayoutOpen ? 'max(48dvh, 390px)' : 'max(34dvh, 300px)',
+          height: photoLayoutOpen ? 'max(48dvh, 390px)' : 'max(calc(34dvh - 26px), 274px)',
           flexShrink: 0,
           /* 鍵盤升起時整條往上移，剛好讓輸入框的下緣貼著鍵盤上緣。
              用 transform 而不是改高度：transform 走合成執行緒，
@@ -11388,7 +11389,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         )}
         
         {/* 圖案頁使用左側分類＋獨立捲動內容，不額外加入浮動按鈕的 pb-20。 */}
-        {/* 圖片編輯那一頁是「滑桿 5rem ＋ 工具列 6rem ＋ 分類列 h-16」的三段式，
+        {/* 圖片編輯那一頁是「滑桿 5rem ＋ 工具列 6rem ＋ 分類列 h-11」的三段式，
             自己就把整個高度切好了。再包一層 p-5 會整個縮一圈、上面那根滑桿
             還會被擠出可視範圍 —— 所以這一頁完全不加內距，跟經典拼圖一樣。 */}
         {/* overscrollBehavior 用 none 而不是 contain：contain 只擋住「把捲動傳給外層」，

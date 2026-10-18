@@ -23,7 +23,7 @@ interface IconProps {
 const INLINE: Record<string, string> = {
   /* 虛線：上面一條實線、下面一條虛線 */
   line_style: '<g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M2.5 7.5h19"/><path d="M2.5 16.5h3.5M10.25 16.5h3.5M18 16.5h3.5"/></g>',
-  /* 調色輪：一個圓（色輪）、一個偏離中心的實心點（調整點），跟 Material 圖示同一種線寬 */
+  /* 色輪：一個圓（色輪）、一個偏離中心的實心點（調整點），跟 Material 圖示同一種線寬 */
   grade_wheels: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="14.6" cy="9.4" r="2.4" fill="#fff"/>',
 };
 const maskOf = (body: string) =>

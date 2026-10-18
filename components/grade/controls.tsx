@@ -38,9 +38,9 @@ export type Ev = { onStart: () => void; onEnd: () => void };
 
 /* 重置圖示：線用不透明的顏色畫，透明度加在整個 svg 上 —— 整個圖先合成再變淡，
    弧線與箭頭交會的地方不會疊出比較白的點。 */
-export const ResetIcon = ({ on }: { on: boolean }) => (
-  <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="#e6e6e6" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
-    style={{ opacity: on ? 1 : 0.2 }}>
+export const ResetIcon = ({ on, size = 11 }: { on: boolean; size?: number }) => (
+  <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="#e6e6e6" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"
+    style={{ opacity: on ? 1 : 0.45 }}>
     <path d="M3.2 6.2A5 5 0 1 1 3 9.6" /><path d="M3 2.6v3.8h3.8" />
   </svg>
 );

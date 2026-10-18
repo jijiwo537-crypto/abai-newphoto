@@ -16,7 +16,7 @@
  * 範圍預設值：Resolve 的預設是給場景線性 HDR 素材的（Specular 在 +4 檔左右），照片是
  * 顯示參照的 sRGB，白色只在中灰上 +2.47 檔，照搬的話高光、鏡面高光幾乎碰不到。
  * 所以照研究資料換算成 SDR 的範圍：黑 −3.5、暗 −2.0、陰影 +0.75、亮 −0.75、高光 +1.5、鏡面 +2.2，
- * 柔化都是 0.75 檔。 */
+ * 柔化都是 1 檔（研究資料建議 0.5～1 檔，取比較柔和的那一端）。 */
 
 import { KR, KG, KB, toLin, toSrgb, sstep } from './common';
 
@@ -32,7 +32,7 @@ export const HDR_ZONES: { id: HdrZoneId; label: string; dark: boolean; range: nu
   { id: 'highlight', label: '高光', dark: false, range: 1.5 },
   { id: 'specular', label: '鏡面高光', dark: false, range: 2.2 },
 ];
-export const HDR_FALLOFF = 0.75;
+export const HDR_FALLOFF = 1;
 export const HDR_IDS = [...HDR_ZONES.map(z => z.id), 'global'] as (HdrZoneId | 'global')[];
 /** 色彩平衡拖到邊緣時的色差（Cb/Cr 單位，換成各通道約 ±1 檔） */
 export const HDR_EDGE = 0.6;

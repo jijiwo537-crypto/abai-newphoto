@@ -190,10 +190,6 @@ export class LutGpu {
   private curveTex: WebGLTexture | null = null;
   private lastTone: Float32Array | null = null;
   private lastCurve: Uint8Array | null = null;
-  /* 調色階段的色相曲線表，用第 8 號貼圖單元 ——
-     共用的 WebGL 上下文裡 5～7 號已經被光暈、低保真特效拿去用了。 */
-  private gradeTex: WebGLTexture | null = null;
-  private lastGradeTab: Float32Array | null = null;
   private frontOn = false;
   private backOn = true;
   private loc = new Map<string, WebGLUniformLocation | null>();
@@ -394,7 +390,6 @@ export class LutGpu {
     gl.uniform1i(this.u('uHasHsl'), f.hsl ? 1 : 0);
     if (f.hsl) { gl.uniform1fv(this.u('uHslH[0]'), f.hsl.h); gl.uniform1fv(this.u('uHslS[0]'), f.hsl.s); gl.uniform1fv(this.u('uHslL[0]'), f.hsl.l); }
     bindGradeUniforms(gl, n => this.u(n), f.grade ?? null);
-    this.bindGradeTables(f.grade ?? null);
     const table = (unit: number, tex: WebGLTexture | null, make: () => void) => {
       gl.activeTexture(gl.TEXTURE0 + unit);
       if (!tex) { tex = gl.createTexture()!; gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -427,39 +422,12 @@ export class LutGpu {
     gl.uniform1f(this.u('uMix'),weight);return true;
   }
 
-  /** 色相曲線表（256×3，R16F，第 8 號貼圖單元） */
-  private bindGradeTables(G: GradeFast | null) {
-    const gl = this.gl;
-    gl.uniform1i(this.u('uGCurves'), 8);
-    gl.activeTexture(gl.TEXTURE8);
-    const fresh = !this.gradeTex;
-    if (!this.gradeTex) {
-      this.gradeTex = gl.createTexture()!;
-      gl.bindTexture(gl.TEXTURE_2D, this.gradeTex);
-      for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
-    } else gl.bindTexture(gl.TEXTURE_2D, this.gradeTex);
-    const data = G?.curveTab ?? null;
-    if (data && data !== this.lastGradeTab) {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, 256, 3, 0, gl.RED, gl.FLOAT, data);
-      this.lastGradeTab = data;
-    } else if (fresh) {
-      // 宣告了的取樣器一定要是完整的貼圖，即使這一次沒用到
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, 1, 1, 0, gl.RED, gl.FLOAT, new Float32Array(1));
-    }
-  }
-  private rebindGradeTables() {
-    if (!this.gradeTex) return;
-    const gl = this.gl;
-    gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, this.gradeTex);
-  }
-
   /** 畫一張。回傳的是這個類別自己的畫布，呼叫端 drawImage 過去就好。 */
   draw(): HTMLCanvasElement | null {
     if (this.lost || !this.srcW || (!this.lutSize && !(this.frontOn && !this.backOn))) return null;
     const gl = this.gl;
     gl.viewport(0, 0, this.srcW, this.srcH);
     gl.useProgram(this.prog);
-    this.rebindGradeTables();
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     return this.canvas;
   }
@@ -503,7 +471,6 @@ export class LutGpu {
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_3D, this.plainTex);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.toneTex);
     gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.curveTex);
-    this.rebindGradeTables();
     gl.bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST);

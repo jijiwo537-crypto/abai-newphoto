@@ -6,10 +6,10 @@ import {
   type ColorGrade, type WheelId, type YRGB, type HdrWheel, type HdrZone, type HdrZoneId,
 } from '../utils/colorGrade';
 
-/* 調色輪面板：照 DaVinci Resolve 桌面版的色輪調色板。
+/* 色輪面板：照 DaVinci Resolve 桌面版的色輪調色板。
  *
- *   上：模式（一級校色輪／Log 色輪／HDR 色輪）、HDR 的頁碼、重置
- *   每個色輪：名稱＋重置鍵、色輪（顏色）、主轉盤（左右拖）、亮度（或曝光）的數值、
+ *   面板上方懸空的一列：模式（Log／一級調色／HDR）、HDR 的頁碼、重置（只重置目前這一種）
+ *   每個色輪：名稱、色輪（顏色）、主轉盤（左右拖）、亮度（或曝光）的數值、
  *            一級／Log：R G B 三個通道的數值；HDR：飽和度／範圍／柔化
  *   HDR 有七個色輪，分兩頁，左右滑動換頁（也可以點頁碼）。
  *
@@ -18,11 +18,14 @@ import {
  * 所有數字都「按住左右拖」來改、點兩下回預設。拖曳中只重畫這個面板（本地 state），
  * 每一步交給 onChange 寫進編輯器的 paramsRef，放手才 onCommit（寫進 state 與復原紀錄）。 */
 
-/** 面板高度：跟 HSL 面板一樣，切換時圖片位置完全不動 */
+/** HSL 面板的高度 */
 export const COLOUR_PANEL_H = 221;
+/** 色輪面板的高度：模式那一列懸空在面板外面，面板本身比 HSL 矮，圖片就不用縮那麼多 */
+export const GRADE_PANEL_H = 182;
 
 type Mode = 'wheels' | 'log' | 'hdr';
-let lastMode: Mode = 'wheels';
+/* 預設是 Log：陰影／中間調／高光各管一段，最接近 Lightroom 的三個色輪，也最直覺 */
+let lastMode: Mode = 'log';
 let lastHdrPage = 0;
 
 const CH_COLOUR: Record<string, string> = { r: '#ff6b6b', g: '#5fd47a', b: '#6b9bff' };
@@ -37,14 +40,13 @@ const WheelDisc: React.FC<{ D: number; px: number; py: number; drag: ReturnType<
       maskImage: `radial-gradient(circle, transparent ${D / 2 - 4}px, #000 ${D / 2 - 3.5}px, #000 ${D / 2 - 1.5}px, transparent ${D / 2 - 1}px)`,
     }} />
     <div className="absolute rounded-full pointer-events-none" style={{
-      inset: 5, background: 'radial-gradient(circle at 50% 42%, #2e2e2e 0%, #222 55%, #191919 100%)',
+      inset: 5, background: 'radial-gradient(circle at 50% 42%, #262626 0%, #1b1b1b 55%, #141414 100%)',
       boxShadow: '0 0 0 1px #050505, inset 0 1px 1px rgba(255,255,255,.05), inset 0 -2px 4px rgba(0,0,0,.45)',
     }} />
     <svg className="absolute inset-0 pointer-events-none" width={D} height={D}>
-      <circle cx={D / 2} cy={D / 2} r={(D / 2 - 9) * 0.5} fill="none" stroke="#2c2c2c" />
-      <path d={`M${D / 2} 9V${D - 9}M9 ${D / 2}H${D - 9}`} stroke="#383838" strokeWidth="1" fill="none" />
+      <path d={`M${D / 2} 9V${D - 9}M9 ${D / 2}H${D - 9}`} stroke="#323232" strokeWidth="1" fill="none" />
       {(px || py) ? <line x1={D / 2} y1={D / 2} x2={D / 2 + px} y2={D / 2 + py} stroke="#8a8a8a" strokeWidth="1" /> : null}
-      <circle cx={D / 2 + px} cy={D / 2 + py} r={4.4} fill="#1a1a1a" stroke="#fff" strokeWidth="1.5" />
+      <circle cx={D / 2 + px} cy={D / 2 + py} r={4.4} fill="#141414" stroke="#fff" strokeWidth="1.5" />
       <circle cx={D / 2 + px} cy={D / 2 + py} r={0.9} fill="#fff" />
     </svg>
   </div>
@@ -61,10 +63,9 @@ const Jog: React.FC<{ W: number; drag: ReturnType<typeof useDrag>; x: number; id
     }} />
 );
 
-const UnitHead: React.FC<{ label: string; neutral: boolean; onReset: () => void; D: number }> = ({ label, neutral, onReset, D }) => (
-  <div className="relative flex items-center justify-center h-[16px]" style={{ width: D }}>
+const UnitHead: React.FC<{ label: string; D: number }> = ({ label, D }) => (
+  <div className="flex items-center justify-center h-[16px]" style={{ width: D }}>
     <span className="text-[11px] leading-none text-white/75 whitespace-nowrap">{label}</span>
-    <button onClick={onReset} className="absolute -right-[4px] top-1/2 -translate-y-1/2 p-[3px]" aria-label={`重置${label}`}><ResetIcon on={!neutral} /></button>
   </div>
 );
 
@@ -129,10 +130,9 @@ const WheelUnit: React.FC<Ev & { id: WheelId; label: string; w: YRGB; D: number;
       onEnd();
     },
   });
-  const reset = () => { onStart(); onChange({ y: s.neutral, r: s.neutral, g: s.neutral, b: s.neutral }); onEnd(); };
   return (
     <div className="flex-1 min-w-0 flex flex-col items-center" data-grade-unit={id}>
-      <UnitHead label={label} neutral={isWheelNeutral(w, id)} onReset={reset} D={D} />
+      <UnitHead label={label} D={D} />
       <div className="mt-[4px]"><WheelDisc D={D} px={px} py={py} drag={wheel} id={id} /></div>
       <Jog W={D - 8} drag={jog} x={jogX} id={id} />
       <Level label="亮度" v={level} def={s.neutral} digits={s.digits} />
@@ -167,15 +167,13 @@ const HdrUnit: React.FC<Ev & { id: HdrZoneId | 'global'; label: string; w: HdrWh
     onDouble: () => { onStart(); onChange({ ...w, exp: 0 }); onEnd(); },
   });
   const zone = 'range' in w;
-  const reset = () => { onStart(); onChange({ ...def }); onEnd(); };
-  const neutral = isHdrWheelNeutral(w) && (!zone || ((w as HdrZone).range === (def as HdrZone).range && (w as HdrZone).falloff === (def as HdrZone).falloff));
   const n = (k: string, lab: string, d: number, step: number, min: number, max: number) => (
     <Num key={k} label={lab} v={(w as any)[k]} color="#fff" def={d} step={step} min={min} max={max} digits={2}
       onStart={onStart} onEnd={onEnd} onChange={v => onChange({ ...w, [k]: v })} />
   );
   return (
     <div className="flex-1 min-w-0 flex flex-col items-center" data-grade-unit={id}>
-      <UnitHead label={label} neutral={neutral} onReset={reset} D={D} />
+      <UnitHead label={label} D={D} />
       <div className="mt-[4px]"><WheelDisc D={D} px={px} py={py} drag={wheel} id={`hdr-${id}`} /></div>
       <Jog W={D - 8} drag={jog} x={jogX} id={`hdr-${id}`} />
       <Level label="曝光" v={w.exp} def={0} digits={2} />
@@ -190,7 +188,7 @@ const HdrUnit: React.FC<Ev & { id: HdrZoneId | 'global'; label: string; w: HdrWh
 
 const PRIMARY_UNITS: [WheelId, string][] = [['lift', '暗部'], ['gamma', '中灰'], ['gain', '亮部'], ['offset', '偏移']];
 const LOG_UNITS: [WheelId, string][] = [['logSh', '陰影'], ['logMid', '中間調'], ['logHi', '高光'], ['offset', '偏移']];
-const MODES: [Mode, string][] = [['wheels', '一級校色輪'], ['log', 'Log 色輪'], ['hdr', 'HDR 色輪']];
+const MODES: [Mode, string][] = [['log', 'Log'], ['wheels', '一級調色'], ['hdr', 'HDR']];
 const HDR_PAGES: (HdrZoneId | 'global')[][] = [['black', 'dark', 'shadow', 'light'], ['highlight', 'specular', 'global']];
 
 export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width, onStart, onChange, onCommit }: {
@@ -226,32 +224,44 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
   const push = (ng: ColorGrade) => { gRef.current = ng; setG(ng); onChange(ng); };
   const setWheel = (id: WheelId, w: YRGB) => push({ ...gRef.current, [id]: w });
   const setHdr = (id: HdrZoneId | 'global', w: any) => push({ ...gRef.current, hdr: { ...gRef.current.hdr, [id]: w } });
-  // 重置這個工具（一級、Log、HDR 全部）
-  const resetAll = () => { ev.onStart(); push({ ...gRef.current, ...freshWheels(), hdr: freshGrade().hdr }); ev.onEnd(); };
+  /* 重置：只重置目前這一種（偏移是一級與 Log 共用的，兩邊重置都會歸零） */
+  const resetMode = () => {
+    const f = freshWheels(), cur = gRef.current;
+    ev.onStart();
+    if (mode === 'hdr') push({ ...cur, hdr: freshGrade().hdr });
+    else if (mode === 'log') push({ ...cur, logSh: f.logSh, logMid: f.logMid, logHi: f.logHi, offset: f.offset });
+    else push({ ...cur, lift: f.lift, gamma: f.gamma, gain: f.gain, offset: f.offset });
+    ev.onEnd();
+  };
+  const modeTouched = mode === 'hdr' ? HDR_ZONES.some(z => !isHdrWheelNeutral(g.hdr[z.id])) || !isHdrWheelNeutral(g.hdr.global)
+    : (mode === 'log' ? (['logSh', 'logMid', 'logHi', 'offset'] as WheelId[]) : (['lift', 'gamma', 'gain', 'offset'] as WheelId[])).some(id => !isWheelNeutral(g[id], id));
 
   const unitW = (width - 12) / 4;
   const D = Math.round(Math.min(82, unitW - 12));
   const fresh = freshGrade().hdr;
   return (
-    <div className="w-full h-full flex flex-col pt-[8px] pb-[6px]" data-primaries-panel>
-      <div className="flex items-center h-[28px] px-[10px] gap-[6px]">
+    <div className="w-full h-full flex flex-col pt-[10px] pb-[6px]" data-primaries-panel>
+      {/* 懸空在面板上方的一列（不佔面板的高度）：按下去就切換，不等放手 */}
+      <div className="absolute left-0 right-0 bottom-full mb-[10px] flex items-center px-[12px] gap-[6px] pointer-events-none" data-grade-modes>
         {MODES.map(([m, l]) => (
-          <button key={m} onClick={() => setMode(m)} data-grade-mode={m}
-            className={`px-[10px] h-[24px] rounded-full text-[10.5px] font-bold tracking-wider whitespace-nowrap border transition-colors ${mode === m ? 'bg-white text-black border-white shadow-lg' : 'bg-white/5 text-white/45 border-white/10'}`}>{l}</button>
+          <button key={m} onPointerDown={e => { e.preventDefault(); setMode(m); }} data-grade-mode={m}
+            className={`pointer-events-auto px-[12px] h-[28px] rounded-[8px] text-[12px] font-medium tracking-wide whitespace-nowrap border backdrop-blur-md ${mode === m ? 'bg-white text-black border-white' : 'bg-black/55 text-white/80 border-white/15'}`}>{l}</button>
         ))}
         <div className="flex-1" />
         {mode === 'hdr' && (
-          <div className="flex items-center" data-hdr-page>
+          <div className="pointer-events-auto flex items-center h-[28px] px-[4px] rounded-[8px] bg-black/55 backdrop-blur-md" data-hdr-page>
             {[0, 1].map(p => (
               <button key={p} onClick={() => goPage(p)} data-hdr-page-btn={p} className="w-[16px] h-[24px] flex items-center justify-center" aria-label={`第 ${p + 1} 頁`}>
-                <span className={`block w-[6px] h-[6px] rounded-full ${page === p ? 'bg-white' : 'bg-white/25'}`} />
+                <span className={`block w-[6px] h-[6px] rounded-full ${page === p ? 'bg-white' : 'bg-white/30'}`} />
               </button>
             ))}
           </div>
         )}
-        <button onClick={resetAll} className="w-[26px] h-[26px] flex items-center justify-center" aria-label="全部重置"><ResetIcon on /></button>
+        <button onClick={resetMode} data-grade-reset className="pointer-events-auto w-[34px] h-[28px] flex items-center justify-center rounded-[8px] bg-black/55 border border-white/15 backdrop-blur-md" aria-label="重置目前的色輪">
+          <ResetIcon on={modeTouched} size={16} />
+        </button>
       </div>
-      <div className="mt-[10px]">
+      <div>
         {mode !== 'hdr' ? (
           <div className="flex px-[6px]">
             {(mode === 'log' ? LOG_UNITS : PRIMARY_UNITS).map(([id, l]) => (
