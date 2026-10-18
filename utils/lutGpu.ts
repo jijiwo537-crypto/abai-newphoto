@@ -152,7 +152,7 @@ void main() {
       if(uHasHsl)f=hslAdjust(f);
       o=mix(o,f,uFilmMix);
     }
-    o=colourGrade(o);
+    o=colourGrade(o,base);
     fragColor=vec4(o,src.a);return;
   }
   vec3 c = base * uScale + uOffset;
@@ -190,6 +190,10 @@ export class LutGpu {
   private curveTex: WebGLTexture | null = null;
   private lastTone: Float32Array | null = null;
   private lastCurve: Uint8Array | null = null;
+  /* 調色階段的兩張小表（色相曲線、色彩扭曲器的位移場），用第 8、9 號貼圖單元 ——
+     共用的 WebGL 上下文裡 5～7 號已經被光暈、低保真特效拿去用了。 */
+  private gradeTex: (WebGLTexture | null)[] = [null, null];
+  private lastGradeTab: (Float32Array | null)[] = [null, null];
   private frontOn = false;
   private backOn = true;
   private loc = new Map<string, WebGLUniformLocation | null>();
@@ -390,6 +394,7 @@ export class LutGpu {
     gl.uniform1i(this.u('uHasHsl'), f.hsl ? 1 : 0);
     if (f.hsl) { gl.uniform1fv(this.u('uHslH[0]'), f.hsl.h); gl.uniform1fv(this.u('uHslS[0]'), f.hsl.s); gl.uniform1fv(this.u('uHslL[0]'), f.hsl.l); }
     bindGradeUniforms(gl, n => this.u(n), f.grade ?? null);
+    this.bindGradeTables(f.grade ?? null);
     const table = (unit: number, tex: WebGLTexture | null, make: () => void) => {
       gl.activeTexture(gl.TEXTURE0 + unit);
       if (!tex) { tex = gl.createTexture()!; gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -422,12 +427,45 @@ export class LutGpu {
     gl.uniform1f(this.u('uMix'),weight);return true;
   }
 
+  /** 色相曲線（256×6，R16F）與扭曲器位移場（W×H，RGBA16F，色相方向循環） */
+  private bindGradeTables(G: GradeFast | null) {
+    const gl = this.gl;
+    gl.uniform1i(this.u('uGCurves'), 8); gl.uniform1i(this.u('uGWarp'), 9);
+    const specs = [
+      { unit: 8, data: G?.curveTab ?? null, w: 256, h: 6, fmt: gl.R16F, src: gl.RED, wrapS: gl.CLAMP_TO_EDGE },
+      { unit: 9, data: G?.warpTab ?? null, w: G?.warpDims?.[0] ?? 1, h: G?.warpDims?.[1] ?? 1, fmt: gl.RGBA16F, src: gl.RGBA, wrapS: gl.REPEAT },
+    ];
+    specs.forEach((t, i) => {
+      gl.activeTexture(gl.TEXTURE0 + t.unit);
+      let tex = this.gradeTex[i];
+      const fresh = !tex;
+      if (!tex) {
+        tex = this.gradeTex[i] = gl.createTexture()!;
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, t.wrapS); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      } else gl.bindTexture(gl.TEXTURE_2D, tex);
+      if (t.data && t.data !== this.lastGradeTab[i]) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, t.fmt, t.w, t.h, 0, t.src, gl.FLOAT, t.data);
+        this.lastGradeTab[i] = t.data;
+      } else if (fresh) {
+        // 宣告了的取樣器一定要是完整的貼圖，即使這一次沒用到
+        gl.texImage2D(gl.TEXTURE_2D, 0, t.fmt, 1, 1, 0, t.src, gl.FLOAT, new Float32Array(t.src === gl.RED ? 1 : 4));
+      }
+    });
+  }
+  private rebindGradeTables() {
+    const gl = this.gl;
+    this.gradeTex.forEach((t, i) => { if (t) { gl.activeTexture(gl.TEXTURE8 + i); gl.bindTexture(gl.TEXTURE_2D, t); } });
+  }
+
   /** 畫一張。回傳的是這個類別自己的畫布，呼叫端 drawImage 過去就好。 */
   draw(): HTMLCanvasElement | null {
     if (this.lost || !this.srcW || (!this.lutSize && !(this.frontOn && !this.backOn))) return null;
     const gl = this.gl;
     gl.viewport(0, 0, this.srcW, this.srcH);
     gl.useProgram(this.prog);
+    this.rebindGradeTables();
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     return this.canvas;
   }
@@ -471,6 +509,7 @@ export class LutGpu {
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_3D, this.plainTex);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.toneTex);
     gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.curveTex);
+    this.rebindGradeTables();
     gl.bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST);

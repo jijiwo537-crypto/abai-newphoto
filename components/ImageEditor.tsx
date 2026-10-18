@@ -1,6 +1,13 @@
 
-import { freshGrade, isGradeIdentity, makeGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
+import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
+import { HUE_CURVE_IDS, type HueCurveId } from '../utils/grade/hueCurves';
+import type { CurvePt } from '../utils/grade/spline';
+import { HueCurveBox } from './grade/HueCurveBox';
 import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
+import { SlicePanel } from './grade/SlicePanel';
+import { WarperPanel } from './grade/WarperPanel';
+import { QualifierPanel, type PickMode } from './grade/QualifierPanel';
+import { pickQual } from '../utils/colorGrade';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
@@ -194,6 +201,10 @@ const MASK_TOOLS: ToolDef[] = [
   { id: 'maskVib', label: '自然飽和度', icon: 'color_lens', min: -100, max: 100 },
 ];
 
+/** 共用「HSL 那個面板外框」的工具：同一個外框、同一個高度，彼此切換時圖片完全不動 */
+const COLOUR_PANEL_TOOLS = ['hsl', 'grade', 'slice', 'warper', 'qualifier'];
+const isColourPanelTool = (id: string) => COLOUR_PANEL_TOOLS.includes(id);
+
 const ADJUST_TOOLS: ToolDef[] = [
   { id: 'brightness', label: '亮度', icon: 'light_mode', min: -100, max: 100 },
   { id: 'exposure', label: '曝光', icon: 'brightness_6', min: -100, max: 100 },
@@ -209,6 +220,10 @@ const ADJUST_TOOLS: ToolDef[] = [
   { id: 'hsl', label: 'HSL', icon: 'invert_colors', min: 0, max: 0 },   // HSL tool
   // 調色輪：陰影／中間調／亮部／全域四個色輪（Lightroom 的顏色分級、達芬奇的色輪）
   { id: 'grade', label: '調色輪', icon: 'grade_wheels', min: 0, max: 0 },
+  // 達芬奇的色彩切片、色彩扭曲器、限定器（見 utils/colourStage）
+  { id: 'slice', label: '色彩切片', icon: 'color_slice', min: 0, max: 0 },
+  { id: 'warper', label: '色彩扭曲器', icon: 'color_warper', min: 0, max: 0 },
+  { id: 'qualifier', label: '限定器', icon: 'qualifier', min: 0, max: 0 },
   /* 銳化本來在特效那一排，搬過來排最後。它底層還是 GLSL 那一層算的
      （params.fxSharpen），只是入口移到調節，圖標用空心三角形。 */
   { id: 'fxSharpen', label: '銳化', icon: 'change_history', min: 0, max: 100 },
@@ -242,7 +257,7 @@ const GRAIN_TOOLS: ToolDef[] = [
 const NO_EFFECT_PARAMS: Record<string, number> = {
   soft: 0, fringeIntensity: 0, leakOpacity: 0, blur: 0, colorNoise: 0, colorNoise2: 0,
   grain: 0, vignette: 0,
-  ...Object.fromEntries(FX_DEFS.filter(d => !d.adjustment).map(d => [d.id, 0])),
+  ...Object.fromEntries(FX_DEFS.map(d => [d.id, 0])),
 };
 
 const EFFECT_TOOLS: ToolDef[] = orderEffectCards<ToolDef>([
@@ -257,7 +272,7 @@ const EFFECT_TOOLS: ToolDef[] = orderEffectCards<ToolDef>([
      舊作品裡的 params.vignette 仍然照樣算得出來，只是不再從介面調整。 */
   /* 銳化已經搬到「調節」的最後面了，這一排不再列它 */
   /* 與拼圖圖片編輯共用完整特效清單；銳化仍只在調節中。 */
-  ...FX_DEFS.filter(d => d.id !== 'fxSharpen' && !d.adjustment)
+  ...FX_DEFS.filter(d => d.id !== 'fxSharpen')
     .map(d => ({ id: d.id, label: d.label, icon: d.icon, min: 0, max: 100 })),
 ], item => item.id);
 
@@ -278,7 +293,7 @@ const EFFECT_OWN_KEYS: Record<string, string[]> = {
   lightLeak: ['leakOpacity'],
   colorNoise: ['colorNoise', 'grain', 'colorNoise2'],
   blur: ['blur'],
-  ...Object.fromEntries(FX_DEFS.filter(d => !d.adjustment).map(d => [d.id, [d.id]])),
+  ...Object.fromEntries(FX_DEFS.map(d => [d.id, [d.id]])),
 };
 
 /** 現在畫面上還有沒有「還沒合併」的特效（合併過的參數是 0，所以自然不算） */
@@ -305,7 +320,7 @@ const EFFECT_ALL_KEYS: string[] = Array.from(new Set([
   'softThreshold', 'softRadius', 'softColor',
   'leakAngle', 'leakHue',
   'fringeHue', 'fringeSize', 'fringeFeather',
-  ...FX_DEFS.filter(d => !d.adjustment).flatMap(d => d.params.map(p => p.id)),
+  ...FX_DEFS.flatMap(d => d.params.map(p => p.id)),
 ]));
 
 /** 把所有特效參數（含細項）整組打回預設值 */
@@ -6732,7 +6747,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (selectedLutIdx === 0) return null;
       return { id: 'lutAmount' as keyof EditorParams, label: '強度', min: 0, max: 100, step: 0.1 };
     }
-    if (activeToolId === 'curves' || activeToolId === 'hsl' || activeToolId === 'grade') return null; 
+    if (activeToolId === 'curves' || isColourPanelTool(activeToolId)) return null; 
     if (activeCategory === 'fx') return (FX_TOOLS[activeFxId] || []).find(t => t.id === activeToolId);
     let tool = [...ADJUST_TOOLS, ...EFFECT_TOOLS].find(t => t.id === activeToolId);
     /* 特效那一頁選中柔光／光暈／漏光時，外層那根滑桿調的是它們各自的強度參數
@@ -6765,7 +6780,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      transition，得知道「這一次 render 是不是跟 HSL 有關」才能把時間關掉：
      ref 在 effect 裡才更新，所以離開 HSL 的那一次 render 讀到的還是舊值。 */
   const prevToolIdRef = useRef(activeToolId);
-  const hslSwitch = activeToolId === 'hsl' || prevToolIdRef.current === 'hsl' || activeToolId === 'grade' || prevToolIdRef.current === 'grade';
+  const hslSwitch = isColourPanelTool(activeToolId) || isColourPanelTool(prevToolIdRef.current);
   /* 從 HSL 直接切到曲線時，曲線不做入場 —— HSL 那一側本來就是瞬間收掉的，
      曲線再慢慢長出來會像是「面板閃了一下又重來」。ref 在 effect 裡才更新，
      所以切過去的那一次 render 讀到的還是 hsl，剛好就是要關掉動畫的那一次。 */
@@ -6825,13 +6840,45 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [activeCategory]);
 
   /* ── 一級調色（調色輪）：拖曳中只寫 paramsRef，放手才進 state 與復原紀錄 ── */
-  const onGradeChange = useCallback((g: ColorGrade, md: number) => {
+  const onGradeChange = useCallback((g: ColorGrade) => {
     const cur = paramsRef.current;
-    paramsRef.current = { ...cur, grade: g, fxMidDetailAmt: md, fxMidDetail: md !== 0 ? 100 : 0 } as EditorParams;
+    paramsRef.current = { ...cur, grade: g } as EditorParams;
     isDirtyRef.current = true;
     lastSliderMoveTimeRef.current = performance.now();
   }, []);
-  const onGradeStart = useCallback(() => setupFastPreview('grade'), [setupFastPreview]);
+  const handleQualPick = (cx: number, cy: number) => {
+    const cvs = displayCanvasRef.current, b = buffers.current.preview, src = b.source;
+    if (!cvs || !src || !qualPick) return;
+    const r = cvs.getBoundingClientRect();
+    const fx = (cx - r.left) / r.width, fy = (cy - r.top) / r.height;
+    if (fx < 0 || fy < 0 || fx > 1 || fy > 1) return;
+    const x0 = Math.round(fx * (b.w - 1)), y0 = Math.round(fy * (b.h - 1));
+    const px: number[][] = [];
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const x = Math.min(b.w - 1, Math.max(0, x0 + dx)), y = Math.min(b.h - 1, Math.max(0, y0 + dy)), i = (y * b.w + x) * 4;
+      px.push([src[i] / 255, src[i + 1] / 255, src[i + 2] / 255]);
+    }
+    const g = normGrade(paramsRef.current.grade);
+    delete g.view;
+    const next = { ...paramsRef.current, grade: { ...g, qual: pickQual(g.qual, px, qualPick) } } as EditorParams;
+    paramsRef.current = next;
+    isDirtyRef.current = true;
+    setParams(next);
+    addToHistory(next, selectedLutIdx);
+    setQualPick(null);
+  };
+  /* 「按住顯示範圍」：只改 paramsRef 讓畫面重畫，不進 state、不進復原紀錄；放手就拿掉 */
+  const onGradePreview = useCallback((g: ColorGrade | null) => {
+    const cur = paramsRef.current;
+    const base = normGrade(cur.grade);
+    delete base.view;
+    paramsRef.current = { ...cur, grade: g ? { ...g, view: g.view } : base } as EditorParams;
+    isDirtyRef.current = true;
+  }, []);
+  const onGradeStart = useCallback(() => setupFastPreview(activeToolIdRef.current), [setupFastPreview]);
+  /* 限定器的滴管：選了之後在畫面上點一下取樣 */
+  const [qualPick, setQualPick] = useState<PickMode>(null);
+  useEffect(() => { if (activeToolId !== 'qualifier') setQualPick(null); }, [activeToolId]);
   const commitGradeRef = useRef<() => void>(() => {});
   commitGradeRef.current = () => {
     setIsInteracting(false);
@@ -6844,7 +6891,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [hslFit, setHslFit] = useState<{ mb: number; mh: number } | null>(null);
   const measureHslFit = useCallback(() => {
     const box = previewBoxRef.current;
-    const panel = detailPanelHost?.querySelector((activeToolIdRef.current === 'hsl' || activeToolIdRef.current === 'grade') ? '[data-hsl-panel]' : '[data-curves-panel]') as HTMLElement | null;
+    const panel = detailPanelHost?.querySelector(isColourPanelTool(activeToolIdRef.current) ? '[data-hsl-panel]' : '[data-curves-panel]') as HTMLElement | null;
     if (!box || !panel) return;
     const b = box.getBoundingClientRect();
     const panelTop = detailPanelHost!.getBoundingClientRect().top - panel.offsetHeight - (activeToolIdRef.current === 'curves' ? 12 : 0);
@@ -6855,7 +6902,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setHslFit(prev => (prev && prev.mb === mb && prev.mh === mh) ? prev : { mb, mh });
   }, [detailPanelHost]);
   useLayoutEffect(() => {
-    if (activeToolId !== 'hsl' && activeToolId !== 'grade' && activeToolId !== 'curves') { setHslFit(prev => (prev ? null : prev)); return; }
+    if (!isColourPanelTool(activeToolId) && activeToolId !== 'curves') { setHslFit(prev => (prev ? null : prev)); return; }
     measureHslFit();
     const box = previewBoxRef.current;
     if (!box || typeof ResizeObserver === 'undefined') return;
@@ -6866,7 +6913,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 直接綁 activeToolId 而不是等 state 被清掉：離開 HSL 時 state 要下一次
      render 才會變成 null，而那一次 render 的 hslSwitch 已經翻回 false，
      尺寸就會用 500ms 補間跑回去。用這個值的話同一次 render 就還原了。 */
-  const hslFitNow = (activeToolId === 'hsl' || activeToolId === 'grade') ? hslFit : null;
+  const hslFitNow = isColourPanelTool(activeToolId) ? hslFit : null;
 
   /* iOS WebKit 對「width:100% + aspect-ratio + max-width + max-height」會做兩次
      constraint pass。長圖特別明顯：先按寬度放大，再被高度上限夾小。
@@ -6901,7 +6948,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   /* 遮色片还没建立时，版面跟建立后保持一致，只锁住暂时不能使用的控制项。 */
   const maskLocked = activeCategory === 'mask' && !params.maskCreated;
-  const sliderRowHidden = activeToolId === 'curves' || activeToolId === 'hsl' || activeToolId === 'grade' || activeCategory === 'compose';
+  const sliderRowHidden = activeToolId === 'curves' || isColourPanelTool(activeToolId) || activeCategory === 'compose';
   const subStripHidden = activeCategory === 'compose';
 
   // Every effect detail page uses the same fixed slider + parameter strip.
@@ -6947,13 +6994,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       return true;
     }
     if (id === 'curves') {
-      return JSON.stringify(params.curves) !== JSON.stringify(DEFAULT_CURVES);
+      return JSON.stringify(params.curves) !== JSON.stringify(DEFAULT_CURVES) || !isGradeToolIdentity(params.grade, 'curves');
     }
     if (id === 'hsl') {
       return !isHslIdentity(params.hsl);
     }
     if (id === 'grade') {
-      return !isGradeIdentity(params.grade) || !!(params as any).fxMidDetailAmt;
+      return !isGradeToolIdentity(params.grade, 'wheels') || !isGradeToolIdentity(params.grade, 'hdr');
+    }
+    if (id === 'slice') return !isGradeToolIdentity(params.grade, 'slice');
+    if (id === 'warper') return !isGradeToolIdentity(params.grade, 'warper');
+    if (id === 'qualifier') {
+      return !isGradeToolIdentity(params.grade, 'qualifier');
     }
     if (id === 'softLight' || id === 'soft' || id === 'softThreshold' || id === 'softRadius' || id === 'softColor') {
       if (params.soft === 0) return false;
@@ -7105,8 +7157,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   const resetAllCurves = () => {
       const newCurves = JSON.parse(JSON.stringify(DEFAULT_CURVES));
-      setParams(prev => ({ ...prev, curves: newCurves }));
-      addToHistory({ ...params, curves: newCurves }, selectedLutIdx);
+      // 「重置全部」連色相／亮度／飽和度那六條也一起歸零
+      const g = normGrade(paramsRef.current.grade);
+      const grade = { ...g, hc: freshGrade().hc };
+      paramsRef.current = { ...paramsRef.current, curves: newCurves, grade };
+      setParams(prev => ({ ...prev, curves: newCurves, grade }));
+      addToHistory({ ...params, curves: newCurves, grade }, selectedLutIdx);
+  };
+  /* 色相／亮度／飽和度曲線（存在 params.grade.hc）：拖曳中只寫 paramsRef */
+  const [hueCurveMode, setHueCurveMode] = useState<HueCurveId | null>(null);
+  const onHueCurveChange = (id: HueCurveId, pts: CurvePt[]) => {
+    const cur = paramsRef.current, g = normGrade(cur.grade);
+    paramsRef.current = { ...cur, grade: { ...g, hc: { ...g.hc, [id]: pts } } };
+    isDirtyRef.current = true;
+    lastSliderMoveTimeRef.current = performance.now();
   };
 
   const getCurvePathD = () => {
@@ -7487,6 +7551,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     style={{ objectFit: 'fill' }}
                     className="absolute inset-0 w-full h-full pointer-events-auto rounded-sm"
                 />
+                {/* 限定器的滴管：點一下在原圖上取 5×5 的顏色 */}
+                {activeToolId === 'qualifier' && qualPick && (
+                  <div className="absolute inset-0 z-30 cursor-crosshair touch-none" data-qual-pick-layer
+                    onPointerDown={e => { e.preventDefault(); e.stopPropagation(); handleQualPick(e.clientX, e.clientY); }} />
+                )}
                 {/* 合併時的定格畫面：從按下合併到全部做完，畫面完全不變（使用者一操作就收掉） */}
                 <canvas ref={freezeCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{display:'none',objectFit:'fill',zIndex:5}} />
                 <canvas key={surfaceGen} ref={el=>{(fxSurfaceRef as React.MutableRefObject<HTMLCanvasElement|null>).current=el;if(el){preferWebgl2(el);el.addEventListener('webglcontextlost',onSurfaceLost,{once:true});}}} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
@@ -7985,7 +8054,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const compareButton = (
         <button
             aria-label="前後對比"
-            style={{ bottom: activeToolId === 'curves' ? 270 : (activeToolId === 'hsl' || activeToolId === 'grade') && hslFit ? hslFit.mb + 16 : 8, transition: 'bottom 260ms ease' }}
+            style={{ bottom: activeToolId === 'curves' ? 270 : isColourPanelTool(activeToolId) && hslFit ? hslFit.mb + 16 : 8, transition: 'bottom 260ms ease' }}
             onPointerDown={(e) => { 
                 e.preventDefault(); 
                 try {
@@ -8022,16 +8091,23 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {/* HSL 與調色輪共用同一個面板外框（同一個 key、固定同一個高度）：
              兩者之間來回切換時外框不卸載、不做進出場，只換裡面的內容，
              圖片的位置與大小也就完全不動。 */}
-        {(activeToolId === 'hsl' || activeToolId === 'grade') && <motion.div key="hsl"
+        {isColourPanelTool(activeToolId) && <motion.div key="hsl"
            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
            data-hsl-panel
            className="absolute inset-x-0 bottom-0 z-40 bg-[#111]/95 backdrop-blur-xl border-t border-white/5 overflow-hidden"
            style={{ height: COLOUR_PANEL_H }}
         >
         {activeToolId === 'grade' ? (
-          <PrimariesPanel grade={params.grade} midDetail={(params as any).fxMidDetailAmt || 0}
-            width={detailPanelHost.clientWidth || window.innerWidth}
+          <PrimariesPanel grade={params.grade} width={detailPanelHost.clientWidth || window.innerWidth}
             onStart={onGradeStart} onChange={onGradeChange} onCommit={onGradeCommit} />
+        ) : activeToolId === 'slice' ? (
+          <SlicePanel grade={params.grade} onStart={onGradeStart} onChange={onGradeChange} onCommit={onGradeCommit} onPreview={onGradePreview} />
+        ) : activeToolId === 'warper' ? (
+          <WarperPanel grade={params.grade} width={detailPanelHost.clientWidth || window.innerWidth}
+            onStart={onGradeStart} onChange={onGradeChange} onCommit={onGradeCommit} />
+        ) : activeToolId === 'qualifier' ? (
+          <QualifierPanel grade={params.grade} pick={qualPick} onPick={setQualPick}
+            onStart={onGradeStart} onChange={onGradeChange} onCommit={onGradeCommit} onPreview={onGradePreview} />
         ) : (
 <div className="w-full flex flex-col px-8 pt-2 pb-2">
               {/* 這一排伸進外層的左右內距裡（w = 100%+4rem 配 -mx-8），才排得下。
@@ -8136,8 +8212,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                          <div
                            key={ch}
                            data-curve-channel={ch}
-                           onClick={() => setCurrentCurveChannel(ch)}
-                           className={`channel-dot ${currentCurveChannel === ch ? 'active' : ''}`}
+                           onClick={() => { setCurrentCurveChannel(ch); setHueCurveMode(null); }}
+                           className={`channel-dot ${currentCurveChannel === ch && !hueCurveMode ? 'active' : ''}`}
                            style={{ color: col }}
                          />
                        ))}
@@ -8162,6 +8238,26 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    {/* Curve Box */}
                    {/* 外框就是格線的最外面那一圈：跟裡面的線同色同粗，
                         整塊看起來才是一張完整的 4×4 格線。 */}
+                   {/* 右邊：達芬奇曲線調色板的另外六種（色相對色相…飽和對亮度） */}
+                   <div className="absolute left-full top-0 h-[242px] flex flex-col justify-center items-start gap-[7px] pl-3">
+                       {HUE_CURVE_IDS.map(id => {
+                         const [a1, b1] = ({ hh: ['色相', '色相'], hs: ['色相', '飽和'], hl: ['色相', '亮度'], ls: ['亮度', '飽和'], ss: ['飽和', '飽和'], sl: ['飽和', '亮度'] } as const)[id];
+                         const on = hueCurveMode === id;
+                         const used = (normGrade(params.grade).hc[id] || []).some(q => Math.abs(q.y - 0.5) > 1e-4);
+                         return (
+                           <button key={id} data-hue-curve-mode={id} onClick={() => setHueCurveMode(id)}
+                             className={`relative w-[46px] h-[30px] rounded-[7px] flex flex-col items-center justify-center leading-[11px] text-[9.5px] border ${on ? 'bg-white text-black border-white' : 'bg-black/45 text-white border-white/70'}`}>
+                             <span>{a1}</span><span className={on ? 'text-black/60' : 'text-white/60'}>對{b1}</span>
+                             {used && <span className={`absolute -right-[3px] -top-[3px] w-[7px] h-[7px] rounded-full ${on ? 'bg-black border border-white' : 'bg-white'}`} />}
+                           </button>
+                         );
+                       })}
+                   </div>
+
+                   {hueCurveMode ? (
+                     <HueCurveBox key={hueCurveMode} id={hueCurveMode} pts={normGrade(params.grade).hc[hueCurveMode]}
+                       onStart={() => setupFastPreview('curves')} onChange={pts => onHueCurveChange(hueCurveMode, pts)} onCommit={onGradeCommit} />
+                   ) : (
                    <div className="relative w-[240px] h-[240px] bg-transparent border border-white shrink-0 touch-none rounded-sm"
                         onMouseDown={handleCurveBgClick}
                         onTouchStart={handleCurveBgClick}
@@ -8205,6 +8301,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                            ))}
                        </svg>
                    </div>
+                   )}
                </div>
            </div>
         </motion.div>}
@@ -8281,7 +8378,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               borderBottom: sliderRowHidden ? '0px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(255, 255, 255, 0.05)'
           }}
         >
-          {activeTool && !['lightLeak', 'softLight'].includes(activeToolId) && activeToolId !== 'curves' && activeToolId !== 'hsl' && activeToolId !== 'grade' && (
+          {activeTool && !['lightLeak', 'softLight'].includes(activeToolId) && activeToolId !== 'curves' && !isColourPanelTool(activeToolId) && (
               <div className="w-full">
                   <FastSlider 
                       value={typeof params[activeTool.id as keyof EditorParams] === 'number' ? params[activeTool.id as keyof EditorParams] as number : 0}
