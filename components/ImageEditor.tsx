@@ -3424,6 +3424,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [activeCategory, lutList, selectedLutIdx, previewAspect, activeSrc, buffersTick]);
 
   const handleFilterSelect = (idx: number) => {
+    releaseFreeze(true);
     tapFastRef.current = true;
     /* 合併還在背景烤：這時候點的會被烤完的歸零蓋掉（要再按一次），先記著，烤完再套 */
     if (mergingRef.current) { pendingTapRef.current = () => tapHandlersRef.current.lut(idx); return; }
@@ -3725,6 +3726,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   const handleEffectToolSelect = (toolId: string) => {
+    releaseFreeze(true);
     tapFastRef.current = true;
     if (mergingRef.current) { pendingTapRef.current = () => tapHandlersRef.current.fx(toolId); return; }
     uiFirstRef.current = true;
@@ -5448,6 +5450,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        走完整的歸零反而會把剛排好的東西洗掉，畫面也會閃一下。 */
     if (srcSwapRef.current) {
       srcSwapRef.current = false;
+      if (preinstalledSrcRef.current === activeSrc) { preinstalledSrcRef.current = null; return; }
       const ready = takeDecoded(activeSrc);
       const install = (im: HTMLImageElement) => {
         originalImgRef.current = im;
@@ -6319,6 +6322,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      烤進去的是整條管線的結果（濾鏡＋調節＋特效），不是只有特效那一段 ——
      特效是接在最後面算的，只抽特效出來烤的話跟畫面上看到的不會一樣。 */
   const mergingRef = useRef(false);
+  const freezeCanvasRef = useRef<HTMLCanvasElement>(null);
+  const freezeHeldRef = useRef(false);
+  const holdFreeze = (src: HTMLCanvasElement) => {
+    const c = freezeCanvasRef.current; if (!c) return;
+    c.width = src.width; c.height = src.height;
+    c.getContext('2d')!.drawImage(src, 0, 0);
+    c.style.display = 'block'; freezeHeldRef.current = true;
+  };
+  /** 收掉定格：等底下真的畫好（再兩幀）才拿開，拿開那一下畫面不會變 */
+  const releaseFreeze = (now = false) => {
+    if (!freezeHeldRef.current) return;
+    const off = () => { const c = freezeCanvasRef.current; freezeHeldRef.current = false; if (c) { c.style.display = 'none'; c.width = c.height = 1; } };
+    if (now) off(); else requestAnimationFrame(() => requestAnimationFrame(off));
+  };
+  /** 合併時已經直接裝好像素的那張（換來源時不用再重建緩衝區） */
+  const preinstalledSrcRef = useRef<string | null>(null);
   /** 合併後那張預覽圖的像素（畫布）與網址：換來源時直接拿來建緩衝區 */
   const mergeCanvasRef = useRef<{ url: string; cvs: HTMLCanvasElement } | null>(null);
   /** 合併後的 <img> 還在背景解碼：這段期間不能再合併（要用它當輸入） */
@@ -6395,6 +6414,76 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
     /* 不放任何動畫也不延遲：按下去就開始烤。
        這一段本來就是同步運算，排 setTimeout 只是多等一輪。 */
+    /* ── 畫面上這一張：當場、同步換好 ─────────────────────────────────
+       直接拿畫面上現成的結果（GPU 已經畫好的那張）當作新的照片：複製、編成網址、
+       裝進緩衝區、參數歸零，全部在這一次點擊裡做完。所以合併後馬上點任何按鈕都會
+       立刻套用（不用排隊等背景）。同時蓋上一張定格畫面，直到解碼等收尾都做完才拿開，
+       從按下合併到做完，畫面一個像素都不會變。原尺寸那張照舊記成待辦、存檔時才烤。 */
+    let syncUrl: string | null = null;
+    {
+      const i = safeIdx;
+      const base = cloneSnap(live);
+      const snap0: BatchSnap = {
+        ...base,
+        params: { ...base.params, ...(ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS)) } as EditorParams,
+        geo: ownGeoRef.current[i] ? JSON.parse(JSON.stringify(ownGeoRef.current[i])) : base.geo,
+      };
+      const shown = visibleEditorCanvas();
+      if (linked[i] !== false && shown && shown.width > 0 && !showOriginalRef.current && isGeoIdentity(snap0.geo)
+          && !(snap0.params.maskCreated && snap0.params.maskShowOverlay)) {
+        let cvs: HTMLCanvasElement | null = document.createElement('canvas');
+        cvs.width = shown.width; cvs.height = shown.height;
+        cvs.getContext('2d', { willReadFrequently: true })!.drawImage(shown, 0, 0);
+        const probe = document.createElement('canvas'); probe.width = probe.height = 8;
+        const pg = probe.getContext('2d', { willReadFrequently: true })!;
+        pg.drawImage(cvs, 0, 0, 8, 8);
+        const d = pg.getImageData(0, 0, 8, 8).data;
+        let mx = 0, minA = 255;
+        for (let q = 0; q < d.length; q += 4) { mx = Math.max(mx, d[q], d[q + 1], d[q + 2]); minA = Math.min(minA, d[q + 3]); }
+        let url = '';
+        if (mx > 0 && minA >= 250) { try { url = cvs.toDataURL('image/jpeg', 0.95); } catch { url = ''; } }
+        if (url.length > 64) {
+          holdFreeze(cvs);
+          const { lut: bl, fx: bf } = mergePendingBakeRef.current;
+          fullJobsRef.current[url] = { input: srcList[i], snap: cloneSnap(snap0) };
+          thumbOriginRef.current[url] = thumbSrcOf(srcList[i]);
+          const was = mergeDepthOf(srcList[i]);
+          mergeDepthRef.current[url] = { lut: was.lut + bl, fx: was.fx + bf };
+          delete ownMaskRef.current[i]; delete ownGeoRef.current[i];
+          // 像素直接裝進緩衝區（鍵就是新網址，跟換來源後一致）
+          lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, selectedLutIdx: -1 } as any;
+          lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
+          buildBuffersFromRef.current(cvs, cvs.width, cvs.height, false, url);
+          cvs.width = cvs.height = 0; cvs = null;
+          const fresh = JSON.parse(JSON.stringify(DEFAULT_PARAMS)) as EditorParams;
+          const freshGeo = { ...DEFAULT_GEO, crop: { ...FULL_CROP } };
+          mergeFreezeRef.current = null;
+          paramsRef.current = fresh; geoRef.current = freshGeo; setGeo(freshGeo);
+          tapFastRef.current = true; isDirtyRef.current = true;
+          const next = [...srcList]; next[i] = url;
+          preinstalledSrcRef.current = url;
+          srcListRef.current = next;
+          swapToSrc(next);
+          sharedSnapRef.current = null; pendingSnapRef.current = null; pendingSnapSrcRef.current = null;
+          mergeImgPendingRef.current = true;
+          loadImg(url).then(im => {
+            rememberDecoded(url, im);
+            if (srcListRef.current[safeIdxRef.current] === url) originalImgRef.current = im;
+          }).catch(() => {}).finally(() => { mergeImgPendingRef.current = false; releaseFreeze(); });
+          syncUrl = url;
+          mergingRef.current = false;          // 之後的點擊照常、立刻套用
+          setMergePending(false);
+          // 其他連結中的照片也要合併時，交給下面背景那段（不影響畫面）
+          const others = srcList.some((_, n) => n !== i && linked[n] !== false);
+          if (!others) {
+            addToHistory(fresh, 0, false, false, false, false, false, false, false, false);
+            return;
+          }
+          mergingRef.current = true;
+        }
+      }
+    }
+
     (async () => {
       try {
         /* 介面已經在這一拍切成合併完的樣子；烤圖等合併鍵的動畫播完、
@@ -6402,7 +6491,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         /* 每一個等待都有時限：任何一個沒回來（動畫被打斷、分頁切到背景），
            合併就會一直卡在「進行中」，之後點的濾鏡／特效全部被排隊、看起來選中卻沒套用。 */
         const race = <T,>(pr: Promise<T>, ms: number) => Promise.race([pr, new Promise<void>(r => setTimeout(r, ms))]);
-        if (after) await race(after, 1000);
+        if (after && !syncUrl) await race(after, 1000);
         await race(new Promise<void>(r => requestAnimationFrame(() => setTimeout(r, 0))), 100);
         // 這一次烤進去的是哪一種（按下的當下就記好了，兩邊都套的話兩邊都算）
         const { lut: bakedLut, fx: bakedFx } = mergePendingBakeRef.current;
@@ -6411,6 +6500,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         for (let i = 0; i < srcList.length; i++) {
           // 沒連結的那幾張有自己的一份參數，這次合併不關它們的事
           if (linked[i] === false) continue;
+          if (syncUrl && i === safeIdx) { next[i] = syncUrl; continue; }   // 這張剛剛已經同步換好了
           const base = cloneSnap(live);
           const snap: BatchSnap = {
             ...base,
@@ -6477,6 +6567,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         /* 先把烤好的那張解碼完再換來源。
            不先解好的話，換來源之後緩衝區還是舊的那張、參數卻已經歸零，
            中間就會畫出一張「沒有特效的舊圖」—— 那就是合併時閃的那一下。 */
+        if (syncUrl) {
+          // 畫面那張早就換好、參數也歸零了；這裡只把其他照片的新網址接上，不碰畫面與參數
+          srcListRef.current = next;
+          setSrcList(next);
+          addToHistory(paramsRef.current, latestEditorDraftRef.current.selectedLutIdx, false, false, false, false, false, false, false, false);
+          return;
+        }
         const shownUrl = next[safeIdx];
         if (shownUrl && shownUrl !== srcList[safeIdx] && mergeCanvasRef.current?.url !== shownUrl) {
           /* load 之後還要等 decode()（再跨一幀）：iOS 的 load 只代表檔案讀到了，
@@ -7350,6 +7447,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     style={{ objectFit: 'fill' }}
                     className="absolute inset-0 w-full h-full pointer-events-auto rounded-sm"
                 />
+                {/* 合併時的定格畫面：從按下合併到全部做完，畫面完全不變（使用者一操作就收掉） */}
+                <canvas ref={freezeCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{display:'none',objectFit:'fill',zIndex:5}} />
                 <canvas key={surfaceGen} ref={el=>{(fxSurfaceRef as React.MutableRefObject<HTMLCanvasElement|null>).current=el;if(el){preferWebgl2(el);el.addEventListener('webglcontextlost',onSurfaceLost,{once:true});}}} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
 
                 {/* 換過去了但還在算的時候，壓暗＋轉圈，別讓人以為沒反應。
