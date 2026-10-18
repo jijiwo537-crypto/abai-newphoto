@@ -6342,6 +6342,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const mergeCanvasRef = useRef<{ url: string; cvs: HTMLCanvasElement } | null>(null);
   /** 合併後的 <img> 還在背景解碼：這段期間不能再合併（要用它當輸入） */
   const mergeImgPendingRef = useRef(false);
+  /** 批量時其他照片還在背景合併 */
+  const mergeOthersPendingRef = useRef(false);
   /** 合併烤圖期間點的濾鏡／特效：烤完、歸零的狀態套用之後再補上 */
   const pendingTapRef = useRef<null | (() => void)>(null);
   const tapHandlersRef = useRef({ fx: handleEffectToolSelect, lut: handleFilterSelect, none: clearAllEffects });
@@ -6375,7 +6377,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   /** after：介面照樣立刻切成合併完的樣子；烤圖等它（合併鍵的動畫）結束才開始 */
   const mergeEffects = (after?: Promise<unknown>) => {
-    if (!originalImgRef.current || mergingRef.current || mergeImgPendingRef.current) return;
+    if (!originalImgRef.current || mergingRef.current || mergeImgPendingRef.current || mergeOthersPendingRef.current) return;
     mergingRef.current = true;
     if (isInteracting) setIsInteracting(false);
 
@@ -6428,9 +6430,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         params: { ...base.params, ...(ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS)) } as EditorParams,
         geo: ownGeoRef.current[i] ? JSON.parse(JSON.stringify(ownGeoRef.current[i])) : base.geo,
       };
+      /* 畫面上那張已經是「裁切後＋濾鏡＋特效」的結果（緩衝區本來就照構圖建），
+         所以有裁切也能直接用；只有正在構圖頁（畫面顯示的是未裁切的整張）時不行。
+         遮色片的紅色遮罩只是編輯輔助：先同步重畫一張不帶遮罩的，再複製。 */
+      if (snap0.params.maskCreated && snap0.params.maskShowOverlay) {
+        try { render({ ...paramsRef.current, maskShowOverlay: false }, selectedLutIdx); } catch { /* 重畫失敗就走背景那條 */ }
+      }
       const shown = visibleEditorCanvas();
-      if (linked[i] !== false && shown && shown.width > 0 && !showOriginalRef.current && isGeoIdentity(snap0.geo)
-          && !(snap0.params.maskCreated && snap0.params.maskShowOverlay)) {
+      if (linked[i] !== false && shown && shown.width > 0 && !showOriginalRef.current && activeCategory !== 'compose') {
         let cvs: HTMLCanvasElement | null = document.createElement('canvas');
         cvs.width = shown.width; cvs.height = shown.height;
         cvs.getContext('2d', { willReadFrequently: true })!.drawImage(shown, 0, 0);
@@ -6479,7 +6486,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             addToHistory(fresh, 0, false, false, false, false, false, false, false, false);
             return;
           }
-          mergingRef.current = true;
+          // 其他照片在背景合併：不擋點擊（畫面這張已經好了），只擋再按一次合併與存檔
+          mergeOthersPendingRef.current = true;
         }
       }
     }
@@ -6625,7 +6633,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           isDirtyRef.current = true;
         }
       } finally {
-        mergingRef.current = false;
+        if (!syncUrl) mergingRef.current = false;
+        mergeOthersPendingRef.current = false;
         setMergePending(false);
       }
     })();
@@ -6661,13 +6670,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setSaveState('processing');
     setTimeout(async () => {
         try {
+            // 其他照片還在背景合併時先等它做完（最多 20 秒），存的才會是合併後的
+            for (let w = 0; w < 200 && (mergeOthersPendingRef.current || mergingRef.current); w++) await new Promise(r => setTimeout(r, 100));
             // 先把現在畫面上這一份收回去，共用的那一份才會是最新的 ——
             // 不然「調到一半直接按儲存」時，其他連結中的照片會拿到上一次切換時的舊參數。
             stashCurrent();
             const live = liveRef.current!;
             const out: string[] = [];
             const encoded: string[] = [];
-            for (let i = 0; i < srcList.length; i++) {
+            const srcs = srcListRef.current;
+            for (let i = 0; i < srcs.length; i++) {
               // 連結中的一律套現在這一份；解除連結的用它自己留下來的那一份。
               // 沒有留下來的（例如從頭到尾沒被切過去過）就直接用現在這一份，
               // 不能因為「還沒載入過」就跳過不套 —— 那就變成沒連結了。
@@ -6680,7 +6692,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
                   : (i === safeIdx ? cloneSnap(base).geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
               };
-              const img = await loadFullImg(srcList[i], i === safeIdx ? originalImgRef.current : null);
+              const img = await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
               // Only lowfi exports depend on this LUT; other formats/effects
               // must not be blocked by a lookup-image network failure.
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
@@ -6698,7 +6710,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             setFinalImage(out[safeIdx] || out[0]);
             setSaveState('success');
             // 首頁的「最近輸出」：記下成品縮圖＋這張圖導出當下的原圖與參數
-            addExport('editor', out[safeIdx] || out[0], srcList[safeIdx] || imageSrc, {
+            addExport('editor', out[safeIdx] || out[0], srcListRef.current[safeIdx] || imageSrc, {
               params: paramsRef.current, geo, selectedLutIdx,
             }, histKey || undefined);
         } catch (e) { console.error("Save failed", e); if (request === saveRequestRef.current) setSaveState('idle'); }
