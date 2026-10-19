@@ -94,6 +94,13 @@ interface BeautyStudioProps {
   onSendToEditor: (dataUrl: string) => void;
   /** 接續上次：把存下來的操作記錄餵回來（跳出應用再回來用的） */
   initialState?: { ops?: any[] } | null;
+  /** 嵌在「編輯」的「人像」分頁裡：不佔整個畫面、不存草稿、不導出，
+      上面一列換成「取消／復原／完成」，編輯器切分頁時呼叫 commitRef 拿成品 */
+  embedded?: {
+    commitRef: React.MutableRefObject<(() => Promise<string | null>) | null>;
+    onDone: (url: string | null) => void;
+    onCancel: () => void;
+  };
 }
 
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
@@ -140,7 +147,7 @@ const unionRect = (a: Rect | null, b: Rect): Rect => {
 };
 
 export const BeautyStudio: React.FC<BeautyStudioProps> = ({
-  imageSrc, onCancel, onHome, onRequestExit, onImportNew, onSendToEditor, initialState,
+  imageSrc, onCancel, onHome, onRequestExit, onImportNew, onSendToEditor, initialState, embedded,
 }) => {
   const initialOpsCountRef = useRef(Array.isArray(initialState?.ops) ? initialState!.ops!.length : 0);
   const [tool, setTool] = useState<BeautyTool>('blemish');
@@ -313,10 +320,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       const first = draftSrcSavedRef.current !== imageSrc;
       draftSrcSavedRef.current = imageSrc;
       const cur = sessionRef.current;
-      if (!cur) return;
+      if (!cur || embedded) return;
       saveToolDraft('beauty', first ? imageSrc : null, { ops: cur.ops.slice(0, cur.opsApplied) });
     }, 1000);
-  }, [imageSrc]);
+  }, [imageSrc, embedded]);
   useEffect(() => () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); }, []);
 
   const syncHist = useCallback(() => {
@@ -857,6 +864,22 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     return canvasToUrl(c);
   }, [imageSrc]);
 
+  /* 嵌在編輯器裡：切分頁時由編輯器來拿成品（沒動過就是 null，不換照片） */
+  if (embedded) embedded.commitRef.current = async () => {
+    const s = sessionRef.current;
+    return s && s.opsApplied > 0 ? await exportFullRes() : null;
+  };
+  useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
+  const finishEmbedded = async () => {
+    if (!embedded) return;
+    const s = sessionRef.current;
+    if (!s || s.opsApplied <= 0) { embedded.onDone(null); return; }
+    setSaveState('processing');
+    const url = await exportFullRes().catch(() => null);
+    setSaveState('idle');
+    embedded.onDone(url);
+  };
+
   const handleSave = () => {
     if (!sessionRef.current) return;
     setShowOriginal(false);
@@ -899,7 +922,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
   const viewport=useStandaloneToolViewport();
   return (
-    <div ref={viewport.ref} className={`safe-top relative w-full h-[100dvh] bg-[#080808] z-[60] flex flex-col font-sans text-white overflow-hidden beauty-root ${viewport.standalone?'standalone-tool-viewport':''}`}>
+    <div ref={embedded ? undefined : viewport.ref} data-beauty-embedded={embedded ? '1' : undefined}
+      className={embedded ? 'absolute inset-0 bg-[#080808] flex flex-col font-sans text-white overflow-hidden beauty-root'
+        : `safe-top relative w-full h-[100dvh] bg-[#080808] z-[60] flex flex-col font-sans text-white overflow-hidden beauty-root ${viewport.standalone?'standalone-tool-viewport':''}`}>
       <style>{`
         ${standaloneToolViewportCSS}
         .beauty-root {
@@ -992,7 +1017,32 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         </div>
       )}
 
-      {saveState !== 'success' && (
+      {saveState !== 'success' && embedded && (
+        <header className="h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 z-20">
+          <div className="w-24">
+            <button onClick={embedded.onCancel} data-embedded-cancel className="h-8 -ml-1 px-2 text-[13px] text-white/70 active:text-white">取消</button>
+          </div>
+          <div className="flex items-center gap-4">
+            <button onClick={undo} disabled={!canUndo}
+              className={`p-2 transition-all ${!canUndo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
+              title="復原">
+              <Icon name="undo" className="text-xl" />
+            </button>
+            <button onClick={redo} disabled={!canRedo}
+              className={`p-2 transition-all ${!canRedo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
+              title="重做">
+              <Icon name="redo" className="text-xl" />
+            </button>
+          </div>
+          <div className="w-24 flex justify-end shrink-0">
+            <button onClick={finishEmbedded} data-embedded-done
+              className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap">
+              完成
+            </button>
+          </div>
+        </header>
+      )}
+      {saveState !== 'success' && !embedded && (
         <header className="h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-20">
           <div className="w-24">
             {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
@@ -1202,7 +1252,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       {saveState === 'processing' && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
-          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
+          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">{embedded ? '套用中' : '儲存中'}</p>
           {/* 這一層蓋住返回鍵，所以一定要有出口（見 StuckEscape） */}
           <StuckEscape onEscape={() => setSaveState('idle')} />
         </div>

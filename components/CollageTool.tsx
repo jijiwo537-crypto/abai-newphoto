@@ -11341,9 +11341,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     工具欄一長高，上面的舞台就矮一截，預覽圖跟著往上跳一下
                     （實測 287px → 300px，畫面位移 6.5px）。
                     一律用最高的那個值，進哪一頁、開不開滑桿，預覽都不會動。
-                    分類列改成純文字後矮了 26px，整條一起少 26px，省下來的給預覽。 */
+                    分類列改成純文字（44＋26，見 EditBar）後比舊的圖示列矮 6px，整條一起少 6px，省下來的給預覽。 */
                  style={{
-          height: photoLayoutOpen ? 'max(48dvh, 390px)' : 'max(calc(34dvh - 26px), 274px)',
+          height: photoLayoutOpen ? 'max(48dvh, 390px)' : 'max(calc(34dvh - 6px), 294px)',
           flexShrink: 0,
           /* 鍵盤升起時整條往上移，剛好讓輸入框的下緣貼著鍵盤上緣。
              用 transform 而不是改高度：transform 走合成執行緒，

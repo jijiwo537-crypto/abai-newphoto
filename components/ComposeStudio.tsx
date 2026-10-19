@@ -1,3 +1,4 @@
+import { EDIT_BAR_H } from './EditBar';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ASPECT_PRESETS,
@@ -32,9 +33,9 @@ const LIVE_MAX = 560;
 const BUTTON_ROW_TOP = (86 - 36) / 2;
 
 /* 構圖這一層要對齊「編輯」的預覽區 —— 那一格上面是編輯器的標題列（h-14＝56），
-   下面是它的分頁列（77）。三個工具都用同一組數字，裁切框的位置與大小才會一致。 */
+   下面是它的分類列（EDIT_BAR_H，見 EditBar）。三個工具都用同一組數字，裁切框的位置與大小才會一致。 */
 const HEADER_H = 56;
-const FOOTER_H = 77;
+const FOOTER_H = EDIT_BAR_H + 1;   // ＋分類列上緣那條 1px 細線（留著不蓋掉）
 
 interface ComposeStudioProps {
   /* 影片也走這一支：<video> 跟 <img> 一樣畫得上畫布，

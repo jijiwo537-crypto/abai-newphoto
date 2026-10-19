@@ -1,3 +1,4 @@
+import { EditBar, EditBarTab } from './EditBar';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
 import { waveWarp } from '../utils/waveWarp';
 import { createPortal, flushSync } from 'react-dom';
@@ -1986,7 +1987,7 @@ export const preDecodeIcon = (src?: string) => {
   im.decode?.().catch(() => {});
 };
 /** 「新增圖形」整片清單：拖動、擠壓時工具每一格都重畫，清單用 memo 包起來就不會跟著重建 */
-const GridShapePicker = React.memo(({ onPick }: { onPick: (it: any) => void }) => (
+export const GridShapePicker = React.memo(({ onPick }: { onPick: (it: any) => void }) => (
   <>
     {shapePickerSections().map(([label, list]) => (
       <div key={label} className="mb-3">
@@ -2473,7 +2474,9 @@ export const SymbolPicker: React.FC<{
   selected?: string | null;
   /** 在手指放下、click 觸發以前先把這一顆的精確外框算進快取。 */
   onPrepare?: (s: string) => void;
-}> = ({ onBack, onPick, onPrepare, selected = null }) => {
+  /** 「編輯」的符號分頁本身就是這一頁，不需要返回鍵 */
+  hideBack?: boolean;
+}> = ({ onBack, onPick, onPrepare, selected = null, hideBack = false }) => {
   /* 全部選項一次建立，使用者第一次滑到底時不會再遇到分批載入或空按鈕。
      不在背景逐顆掃 alpha；那會與 iPhone 的捲動、拖曳競爭主執行緒。 */
   const onPickRef = useRef(onPick);
@@ -2507,15 +2510,15 @@ export const SymbolPicker: React.FC<{
 
   return (
     <div className="pt-1">
-      <div className="flex items-center gap-2 mb-3">
-        <button
+      <div className={`flex items-center gap-2 ${hideBack ? 'mb-2 h-6' : 'mb-3'}`}>
+        {!hideBack && <button
           onClick={onBack}
           aria-label="返回"
           title="返回"
           className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
         >
           <Icon name="arrow_back" className="text-[20px]" />
-        </button>
+        </button>}
         <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
       </div>
       {/* 一次渲染完整清單，避免往下滑到一半才等待下一批。
@@ -3897,11 +3900,15 @@ return (
         ))}
     </div>
 
-    {/* 3. 分類列：跟編輯一樣只有文字、h-11、上方細線、黑底、底部安全區空隙 */}
-    <div className="flex h-11 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+6px)] box-content shrink-0">
+    {/* 3. 分類列：跟編輯同一個元件（只有文字、選中的有底線、下面留空間好按） */}
+    <EditBar>
       {CATS.map(([id, , label]) => (
-        <button
+        <EditBarTab
           key={id}
+          id={id}
+          label={label}
+          /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
+          active={composeOpen ? id === 'compose' : adjustSub === id}
           onClick={() => {
             if (id === 'compose') { openComposeFor(img.id); return; }
             // Let the new controls paint before background thumbnail shaders
@@ -3916,15 +3923,9 @@ return (
             if (id === 'shape') { setShapeMenu('root'); setShapeTool(''); }
             if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
           }}
-          /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
-          className={`flex-1 flex items-center justify-center transition-colors ${
-            (composeOpen ? id === 'compose' : adjustSub === id) ? 'text-white' : 'text-white/35'
-          }`}
-        >
-          <span className="text-[13px] font-bold tracking-[0.18em]">{label}</span>
-        </button>
+        />
       ))}
-    </div>
+    </EditBar>
   </div>
 );
 };
@@ -4956,7 +4957,7 @@ const getPreviewImg = (src: string) => {
   return el;
 };
 
-interface FloatingImage {
+export interface FloatingImage {
   maskAmount?:number;
   maskShape?:'square'|'circle'|'star';
   maskCells?:number;
@@ -6159,8 +6160,69 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
 
 };
 
+/** 新增一個圖形圖層（大小佔頁面短邊的三成、線條類壓成細長條）。
+ *  經典拼圖與「編輯」的圖形分頁共用：cx／cy 是放置的中心、pw／ph 是頁面大小（同一組座標）。 */
+export const makeShapeItem = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem, cx: number, cy: number, pw: number, ph: number): FloatingImage => {
+    const short = Math.min(pw, ph);
+    // 邊框：一放進來就是整頁的框
+    const frame = isFrameShape(it.kind);
+    const w = frame ? Math.round(pw) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+    const h = frame ? Math.round(ph) : (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
+    const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
+    // 星芒是光：預設白色（其他圖形照原本的預設色）
+    const initialColor = it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-') ? '#FFFFFF' : shapeDefaultColorFor(it.kind);
+    const item: FloatingImage = {
+      id, src: '',
+      x: cx - w / 2,
+      y: cy - h / 2,
+      width: w, height: h, scale: 1, rotation: (it as any).rot || 0,
+      shape: it.kind,
+      ...(isBackdropMask(it.kind)?maskDefaults(it.kind):{}),
+      shapeItemId: it.id,
+      // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
+      holeType: (it as HoleShapeItem).hole,
+      ...(isClefTex((it as HoleShapeItem).hole) ? { shapeDotSize: CLEF_TEX_DEFAULTS.size, shapeDotGap: CLEF_TEX_DEFAULTS.gap, shapeStripeN: CLEF_TEX_DEFAULTS.stripeN } : {}),
+      shapeFilled: it.filled,
+      shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
+      shapeLineBase: WAVE_LIKE_KINDS.has(it.kind)
+        ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
+      shapeTextureBaseW: w,
+      shapeTextureBaseH: h,
+      shapeDash: 0,
+      shapeGlow: false,
+      shapeGlowColor: initialColor,
+      color: initialColor,
+      ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
+      ...(frame ? { shapeFrameRange: frameRangeDefault(it.kind), shapeFrameFeather: MIST_FEATHER_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT, shapeDotSize: MIST_TEX_SIZE_DEFAULT, shapeDotGap: MIST_TEX_GAP_DEFAULT } : {}),
+      // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
+      ...(it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-')
+        ? (() => { const idle = glintHasRing((it as any).hole) ? 'spin' : 'breathe';
+            return { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, idle, ...idleDefaults(idle, { shape: true, glint: true }) } }; })() : {}),
+    };
+    return item;
+};
+
+/** 新增一顆符號（字級照長度回推，約佔頁寬三成五）。經典拼圖與「編輯」共用同一組預設。 */
+export const makeSymbolItem = (txt: string, cx: number, cy: number, pw: number): FloatingImage => {
+  const { fontSize, w, h } = prepareClassicSymbolPlacement(txt, pw);
+  return {
+    id: `text-${Math.random().toString(36).substring(2, 9)}`, src: '',
+    x: cx - w / 2, y: cy - h / 2,
+    width: w, height: h, scale: 1, rotation: 0,
+    text: txt, sym: txt,
+    fontFamily: SYMBOL_FONT,
+    fontSize,
+    color: '#FFFFFF',
+    bold: false, italic: false, letterSpacing: 0,
+    strokeColor: '#000000',
+    glow: 0, glowColor: '#FFFFFF',
+    mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT },
+  };
+};
+export { prepareClassicSymbolPlacement, TEXT_PLACEHOLDER };
+
 /** Shared local animation painter for the preview and exported frames. */
-const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
+export const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
   motionFrame: ObjectMotionFrame | null | undefined, density: number, cacheGlow = false) => {
   const phase = motionFrame?.gridWave;
   const mix = motionFrame?.waveMix ?? 1;
@@ -9841,23 +9903,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const handleAddSymbolLayer = (txt: string) => {
     /* pointerdown 已先準備這顆的幾何；即使由鍵盤觸發，這裡也只計算該顆，
        不等待字體 Promise、更不清掉整份快取。setState 能在同一個 click 提交。 */
-    const { rect, fontSize, w, h } = prepareAddSymbolLayer(txt);
-    const id = `text-${Math.random().toString(36).substring(2, 9)}`;
-    const item: FloatingImage = {
-      id, src: '',
-      x: (rect ? rect.centerX : previewW / 2) - w / 2,
-      y: (rect ? rect.centerY : previewH / 2) - h / 2,
-      width: w, height: h, scale: 1, rotation: 0,
-      text: txt, sym: txt,
-      fontFamily: SYMBOL_FONT,
-      fontSize,
-      color: '#FFFFFF',
-      bold: false, italic: false, letterSpacing: 0,
-      strokeColor: '#000000',
-      glow: 0, glowColor: '#FFFFFF',
-      // 經典拼圖的所有新物件預設都是「無／靜止」。
-      mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT },
-    };
+    const rect = getClosestPageRect();
+    const item = makeSymbolItem(txt, rect ? rect.centerX : previewW / 2, rect ? rect.centerY : previewH / 2, rect?.width ?? previewW);
+    const id = item.id;
     setFloatingImages(prev => [...prev, item]);
     setSelectedFloatingId(id);
     setSelectedIndex(null);
@@ -9874,42 +9922,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const onGridShapePick = useCallback((it: any) => shapePickRef.current(it), []);
   const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem) => {
     const rect = getClosestPageRect();
-    const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
-    // 邊框：一放進來就是整頁的框
-    const frame = isFrameShape(it.kind);
-    const w = frame ? Math.round(rect?.width ?? previewW) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
-    const h = frame ? Math.round(rect?.height ?? previewH) : (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
-    const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
-    // 星芒是光：預設白色（其他圖形照原本的預設色）
-    const initialColor = it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-') ? '#FFFFFF' : shapeDefaultColorFor(it.kind);
-    const item: FloatingImage = {
-      id, src: '',
-      x: (rect ? rect.centerX : previewW / 2) - w / 2,
-      y: (rect ? rect.centerY : previewH / 2) - h / 2,
-      width: w, height: h, scale: 1, rotation: (it as any).rot || 0,
-      shape: it.kind,
-      ...(isBackdropMask(it.kind)?maskDefaults(it.kind):{}),
-      shapeItemId: it.id,
-      // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
-      holeType: (it as HoleShapeItem).hole,
-      ...(isClefTex((it as HoleShapeItem).hole) ? { shapeDotSize: CLEF_TEX_DEFAULTS.size, shapeDotGap: CLEF_TEX_DEFAULTS.gap, shapeStripeN: CLEF_TEX_DEFAULTS.stripeN } : {}),
-      shapeFilled: it.filled,
-      shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
-      shapeLineBase: WAVE_LIKE_KINDS.has(it.kind)
-        ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
-      shapeTextureBaseW: w,
-      shapeTextureBaseH: h,
-      shapeDash: 0,
-      shapeGlow: false,
-      shapeGlowColor: initialColor,
-      color: initialColor,
-      ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
-      ...(frame ? { shapeFrameRange: frameRangeDefault(it.kind), shapeFrameFeather: MIST_FEATHER_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT, shapeDotSize: MIST_TEX_SIZE_DEFAULT, shapeDotGap: MIST_TEX_GAP_DEFAULT } : {}),
-      // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
-      ...(it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-')
-        ? (() => { const idle = glintHasRing((it as any).hole) ? 'spin' : 'breathe';
-            return { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, idle, ...idleDefaults(idle, { shape: true, glint: true }) } }; })() : {}),
-    };
+    const item = makeShapeItem(it, rect ? rect.centerX : previewW / 2, rect ? rect.centerY : previewH / 2,
+      rect?.width ?? previewW, rect?.height ?? previewH);
+    const id = item.id;
     setFloatingImages(prev => [...prev, item]);
     setSelectedFloatingId(id);
     setSelectedIndex(null);
@@ -18242,12 +18257,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
       {/* Bottom Tabbed Controller */}
       {/* 高度所有分頁都一樣：切到圖片編輯時畫布不會突然變小。
-          下限是編輯那組操作欄的實際高度（分頁列＋80＋96＋51），
-          螢幕夠高就用 36dvh − 26px（分類列改純文字後省下的高度給畫布）。 */}
+          下限是編輯那組操作欄的實際高度（分頁列＋80＋96＋71），
+          螢幕夠高就用 36dvh − 6px（分類列改成純文字、高度 44＋26，比舊的圖示列矮 6px）。 */}
       <footer
         className="bg-[#0a0a0a] border-t border-[#1a1a1a] flex flex-col z-[50] no-select shrink-0 transition-transform duration-300 ease-out"
         data-classic-controller
-        style={{ height: 'max(calc(36dvh - 26px), 284px)', visibility: igPreview ? 'hidden' : undefined }}
+        style={{ height: 'max(calc(36dvh - 6px), 304px)', visibility: igPreview ? 'hidden' : undefined }}
       >
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* Tabs list */}
@@ -18484,7 +18499,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               }
 
               /* ── 選到圖片：跟「編輯」完全一樣的三段式操作欄 ───────────────
-                 上：一根滑桿（5rem）／中：工具列（6rem）／下：分類列（h-11＋底部空隙） */
+                 上：一根滑桿（5rem）／中：工具列（6rem）／下：分類列（EditBar） */
               const img = layer;
               // 影片有自己的 GPU 路（useVideoFxGl），照舊走文件
               const liveFloat = !selCell && !img.isVideo;

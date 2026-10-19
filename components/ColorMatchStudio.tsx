@@ -34,6 +34,13 @@ interface Props {
   /** 從首頁的歷史紀錄點回來時，把當時的參數餵回來 */
   initialState?: any;
   onSendToEditor?: (dataUrl: string) => void;
+  /** 嵌在「編輯」的「仿色」分頁裡：不佔整個畫面、不導出，上面一列換成「取消／完成」，
+      編輯器切分頁時呼叫 commitRef 拿成品（還沒選參考圖就是 null） */
+  embedded?: {
+    commitRef: React.MutableRefObject<(() => Promise<string | null>) | null>;
+    onDone: (url: string | null) => void;
+    onCancel: () => void;
+  };
 }
 
 const PREVIEW_MAX = 1400;
@@ -61,7 +68,7 @@ const toImageData = (img: HTMLImageElement, max: number): ImageData => {
 
 export const ColorMatchStudio: React.FC<Props> = ({
   imageSrc, onCancel, onHome, onImportNew, onPickReference, referenceSrc, onSendToEditor,
-  initialState, onRequestExit, referenceLoading=false,
+  initialState, onRequestExit, referenceLoading=false, embedded,
 }) => {
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
   const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
@@ -369,6 +376,17 @@ export const ColorMatchStudio: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcImg, luts, picked, strength, skin]);
 
+  if (embedded) embedded.commitRef.current = async () => (referenceSrc && srcImg && luts ? await renderResult() : null);
+  useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
+  const finishEmbedded = async () => {
+    if (!embedded) return;
+    if (!referenceSrc || !srcImg || !luts) { embedded.onDone(null); return; }
+    setSaving(true);
+    const url = await renderResult().catch(() => null);
+    setSaving(false);
+    embedded.onDone(url);
+  };
+
   const recordedRef = useRef('');
   const record = useCallback(async (outUrl?: string) => {
     if (!srcImg || !luts || !referenceSrc) return;   // 還沒挑參考圖＝什麼都還沒做
@@ -461,7 +479,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
 
   const viewport=useStandaloneToolViewport();
   return (
-    <div ref={viewport.ref} className={`safe-top relative w-full h-[100dvh] bg-[#080808] flex flex-col text-white ${viewport.standalone?'standalone-tool-viewport':''}`}>
+    <div ref={embedded ? undefined : viewport.ref} data-match-embedded={embedded ? '1' : undefined}
+      className={embedded ? 'absolute inset-0 bg-[#080808] flex flex-col text-white overflow-hidden'
+        : `safe-top relative w-full h-[100dvh] bg-[#080808] flex flex-col text-white ${viewport.standalone?'standalone-tool-viewport':''}`}>
       {/* 滑桿樣式跟編輯器一模一樣 —— 那邊是寫在自己的 style 區塊裡，
           只有編輯器掛著的時候才存在，所以這裡要自己帶一份。 */}
       <style>{`
@@ -497,6 +517,13 @@ export const ColorMatchStudio: React.FC<Props> = ({
         }
         .custom-range::-moz-range-thumb:active { transform: scale(1.15); }
       `}</style>
+      {embedded ? (
+      <header className="relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 z-[81]">
+        <button onClick={embedded.onCancel} data-embedded-cancel className="h-8 -ml-1 px-2 text-[13px] text-white/70 active:text-white">取消</button>
+        <button onClick={finishEmbedded} data-embedded-done disabled={saving}
+          className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider shadow-lg active:scale-95 transition-transform disabled:opacity-40">完成</button>
+      </header>
+      ) : (
       <header className={`relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 ${formatOpen?'':'backdrop-blur-xl'} z-[81]`}>
         {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
         <button onClick={leave} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
@@ -514,6 +541,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           </div>}
         </div>
       </header>
+      )}
 
       {/* 預覽。版面從頭到尾長一樣 —— 還沒選參考圖時就先放原圖，
           不要等兩張都到齊才長出東西，不然畫面會整個跳一次。
@@ -600,7 +628,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           <span className="flex-1 min-w-0 text-left text-[10px] font-black uppercase tracking-[0.2em] text-white/60 truncate">導入參考圖片</span>
           {!referenceSrc && <Icon name="chevron_right" className="text-xl text-white/30 shrink-0" />}
         </button>
-        {referenceSrc && (
+        {referenceSrc && !embedded && (
           <button
             onClick={onImportNew}
             data-cm-replace-src
@@ -691,7 +719,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       {saving && (
         <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6" />
-          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
+          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">{embedded ? '套用中' : '儲存中'}</p>
           <StuckEscape onEscape={() => setSaving(false)} />
         </div>
       )}

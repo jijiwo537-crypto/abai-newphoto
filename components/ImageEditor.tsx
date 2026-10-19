@@ -1,6 +1,12 @@
 
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
-import { PrimariesPanel, COLOUR_PANEL_H, GRADE_PANEL_H } from './PrimariesPanel';
+import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
+import { EditBar, EditBarTab, EDIT_BAR_H } from './EditBar';
+import { OverlayLayer, TextEditDialog, OVERLAY_PAGE_W, overlayKind, newTextItem, newImageItem, refitText, bakeOverlays, type OverlayItem, type OverlayLayerHandle } from './EditorOverlays';
+import { TextEditorPanel, ShapeEditorPanel, SymbolPicker, GridShapePicker, makeShapeItem, makeSymbolItem, prepareClassicSymbolPlacement } from './GridLayoutTool';
+import { BeautyStudio } from './BeautyStudio';
+import { ColorMatchStudio } from './ColorMatchStudio';
+import { TemplatePanel } from './TemplatePanel';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
@@ -61,6 +67,8 @@ export interface EditorParams {
   hsl: HslAdjust;
   /** 色輪（Log／一級調色／HDR），見 utils/colorGrade */
   grade?: ColorGrade;
+  /** 疊在照片上的文字／符號／圖形／圖片（見 EditorOverlays）。存檔時才畫進成品，合併不會烤掉它 */
+  overlays?: OverlayItem[];
   maskExposure: number;
   maskBrightness: number;
   maskContrast: number;
@@ -169,7 +177,21 @@ export const DEFAULT_PARAMS: EditorParams = {
   ...FX_DEFAULTS,
 };
 
-type Category = 'filter' | 'adjust' | 'effects' | 'leak' | 'soft' | 'grain' | 'halation' | 'mask' | 'compose' | 'fx';
+type Category = 'filter' | 'adjust' | 'effects' | 'leak' | 'soft' | 'grain' | 'halation' | 'mask' | 'compose' | 'fx'
+  | 'template' | 'beauty' | 'match' | 'text' | 'shape' | 'symbol' | 'image';
+/** 疊圖層的四個分頁：控制區比較高（面板要放得下），畫面上的圖層可以點選、拖曳 */
+const OVERLAY_CATS: Category[] = ['text', 'shape', 'symbol', 'image'];
+/** 自己整頁接管的分頁（美顏、仿色直接用那兩個工具本身） */
+const STUDIO_CATS: Category[] = ['beauty', 'match'];
+/** 已經在這一頁時再點一次不做事的分頁（舊的幾頁照舊：再點一次會回到該頁第一個工具） */
+const SELF_CONTAINED_TABS = ['template', 'beauty', 'match', 'text', 'shape', 'symbol', 'image', 'compose'];
+const catOfOverlay = (it: OverlayItem): Category => { const k = overlayKind(it); return k === 'symbol' ? 'symbol' : k; };
+const onlyOverlaysChanged = (a: EditorParams, b: EditorParams) => {
+  if (a.overlays === b.overlays) return false;
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (k !== 'overlays' && (a as any)[k] !== (b as any)[k]) return false;
+  return true;
+};
+const EMPTY_OVERLAYS: OverlayItem[] = [];
 type CurveChannel = 'rgb' | 'r' | 'g' | 'b';
 type LegacyKind = 'soft' | 'halation' | 'leak' | 'blur' | 'simple';
 
@@ -603,6 +625,8 @@ interface ImageEditorProps {
   initialState?: { params?: EditorParams; geo?: GeoParams; selectedLutIdx?: number } | null;
   /** 只有主頁直接進入的獨立編輯器使用：縮短底部分頁列的空白，但保留完整圖標與文字。 */
   compactBottomBar?: boolean;
+  /** 主頁進來的編輯：分類列可以左右滑，多了模板、人像、仿色、文字、圖形、符號、圖片 */
+  fullTabs?: boolean;
 }
 
 interface HistoryItem {
@@ -1105,12 +1129,12 @@ function runThumbChunks<T>(
   step();
 }
 
-export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false }) => {
+export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false }) => {
   if (import.meta.env.DEV) (window as any).__editorRenders = ((window as any).__editorRenders || 0) + 1;
   const curveClipId = React.useId();
-  /* 底部分類列只有文字：主頁入口逐層沿用 ImageAdjustPanel 的 44px 內容 + 6px 底距；
-     相機內的非 compact 編輯器是 40px。這個值也同步參與控制區與構圖舞台計算。 */
-  const footerHeight = compactBottomBar ? 50 : 40;
+  /* 底部分類列（EditBar：只有文字、選中的有底線、下面留空間好按）。
+     這個值也同步參與控制區與構圖舞台計算。 */
+  const footerHeight = EDIT_BAR_H;
   const [detailPanelHost, setDetailPanelHost] = useState<HTMLDivElement | null>(null);
   const lastUiInputRef = useRef(0);
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
@@ -1796,8 +1820,25 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
 
     paramsRef.current = p;
-    isDirtyRef.current = true;
-    scheduleParamsSync();
+    if (maskLiveRef.current && p.maskCreated) applyMaskLiveCss(p);
+    else isDirtyRef.current = true;
+    /* 參考線直接改屬性，不必整個編輯器 render 一次；還沒掛上（剛開始建立）才走 React */
+    if (!applyMaskGuides(p)) scheduleParamsSync();
+  };
+
+  /** 把遮色片參考線（中心、軸線、起始線、結束線、旋轉把手）直接改到新位置。找不到就回傳 false。 */
+  const applyMaskGuides = (p: EditorParams) => {
+    const svg = document.getElementById('mask-svg-overlay');
+    const g = svg?.querySelector('#ui-guides');
+    if (!svg || !g || !p.maskCreated) return false;
+    const d = p.maskD * canvasBounds.width;
+    g.setAttribute('transform', `translate(${p.maskCx * canvasBounds.width}, ${p.maskCy * canvasBounds.height}) rotate(${(p.maskAngle * 180) / Math.PI})`);
+    const axis = g.querySelector('[data-mask-axis]');
+    if (axis) { axis.setAttribute('x1', String(-d)); axis.setAttribute('x2', String(d)); }
+    g.querySelector('[data-mask-rot]')?.setAttribute('transform', `translate(${d}, 0)`);
+    g.querySelector('[data-mask-start]')?.setAttribute('transform', `translate(${-d}, 0)`);
+    g.querySelector('[data-mask-end]')?.setAttribute('transform', `translate(${d}, 0)`);
+    return true;
   };
 
   const handleMaskPointerUp = (e: React.PointerEvent<SVGElement>) => {
@@ -1821,6 +1862,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     activeDragRef.current = null;
     setIsInteracting(false);
     paramsRef.current = p;
+    /* 放手後整條管線照常重畫一次、把遮色片畫進畫布，同一格裡把疊層收掉（見遮色片那段） */
+    if (!p.maskCreated) hideMaskLive();
+    isDirtyRef.current = true;
     flushParamsSync();
   };
 
@@ -2375,6 +2419,45 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const maskTempCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskOutCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskAdjKeyRef = useRef<string>('');
+  /* 拖遮色片形狀時的即時疊層（見遮色片那段）：maskLive 那張畫布裝「整張套上遮色片調整後的樣子」，
+     形狀用 CSS 漸層遮罩表達。maskLiveKey：裡面目前裝的是照什麼算的。 */
+  const maskLiveCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maskLiveRef = useRef(false);
+  const maskLiveKeyRef = useRef('');
+  /** 把遮色片的形狀換成疊層的 CSS 遮罩：漸層從起始線（不透明）到結束線（透明），兩端之外各自延伸 */
+  const applyMaskLiveCss = (p: EditorParams) => {
+    const el = maskLiveCanvasRef.current; if (!el) return;
+    const cw = el.offsetWidth, ch = el.offsetHeight; if (!cw || !ch) return;
+    const dx = Math.cos(p.maskAngle), dy = Math.sin(p.maskAngle);
+    const cx = p.maskCx * cw, cy = p.maskCy * ch, d = p.maskD * cw;
+    // CSS 的角度：0deg 朝上、順時針；方向向量 (sinθ, -cosθ) = (dx, dy)
+    const th = Math.atan2(dx, -dy);
+    const L = Math.abs(cw * Math.sin(th)) + Math.abs(ch * Math.cos(th));
+    const at = (x: number, y: number) => (x - cw / 2) * dx + (y - ch / 2) * dy + L / 2;
+    const t1 = at(cx - d * dx, cy - d * dy), t2 = at(cx + d * dx, cy + d * dy);
+    const m = `linear-gradient(${(th * 180 / Math.PI).toFixed(3)}deg, #000 ${t1.toFixed(2)}px, transparent ${t2.toFixed(2)}px)`;
+    el.style.maskImage = m; (el.style as any).webkitMaskImage = m;
+  };
+  const showMaskLive = (src: HTMLCanvasElement | null, key: string, w: number, h: number, p: EditorParams) => {
+    const el = maskLiveCanvasRef.current; if (!el) return;
+    if (maskLiveKeyRef.current !== key || el.width !== w || el.height !== h) {
+      if (el.width !== w || el.height !== h) { el.width = w; el.height = h; }
+      const g = el.getContext('2d')!;
+      g.globalCompositeOperation = 'copy';
+      if (src) g.drawImage(src, 0, 0);
+      else { g.fillStyle = 'rgba(220,38,38,0.5)'; g.fillRect(0, 0, w, h); }
+      g.globalCompositeOperation = 'source-over';
+      maskLiveKeyRef.current = key;
+    }
+    applyMaskLiveCss(p);
+    el.style.display = 'block';
+    maskLiveRef.current = true;
+  };
+  const hideMaskLive = () => {
+    const el = maskLiveCanvasRef.current;
+    if (el) el.style.display = 'none';
+    maskLiveRef.current = false;
+  };
   /* 拖遮色片滑桿時留下來的底圖（顏色鏈與特效都跑完、還沒上遮色片的樣子）。
      那一整段時間它完全不會變，所以只從主畫布回讀一次。
      maskBaseData：留下來的那一份；maskScratch：每一幀拿來算的工作區；
@@ -2957,9 +3040,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   curveLutsFnRef.current = getCurveLuts;
 
   // 合併期間介面的參數已經歸零，但畫面要維持原樣，所以這時候不要把它同步進繪圖用的 ref
+  /* 只有疊圖層（文字、圖形…）變了的話，照片本身不用重畫：圖層畫在自己那張畫布上 */
+  const lastDirtyParamsRef = useRef(params);
   useEffect(() => {
     if (mergeFreezeRef.current) return;
+    const prev = lastDirtyParamsRef.current;
+    lastDirtyParamsRef.current = params;
     paramsRef.current = params;
+    if (prev !== params && onlyOverlaysChanged(prev, params)) return;
     isDirtyRef.current = true;
   }, [params]);
   /* 這裡以前還會順手把 isDirtyRef 設成 true。拿掉了 ——
@@ -3802,7 +3890,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const effectHasDetail = (toolId: string) =>
     !!EFFECT_DETAIL_CAT[toolId] || !!(FX_TOOLS[toolId] && FX_TOOLS[toolId].length > 1);
 
-  const fxInputKey=(p:EditorParams)=>`${srcIdent()}|${selectedLutIdx}|${!!lutDataRef.current[lutList[selectedLutIdx]?.id]}|${activeCategory}|${JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('fx'))))}|${forceRecalculateEffectsRef.current}`;
+  const fxInputKey=(p:EditorParams)=>`${srcIdent()}|${selectedLutIdx}|${!!lutDataRef.current[lutList[selectedLutIdx]?.id]}|${activeCategory}|${JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('fx')&&key!=='overlays')))}|${forceRecalculateEffectsRef.current}`;
   /* Luminance histogram of the colour-processed photo (for soft light).
      Source data, in order of preference:
        · colourSampleRef — 128px reads of the GPU colour result without and
@@ -3847,7 +3935,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const legacyInputKey=(p:EditorParams,w:number,h:number,kind:LegacyKind)=>{
     const excluded=kind==='soft'?['soft','softThreshold','softRadius','softColor']:kind==='leak'?['leakOpacity','leakAngle','leakHue']:kind==='blur'?['blur']:kind==='simple'?['colorNoise','vignette']:['fringeIntensity','fringeSize','fringeFeather','fringeHue'];
-    return JSON.stringify([srcIdent(),w,h,lutList[selectedLutIdx]?.id,!!lutDataRef.current[lutList[selectedLutIdx]?.id],toneSig(p),Object.fromEntries(Object.entries(p).filter(([k])=>!excluded.includes(k)))]);
+    return JSON.stringify([srcIdent(),w,h,lutList[selectedLutIdx]?.id,!!lutDataRef.current[lutList[selectedLutIdx]?.id],toneSig(p),Object.fromEntries(Object.entries(p).filter(([k])=>!excluded.includes(k)&&k!=='overlays'))]);
   };
   /* 只開了「一種」舊式特效（柔光／光暈／漏光／朦朧，或噪點＋暗角）而且後面沒有別的東西
      要畫在 2D 上：那一層直接在畫面那塊 GPU 表面上算、直接顯示。拖曳中與放開後走同一條，
@@ -4439,6 +4527,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        以前只要 maskShowOverlay 是開的就會整段跑一遍 —— 即使沒有任何調整、
        紅色輔助也不該畫（例如導出時）。那一趟會白白開兩張整張大小的畫布、
        把像素讀回來再寫回去，等於每一幀都付一次全解析度的來回。 */
+    /* 拖遮色片形狀（建立／移動／拉長／旋轉）時走「即時疊層」：底下的畫布保持沒有遮色片的樣子，
+       調整後的整張圖放在疊在上面的那張畫布，形狀只靠 CSS 的線性漸層遮罩 —— 之後每一次移動
+       只改一個 CSS 字串，交給合成器，整條管線一次都不用重跑（以前每一幀都要把整張圖從 GPU
+       讀回來重算一次，手機上就是一頓一頓的）。後面還有 GLSL 特效時特效要吃遮色片的結果，不能這樣疊。 */
+    const maskLive = !!activeDragRef.current && !baking && ctx.canvas === displayCanvasRef.current
+      && !!maskLiveCanvasRef.current && !hasActiveFx(p) && p.maskCreated && (hasMaskAdjustments || showOverlay);
+    if (!maskLive && maskLiveRef.current && ctx.canvas === displayCanvasRef.current && !baking) hideMaskLive();
     if (p.maskCreated && (hasMaskAdjustments || showOverlay)) {
       const cos = Math.cos(p.maskAngle);
       const sin = Math.sin(p.maskAngle);
@@ -4454,7 +4549,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
       const redR = 220, redG = 38, redB = 38, redAlpha = 0.5;
 
-      if (!hasMaskAdjustments) {
+      if (!hasMaskAdjustments && maskLive) {
+        showMaskLive(null, `red|${w}x${h}`, w, h, p);
+        maskAdjKeyRef.current = '';
+      } else if (!hasMaskAdjustments) {
         /* ── 只有紅色輔助遮罩：一次漸層填色就到位 ───────────────────────
            這正是「拖曳生成遮色片」那段時間的情況（遮色片剛畫出來，
            九個參數都還是 0），也是卡頓最嚴重的地方。
@@ -4624,7 +4722,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       }
 
       maskAdjKeyRef.current = dragging ? adjKey : '';
+      maskLiveKeyRef.current = '';
       }
+
+      if (maskLive) {
+        showMaskLive(tempCanvas, adjKey, w, h, p);
+        ctx.restore();
+      } else {
 
       /* 漸層去背。
          拖形狀的時候 tempCanvas 要留著給下一幀用（見上面的 adjKey），
@@ -4657,6 +4761,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       // Draw the masked temp canvas onto the main canvas
       ctx.drawImage(masked, 0, 0);
       ctx.restore();
+      }
       }
     }
 
@@ -6392,6 +6497,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!originalImgRef.current || mergingRef.current || mergeImgPendingRef.current || mergeOthersPendingRef.current) return;
     mergingRef.current = true;
     if (isInteracting) setIsInteracting(false);
+    // 疊圖層不是照片的一部分：合併只烤照片，圖層留著
+    const keepOverlays = paramsRef.current.overlays;
 
     /* ── 按下的這一拍，介面就整個切成「合併完」的樣子 ──
        濾鏡／特效回到原始、滑桿收起來、四顆開關關掉、合併鍵變成「已合併N」。
@@ -6410,6 +6517,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setMergePending(true);
 
     const uiFresh = JSON.parse(JSON.stringify(DEFAULT_PARAMS)) as EditorParams;
+    uiFresh.overlays = keepOverlays;
     setParams(uiFresh);
     setSelectedLutIdx(0);
     setIsSoftActive(false); setIsBlurActive(false);
@@ -6475,6 +6583,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           buildBuffersFromRef.current(cvs, cvs.width, cvs.height, false, url);
           cvs.width = cvs.height = 0; cvs = null;
           const fresh = JSON.parse(JSON.stringify(DEFAULT_PARAMS)) as EditorParams;
+          fresh.overlays = keepOverlays;
           const freshGeo = { ...DEFAULT_GEO, crop: { ...FULL_CROP } };
           mergeFreezeRef.current = null;
           paramsRef.current = fresh; geoRef.current = freshGeo; setGeo(freshGeo);
@@ -6614,6 +6723,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         // 參數整組歸零（效果都烤進圖裡了），四顆開關與濾鏡也一起收乾淨。
         // 介面早就是這個樣子了，這裡是把繪圖那一側也一起解凍。
         const fresh = JSON.parse(JSON.stringify(DEFAULT_PARAMS)) as EditorParams;
+        fresh.overlays = keepOverlays;
         const freshGeo = { ...DEFAULT_GEO, crop: { ...FULL_CROP } };
         mergeFreezeRef.current = null;
         paramsRef.current = fresh;
@@ -6709,6 +6819,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               // must not be blocked by a lookup-image network failure.
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
               const canvas = renderOneCanvas(img, snap);
+              // 疊圖層最後才畫上去（合併不會烤它，所以一定要在這裡）
+              await bakeOverlays(canvas.getContext('2d')!, canvas.width, snap.params.overlays);
               out.push(await canvasToUrl(canvas, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
               if (exportFormat === 'heic') encoded.push(await exportHeic(canvas));
             }
@@ -6886,6 +6998,32 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     };
   }, [previewAspect, previewBoxSize, hslFitNow]);
 
+  /* 進出 HSL／色輪時圖片縮放的過場：以前直接對寬、高、下邊距做 CSS transition，
+     260ms 裡每一幀都重新排版，畫布的 ResizeObserver 也每一幀都回報 → 整個編輯器
+     每一幀 render 一次，手機上就是偶爾卡一下。改成 FLIP：尺寸一次到位（只排版、
+     只回報一次），再用 transform 從舊的位置大小補回去，補間完全交給合成器。 */
+  const lastFitRectRef = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
+  /* 文字／圖形／符號／圖片的控制區比較高：進出那幾頁時預覽也走同一段過場 */
+  const lastTallRef = useRef(false);
+  useLayoutEffect(() => {
+    const el = previewFitRef.current; if (!el) return;
+    const prev = lastFitRectRef.current;
+    const tall = OVERLAY_CATS.includes(activeCategory), tallSwitch = tall !== lastTallRef.current;
+    lastTallRef.current = tall;
+    el.style.transition = 'none'; el.style.transform = '';
+    const r = el.getBoundingClientRect();
+    lastFitRectRef.current = { left: r.left, top: r.top, width: r.width, height: r.height };
+    if (!prev || !(hslSwitch || tallSwitch) || activeCategory === 'compose' || !prev.width || !r.width || !el.offsetWidth) return;
+    if (Math.abs(prev.left - r.left) < 0.5 && Math.abs(prev.top - r.top) < 0.5 && Math.abs(prev.width - r.width) < 0.5 && Math.abs(prev.height - r.height) < 0.5) return;
+    const z = r.width / el.offsetWidth;   // 外層縮放（使用者放大預覽時）
+    el.style.transformOrigin = '0 0';
+    el.style.transform = `translate(${(prev.left - r.left) / z}px,${(prev.top - r.top) / z}px) scale(${prev.width / r.width},${prev.height / r.height})`;
+    void el.offsetWidth;
+    el.style.transition = 'transform 260ms cubic-bezier(.22,1,.36,1)';
+    el.style.transform = '';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewFitSize, hslFitNow?.mb]);
+
   /* 底部功能欄哪幾列要收起來。構圖現在不再是另外開一頁 —— ComposeStudio 只蓋住
      預覽區，分頁列照樣留在原位，所以滑桿列與小分類列都讓給它自己那兩排。 */
   /* 進出構圖不做高度補間。ComposeStudio 是預覽區的 absolute inset-0，
@@ -6904,9 +7042,120 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const detailSwitch = DETAIL_CATS.includes(activeCategory) || DETAIL_CATS.includes(prevCategoryRef.current);
 
   /* 遮色片还没建立时，版面跟建立后保持一致，只锁住暂时不能使用的控制项。 */
+  /* 拖遮色片形狀時 params 這份 state 不會每一步更新（參考線直接改屬性），
+     拖曳中若有別的原因 render，參考線要照最新的位置畫，不能跳回按下去那一刻 */
+  const maskView = activeDragRef.current ? paramsRef.current : params;
   const maskLocked = activeCategory === 'mask' && !params.maskCreated;
-  const sliderRowHidden = activeToolId === 'curves' || isColourPanelTool(activeToolId) || activeCategory === 'compose';
-  const subStripHidden = activeCategory === 'compose';
+  /* ── 疊圖層：文字／符號／圖形／圖片（主頁進來的編輯才有這幾個分頁） ─────────────
+     資料放在 params.overlays：復原／重做、草稿、批量都直接跟著參數走。
+     拖曳、雙指、面板拖滑桿的每一格都只在圖層自己的畫布上畫（OverlayLayer），
+     放手才寫回參數一次（一步復原），照片本身不會因為圖層變動重畫。 */
+  const overlays = params.overlays || EMPTY_OVERLAYS;
+  const [ovSel, setOvSel] = useState<string | null>(null);
+  const [textEditId, setTextEditId] = useState<string | null>(null);
+  const ovApi = useRef<OverlayLayerHandle | null>(null);
+  const ovImgInputRef = useRef<HTMLInputElement>(null);
+  const ovReplaceRef = useRef<string | null>(null);
+  const ovPageH = previewAspect ? OVERLAY_PAGE_W * previewAspect.h / previewAspect.w : OVERLAY_PAGE_W;
+  const commitOverlays = (next: OverlayItem[]) => {
+    const p = { ...paramsRef.current, overlays: next };
+    paramsRef.current = p;
+    setParams(p);
+    addToHistory(p, selectedLutIdx);
+  };
+  const patchOverlay = (id: string, patch: Partial<OverlayItem>) => {
+    const list = paramsRef.current.overlays || [];
+    if (!list.some(o => o.id === id)) return;
+    commitOverlays(list.map(o => (o.id === id ? { ...o, ...refitText(o, patch) } : o)));
+  };
+  const addOverlay = (it: OverlayItem) => { commitOverlays([...(paramsRef.current.overlays || []), it]); setOvSel(it.id); };
+  /* 選到別種圖層就跳到那一種的分頁（面板跟著換） */
+  const selectOverlay = (id: string | null) => {
+    setOvSel(id);
+    const it = id ? (paramsRef.current.overlays || []).find(o => o.id === id) : null;
+    if (it && catOfOverlay(it) !== activeCategory) { setActiveCategory(catOfOverlay(it)); setActiveToolId(catOfOverlay(it)); }
+  };
+  const editOverlay = (id: string) => {
+    const it = (paramsRef.current.overlays || []).find(o => o.id === id); if (!it) return;
+    if (overlayKind(it) === 'text') setTextEditId(id);
+    else selectOverlay(id);
+  };
+  /* 面板拖滑桿：拖的過程只更新圖層畫布，放手才寫回（跟經典拼圖同一招） */
+  const ovTuningRef = useRef<{ id: string; patch: Partial<OverlayItem> } | null>(null);
+  const onOverlayPanelChange = (id: string) => (patch: Partial<OverlayItem>) => {
+    const t = ovTuningRef.current;
+    if (t && t.id === id) { t.patch = { ...t.patch, ...patch }; ovApi.current?.preview(id, patch); return; }
+    patchOverlay(id, patch);
+  };
+  const onOverlayPanelTuning = (id: string) => (active: boolean) => {
+    if (active) { if (ovTuningRef.current?.id !== id) ovTuningRef.current = { id, patch: {} }; return; }
+    const t = ovTuningRef.current; ovTuningRef.current = null;
+    if (t && t.id === id && Object.keys(t.patch).length) patchOverlay(id, t.patch);
+  };
+  const addTextOverlay = () => {
+    const it = newTextItem(OVERLAY_PAGE_W / 2, ovPageH / 2);
+    addOverlay(it);
+    setTextEditId(it.id);   // 新增完直接打字，跟創意拼圖一樣
+  };
+  const addOverlayImageFile = (file: File) => {
+    const url = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = () => {
+      const replace = ovReplaceRef.current; ovReplaceRef.current = null;
+      const cur = replace ? (paramsRef.current.overlays || []).find(o => o.id === replace) : null;
+      if (cur) {
+        // 替換：維持原本的寬度與位置，高度照新圖的比例
+        const h = cur.width * im.naturalHeight / im.naturalWidth;
+        patchOverlay(cur.id, { src: url, natW: im.naturalWidth, natH: im.naturalHeight, height: h, y: cur.y + cur.height / 2 - h / 2 });
+      } else addOverlay(newImageItem(url, im.naturalWidth, im.naturalHeight, ovPageH));
+    };
+    im.onerror = () => URL.revokeObjectURL(url);
+    im.src = url;
+  };
+  /* 離開疊圖層分頁就取消選取（框跟工具列收掉） */
+  useEffect(() => { if (!OVERLAY_CATS.includes(activeCategory)) setOvSel(null); }, [activeCategory]);
+  /* 進疊圖層分頁時預覽回到 1 倍：圖層的位置要跟手指對得上 */
+  useEffect(() => { if (OVERLAY_CATS.includes(activeCategory)) zoomRef.current?.resetTransform(0); }, [activeCategory]);
+
+  /* ── 人像（美顏）與仿色：直接用那兩個工具本身，蓋在編輯器上 ─────────────
+     它們改的是「照片本身」：做完換成新的來源圖，濾鏡、調節這些參數照樣疊在上面、還能再調。
+     切去別的分頁就自動套用；套用也是一步，可以復原。 */
+  const studioCommitRef = useRef<(() => Promise<string | null>) | null>(null);
+  const [studioBusy, setStudioBusy] = useState(false);
+  const replaceSource = (url: string) => {
+    const i = safeIdxRef.current;
+    const cur = srcListRef.current;
+    const next = [...cur]; next[i] = url;
+    thumbOriginRef.current[url] = thumbSrcOf(cur[i]);
+    srcListRef.current = next;
+    swapToSrc(next);
+    addToHistory(paramsRef.current, selectedLutIdx);
+  };
+  const studioPrevRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
+  const [matchRefSrc, setMatchRefSrc] = useState<string | null>(null);
+  const matchRefInputRef = useRef<HTMLInputElement>(null);
+  const backFromStudio = () => {
+    const { cat, tool } = studioPrevRef.current;
+    setActiveCategory(cat); setActiveToolId(tool);
+  };
+  const studioEmbed = {
+    commitRef: studioCommitRef,
+    onDone: (url: string | null) => { if (url) replaceSource(url); backFromStudio(); },
+    onCancel: backFromStudio,
+  };
+  const leaveCategory = (next: () => void) => {
+    const commit = STUDIO_CATS.includes(activeCategory) ? studioCommitRef.current : null;
+    if (!commit) { next(); return; }
+    setStudioBusy(true);
+    commit().then(url => { if (url) replaceSource(url); }).catch(() => {}).finally(() => { setStudioBusy(false); next(); });
+  };
+
+  /** 模板與疊圖層分頁：滑桿列與小分類列都收起來，整塊控制區給它自己的面板 */
+  const ownPanel = activeCategory === 'template' || OVERLAY_CATS.includes(activeCategory) || STUDIO_CATS.includes(activeCategory);
+  const sliderRowHidden = activeToolId === 'curves' || isColourPanelTool(activeToolId) || activeCategory === 'compose' || ownPanel;
+  const subStripHidden = activeCategory === 'compose' || ownPanel;
+  /** 文字／圖形／符號／圖片的面板比較高，控制區多 5rem（預覽跟著縮，有過場） */
+  const tallControls = OVERLAY_CATS.includes(activeCategory);
 
   // Every effect detail page uses the same fixed slider + parameter strip.
   /* 從構圖直接切到別的分頁 ＝ 等同按了「完成」，裁切照樣套用。
@@ -7474,7 +7723,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           pinch={{ step: 240 }}
           panning={{ velocityDisabled: false }}
           alignmentAnimation={{ sizeX: 0, sizeY: 0 }}
-          disabled={activeCategory === 'mask'}
+          disabled={activeCategory === 'mask' || OVERLAY_CATS.includes(activeCategory)}
         >
           <TransformComponent wrapperClass="!w-full !h-full absolute inset-0" contentClass="!w-full !h-full flex items-center justify-center p-4">
             <div className="relative shadow-2xl w-full h-full flex items-center justify-center">
@@ -7485,7 +7734,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    實際高度，圖片就會明顯上下抖動。HSL 原本也要求無進退場動畫。 */
                 className="relative flex items-center justify-center max-w-[calc(100%-32px)]"
                 style={{
-                  transition: hslSwitch && activeCategory !== 'compose' ? 'width 260ms cubic-bezier(.22,1,.36,1), height 260ms cubic-bezier(.22,1,.36,1), margin-bottom 260ms cubic-bezier(.22,1,.36,1)' : 'none',
                   /* 尺寸與比例尚未量完時不先畫錯誤位置；useLayoutEffect 會在首幀
                      顯示前完成量測，所以長圖不會再先抖一下才歸位。 */
                   visibility: !isEditorLoading && previewLayoutReady && previewAspect && previewBoxSize.width && previewBoxSize.height ? 'visible' : 'hidden',
@@ -7511,6 +7759,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 {/* 合併時的定格畫面：從按下合併到全部做完，畫面完全不變（使用者一操作就收掉） */}
                 <canvas ref={freezeCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{display:'none',objectFit:'fill',zIndex:5}} />
                 <canvas key={surfaceGen} ref={el=>{(fxSurfaceRef as React.MutableRefObject<HTMLCanvasElement|null>).current=el;if(el){preferWebgl2(el);el.addEventListener('webglcontextlost',onSurfaceLost,{once:true});}}} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
+                {/* 拖遮色片形狀時的即時疊層（見 applyComplexEffects 的遮色片那段） */}
+                <canvas ref={maskLiveCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{display:'none',objectFit:'fill',zIndex:4}} />
+                {/* 疊圖層：跟照片同一個框，縮放、過場都一起動。按住前後對比時先藏起來（看的是原圖） */}
+                {(fullTabs || overlays.length > 0) && (
+                  <OverlayLayer items={overlays} pageH={ovPageH}
+                    interactive={OVERLAY_CATS.includes(activeCategory)}
+                    hidden={showOriginal || activeCategory === 'compose'}
+                    selectedId={ovSel} onSelect={selectOverlay} onCommit={commitOverlays} onEdit={editOverlay} apiRef={ovApi} />
+                )}
 
                 {/* 換過去了但還在算的時候，壓暗＋轉圈，別讓人以為沒反應。
                     只留轉圈 —— 「渲染中」三個字反而讓人覺得等很久。 */}
@@ -7560,14 +7817,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       style={{
                         willChange: 'transform',
                       }}
-                      transform={`translate(${params.maskCx * canvasBounds.width}, ${params.maskCy * canvasBounds.height}) rotate(${(params.maskAngle * 180) / Math.PI})`}
+                      transform={`translate(${maskView.maskCx * canvasBounds.width}, ${maskView.maskCy * canvasBounds.height}) rotate(${(maskView.maskAngle * 180) / Math.PI})`}
                     >
                       {/* Connecting axis line */}
                       <line
+                        data-mask-axis
                         className="pointer-events-none"
-                        x1={-params.maskD * canvasBounds.width}
+                        x1={-maskView.maskD * canvasBounds.width}
                         y1={0}
-                        x2={params.maskD * canvasBounds.width}
+                        x2={maskView.maskD * canvasBounds.width}
                         y2={0}
                         stroke="rgba(255, 255, 255, 0.5)"
                         strokeWidth="1px"
@@ -7582,7 +7840,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           opacity: activeDragRef.current?.type && activeDragRef.current.type !== 'rotate' ? 0 : 1,
                           pointerEvents: activeDragRef.current?.type && activeDragRef.current.type !== 'rotate' ? 'none' : 'auto',
                         }}
-                        transform={`translate(${params.maskD * canvasBounds.width}, 0)`}
+                        data-mask-rot
+                        transform={`translate(${maskView.maskD * canvasBounds.width}, 0)`}
                       >
                         {/* Rotator Arm */}
                         <line
@@ -7629,7 +7888,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       </g>
 
                       {/* Start line (100% boundary) */}
-                      <g transform={`translate(${-params.maskD * canvasBounds.width}, 0)`}>
+                      <g data-mask-start transform={`translate(${-maskView.maskD * canvasBounds.width}, 0)`}>
                         <line
                           x1={0}
                           y1={-10000}
@@ -7663,7 +7922,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       </g>
 
                       {/* End line (0% boundary) */}
-                      <g transform={`translate(${params.maskD * canvasBounds.width}, 0)`}>
+                      <g data-mask-end transform={`translate(${maskView.maskD * canvasBounds.width}, 0)`}>
                         <line
                           x1={0}
                           y1={-10000}
@@ -8006,7 +8265,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const compareButton = (
         <button
             aria-label="前後對比"
-            style={{ bottom: activeToolId === 'curves' ? 270 : isColourPanelTool(activeToolId) && hslFit ? hslFit.mb + 16 + (activeToolId === 'grade' ? 38 : 0) : 8, transition: 'bottom 260ms ease' }}
+            style={{ bottom: activeToolId === 'curves' ? 270 : isColourPanelTool(activeToolId) && hslFit ? hslFit.mb + 16 : 8, transition: 'bottom 260ms ease' }}
             onPointerDown={(e) => { 
                 e.preventDefault(); 
                 try {
@@ -8042,13 +8301,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {detailPanelHost && createPortal(<AnimatePresence>
         {/* HSL 與色輪共用同一個面板外框（同一個 key）：
              兩者之間來回切換時外框不卸載、不做進出場，只換裡面的內容。
-             色輪的模式列懸空在外框上方，外框比 HSL 矮，圖片在色輪裡會大一點。 */}
+             兩者一樣高，圖片在兩個工具裡縮放一樣、切換時不會動。
+             不用 backdrop-blur：底色幾乎不透明，模糊看不出來，但它讓進場那 260ms
+             （圖片同時在縮）每一格都要重算一次整塊模糊，手機上就是偶爾卡一下。 */}
         {isColourPanelTool(activeToolId) && <motion.div key="hsl"
            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
            data-hsl-panel
-           className={`absolute inset-x-0 bottom-0 z-40 bg-[#111]/95 backdrop-blur-xl border-t border-white/5 ${activeToolId === 'grade' ? 'overflow-visible' : 'overflow-hidden'}`}
-           /* 色輪的模式列懸空在面板上方，面板本身比較矮 → 圖片縮得比較少 */
-           style={{ height: activeToolId === 'grade' ? GRADE_PANEL_H : COLOUR_PANEL_H }}
+           className="absolute inset-x-0 bottom-0 z-40 bg-[#111] border-t border-white/5 overflow-hidden"
+           style={{ height: COLOUR_PANEL_H }}
         >
         {activeToolId === 'grade' ? (
           <PrimariesPanel grade={params.grade} width={detailPanelHost.clientWidth || window.innerWidth}
@@ -8274,7 +8534,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         className={`relative ${subStripHidden || activeToolId === 'curves' ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
         /* 一般、曲線、HSL 與特效細項都佔相同的總控制區高度；內容較少時只在
            內部留位，預覽區不再跟著分頁切換反覆變高變矮。構圖由自己的三列接管。 */
-        style={{ height: `calc(11rem + ${footerHeight}px)`, background: activeToolId === 'curves' ? 'linear-gradient(to bottom, transparent 5rem, #111111 5rem)' : '#111111' }}
+        style={{ height: `calc(${tallControls ? 16 : 11}rem + ${footerHeight}px)`, background: activeToolId === 'curves' ? 'linear-gradient(to bottom, transparent 5rem, #111111 5rem)' : '#111111' }}
       >
         <div ref={setDetailPanelHost} style={{ position: 'absolute', left: 0, right: 0, top: '5rem', height: 0, zIndex: 60 }} />
         <div 
@@ -8292,7 +8552,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                  這樣底部功能欄的高度變化跟開曲線時完全一樣，
                  小分類列與分頁列都待在原地不動。 */
               // 特效細項與其他工具維持同一個滑桿欄高度。
-              height: activeCategory === 'compose' ? '0px' : '5rem',
+              height: activeCategory === 'compose' || ownPanel ? '0px' : '5rem',
               pointerEvents: sliderRowHidden ? 'none' : undefined,
               opacity: sliderRowHidden ? 0 : 1,
               /* 收起來時是 0px 而不是 none —— 寫 none 的話 border-color 會退回
@@ -8613,23 +8873,109 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        {/* compact 主頁入口與 ImageAdjustPanel 使用完全相同的分類列 class；
-            根容器也已改成相同的 normal-flow 100dvh，因此三條分隔線不再偏移。
-            分類列只放文字（不放圖標），高度從 64px 收到 44px，多出來的空間都給預覽。 */}
-        <div
-          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-11 pb-[calc(env(safe-area-inset-bottom,0px)+6px)] box-content' : ''}`}
-          style={compactBottomBar ? undefined : { height: footerHeight, paddingBottom: 0 }}
-        >
-          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex items-center justify-center transition-colors ${activeCategory === 'filter' ? 'text-white' : 'text-white/35'}`}>
-            <span className="text-[13px] font-bold tracking-[0.18em]">濾鏡</span>
-          </button>
-          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex items-center justify-center transition-colors ${activeCategory === 'adjust' ? 'text-white' : 'text-white/35'}`}>
-            <span className="text-[13px] font-bold tracking-[0.18em]">調節</span>
-          </button>
-          <button onClick={enterEffects} className={`flex-1 flex items-center justify-center transition-colors ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/35'}`}>
-            <span className="text-[13px] font-bold tracking-[0.18em]">特效</span>
-          </button>
-          <button onClick={() => {
+        {ownPanel && !STUDIO_CATS.includes(activeCategory) && (
+          <div key={activeCategory} data-edit-panel={activeCategory} className="flex-1 min-h-0 overflow-hidden bg-[#111] animate-in fade-in duration-200">
+            {activeCategory === 'template' && <TemplatePanel />}
+            {OVERLAY_CATS.includes(activeCategory) && (() => {
+              const sel = ovSel ? overlays.find(o => o.id === ovSel) || null : null;
+              const selOf = (k: string) => (sel && overlayKind(sel) === k ? sel : null);
+              const addBtn = (label: string, onClick: () => void, icon: React.ReactNode) => (
+                <div className="h-full flex flex-col items-center justify-center gap-3 px-6">
+                  <button data-overlay-add={activeCategory} onClick={onClick}
+                    className="w-full max-w-[260px] h-14 rounded-2xl bg-white/[0.06] border border-white/10 flex items-center justify-center gap-2 text-[13px] text-white/90 active:scale-[0.98] transition-transform">
+                    {icon}<span>{label}</span>
+                  </button>
+                  {overlays.length > 0 && <p className="text-[11px] text-white/35">點畫面上的圖層可以選取、拖曳，兩指縮放旋轉</p>}
+                </div>
+              );
+              const head = (title: string, onAdd: () => void, addLabel: string) => (
+                <div className="flex items-center gap-2 px-4 pt-2 pb-1 shrink-0">
+                  <span className="flex-1 min-w-0 truncate text-[11px] text-white/45">{title}</span>
+                  <button data-overlay-new onClick={onAdd} className="h-8 px-3 rounded-full bg-white/[0.08] border border-white/10 text-[12px] text-white/85 active:scale-95 transition-transform">＋ {addLabel}</button>
+                </div>
+              );
+              const plus = <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>;
+              if (activeCategory === 'text') {
+                const t = selOf('text');
+                if (!t) return addBtn('新增文字', addTextOverlay, plus);
+                return (
+                  <div className="h-full flex flex-col">
+                    <div className="flex items-center gap-2 px-4 pt-2 pb-1 shrink-0">
+                      <button data-overlay-text-field onClick={() => setTextEditId(t.id)}
+                        className="flex-1 min-w-0 h-8 rounded-lg bg-white/[0.06] border border-white/10 px-3 text-left text-[13px] text-white/85 truncate">{t.text}</button>
+                      <button data-overlay-new onClick={addTextOverlay} className="h-8 px-3 rounded-full bg-white/[0.08] border border-white/10 text-[12px] text-white/85 active:scale-95 transition-transform">＋ 文字</button>
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden no-scrollbar px-4 pb-2">
+                      <TextEditorPanel key={t.id} layer={t} onChange={onOverlayPanelChange(t.id)} onTuningChange={onOverlayPanelTuning(t.id)} />
+                    </div>
+                  </div>
+                );
+              }
+              if (activeCategory === 'symbol') {
+                const t = selOf('symbol');
+                if (!t) return (
+                  <div className="h-full overflow-y-auto no-scrollbar px-4 pt-2">
+                    <SymbolPicker hideBack onBack={() => {}} onPrepare={sym => { prepareClassicSymbolPlacement(sym, OVERLAY_PAGE_W); }}
+                      onPick={sym => addOverlay(makeSymbolItem(sym, OVERLAY_PAGE_W / 2, ovPageH / 2, OVERLAY_PAGE_W))} />
+                  </div>
+                );
+                return (
+                  <div className="h-full flex flex-col">
+                    {head('符號', () => setOvSel(null), '符號')}
+                    <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden no-scrollbar px-4 pb-2">
+                      <TextEditorPanel key={t.id} symbol layer={t} onChange={onOverlayPanelChange(t.id)} onTuningChange={onOverlayPanelTuning(t.id)} />
+                    </div>
+                  </div>
+                );
+              }
+              if (activeCategory === 'shape') {
+                const t = selOf('shape');
+                if (!t) return (
+                  <div className="h-full overflow-y-auto no-scrollbar px-4 pt-3" data-overlay-shape-picker>
+                    <GridShapePicker onPick={it => addOverlay(makeShapeItem(it, OVERLAY_PAGE_W / 2, ovPageH / 2, OVERLAY_PAGE_W, ovPageH))} />
+                  </div>
+                );
+                return (
+                  <div className="h-full flex flex-col">
+                    {head('圖形', () => setOvSel(null), '圖形')}
+                    <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden no-scrollbar px-4 pb-2">
+                      <ShapeEditorPanel key={t.id} layer={t} onChange={onOverlayPanelChange(t.id)} onTuningChange={onOverlayPanelTuning(t.id)} />
+                    </div>
+                  </div>
+                );
+              }
+              const t = selOf('image');
+              if (!t) return addBtn('匯入圖片', () => { ovReplaceRef.current = null; ovImgInputRef.current?.click(); },
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 16l5-5 4 4 3-3 6 6" /><circle cx="16" cy="9" r="1.5" /></svg>);
+              const row = (label: string, value: number, onVal: (v: number) => void, data: string) => (
+                <div className="flex items-center gap-3 h-10">
+                  <span className="text-[11px] text-white/55 w-12 shrink-0">{label}</span>
+                  {/* 不受控：拖的過程只更新圖層畫布（不 render 編輯器），值寫回後 key 換掉重新對齊 */}
+                  <input key={`${t.id}-${data}-${value}`} type="range" min={0} max={100} defaultValue={value} data-overlay-slider={data}
+                    onPointerDown={() => onOverlayPanelTuning(t.id)(true)}
+                    onPointerUp={() => onOverlayPanelTuning(t.id)(false)} onPointerCancel={() => onOverlayPanelTuning(t.id)(false)}
+                    onChange={e => onVal(Number(e.target.value))} className="flex-1 accent-white" />
+                  <span className="text-[11px] tabular-nums text-white/80 w-8 text-right">{value}</span>
+                </div>
+              );
+              return (
+                <div className="h-full flex flex-col">
+                  {head('圖片', () => { ovReplaceRef.current = null; ovImgInputRef.current?.click(); }, '圖片')}
+                  <div className="flex-1 min-h-0 px-5 pt-2 flex flex-col">
+                    {row('不透明', Math.round(t.opacity ?? 100), v => onOverlayPanelChange(t.id)({ opacity: v }), 'opacity')}
+                    {row('圓角', Math.round(t.imgRadius || 0), v => onOverlayPanelChange(t.id)({ imgRadius: v }), 'radius')}
+                    <button onClick={() => { ovReplaceRef.current = t.id; ovImgInputRef.current?.click(); }}
+                      className="mt-3 self-start h-9 px-4 rounded-full bg-white/[0.08] border border-white/10 text-[12px] text-white/85 active:scale-95 transition-transform">替換圖片</button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+        {/* 分類列：跟拼圖的照片編輯同一個元件（EditBar）。
+            主頁進來的（fullTabs）多了七個分頁，一次看得到七個、可以左右滑。 */}
+        {(() => {
+          const enterCompose = () => {
               if (activeCategory === 'compose') return;
               if (activeCategory !== 'compose') beforeComposeRef.current = { cat: activeCategory, tool: activeToolId };
               // Capture the actual, already fitted preview before the compose
@@ -8651,15 +8997,71 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               }
               setDraftGeo(geo);
               setActiveCategory('compose');
-            }} className={`flex-1 flex items-center justify-center transition-colors ${activeCategory === 'compose' ? 'text-white' : 'text-white/35'}`}>
-            {/* crop_rotate 兩側各有一支旋轉箭頭，改成單純的裁切符號 */}
-            <span className="text-[13px] font-bold tracking-[0.18em]">構圖</span>
-          </button>
-          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex items-center justify-center transition-colors ${activeCategory === 'mask' ? 'text-white' : 'text-white/35'}`}>
-            <span className="text-[13px] font-bold tracking-[0.18em]">遮色片</span>
-          </button>
-        </div>
+            };
+          const effectsOn = ['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory);
+          const tabs: [string, string, boolean, () => void][] = [
+            ['filter', '濾鏡', activeCategory === 'filter', () => { setActiveCategory('filter'); setActiveToolId('filter_select'); }],
+            ['adjust', '調節', activeCategory === 'adjust', () => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }],
+            ['effects', '特效', effectsOn, enterEffects],
+            ['compose', '構圖', activeCategory === 'compose', enterCompose],
+            ['mask', '遮色片', activeCategory === 'mask', () => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }],
+          ];
+          if (fullTabs) {
+            const go = (c: Category) => () => {
+              // 記住從哪一頁進美顏／仿色，按「完成」「取消」就回到那一頁
+              if (STUDIO_CATS.includes(c) && !STUDIO_CATS.includes(activeCategory)) studioPrevRef.current = { cat: activeCategory, tool: activeToolId };
+              setActiveCategory(c); setActiveToolId(c);
+            };
+            tabs.unshift(['template', '模板', activeCategory === 'template', go('template')]);
+            tabs.push(
+              ['beauty', '人像', activeCategory === 'beauty', go('beauty')],
+              ['match', '仿色', activeCategory === 'match', go('match')],
+              ['text', '文字', activeCategory === 'text', go('text')],
+              ['shape', '圖形', activeCategory === 'shape', go('shape')],
+              ['symbol', '符號', activeCategory === 'symbol', go('symbol')],
+              ['image', '圖片', activeCategory === 'image', go('image')],
+            );
+          }
+          return (
+            <EditBar scroll={fullTabs} className="mt-auto">
+              {tabs.map(([id, label, on, fn]) => (
+                <EditBarTab key={id} id={id} label={label} active={on} scroll={fullTabs}
+                  onClick={() => { if (on && SELF_CONTAINED_TABS.includes(id)) return; leaveCategory(fn); }} />
+              ))}
+            </EditBar>
+          );
+        })()}
       </div>
+      {/* 人像、仿色：直接用那兩個工具，蓋住編輯器（分類列留著，切分頁會自動套用） */}
+      {STUDIO_CATS.includes(activeCategory) && (
+        <div data-studio-host={activeCategory} className="absolute inset-x-0 top-0 z-[70] animate-in fade-in duration-200"
+          style={{ bottom: footerHeight + 1 }}>
+          {activeCategory === 'beauty' ? (
+            <BeautyStudio key={`beauty-${activeSrc}`} imageSrc={activeSrc} embedded={studioEmbed}
+              onCancel={backFromStudio} onHome={backFromStudio} onImportNew={() => {}} onSendToEditor={() => {}} />
+          ) : (
+            <ColorMatchStudio key={`match-${activeSrc}`} imageSrc={activeSrc} embedded={studioEmbed}
+              referenceSrc={matchRefSrc} onPickReference={() => matchRefInputRef.current?.click()}
+              onCancel={backFromStudio} onHome={backFromStudio} onImportNew={() => {}} />
+          )}
+          {studioBusy && (
+            <div className="absolute inset-0 z-[200] bg-black/60 flex items-center justify-center">
+              <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+            </div>
+          )}
+        </div>
+      )}
+      <input ref={matchRefInputRef} type="file" accept="image/*" className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) setMatchRefSrc(URL.createObjectURL(f)); }} />
+      <input ref={ovImgInputRef} type="file" accept="image/*" className="hidden"
+        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) addOverlayImageFile(f); }} />
+      {textEditId && (() => {
+        const t = overlays.find(o => o.id === textEditId);
+        if (!t) return null;
+        return <TextEditDialog key={textEditId} value={t.text || ''}
+          onInput={v => ovApi.current?.preview(textEditId, { text: v })}
+          onDone={v => { patchOverlay(textEditId, { text: v }); setTextEditId(null); }} />;
+      })()}
       {saveState === 'processing' && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>

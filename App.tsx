@@ -774,6 +774,7 @@ const App: React.FC = () => {
         <ImageEditor 
           key={editorKey}
           compactBottomBar
+          fullTabs
           imageSrc={editorImage}
           batchSrcs={editorImages}
           onAddPhotos={handleAddPhotosClick}

@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { clamp, fmt, RING, useDrag, ResetIcon, type Ev } from './grade/controls';
+import { clamp, fmt, RING_FLAT, useDrag, ResetIcon, type Ev } from './grade/controls';
 import {
   WHEEL_SPEC, rgbToWheel, wheelToRgb, isWheelNeutral, freshWheels, normGrade, freshGrade,
   HDR_ZONES, isHdrWheelNeutral,
@@ -18,10 +18,8 @@ import {
  * 所有數字都「按住左右拖」來改、點兩下回預設。拖曳中只重畫這個面板（本地 state），
  * 每一步交給 onChange 寫進編輯器的 paramsRef，放手才 onCommit（寫進 state 與復原紀錄）。 */
 
-/** HSL 面板的高度 */
+/** HSL 與色輪面板共用的高度（模式那一列在面板裡面，兩個工具的圖片縮放一樣） */
 export const COLOUR_PANEL_H = 221;
-/** 色輪面板的高度：模式那一列懸空在面板外面，面板本身比 HSL 矮，圖片就不用縮那麼多 */
-export const GRADE_PANEL_H = 182;
 
 type Mode = 'wheels' | 'log' | 'hdr';
 /* 預設是 Log：陰影／中間調／高光各管一段，最接近 Lightroom 的三個色輪，也最直覺 */
@@ -34,11 +32,8 @@ const CH_COLOUR: Record<string, string> = { r: '#ff6b6b', g: '#5fd47a', b: '#6b9
  *  十字線與內圈用不透明的灰，交叉的地方才不會疊出一個比較亮的點。 */
 const WheelDisc: React.FC<{ D: number; px: number; py: number; drag: ReturnType<typeof useDrag>; id: string }> = ({ D, px, py, drag, id }) => (
   <div {...drag} data-grade-wheel={id} className="relative shrink-0 rounded-full touch-none select-none" style={{ width: D, height: D }}>
-    <div className="absolute inset-0 rounded-full pointer-events-none" style={{
-      background: RING, opacity: 0.72, filter: 'saturate(.8)',
-      WebkitMaskImage: `radial-gradient(circle, transparent ${D / 2 - 4}px, #000 ${D / 2 - 3.5}px, #000 ${D / 2 - 1.5}px, transparent ${D / 2 - 1}px)`,
-      maskImage: `radial-gradient(circle, transparent ${D / 2 - 4}px, #000 ${D / 2 - 3.5}px, #000 ${D / 2 - 1.5}px, transparent ${D / 2 - 1}px)`,
-    }} />
+    {/* 色環：外緣靠圓角裁切、內緣被盤面（含 1px 深色外框）蓋住，不用遮罩圖層 */}
+    <div className="absolute rounded-full pointer-events-none" style={{ inset: 1.5, background: RING_FLAT }} />
     <div className="absolute rounded-full pointer-events-none" style={{
       inset: 5, background: 'radial-gradient(circle at 50% 42%, #262626 0%, #1b1b1b 55%, #141414 100%)',
       boxShadow: '0 0 0 1px #050505, inset 0 1px 1px rgba(255,255,255,.05), inset 0 -2px 4px rgba(0,0,0,.45)',
@@ -57,9 +52,9 @@ const Jog: React.FC<{ W: number; drag: ReturnType<typeof useDrag>; x: number; id
   <div {...drag} data-grade-jog={id} className="mt-[5px] rounded-[3px] touch-none select-none cursor-ew-resize border border-black/70"
     style={{
       width: W, height: 11,
-      background: `repeating-linear-gradient(90deg, #3a3a3a 0 1px, #232323 1px 4px) ${x}px 0 / auto, #232323`,
+      /* 兩端淡出用一層蓋上去的漸層（跟面板底色一樣），不用遮罩圖層 */
+      background: `linear-gradient(90deg, rgba(17,17,17,.65), rgba(17,17,17,0) 25%, rgba(17,17,17,0) 75%, rgba(17,17,17,.65)), repeating-linear-gradient(90deg, #3a3a3a 0 1px, #232323 1px 4px) ${x}px 0 / auto, #232323`,
       boxShadow: 'inset 0 2px 3px rgba(0,0,0,.55), inset 0 -1px 0 rgba(255,255,255,.04)',
-      WebkitMaskImage: 'linear-gradient(90deg, rgba(0,0,0,.35), #000 25%, #000 75%, rgba(0,0,0,.35))',
     }} />
 );
 
@@ -240,16 +235,16 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
   const D = Math.round(Math.min(82, unitW - 12));
   const fresh = freshGrade().hdr;
   return (
-    <div className="w-full h-full flex flex-col pt-[10px] pb-[6px]" data-primaries-panel>
-      {/* 懸空在面板上方的一列（不佔面板的高度）：按下去就切換，不等放手 */}
-      <div className="absolute left-0 right-0 bottom-full mb-[10px] flex items-center px-[12px] gap-[6px] pointer-events-none" data-grade-modes>
+    <div className="w-full h-full flex flex-col pt-[8px] pb-[6px]" data-primaries-panel>
+      {/* 模式那一列：按下去就切換，不等放手 */}
+      <div className="flex items-center h-[28px] px-[12px] gap-[6px]" data-grade-modes>
         {MODES.map(([m, l]) => (
           <button key={m} onPointerDown={e => { e.preventDefault(); setMode(m); }} data-grade-mode={m}
-            className={`pointer-events-auto px-[12px] h-[28px] rounded-[8px] text-[12px] font-medium tracking-wide whitespace-nowrap border backdrop-blur-md ${mode === m ? 'bg-white text-black border-white' : 'bg-black/55 text-white/80 border-white/15'}`}>{l}</button>
+            className={`px-[12px] h-[28px] rounded-[8px] text-[12px] font-medium tracking-wide whitespace-nowrap border ${mode === m ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/75 border-white/10'}`}>{l}</button>
         ))}
         <div className="flex-1" />
         {mode === 'hdr' && (
-          <div className="pointer-events-auto flex items-center h-[28px] px-[4px] rounded-[8px] bg-black/55 backdrop-blur-md" data-hdr-page>
+          <div className="flex items-center h-[28px]" data-hdr-page>
             {[0, 1].map(p => (
               <button key={p} onClick={() => goPage(p)} data-hdr-page-btn={p} className="w-[16px] h-[24px] flex items-center justify-center" aria-label={`第 ${p + 1} 頁`}>
                 <span className={`block w-[6px] h-[6px] rounded-full ${page === p ? 'bg-white' : 'bg-white/30'}`} />
@@ -257,11 +252,11 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
             ))}
           </div>
         )}
-        <button onClick={resetMode} data-grade-reset className="pointer-events-auto w-[34px] h-[28px] flex items-center justify-center rounded-[8px] bg-black/55 border border-white/15 backdrop-blur-md" aria-label="重置目前的色輪">
+        <button onClick={resetMode} data-grade-reset className="w-[34px] h-[28px] flex items-center justify-center rounded-[8px] bg-white/[0.06] border border-white/10" aria-label="重置目前的色輪">
           <ResetIcon on={modeTouched} size={16} />
         </button>
       </div>
-      <div>
+      <div className="mt-[10px]">
         {mode !== 'hdr' ? (
           <div className="flex px-[6px]">
             {(mode === 'log' ? LOG_UNITS : PRIMARY_UNITS).map(([id, l]) => (

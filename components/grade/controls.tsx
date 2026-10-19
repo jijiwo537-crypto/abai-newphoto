@@ -8,6 +8,17 @@ export const fmt = (v: number, d: number) => { const s = v.toFixed(d); return s 
 
 /** 向量示波器方向的色環（CSS conic 從 12 點鐘順時針；色輪角度從 3 點鐘逆時針） */
 export const RING = `conic-gradient(${Array.from({ length: 37 }, (_, i) => `${wheelColour(90 - i * 10)} ${i * 10}deg`).join(',')})`;
+/** 同一圈色環，但把「saturate(.8)＋72% 不透明疊在 #111 上」直接算進顏色裡：
+ *  畫面一樣，瀏覽器卻不用為每個色輪多開一層濾鏡／半透明圖層（進場動畫時每一格都要重畫） */
+const soften = (c: string) => {
+  const [r, g, b] = (c.match(/\d+/g) || []).map(Number); const s = 0.8, bg = 17, a = 0.72;
+  const R = (0.213 + 0.787 * s) * r + (0.715 - 0.715 * s) * g + (0.072 - 0.072 * s) * b;
+  const G = (0.213 - 0.213 * s) * r + (0.715 + 0.285 * s) * g + (0.072 - 0.072 * s) * b;
+  const B = (0.213 - 0.213 * s) * r + (0.715 - 0.715 * s) * g + (0.072 + 0.928 * s) * b;
+  const f = (v: number) => Math.round(Math.min(255, Math.max(0, v)) * a + bg * (1 - a));
+  return `rgb(${f(R)},${f(G)},${f(B)})`;
+};
+export const RING_FLAT = `conic-gradient(${Array.from({ length: 37 }, (_, i) => `${soften(wheelColour(90 - i * 10))} ${i * 10}deg`).join(',')})`;
 
 /** 拖曳＋雙擊。用 pointer capture，手指拖出元素外也照樣跟著 */
 export function useDrag(opts: { onStart?: () => void; onMove: (dx: number, dy: number) => void; onEnd?: () => void; onDouble?: () => void }) {
