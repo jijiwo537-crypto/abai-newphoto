@@ -3546,6 +3546,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       }
     }
   };
+  /* 濾鏡／特效按鈕縮圖的底圖：一律是「這張照片剛載進來的樣子」（留底的那一份），
+     不管之後套了濾鏡、特效、合併、構圖、人像、仿色都不變 —— 所以只有換照片才需要重算。
+     還沒有留底（極少數）才退回目前的緩衝區。 */
+  const thumbBaseCanvas = (b: BufferSet): HTMLCanvasElement => {
+    const keep = pristineOf(thumbSrcOf(buffersSrcRef.current));
+    if (keep && keep.width && keep.height) return keep;
+    const c = document.createElement('canvas');
+    c.width = b.w; c.height = b.h;
+    c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(b.original || b.source!), b.w, b.h), 0, 0);
+    return c;
+  };
   const thumbSigRef = useRef('');
   useEffect(() => {
     if (activeCategory !== 'filter') return;
@@ -3560,25 +3571,23 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       // 每一格共通的部分（照片 + 調整）；每一顆濾鏡再各自加上「檔案載到了沒」
       /* 縮圖固定畫「原圖套上這顆濾鏡」的樣子，不跟著目前的編輯走 ——
          每動一次滑桿就把整排重算一次太浪費，而且比較不出這顆濾鏡本身的樣子。 */
-      const baseSig = [thumbSrcOf(buffersSrcRef.current), b.w, b.h].join('|');
+      /* 簽章只有「哪一張原圖」：尺寸、構圖、調整都不算，那些變了縮圖也不用重畫 */
+      const baseSig = thumbSrcOf(buffersSrcRef.current);
       const sig = baseSig + '|' + lutList.map(l => (l.url && lutDataRef.current[l.id]) ? 1 : 0).join('');
       if (sig === thumbSigRef.current) return;
       const forSrc = thumbSrcOf(buffersSrcRef.current);
       noteThumbSrc(forSrc);
 
       const W = THUMB_W, H = THUMB_H;
-      const src = document.createElement('canvas');
-      src.width = b.w; src.height = b.h;
-      src.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(b.original || b.source), b.w, b.h), 0, 0);
+      const src = thumbBaseCanvas(b);
       const small = document.createElement('canvas');
       small.width = W; small.height = H;
       const sctx = small.getContext('2d', { willReadFrequently: true })!;
       sctx.imageSmoothingQuality = 'high';
       // 置中裁切成縮圖的比例，才不會變形
-      const scale = Math.max(W / b.w, H / b.h);
-      const dw = b.w * scale, dh = b.h * scale;
+      const scale = Math.max(W / src.width, H / src.height);
+      const dw = src.width * scale, dh = src.height * scale;
       sctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
-      src.width = src.height = 0;
       const thumbSrc = sctx.getImageData(0, 0, W, H).data;
 
       const flat = DEFAULT_PARAMS;          // 一律用預設參數（＝原圖）
@@ -3643,16 +3652,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       /* 簽章只放真的會改變縮圖的東西：縮圖畫的是原圖＋特效，跟目前選哪顆濾鏡無關
          （只有 f22／f23 會改模糊的預設值）。以前放了濾鏡編號，合併濾鏡後編號歸零，
          整排特效縮圖就在背景全部重算一次 —— 那段期間點什麼都要排隊，縮圖列也會閃一下。 */
-      const lutId0 = lutList[selectedLutIdx]?.id;
-      const sig = [thumbSrcOf(buffersSrcRef.current), b.w, b.h, lutId0 === 'f22' || lutId0 === 'f23' ? 30 : 40].join('|');
+      /* 簽章只有「哪一張原圖」：縮圖畫的是原圖＋特效的預設樣子，跟目前選哪顆濾鏡、套了什麼都無關 */
+      const sig = thumbSrcOf(buffersSrcRef.current);
       if (sig === fxThumbSigRef.current) return;
       const forSrc = thumbSrcOf(buffersSrcRef.current);
       noteThumbSrc(forSrc);
 
       const W = THUMB_W, H = THUMB_H;
-      const src = document.createElement('canvas');
-      src.width = b.w; src.height = b.h;
-      src.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(b.original || b.source), b.w, b.h), 0, 0);
+      const src = thumbBaseCanvas(b);
 
       // 底圖固定是原圖：不套濾鏡也不套調整
       const flat = DEFAULT_PARAMS;
@@ -3667,8 +3674,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       small.width = W; small.height = H;
       const sctx = small.getContext('2d', { willReadFrequently: true })!;
       sctx.imageSmoothingQuality = 'high';
-      const scale = Math.max(W / b.w, H / b.h);
-      const dw = b.w * scale, dh = b.h * scale;
+      const scale = Math.max(W / src.width, H / src.height);
+      const dw = src.width * scale, dh = src.height * scale;
       sctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
       const thumbSrc = sctx.getImageData(0, 0, W, H).data;
       const baseData = new Uint8ClampedArray(thumbSrc.length);
@@ -3690,8 +3697,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         EFFECT_TOOLS,
         (tool) => {
           cctx.putImageData(new ImageData(new Uint8ClampedArray(baseData), W, H), 0, 0);
-          const lutId=lutList[selectedLutIdx]?.id;
-          const blurDefault=lutId==='f22'||lutId==='f23'?30:40;
+          const blurDefault=40;   // 範例固定一種，不跟著目前的濾鏡變（換濾鏡不重畫縮圖）
           const demo: EditorParams = { ...flat, ...NO_EFFECT_PARAMS, ...effectPreset(tool.id,FX_DEFS,blurDefault) } as EditorParams;
           try {
             applyComplexEffectsRef.current(cctx, W, H, demo, Math.max(W, H) / 1080,
@@ -3706,7 +3712,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       );
     }, fresh ? 0 : 300);
     return () => { cancelled = true; t(); };
-  }, [activeCategory, lutList, selectedLutIdx, previewAspect, activeSrc, buffersTick]);
+  }, [activeCategory, lutList, previewAspect, activeSrc, buffersTick]);
 
   const handleFilterSelect = (idx: number) => {
     releaseFreeze(true);
