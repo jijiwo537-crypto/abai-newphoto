@@ -16,6 +16,7 @@ import {
   sampleRgb, bakeFor, applyLut, Lut3D,
 } from '../utils/colorTransfer';
 import { LutRenderer } from '../utils/lutGl';
+import type { StudioResult } from './BeautyStudio';
 import { buildProtectMapsFrom, resolveWeight, packWeight, ProtectMaps } from '../utils/protectMask';
 
 interface Props {
@@ -37,8 +38,8 @@ interface Props {
   /** 嵌在「編輯」的「仿色」分頁裡：不佔整個畫面、不導出，上面一列換成「取消／完成」，
       編輯器切分頁時呼叫 commitRef 拿成品（還沒選參考圖就是 null） */
   embedded?: {
-    commitRef: React.MutableRefObject<(() => Promise<string | null>) | null>;
-    onDone: (url: string | null) => void;
+    commitRef: React.MutableRefObject<(() => StudioResult | null) | null>;
+    onDone: (res: StudioResult | null) => void;
     onCancel: () => void;
   };
 }
@@ -352,40 +353,61 @@ export const ColorMatchStudio: React.FC<Props> = ({
   /** 現在這一組設定。參考圖也一起存 —— 少了它就重算不出同一組顏色。 */
   const matchState = () => ({ picked, strength, skin, referenceSrc });
 
-  /** 全解析度跑一張出來（儲存與記錄用的是同一條路） */
-  const renderResult = useCallback(async (): Promise<string | null> => {
-    if (!srcImg || !luts) return null;
-    const w = srcImg.naturalWidth || srcImg.width, h = srcImg.naturalHeight || srcImg.height;
+  /** 用目前這組設定把任一張圖算成指定大小（GPU 一次畫完；沒有 WebGL2 才走 CPU） */
+  const renderAt = (img: HTMLImageElement, w: number, h: number): HTMLCanvasElement | null => {
+    if (!luts) return null;
     const pw = useWeight(skin / 100);
     const gpu = LutRenderer.renderOnce(
-      srcImg, w, h, luts[picked], strength / 100, skin / 100,
+      img, w, h, luts[picked], strength / 100, skin / 100,
       pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null,
     );
-    if (gpu) return canvasToUrl(gpu);
+    if (gpu) return gpu;
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const x = c.getContext('2d', { willReadFrequently: true })!;
-    x.drawImage(srcImg, 0, 0);
+    x.drawImage(img, 0, 0, w, h);
     const d = x.getImageData(0, 0, w, h);
     applyLut(d.data, luts[picked], {
       strength: strength / 100, skinProtect: skin / 100, preserveLuminance: true,
       protect: useWeight(skin / 100), width: w,
     });
     x.putImageData(d, 0, 0);
-    return canvasToUrl(c);
+    return c;
+  };
+  /** 全解析度跑一張出來（儲存與記錄用的是同一條路） */
+  const renderResult = useCallback(async (): Promise<string | null> => {
+    if (!srcImg || !luts) return null;
+    const c = renderAt(srcImg, srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height);
+    return c ? canvasToUrl(c) : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcImg, luts, picked, strength, skin]);
 
-  if (embedded) embedded.commitRef.current = async () => (referenceSrc && srcImg && luts ? await renderResult() : null);
-  useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
-  const finishEmbedded = async () => {
-    if (!embedded) return;
-    if (!referenceSrc || !srcImg || !luts) { embedded.onDone(null); return; }
-    setSaving(true);
-    const url = await renderResult().catch(() => null);
-    setSaving(false);
-    embedded.onDone(url);
+  /* 嵌在編輯器裡：馬上交出預覽尺寸的成品（GPU 一次畫完），原尺寸那張留到存檔才算 */
+  const takeResult = (): StudioResult | null => {
+    if (!referenceSrc || !srcImg || !luts) return null;
+    const W = srcImg.naturalWidth || srcImg.width, H = srcImg.naturalHeight || srcImg.height;
+    const k = Math.min(1, 2048 / Math.max(W, H));
+    const out = renderAt(srcImg, Math.max(1, Math.round(W * k)), Math.max(1, Math.round(H * k)));
+    if (!out) return null;
+    // GPU 畫布換下一張就沒了：先複製成一般畫布
+    const preview = document.createElement('canvas');
+    preview.width = out.width; preview.height = out.height;
+    preview.getContext('2d')!.drawImage(out, 0, 0);
+    const render = renderAt;
+    return {
+      preview,
+      bake: (src: string) => new Promise<string | null>(res => {
+        const im = new Image();
+        if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
+        im.onload = () => { const c = render(im, im.naturalWidth, im.naturalHeight); if (!c) { res(null); return; } canvasToUrl(c).then(res, () => res(null)); };
+        im.onerror = () => res(null);
+        im.src = src;
+      }),
+    };
   };
+  if (embedded) embedded.commitRef.current = takeResult;
+  useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
+  const finishEmbedded = () => { if (embedded) embedded.onDone(takeResult()); };
 
   const recordedRef = useRef('');
   const record = useCallback(async (outUrl?: string) => {
@@ -516,6 +538,16 @@ export const ColorMatchStudio: React.FC<Props> = ({
           border: none; outline: none; cursor: pointer; transition: transform 0.1s; box-shadow: none;
         }
         .custom-range::-moz-range-thumb:active { transform: scale(1.15); }
+        /* 並排的兩根（跟編輯器特效細項同一款）：不外擴、拇指盒收小，圓點才走得到兩端 */
+        .custom-range.dense { height: 26px; width: 100%; margin: 0; }
+        .custom-range.dense::-webkit-slider-runnable-track {
+          background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
+        }
+        .custom-range.dense::-moz-range-track {
+          background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
+        }
+        .custom-range.dense::-webkit-slider-thumb { height: 26px; width: 18px; margin-top: -12px; }
+        .custom-range.dense::-moz-range-thumb { height: 26px; width: 18px; }
       `}</style>
       {embedded ? (
       <header className="relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 z-[81]">
@@ -607,20 +639,22 @@ export const ColorMatchStudio: React.FC<Props> = ({
         )}
       </div>
 
-      <section className="color-match-panel flex flex-col shrink-0 min-h-0 bg-[#0a0a0a] border-t border-[#1a1a1a]" style={{height:'max(34dvh, 300px)'}}>
+      {/* 欄位高度跟編輯器的控制區一樣（11rem）：嵌在編輯器裡時預覽大小相同，切換不會跳；
+          兩根滑桿並排，整塊比以前矮，預覽就大一些。 */}
+      <section className={`color-match-panel flex flex-col shrink-0 min-h-0 bg-[#0a0a0a] border-t border-[#1a1a1a] ${embedded ? '' : 'pb-6'}`} style={{height: embedded ? '11rem' : 'calc(11rem + 24px)'}}>
       {/* 參考圖那一列。
            還沒選參考圖時就只有「導入參考圖片」一顆，佔滿整列（跟以前一樣）；
            選過之後右邊讓出位子給「替換原始圖片」—— 導入那顆縮短，
            空出來的地方剛好放第二顆，兩顆等寬。 */}
       {/* pt-3 跟 pb-3 對稱：上面緊貼著預覽區看起來像黏住了 */}
-      <div className="px-4 pt-3 pb-3 shrink-0 flex items-stretch gap-2">
+      <div className="px-4 pt-3 pb-2 shrink-0 flex items-stretch gap-2">
         <button
           onClick={onPickReference}
           disabled={referenceLoading}
           data-cm-pickref
-          className={`${referenceSrc ? 'flex-1 min-w-0' : 'w-full'} h-14 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform`}
+          className={`${referenceSrc ? 'flex-1 min-w-0' : 'w-full'} h-12 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform`}
         >
-          <div className="w-10 h-10 rounded-xl overflow-hidden bg-[#1a1a1a] flex items-center justify-center shrink-0">
+          <div className="w-8 h-8 rounded-lg overflow-hidden bg-[#1a1a1a] flex items-center justify-center shrink-0">
             {referenceSrc
               ? <img src={referenceSrc} alt="" className="w-full h-full object-cover" />
               : <Icon name="add_photo_alternate" className="text-xl text-white/40" />}
@@ -632,11 +666,11 @@ export const ColorMatchStudio: React.FC<Props> = ({
           <button
             onClick={onImportNew}
             data-cm-replace-src
-            className="flex-1 min-w-0 h-14 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform"
+            className="flex-1 min-w-0 h-12 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform"
           >
             {/* 方塊裡放的是「現在正在調色的那張原圖」，跟左邊那顆放參考圖是同一個道理 ——
                 一眼就看得出來這顆是換哪一張。 */}
-            <div className="w-10 h-10 rounded-xl overflow-hidden bg-[#1a1a1a] flex items-center justify-center shrink-0">
+            <div className="w-8 h-8 rounded-lg overflow-hidden bg-[#1a1a1a] flex items-center justify-center shrink-0">
               <img src={imageSrc} alt="" className="w-full h-full object-cover" />
             </div>
             <span className="flex-1 min-w-0 text-left text-[10px] font-black uppercase tracking-[0.2em] text-white/60 truncate">替換原始圖片</span>
@@ -645,31 +679,29 @@ export const ColorMatchStudio: React.FC<Props> = ({
       </div>
 
       <div role="group" aria-label="仿色方法" className={`px-4 flex gap-2 shrink-0 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
-        {METHODS.map(m => <button key={m} onClick={() => setPicked(m)} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-9 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{METHOD_LABEL[m]}</button>)}
+        {METHODS.map(m => <button key={m} onClick={() => setPicked(m)} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{METHOD_LABEL[m]}</button>)}
       </div>
 
-      {/* 滑桿：樣式與佈局比照編輯器。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
-      <div className={`px-5 pt-2 flex-1 min-h-0 flex flex-col justify-start pb-4 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
-        <div>
-          {/* 強度可以推到 150（100 以上＝比參考圖再更進一步），預設維持 100；
-              膚色保護維持 0～100。 */}
+      {/* 滑桿：兩根並排（跟編輯器特效細項同一款）。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
+      <div className={`px-5 pt-3 flex-1 min-h-0 grid grid-cols-2 gap-5 content-start transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
+          {/* 強度可以推到 150（100 以上＝比參考圖再更進一步），預設維持 100；膚色保護維持 0～100。 */}
           {([['強度', strength, setStrength, 150], ['膚色保護', skin, setSkin, 100]] as const).map(([label, val, set, max]) => (
-            <div key={label} className="pt-1">
-              <div className="flex justify-between items-center px-1">
-                <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">{label}</span>
-                <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded">{val}</span>
+            <div key={label} className="min-w-0">
+              <div className="flex justify-between items-center px-1 mb-1">
+                <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.12em] truncate">{label}</span>
+                <span className="text-[10px] leading-none font-sans tabular-nums font-bold bg-white/10 px-1.5 py-[4px] rounded">{val}</span>
               </div>
-              <div className="slider-wrap relative h-10 flex items-center justify-center touch-none">
+              <div className="slider-wrap relative h-[26px] flex items-center justify-center touch-none">
                 <input
                   type="range" min={0} max={max} value={val}
                   data-cm-slider={label}
                   onChange={(e) => set(Number(e.target.value))}
-                  className="custom-range"
+                  style={{ left: 0, width: '100%', height: 26, margin: '-13px 0 0', touchAction: 'none' }}
+                  className="custom-range dense"
                 />
               </div>
             </div>
           ))}
-        </div>
       </div>
 
       </section>

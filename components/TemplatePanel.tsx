@@ -48,7 +48,7 @@ export const TemplatePanel: React.FC = () => {
       }} />
       <div className="w-full flex items-start gap-2.5 px-4 overflow-x-auto no-scrollbar touch-pan-x">
         {slots.map((src, i) => (
-          <div key={i} className="relative shrink-0 flex flex-col items-center gap-1.5 w-[68px]">
+          <div key={i} className="relative shrink-0 w-[68px]">
             <button data-template-slot={i} aria-label={src ? `模板 ${i + 1}` : `放入模板 ${i + 1} 的圖片`}
               onClick={() => { if (src) setPicked(i); else { target.current = i; input.current?.click(); } }}
               className={`relative w-[68px] h-[90px] rounded-[10px] overflow-hidden flex items-center justify-center transition-transform active:scale-95 ${src ? 'bg-[#1a1a1a]' : 'border border-dashed border-white/30 bg-white/[0.03]'}`}>
@@ -63,7 +63,6 @@ export const TemplatePanel: React.FC = () => {
                 <svg width="8" height="8" viewBox="0 0 10 10" stroke="#fff" strokeWidth="1.6" strokeLinecap="round"><path d="M2 2l6 6M8 2l-6 6" /></svg>
               </button>
             )}
-            <span className={`text-[10px] leading-none ${picked === i && src ? 'text-white' : 'text-white/45'}`}>模板{i + 1}</span>
           </div>
         ))}
       </div>

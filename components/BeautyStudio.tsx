@@ -97,10 +97,45 @@ interface BeautyStudioProps {
   /** 嵌在「編輯」的「人像」分頁裡：不佔整個畫面、不存草稿、不導出，
       上面一列換成「取消／復原／完成」，編輯器切分頁時呼叫 commitRef 拿成品 */
   embedded?: {
-    commitRef: React.MutableRefObject<(() => Promise<string | null>) | null>;
-    onDone: (url: string | null) => void;
+    commitRef: React.MutableRefObject<(() => StudioResult | null) | null>;
+    onDone: (res: StudioResult | null) => void;
     onCancel: () => void;
   };
+}
+
+/** 嵌在編輯器裡的工具交回去的成品：preview 是工作解析度、馬上就能換上的那張；
+    bake 是存檔時才跑的原尺寸版本（拿原尺寸的來源圖重播同一組操作） */
+export type StudioResult = { preview: HTMLCanvasElement; bake: (fullSrc: string) => Promise<string | null> };
+
+/** 把一組美顏操作重播在任一張圖上（sessionW 是當初操作時的工作寬度，座標照比例換算） */
+export async function renderBeautyOn(src: string, ops: Op[], count: number, sessionW: number): Promise<string | null> {
+  const img = await new Promise<HTMLImageElement | null>((res) => {
+    const im = new Image();
+    if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
+    im.onload = () => res(im);
+    im.onerror = () => res(null);
+    im.src = src;
+  });
+  if (!img) return null;
+  const sc = Math.min(1, EXPORT_MAX / Math.max(img.width, img.height));
+  const FW = Math.max(2, Math.round(img.width * sc));
+  const FH = Math.max(2, Math.round(img.height * sc));
+  const c = document.createElement('canvas');
+  c.width = FW; c.height = FH;
+  const ctx = c.getContext('2d', { willReadFrequently: true })!;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, FW, FH);
+  const base = ctx.getImageData(0, 0, FW, FH);
+  const field = createLiquifyField(FW, FH);
+  replayOps(ops, count, base, field, FW, FH, FW / sessionW);
+  if (field.max > 0) {
+    const out = ctx.createImageData(FW, FH);
+    warpRegion(base, FW, FH, field, out, { x: 0, y: 0, w: FW, h: FH });
+    ctx.putImageData(out, 0, 0);
+  } else ctx.putImageData(base, 0, 0);
+  const url = await canvasToUrl(c);
+  c.width = c.height = 0;
+  return url;
 }
 
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
@@ -864,21 +899,25 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     return canvasToUrl(c);
   }, [imageSrc]);
 
-  /* 嵌在編輯器裡：切分頁時由編輯器來拿成品（沒動過就是 null，不換照片） */
-  if (embedded) embedded.commitRef.current = async () => {
+  /* 嵌在編輯器裡：切分頁或按「完成」時，馬上交出工作解析度的成品（同步，不用等），
+     原尺寸那張留到存檔才算。沒動過就是 null，不換照片。 */
+  const takeResult = (): StudioResult | null => {
     const s = sessionRef.current;
-    return s && s.opsApplied > 0 ? await exportFullRes() : null;
+    if (!s || s.opsApplied <= 0) return null;
+    const c = document.createElement('canvas');
+    c.width = s.W; c.height = s.H;
+    const g = c.getContext('2d')!;
+    if (s.lq.max > 0) {
+      const out = g.createImageData(s.W, s.H);
+      warpRegion(s.base, s.W, s.H, s.lq, out, { x: 0, y: 0, w: s.W, h: s.H });
+      g.putImageData(out, 0, 0);
+    } else g.putImageData(s.base, 0, 0);
+    const ops = s.ops.slice(0, s.opsApplied), W = s.W;
+    return { preview: c, bake: (src: string) => renderBeautyOn(src, ops, ops.length, W) };
   };
+  if (embedded) embedded.commitRef.current = takeResult;
   useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
-  const finishEmbedded = async () => {
-    if (!embedded) return;
-    const s = sessionRef.current;
-    if (!s || s.opsApplied <= 0) { embedded.onDone(null); return; }
-    setSaveState('processing');
-    const url = await exportFullRes().catch(() => null);
-    setSaveState('idle');
-    embedded.onDone(url);
-  };
+  const finishEmbedded = () => { if (embedded) embedded.onDone(takeResult()); };
 
   const handleSave = () => {
     if (!sessionRef.current) return;
@@ -965,7 +1004,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         }
       `}</style>
 
-      {saveState === 'idle' && isLoading && (
+      {saveState === 'idle' && isLoading && !embedded && (
         <div className="absolute inset-0 z-[120] flex items-center justify-center bg-[#080808]/80 backdrop-blur-md animate-in fade-in duration-300">
           <div className="flex flex-col items-center gap-4 text-white">
             <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
@@ -1110,6 +1149,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
 
 
+        {/* 嵌在編輯器裡、還在解析的那一下：先放同一張照片，不要露出一塊黑 */}
+        {embedded && isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
+            <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm" draggable={false} />
+          </div>
+        )}
         {/* 筆刷圈。用 DOM 畫，任何縮放倍率下邊緣都是平滑的，不會有鋸齒。
             調整筆刷大小時固定顯示在預覽中央，即時呈現實際大小。 */}
         {(ringPos || sizingBrush) ? (
@@ -1148,6 +1193,78 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         </button>
       </div>
 
+      {embedded ? (() => {
+        /* 嵌在編輯器裡：跟「調節」完全同一套欄位（滑桿欄 5rem ＋ 工具欄 6rem、同樣的底色與按鈕），
+           預覽區因此跟編輯器一樣大，兩邊切換時圖片不會動。 */
+        const sliders: [string, number, number, number, (v: number) => void][] =
+          tool === 'blemish' ? [['筆刷', brush.blemish, BRUSH_RANGE.blemish[0], BRUSH_RANGE.blemish[1], v => setBrush(b => ({ ...b, blemish: v }))]]
+          : tool === 'wrinkle' ? [['筆刷', brush.wrinkle, BRUSH_RANGE.wrinkle[0], BRUSH_RANGE.wrinkle[1], v => setBrush(b => ({ ...b, wrinkle: v }))], ['力度', force, 10, 100, setForce]]
+          : tool === 'liquify' ? [['筆刷', brush.liquify, BRUSH_RANGE.liquify[0], BRUSH_RANGE.liquify[1], v => setBrush(b => ({ ...b, liquify: v }))], ['力度', force, 10, 100, setForce]]
+          : [['筆刷', brush.makeup, BRUSH_RANGE.makeup[0], BRUSH_RANGE.makeup[1], v => setBrush(b => ({ ...b, makeup: v }))], ['濃度', Math.round(intensity * 2), 0, 100, v => setIntensity(v / 2)]];
+        const two = sliders.length > 1;
+        return (
+          <div data-beauty-controls className="shrink-0 flex flex-col border-t border-white/5" style={{ height: '11rem' }}>
+            <div className={`h-[5rem] shrink-0 bg-[#111] border-b border-white/5 ${two ? 'px-5 grid grid-cols-2 gap-5 items-center' : 'px-8 flex flex-col justify-center'}`}>
+              {sliders.map(([label, value, min, max, set]) => (
+                <div key={`${tool}-${label}`} className="w-full min-w-0">
+                  <div className="flex justify-between items-center px-1 mb-1">
+                    <span className={`font-black text-white/40 uppercase ${two ? 'text-[9px] tracking-[0.12em]' : 'text-[10px] tracking-[0.2em]'}`}>{label}</span>
+                    <span className={`font-sans tabular-nums font-bold bg-white/10 rounded ${two ? 'text-[10px] leading-none px-1.5 py-[4px]' : 'text-xs px-2 py-0.5'}`}>{value}</span>
+                  </div>
+                  <div className={`slider-wrap relative flex items-center justify-center touch-none ${two ? 'h-[26px]' : 'h-[30px]'}`}>
+                    <input type="range" min={min} max={max} value={value} aria-label={label}
+                      onChange={ev => set(Number(ev.target.value))}
+                      onPointerDown={label === '筆刷' ? () => setSizingBrush(true) : undefined}
+                      onPointerUp={label === '筆刷' ? () => setSizingBrush(false) : undefined}
+                      onPointerCancel={label === '筆刷' ? () => setSizingBrush(false) : undefined}
+                      onBlur={label === '筆刷' ? () => setSizingBrush(false) : undefined}
+                      style={two ? { left: 0, width: '100%', height: 26, margin: '-13px 0 0', touchAction: 'none', ['--thumb-w' as any]: '18px' } : undefined}
+                      className={two ? 'custom-range dense' : 'custom-range compact'} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div data-beauty-toolbar className="h-[6rem] shrink-0 bg-[#080808] flex items-center px-4 gap-2 overflow-x-auto no-scrollbar">
+              {BEAUTY_TOOLS.map(t => (
+                <button key={t.id} onClick={() => setTool(t.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${tool === t.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40'}`}>
+                    <Icon name={t.icon} className="text-lg" fill={tool === t.id} />
+                  </div>
+                  <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${tool === t.id ? 'text-white' : 'text-white/20'}`}>{t.label}</span>
+                  <div className="w-1 h-1 rounded-full mt-0.5 bg-transparent" />
+                </button>
+              ))}
+              {(tool === 'liquify' || tool === 'makeup') && <div className="w-[1px] h-8 bg-white/10 mx-2 shrink-0" />}
+              {tool === 'liquify' && LIQUIFY_PRESETS.map(m => (
+                <button key={m.id}
+                  onClick={() => {
+                    setLqPreset(m.id);
+                    if (m.brush !== undefined) setBrush(b => ({ ...b, liquify: m.brush! }));
+                    if (m.force !== undefined) setForceMap(f => ({ ...f, liquify: m.force! }));
+                  }}
+                  className={`h-8 px-3.5 rounded-full text-[11px] shrink-0 border transition-colors ${lqPreset === m.id ? 'bg-white text-black border-white font-bold' : 'bg-white/5 text-white/60 border-white/15'}`}>
+                  {m.label}
+                </button>
+              ))}
+              {tool === 'makeup' && (
+                <>
+                  <label title="自選顏色" className="w-7 h-7 rounded-full shrink-0 relative cursor-pointer ring-1 ring-white/40 flex items-center justify-center overflow-hidden"
+                    style={{ background: 'conic-gradient(#f43,#fa3,#fd3,#3d6,#3cf,#63f,#f3a,#f43)' }}>
+                    <span className="absolute inset-[5px] rounded-full bg-[#080808] flex items-center justify-center"><Icon name="colorize" className="text-[13px] text-white" /></span>
+                    <input type="color" value={makeupColor} onChange={e => setMakeupColor(e.target.value)} aria-label="自選顏色" className="absolute inset-0 opacity-0 cursor-pointer" />
+                  </label>
+                  {LIP_PRESETS.map(c => (
+                    <button key={c.hex} onClick={() => setMakeupColor(c.hex)} title={c.name} aria-label={c.name}
+                      className="beauty-swatch w-7 h-7 rounded-full shrink-0" style={{ backgroundColor: c.hex }}>
+                      {makeupColor.toLowerCase() === c.hex.toLowerCase() && <svg className="beauty-swatch-outline" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="none" stroke="white" strokeWidth="2" /></svg>}
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })() : (<>
       {/* 參數區固定高度：切換工具時圖片不會跳動，滑桿位置也永遠對齊。
           額外控制列即使沒有內容也保留空間，四個工具的滑桿才會落在同一個位置。 */}
       <div className="h-[144px] shrink-0 border-t border-white/[0.06] py-3 flex flex-col" data-beauty-controls>
@@ -1248,6 +1365,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         ))}
       </div>
       </div>
+
+      </>)}
 
       {saveState === 'processing' && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">

@@ -19,6 +19,9 @@ const soften = (c: string) => {
   return `rgb(${f(R)},${f(G)},${f(B)})`;
 };
 export const RING_FLAT = `conic-gradient(${Array.from({ length: 37 }, (_, i) => `${soften(wheelColour(90 - i * 10))} ${i * 10}deg`).join(',')})`;
+/** 色環每 10° 一個色標（CSS 角度：12 點鐘起、順時針），已經是 RING_FLAT 的顏色 */
+export const RING_STOPS: [number, number, number][] = Array.from({ length: 37 }, (_, i) =>
+  (soften(wheelColour(90 - i * 10)).match(/\d+/g) || []).map(Number) as [number, number, number]);
 
 /** 拖曳＋雙擊。用 pointer capture，手指拖出元素外也照樣跟著 */
 export function useDrag(opts: { onStart?: () => void; onMove: (dx: number, dy: number) => void; onEnd?: () => void; onDouble?: () => void }) {

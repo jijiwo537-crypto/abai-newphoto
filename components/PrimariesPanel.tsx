@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { clamp, fmt, RING_FLAT, useDrag, ResetIcon, type Ev } from './grade/controls';
+import { clamp, fmt, RING_STOPS, useDrag, ResetIcon, type Ev } from './grade/controls';
 import {
   WHEEL_SPEC, rgbToWheel, wheelToRgb, isWheelNeutral, freshWheels, normGrade, freshGrade,
   HDR_ZONES, isHdrWheelNeutral,
@@ -28,18 +28,62 @@ let lastHdrPage = 0;
 
 const CH_COLOUR: Record<string, string> = { r: '#ff6b6b', g: '#5fd47a', b: '#6b9bff' };
 
-/** 色輪盤面（向量示波器方向的細色環、深色盤面、十字線、調整點）。
- *  十字線與內圈用不透明的灰，交叉的地方才不會疊出一個比較亮的點。 */
+/* 盤面上不會動的部分（色環、深色盤面、外框、十字線）先畫成一張點陣圖，每個尺寸只畫一次。
+   以前用 conic／radial 漸層＋box-shadow，每個色輪都要瀏覽器即時光柵化，
+   進色輪那一格四個一起畫，手機上就是「卡一下才出來」。點陣圖只要貼上去。 */
+const discCache = new Map<string, string>();
+const decoded: HTMLImageElement[] = [];
+const discUrl = (D: number) => {
+  const dpr = Math.min(3, Math.max(1, Math.round((typeof window !== 'undefined' && window.devicePixelRatio) || 1)));
+  const key = `${D}@${dpr}`;
+  let u = discCache.get(key);
+  if (u) return u;
+  const c = document.createElement('canvas');
+  c.width = c.height = D * dpr;
+  const g = c.getContext('2d')!;
+  g.scale(dpr, dpr);
+  const cx = D / 2, R = D / 2;
+  // 色環：外緣 R-1.5，內緣被盤面蓋住；每 1° 一小塊，顏色照 10° 色標內插
+  for (let d = 0; d < 360; d++) {
+    const i = Math.floor(d / 10), t = (d % 10) / 10, A = RING_STOPS[i], B = RING_STOPS[i + 1];
+    g.fillStyle = `rgb(${A.map((v, k) => Math.round(v + (B[k] - v) * t)).join(',')})`;
+    const a0 = (d - 90 - 0.6) * Math.PI / 180, a1 = (d + 1 - 90 + 0.6) * Math.PI / 180;
+    g.beginPath(); g.arc(cx, cx, R - 1.5, a0, a1); g.arc(cx, cx, R - 6, a1, a0, true); g.closePath(); g.fill();
+  }
+  // 盤面（含 1px 深色外框）
+  const r = R - 5;
+  g.beginPath(); g.arc(cx, cx, r + 1, 0, Math.PI * 2); g.fillStyle = '#050505'; g.fill();
+  const gx = cx, gy = cx - r + r * 2 * 0.42, far = Math.hypot(r, r + Math.abs(gy - cx));
+  const grad = g.createRadialGradient(gx, gy, 0, gx, gy, far);
+  grad.addColorStop(0, '#262626'); grad.addColorStop(0.55, '#1b1b1b'); grad.addColorStop(1, '#141414');
+  g.beginPath(); g.arc(cx, cx, r, 0, Math.PI * 2); g.fillStyle = grad; g.fill();
+  // 內側上緣一點點亮、下緣一點點暗（原本 box-shadow 的 inset）
+  g.save(); g.beginPath(); g.arc(cx, cx, r, 0, Math.PI * 2); g.clip();
+  g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,.05)'; g.beginPath(); g.arc(cx, cx + 0.5, r - 0.5, Math.PI * 1.15, Math.PI * 1.85); g.stroke();
+  g.lineWidth = 3; g.strokeStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.arc(cx, cx - 1, r - 1, Math.PI * 0.1, Math.PI * 0.9); g.stroke();
+  g.restore();
+  // 十字線（不透明的灰，交叉處不會疊亮）
+  g.strokeStyle = '#323232'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(cx, 9); g.lineTo(cx, D - 9); g.moveTo(9, cx); g.lineTo(D - 9, cx); g.stroke();
+  u = c.toDataURL('image/png');
+  discCache.set(key, u);
+  // 先解碼好：第一次貼上去的那一格就不用等瀏覽器解 PNG
+  const im = new Image(); im.src = u; im.decode?.().catch(() => {}); decoded.push(im);
+  return u;
+};
+
+/* 編輯器一載入就在空檔把這支螢幕寬度會用到的盤面先畫好，第一次進色輪就不用現畫 */
+if (typeof window !== 'undefined') {
+  const warm = () => { try { const w = Math.min(window.innerWidth, 480); discUrl(Math.round(Math.min(82, (w - 12) / 4 - 12))); jogUrl(); } catch { /* 之後用到再畫 */ } };
+  const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => void) | undefined;
+  if (ric) ric(warm, { timeout: 2000 }); else setTimeout(warm, 800);
+}
+
+/** 色輪盤面（向量示波器方向的細色環、深色盤面、十字線、調整點）。不會動的部分是一張點陣圖（見 discUrl） */
 const WheelDisc: React.FC<{ D: number; px: number; py: number; drag: ReturnType<typeof useDrag>; id: string }> = ({ D, px, py, drag, id }) => (
-  <div {...drag} data-grade-wheel={id} className="relative shrink-0 rounded-full touch-none select-none" style={{ width: D, height: D }}>
-    {/* 色環：外緣靠圓角裁切、內緣被盤面（含 1px 深色外框）蓋住，不用遮罩圖層 */}
-    <div className="absolute rounded-full pointer-events-none" style={{ inset: 1.5, background: RING_FLAT }} />
-    <div className="absolute rounded-full pointer-events-none" style={{
-      inset: 5, background: 'radial-gradient(circle at 50% 42%, #262626 0%, #1b1b1b 55%, #141414 100%)',
-      boxShadow: '0 0 0 1px #050505, inset 0 1px 1px rgba(255,255,255,.05), inset 0 -2px 4px rgba(0,0,0,.45)',
-    }} />
+  <div {...drag} data-grade-wheel={id} className="relative shrink-0 rounded-full touch-none select-none"
+    style={{ width: D, height: D, backgroundImage: `url(${discUrl(D)})`, backgroundSize: '100% 100%' }}>
     <svg className="absolute inset-0 pointer-events-none" width={D} height={D}>
-      <path d={`M${D / 2} 9V${D - 9}M9 ${D / 2}H${D - 9}`} stroke="#323232" strokeWidth="1" fill="none" />
       {(px || py) ? <line x1={D / 2} y1={D / 2} x2={D / 2 + px} y2={D / 2 + py} stroke="#8a8a8a" strokeWidth="1" /> : null}
       <circle cx={D / 2 + px} cy={D / 2 + py} r={4.4} fill="#141414" stroke="#fff" strokeWidth="1.5" />
       <circle cx={D / 2 + px} cy={D / 2 + py} r={0.9} fill="#fff" />
@@ -47,13 +91,24 @@ const WheelDisc: React.FC<{ D: number; px: number; py: number; drag: ReturnType<
   </div>
 );
 
+/* 轉盤的刻紋也是一張 4px 寬的小點陣圖，左右拖只是挪背景位置 */
+let jogTile = '';
+const jogUrl = () => {
+  if (jogTile) return jogTile;
+  const c = document.createElement('canvas'); c.width = 8; c.height = 2;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#232323'; g.fillRect(0, 0, 8, 2);
+  g.fillStyle = '#3a3a3a'; g.fillRect(0, 0, 2, 2);
+  return (jogTile = c.toDataURL('image/png'));
+};
+
 /** 主轉盤（jog wheel）：左右拖 */
 const Jog: React.FC<{ W: number; drag: ReturnType<typeof useDrag>; x: number; id: string }> = ({ W, drag, x, id }) => (
   <div {...drag} data-grade-jog={id} className="mt-[5px] rounded-[3px] touch-none select-none cursor-ew-resize border border-black/70"
     style={{
       width: W, height: 11,
       /* 兩端淡出用一層蓋上去的漸層（跟面板底色一樣），不用遮罩圖層 */
-      background: `linear-gradient(90deg, rgba(17,17,17,.65), rgba(17,17,17,0) 25%, rgba(17,17,17,0) 75%, rgba(17,17,17,.65)), repeating-linear-gradient(90deg, #3a3a3a 0 1px, #232323 1px 4px) ${x}px 0 / auto, #232323`,
+      background: `linear-gradient(90deg, rgba(17,17,17,.65), rgba(17,17,17,0) 25%, rgba(17,17,17,0) 75%, rgba(17,17,17,.65)), url(${jogUrl()}) ${x}px 0 / 4px 100% repeat-x, #232323`,
       boxShadow: 'inset 0 2px 3px rgba(0,0,0,.55), inset 0 -1px 0 rgba(255,255,255,.04)',
     }} />
 );
