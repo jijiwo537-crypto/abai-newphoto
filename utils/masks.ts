@@ -155,51 +155,88 @@ export const brushCanvas = (id: string, m: MaskSnap, w: number, h: number) => {
   return bc.c;
 };
 
+/* 範圍類遮色片要看的那張畫面，每一點的 Lab（顏色範圍用）跟 Y（明度範圍用）只跟畫面有關，
+   跟滑桿無關：同一張畫面只算一次留著。拖「範圍」「平滑」時每一格就只剩一個門檻比較的迴圈 ——
+   以前每一格都把整張重新轉一次 Lab（每點三次開立方根），那就是拖起來卡的原因。 */
+type SrcStats = { key: string; w: number; h: number; lab: Float32Array | null; y: Float32Array | null; rgba: Uint8ClampedArray };
+const srcStats: SrcStats[] = [];
+const statsOf = (src: CanvasImageSource, sw: number, sh: number, baseKey: string): SrcStats => {
+  const key = `${baseKey}|${sw}x${sh}`;
+  let st = srcStats.find(s => s.key === key);
+  if (st) return st;
+  const tmp = newCanvas(sw, sh);
+  const tg = tmp.getContext('2d', { willReadFrequently: true })!;
+  tg.drawImage(src, 0, 0, sw, sh);
+  st = { key, w: sw, h: sh, lab: null, y: null, rgba: tg.getImageData(0, 0, sw, sh).data };
+  srcStats.unshift(st); if (srcStats.length > 2) srcStats.length = 2;   // 拖曳用的小張＋放手後的原尺寸各一份
+  return st;
+};
+const labOf = (st: SrcStats) => {
+  if (st.lab) return st.lab;
+  const d = st.rgba, n = st.w * st.h, lab = new Float32Array(n * 3);
+  for (let i = 0, j = 0; j < n; i += 4, j++) { const [L, A, B] = rgbToLab(d[i], d[i + 1], d[i + 2]); lab[j * 3] = L * 0.6; lab[j * 3 + 1] = A; lab[j * 3 + 2] = B; }
+  return st.lab = lab;
+};
+const yOf = (st: SrcStats) => {
+  if (st.y) return st.y;
+  const d = st.rgba, n = st.w * st.h, y = new Float32Array(n);
+  for (let i = 0, j = 0; j < n; i += 4, j++) y[j] = LSTAR[d[i]] + LSTAR[256 + d[i + 1]] + LSTAR[512 + d[i + 2]];
+  return st.y = y;
+};
+
 /** 顏色範圍：跟任何一個取樣色的 ΔE（亮度權重 0.6，著重色相與彩度）夠近就算，邊緣再留一段平滑淡出 */
-const colorAlpha = (data: Uint8ClampedArray, out: Uint8ClampedArray, m: MaskSnap) => {
-  const labs = m.maskColors.map(c => rgbToLab(c.r, c.g, c.b));
+const colorAlpha = (st: SrcStats, out: Uint8ClampedArray, m: MaskSnap) => {
+  const labs = m.maskColors.map(c => { const q = rgbToLab(c.r, c.g, c.b); return [q[0] * 0.6, q[1], q[2]]; });
   // 範圍 50（預設）＝ΔE 約 20 以內全選、再往外 14 慢慢淡掉：跟 LR 點一下的感覺差不多，只吃相近的顏色
   const tol = 3 + m.maskColorRange * 0.34, soft = 6 + tol * 0.4;
-  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    const [L, A, B] = rgbToLab(data[i], data[i + 1], data[i + 2]);
+  // 距離平方 → alpha 查表（不用每點開根號、算 smoothstep）
+  const maxD = tol + soft, STEPS = 1024, tab = new Uint8ClampedArray(STEPS + 1), k2 = STEPS / (maxD * maxD);
+  for (let i = 0; i <= STEPS; i++) tab[i] = Math.round(255 * (1 - sstep(tol, maxD, Math.sqrt(i / k2))));
+  const lab = labOf(st), n = st.w * st.h, nq = labs.length;
+  for (let j = 0, o = 0; j < n; j++, o += 3) {
+    const L = lab[o], A = lab[o + 1], B = lab[o + 2];
     let best = 1e9;
-    for (const q of labs) { const dL = (L - q[0]) * 0.6, dA = A - q[1], dB = B - q[2]; const d = dL * dL + dA * dA + dB * dB; if (d < best) best = d; }
-    out[j] = Math.round(255 * (1 - sstep(tol, tol + soft, Math.sqrt(best))));
+    for (let q = 0; q < nq; q++) { const c = labs[q]; const dL = L - c[0], dA = A - c[1], dB = B - c[2]; const d = dL * dL + dA * dA + dB * dB; if (d < best) best = d; }
+    const t = best * k2;
+    out[j] = t >= STEPS ? 0 : tab[t | 0];
   }
 };
 /** 明度範圍：L* 落在 [下限, 上限] 之間的全選，外側照平滑度淡出 */
-const lumaAlpha = (data: Uint8ClampedArray, out: Uint8ClampedArray, m: MaskSnap) => {
+const lumaAlpha = (st: SrcStats, out: Uint8ClampedArray, m: MaskSnap) => {
   const lo = Math.min(m.maskLumLo, m.maskLumHi), hi = Math.max(m.maskLumLo, m.maskLumHi);
   const fw = Math.max(0.5, m.maskLumSmooth * 0.3);
   // 256 階的 Y 太粗：L* 直接用 1024 階查表
   const tab = new Uint8ClampedArray(1025);
   for (let k = 0; k <= 1024; k++) { const L = lstarOfY(k / 1024); tab[k] = Math.round(255 * sstep(lo - fw, lo, L) * (1 - sstep(hi, hi + fw, L))); }
-  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    const y = LSTAR[data[i]] + LSTAR[256 + data[i + 1]] + LSTAR[512 + data[i + 2]];
-    out[j] = tab[Math.min(1024, Math.round(y * 1024))];
-  }
+  const y = yOf(st), n = st.w * st.h;
+  for (let j = 0; j < n; j++) { const v = y[j] * 1024; out[j] = tab[v >= 1024 ? 1024 : (v + 0.5) | 0]; }
 };
 
 /* 範圍類的選取要看像素，一次全解析度算要幾十毫秒。拖滑桿時改用縮小的那張算（再放大貼回去，
-   選取範圍本來就是平滑的），放手才用原尺寸。結果按參數與畫面留著，不變就不重算。 */
-type RangeCache = { key: string; c: HTMLCanvasElement };
+   選取範圍本來就是平滑的），放手才用原尺寸。結果按參數與畫面留著，不變就不重算；畫布也重複用。 */
+type RangeCache = { key: string; c: HTMLCanvasElement; img: ImageData | null };
 const rangeCaches = new Map<string, RangeCache>();
 const rangeCanvas = (id: string, m: MaskSnap, src: CanvasImageSource, w: number, h: number, baseKey: string, fast: boolean) => {
   const k = fast ? Math.min(1, 480 / Math.max(w, h)) : 1;
   const sw = Math.max(1, Math.round(w * k)), sh = Math.max(1, Math.round(h * k));
   const key = `${baseKey}|${sw}x${sh}|${m.maskType}|${m.maskType === 'color' ? JSON.stringify(m.maskColors) + m.maskColorRange : `${m.maskLumLo},${m.maskLumHi},${m.maskLumSmooth}`}`;
-  const hit = rangeCaches.get(id);
+  const cid = `${id}@${fast ? 'f' : 'F'}`;
+  let hit = rangeCaches.get(cid);
   if (hit && hit.key === key) return hit.c;
-  const tmp = newCanvas(sw, sh);
-  const tg = tmp.getContext('2d', { willReadFrequently: true })!;
-  tg.drawImage(src, 0, 0, sw, sh);
-  const img = tg.getImageData(0, 0, sw, sh);
+  const st = statsOf(src, sw, sh, baseKey);
+  if (!hit || hit.c.width !== sw || hit.c.height !== sh) {
+    hit = { key: '', c: newCanvas(sw, sh), img: null };
+    rangeCaches.set(cid, hit);
+  }
+  const tg = hit.c.getContext('2d')!;
+  const img = hit.img && hit.img.width === sw && hit.img.height === sh ? hit.img : (hit.img = tg.createImageData(sw, sh));
   const a = new Uint8ClampedArray(sw * sh);
-  if (m.maskType === 'color') colorAlpha(img.data, a, m); else lumaAlpha(img.data, a, m);
-  for (let i = 0, j = 0; j < a.length; i += 4, j++) { img.data[i] = img.data[i + 1] = img.data[i + 2] = 255; img.data[i + 3] = a[j]; }
+  if (m.maskType === 'color') colorAlpha(st, a, m); else lumaAlpha(st, a, m);
+  const d = img.data;
+  for (let i = 0, j = 0; j < a.length; i += 4, j++) { d[i] = d[i + 1] = d[i + 2] = 255; d[i + 3] = a[j]; }
   tg.putImageData(img, 0, 0);
-  rangeCaches.set(id, { key, c: tmp });
-  return tmp;
+  hit.key = key;
+  return hit.c;
 };
 
 /**
@@ -234,5 +271,5 @@ let invC: HTMLCanvasElement | null = null;
 const scratchInv = (w: number, h: number) => { if (!invC) invC = newCanvas(w, h); if (invC.width !== w || invC.height !== h) { invC.width = w; invC.height = h; } return invC; };
 
 /** 換照片／換尺寸時把快取清掉（id 是遮色片在清單裡的位置＋類型） */
-export const clearMaskCaches = () => { brushCaches.clear(); rangeCaches.clear(); };
+export const clearMaskCaches = () => { brushCaches.clear(); rangeCaches.clear(); srcStats.length = 0; };
 export const maskCacheId = (m: MaskSnap) => `${m.maskId}:${m.maskType}`;

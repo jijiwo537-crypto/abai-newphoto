@@ -11,10 +11,15 @@ export const EDIT_BAR_H = EDIT_BAR_ROW + EDIT_BAR_PAD;
 /** 一排分類。scroll：可以左右滑、一次看到 7 個（主頁進來的編輯用） */
 export const EditBar: React.FC<{ children: React.ReactNode; scroll?: boolean; className?: string }> = ({ children, scroll, className = '' }) => {
   const ref = useRef<HTMLDivElement>(null);
-  /* 選中的那一顆不在畫面裡（或貼著邊）就把它捲到中間 */
+  /* 選中的那一顆不在畫面裡（或貼著邊）就把它捲到中間。
+     只在「選中的換了」才量：編輯器每 render 一次都去讀 offsetLeft 會逼瀏覽器當場重排，切分頁就慢一拍 */
+  const lastOnRef = useRef<string | null>(null);
   useLayoutEffect(() => {
     const el = ref.current; if (!scroll || !el) return;
     const on = el.querySelector('[data-edit-tab-on="1"]') as HTMLElement | null; if (!on) return;
+    const id = on.getAttribute('data-edit-tab');
+    if (id === lastOnRef.current) return;
+    lastOnRef.current = id;
     const l = on.offsetLeft, r = l + on.offsetWidth;
     if (l < el.scrollLeft + on.offsetWidth * 0.5 || r > el.scrollLeft + el.clientWidth - on.offsetWidth * 0.5) {
       el.scrollTo({ left: l - (el.clientWidth - on.offsetWidth) / 2, behavior: 'smooth' });

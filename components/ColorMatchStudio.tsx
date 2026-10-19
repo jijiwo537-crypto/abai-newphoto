@@ -11,6 +11,7 @@ import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
+import { useAlignPad, ALIGN_FILL_CSS, type AlignRect } from './studioAlign';
 import {
   METHODS, METHOD_LABEL, Method,
   sampleRgb, bakeFor, applyLut, Lut3D,
@@ -42,6 +43,8 @@ interface Props {
     onDone: (res: StudioResult | null) => void;
     onCancel: () => void;
   };
+  /** 嵌在編輯器裡：編輯器預覽圖在螢幕上的框，照片擺在一模一樣的位置 */
+  align?: AlignRect | null;
 }
 
 const PREVIEW_MAX = 1400;
@@ -69,7 +72,7 @@ const toImageData = (img: HTMLImageElement, max: number): ImageData => {
 
 export const ColorMatchStudio: React.FC<Props> = ({
   imageSrc, onCancel, onHome, onImportNew, onPickReference, referenceSrc, onSendToEditor,
-  initialState, onRequestExit, referenceLoading=false, embedded,
+  initialState, onRequestExit, referenceLoading=false, embedded, align,
 }) => {
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
   const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
@@ -383,8 +386,13 @@ export const ColorMatchStudio: React.FC<Props> = ({
   }, [srcImg, luts, picked, strength, skin]);
 
   /* 嵌在編輯器裡：馬上交出預覽尺寸的成品（GPU 一次畫完），原尺寸那張留到存檔才算 */
+  const sessionIdRef = useRef(`match-${Math.random().toString(36).slice(2)}`);
+  const committedSigRef = useRef('');
   const takeResult = (): StudioResult | null => {
     if (!referenceSrc || !srcImg || !luts) return null;
+    /* 工具交出去之後不會重開：設定沒變過就不用再換一次照片 */
+    const sig = JSON.stringify({ picked, strength, skin, referenceSrc });
+    if (sig === committedSigRef.current) return null;
     const W = srcImg.naturalWidth || srcImg.width, H = srcImg.naturalHeight || srcImg.height;
     const k = Math.min(1, 2048 / Math.max(W, H));
     const out = renderAt(srcImg, Math.max(1, Math.round(W * k)), Math.max(1, Math.round(H * k)));
@@ -394,8 +402,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
     preview.width = out.width; preview.height = out.height;
     preview.getContext('2d')!.drawImage(out, 0, 0);
     const render = renderAt;
+    committedSigRef.current = sig;
     return {
       preview,
+      session: sessionIdRef.current,
       bake: (src: string) => new Promise<string | null>(res => {
         const im = new Image();
         if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
@@ -500,6 +510,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const ready = !!(srcImg && refImg && luts);
 
   const viewport=useStandaloneToolViewport();
+  const srcAspect = srcImg ? (srcImg.naturalWidth || srcImg.width) / Math.max(1, srcImg.naturalHeight || srcImg.height) : (align ? align.width / align.height : null);
+  const fitPad = useAlignPad(embedded ? align : null, stageRef, srcAspect);
   return (
     <div ref={embedded ? undefined : viewport.ref} data-match-embedded={embedded ? '1' : undefined}
       className={embedded ? 'absolute inset-0 bg-[#080808] flex flex-col text-white overflow-hidden'
@@ -508,6 +520,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           只有編輯器掛著的時候才存在，所以這裡要自己帶一份。 */}
       <style>{`
         ${standaloneToolViewportCSS}
+        ${ALIGN_FILL_CSS}
         .custom-range {
           -webkit-appearance: none; width: calc(100% + 64px); height: 40px;
           background: rgba(0,0,0,0); outline: none; margin: 0 -32px; padding: 0;
@@ -598,8 +611,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
         <div
           ref={zoomRef}
           data-color-match-zoom
-          className="absolute inset-0 flex items-center justify-center p-4"
+          className={`absolute inset-0 flex items-center justify-center ${fitPad ? 'studio-fit' : 'p-4'}`}
           style={{
+            ...fitPad,
             transform: `translate(${viewT.tx}px, ${viewT.ty}px) scale(${viewT.k})`,
             transition: pinchRef.current || panRef.current ? 'none' : 'transform 90ms linear',
           }}

@@ -70,6 +70,8 @@ interface ComposeStudioProps {
   stageLimit?: { width: number; height: number } | null;
   /** 獨立編輯器與原預覽共用內距；未指定時維持拼圖的既有配置。 */
   stageInset?: number;
+  /** 編輯器預覽圖在螢幕上的中心：舞台的照片挪到同一個中心，進出構圖圖片不會差半個像素 */
+  alignCenter?: { x: number; y: number } | null;
 }
 
 const HANDLES = [
@@ -115,7 +117,7 @@ export const COMPOSE_WARMUP_CLASSES =
   'transition-[background-color,color,border-color] transition-colors uppercase w-12 w-14 ' +
   'w-full w-px';
 
-export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H, stageLimit, stageInset, showFooterDivider = false }) => {
+export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H, stageLimit, stageInset, showFooterDivider = false, alignCenter }) => {
   const [tab, setTab] = useState<Tab>('crop');
   const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h' | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
@@ -127,6 +129,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   const stageWrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
+  const [nudge, setNudge] = useState({ x: 0, y: 0 });
   /** 拖滑桿或縮放時先用低解析度重算，不然每動一格都要重取樣整張圖，看起來就是一幀一幀的 */
   const [live, setLive] = useState(false);
   /** 九宫格只在裁切框正在移动／缩放时显示；DOM 常驻才能完整播放离场淡出。 */
@@ -175,13 +178,18 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       ctx.clearRect(0, 0, cvs.width, cvs.height);
       ctx.drawImage(baseCanvas, 0, 0);
       setStageSize(prev => prev.w === w && prev.h === h ? prev : { w, h });
+      /* 盒子置中後的中心跟編輯器那一張差多少就挪多少（只在差一點點的時候：真的差很多代表版面不一樣，就別硬拉） */
+      const dx = alignCenter ? alignCenter.x - (box.left + box.width / 2) : 0;
+      const dy = alignCenter ? alignCenter.y - (box.top + box.height / 2) : 0;
+      const n = Math.abs(dx) <= 24 && Math.abs(dy) <= 24 ? { x: dx, y: dy } : { x: 0, y: 0 };
+      setNudge(prev => Math.abs(prev.x - n.x) < 0.01 && Math.abs(prev.y - n.y) < 0.01 ? prev : n);
     };
 
     fit();
     const ro = new ResizeObserver(fit);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [baseCanvas, stageLimit]);
+  }, [baseCanvas, stageLimit, alignCenter?.x, alignCenter?.y]);
 
   const activeRatio = useMemo(() => {
     const p = ASPECT_PRESETS.find(a => a.id === geo.aspect);
@@ -561,7 +569,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
              stopPropagation，所以走不到這裡 —— 兩種操作不會打架。 */}
         <div
           className="relative select-none"
-          style={{ width: stageSize.w || undefined, height: stageSize.h || undefined, touchAction: 'none' }}
+          style={{ width: stageSize.w || undefined, height: stageSize.h || undefined, touchAction: 'none', transform: nudge.x || nudge.y ? `translate(${nudge.x}px,${nudge.y}px)` : undefined }}
           onPointerDown={onHandleDown('move')}
           onPointerMove={onHandleMove}
           onPointerUp={onHandleUp}

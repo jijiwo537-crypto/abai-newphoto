@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { Icon } from './Icon';
+import { useAlignPad, ALIGN_FILL_CSS, type AlignRect } from './studioAlign';
 import { ChevronLeft } from 'lucide-react';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
@@ -12,11 +13,12 @@ import type { ExitChoice } from '../types';
 import {
   Rect, LiquifyMode, LiquifyField,
   BRUSH_REF_WIDTH, DEFAULT_BRUSH, BRUSH_RANGE, LIP_PRESETS, LIQUIFY_SCALE,
-  healAt, healRect, wrinkleDab, wrinkleRect,
+  healAt, healRect, wrinkleDab,
   createLiquifyField, liquifyDab, sampleLiquify, warpRegion, recomputeLiquifyMax,
   hexToRgb, stampAlpha, makeupComposite,
   releaseBuffers,
 } from '../utils/beauty/engine';
+import { StrokeLayer, STROKE_INNER, wrinkleStrength, smoothStrength, smoothInvalidate, type StrokeKind } from '../utils/beauty/strokeFilter';
 
 // 互動時的運算解析度。全解析度即時運算會爆手機記憶體，所以要縮，
 // 但固定 1280 在高 DPI 手機上會被放大顯示、預覽看起來就糊。
@@ -46,12 +48,13 @@ const DRAG_START_PX = 5;
 /** 鬆手後筆刷圈停留的時間 */
 const RING_FLASH_MS = 217;
 
-type BeautyTool = 'blemish' | 'wrinkle' | 'liquify' | 'makeup';
+type BeautyTool = 'blemish' | 'wrinkle' | 'smooth' | 'liquify' | 'makeup';
 
 interface ToolDef { id: BeautyTool; label: string; icon: string; }
 const BEAUTY_TOOLS: ToolDef[] = [
   { id: 'blemish', label: '去痘', icon: 'healing' },
   { id: 'wrinkle', label: '去皺', icon: 'waves' },
+  { id: 'smooth',  label: '磨皮', icon: 'skin_smooth' },
   { id: 'liquify', label: '液化', icon: 'gesture' },
   { id: 'makeup',  label: '修容', icon: 'brush' },
 ];
@@ -72,7 +75,8 @@ const LIQUIFY_PRESETS: {
 // 座標一律存工作解析度的像素值，重播時乘上縮放比即可。
 type Op =
   | { k: 'heal'; x: number; y: number; r: number }
-  | { k: 'wrinkle'; pts: number[]; r: number; amount: number }
+  | { k: 'wrinkle'; pts: number[]; r: number; amount: number }   // 舊版去皺（每點疊一次），只為了讀得回以前的草稿
+  | { k: 'stroke'; kind: StrokeKind; pts: number[]; r: number; strength: number }
   | { k: 'makeup'; pts: number[]; r: number; strength: number; rgb: [number, number, number] }
   | { k: 'liquify'; pts: number[]; r: number; force: number; mode: LiquifyMode };
 
@@ -101,11 +105,13 @@ interface BeautyStudioProps {
     onDone: (res: StudioResult | null) => void;
     onCancel: () => void;
   };
+  /** 嵌在編輯器裡：編輯器預覽圖在螢幕上的框，照片擺在一模一樣的位置 */
+  align?: AlignRect | null;
 }
 
 /** 嵌在編輯器裡的工具交回去的成品：preview 是工作解析度、馬上就能換上的那張；
     bake 是存檔時才跑的原尺寸版本（拿原尺寸的來源圖重播同一組操作） */
-export type StudioResult = { preview: HTMLCanvasElement; bake: (fullSrc: string) => Promise<string | null> };
+export type StudioResult = { preview: HTMLCanvasElement; bake: (fullSrc: string) => Promise<string | null>; session?: string };
 
 /** 把一組美顏操作重播在任一張圖上（sessionW 是當初操作時的工作寬度，座標照比例換算） */
 export async function renderBeautyOn(src: string, ops: Op[], count: number, sessionW: number): Promise<string | null> {
@@ -157,6 +163,9 @@ function replayOps(
       for (let j = 0; j < op.pts.length; j += 2) {
         wrinkleDab(base, W, H, op.pts[j] * k, op.pts[j + 1] * k, op.r * k, op.amount);
       }
+    } else if (op.k === 'stroke') {
+      const L = new StrokeLayer(base.data, W, H, op.kind, op.r * k, null);
+      for (let j = 0; j < op.pts.length; j += 2) L.stamp(op.pts[j] * k, op.pts[j + 1] * k, op.r * k, op.strength, STROKE_INNER[op.kind]);
     } else if (op.k === 'liquify') {
       for (let j = 0; j < op.pts.length; j += 4) {
         liquifyDab(field, op.pts[j] * k, op.pts[j + 1] * k, op.pts[j + 2] * k, op.pts[j + 3] * k,
@@ -182,13 +191,13 @@ const unionRect = (a: Rect | null, b: Rect): Rect => {
 };
 
 export const BeautyStudio: React.FC<BeautyStudioProps> = ({
-  imageSrc, onCancel, onHome, onRequestExit, onImportNew, onSendToEditor, initialState, embedded,
+  imageSrc, onCancel, onHome, onRequestExit, onImportNew, onSendToEditor, initialState, embedded, align,
 }) => {
   const initialOpsCountRef = useRef(Array.isArray(initialState?.ops) ? initialState!.ops!.length : 0);
   const [tool, setTool] = useState<BeautyTool>('blemish');
   const [brush, setBrush] = useState<Record<string, number>>({ ...DEFAULT_BRUSH });
   // 力度分工具記錄。共用一個值的話，液化套用預設會連帶改掉去皺的力度。
-  const [forceMap, setForceMap] = useState<Record<string, number>>({ wrinkle: 70, liquify: 10 });
+  const [forceMap, setForceMap] = useState<Record<string, number>>({ wrinkle: 30, smooth: 60, liquify: 10 });
   const force = forceMap[tool] ?? 70;
   const setForce = (v: number) => setForceMap(m => ({ ...m, [tool]: v }));
   const [lqPreset, setLqPreset] = useState<LqPreset>('slim');
@@ -216,6 +225,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
   const viewRef = useRef<HTMLCanvasElement>(null);
   const sessionRef = useRef<Session | null>(null);
+  /** 嵌在編輯器裡：這一次掛上來的代號，跟最後一次交出去時做到哪一步（見 takeResult） */
+  const sessionIdRef = useRef(`beauty-${Math.random().toString(36).slice(2)}`);
+  const committedSigRef = useRef('');
   const warpBufRef = useRef<ImageData | null>(null);
 
   // 指標事件處理器需要最新參數但不該因參數變動而重建，用 ref 鏡射
@@ -226,6 +238,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   // 這樣每一個筆刷點就不必各自做兩次 ImageData 快照，快速拖動才不會卡。
   const strokeSrcRef = useRef<Uint8ClampedArray | null>(null);
   const strokeAlphaRef = useRef<Float32Array | null>(null);
+  /** 去皺／磨皮這一筆的引擎（見 utils/beauty/strokeFilter） */
+  const strokeLayerRef = useRef<{ layer: StrokeLayer; kind: StrokeKind; R: number; strength: number } | null>(null);
+  /** 磨皮的目標層跨筆共用（跟筆刷大小無關），像素被改到的地方才作廢；選到磨皮時閒置先算好 */
+  const smoothTargetsRef = useRef(new Map<number, Uint8ClampedArray>());
   const strokeUnionRef = useRef<Rect | null>(null);
   const strokePtsRef = useRef<number[]>([]);
 
@@ -382,6 +398,13 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
   const pushOp = useCallback((op: Op) => {
     const s = sessionRef.current!;
+    // 像素被改到的地方，磨皮先算好的目標層就不能再用了
+    if (op.k === 'heal') smoothInvalidate(smoothTargetsRef.current, s.W, s.H, healRect(op.x, op.y, op.r));
+    else if (op.k !== 'liquify' && op.pts.length) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let j = 0; j < op.pts.length; j += 2) { x0 = Math.min(x0, op.pts[j]); x1 = Math.max(x1, op.pts[j]); y0 = Math.min(y0, op.pts[j + 1]); y1 = Math.max(y1, op.pts[j + 1]); }
+      smoothInvalidate(smoothTargetsRef.current, s.W, s.H, { x: Math.floor(x0 - op.r - 2), y: Math.floor(y0 - op.r - 2), w: Math.ceil(x1 - x0 + op.r * 2 + 4), h: Math.ceil(y1 - y0 + op.r * 2 + 4) });
+    }
     s.ops.length = s.opsApplied;   // 撤銷後又有新動作，就把被撤銷的部分丟掉
     s.ops.push(op);
     s.opsApplied++;
@@ -392,6 +415,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     const s = sessionRef.current;
     if (!s || s.opsApplied <= 0) return;
     s.opsApplied--;
+    smoothTargetsRef.current.clear();
     rebuild();
     syncHist();
   }, [rebuild, syncHist]);
@@ -400,6 +424,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     const s = sessionRef.current;
     if (!s || s.opsApplied >= s.ops.length) return;
     s.opsApplied++;
+    smoothTargetsRef.current.clear();
     rebuild();
     syncHist();
   }, [rebuild, syncHist]);
@@ -523,10 +548,11 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       return r;
     }
 
-    // 去皺
-    const pr = wrinkleRect(s.W, s.H, bx, by, R);
+    // 去皺、磨皮：只畫覆蓋遮罩，混合成目標層（每一點的成本跟筆刷大小無關，也不會越塗越重）
+    const L = strokeLayerRef.current;
+    if (!L) return null;
+    const pr = L.layer.stamp(bx, by, L.R, L.strength, STROKE_INNER[L.kind]);
     if (!pr) return null;
-    wrinkleDab(s.base, s.W, s.H, bx, by, R, c.force / 100 * 0.55);
     strokePtsRef.current.push(bx, by);
     strokeUnionRef.current = unionRect(strokeUnionRef.current, pr);
     return pr;
@@ -556,12 +582,13 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       s.lq.data.set(lqBeforeRef.current);
       recomputeLiquifyMax(s.lq);
       render();
-    } else if ((c.tool === 'wrinkle' || c.tool === 'makeup') && strokeUnionRef.current && strokeSrcRef.current) {
+    } else if ((c.tool === 'wrinkle' || c.tool === 'smooth' || c.tool === 'makeup') && strokeUnionRef.current && strokeSrcRef.current) {
       const r = strokeUnionRef.current;
       restore(r, snapFrom(strokeSrcRef.current, r));
       renderPixelRect(r);
     }
     lqBeforeRef.current = null;
+    strokeLayerRef.current = null;
     strokeUnionRef.current = null;
     strokePtsRef.current = [];
     if (ringTimerRef.current) { clearTimeout(ringTimerRef.current); ringTimerRef.current = null; }
@@ -617,11 +644,19 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       strokePtsRef.current = [];
     } else {
       ensureStrokeBuffers(cfg.current.tool === 'makeup');
+      const t = cfg.current.tool;
+      if (t === 'wrinkle' || t === 'smooth') {
+        const R = brushRadius();
+        strokeLayerRef.current = {
+          layer: new StrokeLayer(s.base.data, s.W, s.H, t, R, strokeSrcRef.current, t === 'smooth' ? smoothTargetsRef.current : undefined),
+          kind: t, R, strength: t === 'wrinkle' ? wrinkleStrength(cfg.current.force) : smoothStrength(cfg.current.force),
+        };
+      }
     }
     const d = downRef.current;
     const r = dab(d ? { x: d.x, y: d.y } : p, 0, 0);
     if (r) renderPixelRect(r);
-  }, [dab, ensureStrokeBuffers, renderPixelRect]);
+  }, [dab, ensureStrokeBuffers, renderPixelRect, brushRadius]);
 
   const handleMove = (e: PointerEvent) => {
     if (!sessionRef.current || isLoading) return;
@@ -762,10 +797,11 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       }
       lqBeforeRef.current = null;
     } else if (strokePtsRef.current.length) {
-      pushOp(c.tool === 'makeup'
-        ? { k: 'makeup', pts: strokePtsRef.current.slice(), r: R, strength: c.intensity / 100, rgb: hexToRgb(c.makeupColor) }
-        : { k: 'wrinkle', pts: strokePtsRef.current.slice(), r: R, amount: c.force / 100 * 0.55 });
+      const L = strokeLayerRef.current;
+      if (c.tool === 'makeup') pushOp({ k: 'makeup', pts: strokePtsRef.current.slice(), r: R, strength: c.intensity / 100, rgb: hexToRgb(c.makeupColor) });
+      else if (L) pushOp({ k: 'stroke', kind: L.kind, pts: strokePtsRef.current.slice(), r: L.R, strength: L.strength });
     }
+    strokeLayerRef.current = null;
 
     strokeUnionRef.current = null;
     strokePtsRef.current = [];
@@ -903,17 +939,27 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
      原尺寸那張留到存檔才算。沒動過就是 null，不換照片。 */
   const takeResult = (): StudioResult | null => {
     const s = sessionRef.current;
-    if (!s || s.opsApplied <= 0) return null;
+    if (!s) return null;
+    /* 交出去之後工具不會重開（照片就是它自己畫出來的那張），所以要記得交到哪一步：
+       沒再動過就回 null，切分頁時不會白白重換一次照片 */
+    const sig = `${s.ops.length}:${s.opsApplied}`;
+    if (sig === committedSigRef.current) return null;
+    if (s.opsApplied <= 0 && committedSigRef.current === '') return null;
+    committedSigRef.current = sig;
     const c = document.createElement('canvas');
     c.width = s.W; c.height = s.H;
     const g = c.getContext('2d')!;
-    if (s.lq.max > 0) {
+    const view = viewRef.current;
+    if (view && view.width === s.W && view.height === s.H && !showOriginal && !paintingRef.current) {
+      // 畫面上那張就是成品（同一個解析度）：直接複製，不用再整張重算液化
+      g.drawImage(view, 0, 0);
+    } else if (s.lq.max > 0) {
       const out = g.createImageData(s.W, s.H);
       warpRegion(s.base, s.W, s.H, s.lq, out, { x: 0, y: 0, w: s.W, h: s.H });
       g.putImageData(out, 0, 0);
     } else g.putImageData(s.base, 0, 0);
     const ops = s.ops.slice(0, s.opsApplied), W = s.W;
-    return { preview: c, bake: (src: string) => renderBeautyOn(src, ops, ops.length, W) };
+    return { preview: c, session: sessionIdRef.current, bake: (src: string) => renderBeautyOn(src, ops, ops.length, W) };
   };
   if (embedded) embedded.commitRef.current = takeResult;
   useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
@@ -959,13 +1005,42 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     </div>
   );
 
+  /* 選到磨皮：趁閒置把整張的目標層一塊一塊先算好，第一筆下去就不用等（從畫面中間往外算） */
+  useEffect(() => {
+    if (tool !== 'smooth' || isLoading) return;
+    const s = sessionRef.current; if (!s) return;
+    const probe = new StrokeLayer(s.base.data, s.W, s.H, 'smooth', 0, null, smoothTargetsRef.current);
+    const nx = probe.tilesX, ny = probe.tilesY, cx = (nx - 1) / 2, cy = (ny - 1) / 2;
+    const order: [number, number][] = [];
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) order.push([x, y]);
+    order.sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy));
+    let i = 0, id = 0, stop = false;
+    const ric = (window as any).requestIdleCallback as ((f: (d: { timeRemaining: () => number }) => void) => number) | undefined;
+    const step = (d?: { timeRemaining: () => number }) => {
+      if (stop) return;
+      const until = performance.now() + Math.min(8, d ? Math.max(2, d.timeRemaining()) : 6);
+      const cur = sessionRef.current; if (!cur) return;
+      // 每次都拿現在的像素（復原／重做會整張換掉）
+      const warm = new StrokeLayer(cur.base.data, cur.W, cur.H, 'smooth', 0, null, smoothTargetsRef.current);
+      // 正在畫的時候不搶（筆刷自己會算需要的那幾塊）
+      while (i < order.length && performance.now() < until && !paintingRef.current) { warm.warmTile(order[i][0], order[i][1]); i++; }
+      if (i < order.length) id = ric ? ric(step) : window.setTimeout(step, 16);
+    };
+    id = ric ? ric(step) : window.setTimeout(step, 16);
+    return () => { stop = true; if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
+  }, [tool, isLoading, canUndo, canRedo]);
+
   const viewport=useStandaloneToolViewport();
+  /* 還在解析（ratio 還沒有）的那一下先相信編輯器給的框：放的是同一張照片 */
+  const ratioNum = ratio ? (() => { const [a, b] = ratio.split('/').map(Number); return a > 0 && b > 0 ? a / b : null; })() : (align ? align.width / align.height : null);
+  const fitPad = useAlignPad(embedded ? align : null, stageRef, ratioNum);
   return (
     <div ref={embedded ? undefined : viewport.ref} data-beauty-embedded={embedded ? '1' : undefined}
       className={embedded ? 'absolute inset-0 bg-[#080808] flex flex-col font-sans text-white overflow-hidden beauty-root'
         : `safe-top relative w-full h-[100dvh] bg-[#080808] z-[60] flex flex-col font-sans text-white overflow-hidden beauty-root ${viewport.standalone?'standalone-tool-viewport':''}`}>
       <style>{`
         ${standaloneToolViewportCSS}
+        ${ALIGN_FILL_CSS}
         .beauty-root {
             -webkit-touch-callout: none;
             -webkit-user-select: none;
@@ -1125,8 +1200,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         }}
       >
         <div
-          className="absolute inset-0 flex items-center justify-center p-4"
-          style={{ transform: `translate(${viewT.tx}px, ${viewT.ty}px) scale(${viewT.k})` }}
+          className={`absolute inset-0 flex items-center justify-center ${fitPad ? 'studio-fit' : 'p-4'}`}
+          style={{ transform: `translate(${viewT.tx}px, ${viewT.ty}px) scale(${viewT.k})`, ...fitPad }}
         >
           <div
             className="relative flex items-center justify-center max-w-full max-h-full"
@@ -1151,7 +1226,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
         {/* 嵌在編輯器裡、還在解析的那一下：先放同一張照片，不要露出一塊黑 */}
         {embedded && isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
+          <div className={`absolute inset-0 flex items-center justify-center pointer-events-none ${fitPad ? 'studio-fit' : 'p-4'}`} style={fitPad || undefined}>
             <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm" draggable={false} />
           </div>
         )}
@@ -1175,6 +1250,23 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           />
         ) : null}
 
+        {/* 嵌在編輯器裡：修容的色票浮在預覽下緣，跟前後對比鍵同一排（不佔下面的工具列） */}
+        {embedded && tool === 'makeup' && (
+          <div data-beauty-swatches className="absolute left-3 right-[60px] bottom-[18px] z-20 flex items-center gap-2.5 overflow-x-auto no-scrollbar py-1 px-0.5"
+            style={{ WebkitMaskImage: 'linear-gradient(90deg,#000 calc(100% - 22px),transparent)', maskImage: 'linear-gradient(90deg,#000 calc(100% - 22px),transparent)' }}>
+            <label title="自選顏色" className="w-7 h-7 rounded-full shrink-0 relative cursor-pointer flex items-center justify-center overflow-hidden shadow-[0_1px_6px_rgba(0,0,0,.65)]"
+              style={{ background: 'conic-gradient(#f43,#fa3,#fd3,#3d6,#3cf,#63f,#f3a,#f43)' }}>
+              <span className="absolute inset-[5px] rounded-full bg-[#080808] flex items-center justify-center"><Icon name="colorize" className="text-[13px] text-white" /></span>
+              <input type="color" value={makeupColor} onChange={e => setMakeupColor(e.target.value)} aria-label="自選顏色" className="absolute inset-0 opacity-0 cursor-pointer" />
+            </label>
+            {LIP_PRESETS.map(c => (
+              <button key={c.hex} onClick={() => setMakeupColor(c.hex)} title={c.name} aria-label={c.name}
+                className="beauty-swatch w-7 h-7 rounded-full shrink-0 shadow-[0_1px_6px_rgba(0,0,0,.65)] ring-1 ring-white/20 transition-transform active:scale-90" style={{ backgroundColor: c.hex }}>
+                {makeupColor.toLowerCase() === c.hex.toLowerCase() && <svg className="beauty-swatch-outline" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="none" stroke="white" strokeWidth="2" /></svg>}
+              </button>
+            ))}
+          </div>
+        )}
         <button
           onPointerDown={(e) => { e.preventDefault(); setShowOriginal(true); }}
           onPointerUp={(e) => {
@@ -1199,6 +1291,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         const sliders: [string, number, number, number, (v: number) => void][] =
           tool === 'blemish' ? [['筆刷', brush.blemish, BRUSH_RANGE.blemish[0], BRUSH_RANGE.blemish[1], v => setBrush(b => ({ ...b, blemish: v }))]]
           : tool === 'wrinkle' ? [['筆刷', brush.wrinkle, BRUSH_RANGE.wrinkle[0], BRUSH_RANGE.wrinkle[1], v => setBrush(b => ({ ...b, wrinkle: v }))], ['力度', force, 10, 100, setForce]]
+          : tool === 'smooth' ? [['筆刷', brush.smooth, BRUSH_RANGE.smooth[0], BRUSH_RANGE.smooth[1], v => setBrush(b => ({ ...b, smooth: v }))], ['力度', force, 10, 100, setForce]]
           : tool === 'liquify' ? [['筆刷', brush.liquify, BRUSH_RANGE.liquify[0], BRUSH_RANGE.liquify[1], v => setBrush(b => ({ ...b, liquify: v }))], ['力度', force, 10, 100, setForce]]
           : [['筆刷', brush.makeup, BRUSH_RANGE.makeup[0], BRUSH_RANGE.makeup[1], v => setBrush(b => ({ ...b, makeup: v }))], ['濃度', Math.round(intensity * 2), 0, 100, v => setIntensity(v / 2)]];
         const two = sliders.length > 1;
@@ -1234,7 +1327,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                   <div className="w-1 h-1 rounded-full mt-0.5 bg-transparent" />
                 </button>
               ))}
-              {(tool === 'liquify' || tool === 'makeup') && <div className="w-[1px] h-8 bg-white/10 mx-2 shrink-0" />}
+              {tool === 'liquify' && <div className="w-[1px] h-8 bg-white/10 mx-2 shrink-0" />}
               {tool === 'liquify' && LIQUIFY_PRESETS.map(m => (
                 <button key={m.id}
                   onClick={() => {
@@ -1246,21 +1339,6 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                   {m.label}
                 </button>
               ))}
-              {tool === 'makeup' && (
-                <>
-                  <label title="自選顏色" className="w-7 h-7 rounded-full shrink-0 relative cursor-pointer ring-1 ring-white/40 flex items-center justify-center overflow-hidden"
-                    style={{ background: 'conic-gradient(#f43,#fa3,#fd3,#3d6,#3cf,#63f,#f3a,#f43)' }}>
-                    <span className="absolute inset-[5px] rounded-full bg-[#080808] flex items-center justify-center"><Icon name="colorize" className="text-[13px] text-white" /></span>
-                    <input type="color" value={makeupColor} onChange={e => setMakeupColor(e.target.value)} aria-label="自選顏色" className="absolute inset-0 opacity-0 cursor-pointer" />
-                  </label>
-                  {LIP_PRESETS.map(c => (
-                    <button key={c.hex} onClick={() => setMakeupColor(c.hex)} title={c.name} aria-label={c.name}
-                      className="beauty-swatch w-7 h-7 rounded-full shrink-0" style={{ backgroundColor: c.hex }}>
-                      {makeupColor.toLowerCase() === c.hex.toLowerCase() && <svg className="beauty-swatch-outline" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="none" stroke="white" strokeWidth="2" /></svg>}
-                    </button>
-                  ))}
-                </>
-              )}
             </div>
           </div>
         );
@@ -1330,6 +1408,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         {tool === 'wrinkle' && (
           <>
             {sliderRow('筆刷', brush.wrinkle, BRUSH_RANGE.wrinkle[0], BRUSH_RANGE.wrinkle[1], (v) => setBrush(b => ({ ...b, wrinkle: v })))}
+            {sliderRow('力度', force, 10, 100, setForce)}
+          </>
+        )}
+        {tool === 'smooth' && (
+          <>
+            {sliderRow('筆刷', brush.smooth, BRUSH_RANGE.smooth[0], BRUSH_RANGE.smooth[1], (v) => setBrush(b => ({ ...b, smooth: v })))}
             {sliderRow('力度', force, 10, 100, setForce)}
           </>
         )}

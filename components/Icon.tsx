@@ -24,6 +24,8 @@ const INLINE: Record<string, string> = {
   /* 虛線：上面一條實線、下面一條虛線 */
   line_style: '<g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M2.5 7.5h19"/><path d="M2.5 16.5h3.5M10.25 16.5h3.5M18 16.5h3.5"/></g>',
   /* 色輪：一個圓（色輪）、一個偏離中心的實心點（調整點），跟 Material 圖示同一種線寬 */
+  /* 磨皮：一個缺了右上角的圓（臉／皮膚），缺口那裡一顆四角星（變光滑），裡面一道很淡的柔和弧線 */
+  skin_smooth: '<g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M14.2 3.8A8.5 8.5 0 1 0 20.2 9.8"/><path d="M8.5 14.2c2 1.7 5 1.7 7 0"/></g><path fill="#fff" d="M18.6 1.6l1 2.4 2.4 1-2.4 1-1 2.4-1-2.4-2.4-1 2.4-1z"/><circle cx="9.3" cy="10" r="1.2" fill="#fff"/><circle cx="14.7" cy="10" r="1.2" fill="#fff"/>',
   grade_wheels: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="14.6" cy="9.4" r="2.4" fill="#fff"/>',
 };
 const maskOf = (body: string) =>

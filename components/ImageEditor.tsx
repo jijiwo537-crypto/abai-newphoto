@@ -236,31 +236,75 @@ const MASK_TYPE_TOOLS: Record<MaskType, ToolDef[]> = {
 };
 const MASK_TYPE_TOOL_LIST = Object.values(MASK_TYPE_TOOLS).flat();
 
-/** 遮色片介面用的線條圖示（專案的 Material 圖示是子集，這幾顆自己畫） */
-const MaskGlyph: React.FC<{ k: string; size?: number }> = ({ k, size = 18 }) => {
-  const a = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
-  switch (k) {
-    case 'plus': return <svg {...a}><path d="M12 5v14M5 12h14" /></svg>;
-    case 'close': return <svg {...a}><path d="M6 6l12 12M18 6L6 18" /></svg>;
-    case 'linear': return <svg {...a}><rect x="4" y="4" width="16" height="16" rx="2.5" /><path d="M4 9.5h16" /><path d="M4 14.5h16" strokeDasharray="2 2.2" /></svg>;
-    case 'radial': return <svg {...a}><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="4" strokeDasharray="2 2" /></svg>;
-    case 'brush': return <svg {...a}><path d="M14.5 4.5l5 5-7.5 7.5-5-5z" /><path d="M7 12.5c-2 0-3 1.5-3 3.2 0 1.6-.7 2.8-1.5 3.3 3.2.6 6.9-.3 7.5-3.5" /></svg>;
-    case 'color': return <svg {...a}><path d="M14.5 5.5l4 4-8.5 8.5H6v-4z" /><path d="M13 4l7 7" /><path d="M4 20l2-2" /></svg>;
-    case 'luma': return <svg {...a}><circle cx="12" cy="12" r="8" /><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor" stroke="none" /></svg>;
-    case 'eye': return <svg {...a}><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="3" /></svg>;
-    case 'eyeoff': return <svg {...a}><path d="M2.5 12S6 5.5 12 5.5c1.6 0 3 .4 4.2 1M21.5 12s-3.5 6.5-9.5 6.5c-1.6 0-3-.4-4.2-1" /><path d="M4 20L20 4" /></svg>;
-    case 'invert': return <svg {...a}><circle cx="12" cy="12" r="8" /><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none" /></svg>;
-    case 'trash': return <svg {...a}><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5" /><path d="M10 11v5M14 11v5" /></svg>;
-    case 'feather': return <svg {...a}><circle cx="12" cy="12" r="3.5" /><circle cx="12" cy="12" r="8" strokeDasharray="1.5 2.5" /></svg>;
-    case 'size': return <svg {...a}><circle cx="9" cy="15" r="4" /><circle cx="15.5" cy="8.5" r="2" /></svg>;
-    case 'flow': return <svg {...a}><path d="M12 3.5s6 6.5 6 10.5a6 6 0 0 1-12 0c0-4 6-10.5 6-10.5z" /></svg>;
-    case 'erase': return <svg {...a}><path d="M8.5 19.5h11" /><path d="M5 15.5l8.5-8.5 5 5-6.5 6.5H8z" /><path d="M9.5 11l5 5" /></svg>;
-    case 'range': return <svg {...a}><path d="M4 8h9M17 8h3M4 16h3M11 16h9" /><circle cx="15" cy="8" r="2" /><circle cx="9" cy="16" r="2" /></svg>;
-    case 'lumlo': return <svg {...a}><path d="M4 18h16" /><path d="M6 18a6 6 0 0 1 12 0" /></svg>;
-    case 'lumhi': return <svg {...a}><circle cx="12" cy="12" r="4" /><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4" /></svg>;
-    case 'clearsamples': return <svg {...a}><path d="M14.5 5.5l4 4-8.5 8.5H6v-4z" /><path d="M16 17l4 4M20 17l-4 4" /></svg>;
-    default: return null;
+/** 遮色片的九個調整套在一段 RGBA 像素上（跟全圖的調節同一套公式：utils/photoToneMath）。
+    整張圖（CPU）跟烤 GPU 查色表（33³ 個格點）都用這一支，兩邊的顏色一模一樣。 */
+const MASK_TONE8 = new Uint8ClampedArray(256);
+function maskTonePixels(data: Uint8ClampedArray, m: MaskSnap) {
+  const len = data.length;
+  const stage = makeToneStage({ exposure: m.maskExposure, brightness: m.maskBrightness, contrast: m.maskContrast,
+    shadows: m.maskShadows, highlights: m.maskHighlights, temp: m.maskTemp, tint: m.maskTint, sat: m.maskSat });
+  const vibVal = (m.maskVib * 0.5 * 2.5) / 100;
+  const hasVib = vibVal !== 0, satK = stage.sat;
+  const c3 = new Float32Array(3);
+  if (!stage.wb && satK === 1 && !hasVib) {
+    const t8 = MASK_TONE8;
+    for (let i = 0; i < 256; i++) { applyToneStage(stage, i, i, i, c3); t8[i] = c3[0]; }
+    for (let i = 0; i < len; i += 4) { data[i] = t8[data[i]]; data[i + 1] = t8[data[i + 1]]; data[i + 2] = t8[data[i + 2]]; }
+    return;
   }
+  const tone = makeToneFast(stage);
+  for (let i = 0; i < len; i += 4) {
+    tone(data[i], data[i + 1], data[i + 2], c3);
+    if (satK !== 1) applySaturation(satK, c3);
+    let r = c3[0], gg = c3[1], b = c3[2];
+    if (hasVib) {
+      const avg = (r + gg + b) * 0.33333;
+      const max = r > gg ? (r > b ? r : b) : (gg > b ? gg : b);
+      const min = r < gg ? (r < b ? r : b) : (gg < b ? gg : b);
+      const curSat = max === 0 ? 0 : (max - min) / max;
+      const b1 = 1 + (vibVal > 0 ? vibVal * (1 - curSat * curSat) : vibVal);
+      r = avg + (r - avg) * b1; gg = avg + (gg - avg) * b1; b = avg + (b - avg) * b1;
+    }
+    data[i] = r; data[i + 1] = gg; data[i + 2] = b;
+  }
+}
+
+/** 遮色片介面用的線條圖示（專案的 Material 圖示是子集，這幾顆自己畫）。
+    畫法跟 Icon 的內嵌圖示一樣：SVG 只當「形狀」（遮罩），顏色用 currentColor 整塊填一次。
+    直接用半透明的顏色畫線的話，線跟線交會、線跟實心塊重疊的地方會疊兩層變白；
+    當遮罩用就只有一層，整顆圖示是均勻、不透明的線條。 */
+const MASK_GLYPH_BODY: Record<string, string> = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  linear: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M4 9.5h16"/><path d="M4 14.5h16" stroke-dasharray="2 2.2"/>',
+  radial: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4" stroke-dasharray="2 2"/>',
+  brush: '<path d="M14.5 4.5l5 5-7.5 7.5-5-5z"/><path d="M7 12.5c-2 0-3 1.5-3 3.2 0 1.6-.7 2.8-1.5 3.3 3.2.6 6.9-.3 7.5-3.5"/>',
+  color: '<path d="M14.5 5.5l4 4-8.5 8.5H6v-4z"/><path d="M13 4l7 7"/><path d="M4 20l2-2"/>',
+  luma: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="#fff" stroke="none"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeoff: '<path d="M2.5 12S6 5.5 12 5.5c1.6 0 3 .4 4.2 1M21.5 12s-3.5 6.5-9.5 6.5c-1.6 0-3-.4-4.2-1"/><path d="M4 20L20 4"/>',
+  invert: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="#fff" stroke="none"/>',
+  trash: '<path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5"/><path d="M10 11v5M14 11v5"/>',
+  feather: '<circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r="8" stroke-dasharray="1.5 2.5"/>',
+  size: '<circle cx="9" cy="15" r="4"/><circle cx="15.5" cy="8.5" r="2"/>',
+  flow: '<path d="M12 3.5s6 6.5 6 10.5a6 6 0 0 1-12 0c0-4 6-10.5 6-10.5z"/>',
+  erase: '<path d="M8.5 19.5h11"/><path d="M5 15.5l8.5-8.5 5 5-6.5 6.5H8z"/><path d="M9.5 11l5 5"/>',
+  range: '<path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/>',
+  lumlo: '<path d="M4 18h16"/><path d="M6 18a6 6 0 0 1 12 0"/>',
+  lumhi: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/>',
+  clearsamples: '<path d="M14.5 5.5l4 4-8.5 8.5H6v-4z"/><path d="M16 17l4 4M20 17l-4 4"/>',
+  /* 收起／展開右邊那一欄 */
+  fold: '<path d="M7 14.5l5-5 5 5"/>',
+  unfold: '<path d="M7 9.5l5 5 5-5"/>',
+  layers: '<path d="M12 4l8.5 4.5L12 13 3.5 8.5z"/><path d="M3.5 12.5L12 17l8.5-4.5"/><path d="M3.5 16.5L12 21l8.5-4.5"/>',
+};
+const MASK_GLYPH_URL: Record<string, string> = Object.fromEntries(Object.entries(MASK_GLYPH_BODY).map(([k, body]) => [k,
+  `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`)}")`]));
+const MaskGlyph: React.FC<{ k: string; size?: number }> = ({ k, size = 18 }) => {
+  const url = MASK_GLYPH_URL[k];
+  if (!url) return null;
+  return <span aria-hidden className="inline-block shrink-0" style={{ width: size, height: size, backgroundColor: 'currentColor',
+    WebkitMaskImage: url, maskImage: url, WebkitMaskSize: '100% 100%', maskSize: '100% 100%', WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat' }} />;
 };
 
 /** 共用「HSL 那個面板外框」的工具：同一個外框、同一個高度，彼此切換時圖片完全不動 */
@@ -1218,6 +1262,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const activeToolIdRef = useRef(activeToolId);
   activeToolIdRef.current = activeToolId;
   const [selectedLutIdx, setSelectedLutIdx] = useState(0);
+  const selectedLutIdxNowRef = useRef(0);
+  selectedLutIdxNowRef.current = selectedLutIdx;
   const [isSoftActive, setIsSoftActive] = useState(false);
   const [isBlurActive, setIsBlurActive] = useState(false);
   const [isGrainActive, setIsGrainActive] = useState(false);
@@ -1960,7 +2006,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   /* ── 遮色片清單：新增、選取、刪除、反轉、顯示紅色範圍 ────────────────────
      選中的那一個住在 params 的 mask* 欄位；換選取時先把它寫回 masks，再把新的那一個攤開。 */
-  const MASK_DEFAULT_TOOL: Record<MaskType, string> = { linear: 'maskBrightness', radial: 'maskBrightness', brush: 'maskBrushSize', color: 'maskColorRange', luma: 'maskLumLo' };
+  /* 下面那一排只放九個調整；遮色片自己的參數（羽化、範圍…）在照片左邊那一欄（點了浮出滑桿） */
+  const MASK_DEFAULT_TOOL: Record<MaskType, string> = { linear: 'maskBrightness', radial: 'maskBrightness', brush: 'maskBrightness', color: 'maskBrightness', luma: 'maskBrightness' };
   const commitMaskParams = (next: EditorParams) => {
     paramsRef.current = next; isDirtyRef.current = true;
     flushParamsSync(); addToHistory(next, selectedLutIdx);
@@ -1993,10 +2040,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const masks = withActiveStored(p);
     if (!masks[i] || i === maskList(p).active) return;
     setMaskPicking(false);
-    // 換到不同種類的遮色片：滑桿換成那一種自己的參數（調整類的照舊）
-    const t = masks[i].maskType;
-    if (!MASK_TOOLS.some(x => x.id === activeToolId) && !MASK_TYPE_TOOLS[t].some(x => x.id === activeToolId)) setActiveToolId(MASK_DEFAULT_TOOL[t]);
-    else if (!masks[i].maskCreated && MASK_TOOLS.some(x => x.id === activeToolId)) setActiveToolId(MASK_DEFAULT_TOOL[t]);
+    if (!MASK_TOOLS.some(x => x.id === activeToolId)) setActiveToolId(MASK_DEFAULT_TOOL[masks[i].maskType]);
     commitMaskParams(loadMask(p, masks[i], masks, i));
   };
   const deleteMask = () => {
@@ -2019,6 +2063,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const toggleMaskInvert = () => commitMaskParams({ ...paramsRef.current, maskInvert: !paramsRef.current.maskInvert });
   const toggleMaskOverlay = () => { const p = paramsRef.current; paramsRef.current = { ...p, maskShowOverlay: !p.maskShowOverlay }; isDirtyRef.current = true; flushParamsSync(); };
   const [maskPicking, setMaskPicking] = useState(false);
+  /** 左邊那一欄目前浮出滑桿的是哪一個參數 */
+  const [maskParamOpen, setMaskParamOpen] = useState<string | null>(null);
+  /** 右邊那一欄收起來了沒 */
+  const [maskRailOpen, setMaskRailOpen] = useState(true);
+  useEffect(() => { setMaskParamOpen(null); }, [activeCategory, params.maskId, params.maskType, maskPicking]);
 
   // Single Canvas for all rendering
   const displayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -2178,6 +2227,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const glowGenRef = useRef(0);
   const glowSerialRef = useRef(0);
   /** 「顏色那一段的輸入是哪一份像素」：照片＋（若有）發光那一組。快取鍵一律用它。 */
+  /** 人像／仿色剛交回來、還在背景編碼的那一張：緩衝區先用暫時的鍵，畫面照樣當作是這張照片 */
+  const bufferAliasRef = useRef<{ key: string; for: string } | null>(null);
   const srcIdent = () => srcIdOf(buffersSrcRef.current) + (glowGenRef.current ? `|g${glowGenRef.current}` : '');
   /** 緩衝區換人了。縮圖那兩支 effect 靠這個知道「可以重算了」——
       連結中的照片參數一模一樣，光看 params 是看不出換過照片的。 */
@@ -2587,13 +2638,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const maskPaintingRef = useRef(false);
   /* 即時疊層用比較小的解析度（長邊最多 1100）：拖曳中每一格只要挖這張，手機上才跟得上手指；
      放手後整條管線用原解析度重畫一次 */
-  const paintMaskLive = (m: MaskSnap, w0: number, h0: number) => {
+  const paintMaskLive = (m: MaskSnap) => {
     const el = maskLiveCanvasRef.current, adj = maskLiveAdjRef.current; if (!el || !adj) return;
-    const k = Math.min(1, 1100 / Math.max(w0, h0));
-    const w = Math.max(1, Math.round(w0 * k)), h = Math.max(1, Math.round(h0 * k));
+    const w = adj.width, h = adj.height;
     if (el.width !== w || el.height !== h) { el.width = w; el.height = h; }
     const al = maskLiveAlphaRef.current ??= document.createElement('canvas');
-    maskAlpha(al, maskCacheId(m), m, w, h, null, '');
+    // 顏色／明度範圍看的是拖曳開始時那張畫面（pre），拖的時候用縮小的那張算選取
+    maskAlpha(al, maskCacheId(m), m, w, h, maskLivePreRef.current, `live|${maskLivePreKeyRef.current}`, true);
     const g = el.getContext('2d')!;
     g.globalCompositeOperation = 'copy'; g.drawImage(adj, 0, 0, w, h);
     g.globalCompositeOperation = 'destination-in'; g.drawImage(al, 0, 0);
@@ -2606,7 +2657,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const el = maskLiveCanvasRef.current;
     const adj = maskLiveAdjRef.current;
     if (!maskLiveRef.current || !el || !adj) return false;
-    paintMaskLive(snapOf(p), adj.width, adj.height);
+    paintMaskLive(snapOf(p));
     return true;
   };
   const hideMaskLive = () => {
@@ -2620,34 +2671,58 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const g = dst.getContext('2d', { willReadFrequently: true })!;
     g.globalCompositeOperation = 'copy'; g.drawImage(src, 0, 0); g.globalCompositeOperation = 'source-over';
     const imgData = g.getImageData(0, 0, w, h);
-    const data = imgData.data, len = data.length;
-    const stage = makeToneStage({ exposure: m.maskExposure, brightness: m.maskBrightness, contrast: m.maskContrast,
-      shadows: m.maskShadows, highlights: m.maskHighlights, temp: m.maskTemp, tint: m.maskTint, sat: m.maskSat });
-    const vibVal = (m.maskVib * 0.5 * 2.5) / 100;
-    const hasVib = vibVal !== 0, satK = stage.sat;
-    const c3 = new Float32Array(3);
-    if (!stage.wb && satK === 1 && !hasVib) {
-      const t8 = maskTone8Ref.current;
-      for (let i = 0; i < 256; i++) { applyToneStage(stage, i, i, i, c3); t8[i] = c3[0]; }
-      for (let i = 0; i < len; i += 4) { data[i] = t8[data[i]]; data[i + 1] = t8[data[i + 1]]; data[i + 2] = t8[data[i + 2]]; }
-    } else {
-      const tone = makeToneFast(stage);
-      for (let i = 0; i < len; i += 4) {
-        tone(data[i], data[i + 1], data[i + 2], c3);
-        if (satK !== 1) applySaturation(satK, c3);
-        let r = c3[0], gg = c3[1], b = c3[2];
-        if (hasVib) {
-          const avg = (r + gg + b) * 0.33333;
-          const max = r > gg ? (r > b ? r : b) : (gg > b ? gg : b);
-          const min = r < gg ? (r < b ? r : b) : (gg < b ? gg : b);
-          const curSat = max === 0 ? 0 : (max - min) / max;
-          const b1 = 1 + (vibVal > 0 ? vibVal * (1 - curSat * curSat) : vibVal);
-          r = avg + (r - avg) * b1; gg = avg + (gg - avg) * b1; b = avg + (b - avg) * b1;
-        }
-        data[i] = r; data[i + 1] = gg; data[i + 2] = b;
-      }
-    }
+    maskTonePixels(imgData.data, m);
     g.putImageData(imgData, 0, 0);
+  };
+  /* ── 即時疊層（拖遮色片形狀、刷筆刷、拖任何一根遮色片滑桿）──────────────────
+     底下的主畫布先畫好「選中這一個以外」的樣子，選中這一個的結果畫在上面那張畫布：
+       pre ：這一次拖曳開始時的畫面（縮成長邊 1100），整段拖曳都不會變；
+       adj ：pre 套上選中這一個的調整（GPU 一次查表：調整先烤成 33³ 的查色表，
+             跟 CPU 同一支公式；沒有 GPU 才在縮小的 pre 上用 CPU 算）；
+       上面那張 ＝ adj 用目前的選取範圍挖出來。
+     所以拖滑桿的每一格只有：烤一顆小表＋一次 GPU 查表＋幾次 2D 合成，整條管線一次都不重跑；
+     拖範圍類的滑桿（範圍、平滑、羽化…）連表都不用烤，只重算選取範圍。 */
+  const MASK_LIVE_MAX = 1100;
+  const maskLivePreRef = useRef<HTMLCanvasElement | null>(null);
+  const maskLivePreKeyRef = useRef('');
+  const maskGpuRef = useRef<LutGpu | null | undefined>(undefined);
+  const maskGpuSrcRef = useRef('');
+  /** 正在拖遮色片的滑桿（走即時疊層）；maskRangeDrag：拖的是遮色片自己的參數（範圍、羽化…）→ 紅色遮罩跟著即時變 */
+  const maskSliderLiveRef = useRef(false);
+  const maskRangeDragRef = useRef(false);
+  const liveAdjust = (m: MaskSnap, overlay: boolean) => {
+    const pre = maskLivePreRef.current; if (!pre) return;
+    const la = maskLiveAdjRef.current ??= document.createElement('canvas');
+    if (la.width !== pre.width || la.height !== pre.height) { la.width = pre.width; la.height = pre.height; maskLiveKeyRef.current = ''; }
+    const key = `${maskLivePreKeyRef.current}|${overlay ? 1 : 0}|${MASK_ADJ_KEYS.map(k => (m as any)[k]).join(',')}`;
+    if (maskLiveKeyRef.current === key) return;
+    const lg = la.getContext('2d')!;
+    if (hasMaskAdj(m)) {
+      let done = false;
+      if (maskGpuRef.current === undefined) maskGpuRef.current = LutGpu.create();
+      const gpu = maskGpuRef.current;
+      if (gpu && !gpu.lost && gpu.fits(pre.width, pre.height)) {
+        const sk = `${maskLivePreKeyRef.current}|${pre.width}x${pre.height}`;
+        if (maskGpuSrcRef.current !== sk && gpu.setSourceImage(pre, pre.width, pre.height)) maskGpuSrcRef.current = sk;
+        if (maskGpuSrcRef.current === sk) {
+          const tex = bakedToTexture(bakeColorLut((src, dst) => { dst.set(src); maskTonePixels(dst, m); }, 33));
+          const out = gpu.setLut(tex, 33) ? gpu.draw() : null;
+          if (out) { lg.globalCompositeOperation = 'copy'; lg.drawImage(out, 0, 0); lg.globalCompositeOperation = 'source-over'; done = true; }
+        }
+      }
+      if (!done) adjustMaskInto(la, pre, m, pre.width, pre.height);
+    } else { lg.globalCompositeOperation = 'copy'; lg.fillStyle = 'rgba(0,0,0,0)'; lg.fillRect(0, 0, la.width, la.height); lg.globalCompositeOperation = 'source-over'; }
+    if (overlay) { lg.fillStyle = 'rgba(220,38,38,0.5)'; lg.fillRect(0, 0, la.width, la.height); }
+    maskLiveKeyRef.current = key;
+  };
+  /** 拖滑桿的每一格：疊層已經掛著就只更新疊層（不跑管線）。回傳 false 代表還沒掛好，照舊整條重畫 */
+  const maskLiveFrame = (p: EditorParams, overlay: boolean) => {
+    if (!maskLiveRef.current || !maskLivePreRef.current) return false;
+    const m = snapOf(p);
+    if (!m.maskCreated) return false;
+    liveAdjust(m, overlay);
+    paintMaskLive(m);
+    return true;
   };
   /* 拖遮色片滑桿時留下來的底圖（顏色鏈與特效都跑完、還沒上遮色片的樣子）。
      那一整段時間它完全不會變，所以只從主畫布回讀一次。
@@ -4701,16 +4776,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
     // 9. 遮色片（可以好幾個、五種，見 utils/masks）
     // 紅色遮罩只是編輯時看得到遮色片範圍用的輔助顯示，烘焙（導出、縮圖）出來的圖片絕對不能有它。
-    const showOverlay = !baking && p.maskShowOverlay && activeCategory === 'mask' && !(isInteracting && !activeDragRef.current && !maskPaintingRef.current);
+    /* 拖遮色片自己的參數（範圍、平滑、羽化…）時，紅色遮罩一定顯示、而且跟著滑桿即時變：那正是使用者要看的東西。
+       拖九個調整時照舊收起來，才看得到調出來的樣子。 */
+    const showOverlay = !baking && activeCategory === 'mask'
+      && (maskRangeDragRef.current || (!!p.maskShowOverlay && !(isInteracting && !activeDragRef.current && !maskPaintingRef.current)));
     const { list: maskItems, active: maskAct } = maskList(p);
     const actMask = maskItems[maskAct];
     /* 拖遮色片形狀（建立／移動／拉長／旋轉）或刷筆刷時走「即時疊層」：底下的畫布先套好其他遮色片，
        選中的這一個「調整後的整張圖」算一次放在上面那張畫布，之後每一次移動只重畫選取範圍
        （幾次 GPU 的 2D 合成），整條管線一次都不用重跑。後面還有 GLSL 特效時特效要吃遮色片的結果，不能這樣疊。 */
-    const maskLive = (!!activeDragRef.current || maskPaintingRef.current) && !baking && ctx.canvas === displayCanvasRef.current
+    const sliderLive = maskSliderLiveRef.current;
+    const maskLive = (!!activeDragRef.current || maskPaintingRef.current || sliderLive) && !baking && ctx.canvas === displayCanvasRef.current
       && !!maskLiveCanvasRef.current && !hasActiveFx(p) && !!actMask?.maskCreated
-      && (actMask.maskType === 'linear' || actMask.maskType === 'radial' || actMask.maskType === 'brush')
-      && (hasMaskAdj(actMask) || showOverlay);
+      && (sliderLive || actMask.maskType === 'linear' || actMask.maskType === 'radial' || actMask.maskType === 'brush')
+      && (sliderLive || hasMaskAdj(actMask) || showOverlay);
     if (!maskLive && maskLiveRef.current && ctx.canvas === displayCanvasRef.current && !baking) hideMaskLive();
     const maskWork = maskItems.some((m, i) => m.maskCreated && (hasMaskAdj(m) || (i === maskAct && showOverlay)));
     if (maskWork) {
@@ -4785,18 +4864,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         applyOne(m);
       });
       if (maskLive && actMask) {
-        // 這一次拖曳／刷的第一格才算「調整後的整張圖」，之後每一格只換選取範圍
-        const key = `${w}x${h}|${showOverlay ? 1 : 0}|${MASK_ADJ_KEYS.map(k => (actMask as any)[k]).join(',')}`;
-        if (maskLiveKeyRef.current !== key) {
-          const la = maskLiveAdjRef.current ??= sc();
-          if (la.width !== w || la.height !== h) { la.width = w; la.height = h; }
-          const lg = la.getContext('2d')!;
-          if (hasMaskAdj(actMask)) adjustMaskInto(la, ctx.canvas, actMask, w, h);
-          else { lg.globalCompositeOperation = 'copy'; lg.fillStyle = 'rgba(0,0,0,0)'; lg.fillRect(0, 0, w, h); lg.globalCompositeOperation = 'source-over'; }
-          if (showOverlay) { lg.fillStyle = 'rgba(220,38,38,0.5)'; lg.fillRect(0, 0, w, h); }
-          maskLiveKeyRef.current = key;
+        // 這一次拖曳／刷的第一格：把「選中這一個以外都畫好」的畫面縮小留一份當 pre，之後每一格只動上面那張
+        const lw = Math.max(1, Math.round(w * Math.min(1, MASK_LIVE_MAX / Math.max(w, h))));
+        const lh = Math.max(1, Math.round(h * Math.min(1, MASK_LIVE_MAX / Math.max(w, h))));
+        const preKey = `${w}x${h}|${srcIdent()}|${selectedLutIdx}|${JSON.stringify(Object.entries(p).filter(([k]) => !k.startsWith('mask')))}|${JSON.stringify(maskItems.filter((_, i) => i !== maskAct))}`;
+        const pre = maskLivePreRef.current ??= sc();
+        if (maskLivePreKeyRef.current !== preKey || pre.width !== lw || pre.height !== lh) {
+          if (pre.width !== lw || pre.height !== lh) { pre.width = lw; pre.height = lh; }
+          const pg = pre.getContext('2d')!;
+          pg.globalCompositeOperation = 'copy'; pg.imageSmoothingQuality = 'high'; pg.drawImage(ctx.canvas, 0, 0, lw, lh); pg.globalCompositeOperation = 'source-over';
+          maskLivePreKeyRef.current = preKey;
+          maskLiveKeyRef.current = '';
         }
-        paintMaskLive(actMask, w, h);
+        liveAdjust(actMask, showOverlay);
+        paintMaskLive(actMask);
       } else if (showOverlay && actMask?.maskCreated) {
         // 紅色輔助：選中的那一個的範圍，蓋在最上面
         alphaOf(actMask);
@@ -6124,7 +6205,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         }
         // 換照片時，新圖還在解碼，緩衝區裡裝的還是上一張 —— 這時候畫出去就是舊照片。
         // 等緩衝區換成現在這一張再畫。
-        const buffersReady = buffersSrcRef.current === activeSrcRef.current;
+        const alias = bufferAliasRef.current;
+        const buffersReady = buffersSrcRef.current === activeSrcRef.current
+          || (!!alias && alias.key === buffersSrcRef.current && alias.for === activeSrcRef.current);
         if (cvs && b && b.source && b.dest && buffersReady) {
             const currentParams = paramsRef.current;
             const currentShowOriginal = showOriginalRef.current;
@@ -6170,6 +6253,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 rafId = requestAnimationFrame(tick);
                 return;
             }
+            /* 拖遮色片滑桿、即時疊層已經掛好：每一格都由疊層自己畫，管線不重跑（放手時會補一次完整的） */
+            if (isDirtyRef.current && !flipped && maskSliderLiveRef.current && maskLiveRef.current) isDirtyRef.current = false;
             if (isDirtyRef.current || flipped) {
                 const elapsed = now - lastRenderTimeRef.current;
 
@@ -6403,7 +6488,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      （存檔、輸出、IG 預覽）時才依序烤出來。這樣合併後不管點什麼都跟沒合併一樣快。
      key 是合併後那張預覽圖的網址；input 是合併前那張（可能也是待辦，會一路往前接）。 */
   /* bake：人像／仿色換上來的預覽尺寸照片，原尺寸那張由那個工具自己重播（見 installStudioResult） */
-  const fullJobsRef = useRef<Record<string, { input: string; snap?: BatchSnap; bake?: (fullSrc: string) => Promise<string | null>; run?: Promise<string> }>>({});
+  const fullJobsRef = useRef<Record<string, { input: string; snap?: BatchSnap; bake?: (fullSrc: string) => Promise<string | null>; run?: Promise<string>; session?: string }>>({});
   const resolveFullSrc = (u: string): Promise<string> => {
     const job = fullJobsRef.current[u];
     if (!job) return Promise.resolve(u);
@@ -6836,6 +6921,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setSaveState('processing');
     setTimeout(async () => {
         try {
+            // 人像／仿色剛交回來的那張還在背景編碼：先等它換進來源清單
+            await studioInstallRef.current;
             // 其他照片還在背景合併時先等它做完（最多 20 秒），存的才會是合併後的
             for (let w = 0; w < 200 && (mergeOthersPendingRef.current || mergingRef.current); w++) await new Promise(r => setTimeout(r, 100));
             // 先把現在畫面上這一份收回去，共用的那一份才會是最新的 ——
@@ -6941,6 +7028,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const previewBoxRef = useRef<HTMLDivElement>(null);
   const [previewBoxSize, setPreviewBoxSize] = useState({ width: 0, height: 0 });
   const [previewLayoutReady, setPreviewLayoutReady] = useState(false);
+  /* 預覽區在螢幕上的實際位置（不四捨五入）：構圖、人像、仿色要把圖放在跟編輯器一模一樣的像素上 */
+  const [previewBoxClient, setPreviewBoxClient] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
   /* 以預覽區「實際剩餘尺寸」限制圖片，而不是用 100vh 猜工具列高度。
      這樣超長直圖也一定完整落在上下安全距離內，不會被底欄或頂欄裁掉。 */
@@ -6953,6 +7042,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const measure = () => {
       const rect = box.getBoundingClientRect();
       const next = { width: Math.round(rect.width), height: Math.round(rect.height) };
+      setPreviewBoxClient(prev => prev && prev.left === rect.left && prev.top === rect.top && prev.width === rect.width && prev.height === rect.height
+        ? prev : { left: rect.left, top: rect.top, width: rect.width, height: rect.height });
       if (next.width === lastW && next.height === lastH) return;
       lastW = next.width;
       lastH = next.height;
@@ -7048,6 +7139,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     };
   }, [previewAspect, previewBoxSize, hslFitNow]);
 
+  /* 一般狀態（沒有 HSL／色輪面板）下預覽圖在螢幕上的框。構圖、人像、仿色照這個框擺圖，
+     切過去時圖片連半個像素都不會動 */
+  const previewAlign = useMemo(() => {
+    if (!previewAspect || !previewBoxClient || !previewBoxSize.width || !previewBoxSize.height) return null;
+    const maxW = Math.max(1, previewBoxSize.width - 32), maxH = Math.max(1, previewBoxSize.height - 32);
+    const scale = Math.min(maxW / previewAspect.w, maxH / previewAspect.h);
+    const width = Math.max(1, Math.round(previewAspect.w * scale)), height = Math.max(1, Math.round(previewAspect.h * scale));
+    const b = previewBoxClient;
+    return { left: b.left + (b.width - width) / 2, top: b.top + (b.height - height) / 2, width, height };
+  }, [previewAspect, previewBoxSize, previewBoxClient]);
+
   /* 進出 HSL／色輪時圖片縮放的過場：以前直接對寬、高、下邊距做 CSS transition，
      260ms 裡每一幀都重新排版，畫布的 ResizeObserver 也每一幀都回報 → 整個編輯器
      每一幀 render 一次，手機上就是偶爾卡一下。改成 FLIP：尺寸一次到位（只排版、
@@ -7103,46 +7205,81 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 換上工具交回來的預覽尺寸成品：跟「合併」同一招 —— 像素直接裝進緩衝區、當場換好，
      原尺寸那張記成待辦（存檔時才由那個工具重播）。濾鏡、調節這些參數不動，照樣疊在上面。
      所以按「完成」或切去別的分頁都是立刻的，不用等算圖。 */
+  /* 兩段：
+     一、按下去的這一拍：像素直接裝進緩衝區（暫用一個代號當鍵），畫面當場就是新的；
+     二、背景把它編成 JPEG（toBlob 不擋主執行緒，toDataURL 同步要兩三百毫秒 —— 就是以前切分頁卡一下的元兇），
+        好了才把來源清單換成那個網址。存檔會先等這一段做完。 */
+  const studioInstallRef = useRef<Promise<void>>(Promise.resolve());
+  /** 每個工具（beauty／match）這一次掛上來最後交出去的那張（工具看到自己交出去的照片回來，不用重開） */
+  const studioLastOutRef = useRef<Record<string, string>>({});
+  const pendingKeySeqRef = useRef(0);
   const installStudioResult = (res: StudioResult) => {
     const i = safeIdxRef.current;
-    const cur = srcListRef.current;
-    const input = cur[i];
     const cvs = res.preview;
-    let url = '';
-    try { url = cvs.toDataURL('image/jpeg', 0.95); } catch { url = ''; }
-    if (url.length < 64) return;
-    fullJobsRef.current[url] = { input, bake: res.bake };
-    thumbOriginRef.current[url] = thumbSrcOf(input);
+    const was = srcListRef.current[i];
+    const pend = `${was}#studio${++pendingKeySeqRef.current}`;
+    const prevJob = fullJobsRef.current[was];
+    // 同一個工具連續交好幾次：原尺寸那張永遠從這個工具一開始拿到的那張重播，不會重複套
+    const input = res.session && prevJob?.session === res.session ? prevJob.input : was;
+    thumbOriginRef.current[pend] = thumbSrcOf(input);
     const g = geoRef.current;
     const src: CanvasImageSource = isGeoIdentity(g) ? cvs : composeCanvas(cvs, cvs.width, cvs.height, g, 2400);
     const w = isGeoIdentity(g) ? cvs.width : (src as HTMLCanvasElement).width;
     const h = isGeoIdentity(g) ? cvs.height : (src as HTMLCanvasElement).height;
     lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, selectedLutIdx: -1 } as any;
     lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
-    buildBuffersFromRef.current(src, w, h, false, url);
+    bufferAliasRef.current = { key: pend, for: was };
+    buildBuffersFromRef.current(src, w, h, false, pend);
     tapFastRef.current = true; isDirtyRef.current = true;
-    const next = [...cur]; next[i] = url;
-    preinstalledSrcRef.current = url;
-    srcListRef.current = next;
-    swapToSrc(next);
-    loadImg(url).then(im => {
-      rememberDecoded(url, im);
-      if (srcListRef.current[safeIdxRef.current] === url) originalImgRef.current = im;
-    }).catch(() => {});
-    addToHistory(paramsRef.current, selectedLutIdx);
+    const before = studioInstallRef.current;
+    studioInstallRef.current = (async () => {
+      await before;
+      const blob = await new Promise<Blob | null>(r => { try { cvs.toBlob(r, 'image/jpeg', 0.95); } catch { r(null); } });
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      mergedUrlsRef.current.push(url);
+      fullJobsRef.current[url] = { input, bake: res.bake, session: res.session };
+      thumbOriginRef.current[url] = thumbSrcOf(input);
+      const kind = res.session?.split('-')[0];
+      if (kind) studioLastOutRef.current[kind] = url;
+      const cur = srcListRef.current;
+      if (cur[i] !== was) return;          // 這段時間照片被換掉了（復原、換別張）：這次就作廢
+      const next = [...cur]; next[i] = url;
+      srcListRef.current = next;
+      if (safeIdxRef.current === i && buffersSrcRef.current === pend) {
+        // 同一批像素換個名字而已：GPU 那邊認的編號沿用，不用再上傳一次整張貼圖
+        SRC_IDS.set(url, srcIdOf(pend));
+        buffersSrcRef.current = url;
+        bufferAliasRef.current = null;
+        preinstalledSrcRef.current = url;
+        swapToSrc(next);
+      } else setSrcList(next);
+      loadImg(url).then(im => {
+        rememberDecoded(url, im);
+        if (srcListRef.current[safeIdxRef.current] === url) originalImgRef.current = im;
+      }).catch(() => {});
+      addToHistory(paramsRef.current, selectedLutIdxNowRef.current);
+    })().catch(() => {});
   };
   const studioPrevRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
   const [matchRefSrc, setMatchRefSrc] = useState<string | null>(null);
   const matchRefInputRef = useRef<HTMLInputElement>(null);
   /* 取消＝丟掉這次在工具裡畫的東西：工具一直掛著（進出才會是立刻的），所以換一個新的 */
-  const [studioGen, setStudioGen] = useState(0);
+  const [studioGen, setStudioGen] = useState({ beauty: 0, match: 0 });
   const backFromStudio = () => {
     const { cat, tool } = studioPrevRef.current;
     setActiveCategory(cat); setActiveToolId(tool);
   };
   const studioActs = useRef({ done: (_r: StudioResult | null) => {}, cancel: () => {} });
   studioActs.current.done = (r) => { if (r) installStudioResult(r); backFromStudio(); };
-  studioActs.current.cancel = () => { setStudioGen(g => g + 1); backFromStudio(); };
+  studioActs.current.cancel = () => {
+    const k = activeCategory === 'match' ? 'match' : 'beauty';
+    // 取消＝這個工具從現在這張照片重新開始（之前交出去的已經是照片的一部分了）
+    delete studioLastOutRef.current[k];
+    setStudioSrc(v => ({ ...v, [k]: activeSrc }));
+    setStudioGen(g => ({ ...g, [k]: g[k] + 1 }));
+    backFromStudio();
+  };
   /* 傳給工具的東西都要固定不變：工具一直掛在後面，編輯器每 render 一次它就跟著 render 的話會拖慢編輯器 */
   const studioEmbed = useMemo(() => ({
     commitRef: studioCommitRef,
@@ -7165,15 +7302,43 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const id = ric ? ric(() => setStudiosWarm(true), { timeout: 1500 }) : window.setTimeout(() => setStudiosWarm(true), 600);
     return () => { if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
   }, [fullTabs, studiosWarm, isEditorLoading]);
+  /* 人像／仿色拿到的對齊框：構圖改過比例的話它們顯示的是原圖，比例對不上就自己置中（studioAlign 會判斷） */
+  const studioAlign = useMemo(() => previewAlign,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [previewAlign?.left, previewAlign?.top, previewAlign?.width, previewAlign?.height]);
+  /* 兩個工具各自記得自己是拿哪一張照片開的。照片換成「它自己剛交出去的那張」時不用重開
+     （工具裡的狀態本來就是那張）；被別的東西換掉（換照片、復原、另一個工具交圖）才重開 ——
+     而且是藏在後面時等閒下來才重開，不會跟使用者正在做的事搶主執行緒。 */
+  const [studioSrc, setStudioSrc] = useState<{ beauty: string; match: string }>(() => ({ beauty: activeSrc, match: activeSrc }));
+  const studioWant = (k: 'beauty' | 'match') =>
+    studioSrc[k] === activeSrc || studioLastOutRef.current[k] === activeSrc ? studioSrc[k] : activeSrc;
+  const beautySrc = activeCategory === 'beauty' ? studioWant('beauty') : studioSrc.beauty;
+  const matchSrc = activeCategory === 'match' ? studioWant('match') : studioSrc.match;
+  useEffect(() => {
+    const stale = (['beauty', 'match'] as const).filter(k => studioWant(k) !== studioSrc[k]);
+    if (!stale.length) return;
+    const apply = (ks: readonly ('beauty' | 'match')[]) => setStudioSrc(v => {
+      const n = { ...v };
+      for (const k of ks) { n[k] = activeSrc; delete studioLastOutRef.current[k]; }
+      return n;
+    });
+    const now = stale.filter(k => k === activeCategory), later = stale.filter(k => k !== activeCategory);
+    if (now.length) apply(now);
+    if (!later.length) return;
+    const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
+    const id = ric ? ric(() => apply(later), { timeout: 3000 }) : window.setTimeout(() => apply(later), 800);
+    return () => { if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSrc, activeCategory, studioSrc]);
   const beautyEl = useMemo(() => (
-    <BeautyStudio key={`beauty-${activeSrc}-${studioGen}`} imageSrc={activeSrc} embedded={studioEmbed}
+    <BeautyStudio key={`beauty-${beautySrc}-${studioGen.beauty}`} imageSrc={beautySrc} embedded={studioEmbed} align={studioAlign}
       onCancel={studioNoop} onHome={studioNoop} onImportNew={studioNoop} onSendToEditor={studioNoop} />
-  ), [activeSrc, studioGen, studioEmbed, studioNoop]);
+  ), [beautySrc, studioGen.beauty, studioEmbed, studioNoop, studioAlign]);
   const matchEl = useMemo(() => (
-    <ColorMatchStudio key={`match-${activeSrc}-${studioGen}`} imageSrc={activeSrc} embedded={studioEmbed}
+    <ColorMatchStudio key={`match-${matchSrc}-${studioGen.match}`} imageSrc={matchSrc} embedded={studioEmbed} align={studioAlign}
       referenceSrc={matchRefSrc} onPickReference={pickMatchRef}
       onCancel={studioNoop} onHome={studioNoop} onImportNew={studioNoop} />
-  ), [activeSrc, studioGen, matchRefSrc, studioEmbed, studioNoop, pickMatchRef]);
+  ), [matchSrc, studioGen.match, matchRefSrc, studioEmbed, studioNoop, pickMatchRef, studioAlign]);
 
   /** 模板與疊圖層分頁：滑桿列與小分類列都收起來，整塊控制區給它自己的面板 */
   const ownPanel = activeCategory === 'template' || STUDIO_CATS.includes(activeCategory);
@@ -8080,48 +8245,155 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           </TransformComponent>
         </TransformWrapper>
 
-        {/* 遮色片清單（右上角，跟 Lightroom 一樣一個遮色片一顆）：＋新增、點一顆切換，
-            下面是選中那一個的動作：顯示範圍、反轉、刪除。全部只有圖示。 */}
-        {activeCategory === 'mask' && (
-          <div data-mask-stack className="absolute right-3 top-3 z-[40] flex flex-col items-center gap-2" onPointerDown={e => e.stopPropagation()}>
-            <button data-mask-add aria-label="新增遮色片" onClick={() => setMaskPicking(v => maskHasAny ? !v : true)}
-              className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${maskPicking ? 'bg-white/20 text-white' : 'bg-white text-black'} shadow-[0_2px_8px_rgba(0,0,0,.45)]`}>
-              <MaskGlyph k={maskPicking ? 'close' : 'plus'} />
-            </button>
-            {maskListView.list.map((m, i) => (
-              <button key={m.maskId + i} data-mask-chip={i} aria-label={`遮色片 ${i + 1}`} onClick={() => selectMask(i)}
-                className={`relative w-9 h-9 rounded-full flex items-center justify-center border transition-colors ${i === maskListView.active && !maskPicking ? 'bg-white text-black border-white' : 'bg-black/55 text-white/80 border-white/20'} ${m.maskCreated ? '' : 'border-dashed'}`}>
-                <MaskGlyph k={m.maskType} size={17} />
-                {m.maskInvert && <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-white text-black flex items-center justify-center border border-black/20"><MaskGlyph k="invert" size={8} /></span>}
+        {/* 遮色片清單（右上角，跟 Lightroom 一樣一個遮色片一格）：＋新增、點一格切換，
+            下面是選中那一個的動作：顯示範圍、反轉、刪除。全部只有圖示。
+            最底下那一塊實心方塊是收納鍵：點一下整欄收進方塊裡（只剩方塊），再點一下展開。
+            收合用 grid 的列高從 1fr 補間到 0fr（真的改變高度，方塊跟著滑上去），每一顆再各自淡出縮小、錯開一點時間。 */}
+        {activeCategory === 'mask' && (() => {
+          const EASE = 'cubic-bezier(.22,1,.36,1)';
+          let n = 0;
+          const item = (node: React.ReactNode, key: string) => {
+            const i = n++;
+            return (
+              <div key={key} className="flex items-center justify-center" style={{
+                transition: `opacity 260ms ${EASE} ${maskRailOpen ? 40 + i * 22 : 0}ms, transform 360ms ${EASE} ${maskRailOpen ? 40 + i * 22 : 0}ms`,
+                opacity: maskRailOpen ? 1 : 0, transform: maskRailOpen ? 'none' : 'translateY(10px) scale(.86)',
+              }}>{node}</div>
+            );
+          };
+          const round = 'w-9 h-9 rounded-full flex items-center justify-center bg-black/55 backdrop-blur-sm shadow-[inset_0_0_0_1px_rgba(255,255,255,.2)]';
+          return (
+            <div data-mask-stack data-open={maskRailOpen ? '1' : '0'} className="absolute right-3 top-3 z-[40] flex flex-col items-center" onPointerDown={e => e.stopPropagation()}>
+              <div className="grid" style={{ gridTemplateRows: maskRailOpen ? '1fr' : '0fr', transition: `grid-template-rows 380ms ${EASE}` }}>
+                <div className={`min-h-0 overflow-hidden flex flex-col items-center gap-2 px-1 pt-1 ${maskRailOpen ? 'pb-2.5' : 'pb-0'}`} style={{ transition: `padding 380ms ${EASE}` }} aria-hidden={!maskRailOpen}>
+                  {item(
+                    <button data-mask-add aria-label="新增遮色片" tabIndex={maskRailOpen ? 0 : -1} onClick={() => setMaskPicking(v => maskHasAny ? !v : true)}
+                      className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${maskPicking ? 'bg-white/20 text-white' : 'bg-white text-black'}`}>
+                      <MaskGlyph k={maskPicking ? 'close' : 'plus'} />
+                    </button>, 'add')}
+                  {maskListView.list.map((m, i) => {
+                    const on = i === maskListView.active && !maskPicking;
+                    return item(
+                      <button data-mask-chip={i} data-on={on ? '1' : '0'} aria-label={`遮色片 ${i + 1}`} tabIndex={maskRailOpen ? 0 : -1} onClick={() => selectMask(i)}
+                        /* 方形；選中不填滿，只有白色外框，整格從偏暗變回正常亮度 */
+                        className="relative w-9 h-9 rounded-[9px] flex items-center justify-center bg-black/55 backdrop-blur-sm text-white transition-[opacity,box-shadow] duration-200"
+                        style={{
+                          opacity: on ? 1 : 0.5,
+                          boxShadow: on ? 'inset 0 0 0 1.5px #fff' : m.maskCreated ? 'inset 0 0 0 1px rgba(255,255,255,.25)' : 'none',
+                          outline: m.maskCreated ? undefined : '1px dashed rgba(255,255,255,.55)', outlineOffset: -1,
+                        }}>
+                        <MaskGlyph k={m.maskType} size={17} />
+                        {m.maskInvert && <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-white text-black flex items-center justify-center"><MaskGlyph k="invert" size={9} /></span>}
+                      </button>, `chip-${m.maskId}-${i}`);
+                  })}
+                  {maskListView.list.length > 0 && !maskPicking && (<>
+                    {item(<span className="block w-5 h-px bg-white/25 my-0.5" />, 'sep')}
+                    {item(
+                      <button data-mask-overlay aria-label={params.maskShowOverlay ? '隱藏範圍' : '顯示範圍'} tabIndex={maskRailOpen ? 0 : -1} onClick={toggleMaskOverlay}
+                        className={params.maskShowOverlay ? 'w-9 h-9 rounded-full flex items-center justify-center bg-[#dc2626]/85 text-white shadow-[inset_0_0_0_1px_rgba(248,113,113,.6)]' : `${round} text-white/85`}>
+                        <MaskGlyph k={params.maskShowOverlay ? 'eye' : 'eyeoff'} />
+                      </button>, 'overlay')}
+                    {item(
+                      <button data-mask-invert aria-label="反轉" tabIndex={maskRailOpen ? 0 : -1} onClick={toggleMaskInvert}
+                        className={params.maskInvert ? 'w-9 h-9 rounded-full flex items-center justify-center bg-white text-black' : `${round} text-white/85`}>
+                        <MaskGlyph k="invert" />
+                      </button>, 'invert')}
+                    {item(
+                      <button data-mask-delete aria-label="刪除遮色片" tabIndex={maskRailOpen ? 0 : -1} onClick={deleteMask} className={`${round} text-[#f87171]`}>
+                        <MaskGlyph k="trash" />
+                      </button>, 'delete')}
+                  </>)}
+                </div>
+              </div>
+              {/* 實心方塊＝收納鍵 */}
+              <button data-mask-rail-toggle aria-label={maskRailOpen ? '收起遮色片工具' : '展開遮色片工具'} aria-expanded={maskRailOpen}
+                onClick={() => setMaskRailOpen(v => !v)}
+                className="relative w-9 h-9 rounded-[9px] bg-white text-black flex items-center justify-center shadow-[0_2px_10px_rgba(0,0,0,.45)] active:scale-95 transition-transform duration-150">
+                <span className="flex items-center justify-center" style={{ transition: `transform 380ms ${EASE}`, transform: maskRailOpen ? 'none' : 'rotate(180deg)' }}>
+                  <MaskGlyph k="fold" size={18} />
+                </span>
+                {!maskRailOpen && maskListView.list.length > 0 && (
+                  <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-black text-white text-[10px] font-bold leading-[18px] text-center shadow-[inset_0_0_0_1px_rgba(255,255,255,.35)]">{maskListView.list.length}</span>
+                )}
               </button>
-            ))}
-            {maskListView.list.length > 0 && !maskPicking && (
-              <>
-                <span className="w-5 h-px bg-white/25 my-0.5" />
-                <button data-mask-overlay aria-label={params.maskShowOverlay ? '隱藏範圍' : '顯示範圍'} onClick={toggleMaskOverlay}
-                  className={`w-9 h-9 rounded-full flex items-center justify-center border ${params.maskShowOverlay ? 'bg-[#dc2626]/80 text-white border-[#f87171]/60' : 'bg-black/55 text-white/80 border-white/20'}`}>
-                  <MaskGlyph k={params.maskShowOverlay ? 'eye' : 'eyeoff'} />
+            </div>
+          );
+        })()}
+        {/* 遮色片自己的參數（羽化、範圍、筆刷大小…）：照片左邊浮著一欄，跟右邊那一欄同一種樣子。
+            點一顆就在它旁邊浮出那個參數的滑桿，再點一次收起來；跟下面那一排的九個調整分開。 */}
+        {activeCategory === 'mask' && !maskTypePicking && maskListView.list.length > 0 && (() => {
+          const mt = (params.maskType ?? 'linear') as MaskType;
+          const tools = MASK_TYPE_TOOLS[mt];
+          const extra: { id: string; label: string; icon: string; on: boolean; dim?: boolean; run: () => void }[] = [];
+          if (mt === 'brush') extra.push({ id: 'maskBrushErase', label: '擦除', icon: 'erase', on: !!params.maskBrushErase,
+            run: () => { const p = paramsRef.current; paramsRef.current = { ...p, maskBrushErase: !p.maskBrushErase }; flushParamsSync(); } });
+          if (mt === 'color') extra.push({ id: 'maskClearSamples', label: '清除取樣', icon: 'clearsamples', on: false, dim: !(params.maskColors || []).length,
+            run: () => commitMaskParams({ ...paramsRef.current, maskColors: [], maskCreated: false }) });
+          if (!tools.length && !extra.length) return null;
+          const btn = (on: boolean) => `w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-sm transition-[background-color,box-shadow,color] duration-200 ${on ? 'bg-black/70 text-white shadow-[inset_0_0_0_1.5px_#fff]' : 'bg-black/55 text-white/85 shadow-[inset_0_0_0_1px_rgba(255,255,255,.2)]'}`;
+          return (
+            <div data-mask-params className="absolute left-3 top-3 z-[40] flex flex-col items-start gap-2 pt-1" onPointerDown={e => e.stopPropagation()}>
+              {tools.map(t => {
+                const open = maskParamOpen === t.id;
+                const v = (snapOf(params) as any)[t.id];
+                return (
+                  <div key={t.id} className="relative flex items-center">
+                    <button data-mask-param={t.id} aria-label={t.label} aria-expanded={open} onClick={() => setMaskParamOpen(o => o === t.id ? null : t.id)} className={btn(open)}>
+                      <MaskGlyph k={t.icon} />
+                    </button>
+                    {open && (
+                      <div data-mask-param-slider={t.id}
+                        className="absolute left-[46px] top-1/2 -translate-y-1/2 rounded-2xl bg-black/75 backdrop-blur-md px-4 pt-2 pb-0.5 shadow-[0_6px_24px_rgba(0,0,0,.5),inset_0_0_0_1px_rgba(255,255,255,.08)] animate-in fade-in slide-in-from-left-1 duration-200"
+                        style={{ width: 'min(232px, calc(100vw - 132px))' }}>
+                        <FastSlider
+                          value={typeof v === 'number' ? v : 0}
+                          min={t.min} max={t.max} step={t.step ?? 1}
+                          toolId={t.id} label={t.label} dense
+                          onUpdate={(id, val) => {
+                            const nextParams = { ...paramsRef.current, [id]: val };
+                            paramsRef.current = nextParams;
+                            lastSliderMoveTimeRef.current = performance.now();
+                            if (maskSliderLiveRef.current && maskLiveFrame(nextParams, true)) return;
+                            isDirtyRef.current = true;
+                          }}
+                          onInteractStart={() => {
+                            if (paramsRef.current.maskCreated) { maskSliderLiveRef.current = true; maskRangeDragRef.current = true; }
+                            setupFastPreview(t.id);
+                          }}
+                          onInteractEnd={() => {
+                            maskSliderLiveRef.current = false; maskRangeDragRef.current = false; maskLiveKeyRef.current = '';
+                            setIsInteracting(false);
+                            fastPreviewCacheRef.current.active = false;
+                            isDirtyRef.current = true;
+                            setParams({ ...paramsRef.current });
+                            addToHistory(paramsRef.current, selectedLutIdx);
+                          }}
+                          onReset={handleDoubleTap}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {extra.map(t => (
+                <button key={t.id} data-mask-param={t.id} aria-label={t.label} aria-pressed={t.on} disabled={t.dim} onClick={t.run}
+                  className={`${btn(t.on)} ${t.dim ? 'opacity-35' : ''}`}>
+                  <MaskGlyph k={t.icon} />
                 </button>
-                <button data-mask-invert aria-label="反轉" onClick={toggleMaskInvert}
-                  className={`w-9 h-9 rounded-full flex items-center justify-center border ${params.maskInvert ? 'bg-white text-black border-white' : 'bg-black/55 text-white/80 border-white/20'}`}>
-                  <MaskGlyph k="invert" />
-                </button>
-                <button data-mask-delete aria-label="刪除遮色片" onClick={deleteMask}
-                  className="w-9 h-9 rounded-full flex items-center justify-center border bg-black/55 text-[#f87171] border-white/20">
-                  <MaskGlyph k="trash" />
-                </button>
-              </>
-            )}
-          </div>
-        )}
-        {/* 提示（不擋手勢）：還沒畫出來時告訴使用者這一種要怎麼做 */}
+              ))}
+            </div>
+          );
+        })()}
+        {/* 提示（不擋手勢）：還沒畫出來時告訴使用者這一種要怎麼做。
+            放在照片上緣往下一點的地方（不貼著照片頂邊） */}
         {activeCategory === 'mask' && (() => {
           const mt = params.maskType ?? 'linear';
           const tip = maskPicking || !maskHasAny ? '選一種遮色片'
             : !params.maskCreated ? ({ linear: '在照片上拖曳，拉出線性漸層', radial: '從中心往外拖曳，畫出放射範圍', brush: '在要調整的地方塗抹', color: '點選要選取的顏色', luma: '點選照片，選取那一段亮度' } as Record<string, string>)[mt]
             : mt === 'color' ? '再點其他地方可以多選幾個顏色（最多 5 個）' : mt === 'luma' ? '點照片可以重新取樣亮度' : '';
           if (!tip || isInteracting) return null;
-          return <div data-mask-tip className="absolute top-3 left-1/2 -translate-x-1/2 z-[38] pointer-events-none px-3 py-1.5 rounded-full bg-black/60 text-[12px] text-white/90 whitespace-nowrap">{tip}</div>;
+          const imgTop = previewFitSize && previewBoxSize.height ? Math.max(0, (previewBoxSize.height - previewFitSize.height) / 2) : 0;
+          return <div data-mask-tip className="absolute left-1/2 -translate-x-1/2 z-[38] pointer-events-none px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-[12px] text-white/90 whitespace-nowrap" style={{ top: Math.round(imgTop + 16) }}>{tip}</div>;
         })()}
         
       {/* 批量編輯的縮圖列：跟「前後對比」同一排（畫面底部那一條），
@@ -8540,6 +8812,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           showFooterDivider
           stageLimit={composeStageLimitRef.current || previewFitSize}
           stageInset={16}
+          alignCenter={previewAlign ? { x: previewAlign.left + previewAlign.width / 2, y: previewAlign.top + previewAlign.height / 2 } : null}
           onCancel={cancelCompose}
           onApply={() => {
             if (applyGeo(draftGeo)) addToHistory(paramsRef.current, selectedLutIdx);
@@ -8603,11 +8876,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           if (id === 'blur') userManualBlurRef.current = val;
                           const nextParams = { ...paramsRef.current, [id]: val };
                           paramsRef.current = nextParams; 
-                          isDirtyRef.current = true;
                           lastSliderMoveTimeRef.current = performance.now();
+                          // 遮色片：疊層掛好之後每一格只更新疊層，不重跑整條管線
+                          if (maskSliderLiveRef.current && maskLiveFrame(nextParams, maskRangeDragRef.current)) return;
+                          isDirtyRef.current = true;
                       }}
-                      onInteractStart={() => setupFastPreview(activeTool.id)}
+                      onInteractStart={() => {
+                          if (activeCategory === 'mask' && paramsRef.current.maskCreated) {
+                            maskSliderLiveRef.current = true;
+                            maskRangeDragRef.current = MASK_TYPE_TOOL_LIST.some(t => t.id === activeTool.id);
+                          }
+                          setupFastPreview(activeTool.id);
+                      }}
                       onInteractEnd={() => { 
+                          if (maskSliderLiveRef.current) { maskSliderLiveRef.current = false; maskRangeDragRef.current = false; maskLiveKeyRef.current = ''; isDirtyRef.current = true; }
                           setIsInteracting(false); 
                           fastPreviewCacheRef.current.active = false; 
                           
@@ -8877,8 +9159,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 ))}
               </div>
             );
-            const mt = (params.maskType ?? 'linear') as MaskType;
-            const typeTools = MASK_TYPE_TOOLS[mt];
             const toolBtn = (id: string, label: string, glyph: React.ReactNode, on: boolean, onClick: () => void, dim = false, adjusted = false) => (
               <button key={id} data-mask-tool={id} disabled={dim} onClick={onClick} className={`flex flex-col items-center gap-1 shrink-0 group w-16 ${dim ? 'opacity-30' : ''}`}>
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${on ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}>{glyph}</div>
@@ -8886,14 +9166,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${adjusted ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
               </button>
             );
+            /* 這一排只有九個調整（遮色片自己的參數在照片左邊那一欄） */
             return (
               <div className="flex items-center gap-2">
-                {typeTools.map(t => toolBtn(t.id, t.label, <MaskGlyph k={t.icon} />, activeToolId === t.id, () => setActiveToolId(t.id)))}
-                {mt === 'brush' && toolBtn('maskBrushErase', '擦除', <MaskGlyph k="erase" />, !!params.maskBrushErase,
-                  () => { const p = paramsRef.current; paramsRef.current = { ...p, maskBrushErase: !p.maskBrushErase }; flushParamsSync(); })}
-                {mt === 'color' && toolBtn('maskClearSamples', '清除取樣', <MaskGlyph k="clearsamples" />, false,
-                  () => commitMaskParams({ ...paramsRef.current, maskColors: [], maskCreated: false }), !(params.maskColors || []).length)}
-                {(typeTools.length > 0 || mt === 'brush' || mt === 'color') && <div className="w-[1px] h-8 bg-white/10 mx-2 shrink-0" />}
                 {MASK_TOOLS.map(tool => toolBtn(tool.id, tool.label, <Icon name={tool.icon} className="text-lg" fill={activeToolId === tool.id} />,
                   activeToolId === tool.id, () => { if (params.maskCreated) setActiveToolId(tool.id); }, !params.maskCreated, isParamAdjusted(tool.id)))}
               </div>
