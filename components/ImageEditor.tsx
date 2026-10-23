@@ -1863,14 +1863,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       maskMoveRef.current = !onUi && p.maskCreated && mt === 'radial' && !maskPicking && !maskDeselectedRef.current
         ? { id: e.pointerId, x0: e.clientX, y0: e.clientY, cx0: p.maskCx, cy0: p.maskCy, on: false } : null;
     }
-    if (boxPtrsRef.current.size === 2 && mt === 'radial' && p.maskCreated && !maskPicking) {
+    if (boxPtrsRef.current.size === 2 && mt === 'radial' && p.maskCreated && !maskPicking && !maskDeselectedRef.current) {
       maskTapRef.current = null;
       maskMoveRef.current = null;   // 單指搬移停在這裡，接下來只縮放
       const k = pinchPts();
       maskPinchRef.current = { d0: k.d, a0: k.a, mx0: k.mx, my0: k.my, rx0: p.maskRx ?? 0.25, ry0: p.maskRy ?? 0.25, cx0: p.maskCx, cy0: p.maskCy, ang0: p.maskAngle };
       // 第一根手指如果正在拖把手：就停在這裡，接下來交給雙指
       activeDragRef.current = { type: 'pinch', startX: 0, startY: 0, initialCx: 0, initialCy: 0, initialAngle: 0, initialD: 0, initialRx: 0, initialRy: 0 };
-      setMaskDeselected(false);
       maskLiveKeyRef.current = '';
       setIsInteracting(true);
       e.stopPropagation(); e.preventDefault();
@@ -2183,7 +2182,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const toggleMaskInvert = () => commitMaskParams({ ...paramsRef.current, maskInvert: !paramsRef.current.maskInvert });
   const toggleMaskOverlay = () => { const p = paramsRef.current; paramsRef.current = { ...p, maskShowOverlay: !p.maskShowOverlay }; isDirtyRef.current = true; flushParamsSync(); };
-  const [maskPicking, setMaskPicking] = useState(false);
+  const [maskPicking, setMaskPickingState] = useState(false);
+  /* 按了＋在選新的種類：參考線收起來，紅色範圍也一起藏（繪圖迴圈看這個 ref） */
+  const maskPickingRef = useRef(false);
+  const setMaskPicking = (v: boolean | ((o: boolean) => boolean)) => setMaskPickingState(o => {
+    const n = typeof v === 'function' ? v(o) : v;
+    if (n !== maskPickingRef.current) { maskPickingRef.current = n; isDirtyRef.current = true; }
+    return n;
+  });
+  const pinDownRef = useRef<{ i: number; x: number; y: number } | null>(null);
   /** 左邊那一欄目前浮出滑桿的是哪一個參數 */
   const [maskParamOpen, setMaskParamOpen] = useState<string | null>(null);
   /* 參數方塊的過場：maskPanelTool＝方塊現在畫的是哪一個（縮回去的那段時間還留著），
@@ -4933,7 +4940,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // 紅色遮罩只是編輯時看得到遮色片範圍用的輔助顯示，烘焙（導出、縮圖）出來的圖片絕對不能有它。
     /* 拖遮色片自己的參數（範圍、平滑、羽化…）時，紅色遮罩一定顯示、而且跟著滑桿即時變：那正是使用者要看的東西。
        拖九個調整時照舊收起來，才看得到調出來的樣子。 */
-    const showOverlay = !baking && activeCategory === 'mask' && !maskDeselectedRef.current
+    const showOverlay = !baking && activeCategory === 'mask' && !maskDeselectedRef.current && !maskPickingRef.current
       && (maskRangeDragRef.current || (!!p.maskShowOverlay && !(isInteracting && !activeDragRef.current && !maskPaintingRef.current)));
     const { list: maskItems, active: maskAct } = maskList(p);
     const actMask = maskItems[maskAct];
@@ -8390,7 +8397,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     {/* 其他遮色片的位置（線性、放射）：點一下切過去 */}
                     {!activeDragRef.current && maskListView.list.map((m, i) => ((i === maskListView.active && !maskDeselected) || !m.maskCreated || (m.maskType !== 'linear' && m.maskType !== 'radial')) ? null : (
                       <g key={m.maskId + i} data-mask-pin={i} transform={`translate(${m.maskCx * canvasBounds.width}, ${m.maskCy * canvasBounds.height})`}>
-                        <circle r={16} fill="transparent" style={{ cursor: 'pointer' }} onPointerDown={(e) => { e.stopPropagation(); selectMask(i); }} />
+                        {/* 點一下（放開、而且沒有拖動）才選中，手指只是碰到不算 */}
+                        <circle r={16} fill="transparent" style={{ cursor: 'pointer' }}
+                          onPointerDown={(e) => { e.stopPropagation(); pinDownRef.current = { i, x: e.clientX, y: e.clientY }; }}
+                          onPointerUp={(e) => { const d = pinDownRef.current; pinDownRef.current = null; if (d && d.i === i && Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 8) selectMask(i); }} />
                         <circle className="pointer-events-none" r={6.5} fill="rgba(0,0,0,.45)" stroke="#fff" strokeWidth="1.5" />
                       </g>
                     ))}
@@ -8445,11 +8455,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             <div data-mask-stack data-open={maskRailOpen ? '1' : '0'} onPointerDown={e => e.stopPropagation()}
               /* 黑色毛玻璃底板包住整欄 */
               className="absolute right-3 top-3 z-[40] flex flex-col items-center rounded-[12px] bg-black/45 backdrop-blur-xl p-1.5 shadow-[0_8px_28px_rgba(0,0,0,.4),inset_0_0_0_1px_rgba(255,255,255,.08)]">
-              {/* 遮色片自己的參數（羽化、範圍、筆刷大小…）：橫排在右欄的左邊、靠著它（沒有毛玻璃底），
+              {/* 遮色片自己的參數（羽化、範圍、筆刷大小…）：橫排在右欄的左邊、靠著它，
                   跟右欄一起收合／展開（從靠右欄那一顆開始往左依序彈出）。
-                  點一顆：從那顆按鈕的位置長出一塊透明方塊，把整排按鈕包進去、下面多出它的滑桿；
-                  按鈕全都還在（底圓淡掉，選中的那顆加白框），點別顆就換成那一顆的滑桿，
-                  再點選中的那顆就沿原路縮回去。 */}
+                  點一顆叫出滑桿：每顆按鈕底下那塊圓形毛玻璃各自「長」成同一塊方形的一條（剛好接在一起、不重疊），
+                  合起來就是一整塊，上緣跟按鈕同高，下面多出滑桿。底色從頭到尾是同一層、同一個濃度，
+                  所以變形的過程中顏色不會忽深忽淺。選中的那顆加白框；點別顆換滑桿，再點選中的那顆收回。 */}
               {!maskTypePicking && list.length > 0 && (() => {
                 const mt = (params.maskType ?? 'linear') as MaskType;
                 const tools = MASK_TYPE_TOOLS[mt];
@@ -8459,93 +8469,100 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 if (!tools.length && !extra.length) return null;
                 const items = [...tools.map(t => ({ id: t.id, label: t.label, icon: t.icon, slider: t as ToolDef | null, on: false, run: () => setMaskParamOpen(o => o === t.id ? null : t.id) })),
                   ...extra.map(t => ({ id: t.id, label: t.label, icon: t.icon, slider: null as ToolDef | null, on: t.on, run: t.run }))];
-                const N = items.length, B = 36, GAP = 8, PAD = 6;
+                const N = items.length, B = 36, GAP = 8;
                 const PANEL_W = 4 * B + 3 * GAP;            // 跟筆刷那四顆按鈕排起來一樣寬
                 const rowW = N * B + (N - 1) * GAP;
                 const W = Math.max(PANEL_W, rowW);
                 const xOf = (i: number) => W - rowW + i * (B + GAP);
-                const PANEL_H = 98;
+                const PANEL_H = 92, R = 18;
+                const stripW = PANEL_W / N;                 // 每顆按鈕分到方塊的一條（整數寬，接縫對齊像素）
+                const stripX = (i: number) => W - PANEL_W + Math.round(i * stripW);
+                const stripWi = (i: number) => Math.round((i + 1) * stripW) - Math.round(i * stripW);
                 const MORPH = 'cubic-bezier(.32,.72,0,1)';
-                const pIdx = items.findIndex(it => it.id === maskPanelTool);
-                const pItem = pIdx >= 0 ? items[pIdx] : null;
+                const open = maskPanelOn;
+                const pItem = items.find(it => it.id === maskPanelTool) || null;
                 const v = pItem?.slider ? (snapOf(params) as any)[pItem.id] : 0;
+                const GLASS = 'rgba(0,0,0,.45)';
                 return (
                   <div data-mask-params className="absolute right-full top-1.5 mr-2" style={{ width: W, height: B, pointerEvents: maskRailOpen ? 'auto' : 'none' }}>
-                    {pItem && (
-                      <div data-mask-param-panel={pItem.id} className="absolute overflow-hidden backdrop-blur-md" style={{
-                        left: maskPanelOn ? W - PANEL_W - PAD : xOf(pIdx), top: maskPanelOn ? -PAD : 0,
-                        width: maskPanelOn ? PANEL_W + PAD * 2 : B, height: maskPanelOn ? PANEL_H + PAD : B,
-                        borderRadius: maskPanelOn ? 18 : B / 2,
-                        background: maskPanelOn ? 'rgba(0,0,0,.42)' : 'rgba(0,0,0,.55)',
-                        transition: `left 380ms ${MORPH}, top 380ms ${MORPH}, width 380ms ${MORPH}, height 380ms ${MORPH}, border-radius 380ms ${MORPH}, background-color 300ms ease`,
-                      }}>
-                        {/* 下面：滑桿（方塊長開之後才淡入，收回時先淡掉） */}
-                        {pItem.slider && (
-                          <div className="absolute" style={{
-                            left: 0, top: B + PAD, width: PANEL_W + PAD * 2, padding: '0 16px',
-                            opacity: maskPanelOn ? 1 : 0,
-                            transform: maskPanelOn ? 'none' : 'translateY(-4px)',
-                            transition: maskPanelOn ? 'opacity 220ms ease 170ms, transform 300ms ease 170ms' : 'opacity 100ms ease, transform 100ms ease',
-                          }}>
-                            <FastSlider
-                              key={pItem.id}
-                              value={typeof v === 'number' ? v : 0}
-                              min={pItem.slider.min} max={pItem.slider.max} step={pItem.slider.step ?? 1}
-                              toolId={pItem.id} label={pItem.label} dense
-                              onUpdate={(id, val) => {
-                                const nextParams = { ...paramsRef.current, [id]: val };
-                                paramsRef.current = nextParams;
-                                lastSliderMoveTimeRef.current = performance.now();
-                                if (id === 'maskBrushSize') showSizeRing(nextParams);
-                                if (maskSliderLiveRef.current && maskLiveFrame(nextParams, true)) return;
-                                isDirtyRef.current = true;
-                              }}
-                              onInteractStart={() => {
-                                if (pItem.id === 'maskBrushSize') showSizeRing(paramsRef.current);
-                                if (paramsRef.current.maskCreated) { maskSliderLiveRef.current = true; maskRangeDragRef.current = true; }
-                                setupFastPreview(pItem.id);
-                              }}
-                              onInteractEnd={() => {
-                                hideSizeRing();
-                                maskSliderLiveRef.current = false; maskRangeDragRef.current = false; maskLiveKeyRef.current = '';
-                                setIsInteracting(false);
-                                fastPreviewCacheRef.current.active = false;
-                                isDirtyRef.current = true;
-                                setParams({ ...paramsRef.current });
-                                addToHistory(paramsRef.current, selectedLutIdx);
-                              }}
-                              onReset={handleDoubleTap}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {items.map((it, i) => {
+                    {(['glass', 'btn'] as const).map(layer => items.map((it, i) => {
                       const k = N - 1 - i;                    // 從右邊（靠右欄）那一顆開始
                       const hide = !maskRailOpen;
-                      const sel = maskPanelOn && it.id === maskPanelTool;
+                      const sel = open && it.id === maskPanelTool;
+                      const first = i === 0, last = i === N - 1;
+                      const rad = open ? `${first ? 16 : 0}px ${last ? 16 : 0}px ${last ? 16 : 0}px ${first ? 16 : 0}px` : `${R}px`;
+                      /* 兩層：先畫全部的毛玻璃、再畫全部的按鈕（不然少於四顆時，後面那一條會蓋到前一顆按鈕）。
+                         兩層的位置與彈出／收合動畫一模一樣，看起來就是同一顆。 */
                       return (
-                        <div key={it.id} className="absolute top-0 z-[1]" style={{
-                          left: xOf(i), width: B, height: B, transformOrigin: '50% 50%',
+                        <div key={`${layer}-${it.id}`} className="absolute top-0" style={{
+                          left: xOf(i), width: B, height: B, transformOrigin: '50% 50%', zIndex: layer === 'btn' ? 1 : 0,
                           transition: !maskRailOpen ? 'opacity 150ms ease, transform 180ms cubic-bezier(.5,0,.75,0)'
                             : `opacity 200ms ease ${60 + k * 26}ms, transform 520ms ${JELLY} ${60 + k * 26}ms`,
                           opacity: hide ? 0 : 1, transform: hide ? 'scale(.55)' : 'scale(1)',
                         }}>
-                          <button data-mask-param={it.id} data-on={sel ? '1' : '0'} aria-label={it.label} aria-pressed={it.slider ? sel : it.on} tabIndex={maskRailOpen ? 0 : -1}
-                            onClick={it.run}
-                            /* 方塊打開時底圓淡掉（方塊本身就是底），選中的那顆是白框 */
-                            className="w-9 h-9 rounded-full flex items-center justify-center transition-[background-color,box-shadow,color] duration-300"
-                            style={{
-                              backgroundColor: it.on ? '#fff' : maskPanelTool && maskPanelOn ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,.55)',
-                              color: it.on ? '#000' : 'rgba(255,255,255,.92)',
-                              boxShadow: sel ? 'inset 0 0 0 1.5px #fff' : 'inset 0 0 0 1.5px rgba(255,255,255,0)',
-                              backdropFilter: maskPanelOn ? undefined : 'blur(4px)',
-                            }}>
-                            <MaskGlyph k={it.icon} />
-                          </button>
+                          {layer === 'glass' ? (
+                            /* 這顆的那一塊毛玻璃：平常是圓，叫出滑桿時長成方塊的一條 */
+                            <div aria-hidden className="absolute" style={{
+                              left: open ? stripX(i) - xOf(i) : 0, top: 0,
+                              width: open ? stripWi(i) : B, height: open ? PANEL_H : B,
+                              borderRadius: rad, background: GLASS,
+                              WebkitBackdropFilter: 'blur(24px)', backdropFilter: 'blur(24px)',
+                              transition: `left 380ms ${MORPH}, width 380ms ${MORPH}, height 380ms ${MORPH}, border-radius 380ms ${MORPH}`,
+                            }} />
+                          ) : (
+                            <button data-mask-param={it.id} data-on={sel ? '1' : '0'} aria-label={it.label} aria-pressed={it.slider ? sel : it.on} tabIndex={maskRailOpen ? 0 : -1}
+                              onClick={it.run}
+                              className="relative w-9 h-9 rounded-full flex items-center justify-center transition-[background-color,box-shadow,color] duration-200"
+                              style={{
+                                backgroundColor: it.on ? '#fff' : 'transparent',
+                                color: it.on ? '#000' : 'rgba(255,255,255,.92)',
+                                boxShadow: sel ? 'inset 0 0 0 1.5px #fff' : 'inset 0 0 0 1.5px rgba(255,255,255,0)',
+                              }}>
+                              <MaskGlyph k={it.icon} />
+                            </button>
+                          )}
                         </div>
                       );
-                    })}
+                    }))}
+                    {/* 滑桿：方塊長開之後才淡入，收回時先淡掉（滑桿本身沒有底，底是上面那幾條拼成的方塊） */}
+                    {pItem?.slider && (
+                      <div data-mask-param-panel={pItem.id} className="absolute" style={{
+                        left: W - PANEL_W, top: B, width: PANEL_W, height: PANEL_H - B, padding: '2px 12px 0',
+                        opacity: open ? 1 : 0, transform: open ? 'none' : 'translateY(-4px)',
+                        pointerEvents: open ? 'auto' : 'none',
+                        transition: open ? 'opacity 220ms ease 170ms, transform 300ms ease 170ms' : 'opacity 100ms ease, transform 100ms ease',
+                      }}>
+                        <FastSlider
+                          key={pItem.id}
+                          value={typeof v === 'number' ? v : 0}
+                          min={pItem.slider.min} max={pItem.slider.max} step={pItem.slider.step ?? 1}
+                          toolId={pItem.id} label={pItem.label} dense
+                          onUpdate={(id, val) => {
+                            const nextParams = { ...paramsRef.current, [id]: val };
+                            paramsRef.current = nextParams;
+                            lastSliderMoveTimeRef.current = performance.now();
+                            if (id === 'maskBrushSize') showSizeRing(nextParams);
+                            if (maskSliderLiveRef.current && maskLiveFrame(nextParams, true)) return;
+                            isDirtyRef.current = true;
+                          }}
+                          onInteractStart={() => {
+                            if (pItem.id === 'maskBrushSize') showSizeRing(paramsRef.current);
+                            if (paramsRef.current.maskCreated) { maskSliderLiveRef.current = true; maskRangeDragRef.current = true; }
+                            setupFastPreview(pItem.id);
+                          }}
+                          onInteractEnd={() => {
+                            hideSizeRing();
+                            maskSliderLiveRef.current = false; maskRangeDragRef.current = false; maskLiveKeyRef.current = '';
+                            setIsInteracting(false);
+                            fastPreviewCacheRef.current.active = false;
+                            isDirtyRef.current = true;
+                            setParams({ ...paramsRef.current });
+                            addToHistory(paramsRef.current, selectedLutIdx);
+                          }}
+                          onReset={handleDoubleTap}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })()}
