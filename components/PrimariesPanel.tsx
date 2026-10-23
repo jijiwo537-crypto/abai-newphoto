@@ -91,26 +91,28 @@ const WheelDisc: React.FC<{ D: number; px: number; py: number; drag: ReturnType<
   </div>
 );
 
-/* 轉盤的刻紋也是一張 4px 寬的小點陣圖，左右拖只是挪背景位置 */
+/* 轉盤的刻紋是一張 6px 寬的小點陣圖（2 倍解析度畫，手機上線條才銳利），左右拖只是挪背景位置。
+   刻紋用不透明的灰色畫在圖裡：不會跟別的線疊在一起變白，也沒有陰影、反光那些假立體。 */
 let jogTile = '';
 const jogUrl = () => {
   if (jogTile) return jogTile;
-  const c = document.createElement('canvas'); c.width = 8; c.height = 2;
+  const c = document.createElement('canvas'); c.width = 12; c.height = 12;
   const g = c.getContext('2d')!;
-  g.fillStyle = '#232323'; g.fillRect(0, 0, 8, 2);
-  g.fillStyle = '#3a3a3a'; g.fillRect(0, 0, 2, 2);
+  g.fillStyle = '#5c5c5c'; g.fillRect(0, 0, 2, 12);
   return (jogTile = c.toDataURL('image/png'));
 };
 
-/** 主轉盤（jog wheel）：左右拖 */
+/** 主轉盤（jog wheel）：左右拖。一條平的軌道、一排等距刻紋、中間一根白色指針，兩端刻紋淡出 */
 const Jog: React.FC<{ W: number; drag: ReturnType<typeof useDrag>; x: number; id: string }> = ({ W, drag, x, id }) => (
-  <div {...drag} data-grade-jog={id} className="mt-[5px] rounded-[3px] touch-none select-none cursor-ew-resize border border-black/70"
-    style={{
-      width: W, height: 11,
-      /* 兩端淡出用一層蓋上去的漸層（跟面板底色一樣），不用遮罩圖層 */
-      background: `linear-gradient(90deg, rgba(17,17,17,.65), rgba(17,17,17,0) 25%, rgba(17,17,17,0) 75%, rgba(17,17,17,.65)), url(${jogUrl()}) ${x}px 0 / 4px 100% repeat-x, #232323`,
-      boxShadow: 'inset 0 2px 3px rgba(0,0,0,.55), inset 0 -1px 0 rgba(255,255,255,.04)',
+  <div {...drag} data-grade-jog={id} className="relative mt-[5px] rounded-full overflow-hidden touch-none select-none cursor-ew-resize"
+    style={{ width: W, height: 12, background: '#1c1c1c' }}>
+    <div aria-hidden className="absolute inset-x-0 top-[3px] bottom-[3px]" style={{
+      background: `url(${jogUrl()}) ${x}px 0 / 6px 100% repeat-x`,
+      WebkitMaskImage: 'linear-gradient(90deg, transparent, #000 24%, #000 76%, transparent)',
+      maskImage: 'linear-gradient(90deg, transparent, #000 24%, #000 76%, transparent)',
     }} />
+    <div aria-hidden className="absolute left-1/2 top-[2px] bottom-[2px] w-[2px] -ml-px rounded-full bg-white" />
+  </div>
 );
 
 const UnitHead: React.FC<{ label: string; D: number }> = ({ label, D }) => (
@@ -307,7 +309,7 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
             ))}
           </div>
         )}
-        <button onClick={resetMode} data-grade-reset className="w-[34px] h-[28px] flex items-center justify-center rounded-[8px] bg-white/[0.06] border border-white/10" aria-label="重置目前的色輪">
+        <button onClick={resetMode} data-grade-reset className="w-[34px] h-[28px] flex items-center justify-center active:scale-90 transition-transform duration-150" aria-label="重置目前的色輪">
           <ResetIcon on={modeTouched} size={16} />
         </button>
       </div>

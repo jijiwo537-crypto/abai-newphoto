@@ -8016,10 +8016,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       })() : null;
       return (
       <div
-        className={chromeBox ? 'absolute pointer-events-none' : 'absolute inset-0 pointer-events-none'}
+        className={`${chromeBox ? 'absolute pointer-events-none' : 'absolute inset-0 pointer-events-none'} ${showChrome ? '' : 'vis-off'}`}
         style={{
           ...(chromeBox || null),
-          visibility: showChrome ? 'visible' : 'hidden',
           opacity: showChrome ? 1 : 0,
           /* 這是固定螢幕像素的操作 UI，不能先升成小型點陣合成層再讓外層
              預覽放大；否則高倍率時框、圓點、圖示與文字都會一起模糊。
@@ -16392,10 +16391,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
       {/* Top Header */}
       <header
-        className="relative h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-50 bg-black/90 backdrop-blur-md"
+        className={`relative h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-50 bg-black/90 backdrop-blur-md ${igPreview ? 'vis-off' : ''}`}
         /* IG 預覽期間只隱藏、不移出版面。display:none 會讓工作區突然增高，
-           關閉預覽時 ResizeObserver 再把畫布推回去，正是回來時那一下抖動。 */
-        style={{ visibility: igPreview ? 'hidden' : undefined }}
+           關閉預覽時 ResizeObserver 再把畫布推回去，正是回來時那一下抖動。
+           用 vis-off 藏：裡面每一顆按鈕同一幀消失（不會有誰的過場拖慢一拍） */
       >
         <button
           onClick={(e) => {
@@ -16544,10 +16543,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           圖層一多就會爬過 header 的 z-50，把三個點叫出來的選單壓在底下。
           關進來之後，畫布上的東西再多也只在這一層裡面排前後。 */}
       <div
-        className="flex-1 flex flex-col md:flex-row overflow-hidden relative z-0"
+        className={`flex-1 flex flex-col md:flex-row overflow-hidden relative z-0 ${igPreview ? 'vis-off' : ''}`}
         /* IG 淡入時不能透出底下的原預覽圖片；visibility 不會改變任何幾何，
            因此關閉後畫布直接就在原位。 */
-        style={{ visibility: igPreview ? 'hidden' : undefined }}
         onPointerDown={(e) => {
           if (activeTab === 'motion') return;
           workspacePointerDown.current = {

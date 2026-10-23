@@ -192,7 +192,7 @@ type Category = 'filter' | 'adjust' | 'effects' | 'leak' | 'soft' | 'grain' | 'h
 const STUDIO_CATS: Category[] = ['beauty', 'match'];
 /** 已經在這一頁時再點一次不做事的分頁（舊的幾頁照舊：再點一次會回到該頁第一個工具） */
 const SELF_CONTAINED_TABS = ['template', 'beauty', 'match', 'compose'];
-type MaskDragType = 'center' | 'start' | 'end' | 'rotate' | 'create' | 'rcreate' | 'rcenter' | 'rx' | 'ry' | 'rrot' | 'paint' | 'sample';
+type MaskDragType = 'center' | 'start' | 'end' | 'rotate' | 'create' | 'rcreate' | 'rcenter' | 'rx' | 'ry' | 'rrot' | 'paint' | 'sample' | 'pinch';
 type CurveChannel = 'rgb' | 'r' | 'g' | 'b';
 type LegacyKind = 'soft' | 'halation' | 'leak' | 'blur' | 'simple';
 
@@ -300,7 +300,10 @@ const MASK_GLYPH_BODY: Record<string, string> = {
 };
 const MASK_GLYPH_URL: Record<string, string> = Object.fromEntries(Object.entries(MASK_GLYPH_BODY).map(([k, body]) => [k,
   `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`)}")`]));
+/* 筆刷、顏色範圍用跟其他頁一樣的圖示：筆刷＝人像的「修容」，顏色範圍＝調節的「色調」 */
+const MASK_GLYPH_ICON: Record<string, string> = { brush: 'brush', color: 'colorize' };
 const MaskGlyph: React.FC<{ k: string; size?: number }> = ({ k, size = 18 }) => {
+  if (MASK_GLYPH_ICON[k]) return <span aria-hidden className="inline-flex items-center justify-center shrink-0 leading-none" style={{ width: size, height: size, fontSize: size + 2 }}><Icon name={MASK_GLYPH_ICON[k]} className="!text-[1em] leading-none" /></span>;
   const url = MASK_GLYPH_URL[k];
   if (!url) return null;
   return <span aria-hidden className="inline-block shrink-0" style={{ width: size, height: size, backgroundColor: 'currentColor',
@@ -1829,6 +1832,81 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!r?.width || !r.height) return null;
     return { x: ((e.clientX - r.left) / r.width) * canvasBounds.width, y: ((e.clientY - r.top) / r.height) * canvasBounds.height };
   };
+  /* ── 放射遮色片的雙指手勢（整個預覽區都算，不必按在遮色片上）＋ 點空白處取消選中 ──
+     掛在預覽區的「捕獲」階段：第二根手指一落下就接手（第一根如果正在拖把手，那一下停在原地），
+     之後兩指的移動＝搬移中心、距離比例＝等比縮放、角度差＝旋轉，全部走即時疊層。 */
+  const boxPtrsRef = useRef(new Map<number, { x: number; y: number }>());
+  const maskPinchRef = useRef<null | { d0: number; a0: number; mx0: number; my0: number; rx0: number; ry0: number; cx0: number; cy0: number; ang0: number }>(null);
+  /** 雙指結束後還留在畫面上的那根手指：它之後的移動／放開都不算（不然會變成拖把手） */
+  const maskSwallowRef = useRef(new Set<number>());
+  const maskTapRef = useRef<null | { id: number; x: number; y: number; t: number }>(null);
+  const pinchPts = () => { const [a, b] = [...boxPtrsRef.current.values()]; return { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), a: Math.atan2(b.y - a.y, b.x - a.x), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; };
+  const onBoxPointerDown = (e: React.PointerEvent) => {
+    if (activeCategory !== 'mask') return;
+    boxPtrsRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const p = paramsRef.current;
+    const mt = p.maskType ?? 'linear';
+    if (boxPtrsRef.current.size === 1) {
+      // 按在按鈕、兩邊的欄位、參考線／把手、其他遮色片的小圓點上都不算「點空白處」
+      const onUi = !!(e.target as Element).closest?.('button, input, [data-mask-stack], [data-mask-params], #ui-guides, #ui-radial, [data-mask-pin]');
+      maskTapRef.current = !onUi && p.maskCreated && (mt === 'linear' || mt === 'radial') && !maskPicking
+        ? { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() } : null;
+    }
+    if (boxPtrsRef.current.size === 2 && mt === 'radial' && p.maskCreated && !maskPicking) {
+      maskTapRef.current = null;
+      const k = pinchPts();
+      maskPinchRef.current = { d0: k.d, a0: k.a, mx0: k.mx, my0: k.my, rx0: p.maskRx ?? 0.25, ry0: p.maskRy ?? 0.25, cx0: p.maskCx, cy0: p.maskCy, ang0: p.maskAngle };
+      // 第一根手指如果正在拖把手：就停在這裡，接下來交給雙指
+      activeDragRef.current = { type: 'pinch', startX: 0, startY: 0, initialCx: 0, initialCy: 0, initialAngle: 0, initialD: 0, initialRx: 0, initialRy: 0 };
+      setMaskDeselected(false);
+      maskLiveKeyRef.current = '';
+      setIsInteracting(true);
+      e.stopPropagation(); e.preventDefault();
+    }
+  };
+  const onBoxPointerMove = (e: React.PointerEvent) => {
+    if (!boxPtrsRef.current.has(e.pointerId)) return;
+    boxPtrsRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const tap = maskTapRef.current;
+    if (tap && tap.id === e.pointerId && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 8) maskTapRef.current = null;
+    if (maskSwallowRef.current.has(e.pointerId)) { e.stopPropagation(); return; }
+    const pin = maskPinchRef.current;
+    if (!pin || boxPtrsRef.current.size < 2) return;
+    e.stopPropagation();
+    const r = displayCanvasRef.current?.getBoundingClientRect(); if (!r?.width || !r.height) return;
+    const k = pinchPts();
+    const s = Math.max(0.05, k.d / pin.d0);
+    const p = { ...paramsRef.current };
+    p.maskRx = Math.max(6 / r.width, pin.rx0 * s);
+    p.maskRy = Math.max(6 / r.width, pin.ry0 * s);
+    p.maskCx = Math.max(-0.5, Math.min(1.5, pin.cx0 + (k.mx - pin.mx0) / r.width));
+    p.maskCy = Math.max(-0.5, Math.min(1.5, pin.cy0 + (k.my - pin.my0) / r.height));
+    p.maskAngle = pin.ang0 + Math.atan2(Math.sin(k.a - pin.a0), Math.cos(k.a - pin.a0));
+    paramsRef.current = p;
+    if (!updateMaskLive(p)) isDirtyRef.current = true;
+    if (!applyMaskGuides(p)) scheduleParamsSync();
+  };
+  const onBoxPointerUp = (e: React.PointerEvent) => {
+    if (!boxPtrsRef.current.has(e.pointerId)) return;
+    boxPtrsRef.current.delete(e.pointerId);
+    if (maskSwallowRef.current.delete(e.pointerId)) { e.stopPropagation(); return; }
+    if (maskPinchRef.current) {
+      e.stopPropagation();
+      if (boxPtrsRef.current.size < 2) {
+        maskPinchRef.current = null;
+        boxPtrsRef.current.forEach((_, id) => maskSwallowRef.current.add(id));
+        activeDragRef.current = null;
+        setIsInteracting(false);
+        isDirtyRef.current = true;
+        flushParamsSync();
+        addToHistory(paramsRef.current, selectedLutIdx);
+      }
+      return;
+    }
+    const tap = maskTapRef.current; maskTapRef.current = null;
+    if (tap && tap.id === e.pointerId && e.type === 'pointerup' && performance.now() - tap.t < 450 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) <= 8) setMaskDeselected(true);
+  };
+
   /** 筆刷半徑（佔寬度的比例）：大小 1～100 對應寬度的 0.6%～15% */
   const brushR = (p: EditorParams) => 0.006 + ((p.maskBrushSize ?? 40) / 100) * 0.144;
   const addDabs = (p: EditorParams, x0: number, y0: number, x1: number, y1: number) => {
@@ -1855,7 +1933,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (type === 'sample') {
       const next = { ...p, maskShowOverlay: true };
       if (p.maskType === 'color') {
-        next.maskColors = [...(p.maskColors || []), { r: -1, g: -1, b: -1, x: pt.x / W, y: pt.y / H }].slice(-5);
+        // 顏色範圍只取一個點：再點別的地方就是換成那個顏色
+        next.maskColors = [{ r: -1, g: -1, b: -1, x: pt.x / W, y: pt.y / H }];
         next.maskCreated = true;
       } else next.maskLumSample = { x: pt.x / W, y: pt.y / H };
       paramsRef.current = next; isDirtyRef.current = true;
@@ -1958,7 +2037,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const inner = g.querySelector('[data-radial-inner]'); if (inner) { inner.setAttribute('rx', String(rx * f)); inner.setAttribute('ry', String(ry * f)); }
       g.querySelector('[data-radial-rx]')?.setAttribute('transform', `translate(${rx}, 0)`);
       g.querySelector('[data-radial-ry]')?.setAttribute('transform', `translate(0, ${-ry})`);
-      g.querySelector('[data-radial-rot]')?.setAttribute('transform', `translate(0, ${ry + 28})`);
+      g.querySelector('[data-radial-rxl]')?.setAttribute('transform', `translate(${-rx}, 0)`);
+      g.querySelector('[data-radial-ryb]')?.setAttribute('transform', `translate(0, ${ry})`);
+      g.querySelector('[data-radial-rot]')?.setAttribute('transform', `translate(0, ${-ry - 30})`);
       return true;
     }
     const g = svg.querySelector('#ui-guides');
@@ -2030,6 +2111,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const list = [...masks, m];
     const next = loadMask({ ...p, maskShowOverlay: true }, m, list, list.length - 1);
     setMaskPicking(false);
+    setMaskDeselected(false);
     setDismissedMaskHint(false);
     setActiveToolId(MASK_DEFAULT_TOOL[type]);
     hideMaskLive();
@@ -2038,6 +2120,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const selectMask = (i: number) => {
     const p = paramsRef.current;
     const masks = withActiveStored(p);
+    setMaskDeselected(false);
     if (!masks[i] || i === maskList(p).active) return;
     setMaskPicking(false);
     if (!MASK_TOOLS.some(x => x.id === activeToolId)) setActiveToolId(MASK_DEFAULT_TOOL[masks[i].maskType]);
@@ -2067,6 +2150,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [maskParamOpen, setMaskParamOpen] = useState<string | null>(null);
   /** 右邊那一欄收起來了沒 */
   const [maskRailOpen, setMaskRailOpen] = useState(true);
+  /* 線性／放射：點預覽區其他地方＝取消選中（參考線收起來、紅色範圍不顯示、九個調整先鎖住）。
+     點清單裡那一格、或照片上那個遮色片的小圓點就再選回來。 */
+  const [maskDeselected, setMaskDeselectedState] = useState(false);
+  const maskDeselectedRef = useRef(false);
+  const setMaskDeselected = (v: boolean) => {
+    if (maskDeselectedRef.current === v) return;
+    maskDeselectedRef.current = v; setMaskDeselectedState(v); isDirtyRef.current = true;
+  };
+  useEffect(() => { if (activeCategory !== 'mask') setMaskDeselected(false); }, [activeCategory]);
   useEffect(() => { setMaskParamOpen(null); }, [activeCategory, params.maskId, params.maskType, maskPicking]);
 
   // Single Canvas for all rendering
@@ -4778,7 +4870,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // 紅色遮罩只是編輯時看得到遮色片範圍用的輔助顯示，烘焙（導出、縮圖）出來的圖片絕對不能有它。
     /* 拖遮色片自己的參數（範圍、平滑、羽化…）時，紅色遮罩一定顯示、而且跟著滑桿即時變：那正是使用者要看的東西。
        拖九個調整時照舊收起來，才看得到調出來的樣子。 */
-    const showOverlay = !baking && activeCategory === 'mask'
+    const showOverlay = !baking && activeCategory === 'mask' && !maskDeselectedRef.current
       && (maskRangeDragRef.current || (!!p.maskShowOverlay && !(isInteracting && !activeDragRef.current && !maskPaintingRef.current)));
     const { list: maskItems, active: maskAct } = maskList(p);
     const actMask = maskItems[maskAct];
@@ -7197,7 +7289,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 這張照片有沒有任何遮色片（含剛新增、還沒畫出來的那一個）。沒有的話先選要新增哪一種 */
   const maskHasAny = maskListView.list.length > 0 || !!params.masks?.length;
   /* 還沒畫出遮色片時，九個調整先不能動（不知道要調哪裡）；筆刷大小這些參數照樣可以先調 */
-  const maskLocked = activeCategory === 'mask' && !params.maskCreated && MASK_TOOLS.some(t => t.id === activeToolId);
+  const maskLocked = activeCategory === 'mask' && (!params.maskCreated || maskDeselected) && MASK_TOOLS.some(t => t.id === activeToolId);
   /* ── 人像（美顏）與仿色：直接用那兩個工具本身，蓋在編輯器上 ─────────────
      它們改的是「照片本身」：做完換成新的來源圖，濾鏡、調節這些參數照樣疊在上面、還能再調。
      切去別的分頁就自動套用；套用也是一步，可以復原。 */
@@ -7903,6 +7995,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
            撐開自己，把下面工具列推出 viewport。預覽只能使用剩餘空間，長圖
            由內層等比例 contain；工具列因此永遠留在螢幕內。 */
         className={`flex-1 min-h-0 relative flex overflow-hidden bg-[#080808]`}
+        style={activeCategory === 'mask' ? { touchAction: 'none' } : undefined}
+        onPointerDownCapture={onBoxPointerDown}
+        onPointerMoveCapture={onBoxPointerMove}
+        onPointerUpCapture={onBoxPointerUp}
+        onPointerCancelCapture={onBoxPointerUp}
       >
         <TransformWrapper
           ref={zoomRef}
@@ -7969,11 +8066,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 <>
                   <svg
                     id="mask-svg-overlay"
-                    /* 一定要 overflow-hidden：那兩條「無限長」的邊界線是 y=±10000 畫的，
-                       overflow-visible 會讓它們一路畫到整個螢幕上（照片外面、
-                       連工具列那一帶都是線），而且線上的 18px 觸控帶也跟著跑出去。
-                       SVG 預設就是裁切到自己的框，這裡把它拿回來。 */
-                    className="absolute inset-0 w-full h-full select-none pointer-events-auto overflow-hidden z-30"
+                    /* 參考線與把手可以超出照片、畫在照片外面那圈暗色上（不會因為出了照片邊就被切掉）；
+                       那兩條「無限長」的邊界線由外面的預覽區（overflow-hidden）負責裁到預覽區為止，
+                       不會畫到工具列上。紅色範圍是畫在畫布裡的，本來就不會超出照片。 */
+                    className="absolute inset-0 w-full h-full select-none pointer-events-auto overflow-visible z-30"
                     style={{
                       touchAction: 'none',
                     }}
@@ -7996,7 +8092,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
                   <g transform={`translate(${canvasBounds.left}, ${canvasBounds.top})`}>
                     {/* Vector guides */}
-                    {params.maskCreated && (maskView.maskType ?? 'linear') === 'linear' && !maskPicking && !(isInteracting && !activeDragRef.current) && (
+                    {params.maskCreated && (maskView.maskType ?? 'linear') === 'linear' && !maskPicking && !maskDeselected && !(isInteracting && !activeDragRef.current) && (
                       <g
                         id="ui-guides"
                       style={{
@@ -8192,7 +8288,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     </g>
                   )}
                     {/* 放射：橢圓外框（100%→0% 的邊界）、內側虛線（羽化從這裡開始）、中心、兩軸把手、旋轉把手 */}
-                    {params.maskCreated && maskView.maskType === 'radial' && !maskPicking && !(isInteracting && !activeDragRef.current) && (() => {
+                    {params.maskCreated && maskView.maskType === 'radial' && !maskPicking && !maskDeselected && !(isInteracting && !activeDragRef.current) && (() => {
                       const W = canvasBounds.width, H = canvasBounds.height;
                       const rx = (maskView.maskRx ?? 0.25) * W, ry = (maskView.maskRy ?? 0.25) * W, f = 1 - (maskView.maskFeather ?? 50) / 100;
                       const knob = (data: string, type: MaskDragType, tf: string, cursor: string) => (
@@ -8210,9 +8306,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                             <rect x={-16} y={-16} width={32} height={32} fill="transparent" style={{ cursor: 'move' }} onPointerDown={(e) => handleMaskPointerDown(e, 'rcenter')} />
                             <rect className="pointer-events-none" x={-6} y={-6} width={12} height={12} fill="#fff" stroke="#000" strokeWidth="0.5" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,.45))' }} />
                           </g>
+                          {/* 四個邊都能拉：左右兩顆改橫向半徑、上下兩顆改縱向半徑（以中心對稱） */}
                           {knob('data-radial-rx', 'rx', `translate(${rx}, 0)`, 'ew-resize')}
+                          {knob('data-radial-rxl', 'rx', `translate(${-rx}, 0)`, 'ew-resize')}
                           {knob('data-radial-ry', 'ry', `translate(0, ${-ry})`, 'ns-resize')}
-                          <g data-radial-rot transform={`translate(0, ${ry + 28})`}>
+                          {knob('data-radial-ryb', 'ry', `translate(0, ${ry})`, 'ns-resize')}
+                          <g data-radial-rot transform={`translate(0, ${-ry - 30})`}>
                             <circle r={16} fill="transparent" style={{ cursor: 'alias' }} onPointerDown={(e) => handleMaskPointerDown(e, 'rrot')} />
                             <circle className="pointer-events-none" r={6} fill="none" stroke="#fff" strokeWidth="1.5" strokeDasharray="2,2.2" />
                           </g>
@@ -8226,7 +8325,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       </g>
                     ))}
                     {/* 其他遮色片的位置（線性、放射）：點一下切過去 */}
-                    {!activeDragRef.current && maskListView.list.map((m, i) => (i === maskListView.active || !m.maskCreated || (m.maskType !== 'linear' && m.maskType !== 'radial')) ? null : (
+                    {!activeDragRef.current && maskListView.list.map((m, i) => ((i === maskListView.active && !maskDeselected) || !m.maskCreated || (m.maskType !== 'linear' && m.maskType !== 'radial')) ? null : (
                       <g key={m.maskId + i} data-mask-pin={i} transform={`translate(${m.maskCx * canvasBounds.width}, ${m.maskCy * canvasBounds.height})`}>
                         <circle r={16} fill="transparent" style={{ cursor: 'pointer' }} onPointerDown={(e) => { e.stopPropagation(); selectMask(i); }} />
                         <circle className="pointer-events-none" r={6.5} fill="rgba(0,0,0,.45)" stroke="#fff" strokeWidth="1.5" />
@@ -8250,70 +8349,94 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             最底下那一塊實心方塊是收納鍵：點一下整欄收進方塊裡（只剩方塊），再點一下展開。
             收合用 grid 的列高從 1fr 補間到 0fr（真的改變高度，方塊跟著滑上去），每一顆再各自淡出縮小、錯開一點時間。 */}
         {activeCategory === 'mask' && (() => {
-          const EASE = 'cubic-bezier(.22,1,.36,1)';
+          /* 收合：整塊毛玻璃的高度與寬度一起補間（grid 的 1fr ⇄ 0fr），裡面的按鈕先很快淡掉；
+             展開時盒子先長開，按鈕再依序淡入。曲線用 iOS 那種先快後很慢的收尾。 */
+          const EASE = 'cubic-bezier(.32,.72,0,1)';
+          const DUR = 420;
+          const list = maskListView.list;
+          const NAMES: Record<string, string> = { linear: '線性', radial: '放射', brush: '筆刷', color: '顏色', luma: '明度' };
+          const seen: Record<string, number> = {};
+          const total: Record<string, number> = {};
+          list.forEach(m => { total[m.maskType] = (total[m.maskType] || 0) + 1; });
           let n = 0;
-          const item = (node: React.ReactNode, key: string) => {
+          const fade = (node: React.ReactNode, key: string) => {
             const i = n++;
             return (
               <div key={key} className="flex items-center justify-center" style={{
-                transition: `opacity 260ms ${EASE} ${maskRailOpen ? 40 + i * 22 : 0}ms, transform 360ms ${EASE} ${maskRailOpen ? 40 + i * 22 : 0}ms`,
-                opacity: maskRailOpen ? 1 : 0, transform: maskRailOpen ? 'none' : 'translateY(10px) scale(.86)',
+                transition: maskRailOpen
+                  ? `opacity 280ms ease ${120 + i * 28}ms, transform ${DUR}ms ${EASE} ${90 + i * 28}ms`
+                  : 'opacity 140ms ease 0ms, transform 200ms ease 0ms',
+                opacity: maskRailOpen ? 1 : 0, transform: maskRailOpen ? 'none' : 'scale(.82)',
               }}>{node}</div>
             );
           };
-          const round = 'w-9 h-9 rounded-full flex items-center justify-center bg-black/55 backdrop-blur-sm shadow-[inset_0_0_0_1px_rgba(255,255,255,.2)]';
+          const act = 'w-9 h-8 flex items-center justify-center active:scale-90 transition-transform duration-150';
           return (
-            <div data-mask-stack data-open={maskRailOpen ? '1' : '0'} className="absolute right-3 top-3 z-[40] flex flex-col items-center" onPointerDown={e => e.stopPropagation()}>
-              <div className="grid" style={{ gridTemplateRows: maskRailOpen ? '1fr' : '0fr', transition: `grid-template-rows 380ms ${EASE}` }}>
-                <div className={`min-h-0 overflow-hidden flex flex-col items-center gap-2 px-1 pt-1 ${maskRailOpen ? 'pb-2.5' : 'pb-0'}`} style={{ transition: `padding 380ms ${EASE}` }} aria-hidden={!maskRailOpen}>
-                  {item(
-                    <button data-mask-add aria-label="新增遮色片" tabIndex={maskRailOpen ? 0 : -1} onClick={() => setMaskPicking(v => maskHasAny ? !v : true)}
-                      className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${maskPicking ? 'bg-white/20 text-white' : 'bg-white text-black'}`}>
-                      <MaskGlyph k={maskPicking ? 'close' : 'plus'} />
-                    </button>, 'add')}
-                  {maskListView.list.map((m, i) => {
-                    const on = i === maskListView.active && !maskPicking;
-                    return item(
-                      <button data-mask-chip={i} data-on={on ? '1' : '0'} aria-label={`遮色片 ${i + 1}`} tabIndex={maskRailOpen ? 0 : -1} onClick={() => selectMask(i)}
-                        /* 方形；選中不填滿，只有白色外框，整格從偏暗變回正常亮度 */
-                        className="relative w-9 h-9 rounded-[9px] flex items-center justify-center bg-black/55 backdrop-blur-sm text-white transition-[opacity,box-shadow] duration-200"
-                        style={{
-                          opacity: on ? 1 : 0.5,
-                          boxShadow: on ? 'inset 0 0 0 1.5px #fff' : m.maskCreated ? 'inset 0 0 0 1px rgba(255,255,255,.25)' : 'none',
-                          outline: m.maskCreated ? undefined : '1px dashed rgba(255,255,255,.55)', outlineOffset: -1,
-                        }}>
-                        <MaskGlyph k={m.maskType} size={17} />
-                        {m.maskInvert && <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-white text-black flex items-center justify-center"><MaskGlyph k="invert" size={9} /></span>}
-                      </button>, `chip-${m.maskId}-${i}`);
-                  })}
-                  {maskListView.list.length > 0 && !maskPicking && (<>
-                    {item(<span className="block w-5 h-px bg-white/25 my-0.5" />, 'sep')}
-                    {item(
-                      <button data-mask-overlay aria-label={params.maskShowOverlay ? '隱藏範圍' : '顯示範圍'} tabIndex={maskRailOpen ? 0 : -1} onClick={toggleMaskOverlay}
-                        className={params.maskShowOverlay ? 'w-9 h-9 rounded-full flex items-center justify-center bg-[#dc2626]/85 text-white shadow-[inset_0_0_0_1px_rgba(248,113,113,.6)]' : `${round} text-white/85`}>
-                        <MaskGlyph k={params.maskShowOverlay ? 'eye' : 'eyeoff'} />
-                      </button>, 'overlay')}
-                    {item(
-                      <button data-mask-invert aria-label="反轉" tabIndex={maskRailOpen ? 0 : -1} onClick={toggleMaskInvert}
-                        className={params.maskInvert ? 'w-9 h-9 rounded-full flex items-center justify-center bg-white text-black' : `${round} text-white/85`}>
-                        <MaskGlyph k="invert" />
-                      </button>, 'invert')}
-                    {item(
-                      <button data-mask-delete aria-label="刪除遮色片" tabIndex={maskRailOpen ? 0 : -1} onClick={deleteMask} className={`${round} text-[#f87171]`}>
-                        <MaskGlyph k="trash" />
-                      </button>, 'delete')}
-                  </>)}
+            <div data-mask-stack data-open={maskRailOpen ? '1' : '0'} onPointerDown={e => e.stopPropagation()}
+              /* 黑色毛玻璃底板包住整欄 */
+              className="absolute right-3 top-3 z-[40] flex flex-col items-end rounded-[16px] bg-black/45 backdrop-blur-xl p-1.5 shadow-[0_8px_28px_rgba(0,0,0,.4),inset_0_0_0_1px_rgba(255,255,255,.08)]">
+              <div className="grid" style={{ gridTemplateRows: maskRailOpen ? '1fr' : '0fr', gridTemplateColumns: maskRailOpen ? '1fr' : '0fr', transition: `grid-template-rows ${DUR}ms ${EASE}, grid-template-columns ${DUR}ms ${EASE}` }}>
+                <div className="min-h-0 min-w-0 overflow-hidden" aria-hidden={!maskRailOpen}>
+                  <div className="flex flex-col items-end gap-2 pb-2">
+                    {fade(
+                      <button data-mask-add aria-label="新增遮色片" tabIndex={maskRailOpen ? 0 : -1} onClick={() => setMaskPicking(v => maskHasAny ? !v : true)}
+                        className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${maskPicking ? 'bg-white/20 text-white' : 'bg-white text-black'}`}>
+                        <MaskGlyph k={maskPicking ? 'close' : 'plus'} />
+                      </button>, 'add')}
+                    {list.length > 0 && (
+                      /* 一欄最多 4 個：第 5 個起往左邊再排一欄（從右邊那欄開始排） */
+                      <div className="grid gap-2" style={{ gridAutoFlow: 'column', gridTemplateRows: `repeat(${Math.min(4, list.length)}, auto)`, direction: 'rtl' }}>
+                        {list.map((m, i) => {
+                          const on = i === maskListView.active && !maskPicking && !maskDeselected;
+                          const t = m.maskType;
+                          seen[t] = (seen[t] || 0) + 1;
+                          const name = (NAMES[t] || '') + (total[t] > 1 ? String(seen[t]) : '');
+                          return fade(
+                            <button data-mask-chip={i} data-on={on ? '1' : '0'} aria-label={`遮色片 ${name}`} tabIndex={maskRailOpen ? 0 : -1} onClick={() => selectMask(i)}
+                              /* 方形；選中不填滿，只有白色外框，整格從偏暗變回正常亮度 */
+                              className="relative w-9 h-9 rounded-[9px] flex items-center justify-center bg-white/[0.08] text-white text-[11px] font-medium tracking-[0.02em] leading-none transition-[opacity,box-shadow] duration-200"
+                              style={{
+                                direction: 'ltr',
+                                opacity: on ? 1 : 0.5,
+                                boxShadow: on ? 'inset 0 0 0 1.5px #fff' : m.maskCreated ? 'inset 0 0 0 1px rgba(255,255,255,.22)' : 'none',
+                                outline: m.maskCreated ? undefined : '1px dashed rgba(255,255,255,.55)', outlineOffset: -1,
+                              }}>
+                              {name}
+                              {m.maskInvert && <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-white text-black flex items-center justify-center"><MaskGlyph k="invert" size={9} /></span>}
+                            </button>, `chip-${m.maskId}-${i}`);
+                        })}
+                      </div>
+                    )}
+                    {list.length > 0 && !maskPicking && (<>
+                      {fade(<span className="block w-6 h-px bg-white/20 my-0.5" />, 'sep')}
+                      {/* 這三顆只有圖示，沒有底圓 */}
+                      {fade(
+                        <button data-mask-overlay aria-label={params.maskShowOverlay ? '隱藏範圍' : '顯示範圍'} aria-pressed={!!params.maskShowOverlay} tabIndex={maskRailOpen ? 0 : -1} onClick={toggleMaskOverlay}
+                          className={`${act} ${params.maskShowOverlay ? 'text-[#ef4444]' : 'text-white/75'}`}>
+                          <MaskGlyph k={params.maskShowOverlay ? 'eye' : 'eyeoff'} size={20} />
+                        </button>, 'overlay')}
+                      {fade(
+                        <button data-mask-invert aria-label="反轉" aria-pressed={!!params.maskInvert} tabIndex={maskRailOpen ? 0 : -1} onClick={toggleMaskInvert}
+                          className={`${act} ${params.maskInvert ? 'text-white' : 'text-white/75'}`}>
+                          <MaskGlyph k="invert" size={20} />
+                        </button>, 'invert')}
+                      {fade(
+                        <button data-mask-delete aria-label="刪除遮色片" tabIndex={maskRailOpen ? 0 : -1} onClick={deleteMask} className={`${act} text-[#f87171]`}>
+                          <MaskGlyph k="trash" size={20} />
+                        </button>, 'delete')}
+                    </>)}
+                  </div>
                 </div>
               </div>
               {/* 實心方塊＝收納鍵 */}
               <button data-mask-rail-toggle aria-label={maskRailOpen ? '收起遮色片工具' : '展開遮色片工具'} aria-expanded={maskRailOpen}
                 onClick={() => setMaskRailOpen(v => !v)}
-                className="relative w-9 h-9 rounded-[9px] bg-white text-black flex items-center justify-center shadow-[0_2px_10px_rgba(0,0,0,.45)] active:scale-95 transition-transform duration-150">
-                <span className="flex items-center justify-center" style={{ transition: `transform 380ms ${EASE}`, transform: maskRailOpen ? 'none' : 'rotate(180deg)' }}>
+                className="relative w-9 h-9 rounded-[9px] bg-white text-black flex items-center justify-center active:scale-95 transition-transform duration-150">
+                <span className="flex items-center justify-center" style={{ transition: `transform ${DUR}ms ${EASE}`, transform: maskRailOpen ? 'none' : 'rotate(180deg)' }}>
                   <MaskGlyph k="fold" size={18} />
                 </span>
-                {!maskRailOpen && maskListView.list.length > 0 && (
-                  <span className="absolute -top-1.5 -left-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-black text-white text-[10px] font-bold leading-[18px] text-center shadow-[inset_0_0_0_1px_rgba(255,255,255,.35)]">{maskListView.list.length}</span>
+                {!maskRailOpen && list.length > 0 && (
+                  <span className="absolute -top-2 -left-2 min-w-[18px] h-[18px] px-1 rounded-full bg-black text-white text-[10px] font-bold leading-[18px] text-center shadow-[inset_0_0_0_1px_rgba(255,255,255,.35)] animate-in fade-in zoom-in-75 duration-300">{list.length}</span>
                 )}
               </button>
             </div>
@@ -8327,8 +8450,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           const extra: { id: string; label: string; icon: string; on: boolean; dim?: boolean; run: () => void }[] = [];
           if (mt === 'brush') extra.push({ id: 'maskBrushErase', label: '擦除', icon: 'erase', on: !!params.maskBrushErase,
             run: () => { const p = paramsRef.current; paramsRef.current = { ...p, maskBrushErase: !p.maskBrushErase }; flushParamsSync(); } });
-          if (mt === 'color') extra.push({ id: 'maskClearSamples', label: '清除取樣', icon: 'clearsamples', on: false, dim: !(params.maskColors || []).length,
-            run: () => commitMaskParams({ ...paramsRef.current, maskColors: [], maskCreated: false }) });
           if (!tools.length && !extra.length) return null;
           const btn = (on: boolean) => `w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-sm transition-[background-color,box-shadow,color] duration-200 ${on ? 'bg-black/70 text-white shadow-[inset_0_0_0_1.5px_#fff]' : 'bg-black/55 text-white/85 shadow-[inset_0_0_0_1px_rgba(255,255,255,.2)]'}`;
           return (
@@ -8390,7 +8511,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           const mt = params.maskType ?? 'linear';
           const tip = maskPicking || !maskHasAny ? '選一種遮色片'
             : !params.maskCreated ? ({ linear: '在照片上拖曳，拉出線性漸層', radial: '從中心往外拖曳，畫出放射範圍', brush: '在要調整的地方塗抹', color: '點選要選取的顏色', luma: '點選照片，選取那一段亮度' } as Record<string, string>)[mt]
-            : mt === 'color' ? '再點其他地方可以多選幾個顏色（最多 5 個）' : mt === 'luma' ? '點照片可以重新取樣亮度' : '';
+            : mt === 'color' ? '點其他地方可以換一個顏色' : mt === 'luma' ? '點照片可以重新取樣亮度' : '';
           if (!tip || isInteracting) return null;
           const imgTop = previewFitSize && previewBoxSize.height ? Math.max(0, (previewBoxSize.height - previewFitSize.height) / 2) : 0;
           return <div data-mask-tip className="absolute left-1/2 -translate-x-1/2 z-[38] pointer-events-none px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-[12px] text-white/90 whitespace-nowrap" style={{ top: Math.round(imgTop + 16) }}>{tip}</div>;
@@ -9170,7 +9291,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             return (
               <div className="flex items-center gap-2">
                 {MASK_TOOLS.map(tool => toolBtn(tool.id, tool.label, <Icon name={tool.icon} className="text-lg" fill={activeToolId === tool.id} />,
-                  activeToolId === tool.id, () => { if (params.maskCreated) setActiveToolId(tool.id); }, !params.maskCreated, isParamAdjusted(tool.id)))}
+                  activeToolId === tool.id, () => { if (params.maskCreated && !maskDeselected) setActiveToolId(tool.id); }, !params.maskCreated || maskDeselected, isParamAdjusted(tool.id)))}
               </div>
             );
           })()}
@@ -9241,12 +9362,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           兩邊的欄位高度跟編輯器一樣，預覽大小相同，切換時圖片不會跳。 */}
       {fullTabs && (studiosWarm || STUDIO_CATS.includes(activeCategory)) && (
         <>
-          <div data-studio-host="beauty" className="absolute inset-x-0 top-0 z-[70]" aria-hidden={activeCategory !== 'beauty'}
-            style={{ bottom: footerHeight + 1, visibility: activeCategory === 'beauty' ? 'visible' : 'hidden', pointerEvents: activeCategory === 'beauty' ? 'auto' : 'none' }}>
+          <div data-studio-host="beauty" className={`absolute inset-x-0 top-0 z-[70] ${activeCategory === 'beauty' ? '' : 'vis-off'}`} aria-hidden={activeCategory !== 'beauty'}
+            style={{ bottom: footerHeight + 1, pointerEvents: activeCategory === 'beauty' ? 'auto' : 'none' }}>
             {beautyEl}
           </div>
-          <div data-studio-host="match" className="absolute inset-x-0 top-0 z-[70]" aria-hidden={activeCategory !== 'match'}
-            style={{ bottom: footerHeight + 1, visibility: activeCategory === 'match' ? 'visible' : 'hidden', pointerEvents: activeCategory === 'match' ? 'auto' : 'none' }}>
+          <div data-studio-host="match" className={`absolute inset-x-0 top-0 z-[70] ${activeCategory === 'match' ? '' : 'vis-off'}`} aria-hidden={activeCategory !== 'match'}
+            style={{ bottom: footerHeight + 1, pointerEvents: activeCategory === 'match' ? 'auto' : 'none' }}>
             {matchEl}
           </div>
         </>

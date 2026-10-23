@@ -1252,16 +1252,16 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
         {/* 嵌在編輯器裡：修容的色票浮在預覽下緣，跟前後對比鍵同一排（不佔下面的工具列） */}
         {embedded && tool === 'makeup' && (
-          <div data-beauty-swatches className="absolute left-3 right-[60px] bottom-[18px] z-20 flex items-center gap-2.5 overflow-x-auto no-scrollbar py-1 px-0.5"
+          <div data-beauty-swatches className="absolute left-3 right-[60px] bottom-[14px] z-20 flex items-center gap-2.5 overflow-x-auto no-scrollbar py-1 px-0.5"
             style={{ WebkitMaskImage: 'linear-gradient(90deg,#000 calc(100% - 22px),transparent)', maskImage: 'linear-gradient(90deg,#000 calc(100% - 22px),transparent)' }}>
-            <label title="自選顏色" className="w-7 h-7 rounded-full shrink-0 relative cursor-pointer flex items-center justify-center overflow-hidden shadow-[0_1px_6px_rgba(0,0,0,.65)]"
+            <label title="自選顏色" className="w-7 h-7 rounded-full shrink-0 relative cursor-pointer flex items-center justify-center overflow-hidden"
               style={{ background: 'conic-gradient(#f43,#fa3,#fd3,#3d6,#3cf,#63f,#f3a,#f43)' }}>
               <span className="absolute inset-[5px] rounded-full bg-[#080808] flex items-center justify-center"><Icon name="colorize" className="text-[13px] text-white" /></span>
               <input type="color" value={makeupColor} onChange={e => setMakeupColor(e.target.value)} aria-label="自選顏色" className="absolute inset-0 opacity-0 cursor-pointer" />
             </label>
             {LIP_PRESETS.map(c => (
               <button key={c.hex} onClick={() => setMakeupColor(c.hex)} title={c.name} aria-label={c.name}
-                className="beauty-swatch w-7 h-7 rounded-full shrink-0 shadow-[0_1px_6px_rgba(0,0,0,.65)] ring-1 ring-white/20 transition-transform active:scale-90" style={{ backgroundColor: c.hex }}>
+                className="beauty-swatch w-7 h-7 rounded-full shrink-0 transition-transform active:scale-90" style={{ backgroundColor: c.hex }}>
                 {makeupColor.toLowerCase() === c.hex.toLowerCase() && <svg className="beauty-swatch-outline" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="none" stroke="white" strokeWidth="2" /></svg>}
               </button>
             ))}

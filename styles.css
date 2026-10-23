@@ -400,3 +400,8 @@ html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.mat
 @media (prefers-reduced-motion: reduce) {
   .creative-alignment-dash { animation: none; }
 }
+
+/* 整塊藏起來（visibility:hidden）時，子孫的過場一起關掉。
+   transition-all 會把 visibility 也當成過場：父層一藏，子孫繼承的 hidden 要等自己的過場跑完才生效，
+   看起來就是「選中的那顆、某個圖示比其他東西慢一拍才消失」。用這個 class 藏，所有東西同一幀消失。 */
+.vis-off, .vis-off * { visibility: hidden !important; transition: none !important; }
