@@ -405,3 +405,14 @@ html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.mat
    transition-all 會把 visibility 也當成過場：父層一藏，子孫繼承的 hidden 要等自己的過場跑完才生效，
    看起來就是「選中的那顆、某個圖示比其他東西慢一拍才消失」。用這個 class 藏，所有東西同一幀消失。 */
 .vis-off, .vis-off * { visibility: hidden !important; transition: none !important; }
+
+/* 見 index.html 的 #ios-status-band：只在主畫面 App 模式出現，高度剛好是狀態列（至少 12px，iOS 對太矮的固定色塊不理），
+   純色、不模糊，蓋在所有東西上面，但不擋任何點擊。 */
+#ios-status-band { display: none; }
+@media (display-mode: standalone) {
+  #ios-status-band {
+    display: block; position: fixed; left: 0; right: 0; top: 0;
+    height: max(env(safe-area-inset-top, 0px), 12px);
+    background: #000; z-index: 2147483000; pointer-events: none;
+  }
+}

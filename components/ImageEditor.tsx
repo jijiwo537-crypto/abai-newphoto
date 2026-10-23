@@ -225,7 +225,7 @@ const MASK_TYPE_TOOLS: Record<MaskType, ToolDef[]> = {
   brush: [
     { id: 'maskBrushSize', label: '大小', icon: 'size', min: 1, max: 100 },
     { id: 'maskBrushFeather', label: '羽化', icon: 'feather', min: 0, max: 100 },
-    { id: 'maskBrushFlow', label: '流量', icon: 'flow', min: 1, max: 100 },
+    { id: 'maskBrushFlow', label: '濃度', icon: 'flow', min: 1, max: 100 },
   ],
   color: [{ id: 'maskColorRange', label: '範圍', icon: 'range', min: 0, max: 100 }],
   luma: [
@@ -1937,6 +1937,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (tap && tap.id === e.pointerId && e.type === 'pointerup' && performance.now() - tap.t < 450 && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) <= 8) setMaskDeselected(true);
   };
 
+  /** 調筆刷大小時在照片正中間畫一個實際大小的空心圓（跟人像的筆刷一樣），直接改屬性不經過 React */
+  const showSizeRing = (p: EditorParams) => {
+    const c = document.querySelector('#mask-svg-overlay [data-mask-size-ring]');
+    if (!c) return;
+    c.setAttribute('r', String(brushR(p) * canvasBounds.width));
+    c.setAttribute('visibility', 'visible');
+  };
+  const hideSizeRing = () => document.querySelector('#mask-svg-overlay [data-mask-size-ring]')?.setAttribute('visibility', 'hidden');
   /** 筆刷半徑（佔寬度的比例）：大小 1～100 對應寬度的 0.6%～15% */
   const brushR = (p: EditorParams) => 0.006 + ((p.maskBrushSize ?? 40) / 100) * 0.144;
   const addDabs = (p: EditorParams, x0: number, y0: number, x1: number, y1: number) => {
@@ -8369,6 +8377,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     ))}
                   </g>
                   {maskView.maskType === 'brush' && (
+                    <circle data-mask-size-ring className="pointer-events-none" visibility="hidden"
+                      cx={canvasBounds.left + canvasBounds.width / 2} cy={canvasBounds.top + canvasBounds.height / 2}
+                      r={brushR(maskView) * canvasBounds.width} fill="none" stroke="#fff" strokeWidth="2" style={{ filter: 'drop-shadow(0 0 1.5px rgba(0,0,0,.8))' }} />
+                  )}
+                  {maskView.maskType === 'brush' && (
                     <circle data-brush-cursor className="pointer-events-none" visibility="hidden" cx={0} cy={0}
                       r={brushR(maskView) * canvasBounds.width} fill="none" stroke="#fff" strokeWidth="1.5" style={{ filter: 'drop-shadow(0 0 1.5px rgba(0,0,0,.8))' }} />
                   )}
@@ -8413,8 +8426,72 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             <div data-mask-stack data-open={maskRailOpen ? '1' : '0'} onPointerDown={e => e.stopPropagation()}
               /* 黑色毛玻璃底板包住整欄 */
               className="absolute right-3 top-3 z-[40] flex flex-col items-center rounded-[12px] bg-black/45 backdrop-blur-xl p-1.5 shadow-[0_8px_28px_rgba(0,0,0,.4),inset_0_0_0_1px_rgba(255,255,255,.08)]">
+              {/* 遮色片自己的參數（羽化、範圍、筆刷大小…）：橫排在右欄的左邊、靠著它（沒有毛玻璃底），
+                  跟右欄一起收合／展開。點一顆就在下面浮出那個參數的滑桿，再點一次收起來。 */}
+              {!maskTypePicking && list.length > 0 && (() => {
+                const mt = (params.maskType ?? 'linear') as MaskType;
+                const tools = MASK_TYPE_TOOLS[mt];
+                const extra: { id: string; label: string; icon: string; on: boolean; run: () => void }[] = [];
+                if (mt === 'brush') extra.push({ id: 'maskBrushErase', label: '擦除', icon: 'erase', on: !!params.maskBrushErase,
+                  run: () => { const p = paramsRef.current; paramsRef.current = { ...p, maskBrushErase: !p.maskBrushErase }; flushParamsSync(); } });
+                if (!tools.length && !extra.length) return null;
+                const btn = (on: boolean) => `w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-sm transition-[background-color,box-shadow,color] duration-200 ${on ? 'bg-black/70 text-white shadow-[inset_0_0_0_1.5px_#fff]' : 'bg-black/55 text-white/85 shadow-[inset_0_0_0_1px_rgba(255,255,255,.2)]'}`;
+                const openTool = tools.find(t => t.id === maskParamOpen);
+                const v = openTool ? (snapOf(params) as any)[openTool.id] : 0;
+                return (
+                  <div data-mask-params className="absolute right-full top-1.5 mr-2 flex flex-col items-end" style={{ pointerEvents: maskRailOpen ? 'auto' : 'none' }}>
+                    <div className="flex flex-row items-center gap-2">
+                      {tools.map(t => fade(
+                        <button data-mask-param={t.id} aria-label={t.label} aria-expanded={maskParamOpen === t.id} tabIndex={maskRailOpen ? 0 : -1}
+                          onClick={() => setMaskParamOpen(o => o === t.id ? null : t.id)} className={btn(maskParamOpen === t.id)}>
+                          <MaskGlyph k={t.icon} />
+                        </button>, `p-${t.id}`))}
+                      {extra.map(t => fade(
+                        <button data-mask-param={t.id} aria-label={t.label} aria-pressed={t.on} tabIndex={maskRailOpen ? 0 : -1} onClick={t.run} className={btn(t.on)}>
+                          <MaskGlyph k={t.icon} />
+                        </button>, `p-${t.id}`))}
+                    </div>
+                    {openTool && maskRailOpen && (
+                      <div data-mask-param-slider={openTool.id}
+                        className="mt-2 rounded-2xl bg-black/75 backdrop-blur-md px-4 pt-2 pb-0.5 shadow-[0_6px_24px_rgba(0,0,0,.5),inset_0_0_0_1px_rgba(255,255,255,.08)] animate-in fade-in slide-in-from-top-1 duration-200"
+                        style={{ width: 'min(232px, calc(100vw - 96px))' }}>
+                        <FastSlider
+                          key={openTool.id}
+                          value={typeof v === 'number' ? v : 0}
+                          min={openTool.min} max={openTool.max} step={openTool.step ?? 1}
+                          toolId={openTool.id} label={openTool.label} dense
+                          onUpdate={(id, val) => {
+                            const nextParams = { ...paramsRef.current, [id]: val };
+                            paramsRef.current = nextParams;
+                            lastSliderMoveTimeRef.current = performance.now();
+                            if (id === 'maskBrushSize') showSizeRing(nextParams);
+                            if (maskSliderLiveRef.current && maskLiveFrame(nextParams, true)) return;
+                            isDirtyRef.current = true;
+                          }}
+                          onInteractStart={() => {
+                            if (openTool.id === 'maskBrushSize') showSizeRing(paramsRef.current);
+                            if (paramsRef.current.maskCreated) { maskSliderLiveRef.current = true; maskRangeDragRef.current = true; }
+                            setupFastPreview(openTool.id);
+                          }}
+                          onInteractEnd={() => {
+                            hideSizeRing();
+                            maskSliderLiveRef.current = false; maskRangeDragRef.current = false; maskLiveKeyRef.current = '';
+                            setIsInteracting(false);
+                            fastPreviewCacheRef.current.active = false;
+                            isDirtyRef.current = true;
+                            setParams({ ...paramsRef.current });
+                            addToHistory(paramsRef.current, selectedLutIdx);
+                          }}
+                          onReset={handleDoubleTap}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div className="grid" style={{ gridTemplateRows: maskRailOpen ? '1fr' : '0fr', transition: `grid-template-rows ${DUR}ms ${EASE}` }}>
-                <div className="min-h-0 overflow-hidden" aria-hidden={!maskRailOpen}>
+                {/* 四周多留 6px 再用負邊距抵回去：按鈕果凍放大的那一下不會被這一層的裁切切到 */}
+                <div className="min-h-0 overflow-hidden -m-1.5 p-1.5" aria-hidden={!maskRailOpen}>
                   <div className="flex flex-col items-center gap-2 pb-2">
                     {fade(
                       <button data-mask-add aria-label="新增遮色片" tabIndex={maskRailOpen ? 0 : -1} onClick={() => setMaskPicking(v => maskHasAny ? !v : true)}
@@ -8423,7 +8500,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       </button>, 'add')}
                     {list.length > 0 && (
                       /* 一次最多看到 4 個；超過就在這一段裡上下滑（不會把下面的按鈕擠到太下面） */
-                      <div data-mask-chips className="flex flex-col items-center gap-2 overflow-y-auto no-scrollbar overscroll-contain p-1 -m-1"
+                      <div data-mask-chips className="flex flex-col items-center gap-2 overflow-y-auto no-scrollbar overscroll-contain p-1.5 -m-1.5"
                         style={{ maxHeight: 4 * 36 + 3 * 8, touchAction: 'pan-y', scrollSnapType: 'y proximity' }}>
                         {list.map((m, i) => {
                           const on = i === maskListView.active && !maskPicking && !maskDeselected;
@@ -8478,69 +8555,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   <span className="absolute -top-2 -left-2 min-w-[18px] h-[18px] px-1 rounded-full bg-black text-white text-[10px] font-bold leading-[18px] text-center shadow-[inset_0_0_0_1px_rgba(255,255,255,.35)] animate-in fade-in zoom-in-75 duration-300">{list.length}</span>
                 )}
               </button>
-            </div>
-          );
-        })()}
-        {/* 遮色片自己的參數（羽化、範圍、筆刷大小…）：照片左邊浮著一欄，跟右邊那一欄同一種樣子。
-            點一顆就在它旁邊浮出那個參數的滑桿，再點一次收起來；跟下面那一排的九個調整分開。 */}
-        {activeCategory === 'mask' && !maskTypePicking && maskListView.list.length > 0 && (() => {
-          const mt = (params.maskType ?? 'linear') as MaskType;
-          const tools = MASK_TYPE_TOOLS[mt];
-          const extra: { id: string; label: string; icon: string; on: boolean; dim?: boolean; run: () => void }[] = [];
-          if (mt === 'brush') extra.push({ id: 'maskBrushErase', label: '擦除', icon: 'erase', on: !!params.maskBrushErase,
-            run: () => { const p = paramsRef.current; paramsRef.current = { ...p, maskBrushErase: !p.maskBrushErase }; flushParamsSync(); } });
-          if (!tools.length && !extra.length) return null;
-          const btn = (on: boolean) => `w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-sm transition-[background-color,box-shadow,color] duration-200 ${on ? 'bg-black/70 text-white shadow-[inset_0_0_0_1.5px_#fff]' : 'bg-black/55 text-white/85 shadow-[inset_0_0_0_1px_rgba(255,255,255,.2)]'}`;
-          return (
-            <div data-mask-params className="absolute left-3 top-3 z-[40] flex flex-col items-start gap-2 pt-1" onPointerDown={e => e.stopPropagation()}>
-              {tools.map(t => {
-                const open = maskParamOpen === t.id;
-                const v = (snapOf(params) as any)[t.id];
-                return (
-                  <div key={t.id} className="relative flex items-center">
-                    <button data-mask-param={t.id} aria-label={t.label} aria-expanded={open} onClick={() => setMaskParamOpen(o => o === t.id ? null : t.id)} className={btn(open)}>
-                      <MaskGlyph k={t.icon} />
-                    </button>
-                    {open && (
-                      <div data-mask-param-slider={t.id}
-                        className="absolute left-[46px] top-1/2 -translate-y-1/2 rounded-2xl bg-black/75 backdrop-blur-md px-4 pt-2 pb-0.5 shadow-[0_6px_24px_rgba(0,0,0,.5),inset_0_0_0_1px_rgba(255,255,255,.08)] animate-in fade-in slide-in-from-left-1 duration-200"
-                        style={{ width: 'min(232px, calc(100vw - 132px))' }}>
-                        <FastSlider
-                          value={typeof v === 'number' ? v : 0}
-                          min={t.min} max={t.max} step={t.step ?? 1}
-                          toolId={t.id} label={t.label} dense
-                          onUpdate={(id, val) => {
-                            const nextParams = { ...paramsRef.current, [id]: val };
-                            paramsRef.current = nextParams;
-                            lastSliderMoveTimeRef.current = performance.now();
-                            if (maskSliderLiveRef.current && maskLiveFrame(nextParams, true)) return;
-                            isDirtyRef.current = true;
-                          }}
-                          onInteractStart={() => {
-                            if (paramsRef.current.maskCreated) { maskSliderLiveRef.current = true; maskRangeDragRef.current = true; }
-                            setupFastPreview(t.id);
-                          }}
-                          onInteractEnd={() => {
-                            maskSliderLiveRef.current = false; maskRangeDragRef.current = false; maskLiveKeyRef.current = '';
-                            setIsInteracting(false);
-                            fastPreviewCacheRef.current.active = false;
-                            isDirtyRef.current = true;
-                            setParams({ ...paramsRef.current });
-                            addToHistory(paramsRef.current, selectedLutIdx);
-                          }}
-                          onReset={handleDoubleTap}
-                        />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {extra.map(t => (
-                <button key={t.id} data-mask-param={t.id} aria-label={t.label} aria-pressed={t.on} disabled={t.dim} onClick={t.run}
-                  className={`${btn(t.on)} ${t.dim ? 'opacity-35' : ''}`}>
-                  <MaskGlyph k={t.icon} />
-                </button>
-              ))}
             </div>
           );
         })()}
