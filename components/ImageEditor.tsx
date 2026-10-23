@@ -8447,9 +8447,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               className="absolute right-3 top-3 z-[40] flex flex-col items-center rounded-[12px] bg-black/45 backdrop-blur-xl p-1.5 shadow-[0_8px_28px_rgba(0,0,0,.4),inset_0_0_0_1px_rgba(255,255,255,.08)]">
               {/* 遮色片自己的參數（羽化、範圍、筆刷大小…）：橫排在右欄的左邊、靠著它（沒有毛玻璃底），
                   跟右欄一起收合／展開（從靠右欄那一顆開始往左依序彈出）。
-                  點一顆：那顆按鈕的圓「長成」一塊透明方塊（寬度＝四顆按鈕那麼寬），
-                  上面是那顆的圖示（不再有底圓）、下面是它的滑桿，同一塊裡；其他按鈕同時淡掉。
-                  再點上面的圖示就沿原路縮回那顆按鈕。 */}
+                  點一顆：從那顆按鈕的位置長出一塊透明方塊，把整排按鈕包進去、下面多出它的滑桿；
+                  按鈕全都還在（底圓淡掉，選中的那顆加白框），點別顆就換成那一顆的滑桿，
+                  再點選中的那顆就沿原路縮回去。 */}
               {!maskTypePicking && list.length > 0 && (() => {
                 const mt = (params.maskType ?? 'linear') as MaskType;
                 const tools = MASK_TYPE_TOOLS[mt];
@@ -8457,9 +8457,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 if (mt === 'brush') extra.push({ id: 'maskBrushErase', label: '擦除', icon: 'erase', on: !!params.maskBrushErase,
                   run: () => { const p = paramsRef.current; paramsRef.current = { ...p, maskBrushErase: !p.maskBrushErase }; flushParamsSync(); } });
                 if (!tools.length && !extra.length) return null;
-                const items = [...tools.map(t => ({ id: t.id, label: t.label, icon: t.icon, slider: t as ToolDef | null, on: false, run: () => setMaskParamOpen(t.id) })),
+                const items = [...tools.map(t => ({ id: t.id, label: t.label, icon: t.icon, slider: t as ToolDef | null, on: false, run: () => setMaskParamOpen(o => o === t.id ? null : t.id) })),
                   ...extra.map(t => ({ id: t.id, label: t.label, icon: t.icon, slider: null as ToolDef | null, on: t.on, run: t.run }))];
-                const N = items.length, B = 36, GAP = 8;
+                const N = items.length, B = 36, GAP = 8, PAD = 6;
                 const PANEL_W = 4 * B + 3 * GAP;            // 跟筆刷那四顆按鈕排起來一樣寬
                 const rowW = N * B + (N - 1) * GAP;
                 const W = Math.max(PANEL_W, rowW);
@@ -8468,47 +8468,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 const MORPH = 'cubic-bezier(.32,.72,0,1)';
                 const pIdx = items.findIndex(it => it.id === maskPanelTool);
                 const pItem = pIdx >= 0 ? items[pIdx] : null;
-                const busy = !!pItem;                         // 方塊在（含縮回去的過程）
                 const v = pItem?.slider ? (snapOf(params) as any)[pItem.id] : 0;
                 return (
                   <div data-mask-params className="absolute right-full top-1.5 mr-2" style={{ width: W, height: B, pointerEvents: maskRailOpen ? 'auto' : 'none' }}>
-                    {items.map((it, i) => {
-                      const k = N - 1 - i;                    // 從右邊（靠右欄）那一顆開始
-                      const hide = !maskRailOpen || maskPanelOn || (busy && i === pIdx);
-                      return (
-                        <div key={it.id} className="absolute top-0" style={{
-                          left: xOf(i), width: B, height: B, transformOrigin: '50% 50%',
-                          transition: !maskRailOpen ? 'opacity 150ms ease, transform 180ms cubic-bezier(.5,0,.75,0)'
-                            : maskPanelOn ? 'opacity 140ms ease, transform 220ms ease'
-                            : (busy && i === pIdx) || it.id === maskPanelLastRef.current ? 'none'
-                            : `opacity 200ms ease ${60 + k * 26}ms, transform 520ms ${JELLY} ${60 + k * 26}ms`,
-                          opacity: hide ? 0 : 1, transform: hide && !(busy && i === pIdx) ? 'scale(.55)' : 'scale(1)',
-                        }}>
-                          <button data-mask-param={it.id} aria-label={it.label} aria-pressed={it.slider ? undefined : it.on} tabIndex={maskRailOpen && !maskPanelOn ? 0 : -1}
-                            onClick={it.run}
-                            className={`w-9 h-9 rounded-full flex items-center justify-center backdrop-blur-sm transition-colors duration-200 ${it.on ? 'bg-white text-black' : 'bg-black/55 text-white/90'}`}>
-                            <MaskGlyph k={it.icon} />
-                          </button>
-                        </div>
-                      );
-                    })}
                     {pItem && (
-                      <div data-mask-param-panel={pItem.id} className="absolute top-0 overflow-hidden backdrop-blur-md" style={{
-                        left: maskPanelOn ? W - PANEL_W : xOf(pIdx),
-                        width: maskPanelOn ? PANEL_W : B, height: maskPanelOn ? PANEL_H : B,
-                        borderRadius: maskPanelOn ? 16 : B / 2,
+                      <div data-mask-param-panel={pItem.id} className="absolute overflow-hidden backdrop-blur-md" style={{
+                        left: maskPanelOn ? W - PANEL_W - PAD : xOf(pIdx), top: maskPanelOn ? -PAD : 0,
+                        width: maskPanelOn ? PANEL_W + PAD * 2 : B, height: maskPanelOn ? PANEL_H + PAD : B,
+                        borderRadius: maskPanelOn ? 18 : B / 2,
                         background: maskPanelOn ? 'rgba(0,0,0,.42)' : 'rgba(0,0,0,.55)',
-                        transition: `left 380ms ${MORPH}, width 380ms ${MORPH}, height 380ms ${MORPH}, border-radius 380ms ${MORPH}, background-color 300ms ease`,
+                        transition: `left 380ms ${MORPH}, top 380ms ${MORPH}, width 380ms ${MORPH}, height 380ms ${MORPH}, border-radius 380ms ${MORPH}, background-color 300ms ease`,
                       }}>
-                        {/* 上面：那顆按鈕的圖示（點它就收回去） */}
-                        <button aria-label={`收起${pItem.label}`} onClick={() => setMaskParamOpen(null)}
-                          className="absolute top-0 left-0 right-0 h-9 flex items-center justify-center text-white">
-                          <MaskGlyph k={pItem.icon} />
-                        </button>
                         {/* 下面：滑桿（方塊長開之後才淡入，收回時先淡掉） */}
                         {pItem.slider && (
-                          <div className="absolute left-0 top-9" style={{
-                            width: PANEL_W, padding: '0 14px',
+                          <div className="absolute" style={{
+                            left: 0, top: B + PAD, width: PANEL_W + PAD * 2, padding: '0 16px',
                             opacity: maskPanelOn ? 1 : 0,
                             transform: maskPanelOn ? 'none' : 'translateY(-4px)',
                             transition: maskPanelOn ? 'opacity 220ms ease 170ms, transform 300ms ease 170ms' : 'opacity 100ms ease, transform 100ms ease',
@@ -8546,6 +8520,32 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         )}
                       </div>
                     )}
+                    {items.map((it, i) => {
+                      const k = N - 1 - i;                    // 從右邊（靠右欄）那一顆開始
+                      const hide = !maskRailOpen;
+                      const sel = maskPanelOn && it.id === maskPanelTool;
+                      return (
+                        <div key={it.id} className="absolute top-0 z-[1]" style={{
+                          left: xOf(i), width: B, height: B, transformOrigin: '50% 50%',
+                          transition: !maskRailOpen ? 'opacity 150ms ease, transform 180ms cubic-bezier(.5,0,.75,0)'
+                            : `opacity 200ms ease ${60 + k * 26}ms, transform 520ms ${JELLY} ${60 + k * 26}ms`,
+                          opacity: hide ? 0 : 1, transform: hide ? 'scale(.55)' : 'scale(1)',
+                        }}>
+                          <button data-mask-param={it.id} data-on={sel ? '1' : '0'} aria-label={it.label} aria-pressed={it.slider ? sel : it.on} tabIndex={maskRailOpen ? 0 : -1}
+                            onClick={it.run}
+                            /* 方塊打開時底圓淡掉（方塊本身就是底），選中的那顆是白框 */
+                            className="w-9 h-9 rounded-full flex items-center justify-center transition-[background-color,box-shadow,color] duration-300"
+                            style={{
+                              backgroundColor: it.on ? '#fff' : maskPanelTool && maskPanelOn ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,.55)',
+                              color: it.on ? '#000' : 'rgba(255,255,255,.92)',
+                              boxShadow: sel ? 'inset 0 0 0 1.5px #fff' : 'inset 0 0 0 1.5px rgba(255,255,255,0)',
+                              backdropFilter: maskPanelOn ? undefined : 'blur(4px)',
+                            }}>
+                            <MaskGlyph k={it.icon} />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })()}
