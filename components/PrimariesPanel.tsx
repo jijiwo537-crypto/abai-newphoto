@@ -102,14 +102,17 @@ const jogUrl = () => {
   return (jogTile = c.toDataURL('image/png'));
 };
 
-/** 主轉盤（jog wheel）：左右拖。外形跟原本一樣（小圓角的長條），裡面是平的：一排等距刻紋，兩端淡出 */
+/** 主轉盤（jog wheel）：左右拖。外形跟原本一樣（小圓角的長條），沒有黑邊；
+    刻紋淡一點、上下不頂到邊，兩端用比較明顯的暗色淡出（像轉盤往兩邊彎進去） */
 const Jog: React.FC<{ W: number; drag: ReturnType<typeof useDrag>; x: number; id: string }> = ({ W, drag, x, id }) => (
-  <div {...drag} data-grade-jog={id} className="relative mt-[5px] rounded-[3px] overflow-hidden touch-none select-none cursor-ew-resize border border-black/70"
+  <div {...drag} data-grade-jog={id} className="relative mt-[5px] rounded-[3px] overflow-hidden touch-none select-none cursor-ew-resize"
     style={{ width: W, height: 11, background: '#1f1f1f' }}>
-    <div aria-hidden className="absolute inset-0" style={{
+    <div aria-hidden className="absolute inset-x-0 top-[2.5px] bottom-[2.5px]" style={{
       background: `url(${jogUrl()}) ${x}px 0 / 6px 100% repeat-x`,
-      WebkitMaskImage: 'linear-gradient(90deg, transparent, #000 24%, #000 76%, transparent)',
-      maskImage: 'linear-gradient(90deg, transparent, #000 24%, #000 76%, transparent)',
+      opacity: 0.6,
+    }} />
+    <div aria-hidden className="absolute inset-0" style={{
+      background: 'linear-gradient(90deg, rgba(10,10,10,.92), rgba(10,10,10,.35) 22%, rgba(10,10,10,0) 40%, rgba(10,10,10,0) 60%, rgba(10,10,10,.35) 78%, rgba(10,10,10,.92))',
     }} />
   </div>
 );
