@@ -24,9 +24,10 @@ const INLINE: Record<string, string> = {
   /* 虛線：上面一條實線、下面一條虛線 */
   line_style: '<g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M2.5 7.5h19"/><path d="M2.5 16.5h3.5M10.25 16.5h3.5M18 16.5h3.5"/></g>',
   /* 色輪：一個圓（色輪）、一個偏離中心的實心點（調整點），跟 Material 圖示同一種線寬 */
-  /* 磨皮：一大一小兩顆四角星（變光滑、變乾淨），不畫人 */
-  skin_smooth: '<path fill="#fff" d="M10 3.2c.5 3.6 1.9 5.3 5.6 5.8-3.7.5-5.1 2.2-5.6 5.8-.5-3.6-1.9-5.3-5.6-5.8 3.7-.5 5.1-2.2 5.6-5.8z"/><path fill="#fff" d="M17.2 12.6c.3 2.1 1.1 3.1 3.3 3.4-2.2.3-3 1.3-3.3 3.4-.3-2.1-1.1-3.1-3.3-3.4 2.2-.3 3-1.3 3.3-3.4z"/><circle cx="6.3" cy="18.6" r="1.3" fill="#fff"/>',
-  grade_wheels: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="14.6" cy="9.4" r="2.4" fill="#fff"/>',
+  /* 磨皮：一顆水滴（滋潤、變光滑）加一道柔和的反光，線條粗細跟其他圖示一致 */
+  skin_smooth: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2C8.3 7.6 6 10.9 6 14.1a6 6 0 0 0 12 0c0-3.2-2.3-6.5-6-10.9z"/><path d="M9.1 14.6a3.1 3.1 0 0 0 2.4 2.7"/></g>',
+  /* 色輪：一個圓、正中心一個實心點 */
+  grade_wheels: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="2.4" fill="#fff"/>',
 };
 const maskOf = (body: string) =>
   `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${body}</svg>`)}")`;

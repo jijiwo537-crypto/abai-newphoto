@@ -1840,6 +1840,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 雙指結束後還留在畫面上的那根手指：它之後的移動／放開都不算（不然會變成拖把手） */
   const maskSwallowRef = useRef(new Set<number>());
   const maskTapRef = useRef<null | { id: number; x: number; y: number; t: number }>(null);
+  /** 放射：單指在預覽區任何地方拖＝搬移整個遮色片（超過 6px 才算拖，不然就是點一下） */
+  const maskMoveRef = useRef<null | { id: number; x0: number; y0: number; cx0: number; cy0: number; on: boolean }>(null);
+  const finishMaskGesture = () => {
+    activeDragRef.current = null;
+    setIsInteracting(false);
+    isDirtyRef.current = true;
+    flushParamsSync();
+    addToHistory(paramsRef.current, selectedLutIdx);
+  };
   const pinchPts = () => { const [a, b] = [...boxPtrsRef.current.values()]; return { d: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), a: Math.atan2(b.y - a.y, b.x - a.x), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; };
   const onBoxPointerDown = (e: React.PointerEvent) => {
     if (activeCategory !== 'mask') return;
@@ -1851,9 +1860,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const onUi = !!(e.target as Element).closest?.('button, input, [data-mask-stack], [data-mask-params], #ui-guides, #ui-radial, [data-mask-pin]');
       maskTapRef.current = !onUi && p.maskCreated && (mt === 'linear' || mt === 'radial') && !maskPicking
         ? { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() } : null;
+      maskMoveRef.current = !onUi && p.maskCreated && mt === 'radial' && !maskPicking && !maskDeselectedRef.current
+        ? { id: e.pointerId, x0: e.clientX, y0: e.clientY, cx0: p.maskCx, cy0: p.maskCy, on: false } : null;
     }
     if (boxPtrsRef.current.size === 2 && mt === 'radial' && p.maskCreated && !maskPicking) {
       maskTapRef.current = null;
+      maskMoveRef.current = null;   // 單指搬移停在這裡，接下來只縮放
       const k = pinchPts();
       maskPinchRef.current = { d0: k.d, a0: k.a, mx0: k.mx, my0: k.my, rx0: p.maskRx ?? 0.25, ry0: p.maskRy ?? 0.25, cx0: p.maskCx, cy0: p.maskCy, ang0: p.maskAngle };
       // 第一根手指如果正在拖把手：就停在這裡，接下來交給雙指
@@ -1870,6 +1882,25 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const tap = maskTapRef.current;
     if (tap && tap.id === e.pointerId && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 8) maskTapRef.current = null;
     if (maskSwallowRef.current.has(e.pointerId)) { e.stopPropagation(); return; }
+    const mv = maskMoveRef.current;
+    if (mv && mv.id === e.pointerId && !maskPinchRef.current) {
+      if (!mv.on) {
+        if (Math.hypot(e.clientX - mv.x0, e.clientY - mv.y0) <= 6) return;
+        mv.on = true; maskTapRef.current = null;
+        activeDragRef.current = { type: 'rcenter', startX: 0, startY: 0, initialCx: 0, initialCy: 0, initialAngle: 0, initialD: 0, initialRx: 0, initialRy: 0 };
+        maskLiveKeyRef.current = '';
+        setIsInteracting(true);
+      }
+      e.stopPropagation();
+      const r = displayCanvasRef.current?.getBoundingClientRect(); if (!r?.width || !r.height) return;
+      const p = { ...paramsRef.current };
+      p.maskCx = Math.max(-0.5, Math.min(1.5, mv.cx0 + (e.clientX - mv.x0) / r.width));
+      p.maskCy = Math.max(-0.5, Math.min(1.5, mv.cy0 + (e.clientY - mv.y0) / r.height));
+      paramsRef.current = p;
+      if (!updateMaskLive(p)) isDirtyRef.current = true;
+      if (!applyMaskGuides(p)) scheduleParamsSync();
+      return;
+    }
     const pin = maskPinchRef.current;
     if (!pin || boxPtrsRef.current.size < 2) return;
     e.stopPropagation();
@@ -1877,11 +1908,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const k = pinchPts();
     const s = Math.max(0.05, k.d / pin.d0);
     const p = { ...paramsRef.current };
+    // 雙指只縮放：中心、角度都不動（要搬移用單指）
     p.maskRx = Math.max(6 / r.width, pin.rx0 * s);
     p.maskRy = Math.max(6 / r.width, pin.ry0 * s);
-    p.maskCx = Math.max(-0.5, Math.min(1.5, pin.cx0 + (k.mx - pin.mx0) / r.width));
-    p.maskCy = Math.max(-0.5, Math.min(1.5, pin.cy0 + (k.my - pin.my0) / r.height));
-    p.maskAngle = pin.ang0 + Math.atan2(Math.sin(k.a - pin.a0), Math.cos(k.a - pin.a0));
     paramsRef.current = p;
     if (!updateMaskLive(p)) isDirtyRef.current = true;
     if (!applyMaskGuides(p)) scheduleParamsSync();
@@ -1890,16 +1919,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!boxPtrsRef.current.has(e.pointerId)) return;
     boxPtrsRef.current.delete(e.pointerId);
     if (maskSwallowRef.current.delete(e.pointerId)) { e.stopPropagation(); return; }
+    const mv = maskMoveRef.current;
+    if (mv && mv.id === e.pointerId) {
+      maskMoveRef.current = null;
+      if (mv.on) { e.stopPropagation(); maskTapRef.current = null; finishMaskGesture(); return; }
+    }
     if (maskPinchRef.current) {
       e.stopPropagation();
       if (boxPtrsRef.current.size < 2) {
         maskPinchRef.current = null;
         boxPtrsRef.current.forEach((_, id) => maskSwallowRef.current.add(id));
-        activeDragRef.current = null;
-        setIsInteracting(false);
-        isDirtyRef.current = true;
-        flushParamsSync();
-        addToHistory(paramsRef.current, selectedLutIdx);
+        finishMaskGesture();
       }
       return;
     }
@@ -2160,6 +2190,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   useEffect(() => { if (activeCategory !== 'mask') setMaskDeselected(false); }, [activeCategory]);
   useEffect(() => { setMaskParamOpen(null); }, [activeCategory, params.maskId, params.maskType, maskPicking]);
+  /* 換選取（或剛新增）的時候，清單裡那一格捲到看得到的地方 */
+  useEffect(() => {
+    if (activeCategory !== 'mask') return;
+    const el = document.querySelector('[data-mask-chips] [data-on="1"]') as HTMLElement | null;
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [activeCategory, params.maskId, params.masks?.length]);
 
   // Single Canvas for all rendering
   const displayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -8349,10 +8385,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             最底下那一塊實心方塊是收納鍵：點一下整欄收進方塊裡（只剩方塊），再點一下展開。
             收合用 grid 的列高從 1fr 補間到 0fr（真的改變高度，方塊跟著滑上去），每一顆再各自淡出縮小、錯開一點時間。 */}
         {activeCategory === 'mask' && (() => {
-          /* 收合：整塊毛玻璃的高度與寬度一起補間（grid 的 1fr ⇄ 0fr），裡面的按鈕先很快淡掉；
-             展開時盒子先長開，按鈕再依序淡入。曲線用 iOS 那種先快後很慢的收尾。 */
+          /* 收合：毛玻璃的高度補間（grid 的 1fr ⇄ 0fr，寬度不變），裡面的按鈕在原地縮小淡掉；
+             展開時盒子長開，按鈕在原地像果凍一樣彈出來（縮放帶一點回彈），依序錯開一點點。 */
           const EASE = 'cubic-bezier(.32,.72,0,1)';
-          const DUR = 420;
+          const JELLY = 'cubic-bezier(.34,1.85,.5,1)';
+          const DUR = 400;
           const list = maskListView.list;
           const NAMES: Record<string, string> = { linear: '線性', radial: '放射', brush: '筆刷', color: '顏色', luma: '明度' };
           const seen: Record<string, number> = {};
@@ -8363,10 +8400,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             const i = n++;
             return (
               <div key={key} className="flex items-center justify-center" style={{
+                transformOrigin: '50% 50%',
                 transition: maskRailOpen
-                  ? `opacity 280ms ease ${120 + i * 28}ms, transform ${DUR}ms ${EASE} ${90 + i * 28}ms`
-                  : 'opacity 140ms ease 0ms, transform 200ms ease 0ms',
-                opacity: maskRailOpen ? 1 : 0, transform: maskRailOpen ? 'none' : 'scale(.82)',
+                  ? `opacity 200ms ease ${60 + i * 26}ms, transform 520ms ${JELLY} ${60 + i * 26}ms`
+                  : 'opacity 150ms ease 0ms, transform 180ms cubic-bezier(.5,0,.75,0) 0ms',
+                opacity: maskRailOpen ? 1 : 0, transform: maskRailOpen ? 'scale(1)' : 'scale(.55)',
               }}>{node}</div>
             );
           };
@@ -8374,18 +8412,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           return (
             <div data-mask-stack data-open={maskRailOpen ? '1' : '0'} onPointerDown={e => e.stopPropagation()}
               /* 黑色毛玻璃底板包住整欄 */
-              className="absolute right-3 top-3 z-[40] flex flex-col items-end rounded-[16px] bg-black/45 backdrop-blur-xl p-1.5 shadow-[0_8px_28px_rgba(0,0,0,.4),inset_0_0_0_1px_rgba(255,255,255,.08)]">
-              <div className="grid" style={{ gridTemplateRows: maskRailOpen ? '1fr' : '0fr', gridTemplateColumns: maskRailOpen ? '1fr' : '0fr', transition: `grid-template-rows ${DUR}ms ${EASE}, grid-template-columns ${DUR}ms ${EASE}` }}>
-                <div className="min-h-0 min-w-0 overflow-hidden" aria-hidden={!maskRailOpen}>
-                  <div className="flex flex-col items-end gap-2 pb-2">
+              className="absolute right-3 top-3 z-[40] flex flex-col items-center rounded-[12px] bg-black/45 backdrop-blur-xl p-1.5 shadow-[0_8px_28px_rgba(0,0,0,.4),inset_0_0_0_1px_rgba(255,255,255,.08)]">
+              <div className="grid" style={{ gridTemplateRows: maskRailOpen ? '1fr' : '0fr', transition: `grid-template-rows ${DUR}ms ${EASE}` }}>
+                <div className="min-h-0 overflow-hidden" aria-hidden={!maskRailOpen}>
+                  <div className="flex flex-col items-center gap-2 pb-2">
                     {fade(
                       <button data-mask-add aria-label="新增遮色片" tabIndex={maskRailOpen ? 0 : -1} onClick={() => setMaskPicking(v => maskHasAny ? !v : true)}
                         className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${maskPicking ? 'bg-white/20 text-white' : 'bg-white text-black'}`}>
                         <MaskGlyph k={maskPicking ? 'close' : 'plus'} />
                       </button>, 'add')}
                     {list.length > 0 && (
-                      /* 一欄最多 4 個：第 5 個起往左邊再排一欄（從右邊那欄開始排） */
-                      <div className="grid gap-2" style={{ gridAutoFlow: 'column', gridTemplateRows: `repeat(${Math.min(4, list.length)}, auto)`, direction: 'rtl' }}>
+                      /* 一次最多看到 4 個；超過就在這一段裡上下滑（不會把下面的按鈕擠到太下面） */
+                      <div data-mask-chips className="flex flex-col items-center gap-2 overflow-y-auto no-scrollbar overscroll-contain p-1 -m-1"
+                        style={{ maxHeight: 4 * 36 + 3 * 8, touchAction: 'pan-y', scrollSnapType: 'y proximity' }}>
                         {list.map((m, i) => {
                           const on = i === maskListView.active && !maskPicking && !maskDeselected;
                           const t = m.maskType;
@@ -8394,9 +8433,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           return fade(
                             <button data-mask-chip={i} data-on={on ? '1' : '0'} aria-label={`遮色片 ${name}`} tabIndex={maskRailOpen ? 0 : -1} onClick={() => selectMask(i)}
                               /* 方形；選中不填滿，只有白色外框，整格從偏暗變回正常亮度 */
-                              className="relative w-9 h-9 rounded-[9px] flex items-center justify-center bg-white/[0.08] text-white text-[11px] font-medium tracking-[0.02em] leading-none transition-[opacity,box-shadow] duration-200"
+                              className="relative shrink-0 w-9 h-9 rounded-[9px] flex items-center justify-center bg-white/[0.08] text-white text-[9.5px] font-medium tracking-[0.02em] leading-none transition-[opacity,box-shadow] duration-200"
                               style={{
-                                direction: 'ltr',
+                                scrollSnapAlign: 'start',
                                 opacity: on ? 1 : 0.5,
                                 boxShadow: on ? 'inset 0 0 0 1.5px #fff' : m.maskCreated ? 'inset 0 0 0 1px rgba(255,255,255,.22)' : 'none',
                                 outline: m.maskCreated ? undefined : '1px dashed rgba(255,255,255,.55)', outlineOffset: -1,
@@ -9090,7 +9129,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               height: subStripHidden ? '0px' : '6rem',
               opacity: subStripHidden ? 0 : 1,
               /* 曲線的格子直接疊在這一列上面（滑桿列收起來了），補一條跟其他工具一樣的分隔線 */
-              borderTop: activeToolId === 'curves' ? '1px solid rgba(255, 255, 255, 0.05)' : undefined,
+              /* 遮色片在選種類的時候滑桿列也收起來了，一樣要補那條線 */
+              borderTop: activeToolId === 'curves' || maskTypePicking ? '1px solid rgba(255, 255, 255, 0.05)' : undefined,
           }}
         >
           {activeCategory === 'filter' && lutList.map((lut, idx) => (

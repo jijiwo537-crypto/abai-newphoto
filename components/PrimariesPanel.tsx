@@ -102,16 +102,15 @@ const jogUrl = () => {
   return (jogTile = c.toDataURL('image/png'));
 };
 
-/** 主轉盤（jog wheel）：左右拖。一條平的軌道、一排等距刻紋、中間一根白色指針，兩端刻紋淡出 */
+/** 主轉盤（jog wheel）：左右拖。外形跟原本一樣（小圓角的長條），裡面是平的：一排等距刻紋，兩端淡出 */
 const Jog: React.FC<{ W: number; drag: ReturnType<typeof useDrag>; x: number; id: string }> = ({ W, drag, x, id }) => (
-  <div {...drag} data-grade-jog={id} className="relative mt-[5px] rounded-full overflow-hidden touch-none select-none cursor-ew-resize"
-    style={{ width: W, height: 12, background: '#1c1c1c' }}>
-    <div aria-hidden className="absolute inset-x-0 top-[3px] bottom-[3px]" style={{
+  <div {...drag} data-grade-jog={id} className="relative mt-[5px] rounded-[3px] overflow-hidden touch-none select-none cursor-ew-resize border border-black/70"
+    style={{ width: W, height: 11, background: '#1f1f1f' }}>
+    <div aria-hidden className="absolute inset-0" style={{
       background: `url(${jogUrl()}) ${x}px 0 / 6px 100% repeat-x`,
       WebkitMaskImage: 'linear-gradient(90deg, transparent, #000 24%, #000 76%, transparent)',
       maskImage: 'linear-gradient(90deg, transparent, #000 24%, #000 76%, transparent)',
     }} />
-    <div aria-hidden className="absolute left-1/2 top-[2px] bottom-[2px] w-[2px] -ml-px rounded-full bg-white" />
   </div>
 );
 
