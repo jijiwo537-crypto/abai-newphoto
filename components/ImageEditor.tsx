@@ -7516,7 +7516,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 模板與疊圖層分頁：滑桿列與小分類列都收起來，整塊控制區給它自己的面板 */
   const ownPanel = activeCategory === 'template' || STUDIO_CATS.includes(activeCategory);
   /** 遮色片在選新增哪一種的時候，滑桿列先收起來（沒有東西可以調） */
-  const maskTypePicking = activeCategory === 'mask' && (maskPicking || !maskHasAny);
+  /* 取消選中時，下面那一排直接變成「新增遮色片」的五種（不是一排變暗、按不了的調整） */
+  const maskTypePicking = activeCategory === 'mask' && (maskPicking || !maskHasAny || maskDeselected);
   /** 左下角的參數膠囊：只有「選中了某個遮色片」時才出現（選種類、取消選中時都收掉），線性漸層沒有自己的參數 */
   const maskCapsuleShown = activeCategory === 'mask' && !maskTypePicking && !maskDeselected && maskListView.list.length > 0
     && (MASK_TYPE_TOOLS[(params.maskType ?? 'linear') as MaskType].length > 0 || params.maskType === 'brush');
@@ -8441,7 +8442,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             下面是選中那一個的動作：顯示範圍、反轉、刪除。全部只有圖示。
             最底下那一塊實心方塊是收納鍵：點一下整欄收進方塊裡（只剩方塊），再點一下展開。
             收合用 grid 的列高從 1fr 補間到 0fr（真的改變高度，方塊跟著滑上去），每一顆再各自淡出縮小、錯開一點時間。 */}
-        {activeCategory === 'mask' && (() => {
+        {/* 一個畫出來的遮色片都沒有時，整欄不出現（沒東西可以選、可以操作） */}
+        {activeCategory === 'mask' && maskListView.list.some(m => m.maskCreated) && (() => {
           /* 收合：毛玻璃的高度補間（grid 的 1fr ⇄ 0fr，寬度不變），裡面的按鈕在原地縮小淡掉；
              展開時盒子長開，按鈕在原地像果凍一樣彈出來（縮放帶一點回彈），依序錯開一點點。 */
           const EASE = 'cubic-bezier(.32,.72,0,1)';
@@ -9410,7 +9412,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           )}
           {activeCategory === 'mask' && (() => {
             /* 還沒有任何遮色片、或按了＋：這一列換成五種遮色片讓使用者選 */
-            if (maskPicking || !maskHasAny) return (
+            if (maskPicking || !maskHasAny || maskDeselected) return (
               <div data-mask-types className="flex items-center gap-2">
                 {MASK_TYPES.map(([t, label]) => (
                   <button key={t} data-mask-type={t} onClick={() => addMask(t)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
