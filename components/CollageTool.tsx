@@ -11633,11 +11633,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 <div className="min-w-0 h-[47px] flex items-center justify-between gap-1.5 bg-[#111] px-2.5 border border-[#222] rounded-[6px]">
                   <span className="text-[10px] font-bold text-[#888] shrink-0">{layout === FULL ? '圖案顏色' : '自訂遮罩'}</span>
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <div className="flex items-center gap-1" hidden={layout === FULL}>
+                    {layout !== FULL && <div className="flex items-center gap-1">
                       <button onClick={(e) => { e.stopPropagation(); maskFileInputRef.current?.click(); }} className="px-2 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-wider whitespace-nowrap">
                         上傳
                       </button>
-                    </div>
+                    </div>}
                     {maskImageState && layout !== FULL ? <button className="w-7 h-6 shrink-0 rounded-[4px] border border-white/10 flex items-center justify-center" aria-label="還原素色" onClick={() => setMaskImageState(null)}><ReplayIcon size={12} /></button>
                       : <button className="w-7 h-6 shrink-0 rounded-[4px] shadow-inner border border-white/10 hover:ring-1 hover:ring-white/30 transition-shadow"
                       aria-label="遮罩顏色" onClick={() => setColorPickerTarget('mask')} style={{ backgroundColor: maskColor }} />}
