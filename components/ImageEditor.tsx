@@ -291,8 +291,8 @@ const MASK_GLYPH_BODY: Record<string, string> = {
   erase: '<path d="M8.5 19.5h11"/><path d="M5 15.5l8.5-8.5 5 5-6.5 6.5H8z"/><path d="M9.5 11l5 5"/>',
   range: '<path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/>',
   /* 下限／上限是一對：一條界線＋指向範圍那一側的箭頭（下限在底、往上；上限在頂、往下） */
-  lumlo: '<rect x="7.5" y="3.5" width="9" height="17" rx="3"/><path d="M7.5 15h9v2.5a3 3 0 0 1-3 3h-3a3 3 0 0 1-3-3z" fill="#fff" stroke="none"/><path d="M4 15h16"/>',
-  lumhi: '<rect x="7.5" y="3.5" width="9" height="17" rx="3"/><path d="M7.5 9h9V6.5a3 3 0 0 0-3-3h-3a3 3 0 0 0-3 3z" fill="#fff" stroke="none"/><path d="M4 9h16"/>',
+  lumlo: '<path d="M4 18.5h16V6.5z"/><path d="M9 18.5h11V6.5L9 14.75z" fill="#fff" stroke="none"/><path d="M9 4v16.5"/>',
+  lumhi: '<path d="M4 18.5h16V6.5z"/><path d="M4 18.5h11v-8.25z" fill="#fff" stroke="none"/><path d="M15 4v16.5"/>',
   clearsamples: '<path d="M14.5 5.5l4 4-8.5 8.5H6v-4z"/><path d="M16 17l4 4M20 17l-4 4"/>',
   /* 收起／展開右邊那一欄 */
   fold: '<path d="M7 14.5l5-5 5 5"/>',
@@ -2170,6 +2170,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!masks[i] || i === maskList(p).active) return;
     setMaskPicking(false);
     uiFirstRef.current = true;
+    // 舊的那一個的紅色範圍先收掉，等新的一個畫好再出現（不然換選取的第一格會先看到舊的紅色）
+    if (maskOverlayCanvasRef.current) maskOverlayCanvasRef.current.style.display = 'none';
     if (!MASK_TOOLS.some(x => x.id === activeToolId)) setActiveToolId(MASK_DEFAULT_TOOL[masks[i].maskType]);
     commitMaskParams(loadMask(p, masks[i], masks, i));
   };
@@ -9537,7 +9539,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     className="flex flex-col items-center gap-1 shrink-0 w-12">
                     <div className="relative w-10 h-10 rounded-[12px] flex items-center justify-center bg-white/[0.08] text-white">
                       {/* 調節＝橫的調整圖示；編輯＝同一個逆時針轉 90 度（直式），切換時轉過去 */}
-                      <span data-mode-icon className="flex transition-transform duration-300 ease-[cubic-bezier(.3,1.4,.5,1)]" style={{ transform: mode === 'edit' ? 'rotate(-90deg)' : 'none' }}>
+                      <span data-mode-icon className="flex transition-transform duration-300 ease-[cubic-bezier(.2,.8,.2,1)]" style={{ transform: mode === 'edit' ? 'rotate(-90deg)' : 'none' }}>
                         <Icon name="tune" className="text-[20px]" />
                       </span>
                       <span className="absolute -bottom-1 -right-1 w-[18px] h-[18px] rounded-full bg-[#2a2a2a] flex items-center justify-center text-[10px] leading-none text-white/80">⇄</span>
