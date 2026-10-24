@@ -2166,6 +2166,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setMaskDeselected(false);
     if (!masks[i] || i === maskList(p).active) return;
     setMaskPicking(false);
+    uiFirstRef.current = true;
     if (!MASK_TOOLS.some(x => x.id === activeToolId)) setActiveToolId(MASK_DEFAULT_TOOL[masks[i].maskType]);
     commitMaskParams(loadMask(p, masks[i], masks, i));
   };
@@ -2199,6 +2200,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const pinDownRef = useRef<{ i: number; x: number; y: number } | null>(null);
   /** 左邊那一欄目前浮出滑桿的是哪一個參數 */
   const [maskParamOpen, setMaskParamOpen] = useState<string | null>(null);
+  /** 下排工具列在調哪一組：調節（亮度、曝光…九個）／編輯（這個遮色片自己的羽化、範圍、大小…） */
+  const [maskEditMode, setMaskEditMode] = useState<'adjust' | 'edit'>('adjust');
+  /* 換了選中的遮色片：回到「調節」。新增筆刷（還沒畫）例外 —— 直接停在「編輯／大小」，先調好筆刷再下筆 */
+  useEffect(() => {
+    if (activeCategory !== 'mask') return;
+    const p = paramsRef.current;
+    if (p.maskType === 'brush' && !p.maskCreated) { setMaskEditMode('edit'); setActiveToolId('maskBrushSize'); }
+    else { setMaskEditMode('adjust'); setActiveToolId(t => MASK_TOOLS.some(x => x.id === t) ? t : MASK_TOOLS[0].id); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.maskId, activeCategory]);
   /** 參數膠囊展開了沒（平常只有一顆「調節」圖示） */
   const [maskCapOpen, setMaskCapOpen] = useState(false);
   /* 參數方塊的過場：maskPanelTool＝方塊現在畫的是哪一個（縮回去的那段時間還留著），
@@ -2228,7 +2239,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const maskDeselectedRef = useRef(false);
   const setMaskDeselected = (v: boolean) => {
     if (maskDeselectedRef.current === v) return;
-    maskDeselectedRef.current = v; setMaskDeselectedState(v); isDirtyRef.current = true;
+    // 參考線、清單、下排這一幀就換好（UI 先畫），照片的紅色範圍下一幀跟上 —— 點下去當場就有反應
+    maskDeselectedRef.current = v; setMaskDeselectedState(v); uiFirstRef.current = true; isDirtyRef.current = true;
   };
   useEffect(() => { if (activeCategory !== 'mask') setMaskDeselected(false); }, [activeCategory]);
   useEffect(() => { setMaskParamOpen(null); }, [activeCategory, params.maskId, params.maskType, maskPicking, maskDeselected]);
@@ -7519,7 +7531,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 取消選中時，下面那一排直接變成「新增遮色片」的五種（不是一排變暗、按不了的調整） */
   const maskTypePicking = activeCategory === 'mask' && (maskPicking || !maskHasAny || maskDeselected);
   /** 左下角的參數膠囊：只有「選中了某個遮色片」時才出現（選種類、取消選中時都收掉），線性漸層沒有自己的參數 */
-  const maskCapsuleShown = activeCategory === 'mask' && !maskTypePicking && !maskDeselected && maskListView.list.length > 0
+  const maskCapsuleShown = false && activeCategory === 'mask' && !maskTypePicking && !maskDeselected && maskListView.list.length > 0
     && (MASK_TYPE_TOOLS[(params.maskType ?? 'linear') as MaskType].length > 0 || params.maskType === 'brush');
   const sliderRowHidden = activeToolId === 'curves' || isColourPanelTool(activeToolId) || activeCategory === 'compose' || ownPanel || maskTypePicking;
   const subStripHidden = activeCategory === 'compose' || ownPanel;
@@ -9140,11 +9152,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           const nextParams = { ...paramsRef.current, [id]: val };
                           paramsRef.current = nextParams; 
                           lastSliderMoveTimeRef.current = performance.now();
+                          if (id === 'maskBrushSize') showSizeRing(nextParams);
                           // 遮色片：疊層掛好之後每一格只更新疊層，不重跑整條管線
                           if (maskSliderLiveRef.current && maskLiveFrame(nextParams, maskRangeDragRef.current)) return;
                           isDirtyRef.current = true;
                       }}
                       onInteractStart={() => {
+                          if (activeTool.id === 'maskBrushSize') showSizeRing(paramsRef.current);
                           if (activeCategory === 'mask' && paramsRef.current.maskCreated) {
                             maskSliderLiveRef.current = true;
                             maskRangeDragRef.current = MASK_TYPE_TOOL_LIST.some(t => t.id === activeTool.id);
@@ -9152,6 +9166,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           setupFastPreview(activeTool.id);
                       }}
                       onInteractEnd={() => { 
+                          hideSizeRing();
                           if (maskSliderLiveRef.current) { maskSliderLiveRef.current = false; maskRangeDragRef.current = false; maskLiveKeyRef.current = ''; isDirtyRef.current = true; }
                           setIsInteracting(false); 
                           fastPreviewCacheRef.current.active = false; 
@@ -9430,11 +9445,38 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${adjusted ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
               </button>
             );
-            /* 這一排只有九個調整（遮色片自己的參數在照片左邊那一欄） */
+            /* 最左邊一顆切換鍵：調節（九個調整）⇄ 編輯（這個遮色片自己的參數）。線性漸層沒有自己的參數，就不放切換鍵 */
+            const mt = (params.maskType ?? 'linear') as MaskType;
+            const typeTools = MASK_TYPE_TOOLS[mt];
+            const canEdit = typeTools.length > 0 || mt === 'brush';
+            const mode = canEdit ? maskEditMode : 'adjust';
+            const switchMode = () => {
+              const next = mode === 'adjust' ? 'edit' : 'adjust';
+              setMaskEditMode(next);
+              setActiveToolId(next === 'edit' ? (typeTools[0]?.id ?? MASK_TOOLS[0].id) : MASK_TOOLS[0].id);
+            };
             return (
               <div className="flex items-center gap-2">
-                {MASK_TOOLS.map(tool => toolBtn(tool.id, tool.label, <Icon name={tool.icon} className="text-lg" fill={activeToolId === tool.id} />,
-                  activeToolId === tool.id, () => { if (params.maskCreated && !maskDeselected) setActiveToolId(tool.id); }, !params.maskCreated || maskDeselected, isParamAdjusted(tool.id)))}
+                {canEdit && (<>
+                  <button data-mask-mode={mode} onClick={switchMode} aria-label={mode === 'adjust' ? '切換到編輯遮色片' : '切換到調節'}
+                    className="flex flex-col items-center gap-1 shrink-0 w-14">
+                    <div className="relative w-10 h-10 rounded-[12px] flex items-center justify-center bg-white/[0.08] text-white">
+                      {mode === 'adjust' ? <Icon name="tune" className="text-[20px]" /> : <MaskGlyph k={mt} size={19} />}
+                      <span className="absolute -bottom-1 -right-1 w-[18px] h-[18px] rounded-full bg-[#2a2a2a] flex items-center justify-center text-[10px] leading-none text-white/80">⇄</span>
+                    </div>
+                    <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap text-white/70">{mode === 'adjust' ? '調節' : '編輯'}</span>
+                    <div className="w-1 h-1 mt-0.5" />
+                  </button>
+                  <div className="w-[1px] h-8 bg-white/10 mx-1 shrink-0" />
+                </>)}
+                {mode === 'adjust'
+                  ? MASK_TOOLS.map(tool => toolBtn(tool.id, tool.label, <Icon name={tool.icon} className="text-lg" fill={activeToolId === tool.id} />,
+                    activeToolId === tool.id, () => { if (params.maskCreated && !maskDeselected) setActiveToolId(tool.id); }, !params.maskCreated || maskDeselected, isParamAdjusted(tool.id)))
+                  : <>
+                    {typeTools.map(t => toolBtn(t.id, t.label, <MaskGlyph k={t.icon} />, activeToolId === t.id, () => setActiveToolId(t.id)))}
+                    {mt === 'brush' && toolBtn('maskBrushErase', '擦除', <MaskGlyph k="erase" />, !!params.maskBrushErase,
+                      () => { const p = paramsRef.current; paramsRef.current = { ...p, maskBrushErase: !p.maskBrushErase }; flushParamsSync(); })}
+                  </>}
               </div>
             );
           })()}
