@@ -3,7 +3,7 @@ import Capacitor
 import ImageIO
 import UniformTypeIdentifiers
 
-// Add to the iOS App target and register HeicExportPlugin with CAPBridgeViewController.
+// Part of the App target; registered in MainViewController.
 // Web/PWA never advertises this capability; native release validation is required.
 @objc(HeicExportPlugin)
 public class HeicExportPlugin: CAPPlugin, CAPBridgedPlugin {

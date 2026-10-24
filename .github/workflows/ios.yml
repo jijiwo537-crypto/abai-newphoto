@@ -1,0 +1,104 @@
+name: iOS App
+# 在 GitHub 的 Mac 機器上打包 iOS App，不需要自己有 Mac。
+#  - 每次都會：編譯一次、在 iPhone 模擬器裡開起來截圖（Actions 頁面的 Artifacts 可以下載截圖）。
+#  - 手動執行並勾選 testflight：再簽名、上傳到 TestFlight，手機裝 TestFlight 就能安裝測試。
+#    需要的 secrets（Settings → Secrets and variables → Actions）：
+#      APPLE_TEAM_ID       開發者帳號的 Team ID
+#      ASC_KEY_ID          App Store Connect API 金鑰的 Key ID
+#      ASC_ISSUER_ID       App Store Connect API 的 Issuer ID
+#      ASC_KEY_P8_BASE64   下載的 .p8 金鑰檔內容（base64）
+on:
+  workflow_dispatch:
+    inputs:
+      testflight:
+        description: '上傳到 TestFlight'
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - 'capacitor.config.ts'
+      - 'utils/native.ts'
+      - '.github/workflows/ios.yml'
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: git apply .github/deploy-layout.patch
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+      - run: npx cap sync ios
+      - name: 編譯（模擬器）
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build | tail -40
+          test -d build/Build/Products/Debug-iphonesimulator/App.app
+      - name: 在模擬器開起來截圖
+        run: |
+          DEV=$(xcrun simctl list devices available | grep -m1 -E 'iPhone 1[5-9]( Pro)? \(' | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
+          xcrun simctl boot "$DEV"
+          xcrun simctl bootstatus "$DEV" -b
+          xcrun simctl install "$DEV" build/Build/Products/Debug-iphonesimulator/App.app
+          xcrun simctl launch "$DEV" com.abai.photo
+          mkdir -p shots
+          sleep 15; xcrun simctl io "$DEV" screenshot shots/1-launch.png
+          sleep 15; xcrun simctl io "$DEV" screenshot shots/2-after30s.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simulator-screenshots
+          path: shots
+  testflight:
+    if: github.event_name == 'workflow_dispatch' && inputs.testflight
+    needs: build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: git apply .github/deploy-layout.patch
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+      - run: npx cap sync ios
+      - name: 簽名、上傳 TestFlight
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          KEY_P8: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          KEY="$RUNNER_TEMP/AuthKey.p8"; echo "$KEY_P8" | base64 --decode > "$KEY"
+          AUTH="-allowProvisioningUpdates -authenticationKeyPath $KEY -authenticationKeyID $KEY_ID -authenticationKeyIssuerID $ISSUER"
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Automatic CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            $AUTH archive | tail -40
+          cat > "$RUNNER_TEMP/export.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/out" $AUTH

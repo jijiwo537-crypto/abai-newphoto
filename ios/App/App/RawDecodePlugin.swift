@@ -2,13 +2,9 @@
 //  RawDecodePlugin.swift
 //  ABAI — iOS 原生 RAW 解碼
 //
-//  ── 這個檔案要放哪裡 ────────────────────────────────────────────
-//  跑過 `npx cap add ios` 之後，把這個檔案拖進 Xcode 的
-//      ios/App/App/
-//  資料夾（記得勾 "Copy items if needed"、Target 選 App）。
-//  Capacitor 7 是純 Swift 註冊，不需要再寫 .m 檔。
-//  加進去之後網頁那邊會自動偵測到（見 utils/rawNative.ts 的 available()），
-//  沒加就自動走 LibRaw，不會壞。
+//  已經加進 Xcode 專案（App target），由 MainViewController 登記。
+//  網頁那邊會自動偵測到（見 utils/rawNative.ts 的 available()），
+//  沒有這支（網頁版）就自動走 LibRaw。
 //
 //  ── 這支在做什麼 ──────────────────────────────────────────────
 //  用 Core Image 的 CIRAWFilter 解 RAW。那是 iOS 系統內建的解碼器，
