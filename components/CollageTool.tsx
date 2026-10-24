@@ -6019,8 +6019,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        那就是滑桿一幀一幀的原因。
        純色用 8×8 的小塊平鋪出來完全一樣（pattern 是 repeat），
        遮罩層那邊也改成直接 fillRect，畫出來的每個像素都不變。 */
-    const hasMaskImg = !!(maskImageState && maskImageState.img);
-    const plainMask = !hasMaskImg && patternType === 'none';
+    /* 滿版沒有遮罩區（長寬都是 0），自訂遮罩圖與紋理鋪不上去；
+       圖案一律用「圖案顏色」那一格的純色填 */
+    const hasMaskImg = layout !== FULL && !!(maskImageState && maskImageState.img);
+    const plainMask = !hasMaskImg && (patternType === 'none' || layout === FULL);
     const bCanvas = isMain ? baseMaskCanvasRef.current : document.createElement('canvas');
     /* 遮罩底稿（底色＋遮罩圖＋點點）只跟這幾個參數有關，圖案與動畫都不會動到它。
        播動畫時一秒要走 30 次，每次都重填兩張全尺寸畫布是純粹的浪費 ——
@@ -11475,7 +11477,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 : colorPickerTarget === 'mask' ? MASK_SWATCHES
                 : colorPickerTarget === 'textStroke' || colorPickerTarget === 'shapeStroke' ? STROKE_COLORS : DEFAULT_COLORS}
               onClose={() => setColorPickerTarget(null)}
-              title={colorPickerTarget === 'mask' ? '遮罩顏色'
+              title={colorPickerTarget === 'mask' ? (layout === FULL ? '圖案顏色' : '遮罩顏色')
                 : colorPickerTarget === 'holeGlow' ? '發光顏色'
                 : colorPickerTarget === 'linkColor' ? '連線顏色'
                 : colorPickerTarget === 'shapeObj' ? '圖形顏色'
@@ -11627,15 +11629,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     }} className="px-2 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-wider whitespace-nowrap">上傳</button>
                 </div>
 
-                <div className={`min-w-0 h-[47px] flex items-center justify-between gap-1.5 bg-[#111] px-2.5 border border-[#222] rounded-[6px] ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`}>
-                  <span className="text-[10px] font-bold text-[#888] shrink-0">自訂遮罩</span>
+                {/* 滿版沒有遮罩色塊，但圖案還在，而且圖案就是用這裡的顏色／自訂圖片填的，所以照樣可以調 */}
+                <div className="min-w-0 h-[47px] flex items-center justify-between gap-1.5 bg-[#111] px-2.5 border border-[#222] rounded-[6px]">
+                  <span className="text-[10px] font-bold text-[#888] shrink-0">{layout === FULL ? '圖案顏色' : '自訂遮罩'}</span>
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1" hidden={layout === FULL}>
                       <button onClick={(e) => { e.stopPropagation(); maskFileInputRef.current?.click(); }} className="px-2 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-wider whitespace-nowrap">
                         上傳
                       </button>
                     </div>
-                    {maskImageState ? <button className="w-7 h-6 shrink-0 rounded-[4px] border border-white/10 flex items-center justify-center" aria-label="還原素色" onClick={() => setMaskImageState(null)}><ReplayIcon size={12} /></button>
+                    {maskImageState && layout !== FULL ? <button className="w-7 h-6 shrink-0 rounded-[4px] border border-white/10 flex items-center justify-center" aria-label="還原素色" onClick={() => setMaskImageState(null)}><ReplayIcon size={12} /></button>
                       : <button className="w-7 h-6 shrink-0 rounded-[4px] shadow-inner border border-white/10 hover:ring-1 hover:ring-white/30 transition-shadow"
                       aria-label="遮罩顏色" onClick={() => setColorPickerTarget('mask')} style={{ backgroundColor: maskColor }} />}
                   </div>
