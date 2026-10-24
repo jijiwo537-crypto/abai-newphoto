@@ -291,8 +291,8 @@ const MASK_GLYPH_BODY: Record<string, string> = {
   erase: '<path d="M8.5 19.5h11"/><path d="M5 15.5l8.5-8.5 5 5-6.5 6.5H8z"/><path d="M9.5 11l5 5"/>',
   range: '<path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/>',
   /* 下限／上限是一對：一條界線＋指向範圍那一側的箭頭（下限在底、往上；上限在頂、往下） */
-  lumlo: '<path d="M19 14.5A7.5 7.5 0 1 1 9.5 5a6 6 0 0 0 9.5 9.5z"/>',
-  lumhi: '<circle cx="12" cy="12" r="3.5"/><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M6 18l1.4-1.4M16.6 7.4 18 6"/>',
+  lumlo: '<rect x="4.5" y="4.5" width="15" height="15" rx="2.5"/><path d="M4.5 12h15v5a2.5 2.5 0 0 1-2.5 2.5H7A2.5 2.5 0 0 1 4.5 17z" fill="#fff" stroke="none"/>',
+  lumhi: '<rect x="4.5" y="4.5" width="15" height="15" rx="2.5"/><path d="M4.5 12h15V7A2.5 2.5 0 0 0 17 4.5H7A2.5 2.5 0 0 0 4.5 7z" fill="#fff" stroke="none"/>',
   clearsamples: '<path d="M14.5 5.5l4 4-8.5 8.5H6v-4z"/><path d="M16 17l4 4M20 17l-4 4"/>',
   /* 收起／展開右邊那一欄 */
   fold: '<path d="M7 14.5l5-5 5 5"/>',
