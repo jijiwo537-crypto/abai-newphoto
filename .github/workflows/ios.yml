@@ -34,7 +34,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: git apply .github/deploy-layout.patch
-      - run: npm install --no-audit --no-fund
+      # 鎖定檔是在 Linux 產生的，缺 Mac 版的建置元件（npm 的老問題），所以這裡不照鎖定檔裝
+      - run: rm -f package-lock.json && npm install --no-audit --no-fund
       - run: npm run build
         env:
           VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -71,7 +72,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: git apply .github/deploy-layout.patch
-      - run: npm install --no-audit --no-fund
+      # 鎖定檔是在 Linux 產生的，缺 Mac 版的建置元件（npm 的老問題），所以這裡不照鎖定檔裝
+      - run: rm -f package-lock.json && npm install --no-audit --no-fund
       - run: npm run build
         env:
           VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
