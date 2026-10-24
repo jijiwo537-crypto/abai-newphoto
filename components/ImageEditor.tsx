@@ -291,8 +291,8 @@ const MASK_GLYPH_BODY: Record<string, string> = {
   erase: '<path d="M8.5 19.5h11"/><path d="M5 15.5l8.5-8.5 5 5-6.5 6.5H8z"/><path d="M9.5 11l5 5"/>',
   range: '<path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/>',
   /* 下限／上限是一對：一條界線＋指向範圍那一側的箭頭（下限在底、往上；上限在頂、往下） */
-  lumlo: '<path d="M5 18.5h14"/><path d="M12 15.5V5.5"/><path d="M8.5 9 12 5.5 15.5 9"/>',
-  lumhi: '<path d="M5 5.5h14"/><path d="M12 8.5v10"/><path d="M8.5 15 12 18.5 15.5 15"/>',
+  lumlo: '<rect x="7.5" y="3.5" width="9" height="17" rx="3"/><path d="M7.5 15h9v2.5a3 3 0 0 1-3 3h-3a3 3 0 0 1-3-3z" fill="#fff" stroke="none"/><path d="M4 15h16"/>',
+  lumhi: '<rect x="7.5" y="3.5" width="9" height="17" rx="3"/><path d="M7.5 9h9V6.5a3 3 0 0 0-3-3h-3a3 3 0 0 0-3 3z" fill="#fff" stroke="none"/><path d="M4 9h16"/>',
   clearsamples: '<path d="M14.5 5.5l4 4-8.5 8.5H6v-4z"/><path d="M16 17l4 4M20 17l-4 4"/>',
   /* 收起／展開右邊那一欄 */
   fold: '<path d="M7 14.5l5-5 5 5"/>',
@@ -1846,7 +1846,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const finishMaskGesture = () => {
     activeDragRef.current = null;
     setIsInteracting(false);
-    isDirtyRef.current = true;
+    if (!releaseMaskLive(paramsRef.current)) isDirtyRef.current = true;
+    uiFirstRef.current = true;
     flushParamsSync();
     addToHistory(paramsRef.current, selectedLutIdx);
   };
@@ -1897,7 +1898,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       p.maskCx = Math.max(-0.5, Math.min(1.5, mv.cx0 + (e.clientX - mv.x0) / r.width));
       p.maskCy = Math.max(-0.5, Math.min(1.5, mv.cy0 + (e.clientY - mv.y0) / r.height));
       paramsRef.current = p;
-      if (!updateMaskLive(p)) isDirtyRef.current = true;
+      if (!maskInert(p) && !updateMaskLive(p)) isDirtyRef.current = true;
       if (!applyMaskGuides(p)) scheduleParamsSync();
       return;
     }
@@ -1912,7 +1913,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     p.maskRx = Math.max(6 / r.width, pin.rx0 * s);
     p.maskRy = Math.max(6 / r.width, pin.ry0 * s);
     paramsRef.current = p;
-    if (!updateMaskLive(p)) isDirtyRef.current = true;
+    if (!maskInert(p) && !updateMaskLive(p)) isDirtyRef.current = true;
     if (!applyMaskGuides(p)) scheduleParamsSync();
   };
   const onBoxPointerUp = (e: React.PointerEvent) => {
@@ -1995,7 +1996,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const next = { ...p, maskCreated: true, maskShowOverlay: true, maskStrokes: [...(p.maskStrokes || [])] };
       addDabs(next, pt.x, pt.y, pt.x, pt.y);
       paramsRef.current = next;
-      if (!updateMaskLive(next)) isDirtyRef.current = true;
+      if (!maskInert(next) && !updateMaskLive(next)) isDirtyRef.current = true;
     }
     setIsInteracting(true);
   };
@@ -2061,7 +2062,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
 
     paramsRef.current = p;
-    if (!(p.maskCreated && updateMaskLive(p))) isDirtyRef.current = true;
+    if (!(p.maskCreated && (maskInert(p) || updateMaskLive(p)))) isDirtyRef.current = true;
     /* 參考線直接改屬性，不必整個編輯器 render 一次；還沒掛上（剛開始建立）才走 React */
     if (drag.type !== 'paint' && !applyMaskGuides(p)) scheduleParamsSync();
   };
@@ -2123,7 +2124,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     paramsRef.current = p;
     /* 放手後整條管線照常重畫一次、把遮色片畫進畫布，同一格裡把疊層收掉（見遮色片那段） */
     if (!p.maskCreated) hideMaskLive();
-    isDirtyRef.current = true;
+    if (!releaseMaskLive(p)) isDirtyRef.current = true;
+    uiFirstRef.current = true;
     flushParamsSync();
     addToHistory(p, selectedLutIdx);
   };
@@ -2845,6 +2847,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     paintMaskLive(snapOf(p));
     return true;
   };
+  const maskSkipDirtyRef = useRef(false);
   const maskOverlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   /* 「選中這一個以外都畫好」的整張（原解析度）：每次正常重畫時順手留一份，
      開始拖的那一下直接拿來當底、掛上即時疊層，不必先等整條管線跑一次（就是開始拖時那一頓） */
@@ -2854,8 +2857,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     `${w}x${h}|${srcIdent()}|${selectedLutIdxNowRef.current}|${JSON.stringify(Object.entries(p).filter(([k]) => !k.startsWith('mask')))}|${JSON.stringify(list.filter((_, i) => i !== active))}`;
   const primeMaskLive = (p: EditorParams, overlay: boolean) => {
     if (maskLiveRef.current) return true;
+    if (maskInert(p)) return false;
     const snap = maskNoActiveRef.current, el = displayCanvasRef.current;
-    if (!snap || !el || fxSurfaceShownRef.current || hasActiveFx(p)) return false;
+    if (!snap || !el || hasActiveFx(p)) return false;
     const { list, active } = maskList(p);
     const act = list[active];
     if (!act?.maskCreated) return false;
@@ -2865,6 +2869,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (key !== maskNoActiveKeyRef.current) return false;
     const g = el.getContext('2d')!;
     g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'copy'; g.drawImage(snap, 0, 0); g.restore();
+    // 平常畫面是透過 GPU 那層顯示的；拖的這段改看 2D 畫布（底）＋即時疊層，放手後的重畫再切回去
+    if (fxSurfaceShownRef.current) showFxSurface(false);
     const k = Math.min(1, MASK_LIVE_MAX / Math.max(w, h));
     const lw = Math.max(1, Math.round(w * k)), lh = Math.max(1, Math.round(h * k));
     const pre = maskLivePreRef.current ??= document.createElement('canvas');
@@ -2877,6 +2883,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     liveAdjust(act, overlay);
     paintMaskLive(act);
+    return true;
+  };
+  /** 放手時：這個遮色片沒有任何調整、紅色範圍也沒開 → 畫面跟拖之前一模一樣，收掉疊層就好，不必整條重畫（放手那一頓） */
+  /** 這個遮色片沒有任何調整、紅色範圍也關著：搬它、縮放它畫面都不會變，只要動參考線，不必重畫 */
+  const maskInert = (p: EditorParams) => !p.maskShowOverlay && !!p.maskCreated && !hasMaskAdj(snapOf(p));
+  const releaseMaskLive = (p: EditorParams) => {
+    if (!maskInert(p)) return false;
+    if (maskLiveRef.current) hideMaskLive();
+    maskSkipDirtyRef.current = true;
     return true;
   };
   const hideMaskLive = () => {
@@ -3528,6 +3543,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   useEffect(() => {
     if (mergeFreezeRef.current) return;
     paramsRef.current = params;
+    if (maskSkipDirtyRef.current) { maskSkipDirtyRef.current = false; return; }
     isDirtyRef.current = true;
   }, [params]);
   /* 這裡以前還會順手把 isDirtyRef 設成 true。拿掉了 ——
@@ -5007,8 +5023,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const sliderLive = maskSliderLiveRef.current;
     const maskLive = (!!activeDragRef.current || maskPaintingRef.current || sliderLive) && !baking && ctx.canvas === displayCanvasRef.current
       && !!maskLiveCanvasRef.current && !hasActiveFx(p) && !!actMask?.maskCreated
-      && (sliderLive || actMask.maskType === 'linear' || actMask.maskType === 'radial' || actMask.maskType === 'brush')
-      && (sliderLive || hasMaskAdj(actMask) || showOverlay);
+      && (sliderLive || actMask.maskType === 'linear' || actMask.maskType === 'radial' || actMask.maskType === 'brush');
     if (!maskLive && maskLiveRef.current && ctx.canvas === displayCanvasRef.current && !baking) hideMaskLive();
     const maskWork = maskItems.some((m, i) => m.maskCreated && (hasMaskAdj(m) || (i === maskAct && showOverlay)));
     const ovEl = !baking && ctx.canvas === displayCanvasRef.current ? maskOverlayCanvasRef.current : null;
@@ -5909,7 +5924,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const scale = Math.max(b.w, b.h) / 1080;
     // Pass b.dest as sourcePixelData for noise masking
     applyComplexEffects(ctx, b.w, b.h, pPost, scale, b.shared, isInteracting, false, b.dest);
-    if(!fxSurfaceShownRef.current)presentEditorSource(ctx,b.w,b.h);
+    if(!fxSurfaceShownRef.current&&!maskLiveRef.current)presentEditorSource(ctx,b.w,b.h);
 
     if (quickPass) {
       isDirtyRef.current = true;          // 接著馬上排一次全解析度的
@@ -9506,8 +9521,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             const typeTools = MASK_TYPE_TOOLS[mt];
             const canEdit = typeTools.length > 0 || mt === 'brush';
             const mode = canEdit ? maskEditMode : 'adjust';
-            const switchMode = () => {
+            const switchMode = (e: React.MouseEvent<HTMLButtonElement>) => {
               const next = mode === 'adjust' ? 'edit' : 'adjust';
+              // 圖示先轉（直接改樣式，不等整個編輯器重畫完）
+              const ic = e.currentTarget.querySelector<HTMLElement>('[data-mode-icon]');
+              if (ic) ic.style.transform = next === 'edit' ? 'rotate(-90deg)' : 'none';
+              uiFirstRef.current = true;
               setMaskEditMode(next);
               setActiveToolId(next === 'edit' ? (typeTools[0]?.id ?? MASK_TOOLS[0].id) : MASK_TOOLS[0].id);
             };
@@ -9517,7 +9536,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   <button data-mask-mode={mode} onClick={switchMode} aria-label={mode === 'adjust' ? '切換到編輯遮色片' : '切換到調節'}
                     className="flex flex-col items-center gap-1 shrink-0 w-12">
                     <div className="relative w-10 h-10 rounded-[12px] flex items-center justify-center bg-white/[0.08] text-white">
-                      {mode === 'adjust' ? <Icon name="tune" className="text-[20px]" /> : <MaskGlyph k={mt} size={19} />}
+                      {/* 調節＝橫的調整圖示；編輯＝同一個逆時針轉 90 度（直式），切換時轉過去 */}
+                      <span data-mode-icon className="flex transition-transform duration-300 ease-[cubic-bezier(.3,1.4,.5,1)]" style={{ transform: mode === 'edit' ? 'rotate(-90deg)' : 'none' }}>
+                        <Icon name="tune" className="text-[20px]" />
+                      </span>
                       <span className="absolute -bottom-1 -right-1 w-[18px] h-[18px] rounded-full bg-[#2a2a2a] flex items-center justify-center text-[10px] leading-none text-white/80">⇄</span>
                     </div>
                     <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap text-white/70">{mode === 'adjust' ? '調節' : '編輯'}</span>
