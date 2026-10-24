@@ -112,7 +112,7 @@ const Jog: React.FC<{ W: number; drag: ReturnType<typeof useDrag>; x: number; id
       opacity: 0.6,
     }} />
     <div aria-hidden className="absolute inset-0" style={{
-      background: 'linear-gradient(90deg, rgba(10,10,10,.92), rgba(10,10,10,.35) 22%, rgba(10,10,10,0) 40%, rgba(10,10,10,0) 60%, rgba(10,10,10,.35) 78%, rgba(10,10,10,.92))',
+      background: 'linear-gradient(90deg, rgba(10,10,10,.62), rgba(10,10,10,.2) 22%, rgba(10,10,10,0) 40%, rgba(10,10,10,0) 60%, rgba(10,10,10,.2) 78%, rgba(10,10,10,.62))',
     }} />
   </div>
 );

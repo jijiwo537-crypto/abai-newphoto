@@ -35,7 +35,7 @@ export type MaskSnap = {
   /* 筆刷 */
   maskStrokes: MaskStroke[]; maskBrushSize: number; maskBrushFeather: number; maskBrushFlow: number; maskBrushErase: boolean;
   /* 顏色範圍 */
-  maskColors: ColorSample[]; maskColorRange: number;
+  maskColors: ColorSample[]; maskColorRange: number; maskColorSmooth: number;
   /* 明度範圍（0～100 的 L*） */
   maskLumLo: number; maskLumHi: number; maskLumSmooth: number;
 };
@@ -51,7 +51,7 @@ export const freshMask = (type: MaskType = 'linear', id = 'm0'): MaskSnap => ({
   maskCx: 0.5, maskCy: 0.5, maskAngle: 0, maskD: 0.25,
   maskRx: 0.25, maskRy: 0.25, maskFeather: 50,
   maskStrokes: [], maskBrushSize: 40, maskBrushFeather: 50, maskBrushFlow: 100, maskBrushErase: false,
-  maskColors: [], maskColorRange: 50,
+  maskColors: [], maskColorRange: 50, maskColorSmooth: 50,
   maskLumLo: 60, maskLumHi: 100, maskLumSmooth: 50,
 });
 export const MASK_SNAP_KEYS = Object.keys(freshMask()) as (keyof MaskSnap)[];
@@ -188,7 +188,8 @@ const yOf = (st: SrcStats) => {
 const colorAlpha = (st: SrcStats, out: Uint8ClampedArray, m: MaskSnap) => {
   const labs = m.maskColors.map(c => { const q = rgbToLab(c.r, c.g, c.b); return [q[0] * 0.6, q[1], q[2]]; });
   // 範圍 50（預設）＝ΔE 約 20 以內全選、再往外 14 慢慢淡掉：跟 LR 點一下的感覺差不多，只吃相近的顏色
-  const tol = 3 + m.maskColorRange * 0.34, soft = 6 + tol * 0.4;
+  // 柔化 50＝原本的邊緣；0 幾乎是硬邊、100 淡出的距離是兩倍
+  const tol = 3 + m.maskColorRange * 0.34, soft = Math.max(0.5, (6 + tol * 0.4) * ((m.maskColorSmooth ?? 50) / 50));
   // 距離平方 → alpha 查表（不用每點開根號、算 smoothstep）
   const maxD = tol + soft, STEPS = 1024, tab = new Uint8ClampedArray(STEPS + 1), k2 = STEPS / (maxD * maxD);
   for (let i = 0; i <= STEPS; i++) tab[i] = Math.round(255 * (1 - sstep(tol, maxD, Math.sqrt(i / k2))));
@@ -219,7 +220,7 @@ const rangeCaches = new Map<string, RangeCache>();
 const rangeCanvas = (id: string, m: MaskSnap, src: CanvasImageSource, w: number, h: number, baseKey: string, fast: boolean) => {
   const k = fast ? Math.min(1, 480 / Math.max(w, h)) : 1;
   const sw = Math.max(1, Math.round(w * k)), sh = Math.max(1, Math.round(h * k));
-  const key = `${baseKey}|${sw}x${sh}|${m.maskType}|${m.maskType === 'color' ? JSON.stringify(m.maskColors) + m.maskColorRange : `${m.maskLumLo},${m.maskLumHi},${m.maskLumSmooth}`}`;
+  const key = `${baseKey}|${sw}x${sh}|${m.maskType}|${m.maskType === 'color' ? JSON.stringify(m.maskColors) + m.maskColorRange + ',' + (m.maskColorSmooth ?? 50) : `${m.maskLumLo},${m.maskLumHi},${m.maskLumSmooth}`}`;
   const cid = `${id}@${fast ? 'f' : 'F'}`;
   let hit = rangeCaches.get(cid);
   if (hit && hit.key === key) return hit.c;
