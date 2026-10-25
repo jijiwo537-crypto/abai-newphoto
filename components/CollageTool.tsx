@@ -622,8 +622,8 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
 /* 功能鍵圖示：SVG 只當遮罩、用 currentColor 整塊填（跟遮色片那排一樣），
    半透明的顏色下線條交會處不會疊成比較白的點。 */
 const PARAM_GLYPH: Record<string, string> = {
-  /* 範圍：外框到內框之間那一圈（四角往內的短線＝圖形往內散到哪裡） */
-  range: '<rect x="4" y="4" width="16" height="16" rx="3"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M6.8 6.8l1.6 1.6M17.2 6.8l-1.6 1.6M6.8 17.2l1.6-1.6M17.2 17.2l-1.6-1.6"/>',
+  /* 範圍：跟遮色片「平滑」同一顆（實心小圓＋外圈虛線） */
+  range: '<circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r="8" stroke-dasharray="1.5 2.5"/>',
   gap: '<path d="M4 12h16M7.5 8.5 4 12l3.5 3.5M16.5 8.5 20 12l-3.5 3.5"/>',
   size: '<path d="M7 17 17 7M12 7h5v5M7 12v5h5"/>',
   /* 大小變化：一大一小兩顆圓（跟遮色片「筆刷大小」同一種意思） */
