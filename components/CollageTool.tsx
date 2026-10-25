@@ -36,6 +36,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import { saveDraft as saveToolDraftImpl } from '../utils/toolDraft';
 import { patternDefaultSize } from '../utils/patternDefaults';
 import { addExport } from '../utils/exportHistory';
+import { Frame, MoveHorizontal, Maximize2, Shuffle, RotateCw, Dices, Sun } from 'lucide-react';
 import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Hexagon, Blocks, Sparkles, Asterisk, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
 import { SYMBOLS } from '../utils/symbols';
@@ -615,6 +616,34 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
     </div>
   </div>
 );
+
+/* 一根共用的滑桿＋下面一排可以左右滑的功能鍵（跟「編輯 → 調節」同一種操作）：
+   點哪一顆，上面那根滑桿就改調哪一個。參數很多的圖形（散落圖形邊框）用這個，
+   不用一次攤開七根滑桿。 */
+type ParamItem = { key: string; label: string; icon: React.ReactNode; value: number; def: number; min: number; max: number; onChange: (v: number) => void; disabled?: boolean };
+const ParamStrip: React.FC<{ items: ParamItem[] }> = ({ items }) => {
+  const [active, setActive] = useState(items[0]?.key);
+  const cur = items.find(i => i.key === active && !i.disabled) || items.find(i => !i.disabled) || items[0];
+  if (!cur) return null;
+  return (
+    <div data-param-strip>
+      <div className="px-2">{shapeSlider(cur.label, cur.value, cur.min, cur.max, cur.onChange)}</div>
+      <div className="flex gap-1 overflow-x-auto no-scrollbar mt-3 -mx-2 px-2 pb-1">
+        {items.map(it => {
+          const on = it.key === cur.key;
+          return (
+            <button key={it.key} data-param-key={it.key} disabled={it.disabled} aria-pressed={on} onClick={() => setActive(it.key)}
+              className={`flex flex-col items-center gap-1 shrink-0 w-14 ${it.disabled ? 'opacity-30' : ''}`}>
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors duration-150 ${on ? 'bg-white text-black' : 'bg-white/[0.06] text-white/60'}`}>{it.icon}</div>
+              <span className={`text-[9px] font-bold tracking-tighter whitespace-nowrap ${on ? 'text-white' : 'text-white/40'}`}>{it.label}</span>
+              <div className={`w-1 h-1 rounded-full transition-opacity ${it.value !== it.def ? 'bg-white/70 opacity-100' : 'opacity-0'}`} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 /* ── 連線 ──────────────────────────────────────────────────────────
    每一種圖案都能連線。以前只開放前六種「單一封閉形狀」，理由是字符類的
@@ -11397,7 +11426,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         {/* overscrollBehavior 用 none 而不是 contain：contain 只擋住「把捲動傳給外層」，
             自己還是會橡皮筋 —— 已經到頂了再往上拉，畫面不該有任何位移。
             動畫頁底部另外留 pb-12，最後一根滑桿才不會貼在最下緣。 */}
-        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'none' }} className={`relative flex-1 min-h-0 ${objEditText ? 'overflow-hidden px-5 py-0' : photoLayoutOpen || objEditImage ? 'overflow-hidden' : `${activeTab === 'shape' && !colorPickerTarget ? 'px-5 py-0' : 'p-5'} ${activeTab === 'motion' && !colorPickerTarget ? 'pb-12' : (activeTab === 'shape' && !colorPickerTarget ? '' : colorPickerTarget || activeTab === 'objedit' ? 'pb-5' : 'pb-20')} custom-scrollbar ${
+        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'none', ...(activeTab === 'objedit' && !colorPickerTarget && !objEditText && !photoLayoutOpen && !objEditImage ? { '--pt': '20px', '--pb': '20px' } : {}) } as React.CSSProperties} className={`relative flex-1 min-h-0 ${objEditText ? 'overflow-hidden px-5 py-0' : photoLayoutOpen || objEditImage ? 'overflow-hidden' : `${activeTab === 'shape' && !colorPickerTarget ? 'px-5 py-0' : 'p-5'} ${activeTab === 'motion' && !colorPickerTarget ? 'pb-12' : (activeTab === 'shape' && !colorPickerTarget ? '' : colorPickerTarget || activeTab === 'objedit' ? 'pb-5' : 'pb-20')} custom-scrollbar ${
           (activeTab === 'setting' && !colorPickerTarget) ||
           (activeTab === 'add' && !colorPickerTarget) ||
           (activeTab === 'objedit' && !colorPickerTarget) ||
@@ -11988,7 +12017,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   return (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
                       {/* 模糊圖形的面板很短，整頁固定不捲動 */}
-                      <div className={`h-full ${isBlurShape(sel.kind) ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden no-scrollbar px-2`}>
+                      <div className={`edge-scroll ${isBlurShape(sel.kind) ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden no-scrollbar px-2`}>
                         {/* 底下留一段（跟經典拼圖的圖形編輯一樣的 pb-14）——
                             捲到最底時最後那一格不會貼著邊，也比較好按。 */}
                         <div className="flex flex-col gap-3.5 pt-1 pb-14">
@@ -12036,7 +12065,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>}
                           {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
-                          {isFrameShape(sel.kind) && !isMistFrame(sel.kind) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
+                          {isFrameShape(sel.kind) && !isMistFrame(sel.kind) && sel.kind !== FRAME_SCATTER && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('範圍', Math.round((sel as any).frameRange ?? frameRangeDefault(sel.kind)), 0, 100,
                               (v: number) => patch({ frameRange: v } as any))}
                             {(FRAME_SLIDERS[sel.kind!] || []).filter(sl => sl.key !== 'glow').map(sl => <React.Fragment key={sl.key}>
@@ -12045,11 +12074,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             </React.Fragment>)}
                           </div>}
                           {/* 發光自己一整排（長的滑桿） */}
-                          {sel.kind === FRAME_SCATTER && <div className={`px-2 order-1 w-full ${scatterAllNoGlow((sel as any).frameOpts?.kinds) ? 'opacity-35 pointer-events-none' : ''}`}
-                            aria-disabled={scatterAllNoGlow((sel as any).frameOpts?.kinds) || undefined}>
-                            {shapeSlider('發光', Math.round((sel as any).frameOpts?.glow ?? 0), 0, 100,
-                              (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, glow: Math.round(v) } } as any))}
-                          </div>}
+                          {sel.kind === FRAME_SCATTER && (() => {
+                            const fo = (sel as any).frameOpts || {};
+                            const ICONS: Record<string, React.ReactNode> = { gap: <MoveHorizontal size={18} />, size: <Maximize2 size={17} />, sizeVar: <Shuffle size={17} />, angle: <RotateCw size={17} />, angleVar: <Dices size={17} /> };
+                            const opt = (sl: { key: string; label: string; def: number }): ParamItem => ({ key: sl.key, label: sl.label, icon: ICONS[sl.key], def: sl.def,
+                              value: Math.round(fo[sl.key] ?? sl.def), min: 0, max: 100,
+                              onChange: (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, [sl.key]: Math.round(v) } } as any) });
+                            const items: ParamItem[] = [
+                              { key: 'range', label: '範圍', icon: <Frame size={17} />, def: Math.round(frameRangeDefault(sel.kind)), min: 0, max: 100,
+                                value: Math.round((sel as any).frameRange ?? frameRangeDefault(sel.kind)), onChange: (v: number) => patch({ frameRange: v } as any) },
+                              ...(FRAME_SLIDERS[sel.kind!] || []).filter(sl => sl.key !== 'glow').map(opt),
+                              { key: 'glow', label: '發光', icon: <Sun size={17} />, def: 0, min: 0, max: 100, value: Math.round(fo.glow ?? 0),
+                                disabled: scatterAllNoGlow(fo.kinds), onChange: (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, glow: Math.round(v) } } as any) },
+                            ];
+                            return <div className="order-1 w-full"><ParamStrip key={sel.id} items={items} /></div>;
+                          })()}
                           {sel.kind === FRAME_SCATTER && <div className="px-2 order-1 w-full">
                             <ScatterKindsPicker value={(sel as any).frameOpts?.kinds}
                               onChange={kinds => patch({ frameOpts: { ...(sel as any).frameOpts, kinds } } as any)}

@@ -405,3 +405,14 @@ html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.mat
    transition-all 會把 visibility 也當成過場：父層一藏，子孫繼承的 hidden 要等自己的過場跑完才生效，
    看起來就是「選中的那顆、某個圖示比其他東西慢一拍才消失」。用這個 class 藏，所有東西同一幀消失。 */
 .vis-off, .vis-off * { visibility: hidden !important; transition: none !important; }
+
+/* 面板裡面那層自己捲的清單：往上下延伸蓋過外層的內距（--pt／--pb 由外層給），
+   捲動時內容一路滑到工具列邊緣，不會在上下各被切出一條黑色的空帶。
+   起始位置用同樣的內距補回來，所以沒捲的時候畫面完全不變。 */
+.edge-scroll {
+  margin-top: calc(var(--pt, 0px) * -1);
+  margin-bottom: calc(var(--pb, 0px) * -1);
+  height: calc(100% + var(--pt, 0px) + var(--pb, 0px));
+  padding-top: var(--pt, 0px);
+  padding-bottom: var(--pb, 0px);
+}

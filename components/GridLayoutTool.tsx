@@ -2977,7 +2977,7 @@ export const ShapeEditorPanel: React.FC<{
     <div
       className="max-w-md mx-auto h-full animate-in fade-in duration-300"
     >
-      <div className={`h-full ${colorPage || isBlurShape(layer.shape) ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden no-scrollbar px-2`}>
+      <div className={`edge-scroll ${colorPage || isBlurShape(layer.shape) ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden no-scrollbar px-2`}>
         {colorPage && (
           <ColorPickerPage
             value={colorPage.value}
@@ -18319,7 +18319,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           </div>
 
           {/* Tabs Content */}
-          <div className={`flex-1 min-h-0 no-scrollbar ${imageEditMode ? '' : textEditMode ? 'px-4 py-0' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
+          <div style={imageEditMode || textEditMode ? undefined : { '--pt': '16px', '--pb': '16px' } as React.CSSProperties} className={`flex-1 min-h-0 no-scrollbar ${imageEditMode ? '' : textEditMode ? 'px-4 py-0' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
 
             {activeTab === 'motion' && (() => {
               // 佈局當成一張圖片：同一套面板，寫回去的時候導到佈局上
@@ -18664,7 +18664,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   key={activeTab === 'layout' ? 'layout-create' : `layout-edit-${selectedLayoutId}`}
                   /* -mx-2 px-2：內容位置不變，但裁切範圍左右各多 8px —— 滑桿白點拉到兩端時
                      會超出滑桿本身 7px，以前剛好被這層的 overflow 切掉半顆。 */
-                  className={`w-full min-w-0 flex-1 h-full -mx-2 px-2 ${activeTab === 'layout' ? 'overflow-y-auto overflow-x-hidden no-scrollbar' : 'overflow-hidden'}`}
+                  className={`w-full min-w-0 flex-1 -mx-2 px-2 ${activeTab === 'layout' ? 'edge-scroll overflow-y-auto overflow-x-hidden no-scrollbar' : 'h-full overflow-hidden'}`}
                   data-layout-editor={layoutEditMode ? 'true' : undefined}
                   style={{ overscrollBehavior: 'none' }}
                 >
@@ -18923,7 +18923,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
             {activeTab === 'color' && colorSub === 'bg' && (
               /* 工具欄維持共用高度；套用紋理才讓此頁捲動，不縮小預覽。 */
-              <div ref={colorTabRef} data-classic-background-panel data-texture-active={patternType !== 'none'} className={`max-w-md mx-auto animate-in fade-in duration-300 h-full no-scrollbar ${patternType !== 'none' ? 'overflow-y-auto overflow-x-hidden overscroll-contain' : 'overflow-hidden'}`}>
+              <div ref={colorTabRef} data-classic-background-panel data-texture-active={patternType !== 'none'} className={`max-w-md mx-auto animate-in fade-in duration-300 no-scrollbar ${patternType !== 'none' ? 'edge-scroll overflow-y-auto overflow-x-hidden overscroll-contain' : 'h-full overflow-hidden'}`}>
                 {/* 外面包一層高度 auto 的盒子：ColorPickerEmbedded 的根是 h-full，
                      直接放在這個「有固定高度」的捲動格裡會整個撐滿，把下面的紋理
                      推到很遠。包一層之後 100% 會解析成 auto，它就只佔自己需要的高度。 */}
