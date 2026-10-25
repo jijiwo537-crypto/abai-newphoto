@@ -622,14 +622,14 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
 /* 功能鍵圖示：SVG 只當遮罩、用 currentColor 整塊填（跟遮色片那排一樣），
    半透明的顏色下線條交會處不會疊成比較白的點。 */
 const PARAM_GLYPH: Record<string, string> = {
-  /* 範圍：跟遮色片「範圍」同一顆（兩根滑桿） */
-  range: '<path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/>',
-  gap: '<path d="M4 12h16M7.5 8.5 4 12l3.5 3.5M16.5 8.5 20 12l-3.5 3.5"/>',
-  size: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
+  /* 範圍：外框裡往內一圈虛線（圖形散佈的那一圈） */
+  range: '<rect x="4" y="4" width="16" height="16" rx="3"/><rect x="8.5" y="8.5" width="7" height="7" rx="1.2" stroke-dasharray="2.2 1.9"/>',
+  gap: '<path d="M5 6v12M19 6v12"/><path d="M10.5 9.5 8 12l2.5 2.5M13.5 9.5 16 12l-2.5 2.5M8 12h8"/>',
+  size: '<path d="M14 5h5v5M10 19H5v-5M19 5l-5.5 5.5M5 19l5.5-5.5"/>',
   /* 大小變化：一大一小兩顆圓（跟遮色片「筆刷大小」同一種意思） */
-  sizeVar: '<circle cx="9" cy="15" r="4.5"/><circle cx="16.5" cy="7.5" r="2.5"/>',
+  sizeVar: '<circle cx="9" cy="15" r="4"/><circle cx="16.5" cy="7.5" r="2.5"/>',
   angle: '<path d="M20 12a8 8 0 1 1-2.35-5.65"/><path d="M20 4v5h-5"/>',
-  glow: '<circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/>',
+  glow: '<circle cx="12" cy="12" r="3.2"/><path d="M12 4v1.8M12 18.2V20M4 12h1.8M18.2 12H20M6.3 6.3l1.3 1.3M16.4 16.4l1.3 1.3M6.3 17.7l1.3-1.3M16.4 7.6l1.3-1.3"/>',
 };
 const PARAM_GLYPH_URL: Record<string, string> = Object.fromEntries(Object.entries(PARAM_GLYPH).map(([k, body]) => [k,
   `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`)}")`]));
@@ -12091,7 +12091,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 發光自己一整排（長的滑桿） */}
                           {sel.kind === FRAME_SCATTER && (() => {
                             const fo = (sel as any).frameOpts || {};
-                            const ICONS: Record<string, React.ReactNode> = { gap: <ParamGlyph k="gap" />, size: <ParamGlyph k="size" />, sizeVar: <ParamGlyph k="sizeVar" />, angleVar: <Icon name="rotate_right" className="text-[20px]" /> };
+                            const ICONS: Record<string, React.ReactNode> = { gap: <ParamGlyph k="gap" />, size: <ParamGlyph k="size" />, sizeVar: <ParamGlyph k="sizeVar" />, angleVar: <Icon name="rotate_right" className="text-[17px]" /> };
                             const opt = (sl: { key: string; label: string; def: number }): ParamItem => ({ key: sl.key, label: sl.label, icon: ICONS[sl.key], def: sl.def,
                               value: Math.round(fo[sl.key] ?? sl.def), min: 0, max: 100,
                               onChange: (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, [sl.key]: Math.round(v) } } as any) });
