@@ -36,7 +36,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import { saveDraft as saveToolDraftImpl } from '../utils/toolDraft';
 import { patternDefaultSize } from '../utils/patternDefaults';
 import { addExport } from '../utils/exportHistory';
-import { Frame, MoveHorizontal, Maximize2, Shuffle, RotateCw, Dices, Sun } from 'lucide-react';
+import { Frame, MoveHorizontal, Maximize2, Shuffle, RotateCw, Sun } from 'lucide-react';
 import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Hexagon, Blocks, Sparkles, Asterisk, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
 import { SYMBOLS } from '../utils/symbols';
@@ -628,7 +628,7 @@ const ParamStrip: React.FC<{ items: ParamItem[] }> = ({ items }) => {
   return (
     <div data-param-strip>
       <div className="px-2">{shapeSlider(cur.label, cur.value, cur.min, cur.max, cur.onChange)}</div>
-      <div className="flex gap-1 overflow-x-auto no-scrollbar mt-3 -mx-2 px-2 pb-1">
+      <div className="flex gap-1 overflow-x-auto no-scrollbar mt-3 -mx-2 px-2">
         {items.map(it => {
           const on = it.key === cur.key;
           return (
@@ -636,7 +636,6 @@ const ParamStrip: React.FC<{ items: ParamItem[] }> = ({ items }) => {
               className={`flex flex-col items-center gap-1 shrink-0 w-14 ${it.disabled ? 'opacity-30' : ''}`}>
               <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors duration-150 ${on ? 'bg-white text-black' : 'bg-white/[0.06] text-white/60'}`}>{it.icon}</div>
               <span className={`text-[9px] font-bold tracking-tighter whitespace-nowrap ${on ? 'text-white' : 'text-white/40'}`}>{it.label}</span>
-              <div className={`w-1 h-1 rounded-full transition-opacity ${it.value !== it.def ? 'bg-white/70 opacity-100' : 'opacity-0'}`} />
             </button>
           );
         })}
@@ -12020,7 +12019,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       <div className={`edge-scroll ${isBlurShape(sel.kind) ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden no-scrollbar px-2`}>
                         {/* 底下留一段（跟經典拼圖的圖形編輯一樣的 pb-14）——
                             捲到最底時最後那一格不會貼著邊，也比較好按。 */}
-                        <div className="flex flex-col gap-3.5 pt-1 pb-14">
+                        <div className="flex flex-col gap-3.5 -mt-2 pb-14">
                           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
                           {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c, glowColor: c }), true)}
                           {(DUAL_COLOR_SHAPE_KINDS.has(sel.kind || '') || /^(square|circle)-(star|heart)-cutout$/.test(sel.kind || '')) && (
@@ -12076,18 +12075,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 發光自己一整排（長的滑桿） */}
                           {sel.kind === FRAME_SCATTER && (() => {
                             const fo = (sel as any).frameOpts || {};
-                            const ICONS: Record<string, React.ReactNode> = { gap: <MoveHorizontal size={18} />, size: <Maximize2 size={17} />, sizeVar: <Shuffle size={17} />, angle: <RotateCw size={17} />, angleVar: <Dices size={17} /> };
+                            const ICONS: Record<string, React.ReactNode> = { gap: <MoveHorizontal size={18} />, size: <Maximize2 size={17} />, sizeVar: <Shuffle size={17} />, angleVar: <RotateCw size={17} /> };
                             const opt = (sl: { key: string; label: string; def: number }): ParamItem => ({ key: sl.key, label: sl.label, icon: ICONS[sl.key], def: sl.def,
                               value: Math.round(fo[sl.key] ?? sl.def), min: 0, max: 100,
                               onChange: (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, [sl.key]: Math.round(v) } } as any) });
                             const items: ParamItem[] = [
                               { key: 'range', label: '範圍', icon: <Frame size={17} />, def: Math.round(frameRangeDefault(sel.kind)), min: 0, max: 100,
                                 value: Math.round((sel as any).frameRange ?? frameRangeDefault(sel.kind)), onChange: (v: number) => patch({ frameRange: v } as any) },
-                              ...(FRAME_SLIDERS[sel.kind!] || []).filter(sl => sl.key !== 'glow').map(opt),
+                              /* 「角度」拿掉（固定 0），「角度變化」就叫角度 */
+                              ...(FRAME_SLIDERS[sel.kind!] || []).filter(sl => sl.key !== 'glow' && sl.key !== 'angle')
+                                .map(sl => opt(sl.key === 'angleVar' ? { ...sl, label: '角度' } : sl)),
                               { key: 'glow', label: '發光', icon: <Sun size={17} />, def: 0, min: 0, max: 100, value: Math.round(fo.glow ?? 0),
                                 disabled: scatterAllNoGlow(fo.kinds), onChange: (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, glow: Math.round(v) } } as any) },
                             ];
-                            return <div className="order-1 w-full"><ParamStrip key={sel.id} items={items} /></div>;
+                            return <div className="order-1 w-full -mb-2"><ParamStrip key={sel.id} items={items} /></div>;
                           })()}
                           {sel.kind === FRAME_SCATTER && <div className="px-2 order-1 w-full">
                             <ScatterKindsPicker value={(sel as any).frameOpts?.kinds}
