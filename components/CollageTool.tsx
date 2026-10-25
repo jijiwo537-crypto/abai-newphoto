@@ -36,7 +36,6 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import { saveDraft as saveToolDraftImpl } from '../utils/toolDraft';
 import { patternDefaultSize } from '../utils/patternDefaults';
 import { addExport } from '../utils/exportHistory';
-import { Frame, MoveHorizontal, Maximize2, Shuffle, RotateCw, Sun } from 'lucide-react';
 import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Hexagon, Blocks, Sparkles, Asterisk, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
 import { SYMBOLS } from '../utils/symbols';
@@ -620,6 +619,23 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
 /* 一根共用的滑桿＋下面一排可以左右滑的功能鍵（跟「編輯 → 調節」同一種操作）：
    點哪一顆，上面那根滑桿就改調哪一個。參數很多的圖形（散落圖形邊框）用這個，
    不用一次攤開七根滑桿。 */
+/* 功能鍵圖示：SVG 只當遮罩、用 currentColor 整塊填（跟遮色片那排一樣），
+   半透明的顏色下線條交會處不會疊成比較白的點。 */
+const PARAM_GLYPH: Record<string, string> = {
+  /* 範圍：跟遮色片「範圍」同一顆（兩根滑桿） */
+  range: '<path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/>',
+  gap: '<path d="M4 12h16M7.5 8.5 4 12l3.5 3.5M16.5 8.5 20 12l-3.5 3.5"/>',
+  size: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
+  /* 大小變化：一大一小兩顆圓（跟遮色片「筆刷大小」同一種意思） */
+  sizeVar: '<circle cx="9" cy="15" r="4.5"/><circle cx="16.5" cy="7.5" r="2.5"/>',
+  angle: '<path d="M20 12a8 8 0 1 1-2.35-5.65"/><path d="M20 4v5h-5"/>',
+  glow: '<circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/>',
+};
+const PARAM_GLYPH_URL: Record<string, string> = Object.fromEntries(Object.entries(PARAM_GLYPH).map(([k, body]) => [k,
+  `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`)}")`]));
+const ParamGlyph = ({ k }: { k: string }) => (
+  <span aria-hidden className="block w-[19px] h-[19px] bg-current" style={{ WebkitMaskImage: PARAM_GLYPH_URL[k], maskImage: PARAM_GLYPH_URL[k], WebkitMaskSize: '100% 100%', maskSize: '100% 100%' }} />
+);
 type ParamItem = { key: string; label: string; icon: React.ReactNode; value: number; def: number; min: number; max: number; onChange: (v: number) => void; disabled?: boolean };
 const ParamStrip: React.FC<{ items: ParamItem[] }> = ({ items }) => {
   const [active, setActive] = useState(items[0]?.key);
@@ -12075,17 +12091,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 發光自己一整排（長的滑桿） */}
                           {sel.kind === FRAME_SCATTER && (() => {
                             const fo = (sel as any).frameOpts || {};
-                            const ICONS: Record<string, React.ReactNode> = { gap: <MoveHorizontal size={18} />, size: <Maximize2 size={17} />, sizeVar: <Shuffle size={17} />, angleVar: <RotateCw size={17} /> };
+                            const ICONS: Record<string, React.ReactNode> = { gap: <ParamGlyph k="gap" />, size: <ParamGlyph k="size" />, sizeVar: <ParamGlyph k="sizeVar" />, angleVar: <ParamGlyph k="angle" /> };
                             const opt = (sl: { key: string; label: string; def: number }): ParamItem => ({ key: sl.key, label: sl.label, icon: ICONS[sl.key], def: sl.def,
                               value: Math.round(fo[sl.key] ?? sl.def), min: 0, max: 100,
                               onChange: (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, [sl.key]: Math.round(v) } } as any) });
                             const items: ParamItem[] = [
-                              { key: 'range', label: '範圍', icon: <Frame size={17} />, def: Math.round(frameRangeDefault(sel.kind)), min: 0, max: 100,
+                              { key: 'range', label: '範圍', icon: <ParamGlyph k="range" />, def: Math.round(frameRangeDefault(sel.kind)), min: 0, max: 100,
                                 value: Math.round((sel as any).frameRange ?? frameRangeDefault(sel.kind)), onChange: (v: number) => patch({ frameRange: v } as any) },
                               /* 「角度」拿掉（固定 0），「角度變化」就叫角度 */
                               ...(FRAME_SLIDERS[sel.kind!] || []).filter(sl => sl.key !== 'glow' && sl.key !== 'angle')
                                 .map(sl => opt(sl.key === 'angleVar' ? { ...sl, label: '角度' } : sl)),
-                              { key: 'glow', label: '發光', icon: <Sun size={17} />, def: 0, min: 0, max: 100, value: Math.round(fo.glow ?? 0),
+                              { key: 'glow', label: '發光', icon: <ParamGlyph k="glow" />, def: 0, min: 0, max: 100, value: Math.round(fo.glow ?? 0),
                                 disabled: scatterAllNoGlow(fo.kinds), onChange: (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, glow: Math.round(v) } } as any) },
                             ];
                             return <div className="order-1 w-full -mb-2"><ParamStrip key={sel.id} items={items} /></div>;
