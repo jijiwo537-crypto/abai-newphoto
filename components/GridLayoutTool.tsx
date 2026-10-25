@@ -2811,7 +2811,7 @@ export const TextEditorPanel: React.FC<{
 
         {!colorPage && (sub === 'style' || symbol) && (
           /* 底部留一段：捲到底時最後一根滑桿不要貼著邊（原本 pb-24，減半） */
-          <div className="space-y-3.5 pt-2 pb-12">
+          <div className="space-y-3.5 pt-3 pb-12">
             {/* 文字內容一律直接在畫布上打（選中之後再點一次那段字），
                 所以這裡不放輸入框。符號也是一樣的改法。 */}
             {/* 最上面就是這個物件自己的顏色，色票直接攤開 ——
@@ -2988,7 +2988,7 @@ export const ShapeEditorPanel: React.FC<{
         )}
         {!colorPage && (
         /* 底部留一段：捲到最底時最後一根滑桿不會貼著邊 */
-        <div className="flex flex-col gap-3.5 -mt-1.5 pb-14">
+        <div className="flex flex-col gap-3.5 -mt-1 pb-14">
           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題）。
               換圖形顏色時發光也一起換成同一個色 —— 發光本來就是圖形自己的光暈。
               反過來不成立：單獨挑發光的顏色時，圖形的顏色不會被動到。 */}
