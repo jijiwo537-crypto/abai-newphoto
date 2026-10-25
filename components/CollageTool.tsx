@@ -622,10 +622,10 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
 /* 功能鍵圖示：SVG 只當遮罩、用 currentColor 整塊填（跟遮色片那排一樣），
    半透明的顏色下線條交會處不會疊成比較白的點。 */
 const PARAM_GLYPH: Record<string, string> = {
-  /* 範圍：外框裡往內一圈虛線（圖形散佈的那一圈） */
-  range: '<rect x="4" y="4" width="16" height="16" rx="3"/><rect x="8.5" y="8.5" width="7" height="7" rx="1.2" stroke-dasharray="2.2 1.9"/>',
-  gap: '<path d="M5 6v12M19 6v12"/><path d="M10.5 9.5 8 12l2.5 2.5M13.5 9.5 16 12l-2.5 2.5M8 12h8"/>',
-  size: '<path d="M14 5h5v5M10 19H5v-5M19 5l-5.5 5.5M5 19l5.5-5.5"/>',
+  /* 範圍：外框到內框之間那一圈（四角往內的短線＝圖形往內散到哪裡） */
+  range: '<rect x="4" y="4" width="16" height="16" rx="3"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M6.8 6.8l1.6 1.6M17.2 6.8l-1.6 1.6M6.8 17.2l1.6-1.6M17.2 17.2l-1.6-1.6"/>',
+  gap: '<path d="M4 12h16M7.5 8.5 4 12l3.5 3.5M16.5 8.5 20 12l-3.5 3.5"/>',
+  size: '<path d="M7 17 17 7M12 7h5v5M7 12v5h5"/>',
   /* 大小變化：一大一小兩顆圓（跟遮色片「筆刷大小」同一種意思） */
   sizeVar: '<circle cx="9" cy="15" r="4"/><circle cx="16.5" cy="7.5" r="2.5"/>',
   angle: '<path d="M20 12a8 8 0 1 1-2.35-5.65"/><path d="M20 4v5h-5"/>',
