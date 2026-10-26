@@ -8516,8 +8516,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         <circle r={8} fill={c.r >= 0 ? `rgb(${c.r},${c.g},${c.b})` : 'transparent'} stroke="#fff" strokeWidth="2" style={{ filter: 'drop-shadow(0 1px 3px rgba(0,0,0,.6))' }} />
                       </g>
                     ))}
-                    {/* 其他遮色片的位置（線性、放射）：點一下切過去 */}
-                    {!activeDragRef.current && maskListView.list.map((m, i) => ((i === maskListView.active && !maskDeselected) || !m.maskCreated || (m.maskType !== 'linear' && m.maskType !== 'radial')) ? null : (
+                    {/* 其他遮色片的位置（線性、放射）：點一下切過去。只顯示跟現在這一個同種類的（正在弄明度時不會冒出放射的點） */}
+                    {!activeDragRef.current && maskListView.list.map((m, i) => ((i === maskListView.active && !maskDeselected) || !m.maskCreated || (m.maskType !== 'linear' && m.maskType !== 'radial') || m.maskType !== maskView.maskType) ? null : (
                       <g key={m.maskId + i} data-mask-pin={i} transform={`translate(${m.maskCx * canvasBounds.width}, ${m.maskCy * canvasBounds.height})`}>
                         {/* 點一下（放開、而且沒有拖動）才選中，手指只是碰到不算 */}
                         <circle r={16} fill="transparent" style={{ cursor: 'pointer' }}
@@ -8593,7 +8593,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     {made.length > 0 && (
                       /* 一次最多看到 4 個；超過就在這一段裡上下滑（不會把下面的按鈕擠到太下面） */
                       <div data-mask-chips className="flex flex-col items-center gap-2 overflow-y-auto no-scrollbar overscroll-contain p-1.5 -m-1.5"
-                        style={{ maxHeight: 4 * 36 + 3 * 8, touchAction: 'pan-y', scrollSnapType: 'y proximity' }}>
+                        /* 4 顆＋3 個間距，再加上下各 6px 的內距（p-1.5），第 4 顆才會完整露出來 */
+                        style={{ maxHeight: 4 * 36 + 3 * 8 + 12, touchAction: 'pan-y', scrollSnapType: 'y proximity' }}>
                         {list.map((m, i) => {
                           if (!m.maskCreated) return null;
                           const on = i === maskListView.active && !maskPicking && !maskDeselected;
@@ -8616,7 +8617,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         })}
                       </div>
                     )}
-                    {made.length > 0 && !maskPicking && (<>
+                    {/* 沒有選中任何遮色片時，顯示範圍／反轉／刪除先收起來（沒有對象可以操作） */}
+                    {made.length > 0 && !maskPicking && !maskDeselected && (<>
                       {fade(<span className="block w-6 h-px bg-white/20 my-0.5" />, 'sep')}
                       {/* 這三顆只有圖示，沒有底圓 */}
                       {fade(
