@@ -1,3 +1,4 @@
+import { memBlob } from './memBlob';
 /**
  * 經典拼圖的自動存檔。
  *
@@ -148,7 +149,7 @@ async function internalize(value: any, urls: Map<string, string>): Promise<any> 
         if (!url) {
           const blob = await tx<Blob>(STORE_BLOBS, 'readonly', s => s.get(id) as IDBRequest<Blob>);
           if (blob instanceof Blob && blob.size > 0) {
-            url = URL.createObjectURL(blob);
+            url = URL.createObjectURL(await memBlob(blob));
             urls.set(id, url);
           }
         }

@@ -1,3 +1,4 @@
+import { memBlob } from './memBlob';
 /**
  * 導出紀錄。
  *
@@ -537,7 +538,9 @@ export async function loadExport(id: string): Promise<{ meta: ExportMeta; src: s
   const { photo: _p, assets, assetBytes, ...meta } = rec as any;
   /* state 裡的 hist: 參考換回可以直接用的網址（拼圖的每一張、仿色的參考圖…）。
      新版存的是位元組，先組回 Blob；舊版的紀錄本來就是 Blob，直接用。 */
-  const assetMap: Record<string, Blob> = assets || {};
+  const assetMap: Record<string, Blob> = {};
+  // 舊版存的是 Blob（直接從資料庫來的）：先複製進記憶體（見 utils/memBlob）
+  for (const [k, v] of Object.entries((assets || {}) as Record<string, Blob>)) assetMap[k] = await memBlob(v);
   if (assetBytes) {
     for (const [k, v] of Object.entries(assetBytes as Record<string, Bytes>)) {
       const b = fromBytes(v);
@@ -545,7 +548,7 @@ export async function loadExport(id: string): Promise<{ meta: ExportMeta; src: s
     }
   }
   meta.state = Object.keys(assetMap).length ? internalize(meta.state, assetMap, new Map()) : meta.state;
-  return { meta, src: URL.createObjectURL(photo) };
+  return { meta, src: URL.createObjectURL(rec.photoBytes?.buf ? photo : await memBlob(photo)) };
 }
 
 async function prune(): Promise<void> {

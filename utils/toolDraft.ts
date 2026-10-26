@@ -1,3 +1,4 @@
+import { memBlob } from './memBlob';
 /**
  * 「跳出應用、回來還在」用的草稿。
  *
@@ -197,7 +198,7 @@ async function internalizeState(value: any, urls = new Map<string, string>()): P
         if (!url) {
           const blob = await tx<Blob>('readonly', s => s.get(id) as IDBRequest<Blob>);
           if (blob instanceof Blob && blob.size > 0) {
-            url = URL.createObjectURL(blob);
+            url = URL.createObjectURL(await memBlob(blob));
             urls.set(id, url);
           }
         }
@@ -303,7 +304,7 @@ export async function loadDraft(): Promise<LoadedToolDraft | null> {
   }
   try {
     const restoredState = await internalizeState(meta.state);
-    return { ...meta, state: restoredState, src: URL.createObjectURL(blob) };
+    return { ...meta, state: restoredState, src: URL.createObjectURL(await memBlob(blob)) };
   } catch {
     try {
       localStorage.removeItem(FLAG_KEY);
