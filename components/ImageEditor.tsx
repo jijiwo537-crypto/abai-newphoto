@@ -2168,6 +2168,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     hideMaskLive();
     commitMaskParams(next);
   };
+  const selOverlayScratchRef = useRef<HTMLCanvasElement | null>(null);
   const selectMask = (i: number) => {
     const p = paramsRef.current;
     const masks = withActiveStored(p);
@@ -2175,10 +2176,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!masks[i] || i === maskList(p).active) return;
     setMaskPicking(false);
     uiFirstRef.current = true;
-    // 舊的那一個的紅色範圍先收掉，等新的一個畫好再出現（不然換選取的第一格會先看到舊的紅色）
-    if (maskOverlayCanvasRef.current) maskOverlayCanvasRef.current.style.display = 'none';
     if (!MASK_TOOLS.some(x => x.id === activeToolId)) setActiveToolId(MASK_DEFAULT_TOOL[masks[i].maskType]);
     commitMaskParams(loadMask(p, masks[i], masks, i));
+    /* 紅色範圍當場換成新選的這一個（線性、放射、筆刷不必看畫面，馬上畫得出來），
+       不必等整條管線重畫完 —— 以前中間會有一段完全沒有紅色。
+       顏色／明度範圍要看畫面，先收掉，等管線畫好再出現（不能先露出舊的那一個）。 */
+    const ov = maskOverlayCanvasRef.current, np = paramsRef.current, nm = snapOf(np);
+    if (ov) {
+      if (np.maskShowOverlay && nm.maskCreated && ov.width > 1 && (nm.maskType === 'linear' || nm.maskType === 'radial' || nm.maskType === 'brush')) {
+        const a = maskAlpha(selOverlayScratchRef.current ??= document.createElement('canvas'), maskCacheId(nm), nm, ov.width, ov.height, null, '', true);
+        const og = ov.getContext('2d')!;
+        og.globalCompositeOperation = 'copy'; og.fillStyle = 'rgba(220,38,38,0.5)'; og.fillRect(0, 0, ov.width, ov.height);
+        og.globalCompositeOperation = 'destination-in'; og.drawImage(a, 0, 0);
+        og.globalCompositeOperation = 'source-over';
+        ov.style.display = 'block';
+      } else ov.style.display = 'none';
+    }
   };
   const deleteMask = () => {
     const p = paramsRef.current;
