@@ -2169,6 +2169,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     commitMaskParams(next);
   };
   const selOverlayScratchRef = useRef<HTMLCanvasElement | null>(null);
+  /** 顏色／明度範圍上一次畫好的紅色範圍（縮小版，依遮色片 id） */
+  const maskRangeOvCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const selectMask = (i: number) => {
     const p = paramsRef.current;
     const masks = withActiveStored(p);
@@ -2180,14 +2182,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     commitMaskParams(loadMask(p, masks[i], masks, i));
     /* 紅色範圍當場換成新選的這一個（線性、放射、筆刷不必看畫面，馬上畫得出來），
        不必等整條管線重畫完 —— 以前中間會有一段完全沒有紅色。
-       顏色／明度範圍要看畫面，先收掉，等管線畫好再出現（不能先露出舊的那一個）。 */
+       顏色／明度範圍要看畫面：先拿上一次畫好、留下來的那份頂著，管線畫好就換成精確的；
+       從來沒畫過（例如剛載入）才先收掉，不能先露出舊的那一個。 */
     const ov = maskOverlayCanvasRef.current, np = paramsRef.current, nm = snapOf(np);
     if (ov) {
-      if (np.maskShowOverlay && nm.maskCreated && ov.width > 1 && (nm.maskType === 'linear' || nm.maskType === 'radial' || nm.maskType === 'brush')) {
-        const a = maskAlpha(selOverlayScratchRef.current ??= document.createElement('canvas'), maskCacheId(nm), nm, ov.width, ov.height, null, '', true);
+      const geo = nm.maskType === 'linear' || nm.maskType === 'radial' || nm.maskType === 'brush';
+      const saved = geo ? null : maskRangeOvCacheRef.current.get(nm.maskId) || null;
+      if (np.maskShowOverlay && nm.maskCreated && ov.width > 1 && (geo || saved)) {
+        const a = geo ? maskAlpha(selOverlayScratchRef.current ??= document.createElement('canvas'), maskCacheId(nm), nm, ov.width, ov.height, null, '', true) : saved!;
         const og = ov.getContext('2d')!;
         og.globalCompositeOperation = 'copy'; og.fillStyle = 'rgba(220,38,38,0.5)'; og.fillRect(0, 0, ov.width, ov.height);
-        og.globalCompositeOperation = 'destination-in'; og.drawImage(a, 0, 0);
+        og.imageSmoothingQuality = 'high';
+        og.globalCompositeOperation = 'destination-in'; og.drawImage(a, 0, 0, ov.width, ov.height);
         og.globalCompositeOperation = 'source-over';
         ov.style.display = 'block';
       } else ov.style.display = 'none';
@@ -5170,6 +5176,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         og.globalCompositeOperation = 'destination-in'; og.drawImage(alphaC, 0, 0);
         og.globalCompositeOperation = 'source-over';
         ovDrawn = true;
+        /* 顏色／明度範圍要看畫面才算得出來：留一份縮小的，下次切回這一個時先拿來顯示（見 selectMask） */
+        if (actMask.maskType === 'color' || actMask.maskType === 'luma') {
+          const k = Math.min(1, 640 / Math.max(w, h)), cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
+          const cache = maskRangeOvCacheRef.current;
+          let c = cache.get(actMask.maskId);
+          if (!c) { c = document.createElement('canvas'); cache.set(actMask.maskId, c); if (cache.size > 12) { const old = cache.keys().next().value; if (old !== undefined) cache.delete(old); } }
+          if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+          const cg = c.getContext('2d')!; cg.globalCompositeOperation = 'copy'; cg.drawImage(alphaC, 0, 0, cw, ch); cg.globalCompositeOperation = 'source-over';
+        }
       }
     } else snapNoActive();
     if (ovEl && !maskLive) ovEl.style.display = ovDrawn ? 'block' : 'none';
