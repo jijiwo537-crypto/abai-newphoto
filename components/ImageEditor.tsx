@@ -238,7 +238,10 @@ const MASK_TYPE_TOOL_LIST = Object.values(MASK_TYPE_TOOLS).flat();
 
 /** 遮色片的九個調整套在一段 RGBA 像素上（跟全圖的調節同一套公式：utils/photoToneMath）。
     整張圖（CPU）跟烤 GPU 查色表（33³ 個格點）都用這一支，兩邊的顏色一模一樣。 */
-const MASK_TONE8 = new Uint8ClampedArray(256);
+const MASK_TONE8 = new Float32Array(256);
+/* 寫回 8 位元前加 ±0.375 階的固定抖動（跟 photoPixelCore 同一種）：遮色片把對比、曝光拉大時，
+   平滑的天空、牆面不會出現一圈一圈的色階。表是固定的，同一張圖每次算出來都一樣。 */
+const MASK_DITHER = Float32Array.from({ length: 4096 }, (_, i) => { const x = Math.sin(i * 12.9898) * 43758.5453; return (x - Math.floor(x) - 0.5) * 0.75; });
 function maskTonePixels(data: Uint8ClampedArray, m: MaskSnap) {
   const len = data.length;
   const stage = makeToneStage({ exposure: m.maskExposure, brightness: m.maskBrightness, contrast: m.maskContrast,
@@ -249,7 +252,7 @@ function maskTonePixels(data: Uint8ClampedArray, m: MaskSnap) {
   if (!stage.wb && satK === 1 && !hasVib) {
     const t8 = MASK_TONE8;
     for (let i = 0; i < 256; i++) { applyToneStage(stage, i, i, i, c3); t8[i] = c3[0]; }
-    for (let i = 0; i < len; i += 4) { data[i] = t8[data[i]]; data[i + 1] = t8[data[i + 1]]; data[i + 2] = t8[data[i + 2]]; }
+    for (let i = 0; i < len; i += 4) { const d = MASK_DITHER[(i >>> 2) & 4095]; data[i] = t8[data[i]] + d; data[i + 1] = t8[data[i + 1]] + d; data[i + 2] = t8[data[i + 2]] + d; }
     return;
   }
   const tone = makeToneFast(stage);
@@ -265,7 +268,8 @@ function maskTonePixels(data: Uint8ClampedArray, m: MaskSnap) {
       const b1 = 1 + (vibVal > 0 ? vibVal * (1 - curSat * curSat) : vibVal);
       r = avg + (r - avg) * b1; gg = avg + (gg - avg) * b1; b = avg + (b - avg) * b1;
     }
-    data[i] = r; data[i + 1] = gg; data[i + 2] = b;
+    const d = MASK_DITHER[(i >>> 2) & 4095];
+    data[i] = r + d; data[i + 1] = gg + d; data[i + 2] = b + d;
   }
 }
 
@@ -561,6 +565,7 @@ export function generateCurveLut(channelPoints: Point[]): Uint8Array {
 export { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast } from '../utils/photoToneMath';
+import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
 /* Cache keys name the photo by a short id, not by its source string: a
    data: URL is megabytes, and serialising it into a key on every slider step
    cost ~15ms per frame. */
@@ -2679,14 +2684,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             try {
               generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseLut);
               lut0 = new Uint8ClampedArray(source.length);
-              processPixels(source, lut0, pw, ph, p, null, 0, baseLut, null, false, curveLuts);
+              processPixels(source, lut0, pw, ph, p, null, 0, baseLut, null, false, curveLuts, localFor(p, source, pw, ph, `warm|${pw}x${ph}|${src}`));
             } catch { return done(); }
             yieldTo(() => {
               if (cancelled) return;
               try {
                 if (activeLut) {
                   lut100 = new Uint8ClampedArray(source.length);
-                  processPixels(source, lut100, pw, ph, { ...p, lutAmount: 100 }, activeLut.data, activeLut.size, baseLut, null, false, curveLuts);
+                  processPixels(source, lut100, pw, ph, { ...p, lutAmount: 100 }, activeLut.data, activeLut.size, baseLut, null, false, curveLuts, localFor(p, source, pw, ph, `warm|${pw}x${ph}|${src}`));
                 }
               } catch { lut100 = null; }
               if (cancelled) return;
@@ -3112,11 +3117,28 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* Front-stage parameters for the GPU, with the two 1-D tables cached so
      an exposure / white-balance drag re-uploads nothing but uniforms, and a
      brightness/contrast/shadows/highlights drag only a 1025-entry table. */
+  /* 局部陰影／亮部（utils/localTone）：每張來源算一次保邊亮度底圖，滑桿只重算 1025 格的增益表。
+     陰影、亮部都是 0 的時候完全不碰，畫面、速度都跟以前一樣。 */
+  const localBaseCacheRef = useRef<Map<string, LocalBase>>(new Map());
+  const localGainRef = useRef<{ key: string; gain: Float32Array | null }>({ key: '', gain: null });
+  const localFor = (p: EditorParams, src: Uint8ClampedArray | null | undefined, w: number, h: number, key: string) => {
+    if ((!p.shadows && !p.highlights) || !src || !w || !h || src.length < w * h * 4) return null;
+    const m = localBaseCacheRef.current;
+    let base = m.get(key);
+    if (!base) {
+      base = buildLocalBase(src, w, h); m.set(key, base);
+      if (m.size > 4) { const old = m.keys().next().value; if (old !== undefined) m.delete(old); }
+    }
+    const gk = `${p.exposure},${p.brightness},${p.contrast},${p.shadows},${p.highlights},${p.temp},${p.tint}`;
+    const g = localGainRef.current;
+    if (g.key !== gk || !g.gain) { g.key = gk; g.gain = makeLocalGain(p); }
+    return { base, gain: g.gain };
+  };
   const gpuFrontCacheRef = useRef<{ toneKey: string; tone: Float32Array | null; curveSrc: unknown; curves: Uint8Array | null; hslKey: string; hsl: { h: Float32Array; s: Float32Array; l: Float32Array } | null; gradeKey?: string; grade?: GradeFast | null }>({ toneKey: '', tone: null, curveSrc: null, curves: null, hslKey: '', hsl: null, gradeKey: '', grade: null });
-  const gpuFrontFor = (p: EditorParams) => {
+  const gpuFrontFor = (p: EditorParams, local: { base: LocalBase; gain: Float32Array } | null = null) => {
     const c = gpuFrontCacheRef.current;
-    const toneKey = `${p.brightness},${p.contrast},${p.shadows},${p.highlights}`;
-    const stage = makeToneStage(p, c.toneKey === toneKey ? c.tone : undefined);
+    const toneKey = local ? `${p.brightness},${p.contrast},L` : `${p.brightness},${p.contrast},${p.shadows},${p.highlights}`;
+    const stage = makeToneStage(p, c.toneKey === toneKey ? c.tone : undefined, !!local);
     if (c.toneKey !== toneKey) { c.toneKey = toneKey; c.tone = stage.tone; }
     const luts = getCurveLuts(p.curves);
     if (c.curveSrc !== luts) {
@@ -3138,7 +3160,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const gradeKey = isGradeIdentity(p.grade) ? '' : JSON.stringify(p.grade);
     if (c.gradeKey !== gradeKey) { c.gradeKey = gradeKey; c.grade = makeGrade(p.grade); }
     return { wb: stage.wb, k: stage.ev ? Math.pow(2, stage.ev) : 1, peak: stage.peak, tone: c.tone, curves: c.curves, sat: stage.sat,
-      vib: (p.vib * 0.5) / 100, hsl: c.hsl, grade: c.grade };
+      vib: (p.vib * 0.5) / 100, hsl: c.hsl, grade: c.grade, local };
   };
   const gpuPaint = (
     target: HTMLCanvasElement, src: Uint8ClampedArray, w: number, h: number,
@@ -3159,7 +3181,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
          1-D tables. Dragging any of those sliders (or a curve point) never
          bakes a 3D table — that bake was what made every slider and the
          curve editor stutter. */
-      const front = gpuFrontFor(p);
+      const front = gpuFrontFor(p, localFor(p, src, w, h, srcKey));
       /* ── Film LUT: the only 3D table left ───────────────────────────────
          Vibrance and HSL are in the shader too, so this table depends on
          nothing but which film is applied. It is always the fine 65³ grid
@@ -3355,7 +3377,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!b.source || !g.fits(b.w, b.h)) return false;
     try {
       if (srcKeyRef.current !== srcKey) { if (!g.setSource(b.source, b.w, b.h)) return false; srcKeyRef.current = srcKey; }
-      const front = gpuFrontFor(p);
+      const front = gpuFrontFor(p, localFor(p, b.source, b.w, b.h, srcKey));
       if (!film || !p.lutAmount) { if (!g.setFront(front, false)) return false; }
       else {
         const key = `film|65|100|${filmKey}`;
@@ -5236,12 +5258,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, localBaseCorrectionLut);
     
     // 1. Generate tempLut0 with 0% LUT influence
-    processPixels(b.source, tempLut0, b.w, b.h, p, null, 0, localBaseCorrectionLut, b.sharpenDetail, false, getCurveLuts(p.curves));
+    processPixels(b.source, tempLut0, b.w, b.h, p, null, 0, localBaseCorrectionLut, b.sharpenDetail, false, getCurveLuts(p.curves), localFor(p, b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdent()}`));
     
     // 2. Generate tempLut100 with 100% LUT influence (if activeLut is present)
     if (activeLut && tempLut100) {
         const p100 = { ...p, lutAmount: 100 };
-        processPixels(b.source, tempLut100, b.w, b.h, p100, activeLut.data, lutSize, localBaseCorrectionLut, b.sharpenDetail, false, getCurveLuts(p.curves));
+        processPixels(b.source, tempLut100, b.w, b.h, p100, activeLut.data, lutSize, localBaseCorrectionLut, b.sharpenDetail, false, getCurveLuts(p.curves), localFor(p, b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdent()}`));
     }
     
     // 3. Blend them based on lutAmount
@@ -5317,7 +5339,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const target = st === 0 ? eb.base! : st === 1 ? eb.min! : eb.max!;
     const pS = { ...paramsRef.current, [toolId]: val } as EditorParams;
     generateBaseCorrectionLut(pS.exposure, pS.contrast, pS.brightness, baseCorrectionLutRef.current);
-    processPixels(b.source, target, b.w, b.h, pS, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts);
+    processPixels(b.source, target, b.w, b.h, pS, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts, localFor(pS, b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdent()}`));
 
     // 同步到對應的離屏畫布（拖曳中是靠它們做 GPU 混合的）
     const cache = fastPreviewCacheRef.current;
@@ -5792,7 +5814,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     l0.curves === pRender.curves && l0.hsl === pRender.hsl && l0.grade === pRender.grade &&
                     l0.detail === b.sharpenDetail;
                 if (!canReuseLut0) {
-                    processPixels(b.source, b.lut0!, b.w, b.h, pRender, null, 0, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves));
+                    processPixels(b.source, b.lut0!, b.w, b.h, pRender, null, 0, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves), localFor(pRender, b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdent()}`));
                     lut0StateRef.current[b.w] = {
                         buf: b.lut0,
                         w: b.w, h: b.h, src: buffersSrcRef.current,
@@ -5806,7 +5828,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 // 2. Generate b.lut100: Base adjustments applied with 100% LUT influence (if activeLut is present)
                 if (activeLut) {
                     const p100 = { ...pRender, lutAmount: 100 };
-                    processPixels(b.source, b.lut100!, b.w, b.h, p100, activeLut.data, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves));
+                    processPixels(b.source, b.lut100!, b.w, b.h, p100, activeLut.data, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves), localFor(p100, b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdent()}`));
                 }
                 
                 cpuColourKeyRef.current = colourKeyOf(pRender);
@@ -6712,7 +6734,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     if (!gpuOk) {
       destData = new Uint8ClampedArray(len);
-      processPixels(sourceData, destData, w, h, p, activeLut ? activeLut.data : null, lutSize, baseCorrectionLutRef.current, sharpenDetail, false, getCurveLuts(p.curves));
+      processPixels(sourceData, destData, w, h, p, activeLut ? activeLut.data : null, lutSize, baseCorrectionLutRef.current, sharpenDetail, false, getCurveLuts(p.curves), localFor(p, sourceData, w, h, `export-cpu|${w}x${h}`));
       ctx.putImageData(new ImageData(destData, w, h), 0, 0);
     }
     const scale = Math.max(w, h) / 1080;

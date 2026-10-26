@@ -32,6 +32,7 @@ void main() {
 }`;
 
 import { GRADE_GLSL, bindGradeUniforms, type GradeFast } from './colorGrade';
+import type { LocalBase } from './localTone';
 
 const FRAG = `#version 300 es
 precision highp float;
@@ -68,6 +69,10 @@ uniform float uHslS[8];
 uniform float uHslL[8];
 uniform bool uBack;
 uniform float uFilmMix;
+/* 局部陰影／亮部（utils/localTone，同一套公式）：保邊亮度底圖＋增益表 */
+uniform bool uHasLocal;
+uniform sampler2D uBase;
+uniform sampler2D uGain;
 in vec2 vUv;
 out vec4 fragColor;
 
@@ -138,11 +143,40 @@ vec3 hslAdjust(vec3 c){
   return clamp(o+(l2-cc*.5),0.,1.);
 }
 
+float baseAt(vec2 uv,float Y){
+  ivec2 sz=textureSize(uBase,0);vec2 f=uv*vec2(sz)-.5,fl=floor(f),t=f-fl;
+  ivec2 m=sz-1,p0=clamp(ivec2(fl),ivec2(0),m),p1=clamp(ivec2(fl)+1,ivec2(0),m);
+  float b00=texelFetch(uBase,ivec2(p0.x,p0.y),0).r,b10=texelFetch(uBase,ivec2(p1.x,p0.y),0).r;
+  float b01=texelFetch(uBase,ivec2(p0.x,p1.y),0).r,b11=texelFetch(uBase,ivec2(p1.x,p1.y),0).r;
+  const float K=1./(.12*.12);
+  float w00=(1.-t.x)*(1.-t.y)/(1.+(Y-b00)*(Y-b00)*K),w10=t.x*(1.-t.y)/(1.+(Y-b10)*(Y-b10)*K);
+  float w01=(1.-t.x)*t.y/(1.+(Y-b01)*(Y-b01)*K),w11=t.x*t.y/(1.+(Y-b11)*(Y-b11)*K);
+  float ws=w00+w10+w01+w11;
+  return ws>1e-6?(w00*b00+w10*b10+w01*b01+w11*b11)/ws:(b00+b10+b01+b11)*.25;
+}
+vec3 localTone(vec3 c){
+  float Y=dot(c,vec3(.2126,.7152,.0722));
+  float B=clamp(baseAt(vUv,Y),0.,1.);
+  float g=texture(uGain,vec2((B*1024.+.5)/1025.,.5)).r;
+  vec3 l=toLinear(c);
+  if(g>1.){
+    // 亮部保護（同 utils/localTone 的 protectBright）：看最亮的色版，任何色版都不推過頂
+    float M=max(c.r,max(c.g,c.b)),mL=max(l.r,max(l.g,l.b)),t=clamp((M-.75)/.25,0.,1.);
+    g=1.+(g-1.)*(1.-t*t*(3.-2.*t));
+    if(mL>1e-6)g=max(1.,min(g,1./mL));
+  }
+  return toSrgb(clamp(l*g,0.,1.));
+}
+/* 輸出前加一點點（±1 階）三角分佈的抖動：8 位元的平滑漸層不會出現一圈一圈的色階。
+   用像素座標算，同一張圖每次畫出來都一樣。 */
+float hash(uvec2 q){q=q*uvec2(1597334673u,3812015801u);uint n=(q.x^q.y)*1597334673u;return float(n)*(1./4294967296.);}
+vec3 dith(vec3 c){uvec2 q=uvec2(gl_FragCoord.xy);float d=hash(q)+hash(q+uvec2(7919u,104729u))-1.;return clamp(c+d/255.,0.,1.);}
 ${GRADE_GLSL}
 void main() {
   vec4 src = texture(uImage, vUv);
   vec3 base = clamp(src.rgb, 0.0, 1.0);
   if(uFront){
+    if(uHasLocal)base=localTone(base);
     // front → vibrance → film LUT (3D, only when a film is applied) → HSL
     vec3 c=vibrance(front(base));
     vec3 o=uHasHsl?hslAdjust(c):c;
@@ -153,12 +187,12 @@ void main() {
       o=mix(o,f,uFilmMix);
     }
     o=colourGrade(o);
-    fragColor=vec4(o,src.a);return;
+    fragColor=vec4(dith(o),src.a);return;
   }
   vec3 c = base * uScale + uOffset;
   vec3 colour=texture(uLut,c).rgb;
   if(uMix>=0.)colour=mix(texture(uPlainLut,c).rgb,colour,uMix);
-  fragColor = vec4(colour, src.a);
+  fragColor = vec4(dith(colour), src.a);
 }`;
 
 const compile = (gl: WebGL2RenderingContext, type: number, src: string) => {
@@ -369,7 +403,8 @@ export class LutGpu {
    * when a different array object is passed in.
    */
   setFront(f: { wb: number[] | null; k: number; peak: number; tone: Float32Array | null; curves: Uint8Array | null; sat: number;
-    vib?: number; hsl?: { h: Float32Array; s: Float32Array; l: Float32Array } | null; grade?: GradeFast | null } | null, back = true, filmMix = 1): boolean {
+    vib?: number; hsl?: { h: Float32Array; s: Float32Array; l: Float32Array } | null; grade?: GradeFast | null;
+    local?: { base: LocalBase; gain: Float32Array } | null } | null, back = true, filmMix = 1): boolean {
     if (this.lost) return false;
     const gl = this.gl;
     if (this.shared) this.unpackDefaults();
@@ -412,8 +447,27 @@ export class LutGpu {
     // Samplers that are declared must be complete even when unused.
     if (!this.toneTex) this.toneTex = table(3, null, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, 2, 1, 0, gl.RED, gl.FLOAT, new Float32Array([0, 1])));
     if (!this.curveTex) this.curveTex = table(4, null, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4)));
+    // 局部陰影／亮部：底圖（unit 6）與增益表（unit 7），換了陣列才重新上傳
+    const lo = f.local || null;
+    gl.uniform1i(this.u('uHasLocal'), lo ? 1 : 0);
+    gl.uniform1i(this.u('uBase'), 6); gl.uniform1i(this.u('uGain'), 7);
+    if (lo && lo.base.data !== this.lastBase) {
+      this.baseTex = table(6, this.baseTex, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, lo.base.w, lo.base.h, 0, gl.RED, gl.FLOAT, lo.base.data));
+      this.lastBase = lo.base.data;
+    } else if (this.baseTex) { gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.baseTex); }
+    if (lo && lo.gain !== this.lastGain) {
+      this.gainTex = table(7, this.gainTex, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, lo.gain.length, 1, 0, gl.RED, gl.FLOAT, lo.gain));
+      this.lastGain = lo.gain;
+    } else if (this.gainTex) { gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D, this.gainTex); }
+    if (!this.baseTex) this.baseTex = table(6, null, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, 1, 1, 0, gl.RED, gl.FLOAT, new Float32Array([0.5])));
+    if (!this.gainTex) this.gainTex = table(7, null, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, 2, 1, 0, gl.RED, gl.FLOAT, new Float32Array([1, 1])));
+    gl.activeTexture(gl.TEXTURE0);
     return true;
   }
+  private baseTex: WebGLTexture | null = null;
+  private gainTex: WebGLTexture | null = null;
+  private lastBase: Float32Array | null = null;
+  private lastGain: Float32Array | null = null;
 
   setLutMix(full:Uint8Array,plain:Uint8Array,size:number,weight:number):boolean{
     if(!this.setLut(full,size,true))return false;
@@ -471,6 +525,8 @@ export class LutGpu {
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_3D, this.plainTex);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.toneTex);
     gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.curveTex);
+    if (this.baseTex) { gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.baseTex); }
+    if (this.gainTex) { gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D, this.gainTex); }
     gl.bindVertexArray(null);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.SCISSOR_TEST);
@@ -570,7 +626,7 @@ precision highp float;uniform sampler2D uImage;in vec2 vUv;out vec4 fragColor;vo
     if (this.shared) {
       // The context belongs to the surface; release only this stage's storage.
       const gl = this.gl;
-      for (const t of [this.imgTex, this.lutTex, this.plainTex, this.toneTex, this.curveTex, this.outTex, this.smallTex, this.upTex]) if (t) gl.deleteTexture(t);
+      for (const t of [this.imgTex, this.lutTex, this.plainTex, this.toneTex, this.curveTex, this.baseTex, this.gainTex, this.outTex, this.smallTex, this.upTex]) if (t) gl.deleteTexture(t);
       for (const f of [this.outFbo, this.smallFbo, this.flipFbo]) if (f) gl.deleteFramebuffer(f);
       if (this.upProg) gl.deleteProgram(this.upProg);
       if (this.quad) gl.deleteBuffer(this.quad); gl.deleteProgram(this.prog);

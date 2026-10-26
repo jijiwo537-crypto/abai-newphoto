@@ -1,6 +1,7 @@
 import type { EditorParams } from '../components/ImageEditor';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast } from './photoToneMath';
 import { makeGrade, applyGrade } from './colorGrade';
+import { makeLocalApplier, type LocalBase } from './localTone';
 const HSL_MAX_HUE_SHIFT=15,HSL_MAX_SAT=.5,HSL_MAX_LUM=.1;
 const HSL_CENTERS=Float32Array.from([0,30,60,120,180,240,270,300]);
 const DEFAULT_HSL=Array.from({length:8},()=>({h:0,s:0,l:0}));
@@ -42,7 +43,10 @@ export const processPixels = (
   baseCorrectionLut: Uint8Array, 
   sharpenDetail: Int8Array | null,
   useNearestLut: boolean,
-  curveLuts: { rgb: Uint8Array, r: Uint8Array, g: Uint8Array, b: Uint8Array }
+  curveLuts: { rgb: Uint8Array, r: Uint8Array, g: Uint8Array, b: Uint8Array },
+  /** 局部陰影／亮部（utils/localTone）：有給就不把陰影／亮部放進色調曲線，
+      改成每個像素先乘上那一帶的增益。沒給＝原本的全圖曲線。 */
+  local: { base: LocalBase; gain: Float32Array } | null = null
 ) => {
   if (!sourceData || !destData || sourceData.length !== destData.length) return;
 
@@ -55,7 +59,7 @@ export const processPixels = (
                     p.curves.rgb.some((pt: any) => pt.y !== pt.x) || p.curves.r.some((pt: any) => pt.y !== pt.x) || 
                     p.curves.g.some((pt: any) => pt.y !== pt.x) || p.curves.b.some((pt: any) => pt.y !== pt.x);
 
-  const stage = makeToneStage(p);
+  const stage = makeToneStage(p, undefined, !!local);
   const tc = new Float32Array(3);
   const toneFast = makeToneFast(stage);
   // The master grid has only 32 input levels per channel: precompute them.
@@ -253,7 +257,7 @@ export const processPixels = (
   // not recompute RGB tetrahedra for millions of pixels on every slider tick.
   // Tone, exposure, brightness, contrast, shadows and highlights are all
   // per-channel now; only white balance and saturation mix channels.
-  if (!useNearestLut && !hasLut && !hasHsl && !grade && !hasCurves && !hasTempTint &&
+  if (!useNearestLut && !local && !hasLut && !hasHsl && !grade && !hasCurves && !hasTempTint &&
       !hasVib && satMult === 1 && !hasSharpen) {
     const rr=new Float64Array(256),gg=new Float64Array(256),bb=new Float64Array(256);
     for(let v=0;v<256;v++){
@@ -271,7 +275,42 @@ export const processPixels = (
   }
 
   // Split into explicit loops to guarantee CPU JIT vectorization and no block de-opts
-  if (useNearestLut) {
+  if (local) {
+      // 局部陰影／亮部：先乘上這一帶的增益，再走同一顆主表（四面體內插）
+      const applyRow = makeLocalApplier(local.base, local.gain, w, h);
+      const lc = new Float32Array(w * 3);
+      for (let i = 0, px = w, py = -1, o = 0; i < len; i += 4, px++, o += 3) {
+          if (px === w) { px = 0; o = 0; py++; applyRow(py, sourceData, i, lc); }
+          const rf = lc[o] * sLUT; const gf = lc[o + 1] * sLUT; const bf = lc[o + 2] * sLUT;
+          let r0 = rf | 0; let g0 = gf | 0; let b0 = bf | 0;
+          if (r0 > 31) r0 = 31; if (g0 > 31) g0 = 31; if (b0 > 31) b0 = 31;
+          const r1 = r0 === 31 ? 31 : r0 + 1;
+          const g1 = g0 === 31 ? 31 : g0 + 1;
+          const b1 = b0 === 31 ? 31 : b0 + 1;
+          const dr = rf - r0; const dg = gf - g0; const db = bf - b0;
+          const b0_O = b0 << 10; const b1_O = b1 << 10;
+          const g0_O = g0 << 5; const g1_O = g1 << 5;
+          const i000 = b0_O | g0_O | r0;
+          const i111 = b1_O | g1_O | r1;
+          let iA, iB, w0, w1, w2, w3;
+          if (dr > dg) {
+              if (dg > db) { iA = b0_O | g0_O | r1; iB = b0_O | g1_O | r1; w0 = 1.0 - dr; w1 = dr - dg; w2 = dg - db; w3 = db; }
+              else if (dr > db) { iA = b0_O | g0_O | r1; iB = b1_O | g0_O | r1; w0 = 1.0 - dr; w1 = dr - db; w2 = db - dg; w3 = dg; }
+              else { iA = b1_O | g0_O | r0; iB = b1_O | g0_O | r1; w0 = 1.0 - db; w1 = db - dr; w2 = dr - dg; w3 = dg; }
+          } else {
+              if (db > dg) { iA = b1_O | g0_O | r0; iB = b1_O | g1_O | r0; w0 = 1.0 - db; w1 = db - dg; w2 = dg - dr; w3 = dr; }
+              else if (db > dr) { iA = b0_O | g1_O | r0; iB = b1_O | g1_O | r0; w0 = 1.0 - dg; w1 = dg - db; w2 = db - dr; w3 = dr; }
+              else { iA = b0_O | g1_O | r0; iB = b0_O | g1_O | r1; w0 = 1.0 - dg; w1 = dg - dr; w2 = dr - db; w3 = db; }
+          }
+          let r = masterLUT_R[i000] * w0 + masterLUT_R[iA] * w1 + masterLUT_R[iB] * w2 + masterLUT_R[i111] * w3;
+          let g = masterLUT_G[i000] * w0 + masterLUT_G[iA] * w1 + masterLUT_G[iB] * w2 + masterLUT_G[i111] * w3;
+          let b = masterLUT_B[i000] * w0 + masterLUT_B[iA] * w1 + masterLUT_B[iB] * w2 + masterLUT_B[i111] * w3;
+          if (hasSharpen) { const detail = sharpenDetail![i] * sharpenAmount; r += detail; g += detail; b += detail; }
+          const dither = ditherTable[ditherIdx & 4095];
+          ditherIdx++;
+          destData[i] = r + dither; destData[i+1] = g + dither; destData[i+2] = b + dither; destData[i+3] = 255;
+      }
+  } else if (useNearestLut) {
       // Nearest-neighbor sampling: extremely fast for high-res previews during interaction (~60fps)
       for (let i = 0; i < len; i += 4) {
           const r = sourceData[i], g = sourceData[i+1], b = sourceData[i+2];

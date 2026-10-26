@@ -99,14 +99,20 @@ export type ToneStage = {
 };
 /** reuseTone: a tone table already built for the same brightness /
  *  contrast / shadows / highlights (skips rebuilding it). */
-export const makeToneStage = (p: ToneParams, reuseTone?: Float32Array | null): ToneStage => {
+/** Shadows / highlights as a change of one encoded value (the global curve
+ *  adds this per channel; utils/localTone applies it to the local base). */
+export const shDelta = (x: number, s: number, h: number) =>
+  (s ? -s * SH_GAIN * 0.105 * shadowBand(x) : 0) + (h ? h * SH_GAIN * 0.105 * highlightBand(x) : 0);
+/** noSH: leave shadows / highlights out of the tone table (they are applied
+ *  locally instead, see utils/localTone). */
+export const makeToneStage = (p: ToneParams, reuseTone?: Float32Array | null, noSH = false): ToneStage => {
   const ev = exposureEv(p.exposure || 0), wb = whiteBalanceMatrix(p.temp || 0, p.tint || 0);
   // Brightest linear value white can reach after WB and exposure: the shoulder
   // rolls it into 1 instead of clipping a channel.
   const wbPeak = wb ? Math.max(wb[0] + wb[1] + wb[2], wb[3] + wb[4] + wb[5], wb[6] + wb[7] + wb[8]) : 1;
   const peak = wbPeak * Math.pow(2, ev);
   const b = (p.brightness || 0) / 100, c = (p.contrast || 0) / 100;
-  const s = (p.shadows || 0) / 100, h = (p.highlights || 0) / 100;
+  const s = noSH ? 0 : (p.shadows || 0) / 100, h = noSH ? 0 : (p.highlights || 0) / 100;
   let tone: Float32Array | null = null;
   if (reuseTone !== undefined) tone = reuseTone;
   else if (b || c || s || h) {
@@ -118,8 +124,8 @@ export const makeToneStage = (p: ToneParams, reuseTone?: Float32Array | null): T
       if (b) x = Math.pow(x, gamma);
       if (c) x = x < PIVOT ? PIVOT * Math.pow(x / PIVOT, g) : 1 - (1 - PIVOT) * Math.pow((1 - x) / (1 - PIVOT), g);
       // Shadows: + darkens, − lifts (kept). Highlights: + brightens, − recovers.
-      if (s) x -= s * SH_GAIN * 0.105 * shadowBand(x);
-      if (h) x += h * SH_GAIN * 0.105 * highlightBand(x);
+      if (s) x += shDelta(x, s, 0);
+      if (h) x += shDelta(x, 0, h);
       tone[i] = clamp01(x);
     }
   }
