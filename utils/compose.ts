@@ -56,8 +56,13 @@ export const ASPECT_PRESETS: { id: string; label: string; ratio: number | null }
   { id: '9:16', label: '9:16', ratio: 9 / 16 },
   { id: '5:4', label: '5:4', ratio: 5 / 4 },
   { id: '4:3', label: '4:3', ratio: 4 / 3 },
+  /* 電影常用的寬銀幕比例。原本那幾顆的順序不動，新的照「越扁越右」插進去 */
+  { id: '1.43:1', label: '1.43:1', ratio: 1.43 },   // IMAX
   { id: '3:2', label: '3:2', ratio: 3 / 2 },
   { id: '16:9', label: '16:9', ratio: 16 / 9 },
+  { id: '1.85:1', label: '1.85:1', ratio: 1.85 },   // 美式寬銀幕
+  { id: '2:1', label: '2:1', ratio: 2 },            // Univisium
+  { id: '2.39:1', label: '2.39:1', ratio: 2.39 },   // 變形寬銀幕（Scope）
 ];
 
 export function isCropFull(c: CropRect) {
