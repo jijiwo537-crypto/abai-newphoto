@@ -18,6 +18,8 @@ interface ViewfinderProps {
   fx?: ViewfinderFx;
   /** 硬體變焦不夠時補上的數位變焦，1 = 不放大 */
   digitalZoom?: number;
+  /** 這個比例最後的觀景窗大小（CSS px）。畫布照它配置，切換比例的動畫中不跟著每一格重配 */
+  displayBox?: { w: number; h: number } | null;
   onClick?: (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => void;
   /** 長按鎖定 AE/AF 用的 —— 直接掛在觀景窗的外框上 */
   onPointerDown?: React.PointerEventHandler<HTMLDivElement>;
@@ -237,9 +239,22 @@ const GLOW_LONG = 176;
 const GLOW_RADIUS = 1.6;
 const GLOW_PASSES = 4;
 
-export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, onClick, onPointerDown, onPointerUp, onPointerCancel }: ViewfinderProps, ref) => {
+export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, displayBox, onClick, onPointerDown, onPointerUp, onPointerCancel }: ViewfinderProps, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewSizeRef=useRef({w:0,h:0});
+  const displayBoxRef=useRef(displayBox);
+  displayBoxRef.current=displayBox;
+  /* 切換比例時的抖動：以前畫布跟著框的大小走，300ms 的動畫裡每一格框變一點、畫布就重配一次
+     （重配＝清空重畫，內容的裁切也每格跳一下）。現在畫布固定是「整個感光元件的比例」，
+     大小以這個比例最後的框為準（只在換比例的那一下重配一次），框裡看到哪一塊交給 CSS 的
+     object-fit: cover —— 那跟拍照時從中間裁的方式完全一樣，動畫中每一格都是平順縮放。 */
+  const previewTarget=(vw:number,vh:number,limit:number)=>{
+    const box=displayBoxRef.current&&displayBoxRef.current.w>0&&displayBoxRef.current.h>0?displayBoxRef.current:previewSizeRef.current;
+    if(!box.w||!box.h||!vw||!vh)return null;
+    const sa=vw/vh;let cw=box.w,ch=box.h;
+    if(cw/ch>sa)ch=cw/sa;else cw=ch*sa;
+    return cameraPreviewGeometry(cw,ch,window.devicePixelRatio,vw,vh,limit);
+  };
   useEffect(()=>{
     const canvas=canvasRef.current;if(!canvas)return;
     const measure=()=>{const r=canvas.getBoundingClientRect();previewSizeRef.current={w:r.width,h:r.height};};
@@ -331,9 +346,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     restorePreview: () => {
       const cv = canvasRef.current, gl = glRef.current;
       if (!cv || !gl || stillActiveRef.current || !video || video.readyState < 2) return;
-      const size = previewSizeRef.current;
-      if (!size.w || !size.h) return;
-      const target = cameraPreviewGeometry(size.w, size.h, window.devicePixelRatio, video.videoWidth, video.videoHeight, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number);
+      const target = previewTarget(video.videoWidth, video.videoHeight, gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number);
+      if (!target) return;
       if (cv.width === target.w && cv.height === target.h) return;
       cv.width = target.w; cv.height = target.h;
       try { drawRef.current?.(video, cv.width, cv.height, null); } catch { /* next frame redraws */ }
@@ -663,8 +677,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     if (rvfc) frameHandle = (video as any).requestVideoFrameCallback(onVideoFrame);
     const tick = () => {
       if (!stillActiveRef.current && video && video.readyState >= 2) {
-        const size=previewSizeRef.current;
-        const target=size.w&&size.h?cameraPreviewGeometry(size.w,size.h,window.devicePixelRatio,video.videoWidth,video.videoHeight,previewLimit):{w:video.videoWidth,h:video.videoHeight};
+        const target=previewTarget(video.videoWidth,video.videoHeight,previewLimit)||{w:video.videoWidth,h:video.videoHeight};
         let resized = false;
         if (canvasRef.current && (canvasRef.current.width !== target.w || canvasRef.current.height !== target.h)) {
           canvasRef.current.width = target.w;
@@ -733,7 +746,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   return (
     <div className="w-full h-full relative" onClick={onClick}
          onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}>
-        <canvas ref={canvasRef} className="w-full h-full block" data-camera-viewfinder />
+        <canvas ref={canvasRef} className="w-full h-full block object-cover" data-camera-viewfinder />
     </div>
   );
 });

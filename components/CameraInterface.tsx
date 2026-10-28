@@ -206,6 +206,8 @@ const SmallFrameOverlay = React.memo(React.forwardRef<SmallFrameApi, { baseMm: n
         style={{
           width: `${pct}%`, height: `${pct}%`,
           transform: 'translate(-50%, -50%)',
+          // 跟觀景窗同一個圓角（rounded-camera＝12px），框外的暗色也跟著圓角走
+          borderRadius: 12,
           boxShadow: '0 0 0 1.5px rgba(255,255,255,0.95), 0 0 0 200vmax rgba(0,0,0,0.42)',
           opacity: on ? 1 : 0,
           transition: 'opacity 260ms cubic-bezier(0.2,0,0,1)',
@@ -314,8 +316,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (!p || pointersRef.current.size < 2) return;
     const d = pinchDist();
     if (!d) return;
-    // 兩指拉開＝框變小（等於拉近），捏攏＝框變大；到 1 倍框就消失
-    const z = Math.max(1, Math.min(SMALL_FRAME_MAX, p.z0 * d / p.d0));
+    // 框跟著手指走：兩指往內捏＝框往內縮，往外拉開＝框變大；拉回滿版框就消失
+    const z = Math.max(1, Math.min(SMALL_FRAME_MAX, p.z0 * p.d0 / d));
     frameZoomRef.current = z;
     smallFrameRef.current?.set(z, true);
   };
@@ -933,7 +935,13 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, [editingPhoto, setTorch, stopCountdown, videoEl, videoTrack]);
 
   const getFrameStyle = (): React.CSSProperties => {
-    if (containerSize.w === 0 || containerSize.h === 0) return { opacity: 0 };
+    const d = frameDims();
+    if (!d) return { opacity: 0 };
+    return { width: `${d.w}px`, height: `${d.h}px`, marginBottom: `${d.mb}px` };
+  };
+  /** 這個比例的觀景窗最後會是多大（CSS px）。動畫中框在變，這個不變 —— 觀景窗的畫布照它配置。 */
+  const frameDims = (): { w: number; h: number; mb: number } | null => {
+    if (containerSize.w === 0 || containerSize.h === 0) return null;
 
     const maxW = containerSize.w;
     const maxH = containerSize.h;
@@ -973,11 +981,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     /* 4:3、1:1 比 3:2 矮。外層是貼底排的，以前矮的框就整個沉到底、上面空一大塊。
        改成放在 3:2 那一格的正中間 —— 框的中心跟 3:2 時一樣，切換比例時是上下一起收，
        不是只有上緣往下掉。 */
-    return { 
-        width: `${targetW}px`, 
-        height: `${targetH}px`,
-        marginBottom: `${Math.max(0, (h32 - targetH) / 2)}px`,
-    };
+    return { w: targetW, h: targetH, mb: Math.max(0, (h32 - targetH) / 2) };
   };
 
   const handleSaveEdit = (newSrc: string, shouldClose: boolean = true) => {
@@ -1099,6 +1103,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               isUserFacing={visualFacingMode === 'user'}
               fx={fx}
               digitalZoom={digitalZoom}
+              displayBox={frameDims()}
               /* click 保留為鍵盤／舊版 WebKit 的保底；新 iOS 由 pointerup 立即觸發。 */
               onClick={handleFocus}
               onPointerDown={() => {

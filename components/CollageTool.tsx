@@ -4931,6 +4931,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      這樣任何倍率下都是 1 個畫布像素對 1 個裝置像素，不會有糊掉的區間。 */
   const [previewScale, setPreviewScale] = useState(1);
   const previewScaleRef = useRef(1);
+  /** 畫布像素剛好等於螢幕裝置像素時的倍率（fitScale 每次算的時候順便記下來） */
+  const deviceScaleRef = useRef(1);
   previewScaleRef.current = previewScale;
   /** 主畫布上一次真的是用哪個倍率畫的（由 renderToCanvas 寫入，見那裡的說明） */
   const drawnScaleRef = useRef(1);
@@ -5021,6 +5023,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const fitScale = useCallback((cssW: number, csW: number, k: number) => {
     if (!cssW || !csW) return 1;
     const dpr = Math.min(3, window.devicePixelRatio || 1);
+    // 影片播放中用的倍率：剛好「一個畫布像素對一個螢幕裝置像素」（見影片那支迴圈）
+    deviceScaleRef.current = (cssW * k * dpr) / csW;
     /* 畫布至少要有「螢幕裝置像素 × 1.35」那麼細，而且不低於工作解析度。
        （四周包圍以前會把工作解析度撐到兩千多、遠超過螢幕需要的，
          那個浪費現在從源頭解掉了 —— 它的畫布跟原圖一樣大，
@@ -9682,7 +9686,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!cv) return;
       /* 播放時只畫螢幕實際需要的像素；原本的 1.8x 超取樣會把每格成本放大
          3.24 倍，手機第一秒建立快取時尤其明顯。靜止重畫仍走完整倍率。 */
-      const liveScale = Math.min(previewScaleRef.current, 0.55);
+      /* 以前這裡寫死 0.55 —— 但 previewScale 永遠 ≥ 1（單位是作品的工作尺寸，不是螢幕），
+         所以影片一播放畫布就只剩工作尺寸的 0.55 倍，手機上大約只有螢幕實際像素的一半，
+         影片看起來就糊糊的。改成「剛好對上螢幕的裝置像素」：每個螢幕像素都有自己的
+         畫布像素（最清楚的程度），只是不做靜止畫面那 1.35 倍的抗鋸齒超取樣。 */
+      const liveScale = Math.min(previewScaleRef.current, Math.max(0.25, deviceScaleRef.current * 1.02));
       try { renderToCanvasRef.current(cv, liveScale); }
       catch (err) { console.error('影片預覽影格畫不出來', err); }
     };
