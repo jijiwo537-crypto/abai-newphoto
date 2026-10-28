@@ -373,7 +373,7 @@ export interface PhotoFx {
   exposure?: number;
   contrast?: number;
   highlights?: number;
-  /** 白色色階／黑色色階 −100～100 */
+  /** 白色／黑色 −100～100 */
   whites?: number;
   blacks?: number;
   shadows?: number;
@@ -421,8 +421,8 @@ export const ADJUST_KEYS = [
   ['contrast', '對比'],
   ['highlights', '高光'],
   ['shadows', '陰影'],
-  ['whites', '白色色階'],
-  ['blacks', '黑色色階'],
+  ['whites', '白色'],
+  ['blacks', '黑色'],
   ['temp', '色溫'],
   ['tint', '色調'],
   ['sat', '飽和度'],

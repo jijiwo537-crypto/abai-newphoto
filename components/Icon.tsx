@@ -27,10 +27,13 @@ const INLINE: Record<string, string> = {
   /* 磨皮：一顆水滴（滋潤、變光滑）加一道柔和的反光，線條粗細跟其他圖示一致 */
   skin_smooth: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2C8.3 7.6 6 10.9 6 14.1a6 6 0 0 0 12 0c0-3.2-2.3-6.5-6-10.9z"/><path d="M9.1 14.6a3.1 3.1 0 0 0 2.4 2.7"/></g>',
   /* 色輪：一個圓、正中心一個實心點 */
-  /* 白色色階／黑色色階：一座直方圖，右端（白點）／左端（黑點）立一根標竿 —— 跟 Lightroom 直方圖上那兩端的意思一樣。
-     白色那根頂端是實心圓（亮），黑色那根是空心圓（暗）。 */
-  tone_whites: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 19.5h18"/><path d="M3.5 19.5c2.6-.6 3.6-8 6.6-8s3.5 5.4 5.7 5.4"/><path d="M19 8v11.5"/></g><circle cx="19" cy="5.6" r="2.4" fill="#fff"/>',
-  tone_blacks: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 19.5h18"/><path d="M20.5 19.5c-2.6-.6-3.6-8-6.6-8s-3.5 5.4-5.7 5.4"/><path d="M5 8.4v11.1"/><circle cx="5" cy="5.6" r="2"/></g>',
+  /* 高光／陰影／白色／黑色：同一組「一顆球」的圖。實心 = 亮、斜線 = 暗（素描畫陰影的畫法）。
+     高光：左上受光的那一彎是實心；陰影：右下背光的那一彎是斜線（兩個左右鏡像、互相呼應）。
+     白色：整顆實心（最亮的那一端）；黑色：整顆斜線（最暗的那一端）。跟亮度的太陽圖分得開。 */
+  tone_highlights: '<defs><mask id="h"><circle cx="12" cy="12" r="6.4" fill="#fff"/><circle cx="15.5" cy="15.5" r="6.4" fill="#000"/></mask></defs><circle cx="12" cy="12" r="8.6" fill="none" stroke="#fff" stroke-width="1.7"/><rect width="24" height="24" fill="#fff" mask="url(#h)"/>',
+  tone_shadows: '<defs><mask id="s"><circle cx="12" cy="12" r="6.4" fill="#fff"/><circle cx="8.5" cy="8.5" r="6.4" fill="#000"/></mask></defs><circle cx="12" cy="12" r="8.6" fill="none" stroke="#fff" stroke-width="1.7"/><g mask="url(#s)"><path d="M-24 0 0 24M-20.8 0 3.2 24M-17.6 0 6.4 24M-14.4 0 9.6 24M-11.2 0 12.8 24M-8 0 16 24M-4.8 0 19.2 24M-1.6 0 22.4 24M1.6 0 25.6 24M4.8 0 28.8 24M8 0 32 24M11.2 0 35.2 24M14.4 0 38.4 24M17.6 0 41.6 24M20.8 0 44.8 24M24 0 48 24" stroke="#fff" stroke-width="1.5" fill="none"/></g>',
+  tone_whites: '<circle cx="12" cy="12" r="8.6" fill="none" stroke="#fff" stroke-width="1.7"/><circle cx="12" cy="12" r="6.4" fill="#fff"/>',
+  tone_blacks: '<defs><mask id="b"><circle cx="12" cy="12" r="6.4" fill="#fff"/></mask></defs><circle cx="12" cy="12" r="8.6" fill="none" stroke="#fff" stroke-width="1.7"/><g mask="url(#b)"><path d="M-24 0 0 24M-20.8 0 3.2 24M-17.6 0 6.4 24M-14.4 0 9.6 24M-11.2 0 12.8 24M-8 0 16 24M-4.8 0 19.2 24M-1.6 0 22.4 24M1.6 0 25.6 24M4.8 0 28.8 24M8 0 32 24M11.2 0 35.2 24M14.4 0 38.4 24M17.6 0 41.6 24M20.8 0 44.8 24M24 0 48 24" stroke="#fff" stroke-width="1.5" fill="none"/></g>',
   /* 修補：一塊斜放的 OK 繃（中間透氣孔的四個點），跟去痘的圖標分得開 */
   patch_heal: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><rect x="3.2" y="8.6" width="17.6" height="6.8" rx="3.4" transform="rotate(-45 12 12)"/><rect x="8.9" y="8.9" width="6.2" height="6.2" rx="1" transform="rotate(-45 12 12)"/></g><g fill="#fff"><circle cx="11" cy="11" r=".8"/><circle cx="13" cy="11" r=".8"/><circle cx="11" cy="13" r=".8"/><circle cx="13" cy="13" r=".8"/></g>',
   grade_wheels: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="2.4" fill="#fff"/>',

@@ -56,7 +56,7 @@ interface Curves {
 export interface EditorParams {
   brightness: number;
   exposure: number; contrast: number; highlights: number; shadows: number;
-  /** Lightroom 白色色階／黑色色階 */
+  /** Lightroom 白色／黑色 */
   whites: number; blacks: number;
   temp: number; tint: number; sat: number; vib: number;
   sharpen: number; grain: number; soft: number; softThreshold: number;
@@ -216,10 +216,10 @@ const MASK_TOOLS: ToolDef[] = [
   { id: 'maskBrightness', label: '亮度', icon: 'light_mode', min: -100, max: 100 },
   { id: 'maskExposure', label: '曝光', icon: 'brightness_6', min: -100, max: 100 },
   { id: 'maskContrast', label: '對比', icon: 'contrast', min: -100, max: 100 },
-  { id: 'maskHighlights', label: '高光', icon: 'wb_sunny', min: -100, max: 100 },
-  { id: 'maskShadows', label: '陰影', icon: 'brightness_low', min: -100, max: 100 },
-  { id: 'maskWhites', label: '白色色階', icon: 'tone_whites', min: -100, max: 100 },
-  { id: 'maskBlacks', label: '黑色色階', icon: 'tone_blacks', min: -100, max: 100 },
+  { id: 'maskHighlights', label: '高光', icon: 'tone_highlights', min: -100, max: 100 },
+  { id: 'maskShadows', label: '陰影', icon: 'tone_shadows', min: -100, max: 100 },
+  { id: 'maskWhites', label: '白色', icon: 'tone_whites', min: -100, max: 100 },
+  { id: 'maskBlacks', label: '黑色', icon: 'tone_blacks', min: -100, max: 100 },
   { id: 'maskTemp', label: '色溫', icon: 'device_thermostat', min: -100, max: 100 },
   { id: 'maskTint', label: '色調', icon: 'colorize', min: -100, max: 100 },
   { id: 'maskSat', label: '飽和度', icon: 'palette', min: -100, max: 100 },
@@ -331,11 +331,11 @@ const ADJUST_TOOLS: ToolDef[] = [
   { id: 'brightness', label: '亮度', icon: 'light_mode', min: -100, max: 100 },
   { id: 'exposure', label: '曝光', icon: 'brightness_6', min: -100, max: 100 },
   { id: 'contrast', label: '對比', icon: 'contrast', min: -100, max: 100 },
-  { id: 'highlights', label: '高光', icon: 'wb_sunny', min: -100, max: 100 },
-  { id: 'shadows', label: '陰影', icon: 'brightness_low', min: -100, max: 100 },
-  // Lightroom 的白色色階／黑色色階：調整最亮、最暗那一端（見 utils/photoToneMath 的 endPoints）
-  { id: 'whites', label: '白色色階', icon: 'tone_whites', min: -100, max: 100 },
-  { id: 'blacks', label: '黑色色階', icon: 'tone_blacks', min: -100, max: 100 },
+  { id: 'highlights', label: '高光', icon: 'tone_highlights', min: -100, max: 100 },
+  { id: 'shadows', label: '陰影', icon: 'tone_shadows', min: -100, max: 100 },
+  // Lightroom 的白色／黑色：調整最亮、最暗那一端（見 utils/photoToneMath 的 endPoints）
+  { id: 'whites', label: '白色', icon: 'tone_whites', min: -100, max: 100 },
+  { id: 'blacks', label: '黑色', icon: 'tone_blacks', min: -100, max: 100 },
   { id: 'temp', label: '色溫', icon: 'device_thermostat', min: -100, max: 100 },
   { id: 'tint', label: '色調', icon: 'colorize', min: -100, max: 100 },
   { id: 'sat', label: '飽和度', icon: 'palette', min: -100, max: 100 },
