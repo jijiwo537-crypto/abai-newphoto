@@ -486,6 +486,8 @@ const TUNE_TOOLS: [string, string, string, number, number, number][] = [
   ['contrast', '對比', 'contrast', -100, 100, 0],
   ['highlights', '高光', 'wb_sunny', -100, 100, 0],
   ['shadows', '陰影', 'brightness_low', -100, 100, 0],
+  ['whites', '白色色階', 'tone_whites', -100, 100, 0],
+  ['blacks', '黑色色階', 'tone_blacks', -100, 100, 0],
   ['temp', '色溫', 'device_thermostat', -100, 100, 0],
   ['tint', '色調', 'colorize', -100, 100, 0],
   ['sat', '飽和度', 'palette', -100, 100, 0],

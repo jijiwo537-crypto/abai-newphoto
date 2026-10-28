@@ -1,6 +1,6 @@
 
 import { waveWarp, revealPathD } from '../utils/waveWarp';
-import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
+import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { reframeBasePhoto } from '../utils/reframeBasePhoto';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskSampleReach,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
 import {sliderHeld,SLIDER_RELEASE_EVENT} from '../utils/sliderTouch';
@@ -2819,7 +2819,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const finalUrlRef = useRef<string | null>(null);
   /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
      網址的，按下儲存後馬上離開的話會來不及讀完。 */
-  useEffect(() => () => { const keep = finalUrlRef.current; setTimeout(() => revokeUrl(keep as any), 15000); }, []);
+  // 計時器在 utils/blobUrl 裡跑：寫在這裡的話會抓住整個元件（所有像素），離開後 15 秒都放不掉
+  useEffect(() => () => revokeUrlsLater([finalUrlRef.current], 15000), []);
   const [, setForceRender] = useState(0);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);

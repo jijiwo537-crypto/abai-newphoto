@@ -27,6 +27,7 @@ export type MaskSnap = {
   maskCreated: boolean;
   maskInvert: boolean;
   maskExposure: number; maskBrightness: number; maskContrast: number; maskHighlights: number; maskShadows: number;
+  maskWhites: number; maskBlacks: number;
   maskTemp: number; maskTint: number; maskSat: number; maskVib: number;
   /* 線性／放射共用中心與角度；線性的半寬是 maskD（佔寬度的比例） */
   maskCx: number; maskCy: number; maskAngle: number; maskD: number;
@@ -40,13 +41,14 @@ export type MaskSnap = {
   maskLumLo: number; maskLumHi: number; maskLumSmooth: number;
 };
 
-export const MASK_ADJ_KEYS = ['maskBrightness', 'maskExposure', 'maskContrast', 'maskHighlights', 'maskShadows', 'maskTemp', 'maskTint', 'maskSat', 'maskVib'] as const;
+export const MASK_ADJ_KEYS = ['maskBrightness', 'maskExposure', 'maskContrast', 'maskHighlights', 'maskShadows', 'maskWhites', 'maskBlacks', 'maskTemp', 'maskTint', 'maskSat', 'maskVib'] as const;
 
 export const newMaskId = () => Math.random().toString(36).slice(2, 10);
 export const freshMask = (type: MaskType = 'linear', id = 'm0'): MaskSnap => ({
   maskId: id,
   maskType: type, maskCreated: type === 'luma', maskInvert: false,
   maskExposure: 0, maskBrightness: 0, maskContrast: 0, maskHighlights: 0, maskShadows: 0,
+  maskWhites: 0, maskBlacks: 0,
   maskTemp: 0, maskTint: 0, maskSat: 0, maskVib: 0,
   maskCx: 0.5, maskCy: 0.5, maskAngle: 0, maskD: 0.25,
   maskRx: 0.25, maskRy: 0.25, maskFeather: 50,

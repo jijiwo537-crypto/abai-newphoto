@@ -85,6 +85,12 @@ float shoulder(float x){
   return KNEE+(1.-KNEE)*min(1.,((1.+a)*t)/(1.+a*t));
 }
 float tone(float x){return texture(uTone,vec2((clamp(x,0.,1.)*1024.+.5)/1025.,.5)).r;}
+/* Hue-preserving curve (DNG "RGB tone", same as photoToneMath.hueTone): the
+   curve on the largest and the smallest channel, the middle one keeps its
+   relative position between them — written once for all three channels. */
+vec3 hueMix(vec3 c,float mx,float mn,float fmx,float fmn){
+  return mx>mn?fmn+(fmx-fmn)*(c-mn)/(mx-mn):vec3(fmx);
+}
 vec4 curveAt(float v){return texture(uCurve,vec2((clamp(v,0.,1.)*255.+.5)/256.,.5));}
 
 vec3 front(vec3 c){
@@ -92,10 +98,10 @@ vec3 front(vec3 c){
     c=toLinear(c);
     if(uHasWB)c=uWB*c;
     c=max(c*uK,0.);
-    c=vec3(shoulder(c.r),shoulder(c.g),shoulder(c.b));
+    if(uPeak>1.){float mx=max(c.r,max(c.g,c.b)),mn=min(c.r,min(c.g,c.b));c=hueMix(c,mx,mn,shoulder(mx),shoulder(mn));}
     c=toSrgb(clamp(c,0.,1.));
   }
-  if(uHasTone)c=vec3(tone(c.r),tone(c.g),tone(c.b));
+  if(uHasTone){c=clamp(c,0.,1.);float mx=max(c.r,max(c.g,c.b)),mn=min(c.r,min(c.g,c.b));c=hueMix(c,mx,mn,tone(mx),tone(mn));}
   if(uHasCurve){
     // master curve (alpha) first, then each channel's own curve
     c=vec3(curveAt(curveAt(c.r).a).r,curveAt(curveAt(c.g).a).g,curveAt(curveAt(c.b).a).b);
@@ -112,11 +118,22 @@ vec3 front(vec3 c){
   return clamp(c,0.,1.);
 }
 /* Same formulas as utils/photoPixelCore (steps 6 and 8), in 0…1 units. */
+/* 膚色權重（同 photoToneMath.skinWeight）：平滑窗，沒有硬邊 */
+float skinWeight(vec3 c){
+  float mx=max(c.r,max(c.g,c.b)),mn=min(c.r,min(c.g,c.b)),ch=mx-mn;
+  if(mx<=0.||ch<=0.)return 0.;
+  float s=ch/mx,h;
+  if(mx==c.r)h=60.*((c.g-c.b)/ch);else if(mx==c.g)h=60.*((c.b-c.r)/ch+2.);else h=60.*((c.r-c.g)/ch+4.);
+  if(h>180.)h-=360.;
+  float hueW=smoothstep(-12.,5.,h)*(1.-smoothstep(38.,55.,h));
+  float satW=smoothstep(.06,.15,s)*(1.-smoothstep(.6,.85,s));
+  return hueW*satW*smoothstep(.03,.1,mx);
+}
 vec3 vibrance(vec3 c){
   if(uVib==0.)return c;
   float avg=(c.r+c.g+c.b)*.33333,mx=max(c.r,max(c.g,c.b)),mn=min(c.r,min(c.g,c.b));
   float s=mx==0.?0.:(mx-mn)/mx;
-  float k=1.+(uVib>0.?uVib*(1.-s*s):uVib);
+  float k=uVib>0.?1.+uVib*(1.-s*s)*(1.-.7*skinWeight(c)):max(0.,1.+uVib);
   return clamp(avg+(c-avg)*k,0.,1.);
 }
 const float HC[8]=float[8](0.,30.,60.,120.,180.,240.,270.,300.);

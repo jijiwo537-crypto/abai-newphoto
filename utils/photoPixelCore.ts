@@ -1,5 +1,5 @@
 import type { EditorParams } from '../components/ImageEditor';
-import { makeToneStage, applyToneStage, applySaturation, makeToneFast } from './photoToneMath';
+import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceGain } from './photoToneMath';
 import { makeGrade, applyGrade } from './colorGrade';
 import { makeLocalApplier, type LocalBase } from './localTone';
 const HSL_MAX_HUE_SHIFT=15,HSL_MAX_SAT=.5,HSL_MAX_LUM=.1;
@@ -64,8 +64,8 @@ export const processPixels = (
   const toneFast = makeToneFast(stage);
   // The master grid has only 32 input levels per channel: precompute them.
   const wbM = toneFast.wb;
-  const gridLin = new Float32Array(32), gridTone = new Float32Array(32);
-  for (let i = 0; i < 32; i++) { const v = (i * 255) / 31; gridLin[i] = toneFast.toLinear(v); toneFast(v, v, v, tc); gridTone[i] = tc[0]; }
+  const gridLin = new Float32Array(32);
+  for (let i = 0; i < 32; i++) gridLin[i] = toneFast.toLinear((i * 255) / 31);
   const curveAt = (t: Uint8Array, v: number) => { const f = v < 0 ? 0 : v > 255 ? 255 : v, i = f | 0; return i >= 255 ? t[255] : t[i] + (t[i + 1] - t[i]) * (f - i); };
   const hasTempTint = !!stage.wb;
 
@@ -116,12 +116,15 @@ export const processPixels = (
 
               // 1–3. White balance → exposure → tone curve (utils/photoToneMath).
               //      The legacy 8-bit base table is no longer used here.
-              if (wbM) {
+              //      The shoulder and the tone curve preserve hue (largest /
+              //      smallest channel, see photoToneMath.hueTone), so every grid
+              //      point is evaluated as a colour, not channel by channel.
+              {
                   const x = gridLin[l_r], y = gridLin[l_g], z = gridLin[l_b];
-                  r = toneFast.encode(wbM[0] * x + wbM[1] * y + wbM[2] * z);
-                  g = toneFast.encode(wbM[3] * x + wbM[4] * y + wbM[5] * z);
-                  b = toneFast.encode(wbM[6] * x + wbM[7] * y + wbM[8] * z);
-              } else { r = gridTone[l_r]; g = gridTone[l_g]; b = gridTone[l_b]; }
+                  if (wbM) toneFast.applyLinear(wbM[0] * x + wbM[1] * y + wbM[2] * z, wbM[3] * x + wbM[4] * y + wbM[5] * z, wbM[6] * x + wbM[7] * y + wbM[8] * z, tc);
+                  else toneFast.applyLinear(x, y, z, tc);
+                  r = tc[0]; g = tc[1]; b = tc[2];
+              }
 
               // 4. Curves — exactly what the curve editor draws (no partial mix),
               //    interpolated between the 256 table entries.
@@ -135,11 +138,8 @@ export const processPixels = (
 
               // 6. Vibrance
               if (hasVib) {
-                  let max = r > g ? (r > b ? r : b) : (g > b ? g : b);
-                  let min = r < g ? (r < b ? r : b) : (g < b ? g : b);
-                  const curSat = max === 0 ? 0 : (max - min) / max;
-                  const boost = vibVal > 0 ? vibVal * (1 - curSat * curSat) : vibVal;
-                  const b1 = 1 + boost;
+                  // 越不飽和加越多；像膚色的少加（photoToneMath.vibranceGain）
+                  const b1 = vibranceGain(vibVal, r, g, b);
                   r = avg + (r - avg) * b1; g = avg + (g - avg) * b1; b = avg + (b - avg) * b1;
               }
 
@@ -255,10 +255,10 @@ export const processPixels = (
   // With independent channel corrections, tetrahedral interpolation reduces
   // exactly to three 1D tables. Keep the same master LUT and dithering, but do
   // not recompute RGB tetrahedra for millions of pixels on every slider tick.
-  // Tone, exposure, brightness, contrast, shadows and highlights are all
-  // per-channel now; only white balance and saturation mix channels.
+  // Exposure alone is per-channel (a gain in linear light). The shoulder and
+  // the tone curve keep hue, so they mix channels: no separable path for them.
   if (!useNearestLut && !local && !hasLut && !hasHsl && !grade && !hasCurves && !hasTempTint &&
-      !hasVib && satMult === 1 && !hasSharpen) {
+      !hasVib && satMult === 1 && !hasSharpen && !stage.tone && stage.peak <= 1) {
     const rr=new Float64Array(256),gg=new Float64Array(256),bb=new Float64Array(256);
     for(let v=0;v<256;v++){
       const f=v*sLUT,a=f|0,b=a===31?31:a+1,t=f-a;

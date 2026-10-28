@@ -963,8 +963,46 @@ export function warmFx(fxId: string, surface?: HTMLCanvasElement): void {
     compile(c, '__blend', BLEND_FS);
     compile(c,'__residentColour',FX_COLOUR_SHADER);
     if(fxId==='fxLowfi'){compile(c,'__lowfiHaloSeed',LOWFI_HALO_SEED);compile(c,'__lowfiHaloBlur',LOWFI_HALO_BLUR);}
-    d.passes.forEach((pass, i) => compile(c, `${d.id}#${i}`, fxPassSource(d, pass)));
+    const progs = d.passes.map((pass, i) => compile(c, `${d.id}#${i}`, fxPassSource(d, pass)));
+    /* 編好、連結好還不夠：iPhone 的 WebGL（底下是 Metal）要到「第一次真的拿它畫」才建 GPU
+       管線，那一下動輒幾百毫秒 —— 第一次點柔光ll 那段等待大半是它。這裡用一張 4×4 的
+       私用小畫布每支畫一次，把那一步提前在空檔做掉。畫的是自己的小緩衝，畫面上什麼都不會變；
+       畫完把 framebuffer／viewport／程式原樣還回去。 */
+    if (surface) warmDraw(c, progs);
+    // 柔光ll 第一次用到時還要建「亮部直方圖」那組 GPU 程式（選亮部用）：一併先建好
+    if (fxId === 'fxExposureSpill' && c.gpuHistogram === undefined) c.gpuHistogram = GpuHighlightHistogram.create(c.gl as WebGL2RenderingContext);
   } catch { /* 預熱失敗就算了，真的要用的時候還會再編一次 */ }
+}
+const warmTargets = new WeakMap<WebGLRenderingContext, { tex: WebGLTexture; fb: WebGLFramebuffer }>();
+function warmDraw(c: Ctx, progs: (WebGLProgram | null)[]) {
+  const { gl } = c;
+  let t = warmTargets.get(gl);
+  if (!t) {
+    const tex = gl.createTexture()!, fb = gl.createFramebuffer()!;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 4, 4, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    t = { tex, fb }; warmTargets.set(gl, t);
+  }
+  const prevFb = gl.getParameter(gl.FRAMEBUFFER_BINDING), prevVp = gl.getParameter(gl.VIEWPORT) as Int32Array;
+  const prevProg = gl.getParameter(gl.CURRENT_PROGRAM), prevTex = gl.getParameter(gl.TEXTURE_BINDING_2D), prevUnit = gl.getParameter(gl.ACTIVE_TEXTURE);
+  try {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t.tex, 0);
+    gl.viewport(0, 0, 4, 4);
+    gl.bindBuffer(gl.ARRAY_BUFFER, c.quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    for (const p of progs) {
+      if (!p) continue;
+      gl.useProgram(p);
+      // 讀自己（4×4 那張）以外的貼圖都交給驅動的預設；只是要它真的跑一次
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+  } finally {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFb); gl.viewport(prevVp[0], prevVp[1], prevVp[2], prevVp[3]);
+    gl.useProgram(prevProg); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, prevTex); gl.activeTexture(prevUnit);
+  }
 }
 
 /**

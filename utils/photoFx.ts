@@ -373,6 +373,9 @@ export interface PhotoFx {
   exposure?: number;
   contrast?: number;
   highlights?: number;
+  /** 白色色階／黑色色階 −100～100 */
+  whites?: number;
+  blacks?: number;
   shadows?: number;
   temp?: number;
   tint?: number;
@@ -418,6 +421,8 @@ export const ADJUST_KEYS = [
   ['contrast', '對比'],
   ['highlights', '高光'],
   ['shadows', '陰影'],
+  ['whites', '白色色階'],
+  ['blacks', '黑色色階'],
   ['temp', '色溫'],
   ['tint', '色調'],
   ['sat', '飽和度'],
@@ -572,6 +577,8 @@ const toParams = (fx: PhotoFx): EditorParams => ({
   contrast: fx.contrast || 0,
   highlights: fx.highlights || 0,
   shadows: fx.shadows || 0,
+  whites: fx.whites || 0,
+  blacks: fx.blacks || 0,
   temp: fx.temp || 0,
   tint: fx.tint || 0,
   sat: fx.sat || 0,
@@ -888,7 +895,7 @@ export function applyPhotoFx(
        正是上面要省掉的那一步。改成給每個來源物件一個固定編號（WeakMap），
        同一張圖重畫時鑰匙一樣，貼圖就不必重傳。 */
     const k = `${srcToken(source)}|${out.width}x${out.height}`;
-    const separable = !lut && !p.temp && !p.tint && !p.sat && !p.vib && !p.shadows && !p.highlights;
+    const separable = !lut && !p.temp && !p.tint && !p.sat && !p.vib && !p.shadows && !p.highlights && !p.whites && !p.blacks;
     if (!(opts?.preferSeparableCpu && separable))
       gpuOk = !!gpuColorChain(ctx, readPixels, out.width, out.height, p, lut, amt, baseLut, k, colorKeyOf(fx),!!opts?.scene,
         opts?.afterGlow && source instanceof HTMLCanvasElement ? source : undefined);

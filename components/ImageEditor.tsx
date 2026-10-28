@@ -32,7 +32,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import { flushSync, createPortal } from 'react-dom';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
-import { canvasToUrl, revokeUrls } from '../utils/blobUrl';
+import { canvasToUrl, revokeUrls, revokeUrlsLater } from '../utils/blobUrl';
 import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import { StuckEscape } from './StuckEscape';
@@ -56,6 +56,8 @@ interface Curves {
 export interface EditorParams {
   brightness: number;
   exposure: number; contrast: number; highlights: number; shadows: number;
+  /** Lightroom 白色色階／黑色色階 */
+  whites: number; blacks: number;
   temp: number; tint: number; sat: number; vib: number;
   sharpen: number; grain: number; soft: number; softThreshold: number;
   softRadius: number; softColor: number; lutAmount: number;
@@ -70,6 +72,8 @@ export interface EditorParams {
   maskBrightness: number;
   maskContrast: number;
   maskHighlights: number;
+  maskWhites: number;
+  maskBlacks: number;
   maskShadows: number;
   maskTemp: number;
   maskTint: number;
@@ -154,11 +158,12 @@ const DEFAULT_CURVES: Curves = {
 
 /** 曲線與 HSL 的變更簽章。兩者都不是單一數字，快取要靠這個字串判斷有沒有變 */
 export const toneSig = (p: EditorParams): string =>
-  JSON.stringify(p.curves) + '#' + JSON.stringify(p.hsl ?? DEFAULT_HSL) + '#' + (isGradeIdentity(p.grade) ? '' : JSON.stringify(p.grade));
+  `${p.whites || 0},${p.blacks || 0}#` + JSON.stringify(p.curves) + '#' + JSON.stringify(p.hsl ?? DEFAULT_HSL) + '#' + (isGradeIdentity(p.grade) ? '' : JSON.stringify(p.grade));
 
 export const DEFAULT_PARAMS: EditorParams = {
   brightness: 0,
   exposure: 0, contrast: 0, highlights: 0, shadows: 0,
+  whites: 0, blacks: 0,
   temp: 0, tint: 0, sat: 0, vib: 0,
   sharpen: 0, grain: 0, soft: 0, softThreshold: 80,
   softRadius: 100, softColor: 0, lutAmount: 100,
@@ -172,6 +177,8 @@ export const DEFAULT_PARAMS: EditorParams = {
   maskBrightness: 0,
   maskContrast: 0,
   maskHighlights: 0,
+  maskWhites: 0,
+  maskBlacks: 0,
   maskShadows: 0,
   maskTemp: 0,
   maskTint: 0,
@@ -211,6 +218,8 @@ const MASK_TOOLS: ToolDef[] = [
   { id: 'maskContrast', label: '對比', icon: 'contrast', min: -100, max: 100 },
   { id: 'maskHighlights', label: '高光', icon: 'wb_sunny', min: -100, max: 100 },
   { id: 'maskShadows', label: '陰影', icon: 'brightness_low', min: -100, max: 100 },
+  { id: 'maskWhites', label: '白色色階', icon: 'tone_whites', min: -100, max: 100 },
+  { id: 'maskBlacks', label: '黑色色階', icon: 'tone_blacks', min: -100, max: 100 },
   { id: 'maskTemp', label: '色溫', icon: 'device_thermostat', min: -100, max: 100 },
   { id: 'maskTint', label: '色調', icon: 'colorize', min: -100, max: 100 },
   { id: 'maskSat', label: '飽和度', icon: 'palette', min: -100, max: 100 },
@@ -245,11 +254,13 @@ const MASK_DITHER = Float32Array.from({ length: 4096 }, (_, i) => { const x = Ma
 function maskTonePixels(data: Uint8ClampedArray, m: MaskSnap) {
   const len = data.length;
   const stage = makeToneStage({ exposure: m.maskExposure, brightness: m.maskBrightness, contrast: m.maskContrast,
-    shadows: m.maskShadows, highlights: m.maskHighlights, temp: m.maskTemp, tint: m.maskTint, sat: m.maskSat });
+    shadows: m.maskShadows, highlights: m.maskHighlights, whites: m.maskWhites || 0, blacks: m.maskBlacks || 0, temp: m.maskTemp, tint: m.maskTint, sat: m.maskSat });
   const vibVal = (m.maskVib * 0.5 * 2.5) / 100;
   const hasVib = vibVal !== 0, satK = stage.sat;
   const c3 = new Float32Array(3);
-  if (!stage.wb && satK === 1 && !hasVib) {
+  // 只有曝光（線性光裡乘一個倍率）時三個色版各自獨立，可以用一張 256 格的表；
+  // 色調曲線與高光肩部是保色相的（photoToneMath.hueTone），要整個顏色一起算。
+  if (!stage.wb && satK === 1 && !hasVib && !stage.tone && stage.peak <= 1) {
     const t8 = MASK_TONE8;
     for (let i = 0; i < 256; i++) { applyToneStage(stage, i, i, i, c3); t8[i] = c3[0]; }
     for (let i = 0; i < len; i += 4) { const d = MASK_DITHER[(i >>> 2) & 4095]; data[i] = t8[data[i]] + d; data[i + 1] = t8[data[i + 1]] + d; data[i + 2] = t8[data[i + 2]] + d; }
@@ -262,10 +273,7 @@ function maskTonePixels(data: Uint8ClampedArray, m: MaskSnap) {
     let r = c3[0], gg = c3[1], b = c3[2];
     if (hasVib) {
       const avg = (r + gg + b) * 0.33333;
-      const max = r > gg ? (r > b ? r : b) : (gg > b ? gg : b);
-      const min = r < gg ? (r < b ? r : b) : (gg < b ? gg : b);
-      const curSat = max === 0 ? 0 : (max - min) / max;
-      const b1 = 1 + (vibVal > 0 ? vibVal * (1 - curSat * curSat) : vibVal);
+      const b1 = vibranceGain(vibVal, r, gg, b);
       r = avg + (r - avg) * b1; gg = avg + (gg - avg) * b1; b = avg + (b - avg) * b1;
     }
     const d = MASK_DITHER[(i >>> 2) & 4095];
@@ -325,6 +333,9 @@ const ADJUST_TOOLS: ToolDef[] = [
   { id: 'contrast', label: '對比', icon: 'contrast', min: -100, max: 100 },
   { id: 'highlights', label: '高光', icon: 'wb_sunny', min: -100, max: 100 },
   { id: 'shadows', label: '陰影', icon: 'brightness_low', min: -100, max: 100 },
+  // Lightroom 的白色色階／黑色色階：調整最亮、最暗那一端（見 utils/photoToneMath 的 endPoints）
+  { id: 'whites', label: '白色色階', icon: 'tone_whites', min: -100, max: 100 },
+  { id: 'blacks', label: '黑色色階', icon: 'tone_blacks', min: -100, max: 100 },
   { id: 'temp', label: '色溫', icon: 'device_thermostat', min: -100, max: 100 },
   { id: 'tint', label: '色調', icon: 'colorize', min: -100, max: 100 },
   { id: 'sat', label: '飽和度', icon: 'palette', min: -100, max: 100 },
@@ -564,7 +575,7 @@ export function generateCurveLut(channelPoints: Point[]): Uint8Array {
 // Shared, byte-identical colour maths can also run in a worker.
 export { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
-import { makeToneStage, applyToneStage, applySaturation, makeToneFast } from '../utils/photoToneMath';
+import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceGain } from '../utils/photoToneMath';
 import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
 /* Cache keys name the photo by a short id, not by its source string: a
    data: URL is megabytes, and serialising it into a key on every slider step
@@ -1516,7 +1527,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [saveState, finalImages]);
   /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
      網址的，按下儲存後馬上離開的話會來不及讀完。 */
-  useEffect(() => () => { const keep = finalImagesRef.current; setTimeout(() => revokeUrls(keep as any), 15000); }, []);
+  /* 計時器放在 utils/blobUrl 裡：寫成這裡的箭頭函式的話，它會抓住整個修圖頁的變數
+     （所有像素緩衝），離開後 15 秒內那一兩百 MB 都放不掉。 */
+  useEffect(() => () => revokeUrlsLater(finalImagesRef.current as any, 15000), []);
   const [isPortrait, setIsPortrait] = useState(false);
 
   // Curve Specific State
@@ -2395,6 +2408,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       contrast: number;
       highlights: number;
       shadows: number;
+      whites?: number;
+      blacks?: number;
       temp: number;
       tint: number;
       sat: number;
@@ -3040,7 +3055,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 只把「會影響顏色鏈」的參數寫進鍵。銳化、顆粒、模糊那些不在裡面 ——
      它們不是烤進表裡的東西，放進去只會讓快取白白失效。 */
   const bakeSigRef = useRef((p: EditorParams) =>
-    `${p.brightness},${p.exposure},${p.contrast},${p.highlights},${p.shadows},`
+    `${p.brightness},${p.exposure},${p.contrast},${p.highlights},${p.shadows},${p.whites || 0},${p.blacks || 0},`
     + `${p.temp},${p.tint},${p.sat},${p.vib},${p.lutAmount},`
     + `${JSON.stringify(p.curves)},${JSON.stringify(p.hsl)},${isGradeIdentity(p.grade) ? '' : JSON.stringify(p.grade)}`);
   const exportC0Ref = useRef<HTMLCanvasElement | null>(null);
@@ -3148,7 +3163,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       base = buildLocalBase(src, w, h); m.set(key, base);
       if (m.size > 4) { const old = m.keys().next().value; if (old !== undefined) m.delete(old); }
     }
-    const gk = `${p.exposure},${p.brightness},${p.contrast},${p.shadows},${p.highlights},${p.temp},${p.tint}`;
+    const gk = `${p.exposure},${p.brightness},${p.contrast},${p.shadows},${p.highlights},${p.whites || 0},${p.blacks || 0},${p.temp},${p.tint}`;
     const g = localGainRef.current;
     if (g.key !== gk || !g.gain) { g.key = gk; g.gain = makeLocalGain(p); }
     return { base, gain: g.gain };
@@ -3156,7 +3171,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const gpuFrontCacheRef = useRef<{ toneKey: string; tone: Float32Array | null; curveSrc: unknown; curves: Uint8Array | null; hslKey: string; hsl: { h: Float32Array; s: Float32Array; l: Float32Array } | null; gradeKey?: string; grade?: GradeFast | null }>({ toneKey: '', tone: null, curveSrc: null, curves: null, hslKey: '', hsl: null, gradeKey: '', grade: null });
   const gpuFrontFor = (p: EditorParams, local: { base: LocalBase; gain: Float32Array } | null = null) => {
     const c = gpuFrontCacheRef.current;
-    const toneKey = local ? `${p.brightness},${p.contrast},L` : `${p.brightness},${p.contrast},${p.shadows},${p.highlights}`;
+    const toneKey = `${p.brightness},${p.contrast},${p.whites || 0},${p.blacks || 0},` + (local ? 'L' : `${p.shadows},${p.highlights}`);
     const stage = makeToneStage(p, c.toneKey === toneKey ? c.tone : undefined, !!local);
     if (c.toneKey !== toneKey) { c.toneKey = toneKey; c.tone = stage.tone; }
     const luts = getCurveLuts(p.curves);
@@ -5546,7 +5561,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // Check if we are at effectively original state (No edits)
     const isNoEdits = currentIdx === 0 && 
         pRender.brightness === 0 && pRender.exposure === 0 && pRender.contrast === 0 && 
-        pRender.highlights === 0 && pRender.shadows === 0 && pRender.temp === 0 && pRender.tint === 0 && 
+        pRender.highlights === 0 && pRender.shadows === 0 && !pRender.whites && !pRender.blacks && pRender.temp === 0 && pRender.tint === 0 && 
         pRender.sat === 0 && pRender.vib === 0 && pRender.sharpen === 0 && 
         pRender.grain === 0 && pRender.soft === 0 && pRender.blur === 0 && pRender.colorNoise === 0 && 
         pRender.colorNoise2 === 0 && pRender.vignette === 0 && pRender.leakOpacity === 0 && 
@@ -5699,6 +5714,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             pRender.contrast !== lastP.contrast ||
             pRender.highlights !== lastP.highlights ||
             pRender.shadows !== lastP.shadows ||
+            (pRender.whites || 0) !== (lastP.whites || 0) ||
+            (pRender.blacks || 0) !== (lastP.blacks || 0) ||
             pRender.temp !== lastP.temp ||
             pRender.tint !== lastP.tint ||
             pRender.sat !== lastP.sat ||
@@ -5798,6 +5815,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     contrast: pRender.contrast,
                     highlights: pRender.highlights,
                     shadows: pRender.shadows,
+                    whites: pRender.whites, blacks: pRender.blacks,
                     temp: pRender.temp,
                     tint: pRender.tint,
                     sat: pRender.sat,
@@ -5817,6 +5835,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 lastProcessedParamsRef.current = {
                     brightness: pRender.brightness, exposure: pRender.exposure,
                     contrast: pRender.contrast, highlights: pRender.highlights,
+                    whites: pRender.whites, blacks: pRender.blacks,
                     shadows: pRender.shadows, temp: pRender.temp, tint: pRender.tint,
                     sat: pRender.sat, vib: pRender.vib, sharpen: pRender.sharpen,
                     lutAmount: pRender.lutAmount, selectedLutIdx: currentIdx,
@@ -5837,6 +5856,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     l0.brightness === pRender.brightness && l0.exposure === pRender.exposure &&
                     l0.contrast === pRender.contrast && l0.highlights === pRender.highlights &&
                     l0.shadows === pRender.shadows && l0.temp === pRender.temp &&
+                    l0.whites === pRender.whites && l0.blacks === pRender.blacks &&
                     l0.tint === pRender.tint && l0.sat === pRender.sat &&
                     l0.vib === pRender.vib && l0.sharpen === pRender.sharpen &&
                     l0.curves === pRender.curves && l0.hsl === pRender.hsl && l0.grade === pRender.grade &&
@@ -5848,6 +5868,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         w: b.w, h: b.h, src: buffersSrcRef.current,
                         brightness: pRender.brightness, exposure: pRender.exposure, contrast: pRender.contrast,
                         highlights: pRender.highlights, shadows: pRender.shadows, temp: pRender.temp,
+                        whites: pRender.whites, blacks: pRender.blacks,
                         tint: pRender.tint, sat: pRender.sat, vib: pRender.vib, sharpen: pRender.sharpen,
                         curves: pRender.curves, hsl: pRender.hsl, grade: pRender.grade, detail: b.sharpenDetail,
                     };
@@ -5872,6 +5893,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     contrast: pRender.contrast,
                     highlights: pRender.highlights,
                     shadows: pRender.shadows,
+                    whites: pRender.whites, blacks: pRender.blacks,
                     temp: pRender.temp,
                     tint: pRender.tint,
                     sat: pRender.sat,

@@ -27,6 +27,12 @@ const INLINE: Record<string, string> = {
   /* 磨皮：一顆水滴（滋潤、變光滑）加一道柔和的反光，線條粗細跟其他圖示一致 */
   skin_smooth: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2C8.3 7.6 6 10.9 6 14.1a6 6 0 0 0 12 0c0-3.2-2.3-6.5-6-10.9z"/><path d="M9.1 14.6a3.1 3.1 0 0 0 2.4 2.7"/></g>',
   /* 色輪：一個圓、正中心一個實心點 */
+  /* 白色色階／黑色色階：一座直方圖，右端（白點）／左端（黑點）立一根標竿 —— 跟 Lightroom 直方圖上那兩端的意思一樣。
+     白色那根頂端是實心圓（亮），黑色那根是空心圓（暗）。 */
+  tone_whites: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 19.5h18"/><path d="M3.5 19.5c2.6-.6 3.6-8 6.6-8s3.5 5.4 5.7 5.4"/><path d="M19 8v11.5"/></g><circle cx="19" cy="5.6" r="2.4" fill="#fff"/>',
+  tone_blacks: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 19.5h18"/><path d="M20.5 19.5c-2.6-.6-3.6-8-6.6-8s-3.5 5.4-5.7 5.4"/><path d="M5 8.4v11.1"/><circle cx="5" cy="5.6" r="2"/></g>',
+  /* 修補：一塊斜放的 OK 繃（中間透氣孔的四個點），跟去痘的圖標分得開 */
+  patch_heal: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><rect x="3.2" y="8.6" width="17.6" height="6.8" rx="3.4" transform="rotate(-45 12 12)"/><rect x="8.9" y="8.9" width="6.2" height="6.2" rx="1" transform="rotate(-45 12 12)"/></g><g fill="#fff"><circle cx="11" cy="11" r=".8"/><circle cx="13" cy="11" r=".8"/><circle cx="11" cy="13" r=".8"/><circle cx="13" cy="13" r=".8"/></g>',
   grade_wheels: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="2.4" fill="#fff"/>',
 };
 const maskOf = (body: string) =>

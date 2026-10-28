@@ -1,4 +1,4 @@
-import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
+import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { addExport } from '../utils/exportHistory';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { saveDraft } from '../utils/toolDraft';
@@ -113,10 +113,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
   }, []);
   /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
      網址的，按下儲存後馬上離開的話會來不及讀完。 */
-  useEffect(() => () => {
-    const keep = finalUrlRef.current, previewKeep = finalPreviewRef.current;
-    setTimeout(() => { revokeUrl(keep); revokeUrl(previewKeep); }, 15000);
-  }, []);
+  // 計時器在 utils/blobUrl 裡跑：寫在這裡的話會抓住整個元件（所有像素），離開後 15 秒都放不掉
+  useEffect(() => () => revokeUrlsLater([finalUrlRef.current, finalPreviewRef.current], 15000), []);
   const [saving, setSaving] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);

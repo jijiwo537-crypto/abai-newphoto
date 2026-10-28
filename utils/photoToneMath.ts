@@ -6,7 +6,15 @@
  *   → exposure (linear light, ±4 EV) with a highlight shoulder
  *   → sRGB encode
  *   → tone curve: brightness (mid-tone gamma), contrast (S-curve about
- *     mid-grey), shadows / highlights (band-limited, black and white fixed)
+ *     mid-grey), shadows / highlights (band-limited, black and white fixed),
+ *     whites / blacks (Lightroom-style end points, soft-limited)
+ *
+ * Hue preservation (Adobe DNG "RGB tone" method): the exposure shoulder and
+ * the tone curve are applied to the largest and the smallest channel, and
+ * the middle channel keeps its relative position between them. A per-channel
+ * curve twists hues (a +100 contrast moved skin 13.6° towards yellow, +60
+ * exposure moved orange 39°); this keeps the hue of every colour while
+ * staying continuous everywhere (no new edges, so no banding).
  *   → saturation (around luminance; −100 is exact monochrome)
  * Every stage is identity at 0 and keeps 0→0 and 1→1 (no lifted blacks,
  * no greyed whites, no hard clipping inside the range).
@@ -19,6 +27,54 @@
 export type ToneParams = {
   exposure: number; brightness: number; contrast: number;
   shadows: number; highlights: number; temp: number; tint: number; sat: number;
+  /** Lightroom 白色色階／黑色色階（−100…100），沒給就是 0 */
+  whites?: number; blacks?: number;
+};
+
+/** Hue-preserving application of a monotonic curve f to one colour, in place
+ *  (DNG reference "RGB tone"): f on the largest and the smallest channel,
+ *  the middle channel interpolated so (mid−min)/(max−min) — the hue — is kept.
+ *  Greys (all equal) get exactly f. Continuous in r, g, b. */
+export const hueTone = (f: (v: number) => number, c: Float32Array | Float64Array | number[]) => {
+  const r = c[0], g = c[1], b = c[2];
+  if (r >= g) {
+    if (g >= b) { const hi = f(r), lo = f(b); c[0] = hi; c[2] = lo; c[1] = r > b ? lo + (hi - lo) * (g - b) / (r - b) : hi; }
+    else if (r >= b) { const hi = f(r), lo = f(g); c[0] = hi; c[1] = lo; c[2] = r > g ? lo + (hi - lo) * (b - g) / (r - g) : hi; }
+    else { const hi = f(b), lo = f(g); c[2] = hi; c[1] = lo; c[0] = b > g ? lo + (hi - lo) * (r - g) / (b - g) : hi; }
+  } else {
+    if (r >= b) { const hi = f(g), lo = f(b); c[1] = hi; c[2] = lo; c[0] = g > b ? lo + (hi - lo) * (r - b) / (g - b) : hi; }
+    else if (g >= b) { const hi = f(g), lo = f(r); c[1] = hi; c[0] = lo; c[2] = g > r ? lo + (hi - lo) * (b - r) / (g - r) : hi; }
+    else { const hi = f(b), lo = f(r); c[2] = hi; c[0] = lo; c[1] = b > r ? lo + (hi - lo) * (g - r) / (b - r) : hi; }
+  }
+};
+
+/* ── 自然飽和度（膚色保護）────────────────────────────────────────────
+   Lightroom 的自然飽和度會刻意少加膚色。這裡用平滑的窗（smoothstep，沒有任何硬邊）
+   量「這個顏色像不像膚色」：色相落在偏紅橘一帶（HSV 約 −12°～55°，5°～38° 完全算）、
+   飽和度中等（太灰或太艷的都不算）、而且不是接近黑。像膚色的部分加的量只剩 30%。
+   權重是平滑連續的，所以漸層、膚色與背景的交界都不會出現色塊或斷層。 */
+const sstep = (a: number, b: number, x: number) => { const t = x <= a ? 0 : x >= b ? 1 : (x - a) / (b - a); return t * t * (3 - 2 * t); };
+export const SKIN_PROTECT = 0.7;
+/** 0…1：這個顏色（0…255）有多像膚色 */
+export const skinWeight = (r: number, g: number, b: number) => {
+  const mx = r > g ? (r > b ? r : b) : (g > b ? g : b), mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+  const ch = mx - mn;
+  if (mx <= 0 || ch <= 0) return 0;
+  const s = ch / mx;
+  let h = mx === r ? 60 * ((g - b) / ch) : mx === g ? 60 * ((b - r) / ch + 2) : 60 * ((r - g) / ch + 4);
+  if (h > 180) h -= 360;                       // 洋紅那一側算成負角度，跟紅色連續
+  const hueW = sstep(-12, 5, h) * (1 - sstep(38, 55, h));
+  const satW = sstep(0.06, 0.15, s) * (1 - sstep(0.6, 0.85, s));
+  return hueW * satW * sstep(0.03, 0.1, mx / 255);
+};
+/** 自然飽和度的倍率（繞著平均值放大色度）。r,g,b：0…255；vib：滑桿 /200（遮色片會再乘 2.5）。
+ *  正值：越不飽和加越多、像膚色的少加；負值照舊。 */
+export const vibranceGain = (vib: number, r: number, g: number, b: number) => {
+  if (!vib) return 1;
+  if (vib < 0) return Math.max(0, 1 + vib);   // 遮色片的倍率可以超過 1：不能反轉成補色
+  const mx = r > g ? (r > b ? r : b) : (g > b ? g : b), mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
+  const s = mx === 0 ? 0 : (mx - mn) / mx;
+  return 1 + vib * (1 - s * s) * (1 - SKIN_PROTECT * skinWeight(r, g, b));
 };
 
 const clamp01 = (v: number) => v < 0 ? 0 : v > 1 ? 1 : v;
@@ -81,10 +137,28 @@ const PIVOT = 0.46;                 // encoded 18% grey
 /** Highlight shoulder after exposure: identity below the knee, maps the
  *  brightest input (2^EV) smoothly onto 1 with slope continuity. */
 const KNEE = 0.55;
-const shoulder = (x: number, peak: number) => {
-  if (peak <= 1 || x <= KNEE) return x;
-  const a = (peak - 1) / (1 - KNEE), t = (x - KNEE) / (peak - KNEE);
-  return KNEE + (1 - KNEE) * Math.min(1, ((1 + a) * t) / (1 + a * t));
+/** Maps [knee, peak] smoothly onto [knee, 1] (slope 1 at the knee, monotonic). */
+const softTop = (x: number, knee: number, peak: number) => {
+  if (peak <= 1 || x <= knee) return x;
+  const a = (peak - 1) / (1 - knee), t = (x - knee) / (peak - knee);
+  return knee + (1 - knee) * Math.min(1, ((1 + a) * t) / (1 + a * t));
+};
+const shoulder = (x: number, peak: number) => softTop(x, KNEE, peak);
+/* 白色／黑色色階的幅度（編碼值）：白 +100 把最亮的那一段往上推 0.25 再柔和地收進 1
+   （不硬切成一片死白）；白 −100 把白點壓到 0.9。黑 −100 把最暗的一段往下壓 0.25
+   再柔和地收到 0；黑 +100 把黑點抬到 0.1。整條曲線單調、斜率連續。 */
+const WHITES_UP = 0.25, WHITES_DOWN = 0.1, BLACKS_DOWN = 0.25, BLACKS_UP = 0.1;
+const endPoints = (x: number, w: number, k: number) => {
+  if (w) {
+    x += w * (w > 0 ? WHITES_UP : WHITES_DOWN) * x * x * x * x;
+    if (w > 0) x = softTop(x, 0.85, 1 + w * WHITES_UP);
+  }
+  if (k) {
+    const u = 1 - x;
+    x += k * (k > 0 ? BLACKS_UP : BLACKS_DOWN) * u * u * u * u;
+    if (k < 0) x = 1 - softTop(1 - x, 0.85, 1 - k * BLACKS_DOWN);
+  }
+  return x;
 };
 const SH_GAIN = 0.85;               // < 1 keeps the curve monotonic
 const shadowBand = (x: number) => x * (1 - x) ** 3 / 0.10546875;     // peak 1 at x = 0.25
@@ -113,9 +187,10 @@ export const makeToneStage = (p: ToneParams, reuseTone?: Float32Array | null, no
   const peak = wbPeak * Math.pow(2, ev);
   const b = (p.brightness || 0) / 100, c = (p.contrast || 0) / 100;
   const s = noSH ? 0 : (p.shadows || 0) / 100, h = noSH ? 0 : (p.highlights || 0) / 100;
+  const wh = (p.whites || 0) / 100, bk = (p.blacks || 0) / 100;
   let tone: Float32Array | null = null;
   if (reuseTone !== undefined) tone = reuseTone;
-  else if (b || c || s || h) {
+  else if (b || c || s || h || wh || bk) {
     tone = new Float32Array(TONE_SIZE + 1);
     const gamma = Math.pow(2, -b * 0.8);              // brightness: mid-tone gamma
     const g = Math.pow(2, c * (c > 0 ? 0.9 : 0.6));   // contrast: S-curve steepness at the pivot
@@ -126,6 +201,7 @@ export const makeToneStage = (p: ToneParams, reuseTone?: Float32Array | null, no
       // Shadows: + darkens, − lifts (kept). Highlights: + brightens, − recovers.
       if (s) x += shDelta(x, s, 0);
       if (h) x += shDelta(x, 0, h);
+      if (wh || bk) x = endPoints(x, wh, bk);
       tone[i] = clamp01(x);
     }
   }
@@ -134,7 +210,7 @@ export const makeToneStage = (p: ToneParams, reuseTone?: Float32Array | null, no
 };
 export const toneStageIsIdentity = (t: ToneStage) => !t.tone && !t.ev && !t.wb;
 
-const lookup = (t: Float32Array, x: number) => {
+export const lookup = (t: Float32Array, x: number) => {
   const f = clamp01(x) * TONE_SIZE, i = f | 0;
   return i >= TONE_SIZE ? t[TONE_SIZE] : t[i] + (t[i + 1] - t[i]) * (f - i);
 };
@@ -147,12 +223,14 @@ export const applyToneStage = (t: ToneStage, r: number, g: number, b: number, ou
     x = srgbToLinear(x); y = srgbToLinear(y); z = srgbToLinear(z);
     if (t.wb) { const m = t.wb; const a = m[0] * x + m[1] * y + m[2] * z, bb = m[3] * x + m[4] * y + m[5] * z, cc = m[6] * x + m[7] * y + m[8] * z; x = a; y = bb; z = cc; }
     if (t.ev) { const k = Math.pow(2, t.ev); x *= k; y *= k; z *= k; }
-    x = shoulder(Math.max(0, x), t.peak); y = shoulder(Math.max(0, y), t.peak); z = shoulder(Math.max(0, z), t.peak);
-    x = linearToSrgb(clamp01(x)); y = linearToSrgb(clamp01(y)); z = linearToSrgb(clamp01(z));
+    const v = HT; v[0] = Math.max(0, x); v[1] = Math.max(0, y); v[2] = Math.max(0, z);
+    if (t.peak > 1) { const pk = t.peak; hueTone(q => shoulder(q, pk), v); }
+    x = linearToSrgb(clamp01(v[0])); y = linearToSrgb(clamp01(v[1])); z = linearToSrgb(clamp01(v[2]));
   }
-  if (t.tone) { x = lookup(t.tone, x); y = lookup(t.tone, y); z = lookup(t.tone, z); }
+  if (t.tone) { const v = HT, tt = t.tone; v[0] = clamp01(x); v[1] = clamp01(y); v[2] = clamp01(z); hueTone(q => lookup(tt, q), v); x = v[0]; y = v[1]; z = v[2]; }
   out[0] = clamp01(x) * 255; out[1] = clamp01(y) * 255; out[2] = clamp01(z) * 255;
 };
+const HT = new Float64Array(3);
 
 /** Saturation around luminance (0…255 floats, in place). k = ToneStage.sat:
  *  0 is exact monochrome; chroma is shrunk (not clipped) to stay in gamut. */
@@ -177,25 +255,40 @@ export const makeToneFast = (t: ToneStage) => {
   const lin = LIN;
   const toLin = (v: number) => { const f = (v < 0 ? 0 : v > 255 ? 255 : v) * (LIN_SIZE / 255), i = f | 0; return i >= LIN_SIZE ? lin[LIN_SIZE] : lin[i] + (lin[i + 1] - lin[i]) * (f - i); };
   const N = 2048, maxIn = Math.max(1, t.peak), k = t.ev ? Math.pow(2, t.ev) : 1;
-  // linear (after WB and exposure) → shoulder → encode → tone curve, in 0…255
-  const out = new Float32Array(N + 1);
+  // Three hue-preserving stages, each a table:
+  //   linear (after WB and exposure) → shoulder (linear) → encode → tone curve.
+  // Shoulder and tone go through hueTone (largest/smallest channel), so they
+  // are tables of their own; encoding is per channel.
+  const sh = new Float32Array(N + 1), enc = new Float32Array(N + 1);
   for (let i = 0; i <= N; i++) {
     // Square-root spacing: more samples in the shadows of linear light.
-    const v = (i / N) ** 2 * maxIn;
-    let e = linearToSrgb(clamp01(shoulder(v, t.peak)));
-    if (t.tone) e = lookup(t.tone, e);
-    out[i] = e * 255;
+    sh[i] = clamp01(shoulder((i / N) ** 2 * maxIn, t.peak));
+    enc[i] = linearToSrgb((i / N) ** 2);
   }
+  const shAt = (v: number) => { if (v <= 0) return sh[0]; const f = Math.sqrt(v / maxIn) * N; if (f >= N) return sh[N]; const i = f | 0; return sh[i] + (sh[i + 1] - sh[i]) * (f - i); };
+  const encAt = (v: number) => { if (v <= 0) return 0; const f = Math.sqrt(v) * N; if (f >= N) return enc[N]; const i = f | 0; return enc[i] + (enc[i + 1] - enc[i]) * (f - i); };
+  const tone = t.tone, hasSh = t.peak > 1;
+  const toneAt = tone ? (v: number) => lookup(tone, v) : null;
   const m = t.wb;
-  const at = (v: number) => { if (v <= 0) return out[0]; const f = Math.sqrt(v / maxIn) * N; if (f >= N) return out[N]; const i = f | 0; return out[i] + (out[i + 1] - out[i]) * (f - i); };
+  const v3 = new Float64Array(3);
   /** r,g,b: 0…255; writes 0…255 floats to c. */
   const apply = (r: number, g: number, b: number, c: Float32Array | number[]) => {
     let x = toLin(r), y = toLin(g), z = toLin(b);
     if (m) { const a = m[0] * x + m[1] * y + m[2] * z, bb = m[3] * x + m[4] * y + m[5] * z, cc = m[6] * x + m[7] * y + m[8] * z; x = a; y = bb; z = cc; }
-    c[0] = at(x * k); c[1] = at(y * k); c[2] = at(z * k);
+    v3[0] = x * k; v3[1] = y * k; v3[2] = z * k;
+    if (hasSh) hueTone(shAt, v3);
+    v3[0] = encAt(clamp01(v3[0])); v3[1] = encAt(clamp01(v3[1])); v3[2] = encAt(clamp01(v3[2]));
+    if (toneAt) hueTone(toneAt, v3);
+    c[0] = v3[0] * 255; c[1] = v3[1] * 255; c[2] = v3[2] * 255;
   };
-  /** Pieces for callers that precompute per-channel values themselves:
-   *  toLinear (sRGB 0…255 → linear), encode (linear after WB → 0…255,
-   *  exposure included), wb (matrix or null). */
-  return Object.assign(apply, { toLinear: toLin, encode: (v: number) => at(v * k), wb: m });
+  /** toLinear (sRGB 0…255 → linear) and wb (matrix or null) for callers that
+   *  precompute the linear grid themselves; then call applyLinear. */
+  const applyLinear = (x: number, y: number, z: number, c: Float32Array | number[]) => {
+    v3[0] = x * k; v3[1] = y * k; v3[2] = z * k;
+    if (hasSh) hueTone(shAt, v3);
+    v3[0] = encAt(clamp01(v3[0])); v3[1] = encAt(clamp01(v3[1])); v3[2] = encAt(clamp01(v3[2]));
+    if (toneAt) hueTone(toneAt, v3);
+    c[0] = v3[0] * 255; c[1] = v3[1] * 255; c[2] = v3[2] * 255;
+  };
+  return Object.assign(apply, { toLinear: toLin, applyLinear, wb: m });
 };

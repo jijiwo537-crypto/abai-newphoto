@@ -1,4 +1,4 @@
-import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
+import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { StuckEscape } from './StuckEscape';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
@@ -18,6 +18,7 @@ import {
   hexToRgb, stampAlpha, makeupComposite,
   releaseBuffers,
 } from '../utils/beauty/engine';
+import { inpaintImage, inpaintCrop, cropFor } from '../utils/beauty/inpaint';
 import { StrokeLayer, STROKE_INNER, wrinkleStrength, smoothStrength, smoothInvalidate, type StrokeKind } from '../utils/beauty/strokeFilter';
 
 // 互動時的運算解析度。全解析度即時運算會爆手機記憶體，所以要縮，
@@ -48,11 +49,13 @@ const DRAG_START_PX = 5;
 /** 鬆手後筆刷圈停留的時間 */
 const RING_FLASH_MS = 217;
 
-type BeautyTool = 'blemish' | 'wrinkle' | 'smooth' | 'liquify' | 'makeup';
+type BeautyTool = 'blemish' | 'patch' | 'wrinkle' | 'smooth' | 'liquify' | 'makeup';
 
 interface ToolDef { id: BeautyTool; label: string; icon: string; }
 const BEAUTY_TOOLS: ToolDef[] = [
   { id: 'blemish', label: '去痘', icon: 'healing' },
+  /* 修補：塗掉不要的東西（痣、雜物、路人、電線…），放開自動用周圍的質感重建（內容感知填補） */
+  { id: 'patch',   label: '修補', icon: 'patch_heal' },
   { id: 'wrinkle', label: '去皺', icon: 'waves' },
   { id: 'smooth',  label: '磨皮', icon: 'skin_smooth' },
   { id: 'liquify', label: '液化', icon: 'gesture' },
@@ -78,7 +81,28 @@ type Op =
   | { k: 'wrinkle'; pts: number[]; r: number; amount: number }   // 舊版去皺（每點疊一次），只為了讀得回以前的草稿
   | { k: 'stroke'; kind: StrokeKind; pts: number[]; r: number; strength: number }
   | { k: 'makeup'; pts: number[]; r: number; strength: number; rgb: [number, number, number] }
-  | { k: 'liquify'; pts: number[]; r: number; force: number; mode: LiquifyMode };
+  | { k: 'liquify'; pts: number[]; r: number; force: number; mode: LiquifyMode }
+  /** 修補：筆觸路徑（工作解析度）＋亂數種子；重播時同一組輸入一定算出同一個結果 */
+  | { k: 'patch'; pts: number[]; r: number; seed: number };
+
+/* 修補筆的邊緣硬度：中心大部分整塊換掉，只留窄窄一圈柔邊銜接 */
+const PATCH_HARDNESS = 70;
+/* 修補在工作解析度算好的那一塊先留著（跟著那一筆操作走，不進草稿）：
+   復原／重做時從原圖重播，不必每一筆都重算一次（大範圍一筆要幾百毫秒）。
+   原尺寸輸出時照樣在原尺寸重算，畫質不受工作解析度限制。 */
+const patchCache = new WeakMap<object, { rect: Rect; rgba: Uint8ClampedArray }>();
+/** 修補筆觸蓋到的覆蓋率場與範圍 */
+function patchAlpha(alpha: Float32Array, W: number, H: number, pts: number[], R: number): Rect | null {
+  let u: Rect | null = null;
+  for (let j = 0; j < pts.length; j += 2) {
+    const r = stampAlpha(alpha, W, H, pts[j], pts[j + 1], R, PATCH_HARDNESS, 1);
+    if (r) u = unionRect(u, r);
+  }
+  return u;
+}
+function writeRect(dst: Uint8ClampedArray, W: number, rect: Rect, rgba: Uint8ClampedArray) {
+  for (let y = 0; y < rect.h; y++) dst.set(rgba.subarray(y * rect.w * 4, (y + 1) * rect.w * 4), ((rect.y + y) * W + rect.x) * 4);
+}
 
 interface Session {
   W: number; H: number;
@@ -166,6 +190,15 @@ function replayOps(
     } else if (op.k === 'stroke') {
       const L = new StrokeLayer(base.data, W, H, op.kind, op.r * k, null);
       for (let j = 0; j < op.pts.length; j += 2) L.stamp(op.pts[j] * k, op.pts[j + 1] * k, op.r * k, op.strength, STROKE_INNER[op.kind]);
+    } else if (op.k === 'patch') {
+      const hit = k === 1 ? patchCache.get(op) : undefined;
+      if (hit) { writeRect(base.data, W, hit.rect, hit.rgba); continue; }
+      if (!alpha) alpha = new Float32Array(W * H); else alpha.fill(0);
+      const pts = op.pts.map(v => v * k);
+      const u = patchAlpha(alpha, W, H, pts, op.r * k);
+      if (!u) continue;
+      const res = inpaintImage(base.data, W, H, alpha, u, op.seed);
+      if (res) { writeRect(base.data, W, res.rect, res.rgba); if (k === 1) patchCache.set(op, res); }
     } else if (op.k === 'liquify') {
       for (let j = 0; j < op.pts.length; j += 4) {
         liquifyDab(field, op.pts[j] * k, op.pts[j + 1] * k, op.pts[j + 2] * k, op.pts[j + 3] * k,
@@ -220,7 +253,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const finalUrlRef = useRef<string | null>(null);
   /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
      網址的，按下儲存後馬上離開的話會來不及讀完。 */
-  useEffect(() => () => { const keep = finalUrlRef.current; setTimeout(() => revokeUrl(keep as any), 15000); }, []);
+  // 計時器在 utils/blobUrl 裡跑：寫在這裡的話會抓住整個元件（所有像素），離開後 15 秒都放不掉
+  useEffect(() => () => revokeUrlsLater([finalUrlRef.current], 15000), []);
   const [showOriginal, setShowOriginal] = useState(false);
 
   const viewRef = useRef<HTMLCanvasElement>(null);
@@ -413,7 +447,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
   const undo = useCallback(() => {
     const s = sessionRef.current;
-    if (!s || s.opsApplied <= 0) return;
+    if (!s || s.opsApplied <= 0 || patchBusyRef.current) return;
     s.opsApplied--;
     smoothTargetsRef.current.clear();
     rebuild();
@@ -422,7 +456,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
   const redo = useCallback(() => {
     const s = sessionRef.current;
-    if (!s || s.opsApplied >= s.ops.length) return;
+    if (!s || s.opsApplied >= s.ops.length || patchBusyRef.current) return;
     s.opsApplied++;
     smoothTargetsRef.current.clear();
     rebuild();
@@ -536,6 +570,23 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
     const [bx, by] = toBase(p.x, p.y);
 
+    if (c.tool === 'patch') {
+      /* 塗的時候先蓋一層半透明紅色（跟 Lightroom 修復筆同一種提示），放開才真的修補 */
+      const src = strokeSrcRef.current, alpha = strokeAlphaRef.current;
+      if (!src || !alpha) return null;
+      const r = stampAlpha(alpha, s.W, s.H, bx, by, R, PATCH_HARDNESS, 1);
+      if (!r) return null;
+      const d = s.base.data;
+      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) {
+        const i = y * s.W + x, a = alpha[i] * 0.5, o = i * 4;
+        if (a <= 0) continue;
+        d[o] = src[o] + (255 - src[o]) * a; d[o + 1] = src[o + 1] + (70 - src[o + 1]) * a; d[o + 2] = src[o + 2] + (70 - src[o + 2]) * a;
+      }
+      strokePtsRef.current.push(bx, by);
+      strokeUnionRef.current = unionRect(strokeUnionRef.current, r);
+      return r;
+    }
+
     if (c.tool === 'makeup') {
       const src = strokeSrcRef.current, alpha = strokeAlphaRef.current;
       if (!src || !alpha) return null;
@@ -582,7 +633,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       s.lq.data.set(lqBeforeRef.current);
       recomputeLiquifyMax(s.lq);
       render();
-    } else if ((c.tool === 'wrinkle' || c.tool === 'smooth' || c.tool === 'makeup') && strokeUnionRef.current && strokeSrcRef.current) {
+    } else if ((c.tool === 'wrinkle' || c.tool === 'smooth' || c.tool === 'makeup' || c.tool === 'patch') && strokeUnionRef.current && strokeSrcRef.current) {
       const r = strokeUnionRef.current;
       restore(r, snapFrom(strokeSrcRef.current, r));
       renderPixelRect(r);
@@ -598,6 +649,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const onPointerDown = (e: React.PointerEvent) => {
     if (!sessionRef.current || isLoading || saveState !== 'idle') return;
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // 修補還在算：先不接新的筆（雙指縮放照樣可以）
+    if (patchBusyRef.current && pointersRef.current.size < 2) return;
 
     if (pointersRef.current.size >= 2) {
       // 第二根手指落下 → 進入縮放手勢，把已經畫下去的部分還原
@@ -643,7 +696,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       lqBeforeRef.current = s.lq.data.slice();
       strokePtsRef.current = [];
     } else {
-      ensureStrokeBuffers(cfg.current.tool === 'makeup');
+      ensureStrokeBuffers(cfg.current.tool === 'makeup' || cfg.current.tool === 'patch');
       const t = cfg.current.tool;
       if (t === 'wrinkle' || t === 'smooth') {
         const R = brushRadius();
@@ -735,6 +788,50 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const handleMoveRef = useRef(handleMove);
   handleMoveRef.current = handleMove;
 
+  /* ── 修補 ─────────────────────────────────────────────
+     放開手指：從「這一筆之前」的像素切出工作範圍，丟到背景執行緒補洞（不會卡畫面），
+     回來後整塊寫回（紅色提示一起被蓋掉）、記成一步。算的時候不接新的筆。 */
+  const [patchBusy, setPatchBusy] = useState(false);
+  const patchBusyRef = useRef(false);
+  const patchWorkerRef = useRef<Worker | null | undefined>(undefined);
+  const patchJobRef = useRef(0);
+  useEffect(() => () => { patchWorkerRef.current?.terminate(); patchWorkerRef.current = null; }, []);
+  const runPatch = useCallback((pts: number[], R: number, union: Rect, src: Uint8ClampedArray, strokeAlpha: Float32Array) => {
+    const s = sessionRef.current;
+    if (!s) return;
+    const seed = (Math.random() * 0x7fffffff) | 0;
+    const crop = cropFor(src, s.W, s.H, strokeAlpha, union);
+    const id = ++patchJobRef.current;
+    patchBusyRef.current = true; setPatchBusy(true);
+    const done = (rgba: Uint8ClampedArray | null) => {
+      if (id !== patchJobRef.current || sessionRef.current !== s) return;
+      patchBusyRef.current = false; setPatchBusy(false);
+      if (!rgba) {
+        // 周圍完全找不到可用的質感（例如整張都被塗滿）：把紅色提示收掉，什麼都不改
+        restore(union, snapFrom(src, union)); renderPixelRect(union); return;
+      }
+      writeRect(s.base.data, s.W, crop.rect, rgba);
+      const op: Op = { k: 'patch', pts, r: R, seed };
+      patchCache.set(op, { rect: crop.rect, rgba });
+      pushOp(op);
+      renderPixelRect(crop.rect);
+    };
+    if (patchWorkerRef.current === undefined) {
+      try { patchWorkerRef.current = new Worker(new URL('../utils/beauty/inpaint.worker.ts', import.meta.url), { type: 'module' }); }
+      catch { patchWorkerRef.current = null; }
+    }
+    const w = patchWorkerRef.current;
+    if (w) {
+      const onMsg = (e: MessageEvent) => { if (e.data?.id !== id) return; w.removeEventListener('message', onMsg); done(e.data.rgba); };
+      w.addEventListener('message', onMsg);
+      w.onerror = () => { patchWorkerRef.current = null; setTimeout(() => done(inpaintCrop(crop.rgba, crop.rect.w, crop.rect.h, crop.alpha, seed)), 0); };
+      w.postMessage({ id, rgba: crop.rgba, w: crop.rect.w, h: crop.rect.h, alpha: crop.alpha, seed }, [crop.rgba.buffer, crop.alpha.buffer]);
+    } else {
+      // 沒有 Worker 的環境：讓紅色提示先畫出來，下一個空檔再在主執行緒算
+      setTimeout(() => done(inpaintCrop(crop.rgba, crop.rect.w, crop.rect.h, crop.alpha, seed)), 30);
+    }
+  }, [pushOp, renderPixelRect, restore, snapFrom]);
+
   const finishStroke = useCallback(() => {
     if (!paintingRef.current) return;
     paintingRef.current = false;
@@ -796,6 +893,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         pushOp({ k: 'liquify', pts: strokePtsRef.current.slice(), r: R, force: c.force / 100 * 0.9, mode: c.lqMode });
       }
       lqBeforeRef.current = null;
+    } else if (c.tool === 'patch' && strokePtsRef.current.length && strokeUnionRef.current && strokeSrcRef.current && strokeAlphaRef.current) {
+      runPatch(strokePtsRef.current.slice(), R, strokeUnionRef.current, strokeSrcRef.current, strokeAlphaRef.current);
     } else if (strokePtsRef.current.length) {
       const L = strokeLayerRef.current;
       if (c.tool === 'makeup') pushOp({ k: 'makeup', pts: strokePtsRef.current.slice(), r: R, strength: c.intensity / 100, rgb: hexToRgb(c.makeupColor) });
@@ -822,7 +921,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     }
     downRef.current = null;
     lastClientRef.current = null;
-  }, [beginStroke, brushRadius, dab, drawRing, isTapOnly, pushOp, render, renderPixelRect, toBase]);
+  }, [beginStroke, brushRadius, dab, drawRing, isTapOnly, pushOp, render, renderPixelRect, toBase, runPatch]);
 
   useEffect(() => {
     const move = (e: PointerEvent) => handleMoveRef.current(e);
@@ -1230,6 +1329,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm" draggable={false} />
           </div>
         )}
+        {/* 修補計算中：預覽上緣一顆小膠囊（不擋住畫面，算完自己消失） */}
+        <div data-beauty-patch-busy={patchBusy ? 'on' : 'off'}
+          className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-[11px] font-bold text-white"
+          style={{ opacity: patchBusy ? 1 : 0, transition: 'opacity 180ms ease' }}>
+          <span className="w-3 h-3 rounded-full border-2 border-white/25 border-t-white animate-spin" />修補中
+        </div>
         {/* 筆刷圈。用 DOM 畫，任何縮放倍率下邊緣都是平滑的，不會有鋸齒。
             調整筆刷大小時固定顯示在預覽中央，即時呈現實際大小。 */}
         {(ringPos || sizingBrush) ? (
@@ -1290,6 +1395,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
            預覽區因此跟編輯器一樣大，兩邊切換時圖片不會動。 */
         const sliders: [string, number, number, number, (v: number) => void][] =
           tool === 'blemish' ? [['筆刷', brush.blemish, BRUSH_RANGE.blemish[0], BRUSH_RANGE.blemish[1], v => setBrush(b => ({ ...b, blemish: v }))]]
+          : tool === 'patch' ? [['筆刷', brush.patch, BRUSH_RANGE.patch[0], BRUSH_RANGE.patch[1], v => setBrush(b => ({ ...b, patch: v }))]]
           : tool === 'wrinkle' ? [['筆刷', brush.wrinkle, BRUSH_RANGE.wrinkle[0], BRUSH_RANGE.wrinkle[1], v => setBrush(b => ({ ...b, wrinkle: v }))], ['力度', force, 10, 100, setForce]]
           : tool === 'smooth' ? [['筆刷', brush.smooth, BRUSH_RANGE.smooth[0], BRUSH_RANGE.smooth[1], v => setBrush(b => ({ ...b, smooth: v }))], ['力度', force, 10, 100, setForce]]
           : tool === 'liquify' ? [['筆刷', brush.liquify, BRUSH_RANGE.liquify[0], BRUSH_RANGE.liquify[1], v => setBrush(b => ({ ...b, liquify: v }))], ['力度', force, 10, 100, setForce]]
@@ -1405,6 +1511,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         <div className="flex-1 flex flex-col justify-center gap-3 px-5">
         {tool === 'blemish' &&
           sliderRow('筆刷', brush.blemish, BRUSH_RANGE.blemish[0], BRUSH_RANGE.blemish[1], (v) => setBrush(b => ({ ...b, blemish: v })))}
+        {tool === 'patch' &&
+          sliderRow('筆刷', brush.patch, BRUSH_RANGE.patch[0], BRUSH_RANGE.patch[1], (v) => setBrush(b => ({ ...b, patch: v })))}
         {tool === 'wrinkle' && (
           <>
             {sliderRow('筆刷', brush.wrinkle, BRUSH_RANGE.wrinkle[0], BRUSH_RANGE.wrinkle[1], (v) => setBrush(b => ({ ...b, wrinkle: v })))}

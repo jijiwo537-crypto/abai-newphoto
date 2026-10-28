@@ -58,3 +58,11 @@ export function revokeUrl(s: string | null | undefined): void {
 export function revokeUrls(list: (string | null | undefined)[] | null | undefined): void {
   if (list) list.forEach(revokeUrl);
 }
+
+/** 過一段時間再回收這些網址。計時器寫在這裡（模組層），不要寫在元件裡：
+ *  元件裡的箭頭函式會連著整個元件的變數環境一起被計時器抓住 —— 修圖頁離開後，
+ *  那 15 秒內上百 MB 的像素緩衝都收不掉，這時馬上開別的工具，手機記憶體就疊加爆掉。 */
+export function revokeUrlsLater(list: (string | null | undefined)[] | null | undefined, ms: number): void {
+  const keep = list ? list.slice() : null;
+  setTimeout(() => revokeUrls(keep), ms);
+}
