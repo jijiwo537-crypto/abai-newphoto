@@ -187,7 +187,7 @@ export const makeToneStage = (p: ToneParams, reuseTone?: Float32Array | null, no
   const peak = wbPeak * Math.pow(2, ev);
   const b = (p.brightness || 0) / 100, c = (p.contrast || 0) / 100;
   const s = noSH ? 0 : (p.shadows || 0) / 100, h = noSH ? 0 : (p.highlights || 0) / 100;
-  const wh = (p.whites || 0) / 100, bk = (p.blacks || 0) / 100;
+  const wh = (p.whites || 0) / 100, bk = -(p.blacks || 0) / 100; // 黑色：滑桿往右＝黑的更深、往左＝變淡（跟 Lightroom 相反，照主人的手感）
   let tone: Float32Array | null = null;
   if (reuseTone !== undefined) tone = reuseTone;
   else if (b || c || s || h || wh || bk) {
