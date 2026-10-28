@@ -315,3 +315,56 @@ export function strokeContours(pts: number[], r: number, step: number): number[]
   }
   return out;
 }
+
+/* ── 覆蓋率（距離場）──────────────────────────────────────────
+ * 修補的範圍＝筆觸路徑往外 r 的膠囊聯集，邊緣用 smoothstep 羽化（跟 stampAlpha 同一條曲線）。
+ * 先算一次「每個像素離路徑多遠 ÷ r」，之後調羽化只是查表重寫覆蓋率（不用整條筆觸重蓋一次），
+ * 拉羽化滑桿才順。移動目標＝整塊平移，距離場直接搬過去用。 */
+export type HealField = { x: number; y: number; w: number; h: number; t: Float32Array };
+export function healField(pts: number[], r: number, W: number, H: number): HealField | null {
+  const n = pts.length / 2;
+  if (!n || r <= 0) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < n; i++) { const x = pts[i * 2], y = pts[i * 2 + 1]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  const fx = Math.max(0, Math.floor(x0 - r - 1)), fy = Math.max(0, Math.floor(y0 - r - 1));
+  const fw = Math.min(W, Math.ceil(x1 + r + 2)) - fx, fh = Math.min(H, Math.ceil(y1 + r + 2)) - fy;
+  if (fw <= 0 || fh <= 0) return null;
+  const t = new Float32Array(fw * fh).fill(2);
+  const R2 = r * r;
+  // 每一段只掃它自己的外框，取最小距離
+  const seg = (ax: number, ay: number, bx: number, by: number) => {
+    const sx0 = Math.max(fx, Math.floor(Math.min(ax, bx) - r)), sx1 = Math.min(fx + fw - 1, Math.ceil(Math.max(ax, bx) + r));
+    const sy0 = Math.max(fy, Math.floor(Math.min(ay, by) - r)), sy1 = Math.min(fy + fh - 1, Math.ceil(Math.max(ay, by) + r));
+    const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy;
+    for (let y = sy0; y <= sy1; y++) for (let x = sx0; x <= sx1; x++) {
+      let u = l2 > 0 ? ((x - ax) * vx + (y - ay) * vy) / l2 : 0; u = u < 0 ? 0 : u > 1 ? 1 : u;
+      const dx = x - ax - vx * u, dy = y - ay - vy * u, d2 = dx * dx + dy * dy;
+      if (d2 >= R2) continue;
+      const i = (y - fy) * fw + (x - fx), v = Math.sqrt(d2) / r;
+      if (v < t[i]) t[i] = v;
+    }
+  };
+  if (n === 1) seg(pts[0], pts[1], pts[0], pts[1]);
+  else for (let i = 0; i + 1 < n; i++) seg(pts[i * 2], pts[i * 2 + 1], pts[i * 2 + 2], pts[i * 2 + 3]);
+  return { x: fx, y: fy, w: fw, h: fh, t };
+}
+/** 把距離場（平移 ox, oy）寫成覆蓋率。hard＝邊緣硬度 0–100（100 − 羽化）。回傳寫到的範圍 */
+export function fieldAlpha(alpha: Float32Array, W: number, H: number, f: HealField, hard: number, ox = 0, oy = 0): HealRect | null {
+  const inner = Math.max(0, Math.min(0.97, hard / 100));
+  const x0 = Math.max(0, f.x + ox), y0 = Math.max(0, f.y + oy);
+  const x1 = Math.min(W, f.x + ox + f.w), y1 = Math.min(H, f.y + oy + f.h);
+  if (x1 <= x0 || y1 <= y0) return null;
+  for (let y = y0; y < y1; y++) {
+    const row = (y - oy - f.y) * f.w - f.x - ox;
+    for (let x = x0; x < x1; x++) {
+      const t = f.t[row + x];
+      let a = 0;
+      if (t < 1) {
+        if (t <= inner) a = 1;
+        else { const u = (t - inner) / (1 - inner); a = 1 - u * u * (3 - 2 * u); }
+      }
+      alpha[y * W + x] = a;
+    }
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}

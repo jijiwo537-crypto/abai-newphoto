@@ -1084,7 +1084,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         {/* pb-0 to lower viewfinder frame */}
         <div className="w-full h-full flex items-end justify-center pb-0" ref={containerRef}>
           <div 
-            className="relative rounded-camera overflow-hidden bg-zinc-900 shadow-2xl flex items-center justify-center border border-white/5 transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]"
+            className="relative rounded-camera overflow-hidden bg-black flex items-center justify-center transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]"
             style={{ ...getFrameStyle(), touchAction: 'none' }}
             onPointerDown={onFramePointerDown}
             onPointerMove={onFramePointerMove}

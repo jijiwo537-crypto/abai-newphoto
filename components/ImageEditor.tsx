@@ -1121,9 +1121,9 @@ function putThumb(store: ThumbStore, id: string, src: HTMLCanvasElement, sig = '
  * 大半就是這個。createImageBitmap 是同一瞬間的完整快照（之後 src 被下一格覆蓋也不影響），
  * 非同步交付，交付後一次蓋進倉庫的畫布，所以顯示端一樣只會拿到完整的一幀。
  */
-function putThumbAsync(store: ThumbStore, id: string, src: HTMLCanvasElement, onReady: () => void): void {
+function putThumbAsync(store: ThumbStore, id: string, src: HTMLCanvasElement, onReady: () => void, sig = ''): void {
   if (!src.width || !src.height) return;
-  if (typeof createImageBitmap !== 'function') { putThumb(store, id, src); onReady(); return; }
+  if (typeof createImageBitmap !== 'function') { putThumb(store, id, src, sig); onReady(); return; }
   let e = store.current[id];
   if (!e) e = store.current[id] = { cvs: document.createElement('canvas'), v: 0, sig: '' };
   const entry = e, token = (entry.pending = (entry.pending || 0) + 1);
@@ -1134,7 +1134,7 @@ function putThumbAsync(store: ThumbStore, id: string, src: HTMLCanvasElement, on
     const g = c.getContext('2d')!;
     g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'copy';
     g.drawImage(bmp, 0, 0); g.restore(); bmp.close();
-    entry.pixels = undefined; entry.v++;
+    entry.pixels = undefined; entry.sig = sig; entry.v++;
     onReady();
   }).catch(() => { if (entry.pending === token) { putThumb(store, id, src); onReady(); } });
 }
@@ -3958,7 +3958,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const repaintThumbs = useCallback(() => { thumbPainters.current.forEach(f => f()); }, []);
   /* 批量編輯時每一張照片的縮圖各留一份，來回切換就不用重算（切回去是瞬間的）。
      只留最近幾張，記憶體才不會一直長大。 */
-  const THUMB_CACHE_SRCS = 3;
+  /* 多圖編輯時每一張都留（一張兩排約 8MB），最多 8 張 */
+  const THUMB_CACHE_SRCS = 8;
   const thumbSrcsRef = useRef<string[]>([]);
   /** 倉庫的鍵。分隔符用空格：按鈕 id 跟照片的 URL 都不可能有空格 */
   const THUMB_SEP = ' ';
@@ -4003,162 +4004,159 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(b.original || b.source!), b.w, b.h), 0, 0);
     return c;
   };
-  const thumbSigRef = useRef('');
-  useEffect(() => {
-    if (activeCategory !== 'filter') return;
-    let cancelled = false;
-    // 還沒有這張照片的縮圖時不等（那正是「整排都還是上一張」的那一刻），
-    // 已經對得上了才用防抖，拖滑桿時就不會一直重算。
-    const fresh = thumbSigRef.current.split('|')[0] !== thumbSrcOf(buffersSrcRef.current);
-    const t = afterPaint(() => {
-      const b = buffers.current.preview;
-      if (!b || !b.source || !b.w || !b.h) return;
-      // 這一批縮圖是為了哪一組「照片 + 調整」算的
-      // 每一格共通的部分（照片 + 調整）；每一顆濾鏡再各自加上「檔案載到了沒」
-      /* 縮圖固定畫「原圖套上這顆濾鏡」的樣子，不跟著目前的編輯走 ——
-         每動一次滑桿就把整排重算一次太浪費，而且比較不出這顆濾鏡本身的樣子。 */
-      /* 簽章只有「哪一張原圖」：尺寸、構圖、調整都不算，那些變了縮圖也不用重畫 */
-      const baseSig = thumbSrcOf(buffersSrcRef.current);
-      const sig = baseSig + '|' + lutList.map(l => (l.url && lutDataRef.current[l.id]) ? 1 : 0).join('');
-      if (sig === thumbSigRef.current) return;
-      const forSrc = thumbSrcOf(buffersSrcRef.current);
-      noteThumbSrc(forSrc);
-
-      const W = THUMB_W, H = THUMB_H;
-      const src = thumbBaseCanvas(b);
-      const small = document.createElement('canvas');
-      small.width = W; small.height = H;
-      const sctx = small.getContext('2d', { willReadFrequently: true })!;
-      sctx.imageSmoothingQuality = 'high';
-      // 置中裁切成縮圖的比例，才不會變形
-      const scale = Math.max(W / src.width, H / src.height);
-      const dw = src.width * scale, dh = src.height * scale;
-      sctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
-      const thumbSrc = sctx.getImageData(0, 0, W, H).data;
-
-      const flat = DEFAULT_PARAMS;          // 一律用預設參數（＝原圖）
-      const baseLut = new Uint8Array(256);
-      generateBaseCorrectionLut(flat.exposure, flat.contrast, flat.brightness, baseLut);
-      const curveLuts = {
-        rgb: generateCurveLut(flat.curves.rgb), r: generateCurveLut(flat.curves.r),
-        g: generateCurveLut(flat.curves.g), b: generateCurveLut(flat.curves.b),
-      };
-      const cvs = document.createElement('canvas');
-      cvs.width = W; cvs.height = H;
-      const cctx = cvs.getContext('2d')!;
-
-      runThumbChunks(
-        lutList,
-        (lut: { id: string; name: string; url: string }) => {
-          const data = lut.url ? lutDataRef.current[lut.id] : null;
-          if (lut.url && !data) return false;    // 濾鏡檔還沒下載完，等下一輪
-          const key = thumbKey(forSrc, lut.id);
-          const itemSig = baseSig + '|' + lut.id;
-          /* 縮圖要照這顆濾鏡「按下去之後真正套用的強度」畫。
-             以前一律用 100%，但有 13 顆的預設強度是 50／70／80，
-             縮圖看起來就比實際套上去的濃 —— 這就是「縮圖跟濾鏡對不上」。 */
-          const amount = lut.url ? (LUT_DEFAULT_AMOUNT[lut.id] ?? 100) : 100;
-          // 背景預載每載好一顆就會再跑一輪，這裡跳過已經是最新的那些格子，
-          // 才不會為了補一格把整排重算一次
-          if (filterThumbStore.current[key]?.sig === itemSig) return false;
-          /* 先以完整原圖填滿；即使某個濾鏡資料異常，也不可能留下未寫入的彩色區塊。 */
-          const dst = new Uint8ClampedArray(thumbSrc);
-          try {
-            processPixels(thumbSrc, dst, W, H,
-              { ...flat, lutAmount: amount }, data ? data.data : null, data ? data.size : 0,
-              baseLut, null, false, curveLuts);
-          } catch { return false; }
-          cctx.putImageData(new ImageData(dst, W, H), 0, 0);
-          putThumb(filterThumbStore, key, cvs, itemSig);
-          return true;
-        },
-        repaintThumbs,
-        () => cancelled,
-        () => { thumbSigRef.current = sig; },
-      );
-    }, fresh ? 0 : 300);
-    return () => { cancelled = true; t(); };
-  }, [activeCategory, lutList, previewAspect, loadingLutId, activeSrc, buffersTick, lutReadyTick]);
-
-  /* 特效縮圖：跟濾鏡那排同一套 —— 先把目前的預覽縮成小圖，
-     再分別套上每一個特效的預設效果。GLSL 那些直接走 applyGlEffects，
-     原本就有的柔光／光暈／漏光／模糊／噪點則走 applyComplexEffects。 */
+  /* ── 濾鏡／特效按鈕的縮圖 ──────────────────────────────────────────
+     以前是「點進濾鏡／特效頁才開始算」，而且換一張照片特效那排就整排重算，
+     所以每次點進去、每次換照片，縮圖都要等一下才出來。
+     現在：照片一載好就在背景（閒著的時候、一格一格讓出主執行緒）把這張的兩排都算好，
+     接著把多圖編輯裡其他照片的也算好。每一格各自記得「是哪張原圖、哪一顆」算的，
+     算過的永遠不重算 —— 點進去、換照片，縮圖都已經在了。 */
   /** 「還沒算到這一格」時先頂著的底圖（沒有套任何特效的樣子）的鍵 */
   const FX_THUMB_BASE = '__base';
   /* applyComplexEffects 宣告在後面，用 ref 取用（它每次 render 都會更新） */
   const applyComplexEffectsRef = useRef<any>(() => {});
-  const fxThumbSigRef = useRef('');
-  useEffect(() => {
-    if (activeCategory !== 'effects') return;
-    let cancelled = false;
-    const fresh = fxThumbSigRef.current.split('|')[0] !== thumbSrcOf(buffersSrcRef.current);
-    const t = afterPaint(() => {
-      const b = buffers.current.preview;
-      if (!b || !b.source || !b.w || !b.h) return;
-      /* 簽章只放真的會改變縮圖的東西：縮圖畫的是原圖＋特效，跟目前選哪顆濾鏡無關
-         （只有 f22／f23 會改模糊的預設值）。以前放了濾鏡編號，合併濾鏡後編號歸零，
-         整排特效縮圖就在背景全部重算一次 —— 那段期間點什麼都要排隊，縮圖列也會閃一下。 */
-      /* 簽章只有「哪一張原圖」：縮圖畫的是原圖＋特效的預設樣子，跟目前選哪顆濾鏡、套了什麼都無關 */
-      const sig = thumbSrcOf(buffersSrcRef.current);
-      if (sig === fxThumbSigRef.current) return;
-      const forSrc = thumbSrcOf(buffersSrcRef.current);
-      noteThumbSrc(forSrc);
-
-      const W = THUMB_W, H = THUMB_H;
-      const src = thumbBaseCanvas(b);
-
-      // 底圖固定是原圖：不套濾鏡也不套調整
-      const flat = DEFAULT_PARAMS;
-      const baseLut = new Uint8Array(256);
-      generateBaseCorrectionLut(flat.exposure, flat.contrast, flat.brightness, baseLut);
-      const curveLuts = {
-        rgb: generateCurveLut(flat.curves.rgb), r: generateCurveLut(flat.curves.r),
-        g: generateCurveLut(flat.curves.g), b: generateCurveLut(flat.curves.b),
-      };
-
-      const small = document.createElement('canvas');
-      small.width = W; small.height = H;
-      const sctx = small.getContext('2d', { willReadFrequently: true })!;
-      sctx.imageSmoothingQuality = 'high';
-      const scale = Math.max(W / src.width, H / src.height);
-      const dw = src.width * scale, dh = src.height * scale;
-      sctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
-      const thumbSrc = sctx.getImageData(0, 0, W, H).data;
-      const baseData = new Uint8ClampedArray(thumbSrc.length);
-      try {
-        processPixels(thumbSrc, baseData, W, H,
-          { ...flat, ...NO_EFFECT_PARAMS } as EditorParams, null, 0,
-          baseLut, null, false, curveLuts);
-      } catch { return; }
-
-      const cvs = document.createElement('canvas');
-      cvs.width = W; cvs.height = H;
-      const cctx = cvs.getContext('2d', { willReadFrequently: true })!;
-      // 先把「沒套任何特效」的底圖收進倉庫 —— 還沒輪到的格子先用它頂著，
-      // 一進特效分頁整排就有東西可看，不會是一排空格。
+  /** 把一張圖置中裁切縮成縮圖大小，回傳像素 */
+  const thumbPixelsFrom = (src: CanvasImageSource, sw: number, sh: number) => {
+    const W = THUMB_W, H = THUMB_H;
+    const small = document.createElement('canvas');
+    small.width = W; small.height = H;
+    const sctx = small.getContext('2d', { willReadFrequently: true })!;
+    sctx.imageSmoothingQuality = 'high';
+    const scale = Math.max(W / sw, H / sh);
+    const dw = sw * scale, dh = sh * scale;
+    sctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    return sctx.getImageData(0, 0, W, H).data;
+  };
+  const flatThumbTables = () => {
+    const flat = DEFAULT_PARAMS;
+    const baseLut = new Uint8Array(256);
+    generateBaseCorrectionLut(flat.exposure, flat.contrast, flat.brightness, baseLut);
+    const curveLuts = {
+      rgb: generateCurveLut(flat.curves.rgb), r: generateCurveLut(flat.curves.r),
+      g: generateCurveLut(flat.curves.g), b: generateCurveLut(flat.curves.b),
+    };
+    return { flat, baseLut, curveLuts };
+  };
+  /** 這張原圖的濾鏡那排還缺幾格（濾鏡檔還沒下載的不算缺） */
+  const filterThumbsMissing = (forSrc: string) => lutList.some(l => (!l.url || lutDataRef.current[l.id])
+    && filterThumbStore.current[thumbKey(forSrc, l.id)]?.sig !== forSrc + '|' + l.id);
+  const fxThumbsMissing = (forSrc: string) => EFFECT_TOOLS.some(t => fxThumbStore.current[thumbKey(forSrc, t.id)]?.sig !== forSrc + '|' + t.id);
+  /** 算一張原圖的濾鏡那排（已經算過的格子跳過） */
+  const buildFilterThumbs = (forSrc: string, thumbSrc: Uint8ClampedArray, cancelled: () => boolean, done: () => void) => {
+    const W = THUMB_W, H = THUMB_H;
+    const { flat, baseLut, curveLuts } = flatThumbTables();
+    const cvs = document.createElement('canvas');
+    cvs.width = W; cvs.height = H;
+    const cctx = cvs.getContext('2d')!;
+    runThumbChunks(
+      lutList,
+      (lut: { id: string; name: string; url: string }) => {
+        const data = lut.url ? lutDataRef.current[lut.id] : null;
+        if (lut.url && !data) return false;    // 濾鏡檔還沒下載完，等下一輪
+        const key = thumbKey(forSrc, lut.id);
+        const itemSig = forSrc + '|' + lut.id;
+        if (filterThumbStore.current[key]?.sig === itemSig) return false;
+        /* 縮圖要照這顆濾鏡「按下去之後真正套用的強度」畫 */
+        const amount = lut.url ? (LUT_DEFAULT_AMOUNT[lut.id] ?? 100) : 100;
+        const dst = new Uint8ClampedArray(thumbSrc);
+        try {
+          processPixels(thumbSrc, dst, W, H,
+            { ...flat, lutAmount: amount }, data ? data.data : null, data ? data.size : 0,
+            baseLut, null, false, curveLuts);
+        } catch { return false; }
+        cctx.putImageData(new ImageData(dst, W, H), 0, 0);
+        putThumb(filterThumbStore, key, cvs, itemSig);
+        return true;
+      },
+      repaintThumbs, cancelled, done,
+    );
+  };
+  /** 算一張原圖的特效那排（已經算過的格子跳過） */
+  const buildFxThumbs = (forSrc: string, thumbSrc: Uint8ClampedArray, cancelled: () => boolean, done: () => void) => {
+    const W = THUMB_W, H = THUMB_H;
+    const { flat, baseLut, curveLuts } = flatThumbTables();
+    const baseData = new Uint8ClampedArray(thumbSrc.length);
+    try {
+      processPixels(thumbSrc, baseData, W, H, { ...flat, ...NO_EFFECT_PARAMS } as EditorParams, null, 0, baseLut, null, false, curveLuts);
+    } catch { done(); return; }
+    const cvs = document.createElement('canvas');
+    cvs.width = W; cvs.height = H;
+    const cctx = cvs.getContext('2d', { willReadFrequently: true })!;
+    // 先把「沒套任何特效」的底圖收進倉庫 —— 還沒輪到的格子先用它頂著
+    const baseKey = thumbKey(forSrc, FX_THUMB_BASE);
+    if (fxThumbStore.current[baseKey]?.sig !== forSrc + '|base') {
       cctx.putImageData(new ImageData(new Uint8ClampedArray(baseData), W, H), 0, 0);
-      putThumbAsync(fxThumbStore, thumbKey(forSrc, FX_THUMB_BASE), cvs, repaintThumbs);
-
-      runThumbChunks(
-        EFFECT_TOOLS,
-        (tool) => {
-          cctx.putImageData(new ImageData(new Uint8ClampedArray(baseData), W, H), 0, 0);
-          const blurDefault=40;   // 範例固定一種，不跟著目前的濾鏡變（換濾鏡不重畫縮圖）
-          const demo: EditorParams = { ...flat, ...NO_EFFECT_PARAMS, ...effectPreset(tool.id,FX_DEFS,blurDefault) } as EditorParams;
-          try {
-            applyComplexEffectsRef.current(cctx, W, H, demo, Math.max(W, H) / 1080,
-              new Uint8ClampedArray(baseData.length), false, true, baseData);
-          } catch { /* 單一格算不出來就留基底圖 */ }
-          putThumbAsync(fxThumbStore, thumbKey(forSrc, tool.id), cvs, repaintThumbs);
-          return false;   // 交付時自己叫重畫
-        },
-        repaintThumbs,
-        () => cancelled,
-        () => { fxThumbSigRef.current = sig; },
-      );
-    }, fresh ? 0 : 300);
-    return () => { cancelled = true; t(); };
-  }, [activeCategory, lutList, previewAspect, activeSrc, buffersTick]);
+      putThumbAsync(fxThumbStore, baseKey, cvs, repaintThumbs, forSrc + '|base');
+    }
+    runThumbChunks(
+      EFFECT_TOOLS,
+      (tool) => {
+        const key = thumbKey(forSrc, tool.id), itemSig = forSrc + '|' + tool.id;
+        if (fxThumbStore.current[key]?.sig === itemSig) return false;
+        cctx.putImageData(new ImageData(new Uint8ClampedArray(baseData), W, H), 0, 0);
+        const blurDefault = 40;   // 範例固定一種，不跟著目前的濾鏡變
+        const demo: EditorParams = { ...flat, ...NO_EFFECT_PARAMS, ...effectPreset(tool.id,FX_DEFS,blurDefault) } as EditorParams;
+        try {
+          applyComplexEffectsRef.current(cctx, W, H, demo, Math.max(W, H) / 1080,
+            new Uint8ClampedArray(baseData.length), false, true, baseData);
+        } catch { /* 單一格算不出來就留基底圖 */ }
+        putThumbAsync(fxThumbStore, key, cvs, repaintThumbs, itemSig);
+        return false;   // 交付時自己叫重畫
+      },
+      repaintThumbs, cancelled, done,
+    );
+  };
+  /* 背景排程：先這一張（正在看濾鏡／特效頁的那一排優先、而且不等），再其他照片。
+     拖滑桿時整個停下來，放手後接著做。 */
+  const thumbJobRef = useRef(0);
+  useEffect(() => {
+    if (isInteracting) return;
+    const job = ++thumbJobRef.current;
+    const cancelled = () => job !== thumbJobRef.current;
+    const b0 = buffers.current.preview;
+    if (!b0 || !b0.source || !b0.w || !b0.h) return;
+    const cur = thumbSrcOf(buffersSrcRef.current);
+    const order: ('filter' | 'fx')[] = activeCategory === 'effects' ? ['fx', 'filter'] : ['filter', 'fx'];
+    const urgent = (activeCategory === 'filter' && filterThumbsMissing(cur)) || (activeCategory === 'effects' && fxThumbsMissing(cur));
+    const others = srcList.map(thumbSrcOf).filter((u, i, a) => u !== cur && a.indexOf(u) === i);
+    const run = () => {
+      if (cancelled()) return;
+      noteThumbSrc(cur);
+      let pixels: Uint8ClampedArray | null = null;
+      const curPixels = () => {
+        if (!pixels) { const b = buffers.current.preview; const c = thumbBaseCanvas(b); pixels = thumbPixelsFrom(c, c.width, c.height); }
+        return pixels;
+      };
+      const steps: (() => void)[] = [];
+      const next = () => { if (cancelled()) return; const f = steps.shift(); if (f) window.setTimeout(f, 0); };
+      for (const k of order) steps.push(() => {
+        if (thumbSrcOf(buffersSrcRef.current) !== cur) return next();
+        if (k === 'filter') { if (filterThumbsMissing(cur)) buildFilterThumbs(cur, curPixels(), cancelled, next); else next(); }
+        else { if (fxThumbsMissing(cur)) buildFxThumbs(cur, curPixels(), cancelled, next); else next(); }
+      });
+      // 其他照片：解好的圖直接用，沒有就載一次（只用來縮小，不留）
+      for (const u of others) steps.push(() => {
+        if (!filterThumbsMissing(u) && !fxThumbsMissing(u)) return next();
+        const use = (im: HTMLImageElement) => {
+          if (cancelled()) return;
+          const w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
+          if (!w || !h) return next();
+          const px = thumbPixelsFrom(im, w, h);
+          noteThumbSrc(u);
+          buildFilterThumbs(u, px, cancelled, () => buildFxThumbs(u, px, cancelled, next));
+        };
+        const ready = viewedImgRef.current.get(u) || warmImgRef.current.get(u);
+        if (ready && ready.complete && ready.naturalWidth) use(ready);
+        else loadImg(u).then(use).catch(() => next());
+      });
+      next();
+    };
+    // 正在看的那一排缺格子：下一幀就開始；其他的等閒下來（不跟換照片、開分頁搶主執行緒）
+    let idle = 0;
+    const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
+    const cancelT = urgent ? afterPaint(run, 0) : afterPaint(() => { idle = ric ? ric(run, { timeout: 1500 }) : window.setTimeout(run, 200); }, 350);
+    return () => { thumbJobRef.current++; cancelT(); if (idle) { if (ric) (window as any).cancelIdleCallback?.(idle); else clearTimeout(idle); } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCategory, lutList, activeSrc, buffersTick, lutReadyTick, srcList, isInteracting]);
 
   const handleFilterSelect = (idx: number) => {
     releaseFreeze(true);

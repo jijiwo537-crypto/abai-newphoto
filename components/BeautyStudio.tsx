@@ -1,6 +1,6 @@
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { StuckEscape } from './StuckEscape';
-import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { Icon } from './Icon';
@@ -19,7 +19,7 @@ import {
   releaseBuffers,
 } from '../utils/beauty/engine';
 import { inpaintImage, inpaintCrop, cropFor } from '../utils/beauty/inpaint';
-import { findHealSource, applyHeal, alphaBounds, strokeContours, type HealMode, type HealRect } from '../utils/beauty/heal';
+import { findHealSource, applyHeal, alphaBounds, strokeContours, healField, fieldAlpha, type HealMode, type HealRect, type HealField } from '../utils/beauty/heal';
 import { StrokeLayer, STROKE_INNER, wrinkleStrength, smoothStrength, smoothInvalidate, type StrokeKind } from '../utils/beauty/strokeFilter';
 
 // 互動時的運算解析度。全解析度即時運算會爆手機記憶體，所以要縮，
@@ -55,13 +55,13 @@ type BeautyTool = 'blemish' | 'clone' | 'patch' | 'wrinkle' | 'smooth' | 'liquif
 interface ToolDef { id: BeautyTool; label: string; icon: string; }
 const BEAUTY_TOOLS: ToolDef[] = [
   { id: 'blemish', label: '去痘', icon: 'healing' },
-  /* 修補：塗抹要修的地方，自動挑一塊最像的來源蓋上去（修復＝明暗顏色跟著周圍走；仿製＝原封不動複製），
-     放開後拖曳來源框可以自己換一塊 */
-  { id: 'clone',   label: '修補', icon: 'patch_heal' },
   { id: 'wrinkle', label: '去皺', icon: 'waves' },
   { id: 'smooth',  label: '磨皮', icon: 'skin_smooth' },
   { id: 'liquify', label: '液化', icon: 'gesture' },
   { id: 'makeup',  label: '修容', icon: 'brush' },
+  /* 修補（仿製）：塗抹要修的地方，自動挑一塊最像的來源原封不動複製過來；
+     放開後兩個框（目標 A、來源 B）都可以拖 */
+  { id: 'clone',   label: '修補', icon: 'patch_heal' },
   /* 刪除：塗掉不要的東西（痣、雜物、路人、電線…），放開自動用周圍的質感重建（內容感知填補） */
   { id: 'patch',   label: '刪除', icon: 'erase_spot' },
 ];
@@ -218,9 +218,9 @@ function replayOps(
       if (res) { writeRect(base.data, W, res.rect, res.rgba); if (k === 1) patchCache.set(op, res); }
     } else if (op.k === 'clone') {
       if (!alpha) alpha = new Float32Array(W * H); else alpha.fill(0);
-      const u = patchAlpha(alpha, W, H, op.pts.map(v => v * k), op.r * k, op.hard ?? CLONE_HARDNESS);
-      const rect = u && alphaBounds(alpha, W, H, u);
-      if (rect) applyHeal(base.data, base.data, W, H, alpha, rect, op.dx * k, op.dy * k, op.mode || 'heal', op.opacity ?? 1);
+      const f = healField(op.pts.map(v => v * k), op.r * k, W, H);
+      const rect = f && fieldAlpha(alpha, W, H, f, op.hard ?? CLONE_HARDNESS);
+      if (rect) applyHeal(base.data, base.data, W, H, alpha, rect, op.dx * k, op.dy * k, op.mode || 'clone', op.opacity ?? 1);
     } else if (op.k === 'liquify') {
       for (let j = 0; j < op.pts.length; j += 4) {
         liquifyDab(field, op.pts[j] * k, op.pts[j + 1] * k, op.pts[j + 2] * k, op.pts[j + 3] * k,
@@ -356,7 +356,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const brushRadius = useCallback(() => {
     const s = sessionRef.current;
     if (!s) return 10;
-    return Math.max(3, (cfg.current.brush[cfg.current.tool] || 20) * (s.W / BRUSH_REF_WIDTH));
+    // 修補的筆刷大小固定（60），不給調
+    const size = cfg.current.tool === 'clone' ? DEFAULT_BRUSH.clone : (cfg.current.brush[cfg.current.tool] || 20);
+    return Math.max(3, size * (s.W / BRUSH_REF_WIDTH));
   }, []);
 
   const render = useCallback((rect?: Rect | null) => {
@@ -570,7 +572,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   /* ── 修補：最後一筆的來源可以拖 ────────────────────────────
      src／alpha 直接借用筆刷的暫存區（這一筆之前的整張圖、這一筆的覆蓋率），不另外複製；
      下一筆一開始、復原／重做、換工具，就結束（暫存區要被蓋掉了）。 */
-  const healRef = useRef<{ op: CloneOp; src: Uint8ClampedArray; alpha: Float32Array; rect: HealRect; out: Rect } | null>(null);
+  /** field：這一筆的距離場（以最初的筆觸位置算），ox/oy：目標被拖了多少（距離場整塊平移） */
+  const healRef = useRef<{ op: CloneOp; src: Uint8ClampedArray; alpha: Float32Array; field: HealField; pts0: number[]; ox: number; oy: number; rect: HealRect; out: Rect } | null>(null);
   const [healEdit, setHealEdit] = useState<{ pts: number[]; r: number; dx: number; dy: number } | null>(null);
   const endHealEdit = useCallback(() => {
     if (!healRef.current) return;
@@ -598,6 +601,17 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     const lines = strokeContours(healEdit.pts, healEdit.r, Math.max(0.75, healEdit.r / 14));
     return lines.map(l => 'M' + l.map((v, i) => (i % 2 ? ' ' : i ? ' L' : '') + v.toFixed(1)).join('') + 'Z').join(' ');
   }, [healEdit?.pts, healEdit?.r]);
+  /* 兩個框放在縮放層外面：每次畫面更新（縮放、平移、換尺寸）後，照片布在舞台上的位置算成一個矩陣套上去 */
+  const healRootRef = useRef<SVGGElement | null>(null);
+  useLayoutEffect(() => {
+    const g = healRootRef.current, v = viewRef.current, st = stageRef.current, s = sessionRef.current;
+    if (!g || !v || !st || !s) return;
+    const vr = v.getBoundingClientRect(), sr = st.getBoundingClientRect();
+    const k = vr.width / s.W, k2 = vr.height / s.H;
+    g.setAttribute('transform', `matrix(${k} 0 0 ${k2} ${vr.left - sr.left} ${vr.top - sr.top})`);
+    // 拖動中改過的位移，換成新的 healEdit 之後歸零（新的輪廓已經在新位置）
+    if (!srcDragRef.current) healDstGRef.current?.setAttribute('transform', 'translate(0 0)');
+  });
 
   const ensureStrokeBuffers = useCallback((needAlpha: boolean) => {
     const s = sessionRef.current!;
@@ -732,14 +746,15 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     }
     if (gestureLockRef.current) return;
 
-    /* 修補：按在來源框上＝拖來源，不是畫新的一筆 */
+    /* 修補：按在 A 或 B 框上＝拖它，不是畫新的一筆 */
     if (cfg.current.tool === 'clone' && healRef.current) {
       const p0 = localPoint(e);
       const [bx, by] = toBase(p0.x, p0.y);
-      if (hitHealSource(bx, by)) {
+      const kind = hitHeal(bx, by);
+      if (kind) {
         try { (e.currentTarget as HTMLCanvasElement).setPointerCapture?.(e.pointerId); } catch (err) { /* noop */ }
         const h = healRef.current;
-        srcDragRef.current = { id: e.pointerId, x: bx, y: by, dx0: h.op.dx, dy0: h.op.dy };
+        srcDragRef.current = { id: e.pointerId, kind, x: bx, y: by, dx0: h.op.dx, dy0: h.op.dy, ox0: h.ox, oy0: h.oy };
         setSrcDragging(true);
         drawRing(null);
         e.preventDefault();
@@ -822,7 +837,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       if (e.pointerId !== sd.id) return;
       const p0 = localPoint(e);
       const [bx, by] = toBase(p0.x, p0.y);
-      moveHealSource(sd.dx0 + bx - sd.x, sd.dy0 + by - sd.y);
+      moveHeal(bx - sd.x, by - sd.y);
       e.preventDefault();
       return;
     }
@@ -926,94 +941,113 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     }
   }, [pushOp, renderPixelRect, restore, snapFrom]);
 
-  /* ── 修補 ─────────────────────────────────────────────
-     放開手指：自動找一塊最像的來源（比的是範圍外那一圈，見 utils/beauty/heal），馬上蓋上去，記成一步。
-     之後畫面上會留著「目標框＋來源框」，拖曳來源框可以自己換一塊，邊拖邊看結果。 */
+  /* ── 修補（仿製）─────────────────────────────────────────
+     放開手指：自動找一塊最像的來源（比的是範圍外那一圈，見 utils/beauty/heal），原封不動複製過來，記成一步。
+     之後畫面上留著兩個框：目標（實線，A）與來源（虛線，B），兩個都可以拖，邊拖邊看結果。
+     覆蓋率用距離場算（一次），之後拖動、調羽化都只是查表重寫，一點都不卡。 */
   const runClone = useCallback((pts: number[], R: number, union: Rect, src: Uint8ClampedArray, alpha: Float32Array) => {
     const s = sessionRef.current;
     if (!s) return;
     restore(union, snapFrom(src, union));          // 先把白色提示收掉
-    const rect = alphaBounds(alpha, s.W, s.H, union);
+    const field = healField(pts, R, s.W, s.H);
+    for (let y = union.y; y < union.y + union.h; y++) alpha.fill(0, y * s.W + union.x, y * s.W + union.x + union.w);
+    const hard = 100 - cfg.current.healFeather;
+    const rect = field && fieldAlpha(alpha, s.W, s.H, field, hard);
     const found = rect && findHealSource(src, s.W, s.H, alpha, rect);
-    if (!rect || !found) { renderPixelRect(union); return; }
-    const op: CloneOp = { k: 'clone', pts, r: R, dx: found.dx, dy: found.dy, mode: 'heal', hard: 100 - cfg.current.healFeather, opacity: cfg.current.healOpacity / 100 };
-    const out = applyHeal(src, s.base.data, s.W, s.H, alpha, rect, op.dx, op.dy, op.mode, op.opacity) || rect;
+    if (!field || !rect || !found) { renderPixelRect(union); return; }
+    const op: CloneOp = { k: 'clone', pts, r: R, dx: found.dx, dy: found.dy, mode: 'clone', hard, opacity: cfg.current.healOpacity / 100 };
+    const out = applyHeal(src, s.base.data, s.W, s.H, alpha, rect, op.dx, op.dy, 'clone', op.opacity) || rect;
     pushOp(op);
     renderPixelRect(unionRect(union, out));
-    healRef.current = { op, src, alpha, rect, out };
+    healRef.current = { op, src, alpha, field, pts0: pts.slice(), ox: 0, oy: 0, rect, out };
+    healEditOxRef.current = 0; healEditOyRef.current = 0;
     setHealEdit({ pts, r: R, dx: op.dx, dy: op.dy });
   }, [pushOp, renderPixelRect, restore, snapFrom]);
-  /** 重新套一次這一處修補（拖了來源、調了羽化／透明度）。先把上一次改過的範圍還原成修補前，再重新蓋 */
-  const reapplyHeal = useCallback((reAlpha = false) => {
+  /** 重新套一次這一處修補：上一次改過的範圍先還原成修補前，覆蓋率照現在的羽化／位置重寫，再蓋一次 */
+  const reapplyHeal = useCallback(() => {
     const h = healRef.current, s = sessionRef.current;
     if (!h || !s) return;
     const prev = h.out;
     for (let y = prev.y; y < prev.y + prev.h; y++) {
       const o = (y * s.W + prev.x) * 4;
       s.base.data.set(h.src.subarray(o, o + prev.w * 4), o);
+      h.alpha.fill(0, y * s.W + prev.x, y * s.W + prev.x + prev.w);
     }
-    if (reAlpha) {
-      // 羽化變了：覆蓋率重算（半徑不變，只是邊緣軟硬）
-      for (let y = h.rect.y; y < h.rect.y + h.rect.h; y++) h.alpha.fill(0, y * s.W + h.rect.x, y * s.W + h.rect.x + h.rect.w);
-      const u = patchAlpha(h.alpha, s.W, s.H, h.op.pts, h.op.r, h.op.hard ?? CLONE_HARDNESS);
-      const rect = u && alphaBounds(h.alpha, s.W, s.H, u);
-      if (rect) h.rect = rect;
-    }
-    const out = applyHeal(h.src, s.base.data, s.W, s.H, h.alpha, h.rect, h.op.dx, h.op.dy, 'heal', h.op.opacity ?? 1) || h.rect;
+    const rect = fieldAlpha(h.alpha, s.W, s.H, h.field, h.op.hard ?? CLONE_HARDNESS, h.ox, h.oy);
+    if (!rect) { renderPixelRect(prev); return; }
+    h.rect = rect;
+    const out = applyHeal(h.src, s.base.data, s.W, s.H, h.alpha, rect, h.op.dx, h.op.dy, 'clone', h.op.opacity ?? 1) || rect;
     h.out = out;
     renderPixelRect(unionRect(prev, out));
   }, [renderPixelRect]);
+  /** 一格只重算一次：滑桿、拖動一秒送上百個事件，全部併成下一幀那一次 */
+  const healRafRef = useRef(0);
+  const scheduleHeal = () => {
+    if (!healRafRef.current) healRafRef.current = requestAnimationFrame(() => { healRafRef.current = 0; reapplyHeal(); });
+  };
   /** 羽化／透明度：有一處正在修補時直接改它（邊拉邊看），沒有的話就是下一筆的設定 */
   const setHealFeatherLive = (v: number) => {
     setHealFeather(v);
     const h = healRef.current;
-    if (h) { h.op.hard = 100 - v; reapplyHeal(true); }
+    if (h) { h.op.hard = 100 - v; scheduleHeal(); }
   };
   const setHealOpacityLive = (v: number) => {
     setHealOpacity(v);
     const h = healRef.current;
-    if (h) { h.op.opacity = v / 100; reapplyHeal(); }
+    if (h) { h.op.opacity = v / 100; scheduleHeal(); }
   };
 
-  /* ── 拖曳修補的來源 ───────────────────────────────── */
-  const srcDragRef = useRef<{ id: number; x: number; y: number; dx0: number; dy0: number } | null>(null);
+  /* ── 拖曳 A（目標）／B（來源）───────────────────────── */
+  const srcDragRef = useRef<{ id: number; kind: 'src' | 'dst'; x: number; y: number; dx0: number; dy0: number; ox0: number; oy0: number } | null>(null);
   const [srcDragging, setSrcDragging] = useState(false);
   const healSrcGRef = useRef<SVGGElement | null>(null);
-  const healLineRef = useRef<SVGLineElement | null>(null);
-  const healKnobRef = useRef<SVGGElement | null>(null);
-  const healRafRef = useRef(0);
-  /** (x, y) 是不是按在來源框上（筆觸外擴一點點，手指比較好抓），或來源中心那顆把手上 */
-  const hitHealSource = (x: number, y: number) => {
+  const healDstGRef = useRef<SVGGElement | null>(null);
+  /** (x, y) 按在哪一個框上（筆觸外擴一點點，手指比較好抓）。兩個疊在一起時算來源 */
+  const hitHeal = (x: number, y: number): 'src' | 'dst' | null => {
     const h = healRef.current, s = sessionRef.current;
-    if (!h || !s) return false;
+    if (!h || !s) return null;
     const view = viewRef.current;
     const px = view ? s.W / Math.max(1, view.getBoundingClientRect().width) : 1;   // 一個螢幕像素＝幾個工作像素
-    const slop = Math.max(h.op.r * 0.35, 14 * px);
-    const qx = x - h.op.dx, qy = y - h.op.dy;
-    const c = healCentroid(h.op.pts);
-    const len = Math.max(1, Math.hypot(h.op.dx, h.op.dy)), off = h.op.r + 16 * px;
-    if (Math.hypot(qx - c.x - h.op.dx / len * off, qy - c.y - h.op.dy / len * off) <= 22 * px) return true;
-    if (Math.hypot(qx - c.x, qy - c.y) <= 22 * px) return true;
-    for (let j = 0; j < h.op.pts.length; j += 2) if (Math.hypot(qx - h.op.pts[j], qy - h.op.pts[j + 1]) <= h.op.r + slop) return true;
-    return false;
+    const reach = h.op.r + Math.max(h.op.r * 0.25, 12 * px);
+    const near = (qx: number, qy: number) => {
+      for (let j = 0; j < h.op.pts.length; j += 2) if (Math.hypot(qx - h.op.pts[j], qy - h.op.pts[j + 1]) <= reach) return true;
+      return false;
+    };
+    if (near(x - h.op.dx, y - h.op.dy)) return 'src';
+    if (near(x, y)) return 'dst';
+    return null;
   };
-  /** 把來源移到 (dx, dy)：整塊都要留在照片裡、不能壓到目標本身。畫面的框直接改屬性，像素下一格才重算 */
-  const moveHealSource = (dx: number, dy: number) => {
-    const h = healRef.current, s = sessionRef.current;
-    if (!h || !s) return;
-    const r = h.rect;
-    dx = Math.round(clamp(dx, -r.x, s.W - (r.x + r.w)));
-    dy = Math.round(clamp(dy, -r.y, s.H - (r.y + r.h)));
-    // 跟目標重疊太多就停在原地（搬一塊「自己」來蓋自己沒有意義）
-    if (Math.abs(dx) < r.w * 0.35 && Math.abs(dy) < r.h * 0.35) return;
-    if (dx === h.op.dx && dy === h.op.dy) return;
-    h.op.dx = dx; h.op.dy = dy;
-    healSrcGRef.current?.setAttribute('transform', `translate(${dx} ${dy})`);
-    const c = healCentroid(h.op.pts);
-    healLineRef.current?.setAttribute('x2', String(c.x + dx)); healLineRef.current?.setAttribute('y2', String(c.y + dy));
-    healKnobRef.current?.setAttribute('transform', `translate(${c.x + dx} ${c.y + dy})`);
-    if (!healRafRef.current) healRafRef.current = requestAnimationFrame(() => { healRafRef.current = 0; reapplyHeal(); });
+  /** 拖了 (mx, my)（工作像素）：B 就是換來源；A 是整塊目標搬走、來源留在原地。框直接改屬性，像素下一格才重算 */
+  const moveHeal = (mx: number, my: number) => {
+    const sd = srcDragRef.current, h = healRef.current, s = sessionRef.current;
+    if (!sd || !h || !s) return;
+    const f = h.field;
+    if (sd.kind === 'src') {
+      const r = h.rect;
+      const dx = Math.round(clamp(sd.dx0 + mx, -r.x, s.W - (r.x + r.w)));
+      const dy = Math.round(clamp(sd.dy0 + my, -r.y, s.H - (r.y + r.h)));
+      if (dx === h.op.dx && dy === h.op.dy) return;
+      h.op.dx = dx; h.op.dy = dy;
+    } else {
+      // 目標整塊留在照片裡
+      const ox = Math.round(clamp(sd.ox0 + mx, -f.x, s.W - (f.x + f.w)));
+      const oy = Math.round(clamp(sd.oy0 + my, -f.y, s.H - (f.y + f.h)));
+      // 來源不動（絕對位置），位移跟著反向變；來源也要留在照片裡
+      const ax = ox - sd.ox0, ay = oy - sd.oy0;
+      const dx = sd.dx0 - ax, dy = sd.dy0 - ay;
+      if (f.x + ox + dx < 0 || f.y + oy + dy < 0 || f.x + ox + f.w + dx > s.W || f.y + oy + f.h + dy > s.H) return;
+      if (ox === h.ox && oy === h.oy) return;
+      h.ox = ox; h.oy = oy; h.op.dx = dx; h.op.dy = dy;
+    }
+    const e = healEdit;
+    // 畫面上的框：以 healEdit 那一份筆觸為準的位移
+    const tx = h.ox - (e ? healEditOxRef.current : 0), ty = h.oy - (e ? healEditOyRef.current : 0);
+    healDstGRef.current?.setAttribute('transform', `translate(${tx} ${ty})`);
+    healSrcGRef.current?.setAttribute('transform', `translate(${tx + h.op.dx} ${ty + h.op.dy})`);
+    scheduleHeal();
   };
+  /** healEdit 那一份筆觸對應的目標位移（框的 transform 以它為基準） */
+  const healEditOxRef = useRef(0), healEditOyRef = useRef(0);
   const endSrcDrag = useCallback(() => {
     if (!srcDragRef.current) return;
     srcDragRef.current = null;
@@ -1022,14 +1056,17 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     if (!h) return;
     if (healRafRef.current) { cancelAnimationFrame(healRafRef.current); healRafRef.current = 0; }
     reapplyHeal();
-    setHealEdit(v => v && { ...v, dx: h.op.dx, dy: h.op.dy });
+    // 目標搬過的話，記錄裡的筆觸也一起搬（重播、存檔用的是它）
+    h.op.pts = h.pts0.map((v, i) => v + (i % 2 ? h.oy : h.ox));
+    healEditOxRef.current = h.ox; healEditOyRef.current = h.oy;
+    setHealEdit({ pts: h.op.pts, r: h.op.r, dx: h.op.dx, dy: h.op.dy });
     saveBeautyDraft();
   }, [reapplyHeal, saveBeautyDraft]);
-  /** 雙指進來：來源放回拖之前的位置 */
+  /** 雙指進來：放回拖之前的位置 */
   const cancelSrcDrag = () => {
     const sd = srcDragRef.current, h = healRef.current;
     if (!sd) return;
-    if (h) { moveHealSource(sd.dx0, sd.dy0); h.op.dx = sd.dx0; h.op.dy = sd.dy0; }
+    if (h) { h.op.dx = sd.dx0; h.op.dy = sd.dy0; h.ox = sd.ox0; h.oy = sd.oy0; }
     endSrcDrag();
   };
 
@@ -1523,42 +1560,27 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                 if (e.pointerType === 'mouse' && !paintingRef.current) drawRing(null);
               }}
             />
-            {/* 修補：兩條細白線 —— 目標是實線、來源是虛線（一眼分得出哪個是哪個），中間一條淡淡的連接線，
-                來源外側一顆小把手。拖虛線框或把手可以換一塊 */}
-            {tool === 'clone' && healEdit && sessionRef.current && !showOriginal && (() => {
-              const s = sessionRef.current!;
-              const view = viewRef.current;
-              const px = s.W / Math.max(1, view?.clientWidth || s.W) / Math.max(1, viewT.k);   // 一個螢幕像素＝幾個工作像素
-              const d = healContour;
-              const c = healCentroid(healEdit.pts);
-              const len = Math.max(1, Math.hypot(healEdit.dx, healEdit.dy)), off = healEdit.r + 16 * px;
-              const kx = healEdit.dx / len * off, ky = healEdit.dy / len * off;
-              return (
-                <svg data-heal-overlay className="absolute inset-0 w-full h-full pointer-events-none overflow-visible" viewBox={`0 0 ${s.W} ${s.H}`} preserveAspectRatio="none">
-                  <line ref={healLineRef} x1={c.x} y1={c.y} x2={c.x + healEdit.dx} y2={c.y + healEdit.dy}
-                    stroke="#fff" strokeOpacity={0.55} strokeWidth={1} vectorEffect="non-scaling-stroke" />
-                  <path d={d} fill="none" stroke="#fff" strokeWidth={1.25} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-                  <g ref={healSrcGRef} transform={`translate(${healEdit.dx} ${healEdit.dy})`}>
-                    <path d={d} fill="none" stroke="#fff" strokeWidth={1.25} strokeDasharray="4 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-                  </g>
-                  <g ref={healKnobRef} transform={`translate(${c.x + healEdit.dx} ${c.y + healEdit.dy})`}>
-                    <g transform={`translate(${kx} ${ky})`}>
-                      <circle r={10 * px} fill="rgba(0,0,0,0.35)" stroke="#fff" strokeWidth={1.25} vectorEffect="non-scaling-stroke" />
-                      <g transform={`scale(${px * 0.8})`} fill="#fff">
-                        <path d="M0 -8.5 L3 -5 L-3 -5 Z M0 8.5 L3 5 L-3 5 Z M-8.5 0 L-5 3 L-5 -3 Z M8.5 0 L5 3 L5 -3 Z" />
-                        <circle r={1.6} />
-                      </g>
-                    </g>
-                  </g>
-                </svg>
-              );
-            })()}
           </div>
         </div>
 
 
 
 
+        {/* 修補的兩個框：A（目標）實線、B（來源）虛線，都是一條細白線，兩個都可以拖。
+            畫在縮放層外面（不跟著 CSS 縮放一起被放大），任何倍率下線條都一樣細、一樣清楚 ——
+            以前放在縮放層裡，放大時整層是當成一張圖被拉大的，線就糊了。 */}
+        {tool === 'clone' && healEdit && sessionRef.current && !showOriginal && (
+          <svg data-heal-overlay className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-[5]">
+            <g ref={healRootRef}>
+              <g ref={healDstGRef}>
+                <path d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+              </g>
+              <g ref={healSrcGRef} transform={`translate(${healEdit.dx} ${healEdit.dy})`}>
+                <path d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeDasharray="4 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+              </g>
+            </g>
+          </svg>
+        )}
         {/* 嵌在編輯器裡、還在解析的那一下：先放同一張照片，不要露出一塊黑 */}
         {embedded && isLoading && (
           <div className={`absolute inset-0 flex items-center justify-center pointer-events-none ${fitPad ? 'studio-fit' : 'p-4'}`} style={fitPad || undefined}>
@@ -1570,7 +1592,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         <div data-beauty-heal-tip={tool === 'clone' ? 'on' : 'off'}
           className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none rounded-full bg-black/60 px-3 py-1.5 text-[11px] font-bold text-white whitespace-nowrap"
           style={{ opacity: tool === 'clone' && !srcDragging && !sizingBrush && !patchBusy ? 1 : 0, transition: 'opacity 180ms ease' }}>
-          {healNotice ? '一次修一處・再點一下「修補」修下一處' : healEdit ? '拖曳虛線框換來源・可調羽化與透明度' : '塗抹要修補的地方'}
+          {healNotice ? '一次修一處・再點一下「修補」修下一處' : healEdit ? '拖曳實線框移動目標、虛線框換來源' : '塗抹要修補的地方'}
         </div>
         {/* 刪除計算中：預覽上緣一顆小膠囊（不擋住畫面，算完自己消失） */}
         <div data-beauty-patch-busy={patchBusy ? 'on' : 'off'}
@@ -1639,8 +1661,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         const sliders: [string, number, number, number, (v: number) => void][] =
           tool === 'blemish' ? [['筆刷', brush.blemish, BRUSH_RANGE.blemish[0], BRUSH_RANGE.blemish[1], v => setBrush(b => ({ ...b, blemish: v }))]]
           : tool === 'patch' ? [['筆刷', brush.patch, BRUSH_RANGE.patch[0], BRUSH_RANGE.patch[1], v => setBrush(b => ({ ...b, patch: v }))]]
-          : tool === 'clone' ? [['筆刷', brush.clone, BRUSH_RANGE.clone[0], BRUSH_RANGE.clone[1], v => setBrush(b => ({ ...b, clone: v }))],
-              ['羽化', healFeather, 0, 100, setHealFeatherLive], ['透明度', healOpacity, 0, 100, setHealOpacityLive]]
+          : tool === 'clone' ? [['羽化', healFeather, 0, 100, setHealFeatherLive], ['透明度', healOpacity, 0, 100, setHealOpacityLive]]
           : tool === 'wrinkle' ? [['筆刷', brush.wrinkle, BRUSH_RANGE.wrinkle[0], BRUSH_RANGE.wrinkle[1], v => setBrush(b => ({ ...b, wrinkle: v }))], ['力度', force, 10, 100, setForce]]
           : tool === 'smooth' ? [['筆刷', brush.smooth, BRUSH_RANGE.smooth[0], BRUSH_RANGE.smooth[1], v => setBrush(b => ({ ...b, smooth: v }))], ['力度', force, 10, 100, setForce]]
           : tool === 'liquify' ? [['筆刷', brush.liquify, BRUSH_RANGE.liquify[0], BRUSH_RANGE.liquify[1], v => setBrush(b => ({ ...b, liquify: v }))], ['力度', force, 10, 100, setForce]]
@@ -1761,7 +1782,6 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           sliderRow('筆刷', brush.patch, BRUSH_RANGE.patch[0], BRUSH_RANGE.patch[1], (v) => setBrush(b => ({ ...b, patch: v })))}
         {tool === 'clone' && (
           <>
-            {sliderRow('筆刷', brush.clone, BRUSH_RANGE.clone[0], BRUSH_RANGE.clone[1], (v) => setBrush(b => ({ ...b, clone: v })))}
             {sliderRow('羽化', healFeather, 0, 100, setHealFeatherLive)}
             {sliderRow('透明度', healOpacity, 0, 100, setHealOpacityLive)}
           </>
