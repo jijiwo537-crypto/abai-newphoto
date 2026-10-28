@@ -14,6 +14,8 @@ import { StarBurstLab, loadCustomBursts, loadDeletedBursts } from './components/
 import { STAR_BURSTS } from './utils/starBursts';
 import { FrameLab, LAB_FRAMES, STORE_FRAME_PICK, STORE_FRAME_RANGE, loadFramePicks, loadFrameRanges, FRAME_SLIDERS, loadScatterKinds } from './components/FrameLab';
 import { frameRangeDefault, FRAME_SCATTER } from './utils/frameShapes';
+import { ToneIconLab, STORE_TONE_ICON, loadToneIconPick } from './components/ToneIconLab';
+import { TONE_ICON_SETS } from './utils/toneIconSets';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
 const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o', 'track-select-o', 'track-select8-o', 'track-cross-o']);
@@ -107,7 +109,10 @@ type Drag = { group: string; id: string; pointerId: number; dx: number; dy: numb
 function OrderTool() {
   const base = useMemo(defaultGroups, []);
   const [groups, setGroups] = useState<Group[]>(() => load(base));
-  const [tab, setTab] = useState<'pattern' | 'shape' | 'size' | 'burst' | 'frame'>('pattern');
+  const [tab, setTab] = useState<'pattern' | 'shape' | 'size' | 'burst' | 'frame' | 'icon'>('pattern');
+  /** 「圖標」頁挑中的高光／陰影／白色／黑色圖標方案 */
+  const [toneIcon, setToneIcon] = useState<string>(loadToneIconPick);
+  useEffect(() => { try { toneIcon ? localStorage.setItem(STORE_TONE_ICON, toneIcon) : localStorage.removeItem(STORE_TONE_ICON); } catch {} }, [toneIcon]);
   /** 「邊框」頁：勾選想加進 App 的、以及試調過的範圍 */
   const [framePicks, setFramePicks] = useState<string[]>(loadFramePicks);
   const [frameRanges, setFrameRanges] = useState<Record<string, number>>(loadFrameRanges);
@@ -262,6 +267,8 @@ function OrderTool() {
 
   const text = () => {
     const lines = ['【ABAI 排序 v1】（只列有改的部分）'];
+    const ti = TONE_ICON_SETS.findIndex(x => x.id === toneIcon);
+    if (ti >= 0) lines.push('高光／陰影／白色／黑色的圖標', `方案 ${ti + 1}｜${TONE_ICON_SETS[ti].name}（${toneIcon}）`);
     // 只帶有改過順序的那幾區，沒動的不用每次都整串貼過去
     for (const g of groups) if (changed(g)) lines.push(g.label, g.items.map(i => i.id).join(', '));
     const items = new Map(allShapeItems().map(it => [it.id, it]));
@@ -308,11 +315,11 @@ function OrderTool() {
       ta.remove();
     }
   };
-  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小、星芒的勾選、刪除和自訂也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setTexIds([]); setSizes({}); setBursts([]); try { localStorage.removeItem('abai-order-tool-starburst-deleted-v1'); localStorage.removeItem('abai-order-tool-starburst-custom-v1'); } catch {} window.dispatchEvent(new Event('abai-burst-reset')); } };
+  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小、星芒的勾選、刪除和自訂也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setTexIds([]); setSizes({}); setBursts([]); setToneIcon(''); try { localStorage.removeItem('abai-order-tool-starburst-deleted-v1'); localStorage.removeItem('abai-order-tool-starburst-custom-v1'); } catch {} window.dispatchEvent(new Event('abai-burst-reset')); } };
 
-  const shown = tab === 'size' || tab === 'burst' || tab === 'frame' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
+  const shown = tab === 'size' || tab === 'burst' || tab === 'frame' || tab === 'icon' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
   const dragged = drag && groups.find(g => g.key === drag.group)?.items.find(i => i.id === drag.id);
-  const anyChanged = groups.some(changed) || framePicks.length > 0 || texIds.length > 0 || stretchIds.length > 0 || deleteIds.length > 0 || Object.keys(sizes).length > 0 || bursts.length > 0;
+  const anyChanged = groups.some(changed) || framePicks.length > 0 || texIds.length > 0 || stretchIds.length > 0 || deleteIds.length > 0 || Object.keys(sizes).length > 0 || bursts.length > 0 || !!toneIcon;
   const sizeList = (groups.find(g => g.key === 'pattern')?.items || []).filter(i => !i.fromShape);
 
   /* 預覽時整頁就是一個真正的創意拼圖（跟 App 裡一樣全螢幕，選單、彈出層都照原本的方式疊） */
@@ -336,10 +343,10 @@ function OrderTool() {
               <button onClick={copy} className={`h-9 px-4 rounded-full text-[13px] font-bold active:scale-95 ${anyChanged ? 'bg-white text-black' : 'bg-white/15 text-white'}`}>複製有改的</button>
             </div>
           </div>
-          <div className="mt-3 grid grid-cols-5 gap-1 p-1 rounded-full bg-white/[0.06]">
-            {(['pattern', 'shape', 'size', 'burst', 'frame'] as const).map(k => (
-              <button key={k} onClick={() => setTab(k)} className={`h-8 rounded-full text-[13px] font-bold transition-colors ${tab === k ? 'bg-white text-black' : 'text-white/55'}`}>
-                {k === 'pattern' ? '圖案' : k === 'shape' ? '圖形' : k === 'size' ? '圖案大小' : k === 'burst' ? '星芒' : '邊框'}
+          <div className="mt-3 grid grid-cols-6 gap-1 p-1 rounded-full bg-white/[0.06]">
+            {(['pattern', 'shape', 'size', 'burst', 'frame', 'icon'] as const).map(k => (
+              <button key={k} onClick={() => setTab(k)} className={`h-8 rounded-full text-[12px] font-bold transition-colors ${tab === k ? 'bg-white text-black' : 'text-white/55'}`}>
+                {k === 'pattern' ? '圖案' : k === 'shape' ? '圖形' : k === 'size' ? '圖案大小' : k === 'burst' ? '星芒' : k === 'frame' ? '邊框' : '圖標'}
               </button>
             ))}
           </div>
@@ -397,6 +404,7 @@ function OrderTool() {
           </div>
         )}
         {tab === 'shape' && <div className="mt-3 text-[10px] text-white/35">圖形是創意拼圖與跨頁拼圖共用的</div>}
+        {tab === 'icon' && <ToneIconLab picked={toneIcon} onPick={id => { setToneIcon(id); flash(id ? '已選這組圖標' : '已取消'); }} />}
         {tab === 'frame' && (
           <FrameLab photo={photo} onPickPhoto={setPhoto} picked={framePicks} ranges={frameRanges}
             onRange={(id, v) => setFrameRanges(r => ({ ...r, [id]: v }))}
