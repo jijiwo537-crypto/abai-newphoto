@@ -1649,8 +1649,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 切走時把「畫好的整張」（含這張自己的遮色片、特效、濾鏡）留一份。背景預熱的那份只有連動的色彩調整，
      沒有遮色片也沒有特效 —— 切回來先畫預熱那份的話，遮色片／特效要等整條管線重跑完才補上，看起來就是慢半拍、
      像在重新載入。參數完全沒變的話直接畫留下來的這份，切過去的那一格就是最後的樣子。最多留三張（記憶體）。 */
-  const maskShotRef = useRef<Map<string, { canvas: HTMLCanvasElement; sig: string }>>(new Map());
-  const maskShotSig = (p: EditorParams, lutIdx: number, g: GeoParams) => JSON.stringify([p, lutIdx, g]);
+  const maskShotRef = useRef<Map<string, { canvas: HTMLCanvasElement; sig: string; ov: HTMLCanvasElement | null }>>(new Map());
+  /* 鍵的順序不能算進去：同一份參數經過 { ...快照, ...這張的遮色片 } 合起來時鍵的順序會不一樣，
+     直接 JSON.stringify 會被當成「不一樣」，留下來的那份就永遠用不到 */
+  const stableJson = (v: unknown): string => JSON.stringify(v, (_k, x) => x && typeof x === 'object' && !Array.isArray(x)
+    ? Object.keys(x).sort().reduce((o: any, k) => { o[k] = (x as any)[k]; return o; }, {}) : x);
+  const maskShotSig = (p: EditorParams, lutIdx: number, g: GeoParams) => stableJson([p, lutIdx, g]);
   const keepMaskShot = () => {
     const live = liveRef.current, src = srcList[safeIdx];
     const shots = maskShotRef.current;
@@ -1662,31 +1666,57 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (c.width !== b.w || c.height !== b.h) { c.width = b.w; c.height = b.h; }
     const g = c.getContext('2d'); if (!g) return;
     g.globalCompositeOperation = 'copy'; g.drawImage(shown, 0, 0, b.w, b.h); g.globalCompositeOperation = 'source-over';
-    shots.set(src, { canvas: c, sig: maskShotSig(paramsRef.current, live.selectedLutIdx, live.geo) });
-    while (shots.size > 3) { const k = shots.keys().next().value as string; shots.get(k)!.canvas.width = 0; shots.delete(k); }
+    /* 遮色片頁的紅色範圍在自己那一層：一起留一份，切回來時跟照片同一格出現 */
+    const ovEl = maskOverlayCanvasRef.current;
+    let ov: HTMLCanvasElement | null = old?.ov || null;
+    if (ovEl && ovEl.style.display !== 'none' && ovEl.width > 0) {
+      ov ||= document.createElement('canvas');
+      if (ov.width !== ovEl.width || ov.height !== ovEl.height) { ov.width = ovEl.width; ov.height = ovEl.height; }
+      const og = ov.getContext('2d')!; og.globalCompositeOperation = 'copy'; og.drawImage(ovEl, 0, 0); og.globalCompositeOperation = 'source-over';
+    } else if (ov) { ov.width = 0; ov = null; }
+    shots.set(src, { canvas: c, sig: maskShotSig(paramsRef.current, live.selectedLutIdx, live.geo), ov });
+    while (shots.size > 3) { const k = shots.keys().next().value as string; const o = shots.get(k)!; o.canvas.width = 0; if (o.ov) o.ov.width = 0; shots.delete(k); }
   };
-  const paintMaskShot = (i: number, snap: BatchSnap | null): boolean => {
-    const shot = maskShotRef.current.get(srcList[i]), cvs = displayCanvasRef.current;
-    if (!shot || !cvs || !snap) return false;
+  /** 第 i 張留下來的那份還對得上它現在該有的樣子嗎 */
+  const shotValid = (i: number, snap: BatchSnap | null) => {
+    const shot = maskShotRef.current.get(srcList[i]);
+    if (!shot || !snap) return null;
     const ownMask = ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS);
     const ownGeo = ownGeoRef.current[i] || { ...DEFAULT_GEO, crop: { ...FULL_CROP } };
-    if (shot.sig !== maskShotSig({ ...cloneSnap(snap).params, ...ownMask } as EditorParams, snap.selectedLutIdx, ownGeo)) return false;
+    return shot.sig === maskShotSig({ ...cloneSnap(snap).params, ...ownMask } as EditorParams, snap.selectedLutIdx, ownGeo) ? shot : null;
+  };
+  const paintMaskShot = (i: number, snap: BatchSnap | null): boolean => {
+    const shot = shotValid(i, snap), cvs = displayCanvasRef.current;
+    if (!shot || !cvs) return false;
     showFxSurface(false); fxInputKeyRef.current = '';
     const { width: w, height: h } = shot.canvas;
     if (cvs.width !== w || cvs.height !== h) { cvs.width = w; cvs.height = h; }
     const ctx = cvs.getContext('2d'); if (!ctx) return false;
     ctx.globalCompositeOperation = 'copy'; ctx.drawImage(shot.canvas, 0, 0); ctx.globalCompositeOperation = 'source-over';
     cvs.style.filter = 'none';
+    const ovEl = maskOverlayCanvasRef.current;
+    if (ovEl && shot.ov && activeCategory === 'mask') {
+      if (ovEl.width !== shot.ov.width || ovEl.height !== shot.ov.height) { ovEl.width = shot.ov.width; ovEl.height = shot.ov.height; }
+      const og = ovEl.getContext('2d')!; og.globalCompositeOperation = 'copy'; og.drawImage(shot.ov, 0, 0); og.globalCompositeOperation = 'source-over';
+      ovEl.style.display = 'block';
+    }
     warmPaintedSrcRef.current = srcList[i];
     applyPreviewAspect(w, h);
+    /* 畫上去的就是最後的樣子：整條管線（發光類特效還要整張讀回重算光暈）晚一點再跑，
+       連續切好幾張時，中間經過的那幾張就不用每張都算一次 */
+    shotHoldUntilRef.current = performance.now() + 320;
     return true;
   };
+  const shotHoldUntilRef = useRef(0);
   /** 切換要預覽哪一張 */
   const switchTo = (i: number) => {
     if (i === safeIdx || i < 0 || i >= srcList.length) return;
     setBatchMenu(null);
     keepMaskShot();
     stashCurrent();
+    // 上一張的紅色遮色片範圍不能留在下一張上（看起來就像遮色片被帶過去了）
+    if (maskOverlayCanvasRef.current) maskOverlayCanvasRef.current.style.display = 'none';
+    hideMaskLive();
     pendingSnapRef.current = snapFor(i);
     pendingSnapSrcRef.current = srcList[i];
     pendingSnapIdxRef.current = i;
@@ -2704,7 +2734,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const yieldTo = (fn: () => void) => { if (!cancelled) window.setTimeout(fn, 0); };
     const t = window.setTimeout(() => {
       // 只預熱「連結中」的 —— 沒連結的那幾張參數各走各的，先算了也是白算
-      const queue = srcList.filter((u, i) => u !== activeSrc && linked[i] !== false);
+      // 已經留著「畫好的整張」而且還對得上的，切過去直接用那份，不必再背景算一次（省下每張兩趟整張運算）
+      const queue = srcList.filter((u, i) => u !== activeSrc && linked[i] !== false && !shotValid(i, liveRef.current));
       const live = liveRef.current;
       if (!live) return;
       const lut = lutList[live.selectedLutIdx];
@@ -6128,9 +6159,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       }
       return;
     }
+    /* 多圖編輯換照片：停在原本的分頁（以前一律跳回「濾鏡」，在特效頁換照片會被丟到濾鏡頁）。
+       特效頁要照新照片自己的參數重新選中（它沒套那個特效就停在「原始」，不能留著上一張的白框）。 */
+    const batchSwitch = srcListRef.current.length > 1 && !!pendingSnapRef.current && pendingSnapSrcRef.current === activeSrc;
+    const keepCat = batchSwitch && !['compose', 'template', 'beauty', 'match'].includes(activeCategory);
     setParams(JSON.parse(JSON.stringify(DEFAULT_PARAMS)));
-    setActiveCategory('filter');
-    setActiveToolId('filter_select');
+    if (!keepCat) {
+      setActiveCategory('filter');
+      setActiveToolId('filter_select');
+    } else if (['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)) {
+      const sp = pendingSnapRef.current!.params;
+      const on = EFFECT_TOOLS.find(t => (EFFECT_OWN_KEYS[t.id] || [t.id]).some(k => ((sp as any)[k] || 0) !== 0));
+      setActiveCategory('effects');
+      setActiveFxId(on ? on.id : EFFECT_TOOLS[0].id);
+      setActiveToolId(on ? effectAmountId(on.id) : 'softLight');
+    }
     setSelectedLutIdx(0);
     const freshGeo = { ...DEFAULT_GEO, crop: { ...FULL_CROP } };
     geoRef.current = freshGeo;
@@ -6649,6 +6692,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             if ((isDirtyRef.current || flipped) && uiFirstRef.current && !interacting) {
                 // The tapped card / tab paints in this frame; the photo follows in the next.
                 uiFirstRef.current = false;
+                shotHoldUntilRef.current = 0;   // 使用者點了東西：不再等，下一格就照常畫
+                rafId = requestAnimationFrame(tick);
+                return;
+            }
+            /* 剛切過來、畫面已經是留下來的最終樣子：先不重跑（見 paintMaskShot）。一有操作就照常畫 */
+            if (isDirtyRef.current && !flipped && !interacting && !uiFirstRef.current && now < shotHoldUntilRef.current) {
                 rafId = requestAnimationFrame(tick);
                 return;
             }
@@ -7743,9 +7792,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (now.length) apply(now);
     if (!later.length) return;
     const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
-    // 換照片之後藏在後面的工具要盡快跟上（多圖編輯時切完照片馬上點人像／仿色，才不用重新載入）
-    const id = ric ? ric(() => apply(later), { timeout: 500 }) : window.setTimeout(() => apply(later), 300);
-    return () => { if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
+    /* 藏在後面的工具重新載入很重（人像要解析整張臉、仿色要重建貼圖）。多圖編輯時連續切照片，
+       每切一次就重載一次的話，下一次切換就會卡在它後面。所以等使用者在這張停一下（1.2 秒）、
+       主執行緒也閒著了才重載；就算之前直接點進去，也有「畫好才翻過去」那一層接著，不會黑。 */
+    let id = 0;
+    const t = window.setTimeout(() => { id = ric ? ric(() => apply(later), { timeout: 2500 }) : window.setTimeout(() => apply(later), 0); }, 1200);
+    return () => { clearTimeout(t); if (id) { if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSrc, activeCategory, studioSrc]);
   /* 工具重新掛上（換了照片、第一次進去）的那一下，它的照片還沒解碼好，整塊是黑的。
@@ -9062,7 +9114,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             disabled={!hasMergeable}
             /* 固定寬度：底下的字會在「合併特效／合併濾鏡／已合併N」之間換，
                寬度跟著字變的話，置中在上面的圖標就會左右跳。 */
-            className="absolute bottom-2 left-2 w-14 py-2 flex flex-col items-center justify-center gap-1 select-none touch-none z-20 text-white active:scale-90 transition-transform"
+            /* 多圖編輯時左下角是縮圖列：以前合併鍵就藏在第一張縮圖底下，點縮圖稍微偏一點（縮圖之間的縫、
+               縮圖上緣）就會按到看不見的合併 —— 濾鏡／特效突然變回「原始」、畫面卻還是套著的樣子。
+               多張時往上挪到縮圖列上面，兩個永遠不會疊在一起。 */
+            className={`absolute ${srcList.length > 1 ? 'bottom-[58px]' : 'bottom-2'} left-2 w-14 py-2 flex flex-col items-center justify-center gap-1 select-none touch-none z-20 text-white active:scale-90 transition-transform`}
           >
             {/* 兩個疊在一起的菱形：上面那片完整畫出來，下面那片被上面那片蓋住，
                 只露出下半截（用遮罩挖掉上面那片的位置，遮罩跟著上面那片一起動）。

@@ -209,7 +209,7 @@ function pushPull(val: Float32Array, wt: Float32Array, w: number, h: number, ch:
  * 回傳改到的範圍。
  */
 export function applyHeal(src: Uint8ClampedArray, dst: Uint8ClampedArray, W: number, H: number,
-  alpha: Float32Array, rect: HealRect, dx: number, dy: number, mode: HealMode): HealRect | null {
+  alpha: Float32Array, rect: HealRect, dx: number, dy: number, mode: HealMode, opacity = 1): HealRect | null {
   dx = Math.round(dx); dy = Math.round(dy);
   // 目標外框再往外留一圈，修復要在這一圈量「目標 − 來源」的差
   const pad = Math.max(3, Math.round(Math.max(rect.w, rect.h) * 0.06));
@@ -237,7 +237,7 @@ export function applyHeal(src: Uint8ClampedArray, dst: Uint8ClampedArray, W: num
     M = pushPull(val, wt, w, h, 3);
   }
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    const i = y * w + x, a = A[i];
+    const i = y * w + x, a = A[i] * opacity;
     if (a <= 0) continue;
     const o = ((y0 + y) * W + x0 + x) * 4;
     for (let c = 0; c < 3; c++) {
@@ -247,4 +247,71 @@ export function applyHeal(src: Uint8ClampedArray, dst: Uint8ClampedArray, W: num
     }
   }
   return { x: x0, y: y0, w, h };
+}
+
+/* ── 外框輪廓 ─────────────────────────────────────────────────
+ * 筆觸＝沿著路徑、半徑 r 的一串圓（膠囊的聯集）。用距離場做 marching squares，
+ * 邊上做線性內插，得到平順的輪廓折線（工作像素座標）。畫面上的細白線、虛線都畫這條。 */
+export function strokeContours(pts: number[], r: number, step: number): number[][] {
+  const n = pts.length / 2;
+  if (!n || r <= 0) return [];
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < n; i++) { const x = pts[i * 2], y = pts[i * 2 + 1]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  step = Math.max(0.5, step);
+  const ox = x0 - r - step * 2, oy = y0 - r - step * 2;
+  const gw = Math.ceil((x1 - x0 + 2 * r) / step) + 5, gh = Math.ceil((y1 - y0 + 2 * r) / step) + 5;
+  // f > 0 在筆觸裡面
+  const f = new Float32Array(gw * gh);
+  const segDist2 = (px: number, py: number) => {
+    let best = Infinity;
+    if (n === 1) { const dx = px - pts[0], dy = py - pts[1]; return dx * dx + dy * dy; }
+    for (let i = 0; i + 1 < n; i++) {
+      const ax = pts[i * 2], ay = pts[i * 2 + 1], bx = pts[i * 2 + 2], by = pts[i * 2 + 3];
+      const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy;
+      let t = l2 > 0 ? ((px - ax) * vx + (py - ay) * vy) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const dx = px - ax - vx * t, dy = py - ay - vy * t, d = dx * dx + dy * dy;
+      if (d < best) best = d;
+    }
+    return best;
+  };
+  for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) f[j * gw + i] = r - Math.sqrt(segDist2(ox + i * step, oy + j * step));
+  // 每一格的線段（邊的編號：0 上、1 右、2 下、3 左），端點用「邊的鍵」串起來
+  const pt = (i: number, j: number, e: number): [number, number] => {
+    const a = (ii: number, jj: number) => f[jj * gw + ii];
+    let ax: number, ay: number, bx: number, by: number, fa: number, fb: number;
+    if (e === 0) { ax = i; ay = j; bx = i + 1; by = j; } else if (e === 1) { ax = i + 1; ay = j; bx = i + 1; by = j + 1; }
+    else if (e === 2) { ax = i; ay = j + 1; bx = i + 1; by = j + 1; } else { ax = i; ay = j; bx = i; by = j + 1; }
+    fa = a(ax, ay); fb = a(bx, by);
+    const t = fa === fb ? 0.5 : fa / (fa - fb);
+    return [ox + (ax + (bx - ax) * t) * step, oy + (ay + (by - ay) * t) * step];
+  };
+  const key = (i: number, j: number, e: number) => e === 0 ? `h${i},${j}` : e === 2 ? `h${i},${j + 1}` : e === 3 ? `v${i},${j}` : `v${i + 1},${j}`;
+  const adj = new Map<string, string[]>(), pos = new Map<string, [number, number]>();
+  const link = (a: string, b: string) => { (adj.get(a) || adj.set(a, []).get(a)!).push(b); (adj.get(b) || adj.set(b, []).get(b)!).push(a); };
+  const TABLE: number[][][] = [[], [[3, 2]], [[2, 1]], [[3, 1]], [[0, 1]], [[3, 0], [2, 1]], [[0, 2]], [[3, 0]], [[3, 0]], [[0, 2]], [[0, 1], [3, 2]], [[0, 1]], [[3, 1]], [[2, 1]], [[3, 2]], []];
+  for (let j = 0; j + 1 < gh; j++) for (let i = 0; i + 1 < gw; i++) {
+    const c = (f[j * gw + i] > 0 ? 8 : 0) | (f[j * gw + i + 1] > 0 ? 4 : 0) | (f[(j + 1) * gw + i + 1] > 0 ? 2 : 0) | (f[(j + 1) * gw + i] > 0 ? 1 : 0);
+    for (const [ea, eb] of TABLE[c]) {
+      const ka = key(i, j, ea), kb = key(i, j, eb);
+      if (!pos.has(ka)) pos.set(ka, pt(i, j, ea));
+      if (!pos.has(kb)) pos.set(kb, pt(i, j, eb));
+      link(ka, kb);
+    }
+  }
+  // 串成折線
+  const seen = new Set<string>(), out: number[][] = [];
+  for (const start of adj.keys()) {
+    if (seen.has(start)) continue;
+    const line: number[] = [];
+    let cur: string | undefined = start, prev = '';
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      const p = pos.get(cur)!; line.push(p[0], p[1]);
+      const nb: string[] = adj.get(cur) || [];
+      const nx = nb.find(k => k !== prev && !seen.has(k));
+      prev = cur; cur = nx;
+    }
+    if (line.length >= 4) { line.push(line[0], line[1]); out.push(line); }
+  }
+  return out;
 }

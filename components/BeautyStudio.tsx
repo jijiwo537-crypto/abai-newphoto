@@ -19,7 +19,7 @@ import {
   releaseBuffers,
 } from '../utils/beauty/engine';
 import { inpaintImage, inpaintCrop, cropFor } from '../utils/beauty/inpaint';
-import { findHealSource, applyHeal, alphaBounds, type HealMode, type HealRect } from '../utils/beauty/heal';
+import { findHealSource, applyHeal, alphaBounds, strokeContours, type HealMode, type HealRect } from '../utils/beauty/heal';
 import { StrokeLayer, STROKE_INNER, wrinkleStrength, smoothStrength, smoothInvalidate, type StrokeKind } from '../utils/beauty/strokeFilter';
 
 // 互動時的運算解析度。全解析度即時運算會爆手機記憶體，所以要縮，
@@ -90,11 +90,11 @@ type Op =
   | { k: 'patch'; pts: number[]; r: number; seed: number }
   /** 修補：筆觸路徑＋來源位移（目標點拿 p + (dx, dy) 的像素）＋修復／仿製 */
   | CloneOp;
-type CloneOp = { k: 'clone'; pts: number[]; r: number; dx: number; dy: number; mode: HealMode };
+/** hard：邊緣硬度（100 − 羽化）；opacity：0–1。舊的草稿沒有這兩個欄位，用預設值 */
+type CloneOp = { k: 'clone'; pts: number[]; r: number; dx: number; dy: number; mode: HealMode; hard?: number; opacity?: number };
 
 /* 修補筆的邊緣：比刪除柔一點，接縫更不明顯 */
 const CLONE_HARDNESS = 55;
-const HEAL_MODES: { id: HealMode; label: string }[] = [{ id: 'heal', label: '修復' }, { id: 'clone', label: '仿製' }];
 /** 筆觸的中心（畫連接線與來源把手用） */
 const healCentroid = (pts: number[]) => {
   let x = 0, y = 0; const n = Math.max(1, pts.length / 2);
@@ -218,9 +218,9 @@ function replayOps(
       if (res) { writeRect(base.data, W, res.rect, res.rgba); if (k === 1) patchCache.set(op, res); }
     } else if (op.k === 'clone') {
       if (!alpha) alpha = new Float32Array(W * H); else alpha.fill(0);
-      const u = patchAlpha(alpha, W, H, op.pts.map(v => v * k), op.r * k, CLONE_HARDNESS);
+      const u = patchAlpha(alpha, W, H, op.pts.map(v => v * k), op.r * k, op.hard ?? CLONE_HARDNESS);
       const rect = u && alphaBounds(alpha, W, H, u);
-      if (rect) applyHeal(base.data, base.data, W, H, alpha, rect, op.dx * k, op.dy * k, op.mode);
+      if (rect) applyHeal(base.data, base.data, W, H, alpha, rect, op.dx * k, op.dy * k, op.mode || 'heal', op.opacity ?? 1);
     } else if (op.k === 'liquify') {
       for (let j = 0; j < op.pts.length; j += 4) {
         liquifyDab(field, op.pts[j] * k, op.pts[j + 1] * k, op.pts[j + 2] * k, op.pts[j + 3] * k,
@@ -288,9 +288,11 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
   // 指標事件處理器需要最新參數但不該因參數變動而重建，用 ref 鏡射
   /** 修補的模式：修復（明暗顏色跟著周圍）／仿製（原封不動） */
-  const [healMode, setHealMode] = useState<HealMode>('heal');
-  const cfg = useRef({ tool, brush, force, lqMode, makeupColor, intensity, healMode });
-  cfg.current = { tool, brush, force, lqMode, makeupColor, intensity, healMode };
+  /* 修補只有一種（修復）：搬來源的紋理、明暗顏色跟著周圍走。羽化＝邊緣多柔；透明度＝蓋上去多少 */
+  const [healFeather, setHealFeather] = useState(45);
+  const [healOpacity, setHealOpacity] = useState(100);
+  const cfg = useRef({ tool, brush, force, lqMode, makeupColor, intensity, healFeather, healOpacity });
+  cfg.current = { tool, brush, force, lqMode, makeupColor, intensity, healFeather, healOpacity };
 
   // 去皺與修容都以「整筆」為單位：下筆前存一份像素，結束時才記一次歷史。
   // 這樣每一個筆刷點就不必各自做兩次 ImageData 快照，快速拖動才不會卡。
@@ -576,7 +578,26 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     setHealEdit(null);
   }, []);
   useEffect(() => { if (tool !== 'clone') endHealEdit(); }, [tool, endHealEdit]);
-  const healSvgId = useId().replace(/:/g, '');
+  /** 已經有一處修補時又在別的地方下筆：提示一下怎麼修下一處 */
+  const [healNotice, setHealNoticeState] = useState(false);
+  const healNoticeTimer = useRef(0);
+  const setHealNotice = (on: boolean) => {
+    window.clearTimeout(healNoticeTimer.current);
+    setHealNoticeState(on);
+    if (on) healNoticeTimer.current = window.setTimeout(() => setHealNoticeState(false), 2200);
+  };
+  useEffect(() => () => window.clearTimeout(healNoticeTimer.current), []);
+  /** 點工具列的「修補」：已經在修補裡、手上有一處的話，把它定下來，可以開始修下一處 */
+  const pickTool = (id: BeautyTool) => {
+    if (id === 'clone' && tool === 'clone' && healRef.current) { endHealEdit(); setHealNotice(false); return; }
+    setTool(id);
+  };
+  /* 外框輪廓（跟著筆觸形狀的一條線）：只在筆觸或大小變了的時候重算 */
+  const healContour = React.useMemo(() => {
+    if (!healEdit) return '';
+    const lines = strokeContours(healEdit.pts, healEdit.r, Math.max(0.75, healEdit.r / 14));
+    return lines.map(l => 'M' + l.map((v, i) => (i % 2 ? ' ' : i ? ' L' : '') + v.toFixed(1)).join('') + 'Z').join(' ');
+  }, [healEdit?.pts, healEdit?.r]);
 
   const ensureStrokeBuffers = useCallback((needAlpha: boolean) => {
     const s = sessionRef.current!;
@@ -614,7 +635,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
          刪除是紅色，修補是白色，一眼分得出現在是哪一支筆 */
       const src = strokeSrcRef.current, alpha = strokeAlphaRef.current;
       if (!src || !alpha) return null;
-      const r = stampAlpha(alpha, s.W, s.H, bx, by, R, c.tool === 'clone' ? CLONE_HARDNESS : PATCH_HARDNESS, 1);
+      const r = stampAlpha(alpha, s.W, s.H, bx, by, R, c.tool === 'clone' ? 100 - c.healFeather : PATCH_HARDNESS, 1);
       if (!r) return null;
       const d = s.base.data;
       const [tr, tg, tb, ta] = c.tool === 'clone' ? [255, 255, 255, 0.45] : [255, 70, 70, 0.5];
@@ -724,6 +745,11 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         e.preventDefault();
         return;
       }
+      /* 一次進入修補只修一處：已經有一處的時候不畫新的一筆，讓使用者慢慢調這一處。
+         要修下一處：再點一下「修補」（或切到別的工具再回來），這一處就定下來了 */
+      setHealNotice(true);
+      e.preventDefault();
+      return;
     }
 
     // 指標可能已經失效（手勢中斷、合成事件），失敗不該中斷整個筆觸
@@ -910,24 +936,43 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     const rect = alphaBounds(alpha, s.W, s.H, union);
     const found = rect && findHealSource(src, s.W, s.H, alpha, rect);
     if (!rect || !found) { renderPixelRect(union); return; }
-    const op: CloneOp = { k: 'clone', pts, r: R, dx: found.dx, dy: found.dy, mode: cfg.current.healMode };
-    const out = applyHeal(src, s.base.data, s.W, s.H, alpha, rect, op.dx, op.dy, op.mode) || rect;
+    const op: CloneOp = { k: 'clone', pts, r: R, dx: found.dx, dy: found.dy, mode: 'heal', hard: 100 - cfg.current.healFeather, opacity: cfg.current.healOpacity / 100 };
+    const out = applyHeal(src, s.base.data, s.W, s.H, alpha, rect, op.dx, op.dy, op.mode, op.opacity) || rect;
     pushOp(op);
     renderPixelRect(unionRect(union, out));
     healRef.current = { op, src, alpha, rect, out };
     setHealEdit({ pts, r: R, dx: op.dx, dy: op.dy });
   }, [pushOp, renderPixelRect, restore, snapFrom]);
-  /** 重新套一次最後那一筆修補（拖了來源、換了模式） */
-  const reapplyHeal = useCallback(() => {
+  /** 重新套一次這一處修補（拖了來源、調了羽化／透明度）。先把上一次改過的範圍還原成修補前，再重新蓋 */
+  const reapplyHeal = useCallback((reAlpha = false) => {
     const h = healRef.current, s = sessionRef.current;
     if (!h || !s) return;
-    const out = applyHeal(h.src, s.base.data, s.W, s.H, h.alpha, h.rect, h.op.dx, h.op.dy, h.op.mode);
-    if (out) renderPixelRect(out);
+    const prev = h.out;
+    for (let y = prev.y; y < prev.y + prev.h; y++) {
+      const o = (y * s.W + prev.x) * 4;
+      s.base.data.set(h.src.subarray(o, o + prev.w * 4), o);
+    }
+    if (reAlpha) {
+      // 羽化變了：覆蓋率重算（半徑不變，只是邊緣軟硬）
+      for (let y = h.rect.y; y < h.rect.y + h.rect.h; y++) h.alpha.fill(0, y * s.W + h.rect.x, y * s.W + h.rect.x + h.rect.w);
+      const u = patchAlpha(h.alpha, s.W, s.H, h.op.pts, h.op.r, h.op.hard ?? CLONE_HARDNESS);
+      const rect = u && alphaBounds(h.alpha, s.W, s.H, u);
+      if (rect) h.rect = rect;
+    }
+    const out = applyHeal(h.src, s.base.data, s.W, s.H, h.alpha, h.rect, h.op.dx, h.op.dy, 'heal', h.op.opacity ?? 1) || h.rect;
+    h.out = out;
+    renderPixelRect(unionRect(prev, out));
   }, [renderPixelRect]);
-  const setHealModeLive = (m: HealMode) => {
-    setHealMode(m);
+  /** 羽化／透明度：有一處正在修補時直接改它（邊拉邊看），沒有的話就是下一筆的設定 */
+  const setHealFeatherLive = (v: number) => {
+    setHealFeather(v);
     const h = healRef.current;
-    if (h && h.op.mode !== m) { h.op.mode = m; reapplyHeal(); saveBeautyDraft(); }
+    if (h) { h.op.hard = 100 - v; reapplyHeal(true); }
+  };
+  const setHealOpacityLive = (v: number) => {
+    setHealOpacity(v);
+    const h = healRef.current;
+    if (h) { h.op.opacity = v / 100; reapplyHeal(); }
   };
 
   /* ── 拖曳修補的來源 ───────────────────────────────── */
@@ -1478,57 +1523,33 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                 if (e.pointerType === 'mouse' && !paintingRef.current) drawRing(null);
               }}
             />
-            {/* 修補：目標框（實線）＋來源框（虛線感的淡框）＋連接線＋來源把手。拖來源框可以換一塊 */}
+            {/* 修補：兩條細白線 —— 目標是實線、來源是虛線（一眼分得出哪個是哪個），中間一條淡淡的連接線，
+                來源外側一顆小把手。拖虛線框或把手可以換一塊 */}
             {tool === 'clone' && healEdit && sessionRef.current && !showOriginal && (() => {
               const s = sessionRef.current!;
               const view = viewRef.current;
               const px = s.W / Math.max(1, view?.clientWidth || s.W) / Math.max(1, viewT.k);   // 一個螢幕像素＝幾個工作像素
-              const t = 1.6 * px;
-              const pts = healEdit.pts;
-              const d = pts.length >= 4
-                ? 'M' + pts.map((v, i) => (i % 2 ? ' ' : (i ? ' L' : '')) + v.toFixed(1)).join('')
-                : `M${pts[0]} ${pts[1]} l0.01 0`;
-              const c = healCentroid(pts);
-              /* 外框＝粗筆畫減掉細筆畫。暗色的那一圈（halo）比白線寬一點，亮的照片上也看得清楚 */
-              const ring = (id: string, outer: number, inner: number) => (
-                <mask id={id} maskUnits="userSpaceOnUse" x={-s.W} y={-s.H} width={s.W * 3} height={s.H * 3}>
-                  <path d={d} fill="none" stroke="#fff" strokeWidth={healEdit.r * 2 + outer * 2} strokeLinecap="round" strokeLinejoin="round" />
-                  <path d={d} fill="none" stroke="#000" strokeWidth={Math.max(0, healEdit.r * 2 - inner * 2)} strokeLinecap="round" strokeLinejoin="round" />
-                </mask>
-              );
-              const big = { x: -s.W, y: -s.H, width: s.W * 3, height: s.H * 3 };
+              const d = healContour;
+              const c = healCentroid(healEdit.pts);
+              const len = Math.max(1, Math.hypot(healEdit.dx, healEdit.dy)), off = healEdit.r + 16 * px;
+              const kx = healEdit.dx / len * off, ky = healEdit.dy / len * off;
               return (
-                <svg data-heal-overlay className="absolute inset-0 w-full h-full pointer-events-none" viewBox={`0 0 ${s.W} ${s.H}`} preserveAspectRatio="none"
-                  style={{ opacity: srcDragging ? 1 : 0.95 }}>
-                  <defs>{ring(`${healSvgId}t`, t, 0)}{ring(`${healSvgId}h`, t * 2.2, t * 1.2)}</defs>
+                <svg data-heal-overlay className="absolute inset-0 w-full h-full pointer-events-none overflow-visible" viewBox={`0 0 ${s.W} ${s.H}`} preserveAspectRatio="none">
                   <line ref={healLineRef} x1={c.x} y1={c.y} x2={c.x + healEdit.dx} y2={c.y + healEdit.dy}
-                    stroke="#fff" strokeOpacity={0.75} strokeWidth={1.25} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
-                  <rect {...big} fill="#000" fillOpacity={0.35} mask={`url(#${healSvgId}h)`} />
-                  <rect {...big} fill="#fff" mask={`url(#${healSvgId}t)`} />
-                  {/* 來源框：同一個外框，整組平移過去（拖的時候只改這一組的 transform，瀏覽器不必重算遮罩） */}
+                    stroke="#fff" strokeOpacity={0.55} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+                  <path d={d} fill="none" stroke="#fff" strokeWidth={1.25} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
                   <g ref={healSrcGRef} transform={`translate(${healEdit.dx} ${healEdit.dy})`}>
-                    <rect {...big} fill="#000" fillOpacity={0.25} mask={`url(#${healSvgId}h)`} />
-                    <rect {...big} fill="#fff" fillOpacity={0.6} mask={`url(#${healSvgId}t)`} />
+                    <path d={d} fill="none" stroke="#fff" strokeWidth={1.25} strokeDasharray="4 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
                   </g>
-                  {/* 目標中心一顆小點、來源中心一顆把手（四向箭頭＝可以拖） */}
-                  <circle cx={c.x} cy={c.y} r={3 * px} fill="#fff" />
-                  {/* 來源把手：放在來源框外側（連接線的延長線上），不蓋住來源本身 */}
-                  {(() => {
-                    const len = Math.max(1, Math.hypot(healEdit.dx, healEdit.dy));
-                    const off = healEdit.r + 16 * px;
-                    const kx = healEdit.dx / len * off, ky = healEdit.dy / len * off;
-                    return (
-                      <g ref={healKnobRef} transform={`translate(${c.x + healEdit.dx} ${c.y + healEdit.dy})`}>
-                        <g transform={`translate(${kx} ${ky})`}>
-                          <circle r={10 * px} fill="rgba(0,0,0,0.5)" stroke="#fff" strokeWidth={1.25} vectorEffect="non-scaling-stroke" />
-                          <g transform={`scale(${px * 0.8})`} fill="#fff">
-                            <path d="M0 -8.5 L3 -5 L-3 -5 Z M0 8.5 L3 5 L-3 5 Z M-8.5 0 L-5 3 L-5 -3 Z M8.5 0 L5 3 L5 -3 Z" />
-                            <circle r={1.6} />
-                          </g>
-                        </g>
+                  <g ref={healKnobRef} transform={`translate(${c.x + healEdit.dx} ${c.y + healEdit.dy})`}>
+                    <g transform={`translate(${kx} ${ky})`}>
+                      <circle r={10 * px} fill="rgba(0,0,0,0.35)" stroke="#fff" strokeWidth={1.25} vectorEffect="non-scaling-stroke" />
+                      <g transform={`scale(${px * 0.8})`} fill="#fff">
+                        <path d="M0 -8.5 L3 -5 L-3 -5 Z M0 8.5 L3 5 L-3 5 Z M-8.5 0 L-5 3 L-5 -3 Z M8.5 0 L5 3 L5 -3 Z" />
+                        <circle r={1.6} />
                       </g>
-                    );
-                  })()}
+                    </g>
+                  </g>
                 </svg>
               );
             })()}
@@ -1549,7 +1570,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         <div data-beauty-heal-tip={tool === 'clone' ? 'on' : 'off'}
           className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none rounded-full bg-black/60 px-3 py-1.5 text-[11px] font-bold text-white whitespace-nowrap"
           style={{ opacity: tool === 'clone' && !srcDragging && !sizingBrush && !patchBusy ? 1 : 0, transition: 'opacity 180ms ease' }}>
-          {healEdit ? '拖曳淡色的來源框，換一塊來修補' : '塗抹要修補的地方'}
+          {healNotice ? '一次修一處・再點一下「修補」修下一處' : healEdit ? '拖曳虛線框換來源・可調羽化與透明度' : '塗抹要修補的地方'}
         </div>
         {/* 刪除計算中：預覽上緣一顆小膠囊（不擋住畫面，算完自己消失） */}
         <div data-beauty-patch-busy={patchBusy ? 'on' : 'off'}
@@ -1618,16 +1639,17 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         const sliders: [string, number, number, number, (v: number) => void][] =
           tool === 'blemish' ? [['筆刷', brush.blemish, BRUSH_RANGE.blemish[0], BRUSH_RANGE.blemish[1], v => setBrush(b => ({ ...b, blemish: v }))]]
           : tool === 'patch' ? [['筆刷', brush.patch, BRUSH_RANGE.patch[0], BRUSH_RANGE.patch[1], v => setBrush(b => ({ ...b, patch: v }))]]
-          : tool === 'clone' ? [['筆刷', brush.clone, BRUSH_RANGE.clone[0], BRUSH_RANGE.clone[1], v => setBrush(b => ({ ...b, clone: v }))]]
+          : tool === 'clone' ? [['筆刷', brush.clone, BRUSH_RANGE.clone[0], BRUSH_RANGE.clone[1], v => setBrush(b => ({ ...b, clone: v }))],
+              ['羽化', healFeather, 0, 100, setHealFeatherLive], ['透明度', healOpacity, 0, 100, setHealOpacityLive]]
           : tool === 'wrinkle' ? [['筆刷', brush.wrinkle, BRUSH_RANGE.wrinkle[0], BRUSH_RANGE.wrinkle[1], v => setBrush(b => ({ ...b, wrinkle: v }))], ['力度', force, 10, 100, setForce]]
           : tool === 'smooth' ? [['筆刷', brush.smooth, BRUSH_RANGE.smooth[0], BRUSH_RANGE.smooth[1], v => setBrush(b => ({ ...b, smooth: v }))], ['力度', force, 10, 100, setForce]]
           : tool === 'liquify' ? [['筆刷', brush.liquify, BRUSH_RANGE.liquify[0], BRUSH_RANGE.liquify[1], v => setBrush(b => ({ ...b, liquify: v }))], ['力度', force, 10, 100, setForce]]
           : [['筆刷', brush.makeup, BRUSH_RANGE.makeup[0], BRUSH_RANGE.makeup[1], v => setBrush(b => ({ ...b, makeup: v }))], ['濃度', Math.round(intensity * 2), 0, 100, v => setIntensity(v / 2)]];
         const two = sliders.length > 1;
-        const modeSeg = tool === 'clone';
+        const three = sliders.length > 2;
         return (
           <div data-beauty-controls className="shrink-0 flex flex-col border-t border-white/5" style={{ height: '11rem' }}>
-            <div className={`h-[5rem] shrink-0 bg-[#111] border-b border-white/5 ${two ? 'px-5 grid grid-cols-2 gap-5 items-center' : modeSeg ? 'pl-8 pr-5 flex items-center gap-5' : 'px-8 flex flex-col justify-center'}`}>
+            <div className={`h-[5rem] shrink-0 bg-[#111] border-b border-white/5 ${three ? 'px-4 grid grid-cols-3 gap-3 items-center' : two ? 'px-5 grid grid-cols-2 gap-5 items-center' : 'px-8 flex flex-col justify-center'}`}>
               {sliders.map(([label, value, min, max, set]) => (
                 <div key={`${tool}-${label}`} className="w-full min-w-0">
                   <div className="flex justify-between items-center px-1 mb-1">
@@ -1646,21 +1668,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                   </div>
                 </div>
               ))}
-              {/* 修補：修復／仿製，跟筆刷同一排（不用捲工具列找） */}
-              {modeSeg && (
-                <div className="shrink-0 flex p-[3px] rounded-full bg-white/[0.07] border border-white/10" role="radiogroup" aria-label="修補模式">
-                  {HEAL_MODES.map(m => (
-                    <button key={m.id} data-heal-mode={m.id} role="radio" aria-checked={healMode === m.id} onClick={() => setHealModeLive(m.id)}
-                      className={`h-7 px-3.5 rounded-full text-[11px] font-bold transition-colors ${healMode === m.id ? 'bg-white text-black' : 'text-white/55'}`}>
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
             <div data-beauty-toolbar className="h-[6rem] shrink-0 bg-[#080808] flex items-center px-4 gap-2 overflow-x-auto no-scrollbar">
               {BEAUTY_TOOLS.map(t => (
-                <button key={t.id} onClick={() => setTool(t.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
+                <button key={t.id} onClick={() => pickTool(t.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${tool === t.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40'}`}>
                     <Icon name={t.icon} className="text-lg" fill={tool === t.id} />
                   </div>
@@ -1702,12 +1713,6 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                   : 'bg-white/5 text-white/60 border-white/15'
               }`}
             >
-              {m.label}
-            </button>
-          ))}
-          {tool === 'clone' && HEAL_MODES.map(m => (
-            <button key={m.id} data-heal-mode={m.id} onClick={() => setHealModeLive(m.id)}
-              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 border transition-all active:scale-95 ${healMode === m.id ? 'bg-white text-black border-white font-bold' : 'bg-white/5 text-white/60 border-white/15'}`}>
               {m.label}
             </button>
           ))}
@@ -1754,8 +1759,13 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           sliderRow('筆刷', brush.blemish, BRUSH_RANGE.blemish[0], BRUSH_RANGE.blemish[1], (v) => setBrush(b => ({ ...b, blemish: v })))}
         {tool === 'patch' &&
           sliderRow('筆刷', brush.patch, BRUSH_RANGE.patch[0], BRUSH_RANGE.patch[1], (v) => setBrush(b => ({ ...b, patch: v })))}
-        {tool === 'clone' &&
-          sliderRow('筆刷', brush.clone, BRUSH_RANGE.clone[0], BRUSH_RANGE.clone[1], (v) => setBrush(b => ({ ...b, clone: v })))}
+        {tool === 'clone' && (
+          <>
+            {sliderRow('筆刷', brush.clone, BRUSH_RANGE.clone[0], BRUSH_RANGE.clone[1], (v) => setBrush(b => ({ ...b, clone: v })))}
+            {sliderRow('羽化', healFeather, 0, 100, setHealFeatherLive)}
+            {sliderRow('透明度', healOpacity, 0, 100, setHealOpacityLive)}
+          </>
+        )}
         {tool === 'wrinkle' && (
           <>
             {sliderRow('筆刷', brush.wrinkle, BRUSH_RANGE.wrinkle[0], BRUSH_RANGE.wrinkle[1], (v) => setBrush(b => ({ ...b, wrinkle: v })))}
@@ -1791,7 +1801,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         {BEAUTY_TOOLS.map(t => (
           <button
             key={t.id}
-            onClick={() => setTool(t.id)}
+            onClick={() => pickTool(t.id)}
             className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${tool === t.id ? 'text-white' : 'text-white/20'}`}
           >
             <Icon name={t.icon} className="text-xl" fill={tool === t.id} />
