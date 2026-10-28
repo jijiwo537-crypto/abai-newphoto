@@ -17,7 +17,7 @@ test('base selected frame is painted before foreground objects, not as a DOM bor
  assert.match(s,/ctx\.clip\('evenodd'\)/);
 });
 test('base photos edit through the same image panel without shapes',()=>{
- assert.match(s,/hideShape=\{regionEditing\}/);assert.match(s,/photos:photoRegionRef\.current\.photos\.map/);
+ assert.match(s,/hideShape=\{regionEditing \|\| baseVideoEditing\}/);assert.match(s,/photos:photoRegionRef\.current\.photos\.map/);
  assert.match(s,/region-fx-\$\{i\}@\$\{p\.src\}/);
  assert.match(s,/region-processed-\$\{i\}@\$\{p\.src\}/);
  assert.match(s,/width:\(processed as any\)\.naturalWidth \|\| \(processed as any\)\.width/);

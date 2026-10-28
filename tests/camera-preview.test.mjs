@@ -23,7 +23,11 @@ test('effect processing stays in sensor coordinates and camera controls cannot b
  const view=readFileSync(new URL('../components/Viewfinder.tsx',import.meta.url),'utf8');
  assert.match(view,/ensureTargets\(sourceW, sourceH\)/);
  assert.match(view,/tc = \(tc - \.5\) \* u_effectCrop \+ \.5/);
- assert.doesNotMatch(view,/className="[^"]*object-cover/);
+ // The canvas holds the whole sensor aspect, sized once per ratio (not per animation frame);
+ // CSS object-fit: cover crops it exactly like the capture's centred crop.
+ assert.match(view,/className="[^"]*object-cover/);
+ assert.match(view,/const previewTarget=/);
+ assert.doesNotMatch(view,/previewSizeRef\.current;\n\s*const target=size\.w/);
  const ui=readFileSync(new URL('../components/CameraInterface.tsx',import.meta.url),'utf8');
  assert.match(ui,/grid grid-cols-3 gap-2 w-\[calc\(100%-96px\)\] min-w-0/);
  assert.match(ui,/data-camera-effects-back/);

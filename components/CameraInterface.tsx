@@ -84,11 +84,13 @@ type CameraTickScaleProps = {
   max: number;
   step: number;
   onStep: (value: number, index: number) => void;
+  /** 手指劃過整條刻度帶時走過幾倍的全範圍（越大越靈敏） */
+  sensitivity?: number;
 };
 
 /** 與構圖「梯形」同款：拖的是整條刻度帶，當前刻度永遠吸附在中央。 */
 const CameraTickScale: React.FC<CameraTickScaleProps> = ({
-  label, value, min, max, step, onStep,
+  label, value, min, max, step, onStep, sensitivity = 2.16,
 }) => {
   const dragRef = useRef<{ startX: number; startValue: number; width: number } | null>(null);
   const [visualValue, setVisualValue] = useState<number | null>(null);
@@ -134,7 +136,7 @@ const CameraTickScale: React.FC<CameraTickScaleProps> = ({
         const raw = Math.max(min, Math.min(max,
           /* 同一段手指距離改成原本的兩倍靈敏度。仍然在 min/max 內逐格吸附，
              所以加快反應不會犧牲中央刻度的精準度。 */
-          drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min) * 2.16));
+          drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min) * sensitivity));
         const index = Math.max(0, Math.min(total, Math.round((raw - min) / step)));
         const snapped = min + index * step;
         /* 相機刻度必須真的「卡」在中央刻度上。舊版雖然把數值 round 了，
@@ -1376,6 +1378,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                           <CameraTickScale
                             label="白平衡"
                             value={settings.kelvin} min={2500} max={9000} step={100}
+                            /* 色溫有 65 格，跟曝光（20 格）用同一個靈敏度的話，手指動 1.5px 就跳一格（100K），
+                               很難停在想要的值。改成手指約 5.5px 一格 —— 跟曝光每格的手感一樣。 */
+                            sensitivity={0.6}
                             onStep={(val, index) => {
                               if (val === settings.kelvin) return;
                               triggerCameraTick('kelvin', index);
