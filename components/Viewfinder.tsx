@@ -255,6 +255,24 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     if(cw/ch>sa)ch=cw/sa;else cw=ch*sa;
     return cameraPreviewGeometry(cw,ch,window.devicePixelRatio,vw,vh,limit);
   };
+  /* 感光元件的比例（直式）。畫布在框裡的 CSS 大小用它算 */
+  const [sensor,setSensor]=useState<{w:number;h:number}|null>(null);
+  useEffect(()=>{
+    if(!video)return;
+    const read=()=>{if(video.videoWidth&&video.videoHeight)setSensor(s=>s&&s.w===video.videoWidth&&s.h===video.videoHeight?s:{w:video.videoWidth,h:video.videoHeight});};
+    read();video.addEventListener('loadedmetadata',read);video.addEventListener('resize',read);
+    return()=>{video.removeEventListener('loadedmetadata',read);video.removeEventListener('resize',read);};
+  },[video]);
+  /* 1:1 → 16:9 會抖一下：框同時「變窄又變高」，以前用 object-fit: cover，畫面的放大倍率是
+     max(寬比, 高比) —— 動畫前半段由寬度決定（越縮越小）、後半段換成高度決定（越放越大），
+     所以畫面先縮一下再放大。現在畫布自己有 CSS 大小＝「蓋滿最後那個框」的大小，置中，
+     跟框用同一條曲線過渡：倍率從頭到尾單向變化，框只是負責裁切。 */
+  const coverCss=(()=>{
+    const box=displayBox;if(!box||!(box.w>0)||!(box.h>0)||!sensor)return null;
+    const sa=sensor.w/sensor.h;let cw=box.w,ch=box.h;
+    if(cw/ch>sa)ch=cw/sa;else cw=ch*sa;
+    return{w:cw,h:ch};
+  })();
   useEffect(()=>{
     const canvas=canvasRef.current;if(!canvas)return;
     const measure=()=>{const r=canvas.getBoundingClientRect();previewSizeRef.current={w:r.width,h:r.height};};
@@ -744,9 +762,10 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   }, [lutUrl, gpuEpoch]);
 
   return (
-    <div className="w-full h-full relative" onClick={onClick}
+    <div className="w-full h-full relative overflow-hidden" onClick={onClick}
          onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}>
-        <canvas ref={canvasRef} className="w-full h-full block object-cover" data-camera-viewfinder />
+        <canvas ref={canvasRef} className={coverCss?'block absolute left-1/2 top-1/2':'w-full h-full block object-cover'} data-camera-viewfinder
+          style={coverCss?{width:coverCss.w,height:coverCss.h,transform:'translate(-50%,-50%)',transition:'width 300ms cubic-bezier(0.2,0,0,1), height 300ms cubic-bezier(0.2,0,0,1)'}:undefined} />
     </div>
   );
 });

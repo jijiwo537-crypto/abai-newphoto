@@ -45,6 +45,8 @@ interface Props {
   };
   /** 嵌在編輯器裡：編輯器預覽圖在螢幕上的框，照片擺在一模一樣的位置 */
   align?: AlignRect | null;
+  /** 嵌在編輯器裡：照片第一次真的畫到畫面上了（見 BeautyStudio 的同名參數） */
+  onPainted?: () => void;
 }
 
 const PREVIEW_MAX = 1400;
@@ -72,7 +74,7 @@ const toImageData = (img: HTMLImageElement, max: number): ImageData => {
 
 export const ColorMatchStudio: React.FC<Props> = ({
   imageSrc, onCancel, onHome, onImportNew, onPickReference, referenceSrc, onSendToEditor,
-  initialState, onRequestExit, referenceLoading=false, embedded, align,
+  initialState, onRequestExit, referenceLoading=false, embedded, align, onPainted,
 }) => {
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
   const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
@@ -414,6 +416,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     };
   };
   if (embedded) embedded.commitRef.current = takeResult;
+  const onPaintedRef = useRef(onPainted); onPaintedRef.current = onPainted;
   useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
   const finishEmbedded = () => { if (embedded) embedded.onDone(takeResult()); };
 
@@ -506,6 +509,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   };
 
   const ready = !!(srcImg && refImg && luts);
+  useEffect(() => { if (ready) onPaintedRef.current?.(); }, [ready]);
 
   const viewport=useStandaloneToolViewport();
   const srcAspect = srcImg ? (srcImg.naturalWidth || srcImg.width) / Math.max(1, srcImg.naturalHeight || srcImg.height) : (align ? align.width / align.height : null);
@@ -621,7 +625,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
             className={`max-w-full max-h-full object-contain rounded-sm shadow-2xl ${ready && !glReady ? '' : 'hidden'}`}
           />
           {!ready && (
-            <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm shadow-2xl" />
+            <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm shadow-2xl"
+              ref={el => { if (el?.complete && el.naturalWidth) onPaintedRef.current?.(); }} onLoad={() => onPaintedRef.current?.()} />
           )}
         </div>
         {(busy || referenceLoading) && (

@@ -25,7 +25,9 @@ test('effect processing stays in sensor coordinates and camera controls cannot b
  assert.match(view,/tc = \(tc - \.5\) \* u_effectCrop \+ \.5/);
  // The canvas holds the whole sensor aspect, sized once per ratio (not per animation frame);
  // CSS object-fit: cover crops it exactly like the capture's centred crop.
- assert.match(view,/className="[^"]*object-cover/);
+ // 畫布用「蓋滿最後那個框」的 CSS 大小置中（沒有框的尺寸時退回 object-cover）
+ assert.match(view,/coverCss\?.*object-cover/);
+ assert.match(view,/transition:.width 300ms/);
  assert.match(view,/const previewTarget=/);
  assert.doesNotMatch(view,/previewSizeRef\.current;\n\s*const target=size\.w/);
  const ui=readFileSync(new URL('../components/CameraInterface.tsx',import.meta.url),'utf8');

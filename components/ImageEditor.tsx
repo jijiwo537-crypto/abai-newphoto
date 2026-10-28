@@ -1646,10 +1646,45 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const snapFor = (i: number): BatchSnap | null =>
     (linked[i] === false ? soloSnapsRef.current[i] : sharedSnapRef.current) ?? null;
+  /* 有遮色片的照片：切走時把「畫好的整張」（含遮色片）留一份。背景預熱的那份只有連動的色彩調整，
+     沒有這張自己的遮色片 —— 切回來時先畫預熱那份，遮色片要等整條管線重跑完才補上，看起來就是慢半拍。
+     參數完全沒變的話直接畫留下來的這份，切過去的那一格遮色片就在了。只留有遮色片的、最多四張。 */
+  const maskShotRef = useRef<Map<string, { canvas: HTMLCanvasElement; sig: string }>>(new Map());
+  const maskShotSig = (p: EditorParams, lutIdx: number, g: GeoParams) => JSON.stringify([p, lutIdx, g]);
+  const hasMaskWork = (p: EditorParams) => maskList(p).list.some(m => m.maskCreated && hasMaskAdj(m));
+  const keepMaskShot = () => {
+    const live = liveRef.current, cvs = displayCanvasRef.current, src = srcList[safeIdx];
+    const shots = maskShotRef.current;
+    if (!live || !cvs || !src) return;
+    shots.delete(src);
+    if (!hasMaskWork(paramsRef.current) || hasActiveFx(paramsRef.current) || !cvs.width || !cvs.height || isSwitching) return;
+    const c = document.createElement('canvas'); c.width = cvs.width; c.height = cvs.height;
+    const g = c.getContext('2d'); if (!g) return;
+    g.drawImage(cvs, 0, 0);
+    shots.set(src, { canvas: c, sig: maskShotSig(paramsRef.current, live.selectedLutIdx, live.geo) });
+    while (shots.size > 4) { const k = shots.keys().next().value as string; shots.get(k)!.canvas.width = 0; shots.delete(k); }
+  };
+  const paintMaskShot = (i: number, snap: BatchSnap | null): boolean => {
+    const shot = maskShotRef.current.get(srcList[i]), cvs = displayCanvasRef.current;
+    if (!shot || !cvs || !snap) return false;
+    const ownMask = ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS);
+    const ownGeo = ownGeoRef.current[i] || { ...DEFAULT_GEO, crop: { ...FULL_CROP } };
+    if (shot.sig !== maskShotSig({ ...cloneSnap(snap).params, ...ownMask } as EditorParams, snap.selectedLutIdx, ownGeo)) return false;
+    showFxSurface(false); fxInputKeyRef.current = '';
+    const { width: w, height: h } = shot.canvas;
+    if (cvs.width !== w || cvs.height !== h) { cvs.width = w; cvs.height = h; }
+    const ctx = cvs.getContext('2d'); if (!ctx) return false;
+    ctx.globalCompositeOperation = 'copy'; ctx.drawImage(shot.canvas, 0, 0); ctx.globalCompositeOperation = 'source-over';
+    cvs.style.filter = 'none';
+    warmPaintedSrcRef.current = srcList[i];
+    applyPreviewAspect(w, h);
+    return true;
+  };
   /** 切換要預覽哪一張 */
   const switchTo = (i: number) => {
     if (i === safeIdx || i < 0 || i >= srcList.length) return;
     setBatchMenu(null);
+    keepMaskShot();
     stashCurrent();
     pendingSnapRef.current = snapFor(i);
     pendingSnapSrcRef.current = srcList[i];
@@ -1664,7 +1699,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // 註：重建是同步的，所以「先等一下再蓋」行不通 —— 主執行緒被卡住時計時器根本輪不到。
     const decoded = viewedImgRef.current.get(srcList[i]) || warmImgRef.current.get(srcList[i]);
     const instant = !!(decoded && decoded.complete && decoded.naturalWidth);
-    if (!paintWarmNow(srcList[i], pendingSnapRef.current || liveRef.current) && !instant) setIsSwitching(true);
+    if (!paintMaskShot(i, pendingSnapRef.current || liveRef.current) && !paintWarmNow(srcList[i], pendingSnapRef.current || liveRef.current) && !instant) setIsSwitching(true);
   };
   /* ---- 縮圖的點按 ----------------------------------------------------------
      用 pointerup 而不是 click：手機上兩下點得快時，第二下的 click 常常被瀏覽器
@@ -6551,13 +6586,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     if (snap.width !== b.w || snap.height !== b.h) { snap.width = b.w; snap.height = b.h; }
                     const sctx = snap.getContext('2d')!;
                     sctx.globalCompositeOperation = 'copy';
-                    sctx.drawImage(visibleEditorCanvas() || cvs, 0, 0);
+                    /* 一定要縮放到 b.w×b.h：畫面上看得到的那張可能是 GPU 特效畫布，尺寸跟緩衝區不一樣。
+                       以前照原尺寸貼在 (0,0)，比較小的那張放開時就縮在左上角（「縮小又往左上跑」）。 */
+                    const shown = visibleEditorCanvas() || cvs;
+                    if (shown.width > 0 && shown.height > 0) sctx.drawImage(shown, 0, 0, b.w, b.h);
                     sctx.globalCompositeOperation = 'source-over';
-                    compareSnapKeyRef.current = isDirtyRef.current ? '' : snapKey;
+                    compareSnapKeyRef.current = isDirtyRef.current || !(shown.width > 0 && shown.height > 0) ? '' : snapKey;
                 } else if (!isDirtyRef.current && compareSnapRef.current && compareSnapKeyRef.current === snapKey) {
                     const dctx = cvs.getContext('2d')!;
+                    if (cvs.width !== b.w || cvs.height !== b.h) { cvs.width = b.w; cvs.height = b.h; }
                     dctx.globalCompositeOperation = 'copy';
-                    dctx.drawImage(compareSnapRef.current, 0, 0);
+                    dctx.drawImage(compareSnapRef.current, 0, 0, b.w, b.h);
                     dctx.globalCompositeOperation = 'source-over';
                     cvs.style.filter = 'none';
                     // Comparison presented the original on the GPU surface.
@@ -7625,7 +7664,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   useEffect(() => {
     if (!fullTabs || studiosWarm || isEditorLoading) return;
     const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
-    const id = ric ? ric(() => setStudiosWarm(true), { timeout: 1500 }) : window.setTimeout(() => setStudiosWarm(true), 600);
+    const id = ric ? ric(() => setStudiosWarm(true), { timeout: 800 }) : window.setTimeout(() => setStudiosWarm(true), 400);
     return () => { if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
   }, [fullTabs, studiosWarm, isEditorLoading]);
   /* 人像／仿色拿到的對齊框：構圖改過比例的話它們顯示的是原圖，比例對不上就自己置中（studioAlign 會判斷） */
@@ -7652,19 +7691,37 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (now.length) apply(now);
     if (!later.length) return;
     const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
-    const id = ric ? ric(() => apply(later), { timeout: 3000 }) : window.setTimeout(() => apply(later), 800);
+    // 換照片之後藏在後面的工具要盡快跟上（多圖編輯時切完照片馬上點人像／仿色，才不用重新載入）
+    const id = ric ? ric(() => apply(later), { timeout: 500 }) : window.setTimeout(() => apply(later), 300);
     return () => { if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSrc, activeCategory, studioSrc]);
+  /* 工具重新掛上（換了照片、第一次進去）的那一下，它的照片還沒解碼好，整塊是黑的。
+     記下每個工具「這一份」是不是已經畫出照片了；還沒的話先不把它翻到前面，
+     下面編輯器自己的預覽（同一個框）繼續顯示，畫好的那一格才換過去。 */
+  const beautyKey = `beauty-${beautySrc}-${studioGen.beauty}`, matchKey = `match-${matchSrc}-${studioGen.match}`;
+  const [studioPainted, setStudioPainted] = useState<{ beauty: string; match: string }>({ beauty: '', match: '' });
+  const beautyPainted = useCallback(() => setStudioPainted(v => v.beauty === beautyKey ? v : { ...v, beauty: beautyKey }), [beautyKey]);
+  const matchPainted = useCallback(() => setStudioPainted(v => v.match === matchKey ? v : { ...v, match: matchKey }), [matchKey]);
+  /* 保底：真的一直沒回報（例如圖解不開）也不能卡在編輯器畫面 */
+  const [studioForce, setStudioForce] = useState('');
+  const studioWaitKey = activeCategory === 'beauty' ? beautyKey : activeCategory === 'match' ? matchKey : '';
+  useEffect(() => {
+    if (!studioWaitKey) return;
+    const t = window.setTimeout(() => setStudioForce(studioWaitKey), 700);
+    return () => clearTimeout(t);
+  }, [studioWaitKey]);
+  const studioShown = (k: 'beauty' | 'match') => activeCategory === k
+    && (studioPainted[k] === (k === 'beauty' ? beautyKey : matchKey) || studioForce === (k === 'beauty' ? beautyKey : matchKey));
   const beautyEl = useMemo(() => (
-    <BeautyStudio key={`beauty-${beautySrc}-${studioGen.beauty}`} imageSrc={beautySrc} embedded={studioEmbed} align={studioAlign}
+    <BeautyStudio key={beautyKey} imageSrc={beautySrc} embedded={studioEmbed} align={studioAlign} onPainted={beautyPainted}
       onCancel={studioNoop} onHome={studioNoop} onImportNew={studioNoop} onSendToEditor={studioNoop} />
-  ), [beautySrc, studioGen.beauty, studioEmbed, studioNoop, studioAlign]);
+  ), [beautyKey, beautySrc, studioEmbed, studioNoop, studioAlign, beautyPainted]);
   const matchEl = useMemo(() => (
-    <ColorMatchStudio key={`match-${matchSrc}-${studioGen.match}`} imageSrc={matchSrc} embedded={studioEmbed} align={studioAlign}
+    <ColorMatchStudio key={matchKey} imageSrc={matchSrc} embedded={studioEmbed} align={studioAlign} onPainted={matchPainted}
       referenceSrc={matchRefSrc} onPickReference={pickMatchRef}
       onCancel={studioNoop} onHome={studioNoop} onImportNew={studioNoop} />
-  ), [matchSrc, studioGen.match, matchRefSrc, studioEmbed, studioNoop, pickMatchRef, studioAlign]);
+  ), [matchKey, matchSrc, matchRefSrc, studioEmbed, studioNoop, pickMatchRef, studioAlign, matchPainted]);
 
   /** 模板與疊圖層分頁：滑桿列與小分類列都收起來，整塊控制區給它自己的面板 */
   const ownPanel = activeCategory === 'template' || STUDIO_CATS.includes(activeCategory);
@@ -8813,6 +8870,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           if (!tip || isInteracting) return null;
           // 放在照片下緣往上一點（不貼著照片底邊，也不擋上面的工具列）
           const imgGap = previewFitSize && previewBoxSize.height ? Math.max(0, (previewBoxSize.height - previewFitSize.height) / 2) : 0;
+          // 多圖編輯時下緣是縮圖列，提示改放在照片上緣往下一點
+          if (srcList.length > 1) return <div data-mask-tip className="absolute left-1/2 -translate-x-1/2 z-[38] pointer-events-none px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-[12px] text-white/90 whitespace-nowrap" style={{ top: Math.round(imgGap + 16) }}>{tip}</div>;
           // 左下角的參數膠囊出現時提示再往上讓一排，不疊在一起
           return <div data-mask-tip className="absolute left-1/2 -translate-x-1/2 z-[38] pointer-events-none px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-[12px] text-white/90 whitespace-nowrap" style={{ bottom: Math.round(imgGap + 16 + (maskCapsuleShown ? 46 : 0)), transition: 'bottom 260ms cubic-bezier(.22,1,.36,1)' }}>{tip}</div>;
         })()}
@@ -9701,11 +9760,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           兩邊的欄位高度跟編輯器一樣，預覽大小相同，切換時圖片不會跳。 */}
       {fullTabs && (studiosWarm || STUDIO_CATS.includes(activeCategory)) && (
         <>
-          <div data-studio-host="beauty" className={`absolute inset-x-0 top-0 z-[70] ${activeCategory === 'beauty' ? '' : 'vis-off'}`} aria-hidden={activeCategory !== 'beauty'}
+          <div data-studio-host="beauty" className={`absolute inset-x-0 top-0 z-[70] ${studioShown('beauty') ? '' : 'vis-off'}`} aria-hidden={activeCategory !== 'beauty'}
             style={{ bottom: footerHeight + 1, pointerEvents: activeCategory === 'beauty' ? 'auto' : 'none' }}>
             {beautyEl}
           </div>
-          <div data-studio-host="match" className={`absolute inset-x-0 top-0 z-[70] ${activeCategory === 'match' ? '' : 'vis-off'}`} aria-hidden={activeCategory !== 'match'}
+          <div data-studio-host="match" className={`absolute inset-x-0 top-0 z-[70] ${studioShown('match') ? '' : 'vis-off'}`} aria-hidden={activeCategory !== 'match'}
             style={{ bottom: footerHeight + 1, pointerEvents: activeCategory === 'match' ? 'auto' : 'none' }}>
             {matchEl}
           </div>

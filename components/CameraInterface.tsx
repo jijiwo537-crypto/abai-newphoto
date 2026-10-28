@@ -345,6 +345,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   useEffect(() => () => { ownedUrlsRef.current.forEach(u => URL.revokeObjectURL(u)); ownedUrlsRef.current.clear(); }, []);
   const [showGallery, setShowGallery] = useState(false);
   const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number } | null>(null);
+  /* 進相簿（或從相簿進編輯）就把小框收掉：回到相機時應該是重新開始的滿版畫面，
+     不是停在上一次捏的位置。frameZoomRef 也一起歸 1，免得畫面上沒有框、拍下去卻還是裁過的。 */
+  useEffect(() => {
+    if (!showGallery && !editingPhoto) return;
+    frameZoomRef.current = 1;
+    pinchRef.current = null;
+    smallFrameRef.current?.set(1, false);
+  }, [showGallery, editingPhoto]);
   const [editorId, setEditorId] = useState(0);
   const [isCapturing, setIsCapturing] = useState(false);
   const [isImportingLocal, setIsImportingLocal] = useState(false);
@@ -1134,10 +1142,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
             {showGrid && (
                 <div className="absolute inset-0 z-10 pointer-events-none w-full h-full">
-                    <div className="absolute top-1/3 left-0 right-0 h-[1.5px] bg-white/30"></div>
-                    <div className="absolute top-2/3 left-0 right-0 h-[1.5px] bg-white/30"></div>
-                    <div className="absolute left-1/3 top-0 bottom-0 w-[1.5px] bg-white/30"></div>
-                    <div className="absolute left-2/3 top-0 bottom-0 w-[1.5px] bg-white/30"></div>
+                    {/* 輔助線：實色、不透明（以前是半透明白，兩條線交叉的地方疊兩層會變得比較白），1px 細線 */}
+                    <div className="absolute top-1/3 left-0 right-0 h-px -translate-y-1/2 bg-white"></div>
+                    <div className="absolute top-2/3 left-0 right-0 h-px -translate-y-1/2 bg-white"></div>
+                    <div className="absolute left-1/3 top-0 bottom-0 w-px -translate-x-1/2 bg-white"></div>
+                    <div className="absolute left-2/3 top-0 bottom-0 w-px -translate-x-1/2 bg-white"></div>
                 </div>
             )}
             

@@ -224,7 +224,7 @@ const unionRect = (a: Rect | null, b: Rect): Rect => {
 };
 
 export const BeautyStudio: React.FC<BeautyStudioProps> = ({
-  imageSrc, onCancel, onHome, onRequestExit, onImportNew, onSendToEditor, initialState, embedded, align,
+  imageSrc, onCancel, onHome, onRequestExit, onImportNew, onSendToEditor, initialState, embedded, align, onPainted,
 }) => {
   const initialOpsCountRef = useRef(Array.isArray(initialState?.ops) ? initialState!.ops!.length : 0);
   const [tool, setTool] = useState<BeautyTool>('blemish');
@@ -1061,6 +1061,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     return { preview: c, session: sessionIdRef.current, bake: (src: string) => renderBeautyOn(src, ops, ops.length, W) };
   };
   if (embedded) embedded.commitRef.current = takeResult;
+  const onPaintedRef = useRef(onPainted); onPaintedRef.current = onPainted;
+  useEffect(() => { if (!isLoading) onPaintedRef.current?.(); }, [isLoading]);
   useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
   const finishEmbedded = () => { if (embedded) embedded.onDone(takeResult()); };
 
@@ -1326,7 +1328,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         {/* 嵌在編輯器裡、還在解析的那一下：先放同一張照片，不要露出一塊黑 */}
         {embedded && isLoading && (
           <div className={`absolute inset-0 flex items-center justify-center pointer-events-none ${fitPad ? 'studio-fit' : 'p-4'}`} style={fitPad || undefined}>
-            <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm" draggable={false} />
+            <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm" draggable={false}
+              ref={el => { if (el?.complete && el.naturalWidth) onPaintedRef.current?.(); }} onLoad={() => onPaintedRef.current?.()} />
           </div>
         )}
         {/* 修補計算中：預覽上緣一顆小膠囊（不擋住畫面，算完自己消失） */}
