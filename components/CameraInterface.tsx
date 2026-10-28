@@ -1141,8 +1141,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             )}
 
             {showGrid && (
-                <div className="absolute inset-0 z-10 pointer-events-none w-full h-full">
-                    {/* 輔助線：實色、不透明（以前是半透明白，兩條線交叉的地方疊兩層會變得比較白），1px 細線 */}
+                /* 輔助線：跟 iOS 相機一樣是淡淡的半透明白。透明度加在整組外層（opacity），
+                   四條線本身是實色 —— 交叉的地方是同一層，不會疊兩次變得比較白 */
+                <div className="absolute inset-0 z-10 pointer-events-none w-full h-full opacity-[0.38]">
                     <div className="absolute top-1/3 left-0 right-0 h-px -translate-y-1/2 bg-white"></div>
                     <div className="absolute top-2/3 left-0 right-0 h-px -translate-y-1/2 bg-white"></div>
                     <div className="absolute left-1/3 top-0 bottom-0 w-px -translate-x-1/2 bg-white"></div>

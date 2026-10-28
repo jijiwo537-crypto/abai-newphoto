@@ -1646,23 +1646,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const snapFor = (i: number): BatchSnap | null =>
     (linked[i] === false ? soloSnapsRef.current[i] : sharedSnapRef.current) ?? null;
-  /* 有遮色片的照片：切走時把「畫好的整張」（含遮色片）留一份。背景預熱的那份只有連動的色彩調整，
-     沒有這張自己的遮色片 —— 切回來時先畫預熱那份，遮色片要等整條管線重跑完才補上，看起來就是慢半拍。
-     參數完全沒變的話直接畫留下來的這份，切過去的那一格遮色片就在了。只留有遮色片的、最多四張。 */
+  /* 切走時把「畫好的整張」（含這張自己的遮色片、特效、濾鏡）留一份。背景預熱的那份只有連動的色彩調整，
+     沒有遮色片也沒有特效 —— 切回來先畫預熱那份的話，遮色片／特效要等整條管線重跑完才補上，看起來就是慢半拍、
+     像在重新載入。參數完全沒變的話直接畫留下來的這份，切過去的那一格就是最後的樣子。最多留三張（記憶體）。 */
   const maskShotRef = useRef<Map<string, { canvas: HTMLCanvasElement; sig: string }>>(new Map());
   const maskShotSig = (p: EditorParams, lutIdx: number, g: GeoParams) => JSON.stringify([p, lutIdx, g]);
-  const hasMaskWork = (p: EditorParams) => maskList(p).list.some(m => m.maskCreated && hasMaskAdj(m));
   const keepMaskShot = () => {
-    const live = liveRef.current, cvs = displayCanvasRef.current, src = srcList[safeIdx];
+    const live = liveRef.current, src = srcList[safeIdx];
     const shots = maskShotRef.current;
-    if (!live || !cvs || !src) return;
-    shots.delete(src);
-    if (!hasMaskWork(paramsRef.current) || hasActiveFx(paramsRef.current) || !cvs.width || !cvs.height || isSwitching) return;
-    const c = document.createElement('canvas'); c.width = cvs.width; c.height = cvs.height;
+    if (!live || !src) return;
+    const old = shots.get(src); shots.delete(src);
+    const shown = visibleEditorCanvas(), b = buffers.current.preview;
+    if (!shown || !b || !b.w || !b.h || !shown.width || !shown.height || isSwitching || showOriginalRef.current || isDirtyRef.current) { if (old) old.canvas.width = 0; return; }
+    const c = old?.canvas || document.createElement('canvas');
+    if (c.width !== b.w || c.height !== b.h) { c.width = b.w; c.height = b.h; }
     const g = c.getContext('2d'); if (!g) return;
-    g.drawImage(cvs, 0, 0);
+    g.globalCompositeOperation = 'copy'; g.drawImage(shown, 0, 0, b.w, b.h); g.globalCompositeOperation = 'source-over';
     shots.set(src, { canvas: c, sig: maskShotSig(paramsRef.current, live.selectedLutIdx, live.geo) });
-    while (shots.size > 4) { const k = shots.keys().next().value as string; shots.get(k)!.canvas.width = 0; shots.delete(k); }
+    while (shots.size > 3) { const k = shots.keys().next().value as string; shots.get(k)!.canvas.width = 0; shots.delete(k); }
   };
   const paintMaskShot = (i: number, snap: BatchSnap | null): boolean => {
     const shot = maskShotRef.current.get(srcList[i]), cvs = displayCanvasRef.current;
@@ -2925,6 +2926,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const maskSkipDirtyRef = useRef(false);
   const maskOverlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** 剛剛的變化只有「紅色範圍顯示／隱藏」 */
+  const overlayOnlyRef = useRef(false);
+  /** 上一次整條管線畫的是哪一份參數（用來確認真的只有紅色範圍的開關不一樣） */
+  const lastFullRenderParamsRef = useRef<EditorParams | null>(null);
+  /** 只更新紅色範圍那一層。做不到（缺少上一次算好的東西）就回傳 false，照舊整張重畫 */
+  const paintOverlayOnlyRef = useRef<(p: EditorParams) => boolean>(() => false);
   /* 「選中這一個以外都畫好」的整張（原解析度）：每次正常重畫時順手留一份，
      開始拖的那一下直接拿來當底、掛上即時疊層，不必先等整條管線跑一次（就是開始拖時那一頓） */
   const maskNoActiveRef = useRef<HTMLCanvasElement | null>(null);
@@ -3677,12 +3684,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   // Force close or open the mask overlay depending on activeCategory
   useEffect(() => {
+    /* 只是紅色範圍的開關：照片本身一個像素都沒變，不必把整條管線重跑一次
+       （有遮色片時進出遮色片頁以前每次都要重算整張，大照片在手機上要半秒以上）。
+       標記起來，下一格只更新紅色那一層（見 paintOverlayOnly）。 */
     if (activeCategory === 'mask') {
       if (paramsRef.current.maskCreated && !paramsRef.current.maskShowOverlay) {
+        overlayOnlyRef.current = true;
         setParams(prev => ({ ...prev, maskShowOverlay: true }));
       }
     } else {
       if (paramsRef.current.maskShowOverlay) {
+        overlayOnlyRef.current = true;
         setParams(prev => ({ ...prev, maskShowOverlay: false }));
       }
     }
@@ -5474,6 +5486,29 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buildFastStage]);
 
+  paintOverlayOnlyRef.current = (p: EditorParams) => {
+    const ovEl = maskOverlayCanvasRef.current, b = buffers.current.preview;
+    if (!ovEl || !b || !b.w || !b.h) return false;
+    const { list, active } = maskList(p);
+    const act = list[active];
+    if (activeCategory !== 'mask' || !p.maskShowOverlay || !act?.maskCreated) { ovEl.style.display = 'none'; return true; }
+    const w = b.w, h = b.h, alphaC = maskAlphaCanvasRef.current;
+    if (!alphaC || alphaC.width !== w || alphaC.height !== h) return false;
+    let baseCopy: HTMLCanvasElement | null = null, baseKey = '';
+    if (list.some(m => m.maskCreated && (m.maskType === 'color' || m.maskType === 'luma'))) {
+      baseCopy = maskBaseCopyRef.current;
+      if (!baseCopy || baseCopy.width !== w || baseCopy.height !== h) return false;
+      baseKey = `${w}x${h}|${srcIdent()}|${selectedLutIdx}|${JSON.stringify(Object.entries(p).filter(([k]) => !k.startsWith('mask')))}`;
+    }
+    maskAlpha(alphaC, maskCacheId(act), act, w, h, baseCopy, baseKey, false);
+    if (ovEl.width !== w || ovEl.height !== h) { ovEl.width = w; ovEl.height = h; }
+    const og = ovEl.getContext('2d')!;
+    og.globalCompositeOperation = 'copy'; og.fillStyle = 'rgba(220,38,38,0.5)'; og.fillRect(0, 0, w, h);
+    og.globalCompositeOperation = 'destination-in'; og.drawImage(alphaC, 0, 0);
+    og.globalCompositeOperation = 'source-over';
+    ovEl.style.display = 'block';
+    return true;
+  };
   const render = useCallback((p: EditorParams, overrideLutIdx?: number) => {
     if (p.sharpen > 0) for (const bb of [buffers.current.preview, buffers.current.fast]) {
       const base = bb.original || bb.source;
@@ -5483,6 +5518,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        載好才變成有濾鏡的（loadLut 載好會再標記重畫）。 */
     { const l = lutList[overrideLutIdx ?? selectedLutIdx];
       if (l?.url && !lutDataRef.current[l.id] && LUT_IN_FLIGHT.has(l.id)) return; }
+    lastFullRenderParamsRef.current = p;
     const activeToolId = activeToolIdRef.current;
     const cache = fastPreviewCacheRef.current;
 
@@ -6618,6 +6654,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             }
             /* 拖遮色片滑桿、即時疊層已經掛好：每一格都由疊層自己畫，管線不重跑（放手時會補一次完整的） */
             if (isDirtyRef.current && !flipped && maskLiveRef.current && (maskSliderLiveRef.current || !!activeDragRef.current || maskPaintingRef.current)) isDirtyRef.current = false;
+            /* 只有紅色範圍的開關變了：只畫那一層，照片不重算 */
+            if (isDirtyRef.current && !flipped && overlayOnlyRef.current) {
+                overlayOnlyRef.current = false;
+                const last = lastFullRenderParamsRef.current;
+                const same = !!last && last !== currentParams && (() => {
+                    const keys = new Set([...Object.keys(last), ...Object.keys(currentParams)]);
+                    for (const k of keys) if (k !== 'maskShowOverlay' && (last as any)[k] !== (currentParams as any)[k]) return false;
+                    return true;
+                })();
+                if (same && !interacting && paintOverlayOnlyRef.current(currentParams)) {
+                    isDirtyRef.current = false;
+                    lastFullRenderParamsRef.current = currentParams;
+                    rafId = requestAnimationFrame(tick);
+                    return;
+                }
+            }
             if (isDirtyRef.current || flipped) {
                 const elapsed = now - lastRenderTimeRef.current;
 
