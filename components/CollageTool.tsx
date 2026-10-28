@@ -69,7 +69,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
 import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { drawStableText, hasEmoji } from '../utils/stableText';
 import { normalizeImageFiles } from '../utils/imageLoader';
-import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
+import { RAW_ACCEPT as RAW_ACCEPT_IMG, MEDIA_ACCEPT } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
 import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
@@ -107,7 +107,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
 import { setBlurRebuildListener } from '../utils/blurShapes';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
-import {warmPhotoFxSurface,warmPhotoSceneColour} from '../utils/photoFx';
+import {warmPhotoFxSurface,warmPhotoSceneColour,forgetPhotoFxSource} from '../utils/photoFx';
 import {videoPoster} from '../utils/videoPoster';
 import {canEncodeFrames,encodeCanvasFrames,seekVideosTo} from '../utils/frameExactVideo';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
@@ -1425,6 +1425,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const saveToolDraft: typeof saveToolDraftImpl = (...args) => sandbox ? Promise.resolve() as any : saveToolDraftImpl(...args);
   useKeyboardRecovery();
   const [imageState, setImageState] = useState<any>(null);
+  const imageStateRef = useRef<any>(null);
+  imageStateRef.current = imageState;
+  /* 底是影片時，它自己的濾鏡／調節／特效／構圖，以及給面板卡片用的第一格縮圖。
+     刻意**不**放進 imageState：imageState 換一個物件就等於「換了一張底」——
+     圖案會重灑、上一步紀錄會被清空。記著是哪一段影片（img），換底之後舊的自動不算。 */
+  const [baseVidEdit, setBaseVidEdit] = useState<{ img: any; fx?: PhotoFx; geo?: GeoParams }>({ img: null });
+  const [baseVidPoster, setBaseVidPoster] = useState<{ img: any; poster: string; src: string } | null>(null);
+  const bvEdit = imageState?.vid && baseVidEdit.img === imageState.img ? baseVidEdit : null;
+  const bvEditRef = useRef(bvEdit);
+  bvEditRef.current = bvEdit;
+  /** 底是影片、裁切改了比例時，鋪進原本框形的那一張（主畫布／匯出各一張） */
+  const baseVidCoverRef = useRef<Record<string, { cv: HTMLCanvasElement }>>({});
   const [photoRegion, setPhotoRegion] = useState<PhotoRegion | null>(null);
   const photoRegionRef = useRef(photoRegion);
   const committedRegionRef=useRef(photoRegion);
@@ -1680,6 +1692,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      卡片牆看的是這顆物件的身分，身分一直換就等於整面卡片一直重做。
      同一顆物件就回同一份。 */
   const panelImgRef = useRef<{ from: any; out: any } | null>(null);
+  /** 底是影片時給編輯面板的那顆「物件」（同一個 imageState 回同一顆，面板才不會每次 render 都重來） */
+  const baseVideoSelRef = useRef<{ from: any; out: any } | null>(null);
+  const baseVideoSel = (st: any, edit: any, poster: any) => {
+    const from = [st, edit, poster];
+    const prev = baseVideoSelRef.current?.from;
+    if (prev && prev[0] === st && prev[1] === edit && prev[2] === poster) return baseVideoSelRef.current!.out;
+    const pv = poster && poster.img === st.img ? poster : null;
+    const out = { id: 'base-video', type: 'image', img: st.img, src: pv?.src || '', vid: true, poster: pv?.poster, fx: edit?.fx, geo: edit?.geo };
+    baseVideoSelRef.current = { from, out };
+    return out;
+  };
   const panelImgOf = (o: any) => {
     if (!o || !o.vid || !o.poster) return o;
     if (panelImgRef.current && panelImgRef.current.from === o) return panelImgRef.current.out;
@@ -1933,6 +1956,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       reuse=regionFxSurfaces.current.get(o.id);
       if(!reuse){reuse=document.createElement('canvas');regionFxSurfaces.current.set(o.id,reuse);}
     }
+    /* 影片每一格都畫在同一張畫布上（videoFrame／geoFrameCanvas 重複使用），畫布本人沒換，
+       GPU 那邊就會以為「同一張圖、貼圖已經在上面」而一直用第一次上傳的那格 —— 套了濾鏡的影片
+       就停在那一格。換格時讓它換個編號，強迫重新上傳這一格。 */
+    if (isVid) forgetPhotoFxSource(srcEl);
     const base = applyPhotoFx(srcEl, iw, ih, o.fx || {}, {
       cacheSource: !isVid, fast: live, out: reuse, gpuSurface: regionPhoto || objectGpu,
     });
@@ -2331,6 +2358,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [composeState, setComposeState] = useState<{ id: string; img: HTMLImageElement | HTMLVideoElement; geo: GeoParams; vid?: boolean } | null>(null);
 
   const openComposeFor = useCallback((id: string) => {
+    if (id === 'base-video') {
+      const st = imageStateRef.current;
+      if (st?.vid && isVideoEl(st.img)) setComposeState({ id, img: st.img, geo: bvEditRef.current?.geo || DEFAULT_GEO, vid: true });
+      return;
+    }
     const regionIndex = id.startsWith('region-photo-') ? Number(id.slice(13)) : -1;
     const o = regionIndex >= 0 ? photoRegionRef.current?.photos[regionIndex] : objectsRef.current.find(z => z.id === id);
     if (!o || !o.src) return;
@@ -2352,6 +2384,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const applyComposeToObj = useCallback(() => {
     setComposeState(st => {
       if (!st) return null;
+      // 底是影片：構圖只記 geo，每一格畫的時候才套（底是用 cover 鋪滿的，比例變了也不會變形）
+      if (st.id === 'base-video') {
+        const v = imageStateRef.current?.vid ? imageStateRef.current.img : null;
+        if (v) setBaseVidEdit(e => ({ ...(e.img === v ? e : {}), img: v, geo: isGeoIdentity(st.geo) ? undefined : st.geo }));
+        objFxCache.current.delete('base-video');
+        setFxTick(n => n + 1);
+        return null;
+      }
       const regionIndex = st.id.startsWith('region-photo-') ? Number(st.id.slice(13)) : -1;
       const o = regionIndex >= 0 ? photoRegionRef.current?.photos[regionIndex] : objectsRef.current.find(z => z.id === st.id);
       if (!o) return null;
@@ -3195,6 +3235,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 現在當底的那一段影片（沒有影片就是 null）。換底、離開時要收掉。 */
   const baseVidRef = useRef<HTMLVideoElement | null>(null);
 
+  const addMediaFilesRef = useRef<(files: File[]) => void>(() => {});
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     /* 先把元素抓起來再 await —— 這支現在是非同步的，等解碼回來之後
        才去碰 e.target 會依賴「事件物件還活著」。React 19 不回收事件所以
@@ -3202,9 +3243,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （從 initialFile 那支 effect 呼叫時 e 是自己造的假物件，一樣沒問題。） */
     const inputEl = e.target as HTMLInputElement;
     const preserveLayout = inputEl === replaceFileInputRef.current;
-    /* 創意拼圖恢復為只接受圖片。accept 只會限制相簿介面，分享／拖放仍可能
-       帶入影片，所以真正處理之前也必須過濾一次。 */
-    const rawPicked = (Array.from(inputEl.files || []) as File[]).filter(file => !isVideoFile(file)).slice(0, CREATIVE_PHOTO_LIMIT);
+    /* 第一個檔案當底（照片或影片都可以）。底是影片時，其餘的檔案變成浮動物件；
+       底是照片時，其餘的照片照舊排進圖片排版，影片則變成浮動物件（影片不能當格子）。 */
+    const allPicked = (Array.from(inputEl.files || []) as File[]).slice(0, CREATIVE_PHOTO_LIMIT);
+    const baseIsVideo = !!allPicked[0] && isVideoFile(allPicked[0]);
+    const extraVideos = baseIsVideo ? allPicked.slice(1) : allPicked.slice(1).filter(f => isVideoFile(f));
+    const rawPicked = baseIsVideo ? allPicked.slice(0, 1) : allPicked.filter(f => !isVideoFile(f));
     if (!rawPicked.length) { inputEl.value = ''; return; }
     const epoch = ++photoImportEpoch.current;
     ++photoRegionEpoch.current;
@@ -3272,9 +3316,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       setBaseSelected(false);
       setSelectedTarget(null);
     };
+    /* 底放好之後，剩下的影片（或底是影片時剩下的全部）加成浮動物件 */
+    // 等底那一輪 render 完（版面尺寸換好）再加，物件才會放在新底的正中間
+    const addExtras = () => { if (extraVideos.length) setTimeout(() => { if (epoch === photoImportEpoch.current) addMediaFilesRef.current(extraVideos); }, 150); };
     if (isVideoFile(file)) {
       loadVideoEl(url)
-        .then(v => place(v, v.videoWidth, v.videoHeight))
+        .then(v => {
+          place(v, v.videoWidth, v.videoHeight); addExtras();
+          /* 第一格烤成小圖：編輯面板的濾鏡／特效卡片拿它畫縮圖（影片網址畫不出卡片） */
+          void videoPoster(url).then(poster => { if (poster) setBaseVidPoster({ img: v, poster, src: url }); });
+        })
         .catch(() => alert('這段影片讀不進來，換一個格式試試（MP4 最穩）'));
       inputEl.value = '';
       return;
@@ -3295,6 +3346,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       setSelectedRegionPhoto(null);
       const img = decodedRegionPhotos.current.get(url)!;
       place(img, img.naturalWidth, img.naturalHeight, photos.length > 1);
+      addExtras();
     } catch (error) {
       console.error('Creative photo region import failed', error);
       alert('圖片讀取失敗，請重新選擇圖片');
@@ -3672,13 +3724,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 一次把一批檔案加成物件（相簿多選）。順序照使用者選的順序。
       RAW／HEIC 先解碼再加，不然加進來會是一個載不出來的空物件。 */
   const addMediaFiles = useCallback((files: File[]) => {
-    /* 創意拼圖不收影片（統一走經典拼圖）—— 進來之前先濾掉 */
-    const photos = files.filter(f => !isVideoFile(f));
-    if (!photos.length) return;
-    normalizeImageFiles(photos)
+    /* 照片與影片都收（順序照使用者選的）。RAW／HEIC 先解碼；影片原樣放行。 */
+    if (!files.length) return;
+    normalizeImageFiles(files)
       .then(list => list.forEach((f, i) => addMediaObject(f, i)))
-      .catch(() => photos.forEach((f, i) => addMediaObject(f, i)));
+      .catch(() => files.forEach((f, i) => addMediaObject(f, i)));
   }, [addMediaObject]);
+  addMediaFilesRef.current = addMediaFiles;
 
   /* 換排版時畫布的形狀會整個換掉（例如遮罩從下面搬到上面、或變成四周包圍），
      但浮動物件的座標還停在舊畫布上 —— 來回切幾次就會整個跑到畫面外面不見了。
@@ -6036,14 +6088,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        這一格底圖會被畫好幾次（中央那張、遮罩底下那張、洞裡看到的那張），
        但落格只會做一次 —— 之後每一次都是「畫布對畫布」的純記憶體搬移。
        不是影片就原樣回傳，圖片那條路完全沒有變。 */
-    const baseImg = videoFrame(imageState.img, Math.ceil(Math.max(
+    const basePx = Math.ceil(Math.max(
       offs.cw, offs.ch,
       Math.abs((imageTransform.w || 0) * s), Math.abs((imageTransform.h || 0) * s),
-    )));
+    ));
+    /* 底是影片而且套了濾鏡／調節／特效／構圖：每一格走跟影片物件同一條效果管線（fxCanvasOf），
+       工作尺寸夾在畫面實際大小。沒套就照舊直接用那一格。 */
+    const bv = bvEdit;
+    const baseVidEdited = !!bv && ((bv.fx && hasPhotoFx(bv.fx)) || (bv.geo && !isGeoIdentity(bv.geo)));
+    let baseImg: any = (baseVidEdited
+      && fxCanvasOf({ id: 'base-video', img: imageState.img, fx: bv!.fx, geo: bv!.geo }, isMain, basePx))
+      || videoFrame(imageState.img, basePx);
+    /* 裁切改了比例（例如 3:4 的影片裁成 1:1）：底的框還是原本的形狀，直接畫上去會被拉長。
+       跟照片當底一樣用「鋪滿」—— 裁切後那一格以中心等比裁進原本的框。
+       畫布固定重複使用；一次畫面大小的畫布對畫布複製，不到一毫秒。 */
+    if (baseVidEdited && bv!.geo && !isGeoIdentity(bv!.geo) && baseImg instanceof HTMLCanvasElement && imageTransform.w && imageTransform.h) {
+      const ta = Math.abs(imageTransform.w) / Math.abs(imageTransform.h), bw = baseImg.width, bh = baseImg.height;
+      if (bw > 1 && bh > 1 && Math.abs(bw / bh - ta) > 0.004 * ta) {
+        const slot = isMain ? 'main' : 'export';
+        let rec = baseVidCoverRef.current[slot];
+        if (!rec) rec = baseVidCoverRef.current[slot] = { cv: document.createElement('canvas') };
+        const sw = bw / bh > ta ? bh * ta : bw, sh = bw / bh > ta ? bh : bw / ta;
+        const ow = Math.max(1, Math.round(sw)), oh = Math.max(1, Math.round(sh));
+        if (rec.cv.width !== ow || rec.cv.height !== oh) { rec.cv.width = ow; rec.cv.height = oh; }
+        const g = rec.cv.getContext('2d');
+        if (g) { g.globalCompositeOperation = 'copy'; g.drawImage(baseImg, (bw - sw) / 2, (bh - sh) / 2, sw, sh, 0, 0, ow, oh); g.globalCompositeOperation = 'source-over'; }
+        baseImg = rec.cv;
+      }
+    }
     /* 快取的號碼牌一定要看**原本那個 <video>**，不是上面那張畫布 ——
        畫布本身沒有「現在第幾格」這回事，拿它去問會永遠拿到 0，
        底圖那幾層就會定格在第一幀。 */
-    const baseVidTok = videoToken(imageState.img);
+    /* 影片暫停時換濾鏡／裁切，號碼牌不會變 —— 把這段影片自己的編輯也算進去，
+       不然那幾層快取會繼續拿舊的那張。 */
+    const baseVidTok = baseVidEdited
+      ? `${videoToken(imageState.img)}~${JSON.stringify([bv!.fx || null, bv!.geo || null])}~${!!getLoadedLut(bv!.fx?.lut)}`
+      : videoToken(imageState.img);
     /* 主畫布這一趟真的用了哪個倍率，記下來。
        所有「畫面座標 ↔ 畫布座標」的換算都要用這個，不能用 previewScale ——
        影片播放中會刻意畫得小一號（見影片那支迴圈），兩者就不一樣了，
@@ -8744,7 +8824,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
-  }, [imageState, photoRegion, swapSource, selectedRegionPhoto, activeTab, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
+  }, [imageState, bvEdit, photoRegion, swapSource, selectedRegionPhoto, activeTab, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
       stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlow, holeGlowColor, glowIdle, patternSceneIdentity,backdropSceneFingerprint,lutRevision,stableSceneKey]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
@@ -9754,6 +9834,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     maskColor, patternType, dotColor, dotSize, dotGap, dotSquash,
     stripeN, stripeDir, stripeA: stripeAPick, stripeB,
     maskImageState, maskTransform, imageTransform,
+    // 底是影片時它自己的濾鏡／特效／構圖（照片的底記在 photoRegion 裡）
+    baseVidFx: bvEdit?.fx ?? null, baseVidGeo: bvEdit?.geo ?? null,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
     glowMode, holeGlow, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
     linkMode, linkColor,
@@ -9783,6 +9865,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (e.stripeB !== undefined) setStripeB(e.stripeB);
     setMaskImageState(e.maskImageState ?? null);
     setMaskTransform(e.maskTransform); setImageTransform(e.imageTransform);
+    // 底是影片時，它的濾鏡／特效／構圖也一起回到那一步
+    {const st = imageStateRef.current; if (st?.vid) setBaseVidEdit({ img: st.img, fx: e.baseVidFx ?? undefined, geo: e.baseVidGeo ?? undefined });}
     setHoleType(e.holeType); setCustomText(e.customText);
     setHoleSize(e.holeSize); setSizeJitter(e.sizeJitter);
     setHoleAngle(e.holeAngle); setHoleCount(Math.min(30, Math.max(0, e.holeCount)));
@@ -9813,7 +9897,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }, 400);
     return () => window.clearTimeout(t);
   }, [
-    imageState, pushHistory, markDirty,
+    imageState, pushHistory, markDirty, bvEdit,
     layout, maskScale, canvasRatio, canvasRatioBeforeFull, photoRegion, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
@@ -10803,8 +10887,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         )}
         {exportOptionsOpen&&<CollageExportOptions label="創意拼圖匯出設定" panelRef={exportOptionsRef} imageFormat={imageExportFormat} videoFormat={videoExportFormat} fps={videoExportFps} quality={videoExportQuality} onImage={setImageExportFormat} onVideo={setVideoExportFormat} onFps={setVideoExportFps} onQuality={setVideoExportQuality}/>}
         {/* 多選最多九張照片，全部加入同一個圖片排版區域。 */}
-        <input type="file" accept={RAW_ACCEPT_IMG} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
-        <input type="file" accept={RAW_ACCEPT_IMG} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={MEDIA_ACCEPT} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={MEDIA_ACCEPT} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
         <input type="file" accept={RAW_ACCEPT_IMG} multiple aria-label="填入圖片排版" className="hidden" ref={regionUploadRef} onChange={uploadRegionPhotos} />
         <input type="file" accept="image/*" aria-label="上傳遮罩圖片" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
       </header>
@@ -11371,7 +11455,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       <input
         type="file"
         ref={objFileInputRef}
-        accept={RAW_ACCEPT_IMG}
+        accept={MEDIA_ACCEPT}
         multiple
         className="hidden"
         onChange={(e) => {
@@ -11972,8 +12056,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 // snapshot back into ImageAdjustPanel and erase a newer FX.
                 const regionPhoto = editRegionIndex !== null ? photoRegionRef.current?.photos[editRegionIndex] : null;
                 const regionEditing = !!regionPhoto?.src;
-                const sel = regionEditing ? {...regionPhoto,id:`region-photo-${editRegionIndex}`,type:'image',img:decodedRegionPhotos.current.get(regionPhoto.src)} : objects.find(o => o.id === selectedObj) || null;
+                /* 底是影片：選中底的時候編輯的就是那段影片本人（濾鏡、調節、特效、構圖）。
+                   設定記在 baseVidEdit 上（不放進 imageState，見那裡的註解），每一格畫的時候才套（見 renderToCanvas 的 baseVidEdited）。 */
+                const baseVideoEditing = !regionEditing && baseSelected && !!imageState?.vid && isVideoEl(imageState?.img);
+                const sel = regionEditing ? {...regionPhoto,id:`region-photo-${editRegionIndex}`,type:'image',img:decodedRegionPhotos.current.get(regionPhoto.src)}
+                  : baseVideoEditing ? baseVideoSel(imageState, bvEdit, baseVidPoster)
+                  : objects.find(o => o.id === selectedObj) || null;
                 const patch = (d: any) => {
+                  if (baseVideoEditing) {
+                    const keep: any = {};
+                    if ('fx' in d) keep.fx = d.fx;
+                    if ('geo' in d) keep.geo = d.geo;
+                    const v = imageState.img;
+                    if (Object.keys(keep).length) setBaseVidEdit(e => ({ ...(e.img === v ? e : {}), ...keep, img: v }));
+                    return;
+                  }
                   if (regionEditing && photoRegionRef.current) {
                     clearPhotoDimmer();
                     commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)},!!d.fx);
@@ -12315,13 +12412,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         形狀那一組（圓角／羽化／描邊／發光）也接上了，
                         畫布端會把它們畫進每個圖片物件的快取裡。 */}
                     <ImageAdjustPanel
+                      key={baseVideoEditing ? 'base-video' : undefined}
                       /* 影片物件：卡片牆（濾鏡／特效）是拿 src 去重畫縮圖的，
                          而 <img src="blob:…mp4"> 畫不出東西 —— 卡片會整面空白。
                          換成匯入時烤好的第一格，卡片就跟圖片物件長得一模一樣。
                          真正畫到畫布上的還是 sel.img（那段影片本人），這裡換掉的
                          只有面板看的那條網址。 */
                       img={panelImgOf(sel)}
-                      hideShape={regionEditing}
+                      hideShape={regionEditing || baseVideoEditing}
                       isolateFxUpdates={regionEditing||liveObjFx}
                       onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : liveObjFx ? ()=>{maskSliderLive.current={id:sel.id,patch:{}};} : undefined}
                       onAdjustmentCommit={regionEditing ? finishRegionEdit : liveObjFx ? commitObjFxLive : undefined}

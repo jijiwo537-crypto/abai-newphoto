@@ -268,6 +268,9 @@ export function settlePhotoFx(result:HTMLCanvasElement,out:HTMLCanvasElement):HT
 /** Native-resolution baking is finished once the caller has its immutable
  * result. Drop CPU readbacks and duplicate blend canvases, not result pixels
  * or the live editing compositor. */
+/** 來源畫布的內容換了（例如影片落了新的一格、畫在同一張畫布上）：
+ *  讓它拿一個新編號，GPU 上那張舊貼圖就不會被當成這一格繼續用。 */
+export function forgetPhotoFxSource(source:CanvasImageSource){if(source&&typeof source==='object')srcIds.delete(source as object);}
 export function releasePhotoFxReadbacks(source:CanvasImageSource){
   const prefix=srcToken(source)+'|';
   for(const key of srcPxCache.keys())if(key.startsWith(prefix))srcPxCache.delete(key);

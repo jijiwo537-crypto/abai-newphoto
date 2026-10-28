@@ -176,6 +176,55 @@ const CameraTickScale: React.FC<CameraTickScaleProps> = ({
   );
 };
 
+/** 小框構圖的最大倍率：框最小是畫面的 1/4 邊長（再小就拍不出能用的解析度） */
+const SMALL_FRAME_MAX = 4;
+
+type SmallFrameApi = { set: (zoom: number, pinching: boolean) => void };
+
+/**
+ * 小框構圖（跟 Dazz 同款）：雙指縮放時不放大畫面，而是在畫面中央出現一個
+ * 跟目前比例一樣的白框，框外稍微變暗；拍下去只留框裡的部分。
+ * 縮放中框的正中央顯示這個框等於多少焦段。
+ *
+ * 自己是一個小元件、由父層透過 ref 推數值：捏的過程中每一格只重畫這一小塊，
+ * 不會把整個相機介面（濾鏡列、按鈕…）一起重畫，手勢才跟得上 60fps。
+ */
+const SmallFrameOverlay = React.memo(React.forwardRef<SmallFrameApi, { baseMm: number }>(({ baseMm }, ref) => {
+  const [zoom, setZoom] = useState(1);
+  const [pinching, setPinching] = useState(false);
+  React.useImperativeHandle(ref, () => ({
+    set: (z, p) => { setZoom(z); setPinching(p); },
+  }), []);
+  const on = zoom > 1.001;
+  const pct = 100 / Math.max(1, zoom);
+  return (
+    <div className="absolute inset-0 z-[15] pointer-events-none" aria-hidden="true">
+      {/* 框：白色細線；框外用一圈很大的陰影壓暗（外層 overflow-hidden 會把它裁在畫面裡） */}
+      <div
+        data-camera-small-frame={on ? 'on' : 'off'}
+        className="absolute left-1/2 top-1/2"
+        style={{
+          width: `${pct}%`, height: `${pct}%`,
+          transform: 'translate(-50%, -50%)',
+          boxShadow: '0 0 0 1.5px rgba(255,255,255,0.95), 0 0 0 200vmax rgba(0,0,0,0.42)',
+          opacity: on ? 1 : 0,
+          transition: 'opacity 260ms cubic-bezier(0.2,0,0,1)',
+          willChange: 'width, height, opacity',
+        }}
+      />
+      {/* 焦段：只在縮放的過程中出現，放手後慢慢淡掉 */}
+      <div
+        className="absolute inset-0 flex items-center justify-center"
+        style={{ opacity: pinching ? 1 : 0, transition: pinching ? 'opacity 160ms ease-out' : 'opacity 420ms ease-in 380ms' }}
+      >
+        <span data-camera-small-frame-mm className="text-sm font-medium text-white tracking-[0.1em] leading-none tabular-nums select-none mr-[-0.1em] [text-shadow:0_1px_2px_rgba(0,0,0,0.45)]">
+          {Math.round(baseMm * Math.max(1, zoom))}mm
+        </span>
+      </div>
+    </div>
+  );
+}));
+
 export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutList, onImportNew }) => {
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const [captureNotice, setCaptureNotice] = useState('');
@@ -228,6 +277,59 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   
   const [focalLengthMm, setFocalLengthMm] = useState<string | null>(null);
   const focalLengthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /* ── 小框構圖 ─────────────────────────────────────────────
+     frameZoomRef：目前框的倍率（1 = 沒有框）。拍照時讀這個。
+     捏的過程不走 React state（見 SmallFrameOverlay），放手時才定下來。 */
+  const frameZoomRef = useRef(1);
+  const smallFrameRef = useRef<SmallFrameApi>(null);
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{ d0: number; z0: number } | null>(null);
+  /** 這一次觸控裡有沒有捏過 —— 有的話放手時不能當成「點一下對焦」 */
+  const gesturePinchedRef = useRef(false);
+  /** 捏完之後很短的時間內，瀏覽器補送的 click 也不能觸發對焦 */
+  const focusGuardUntilRef = useRef(0);
+  const pinchDist = () => {
+    const pts = [...pointersRef.current.values()];
+    return pts.length < 2 ? 0 : Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  };
+  const onFramePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.pointerType === 'mouse') return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size === 2) {
+      const d = pinchDist();
+      if (d > 8) {
+        pinchRef.current = { d0: d, z0: frameZoomRef.current };
+        gesturePinchedRef.current = true;
+        // 第二根手指下來就不是長按鎖定了
+        if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; }
+        smallFrameRef.current?.set(frameZoomRef.current, true);
+      }
+    }
+  };
+  const onFramePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const p = pinchRef.current;
+    if (!p || pointersRef.current.size < 2) return;
+    const d = pinchDist();
+    if (!d) return;
+    // 兩指拉開＝框變小（等於拉近），捏攏＝框變大；到 1 倍框就消失
+    const z = Math.max(1, Math.min(SMALL_FRAME_MAX, p.z0 * d / p.d0));
+    frameZoomRef.current = z;
+    smallFrameRef.current?.set(z, true);
+  };
+  const onFramePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointersRef.current.delete(e.pointerId)) return;
+    if (pinchRef.current && pointersRef.current.size < 2) {
+      pinchRef.current = null;
+      // 很接近 1 倍就直接收掉框，不留一條貼著邊的白線
+      if (frameZoomRef.current < 1.04) frameZoomRef.current = 1;
+      smallFrameRef.current?.set(frameZoomRef.current, false);
+      focusGuardUntilRef.current = performance.now() + 400;
+    }
+    if (pointersRef.current.size === 0) setTimeout(() => { gesturePinchedRef.current = false; }, 0);
+  };
   
   const [photos, setPhotos] = useState<string[]>([]);
   const { thumbs, seed: seedThumb } = usePhotoThumbs(photos);
@@ -464,10 +566,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     lastCameraTickRef.current = key;
   }, []);
 
+  /** 目前鏡頭的等效焦段（小框構圖的焦段＝這個 × 框的倍率） */
+  const lensMm = parseInt(ZOOM_STEPS.find(z => z.label === settings.focalLength)?.mm || '24', 10) || 24;
   const handleZoomClick = (val: string) => {
     triggerHaptic();
     setSettings(prev => ({ ...prev, focalLength: val }));
-    setFocalLengthMm(ZOOM_STEPS.find(z => z.label === val)?.mm || '');
+    const mm = parseInt(ZOOM_STEPS.find(z => z.label === val)?.mm || '', 10);
+    // 有小框時，顯示的是框的焦段（跟縮放時中間那個數字同一套）
+    setFocalLengthMm(mm ? `${Math.round(mm * frameZoomRef.current)}mm` : '');
     if (focalLengthTimerRef.current) clearTimeout(focalLengthTimerRef.current);
     focalLengthTimerRef.current = setTimeout(() => setFocalLengthMm(null), 1000);
   };
@@ -502,6 +608,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   useEffect(() => { setAeafLock(false); }, [facingMode]);
 
   const handleFocus = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement> | React.PointerEvent<HTMLDivElement>) => {
+    // 剛剛是雙指縮放小框，不是點一下對焦
+    if (gesturePinchedRef.current || performance.now() < focusGuardUntilRef.current) return;
     if (showSettingsMenu) {
       /* 收起選單不能吃掉這次點擊；同一次點擊仍然要顯示並執行對焦。 */
       setShowSettingsMenu(false);
@@ -545,10 +653,33 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         if (Array.isArray(caps.focusMode) && caps.focusMode.includes('single-shot')) adv.focusMode = 'single-shot';
         else if ('focusMode' in caps) adv.focusMode = 'continuous';
         if (Array.isArray(caps.exposureMode) && caps.exposureMode.includes('single-shot')) adv.exposureMode = 'single-shot';
-        if (Object.keys(adv).length) {
-          try { videoTrack.applyConstraints({ advanced: [adv] }); } catch(e) {}
-        }
+        if (Object.keys(adv).length) queueFocusConstraints(videoTrack, adv);
     }
+  };
+
+  /* 對焦卡頓：
+     ① applyConstraints 會讓相機重新設定一次（部分裝置那一下會停送一兩格），以前它跟對焦框的
+        第一格擠在同一個事件裡，畫面要等它回來才畫得出對焦框 —— 看起來就是點下去頓一下。
+        現在先讓對焦框畫出來（下一格之後才送），
+     ② 連點的時候以前每一下都送一次，上一次還沒套完又來一次，相機就一直在重設。
+        現在同時間只會有一個在路上，排隊的只留最新的那一個點。 */
+  const focusApplyRef = useRef<{ busy: boolean; next: { track: MediaStreamTrack; adv: any } | null }>({ busy: false, next: null });
+  const queueFocusConstraints = (track: MediaStreamTrack, adv: any) => {
+    const q = focusApplyRef.current;
+    q.next = { track, adv };
+    if (q.busy) return;
+    const pump = () => {
+      const job = q.next;
+      q.next = null;
+      if (!job || job.track.readyState !== 'live') { q.busy = false; return; }
+      q.busy = true;
+      let p: Promise<void>;
+      try { p = job.track.applyConstraints({ advanced: [job.adv] }); } catch { p = Promise.resolve(); }
+      // 有些裝置永遠不回應：最多等 1.2 秒就放行下一個
+      withLimit(p, 1200).catch(() => {}).finally(pump);
+    };
+    q.busy = true;
+    requestAnimationFrame(() => setTimeout(pump, 0));
   };
 
   /* 所有會跟相機硬體打交道的呼叫一律有截止時間；裝置不回應也不能鎖死介面。 */
@@ -652,6 +783,13 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       } else {
         cropH = srcW / targetRatio;
         offsetY = (srcH - cropH) / 2;
+      }
+      /* 小框構圖：只留框裡的那一塊（框永遠在正中央、比例跟畫面一樣） */
+      const fz = frameZoomRef.current;
+      if (fz > 1.001) {
+        const w2 = cropW / fz, h2 = cropH / fz;
+        offsetX += (cropW - w2) / 2; offsetY += (cropH - h2) / 2;
+        cropW = w2; cropH = h2;
       }
 
       /* 保留相機實際提供的完整像素；畫布重用，相簿只持有編碼後的 Blob。 */
@@ -832,9 +970,13 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         break;
     }
 
+    /* 4:3、1:1 比 3:2 矮。外層是貼底排的，以前矮的框就整個沉到底、上面空一大塊。
+       改成放在 3:2 那一格的正中間 —— 框的中心跟 3:2 時一樣，切換比例時是上下一起收，
+       不是只有上緣往下掉。 */
     return { 
         width: `${targetW}px`, 
-        height: `${targetH}px` 
+        height: `${targetH}px`,
+        marginBottom: `${Math.max(0, (h32 - targetH) / 2)}px`,
     };
   };
 
@@ -929,7 +1071,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         <div className="w-full h-full flex items-end justify-center pb-0" ref={containerRef}>
           <div 
             className="relative rounded-camera overflow-hidden bg-zinc-900 shadow-2xl flex items-center justify-center border border-white/5 transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]"
-            style={getFrameStyle()}
+            style={{ ...getFrameStyle(), touchAction: 'none' }}
+            onPointerDown={onFramePointerDown}
+            onPointerMove={onFramePointerMove}
+            onPointerUp={onFramePointerEnd}
+            onPointerCancel={onFramePointerEnd}
           >
             {/* 返回鍵屬於相機畫面本身，和右上角的更多按鈕平行對稱。 */}
             {!showGallery && !editingPhoto && activeControl !== 'filters' && activeControl !== 'effects' && (
@@ -988,15 +1134,16 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 </div>
             )}
             
+            {!editingPhoto && <SmallFrameOverlay ref={smallFrameRef} baseMm={lensMm} />}
+
             {focalLengthMm && (
                 <div 
                     key={focalLengthMm} 
                     className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none"
                 >
-                    <div className="text-sm font-medium text-white animate-[fadeOut_1s_ease-out_forwards] tracking-[0.1em] leading-none select-none mr-[-0.1em] translate-y-4">
+                    <div className="text-sm font-medium text-white animate-[camFadeOut_1s_ease-out_forwards] tracking-[0.1em] leading-none select-none mr-[-0.1em] translate-y-4">
                         {focalLengthMm}
                     </div>
-                    <style>{`@keyframes fadeOut { 0% { opacity: 1; } 50% { opacity: 1; } 100% { opacity: 0; } }`}</style>
                 </div>
             )}
 
@@ -1053,21 +1200,19 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     className="absolute z-40 pointer-events-none"
                     style={{ left: focusPoint.x, top: focusPoint.y, transform: 'translate(-50%, -50%)' }}
                 >
-                    <div className="w-[78px] h-[78px] animate-[focusTap_0.92s_cubic-bezier(0.2,0.72,0.2,1)_forwards]">
-                         <svg width="100%" height="100%" viewBox="0 0 78 78" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_1px_1px_rgba(0,0,0,0.32)]">
+                    {/* 陰影改成畫在 SVG 裡的一條淡黑線：CSS 的 drop-shadow 濾鏡疊在每格都在重畫的
+                        觀景窗上，縮放動畫的每一格都要重算一次模糊，對焦那一下就會頓。 */}
+                    <div className="w-[78px] h-[78px] animate-[camFocusTap_0.92s_cubic-bezier(0.2,0.72,0.2,1)_forwards]" style={{ willChange: 'transform, opacity' }}>
+                         <svg width="100%" height="100%" viewBox="0 0 78 78" fill="none" xmlns="http://www.w3.org/2000/svg">
+                             <g transform="translate(0 1)" stroke="rgba(0,0,0,0.28)" strokeWidth="1">
+                               <rect x="4.5" y="4.5" width="69" height="69"/>
+                               <path d="M39 4.5V13M39 73.5V65M4.5 39H13M73.5 39H65" strokeLinecap="square"/>
+                             </g>
                              <rect x="4.5" y="4.5" width="69" height="69" stroke="#fff" strokeWidth="1"/>
                              {/* 四條刻度全部向框內延伸，不再凸出框外。 */}
                              <path d="M39 4.5V13M39 73.5V65M4.5 39H13M73.5 39H65" stroke="#fff" strokeWidth="1" strokeLinecap="square"/>
                          </svg>
                     </div>
-                    <style>{`
-                        @keyframes focusTap {
-                          0% { transform: scale(1.22); opacity: 1; }
-                          20% { transform: scale(1); opacity: 1; }
-                          78% { transform: scale(1); opacity: 1; }
-                          100% { transform: scale(1); opacity: 0; }
-                        }
-                    `}</style>
                 </div>
             )}
 
