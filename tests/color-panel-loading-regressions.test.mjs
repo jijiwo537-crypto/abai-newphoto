@@ -16,12 +16,9 @@ test('only active background texture allows color panel scrolling', () => {
   assert.match(grid, /flex-1 min-h-0 no-scrollbar/);
 });
 
-test('color match progress is a top capsule like the beauty 刪除中 one', () => {
-  // 分析中：跟人像「刪除中」同一款膠囊、同一個位置（照片上緣往下 16px），不再擋在照片正中間
-  const status = match.match(/<div role="status" aria-label="分析色彩中"[\s\S]*?<\/div>/)?.[0];
+test('color match progress is centered without an opaque backing', () => {
+  const status = match.match(/\{\(busy \|\| referenceLoading\) && \(([\s\S]*?)\n        \)\}/)?.[1];
   assert.ok(status);
-  assert.match(status, /rounded-full bg-black\/60 backdrop-blur-sm text-\[12px\]/);
-  assert.match(status, /top: Math\.round\(imgTop \+ 16\)/);
-  assert.match(status, /animate-spin/);
-  assert.doesNotMatch(status, /inset-0/);
+  assert.match(status, /absolute inset-0 flex items-center justify-center/);
+  assert.doesNotMatch(status, /bg-|top-3|right-3/);
 });
