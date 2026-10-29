@@ -538,3 +538,35 @@ export function fieldMaskRGBA(f: HealField, hard: number): Uint8ClampedArray {
   }
   return out;
 }
+
+/**
+ * 剛畫完時來源 B 擺哪：先試「緊貼在 A 的左邊或右邊、同一個高度」（左右平行，中間留一點縫），
+ * 兩邊都放得下就挑周圍比較像的那邊（比的是範圍外那一圈，跟 findHealSource 同一個標準）。
+ * 左右都放不下（太大、貼著照片邊）才退回原本的自動搜尋（會跑比較遠）。
+ */
+export function sideHealSource(src: Uint8ClampedArray, W: number, H: number, alpha: Float32Array, rect: HealRect): { dx: number; dy: number } | null {
+  const gap = Math.max(4, Math.round(rect.w * 0.08));
+  const step = rect.w + gap;
+  const cands = [{ dx: step, dy: 0 }, { dx: -step, dy: 0 }]
+    .filter(c => rect.x + c.dx >= 0 && rect.x + rect.w + c.dx <= W);
+  if (!cands.length) return null;
+  if (cands.length === 1) return cands[0];
+  // 範圍外那一圈（外框往外 pad）裡 alpha 幾乎是 0 的像素，抽樣比色差
+  const pad = Math.max(3, Math.round(Math.max(rect.w, rect.h) * 0.15));
+  const x0 = Math.max(0, rect.x - pad), y0 = Math.max(0, rect.y - pad);
+  const x1 = Math.min(W, rect.x + rect.w + pad), y1 = Math.min(H, rect.y + rect.h + pad);
+  const stride = Math.max(1, Math.round(Math.sqrt((x1 - x0) * (y1 - y0) / 4000)));
+  const cost = (c: { dx: number; dy: number }) => {
+    let e = 0, n = 0;
+    for (let y = y0; y < y1; y += stride) for (let x = x0; x < x1; x += stride) {
+      if (alpha[y * W + x] > 0.01) continue;
+      const sx = x + c.dx;
+      if (sx < 0 || sx >= W) continue;
+      const o = (y * W + x) * 4, q = (y * W + sx) * 4;
+      const dr = src[o] - src[q], dg = src[o + 1] - src[q + 1], db = src[o + 2] - src[q + 2];
+      e += dr * dr + dg * dg + db * db; n++;
+    }
+    return n ? e / n : Infinity;
+  };
+  return cost(cands[0]) <= cost(cands[1]) ? cands[0] : cands[1];
+}
