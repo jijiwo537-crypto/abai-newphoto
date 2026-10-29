@@ -11,7 +11,7 @@ import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
-import { useAlignPad, ALIGN_FILL_CSS, type AlignRect } from './studioAlign';
+import { useAlignPad, ALIGN_FILL_CSS, paintedWhenDecoded, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
 import {
   METHODS, METHOD_LABEL, Method,
   sampleRgb, bakeFor, applyLut, Lut3D,
@@ -42,6 +42,9 @@ interface Props {
     commitRef: React.MutableRefObject<(() => StudioResult | null) | null>;
     onDone: (res: StudioResult | null) => void;
     onCancel: () => void;
+    onSave?: () => void;
+    onMore?: () => void;
+    viewApi?: React.MutableRefObject<Record<string, StudioViewApi | undefined>>;
   };
   /** 嵌在編輯器裡：編輯器預覽圖在螢幕上的框，照片擺在一模一樣的位置 */
   align?: AlignRect | null;
@@ -419,6 +422,16 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const onPaintedRef = useRef(onPainted); onPaintedRef.current = onPainted;
   useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
   const finishEmbedded = () => { if (embedded) embedded.onDone(takeResult()); };
+  /* 跟編輯器共用預覽縮放：切過來的那一下直接跳到同一個大小（不補間，不然會看到它滑過去） */
+  const [viewJump, setViewJump] = useState(false);
+  if (embedded?.viewApi) embedded.viewApi.current.match = {
+    get: () => { const v = viewTRef.current; const c = stageBox(); return centerViewToShared(v.k, v.tx, v.ty, c); },
+    set: (sv) => {
+      const c = stageBox(); const v = sharedToCenterView(sv, c);
+      setViewJump(true); applyView(v.k, v.tx, v.ty);
+      requestAnimationFrame(() => requestAnimationFrame(() => setViewJump(false)));
+    },
+  };
 
   const recordedRef = useRef('');
   const record = useCallback(async (outUrl?: string) => {
@@ -567,8 +580,12 @@ export const ColorMatchStudio: React.FC<Props> = ({
       {embedded ? (
       <header className="relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 z-[81]">
         <button onClick={embedded.onCancel} data-embedded-cancel className="h-8 -ml-1 px-2 text-[13px] text-white/70 active:text-white">取消</button>
-        <button onClick={finishEmbedded} data-embedded-done disabled={saving}
-          className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider shadow-lg active:scale-95 transition-transform disabled:opacity-40">儲存</button>
+        {/* 跟編輯器其他分頁同一顆：儲存＋匯出選項（三個點） */}
+        <div className="h-8 flex items-center bg-white text-black rounded-full overflow-hidden">
+          <button onClick={embedded.onSave || finishEmbedded} data-embedded-done disabled={saving} className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap disabled:opacity-40">儲存</button>
+          <span aria-hidden="true" className="w-px h-4 bg-black/20" />
+          <button aria-label="匯出選項" onClick={embedded.onMore} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
+        </div>
       </header>
       ) : (
       <header className={`relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 ${formatOpen?'':'backdrop-blur-xl'} z-[81]`}>
@@ -617,7 +634,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           style={{
             ...fitPad,
             transform: `translate(${viewT.tx}px, ${viewT.ty}px) scale(${viewT.k})`,
-            transition: pinchRef.current || panRef.current ? 'none' : 'transform 90ms linear',
+            transition: pinchRef.current || panRef.current || viewJump ? 'none' : 'transform 90ms linear',
           }}
         >
           <canvas
@@ -626,7 +643,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           />
           {!ready && (
             <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm shadow-2xl"
-              ref={el => { if (el?.complete && el.naturalWidth) onPaintedRef.current?.(); }} onLoad={() => onPaintedRef.current?.()} />
+              ref={el => paintedWhenDecoded(el, () => onPaintedRef.current?.())} onLoad={e => paintedWhenDecoded(e.currentTarget, () => onPaintedRef.current?.())} />
           )}
         </div>
         {(busy || referenceLoading) && (

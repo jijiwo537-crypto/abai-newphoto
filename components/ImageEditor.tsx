@@ -3,6 +3,7 @@ import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, normGrade,
 import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
 import { EditBar, EditBarTab, EDIT_BAR_H } from './EditBar';
 import { BeautyStudio, type StudioResult } from './BeautyStudio';
+import type { StudioView, StudioViewApi } from './studioAlign';
 import { ColorMatchStudio } from './ColorMatchStudio';
 import { TemplatePanel } from './TemplatePanel';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
@@ -1303,6 +1304,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const saveRequestRef = useRef(0);
   const saveBusyRef = useRef(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const editorHeaderRef = useRef<HTMLElement | null>(null);
   const [exportFormat, setExportFormat] = useState<'png' | 'jpg' | 'heic'>('png');
   const [encodedExports, setEncodedExports] = useState<string[]>([]);
   const encodedExportsRef = useRef<string[]>([]);
@@ -7381,6 +7383,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setIgBusy(false);
   };
 
+  const exportMenuEl = (cls: string) => (
+    <div role="dialog" aria-label="匯出選項" className={`${cls} rounded-xl border border-white/15 p-3 shadow-xl`} style={PREMIUM_GLASS}>
+      <div className="text-xs text-white/50 mb-2">匯出格式</div>
+      <div className="flex gap-2">
+        {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-[#303034]'}`}>{format.toUpperCase()}</button>)}
+        <button disabled={!canExportHeic()} aria-pressed={exportFormat === 'heic'} onClick={() => setExportFormat('heic')} className={`flex-1 py-2 rounded-lg text-xs disabled:opacity-35 ${exportFormat === 'heic' ? 'bg-white text-black' : 'bg-[#303034]'}`}>HEIC</button>
+      </div>
+    </div>
+  );
   const handleSave = () => {
     if (!originalImgRef.current || saveBusyRef.current || saveState !== 'idle') return;
     saveBusyRef.current = true;
@@ -7755,6 +7766,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setActiveCategory(cat); setActiveToolId(tool);
   };
   const studioActs = useRef({ done: (_r: StudioResult | null) => {}, cancel: () => {} });
+  const studioSaveActs = useRef({ save: () => {} });
+  const studioViewRef = useRef<Record<string, StudioViewApi | undefined>>({});
   studioActs.current.done = (r) => { if (r) installStudioResult(r); backFromStudio(); };
   studioActs.current.cancel = () => {
     const k = activeCategory === 'match' ? 'match' : 'beauty';
@@ -7765,11 +7778,45 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     backFromStudio();
   };
   /* 傳給工具的東西都要固定不變：工具一直掛在後面，編輯器每 render 一次它就跟著 render 的話會拖慢編輯器 */
+  /* 人像／仿色右上角的儲存與三個點：跟其他分頁同一顆。儲存＝先把工具裡的成品裝進來，再照常存檔 */
+  studioSaveActs.current.save = () => {
+    const res = studioCommitRef.current ? studioCommitRef.current() : null;
+    if (res) installStudioResult(res);
+    handleSave();
+  };
   const studioEmbed = useMemo(() => ({
     commitRef: studioCommitRef,
     onDone: (r: StudioResult | null) => studioActs.current.done(r),
     onCancel: () => studioActs.current.cancel(),
+    onSave: () => studioSaveActs.current.save(),
+    onMore: () => setExportMenuOpen(v => !v),
+    viewApi: studioViewRef,
   }), []);
+  /* 預覽縮放三邊共用：在調節裡放大／縮小後切到人像、仿色（或反過來），照片維持一樣的大小與位置。
+     換頁的那一格（畫面出來之前）把離開那一邊的縮放換算過去（見 studioAlign 的 StudioView） */
+  const prevViewCatRef = useRef(activeCategory);
+  useLayoutEffect(() => {
+    const prev = prevViewCatRef.current;
+    prevViewCatRef.current = activeCategory;
+    if (prev === activeCategory) return;
+    const isStudio = (c: Category): c is 'beauty' | 'match' => c === 'beauty' || c === 'match';
+    if (!isStudio(prev) && !isStudio(activeCategory)) return;
+    const editorView = (): StudioView | null => {
+      const z = zoomRef.current, w = z?.instance.wrapperComponent;
+      if (!z || !w) return null;
+      const { scale, positionX, positionY } = z.instance.transformState;
+      const r = w.getBoundingClientRect();
+      return { k: scale, bx: (1 - scale) * r.left + positionX, by: (1 - scale) * r.top + positionY };
+    };
+    const v = isStudio(prev) ? studioViewRef.current[prev]?.get() : editorView();
+    if (!v) return;
+    if (isStudio(activeCategory)) { studioViewRef.current[activeCategory]?.set(v); return; }
+    const z = zoomRef.current, w = z?.instance.wrapperComponent;
+    if (!z || !w) return;
+    const r = w.getBoundingClientRect();
+    const k = Math.max(0.5, Math.min(5, v.k));
+    z.setTransform(v.bx - (1 - k) * r.left, v.by - (1 - k) * r.top, k, 0);
+  }, [activeCategory]);
   const studioNoop = useCallback(() => {}, []);
   const pickMatchRef = useCallback(() => matchRefInputRef.current?.click(), []);
   const leaveCategory = (next: () => void) => {
@@ -8299,8 +8346,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           不然按資訊鍵按到的是遮罩，一次點擊會被算成兩次（見下面 EXIF 那一段）。
           面板收起來時就回到原本的 z-20，其餘完全不變。 */}
       {exportMenuOpen && <button aria-label="關閉匯出選項" className="absolute inset-0 z-[80]" onClick={() => setExportMenuOpen(false)} />}
+      {/* 人像／仿色裡按三個點：它們的標題列蓋在編輯器上面，選單也要浮在它們上面（位置跟其他分頁一樣） */}
+      {exportMenuOpen && STUDIO_CATS.includes(activeCategory) && (
+        <div className="absolute inset-x-0 z-[95] pointer-events-none" style={{ top: (editorHeaderRef.current ? editorHeaderRef.current.offsetTop + editorHeaderRef.current.offsetHeight : 56) }}>
+          <div className="relative pointer-events-auto">{exportMenuEl('absolute left-4 right-4 top-0 mt-2')}</div>
+        </div>
+      )}
       {saveState !== 'success' && (
-      <header className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 ${exportMenuOpen ? '' : 'backdrop-blur-xl'} ${showExifPanel || exportMenuOpen ? 'z-[90]' : 'z-20'}`}>
+      <header ref={editorHeaderRef} className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 ${exportMenuOpen ? '' : 'backdrop-blur-xl'} ${showExifPanel || (exportMenuOpen && !STUDIO_CATS.includes(activeCategory)) ? 'z-[90]' : 'z-20'}`}>
         <div className="w-20">
             {/* 构图中的返回只退出构图并丢弃 draftGeo；其他分页才离开编辑器。 */}
             <button
@@ -8324,15 +8377,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <span aria-hidden="true" className="w-px h-4 bg-black/20" />
               <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(v => !v)} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
             </div>
-            {exportMenuOpen && <>
-              <div role="dialog" aria-label="匯出選項" className="absolute left-4 right-4 top-full mt-2 z-[81] rounded-xl border border-white/15 p-3 shadow-xl" style={PREMIUM_GLASS}>
-                <div className="text-xs text-white/50 mb-2">匯出格式</div>
-                <div className="flex gap-2">
-                  {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-[#303034]'}`}>{format.toUpperCase()}</button>)}
-                  <button disabled={!canExportHeic()} aria-pressed={exportFormat === 'heic'} onClick={() => setExportFormat('heic')} className={`flex-1 py-2 rounded-lg text-xs disabled:opacity-35 ${exportFormat === 'heic' ? 'bg-white text-black' : 'bg-[#303034]'}`}>HEIC</button>
-                </div>
-              </div>
-            </>}
+            {exportMenuOpen && !STUDIO_CATS.includes(activeCategory) && exportMenuEl('absolute left-4 right-4 top-full mt-2 z-[81]')}
         </div>
         ) : <div className="w-28" aria-hidden="true" />}
       </header>

@@ -451,7 +451,18 @@ export type HealXf = { ox: number; oy: number; s: number; cx: number; cy: number
 const XF0: HealXf = { ox: 0, oy: 0, s: 1, cx: 0, cy: 0 };
 
 /** 把距離場（照 xf 擺好）寫成覆蓋率。hard＝邊緣硬度 0–100（100 − 羽化）。回傳寫到的範圍 */
-export function fieldAlpha(alpha: Float32Array, W: number, H: number, f: HealField, hard: number, xf: HealXf = XF0): HealRect | null {
+/** fieldAlpha 會寫到的範圍（不寫任何東西） */
+export function fieldBounds(W: number, H: number, f: HealField, xf: HealXf = XF0): HealRect | null {
+  const s = xf.s > 0 ? xf.s : 1;
+  const map = (v: number, c: number, o: number) => c + o + (v - c) * s;
+  const exact = s === 1 && Math.round(xf.ox) === xf.ox && Math.round(xf.oy) === xf.oy;
+  const x0 = Math.max(0, exact ? f.x + xf.ox : Math.floor(map(f.x, xf.cx, xf.ox))), y0 = Math.max(0, exact ? f.y + xf.oy : Math.floor(map(f.y, xf.cy, xf.oy)));
+  const x1 = Math.min(W, exact ? f.x + xf.ox + f.w : Math.ceil(map(f.x + f.w, xf.cx, xf.ox))), y1 = Math.min(H, exact ? f.y + xf.oy + f.h : Math.ceil(map(f.y + f.h, xf.cy, xf.oy)));
+  return x1 <= x0 || y1 <= y0 ? null : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** rows：只寫這幾列 [起, 迄)（分好幾格寫完，用在框放大很多倍之後的正式結果） */
+export function fieldAlpha(alpha: Float32Array, W: number, H: number, f: HealField, hard: number, xf: HealXf = XF0, rows?: [number, number]): HealRect | null {
   const inner = Math.max(0, Math.min(0.97, hard / 100));
   const s = xf.s > 0 ? xf.s : 1;
   const fw = Math.max(0.5, (1 - inner) * f.r * s);   // 羽化寬度（像素）
@@ -461,7 +472,7 @@ export function fieldAlpha(alpha: Float32Array, W: number, H: number, f: HealFie
     const x0 = Math.max(0, f.x + ix), y0 = Math.max(0, f.y + iy);
     const x1 = Math.min(W, f.x + ix + f.w), y1 = Math.min(H, f.y + iy + f.h);
     if (x1 <= x0 || y1 <= y0) return null;
-    for (let y = y0; y < y1; y++) {
+    for (let y = rows ? Math.max(y0, rows[0]) : y0; y < (rows ? Math.min(y1, rows[1]) : y1); y++) {
       const row = (y - iy - f.y) * f.w - f.x - ix;
       for (let x = x0; x < x1; x++) alpha[y * W + x] = prof(f.d[row + x]);
     }
@@ -475,7 +486,7 @@ export function fieldAlpha(alpha: Float32Array, W: number, H: number, f: HealFie
   if (x1 <= x0 || y1 <= y0) return null;
   const out = -f.r, D = f.d, FW = f.w, FH = f.h, inv = 1 / s, iw = 1 / fw;
   const u0 = cx + (-cx - xf.ox) * inv - f.x;
-  for (let y = y0; y < y1; y++) {
+  for (let y = rows ? Math.max(y0, rows[0]) : y0; y < (rows ? Math.min(y1, rows[1]) : y1); y++) {
     const v = cy + (y - cy - xf.oy) * inv - f.y;
     const j0 = Math.floor(v), ay = v - j0, by = 1 - ay;
     const r0 = j0 >= 0 && j0 < FH ? j0 * FW : -1, r1 = j0 + 1 >= 0 && j0 + 1 < FH ? (j0 + 1) * FW : -1;
@@ -512,4 +523,18 @@ export function fallbackHealSource(rect: HealRect, W: number, H: number): { dx: 
   const o = fit[0] || room.sort((a, b) => b.n - a.n)[0];
   const k = fit[0] ? need(o) : Math.max(0, o.n);
   return { dx: o.dx * k, dy: o.dy * k };
+}
+
+/** 距離場（沒有平移縮放）照羽化寫成一張白色、alpha＝覆蓋率的 RGBA 圖：
+    拖動、縮放框的時候交給 GPU 直接縮放貼上（縮放後的覆蓋率剛好就是這張圖等比放大，見 fieldAlpha） */
+export function fieldMaskRGBA(f: HealField, hard: number): Uint8ClampedArray {
+  const inner = Math.max(0, Math.min(0.97, hard / 100));
+  const fw = Math.max(0.5, (1 - inner) * f.r), iw = 1 / fw;
+  const out = new Uint8ClampedArray(f.w * f.h * 4);
+  for (let i = 0; i < f.w * f.h; i++) {
+    const d = f.d[i];
+    const a = d <= 0 ? 0 : d >= fw ? 1 : (() => { const t = d * iw; return t * t * (3 - 2 * t); })();
+    const o = i * 4; out[o] = 255; out[o + 1] = 255; out[o + 2] = 255; out[o + 3] = Math.round(a * 255);
+  }
+  return out;
 }

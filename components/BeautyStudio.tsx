@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { Icon } from './Icon';
-import { useAlignPad, ALIGN_FILL_CSS, type AlignRect } from './studioAlign';
+import { useAlignPad, ALIGN_FILL_CSS, paintedWhenDecoded, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
 import { ChevronLeft } from 'lucide-react';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
@@ -19,7 +19,7 @@ import {
   releaseBuffers,
 } from '../utils/beauty/engine';
 import { inpaintImage, inpaintCrop, cropFor } from '../utils/beauty/inpaint';
-import { findHealSource, fallbackHealSource, applyHeal, strokeContours, healField, fieldAlpha, type HealMode, type HealRect, type HealField } from '../utils/beauty/heal';
+import { findHealSource, fallbackHealSource, applyHeal, strokeContours, healField, fieldAlpha, fieldBounds, fieldMaskRGBA, type HealMode, type HealRect, type HealField } from '../utils/beauty/heal';
 import { StrokeLayer, STROKE_INNER, wrinkleStrength, smoothStrength, smoothInvalidate, type StrokeKind } from '../utils/beauty/strokeFilter';
 
 // 互動時的運算解析度。全解析度即時運算會爆手機記憶體，所以要縮，
@@ -151,6 +151,11 @@ interface BeautyStudioProps {
     commitRef: React.MutableRefObject<(() => StudioResult | null) | null>;
     onDone: (res: StudioResult | null) => void;
     onCancel: () => void;
+    /** 右上角的「儲存」與三個點：跟編輯器其他分頁同一顆（交給編輯器存檔、開匯出選項） */
+    onSave?: () => void;
+    onMore?: () => void;
+    /** 跟編輯器共用預覽縮放（見 studioAlign 的 StudioView） */
+    viewApi?: React.MutableRefObject<Record<string, StudioViewApi | undefined>>;
   };
   /** 嵌在編輯器裡：編輯器預覽圖在螢幕上的框，照片擺在一模一樣的位置 */
   align?: AlignRect | null;
@@ -585,14 +590,18 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     op: CloneOp; src: Uint8ClampedArray; alpha: Float32Array; field: HealField;
     pts0: number[]; r0: number; c: { x: number; y: number; hw: number; hh: number };
     ox: number; oy: number; sA: number; sB: number; rect: HealRect; out: Rect;
+    /** 拖動／縮放時交給 GPU 預覽用：這一筆之前的整張圖（畫布）、覆蓋率圖（跟著羽化） */
+    srcCv?: HTMLCanvasElement; maskCv?: HTMLCanvasElement; maskHard?: number;
   };
   const healRef = useRef<HealState | null>(null);
   /** 這一處的筆觸（原始位置、原始大小）：框的輪廓只在畫完那一下算一次，之後移動縮放都只改 transform */
   const [healEdit, setHealEdit] = useState<{ pts: number[]; r: number } | null>(null);
-  /** 選中的是哪一個框（只有選中的那個可以移動、縮放）。預設選中來源（虛線） */
-  const [healSel, setHealSelState] = useState<'src' | 'dst'>('src');
-  const healSelRef = useRef<'src' | 'dst'>('src');
-  const setHealSel = (k: 'src' | 'dst') => { healSelRef.current = k; setHealSelState(k); };
+  /** 選中的是哪一個框（只有選中的那個可以移動、縮放）。預設選中來源（虛線）；
+      點 A、B 以外的地方＝都不選（這時候雙指就是縮放預覽） */
+  type HealSel = 'src' | 'dst' | null;
+  const [healSel, setHealSelState] = useState<HealSel>('src');
+  const healSelRef = useRef<HealSel>('src');
+  const setHealSel = (k: HealSel) => { healSelRef.current = k; setHealSelState(k); };
   /** 每改一次這一處就加一（交給編輯器時用來判斷有沒有變） */
   const healRevRef = useRef(0);
   /** 把現在的擺法寫回記錄（重播、存檔、交給編輯器用的是記錄） */
@@ -608,7 +617,11 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     const h = healRef.current;
     if (!h) return;
     healGestRef.current = null;
-    if (healRafRef.current) { cancelAnimationFrame(healRafRef.current); healRafRef.current = 0; reapplyHealRef.current(); }
+    finishHealJobRef.current();
+    const pending = !!healRafRef.current;
+    if (healRafRef.current) { cancelAnimationFrame(healRafRef.current); healRafRef.current = 0; }
+    if (healGpuLiveRef.current || pending) reapplyHealRef.current();
+    stopHealGpu();
     syncHealOp(h);
     healRef.current = null;
     setHealEdit(null);
@@ -771,13 +784,15 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     if (patchBusyRef.current && pointersRef.current.size < 2) return;
 
     /* 修補放開後：單指在畫布任何地方拖＝移動選中的框，雙指＝縮放（＋移動）選中的框，點一下框＝選它 */
-    if (cfg.current.tool === 'clone' && healRef.current) {
+    if (cfg.current.tool === 'clone' && healRef.current && (healSelRef.current || pointersRef.current.size < 2)) {
       try { (e.currentTarget as HTMLCanvasElement).setPointerCapture?.(e.pointerId); } catch (err) { /* noop */ }
       beginHealGesture();
       drawRing(null);
       e.preventDefault();
       return;
     }
+    // 都沒選的時候第二根手指：照常縮放預覽（剛剛那根手指只是在等看是不是點一下）
+    if (cfg.current.tool === 'clone' && healRef.current) healGestRef.current = null;
 
     if (pointersRef.current.size >= 2) {
       // 第二根手指落下 → 進入縮放手勢，把已經畫下去的部分還原
@@ -989,9 +1004,15 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     healRevRef.current++;
     setHealSel('src');
     setHealEdit({ pts, r: R });
+    // 拖動時 GPU 預覽要用的來源畫布：趁閒置先做好，第一次拖才不會頓一下
+    const hNow = healRef.current;
+    const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
+    const warm = () => { if (healRef.current === hNow && hNow) ensureHealSrcCanvas(hNow); };
+    if (ric) ric(warm, { timeout: 400 }); else window.setTimeout(warm, 60);
   }, [pushOp, renderPixelRect, restore, snapFrom]);
   /** 重新套一次這一處修補：上一次改過的範圍先還原成修補前，覆蓋率照現在的羽化／位置／大小重寫，再蓋一次 */
   const reapplyHeal = useCallback(() => {
+    finishHealJobRef.current();
     const h = healRef.current, s = sessionRef.current;
     if (!h || !s) return;
     const prev = h.out;
@@ -1014,7 +1035,147 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   /** 一格只重算一次：滑桿、拖動一秒送上百個事件，全部併成下一幀那一次 */
   const healRafRef = useRef(0);
   const scheduleHeal = () => {
-    if (!healRafRef.current) healRafRef.current = requestAnimationFrame(() => { healRafRef.current = 0; reapplyHealRef.current(); });
+    if (!healRafRef.current) healRafRef.current = requestAnimationFrame(() => {
+      healRafRef.current = 0;
+      // 手指還在動（疊層開著、不是放手後在分格算）才走 GPU；其他（拉羽化…）照正式的算
+      if (healGpuLiveRef.current && !healJobRef.current) drawHealGpu(); else reapplyHealRef.current();
+    });
+  };
+
+  /* ── 拖動／縮放框的時候：交給 GPU 畫 ─────────────────────────────
+     框放大之後，每一格都用 CPU 重算整塊（取樣、羽化、寫回、上傳）會跟不上手指。
+     手指在動的這段時間改成：照片先還原成沒修補的樣子，修補那一塊用一張疊在上面的畫布，
+     以「覆蓋率圖」當遮罩、把來源圖縮放平移貼上去 —— 兩次 drawImage，GPU 做，跟框多大無關。
+     手指放開才用 CPU 照原尺寸正式算一次（跟存檔一模一樣），同一格換掉疊層。
+     有液化的話照片是變形過的，疊層對不上，就照舊用 CPU。 */
+  const healPrevRef = useRef<HTMLCanvasElement>(null);
+  const healTmpRef = useRef<HTMLCanvasElement | null>(null);
+  const healGpuLiveRef = useRef(false);
+  const ensureHealSrcCanvas = (h: HealState) => {
+    const s = sessionRef.current;
+    if (h.srcCv || !s) return;
+    const c = document.createElement('canvas');
+    c.width = s.W; c.height = s.H;
+    c.getContext('2d')!.putImageData(new ImageData(h.src, s.W, s.H), 0, 0);
+    h.srcCv = c;
+  };
+  const startHealGpu = (): boolean => {
+    finishHealJobRef.current();
+    const h = healRef.current, s = sessionRef.current, ov = healPrevRef.current, v = viewRef.current;
+    if (!h || !s || !ov || !v || s.lq.max > 0 || showOriginal) return false;
+    if (healGpuLiveRef.current) return true;
+    ensureHealSrcCanvas(h);
+    const hard = h.op.hard ?? CLONE_HARDNESS;
+    if (!h.maskCv || h.maskHard !== hard) {
+      const m = h.maskCv || document.createElement('canvas');
+      m.width = h.field.w; m.height = h.field.h;
+      m.getContext('2d')!.putImageData(new ImageData(fieldMaskRGBA(h.field, hard), h.field.w, h.field.h), 0, 0);
+      h.maskCv = m; h.maskHard = hard;
+    }
+    if (ov.width !== s.W || ov.height !== s.H) { ov.width = s.W; ov.height = s.H; }
+    // 疊層蓋在照片畫布同一個位置、同一個大小
+    ov.style.left = v.offsetLeft + 'px'; ov.style.top = v.offsetTop + 'px';
+    ov.style.width = v.offsetWidth + 'px'; ov.style.height = v.offsetHeight + 'px';
+    // 照片還原成沒修補的樣子（只動修補那一塊）：像素直接搬，畫面用 GPU 從來源畫布貼回去（不用整塊 putImageData）
+    const prev = h.out;
+    for (let y = prev.y; y < prev.y + prev.h; y++) {
+      const o = (y * s.W + prev.x) * 4;
+      s.base.data.set(h.src.subarray(o, o + prev.w * 4), o);
+    }
+    if (prev.w > 0 && prev.h > 0 && h.srcCv) {
+      // 來源畫布是不透明的：一般疊上去就好（不能用 copy —— copy 會把這一塊以外整張清掉）
+      const vc = v.getContext('2d')!;
+      vc.drawImage(h.srcCv, prev.x, prev.y, prev.w, prev.h, prev.x, prev.y, prev.w, prev.h);
+    }
+    healGpuLiveRef.current = true;
+    ov.style.display = 'block';
+    drawHealGpu();
+    return true;
+  };
+  const drawHealGpu = () => {
+    const h = healRef.current, ov = healPrevRef.current;
+    if (!h || !ov || !h.srcCv || !h.maskCv) return;
+    const ctx = ov.getContext('2d')!;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, ov.width, ov.height);
+    const f = h.field, sA = h.sA, ks = h.sB / h.sA;
+    const ax = h.c.x + h.ox, ay = h.c.y + h.oy, bx = ax + h.op.dx, by = ay + h.op.dy;
+    // 目標範圍（照片座標）
+    const x0 = Math.floor(ax + (f.x - h.c.x) * sA), y0 = Math.floor(ay + (f.y - h.c.y) * sA);
+    const w = Math.ceil(f.w * sA) + 2, hh = Math.ceil(f.h * sA) + 2;
+    let t = healTmpRef.current;
+    if (!t) t = healTmpRef.current = document.createElement('canvas');
+    if (t.width < w || t.height < hh) { t.width = Math.max(w, t.width); t.height = Math.max(hh, t.height); }
+    const g = t.getContext('2d')!;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = 'copy';
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+    g.drawImage(h.maskCv, ax + (f.x - h.c.x) * sA - x0, ay + (f.y - h.c.y) * sA - y0, f.w * sA, f.h * sA);
+    // 來源：目標點 p 拿 B 中心 +（p − A 中心）× ks 的像素
+    g.globalCompositeOperation = 'source-in';
+    g.setTransform(1 / ks, 0, 0, 1 / ks, ax - bx / ks - x0, ay - by / ks - y0);
+    g.drawImage(h.srcCv, 0, 0);
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = h.op.opacity ?? 1;
+    ctx.drawImage(t, 0, 0, w, hh, x0, y0, w, hh);
+    ctx.globalAlpha = 1;
+  };
+  /* 放手後的正式結果：框放大很多倍時整塊一次算要上百毫秒（手指一放就頓一下）。
+     改成分好幾格、每格只算幾毫秒（GPU 疊層照樣蓋在上面，看起來就是放手那一刻的樣子），
+     算完那一格才把疊層收掉。中途又有任何動作（再拖、拉羽化、離開）就先一口氣把剩下的算完。 */
+  const healJobRef = useRef<{ rect: HealRect; prev: Rect; y: number; ks: number; raf: number } | null>(null);
+  const stepHealJob = (budget: number) => {
+    const j = healJobRef.current, h = healRef.current, s = sessionRef.current;
+    if (!j || !h || !s) { healJobRef.current = null; return; }
+    const t0 = performance.now();
+    const xf = { ox: h.ox, oy: h.oy, s: h.sA, cx: h.c.x, cy: h.c.y };
+    const sc = Math.abs(j.ks - 1) > 1e-4 ? { s: j.ks, x: h.c.x + h.ox, y: h.c.y + h.oy } : undefined;
+    const end = j.rect.y + j.rect.h;
+    while (j.y < end && performance.now() - t0 < budget) {
+      const y1 = Math.min(end, j.y + 24);
+      fieldAlpha(h.alpha, s.W, s.H, h.field, h.op.hard ?? CLONE_HARDNESS, xf, [j.y, y1]);
+      applyHeal(h.src, s.base.data, s.W, s.H, h.alpha, { x: j.rect.x, y: j.y, w: j.rect.w, h: y1 - j.y }, h.op.dx, h.op.dy, 'clone', h.op.opacity ?? 1, sc);
+      // 一段一段畫上照片（疊層還蓋著，看不出來），最後就不用一次貼一大塊
+      render({ x: j.rect.x, y: j.y, w: j.rect.w, h: y1 - j.y });
+      j.y = y1;
+    }
+    if (j.y < end) { j.raf = requestAnimationFrame(() => stepHealJob(7)); return; }
+    healJobRef.current = null;
+    stopHealGpu();
+  };
+  const finishHealJobRef = useRef(() => {});
+  finishHealJobRef.current = () => {
+    const j = healJobRef.current;
+    if (!j) return;
+    cancelAnimationFrame(j.raf);
+    stepHealJob(Infinity);
+  };
+  /** 放手：GPU 疊層開著的話分格算正式結果，不然就直接算 */
+  const commitHealGesture = () => {
+    const h = healRef.current, s = sessionRef.current;
+    if (!h || !s) return;
+    if (!healGpuLiveRef.current) { reapplyHeal(); return; }
+    finishHealJobRef.current();
+    const prev = h.out;
+    for (let y = prev.y; y < prev.y + prev.h; y++) {
+      const o = (y * s.W + prev.x) * 4;
+      s.base.data.set(h.src.subarray(o, o + prev.w * 4), o);
+      h.alpha.fill(0, y * s.W + prev.x, y * s.W + prev.x + prev.w);
+    }
+    healRevRef.current++;
+    const rect = fieldBounds(s.W, s.H, h.field, { ox: h.ox, oy: h.oy, s: h.sA, cx: h.c.x, cy: h.c.y });
+    if (!rect) { h.out = { x: prev.x, y: prev.y, w: 0, h: 0 }; renderPixelRect(prev); stopHealGpu(); return; }
+    h.rect = rect; h.out = rect;
+    healJobRef.current = { rect, prev, y: rect.y, ks: h.sB / h.sA, raf: 0 };
+    stepHealJob(7);
+  };
+  /** 正式結果已經畫進照片之後才收掉疊層（同一格，不會閃） */
+  const stopHealGpu = () => {
+    if (!healGpuLiveRef.current) return;
+    healGpuLiveRef.current = false;
+    const ov = healPrevRef.current;
+    if (ov) { ov.getContext('2d')!.clearRect(0, 0, ov.width, ov.height); ov.style.display = 'none'; }
   };
   /** 羽化／透明度：有一處正在修補時直接改它（邊拉邊看），沒有的話就是下一筆的設定 */
   const setHealFeatherLive = (v: number) => {
@@ -1059,6 +1220,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       const [[, a], [, b]] = pts;
       healGestRef.current = { mode: 'pinch', id: -1, x0: (a.x + b.x) / 2, y0: (a.y + b.y) / 2, d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), ...healSnap(h) };
       setHealMoving(healSelRef.current === 'dst');
+      startHealGpu();
       return;
     }
     if (cur && cur.mode === 'locked') return;
@@ -1076,7 +1238,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   };
   const placeHeal = (g: HealGest, mx: number, my: number, f: number) => {
     const h = healRef.current;
-    if (!h) return;
+    if (!h || !healSelRef.current) return;
     if (healSelRef.current === 'src') {
       const sB = clamp(g.sB * f, HEAL_S_MIN, HEAL_S_MAX);
       const b = fitCenter(h, g.bx + mx, g.by + my, sB);
@@ -1114,8 +1276,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     if (e.pointerId !== g.id) return;
     if (g.mode === 'pending') {
       if (Math.hypot(e.clientX - g.x0, e.clientY - g.y0) < DRAG_START_PX) return;
+      if (!healSelRef.current) return;   // 都沒選：單指拖曳不動任何東西
       g.mode = 'drag';
       setHealMoving(healSelRef.current === 'dst');
+      startHealGpu();
     }
     placeHeal(g, (e.clientX - g.x0) * k, (e.clientY - g.y0) * k, 1);
   };
@@ -1146,8 +1310,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       if (h && s && v) {
         const r = v.getBoundingClientRect();
         const [bx, by] = toBase((e.clientX - r.left) * (s.W / r.width), (e.clientY - r.top) * (s.H / r.height));
+        // 點到框＝選它；點到 A、B 以外的地方＝取消選取
         const kind = hitHeal(bx, by);
-        if (kind && kind !== healSelRef.current) setHealSel(kind);
+        if (kind !== healSelRef.current) setHealSel(kind);
       }
       return;
     }
@@ -1158,7 +1323,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     setHealMoving(false);
     if (h) {
       if (healRafRef.current) { cancelAnimationFrame(healRafRef.current); healRafRef.current = 0; }
-      reapplyHeal();
+      commitHealGesture();
       syncHealOp(h);
       saveBeautyDraft();
     }
@@ -1399,6 +1564,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     return { preview: c, session: sessionIdRef.current, bake: (src: string) => renderBeautyOn(src, ops, ops.length, W) };
   };
   if (embedded) embedded.commitRef.current = takeResult;
+  if (embedded?.viewApi) embedded.viewApi.current.beauty = {
+    get: () => { const v = viewTRef.current; return centerViewToShared(v.k, v.tx, v.ty, stageCenter()); },
+    set: (sv) => { const v = sharedToCenterView(sv, stageCenter()); applyView(v.k, v.tx, v.ty); },
+  };
   const onPaintedRef = useRef(onPainted); onPaintedRef.current = onPainted;
   useEffect(() => { if (!isLoading) onPaintedRef.current?.(); }, [isLoading]);
   useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
@@ -1575,7 +1744,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           <div className="w-24">
             <button onClick={embedded.onCancel} data-embedded-cancel className="h-8 -ml-1 px-2 text-[13px] text-white/70 active:text-white">取消</button>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-4">
             <button onClick={undo} disabled={!canUndo}
               className={`p-2 transition-all ${!canUndo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="復原">
@@ -1587,11 +1756,13 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
               <Icon name="redo" className="text-xl" />
             </button>
           </div>
-          <div className="w-24 flex justify-end shrink-0">
-            <button onClick={finishEmbedded} data-embedded-done
-              className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap">
-              儲存
-            </button>
+          {/* 跟編輯器其他分頁同一顆：儲存＋匯出選項（三個點） */}
+          <div className="flex justify-end items-center shrink-0">
+            <div className="h-8 flex items-center bg-white text-black rounded-full overflow-hidden">
+              <button onClick={embedded.onSave || finishEmbedded} data-embedded-done className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap">儲存</button>
+              <span aria-hidden="true" className="w-px h-4 bg-black/20" />
+              <button aria-label="匯出選項" onClick={embedded.onMore} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
+            </div>
           </div>
         </header>
       )}
@@ -1646,6 +1817,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             className="relative flex items-center justify-center max-w-full max-h-full"
             style={{ aspectRatio: ratio, touchAction: 'none' }}
           >
+            {/* 拖動／縮放修補框時的 GPU 預覽（見 startHealGpu） */}
+            <canvas ref={healPrevRef} data-heal-preview className="absolute pointer-events-none rounded-sm" style={{ display: 'none', zIndex: 1 }} />
             <canvas
               ref={viewRef}
               className="beauty-paint max-w-full max-h-full object-contain rounded-sm block"
@@ -1669,11 +1842,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         {tool === 'clone' && healEdit && sessionRef.current && !showOriginal && (
           <svg data-heal-overlay className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-[5]">
             <g ref={healRootRef}>
-              <g ref={healDstGRef} data-heal-box="dst" style={{ opacity: healMoving ? 0 : healSel === 'dst' ? 1 : 0.5, transition: 'opacity 140ms ease' }}>
-                <path d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+              {/* 兩個框一樣亮；選中的那個線稍微粗一點 */}
+              <g ref={healDstGRef} data-heal-box="dst" data-selected={healSel === 'dst' ? '1' : '0'} style={{ opacity: healMoving ? 0 : 1 }}>
+                <path d={healContour} fill="none" stroke="#fff" strokeWidth={healSel === 'dst' ? 2 : 1.25} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
               </g>
-              <g ref={healSrcGRef} data-heal-box="src" style={{ opacity: healSel === 'src' ? 1 : 0.5, transition: 'opacity 140ms ease' }}>
-                <path ref={healSrcPathRef} d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeDasharray="4 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+              <g ref={healSrcGRef} data-heal-box="src" data-selected={healSel === 'src' ? '1' : '0'}>
+                <path ref={healSrcPathRef} d={healContour} fill="none" stroke="#fff" strokeWidth={healSel === 'src' ? 2 : 1.25} strokeDasharray="4 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
               </g>
             </g>
           </svg>
@@ -1682,7 +1856,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         {embedded && isLoading && (
           <div className={`absolute inset-0 flex items-center justify-center pointer-events-none ${fitPad ? 'studio-fit' : 'p-4'}`} style={fitPad || undefined}>
             <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm" draggable={false}
-              ref={el => { if (el?.complete && el.naturalWidth) onPaintedRef.current?.(); }} onLoad={() => onPaintedRef.current?.()} />
+              ref={el => paintedWhenDecoded(el, () => onPaintedRef.current?.())} onLoad={e => paintedWhenDecoded(e.currentTarget, () => onPaintedRef.current?.())} />
           </div>
         )}
         {/* 修補的提示：跟遮色片的提示同一款，放在照片上緣往下一點 */}
@@ -1783,7 +1957,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         const two = sliders.length > 1;
         const three = sliders.length > 2;
         return (
-          <div data-beauty-controls className="shrink-0 flex flex-col border-t border-white/5" style={{ height: '11rem' }}>
+          /* 上緣那條分隔線跟編輯器同一條：底色同樣是 #111（白 5% 疊在 #111 上才是同一個亮度，疊在 #080808 上會淡一截、看起來特別細），
+             高度少 1px —— 外框底邊讓開了分頁列的那 1px，不扣掉的話整欄會高 1px、線的位置對不上 */
+          <div data-beauty-controls className="shrink-0 flex flex-col border-t border-white/5 bg-[#111]" style={{ height: 'calc(11rem - 1px)' }}>
             <div className={`h-[5rem] shrink-0 bg-[#111] border-b border-white/5 ${three ? 'px-4 grid grid-cols-3 gap-3 items-center' : two ? 'px-5 grid grid-cols-2 gap-5 items-center' : 'px-8 flex flex-col justify-center'}`}>
               {sliders.map(([label, value, min, max, set]) => (
                 <div key={`${tool}-${label}`} className="w-full min-w-0">
@@ -1804,7 +1980,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                 </div>
               ))}
             </div>
-            <div data-beauty-toolbar className="h-[6rem] shrink-0 bg-[#080808] flex items-center px-4 gap-2 overflow-x-auto no-scrollbar">
+            <div data-beauty-toolbar className="flex-1 min-h-0 bg-[#080808] flex items-center px-4 gap-2 overflow-x-auto no-scrollbar">
               {BEAUTY_TOOLS.map(t => (
                 <button key={t.id} onClick={() => pickTool(t.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${tool === t.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40'}`}>

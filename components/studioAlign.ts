@@ -35,3 +35,23 @@ export function useAlignPad(align: AlignRect | null | undefined, stage: RefObjec
 
 /** 有對齊框時，舞台裡的照片元素一律撐滿內容框（不再自己 contain） */
 export const ALIGN_FILL_CSS = `.studio-fit > canvas, .studio-fit > img, .studio-fit > div, .studio-fit > div > canvas { width:100% !important; height:100% !important; max-width:none !important; max-height:none !important; object-fit:fill; }`;
+
+/* ── 編輯器與人像／仿色共用預覽的縮放 ─────────────────────────────
+   三邊的照片在沒縮放時擺在螢幕上一模一樣的位置（見 useAlignPad），所以縮放可以用一個跟元件無關的
+   形式交換：「縮放後的螢幕座標 ＝ k × 沒縮放時的螢幕座標 ＋ (bx, by)」。
+   切分頁時把離開那一邊的換算成這個，再套到要去的那一邊，照片就停在一模一樣的大小與位置。 */
+export type StudioView = { k: number; bx: number; by: number };
+export type StudioViewApi = { get: () => StudioView; set: (v: StudioView) => void };
+/** 以元素中心為原點的 translate(tx, ty) scale(k)（CSS 預設 transform-origin）←→ 共用形式；c 是那個元素中心的螢幕座標 */
+export const centerViewToShared = (k: number, tx: number, ty: number, c: { x: number; y: number }): StudioView =>
+  ({ k, bx: (1 - k) * c.x + tx, by: (1 - k) * c.y + ty });
+export const sharedToCenterView = (v: StudioView, c: { x: number; y: number }) =>
+  ({ k: v.k, tx: v.bx - (1 - v.k) * c.x, ty: v.by - (1 - v.k) * c.y });
+
+/** 佔位用的照片真的「解碼好、畫得出來」才回報。只看 complete 的話，那一格可能還是空的（就是一進去黑一下） */
+export function paintedWhenDecoded(el: HTMLImageElement | null, done: () => void) {
+  if (!el || !el.complete || !el.naturalWidth) return;
+  const d = (el as any).__decoding as Promise<void> | undefined;
+  if (d) return;
+  (el as any).__decoding = (el.decode ? el.decode() : Promise.resolve()).then(done, done);
+}
