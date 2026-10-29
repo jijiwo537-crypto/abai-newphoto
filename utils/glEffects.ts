@@ -195,8 +195,8 @@ export const FX_DEFS: FxDef[] = [
       float mono=hash21(cell+731.)-.5;vec3 noise=vec3(hash21(cell+1949.),hash21(cell+2896.),hash21(cell+3843.))-.5;
       c=mix(c,lowfiLookup(c),fxLowfiFilter/100.);
       c=((c-.5)*(1.+fxLowfiContrast*.004)+.5)*exp2(${LOWFI_FIXED.exposure*.008});
-      // 顆粒：暗部最明顯、越亮越淡，純白沒有（跟真實雜訊一樣；中間調強度跟以前相同）
-      c+=fxLowfiGrain*1.6*1.55*(1.-l)*(mono*.55+noise*.85)/255.;
+      // 顆粒：暗部最明顯、越亮越淡，亮部留三成多（跟真實雜訊一樣；中間調強度跟以前差不多）
+      c+=fxLowfiGrain*1.6*1.15*((1.-l)+.35*l)*(mono*.55+noise*.85)/255.;
       // Fixed legacy halation: diffusion 10, range 100, hue 254.
       float alpha=texture2D(uLowfiHalo,uv).a;
       float darkMask=max(0.,1.-dot(texture2D(uTex,uv).rgb,vec3(.299,.587,.114)));
