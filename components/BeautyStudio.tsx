@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { Icon } from './Icon';
-import { useAlignPad, ALIGN_FILL_CSS, paintedWhenDecoded, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
+import { useAlignPad, ALIGN_FILL_CSS, paintedWhenDecoded, useOriginalImage, drawOriginalInto, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
 import { ChevronLeft } from 'lucide-react';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
@@ -156,6 +156,8 @@ interface BeautyStudioProps {
     onMore?: () => void;
     /** 左上角的返回：跟編輯器其他分頁一樣離開編輯 */
     onBack?: () => void;
+    /** 前後對比要看的那張：這張照片最原始的樣子（編輯器給；沒有就用工具拿到的那張） */
+    getOriginalSrc?: () => string | null;
     /** 跟編輯器共用預覽縮放（見 studioAlign 的 StudioView） */
     viewApi?: React.MutableRefObject<Record<string, StudioViewApi | undefined>>;
   };
@@ -598,7 +600,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const healRef = useRef<HealState | null>(null);
   /** 這一處的筆觸（原始位置、原始大小）：框的輪廓只在畫完那一下算一次，之後移動縮放都只改 transform */
   const [healEdit, setHealEdit] = useState<{ pts: number[]; r: number } | null>(null);
-  /** 選中的是哪一個框（只有選中的那個可以移動、縮放）。預設選中來源（虛線）；
+  /** 選中的是哪一個框（只有選中的那個可以移動、縮放）。預設選中來源（實線）；
       點 A、B 以外的地方＝都不選（這時候雙指就是縮放預覽） */
   type HealSel = 'src' | 'dst' | null;
   const [healSel, setHealSelState] = useState<HealSel>('src');
@@ -650,7 +652,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const healRootRef = useRef<SVGGElement | null>(null);
   const healSrcGRef = useRef<SVGGElement | null>(null);
   const healDstGRef = useRef<SVGGElement | null>(null);
-  const healSrcPathRef = useRef<SVGPathElement | null>(null);
+  const healDashPathRef = useRef<SVGPathElement | null>(null);
   const paintHealBoxes = () => {
     const g = healRootRef.current, v = viewRef.current, st = stageRef.current, s = sessionRef.current, h = healRef.current;
     if (!g || !v || !st || !s || !h) return;
@@ -659,8 +661,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     const ax = h.c.x + h.ox, ay = h.c.y + h.oy, bx = ax + h.op.dx, by = ay + h.op.dy;
     healDstGRef.current?.setAttribute('transform', `translate(${ax} ${ay}) scale(${h.sA}) translate(${-h.c.x} ${-h.c.y})`);
     healSrcGRef.current?.setAttribute('transform', `translate(${bx} ${by}) scale(${h.sB}) translate(${-h.c.x} ${-h.c.y})`);
-    const k = viewTRef.current.k * h.sB;
-    healSrcPathRef.current?.setAttribute('stroke-dasharray', `${(4 * k).toFixed(2)} ${(3 * k).toFixed(2)}`);
+    // 虛線在目標 A 上：跟著預覽倍率 × A 的大小
+    const k = viewTRef.current.k * h.sA;
+    healDashPathRef.current?.setAttribute('stroke-dasharray', `${(4 * k).toFixed(2)} ${(3 * k).toFixed(2)}`);
   };
   /** 照片（沒縮放時）上緣離舞台頂端多遠：提示要放在照片上緣往下一點 */
   const [imgTop, setImgTop] = useState(0);
@@ -706,7 +709,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
          刪除是紅色，修補是白色，一眼分得出現在是哪一支筆 */
       const src = strokeSrcRef.current, alpha = strokeAlphaRef.current;
       if (!src || !alpha) return null;
-      const r = stampAlpha(alpha, s.W, s.H, bx, by, R, c.tool === 'clone' ? 90 : PATCH_HARDNESS, 1);
+      // 修補：畫的時候白色色塊就照現在的羽化顯示邊緣（放開後的結果也是這個羽化）
+      const r = stampAlpha(alpha, s.W, s.H, bx, by, R, c.tool === 'clone' ? 100 - c.healFeather : PATCH_HARDNESS, 1);
       if (!r) return null;
       const d = s.base.data;
       const [tr, tg, tb, ta] = c.tool === 'clone' ? [255, 255, 255, 0.45] : [255, 70, 70, 0.5];
@@ -987,7 +991,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
   /* ── 修補（仿製）─────────────────────────────────────────
      放開手指：自動找一塊最像的來源（比的是範圍外那一圈，見 utils/beauty/heal），原封不動複製過來，記成一步。
-     之後畫面上留著兩個框：目標（實線，A）與來源（虛線，B），選中哪一個就可以在畫布任何地方拖它、雙指縮放它。
+     之後畫面上留著兩個框：目標（虛線，A）與來源（實線，B），選中哪一個就可以在畫布任何地方拖它、雙指縮放它。
      覆蓋率用距離場算（一次），之後移動、縮放、調羽化都只是查表重寫，一點都不卡。 */
   const runClone = useCallback((pts: number[], R: number, union: Rect, src: Uint8ClampedArray, alpha: Float32Array) => {
     const s = sessionRef.current;
@@ -1207,7 +1211,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     ax: number; ay: number; bx: number; by: number; sA: number; sB: number;   // 開始時 A、B 的中心與大小
   };
   const healGestRef = useRef<HealGest | null>(null);
-  /** 移動、縮放 A 的時候，實線暫時收起來（才看得清楚底下蓋上去的樣子） */
+  /** 移動、縮放 A 的時候，A 的虛線暫時收起來（才看得清楚底下蓋上去的樣子） */
   const [healMoving, setHealMoving] = useState(false);
   /** 一個螢幕像素＝幾個工作像素 */
   const workPerScreen = () => {
@@ -1455,10 +1459,17 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   // ---------------------------------------------------------------
   // 原圖對比
   // ---------------------------------------------------------------
+  /* 嵌在編輯器裡：按住看的是照片最原始的樣子（跟濾鏡、調節那些分頁的前後對比同一張），
+     不是人像拿到的那張（它可能已經套過仿色、合併過、其他人像修改） */
+  const originalRef = useOriginalImage(embedded?.getOriginalSrc?.() ?? null);
   useEffect(() => {
     const s = sessionRef.current, cv = viewRef.current;
     if (!s || !cv || isLoading) return;
-    if (showOriginal) cv.getContext('2d')!.putImageData(s.orig, 0, 0);
+    if (showOriginal) {
+      const g = cv.getContext('2d')!, im = originalRef.current;
+      if (embedded && im) drawOriginalInto(g, im, cv.width, cv.height);
+      else g.putImageData(s.orig, 0, 0);
+    }
     else render();
   }, [showOriginal, isLoading, render]);
 
@@ -1851,18 +1862,19 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
 
 
-        {/* 修補的兩個框：A（目標）實線、B（來源）虛線，都是一條細白線，兩個都可以拖。
+        {/* 修補的兩個框：A（目標）虛線、B（來源）實線，都是一條細白線，兩個都可以拖。
             畫在縮放層外面（不跟著 CSS 縮放一起被放大），任何倍率下線條都一樣細、一樣清楚 ——
             以前放在縮放層裡，放大時整層是當成一張圖被拉大的，線就糊了。 */}
         {tool === 'clone' && healEdit && sessionRef.current && !showOriginal && (
           <svg data-heal-overlay className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-[5]">
             <g ref={healRootRef}>
               {/* 兩個框一樣亮、一樣粗 */}
+              {/* 塗抹出來的那一塊（目標 A）是虛線、自動找的來源（B）是實線 */}
               <g ref={healDstGRef} data-heal-box="dst" data-selected={healSel === 'dst' ? '1' : '0'} style={{ opacity: healMoving ? 0 : 1 }}>
-                <path d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                <path ref={healDashPathRef} d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeDasharray="4 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
               </g>
               <g ref={healSrcGRef} data-heal-box="src" data-selected={healSel === 'src' ? '1' : '0'}>
-                <path ref={healSrcPathRef} d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeDasharray="4 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                <path d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
               </g>
             </g>
           </svg>

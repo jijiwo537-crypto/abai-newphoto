@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 
 /* 人像、仿色嵌在編輯器裡時，照片要擺在跟編輯器預覽「同一組像素」上：
    編輯器把它算好的框（螢幕座標）傳進來，這裡換成舞台裡的四邊內距。
@@ -54,4 +54,41 @@ export function paintedWhenDecoded(el: HTMLImageElement | null, done: () => void
   const d = (el as any).__decoding as Promise<void> | undefined;
   if (d) return;
   (el as any).__decoding = (el.decode ? el.decode() : Promise.resolve()).then(done, done);
+}
+
+/* ── 前後對比要看的是「照片最原始的樣子」──────────────────────────
+   人像／仿色拿到的照片可能已經是改過的（另一個工具交回來、合併過）。編輯器給一個網址（最一開始那張），
+   這裡先載好、解碼好，按下前後對比那一下就能直接畫，跟其他分頁一模一樣。 */
+const originalCache = new Map<string, HTMLImageElement>();
+export function useOriginalImage(src: string | null | undefined) {
+  const ref = useRef<HTMLImageElement | null>(null);
+  useEffect(() => {
+    if (!src) { ref.current = null; return; }
+    const hit = originalCache.get(src);
+    if (hit) { ref.current = hit.complete && hit.naturalWidth ? hit : null; if (ref.current) return; }
+    let live = true;
+    const im = hit || new Image();
+    if (!hit) {
+      if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
+      im.src = src;
+      originalCache.set(src, im);
+      while (originalCache.size > 6) originalCache.delete(originalCache.keys().next().value!);
+    }
+    (im.decode ? im.decode() : Promise.resolve()).then(() => { if (live) ref.current = im; }, () => {});
+    return () => { live = false; };
+  }, [src]);
+  return ref;
+}
+/** 把原圖等比放進 w×h（比例不同時其餘留黑，跟編輯器的前後對比同一個畫法） */
+export function drawOriginalInto(ctx: CanvasRenderingContext2D, im: HTMLImageElement, w: number, h: number) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, w, h);
+  const r = Math.min(w / im.naturalWidth, h / im.naturalHeight);
+  const dw = im.naturalWidth * r, dh = im.naturalHeight * r;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(im, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  ctx.restore();
 }

@@ -11,7 +11,7 @@ import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
-import { useAlignPad, ALIGN_FILL_CSS, paintedWhenDecoded, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
+import { useAlignPad, ALIGN_FILL_CSS, paintedWhenDecoded, useOriginalImage, drawOriginalInto, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
 import {
   METHODS, METHOD_LABEL, Method,
   sampleRgb, bakeFor, applyLut, Lut3D,
@@ -45,6 +45,7 @@ interface Props {
     onSave?: () => void;
     onMore?: () => void;
     onBack?: () => void;
+    getOriginalSrc?: () => string | null;
     viewApi?: React.MutableRefObject<Record<string, StudioViewApi | undefined>>;
   };
   /** 嵌在編輯器裡：編輯器預覽圖在螢幕上的框，照片擺在一模一樣的位置 */
@@ -328,7 +329,26 @@ export const ColorMatchStudio: React.FC<Props> = ({
 
   /* 前後對比：GPU 版就是把強度當 0 再畫一次（一樣只有一個 draw call）；
      CPU 版把事先算好的兩份直接貼上去。兩條路都不經過 React 狀態，按下去才不會慢半拍。 */
+  /* 嵌在編輯器裡：按住看的是照片最原始的樣子（跟其他分頁的前後對比同一張），蓋一張畫布在照片上 */
+  const originalRef = useOriginalImage(embedded?.getOriginalSrc?.() ?? null);
+  const cmpRef = useRef<HTMLCanvasElement>(null);
   const showSide = (original: boolean) => {
+    const cmp = cmpRef.current, im = originalRef.current;
+    if (embedded && cmp && im) {
+      if (!original) { cmp.parentElement!.style.display = 'none'; return; }
+      const z = zoomRef.current;
+      const el = z && [...z.querySelectorAll(':scope > canvas, :scope > img')].find(e => (e as HTMLElement).offsetParent && !(e as HTMLElement).classList.contains('hidden')) as HTMLElement | undefined;
+      if (el) {
+        const box = cmp.parentElement!;
+        box.style.left = el.offsetLeft + 'px'; box.style.top = el.offsetTop + 'px';
+        box.style.width = el.offsetWidth + 'px'; box.style.height = el.offsetHeight + 'px';
+        const dpr = Math.min(3, window.devicePixelRatio || 1);
+        cmp.width = Math.max(1, Math.round(el.offsetWidth * dpr)); cmp.height = Math.max(1, Math.round(el.offsetHeight * dpr));
+        drawOriginalInto(cmp.getContext('2d')!, im, cmp.width, cmp.height);
+        box.style.display = 'block';
+        return;
+      }
+    }
     if (glRef.current && glReadyRef.current) { paint(original ? 0 : undefined); return; }
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx || !preview) return;
@@ -641,6 +661,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
             transition: pinchRef.current || panRef.current || viewJump ? 'none' : 'transform 90ms linear',
           }}
         >
+          {/* 前後對比的原圖（見 showSide）。包一層 span：ALIGN_FILL_CSS 會把這一層直接的 canvas 拉滿 */}
+          <span className="absolute pointer-events-none rounded-sm overflow-hidden" style={{ display: 'none', zIndex: 2 }}>
+            <canvas ref={cmpRef} className="block w-full h-full" />
+          </span>
           <canvas
             ref={canvasRef}
             className={`max-w-full max-h-full object-contain rounded-sm shadow-2xl ${ready && !glReady ? '' : 'hidden'}`}

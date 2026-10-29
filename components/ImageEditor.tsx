@@ -3971,6 +3971,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      這樣合併時整排縮圖的簽章沒變，一格都不用重算（合併也就快得多）。 */
   const thumbOriginRef = useRef<Record<string, string>>({});
   const thumbSrcOf = (src: string) => thumbOriginRef.current[src] || src;
+  const thumbSrcOfRef = useRef(thumbSrcOf); thumbSrcOfRef.current = thumbSrcOf;
   /* 前後對比要看的是「最原始那張」，不是合併之後的。
      合併會把效果烤進圖裡、換成一張新的來源圖，之後緩衝區裡的原圖
      就已經是合併過的了，所以第一次載進來時先把那張留一份下來。 */
@@ -7803,6 +7804,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     onCancel: () => studioActs.current.cancel(),
     onSave: () => studioSaveActs.current.save(),
     onBack: () => studioSaveActs.current.back(),
+    /* 前後對比：這張照片最一開始的樣子（合併、人像、仿色交回來的都不算），跟其他分頁的前後對比同一張 */
+    getOriginalSrc: () => thumbSrcOfRef.current(srcListRef.current[safeIdxRef.current]),
     onMore: () => setExportMenuOpen(v => !v),
     viewApi: studioViewRef,
   }), []);
