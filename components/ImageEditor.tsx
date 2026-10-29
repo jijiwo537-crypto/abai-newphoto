@@ -7036,6 +7036,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     onCancel(choice === 'save');
   }, [historyIndex, initialState, onRequestExit, onCancel, imageSrc, activeSrc, geo, selectedLutIdx, recordProgress]);
+  const requestLeaveRef = useRef(requestLeave); requestLeaveRef.current = requestLeave;
 
   /* 「合併」：把現在畫面上的樣子用全解析度烤成一張新的原圖，參數整組歸零。
      特效一次只能套一個，合併過的那一層已經變成點陣圖的一部分，
@@ -7766,7 +7767,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setActiveCategory(cat); setActiveToolId(tool);
   };
   const studioActs = useRef({ done: (_r: StudioResult | null) => {}, cancel: () => {} });
-  const studioSaveActs = useRef({ save: () => {} });
+  const studioSaveActs = useRef({ save: () => {}, back: () => {} });
   const studioViewRef = useRef<Record<string, StudioViewApi | undefined>>({});
   studioActs.current.done = (r) => { if (r) installStudioResult(r); backFromStudio(); };
   studioActs.current.cancel = () => {
@@ -7784,11 +7785,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (res) installStudioResult(res);
     handleSave();
   };
+  /* 左上角的返回：跟其他分頁同一顆。先把工具裡做到一半的裝進來，再照常離開（會問要不要存） */
+  studioSaveActs.current.back = async () => {
+    const res = studioCommitRef.current ? studioCommitRef.current() : null;
+    if (res) {
+      installStudioResult(res);
+      /* 換上去的照片要等它編好、來源清單換成新網址、畫面重新 render 過，
+         離開時判斷「有沒有改過」才看得到這一筆（不然會當成沒改、直接離開） */
+      await studioInstallRef.current;
+      await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+    }
+    requestLeaveRef.current();
+  };
   const studioEmbed = useMemo(() => ({
     commitRef: studioCommitRef,
     onDone: (r: StudioResult | null) => studioActs.current.done(r),
     onCancel: () => studioActs.current.cancel(),
     onSave: () => studioSaveActs.current.save(),
+    onBack: () => studioSaveActs.current.back(),
     onMore: () => setExportMenuOpen(v => !v),
     viewApi: studioViewRef,
   }), []);

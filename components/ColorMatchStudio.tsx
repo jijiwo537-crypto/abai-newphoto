@@ -44,6 +44,7 @@ interface Props {
     onCancel: () => void;
     onSave?: () => void;
     onMore?: () => void;
+    onBack?: () => void;
     viewApi?: React.MutableRefObject<Record<string, StudioViewApi | undefined>>;
   };
   /** 嵌在編輯器裡：編輯器預覽圖在螢幕上的框，照片擺在一模一樣的位置 */
@@ -579,7 +580,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
       `}</style>
       {embedded ? (
       <header className="relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 z-[81]">
-        <button onClick={embedded.onCancel} data-embedded-cancel className="h-8 -ml-1 px-2 text-[13px] text-white/70 active:text-white">取消</button>
+        {/* 跟編輯器其他分頁同一顆：返回（離開編輯） */}
+        <button onClick={embedded.onBack || embedded.onCancel} data-embedded-back aria-label="返回" className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
+          <ChevronLeft size={22} />
+        </button>
         {/* 跟編輯器其他分頁同一顆：儲存＋匯出選項（三個點） */}
         <div className="h-8 flex items-center bg-white text-black rounded-full overflow-hidden">
           <button onClick={embedded.onSave || finishEmbedded} data-embedded-done disabled={saving} className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap disabled:opacity-40">儲存</button>
@@ -712,12 +716,13 @@ export const ColorMatchStudio: React.FC<Props> = ({
         )}
       </div>
 
-      <div role="group" aria-label="仿色方法" className={`px-4 flex gap-2 shrink-0 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
+      {/* 嵌在編輯器裡：不給選仿色邏輯，一律用標準（mkl）；滑桿往上、上下留更多空間 */}
+      {!embedded && <div role="group" aria-label="仿色方法" className={`px-4 flex gap-2 shrink-0 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
         {METHODS.map(m => <button key={m} onClick={() => setPicked(m)} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{METHOD_LABEL[m]}</button>)}
-      </div>
+      </div>}
 
       {/* 滑桿：兩根並排（跟編輯器特效細項同一款）。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
-      <div className={`px-5 pt-3 flex-1 min-h-0 grid grid-cols-2 gap-5 content-start transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
+      <div className={`px-5 flex-1 min-h-0 grid grid-cols-2 gap-5 transition-opacity ${embedded ? 'content-center pb-2' : 'pt-3 content-start'} ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
           {/* 強度可以推到 150（100 以上＝比參考圖再更進一步），預設維持 100；膚色保護維持 0～100。 */}
           {([['強度', strength, setStrength, 150], ['膚色保護', skin, setSkin, 100]] as const).map(([label, val, set, max]) => (
             <div key={label} className="min-w-0">

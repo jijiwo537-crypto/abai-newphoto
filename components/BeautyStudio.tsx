@@ -154,6 +154,8 @@ interface BeautyStudioProps {
     /** 右上角的「儲存」與三個點：跟編輯器其他分頁同一顆（交給編輯器存檔、開匯出選項） */
     onSave?: () => void;
     onMore?: () => void;
+    /** 左上角的返回：跟編輯器其他分頁一樣離開編輯 */
+    onBack?: () => void;
     /** 跟編輯器共用預覽縮放（見 studioAlign 的 StudioView） */
     viewApi?: React.MutableRefObject<Record<string, StudioViewApi | undefined>>;
   };
@@ -1748,7 +1750,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       {saveState !== 'success' && embedded && (
         <header className="h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 z-20">
           <div className="w-24">
-            <button onClick={embedded.onCancel} data-embedded-cancel className="h-8 -ml-1 px-2 text-[13px] text-white/70 active:text-white">取消</button>
+            {/* 跟編輯器其他分頁同一顆：返回（離開編輯） */}
+            <button onClick={embedded.onBack || embedded.onCancel} data-embedded-back aria-label="返回" className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
+              <ChevronLeft size={22} />
+            </button>
           </div>
           <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-4">
             <button onClick={undo} disabled={!canUndo}
@@ -1877,9 +1882,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         </div>
         {/* 刪除計算中：預覽上緣一顆小膠囊（不擋住畫面，算完自己消失） */}
         <div data-beauty-patch-busy={patchBusy ? 'on' : 'off'}
-          className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-[11px] font-bold text-white"
-          style={{ opacity: patchBusy ? 1 : 0, transition: 'opacity 180ms ease' }}>
-          <span className="w-3 h-3 rounded-full border-2 border-white/25 border-t-white animate-spin" />修補中
+          className="absolute left-1/2 -translate-x-1/2 z-30 pointer-events-none flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-[12px] text-white/90 whitespace-nowrap"
+          style={{ top: Math.round(imgTop + 16), opacity: patchBusy ? 1 : 0, transition: 'opacity 180ms ease' }}>
+          <span className="w-3 h-3 rounded-full border-2 border-white/25 border-t-white animate-spin" />刪除中
         </div>
         {/* 筆刷圈。用 DOM 畫，任何縮放倍率下邊緣都是平滑的，不會有鋸齒。
             調整筆刷大小時固定顯示在預覽中央，即時呈現實際大小。 */}
