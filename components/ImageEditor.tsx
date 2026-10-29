@@ -6687,7 +6687,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 }
             }
 
-            if ((isDirtyRef.current || flipped) && uiFirstRef.current && !interacting) {
+            if ((isDirtyRef.current || flipped) && uiFirstRef.current && !interacting && !studioPaintNowRef.current) {
                 // The tapped card / tab paints in this frame; the photo follows in the next.
                 uiFirstRef.current = false;
                 shotHoldUntilRef.current = 0;   // 使用者點了東西：不再等，下一格就照常畫
@@ -6695,7 +6695,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 return;
             }
             /* 剛切過來、畫面已經是留下來的最終樣子：先不重跑（見 paintMaskShot）。一有操作就照常畫 */
-            if (isDirtyRef.current && !flipped && !interacting && !uiFirstRef.current && now < shotHoldUntilRef.current) {
+            if (isDirtyRef.current && !flipped && !interacting && !uiFirstRef.current && now < shotHoldUntilRef.current && !studioPaintNowRef.current) {
                 rafId = requestAnimationFrame(tick);
                 return;
             }
@@ -6737,6 +6737,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         }
                         const start = performance.now();
                         render(currentParams, mergeFreezeRef.current?.lutIdx);
+                        /* 剛從人像／仿色出來：編輯器這一格已經畫好新照片，工具那張同一格收掉（不會閃回舊照片） */
+                        if (studioPaintNowRef.current) {
+                            studioPaintNowRef.current = false;
+                            uiFirstRef.current = false;
+                            if (studioHoldRef.current) { studioHoldRef.current = ''; flushSync(() => setStudioHold('')); }
+                        }
                         const duration = performance.now() - start;
                         lastRenderDurationRef.current = duration;
                         clearPendingLutPaint();
@@ -7677,8 +7683,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 每個工具（beauty／match）這一次掛上來最後交出去的那張（工具看到自己交出去的照片回來，不用重開） */
   const studioLastOutRef = useRef<Record<string, string>>({});
   const pendingKeySeqRef = useRef(0);
+  /* 從人像／仿色切出去的那一下：編輯器要先等下一格才畫新照片（uiFirst），工具卻當場藏起來 ——
+     中間那一格露出的是編輯器裡還沒換的舊照片，就是「閃一下」。所以：
+     一、編輯器這次不等，下一格就畫；二、畫好之前工具那張照片先留著（只留照片，介面照常換成編輯器的）。 */
+  const studioPaintNowRef = useRef(false);
+  const studioHoldRef = useRef<'' | 'beauty' | 'match'>('');
+  const [studioHold, setStudioHold] = useState<'' | 'beauty' | 'match'>('');
+  useEffect(() => {
+    if (!studioHold) return;
+    const t = window.setTimeout(() => { studioHoldRef.current = ''; setStudioHold(''); }, 800);   // 保底
+    return () => clearTimeout(t);
+  }, [studioHold]);
   const installStudioResult = (res: StudioResult) => {
     const i = safeIdxRef.current;
+    const holdKind = res.session?.split('-')[0];
+    if (holdKind === 'beauty' || holdKind === 'match') { studioHoldRef.current = holdKind; setStudioHold(holdKind); }
+    studioPaintNowRef.current = true;
     const cvs = res.preview;
     const was = srcListRef.current[i];
     const pend = `${was}#studio${++pendingKeySeqRef.current}`;
@@ -7813,8 +7833,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const t = window.setTimeout(() => setStudioForce(studioWaitKey), 700);
     return () => clearTimeout(t);
   }, [studioWaitKey]);
-  const studioShown = (k: 'beauty' | 'match') => activeCategory === k
-    && (studioPainted[k] === (k === 'beauty' ? beautyKey : matchKey) || studioForce === (k === 'beauty' ? beautyKey : matchKey));
+  const studioShown = (k: 'beauty' | 'match') => (activeCategory === k
+    && (studioPainted[k] === (k === 'beauty' ? beautyKey : matchKey) || studioForce === (k === 'beauty' ? beautyKey : matchKey)))
+    || studioHold === k;
+  /** 剛離開、編輯器還沒畫好：工具只留照片（studio-hold），其他介面已經是編輯器的 */
+  const studioHostCls = (k: 'beauty' | 'match') => studioHold === k && activeCategory !== k ? 'studio-hold' : studioShown(k) ? '' : 'vis-off';
   const beautyEl = useMemo(() => (
     <BeautyStudio key={beautyKey} imageSrc={beautySrc} embedded={studioEmbed} align={studioAlign} onPainted={beautyPainted}
       onCancel={studioNoop} onHome={studioNoop} onImportNew={studioNoop} onSendToEditor={studioNoop} />
@@ -9865,11 +9888,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           兩邊的欄位高度跟編輯器一樣，預覽大小相同，切換時圖片不會跳。 */}
       {fullTabs && (studiosWarm || STUDIO_CATS.includes(activeCategory)) && (
         <>
-          <div data-studio-host="beauty" className={`absolute inset-x-0 top-0 z-[70] ${studioShown('beauty') ? '' : 'vis-off'}`} aria-hidden={activeCategory !== 'beauty'}
+          <div data-studio-host="beauty" className={`absolute inset-x-0 top-0 z-[70] ${studioHostCls('beauty')}`} aria-hidden={activeCategory !== 'beauty'}
             style={{ bottom: footerHeight + 1, pointerEvents: activeCategory === 'beauty' ? 'auto' : 'none' }}>
             {beautyEl}
           </div>
-          <div data-studio-host="match" className={`absolute inset-x-0 top-0 z-[70] ${studioShown('match') ? '' : 'vis-off'}`} aria-hidden={activeCategory !== 'match'}
+          <div data-studio-host="match" className={`absolute inset-x-0 top-0 z-[70] ${studioHostCls('match')}`} aria-hidden={activeCategory !== 'match'}
             style={{ bottom: footerHeight + 1, pointerEvents: activeCategory === 'match' ? 'auto' : 'none' }}>
             {matchEl}
           </div>

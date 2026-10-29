@@ -166,7 +166,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   };
   const applyView = useCallback((k: number, tx: number, ty: number) => {
     const c = stageBox();
-    const kk = Math.max(1, Math.min(8, k));
+    const kk = Math.max(0.5, Math.min(8, k));
     // 限制平移範圍，免得把圖拖出畫面找不回來
     const mx = Math.max(0, (kk - 1) * c.w * 0.5);
     const my = Math.max(0, (kk - 1) * c.h * 0.5);
@@ -204,7 +204,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (pin && pts.length >= 2) {
       const c = stageBox();
       const dist = Math.max(1, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y));
-      const k = Math.max(1, Math.min(8, pin.k0 * (dist / pin.d0)));
+      const k = Math.max(0.5, Math.min(8, pin.k0 * (dist / pin.d0)));
       const mx = (pts[0].x + pts[1].x) / 2 - c.x;
       const my = (pts[0].y + pts[1].y) / 2 - c.y;
       applyView(k, mx - pin.cx * k, my - pin.cy * k);
@@ -568,7 +568,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       <header className="relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 z-[81]">
         <button onClick={embedded.onCancel} data-embedded-cancel className="h-8 -ml-1 px-2 text-[13px] text-white/70 active:text-white">取消</button>
         <button onClick={finishEmbedded} data-embedded-done disabled={saving}
-          className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider shadow-lg active:scale-95 transition-transform disabled:opacity-40">完成</button>
+          className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider shadow-lg active:scale-95 transition-transform disabled:opacity-40">儲存</button>
       </header>
       ) : (
       <header className={`relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 ${formatOpen?'':'backdrop-blur-xl'} z-[81]`}>
@@ -604,7 +604,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         onWheel={(e) => {
           // 桌機沒有兩指，用滾輪當縮放
           const c = stageBox(), v = viewTRef.current;
-          const k = Math.max(1, Math.min(8, v.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+          const k = Math.max(0.5, Math.min(8, v.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
           const ax = e.clientX - c.x, ay = e.clientY - c.y;
           applyView(k, ax - ((ax - v.tx) / v.k) * k, ay - ((ay - v.ty) / v.k) * k);
         }}
