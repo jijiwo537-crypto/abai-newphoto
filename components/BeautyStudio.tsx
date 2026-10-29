@@ -1868,11 +1868,11 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         {tool === 'clone' && healEdit && sessionRef.current && !showOriginal && (
           <svg data-heal-overlay className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-[5]">
             <g ref={healRootRef}>
-              {/* 兩個框一樣亮、一樣粗 */}
-              <g ref={healDstGRef} data-heal-box="dst" data-selected={healSel === 'dst' ? '1' : '0'} style={{ opacity: healMoving ? 0 : 1 }}>
+              {/* 沒選中的那個稍微淡一點（72%），選中的全亮；都沒選時兩個一樣亮 */}
+              <g ref={healDstGRef} data-heal-box="dst" data-selected={healSel === 'dst' ? '1' : '0'} style={{ opacity: healMoving ? 0 : healSel === 'src' ? 0.72 : 1, transition: 'opacity 140ms ease' }}>
                 <path d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
               </g>
-              <g ref={healSrcGRef} data-heal-box="src" data-selected={healSel === 'src' ? '1' : '0'}>
+              <g ref={healSrcGRef} data-heal-box="src" data-selected={healSel === 'src' ? '1' : '0'} style={{ opacity: healSel === 'dst' ? 0.72 : 1, transition: 'opacity 140ms ease' }}>
                 <path ref={healSrcPathRef} d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeDasharray="4 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
               </g>
             </g>
