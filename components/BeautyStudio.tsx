@@ -777,8 +777,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     drawRing(null);
   }, [drawRing, render, renderPixelRect, restore, snapFrom]);
 
+  /** 掛在整個舞台上：照片外面的黑色區域也收得到（修補框的拖曳縮放、雙指縮放預覽）；畫筆只在照片上下筆 */
   const onPointerDown = (e: React.PointerEvent) => {
     if (!sessionRef.current || isLoading || saveState !== 'idle') return;
+    const onPhoto = e.target === viewRef.current;
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     // 修補還在算：先不接新的筆（雙指縮放照樣可以）
     if (patchBusyRef.current && pointersRef.current.size < 2) return;
@@ -810,6 +812,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       return;
     }
     if (gestureLockRef.current) return;
+    if (!onPhoto) return;   // 黑色區域：只等看是不是雙指，不下筆
 
     // 指標可能已經失效（手勢中斷、合成事件），失敗不該中斷整個筆觸
     try { (e.currentTarget as HTMLCanvasElement).setPointerCapture?.(e.pointerId); } catch (err) { /* noop */ }
@@ -1138,6 +1141,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       applyHeal(h.src, s.base.data, s.W, s.H, h.alpha, { x: j.rect.x, y: j.y, w: j.rect.w, h: y1 - j.y }, h.op.dx, h.op.dy, 'clone', h.op.opacity ?? 1, sc);
       // 一段一段畫上照片（疊層還蓋著，看不出來），最後就不用一次貼一大塊
       render({ x: j.rect.x, y: j.y, w: j.rect.w, h: y1 - j.y });
+      /* 這幾列照片上已經是正式結果：疊層同一段馬上擦掉。不擦的話疊層會再蓋一次在正式結果上，
+         羽化那一圈被疊兩次變硬，算完收掉疊層時又變回來 —— 就是放手那一下「羽化抖一下」 */
+      healPrevRef.current?.getContext('2d')!.clearRect(j.rect.x - 2, j.y, j.rect.w + 4, y1 - j.y);
       j.y = y1;
     }
     if (j.y < end) { j.raf = requestAnimationFrame(() => stepHealJob(7)); return; }
@@ -1798,6 +1804,11 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       {/* 畫布。單指在畫布上是繪製，雙指縮放平移。 */}
       <div
         ref={stageRef}
+        onPointerDown={(e) => {
+          // 舞台上的按鈕（前後對比、色票、液化模式）自己處理
+          if ((e.target as HTMLElement).closest('button, label, input')) return;
+          onPointerDown(e);
+        }}
         className="flex-1 relative bg-[#080808] min-h-0 overflow-hidden"
         style={{ touchAction: 'none' }}
         onWheel={(e) => {
@@ -1823,7 +1834,6 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
               ref={viewRef}
               className="beauty-paint max-w-full max-h-full object-contain rounded-sm block"
               style={{ touchAction: 'none' }}
-              onPointerDown={onPointerDown}
               onPointerLeave={(e) => {
                 // 只有滑鼠移出去才收掉筆刷圈。觸控在 pointerup 之後會緊接著送出
                 // pointerleave，先前會把鬆手那一下的閃現整個吃掉。
@@ -1842,12 +1852,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         {tool === 'clone' && healEdit && sessionRef.current && !showOriginal && (
           <svg data-heal-overlay className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-[5]">
             <g ref={healRootRef}>
-              {/* 兩個框一樣亮；選中的那個線稍微粗一點 */}
+              {/* 兩個框一樣亮、一樣粗 */}
               <g ref={healDstGRef} data-heal-box="dst" data-selected={healSel === 'dst' ? '1' : '0'} style={{ opacity: healMoving ? 0 : 1 }}>
-                <path d={healContour} fill="none" stroke="#fff" strokeWidth={healSel === 'dst' ? 2 : 1.25} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                <path d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
               </g>
               <g ref={healSrcGRef} data-heal-box="src" data-selected={healSel === 'src' ? '1' : '0'}>
-                <path ref={healSrcPathRef} d={healContour} fill="none" stroke="#fff" strokeWidth={healSel === 'src' ? 2 : 1.25} strokeDasharray="4 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                <path ref={healSrcPathRef} d={healContour} fill="none" stroke="#fff" strokeWidth={1.25} strokeDasharray="4 3" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
               </g>
             </g>
           </svg>
@@ -1919,7 +1929,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                   if (m.brush !== undefined) setBrush(b => ({ ...b, liquify: m.brush! }));
                   if (m.force !== undefined) setForceMap(f => ({ ...f, liquify: m.force! }));
                 }}
-                className={`h-7 px-3 rounded-full text-[11px] shrink-0 border transition-colors active:scale-95 ${lqPreset === m.id ? 'bg-white text-black border-white font-bold' : 'bg-black/45 backdrop-blur-sm text-white/80 border-white/20'}`}>
+                className={`h-7 px-3 rounded-full text-[11px] shrink-0 transition-colors active:scale-95 ${lqPreset === m.id ? 'bg-white text-black font-bold' : 'bg-black/45 backdrop-blur-sm text-white/80'}`}>
                 {m.label}
               </button>
             ))}
@@ -1963,7 +1973,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             <div className={`h-[5rem] shrink-0 bg-[#111] border-b border-white/5 ${three ? 'px-4 grid grid-cols-3 gap-3 items-center' : two ? 'px-5 grid grid-cols-2 gap-5 items-center' : 'px-8 flex flex-col justify-center'}`}>
               {sliders.map(([label, value, min, max, set]) => (
                 <div key={`${tool}-${label}`} className="w-full min-w-0">
-                  <div className="flex justify-between items-center px-1 mb-1">
+                  {/* 兩根並排時文字對齊滑軌的起點（細滑軌兩端各留 9px），不要貼在最左邊 */}
+                  <div className={`flex justify-between items-center mb-1 ${two ? 'px-2.5' : 'px-1'}`}>
                     <span className={`font-black text-white/40 uppercase ${two ? 'text-[9px] tracking-[0.12em]' : 'text-[10px] tracking-[0.2em]'}`}>{label}</span>
                     <span className={`font-sans tabular-nums font-bold bg-white/10 rounded ${two ? 'text-[10px] leading-none px-1.5 py-[4px]' : 'text-xs px-2 py-0.5'}`}>{value}</span>
                   </div>
