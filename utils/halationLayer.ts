@@ -1,5 +1,4 @@
 import {blurAlpha} from './alphaBoxBlur.js';
-import { SHADOW_GRAIN_GLSL } from './shadowGrain';
 import {highlightHistogram,selectHighlights} from './highlightSelection';
 import {composeFxScene,disposeFxScene,invalidateFxSurface,type FxScene} from './glEffects';
 import {uniformLocation} from './uniformLocation';
@@ -139,10 +138,9 @@ export class HalationLayer {
       if(!gl.getProgramParameter(c,gl.LINK_STATUS))return false;this.composite=c;this.baseTex=texture();this.layerTex=texture();
     }
     this.simple=makeProgram(`precision highp float;varying vec2 uv;uniform sampler2D base;uniform sampler2D noise;uniform vec2 size;uniform float vignette;uniform float grain;uniform float fullLayer;
-      ${SHADOW_GRAIN_GLSL}
       void main(){vec3 b=texture2D(base,uv).rgb;vec2 pixel=vec2(uv.x,1.-uv.y)*size;
       vec3 n=fullLayer>.5?texture2D(noise,pixel/size).rgb:texture2D(noise,fract(pixel/(max(size.x,size.y)/1080.*512.))).rgb;
-      b=shadowGrain(b,n,grain*.63);
+      vec3 overlay=mix(2.*b*n,1.-2.*(1.-b)*(1.-n),step(vec3(.5),b));b=mix(b,overlay,grain*.63);
       float radial=clamp((length(pixel-size*.5)-size.x/3.)/(max(size.x,size.y)-size.x/3.),0.,1.);
       b*=1.-radial*min(1.,vignette*.8);gl_FragColor=vec4(b,1.);}`)||undefined;
     return true;

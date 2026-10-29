@@ -1,4 +1,3 @@
-import { drawShadowGrain } from './shadowGrain';
 /**
  * 經典拼圖裡的照片調整。
  *
@@ -947,10 +946,18 @@ export function applyPhotoFx(
   const scale = Math.max(out.width, out.height) / 1080;
   const W = out.width, H = out.height;
 
-  // 噪點：暗部清楚、越亮越淡（見 utils/shadowGrain；跟編輯同一張圖樣、同一個濃度）
+  // 噪點：彩色雜訊圖樣用 overlay 疊上去（跟編輯同一張圖樣、同一個濃度）
   if (fx.colorNoise) {
-    const layer = noiseLayerFor(W, H);
-    if (layer) drawShadowGrain(ctx, layer, (fx.colorNoise / 100) * 0.63, W, H);
+    ctx.save();
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.globalAlpha = (fx.colorNoise / 100) * 0.63;
+    const pat = ctx.createPattern(getNoisePattern(), 'repeat');
+    if (pat) {
+      ctx.scale(scale, scale);
+      ctx.fillStyle = pat;
+      ctx.fillRect(0, 0, W / scale, H / scale);
+    }
+    ctx.restore();
   }
 
   // 模糊
