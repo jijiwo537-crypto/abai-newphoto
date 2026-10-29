@@ -425,6 +425,13 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const finishEmbedded = () => { if (embedded) embedded.onDone(takeResult()); };
   /* 跟編輯器共用預覽縮放：切過來的那一下直接跳到同一個大小（不補間，不然會看到它滑過去） */
   const [viewJump, setViewJump] = useState(false);
+  /** 照片（沒縮放時）上緣離舞台頂端多遠：分析中的膠囊放在照片上緣往下一點 */
+  const [imgTop, setImgTop] = useState(0);
+  useLayoutEffect(() => {
+    const z = zoomRef.current;
+    const el = z && [...z.querySelectorAll('canvas, img')].find(e => (e as HTMLElement).offsetParent && !(e as HTMLElement).classList.contains('hidden')) as HTMLElement | undefined;
+    if (el) { const t = el.offsetTop; if (Math.abs(t - imgTop) > 0.5) setImgTop(t); }
+  });
   if (embedded?.viewApi) embedded.viewApi.current.match = {
     get: () => { const v = viewTRef.current; const c = stageBox(); return centerViewToShared(v.k, v.tx, v.ty, c); },
     set: (sv) => {
@@ -650,11 +657,12 @@ export const ColorMatchStudio: React.FC<Props> = ({
               ref={el => paintedWhenDecoded(el, () => onPaintedRef.current?.())} onLoad={e => paintedWhenDecoded(e.currentTarget, () => onPaintedRef.current?.())} />
           )}
         </div>
-        {(busy || referenceLoading) && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" role="status" aria-label="分析色彩中">
-            <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-          </div>
-        )}
+        {/* 分析中：跟人像「刪除中」同一款膠囊，放在照片上緣往下一點（不擋住照片中間） */}
+        <div role="status" aria-label="分析色彩中" data-cm-busy={busy || referenceLoading ? 'on' : 'off'}
+          className="absolute left-1/2 -translate-x-1/2 z-30 pointer-events-none flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-[12px] text-white/90 whitespace-nowrap"
+          style={{ top: Math.round(imgTop + 16), opacity: busy || referenceLoading ? 1 : 0, transition: 'opacity 180ms ease' }}>
+          <span className="w-3 h-3 rounded-full border-2 border-white/25 border-t-white animate-spin" />分析中
+        </div>
         {ready && (
           <button
             data-cm-compare

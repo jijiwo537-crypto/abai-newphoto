@@ -22,7 +22,7 @@ vec3 lowfiColor(vec3 c,vec2 uv,vec2 res,float lum){
  vec3 noise=vec3(hash21(cell+1949.),hash21(cell+2896.),hash21(cell+3843.))-.5;
  c=mix(c,lowfiLookup(c),${param(lowfi,'fxLowfiFilter').toFixed(1)}/100.);
  c=((c-.5)*(1.+${param(lowfi,'fxLowfiContrast').toFixed(1)}*.004)+.5)*exp2(${LOWFI_FIXED.exposure*.008});
- c+=${param(lowfi,'fxLowfiGrain').toFixed(1)}*1.6*(.55+.45*(1.-lum))*(mono*.55+noise*.85)/255.;
+ c+=${param(lowfi,'fxLowfiGrain').toFixed(1)}*1.6*1.55*(1.-lum)*(mono*.55+noise*.85)/255.;
  return clamp(c,0.,1.);
 }
 vec2 lowfiShift(vec2 uv){vec2 d=uv-.5;return d*${param(lowfi,'fxLowfiAberration').toFixed(1)}*.00008*(.15+dot(d,d)*3.);}

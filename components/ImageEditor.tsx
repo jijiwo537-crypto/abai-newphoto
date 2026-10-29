@@ -4,6 +4,7 @@ import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
 import { EditBar, EditBarTab, EDIT_BAR_H } from './EditBar';
 import { BeautyStudio, type StudioResult } from './BeautyStudio';
 import type { StudioView, StudioViewApi } from './studioAlign';
+import { drawShadowGrain } from '../utils/shadowGrain';
 import { ColorMatchStudio } from './ColorMatchStudio';
 import { TemplatePanel } from './TemplatePanel';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
@@ -4648,21 +4649,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
 
     // 2. COLOR NOISE (Fast overlay, always run)
+    // 暗部清楚、越亮越淡、最亮的地方沒有（見 utils/shadowGrain；GPU 預覽用同一條式子）
     if (p.colorNoise > 0 && noisePatternRef.current) {
-        ctx.save();
-        ctx.globalCompositeOperation = 'overlay';
-        ctx.globalAlpha = (p.colorNoise / 100) * 0.63;
-        if (!compiledNoisePatternRef.current) {
-            compiledNoisePatternRef.current = ctx.createPattern(noisePatternRef.current, 'repeat');
-        }
-        const pattern = compiledNoisePatternRef.current;
-        if (pattern) {
-            const noiseScale = scale;
-            ctx.scale(noiseScale, noiseScale);
-            ctx.fillStyle = pattern;
-            ctx.fillRect(0, 0, w / noiseScale, h / noiseScale);
-        }
-        ctx.restore();
+        const layer = noiseLayerFor(w, h);
+        if (layer) drawShadowGrain(ctx, layer, (p.colorNoise / 100) * 0.63, w, h);
     }
 
     // 3. COLOR NOISE II (Advanced masked, cache-supported)
