@@ -4,6 +4,7 @@ import { loadCameraLut, readyCameraLut } from '../utils/cameraLuts';
 import {CAMERA_FX_ZERO, CAMERA_LOWFI_GLSL, CAMERA_HIGHLIGHT_FS, CAMERA_SPILL_STEP, type CameraFx} from '../utils/cameraEffects';
 import {cameraPreviewGeometry} from '../utils/cameraPreview';
 import {bindLowfiLut} from '../utils/lowfiLut';
+import { loadFaceLandmarker, FaceSkinMask } from '../utils/faceSkin';
 
 /** 拍照時可以即時看到的特效，跟編輯頁同款、數值都是 0–100 */
 export type ViewfinderFx = CameraFx;
@@ -25,6 +26,8 @@ interface ViewfinderProps {
   onPointerDown?: React.PointerEventHandler<HTMLDivElement>;
   onPointerUp?: React.PointerEventHandler<HTMLDivElement>;
   onPointerCancel?: React.PointerEventHandler<HTMLDivElement>;
+  /** 人臉磨皮（只作用在臉上的皮膚） */
+  skinSmooth?: boolean;
 }
 
 const VS_SOURCE = `#version 300 es
@@ -229,6 +232,67 @@ void main() {
 }
 `;
 
+/* ── 人臉磨皮（頻率分離，跟 Photoshop 修膚同一個做法）──────────────────
+   畫面拆成三層：最細的紋理（毛孔、皮膚質感）、中間那層（痘印、斑、膚色不均）、最底的大色塊。
+   只把中間那層壓平，細紋理照留 —— 所以是乾淨的皮膚，不是塑膠臉。
+   中間那層裡反差大的（輪廓、髮絲、眼鏡邊）判定成邊緣，不壓。
+   只在「臉的皮膚範圍」（找臉畫出來的遮罩，挖掉眼睛、眉毛、嘴唇）× 膚色判斷 裡做，其他地方一個像素都不動。
+   座標一律用 gl_FragCoord（跟影像貼圖一一對應，不經過鏡像／裁切），主畫面那一趟再照常鏡像裁切。 */
+const FS_SKIN_BLUR = `#version 300 es
+precision highp float;
+uniform sampler2D u_tex;
+uniform vec2 u_size;   // 輸出大小
+uniform vec2 u_dir;    // 一步在來源貼圖上的位移（uv）
+out vec4 outColor;
+void main() {
+    vec2 uv = gl_FragCoord.xy / u_size;
+    vec3 acc = vec3(0.0); float wsum = 0.0;
+    for (int i = -8; i <= 8; i++) {
+        float x = float(i) / 3.0;          // 17 抽樣涵蓋 ±2.7σ
+        float w = exp(-0.5 * x * x);
+        acc += texture(u_tex, uv + u_dir * float(i)).rgb * w; wsum += w;
+    }
+    outColor = vec4(acc / wsum, 1.0);
+}
+`;
+const FS_SKIN = `#version 300 es
+precision highp float;
+uniform sampler2D u_video;
+uniform sampler2D u_coarse;
+uniform sampler2D u_mask;
+uniform vec2 u_size;
+uniform vec2 u_maskPx;
+out vec4 outColor;
+void main() {
+    vec2 uv = gl_FragCoord.xy / u_size;
+    vec2 px = 1.0 / u_size;
+    vec3 o = texture(u_video, uv).rgb;
+    // 遮罩：小圖上 3×3 取樣（柔邊，看不出界線）
+    float m = 0.0;
+    for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) m += texture(u_mask, uv + vec2(float(i), float(j)) * u_maskPx * 1.5).r;
+    m /= 9.0;
+    if (m < 0.003) { outColor = vec4(o, 1.0); return; }
+    // 膚色判斷（YCbCr）：頭髮、鬍子、眼鏡、背景不在膚色範圍裡就少磨或不磨
+    float Y = dot(o, vec3(0.299, 0.587, 0.114));
+    float cb = (o.b - Y) * 0.564 + 0.5, cr = (o.r - Y) * 0.713 + 0.5;
+    float skin = smoothstep(0.49, 0.53, cr) * (1.0 - smoothstep(0.70, 0.74, cr)) * smoothstep(0.26, 0.30, cb) * (1.0 - smoothstep(0.52, 0.56, cb));
+    skin *= smoothstep(0.06, 0.16, Y);                       // 太暗的（陰影裡的頭髮）不算
+    m *= mix(0.25, 1.0, skin);
+    // 細紋理層：跟 3×3 帳篷模糊的差（毛孔、皮膚質感）
+    vec3 fine = o * 0.25;
+    fine += (texture(u_video, uv + vec2(px.x, 0.0)).rgb + texture(u_video, uv - vec2(px.x, 0.0)).rgb
+           + texture(u_video, uv + vec2(0.0, px.y)).rgb + texture(u_video, uv - vec2(0.0, px.y)).rgb) * 0.125;
+    fine += (texture(u_video, uv + px).rgb + texture(u_video, uv - px).rgb
+           + texture(u_video, uv + vec2(px.x, -px.y)).rgb + texture(u_video, uv + vec2(-px.x, px.y)).rgb) * 0.0625;
+    vec3 coarse = texture(u_coarse, uv).rgb;
+    vec3 mid = fine - coarse;
+    // 中間層反差大的是真的邊緣，留著；小的（斑、痘印、不均）壓平
+    float keep = smoothstep(0.045, 0.14, length(mid));
+    vec3 smoothed = coarse + mid * keep + (o - fine) * 0.9;
+    outColor = vec4(mix(o, smoothed, clamp(m, 0.0, 1.0) * 0.85), 1.0);
+}
+`;
+
 /** 朦朧的模糊在 1/4 邊長上算：肉眼看不出差別，但快 16 倍 */
 const BLUR_DIV = 4;
 
@@ -239,7 +303,17 @@ const GLOW_LONG = 176;
 const GLOW_RADIUS = 1.6;
 const GLOW_PASSES = 4;
 
-export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, displayBox, onClick, onPointerDown, onPointerUp, onPointerCancel }: ViewfinderProps, ref) => {
+export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, displayBox, onClick, onPointerDown, onPointerUp, onPointerCancel, skinSmooth }: ViewfinderProps, ref) => {
+  /* 人臉磨皮：開了才載入找臉的模型（第一次約 3.7MB）；關掉就完全不跑 */
+  const skinOnRef = useRef(!!skinSmooth);
+  skinOnRef.current = !!skinSmooth;
+  const skinMaskRef = useRef<FaceSkinMask | null>(null);
+  useEffect(() => {
+    if (!skinSmooth || skinMaskRef.current) return;
+    let live = true;
+    loadFaceLandmarker().then(lm => { if (live && lm && !skinMaskRef.current) skinMaskRef.current = new FaceSkinMask(lm); });
+    return () => { live = false; };
+  }, [skinSmooth]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewSizeRef=useRef({w:0,h:0});
   const displayBoxRef=useRef(displayBox);
@@ -322,6 +396,11 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
   /* 滑桿是每一幀都可能在動的，放進 effect 依賴會不停重建 render loop。
      用 ref 讓迴圈每一幀讀最新值，迴圈本身只建立一次。 */
+  const skinBlurProgRef = useRef<WebGLProgram | null>(null);
+  const skinProgRef = useRef<WebGLProgram | null>(null);
+  const skinRtRef = useRef<{ w: number; h: number; qw: number; qh: number; qa: { fb: WebGLFramebuffer; tex: WebGLTexture } | null; qb: { fb: WebGLFramebuffer; tex: WebGLTexture } | null; out: { fb: WebGLFramebuffer; tex: WebGLTexture } | null }>({ w: 0, h: 0, qw: 0, qh: 0, qa: null, qb: null, out: null });
+  const skinMaskTexRef = useRef<WebGLTexture | null>(null);
+  const skinMaskVerRef = useRef(-1);
   const fxRef = useRef<ViewfinderFx>(fx || FX_ZERO);
   fxRef.current = fx || FX_ZERO;
   const zoomRef = useRef(1);
@@ -436,6 +515,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     const prog = link(FS_SOURCE);
     progRef.current = prog;
     blurProgRef.current = link(FS_BLUR);
+    skinBlurProgRef.current = link(FS_SKIN_BLUR);
+    skinProgRef.current = link(FS_SKIN);
     compProgRef.current = link(FS_COMPOSITE);
     highlightProgRef.current = link(CAMERA_HIGHLIGHT_FS);
 
@@ -461,7 +542,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       if (aUv >= 0) { gl.enableVertexAttribArray(aUv); gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 0, 0); }
     };
     // 三個程式的屬性位置都是 0/1，所以綁一次就好；保險起見全部走一遍
-    bind(prog); bind(blurProgRef.current); bind(compProgRef.current);bind(highlightProgRef.current);
+    bind(prog); bind(blurProgRef.current); bind(compProgRef.current);bind(highlightProgRef.current);bind(skinBlurProgRef.current);bind(skinProgRef.current);
 
     videoTexRef.current = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current);
@@ -477,6 +558,12 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       }
       rtRef.current = { w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, sw:0,sh:0,scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null,sPing:null,sPong:null,wide:null,narrow:null,halo:null,cut:null };
       gl.deleteProgram(prog);
+      for (const t of [skinRtRef.current.qa, skinRtRef.current.qb, skinRtRef.current.out]) if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
+      skinRtRef.current = { w: 0, h: 0, qw: 0, qh: 0, qa: null, qb: null, out: null };
+      if (skinMaskTexRef.current) gl.deleteTexture(skinMaskTexRef.current);
+      skinMaskTexRef.current = null; skinMaskVerRef.current = -1;
+      if (skinBlurProgRef.current) gl.deleteProgram(skinBlurProgRef.current);
+      if (skinProgRef.current) gl.deleteProgram(skinProgRef.current);
       if (blurProgRef.current) gl.deleteProgram(blurProgRef.current);
       if (compProgRef.current) gl.deleteProgram(compProgRef.current);
       if (highlightProgRef.current) gl.deleteProgram(highlightProgRef.current);
@@ -542,6 +629,54 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       if (!m.has(name)) m.set(name, gl.getUniformLocation(p, name));
       return m.get(name)!;
     };
+    /** 磨皮三趟：縮小橫模糊 → 直模糊（大色塊層）→ 原尺寸合成。回傳結果貼圖；沒臉或還沒載好回 null */
+    const skinPass = (w: number, h: number): WebGLTexture | null => {
+      const mk = skinMaskRef.current, bp = skinBlurProgRef.current, sp = skinProgRef.current;
+      if (!mk || !mk.faces || !bp || !sp) return null;
+      if (!skinMaskTexRef.current) {
+        const t = gl.createTexture()!;
+        gl.bindTexture(gl.TEXTURE_2D, t);
+        for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+        skinMaskTexRef.current = t;
+      }
+      if (skinMaskVerRef.current !== mk.version) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, skinMaskTexRef.current);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mk.canvas);
+        skinMaskVerRef.current = mk.version;
+      }
+      let r = skinRtRef.current;
+      const qw = Math.max(2, Math.round(w / 4)), qh = Math.max(2, Math.round(h / 4));
+      if (!r.out || r.w !== w || r.h !== h) {
+        for (const t of [r.qa, r.qb, r.out]) if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
+        r = skinRtRef.current = { w, h, qw, qh, qa: makeTarget(qw, qh), qb: makeTarget(qw, qh), out: makeTarget(w, h) };
+      }
+      // 大色塊層的模糊半徑跟著臉的大小走（約臉寬的 1.4%），在 1/4 尺寸上算
+      const sigmaPx = Math.max(4, Math.min(48, mk.faceFrac * w * 0.014));
+      const step = Math.max(0.5, sigmaPx / 4 / 3);
+      gl.useProgram(bp);
+      gl.uniform1i(uloc(bp, 'u_tex'), 0);
+      gl.uniform2f(uloc(bp, 'u_size'), qw, qh);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, r.qa!.fb); gl.viewport(0, 0, qw, qh);
+      gl.uniform2f(uloc(bp, 'u_dir'), step / qw, 0);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindTexture(gl.TEXTURE_2D, r.qa!.tex);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, r.qb!.fb);
+      gl.uniform2f(uloc(bp, 'u_dir'), 0, step / qh);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.useProgram(sp);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, r.out!.fb); gl.viewport(0, 0, w, h);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current); gl.uniform1i(uloc(sp, 'u_video'), 0);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, r.qb!.tex); gl.uniform1i(uloc(sp, 'u_coarse'), 1);
+      gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, skinMaskTexRef.current); gl.uniform1i(uloc(sp, 'u_mask'), 2);
+      gl.uniform2f(uloc(sp, 'u_size'), w, h);
+      gl.uniform2f(uloc(sp, 'u_maskPx'), 1 / mk.canvas.width, 1 / mk.canvas.height);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.activeTexture(gl.TEXTURE0);
+      return r.out!.tex;
+    };
     const draw = (source: TexImageSource, W: number, H: number) => {
       const f = fxRef.current;
       const input=source as any;
@@ -564,6 +699,13 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source as any);
+      /* 人臉磨皮：畫面裡有臉才做；結果換掉這一格的影像貼圖，後面的曝光、濾鏡、特效照常疊上去 */
+      const skinTex = skinOnRef.current ? skinPass(sourceW, sourceH) : null;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, anyFx ? rt!.scene!.fb : null);
+      gl.viewport(0, 0, anyFx ? sourceW : W, anyFx ? sourceH : H);
+      gl.useProgram(prog);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, skinTex || videoTexRef.current);
       gl.uniform1i(uloc(prog, 'u_video'), 0);
 
       const useLut = !!lutTexRef.current;
@@ -704,8 +846,13 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         }
         const pr = paramRef.current;
         const state = `${pr.exposure}|${pr.kelvin}|${pr.isUserFacing}|${zoomRef.current}|${JSON.stringify(fxRef.current)}`;
-        if (!rvfc || newFrame || resized || state !== lastState || lastLut !== lutTexRef.current) {
-          newFrame = false; lastState = state; lastLut = lutTexRef.current;
+        /* 磨皮開著：每一格新畫面找一次臉（在畫之前，遮罩跟這一格對得上） */
+        const mk = skinOnRef.current ? skinMaskRef.current : null;
+        let maskChanged = false;
+        if (mk && (!rvfc || newFrame)) maskChanged = mk.update(video, performance.now());
+        const skinState = skinOnRef.current ? `|skin${mk ? mk.faces : 'x'}` : '';
+        if (!rvfc || newFrame || maskChanged || resized || state + skinState !== lastState || lastLut !== lutTexRef.current) {
+          newFrame = false; lastState = state + skinState; lastLut = lutTexRef.current;
           draw(video, gl.canvas.width, gl.canvas.height);
         }
       }
