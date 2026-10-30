@@ -279,8 +279,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
   /** 人臉磨皮：只有開／關（強度固定），記住上次的選擇 */
-  const [skinSmooth, setSkinSmooth] = useState(() => { try { return localStorage.getItem('abai-camera-skin') === '1'; } catch { return false; } });
-  useEffect(() => { try { localStorage.setItem('abai-camera-skin', skinSmooth ? '1' : '0'); } catch { /* 私密模式 */ } }, [skinSmooth]);
+  // 磨皮預設開啟（換一個鍵：舊的鍵以前不管有沒有按過都存了 0）
+  const [skinSmooth, setSkinSmooth] = useState(() => { try { return localStorage.getItem('abai-camera-skin-v2') !== '0'; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem('abai-camera-skin-v2', skinSmooth ? '1' : '0'); } catch { /* 私密模式 */ } }, [skinSmooth]);
   
   const [focalLengthMm, setFocalLengthMm] = useState<string | null>(null);
   const focalLengthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

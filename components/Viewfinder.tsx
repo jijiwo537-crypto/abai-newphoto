@@ -637,14 +637,16 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         skinMaskVerRef.current = mk.version;
       }
       let r = skinRtRef.current;
-      const qw = Math.max(2, Math.round(w / 4)), qh = Math.max(2, Math.round(h / 4));
-      if (!r.qb || r.w !== w || r.h !== h) {
+      // 大色塊層的模糊半徑跟著臉的大小走（約臉寬的 1.4%）。臉大（半徑大）時在 1/8 尺寸上算，像素少四倍；臉小用 1/4，免得取樣太粗而閃爍
+      const sigmaPx = Math.max(4, Math.min(48, mk.faceFrac * w * 0.014));
+      const prevDiv = r.qw ? Math.round(r.w / r.qw) : 4;
+      const div = sigmaPx >= 18 ? 8 : sigmaPx < 14 ? 4 : (prevDiv === 8 ? 8 : 4);   // 中間留一段緩衝，臉大小在邊界附近不會一直換
+      const qw = Math.max(2, Math.round(w / div)), qh = Math.max(2, Math.round(h / div));
+      if (!r.qb || r.w !== w || r.h !== h || r.qw !== qw || r.qh !== qh) {
         for (const t of [r.qa, r.qb]) if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
         r = skinRtRef.current = { w, h, qw, qh, qa: makeTarget(qw, qh), qb: makeTarget(qw, qh) };
       }
-      // 大色塊層的模糊半徑跟著臉的大小走（約臉寬的 1.4%），在 1/4 尺寸上算
-      const sigmaPx = Math.max(4, Math.min(48, mk.faceFrac * w * 0.014));
-      const step = Math.max(0.5, sigmaPx / 4 / 3);
+      const step = Math.max(0.5, sigmaPx / div / 3);
       /* 只在臉的外框裡算（剪裁區）：其他地方主畫面直接讀原本的影像，所以這張貼圖框外是什麼都沒關係。
          花的力氣跟臉的大小成正比，不是整個相機畫面 */
       const [b0, b1, b2, b3] = mk.box;

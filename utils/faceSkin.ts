@@ -11,7 +11,7 @@
 import { drawSkinMask, maskSize, type MaskBufs } from './faceSkinDraw';
 
 /** 送去偵測的畫面長邊：模型本身吃 192／256 的小圖，送大的只是浪費傳輸 */
-const DETECT_LONG = 480;
+const DETECT_LONG = 320;
 
 /** 找臉的引擎：背景執行緒（優先），或主執行緒（背景執行緒在這台裝置上起不來時的退路） */
 type Detector =
@@ -108,9 +108,9 @@ export class FaceSkinMask {
     const vw = video.videoWidth, vh = video.videoHeight;
     // 背景執行緒的回覆遺失（極少見）：兩秒沒回就當作沒在算
     if (this.busy && now - this.sentAt > 2000) this.busy = false;
-    /* 背景執行緒找臉每秒最多 20 次：遮罩有柔邊，臉移動時看不出差別；
+    /* 背景執行緒找臉每秒最多 12 次：遮罩有柔邊，臉移動時看不出差別；
        少一半的縮圖、傳輸跟 CPU 運算，手機不會因為忙著找臉而發熱降頻、讓畫面變卡 */
-    const due = this.d.kind !== 'worker' || now - this.sentAt >= 50;
+    const due = this.d.kind !== 'worker' || now - this.sentAt >= 80;
     if (!this.busy && due && vw && vh && video.readyState >= 2) {
       const k = Math.min(1, DETECT_LONG / Math.max(vw, vh));
       const sw = Math.max(1, Math.round(vw * k)), sh = Math.max(1, Math.round(vh * k));
