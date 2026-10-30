@@ -282,17 +282,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   // 磨皮預設關閉，使用者打開過才記住（換一個鍵：上一版預設開啟時每個人都存了 1）
   const [skinSmooth, setSkinSmooth] = useState(() => { try { return localStorage.getItem('abai-camera-skin-v3') === '1'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('abai-camera-skin-v3', skinSmooth ? '1' : '0'); } catch { /* 私密模式 */ } }, [skinSmooth]);
-  /** 磨皮診斷（選單打開時每秒更新）：找臉走哪條路、一次多久 */
-  const [skinStat, setSkinStat] = useState('');
-  useEffect(() => {
-    if (!showSettingsMenu || !skinSmooth) return;
-    const read = () => {
-      const st = (window as any).__faceSkinStats, eng = (window as any).__faceSkinEngine;
-      setSkinStat(st ? `${st.engine === 'worker' ? (st.vf ? '背景V' : '背景') : '主'} ${st.ms}ms` : eng ? (eng === 'none' ? '無法載入' : '載入完成') : '載入中');
-    };
-    read(); const id = setInterval(read, 1000);
-    return () => clearInterval(id);
-  }, [showSettingsMenu, skinSmooth]);
   
   const [focalLengthMm, setFocalLengthMm] = useState<string | null>(null);
   const focalLengthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1220,7 +1209,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                                 <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${skinSmooth ? 'translate-x-5' : 'translate-x-0'}`} />
                             </button>
                         </div>
-                        {skinSmooth && skinStat && <div className="-mt-2 pl-7 text-[10px] text-white/35 tabular-nums whitespace-nowrap">{skinStat}</div>}
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
                                 <Icon name="timer" className="text-lg text-white/70" />

@@ -301,12 +301,12 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   skinOnRef.current = !!skinSmooth;
   const skinMaskRef = useRef<FaceSkinMask | null>(null);
   useEffect(() => {
+    /* 只有打開磨皮才載入找臉的模型。以前相機一開就在背景先載：模型＋wasm 會吃掉上百 MB 記憶體、
+       開頭幾秒佔滿 CPU，iPhone 上開關特效（要配置原尺寸暫存）就會卡一下 */
+    if (!skinSmooth) return;
     let live = true;
-    const go = () => createFaceSkinMask().then(m => { if (live && m && !skinMaskRef.current) skinMaskRef.current = m; });
-    if (skinSmooth) { go(); return () => { live = false; }; }
-    const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
-    const id = ric ? ric(go, { timeout: 2500 }) : window.setTimeout(go, 1500);
-    return () => { live = false; if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
+    createFaceSkinMask().then(m => { if (live && m && !skinMaskRef.current) skinMaskRef.current = m; });
+    return () => { live = false; };
   }, [skinSmooth]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewSizeRef=useRef({w:0,h:0});

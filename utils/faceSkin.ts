@@ -11,7 +11,7 @@
 import { drawSkinMask, maskSize, type MaskBufs } from './faceSkinDraw';
 
 /** 送去偵測的畫面長邊：模型本身吃 192／256 的小圖，送大的只是浪費傳輸 */
-const DETECT_LONG = 320;
+const DETECT_LONG = 480;
 
 /** 找臉的引擎：背景執行緒（優先），或主執行緒（背景執行緒在這台裝置上起不來時的退路） */
 type Detector =
@@ -113,9 +113,9 @@ export class FaceSkinMask {
     if (this.busy && now - this.sentAt > 2000) this.busy = false;
     /* 背景執行緒找臉每秒最多 12 次：遮罩有柔邊，臉移動時看不出差別；
        少一半的縮圖、傳輸跟 CPU 運算，手機不會因為忙著找臉而發熱降頻、讓畫面變卡 */
-    /* 找臉的頻率：畫面裡有臉時跟著臉走（背景執行緒每秒 12 次）；沒有臉時每秒 3 次就夠（找不到臉時模型每次都要整張重新搜，最耗）。
+    /* 找臉的頻率：畫面裡有臉時跟著臉走（背景執行緒每秒 15 次）；沒有臉時每秒約 7 次（太慢會很難抓到臉）。
        退路（主執行緒找臉，每次都會擋住畫面）再放慢：有臉每秒 5 次、沒臉每秒 2 次 */
-    const gap = this.d.kind === 'worker' ? (this.faces ? 80 : 330) : (this.faces ? 200 : 500);
+    const gap = this.d.kind === 'worker' ? (this.faces ? 66 : 150) : (this.faces ? 200 : 500);
     const due = now - this.sentAt >= gap;
     if (!this.busy && due && vw && vh && video.readyState >= 2) {
       const k = Math.min(1, DETECT_LONG / Math.max(vw, vh));
@@ -141,7 +141,7 @@ export class FaceSkinMask {
           } catch { this.useVideoFrame = false; }
         }
         let p: Promise<ImageBitmap>;
-        try { p = this.bitmapResize ? createImageBitmap(video, { resizeWidth: sw, resizeHeight: sh, resizeQuality: 'low' }) : viaCanvas(); }
+        try { p = this.bitmapResize ? createImageBitmap(video, { resizeWidth: sw, resizeHeight: sh, resizeQuality: 'medium' }) : viaCanvas(); }
         catch { this.bitmapResize = false; try { p = viaCanvas(); } catch { this.busy = false; return this.take(); } }
         p.then(send).catch(() => { this.bitmapResize = false; this.busy = false; });
       } else if (this.d.kind === 'main') {

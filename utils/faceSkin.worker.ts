@@ -28,7 +28,7 @@ self.onmessage = async (e: MessageEvent) => {
       const make = (delegate: 'GPU' | 'CPU') => FaceLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: m.base + 'models/face_landmarker.task', delegate },
         runningMode: 'VIDEO', numFaces: 4,
-        minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+        minFaceDetectionConfidence: 0.4, minFacePresenceConfidence: 0.4, minTrackingConfidence: 0.5,
       });
       /* 背景執行緒裡只用 CPU（XNNPACK）：在 iPhone 上背景執行緒建 GPU 環境會一直等不到回應（磨皮遲遲不出現就是這個）。
          模型很小、送進來的畫面也縮小過，CPU 一格十幾毫秒，而且不佔主執行緒 */
@@ -44,7 +44,7 @@ self.onmessage = async (e: MessageEvent) => {
     if (m.vf) {
       // 主執行緒轉交過來的整格相機畫面：在這裡縮小（不佔主執行緒）
       const vf = m.vf;
-      try { bmp = await createImageBitmap(vf, { resizeWidth: m.sw, resizeHeight: m.sh, resizeQuality: 'low' }); }
+      try { bmp = await createImageBitmap(vf, { resizeWidth: m.sw, resizeHeight: m.sh, resizeQuality: 'medium' }); }
       catch {
         try {
           const c = new OffscreenCanvas(m.sw, m.sh);
