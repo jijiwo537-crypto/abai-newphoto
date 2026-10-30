@@ -91,6 +91,8 @@ export class FaceSkinMask {
   private bitmapResize = true;
   /** 這台能不能把 VideoFrame 交給背景執行緒（不行的話背景會回報，改走 ImageBitmap） */
   private useVideoFrame = true;
+  private lastVF = false;
+  private vfStalls = 0;
 
   /** 送去偵測的小圖（退路：每一格把相機畫面縮小畫上來） */
   private snap = document.createElement('canvas');
@@ -100,7 +102,8 @@ export class FaceSkinMask {
       const m = e.data;
       if (m?.type === 'vfFail') { this.useVideoFrame = false; this.busy = false; return; }
       if (m?.type !== 'faces') return;
-      this.stat(m.ms);
+      this.vfStalls = 0;
+      this.stat(m.ms); try { (window as any).__faceSkinStats.n = m.bitmap ? m.n : m.faces?.length; } catch { /* noop */ }
       if (m.bitmap) this.onMask(m.bitmap, m.n, m.frac, m.box);
       else this.onFaces(m.faces);
     });
@@ -110,7 +113,11 @@ export class FaceSkinMask {
   update(video: HTMLVideoElement, now: number): boolean {
     const vw = video.videoWidth, vh = video.videoHeight;
     // 背景執行緒的回覆遺失（極少見）：兩秒沒回就當作沒在算
-    if (this.busy && now - this.sentAt > 2000) this.busy = false;
+    if (this.busy && now - this.sentAt > 2000) {
+      this.busy = false;
+      // 交 VideoFrame 過去卻一直沒回音（某些裝置背景執行緒處理不了）：連兩次就改走 ImageBitmap 那條
+      if (this.lastVF && ++this.vfStalls >= 2) this.useVideoFrame = false;
+    }
     /* 背景執行緒找臉每秒最多 12 次：遮罩有柔邊，臉移動時看不出差別；
        少一半的縮圖、傳輸跟 CPU 運算，手機不會因為忙著找臉而發熱降頻、讓畫面變卡 */
     /* 找臉的頻率：畫面裡有臉時跟著臉走（背景執行緒每秒 15 次）；沒有臉時每秒約 7 次（太慢會很難抓到臉）。
@@ -137,9 +144,11 @@ export class FaceSkinMask {
           try {
             const vf = new (window as any).VideoFrame(video, { timestamp: Math.round(now * 1000) });
             w.postMessage({ type: 'frame', vf, sw, sh, t: now, id, vw, vh }, [vf]);
+            this.lastVF = true;
             return this.take();
           } catch { this.useVideoFrame = false; }
         }
+        this.lastVF = false;
         let p: Promise<ImageBitmap>;
         try { p = this.bitmapResize ? createImageBitmap(video, { resizeWidth: sw, resizeHeight: sh, resizeQuality: 'medium' }) : viaCanvas(); }
         catch { this.bitmapResize = false; try { p = viaCanvas(); } catch { this.busy = false; return this.take(); } }
