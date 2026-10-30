@@ -14,12 +14,6 @@
  *      細節在細層補上 —— 不會出現重複貼圖的圖章感，也不會糊成一片。
  *   4. 最後用筆刷的柔邊混回原圖：中心整塊換掉，邊緣平滑過渡，沒有接縫。
  *
- * 再加上 Photoshop 內容感知填色的進階選項：
- *   · 旋轉／縮放／鏡像：周圍的樣子另外做幾份「轉 90°、轉 270°、左右翻、縮小、放大」的副本，
- *     跟原本的排在同一張大圖（atlas）裡一起當來源找。斜的紋路、遠近大小不同的地磚、
- *     左右對稱的東西，都找得到方向和大小對的那一塊（只找、不改原圖）。
- *     （以前只能找方向、大小一樣的：例如領帶的花紋旁邊沒有同方向的，就會補成一團灰。）
- *
  * 純函式、決定性（固定亂數種子）：預覽（Web Worker）、復原重播、原尺寸輸出算出來的
  * 方法完全相同。
  */
@@ -49,41 +43,38 @@ const rng = (seed: number) => {
   return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
 };
 
-/** hole：要補的地方（只在原圖那一份裡）；bad：不能拿來當來源（洞、副本之間的空隙、副本裡洞的位置） */
-interface Level { w: number; h: number; img: Float32Array; hole: Uint8Array; bad: Uint8Array }
+interface Level { w: number; h: number; img: Float32Array; hole: Uint8Array }
 
 const down = (L: Level): Level => {
   const w = Math.max(1, (L.w + 1) >> 1), h = Math.max(1, (L.h + 1) >> 1);
-  const img = new Float32Array(w * h * 3), hole = new Uint8Array(w * h), bad = new Uint8Array(w * h);
+  const img = new Float32Array(w * h * 3), hole = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    let r = 0, g = 0, b = 0, n = 0, anyHole = 0, anyBad = 0;
+    let r = 0, g = 0, b = 0, n = 0, anyHole = 0;
     for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
       const sx = Math.min(L.w - 1, x * 2 + dx), sy = Math.min(L.h - 1, y * 2 + dy), si = sy * L.w + sx;
-      if (L.bad[si]) anyBad = 1;
       if (L.hole[si]) { anyHole = 1; continue; }
       r += L.img[si * 3]; g += L.img[si * 3 + 1]; b += L.img[si * 3 + 2]; n++;
     }
     const i = y * w + x;
     // 只要有一個子像素在洞裡，粗層的這一格就算洞：洞只會被放大，不會在粗層漏掉一角
-    hole[i] = anyHole; bad[i] = anyBad | anyHole;
+    hole[i] = anyHole;
     if (n) { img[i * 3] = r / n; img[i * 3 + 1] = g / n; img[i * 3 + 2] = b / n; }
   }
-  return { w, h, img, hole, bad };
+  return { w, h, img, hole };
 };
 
 /** 洞先用四周往內一圈一圈平均補滿（只當最粗那一層的起點） */
 const diffuseFill = (L: Level) => {
   const { w, h, img } = L;
-  // 已知＝可以參考的像素（副本之間的空隙不算）；要補的只有洞
   const known = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) known[i] = L.bad[i] ? 0 : 1;
-  let left = 0; for (let i = 0; i < w * h; i++) if (L.hole[i]) left++;
+  for (let i = 0; i < w * h; i++) known[i] = L.hole[i] ? 0 : 1;
+  let left = 0; for (let i = 0; i < w * h; i++) if (!known[i]) left++;
   let guard = w + h + 2;
   while (left > 0 && guard-- > 0) {
     const next: number[] = [];
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const i = y * w + x;
-      if (known[i] || !L.hole[i]) continue;
+      if (known[i]) continue;
       let r = 0, g = 0, b = 0, n = 0;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const xx = x + dx, yy = y + dy;
@@ -109,14 +100,14 @@ const diffuseFill = (L: Level) => {
 const onionInit = (L: Level, valid: Int32Array, rand: () => number): Int32Array => {
   const { w, h, img, hole } = L;
   const known = new Uint8Array(w * h), pick = new Int32Array(w * h).fill(-1);
-  for (let i = 0; i < w * h; i++) known[i] = L.bad[i] ? 0 : 1;
+  for (let i = 0; i < w * h; i++) known[i] = hole[i] ? 0 : 1;
   // 來源太多時隨機取一部分比（最粗層通常只有幾百到幾千個，幾乎都是全比）
   const pool = valid.length > 2500 ? Int32Array.from({ length: 2500 }, () => valid[(rand() * valid.length) | 0]) : valid;
   let guard = w + h;
   while (guard-- > 0) {
     const front: number[] = [];
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const i = y * w + x; if (known[i] || !hole[i]) continue;
+      const i = y * w + x; if (known[i]) continue;
       let k = 0;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < w && yy < h && known[yy * w + xx]) k++; }
       if (k) front.push(i * 16 + k);
@@ -159,7 +150,7 @@ const onionInit = (L: Level, valid: Int32Array, rand: () => number): Int32Array 
 const onionFast = (L: Level, validMap: Uint8Array, valid: Int32Array, suggest: Int32Array, rand: () => number): Int32Array => {
   const { w, h, img, hole } = L;
   const known = new Uint8Array(w * h), pick = new Int32Array(w * h).fill(-1);
-  for (let i = 0; i < w * h; i++) known[i] = L.bad[i] ? 0 : 1;
+  for (let i = 0; i < w * h; i++) known[i] = hole[i] ? 0 : 1;
   const masked = (p: number, q: number, cut: number) => {
     const px = p % w, py = (p / w) | 0, qx = q % w, qy = (q / w) | 0;
     let s2 = 0, n = 0;
@@ -181,7 +172,7 @@ const onionFast = (L: Level, validMap: Uint8Array, valid: Int32Array, suggest: I
   while (guard-- > 0) {
     const front: number[] = [];
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      const i = y * w + x; if (known[i] || !hole[i]) continue;
+      const i = y * w + x; if (known[i]) continue;
       let k = 0;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < w && yy < h && known[yy * w + xx]) k++; }
       if (k) front.push(i * 16 + k);
@@ -220,9 +211,9 @@ const onionFast = (L: Level, validMap: Uint8Array, valid: Int32Array, suggest: I
 
 /** 每一格「當來源小塊中心」合不合格：小塊整塊在範圍內、而且完全沒碰到洞 */
 const validCenters = (L: Level): Int32Array => {
-  const { w, h, bad } = L;
+  const { w, h, hole } = L;
   const S = new Int32Array((w + 1) * (h + 1));
-  for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += bad[y * w + x]; S[(y + 1) * (w + 1) + x + 1] = S[y * (w + 1) + x + 1] + row; } }
+  for (let y = 0; y < h; y++) { let row = 0; for (let x = 0; x < w; x++) { row += hole[y * w + x]; S[(y + 1) * (w + 1) + x + 1] = S[y * (w + 1) + x + 1] + row; } }
   const out: number[] = [];
   for (let y = PR; y < h - PR; y++) for (let x = PR; x < w - PR; x++) {
     const a = S[(y - PR) * (w + 1) + (x - PR)], b = S[(y - PR) * (w + 1) + (x + PR + 1)];
@@ -368,57 +359,6 @@ const edgeDistance = (L: Level): Float32Array => {
   return d;
 };
 
-/* ── 旋轉／縮放／鏡像的來源副本 ─────────────────────────────── */
-type Xf = { w: number; h: number; at: (x: number, y: number) => [number, number] };
-/** 把原圖（W×H）跟幾份變形過的副本排成一張大圖。原圖在左上角 (0,0)，座標不變 */
-function buildAtlas(src: Float32Array, hole: Uint8Array, W: number, H: number): Level {
-  const area = W * H;
-  const xfs: Xf[] = [
-    { w: W, h: H, at: (x, y) => [W - 1 - x, y] },                 // 左右翻
-  ];
-  if (area <= 360000) {
-    xfs.push({ w: H, h: W, at: (x, y) => [y, H - 1 - x] });         // 轉 90°
-    xfs.push({ w: H, h: W, at: (x, y) => [W - 1 - y, x] });         // 轉 270°
-  }
-  for (const k of area <= 360000 ? [0.8, 1.25] : [0.8]) {
-    const w = Math.max(P * 3, Math.round(W * k)), h = Math.max(P * 3, Math.round(H * k));
-    xfs.push({ w, h, at: (x, y) => [(x + 0.5) * W / w - 0.5, (y + 0.5) * H / h - 0.5] });   // 縮小／放大
-  }
-  // 排版：原圖在第一格，其他往右排、放不下就換行；之間留 PR+2 的空隙（不能當來源）
-  const G = PR + 2, maxW = Math.max(W * 2 + G, ...xfs.map(f => f.w));
-  const pos: { x: number; y: number }[] = [];
-  let cx = W + G, cy = 0, rowH = H, AW = W, AH = H;
-  for (const f of xfs) {
-    if (cx + f.w > maxW) { cx = 0; cy += rowH + G; rowH = 0; }
-    pos.push({ x: cx, y: cy });
-    cx += f.w + G; rowH = Math.max(rowH, f.h);
-    AW = Math.max(AW, cx - G); AH = Math.max(AH, cy + f.h);
-  }
-  const n = AW * AH;
-  const img = new Float32Array(n * 3), aHole = new Uint8Array(n), bad = new Uint8Array(n).fill(1);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const i = y * W + x, j = y * AW + x;
-    img[j * 3] = src[i * 3]; img[j * 3 + 1] = src[i * 3 + 1]; img[j * 3 + 2] = src[i * 3 + 2];
-    aHole[j] = hole[i]; bad[j] = hole[i];
-  }
-  xfs.forEach((f, k) => {
-    const o = pos[k];
-    for (let y = 0; y < f.h; y++) for (let x = 0; x < f.w; x++) {
-      const [sx, sy] = f.at(x, y);
-      const x0 = Math.floor(sx), y0 = Math.floor(sy), tx = sx - x0, ty = sy - y0;
-      if (x0 < 0 || y0 < 0 || x0 >= W || y0 >= H) continue;
-      const x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1);
-      const a = y0 * W + x0, b = y0 * W + x1, c = y1 * W + x0, d = y1 * W + x1;
-      if (hole[a] || hole[b] || hole[c] || hole[d]) continue;     // 碰到洞的位置不能當來源
-      const j = (o.y + y) * AW + o.x + x;
-      for (let ch = 0; ch < 3; ch++)
-        img[j * 3 + ch] = (src[a * 3 + ch] * (1 - tx) + src[b * 3 + ch] * tx) * (1 - ty) + (src[c * 3 + ch] * (1 - tx) + src[d * 3 + ch] * tx) * ty;
-      bad[j] = 0;
-    }
-  });
-  return { w: AW, h: AH, img, hole: aHole, bad };
-}
-
 /**
  * 在一塊 RGBA 影像（就是工作範圍那一塊）上補洞。
  * alpha：每個像素被筆刷蓋到的程度（0…1）。回傳一塊同大小的新 RGBA（不改動輸入）。
@@ -426,16 +366,13 @@ function buildAtlas(src: Float32Array, hole: Uint8Array, W: number, H: number): 
  */
 export function inpaintCrop(rgba: Uint8ClampedArray, W: number, H: number, alpha: Float32Array, seed = 1): Uint8ClampedArray | null {
   const n = W * H;
-  const src0 = new Float32Array(n * 3), hole0 = new Uint8Array(n);
+  const base: Level = { w: W, h: H, img: new Float32Array(n * 3), hole: new Uint8Array(n) };
   let holes = 0;
   for (let i = 0; i < n; i++) {
-    src0[i * 3] = rgba[i * 4]; src0[i * 3 + 1] = rgba[i * 4 + 1]; src0[i * 3 + 2] = rgba[i * 4 + 2];
-    if (alpha[i] > HOLE_T) { hole0[i] = 1; holes++; }
+    base.img[i * 3] = rgba[i * 4]; base.img[i * 3 + 1] = rgba[i * 4 + 1]; base.img[i * 3 + 2] = rgba[i * 4 + 2];
+    if (alpha[i] > HOLE_T) { base.hole[i] = 1; holes++; }
   }
   if (!holes) return null;
-  // 原圖＋旋轉／縮放／鏡像的副本排成一張大圖，一起當來源找（原圖在左上角，座標不變）
-  const base: Level = buildAtlas(src0, hole0, W, H);
-  const AW = base.w;
   // 金字塔：一路縮到洞只剩幾個像素寬（或範圍本身太小、再縮就沒有合格的來源了）
   const levels: Level[] = [base];
   const extent = (L: Level) => {
@@ -502,11 +439,9 @@ export function inpaintCrop(rgba: Uint8ClampedArray, W: number, H: number, alpha
     solveLevel(L, valid, validMap, targets, nnf, iters, rand, li === 0);
     prev = { L, targets, nnf };
   }
-  // 原圖那一份取回來（小塊比對時已經把洞邊一圈的已知像素算進去，明暗、顏色本來就接得上）
-  const img = new Float32Array(n * 3);
-  for (let y = 0; y < H; y++) img.set(base.img.subarray(y * AW * 3, (y * AW + W) * 3), y * W * 3);
   // 用筆刷的柔邊混回原圖：覆蓋率 ≥ 0.3 的整塊換掉，外圈平滑過渡（帶子窄，不會留一圈新舊重疊的鬼影）
   const out = new Uint8ClampedArray(rgba);
+  const img = base.img;
   for (let i = 0; i < n; i++) {
     const a = alpha[i];
     if (a <= HOLE_T) continue;

@@ -22,22 +22,60 @@ const MASK_LONG = 256;
 /** 送去偵測的畫面長邊：模型本身吃 192／256 的小圖，送大的只是浪費傳輸 */
 const DETECT_LONG = 480;
 
-let worker: Worker | null = null;
+/** 找臉的引擎：背景執行緒（優先），或主執行緒（背景執行緒在這台裝置上起不來時的退路） */
+type Detector =
+  | { kind: 'worker'; w: Worker }
+  | { kind: 'main'; detect: (src: HTMLCanvasElement, t: number) => number[][] };
+let detector: Detector | null = null;
 let ready: Promise<boolean> | null = null;
 
-/** 背景執行緒＋模型（只載一次）。相機一打開就先叫，開關按下去時已經好了 */
+async function loadMain(): Promise<Detector | null> {
+  try {
+    const { FilesetResolver, FaceLandmarker } = await import('@mediapipe/tasks-vision');
+    const base = new URL('./', document.baseURI).href;
+    const fileset = await FilesetResolver.forVisionTasks(base + 'mediapipe');
+    const make = (delegate: 'GPU' | 'CPU') => FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: base + 'models/face_landmarker.task', delegate },
+      runningMode: 'VIDEO', numFaces: 4,
+      minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
+    });
+    let lm: Awaited<ReturnType<typeof make>>;
+    try { lm = await make('GPU'); } catch { lm = await make('CPU'); }
+    let last = 0;
+    return {
+      kind: 'main', detect: (src, t) => {
+        t = Math.max(t, last + 1); last = t;
+        return (lm.detectForVideo(src, t).faceLandmarks || []).map(f => { const a: number[] = []; f.forEach(p => a.push(p.x, p.y)); return a; });
+      },
+    };
+  } catch { return null; }
+}
+
+function loadWorker(): Promise<Detector | null> {
+  return new Promise(resolve => {
+    let w: Worker;
+    // 一般（classic）worker：MediaPipe 在 worker 裡用 importScripts 載 wasm，module worker 沒有這支（iPhone 上就是因此沒反應）
+    try { w = new Worker(new URL('./faceSkin.worker.ts', import.meta.url)); }
+    catch { resolve(null); return; }
+    let settled = false;
+    const done = (d: Detector | null) => { if (settled) return; settled = true; clearTimeout(timer); if (!d) w.terminate(); resolve(d); };
+    // 有的裝置在背景執行緒建 GPU 環境會一直等不到回應：等太久就改用主執行緒
+    const timer = setTimeout(() => done(null), 25000);
+    w.addEventListener('message', e => { if (e.data?.type === 'ready') done({ kind: 'worker', w }); else if (e.data?.type === 'fail') done(null); });
+    w.addEventListener('error', () => done(null));
+    w.postMessage({ type: 'init', base: new URL('./', document.baseURI).href });
+  });
+}
+
+/** 載入找臉的引擎（只載一次）。相機一打開就先叫，開關按下去時已經好了 */
 export function preloadFaceSkin(): Promise<boolean> {
   if (ready) return ready;
-  ready = new Promise<boolean>(resolve => {
-    try {
-      const w = new Worker(new URL('./faceSkin.worker.ts', import.meta.url), { type: 'module' });
-      const done = (ok: boolean) => { w.removeEventListener('message', on); if (!ok) { w.terminate(); worker = null; ready = null; } resolve(ok); };
-      const on = (e: MessageEvent) => { if (e.data?.type === 'ready') { worker = w; done(true); } else if (e.data?.type === 'fail') done(false); };
-      w.addEventListener('message', on);
-      w.addEventListener('error', () => done(false));
-      w.postMessage({ type: 'init', base: new URL('./', document.baseURI).href });
-    } catch { ready = null; resolve(false); }
-  });
+  ready = (async () => {
+    detector = await loadWorker() || await loadMain();
+    if (!detector) ready = null;   // 下次再試（例如剛剛沒網路）
+    try { (window as any).__faceSkinEngine = detector?.kind || 'none'; } catch { /* noop */ }
+    return !!detector;
+  })();
   return ready;
 }
 
@@ -54,21 +92,40 @@ export class FaceSkinMask {
   private buf: Float32Array | null = null;
   private tmp: Float32Array | null = null;
 
-  constructor(private w: Worker) {
-    w.addEventListener('message', e => { if (e.data?.type === 'faces') this.onFaces(e.data.faces); });
+  /** 送去偵測的小圖（每一格把相機畫面縮小畫上來） */
+  private snap = document.createElement('canvas');
+  private sentAt = 0;
+  constructor(private d: Detector) {
+    if (d.kind === 'worker') d.w.addEventListener('message', e => { if (e.data?.type === 'faces') this.onFaces(e.data.faces); });
   }
 
   /** 每一格新畫面呼叫：上一張還在算就跳過（不排隊、不落後）。回傳「從上次呼叫到現在有沒有新的遮罩」 */
   update(video: HTMLVideoElement, now: number): boolean {
     const vw = video.videoWidth, vh = video.videoHeight;
-    if (!this.busy && vw && vh && video.readyState >= 2 && typeof createImageBitmap === 'function') {
-      this.busy = true;
+    // 背景執行緒的回覆遺失（極少見）：兩秒沒回就當作沒在算
+    if (this.busy && now - this.sentAt > 2000) this.busy = false;
+    if (!this.busy && vw && vh && video.readyState >= 2) {
       const k = Math.min(1, DETECT_LONG / Math.max(vw, vh));
+      const sw = Math.max(1, Math.round(vw * k)), sh = Math.max(1, Math.round(vh * k));
+      const c = this.snap;
+      if (c.width !== sw || c.height !== sh) { c.width = sw; c.height = sh; }
+      try { c.getContext('2d')!.drawImage(video, 0, 0, sw, sh); } catch { return this.take(); }
       this.vw = vw; this.vh = vh;
-      createImageBitmap(video, { resizeWidth: Math.max(1, Math.round(vw * k)), resizeHeight: Math.max(1, Math.round(vh * k)), resizeQuality: 'low' })
-        .then(bitmap => this.w.postMessage({ type: 'frame', bitmap, t: now, id: ++this.seq }, [bitmap]))
-        .catch(() => { this.busy = false; });
+      if (this.d.kind === 'main') {
+        let faces: number[][] = [];
+        try { faces = this.d.detect(c, now); } catch { faces = []; }
+        this.onFaces(faces);
+      } else if (typeof createImageBitmap === 'function') {
+        this.busy = true; this.sentAt = now;
+        const w = this.d.w;
+        createImageBitmap(c)
+          .then(bitmap => w.postMessage({ type: 'frame', bitmap, t: now, id: ++this.seq }, [bitmap]))
+          .catch(() => { this.busy = false; });
+      }
     }
+    return this.take();
+  }
+  private take() {
     const f = this.fresh; this.fresh = false;
     return f;
   }
@@ -148,5 +205,5 @@ export class FaceSkinMask {
 /** 拿到一個可以用的 FaceSkinMask（背景執行緒、模型都好了才給） */
 export async function createFaceSkinMask(): Promise<FaceSkinMask | null> {
   const ok = await preloadFaceSkin();
-  return ok && worker ? new FaceSkinMask(worker) : null;
+  return ok && detector ? new FaceSkinMask(detector) : null;
 }
