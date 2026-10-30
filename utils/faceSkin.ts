@@ -104,8 +104,8 @@ export class FaceSkinMask {
       if (m?.type !== 'faces') return;
       this.vfStalls = 0;
       this.stat(m.ms); try { (window as any).__faceSkinStats.n = m.bitmap ? m.n : m.faces?.length; } catch { /* noop */ }
-      if (m.bitmap) this.onMask(m.bitmap, m.n, m.frac, m.box);
-      else this.onFaces(m.faces);
+      if (m.bitmap) this.onMask(m.bitmap, m.n, m.frac, m.box, m.t);
+      else this.onFaces(m.faces, m.t);
     });
   }
 
@@ -162,7 +162,7 @@ export class FaceSkinMask {
         const t0 = performance.now();
         try { faces = this.d.detect(c, now); } catch { faces = []; }
         this.stat(performance.now() - t0);
-        this.onFaces(faces);
+        this.onFaces(faces, now);
       }
     }
     return this.take();
@@ -174,6 +174,52 @@ export class FaceSkinMask {
     try { (window as any).__faceSkinStats = { engine: this.d.kind, ms: Math.round(this.ms), vf: this.d.kind === 'worker' && this.useVideoFrame }; } catch { /* noop */ }
   }
   private ms = 0;
+  /* ── 動態補償（跟專業美顏 app 同一套思路）──
+     找臉一次要幾十毫秒，結果回來時臉早就移動了；而且一秒只找十次。直接用就會「磨皮範圍落後、跑掉」。
+     做法：每個遮罩記住它是哪一刻的畫面算的、當時臉在哪（中心、大小），
+     用 α-β 濾波器（簡化的卡爾曼濾波）一路估計臉的移動速度與縮放速度，
+     每一格畫面都預測「臉現在在哪」，把遮罩平移／縮放貼到預測的位置上（GPU 上做，幾乎不花時間）。
+     所以兩次找臉之間、還有結果延遲的那段時間，磨皮都會跟著臉走。 */
+  /** 遮罩算的那一刻臉的中心、大小（對數） */
+  private m0 = { x: 0.5, y: 0.5, ls: 0, t: 0 };
+  /** 濾波器狀態：位置、速度（每毫秒） */
+  private kf = { x: 0.5, y: 0.5, ls: 0, vx: 0, vy: 0, vs: 0, t: 0, ok: false };
+  private track(box: [number, number, number, number], t?: number) {
+    const now = performance.now();
+    const at = typeof t === 'number' && t <= now && now - t < 1000 ? t : now;
+    const x = (box[0] + box[2]) / 2, y = (box[1] + box[3]) / 2;
+    const ls = Math.log(Math.max(1e-3, Math.sqrt((box[2] - box[0]) * (box[3] - box[1]))));
+    this.m0 = { x, y, ls, t: at };
+    const k = this.kf, dt = at - k.t;
+    if (!k.ok || dt <= 0 || dt > 600) { Object.assign(k, { x, y, ls, vx: 0, vy: 0, vs: 0, t: at, ok: true }); return; }
+    // α-β 濾波：先用速度預測，再用量到的位置修正（α 修正位置、β 修正速度）
+    const px = k.x + k.vx * dt, py = k.y + k.vy * dt, ps = k.ls + k.vs * dt;
+    const a = 0.9, b = 0.6;
+    const rx = x - px, ry = y - py, rs = ls - ps;
+    k.x = px + a * rx; k.y = py + a * ry; k.ls = ps + a * rs;
+    k.vx += (b * rx) / dt; k.vy += (b * ry) / dt; k.vs += (b * rs) / dt;
+    // 速度上限（避免偵測抖一下就飛出去）：每秒最多移動 1.5 個畫面、縮放 3 倍
+    const cap = (v: number, m: number) => Math.max(-m, Math.min(m, v));
+    k.vx = cap(k.vx, 0.0015); k.vy = cap(k.vy, 0.0015); k.vs = cap(k.vs, 0.0011);
+    k.t = at;
+  }
+  /** 這一刻要把遮罩怎麼貼：回傳 [遮罩中心x, y, 預測中心x, y, 縮放比]；畫面座標 uv → 遮罩座標 = m0 + (uv − 預測) × 比 */
+  maskXform(now = performance.now()): [number, number, number, number, number] {
+    const k = this.kf, m = this.m0;
+    if (!k.ok) return [0.5, 0.5, 0.5, 0.5, 1];
+    // 最多往前預測 0.3 秒；越久沒新結果，速度的信任度越低
+    const dt = Math.max(0, Math.min(300, now - k.t)), damp = 1 - dt / 600;
+    const x = k.x + k.vx * dt * damp, y = k.y + k.vy * dt * damp, ls = k.ls + k.vs * dt * damp;
+    return [m.x, m.y, x, y, Math.exp(m.ls - ls)];
+  }
+  /** 預測位置上的磨皮外框（畫面座標） */
+  predictedBox(now = performance.now()): [number, number, number, number] {
+    const [mx, my, px, py, r] = this.maskXform(now), [x0, y0, x1, y1] = this.box;
+    const f = (u: number, mc: number, pc: number) => pc + (u - mc) / r;
+    // 跟「上一次量到的位置」取聯集：主畫面兩個位置都會取樣（見 Viewfinder），外框要兩個都包住
+    return [Math.max(0, Math.min(x0, f(x0, mx, px))), Math.max(0, Math.min(y0, f(y0, my, py))), Math.min(1, Math.max(x1, f(x1, mx, px))), Math.min(1, Math.max(y1, f(y1, my, py)))];
+  }
+
   /* 追蹤保持：臉移動時（動態模糊、側臉）偶爾會有一兩次找不到，以前遮罩就立刻消失、磨皮一閃一閃。
      現在找不到時先保留上一個遮罩（外框放大一點包住移動），連續 0.8 秒都找不到才真的關掉 */
   private lastFaceAt = 0;
@@ -194,7 +240,7 @@ export class FaceSkinMask {
   private vw = 0; private vh = 0;
 
   /** 背景執行緒連遮罩都畫好了：主執行緒只要換貼圖 */
-  private onMask(bitmap: ImageBitmap, n: number, frac: number, box: [number, number, number, number]) {
+  private onMask(bitmap: ImageBitmap, n: number, frac: number, box: [number, number, number, number], t?: number) {
     this.busy = false;
     if (!n && this.faces === 0) { bitmap.close(); return; }
     if (this.holdMiss(n)) { bitmap.close(); return; }
@@ -202,13 +248,13 @@ export class FaceSkinMask {
     this.mask = bitmap; this.maskW = bitmap.width; this.maskH = bitmap.height;
     if (old !== this.canvas && typeof (old as ImageBitmap).close === 'function') (old as ImageBitmap).close();
     if (frac > 0) this.faceFrac = frac;
-    if (n) this.box = box;
+    if (n) { this.box = box; this.track(box, t); }
     this.faces = n;
     this.version++;
     this.fresh = true;
   }
 
-  private onFaces(faces: number[][]) {
+  private onFaces(faces: number[][], t?: number) {
     this.busy = false;
     const vw = this.vw, vh = this.vh;
     if (!vw || !vh) return;
@@ -221,7 +267,7 @@ export class FaceSkinMask {
     const { frac, box } = drawSkinMask(g, mw, mh, faces, vw, vh, this.bufs);
     this.mask = c; this.maskW = mw; this.maskH = mh;
     if (frac > 0) this.faceFrac = frac;
-    if (faces.length) this.box = box;
+    if (faces.length) { this.box = box; this.track(box, t); }
     this.faces = faces.length;
     this.version++;
     this.fresh = true;

@@ -46,7 +46,9 @@ uniform sampler2D u_video;
 uniform sampler2D u_coarse;    // 磨皮的大色塊層（1/4 尺寸模糊，只有臉的外框裡有算）
 uniform sampler2D u_mask;      // 皮膚範圍遮罩（已柔邊）
 uniform vec2 u_videoPx;        // 影像一個像素（貼圖座標）
-uniform vec4 u_skinBox;        // 臉的外框（貼圖座標 x0, y0, x1, y1）
+uniform vec4 u_skinBox;        // 臉的外框（貼圖座標 x0, y0, x1, y1，已移到預測位置）
+uniform vec4 u_maskXf;         // 動態補償：遮罩中心(xy)、預測的臉中心(zw)
+uniform float u_maskK;         // 動態補償：縮放比
 uniform bool u_useSkin;
 uniform sampler2D u_lut;
 uniform bool u_useLut;
@@ -85,7 +87,10 @@ vec3 shoulder(vec3 x, float peak) {
    只把中間那層壓平，細紋理照留；中間那層反差大的（輪廓、髮絲）是邊緣，不壓。
    只在遮罩（挖掉眼睛、眉毛、嘴唇）× 膚色判斷 裡做。直接在主畫面這一趟算（螢幕解析度），不另外多畫一張 */
 vec3 skinSmooth(vec3 o, vec2 uv) {
-    float m = texture(u_mask, uv).r;
+    /* 動態補償：遮罩貼在「預測的臉的位置」，同時也看「上一次量到的位置」，兩個取大的。
+       預測對了就完全跟上；預測過頭或臉突然轉向時，舊位置還蓋著，臉上不會有一塊突然沒磨到。
+       多蓋到的背景、頭髮由下面的膚色判斷擋掉 */
+    float m = max(texture(u_mask, u_maskXf.xy + (uv - u_maskXf.zw) * u_maskK).r, texture(u_mask, uv).r);
     if (m < 0.003) return o;
     float Y = dot(o, vec3(0.299, 0.587, 0.114));
     float cb = (o.b - Y) * 0.564 + 0.5, cr = (o.r - Y) * 0.713 + 0.5;
@@ -649,7 +654,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       const step = Math.max(0.5, sigmaPx / div / 3);
       /* 只在臉的外框裡算（剪裁區）：其他地方主畫面直接讀原本的影像，所以這張貼圖框外是什麼都沒關係。
          花的力氣跟臉的大小成正比，不是整個相機畫面 */
-      const [b0, b1, b2, b3] = mk.box;
+      const [b0, b1, b2, b3] = mk.predictedBox();
       const scissorAt = (sw: number, sh: number, pad: number) => {
         const x = Math.max(0, Math.floor(b0 * sw) - pad), y = Math.max(0, Math.floor(b1 * sh) - pad);
         gl.scissor(x, y, Math.min(sw, Math.ceil(b2 * sw) + pad) - x, Math.min(sh, Math.ceil(b3 * sh) + pad) - y);
@@ -704,7 +709,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.uniform1i(uloc(prog, 'u_video'), 0);
       gl.uniform1i(uloc(prog, 'u_useSkin'), skinTex ? 1 : 0);
       if (skinTex) {
-        const bx = skinMaskRef.current!.box;
+        const bx = skinMaskRef.current!.predictedBox();
         gl.activeTexture(gl.TEXTURE3);
         gl.bindTexture(gl.TEXTURE_2D, skinTex);
         gl.uniform1i(uloc(prog, 'u_coarse'), 3);
@@ -712,7 +717,10 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         gl.bindTexture(gl.TEXTURE_2D, skinMaskTexRef.current);
         gl.uniform1i(uloc(prog, 'u_mask'), 2);
         gl.uniform2f(uloc(prog, 'u_videoPx'), 1 / sourceW, 1 / sourceH);
+        const xf = skinMaskRef.current!.maskXform();
         gl.uniform4f(uloc(prog, 'u_skinBox'), bx[0], bx[1], bx[2], bx[3]);
+        gl.uniform4f(uloc(prog, 'u_maskXf'), xf[0], xf[1], xf[2], xf[3]);
+        gl.uniform1f(uloc(prog, 'u_maskK'), xf[4]);
         gl.activeTexture(gl.TEXTURE0);
       }
 

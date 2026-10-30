@@ -73,11 +73,11 @@ self.onmessage = async (e: MessageEvent) => {
         if (offG) {
           const { frac, box } = drawSkinMask(offG, mw, mh, faces, m.vw, m.vh, bufs);
           const bitmap = off.transferToImageBitmap();
-          (self as any).postMessage({ type: 'faces', n: faces.length, frac, box, bitmap, id: m.id, ms: detectMs }, [bitmap]);
+          (self as any).postMessage({ type: 'faces', n: faces.length, frac, box, bitmap, id: m.id, ms: detectMs, t: m.t }, [bitmap]);
           return;
         }
       } catch { /* 改由主執行緒畫 */ }
     }
-    (self as any).postMessage({ type: 'faces', faces, id: m.id, ms: detectMs });
+    (self as any).postMessage({ type: 'faces', faces, id: m.id, ms: detectMs, t: m.t });
   }
 };
