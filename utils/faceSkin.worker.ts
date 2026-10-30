@@ -2,6 +2,7 @@
 /* 找臉在背景執行緒做：載入模型（編譯 wasm、建 GPU 環境）跟每一格的偵測都不佔主執行緒，
    打開磨皮、拍照時畫面不會卡。主執行緒每一格送一張縮小的畫面（ImageBitmap）過來，這裡回傳臉的點。 */
 import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
+import { drawSkinMask, maskSize, type MaskBufs } from './faceSkinDraw';
 
 // MediaPipe 在 worker 裡用 importScripts 載它的 wasm 載入程式；module worker 沒有這支，補一個同步版
 if (typeof (self as any).importScripts !== 'function') {
@@ -13,6 +14,11 @@ if (typeof (self as any).importScripts !== 'function') {
 
 let lm: FaceLandmarker | null = null;
 let lastT = 0;
+/* 遮罩也在這裡畫（含柔邊），畫好轉成 ImageBitmap 傳回去：主執行緒不用讀回像素、不用跑柔邊，每一格都順 */
+const canOff = typeof OffscreenCanvas !== 'undefined';
+let off: OffscreenCanvas | null = null;
+let offG: OffscreenCanvasRenderingContext2D | null = null;
+const bufs: MaskBufs = { a: null, t: null };
 self.onmessage = async (e: MessageEvent) => {
   const m = e.data;
   if (m.type === 'init') {
@@ -43,6 +49,19 @@ self.onmessage = async (e: MessageEvent) => {
       }
     } catch { faces = []; }
     bmp.close();
+    if (canOff && m.vw && m.vh) {
+      try {
+        const [mw, mh] = maskSize(m.vw, m.vh);
+        if (!off) { off = new OffscreenCanvas(mw, mh); offG = off.getContext('2d', { willReadFrequently: true }) as OffscreenCanvasRenderingContext2D; }
+        if (off.width !== mw || off.height !== mh) { off.width = mw; off.height = mh; }
+        if (offG) {
+          const { frac, box } = drawSkinMask(offG, mw, mh, faces, m.vw, m.vh, bufs);
+          const bitmap = off.transferToImageBitmap();
+          (self as any).postMessage({ type: 'faces', n: faces.length, frac, box, bitmap, id: m.id }, [bitmap]);
+          return;
+        }
+      } catch { /* 改由主執行緒畫 */ }
+    }
     (self as any).postMessage({ type: 'faces', faces, id: m.id });
   }
 };

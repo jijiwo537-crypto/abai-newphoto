@@ -646,7 +646,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       if (skinMaskVerRef.current !== mk.version) {
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, skinMaskTexRef.current);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mk.canvas);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mk.mask);
         skinMaskVerRef.current = mk.version;
       }
       let r = skinRtRef.current;
@@ -686,7 +686,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, r.qb!.tex); gl.uniform1i(uloc(sp, 'u_coarse'), 1);
       gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, skinMaskTexRef.current); gl.uniform1i(uloc(sp, 'u_mask'), 2);
       gl.uniform2f(uloc(sp, 'u_size'), w, h);
-      gl.uniform2f(uloc(sp, 'u_maskPx'), 1 / mk.canvas.width, 1 / mk.canvas.height);
+      gl.uniform2f(uloc(sp, 'u_maskPx'), 1 / mk.maskW, 1 / mk.maskH);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.disable(gl.SCISSOR_TEST);
       gl.activeTexture(gl.TEXTURE0);
