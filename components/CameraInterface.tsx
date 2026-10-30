@@ -536,22 +536,51 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /** 沒有超廣角鏡頭時 0.5x 是做不到的（數位變焦只能放大不能變廣） */
   const canWide = !!hwZoom && (hwZoom.min ?? 1) < 1;
 
+  /* 變焦平滑過渡：從目前倍率用 ease-out 在約 0.32 秒內推到目標（像原生相機的變焦轉盤），不是直接跳過去。
+     每一格把總倍率拆成「硬體能做的」＋「剩下的數位變焦」；硬體約束上一個還沒套用完就先不送下一個，不會塞車 */
+  const zoomNowRef = useRef(1);
+  const zoomAnimRef = useRef(0);
+  const hwBusyRef = useRef(false);
+  const hwWantRef = useRef<number | null>(null);
   const applyZoom = useCallback((zoomFactor: string) => {
     const want = ZOOM_STEPS.find(z => z.label === zoomFactor)?.factor ?? 1;
     const min = hwZoom?.min ?? 1;
     const max = hwZoom?.max ?? 1;
-
-    const hw = hwZoom ? Math.max(min, Math.min(max, want)) : 1;
-    // 硬體只到 2 倍、想要 3 倍的話，剩下的 1.5 倍交給數位變焦
-    setDigitalZoom(Math.max(1, want / hw));
-
-    if (!videoTrack || !hwZoom) return;
-    try {
-        videoTrack.applyConstraints({ advanced: [{ zoom: hw }] });
-    } catch (e) {
-        console.warn("Zoom not supported", e);
-    }
+    const pushHw = (hw: number) => {
+      if (!videoTrack || !hwZoom) return;
+      hwWantRef.current = hw;
+      if (hwBusyRef.current) return;
+      const send = () => {
+        const v = hwWantRef.current; hwWantRef.current = null;
+        if (v == null) { hwBusyRef.current = false; return; }
+        hwBusyRef.current = true;
+        let p: Promise<void> | undefined;
+        try { p = videoTrack.applyConstraints({ advanced: [{ zoom: v } as any] }); } catch { p = undefined; }
+        (p || Promise.resolve()).catch(() => {}).then(send);
+      };
+      send();
+    };
+    const setAt = (z: number) => {
+      zoomNowRef.current = z;
+      const hw = hwZoom ? Math.max(min, Math.min(max, z)) : 1;
+      // 硬體只到 2 倍、想要 3 倍的話，剩下的 1.5 倍交給數位變焦
+      setDigitalZoom(Math.max(1, z / hw));
+      pushHw(hw);
+    };
+    cancelAnimationFrame(zoomAnimRef.current);
+    const from = zoomNowRef.current;
+    if (Math.abs(from - want) < 1e-3) { setAt(want); return; }
+    const t0 = performance.now(), dur = 320;
+    // 用對數空間插值：1→2 和 2→4 看起來一樣快
+    const la = Math.log(from), lb = Math.log(want);
+    const step = (now: number) => {
+      const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      setAt(Math.exp(la + (lb - la) * e));
+      if (k < 1) zoomAnimRef.current = requestAnimationFrame(step);
+    };
+    zoomAnimRef.current = requestAnimationFrame(step);
   }, [videoTrack, hwZoom]);
+  useEffect(() => () => cancelAnimationFrame(zoomAnimRef.current), []);
 
   useEffect(() => {
     applyZoom(settings.focalLength);
@@ -1103,7 +1132,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                   onClick={(e) => { e.stopPropagation(); onHome(); }}
                   className="w-10 h-10 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-colors"
                 >
-                  <Icon name="arrow_back" className="text-2xl drop-shadow-md" />
+                  <Icon name="chevron_left" className="text-[28px] drop-shadow-md" />
                 </button>
               </div>
             )}
@@ -1287,7 +1316,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
       {/* 比上一版下移 16px；仍比最初多留 24px，底部不會再顯得擁擠。 */}
       <section className="flex flex-col px-6 pt-4 pb-16">
-        <div className={`flex justify-center relative mb-2 transition-[height] duration-300 ${activeControl === 'filters' ? 'h-30' : 'h-14'}`}>
+        <div className={`flex justify-center relative mb-2 h-14`}>
           {activeControl === 'none' ? (
             <div data-camera-main-row key="camera-main-controls" className="flex items-center justify-between w-full max-sm px-0 h-14 gap-1 overflow-x-auto no-scrollbar [&>button]:w-[52px] [&>button]:h-[52px] [&>button]:flex [&>button]:items-center [&>button]:justify-center">
               <button onClick={() => setActiveControl('exposure')} className="relative p-3 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] shrink-0 text-white/90">
@@ -1327,27 +1356,16 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               </button>
             </div>
           ) : activeControl === 'filters' ? (
-            <div className="w-full flex items-end animate-in h-full overflow-hidden justify-center pb-1">
-               <div className="flex overflow-x-auto overflow-y-hidden w-full no-scrollbar gap-2 px-4 scroll-smooth min-h-[84px] items-center">
+            /* 濾鏡列跟其他控制列同一個 56px 高度：打開時上面的觀景窗、按鈕都不會被推動 */
+            <div data-camera-filter-row className="w-full flex items-center h-full overflow-hidden animate-in fade-in duration-200">
+               <div className="flex overflow-x-auto overflow-y-hidden w-full no-scrollbar gap-2 px-4 scroll-smooth items-center">
                  {lutList.map((lut, idx) => (
-                   <button 
-                    key={lut.id} 
+                   <button
+                    key={lut.id}
                     onClick={() => { triggerHaptic(); setSelectedLutIdx(idx); }}
-                    className="flex flex-col items-center gap-2 group flex-shrink-0"
+                    className={`shrink-0 h-8 px-3.5 rounded-full text-[12px] font-medium whitespace-nowrap ring-1 ring-inset transition-[background-color,color,transform] duration-200 active:scale-95 ${selectedLutIdx === idx ? 'bg-white text-black ring-white' : 'bg-white/[0.07] text-white/70 ring-white/10'}`}
                    >
-                     <div className={`w-16 h-16 rounded-xl border-2 transition-all ${selectedLutIdx === idx ? 'border-white scale-105 shadow-lg' : 'border-white/10 opacity-60'}`}>
-                        <div className="w-full h-full bg-zinc-800 rounded-lg overflow-hidden flex flex-col items-center justify-center relative">
-                          {/* 「原始」與其他濾鏡用同一套版面（同尺寸的圖標、同一行高的名稱），
-                              只換圖標與文字 —— 以前兩邊的圖標大小、間距、字級都不同，
-                              原始那格的圖標和字就跟旁邊的對不齊。 */}
-                          <div className={`w-full h-full flex flex-col items-center justify-center ${lut.url ? 'bg-zinc-700/50' : ''}`}>
-                              <Icon name={lut.url ? 'photo_camera' : 'do_not_disturb_on'} className={`${lut.url ? 'text-white/20' : 'text-white/40'} text-2xl mb-1`} />
-                              <span className={`text-[9px] font-bold ${lut.url ? 'text-white/80' : 'text-white/60'} leading-tight text-center px-1 uppercase truncate w-full`}>
-                                  {lut.url ? lut.name : '原始'}
-                              </span>
-                          </div>
-                        </div>
-                     </div>
+                     {lut.url ? lut.name : '原始'}
                    </button>
                  ))}
                </div>
