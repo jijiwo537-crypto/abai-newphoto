@@ -27,7 +27,7 @@ self.onmessage = async (e: MessageEvent) => {
       const fileset = await FilesetResolver.forVisionTasks(m.base + 'mediapipe');
       const make = (delegate: 'GPU' | 'CPU') => FaceLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: m.base + 'models/face_landmarker.task', delegate },
-        runningMode: 'VIDEO', numFaces: 4,
+        runningMode: 'VIDEO', numFaces: 2,
         minFaceDetectionConfidence: 0.4, minFacePresenceConfidence: 0.4, minTrackingConfidence: 0.5,
       });
       /* 背景執行緒裡只用 CPU（XNNPACK）：在 iPhone 上背景執行緒建 GPU 環境會一直等不到回應（磨皮遲遲不出現就是這個）。

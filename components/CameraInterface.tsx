@@ -290,8 +290,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     let live = true;
     const go = () => preloadFaceSkin().then(ok => { if (live) setSkinReady(ok); });
     const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
-    const id = ric ? ric(go, { timeout: 1500 }) : window.setTimeout(go, 800);
-    return () => { live = false; if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
+    // 等相機開好、畫面穩定 2.5 秒後才在閒置時載入，避開相機啟動跟使用者剛進來就切特效的時候
+    let id = 0;
+    const t = window.setTimeout(() => { id = ric ? ric(go, { timeout: 1500 }) : window.setTimeout(go, 0); }, 2500);
+    return () => { live = false; clearTimeout(t); if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
   }, []);
   useEffect(() => {
     if (!showSettingsMenu && !skinSmooth) return;

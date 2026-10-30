@@ -11,7 +11,7 @@
 import { drawSkinMask, maskSize, type MaskBufs } from './faceSkinDraw';
 
 /** 送去偵測的畫面長邊：模型本身吃 192／256 的小圖，送大的只是浪費傳輸 */
-const DETECT_LONG = 480;
+const DETECT_LONG = 384;
 
 /** 找臉的引擎：背景執行緒（優先），或主執行緒（背景執行緒在這台裝置上起不來時的退路） */
 type Detector =
@@ -27,7 +27,7 @@ async function loadMain(): Promise<Detector | null> {
     const fileset = await FilesetResolver.forVisionTasks(base + 'mediapipe');
     const make = (delegate: 'GPU' | 'CPU') => FaceLandmarker.createFromOptions(fileset, {
       baseOptions: { modelAssetPath: base + 'models/face_landmarker.task', delegate },
-      runningMode: 'VIDEO', numFaces: 4,
+      runningMode: 'VIDEO', numFaces: 2,
       minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
     });
     let lm: Awaited<ReturnType<typeof make>>;
@@ -120,9 +120,9 @@ export class FaceSkinMask {
     }
     /* 背景執行緒找臉每秒最多 12 次：遮罩有柔邊，臉移動時看不出差別；
        少一半的縮圖、傳輸跟 CPU 運算，手機不會因為忙著找臉而發熱降頻、讓畫面變卡 */
-    /* 找臉的頻率：畫面裡有臉時跟著臉走（背景執行緒每秒 15 次）；沒有臉時每秒約 7 次（太慢會很難抓到臉）。
+    /* 找臉的頻率：畫面裡有臉時跟著臉走（背景執行緒每秒 10 次，中間偶爾找不到由追蹤保持補上）；沒有臉時每秒約 4.5 次。找臉越頻繁，手機越忙、畫面幀數越低。
        退路（主執行緒找臉，每次都會擋住畫面）再放慢：有臉每秒 5 次、沒臉每秒 2 次 */
-    const gap = this.d.kind === 'worker' ? (this.faces ? 66 : 150) : (this.faces ? 200 : 500);
+    const gap = this.d.kind === 'worker' ? (this.faces ? 100 : 220) : (this.faces ? 200 : 500);
     const due = now - this.sentAt >= gap;
     if (!this.busy && due && vw && vh && video.readyState >= 2) {
       const k = Math.min(1, DETECT_LONG / Math.max(vw, vh));
