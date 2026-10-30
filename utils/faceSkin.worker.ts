@@ -23,7 +23,9 @@ self.onmessage = async (e: MessageEvent) => {
         runningMode: 'VIDEO', numFaces: 4,
         minFaceDetectionConfidence: 0.5, minFacePresenceConfidence: 0.5, minTrackingConfidence: 0.5,
       });
-      try { lm = await make('GPU'); } catch { lm = await make('CPU'); }
+      /* 背景執行緒裡只用 CPU（XNNPACK）：在 iPhone 上背景執行緒建 GPU 環境會一直等不到回應（磨皮遲遲不出現就是這個）。
+         模型很小、送進來的畫面也縮小過，CPU 一格十幾毫秒，而且不佔主執行緒 */
+      lm = await make('CPU');
       (self as any).postMessage({ type: 'ready' });
     } catch (err) {
       (self as any).postMessage({ type: 'fail', error: String(err) });

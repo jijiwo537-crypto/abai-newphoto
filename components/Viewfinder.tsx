@@ -43,6 +43,9 @@ void main() {
 const FS_SOURCE = `#version 300 es
 precision highp float;
 uniform sampler2D u_video;
+uniform sampler2D u_skin;      // 磨皮過的那一塊（只有臉的外框裡有算）
+uniform vec4 u_skinBox;        // 臉的外框（貼圖座標 x0, y0, x1, y1）
+uniform bool u_useSkin;
 uniform sampler2D u_lut;
 uniform bool u_useLut;
 uniform float u_exposure;
@@ -82,7 +85,8 @@ void main() {
     // 數位變焦：從中心往內裁一塊再放大（硬體變焦做不到的倍率才會用到）
     tc = (tc - 0.5) * u_crop / max(u_zoom, 0.0001) + 0.5;
 
-    vec4 source = texture(u_video, tc);
+    bool inSkin = u_useSkin && tc.x >= u_skinBox.x && tc.y >= u_skinBox.y && tc.x <= u_skinBox.z && tc.y <= u_skinBox.w;
+    vec4 source = inSkin ? texture(u_skin, tc) : texture(u_video, tc);
     vec3 rgb = source.rgb;
 
     // Manual Adjustments (linear light)
@@ -267,10 +271,8 @@ void main() {
     vec2 uv = gl_FragCoord.xy / u_size;
     vec2 px = 1.0 / u_size;
     vec3 o = texture(u_video, uv).rgb;
-    // 遮罩：小圖上 3×3 取樣（柔邊，看不出界線）
-    float m = 0.0;
-    for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) m += texture(u_mask, uv + vec2(float(i), float(j)) * u_maskPx * 1.5).r;
-    m /= 9.0;
+    // 遮罩本身已經柔邊過（見 utils/faceSkin），一次取樣就好；臉以外的像素到這裡就結束（整個畫面大部分只多兩次取樣）
+    float m = texture(u_mask, uv).r;
     if (m < 0.003) { outColor = vec4(o, 1.0); return; }
     // 膚色判斷（YCbCr）：頭髮、鬍子、眼鏡、背景不在膚色範圍裡就少磨或不磨
     float Y = dot(o, vec3(0.299, 0.587, 0.114));
@@ -279,11 +281,10 @@ void main() {
     skin *= smoothstep(0.04, 0.18, Y);                       // 太暗的（陰影裡的頭髮）不算
     m *= mix(0.35, 1.0, skin);                               // 過渡放寬：膚色判斷不會在臉上切出一塊一塊
     // 細紋理層：跟 3×3 帳篷模糊的差（毛孔、皮膚質感）
-    vec3 fine = o * 0.25;
-    fine += (texture(u_video, uv + vec2(px.x, 0.0)).rgb + texture(u_video, uv - vec2(px.x, 0.0)).rgb
-           + texture(u_video, uv + vec2(0.0, px.y)).rgb + texture(u_video, uv - vec2(0.0, px.y)).rgb) * 0.125;
-    fine += (texture(u_video, uv + px).rgb + texture(u_video, uv - px).rgb
-           + texture(u_video, uv + vec2(px.x, -px.y)).rgb + texture(u_video, uv + vec2(-px.x, px.y)).rgb) * 0.0625;
+    // 3×3 帳篷模糊只用四次取樣：取在半格的位置，硬體雙線性一次就平均了四個像素
+    vec2 h = px * 0.5;
+    vec3 fine = (texture(u_video, uv + h).rgb + texture(u_video, uv - h).rgb
+              + texture(u_video, uv + vec2(h.x, -h.y)).rgb + texture(u_video, uv + vec2(-h.x, h.y)).rgb) * 0.25;
     vec3 coarse = texture(u_coarse, uv).rgb;
     vec3 mid = fine - coarse;
     // 中間層反差大的是真的邊緣，留著；小的（斑、痘印、不均）壓平
@@ -657,12 +658,21 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       // 大色塊層的模糊半徑跟著臉的大小走（約臉寬的 1.4%），在 1/4 尺寸上算
       const sigmaPx = Math.max(4, Math.min(48, mk.faceFrac * w * 0.014));
       const step = Math.max(0.5, sigmaPx / 4 / 3);
+      /* 只在臉的外框裡算（剪裁區）：其他地方主畫面直接讀原本的影像，所以這張貼圖框外是什麼都沒關係。
+         花的力氣跟臉的大小成正比，不是整個相機畫面 */
+      const [b0, b1, b2, b3] = mk.box;
+      const scissorAt = (sw: number, sh: number, pad: number) => {
+        const x = Math.max(0, Math.floor(b0 * sw) - pad), y = Math.max(0, Math.floor(b1 * sh) - pad);
+        gl.scissor(x, y, Math.min(sw, Math.ceil(b2 * sw) + pad) - x, Math.min(sh, Math.ceil(b3 * sh) + pad) - y);
+      };
+      gl.enable(gl.SCISSOR_TEST);
       gl.useProgram(bp);
       gl.uniform1i(uloc(bp, 'u_tex'), 0);
       gl.uniform2f(uloc(bp, 'u_size'), qw, qh);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current);
       gl.bindFramebuffer(gl.FRAMEBUFFER, r.qa!.fb); gl.viewport(0, 0, qw, qh);
+      scissorAt(qw, qh, Math.ceil(step * 8) + 2);
       gl.uniform2f(uloc(bp, 'u_dir'), step / qw, 0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.bindTexture(gl.TEXTURE_2D, r.qa!.tex);
@@ -671,12 +681,14 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.useProgram(sp);
       gl.bindFramebuffer(gl.FRAMEBUFFER, r.out!.fb); gl.viewport(0, 0, w, h);
+      scissorAt(w, h, 2);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current); gl.uniform1i(uloc(sp, 'u_video'), 0);
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, r.qb!.tex); gl.uniform1i(uloc(sp, 'u_coarse'), 1);
       gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, skinMaskTexRef.current); gl.uniform1i(uloc(sp, 'u_mask'), 2);
       gl.uniform2f(uloc(sp, 'u_size'), w, h);
       gl.uniform2f(uloc(sp, 'u_maskPx'), 1 / mk.canvas.width, 1 / mk.canvas.height);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.disable(gl.SCISSOR_TEST);
       gl.activeTexture(gl.TEXTURE0);
       return r.out!.tex;
     };
@@ -708,8 +720,17 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.viewport(0, 0, anyFx ? sourceW : W, anyFx ? sourceH : H);
       gl.useProgram(prog);
       gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, skinTex || videoTexRef.current);
+      gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current);
       gl.uniform1i(uloc(prog, 'u_video'), 0);
+      gl.uniform1i(uloc(prog, 'u_useSkin'), skinTex ? 1 : 0);
+      if (skinTex) {
+        const bx = skinMaskRef.current!.box;
+        gl.activeTexture(gl.TEXTURE3);
+        gl.bindTexture(gl.TEXTURE_2D, skinTex);
+        gl.uniform1i(uloc(prog, 'u_skin'), 3);
+        gl.uniform4f(uloc(prog, 'u_skinBox'), bx[0], bx[1], bx[2], bx[3]);
+        gl.activeTexture(gl.TEXTURE0);
+      }
 
       const useLut = !!lutTexRef.current;
       gl.uniform1i(uloc(prog, 'u_useLut'), useLut ? 1 : 0);

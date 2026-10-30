@@ -60,7 +60,7 @@ function loadWorker(): Promise<Detector | null> {
     let settled = false;
     const done = (d: Detector | null) => { if (settled) return; settled = true; clearTimeout(timer); if (!d) w.terminate(); resolve(d); };
     // 有的裝置在背景執行緒建 GPU 環境會一直等不到回應：等太久就改用主執行緒
-    const timer = setTimeout(() => done(null), 25000);
+    const timer = setTimeout(() => done(null), 15000);
     w.addEventListener('message', e => { if (e.data?.type === 'ready') done({ kind: 'worker', w }); else if (e.data?.type === 'fail') done(null); });
     w.addEventListener('error', () => done(null));
     w.postMessage({ type: 'init', base: new URL('./', document.baseURI).href });
@@ -85,6 +85,8 @@ export class FaceSkinMask {
   faces = 0;
   /** 最大那張臉的寬度佔畫面寬度的比例（磨皮的半徑跟著臉的大小走） */
   faceFrac = 0.3;
+  /** 所有臉的外框（比例座標 x0, y0, x1, y1，含一圈餘裕）：磨皮只在這個框裡算 */
+  box: [number, number, number, number] = [0, 0, 1, 1];
   version = 0;
   private busy = false;
   private fresh = false;
@@ -94,6 +96,7 @@ export class FaceSkinMask {
 
   /** 送去偵測的小圖（每一格把相機畫面縮小畫上來） */
   private snap = document.createElement('canvas');
+  private mainTick = 0;
   private sentAt = 0;
   constructor(private d: Detector) {
     if (d.kind === 'worker') d.w.addEventListener('message', e => { if (e.data?.type === 'faces') this.onFaces(e.data.faces); });
@@ -112,6 +115,8 @@ export class FaceSkinMask {
       try { c.getContext('2d')!.drawImage(video, 0, 0, sw, sh); } catch { return this.take(); }
       this.vw = vw; this.vh = vh;
       if (this.d.kind === 'main') {
+        // 主執行緒那條退路：隔一格才找一次臉，畫面才不會一格一格卡
+        if ((this.mainTick = (this.mainTick + 1) & 1)) return this.take();
         let faces: number[][] = [];
         try { faces = this.d.detect(c, now); } catch { faces = []; }
         this.onFaces(faces);
@@ -173,6 +178,12 @@ export class FaceSkinMask {
     if (frac > 0) this.faceFrac = frac;
     // 柔邊：三趟方塊模糊（≈ 高斯），半徑跟著臉的大小
     if (faces.length) this.feather(g, mw, mh, Math.round(blurPx / 1.7));
+    if (faces.length) {
+      let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+      for (const f of faces) for (let i = 0; i < f.length; i += 2) { const x = f[i], y = f[i + 1]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      const mx = (x1 - x0) * 0.12 + 0.01, my = (y1 - y0) * 0.12 + 0.01;
+      this.box = [Math.max(0, x0 - mx), Math.max(0, y0 - my), Math.min(1, x1 + mx), Math.min(1, y1 + my)];
+    }
     this.faces = faces.length;
     this.version++;
     this.fresh = true;
