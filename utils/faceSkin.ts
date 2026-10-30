@@ -89,6 +89,8 @@ export class FaceSkinMask {
   private bufs: MaskBufs = { a: null, t: null };
   /** 直接從影像縮圖成 ImageBitmap（非同步，主執行緒不用等 GPU 回讀）；這台不支援就改用 canvas */
   private bitmapResize = true;
+  /** 這台能不能把 VideoFrame 交給背景執行緒（不行的話背景會回報，改走 ImageBitmap） */
+  private useVideoFrame = true;
 
   /** 送去偵測的小圖（退路：每一格把相機畫面縮小畫上來） */
   private snap = document.createElement('canvas');
@@ -96,7 +98,9 @@ export class FaceSkinMask {
   constructor(private d: Detector) {
     if (d.kind === 'worker') d.w.addEventListener('message', e => {
       const m = e.data;
+      if (m?.type === 'vfFail') { this.useVideoFrame = false; this.busy = false; return; }
       if (m?.type !== 'faces') return;
+      this.stat(m.ms);
       if (m.bitmap) this.onMask(m.bitmap, m.n, m.frac, m.box);
       else this.onFaces(m.faces);
     });
@@ -127,6 +131,15 @@ export class FaceSkinMask {
           c.getContext('2d')!.drawImage(video, 0, 0, sw, sh);
           return createImageBitmap(c);
         };
+        /* 最好的路：VideoFrame 直接包住相機這一格（不複製、不讀回），整個轉交給背景執行緒，
+           縮圖、找臉、畫遮罩全在背景做，主執行緒一點事都沒有（原生美顏 app 也是這樣：相機畫面直接交給另一條線處理） */
+        if (this.useVideoFrame && typeof (window as any).VideoFrame === 'function') {
+          try {
+            const vf = new (window as any).VideoFrame(video, { timestamp: Math.round(now * 1000) });
+            w.postMessage({ type: 'frame', vf, sw, sh, t: now, id, vw, vh }, [vf]);
+            return this.take();
+          } catch { this.useVideoFrame = false; }
+        }
         let p: Promise<ImageBitmap>;
         try { p = this.bitmapResize ? createImageBitmap(video, { resizeWidth: sw, resizeHeight: sh, resizeQuality: 'low' }) : viaCanvas(); }
         catch { this.bitmapResize = false; try { p = viaCanvas(); } catch { this.busy = false; return this.take(); } }
@@ -137,12 +150,21 @@ export class FaceSkinMask {
         if (c.width !== sw || c.height !== sh) { c.width = sw; c.height = sh; }
         try { c.getContext('2d')!.drawImage(video, 0, 0, sw, sh); } catch { return this.take(); }
         let faces: number[][] = [];
+        const t0 = performance.now();
         try { faces = this.d.detect(c, now); } catch { faces = []; }
+        this.stat(performance.now() - t0);
         this.onFaces(faces);
       }
     }
     return this.take();
   }
+  /** 診斷用：找臉一次花多久（設定選單裡顯示，方便在手機上看是哪條路、多重） */
+  private stat(ms: number) {
+    if (!(ms >= 0)) return;
+    this.ms = this.ms ? this.ms * 0.8 + ms * 0.2 : ms;
+    try { (window as any).__faceSkinStats = { engine: this.d.kind, ms: Math.round(this.ms), vf: this.d.kind === 'worker' && this.useVideoFrame }; } catch { /* noop */ }
+  }
+  private ms = 0;
   private take() {
     const f = this.fresh; this.fresh = false;
     return f;

@@ -14,6 +14,7 @@ if (typeof (self as any).importScripts !== 'function') {
 
 let lm: FaceLandmarker | null = null;
 let lastT = 0;
+let detectMs = 0;
 /* 遮罩也在這裡畫（含柔邊），畫好轉成 ImageBitmap 傳回去：主執行緒不用讀回像素、不用跑柔邊，每一格都順 */
 const canOff = typeof OffscreenCanvas !== 'undefined';
 let off: OffscreenCanvas | null = null;
@@ -39,12 +40,27 @@ self.onmessage = async (e: MessageEvent) => {
     return;
   }
   if (m.type === 'frame') {
-    const bmp: ImageBitmap = m.bitmap;
+    let bmp: ImageBitmap = m.bitmap;
+    if (m.vf) {
+      // 主執行緒轉交過來的整格相機畫面：在這裡縮小（不佔主執行緒）
+      const vf = m.vf;
+      try { bmp = await createImageBitmap(vf, { resizeWidth: m.sw, resizeHeight: m.sh, resizeQuality: 'low' }); }
+      catch {
+        try {
+          const c = new OffscreenCanvas(m.sw, m.sh);
+          (c.getContext('2d') as OffscreenCanvasRenderingContext2D).drawImage(vf, 0, 0, m.sw, m.sh);
+          bmp = c.transferToImageBitmap();
+        } catch { vf.close(); (self as any).postMessage({ type: 'vfFail' }); return; }
+      }
+      vf.close();
+    }
     let faces: number[][] = [];
     try {
       if (lm) {
         const t = Math.max(m.t, lastT + 1); lastT = t;
+        const t0 = performance.now();
         const res = lm.detectForVideo(bmp, t);
+        detectMs = performance.now() - t0;
         faces = (res.faceLandmarks || []).map(f => { const a = new Array(f.length * 2); f.forEach((p, i) => { a[i * 2] = p.x; a[i * 2 + 1] = p.y; }); return a; });
       }
     } catch { faces = []; }
@@ -57,11 +73,11 @@ self.onmessage = async (e: MessageEvent) => {
         if (offG) {
           const { frac, box } = drawSkinMask(offG, mw, mh, faces, m.vw, m.vh, bufs);
           const bitmap = off.transferToImageBitmap();
-          (self as any).postMessage({ type: 'faces', n: faces.length, frac, box, bitmap, id: m.id }, [bitmap]);
+          (self as any).postMessage({ type: 'faces', n: faces.length, frac, box, bitmap, id: m.id, ms: detectMs }, [bitmap]);
           return;
         }
       } catch { /* 改由主執行緒畫 */ }
     }
-    (self as any).postMessage({ type: 'faces', faces, id: m.id });
+    (self as any).postMessage({ type: 'faces', faces, id: m.id, ms: detectMs });
   }
 };

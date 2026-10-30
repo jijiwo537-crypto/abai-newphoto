@@ -279,11 +279,20 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
   /** 人臉磨皮：只有開／關（強度固定），記住上次的選擇 */
-  /** 切換鏡頭圖示轉半圈（微動效） */
-  const [flipTurns, setFlipTurns] = useState(0);
-  // 磨皮預設開啟（換一個鍵：舊的鍵以前不管有沒有按過都存了 0）
-  const [skinSmooth, setSkinSmooth] = useState(() => { try { return localStorage.getItem('abai-camera-skin-v2') !== '0'; } catch { return true; } });
-  useEffect(() => { try { localStorage.setItem('abai-camera-skin-v2', skinSmooth ? '1' : '0'); } catch { /* 私密模式 */ } }, [skinSmooth]);
+  // 磨皮預設關閉，使用者打開過才記住（換一個鍵：上一版預設開啟時每個人都存了 1）
+  const [skinSmooth, setSkinSmooth] = useState(() => { try { return localStorage.getItem('abai-camera-skin-v3') === '1'; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem('abai-camera-skin-v3', skinSmooth ? '1' : '0'); } catch { /* 私密模式 */ } }, [skinSmooth]);
+  /** 磨皮診斷（選單打開時每秒更新）：找臉走哪條路、一次多久 */
+  const [skinStat, setSkinStat] = useState('');
+  useEffect(() => {
+    if (!showSettingsMenu || !skinSmooth) return;
+    const read = () => {
+      const st = (window as any).__faceSkinStats, eng = (window as any).__faceSkinEngine;
+      setSkinStat(st ? `${st.engine === 'worker' ? (st.vf ? '背景V' : '背景') : '主'} ${st.ms}ms` : eng ? (eng === 'none' ? '無法載入' : '載入完成') : '載入中');
+    };
+    read(); const id = setInterval(read, 1000);
+    return () => clearInterval(id);
+  }, [showSettingsMenu, skinSmooth]);
   
   const [focalLengthMm, setFocalLengthMm] = useState<string | null>(null);
   const focalLengthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1211,6 +1220,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                                 <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${skinSmooth ? 'translate-x-5' : 'translate-x-0'}`} />
                             </button>
                         </div>
+                        {skinSmooth && skinStat && <div className="-mt-2 pl-7 text-[10px] text-white/35 tabular-nums whitespace-nowrap">{skinStat}</div>}
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
                                 <Icon name="timer" className="text-lg text-white/70" />
@@ -1324,8 +1334,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 <span aria-hidden className={`absolute bottom-[5px] left-1/2 -ml-[2px] w-1 h-1 rounded-full bg-white transition-[opacity,transform] duration-300 ${fxOn ? 'opacity-100 scale-100' : 'opacity-0 scale-0'}`} />
               </button>
 
-              <button aria-label="切換鏡頭" onClick={() => { setFlipTurns(t => t + 1); toggleCamera(); }} className="p-3 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] shrink-0 text-white/90">
-                <span className="inline-flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]" style={{ transform: `rotate(${flipTurns * 180}deg)` }}><Icon name="flip_camera_ios" className="text-[25px]" /></span>
+              <button aria-label="切換鏡頭" onClick={toggleCamera} className="p-3 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] shrink-0 text-white/90">
+                <Icon name="flip_camera_ios" className="text-[25px]" />
               </button>
             </div>
           ) : activeControl === 'filters' ? (

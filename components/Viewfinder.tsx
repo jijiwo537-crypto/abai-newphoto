@@ -843,6 +843,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     let newFrame = true, frameHandle = 0, lastState = '', lastLut: WebGLTexture | null = null;
     const onVideoFrame = () => { newFrame = true; frameHandle = (video as any).requestVideoFrameCallback(onVideoFrame); };
     if (rvfc) frameHandle = (video as any).requestVideoFrameCallback(onVideoFrame);
+    let warmed = false, drawnFrames = 0;
     const tick = () => {
       if (!stillActiveRef.current && video && video.readyState >= 2) {
         const target=previewTarget(video.videoWidth,video.videoHeight,previewLimit)||{w:video.videoWidth,h:video.videoHeight};
@@ -863,6 +864,19 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         if (!rvfc || newFrame || maskChanged || resized || state + skinState !== lastState || lastLut !== lutTexRef.current) {
           newFrame = false; lastState = state + skinState; lastLut = lutTexRef.current;
           draw(video, gl.canvas.width, gl.canvas.height);
+          /* 預熱：相機穩定後（約半秒）把所有特效的暫存貼圖配好、每個著色器都真的畫過一次。
+             iPhone 的著色器是第一次用到時才編譯，暫存也是第一次才配置 —— 以前就是這個讓「第一次開／關特效」卡一下。
+             同一個工作裡接著再畫一次正常畫面，所以使用者看不到預熱那一格 */
+          if (!warmed && ++drawnFrames > 15) {
+            warmed = true;
+            const saved = fxRef.current;
+            try {
+              fxRef.current = { ...saved, soft: 50, blur: 50, soft2: 50, halo: 50, lowfi: 50 };
+              draw(video, gl.canvas.width, gl.canvas.height);
+            } catch { /* 預熱失敗不影響正常畫面 */ }
+            fxRef.current = saved;
+            draw(video, gl.canvas.width, gl.canvas.height);
+          }
         }
       }
       rafId = requestAnimationFrame(tick);
