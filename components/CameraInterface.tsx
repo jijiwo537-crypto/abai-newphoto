@@ -285,6 +285,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   useEffect(() => { try { localStorage.setItem('abai-camera-skin-v3', skinSmooth ? '1' : '0'); } catch { /* 私密模式 */ } }, [skinSmooth]);
   /* 找臉模型：打開設定選單（準備要按磨皮）就先開始載入；磨皮開著時載完才算好，開關上顯示載入中 */
   const [skinReady, setSkinReady] = useState(false);
+  // 磨皮隨時待命：進相機、畫面穩定後（閒下來時）就在背景載好找臉模型，一按就有
+  useEffect(() => {
+    let live = true;
+    const go = () => preloadFaceSkin().then(ok => { if (live) setSkinReady(ok); });
+    const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
+    const id = ric ? ric(go, { timeout: 1500 }) : window.setTimeout(go, 800);
+    return () => { live = false; if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
+  }, []);
   useEffect(() => {
     if (!showSettingsMenu && !skinSmooth) return;
     let live = true;

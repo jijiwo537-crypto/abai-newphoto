@@ -174,6 +174,19 @@ export class FaceSkinMask {
     try { (window as any).__faceSkinStats = { engine: this.d.kind, ms: Math.round(this.ms), vf: this.d.kind === 'worker' && this.useVideoFrame }; } catch { /* noop */ }
   }
   private ms = 0;
+  /* 追蹤保持：臉移動時（動態模糊、側臉）偶爾會有一兩次找不到，以前遮罩就立刻消失、磨皮一閃一閃。
+     現在找不到時先保留上一個遮罩（外框放大一點包住移動），連續 0.8 秒都找不到才真的關掉 */
+  private lastFaceAt = 0;
+  private holdMiss(n: number) {
+    const now = performance.now();
+    if (n) { this.lastFaceAt = now; return false; }
+    if (this.faces && now - this.lastFaceAt < 800) {
+      const [x0, y0, x1, y1] = this.box, gx = (x1 - x0) * 0.06, gy = (y1 - y0) * 0.06;
+      this.box = [Math.max(0, x0 - gx), Math.max(0, y0 - gy), Math.min(1, x1 + gx), Math.min(1, y1 + gy)];
+      return true;
+    }
+    return false;
+  }
   private take() {
     const f = this.fresh; this.fresh = false;
     return f;
@@ -184,6 +197,7 @@ export class FaceSkinMask {
   private onMask(bitmap: ImageBitmap, n: number, frac: number, box: [number, number, number, number]) {
     this.busy = false;
     if (!n && this.faces === 0) { bitmap.close(); return; }
+    if (this.holdMiss(n)) { bitmap.close(); return; }
     const old = this.mask;
     this.mask = bitmap; this.maskW = bitmap.width; this.maskH = bitmap.height;
     if (old !== this.canvas && typeof (old as ImageBitmap).close === 'function') (old as ImageBitmap).close();
@@ -199,6 +213,7 @@ export class FaceSkinMask {
     const vw = this.vw, vh = this.vh;
     if (!vw || !vh) return;
     if (!faces.length && this.faces === 0) return;   // 一直都沒有臉：不用重畫
+    if (this.holdMiss(faces.length)) return;
     const [mw, mh] = maskSize(vw, vh);
     const c = this.canvas;
     if (c.width !== mw || c.height !== mh) { c.width = mw; c.height = mh; }
