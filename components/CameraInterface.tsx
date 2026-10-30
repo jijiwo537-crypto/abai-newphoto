@@ -279,6 +279,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
   /** 人臉磨皮：只有開／關（強度固定），記住上次的選擇 */
+  /** 切換鏡頭圖示轉半圈（微動效） */
+  const [flipTurns, setFlipTurns] = useState(0);
   // 磨皮預設開啟（換一個鍵：舊的鍵以前不管有沒有按過都存了 0）
   const [skinSmooth, setSkinSmooth] = useState(() => { try { return localStorage.getItem('abai-camera-skin-v2') !== '0'; } catch { return true; } });
   useEffect(() => { try { localStorage.setItem('abai-camera-skin-v2', skinSmooth ? '1' : '0'); } catch { /* 私密模式 */ } }, [skinSmooth]);
@@ -1183,34 +1185,34 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 </button>
                 
                 {showSettingsMenu && (
-                    <div className="absolute top-12 right-2 bg-black/40 backdrop-blur-2xl border border-white/10 rounded-2xl p-3 w-40 shadow-2xl flex flex-col gap-2 animate-in fade-in zoom-in-95 duration-200 origin-top-right select-none" onClick={(e) => e.stopPropagation()}>
+                    <div className="absolute top-12 right-2 bg-black/40 backdrop-blur-2xl border border-white/10 rounded-[18px] px-3.5 py-3 w-44 shadow-[0_12px_40px_rgba(0,0,0,0.45)] flex flex-col gap-3 animate-in fade-in zoom-in-90 slide-in-from-top-1 duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] origin-top-right select-none" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs font-bold text-white/90">
+                            <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
                                 <Icon name="grid_3x3" className="text-lg text-white/70" />
                                 <span>構圖線</span>
                             </div>
                             <button 
                                 onClick={(e) => { e.stopPropagation(); setShowGrid(!showGrid); triggerHaptic(); }}
-                                className={`w-11 h-6 rounded-full p-1 transition-all duration-300 backdrop-blur-md border border-white/10 ${showGrid ? 'bg-white/40' : 'bg-white/10'}`}
+                                className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] border border-white/10 ${showGrid ? 'bg-white/40' : 'bg-white/10'}`}
                             >
-                                <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-300 ${showGrid ? 'translate-x-5' : 'translate-x-0'}`} />
+                                <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${showGrid ? 'translate-x-5' : 'translate-x-0'}`} />
                             </button>
                         </div>
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs font-bold text-white/90">
+                            <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
                                 <Icon name="skin_smooth" className="text-lg text-white/70" />
                                 <span>磨皮</span>
                             </div>
                             <button
                                 aria-label="人臉磨皮" aria-pressed={skinSmooth} data-camera-skin
                                 onClick={(e) => { e.stopPropagation(); setSkinSmooth(!skinSmooth); triggerHaptic(); }}
-                                className={`w-11 h-6 rounded-full p-1 transition-all duration-300 backdrop-blur-md border border-white/10 ${skinSmooth ? 'bg-white/40' : 'bg-white/10'}`}
+                                className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] border border-white/10 ${skinSmooth ? 'bg-white/40' : 'bg-white/10'}`}
                             >
-                                <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-300 ${skinSmooth ? 'translate-x-5' : 'translate-x-0'}`} />
+                                <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${skinSmooth ? 'translate-x-5' : 'translate-x-0'}`} />
                             </button>
                         </div>
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs font-bold text-white/90">
+                            <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
                                 <Icon name="timer" className="text-lg text-white/70" />
                                 <span>定時</span>
                             </div>
@@ -1220,7 +1222,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                                     setTimer(prev => prev === 0 ? 3 : prev === 3 ? 10 : 0);
                                     triggerHaptic();
                                 }}
-                                className="h-6 px-2 rounded-md bg-white/10 text-[10px] font-black border border-white/10 min-w-[3rem] flex items-center justify-center hover:bg-white/20 transition-colors"
+                                className="h-6 px-2.5 rounded-full bg-white/10 text-[11px] font-semibold tabular-nums text-white/85 border border-white/10 min-w-[3rem] flex items-center justify-center active:scale-90 transition-[transform,background-color] duration-200"
                             >
                                 {timer === 0 ? 'OFF' : `${timer}s`}
                             </button>
@@ -1273,9 +1275,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     key={val}
                     disabled={unavailable}
                     onClick={() => handleZoomClick(val)}
-                    className={`w-8 h-8 rounded-full flex items-center justify-center text-[9px] font-black transition-all border backdrop-blur-2xl ${settings.focalLength === val ? 'bg-white text-black border-white shadow-xl scale-110' : unavailable ? 'bg-black/20 border-white/5 text-white/20' : 'bg-black/20 border-white/10 text-white/60 hover:bg-black/40'}`}
+                    className={`w-[34px] h-[34px] rounded-full flex items-center justify-center text-[10px] font-semibold tabular-nums tracking-[-0.02em] transition-[transform,background-color,color] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] backdrop-blur-xl active:scale-90 ${settings.focalLength === val ? 'bg-white text-black scale-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)]' : unavailable ? 'bg-black/30 text-white/20 scale-[0.82]' : 'bg-black/30 text-white/80 scale-[0.82]'}`}
                   >
-                    {val.replace('.0', '')}
+                    {settings.focalLength === val ? val.replace('.0', '').replace('x', '×') : val.replace('.0', '').replace('x', '')}
                   </button>
                   );
                 })}
@@ -1290,38 +1292,40 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         <div className={`flex justify-center relative mb-2 transition-[height] duration-300 ${activeControl === 'filters' ? 'h-30' : 'h-14'}`}>
           {activeControl === 'none' ? (
             <div data-camera-main-row key="camera-main-controls" className="flex items-center justify-between w-full max-sm px-0 h-14 gap-1 overflow-x-auto no-scrollbar [&>button]:w-[52px] [&>button]:h-[52px] [&>button]:flex [&>button]:items-center [&>button]:justify-center">
-              <button onClick={() => setActiveControl('exposure')} className="p-3 active:scale-90 transition-transform shrink-0">
-                <Icon name="exposure" className="text-[28px]" />
+              <button onClick={() => setActiveControl('exposure')} className="relative p-3 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] shrink-0 text-white/90">
+                <Icon name="exposure" className="text-[25px]" />
               </button>
               
-              <button aria-label="色溫" onClick={() => setActiveControl('kelvin')} className="p-3 w-[52px] h-[52px] flex items-center justify-center active:scale-90 transition-transform shrink-0">
-                <Icon name="device_thermostat" className="text-[28px]" />
+              <button aria-label="色溫" onClick={() => setActiveControl('kelvin')} className="relative p-3 w-[52px] h-[52px] flex items-center justify-center active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] shrink-0 text-white/90">
+                <Icon name="device_thermostat" className="text-[25px]" />
               </button>
 
               <button 
                 onClick={() => setAspectRatio(prev => ASPECT_CYCLE[(ASPECT_CYCLE.indexOf(prev) + 1) % ASPECT_CYCLE.length])}
-                className="p-3 active:scale-90 transition-transform flex flex-col items-center shrink-0"
+                className="p-3 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] flex flex-col items-center shrink-0 text-white/90"
               >
-                <div className="w-8 h-8 border-[2px] border-white rounded-[6px] flex items-center justify-center">
-                  <span className="text-[10px] font-black leading-none">{aspectRatio}</span>
+                <div className="w-[27px] h-[27px] border-[1.5px] border-current rounded-[7px] flex items-center justify-center">
+                  <span className="text-[9.5px] font-semibold tracking-[-0.02em] leading-none tabular-nums">{aspectRatio}</span>
                 </div>
               </button>
 
               <button
                 disabled={!flashAvailable}
                 title={flashAvailable ? '閃光燈' : '這顆鏡頭沒有閃光燈'}
-                className={`p-3 active:scale-90 transition-transform shrink-0 ${flashAvailable ? 'text-white' : 'text-white/25'}`}
+                className={`relative p-3 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] shrink-0 ${flashAvailable ? 'text-white/90' : 'text-white/25'}`}
                 onClick={() => setFlashOn(!flashOn)}
               >
-                  <Icon name="bolt" className="text-[28px]" fill={flashOn} />
+                  <Icon name="bolt" className="text-[25px]" fill={flashOn} />
+                  <span aria-hidden className={`absolute bottom-[5px] left-1/2 -ml-[2px] w-1 h-1 rounded-full bg-white transition-[opacity,transform] duration-300 ${flashOn && flashAvailable ? 'opacity-100 scale-100' : 'opacity-0 scale-0'}`} />
               </button>
 
-              <button aria-label="開啟特效" onClick={() => setActiveControl('effects')} className="p-3 active:scale-90 transition-transform shrink-0 text-white">
-                <Icon name="magic_button" className="text-[28px]" fill={fxOn} />
+              <button aria-label="開啟特效" onClick={() => setActiveControl('effects')} className="relative p-3 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] shrink-0 text-white/90">
+                <Icon name="magic_button" className="text-[25px]" fill={fxOn} />
+                <span aria-hidden className={`absolute bottom-[5px] left-1/2 -ml-[2px] w-1 h-1 rounded-full bg-white transition-[opacity,transform] duration-300 ${fxOn ? 'opacity-100 scale-100' : 'opacity-0 scale-0'}`} />
               </button>
 
-              <button onClick={toggleCamera} className="p-3 active:scale-90 transition-transform shrink-0">
-                <Icon name="flip_camera_ios" className="text-[28px]" />
+              <button aria-label="切換鏡頭" onClick={() => { setFlipTurns(t => t + 1); toggleCamera(); }} className="p-3 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] shrink-0 text-white/90">
+                <span className="inline-flex transition-transform duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]" style={{ transform: `rotate(${flipTurns * 180}deg)` }}><Icon name="flip_camera_ios" className="text-[25px]" /></span>
               </button>
             </div>
           ) : activeControl === 'filters' ? (
@@ -1428,12 +1432,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
         <div className="grid grid-cols-3 items-center w-full max-w-sm mx-auto pt-0">
           <div className="flex justify-center">
-            <button onClick={() => setShowGallery(true)} className="w-14 h-14 rounded-2xl overflow-hidden border border-white/10 bg-zinc-900 active:scale-90 transition-all shadow-lg ring-1 ring-white/5">
+            <button onClick={() => setShowGallery(true)} className="w-12 h-12 rounded-[14px] overflow-hidden bg-zinc-900 ring-1 ring-inset ring-white/15 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]">
               {photos.length > 0 ? (
-                 thumbs[photos[0]] ? <img src={thumbs[photos[0]]} className="w-full h-full object-cover" alt="Latest" /> : <div className="w-full h-full bg-white/10" />
+                 thumbs[photos[0]] ? <img key={photos[0]} src={thumbs[photos[0]]} className="w-full h-full object-cover animate-in fade-in zoom-in-50 duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]" alt="Latest" /> : <div className="w-full h-full bg-white/10" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
-                  <Icon name="image" className="text-white/10 text-2xl" />
+                  <Icon name="image" className="text-white/25 text-[22px]" />
                 </div>
               )}
             </button>
@@ -1444,13 +1448,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               aria-label="拍照"
               disabled={countdown !== null}
               aria-busy={isCapturing}
-              className={`relative w-[72px] h-[72px] flex items-center justify-center transition-all ${countdown !== null ? 'opacity-50' : 'active:scale-95'}`}
+              className={`group relative w-[76px] h-[76px] flex items-center justify-center transition-opacity duration-200 ${countdown !== null ? 'opacity-50' : ''}`}
               onClick={handleShutterClick}
             >
-              <div className="absolute inset-0 rounded-full border-[2.5px] border-white/30"></div>
-              <div className="w-[58px] h-[58px] rounded-full flex items-center justify-center shadow-2xl bg-white">
-                 <div className="w-[54px] h-[54px] rounded-full border border-black/5"></div>
-              </div>
+              <div className="absolute inset-0 rounded-full border-[3px] border-white/90"></div>
+              {/* 按下去內圈縮一點、放開彈回（跟原生相機一樣的手感） */}
+              <div className={`w-[62px] h-[62px] rounded-full bg-white transition-transform duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] group-active:scale-[0.86] ${isCapturing ? 'scale-[0.86]' : ''}`} />
             </button>
           </div>
 
@@ -1460,9 +1463,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 triggerHaptic();
                 setActiveControl(prev => prev === 'filters' ? 'none' : 'filters');
               }} 
-              className={`w-14 h-14 rounded-2xl bg-white/5 backdrop-blur-xl flex items-center justify-center border border-white/10 active:scale-90 transition-all hover:bg-white/10 ${activeControl === 'filters' ? 'bg-white/20 border-white/40 shadow-inner' : ''}`}
+              className={`w-12 h-12 rounded-full flex items-center justify-center ring-1 ring-inset active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${activeControl === 'filters' ? 'bg-white/20 ring-white/40' : 'bg-white/[0.07] ring-white/15'}`}
             >
-              <Icon name="photo_camera" className={`text-white text-2xl transition-opacity ${activeControl === 'filters' ? 'opacity-100' : 'opacity-80'}`} />
+              <Icon name="photo_camera" className={`text-white text-[22px] transition-opacity ${activeControl === 'filters' ? 'opacity-100' : 'opacity-85'}`} />
             </button>
           </div>
         </div>
