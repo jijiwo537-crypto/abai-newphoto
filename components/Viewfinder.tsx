@@ -4,7 +4,7 @@ import { loadCameraLut, readyCameraLut } from '../utils/cameraLuts';
 import {CAMERA_FX_ZERO, CAMERA_LOWFI_GLSL, CAMERA_HIGHLIGHT_FS, CAMERA_SPILL_STEP, type CameraFx} from '../utils/cameraEffects';
 import {cameraPreviewGeometry} from '../utils/cameraPreview';
 import {bindLowfiLut} from '../utils/lowfiLut';
-import { loadFaceLandmarker, FaceSkinMask } from '../utils/faceSkin';
+import { createFaceSkinMask, type FaceSkinMask } from '../utils/faceSkin';
 
 /** 拍照時可以即時看到的特效，跟編輯頁同款、數值都是 0–100 */
 export type ViewfinderFx = CameraFx;
@@ -275,9 +275,9 @@ void main() {
     // 膚色判斷（YCbCr）：頭髮、鬍子、眼鏡、背景不在膚色範圍裡就少磨或不磨
     float Y = dot(o, vec3(0.299, 0.587, 0.114));
     float cb = (o.b - Y) * 0.564 + 0.5, cr = (o.r - Y) * 0.713 + 0.5;
-    float skin = smoothstep(0.49, 0.53, cr) * (1.0 - smoothstep(0.70, 0.74, cr)) * smoothstep(0.26, 0.30, cb) * (1.0 - smoothstep(0.52, 0.56, cb));
-    skin *= smoothstep(0.06, 0.16, Y);                       // 太暗的（陰影裡的頭髮）不算
-    m *= mix(0.25, 1.0, skin);
+    float skin = smoothstep(0.47, 0.54, cr) * (1.0 - smoothstep(0.69, 0.76, cr)) * smoothstep(0.24, 0.31, cb) * (1.0 - smoothstep(0.51, 0.58, cb));
+    skin *= smoothstep(0.04, 0.18, Y);                       // 太暗的（陰影裡的頭髮）不算
+    m *= mix(0.35, 1.0, skin);                               // 過渡放寬：膚色判斷不會在臉上切出一塊一塊
     // 細紋理層：跟 3×3 帳篷模糊的差（毛孔、皮膚質感）
     vec3 fine = o * 0.25;
     fine += (texture(u_video, uv + vec2(px.x, 0.0)).rgb + texture(u_video, uv - vec2(px.x, 0.0)).rgb
@@ -289,7 +289,7 @@ void main() {
     // 中間層反差大的是真的邊緣，留著；小的（斑、痘印、不均）壓平
     float keep = smoothstep(0.045, 0.14, length(mid));
     vec3 smoothed = coarse + mid * keep + (o - fine) * 0.9;
-    outColor = vec4(mix(o, smoothed, clamp(m, 0.0, 1.0) * 0.85), 1.0);
+    outColor = vec4(mix(o, smoothed, clamp(m, 0.0, 1.0) * 0.68), 1.0);
 }
 `;
 
@@ -304,15 +304,18 @@ const GLOW_RADIUS = 1.6;
 const GLOW_PASSES = 4;
 
 export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, displayBox, onClick, onPointerDown, onPointerUp, onPointerCancel, skinSmooth }: ViewfinderProps, ref) => {
-  /* 人臉磨皮：開了才載入找臉的模型（第一次約 3.7MB）；關掉就完全不跑 */
+  /* 人臉磨皮：找臉在背景執行緒做。相機一打開、閒下來就先載好（不佔主執行緒），一按開關馬上有效果；
+     關著的時候不送畫面、不算 */
   const skinOnRef = useRef(!!skinSmooth);
   skinOnRef.current = !!skinSmooth;
   const skinMaskRef = useRef<FaceSkinMask | null>(null);
   useEffect(() => {
-    if (!skinSmooth || skinMaskRef.current) return;
     let live = true;
-    loadFaceLandmarker().then(lm => { if (live && lm && !skinMaskRef.current) skinMaskRef.current = new FaceSkinMask(lm); });
-    return () => { live = false; };
+    const go = () => createFaceSkinMask().then(m => { if (live && m && !skinMaskRef.current) skinMaskRef.current = m; });
+    if (skinSmooth) { go(); return () => { live = false; }; }
+    const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
+    const id = ric ? ric(go, { timeout: 2500 }) : window.setTimeout(go, 1500);
+    return () => { live = false; if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
   }, [skinSmooth]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewSizeRef=useRef({w:0,h:0});
