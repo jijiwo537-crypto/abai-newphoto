@@ -20,7 +20,7 @@ import {
 } from '../utils/beauty/engine';
 import { inpaintImage, inpaintCrop, cropFor } from '../utils/beauty/inpaint';
 import { findHealSource, fallbackHealSource, sideHealSource, applyHeal, strokeContours, healField, fieldAlpha, fieldBounds, fieldMaskRGBA, type HealMode, type HealRect, type HealField } from '../utils/beauty/heal';
-import { analyzeDodgeBurn, applyDodgeBurnAuto, DBStroke, observeView, skinMidLuma, type DBAnalysis } from '../utils/beauty/dodgeBurn';
+import { analyzeDodgeBurn, applyDodgeBurnAuto, analyzeMidBand, faceWidthFrac, DBStroke, observeView, skinMidLuma, type DBAnalysis, type DBBand } from '../utils/beauty/dodgeBurn';
 import { detectFacesStill } from '../utils/faceSkin';
 import { StrokeLayer, STROKE_INNER, wrinkleStrength, smoothStrength, smoothInvalidate, type StrokeKind } from '../utils/beauty/strokeFilter';
 
@@ -95,7 +95,7 @@ type Op =
   /** 一鍵中性灰：臉的點（比例座標，重播時任何解析度都對得上）＋強度 0～1 */
   | { k: 'dbauto'; faces: number[][]; strength: number }
   /** 中性灰筆刷：sign＝+1 提亮、−1 壓暗；flow＝每一下的量 */
-  | { k: 'db'; pts: number[]; r: number; flow: number; sign: number }
+  | { k: 'db'; pts: number[]; r: number; flow: number; sign: number; fw?: number }
   /** 刪除：筆觸路徑（工作解析度）＋亂數種子；重播時同一組輸入一定算出同一個結果 */
   | { k: 'patch'; pts: number[]; r: number; seed: number }
   /** 修補：筆觸路徑＋來源位移（目標點拿 p + (dx, dy) 的像素）＋修復／仿製 */
@@ -219,8 +219,10 @@ function replayOps(
   W: number, H: number, k: number,
 ) {
   let alpha: Float32Array | null = null;
+  let dbBand: DBBand | null = null, dbBandFw = -1;
   for (let i = 0; i < count; i++) {
     const op = ops[i];
+    if (op.k !== 'db') dbBand = null;   // 像素被別的操作改過：中頻層要重新分析
     if (op.k === 'heal') {
       healAt(base, W, H, op.x * k, op.y * k, op.r * k);
     } else if (op.k === 'wrinkle') {
@@ -249,8 +251,13 @@ function replayOps(
       const an = analyzeDodgeBurn(base.data, W, H, op.faces);
       applyDodgeBurnAuto(base.data, base.data, an, op.strength, W, H);
     } else if (op.k === 'db') {
-      const src = base.data.slice(), st = new DBStroke(W, H);
-      for (let j = 0; j < op.pts.length; j += 2) st.dab(base.data, src, op.pts[j] * k, op.pts[j + 1] * k, op.r * k, op.flow, op.sign);
+      // 連續幾筆中性灰共用同一份中頻層（每一筆結束把修掉的量扣掉），不必每一筆重新分析
+      const fw = op.fw ?? Math.min(W, H) * 0.3 / W;
+      if (!dbBand || dbBandFw !== fw) { dbBand = analyzeMidBand(base.data, W, H, fw); dbBandFw = fw; }
+      const src = base.data.slice(), st = new DBStroke(W, H, dbBand, op.sign);
+      for (let j = 0; j < op.pts.length; j += 2) st.dab(base.data, src, op.pts[j] * k, op.pts[j + 1] * k, op.r * k, op.flow);
+      st.commit();
+      continue;
     } else if (op.k === 'liquify') {
       for (let j = 0; j < op.pts.length; j += 4) {
         liquifyDab(field, op.pts[j] * k, op.pts[j + 1] * k, op.pts[j + 2] * k, op.pts[j + 3] * k,
@@ -332,6 +339,14 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   /** 目前可以用強度滑桿調整的那一次一鍵中性灰：套用前的像素＋分析結果＋它在操作記錄裡的那一筆 */
   const dbAutoRef = useRef<{ pre: Uint8ClampedArray; an: DBAnalysis; op: Op } | null>(null);
   const dbStrokeRef = useRef<DBStroke | null>(null);
+  /** 筆刷用的中頻層（目前的照片）：別的操作改過像素就作廢，下一筆再重新分析 */
+  const dbBandRef = useRef<{ band: DBBand; fw: number } | null>(null);
+  const dbFw = () => { const s = sessionRef.current!; return dbFacesRef.current.length ? faceWidthFrac(dbFacesRef.current, s.W, s.H) : Math.min(s.W, s.H) * 0.3 / s.W; };
+  const ensureDbBand = () => {
+    const s = sessionRef.current!;
+    if (!dbBandRef.current) { const fw = dbFw(); dbBandRef.current = { band: analyzeMidBand(s.base.data, s.W, s.H, fw), fw }; }
+    return dbBandRef.current;
+  };
   /** 最近一次找到的臉（觀察層用來決定中心亮度） */
   const dbFacesRef = useRef<number[][]>([]);
   const cfg = useRef({ tool, brush, force, lqMode, makeupColor, intensity, healFeather, healOpacity, dbMode, dbFlow });
@@ -518,6 +533,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       smoothInvalidate(smoothTargetsRef.current, s.W, s.H, { x: Math.floor(x0 - op.r - 2), y: Math.floor(y0 - op.r - 2), w: Math.ceil(x1 - x0 + op.r * 2 + 4), h: Math.ceil(y1 - y0 + op.r * 2 + 4) });
     }
     if (op.k !== 'dbauto') dbAutoRef.current = null;   // 之後有別的動作，前一次一鍵中性灰的強度就定下來了
+    if (op.k !== 'db') dbBandRef.current = null;
     s.ops.length = s.opsApplied;   // 撤銷後又有新動作，就把被撤銷的部分丟掉
     s.ops.push(op);
     s.opsApplied++;
@@ -529,7 +545,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     if (!s || s.opsApplied <= 0 || patchBusyRef.current) return;
     endHealEdit();
     s.opsApplied--;
-    dbAutoRef.current = null;
+    dbAutoRef.current = null; dbBandRef.current = null;
     smoothTargetsRef.current.clear();
     rebuild();
     syncHist();
@@ -540,7 +556,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     if (!s || s.opsApplied >= s.ops.length || patchBusyRef.current) return;
     endHealEdit();
     s.opsApplied++;
-    dbAutoRef.current = null;
+    dbAutoRef.current = null; dbBandRef.current = null;
     smoothTargetsRef.current.clear();
     rebuild();
     syncHist();
@@ -712,6 +728,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       dbRafRef.current = requestAnimationFrame(() => {
         const cur = sessionRef.current; if (!cur || dbAutoRef.current !== a) return;
         applyDodgeBurnAuto(cur.base.data, a.pre, a.an, v / 100, cur.W, cur.H);
+        dbBandRef.current = null;
         render();
         saveBeautyDraft();
       });
@@ -724,6 +741,27 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     setObserve(on);
     render();
   };
+  // 換到提亮／壓暗筆：先找臉（決定尺度）、分析好中頻層，第一筆下去就不用等
+  useEffect(() => {
+    if (tool !== 'neutral' || dbMode === 'auto' || dbBandRef.current) return;
+    let live = true;
+    (async () => {
+      const s = sessionRef.current; if (!s) return;
+      setDbBusy(true);
+      try {
+        if (!dbFacesRef.current.length) {
+          const c = document.createElement('canvas'); c.width = s.W; c.height = s.H;
+          c.getContext('2d')!.putImageData(s.base, 0, 0);
+          dbFacesRef.current = await detectFacesStill(c);
+          c.width = c.height = 0;
+        }
+        await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+        if (live && !dbBandRef.current && sessionRef.current) ensureDbBand();
+      } finally { if (live) setDbBusy(false); }
+    })();
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool, dbMode]);
   // 離開中性灰就把觀察層關掉（其他工具要看真的顏色）
   useEffect(() => { if (tool !== 'neutral' && observeRef.current.on) { observeRef.current = { on: false, mid: 0.5 }; setObserve(false); render(); } }, [tool, render]);
 
@@ -830,7 +868,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       // 中性灰筆刷：低流量、同一筆裡越刷越多；只改亮度
       const st = dbStrokeRef.current, src = strokeSrcRef.current;
       if (!st || !src) return null;
-      const r = st.dab(s.base.data, src, bx, by, R, c.dbFlow / 100, c.dbMode === 'burn' ? -1 : 1);
+      const r = st.dab(s.base.data, src, bx, by, R, c.dbFlow / 100);
       if (!r) return null;
       strokePtsRef.current.push(bx, by);
       strokeUnionRef.current = unionRect(strokeUnionRef.current, r);
@@ -954,7 +992,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       endHealEdit();
       ensureStrokeBuffers(cfg.current.tool === 'makeup' || cfg.current.tool === 'patch' || cfg.current.tool === 'clone');
       const t = cfg.current.tool;
-      if (t === 'neutral') { dbStrokeRef.current = new DBStroke(s.W, s.H); dbAutoRef.current = null; }
+      if (t === 'neutral') { const b = ensureDbBand(); dbStrokeRef.current = new DBStroke(s.W, s.H, b.band, cfg.current.dbMode === 'burn' ? -1 : 1); dbAutoRef.current = null; }
       if (t === 'wrinkle' || t === 'smooth') {
         const R = brushRadius();
         strokeLayerRef.current = {
@@ -1515,7 +1553,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     } else if (strokePtsRef.current.length) {
       const L = strokeLayerRef.current;
       if (c.tool === 'makeup') pushOp({ k: 'makeup', pts: strokePtsRef.current.slice(), r: R, strength: c.intensity / 100, rgb: hexToRgb(c.makeupColor) });
-      else if (c.tool === 'neutral') pushOp({ k: 'db', pts: strokePtsRef.current.slice(), r: R, flow: c.dbFlow / 100, sign: c.dbMode === 'burn' ? -1 : 1 });
+      else if (c.tool === 'neutral') {
+        dbStrokeRef.current?.commit();
+        pushOp({ k: 'db', pts: strokePtsRef.current.slice(), r: R, flow: c.dbFlow / 100, sign: c.dbMode === 'burn' ? -1 : 1, fw: dbBandRef.current?.fw });
+      }
       else if (L) pushOp({ k: 'stroke', kind: L.kind, pts: strokePtsRef.current.slice(), r: L.R, strength: L.strength });
     }
     strokeLayerRef.current = null;
