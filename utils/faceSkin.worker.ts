@@ -71,9 +71,9 @@ self.onmessage = async (e: MessageEvent) => {
         if (!off) { off = new OffscreenCanvas(mw, mh); offG = off.getContext('2d', { willReadFrequently: true }) as OffscreenCanvasRenderingContext2D; }
         if (off.width !== mw || off.height !== mh) { off.width = mw; off.height = mh; }
         if (offG) {
-          const { frac, box } = drawSkinMask(offG, mw, mh, faces, m.vw, m.vh, bufs);
+          const { frac, box, pts } = drawSkinMask(offG, mw, mh, faces, m.vw, m.vh, bufs);
           const bitmap = off.transferToImageBitmap();
-          (self as any).postMessage({ type: 'faces', n: faces.length, frac, box, bitmap, id: m.id, ms: detectMs, t: m.t }, [bitmap]);
+          (self as any).postMessage({ type: 'faces', n: faces.length, frac, box, pts, bitmap, id: m.id, ms: detectMs, t: m.t }, [bitmap]);
           return;
         }
       } catch { /* 改由主執行緒畫 */ }

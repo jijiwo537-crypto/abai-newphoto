@@ -83,6 +83,10 @@ export class FaceSkinMask {
   /** 所有臉的外框（比例座標 x0, y0, x1, y1，含一圈餘裕）：磨皮只在這個框裡算 */
   box: [number, number, number, number] = [0, 0, 1, 1];
   version = 0;
+  /** 瘦臉控制點（遮罩那一刻的畫面座標，每張臉 8 點：見 faceSkinDraw.SLIM_IDX） */
+  pts: number[] = [];
+  /** 影像寬高比（寬／高），瘦臉在等比例空間裡算 */
+  get aspect() { return this.vw && this.vh ? this.vw / this.vh : 4 / 3; }
   private busy = false;
   private fresh = false;
   private seq = 0;
@@ -104,7 +108,7 @@ export class FaceSkinMask {
       if (m?.type !== 'faces') return;
       this.vfStalls = 0;
       this.stat(m.ms); try { (window as any).__faceSkinStats.n = m.bitmap ? m.n : m.faces?.length; } catch { /* noop */ }
-      if (m.bitmap) this.onMask(m.bitmap, m.n, m.frac, m.box, m.t);
+      if (m.bitmap) this.onMask(m.bitmap, m.n, m.frac, m.box, m.t, m.pts);
       else this.onFaces(m.faces, m.t);
     });
   }
@@ -240,7 +244,7 @@ export class FaceSkinMask {
   private vw = 0; private vh = 0;
 
   /** 背景執行緒連遮罩都畫好了：主執行緒只要換貼圖 */
-  private onMask(bitmap: ImageBitmap, n: number, frac: number, box: [number, number, number, number], t?: number) {
+  private onMask(bitmap: ImageBitmap, n: number, frac: number, box: [number, number, number, number], t?: number, pts?: number[]) {
     this.busy = false;
     if (!n && this.faces === 0) { bitmap.close(); return; }
     if (this.holdMiss(n)) { bitmap.close(); return; }
@@ -248,7 +252,7 @@ export class FaceSkinMask {
     this.mask = bitmap; this.maskW = bitmap.width; this.maskH = bitmap.height;
     if (old !== this.canvas && typeof (old as ImageBitmap).close === 'function') (old as ImageBitmap).close();
     if (frac > 0) this.faceFrac = frac;
-    if (n) { this.box = box; this.track(box, t); }
+    if (n) { this.box = box; this.pts = pts || []; this.track(box, t); }
     this.faces = n;
     this.version++;
     this.fresh = true;
@@ -264,10 +268,10 @@ export class FaceSkinMask {
     const c = this.canvas;
     if (c.width !== mw || c.height !== mh) { c.width = mw; c.height = mh; }
     const g = c.getContext('2d', { willReadFrequently: true })!;
-    const { frac, box } = drawSkinMask(g, mw, mh, faces, vw, vh, this.bufs);
+    const { frac, box, pts } = drawSkinMask(g, mw, mh, faces, vw, vh, this.bufs);
     this.mask = c; this.maskW = mw; this.maskH = mh;
     if (frac > 0) this.faceFrac = frac;
-    if (faces.length) { this.box = box; this.track(box, t); }
+    if (faces.length) { this.box = box; this.pts = pts; this.track(box, t); }
     this.faces = faces.length;
     this.version++;
     this.fresh = true;

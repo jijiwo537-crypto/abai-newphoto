@@ -28,6 +28,11 @@ interface ViewfinderProps {
   onPointerCancel?: React.PointerEventHandler<HTMLDivElement>;
   /** 人臉磨皮（只作用在臉上的皮膚） */
   skinSmooth?: boolean;
+  /** 瘦臉（下頰、下顎往臉中心收） */
+  slimFace?: boolean;
+  /** 腮紅／口紅顏色（#rrggbb），null＝不上 */
+  blush?: string | null;
+  lipstick?: string | null;
 }
 
 const VS_SOURCE = `#version 300 es
@@ -49,6 +54,13 @@ uniform vec2 u_videoPx;        // 影像一個像素（貼圖座標）
 uniform vec4 u_skinBox;        // 臉的外框（貼圖座標 x0, y0, x1, y1，已移到預測位置）
 uniform vec4 u_maskXf;         // 動態補償：遮罩中心(xy)、預測的臉中心(zw)
 uniform float u_maskK;         // 動態補償：縮放比
+uniform bool u_skinOn;         // 磨皮
+uniform vec4 u_blush;          // 腮紅顏色 rgb、濃度 a（0＝不上）
+uniform vec4 u_lip;            // 口紅顏色 rgb、濃度 a
+uniform int u_slimN;           // 瘦臉推移點數
+uniform vec4 u_wc[10];         // 推移中心（等比例座標 x·寬高比, y）、半徑
+uniform vec2 u_wm[10];         // 推移量
+uniform float u_aspect;        // 影像寬／高
 uniform bool u_useSkin;
 uniform sampler2D u_lut;
 uniform bool u_useLut;
@@ -86,11 +98,7 @@ vec3 shoulder(vec3 x, float peak) {
 /* 人臉磨皮（頻率分離）：畫面拆成三層：最細的紋理（毛孔、皮膚質感）、中間那層（痘印、斑、膚色不均）、最底的大色塊。
    只把中間那層壓平，細紋理照留；中間那層反差大的（輪廓、髮絲）是邊緣，不壓。
    只在遮罩（挖掉眼睛、眉毛、嘴唇）× 膚色判斷 裡做。直接在主畫面這一趟算（螢幕解析度），不另外多畫一張 */
-vec3 skinSmooth(vec3 o, vec2 uv) {
-    /* 動態補償：遮罩貼在「預測的臉的位置」，同時也看「上一次量到的位置」，兩個取大的。
-       預測對了就完全跟上；預測過頭或臉突然轉向時，舊位置還蓋著，臉上不會有一塊突然沒磨到。
-       多蓋到的背景、頭髮由下面的膚色判斷擋掉 */
-    float m = max(texture(u_mask, u_maskXf.xy + (uv - u_maskXf.zw) * u_maskK).r, texture(u_mask, uv).r);
+vec3 skinSmooth(vec3 o, vec2 uv, float m) {
     if (m < 0.003) return o;
     float Y = dot(o, vec3(0.299, 0.587, 0.114));
     float cb = (o.b - Y) * 0.564 + 0.5, cr = (o.r - Y) * 0.713 + 0.5;
@@ -108,15 +116,61 @@ vec3 skinSmooth(vec3 o, vec2 uv) {
     return mix(o, smoothed, clamp(m, 0.0, 1.0) * 0.68);
 }
 
+float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+/* 上妝：
+   腮紅＝柔光混合（保留毛孔與明暗）再帶一點色彩相乘，大範圍漸層；
+   口紅＝換掉嘴唇的顏色但保留嘴唇本身的亮暗紋理（亮度比例對應），亮處加一點點光澤 */
+vec3 makeup(vec3 o, float g, float b) {
+    if (u_blush.a > 0.0 && g > 0.003) {
+        vec3 c = u_blush.rgb;
+        vec3 sl = (1.0 - 2.0 * c) * o * o + 2.0 * c * o;
+        vec3 res = mix(sl, o * c * 1.18, 0.3);
+        o = mix(o, clamp(res, 0.0, 1.0), clamp(g, 0.0, 1.0) * u_blush.a);
+    }
+    if (u_lip.a > 0.0 && b > 0.003) {
+        vec3 c = u_lip.rgb;
+        float L = luma(o), Lc = max(luma(c), 0.05);
+        vec3 target = clamp(c * (0.35 + 0.65 * L / Lc), 0.0, 1.0);
+        target += vec3(smoothstep(0.62, 0.9, L)) * 0.07;
+        o = mix(o, clamp(target, 0.0, 1.0), clamp(b, 0.0, 1.0) * u_lip.a);
+    }
+    return o;
+}
+/* 瘦臉：局部平移變形（美顏 app 常用的液化推移）。
+   每個推移點把半徑內的內容往臉中心推，越近中心推越多、到半徑邊緣平滑地降到零，所以沒有斷層；
+   眼睛鼻子嘴巴在半徑外或很邊緣，幾乎不動 */
+vec2 slimWarp(vec2 uv) {
+    vec2 p = vec2(uv.x * u_aspect, uv.y), q = p;
+    for (int i = 0; i < 10; i++) {
+        if (i >= u_slimN) break;
+        vec2 d = p - u_wc[i].xy;
+        float r2 = u_wc[i].z * u_wc[i].z, dd = dot(d, d);
+        if (dd < r2) {
+            // 平滑衰減（中心 1、半徑邊緣 0，斜率也連續）：推移量只有半徑的幾分之一，這樣不會撕裂、不會折疊
+            float w = 1.0 - dd / r2;
+            q -= w * w * u_wm[i];
+        }
+    }
+    return vec2(q.x / u_aspect, q.y);
+}
+
 void main() {
     vec2 tc = v_texCoord;
     if (u_isUserFacing) tc.x = 1.0 - tc.x;
     // 數位變焦：從中心往內裁一塊再放大（硬體變焦做不到的倍率才會用到）
     tc = (tc - 0.5) * u_crop / max(u_zoom, 0.0001) + 0.5;
 
+    if (u_slimN > 0) tc = slimWarp(tc);
     bool inSkin = u_useSkin && tc.x >= u_skinBox.x && tc.y >= u_skinBox.y && tc.x <= u_skinBox.z && tc.y <= u_skinBox.w;
     vec3 rgb = texture(u_video, tc).rgb;
-    if (inSkin) rgb = skinSmooth(rgb, tc);
+    if (inSkin) {
+        /* 動態補償：遮罩貼在「預測的臉的位置」，同時也看「上一次量到的位置」，兩個取大的。
+           預測對了就完全跟上；預測過頭或臉突然轉向時，舊位置還蓋著，不會有一塊突然沒磨到。
+           多蓋到的背景、頭髮由磨皮的膚色判斷擋掉 */
+        vec3 mk = max(texture(u_mask, u_maskXf.xy + (tc - u_maskXf.zw) * u_maskK).rgb, texture(u_mask, tc).rgb);
+        if (u_skinOn) rgb = skinSmooth(rgb, tc, mk.r);
+        rgb = makeup(rgb, mk.g, mk.b);
+    }
 
     // Manual Adjustments (linear light)
     vec3 gain = kelvinGain(u_kelvin) * exp2(u_exposure);
@@ -299,20 +353,26 @@ const GLOW_LONG = 176;
 const GLOW_RADIUS = 1.6;
 const GLOW_PASSES = 4;
 
-export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, displayBox, onClick, onPointerDown, onPointerUp, onPointerCancel, skinSmooth }: ViewfinderProps, ref) => {
+export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, displayBox, onClick, onPointerDown, onPointerUp, onPointerCancel, skinSmooth, slimFace, blush, lipstick }: ViewfinderProps, ref) => {
   /* 人臉磨皮：找臉在背景執行緒做。相機一打開、閒下來就先載好（不佔主執行緒），一按開關馬上有效果；
      關著的時候不送畫面、不算 */
   const skinOnRef = useRef(!!skinSmooth);
   skinOnRef.current = !!skinSmooth;
+  /** 任何一個臉部效果開著就要找臉（磨皮、瘦臉、腮紅、口紅） */
+  const faceOn = !!(skinSmooth || slimFace || blush || lipstick);
+  const faceOnRef = useRef(faceOn);
+  faceOnRef.current = faceOn;
+  const faceFxRef = useRef({ slim: !!slimFace, blush: blush || null, lip: lipstick || null });
+  faceFxRef.current = { slim: !!slimFace, blush: blush || null, lip: lipstick || null };
   const skinMaskRef = useRef<FaceSkinMask | null>(null);
   useEffect(() => {
     /* 只有打開磨皮才載入找臉的模型。以前相機一開就在背景先載：模型＋wasm 會吃掉上百 MB 記憶體、
        開頭幾秒佔滿 CPU，iPhone 上開關特效（要配置原尺寸暫存）就會卡一下 */
-    if (!skinSmooth) return;
+    if (!faceOn) return;
     let live = true;
     createFaceSkinMask().then(m => { if (live && m && !skinMaskRef.current) skinMaskRef.current = m; });
     return () => { live = false; };
-  }, [skinSmooth]);
+  }, [faceOn]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewSizeRef=useRef({w:0,h:0});
   const displayBoxRef=useRef(displayBox);
@@ -626,9 +686,10 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       return m.get(name)!;
     };
     /** 磨皮的大色塊層：縮小橫模糊 → 直模糊（只在臉的外框裡）。合成在主畫面那一趟。沒臉或還沒載好回 null */
-    const skinPass = (w: number, h: number): WebGLTexture | null => {
-      const mk = skinMaskRef.current, bp = skinBlurProgRef.current;
-      if (!mk || !mk.faces || !bp) return null;
+    /** 臉部遮罩貼圖（R 皮膚、G 腮紅、B 嘴唇）：有新的才重傳。沒臉回 false */
+    const ensureFaceMask = (): boolean => {
+      const mk = skinMaskRef.current;
+      if (!mk || !mk.faces) return false;
       if (!skinMaskTexRef.current) {
         const t = gl.createTexture()!;
         gl.bindTexture(gl.TEXTURE_2D, t);
@@ -641,6 +702,11 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mk.mask);
         skinMaskVerRef.current = mk.version;
       }
+      return true;
+    };
+    const skinPass = (w: number, h: number): WebGLTexture | null => {
+      const mk = skinMaskRef.current, bp = skinBlurProgRef.current;
+      if (!mk || !mk.faces || !bp) return null;
       let r = skinRtRef.current;
       // 大色塊層的模糊半徑跟著臉的大小走（約臉寬的 1.4%）。臉大（半徑大）時在 1/8 尺寸上算，像素少四倍；臉小用 1/4，免得取樣太粗而閃爍
       const sigmaPx = Math.max(4, Math.min(48, mk.faceFrac * w * 0.014));
@@ -699,30 +765,72 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source as any);
-      /* 人臉磨皮：畫面裡有臉才做；結果換掉這一格的影像貼圖，後面的曝光、濾鏡、特效照常疊上去 */
-      const skinTex = skinOnRef.current ? skinPass(sourceW, sourceH) : null;
+      /* 臉部效果（磨皮、瘦臉、腮紅、口紅）：畫面裡有臉才做，全部在主畫面這一趟裡算，後面的曝光、濾鏡、特效照常疊上去 */
+      const faceReady = faceOnRef.current && ensureFaceMask();
+      const skinTex = faceReady && skinOnRef.current ? skinPass(sourceW, sourceH) : null;
       gl.bindFramebuffer(gl.FRAMEBUFFER, anyFx ? rt!.scene!.fb : null);
       gl.viewport(0, 0, anyFx ? sourceW : W, anyFx ? sourceH : H);
       gl.useProgram(prog);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current);
       gl.uniform1i(uloc(prog, 'u_video'), 0);
-      gl.uniform1i(uloc(prog, 'u_useSkin'), skinTex ? 1 : 0);
-      if (skinTex) {
-        const bx = skinMaskRef.current!.predictedBox();
-        gl.activeTexture(gl.TEXTURE3);
-        gl.bindTexture(gl.TEXTURE_2D, skinTex);
-        gl.uniform1i(uloc(prog, 'u_coarse'), 3);
+      gl.uniform1i(uloc(prog, 'u_useSkin'), faceReady ? 1 : 0);
+      gl.uniform1i(uloc(prog, 'u_skinOn'), skinTex ? 1 : 0);
+      let slimN = 0;
+      if (faceReady) {
+        const mk = skinMaskRef.current!, ff = faceFxRef.current;
+        const now = performance.now();
+        const bx = mk.predictedBox(now);
+        if (skinTex) {
+          gl.activeTexture(gl.TEXTURE3);
+          gl.bindTexture(gl.TEXTURE_2D, skinTex);
+          gl.uniform1i(uloc(prog, 'u_coarse'), 3);
+        }
         gl.activeTexture(gl.TEXTURE2);
         gl.bindTexture(gl.TEXTURE_2D, skinMaskTexRef.current);
         gl.uniform1i(uloc(prog, 'u_mask'), 2);
         gl.uniform2f(uloc(prog, 'u_videoPx'), 1 / sourceW, 1 / sourceH);
-        const xf = skinMaskRef.current!.maskXform();
-        gl.uniform4f(uloc(prog, 'u_skinBox'), bx[0], bx[1], bx[2], bx[3]);
+        const xf = mk.maskXform(now);
         gl.uniform4f(uloc(prog, 'u_maskXf'), xf[0], xf[1], xf[2], xf[3]);
         gl.uniform1f(uloc(prog, 'u_maskK'), xf[4]);
+        const hex = (c: string | null, a: number) => {
+          if (!c) return [0, 0, 0, 0];
+          const n = parseInt(c.slice(1), 16);
+          return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255, a];
+        };
+        const bl = hex(ff.blush, 0.62), lp = hex(ff.lip, 0.78);
+        gl.uniform4f(uloc(prog, 'u_blush'), bl[0], bl[1], bl[2], bl[3]);
+        gl.uniform4f(uloc(prog, 'u_lip'), lp[0], lp[1], lp[2], lp[3]);
+        /* 瘦臉推移點：控制點是遮罩那一刻的位置，先套動態補償移到「臉現在的位置」，再換成等比例座標 */
+        let ex = bx;
+        if (ff.slim && mk.pts.length) {
+          const A = sourceW / sourceH, wc: number[] = [], wm: number[] = [];
+          const P = (f: number, i: number): [number, number] => {
+            const x = xf[2] + (mk.pts[f * 16 + i * 2] - xf[0]) / xf[4], y = xf[3] + (mk.pts[f * 16 + i * 2 + 1] - xf[1]) / xf[4];
+            return [x * A, y];
+          };
+          for (let f = 0; f * 16 < mk.pts.length && f < 2; f++) {
+            const N = P(f, 0), L = P(f, 6), Rr = P(f, 7);
+            const fw = Math.hypot(L[0] - Rr[0], L[1] - Rr[1]);
+            // [控制點序號, 推移量（臉寬的比例）, 半徑]：下頰、下顎角往鼻尖方向收，下巴微微往上收
+            for (const [i, amt, rad] of [[1, 0.05, 0.32], [2, 0.065, 0.30], [3, 0.05, 0.32], [4, 0.065, 0.30], [5, 0.03, 0.26]]) {
+              const c = P(f, i), dx = N[0] - c[0], dy = N[1] - c[1], dl = Math.hypot(dx, dy) || 1;
+              wc.push(c[0], c[1], rad * fw, 0); wm.push(dx / dl * amt * fw, dy / dl * amt * fw);
+              slimN++;
+            }
+          }
+          if (slimN) {
+            gl.uniform4fv(uloc(prog, 'u_wc[0]'), new Float32Array(wc));
+            gl.uniform2fv(uloc(prog, 'u_wm[0]'), new Float32Array(wm));
+            gl.uniform1f(uloc(prog, 'u_aspect'), A);
+            // 變形會把外框外一點點的內容拉進來：外框放寬
+            const g = 0.06; ex = [Math.max(0, bx[0] - g), Math.max(0, bx[1] - g), Math.min(1, bx[2] + g), Math.min(1, bx[3] + g)];
+          }
+        }
+        gl.uniform4f(uloc(prog, 'u_skinBox'), ex[0], ex[1], ex[2], ex[3]);
         gl.activeTexture(gl.TEXTURE0);
       }
+      gl.uniform1i(uloc(prog, 'u_slimN'), slimN);
 
       const useLut = !!lutTexRef.current;
       gl.uniform1i(uloc(prog, 'u_useLut'), useLut ? 1 : 0);
@@ -864,11 +972,12 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         const pr = paramRef.current;
         const state = `${pr.exposure}|${pr.kelvin}|${pr.isUserFacing}|${zoomRef.current}|${JSON.stringify(fxRef.current)}`;
         /* 磨皮開著：每一格新畫面找一次臉（在畫之前，遮罩跟這一格對得上） */
-        const mk = skinOnRef.current ? skinMaskRef.current : null;
+        const mk = faceOnRef.current ? skinMaskRef.current : null;
         // 遮罩回來不另外重畫：下一格影像畫的時候自然會用到（不然每秒畫兩倍的次數）
         let maskChanged = false;
         if (mk && (!rvfc || newFrame)) maskChanged = mk.update(video, performance.now()) && !rvfc;
-        const skinState = skinOnRef.current ? `|skin${mk ? mk.faces : 'x'}` : '';
+        const ff = faceFxRef.current;
+        const skinState = faceOnRef.current ? `|skin${skinOnRef.current ? 1 : 0}${ff.slim ? 1 : 0}${ff.blush}${ff.lip}${mk ? mk.faces : 'x'}` : '';
         if (!rvfc || newFrame || maskChanged || resized || state + skinState !== lastState || lastLut !== lutTexRef.current) {
           newFrame = false; lastState = state + skinState; lastLut = lutTexRef.current;
           draw(video, gl.canvas.width, gl.canvas.height);
