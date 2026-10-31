@@ -1,6 +1,7 @@
 
 import { waveWarp, revealPathD } from '../utils/waveWarp';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
+import { isMobileDevice, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
 import { reframeBasePhoto } from '../utils/reframeBasePhoto';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskSampleReach,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
 import {sliderHeld,SLIDER_RELEASE_EVENT} from '../utils/sliderTouch';
@@ -180,7 +181,8 @@ const DEFAULT_MASK_SCALE = 0.5;
 /** 單邊上限（Safari Mobile 安全值） */
 const MAX_FINAL_DIM = 4096;
 /** 導出畫布的總像素上限。真正把分頁殺掉的是「面積」不是「邊長」 */
-const MAX_EXPORT_PIXELS = 20_000_000;
+/* 手機（iPhone 單張畫布上限約 1677 萬像素）壓在 1600 萬，超過畫布是空的、記憶體也會爆而閃退；電腦維持 2000 萬 */
+const MAX_EXPORT_PIXELS = isMobileDevice() ? MOBILE_MAX_PIXELS : 20_000_000;
 /* 匯出的「底線解析度」（長邊）。
    以前成品最大就是原圖那麼大（finalScale 封頂 1.0）—— 照片小的時候，
    畫在上面的圖案、圖形、文字、連線、紋理就只分到那幾個像素，邊緣自然糊。

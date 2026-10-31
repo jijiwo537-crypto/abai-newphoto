@@ -1,4 +1,5 @@
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
+import { safeSize } from '../utils/exportLimits';
 import { addExport } from '../utils/exportHistory';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { saveDraft } from '../utils/toolDraft';
@@ -404,7 +405,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
   /** 全解析度跑一張出來（儲存與記錄用的是同一條路） */
   const renderResult = useCallback(async (): Promise<string | null> => {
     if (!srcImg || !luts) return null;
-    const c = renderAt(srcImg, srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height);
+    const full = safeSize(srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height);
+    const c = renderAt(srcImg, full.w, full.h);
     return c ? canvasToUrl(c) : null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcImg, luts, picked, strength, skin]);
@@ -433,7 +435,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       bake: (src: string) => new Promise<string | null>(res => {
         const im = new Image();
         if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
-        im.onload = () => { const c = render(im, im.naturalWidth, im.naturalHeight); if (!c) { res(null); return; } canvasToUrl(c).then(res, () => res(null)); };
+        im.onload = () => { const z = safeSize(im.naturalWidth, im.naturalHeight); const c = render(im, z.w, z.h); if (!c) { res(null); return; } canvasToUrl(c).then(res, () => res(null)); };
         im.onerror = () => res(null);
         im.src = src;
       }),
@@ -510,7 +512,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
       Math.max(0, 450 - (performance.now() - savingStarted)),
     );
     setSaving(true);
-    const w = srcImg.naturalWidth || srcImg.width, h = srcImg.naturalHeight || srcImg.height;
+    // 手機上成品面積有上限（見 utils/exportLimits），48MP 照片才不會閃退
+    const { w, h } = safeSize(srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height);
     // GPU 一次畫完，全解析度也是瞬間 —— 按下去就直接進導出畫面，不用等
     const pw = useWeight(skin / 100);
     const gpu = LutRenderer.renderOnce(

@@ -20,6 +20,7 @@ import {
 } from '../utils/beauty/engine';
 import { inpaintImage, inpaintCrop, cropFor } from '../utils/beauty/inpaint';
 import { findHealSource, fallbackHealSource, sideHealSource, applyHeal, strokeContours, healField, fieldAlpha, fieldBounds, fieldMaskRGBA, type HealMode, type HealRect, type HealField } from '../utils/beauty/heal';
+import { safeScale } from '../utils/exportLimits';
 import { StrokeLayer, STROKE_INNER, wrinkleStrength, smoothStrength, smoothInvalidate, type StrokeKind } from '../utils/beauty/strokeFilter';
 
 // 互動時的運算解析度。全解析度即時運算會爆手機記憶體，所以要縮，
@@ -179,7 +180,7 @@ export async function renderBeautyOn(src: string, ops: Op[], count: number, sess
     im.src = src;
   });
   if (!img) return null;
-  const sc = Math.min(1, EXPORT_MAX / Math.max(img.width, img.height));
+  const sc = Math.min(1, EXPORT_MAX / Math.max(img.width, img.height)) * safeScale(img.width, img.height);
   const FW = Math.max(2, Math.round(img.width * sc));
   const FH = Math.max(2, Math.round(img.height * sc));
   const c = document.createElement('canvas');
@@ -1528,7 +1529,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     // 讀不到原圖就退回工作解析度，至少不會失敗
     if (!img) return canvasToUrl(cv);
 
-    const sc = Math.min(1, EXPORT_MAX / Math.max(img.width, img.height));
+    // 手機上成品面積有上限（見 utils/exportLimits）：48MP 照片原尺寸重播會讓記憶體爆掉閃退
+    const sc = Math.min(1, EXPORT_MAX / Math.max(img.width, img.height)) * safeScale(img.width, img.height);
     const FW = Math.max(2, Math.round(img.width * sc));
     const FH = Math.max(2, Math.round(img.height * sc));
     if (FW <= s.W) return canvasToUrl(cv);   // 原圖本來就不大

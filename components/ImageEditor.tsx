@@ -7,6 +7,7 @@ import type { StudioView, StudioViewApi } from './studioAlign';
 import { ColorMatchStudio } from './ColorMatchStudio';
 import { TemplatePanel } from './TemplatePanel';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
+import { safeScale } from '../utils/exportLimits';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
 import { isIdentityCurve, boundedCurvePath } from '../utils/editorCurveGeometry';
@@ -6845,9 +6846,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const h0 = isGeoIdentity(g) ? oh : (geoSource as HTMLCanvasElement).height;
     /* iOS Safari 單張畫布上限約 1677 萬像素，超過時畫布是空的、記憶體也會爆而重新載入
        （48MP 照片疊特效存檔時）。只有超過上限的照片才等比縮到上限內，其他照片不變。 */
-    const IOS_MAX_PX = 16_000_000;
-    const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    const capK = isIOS && w0 * h0 > IOS_MAX_PX ? Math.sqrt(IOS_MAX_PX / (w0 * h0)) : 1;
+    const capK = safeScale(w0, h0);   // 手機（iPhone、Android）都套，見 utils/exportLimits
     const w = Math.max(1, Math.floor(w0 * capK)), h = Math.max(1, Math.floor(h0 * capK));
     const c = document.createElement('canvas');
     c.width = w; c.height = h;

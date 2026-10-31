@@ -1,4 +1,5 @@
 import {LiveRange} from './LiveRange';
+import { safeImage } from '../utils/exportLimits';
 import {TransformWrapper,TransformComponent} from 'react-zoom-pan-pinch';
 import React,{useState,useRef,useEffect,useLayoutEffect,useCallback} from 'react';
 import {ASCII_DEFAULTS} from '../utils/asciiRenderer';
@@ -84,8 +85,10 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  useEffect(()=>{
   setReady(false);if(!src||!asciiCanvas.current)return;
   let cancelled=false;const im=new Image();
-  im.onload=()=>{if(cancelled)return;try{
-   image.current=im;invalidateTracking();setDimensions({w:im.naturalWidth,h:im.naturalHeight});
+  im.onload=async()=>{if(cancelled)return;
+   // 手機上照片太大先縮到安全尺寸（見 utils/exportLimits）：畫布超過上限是空的、存檔會閃退
+   const im2=await safeImage(im);if(cancelled)return;try{
+   const im=im2;image.current=im;invalidateTracking();setDimensions({w:im.naturalWidth,h:im.naturalHeight});
    for(const c of [asciiCanvas.current!,trackingCanvas.current!]){c.width=im.naturalWidth;c.height=im.naturalHeight;}setReady(true);
   }catch(e){setError(String(e));}};
   im.onerror=()=>{if(!cancelled)setError('照片無法讀取，請重新選擇。');};im.src=src;
