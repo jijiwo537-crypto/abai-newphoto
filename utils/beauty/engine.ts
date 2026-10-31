@@ -29,10 +29,10 @@ export const LIQUIFY_SCALE = 4;
 /** 筆刷大小以「長邊 1024px 時的影像像素半徑」為基準，換算後與解析度無關 */
 export const BRUSH_REF_WIDTH = 1024;
 export const DEFAULT_BRUSH: Record<string, number> = {
-  blemish: 14, wrinkle: 30, smooth: 60, liquify: 150, makeup: 20, patch: 26, clone: 60,
+  blemish: 14, wrinkle: 30, smooth: 60, neutral: 50, liquify: 150, makeup: 20, patch: 26, clone: 60,
 };
 export const BRUSH_RANGE: Record<string, [number, number]> = {
-  blemish: [5, 55], wrinkle: [10, 90], smooth: [10, 160], liquify: [40, 260], makeup: [8, 90], patch: [6, 120], clone: [6, 120],
+  blemish: [5, 55], wrinkle: [10, 90], smooth: [10, 160], neutral: [8, 160], liquify: [40, 260], makeup: [8, 90], patch: [6, 120], clone: [6, 120],
 };
 
 /**

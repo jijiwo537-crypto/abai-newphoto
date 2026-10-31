@@ -20,6 +20,8 @@ import {
 } from '../utils/beauty/engine';
 import { inpaintImage, inpaintCrop, cropFor } from '../utils/beauty/inpaint';
 import { findHealSource, fallbackHealSource, sideHealSource, applyHeal, strokeContours, healField, fieldAlpha, fieldBounds, fieldMaskRGBA, type HealMode, type HealRect, type HealField } from '../utils/beauty/heal';
+import { analyzeDodgeBurn, applyDodgeBurnAuto, DBStroke, observeView, skinMidLuma, type DBAnalysis } from '../utils/beauty/dodgeBurn';
+import { detectFacesStill } from '../utils/faceSkin';
 import { StrokeLayer, STROKE_INNER, wrinkleStrength, smoothStrength, smoothInvalidate, type StrokeKind } from '../utils/beauty/strokeFilter';
 
 // 互動時的運算解析度。全解析度即時運算會爆手機記憶體，所以要縮，
@@ -52,13 +54,15 @@ const VIEW_K_MIN = 0.5;
 /** 鬆手後筆刷圈停留的時間 */
 const RING_FLASH_MS = 217;
 
-type BeautyTool = 'blemish' | 'clone' | 'patch' | 'wrinkle' | 'smooth' | 'liquify' | 'makeup';
+type BeautyTool = 'blemish' | 'clone' | 'patch' | 'wrinkle' | 'smooth' | 'neutral' | 'liquify' | 'makeup';
 
 interface ToolDef { id: BeautyTool; label: string; icon: string; }
 const BEAUTY_TOOLS: ToolDef[] = [
   { id: 'blemish', label: '去痘', icon: 'healing' },
   { id: 'wrinkle', label: '去皺', icon: 'waves' },
   { id: 'smooth',  label: '磨皮', icon: 'skin_smooth' },
+  /* 中性灰（加深減淡）：一鍵自動修平皮膚的明暗不均，或用提亮／壓暗筆手動精修；不模糊、毛孔完整保留 */
+  { id: 'neutral', label: '中性灰', icon: 'neutral_gray' },
   { id: 'liquify', label: '液化', icon: 'gesture' },
   { id: 'makeup',  label: '修容', icon: 'brush' },
   /* 修補（仿製）：塗抹要修的地方，自動挑一塊最像的來源原封不動複製過來；
@@ -88,6 +92,10 @@ type Op =
   | { k: 'stroke'; kind: StrokeKind; pts: number[]; r: number; strength: number }
   | { k: 'makeup'; pts: number[]; r: number; strength: number; rgb: [number, number, number] }
   | { k: 'liquify'; pts: number[]; r: number; force: number; mode: LiquifyMode }
+  /** 一鍵中性灰：臉的點（比例座標，重播時任何解析度都對得上）＋強度 0～1 */
+  | { k: 'dbauto'; faces: number[][]; strength: number }
+  /** 中性灰筆刷：sign＝+1 提亮、−1 壓暗；flow＝每一下的量 */
+  | { k: 'db'; pts: number[]; r: number; flow: number; sign: number }
   /** 刪除：筆觸路徑（工作解析度）＋亂數種子；重播時同一組輸入一定算出同一個結果 */
   | { k: 'patch'; pts: number[]; r: number; seed: number }
   /** 修補：筆觸路徑＋來源位移（目標點拿 p + (dx, dy) 的像素）＋修復／仿製 */
@@ -237,6 +245,12 @@ function replayOps(
       const rect = f && fieldAlpha(alpha, W, H, f, op.hard ?? CLONE_HARDNESS);
       if (rect) applyHeal(base.data, base.data, W, H, alpha, rect, op.dx * k, op.dy * k, op.mode || 'clone', op.opacity ?? 1,
         op.sc ? { s: op.sc.s, x: op.sc.x * k, y: op.sc.y * k } : undefined);
+    } else if (op.k === 'dbauto') {
+      const an = analyzeDodgeBurn(base.data, W, H, op.faces);
+      applyDodgeBurnAuto(base.data, base.data, an, op.strength, W, H);
+    } else if (op.k === 'db') {
+      const src = base.data.slice(), st = new DBStroke(W, H);
+      for (let j = 0; j < op.pts.length; j += 2) st.dab(base.data, src, op.pts[j] * k, op.pts[j + 1] * k, op.r * k, op.flow, op.sign);
     } else if (op.k === 'liquify') {
       for (let j = 0; j < op.pts.length; j += 4) {
         liquifyDab(field, op.pts[j] * k, op.pts[j + 1] * k, op.pts[j + 2] * k, op.pts[j + 3] * k,
@@ -307,8 +321,21 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   /* 修補只有一種（修復）：搬來源的紋理、明暗顏色跟著周圍走。羽化＝邊緣多柔；透明度＝蓋上去多少 */
   const [healFeather, setHealFeather] = useState(45);
   const [healOpacity, setHealOpacity] = useState(100);
-  const cfg = useRef({ tool, brush, force, lqMode, makeupColor, intensity, healFeather, healOpacity });
-  cfg.current = { tool, brush, force, lqMode, makeupColor, intensity, healFeather, healOpacity };
+  /* 中性灰：模式（一鍵自動／提亮筆／壓暗筆）、自動的強度、筆刷流量、觀察層 */
+  const [dbMode, setDbMode] = useState<'auto' | 'dodge' | 'burn'>('auto');
+  const [dbStrength, setDbStrength] = useState(60);
+  const [dbFlow, setDbFlow] = useState(30);
+  const [observe, setObserve] = useState(false);
+  const observeRef = useRef<{ on: boolean; mid: number }>({ on: false, mid: 0.5 });
+  const [dbBusy, setDbBusy] = useState(false);
+  const [dbNote, setDbNote] = useState('');
+  /** 目前可以用強度滑桿調整的那一次一鍵中性灰：套用前的像素＋分析結果＋它在操作記錄裡的那一筆 */
+  const dbAutoRef = useRef<{ pre: Uint8ClampedArray; an: DBAnalysis; op: Op } | null>(null);
+  const dbStrokeRef = useRef<DBStroke | null>(null);
+  /** 最近一次找到的臉（觀察層用來決定中心亮度） */
+  const dbFacesRef = useRef<number[][]>([]);
+  const cfg = useRef({ tool, brush, force, lqMode, makeupColor, intensity, healFeather, healOpacity, dbMode, dbFlow });
+  cfg.current = { tool, brush, force, lqMode, makeupColor, intensity, healFeather, healOpacity, dbMode, dbFlow };
 
   // 去皺與修容都以「整筆」為單位：下筆前存一份像素，結束時才記一次歷史。
   // 這樣每一個筆刷點就不必各自做兩次 ImageData 快照，快速拖動才不會卡。
@@ -392,13 +419,19 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     const w = x1 - x0, h = y1 - y0;
     if (w < 1 || h < 1) return;
 
-    if (s.lq.max === 0) { ctx.putImageData(s.base, 0, 0, x0, y0, w, h); return; }
+    const ob = observeRef.current;
+    if (s.lq.max === 0 && !ob.on) { ctx.putImageData(s.base, 0, 0, x0, y0, w, h); return; }
     let bufImg = warpBufRef.current;
     if (!bufImg || bufImg.width < w || bufImg.height < h) {
       bufImg = ctx.createImageData(Math.max(w,bufImg?.width||0), Math.max(h,bufImg?.height||0));
       warpBufRef.current = bufImg;
     }
-    warpRegion(s.base, s.W, s.H, s.lq, bufImg, { x: x0, y: y0, w, h });
+    if (s.lq.max === 0) {
+      const d = bufImg.data, src = s.base.data, bw = bufImg.width;
+      for (let y = 0; y < h; y++) d.set(src.subarray(((y0 + y) * s.W + x0) * 4, ((y0 + y) * s.W + x0 + w) * 4), y * bw * 4);
+    } else warpRegion(s.base, s.W, s.H, s.lq, bufImg, { x: x0, y: y0, w, h });
+    /* 觀察層：只是看的（黑白＋高對比，明暗不均一目了然），不改像素 */
+    if (ob.on) observeView(bufImg.data, bufImg.data, bufImg.width * h, ob.mid);
     ctx.putImageData(bufImg, x0, y0, 0, 0, w, h);
   }, []);
 
@@ -478,11 +511,13 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     const s = sessionRef.current!;
     // 像素被改到的地方，磨皮先算好的目標層就不能再用了
     if (op.k === 'heal') smoothInvalidate(smoothTargetsRef.current, s.W, s.H, healRect(op.x, op.y, op.r));
+    else if (op.k === 'dbauto') smoothTargetsRef.current.clear();
     else if (op.k !== 'liquify' && op.pts.length) {
       let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
       for (let j = 0; j < op.pts.length; j += 2) { x0 = Math.min(x0, op.pts[j]); x1 = Math.max(x1, op.pts[j]); y0 = Math.min(y0, op.pts[j + 1]); y1 = Math.max(y1, op.pts[j + 1]); }
       smoothInvalidate(smoothTargetsRef.current, s.W, s.H, { x: Math.floor(x0 - op.r - 2), y: Math.floor(y0 - op.r - 2), w: Math.ceil(x1 - x0 + op.r * 2 + 4), h: Math.ceil(y1 - y0 + op.r * 2 + 4) });
     }
+    if (op.k !== 'dbauto') dbAutoRef.current = null;   // 之後有別的動作，前一次一鍵中性灰的強度就定下來了
     s.ops.length = s.opsApplied;   // 撤銷後又有新動作，就把被撤銷的部分丟掉
     s.ops.push(op);
     s.opsApplied++;
@@ -494,6 +529,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     if (!s || s.opsApplied <= 0 || patchBusyRef.current) return;
     endHealEdit();
     s.opsApplied--;
+    dbAutoRef.current = null;
     smoothTargetsRef.current.clear();
     rebuild();
     syncHist();
@@ -504,6 +540,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     if (!s || s.opsApplied >= s.ops.length || patchBusyRef.current) return;
     endHealEdit();
     s.opsApplied++;
+    dbAutoRef.current = null;
     smoothTargetsRef.current.clear();
     rebuild();
     syncHist();
@@ -636,6 +673,60 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   }, [saveBeautyDraft]);
   useEffect(() => { if (tool !== 'clone') endHealEdit(); }, [tool, endHealEdit]);
   /** 點工具列的「修補」：已經在修補裡、手上有一處的話，把它定下來，可以開始修下一處 */
+  /* ── 一鍵中性灰 ──
+     找臉（478 點）→ 頻帶分析（只算一次）→ 依強度套用。之後拖強度滑桿只重套最後一步（幾十毫秒），
+     而且永遠從「套用前」的像素重算，拖來拖去不會越修越多。 */
+  const runDbAuto = useCallback(async (strength: number) => {
+    const s = sessionRef.current;
+    if (!s || dbBusy) return;
+    setDbBusy(true); setDbNote('');
+    try {
+      const c = document.createElement('canvas'); c.width = s.W; c.height = s.H;
+      c.getContext('2d')!.putImageData(s.base, 0, 0);
+      const faces = await detectFacesStill(c);
+      dbFacesRef.current = faces;
+      c.width = c.height = 0;
+      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+      const cur = sessionRef.current;
+      if (!cur) return;
+      const pre = cur.base.data.slice();
+      const an = analyzeDodgeBurn(pre, cur.W, cur.H, faces);
+      applyDodgeBurnAuto(cur.base.data, pre, an, strength / 100, cur.W, cur.H);
+      const op = { k: 'dbauto', faces, strength: strength / 100 } as Op;
+      pushOp(op);
+      dbAutoRef.current = { pre, an, op };
+      if (observeRef.current.on) observeRef.current.mid = skinMidLuma(cur.base.data, cur.W, cur.H, faces);
+      render();
+      setDbNote(faces.length ? '' : '沒有找到臉：只修膚色的地方，力道較保守');
+    } finally { setDbBusy(false); }
+  }, [dbBusy, pushOp, render]);
+  const dbRafRef = useRef(0);
+  const setDbStrengthLive = (v: number) => {
+    setDbStrength(v);
+    const s = sessionRef.current, a = dbAutoRef.current;
+    if (!s) return;
+    // 剛剛那一次一鍵中性灰還是最後一步：直接改它的強度（重套最後一步）；不然就照這個強度再做一次
+    if (a && s.opsApplied > 0 && s.ops[s.opsApplied - 1] === a.op) {
+      (a.op as any).strength = v / 100;
+      cancelAnimationFrame(dbRafRef.current);
+      dbRafRef.current = requestAnimationFrame(() => {
+        const cur = sessionRef.current; if (!cur || dbAutoRef.current !== a) return;
+        applyDodgeBurnAuto(cur.base.data, a.pre, a.an, v / 100, cur.W, cur.H);
+        render();
+        saveBeautyDraft();
+      });
+    }
+  };
+  const toggleObserve = () => {
+    const s = sessionRef.current; if (!s) return;
+    const on = !observeRef.current.on;
+    observeRef.current = { on, mid: on ? skinMidLuma(s.base.data, s.W, s.H, dbFacesRef.current) : 0.5 };
+    setObserve(on);
+    render();
+  };
+  // 離開中性灰就把觀察層關掉（其他工具要看真的顏色）
+  useEffect(() => { if (tool !== 'neutral' && observeRef.current.on) { observeRef.current = { on: false, mid: 0.5 }; setObserve(false); render(); } }, [tool, render]);
+
   const pickTool = (id: BeautyTool) => {
     if (id === 'clone' && tool === 'clone' && healRef.current) { endHealEdit(); return; }
     setTool(id);
@@ -735,6 +826,17 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       return r;
     }
 
+    if (c.tool === 'neutral') {
+      // 中性灰筆刷：低流量、同一筆裡越刷越多；只改亮度
+      const st = dbStrokeRef.current, src = strokeSrcRef.current;
+      if (!st || !src) return null;
+      const r = st.dab(s.base.data, src, bx, by, R, c.dbFlow / 100, c.dbMode === 'burn' ? -1 : 1);
+      if (!r) return null;
+      strokePtsRef.current.push(bx, by);
+      strokeUnionRef.current = unionRect(strokeUnionRef.current, r);
+      return r;
+    }
+
     // 去皺、磨皮：只畫覆蓋遮罩，混合成目標層（每一點的成本跟筆刷大小無關，也不會越塗越重）
     const L = strokeLayerRef.current;
     if (!L) return null;
@@ -769,13 +871,14 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       s.lq.data.set(lqBeforeRef.current);
       recomputeLiquifyMax(s.lq);
       render();
-    } else if ((c.tool === 'wrinkle' || c.tool === 'smooth' || c.tool === 'makeup' || c.tool === 'patch' || c.tool === 'clone') && strokeUnionRef.current && strokeSrcRef.current) {
+    } else if ((c.tool === 'wrinkle' || c.tool === 'smooth' || c.tool === 'neutral' || c.tool === 'makeup' || c.tool === 'patch' || c.tool === 'clone') && strokeUnionRef.current && strokeSrcRef.current) {
       const r = strokeUnionRef.current;
       restore(r, snapFrom(strokeSrcRef.current, r));
       renderPixelRect(r);
     }
     lqBeforeRef.current = null;
     strokeLayerRef.current = null;
+    dbStrokeRef.current = null;
     strokeUnionRef.current = null;
     strokePtsRef.current = [];
     if (ringTimerRef.current) { clearTimeout(ringTimerRef.current); ringTimerRef.current = null; }
@@ -818,6 +921,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     }
     if (gestureLockRef.current) return;
     if (!onPhoto) return;   // 黑色區域：只等看是不是雙指，不下筆
+    if (cfg.current.tool === 'neutral' && cfg.current.dbMode === 'auto') return;   // 一鍵模式不下筆（雙指縮放照常）
 
     // 指標可能已經失效（手勢中斷、合成事件），失敗不該中斷整個筆觸
     try { (e.currentTarget as HTMLCanvasElement).setPointerCapture?.(e.pointerId); } catch (err) { /* noop */ }
@@ -850,6 +954,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       endHealEdit();
       ensureStrokeBuffers(cfg.current.tool === 'makeup' || cfg.current.tool === 'patch' || cfg.current.tool === 'clone');
       const t = cfg.current.tool;
+      if (t === 'neutral') { dbStrokeRef.current = new DBStroke(s.W, s.H); dbAutoRef.current = null; }
       if (t === 'wrinkle' || t === 'smooth') {
         const R = brushRadius();
         strokeLayerRef.current = {
@@ -1410,9 +1515,11 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     } else if (strokePtsRef.current.length) {
       const L = strokeLayerRef.current;
       if (c.tool === 'makeup') pushOp({ k: 'makeup', pts: strokePtsRef.current.slice(), r: R, strength: c.intensity / 100, rgb: hexToRgb(c.makeupColor) });
+      else if (c.tool === 'neutral') pushOp({ k: 'db', pts: strokePtsRef.current.slice(), r: R, flow: c.dbFlow / 100, sign: c.dbMode === 'burn' ? -1 : 1 });
       else if (L) pushOp({ k: 'stroke', kind: L.kind, pts: strokePtsRef.current.slice(), r: L.R, strength: L.strength });
     }
     strokeLayerRef.current = null;
+    dbStrokeRef.current = null;
 
     strokeUnionRef.current = null;
     strokePtsRef.current = [];
@@ -1934,6 +2041,29 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             ))}
           </div>
         )}
+        {/* 中性灰：一鍵／提亮筆／壓暗筆／觀察層，浮在預覽下緣（跟液化的模式同一個位置） */}
+        {tool === 'neutral' && (
+          <div data-beauty-db-modes className="absolute left-3 right-[60px] bottom-[14px] z-20 flex items-center gap-2 overflow-x-auto no-scrollbar py-1 px-0.5">
+            <button data-db-auto onClick={() => { setDbMode('auto'); runDbAuto(dbStrength); }} disabled={dbBusy}
+              className={`h-7 px-3 rounded-full text-[11px] shrink-0 transition-colors active:scale-95 flex items-center gap-1.5 ${dbMode === 'auto' ? 'bg-white text-black font-bold' : 'bg-black/45 backdrop-blur-sm text-white/80'}`}>
+              {dbBusy && <span className="w-3 h-3 rounded-full border-[1.5px] border-black/20 border-t-black/70 animate-spin" />}
+              一鍵中性灰
+            </button>
+            {([['dodge', '提亮筆'], ['burn', '壓暗筆']] as const).map(([m, label]) => (
+              <button key={m} data-db-mode={m} onClick={() => setDbMode(m)}
+                className={`h-7 px-3 rounded-full text-[11px] shrink-0 transition-colors active:scale-95 ${dbMode === m ? 'bg-white text-black font-bold' : 'bg-black/45 backdrop-blur-sm text-white/80'}`}>
+                {label}
+              </button>
+            ))}
+            <button data-db-observe onClick={toggleObserve} aria-pressed={observe}
+              className={`h-7 px-3 rounded-full text-[11px] shrink-0 transition-colors active:scale-95 ${observe ? 'bg-white text-black font-bold' : 'bg-black/45 backdrop-blur-sm text-white/80'}`}>
+              觀察
+            </button>
+          </div>
+        )}
+        {tool === 'neutral' && dbNote && (
+          <div className="absolute left-1/2 -translate-x-1/2 top-3 z-20 px-3 py-1.5 rounded-full bg-black/70 text-[11px] text-white/90 whitespace-nowrap pointer-events-none">{dbNote}</div>
+        )}
         {/* 嵌在編輯器裡：液化的五種模式也浮在預覽下緣（跟修容的色票同一個位置），不跟工具擠在同一排 */}
         {embedded && tool === 'liquify' && (
           <div data-beauty-lq-modes className="absolute left-3 right-[60px] bottom-[14px] z-20 flex items-center gap-2 overflow-x-auto no-scrollbar py-1 px-0.5"
@@ -1978,6 +2108,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           : tool === 'clone' ? [['羽化', healFeather, 0, 100, setHealFeatherLive], ['透明度', healOpacity, 0, 100, setHealOpacityLive]]
           : tool === 'wrinkle' ? [['筆刷', brush.wrinkle, BRUSH_RANGE.wrinkle[0], BRUSH_RANGE.wrinkle[1], v => setBrush(b => ({ ...b, wrinkle: v }))], ['力度', force, 10, 100, setForce]]
           : tool === 'smooth' ? [['筆刷', brush.smooth, BRUSH_RANGE.smooth[0], BRUSH_RANGE.smooth[1], v => setBrush(b => ({ ...b, smooth: v }))], ['力度', force, 10, 100, setForce]]
+          : tool === 'neutral' ? (dbMode === 'auto' ? [['強度', dbStrength, 0, 100, setDbStrengthLive]]
+              : [['筆刷', brush.neutral, BRUSH_RANGE.neutral[0], BRUSH_RANGE.neutral[1], v => setBrush(b => ({ ...b, neutral: v }))], ['流量', dbFlow, 5, 100, setDbFlow]])
           : tool === 'liquify' ? [['筆刷', brush.liquify, BRUSH_RANGE.liquify[0], BRUSH_RANGE.liquify[1], v => setBrush(b => ({ ...b, liquify: v }))], ['力度', force, 10, 100, setForce]]
           : [['筆刷', brush.makeup, BRUSH_RANGE.makeup[0], BRUSH_RANGE.makeup[1], v => setBrush(b => ({ ...b, makeup: v }))], ['濃度', Math.round(intensity * 2), 0, 100, v => setIntensity(v / 2)]];
         const two = sliders.length > 1;
@@ -2103,6 +2235,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             {sliderRow('力度', force, 10, 100, setForce)}
           </>
         )}
+        {tool === 'neutral' && (dbMode === 'auto'
+          ? sliderRow('強度', dbStrength, 0, 100, setDbStrengthLive)
+          : <>
+            {sliderRow('筆刷', brush.neutral, BRUSH_RANGE.neutral[0], BRUSH_RANGE.neutral[1], (v) => setBrush(b => ({ ...b, neutral: v })))}
+            {sliderRow('流量', dbFlow, 5, 100, setDbFlow)}
+          </>)}
         {tool === 'liquify' && (
           <>
             {sliderRow('筆刷', brush.liquify, BRUSH_RANGE.liquify[0], BRUSH_RANGE.liquify[1], (v) => setBrush(b => ({ ...b, liquify: v })))}

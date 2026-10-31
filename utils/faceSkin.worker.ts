@@ -39,6 +39,22 @@ self.onmessage = async (e: MessageEvent) => {
     }
     return;
   }
+  /* 靜態照片找臉（人像頁的中性灰用）：回傳每張臉完整的 478 點 */
+  if (m.type === 'still') {
+    let faces: number[][] = [];
+    try {
+      if (lm) {
+        const t = lastT + 1000; lastT = t;
+        // 連送兩次：VIDEO 模式第一次是偵測、第二次是用追蹤再精修一次，點更準
+        lm.detectForVideo(m.bitmap, t);
+        const res = lm.detectForVideo(m.bitmap, t + 33); lastT = t + 33;
+        faces = (res.faceLandmarks || []).map(f => { const a = new Array(f.length * 2); f.forEach((p, i) => { a[i * 2] = p.x; a[i * 2 + 1] = p.y; }); return a; });
+      }
+    } catch { faces = []; }
+    m.bitmap.close?.();
+    (self as any).postMessage({ type: 'stillFaces', faces, id: m.id });
+    return;
+  }
   if (m.type === 'frame') {
     let bmp: ImageBitmap = m.bitmap;
     if (m.vf) {
