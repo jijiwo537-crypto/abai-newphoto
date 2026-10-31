@@ -1069,23 +1069,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         const objectUrl = await processImageFile(file, (previewUrl) => {
             setLocalImportPreviewUrl(previewUrl);
         });
+        /* 直接用讀進來的檔案（瀏覽器本來就能顯示，方向也已經轉正），不再整張畫進畫布重新編成 PNG：
+           48MP 的 iPhone 照片超過手機的畫布上限，以前在這一步就是空白或閃退；不重編碼也完全無損 */
         const img = new Image();
         img.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = img.width;
-            canvas.height = img.height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-                ctx.drawImage(img, 0, 0);
-                canvas.toBlob(blob => {
-                  const src = blob ? URL.createObjectURL(blob) : canvas.toDataURL('image/png');
-                  if (blob) ownedUrlsRef.current.add(src);
-                  setPhotos(prev => [src, ...prev]);
-                  setEditingPhoto({ src, index: 0 });
-                  setEditorId(prev => prev + 1);
-                }, 'image/png');
-            }
-            URL.revokeObjectURL(objectUrl);
+            ownedUrlsRef.current.add(objectUrl);
+            setPhotos(prev => [objectUrl, ...prev]);
+            setEditingPhoto({ src: objectUrl, index: 0 });
+            setEditorId(prev => prev + 1);
             setIsImportingLocal(false);
             setLocalImportPreviewUrl(null);
         };

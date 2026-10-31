@@ -25,20 +25,9 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, thumbs =
           const objectUrl = await processImageFile(file);
           return new Promise<string>((resolve) => {
             const img = new Image();
-            img.onload = () => {
-              const canvas = document.createElement('canvas');
-              canvas.width = img.width;
-              canvas.height = img.height;
-              const ctx = canvas.getContext('2d');
-              if (ctx) {
-                ctx.drawImage(img, 0, 0);
-                // 一樣是無損 PNG，改用 blob 網址拿在手上
-                canvasToUrl(canvas).then(resolve);
-              } else {
-                resolve('');
-              }
-              URL.revokeObjectURL(objectUrl);
-            };
+            /* 直接用讀進來的檔案（瀏覽器本來就能顯示），不整張畫進畫布重新編碼：
+               48MP 照片超過手機畫布上限，以前匯入就是空白或閃退；不重編碼也完全無損 */
+            img.onload = () => resolve(objectUrl);
             img.onerror = () => {
               URL.revokeObjectURL(objectUrl);
               resolve('');
