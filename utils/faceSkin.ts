@@ -279,29 +279,3 @@ export async function createFaceSkinMask(): Promise<FaceSkinMask | null> {
   const ok = await preloadFaceSkin();
   return ok && detector ? new FaceSkinMask(detector) : null;
 }
-
-/** 靜態照片找臉：回傳每張臉 478 點（比例座標，x0,y0,x1,y1…）。找不到或模型載不起來回空陣列 */
-export async function detectFacesStill(src: CanvasImageSource & { width: number; height: number }): Promise<number[][]> {
-  const ok = await preloadFaceSkin();
-  if (!ok || !detector) return [];
-  // 模型本身吃小圖，送 1024 長邊就夠（臉小的團體照也還抓得到）
-  const k = Math.min(1, 1024 / Math.max(src.width, src.height));
-  const w = Math.max(1, Math.round(src.width * k)), h = Math.max(1, Math.round(src.height * k));
-  const c = document.createElement('canvas'); c.width = w; c.height = h;
-  c.getContext('2d')!.drawImage(src, 0, 0, w, h);
-  if (detector.kind === 'main') {
-    try { detector.detect(c, performance.now()); return detector.detect(c, performance.now() + 33); } catch { return []; }
-  }
-  const wk = detector.w;
-  const bitmap = await createImageBitmap(c);
-  return new Promise(resolve => {
-    const id = Math.random();
-    const timer = setTimeout(() => { wk.removeEventListener('message', on); resolve([]); }, 8000);
-    const on = (e: MessageEvent) => {
-      if (e.data?.type !== 'stillFaces' || e.data.id !== id) return;
-      clearTimeout(timer); wk.removeEventListener('message', on); resolve(e.data.faces || []);
-    };
-    wk.addEventListener('message', on);
-    wk.postMessage({ type: 'still', bitmap, id }, [bitmap]);
-  });
-}

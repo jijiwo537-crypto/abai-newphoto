@@ -25,7 +25,6 @@ const INLINE: Record<string, string> = {
   line_style: '<g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M2.5 7.5h19"/><path d="M2.5 16.5h3.5M10.25 16.5h3.5M18 16.5h3.5"/></g>',
   /* 色輪：一個圓（色輪）、一個偏離中心的實心點（調整點），跟 Material 圖示同一種線寬 */
   /* 磨皮：一顆水滴（滋潤、變光滑）加一道柔和的反光，線條粗細跟其他圖示一致 */
-  neutral_gray: '<circle cx="12" cy="12" r="8.6" fill="none" stroke="#fff" stroke-width="1.7"/><path d="M12 3.4a8.6 8.6 0 0 1 0 17.2z" fill="#fff"/><path d="M12 7.6a4.4 4.4 0 0 0 0 8.8z" fill="#fff" fill-opacity=".5"/>',
   skin_smooth: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2C8.3 7.6 6 10.9 6 14.1a6 6 0 0 0 12 0c0-3.2-2.3-6.5-6-10.9z"/><path d="M9.1 14.6a3.1 3.1 0 0 0 2.4 2.7"/></g>',
   /* 色輪：一個圓、正中心一個實心點 */
   /* 高光／陰影／白色／黑色：同一組「一顆球」的圖。實心 = 亮、斜線 = 暗（素描畫陰影的畫法）。
