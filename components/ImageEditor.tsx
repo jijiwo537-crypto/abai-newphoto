@@ -8,6 +8,7 @@ import { ColorMatchStudio } from './ColorMatchStudio';
 import { TemplatePanel } from './TemplatePanel';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { safeScale } from '../utils/exportLimits';
+import { buildTransfer, exportFullRes } from '../utils/fullResExport';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
 import { isIdentityCurve, boundedCurvePath } from '../utils/editorCurveGeometry';
@@ -6841,9 +6842,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const ow = img.naturalWidth || img.width;
     const oh = img.naturalHeight || img.height;
     // 存檔用原始解析度重跑一次構圖，預覽時的 2400px 版本只是給畫面看的
-    const geoSource: CanvasImageSource = isGeoIdentity(g) ? img : composeCanvas(img, ow, oh, g);
-    const w0 = isGeoIdentity(g) ? ow : (geoSource as HTMLCanvasElement).width;
-    const h0 = isGeoIdentity(g) ? oh : (geoSource as HTMLCanvasElement).height;
+    /* 只有裁切（沒有旋轉、翻轉、透視、縮放）時不必先組出原尺寸的整張：直接從原圖切那一塊畫下去。
+       48MP 照片原尺寸裁切出來的那張常常就超過手機的畫布上限，以前在這一步就是空的 */
+    const crop = cropOnlyRect(g, ow, oh);
+    const geoSource: CanvasImageSource = isGeoIdentity(g) || crop ? img : composeCanvas(img, ow, oh, g);
+    const w0 = crop ? crop.w : isGeoIdentity(g) ? ow : (geoSource as HTMLCanvasElement).width;
+    const h0 = crop ? crop.h : isGeoIdentity(g) ? oh : (geoSource as HTMLCanvasElement).height;
     /* iOS Safari 單張畫布上限約 1677 萬像素，超過時畫布是空的、記憶體也會爆而重新載入
        （48MP 照片疊特效存檔時）。只有超過上限的照片才等比縮到上限內，其他照片不變。 */
     const capK = safeScale(w0, h0);   // 手機（iPhone、Android）都套，見 utils/exportLimits
@@ -6851,8 +6855,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctxOriginal = c.getContext('2d', { willReadFrequently: true })!;
-    ctxOriginal.drawImage(geoSource, 0, 0, w, h);
+    if (crop) ctxOriginal.drawImage(geoSource, crop.x, crop.y, crop.w, crop.h, 0, 0, w, h);
+    else ctxOriginal.drawImage(geoSource, 0, 0, w, h);
     const originalData = ctxOriginal.getImageData(0, 0, w, h).data;
+    if (keepOriginalRef.current) keepOriginalRef.current.data = new Uint8ClampedArray(originalData);
     /* 發光類特效先在原圖上算（跟預覽同一個順序），濾鏡與調節再套在「原圖＋光」上 */
     const sourceData = hasGlow(p) ? (glowCpu(p, originalData, w, h) || originalData) : originalData;
     const len = sourceData.length;
@@ -6935,6 +6941,41 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return canvas;
   };
 
+  /** 原尺寸存檔需要的「縮小尺寸原圖」：renderOneCanvas 讀出原圖時順便留一份（只在原尺寸存檔時要） */
+  const keepOriginalRef = useRef<{ data: Uint8ClampedArray | null } | null>(null);
+  /** 只有裁切的構圖：回傳原圖上的裁切範圍（跟 composeCanvas 同樣的取整）；有其他變形回 null */
+  const cropOnlyRect = (g: GeoParams, ow: number, oh: number): { x: number; y: number; w: number; h: number } | null => {
+    if (isGeoIdentity(g)) return null;
+    if (g.quarter || g.angle || g.flipH || g.flipV || g.keyV || g.keyH || (g.zoom ?? 1) !== 1 || g.offset?.x || g.offset?.y) return null;
+    const x = Math.max(0, Math.min(ow - 1, Math.round(g.crop.x * ow))), y = Math.max(0, Math.min(oh - 1, Math.round(g.crop.y * oh)));
+    return { x, y, w: Math.max(1, Math.min(ow - x, Math.round(g.crop.w * ow))), h: Math.max(1, Math.min(oh - y, Math.round(g.crop.h * oh))) };
+  };
+  /* ── 原尺寸存檔（超過手機畫布上限的大照片） ──
+     見 utils/fullResExport：效果在手機能處理的最大尺寸上算，再用導向上採樣套到真正的原尺寸原圖，
+     一條一條送進背景執行緒編碼，不會閃退、也不降畫質。
+     旋轉、透視這類構圖要先組出原尺寸整張，那種情況維持原本的做法（縮到上限內）。 */
+  const renderFullUrl = async (img: HTMLImageElement, snap: BatchSnap, type: 'image/jpeg' | 'image/png', quality = 1): Promise<string> => {
+    const ow = img.naturalWidth || img.width, oh = img.naturalHeight || img.height, g = snap.geo;
+    const crop = isGeoIdentity(g) ? { x: 0, y: 0, w: ow, h: oh } : cropOnlyRect(g, ow, oh);
+    const big = !!crop && (forceFullResRef() || safeScale(crop.w, crop.h) < 1);
+    if (!big) return canvasToUrl(renderOneCanvas(img, snap), type, quality);
+    keepOriginalRef.current = { data: null };
+    const proc = renderOneCanvas(img, snap);
+    const D = keepOriginalRef.current.data; keepOriginalRef.current = null;
+    const pw = proc.width, ph = proc.height;
+    const P = proc.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, pw, ph).data;
+    if (!D || D.length !== P.length) return canvasToUrl(proc, type, quality);
+    proc.width = proc.height = 0;
+    const T = buildTransfer(P, D, pw, ph);
+    const url = await exportFullRes({
+      W: crop!.w, H: crop!.h,
+      drawStrip: (ctx, y0, h) => ctx.drawImage(img, crop!.x, crop!.y + y0, crop!.w, h, 0, 0, crop!.w, h),
+    }, T, type);
+    return url || '';
+  };
+  /** 測試用：在電腦上強制走原尺寸存檔（window.__forceFullRes = true） */
+  const forceFullResRef = () => { try { return !!(window as any).__forceFullRes; } catch { return false; } };
+
   /** 導出用：跟合併走同一支全解析度管線，只是最後轉成 PNG。
       成品用 blob 網址 —— 批次十張的話 dataURL 會是好幾百 MB 的字串。 */
   const renderOne = (img: HTMLImageElement, snap: BatchSnap): Promise<string> =>
@@ -6971,9 +7012,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const img = input === srcListRef.current[safeIdxRef.current] && originalImgRef.current?.src === input
         ? originalImgRef.current : await loadImg(input);
       if (Number(job.snap!.params.fxLowfi) > 0) await warmLowfiLut();
-      const cvs = renderOneCanvas(img, job.snap!);
-      const url = await canvasToUrl(cvs);
-      cvs.width = cvs.height = 0;
+      // 合併後的原尺寸那張：大照片也要原尺寸（之後存檔才是原尺寸），無損 PNG 分段存（中間檔不能再壓一次失真）
+      const url = await renderFullUrl(img, job.snap!, 'image/png');
       if (!url) return input;
       mergedUrlsRef.current.push(url);
       return url;
@@ -7432,9 +7472,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               // Only lowfi exports depend on this LUT; other formats/effects
               // must not be blocked by a lookup-image network failure.
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
-              const canvas = renderOneCanvas(img, snap);
-              out.push(await canvasToUrl(canvas, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
-              if (exportFormat === 'heic') encoded.push(await exportHeic(canvas));
+              if (exportFormat !== 'heic') {
+                // JPG／PNG：大照片走原尺寸分段存檔（見 renderFullUrl），一般照片跟以前一樣
+                out.push(await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
+              } else {
+                const canvas = renderOneCanvas(img, snap);
+                out.push(await canvasToUrl(canvas, 'image/png', 1));
+                encoded.push(await exportHeic(canvas));
+              }
             }
             if (request !== saveRequestRef.current) { revokeUrls([...out, ...encoded]); return; }
             revokeUrls(finalImagesRef.current.filter(u => !out.includes(u)));

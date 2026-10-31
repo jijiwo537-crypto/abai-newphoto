@@ -1,5 +1,14 @@
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { safeSize } from '../utils/exportLimits';
+import { fullResFromProcessed, originalAt } from '../utils/fullResExport';
+/** 讀出畫布像素（GPU 畫布先複製到一般畫布再讀） */
+const readPixels = (c: HTMLCanvasElement): Uint8ClampedArray | null => {
+  try {
+    const t = document.createElement('canvas'); t.width = c.width; t.height = c.height;
+    const g = t.getContext('2d', { willReadFrequently: true })!; g.drawImage(c, 0, 0);
+    const d = g.getImageData(0, 0, t.width, t.height).data; t.width = t.height = 0; return d;
+  } catch { return null; }
+};
 import { addExport } from '../utils/exportHistory';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { saveDraft } from '../utils/toolDraft';
@@ -407,7 +416,14 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (!srcImg || !luts) return null;
     const full = safeSize(srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height);
     const c = renderAt(srcImg, full.w, full.h);
-    return c ? canvasToUrl(c) : null;
+    if (!c) return null;
+    // 超過手機畫布上限的大照片：在上限內算，再用導向上採樣做出原尺寸（見 utils/fullResExport）
+    if (full.k < 1) {
+      const P = readPixels(c), D = originalAt(srcImg, full.w, full.h);
+      const u = P && await fullResFromProcessed(srcImg, P, D, full.w, full.h, 'image/png');
+      if (u) return u;
+    }
+    return canvasToUrl(c);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcImg, luts, picked, strength, skin]);
 
@@ -435,7 +451,16 @@ export const ColorMatchStudio: React.FC<Props> = ({
       bake: (src: string) => new Promise<string | null>(res => {
         const im = new Image();
         if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
-        im.onload = () => { const z = safeSize(im.naturalWidth, im.naturalHeight); const c = render(im, z.w, z.h); if (!c) { res(null); return; } canvasToUrl(c).then(res, () => res(null)); };
+        im.onload = async () => {
+          const z = safeSize(im.naturalWidth, im.naturalHeight); const c = render(im, z.w, z.h);
+          if (!c) { res(null); return; }
+          if (z.k < 1) {
+            const P = readPixels(c), D = originalAt(im, z.w, z.h);
+            const u = P && await fullResFromProcessed(im, P, D, z.w, z.h, 'image/png').catch(() => null);
+            if (u) { res(u); return; }
+          }
+          canvasToUrl(c).then(res, () => res(null));
+        };
         im.onerror = () => res(null);
         im.src = src;
       }),
@@ -486,6 +511,21 @@ export const ColorMatchStudio: React.FC<Props> = ({
   };
 
   const saveCanvas = async (canvas: HTMLCanvasElement) => {
+    /* 超過手機畫布上限的大照片：這張是上限內算的，用導向上採樣做出原尺寸檔案（見 utils/fullResExport）；
+       預覽與歷史紀錄用上限內那張就夠 */
+    if (srcImg && safeSize(srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height).k < 1 && exportFormat !== 'heic') {
+      const P = readPixels(canvas), D = originalAt(srcImg, canvas.width, canvas.height);
+      const big = P ? await fullResFromProcessed(srcImg, P, D, canvas.width, canvas.height, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png') : null;
+      if (big) {
+        const previewUrl = await canvasToUrl(canvas);
+        revokeUrl(finalPreviewRef.current);
+        finalPreviewRef.current = previewUrl;
+        setFinalPreview(previewUrl);
+        putFinal(big);
+        await record(previewUrl);
+        return;
+      }
+    }
     // History and browser previews remain lossless PNG; the shared file uses the chosen encoder.
     const previewUrl = await canvasToUrl(canvas);
     if (!previewUrl) throw new Error('Unable to encode preview');

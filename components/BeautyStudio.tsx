@@ -21,6 +21,7 @@ import {
 import { inpaintImage, inpaintCrop, cropFor } from '../utils/beauty/inpaint';
 import { findHealSource, fallbackHealSource, sideHealSource, applyHeal, strokeContours, healField, fieldAlpha, fieldBounds, fieldMaskRGBA, type HealMode, type HealRect, type HealField } from '../utils/beauty/heal';
 import { safeScale } from '../utils/exportLimits';
+import { fullResFromProcessed } from '../utils/fullResExport';
 import { StrokeLayer, STROKE_INNER, wrinkleStrength, smoothStrength, smoothInvalidate, type StrokeKind } from '../utils/beauty/strokeFilter';
 
 // 互動時的運算解析度。全解析度即時運算會爆手機記憶體，所以要縮，
@@ -189,6 +190,9 @@ export async function renderBeautyOn(src: string, ops: Op[], count: number, sess
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, FW, FH);
   const base = ctx.getImageData(0, 0, FW, FH);
+  // 超過手機畫布上限的大照片：先在上限內算，最後用導向上採樣做出原尺寸（見 utils/fullResExport）
+  const big = safeScale(img.width, img.height) < 1;
+  const orig = big ? base.data.slice() : null;
   const field = createLiquifyField(FW, FH);
   replayOps(ops, count, base, field, FW, FH, FW / sessionW);
   if (field.max > 0) {
@@ -196,6 +200,11 @@ export async function renderBeautyOn(src: string, ops: Op[], count: number, sess
     warpRegion(base, FW, FH, field, out, { x: 0, y: 0, w: FW, h: FH });
     ctx.putImageData(out, 0, 0);
   } else ctx.putImageData(base, 0, 0);
+  if (orig) {
+    const P = ctx.getImageData(0, 0, FW, FH).data; c.width = c.height = 0;
+    const u = await fullResFromProcessed(img, P, orig, FW, FH, 'image/png');
+    if (u) return u;
+  }
   const url = await canvasToUrl(c);
   c.width = c.height = 0;
   return url;
@@ -1542,6 +1551,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     ctx.drawImage(img, 0, 0, FW, FH);
     const base = ctx.getImageData(0, 0, FW, FH);
     const k = FW / s.W;
+    // 超過手機畫布上限的大照片：先在上限內算，最後用導向上採樣做出原尺寸（見 utils/fullResExport）
+    const big = safeScale(img.width, img.height) < 1;
+    const orig = big ? base.data.slice() : null;
 
     const field = createLiquifyField(FW, FH);
     replayOps(s.ops, s.opsApplied, base, field, FW, FH, k);
@@ -1552,6 +1564,11 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       ctx.putImageData(out, 0, 0);
     } else {
       ctx.putImageData(base, 0, 0);
+    }
+    if (orig) {
+      const P = ctx.getImageData(0, 0, FW, FH).data; c.width = c.height = 0;
+      const u = await fullResFromProcessed(img, P, orig, FW, FH, 'image/png');
+      if (u) return u;
     }
     return canvasToUrl(c);
   }, [imageSrc]);

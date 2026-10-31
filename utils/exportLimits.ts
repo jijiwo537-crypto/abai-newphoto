@@ -11,6 +11,9 @@ export const isMobileDevice = () => typeof navigator !== 'undefined' && (
 
 /** 這個尺寸要縮多少倍才安全（1＝不用縮） */
 export function safeScale(w: number, h: number, maxPixels = MOBILE_MAX_PIXELS): number {
+  // 測試用：window.__testMaxPixels 可以在電腦上模擬手機的上限
+  const t = typeof window !== 'undefined' ? (window as any).__testMaxPixels : 0;
+  if (t > 0) return w * h > t ? Math.sqrt(t / (w * h)) : 1;
   if (!isMobileDevice() || w * h <= maxPixels) return 1;
   return Math.sqrt(maxPixels / (w * h));
 }
