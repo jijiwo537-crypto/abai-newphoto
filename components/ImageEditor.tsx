@@ -7141,6 +7141,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        裝進緩衝區、參數歸零，全部在這一次點擊裡做完。所以合併後馬上點任何按鈕都會
        立刻套用（不用排隊等背景）。同時蓋上一張定格畫面，直到解碼等收尾都做完才拿開，
        從按下合併到做完，畫面一個像素都不會變。原尺寸那張照舊記成待辦、存檔時才烤。 */
+    /* 介面在這一拍已經切成合併完的樣子（上面那些 set）；真正的複製、編碼、裝緩衝區（主執行緒會忙一下）
+       排到下一格才做：按下的回饋、介面切換先畫出來，不會「卡一下才有反應」。畫面靠 mergeFreezeRef 維持原樣。 */
+    const frozenP = mergeFreezeRef.current!.params, frozenLut = mergeFreezeRef.current!.lutIdx;
+    const runHeavy = () => {
     let syncUrl: string | null = null;
     {
       const i = safeIdx;
@@ -7154,7 +7158,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
          所以有裁切也能直接用；只有正在構圖頁（畫面顯示的是未裁切的整張）時不行。
          遮色片的紅色遮罩只是編輯輔助：先同步重畫一張不帶遮罩的，再複製。 */
       if (anyMask(snap0.params) && snap0.params.maskShowOverlay) {
-        try { render({ ...paramsRef.current, maskShowOverlay: false }, selectedLutIdx); } catch { /* 重畫失敗就走背景那條 */ }
+        try { render({ ...frozenP, maskShowOverlay: false }, frozenLut); } catch { /* 重畫失敗就走背景那條 */ }
       }
       const shown = visibleEditorCanvas();
       if (linked[i] !== false && shown && shown.width > 0 && !showOriginalRef.current && activeCategory !== 'compose') {
@@ -7358,6 +7362,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         setMergePending(false);
       }
     })();
+    };
+    requestAnimationFrame(() => setTimeout(runHeavy, 0));
   };
 
   /** 眼睛：用現在的參數輸出一張，然後打開 IG 預覽 */
@@ -9183,12 +9189,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   el.getAnimations().forEach(a => a.cancel());
                   const a = el.animate([
                     { transform: 'translateY(0)' },
-                    { transform: 'translateY(3.5px)', offset: .4 },
+                    { transform: 'translateY(2.9px)', offset: .4 },
                     { transform: 'translateY(0)' },
                   ], { duration: 680, easing: 'cubic-bezier(.22,1,.36,1)' });
                   done = a.finished.catch(() => {});
                 }
               }
+              /* 合併本身會讓主執行緒忙一下（在 mergeEffects 裡排到下一格才做）；動畫在合成器上，主執行緒再忙也照常播 */
               mergeEffects(done);
             } : undefined}
             disabled={!hasMergeable}
@@ -9204,17 +9211,28 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 線條要跟前後對比鍵「畫在螢幕上一樣粗」：34 的 viewBox 畫成 28px
                 （0.824 倍），所以 strokeWidth 1.82 ≈ 1.5px。顏色寫死白色，
                 不吃 currentColor（按鈕停用時會被瀏覽器調淡）。 */}
-            <svg width="28" height="23" viewBox="0 0 34 28" fill="none" xmlns="http://www.w3.org/2000/svg"
-                 className="block drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-              <defs>
-                <mask id={`${curveClipId}-merge`} maskUnits="userSpaceOnUse" x="0" y="0" width="34" height="28">
-                  <rect width="34" height="28" fill="#fff" />
-                  <path data-merge-top="" d="M17 2 30 9.5 17 17 4 9.5Z" fill="#000" stroke="#000" strokeWidth="5" strokeLinejoin="round" />
-                </mask>
-              </defs>
-              <path d="M17 8.5 30 16 17 23.5 4 16Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" mask={`url(#${curveClipId}-merge)`} />
-              <path data-merge-top="" d="M17 2 30 9.5 17 17 4 9.5Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" />
-            </svg>
+            {/* 上面那片菱形自己一個 HTML 圖層（獨立的 svg），動畫只動這個圖層的 transform：
+                交給合成器（GPU）播，主執行緒在烤圖時就算忙，壓下去的動畫也一格都不會卡。
+                （以前動的是 svg 裡面的 path，那種動畫只能在主執行緒上跑，一烤圖就停住。）
+                下面那片的遮罩固定在上面那片的原位：壓下去時上面那片蓋過下面那片，正好是「壓進去」的樣子。 */}
+            <span className="relative block w-[28px] h-[23px]">
+              <svg width="28" height="23" viewBox="0 0 34 28" fill="none" xmlns="http://www.w3.org/2000/svg"
+                   className="absolute inset-0 block drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+                <defs>
+                  <mask id={`${curveClipId}-merge`} maskUnits="userSpaceOnUse" x="0" y="0" width="34" height="28">
+                    <rect width="34" height="28" fill="#fff" />
+                    <path d="M17 2 30 9.5 17 17 4 9.5Z" fill="#000" stroke="#000" strokeWidth="5" strokeLinejoin="round" />
+                  </mask>
+                </defs>
+                <path d="M17 8.5 30 16 17 23.5 4 16Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" mask={`url(#${curveClipId}-merge)`} />
+              </svg>
+              <span data-merge-top="" className="absolute inset-0 block" style={{ willChange: 'transform' }}>
+                <svg width="28" height="23" viewBox="0 0 34 28" fill="none" xmlns="http://www.w3.org/2000/svg"
+                     className="block drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+                  <path d="M17 2 30 9.5 17 17 4 9.5Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" />
+                </svg>
+              </span>
+            </span>
             <span className="text-[9px] leading-none font-medium tracking-wide whitespace-nowrap drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
               {hasMergeable
                 ? (activeCategory === 'effects' ? '合併特效' : '合併濾鏡')
