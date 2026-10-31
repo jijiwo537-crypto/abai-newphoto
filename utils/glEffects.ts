@@ -676,6 +676,11 @@ interface Pool {
   /** The last effect's input and pre-blend result from the previous call
    *  (indices into texs), valid while blendKey matches. */
   blendCache?: { key: string; from: number; layerIn: number };
+  /** 疊加特效的分層快取：第 j 層算完的結果（key＝來源＋前 j 層的設定） */
+  layerCache?: Map<number, { key: string; tex: WebGLTexture }>;
+  /** 上一次各層的設定（判斷這次是哪一層開始變了、是不是正在拖同一層） */
+  lastLayerKeys?: string[];
+  lastChangeAt?: number;
 }
 
 interface Ctx {
@@ -909,6 +914,7 @@ function getPool(c: Ctx, w: number, h: number): Pool {
     if(c.pool.narrow)gl.deleteTexture(c.pool.narrow);
     if(c.pool.spillSeed)gl.deleteTexture(c.pool.spillSeed);
     for (const t of c.pool.texs) gl.deleteTexture(t);
+    if(c.pool.layerCache)for(const e of c.pool.layerCache.values())gl.deleteTexture(e.tex);
   }
   c.pool = {
     w, h,
@@ -1151,8 +1157,31 @@ export function applyGlEffects(
         active.map(d=>[d.id,d===last?0:params[d.id],...d.params.map(p=>params[p.id]??p.def)])])
     : undefined;
   const blendHit=!!blendKey&&pool.blendCache?.key===blendKey;
+  /* ── 疊加特效的分層快取 ──
+     以前每改一個特效（開一個新的、拖某一個的滑桿），整串特效都從頭重算一次，
+     疊越多就越慢。現在每一層算完的結果會留著（key＝來源照片＋前面每一層的設定），
+     下一次只要前面幾層沒變，就直接從快取那一層接著算，前面的全部跳過。
+     例：疊了 6 個特效，開第 7 個（排在後面）只要算 1 層，不是 7 層。
+     拖滑桿時（同一層連續在變）不寫快取，避免每一格多複製好幾張；開／關、換一個特效時才寫。
+     最多留 4 層（全解析度貼圖，顧記憶體）。 */
+  const layerBase=!auditReference&&rawUploadKey&&!toTexture
+    ? JSON.stringify([rawUploadKey,image?1:0,colour?[arrayId(colour.full),arrayId(colour.plain),colour.amount]:0,w,h]) : undefined;
+  const layerKeys:string[]=[];
+  if(layerBase){let acc=layerBase;for(const d of active){acc+='|'+JSON.stringify([d.id,params[d.id],...d.params.map(p=>params[p.id]??p.def)]);layerKeys.push(acc);}}
+  let firstChange=0;
+  if(layerBase&&pool.lastLayerKeys){while(firstChange<layerKeys.length&&layerKeys[firstChange]===pool.lastLayerKeys[firstChange])firstChange++;}
+  /* 同一層連續在變（拖滑桿）：上一次也是從這一層開始變 */
+  const dragging=!!layerBase&&pool.lastChangeAt===firstChange&&firstChange<layerKeys.length&&(pool.lastLayerKeys?.length===layerKeys.length);
+  if(layerBase){pool.lastLayerKeys=layerKeys;pool.lastChangeAt=firstChange;}
+  let resumeAt=-1;
+  if(layerBase&&!blendHit&&pool.layerCache){
+    for(let j=active.length-2;j>=0;j--){const e=pool.layerCache.get(j);if(e&&e.key===layerKeys[j]){resumeAt=j;break;}}
+  }
+  /* 從快取接著算時，後面沒有要用原始來源的特效（低保真光暈、溢光要看原圖亮部）就連顏色那一趟也省掉 */
+  const needSource=active.slice(resumeAt+1).some(d=>d.id==='fxLowfi'||d.id==='fxExposureSpill');
+  const skipHead=resumeAt>=0&&!needSource;
   try {
-    if(colour&&!blendHit){
+    if(colour&&!blendHit&&!skipHead){
       if(c.colour&&(c.colour.w!==w||c.colour.h!==h)){for(const t of [c.colour.full,c.colour.plain,c.colour.target])gl.deleteTexture(t);c.colour=undefined;}
       c.colour ||= {full:makeTex(gl,1089,33),plain:makeTex(gl,1089,33),target:makeTex(gl,w,h),w,h};
       const p=compile(c,'__residentColour',FX_COLOUR_SHADER);if(!p)return;
@@ -1165,7 +1194,7 @@ export function applyGlEffects(
       }
       gl.uniform1f(uniformLocation(gl,p,'uMix'),colour.amount);drawTo(c.colour.target);srcTex=c.colour.target;
     }
-    if(spillOn&&!blendHit&&(gpuSpill||colour||(image&&!sourceOverride?.bins))){
+    if(spillOn&&!blendHit&&!skipHead&&(gpuSpill||colour||(image&&!sourceOverride?.bins))){
       const histogramStart=import.meta.env.DEV?performance.now():0;
       if(c.gpuHistogram)spillSelectionTexture=c.gpuHistogram.prepare(srcTex,w,h,uploadKey,params.fxSpillRange??20,c.quad,(key,fs)=>compile(c,key,fs));
       gl.bindBuffer(gl.ARRAY_BUFFER,c.quad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.viewport(0,0,w,h);
@@ -1183,7 +1212,7 @@ export function applyGlEffects(
     let gpuHalo=false;
     /* 低保真的光暈遮罩一律在 GPU 上算（跟 CPU 那份同樣的 800px 亮部、同樣的盒狀模糊與進位）。
        以前只有拼圖底圖這樣做；編輯頁每換一次來源就把整張讀回 CPU 再算一次。 */
-    if(!auditReference&&active.some(d=>d.id==='fxLowfi')){
+    if(!auditReference&&!skipHead&&active.some(d=>d.id==='fxLowfi')){
       c.lowfiHalo ||= new LowfiHaloMask();
       gpuHalo=c.lowfiHalo.prepareGpu(gl,srcTex,w,h,uploadKey,fb,(key,fs)=>compile(c,key,fs));
     }
@@ -1191,6 +1220,17 @@ export function applyGlEffects(
     const copy = compile(c, '__copy', `${GLSL_HEADER}\nvoid main(){ gl_FragColor = vec4(texture2D(uTex, vUv).rgb, 1.0); }`);
     if (!copy) { cleanup(); return; }
     let cur = 0;   // 目前畫面所在的 index
+    const saveLayer=(li:number)=>{
+      // 最後一層不用存（它就是輸出）；拖曳中不存；只留最後 4 層
+      if(!layerBase||li>=active.length-1||dragging||li<active.length-5)return;
+      pool.layerCache ||= new Map();
+      const old=pool.layerCache.get(li);
+      if(old&&old.key===layerKeys[li])return;
+      const tex=old?.tex||makeTex(gl,w,h);
+      gl.useProgram(copy);bind(copy,texs[cur],texs[cur]);drawTo(tex);
+      pool.layerCache.set(li,{key:layerKeys[li],tex});
+      for(const [k,e] of pool.layerCache)if(k>=active.length-1||k<active.length-5){gl.deleteTexture(e.tex);pool.layerCache.delete(k);}
+    };
     if(blendHit){
       const {from,layerIn}=pool.blendCache!;
       const blend = compile(c, '__blend', BLEND_FS);
@@ -1205,10 +1245,12 @@ export function applyGlEffects(
     }else{
     pool.blendCache=undefined;
     gl.useProgram(copy);
-    bind(copy, srcTex, srcTex);
+    if(resumeAt>=0){bind(copy, pool.layerCache!.get(resumeAt)!.tex, pool.layerCache!.get(resumeAt)!.tex);}
+    else bind(copy, srcTex, srcTex);
     drawTo(texs[0]);
 
-    for (const d of active) {
+    for (let li=resumeAt+1; li<active.length; li++) {
+      const d=active[li];
       const layerIn = cur;                       // 本層輸入（uSrc）
       let from = cur;
       let fromTexture:WebGLTexture|undefined;
@@ -1269,7 +1311,7 @@ export function applyGlEffects(
       }
       // These effects already apply their own amount in the final shader.
       // A second full-frame blend with amount=1 is just an expensive copy.
-      if(d.handlesAmount&&!auditReference){cur=from;continue;}
+      if(d.handlesAmount&&!auditReference){cur=from;saveLayer(li);continue;}
       // 跟本層輸入按強度插值
       const blend = compile(c, '__blend', BLEND_FS);
       if (!blend) { cleanup(); return; }
@@ -1281,6 +1323,7 @@ export function applyGlEffects(
       drawTo(texs[to]);
       cur = to;
       if(d===last&&blendKey)pool.blendCache={key:blendKey,from,layerIn};
+      saveLayer(li);
     }
     }
 

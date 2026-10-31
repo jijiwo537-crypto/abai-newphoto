@@ -5611,9 +5611,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (quickFilterRef.current && hasGlow(p)) quickFilterRef.current = false;
     /* 旗標一定在點完濾鏡後的這一次就收掉：留著的話，下一次（常常是點特效）會先畫一張
        低解析度的再換全解析度，疊了特效時看起來就是閃一下。有特效時也不走低解析度那張。 */
-    const quickPass = quickFilterRef.current && !!proxy.source && !isInteracting && !hasLiveEffect(p);
+    /* 不再先畫一張低解析度的：先畫 1/4 再換全解析度，整張會先糊再清楚，
+       疊了特效、濾鏡時看起來就是預覽「抖一下」。直接畫全解析度（特效有分層快取，夠快）。 */
     quickFilterRef.current = false;
-    const useProxy = quickPass;
+    const useProxy = false;
     const b = useProxy ? proxy : buffers.current.preview;
 
     const cvs = displayCanvasRef.current;
@@ -6103,10 +6104,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     applyComplexEffects(ctx, b.w, b.h, pPost, scale, b.shared, isInteracting, false, b.dest);
     if(!fxSurfaceShownRef.current&&!maskLiveRef.current)presentEditorSource(ctx,b.w,b.h);
 
-    if (quickPass) {
-      isDirtyRef.current = true;          // 接著馬上排一次全解析度的
-      lastRenderTimeRef.current = 0;
-    }
 
   }, [isInteracting, selectedLutIdx, lutList, applyComplexEffects, getCurveLuts]);
 
