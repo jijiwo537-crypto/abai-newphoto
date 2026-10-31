@@ -12,41 +12,6 @@ import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
 import {preferCameraResolution} from '../utils/cameraPreview';
 import { preloadFaceSkin } from '../utils/faceSkin';
 
-/* 韓系熱門色調（參考韓國年輕人常用的唇彩、腮紅色系；色碼是近似值，不是特定品牌官方色） */
-const BLUSH_PRESETS = [
-  { name: '蜜桃', c: '#F6A08C' }, { name: '嫩粉', c: '#F3A3B5' }, { name: '杏桃奶茶', c: '#E6A386' },
-  { name: '薰衣草', c: '#D6A2C9' }, { name: '玫瑰', c: '#E2868F' },
-];
-const LIP_PRESETS = [
-  { name: '無花果', c: '#B4535C' }, { name: '玫瑰裸', c: '#C67B7A' }, { name: '奶茶棕', c: '#A0655B' },
-  { name: '番茄紅', c: '#D9493E' }, { name: '草莓', c: '#D63F5E' }, { name: '珊瑚', c: '#E8756A' },
-];
-const readLS = <T,>(k: string, d: T): T => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) as T : d; } catch { return d; } };
-const writeLS = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* 私密模式 */ } };
-/** 從上傳的照片取主色：縮小後只看有顏色的像素（略過太白、太黑、太灰的背景），用飽和度加權平均 */
-async function dominantColor(file: File): Promise<string | null> {
-  try {
-    const bmp = await createImageBitmap(file);
-    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
-    const g = c.getContext('2d', { willReadFrequently: true })!;
-    // 只取中間 70%（試色照通常顏色在中間）
-    const sw = bmp.width * 0.7, sh = bmp.height * 0.7;
-    g.drawImage(bmp, (bmp.width - sw) / 2, (bmp.height - sh) / 2, sw, sh, 0, 0, 64, 64);
-    bmp.close?.();
-    const d = g.getImageData(0, 0, 64, 64).data;
-    let r = 0, gg = 0, b = 0, w = 0;
-    for (let i = 0; i < d.length; i += 4) {
-      const R = d[i], G = d[i + 1], B = d[i + 2], mx = Math.max(R, G, B), mn = Math.min(R, G, B);
-      const sat = mx ? (mx - mn) / mx : 0, v = mx / 255;
-      if (sat < 0.15 || v < 0.12 || v > 0.98) continue;
-      const k = sat * sat; r += R * k; gg += G * k; b += B * k; w += k;
-    }
-    if (!w) return null;
-    const h = (x: number) => Math.round(x / w).toString(16).padStart(2, '0');
-    return `#${h(r)}${h(gg)}${h(b)}`.toUpperCase();
-  } catch { return null; }
-}
-
 // Extend MediaStream types to support zoom
 declare global {
   interface MediaTrackCapabilities {
@@ -318,28 +283,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   // 磨皮預設關閉，使用者打開過才記住（換一個鍵：上一版預設開啟時每個人都存了 1）
   const [skinSmooth, setSkinSmooth] = useState(() => { try { return localStorage.getItem('abai-camera-skin-v3') === '1'; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem('abai-camera-skin-v3', skinSmooth ? '1' : '0'); } catch { /* 私密模式 */ } }, [skinSmooth]);
-  /* 瘦臉、腮紅、口紅（記住上次的選擇；上傳的顏色各留最近 6 個） */
-  const [slimFace, setSlimFace] = useState(() => readLS('abai-camera-slim', false));
-  const [blush, setBlush] = useState<string | null>(() => readLS('abai-camera-blush', null));
-  const [lipstick, setLipstick] = useState<string | null>(() => readLS('abai-camera-lip', null));
-  const [customBlush, setCustomBlush] = useState<string[]>(() => readLS('abai-camera-blush-custom', []));
-  const [customLip, setCustomLip] = useState<string[]>(() => readLS('abai-camera-lip-custom', []));
-  useEffect(() => writeLS('abai-camera-slim', slimFace), [slimFace]);
-  useEffect(() => writeLS('abai-camera-blush', blush), [blush]);
-  useEffect(() => writeLS('abai-camera-lip', lipstick), [lipstick]);
-  useEffect(() => writeLS('abai-camera-blush-custom', customBlush), [customBlush]);
-  useEffect(() => writeLS('abai-camera-lip-custom', customLip), [customLip]);
-  /** 選單裡展開的是腮紅還是口紅的色盤 */
-  const [makeupOpen, setMakeupOpen] = useState<'blush' | 'lip' | null>(null);
-  const makeupFileRef = useRef<HTMLInputElement>(null);
-  const onMakeupFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]; e.target.value = '';
-    if (!f || !makeupOpen) return;
-    const c = await dominantColor(f);
-    if (!c) { setCaptureNotice('這張照片找不到明顯的顏色'); return; }
-    if (makeupOpen === 'blush') { setCustomBlush(l => [c, ...l.filter(x => x !== c)].slice(0, 6)); setBlush(c); }
-    else { setCustomLip(l => [c, ...l.filter(x => x !== c)].slice(0, 6)); setLipstick(c); }
-  };
   /* 找臉模型：打開設定選單（準備要按磨皮）就先開始載入；磨皮開著時載完才算好，開關上顯示載入中 */
   const [skinReady, setSkinReady] = useState(false);
   // 磨皮隨時待命：進相機、畫面穩定後（閒下來時）就在背景載好找臉模型，一按就有
@@ -353,11 +296,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     return () => { live = false; clearTimeout(t); if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
   }, []);
   useEffect(() => {
-    if (!showSettingsMenu && !skinSmooth && !slimFace && !blush && !lipstick) return;
+    if (!showSettingsMenu && !skinSmooth) return;
     let live = true;
     preloadFaceSkin().then(ok => { if (live) setSkinReady(ok); });
     return () => { live = false; };
-  }, [showSettingsMenu, skinSmooth, slimFace, blush, lipstick]);
+  }, [showSettingsMenu, skinSmooth]);
   
   const [focalLengthMm, setFocalLengthMm] = useState<string | null>(null);
   const focalLengthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1224,9 +1167,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               digitalZoom={digitalZoom}
               displayBox={frameDims()}
               skinSmooth={skinSmooth}
-              slimFace={slimFace}
-              blush={blush}
-              lipstick={lipstick}
               /* click 保留為鍵盤／舊版 WebKit 的保底；新 iOS 由 pointerup 立即觸發。 */
               onClick={handleFocus}
               onPointerDown={() => {
@@ -1319,58 +1259,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                                 </div>
                             </button>
                         </div>
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
-                                <Icon name="face_slim" className="text-lg text-white/70" />
-                                <span>瘦臉</span>
-                            </div>
-                            <button
-                                aria-label="瘦臉" aria-pressed={slimFace} data-camera-slim
-                                onClick={(e) => { e.stopPropagation(); setSlimFace(!slimFace); triggerHaptic(); }}
-                                className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] border border-white/10 ${slimFace ? 'bg-white/40' : 'bg-white/10'}`}
-                            >
-                                <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${slimFace ? 'translate-x-5' : 'translate-x-0'}`} />
-                            </button>
-                        </div>
-                        {([['blush', '腮紅', blush, setBlush, BLUSH_PRESETS, customBlush, setCustomBlush], ['lip', '口紅', lipstick, setLipstick, LIP_PRESETS, customLip, setCustomLip]] as const).map(([key, label, cur, setCur, presets, custom, setCustom]) => (
-                          <div key={key} className="flex flex-col gap-2">
-                            <button
-                                data-camera-makeup={key}
-                                onClick={(e) => { e.stopPropagation(); setMakeupOpen(o => o === key ? null : key); triggerHaptic(); }}
-                                className="flex items-center justify-between active:opacity-70 transition-opacity"
-                            >
-                                <span className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
-                                    <span className="w-[18px] h-[18px] flex items-center justify-center">
-                                        <span className="w-3.5 h-3.5 rounded-full ring-1 ring-inset ring-white/30" style={{ background: cur || 'transparent' }} />
-                                    </span>
-                                    <span>{label}</span>
-                                </span>
-                                <span className="flex items-center gap-1 text-[11px] text-white/45">
-                                    {cur ? ([...presets].find(p => p.c === cur)?.name || '自訂') : '無'}
-                                    <Icon name="expand_more" className={`text-base transition-transform duration-200 ${makeupOpen === key ? 'rotate-180' : ''}`} />
-                                </span>
-                            </button>
-                            {makeupOpen === key && (
-                              <div className="grid grid-cols-6 gap-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
-                                <button aria-label={`${label}：無`} onClick={(e) => { e.stopPropagation(); (setCur as (v: string | null) => void)(null); triggerHaptic(); }}
-                                  className={`w-[22px] h-[22px] rounded-full flex items-center justify-center ring-1 ring-inset transition-transform active:scale-90 ${!cur ? 'ring-white' : 'ring-white/25'}`}>
-                                    <span className="w-3 h-px bg-white/60 rotate-45" />
-                                </button>
-                                {[...presets.map(p => p.c), ...custom].map((c, i) => (
-                                  <button key={c + i} aria-label={`${label} ${c}`} onClick={(e) => { e.stopPropagation(); (setCur as (v: string | null) => void)(c); triggerHaptic(); }}
-                                    onContextMenu={(e) => { if (i >= presets.length) { e.preventDefault(); (setCustom as (f: (l: string[]) => string[]) => void)(l => l.filter(x => x !== c)); if (cur === c) (setCur as (v: string | null) => void)(null); } }}
-                                    className={`w-[22px] h-[22px] rounded-full transition-transform active:scale-90 ${cur === c ? 'ring-2 ring-white ring-offset-[1.5px] ring-offset-black/60' : ''}`}
-                                    style={{ background: c }} />
-                                ))}
-                                <button aria-label={`上傳${label}顏色`} onClick={(e) => { e.stopPropagation(); makeupFileRef.current?.click(); }}
-                                  className="w-[22px] h-[22px] rounded-full flex items-center justify-center ring-1 ring-inset ring-white/25 text-white/70 active:scale-90 transition-transform">
-                                    <Icon name="add" className="text-sm" />
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                        <input ref={makeupFileRef} type="file" accept="image/*" className="hidden" onChange={onMakeupFile} />
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
                                 <Icon name="timer" className="text-lg text-white/70" />
