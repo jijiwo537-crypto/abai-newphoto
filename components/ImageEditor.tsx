@@ -17,7 +17,7 @@ import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from '../u
 import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
 import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from '../utils/fxSurfaceGl';
-import { FX_DEFS, FX_DEFAULTS, applyGlEffects, presentFxSource, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
+import { FX_DEFS, FX_DEFAULTS, applyGlEffects, releaseLargeFxBuffers, presentFxSource, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import {warmLowfiLut} from '../utils/lowfiLut';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
 import {effectControlValue,effectStoredValue,effectControlMin,effectControlStep,isContinuousEffectControl} from '../utils/effectControlValues';
@@ -6938,6 +6938,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     const scale = Math.max(w, h) / 1080;
     applyComplexEffects(ctx, w, h, stripGlow(p), scale, null, false, true, gpuOk ? null : destData);
+    // 結果已經畫進 2D 畫布了：存檔尺寸的特效暫存貼圖馬上還回去（見 releaseLargeFxBuffers）
+    try { releaseLargeFxBuffers(fxSurfaceRef.current || undefined); releaseLargeFxBuffers(); } catch { /* 釋放失敗不影響存檔 */ }
     return canvas;
   };
 

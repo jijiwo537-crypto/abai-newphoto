@@ -838,6 +838,24 @@ export function compactFxSurface(canvas:HTMLCanvasElement){
  if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);if(pool.spillSeed)gl.deleteTexture(pool.spillSeed);gl.deleteFramebuffer(pool.fb);c.pool=null;}
  c.canvas.width=c.canvas.height=canvas.width=canvas.height=1;
 }
+/** 存檔算完後馬上把大尺寸的暫存貼圖還回去（存檔尺寸一張就 48～64MB）：
+    留著的話接著再存一張、或切到別的畫面，iPhone 的 GPU 記憶體會不夠而讓 Safari 崩潰。
+    預覽尺寸的照常留著（下一次預覽直接用）。 */
+export function releaseLargeFxBuffers(surface?:HTMLCanvasElement){
+ const c=getCtx(surface);if(!c)return;const {gl,pool}=c;
+ if(pool&&pool.w*pool.h>LAYER_CACHE_MAX_PX){
+  if(pool.src!==c.plainTex)gl.deleteTexture(pool.src);
+  pool.texs.forEach(t=>gl.deleteTexture(t));
+  for(const t of [pool.aux,pool.narrow,pool.spillSeed])if(t)gl.deleteTexture(t);
+  if(pool.layerCache)for(const e of pool.layerCache.values())gl.deleteTexture(e.tex);
+  gl.deleteFramebuffer(pool.fb);
+  c.pool=null;c.uploadKey=undefined;
+ }
+ if(c.colour&&c.colour.w*c.colour.h>LAYER_CACHE_MAX_PX){for(const t of [c.colour.full,c.colour.plain,c.colour.target])gl.deleteTexture(t);c.colour=undefined;}
+ if(c.canvas.width*c.canvas.height>LAYER_CACHE_MAX_PX){c.canvas.width=c.canvas.height=1;}
+ c.renderedKey=undefined;c.renderedScene=undefined;c.renderedColour=undefined;
+}
+
 export function disposeFxSurface(canvas:HTMLCanvasElement){
  const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
  c.lowfiHalo?.dispose(gl);
@@ -903,6 +921,9 @@ function makeTex(gl: WebGLRenderingContext, w: number, h: number): WebGLTexture 
   gl.bindTexture(gl.TEXTURE_2D,previous);
   return t;
 }
+
+/** 分層快取只在這個面積以內使用（預覽尺寸）；存檔的大尺寸不用，避免 GPU 記憶體爆掉 */
+const LAYER_CACHE_MAX_PX = 4_500_000;
 
 function getPool(c: Ctx, w: number, h: number): Pool {
   const { gl } = c;
@@ -1163,8 +1184,11 @@ export function applyGlEffects(
      下一次只要前面幾層沒變，就直接從快取那一層接著算，前面的全部跳過。
      例：疊了 6 個特效，開第 7 個（排在後面）只要算 1 層，不是 7 層。
      拖滑桿時（同一層連續在變）不寫快取，避免每一格多複製好幾張；開／關、換一個特效時才寫。
-     最多留 4 層（全解析度貼圖，顧記憶體）。 */
-  const layerBase=!auditReference&&rawUploadKey&&!toTexture
+     最多留 4 層（全解析度貼圖，顧記憶體）。
+     只在預覽尺寸（≤ 約 450 萬像素）用：存檔是原尺寸（1200～1600 萬像素），一張貼圖就 48～64MB，
+     再多 4 張快取會讓 iPhone 的 GPU 記憶體爆掉、Safari 直接崩潰（套著特效存檔閃退就是這個）；
+     存檔本來就只算一次，快取也用不到。 */
+  const layerBase=!auditReference&&rawUploadKey&&!toTexture&&w*h<=LAYER_CACHE_MAX_PX
     ? JSON.stringify([rawUploadKey,image?1:0,colour?[arrayId(colour.full),arrayId(colour.plain),colour.amount]:0,w,h]) : undefined;
   const layerKeys:string[]=[];
   if(layerBase){let acc=layerBase;for(const d of active){acc+='|'+JSON.stringify([d.id,params[d.id],...d.params.map(p=>params[p.id]??p.def)]);layerKeys.push(acc);}}
