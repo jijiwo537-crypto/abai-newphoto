@@ -72,22 +72,53 @@ function stretchContrast(src: Cvs): Cvs {
 }
 
 /* ── 3. 線稿模型（背景執行緒） ── */
-let worker: Worker | null = null, seq = 0;
-const pending = new Map<number, { res: (v: any) => void; rej: (e: any) => void }>();
+let worker: Worker | null = null, seq = 0, mode: 'gpu' | 'cpu' | null = null;
+const pending = new Map<number, { msg: any; transfer: Transferable[]; res: (v: any) => void; rej: (e: any) => void }>();
 const modelUrl = () => new URL(`${(import.meta as any).env?.BASE_URL || '/'}models/line-art.onnx`, location.href).href;
-function lineWorker() {
-  if (!worker) {
-    worker = new Worker(new URL('./lineArt.worker.ts', import.meta.url), { type: 'module' });
-    worker.onmessage = e => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.ok ? p.res(e.data) : p.rej(new Error(e.data.error)); };
-    worker.onerror = e => { for (const p of pending.values()) p.rej(e); pending.clear(); worker?.terminate(); worker = null; };
-  }
-  return worker;
+const gpuLikely = () => { try { return !!(navigator as any).gpu && !(globalThis as any).__dotArtCpu; } catch { return false; } };
+let gpuTimer = 0, gpuLoaded = false;
+const armGpuTimer = () => { clearTimeout(gpuTimer); gpuTimer = window.setTimeout(() => { if (mode === 'gpu') toCpu('timeout'); }, 25000); };
+/** GPU 那支換成 CPU 那支，沒完成的工作原樣重送 */
+function toCpu(why: string) {
+  console.warn('line art: falling back to CPU', why);
+  clearTimeout(gpuTimer); worker?.terminate(); spawn('cpu');
+  for (const [id, q] of pending) worker!.postMessage({ ...q.msg, id, modelUrl: modelUrl() });
 }
-const call = (msg: any, transfer: Transferable[] = []) => new Promise<any>((res, rej) => {
-  const id = ++seq; pending.set(id, { res, rej }); lineWorker().postMessage({ ...msg, id, modelUrl: modelUrl() }, transfer);
+function spawn(m: 'gpu' | 'cpu') {
+  mode = m; gpuLoaded = false;
+  worker = m === 'gpu'
+    ? new Worker(new URL('./lineArtGpu.worker.ts', import.meta.url), { type: 'module' })
+    : new Worker(new URL('./lineArt.worker.ts', import.meta.url), { type: 'module' });
+  worker.onmessage = e => {
+    const p = pending.get(e.data.id); if (!p) return;
+    if (!e.data.ok && mode === 'gpu') { toCpu(e.data.error); return; }   // GPU 那支不能用（資料送出前已經複製一份）
+    if (mode === 'gpu' && e.data.data) clearTimeout(gpuTimer);   // GPU 真的交出結果了
+    if (mode === 'gpu' && e.data.loadMs !== undefined && !gpuLoaded) {   // 模型載好（含自我檢查）才開始計推論時間
+      gpuLoaded = true;
+      if ([...pending.values()].some(q => q.msg.type === 'run')) armGpuTimer();
+    }
+    pending.delete(e.data.id); e.data.ok ? p.res(e.data) : p.rej(new Error(e.data.error));
+  };
+  worker.onerror = e => {
+    if (mode === 'gpu') { toCpu('worker error'); return; }
+    for (const p of pending.values()) p.rej(e); pending.clear(); worker?.terminate(); worker = null; mode = null;
+  };
+}
+const call = (msg: any) => new Promise<any>((res, rej) => {
+  if (!worker) { spawn(gpuLikely() ? 'gpu' : 'cpu'); if (mode === 'gpu' && msg.type !== 'warm') call({ type: 'warm' }).catch(() => {}); }
+  const id = ++seq;
+  // 保留一份原始資料：GPU 失敗改走 CPU 時要重送（轉移所有權後原本那份就不能用了）
+  const keep = msg.data ? { ...msg, data: (msg.data as Float32Array).slice() } : msg;
+  pending.set(id, { msg: keep, transfer: [], res, rej });
+  /* GPU 卡住或比 CPU 還慢（少數裝置的 GPU 驅動）：推論 25 秒還沒交出結果就改用 CPU。
+     只算推論本身（下載模型的時間不算，網路慢不會誤判） */
+  if (mode === 'gpu' && msg.type === 'run' && gpuLoaded) armGpuTimer();
+  worker!.postMessage({ ...msg, id, modelUrl: modelUrl() }, msg.data ? [(msg.data as Float32Array).buffer] : []);
 });
 /** 先把模型載好（打開工具就開始下載，按「產生」時就不用等） */
 export const warmLineArtModel = () => call({ type: 'warm' }).catch(() => {});
+/** 目前用的是 GPU 還是 CPU（測試用） */
+export const lineArtMode = () => mode;
 
 const lineArtCache = new WeakMap<Cvs, Cvs>();
 async function lineArt(src: Cvs): Promise<Cvs> {
@@ -95,7 +126,8 @@ async function lineArt(src: Cvs): Promise<Cvs> {
   const w = src.width, h = src.height, px = ctx2d(src).getImageData(0, 0, w, h).data, plane = w * h;
   const input = new Float32Array(plane * 3);
   for (let i = 0, p = 0; p < plane; i += 4, p++) { input[p] = px[i] / 255; input[plane + p] = px[i + 1] / 255; input[2 * plane + p] = px[i + 2] / 255; }
-  const out = await call({ type: 'run', data: input, width: w, height: h }, [input.buffer]);
+  const out = await call({ type: 'run', data: input, width: w, height: h });
+  (globalThis as any).__dotArtTiming = { wait: out.waitMs, run: out.runMs, ep: out.ep, w, h };
   const ow = out.width, oh = out.height, v = out.data as Float32Array;
   const c = canvas(ow, oh), g = ctx2d(c), img = g.createImageData(ow, oh), d = img.data;
   for (let p = 0, i = 0; p < v.length; p++, i += 4) { const x = 255 * v[p]; d[i] = x; d[i + 1] = x; d[i + 2] = x; d[i + 3] = 255; }
@@ -106,7 +138,9 @@ async function lineArt(src: Cvs): Promise<Cvs> {
 
 /** 拉好對比的照片 × 輪廓線（色彩增值疊 lines 次） */
 async function preprocess(src: Cvs, lines: number): Promise<Cvs> {
-  const base = stretchContrast(src), la = await lineArt(src);
+  const base = stretchContrast(src);
+  if (lines <= 0) return base;   // 不疊線：用不到線稿模型
+  const la = await lineArt(src);
   const c = canvas(base.width, base.height), g = ctx2d(c);
   g.drawImage(base, 0, 0);
   g.globalCompositeOperation = 'multiply';
@@ -239,16 +273,19 @@ export async function generateDotArt(src: Cvs, s: DotArtSettings, onStep?: (labe
 export class DotArtSession {
   private pre = new Map<number, Cvs>();
   private line = new Map<string, Cvs>();
+  /** 線稿模型跑完了沒（跑完之前先用「不疊線」的版本頂著，不用乾等） */
+  modelReady = false;
   constructor(readonly src: Cvs) {}
-  /** 先跑完線稿模型（第一次比較久） */
-  async prepare() { await lineArt(this.src); }
+  /** 背景跑線稿模型（第一次比較久） */
+  async prepare() { await lineArt(this.src); this.modelReady = true; }
   private async preFor(lines: number) {
     let c = this.pre.get(lines);
     if (!c) { c = await preprocess(this.src, lines); if (this.pre.size > 6) this.pre.clear(); this.pre.set(lines, c); }
     return c;
   }
   /** 主要的那一張：kind＝線稿或陰影，大小用設定值 */
-  async render(kind: 'line' | 'shade', s: DotArtSettings): Promise<string | null> {
+  async render(kind: 'line' | 'shade', s0: DotArtSettings): Promise<string | null> {
+    const s = this.modelReady ? s0 : { ...s0, lines: 0 };
     const pre = await this.preFor(s.lines);
     let img: Cvs;
     if (kind === 'line') {

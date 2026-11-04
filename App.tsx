@@ -676,7 +676,11 @@ const App: React.FC = () => {
           onOpenBeauty={handleBeautyImportClick}
           onOpenMatch={handleMatchImportClick}
           onOpenArt={() => artFileInputRef.current?.click()}
-          onOpenDotArt={() => dotArtInputRef.current?.click()}
+          onOpenDotArt={() => {
+            dotArtInputRef.current?.click();
+            /* 使用者挑照片的這段時間，背景先把線稿模型下載、載好 */
+            import('./utils/dotArt').then(m => m.warmLineArtModel()).catch(() => {});
+          }}
           recent={recentExports}
           onOpenRecent={handleOpenRecent}
         />
