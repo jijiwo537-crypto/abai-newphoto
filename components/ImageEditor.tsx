@@ -26,7 +26,7 @@ import {effectDetailIcon} from '../utils/effectDetailIcons';
 import {HalationLayer} from '../utils/halationLayer';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '../utils/highlightSelection';
 import { maskList, snapOf, hasMaskAdj, anyMask, maskAlpha, maskCacheId, freshMask, newMaskId, MASK_ADJ_KEYS, MASK_SNAP_KEYS, rgbToLab, type MaskSnap, type MaskType } from '../utils/masks';
-import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
+import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, geoAffine, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
 /* IG 貼文預覽跟拼圖那兩個工具共用同一顆元件 */
@@ -36,7 +36,7 @@ import { flushSync, createPortal } from 'react-dom';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { canvasToUrl, revokeUrls, revokeUrlsLater } from '../utils/blobUrl';
-import { canExportHeic, exportHeic } from '../utils/heicExport';
+import { canExportHeic, exportHeic, exportHeicFromUrl } from '../utils/heicExport';
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import { StuckEscape } from './StuckEscape';
 import { motion, AnimatePresence } from 'motion/react';
@@ -6844,10 +6844,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // 存檔用原始解析度重跑一次構圖，預覽時的 2400px 版本只是給畫面看的
     /* 只有裁切（沒有旋轉、翻轉、透視、縮放）時不必先組出原尺寸的整張：直接從原圖切那一塊畫下去。
        48MP 照片原尺寸裁切出來的那張常常就超過手機的畫布上限，以前在這一步就是空的 */
-    const crop = cropOnlyRect(g, ow, oh);
-    const geoSource: CanvasImageSource = isGeoIdentity(g) || crop ? img : composeCanvas(img, ow, oh, g);
-    const w0 = crop ? crop.w : isGeoIdentity(g) ? ow : (geoSource as HTMLCanvasElement).width;
-    const h0 = crop ? crop.h : isGeoIdentity(g) ? oh : (geoSource as HTMLCanvasElement).height;
+    /* 沒有梯形的構圖（旋轉、翻轉、微調角度、縮放、平移、裁切）整條就是一個仿射變換（見 geoAffine），
+       直接用矩陣從原圖畫，不必先組出原尺寸整張 —— 大照片原尺寸組出來就超過手機畫布上限 */
+    const aff = affineOf(g, ow, oh);
+    const geoSource: CanvasImageSource = isGeoIdentity(g) || aff ? img : composeCanvas(img, ow, oh, g);
+    const w0 = aff ? aff.w : isGeoIdentity(g) ? ow : (geoSource as HTMLCanvasElement).width;
+    const h0 = aff ? aff.h : isGeoIdentity(g) ? oh : (geoSource as HTMLCanvasElement).height;
     /* iOS Safari 單張畫布上限約 1677 萬像素，超過時畫布是空的、記憶體也會爆而重新載入
        （48MP 照片疊特效存檔時）。只有超過上限的照片才等比縮到上限內，其他照片不變。 */
     const capK = safeScale(w0, h0, maxPixels);   // 手機（iPhone、Android）都套，見 utils/exportLimits
@@ -6855,8 +6857,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctxOriginal = c.getContext('2d', { willReadFrequently: true })!;
-    if (crop) ctxOriginal.drawImage(geoSource, crop.x, crop.y, crop.w, crop.h, 0, 0, w, h);
-    else ctxOriginal.drawImage(geoSource, 0, 0, w, h);
+    if (aff) {
+      ctxOriginal.imageSmoothingQuality = 'high';
+      ctxOriginal.setTransform(w / aff.w, 0, 0, h / aff.h, 0, 0);
+      ctxOriginal.transform(...aff.m);
+      ctxOriginal.drawImage(img, 0, 0, ow, oh);
+      ctxOriginal.setTransform(1, 0, 0, 1, 0, 0);
+    } else ctxOriginal.drawImage(geoSource, 0, 0, w, h);
     const originalData = ctxOriginal.getImageData(0, 0, w, h).data;
     if (keepOriginalRef.current) keepOriginalRef.current.data = new Uint8ClampedArray(originalData);
     /* 發光類特效先在原圖上算（跟預覽同一個順序），濾鏡與調節再套在「原圖＋光」上 */
@@ -6945,12 +6952,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   /** 原尺寸存檔需要的「縮小尺寸原圖」：renderOneCanvas 讀出原圖時順便留一份（只在原尺寸存檔時要） */
   const keepOriginalRef = useRef<{ data: Uint8ClampedArray | null } | null>(null);
-  /** 只有裁切的構圖：回傳原圖上的裁切範圍（跟 composeCanvas 同樣的取整）；有其他變形回 null */
-  const cropOnlyRect = (g: GeoParams, ow: number, oh: number): { x: number; y: number; w: number; h: number } | null => {
-    if (isGeoIdentity(g)) return null;
-    if (g.quarter || g.angle || g.flipH || g.flipV || g.keyV || g.keyH || (g.zoom ?? 1) !== 1 || g.offset?.x || g.offset?.y) return null;
-    const x = Math.max(0, Math.min(ow - 1, Math.round(g.crop.x * ow))), y = Math.max(0, Math.min(oh - 1, Math.round(g.crop.y * oh)));
-    return { x, y, w: Math.max(1, Math.min(ow - x, Math.round(g.crop.w * ow))), h: Math.max(1, Math.min(oh - y, Math.round(g.crop.h * oh))) };
+  /** 沒有梯形的構圖：回傳輸出大小與「輸出 ← 原圖」的仿射矩陣（跟 composeCanvas 同一份幾何）；有梯形或沒有構圖回 null */
+  const affineOf = (g: GeoParams, ow: number, oh: number): { w: number; h: number; m: [number, number, number, number, number, number] } | null => {
+    if (isGeoIdentity(g) || g.keyV || g.keyH) return null;
+    const A = geoAffine(ow, oh, g);
+    return { w: Math.max(1, Math.round(A.outW)), h: Math.max(1, Math.round(A.outH)), m: A.m };
   };
   /* ── 原尺寸存檔（超過手機畫布上限的大照片） ──
      見 utils/fullResExport：效果在手機能處理的最大尺寸上算，再用導向上採樣套到真正的原尺寸原圖，
@@ -6958,10 +6964,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      旋轉、透視這類構圖要先組出原尺寸整張，那種情況維持原本的做法（縮到上限內）。 */
   const renderFullUrl = async (img: HTMLImageElement, snap: BatchSnap, type: 'image/jpeg' | 'image/png', quality = 1): Promise<string> => {
     const ow = img.naturalWidth || img.width, oh = img.naturalHeight || img.height, g = snap.geo;
-    const crop = isGeoIdentity(g) ? { x: 0, y: 0, w: ow, h: oh } : cropOnlyRect(g, ow, oh);
-    const big = !!crop && (forceFullResRef() || safeScale(crop.w, crop.h) < 1);
-    /* 不能套回原尺寸的情況（旋轉、透視等構圖）：用畫布上限 1600 萬算，跟以前一樣，1200 萬像素以下的照片不縮小 */
-    if (!crop) return canvasToUrl(renderOneCanvas(img, snap, MOBILE_MAX_PIXELS), type, quality);
+    const aff = affineOf(g, ow, oh);
+    const out = isGeoIdentity(g) ? { w: ow, h: oh } : aff;
+    const big = !!out && (forceFullResRef() || safeScale(out.w, out.h) < 1);
+    /* 只有梯形透視不是仿射、不能逐條畫原圖：用畫布上限 1600 萬算（跟以前一樣），1200 萬像素以下不縮小 */
+    if (!out) return canvasToUrl(renderOneCanvas(img, snap, MOBILE_MAX_PIXELS), type, quality);
     if (!big) return canvasToUrl(renderOneCanvas(img, snap), type, quality);
     keepOriginalRef.current = { data: null };
     const proc = renderOneCanvas(img, snap);
@@ -6972,8 +6979,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     proc.width = proc.height = 0;
     const T = buildTransfer(P, D, pw, ph);
     const url = await exportFullRes({
-      W: crop!.w, H: crop!.h,
-      drawStrip: (ctx, y0, h) => ctx.drawImage(img, crop!.x, crop!.y + y0, crop!.w, h, 0, 0, crop!.w, h),
+      W: out!.w, H: out!.h,
+      drawStrip: (ctx, y0) => {
+        if (!aff) { ctx.drawImage(img, 0, -y0); return; }
+        ctx.setTransform(1, 0, 0, 1, 0, -y0); ctx.transform(...aff.m); ctx.drawImage(img, 0, 0, ow, oh);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+      },
     }, T, type);
     return url || '';
   };
@@ -7480,10 +7491,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 // JPG／PNG：大照片走原尺寸分段存檔（見 renderFullUrl），一般照片跟以前一樣
                 out.push(await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
               } else {
-                // HEIC 要一整張畫布編碼，沒辦法原尺寸分段：用畫布上限（1600 萬）
-                const canvas = renderOneCanvas(img, snap, MOBILE_MAX_PIXELS);
-                out.push(await canvasToUrl(canvas, 'image/png', 1));
-                encoded.push(await exportHeic(canvas));
+                // HEIC（App 才有）：先原尺寸做出無損 PNG（見 renderFullUrl），再交給原生編碼器轉 HEIC
+                const png = await renderFullUrl(img, snap, 'image/png', 1);
+                if (png) { out.push(png); encoded.push(await exportHeicFromUrl(png)); }
+                else {
+                  // 萬一分段失敗：退回一整張畫布（畫布上限內）
+                  const canvas = renderOneCanvas(img, snap, MOBILE_MAX_PIXELS);
+                  out.push(await canvasToUrl(canvas, 'image/png', 1));
+                  encoded.push(await exportHeic(canvas));
+                }
               }
             }
             if (request !== saveRequestRef.current) { revokeUrls([...out, ...encoded]); return; }
