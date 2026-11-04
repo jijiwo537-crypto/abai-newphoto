@@ -38,8 +38,24 @@ const ctx2d = (c: Cvs) => c.getContext('2d', { willReadFrequently: true })!;
 
 /* ── 1. 讀圖：寬度最多 768，寬高裁成 4 的倍數（一格點字 4 列高） ── */
 export async function prepareDotArtImage(file: Blob): Promise<Cvs> {
-  let bmp = await createImageBitmap(file);
-  if (bmp.width > MAX_INPUT_W) { const big = bmp; bmp = await createImageBitmap(file, { resizeWidth: MAX_INPUT_W }); big.close(); }
+  /* 先只讀尺寸（<img> 讀檔頭就知道寬高，不會整張解碼）：4800 萬像素的照片整張解碼要將近 200MB，
+     iPhone 上會讓分頁直接崩潰。寬度超過 768 就直接解碼成縮小後的尺寸（跟原本同一個縮圖呼叫，結果一樣）。 */
+  const natW = await new Promise<number>(res => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => { res(im.naturalWidth); URL.revokeObjectURL(url); };
+    im.onerror = () => { res(0); URL.revokeObjectURL(url); };
+    im.src = url;
+  });
+  const bmp = natW > MAX_INPUT_W
+    ? await createImageBitmap(file, { resizeWidth: MAX_INPUT_W })
+    : await createImageBitmap(file);
+  if (bmp.width > MAX_INPUT_W) {   // 讀不到尺寸的特殊格式：照舊縮
+    const small = await createImageBitmap(file, { resizeWidth: MAX_INPUT_W }); bmp.close();
+    return finishPrepared(small);
+  }
+  return finishPrepared(bmp);
+}
+function finishPrepared(bmp: ImageBitmap): Cvs {
   let w = bmp.width, h = bmp.height;
   if (w > 20) { w -= w % 4; h -= h % 4; }
   const c = canvas(w, h);
@@ -72,53 +88,26 @@ function stretchContrast(src: Cvs): Cvs {
 }
 
 /* ── 3. 線稿模型（背景執行緒） ── */
-let worker: Worker | null = null, seq = 0, mode: 'gpu' | 'cpu' | null = null;
-const pending = new Map<number, { msg: any; transfer: Transferable[]; res: (v: any) => void; rej: (e: any) => void }>();
+/* 只用 CPU（單執行緒 WebAssembly）那支 worker。
+   試過 WebGPU：iPhone 上要多載一份較大的執行檔、模型要兩份（GPU 自我檢查用），
+   768px 的中間結果在 GPU 上又要好幾百 MB —— Safari 會直接把整個分頁關掉（導入圖片就崩潰），所以拿掉。 */
+let worker: Worker | null = null, seq = 0;
+const pending = new Map<number, { res: (v: any) => void; rej: (e: any) => void }>();
 const modelUrl = () => new URL(`${(import.meta as any).env?.BASE_URL || '/'}models/line-art.onnx`, location.href).href;
-const gpuLikely = () => { try { return !!(navigator as any).gpu && !(globalThis as any).__dotArtCpu; } catch { return false; } };
-let gpuTimer = 0, gpuLoaded = false;
-const armGpuTimer = () => { clearTimeout(gpuTimer); gpuTimer = window.setTimeout(() => { if (mode === 'gpu') toCpu('timeout'); }, 25000); };
-/** GPU 那支換成 CPU 那支，沒完成的工作原樣重送 */
-function toCpu(why: string) {
-  console.warn('line art: falling back to CPU', why);
-  clearTimeout(gpuTimer); worker?.terminate(); spawn('cpu');
-  for (const [id, q] of pending) worker!.postMessage({ ...q.msg, id, modelUrl: modelUrl() });
-}
-function spawn(m: 'gpu' | 'cpu') {
-  mode = m; gpuLoaded = false;
-  worker = m === 'gpu'
-    ? new Worker(new URL('./lineArtGpu.worker.ts', import.meta.url), { type: 'module' })
-    : new Worker(new URL('./lineArt.worker.ts', import.meta.url), { type: 'module' });
-  worker.onmessage = e => {
-    const p = pending.get(e.data.id); if (!p) return;
-    if (!e.data.ok && mode === 'gpu') { toCpu(e.data.error); return; }   // GPU 那支不能用（資料送出前已經複製一份）
-    if (mode === 'gpu' && e.data.data) clearTimeout(gpuTimer);   // GPU 真的交出結果了
-    if (mode === 'gpu' && e.data.loadMs !== undefined && !gpuLoaded) {   // 模型載好（含自我檢查）才開始計推論時間
-      gpuLoaded = true;
-      if ([...pending.values()].some(q => q.msg.type === 'run')) armGpuTimer();
-    }
-    pending.delete(e.data.id); e.data.ok ? p.res(e.data) : p.rej(new Error(e.data.error));
-  };
-  worker.onerror = e => {
-    if (mode === 'gpu') { toCpu('worker error'); return; }
-    for (const p of pending.values()) p.rej(e); pending.clear(); worker?.terminate(); worker = null; mode = null;
-  };
+function lineWorker() {
+  if (!worker) {
+    worker = new Worker(new URL('./lineArt.worker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = e => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.ok ? p.res(e.data) : p.rej(new Error(e.data.error)); };
+    worker.onerror = e => { for (const p of pending.values()) p.rej(e); pending.clear(); worker?.terminate(); worker = null; };
+  }
+  return worker;
 }
 const call = (msg: any) => new Promise<any>((res, rej) => {
-  if (!worker) { spawn(gpuLikely() ? 'gpu' : 'cpu'); if (mode === 'gpu' && msg.type !== 'warm') call({ type: 'warm' }).catch(() => {}); }
-  const id = ++seq;
-  // 保留一份原始資料：GPU 失敗改走 CPU 時要重送（轉移所有權後原本那份就不能用了）
-  const keep = msg.data ? { ...msg, data: (msg.data as Float32Array).slice() } : msg;
-  pending.set(id, { msg: keep, transfer: [], res, rej });
-  /* GPU 卡住或比 CPU 還慢（少數裝置的 GPU 驅動）：推論 25 秒還沒交出結果就改用 CPU。
-     只算推論本身（下載模型的時間不算，網路慢不會誤判） */
-  if (mode === 'gpu' && msg.type === 'run' && gpuLoaded) armGpuTimer();
-  worker!.postMessage({ ...msg, id, modelUrl: modelUrl() }, msg.data ? [(msg.data as Float32Array).buffer] : []);
+  const id = ++seq; pending.set(id, { res, rej });
+  lineWorker().postMessage({ ...msg, id, modelUrl: modelUrl() }, msg.data ? [(msg.data as Float32Array).buffer] : []);
 });
 /** 先把模型載好（打開工具就開始下載，按「產生」時就不用等） */
 export const warmLineArtModel = () => call({ type: 'warm' }).catch(() => {});
-/** 目前用的是 GPU 還是 CPU（測試用） */
-export const lineArtMode = () => mode;
 
 const lineArtCache = new WeakMap<Cvs, Cvs>();
 async function lineArt(src: Cvs): Promise<Cvs> {
