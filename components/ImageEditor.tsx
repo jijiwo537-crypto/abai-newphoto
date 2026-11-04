@@ -1558,6 +1558,29 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   // 構圖參數。套用之後整個預覽緩衝會用新的幾何重建，色彩流程完全不用知道它的存在。
   const [geo, setGeo] = useState<GeoParams>(() => ({ ...DEFAULT_GEO, crop: { ...FULL_CROP } }));
   const [draftGeo, setDraftGeo] = useState<GeoParams | null>(null);
+  /* 構圖裡每一步（轉 90 度、翻轉、拖一次角度、拉一次裁切框）都能單獨撤銷／重做。
+     連續拖動中的每一格併成同一步（間隔 400ms 內），離開構圖後整段構圖仍是編輯器歷史裡的一步。 */
+  const draftHistRef = useRef<{ past: GeoParams[]; future: GeoParams[]; at: number }>({ past: [], future: [], at: 0 });
+  const [draftHistTick, setDraftHistTick] = useState(0);
+  const draftGeoNowRef = useRef<GeoParams | null>(null);
+  draftGeoNowRef.current = draftGeo;
+  const resetDraftHist = () => { draftHistRef.current = { past: [], future: [], at: performance.now() }; setDraftHistTick(t => t + 1); };
+  const changeDraftGeo = useCallback((g: GeoParams) => {
+    const h = draftHistRef.current, cur = draftGeoNowRef.current, now = performance.now();
+    if (cur && now - h.at > 400 && JSON.stringify(cur) !== JSON.stringify(g)) { h.past.push(cur); if (h.past.length > 200) h.past.shift(); h.future = []; setDraftHistTick(t => t + 1); }
+    h.at = now;
+    setDraftGeo(g);
+  }, []);
+  const undoDraftGeo = () => {
+    const h = draftHistRef.current, cur = draftGeoNowRef.current;
+    const prev = h.past.pop(); if (!prev || !cur) return;
+    h.future.push(cur); h.at = 0; setDraftGeo(prev); setDraftHistTick(t => t + 1);
+  };
+  const redoDraftGeo = () => {
+    const h = draftHistRef.current, cur = draftGeoNowRef.current;
+    const next = h.future.pop(); if (!next || !cur) return;
+    h.past.push(cur); h.at = 0; setDraftGeo(next); setDraftHistTick(t => t + 1);
+  };
   const composePreviewRef = useRef<HTMLCanvasElement | HTMLImageElement | null>(null);
   const composeStageLimitRef = useRef<{width:number;height:number}|null>(null);
   const releaseComposePreview = () => {
@@ -2526,7 +2549,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 「顏色那一段的輸入是哪一份像素」：照片＋（若有）發光那一組。快取鍵一律用它。 */
   /** 人像／仿色剛交回來、還在背景編碼的那一張：緩衝區先用暫時的鍵，畫面照樣當作是這張照片 */
   const bufferAliasRef = useRef<{ key: string; for: string } | null>(null);
-  const srcIdent = () => srcIdOf(buffersSrcRef.current) + (glowGenRef.current ? `|g${glowGenRef.current}` : '');
+  /* 緩衝區是照哪一組構圖組出來的。所有快取（GPU 原圖貼圖、濾鏡結果、發光、特效輸入）都認這個鍵：
+     以前只認照片編號，翻轉、同比例裁切這類「尺寸不變」的構圖之後，快取還是舊的那張，
+     預覽就跳回沒構圖的樣子（導出不受影響）。 */
+  const bufGeoSigRef = useRef('');
+  const noteBufferGeo = (g: GeoParams | null) => {
+    const id = !g || isGeoIdentity(g) ? '' : JSON.stringify(g);
+    let h = 5381; for (let i = 0; i < id.length; i++) h = (h * 33 + id.charCodeAt(i)) | 0;
+    bufGeoSigRef.current = id ? `|G${(h >>> 0).toString(36)}` : '';
+    bufferGeoRef.current = g && !isGeoIdentity(g) ? g : DEFAULT_GEO;
+  };
+  const bufIdent = () => srcIdOf(buffersSrcRef.current) + bufGeoSigRef.current;
+  const srcIdent = () => bufIdent() + (glowGenRef.current ? `|g${glowGenRef.current}` : '');
   /** 緩衝區換人了。縮圖那兩支 effect 靠這個知道「可以重算了」——
       連結中的照片參數一模一樣，光看 params 是看不出換過照片的。 */
   const [buffersTick, setBuffersTick] = useState(0);
@@ -3367,7 +3401,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const g = getSurfaceGpu();
     if (!g || !b.source) return null;
     const original = b.original || b.source;
-    const origKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
+    const origKey = `${b.w}x${b.h}|${bufIdent()}`;
     if (!gpuColourOn(g, surfaceSrcKeyRef, p, film, filmSize, filmKey, origKey, { source: original, w: b.w, h: b.h })) return null;
     let glow: WebGLTexture | null = null;
     if (hasGlow(p)) { glow = glowGpu(p, { original, w: b.w, h: b.h }, origKey); if (!glow) return null; }
@@ -3465,7 +3499,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const syncGlowSource = (b: BufferSet, p: EditorParams): boolean => {
     if (!b.source) return false;
     if (!b.original) b.original = b.source;
-    const origKey = `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}`;
+    const origKey = `${b.w}x${b.h}|${bufIdent()}`;
     const sig = glowSig(p), key = sig ? `${origKey}|${sig}` : '';
     if (key === (b.glowKey || '')) return true;
     if (!key) b.source = b.original;
@@ -5630,9 +5664,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const ctx = cvs.getContext('2d')!;
     /* 發光類特效在原圖上算（見 syncGlowSource）。拖曳中而且有 GPU 表面時，
        發光參數變了交給下面的 GPU 直通路線（不讀回像素）；其他情況先在這裡對齊。 */
-    const glowPending = glowSig(p) ? `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}|${glowSig(p)}` !== (b.glowKey || '') : !!b.glowKey;
+    const glowPending = glowSig(p) ? `${b.w}x${b.h}|${bufIdent()}|${glowSig(p)}` !== (b.glowKey || '') : !!b.glowKey;
     if (!(isInteracting && glowPending && getSurfaceGpu())) syncGlowSource(b, p);
-    const glowStale = glowPending && b.glowKey !== (glowSig(p) ? `${b.w}x${b.h}|${srcIdOf(buffersSrcRef.current)}|${glowSig(p)}` : '');
+    const glowStale = glowPending && b.glowKey !== (glowSig(p) ? `${b.w}x${b.h}|${bufIdent()}|${glowSig(p)}` : '');
     const pPost0 = stripGlow(p);
     const legacy=legacyPreviewRef.current;
     if(!glowStale&&!showOriginalRef.current&&!forceRecalculateEffectsRef.current&&!displayStaleRef.current&&legacy&&legacy.key===legacyInputKey(pPost0,b.w,b.h,legacy.kind)){
@@ -6130,6 +6164,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         // 換成合併好的那張：CPU 路徑留著的濾鏡結果是舊來源算的，一定要重算
         lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, selectedLutIdx: -1 } as any;
         lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
+        noteBufferGeo(g);
         buildBuffersFromRef.current(src, w, h, false, activeSrc);
       };
       /* 合併剛做好的那張：像素已經在手上（一張普通的 2D 畫布），直接拿來建緩衝區，
@@ -6141,6 +6176,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const c = fresh.cvs;
         lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, selectedLutIdx: -1 } as any;
         lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
+        noteBufferGeo(null);
         buildBuffersFromRef.current(c, c.width, c.height, false, activeSrc);
         c.width = c.height = 0;
         tapFastRef.current = true;   // 換上之後那一次也走 GPU 直出，不跑 CPU 整張重算
@@ -6280,6 +6316,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       // Update dimensions dynamically
       setImageDimensions(`${img.naturalWidth}×${img.naturalHeight}`);
 
+      noteBufferGeo(null);
       buildBuffersFromRef.current(img, img.width, img.height, true, activeSrc);
       // 這張自己的裁切／旋轉要在圖解好之後才補得回去。上面 applySnap 那時候
       // originalImgRef 還是空的，只設得了狀態、套不到畫布上 —— 所以切回一張
@@ -6577,6 +6614,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const src = isGeoIdentity(g) ? img : composeCanvas(img, sw, sh, g, 2400);
     const w = 'width' in src ? (src as HTMLCanvasElement).width : sw;
     const h = 'height' in src ? (src as HTMLCanvasElement).height : sh;
+    noteBufferGeo(g);
     buildBuffersFromRef.current(src, isGeoIdentity(g) ? sw : w, isGeoIdentity(g) ? sh : h, false);
     bufferGeoRef.current = g;
     geoRef.current = g;
@@ -7238,6 +7276,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           // 像素直接裝進緩衝區（鍵就是新網址，跟換來源後一致）
           lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, selectedLutIdx: -1 } as any;
           lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
+          noteBufferGeo(null);
           buildBuffersFromRef.current(cvs, cvs.width, cvs.height, false, url);
           cvs.width = cvs.height = 0; cvs = null;
           const fresh = JSON.parse(JSON.stringify(DEFAULT_PARAMS)) as EditorParams;
@@ -7794,6 +7833,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, selectedLutIdx: -1 } as any;
     lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
     bufferAliasRef.current = { key: pend, for: was };
+    noteBufferGeo(g);
     buildBuffersFromRef.current(src, w, h, false, pend);
     tapFastRef.current = true; isDirtyRef.current = true;
     const before = studioInstallRef.current;
@@ -8461,7 +8501,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
            <button onClick={undo} disabled={historyIndex <= 0} className={`p-2 transition-all ${historyIndex <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="undo" className="text-xl" /></button>
            <button onClick={redo} disabled={historyIndex >= history.length - 1} className={`p-2 transition-all ${historyIndex >= history.length - 1 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="redo" className="text-xl" /></button>
         </div>
-        ) : <div aria-hidden="true" />}
+        ) : (
+        /* 構圖裡：撤銷／重做的是構圖的每一步（見 draftHistRef） */
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-4" data-draft-hist={draftHistTick}>
+           <button onClick={undoDraftGeo} disabled={!draftHistRef.current.past.length} className={`p-2 transition-all ${!draftHistRef.current.past.length ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="undo" className="text-xl" /></button>
+           <button onClick={redoDraftGeo} disabled={!draftHistRef.current.future.length} className={`p-2 transition-all ${!draftHistRef.current.future.length ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="redo" className="text-xl" /></button>
+        </div>
+        )}
         {activeCategory !== 'compose' ? (
         <div className="flex justify-end items-center gap-1">
             <div className="h-8 flex items-center bg-white text-black rounded-full overflow-hidden">
@@ -9564,7 +9610,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         <ComposeStudio
           image={composePreviewRef.current || originalImgRef.current!}
           geo={draftGeo}
-          onChange={setDraftGeo}
+          onChange={changeDraftGeo}
           footerHeight={footerHeight}
           showFooterDivider
           stageLimit={composeStageLimitRef.current || previewFitSize}
@@ -10000,6 +10046,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 composePreviewRef.current = originalImgRef.current;
               }
               setDraftGeo(geo);
+              resetDraftHist();
               setActiveCategory('compose');
             };
           const effectsOn = ['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory);

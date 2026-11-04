@@ -21,7 +21,7 @@ import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
-import { useAlignPad, ALIGN_FILL_CSS, paintedWhenDecoded, useOriginalImage, drawOriginalInto, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
+import { useAlignPad, ALIGN_FILL_CSS, useOriginalImage, drawOriginalInto, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
 import {
   METHODS, METHOD_LABEL, Method,
   sampleRgb, bakeFor, applyLut, Lut3D,
@@ -607,6 +607,28 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const placeholderDecodedRef = useRef(false);
   const geoReadyRef = useRef(geoReady); geoReadyRef.current = geoReady;
   const placeholderPainted = () => { placeholderDecodedRef.current = true; if (geoReadyRef.current) onPaintedRef.current?.(); };
+  /* 還沒有參考圖時的畫面：把已經解碼好的原圖縮成預覽尺寸畫進畫布，不再放一張原尺寸的 <img>。
+     iPhone 上 4800 萬像素的 <img> 會先回報「解好了」、真正畫上去卻晚一拍 —— 第一次進仿色就閃一下黑。
+     畫布的像素是現成的，畫好的下一格（兩次 rAF 確認已經上畫面）才回報，編輯器的預覽才讓開。 */
+  const [phShown, setPhShown] = useState(false);
+  useLayoutEffect(() => {
+    if (ready || !srcImg) { setPhShown(false); return; }
+    const cvs = canvasRef.current;
+    if (!cvs) return;
+    const W0 = srcImg.naturalWidth || srcImg.width, H0 = srcImg.naturalHeight || srcImg.height;
+    const k = Math.min(1, PREVIEW_MAX / Math.max(W0, H0));
+    const w = Math.max(1, Math.round(W0 * k)), h = Math.max(1, Math.round(H0 * k));
+    if (cvs.width !== w || cvs.height !== h) { cvs.width = w; cvs.height = h; }
+    const g = cvs.getContext('2d');
+    if (!g) return;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(srcImg, 0, 0, w, h);
+    setPhShown(true);
+    let r2 = 0;
+    const r1 = requestAnimationFrame(() => { r2 = requestAnimationFrame(placeholderPainted); });
+    return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcImg, ready]);
   useEffect(() => { if (geoReady && placeholderDecodedRef.current) onPaintedRef.current?.(); }, [geoReady]);
 
   const viewport=useStandaloneToolViewport();
@@ -736,12 +758,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
           </span>
           <canvas
             ref={canvasRef}
-            className={`${sg.gh ? 'block w-full h-full' : 'max-w-full max-h-full object-contain rounded-sm shadow-2xl'} ${ready && !glReady ? '' : 'hidden'}`}
+            className={`${sg.gh ? 'block w-full h-full' : 'max-w-full max-h-full object-contain rounded-sm shadow-2xl'} ${(ready && !glReady) || (!ready && phShown) ? '' : 'hidden'}`}
           />
-          {!ready && (
-            <img src={imageSrc} alt="" className={sg.gh ? 'block w-full h-full' : 'max-w-full max-h-full object-contain rounded-sm shadow-2xl'}
-              ref={el => paintedWhenDecoded(el, placeholderPainted)} onLoad={e => paintedWhenDecoded(e.currentTarget, placeholderPainted)} />
-          )}
           </div>
           </div>
         </div>
