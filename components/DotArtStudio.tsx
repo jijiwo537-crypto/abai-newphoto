@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { ChevronLeft, Copy, Check, Plus } from 'lucide-react';
 import { Icon } from './Icon';
 import { Glyph } from './Glyph';
-import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, invertDotArt, prepareDotArtImage, warmLineArtModel, type DotArtSettings } from '../utils/dotArt';
+import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, invertDotArt, prepareDotArtImage, warmLineArtModel, type DotArtFrame, type DotArtSettings } from '../utils/dotArt';
 
 type Kind = 'line' | 'shade';
 type ToolId = 'width' | 'threshold' | 'lines' | 'thicken' | 'draw' | 'erase';
@@ -50,7 +50,8 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   });
   const [brush, setBrush] = useState(2);
   const [tool, setTool] = useState<ToolId>('width');
-  const [text, setText] = useState<string | null>(null);
+  const [frame, setFrame] = useState<DotArtFrame | null>(null);
+  const text = frame?.text ?? null;
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [modelReady, setModelReady] = useState(false);
   const [photo, setPhoto] = useState<string>('');
@@ -67,7 +68,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
 
   const busy = useRef(false), shown = useRef('');
   const open = useCallback(async (file: File) => {
-    setStatus('loading'); setText(null); setModelReady(false);
+    setStatus('loading'); setFrame(null); setModelReady(false);
     edits.current.clear(); undoStack.current = []; redoStack.current = []; setHistTick(t => t + 1);
     try {
       const c = await prepareDotArtImage(file);
@@ -99,7 +100,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         const t = await s.render(job.kind, job.settings);
         if (session.current !== s) return;
         shown.current = job.key;
-        setText(t); setTextKey(job.key);
+        setFrame(t); setTextKey(job.key);
         await new Promise(r => requestAnimationFrame(() => r(null)));
       }
     } finally { busy.current = false; }
@@ -118,21 +119,23 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     const upd = () => setBoxSize({ w: b.clientWidth, h: b.clientHeight });
     upd(); const ro = new ResizeObserver(upd); ro.observe(b); return () => ro.disconnect();
   }, []);
-  const geom = useRef({ pitch: 1, cols: 0, rows: 0 });
-  const paint = useCallback((t: string | null) => {
+  /* 框固定是「整張照片的點陣」那麼大（收掉的空白邊也算進去），成品畫在它該在的位置：
+     拖明暗、線條時四周空白多一格少一格，畫面也不會跳、不會變比例 */
+  const geom = useRef({ pitch: 1, cols: 0, rows: 0, ox: 0, oy: 0 });
+  const paint = useCallback((t: string | null, f: DotArtFrame | null) => {
     const c = cvs.current; if (!c) return;
     const lines = t ? t.split('\n') : [];
     const cols = Math.max(0, ...lines.map(l => l.length)), rows = lines.length;
-    if (!cols || !rows || !boxSize.w || !boxSize.h) { c.width = c.height = 0; return; }
-    const pitch = Math.min((boxSize.w - 32) / (cols * 2), (boxSize.h - 32) / (rows * 4));
-    geom.current = { pitch, cols, rows };
-    const dpr = Math.min(3, window.devicePixelRatio || 1), W = cols * 2 * pitch, H = rows * 4 * pitch;
+    if (!f || !cols || !rows || !boxSize.w || !boxSize.h) { c.width = c.height = 0; return; }
+    const pitch = Math.min((boxSize.w - 32) / (f.cols * 2), (boxSize.h - 32) / (f.rows * 4));
+    geom.current = { pitch, cols, rows, ox: f.left * 2 * pitch, oy: f.top * 4 * pitch };
+    const dpr = Math.min(3, window.devicePixelRatio || 1), W = f.cols * 2 * pitch, H = f.rows * 4 * pitch;
     c.style.width = `${W}px`; c.style.height = `${H}px`;
     const pw = Math.round(W * dpr), ph = Math.round(H * dpr);
     if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
     const g = c.getContext('2d')!; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
     g.fillStyle = '#fff';
-    const r = Math.max(0.35, pitch * 0.36);
+    const r = Math.max(0.35, pitch * 0.36), x0 = f.left * 2, y0 = f.top * 4;
     g.beginPath();
     for (let y = 0; y < rows; y++) {
       const l = lines[y];
@@ -140,14 +143,14 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         const code = l.charCodeAt(x) - 0x2800;
         if (code <= 0 || code > 0xff) continue;
         for (let k = 0; k < 8; k++) if (code & (1 << k)) {
-          const cx = (x * 2 + POS[k][0] + 0.5) * pitch, cy = (y * 4 + POS[k][1] + 0.5) * pitch;
+          const cx = (x0 + x * 2 + POS[k][0] + 0.5) * pitch, cy = (y0 + y * 4 + POS[k][1] + 0.5) * pitch;
           g.moveTo(cx + r, cy); g.arc(cx, cy, r, 0, Math.PI * 2);
         }
       }
     }
     g.fill();
   }, [boxSize]);
-  useLayoutEffect(() => { paint(finalText); }, [finalText, paint]);
+  useLayoutEffect(() => { paint(finalText, frame); }, [finalText, frame, paint]);
 
   const drawing = tool === 'draw' || tool === 'erase';
   const stroke = useRef<{ last: [number, number] | null } | null>(null);
@@ -164,7 +167,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   };
   const toDot = (ev: React.PointerEvent): [number, number] => {
     const r = cvs.current!.getBoundingClientRect(), p = geom.current.pitch;
-    return [(ev.clientX - r.left) / p, (ev.clientY - r.top) / p];
+    return [(ev.clientX - r.left - geom.current.ox) / p, (ev.clientY - r.top - geom.current.oy) / p];
   };
   const onMove = (ev: React.PointerEvent) => {
     const s = stroke.current; if (!s) return;
@@ -174,7 +177,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
       for (let i = 1; i <= n; i++) dab(lx + (x - lx) * i / n, ly + (y - ly) * i / n);
     } else dab(x, y);
     s.last = [x, y];
-    paint(base ? applyEdit(base, edits.current.get(textKey)) : base);
+    paint(base ? applyEdit(base, edits.current.get(textKey)) : base, frame);
   };
   const onDown = (ev: React.PointerEvent) => {
     if (!drawing || !finalText) return;
@@ -212,12 +215,14 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     if (isBrush) setBrush(v);
     else setRaw(r => ({ ...r, [kind]: { ...r[kind], [cur.id]: v } }));
   };
+  /* 底部工具列跟美顏同一款：平的圖示＋字，選中的是白色 */
   const toolBtn = (t: ToolDef) => {
     const on = cur.id === t.id;
     return (
-      <button key={t.id} onClick={() => setTool(t.id)} className="flex flex-col items-center gap-1 shrink-0 w-14">
-        <span className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${on ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40'}`}>{t.glyph}</span>
-        <span className={`text-[9px] font-bold whitespace-nowrap ${on ? 'text-white' : 'text-white/25'}`}>{t.label}</span>
+      <button key={t.id} onClick={() => setTool(t.id)}
+        className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${on ? 'text-white' : 'text-white/20'}`}>
+        <span className="h-6 flex items-center justify-center">{t.glyph}</span>
+        <span className="text-[9px] font-black uppercase tracking-[0.15em]">{t.label}</span>
       </button>
     );
   };
@@ -246,7 +251,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         {finalText && <pre data-dot-art-text hidden>{finalText}</pre>}
         {status === 'ready' && text === null && <p className="absolute text-[12px] text-white/50">畫面全空白，調一下明暗</p>}
         {status === 'ready' && !modelReady && (
-          <div data-dot-art-refining className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md flex items-center gap-2 text-[11px] text-white/80">
+          <div data-dot-art-refining className="absolute top-14 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md flex items-center gap-2 text-[11px] text-white/80">
             <span className="w-3 h-3 rounded-full border-2 border-white/25 border-t-white animate-spin" />線條描繪中
           </div>
         )}
@@ -256,37 +261,38 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
           {photo && <img src={photo} alt="" className="w-full h-full object-cover" />}
           <span className="absolute right-0.5 bottom-0.5 w-4 h-4 rounded-full bg-white text-black flex items-center justify-center"><Plus size={11} strokeWidth={3} /></span>
         </button>
+        {/* 反轉：跟創意拼圖的隨機圖案鍵同一款，只有圖示（影子貼著圖示，不是一團霧） */}
         <button aria-label="反轉" aria-pressed={inverted} onClick={() => setInverted(v => !v)}
-          className={`absolute right-4 bottom-3 w-10 h-10 rounded-full flex items-center justify-center backdrop-blur-md ${inverted ? 'bg-white text-black' : 'bg-white/10 text-white/80'}`}>
-          <Glyph k="invert" size={18} />
+          className="absolute right-2 bottom-1 p-3 bg-transparent border-0 text-white active:scale-90 transition-transform flex items-center justify-center select-none"
+          style={{ filter: 'drop-shadow(0 1px 0.5px rgba(0,0,0,.5))' }}>
+          <Glyph k="invert" size={24} />
         </button>
-      </div>
-
-      {/* 線稿／陰影 */}
-      <div className="shrink-0 flex justify-center gap-2 pt-3">
-        {(['line', 'shade'] as const).map(k => (
-          <button key={k} onClick={() => setKind(k)} aria-pressed={kind === k}
-            className={`h-8 px-5 rounded-full text-[11px] font-black tracking-[0.08em] transition-colors ${kind === k ? 'bg-white text-black' : 'bg-white/[0.06] text-white/60'}`}>
-            {k === 'line' ? '線稿' : '陰影'}
-          </button>
-        ))}
-      </div>
-
-      {/* 滑桿（連續、跟手） */}
-      <div className="shrink-0 px-6 pt-4 pb-2">
-        <div className="flex justify-between items-center mb-2">
-          <span className="text-[11px] font-bold text-white/60">{isBrush ? '筆刷大小' : cur.label}</span>
-          <span className="text-[10px] leading-none tabular-nums font-bold bg-white/10 px-1.5 py-[4px] rounded">{cur.decimals ? snap(cur.id, value).toFixed(2) : snap(cur.id, value)}</span>
-        </div>
-        <div className="slider-wrap w-full" style={{ height: 16 }}>
-          <input type="range" aria-label={cur.label} min={cur.min} max={cur.max} step="any" value={value}
-            onChange={e => setValue(Number(e.target.value))} className="premium-slider w-full" />
+        {/* 線稿／陰影：浮在預覽上緣 */}
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-2">
+          {(['line', 'shade'] as const).map(k => (
+            <button key={k} onClick={() => setKind(k)} aria-pressed={kind === k}
+              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 border transition-all active:scale-95 ${kind === k ? 'bg-white text-black border-white font-bold' : 'bg-black/40 text-white/60 border-white/15 backdrop-blur-md'}`}>
+              {k === 'line' ? '線稿' : '陰影'}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* 工具 */}
-      <div className="shrink-0 flex justify-center gap-1 pt-2 overflow-x-auto no-scrollbar px-2" style={{ paddingBottom: 'calc(14px + env(safe-area-inset-bottom))' }}>
-        {tools.map(toolBtn)}
+      {/* 滑桿：一列（名稱｜滑桿｜數值），跟美顏同一款 */}
+      <div className="shrink-0 border-t border-white/10 h-[72px] flex items-center px-5">
+        <div className="flex items-center gap-3 h-6 w-full">
+          <span className="text-[10px] font-bold tracking-[0.15em] text-white/40 w-14 shrink-0">{isBrush ? '筆刷大小' : cur.label}</span>
+          <div className="slider-wrap flex-1" style={{ height: 16 }}>
+            <input type="range" aria-label={cur.label} min={cur.min} max={cur.max} step="any" value={value}
+              onChange={e => setValue(Number(e.target.value))} className="premium-slider w-full" />
+          </div>
+          <span className="text-[11px] font-mono tabular-nums text-white/80 w-9 text-right shrink-0">{cur.decimals ? snap(cur.id, value).toFixed(2) : snap(cur.id, value)}</span>
+        </div>
+      </div>
+
+      {/* 工具列：跟美顏同一個高度（64px＋底部 12px） */}
+      <div className="border-t border-white/10 bg-black shrink-0" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <div className="flex h-16 pb-3 box-content">{tools.map(toolBtn)}</div>
       </div>
     </div>
   );

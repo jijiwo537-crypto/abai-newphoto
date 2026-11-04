@@ -138,35 +138,43 @@ async function preprocess(src: Cvs, lines: number): Promise<Cvs> {
   return c;
 }
 
-/* ── 4a. 線稿版：明暗門檻 → 黑色擴張 ── */
+/* ── 4a. 線稿版：明暗門檻 → 黑色擴張 ──
+   門檻 f(L)=clamp(256·L − 255·level) 對亮度 L 是單調遞增的，所以「先門檻再取 3×3 最暗」＝「先取最暗再門檻」。
+   拖明暗滑桿時只重做最便宜的門檻那一步；擴張（最花時間）每組「線條／粗細」只做一次。結果逐像素相同。 */
 const LUMA = [0.2126, 0.7152, 0.0722];
-function thresholdAndThicken(src: Cvs, level: number, steps: number): Cvs {
+interface Eroded { L: Float32Array; W: number; H: number; srcW: number; srcH: number }
+function erodedLuma(src: Cvs, steps: number): Eroded {
   // 在 1000px 寬上做（線條粗細才跟照片原本多大無關），做完縮回原尺寸
   const work = canvas(1000, src.height / src.width * 1000), g = ctx2d(work);
   g.drawImage(src, 0, 0, work.width, work.height);
-  const img = g.getImageData(0, 0, work.width, work.height), d = img.data, W = work.width, H = work.height;
-  // 亮度（Rec.709）× 256 − 255 × level：亮度高於 level 一點點就全白，低於就全黑
-  for (let i = 0; i < d.length; i += 4) {
-    const v = Math.max(0, Math.min(255, 256 * (LUMA[0] * d[i] + LUMA[1] * d[i + 1] + LUMA[2] * d[i + 2]) - 255 * level)) | 0;
-    d[i] = d[i + 1] = d[i + 2] = v;
-  }
-  // 黑色擴張：每次取 3×3 範圍內最暗的那一點
-  let cur = d, next = new Uint8ClampedArray(d.length);
+  const d = g.getImageData(0, 0, work.width, work.height).data, W = work.width, H = work.height;
+  let cur = new Float32Array(W * H), next = new Float32Array(W * H);
+  for (let p = 0, i = 0; p < cur.length; p++, i += 4) cur[p] = LUMA[0] * d[i] + LUMA[1] * d[i + 1] + LUMA[2] * d[i + 2];
+  // 黑色擴張：每次取 3×3 範圍內最暗的那一點（可分離：先橫向再縱向取最小，結果一樣、快三倍）
+  const tmp = new Float32Array(W * H);
   for (let s = 0; s < steps; s++) {
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      let m = 255;
-      for (let dy = -1; dy <= 1; dy++) { const yy = y + dy; if (yy < 0 || yy >= H) continue;
-        for (let dx = -1; dx <= 1; dx++) { const xx = x + dx; if (xx < 0 || xx >= W) continue; const v = cur[(yy * W + xx) * 4]; if (v < m) m = v; } }
-      const o = (y * W + x) * 4; next[o] = next[o + 1] = next[o + 2] = m; next[o + 3] = cur[o + 3];
-    }
-    const t = cur; cur = next; next = t as Uint8ClampedArray;
+    for (let y = 0; y < H; y++) { const o = y * W;
+      for (let x = 0; x < W; x++) { let m = cur[o + x]; if (x > 0 && cur[o + x - 1] < m) m = cur[o + x - 1]; if (x < W - 1 && cur[o + x + 1] < m) m = cur[o + x + 1]; tmp[o + x] = m; } }
+    for (let y = 0; y < H; y++) { const o = y * W;
+      for (let x = 0; x < W; x++) { let m = tmp[o + x]; if (y > 0 && tmp[o - W + x] < m) m = tmp[o - W + x]; if (y < H - 1 && tmp[o + W + x] < m) m = tmp[o + W + x]; next[o + x] = m; } }
+    const t = cur; cur = next; next = t;
   }
-  if (cur !== d) d.set(cur);
+  work.width = work.height = 0;
+  return { L: cur, W, H, srcW: src.width, srcH: src.height };
+}
+function thresholdEroded(e: Eroded, level: number): Cvs {
+  const work = canvas(e.W, e.H), g = ctx2d(work), img = g.createImageData(e.W, e.H), d = img.data, off = 255 * level;
+  for (let p = 0, i = 0; p < e.L.length; p++, i += 4) {
+    const v = Math.max(0, Math.min(255, 256 * e.L[p] - off)) | 0;
+    d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
+  }
   g.putImageData(img, 0, 0);
-  const out = canvas(src.width, src.height);
+  const out = canvas(e.srcW, e.srcH);
   ctx2d(out).drawImage(work, 0, 0, out.width, out.height);
+  work.width = work.height = 0;
   return out;
 }
+function thresholdAndThicken(src: Cvs, level: number, steps: number): Cvs { return thresholdEroded(erodedLuma(src, steps), level); }
 
 /* ── 4b. 陰影版：亮度調整 → Atkinson 抖動（線性光空間） ── */
 const toLinear = (v: number) => (v <= 0.04045 ? v / 12.95 : Math.pow((v + 0.055) / 1.055, 2.4));
@@ -215,15 +223,17 @@ function toBraille(src: Cvs, level: number, chars: number): string[] {
   return lines;
 }
 /** 左右共同的空白欄、上下的空白列都收掉；整張空白回 null */
-function trim(lines: string[]): string[] | null {
-  const lead = Math.min(...lines.map(l => l.length - l.replace(/^⠀+/, '').length));
-  const tail = Math.min(...lines.map(l => l.length - l.replace(/⠀+$/, '').length));
+function trimAt(lines: string[]): { lines: string[]; left: number; top: number } | null {
+  const lead = Math.min(...lines.map(l => l.length - l.replace(/^\u2800+/, '').length));
+  const tail = Math.min(...lines.map(l => l.length - l.replace(/\u2800+$/, '').length));
   let out = lines.map(l => l.slice(lead, tail ? l.length - tail : l.length));
   if (!out.join('').replaceAll(BLANK, '').trim()) return null;
-  while (!out[0].replaceAll(BLANK, '')) out = out.slice(1);
+  let top = 0;
+  while (!out[0].replaceAll(BLANK, '')) { out = out.slice(1); top++; }
   while (!out[out.length - 1].replaceAll(BLANK, '')) out = out.slice(0, -1);
-  return out;
+  return { lines: out, left: lead, top };
 }
+const trim = (lines: string[]) => trimAt(lines)?.lines ?? null;
 
 /** 反轉：每一格的 8 個點亮暗互換 */
 export const invertDotArt = (text: string) =>
@@ -258,9 +268,12 @@ export async function generateDotArt(src: Cvs, s: DotArtSettings, onStep?: (labe
 }
 
 /* ── 即時預覽用：同一張圖的各階段各留一份，拖滑桿時只重算變了的那一段 ──
-   線稿模型只跑一次；「線條多寡」變了才重疊；「明暗／粗細」變了才重做門檻；「大小」只重排點字。 */
+   線稿模型只跑一次；「線條多寡」變了才重疊；「粗細」變了才重做擴張；「明暗」只重做門檻；「大小」只重排點字。 */
+/** 主要成品：收邊後的文字，加上它在「整張照片的點陣」裡的位置（預覽用固定的框，拖滑桿時才不會跳） */
+export interface DotArtFrame { text: string; left: number; top: number; cols: number; rows: number }
 export class DotArtSession {
   private pre = new Map<number, Cvs>();
+  private eroded = new Map<string, Eroded>();
   private line = new Map<string, Cvs>();
   /** 線稿模型跑完了沒（跑完之前先用「不疊線」的版本頂著，不用乾等） */
   modelReady = false;
@@ -272,18 +285,24 @@ export class DotArtSession {
     if (!c) { c = await preprocess(this.src, lines); if (this.pre.size > 6) this.pre.clear(); this.pre.set(lines, c); }
     return c;
   }
-  /** 主要的那一張：kind＝線稿或陰影，大小用設定值 */
-  async render(kind: 'line' | 'shade', s0: DotArtSettings): Promise<string | null> {
+  async render(kind: 'line' | 'shade', s0: DotArtSettings): Promise<DotArtFrame | null> {
     const s = this.modelReady ? s0 : { ...s0, lines: 0 };
     const pre = await this.preFor(s.lines);
     let img: Cvs;
     if (kind === 'line') {
-      const level = Math.round(255 * (1 - (s.threshold || 0.5))), key = `${s.lines}|${level}|${s.thicken}`;
+      const level = Math.round(255 * (1 - (s.threshold || 0.5))), ek = `${s.lines}|${s.thicken}`, key = `${ek}|${level}`;
       let c = this.line.get(key);
-      if (!c) { c = thresholdAndThicken(pre, level, s.thicken); if (this.line.size > 12) this.line.clear(); this.line.set(key, c); }
+      if (!c) {
+        let e = this.eroded.get(ek);
+        if (!e) { e = erodedLuma(pre, s.thicken); if (this.eroded.size > 4) this.eroded.clear(); this.eroded.set(ek, e); }
+        c = thresholdEroded(e, level);
+        if (this.line.size > 24) { for (const v of this.line.values()) v.width = v.height = 0; this.line.clear(); }
+        this.line.set(key, c);
+      }
       img = c;
     } else img = ditherAt(pre, s.width, 2 * s.threshold);
-    const t = trim(toBraille(img, 128, s.width));
-    return t ? t.join('\n') : null;
+    const full = toBraille(img, 128, s.width);
+    const t = trimAt(full);
+    return t ? { text: t.lines.join('\n'), left: t.left, top: t.top, cols: full[0]?.length || s.width, rows: full.length } : null;
   }
 }
