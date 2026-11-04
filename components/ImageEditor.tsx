@@ -7,7 +7,7 @@ import type { StudioView, StudioViewApi } from './studioAlign';
 import { ColorMatchStudio } from './ColorMatchStudio';
 import { TemplatePanel } from './TemplatePanel';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
-import { safeScale } from '../utils/exportLimits';
+import { safeScale, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
 import { buildTransfer, exportFullRes } from '../utils/fullResExport';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
@@ -6836,7 +6836,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   /** 把一張照片用指定的一組參數算出成品（存檔用的原始解析度） */
-  const renderOneCanvas = (img: HTMLImageElement, snap: BatchSnap): HTMLCanvasElement => {
+  const renderOneCanvas = (img: HTMLImageElement, snap: BatchSnap, maxPixels?: number): HTMLCanvasElement => {
     const g = snap.geo;
     const p = snap.params;
     const ow = img.naturalWidth || img.width;
@@ -6850,7 +6850,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const h0 = crop ? crop.h : isGeoIdentity(g) ? oh : (geoSource as HTMLCanvasElement).height;
     /* iOS Safari 單張畫布上限約 1677 萬像素，超過時畫布是空的、記憶體也會爆而重新載入
        （48MP 照片疊特效存檔時）。只有超過上限的照片才等比縮到上限內，其他照片不變。 */
-    const capK = safeScale(w0, h0);   // 手機（iPhone、Android）都套，見 utils/exportLimits
+    const capK = safeScale(w0, h0, maxPixels);   // 手機（iPhone、Android）都套，見 utils/exportLimits
     const w = Math.max(1, Math.floor(w0 * capK)), h = Math.max(1, Math.floor(h0 * capK));
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
@@ -7478,7 +7478,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 // JPG／PNG：大照片走原尺寸分段存檔（見 renderFullUrl），一般照片跟以前一樣
                 out.push(await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
               } else {
-                const canvas = renderOneCanvas(img, snap);
+                // HEIC 要一整張畫布編碼，沒辦法原尺寸分段：用畫布上限（1600 萬）
+                const canvas = renderOneCanvas(img, snap, MOBILE_MAX_PIXELS);
                 out.push(await canvasToUrl(canvas, 'image/png', 1));
                 encoded.push(await exportHeic(canvas));
               }

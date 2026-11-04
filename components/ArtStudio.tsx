@@ -1,5 +1,5 @@
 import {LiveRange} from './LiveRange';
-import { safeImage } from '../utils/exportLimits';
+import { safeImage, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
 import {TransformWrapper,TransformComponent} from 'react-zoom-pan-pinch';
 import React,{useState,useRef,useEffect,useLayoutEffect,useCallback} from 'react';
 import {ASCII_DEFAULTS} from '../utils/asciiRenderer';
@@ -87,7 +87,7 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
   let cancelled=false;const im=new Image();
   im.onload=async()=>{if(cancelled)return;
    // 手機上照片太大先縮到安全尺寸（見 utils/exportLimits）：畫布超過上限是空的、存檔會閃退
-   const im2=await safeImage(im);if(cancelled)return;try{
+   const im2=await safeImage(im,MOBILE_MAX_PIXELS);if(cancelled)return;try{
    const im=im2;image.current=im;invalidateTracking();setDimensions({w:im.naturalWidth,h:im.naturalHeight});
    for(const c of [asciiCanvas.current!,trackingCanvas.current!]){c.width=im.naturalWidth;c.height=im.naturalHeight;}setReady(true);
   }catch(e){setError(String(e));}};
