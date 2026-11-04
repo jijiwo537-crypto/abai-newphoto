@@ -233,3 +233,31 @@ export async function generateDotArt(src: Cvs, s: DotArtSettings, onStep?: (labe
   groups.unshift(shadeRes);
   return { preview: pre, results: groups.flat() };
 }
+
+/* ── 即時預覽用：同一張圖的各階段各留一份，拖滑桿時只重算變了的那一段 ──
+   線稿模型只跑一次；「線條多寡」變了才重疊；「明暗／粗細」變了才重做門檻；「大小」只重排點字。 */
+export class DotArtSession {
+  private pre = new Map<number, Cvs>();
+  private line = new Map<string, Cvs>();
+  constructor(readonly src: Cvs) {}
+  /** 先跑完線稿模型（第一次比較久） */
+  async prepare() { await lineArt(this.src); }
+  private async preFor(lines: number) {
+    let c = this.pre.get(lines);
+    if (!c) { c = await preprocess(this.src, lines); if (this.pre.size > 6) this.pre.clear(); this.pre.set(lines, c); }
+    return c;
+  }
+  /** 主要的那一張：kind＝線稿或陰影，大小用設定值 */
+  async render(kind: 'line' | 'shade', s: DotArtSettings): Promise<string | null> {
+    const pre = await this.preFor(s.lines);
+    let img: Cvs;
+    if (kind === 'line') {
+      const level = Math.round(255 * (1 - (s.threshold || 0.5))), key = `${s.lines}|${level}|${s.thicken}`;
+      let c = this.line.get(key);
+      if (!c) { c = thresholdAndThicken(pre, level, s.thicken); if (this.line.size > 12) this.line.clear(); this.line.set(key, c); }
+      img = c;
+    } else img = ditherAt(pre, s.width, 2 * s.threshold);
+    const t = trim(toBraille(img, 128, s.width));
+    return t ? t.join('\n') : null;
+  }
+}
