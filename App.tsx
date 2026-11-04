@@ -8,12 +8,13 @@ import { GridLayoutTool } from './components/GridLayoutTool';
 import { BeautyStudio } from './components/BeautyStudio';
 import { ColorMatchStudio } from './components/ColorMatchStudio';
 import { ArtStudio } from './components/ArtStudio';
+import { DotArtStudio } from './components/DotArtStudio';
 import { warmCameraLuts } from './utils/cameraLuts';
 import { warmFontSamples } from './utils/fonts';
 import {warmLowfiLut} from './utils/lowfiLut';
 import {warmEditorLuts} from './utils/photoFx';
 
-type AppView = 'home' | 'camera' | 'editor' | 'collage' | 'layout' | 'beauty' | 'match' | 'art';
+type AppView = 'home' | 'camera' | 'editor' | 'collage' | 'layout' | 'beauty' | 'match' | 'art' | 'dotart';
 
 const LUT_LIST = [
   { id: 'none', name: '原始', url: '' },
@@ -155,6 +156,8 @@ const App: React.FC = () => {
   const [matchImage, setMatchImage] = useState<string | null>(null);
   const [artImage, setArtImage] = useState<string | null>(null);
   const artFileInputRef = useRef<HTMLInputElement>(null);
+  const dotArtInputRef = useRef<HTMLInputElement>(null);
+  const [dotArtFiles, setDotArtFiles] = useState<File[]>([]);
   const [matchRef, setMatchRef] = useState<string | null>(null);
   const [matchReferenceLoading,setMatchReferenceLoading]=useState(false);
   const [beautyKey, setBeautyKey] = useState(0);
@@ -673,6 +676,7 @@ const App: React.FC = () => {
           onOpenBeauty={handleBeautyImportClick}
           onOpenMatch={handleMatchImportClick}
           onOpenArt={() => artFileInputRef.current?.click()}
+          onOpenDotArt={() => dotArtInputRef.current?.click()}
           recent={recentExports}
           onOpenRecent={handleOpenRecent}
         />
@@ -688,6 +692,11 @@ const App: React.FC = () => {
         finally { setIsImporting(false);setImportPreviewUrl(null); }
       }}/>
       {currentView === 'art' && artImage && <ArtStudio initialSrc={artImage} onClose={() => setCurrentView('home')} />}
+      <input ref={dotArtInputRef} hidden type="file" accept="image/*" multiple onChange={e => {
+        const files = [...(e.target.files || [])]; e.target.value = ''; if (!files.length) return;
+        setDotArtFiles(files); setCurrentView('dotart');
+      }}/>
+      {currentView === 'dotart' && dotArtFiles.length > 0 && <DotArtStudio initialFiles={dotArtFiles} onClose={() => setCurrentView('home')} />}
       {currentView === 'match' && matchImage && (
         <ColorMatchStudio
           imageSrc={matchImage}

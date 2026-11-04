@@ -25,6 +25,8 @@ interface HomePageProps {
   onOpenBeauty: () => void;
   onOpenMatch: () => void;
   onOpenArt: () => void;
+  /** 點陣文字（圖片轉點字圖案） */
+  onOpenDotArt?: () => void;
   /** 導出紀錄，新的在前面 */
   recent?: ExportMeta[];
   onOpenRecent?: (id: string) => void;
@@ -184,7 +186,7 @@ const NAV_ITEMS = [
 ] as const;
 
 export const HomePage: React.FC<HomePageProps> = ({
-  onOpenCamera, onImportPhoto, onImportToCollage, onOpenLayout, onOpenBeauty, onOpenMatch, onOpenArt,
+  onOpenCamera, onImportPhoto, onImportToCollage, onOpenLayout, onOpenBeauty, onOpenMatch, onOpenArt, onOpenDotArt,
   recent = [], onOpenRecent,
 }) => {
   const [nav, setNav] = useState<string>('home');
@@ -1296,11 +1298,13 @@ export const HomePage: React.FC<HomePageProps> = ({
         </div>
 
         {/* One accessible entry, with a shared horizontal title/action baseline. */}
+        {/* 這一排兩個入口：藝術效果、點陣文字（各佔一半，同一個高度、同一條文字基線） */}
+        <div className="relative z-10 mt-[14px] shrink-0 flex gap-2">
         <button
           type="button"
           aria-label="開啟藝術效果"
           onClick={onOpenArt}
-          className="relative z-10 mt-[14px] shrink-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
+          className="relative flex-1 min-w-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
           style={{ background: previews.promo ? undefined : 'rgba(255,255,255,.03)' }}
         >
           {previews.promo && (
@@ -1322,15 +1326,36 @@ export const HomePage: React.FC<HomePageProps> = ({
               />
             </>
           )}
-          <div className="relative px-[18px] pt-7 pb-4">
+          <div className="relative px-[14px] pt-7 pb-4">
             <span className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">藝術效果</span>
-            <span className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65">一鍵為照片套用藝術風格</span>
+            <span className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65 truncate">一鍵套用藝術風格</span>
             <span className="mt-3 h-[26px] w-fit pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 shrink-0">
               立即使用
               {pillArrow}
             </span>
           </div>
         </button>
+        <button
+          type="button"
+          aria-label="開啟點陣文字"
+          onClick={onOpenDotArt}
+          className="relative flex-1 min-w-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
+          style={{ background: 'rgba(255,255,255,.03)' }}
+        >
+          {/* 背景是一小段點字圖案（純文字，不用圖檔） */}
+          <span aria-hidden="true" className="absolute right-1 top-1 bottom-1 flex items-center text-white/[0.13] whitespace-pre leading-[1] pointer-events-none select-none" style={{ fontSize: 9, fontFamily: 'monospace' }}>
+            {'⠀⣠⣴⣶⣶⣦⣄⠀\n⣾⣿⠿⠿⠿⠿⣿⣷\n⣿⡇⢸⣿⣿⡇⢸⣿\n⢿⣷⣤⣤⣤⣤⣾⡿\n⠀⠙⠻⠿⠿⠟⠋⠀'}
+          </span>
+          <div className="relative px-[14px] pt-7 pb-4">
+            <span className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">點陣文字</span>
+            <span className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65 truncate">照片變點字圖案</span>
+            <span className="mt-3 h-[26px] w-fit pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 shrink-0">
+              立即使用
+              {pillArrow}
+            </span>
+          </div>
+        </button>
+        </div>
 
         {/* 首頁只顯示推薦；歷史紀錄集中在「我的」。 */}
         <div className="relative z-10 mt-[12px] shrink-0">{recommendationSection}</div>
