@@ -32,8 +32,10 @@ test('pattern choices have explicit equal height and scrolling reaches panel edg
 test('seamless fusion uses native source pixels and stable SVG geometry without re-encoding on input',()=>{
   const component=readFileSync(new URL('../components/SeamlessLayout.tsx',import.meta.url),'utf8');
   const renderer=readFileSync(new URL('../utils/seamlessLayout.ts',import.meta.url),'utf8');
-  assert.match(component,/\[sourceKey,revision\]/);
-  assert.match(component,/prepareSeamSource\(c,revision\)/);
+  // 來源只跟這個版型自己的照片／效果／LUT 有關（不再吃整個編輯器的 revision），融合程度不影響
+  assert.match(component,/\},\[sourceKey\]\);/);
+  assert.match(component,/const sourceKey=JSON.stringify\(cells.map\(c=>\[c.url,c.fx\|\|\{\},lutReady\(c.fx\)\]\)\)/);
+  assert.match(component,/prepareSeamSource\(\{\.\.\.c,fx:undefined\},0\)/);
   assert.doesNotMatch(component,/toBlob|createObjectURL|renderSeamlessLayout\(/);
   assert.match(renderer,/if \(sourceResolution\)/);
   assert.match(renderer,/img.naturalWidth/);
@@ -43,14 +45,17 @@ test('seamless fusion uses native source pixels and stable SVG geometry without 
   assert.match(component,/data-seamless-master/);
   assert.match(component,/transform:`scale\(\$\{scale\}\)`/);
   assert.match(component,/onPointerUp=\{commit\}/);
-  assert.match(component,/previews.get\(previewId\)\?\.\(latest.current\)/);
+  // 拖動中每一格直接把最新值交給預覽（取到 0.01），放開時再交一次正式值
+  assert.match(component,/previews.get\(previewId\)\?\.\(Math.round\(latest.current\*100\)\/100,true\)/);
   assert.doesNotMatch(component,/<foreignObject/);
   assert.match(component,/resolveSeamSurface\(points,w,h,width\*scale,height\*scale/);
   assert.match(gpu,/gl.uniform4f/);
   assert.doesNotMatch(gpu,/toBlob|toDataURL/);
-  assert.match(gpu,/if\(!tex\)[\s\S]*getImageData[\s\S]*this.textures.set/,'color conversion is restricted to immutable texture creation');
+  // 只在建立（或來源內容換了 revision）時做色彩轉換，拖動中不會重讀
+  assert.match(gpu,/if\(!tex(\|\|this.revisions.get\(image\)!==revision)?\)[\s\S]*getImageData[\s\S]*this.textures.set/,'color conversion is restricted to immutable texture creation');
   const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
-  assert.match(grid,/width=\{lbox.w\} height=\{lbox.h\} scale=\{ls\}/);
-  assert.match(grid,/left: stableSeamless \? 0/);
+  // 經典拼圖的無縫改由共用的 LayoutPhotoSurface 畫（跟一般版型同一個 GPU 畫面，融合只是參數）
+  assert.match(grid,/<LayoutPhotoSurface [^\n]*width=\{lw\} height=\{lh\}[^\n]*geomScale=\{ls\}/);
+  assert.match(grid,/fusion=\{stableSeamless \? \(layout.seamlessAmount \?\? 0\) : undefined\}/);
   assert.match(grid,/locked\.scale - ns.*locked\.extent.*<= 7/);
 });

@@ -34,7 +34,7 @@ test('rounded layout photos have no dark backing and use the inner padded dimens
 });
 
 test('layout edit is fixed and top-aligned while the creation picker remains scrollable',()=>{
-  assert.match(source,/activeTab === 'layout' \? 'overflow-y-auto overflow-x-hidden no-scrollbar' : 'overflow-hidden'/);
+  assert.match(source,/activeTab === 'layout' \? '[^']*overflow-y-auto overflow-x-hidden no-scrollbar' : '[^']*overflow-hidden'/);
   const edit=source.slice(source.indexOf('/* Adjustment sliders'),source.indexOf("{activeTab === 'ratio' &&"));
   assert.doesNotMatch(edit,/pb-24|pt-2\.5/);
   assert.match(edit,/w-full min-w-0 space-y-4/);

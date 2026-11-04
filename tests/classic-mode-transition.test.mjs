@@ -16,7 +16,7 @@ test('tab changes stop inertia and discard the pending pan before React changes 
   assert.equal(pan.current,null);
   assert.equal(el.scrollLeft,127.25);
   assert.equal(anchor.current,(10+195+80.5)/.4);
-  assert.match(source,/if \(id !== activeTab\) stopPreviewForModeChange\(\);\s+setActiveTab/);
+  assert.match(source,/if \(id !== activeTab\) stopPreviewForModeChange\(\);[\s\S]{0,600}?setActiveTab/);
 });
 
 test('seams already visible in normal mode do not restart their fade on entering sort', () => {

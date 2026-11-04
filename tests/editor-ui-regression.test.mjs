@@ -13,7 +13,8 @@ test('HSL and curves share a control-strip anchored portal', () => {
   assert.match(editor, /data-hsl-panel/);
   assert.match(editor, /data-curves-panel/);
   assert.match(editor, /ref={setDetailPanelHost}/);
-  assert.match(editor, /height: activeCategory === 'compose' \? '0px' : '5rem'/);
+  // 構圖與自帶面板的分頁（模板、人像、仿色…）都收起滑桿列
+  assert.match(editor, /height: activeCategory === 'compose' \|\| ownPanel \? '0px' : '5rem'/);
 });
 test('compose divider is opt-in, preserving other callers', () => {
   assert.match(compose, /showFooterDivider = false/);

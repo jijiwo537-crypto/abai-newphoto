@@ -1,13 +1,15 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import ts from 'typescript';
 const source=fs.readFileSync('utils/photoPixelCore.ts','utf8');
-const fn=source.slice(source.indexOf('export const processPixels ='));
-const pre=`const masterLUT_R=new Float32Array(32768),masterLUT_G=new Float32Array(32768),masterLUT_B=new Float32Array(32768);
-const ditherTable=Float32Array.from({length:4096},(_,i)=>((i*71%1024)/1024-.5)*.75);
-const DEFAULT_HSL=Array.from({length:8},()=>({h:0,s:0,l:0}));const HSL_CENTERS=Float32Array.from([0,30,60,120,180,240,270,300]);
-const HSL_MAX_HUE_SHIFT=15,HSL_MAX_SAT=.5,HSL_MAX_LUM=.1;const isHslIdentity=x=>!x||x.every(b=>b.h===0&&b.s===0&&b.l===0);
-`+fs.readFileSync('utils/photoToneMath.ts','utf8').replace(/^export /gm,'')+'\n';
-const load=async code=>{const js=ts.transpileModule(pre+code,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;return (await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'))).processPixels;};
-const fast=await load(fn),reference=await load(fn.replace(/  \/\/ With independent channel corrections[\s\S]*?(?=  \/\/ Split into explicit loops)/,''));
+import esbuild from 'esbuild';
+/* 用 esbuild 把整個 photoPixelCore（連同它 import 的調色、局部調整模組）打包起來載入；
+   參考版本＝同一份原始碼拿掉「獨立通道快速路徑」那一段。不再手動拼前置程式碼。 */
+// 抖動表在模組載入時用 Math.random 建；兩份要一模一樣才能逐位元比，載入時換成固定種子
+const seeded=()=>{let x=12345;return()=>((x=Math.imul(x^x>>>15,2246822507)+0x6d2b79f5|0)>>>0)/4294967296;};
+const load=async code=>{const rnd=Math.random;Math.random=seeded();try{return await load0(code);}finally{Math.random=rnd;}};
+const load0=async code=>{const out=await esbuild.build({stdin:{contents:code,resolveDir:'utils',sourcefile:'photoPixelCore.ts',loader:'ts'},bundle:true,format:'esm',write:false,platform:'neutral',logLevel:'silent'});return (await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'))).processPixels;};
+const stripped=source.replace(/  \/\/ With independent channel corrections[\s\S]*?(?=  \/\/ Split into explicit loops)/,'');
+assert.notEqual(stripped,source,'fast-path block must exist');
+const fast=await load(source),reference=await load(stripped);
 test('full-resolution channel fast path is byte-identical to existing tetrahedral pipeline',()=>{
  const src=Uint8ClampedArray.from({length:16384},(_,i)=>(Math.imul(i+9,15485863)>>>7)&255);
  const curve=Uint8Array.from({length:256},(_,i)=>i),curves={rgb:curve,r:curve,g:curve,b:curve};

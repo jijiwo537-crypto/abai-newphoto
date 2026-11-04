@@ -13,12 +13,12 @@ test('animation tab locks preview gestures, not object gestures',()=>{
   assert.ok(creative.includes('if (motionLockRef.current) return;'));
 });
 test('animation captures the actual starting rectangle and glides with one transform toward the live end rectangle',()=>{
-  assert.ok(creative.includes('motionStartRectRef.current = motionFrameRef.current?.getBoundingClientRect()'));
+  assert.ok(creative.includes('motionStartRectRef.current = motionFrameRef.current?.getBoundingClientRect() || null;'));
   // One transform on the frame, re-aimed every frame at the CURRENT layout box (the footer may still be resizing),
   // and re-aligned in the same frame when the layout box changes size.
   assert.ok(creative.includes('const w = first.width + (nw - first.width) * e, h = first.height + (nh - first.height) * e;'));
   assert.ok(creative.includes('frame.style.transform = `translate(${dx}px,${dy}px) scale(${w / nw},${h / nh})`;'));
-  assert.ok(creative.includes('observer = new ResizeObserver(() => { apply(); });'));
+  assert.ok(creative.includes('observer = new ResizeObserver(handoff);'));
   // Leaving the layout catalog through a tab: the footer height snaps, so the end rectangle is fixed.
   assert.ok(creative.includes('footerSnapRef.current ?'));
 });
@@ -52,6 +52,6 @@ test('preview gestures do not request a full content repaint on every move',()=>
 test('entry transition keeps its bitmap until geometry has settled',()=>{
   assert.ok(creative.includes('motionTransitionUntilRef.current = performance.now() + 420;'));
   assert.ok(creative.includes('Math.max(90, motionTransitionUntilRef.current - performance.now() + 32)'));
-  assert.ok(creative.includes('if (now < motionTransitionUntilRef.current) return;'));
+  assert.ok(creative.includes('if (now < motionTransitionUntilRef.current) { last = now; deferHeavyWork(400); return; }'));
   assert.ok(creative.includes('if (performance.now() < motionTransitionUntilRef.current) return;'));
 });

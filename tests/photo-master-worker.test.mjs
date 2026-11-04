@@ -1,9 +1,9 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import ts from 'typescript';import{createHash}from'node:crypto';
 const source=fs.readFileSync('utils/photoPixelCore.ts','utf8');
-// The tone math lives in its own module; inline it so the data: URL import is self-contained.
-const inlined=source.replace(/^import \{[^}]*\} from '\.\/photoToneMath';$/m,fs.readFileSync('utils/photoToneMath.ts','utf8'));
-const js=ts.transpileModule(inlined,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
-const core=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+// photoPixelCore 現在還 import 調色、局部調整等模組：用 esbuild 整包打包再載入（data: URL 才能自給自足）
+import esbuild from 'esbuild';
+const bundled=await esbuild.build({stdin:{contents:source,resolveDir:'utils',sourcefile:'photoPixelCore.ts',loader:'ts'},bundle:true,format:'esm',write:false,platform:'neutral',logLevel:'silent'});
+const core=await import('data:text/javascript;base64,'+Buffer.from(bundled.outputFiles[0].text).toString('base64'));
 test('resident film strength matches every original full precision master without rebaking',()=>{
  const identity=[{x:0,y:0},{x:255,y:255}];
  const p={brightness:23,exposure:-14,contrast:19,highlights:-32,shadows:20,temp:30,tint:-21,sat:40,vib:25,lutAmount:100,sharpen:0,hsl:Array.from({length:8},()=>({h:0,s:0,l:0})),curves:{rgb:identity,r:identity,g:identity,b:identity}};
@@ -16,7 +16,13 @@ test('resident film strength matches every original full precision master withou
  }
 });
 test('worker extraction preserves the original pixel function byte for byte',()=>{
- assert.equal(createHash('sha256').update(source.slice(source.indexOf('export const processPixels =')).trim()).digest('hex'),'f643677d5c42795d7fbfbf4acbae60113249fad9385f84be8eaa618382d1fcfa');
+ // 原本釘死原始碼雜湊，之後每次正常修調色（保色相、白／黑色階…）都會誤報。
+ // 真正要保證的是：只有一份像素函式，編輯器與 worker 都從 photoPixelCore 拿，沒有複製一份。
+ const editor=fs.readFileSync('components/ImageEditor.tsx','utf8');
+ assert.match(editor,/import \{ generateBaseCorrectionLut, processPixels \} from '\.\.\/utils\/photoPixelCore'/);
+ assert.doesNotMatch(editor,/const processPixels\s*=/);
+ for(const w of ['utils/photoLut.worker.ts','utils/lutDecode.worker.ts'])assert.match(fs.readFileSync(w,'utf8'),/from '\.\/photoPixelCore'/);
+ assert.equal((source.match(/export const processPixels =/g)||[]).length,1);
 });
 test('full-precision master tetrahedra preserve the standard pixel pipeline',()=>{
  core.setPixelDither(new Float32Array(4096));

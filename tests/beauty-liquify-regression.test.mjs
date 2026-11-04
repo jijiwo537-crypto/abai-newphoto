@@ -1,10 +1,10 @@
 import {readFileSync} from 'node:fs';
-import {execFileSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import ts from 'typescript';
 
 const source=readFileSync(new URL('../utils/beauty/engine.ts',import.meta.url),'utf8');
-const original=execFileSync('git',['show','5eaab4c:utils/beauty/engine.ts'],{encoding:'utf8'});
+// 液化優化（238c554）之前的引擎，存成固定檔：不依賴 git 歷史（淺複製時也能跑）
+const original=readFileSync(new URL('./fixtures/beauty-engine-before-liquify-opt.ts',import.meta.url),'utf8');
 const load=async code=>import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
 const [engine,previous]=await Promise.all([load(source),load(original)]);
 const image=(w,h)=>({width:w,height:h,data:new Uint8ClampedArray(w*h*4)});

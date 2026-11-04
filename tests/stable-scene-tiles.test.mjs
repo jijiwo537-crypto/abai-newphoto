@@ -32,7 +32,8 @@ test('oversized snapshots are refused rather than downsampling or unbounded allo
 test('both editors remove shape opacity controls without rewriting saved alpha',()=>{
  for(const file of ['CollageTool','GridLayoutTool']){
   const s=fs.readFileSync(new URL('../components/'+file+'.tsx',import.meta.url),'utf8');
-  assert.ok(!/shapeSlider\('透明度'/.test(s));
+  // 一般圖形不給透明度；只有霧框（23f91ec）在圓角旁邊刻意加了一顆
+  for(const m of s.matchAll(/shapeSlider\('透明度'/g))assert.match(s.slice(Math.max(0,m.index-400),m.index),/isMistFrame\(sel\.kind\) && <div[^\n]*\n[^\n]*shapeSlider\('圓角'/);
   if(file==='GridLayoutTool')assert.ok(!/slider\('透明度', layer\.opacity/.test(s));
  }
 });

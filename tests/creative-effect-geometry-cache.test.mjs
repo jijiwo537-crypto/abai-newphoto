@@ -13,10 +13,13 @@ test('preview uses resident photo textures without uploading the changing scene 
  assert.match(presenter,/ctx.drawImage\(surface,0,0\)/);
  // WebKit misreads a Display-P3 WebGL canvas drawn into 2D (washed out); the
  // presentation surface renders sRGB there instead of reading pixels back.
- assert.match(presenter,/view,true,isWebKit\(\)\)/);
+ assert.match(presenter,/view,true,isWebKit\(\)(,noTransfer)?\)/);
  assert.match(presenter,/creativePhotoComposition='single-canvas'/);
- assert.doesNotMatch(presenter,/prepend\(surface\)|clearRect\(clearLeft/);
- assert.doesNotMatch(presenter,/getBoundingClientRect/);
+ // 拖滑桿時另有一條「直接疊 GPU 層」的路（bae45ac，live-layer）；一般畫面仍是單一畫布，舊規則只套在那條以外
+ const single=presenter.slice(0,presenter.indexOf('if(liveLayer&&parent&&'))+presenter.slice(presenter.indexOf("main.dataset.creativePhotoComposition='live-layer'"));
+ assert.match(presenter,/main.dataset.creativePhotoComposition='live-layer'/);
+ assert.doesNotMatch(single.replace(/main.dataset.creativePhotoComposition='live-layer';[\s\S]*?return true;\n    \}/,''),/prepend\(surface\)|clearRect\(clearLeft/);
+ assert.doesNotMatch(single,/getBoundingClientRect/);
  assert.doesNotMatch(shader,/sceneOverlay|overlayTexture|texSubImage2D/);
  assert.doesNotMatch(presenter,/this.main.style.opacity='0'/);
  assert.match(collage,/Math.ceil\(maskW\)/);
@@ -91,7 +94,7 @@ test('non-feathered pixels have exactly one photo owner at fractional boundaries
  // Isolated layout tiles use half-open limits so a pixel centre on a shared
  // boundary belongs to exactly one tile; legacy feather geometry keeps the
  // nearest-photo ownership rule.
- assert.match(seam,/if\(isolated\?inside:distance<nearest\)\{nearest=distance;owner=/);
+ assert.match(seam,/if\(isolated(&&!sealEdges)?\?inside:distance<nearest\)\{nearest=distance;owner=/);
  assert.match(seam,/!fused\?owner==/);
  assert.match(seam,/image instanceof HTMLCanvasElement/);
  assert.match(seam,/this.textureBytes.clear\(\);this.revisions.clear\(\)/);

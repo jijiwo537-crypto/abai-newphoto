@@ -4,10 +4,11 @@ import { readFileSync } from 'node:fs';
 const grid = readFileSync(new URL('../components/GridLayoutTool.tsx', import.meta.url), 'utf8');
 const creative = readFileSync(new URL('../components/CollageTool.tsx', import.meta.url), 'utf8');
 
-test('shape glow maps display 0..100 to strength 0..50 in both editors', () => {
-  assert.match(grid, /shapeGlow: v \/ 2/);
-  assert.match(creative, /glow: v \/ 2, glowColor/);
-  assert.match(creative, /: \{ glow: v \/ 2 \}/);
+test('shape glow uses the same display→strength mapping in both editors', () => {
+  // 光暈改成共用的 shapeGlowFromUi（邊框類上限較低），兩個編輯器必須走同一支
+  assert.match(grid, /shapeGlow: shapeGlowFromUi\(v, outlineShape \|\| isLine\)/);
+  assert.match(creative, /glow: shapeGlowFromUi\(v, outlineShape \|\| isLine\), glowColor/);
+  assert.match(creative, /: \{ glow: shapeGlowFromUi\(v, outlineShape \|\| isLine\) \}/);
 });
 
 test('empty cell chrome updates in the same geometry frame, not a following frame', () => {
@@ -21,9 +22,13 @@ test('empty cell chrome updates in the same geometry frame, not a following fram
 });
 
 test('plain layout cells use shared SVG geometry while filters and seamless rendering remain separate', () => {
-  assert.match(grid, /const nativeLayout = !insetLayout && !layout\.seamless\s*&& layout\.images\.every\(c => !hasPhotoFx\(c\.fx\)\)/);
-  assert.match(grid, /data-layout-photo-layer="1" width=\{lw\} height=\{lh\}/);
-  assert.match(grid, /clipPath id=\{clip\} clipPathUnits="userSpaceOnUse"/);
+  assert.match(grid, /const nativeInset = insetLayout && layout\.images\.every\(c => !hasPhotoFx\(c\.fx\)\)/);
+  // 一般與無縫共用同一個 GPU 畫面（切換無縫只換著色器參數）
+  assert.match(grid, /const nativeLayout = !insetLayout;/);
+  // 一般格子的照片改由共用的 GPU 畫面（LayoutPhotoSurface）畫，內嵌版型仍用 SVG 裁切
+  assert.match(grid, /<LayoutPhotoSurface cells=\{layout\.images\} rects=\{pageActiveTemplate\.rects\} width=\{lw\} height=\{lh\}/);
+  assert.match(grid, /nativeInset && <svg data-inset-photo-layer="1" width=\{lw\} height=\{lh\}/);
+  assert.match(grid, /<clipPath id=\{clip\}>/);
   assert.match(grid, /display:nativeInset \|\| nativeLayout \? 'none' : 'contents'/);
 });
 

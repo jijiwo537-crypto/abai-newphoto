@@ -13,7 +13,7 @@ test('classic background texture UI 0–100 maps to original 15–130 units',()=
 });
 test('texture page gains 36px scroll room without changing the preview',()=>{
  assert.match(grid,/data-classic-texture-bottom-space className=\{patternType !== 'none' \? 'h-\[44px\]' : 'h-2'\}/);
- assert.match(grid,/height: 'max\(36dvh, 310px\)'/);
+ assert.match(grid,/data-classic-controller\s+style=\{\{ height: 'max\(calc\(36dvh - 6px\), 304px\)'/);
 });
 test('add-symbol buttons use the creative third-row second vortex icon',()=>{
  for(const file of ['GridLayoutTool','CollageTool'])assert.match(fs.readFileSync(`components/${file}.tsx`,'utf8'),/data-add-symbol-icon="vortex" style=\{\{transform:'translateX\(-1.125px\)'\}\}><VortexIcon size=\{18\}/);

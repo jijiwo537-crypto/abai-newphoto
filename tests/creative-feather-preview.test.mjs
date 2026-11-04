@@ -15,7 +15,7 @@ test('creative feather input retains original physical-pixel quality without rea
  assert.match(a,/if\(preview\)[\s\S]*?this.interactive.paint/);
  const c=read('components/CollageTool.tsx');assert.match(c,/regionPaintRef.current=\(\)=>/);assert.match(c,/const photoRegion=photoRegionRef.current/);
  assert.match(c,/const finishRegionEdit=\(\)=>[\s\S]*?setPhotoRegion\(photoRegionRef.current\)/);
- assert.match(c,/const RegionLiveRange=/);assert.match(c,/onPointerCancel=\{onCommit\}/);
+ assert.match(c,/const RegionLiveRange=/);assert.match(c,/const finish=\(\)=>\{release.current\?\.\(\);release.current=null;onCommit\(\);\};/);assert.match(c,/onPointerUp=\{finish\} onPointerCancel=\{finish\}/);
 });
 test('preview pinch paints full density directly and commits the same view on release',()=>{
  const c=read('components/CollageTool.tsx');

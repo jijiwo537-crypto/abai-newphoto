@@ -33,8 +33,10 @@ test('home keeps native momentum and blocks only outward edge pulls', async () =
 test('classic and creative use identical object idle defaults', async () => {
   const { idleDefaults } = await load('utils/animationDefaults.ts');
   for (const file of ['components/GridLayoutTool.tsx', 'components/CollageTool.tsx']) assert.match(source(file), /idleDefaults\(/);
-  assert.deepEqual(idleDefaults('symbol-breathe2', { symbol: true }), { amp: 60, speed: 1.2 });
-  assert.equal(idleDefaults('grid-wave', { shape: true, grid: true }).speed, 1.8);
+  // 預設值改成滑桿刻度的整數（50 ＝ 1.25，edfcb38）
+  assert.deepEqual(idleDefaults('symbol-breathe2', { symbol: true }), { amp: 60, speed: 1.25 });
+  // 圖形的波浪預設是滑桿 90（＝ .2 + 90×.018）
+  assert.ok(Math.abs(idleDefaults('grid-wave', { shape: true, grid: true }).speed - (.2 + 90 * .018)) < 1e-9);
 });
 
 test('drag-to-pinch preserves the committed position; thumbnails are keyed to their photo', () => {

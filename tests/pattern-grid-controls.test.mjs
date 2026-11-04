@@ -7,7 +7,7 @@ const compile = source => ts.transpileModule(source, {compilerOptions:{module:ts
 const grid = fs.readFileSync('components/GridLayoutTool.tsx','utf8');
 const creative = fs.readFileSync('components/CollageTool.tsx','utf8');
 const start = grid.indexOf('export const shapePathD =');
-const scope = {exports:{},r3:n=>Math.round(n*1000)/1000};
+const scope = {exports:{},r3:n=>Math.round(n*1000)/1000,isFrameShape:()=>false,STITCH_LINE_KINDS:new Set(),stitchLineD:()=>'',blurShapeBaseD:()=>''};
 vm.runInNewContext(compile(grid.slice(start,grid.indexOf('\n};',start)+3)),scope);
 const path = scope.exports.shapePathD;
 test('orbit grid keeps complete rings inside the stretched frame',()=>{
@@ -39,6 +39,7 @@ test('pattern panel scroll targets its own scroll container',()=>{
   assert.doesNotMatch(creative,/if \(patternType === 'none'\)[^]*?scrollTop = 0/);
 });
 test('grid texture controls are excluded in both editors',()=>{
-  assert.match(grid,/!isLine && !isGridShape/);
-  assert.match(creative,/!isLine && !GRID_SHAPE_KINDS.has\(sel.kind\)/);
+  // 光芒（glint）也不給紋理，條件中間多了 !isGlint
+  assert.match(grid,/!isLine && !isGlint && !isGridShape/);
+  assert.match(creative,/!isLine && !isGlint && !GRID_SHAPE_KINDS.has\(sel.kind\)/);
 });

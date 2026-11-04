@@ -93,7 +93,7 @@ test('all new grid paths remain finite at square, stretched and small dimensions
  const start=source.indexOf('export const shapePathD =');
  const end=source.indexOf('\n};',start)+3;
  const js=ts.transpileModule(source.slice(start,end),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
- const sandbox={exports:{},r3:n=>Math.round(n*1000)/1000};vm.runInNewContext(js,sandbox);
+ const sandbox={exports:{},r3:n=>Math.round(n*1000)/1000,isFrameShape:()=>false,STITCH_LINE_KINDS:new Set(),stitchLineD:()=>'',blurShapeBaseD:()=>''};vm.runInNewContext(js,sandbox);
  const kinds=['grid-dots-staggered','grid-dots-fade-diagonal','grid-diag-cross','grid-plus','grid-orbits','grid-chevron'];
  for(const kind of kinds) for(const [w,h] of [[160,160],[320,160],[160,320],[24,24]]){
   const d=sandbox.exports.shapePathD(kind,w,h);assert.ok(d.length>20,kind);assert.doesNotMatch(d,/NaN|Infinity/,kind);

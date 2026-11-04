@@ -33,11 +33,12 @@ test('gapless layout raster closes subpixel joins in both GPU and FX canvas path
  assert.match(gpu,/isolated&&!sealEdges\?inside:distance<nearest/);
  assert.match(gpu,/uniform bool sealEdges/);
  assert.match(surface,/sealEdges:noVisibleGutter/);
- assert.match(surface,/const x=x0-leftBleed,y=y0-topBleed,cw=w0\+leftBleed\+rightBleed,ch=h0\+topBleed\+bottomBleed/);
+ assert.match(surface,/x:x0-leftBleed,y:y0-topBleed,cw:w0\+leftBleed\+rightBleed,ch:h0\+topBleed\+bottomBleed/);
  assert.match(surface,/const cx=x0\+w0\/2\+crop\.tx/);
  // GPU owners use exact cell edges; only the separately antialiased 2D clips overlap.
  assert.match(surface,/clips\.push\(\{x:x\/width,y:y\/height,w:cw\/width,h:ch\/height\}\)/);
- assert.match(surface,/const r=rects\[i\],source=sources\[i\]/);
+ // 每一格的版面框（cellBox）與它自己的來源照片是同一個索引
+ assert.match(surface,/const r=rects\[i\];/);assert.match(surface,/const source=sources\[i\],crop=crops\[i\],c=cells\[i\]/);
 });
 test('GPU photo sampling never relies on implicit derivatives inside the owner branch',()=>{
  const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
@@ -82,7 +83,7 @@ test('fusion gesture bypasses full editor state and keeps pixels at fixed full r
 test('fusion normalizes RGB by total feather weight instead of clamping it at one',()=>{
   const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
   assert.match(gpu,/float divisor=isolated\?max\(\.000001,min\(1\.,coverage\)\):max\(\.000001,coverage\)/);
-  assert.match(gpu,/color=vec4\(toEncoded\(sum\/divisor\),isolated\?min\(1\.,coverage\):1\.\)/);
+  assert.match(gpu,/color=vec4\(isolated\?toEncoded\(sum\/divisor\):sum\/divisor,isolated\?min\(1\.,coverage\):1\.\)/);
   const weighted=(values,weights)=>values.reduce((sum,v,i)=>sum+v*weights[i],0)/weights.reduce((a,b)=>a+b,0);
   assert.ok(Math.abs(weighted([.2,.8],[.75,.75])-.5)<1e-12);
 });
@@ -93,7 +94,8 @@ test('seam feather uses canvas-compatible encoded RGB and preserves unchanged co
   assert.match(gpu,/isolated\?toEncoded\(sum\/divisor\):sum\/divisor/);
   assert.match(gpu,/sum\+=rgb\*weight;coverage\+=weight/);
   const mix=(a,b,t)=>a*(1-t)+b*t;
-  for(const color of [.01,.04,.18,.5,.9])assert.equal(mix(color,color,.63),color);
+  // 浮點數 .9×.37+.9×.63 會差 1e-16，用極小容差比（意思不變：同色混合不變色）
+  for(const color of [.01,.04,.18,.5,.9])assert.ok(Math.abs(mix(color,color,.63)-color)<1e-12);
   // Unlike linear-light interpolation, encoded RGB does not lift mixed photo
   // edges above the app's established canvas source-over result.
   assert.ok(Math.abs(mix(.05,.8,.5)-.425)<1e-12);
