@@ -6960,6 +6960,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const ow = img.naturalWidth || img.width, oh = img.naturalHeight || img.height, g = snap.geo;
     const crop = isGeoIdentity(g) ? { x: 0, y: 0, w: ow, h: oh } : cropOnlyRect(g, ow, oh);
     const big = !!crop && (forceFullResRef() || safeScale(crop.w, crop.h) < 1);
+    /* 不能套回原尺寸的情況（旋轉、透視等構圖）：用畫布上限 1600 萬算，跟以前一樣，1200 萬像素以下的照片不縮小 */
+    if (!crop) return canvasToUrl(renderOneCanvas(img, snap, MOBILE_MAX_PIXELS), type, quality);
     if (!big) return canvasToUrl(renderOneCanvas(img, snap), type, quality);
     keepOriginalRef.current = { data: null };
     const proc = renderOneCanvas(img, snap);
