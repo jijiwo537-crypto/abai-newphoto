@@ -123,16 +123,16 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   }, []);
   /* 框固定是「整張照片的點陣」那麼大（收掉的空白邊也算進去），成品畫在它該在的位置：
      拖明暗、線條時四周空白多一格少一格，畫面也不會跳、不會變比例 */
-  /* 點的排法照點字字型實際的樣子（量網站顯示用的字型）：一個字寬 1、高 1.6，
-     兩欄點在字寬的 30%／70%，四列點間距 23.5%，點的直徑是字寬的 20%。
-     所以看起來跟網站上那一段點字（以及貼到別的地方）一樣疏密、一樣比例。 */
+  /* 點的排法照參考網站實際顯示的樣子量出來（8px 點字）：一個字寬 1、高 1.53；
+     兩欄點相距 0.6 個字寬，跟下一個字的第一欄只差 0.4 —— 相鄰兩個字的欄會靠在一起，
+     看起來就是一組一組的直條長方形；四列點上下等距；點是方的，邊長約 0.19 個字寬。 */
   const geom = useRef({ cw: 1, ch: 1.6, cols: 0, rows: 0, ox: 0, oy: 0 });
   const paint = useCallback((t: string | null, f: DotArtFrame | null) => {
     const c = cvs.current; if (!c) return;
     const lines = t ? t.split('\n') : [];
     const cols = Math.max(0, ...lines.map(l => l.length)), rows = lines.length;
     if (!f || !cols || !rows || !boxSize.w || !boxSize.h) { c.width = c.height = 0; return; }
-    const CH = 1.604;
+    const CH = 1.532;
     const cw = Math.min((boxSize.w - 32) / f.cols, (boxSize.h - 32) / (f.rows * CH)), ch = cw * CH;
     geom.current = { cw, ch, cols, rows, ox: f.left * cw, oy: f.top * ch };
     const dpr = Math.min(3, window.devicePixelRatio || 1), W = f.cols * cw, H = f.rows * ch;
@@ -141,7 +141,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
     const g = c.getContext('2d')!; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
     g.fillStyle = '#fff';
-    const r = Math.max(0.3, cw * 0.1), DX = [0.3, 0.7], DY = [0.184, 0.4195, 0.655, 0.8905];
+    const sz = Math.max(0.6, cw * 0.19), DX = [0.2, 0.796], DY = [0.125, 0.375, 0.625, 0.875];
     g.beginPath();
     for (let y = 0; y < rows; y++) {
       const l = lines[y], by = (f.top + y) * ch;
@@ -151,7 +151,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         const bx = (f.left + x) * cw;
         for (let k = 0; k < 8; k++) if (code & (1 << k)) {
           const cx = bx + DX[POS[k][0]] * cw, cy = by + DY[POS[k][1]] * ch;
-          g.moveTo(cx + r, cy); g.arc(cx, cy, r, 0, Math.PI * 2);
+          g.rect(cx - sz / 2, cy - sz / 2, sz, sz);
         }
       }
     }
