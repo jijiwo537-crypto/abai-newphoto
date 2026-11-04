@@ -34,7 +34,7 @@ export function useAlignPad(align: AlignRect | null | undefined, stage: RefObjec
 }
 
 /** 有對齊框時，舞台裡的照片元素一律撐滿內容框（不再自己 contain） */
-export const ALIGN_FILL_CSS = `.studio-fit > canvas, .studio-fit > img, .studio-fit > div, .studio-fit > div > canvas { width:100% !important; height:100% !important; max-width:none !important; max-height:none !important; object-fit:fill; }`;
+export const ALIGN_FILL_CSS = `.studio-fit > canvas, .studio-fit > img, .studio-fit > div, .studio-fit > div > canvas, .studio-fit [data-studio-geo="off"] > canvas, .studio-fit [data-studio-geo="off"] > img { width:100% !important; height:100% !important; max-width:none !important; max-height:none !important; object-fit:fill; }`;
 
 /* ── 編輯器與人像／仿色共用預覽的縮放 ─────────────────────────────
    三邊的照片在沒縮放時擺在螢幕上一模一樣的位置（見 useAlignPad），所以縮放可以用一個跟元件無關的

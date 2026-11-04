@@ -628,3 +628,46 @@ export function fitCropToAspect(crop: CropRect, frameW: number, frameH: number, 
   y = Math.max(0, Math.min(1 - h, y));
   return { x, y, w, h };
 }
+
+/* ── 完整構圖（含梯形）的投影矩陣 ──
+ * 跟 geoAffine 同一份幾何，只是不把梯形丟掉：回傳 3×3（列優先）「輸出 ← 來源」的投影變換。
+ * 人像、仿色這類「在原圖座標上作畫」的工具用它把畫面照構圖顯示（CSS matrix3d），
+ * 手指位置再用反矩陣換回原圖座標 —— 預覽跟導出吃的是同一份構圖。 */
+export type Mat3 = [number, number, number, number, number, number, number, number, number];
+const m3Mul = (A: Mat3, B: Mat3): Mat3 => {
+  const r = new Array(9) as Mat3;
+  for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++)
+    r[i * 3 + j] = A[i * 3] * B[j] + A[i * 3 + 1] * B[3 + j] + A[i * 3 + 2] * B[6 + j];
+  return r;
+};
+const aff3 = (m: Affine): Mat3 => [m[0], m[2], m[4], m[1], m[3], m[5], 0, 0, 1];
+export function invMat3(m: Mat3): Mat3 | null {
+  const [a, b, c, d, e, f, g, h, i] = m;
+  const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+  const det = a * A + b * B + c * C;
+  if (Math.abs(det) < 1e-12) return null;
+  const k = 1 / det;
+  return [A * k, -(b * i - c * h) * k, (b * f - c * e) * k, B * k, (a * i - c * g) * k, -(a * f - c * d) * k, C * k, -(a * h - b * g) * k, (a * e - b * d) * k];
+}
+export const applyMat3 = (m: Mat3, x: number, y: number): [number, number] => {
+  const w = m[6] * x + m[7] * y + m[8];
+  return [(m[0] * x + m[1] * y + m[2]) / w, (m[3] * x + m[4] * y + m[5]) / w];
+};
+export interface GeoHomography { outW: number; outH: number; H: Mat3; inv: Mat3 }
+export function geoHomography(srcW: number, srcH: number, g: GeoParams): GeoHomography | null {
+  const q = ((g.quarter % 4) + 4) % 4;
+  const swap = q === 1 || q === 3;
+  const W1 = Math.max(1, swap ? srcH : srcW);
+  const H1 = Math.max(1, swap ? srcW : srcH);
+  const cq = Math.round(Math.cos((q * Math.PI) / 2));
+  const sq = Math.round(Math.sin((q * Math.PI) / 2));
+  const m1 = mMul(mTrans(W1 / 2, H1 / 2), mMul([cq, sq, -sq, cq, 0, 0], mMul(mScale(g.flipH ? -1 : 1, g.flipV ? -1 : 1), mTrans(-srcW / 2, -srcH / 2))));
+  const local = placeQuad(targetQuad(W1, H1, g), W1, H1, g.zoom ?? 1, g.offset || { x: 0, y: 0 });
+  const s = squareToQuad(local);
+  const S: Mat3 = [s.a, s.b, s.c, s.d, s.e, s.f, s.g, s.h, 1];
+  const c = g.crop || FULL_CROP;
+  const outW = Math.max(1, Math.round(c.w * W1)), outH = Math.max(1, Math.round(c.h * H1));
+  const H = m3Mul(aff3(mTrans(-c.x * W1, -c.y * H1)), m3Mul(S, m3Mul([1 / W1, 0, 0, 0, 1 / H1, 0, 0, 0, 1], aff3(m1))));
+  const inv = invMat3(H);
+  return inv ? { outW, outH, H, inv } : null;
+}

@@ -21,6 +21,8 @@ import {
 import { inpaintImage, inpaintCrop, cropFor } from '../utils/beauty/inpaint';
 import { findHealSource, fallbackHealSource, sideHealSource, applyHeal, strokeContours, healField, fieldAlpha, fieldBounds, fieldMaskRGBA, type HealMode, type HealRect, type HealField } from '../utils/beauty/heal';
 import { safeScale } from '../utils/exportLimits';
+import { useStudioGeo } from './studioGeo';
+import { isGeoIdentity, type GeoParams } from '../utils/compose';
 import { fullResFromProcessed } from '../utils/fullResExport';
 import { StrokeLayer, STROKE_INNER, wrinkleStrength, smoothStrength, smoothInvalidate, type StrokeKind } from '../utils/beauty/strokeFilter';
 
@@ -140,6 +142,8 @@ interface Session {
 
 interface BeautyStudioProps {
   imageSrc: string;
+  /** 嵌在編輯器裡：照片目前的構圖（畫面照構圖顯示，作畫仍在原圖座標，見 studioGeo） */
+  geo?: GeoParams | null;
   onCancel: (keepDraft?: boolean) => void;
   onHome: (keepDraft?: boolean) => void;
   onRequestExit?: () => Promise<ExitChoice>;
@@ -272,7 +276,7 @@ const unionRect = (a: Rect | null, b: Rect): Rect => {
 };
 
 export const BeautyStudio: React.FC<BeautyStudioProps> = ({
-  imageSrc, onCancel, onHome, onRequestExit, onImportNew, onSendToEditor, initialState, embedded, align, onPainted,
+  imageSrc, onCancel, onHome, onRequestExit, onImportNew, onSendToEditor, initialState, embedded, align, onPainted, geo,
 }) => {
   const initialOpsCountRef = useRef(Array.isArray(initialState?.ops) ? initialState!.ops!.length : 0);
   const [tool, setTool] = useState<BeautyTool>('blemish');
@@ -295,6 +299,31 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [ratio, setRatio] = useState<string | undefined>(undefined);
+  const [workWH, setWorkWH] = useState({ W: 0, H: 0 });
+  const sg = useStudioGeo(embedded ? geo : null, workWH.W, workWH.H);
+  const sgRef = useRef(sg); sgRef.current = sg;
+  /** 一個工作像素在螢幕上多大（有構圖時看構圖後的縮放） */
+  const screenPerWork = () => {
+    const s = sessionRef.current, v = viewRef.current;
+    if (!s || !v) return 1;
+    const G = sgRef.current;
+    if (G.gh) {
+      const a = G.workToClient(s.W / 2, s.H / 2), b = G.workToClient(s.W / 2 + 1, s.H / 2), c = G.workToClient(s.W / 2, s.H / 2 + 1);
+      if (a && b && c) return Math.sqrt(Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))) || 1;
+    }
+    return v.getBoundingClientRect().width / s.W;
+  };
+  /** 螢幕上的位移換成工作像素的位移（有構圖時要跟著旋轉、翻轉） */
+  const d2w = (dx: number, dy: number): [number, number] => {
+    const G = sgRef.current, r = G.gh ? G.boxRef.current?.getBoundingClientRect() : null;
+    if (r) {
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      const a = G.clientToWork(cx, cy), b = G.clientToWork(cx + dx, cy + dy);
+      if (a && b) return [b[0] - a[0], b[1] - a[1]];
+    }
+    const k = 1 / screenPerWork();
+    return [dx * k, dy * k];
+  };
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [finalImage, setFinalImage] = useState<string | null>(null);
   /* 成品是 blob 網址：重新導出時先回收上一張，離開時也要回收 */
@@ -548,6 +577,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       const view = viewRef.current;
       if (view) { view.width = W; view.height = H; }
       setRatio(`${W}/${H}`);
+      setWorkWH({ W, H });
       setIsLoading(false);
       // 接續上次：操作記錄放回去，從原圖重跑一次就回到上次的樣子
       const saved = initialState?.ops;
@@ -576,8 +606,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const ringScreenR = useCallback(() => {
     const s = sessionRef.current, cv = viewRef.current;
     if (!s || !cv) return 0;
-    const r = cv.getBoundingClientRect();
-    return brushRadius() * (r.width / s.W);
+    return brushRadius() * screenPerWork();
   }, [brushRadius]);
 
   const drawRing = useCallback((p: { cx: number; cy: number } | null) => {
@@ -667,7 +696,13 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     const g = healRootRef.current, v = viewRef.current, st = stageRef.current, s = sessionRef.current, h = healRef.current;
     if (!g || !v || !st || !s || !h) return;
     const vr = v.getBoundingClientRect(), sr = st.getBoundingClientRect();
-    g.setAttribute('transform', `matrix(${vr.width / s.W} 0 0 ${vr.height / s.H} ${vr.left - sr.left} ${vr.top - sr.top})`);
+    const G = sgRef.current;
+    const p0 = G.gh ? G.workToClient(h.c.x, h.c.y) : null, px = G.gh ? G.workToClient(h.c.x + 1, h.c.y) : null, py = G.gh ? G.workToClient(h.c.x, h.c.y + 1) : null;
+    if (p0 && px && py) {
+      // 有構圖：用框中心那一點的局部變換（旋轉、翻轉、縮放都對；梯形在框的範圍內幾乎是直的）
+      const a = px[0] - p0[0], b = px[1] - p0[1], c = py[0] - p0[0], d = py[1] - p0[1];
+      g.setAttribute('transform', `matrix(${a} ${b} ${c} ${d} ${p0[0] - a * h.c.x - c * h.c.y - sr.left} ${p0[1] - b * h.c.x - d * h.c.y - sr.top})`);
+    } else g.setAttribute('transform', `matrix(${vr.width / s.W} 0 0 ${vr.height / s.H} ${vr.left - sr.left} ${vr.top - sr.top})`);
     const ax = h.c.x + h.ox, ay = h.c.y + h.oy, bx = ax + h.op.dx, by = ay + h.op.dy;
     healDstGRef.current?.setAttribute('transform', `translate(${ax} ${ay}) scale(${h.sA}) translate(${-h.c.x} ${-h.c.y})`);
     healSrcGRef.current?.setAttribute('transform', `translate(${bx} ${by}) scale(${h.sB}) translate(${-h.c.x} ${-h.c.y})`);
@@ -678,8 +713,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const [imgTop, setImgTop] = useState(0);
   useLayoutEffect(() => {
     paintHealBoxes();
-    const v = viewRef.current, w = v?.parentElement;
-    if (v && w) { const t = w.offsetTop + v.offsetTop; if (Math.abs(t - imgTop) > 0.5) setImgTop(t); }
+    const v = viewRef.current, w = sgRef.current.gh ? sgRef.current.boxRef.current : v?.parentElement;
+    if (v && w) { const t = w.offsetTop + (sgRef.current.gh ? 0 : v.offsetTop); if (Math.abs(t - imgTop) > 0.5) setImgTop(t); }
   });
 
   const ensureStrokeBuffers = useCallback((needAlpha: boolean) => {
@@ -758,6 +793,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const localPoint = (e: React.PointerEvent) => {
     const view = viewRef.current!;
     const s = sessionRef.current!;
+    const gw = sgRef.current.clientToWork(e.clientX, e.clientY);
+    if (gw) return { x: gw[0], y: gw[1], cx: e.clientX, cy: e.clientY };
     const r = view.getBoundingClientRect();   // 已含縮放變形，座標換算自動正確
     return {
       x: (e.clientX - r.left) * (s.W / r.width),
@@ -1226,7 +1263,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   /** 一個螢幕像素＝幾個工作像素 */
   const workPerScreen = () => {
     const s = sessionRef.current, v = viewRef.current;
-    return s && v ? s.W / Math.max(1, v.getBoundingClientRect().width) : 1;
+    return s && v ? 1 / Math.max(1e-6, screenPerWork()) : 1;
   };
   const healSnap = (h: HealState) => {
     const ax = h.c.x + h.ox, ay = h.c.y + h.oy;
@@ -1286,13 +1323,13 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const moveHealGesture = (e: PointerEvent) => {
     const g = healGestRef.current;
     if (!g || g.mode === 'locked') return;
-    const k = workPerScreen();
     if (g.mode === 'pinch') {
       const pts = [...pointersRef.current.values()];
       if (pts.length < 2) return;
       const [a, b] = pts;
       const d = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
-      placeHeal(g, ((a.x + b.x) / 2 - g.x0) * k, ((a.y + b.y) / 2 - g.y0) * k, d / g.d0);
+      const [ddx, ddy] = d2w((a.x + b.x) / 2 - g.x0, (a.y + b.y) / 2 - g.y0);
+      placeHeal(g, ddx, ddy, d / g.d0);
       return;
     }
     if (e.pointerId !== g.id) return;
@@ -1303,7 +1340,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       setHealMoving(healSelRef.current === 'dst');
       startHealGpu();
     }
-    placeHeal(g, (e.clientX - g.x0) * k, (e.clientY - g.y0) * k, 1);
+    const [mdx, mdy] = d2w(e.clientX - g.x0, e.clientY - g.y0);
+    placeHeal(g, mdx, mdy, 1);
   };
   /** (x, y)（工作像素）按在哪一個框上（筆觸外擴一點點，手指比較好抓）。兩個都中的話，換成另一個 */
   const hitHeal = (x: number, y: number): 'src' | 'dst' | null => {
@@ -1331,7 +1369,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       const s = sessionRef.current, v = viewRef.current;
       if (h && s && v) {
         const r = v.getBoundingClientRect();
-        const [bx, by] = toBase((e.clientX - r.left) * (s.W / r.width), (e.clientY - r.top) * (s.H / r.height));
+        const gw = sgRef.current.clientToWork(e.clientX, e.clientY);
+        const [bx, by] = toBase(gw ? gw[0] : (e.clientX - r.left) * (s.W / r.width), gw ? gw[1] : (e.clientY - r.top) * (s.H / r.height));
         // 點到框＝選它；點到 A、B 以外的地方＝取消選取
         const kind = hitHeal(bx, by);
         if (kind !== healSelRef.current) setHealSel(kind);
@@ -1607,7 +1646,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     set: (sv) => { const v = sharedToCenterView(sv, stageCenter()); applyView(v.k, v.tx, v.ty); },
   };
   const onPaintedRef = useRef(onPainted); onPaintedRef.current = onPainted;
-  useEffect(() => { if (!isLoading) onPaintedRef.current?.(); }, [isLoading]);
+  const geoReady = !sg.gh || !!sg.wrapStyle?.transform;
+  useEffect(() => { if (!isLoading && geoReady) onPaintedRef.current?.(); }, [isLoading, geoReady]);
   useEffect(() => () => { if (embedded) embedded.commitRef.current = null; }, []);
   const finishEmbedded = () => { if (embedded) embedded.onDone(takeResult()); };
 
@@ -1860,14 +1900,18 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           style={{ transform: `translate(${viewT.tx}px, ${viewT.ty}px) scale(${viewT.k})`, ...fitPad }}
         >
           <div
-            className="relative flex items-center justify-center max-w-full max-h-full"
-            style={{ aspectRatio: ratio, touchAction: 'none' }}
+            ref={sg.boxRef}
+            className={`relative flex items-center justify-center max-w-full max-h-full ${sg.gh ? 'overflow-hidden rounded-sm' : ''}`}
+            style={{ aspectRatio: sg.ratio ?? ratio, touchAction: 'none' }}
           >
+            {/* 有構圖：撐開外框用的空白圖（構圖後的比例），畫布包在套了構圖矩陣的那一層裡（見 studioGeo） */}
+            {sg.gh && <img src={sg.sizer} alt="" aria-hidden="true" draggable={false} className="block max-w-full max-h-full invisible" />}
+            <div data-studio-geo={sg.gh ? 'on' : 'off'} style={sg.gh ? sg.wrapStyle : { display: 'contents' }}>
             {/* 拖動／縮放修補框時的 GPU 預覽（見 startHealGpu） */}
             <canvas ref={healPrevRef} data-heal-preview className="absolute pointer-events-none rounded-sm" style={{ display: 'none', zIndex: 1 }} />
             <canvas
               ref={viewRef}
-              className="beauty-paint max-w-full max-h-full object-contain rounded-sm block"
+              className={sg.gh ? 'beauty-paint block w-full h-full' : 'beauty-paint max-w-full max-h-full object-contain rounded-sm block'}
               style={{ touchAction: 'none' }}
               onPointerLeave={(e) => {
                 // 只有滑鼠移出去才收掉筆刷圈。觸控在 pointerup 之後會緊接著送出
@@ -1875,6 +1919,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                 if (e.pointerType === 'mouse' && !paintingRef.current) drawRing(null);
               }}
             />
+            </div>
           </div>
         </div>
 
@@ -1898,7 +1943,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           </svg>
         )}
         {/* 嵌在編輯器裡、還在解析的那一下：先放同一張照片，不要露出一塊黑 */}
-        {embedded && isLoading && (
+        {embedded && isLoading && !(geo && !isGeoIdentity(geo)) && (
           <div className={`absolute inset-0 flex items-center justify-center pointer-events-none ${fitPad ? 'studio-fit' : 'p-4'}`} style={fitPad || undefined}>
             <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm" draggable={false}
               ref={el => paintedWhenDecoded(el, () => onPaintedRef.current?.())} onLoad={e => paintedWhenDecoded(e.currentTarget, () => onPaintedRef.current?.())} />

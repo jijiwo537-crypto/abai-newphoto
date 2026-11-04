@@ -7970,15 +7970,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     || studioHold === k;
   /** 剛離開、編輯器還沒畫好：工具只留照片（studio-hold），其他介面已經是編輯器的 */
   const studioHostCls = (k: 'beauty' | 'match') => studioHold === k && activeCategory !== k ? 'studio-hold' : studioShown(k) ? '' : 'vis-off';
+  /* 人像／仿色照目前的構圖顯示（見 studioGeo）。在構圖分頁拖動時先不跟（它們藏在後面，不用每一格重排） */
+  const studioGeoKeyRef = useRef<{ key: string; geo: GeoParams }>({ key: '', geo });
+  if (activeCategory !== 'compose') {
+    const k = JSON.stringify(geo);
+    if (k !== studioGeoKeyRef.current.key) studioGeoKeyRef.current = { key: k, geo };
+  }
+  const studioGeo = studioGeoKeyRef.current.geo;
   const beautyEl = useMemo(() => (
-    <BeautyStudio key={beautyKey} imageSrc={beautySrc} embedded={studioEmbed} align={studioAlign} onPainted={beautyPainted}
+    <BeautyStudio key={beautyKey} imageSrc={beautySrc} geo={studioGeo} embedded={studioEmbed} align={studioAlign} onPainted={beautyPainted}
       onCancel={studioNoop} onHome={studioNoop} onImportNew={studioNoop} onSendToEditor={studioNoop} />
-  ), [beautyKey, beautySrc, studioEmbed, studioNoop, studioAlign, beautyPainted]);
+  ), [beautyKey, beautySrc, studioGeo, studioEmbed, studioNoop, studioAlign, beautyPainted]);
   const matchEl = useMemo(() => (
-    <ColorMatchStudio key={matchKey} imageSrc={matchSrc} embedded={studioEmbed} align={studioAlign} onPainted={matchPainted}
+    <ColorMatchStudio key={matchKey} imageSrc={matchSrc} geo={studioGeo} embedded={studioEmbed} align={studioAlign} onPainted={matchPainted}
       referenceSrc={matchRefSrc} onPickReference={pickMatchRef}
       onCancel={studioNoop} onHome={studioNoop} onImportNew={studioNoop} />
-  ), [matchKey, matchSrc, matchRefSrc, studioEmbed, studioNoop, pickMatchRef, studioAlign, matchPainted]);
+  ), [matchKey, matchSrc, matchRefSrc, studioGeo, studioEmbed, studioNoop, pickMatchRef, studioAlign, matchPainted]);
 
   /** 模板與疊圖層分頁：滑桿列與小分類列都收起來，整塊控制區給它自己的面板 */
   const ownPanel = activeCategory === 'template' || STUDIO_CATS.includes(activeCategory);

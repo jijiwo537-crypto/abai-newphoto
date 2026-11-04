@@ -27,12 +27,16 @@ import {
   sampleRgb, bakeFor, applyLut, Lut3D,
 } from '../utils/colorTransfer';
 import { LutRenderer } from '../utils/lutGl';
+import { useStudioGeo } from './studioGeo';
+import type { GeoParams } from '../utils/compose';
 import type { StudioResult } from './BeautyStudio';
 import { buildProtectMapsFrom, resolveWeight, packWeight, ProtectMaps } from '../utils/protectMask';
 
 interface Props {
   /** 要調色的照片 */
   imageSrc: string;
+  /** 嵌在編輯器裡：照片目前的構圖（畫面照構圖顯示，見 studioGeo） */
+  geo?: GeoParams | null;
   onCancel: (keepDraft?: boolean) => void;
   onRequestExit?: () => Promise<ExitChoice>;
   onHome: () => void;
@@ -89,9 +93,11 @@ const toImageData = (img: HTMLImageElement, max: number): ImageData => {
 
 export const ColorMatchStudio: React.FC<Props> = ({
   imageSrc, onCancel, onHome, onImportNew, onPickReference, referenceSrc, onSendToEditor,
-  initialState, onRequestExit, referenceLoading=false, embedded, align, onPainted,
+  initialState, onRequestExit, referenceLoading=false, embedded, align, onPainted, geo,
 }) => {
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
+  const sg = useStudioGeo(embedded ? geo : null, srcImg ? srcImg.naturalWidth || srcImg.width : 0, srcImg ? srcImg.naturalHeight || srcImg.height : 0);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
   const [preview, setPreview] = useState<ImageData | null>(null);
   const [luts, setLuts] = useState<Record<string, Lut3D> | null>(null);
@@ -159,6 +165,15 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const glReadyRef = useRef(false);
   /** 用 state 是為了讓備援畫布真的被藏起來（ref 改了不會重繪） */
   const [glReady, setGlReady] = useState(false);
+  // GPU 畫布是直接掛上去的：構圖開關時跟著換尺寸規則（hidden 照舊）
+  useEffect(() => {
+    const c = glRef.current?.canvas;
+    if (!c) return;
+    const hidden = c.classList.contains('hidden');
+    c.className = (sg.gh ? 'block w-full h-full' : 'max-w-full max-h-full object-contain rounded-sm shadow-2xl') + (hidden ? ' hidden' : '');
+    if (wrapRef.current && c.parentElement !== wrapRef.current) wrapRef.current.appendChild(c);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sg.gh, glReady]);
   /** CPU 版才需要：算好的結果先留著，前後對比才切得動 */
   const processedRef = useRef<ImageData | null>(null);
 
@@ -241,7 +256,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       // 先藏起來。它是直接掛進畫面裡的，還沒畫東西之前如果留在版面裡，
       // 會跟佔位用的原圖擠在同一排 —— 原圖就被推到旁邊去了（量到偏了 150px）。
       gl.canvas.className = 'max-w-full max-h-full object-contain rounded-sm shadow-2xl hidden';
-      zoomRef.current.appendChild(gl.canvas);
+      (wrapRef.current || zoomRef.current).appendChild(gl.canvas);
     }
     return () => { gl?.canvas.remove(); gl?.dispose(); glRef.current = null; };
   }, []);
@@ -346,7 +361,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const cmp = cmpRef.current, im = originalRef.current;
     if (embedded && cmp && im) {
       if (!original) { cmp.parentElement!.style.display = 'none'; return; }
-      const z = zoomRef.current;
+      const z = wrapRef.current || zoomRef.current;
       const el = z && [...z.querySelectorAll(':scope > canvas, :scope > img')].find(e => (e as HTMLElement).offsetParent && !(e as HTMLElement).classList.contains('hidden')) as HTMLElement | undefined;
       if (el) {
         const box = cmp.parentElement!;
@@ -586,7 +601,13 @@ export const ColorMatchStudio: React.FC<Props> = ({
   };
 
   const ready = !!(srcImg && refImg && luts);
-  useEffect(() => { if (ready) onPaintedRef.current?.(); }, [ready]);
+  const geoReady = !sg.gh || !!sg.wrapStyle?.transform;
+  useEffect(() => { if (ready && geoReady) onPaintedRef.current?.(); }, [ready, geoReady]);
+  /* 佔位原圖解好了：有構圖的話等構圖那層量好尺寸才回報（不然翻過來那一格是空的） */
+  const placeholderDecodedRef = useRef(false);
+  const geoReadyRef = useRef(geoReady); geoReadyRef.current = geoReady;
+  const placeholderPainted = () => { placeholderDecodedRef.current = true; if (geoReadyRef.current) onPaintedRef.current?.(); };
+  useEffect(() => { if (geoReady && placeholderDecodedRef.current) onPaintedRef.current?.(); }, [geoReady]);
 
   const viewport=useStandaloneToolViewport();
   const srcAspect = srcImg ? (srcImg.naturalWidth || srcImg.width) / Math.max(1, srcImg.naturalHeight || srcImg.height) : (align ? align.width / align.height : null);
@@ -704,18 +725,25 @@ export const ColorMatchStudio: React.FC<Props> = ({
             transition: pinchRef.current || panRef.current || viewJump ? 'none' : 'transform 90ms linear',
           }}
         >
+          {/* 有構圖：外框只露出構圖後的範圍，裡面那層套構圖矩陣（見 studioGeo）；沒有構圖時兩層都是 display:contents */}
+          <div ref={sg.boxRef} className={sg.gh ? 'relative flex items-center justify-center max-w-full max-h-full overflow-hidden rounded-sm shadow-2xl' : ''}
+            style={sg.gh ? { aspectRatio: sg.ratio } : { display: 'contents' }}>
+          {sg.gh && <img src={sg.sizer} alt="" aria-hidden="true" draggable={false} className="block max-w-full max-h-full invisible" />}
+          <div ref={wrapRef} data-studio-geo={sg.gh ? 'on' : 'off'} style={sg.gh ? sg.wrapStyle : { display: 'contents' }}>
           {/* 前後對比的原圖（見 showSide）。包一層 span：ALIGN_FILL_CSS 會把這一層直接的 canvas 拉滿 */}
           <span className="absolute pointer-events-none rounded-sm overflow-hidden" style={{ display: 'none', zIndex: 2 }}>
             <canvas ref={cmpRef} className="block w-full h-full" />
           </span>
           <canvas
             ref={canvasRef}
-            className={`max-w-full max-h-full object-contain rounded-sm shadow-2xl ${ready && !glReady ? '' : 'hidden'}`}
+            className={`${sg.gh ? 'block w-full h-full' : 'max-w-full max-h-full object-contain rounded-sm shadow-2xl'} ${ready && !glReady ? '' : 'hidden'}`}
           />
           {!ready && (
-            <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm shadow-2xl"
-              ref={el => paintedWhenDecoded(el, () => onPaintedRef.current?.())} onLoad={e => paintedWhenDecoded(e.currentTarget, () => onPaintedRef.current?.())} />
+            <img src={imageSrc} alt="" className={sg.gh ? 'block w-full h-full' : 'max-w-full max-h-full object-contain rounded-sm shadow-2xl'}
+              ref={el => paintedWhenDecoded(el, placeholderPainted)} onLoad={e => paintedWhenDecoded(e.currentTarget, placeholderPainted)} />
           )}
+          </div>
+          </div>
         </div>
         {(busy || referenceLoading) && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none" role="status" aria-label="分析色彩中">
