@@ -9,12 +9,13 @@ import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, invertDotArt,
 type Kind = 'line' | 'shade';
 type ToolId = 'width' | 'threshold' | 'lines' | 'thicken' | 'draw' | 'erase';
 interface ToolDef { id: ToolId; label: string; glyph: React.ReactNode; min: number; max: number; decimals?: boolean }
-/* 圖示沿用其他功能的同名工具：大小、擦除＝遮色片筆刷；筆刷＝人像修容；明暗＝調節的亮度 */
+/* 精細度＝橫向幾個字（越多越細）；輪廓量＝照片裡的輪廓線描出多少；線條粗細＝線條加粗幾次。
+   圖示沿用其他功能的同類工具：精細度、擦除＝遮色片筆刷的大小／擦除；筆刷＝人像修容；明暗＝調節的亮度 */
 const TOOLS: ToolDef[] = [
-  { id: 'width', label: '大小', glyph: <Glyph k="size" />, min: 1, max: 200 },
+  { id: 'width', label: '精細度', glyph: <Glyph k="size" />, min: 1, max: 200 },
   { id: 'threshold', label: '明暗', glyph: <Icon name="light_mode" className="text-[20px]" />, min: 0.01, max: 0.99, decimals: true },
-  { id: 'lines', label: '線條', glyph: <Glyph k="lines" />, min: 0, max: 20 },
-  { id: 'thicken', label: '粗細', glyph: <Glyph k="weight" />, min: 0, max: 10 },
+  { id: 'lines', label: '輪廓量', glyph: <Glyph k="lines" />, min: 0, max: 20 },
+  { id: 'thicken', label: '線條粗細', glyph: <Glyph k="weight" />, min: 0, max: 10 },
   { id: 'draw', label: '筆刷', glyph: <Icon name="brush" className="text-[20px]" />, min: 1, max: 8 },
   { id: 'erase', label: '擦除', glyph: <Glyph k="erase" />, min: 1, max: 8 },
 ];
@@ -55,7 +56,8 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [modelReady, setModelReady] = useState(false);
   const [photo, setPhoto] = useState<string>('');
-  const [inverted, setInverted] = useState(true);   // 預設反轉：照片亮的地方是白點，黑底上看起來就是原本的照片
+  /* 網站是白底黑點（點＝暗的地方）。這裡是黑底白點，要看起來一樣就要反轉（點＝亮的地方、暗的地方是空的） */
+  const [inverted, setInverted] = useState(true);
   const [copied, setCopied] = useState(false);
   const session = useRef<DotArtSession | null>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -121,29 +123,34 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   }, []);
   /* 框固定是「整張照片的點陣」那麼大（收掉的空白邊也算進去），成品畫在它該在的位置：
      拖明暗、線條時四周空白多一格少一格，畫面也不會跳、不會變比例 */
-  const geom = useRef({ pitch: 1, cols: 0, rows: 0, ox: 0, oy: 0 });
+  /* 點的排法照點字字型實際的樣子（量網站顯示用的字型）：一個字寬 1、高 1.6，
+     兩欄點在字寬的 30%／70%，四列點間距 23.5%，點的直徑是字寬的 20%。
+     所以看起來跟網站上那一段點字（以及貼到別的地方）一樣疏密、一樣比例。 */
+  const geom = useRef({ cw: 1, ch: 1.6, cols: 0, rows: 0, ox: 0, oy: 0 });
   const paint = useCallback((t: string | null, f: DotArtFrame | null) => {
     const c = cvs.current; if (!c) return;
     const lines = t ? t.split('\n') : [];
     const cols = Math.max(0, ...lines.map(l => l.length)), rows = lines.length;
     if (!f || !cols || !rows || !boxSize.w || !boxSize.h) { c.width = c.height = 0; return; }
-    const pitch = Math.min((boxSize.w - 32) / (f.cols * 2), (boxSize.h - 32) / (f.rows * 4));
-    geom.current = { pitch, cols, rows, ox: f.left * 2 * pitch, oy: f.top * 4 * pitch };
-    const dpr = Math.min(3, window.devicePixelRatio || 1), W = f.cols * 2 * pitch, H = f.rows * 4 * pitch;
+    const CH = 1.604;
+    const cw = Math.min((boxSize.w - 32) / f.cols, (boxSize.h - 32) / (f.rows * CH)), ch = cw * CH;
+    geom.current = { cw, ch, cols, rows, ox: f.left * cw, oy: f.top * ch };
+    const dpr = Math.min(3, window.devicePixelRatio || 1), W = f.cols * cw, H = f.rows * ch;
     c.style.width = `${W}px`; c.style.height = `${H}px`;
     const pw = Math.round(W * dpr), ph = Math.round(H * dpr);
     if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
     const g = c.getContext('2d')!; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
     g.fillStyle = '#fff';
-    const r = Math.max(0.35, pitch * 0.36), x0 = f.left * 2, y0 = f.top * 4;
+    const r = Math.max(0.3, cw * 0.1), DX = [0.3, 0.7], DY = [0.184, 0.4195, 0.655, 0.8905];
     g.beginPath();
     for (let y = 0; y < rows; y++) {
-      const l = lines[y];
+      const l = lines[y], by = (f.top + y) * ch;
       for (let x = 0; x < l.length; x++) {
         const code = l.charCodeAt(x) - 0x2800;
         if (code <= 0 || code > 0xff) continue;
+        const bx = (f.left + x) * cw;
         for (let k = 0; k < 8; k++) if (code & (1 << k)) {
-          const cx = (x0 + x * 2 + POS[k][0] + 0.5) * pitch, cy = (y0 + y * 4 + POS[k][1] + 0.5) * pitch;
+          const cx = bx + DX[POS[k][0]] * cw, cy = by + DY[POS[k][1]] * ch;
           g.moveTo(cx + r, cy); g.arc(cx, cy, r, 0, Math.PI * 2);
         }
       }
@@ -166,8 +173,9 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     }
   };
   const toDot = (ev: React.PointerEvent): [number, number] => {
-    const r = cvs.current!.getBoundingClientRect(), p = geom.current.pitch;
-    return [(ev.clientX - r.left - geom.current.ox) / p, (ev.clientY - r.top - geom.current.oy) / p];
+    // 換成「點」的座標：一個字橫向 2 點、縱向 4 點
+    const r = cvs.current!.getBoundingClientRect(), gm = geom.current;
+    return [(ev.clientX - r.left - gm.ox) / (gm.cw / 2), (ev.clientY - r.top - gm.oy) / (gm.ch / 4)];
   };
   const onMove = (ev: React.PointerEvent) => {
     const s = stroke.current; if (!s) return;

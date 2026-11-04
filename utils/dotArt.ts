@@ -35,6 +35,16 @@ const canvas = (w: number, h: number): Cvs => {
   return c;
 };
 const ctx2d = (c: Cvs) => c.getContext('2d', { willReadFrequently: true })!;
+/* 暫用畫布重複使用：拖滑桿時每一格都開新畫布的話，iPhone 有「所有畫布加起來」的上限，
+   還沒被回收的舊畫布會把額度吃光 —— 之後新畫布畫不出東西，點陣區就整個黑掉。
+   重新指定寬高會把內容與狀態清空，跟新開一張一樣。 */
+const scratch = new Map<string, Cvs>();
+const scratchCanvas = (name: string, w: number, h: number): Cvs => {
+  let c = scratch.get(name);
+  if (!c) { c = document.createElement('canvas'); scratch.set(name, c); }
+  c.width = Math.max(1, Math.floor(w)); c.height = Math.max(1, Math.floor(h));
+  return c;
+};
 
 /* ── 1. 讀圖：寬度最多 768，寬高裁成 4 的倍數（一格點字 4 列高） ── */
 export async function prepareDotArtImage(file: Blob): Promise<Cvs> {
@@ -135,6 +145,7 @@ async function preprocess(src: Cvs, lines: number): Promise<Cvs> {
   g.globalCompositeOperation = 'multiply';
   for (let i = 0; i < lines; i++) g.drawImage(la, 0, 0, base.width, base.height);
   g.globalCompositeOperation = 'source-over';
+  base.width = base.height = 0;   // 用完馬上還畫布額度
   return c;
 }
 
@@ -145,7 +156,7 @@ const LUMA = [0.2126, 0.7152, 0.0722];
 interface Eroded { L: Float32Array; W: number; H: number; srcW: number; srcH: number }
 function erodedLuma(src: Cvs, steps: number): Eroded {
   // 在 1000px 寬上做（線條粗細才跟照片原本多大無關），做完縮回原尺寸
-  const work = canvas(1000, src.height / src.width * 1000), g = ctx2d(work);
+  const work = scratchCanvas('erode', 1000, src.height / src.width * 1000), g = ctx2d(work);
   g.drawImage(src, 0, 0, work.width, work.height);
   const d = g.getImageData(0, 0, work.width, work.height).data, W = work.width, H = work.height;
   let cur = new Float32Array(W * H), next = new Float32Array(W * H);
@@ -159,11 +170,10 @@ function erodedLuma(src: Cvs, steps: number): Eroded {
       for (let x = 0; x < W; x++) { let m = tmp[o + x]; if (y > 0 && tmp[o - W + x] < m) m = tmp[o - W + x]; if (y < H - 1 && tmp[o + W + x] < m) m = tmp[o + W + x]; next[o + x] = m; } }
     const t = cur; cur = next; next = t;
   }
-  work.width = work.height = 0;
   return { L: cur, W, H, srcW: src.width, srcH: src.height };
 }
 function thresholdEroded(e: Eroded, level: number): Cvs {
-  const work = canvas(e.W, e.H), g = ctx2d(work), img = g.createImageData(e.W, e.H), d = img.data, off = 255 * level;
+  const work = scratchCanvas('threshold', e.W, e.H), g = ctx2d(work), img = g.createImageData(e.W, e.H), d = img.data, off = 255 * level;
   for (let p = 0, i = 0; p < e.L.length; p++, i += 4) {
     const v = Math.max(0, Math.min(255, 256 * e.L[p] - off)) | 0;
     d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
@@ -171,7 +181,6 @@ function thresholdEroded(e: Eroded, level: number): Cvs {
   g.putImageData(img, 0, 0);
   const out = canvas(e.srcW, e.srcH);
   ctx2d(out).drawImage(work, 0, 0, out.width, out.height);
-  work.width = work.height = 0;
   return out;
 }
 function thresholdAndThicken(src: Cvs, level: number, steps: number): Cvs { return thresholdEroded(erodedLuma(src, steps), level); }
@@ -180,7 +189,7 @@ function thresholdAndThicken(src: Cvs, level: number, steps: number): Cvs { retu
 const toLinear = (v: number) => (v <= 0.04045 ? v / 12.95 : Math.pow((v + 0.055) / 1.055, 2.4));
 const toSrgb = (v: number) => (v <= 0.0031308 ? 12.95 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
 function ditherAt(src: Cvs, chars: number, brightness: number): Cvs {
-  const c = canvas(2 * chars, Math.round(2 * chars * (src.height / src.width))), g = ctx2d(c);
+  const c = scratchCanvas('dither', 2 * chars, Math.round(2 * chars * (src.height / src.width))), g = ctx2d(c);
   g.fillStyle = 'white'; g.fillRect(0, 0, c.width, c.height);
   g.filter = `brightness(${brightness})`;
   g.drawImage(src, 0, 0, c.width, c.height);
@@ -205,7 +214,7 @@ function ditherAt(src: Cvs, chars: number, brightness: number): Cvs {
 const DOT_BITS = [[0, 3], [1, 4], [2, 5], [6, 7]];   // [列][欄] → 位元
 function toBraille(src: Cvs, level: number, chars: number): string[] {
   const rows = Math.ceil(2 * chars * (src.height / src.width) / 4);
-  const c = canvas(2 * chars, 4 * rows), g = ctx2d(c);
+  const c = scratchCanvas('braille', 2 * chars, 4 * rows), g = ctx2d(c);
   g.drawImage(src, 0, 0, c.width, c.height);
   const W = c.width, d = g.getImageData(0, 0, W, c.height).data, lines: string[] = [];
   for (let y = 0; y < c.height; y += 4) {
@@ -282,7 +291,11 @@ export class DotArtSession {
   async prepare() { await lineArt(this.src); this.modelReady = true; }
   private async preFor(lines: number) {
     let c = this.pre.get(lines);
-    if (!c) { c = await preprocess(this.src, lines); if (this.pre.size > 6) this.pre.clear(); this.pre.set(lines, c); }
+    if (!c) {
+      c = await preprocess(this.src, lines);
+      if (this.pre.size >= 4) { const [k, old] = this.pre.entries().next().value as [number, Cvs]; old.width = old.height = 0; this.pre.delete(k); }
+      this.pre.set(lines, c);
+    } else { this.pre.delete(lines); this.pre.set(lines, c); }   // 最近用的排到最後
     return c;
   }
   async render(kind: 'line' | 'shade', s0: DotArtSettings): Promise<DotArtFrame | null> {
@@ -296,7 +309,7 @@ export class DotArtSession {
         let e = this.eroded.get(ek);
         if (!e) { e = erodedLuma(pre, s.thicken); if (this.eroded.size > 4) this.eroded.clear(); this.eroded.set(ek, e); }
         c = thresholdEroded(e, level);
-        if (this.line.size > 24) { for (const v of this.line.values()) v.width = v.height = 0; this.line.clear(); }
+        if (this.line.size >= 8) { const [k, old] = this.line.entries().next().value as [string, Cvs]; old.width = old.height = 0; this.line.delete(k); }
         this.line.set(key, c);
       }
       img = c;
