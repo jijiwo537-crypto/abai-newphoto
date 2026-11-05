@@ -14,12 +14,13 @@ type Kind = 'line' | 'shade';
 type ToolId = 'width' | 'threshold' | 'lines' | 'spacing' | 'draw' | 'erase';
 interface ToolDef { id: ToolId; label: string; glyph: React.ReactNode; min: number; max: number; decimals?: boolean }
 /* 數量＝橫向幾個字（越多點越多、越細）；輪廓＝照片裡的輪廓線描出多少；間距＝點幾個一組排。
-   圖示沿用其他功能的同類工具：數量、擦除＝遮色片筆刷的大小／擦除；筆刷＝人像修容；明暗＝調節的亮度 */
+   圖示沿用其他功能的同名工具：數量＝特效的「數量」、間距＝多格拼圖描邊的「間距」、明暗＝調節的亮度、
+   筆刷＝人像修容、擦除＝遮色片的擦除；輪廓沒有同名的，用線稿常用的鉛筆 */
 const TOOLS: ToolDef[] = [
-  { id: 'width', label: '數量', glyph: <Glyph k="size" size={20} />, min: 0, max: 100 },
+  { id: 'width', label: '數量', glyph: <Icon name="apps" className="text-xl" />, min: 0, max: 100 },
   { id: 'threshold', label: '明暗', glyph: <Icon name="light_mode" className="text-xl" />, min: 0.01, max: 0.99, decimals: true },
-  { id: 'lines', label: '輪廓', glyph: <Glyph k="contour" size={20} />, min: 0, max: 20 },
-  { id: 'spacing', label: '間距', glyph: <Glyph k="spacing" size={20} />, min: 1, max: 8 },
+  { id: 'lines', label: '輪廓', glyph: <Icon name="edit" className="text-xl" />, min: 0, max: 20 },
+  { id: 'spacing', label: '間距', glyph: <Glyph k="gap" size={20} />, min: 1, max: 8 },
   { id: 'draw', label: '筆刷', glyph: <Icon name="brush" className="text-xl" />, min: 1, max: 8 },
   { id: 'erase', label: '擦除', glyph: <Glyph k="erase" size={20} />, min: 1, max: 8 },
 ];
@@ -129,6 +130,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const [frame, setFrame] = useState<DotArtFrame | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [modelReady, setModelReady] = useState(false);
+  const [rendered, setRendered] = useState(false);   // 完整的點陣算出第一張了沒
   const [photo, setPhoto] = useState<string>('');
   /* 網站是白底黑點（點＝暗的地方）。這裡是黑底白點，要看起來一樣就要反轉（點＝亮的地方、暗的地方是空的） */
   const [inverted, setInverted] = useState(true);
@@ -144,7 +146,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
 
   const busy = useRef(false), shown = useRef('');
   const open = useCallback(async (file: File) => {
-    setStatus('loading'); setFrame(null); setModelReady(false);
+    setStatus('loading'); setFrame(null); setModelReady(false); setRendered(false);
     edits.current.clear(); undoStack.current = []; redoStack.current = []; setHistTick(t => t + 1);
     try {
       const c = await prepareDotArtImage(file);
@@ -152,8 +154,9 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
       const s = new DotArtSession(c);
       session.current = s; shown.current = '';
       setStatus('ready');   // 先出「不疊線」的版本，線稿模型在背景跑
+      // 線稿模型跑完才開始出點陣（不先出暫時的版本）；模型失敗就直接出「不疊線」的版本，不會一直轉圈
       s.prepare().then(() => { if (session.current === s) { shown.current = ''; setModelReady(true); } })
-        .catch(e => { console.error('dot art model', e); });
+        .catch(e => { console.error('dot art model', e); if (session.current === s) setModelReady(true); });
     } catch (e) { console.error('dot art', e); setStatus('error'); }
   }, []);
   useEffect(() => { warmLineArtModel(); if (initialFiles[0]) open(initialFiles[0]); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
@@ -176,12 +179,12 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         const t = await s.render(job.kind, job.settings);
         if (session.current !== s) return;
         shown.current = job.key;
-        setFrame(t); setEditKey(`${job.kind}|${job.settings.width}`);
+        setFrame(t); setEditKey(`${job.kind}|${job.settings.width}`); setRendered(true);
         await new Promise(r => requestAnimationFrame(() => r(null)));
       }
     } finally { busy.current = false; }
   }, []);
-  useEffect(() => { if (status === 'ready') pump(); }, [want, status, pump]);
+  useEffect(() => { if (status === 'ready' && modelReady) pump(); }, [want, status, modelReady, pump]);
 
   /* 算出來的點陣（含反轉）＋手畫的點＝畫面上的點陣 */
   const baseBits = useMemo(() => (frame ? textToBits(frame, inverted) : null), [frame, inverted]);
@@ -390,16 +393,16 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
 
       {/* 成品：黑底白點；筆刷／擦除時手指直接在上面畫 */}
       <div ref={box} className="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-black" style={{ paddingBottom: BOTTOM_ROW - 16 }}>
-        {status === 'loading' && <div className="absolute w-6 h-6 rounded-full border-2 border-white/20 border-t-white animate-spin" />}
         {status === 'error' && <p className="absolute text-[12px] text-white/60">無法處理這張照片</p>}
-        <canvas ref={cvs} data-dot-art-canvas className={status === 'ready' && bits ? '' : 'hidden'}
+        <canvas ref={cvs} data-dot-art-canvas className={status === 'ready' && rendered && bits ? '' : 'hidden'}
           style={{ touchAction: drawing ? 'none' : 'auto' }}
           onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
-        {finalText && <pre data-dot-art-text hidden>{finalText}</pre>}
-        {status === 'ready' && !frame && <p className="absolute text-[12px] text-white/50">畫面全空白，調一下明暗</p>}
-        {status === 'ready' && !modelReady && (
-          <div data-dot-art-refining className="absolute top-3 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md flex items-center gap-2 text-[11px] text-white/80">
-            <span className="w-3 h-3 rounded-full border-2 border-white/25 border-t-white animate-spin" />線條描繪中
+        {rendered && finalText && <pre data-dot-art-text hidden>{finalText}</pre>}
+        {status === 'ready' && rendered && !frame && <p className="absolute text-[12px] text-white/50">畫面全空白，調一下明暗</p>}
+        {/* 生成中：只有正中間一個轉圈（跟仿色同一款），完整的點陣出來之前不顯示任何點 */}
+        {(status === 'loading' || (status === 'ready' && !rendered)) && (
+          <div data-dot-art-refining className="absolute inset-0 flex items-center justify-center pointer-events-none" role="status" aria-label="生成中">
+            <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
           </div>
         )}
         {/* 左下：目前的照片，點一下換一張；右下：反轉 */}
