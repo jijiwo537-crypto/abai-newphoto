@@ -163,3 +163,19 @@ export function trimAt(lines: string[]): { lines: string[]; left: number; top: n
   return { lines: out, left: lead, top };
 }
 export const trim = (lines: string[]) => trimAt(lines)?.lines ?? null;
+
+/* ── 明暗滑桿的對照表：在幾個明暗值實際算出點陣，記下「點亮的點佔幾成」 ──
+   門檻值本身的算法完全不動（跟網站一樣），只是滑桿改成依點的多寡平均分布：
+   原本整張很暗或很亮的照片，滑桿有一大段完全沒變化（全滿或全空），現在每一段都有反應。 */
+export const CURVE_N = 49;
+/** 對照表第 k 格對應的明暗值（0.01～0.99） */
+export const curveT = (k: number) => 0.01 + 0.98 * k / (CURVE_N - 1);
+/** 點字裡點亮的點佔全部點位的比例 */
+export function fillOf(lines: string[]): number {
+  let dots = 0, cells = 0;
+  for (const l of lines) for (let i = 0; i < l.length; i++) {
+    let v = l.charCodeAt(i) - 0x2800; cells++;
+    while (v) { dots += v & 1; v >>= 1; }
+  }
+  return cells ? dots / (cells * 8) : 0;
+}

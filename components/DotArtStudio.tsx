@@ -8,17 +8,17 @@ import { Glyph } from './Glyph';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
 import { useStandaloneToolViewport, standaloneToolViewportCSS } from '../utils/useStandaloneToolViewport';
-import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, prepareDotArtImage, warmLineArtModel, type DotArtFrame, type DotArtSettings } from '../utils/dotArt';
+import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, prepareDotArtImage, warmLineArtModel, type DotArtFrame, type DotArtSettings, curveT, CURVE_N } from '../utils/dotArt';
 
 type Kind = 'line' | 'shade';
 type ToolId = 'width' | 'threshold' | 'lines' | 'spacing' | 'draw' | 'erase';
-interface ToolDef { id: ToolId; label: string; glyph: React.ReactNode; min: number; max: number; decimals?: boolean }
+interface ToolDef { id: ToolId; label: string; glyph: React.ReactNode; min: number; max: number }
 /* 數量＝橫向幾個字（越多點越多、越細）；輪廓＝照片裡的輪廓線描出多少；間距＝點幾個一組排。
    圖示沿用其他功能的同名工具：數量＝特效的「數量」、間距＝多格拼圖描邊的「間距」、明暗＝調節的亮度、
    筆刷＝人像修容、擦除＝遮色片的擦除；輪廓沒有同名的，用線稿常用的鉛筆 */
 const TOOLS: ToolDef[] = [
   { id: 'width', label: '數量', glyph: <Icon name="apps" className="text-xl" />, min: 0, max: 100 },
-  { id: 'threshold', label: '明暗', glyph: <Icon name="light_mode" className="text-xl" />, min: 0.01, max: 0.99, decimals: true },
+  { id: 'threshold', label: '明暗', glyph: <Icon name="light_mode" className="text-xl" />, min: 0, max: 100 },
   { id: 'lines', label: '輪廓', glyph: <Icon name="edit" className="text-xl" />, min: 0, max: 20 },
   { id: 'spacing', label: '間距', glyph: <Glyph k="gap" size={20} />, min: 1, max: 8 },
   { id: 'draw', label: '筆刷', glyph: <Icon name="brush" className="text-xl" />, min: 1, max: 8 },
@@ -29,7 +29,45 @@ const WIDTH_MIN = 20, WIDTH_MAX = 100;
 const widthOf = (v: number) => Math.round(WIDTH_MIN + (WIDTH_MAX - WIDTH_MIN) * Math.round(v) / 100);
 const sliderOfWidth = (w: number) => (w - WIDTH_MIN) / (WIDTH_MAX - WIDTH_MIN) * 100;
 /** 滑桿是連續的（拖起來不會一格一格），算圖時才取到該有的刻度 */
-const snap = (id: ToolId, v: number) => (id === 'threshold' ? Math.round(v * 100) / 100 : Math.round(v));
+const snap = (id: ToolId, v: number) => (id === 'threshold' ? Math.round(v * 1000) / 1000 : Math.round(v));
+
+/* 明暗滑桿：算法照網站（門檻值 0.01～0.99），但滑桿位置改成「點亮的點有多少」平均分布。
+   照網站原本的刻度，偏暗或偏亮的照片有一大段滑桿完全沒變化（點全滿／全空），看起來像沒反應；
+   現在依這張照片算出的對照表換算，滑桿每一段都會改變點的多寡。預設值還是網站的 0.80（結果一模一樣）。 */
+/** 對照表 → 滑桿刻度：每一段的寬度＝一半看點的多寡變了多少、一半平均分給「有變化的範圍」；
+    頭尾整段都是全滿或全空（怎麼調都一樣）的部分寬度是 0。回傳每個取樣點在滑桿上的位置（0～1） */
+const scaleOf = (c: Float32Array): Float64Array | null => {
+  const N = c.length, first = c[0], last = c[N - 1];
+  if (Math.abs(first - last) < 1e-4) return null;
+  let a = 0, b = N - 1;
+  while (a < N - 1 && Math.abs(c[a + 1] - first) < 1e-6) a++;   // 開頭不會變的那一段
+  while (b > 0 && Math.abs(c[b - 1] - last) < 1e-6) b--;         // 結尾不會變的那一段
+  const total = Math.abs(last - first), segs = Math.max(1, b - a), w = new Float64Array(N);
+  for (let k = 1; k < N; k++) {
+    const active = k > a && k <= b;
+    w[k] = w[k - 1] + (active ? 0.5 * Math.abs(c[k] - c[k - 1]) / total + 0.5 / segs : 0);
+  }
+  const end = w[N - 1] || 1;
+  for (let k = 0; k < N; k++) w[k] /= end;
+  return w;
+};
+/** 明暗值 → 滑桿位置（0～100） */
+const posOfT = (c: Float32Array | null, t: number) => {
+  const w = c && scaleOf(c);
+  if (!w) return (t - 0.01) / 0.98 * 100;
+  const x = Math.max(0, Math.min(CURVE_N - 1, (t - 0.01) / 0.98 * (CURVE_N - 1))), i = Math.min(CURVE_N - 2, Math.floor(x)), f = x - i;
+  return (w[i] * (1 - f) + w[i + 1] * f) * 100;
+};
+/** 滑桿位置（0～100）→ 明暗值 */
+const tOfPos = (c: Float32Array | null, p: number) => {
+  const w = c && scaleOf(c), q = p / 100;
+  if (!w) return 0.01 + 0.98 * q;
+  for (let k = 1; k < CURVE_N; k++) if (w[k] >= q && w[k] > w[k - 1]) {
+    const f = (q - w[k - 1]) / (w[k] - w[k - 1]);
+    return curveT(k - 1) + (curveT(k) - curveT(k - 1)) * Math.max(0, Math.min(1, f));
+  }
+  return q <= 0 ? 0.01 : 0.99;
+};
 
 /* 點字 ⇄ 點陣：每格 8 個位元對應的位置 [欄, 列] */
 const POS = [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [0, 3], [1, 3]];
@@ -114,6 +152,19 @@ const drawDots = (g: CanvasRenderingContext2D, b: Bits, L: Layout, cw: number, c
 /** 一筆畫改到哪些點：位置、改之前、改之後（復原／重做只記差異，不用每筆存一整張） */
 interface Step { key: string; idx: number[]; before: number[]; after: number[] }
 
+/** 等待中的小字：後面的點 1→2→3→2→1 來回變化（點的位置先留好，字不會左右晃） */
+const DOT_STEPS = [1, 2, 3, 2];
+function LoadingText({ text }: { text: string }) {
+  const [i, setI] = useState(0);
+  useEffect(() => { const id = setInterval(() => setI(v => (v + 1) % DOT_STEPS.length), 400); return () => clearInterval(id); }, []);
+  const dots = '.'.repeat(DOT_STEPS[i]);
+  return (
+    <p className="text-[11px] tracking-[0.1em] text-white/50 whitespace-nowrap" data-dot-art-loading-text>
+      <span className="invisible">...</span>{text}<span className="inline-block w-[1.2em] text-left">{dots}</span>
+    </p>
+  );
+}
+
 export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; initialFiles: File[] }) {
   const viewport = useStandaloneToolViewport();
   const [kind, setKind] = useState<Kind>('line');
@@ -148,10 +199,12 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const open = useCallback(async (file: File) => {
     setStatus('loading'); setFrame(null); setModelReady(false); setRendered(false);
     edits.current.clear(); undoStack.current = []; redoStack.current = []; setHistTick(t => t + 1);
+    curves.current.clear(); thrPos.current = null;
     try {
       const c = await prepareDotArtImage(file);
       setPhoto(c.toDataURL('image/jpeg', 0.8));
       const s = new DotArtSession(c);
+      s.onCurve = (key, curve) => { if (session.current === s) { curves.current.set(key, curve); setCurveTick(t => t + 1); } };
       session.current = s; shown.current = '';
       setStatus('ready');   // 先出「不疊線」的版本，線稿模型在背景跑
       // 線稿模型跑完才開始出點陣（不先出暫時的版本）；模型失敗就直接出「不疊線」的版本，不會一直轉圈
@@ -169,6 +222,11 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const want = `${kind}|${settings.width}|${settings.threshold}|${settings.lines}|${modelReady}`;
   const wantRef = useRef({ key: want, kind, settings }); wantRef.current = { key: want, kind, settings };
   const [editKey, setEditKey] = useState('');
+  /** 明暗對照表：每個「線稿／陰影＋輪廓」一份（換照片時清掉） */
+  const curves = useRef(new Map<string, Float32Array>());
+  const [, setCurveTick] = useState(0);
+  /** 拖明暗時滑桿停在手指的位置（不從換算回來的值反推，免得滑桿抖） */
+  const thrPos = useRef<{ key: string; t: number; p: number } | null>(null);
   const pump = useCallback(async () => {
     const s = session.current;
     if (!s || busy.current) return;
@@ -176,10 +234,10 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     try {
       while (shown.current !== wantRef.current.key) {
         const job = wantRef.current;
-        const t = await s.render(job.kind, job.settings);
+        const r = await s.renderWithCurve(job.kind, job.settings);
         if (session.current !== s) return;
         shown.current = job.key;
-        setFrame(t); setEditKey(`${job.kind}|${job.settings.width}`); setRendered(true);
+        setFrame(r.frame); setEditKey(`${job.kind}|${job.settings.width}`); setRendered(true);
         await new Promise(r => requestAnimationFrame(() => r(null)));
       }
     } finally { busy.current = false; }
@@ -346,9 +404,17 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
 
   const cur = TOOLS.find(t => t.id === tool) || TOOLS[0];
   const isBrush = cur.id === 'draw' || cur.id === 'erase';
-  const value = isBrush ? brush : cur.id === 'spacing' ? 0 : raw[kind][cur.id as keyof DotArtSettings];
+  const curveKey = `${kind}|${settings.lines}|${settings.width}`, curve = curves.current.get(curveKey) ?? null;
+  const thrNow = raw[kind].threshold;
+  const thrSlider = thrPos.current && thrPos.current.key === curveKey && thrPos.current.t === thrNow ? thrPos.current.p : posOfT(curve, thrNow);
+  const value = isBrush ? brush : cur.id === 'spacing' ? 0 : cur.id === 'threshold' ? thrSlider : raw[kind][cur.id as keyof DotArtSettings];
   const setValue = (v: number) => {
     if (isBrush) setBrush(v);
+    else if (cur.id === 'threshold') {
+      const t = Math.max(0.01, Math.min(0.99, snap('threshold', tOfPos(curve, v))));
+      thrPos.current = { key: curveKey, t, p: v };
+      setRaw(r => ({ ...r, [kind]: { ...r[kind], threshold: t } }));
+    }
     else setRaw(r => ({ ...r, [kind]: { ...r[kind], [cur.id]: v } }));
   };
   /* 一列滑桿：名稱｜滑桿｜數值（跟美顏同一款） */
@@ -402,7 +468,10 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         {/* 生成中：只有正中間一個轉圈（跟仿色同一款），完整的點陣出來之前不顯示任何點 */}
         {(status === 'loading' || (status === 'ready' && !rendered)) && (
           <div data-dot-art-refining className="absolute inset-0 flex items-center justify-center pointer-events-none" role="status" aria-label="生成中">
-            <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+              <LoadingText text={status === 'ready' && modelReady ? '正在生成點陣圖' : '正在偵測輪廓'} />
+            </div>
           </div>
         )}
         {/* 左下：目前的照片，點一下換一張；右下：反轉 */}
@@ -434,7 +503,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
           {sliderRow('橫向', 1, 8, gap.x, String(gx), v => setGap(g => ({ ...g, x: v })))}
           {sliderRow('直向', 1, 8, gap.y, String(gy), v => setGap(g => ({ ...g, y: v })))}
         </>) : sliderRow(isBrush ? '筆刷' : cur.label, cur.min, cur.max, value,
-          cur.decimals ? snap(cur.id, value).toFixed(2) : String(snap(cur.id, value)), setValue)}
+          String(Math.round(value)), setValue)}
       </div>
 
       {/* 工具列：跟美顏同一款（64px 按鈕列＋12px 底部距離） */}

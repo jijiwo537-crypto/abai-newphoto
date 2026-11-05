@@ -27,7 +27,8 @@ export interface DotArtResult { kind: 'line' | 'shade'; width: number; text: str
 
 const MAX_INPUT_W = 768;
 
-import { BLANK, canvas, ctx2d, scratchCanvas, stretchContrast, overlayLines, erodedLuma, thresholdEroded, thresholdAndThicken, ditherAt, toBraille, trimAt, trim, type Cvs, type Eroded } from './dotArtCore';
+import { BLANK, canvas, ctx2d, scratchCanvas, stretchContrast, overlayLines, erodedLuma, thresholdEroded, thresholdAndThicken, ditherAt, toBraille, trimAt, trim, fillOf, curveT, CURVE_N, type Cvs, type Eroded } from './dotArtCore';
+export { curveT, CURVE_N } from './dotArtCore';
 
 /* ── 1. 讀圖：寬度最多 768，寬高裁成 4 的倍數（一格點字 4 列高） ── */
 export async function prepareDotArtImage(file: Blob): Promise<HTMLCanvasElement> {
@@ -141,6 +142,10 @@ export async function generateDotArt(src: Cvs, s: DotArtSettings, onStep?: (labe
    線稿模型只跑一次；「線條多寡」變了才重疊；「粗細」變了才重做擴張；「明暗」只重做門檻；「大小」只重排點字。 */
 /** 主要成品：收邊後的文字，加上它在「整張照片的點陣」裡的位置（預覽用固定的框，拖滑桿時才不會跳） */
 export interface DotArtFrame { text: string; left: number; top: number; cols: number; rows: number }
+/** 一次算圖的結果：成品（整張空白時是 null） */
+export interface DotArtRender { frame: DotArtFrame | null }
+/** 明暗滑桿的對照表算好時通知：key＝「線稿/陰影|輪廓|字數」，curve[k]＝明暗 curveT(k) 時點亮的比例 */
+export type CurveListener = (key: string, curve: Float32Array) => void;
 /* 線稿版在背景執行緒算（見 dotArtLine.worker）：主畫面不卡，閒下來時先算好輪廓的前後幾格。
    不支援 OffscreenCanvas 的瀏覽器，或背景執行緒出錯時，自動改回在主畫面算（結果一樣）。 */
 let lineStage: Worker | null | undefined, lsSeq = 0, lsOwner: object | null = null;
@@ -150,7 +155,7 @@ function lineStageWorker(): Worker | null {
   if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return (lineStage = null);
   try {
     const w = new Worker(new URL('./dotArtLine.worker.ts', import.meta.url), { type: 'module' });
-    w.onmessage = e => { const p = lsPending.get(e.data.id); if (!p) return; lsPending.delete(e.data.id); e.data.ok ? p.res(e.data) : p.rej(new Error(e.data.error)); };
+    w.onmessage = e => { if (e.data.type === 'curve') { (lsOwner as DotArtSession | null)?.workerCurve(e.data); return; } const p = lsPending.get(e.data.id); if (!p) return; lsPending.delete(e.data.id); e.data.ok ? p.res(e.data) : p.rej(new Error(e.data.error)); };
     w.onerror = e => { e.preventDefault?.(); for (const p of lsPending.values()) p.rej(new Error('line stage worker failed')); lsPending.clear(); w.terminate(); lineStage = null; };
     lineStage = w;
   } catch { lineStage = null; }
@@ -185,7 +190,42 @@ export class DotArtSession {
     return c;
   }
   /** 線稿版在背景執行緒算出整張的點字；不能用時回 null（改在主畫面算） */
-  private async lineInWorker(s: DotArtSettings, level: number): Promise<string[] | null> {
+  /** 明暗對照表算好時叫這個（畫面拿去換算滑桿位置） */
+  onCurve: CurveListener | null = null;
+  private curveKeys = new Set<string>();
+  private curveRun: { key: string; cancel: boolean } | null = null;
+  /** 背景執行緒算好線稿版的對照表 */
+  workerCurve(m: { lines: number; thicken: number; width: number; curve: Float32Array }) {
+    const key = `line|${m.lines}|${m.width}`;
+    this.curveKeys.add(key); this.onCurve?.(key, m.curve);
+  }
+  /** 在主畫面一格一格算對照表（陰影版，或背景執行緒不能用時的線稿版）：每格算完讓出一下，不卡畫面 */
+  private sampleCurve(kind: 'line' | 'shade', s: DotArtSettings) {
+    const key = `${kind}|${s.lines}|${s.width}`;
+    if (this.curveKeys.has(key) || this.curveRun?.key === key) return;
+    if (this.curveRun) this.curveRun.cancel = true;
+    const run = { key, cancel: false }; this.curveRun = run;
+    const fills = new Float32Array(CURVE_N);
+    let k = 0;
+    const step = async () => {
+      if (run.cancel) return;
+      try {
+        const t = curveT(k);
+        let full: string[];
+        if (kind === 'line') {
+          const ek = `${s.lines}|${s.thicken}`;
+          let e = this.eroded.get(ek);
+          if (!e) { e = erodedLuma(await this.preFor(s.lines), s.thicken); if (this.eroded.size > 4) this.eroded.clear(); this.eroded.set(ek, e); }
+          const c = thresholdEroded(e, Math.round(255 * (1 - t))); full = toBraille(c, 128, s.width); c.width = c.height = 0;
+        } else full = toBraille(ditherAt(await this.preFor(s.lines), s.width, 2 * t), 128, s.width);
+        fills[k++] = fillOf(full);
+      } catch { if (this.curveRun === run) this.curveRun = null; return; }
+      if (k < CURVE_N) setTimeout(step, 0);
+      else { if (this.curveRun === run) this.curveRun = null; this.curveKeys.add(key); this.onCurve?.(key, fills); }
+    };
+    setTimeout(step, 30);
+  }
+  private async lineInWorker(s: DotArtSettings, level: number): Promise<{ full: string[] } | null> {
     if (!this.useWorker || !lineStageWorker()) return null;
     try {
       if (lsOwner !== this) { lsOwner = this; this.sentBase = null; this.sentLa = null; }
@@ -197,15 +237,17 @@ export class DotArtSession {
       }
       if (lsOwner !== this) return null;
       const r = await lsCall({ type: 'render', lines: s.lines, thicken: s.thicken, level, width: s.width });
-      return r.skipped ? null : r.full;
+      return r.skipped ? null : { full: r.full };
     } catch (e) { console.warn('dot art worker → main thread', e); this.useWorker = false; return null; }
   }
-  async render(kind: 'line' | 'shade', s0: DotArtSettings): Promise<DotArtFrame | null> {
+  async render(kind: 'line' | 'shade', s0: DotArtSettings): Promise<DotArtFrame | null> { return (await this.renderWithCurve(kind, s0)).frame; }
+  async renderWithCurve(kind: 'line' | 'shade', s0: DotArtSettings): Promise<DotArtRender> {
     const s = this.modelReady ? s0 : { ...s0, lines: 0 };
     let full: string[] | null = null;
     if (kind === 'line') {
       const level = Math.round(255 * (1 - (s.threshold || 0.5))), ek = `${s.lines}|${s.thicken}`, key = `${ek}|${level}`;
-      full = await this.lineInWorker(s, level);
+      const w = await this.lineInWorker(s, level);
+      if (w) full = w.full;
       if (!full) {
         const pre = await this.preFor(s.lines);
         let c = this.line.get(key);
@@ -217,10 +259,15 @@ export class DotArtSession {
           this.line.set(key, c);
         }
         full = toBraille(c, 128, s.width);
+        this.sampleCurve('line', s);
       }
-    } else full = toBraille(ditherAt(await this.preFor(s.lines), s.width, 2 * s.threshold), 128, s.width);
+    } else {
+      const pre = await this.preFor(s.lines);
+      full = toBraille(ditherAt(pre, s.width, 2 * s.threshold), 128, s.width);
+      this.sampleCurve('shade', s);
+    }
     const t = trimAt(full);
-    return t ? { text: t.lines.join('\n'), left: t.left, top: t.top, cols: full[0]?.length || s.width, rows: full.length } : null;
+    return { frame: t ? { text: t.lines.join('\n'), left: t.left, top: t.top, cols: full[0]?.length || s.width, rows: full.length } : null };
   }
   /** 測試用：強制在主畫面算 */
   set workerEnabled(v: boolean) { this.useWorker = v; }
