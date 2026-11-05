@@ -16501,7 +16501,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 onClick={() => {setExportOptionsOpen(false);setMoreOpen(false);handleExport();}}
                 disabled={exportState === 'processing' || !(pages.some(p => p.layouts.some(l => l.images.some(img => img.url !== ''))) || floatingImages.length > 0)}
                 style={{ opacity: pages.some(p => p.layouts.some(l => l.images.some(img => img.url !== ''))) || floatingImages.length > 0 ? 1 : .45 }}
-                className="h-full pl-4 pr-2 text-[11px] font-black whitespace-nowrap active:opacity-60"
+                className="h-full pl-4 pr-2 text-[11px] font-black whitespace-nowrap"
               >
                 儲存
               </button>

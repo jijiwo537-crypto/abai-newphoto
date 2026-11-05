@@ -16,6 +16,7 @@ import type { ExitChoice } from '../types';
 import { ChevronLeft } from 'lucide-react';
 import { Icon } from './Icon';
 import { SaveButton } from './SaveButton';
+import { BusySpinner } from './BusySpinner';
 import { ExportActionLift } from './ExportActionLift';
 import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
@@ -558,7 +559,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   };
 
   const handleSave = () => {
-    if (!srcImg || !luts) return;
+    if (!srcImg || !luts || saving) return;
     setFormatOpen(false);
     setSaveError('');
     const savingStarted = performance.now();
@@ -692,7 +693,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         </button>
         {/* 跟編輯器其他分頁同一顆：儲存＋匯出選項（三個點） */}
         <div className="h-8 flex items-center bg-white text-black rounded-full overflow-hidden">
-          <button onClick={embedded.onSave || finishEmbedded} data-embedded-done disabled={saving} className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap disabled:opacity-40">儲存</button>
+          <button onClick={() => { if (!saving) (embedded.onSave || finishEmbedded)(); }} data-embedded-done className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap">儲存</button>
           <span aria-hidden="true" className="w-px h-4 bg-black/20" />
           <button aria-label="匯出選項" onClick={embedded.onMore} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
         </div>
@@ -705,7 +706,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         </button>
         <div ref={formatMenuRef}>
           <div className="flex items-center rounded-full bg-white text-black overflow-hidden h-8">
-            <button onClick={handleSave} disabled={!ready || saving} className="h-8 px-4 text-[11px] font-black tracking-wider disabled:opacity-40 active:scale-95">儲存</button>
+            <button onClick={handleSave} disabled={!ready} className="h-8 px-4 text-[11px] font-black tracking-wider disabled:opacity-40 active:scale-95">儲存</button>
             <span className="h-4 w-px bg-black/20" />
             <button aria-label="匯出選項" aria-expanded={formatOpen} onClick={() => setFormatOpen(v => !v)} className="h-8 px-2 flex items-center active:opacity-60"><Icon name="more_horiz" className="text-xl" /></button>
           </div>
@@ -764,8 +765,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
           </div>
         </div>
         {(busy || referenceLoading) && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" role="status" aria-label="分析色彩中">
-            <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" role="status" aria-label="AI仿色中">
+            <BusySpinner text="AI仿色中" />
           </div>
         )}
         {ready && (

@@ -6,6 +6,7 @@ import { ChevronLeft, Copy, Check, Plus } from 'lucide-react';
 import { Icon } from './Icon';
 import { Glyph } from './Glyph';
 import { SaveButton } from './SaveButton';
+import { BusySpinner } from './BusySpinner';
 import { ExportActionLift } from './ExportActionLift';
 import { useStandaloneToolViewport, standaloneToolViewportCSS } from '../utils/useStandaloneToolViewport';
 import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, prepareDotArtImage, warmLineArtModel, type DotArtFrame, type DotArtSettings, curveT, CURVE_N } from '../utils/dotArt';
@@ -151,19 +152,6 @@ const drawDots = (g: CanvasRenderingContext2D, b: Bits, L: Layout, cw: number, c
 
 /** 一筆畫改到哪些點：位置、改之前、改之後（復原／重做只記差異，不用每筆存一整張） */
 interface Step { key: string; idx: number[]; before: number[]; after: number[] }
-
-/** 等待中的小字：後面的點 1→2→3→2→1 來回變化（點的位置先留好，字不會左右晃） */
-const DOT_STEPS = [1, 2, 3, 2];
-function LoadingText({ text }: { text: string }) {
-  const [i, setI] = useState(0);
-  useEffect(() => { const id = setInterval(() => setI(v => (v + 1) % DOT_STEPS.length), 400); return () => clearInterval(id); }, []);
-  const dots = '.'.repeat(DOT_STEPS[i]);
-  return (
-    <p className="text-[11px] tracking-[0.1em] text-white/50 whitespace-nowrap" data-dot-art-loading-text>
-      <span className="invisible">...</span>{text}<span className="inline-block w-[1.2em] text-left">{dots}</span>
-    </p>
-  );
-}
 
 export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; initialFiles: File[] }) {
   const viewport = useStandaloneToolViewport();
@@ -449,7 +437,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
             className="p-2 text-white active:scale-90 transition-transform disabled:opacity-30">
             {copied ? <Check size={19} strokeWidth={2.4} /> : <Copy size={19} strokeWidth={2} />}
           </button>
-          <button onClick={save} disabled={!finalText || saving}
+          <button onClick={save} disabled={!finalText}
             className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap disabled:opacity-30">
             儲存
           </button>
@@ -468,10 +456,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         {/* 生成中：只有正中間一個轉圈（跟仿色同一款），完整的點陣出來之前不顯示任何點 */}
         {(status === 'loading' || (status === 'ready' && !rendered)) && (
           <div data-dot-art-refining className="absolute inset-0 flex items-center justify-center pointer-events-none" role="status" aria-label="生成中">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-              <LoadingText text={status === 'ready' && modelReady ? '正在生成點陣圖' : '正在偵測輪廓'} />
-            </div>
+            <BusySpinner text={status === 'ready' && modelReady ? '正在生成點陣圖' : '正在偵測輪廓'} />
           </div>
         )}
         {/* 左下：目前的照片，點一下換一張；右下：反轉 */}

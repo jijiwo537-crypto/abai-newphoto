@@ -10860,7 +10860,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             {/* 儲存：點一下，兩顆選項從它正下方延伸出來（不論有沒有設動畫都有影片） */}
             <div className="relative shrink-0">
               <div className="h-7 rounded-full bg-white text-black shadow-lg flex items-center overflow-hidden">
-                <button onClick={(e)=>{e.stopPropagation();setExportOptionsOpen(false);setMoreOpen(false);setExportAsk(v=>!v);}} className="h-full pl-4 pr-2 text-[11px] font-black whitespace-nowrap active:opacity-60">儲存</button>
+                <button onClick={(e)=>{e.stopPropagation();setExportOptionsOpen(false);setMoreOpen(false);setExportAsk(v=>!v);}} className="h-full pl-4 pr-2 text-[11px] font-black whitespace-nowrap">儲存</button>
                 <button data-creative-export-options-toggle aria-label="創意拼圖匯出選項" aria-expanded={exportOptionsOpen} onClick={()=>{setExportAsk(false);setMoreOpen(false);setExportOptionsOpen(v=>!v);}} className="h-full w-7 pr-1 flex items-center justify-center active:opacity-60"><Icon name="more_horiz" className="text-[16px]"/></button>
               </div>
               {/* 展開／收合都走同一組 transition，所以兩個方向都是順的。
