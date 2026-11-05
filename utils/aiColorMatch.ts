@@ -1,4 +1,4 @@
-/* AI 仿色：用開源深度學習的寫實風格轉換（WCT2 或 CAP-VSTNet，都是 MIT License）先在小圖上算出「參考圖風格的原圖」，
+/* AI 仿色：用開源深度學習的寫實風格轉換（CAP-VSTNet，MIT License）先在小圖上算出「參考圖風格的原圖」，
    再把「原圖顏色 → AI 結果顏色」的對應學成一顆平滑的 3D LUT，套回原尺寸照片。
    為什麼不直接用 AI 的輸出：
      - 網路在手機上只能跑小圖（記憶體），直接放大會糊、還會有 AI 特有的斑塊與紋理
@@ -7,22 +7,19 @@
    AI 會連明暗一起換（氣氛：黃昏、夜景、暗調），所以這個模式不鎖亮度。 */
 import type { Lut3D } from './colorTransfer';
 
-/** 兩種 AI：wct2＝AI 風格（見 wct2.worker）、cap＝AI 寫實（見 capvst.worker） */
-export type AiEngine = 'wct2' | 'cap';
-/** 網路吃的尺寸：長邊幾像素。wct2 寬高要是 8 的倍數（編碼器三次減半）、cap 要是 4 的倍數 */
+/** AI 寫實（CAP-VSTNet，見 capvst.worker） */
+export type AiEngine = 'cap';
+/** 網路吃的尺寸：長邊幾像素，寬高要是 4 的倍數 */
 const NET: Record<AiEngine, { long: number; mult: number; files: string[] }> = {
-  wct2: { long: 288, mult: 8, files: ['e1', 'e2', 'e3', 'e4', 'd4', 'd3', 'd2', 'd1'].map(n => `models/wct2/${n}.onnx`) },
   cap: { long: 384, mult: 4, files: ['models/cap/fwd.onnx', 'models/cap/inv.onnx'] },
 };
 
-/* 記憶體：WebAssembly 的記憶體只會長大、不會縮小，模型跑完就算不用了也一直佔著（實測一顆 450～720MB），
-   兩三種 AI 都試過之後 iPhone 就會把整個網頁關掉重開（＝崩潰）。
+/* 記憶體：WebAssembly 的記憶體只會長大、不會縮小，模型跑完就算不用了也一直佔著（實測一次 450～720MB），
+   多算幾次之後 iPhone 就會把整個網頁關掉重開（＝崩潰）。
    所以每次都開一個新的背景執行緒，算完（不管成功失敗）立刻關掉，記憶體整塊還給系統；
    同一時間只會有一個在跑（新的一來，舊的直接關掉）。 */
 let current: { w: Worker; rej: (e: any) => void } | null = null;
-const spawn = (e: AiEngine) => e === 'cap'
-  ? new Worker(new URL('./capvst.worker.ts', import.meta.url), { type: 'module' })
-  : new Worker(new URL('./wct2.worker.ts', import.meta.url), { type: 'module' });
+const spawn = (_e: AiEngine) => new Worker(new URL('./capvst.worker.ts', import.meta.url), { type: 'module' });
 const base = () => new URL((import.meta as any).env?.BASE_URL || '/', location.href).href;
 function runOnce(engine: AiEngine, msg: any, transfer: Transferable[]) {
   if (current) { current.w.terminate(); current.rej(new Error('cancelled')); }
@@ -39,7 +36,7 @@ function runOnce(engine: AiEngine, msg: any, transfer: Transferable[]) {
 export function cancelAiColorMatch() { if (current) { current.w.terminate(); current.rej(new Error('cancelled')); current = null; } }
 /** 選了 AI 模式先把模型下載進快取（不載進記憶體） */
 const warmed = new Set<AiEngine>();
-export const warmAiColorMatch = (e: AiEngine = 'wct2') => {
+export const warmAiColorMatch = (e: AiEngine = 'cap') => {
   if (warmed.has(e)) return; warmed.add(e);
   for (const f of NET[e].files) fetch(base() + f).then(r => r.arrayBuffer()).catch(() => warmed.delete(e));
 };
@@ -138,7 +135,7 @@ export function distillLut(src: Uint8ClampedArray, dst: Float32Array, n: number,
 export async function aiColorMatchLut(
   src: CanvasImageSource, sw: number, sh: number,
   ref: CanvasImageSource, rw: number, rh: number,
-  skin?: (u: number, v: number) => number, engine: AiEngine = 'wct2',
+  skin?: (u: number, v: number) => number, engine: AiEngine = 'cap',
 ): Promise<Lut3D> {
   const { long, mult } = NET[engine];
   const c = prep(src, sw, sh, long, mult), s = prep(ref, rw, rh, long, mult);

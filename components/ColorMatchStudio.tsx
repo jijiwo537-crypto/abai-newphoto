@@ -36,9 +36,9 @@ import { buildSkinMap, skinWeight, withoutSkin, type SkinMap } from '../utils/sk
 import { aiColorMatchLut, warmAiColorMatch, cancelAiColorMatch, type AiEngine } from '../utils/aiColorMatch';
 import { sampleMaskAt } from '../utils/colorTransfer';
 /** 仿色做法：統計法三種＋AI（WCT2 學成 LUT，見 utils/aiColorMatch） */
-type Pick = Method | 'ai' | 'cap';
-const PICK_LABEL = (m: Pick) => (m === 'ai' ? 'AI 風格' : m === 'cap' ? 'AI 寫實' : METHOD_LABEL[m]);
-const AI_ENGINE: Partial<Record<Pick, AiEngine>> = { ai: 'wct2', cap: 'cap' };
+type Pick = Method | 'cap';
+const PICK_LABEL = (m: Pick) => (m === 'cap' ? 'AI 寫實' : METHOD_LABEL[m]);
+const AI_ENGINE: Partial<Record<Pick, AiEngine>> = { cap: 'cap' };
 const isAi = (m: Pick) => !!AI_ENGINE[m];
 const warmFor = (m: Pick) => { const e = AI_ENGINE[m]; if (e) warmAiColorMatch(e); };
 
@@ -312,7 +312,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { cancelled = true; window.clearTimeout(t); };
   }, [srcImg, refImg]);
 
-  /* AI 模式（AI 風格＝WCT2、AI 寫實＝CAP-VSTNet）：第一次選到才算（要下載模型、算十幾秒）。
+  /* AI 模式（AI 寫實＝CAP-VSTNet）：第一次選到才算（要下載模型、算十幾秒）。
      算好的 LUT 跟其他做法放在一起；AI 跑完背景執行緒就關掉，記憶體立刻還回去（見 aiColorMatch） */
   const aiFor = useRef<object | null>(null);
   useEffect(() => {
@@ -852,13 +852,13 @@ export const ColorMatchStudio: React.FC<Props> = ({
         )}
       </div>
 
-      {/* 嵌在編輯器裡：只給兩種——標準（統計法）與 AI 風格（WCT2）；其他細分的做法只在獨立的仿色裡 */}
+      {/* 嵌在編輯器裡：只給兩種——標準（統計法）與 AI 寫實（CAP-VSTNet）；其他細分的做法只在獨立的仿色裡 */}
       {embedded && <div role="group" aria-label="仿色方法" className={`px-4 flex gap-2 shrink-0 transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
-        {(['mkl', 'ai', 'cap'] as Pick[]).map(m => <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{PICK_LABEL(m)}</button>)}
+        {(['mkl', 'cap'] as Pick[]).map(m => <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{PICK_LABEL(m)}</button>)}
       </div>}
       {/* 嵌在編輯器裡：滑桿往上、上下留更多空間 */}
       {!embedded && <div role="group" aria-label="仿色方法" className={`px-4 flex gap-2 shrink-0 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
-        {([...METHODS, 'ai', 'cap'] as Pick[]).map(m => <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{PICK_LABEL(m)}</button>)}
+        {([...METHODS, 'cap'] as Pick[]).map(m => <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{PICK_LABEL(m)}</button>)}
       </div>}
 
       {/* 滑桿：兩根並排（跟編輯器特效細項同一款）。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}

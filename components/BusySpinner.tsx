@@ -1,8 +1,8 @@
 /* 等待中的轉圈＋小字（點陣、仿色共用同一款）：
-   小圈在正中間，下面一行小字（帶一點陰影，蓋在亮的照片上也看得到），字後面的點 1→2→3→2 來回變化（點的位置先留好，字不會左右晃）。 */
+   小圈在正中間，下面一行小字（帶一點陰影，蓋在亮的照片上也看得到），字後面的點 1→2→3→1→2→3 循環（點的位置先留好，字不會左右晃）。 */
 import React, { useEffect, useState } from 'react';
 
-const DOT_STEPS = [1, 2, 3, 2];
+const DOT_STEPS = [1, 2, 3];
 
 export function LoadingText({ text }: { text: string }) {
   const [i, setI] = useState(0);
