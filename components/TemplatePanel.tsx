@@ -40,18 +40,19 @@ export const TemplatePanel: React.FC = () => {
   const input = useRef<HTMLInputElement>(null);
   const put = (i: number, v: string | null) => setSlots(prev => { const n = prev.slice(); n[i] = v; save(n); return n; });
   return (
-    <div className="w-full h-full flex items-center" data-template-panel>
+    /* 欄位跟其他分頁一樣高（預覽大小、位置都不變）；格子撐滿這一塊，上下各留 12px，不留一大片空白 */
+    <div className="w-full h-full flex items-stretch py-3" data-template-panel>
       <input ref={input} type="file" accept="image/*" className="hidden" onChange={async e => {
         const f = e.target.files?.[0]; e.target.value = '';
         if (!f) return;
         try { const t = await toThumb(f); put(target.current, t); setPicked(target.current); } catch { /* 讀不到的格式就略過 */ }
       }} />
-      <div className="w-full flex items-start gap-2.5 px-4 overflow-x-auto no-scrollbar touch-pan-x">
+      <div className="w-full h-full flex items-stretch gap-2.5 px-4 pt-1.5 overflow-x-auto no-scrollbar touch-pan-x">
         {slots.map((src, i) => (
-          <div key={i} className="relative shrink-0 w-[68px]">
+          <div key={i} className="relative shrink-0 h-full aspect-[3/4]">
             <button data-template-slot={i} aria-label={src ? `模板 ${i + 1}` : `放入模板 ${i + 1} 的圖片`}
               onClick={() => { if (src) setPicked(i); else { target.current = i; input.current?.click(); } }}
-              className={`relative w-[68px] h-[90px] rounded-[10px] overflow-hidden flex items-center justify-center transition-transform active:scale-95 ${src ? 'bg-[#1a1a1a]' : 'border border-dashed border-white/30 bg-white/[0.03]'}`}>
+              className={`relative w-full h-full rounded-[10px] overflow-hidden flex items-center justify-center transition-transform active:scale-95 ${src ? 'bg-[#1a1a1a]' : 'border border-dashed border-white/30 bg-white/[0.03]'}`}>
               {src
                 ? <img src={src} alt="" className="w-full h-full object-cover" draggable={false} />
                 : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.45)" strokeWidth="1.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>}

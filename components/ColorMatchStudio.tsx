@@ -38,11 +38,11 @@ import { sampleMaskAt } from '../utils/colorTransfer';
 import { useMatchRefs, addMatchRefs, removeMatchRef } from '../utils/matchRefs';
 /** 仿色做法：統計法三種＋AI（CAP-VSTNet 學成 LUT，見 utils/aiColorMatch） */
 type Pick = Method | 'cap';
-const PICK_LABEL = (m: Pick) => (m === 'cap' ? '氛圍' : METHOD_LABEL[m]);
+const PICK_LABEL = (m: Pick) => (m === 'cap' ? '專業' : METHOD_LABEL[m]);
 const AI_ENGINE: Partial<Record<Pick, AiEngine>> = { cap: 'cap' };
 const isAi = (m: Pick) => !!AI_ENGINE[m];
 const warmFor = (m: Pick) => { const e = AI_ENGINE[m]; if (e) warmAiColorMatch(e); };
-/** 強度上限：標準等統計法 100；氛圍可以推到 150（比參考圖再更進一步） */
+/** 強度上限：標準等統計法 100；專業可以推到 150（比參考圖再更進一步） */
 const maxFor = (m: Pick) => (m === 'cap' ? 150 : 100);
 
 interface Props {
@@ -142,6 +142,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const [preview, setPreview] = useState<ImageData | null>(null);
   const [luts, setLuts] = useState<Record<string, Lut3D> | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 正在算的是專業（AI）那一種：加載文字不一樣 */
+  const [aiBusy, setAiBusy] = useState(false);
   const [picked, setPicked] = useState<Pick>('mkl');
   const pickedRef = useRef<Pick>('mkl'); pickedRef.current = picked;
   /** AI 模式：亮度也跟著換 */
@@ -149,6 +151,30 @@ export const ColorMatchStudio: React.FC<Props> = ({
   /** SA-LUT：第二顆 LUT 與情境圖（逐點混合） */
   const [aiError, setAiError] = useState('');
   const [strength, setStrength] = useState(100);
+  const strengthInputRef = useRef<HTMLInputElement>(null);
+  const strengthTextRef = useRef<HTMLSpanElement>(null);
+  const liveStrengthRef = useRef<{ v: number; raf: number; timer: number }>({ v: -1, raf: 0, timer: 0 });
+  const paintRef = useRef<(s?: number) => void>(() => {});
+  /** 拖滑桿的每一格：數字直接改、下一格畫面 GPU 重畫一次（一格最多一次） */
+  const liveStrength = (v: number) => {
+    const L = liveStrengthRef.current;
+    L.v = v;
+    if (strengthTextRef.current) strengthTextRef.current.textContent = String(v);
+    if (!L.raf) L.raf = requestAnimationFrame(() => { L.raf = 0; paintRef.current(L.v); });
+    window.clearTimeout(L.timer);
+    L.timer = window.setTimeout(commitStrength, 250);   // 停下來一下也存（放手的事件偶爾會漏）
+  };
+  const commitStrength = () => {
+    const L = liveStrengthRef.current;
+    window.clearTimeout(L.timer);
+    if (L.v >= 0) { const v = L.v; L.v = -1; setStrength(v); }
+  };
+  // 狀態從別的地方改了（換做法、還原紀錄）：滑桿跟數字跟上
+  useEffect(() => {
+    const el = strengthInputRef.current;
+    if (el && Number(el.value) !== strength && liveStrengthRef.current.v < 0) el.value = String(strength);
+    if (strengthTextRef.current && liveStrengthRef.current.v < 0) strengthTextRef.current.textContent = String(strength);
+  }, [strength]);
   useEffect(() => { const m = maxFor(picked); setStrength(v => Math.min(v, m)); }, [picked]);
   const [finalUrl, setFinalUrl] = useState<string | null>(null);
   const [finalPreview, setFinalPreview] = useState<string | null>(null);
@@ -292,14 +318,37 @@ export const ColorMatchStudio: React.FC<Props> = ({
   useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){skinRef.current=null;weightRef.current=null;setSrcImg(image);}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
+    /* 算過的參考圖：不等圖片解碼，這一下就換上它的顏色（解碼完的那一次會直接命中快取，不會再算） */
+    const hit = lutCacheRef.current.src === srcImg ? lutCacheRef.current.map.get(new URL(referenceSrc, location.href).href) : undefined;
+    if (hit) { setLuts(hit); setBusy(false); }
     let active=true;loadImage(referenceSrc).then(image=>{if(active)setRefImg(image);}).catch(() => {});
     return()=>{active=false;};
   }, [referenceSrc]);
 
   // 兩張都到齊 → 找臉、學膚色，再把每種方法各烘一顆 LUT（等久一點沒關係，要算對）
+  /* 算過的參考圖：每張參考圖各留一組 LUT（標準三種＋專業那顆），切回去直接拿來用、不用重算。
+     一組約 1.7MB，最多留 12 組（約 20MB），再多就丟最久沒用的那組；換了要調色的照片就整個清掉 */
+  const lutCacheRef = useRef<{ src: HTMLImageElement | null; map: Map<string, Record<string, Lut3D>> }>({ src: null, map: new Map() });
+  const curRefKeyRef = useRef('');
+  const cacheLuts = (key: string, l: Record<string, Lut3D>) => {
+    const c = lutCacheRef.current.map;
+    c.delete(key); c.set(key, l);
+    while (c.size > 12) c.delete(c.keys().next().value as string);
+  };
   useEffect(() => {
     if (!srcImg || !refImg) { setLuts(null); return; }
     let cancelled = false;
+    if (lutCacheRef.current.src !== srcImg) lutCacheRef.current = { src: srcImg, map: new Map() };
+    const refKey = refImg.src;
+    curRefKeyRef.current = refKey;
+    const hit = lutCacheRef.current.map.get(refKey);
+    if (hit && preview && skinRef.current?.img === srcImg) {
+      cacheLuts(refKey, hit);   // 移到最新
+      setBusy(false);
+      setLuts(hit);
+      if (!isAi(pickedRef.current)) setPicked('mkl');
+      return;
+    }
     setBusy(true);
     const t = window.setTimeout(async () => {
       try {
@@ -332,7 +381,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
         // 33³ 跟調校台同一個尺寸；比 25³ 多 2.3 倍格點，漸層更平順，也才對得起來
         for (const m of METHODS) out[m] = bakeFor(m, sStat, rStat, 33);
         if (cancelled) return;
-        setPreview(toImageData(srcImg, PREVIEW_MAX));
+        if (previewSrcRef.current !== srcImg) { previewSrcRef.current = srcImg; setPreview(toImageData(srcImg, PREVIEW_MAX)); }
+        cacheLuts(refKey, out);
         setLuts(out);
         if (!isAi(pickedRef.current)) setPicked('mkl');   // 選了 AI 的話換參考圖照樣用 AI（下面那段會自己重算）
       } catch (e) { console.error('color match', e); }
@@ -341,7 +391,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
       }
     }, 30);
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [srcImg, refImg]);
+  }, [srcImg, refImg]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const previewSrcRef = useRef<HTMLImageElement | null>(null);
 
   /* AI 模式（AI 寫實＝CAP-VSTNet）：第一次選到才算（要下載模型、算十幾秒）。
      算好的 LUT 跟其他做法放在一起；AI 跑完背景執行緒就關掉，記憶體立刻還回去（見 aiColorMatch） */
@@ -352,24 +403,35 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const key = picked;
     aiFor.current = luts;
     let cancelled = false, done = false;
-    setBusy(true); setAiError('');
+    setBusy(true); setAiBusy(true); setAiError('');
     const map = skinRef.current?.img === srcImg ? skinRef.current.map : null;
     const skin = map && map.faces ? (u: number, v: number) => sampleMaskAt(map.skin, map.w, map.h, u, v) : undefined;
     aiColorMatchLut(srcImg, srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height,
       refImg, refImg.naturalWidth || refImg.width, refImg.naturalHeight || refImg.height, skin, engine)
-      .then(lut => { if (!cancelled) setLuts(l => (l ? { ...l, [key]: lut } : l)); })
+      .then(lut => {
+        if (cancelled) return;
+        setLuts(l => {
+          if (!l) return l;
+          const n = { ...l, [key]: lut };
+          if (curRefKeyRef.current && lutCacheRef.current.map.has(curRefKeyRef.current)) cacheLuts(curRefKeyRef.current, n);
+          return n;
+        });
+      })
       .catch(e => { if (cancelled) return; console.error('ai color match', e); setAiError('AI 仿色失敗，請再試一次'); setPicked('mkl'); })
-      .finally(() => { done = true; if (!cancelled) setBusy(false); aiFor.current = null; });
-    return () => { cancelled = true; aiFor.current = null; if (!done) { cancelAiColorMatch(); setBusy(false); } };
+      .finally(() => { done = true; if (!cancelled) { setBusy(false); setAiBusy(false); } aiFor.current = null; });
+    return () => { cancelled = true; aiFor.current = null; if (!done) { cancelAiColorMatch(); setBusy(false); setAiBusy(false); } };
   }, [picked, srcImg, refImg, luts]);
 
+  const glImageRef = useRef<ImageData | null>(null);
+  const glLutRef = useRef<Map<string, Lut3D>>(new Map());
   // 圖片與 LUT 上傳到 GPU（各只做一次）
   useLayoutEffect(() => {
     const gl = glRef.current;
     if (!gl || !preview || !luts) return;
     try {
-      gl.setImage(preview as unknown as TexImageSource, preview.width, preview.height);
-      for (const m of Object.keys(luts)) gl.setLut(m, luts[m]);
+      // 照片只在換照片時上傳一次；換參考圖只換 LUT（切參考圖才會是立刻的）
+      if (glImageRef.current !== preview) { gl.setImage(preview as unknown as TexImageSource, preview.width, preview.height); glImageRef.current = preview; }
+      for (const m of Object.keys(luts)) if (glLutRef.current.get(m) !== luts[m]) { gl.setLut(m, luts[m]); glLutRef.current.set(m, luts[m]); }
       glWeightRef.current = null;
       const pw=useWeight();
       if(pw){gl.setProtectMap(packWeight(pw.weight),pw.w,pw.h);glWeightRef.current=weightRef.current;}
@@ -443,6 +505,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (img) ctx.putImageData(img, 0, 0);
   };
 
+  paintRef.current = paint;
   useLayoutEffect(() => { paint(); }, [paint]);
 
   // 導出畫面蓋上來的時候，把 GPU 畫布也收起來。它已經被不透明的浮層擋住了，
@@ -818,15 +881,16 @@ export const ColorMatchStudio: React.FC<Props> = ({
           </div>
         </div>
         {(busy || referenceLoading) && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/55 transition-opacity" role="status" aria-label="AI仿色中">
-            <BusySpinner text="AI仿色中" />
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/55 transition-opacity" role="status" aria-label={aiBusy ? 'AI仿色中' : '仿色中'}>
+            {/* 標準：一句「仿色中…」；專業（AI 要算十幾秒）：三句輪流，讓人知道它在做什麼 */}
+            {aiBusy ? <BusySpinner text="AI仿色中" texts={['AI仿色中', '分析光影與色調中', '重建色彩層次中']} /> : <BusySpinner text="仿色中" />}
           </div>
         )}
-        {/* 仿色做法：懸空在預覽下緣中間（跟點陣的線稿／陰影同一款），滑桿那一列就整列給強度 */}
-        <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 left-1/2 -translate-x-1/2 h-11 flex items-center gap-2 z-[5] transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
+        {/* 仿色做法：懸空在預覽下緣、靠左（跟點陣的線稿／陰影同一款，不加外框），滑桿那一列就整列給強度 */}
+        <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 ${embedded ? 'left-3' : 'left-[68px]'} h-11 flex items-center gap-2 z-[5] transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
           {((embedded ? ['mkl', 'cap'] : [...METHODS, 'cap']) as Pick[]).map(m => (
             <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m}
-              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap border transition-all active:scale-95 ${picked === m ? 'bg-white text-black border-white font-bold' : 'bg-black/40 text-white/60 border-white/15 backdrop-blur-md'}`}>
+              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap transition-all active:scale-95 ${picked === m ? 'bg-white text-black font-bold' : 'bg-black/40 text-white/60 backdrop-blur-md'}`}>
               {PICK_LABEL(m)}
             </button>
           ))}
@@ -863,19 +927,24 @@ export const ColorMatchStudio: React.FC<Props> = ({
       {/* 下面這塊跟濾鏡同一個版面（總高 11rem，嵌在編輯器裡時預覽大小不會跳）：
            上面 5rem 是強度滑桿，下面 6rem 是一排參考圖 —— 最左邊那格是新增，其他每一格是一張參考圖，
            點一下就換成仿那一張；選中的那張右上角有刪除。 */}
-      <section className={`color-match-panel flex flex-col shrink-0 min-h-0 bg-[#111] border-t border-white/5 ${embedded ? '' : 'pb-6'}`} style={{height: embedded ? '11rem' : 'calc(11rem + 24px)'}}>
-        <div className={`h-[5rem] shrink-0 px-8 flex flex-col justify-center border-b border-white/5 transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
+      <section className={`color-match-panel flex flex-col shrink-0 min-h-0 bg-[#111] border-t border-white/5 ${embedded ? '' : 'pb-6'}`} style={{height: embedded ? 'calc(11rem - 1px)' : 'calc(11rem + 24px)'}}>
+        {/* 跟編輯器、人像一樣：5rem＋6rem 按比例擠掉多出來的那一點，分隔線與滑桿的位置三頁完全一樣 */}
+        <div style={{ flex: '0 1 5rem' }} className={`min-h-0 px-8 flex flex-col justify-center border-b border-white/5 transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
           <div className="flex justify-between items-center select-none mb-1 translate-y-2">
             <span className="font-black text-white/40 uppercase text-[10px] tracking-[0.2em]">強度</span>
-            <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2.5 py-0.5 rounded">{strength}</span>
+            <span ref={strengthTextRef} className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2.5 py-0.5 rounded">{strength}</span>
           </div>
-          <div className="relative h-10 flex items-center touch-none">
-            <input type="range" min={0} max={maxFor(picked)} value={Math.min(strength, maxFor(picked))}
-              data-cm-slider="強度" onChange={(e) => setStrength(Number(e.target.value))}
+          <div className="slider-wrap relative h-12 flex items-center justify-center touch-none">
+            {/* 跟濾鏡的強度滑桿同一個做法：拖的時候不經過 React，每一格直接叫 GPU 重畫一次、數字直接改；
+                放手（或停下來一下）才把值存回狀態。整個仿色畫面不會每一格重新 render 一次 */}
+            <input ref={strengthInputRef} type="range" min={0} max={maxFor(picked)} defaultValue={Math.min(strength, maxFor(picked))}
+              data-cm-slider="強度"
+              onInput={(e) => liveStrength(Number((e.target as HTMLInputElement).value))}
+              onPointerUp={() => commitStrength()} onTouchEnd={() => commitStrength()} onKeyUp={() => commitStrength()}
               className="custom-range" />
           </div>
         </div>
-        <div data-cm-refs className="h-[6rem] shrink-0 flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808]">
+        <div data-cm-refs style={{ flex: '0 1 6rem' }} className="min-h-0 flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808]">
           <button onClick={() => refInputRef.current?.click()} disabled={referenceLoading} data-cm-pickref aria-label="新增參考圖片"
             className="flex flex-col items-center shrink-0 w-[64px] active:scale-95 transition-transform">
             <div className="relative w-full h-[76px] rounded-lg bg-[#1a1a1a] flex flex-col items-center justify-center gap-1 text-white/50">

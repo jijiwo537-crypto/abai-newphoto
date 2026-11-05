@@ -4,21 +4,24 @@ import React, { useEffect, useState } from 'react';
 
 const DOT_STEPS = [1, 2, 3];
 
-export function LoadingText({ text }: { text: string }) {
+/** texts 給好幾句的話：點點跑完兩輪（2.4 秒）換下一句，輪流顯示 */
+export function LoadingText({ text, texts }: { text: string; texts?: string[] }) {
   const [i, setI] = useState(0);
-  useEffect(() => { const id = setInterval(() => setI(v => (v + 1) % DOT_STEPS.length), 400); return () => clearInterval(id); }, []);
+  useEffect(() => { const id = setInterval(() => setI(v => v + 1), 400); return () => clearInterval(id); }, []);
+  const list = texts && texts.length ? texts : [text];
+  const cur = list[Math.floor(i / (DOT_STEPS.length * 2)) % list.length];
   return (
     <p className="text-[11px] tracking-[0.1em] text-white/60 whitespace-nowrap" style={{ textShadow: '0 1px 3px rgba(0,0,0,.7)' }} data-loading-text>
-      <span className="invisible">...</span>{text}<span className="inline-block w-[1.2em] text-left">{'.'.repeat(DOT_STEPS[i])}</span>
+      <span className="invisible">...</span>{cur}<span className="inline-block w-[1.2em] text-left">{'.'.repeat(DOT_STEPS[i % DOT_STEPS.length])}</span>
     </p>
   );
 }
 
-export function BusySpinner({ text }: { text: string }) {
+export function BusySpinner({ text, texts }: { text: string; texts?: string[] }) {
   return (
     <div className="flex flex-col items-center gap-3" style={{ filter: 'drop-shadow(0 1px 2px rgba(0,0,0,.45))' }}>
       <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-      <LoadingText text={text} />
+      <LoadingText text={text} texts={texts} />
     </div>
   );
 }

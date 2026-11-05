@@ -1289,6 +1289,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   useEffect(() => { setBatchMenu(null); }, [srcList.length]);
   const [params, setParams] = useState<EditorParams>(DEFAULT_PARAMS);
   const [activeCategory, setActiveCategory] = useState<Category>('filter');
+  const activeCategoryNowRef = useRef<Category>('filter'); activeCategoryNowRef.current = activeCategory;
   /** 目前展開的是哪一個新特效（activeCategory === 'fx' 時才有意義） */
   const [activeFxId, setActiveFxId] = useState<string>(FX_DEFS[0].id);
   const [activeToolId, setActiveToolId] = useState<string>('filter_select');
@@ -2338,7 +2339,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 右側工具欄的按鈕：先讓按鈕本身的變化畫出來（這一格），照片下一格才重畫 ——
      以前同一格裡先跑整條管線，按鈕要等照片算完才變（手機上慢半秒以上） */
   const toggleMaskInvert = () => { uiFirstRef.current = true; commitMaskParams({ ...paramsRef.current, maskInvert: !paramsRef.current.maskInvert }); };
-  const toggleMaskOverlay = () => { uiFirstRef.current = true; const p = paramsRef.current; paramsRef.current = { ...p, maskShowOverlay: !p.maskShowOverlay }; isDirtyRef.current = true; flushParamsSync(); };
+  const toggleMaskOverlay = () => {
+    const p = paramsRef.current, next = { ...p, maskShowOverlay: !p.maskShowOverlay };
+    paramsRef.current = next;
+    /* 照片本身不會變：紅色那一層當場畫好／收掉（跟按鈕同一格），不必等整條管線 */
+    const ov = maskOverlayCanvasRef.current;
+    if (!next.maskShowOverlay && ov && !maskLiveRef.current) ov.style.display = 'none';
+    else if (next.maskShowOverlay && !maskLiveRef.current) paintOverlayOnlyRef.current(next);
+    // 接著那一次重畫也只畫紅色那一層（照片沒變，見繪圖迴圈的 overlayOnly）
+    overlayOnlyRef.current = true; uiFirstRef.current = true; isDirtyRef.current = true;
+    flushParamsSync();
+  };
   const [maskPicking, setMaskPickingState] = useState(false);
   /* 按了＋在選新的種類：參考線收起來，紅色範圍也一起藏（繪圖迴圈看這個 ref） */
   const maskPickingRef = useRef(false);
@@ -3866,10 +3877,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
   }, [historyIndex, history, isSoftActive, isBlurActive, isGrainActive, isHalationActive, softManuallyAdjusted, blurManuallyAdjusted, grainManuallyAdjusted, halationManuallyAdjusted]);
 
+  /* 「顯示紅色範圍」是看的方式，不是照片的編輯：復原／重做不能把它改回當時的樣子
+     （以前關掉紅色之後按復原，紅色又自己跑出來，看起來就像沒消失） */
+  const keepViewPrefs = (p: EditorParams): EditorParams => ({ ...p, maskShowOverlay: paramsRef.current.maskShowOverlay });
   const undo = () => {
     if (historyIdxRef.current > 0) {
       const prev = historyRef.current[historyIdxRef.current - 1];
-      setParams(JSON.parse(JSON.stringify(prev.params)));
+      setParams(keepViewPrefs(JSON.parse(JSON.stringify(prev.params))));
       setSelectedLutIdx(prev.selectedLutIdx);
       if (prev.isSoftActive !== undefined) setIsSoftActive(prev.isSoftActive);
       if (prev.isBlurActive !== undefined) setIsBlurActive(prev.isBlurActive);
@@ -3902,7 +3916,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const redo = () => {
     if (historyIdxRef.current < historyRef.current.length - 1) {
       const next = historyRef.current[historyIdxRef.current + 1];
-      setParams(JSON.parse(JSON.stringify(next.params)));
+      setParams(keepViewPrefs(JSON.parse(JSON.stringify(next.params))));
       setSelectedLutIdx(next.selectedLutIdx);
       if (next.isSoftActive !== undefined) setIsSoftActive(next.isSoftActive);
       if (next.isBlurActive !== undefined) setIsBlurActive(next.isBlurActive);
@@ -6180,7 +6194,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const scale = Math.max(b.w, b.h) / 1080;
     // Pass b.dest as sourcePixelData for noise masking
     applyComplexEffects(ctx, b.w, b.h, pPost, scale, b.shared, isInteracting, false, b.dest);
-    if(!fxSurfaceShownRef.current&&!maskLiveRef.current)presentEditorSource(ctx,b.w,b.h);
+    /* 遮色片那一頁（沒有 GPU 特效時）照片一律直接看 2D 畫布，不轉到 GPU 那層顯示：
+       拖遮色片滑桿時即時疊層是畫在 2D 畫布上的，放手後如果換成 GPU 那層顯示，同一張照片換了一個顯示層，
+       iPhone 上兩層的取樣差一點點，看起來就是「遮色片的區域動了一下」。整段都在同一層就不會 */
+    if(!fxSurfaceShownRef.current&&!maskLiveRef.current){
+      if(activeCategoryNowRef.current==='mask')showFxSurface(false);
+      else presentEditorSource(ctx,b.w,b.h);
+    }
 
 
   }, [isInteracting, selectedLutIdx, lutList, applyComplexEffects, getCurveLuts]);
@@ -9339,10 +9359,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {/* 合併：把現在畫面上的樣子烤進圖層，烤完才能再疊下一個特效／濾鏡。
              位置跟右下角的前後對比鍵左右對稱。
              只有「現在真的套著特效或濾鏡」時才出現 —— 合併過的參數已經歸零，不算。
-             遮色片與調節這兩頁不出現：那兩頁在調的東西跟「烤進圖層」是兩回事，
+             遮色片、調節、模板這幾頁不出現：那幾頁在做的事跟「烤進圖層」是兩回事，
              按鈕擺在那裡只會讓人以為是在合併遮色片。 */}
         {(hasMergeable || mergedCount > 0)
-          && activeCategory !== 'mask' && activeCategory !== 'adjust' && (
+          && activeCategory !== 'mask' && activeCategory !== 'adjust' && activeCategory !== 'template' && (
           <button
             aria-label="合併特效"
             onClick={hasMergeable ? (e) => {
@@ -9687,8 +9707,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         className={`relative ${(subStripHidden && activeCategory !== 'template') || activeToolId === 'curves' ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
         /* 一般、曲線、HSL 與特效細項都佔相同的總控制區高度；內容較少時只在
            內部留位，預覽區不再跟著分頁切換反覆變高變矮。構圖由自己的三列接管。 */
-        /* 模板那頁只有一排格子：欄位矮一點（格子 90px＋上下各 12px），不留一大塊空白 */
-        style={{ height: activeCategory === 'template' ? `calc(114px + ${footerHeight}px)` : `calc(11rem + ${footerHeight}px)`, background: activeToolId === 'curves' ? 'linear-gradient(to bottom, transparent 5rem, #111111 5rem)' : '#111111' }}
+        style={{ height: `calc(11rem + ${footerHeight}px)`, background: activeToolId === 'curves' ? 'linear-gradient(to bottom, transparent 5rem, #111111 5rem)' : '#111111' }}
       >
         <div ref={setDetailPanelHost} style={{ position: 'absolute', left: 0, right: 0, top: '5rem', height: 0, zIndex: 60 }} />
         <div 

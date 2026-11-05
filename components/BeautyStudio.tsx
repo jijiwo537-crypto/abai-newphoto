@@ -2050,15 +2050,17 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           /* 上緣那條分隔線跟編輯器同一條：底色同樣是 #111（白 5% 疊在 #111 上才是同一個亮度，疊在 #080808 上會淡一截、看起來特別細），
              高度少 1px —— 外框底邊讓開了分頁列的那 1px，不扣掉的話整欄會高 1px、線的位置對不上 */
           <div data-beauty-controls className="shrink-0 flex flex-col border-t border-white/5 bg-[#111]" style={{ height: 'calc(11rem - 1px)' }}>
-            <div className={`h-[5rem] shrink-0 bg-[#111] border-b border-white/5 ${three ? 'px-4 grid grid-cols-3 gap-3 items-center' : two ? 'px-5 grid grid-cols-2 gap-5 items-center' : 'px-8 flex flex-col justify-center'}`}>
+            {/* 滑桿列 5rem、工具列 6rem，跟編輯器一樣按比例一起擠掉多出來的 2px（編輯器量到 79.09／94.91）：兩頁的分隔線、滑桿、圖示位置完全一樣 */}
+            <div style={{ flex: '0 1 5rem' }} className={`min-h-0 bg-[#111] border-b border-white/5 ${three ? 'px-4 grid grid-cols-3 gap-3 items-center' : two ? 'px-5 grid grid-cols-2 gap-5 items-center' : 'px-8 flex flex-col justify-center'}`}>
               {sliders.map(([label, value, min, max, set]) => (
                 <div key={`${tool}-${label}`} className="w-full min-w-0">
                   {/* 兩根並排時文字對齊滑軌的起點（細滑軌兩端各留 9px），不要貼在最左邊 */}
-                  <div className={`flex justify-between items-center mb-1 ${two ? 'px-2.5' : 'px-1'}`}>
+                  {/* 只有一根時：跟編輯器「調節」的滑桿一模一樣（字貼齊滑軌兩端、往下 8px、同樣的數字框），切換兩頁時位置不會差 */}
+                  <div className={`flex justify-between items-center mb-1 ${two ? 'px-2.5' : 'select-none translate-y-2'}`}>
                     <span className={`font-black text-white/40 uppercase ${two ? 'text-[9px] tracking-[0.12em]' : 'text-[10px] tracking-[0.2em]'}`}>{label}</span>
-                    <span className={`font-sans tabular-nums font-bold bg-white/10 rounded ${two ? 'text-[10px] leading-none px-1.5 py-[4px]' : 'text-xs px-2 py-0.5'}`}>{value}</span>
+                    <span className={`font-sans tabular-nums font-bold bg-white/10 rounded ${two ? 'text-[10px] leading-none px-1.5 py-[4px]' : 'text-xs px-2.5 py-0.5'}`}>{value}</span>
                   </div>
-                  <div className={`slider-wrap relative flex items-center justify-center touch-none ${two ? 'h-[26px]' : 'h-[30px]'}`}>
+                  <div className={`slider-wrap relative flex items-center justify-center touch-none ${two ? 'h-[26px]' : 'h-12'}`}>
                     <input type="range" min={min} max={max} value={value} aria-label={label}
                       onChange={ev => set(Number(ev.target.value))}
                       onPointerDown={label === '筆刷' ? () => setSizingBrush(true) : undefined}
@@ -2066,12 +2068,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                       onPointerCancel={label === '筆刷' ? () => setSizingBrush(false) : undefined}
                       onBlur={label === '筆刷' ? () => setSizingBrush(false) : undefined}
                       style={two ? { left: 0, width: '100%', height: 26, margin: '-13px 0 0', touchAction: 'none', ['--thumb-w' as any]: '18px' } : undefined}
-                      className={two ? 'custom-range dense' : 'custom-range compact'} />
+                      className={two ? 'custom-range dense' : 'custom-range'} />
                   </div>
                 </div>
               ))}
             </div>
-            <div data-beauty-toolbar className="flex-1 min-h-0 bg-[#080808] flex items-center px-4 gap-2 overflow-x-auto no-scrollbar">
+            <div data-beauty-toolbar style={{ flex: '0 1 6rem' }} className="min-h-0 bg-[#080808] flex items-center px-4 gap-2 overflow-x-auto no-scrollbar">
               {BEAUTY_TOOLS.map(t => (
                 <button key={t.id} onClick={() => pickTool(t.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${tool === t.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40'}`}>
