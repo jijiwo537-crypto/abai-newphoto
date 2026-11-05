@@ -13,6 +13,18 @@ function blurMaterialTexture(s,w,h,radius){
  gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,s.blurTemp);gl.uniform1i(s.blurImage,1);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,s.glass,0);gl.uniform2f(s.blurDirection,0,1/bh);gl.uniform1f(s.blurSigma,Math.max(.25,radius*scale));gl.drawArrays(gl.TRIANGLES,0,6);
  gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.useProgram(s.program);gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,s.glass);gl.viewport(0,0,w,h);s.blurKey=key;
 }
+/* 照片先畫到一般 2D 畫布、再把那份像素上傳到 GPU。
+   Safari 直接把 <img> 上傳到 WebGL 時，不會照照片的色彩描述檔（iPhone 拍的是 Display P3）轉成 sRGB，
+   數值被當成 sRGB 直接用，整張底圖的色調就偏掉了。2D 畫布在每個瀏覽器都會正確轉好、
+   跟畫面上一般顯示的顏色一樣（藝術效果其他地方、原圖都是走這條），上傳時再關掉 WebGL 自己的轉換，
+   兩邊顏色就一模一樣。暫用畫布上傳完馬上還掉。 */
+function uploadSrgb(gl,source){
+ const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height,c=document.createElement('canvas');
+ c.width=w;c.height=h;c.getContext('2d').drawImage(source,0,0,w,h);
+ gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,gl.NONE);
+ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,c);
+ c.width=c.height=0;
+}
 export function paintTrackingMaterials(canvas,source,options){
  try{
   let s=states.get(canvas);if(s===false)return false;
@@ -45,10 +57,10 @@ export function paintTrackingMaterials(canvas,source,options){
   if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
   gl.viewport(0,0,w,h);gl.uniform2f(u.size,w,h);gl.uniform1f(u.imageOpacity,o.imageOpacity);gl.uniform1i(u.image,0);gl.uniform1i(u.frosted,1);
   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,s.original);
-  if(s.source!==source){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,source);s.source=source;s.blurKey='';}
+  if(s.source!==source){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);uploadSrgb(gl,source);s.source=source;s.blurKey='';}
   if(regions.some(r=>r.mode==='glass')){
    if(o.blur>0)blurMaterialTexture(s,w,h,o.blur*k);
-   else{gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,s.glass);if(s.blurKey!=='zero'){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,source);s.blurKey='zero';s.blurW=s.blurH=0;}}
+   else{gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,s.glass);if(s.blurKey!=='zero'){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);uploadSrgb(gl,source);s.blurKey='zero';s.blurW=s.blurH=0;}}
   }else if(!s.blurKey){gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,s.glass);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));}
   const bg=parseInt(o.background.slice(1),16);gl.clearColor((bg>>16)/255,((bg>>8)&255)/255,(bg&255)/255,1);gl.clear(gl.COLOR_BUFFER_BIT);gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
   gl.uniform4f(u.rect,0,0,w,h);gl.uniform1f(u.mode,0);gl.uniform1i(u.circleCount,0);gl.drawArrays(gl.TRIANGLES,0,6);
