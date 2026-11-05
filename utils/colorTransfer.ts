@@ -867,7 +867,8 @@ export function applyLut(
       w = 0;   // 沒有遮罩＝照片裡沒有臉：完全不保護（以前只看顏色的內建保護已拿掉）
     }
 
-    const L = opt.preserveLuminance ? labIn[0] : labOut[0];
+    // 亮度也換（AI 仿色）時，皮膚的亮度只跟一半 —— 跟 GPU 版同一條式子
+    const L = opt.preserveLuminance ? labIn[0] : labIn[0] + (labOut[0] - labIn[0]) * (1 - 0.5 * w);
     let A = labIn[1] + (labOut[1] - labIn[1]) * (1 - w);
     let BB = labIn[2] + (labOut[2] - labIn[2]) * (1 - w);
     const cIn = Math.hypot(labIn[1], labIn[2]);

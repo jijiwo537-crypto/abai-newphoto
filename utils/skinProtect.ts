@@ -18,8 +18,9 @@ import { drawSkinMask, FACE_OVAL, type MaskBufs } from './faceSkinDraw';
 import { guidedFilter, morphClose, maskSize } from './protectMask';
 import { rgbToLab } from './colorTransfer';
 
-/** 皮膚被保護的程度（1 ＝ 膚色完全不換）。留一點點跟著整體走，人才不會像貼上去的 */
-export const SKIN_KEEP = 0.85;
+/** 皮膚被保護的程度（1 ＝ 膚色完全不換）。0.6 ＝ 膚色跟著整體的色調走四成：
+    臉也有被仿到色（跟畫面融在一起、不像貼上去的），但不會被染成參考圖的顏色（藍臉、綠臉） */
+export const SKIN_KEEP = 0.6;
 
 export interface SkinMap {
   w: number;

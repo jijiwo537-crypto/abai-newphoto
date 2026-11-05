@@ -33,6 +33,10 @@ import type { GeoParams } from '../utils/compose';
 import type { StudioResult } from './BeautyStudio';
 import { packWeight } from '../utils/protectMask';
 import { buildSkinMap, skinWeight, withoutSkin, type SkinMap } from '../utils/skinProtect';
+import { aiColorMatchLut, warmAiColorMatch } from '../utils/aiColorMatch';
+import { sampleMaskAt } from '../utils/colorTransfer';
+/** 仿色做法：統計法三種＋AI（WCT2 學成 LUT，見 utils/aiColorMatch） */
+type Pick = Method | 'ai';
 
 interface Props {
   /** 要調色的照片 */
@@ -104,7 +108,11 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const [preview, setPreview] = useState<ImageData | null>(null);
   const [luts, setLuts] = useState<Record<string, Lut3D> | null>(null);
   const [busy, setBusy] = useState(false);
-  const [picked, setPicked] = useState<Method>('mkl');
+  const [picked, setPicked] = useState<Pick>('mkl');
+  const pickedRef = useRef<Pick>('mkl'); pickedRef.current = picked;
+  /** AI 模式：亮度也跟著換 */
+  const keepL = picked === 'ai' ? 0 : 1;
+  const [aiError, setAiError] = useState('');
   const [strength, setStrength] = useState(100);
   const [finalUrl, setFinalUrl] = useState<string | null>(null);
   const [finalPreview, setFinalPreview] = useState<string | null>(null);
@@ -285,7 +293,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         if (cancelled) return;
         setPreview(toImageData(srcImg, PREVIEW_MAX));
         setLuts(out);
-        setPicked('mkl');
+        if (pickedRef.current !== 'ai') setPicked('mkl');   // 選了 AI 的話換參考圖照樣用 AI（下面那段會自己重算）
       } catch (e) { console.error('color match', e); }
       finally {
         if (!cancelled) setBusy(false);
@@ -294,19 +302,36 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { cancelled = true; window.clearTimeout(t); };
   }, [srcImg, refImg]);
 
+  /* AI 模式：第一次選到才算（要下載約 40MB 的模型、算十幾秒）。算好的 LUT 跟其他做法放在一起 */
+  const aiFor = useRef<object | null>(null);
+  useEffect(() => {
+    if (picked !== 'ai' || !srcImg || !refImg || !luts || luts.ai || aiFor.current === luts) return;
+    aiFor.current = luts;
+    let cancelled = false;
+    setBusy(true); setAiError('');
+    const map = skinRef.current?.img === srcImg ? skinRef.current.map : null;
+    const skin = map && map.faces ? (u: number, v: number) => sampleMaskAt(map.skin, map.w, map.h, u, v) : undefined;
+    aiColorMatchLut(srcImg, srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height,
+      refImg, refImg.naturalWidth || refImg.width, refImg.naturalHeight || refImg.height, skin)
+      .then(ai => { if (!cancelled) setLuts(l => (l ? { ...l, ai } : l)); })
+      .catch(e => { console.error('ai color match', e); if (!cancelled) { setAiError('AI 仿色失敗，請再試一次'); setPicked('mkl'); } })
+      .finally(() => { if (!cancelled) setBusy(false); aiFor.current = null; });
+    return () => { cancelled = true; };
+  }, [picked, srcImg, refImg, luts]);
+
   // 圖片與 LUT 上傳到 GPU（各只做一次）
   useLayoutEffect(() => {
     const gl = glRef.current;
     if (!gl || !preview || !luts) return;
     try {
       gl.setImage(preview as unknown as TexImageSource, preview.width, preview.height);
-      for (const m of METHODS) gl.setLut(m, luts[m]);
+      for (const m of Object.keys(luts)) gl.setLut(m, luts[m]);
       glWeightRef.current = null;
       const pw=useWeight();
       if(pw){gl.setProtectMap(packWeight(pw.weight),pw.w,pw.h);glWeightRef.current=weightRef.current;}
       else gl.clearProtectMap();
       // Upload, draw, and reveal atomically before the browser presents a frame.
-      glReadyRef.current = gl.draw(picked,strength/100,0);
+      glReadyRef.current = gl.draw(luts[picked] ? picked : 'mkl',strength/100,0,luts[picked] ? keepL : 1);
     } catch { glReadyRef.current = false; }
     gl.canvas.classList.toggle('hidden', !glReadyRef.current);
     setGlReady(glReadyRef.current);
@@ -327,7 +352,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         gl.clearProtectMap();
         glWeightRef.current = null;
       }
-      if (gl.draw(picked, st, 0)) return;
+      if (gl.draw(picked, st, 0, keepL)) return;
     }
     // 退回 CPU
     const cvs = canvasRef.current;
@@ -341,12 +366,12 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (!lut) { processedRef.current = null; ctx.putImageData(preview, 0, 0); return; }
     const copy = new ImageData(new Uint8ClampedArray(preview.data), preview.width, preview.height);
     applyLut(copy.data, lut, {
-      strength: st, skinProtect: 0, preserveLuminance: true,
+      strength: st, skinProtect: 0, preserveLuminance: keepL === 1,
       protect: pw, width: preview.width,
     });
     processedRef.current = copy;
     ctx.putImageData(copy, 0, 0);
-  }, [preview, luts, picked, strength, useWeight]);
+  }, [preview, luts, picked, strength, useWeight, keepL]);
 
   /* 前後對比：GPU 版就是把強度當 0 再畫一次（一樣只有一個 draw call）；
      CPU 版把事先算好的兩份直接貼上去。兩條路都不經過 React 狀態，按下去才不會慢半拍。 */
@@ -406,7 +431,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const pw = useWeight();
     const gpu = LutRenderer.renderOnce(
       img, w, h, luts[picked], strength / 100, 0,
-      pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null,
+      pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null, keepL,
     );
     if (gpu) return gpu;
     const c = document.createElement('canvas');
@@ -415,7 +440,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     x.drawImage(img, 0, 0, w, h);
     const d = x.getImageData(0, 0, w, h);
     applyLut(d.data, luts[picked], {
-      strength: strength / 100, skinProtect: 0, preserveLuminance: true,
+      strength: strength / 100, skinProtect: 0, preserveLuminance: keepL === 1,
       protect: useWeight(), width: w,
     });
     x.putImageData(d, 0, 0);
@@ -568,7 +593,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const pw = useWeight();
     const gpu = LutRenderer.renderOnce(
       srcImg, w, h, luts[picked], strength / 100, 0,
-      pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null,
+      pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null, keepL,
     );
     if (gpu) {
       saveCanvas(gpu)
@@ -585,7 +610,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         x.drawImage(srcImg, 0, 0);
         const d = x.getImageData(0, 0, w, h);
         applyLut(d.data, luts[picked], {
-          strength: strength / 100, skinProtect: 0, preserveLuminance: true,
+          strength: strength / 100, skinProtect: 0, preserveLuminance: keepL === 1,
           protect: useWeight(), width: w,
         });
         x.putImageData(d, 0, 0);
@@ -824,9 +849,13 @@ export const ColorMatchStudio: React.FC<Props> = ({
         )}
       </div>
 
-      {/* 嵌在編輯器裡：不給選仿色邏輯，一律用標準（mkl）；滑桿往上、上下留更多空間 */}
+      {/* 嵌在編輯器裡：只給兩種——標準（統計法）與 AI 風格（WCT2）；其他細分的做法只在獨立的仿色裡 */}
+      {embedded && <div role="group" aria-label="仿色方法" className={`px-4 flex gap-2 shrink-0 transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
+        {(['mkl', 'ai'] as Pick[]).map(m => <button key={m} onClick={() => { if (m === 'ai') warmAiColorMatch(); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{m === 'ai' ? 'AI 風格' : '標準'}</button>)}
+      </div>}
+      {/* 嵌在編輯器裡：滑桿往上、上下留更多空間 */}
       {!embedded && <div role="group" aria-label="仿色方法" className={`px-4 flex gap-2 shrink-0 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
-        {METHODS.map(m => <button key={m} onClick={() => setPicked(m)} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{METHOD_LABEL[m]}</button>)}
+        {([...METHODS, 'ai'] as Pick[]).map(m => <button key={m} onClick={() => { if (m === 'ai') warmAiColorMatch(); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{m === 'ai' ? 'AI 風格' : METHOD_LABEL[m]}</button>)}
       </div>}
 
       {/* 滑桿：兩根並排（跟編輯器特效細項同一款）。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
@@ -853,6 +882,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       </div>
 
       </section>
+      {aiError && <div role="alert" className="absolute top-16 left-4 right-4 z-[82] rounded-xl bg-black/90 p-3 text-sm" onClick={() => setAiError('')}>{aiError}</div>}
       {saveError && <div role="alert" className="absolute top-16 left-4 right-4 z-[82] rounded-xl bg-black/90 p-3 text-sm">{saveError}</div>}
 
       {/* 導出畫面蓋在上面就好，不要換一棵樹 ——

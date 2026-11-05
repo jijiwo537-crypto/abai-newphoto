@@ -49,6 +49,8 @@ uniform float uSatRoom;
 uniform float uSatFrac;
 uniform float uRedMinSat;
 uniform float uRedDamp;
+/* 1 ＝ 亮度用原圖的（一般仿色）；0 ＝ 亮度也跟著換（AI 仿色：連氣氛明暗一起學），皮膚的亮度只跟一半 */
+uniform float uKeepL;
 in vec2 vUv;
 out vec4 fragColor;
 
@@ -251,7 +253,8 @@ void main() {
      以前是先把結果夾進 sRGB、再用 RGB 做 mix，強度超過 1 時會把已經夾過的值
      再往外拉、最後又被畫面緩衝區夾一次；兩次硬夾疊起來就把紅色那種
      本來就貼著色域邊緣的區域整片壓平，邊界出現硬變。 */
-  vec3 labF = vec3(labIn.x, mix(labIn.yz, ab, uStrength));
+  float Lt = mix(labOut.x, labIn.x, 0.5 * rw);
+  vec3 labF = vec3(labIn.x + (Lt - labIn.x) * uStrength * (1.0 - uKeepL), mix(labIn.yz, ab, uStrength));
   fragColor = vec4(lab2rgbSoft(labF.x, labF.yz), 1.0);
 }`;
 
@@ -269,7 +272,7 @@ export class LutRenderer {
 
   private constructor(canvas: HTMLCanvasElement, gl: WebGL2RenderingContext, prog: WebGLProgram, imgTex: WebGLTexture) {
     this.canvas = canvas; this.gl = gl; this.prog = prog; this.imgTex = imgTex;
-    for (const n of ['uImage', 'uLut', 'uProtectMap', 'uHasMask', 'uStrength', 'uProtect', 'uLutScale', 'uLutOffset', 'uMaxSat', 'uSatRoom', 'uSatFrac', 'uRedMinSat', 'uRedDamp']) {
+    for (const n of ['uImage', 'uLut', 'uProtectMap', 'uHasMask', 'uStrength', 'uProtect', 'uLutScale', 'uLutOffset', 'uMaxSat', 'uSatRoom', 'uSatFrac', 'uRedMinSat', 'uRedDamp', 'uKeepL']) {
       this.uni[n] = gl.getUniformLocation(prog, n);
     }
   }
@@ -397,7 +400,7 @@ export class LutRenderer {
   hasLut(key: string): boolean { return this.luts.has(key); }
 
   /** 畫一張。換做法、動滑桿都只走這裡，成本就是一個 draw call。 */
-  draw(key: string, strength: number, protect: number): boolean {
+  draw(key: string, strength: number, protect: number, keepL = 1): boolean {
     const gl = this.gl;
     const tex = this.luts.get(key);
     if (!tex || !this.lutSize) return false;
@@ -425,6 +428,7 @@ export class LutRenderer {
     gl.uniform1f(this.uni.uSatFrac!, MAX_SAT_FRACTION);
     gl.uniform1f(this.uni.uRedMinSat!, RED_MIN_SAT);
     gl.uniform1f(this.uni.uRedDamp!, RED_HUE_DAMP);
+    gl.uniform1f(this.uni.uKeepL!, keepL);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     return true;
   }
@@ -440,6 +444,7 @@ export class LutRenderer {
     source: TexImageSource, w: number, h: number,
     lut: GlLut, strength: number, protect: number,
     mask?: { rgba: Uint8Array; w: number; h: number } | null,
+    keepL = 1,
   ): HTMLCanvasElement | null {
     const r = LutRenderer.create();
     if (!r) return null;
@@ -448,7 +453,7 @@ export class LutRenderer {
       r.setImage(source, w, h);
       if (mask) r.setProtectMap(mask.rgba, mask.w, mask.h);
       r.setLut('one', lut);
-      if (!r.draw('one', strength, protect)) { r.dispose(); return null; }
+      if (!r.draw('one', strength, protect, keepL)) { r.dispose(); return null; }
       const out = document.createElement('canvas');
       out.width = w; out.height = h;
       out.getContext('2d')!.drawImage(r.canvas, 0, 0);
