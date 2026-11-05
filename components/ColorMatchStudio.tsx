@@ -883,7 +883,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         {(busy || referenceLoading) && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/55 transition-opacity" role="status" aria-label={aiBusy ? 'AI仿色中' : '仿色中'}>
             {/* 標準：一句「仿色中…」；專業（AI 要算十幾秒）：三句輪流，讓人知道它在做什麼 */}
-            {aiBusy ? <BusySpinner text="AI仿色中" texts={['AI仿色中', '分析光影與色調中', '重建色彩層次中']} /> : <BusySpinner text="仿色中" />}
+            {aiBusy ? <BusySpinner text="AI仿色" texts={['AI仿色', '分析光影與色調', '重建色彩層次']} /> : <BusySpinner text="仿色中" />}
           </div>
         )}
         {/* 仿色做法：懸空在預覽下緣、靠左（跟點陣的線稿／陰影同一款，不加外框），滑桿那一列就整列給強度 */}
