@@ -1,4 +1,4 @@
-/* AI 仿色：用 WCT2（開源深度學習的寫實風格轉換，MIT License）先在小圖上算出「參考圖風格的原圖」，
+/* AI 仿色：用開源深度學習的寫實風格轉換（WCT2 或 CAP-VSTNet，都是 MIT License）先在小圖上算出「參考圖風格的原圖」，
    再把「原圖顏色 → AI 結果顏色」的對應學成一顆平滑的 3D LUT，套回原尺寸照片。
    為什麼不直接用 AI 的輸出：
      - 網路在手機上只能跑小圖（記憶體），直接放大會糊、還會有 AI 特有的斑塊與紋理
@@ -7,30 +7,47 @@
    AI 會連明暗一起換（氣氛：黃昏、夜景、暗調），所以這個模式不鎖亮度。 */
 import type { Lut3D } from './colorTransfer';
 
-/** 網路吃的尺寸：長邊幾像素（寬高都要是 8 的倍數：編碼器有三次減半） */
-const NET_LONG = 320;
+/** 兩種 AI：wct2＝AI 風格（見 wct2.worker）、cap＝AI 寫實（見 capvst.worker） */
+export type AiEngine = 'wct2' | 'cap';
+/** 網路吃的尺寸：長邊幾像素。wct2 寬高要是 8 的倍數（編碼器三次減半）、cap 要是 4 的倍數 */
+const NET: Record<AiEngine, { long: number; mult: number; files: string[] }> = {
+  wct2: { long: 288, mult: 8, files: ['e1', 'e2', 'e3', 'e4', 'd4', 'd3', 'd2', 'd1'].map(n => `models/wct2/${n}.onnx`) },
+  cap: { long: 384, mult: 4, files: ['models/cap/fwd.onnx', 'models/cap/inv.onnx'] },
+};
 
-let worker: Worker | null = null, seq = 0;
-const pending = new Map<number, { res: (v: any) => void; rej: (e: any) => void }>();
-function getWorker() {
-  if (!worker) {
-    worker = new Worker(new URL('./wct2.worker.ts', import.meta.url), { type: 'module' });
-    worker.onmessage = e => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id); e.data.ok ? p.res(e.data) : p.rej(new Error(e.data.error)); };
-    worker.onerror = e => { for (const p of pending.values()) p.rej(e); pending.clear(); worker?.terminate(); worker = null; };
-  }
-  return worker;
-}
+/* 記憶體：WebAssembly 的記憶體只會長大、不會縮小，模型跑完就算不用了也一直佔著（實測一顆 450～720MB），
+   兩三種 AI 都試過之後 iPhone 就會把整個網頁關掉重開（＝崩潰）。
+   所以每次都開一個新的背景執行緒，算完（不管成功失敗）立刻關掉，記憶體整塊還給系統；
+   同一時間只會有一個在跑（新的一來，舊的直接關掉）。 */
+let current: { w: Worker; rej: (e: any) => void } | null = null;
+const spawn = (e: AiEngine) => e === 'cap'
+  ? new Worker(new URL('./capvst.worker.ts', import.meta.url), { type: 'module' })
+  : new Worker(new URL('./wct2.worker.ts', import.meta.url), { type: 'module' });
 const base = () => new URL((import.meta as any).env?.BASE_URL || '/', location.href).href;
-const call = (msg: any, transfer: Transferable[] = []) => new Promise<any>((res, rej) => {
-  const id = ++seq; pending.set(id, { res, rej }); getWorker().postMessage({ ...msg, id, base: base() }, transfer);
-});
-/** 先把模型載好（選了 AI 模式才叫） */
-export const warmAiColorMatch = () => call({ type: 'warm' }).catch(() => {});
+function runOnce(engine: AiEngine, msg: any, transfer: Transferable[]) {
+  if (current) { current.w.terminate(); current.rej(new Error('cancelled')); }
+  const w = spawn(engine);
+  return new Promise<any>((res, rej) => {
+    const me = { w, rej }; current = me;
+    const done = () => { w.terminate(); if (current === me) current = null; };
+    w.onmessage = e => { done(); e.data.ok ? res(e.data) : rej(new Error(e.data.error)); };
+    w.onerror = e => { done(); rej(e); };
+    w.postMessage({ ...msg, id: 1, base: base() }, transfer);
+  });
+}
+/** 不要了（換了別的做法、離開仿色）：正在算的直接關掉 */
+export function cancelAiColorMatch() { if (current) { current.w.terminate(); current.rej(new Error('cancelled')); current = null; } }
+/** 選了 AI 模式先把模型下載進快取（不載進記憶體） */
+const warmed = new Set<AiEngine>();
+export const warmAiColorMatch = (e: AiEngine = 'wct2') => {
+  if (warmed.has(e)) return; warmed.add(e);
+  for (const f of NET[e].files) fetch(base() + f).then(r => r.arrayBuffer()).catch(() => warmed.delete(e));
+};
 
 /** 縮成網路要的尺寸，回傳 RGB 0～1 的平面陣列（CHW）與同一張的 RGBA 像素 */
-function prep(src: CanvasImageSource, W: number, H: number) {
-  const k = NET_LONG / Math.max(W, H);
-  const w = Math.max(8, Math.round(W * k / 8) * 8), h = Math.max(8, Math.round(H * k / 8) * 8);
+function prep(src: CanvasImageSource, W: number, H: number, long: number, m: number) {
+  const k = long / Math.max(W, H);
+  const w = Math.max(m, Math.round(W * k / m) * m), h = Math.max(m, Math.round(H * k / m) * m);
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
   const g = c.getContext('2d', { willReadFrequently: true })!;
@@ -121,10 +138,11 @@ export function distillLut(src: Uint8ClampedArray, dst: Float32Array, n: number,
 export async function aiColorMatchLut(
   src: CanvasImageSource, sw: number, sh: number,
   ref: CanvasImageSource, rw: number, rh: number,
-  skin?: (u: number, v: number) => number,
+  skin?: (u: number, v: number) => number, engine: AiEngine = 'wct2',
 ): Promise<Lut3D> {
-  const c = prep(src, sw, sh), s = prep(ref, rw, rh);
-  const r = await call({ type: 'run', content: { data: c.data, w: c.w, h: c.h }, style: { data: s.data, w: s.w, h: s.h } }, [c.data.buffer, s.data.buffer]);
+  const { long, mult } = NET[engine];
+  const c = prep(src, sw, sh, long, mult), s = prep(ref, rw, rh, long, mult);
+  const r = await runOnce(engine, { type: 'run', content: { data: c.data, w: c.w, h: c.h }, style: { data: s.data, w: s.w, h: s.h } }, [c.data.buffer, s.data.buffer]);
   try { (globalThis as any).__aiColorMs = Math.round(r.ms); } catch { /* noop */ }
   const n = c.w * c.h;
   let skipped = 0;
