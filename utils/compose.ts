@@ -323,6 +323,19 @@ export function warpCanvas(src: HTMLCanvasElement, g: GeoParams, maxSize?: numbe
     octx.drawImage(src, 0, 0, outW, outH);
     return out;
   }
+  /* 沒有梯形＝四邊形是平行四邊形＝整個變換是仿射：直接交給 drawImage（GPU 一次畫完）。
+     跟下面逐點雙線性取樣是同一份幾何、同樣的像素中心，但快幾十倍 ——
+     所以拖角度時也能用跟放手一樣的解析度，不必先降成小圖（放手時看起來會跳一下） */
+  if (g.keyV === 0 && g.keyH === 0) {
+    // 單位正方形 (u,v) → 四邊形：p0 ＋ u·(p1−p0) ＋ v·(p3−p0)；來源像素 (x,y) 的 u＝x/寬、v＝y/高
+    const [[x0, y0], [x1, y1], , [x3, y3]] = local;
+    octx.imageSmoothingEnabled = true;
+    octx.imageSmoothingQuality = 'high';
+    octx.setTransform((x1 - x0) / src.width, (y1 - y0) / src.width, (x3 - x0) / src.height, (y3 - y0) / src.height, x0, y0);
+    octx.drawImage(src, 0, 0);
+    octx.setTransform(1, 0, 0, 1, 0, 0);
+    return out;
+  }
 
   const sctx = src.getContext('2d', { willReadFrequently: true })!;
   const sData = sctx.getImageData(0, 0, src.width, src.height).data;

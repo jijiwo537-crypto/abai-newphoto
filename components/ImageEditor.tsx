@@ -2318,6 +2318,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
   };
   const deleteMask = () => {
+    uiFirstRef.current = true;
     const p = paramsRef.current;
     const { active } = maskList(p);
     const masks = withActiveStored(p).filter((_, i) => i !== active);
@@ -2334,14 +2335,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const idx = Math.min(active, masks.length - 1);
     commitMaskParams(loadMask(p, masks[idx], masks, idx));
   };
-  const toggleMaskInvert = () => commitMaskParams({ ...paramsRef.current, maskInvert: !paramsRef.current.maskInvert });
-  const toggleMaskOverlay = () => { const p = paramsRef.current; paramsRef.current = { ...p, maskShowOverlay: !p.maskShowOverlay }; isDirtyRef.current = true; flushParamsSync(); };
+  /* 右側工具欄的按鈕：先讓按鈕本身的變化畫出來（這一格），照片下一格才重畫 ——
+     以前同一格裡先跑整條管線，按鈕要等照片算完才變（手機上慢半秒以上） */
+  const toggleMaskInvert = () => { uiFirstRef.current = true; commitMaskParams({ ...paramsRef.current, maskInvert: !paramsRef.current.maskInvert }); };
+  const toggleMaskOverlay = () => { uiFirstRef.current = true; const p = paramsRef.current; paramsRef.current = { ...p, maskShowOverlay: !p.maskShowOverlay }; isDirtyRef.current = true; flushParamsSync(); };
   const [maskPicking, setMaskPickingState] = useState(false);
   /* 按了＋在選新的種類：參考線收起來，紅色範圍也一起藏（繪圖迴圈看這個 ref） */
   const maskPickingRef = useRef(false);
   const setMaskPicking = (v: boolean | ((o: boolean) => boolean)) => setMaskPickingState(o => {
     const n = typeof v === 'function' ? v(o) : v;
-    if (n !== maskPickingRef.current) { maskPickingRef.current = n; isDirtyRef.current = true; }
+    if (n !== maskPickingRef.current) { maskPickingRef.current = n; isDirtyRef.current = true; uiFirstRef.current = true; }
     return n;
   });
   const pinDownRef = useRef<{ i: number; x: number; y: number } | null>(null);
@@ -2971,6 +2974,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      maskLiveKey：maskLiveAdj 目前裝的是照什麼算的。 */
   const maskLiveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskLiveAdjRef = useRef<HTMLCanvasElement | null>(null);
+  /** 這一格要挖的「調整後整張」：GPU 算的那張直接用（null＝用 maskLiveAdj） */
+  const maskLiveSrcRef = useRef<HTMLCanvasElement | null>(null);
   const maskLiveAlphaRef = useRef<HTMLCanvasElement | null>(null);
   const maskAlphaCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const maskBaseCopyRef = useRef<HTMLCanvasElement | null>(null);
@@ -2983,8 +2988,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 即時疊層用比較小的解析度（長邊最多 1100）：拖曳中每一格只要挖這張，手機上才跟得上手指；
      放手後整條管線用原解析度重畫一次 */
   const paintMaskLive = (m: MaskSnap) => {
-    const el = maskLiveCanvasRef.current, adj = maskLiveAdjRef.current; if (!el || !adj) return;
-    const w = adj.width, h = adj.height;
+    const el = maskLiveCanvasRef.current, la = maskLiveAdjRef.current; if (!el || !la) return;
+    const adj: CanvasImageSource = maskLiveSrcRef.current || la;
+    const w = la.width, h = la.height;
     if (el.width !== w || el.height !== h) { el.width = w; el.height = h; }
     const al = maskLiveAlphaRef.current ??= document.createElement('canvas');
     // 顏色／明度範圍看的是拖曳開始時那張畫面（pre），拖的時候用縮小的那張算選取
@@ -3019,8 +3025,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const maskNoActiveKeyRef = useRef('');
   const maskPreKeyOf = (p: EditorParams, w: number, h: number, list: MaskSnap[], active: number) =>
     `${w}x${h}|${srcIdent()}|${selectedLutIdxNowRef.current}|${JSON.stringify(Object.entries(p).filter(([k]) => !k.startsWith('mask')))}|${JSON.stringify(list.filter((_, i) => i !== active))}`;
-  const primeMaskLive = (p: EditorParams, overlay: boolean) => {
-    if (maskLiveRef.current) return true;
+  /* full：拖的是遮色片的「調節」滑桿（曝光、色溫…）。選取範圍整段都不變，所以疊層直接用原解析度 ——
+     以前一律縮到 1100 再放大貼回去，細線會糊一點、偏一個像素，放手換回原解析度時看起來就像照片動了一下。
+     拖形狀、刷筆刷、拖範圍類的滑桿每一格都要重算選取範圍，才維持縮小的版本（跟得上手指） */
+  const primeMaskLive = (p: EditorParams, overlay: boolean, full = false) => {
+    if (maskLiveRef.current) {
+      // 已經掛著：要原解析度但手上的是縮小版（剛拖過形狀）就重掛一次
+      const pre = maskLivePreRef.current, de = displayCanvasRef.current;
+      if (!full || (pre && de && pre.width === de.width && pre.height === de.height)) return true;
+    }
     if (maskInert(p)) return false;
     const snap = maskNoActiveRef.current, el = displayCanvasRef.current;
     if (!snap || !el || hasActiveFx(p)) return false;
@@ -3035,7 +3048,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'copy'; g.drawImage(snap, 0, 0); g.restore();
     // 平常畫面是透過 GPU 那層顯示的；拖的這段改看 2D 畫布（底）＋即時疊層，放手後的重畫再切回去
     if (fxSurfaceShownRef.current) showFxSurface(false);
-    const k = Math.min(1, MASK_LIVE_MAX / Math.max(w, h));
+    const gq = full ? maskGpu() : null;
+    const k = full && ((gq && gq.fits(w, h)) || w * h <= MASK_LIVE_CPU_FULL) ? 1 : Math.min(1, MASK_LIVE_MAX / Math.max(w, h));
     const lw = Math.max(1, Math.round(w * k)), lh = Math.max(1, Math.round(h * k));
     const pre = maskLivePreRef.current ??= document.createElement('canvas');
     if (maskLivePreKeyRef.current !== key || pre.width !== lw || pre.height !== lh) {
@@ -3081,30 +3095,42 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      所以拖滑桿的每一格只有：烤一顆小表＋一次 GPU 查表＋幾次 2D 合成，整條管線一次都不重跑；
      拖範圍類的滑桿（範圍、平滑、羽化…）連表都不用烤，只重算選取範圍。 */
   const MASK_LIVE_MAX = 1100;
+  /** 沒有 GPU 時（CPU 逐點算）：畫面不超過這麼多像素才用原解析度，再大就縮小（不然每一格太慢） */
+  const MASK_LIVE_CPU_FULL = 1_600_000;
   const maskLivePreRef = useRef<HTMLCanvasElement | null>(null);
   const maskLivePreKeyRef = useRef('');
   const maskGpuRef = useRef<LutGpu | null | undefined>(undefined);
   const maskGpuSrcRef = useRef('');
   /** 正在拖遮色片的滑桿（走即時疊層）；maskRangeDrag：拖的是遮色片自己的參數（範圍、羽化…）→ 紅色遮罩跟著即時變 */
   const maskSliderLiveRef = useRef(false);
+  /** 拖遮色片滑桿：這一格要畫的疊層已經排好了（一格最多畫一次） */
+  const maskLiveRafRef = useRef(0);
   const maskRangeDragRef = useRef(false);
+  /* 遮色片即時疊層用的 GPU。iPhone 同時開太多 GPU 畫布時會把舊的收走（lost）：
+     以前收走就一直退回 CPU（每一格整張逐點算，拖滑桿就是「有時候會卡」），現在被收走就重開一個 */
+  const maskGpu = () => {
+    if (maskGpuRef.current === undefined || maskGpuRef.current?.lost) { maskGpuRef.current = LutGpu.create(); maskGpuSrcRef.current = ''; }
+    return maskGpuRef.current;
+  };
   const liveAdjust = (m: MaskSnap, overlay: boolean) => {
     const pre = maskLivePreRef.current; if (!pre) return;
     const la = maskLiveAdjRef.current ??= document.createElement('canvas');
     if (la.width !== pre.width || la.height !== pre.height) { la.width = pre.width; la.height = pre.height; maskLiveKeyRef.current = ''; }
     const key = `${maskLivePreKeyRef.current}|${overlay ? 1 : 0}|${MASK_ADJ_KEYS.map(k => (m as any)[k]).join(',')}`;
     if (maskLiveKeyRef.current === key) return;
+    maskLiveSrcRef.current = null;
     const lg = la.getContext('2d')!;
     if (hasMaskAdj(m)) {
       let done = false;
-      if (maskGpuRef.current === undefined) maskGpuRef.current = LutGpu.create();
-      const gpu = maskGpuRef.current;
+      const gpu = maskGpu();
       if (gpu && !gpu.lost && gpu.fits(pre.width, pre.height)) {
         const sk = `${maskLivePreKeyRef.current}|${pre.width}x${pre.height}`;
         if (maskGpuSrcRef.current !== sk && gpu.setSourceImage(pre, pre.width, pre.height)) maskGpuSrcRef.current = sk;
         if (maskGpuSrcRef.current === sk) {
           const tex = bakedToTexture(bakeColorLut((src, dst) => { dst.set(src); maskTonePixels(dst, m); }, 33));
           const out = gpu.setLut(tex, 33) ? gpu.draw() : null;
+          /* 不用紅色遮罩時直接拿 GPU 那張去挖（少一次「GPU 畫布 → 2D 畫布」的整張複製，那一次是每一格最貴的） */
+          if (out && !overlay) { maskLiveSrcRef.current = out; maskLiveKeyRef.current = key; return; }
           if (out) { lg.globalCompositeOperation = 'copy'; lg.drawImage(out, 0, 0); lg.globalCompositeOperation = 'source-over'; done = true; }
         }
       }
@@ -5296,8 +5322,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       });
       if (maskLive && actMask) {
         // 這一次拖曳／刷的第一格：把「選中這一個以外都畫好」的畫面縮小留一份當 pre，之後每一格只動上面那張
-        const lw = Math.max(1, Math.round(w * Math.min(1, MASK_LIVE_MAX / Math.max(w, h))));
-        const lh = Math.max(1, Math.round(h * Math.min(1, MASK_LIVE_MAX / Math.max(w, h))));
+        /* 拖遮色片的「調節」滑桿：選取範圍不變，直接用原解析度（縮小再放大會糊、偏一個像素，放手時看起來像照片動了一下）。
+           拖形狀、刷筆刷、拖範圍類的滑桿每一格都要重算選取範圍，才用縮小的（跟得上手指） */
+        const gq = maskGpu();
+        const liveK = sliderLive && !maskRangeDragRef.current && ((gq && gq.fits(w, h)) || w * h <= MASK_LIVE_CPU_FULL) ? 1 : Math.min(1, MASK_LIVE_MAX / Math.max(w, h));
+        const lw = Math.max(1, Math.round(w * liveK));
+        const lh = Math.max(1, Math.round(h * liveK));
         const preKey = `${w}x${h}|${srcIdent()}|${selectedLutIdx}|${JSON.stringify(Object.entries(p).filter(([k]) => !k.startsWith('mask')))}|${JSON.stringify(maskItems.filter((_, i) => i !== maskAct))}`;
         const pre = maskLivePreRef.current ??= sc();
         if (maskLivePreKeyRef.current !== preKey || pre.width !== lw || pre.height !== lh) {
@@ -8006,12 +8036,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [studioPainted, setStudioPainted] = useState<{ beauty: string; match: string }>({ beauty: '', match: '' });
   const beautyPainted = useCallback(() => setStudioPainted(v => v.beauty === beautyKey ? v : { ...v, beauty: beautyKey }), [beautyKey]);
   const matchPainted = useCallback(() => setStudioPainted(v => v.match === matchKey ? v : { ...v, match: matchKey }), [matchKey]);
-  /* 保底：真的一直沒回報（例如圖解不開）也不能卡在編輯器畫面 */
+  /* 保底：真的一直沒回報（例如圖解不開）也不能卡在編輯器畫面。
+     不能太短：編輯過的照片是一張新的大圖，iPhone 上解碼要一兩秒 —— 以前 0.7 秒就硬翻過去，
+     工具的照片還沒畫出來，看到的就是一整塊黑。等待時編輯器自己的預覽一直在（同一個框），所以多等不會黑 */
   const [studioForce, setStudioForce] = useState('');
   const studioWaitKey = activeCategory === 'beauty' ? beautyKey : activeCategory === 'match' ? matchKey : '';
   useEffect(() => {
     if (!studioWaitKey) return;
-    const t = window.setTimeout(() => setStudioForce(studioWaitKey), 700);
+    const t = window.setTimeout(() => setStudioForce(studioWaitKey), 6000);
     return () => clearTimeout(t);
   }, [studioWaitKey]);
   const studioShown = (k: 'beauty' | 'match') => (activeCategory === k
@@ -8863,6 +8895,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           style={{ cursor: 'grab' }}
                           onPointerDown={(e) => handleMaskPointerDown(e, 'center')}
                         />
+                        {/* 黑邊：跟起點、終點兩條一模一樣（底下黑 2.1px、上面白 1.5px） */}
+                        <line
+                          className="pointer-events-none"
+                          x1={0}
+                          y1={-10000}
+                          x2={0}
+                          y2={10000}
+                          stroke="#000000"
+                          strokeWidth="2.1px"
+                          strokeLinecap="round"
+                        />
                         <line
                           className="pointer-events-none"
                           x1={0}
@@ -9641,10 +9684,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           那種狀態下就把外框這一條收掉，留分頁列自己那條。 */}
       <div
         onPointerDownCapture={() => { lastUiInputRef.current = performance.now(); }}
-        className={`relative ${subStripHidden || activeToolId === 'curves' ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
+        className={`relative ${(subStripHidden && activeCategory !== 'template') || activeToolId === 'curves' ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
         /* 一般、曲線、HSL 與特效細項都佔相同的總控制區高度；內容較少時只在
            內部留位，預覽區不再跟著分頁切換反覆變高變矮。構圖由自己的三列接管。 */
-        style={{ height: `calc(11rem + ${footerHeight}px)`, background: activeToolId === 'curves' ? 'linear-gradient(to bottom, transparent 5rem, #111111 5rem)' : '#111111' }}
+        /* 模板那頁只有一排格子：欄位矮一點（格子 90px＋上下各 12px），不留一大塊空白 */
+        style={{ height: activeCategory === 'template' ? `calc(114px + ${footerHeight}px)` : `calc(11rem + ${footerHeight}px)`, background: activeToolId === 'curves' ? 'linear-gradient(to bottom, transparent 5rem, #111111 5rem)' : '#111111' }}
       >
         <div ref={setDetailPanelHost} style={{ position: 'absolute', left: 0, right: 0, top: '5rem', height: 0, zIndex: 60 }} />
         <div 
@@ -9689,8 +9733,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           paramsRef.current = nextParams; 
                           lastSliderMoveTimeRef.current = performance.now();
                           if (id === 'maskBrushSize') showSizeRing(nextParams);
-                          // 遮色片：疊層掛好之後每一格只更新疊層，不重跑整條管線
-                          if (maskSliderLiveRef.current && maskLiveFrame(nextParams, maskRangeDragRef.current)) return;
+                          // 遮色片：疊層掛好之後只更新疊層，不重跑整條管線。
+                          // 一格畫面最多畫一次：手機的觸控一格會送好幾次（120Hz），每次都重算的話就會卡
+                          if (maskSliderLiveRef.current && maskLiveRef.current && maskLivePreRef.current && nextParams.maskCreated) {
+                            if (!maskLiveRafRef.current) maskLiveRafRef.current = requestAnimationFrame(() => {
+                              maskLiveRafRef.current = 0;
+                              if (maskSliderLiveRef.current && !maskLiveFrame(paramsRef.current, maskRangeDragRef.current)) isDirtyRef.current = true;
+                            });
+                            return;
+                          }
                           isDirtyRef.current = true;
                       }}
                       onInteractStart={() => {
@@ -9698,12 +9749,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           if (activeCategory === 'mask' && paramsRef.current.maskCreated) {
                             maskSliderLiveRef.current = true;
                             maskRangeDragRef.current = MASK_TYPE_TOOL_LIST.some(t => t.id === activeTool.id);
-                            primeMaskLive(paramsRef.current, maskRangeDragRef.current);
+                            primeMaskLive(paramsRef.current, maskRangeDragRef.current, !maskRangeDragRef.current);
                           }
                           setupFastPreview(activeTool.id);
                       }}
                       onInteractEnd={() => { 
                           hideSizeRing();
+                          if (maskLiveRafRef.current) { cancelAnimationFrame(maskLiveRafRef.current); maskLiveRafRef.current = 0; }
                           if (maskSliderLiveRef.current) { maskSliderLiveRef.current = false; maskRangeDragRef.current = false; maskLiveKeyRef.current = ''; isDirtyRef.current = true; }
                           setIsInteracting(false); 
                           fastPreviewCacheRef.current.active = false; 

@@ -139,10 +139,13 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   useEffect(() => { geoRef.current = geo; }, [geo]);
 
   // 底圖只跟翻轉/鏡像/角度/梯形有關，跟裁切框無關，所以裁切拖曳不會重畫。
-  const baseKey = `${geo.quarter}|${geo.angle}|${geo.flipH}|${geo.flipV}|${geo.keyV}|${geo.keyH}|${geo.zoom}|${geo.offset?.x}|${geo.offset?.y}|${live}`;
+  /* 拖曳中只有「梯形」需要降成小圖（逐點變形）；角度、縮放這些是仿射，GPU 一次畫完（見 warpCanvas），
+     拖的時候就用跟放手一樣的解析度，放手時畫面不會跳一下 */
+  const workMax = live && (geo.keyV || geo.keyH) ? LIVE_MAX : STAGE_MAX;
+  const baseKey = `${geo.quarter}|${geo.angle}|${geo.flipH}|${geo.flipV}|${geo.keyV}|${geo.keyH}|${geo.zoom}|${geo.offset?.x}|${geo.offset?.y}|${workMax}`;
   const baseCanvas = useMemo(() => {
     if (!image) return null;
-    return stageAndWarp(image, (image as any).naturalWidth || (image as any).videoWidth || image.width, (image as any).naturalHeight || (image as any).videoHeight || image.height, geo, live ? LIVE_MAX : STAGE_MAX);
+    return stageAndWarp(image, (image as any).naturalWidth || (image as any).videoWidth || image.width, (image as any).naturalHeight || (image as any).videoHeight || image.height, geo, workMax);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [image, baseKey]);
 
