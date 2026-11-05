@@ -9,6 +9,7 @@ import { BeautyStudio } from './components/BeautyStudio';
 import { ColorMatchStudio } from './components/ColorMatchStudio';
 import { ArtStudio } from './components/ArtStudio';
 import { DotArtStudio } from './components/DotArtStudio';
+import { resetPageScroll } from './components/ImageEditor';
 import { warmCameraLuts } from './utils/cameraLuts';
 import { warmFontSamples } from './utils/fonts';
 import {warmLowfiLut} from './utils/lowfiLut';
@@ -622,7 +623,7 @@ const App: React.FC = () => {
       />
 
       <input type="file" ref={matchFileInputRef} className="hidden" accept={RAW_ACCEPT} onChange={handleMatchFileChange} />
-      <input type="file" ref={matchRefInputRef} className="hidden" accept={RAW_ACCEPT} onChange={handleMatchRefChange} />
+      <input type="file" ref={matchRefInputRef} className="hidden" accept={RAW_ACCEPT} onChange={e => { resetPageScroll(); handleMatchRefChange(e); }} />
 
       <input 
         type="file" 

@@ -106,7 +106,7 @@ function morphPass(
 }
 
 /** 閉運算：先膨脹（洞被四周淹掉）再侵蝕（外輪廓縮回原位） */
-function morphClose(src: Float32Array, w: number, h: number, r: number, out: Float32Array): Float32Array {
+export function morphClose(src: Float32Array, w: number, h: number, r: number, out: Float32Array): Float32Array {
   const t = new Float32Array(w * h);
   morphPass(src, w, h, r, t, true);
   morphPass(t, w, h, r, out, false);
@@ -142,7 +142,7 @@ function boxBlur(src: Float32Array, w: number, h: number, r: number, out: Float3
 }
 
 /** 導引濾波：用 I（亮度）當導引，把 p（遮罩）做邊緣感知的平滑 */
-function guidedFilter(
+export function guidedFilter(
   I: Float32Array, p: Float32Array, w: number, h: number,
   r: number, eps: number, out: Float32Array,
 ): Float32Array {

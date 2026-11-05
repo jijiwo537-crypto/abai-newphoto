@@ -842,7 +842,6 @@ export function applyLut(
      寫進 Uint8ClampedArray 時本來就會夾回 0～255；GPU 那條走的是同一個 mix，
      兩邊結果一致。 */
   const s = Math.min(2, Math.max(0, opt.strength));
-  const sp = Math.min(1, Math.max(0, opt.skinProtect));
   /* 防斷層遮罩：算的時候用的是縮圖（遮罩本來就很平滑），這裡雙線性取樣回來。
      遮罩裡的權重已經做過補洞與羽化，所以臉上那塊偏青的皮膚也一起受保護，
      交界不再是一條硬邊。沒有遮罩就退回逐像素算 —— 兩條路的式子完全一樣，
@@ -865,7 +864,7 @@ export function applyLut(
       const u = ((k % iw) + 0.5) / iw, v = (((k / iw) | 0) + 0.5) / ih;
       w = sampleMaskAt(pm!.weight, pm!.w, pm!.h, u, v);
     } else {
-      w = protectWeight(labIn[1], labIn[2], skinProbability(r, g, b), sp);
+      w = 0;   // 沒有遮罩＝照片裡沒有臉：完全不保護（以前只看顏色的內建保護已拿掉）
     }
 
     const L = opt.preserveLuminance ? labIn[0] : labOut[0];

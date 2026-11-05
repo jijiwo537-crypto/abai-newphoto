@@ -207,9 +207,9 @@ void main() {
      有遮罩時直接讀遮罩：那一份是「先合併、再補洞、再羽化」算好的，
      順序跟調校台一致（先防斷層再合併會在兩塊接壤處偏掉）。 */
   float mw = texture(uProtectMap, vUv).r;
-  float rw = uHasMask > 0.5
-    ? mw
-    : min(1.0, max(uProtect * protectProb(src), hueProtect(labIn.yz)));
+  /* 保護只來自遮罩（找臉、學這個人的膚色算出來的，見 utils/skinProtect）。
+     沒有遮罩＝照片裡沒有臉＝完全不保護。以前「只看顏色像不像膚色／是不是紅色」的內建保護已拿掉 */
+  float rw = uHasMask > 0.5 ? mw : 0.0;
   // 亮度一律用原圖的（只換顏色不動明暗），色度依保護程度混合
   vec2 ab = mix(labIn.yz, labOut.yz, 1.0 - rw);
   float cIn = length(labIn.yz);
@@ -319,7 +319,21 @@ export class LutRenderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.imgTex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source as any);
+    /* 照片（<img>、ImageBitmap）先畫到一般 2D 畫布再上傳：Safari 直接把照片上傳到 WebGL 時
+       不照色彩描述檔（iPhone 是 Display P3）轉成 sRGB，存出來的顏色會偏；2D 畫布每個瀏覽器都轉得對。
+       ImageData 本來就是 2D 畫布讀出來的，直接傳 */
+    if (typeof ImageData !== 'undefined' && source instanceof ImageData) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    } else {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d')!;
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(source as CanvasImageSource, 0, 0, w, h);
+      gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+      c.width = c.height = 0;
+    }
     gl.viewport(0, 0, w, h);
   }
 

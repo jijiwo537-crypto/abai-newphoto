@@ -196,6 +196,18 @@ export const DEFAULT_PARAMS: EditorParams = {
   ...FX_DEFAULTS,
 };
 
+/* iPhone 的照片選擇器關掉之後，Safari 偶爾會把整頁捲動一點點（朝著那個看不見的檔案輸入框）。
+   人像／仿色的照片是照「之前量好的螢幕位置」擺的，頁面一捲就整張錯位 —— 選完圖馬上捲回原位，
+   選擇器收起的動畫結束後再確認一次 */
+export const resetPageScroll = () => {
+  const fix = () => {
+    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    const se = document.scrollingElement as HTMLElement | null;
+    if (se && (se.scrollTop || se.scrollLeft)) { se.scrollTop = 0; se.scrollLeft = 0; }
+  };
+  fix(); requestAnimationFrame(fix); setTimeout(fix, 350);
+};
+
 type Category = 'filter' | 'adjust' | 'effects' | 'leak' | 'soft' | 'grain' | 'halation' | 'mask' | 'compose' | 'fx'
   | 'template' | 'beauty' | 'match';
 /** 自己整頁接管的分頁（美顏、仿色直接用那兩個工具本身） */
@@ -10095,7 +10107,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         </>
       )}
       <input ref={matchRefInputRef} type="file" accept="image/*" className="hidden"
-        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) setMatchRefSrc(URL.createObjectURL(f)); }} />
+        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; resetPageScroll(); if (f) setMatchRefSrc(URL.createObjectURL(f)); }} />
       {saveState === 'processing' && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>

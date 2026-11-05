@@ -31,7 +31,8 @@ import { LutRenderer } from '../utils/lutGl';
 import { useStudioGeo } from './studioGeo';
 import type { GeoParams } from '../utils/compose';
 import type { StudioResult } from './BeautyStudio';
-import { buildProtectMapsFrom, resolveWeight, packWeight, ProtectMaps } from '../utils/protectMask';
+import { packWeight } from '../utils/protectMask';
+import { buildSkinMap, skinWeight, withoutSkin, type SkinMap } from '../utils/skinProtect';
 
 interface Props {
   /** 要調色的照片 */
@@ -105,9 +106,6 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<Method>('mkl');
   const [strength, setStrength] = useState(100);
-  /* 膚色保護預設 90：仿色最容易出事的就是把人臉一起換掉，
-     保護開高一點，膚色留住、其他顏色照樣跟著參考圖走。 */
-  const [skin, setSkin] = useState(0);
   const [finalUrl, setFinalUrl] = useState<string | null>(null);
   const [finalPreview, setFinalPreview] = useState<string | null>(null);
   const finalPreviewRef = useRef<string | null>(null);
@@ -146,23 +144,12 @@ export const ColorMatchStudio: React.FC<Props> = ({
      每次更新就只有一個 draw call。沒有 WebGL2 就退回 CPU 版。 */
   const glRef = useRef<LutRenderer | null>(null);
   const glWeightRef = useRef<unknown>(null);
-  /* 防斷層的保護遮罩。
-     合併（膚色 ∪ 色相）必須發生在補洞與羽化「之前」—— 順序跟調校台一致。
-     可是這樣遮罩就跟膚色保護滑桿綁在一起了，所以一張圖烤好 SKIN_LAYERS 層，
-     拉滑桿時只在相鄰兩層之間內插（整張圖幾毫秒），零延遲又不失準。 */
-  const maskRef = useRef<ProtectMaps | null>(null);
+  /* 膚色保護（見 utils/skinProtect）：找到臉、學這個人的膚色，算出一張「皮膚圖」。
+     原圖的皮膚圖跟參考圖無關，換參考圖不用重算；沒有臉就是全 0（完全不保護）。 */
+  const skinRef = useRef<{ img: HTMLImageElement; map: SkinMap } | null>(null);
   const weightRef = useRef<{ w: number; h: number; weight: Float32Array } | null>(null);
-  const weightForRef = useRef(-1);
-  /** 解出這個膚色保護值下的權重（沒變就沿用，不重算） */
-  const useWeight = useCallback((sp: number) => {
-    const m = maskRef.current;
-    if (!m) { weightRef.current = null; return null; }
-    if (weightForRef.current !== sp || !weightRef.current) {
-      weightRef.current = { w: m.w, h: m.h, weight: resolveWeight(m, sp) };
-      weightForRef.current = sp;
-    }
-    return weightRef.current;
-  }, []);
+  /** 套用時的保護權重（沒有就 null） */
+  const useWeight = useCallback(() => weightRef.current, []);
   const glReadyRef = useRef(false);
   /** 用 state 是為了讓備援畫布真的被藏起來（ref 改了不會重繪） */
   const [glReady, setGlReady] = useState(false);
@@ -262,29 +249,36 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { gl?.canvas.remove(); gl?.dispose(); glRef.current = null; };
   }, []);
 
-  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){maskRef.current=null;weightRef.current=null;weightForRef.current=-1;setSrcImg(image);}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
+  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){skinRef.current=null;weightRef.current=null;setSrcImg(image);}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
     let active=true;loadImage(referenceSrc).then(image=>{if(active)setRefImg(image);}).catch(() => {});
     return()=>{active=false;};
   }, [referenceSrc]);
 
-  // 兩張都到齊 → 把四種方法各烘一顆 LUT
+  // 兩張都到齊 → 找臉、學膚色，再把每種方法各烘一顆 LUT（等久一點沒關係，要算對）
   useEffect(() => {
     if (!srcImg || !refImg) { setLuts(null); return; }
     let cancelled = false;
     setBusy(true);
-    const t = window.setTimeout(() => {
+    const t = window.setTimeout(async () => {
       try {
-        maskRef.current = buildProtectMapsFrom(
-          srcImg, srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height,
-        );
-        weightRef.current = null; weightForRef.current = -1;
-        /* 統計用縮圖的每一顆像素都算進去（STAT_MAX 之下最多 900×675 ≈ 60 萬顆，
-           算 3×3 共變異數只要十幾毫秒）。抽樣再怎麼聰明都不如全部都看 ——
-           而且這樣才跟調校台的預覽區用同一份統計。 */
-        const sStat = sampleRgb(toImageData(srcImg, STAT_MAX).data, Infinity);
-        const rStat = sampleRgb(toImageData(refImg, STAT_MAX).data, Infinity);
+        const t0 = performance.now();
+        const sw = srcImg.naturalWidth || srcImg.width, sh = srcImg.naturalHeight || srcImg.height;
+        const rw = refImg.naturalWidth || refImg.width, rh = refImg.naturalHeight || refImg.height;
+        if (skinRef.current?.img !== srcImg) skinRef.current = { img: srcImg, map: await buildSkinMap(srcImg, sw, sh) };
+        if (cancelled) return;
+        const sMap = skinRef.current.map;
+        const rMap = await buildSkinMap(refImg, rw, rh);
+        if (cancelled) return;
+        weightRef.current = sMap.faces ? { w: sMap.w, h: sMap.h, weight: skinWeight(sMap) } : null;
+        try { (window as any).__cmSkin = { faces: sMap.faces, refFaces: rMap.faces, ms: Math.round(performance.now() - t0) }; } catch { /* noop */ }
+        /* 統計用縮圖的每一顆像素都算進去，但兩張都先拿掉皮膚：皮膚另外保護，
+           「顏色怎麼對應」只從其他地方學 —— 參考圖裡的人臉不會把原圖的天空、衣服拉成膚色，
+           原圖的大片皮膚也不會把對應整個帶偏。 */
+        const sData = toImageData(srcImg, STAT_MAX), rData = toImageData(refImg, STAT_MAX);
+        const sStat = sampleRgb(withoutSkin(sData.data, sData.width, sData.height, sMap), Infinity);
+        const rStat = sampleRgb(withoutSkin(rData.data, rData.width, rData.height, rMap), Infinity);
         const out: Record<string, Lut3D> = {};
         // 33³ 跟調校台同一個尺寸；比 25³ 多 2.3 倍格點，漸層更平順，也才對得起來
         for (const m of METHODS) out[m] = bakeFor(m, sStat, rStat, 33);
@@ -292,7 +286,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
         setPreview(toImageData(srcImg, PREVIEW_MAX));
         setLuts(out);
         setPicked('mkl');
-      } finally {
+      } catch (e) { console.error('color match', e); }
+      finally {
         if (!cancelled) setBusy(false);
       }
     }, 30);
@@ -307,11 +302,11 @@ export const ColorMatchStudio: React.FC<Props> = ({
       gl.setImage(preview as unknown as TexImageSource, preview.width, preview.height);
       for (const m of METHODS) gl.setLut(m, luts[m]);
       glWeightRef.current = null;
-      const pw=useWeight(skin/100);
+      const pw=useWeight();
       if(pw){gl.setProtectMap(packWeight(pw.weight),pw.w,pw.h);glWeightRef.current=weightRef.current;}
       else gl.clearProtectMap();
       // Upload, draw, and reveal atomically before the browser presents a frame.
-      glReadyRef.current = gl.draw(picked,strength/100,skin/100);
+      glReadyRef.current = gl.draw(picked,strength/100,0);
     } catch { glReadyRef.current = false; }
     gl.canvas.classList.toggle('hidden', !glReadyRef.current);
     setGlReady(glReadyRef.current);
@@ -321,7 +316,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const paint = useCallback((strengthOverride?: number) => {
     if (!preview) return;
     const st = (strengthOverride ?? strength) / 100;
-    const pw = useWeight(skin / 100);
+    const pw = useWeight();
     const gl = glRef.current;
     if (gl && glReadyRef.current && luts?.[picked]) {
       // 權重換了才重傳貼圖（拉滑桿時整張圖只有一次乘加 + 一次上傳，幾毫秒）
@@ -332,7 +327,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         gl.clearProtectMap();
         glWeightRef.current = null;
       }
-      if (gl.draw(picked, st, skin / 100)) return;
+      if (gl.draw(picked, st, 0)) return;
     }
     // 退回 CPU
     const cvs = canvasRef.current;
@@ -346,12 +341,12 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (!lut) { processedRef.current = null; ctx.putImageData(preview, 0, 0); return; }
     const copy = new ImageData(new Uint8ClampedArray(preview.data), preview.width, preview.height);
     applyLut(copy.data, lut, {
-      strength: st, skinProtect: skin / 100, preserveLuminance: true,
+      strength: st, skinProtect: 0, preserveLuminance: true,
       protect: pw, width: preview.width,
     });
     processedRef.current = copy;
     ctx.putImageData(copy, 0, 0);
-  }, [preview, luts, picked, strength, skin, useWeight]);
+  }, [preview, luts, picked, strength, useWeight]);
 
   /* 前後對比：GPU 版就是把強度當 0 再畫一次（一樣只有一個 draw call）；
      CPU 版把事先算好的兩份直接貼上去。兩條路都不經過 React 狀態，按下去才不會慢半拍。 */
@@ -400,18 +395,17 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const st = initialState;
     if (st.picked) setPicked(st.picked);
     if (st.strength !== undefined) setStrength(Math.max(0,Math.min(150,st.strength)));
-    if (st.skin !== undefined) setSkin(st.skin);
   }, [initialState]);
 
   /** 現在這一組設定。參考圖也一起存 —— 少了它就重算不出同一組顏色。 */
-  const matchState = () => ({ picked, strength, skin, referenceSrc });
+  const matchState = () => ({ picked, strength, referenceSrc });
 
   /** 用目前這組設定把任一張圖算成指定大小（GPU 一次畫完；沒有 WebGL2 才走 CPU） */
   const renderAt = (img: HTMLImageElement, w: number, h: number): HTMLCanvasElement | null => {
     if (!luts) return null;
-    const pw = useWeight(skin / 100);
+    const pw = useWeight();
     const gpu = LutRenderer.renderOnce(
-      img, w, h, luts[picked], strength / 100, skin / 100,
+      img, w, h, luts[picked], strength / 100, 0,
       pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null,
     );
     if (gpu) return gpu;
@@ -421,8 +415,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
     x.drawImage(img, 0, 0, w, h);
     const d = x.getImageData(0, 0, w, h);
     applyLut(d.data, luts[picked], {
-      strength: strength / 100, skinProtect: skin / 100, preserveLuminance: true,
-      protect: useWeight(skin / 100), width: w,
+      strength: strength / 100, skinProtect: 0, preserveLuminance: true,
+      protect: useWeight(), width: w,
     });
     x.putImageData(d, 0, 0);
     return c;
@@ -441,7 +435,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     }
     return canvasToUrl(c);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcImg, luts, picked, strength, skin]);
+  }, [srcImg, luts, picked, strength]);
 
   /* 嵌在編輯器裡：馬上交出預覽尺寸的成品（GPU 一次畫完），原尺寸那張留到存檔才算 */
   const sessionIdRef = useRef(`match-${Math.random().toString(36).slice(2)}`);
@@ -449,7 +443,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const takeResult = (): StudioResult | null => {
     if (!referenceSrc || !srcImg || !luts) return null;
     /* 工具交出去之後不會重開：設定沒變過就不用再換一次照片 */
-    const sig = JSON.stringify({ picked, strength, skin, referenceSrc });
+    const sig = JSON.stringify({ picked, strength, referenceSrc });
     if (sig === committedSigRef.current) return null;
     const W = srcImg.naturalWidth || srcImg.width, H = srcImg.naturalHeight || srcImg.height;
     const k = Math.min(1, 2048 / Math.max(W, H));
@@ -500,7 +494,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const recordedRef = useRef('');
   const record = useCallback(async (outUrl?: string) => {
     if (!srcImg || !luts || !referenceSrc) return;   // 還沒挑參考圖＝什麼都還沒做
-    const sig = JSON.stringify({ picked, strength, skin, referenceSrc });
+    const sig = JSON.stringify({ picked, strength, referenceSrc });
     if (recordedRef.current === sig) return;
     recordedRef.current = sig;
     let url = outUrl || null;
@@ -508,11 +502,11 @@ export const ColorMatchStudio: React.FC<Props> = ({
     try {
       if (!url) url = await renderResult();
       if (!url) return;
-      await addExport('match', url, imageSrc, { picked, strength, skin, referenceSrc });
+      await addExport('match', url, imageSrc, { picked, strength, referenceSrc });
     } catch { /* 記錄失敗不能影響離開 */ }
     finally { if (mine && url) revokeUrl(url); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcImg, luts, referenceSrc, picked, strength, skin, imageSrc, renderResult]);
+  }, [srcImg, luts, referenceSrc, picked, strength, imageSrc, renderResult]);
 
   const exitPending=useRef(false);
   const leave = async () => {
@@ -571,9 +565,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
     // 手機上成品面積有上限（見 utils/exportLimits），48MP 照片才不會閃退
     const { w, h } = safeSize(srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height);
     // GPU 一次畫完，全解析度也是瞬間 —— 按下去就直接進導出畫面，不用等
-    const pw = useWeight(skin / 100);
+    const pw = useWeight();
     const gpu = LutRenderer.renderOnce(
-      srcImg, w, h, luts[picked], strength / 100, skin / 100,
+      srcImg, w, h, luts[picked], strength / 100, 0,
       pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null,
     );
     if (gpu) {
@@ -591,8 +585,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
         x.drawImage(srcImg, 0, 0);
         const d = x.getImageData(0, 0, w, h);
         applyLut(d.data, luts[picked], {
-          strength: strength / 100, skinProtect: skin / 100, preserveLuminance: true,
-          protect: useWeight(skin / 100), width: w,
+          strength: strength / 100, skinProtect: 0, preserveLuminance: true,
+          protect: useWeight(), width: w,
         });
         x.putImageData(d, 0, 0);
         await saveCanvas(c);
@@ -765,7 +759,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           </div>
         </div>
         {(busy || referenceLoading) && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" role="status" aria-label="AI仿色中">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/55 transition-opacity" role="status" aria-label="AI仿色中">
             <BusySpinner text="AI仿色中" />
           </div>
         )}
@@ -836,9 +830,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
       </div>}
 
       {/* 滑桿：兩根並排（跟編輯器特效細項同一款）。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
-      <div className={`px-5 flex-1 min-h-0 grid grid-cols-2 gap-5 transition-opacity ${embedded ? 'content-center pb-2' : 'pt-3 content-start'} ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
-          {/* 強度可以推到 150（100 以上＝比參考圖再更進一步），預設維持 100；膚色保護維持 0～100。 */}
-          {([['強度', strength, setStrength, 150], ['膚色保護', skin, setSkin, 100]] as const).map(([label, val, set, max]) => (
+      <div className={`px-5 flex-1 min-h-0 grid grid-cols-1 gap-5 transition-opacity ${embedded ? 'content-center pb-2' : 'pt-3 content-start'} ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
+          {/* 強度可以推到 150（100 以上＝比參考圖再更進一步），預設維持 100。
+              膚色保護不再是滑桿：自動找臉、學這個人的膚色來保護（見 utils/skinProtect），整列都給強度 */}
+          {([['強度', strength, setStrength, 150]] as const).map(([label, val, set, max]) => (
             <div key={label} className="min-w-0">
               <div className="flex justify-between items-center px-1 mb-1">
                 <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.12em] truncate">{label}</span>
