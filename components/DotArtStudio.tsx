@@ -1,6 +1,6 @@
 /* 點陣文字：照片轉成可以複製貼上的點字圖案（演算法見 utils/dotArt）
    版面跟美顏同一套：上面成品（黑底白點、即時更新、可以用手指畫點／擦點），
-   下面參數區（線稿／陰影＋一根滑桿）和一排工具；右上角複製、儲存成圖片。 */
+   預覽下緣懸空放換照片、線稿／陰影、反轉；下面一塊滑桿和一排工具；右上角複製、儲存成圖片。 */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, Copy, Check, Plus } from 'lucide-react';
 import { Icon } from './Icon';
@@ -11,17 +11,22 @@ import { useStandaloneToolViewport, standaloneToolViewportCSS } from '../utils/u
 import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, prepareDotArtImage, warmLineArtModel, type DotArtFrame, type DotArtSettings } from '../utils/dotArt';
 
 type Kind = 'line' | 'shade';
-type ToolId = 'width' | 'threshold' | 'lines' | 'draw' | 'erase';
+type ToolId = 'width' | 'threshold' | 'lines' | 'spacing' | 'draw' | 'erase';
 interface ToolDef { id: ToolId; label: string; glyph: React.ReactNode; min: number; max: number; decimals?: boolean }
-/* 數量＝橫向幾個字（越多點越多、越細）；輪廓＝照片裡的輪廓線描出多少。
+/* 數量＝橫向幾個字（越多點越多、越細）；輪廓＝照片裡的輪廓線描出多少；間距＝點幾個一組排。
    圖示沿用其他功能的同類工具：數量、擦除＝遮色片筆刷的大小／擦除；筆刷＝人像修容；明暗＝調節的亮度 */
 const TOOLS: ToolDef[] = [
-  { id: 'width', label: '數量', glyph: <Glyph k="size" size={20} />, min: 1, max: 200 },
+  { id: 'width', label: '數量', glyph: <Glyph k="size" size={20} />, min: 0, max: 100 },
   { id: 'threshold', label: '明暗', glyph: <Icon name="light_mode" className="text-xl" />, min: 0.01, max: 0.99, decimals: true },
-  { id: 'lines', label: '輪廓', glyph: <Glyph k="lines" size={20} />, min: 0, max: 20 },
+  { id: 'lines', label: '輪廓', glyph: <Glyph k="contour" size={20} />, min: 0, max: 20 },
+  { id: 'spacing', label: '間距', glyph: <Glyph k="spacing" size={20} />, min: 1, max: 8 },
   { id: 'draw', label: '筆刷', glyph: <Icon name="brush" className="text-xl" />, min: 1, max: 8 },
   { id: 'erase', label: '擦除', glyph: <Glyph k="erase" size={20} />, min: 1, max: 8 },
 ];
+/** 數量滑桿看起來是 0～100，實際是 20～100 個字（0 → 20 字、100 → 100 字） */
+const WIDTH_MIN = 20, WIDTH_MAX = 100;
+const widthOf = (v: number) => Math.round(WIDTH_MIN + (WIDTH_MAX - WIDTH_MIN) * Math.round(v) / 100);
+const sliderOfWidth = (w: number) => (w - WIDTH_MIN) / (WIDTH_MAX - WIDTH_MIN) * 100;
 /** 滑桿是連續的（拖起來不會一格一格），算圖時才取到該有的刻度 */
 const snap = (id: ToolId, v: number) => (id === 'threshold' ? Math.round(v * 100) / 100 : Math.round(v));
 
@@ -30,18 +35,35 @@ const POS = [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [0, 3], [1, 3]];
 const BIT_AT = [[0, 3], [1, 4], [2, 5], [6, 7]];   // [列][欄] → 位元
 
 /* 點的排法照參考網站實際顯示的樣子量出來：一個字寬 1、高 1.532；點是方的，邊長 0.19 個字寬。
-   左右：一個字的兩欄相距 0.6 字寬，跟下一個字的第一欄只差 0.4 —— 一寬一窄交替。
-   上下：同一個字的四列靠得近（8），跟下一個字之間空得多（12），也是一寬一窄的規律間隔。 */
+   點會「幾個一組」排：組內靠近、組與組之間空多一點（網站是橫向 2 個一組、直向 4 個一組）。
+   組數可以調；組內：組間的距離比固定（橫向 9.5:14、直向 8:12，都是從網站量的），平均點距不變，
+   所以整張大小、比例不會因為調間距而改變。 */
 const CH = 1.532, DOT = 0.19;
-const DX = [0.2, 0.796];
-const DY = [6 / 36, 14 / 36, 22 / 36, 30 / 36];
-
-/** 手指在格子裡的位置（以字為單位）→ 連續的點座標（點中心在 i＋0.5），點距不平均也對得準 */
-const toAxis = (u: number, P: number[]) => {
-  const n = Math.floor(u), f = u - n, m = P.length;
-  if (f < P[0]) { const a = P[m - 1] - 1; return n * m - 0.5 + (f - a) / (P[0] - a); }
-  for (let k = 0; k < m - 1; k++) if (f < P[k + 1]) return n * m + k + 0.5 + (f - P[k]) / (P[k + 1] - P[k]);
-  const b = 1 + P[0]; return n * m + m - 0.5 + (f - P[m - 1]) / (b - P[m - 1]);
+/** 預覽下緣懸空那一排（換照片／線稿陰影／反轉）佔的高度：點陣畫在它上面，手指畫點時不會被按鈕擋到 */
+const BOTTOM_ROW = 68;
+const RX = 9.5 / 14, RY = 8 / 12;
+/** 一個方向上每個點的中心位置（以字寬／字高為單位）。n＝點數、cells＝格數、per＝每格幾點、g＝幾點一組、phase＝分組起點 */
+const axis = (n: number, cells: number, per: number, g: number, r: number, phase: number) => {
+  const p = 1 / per, sIn = g * p / (g - 1 + 1 / r), extra = sIn / r - sIn, pos = new Float64Array(n);
+  for (let i = 0; i < n; i++) pos[i] = i * sIn + Math.floor((i + phase) / g) * extra - Math.floor(phase / g) * extra;
+  const off = (cells - (n > 1 ? pos[n - 1] : 0)) / 2;
+  for (let i = 0; i < n; i++) pos[i] += off;
+  return { pos, minStep: g > 1 ? sIn : p };
+};
+/* 橫向的組以「字和字的交界」為中心（網站 2 個一組時是相鄰兩個字的欄靠在一起）；直向的組對齊每個字 */
+const layoutFor = (W: number, H: number, gx: number, gy: number) => ({
+  x: axis(W, W / 2, 2, gx, RX, Math.floor(gx / 2)),
+  y: axis(H, H / 4, 4, gy, RY, 0),
+});
+type Layout = ReturnType<typeof layoutFor>;
+/** 手指位置（字寬／字高為單位）→ 連續的點座標（點中心在 i＋0.5），點距不平均也對得準 */
+const toAxis = (u: number, pos: Float64Array) => {
+  const n = pos.length; if (n < 2) return 0.5;
+  let lo = 0, hi = n - 1;
+  if (u <= pos[0]) return 0.5 + (u - pos[0]) / (pos[1] - pos[0]);
+  if (u >= pos[n - 1]) return n - 0.5 + (u - pos[n - 1]) / (pos[n - 1] - pos[n - 2]);
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (pos[m] <= u) lo = m; else hi = m; }
+  return lo + 0.5 + (u - pos[lo]) / (pos[hi] - pos[lo]);
 };
 
 /** 整張照片的點陣（W＝字數×2、H＝列數×4），1＝有點 */
@@ -79,13 +101,12 @@ const bitsToText = (b: Bits): { text: string; x0: number; y0: number; cols: numb
   }
   return { text: rows.join('\n'), x0, y0, cols: x1 - x0 + 1, rows: y1 - y0 + 1 };
 };
-/** 畫一格（cx, cy 是字的位置）的點；clear＝先把這一格擦乾淨（畫筆只重畫改到的格子） */
-const drawCell = (g: CanvasRenderingContext2D, b: Bits, cx: number, cy: number, cw: number, ch: number, ox: number, oy: number, clear: boolean) => {
-  const bx = ox + cx * cw, by = oy + cy * ch, sz = Math.max(0.6, cw * DOT), h = sz / 2;
-  if (clear) g.clearRect(bx, by, cw, ch);
-  for (let r = 0; r < 4; r++) {
-    const row = (cy * 4 + r) * b.W + cx * 2;
-    for (let k = 0; k < 2; k++) if (b.d[row + k]) g.rect(bx + DX[k] * cw - h, by + DY[r] * ch - h, sz, sz);
+/** 把點陣畫上去（ox, oy 是畫布上原點的位置、cw/ch 是一個字的寬高） */
+const drawDots = (g: CanvasRenderingContext2D, b: Bits, L: Layout, cw: number, ch: number, ox: number, oy: number, x0 = 0, y0 = 0, x1 = b.W, y1 = b.H) => {
+  const sz = Math.max(0.6, cw * DOT), h = sz / 2, px = L.x.pos, py = L.y.pos;
+  for (let y = y0; y < y1; y++) {
+    const row = y * b.W, cy = oy + py[y] * ch - h;
+    for (let x = x0; x < x1; x++) if (b.d[row + x]) g.rect(ox + px[x] * cw - h, cy, sz, sz);
   }
 };
 
@@ -97,9 +118,12 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const [kind, setKind] = useState<Kind>('line');
   /* 兩種各記各的明暗：線稿 0.80、陰影 0.65（陰影要亮一點才看得出層次） */
   const [raw, setRaw] = useState<Record<Kind, DotArtSettings>>({
-    line: { ...DOT_ART_DEFAULTS },
-    shade: { ...DOT_ART_DEFAULTS, threshold: DOT_ART_SHADE_THRESHOLD },
+    line: { ...DOT_ART_DEFAULTS, width: sliderOfWidth(DOT_ART_DEFAULTS.width) },
+    shade: { ...DOT_ART_DEFAULTS, width: sliderOfWidth(DOT_ART_DEFAULTS.width), threshold: DOT_ART_SHADE_THRESHOLD },
   });
+  /* 間距：橫向、直向各幾個點一組（只改點的排法，不改點字內容） */
+  const [gap, setGap] = useState({ x: 2, y: 4 });
+  const gx = Math.round(gap.x), gy = Math.round(gap.y);
   const [brush, setBrush] = useState(2);
   const [tool, setTool] = useState<ToolId>('width');
   const [frame, setFrame] = useState<DotArtFrame | null>(null);
@@ -136,7 +160,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
 
   /* 即時重算：同一時間只算一張，拖動中來的新值等這張算完直接算最新的（中間的跳過） */
   const settings: DotArtSettings = {
-    width: snap('width', raw[kind].width), threshold: snap('threshold', raw[kind].threshold),
+    width: widthOf(raw[kind].width), threshold: snap('threshold', raw[kind].threshold),
     lines: snap('lines', raw[kind].lines), thicken: DOT_ART_DEFAULTS.thicken,
   };
   const want = `${kind}|${settings.width}|${settings.threshold}|${settings.lines}|${modelReady}`;
@@ -183,12 +207,14 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     const upd = () => setBoxSize({ w: b.clientWidth, h: b.clientHeight });
     upd(); const ro = new ResizeObserver(upd); ro.observe(b); return () => ro.disconnect();
   }, []);
+  const layout = useMemo(() => (bits ? layoutFor(bits.W, bits.H, gx, gy) : null), [bits?.W, bits?.H, gx, gy]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const layoutRef = useRef(layout); layoutRef.current = layout;
   const geom = useRef({ cw: 1, ch: CH, C: 0, R: 0, dpr: 1 });
-  const paint = useCallback((b: Bits | null) => {
+  const paint = useCallback((b: Bits | null, L: Layout | null) => {
     const c = cvs.current; if (!c) return;
-    if (!b || !boxSize.w || !boxSize.h) { c.width = c.height = 0; return; }
+    if (!b || !L || !boxSize.w || !boxSize.h) { c.width = c.height = 0; return; }
     const C = b.W / 2, R = b.H / 4;
-    const cw = Math.min((boxSize.w - 32) / C, (boxSize.h - 32) / (R * CH)), ch = cw * CH;
+    const cw = Math.min((boxSize.w - 32) / C, (boxSize.h - 16 - BOTTOM_ROW) / (R * CH)), ch = cw * CH;
     const dpr = Math.min(3, window.devicePixelRatio || 1);
     geom.current = { cw, ch, C, R, dpr };
     const W = C * cw, H = R * ch;
@@ -197,21 +223,28 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
     const g = c.getContext('2d')!; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
     g.fillStyle = '#fff'; g.beginPath();
-    for (let y = 0; y < R; y++) for (let x = 0; x < C; x++) drawCell(g, b, x, y, cw, ch, 0, 0, false);
+    drawDots(g, b, L, cw, ch, 0, 0);
     g.fill();
   }, [boxSize]);
-  useLayoutEffect(() => { paint(bits); }, [bits, paint]);
+  useLayoutEffect(() => { paint(bits, layout); }, [bits, layout, paint]);
 
   /* ── 畫筆：只改點陣、只重畫改到的格子（每一下都重排整張字、重畫整張，在手機上會卡到分頁被關掉） ── */
   const drawing = tool === 'draw' || tool === 'erase';
   const stroke = useRef<{ last: [number, number] | null; changed: Map<number, number>; dirty: Set<number>; raf: number } | null>(null);
   const flush = () => {
-    const s = stroke.current, c = cvs.current, b = bitsRef.current;
-    if (!s || !c || !b) return;
+    const s = stroke.current, c = cvs.current, b = bitsRef.current, L = layoutRef.current;
+    if (!s || !c || !b || !L) return;
     s.raf = 0;
-    const { cw, ch, C, dpr } = geom.current;
+    const { cw, ch, dpr } = geom.current;
+    /* 只擦、只畫改到的點：擦的範圍比點大一點（含反鋸齒的邊），但碰不到隔壁的點 */
+    const sz = Math.max(0.6, cw * DOT), room = Math.min(L.x.minStep * cw, L.y.minStep * ch) - sz;
+    const h = sz / 2 + Math.max(0, Math.min(1.5 / dpr + 0.5, room * 0.45));
     const g = c.getContext('2d')!; g.setTransform(dpr, 0, 0, dpr, 0, 0); g.fillStyle = '#fff'; g.beginPath();
-    s.dirty.forEach(i => drawCell(g, b, i % C, Math.floor(i / C), cw, ch, 0, 0, true));
+    s.dirty.forEach(i => {
+      const x = i % b.W, y = (i - x) / b.W, cx = L.x.pos[x] * cw, cy = L.y.pos[y] * ch;
+      g.clearRect(cx - h, cy - h, 2 * h, 2 * h);
+      if (b.d[i]) g.rect(cx - sz / 2, cy - sz / 2, sz, sz);
+    });
     g.fill(); s.dirty.clear();
   };
   const dab = (px: number, py: number) => {
@@ -219,7 +252,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     if (!s || !b) return;
     let m = edits.current.get(editKey);
     if (!m || m.length !== b.d.length) { m = new Uint8Array(b.d.length); edits.current.set(editKey, m); }
-    const rad = Math.max(0.5, Math.round(brush) - 0.5), v = tool === 'draw' ? 1 : 2, C = b.W / 2;
+    const rad = Math.max(0.5, Math.round(brush) - 0.5), v = tool === 'draw' ? 1 : 2;
     for (let y = Math.floor(py - rad); y <= Math.ceil(py + rad); y++) for (let x = Math.floor(px - rad); x <= Math.ceil(px + rad); x++) {
       if (x < 0 || y < 0 || x >= b.W || y >= b.H) continue;
       if (Math.hypot(x + 0.5 - px, y + 0.5 - py) > rad) continue;
@@ -227,12 +260,13 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
       if (m[i] === v) continue;
       if (!s.changed.has(i)) s.changed.set(i, m[i]);
       m[i] = v; b.d[i] = v === 1 ? 1 : 0;
-      s.dirty.add((y >> 2) * C + (x >> 1));
+      s.dirty.add(i);
     }
   };
   const toDot = (ev: React.PointerEvent): [number, number] => {
-    const r = cvs.current!.getBoundingClientRect(), gm = geom.current;
-    return [toAxis((ev.clientX - r.left) / gm.cw, DX), toAxis((ev.clientY - r.top) / gm.ch, DY)];
+    const r = cvs.current!.getBoundingClientRect(), gm = geom.current, L = layoutRef.current;
+    if (!L) return [NaN, NaN];
+    return [toAxis((ev.clientX - r.left) / gm.cw, L.x.pos), toAxis((ev.clientY - r.top) / gm.ch, L.y.pos)];
   };
   const onMove = (ev: React.PointerEvent) => {
     const s = stroke.current; if (!s) return;
@@ -286,20 +320,20 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const [saving, setSaving] = useState(false);
   useEffect(() => () => { if (exportUrl) URL.revokeObjectURL(exportUrl); }, [exportUrl]);
   const save = async () => {
-    const b = bits, o = out;
-    if (!b || !o || saving) return;
+    const b = bits, o = out, L = layout;
+    if (!b || !o || !L || saving) return;
     setSaving(true);
     try {
-      const pad = 1;   // 四周留一格
-      const C = o.cols + pad * 2, R = o.rows + pad * 2;
-      const cw = Math.max(4, Math.min(32, 4096 / C, 4096 / (R * CH))), ch = cw * CH;
+      // 只存有點的範圍（跟複製的文字同一塊），四周各留一個字寬的黑邊
+      const x0 = o.x0 * 2, x1 = (o.x0 + o.cols) * 2, y0 = o.y0 * 4, y1 = (o.y0 + o.rows) * 4;
+      const spanX = L.x.pos[x1 - 1] - L.x.pos[x0], spanY = L.y.pos[y1 - 1] - L.y.pos[y0];
+      const cw = Math.max(4, Math.min(32, 4096 / (spanX + 2), 4096 / (spanY * CH + 2))), ch = cw * CH;
       const c = document.createElement('canvas');
-      c.width = Math.round(C * cw); c.height = Math.round(R * ch);
+      c.width = Math.round(spanX * cw + 2 * cw); c.height = Math.round(spanY * ch + 2 * cw);
       const g = c.getContext('2d')!;
       g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
       g.fillStyle = '#fff'; g.beginPath();
-      const ox = (pad - o.x0) * cw, oy = (pad - o.y0) * ch;
-      for (let y = o.y0; y < o.y0 + o.rows; y++) for (let x = o.x0; x < o.x0 + o.cols; x++) drawCell(g, b, x, y, cw, ch, ox, oy, false);
+      drawDots(g, b, L, cw, ch, cw - L.x.pos[x0] * cw, cw - L.y.pos[y0] * ch, x0, y0, x1, y1);
       g.fill();
       const blob = await new Promise<Blob | null>(r => c.toBlob(r, 'image/png'));
       c.width = c.height = 0;
@@ -309,11 +343,22 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
 
   const cur = TOOLS.find(t => t.id === tool) || TOOLS[0];
   const isBrush = cur.id === 'draw' || cur.id === 'erase';
-  const value = isBrush ? brush : raw[kind][cur.id as keyof DotArtSettings];
+  const value = isBrush ? brush : cur.id === 'spacing' ? 0 : raw[kind][cur.id as keyof DotArtSettings];
   const setValue = (v: number) => {
     if (isBrush) setBrush(v);
     else setRaw(r => ({ ...r, [kind]: { ...r[kind], [cur.id]: v } }));
   };
+  /* 一列滑桿：名稱｜滑桿｜數值（跟美顏同一款） */
+  const sliderRow = (label: string, min: number, max: number, v: number, shown: string, set: (v: number) => void) => (
+    <div className="flex items-center gap-3 h-6" key={label}>
+      <span className="text-[10px] font-bold tracking-[0.15em] text-white/40 w-12 shrink-0">{label}</span>
+      <div className="slider-wrap flex-1" style={{ height: 16 }}>
+        <input type="range" aria-label={label} min={min} max={max} step="any" value={v}
+          onChange={e => set(Number(e.target.value))} className="premium-slider w-full" />
+      </div>
+      <span className="text-[11px] font-mono tabular-nums text-white/80 w-8 text-right shrink-0">{shown}</span>
+    </div>
+  );
 
   return (
     <div ref={viewport.ref} data-dot-art-studio
@@ -344,7 +389,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
       <input ref={input} hidden type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) open(f); }} />
 
       {/* 成品：黑底白點；筆刷／擦除時手指直接在上面畫 */}
-      <div ref={box} className="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-black">
+      <div ref={box} className="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-black" style={{ paddingBottom: BOTTOM_ROW - 16 }}>
         {status === 'loading' && <div className="absolute w-6 h-6 rounded-full border-2 border-white/20 border-t-white animate-spin" />}
         {status === 'error' && <p className="absolute text-[12px] text-white/60">無法處理這張照片</p>}
         <canvas ref={cvs} data-dot-art-canvas className={status === 'ready' && bits ? '' : 'hidden'}
@@ -369,28 +414,24 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
           style={{ filter: 'drop-shadow(0 1px 0.5px rgba(0,0,0,.5))' }}>
           <Glyph k="invert" size={24} />
         </button>
-      </div>
-
-      {/* 參數區：跟美顏同一個高度與排法（上面一排選項、下面滑桿），切工具時圖片不會跳 */}
-      <div className="h-[144px] shrink-0 border-t border-white/[0.06] py-3 flex flex-col" data-dot-art-controls>
-        <div className="h-8 shrink-0 flex items-center gap-2 overflow-x-auto overflow-y-hidden no-scrollbar px-5">
+        {/* 線稿／陰影：懸空在預覽下緣中間，跟左下的照片同一排 */}
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 h-11 flex items-center gap-2">
           {(['line', 'shade'] as const).map(k => (
             <button key={k} onClick={() => setKind(k)} aria-pressed={kind === k}
-              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 border transition-all active:scale-95 ${kind === k ? 'bg-white text-black border-white font-bold' : 'bg-white/5 text-white/60 border-white/15'}`}>
+              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 border transition-all active:scale-95 ${kind === k ? 'bg-white text-black border-white font-bold' : 'bg-black/40 text-white/60 border-white/15 backdrop-blur-md'}`}>
               {k === 'line' ? '線稿' : '陰影'}
             </button>
           ))}
         </div>
-        <div className="flex-1 flex flex-col justify-center gap-3 px-5">
-          <div className="flex items-center gap-3 h-6">
-            <span className="text-[10px] font-bold tracking-[0.15em] text-white/40 w-12 shrink-0">{isBrush ? '筆刷' : cur.label}</span>
-            <div className="slider-wrap flex-1" style={{ height: 16 }}>
-              <input type="range" aria-label={cur.label} min={cur.min} max={cur.max} step="any" value={value}
-                onChange={e => setValue(Number(e.target.value))} className="premium-slider w-full" />
-            </div>
-            <span className="text-[11px] font-mono tabular-nums text-white/80 w-8 text-right shrink-0">{cur.decimals ? snap(cur.id, value).toFixed(2) : snap(cur.id, value)}</span>
-          </div>
-        </div>
+      </div>
+
+      {/* 滑桿區：只放滑桿（間距有橫向、直向兩根），高度固定，切工具時圖片不會跳 */}
+      <div className="h-[84px] shrink-0 border-t border-white/[0.06] px-5 flex flex-col justify-center gap-3" data-dot-art-controls>
+        {cur.id === 'spacing' ? (<>
+          {sliderRow('橫向', 1, 8, gap.x, String(gx), v => setGap(g => ({ ...g, x: v })))}
+          {sliderRow('直向', 1, 8, gap.y, String(gy), v => setGap(g => ({ ...g, y: v })))}
+        </>) : sliderRow(isBrush ? '筆刷' : cur.label, cur.min, cur.max, value,
+          cur.decimals ? snap(cur.id, value).toFixed(2) : String(snap(cur.id, value)), setValue)}
       </div>
 
       {/* 工具列：跟美顏同一款（64px 按鈕列＋12px 底部距離） */}

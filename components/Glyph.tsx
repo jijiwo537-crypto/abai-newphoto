@@ -7,10 +7,10 @@ const BODY: Record<string, string> = {
   size: '<circle cx="9" cy="15" r="4"/><circle cx="15.5" cy="8.5" r="2"/>',
   erase: '<path d="M8.5 19.5h11"/><path d="M5 15.5l8.5-8.5 5 5-6.5 6.5H8z"/><path d="M9.5 11l5 5"/>',
   invert: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="#fff" stroke="none"/>',
-  /* 線條：一條起伏的線 */
-  lines: '<path d="M3.5 15c2.2 0 2.6-6 5-6s2.8 6 5.1 6 2.6-6 5-6 1.6 1.5 1.9 2.2"/>',
-  /* 粗細：由細到粗三條線 */
-  weight: '<path d="M5 6.5h14" stroke-width="1.2"/><path d="M5 12h14" stroke-width="2.2"/><path d="M5 17.8h14" stroke-width="3.4"/>',
+  /* 輪廓：側臉的外框線（描出照片裡的輪廓） */
+  contour: '<path d="M8.6 20.5v-4.4C6.1 14.8 4.5 12.3 4.5 9.4 4.5 5.9 7.6 3.5 11.3 3.5c3.6 0 6.2 2.4 6.6 5.6l1.7 3.1c.3.5-.1 1-.6 1h-1.3v2.4c0 1-.8 1.8-1.8 1.8h-1.8v3.1"/>',
+  /* 間距：點一組一組排（2×2 一組，組與組之間空較多） */
+  spacing: '<g fill="#fff" stroke="none"><rect x="3.6" y="3.6" width="2.8" height="2.8" rx=".5"/><rect x="7.6" y="3.6" width="2.8" height="2.8" rx=".5"/><rect x="13.6" y="3.6" width="2.8" height="2.8" rx=".5"/><rect x="17.6" y="3.6" width="2.8" height="2.8" rx=".5"/><rect x="3.6" y="7.6" width="2.8" height="2.8" rx=".5"/><rect x="7.6" y="7.6" width="2.8" height="2.8" rx=".5"/><rect x="13.6" y="7.6" width="2.8" height="2.8" rx=".5"/><rect x="17.6" y="7.6" width="2.8" height="2.8" rx=".5"/><rect x="3.6" y="13.6" width="2.8" height="2.8" rx=".5"/><rect x="7.6" y="13.6" width="2.8" height="2.8" rx=".5"/><rect x="13.6" y="13.6" width="2.8" height="2.8" rx=".5"/><rect x="17.6" y="13.6" width="2.8" height="2.8" rx=".5"/><rect x="3.6" y="17.6" width="2.8" height="2.8" rx=".5"/><rect x="7.6" y="17.6" width="2.8" height="2.8" rx=".5"/><rect x="13.6" y="17.6" width="2.8" height="2.8" rx=".5"/><rect x="17.6" y="17.6" width="2.8" height="2.8" rx=".5"/></g>',
 };
 const URL_OF: Record<string, string> = Object.fromEntries(Object.entries(BODY).map(([k, body]) => [k,
   `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`)}")`]));

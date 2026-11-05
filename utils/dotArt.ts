@@ -25,29 +25,12 @@ export const DOT_ART_SHADE_THRESHOLD = 0.65;
 
 export interface DotArtResult { kind: 'line' | 'shade'; width: number; text: string; chars: number }
 
-const BLANK = '⠀';
 const MAX_INPUT_W = 768;
 
-type Cvs = HTMLCanvasElement;
-const canvas = (w: number, h: number): Cvs => {
-  const c = document.createElement('canvas');
-  c.width = Math.max(1, Math.floor(w)); c.height = Math.max(1, Math.floor(h));
-  return c;
-};
-const ctx2d = (c: Cvs) => c.getContext('2d', { willReadFrequently: true })!;
-/* 暫用畫布重複使用：拖滑桿時每一格都開新畫布的話，iPhone 有「所有畫布加起來」的上限，
-   還沒被回收的舊畫布會把額度吃光 —— 之後新畫布畫不出東西，點陣區就整個黑掉。
-   重新指定寬高會把內容與狀態清空，跟新開一張一樣。 */
-const scratch = new Map<string, Cvs>();
-const scratchCanvas = (name: string, w: number, h: number): Cvs => {
-  let c = scratch.get(name);
-  if (!c) { c = document.createElement('canvas'); scratch.set(name, c); }
-  c.width = Math.max(1, Math.floor(w)); c.height = Math.max(1, Math.floor(h));
-  return c;
-};
+import { BLANK, canvas, ctx2d, scratchCanvas, stretchContrast, overlayLines, erodedLuma, thresholdEroded, thresholdAndThicken, ditherAt, toBraille, trimAt, trim, type Cvs, type Eroded } from './dotArtCore';
 
 /* ── 1. 讀圖：寬度最多 768，寬高裁成 4 的倍數（一格點字 4 列高） ── */
-export async function prepareDotArtImage(file: Blob): Promise<Cvs> {
+export async function prepareDotArtImage(file: Blob): Promise<HTMLCanvasElement> {
   /* 先只讀尺寸（<img> 讀檔頭就知道寬高，不會整張解碼）：4800 萬像素的照片整張解碼要將近 200MB，
      iPhone 上會讓分頁直接崩潰。寬度超過 768 就直接解碼成縮小後的尺寸（跟原本同一個縮圖呼叫，結果一樣）。 */
   const natW = await new Promise<number>(res => {
@@ -65,37 +48,15 @@ export async function prepareDotArtImage(file: Blob): Promise<Cvs> {
   }
   return finishPrepared(bmp);
 }
-function finishPrepared(bmp: ImageBitmap): Cvs {
+function finishPrepared(bmp: ImageBitmap): HTMLCanvasElement {
   let w = bmp.width, h = bmp.height;
   if (w > 20) { w -= w % 4; h -= h % 4; }
-  const c = canvas(w, h);
+  const c = canvas(w, h) as HTMLCanvasElement;
   ctx2d(c).drawImage(bmp, 0, 0);
   bmp.close();
   return c;
 }
 
-/* ── 2. 依明暗分布拉對比 ── */
-function stretchContrast(src: Cvs): Cvs {
-  const c = canvas(src.width, src.height), g = ctx2d(c);
-  g.fillStyle = 'white'; g.fillRect(0, 0, c.width, c.height); g.drawImage(src, 0, 0);
-  const img = g.getImageData(0, 0, c.width, c.height), d = img.data, n = c.width * c.height;
-  const hist = new Array<number>(256).fill(0);
-  for (let i = 0; i < d.length; i += 4) hist[Math.round((d[i] + d[i + 1] + d[i + 2]) / 3)]++;
-  // 每一階佔全圖的萬分之幾
-  for (let i = 0; i < 256; i++) hist[i] = Math.round(hist[i] * 10000 / n);
-  // 暗端：累積到萬分之 30，或單一階超過萬分之 2，就是起點
-  let lo = 255;
-  for (let i = 0, acc = 0; i < 256; i++) { acc += hist[i]; if (acc >= 30 || hist[i] > 2) { lo = i; break; } }
-  // 亮端：從最亮往下找第一個超過萬分之 2 的階
-  let hi = 0;
-  for (let i = 255; i >= 0; i--) { if (hist[i] > 2) { hi = i; break; } }
-  const map = (v: number) => (v <= lo ? 0 : v >= hi ? hi : (v - lo) / (hi - lo));
-  for (let i = 0; i < d.length; i += 4) {
-    d[i] = 255 * map(d[i]); d[i + 1] = 255 * map(d[i + 1]); d[i + 2] = 255 * map(d[i + 2]); d[i + 3] = 255;
-  }
-  g.putImageData(img, 0, 0);
-  return c;
-}
 
 /* ── 3. 線稿模型（背景執行緒） ── */
 /* 只用 CPU（單執行緒 WebAssembly）那支 worker。
@@ -136,113 +97,13 @@ async function lineArt(src: Cvs): Promise<Cvs> {
 }
 
 /** 拉好對比的照片 × 輪廓線（色彩增值疊 lines 次） */
-async function preprocess(src: Cvs, lines: number): Promise<Cvs> {
-  const base = stretchContrast(src);
-  if (lines <= 0) return base;   // 不疊線：用不到線稿模型
-  const la = await lineArt(src);
-  const c = canvas(base.width, base.height), g = ctx2d(c);
-  g.drawImage(base, 0, 0);
-  g.globalCompositeOperation = 'multiply';
-  for (let i = 0; i < lines; i++) g.drawImage(la, 0, 0, base.width, base.height);
-  g.globalCompositeOperation = 'source-over';
-  base.width = base.height = 0;   // 用完馬上還畫布額度
-  return c;
+async function preprocess(src: Cvs, base: Cvs, lines: number): Promise<Cvs> {
+  return overlayLines(base, lines > 0 ? await lineArt(src) : null, lines);
 }
 
 /* ── 4a. 線稿版：明暗門檻 → 黑色擴張 ──
    門檻 f(L)=clamp(256·L − 255·level) 對亮度 L 是單調遞增的，所以「先門檻再取 3×3 最暗」＝「先取最暗再門檻」。
    拖明暗滑桿時只重做最便宜的門檻那一步；擴張（最花時間）每組「線條／粗細」只做一次。結果逐像素相同。 */
-const LUMA = [0.2126, 0.7152, 0.0722];
-interface Eroded { L: Float32Array; W: number; H: number; srcW: number; srcH: number }
-function erodedLuma(src: Cvs, steps: number): Eroded {
-  // 在 1000px 寬上做（線條粗細才跟照片原本多大無關），做完縮回原尺寸
-  const work = scratchCanvas('erode', 1000, src.height / src.width * 1000), g = ctx2d(work);
-  g.drawImage(src, 0, 0, work.width, work.height);
-  const d = g.getImageData(0, 0, work.width, work.height).data, W = work.width, H = work.height;
-  let cur = new Float32Array(W * H), next = new Float32Array(W * H);
-  for (let p = 0, i = 0; p < cur.length; p++, i += 4) cur[p] = LUMA[0] * d[i] + LUMA[1] * d[i + 1] + LUMA[2] * d[i + 2];
-  // 黑色擴張：每次取 3×3 範圍內最暗的那一點（可分離：先橫向再縱向取最小，結果一樣、快三倍）
-  const tmp = new Float32Array(W * H);
-  for (let s = 0; s < steps; s++) {
-    for (let y = 0; y < H; y++) { const o = y * W;
-      for (let x = 0; x < W; x++) { let m = cur[o + x]; if (x > 0 && cur[o + x - 1] < m) m = cur[o + x - 1]; if (x < W - 1 && cur[o + x + 1] < m) m = cur[o + x + 1]; tmp[o + x] = m; } }
-    for (let y = 0; y < H; y++) { const o = y * W;
-      for (let x = 0; x < W; x++) { let m = tmp[o + x]; if (y > 0 && tmp[o - W + x] < m) m = tmp[o - W + x]; if (y < H - 1 && tmp[o + W + x] < m) m = tmp[o + W + x]; next[o + x] = m; } }
-    const t = cur; cur = next; next = t;
-  }
-  return { L: cur, W, H, srcW: src.width, srcH: src.height };
-}
-function thresholdEroded(e: Eroded, level: number): Cvs {
-  const work = scratchCanvas('threshold', e.W, e.H), g = ctx2d(work), img = g.createImageData(e.W, e.H), d = img.data, off = 255 * level;
-  for (let p = 0, i = 0; p < e.L.length; p++, i += 4) {
-    const v = Math.max(0, Math.min(255, 256 * e.L[p] - off)) | 0;
-    d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255;
-  }
-  g.putImageData(img, 0, 0);
-  const out = canvas(e.srcW, e.srcH);
-  ctx2d(out).drawImage(work, 0, 0, out.width, out.height);
-  return out;
-}
-function thresholdAndThicken(src: Cvs, level: number, steps: number): Cvs { return thresholdEroded(erodedLuma(src, steps), level); }
-
-/* ── 4b. 陰影版：亮度調整 → Atkinson 抖動（線性光空間） ── */
-const toLinear = (v: number) => (v <= 0.04045 ? v / 12.95 : Math.pow((v + 0.055) / 1.055, 2.4));
-const toSrgb = (v: number) => (v <= 0.0031308 ? 12.95 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055);
-function ditherAt(src: Cvs, chars: number, brightness: number): Cvs {
-  const c = scratchCanvas('dither', 2 * chars, Math.round(2 * chars * (src.height / src.width))), g = ctx2d(c);
-  g.fillStyle = 'white'; g.fillRect(0, 0, c.width, c.height);
-  g.filter = `brightness(${brightness})`;
-  g.drawImage(src, 0, 0, c.width, c.height);
-  g.filter = 'none';
-  const W = c.width, H = c.height, img = g.getImageData(0, 0, W, H), d = img.data;
-  const L = new Float32Array(W * H);
-  for (let p = 0, i = 0; p < L.length; p++, i += 4) L[p] = 0.21 * toLinear(d[i] / 255) + 0.72 * toLinear(d[i + 1] / 255) + 0.07 * toLinear(d[i + 2] / 255);
-  // Atkinson：誤差的 1/8 各給右邊兩格、下一列左中右三格、再下一列正下方（共 6/8，其餘丟掉）
-  const taps: [number, number][] = [[1, 0], [2, 0], [-1, 1], [0, 1], [1, 1], [0, 2]];
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const p = y * W + x, old = L[p], q = old > 0.5 ? 1 : 0, err = old - q;
-    L[p] = q;
-    for (const [dx, dy] of taps) { const xx = x + dx, yy = y + dy; if (xx >= 0 && xx < W && yy < H) L[yy * W + xx] += err / 8; }
-  }
-  for (let p = 0, i = 0; p < L.length; p++, i += 4) { const v = 255 * toSrgb(L[p]); d[i] = d[i + 1] = d[i + 2] = v; d[i + 3] = 255; }
-  g.putImageData(img, 0, 0);
-  return c;
-}
-
-/* ── 5. 轉成點字 ── */
-/* 一格 2×4 的點對應 Unicode 點字的 8 個位元：左欄由上而下是 1、2、3、7 號點，右欄是 4、5、6、8 號點 */
-const DOT_BITS = [[0, 3], [1, 4], [2, 5], [6, 7]];   // [列][欄] → 位元
-function toBraille(src: Cvs, level: number, chars: number): string[] {
-  const rows = Math.ceil(2 * chars * (src.height / src.width) / 4);
-  const c = scratchCanvas('braille', 2 * chars, 4 * rows), g = ctx2d(c);
-  g.drawImage(src, 0, 0, c.width, c.height);
-  const W = c.width, d = g.getImageData(0, 0, W, c.height).data, lines: string[] = [];
-  for (let y = 0; y < c.height; y += 4) {
-    let line = '';
-    for (let x = 0; x < W; x += 2) {
-      let code = 0;
-      for (let r = 0; r < 4; r++) for (let k = 0; k < 2; k++) {
-        const i = ((y + r) * W + x + k) * 4;
-        if ((d[i] + d[i + 1] + d[i + 2]) / 3 < level) code |= 1 << DOT_BITS[r][k];
-      }
-      line += String.fromCharCode(0x2800 + code);
-    }
-    lines.push(line);
-  }
-  return lines;
-}
-/** 左右共同的空白欄、上下的空白列都收掉；整張空白回 null */
-function trimAt(lines: string[]): { lines: string[]; left: number; top: number } | null {
-  const lead = Math.min(...lines.map(l => l.length - l.replace(/^\u2800+/, '').length));
-  const tail = Math.min(...lines.map(l => l.length - l.replace(/\u2800+$/, '').length));
-  let out = lines.map(l => l.slice(lead, tail ? l.length - tail : l.length));
-  if (!out.join('').replaceAll(BLANK, '').trim()) return null;
-  let top = 0;
-  while (!out[0].replaceAll(BLANK, '')) { out = out.slice(1); top++; }
-  while (!out[out.length - 1].replaceAll(BLANK, '')) out = out.slice(0, -1);
-  return { lines: out, left: lead, top };
-}
-const trim = (lines: string[]) => trimAt(lines)?.lines ?? null;
 
 /** 反轉：每一格的 8 個點亮暗互換 */
 export const invertDotArt = (text: string) =>
@@ -250,7 +111,7 @@ export const invertDotArt = (text: string) =>
 
 /** 一張圖的全部結果：陰影版在前、線稿版在後，各三種大小 */
 export async function generateDotArt(src: Cvs, s: DotArtSettings, onStep?: (label: string) => void): Promise<{ preview: Cvs; results: DotArtResult[] }> {
-  const pre = await preprocess(src, s.lines);
+  const pre = await preprocess(src, stretchContrast(src), s.lines);
   const sizes = [Math.round(0.6 * s.width), s.width, Math.round(1.3 * s.width)];
   const groups: DotArtResult[][] = [];
   // 線稿版
@@ -280,42 +141,87 @@ export async function generateDotArt(src: Cvs, s: DotArtSettings, onStep?: (labe
    線稿模型只跑一次；「線條多寡」變了才重疊；「粗細」變了才重做擴張；「明暗」只重做門檻；「大小」只重排點字。 */
 /** 主要成品：收邊後的文字，加上它在「整張照片的點陣」裡的位置（預覽用固定的框，拖滑桿時才不會跳） */
 export interface DotArtFrame { text: string; left: number; top: number; cols: number; rows: number }
+/* 線稿版在背景執行緒算（見 dotArtLine.worker）：主畫面不卡，閒下來時先算好輪廓的前後幾格。
+   不支援 OffscreenCanvas 的瀏覽器，或背景執行緒出錯時，自動改回在主畫面算（結果一樣）。 */
+let lineStage: Worker | null | undefined, lsSeq = 0, lsOwner: object | null = null;
+const lsPending = new Map<number, { res: (v: any) => void; rej: (e: any) => void }>();
+function lineStageWorker(): Worker | null {
+  if (lineStage !== undefined) return lineStage;
+  if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap === 'undefined') return (lineStage = null);
+  try {
+    const w = new Worker(new URL('./dotArtLine.worker.ts', import.meta.url), { type: 'module' });
+    w.onmessage = e => { const p = lsPending.get(e.data.id); if (!p) return; lsPending.delete(e.data.id); e.data.ok ? p.res(e.data) : p.rej(new Error(e.data.error)); };
+    w.onerror = e => { e.preventDefault?.(); for (const p of lsPending.values()) p.rej(new Error('line stage worker failed')); lsPending.clear(); w.terminate(); lineStage = null; };
+    lineStage = w;
+  } catch { lineStage = null; }
+  return lineStage;
+}
+const lsCall = (msg: any, transfer: Transferable[] = []) => new Promise<any>((res, rej) => {
+  const w = lineStageWorker(); if (!w) { rej(new Error('no worker')); return; }
+  const id = ++lsSeq; lsPending.set(id, { res, rej }); w.postMessage({ ...msg, id }, transfer);
+});
+
 export class DotArtSession {
   private pre = new Map<number, Cvs>();
   private eroded = new Map<string, Eroded>();
   private line = new Map<string, Cvs>();
   /** 線稿模型跑完了沒（跑完之前先用「不疊線」的版本頂著，不用乾等） */
   modelReady = false;
+  private base: Cvs | null = null;   // 對比拉開的照片：跟輪廓無關，只算一次
+  private useWorker = true;
+  private sentBase: Promise<void> | null = null;
+  private sentLa: Promise<void> | null = null;
   constructor(readonly src: Cvs) {}
   /** 背景跑線稿模型（第一次比較久） */
   async prepare() { await lineArt(this.src); this.modelReady = true; }
+  private baseCanvas() { if (!this.base) this.base = stretchContrast(this.src); return this.base; }
   private async preFor(lines: number) {
     let c = this.pre.get(lines);
     if (!c) {
-      c = await preprocess(this.src, lines);
+      c = await preprocess(this.src, this.baseCanvas(), lines);
       if (this.pre.size >= 4) { const [k, old] = this.pre.entries().next().value as [number, Cvs]; old.width = old.height = 0; this.pre.delete(k); }
       this.pre.set(lines, c);
     } else { this.pre.delete(lines); this.pre.set(lines, c); }   // 最近用的排到最後
     return c;
   }
+  /** 線稿版在背景執行緒算出整張的點字；不能用時回 null（改在主畫面算） */
+  private async lineInWorker(s: DotArtSettings, level: number): Promise<string[] | null> {
+    if (!this.useWorker || !lineStageWorker()) return null;
+    try {
+      if (lsOwner !== this) { lsOwner = this; this.sentBase = null; this.sentLa = null; }
+      if (!this.sentBase) this.sentBase = createImageBitmap(this.baseCanvas()).then(b => lsCall({ type: 'init', base: b }, [b]));
+      await this.sentBase;
+      if (s.lines > 0) {
+        if (!this.sentLa) this.sentLa = lineArt(this.src).then(la => createImageBitmap(la)).then(b => lsCall({ type: 'lineArt', la: b }, [b]));
+        await this.sentLa;
+      }
+      if (lsOwner !== this) return null;
+      const r = await lsCall({ type: 'render', lines: s.lines, thicken: s.thicken, level, width: s.width });
+      return r.skipped ? null : r.full;
+    } catch (e) { console.warn('dot art worker → main thread', e); this.useWorker = false; return null; }
+  }
   async render(kind: 'line' | 'shade', s0: DotArtSettings): Promise<DotArtFrame | null> {
     const s = this.modelReady ? s0 : { ...s0, lines: 0 };
-    const pre = await this.preFor(s.lines);
-    let img: Cvs;
+    let full: string[] | null = null;
     if (kind === 'line') {
       const level = Math.round(255 * (1 - (s.threshold || 0.5))), ek = `${s.lines}|${s.thicken}`, key = `${ek}|${level}`;
-      let c = this.line.get(key);
-      if (!c) {
-        let e = this.eroded.get(ek);
-        if (!e) { e = erodedLuma(pre, s.thicken); if (this.eroded.size > 4) this.eroded.clear(); this.eroded.set(ek, e); }
-        c = thresholdEroded(e, level);
-        if (this.line.size >= 8) { const [k, old] = this.line.entries().next().value as [string, Cvs]; old.width = old.height = 0; this.line.delete(k); }
-        this.line.set(key, c);
+      full = await this.lineInWorker(s, level);
+      if (!full) {
+        const pre = await this.preFor(s.lines);
+        let c = this.line.get(key);
+        if (!c) {
+          let e = this.eroded.get(ek);
+          if (!e) { e = erodedLuma(pre, s.thicken); if (this.eroded.size > 4) this.eroded.clear(); this.eroded.set(ek, e); }
+          c = thresholdEroded(e, level);
+          if (this.line.size >= 8) { const [k, old] = this.line.entries().next().value as [string, Cvs]; old.width = old.height = 0; this.line.delete(k); }
+          this.line.set(key, c);
+        }
+        full = toBraille(c, 128, s.width);
       }
-      img = c;
-    } else img = ditherAt(pre, s.width, 2 * s.threshold);
-    const full = toBraille(img, 128, s.width);
+    } else full = toBraille(ditherAt(await this.preFor(s.lines), s.width, 2 * s.threshold), 128, s.width);
     const t = trimAt(full);
     return t ? { text: t.lines.join('\n'), left: t.left, top: t.top, cols: full[0]?.length || s.width, rows: full.length } : null;
   }
+  /** 測試用：強制在主畫面算 */
+  set workerEnabled(v: boolean) { this.useWorker = v; }
 }
