@@ -3004,13 +3004,27 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const w = la.width, h = la.height;
     if (el.width !== w || el.height !== h) { el.width = w; el.height = h; }
     const al = maskLiveAlphaRef.current ??= document.createElement('canvas');
+    const pre = maskLivePreRef.current, disp = displayCanvasRef.current;
+    /* 拖遮色片的「調節」滑桿（原解析度）：結果直接畫進照片本身那張畫布，不另外疊一層。
+       iPhone 上疊在上面的那一層會被另外對齊到整數像素，跟底下的照片差半個像素 ——
+       看起來就是「只有遮色片的地方在動」。畫在同一張畫布上就不可能錯開。
+       選取範圍這時候也用正式那一套（不走拖曳用的快速版），放手前後一模一样 */
+    const inBase = maskSliderLiveRef.current && !maskRangeDragRef.current && !!pre && !!disp
+      && pre.width === w && pre.height === h && disp.width === w && disp.height === h;
     // 顏色／明度範圍看的是拖曳開始時那張畫面（pre），拖的時候用縮小的那張算選取
-    maskAlpha(al, maskCacheId(m), m, w, h, maskLivePreRef.current, `live|${maskLivePreKeyRef.current}`, true);
+    maskAlpha(al, maskCacheId(m), m, w, h, pre, `live|${maskLivePreKeyRef.current}`, !inBase);
     const g = el.getContext('2d')!;
     g.globalCompositeOperation = 'copy'; g.drawImage(adj, 0, 0, w, h);
     g.globalCompositeOperation = 'destination-in'; g.drawImage(al, 0, 0);
     g.globalCompositeOperation = 'source-over';
-    el.style.display = 'block';
+    if (inBase) {
+      const dg = disp.getContext('2d')!;
+      dg.save(); dg.setTransform(1, 0, 0, 1, 0, 0);
+      dg.globalCompositeOperation = 'copy'; dg.drawImage(pre, 0, 0);
+      dg.globalCompositeOperation = 'source-over'; dg.drawImage(el, 0, 0);
+      dg.restore();
+      el.style.display = 'none';
+    } else el.style.display = 'block';
     if (maskOverlayCanvasRef.current) maskOverlayCanvasRef.current.style.display = 'none';   // 疊層自己有紅色
     maskLiveRef.current = true;
   };
@@ -8712,10 +8726,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 <canvas ref={freezeCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{display:'none',objectFit:'fill',zIndex:5}} />
                 <canvas key={surfaceGen} ref={el=>{(fxSurfaceRef as React.MutableRefObject<HTMLCanvasElement|null>).current=el;if(el){preferWebgl2(el);el.addEventListener('webglcontextlost',onSurfaceLost,{once:true});}}} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
                 {/* 拖遮色片形狀時的即時疊層（見 applyComplexEffects 的遮色片那段） */}
-                <canvas ref={maskLiveCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{display:'none',objectFit:'fill',zIndex:4}} />
+                <canvas ref={maskLiveCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{display:'none',objectFit:'fill',zIndex:4,visibility: activeCategory === 'mask' && !maskPicking ? 'visible' : 'hidden'}} />
                 {/* 紅色範圍自己一層：選中／取消選中、按＋時跟參考線在同一幀出現／消失（用 CSS 切，不必重算照片） */}
                 <canvas ref={maskOverlayCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm"
-                  style={{display:'none',objectFit:'fill',zIndex:4,visibility: activeCategory === 'mask' && !maskDeselected && !maskPicking ? 'visible' : 'hidden'}} />
+                  /* 紅色該消失就馬上消失：不在遮色片頁、沒有選中、正在選新種類、選中的這一個還沒畫出來（剛按了新增）、
+                     或「顯示範圍」關著，這一層就直接藏起來（跟按鈕同一格），不等照片重畫完 */
+                  style={{display:'none',objectFit:'fill',zIndex:4,visibility: activeCategory === 'mask' && !maskDeselected && !maskPicking && !!params.maskCreated && !!params.maskShowOverlay ? 'visible' : 'hidden'}} />
 
                 {/* 換過去了但還在算的時候，壓暗＋轉圈，別讓人以為沒反應。
                     只留轉圈 —— 「渲染中」三個字反而讓人覺得等很久。 */}

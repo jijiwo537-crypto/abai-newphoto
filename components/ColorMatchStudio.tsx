@@ -346,7 +346,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       cacheLuts(refKey, hit);   // 移到最新
       setBusy(false);
       setLuts(hit);
-      if (!isAi(pickedRef.current)) setPicked('mkl');
+
       return;
     }
     setBusy(true);
@@ -384,7 +384,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         if (previewSrcRef.current !== srcImg) { previewSrcRef.current = srcImg; setPreview(toImageData(srcImg, PREVIEW_MAX)); }
         cacheLuts(refKey, out);
         setLuts(out);
-        if (!isAi(pickedRef.current)) setPicked('mkl');   // 選了 AI 的話換參考圖照樣用 AI（下面那段會自己重算）
+        // 做法維持使用者選的那一個（可以先選好做法再選參考圖；選了專業的話下面那段會自己算）
       } catch (e) { console.error('color match', e); }
       finally {
         if (!cancelled) setBusy(false);
@@ -887,14 +887,15 @@ export const ColorMatchStudio: React.FC<Props> = ({
           </div>
         )}
         {/* 仿色做法：懸空在預覽下緣、靠左（跟點陣的線稿／陰影同一款，不加外框），滑桿那一列就整列給強度 */}
-        <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 ${embedded ? 'left-3' : 'left-[68px]'} h-11 flex items-center gap-2 z-[5] transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
+        {/* 還沒選參考圖也可以先選做法（選好參考圖就照這個做法算）；圖庫裡一張參考圖都沒有時才不出現 */}
+        {refs.length > 0 && <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 ${embedded ? 'left-3' : 'left-[68px]'} h-11 flex items-center gap-2 z-[5] transition-opacity ${busy ? 'opacity-30 pointer-events-none' : ''}`}>
           {((embedded ? ['mkl', 'cap'] : [...METHODS, 'cap']) as Pick[]).map(m => (
             <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m}
               className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap transition-all active:scale-95 ${picked === m ? 'bg-white text-black font-bold' : 'bg-black/40 text-white/60 backdrop-blur-md'}`}>
               {PICK_LABEL(m)}
             </button>
           ))}
-        </div>
+        </div>}
         {/* 獨立的仿色：左下角換要調色的那張（跟點陣換照片同一款） */}
         {!embedded && (
           <button onClick={onImportNew} data-cm-replace-src data-cm-float aria-label="替換原始圖片"
