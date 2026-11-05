@@ -7879,8 +7879,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     })().catch(() => {});
   };
   const studioPrevRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
-  const [matchRefSrc, setMatchRefSrc] = useState<string | null>(null);
-  const matchRefInputRef = useRef<HTMLInputElement>(null);
   /* 取消＝丟掉這次在工具裡畫的東西：工具一直掛著（進出才會是立刻的），所以換一個新的 */
   const [studioGen, setStudioGen] = useState({ beauty: 0, match: 0 });
   const backFromStudio = () => {
@@ -7955,7 +7953,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     z.setTransform(v.bx - (1 - k) * r.left, v.by - (1 - k) * r.top, k, 0);
   }, [activeCategory]);
   const studioNoop = useCallback(() => {}, []);
-  const pickMatchRef = useCallback(() => matchRefInputRef.current?.click(), []);
   const leaveCategory = (next: () => void) => {
     const commit = STUDIO_CATS.includes(activeCategory) ? studioCommitRef.current : null;
     const res = commit ? commit() : null;
@@ -8035,9 +8032,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   ), [beautyKey, beautySrc, studioGeo, studioEmbed, studioNoop, studioAlign, beautyPainted]);
   const matchEl = useMemo(() => (
     <ColorMatchStudio key={matchKey} imageSrc={matchSrc} geo={studioGeo} embedded={studioEmbed} align={studioAlign} onPainted={matchPainted}
-      referenceSrc={matchRefSrc} onPickReference={pickMatchRef}
       onCancel={studioNoop} onHome={studioNoop} onImportNew={studioNoop} />
-  ), [matchKey, matchSrc, matchRefSrc, studioGeo, studioEmbed, studioNoop, pickMatchRef, studioAlign, matchPainted]);
+  ), [matchKey, matchSrc, studioGeo, studioEmbed, studioNoop, studioAlign, matchPainted]);
 
   /** 模板與疊圖層分頁：滑桿列與小分類列都收起來，整塊控制區給它自己的面板 */
   const ownPanel = activeCategory === 'template' || STUDIO_CATS.includes(activeCategory);
@@ -10106,8 +10102,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           </div>
         </>
       )}
-      <input ref={matchRefInputRef} type="file" accept="image/*" className="hidden"
-        onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; resetPageScroll(); if (f) setMatchRefSrc(URL.createObjectURL(f)); }} />
       {saveState === 'processing' && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>

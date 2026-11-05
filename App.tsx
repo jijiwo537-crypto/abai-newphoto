@@ -707,7 +707,6 @@ const App: React.FC = () => {
           imageSrc={matchImage}
           referenceSrc={matchRef}
           referenceLoading={matchReferenceLoading}
-          onPickReference={handleMatchRefClick}
           initialState={toolDraftState}
           onRequestExit={requestExit}
           onCancel={(keepDraft = false) => {

@@ -35,12 +35,15 @@ import { packWeight, buildHueProtectFrom } from '../utils/protectMask';
 import { buildSkinMap, skinWeight, withoutSkin, type SkinMap } from '../utils/skinProtect';
 import { aiColorMatchLut, warmAiColorMatch, cancelAiColorMatch, type AiEngine } from '../utils/aiColorMatch';
 import { sampleMaskAt } from '../utils/colorTransfer';
-/** 仿色做法：統計法三種＋AI（WCT2 學成 LUT，見 utils/aiColorMatch） */
+import { useMatchRefs, addMatchRefs, removeMatchRef } from '../utils/matchRefs';
+/** 仿色做法：統計法三種＋AI（CAP-VSTNet 學成 LUT，見 utils/aiColorMatch） */
 type Pick = Method | 'cap';
-const PICK_LABEL = (m: Pick) => (m === 'cap' ? 'AI 寫實' : METHOD_LABEL[m]);
+const PICK_LABEL = (m: Pick) => (m === 'cap' ? '氛圍' : METHOD_LABEL[m]);
 const AI_ENGINE: Partial<Record<Pick, AiEngine>> = { cap: 'cap' };
 const isAi = (m: Pick) => !!AI_ENGINE[m];
 const warmFor = (m: Pick) => { const e = AI_ENGINE[m]; if (e) warmAiColorMatch(e); };
+/** 強度上限：標準等統計法 100；氛圍可以推到 150（比參考圖再更進一步） */
+const maxFor = (m: Pick) => (m === 'cap' ? 150 : 100);
 
 interface Props {
   /** 要調色的照片 */
@@ -52,10 +55,10 @@ interface Props {
   onHome: () => void;
   /** 換一張要調色的照片 */
   onImportNew: () => void;
-  /** 選參考風格的照片（交給外面開檔案選擇器） */
-  onPickReference: () => void;
-  /** 外面選好的參考圖 */
-  referenceSrc: string | null;
+  /** （舊的）交給外面開檔案選擇器：現在參考圖庫在工具自己裡面（見 utils/matchRefs），這個不再用 */
+  onPickReference?: () => void;
+  /** 外面指定的參考圖（從歷史紀錄點回來時） */
+  referenceSrc?: string | null;
   referenceLoading?: boolean;
   /** 從首頁的歷史紀錄點回來時，把當時的參數餵回來 */
   initialState?: any;
@@ -77,6 +80,16 @@ interface Props {
   /** 嵌在編輯器裡：照片第一次真的畫到畫面上了（見 BeautyStudio 的同名參數） */
   onPainted?: () => void;
 }
+
+/* iPhone 的照片選擇器關掉之後 Safari 偶爾會把整頁捲一點點（照片是照量好的螢幕位置擺的，一捲就錯位）：捲回原位 */
+const fixPageScroll = () => {
+  const fix = () => {
+    if (window.scrollX || window.scrollY) window.scrollTo(0, 0);
+    const se = document.scrollingElement as HTMLElement | null;
+    if (se && (se.scrollTop || se.scrollLeft)) { se.scrollTop = 0; se.scrollLeft = 0; }
+  };
+  fix(); requestAnimationFrame(fix); setTimeout(fix, 350);
+};
 
 const PREVIEW_MAX = 1400;
 const STAT_MAX = 900;   // 統計用的縮圖，再大也不會更準
@@ -102,9 +115,26 @@ const toImageData = (img: HTMLImageElement, max: number): ImageData => {
 };
 
 export const ColorMatchStudio: React.FC<Props> = ({
-  imageSrc, onCancel, onHome, onImportNew, onPickReference, referenceSrc, onSendToEditor,
-  initialState, onRequestExit, referenceLoading=false, embedded, align, onPainted, geo,
+  imageSrc, onCancel, onHome, onImportNew, referenceSrc: referenceProp = null, onSendToEditor,
+  initialState, onRequestExit, referenceLoading: referenceLoadingProp=false, embedded, align, onPainted, geo,
 }) => {
+  /* 參考圖庫：很多張、隨時切換、可刪除，離開或換照片都還在（見 utils/matchRefs） */
+  const refs = useMatchRefs();
+  const [referenceSrc, setReferenceSrc] = useState<string | null>(referenceProp);
+  useEffect(() => { if (referenceProp) setReferenceSrc(referenceProp); }, [referenceProp]);
+  const [refAdding, setRefAdding] = useState(false);
+  const referenceLoading = referenceLoadingProp || refAdding;
+  const refInputRef = useRef<HTMLInputElement>(null);
+  const onRefFiles = async (files: File[]) => {
+    if (!files.length) return;
+    setRefAdding(true);
+    try { const added = await addMatchRefs(files); if (added[0]) setReferenceSrc(added[0].url); }
+    finally { setRefAdding(false); }
+  };
+  const deleteRef = (id: string, url: string) => {
+    removeMatchRef(id);
+    if (referenceSrc === url) setReferenceSrc(null);
+  };
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
   const sg = useStudioGeo(embedded ? geo : null, srcImg ? srcImg.naturalWidth || srcImg.width : 0, srcImg ? srcImg.naturalHeight || srcImg.height : 0);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -119,6 +149,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   /** SA-LUT：第二顆 LUT 與情境圖（逐點混合） */
   const [aiError, setAiError] = useState('');
   const [strength, setStrength] = useState(100);
+  useEffect(() => { const m = maxFor(picked); setStrength(v => Math.min(v, m)); }, [picked]);
   const [finalUrl, setFinalUrl] = useState<string | null>(null);
   const [finalPreview, setFinalPreview] = useState<string | null>(null);
   const finalPreviewRef = useRef<string | null>(null);
@@ -209,7 +240,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
 
   const onStageDown = (e: React.PointerEvent) => {
     // 前後對比那顆按鈕自己有事情要做，不要被當成縮放
-    if ((e.target as HTMLElement).closest('[data-cm-compare]')) return;
+    if ((e.target as HTMLElement).closest('[data-cm-compare],[data-cm-float]')) return;   // 懸空的按鈕也不算
     ptsRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     // 抓不到指標就算了，別讓它把後面設定縮放狀態的程式碼一起中斷掉
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* 沒抓到也無所謂 */ }
@@ -426,7 +457,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     restoredRef.current = true;
     const st = initialState;
     if (st.picked) setPicked(st.picked);
-    if (st.strength !== undefined) setStrength(Math.max(0,Math.min(150,st.strength)));
+    if (st.strength !== undefined) setStrength(Math.max(0,Math.min(maxFor(st.picked || 'mkl'),st.strength)));
   }, [initialState]);
 
   /** 現在這一組設定。參考圖也一起存 —— 少了它就重算不出同一組顏色。 */
@@ -791,6 +822,22 @@ export const ColorMatchStudio: React.FC<Props> = ({
             <BusySpinner text="AI仿色中" />
           </div>
         )}
+        {/* 仿色做法：懸空在預覽下緣中間（跟點陣的線稿／陰影同一款），滑桿那一列就整列給強度 */}
+        <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 left-1/2 -translate-x-1/2 h-11 flex items-center gap-2 z-[5] transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
+          {((embedded ? ['mkl', 'cap'] : [...METHODS, 'cap']) as Pick[]).map(m => (
+            <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m}
+              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap border transition-all active:scale-95 ${picked === m ? 'bg-white text-black border-white font-bold' : 'bg-black/40 text-white/60 border-white/15 backdrop-blur-md'}`}>
+              {PICK_LABEL(m)}
+            </button>
+          ))}
+        </div>
+        {/* 獨立的仿色：左下角換要調色的那張（跟點陣換照片同一款） */}
+        {!embedded && (
+          <button onClick={onImportNew} data-cm-replace-src data-cm-float aria-label="替換原始圖片"
+            className="absolute left-3 bottom-3 w-11 h-11 rounded-lg overflow-hidden border border-white/30 z-[5] active:scale-95 transition-transform">
+            <img src={imageSrc} alt="" className="w-full h-full object-cover" />
+          </button>
+        )}
         {ready && (
           <button
             data-cm-compare
@@ -813,77 +860,49 @@ export const ColorMatchStudio: React.FC<Props> = ({
         )}
       </div>
 
-      {/* 欄位高度跟編輯器的控制區一樣（11rem）：嵌在編輯器裡時預覽大小相同，切換不會跳；
-          兩根滑桿並排，整塊比以前矮，預覽就大一些。 */}
-      <section className={`color-match-panel flex flex-col shrink-0 min-h-0 bg-[#0a0a0a] border-t border-[#1a1a1a] ${embedded ? '' : 'pb-6'}`} style={{height: embedded ? '11rem' : 'calc(11rem + 24px)'}}>
-      {/* 參考圖那一列。
-           還沒選參考圖時就只有「導入參考圖片」一顆，佔滿整列（跟以前一樣）；
-           選過之後右邊讓出位子給「替換原始圖片」—— 導入那顆縮短，
-           空出來的地方剛好放第二顆，兩顆等寬。 */}
-      {/* pt-3 跟 pb-3 對稱：上面緊貼著預覽區看起來像黏住了 */}
-      <div className="px-4 pt-3 pb-2 shrink-0 flex items-stretch gap-2">
-        <button
-          onClick={onPickReference}
-          disabled={referenceLoading}
-          data-cm-pickref
-          className={`${referenceSrc ? 'flex-1 min-w-0' : 'w-full'} h-12 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform`}
-        >
-          <div className="w-8 h-8 rounded-lg overflow-hidden bg-[#1a1a1a] flex items-center justify-center shrink-0">
-            {referenceSrc
-              ? <img src={referenceSrc} alt="" className="w-full h-full object-cover" />
-              : <Icon name="add_photo_alternate" className="text-xl text-white/40" />}
+      {/* 下面這塊跟濾鏡同一個版面（總高 11rem，嵌在編輯器裡時預覽大小不會跳）：
+           上面 5rem 是強度滑桿，下面 6rem 是一排參考圖 —— 最左邊那格是新增，其他每一格是一張參考圖，
+           點一下就換成仿那一張；選中的那張右上角有刪除。 */}
+      <section className={`color-match-panel flex flex-col shrink-0 min-h-0 bg-[#111] border-t border-white/5 ${embedded ? '' : 'pb-6'}`} style={{height: embedded ? '11rem' : 'calc(11rem + 24px)'}}>
+        <div className={`h-[5rem] shrink-0 px-8 flex flex-col justify-center border-b border-white/5 transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
+          <div className="flex justify-between items-center select-none mb-1 translate-y-2">
+            <span className="font-black text-white/40 uppercase text-[10px] tracking-[0.2em]">強度</span>
+            <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2.5 py-0.5 rounded">{strength}</span>
           </div>
-          <span className="flex-1 min-w-0 text-left text-[10px] font-black uppercase tracking-[0.2em] text-white/60 truncate">導入參考圖片</span>
-          {!referenceSrc && <Icon name="chevron_right" className="text-xl text-white/30 shrink-0" />}
-        </button>
-        {referenceSrc && !embedded && (
-          <button
-            onClick={onImportNew}
-            data-cm-replace-src
-            className="flex-1 min-w-0 h-12 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform"
-          >
-            {/* 方塊裡放的是「現在正在調色的那張原圖」，跟左邊那顆放參考圖是同一個道理 ——
-                一眼就看得出來這顆是換哪一張。 */}
-            <div className="w-8 h-8 rounded-lg overflow-hidden bg-[#1a1a1a] flex items-center justify-center shrink-0">
-              <img src={imageSrc} alt="" className="w-full h-full object-cover" />
+          <div className="relative h-10 flex items-center touch-none">
+            <input type="range" min={0} max={maxFor(picked)} value={Math.min(strength, maxFor(picked))}
+              data-cm-slider="強度" onChange={(e) => setStrength(Number(e.target.value))}
+              className="custom-range" />
+          </div>
+        </div>
+        <div data-cm-refs className="h-[6rem] shrink-0 flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808]">
+          <button onClick={() => refInputRef.current?.click()} disabled={referenceLoading} data-cm-pickref aria-label="新增參考圖片"
+            className="flex flex-col items-center shrink-0 w-[64px] active:scale-95 transition-transform">
+            <div className="relative w-full h-[76px] rounded-lg bg-[#1a1a1a] flex flex-col items-center justify-center gap-1 text-white/50">
+              {refAdding ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                : <Icon name="add_photo_alternate" className="text-2xl" />}
+              <span className="text-[8px] font-black tracking-widest">新增</span>
             </div>
-            <span className="flex-1 min-w-0 text-left text-[10px] font-black uppercase tracking-[0.2em] text-white/60 truncate">替換原始圖片</span>
           </button>
-        )}
-      </div>
-
-      {/* 嵌在編輯器裡：只給兩種——標準（統計法）與 AI 寫實（CAP-VSTNet）；其他細分的做法只在獨立的仿色裡 */}
-      {embedded && <div role="group" aria-label="仿色方法" className={`px-4 flex gap-2 shrink-0 transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
-        {(['mkl', 'cap'] as Pick[]).map(m => <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{PICK_LABEL(m)}</button>)}
-      </div>}
-      {/* 嵌在編輯器裡：滑桿往上、上下留更多空間 */}
-      {!embedded && <div role="group" aria-label="仿色方法" className={`px-4 flex gap-2 shrink-0 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
-        {([...METHODS, 'cap'] as Pick[]).map(m => <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-8 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{PICK_LABEL(m)}</button>)}
-      </div>}
-
-      {/* 滑桿：兩根並排（跟編輯器特效細項同一款）。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
-      <div className={`px-5 flex-1 min-h-0 grid grid-cols-1 gap-5 transition-opacity ${embedded ? 'content-center pb-2' : 'pt-3 content-start'} ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
-          {/* 強度可以推到 150（100 以上＝比參考圖再更進一步），預設維持 100。
-              膚色保護不再是滑桿：自動找臉、學這個人的膚色來保護（見 utils/skinProtect），整列都給強度 */}
-          {([['強度', strength, setStrength, 150]] as const).map(([label, val, set, max]) => (
-            <div key={label} className="min-w-0">
-              <div className="flex justify-between items-center px-1 mb-1">
-                <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.12em] truncate">{label}</span>
-                <span className="text-[10px] leading-none font-sans tabular-nums font-bold bg-white/10 px-1.5 py-[4px] rounded">{val}</span>
+          {refs.map(r => {
+            const on = referenceSrc === r.url;
+            return (
+              <div key={r.id} className="relative shrink-0 w-[64px] h-[76px]">
+                <button onClick={() => { if (!on) setReferenceSrc(r.url); }} data-cm-ref={r.id} aria-pressed={on} aria-label="參考圖片"
+                  className="block w-full h-full rounded-lg overflow-hidden bg-[#1a1a1a] active:scale-95 transition-transform">
+                  <img src={r.url} alt="" draggable={false} className="w-full h-full object-cover" />
+                  {on && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
+                </button>
+                {on && <button onClick={() => deleteRef(r.id, r.url)} data-cm-delref aria-label="刪除這張參考圖"
+                  className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center active:scale-90">
+                  <Icon name="close" className="text-[13px]" />
+                </button>}
               </div>
-              <div className="slider-wrap relative h-[26px] flex items-center justify-center touch-none">
-                <input
-                  type="range" min={0} max={max} value={val}
-                  data-cm-slider={label}
-                  onChange={(e) => set(Number(e.target.value))}
-                  style={{ left: 0, width: '100%', height: 26, margin: '-13px 0 0', touchAction: 'none' }}
-                  className="custom-range dense"
-                />
-              </div>
-            </div>
-          ))}
-      </div>
-
+            );
+          })}
+        </div>
+        <input ref={refInputRef} type="file" accept="image/*" multiple className="hidden"
+          onChange={e => { const f = [...(e.target.files || [])]; e.target.value = ''; fixPageScroll(); onRefFiles(f); }} />
       </section>
       {aiError && <div role="alert" className="absolute top-16 left-4 right-4 z-[82] rounded-xl bg-black/90 p-3 text-sm" onClick={() => setAiError('')}>{aiError}</div>}
       {saveError && <div role="alert" className="absolute top-16 left-4 right-4 z-[82] rounded-xl bg-black/90 p-3 text-sm">{saveError}</div>}
