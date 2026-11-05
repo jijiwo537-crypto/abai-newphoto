@@ -273,3 +273,30 @@ export function packWeight(weight: Float32Array): Uint8Array {
   return out;
 }
 
+
+/**
+ * 只有「色相保護」（紅色保護）那一層：每顆像素依它的色相算保護多少（PROTECT_BANDS），
+ * 再補洞＋羽化（同一套防斷層）。跟膚色無關，所以一張圖算一次就好。
+ */
+export function buildHueProtectFrom(src: CanvasImageSource, W: number, H: number): { w: number; h: number; weight: Float32Array } | null {
+  const size = maskSize(W, H), w = size.w, h = size.h, n = w * h;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  if (!g) return null;
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(src, 0, 0, w, h);
+  const data = g.getImageData(0, 0, w, h).data;
+  c.width = c.height = 0;
+  const hue = new Float32Array(n), luma = new Float32Array(n);
+  for (let p = 0, k = 0; k < n; p += 4, k++) {
+    const r8 = data[p], g8 = data[p + 1], b8 = data[p + 2];
+    luma[k] = (0.299 * r8 + 0.587 * g8 + 0.114 * b8) / 255;
+    const R = LIN8[r8], G = LIN8[g8], B = LIN8[b8];
+    const fx = labF((0.4124564 * R + 0.3575761 * G + 0.1804375 * B) / WHITE_X);
+    const fy = labF(0.2126729 * R + 0.7151522 * G + 0.0721750 * B);
+    const fz = labF((0.0193339 * R + 0.1191920 * G + 0.9503041 * B) / WHITE_Z);
+    hue[k] = hueProtect(500 * (fx - fy), 200 * (fy - fz));
+  }
+  return { w, h, weight: deband(hue, luma, w, h) };
+}

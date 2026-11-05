@@ -31,7 +31,7 @@ import { LutRenderer } from '../utils/lutGl';
 import { useStudioGeo } from './studioGeo';
 import type { GeoParams } from '../utils/compose';
 import type { StudioResult } from './BeautyStudio';
-import { packWeight } from '../utils/protectMask';
+import { packWeight, buildHueProtectFrom } from '../utils/protectMask';
 import { buildSkinMap, skinWeight, withoutSkin, type SkinMap } from '../utils/skinProtect';
 import { aiColorMatchLut, warmAiColorMatch } from '../utils/aiColorMatch';
 import { sampleMaskAt } from '../utils/colorTransfer';
@@ -154,7 +154,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const glWeightRef = useRef<unknown>(null);
   /* 膚色保護（見 utils/skinProtect）：找到臉、學這個人的膚色，算出一張「皮膚圖」。
      原圖的皮膚圖跟參考圖無關，換參考圖不用重算；沒有臉就是全 0（完全不保護）。 */
-  const skinRef = useRef<{ img: HTMLImageElement; map: SkinMap } | null>(null);
+  const skinRef = useRef<{ img: HTMLImageElement; map: SkinMap; hue: { w: number; h: number; weight: Float32Array } | null } | null>(null);
   const weightRef = useRef<{ w: number; h: number; weight: Float32Array } | null>(null);
   /** 套用時的保護權重（沒有就 null） */
   const useWeight = useCallback(() => weightRef.current, []);
@@ -274,12 +274,21 @@ export const ColorMatchStudio: React.FC<Props> = ({
         const t0 = performance.now();
         const sw = srcImg.naturalWidth || srcImg.width, sh = srcImg.naturalHeight || srcImg.height;
         const rw = refImg.naturalWidth || refImg.width, rh = refImg.naturalHeight || refImg.height;
-        if (skinRef.current?.img !== srcImg) skinRef.current = { img: srcImg, map: await buildSkinMap(srcImg, sw, sh) };
+        if (skinRef.current?.img !== srcImg) skinRef.current = { img: srcImg, map: await buildSkinMap(srcImg, sw, sh), hue: buildHueProtectFrom(srcImg, sw, sh) };
         if (cancelled) return;
         const sMap = skinRef.current.map;
         const rMap = await buildSkinMap(refImg, rw, rh);
         if (cancelled) return;
-        weightRef.current = sMap.faces ? { w: sMap.w, h: sMap.h, weight: skinWeight(sMap) } : null;
+        /* 保護權重＝紅色（色相）保護 ∪ 找臉的膚色保護，取大的那一個。
+           紅色保護跟以前一樣一直都在：沒有它的話紅色、橘色會被拉得太飽和（實測整體彩度高出一倍） */
+        const hue = skinRef.current.hue;
+        let weight: Float32Array | null = hue ? hue.weight : null;
+        if (sMap.faces) {
+          const sw2 = skinWeight(sMap);
+          if (weight && weight.length === sw2.length) { const m = new Float32Array(sw2.length); for (let i = 0; i < m.length; i++) m[i] = Math.max(weight[i], sw2[i]); weight = m; }
+          else weight = sw2;
+        }
+        weightRef.current = weight ? { w: sMap.w, h: sMap.h, weight } : null;
         try { (window as any).__cmSkin = { faces: sMap.faces, refFaces: rMap.faces, ms: Math.round(performance.now() - t0) }; } catch { /* noop */ }
         /* 統計用縮圖的每一顆像素都算進去，但兩張都先拿掉皮膚：皮膚另外保護，
            「顏色怎麼對應」只從其他地方學 —— 參考圖裡的人臉不會把原圖的天空、衣服拉成膚色，
