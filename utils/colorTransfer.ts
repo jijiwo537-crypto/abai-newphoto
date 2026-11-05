@@ -619,6 +619,9 @@ export type ApplyOptions = {
   protect?: ProtectLike | null;
   /** 有 protect 時必填：data 的寬（要換算 x / y 才取樣得到遮罩） */
   width?: number;
+  /** SA-LUT：第二顆 LUT 與情境圖（每個位置在兩顆 LUT 之間混合多少）。有的話要給 width */
+  lut2?: Lut3D | null;
+  ctx?: { w: number; h: number; data: Float32Array } | null;
 };
 
 /** 只取 applyLut 需要的欄位，免得 colorTransfer 反過來相依 protectMask */
@@ -834,7 +837,7 @@ export function applyLut(
   lut: Lut3D,
   opt: ApplyOptions,
 ): void {
-  const out: Rgb = [0, 0, 0];
+  const out: Rgb = [0, 0, 0], out2: Rgb = [0, 0, 0];
   const labIn: number[] = [0, 0, 0], labOut: number[] = [0, 0, 0], rgb: number[] = [0, 0, 0];
   /* 強度上限放到 2（介面上的 200）。
      最後那一步是線性內插 src + (res - src) * s —— s 超過 1 就是「往參考圖的
@@ -854,6 +857,12 @@ export function applyLut(
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i] / 255, g = data[i + 1] / 255, b = data[i + 2] / 255;
     sampleLut(lut, r, g, b, out);
+    if (opt.lut2 && opt.ctx && iw > 0) {
+      const k = i >> 2, ihh = Math.max(1, Math.round(data.length / 4 / iw));
+      const t = sampleMaskAt(opt.ctx.data, opt.ctx.w, opt.ctx.h, ((k % iw) + 0.5) / iw, (((k / iw) | 0) + 0.5) / ihh);
+      sampleLut(opt.lut2, r, g, b, out2);
+      out[0] += (out2[0] - out[0]) * t; out[1] += (out2[1] - out[1]) * t; out[2] += (out2[2] - out[2]) * t;
+    }
     rgbToLab(r, g, b, labIn);
     rgbToLab(out[0], out[1], out[2], labOut);
 

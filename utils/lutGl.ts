@@ -35,6 +35,10 @@ precision highp float;
 precision highp sampler3D;
 uniform sampler2D uImage;
 uniform sampler3D uLut;
+/* SA-LUT：第二顆 LUT＋情境圖（每個位置在兩顆 LUT 之間混合多少）。uHasCtx 是 0 時只用 uLut */
+uniform sampler3D uLut2;
+uniform sampler2D uCtx;
+uniform float uHasCtx;
 /* 防斷層的保護遮罩：R ＝ 膚色保護、G ＝ 紅色權重。已經在 CPU 上做完
    補洞與羽化，所以它看得到鄰居 —— 臉上那塊偏青的皮膚也一起受保護。
    uHasMask 是 0 的時候整條路退回原本的逐像素判斷，結果跟以前一模一樣。 */
@@ -200,7 +204,9 @@ vec3 lab2rgbSoft(float L, vec2 ab) {
 
 void main() {
   vec3 src = texture(uImage, vUv).rgb;
-  vec3 mapped = texture(uLut, src * uLutScale + uLutOffset).rgb;
+  vec3 lc = src * uLutScale + uLutOffset;
+  vec3 mapped = texture(uLut, lc).rgb;
+  if (uHasCtx > 0.5) mapped = mix(mapped, texture(uLut2, lc).rgb, texture(uCtx, vUv).r);
   vec3 labIn = rgb2lab(src);
   vec3 labOut = rgb2lab(mapped);
   /* 這顆像素該被保護多少：膚色保護與色相保護取大的那一個。
@@ -266,13 +272,14 @@ export class LutRenderer {
   private prog: WebGLProgram;
   private imgTex: WebGLTexture;
   private maskTex: WebGLTexture | null = null;
+  private ctxTex: WebGLTexture | null = null;
   private luts = new Map<string, WebGLTexture>();
   private uni: Record<string, WebGLUniformLocation | null> = {};
   private lutSize = 0;
 
   private constructor(canvas: HTMLCanvasElement, gl: WebGL2RenderingContext, prog: WebGLProgram, imgTex: WebGLTexture) {
     this.canvas = canvas; this.gl = gl; this.prog = prog; this.imgTex = imgTex;
-    for (const n of ['uImage', 'uLut', 'uProtectMap', 'uHasMask', 'uStrength', 'uProtect', 'uLutScale', 'uLutOffset', 'uMaxSat', 'uSatRoom', 'uSatFrac', 'uRedMinSat', 'uRedDamp', 'uKeepL']) {
+    for (const n of ['uImage', 'uLut', 'uProtectMap', 'uHasMask', 'uStrength', 'uProtect', 'uLutScale', 'uLutOffset', 'uMaxSat', 'uSatRoom', 'uSatFrac', 'uRedMinSat', 'uRedDamp', 'uKeepL', 'uLut2', 'uCtx', 'uHasCtx']) {
       this.uni[n] = gl.getUniformLocation(prog, n);
     }
   }
@@ -367,6 +374,23 @@ export class LutRenderer {
     this.maskTex = null;
   }
 
+  /** SA-LUT 的情境圖（0～1，w×h，由上而下）；翻轉跟其他貼圖一樣 */
+  setCtx(data: Float32Array, w: number, h: number): void {
+    const gl = this.gl;
+    if (!this.ctxTex) this.ctxTex = gl.createTexture()!;
+    const bytes = new Uint8Array(w * h * 4);
+    for (let i = 0; i < w * h; i++) { bytes[i * 4] = Math.round(Math.min(1, Math.max(0, data[i])) * 255); bytes[i * 4 + 3] = 255; }
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.ctxTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+  }
+
   /** 一顆 LUT 上傳成一張 3D 貼圖，之後換做法只是換綁 */
   setLut(key: string, lut: GlLut): void {
     const gl = this.gl;
@@ -400,9 +424,10 @@ export class LutRenderer {
   hasLut(key: string): boolean { return this.luts.has(key); }
 
   /** 畫一張。換做法、動滑桿都只走這裡，成本就是一個 draw call。 */
-  draw(key: string, strength: number, protect: number, keepL = 1): boolean {
+  draw(key: string, strength: number, protect: number, keepL = 1, key2?: string): boolean {
     const gl = this.gl;
     const tex = this.luts.get(key);
+    const tex2 = key2 ? this.luts.get(key2) : undefined;
     if (!tex || !this.lutSize) return false;
     gl.useProgram(this.prog);
     gl.activeTexture(gl.TEXTURE0);
@@ -429,6 +454,15 @@ export class LutRenderer {
     gl.uniform1f(this.uni.uRedMinSat!, RED_MIN_SAT);
     gl.uniform1f(this.uni.uRedDamp!, RED_HUE_DAMP);
     gl.uniform1f(this.uni.uKeepL!, keepL);
+    // 沒用到第二顆 LUT／情境圖時也要綁東西上去（同 uProtectMap 的理由），用 uHasCtx 關掉
+    const useCtx = !!(tex2 && this.ctxTex);
+    gl.activeTexture(gl.TEXTURE3);
+    gl.bindTexture(gl.TEXTURE_3D, useCtx ? tex2! : tex);
+    gl.uniform1i(this.uni.uLut2!, 3);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, useCtx ? this.ctxTex : this.imgTex);
+    gl.uniform1i(this.uni.uCtx!, 4);
+    gl.uniform1f(this.uni.uHasCtx!, useCtx ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     return true;
   }
@@ -445,6 +479,7 @@ export class LutRenderer {
     lut: GlLut, strength: number, protect: number,
     mask?: { rgba: Uint8Array; w: number; h: number } | null,
     keepL = 1,
+    extra?: { lut2: GlLut; ctx: { w: number; h: number; data: Float32Array } } | null,
   ): HTMLCanvasElement | null {
     const r = LutRenderer.create();
     if (!r) return null;
@@ -453,7 +488,8 @@ export class LutRenderer {
       r.setImage(source, w, h);
       if (mask) r.setProtectMap(mask.rgba, mask.w, mask.h);
       r.setLut('one', lut);
-      if (!r.draw('one', strength, protect, keepL)) { r.dispose(); return null; }
+      if (extra) { r.setLut('two', extra.lut2); r.setCtx(extra.ctx.data, extra.ctx.w, extra.ctx.h); }
+      if (!r.draw('one', strength, protect, keepL, extra ? 'two' : undefined)) { r.dispose(); return null; }
       const out = document.createElement('canvas');
       out.width = w; out.height = h;
       out.getContext('2d')!.drawImage(r.canvas, 0, 0);
@@ -471,6 +507,8 @@ export class LutRenderer {
     this.luts.clear();
     if (this.maskTex) gl.deleteTexture(this.maskTex);
     this.maskTex = null;
+    if (this.ctxTex) gl.deleteTexture(this.ctxTex);
+    this.ctxTex = null;
     gl.deleteTexture(this.imgTex);
     gl.deleteProgram(this.prog);
   }
