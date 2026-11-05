@@ -168,15 +168,16 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const glReadyRef = useRef(false);
   /** 用 state 是為了讓備援畫布真的被藏起來（ref 改了不會重繪） */
   const [glReady, setGlReady] = useState(false);
-  // GPU 畫布是直接掛上去的：構圖開關時跟著換尺寸規則（hidden 照舊）
-  useEffect(() => {
-    const c = glRef.current?.canvas;
-    if (!c) return;
-    const hidden = c.classList.contains('hidden');
-    c.className = (sg.gh ? 'block w-full h-full' : 'max-w-full max-h-full object-contain rounded-sm shadow-2xl') + (hidden ? ' hidden' : '');
-    if (wrapRef.current && c.parentElement !== wrapRef.current) wrapRef.current.appendChild(c);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sg.gh, glReady]);
+  /* GPU 只負責算，畫面上看到的永遠是同一張一般畫布（canvasRef）：GPU 算完直接複製過去。
+     以前是把 GPU 畫布本身掛上去顯示 —— iPhone 的 Safari 擺 WebGL 畫布的位置跟一般畫布差零點幾個像素，
+     導入參考圖（換成 GPU 畫布顯示）之後，前後對比、切換分頁時照片就看得出在動。 */
+  const present = () => {
+    const gl = glRef.current, cvs = canvasRef.current;
+    if (!gl || !cvs) return;
+    if (cvs.width !== gl.canvas.width || cvs.height !== gl.canvas.height) { cvs.width = gl.canvas.width; cvs.height = gl.canvas.height; }
+    const g = cvs.getContext('2d');
+    if (g) { g.clearRect(0, 0, cvs.width, cvs.height); g.drawImage(gl.canvas, 0, 0); }
+  };
   /** CPU 版才需要：算好的結果先留著，前後對比才切得動 */
   const processedRef = useRef<ImageData | null>(null);
 
@@ -255,13 +256,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
   useEffect(() => {
     const gl = LutRenderer.create();
     glRef.current = gl;
-    if (gl && zoomRef.current) {
-      // 先藏起來。它是直接掛進畫面裡的，還沒畫東西之前如果留在版面裡，
-      // 會跟佔位用的原圖擠在同一排 —— 原圖就被推到旁邊去了（量到偏了 150px）。
-      gl.canvas.className = 'max-w-full max-h-full object-contain rounded-sm shadow-2xl hidden';
-      (wrapRef.current || zoomRef.current).appendChild(gl.canvas);
-    }
-    return () => { gl?.canvas.remove(); gl?.dispose(); glRef.current = null; };
+    // GPU 畫布不放進畫面（見 present）
+    return () => { gl?.dispose(); glRef.current = null; };
   }, []);
 
   useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){skinRef.current=null;weightRef.current=null;setSrcImg(image);}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
@@ -365,7 +361,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       // Upload, draw, and reveal atomically before the browser presents a frame.
       glReadyRef.current = gl.draw(luts[picked] ? picked : 'mkl',strength/100,0,luts[picked] ? keepL : 1,luts[picked] ? key2 : undefined);
     } catch { glReadyRef.current = false; }
-    gl.canvas.classList.toggle('hidden', !glReadyRef.current);
+    if (glReadyRef.current) present();
     setGlReady(glReadyRef.current);
   }, [preview, luts]);
 
@@ -384,7 +380,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         gl.clearProtectMap();
         glWeightRef.current = null;
       }
-      if (gl.draw(picked, st, 0, keepL, key2)) return;
+      if (gl.draw(picked, st, 0, keepL, key2)) { present(); return; }
     }
     // 退回 CPU
     const cvs = canvasRef.current;
@@ -409,23 +405,20 @@ export const ColorMatchStudio: React.FC<Props> = ({
      CPU 版把事先算好的兩份直接貼上去。兩條路都不經過 React 狀態，按下去才不會慢半拍。 */
   /* 嵌在編輯器裡：按住看的是照片最原始的樣子（跟其他分頁的前後對比同一張），蓋一張畫布在照片上 */
   const originalRef = useOriginalImage(embedded?.getOriginalSrc?.() ?? null);
-  const cmpRef = useRef<HTMLCanvasElement>(null);
   const showSide = (original: boolean) => {
-    const cmp = cmpRef.current, im = originalRef.current;
-    if (embedded && cmp && im) {
-      if (!original) { cmp.parentElement!.style.display = 'none'; return; }
-      const z = wrapRef.current || zoomRef.current;
-      const el = z && [...z.querySelectorAll(':scope > canvas, :scope > img')].find(e => (e as HTMLElement).offsetParent && !(e as HTMLElement).classList.contains('hidden')) as HTMLElement | undefined;
-      if (el) {
-        const box = cmp.parentElement!;
-        box.style.left = el.offsetLeft + 'px'; box.style.top = el.offsetTop + 'px';
-        box.style.width = el.offsetWidth + 'px'; box.style.height = el.offsetHeight + 'px';
-        const dpr = Math.min(3, window.devicePixelRatio || 1);
-        cmp.width = Math.max(1, Math.round(el.offsetWidth * dpr)); cmp.height = Math.max(1, Math.round(el.offsetHeight * dpr));
-        drawOriginalInto(cmp.getContext('2d')!, im, cmp.width, cmp.height);
-        box.style.display = 'block';
+    const im = originalRef.current, cvs = canvasRef.current;
+    /* 嵌在編輯器裡：原圖直接畫在「正在顯示的那張畫布」上 —— 同一個元素、同一個位置。
+       以前是另外蓋一張畫布，位置用 offsetLeft／offsetTop（整數像素）算，照片在 102.5 時就差半個像素，
+       按下跟放開看得出照片在跳 */
+    if (embedded && im && cvs && ready) {
+      if (original) {
+        const g = cvs.getContext('2d');
+        if (g) { g.clearRect(0, 0, cvs.width, cvs.height); drawOriginalInto(g, im, cvs.width, cvs.height); }
         return;
       }
+      if (glRef.current && glReadyRef.current) { paint(); return; }
+      if (processedRef.current) { cvs.getContext('2d')?.putImageData(processedRef.current, 0, 0); return; }
+      paint(); return;
     }
     if (glRef.current && glReadyRef.current) { paint(original ? 0 : undefined); return; }
     const ctx = canvasRef.current?.getContext('2d');
@@ -438,10 +431,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
 
   // 導出畫面蓋上來的時候，把 GPU 畫布也收起來。它已經被不透明的浮層擋住了，
   // 但收起來才不會有任何機會露出第二張圖。
-  useEffect(() => {
-    const gl = glRef.current;
-    if (gl) gl.canvas.classList.toggle('hidden', !!finalUrl || !glReadyRef.current);
-  }, [finalUrl, glReady]);
+
 
   /* ── 歷史紀錄 ────────────────────────────────────────────────────
      跟其他工具同一套：儲存時記一筆，沒儲存直接離開也記一筆。 */
@@ -804,13 +794,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
             style={sg.gh ? { aspectRatio: sg.ratio } : { display: 'contents' }}>
           {sg.gh && <img src={sg.sizer} alt="" aria-hidden="true" draggable={false} className="block max-w-full max-h-full invisible" />}
           <div ref={wrapRef} data-studio-geo={sg.gh ? 'on' : 'off'} style={sg.gh ? sg.wrapStyle : { display: 'contents' }}>
-          {/* 前後對比的原圖（見 showSide）。包一層 span：ALIGN_FILL_CSS 會把這一層直接的 canvas 拉滿 */}
-          <span className="absolute pointer-events-none rounded-sm overflow-hidden" style={{ display: 'none', zIndex: 2 }}>
-            <canvas ref={cmpRef} className="block w-full h-full" />
-          </span>
           <canvas
             ref={canvasRef}
-            className={`${sg.gh ? 'block w-full h-full' : 'max-w-full max-h-full object-contain rounded-sm shadow-2xl'} ${(ready && !glReady) || (!ready && phShown) ? '' : 'hidden'}`}
+            className={`${sg.gh ? 'block w-full h-full' : 'max-w-full max-h-full object-contain rounded-sm shadow-2xl'} ${ready || phShown ? '' : 'hidden'}`}
           />
           </div>
           </div>
