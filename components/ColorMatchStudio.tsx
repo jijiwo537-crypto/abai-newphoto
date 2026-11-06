@@ -348,6 +348,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
      一組約 1.7MB，最多留 12 組（約 20MB），再多就丟最久沒用的那組；換了要調色的照片就整個清掉 */
   const lutCacheRef = useRef<{ src: HTMLImageElement | null; map: Map<string, Record<string, Lut3D>> }>({ src: null, map: new Map() });
   const curRefKeyRef = useRef('');
+  /** 剛算好的那一組（還沒有專業那顆的話，AI 那段會接著算） */
+  const luts0Ref = useRef<Record<string, Lut3D> | null>(null);
   const cacheLuts = (key: string, l: Record<string, Lut3D>) => {
     const c = lutCacheRef.current.map;
     c.delete(key); c.set(key, l);
@@ -369,6 +371,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     }
     setBusy(true);
     const t = window.setTimeout(async () => {
+      luts0Ref.current = null;   // 出錯的話不會留著上一張的，轉圈一定收得掉
       try {
         const t0 = performance.now();
         const sw = srcImg.naturalWidth || srcImg.width, sh = srcImg.naturalHeight || srcImg.height;
@@ -401,11 +404,14 @@ export const ColorMatchStudio: React.FC<Props> = ({
         if (cancelled) return;
         if (previewSrcRef.current !== srcImg) { previewSrcRef.current = srcImg; setPreview(toImageData(srcImg, PREVIEW_MAX)); }
         cacheLuts(refKey, out);
+        luts0Ref.current = out;
         setLuts(out);
         // 做法維持使用者選的那一個（可以先選好做法再選參考圖；選了專業的話下面那段會自己算）
       } catch (e) { console.error('color match', e); }
       finally {
-        if (!cancelled) setBusy(false);
+        /* 選的是專業：接下來 AI 那段會接著算，轉圈不要在中間收掉一格 ——
+           收掉再出現的話加載文字會從頭再跑一次（看起來就是同一句出現兩次） */
+        if (!cancelled && !(isAi(pickedRef.current) && luts0Ref.current && !luts0Ref.current[pickedRef.current])) setBusy(false);
       }
     }, 30);
     return () => { cancelled = true; window.clearTimeout(t); };

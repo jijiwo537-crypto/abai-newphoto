@@ -142,12 +142,13 @@ export function distillLut(src: Uint8ClampedArray, dst: Float32Array, n: number,
   return { size: N, data };
 }
 
-/* AI 偶爾會把明暗改太多（整張壓得很暗、或參考圖很白時把暗部整片拉亮）。不能整個鎖住亮度 ——
-   黃昏、夜景、暗調本來就要改明暗 —— 所以只「收」太大的那一段，用平滑的軟上限（沒有硬切，漸層不會斷）：
-     · 變暗：8 以內原封不動，再多就平滑地逼近 18
-     · 變亮：看這個顏色本來有多暗。本來就是暗部的地方不該因為參考圖很白就整片變亮 ——
-       純暗部（L≈0～10）最多只能亮 4，往中間調慢慢放寬，到 L≥60 跟變暗一樣（8／18）
-   （L 是 Lab 亮度 0～100；色相與飽和度照 AI 的結果，只動亮度） */
+/* AI 偶爾會把明暗改太多（整張壓得很暗、參考圖很白時把暗部整片拉亮、亮部衝白或變灰）。
+   不能整個鎖住亮度 —— 黃昏、夜景、暗調本來就要改明暗 —— 所以只「收」太大的那一段，用平滑的軟上限
+   （沒有硬切，漸層不會斷）。上限看這個顏色本來有多亮（Lab 的 L，0～100）：
+     · 中間調（L 約 35～65）：8 以內原封不動，再多就平滑地逼近 18
+     · 暗部：不能被拉亮（純暗部最多亮 4）；往暗的方向照中間調的規則
+     · 亮部：不能被拉更亮、也不能被壓暗太多（純白附近兩個方向都最多 4）
+   色相與飽和度照 AI 的結果，只動亮度。 */
 const softKnee = (d: number, knee: number, ceil: number) => {
   const a = Math.abs(d);
   if (a <= knee) return d;
@@ -155,10 +156,11 @@ const softKnee = (d: number, knee: number, ceil: number) => {
   return Math.sign(d) * (knee + r * Math.tanh((a - knee) / r));
 };
 const smooth = (e0: number, e1: number, x: number) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+/** w＝1：完整的 8／18；w＝0：最多 4（2 以內不動） */
+const knee = (d: number, w: number) => softKnee(d, 2 + 6 * w, 4 + 14 * w);
 const limitDL = (dL: number, Lin: number) => {
-  if (dL <= 0) return softKnee(dL, 8, 18);
-  const s = smooth(10, 60, Lin);
-  return softKnee(dL, 2 + 6 * s, 4 + 14 * s);
+  if (dL <= 0) return knee(dL, 1 - smooth(65, 95, Lin));                       // 變暗：亮部收緊
+  return knee(dL, smooth(10, 50, Lin) * (1 - smooth(65, 95, Lin)));           // 變亮：暗部、亮部都收緊
 };
 export function limitLightness(lut: Lut3D): Lut3D {
   const N = lut.size, M = N - 1, d = lut.data, out = new Float32Array(d.length);
