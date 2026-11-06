@@ -893,7 +893,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         {/* 仿色做法：懸空在預覽下緣、靠左（跟點陣的線稿／陰影同一款，不加外框），滑桿那一列就整列給強度 */}
         {/* 還沒選參考圖也可以先選做法（選好參考圖就照這個做法算）；圖庫裡一張參考圖都沒有時才不出現 */}
         {refs.length > 0 && <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 ${embedded ? 'left-3' : 'left-[68px]'} h-11 flex items-center gap-2 z-[5] transition-opacity ${busy ? 'opacity-30 pointer-events-none' : ''}`}>
-          {((embedded ? ['mkl', 'cap'] : [...METHODS, 'cap']) as Pick[]).map(m => (
+          {(['mkl', 'cap'] as Pick[]).map(m => (   // 從主頁進來的跟編輯器裡的一樣：只有標準、專業兩種
             <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m}
               className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap transition-[background-color,color,transform] active:scale-95 ${picked === m ? 'bg-white text-black font-bold' : 'bg-black/40 text-white/60 backdrop-blur-md'}`}>
               {PICK_LABEL(m)}
@@ -903,7 +903,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         {/* 獨立的仿色：左下角換要調色的那張（跟點陣換照片同一款） */}
         {!embedded && (
           <button onClick={onImportNew} data-cm-replace-src data-cm-float aria-label="替換原始圖片"
-            className="absolute left-3 bottom-3 w-11 h-11 rounded-lg overflow-hidden border border-white/30 z-[5] active:scale-95 transition-transform">
+            className="absolute left-3 bottom-3 w-11 h-11 rounded-lg overflow-hidden z-[5] active:scale-95 transition-transform">
             <img src={imageSrc} alt="" className="w-full h-full object-cover" />
           </button>
         )}
@@ -932,7 +932,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       {/* 下面這塊跟濾鏡同一個版面（總高 11rem，嵌在編輯器裡時預覽大小不會跳）：
            上面 5rem 是強度滑桿，下面 6rem 是一排參考圖 —— 最左邊那格是新增，其他每一格是一張參考圖，
            點一下就換成仿那一張；選中的那張右上角有刪除。 */}
-      <section className={`color-match-panel flex flex-col shrink-0 min-h-0 bg-[#111] border-t border-white/5 ${embedded ? '' : 'pb-6'}`} style={{height: embedded ? 'calc(11rem - 1px)' : 'calc(11rem + 24px)'}}>
+      <section className="color-match-panel flex flex-col shrink-0 min-h-0 bg-[#111] border-t border-white/5" style={{height: embedded ? 'calc(11rem - 1px)' : 'calc(11rem + 24px)'}}>
         {/* 跟編輯器、人像一樣：5rem＋6rem 按比例擠掉多出來的那一點，分隔線與滑桿的位置三頁完全一樣 */}
         <div style={{ flex: '0 1 5rem' }} className={`min-h-0 px-8 flex flex-col justify-center border-b border-white/5 transition-opacity ${ready && !busy ? '' : 'opacity-30 pointer-events-none'}`}>
           <div className="flex justify-between items-center select-none mb-1 translate-y-2">
@@ -949,7 +949,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
               className="custom-range" />
           </div>
         </div>
-        <div data-cm-refs style={{ flex: '0 1 6rem' }} className="min-h-0 flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808]">
+        {/* 從主頁進來的：最下面多留的 24px（手機底部的橫條）也是參考圖這一排的黑底，不會露出一塊灰的 */}
+        <div data-cm-refs style={embedded ? { flex: '0 1 6rem' } : { flex: '0 1 calc(6rem + 24px)', paddingBottom: 24 }} className="min-h-0 flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808]">
           <button onClick={() => refInputRef.current?.click()} disabled={referenceLoading} data-cm-pickref aria-label="新增參考圖片"
             className="flex flex-col items-center shrink-0 w-[64px] active:scale-95 transition-transform">
             <div className="relative w-full h-[76px] rounded-lg bg-[#1a1a1a] flex flex-col items-center justify-center gap-1 text-white/50">

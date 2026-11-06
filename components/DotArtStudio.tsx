@@ -461,7 +461,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         )}
         {/* 左下：目前的照片，點一下換一張；右下：反轉 */}
         <button aria-label="換一張照片" onClick={() => input.current?.click()}
-          className="absolute left-4 bottom-3 w-11 h-11 rounded-xl overflow-hidden border border-white/15 bg-white/10 active:scale-95">
+          className="absolute left-4 bottom-3 w-11 h-11 rounded-xl overflow-hidden bg-white/10 active:scale-95">
           {photo && <img src={photo} alt="" className="w-full h-full object-cover" />}
           <span className="absolute right-0.5 bottom-0.5 w-4 h-4 rounded-full bg-white text-black flex items-center justify-center"><Plus size={11} strokeWidth={3} /></span>
         </button>
