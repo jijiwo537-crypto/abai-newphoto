@@ -166,7 +166,7 @@ const WheelUnit: React.FC<Ev & { id: WheelId; label: string; w: YRGB; D: number;
     onEnd,
     onDouble: () => { onStart(); onChange(wheelToRgb(w, s.neutral, 0, 0)); onEnd(); },
   });
-  /* 主轉盤：有 Y 的（暗部／中灰／亮部）改 Y；沒有的（偏移、Log）三個通道一起改 */
+  /* 主轉盤：有 Y 的（暗部／中間調／亮部）改 Y；沒有的（偏移、Log）三個通道一起改 */
   const level = s.hasY ? w.y : (w.r + w.g + w.b) / 3;
   const [jogX, setJogX] = useState(0);
   const jog = useDrag({
@@ -240,7 +240,7 @@ const HdrUnit: React.FC<Ev & { id: HdrZoneId | 'global'; label: string; w: HdrWh
   );
 };
 
-const PRIMARY_UNITS: [WheelId, string][] = [['lift', '暗部'], ['gamma', '中灰'], ['gain', '亮部'], ['offset', '偏移']];
+const PRIMARY_UNITS: [WheelId, string][] = [['lift', '暗部'], ['gamma', '中間調'], ['gain', '亮部'], ['offset', '偏移']];
 const LOG_UNITS: [WheelId, string][] = [['logSh', '陰影'], ['logMid', '中間調'], ['logHi', '高光'], ['offset', '偏移']];
 const MODES: [Mode, string][] = [['log', 'Log'], ['wheels', '一級調色'], ['hdr', 'HDR']];
 const HDR_PAGES: (HdrZoneId | 'global')[][] = [['black', 'dark', 'shadow', 'light'], ['highlight', 'specular', 'global']];
