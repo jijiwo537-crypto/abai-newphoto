@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import { localizeUI } from './scripts/localize-ui';
 
-/* 相機人臉磨皮用的 MediaPipe 執行檔（wasm）：放在自己網站的 mediapipe/ 底下，不連外部 CDN。
+/* 仿色保護膚色（找臉）用的 MediaPipe 執行檔（wasm）：放在自己網站的 mediapipe/ 底下，不連外部 CDN。
    開發時直接從 node_modules 送出去；建置時複製進輸出資料夾。 */
 const mediapipeWasm = () => {
   const dir = path.resolve(__dirname, 'node_modules/@mediapipe/tasks-vision/wasm');

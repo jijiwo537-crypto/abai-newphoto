@@ -10,7 +10,6 @@ import { createPortal } from 'react-dom';
 import { processImageFile } from '../utils/imageLoader';
 import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
 import {preferCameraResolution} from '../utils/cameraPreview';
-import { preloadFaceSkin } from '../utils/faceSkin';
 
 // Extend MediaStream types to support zoom
 declare global {
@@ -279,28 +278,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [countdown, setCountdown] = useState<number | null>(null);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
-  /** 人臉磨皮：只有開／關（強度固定），記住上次的選擇 */
-  // 磨皮預設關閉，使用者打開過才記住（換一個鍵：上一版預設開啟時每個人都存了 1）
-  const [skinSmooth, setSkinSmooth] = useState(() => { try { return localStorage.getItem('abai-camera-skin-v3') === '1'; } catch { return false; } });
-  useEffect(() => { try { localStorage.setItem('abai-camera-skin-v3', skinSmooth ? '1' : '0'); } catch { /* 私密模式 */ } }, [skinSmooth]);
-  /* 找臉模型：打開設定選單（準備要按磨皮）就先開始載入；磨皮開著時載完才算好，開關上顯示載入中 */
-  const [skinReady, setSkinReady] = useState(false);
-  // 磨皮隨時待命：進相機、畫面穩定後（閒下來時）就在背景載好找臉模型，一按就有
-  useEffect(() => {
-    let live = true;
-    const go = () => preloadFaceSkin().then(ok => { if (live) setSkinReady(ok); });
-    const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
-    // 等相機開好、畫面穩定 2.5 秒後才在閒置時載入，避開相機啟動跟使用者剛進來就切特效的時候
-    let id = 0;
-    const t = window.setTimeout(() => { id = ric ? ric(go, { timeout: 1500 }) : window.setTimeout(go, 0); }, 2500);
-    return () => { live = false; clearTimeout(t); if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
-  }, []);
-  useEffect(() => {
-    if (!showSettingsMenu && !skinSmooth) return;
-    let live = true;
-    preloadFaceSkin().then(ok => { if (live) setSkinReady(ok); });
-    return () => { live = false; };
-  }, [showSettingsMenu, skinSmooth]);
+  // 磨皮已移除：清掉以前記住的開關
+  useEffect(() => { try { localStorage.removeItem('abai-camera-skin-v3'); } catch { /* 私密模式 */ } }, []);
   
   const [focalLengthMm, setFocalLengthMm] = useState<string | null>(null);
   const focalLengthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1180,7 +1159,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               fx={fx}
               digitalZoom={digitalZoom}
               displayBox={frameDims()}
-              skinSmooth={skinSmooth}
               /* click 保留為鍵盤／舊版 WebKit 的保底；新 iOS 由 pointerup 立即觸發。 */
               onClick={handleFocus}
               onPointerDown={() => {
@@ -1256,21 +1234,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                                 className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] border border-white/10 ${showGrid ? 'bg-white/40' : 'bg-white/10'}`}
                             >
                                 <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${showGrid ? 'translate-x-5' : 'translate-x-0'}`} />
-                            </button>
-                        </div>
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
-                                <Icon name="skin_smooth" className="text-lg text-white/70" />
-                                <span>磨皮</span>
-                            </div>
-                            <button
-                                aria-label="人臉磨皮" aria-pressed={skinSmooth} data-camera-skin
-                                onClick={(e) => { e.stopPropagation(); setSkinSmooth(!skinSmooth); triggerHaptic(); }}
-                                className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] border border-white/10 ${skinSmooth ? 'bg-white/40' : 'bg-white/10'}`}
-                            >
-                                <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] flex items-center justify-center ${skinSmooth ? 'translate-x-5' : 'translate-x-0'}`}>
-                                    {skinSmooth && !skinReady && <span aria-label="載入中" className="w-2.5 h-2.5 rounded-full border-[1.5px] border-black/20 border-t-black/70 animate-spin" />}
-                                </div>
                             </button>
                         </div>
                         <div className="flex items-center justify-between">
