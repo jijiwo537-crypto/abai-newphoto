@@ -144,8 +144,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const [busy, setBusy] = useState(false);
   /** 正在算的是專業（AI）那一種：加載文字不一樣 */
   const [aiBusy, setAiBusy] = useState(false);
-  const [picked, setPicked] = useState<Pick>('mkl');
-  const pickedRef = useRef<Pick>('mkl'); pickedRef.current = picked;
+  /* 預設用專業（AI）；標準排在後面 */
+  const [picked, setPicked] = useState<Pick>('cap');
+  const pickedRef = useRef<Pick>('cap'); pickedRef.current = picked;
+  useEffect(() => { warmFor('cap'); }, []);   // 先把專業的模型下載進快取（不載進記憶體）
   /** AI 模式：亮度也跟著換 */
   const keepL = isAi(picked) ? 0 : 1;
   /** SA-LUT：第二顆 LUT 與情境圖（逐點混合） */
@@ -897,7 +899,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         {/* 仿色做法：懸空在預覽下緣、靠左（跟點陣的線稿／陰影同一款，不加外框），滑桿那一列就整列給強度 */}
         {/* 還沒選參考圖也可以先選做法（選好參考圖就照這個做法算）；圖庫裡一張參考圖都沒有時才不出現 */}
         {refs.length > 0 && <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 ${embedded ? 'left-3' : 'left-[68px]'} h-11 flex items-center gap-2 z-[5] transition-opacity ${busy ? 'opacity-30 pointer-events-none' : ''}`}>
-          {(['mkl', 'cap'] as Pick[]).map(m => (   // 從主頁進來的跟編輯器裡的一樣：只有標準、專業兩種
+          {(['cap', 'mkl'] as Pick[]).map(m => (   // 從主頁進來的跟編輯器裡的一樣：只有標準、專業兩種
             <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m}
               className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap transition-[background-color,color,transform] active:scale-95 ${picked === m ? 'bg-white text-black font-bold' : 'bg-black/40 text-white/60 backdrop-blur-md'}`}>
               {PICK_LABEL(m)}
