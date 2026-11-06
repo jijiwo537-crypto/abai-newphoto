@@ -181,7 +181,19 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (el && Number(el.value) !== strength) el.value = String(strength);
     if (strengthTextRef.current) strengthTextRef.current.textContent = String(strength);
   }, [strength]);
-  useEffect(() => { const m = maxFor(picked); setStrength(v => Math.min(v, m)); }, [picked]);
+  /* 兩種做法各記各的強度：切到另一個時，滑桿換成那一個上次的值（沒調過就是 100） */
+  const strengthByRef = useRef<Record<string, number>>({});
+  const strengthNowRef = useRef(100); strengthNowRef.current = strength;
+  const pickedPrevRef = useRef<Pick | null>(null);
+  useEffect(() => {
+    const prev = pickedPrevRef.current;
+    pickedPrevRef.current = picked;
+    if (prev === null || prev === picked) return;
+    const L = liveStrengthRef.current;
+    strengthByRef.current[prev] = L.pending ? L.v : strengthNowRef.current;   // 剛拖完還沒存回的也算
+    window.clearTimeout(L.timer); L.pending = false;
+    setStrength(Math.min(maxFor(picked), strengthByRef.current[picked] ?? 100));
+  }, [picked]);
   const [finalUrl, setFinalUrl] = useState<string | null>(null);
   const [finalPreview, setFinalPreview] = useState<string | null>(null);
   const finalPreviewRef = useRef<string | null>(null);
@@ -900,7 +912,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
         )}
         {/* 仿色做法：懸空在預覽下緣、靠左（跟點陣的線稿／陰影同一款，不加外框），滑桿那一列就整列給強度 */}
         {/* 還沒選參考圖也可以先選做法（選好參考圖就照這個做法算）；圖庫裡一張參考圖都沒有時才不出現 */}
-        {refs.length > 0 && <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 ${embedded ? 'left-3' : 'left-[68px]'} h-11 flex items-center gap-2 z-[5] transition-opacity ${busy ? 'opacity-30 pointer-events-none' : ''}`}>
+        {/* 算的時候也一樣清楚、一樣能按（蓋在壓暗那一層上面，不跟著變暗）；按另一個就改用那個做法算 */}
+        {refs.length > 0 && <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 ${embedded ? 'left-3' : 'left-[68px]'} h-11 flex items-center gap-2 z-[6]`}>
           {(['cap', 'mkl'] as Pick[]).map(m => (   // 從主頁進來的跟編輯器裡的一樣：只有標準、專業兩種
             <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m}
               className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap transition-[background-color,color,transform] active:scale-95 ${picked === m ? 'bg-white text-black font-bold' : 'bg-black/40 text-white/60 backdrop-blur-md'}`}>

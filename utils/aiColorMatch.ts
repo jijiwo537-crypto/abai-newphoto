@@ -5,7 +5,7 @@
      - LUT 是「同一個顏色永遠換成同一個顏色」的全域對應：細節一點都不動，斑塊自然消失，
        全解析度也是 GPU 一次畫完，而且強度、膚色保護都能沿用同一條管線
    AI 會連明暗一起換（氣氛：黃昏、夜景、暗調），所以這個模式不鎖亮度。 */
-import type { Lut3D } from './colorTransfer';
+import { rgbToLab, labToRgbSoft, type Lut3D } from './colorTransfer';
 
 /** AI 寫實（CAP-VSTNet，見 capvst.worker） */
 export type AiEngine = 'cap';
@@ -142,6 +142,33 @@ export function distillLut(src: Uint8ClampedArray, dst: Float32Array, n: number,
   return { size: N, data };
 }
 
+/* AI 偶爾會把明暗改太多（整張壓得很暗、亮部整片衝白）。不能整個鎖住亮度 —— 黃昏、夜景、暗調本來就要改明暗，
+   所以只「收」太大的那一段：每一個顏色的亮度變化（Lab 的 L，0～100）
+     · 12 以內：原封不動（正常幅度的光影調整完全不受影響）
+     · 超過 12：越大收得越多，平滑地逼近 30，永遠不會超過（沒有硬切，漸層不會斷）
+   色相與飽和度照 AI 的結果，只動亮度。 */
+const L_KNEE = 12, L_CEIL = 30;
+const softKnee = (d: number) => {
+  const a = Math.abs(d);
+  if (a <= L_KNEE) return d;
+  const r = L_CEIL - L_KNEE;
+  return Math.sign(d) * (L_KNEE + r * Math.tanh((a - L_KNEE) / r));
+};
+export function limitLightness(lut: Lut3D): Lut3D {
+  const N = lut.size, M = N - 1, d = lut.data, out = new Float32Array(d.length);
+  const li = [0, 0, 0], lo = [0, 0, 0], rgb = [0, 0, 0];
+  for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const c = ((z * N + y) * N + x) * 3;
+    rgbToLab(x / M, y / M, z / M, li);
+    rgbToLab(d[c], d[c + 1], d[c + 2], lo);
+    const dL = lo[0] - li[0], k = softKnee(dL);
+    if (k === dL) { out[c] = d[c]; out[c + 1] = d[c + 1]; out[c + 2] = d[c + 2]; continue; }
+    labToRgbSoft(li[0] + k, lo[1], lo[2], rgb);
+    out[c] = Math.min(1, Math.max(0, rgb[0])); out[c + 1] = Math.min(1, Math.max(0, rgb[1])); out[c + 2] = Math.min(1, Math.max(0, rgb[2]));
+  }
+  return { size: N, data: out };
+}
+
 /** 算出 AI 仿色的 LUT。skin(u, v)：原圖那一點是皮膚的程度（0～1），皮膚不參與學習 */
 export async function aiColorMatchLut(
   src: CanvasImageSource, sw: number, sh: number,
@@ -158,5 +185,5 @@ export async function aiColorMatchLut(
   let lut = distillLut(c.px, r.out as Float32Array, n, 33, skip);
   // 皮膚佔了大半張（大頭照）：拿掉之後樣本太少，就整張一起學
   if (skin && skipped > n * 0.75) lut = distillLut(c.px, r.out as Float32Array, n, 33);
-  return lut;
+  return limitLightness(lut);
 }
