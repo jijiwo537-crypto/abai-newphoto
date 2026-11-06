@@ -122,7 +122,12 @@ export class FaceSkinMask {
        少一半的縮圖、傳輸跟 CPU 運算，手機不會因為忙著找臉而發熱降頻、讓畫面變卡 */
     /* 找臉的頻率：畫面裡有臉時跟著臉走（背景執行緒每秒 10 次，中間偶爾找不到由追蹤保持補上）；沒有臉時每秒約 4.5 次。找臉越頻繁，手機越忙、畫面幀數越低。
        退路（主執行緒找臉，每次都會擋住畫面）再放慢：有臉每秒 5 次、沒臉每秒 2 次 */
-    const gap = this.d.kind === 'worker' ? (this.faces ? 100 : 220) : (this.faces ? 200 : 500);
+    /* 臉在動（或剛跟丟）時找快一點：每秒 30 次。MediaPipe 的追蹤是拿上一次的臉位置當這一次的範圍，
+       一秒只找 10 次的話臉動一下就跑出範圍、得整個重找，所以動態時特別容易跟丟。
+       臉靜止時維持每秒 10 次（省電、手機不發熱）。都在背景執行緒，畫面不會因此卡 */
+    const k = this.kf, moving = this.faces > 0 && k.ok && (Math.hypot(k.vx, k.vy) > 0.00015 || Math.abs(k.vs) > 0.0002);
+    const reacquire = this.faces > 0 && now - this.lastFaceAt > 250;   // 上一次沒找到（追蹤保持中）：快點重新抓到
+    const gap = this.d.kind === 'worker' ? (this.faces ? (moving || reacquire ? 33 : 100) : 220) : (this.faces ? 200 : 500);
     const due = now - this.sentAt >= gap;
     if (!this.busy && due && vw && vh && video.readyState >= 2) {
       const k = Math.min(1, DETECT_LONG / Math.max(vw, vh));

@@ -104,8 +104,9 @@ vec3 skinSmooth(vec3 o, vec2 uv) {
     vec3 coarse = texture(u_coarse, uv).rgb;
     vec3 mid = fine - coarse;
     float keep = smoothstep(0.045, 0.14, length(mid));
-    vec3 smoothed = coarse + mid * keep + (o - fine) * 0.9;
-    return mix(o, smoothed, clamp(m, 0.0, 1.0) * 0.68);
+    // 磨皮強度：0.8（原本 0.68）；細紋理留 85%（原本 90%），皮膚質感還在、不會變塑膠
+    vec3 smoothed = coarse + mid * keep + (o - fine) * 0.85;
+    return mix(o, smoothed, clamp(m, 0.0, 1.0) * 0.8);
 }
 
 void main() {

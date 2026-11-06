@@ -937,6 +937,29 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
   }, []);
 
+  /* 快門鍵的手感：按下縮到 0.86、放開彈回。用 Web Animations 跑 transform —— 這種動畫在合成器上跑，
+     拍照時主執行緒卡住也不會停格（以前用 class 切換＋CSS transition，要等主執行緒才會開始動） */
+  const shutterInnerRef = useRef<HTMLDivElement>(null);
+  const shutterAnimRef = useRef<Animation | null>(null);
+  const shutterDownRef = useRef(false);
+  const shutterPress = (down: boolean, tap = false) => {
+    const el = shutterInnerRef.current;
+    if (!el || typeof el.animate !== 'function') return;
+    if (!tap && down === shutterDownRef.current) return;
+    const cur = getComputedStyle(el).transform;
+    const from = cur && cur !== 'none' ? cur : 'scale(1)';
+    shutterAnimRef.current?.cancel();
+    if (tap) {
+      // 鍵盤／輔助功能觸發的點擊（沒有按下的過程）：一次做完縮下去再彈回
+      shutterAnimRef.current = el.animate([{ transform: 'scale(1)' }, { transform: 'scale(0.86)', offset: 0.35 }, { transform: 'scale(1)' }], { duration: 320, easing: 'cubic-bezier(0.2,0.8,0.2,1)' });
+      shutterAnimRef.current.onfinish = () => { shutterAnimRef.current = null; };
+      return;
+    }
+    shutterDownRef.current = down;
+    shutterAnimRef.current = el.animate([{ transform: from }, { transform: down ? 'scale(0.86)' : 'scale(1)' }],
+      { duration: down ? 120 : 260, easing: 'cubic-bezier(0.2,0.8,0.2,1)', fill: 'forwards' });
+    if (!down) shutterAnimRef.current.onfinish = () => { shutterAnimRef.current = null; };
+  };
   const handleShutterClick = () => {
     if (countdown !== null) {          // 倒數中再按一下＝取消
       stopCountdown();
@@ -1477,11 +1500,20 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               disabled={countdown !== null}
               aria-busy={isCapturing}
               className={`group relative w-[76px] h-[76px] flex items-center justify-center transition-opacity duration-200 ${countdown !== null ? 'opacity-50' : ''}`}
-              onClick={handleShutterClick}
+              onPointerDown={() => shutterPress(true)}
+              onPointerUp={() => shutterPress(false)}
+              onPointerCancel={() => shutterPress(false)}
+              onPointerLeave={() => shutterPress(false)}
+              onClick={() => {
+                /* 拍照那一下主執行緒會忙一陣子（讀畫面、編碼）。按鈕的縮放動畫交給合成器跑（Web Animations），
+                   真正開始拍再晚兩格，讓動畫先開始 —— 主執行緒忙的時候動畫照樣順 */
+                if (!shutterAnimRef.current) shutterPress(true, true);
+                requestAnimationFrame(() => requestAnimationFrame(handleShutterClick));
+              }}
             >
               <div className="absolute inset-0 rounded-full border-[3px] border-white/90"></div>
               {/* 按下去內圈縮一點、放開彈回（跟原生相機一樣的手感） */}
-              <div className={`w-[62px] h-[62px] rounded-full bg-white transition-transform duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] group-active:scale-[0.86] ${isCapturing ? 'scale-[0.86]' : ''}`} />
+              <div ref={shutterInnerRef} className="w-[62px] h-[62px] rounded-full bg-white" style={{ willChange: 'transform' }} />
             </button>
           </div>
 
