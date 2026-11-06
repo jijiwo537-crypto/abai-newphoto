@@ -974,7 +974,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
         <div data-cm-refs style={embedded ? { flex: '0 1 6rem' } : { flex: '0 1 calc(6rem + 24px)', paddingBottom: 24 }} className="min-h-0 flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808]">
           <button onClick={() => refInputRef.current?.click()} disabled={referenceLoading} data-cm-pickref aria-label="新增參考圖片"
             className="flex flex-col items-center shrink-0 w-[64px] active:scale-95 transition-transform">
-            <div className="relative w-full h-[76px] rounded-lg bg-[#1a1a1a] flex flex-col items-center justify-center gap-1 text-white/50">
+            {/* 跟底下那一排同一個深色、外框是虛線（跟模板的空格子同一款） */}
+            <div className="relative w-full h-[76px] rounded-lg border border-dashed border-white/30 bg-white/[0.03] flex flex-col items-center justify-center gap-1 text-white/50">
               {refAdding ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 : <Icon name="add_photo_alternate" className="text-2xl" />}
               <span className="text-[8px] font-black tracking-widest">新增</span>
