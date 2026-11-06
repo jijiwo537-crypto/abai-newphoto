@@ -6857,7 +6857,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         if (studioPaintNowRef.current) {
                             studioPaintNowRef.current = false;
                             uiFirstRef.current = false;
-                            if (studioHoldRef.current) { studioHoldRef.current = ''; flushSync(() => setStudioHold('')); }
+                            // 切到另一個工具（人像↔仿色）時不在這裡收：要等那個工具畫好新照片（見 holdForStudio）
+                            if (studioHoldRef.current && !STUDIO_CATS.includes(activeCategoryNowRef.current)) { studioHoldRef.current = ''; flushSync(() => setStudioHold('')); }
                         }
                         const duration = performance.now() - start;
                         lastRenderDurationRef.current = duration;
@@ -7885,9 +7886,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const studioPaintNowRef = useRef(false);
   const studioHoldRef = useRef<'' | 'beauty' | 'match'>('');
   const [studioHold, setStudioHold] = useState<'' | 'beauty' | 'match'>('');
+  /** 工具交出來的成品還在裝進照片清單（裝好之前另一個工具拿到的還是舊照片） */
+  const [studioInstalling, setStudioInstalling] = useState(0);
   useEffect(() => {
     if (!studioHold) return;
-    const t = window.setTimeout(() => { studioHoldRef.current = ''; setStudioHold(''); }, 800);   // 保底
+    // 保底；直接切到另一個工具時要等它載入新照片，給久一點
+    const t = window.setTimeout(() => { studioHoldRef.current = ''; setStudioHold(''); }, STUDIO_CATS.includes(activeCategoryNowRef.current) ? 4000 : 800);
     return () => clearTimeout(t);
   }, [studioHold]);
   const installStudioResult = (res: StudioResult) => {
@@ -7913,6 +7917,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     buildBuffersFromRef.current(src, w, h, false, pend);
     tapFastRef.current = true; isDirtyRef.current = true;
     const before = studioInstallRef.current;
+    setStudioInstalling(n => n + 1);
     studioInstallRef.current = (async () => {
       await before;
       const blob = await new Promise<Blob | null>(r => { try { cvs.toBlob(r, 'image/jpeg', 0.95); } catch { r(null); } });
@@ -7940,7 +7945,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         if (srcListRef.current[safeIdxRef.current] === url) originalImgRef.current = im;
       }).catch(() => {});
       addToHistory(paramsRef.current, selectedLutIdxNowRef.current);
-    })().catch(() => {});
+    })().catch(() => {}).finally(() => setStudioInstalling(n => Math.max(0, n - 1)));
   };
   const studioPrevRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
   /* 取消＝丟掉這次在工具裡畫的東西：工具一直掛著（進出才會是立刻的），所以換一個新的 */
@@ -8080,9 +8085,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const t = window.setTimeout(() => setStudioForce(studioWaitKey), 6000);
     return () => clearTimeout(t);
   }, [studioWaitKey]);
+  /* 從仿色直接切到人像（或反過來）：剛離開的那個把成品交出去，要裝進照片、另一個工具再用新照片重載，
+     中間另一個工具會先露出舊照片、再空一下才換成新的（看起來就是閃一下）。
+     所以這段時間：剛離開的那個工具只留它的照片（就是剛做好的成品）蓋在最上面，
+     要去的那個工具的介面照常顯示；等它用新照片畫好了，才把蓋著的那張收掉。 */
+  const holdForStudio = !!studioHold && studioHold !== activeCategory && (activeCategory === 'beauty' || activeCategory === 'match');
+  const studioKeyOf = (k: 'beauty' | 'match') => (k === 'beauty' ? beautyKey : matchKey);
   const studioShown = (k: 'beauty' | 'match') => (activeCategory === k
-    && (studioPainted[k] === (k === 'beauty' ? beautyKey : matchKey) || studioForce === (k === 'beauty' ? beautyKey : matchKey)))
+    && (studioPainted[k] === studioKeyOf(k) || studioForce === studioKeyOf(k) || (holdForStudio && !!studioPainted[k])))
     || studioHold === k;
+  useEffect(() => {
+    if (!holdForStudio || studioInstalling) return;
+    const k = activeCategory as 'beauty' | 'match';
+    const fresh = (k === 'beauty' ? beautySrc : matchSrc) === activeSrc;
+    if (fresh && studioPainted[k] === studioKeyOf(k)) { studioHoldRef.current = ''; setStudioHold(''); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holdForStudio, studioInstalling, studioPainted, beautyKey, matchKey, activeSrc, activeCategory]);
   /** 剛離開、編輯器還沒畫好：工具只留照片（studio-hold），其他介面已經是編輯器的 */
   const studioHostCls = (k: 'beauty' | 'match') => studioHold === k && activeCategory !== k ? 'studio-hold' : studioShown(k) ? '' : 'vis-off';
   /* 人像／仿色照目前的構圖顯示（見 studioGeo）。在構圖分頁拖動時先不跟（它們藏在後面，不用每一格重排） */
@@ -9019,7 +9037,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       </g>
                     ))}
                     {/* 其他遮色片的位置（線性、放射）：點一下切過去。只顯示跟現在這一個同種類的（正在弄明度時不會冒出放射的點） */}
-                    {!activeDragRef.current && maskListView.list.map((m, i) => ((i === maskListView.active && !maskDeselected) || !m.maskCreated || (m.maskType !== 'linear' && m.maskType !== 'radial') || m.maskType !== maskView.maskType) ? null : (
+                    {/* 按住前後對比時這些小圓點也先收起來（看原圖時不該有任何記號） */}
+                    {!activeDragRef.current && !showOriginal && maskListView.list.map((m, i) => ((i === maskListView.active && !maskDeselected) || !m.maskCreated || (m.maskType !== 'linear' && m.maskType !== 'radial') || m.maskType !== maskView.maskType) ? null : (
                       <g key={m.maskId + i} data-mask-pin={i} transform={`translate(${m.maskCx * canvasBounds.width}, ${m.maskCy * canvasBounds.height})`}>
                         {/* 點一下（放開、而且沒有拖動）才選中，手指只是碰到不算 */}
                         <circle r={16} fill="transparent" style={{ cursor: 'pointer' }}
@@ -10179,7 +10198,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           兩邊的欄位高度跟編輯器一樣，預覽大小相同，切換時圖片不會跳。 */}
       {fullTabs && (studiosWarm || STUDIO_CATS.includes(activeCategory)) && (
         <>
-          <div data-studio-host="beauty" className={`absolute inset-x-0 top-0 z-[70] ${studioHostCls('beauty')}`} aria-hidden={activeCategory !== 'beauty'}
+          <div data-studio-host="beauty" className={`absolute inset-x-0 top-0 ${studioHold === 'beauty' && activeCategory === 'match' ? 'z-[71]' : 'z-[70]'} ${studioHostCls('beauty')}`} aria-hidden={activeCategory !== 'beauty'}
             style={{ bottom: footerHeight + 1, pointerEvents: activeCategory === 'beauty' ? 'auto' : 'none' }}>
             {beautyEl}
           </div>

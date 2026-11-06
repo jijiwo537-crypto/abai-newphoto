@@ -407,7 +407,8 @@ html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.mat
 .vis-off, .vis-off * { visibility: hidden !important; transition: none !important; }
 /* 剛離開人像／仿色、編輯器那一格還沒畫好：工具只留下照片那張畫布，其他全部透明 */
 .studio-hold, .studio-hold * { visibility: hidden !important; transition: none !important; pointer-events: none !important; }
-.studio-hold canvas.beauty-paint, .studio-hold [data-color-match-zoom] > canvas { visibility: visible !important; }
+/* 仿色的照片外面多包了構圖那兩層（沒有構圖時是 display:contents），所以不能只認「直接子層」 */
+.studio-hold canvas.beauty-paint, .studio-hold [data-color-match-zoom] canvas { visibility: visible !important; }
 
 /* 面板裡面那層自己捲的清單：往上下延伸蓋過外層的內距（--pt／--pb 由外層給），
    捲動時內容一路滑到工具列邊緣，不會在上下各被切出一條黑色的空帶。

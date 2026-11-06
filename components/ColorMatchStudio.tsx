@@ -881,9 +881,13 @@ export const ColorMatchStudio: React.FC<Props> = ({
           </div>
         </div>
         {(busy || referenceLoading) && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/55 transition-opacity" role="status" aria-label={aiBusy ? 'AI仿色中' : '仿色中'}>
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/55 transition-opacity" role="status" aria-label={aiBusy || isAi(picked) ? 'AI仿色中' : '仿色中'}>
             {/* 標準：一句「仿色中…」；專業（AI 要算十幾秒）：三句輪流，讓人知道它在做什麼 */}
-            {aiBusy ? <BusySpinner text="AI仿色" texts={['AI仿色', '分析光影與色調', '重建色彩層次']} /> : <BusySpinner text="仿色中" />}
+            {/* 標準：一句「仿色中…」。專業：從頭到尾都是專業那幾句（前面先算標準表的那一小段也是），
+                四句依序各出現一次，最後一句停著（不會再繞回第一句） */}
+            {aiBusy || isAi(picked)
+              ? <BusySpinner text="AI仿色中" texts={['AI仿色中', '分析光影與色調', '重建色彩層次', '微調最終色彩']} hold />
+              : <BusySpinner text="仿色中" />}
           </div>
         )}
         {/* 仿色做法：懸空在預覽下緣、靠左（跟點陣的線稿／陰影同一款，不加外框），滑桿那一列就整列給強度 */}
@@ -891,7 +895,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         {refs.length > 0 && <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 ${embedded ? 'left-3' : 'left-[68px]'} h-11 flex items-center gap-2 z-[5] transition-opacity ${busy ? 'opacity-30 pointer-events-none' : ''}`}>
           {((embedded ? ['mkl', 'cap'] : [...METHODS, 'cap']) as Pick[]).map(m => (
             <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m}
-              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap transition-all active:scale-95 ${picked === m ? 'bg-white text-black font-bold' : 'bg-black/40 text-white/60 backdrop-blur-md'}`}>
+              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap transition-[background-color,color,transform] active:scale-95 ${picked === m ? 'bg-white text-black font-bold' : 'bg-black/40 text-white/60 backdrop-blur-md'}`}>
               {PICK_LABEL(m)}
             </button>
           ))}

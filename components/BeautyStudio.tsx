@@ -1827,12 +1827,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           </div>
           <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-4">
             <button onClick={undo} disabled={!canUndo}
-              className={`p-2 transition-all ${!canUndo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
+              className={`p-2 transition-[opacity,transform,background-color,color,border-color] ${!canUndo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="復原">
               <Icon name="undo" className="text-xl" />
             </button>
             <button onClick={redo} disabled={!canRedo}
-              className={`p-2 transition-all ${!canRedo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
+              className={`p-2 transition-[opacity,transform,background-color,color,border-color] ${!canRedo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="重做">
               <Icon name="redo" className="text-xl" />
             </button>
@@ -1857,12 +1857,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           </div>
           <div className="flex items-center gap-4">
             <button onClick={undo} disabled={!canUndo}
-              className={`p-2 transition-all ${!canUndo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
+              className={`p-2 transition-[opacity,transform,background-color,color,border-color] ${!canUndo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="復原">
               <Icon name="undo" className="text-xl" />
             </button>
             <button onClick={redo} disabled={!canRedo}
-              className={`p-2 transition-all ${!canRedo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
+              className={`p-2 transition-[opacity,transform,background-color,color,border-color] ${!canRedo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="重做">
               <Icon name="redo" className="text-xl" />
             </button>
@@ -2022,7 +2022,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             setShowOriginal(false);
           }}
           onPointerCancel={() => setShowOriginal(false)}
-          className={`absolute bottom-2 right-2 p-3 flex items-center justify-center select-none touch-none transition-all active:scale-90 z-20 ${showOriginal ? 'text-white' : 'text-white/40'}`}
+          className={`absolute bottom-2 right-2 p-3 flex items-center justify-center select-none touch-none transition-[opacity,transform,background-color,color,border-color] active:scale-90 z-20 ${showOriginal ? 'text-white' : 'text-white/40'}`}
           title="按住看原圖"
         >
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
@@ -2076,7 +2076,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             <div data-beauty-toolbar style={{ flex: '0 1 6rem' }} className="min-h-0 bg-[#080808] flex items-center px-4 gap-2 overflow-x-auto no-scrollbar">
               {BEAUTY_TOOLS.map(t => (
                 <button key={t.id} onClick={() => pickTool(t.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${tool === t.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40'}`}>
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-[background-color,color,transform] ${tool === t.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40'}`}>
                     <Icon name={t.icon} className="text-lg" fill={tool === t.id} />
                   </div>
                   <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${tool === t.id ? 'text-white' : 'text-white/20'}`}>{t.label}</span>
@@ -2099,7 +2099,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                 if (m.brush !== undefined) setBrush(b => ({ ...b, liquify: m.brush! }));
                 if (m.force !== undefined) setForceMap(f => ({ ...f, liquify: m.force! }));
               }}
-              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 border transition-all active:scale-95 ${
+              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 border transition-[opacity,transform,background-color,color,border-color] active:scale-95 ${
                 lqPreset === m.id
                   ? 'bg-white text-black border-white font-bold'
                   : 'bg-white/5 text-white/60 border-white/15'
