@@ -1,7 +1,7 @@
 /* HDR 色輪（DaVinci Resolve 的 HDR 調色板）。
  *
  * 六個區域，由暗到亮：黑色 Black、暗部 Dark、陰影 Shadow、亮部 Light、高光 Highlight、
- * 鏡面高光 Specular，再加一個全域 Global。每個色輪：色彩平衡（X/Y 拖點）、曝光（檔）、飽和度。
+ * 白色 Specular（原文鏡面高光），再加一個全域 Global。每個色輪：色彩平衡（X/Y 拖點）、曝光（檔）、飽和度。
  * 每個區域有自己的「範圍」（以中灰 18% 為 0 的曝光檔數）與「柔化」（邊界過渡寬度，檔）。
  *
  * 跟 Resolve 一樣：
@@ -30,7 +30,7 @@ export const HDR_ZONES: { id: HdrZoneId; label: string; dark: boolean; range: nu
   { id: 'shadow', label: '陰影', dark: true, range: 0.75 },
   { id: 'light', label: '亮部', dark: false, range: -0.75 },
   { id: 'highlight', label: '高光', dark: false, range: 1.5 },
-  { id: 'specular', label: '鏡面高光', dark: false, range: 2.2 },
+  { id: 'specular', label: '白色', dark: false, range: 2.2 },
 ];
 export const HDR_FALLOFF = 1;
 export const HDR_IDS = [...HDR_ZONES.map(z => z.id), 'global'] as (HdrZoneId | 'global')[];
