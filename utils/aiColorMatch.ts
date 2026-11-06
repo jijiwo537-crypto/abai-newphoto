@@ -18,22 +18,33 @@ const NET: Record<AiEngine, { long: number; mult: number; files: string[] }> = {
    多算幾次之後 iPhone 就會把整個網頁關掉重開（＝崩潰）。
    所以每次都開一個新的背景執行緒，算完（不管成功失敗）立刻關掉，記憶體整塊還給系統；
    同一時間只會有一個在跑（新的一來，舊的直接關掉）。 */
-let current: { w: Worker; rej: (e: any) => void } | null = null;
+let current: { w: Worker | null; rej: (e: any) => void } | null = null;
 const spawn = (_e: AiEngine) => new Worker(new URL('./capvst.worker.ts', import.meta.url), { type: 'module' });
 const base = () => new URL((import.meta as any).env?.BASE_URL || '/', location.href).href;
+/* 上一個執行緒關掉之後，它的記憶體要過一下子才真的還給系統。馬上又開一個的話，兩份會同時佔著 ——
+   快速切換參考圖時就是這樣疊上去的（實測尖峰多一倍，iPhone 會直接把網頁關掉重開）。
+   所以關掉之後至少隔 600ms 才開下一個。 */
+const COOLDOWN = 600;
+let lastEnd = 0;
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 function runOnce(engine: AiEngine, msg: any, transfer: Transferable[]) {
-  if (current) { current.w.terminate(); current.rej(new Error('cancelled')); }
-  const w = spawn(engine);
+  if (current) { current.w.terminate(); current.rej(new Error('cancelled')); current = null; lastEnd = performance.now(); }
   return new Promise<any>((res, rej) => {
-    const me = { w, rej }; current = me;
-    const done = () => { w.terminate(); if (current === me) current = null; };
-    w.onmessage = e => { done(); e.data.ok ? res(e.data) : rej(new Error(e.data.error)); };
-    w.onerror = e => { done(); rej(e); };
-    w.postMessage({ ...msg, id: 1, base: base() }, transfer);
+    const me: { w: Worker | null; rej: (e: any) => void } = { w: null, rej };
+    current = me as any;
+    const wait = COOLDOWN - (performance.now() - lastEnd);
+    (wait > 0 ? sleep(wait) : Promise.resolve()).then(() => {
+      if (current !== (me as any)) return;   // 等的這段時間又被取消了：根本不開
+      const w = spawn(engine); me.w = w;
+      const done = () => { w.terminate(); lastEnd = performance.now(); if (current === (me as any)) current = null; };
+      w.onmessage = e => { done(); e.data.ok ? res(e.data) : rej(new Error(e.data.error)); };
+      w.onerror = e => { done(); rej(e); };
+      w.postMessage({ ...msg, id: 1, base: base() }, transfer);
+    });
   });
 }
 /** 不要了（換了別的做法、離開仿色）：正在算的直接關掉 */
-export function cancelAiColorMatch() { if (current) { current.w.terminate(); current.rej(new Error('cancelled')); current = null; } }
+export function cancelAiColorMatch() { if (current) { current.w?.terminate(); current.rej(new Error('cancelled')); current = null; lastEnd = performance.now(); } }
 /** 選了 AI 模式先把模型下載進快取（不載進記憶體） */
 const warmed = new Set<AiEngine>();
 export const warmAiColorMatch = (e: AiEngine = 'cap') => {

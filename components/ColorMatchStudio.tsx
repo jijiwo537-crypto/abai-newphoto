@@ -408,12 +408,14 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (!engine || !srcImg || !refImg || !luts || luts[picked] || aiFor.current === luts) return;
     const key = picked;
     aiFor.current = luts;
-    let cancelled = false, done = false;
+    let cancelled = false, done = false, stopWait = () => {};
     setBusy(true); setAiBusy(true); setAiError('');
     const map = skinRef.current?.img === srcImg ? skinRef.current.map : null;
     const skin = map && map.faces ? (u: number, v: number) => sampleMaskAt(map.skin, map.w, map.h, u, v) : undefined;
-    aiColorMatchLut(srcImg, srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height,
-      refImg, refImg.naturalWidth || refImg.width, refImg.naturalHeight || refImg.height, skin, engine)
+    /* 停一下才開始：連續點好幾張參考圖時，中間經過的那幾張不會各開一次 AI（每開一次就佔幾百 MB） */
+    new Promise<void>((res, rej) => { const t = window.setTimeout(res, 350); stopWait = () => { clearTimeout(t); rej(new Error('cancelled')); }; })
+      .then(() => aiColorMatchLut(srcImg, srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height,
+        refImg, refImg.naturalWidth || refImg.width, refImg.naturalHeight || refImg.height, skin, engine))
       .then(lut => {
         if (cancelled) return;
         setLuts(l => {
@@ -425,7 +427,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       })
       .catch(e => { if (cancelled) return; console.error('ai color match', e); setAiError('AI 仿色失敗，請再試一次'); setPicked('mkl'); })
       .finally(() => { done = true; if (!cancelled) { setBusy(false); setAiBusy(false); } aiFor.current = null; });
-    return () => { cancelled = true; aiFor.current = null; if (!done) { cancelAiColorMatch(); setBusy(false); setAiBusy(false); } };
+    return () => { cancelled = true; aiFor.current = null; stopWait(); if (!done) { cancelAiColorMatch(); setBusy(false); setAiBusy(false); } };
   }, [picked, srcImg, refImg, luts]);
 
   const glImageRef = useRef<ImageData | null>(null);

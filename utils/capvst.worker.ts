@@ -12,7 +12,10 @@ import wasmUrl from '../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded
 import mjsUrl from '../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs?url';
 import { threads } from './lineArtEngine';
 
-const OPT = { executionProviders: ['wasm'], graphOptimizationLevel: 'all' as const };
+/* 記憶體：關掉 CPU 記憶體池與預先配置（enableCpuMemArena／enableMemPattern）。
+   開著的話 onnxruntime 會把用過的大塊記憶體留著不還、還會照最大的那一次先保留，尖峰高很多；
+   關掉只慢一點點，手機上比較不會因為記憶體不夠被系統把網頁關掉 */
+const OPT = { executionProviders: ['wasm'], graphOptimizationLevel: 'all' as const, enableCpuMemArena: false, enableMemPattern: false };
 
 /** cWCT：把 c（C×N）的平均與共變異數換成 s 的。T ＝ Ls · Lc⁻¹（Ls、Lc 是兩邊共變異數的 Cholesky 下三角） */
 export function cwct(c: Float32Array, s: Float32Array, C: number, Nc: number, Ns: number) {
