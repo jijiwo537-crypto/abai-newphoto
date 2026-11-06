@@ -144,10 +144,11 @@ export function distillLut(src: Uint8ClampedArray, dst: Float32Array, n: number,
 
 /* AI 偶爾會把明暗改太多（整張壓得很暗、亮部整片衝白）。不能整個鎖住亮度 —— 黃昏、夜景、暗調本來就要改明暗，
    所以只「收」太大的那一段：每一個顏色的亮度變化（Lab 的 L，0～100）
-     · 12 以內：原封不動（正常幅度的光影調整完全不受影響）
-     · 超過 12：越大收得越多，平滑地逼近 30，永遠不會超過（沒有硬切，漸層不會斷）
+     · 8 以內：原封不動（正常幅度的光影調整完全不受影響）
+     · 超過 8：越大收得越多，平滑地逼近 18，永遠不會超過（沒有硬切，漸層不會斷）
+       （第一版是 12／30，實際用起來上限還是太高）
    色相與飽和度照 AI 的結果，只動亮度。 */
-const L_KNEE = 12, L_CEIL = 30;
+const L_KNEE = 8, L_CEIL = 18;
 const softKnee = (d: number) => {
   const a = Math.abs(d);
   if (a <= L_KNEE) return d;
