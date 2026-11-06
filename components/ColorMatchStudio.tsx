@@ -153,12 +153,14 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const [strength, setStrength] = useState(100);
   const strengthInputRef = useRef<HTMLInputElement>(null);
   const strengthTextRef = useRef<HTMLSpanElement>(null);
-  const liveStrengthRef = useRef<{ v: number; raf: number; timer: number }>({ v: -1, raf: 0, timer: 0 });
+  /** v：最後一次拖到的值；pending：還沒存回狀態。兩件事分開記 ——
+      以前存回狀態時把 v 清成 -1，剛好排在後面的那一格就用 -1 去畫（＝強度 0＝原圖），點一下或突然停下就會閃成原圖 */
+  const liveStrengthRef = useRef<{ v: number; pending: boolean; raf: number; timer: number }>({ v: 100, pending: false, raf: 0, timer: 0 });
   const paintRef = useRef<(s?: number) => void>(() => {});
   /** 拖滑桿的每一格：數字直接改、下一格畫面 GPU 重畫一次（一格最多一次） */
   const liveStrength = (v: number) => {
     const L = liveStrengthRef.current;
-    L.v = v;
+    L.v = v; L.pending = true;
     if (strengthTextRef.current) strengthTextRef.current.textContent = String(v);
     if (!L.raf) L.raf = requestAnimationFrame(() => { L.raf = 0; paintRef.current(L.v); });
     window.clearTimeout(L.timer);
@@ -167,13 +169,15 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const commitStrength = () => {
     const L = liveStrengthRef.current;
     window.clearTimeout(L.timer);
-    if (L.v >= 0) { const v = L.v; L.v = -1; setStrength(v); }
+    if (L.pending) { L.pending = false; setStrength(L.v); }
   };
   // 狀態從別的地方改了（換做法、還原紀錄）：滑桿跟數字跟上
   useEffect(() => {
     const el = strengthInputRef.current;
-    if (el && Number(el.value) !== strength && liveStrengthRef.current.v < 0) el.value = String(strength);
-    if (strengthTextRef.current && liveStrengthRef.current.v < 0) strengthTextRef.current.textContent = String(strength);
+    if (liveStrengthRef.current.pending) return;
+    liveStrengthRef.current.v = strength;
+    if (el && Number(el.value) !== strength) el.value = String(strength);
+    if (strengthTextRef.current) strengthTextRef.current.textContent = String(strength);
   }, [strength]);
   useEffect(() => { const m = maxFor(picked); setStrength(v => Math.min(v, m)); }, [picked]);
   const [finalUrl, setFinalUrl] = useState<string | null>(null);
