@@ -142,18 +142,23 @@ export function distillLut(src: Uint8ClampedArray, dst: Float32Array, n: number,
   return { size: N, data };
 }
 
-/* AI 偶爾會把明暗改太多（整張壓得很暗、亮部整片衝白）。不能整個鎖住亮度 —— 黃昏、夜景、暗調本來就要改明暗，
-   所以只「收」太大的那一段：每一個顏色的亮度變化（Lab 的 L，0～100）
-     · 8 以內：原封不動（正常幅度的光影調整完全不受影響）
-     · 超過 8：越大收得越多，平滑地逼近 18，永遠不會超過（沒有硬切，漸層不會斷）
-       （第一版是 12／30，實際用起來上限還是太高）
-   色相與飽和度照 AI 的結果，只動亮度。 */
-const L_KNEE = 8, L_CEIL = 18;
-const softKnee = (d: number) => {
+/* AI 偶爾會把明暗改太多（整張壓得很暗、或參考圖很白時把暗部整片拉亮）。不能整個鎖住亮度 ——
+   黃昏、夜景、暗調本來就要改明暗 —— 所以只「收」太大的那一段，用平滑的軟上限（沒有硬切，漸層不會斷）：
+     · 變暗：8 以內原封不動，再多就平滑地逼近 18
+     · 變亮：看這個顏色本來有多暗。本來就是暗部的地方不該因為參考圖很白就整片變亮 ——
+       純暗部（L≈0～10）最多只能亮 4，往中間調慢慢放寬，到 L≥60 跟變暗一樣（8／18）
+   （L 是 Lab 亮度 0～100；色相與飽和度照 AI 的結果，只動亮度） */
+const softKnee = (d: number, knee: number, ceil: number) => {
   const a = Math.abs(d);
-  if (a <= L_KNEE) return d;
-  const r = L_CEIL - L_KNEE;
-  return Math.sign(d) * (L_KNEE + r * Math.tanh((a - L_KNEE) / r));
+  if (a <= knee) return d;
+  const r = ceil - knee;
+  return Math.sign(d) * (knee + r * Math.tanh((a - knee) / r));
+};
+const smooth = (e0: number, e1: number, x: number) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+const limitDL = (dL: number, Lin: number) => {
+  if (dL <= 0) return softKnee(dL, 8, 18);
+  const s = smooth(10, 60, Lin);
+  return softKnee(dL, 2 + 6 * s, 4 + 14 * s);
 };
 export function limitLightness(lut: Lut3D): Lut3D {
   const N = lut.size, M = N - 1, d = lut.data, out = new Float32Array(d.length);
@@ -162,7 +167,7 @@ export function limitLightness(lut: Lut3D): Lut3D {
     const c = ((z * N + y) * N + x) * 3;
     rgbToLab(x / M, y / M, z / M, li);
     rgbToLab(d[c], d[c + 1], d[c + 2], lo);
-    const dL = lo[0] - li[0], k = softKnee(dL);
+    const dL = lo[0] - li[0], k = limitDL(dL, li[0]);
     if (k === dL) { out[c] = d[c]; out[c + 1] = d[c + 1]; out[c + 2] = d[c + 2]; continue; }
     labToRgbSoft(li[0] + k, lo[1], lo[2], rgb);
     out[c] = Math.min(1, Math.max(0, rgb[0])); out[c + 1] = Math.min(1, Math.max(0, rgb[1])); out[c + 2] = Math.min(1, Math.max(0, rgb[2]));
