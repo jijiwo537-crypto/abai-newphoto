@@ -9,7 +9,7 @@
  *   ‧ 存檔、構圖、草稿、復原紀錄一律還是原圖的網址 —— 成品畫質跟以前完全一樣。
  * 程式裡存的永遠是原圖網址；只有「畫到預覽上」的那幾個地方透過 previewSrc() 換成適合的那一份。 */
 import { useEffect, useState } from 'react';
-import { get2dWide } from './colorSpace';
+import { loadImage as loadImg, resampleImage, fitLong } from './imageResample';
 import { registerTrim } from './memoryPressure';
 
 /* 兩級小副本：一般大小的圖層（例如一頁放二十幾張）只要 1024，拉大才做 2048，再大才用原圖。
@@ -34,24 +34,12 @@ export function setPreviewZoom(k: number) {
 }
 export const previewZoom = () => viewZoom;
 
-const loadImg = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
-  const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('load')); im.src = src;
-});
-/** 原圖縮成長邊 target 的一份（高品質縮小、廣色域照片維持廣色域、有透明的維持透明），回傳網址 */
+/** 原圖縮成長邊 target 的一份，回傳網址 */
 async function shrink(im: HTMLImageElement, target: number, type: string): Promise<string> {
-  const w = im.naturalWidth, h = im.naturalHeight, k = target / Math.max(w, h);
-  const cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
-  const c = document.createElement('canvas'); c.width = cw; c.height = ch;
-  try {
-    const g = get2dWide(c); if (!g) throw new Error('no 2d');
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(im, 0, 0, cw, ch);
-    const alpha = /png|webp|gif|avif/i.test(type);
-    const blob = await new Promise<Blob | null>(r => c.toBlob(r, alpha ? 'image/png' : 'image/jpeg', alpha ? undefined : 0.95));
-    if (!blob) throw new Error('encode');
-    const u = URL.createObjectURL(blob);
-    const s = await loadImg(u); try { await s.decode?.(); } catch { /* ok */ }
-    return u;
-  } finally { c.width = c.height = 0; }
+  const { w, h } = fitLong(im.naturalWidth, im.naturalHeight, target);
+  const r = await resampleImage(im, w, h, /png|webp|gif|avif/i.test(type), 0.95);
+  if (!r) throw new Error('shrink');
+  return r.url;
 }
 
 /** 導入照片時呼叫（等它做完再放進畫面）：原圖比 PREVIEW_LONG 大就做一份小副本 */
@@ -64,18 +52,8 @@ export function ensurePreviewCopy(url: string, type = ''): Promise<void> {
       const im = await loadImg(url);
       const w = im.naturalWidth, h = im.naturalHeight, long = Math.max(w, h);
       if (!long || long <= PREVIEW_LONG * 1.15) { copies.set(url, { small: null, smallLong: long, long, orig: im, origReady: true, origLoading: false, mid: null, midLong: 0, midLoading: false, type }); return; }
-      const k = PREVIEW_LONG / long, cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
-      const c = document.createElement('canvas'); c.width = cw; c.height = ch;
-      try {
-        const g = get2dWide(c); if (!g) throw new Error('no 2d');
-        g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(im, 0, 0, cw, ch);
-        const alpha = /png|webp|gif|avif/i.test(type);
-        const blob = await new Promise<Blob | null>(r => c.toBlob(r, alpha ? 'image/png' : 'image/jpeg', alpha ? undefined : 0.95));
-        if (!blob) throw new Error('encode');
-        const small = URL.createObjectURL(blob);
-        const s = await loadImg(small); try { await s.decode?.(); } catch { /* ok */ }
-        copies.set(url, { small, smallLong: PREVIEW_LONG, long, orig: null, origReady: false, origLoading: false, mid: null, midLong: 0, midLoading: false, type });
-      } finally { c.width = c.height = 0; }
+      const small = await shrink(im, PREVIEW_LONG, type);
+      copies.set(url, { small, smallLong: PREVIEW_LONG, long, orig: null, origReady: false, origLoading: false, mid: null, midLong: 0, midLoading: false, type });
     } catch {
       copies.set(url, { small: null, smallLong: 0, long: 0, orig: null, origReady: true, origLoading: false, mid: null, midLong: 0, midLoading: false, type });
     } finally { pending.delete(url); }

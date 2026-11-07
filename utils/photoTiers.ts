@@ -11,7 +11,7 @@
  *   ‧ 原始檔案一直留著（只是壓縮過的檔案，幾 MB）：照片被放大、換成更大的格子、
  *     預覽放大到超過現有細節、或要存檔時，從原檔重新做一張更清楚的換上去。
  * 所以成品的畫質不會變差，只是不再為「根本用不到的像素」付記憶體。 */
-import { get2dWide } from './colorSpace';
+import { loadImage as loadImg, resampleImage, fitLong } from './imageResample';
 
 /** 長邊的分級。分級是為了不要每放大一點點就重做一張 */
 export const TIER_STEPS = [1280, 1600, 2048, 2560, 3072, 3584, 4096, 4608, 5120, 6144, 7168, 8192];
@@ -33,32 +33,11 @@ interface Entry {
 }
 const reg = new Map<string, Entry>();
 
-const loadImg = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
-  const im = new Image();
-  im.onload = () => res(im);
-  im.onerror = () => rej(new Error('image load failed'));
-  im.src = src;
-});
-
-/** 從原圖做一張長邊 long 的（高品質縮小；廣色域照片維持廣色域；有透明的維持透明） */
+/** 從原圖做一張長邊 long 的 */
 async function make(src: string, e: Pick<Entry, 'ow' | 'oh' | 'alpha'>, long: number): Promise<{ img: HTMLImageElement; url: string } | null> {
   const original = await loadImg(src);
-  const k = long / Math.max(e.ow, e.oh);
-  const w = Math.max(1, Math.round(e.ow * k)), h = Math.max(1, Math.round(e.oh * k));
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  try {
-    const g = get2dWide(c);
-    if (!g) return null;
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-    g.drawImage(original, 0, 0, w, h);
-    const blob = await new Promise<Blob | null>(r => c.toBlob(r, e.alpha ? 'image/png' : 'image/jpeg', e.alpha ? undefined : 0.97));
-    if (!blob) return null;
-    const url = URL.createObjectURL(blob);
-    const img = await loadImg(url);
-    try { await img.decode?.(); } catch { /* 解碼延後也沒關係 */ }
-    return { img, url };
-  } finally { c.width = c.height = 0; }
+  const { w, h } = fitLong(e.ow, e.oh, long);
+  return resampleImage(original, w, h, e.alpha, 0.97);
 }
 
 const mayHaveAlpha = (type: string) => /png|webp|gif|avif|svg/i.test(type || '');
