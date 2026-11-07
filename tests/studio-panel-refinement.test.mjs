@@ -2,14 +2,16 @@ import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
-test('match imports precede option selectors and top-aligned sliders',()=>{
+test('match panel follows the filter-style layout: floating methods, one slider, then the reference row',()=>{
  const s=read('components/ColorMatchStudio.tsx');
- assert.ok(s.indexOf('data-cm-pickref')<s.indexOf('aria-label="仿色方法"'));
- assert.ok(s.indexOf('aria-label="仿色方法"')<s.indexOf('data-cm-slider'));
+ // 兩個方案浮在預覽左下角；下面一根滑桿；最底下一排參考圖（最左邊是新增）
+ const methods=s.indexOf('aria-label="仿色方法"'),slider=s.indexOf('data-cm-slider'),add=s.indexOf('data-cm-pickref'),ref=s.indexOf('data-cm-ref=');
+ assert.ok(methods>0&&slider>0&&add>0&&ref>0);
+ assert.ok(methods<slider&&slider<add&&add<ref);
+ assert.match(s,/aria-label="仿色方法" data-cm-float/);
  assert.match(s,/aria-pressed=\{picked === m\}/);
- // 兩根滑桿改成並排一列（跟編輯器特效細項同一款）；獨立開啟時仍靠上（content-start）
- assert.match(s,/flex-1 min-h-0 grid grid-cols-2 gap-5[^\n]*'pt-3 content-start'/);
- assert.match(s,/<div key=\{label\} className="min-w-0">/);
+ // 沒有任何參考圖時不出現方案按鈕
+ assert.match(s,/\{refs\.length > 0 && <div role="group" aria-label="仿色方法"/);
  assert.ok(!s.includes('order-first'));
 });
 test('match save formats use real full-quality encoding and separate lossless preview',()=>{

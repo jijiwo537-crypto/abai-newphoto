@@ -6,9 +6,12 @@ const app=fs.readFileSync('App.tsx','utf8');
 test('reference import preserves framing and presents GPU content before exposing it',()=>{
  assert.match(source,/setViewT\(\{ k: 1, tx: 0, ty: 0 \}\); \}, \[imageSrc\]\)/);
  assert.match(source,/useLayoutEffect\(\(\) => \{\s*const gl = glRef.current/);
- assert.ok(source.indexOf('glReadyRef.current = gl.draw(')<source.indexOf("gl.canvas.classList.toggle('hidden', !glReadyRef.current)"));
+ // GPU 畫布不放進畫面：先畫好、確認成功才交給 present()
+ assert.ok(source.indexOf('glReadyRef.current = gl.draw(')>0);
+ assert.ok(source.indexOf('glReadyRef.current = gl.draw(')<source.indexOf('if (glReadyRef.current) present();'));
  assert.doesNotMatch(source,/inset-0[^"\n]*bg-black\/45/);
- assert.match(source,/setStrength, 150/);
+ // 強度上限：標準 100、專業 150
+ assert.match(source,/const maxFor = \(m: Pick\) => \(m === 'cap' \? 150 : 100\)/);
  assert.match(app,/if \(currentView !== 'match'\) \{ setMatchRef\(null\)/);
  const refImport=app.slice(app.indexOf('const handleMatchRefChange'),app.indexOf('const handleMatchRefChange')+900);
  assert.doesNotMatch(refImport,/setIsImporting\(/);

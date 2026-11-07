@@ -16,9 +16,11 @@ test('only active background texture allows color panel scrolling', () => {
   assert.match(grid, /flex-1 min-h-0 no-scrollbar/);
 });
 
-test('color match progress is centered without an opaque backing', () => {
+test('color match progress is centered over a translucent dim (never opaque, never in a corner)', () => {
   const status = match.match(/\{\(busy \|\| referenceLoading\) && \(([\s\S]*?)\n        \)\}/)?.[1];
   assert.ok(status);
   assert.match(status, /absolute inset-0 flex items-center justify-center/);
-  assert.doesNotMatch(status, /bg-|top-3|right-3/);
+  // 加載時照片稍微變暗（半透明），看得出正在算；不能是整片不透明，也不能跑到角落
+  assert.match(status, /bg-black\/55/);
+  assert.doesNotMatch(status, /bg-(?!black\/55)|top-3|right-3/);
 });
