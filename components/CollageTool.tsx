@@ -2551,6 +2551,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const motionStartRectRef = useRef<DOMRect | null>(null);
   const motionFrameAnimationRef = useRef<{ cancel: () => void } | null>(null);
   const [activeTab, setActiveTabState] = useState('setting');
+  const activeTabRef = useRef(activeTab); activeTabRef.current = activeTab;
   const setActiveTab = useCallback((next: React.SetStateAction<string>) => {
     motionStartRectRef.current = motionFrameRef.current?.getBoundingClientRect() || null;
     setActiveTabState(next);
@@ -2775,6 +2776,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 圖片調整面板的 UI 狀態 —— 跟經典拼圖同一組，只是各自持有，
      這樣兩邊的「停在哪個子分頁」互不干擾。 */
   const [adjustSub, setAdjustSub] = useState<'shape' | 'tune' | 'filter' | 'effect'>('filter');
+  const adjustSubRef = useRef(adjustSub); adjustSubRef.current = adjustSub;
   const [effectCard, setEffectCard] = useState<string | null>(null);
   const [effectDetail, setEffectDetail] = useState(false);
   useLayoutEffect(() => {
@@ -5694,10 +5696,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(targetCanvas===canvasRef.current&&!previewCapture){
       if(basePhotoEditing&&!baseEditingWas.current){
         baseEditGate.current=false;
-        requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(()=>{baseEditGate.current=true;regionPaintRef.current();},0)));
+        /* 等面板畫出來、分頁圖示亮好（0.4 秒）才備，通常在手指碰到滑桿之前就備好了。
+           真的開始拖滑桿時不等（見下面的 editGateOpen），第一格就備好 */
+        const gateFor=imageStateRef.current;
+        const open=()=>{if(imageStateRef.current!==gateFor||baseEditGate.current||leavingRef.current)return;
+          // 手指正按著（點子分頁、按住滑桿）就等它放開；拖滑桿的話上面那行已經直接開了
+          if(activePointers.current.size||sliderHeld()){setTimeout(open,80);return;}
+          baseEditGate.current=true;regionPaintRef.current();};
+        requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(open,400)));
       }
       baseEditingWas.current=basePhotoEditing;
     }
+    if(basePhotoEditing&&!baseEditGate.current&&(sliderHeld()||regionSliderHeld.current))baseEditGate.current=true;
     const editGateOpen=baseEditGate.current||!basePhotoEditing;
     // 圖片物件那張 GPU 合成（objComposite）只在它自己那條路上顯示；其他畫法一律先收起來
     if(targetCanvas===canvasRef.current&&!previewCapture&&objComposite.current?.shown&&(selectedObj!==objComposite.current.id||activeTab!=='objedit'))objComposite.current.shown.style.display='none';
@@ -5808,7 +5818,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             regionSpatial.current={key:regionGpuSceneKey.current,scale:renderScale,scene:{black:scenes[1],white:scenes[2],placements},input:regionSpatialInput.current};
             }
             const prepared=regionSpatial.current;
-            void awaitPhotoIdle().then(async()=>{
+            /* 這幾個是「特效」用的預熱：等使用者打開特效那一頁才做。以前一備好就做，常常剛好撞上
+               第一下拖濾鏡／調節滑桿（柔光ll 第一次要編十幾段顯示卡程式），預覽就卡住一下 */
+            void (async()=>{while(adjustSubRef.current!=='effect'||activeTabRef.current!=='objedit'){await new Promise(r=>setTimeout(r,300));if(regionSpatial.current!==prepared||leavingRef.current)return;}})().then(()=>awaitPhotoIdle()).then(async()=>{
               if(regionSpatial.current!==prepared||leavingRef.current||!regionColourActive.current)return;
               warmPhotoFxSurface(prepared.input,'fxMosaic',prepared.scene);
               // Compile-only preflight misses the costly first real texture
@@ -9526,9 +9538,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionShadersPrimed=useRef(false),regionPrimedIds=useRef(new Set<string>());
   const PRIME_LONG=256;
   useEffect(()=>{
-    /* 等使用者真的進到編輯頁才預熱：一進創意拼圖就預熱的話，進來那一刻記憶體多出一大截、主畫面卡好幾下，
+    /* 等使用者真的進到編輯頁的特效才預熱：一進創意拼圖就預熱的話，進來那一刻記憶體多出一大截、主畫面卡好幾下，
        而只想排版、加圖案的人根本用不到。進編輯頁時那份場景本來就會備好，預熱只多跑幾次小圖的特效。 */
-    if(activeTab!=='objedit')return;
+    /* 這六種都是「特效」：打開特效那一頁才預熱。只調濾鏡、調節的時候不會有背景工作跟滑桿搶顯示卡 */
+    if(activeTab!=='objedit'||adjustSub!=='effect')return;
     if(!imageState||!photoRegion?.photos.length||regionShadersPrimed.current)return;
     let cancelled=false;
     void(async()=>{
@@ -9576,7 +9589,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       finally{regionPreflight.current=false;}
     })();
     return()=>{cancelled=true;};
-  },[imageState,photoRegion?.photos[0]?.src,activeTab]);
+  },[imageState,photoRegion?.photos[0]?.src,activeTab,adjustSub]);
   useEffect(()=>{
     if(!import.meta.env.DEV)return;
     const reference=(event:Event)=>{const detail=(event as CustomEvent).detail;if(detail?.canvas instanceof HTMLCanvasElement)renderToCanvasRef.current(detail.canvas,previewScaleRef.current,!detail.export);};
@@ -11645,7 +11658,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                      就回到新增的主頁 —— 不必特地去按左上角的返回鍵。 */
                   if (id === 'add') setAddSub('root');
                 }} 
-                className={`flex-1 py-3 text-[11px] font-bold border-b-2 transition-[color] duration-150 ${
+                /* 亮起來不做淡入：顏色的漸變在 iPhone 上是主執行緒在跑，切頁之後那幾格只要在重畫預覽，
+                   淡入就會停在半路 —— 看起來就是「圖示慢一拍才亮」 */
+                className={`flex-1 py-3 text-[11px] font-bold border-b-2 ${
                   activeTab === id ? 'text-white border-white' : 'text-[#555] border-transparent'
                 }`}
               >
@@ -12873,12 +12888,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {activeTab === 'shape' && <div className="max-w-md mx-auto h-full min-h-0 flex flex-row animate-in fade-in duration-300">
                 <div className="flex flex-col shrink-0 w-11 -ml-5 border-r border-white/10 select-none">
                   <button onClick={() => setShapeSub('shape')} title="圖案" aria-label="圖案"
-                    className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}>
+                    className={`w-full flex-1 flex items-center justify-center outline-none ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}>
                     <Star size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'shape' ? 'scale-110' : 'scale-100'}`} />
                   </button>
                   <div className="w-full h-[1px] bg-white/10 shrink-0" />
                   <button onClick={() => setShapeSub('style')} title="參數" aria-label="參數"
-                    className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${shapeSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}>
+                    className={`w-full flex-1 flex items-center justify-center outline-none ${shapeSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}>
                     <SlidersHorizontal size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'style' ? 'scale-110' : 'scale-100'}`} />
                   </button>
                 </div>

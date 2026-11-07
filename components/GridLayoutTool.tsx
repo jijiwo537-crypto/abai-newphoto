@@ -3414,13 +3414,20 @@ useEffect(()=>{
   const source=getPreviewImg(cardSrc);
   const prime=()=>{if(cancelled||!source.naturalWidth)return;
     for(const [id] of FX_ROOT_TOOLS){
+      /* 柔光ll 第一次要編譯十幾段顯示卡程式（其他特效一張只要零點零幾秒）：不先備，
+         等真的打開特效頁、卡片出現時才算，不會在使用者拖別的滑桿時突然卡住 */
+      if(id==='fxExposureSpill')continue;
       const key=`${cardSrc}|fx:${id}`;
       if(cardThumbCache.has(key))continue;
       void queueCardThumb(()=>{if(cardThumbCache.has(key))return;const thumb=makeCardThumb(source,effectPreset(id,FX_DEFS) as PhotoFx);if(thumb)putCardThumb(key,thumb);},()=>cancelled);
     }
   };
-  if(source.complete)prime();else source.addEventListener('load',prime,{once:true});
-  return()=>{cancelled=true;source.removeEventListener('load',prime);};
+  /* 特效卡片的縮圖是「先備著」的（打開特效頁時卡片自己會算）：進編輯頁之後等 2.5 秒再開始。
+     有幾張特效第一次要編譯很多段顯示卡程式（柔光ll 一張就要編十幾段），一開編輯頁就算的話，
+     常常剛好撞上使用者第一下拖濾鏡、調節滑桿 —— 那就是「剛開始預覽一卡一卡、過一陣子就好」 */
+  const start=()=>{if(source.complete)prime();else source.addEventListener('load',prime,{once:true});};
+  const t=window.setTimeout(start,2500);
+  return()=>{cancelled=true;clearTimeout(t);source.removeEventListener('load',prime);};
 },[cardSrc]);
 
 /* ── 兩段式的那幾顆（形狀／描邊／發光）按下去要立刻有反應 ──────────────

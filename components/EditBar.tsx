@@ -39,7 +39,9 @@ export const EditBar: React.FC<{ children: React.ReactNode; scroll?: boolean; cl
 export const EditBarTab: React.FC<{ active: boolean; label: string; onClick: () => void; scroll?: boolean; id?: string }> = ({ active, label, onClick, scroll, id }) => (
   <button onClick={onClick} data-edit-tab={id} data-edit-tab-on={active ? '1' : '0'}
     style={scroll ? { width: 'calc((100% - 12px) / 7)' } : undefined}
-    className={`relative h-full flex items-center justify-center transition-colors duration-200 ${scroll ? 'shrink-0' : 'flex-1'} ${active ? 'text-white' : 'text-white/50'}`}>
+    /* 文字顏色直接換（不淡入）：顏色漸變在 iPhone 上跑在主執行緒，切頁後那幾格在重畫預覽時會停在半路、
+       看起來慢一拍才亮。底下那條線是 transform／opacity（交給合成器），照樣有動畫 */
+    className={`relative h-full flex items-center justify-center ${scroll ? 'shrink-0' : 'flex-1'} ${active ? 'text-white' : 'text-white/50'}`}>
     <span className="text-[12.5px] font-normal tracking-[0.04em] whitespace-nowrap">{label}</span>
     <span aria-hidden className={`absolute left-1/2 bottom-[4px] -ml-[9px] w-[18px] h-[2px] rounded-full bg-white transition-[opacity,transform] duration-200 ${active ? 'opacity-100 scale-x-100' : 'opacity-0 scale-x-50'}`} />
   </button>
