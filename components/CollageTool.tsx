@@ -1637,6 +1637,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }return value;
   };
   const regionColour=useRef<PhotoSceneColour|null>(null);
+  const baseEditingWas=useRef(false),baseEditGate=useRef(true);
   const regionColourActive=useRef(false);
   const regionSpatialActive=useRef(false);
   /* 圖片物件拖效果滑桿：場景先拍兩張（這顆物件換成全黑／全白），之後每一格只在 GPU 上把
@@ -5678,6 +5679,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
     }
     const basePhotoEditing=activeTab==='objedit'&&!selectedObj&&(baseSelected||selectedRegionPhotoRef.current!==null);
+    /* 剛進編輯頁的那一格：先照一般的畫法畫（跟進來前一模一樣），讓編輯頁的面板馬上出來；
+       顯示卡那邊要備的場景（整張重畫三次再上傳）等面板畫出來之後的下一格才做。
+       以前全部擠在按下去的那一格，按「編輯」要等好一下才換頁。 */
+    if(targetCanvas===canvasRef.current&&!previewCapture){
+      if(basePhotoEditing&&!baseEditingWas.current){
+        baseEditGate.current=false;
+        requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(()=>{baseEditGate.current=true;regionPaintRef.current();},0)));
+      }
+      baseEditingWas.current=basePhotoEditing;
+    }
+    const editGateOpen=baseEditGate.current||!basePhotoEditing;
     // 圖片物件那張 GPU 合成（objComposite）只在它自己那條路上顯示；其他畫法一律先收起來
     if(targetCanvas===canvasRef.current&&!previewCapture&&objComposite.current?.shown&&(selectedObj!==objComposite.current.id||activeTab!=='objedit'))objComposite.current.shown.style.display='none';
     // A resident photo-edit surface contains the old complete scene. It must
@@ -5686,7 +5698,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       regionColour.current?.hide();
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
     }
-    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&!regionHold.current?.active&&!swapPaintForced.current&&!regionSelectionFeedbackPending.current&&(basePhotoEditing||regionPreflight.current)){
+    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&!regionHold.current?.active&&!swapPaintForced.current&&!regionSelectionFeedbackPending.current&&((basePhotoEditing&&editGateOpen)||regionPreflight.current)){
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
       const sceneGeometryGesture=!!objDragRef.current||!!objPinchRef.current||!!objStretchRef.current||!!baseDragRef.current||!!basePinchRef.current||!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
       /* 只剩顏色（例如特效拖回 0）而顏色那一條的場景還沒更新（照片在格子裡平移／縮放過）：
@@ -9498,8 +9510,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     });
     return()=>{cancelled=true;};
   },[stableSceneKey,sliderRelease,imageState,layout,maskScale,canvasRatio,maxPreviewScale,viewT,editingTextId,swapSource,activeTab,objDragging,objPinching,objStretching,objEditImage,selectedRegionPhoto,baseSelected,selectedObj,shapeSel,selectedTarget]);
-  const regionShadersPrimed=useRef(false);
+  const regionShadersPrimed=useRef(false),regionPrimedIds=useRef(new Set<string>());
+  const PRIME_LONG=256;
   useEffect(()=>{
+    /* 等使用者真的進到編輯頁才預熱：一進創意拼圖就預熱的話，進來那一刻記憶體多出一大截、主畫面卡好幾下，
+       而只想排版、加圖案的人根本用不到。進編輯頁時那份場景本來就會備好，預熱只多跑幾次小圖的特效。 */
+    if(activeTab!=='objedit')return;
     if(!imageState||!photoRegion?.photos.length||regionShadersPrimed.current)return;
     let cancelled=false;
     void(async()=>{
@@ -9526,13 +9542,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(ready&&source&&!ready.shown){
           const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height;
           const transform=latestImageTransform.current;
-          const cap=regionEffectCapacity(p,0,w,h,Math.max(Math.abs(transform.w),Math.abs(transform.h))*previewScaleRef.current),k=Math.min(1,cap/Math.max(w,h));
+          /* 預熱只是讓顯示卡先把各特效的程式編譯好（第一次點特效才不會頓一下），跟圖多大無關：
+             用長邊 PRIME_LONG 的小圖跑就夠了。以前用預覽的實際大小跑六種特效，
+             一進來就多佔約 90MB 的畫布記憶體、主畫面卡住將近 2 秒 —— iPhone 上一進創意拼圖就閃退的主因之一。
+             真的點特效時才依實際大小配置（配置很快，慢的是編譯，那已經做好了）。 */
+          const cap=regionEffectCapacity(p,0,w,h,Math.max(Math.abs(transform.w),Math.abs(transform.h))*previewScaleRef.current),k=Math.min(1,cap/Math.max(w,h),PRIME_LONG/Math.max(w,h));
           for(const id of ['soft','fringeIntensity','leakOpacity','fxMosaic','fxLowfi','fxExposureSpill']){
+            // 做過的就不再做（中途離開編輯頁再回來，從還沒做的那一個接著做）
+            if(regionPrimedIds.current.has(id))continue;
             await awaitPhotoIdle();if(cancelled)return;
             const primed=applyPhotoFx(source,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),{...FX_PARAM_DEFAULTS,[id]:100},{cacheSource:true,gpuSurface:true,out:ready.input,scene:ready.scene});
             // WebKit can defer the real texture/shader work until presentation.
             // Fence only this import-time preflight, never an interaction frame.
             if(primed instanceof HTMLCanvasElement&&primed!==ready.input)(primed.getContext('webgl2')||primed.getContext('webgl'))?.finish();
+            regionPrimedIds.current.add(id);
           }
           regionShadersPrimed.current=true;
         }
@@ -9540,7 +9563,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       finally{regionPreflight.current=false;}
     })();
     return()=>{cancelled=true;};
-  },[imageState,photoRegion?.photos[0]?.src]);
+  },[imageState,photoRegion?.photos[0]?.src,activeTab]);
   useEffect(()=>{
     if(!import.meta.env.DEV)return;
     const reference=(event:Event)=>{const detail=(event as CustomEvent).detail;if(detail?.canvas instanceof HTMLCanvasElement)renderToCanvasRef.current(detail.canvas,previewScaleRef.current,!detail.export);};
