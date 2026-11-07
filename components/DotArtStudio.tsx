@@ -86,6 +86,8 @@ const BOTTOM_ROW = 68;
 const RX = 9.5 / 14, RY = 8 / 12;
 /** 平均點距（字寬）：橫向一個字 2 點、直向一個字高 4 點；筆刷半徑以兩者的幾何平均當一格 */
 const PITCH_X = 0.5, PITCH_Y = CH / 4, PITCH = Math.sqrt(PITCH_X * PITCH_Y);
+/** 筆刷半徑（點距）：跟著滑桿連續變（不取整數），調大小時中間的圈平滑地變大變小 */
+const brushRad = (v: number) => Math.max(0.5, v - 0.5);
 /** 一個方向上每個點的中心位置（以字寬／字高為單位）。n＝點數、cells＝格數、per＝每格幾點、g＝幾點一組、phase＝分組起點 */
 const axis = (n: number, cells: number, per: number, g: number, r: number, phase: number) => {
   const p = 1 / per, sIn = g * p / (g - 1 + 1 / r), extra = sIn / r - sIn, pos = new Float64Array(n);
@@ -162,13 +164,13 @@ const drawDots = (g: CanvasRenderingContext2D, b: Bits, L: Layout, cw: number, c
      3. 亮度用「1 − e^(−x)」平滑收頂（密的地方不會硬切成一片白）；
      4. 轉成 8 位元時加一點點雜訊（dither），最暗那一段不會出現一階一階的色帶。
    全部是小格子上的加減（幾十萬格），手機上幾毫秒；光暈大小跟著字寬走，預覽與存出來的圖看起來一樣。
-   滑桿只改這一層的透明度，不用重算。最大值＝原本的 60%（滑桿照樣是 0～100）。 */
+   滑桿只改這一層的透明度，不用重算。最大值＝最早版本的 72%（滑桿照樣是 0～100）。 */
 const GLOW_CELL = 0.25;          // 格子大小（字寬）
 const GLOW_PAD = 4;              // 四周多留幾個字寬（光暈最外圈約 3 個標準差，不會被切掉）
 const GLOW_SIGMAS = [0.3, 0.6, 1.2]; // 三層光暈的大小（字寬）
 const GLOW_WEIGHTS = [0.5, 0.3, 0.2];
 const GLOW_GAIN = 12;            // 點很細，平均下來很淡，先放大再平滑收頂
-const GLOW_MAX = 0.6;       // 滑桿拉滿＝原本的 60
+const GLOW_MAX = 0.72;      // 滑桿拉滿＝最早版本的 72（滑桿照樣顯示 0～100）
 /** 三次方塊模糊 ≈ 高斯：每次的半徑 */
 const boxRadii = (sigma: number) => {
   const n = 3, wIdeal = Math.sqrt(12 * sigma * sigma / n + 1);
@@ -492,7 +494,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     if (!m || m.length !== b.d.length) { m = new Uint8Array(b.d.length); edits.current.set(editKey, m); }
     /* 筆刷在畫面上是正圓（橫向點距 0.5 字寬、直向 0.383 字寬不一樣，換算成畫面距離再比），
        跟調大小時中間那個圈一樣大 */
-    const rad = Math.max(0.5, Math.round(brush) - 0.5), v = tool === 'draw' ? 1 : 2;
+    const rad = brushRad(brush), v = tool === 'draw' ? 1 : 2;
     const kx = PITCH_X / PITCH, ky = PITCH_Y / PITCH, rx = rad / kx, ry = rad / ky;
     for (let y = Math.floor(py - ry); y <= Math.ceil(py + ry); y++) for (let x = Math.floor(px - rx); x <= Math.ceil(px + rx); x++) {
       if (x < 0 || y < 0 || x >= b.W || y >= b.H) continue;
@@ -566,21 +568,22 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     if (!b || !o || !L || saving) return;
     setSaving(true);
     try {
-      // 只存有點的範圍（跟複製的文字同一塊），四周各留一個字寬的黑邊（有發光時留三個字寬，光暈才不會被切掉）
+      /* 存成去背的 PNG：背景完全透明，只有白點（不透明）和光暈（白色、透明度＝光的強度），
+         放到任何顏色的背景上都跟這裡看到的一樣自然，邊緣不會有黑邊或白邊。
+         只存有點的範圍（跟複製的文字同一塊），四周各留一個字寬（有發光時留三個字寬，光暈才不會被切掉） */
       const x0 = o.x0 * 2, x1 = (o.x0 + o.cols) * 2, y0 = o.y0 * 4, y1 = (o.y0 + o.rows) * 4;
       const spanX = L.x.pos[x1 - 1] - L.x.pos[x0], spanY = L.y.pos[y1 - 1] - L.y.pos[y0];
       const M = glowOn ? 3 : 1;
       const cw = Math.max(4, Math.min(32, 4096 / (spanX + 2 * M), 4096 / (spanY * CH + 2 * M))), ch = cw * CH;
       const c = document.createElement('canvas');
       c.width = Math.round(spanX * cw + 2 * M * cw); c.height = Math.round(spanY * ch + 2 * M * cw);
-      /* 點先畫在透明的一層（發光要從這層算），再疊到黑底上：黑底 → 光暈 → 點 */
+      /* 光暈在下、點在上，疊在透明的畫布上 */
       const dots = document.createElement('canvas'); dots.width = c.width; dots.height = c.height;
       const gd = dots.getContext('2d')!;
       gd.fillStyle = '#fff'; gd.beginPath();
       drawDots(gd, b, L, cw, ch, M * cw - L.x.pos[x0] * cw, M * cw - L.y.pos[y0] * ch, x0, y0, x1, y1);
       gd.fill();
       const g = c.getContext('2d')!;
-      g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
       if (glowOn) {
         const G = glowField(b, L), ox = M * cw - L.x.pos[x0] * cw, oy = M * cw - L.y.pos[y0] * ch;
         g.globalAlpha = GLOW_MAX * Math.min(1, glow / 100); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
@@ -670,10 +673,11 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         {sizingBrush && isBrush && bits && (() => {
           const bx = box.current?.getBoundingClientRect(), cr = cvs.current?.getBoundingClientRect();
           if (!bx || !cr || !cr.width) return null;
-          const R = Math.max(0.5, Math.round(brush) - 0.5) * PITCH * geom.current.cw;
+          /* 圈再小也至少 8px（框線 2px，太小時框線會把圈撐大、看起來偏到右下）；用中心點定位，大小怎麼變都在正中間 */
+          const D = Math.max(8, 2 * brushRad(brush) * PITCH * geom.current.cw);
           const cx = cr.left - bx.left + cr.width / 2, cy = cr.top - bx.top + cr.height / 2;
           return <div data-dot-brush-ring className="absolute pointer-events-none z-20 rounded-full border-2 border-white"
-            style={{ left: cx - R, top: cy - R, width: 2 * R, height: 2 * R}} />;
+            style={{ left: cx, top: cy, width: D, height: D, transform: 'translate(-50%, -50%)' }} />;
         })()}
         {status === 'ready' && rendered && !frame && <p className="absolute text-[12px] text-white/50">畫面全空白，調一下明暗</p>}
         {/* 生成中：只有正中間一個轉圈（跟仿色同一款），完整的點陣出來之前不顯示任何點 */}
