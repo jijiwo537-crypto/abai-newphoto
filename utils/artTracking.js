@@ -93,6 +93,8 @@ export function renderTracking(c,source,strength=.6,options={}){
   c.globalAlpha=amount;c.drawImage(p.blur,0,0,w,h);c.globalAlpha=1;
   const wash=c.createLinearGradient(x,y,x+rw,y+rh);wash.addColorStop(0,'#ffffff22');wash.addColorStop(.5,'#ffffff00');wash.addColorStop(1,'#ffffff11');c.globalAlpha=amount;c.fillStyle=wash;c.fillRect(x,y,rw,rh);
  }else if(mode==='negative'){c.globalCompositeOperation='difference';c.globalAlpha=amount;c.fillStyle='white';c.fillRect(x,y,rw,rh);}
+ // 黑白負片：先去色（亮度 0.3R+0.59G+0.11B，跟 GPU 那條同一個算式），再反轉
+ else if(mode==='mononeg'){c.globalAlpha=amount;c.globalCompositeOperation='saturation';c.fillStyle='#808080';c.fillRect(x,y,rw,rh);c.globalCompositeOperation='difference';c.fillStyle='white';c.fillRect(x,y,rw,rh);}
  else{
   const grid=mosaicGrid(rw,rh,o.pixels,k),tw=grid.x,th=grid.y;
   p.tile.width=tw;p.tile.height=th;const tg=p.tile.getContext('2d');

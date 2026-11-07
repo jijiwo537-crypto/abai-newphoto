@@ -135,7 +135,7 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  const randomizeMasks=(e:React.MouseEvent<HTMLButtonElement>)=>{
   setTracking(s=>redistributeRegions(s));randomizeFeedback(e.currentTarget);
  };
- const selectMany=(key:'shapes'|'materials',value:string)=>setTracking(s=>({...s,[key]:value==='none'?[]:s[key].includes(value)?s[key].filter((x:string)=>x!==value):[...s[key],value],...(key==='materials'&&value!=='none'?{count:s.count===0?10:s.count}:{})}));
+ const selectMany=(key:'shapes'|'materials',value:string)=>setTracking(s=>key==='shapes'&&s.shapes.length===1&&s.shapes.includes(value)?s/* 輪廓至少要留一種，最後一種按了不取消 */:({...s,[key]:value==='none'?[]:s[key].includes(value)?s[key].filter((x:string)=>x!==value):[...s[key],value],...(key==='materials'&&value!=='none'?{count:s.count===0?10:s.count}:{})}));
  /* 連續的參數（大小、粗細、虛線、霧化…）用很細的刻度：拖的時候畫面跟著一點一點變，
     不會因為範圍小（例如 2～30）而一格一格跳。數字仍照 shown 的精度顯示。 */
  const slider=(name:string,value:number,min:number,max:number,change:(v:number)=>void,step=1,unit='',shown=step)=><label className="art-range"><span>{name}<output>{shown>=1?Math.round(value):Number(value.toFixed(String(shown).split('.')[1]?.length||1))}{unit}</output></span><LiveRange ariaLabel={name} min={min} max={max} step={step} value={value} onValue={change} className="" wrapClassName="art-range-track" height={24}/></label>;
@@ -147,6 +147,8 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  const tt=(name:string,key:string)=>binary(name,!!tracking[key],value=>updateTracking(key,value));
  const groups=(names:string[])=><div className="art-subtabs">{names.map(name=><button key={name} aria-pressed={section===name} onClick={()=>setSection(name)}>{name}</button>)}</div>;
  const tabs=effect==='ascii'?['效果','字符','範圍','外觀']:['效果','節點','元素','遮罩'];
+ /* 沒有選任何遮罩時沒有「細節」可調（分頁也藏起來）；停在細節時被清空（例如復原）就回到編輯 */
+ useEffect(()=>{if(section==='細節'&&!tracking.materials.length)setSection('編輯');},[section,tracking.materials.length]);
  const selectTab=(name:string)=>{setTab(name);setPlacing(false);setSection(name==='節點'?'偵測':'編輯');};
  const save=async()=>{
   if(!ready||busy)return;setBusy(true);setFormatOpen(false);let url='',heicUrl='';
@@ -203,9 +205,9 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
      <section aria-label="圓圈設定">{tt('圓圈','chain')}<fieldset disabled={!tracking.chain} className="art-detail-ranges art-element-ranges" aria-label="圓圈調整">{tr('大小','baseRadius',30,400)}{slider('角度',Math.round(trackingChainAngle(tracking,dimensions.w,dimensions.h)),0,180,v=>updateTracking('angle',v))}</fieldset></section>
     </div>
    </>}
-   {effect==='tracking'&&tab==='遮罩'&&<><div className="art-mask-toolbar">{groups(['編輯','細節'])}<button className="art-mask-random" onClick={randomizeMasks}>隨機分佈</button></div>
+   {effect==='tracking'&&tab==='遮罩'&&<><div className="art-mask-toolbar">{groups(tracking.materials.length?['編輯','細節']:['編輯'])}<button className="art-mask-random" onClick={randomizeMasks}>隨機分佈</button></div>
     {section==='編輯'&&<><div className="art-presets" role="group" aria-label="遮罩材質">{MATERIALS.map(([key,name])=><button key={key} aria-pressed={tracking.materials.includes(key)} onClick={()=>selectMany('materials',key)}>{name}</button>)}</div>{tr('數量','count',0,30)}<div className="art-detail-ranges">{tr('大小','size',20,400)}{tr('變化','sizeVariation',0,100)}</div></>}
-    {section==='細節'&&<><div className="art-detail-ranges">{tracking.materials.includes('mosaic')&&tr('馬賽克','pixels',2,60)}{tracking.materials.includes('glass')&&tr('霧化','blur',0,60)}</div>{tt('框線','zoneStroke')}</>}
+    {section==='細節'&&tracking.materials.length>0&&<><div className="art-detail-ranges">{tracking.materials.includes('mosaic')&&tr('馬賽克','pixels',2,60)}{tracking.materials.includes('glass')&&tr('霧化','blur',0,60)}</div>{tt('框線','zoneStroke')}</>}
    </>}
   </div></section>
   <input hidden ref={input} type="file" accept="image/*" onChange={async e=>{const f=e.target.files?.[0];e.target.value='';if(!f)return;const revision=++importRevision.current;setBusy(true);setReady(false);setError('');setCompare(false);try{const next=await processImageFile(f);if(revision===importRevision.current){setSrc(next);setSourceRevision(revision);setTracking(s=>({...s,zones:[]}));}}catch(err){if(revision===importRevision.current)setError(String(err));}finally{if(revision===importRevision.current)setBusy(false);}}}/>
