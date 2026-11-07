@@ -152,6 +152,11 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         guard session.canAddInput(input) else { throw ABAIImageCore.CoreError.unsupported("相機輸入") }
         session.addInput(input)
         device = dev
+        /* 虛擬鏡頭預設倍率 1 是超廣角；一打開要停在主鏡頭（介面上的 1x） */
+        if let base = dev.virtualDeviceSwitchOverVideoZoomFactors.first, (try? dev.lockForConfiguration()) != nil {
+            dev.videoZoomFactor = CGFloat(truncating: base)
+            dev.unlockForConfiguration()
+        }
 
         if !configured {
             guard session.canAddOutput(photoOutput), session.canAddOutput(videoOutput) else { throw ABAIImageCore.CoreError.unsupported("相機輸出") }
@@ -249,10 +254,13 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
 
     // MARK: 變焦、對焦、曝光、濾鏡
 
+    /// factor：鏡頭本身的倍率；或 uiZoom：介面上的倍率（1＝主鏡頭、0.5＝超廣角），自動換算
     @objc func setZoom(_ call: CAPPluginCall) {
-        let f = CGFloat(call.getDouble("factor") ?? 1)
         sessionQueue.async {
             guard let d = self.device, (try? d.lockForConfiguration()) != nil else { call.resolve(); return }
+            /* 三鏡頭／雙廣角的虛擬鏡頭：倍率 1 是超廣角，主鏡頭在第一個切換點 */
+            let base = d.virtualDeviceSwitchOverVideoZoomFactors.first.map { CGFloat(truncating: $0) } ?? 1
+            let f: CGFloat = call.getDouble("uiZoom").map { CGFloat($0) * base } ?? CGFloat(call.getDouble("factor") ?? 1)
             d.videoZoomFactor = max(d.minAvailableVideoZoomFactor, min(d.maxAvailableVideoZoomFactor, f))
             d.unlockForConfiguration()
             call.resolve(["factor": Double(d.videoZoomFactor)])

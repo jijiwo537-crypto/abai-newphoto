@@ -1,5 +1,9 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { isNative } from '../utils/native';
+import { nativeCamera, captureNative, lutFileName } from '../utils/nativeCamera';
+import { nativePhotos } from '../utils/nativePhotos';
+import { punchThrough } from '../utils/nativePreview';
 import { Icon } from './Icon';
 import { CameraSettings } from '../types';
 import { GalleryOverlay } from './GalleryOverlay';
@@ -270,6 +274,17 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const fxOn = FX_ITEMS.some(item => fx[item.id] > 0);
 
   const [flashOn, setFlashOn] = useState(false);
+  /* 專業模式（只有 App 裡有）：原生相機，4800 萬像素、ProRAW、零快門延遲、相機控制按鈕。
+     觀景窗由原生畫、即時套濾鏡；即時特效在這個模式不套用。 */
+  const [proAvailable, setProAvailable] = useState(false);
+  const [proRawSupported, setProRawSupported] = useState(false);
+  const [proMode, setProMode] = useState(false);
+  const [proRaw, setProRaw] = useState(false);
+  const proModeRef = useRef(false); proModeRef.current = proMode;
+  useEffect(() => {
+    if (!isNative()) return;
+    void nativeCamera().then(c => c?.available().then(r => { setProAvailable(!!r.available); setProRawSupported(!!r.proRAW); })).catch(() => {});
+  }, []);
   
   // 預設比例 3:2
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('3:2');
@@ -400,6 +415,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
+      // 專業模式由原生相機接手，網頁這邊不開串流（同一時間只能有一方用相機）
+      if (proModeRef.current) { streamRef.current = null; return; }
       
       try {
         const constraints: MediaStreamConstraints = {
@@ -502,7 +519,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [facingMode, videoEl]);
+  }, [facingMode, videoEl, proMode]);
 
   /* ---------- 閃光燈 ----------
      網頁連拍管線只使用不會暫停串流的 torch 約束。ImageCapture.takePhoto
@@ -613,6 +630,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const lensMm = parseInt(ZOOM_STEPS.find(z => z.label === settings.focalLength)?.mm || '24', 10) || 24;
   const handleZoomClick = (val: string) => {
     triggerHaptic();
+    if (proModeRef.current) void nativeCamera().then(c => c?.setZoom({ uiZoom: parseFloat(val) || 1 }));
     setSettings(prev => ({ ...prev, focalLength: val }));
     const mm = parseInt(ZOOM_STEPS.find(z => z.label === val)?.mm || '', 10);
     // 有小框時，顯示的是框的焦段（跟縮放時中間那個數字同一套）
@@ -670,6 +688,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
     const x = clientX - rect.left;
     const y = clientY - rect.top;
+    if (proModeRef.current && rect.width && rect.height) void nativeCamera().then(c => c?.focus({ x: x / rect.width, y: y / rect.height }));
     /* 同一次觸控在新 WebKit 會依序送 pointerup 與 click。click 是舊版保底，
        但新版本不能因此讓相機硬體重做兩次對焦。 */
     const now = performance.now();
@@ -769,7 +788,24 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      就立刻取下一張新幀。上限 3 是避免極端連點在手機上累積無限工作。 */
   const captureQueueRef = useRef(0);
   const capturePhotoRef = useRef<() => void>(() => {});
+  const proOptsRef = useRef({ lut: '', aspect: 2 / 3, flash: false, raw: false });
+  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw };
   const capturePhoto = useCallback(async () => {
+    /* 專業模式：原生全解析度拍照，原生端套濾鏡、裁成畫面比例；ProRAW 開著時 RAW 檔直接存進相簿 */
+    if (proModeRef.current) {
+      if (capturingRef.current) return;
+      capturingRef.current = true; setIsCapturing(true); setCaptureNotice('');
+      try {
+        const o = proOptsRef.current;
+        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, aspect: o.aspect, zoom: frameZoomRef.current });
+        if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
+        ownedUrlsRef.current.add(r.url);
+        setPhotos(prev => [r.url, ...prev]);
+        if (r.rawPath) void nativePhotos().then(p => p?.save({ path: r.rawPath!, kind: 'photo' })).catch(() => {});
+      } catch { setCaptureNotice('未能儲存照片，請再拍一次'); }
+      finally { capturingRef.current = false; setIsCapturing(false); }
+      return;
+    }
     const video = videoEl;
     if (!video || !videoTrack || videoTrack.readyState === 'ended') return;
     if (capturingRef.current) {
@@ -901,6 +937,36 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     }
   }, [aspectRatio, canvasHasFrame, flashOn, hasTorch, seedThumb, setTorch, settings.exposure, videoTrack, videoEl, waitForCameraFrame]);
   capturePhotoRef.current = capturePhoto;
+
+  /* 專業模式開著時：原生相機畫在網頁底下，觀景窗那一塊挖成透明；實體按鈕（音量鍵、相機控制）當快門 */
+  useEffect(() => {
+    if (!proMode) return;
+    let alive = true, restore: (() => void) | null = null, sub: { remove: () => void } | null = null, ro: ResizeObserver | null = null;
+    void (async () => {
+      const cam = await nativeCamera();
+      const canvas = viewfinderRef.current?.getCanvas?.() ?? null;
+      const el = canvas?.parentElement;
+      if (!cam || !el || !alive) return;
+      const rect = () => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; };
+      try {
+        await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: 1, proRAW: true });
+      } catch { if (alive) { setProMode(false); setCaptureNotice('專業模式無法啟動，已換回一般相機'); } return; }
+      if (!alive) { void cam.stop(); return; }
+      restore = punchThrough(el, canvas ? [canvas] : []);
+      ro = new ResizeObserver(() => { void cam.setRect(rect()).catch(() => {}); });
+      ro.observe(el);
+      sub = await cam.addListener('shutter', () => capturePhotoRef.current());
+    })();
+    return () => {
+      alive = false; ro?.disconnect(); sub?.remove(); restore?.();
+      void nativeCamera().then(c => c?.stop());
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proMode, facingMode, editingPhoto]);
+  useEffect(() => {
+    if (proMode) void nativeCamera().then(c => c?.setLut({ lut: lutFileName(lutList[selectedLutIdx]?.url), amount: 1 }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proMode, selectedLutIdx]);
   useEffect(() => () => { captureQueueRef.current = 0; }, []);
 
   /* 倒數用的計時器要抓在 ref 上：離開相機時一定要取消，
@@ -1234,6 +1300,34 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                                 <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${showGrid ? 'translate-x-5' : 'translate-x-0'}`} />
                             </button>
                         </div>
+                        {proAvailable && (<>
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
+                                <Icon name="pro_camera" className="text-lg text-white/70" />
+                                <span>專業</span>
+                            </div>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setProMode(v => !v); triggerHaptic(); }}
+                                className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] border border-white/10 ${proMode ? 'bg-white/40' : 'bg-white/10'}`}
+                            >
+                                <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${proMode ? 'translate-x-5' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+                        {proMode && proRawSupported && (
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
+                                <Icon name="raw_file" className="text-lg text-white/70" />
+                                <span>ProRAW</span>
+                            </div>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setProRaw(v => !v); triggerHaptic(); }}
+                                className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] border border-white/10 ${proRaw ? 'bg-white/40' : 'bg-white/10'}`}
+                            >
+                                <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${proRaw ? 'translate-x-5' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+                        )}
+                        </>)}
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
                                 <Icon name="timer" className="text-lg text-white/70" />

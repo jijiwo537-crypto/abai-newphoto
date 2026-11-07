@@ -27,6 +27,9 @@
 		AB000000000000000000010A /* HapticsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000000A /* HapticsPlugin.swift */; };
 		AB000000000000000000010B /* VideoWriterPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000000B /* VideoWriterPlugin.swift */; };
 		AB00000000000000000001F0 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000F0 /* PrivacyInfo.xcprivacy */; };
+		AB000000000000000000E005 /* PhotoEditingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000E003 /* PhotoEditingViewController.swift */; };
+		AB000000000000000000E006 /* ABAIImageCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000005 /* ABAIImageCore.swift */; };
+		AB000000000000000000E007 /* ABAIEdit.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = AB000000000000000000E002 /* ABAIEdit.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -52,7 +55,34 @@
 		AB000000000000000000000A /* HapticsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticsPlugin.swift; sourceTree = "<group>"; };
 		AB000000000000000000000B /* VideoWriterPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoWriterPlugin.swift; sourceTree = "<group>"; };
 		AB00000000000000000000F0 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		AB000000000000000000E002 /* ABAIEdit.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ABAIEdit.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB000000000000000000E003 /* PhotoEditingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoEditingViewController.swift; sourceTree = "<group>"; };
+		AB000000000000000000E004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXContainerItemProxy section */
+		AB000000000000000000E00F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AB000000000000000000E001;
+			remoteInfo = ABAIEdit;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AB000000000000000000E00D /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				AB000000000000000000E007 /* ABAIEdit.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		504EC3011FED79650016851F /* Frameworks */ = {
@@ -60,6 +90,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AB000000000000000000E00A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -71,6 +108,7 @@
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
+				AB000000000000000000E008 /* ABAIEdit */,
 				504EC3051FED79650016851F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -79,6 +117,7 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				AB000000000000000000E002 /* ABAIEdit.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -110,6 +149,15 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		AB000000000000000000E008 /* ABAIEdit */ = {
+			isa = PBXGroup;
+			children = (
+				AB000000000000000000E003 /* PhotoEditingViewController.swift */,
+				AB000000000000000000E004 /* Info.plist */,
+			);
+			path = ABAIEdit;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -120,10 +168,12 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				AB000000000000000000E00D /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				AB000000000000000000E00E /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -132,6 +182,24 @@
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
+		};
+		AB000000000000000000E001 /* ABAIEdit */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AB000000000000000000E012 /* Build configuration list for PBXNativeTarget "ABAIEdit" */;
+			buildPhases = (
+				AB000000000000000000E009 /* Sources */,
+				AB000000000000000000E00A /* Frameworks */,
+				AB000000000000000000E00B /* Resources */,
+				AB000000000000000000E00C /* Copy filter LUTs */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ABAIEdit;
+			productName = ABAIEdit;
+			productReference = AB000000000000000000E002 /* ABAIEdit.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -146,6 +214,9 @@
 						CreatedOnToolsVersion = 9.2;
 						LastSwiftMigration = 1100;
 						ProvisioningStyle = Automatic;
+					};
+					AB000000000000000000E001 = {
+						CreatedOnToolsVersion = 16.0;
 					};
 				};
 			};
@@ -166,6 +237,7 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				AB000000000000000000E001 /* ABAIEdit */,
 			);
 		};
 /* End PBXProject section */
@@ -185,7 +257,36 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB000000000000000000E00B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		AB000000000000000000E00C /* Copy filter LUTs */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy filter LUTs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# 擴充用的濾鏡 LUT 跟 App 同一批（npx cap sync ios 會把網頁的 public 複製到 App/public）\nDEST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nmkdir -p \"$DEST\"\nif ls \"${SRCROOT}/App/public/luts/\"*.webp >/dev/null 2>&1; then\n  cp \"${SRCROOT}/App/public/luts/\"*.webp \"$DEST/\"\nelse\n  echo \"warning: 找不到 App/public/luts，請先執行 npx cap sync ios\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		504EC3001FED79650016851F /* Sources */ = {
@@ -207,7 +308,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB000000000000000000E009 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AB000000000000000000E005 /* PhotoEditingViewController.swift in Sources */,
+				AB000000000000000000E006 /* ABAIImageCore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AB000000000000000000E00E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AB000000000000000000E001 /* ABAIEdit */;
+			targetProxy = AB000000000000000000E00F /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		504EC30B1FED79650016851F /* Main.storyboard */ = {
@@ -382,6 +500,56 @@
 			};
 			name = Release;
 		};
+		AB000000000000000000E010 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ABAIEdit/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.abai.photo.edit;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AB000000000000000000E011 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ABAIEdit/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.abai.photo.edit;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -399,6 +567,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AB000000000000000000E012 /* Build configuration list for PBXNativeTarget "ABAIEdit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB000000000000000000E010 /* Debug */,
+				AB000000000000000000E011 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

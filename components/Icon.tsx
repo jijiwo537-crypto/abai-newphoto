@@ -21,6 +21,10 @@ interface IconProps {
  * 重疊的地方還是同一層，整個圖示是均勻、不透明感的線條 —— 跟字型圖示一樣。
  */
 const INLINE: Record<string, string> = {
+  /* 專業相機：機身外框加鏡頭（相機設定選單的「專業」） */
+  pro_camera: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><path d="M3.5 8.2a1.7 1.7 0 0 1 1.7-1.7h2.6l1.5-2h5.4l1.5 2h2.6a1.7 1.7 0 0 1 1.7 1.7v9.6a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z"/><circle cx="12" cy="12.8" r="3.6"/></g>',
+  /* RAW 檔：摺角的檔案外框，裡面三條長短不同的線 */
+  raw_file: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4"/><path d="M9 12h6M9 15h6M9 18h3.5"/></g>',
   /* 虛線：上面一條實線、下面一條虛線 */
   line_style: '<g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M2.5 7.5h19"/><path d="M2.5 16.5h3.5M10.25 16.5h3.5M18 16.5h3.5"/></g>',
   /* 色輪：一個圓（色輪）、一個偏離中心的實心點（調整點），跟 Material 圖示同一種線寬 */

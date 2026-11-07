@@ -1,5 +1,6 @@
 
 import { waveWarp, revealPathD } from '../utils/waveWarp';
+import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { isMobileDevice, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
@@ -4831,6 +4832,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     // 高更新率觸控一個畫面幀可能送數筆事件；只提交該幀最後的位置，避免
     // React 排隊重畫過期的中間尺寸而造成物件與固定邊來回抖動。
+    snapHaptic(guidesRef.current.length, nextGuides.length);
     guidesRef.current = nextGuides;
     queueMove(() => {
       setGuides(nextGuides);
@@ -5199,6 +5201,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       k = Math.max(pinchMin, pinchSnap.k);
       const nw = pin.w0 * k, nh = pin.h0 * k;
       const sx0 = pin.cx0 - nw / 2, sy0 = pin.cy0 - nh / 2;
+      snapHaptic(guidesRef.current.length, pinchSnap.guides.length);
       guidesRef.current = pinchSnap.guides;
       queueMove(() => {
         setGuides(pinchSnap.guides);
@@ -5266,6 +5269,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const oNow = objectsRef.current.find(z => z.id === d.id);
       const r2 = snapToGuides(nx, ny, oNow?.w || 0, oNow?.h || 0, oNow?.rot || 0, false, d.id);
       nx = r2.x; ny = r2.y;
+      snapHaptic(guidesRef.current.length, r2.guides.length);
       guidesRef.current = r2.guides;
       queueMove(() => {
         setGuides(r2.guides);

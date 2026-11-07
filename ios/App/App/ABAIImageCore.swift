@@ -16,6 +16,12 @@ import ImageIO
 import UniformTypeIdentifiers
 import UIKit
 
+/// App 和相簿編輯擴充共用的編輯清單格式（存在 Photos 的 adjustmentData 裡）
+enum ABAIAdjustment {
+    static let formatIdentifier = "com.abai.photo.edits"
+    static let formatVersion = "1"
+}
+
 enum ABAIImageCore {
 
     // MARK: 色域與 context
@@ -85,6 +91,16 @@ enum ABAIImageCore {
         var opts: [CIImageOption: Any] = [.applyOrientationProperty: true]
         if expandHDR, #available(iOS 18.0, *) { opts[.expandToHDR] = true }
         return CIImage(contentsOf: url, options: opts)
+    }
+
+    /// 這張照片有沒有 HDR 增益圖（iPhone 拍的 HDR 照片、iOS 18 的 ISO 增益圖）
+    static func hasGainMap(_ url: URL) -> Bool {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
+        if CGImageSourceCopyAuxiliaryDataInfoAtIndex(src, 0, kCGImageAuxiliaryDataTypeHDRGainMap) != nil { return true }
+        if #available(iOS 18.0, *) {
+            if CGImageSourceCopyAuxiliaryDataInfoAtIndex(src, 0, kCGImageAuxiliaryDataTypeISOGainMap) != nil { return true }
+        }
+        return false
     }
 
     /// 不透明度：檔案格式本身可能帶透明（PNG、HEIC 也可以）

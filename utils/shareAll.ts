@@ -12,6 +12,7 @@
  * 包成 App（Capacitor）之後改走 nativeShare()，見下面。網頁版一個字都沒動。
  */
 import { isNative } from './native';
+import { saveToPhotos } from './nativePhotos';
 
 export type ShareResult = 'shared' | 'downloaded' | 'cancelled' | 'failed';
 
@@ -129,8 +130,13 @@ async function nativeShare(files: File[]): Promise<ShareResult> {
 /** 直接在點擊事件裡呼叫，files 要事先備好 */
 export async function shareFiles(files: File[]): Promise<ShareResult> {
   if (!files.length) return 'failed';
-  // 包成 App 時走原生那條。網頁版永遠不會進到這個 if 裡面。
-  if (isNative()) return nativeShare(files);
+  // 包成 App 時：直接存進相簿（存到一半切到背景也會做完）；外掛不在的舊版 App 才跳分享面板。
+  // 網頁版永遠不會進到這個 if 裡面。
+  if (isNative()) {
+    const saved = await saveToPhotos(files);
+    if (saved === 'saved') return 'downloaded';
+    return nativeShare(files);
+  }
   if (canShareFiles(files)) {
     try {
       await (navigator as Navigator).share({ files });

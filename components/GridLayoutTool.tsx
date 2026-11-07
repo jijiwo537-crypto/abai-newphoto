@@ -1,4 +1,5 @@
 import { EditBar, EditBarTab } from './EditBar';
+import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
 import { waveWarp } from '../utils/waveWarp';
@@ -8699,7 +8700,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const key = JSON.stringify(next);
     if (key === guideKeyRef.current) return;
     guideKeyRef.current = key;
-    setActiveGuidelinesRaw(next);
+    setActiveGuidelinesRaw(prev => { snapHaptic(prev.length, next.length); return next; });
   }, []);
   const [enableSnapping, setEnableSnapping] = useState(true);
   /** 上方那顆三個點的選單 */

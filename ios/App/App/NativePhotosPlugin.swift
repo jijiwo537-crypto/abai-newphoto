@@ -18,12 +18,6 @@ import PhotosUI
 import UniformTypeIdentifiers
 import UIKit
 
-/// App 和相簿編輯擴充共用的編輯清單格式
-enum ABAIAdjustment {
-    static let formatIdentifier = "com.abai.photo.edits"
-    static let formatVersion = "1"
-}
-
 @objc(NativePhotosPlugin)
 public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewControllerDelegate {
     public let identifier = "NativePhotosPlugin"

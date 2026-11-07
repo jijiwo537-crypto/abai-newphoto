@@ -13,6 +13,8 @@
  * 所以成品的畫質不會變差，只是不再為「根本用不到的像素」付記憶體。 */
 import { loadImage as loadImg, resampleImage, fitLong } from './imageResample';
 import { registerBudget, scheduleBudgetCheck } from './memoryBudget';
+import { nativePathOf } from './nativeBridge';
+import { nativeDownsample, nativeImageSize } from './nativeImage';
 
 /** 長邊的分級。分級是為了不要每放大一點點就重做一張 */
 export const TIER_STEPS = [1280, 1600, 2048, 2560, 3072, 3584, 4096, 4608, 5120, 6144, 7168, 8192];
@@ -36,6 +38,16 @@ const reg = new Map<string, Entry>();
 
 /** 從原圖做一張長邊 long 的 */
 async function make(src: string, e: Pick<Entry, 'ow' | 'oh' | 'alpha'>, long: number): Promise<{ img: HTMLImageElement; url: string } | null> {
+  /* App 裡、照片從系統選擇器來的：原生端用 ImageIO 在解碼時就縮小，WebKit 不必解開原圖 */
+  const nativePath = nativePathOf(src);
+  if (nativePath) {
+    const r = await nativeDownsample(nativePath, long);
+    if (r) {
+      const img = await loadImg(r.url);
+      try { await img.decode?.(); } catch { /* 解碼延後也沒關係 */ }
+      return { img, url: r.url };
+    }
+  }
   const original = await loadImg(src);
   const { w, h } = fitLong(e.ow, e.oh, long);
   return resampleImage(original, w, h, e.alpha, 0.97);
@@ -48,18 +60,23 @@ const mayHaveAlpha = (type: string) => /png|webp|gif|avif|svg/i.test(type || '')
  * initialLong 傳 Infinity＝整張照原圖。回傳畫用的那張與原圖尺寸（邏輯尺寸）。
  */
 export async function openTiered(src: string, type: string, initialLong: number): Promise<{ img: HTMLImageElement; ow: number; oh: number }> {
-  const head = await loadImg(src);
-  const ow = head.naturalWidth, oh = head.naturalHeight, long = Math.max(ow, oh);
+  /* App 裡有原生路徑時，尺寸只讀檔頭；原圖要等真的需要原尺寸才讀進 WebKit */
+  const nativePath = nativePathOf(src);
+  const nativeSize = nativePath ? await nativeImageSize(nativePath) : null;
+  const head = nativeSize ? null : await loadImg(src);
+  const ow = nativeSize ? nativeSize.width : head!.naturalWidth, oh = nativeSize ? nativeSize.height : head!.naturalHeight, long = Math.max(ow, oh);
   const alpha = mayHaveAlpha(type);
   const tier = Math.min(long, initialLong >= long ? long : pickTier(initialLong / 1.12, long));
-  let img = head, made: string[] = [];
+  let img: HTMLImageElement | null = null, made: string[] = [];
   if (tier < long) {
-    try { const m = await make(src, { ow, oh, alpha }, tier); if (m) { img = m.img; made = [m.url]; } }
+    try { const m = await make(src, { ow, oh, alpha }, tier); if (m) { img = m.img; made = m.url.startsWith('blob:') ? [m.url] : []; } }
     catch { /* 做不出來就用原圖，不影響功能 */ }
   }
+  const full = !img;
+  if (!img) img = head ?? await loadImg(src);
   const prev = reg.get(src);
   if (prev) prev.made.forEach(u => URL.revokeObjectURL(u));
-  reg.set(src, { ow, oh, alpha, img, tier: img === head ? long : tier, job: null, made });
+  reg.set(src, { ow, oh, alpha, img, tier: full ? long : tier, job: null, made });
   scheduleBudgetCheck();
   return { img, ow, oh };
 }
@@ -89,7 +106,7 @@ export function ensureTier(src: string, required: number): Promise<HTMLImageElem
       if (tier >= long) img = await loadImg(src);
       else { const m = await make(src, e, tier); if (!m) return null; img = m.img; url = m.url; }
       if (reg.get(src) !== e) { if (url) URL.revokeObjectURL(url); return null; }
-      if (url) e.made.push(url);
+      if (url && url.startsWith('blob:')) e.made.push(url);
       e.img = img; e.tier = tier >= long ? long : tier;
       scheduleBudgetCheck();
       return img;

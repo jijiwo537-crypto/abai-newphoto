@@ -11,6 +11,8 @@
 import { useEffect, useState } from 'react';
 import { loadImage as loadImg, resampleImage, fitLong } from './imageResample';
 import { registerTrim } from './memoryPressure';
+import { nativePathOf } from './nativeBridge';
+import { nativeDownsample, nativeImageSize } from './nativeImage';
 import { registerBudget, scheduleBudgetCheck } from './memoryBudget';
 
 /* 兩級小副本：一般大小的圖層（例如一頁放二十幾張）只要 1024，拉大才做 2048，再大才用原圖。
@@ -21,7 +23,9 @@ export const PREVIEW_MID = 2048;
 interface Entry { small: string | null; smallLong: number; long: number; orig: HTMLImageElement | null; origReady: boolean; origLoading: boolean;
   mid: string | null; midLong: number; midLoading: boolean; type: string;
   /** 畫面上是不是正在用原圖；不用了從什麼時候開始（共用記憶體預算靠它挑要放掉哪一張） */
-  wantOrig?: boolean; wantAt?: number; idleAt?: number }
+  wantOrig?: boolean; wantAt?: number; idleAt?: number;
+  /** 小副本是原生端做的檔案網址（不是 blob），收掉時不用 revoke */
+  nativeSmall?: boolean }
 const copies = new Map<string, Entry>();
 const pending = new Map<string, Promise<void>>();
 let version = 0;
@@ -51,6 +55,17 @@ export function ensurePreviewCopy(url: string, type = ''): Promise<void> {
   const run = pending.get(url);
   if (run) return run;
   const p = (async () => {
+    /* App 裡、照片從系統選擇器來的：原生端用 ImageIO 在解碼時就縮小，WebKit 完全不必解開原圖 */
+    const nativePath = nativePathOf(url);
+    if (nativePath) {
+      const size = await nativeImageSize(nativePath);
+      const long = size ? Math.max(size.width, size.height) : 0;
+      const small = long > PREVIEW_LONG * 1.15 ? await nativeDownsample(nativePath, PREVIEW_LONG) : null;
+      if (small) {
+        copies.set(url, { small: small.url, smallLong: PREVIEW_LONG, long, orig: null, origReady: false, origLoading: false, mid: null, midLong: 0, midLoading: false, type, nativeSmall: true });
+        pending.delete(url); bump(); return;
+      }
+    }
     try {
       const im = await loadImg(url);
       const w = im.naturalWidth, h = im.naturalHeight, long = Math.max(w, h);
@@ -90,7 +105,9 @@ export function previewSrc(url: string, need = 0): string {
     if (e.mid) return e.mid;
     if (!e.midLoading) {
       e.midLoading = true;
-      loadImg(url).then(im => shrink(im, PREVIEW_MID, e.type)).then(u => { if (copies.get(url) === e) { e.mid = u; e.midLong = PREVIEW_MID; bump(); } else URL.revokeObjectURL(u); })
+      const np = nativePathOf(url);
+      (np ? nativeDownsample(np, PREVIEW_MID).then(r => { if (!r) throw new Error('native'); return r.url; })
+          : loadImg(url).then(im => shrink(im, PREVIEW_MID, e.type))).then(u => { if (copies.get(url) === e) { e.mid = u; e.midLong = PREVIEW_MID; bump(); } else URL.revokeObjectURL(u); })
         .catch(() => { e.midLoading = false; });
     }
     return e.small;
@@ -116,7 +133,7 @@ export const subscribePreviewCopies = (f: (v: number) => void) => { subs.add(f);
 
 /** 離開跨頁拼圖時收掉小副本 */
 export function forgetPreviewCopies() {
-  for (const e of copies.values()) { if (e.small) URL.revokeObjectURL(e.small); if (e.mid) URL.revokeObjectURL(e.mid); }
+  for (const e of copies.values()) { if (e.small && !e.nativeSmall) URL.revokeObjectURL(e.small); if (e.mid && e.mid.startsWith('blob:')) URL.revokeObjectURL(e.mid); }
   copies.clear(); pending.clear(); viewZoom = 1;
 }
 

@@ -10,6 +10,7 @@
  * 不支援 WebCodecs 的裝置，呼叫端照舊走 MediaRecorder。
  */
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import { isNative } from './native';
 
 export const canEncodeFrames = (): boolean =>
   typeof window !== 'undefined' && typeof (window as any).VideoEncoder === 'function' && typeof (window as any).VideoFrame === 'function';
@@ -39,6 +40,12 @@ export async function encodeCanvasFrames(o: {
   aborted?: () => boolean;
   type?: string;
 }): Promise<Blob | null> {
+  /* App 裡優先用原生的硬體 HEVC（檔案更小、切到背景也能編完）；做不到再走 WebCodecs */
+  if (isNative()) {
+    const { encodeCanvasFramesNative } = await import('./nativeVideo');
+    const native = await encodeCanvasFramesNative(o).catch(() => null);
+    if (native) return native;
+  }
   if (!canEncodeFrames()) return null;
   const { canvas, frames } = o;
   const fps = Math.max(1, Math.min(120, o.fps));

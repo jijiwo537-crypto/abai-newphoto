@@ -43,6 +43,15 @@ export const APP_SCHEME = 'com.abai.photo';
  */
 export async function setupNativeShell(): Promise<void> {
   if (!isNative()) return;
+  /* 原生功能：系統照片選擇器、觸覺回饋、照系統實際記憶體調整的照片快取預算 */
+  try {
+    const [{ installNativeFilePicker }, { prepareHaptics }, { watchNativeMemoryBudget }] = await Promise.all([
+      import('./nativePhotos'), import('./haptics'), import('./nativeImage'),
+    ]);
+    installNativeFilePicker();
+    prepareHaptics();
+    void watchNativeMemoryBudget();
+  } catch { /* 舊版 App 沒有這些外掛：照網頁的方式跑 */ }
   try {
     const { StatusBar, Style } = await import('@capacitor/status-bar');
     // Capacitor 的命名是以「背景」為準：Style.Dark ＝ 深色背景，所以字是白的。

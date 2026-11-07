@@ -66,7 +66,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func info(_ call: CAPPluginCall) {
         guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? ""),
               let size = ABAIImageCore.pixelSize(of: url) else { call.reject("讀不到這個檔案"); return }
-        call.resolve(["width": Int(size.width), "height": Int(size.height)])
+        call.resolve(["width": Int(size.width), "height": Int(size.height), "hdr": ABAIImageCore.hasGainMap(url)])
     }
 
     /// 縮小解碼並存成小檔。有透明的存 PNG，其餘存 P3 JPEG。
@@ -110,12 +110,23 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         let wantHDR = call.getBool("hdr") ?? false
         let lutName = call.getString("lut")
         let cubeB64 = call.getString("cube"), cubeSize = call.getInt("cubeSize") ?? 0
+        let aspect = call.getDouble("aspect") ?? 0          // 寬÷高；有給就從中間裁成這個比例
+        let zoom = max(1, call.getDouble("zoom") ?? 1)      // 再從中間放大裁切（相機的小框構圖）
         queue.async {
             autoreleasepool {
                 var image: CIImage?
                 if maxPixel > 0, let cg = ABAIImageCore.downsample(url, maxPixel: maxPixel) { image = CIImage(cgImage: cg) }
                 else { image = ABAIImageCore.ciImage(url, expandHDR: wantHDR) }
                 guard var img = image else { call.reject("讀不出影像"); return }
+                if aspect > 0 || zoom > 1.001 {
+                    var e = img.extent
+                    if aspect > 0 {
+                        if e.width / e.height > aspect { let w = e.height * aspect; e = CGRect(x: e.midX - w / 2, y: e.minY, width: w, height: e.height) }
+                        else { let h = e.width / aspect; e = CGRect(x: e.minX, y: e.midY - h / 2, width: e.width, height: h) }
+                    }
+                    if zoom > 1.001 { e = e.insetBy(dx: e.width * (1 - 1 / zoom) / 2, dy: e.height * (1 - 1 / zoom) / 2) }
+                    img = img.cropped(to: e.integral).transformed(by: CGAffineTransform(translationX: -e.integral.minX, y: -e.integral.minY))
+                }
                 var cube: ABAIImageCore.Cube?
                 if let b = cubeB64, cubeSize > 1 { cube = ABAIImageCore.cube(base64: b, size: cubeSize) }
                 else if let n = lutName, let u = ABAIImageCore.bundledLut(n) { cube = ABAIImageCore.cube(fromAtlas: u) }

@@ -1,5 +1,9 @@
 
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
+import { setSaveContext } from '../utils/nativePhotos';
+import { isNative } from '../utils/native';
+import { nativeAssetIdOf } from '../utils/nativeBridge';
+import { useNativeHdrPreview } from '../utils/nativePreview';
 import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
 import { EditBar, EditBarTab, EDIT_BAR_H } from './EditBar';
 import { BeautyStudio, type StudioResult } from './BeautyStudio';
@@ -6415,6 +6419,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   // 自己處理載入狀態，建立暫存可能要一秒左右
   const [isEditorLoading, setIsEditorLoading] = useState(true);
+  /* App 裡：這次的成品存回「原本那張照片」的可逆編輯（Photos 保留原圖、可以回復）。
+     只有單張、而且照片是從系統選擇器選來的才會這樣存；其他情況照樣存成新照片。 */
+  useEffect(() => {
+    if (!isNative()) return;
+    const assetId = nativeAssetIdOf(activeSrc);
+    setSaveContext(assetId ? { assetId, adjustment: () => ({ tool: 'editor', params: paramsRef.current }) } : null);
+    return () => setSaveContext(null);
+  }, [activeSrc]);
+  /* App 裡的 HDR 照片：還沒編輯、或按住對比看原圖時，用原生 Metal＋EDR 顯示真正的 HDR（網頁只能顯示 SDR） */
+  useNativeHdrPreview({
+    container: () => displayCanvasRef.current?.parentElement ?? null,
+    hideWhileShown: () => [displayCanvasRef.current, fxSurfaceRef.current],
+    src: activeSrc,
+    active: (showOriginal || historyIndex <= 0) && !isEditorLoading,
+  });
 
   // 構圖會改變來源畫面的尺寸與內容，所以緩衝區的建立必須能重跑。第一次載入與每次套用
   // 構圖都走這裡，差別只在 initial 決定要不要做暖機與解鎖 UI。

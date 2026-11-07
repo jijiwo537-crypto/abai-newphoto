@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { sliderHaptic } from './haptics';
 
 /* 滑桿「一格一格跳」與「跟不上手指」的共同解法。
  *
@@ -38,8 +39,12 @@ export function useSmoothSlider(
     const v = pending.current; pending.current = null;
     if (v !== null && v !== sent.current) { sent.current = v; cb.current(v); }
   };
+  const lastRaw = useRef(value);
   const input = useCallback((raw: number) => {
     if (!Number.isFinite(raw)) return;
+    /* App 裡：經過 0 輕震一下、拉到頭再震一下（網頁版什麼都不做） */
+    sliderHaptic(dragging.current ? lastRaw.current : sent.current, raw, min, max);
+    lastRaw.current = raw;
     dragging.current = true;
     setShown(raw);
     pending.current = snapToStep(raw, min, max, step);

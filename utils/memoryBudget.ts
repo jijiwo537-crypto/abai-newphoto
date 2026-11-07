@@ -14,8 +14,16 @@ export interface BudgetHolder {
   evictIdle(): boolean;
 }
 
-/** iPhone 上網頁的記憶體上限比桌機低很多，照片快取抓 256MB（約五張 1200 萬像素的原圖） */
+/** iPhone 上網頁的記憶體上限比桌機低很多，照片快取預設 256MB（約五張 1200 萬像素的原圖）。
+ *  包成 App 時改成照系統實際給的空間調整（見 utils/nativeImage 的 watchNativeMemoryBudget）。 */
 export const IMAGE_BUDGET = 256 * 1024 * 1024;
+let budget = IMAGE_BUDGET;
+export const imageBudget = () => budget;
+export function setImageBudget(bytes: number) {
+  const tighter = bytes < budget;
+  budget = bytes;
+  if (tighter) scheduleBudgetCheck();
+}
 
 const holders = new Map<string, BudgetHolder>();
 let queued = false;
@@ -32,7 +40,7 @@ export function budgetUsed(): number {
 }
 
 /** 超過預算就放掉閒置的照片。回傳放掉了幾張 */
-export function enforceBudget(limit = IMAGE_BUDGET): number {
+export function enforceBudget(limit = budget): number {
   let freed = 0;
   for (let guard = 0; guard < 200 && budgetUsed() > limit; guard++) {
     let pick: BudgetHolder | null = null, at = Infinity;
