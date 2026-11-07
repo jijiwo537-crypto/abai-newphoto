@@ -8,6 +8,7 @@ import {previews as seamlessPreviews} from './SeamlessLayout';
 import {drawCoveredPhoto} from '../utils/coveredPhoto';
 import {get2dWide} from '../utils/colorSpace';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
+import {previewSrc,previewZoom,usePreviewCopies} from '../utils/previewCopies';
 
 /* 拖融合程度滑桿的那幾格：共用的 GPU 畫面每格都要複製進這個佈局的 2D 畫布（iOS 上是一次
    同步讀回）。拖曳中改成整個編輯器共用的一張 WebGL 畫布直接疊在原位顯示，同一組像素；
@@ -18,7 +19,7 @@ const surfaceToken=(o:object)=>{let t=surfaceTokens.get(o);if(!t)surfaceTokens.s
 const dropLiveSeam=(owner?:HTMLCanvasElement|null)=>{if(liveSeam&&(!owner||liveSeam.previousSibling===owner)){liveSeam.remove();}};
 type Cell={id:string;url:string;naturalWidth?:number;naturalHeight?:number;zoom:number;offsetX:number;offsetY:number;rotation:number;opacity?:number;imgRadius?:number;fx?:PhotoFx};
 type Rect={x:number;y:number;w:number;h:number};
-type Resource={url:string;image:HTMLImageElement;input:HTMLCanvasElement;key:string;output:CanvasImageSource|null;
+type Resource={url:string;src0?:string;image:HTMLImageElement;input:HTMLCanvasElement;key:string;output:CanvasImageSource|null;
   /** Editor-sized proxy used while a slider is held (same size as the home editor preview). */
   preview?:HTMLCanvasElement;previewKey?:string;previewOutput?:HTMLCanvasElement|null;pending?:string;primed?:boolean};
 // The home editor previews at 1800px. Matching it keeps every slider frame
@@ -53,6 +54,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
   /** 每一格的亮度倍率（長按互換時被懸停的那一格 < 1）。直接在畫照片時變暗，範圍跟照片完全一致。 */
   dims?:number[]}){
   const baseRef=useRef<HTMLCanvasElement>(null);
+  /* 預覽用「夠清楚就好」的那一份（見 utils/previewCopies）。換了（小副本做好、放大到要換原圖）就重畫 */
+  const copiesVersion=usePreviewCopies();
   /** 底圖目前畫的是什麼：內容簽章、密度（每個佈局單位幾個像素）、邊緣狀態（哪幾邊往外多蓋） */
   const baseState=useRef<{key:string;s:number;edges:string}|null>(null),baseDirty=useRef(true);
   const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef<(viewOnly?:boolean)=>void>(()=>{});
@@ -109,14 +112,26 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
   useLayoutEffect(()=>{
     const active=new Set(cells.map(c=>c.id));
     for(const [id,r] of resources.current)if(!active.has(id)){releaseResource(r);resources.current.delete(id);}
-    cells.forEach(c=>{
+    cells.forEach((c,i)=>{
       if(!c.url)return;
-      const old=resources.current.get(c.id);if(old?.url===c.url)return;
-      if(old)releaseResource(old);
+      /* 這一格的照片在畫面上實際多大（裝置像素長邊）：格子大小、照片鋪滿格子的倍率、格子裡的放大、畫面放大 */
+      const rc=rects[i];
+      const cw=(rc?.w||1)*width,ch=(rc?.h||1)*height,pw=c.naturalWidth||1,ph=c.naturalHeight||1;
+      const need=Math.max(cw/pw,ch/ph)*Math.max(pw,ph)*Math.max(1,c.zoom||1)*Math.min(3,window.devicePixelRatio||1)*previewZoom()*1.1;
+      const src=previewSrc(c.url,need);
+      const old=resources.current.get(c.id);if(old?.url===src)return;
       // decode()：解碼在背景執行緒做完才通知重畫，第一次畫這張時主執行緒不必同步解碼整張原圖
-      const image=new Image();image.src=c.url;
+      const image=new Image();image.src=src;
+      /* 同一張照片換另一份（小副本↔原圖）：新的那份解碼好之前舊的照畫，不會空一格 */
+      if(old&&old.image.naturalWidth&&old.src0===c.url){
+        old.url=src;
+        void image.decode().catch(()=>{}).then(()=>{if(resources.current.get(c.id)!==old||old.url!==src)return;releaseResource(old);
+          resources.current.set(c.id,{url:src,src0:c.url,image,input:document.createElement('canvas'),key:'',output:null});schedule();});
+        return;
+      }
+      if(old)releaseResource(old);
       void image.decode().catch(()=>{}).then(()=>{if(resources.current.get(c.id)?.image===image)schedule();});
-      resources.current.set(c.id,{url:c.url,image,input:document.createElement('canvas'),key:'',output:null});
+      resources.current.set(c.id,{url:src,src0:c.url,image,input:document.createElement('canvas'),key:'',output:null});
     });
     const drawImpl=(viewOnly=false,settle=false)=>{
       const gl=geomLive.current;
@@ -501,6 +516,6 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       catch(e){const b=baseRef.current;if(b&&baseState.current)b.style.visibility='';console.warn('layout paint failed',e);if(retries.current++<5)schedule();}
     };
     drawRef.current();
-  },[cells,rects,width,height,gapProp,radiusProp,revision,fusion,(dims||[]).join(',')]);
+  },[cells,rects,width,height,gapProp,radiusProp,revision,fusion,(dims||[]).join(','),copiesVersion]);
   return <><svg ref={plane} data-layout-photo-plane viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" aria-hidden style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,overflow:'hidden'}}><g opacity={0}><circle data-layout-probe cx={0} cy={0} r={.005}/><circle data-layout-probe cx={width} cy={0} r={.005}/><circle data-layout-probe cx={0} cy={height} r={.005}/></g></svg><canvas ref={baseRef} data-layout-base style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/><canvas ref={ref} data-layout-photo-surface style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0}}/><canvas ref={editSurface} style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/></>;
 }

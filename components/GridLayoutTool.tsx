@@ -24,6 +24,7 @@ import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface,layoutGeomPreviews} from './LayoutPhotoSurface';
+import {ensurePreviewCopy,previewSrc,usePreviewCopies,setPreviewZoom,previewZoom,forgetPreviewCopies} from '../utils/previewCopies';
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import {drawStableText, hasEmoji} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
@@ -3411,7 +3412,8 @@ const cardSrc = !panelIsVideo ? img.src
   : knownPoster || (madePoster?.url === videoUrl ? madePoster.poster : BLANK_CARD_SRC);
 useEffect(()=>{
   let cancelled=false;
-  const source=getPreviewImg(cardSrc);
+  // 卡片縮圖很小：用預覽小副本就夠了（見 utils/previewCopies）
+  const source=getPreviewImg(previewSrc(cardSrc,0));
   const prime=()=>{if(cancelled||!source.naturalWidth)return;
     for(const [id] of FX_ROOT_TOOLS){
       /* 柔光ll 第一次要編譯十幾段顯示卡程式（其他特效一張只要零點零幾秒）：不先備，
@@ -4820,7 +4822,7 @@ const cardSourceThumbCache=new Map<string,HTMLCanvasElement>();
 const CardSourceThumb:React.FC<{src:string}>=({src})=>{
   const ref=useRef<HTMLCanvasElement|null>(null);
   useLayoutEffect(()=>{
-    let dead=false;const img=getPreviewImg(src);
+    let dead=false;const img=getPreviewImg(previewSrc(src,0));
     const paint=()=>{
       if(dead||!ref.current||!img.naturalWidth)return;
       let base=cardSourceThumbCache.get(src);
@@ -4897,7 +4899,7 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
       if (dead || !cvs) return;
       let thumb = cardThumbCache.get(cacheKey);
       if (!thumb) {
-        const img = getPreviewImg(src);
+        const img = getPreviewImg(previewSrc(src, 0));
         if (!img.complete || !img.naturalWidth) {
           const ready = () => { if (!dead) paint(); };
           img.addEventListener('load', ready, { once: true });
@@ -6627,6 +6629,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     || image.text !== undefined || !!image.shape;
   const boxW = exactAlignedGeometry ? image.width * image.scale : snapPx2(image.width * image.scale);
   const boxH = exactAlignedGeometry ? image.height * image.scale : snapPx2(image.height * image.scale);
+  /* 畫到預覽上用「夠清楚就好」的那一份（見 utils/previewCopies）：一般大小用小副本，
+     拉大或畫面放大到小副本不夠時才換原圖。存檔、構圖照樣用原圖 */
+  usePreviewCopies();
+  const pvSrc = image.text !== undefined || image.isVideo || !image.src ? image.src
+    : previewSrc(image.src, Math.max(boxW, boxH) * Math.min(3, window.devicePixelRatio || 1) * previewZoom() * 1.1);
+  const pvSrcRef = useRef(pvSrc); pvSrcRef.current = pvSrc;
   const renderScale = Math.max(
     boxW / Math.max(1, image.width),
     boxH / Math.max(1, image.height),
@@ -6652,13 +6660,13 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   const [shapeImgReady, setShapeImgReady] = useState(false);
   useEffect(() => {
     if (image.text !== undefined || image.isVideo || !image.src) return;
-    const el = getPreviewImg(image.src);
+    const el = getPreviewImg(pvSrc);
     if (el.complete && el.naturalWidth) { setShapeImgReady(true); return; }
     setShapeImgReady(false);
     const on = () => setShapeImgReady(true);
     el.addEventListener('load', on);
     return () => el.removeEventListener('load', on);
-  }, [image.src, image.text]);
+  }, [pvSrc, image.text]);
 
   /* ── 影片也要能調 ──────────────────────────────────────────────────
      以前這裡把影片整個排除在 canvas 那條路之外，所以濾鏡、圓角、羽化、
@@ -6770,7 +6778,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     const fx = liveFxRef.current ?? image.fx;
     if (!hasPhotoFx(fx)) return img as CanvasImageSource;
     const MAX = fxFullMax();
-    const key = `${image.src}|${JSON.stringify(fx)}|${lutRevision}|${MAX}`;
+    const key = `${pvSrc}|${JSON.stringify(fx)}|${lutRevision}|${MAX}`;
     const hit = fxCacheRef.current;
     if (hit && hit.key === key) return hit.canvas;
     const aspect = (image.width || 1) / (image.height || 1);
@@ -6797,7 +6805,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     if (!plainImageWave) return;
     const canvas = waveImageCanvasRef.current;
     if (!canvas) return;
-    const img = getPreviewImg(image.src);
+    const img = getPreviewImg(pvSrc);
     let alive = true;
     const draw = () => {
       if (!alive || !img.naturalWidth) return;
@@ -6842,14 +6850,14 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     if (img.complete && img.naturalWidth) draw();
     else img.addEventListener('load', draw, { once: true });
     return () => { alive = false; img.removeEventListener('load', draw); };
-  }, [plainImageWave, image.src, image.fx, lutRevision, boxW, boxH, waveImagePad, glowPad, needsShapeCanvas,
+  }, [plainImageWave, pvSrc, image.fx, lutRevision, boxW, boxH, waveImagePad, glowPad, needsShapeCanvas,
       motionFrame?.gridWave, motionFrame?.gridReveal, motionFrame?.waveMix, image.mo?.amp]);
 
   useLayoutEffect(() => {
     if (!needsShapeCanvas) return;
     const c = shapeCanvasRef.current;
     if (!c) return;
-    const img = getPreviewImg(image.src);
+    const img = getPreviewImg(pvSrc);
     const draw = () => {
       if (!img.naturalWidth) return;
       const dpr = shapeDpr;
@@ -7000,8 +7008,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       // 拖滑桿時一格會送好幾個 input，每一個都重算就會一頓一頓。
       // 收斂成「最多一幀畫一次、只畫最後那個值」：畫面照樣即時，工作量少很多。
       // 第一次（或換圖）同步畫，不然會空一格。
-      if (drawnSrcRef.current !== image.src) {
-        drawnSrcRef.current = image.src;
+      if (drawnSrcRef.current !== pvSrc) {
+        drawnSrcRef.current = pvSrc;
         draw();
       } else {
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -7012,7 +7020,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     img.addEventListener('load', draw);
     return () => img.removeEventListener('load', draw);
   }, [
-    needsShapeCanvas, image.src, image.feather, image.imgRadius,
+    needsShapeCanvas, pvSrc, image.feather, image.imgRadius,
     image.imgGlow, image.imgGlowColor, image.imgStrokeWidth, image.imgStrokeColor, image.imgStrokeDash, image.imgStrokeGap,
     image.scale, boxW, boxH, glowPad,
     image.fx, lutRevision,
@@ -7550,7 +7558,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         // A draft, motion frame or sorting pose is content, not selection UI.
         // Unknown DOM/video layers are opted out by the scene collector.
         const current={...committedImage,...classicVectorDraft(committedImage.id)};
-        const source=current.src?getPreviewImg(current.src):null;
+        const source=current.src?getPreviewImg(pvSrcRef.current):null;
         return JSON.stringify([Object.fromEntries(Object.entries(current).filter(([key])=>key!=='src')),
           source?.complete,source?.naturalWidth,sceneMotionFrame?.(current,stackIndex),
           performance.now()<shift.at+220?performance.now():0,
@@ -7627,7 +7635,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           const source=scene.backdrop(ctx,(dragShift?.live?450100:60)+stackIndex*2,density,backdropRoot,!!dragShift?.live||backdropFrozen||gestureRendering||isDragging||isScaling);
           drawBackdropMask(ctx,image.shape!,image.width,image.height,image,source,scene.backdropCacheStamp);
         } else if (isScenePhoto) {
-          const source = getPreviewImg(image.src);
+          const source = getPreviewImg(pvSrcRef.current);
           if (source.complete && source.naturalWidth) {
             const cx = image.x + image.width / 2, cy = image.y + image.height / 2;
             const hw = image.width * image.scale / 2, hh = image.height * image.scale / 2;
@@ -8429,7 +8437,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         />
       ) : (
         <img
-          src={image.src}
+          src={pvSrc}
           alt="floating-item"
           style={{
             /* 邏輯外框與吸附座標仍是精確貼邊；可見點陣只向外多取樣半個
@@ -11046,7 +11054,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      所以這個 ref 是「現在真正的倍率」。千萬不要在 render 裡把它蓋回 state ——
      捏合中如果剛好有別的原因重繪一次，就會把手勢的值抹掉。 */
   const userZoomRef = useRef(1);
-  useEffect(() => { userZoomRef.current = userZoom; }, [userZoom]);
+  useEffect(() => { userZoomRef.current = userZoom; setPreviewZoom(userZoom); }, [userZoom]);
+  /* 預覽小副本（見 utils/previewCopies）：做好或換成原圖時整棵重畫一次；離開時收掉 */
+  usePreviewCopies();
+  useEffect(() => () => forgetPreviewCopies(), []);
+  /* 從草稿、紀錄接回來的照片沒有經過導入那一段：在背景補做小副本，做好之前先用原圖 */
+  useEffect(() => {
+    for (const pg of pages) for (const lay of pg.layouts) for (const c of lay.images) if (c.url) void ensurePreviewCopy(c.url);
+    for (const f of floatingImages) if (f.src && !f.isVideo && f.text === undefined && !f.shape) void ensurePreviewCopy(f.src);
+  }, [pages, floatingImages]);
   const ZOOM_MIN = PREVIEW_MIN_SCALE, ZOOM_MAX = 3;
   /** 正在雙指縮放畫布。有值的時候不准任何其他手勢介入 */
   /** 雙指縮放整個預覽：起手的兩指距離、起手倍率，以及「捏住的那個內容座標」與它在螢幕上的位置 */
@@ -11488,6 +11504,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         || (!selectedFloatingId && selectedIndex !== null && selectedLayoutId !== null));
   const textEditMode = activeTab === 'adjust' && floatingImages.some(f=>f.id===selectedFloatingId&&f.text!==undefined);
 
+  const initialLoadingRef = useRef(!!(initialFiles && initialFiles.length));
   const [historyState, setHistoryState] = useState<{
     history: { pages: PageConfig[]; floatingImages: FloatingImage[]; brushStrokes: ClassicBrushStroke[]; selectedRatio: string; isLandscape: boolean }[];
     index: number;
@@ -11502,6 +11519,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       isUndoing.current = false;
       return;
     }
+    /* 一開始帶進來的照片還在讀（含做預覽小副本）：先別記第一格。不然第一格會是「空白頁」，
+       導入完復原鍵就亮著、按下去照片全部不見 */
+    if (initialLoadingRef.current) return;
 
     const timer = setTimeout(() => {
       setHistoryState(prev => {
@@ -12682,6 +12702,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const url = URL.createObjectURL(f);
           const video = isVideoFile(f);
           const dims = video ? await getVideoDimensions(url) : await getImageDimensions(url);
+          // 預覽用的小副本（見 utils/previewCopies）：畫面上不用原圖，存檔照樣用原圖
+          if (!video) await ensurePreviewCopy(url, f.type);
 
           const aspect = dims.width / dims.height;
 
@@ -12754,9 +12776,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             ...(video ? { isVideo: true, poster: (dims as any).poster } : {}),
           });
         }
+        initialLoadingRef.current = false;
         setFloatingImages(fImgs);
       };
-      loadInitial();
+      void loadInitial().catch(() => {}).finally(() => { initialLoadingRef.current = false; });
     }
   }, [initialFiles, containerMeasured]);
 
@@ -12949,6 +12972,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const url = URL.createObjectURL(f);
       const video = isVideoFile(f as File);
       const dims = video ? await getVideoDimensions(url) : await getImageDimensions(url);
+      if (!video) await ensurePreviewCopy(url, (f as File).type);
       
       const aspect = dims.width / dims.height;
 
@@ -13032,6 +13056,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const url = URL.createObjectURL(file);
       try {
         const dims = await getImageDimensions(url);
+        await ensurePreviewCopy(url, (file as File).type);
         return { file, url, dims };
       } catch (error) {
         URL.revokeObjectURL(url);
@@ -17217,11 +17242,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             opacity: (cell.opacity ?? 100) / 100,
                                             pointerEvents: 'none',
                                           };
+                                          /* 畫面上這張實際多大就給多清楚的那一份（見 utils/previewCopies），存檔照樣用原圖 */
+                                          const pvCellSrc = previewSrc(cell.url, Math.max(layoutW, layoutH) * Math.abs(cssScale || 1) * Math.min(3, window.devicePixelRatio || 1) * previewZoom() * 1.1);
                                           return <div className="layout-photo-content" style={{display:nativeInset || nativeLayout ? 'none' : 'contents'}}>{!nativeInset&&!nativeLayout&&!stableSeamless&&(hasPhotoFx(cell.fx)
                                             ? (
                                               <CellFxImage
                                                 id={cell.id}
-                                                url={cell.url}
+                                                url={pvCellSrc}
                                                 fx={cell.fx!}
                                                 style={photoStyle}
                                                 lutRevision={lutRevision}
@@ -17229,7 +17256,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                                 boxH={cellHeight}
                                               />
                                             )
-                                            : <img src={cell.url} alt="cell" style={photoStyle} />)}</div>;
+                                            : <img src={pvCellSrc} alt="cell" style={photoStyle} />)}</div>;
                                         })()}
 
                                         {/* Thin solid outline on top of the image */}
