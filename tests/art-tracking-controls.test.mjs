@@ -31,7 +31,7 @@ test('actual vector rendering isolates node randomness from material randomness'
  }finally{globalThis.document=old;invalidateTracking();}
 });
 test('tracking tools expose requested placement, two-state elements and paired outline sliders',()=>{
- assert.match(ui,/groups\(\['偵測','輪廓','連線','顏色'\]\)/);assert.match(ui,/\['效果','節點','元素','遮罩'\]/);assert.match(ui,/groups\(\['編輯','細節'\]\)/);
+ assert.match(ui,/groups\(\['偵測','輪廓','連線','顏色'\]\)/);assert.match(ui,/\['效果','節點','元素','遮罩'\]/);assert.match(ui,/groups\(tracking\.materials\.length\?\['編輯','細節'\]:\['編輯'\]\)/);
  assert.doesNotMatch(ui,/groups\(\['元素','文字'\]\)|角落文字|firstTrackingElementVisit/);
  assert.equal(trackingDefaults.frame,false);
  assert.equal(trackingDefaults.maxRadius,60);assert.match(ui,/tr\('大小','maxRadius',10,100\)/);
@@ -50,7 +50,7 @@ test('mask materials share the edit page with no preselected material or placeme
  const mask=ui.slice(ui.indexOf("effect==='tracking'&&tab==='遮罩'"),ui.indexOf('</section>',ui.indexOf("effect==='tracking'&&tab==='遮罩'")));
  assert.match(mask,/section==='編輯'.*aria-label="遮罩材質"/);
  assert.doesNotMatch(mask,/手動放置|清除|section==='材質'/);
- assert.match(mask,/className="art-mask-toolbar".*groups\(\['編輯','細節'\]\).*className="art-mask-random"/);
+ assert.match(mask,/className="art-mask-toolbar".*groups\(tracking\.materials\.length\?\['編輯','細節'\]:\['編輯'\]\).*className="art-mask-random"/);
  assert.match(ui,/const randomizeNodes=[\s\S]*?randomizeFeedback\(e.currentTarget\)/);
  assert.match(ui,/const randomizeMasks=[\s\S]*?redistributeRegions\(s\).*randomizeFeedback\(e.currentTarget\)/);
  assert.match(css,/art-mask-random\{[^}]*margin-left:auto/);

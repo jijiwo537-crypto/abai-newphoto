@@ -1,12 +1,13 @@
-import {sliderHeld,SLIDER_RELEASE_EVENT} from './sliderTouch';
 let busyUntil=0;
 const holds=new Set<symbol>();
 const now=()=>typeof performance==='undefined'?Date.now():performance.now();
 const nap=(ms:number)=>new Promise<void>(resolve=>setTimeout(resolve,ms));
 
 export function deferHeavyWork(ms=350){busyUntil=Math.max(busyUntil,now()+ms);}
-/* 放開滑桿之後也先別急著開始背景工作：常常是調一下、看一眼、馬上再調 */
-if(typeof window!=='undefined')window.addEventListener(SLIDER_RELEASE_EVENT,()=>deferHeavyWork(600));
+/* 「手指是不是正按在任何一根滑桿上」由 utils/sliderTouch 登記在 globalThis 上（這支檔案刻意不 import 它，
+   維持沒有相依、可以單獨載入）。放開滑桿之後也先別急著開始背景工作：常常是調一下、看一眼、馬上再調 */
+const sliderHeld=()=>!!(globalThis as any).__abaiSliderHeld?.();
+if(typeof window!=='undefined'&&window.addEventListener)window.addEventListener('abai-slider-release',()=>deferHeavyWork(600));
 /** Synchronous paint-side guard for nonessential draft thumbnails. */
 /* 手指正按在任何一根滑桿上也算忙：滑桿不一定每一根都有登記 holdPhotoInteraction（例如編輯頁的調節滑桿），
    以前拖滑桿時背景的卡片縮圖照樣一張一張算，預覽就一卡一卡的 */

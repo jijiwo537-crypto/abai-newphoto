@@ -3,10 +3,16 @@ let film:any=null;
 self.onmessage=async(event:MessageEvent)=>{
  if(event.data.warm){
   const base=event.data.warm;
-  for(let i=0;i<8;i++){
+  /* 預熱：讓 JavaScript 引擎在使用者第一次拖滑桿之前就把烤色表這段程式編譯到最快的那一層。
+     iPhone 的引擎一開始是用「直譯」跑，同一段要跑過很多次才會升級；沒預熱的話頭幾秒每烤一張要好幾倍時間，
+     預覽就只能一格一格地跟上。每一項調整（含白色／黑色）單獨、一起、正負都跑過，每一條分支都熱好 */
+  const keys=['brightness','exposure','contrast','highlights','shadows','whites','blacks','temp','tint','sat','vib'];
+  const jobs:Record<string,number>[]=[];
+  for(const k of keys)for(const v of [60,-60])jobs.push({[k]:v});
+  for(let i=0;i<6;i++){const v=[75,-75,30,-30,100,-100][i];jobs.push(Object.fromEntries(keys.map((k,j)=>[k,j%2?-v:v])));}
+  for(const j of jobs){
    await new Promise<void>(r=>setTimeout(r,0));
-   const v=i%2?75:-75;
-   bakePixelMaster({...base,brightness:v,exposure:-v,contrast:v,highlights:v,shadows:-v,temp:v,tint:-v,sat:v,vib:-v},null);
+   bakePixelMaster({...base,...j},null);
   }
   self.postMessage({warmReady:true});return;
  }

@@ -1639,6 +1639,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const regionColour=useRef<PhotoSceneColour|null>(null);
   const baseEditingWas=useRef(false),baseEditGate=useRef(true);
+  /* 調色用的背景執行緒一導入照片就先開、先預熱（在背景跑，不佔畫面）：以前是第一次調整時才開，
+     第一下拖滑桿就排在預熱後面、而且烤色表的程式還沒熱，頭幾秒預覽一格一格的 */
+  useEffect(()=>{if(!imageState||isVideoEl(imageState.img))return;const id=window.setTimeout(()=>{if(leavingRef.current)return;
+    regionColour.current??=new PhotoSceneColour();regionColour.current.onReady=()=>regionPaintRef.current();},1200);return()=>clearTimeout(id);},[imageState]);
   const regionColourActive=useRef(false);
   const regionSpatialActive=useRef(false);
   /* 圖片物件拖效果滑桿：場景先拍兩張（這顆物件換成全黑／全白），之後每一格只在 GPU 上把
@@ -5717,7 +5721,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       regionColour.current?.hide();
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
     }
-    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&!regionHold.current?.active&&!swapPaintForced.current&&!regionSelectionFeedbackPending.current&&((basePhotoEditing&&editGateOpen)||regionPreflight.current)){
+    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&!regionHold.current?.active&&!swapPaintForced.current&&!regionSelectionFeedbackPending.current&&(basePhotoEditing&&editGateOpen||regionPreflight.current)){
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
       const sceneGeometryGesture=!!objDragRef.current||!!objPinchRef.current||!!objStretchRef.current||!!baseDragRef.current||!!basePinchRef.current||!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
       /* 只剩顏色（例如特效拖回 0）而顏色那一條的場景還沒更新（照片在格子裡平移／縮放過）：

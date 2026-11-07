@@ -173,7 +173,11 @@ export class PhotoSceneColour {
      unadjusted or black (e.g. when an effect is slid to 0 and the preview
      switches to this surface). The caller then draws its regular path; the
      worker's result is presented on the next paint. */
-  if(key!==this.key&&(this.key===''||this.canvas.style.display==='none'))return false;
+  /* 只有「這張照片還沒有任何一張算好的色表」（剛備好場景，key 是空的）才退回一般畫法。
+     以前只要這層還沒顯示過、而新色表又還在烤，就退回去用 CPU 整張重算 —— 第一次拖調節滑桿時
+     每一格都是這樣（值一直在變，烤好的那張永遠追不上），預覽就一格一格的；停一下讓它顯示出來之後
+     下一次拖才順。現在手上已經有這張照片的色表（就是畫面上現在的樣子）就直接先用它，新的一到就換上 */
+  if(key!==this.key&&this.key==='')return false;
   /* 新的色表還在背景烤（worker 回來時自己會畫）：此刻再畫一次只會用「上一張色表」
      把畫面上已經顯示的同一張重畫一遍 —— 每一格白白多一次整張 GPU 合成（拖調節滑桿時
      等於每格算兩次）。場景只會在 prepare() 改，而 prepare 一定先把這層藏起來，

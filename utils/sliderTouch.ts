@@ -179,6 +179,8 @@ let installed = false;
     SLIDER_RELEASE_EVENT fires on window when the drag ends. */
 let held = 0;
 export const sliderHeld = () => held > 0;
+/* 給 utils/photoInteractionIdle 用（那支不 import 這支）：手指按在滑桿上時，背景工作要等 */
+(globalThis as any).__abaiSliderHeld = sliderHeld;
 export const SLIDER_RELEASE_EVENT = 'abai-slider-release';
 export const installSliderTouch = () => {
   if (installed || typeof document === 'undefined') return;
