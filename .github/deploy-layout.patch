@@ -12,10 +12,10 @@ index b729473..325af9a 100644
  .art-error{position:absolute;z-index:120;left:20px;right:20px;top:80px;background:#542b2b;padding:20px;border-radius:12px;font-size:13px}
  .art-export{position:absolute;inset:0;background:#000;z-index:110;display:flex;flex-direction:column}
 diff --git a/components/CollageTool.tsx b/components/CollageTool.tsx
-index 2e5008e..3742413 100644
+index 7869c61..c0d75bd 100644
 --- a/components/CollageTool.tsx
 +++ b/components/CollageTool.tsx
-@@ -562,7 +562,7 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
+@@ -617,7 +617,7 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
          min={min} max={max} step={1} value={value}
          onValue={v => onVal(Math.round(v))}
          className="premium-slider w-full"
@@ -24,7 +24,7 @@ index 2e5008e..3742413 100644
        />
      </div>
    </div>
-@@ -9540,7 +9540,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
+@@ -10463,7 +10463,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            outline: none;
            margin: 0 -32px;
            padding: 0;
@@ -33,7 +33,7 @@ index 2e5008e..3742413 100644
            -webkit-tap-highlight-color: rgba(0,0,0,0);
          }
          .custom-range:focus { outline: none; }
-@@ -9608,11 +9608,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
+@@ -10531,11 +10531,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
             長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
             判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
@@ -48,10 +48,10 @@ index 2e5008e..3742413 100644
          /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
             不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
 diff --git a/components/GridLayoutTool.tsx b/components/GridLayoutTool.tsx
-index e329042..6aea13c 100644
+index d4d6340..b4720c7 100644
 --- a/components/GridLayoutTool.tsx
 +++ b/components/GridLayoutTool.tsx
-@@ -14427,11 +14427,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
+@@ -16155,11 +16155,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
             長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
             判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
@@ -65,7 +65,7 @@ index e329042..6aea13c 100644
          .slider-wrap::before { content: ''; position: absolute; left: -7px; right: -7px; top: 50%; height: 56px; margin-top: -28px; }
          /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
             不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
-@@ -14466,7 +14465,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
+@@ -16194,7 +16193,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
            outline: none;
            margin: 0 -32px;
            padding: 0;
@@ -75,10 +75,10 @@ index e329042..6aea13c 100644
          }
          .custom-range:focus { outline: none; }
 diff --git a/components/ImageEditor.tsx b/components/ImageEditor.tsx
-index 6a2d442..526a0d3 100644
+index fc53335..9263247 100644
 --- a/components/ImageEditor.tsx
 +++ b/components/ImageEditor.tsx
-@@ -786,14 +786,14 @@ const FastSlider = React.memo(({
+@@ -970,14 +970,14 @@ const FastSlider = React.memo(({
                  )}
              </div>
  
@@ -95,7 +95,7 @@ index 6a2d442..526a0d3 100644
                      disabled={disabled}
                      onChange={handleChange}
                      onPointerDown={onInteractStart}
-@@ -6368,7 +6368,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
+@@ -8365,7 +8365,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
            outline: none; 
            margin: 0 -32px; 
            padding: 0;
@@ -105,7 +105,7 @@ index 6a2d442..526a0d3 100644
          }
          .custom-range:focus {
 diff --git a/styles.css b/styles.css
-index d6bc968..9de3c12 100644
+index 3c132bb..7c4bb7b 100644
 --- a/styles.css
 +++ b/styles.css
 @@ -133,13 +133,12 @@ select:focus, select:focus-visible {
@@ -195,7 +195,7 @@ index f36ce57..46bb478 100644
 + assert.equal(prevented,0);assert.equal(input.value,'50');assert.equal(events.includes('capture'),false);
 +});
 diff --git a/utils/sliderTouch.ts b/utils/sliderTouch.ts
-index d477fce..efd2f75 100644
+index 97a1670..cc715dd 100644
 --- a/utils/sliderTouch.ts
 +++ b/utils/sliderTouch.ts
 @@ -9,8 +9,8 @@
@@ -227,12 +227,12 @@ index d477fce..efd2f75 100644
  };
  
  /* ── 從滑桿區開始、其實是要上下捲面板的那一下 ─────────────────────────
-- * touchstart 已經 preventDefault（見下面），瀏覽器自己不會捲。以前判定成「在捲面板」
+- * touchstart 已經 preventDefault（見下面），瀏覽器自己不會捲。不然會判定成「在捲面板」
 - * 之後就什麼都不做 —— 結果滑桿多的面板，手指剛好落在滑桿那 56px 高的透明區上就怎麼滑都不動。
 - * 現在由這裡接手：找到最近一層可以直向捲動的容器，跟著手指捲，放手後照手指速度慣性滑一段。 */
 + * touchstart 已經 preventDefault（見下面），所以就算滑桿區是 pan-y，瀏覽器自己也不會捲。
-+ * 以前判定成「在捲面板」之後就什麼都不做 —— 滑桿多的面板，手指剛好落在滑桿那 56px 高的
-+ * 透明區上就怎麼滑都不動。現在由這裡接手：找到最近一層可以直向捲動的容器，跟著手指捲，
++ * 如果判定成「在捲面板」之後就什麼都不做，滑桿多的面板，手指剛好落在滑桿那 56px 高的
++ * 透明區上就怎麼滑都不動。所以由這裡接手：找到最近一層可以直向捲動的容器，跟著手指捲，
 + * 放手後照手指速度慣性滑一段。 */
  const scrollParent = (from: Element | null): HTMLElement | null => {
    for (let n = from?.parentElement || null; n; n = n.parentElement) {
@@ -244,7 +244,7 @@ index d477fce..efd2f75 100644
    return doc && doc.scrollHeight > doc.clientHeight + 1 ? doc : null;
  };
  const glide = (el: HTMLElement, v0: number) => {
-@@ -215,7 +217,9 @@ export const installSliderTouch = () => {
+@@ -218,7 +220,9 @@ export const installSliderTouch = () => {
      // 白點周圍至少44px的觸控區立即取得手勢，但不跳值。
      // 其他透明區仍等待橫向拖動，避免遮住相鄰按鈕的點擊。
      const onThumb = Math.abs(x0-center)<=22 && Math.abs(y0-(r.top+r.height/2))<=22;
@@ -255,7 +255,7 @@ index d477fce..efd2f75 100644
      let dead = false;   // 已經認定使用者是在捲面板，這一下從頭到尾不關滑桿的事
      let done = false;
      let notifiedStart = false;
-@@ -244,24 +248,21 @@ export const installSliderTouch = () => {
+@@ -247,24 +251,21 @@ export const installSliderTouch = () => {
        if (dead) return false;
        if (!live) {
          const dx = Math.abs(cx - x0), dy = Math.abs(cy - y0);
@@ -290,7 +290,7 @@ index d477fce..efd2f75 100644
          } else return false;
        }
        setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel,el.dataset.smoothRange==='true')) : valueAt(el, onThumb ? cx-x0+center : cx));
-@@ -273,15 +274,14 @@ export const installSliderTouch = () => {
+@@ -276,15 +277,14 @@ export const installSliderTouch = () => {
        if (advance(m.clientX, m.clientY) && m.cancelable) m.preventDefault();
      };
  
@@ -309,7 +309,7 @@ index d477fce..efd2f75 100644
          scroller.scrollTop = scrollTop0 - (f.clientY - y0);
          const now = performance.now();
          samples.push({ y: f.clientY, t: now });
-@@ -340,7 +340,7 @@ export const installSliderTouch = () => {
+@@ -343,7 +343,7 @@ export const installSliderTouch = () => {
        window.addEventListener('touchend', onTouchEnd, true);
        window.addEventListener('touchcancel', onTouchEnd, true);
      }
