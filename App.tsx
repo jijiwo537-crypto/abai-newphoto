@@ -551,8 +551,12 @@ const App: React.FC = () => {
   /** 不接續：兩份草稿都收掉，從乾淨的首頁開始 */
   /* 被系統關掉之後自動接回剛才的編輯（連續被關掉的話不自動，改回先問，見 crashRecovery） */
   const autoResumed = useRef(false);
+  const autoPending = !!(crashed?.auto && resume && resume.kind === crashed.tool && resume.at >= crashed.since - 1000);
   useEffect(() => {
     if (autoResumed.current || !crashed?.auto || !resume) return;
+    /* 只接回「被關掉的那個工具、進去之後才存的」草稿。還沒存過就被關掉時，
+       留著的可能是更早、別的作品，那就照一般流程讓使用者自己選 */
+    if (resume.kind !== crashed.tool || resume.at < crashed.since - 1000) return;
     autoResumed.current = true;
     void handleResume().then(() => { setRecoveredToast(true); window.setTimeout(() => setRecoveredToast(false), 3500); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -667,7 +671,7 @@ const App: React.FC = () => {
         </div>
       )}
       {/* 上次還沒做完的東西：先問，不要直接跳進去（被系統關掉的那種會自動接回，見上面） */}
-      {resume && currentView === 'home' && !(crashed?.auto && !autoResumed.current) && (
+      {resume && currentView === 'home' && !(autoPending && !autoResumed.current) && (
         <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">
           <div className="w-full max-w-[320px] rounded-3xl bg-[#141414] border border-white/10 p-6 text-center shadow-2xl animate-in zoom-in-95 duration-200">
             <p className="text-white font-black tracking-wide">要繼續上次的編輯嗎？</p>
