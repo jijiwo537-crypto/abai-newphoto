@@ -8,7 +8,7 @@ import { Glyph } from './Glyph';
 import { SaveButton } from './SaveButton';
 import { BusySpinner } from './BusySpinner';
 import { ExportActionLift } from './ExportActionLift';
-import { SLIDER_RELEASE_EVENT } from '../utils/sliderTouch';
+import { SLIDER_RELEASE_EVENT, sliderHeld } from '../utils/sliderTouch';
 import { useStandaloneToolViewport, standaloneToolViewportCSS } from '../utils/useStandaloneToolViewport';
 import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, prepareDotArtImage, warmLineArtModel, type DotArtFrame, type DotArtSettings, curveT, CURVE_N } from '../utils/dotArt';
 
@@ -27,8 +27,8 @@ const TOOLS: ToolDef[] = [
   { id: 'draw', label: '筆刷', glyph: <Icon name="brush" className="text-xl" />, min: 1, max: 8 },
   { id: 'erase', label: '擦除', glyph: <Glyph k="erase" size={20} />, min: 1, max: 8 },
 ];
-/** 數量滑桿看起來是 0～100，實際是 20～100 個字（0 → 20 字、100 → 100 字） */
-const WIDTH_MIN = 20, WIDTH_MAX = 100;
+/** 數量滑桿看起來是 0～100，實際是 40～100 個字（0 → 40 字、100 → 100 字；40 字＝以前滑桿的 25） */
+const WIDTH_MIN = 40, WIDTH_MAX = 100;
 const widthOf = (v: number) => Math.round(WIDTH_MIN + (WIDTH_MAX - WIDTH_MIN) * Math.round(v) / 100);
 const sliderOfWidth = (w: number) => (w - WIDTH_MIN) / (WIDTH_MAX - WIDTH_MIN) * 100;
 /** 滑桿是連續的（拖起來不會一格一格），算圖時才取到該有的刻度 */
@@ -285,7 +285,13 @@ const glowField = (b: Bits, L: Layout, out?: HTMLCanvasElement) => {
 };
 
 /** 一筆畫改到哪些點：位置、改之前、改之後（復原／重做只記差異，不用每筆存一整張） */
-interface Step { key: string; idx: number[]; before: number[]; after: number[] }
+interface Step { key: string; idx: number[]; before: number[]; after: number[]; set?: undefined }
+/** 滑桿的一步：調之前、調之後的所有滑桿值（數量、明暗、輪廓、間距、發光），連在哪一種（線稿／陰影）調的也記著 */
+interface Snap { kind: Kind; raw: Record<Kind, DotArtSettings>; gap: { x: number; y: number }; glow: number }
+interface SetStep { set: true; before: Snap; after: Snap }
+type HistStep = Step | SetStep;
+const sameSnap = (a: Snap, b: Snap) => a.glow === b.glow && a.gap.x === b.gap.x && a.gap.y === b.gap.y &&
+  (['line', 'shade'] as const).every(k => a.raw[k].width === b.raw[k].width && a.raw[k].threshold === b.raw[k].threshold && a.raw[k].lines === b.raw[k].lines);
 
 export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; initialFiles: File[] }) {
   const viewport = useStandaloneToolViewport();
@@ -320,14 +326,14 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
 
   /* ── 手畫的點：跟著「線稿／陰影＋數量」存（同一個點陣大小），調明暗、輪廓時畫過的點都還在 ── */
   const edits = useRef(new Map<string, Uint8Array>());   // 每個點：1＝點亮、2＝擦掉、0＝照算出來的
-  const undoStack = useRef<Step[]>([]);
-  const redoStack = useRef<Step[]>([]);
+  const undoStack = useRef<HistStep[]>([]);
+  const redoStack = useRef<HistStep[]>([]);
   const [histTick, setHistTick] = useState(0);
 
   const busy = useRef(false), shown = useRef('');
   const open = useCallback(async (file: File) => {
     setStatus('loading'); setFrame(null); setModelReady(false); setRendered(false);
-    edits.current.clear(); undoStack.current = []; redoStack.current = []; setHistTick(t => t + 1);
+    edits.current.clear(); undoStack.current = []; redoStack.current = []; if (setTx.current) { clearTimeout(setTx.current.timer); setTx.current = null; } setHistTick(t => t + 1);
     curves.current.clear(); thrPos.current = null;
     try {
       const c = await prepareDotArtImage(file);
@@ -530,6 +536,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   };
   const onUp = () => {
     const s = stroke.current; if (!s) return;
+    commitSet();
     if (s.raf) cancelAnimationFrame(s.raf);
     flush(); stroke.current = null;
     clearTimeout(glowTimer.current); glowTimer.current = 0; paintGlow();
@@ -541,10 +548,50 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     }
     setHistTick(t => t + 1);
   };
+  /* ── 滑桿也進復原／重做：按下去（或第一次動）先記下原本的值，放開手（或停 0.4 秒）才記成一步 ── */
+  const snapRef = useRef<Snap>({ kind, raw, gap, glow });
+  snapRef.current = { kind, raw, gap, glow };
+  const setTx = useRef<{ before: Snap; timer: number } | null>(null);
+  const commitSet = () => {
+    const tx = setTx.current; if (!tx) return;
+    clearTimeout(tx.timer); setTx.current = null;
+    const after = snapRef.current;
+    if (sameSnap(tx.before, after)) return;
+    undoStack.current.push({ set: true, before: tx.before, after: { ...after, kind: tx.before.kind } });
+    if (undoStack.current.length > 300) undoStack.current.shift();
+    redoStack.current = [];
+    setHistTick(t => t + 1);
+  };
+  const commitSoon = () => {
+    const tx = setTx.current; if (!tx) return;
+    clearTimeout(tx.timer);
+    tx.timer = window.setTimeout(function wait() {
+      if (sliderHeld()) { if (setTx.current) setTx.current.timer = window.setTimeout(wait, 200); return; }
+      commitSet();
+    }, 400);
+  };
+  /** 每次滑桿要改值之前叫這個 */
+  const beginSet = () => {
+    if (!setTx.current) setTx.current = { before: snapRef.current, timer: 0 };
+    commitSoon();
+  };
+  useEffect(() => {
+    const onRelease = () => { if (setTx.current) window.setTimeout(commitSet, 0); };
+    window.addEventListener(SLIDER_RELEASE_EVENT, onRelease);
+    return () => { window.removeEventListener(SLIDER_RELEASE_EVENT, onRelease); if (setTx.current) clearTimeout(setTx.current.timer); };
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  const applySnap = (v: Snap) => {
+    thrPos.current = null;
+    setRaw(v.raw); setGap(v.gap); setGlow(v.glow); setKind(v.kind);
+  };
   const travel = (from: typeof undoStack, to: typeof undoStack, redo: boolean) => {
+    commitSet();
     const step = from.current.pop(); if (!step) return;
-    const m = edits.current.get(step.key);
-    if (m) step.idx.forEach((i, j) => { m[i] = redo ? step.after[j] : step.before[j]; });
+    if (step.set) applySnap(redo ? step.after : step.before);
+    else {
+      const m = edits.current.get(step.key);
+      if (m) step.idx.forEach((i, j) => { m[i] = redo ? step.after[j] : step.before[j]; });
+    }
     to.current.push(step);
     setHistTick(t => t + 1);
   };
@@ -605,8 +652,9 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const thrSlider = thrPos.current && thrPos.current.key === curveKey && thrPos.current.t === thrNow ? thrPos.current.p : posOfT(curve, thrNow);
   const value = isBrush ? brush : cur.id === 'spacing' ? 0 : cur.id === 'glow' ? glow : cur.id === 'threshold' ? thrSlider : raw[kind][cur.id as keyof DotArtSettings];
   const setValue = (v: number) => {
-    if (isBrush) setBrush(v);
-    else if (cur.id === 'glow') setGlow(v);
+    if (isBrush) { setBrush(v); return; }   // 筆刷大小是工具設定，不算一步
+    beginSet();
+    if (cur.id === 'glow') setGlow(v);
     else if (cur.id === 'threshold') {
       const t = Math.max(0.01, Math.min(0.99, snap('threshold', tOfPos(curve, v))));
       thrPos.current = { key: curveKey, t, p: v };
@@ -715,8 +763,8 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
       {/* 滑桿區：只放滑桿（間距有橫向、直向兩根），高度固定，切工具時圖片不會跳 */}
       <div className="h-[84px] shrink-0 border-t border-white/[0.06] px-5 flex flex-col justify-center gap-3" data-dot-art-controls>
         {cur.id === 'spacing' ? (<>
-          {sliderRow('橫向', 1, 8, gap.x, String(gx), v => setGap(g => ({ ...g, x: v })))}
-          {sliderRow('直向', 1, 8, gap.y, String(gy), v => setGap(g => ({ ...g, y: v })))}
+          {sliderRow('橫向', 1, 8, gap.x, String(gx), v => { beginSet(); setGap(g => ({ ...g, x: v })); })}
+          {sliderRow('直向', 1, 8, gap.y, String(gy), v => { beginSet(); setGap(g => ({ ...g, y: v })); })}
         </>) : sliderRow(isBrush ? '筆刷' : cur.label, cur.min, cur.max, value,
           String(Math.round(value)), setValue, isBrush)}
       </div>
