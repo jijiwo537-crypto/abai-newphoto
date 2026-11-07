@@ -1,5 +1,4 @@
-// Histogram selection is relative to the current photograph, not a fixed
-// luminance such as 0.55. Tied pixels share the boundary's remaining weight.
+// 直方圖選取是相對於目前這張照片，不是固定的亮度（例如 0.55）。剛好落在邊界上的像素平分剩下的權重
 export function luminanceBin(r,g,b){return Math.max(0,Math.min(255,Math.round(.299*r+.587*g+.114*b)));}
 export function highlightHistogram(data){
  const bins=new Float64Array(256);

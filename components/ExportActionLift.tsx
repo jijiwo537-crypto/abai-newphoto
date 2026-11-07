@@ -1,7 +1,8 @@
 import React, {useLayoutEffect, useRef} from 'react';
 
-/** Halve the previous result-footer clearance (base padding + 56px lift).
- * Keep the media's original top; only shorten its lower edge when necessary. */
+/**
+ * 成品底部的空間減半（基本間距加上 56px 的上移）。圖片的上緣維持原位，必要時只把下緣縮短
+ */
 export function ExportActionLift() {
   const ref=useRef<HTMLSpanElement>(null);
   useLayoutEffect(()=>{
@@ -25,18 +26,16 @@ export function ExportActionLift() {
       const lift=previousGap/2-baseGap;
       actions.style.transform=`translateY(${-lift}px)`;
       const bottom=actions.getBoundingClientRect().top-16;
-      // Reserve the original flow footprint. Otherwise a shorter photo can
-      // pull the footer up again, and a horizontal result strip can clip its
-      // translated top edge (especially Safari's flex min-content sizing).
+      // 保留原本在版面裡佔的空間。不然比較矮的照片又會把底部拉上來，
+      // 橫向的成品列也可能裁掉往上移的上緣（尤其是 Safari 的 flex min-content 尺寸）
       holders.forEach((h,i)=>h.style.minHeight=`${holderHeights[i]}px`);
       media.forEach((m,i)=>{
-        // Desktop also uses a phone-width app shell; 80vw alone can otherwise
-        // make a result wider than that shell. Preserve its original top here.
+        // 桌機也是手機寬度的外框；只用 80vw 的話成品可能比外框還寬。這裡維持它原本的上緣
         m.style.maxWidth=widths[i]==='none'?`${Math.max(1,root.clientWidth-48)}px`:`min(${widths[i]}, ${Math.max(1,root.clientWidth-48)}px)`;
         const r=original[i];if(r.height>0&&r.bottom>bottom)
           m.style.maxHeight=`${Math.max(1,bottom-r.top)}px`;
       });
-      // Read after all size writes: centring parents may have changed height.
+      // 所有尺寸都寫完再讀：置中的上層元素高度可能變了
       const offsets=new Map<HTMLElement,number>();
       media.forEach((m,i)=>{
         const h=m.closest<HTMLElement>('[data-export-media]')!;

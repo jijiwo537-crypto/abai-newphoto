@@ -408,7 +408,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     },
   }));
 
-  // Initialize WebGL
+  // 初始化 WebGL
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -488,7 +488,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     };
   }, [gpuEpoch]);
 
-  // Render Loop
+  // 繪製迴圈
   useEffect(() => {
     if (!glRef.current || !progRef.current) return;
 
@@ -551,8 +551,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       const soft = (f.soft || 0) / 100, blurAmt = (f.blur || 0) / 100;
       const soft2=(f.soft2||0)/100,halo=(f.halo||0)/100,lowfi=(f.lowfi||0)/100;
       const anyFx = soft > 0 || blurAmt > 0 || soft2>0 || halo>0 || lowfi>0;
-      // All effect passes share sensor coordinates; crop only the final screen pass.
-      // This keeps highlight selection and blur extents identical to the captured still.
+      // 所有特效階段共用感光元件的座標，只在最後畫到螢幕的那一步裁切，
+      // 亮部選取和模糊範圍才會跟拍下來的照片完全一樣
       const rt = anyFx ? ensureTargets(sourceW, sourceH) : null;
 
       // ---- 第一趟：影像 → 曝光／色溫／濾鏡 ----
@@ -728,7 +728,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     return () => { cancelAnimationFrame(rafId); if (rvfc) (video as any).cancelVideoFrameCallback?.(frameHandle); drawRef.current = null; };
   }, [video, gpuEpoch]);
 
-  // Handle LUT Loading
+  // 處理 LUT 載入
   /* 換濾鏡時會閃一下白（其實是閃「沒有濾鏡的原樣」），原因是一按下去就把
      現在這顆清掉，等新的圖檔載完中間那幾幀等於沒有濾鏡。
      改成：新的載好了才換過去，中間畫面維持前一顆。

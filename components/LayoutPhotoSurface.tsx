@@ -20,10 +20,9 @@ const dropLiveSeam=(owner?:HTMLCanvasElement|null)=>{if(liveSeam&&(!owner||liveS
 type Cell={id:string;url:string;naturalWidth?:number;naturalHeight?:number;zoom:number;offsetX:number;offsetY:number;rotation:number;opacity?:number;imgRadius?:number;fx?:PhotoFx};
 type Rect={x:number;y:number;w:number;h:number};
 type Resource={url:string;src0?:string;image:HTMLImageElement;input:HTMLCanvasElement;key:string;output:CanvasImageSource|null;
-  /** Editor-sized proxy used while a slider is held (same size as the home editor preview). */
+  /** 按住滑桿時用的編輯器大小代理（跟首頁編輯器的預覽一樣大） */
   preview?:HTMLCanvasElement;previewKey?:string;previewOutput?:HTMLCanvasElement|null;pending?:string;primed?:boolean};
-// The home editor previews at 1800px. Matching it keeps every slider frame
-// independent of the photo's native size (12MP+ on phones).
+// 首頁編輯器用 1800px 預覽。用一樣的大小，每格滑桿就跟照片原始尺寸（手機上 1200 萬像素以上）無關
 const LIVE_PREVIEW=1800;
 /** 每個佈局畫布（含畫面外多畫的那一圈）最多幾個實體像素 */
 const OVERSCAN_PIXELS=5_000_000;
@@ -38,16 +37,17 @@ export const layoutGeomPreviews=new Map<string,(g:{gap?:number;radius?:number}|n
 const BASE_PIXELS=4_000_000,BASE_TOTAL=12_000_000;
 let liveBases=0;
 const previewSize=(im:HTMLImageElement)=>{const k=Math.min(1,LIVE_PREVIEW/Math.max(im.naturalWidth,im.naturalHeight));return [Math.max(1,Math.round(im.naturalWidth*k)),Math.max(1,Math.round(im.naturalHeight*k))];};
-// Effect pixels depend on the cell's own LUT being decoded, not on every
-// unrelated background LUT load that bumps the editor-wide revision.
+// 特效像素只取決於這一格自己的 LUT 有沒有解碼好，不受其他背景 LUT 載入讓整個編輯器版本號變動的影響
 const fxKey=(fx:PhotoFx)=>JSON.stringify([fx,fx.lut?!!getLoadedLut(fx.lut):0]);
 const releasePreview=(r:Resource)=>{if(!r.preview)return;releasePhotoFxSurface(r.preview);r.preview.width=r.preview.height=1;r.preview=undefined;r.previewKey=undefined;r.previewOutput=null;};
 const releaseResource=(r:Resource)=>{r.image.onload=null;r.pending=undefined;releasePhotoFxSurface(r.input);r.input.width=r.input.height=1;if(r.preview){releasePhotoFxSurface(r.preview);r.preview.width=r.preview.height=1;}};
-/** Every cell is painted in one unchanged layout plane. Selection never swaps
- * SVG/HTML geometry, and neighbour edges cannot be independently composited. */
-/** fusion: seamless blend amount (0..100), or undefined for separate cells.
- * Both modes share this one GPU surface and its resident textures, so
- * toggling seamless only changes shader uniforms (no re-decode/re-upload). */
+/**
+ * 每一格都畫在同一個不變的版面平面上。選取絕不會換 SVG／HTML 幾何，相鄰的邊也不會各自合成
+ */
+/**
+ * fusion：無縫融合的程度（0..100），undefined 代表各格分開。兩種模式共用這一張 GPU 畫布和它常駐的貼圖，
+ * 切換無縫只改著色器 uniform（不重新解碼、不重新上傳）
+ */
 export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:radiusProp,geomScale=1,revision,fusion,previewId,dims}:{cells:Cell[];rects:Rect[];width:number;height:number;gap:number;radius:number;
   /** 佈局縮放（props 的 gap／radius 已經乘過；滑桿直接傳來的值要乘這個） */
   geomScale?:number;revision:number;fusion?:number;previewId?:string;
@@ -63,27 +63,26 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
   const paintedView=useRef<{fwd:number[];gesture:boolean;headroom?:number;cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastPaintAt=useRef(-1e9);
   /** 底圖重畫的計時：最後一次內容變動後 400ms 都沒再動才畫（拖滑桿中間停一下不會突然卡一下） */
   const baseTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastEditAt=useRef(-1e9),retries=useRef(0);
-  // The layout canvas is a plain 2D bitmap fed by the editor-wide shared GPU
-  // renderer (drawSeamShared), so it can never lose a context or turn grey.
+  // 版面畫布是一般的 2D 點陣，由整個編輯器共用的 GPU 繪製（drawSeamShared）餵進來，
+  // 所以永遠不會掉 context 或變灰
   const fusionLive=useRef(fusion),liveDrag=useRef(false);
   const geomLive=useRef<{gap?:number;radius?:number}|null>(null),geomScaleRef=useRef(geomScale);geomScaleRef.current=geomScale;
   // React 已經把放開時的值寫進 props：拖動中的暫時值就不需要了（同一次 render，不會閃回舊值）
   useLayoutEffect(()=>{geomLive.current=null;},[gapProp,radiusProp]);
   useLayoutEffect(()=>{if(!previewId)return;layoutGeomPreviews.set(previewId,g=>{geomLive.current=g?{...geomLive.current,...g}:null;drawRef.current();});return()=>{layoutGeomPreviews.delete(previewId);};},[previewId]);
-  // What the flat (effect-editing) canvas currently holds: its geometry and each cell's pixels.
+  // 平面（特效編輯）畫布目前放的是什麼：它的幾何和每一格的像素
   const flatState=useRef<{geom:string;sigs:string[]}|null>(null);
   /** 拖特效時直接疊在原位的那一格 GPU 預覽（見 flat 那一段） */
   const liveCell=useRef<HTMLDivElement|null>(null);
   const dropLiveCell=()=>{const host=liveCell.current;if(!host)return;host.remove();const clip=host.firstElementChild?.firstElementChild;clip?.replaceChildren();};
   useLayoutEffect(()=>{fusionLive.current=fusion;},[fusion]);
-  // The fusion slider repaints uniforms directly, without a React render.
+  // 融合滑桿直接重畫 uniform，不經過 React render
   useLayoutEffect(()=>{if(!previewId||fusion===undefined)return;seamlessPreviews.set(previewId,(v,isLive)=>{fusionLive.current=v;liveDrag.current=!!isLive;drawRef.current();});return()=>{seamlessPreviews.delete(previewId);};},[previewId,fusion===undefined]);
   const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;drawRef.current();});};
   useEffect(()=>{liveBases++;const b=baseRef.current;return()=>{liveBases--;if(baseTimer.current)clearTimeout(baseTimer.current);if(b){releaseSeamShared(b);b.width=b.height=1;}};},[]);
   useEffect(()=>{const element=ref.current;return()=>{cancelAnimationFrame(frame.current);if(settleTimer.current)clearTimeout(settleTimer.current);for(const r of resources.current.values())releaseResource(r);resources.current.clear();if(element){releaseSeamShared(element);dropLiveSeam(element);}dropLiveCell();};},[]);
   useEffect(()=>{
-    // Repaint in the SAME transform frame, not a second rAF one frame later.
-    // Sources and FX remain cached; zoom only resamples their visible pixels.
+    // 在「同一個」transform 畫格裡重畫，不要晚一格另排 rAF。來源和特效照樣快取，縮放只是重新取樣看得到的像素
     const paint=()=>drawRef.current(true);
     window.addEventListener('abai-preview-transform',paint,true);window.addEventListener('abai-layout-visual',paint);
     // 原圖的完整解析度材質剛準備好（見 seamlessPreview 的 stripPixels）：照新的材質重畫
@@ -94,10 +93,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
   },[]);
   useLayoutEffect(()=>{
     const clean=cells.map(c=>subscribeCellPhoto(c.id,fx=>{live.current.set(c.id,fx);schedule();}));
-    // Selecting a cell for editing prepares its live proxy while idle (source
-    // downscale + upload into the SHARED colour GPU). It must not create
-    // per-cell WebGL contexts: iOS Safari evicts the oldest live context once
-    // too many exist, which blanked the layout/seamless canvases to grey.
+    // 選中格子編輯時，趁閒置準備它的即時代理（縮小來源、上傳到「共用的」色彩 GPU）。
+    // 不能替每一格建 WebGL context：太多時 iOS Safari 會把最舊的收掉，版面和無縫畫布就變成灰色
     const primes=cells.map(c=>subscribeCellPrime(c.id,()=>{void(async()=>{
       await awaitPhotoIdle();
       const r=resources.current.get(c.id),im=r?.image;if(!r||r.primed||!im?.naturalWidth||live.current.has(c.id))return;
@@ -140,9 +137,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       const aw=Math.max(1,width-gap),ah=Math.max(1,height-gap);
       const points=Array.from(root.querySelectorAll<SVGCircleElement>('[data-layout-probe]')).map(n=>{const b=n.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2};});
       const bounds=root.getBoundingClientRect(),clip=root.closest('[data-grid-preview-viewport]')?.getBoundingClientRect();
-      // Always render at physical screen density directly from full originals,
-      // never a fixed-size intermediate stretched by CSS. Bound allocation to
-      // the visible viewport, rather than to the possibly huge layout.
+      // 一律用實體螢幕密度直接從原圖畫，絕不用固定大小的中間圖再靠 CSS 拉伸。配置大小以看得到的 viewport 為限，
+      // 不是可能很大的整個版面
       const dpr=devicePixelRatio||1;
       const vis={left:Math.max(0,clip?.left??0),top:Math.max(0,clip?.top??0),right:Math.min(innerWidth,clip?.right??innerWidth),bottom:Math.min(innerHeight,clip?.bottom??innerHeight)};
       /* 整個佈局在手勢中當成「一張圖片」：
@@ -264,11 +260,9 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
         if(lastView.current!==viewKey){editPresentation.current=false;lastView.current=viewKey;}
       }
       const sources:SeamTexture[]=[],clips:Rect[]=[],radii:number[]=[],crops:{tx:number;ty:number;scale:number;angle:number}[]=[],contents:string[]=[],previewCells:number[]=[];
-      // The GPU path is one opaque raster: adjacent cells share exact float
-      // edges and every sample has an owner (sealEdges), so the browser's
-      // resampling of this canvas can never open a gap between them. Only the
-      // 2D effect canvas below antialiases each clip separately and needs a
-      // subpixel overlap. No overlap with a real gutter or rounded corners.
+      // GPU 路線是一張不透明的點陣：相鄰格子共用精確的浮點邊，每個取樣點都有歸屬（sealEdges），
+      // 瀏覽器重新取樣這張畫布時格子之間不可能裂開。只有下面的 2D 特效畫布會各自對每個裁切反鋸齒，
+      // 需要次像素重疊；有真正的間距或圓角時不重疊
       const noVisibleGutter=gap<=.001&&radius<=.001&&cells.every(c=>!(c.imgRadius||0));
       rects.forEach((r,i)=>{
         const c=cells[i];if(!c)return;
@@ -285,9 +279,9 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
         };
         let shown:CanvasImageSource|null=null;
         if(liveFx&&hasPhotoFx(fx)){
-          // Slider held: render the editor-sized proxy, never native pixels.
+          // 按住滑桿時：畫編輯器大小的代理，絕不畫原圖像素
           if(r0.previewKey!==key){
-            // At most one live effect surface (one extra GPU context) at a time.
+            // 同一時間最多一張即時特效畫布（多一個 GPU context）
             for(const other of resources.current.values())if(other!==r0)releasePreview(other);
             r0.preview??=document.createElement('canvas');const [pw,ph]=previewSize(im);
             r0.previewOutput=applyPhotoFx(im,pw,ph,fx,{cacheSource:true,gpuSurface:true,out:r0.preview});
@@ -296,8 +290,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
           editPresentation.current=true;shown=r0.previewOutput!;
         }else if(r0.key!==key){
           if(hasPhotoFx(fx)&&r0.previewKey===key&&r0.previewOutput){
-            // Just released: keep the identical proxy on screen and finish the
-            // native-resolution pixels when the editor is idle, not on pointerup.
+            // 剛放開：畫面上維持同一份代理，原解析度的像素等編輯器閒置時再做完，不在 pointerup 時做
             editPresentation.current=true;shown=r0.previewOutput;
             if(r0.pending!==key){r0.pending=key;void awaitPhotoIdle().then(()=>{
               if(r0.pending!==key||resources.current.get(c.id)!==r0||live.current.has(c.id))return;
@@ -311,7 +304,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
           }
         }
         const source=shown||resource!.output!,iw=(source as any).naturalWidth||(source as any).width,ih=(source as any).naturalHeight||(source as any).height;
-        // Shared with every other preview path and the export (one framing rule).
+        // 跟其他所有預覽路線和存檔共用（同一套構圖規則）
         const {scale,dx,dy,angle}=cellPhotoPlacement(r.w*aw,r.h*ah,iw,ih,c);
         const cr=c.imgRadius?Math.min(cw,ch)*Math.min(.5,Math.max(0,c.imgRadius/100)):Math.min(radius,cw/2,ch/2);
         sources.push({image:source,width:iw,height:ih});radii.push(cr);
@@ -382,22 +375,18 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       cv.style.width=`${surface.width}px`;cv.style.height=`${surface.height}px`;
       cv.style.transform=`matrix(${surface.transform.join(',')})`;cv.style.clipPath=`polygon(${surface.clip})`;
       if(editPresentation.current&&!fused){
-        // WebKit can directly crop a native FX canvas into a physical-pixel
-        // 2D surface. Re-uploading its entire multi-megapixel framebuffer to a
-        // second GL context on EACH slider tick is substantially slower.
-        // This is not a lower-quality draft: both paths sample full originals
-        // at identical screen density. Retain these exact pixels on release.
+        // WebKit 可以直接把原圖大小的特效畫布裁進實體像素的 2D 畫布。
+        // 每格滑桿都把好幾百萬像素的暫存重新上傳到第二個 GL context 會慢很多。這不是比較差的草稿：
+        // 兩條路線都用同樣的螢幕密度取樣原圖，放開時保留這些像素
         const resized=flat.width!==W||flat.height!==H;
         if(flat.width!==W)flat.width=W;if(flat.height!==H)flat.height=H;
         flat.style.width=cv.style.width;flat.style.height=cv.style.height;flat.style.transform=cv.style.transform;flat.style.clipPath=cv.style.clipPath;
         const v=surface.view,m=new DOMMatrix([v.xx/W,v.yx/W,v.xy/H,v.yy/H,v.x0,v.y0]).inverse();
-        // Cover the 2D canvas's half-texel footprint and clip antialiasing at
-        // shared edges: each clip overlaps its neighbours by ~1 raster pixel.
+        // 蓋住 2D 畫布半個像素的範圍、在共用邊上裁掉反鋸齒：每個裁切跟鄰居重疊約 1 個點陣像素
         const bleedX=noVisibleGutter?(Math.abs(v.xx/W)+Math.abs(v.xy/H))*1.25:0;
         const bleedY=noVisibleGutter?(Math.abs(v.yx/W)+Math.abs(v.yy/H))*1.25:0;
         const cellBox=(i:number)=>{
-          // Layout rects, not the normalized clips: those are already scaled
-          // by the full width and would shift every cell by the gutter.
+          // 用版面矩形，不是正規化的裁切：那些已經乘上整個寬度，會讓每一格都偏一個間距
           const r=rects[i];
           const x0=gap+r.x*aw,y0=gap+r.y*ah,w0=Math.max(0,r.w*aw-gap),h0=Math.max(0,r.h*ah-gap);
           const leftBleed=noVisibleGutter&&r.x>1e-6?bleedX:0,rightBleed=noVisibleGutter&&r.x+r.w<1-1e-6?bleedX:0;
@@ -441,8 +430,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
           const {x0,y0,w0,h0,x,y,cw,ch}=cellBox(i);
           if(i===overlayIdx)return;
           if(!source){g.fillStyle='#121212';g.fillRect(x,y,cw,ch);return;}
-          // Keep the crop's optical center on the unbled cell, so the overlap
-          // never moves the photo's framing.
+          // 裁切的光學中心維持在沒出血的格子上，重疊才不會移動照片的構圖
           const cx=x0+w0/2+crop.tx*Math.cos(crop.angle)-crop.ty*Math.sin(crop.angle),cy=y0+h0/2+crop.tx*Math.sin(crop.angle)+crop.ty*Math.cos(crop.angle);
           const {image,width:iw,height:ih}=source;
           g.save();g.globalAlpha=(c.opacity??100)/100;
@@ -480,7 +468,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       }else{
         dropLiveCell();
         flatState.current=null;
-        // Geometry-only frames change GPU uniforms, never re-run effects.
+        // 只改幾何的畫格只改 GPU uniform，絕不重跑特效
         let direct=false;
         if(fused&&liveDrag.current&&cv.parentElement){
           try{

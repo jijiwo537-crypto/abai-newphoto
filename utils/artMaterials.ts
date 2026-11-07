@@ -1,5 +1,4 @@
-// Original ABAI region treatments. Use an explicit separable GPU kernel instead
-// of Canvas filter, which is not implemented consistently in iOS WebKit.
+// ABAI 原創的區域效果。用明確的可分離 GPU 卷積核，不用 Canvas filter，iOS WebKit 對它的支援不一致
 export const MATERIALS=[['mosaic','像素'],['glass','毛玻璃'],['negative','負片'],['mononeg','黑白負片']];
 let gpu;
 function gpuBlur(source,w,h,radius){
@@ -35,8 +34,7 @@ export function blurRGBA(data,w,h,radius){
  }return a;
 }
 export function blurredSource(source,radius){
- // Only the deliberately blurred material is band-limited. The photograph and
- // analytic overlay retain their original/vector resolution at every zoom.
+ // 只有刻意模糊的材質會限制頻寬。照片和分析疊層在任何縮放下都維持原本的解析度或向量
  const scale=Math.min(1,1200/Math.max(source.width,source.height),6/Math.max(1,radius));
  if(radius>0){const accelerated=gpuBlur(source,Math.max(1,Math.round(source.width*scale)),Math.max(1,Math.round(source.height*scale)),radius*scale);if(accelerated)return accelerated;}
  const c=document.createElement('canvas');c.width=Math.max(1,Math.round(source.width*scale));c.height=Math.max(1,Math.round(source.height*scale));
@@ -47,7 +45,7 @@ export function makeLinks(nodes,mode,maxDistance){
  if(mode==='none'||nodes.length<2)return [];
  if(mode==='radial'){const center=nodes.reduce((a,b)=>a.score>b.score?a:b);return nodes.filter(n=>n!==center).map(n=>[center,n]);}
  if(mode==='tree'){
-  // Prim's algorithm with retained nearest distances: O(n²), not O(n³).
+  // Prim 演算法，保留最近距離：O(n²)，不是 O(n³)
   const used=new Uint8Array(nodes.length),distance=new Float64Array(nodes.length).fill(Infinity),parents=new Int32Array(nodes.length).fill(-1),edges=[];distance[0]=0;
   for(let step=0;step<nodes.length;step++){let best=-1;for(let j=0;j<nodes.length;j++)if(!used[j]&&(best<0||distance[j]<distance[best]))best=j;
    used[best]=1;if(parents[best]>=0)edges.push([nodes[parents[best]],nodes[best]]);

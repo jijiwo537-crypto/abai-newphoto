@@ -6,7 +6,7 @@ const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'
 const load = code => import('data:text/javascript;base64,' + Buffer.from(ts.transpileModule(code, {compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText).toString('base64'));
 const geometry = await load(read('utils/editorCurveGeometry.ts'));
 const editor = read('components/ImageEditor.tsx');
-const math = await load(editor.slice(editor.indexOf('function getSplineY('), editor.indexOf('// 60FPS Optimization: Pre-calculate')).replace('function getSplineY(', 'export function getSplineY('));
+const math = await load(editor.slice(editor.indexOf('function getSplineY('), editor.indexOf('// 曝光、對比、亮度預先合成')).replace('function getSplineY(', 'export function getSplineY('));
 
 test('endpoints at top/bottom with inset x coordinates are still edited curves', () => {
   assert.equal(geometry.isIdentityCurve([{x:0,y:0},{x:255,y:255}]), true);

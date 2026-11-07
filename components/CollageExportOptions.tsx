@@ -14,7 +14,7 @@ const Row=({label,value,choices,onChange,disabled}:{label:string;value:string;ch
  React.useEffect(()=>setShown(value),[value]);
  return <div className="flex flex-col gap-1.5"><span className="text-[10px] text-white/50">{label}</span><div className="flex gap-1.5">{choices.map(([v,name])=><button key={v} aria-pressed={shown===v} disabled={disabled?.(v)} onClick={()=>{if(v===shown)return;setShown(v);React.startTransition(()=>onChange(v));}} className={`flex-1 h-8 rounded-lg text-[11px] font-medium disabled:text-white/30 ${shown===v?'bg-white text-black':'bg-[#303034] text-white/90'}`}>{name}</button>)}</div></div>;};
 const PANEL={background:'rgb(16,16,19)',boxShadow:PREMIUM_GLASS.boxShadow} as const;
-/** Shared markup: both collage editors have exactly the same export panel. */
+/** 共用的版面：兩個拼圖的存檔面板完全一樣 */
 export function CollageExportOptions(p:Props){return <div ref={p.panelRef} role="dialog" aria-label={p.label} data-collage-export-options style={PANEL} className="absolute left-4 right-4 top-full mt-2 z-[81] p-3 rounded-2xl border border-white/15 flex flex-col gap-3">
  <Row label="圖片格式" value={p.imageFormat} choices={[['jpg','JPG'],['png','PNG'],['heic','HEIC']]} disabled={v=>v==='heic'&&!canExportHeic()} onChange={v=>p.onImage(v as Props['imageFormat'])}/>
  <Row label="影片格式" value={p.videoFormat} choices={[['auto','自動'],['mp4','MP4'],['mov','MOV']]} disabled={v=>v!=='auto'&&!collageVideoMime(v as CollageVideoFormat)} onChange={v=>p.onVideo(v as CollageVideoFormat)}/>

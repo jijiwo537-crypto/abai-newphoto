@@ -1,4 +1,4 @@
-/** UI ordering only. Never reorder the rendering passes or saved effect IDs. */
+/** 只是介面的順序，絕不改繪製的順序或存檔的特效 ID */
 export function orderEffectCards<T>(items: readonly T[], idOf: (item: T) => string): T[] {
   const result = [...items];
   for (const [id, anchor] of [['fxExposureSpill', 'softLight'], ['fxLowfi', 'fxSpin']]) {

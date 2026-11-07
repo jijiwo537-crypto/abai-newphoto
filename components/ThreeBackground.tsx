@@ -11,47 +11,47 @@ export const ThreeBackground: React.FC = () => {
     const width = container.clientWidth;
     const height = container.clientHeight;
 
-    // 1. Create Scene
+    // 1. 建立場景
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x000000, 0.012);
 
-    // 2. Create Camera
+    // 2. 建立相機
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
     camera.position.z = 25;
 
-    // 3. WebGL Renderer with Ultra Settings
+    // 3. WebGL 繪製器（最高設定）
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;
     container.appendChild(renderer.domElement);
 
-    // 4. Dramatic Contrast Studio Lighting (Specular Gloss Design)
+    // 4. 高對比的攝影棚打光（鏡面光澤）
     const ambientLight = new THREE.AmbientLight(0x060606);
     scene.add(ambientLight);
 
-    // High intensity Key Light (cool white)
+    // 高強度主光（冷白）
     const keyLight = new THREE.DirectionalLight(0xffffff, 4.0);
     keyLight.position.set(20, 25, 20);
     scene.add(keyLight);
 
-    // High contrast Fill Light (warm neutral white)
+    // 高對比補光（暖中性白）
     const fillLight = new THREE.DirectionalLight(0xddeeff, 2.0);
     fillLight.position.set(-20, -10, -10);
     scene.add(fillLight);
 
-    // Intense Rim Light for sharp metallic edges
+    // 強烈的輪廓光，讓金屬邊緣銳利
     const rimLight = new THREE.DirectionalLight(0xffffff, 3.5);
     rimLight.position.set(0, -30, -15);
     scene.add(rimLight);
 
-    // Self-Guided Point Light that orbits smoothly for dynamic reflection highlights
+    // 平順繞行的點光源，做出會動的反光
     const pointLight = new THREE.PointLight(0xffffff, 5.0, 50);
     pointLight.position.set(0, 0, 10);
     scene.add(pointLight);
 
-    // 5. Build Upgraded Masterpiece: Nested Camera Aperture / Chrono Ring System
-    // Object A: Central Reflective Obsidian Crystal Core (Icosahedron)
+    // 5. 主體：層層疊疊的相機光圈／計時環
+    // 物件 A：中央反光的黑曜石水晶核心（二十面體）
     const coreGeometry = new THREE.IcosahedronGeometry(4.8, 4);
     const originalPositions = coreGeometry.attributes.position.clone();
 
@@ -68,7 +68,7 @@ export const ThreeBackground: React.FC = () => {
     const coreMesh = new THREE.Mesh(coreGeometry, coreMaterial);
     scene.add(coreMesh);
 
-    // Fine wireframe overlay with highly sophisticated structure
+    // 細緻的線框疊層
     const coreWireframeGeom = new THREE.IcosahedronGeometry(4.82, 2);
     const coreWireframeMat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
@@ -79,7 +79,7 @@ export const ThreeBackground: React.FC = () => {
     const coreWireframeMesh = new THREE.Mesh(coreWireframeGeom, coreWireframeMat);
     coreMesh.add(coreWireframeMesh);
 
-    // Object B: Multi-layer concentric Camera Aperture Focus Rings
+    // 物件 B：多層同心的相機光圈對焦環
     const ringGroup = new THREE.Group();
     scene.add(ringGroup);
 
@@ -89,25 +89,25 @@ export const ThreeBackground: React.FC = () => {
       metalness: 0.95,
     });
 
-    // Ring 1: Wide outer guide track
+    // 環 1：寬的外圈軌道
     const ringGeom1 = new THREE.TorusGeometry(8.2, 0.04, 16, 120);
     const ring1 = new THREE.Mesh(ringGeom1, ringMaterial);
     ring1.rotation.x = Math.PI / 4;
     ringGroup.add(ring1);
 
-    // Ring 2: Perpendicular inner track
+    // 環 2：垂直的內圈軌道
     const ringGeom2 = new THREE.TorusGeometry(7.0, 0.04, 16, 120);
     const ring2 = new THREE.Mesh(ringGeom2, ringMaterial);
     ring2.rotation.y = Math.PI / 3;
     ringGroup.add(ring2);
 
-    // Ring 3: Center focus bevel ring
+    // 環 3：中央對焦斜面環
     const ringGeom3 = new THREE.TorusGeometry(5.8, 0.06, 16, 120);
     const ring3 = new THREE.Mesh(ringGeom3, ringMaterial);
     ring3.rotation.z = Math.PI / 6;
     ringGroup.add(ring3);
 
-    // Node pointers on the ring (representing f-stop tick marks and aperture pointers)
+    // 環上的節點（代表光圈刻度和指標）
     const nodeGeometry = new THREE.SphereGeometry(0.12, 16, 16);
     const nodeMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff,
@@ -115,7 +115,7 @@ export const ThreeBackground: React.FC = () => {
       opacity: 0.8,
     });
 
-    // Distribute small nodes along the focus rings
+    // 沿著對焦環分布小節點
     const nodeCount = 5;
     for (let i = 0; i < nodeCount; i++) {
       const node = new THREE.Mesh(nodeGeometry, nodeMaterial);
@@ -131,7 +131,7 @@ export const ThreeBackground: React.FC = () => {
       ring2.add(node);
     }
 
-    // 6. Responsive Resizing
+    // 6. 跟著視窗調整大小
     const resizeObserver = new ResizeObserver((entries) => {
       for (let entry of entries) {
         const { width, height } = entry.contentRect;
@@ -142,7 +142,7 @@ export const ThreeBackground: React.FC = () => {
     });
     resizeObserver.observe(container);
 
-    // 7. Kinetic/Self-Guided Animation Logic
+    // 7. 自動運行的動畫
     let animationFrameId: number;
     const clock = new THREE.Clock();
 
@@ -151,7 +151,7 @@ export const ThreeBackground: React.FC = () => {
 
       const time = clock.getElapsedTime();
 
-      // Rotating complex ring structures on independent, interlocking axes.
+      // 複雜的環狀結構各自繞著互相交錯的軸旋轉
       ring1.rotation.z = time * 0.18;
       ring2.rotation.x = -time * 0.22;
       ring3.rotation.y = time * 0.12;
@@ -159,11 +159,11 @@ export const ThreeBackground: React.FC = () => {
       coreMesh.rotation.y = time * 0.08;
       coreMesh.rotation.x = time * 0.05;
 
-      // High-end breathing scale animation (sculpture alive state)
+      // 呼吸般的縮放動畫（讓雕塑看起來是活的）
       const breathe = Math.sin(time * 0.6) * 0.04 + 1.0;
       coreMesh.scale.set(breathe, breathe, breathe);
 
-      // Liquid Chrome morphing wave effect on Obsidian Core
+      // 黑曜石核心上像液態鉻一樣流動的波紋
       const posAttr = coreGeometry.attributes.position;
       const origAttr = originalPositions;
       const tempV = new THREE.Vector3();
@@ -172,7 +172,7 @@ export const ThreeBackground: React.FC = () => {
       for (let i = 0; i < posAttr.count; i++) {
         origV.fromBufferAttribute(origAttr, i);
         
-        // Multi-frequency wave formula
+        // 多頻率的波動公式
         const wave1 = Math.sin(origV.x * 0.35 + time * 1.5);
         const wave2 = Math.cos(origV.y * 0.35 + time * 1.8);
         const wave3 = Math.sin(origV.z * 0.25 + time * 1.2);
@@ -193,7 +193,7 @@ export const ThreeBackground: React.FC = () => {
       posAttr.needsUpdate = true;
       coreGeometry.computeVertexNormals();
 
-      // Mirror subtle variations onto the wireframe mesh
+      // 在線框網格上同步做細微的變化
       const wfPosAttr = coreWireframeMesh.geometry.attributes.position;
       for (let i = 0; i < wfPosAttr.count; i++) {
         wfPosAttr.setXYZ(
@@ -205,7 +205,7 @@ export const ThreeBackground: React.FC = () => {
       }
       wfPosAttr.needsUpdate = true;
 
-      // Self-orbiting point light
+      // 自己繞行的點光源
       pointLight.position.x = Math.sin(time * 1.4) * 14;
       pointLight.position.y = Math.cos(time * 1.2) * 14;
       pointLight.position.z = Math.sin(time * 0.8) * 5 + 12;
@@ -215,13 +215,13 @@ export const ThreeBackground: React.FC = () => {
 
     animate();
 
-    // 8. Thorough Memory Safe Cleanup
+    // 8. 完整、安全地釋放記憶體
     return () => {
       cancelAnimationFrame(animationFrameId);
       resizeObserver.disconnect();
       
       coreGeometry.dispose();
-      originalPositions.clone(); // triggers clean GC release
+      originalPositions.clone(); // 讓垃圾回收能乾淨地收掉
       coreMaterial.dispose();
       
       coreWireframeGeom.dispose();

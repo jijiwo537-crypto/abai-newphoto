@@ -419,8 +419,8 @@ export const HomePage: React.FC<HomePageProps> = ({
     finally { setDelBusy(false); }
   };
 
-  /* 程式定位分頁时先锁住高亮，避免 scroll 事件在同一帧仍用旧门槛
-     把刚点亮的分页覆盖回去；用户自己触碰滚动区就立即交还控制。 */
+  /* 程式定位分頁時先鎖住高亮，避免 scroll 事件在同一幀仍用舊門檻
+     把剛點亮的分頁覆蓋回去；使用者自己觸碰滾動區就立即交還控制。 */
   const navLockRef = useRef<string | null>(null);
 
   /**
@@ -561,8 +561,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   /** 主視覺裡的照片。它比整屏再慢一層，JS 那條路也要跟著畫 */
   const artRef = useRef<HTMLDivElement>(null);
   const cssTimeline = useRef(typeof CSS !== 'undefined' && CSS.supports('animation-timeline: scroll()'));
-  // Touch input is not a request to disable parallax. Prefer the native scroll
-  // timeline on capable browsers; only the accessibility preference disables it.
+  // 觸控不代表要關掉視差。支援的瀏覽器優先用原生的捲動時間軸；只有無障礙設定會關掉它
   const reduceMotion = useRef(typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches);
   useEffect(() => {
     try {
@@ -583,10 +582,10 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (!sc) return;
     const h = sc.clientHeight;
     const w = sc.clientWidth;
-    /* iOS 快速回顶时，状态栏／浏览器栏可能只改变可视高度几像素。
-       这不是版面真的改尺寸，却会让 scroll-timeline 的范围重算并把整屏
-       瞬间贴到另一个进度。宽度没变就锁住本次会话的纵向基准；真正旋转
-       屏幕时宽度会改变，仍会正常重算。 */
+    /* iOS 快速回頂時，狀態列／瀏覽器工具列可能只改變可視高度幾像素。
+       這不是版面真的改尺寸，卻會讓 scroll-timeline 的範圍重算並把整屏
+       瞬間貼到另一個進度。寬度沒變就鎖住本次會話的縱向基準；真正旋轉
+       螢幕時寬度會改變，仍會正常重算。 */
     if (rangeWritten.current > 0 && Math.abs(w - rangeWidthWritten.current) < 1) {
       rangePending.current = false;
       return;
@@ -623,7 +622,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       return;
     }
     if (cssTimeline.current) {
-      // A property must have exactly one owner, including the first layout pass.
+      // 每個屬性只能有一個負責的地方，第一次排版也一樣
       el.style.transform = ''; el.style.opacity = '';
       if (artRef.current) artRef.current.style.transform = '';
       if (libRef.current) libRef.current.style.transform = '';
@@ -633,9 +632,8 @@ export const HomePage: React.FC<HomePageProps> = ({
     // 夾在 0～可捲上限之間：iOS 橡皮筋期間讀到的值可能超出範圍，
     // 直接拿去算會讓圖案往回彈一下。
     const rawY = Math.max(0, sc.scrollTop);
-    // Fade the compensation velocity to zero at the top. WebKit's asynchronous
-    // scroll position may lag the compositor by a frame; a zero endpoint slope
-    // prevents a visible last-frame correction without changing native momentum.
+    // 到頂端時補償速度漸漸歸零。WebKit 非同步的捲動位置可能比合成器慢一格，
+    // 終點斜率為零才不會在最後一格看到修正，原生慣性也不受影響
     const edge = Math.min(1, rawY / (h * 0.12));
     const y = rawY * edge * edge * (3 - 2 * edge);
     /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
@@ -719,9 +717,9 @@ export const HomePage: React.FC<HomePageProps> = ({
   useEffect(() => {
     const on = () => {
       const sc = scrollRef.current;
-      /* 只有真正改变横向版面（旋转／分屏）才重算模板门槛。iOS 快速回顶
-         时状态栏造成的纯高度 resize 不应该清空门槛，否则下一次 scroll
-         会在惯性途中同步读取整页高度并产生一次跳帧。 */
+      /* 只有真正改變橫向版面（旋轉／分屏）才重算範本門檻。iOS 快速回頂
+         時狀態列造成的純高度 resize 不應該清空門檻，否則下一次 scroll
+         會在慣性途中同步讀取整頁高度並產生一次跳幀。 */
       if (sc && (rangeWidthWritten.current < 0
         || Math.abs(sc.clientWidth - rangeWidthWritten.current) >= 1)) {
         resetNavThresh();
@@ -1297,7 +1295,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           ))}
         </div>
 
-        {/* One accessible entry, with a shared horizontal title/action baseline. */}
+        {/* 只有一個無障礙入口，標題和動作共用同一條水平基線 */}
         {/* 這一排兩個入口：藝術效果、點陣文字（各佔一半，同一個高度、同一條文字基線） */}
         <div className="relative z-10 mt-[14px] shrink-0 flex gap-2">
         <button

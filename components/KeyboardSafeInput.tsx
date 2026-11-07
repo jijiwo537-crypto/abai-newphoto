@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 
-/** Edit low toolbar fields above the keyboard, without moving the editor itself. */
+/** 編輯下方工具列的輸入欄時移到鍵盤上方，編輯器本身不動 */
 export function KeyboardSafeInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
   const [open, setOpen] = useState(false);
   const field = useRef<HTMLInputElement>(null);

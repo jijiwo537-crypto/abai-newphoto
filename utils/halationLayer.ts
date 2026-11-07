@@ -5,9 +5,10 @@ import {uniformLocation} from './uniformLocation';
 import {surfaceGl,type GpuImage} from './fxSurfaceGl';
 import {GpuHighlightHistogram} from './gpuHighlightHistogram';
 
-/** Persistent halation layer: identical 800px highlight kernel at rest and
- * during input. Radius changes only blur one byte/channel; hue and feather
- * change shader uniforms. Never shrink the photograph or defer to release. */
+/**
+ * 常駐的光暈圖層：靜止和輸入中都用一樣的 800px 亮部卷積核。改半徑只模糊每個通道一個位元組；
+ * 色相和羽化只改著色器 uniform。絕不縮小照片，也不拖到放開才做
+ */
 export class HalationLayer {
   private canvas: HTMLCanvasElement;
   private sample = document.createElement('canvas');
@@ -53,18 +54,16 @@ export class HalationLayer {
   private sceneResult?:WebGLTexture;
   private sceneResultSize='';
   setScene(scene?:FxScene){this.scene=scene;}
-  /* Context loss/restoration is tracked by events. gl.isProgram() is a
-     synchronous query: the browser waits for the GPU to finish all queued
-     work before answering, and this getter runs every frame. */
+  /* context 遺失和恢復靠事件追蹤。gl.isProgram() 是同步查詢：瀏覽器要等 GPU 做完所有排隊的工作才回答，
+     而這個 getter 每格都會跑 */
   private stale=false;
   private listening=false;
   get lost(){return !!this.gl&&(this.gl.isContextLost()||this.stale);}
   constructor(private presentation?:HTMLCanvasElement){this.canvas=presentation||document.createElement('canvas');}
-  /** Compile once before interaction without changing any presented pixels. */
+  /** 互動前先編譯一次，不改任何已經顯示的像素 */
   warm(){
     if(!this.init())return false;
-    // Presentation layers also compile the downscale and percentile passes now,
-    // so the first soft light / halation frame does not compile shaders.
+    // 顯示用的圖層現在也一起編譯縮小和百分位數的步驟，第一格柔光、光暈才不必編譯著色器
     if(this.presentation){this.ensureDown();if(this.hist===undefined)this.hist=GpuHighlightHistogram.create(this.gl!);}
     return true;
   }
@@ -126,8 +125,7 @@ export class HalationLayer {
         gl_FragColor=floor(sum*255./(radius*2.+1.)+.5)/255.;}`)||undefined;
     if(!this.softSeed||!this.softBlur||!this.haloSeed){this.failed=true;return false;}
     this.softTextures=[texture(),texture(),texture()];this.framebuffer=gl.createFramebuffer()!;
-    // The box blur reads pairs of texels with one linear fetch (see softBlur).
-    // Every other read of these textures is at texel centres, unaffected.
+    // 方框模糊一次線性取樣讀兩個像素（見 softBlur）。這些貼圖其他的讀取都在像素中心，不受影響
     for(const t of [...this.softTextures,this.sourceTex!]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);}
     this.leak=makeProgram(`precision highp float;varying vec2 uv;uniform sampler2D base;uniform vec2 size;uniform vec2 direction;uniform vec3 color;uniform float amount;
       void main(){vec3 b=texture2D(base,uv).rgb;vec2 pixel=(vec2(uv.x,1.-uv.y)-.5)*size;float a=clamp(dot(pixel,direction)/(max(size.x,size.y)*1.5),0.,1.)*amount;gl_FragColor=vec4(b+(1.-b)*color*a,1.);}`)||undefined;
@@ -148,9 +146,8 @@ export class HalationLayer {
 
   private begin(ctx:CanvasRenderingContext2D,w:number,h:number,mw:number,mh:number,key:string){
     const gl=this.gl!;gl.disable(gl.BLEND);gl.disable(gl.DEPTH_TEST);gl.disable(gl.DITHER);
-    // The optical kind changes the layer, not the underlying photograph.
-    // Re-uploading that same multi-megapixel canvas on soft/halo/leak switches
-    // forces WebKit to synchronize its 2D and GPU queues unnecessarily.
+    // 光學種類改的是圖層，不是底下的照片。切換柔光、光暈、漏光時重新上傳同一張好幾百萬像素的畫布，
+    // 會讓 WebKit 白白同步 2D 和 GPU 的佇列
     const sourceKey=key.replace(/\|(soft|halo|leak|blur|simple)$/,'');
     if(this.presentation){
       if(!this.targetTexture){
@@ -167,8 +164,9 @@ export class HalationLayer {
       gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer!);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.layerTex!,0);
     }else gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   }
-  /** When set (presentation mode), the photo with the layer composited is
-   *  written into this texture of the same context instead of the screen. */
+  /**
+   * 有設的話（顯示模式），合成好圖層的照片寫進同一個 context 的這張貼圖，不畫到螢幕
+   */
   targetTexture:WebGLTexture|null=null;
   private resultTarget(w:number,h:number){
     const gl=this.gl!;
@@ -217,7 +215,7 @@ export class HalationLayer {
     const dims=`${mw}x${mh}`;
     if(this.key!==key||this.haloGpu!==gpu||this.dims!==dims){
       if(gpu){
-        // Working copy made on the GPU from the full photo (see sampleFromBase).
+        // 在 GPU 上從整張照片做的工作複本（見 sampleFromBase）
         if(!this.sampleFromBase(ctx,key,w,h,mw,mh))return null;
         if(this.dims!==dims)for(const t of this.softTextures){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}
         this.dims=dims;
@@ -239,8 +237,7 @@ export class HalationLayer {
     const haloMaskKey=`${key}|${mw}x${mh}|${radius}`;
     gl.activeTexture(gl.TEXTURE1);gl.bindTexture(gl.TEXTURE_2D,this.maskTex!);
     if(gpu&&this.haloMaskKey!==haloMaskKey){
-      // Same 800px mask and four rounded box passes as the CPU path. Keep it
-      // resident on the GPU instead of stalling to read pixels into JavaScript.
+      // 跟 CPU 路線一樣的 800px 遮罩和四次取整的方框模糊。留在 GPU 上，不要卡住等像素讀進 JavaScript
       gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.viewport(0,0,mw,mh);
       const draw=(program:WebGLProgram,input:WebGLTexture,target:WebGLTexture)=>{
         gl.useProgram(program);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,input);gl.uniform1i(uniformLocation(gl,program,'source'),0);
@@ -260,8 +257,7 @@ export class HalationLayer {
       this.haloMaskKey=haloMaskKey;this.radius=radius;this.begin(ctx,w,h,mw,mh,key);
     }else if(!gpu&&this.radius!==radius){
       blurAlpha(this.alpha,this.blurred,this.scratch,mw,mh,radius);
-      // Typed array rows have to be flipped explicitly (UNPACK_FLIP only
-      // applies to DOM sources). Reuse scratch after the last blur pass.
+      // 型別陣列的列要自己翻轉（UNPACK_FLIP 只對 DOM 來源有效）。最後一次模糊後重用暫存
       for(let y=0;y<mh;y++)this.scratch.set(this.blurred.subarray(y*mw,(y+1)*mw),(mh-y-1)*mw);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.ALPHA,mw,mh,0,gl.ALPHA,gl.UNSIGNED_BYTE,this.scratch);
       this.radius=radius;
@@ -275,9 +271,8 @@ export class HalationLayer {
     gl.uniform1f(this.uniforms.falloff,1+(100-p.fringeFeather)/100*4);
     gl.uniform1f(this.uniforms.soft,0);
     gl.viewport(0,0,mw,mh);gl.drawArrays(gl.TRIANGLES,0,3);
-    // Keep one halo photograph, not a full collage or a result for every
-    // photo. Other optical families may reuse sceneResult without overwriting
-    // this result. Geometry changes then only recompose unchanged pixels.
+    // 只留一張光暈照片，不是整張拼圖，也不是每張照片各一份。其他光學類別可以重用 sceneResult，
+    // 不會蓋掉這個結果；之後改幾何只重新合成沒變的像素
     const otherResult=this.sceneResult,otherSize=this.sceneResultSize;
     if(cachePhoto){this.sceneResult=this.haloPhoto;this.sceneResultSize=this.haloPhotoSize;}
     let result:HTMLCanvasElement;
@@ -288,7 +283,7 @@ export class HalationLayer {
 
   private histSample:HTMLCanvasElement|null=null;
   private dims='';
-  /** undefined: not computed for this photo yet; null: CPU percentile in use. */
+  /** undefined：這張照片還沒算；null：用 CPU 的百分位數 */
   private softSel?:null;
   private cpuBins(ctx:CanvasRenderingContext2D,mw:number,mh:number){
     const hk=Math.min(1,128/Math.max(mw,mh)),hw=Math.max(1,Math.round(mw*hk)),hh=Math.max(1,Math.round(mh*hk));
@@ -296,16 +291,19 @@ export class HalationLayer {
     const hx=hc.getContext('2d',{willReadFrequently:true})!;hx.imageSmoothingQuality='high';hx.drawImage(this.src(ctx),0,0,hw,hh);
     return highlightHistogram(hx.getImageData(0,0,hw,hh).data);
   }
-  /** When set, the photo is read from this canvas (e.g. the colour GPU's own
-   *  canvas during a drag) instead of the 2D canvas passed in as ctx. */
+  /**
+   * 有設的話，從這張畫布讀照片（例如拖動時色彩 GPU 自己的畫布），不從傳進來當 ctx 的 2D 畫布讀
+   */
   sourceOverride:HTMLCanvasElement|null=null;
   private src(ctx:CanvasRenderingContext2D){return this.sourceOverride||ctx.canvas;}
-  /** When set, the photo is this texture of the same GPU context (the colour
-   *  stage's result): nothing is copied in at all. Presentation mode only. */
+  /**
+   * 有設的話，照片就是同一個 GPU context 的這張貼圖（色彩階段的結果），完全不用複製。只用在顯示模式
+   */
   sourceImage:GpuImage|null=null;
   private base(){return this.sourceImage?.texture||this.baseTex!;}
-  /** Full-resolution photo on the GPU: the caller's texture, or one upload
-   *  of the canvas per photograph/colour state. */
+  /**
+   * GPU 上的原解析度照片：呼叫端給的貼圖，或每張照片／色彩狀態上傳一次畫布
+   */
   private ensureBase(ctx:CanvasRenderingContext2D,sourceKey:string){
     const gl=this.gl!;
     if(this.sourceImage){this.presentKey='';return;}
@@ -315,11 +313,8 @@ export class HalationLayer {
       this.presentKey=sourceKey;
     }
   }
-  /* The ≤800px working copy of the photo (presentation mode). Made on the GPU
-     from the full-resolution photo by an exact area average: every source
-     pixel contributes by the fraction of it an output pixel covers. The same
-     pass is used while dragging and at rest, so both select the same
-     highlights. */
+  /* 照片 ≤800px 的工作複本（顯示模式）。在 GPU 上用精確的面積平均從原解析度照片做：
+     每個來源像素依輸出像素蓋到它的比例貢獻。拖動中和靜止時用同一個步驟，選到的亮部一樣 */
   private downProgram?:WebGLProgram|null;
   private sampleFromBase(ctx:CanvasRenderingContext2D,key:string,w:number,h:number,mw:number,mh:number){
     const gl=this.gl!;
@@ -330,7 +325,7 @@ export class HalationLayer {
     if(this.sampleSize!==`${mw}x${mh}`){gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);this.sampleSize=`${mw}x${mh}`;}
     const base=this.base();
     gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,base);
-    // Texel centres only; the external texture may be set to linear filtering.
+    // 只在像素中心取樣；外部貼圖可能設成線性過濾
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
     gl.useProgram(this.downProgram);gl.uniform1i(uniformLocation(gl,this.downProgram,'source'),2);
     gl.uniform2f(uniformLocation(gl,this.downProgram,'srcSize'),w,h);gl.uniform2f(uniformLocation(gl,this.downProgram,'dstSize'),mw,mh);
@@ -349,7 +344,7 @@ export class HalationLayer {
         gl_FragColor=sum/total;}`);
     return !!this.downProgram;
   }
-  /** GPU percentile of the working copy's luminance, for soft light. */
+  /** 工作複本亮度的 GPU 百分位數，給柔光用 */
   private hist?:GpuHighlightHistogram|null;
   private histProgs=new Map<string,WebGLProgram|null>();
   private softSelect(key:string,mw:number,mh:number,coverage:number):WebGLTexture|null{
@@ -368,8 +363,9 @@ export class HalationLayer {
     const pr=gl.createProgram()!;gl.attachShader(pr,v);gl.attachShader(pr,f);gl.bindAttribLocation(pr,0,'p');gl.linkProgram(pr);gl.deleteShader(v);gl.deleteShader(f);
     if(!gl.getProgramParameter(pr,gl.LINK_STATUS)){gl.deleteProgram(pr);return null;}return pr;
   }
-  /** bins: luminance histogram of the colour-processed photo, supplied by the
-   *  caller from data it already has (no canvas readback here). */
+  /**
+   * bins：調色後照片的亮度直方圖，由呼叫端用它已經有的資料提供（這裡不從畫布讀回）
+   */
   renderSoft(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,color:number[],bins?:Float64Array|null):HTMLCanvasElement|null {
     this.mixLayer=false;
     if(!this.init())return null;
@@ -378,11 +374,11 @@ export class HalationLayer {
     const dims=`${mw}x${mh}`,gpuSample=!!this.presentation;
     if(this.key!==key||this.dims!==dims){
       if(gpuSample){
-        // Working copy made on the GPU from the full photo (see sampleFromBase).
+        // 在 GPU 上從整張照片做的工作複本（見 sampleFromBase）
         if(!this.sampleFromBase(ctx,key,w,h,mw,mh))return null;
         this.softSel=undefined;
         if(!this.softSelect(key,mw,mh,100-p.softThreshold)){
-          // No float render targets: the CPU percentile, from a canvas.
+          // 沒有浮點繪製目標：用 CPU 從畫布算百分位數
           if(bins)this.softBins=bins;
           else if(this.sourceImage)return null;
           else this.softBins=this.cpuBins(ctx,mw,mh);
@@ -391,9 +387,8 @@ export class HalationLayer {
       }else{
         this.sample.width=mw;this.sample.height=mh;this.canvas.width=mw;this.canvas.height=mh;
         const s=this.sample.getContext('2d')!;s.drawImage(this.src(ctx),0,0,mw,mh);
-        /* The highlight threshold is a percentile of the photo's luminance. A
-           128px copy gives the same percentile to well within one level; it is
-           used always, so a drag and its release select the same highlights. */
+        /* 亮部門檻是照片亮度的百分位數。128px 的複本算出來的百分位數差不到一階；一律用它，
+           拖動中和放開後選到的亮部才一樣 */
         this.softBins=bins||this.cpuBins(ctx,mw,mh);
         gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
         gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.sample);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
@@ -432,7 +427,7 @@ export class HalationLayer {
       }
       this.softRange=p.softThreshold;this.softRadius=radius;
     }
-    // Restore the final layer target after the four exact box passes.
+    // 四次精確的方框模糊之後，還原最後的圖層目標
     this.begin(ctx,w,h,mw,mh,key);
     gl.useProgram(this.program!);gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.softTextures[radius>=1?2:0]);gl.uniform1i(this.uniforms.source,0);

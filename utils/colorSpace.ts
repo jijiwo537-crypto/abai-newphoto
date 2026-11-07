@@ -42,9 +42,10 @@ export function get2dWide(
   return canvas.getContext('2d', opts);
 }
 
-/** Keep the output and imported texture primaries in the same color space.
- * WebKit exposes drawingBufferColorSpace but not unpackColorSpace: in that
- * case uploads must use explicitly color-managed pixel bytes, not DOM images. */
+/**
+ * 輸出和匯入貼圖的色域要一樣。WebKit 有 drawingBufferColorSpace 但沒有 unpackColorSpace，
+ * 這時上傳要用明確做過色彩管理的像素，不能直接用 DOM 圖片
+ */
 export function configureWebglWide(gl: WebGL2RenderingContext) {
   const wide = gl as WebGL2RenderingContext & { drawingBufferColorSpace?: string; unpackColorSpace?: string };
   if (!supportsP3() || !('drawingBufferColorSpace' in wide)) return { colorSpace: 'srgb' as const, directUpload: false };
@@ -57,7 +58,7 @@ export function configureWebglWide(gl: WebGL2RenderingContext) {
     }
     return { colorSpace: 'display-p3' as const, directUpload: false };
   } catch {
-    // A partially supported implementation still needs matching pixel bytes.
+    // 只支援一部分的實作也需要對應的像素
     return { colorSpace: wide.drawingBufferColorSpace === 'display-p3' ? 'display-p3' as const : 'srgb' as const, directUpload: false };
   }
 }

@@ -11,7 +11,7 @@ import { processImageFile } from '../utils/imageLoader';
 import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
 import {preferCameraResolution} from '../utils/cameraPreview';
 
-// Extend MediaStream types to support zoom
+// MediaStream 型別補上 zoom
 declare global {
   interface MediaTrackCapabilities {
     zoom?: { min: number; max: number };
@@ -247,12 +247,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     restorePreview?: () => void;
   }>(null);
   
-  // Logic facing mode vs Visual facing mode (to prevent flip glitch)
+  // 邏輯上的鏡頭方向跟畫面上的分開記，切換時才不會閃一下翻轉
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [visualFacingMode, setVisualFacingMode] = useState<'user' | 'environment'>('environment');
   
   const [stream, setStream] = useState<MediaStream | null>(null);
-  // Ref to hold stream for reliable cleanup on unmount
+  // 用 ref 存串流，卸載時一定收得掉
   const streamRef = useRef<MediaStream | null>(null);
 
   const [videoTrack, setVideoTrack] = useState<MediaStreamTrack | null>(null);
@@ -271,7 +271,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
   const [flashOn, setFlashOn] = useState(false);
   
-  // Default Aspect Ratio changed to 3:2
+  // 預設比例 3:2
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('3:2');
   
   const [timer, setTimer] = useState<TimerMode>(0);
@@ -367,7 +367,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   
   const localFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Measure container size for smooth aspect ratio transitions
+  // 量容器大小，比例切換時才能平順過渡
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
 
@@ -392,11 +392,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
   }, []);
 
-  // Initialize Camera
+  // 啟動相機
   useEffect(() => {
     let mounted = true;
     const startCamera = async () => {
-      // Stop any existing stream before starting a new one (using Ref for safety)
+      // 開新的串流前先停掉舊的（從 ref 拿，比較保險）
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
@@ -428,13 +428,13 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         }
 
         if (!mounted) {
-            // If component unmounted during async call, stop stream immediately
+            // 等待中元件已經卸載的話，立刻停掉串流
             mediaStream.getTracks().forEach(t => t.stop());
             return;
         }
 
         setStream(mediaStream);
-        streamRef.current = mediaStream; // Update Ref
+        streamRef.current = mediaStream; // 更新 ref
         
         const vTrack = mediaStream.getVideoTracks()[0];
         await preferCameraResolution(vTrack,viewfinderRef.current?.maxTextureSize?.()??4096);
@@ -466,13 +466,13 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         }
       } catch (err) {
         console.error("Error accessing camera:", err);
-        // Fallback
+        // 退而求其次
         if (!streamRef.current && mounted) {
              try {
                 const basicStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
                 if (mounted) {
                     setStream(basicStream);
-                    streamRef.current = basicStream; // Update Ref
+                    streamRef.current = basicStream; // 更新 ref
                     const basicTrack=basicStream.getVideoTracks()[0];
                     await preferCameraResolution(basicTrack,viewfinderRef.current?.maxTextureSize?.()??4096);
                     if(!mounted){basicStream.getTracks().forEach(t=>t.stop());return;}
@@ -493,7 +493,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     
     return () => {
         mounted = false;
-        // Strictly stop all tracks on unmount using the Ref to release camera permissions immediately
+        // 卸載時從 ref 停掉所有 track，馬上把相機權限還回去
         if (streamRef.current) {
             streamRef.current.getTracks().forEach(track => track.stop());
         }
@@ -804,8 +804,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         }
         await waitForCameraFrame(video, 600);
       }
-      // Never silently save the raw camera frame when the chosen processing
-      // pipeline is unavailable: it would discard both the LUT and effects.
+      // 選的處理流程不能用時，絕不偷偷存下沒處理過的原始畫面：濾鏡和特效會整個不見
       if (captureSource === video) {
         setCaptureNotice('相機影像尚未就緒，請再拍一次');
         return;
@@ -864,7 +863,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
       /* 第一幀若剛好是相機切換／回前景產生的全黑幀，就等下一幀重畫；
          最多三次，每次都有時限，永遠不會把黑圖加進相簿。 */
-      // Each check is a GPU readback; remember the result instead of re-reading.
+      // 每次檢查都要從 GPU 讀回來，結果記住，不重讀
       let hasFrame = false;
       for (let attempt = 0; attempt < 3 && !hasFrame; attempt++) {
         draw();
@@ -875,8 +874,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         if (rendered && canvasHasFrame(rendered)) captureSource = rendered;
       }
       if (!hasFrame) return;
-      // The 2D crop holds the photo now; give the full-size GPU buffers back
-      // before JPEG encoding needs its own memory.
+      // 裁好的照片已經在 2D 畫布上了，先把全尺寸的 GPU 暫存還回去，JPEG 編碼也要記憶體
       viewfinderRef.current?.restorePreview?.();
 
       const thumb = await thumbFromCanvas(photoCanvas, outW, outH);
@@ -1010,7 +1008,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     const maxW = containerSize.w;
     const maxH = containerSize.h;
     
-    // Calculate 3:2 Reference Height (Portrait 2:3 = 0.666...)
+    // 算 3:2 的基準高度（直式 2:3 ＝ 0.666…）
     const ratio32 = 2/3;
     let h32 = maxW / ratio32;
     let w32 = maxW;
@@ -1025,7 +1023,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
     switch (aspectRatio) {
       case '16:9':
-        // 16:9 (Portrait 9:16) - Requirement: Height matches 3:2 height
+        // 16:9（直式 9:16）：高度要跟 3:2 一樣
         targetH = h32;
         targetW = targetH * (9/16);
         break;
@@ -1116,7 +1114,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         </div>
       )}
 
-      {/* Hidden Input for Local 'Edit Next' Import */}
+      {/* 「編輯下一張」用的隱藏檔案輸入 */}
       <input 
         type="file" 
         ref={localFileInputRef} 
@@ -1126,7 +1124,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       />
 
       <main className="flex-1 relative flex flex-col justify-end px-4 overflow-hidden">
-        {/* pb-0 to lower viewfinder frame */}
+        {/* pb-0 讓觀景框低一點 */}
         <div className="w-full h-full flex items-end justify-center pb-0" ref={containerRef}>
           <div 
             className="relative rounded-camera overflow-hidden bg-black flex items-center justify-center transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]"
@@ -1209,7 +1207,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 </div>
             )}
 
-            {/* Settings Menu Button */}
+            {/* 設定選單按鈕 */}
             <div className="absolute top-1 right-2 z-50">
                 <button 
                     onClick={(e) => { 

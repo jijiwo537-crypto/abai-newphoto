@@ -11,17 +11,19 @@ export const copyPixelDither=()=>ditherTable.slice();
 export const setPixelDither=(value:Float32Array)=>ditherTable.set(value);
 const masterLUT_R=new Float32Array(32768),masterLUT_G=new Float32Array(32768),masterLUT_B=new Float32Array(32768);
 
-/** Per-channel exposure → brightness → contrast as an 8-bit table.
- *  processPixels no longer reads it (it evaluates photoToneMath directly at
- *  full precision); kept for callers that still pass one in. */
+/**
+ * 逐通道的曝光 → 亮度 → 對比，做成 8 位元表。processPixels 已經不讀它（直接用完整精度算 photoToneMath），
+ * 留給還會傳這張表進來的呼叫端
+ */
 export function generateBaseCorrectionLut(exposure: number, contrast: number, brightness: number, output: Uint8Array): void {
     const stage = makeToneStage({ exposure, contrast, brightness, shadows: 0, highlights: 0, temp: 0, tint: 0, sat: 0 });
     const c = new Float32Array(3);
     for (let i = 0; i < 256; i++) { applyToneStage(stage, i, i, i, c); output[i] = Math.round(c[0]); }
 }
 
-/** Expose the existing full-precision master directly: no second resampling,
- * no 8-bit intermediate and no additional full pixel loop. */
+/**
+ * 直接提供現有的完整精度主表：不再重新取樣，沒有 8 位元的中間值，也不多跑一次整張像素迴圈
+ */
 export function bakePixelMaster(p:EditorParams,film:{data:Uint8ClampedArray;size:number}|null){
  const base=new Uint8Array(256);generateBaseCorrectionLut(p.exposure,p.contrast,p.brightness,base);
  const curve=Uint8Array.from({length:256},(_,i)=>i),curves={rgb:curve,r:curve,g:curve,b:curve};
@@ -62,19 +64,19 @@ export const processPixels = (
   const stage = makeToneStage(p, undefined, !!local);
   const tc = new Float32Array(3);
   const toneFast = makeToneFast(stage);
-  // The master grid has only 32 input levels per channel: precompute them.
+  // 主網格每個通道只有 32 個輸入值，先算好
   const wbM = toneFast.wb;
   const gridLin = new Float32Array(32);
   for (let i = 0; i < 32; i++) gridLin[i] = toneFast.toLinear((i * 255) / 31);
   const curveAt = (t: Uint8Array, v: number) => { const f = v < 0 ? 0 : v > 255 ? 255 : v, i = f | 0; return i >= 255 ? t[255] : t[i] + (t[i + 1] - t[i]) * (f - i); };
   const hasTempTint = !!stage.wb;
 
-  // Saturation & Vibrance Constants
+  // 飽和度和自然飽和度的常數
   const satMult = stage.sat;
   const vibVal = (p.vib * 0.5) / 100;
   const hasVib = vibVal !== 0;
 
-  // Film LUT Constants
+  // 底片 LUT 的常數
   const lutAmount = p.lutAmount / 100;
   const hasLut = !!lutData && lutAmount > 0;
   const lutSizeSq = lutSize * lutSize;
@@ -94,14 +96,12 @@ export const processPixels = (
   // 調色輪（陰影／中間調／亮部／全域）—— 在最後，接在 HSL 之後
   const grade = makeGrade((p as any).grade);
 
-  // Sharpen Constants (Multiply amount since Int8 is halved)
+  // 銳利化的常數（Int8 減半了，所以強度要乘回來）
   const hasSharpen = p.sharpen > 0 && !!sharpenDetail;
   const sharpenAmount = p.sharpen > 0 ? ((p.sharpen / 100) * 0.59) * 2.0 : 0;
   
-  // --- SMART OPTIMIZATION: MASTER 3D LUT BAKING ---
-  // In order to process 2.56M pixels at 60fps within a single CPU thread without losing resolution,
-  // we adopt the DaVinci Resolve proxy pattern: we bake the ENTIRE math-heavy color pipeline 
-  // into an interim 32x32x32 3D Master LUT (takes < 2ms to generate).
+  // 主 3D LUT 預烤：為了在單一 CPU 執行緒上以 60fps 處理 256 萬像素又不降解析度，
+  // 用 DaVinci Resolve 的代理做法，把整條運算量大的色彩流程烤進一張 32×32×32 的中間主 3D LUT（產生不到 2ms）
   
   const MASTER_DIM = 32;
   const MASTER_MAX = 31;
@@ -114,11 +114,9 @@ export const processPixels = (
               let g = (l_g * 255.0) / 31.0;
               let b = (l_b * 255.0) / 31.0;
 
-              // 1–3. White balance → exposure → tone curve (utils/photoToneMath).
-              //      The legacy 8-bit base table is no longer used here.
-              //      The shoulder and the tone curve preserve hue (largest /
-              //      smallest channel, see photoToneMath.hueTone), so every grid
-              //      point is evaluated as a colour, not channel by channel.
+              // 1～3. 白平衡 → 曝光 → 色調曲線（utils/photoToneMath），這裡不再用舊的 8 位元基本表。
+              // 肩部和色調曲線會保留色相（最大／最小通道，見 photoToneMath.hueTone），所以每個網格點都當成一個顏色算，
+              // 不是逐通道
               {
                   const x = gridLin[l_r], y = gridLin[l_g], z = gridLin[l_b];
                   if (wbM) toneFast.applyLinear(wbM[0] * x + wbM[1] * y + wbM[2] * z, wbM[3] * x + wbM[4] * y + wbM[5] * z, wbM[6] * x + wbM[7] * y + wbM[8] * z, tc);
@@ -126,17 +124,16 @@ export const processPixels = (
                   r = tc[0]; g = tc[1]; b = tc[2];
               }
 
-              // 4. Curves — exactly what the curve editor draws (no partial mix),
-              //    interpolated between the 256 table entries.
+              // 4. 曲線：跟曲線編輯器畫的完全一樣（不做部分混合），在 256 個表格項目之間內插
               if (hasCurves) {
                   r = curveAt(cLutR, curveAt(cLutM, r)); g = curveAt(cLutG, curveAt(cLutM, g)); b = curveAt(cLutB, curveAt(cLutM, b));
               }
 
-              // 5. Saturation around luminance; −100 is exact monochrome.
+              // 5. 以亮度為中心調飽和度；−100 是完全的單色
               if (stage.sat !== 1) { tc[0] = r; tc[1] = g; tc[2] = b; applySaturation(stage.sat, tc); r = tc[0]; g = tc[1]; b = tc[2]; }
               const avg = (r + g + b) * 0.33333;
 
-              // 6. Vibrance
+              // 6. 自然飽和度
               if (hasVib) {
                   // 越不飽和加越多；像膚色的少加（photoToneMath.vibranceGain）
                   const b1 = vibranceGain(vibVal, r, g, b);
@@ -145,7 +142,7 @@ export const processPixels = (
 
               r = r < 0 ? 0 : r > 255 ? 255 : r; g = g < 0 ? 0 : g > 255 ? 255 : g; b = b < 0 ? 0 : b > 255 ? 255 : b;
 
-              // 7. LUT (Film)
+              // 7. LUT（底片）
               if (hasLut && lutData) {
                   const s = 0.00392156862 * lutMax;
                   const rf = r * s; const gf = g * s; const bf = b * s;
@@ -247,16 +244,14 @@ export const processPixels = (
       }
   }
 
-  // --- APPLY MASTER LUT TO PIXELS ---
+  // 把主 LUT 套到像素上
   const len = sourceData.length;
   const sLUT = 0.12156862745; // 31 / 255
   let ditherIdx = 0;
 
-  // With independent channel corrections, tetrahedral interpolation reduces
-  // exactly to three 1D tables. Keep the same master LUT and dithering, but do
-  // not recompute RGB tetrahedra for millions of pixels on every slider tick.
-  // Exposure alone is per-channel (a gain in linear light). The shoulder and
-  // the tone curve keep hue, so they mix channels: no separable path for them.
+  // 各通道的修正互相獨立時，四面體內插剛好等於三張 1D 表。保留同一張主 LUT 和遞色，
+  // 但不要每格滑桿都對幾百萬個像素重算 RGB 四面體。只有曝光是逐通道的（線性光的增益）；
+  // 肩部和色調曲線保留色相、會混合通道，所以它們沒有可分離的路線
   if (!useNearestLut && !local && !hasLut && !hasHsl && !grade && !hasCurves && !hasTempTint &&
       !hasVib && satMult === 1 && !hasSharpen && !stage.tone && stage.peak <= 1) {
     const rr=new Float64Array(256),gg=new Float64Array(256),bb=new Float64Array(256);
@@ -274,7 +269,7 @@ export const processPixels = (
     return;
   }
 
-  // Split into explicit loops to guarantee CPU JIT vectorization and no block de-opts
+  // 拆成明確的迴圈，確保 CPU JIT 能向量化、不會整段退化
   if (local) {
       // 局部陰影／亮部：先乘上這一帶的增益，再走同一顆主表（四面體內插）
       const applyRow = makeLocalApplier(local.base, local.gain, w, h);
@@ -311,11 +306,11 @@ export const processPixels = (
           destData[i] = r + dither; destData[i+1] = g + dither; destData[i+2] = b + dither; destData[i+3] = 255;
       }
   } else if (useNearestLut) {
-      // Nearest-neighbor sampling: extremely fast for high-res previews during interaction (~60fps)
+      // 最近鄰取樣：互動時對高解析度預覽非常快（約 60fps）
       for (let i = 0; i < len; i += 4) {
           const r = sourceData[i], g = sourceData[i+1], b = sourceData[i+2];
 
-          // Quantize to 32x32x32 master LUT index (branchless)
+          // 量化成 32×32×32 主 LUT 的索引（無分支）
           const r_idx = (r * 0.12156862745 + 0.5) | 0;
           const g_idx = (g * 0.12156862745 + 0.5) | 0;
           const b_idx = (b * 0.12156862745 + 0.5) | 0;

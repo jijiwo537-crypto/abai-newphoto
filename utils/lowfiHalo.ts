@@ -2,9 +2,10 @@ import {blurAlpha} from './alphaBoxBlur';
 const header='precision highp float; varying vec2 vUv; uniform sampler2D uTex;';
 export const LOWFI_HALO_SEED=header+'void main(){float l=dot(texture2D(uTex,vUv).rgb,vec3(.299,.587,.114));float a=pow(max(0.,(l-160./255.)/(95./255.)),1.5);gl_FragColor=vec4(0.,0.,0.,floor(a*255.+.5)/255.);}';
 export const LOWFI_HALO_BLUR=header+'uniform vec2 uStep;uniform float uRadius;void main(){float a=0.;for(int i=-5;i<=5;i++){if(abs(float(i))<=uRadius)a+=texture2D(uTex,vUv+float(i)*uStep).a;}gl_FragColor=vec4(0.,0.,0.,floor(a/(2.*uRadius+1.)*255.+.5)/255.);}';
-/** Same highlight mask, box kernel and rounding as the existing halation.
- * Only its mask is sampled at the legacy 800px analysis size: the photograph
- * and LUT stay full-resolution. Strength dragging only changes a uniform. */
+/**
+ * 跟現有光暈一樣的亮部遮罩、方框卷積核和取整。只有遮罩用舊的 800px 分析大小取樣，照片和 LUT 維持原解析度；
+ * 拖強度只改一個 uniform
+ */
 export class LowfiHaloMask {
  private sample=document.createElement('canvas');
  private mask=document.createElement('canvas');
@@ -13,8 +14,9 @@ export class LowfiHaloMask {
  private gpuScratch:WebGLTexture|null=null;
  private gpuSize='';
  private gpuKey?:string;
- /** Identical 800px highlight analysis and four rounded box passes, kept
-  * inside the photo effect context rather than reading the photo back to CPU. */
+ /**
+  * 一樣的 800px 亮部分析和四次取整的方框模糊，留在照片特效的 context 裡做，不把照片讀回 CPU
+  */
  prepareGpu(gl:WebGLRenderingContext,source:WebGLTexture,w:number,h:number,key:string|undefined,fb:WebGLFramebuffer,compile:(name:string,source:string)=>WebGLProgram|null){
   const k=Math.min(1,800/Math.max(w,h)),mw=Math.max(1,Math.floor(w*k)),mh=Math.max(1,Math.floor(h*k)),size=`${mw}x${mh}`;
   const seed=compile('__lowfiHaloSeed',LOWFI_HALO_SEED);

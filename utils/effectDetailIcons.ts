@@ -1,5 +1,4 @@
-// User-approved parameter icons, shared by every effect detail panel.
-// Match the canonical label before translation so every language stays consistent.
+// 使用者確認過的參數圖示，每個特效細節面板共用。用翻譯前的標準名稱比對，各種語言才會一致
 const PARAMETER_ICONS = Object.freeze({
   '強度': 'blur_on',
   '範圍': 'tonality',

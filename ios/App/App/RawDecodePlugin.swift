@@ -12,9 +12,8 @@
 //  真正的去馬賽克、相機白平衡、亮部處理都在裡面，而且跑在原生程式碼上、
 //  吃得到硬體加速 —— 比 WebAssembly 版的 LibRaw 快很多。
 //
-//  ⚠ 誠實說明：這段 Swift 沒有在真機上跑過（開發環境沒有 Xcode）。
-//    它是照 Apple 的 CIRAWFilter 文件寫的，介面與錯誤處理都留了退路，
-//    但第一次在 Xcode 裡跑起來時請先用一張 RAW 實測。
+//  尚未在真機上驗證。照 Apple 的 CIRAWFilter 文件寫的，介面與錯誤處理都留了退路，
+//  第一次在 Xcode 執行時先用一張 RAW 測試。
 //
 
 import Foundation

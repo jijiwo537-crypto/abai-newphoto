@@ -15,7 +15,7 @@ export function watchAppUpdates(canReload: () => boolean): { stop: () => void; r
   let pending = '', checking = false, last = 0;
   const reloadIfSafe = () => {
     if (!pending || !canReload()) return;
-    // A cached page could come back as the old build again; never loop.
+    // 快取的頁面可能又回到舊版本；絕不能無限循環
     try {
       const [target, at] = (sessionStorage.getItem('abai-update-target') || '').split('|');
       if (target === pending && Date.now() - Number(at) < 120_000) return;

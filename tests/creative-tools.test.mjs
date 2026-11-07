@@ -23,7 +23,7 @@ test('brush eraser handles palette objects and pinch cancels both kinds of unfin
 });
 test('group flash clips to visible artwork with the same alpha and scale checks',()=>{
  const c=read('components/CollageTool.tsx'),flash=c.slice(c.indexOf('const groupFlash ='),c.indexOf('/* 選取框只畫'));
- assert.doesNotMatch(flash,/!A.on|A.a<=/);assert.match(flash,/Resting artwork/);assert.match(flash,/isHoleFullyInsideMask\(h, s,/);
+ assert.doesNotMatch(flash,/!A.on|A.a<=/);assert.match(flash,/是否顯示看靜止時的作品/);assert.match(flash,/isHoleFullyInsideMask\(h, s,/);
  assert.match(flash,/ctx.clip\(side==='mask'&&layout===AROUND\?'evenodd':'nonzero'\)/);
 });
 test('creative export settings are connected to real encoders, track rate and bitrate',()=>{

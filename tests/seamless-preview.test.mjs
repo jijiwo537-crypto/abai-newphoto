@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 const source=readFileSync(new URL('../utils/seamlessLayout.ts',import.meta.url),'utf8');
-const geom=source.slice(source.indexOf('export function seamGeometry'),source.indexOf('/** Shared preview/export renderer'));
+const geom=source.slice(source.indexOf('export function seamGeometry'),source.indexOf('/**\n * 預覽和存檔共用的繪製'));
 const js=ts.transpileModule(geom,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
 const {seamGeometry,seamImageTransform}=new Function('exports',`${js};return exports;`)({});
 

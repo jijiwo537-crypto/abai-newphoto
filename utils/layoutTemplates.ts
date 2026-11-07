@@ -1,4 +1,4 @@
-/** One catalog shared by cross-page and creative photo layouts. */
+/** 跨頁拼圖和創意拼圖共用的一份版面目錄 */
 export type CellRect = { x: number; y: number; w: number; h: number; squareOverlay?: boolean };
 export const TEMPLATE_MAP: Record<number, { name: string; rects: CellRect[] }[]> = {
   1: [

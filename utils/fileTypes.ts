@@ -63,7 +63,7 @@ export const isVideoFileName = (f: File | string): boolean => {
  * 瀏覽器自己就畫得出來的那幾種？
  * 是的話整個解碼流程都可以跳過（絕大多數使用者的 JPEG/PNG 走這條，零成本）。
  *
- * ⚠ HEIC 不算在內：Safari 讀得出來，但 Chrome／Android 讀不出來，
+ * HEIC 不算在內：Safari 讀得出來，但 Chrome／Android 讀不出來，
  *   而我們要的是「兩邊行為一樣」。真的讀得出來時，processImageFile
  *   第一步的原生偵測還是會直接放行，不會白做工。
  */

@@ -1,4 +1,4 @@
-/** v1 stored a one-logical-pixel spacer between pages. v2 pages share an edge. */
+/** v1 在頁面之間存一個邏輯像素的間隔；v2 的頁面共用一條邊 */
 export const CLASSIC_COORDINATE_VERSION = 2;
 
 export function joinLegacyPages<T extends { coordinateVersion?: number; pageWidth?: number;

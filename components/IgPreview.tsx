@@ -1497,13 +1497,13 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
      不用瀏覽器的捲動＋scroll-snap：那個放手之後還會自己滑一段再吸過去，
      就是那股「緩衝感」，而且滑太快還會一次跳過好幾頁。IG 不是這樣 ——
      手指拖到哪就到哪，放手當下立刻決定翻或不翻，一次只翻一頁，
-   以接近原生 IG 的减速时间直接就位，中途不再飘。所以这里自己接指针事件、自己搬位置。 */
+   以接近原生 IG 的減速時間直接就位，中途不再飄。所以這裡自己接指針事件、自己搬位置。 */
   /** 把軌道移到某個位置；animate=false 是跟著手指走，不能有過場 */
   const igMoveTrack = (px: number, animate: boolean, duration = 450) => {
     const el = igTrackRef.current;
     if (!el) return;
-    /* 保留释放瞬间的方向，但减速段不能短到像甩卡片。曲线前段不暴冲、
-       后段柔和收住，手感更接近 IG 多图贴文。 */
+    /* 保留釋放瞬間的方向，但減速段不能短到像甩卡片。曲線前段不暴衝、
+       後段柔和收住，手感更接近 IG 多圖貼文。 */
     el.style.transition = animate
       ? `transform ${duration}ms cubic-bezier(0.24, 0.68, 0.22, 1)`
       : 'none';
@@ -1575,8 +1575,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     const targetX = -next * w;
     const currentX = -igPage * w + d.dx;
     const remaining = Math.abs(targetX - currentX);
-    /* Keep direct finger tracking; release takes 1.5 times the original
-       duration (435–645ms), including distance/velocity interpolation. */
+    /* 手指拖動時直接跟手；放開後的動畫是原本的 1.5 倍時間（435～645ms），距離和速度的內插也照比例 */
     const duration = 1.5 * Math.max(290, Math.min(430,
       remaining / Math.max(0.72, Math.abs(v) * 0.92)));
     igMoveTrack(targetX, true, duration);       // 先動，再更新狀態，才不會等一拍
@@ -1727,8 +1726,8 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                  補 padding-top 讓整組（帳號列＋圖＋愛心那幾列）一起往下，
                  圖就落在畫面中心略偏上 —— 同步移動，不是只動圖片。 */
               /* 連續動態牆時不需要往下推 —— 一篇接一篇，靠貼文之間的間距就好 */
-              /* 编辑器储存栏已经从布局移除，不能再保留过去为它让出的 58px。
-                 只留 8px 呼吸空间，原本唯一一份 IG 贴文整体向上归位。 */
+              /* 編輯器儲存欄已經從佈局移除，不能再保留過去為它讓出的 58px。
+                 只留 8px 呼吸空間，原本唯一一份 IG 貼文整體向上歸位。 */
               paddingTop: flow ? 0 : '8px',
             }}
           >
@@ -1848,8 +1847,8 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                       // 寬度用整數的 px（不是 100%）：小數寬度會讓隔壁那一頁露出一條白線
                       className="h-full shrink-0 flex items-center justify-center bg-black overflow-hidden"
                       style={{
-                        /* 每张向右多画 1px、再用负 margin 抵消版面宽度：轨道步长仍
-                           是 igBox.w，但 GPU 次像素取整时不会露出两页间的黑缝。 */
+                        /* 每張向右多畫 1px、再用負 margin 抵消版面寬度：軌道步長仍
+                           是 igBox.w，但 GPU 次像素取整時不會露出兩頁間的黑縫。 */
                         width: `${igBox.w + 1}px`,
                         marginRight: '-1px',
                         transform: 'translateZ(0)',

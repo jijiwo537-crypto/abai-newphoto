@@ -19,7 +19,7 @@ function load(url: string) {
 
 export type SeamSource = { image: CanvasImageSource; width: number; height: number } | null;
 const previewSources = new Map<string, Promise<SeamSource>>();
-/** Decode/effect processing belongs to source changes, never to a fusion gesture. */
+/** 解碼和特效處理只跟來源變動有關，絕不跟融合手勢有關 */
 export function prepareSeamSource(cell: SeamPhoto, revision: number): Promise<SeamSource> {
   if (!cell.url) return Promise.resolve(null);
   const key = JSON.stringify([cell.url, cell.fx || {}, revision]);
@@ -28,8 +28,7 @@ export function prepareSeamSource(cell: SeamPhoto, revision: number): Promise<Se
     task = load(cell.url).then(async img => {
       if (!hasPhotoFx(cell.fx)) return { image: img, width: img.naturalWidth, height: img.naturalHeight };
       const processed = applyPhotoFx(img, img.naturalWidth, img.naturalHeight, cell.fx!);
-      // The effects pipeline reuses scratch canvases. Freeze its full-size result
-      // once, without reducing quality or serializing pixels on every gesture.
+      // 特效管線會重用暫存畫布。把它的全尺寸結果凍結一次，不降畫質，也不必每個手勢都序列化像素
       const canvas=document.createElement('canvas');canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;canvas.getContext('2d')!.drawImage(processed,0,0);
       return { image: canvas, width: img.naturalWidth, height: img.naturalHeight };
     }).catch(error => { previewSources.delete(key); throw error; });
@@ -39,12 +38,11 @@ export function prepareSeamSource(cell: SeamPhoto, revision: number): Promise<Se
   return task;
 }
 
-/** One continuous layout-local coordinate system, shared by SVG and export. */
+/** 同一套連續的版面本地座標，SVG 和存檔共用 */
 export function seamGeometry(rects: SeamRect[], index: number, w: number, h: number, amount: number) {
   const r = rects[index];
   const smallest = Math.min(...rects.map(r => Math.min(r.w * w, r.h * h)));
-  // Negative amount is the same original-photo GPU compositor without fusion.
-  // UI/export seamless values remain 0..100 with their original feather curve.
+  // 負數代表同一個原圖 GPU 合成器、不做融合。介面和存檔的無縫數值維持 0..100，羽化曲線也不變
   const band = amount<0?0:smallest * (.012 + Math.max(0, Math.min(100, amount)) / 100 * .238);
   const x = r.x*w, y = r.y*h, rw = r.w*w, rh = r.h*h;
   const left = r.x > .00001 ? band : 0, top = r.y > .00001 ? band : 0;
@@ -61,14 +59,14 @@ export function seamImageTransform(c: SeamPhoto, iw: number, ih: number, g: Retu
   return { scale, tx:Math.max(-mx,Math.min(mx,ux)), ty:Math.max(-my,Math.min(my,uy)), cx:g.ex+g.ew/2, cy:g.ey+g.eh/2, angle:a };
 }
 
-/** Shared preview/export renderer. Complementary separable weights form a partition
- * of unity, including T junctions: photos blend into each other, never into the page. */
+/**
+ * 預覽和存檔共用的繪製。互補的可分離權重加起來剛好是 1，T 字交界也一樣：照片之間互相融合，絕不融進頁面
+ */
 export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[], width: number, height: number, amount = 0, revision = 0, cancelled = () => false, sourceResolution = false) {
   const sources = await Promise.all(cells.map(c => c.url ? load(c.url) : null));
   if (cancelled()) throw new DOMException('Superseded render', 'AbortError');
   if (sourceResolution) {
-    // A preview zoom must not re-sample or asynchronously replace the blend.
-    // Build one source-resolution master in layout-local coordinates instead.
+    // 預覽縮放不能重新取樣，也不能非同步換掉融合結果。改成在版面本地座標做一份來源解析度的母版
     const aspect = width / Math.max(.000001, height);
     let masterH = 1024;
     sources.forEach((img, i) => {
@@ -83,12 +81,12 @@ export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[]
   try {
     const textures=await Promise.all(cells.map(c=>prepareSeamSource(c,revision)));
     if(cancelled())throw new DOMException('Superseded render','AbortError');
-    // Lazy import avoids initializing a preview renderer during module loading.
+    // 延後匯入，模組載入時才不會先初始化預覽繪製
     const {renderSeamlessGpu}=await import('./seamlessPreview');
     return await renderSeamlessGpu(cells,rects,textures,width,height,amount,cancelled);
   } catch(error) {
     if(cancelled()||(error instanceof DOMException&&error.name==='AbortError'))throw error;
-    // Keep the color-managed 2D fallback for devices with unavailable WebGL.
+    // 沒有可用 WebGL 的裝置保留有色彩管理的 2D 備援
     console.warn('Seamless export GPU unavailable; using 2D fallback',error);
   }
   const out = document.createElement('canvas'); out.width = Math.max(1, Math.round(width)); out.height = Math.max(1, Math.round(height));
@@ -96,11 +94,9 @@ export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[]
   const layer = document.createElement('canvas'); layer.width = out.width; layer.height = out.height;
   const lc = get2dWide(layer)!;
   const w = out.width, h = out.height;
-  // Even the minimum is a subtle blend; no additional image zoom beyond covering
-  // the expanded cell. Exterior edges stay sharp and at their original positions.
+  // 最小值也是輕微的融合；除了蓋滿擴大的格子，不再額外放大圖片。外緣維持銳利、位置不變
   for (let i=0; i<rects.length; i++) {
-    // Yield between photos: switching the feature off must not wait for the
-    // remaining full-resolution layers of a now-obsolete render.
+    // 每張照片之間讓出執行緒：關掉功能時，不必等已經過時的那次繪製把剩下的原解析度圖層做完
     if (i) await new Promise<void>(resolve => setTimeout(resolve, 0));
     if (cancelled()) throw new DOMException('Superseded render', 'AbortError');
     const r = rects[i], c = cells[i], img = sources[i]; if (!c) continue;
@@ -127,16 +123,14 @@ export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[]
     lc.fillStyle=gy; lc.fillRect(0,0,w,h); lc.globalCompositeOperation='source-over';
     ctx.globalCompositeOperation='lighter'; ctx.drawImage(layer,0,0);
   }
-  // Canvas alpha is quantized to 8 bits. Normalize its rounding residue so even
-  // high-contrast page backgrounds cannot show through a junction.
+  // 畫布的 alpha 只有 8 位元。把取整的殘差補正，對比很強的頁面背景也不會從交界透出來
   const pixels=ctx.getImageData(0,0,w,h);
   for(let i=3;i<pixels.data.length;i+=4) if(pixels.data[i]) pixels.data[i]=255;
   ctx.putImageData(pixels,0,0); ctx.globalCompositeOperation='source-over';
   return out;
 }
 
-// Complementary smoothstep ramps have zero slope at both ends. The outermost
-// image edge is fully transparent, with no abrupt linear-ramp shoulder.
+// 互補的 smoothstep 漸層兩端斜率都是 0，最外側的圖片邊緣完全透明，沒有線性漸層那種突兀的肩
 function featherStops(g: CanvasGradient, start: number, end: number) {
   g.addColorStop(0, start ? 'rgba(255,255,255,0)' : '#fff');
   if (start) for (let n=1;n<=32;n++) {

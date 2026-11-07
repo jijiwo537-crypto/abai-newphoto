@@ -20,14 +20,14 @@ test('layout creation and common editing are separate routes without sidebar tab
   assert.ok(!source.includes('layoutSubTab'));
   assert.ok(source.includes("activeTab === 'adjust' && !layoutEditMode"));
   assert.ok(source.includes("activeTab === 'layout' || layoutEditMode"));
-  const picker = source.slice(source.indexOf('allTemplatesFlattened.map'), source.indexOf('/* Adjustment sliders'));
+  const picker = source.slice(source.indexOf('allTemplatesFlattened.map'), source.indexOf('/* 調整滑桿：靠上對齊'));
   assert.ok(picker.includes('handleAddLayoutToPage(activePageIndex, idx, count)'));
   assert.ok(!picker.includes('setTemplateIndex('));
   assert.match(source,/e.stopPropagation\(\); setObjectEditorRevision\(v=>v\+1\); setActiveTab\('adjust'\);/);
 });
 
 test('rounded layout photos have no dark backing and use the inner padded dimensions', () => {
-  const cell = source.slice(source.indexOf('id={`cell-container-${idx}`}'), source.indexOf('/* Thin solid outline'));
+  const cell = source.slice(source.indexOf('id={`cell-container-${idx}`}'), source.indexOf('/* 圖片上方的細實線外框'));
   assert.ok(cell.includes("backgroundColor: 'transparent'"));
   assert.ok(cell.includes('Math.max(0, cellWidth - gap)'));
   assert.ok(cell.includes('Math.max(0, cellHeight - gap)'));
@@ -35,7 +35,7 @@ test('rounded layout photos have no dark backing and use the inner padded dimens
 
 test('layout edit is fixed and top-aligned while the creation picker remains scrollable',()=>{
   assert.match(source,/activeTab === 'layout' \? '[^']*overflow-y-auto overflow-x-hidden no-scrollbar' : '[^']*overflow-hidden'/);
-  const edit=source.slice(source.indexOf('/* Adjustment sliders'),source.indexOf("{activeTab === 'ratio' &&"));
+  const edit=source.slice(source.indexOf('/* 調整滑桿：靠上對齊'),source.indexOf("{activeTab === 'ratio' &&"));
   assert.doesNotMatch(edit,/pb-24|pt-2\.5/);
   assert.match(edit,/w-full min-w-0 space-y-4/);
   const ratio=source.slice(source.indexOf('data-page-ratio-panel'),source.indexOf("{activeTab === 'color'"));

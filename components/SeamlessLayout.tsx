@@ -6,13 +6,12 @@ import {subscribeCellPhoto} from '../utils/liveCellPhoto';
 import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,settlePhotoFx,getLoadedLut,type PhotoFx} from '../utils/photoFx';
 import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
 
-// Live slider frames use the home editor's 1800px preview size. The texture
-// keeps the original's logical width/height, so crop and fusion are unchanged.
+// 即時滑桿畫格用首頁編輯器的 1800px 預覽大小。貼圖保留原圖的邏輯寬高，裁切和融合都不變
 const LIVE_PREVIEW=1800;
 const liveSize=(w:number,h:number)=>{const k=Math.min(1,LIVE_PREVIEW/Math.max(w,h));return [Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k))];};
 const lutReady=(fx?:PhotoFx)=>fx?.lut?!!getLoadedLut(fx.lut):0;
 
-// Fusion input updates only the layout renderer, not the entire editor.
+// 融合輸入只更新版面繪製，不更新整個編輯器
 /** live＝手指還在滑桿上（畫面可以走直接顯示的 GPU 層）；放開那一次傳 false */
 export const previews = new Map<string, (amount: number, live?: boolean) => void>();
 export function SeamlessAmountSlider({ previewId, value, onCommit }: { previewId: string; value: number; onCommit: (value: number) => void }) {
@@ -23,9 +22,7 @@ export function SeamlessAmountSlider({ previewId, value, onCommit }: { previewId
   const update=(v:number)=>{latest.current=v;setLive(v);if(!frame.current)frame.current=requestAnimationFrame(()=>{
     frame.current=0;previews.get(previewId)?.(Math.round(latest.current*100)/100,true);
   });};
-  // The thumb and preview follow the finger continuously. The stored amount
-  // keeps the dragged value (2 decimals): snapping to an integer on release
-  // visibly shifted the blend band after letting go.
+  // 拇指和預覽連續跟著手指。存的數值保留拖到的值（小數兩位）：放開時取整數，融合帶會明顯跳一下
   const commit=()=>{cancelAnimationFrame(frame.current);frame.current=0;const v=Math.round(latest.current*100)/100;latest.current=v;setLive(v);previews.get(previewId)?.(v,false);if(committed.current!==v){committed.current=v;onCommit(v);}};
   return <div className="space-y-1.5 col-span-2">
     <div className="flex justify-between text-[11px] font-bold text-white/70"><span>融合程度</span><span className="font-mono text-white">{Math.round(live)}</span></div>
@@ -59,8 +56,7 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
           const photo=cellsRef.current[i];if(!photo?.id||!dirtyPhotos.current.has(photo.id))return source;
           const original=originals.current.get(photo.url);if(!original)return source;
           if(!hasPhotoFx(photo.fx))return original;
-          // One live effect surface (one extra GPU context) at a time.
-          // Never release one still on screen (its native pixels not ready yet).
+          // 同一時間只有一張即時特效畫布（多一個 GPU context）。還在畫面上的（原圖像素還沒好）絕不放掉
           const shown=new Set((sourcesRef.current||[]).map(s=>s?.image));
           for(const [id,cv] of liveSurfaces.current)if(id!==photo.id&&!shown.has(cv)){releasePhotoFxSurface(cv);cv.width=cv.height=1;liveSurfaces.current.delete(id);liveKeys.current.delete(id);}
           let input=liveSurfaces.current.get(photo.id);if(!input){input=document.createElement('canvas');liveSurfaces.current.set(photo.id,input);}
@@ -78,10 +74,9 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
   const lastRemount=useRef(-1e9);
   useEffect(()=>{
     const element=canvas.current;if(!element)return;
-    // iOS Safari evicts the oldest WebGL context when too many are alive and
-    // never restores it on the same element. Swap in a fresh <canvas> (keyed
-    // by contextRevision) instead of leaving the photos blank/grey.
-    // Rate-limited so a starved GPU can never churn canvases in a loop.
+    // WebGL context 太多時 iOS Safari 會收掉最舊的，而且同一個元素不會再恢復。
+    // 換一張新的 <canvas>（用 contextRevision 當 key），不要讓照片變空白或灰色。有頻率限制，
+    // GPU 不夠用時才不會一直換畫布
     const lost=(e:Event)=>{e.preventDefault();warmKey.current='';
       const now=performance.now();if(now-lastRemount.current<2000){setReady(false);return;}
       lastRemount.current=now;restoreContext(v=>v+1);},restored=()=>restoreContext(v=>v+1);
@@ -90,20 +85,17 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
   },[contextRevision]);
   useEffect(()=>{
     const paint=()=>paintCurrent.current();
-    // The strip dispatches this event on itself without bubbling. Capture is
-    // essential: otherwise ancestor zoom stretches the LAST raster frame.
+    // 整條會對自己發這個事件、不冒泡，所以一定要用 capture，不然上層的縮放會拉伸「最後一格」點陣
     window.addEventListener('abai-preview-transform',paint,true);window.addEventListener('scroll',paint,true);window.addEventListener('resize',paint);
     const observer=new ResizeObserver(paint);if(svg.current)observer.observe(svg.current);
     return()=>{observer.disconnect();window.removeEventListener('abai-preview-transform',paint,true);window.removeEventListener('scroll',paint,true);window.removeEventListener('resize',paint);};
   },[]);
   const liveAmount=useRef(amount);
   useLayoutEffect(()=>{liveAmount.current=amount;setLive(amount);},[amount]);
-  // Fusion drags only change shader uniforms: repaint directly, without
-  // re-rendering this component (or reflowing React output) on every tick.
+  // 拖融合只改著色器 uniform：直接重畫，不要每次都重新 render 這個元件（或讓 React 重排）
   useLayoutEffect(()=>{if(!previewId)return;previews.set(previewId,v=>{liveAmount.current=v;if(svg.current)svg.current.dataset.seamlessAmount=String(v);paintCurrent.current();});return()=>{previews.delete(previewId);};},[previewId]);
-  // Source decoding/effect processing never depends on fusion or uniform zoom.
-  // Unrelated background LUT loads bump the editor-wide revision; only this
-  // layout's own LUT readiness changes its effect pixels.
+  // 來源解碼和特效處理跟融合、uniform 縮放無關。不相關的背景 LUT 載入會讓整個編輯器的版本號變動；
+  // 只有這個版面自己的 LUT 好了才會改它的特效像素
   const sourceKey=JSON.stringify(cells.map(c=>[c.url,c.fx||{},lutReady(c.fx)]));
   useEffect(()=>{
     let cancelled=false;
@@ -112,8 +104,7 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
       if(!cancelled&&original)originals.current.set(c.url,original);
       if(cancelled||!original||!hasPhotoFx(c.fx))return original;
       const id=c.id||String(i),key=JSON.stringify([c.url,c.fx,lutReady(c.fx)]);
-      // A just-released slider already shows these exact effects at preview
-      // size. Finish native pixels when idle instead of on pointerup.
+      // 剛放開的滑桿已經用預覽大小顯示這些特效，原圖像素等閒置再做完，不在 pointerup 時做
       if(liveKeys.current.get(id)===key){await awaitPhotoIdle();if(cancelled)return original;}
       let input=effectSurfaces.current.get(id);
       if(!input){input=document.createElement('canvas');effectSurfaces.current.set(id,input);}
@@ -124,12 +115,10 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
     return()=>{cancelled=true;};
   },[sourceKey]);
   const aspect=Math.round(width/Math.max(.000001,height)*1e8)/1e8;
-  // Keep the last complete frame visible until the next complete source set
-  // is ready; parameter input must not expose the original/blank fallback.
+  // 下一組完整的來源好之前，維持上一格完整的畫面；調參數時不能露出原圖或空白的備援
   const sources=prepared?.sources||null;
   const placementKey=JSON.stringify(cells.map(c=>[c.zoom,c.offsetX,c.offsetY,c.rotation,c.opacity]));
-  // Retain the established source-resolution local plane. Zoom never changes
-  // the original textures; visible pixels are sampled at constant screen density.
+  // 保留已經建好的來源解析度平面。縮放絕不改原圖貼圖；看得到的像素用固定的螢幕密度取樣
   let masterH=1024;
   sources?.forEach((s,i)=>{const r=rects[i];if(!s||!r)return;const turn=Math.abs((cells[i].rotation||0)%180)===90;
     masterH=Math.max(masterH,Math.min((turn?s.height:s.width)/Math.max(.000001,r.w*aspect),(turn?s.width:s.height)/Math.max(.000001,r.h)));});
@@ -138,22 +127,19 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
     const paint=()=>{
       const element=canvas.current,root=svg.current;
       if(!sources||!element||!root){setReady(false);return;}
-      // Keep the selected layout's GPU/photos warm while the switch is off.
-      // It can switch back on without decode, shader compilation or re-upload.
-      // An inactive warm surface does not redraw on workspace gestures.
+      // 開關關掉時，選中版面的 GPU 和照片保持預熱，再打開時不用解碼、編譯著色器或重新上傳。
+      // 沒在用的預熱畫布不會因為工作區手勢重畫
       const key=`${sourceKey}:${contextRevision}`;
       if(!enabled&&warmKey.current===key)return;
-      // SVG marker bounds include WebKit's ancestor CSS matrix (getScreenCTM
-      // does not). All crop coordinates derive from this exact shared plane.
+      // SVG 標記的範圍包含 WebKit 上層的 CSS 矩陣（getScreenCTM 不含）。所有裁切座標都從這同一個共用平面來
       const points=Array.from(root.querySelectorAll<SVGCircleElement>('[data-seam-probe]') as NodeListOf<SVGCircleElement>).map(n=>{const b=n.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2};});
       if(points.length!==3)return;
       const bounds=root.getBoundingClientRect(),clip=root.closest('[data-grid-preview-viewport]')?.getBoundingClientRect();
       const surface=resolveSeamSurface(points,w,h,width*scale,height*scale,bounds,{left:Math.max(0,clip?.left??0),top:Math.max(0,clip?.top??0),right:Math.min(innerWidth,clip?.right??innerWidth),bottom:Math.min(innerHeight,clip?.bottom??innerHeight)},window.devicePixelRatio||1);
       if(!surface){element.style.display='none';return;}element.style.display='block';
       if(element.width!==surface.pixelWidth)element.width=surface.pixelWidth;if(element.height!==surface.pixelHeight)element.height=surface.pixelHeight;
-      // Counter-project the HTML GPU surface into the very same layout plane.
-      // Keeping WebGL outside foreignObject avoids WebKit's software readback;
-      // its displayed pixels still remain locked to the SVG markers above.
+      // 把 HTML 的 GPU 畫布反投影到同一個版面平面。WebGL 不放進 foreignObject，才不會觸發 WebKit 的軟體讀回；
+      // 顯示的像素照樣鎖在上面的 SVG 標記上
       element.style.width=`${surface.width}px`;element.style.height=`${surface.height}px`;
       element.style.transform=`matrix(${surface.transform.join(',')})`;
       element.style.clipPath=`polygon(${surface.clip})`;

@@ -1,4 +1,4 @@
-// One palette catalog for every tool. Reordering never rewrites saved colors.
+// 所有工具共用一份色盤目錄。重新排序絕不改寫存好的顏色
 const unique=(colors:readonly string[]):string[]=>[...new Set(colors.map(c=>c.toUpperCase()))];
 const hsl=(h:number,s:number,l:number):string=>{const c=(1-Math.abs(2*l-1))*s,p=((h%360)+360)%360/60,x=c*(1-Math.abs(p%2-1)),m=l-c/2;
  const rgb=p<1?[c,x,0]:p<2?[x,c,0]:p<3?[0,c,x]:p<4?[0,x,c]:p<5?[x,0,c]:[c,0,x];
@@ -7,7 +7,7 @@ const values=(hex:string)=>{const v=parseInt(hex.slice(1),16),r=(v>>16)/255,g=((
  const h=d?((max===r?60*((g-b)/d%6):max===g?60*((b-r)/d+2):60*((r-g)/d+4))+360)%360:0;
  return {h,s:d?d/(1-Math.abs(2*l-1)):0,l,hsvS:max?d/max:0};};
 const ring=(hex:string,sorted=false):string[]=>{const {h,s,l}=values(hex),hs=Array.from({length:14},(_,i)=>(h+i*360/14)%360);if(sorted)hs.sort((a,b)=>a-b);return hs.map(h=>hsl(h,s,l));};
-// Exactly the previous text/shape chromatic colors (HSV V=90), in original order.
+// 跟原本文字、形狀的彩色完全一樣（HSV V=90），順序也一樣
 const old=values('#9BD4C3'),oldS=Math.round(old.hsvS*100)/100;
 const oldColor=(h:number):string=>{const f=(n:number)=>{const k=(n+h/60)%6;return Math.round((.9-.9*oldS*Math.max(Math.min(k,4-k,1),0))*255).toString(16).padStart(2,'0');};return ('#'+f(5)+f(3)+f(1)).toUpperCase();};
 export const LEGACY_TEXT_COLORS=Object.freeze(['#000000','#FFFFFF',...Array.from({length:14},(_,i)=>oldColor((old.h+i*360/14)%360))]);
@@ -19,8 +19,7 @@ export const SHAPE_COLORS=Object.freeze(unique([...LEGACY_TEXT_COLORS.slice(1),.
 export const TEXT_COLORS=Object.freeze(['#000000',...SHAPE_COLORS]);
 export const DEFAULT_COLORS=SHAPE_COLORS;
 export const STROKE_COLORS=Object.freeze(unique(['#FFFFFF','#000000',...SHAPE_COLORS]));
-// Reverse both original mask rings; keep the deeper E3BFB8..E3B8C3
-// family first and insert the old text ring between the two mask rings.
+// 兩組原本的遮罩色環都反過來；比較深的 E3BFB8..E3B8C3 那一組放前面，舊的文字色環插在兩組遮罩色環中間
 const reversedDeep=[...MASK_DEEP_COLORS].reverse();
 export const CREATIVE_MASK_COLORS=Object.freeze(unique(['#FFFFFF',...reversedDeep,
  ...rotateNear(LEGACY_TEXT_COLORS.slice(2),reversedDeep.at(-1)!),...light.reverse()]));

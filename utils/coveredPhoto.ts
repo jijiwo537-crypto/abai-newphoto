@@ -1,8 +1,9 @@
 import {scenePixelEdge} from './scenePixelGrid';
 
-/** Preserve the crop's continuous sampling transform while assigning a shared
- * cell edge to exactly one raster pixel. Extend source edge texels underneath
- * that clip so drawImage cannot introduce transparent antialiasing fringes. */
+/**
+ * 保留裁切連續的取樣變換，同時讓共用的格子邊緣剛好只歸一個點陣像素。在裁切下面延伸來源的邊緣像素，
+ * drawImage 才不會產生透明的反鋸齒邊
+ */
 export function drawCoveredPhoto(ctx:CanvasRenderingContext2D,image:CanvasImageSource,
   sx:number,sy:number,sw:number,sh:number,x:number,y:number,w:number,h:number) {
   const m=ctx.getTransform();
@@ -14,14 +15,13 @@ export function drawCoveredPhoto(ctx:CanvasRenderingContext2D,image:CanvasImageS
   const kx=dw/sw,ky=dh/sh,ix=dx-sx*kx,iy=dy-sy*ky;
   ctx.save();ctx.setTransform(1,0,0,1,0,0);
   ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();
-  // Draw the whole original beneath the crop. Crop edges within the photo
-  // therefore sample neighbours, not a separately antialiased image rectangle.
+  // 在裁切下面畫整張原圖，照片內的裁切邊緣取樣到的就是鄰近像素，不是另外反鋸齒的圖片矩形
   const pad=2;
   if(Math.abs(ix-left)<pad)ctx.drawImage(image,0,0,1,ih,left-pad,iy,Math.max(0,ix-left+pad),ih*ky);
   if(Math.abs(ix+iw*kx-right)<pad)ctx.drawImage(image,iw-1,0,1,ih,ix+iw*kx,iy,Math.max(0,right+pad-ix-iw*kx),ih*ky);
   if(Math.abs(iy-top)<pad)ctx.drawImage(image,0,0,iw,1,ix,top-pad,iw*kx,Math.max(0,iy-top+pad));
   if(Math.abs(iy+ih*ky-bottom)<pad)ctx.drawImage(image,0,ih-1,iw,1,ix,iy+ih*ky,iw*kx,Math.max(0,bottom+pad-iy-ih*ky));
-  // Corner samples are needed when both source boundaries meet a cell corner.
+  // 兩條來源邊界都碰到格子轉角時需要轉角的取樣
   for(const [px,py,tx,ty,tw,th] of [
     [0,0,left-pad,top-pad,ix-left+pad,iy-top+pad],
     [iw-1,0,ix+iw*kx,top-pad,right+pad-ix-iw*kx,iy-top+pad],

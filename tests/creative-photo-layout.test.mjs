@@ -97,7 +97,7 @@ test('imports, gestures, drafts and readonly IG statistics are wired into the mo
  const stat=ig.slice(ig.indexOf('const statInput'),ig.indexOf('/* 這裡本來有一顆右下角'));
  assert.match(stat,/<span/);assert.doesNotMatch(stat,/<input|inputMode|onChange=|contentEditable/);
  const surface=readFileSync(new URL('../components/LayoutPhotoSurface.tsx',import.meta.url),'utf8');
- assert.match(surface,/data-layout-photo-surface/);assert.match(grid,/The outer perimeter is not a grid line/);
+ assert.match(surface,/data-layout-photo-surface/);assert.match(grid,/最外圍不算格線/);
  assert.match(grid,/backfaceVisibility: stableSeamless \|\| nativeLayout \? undefined/);
  assert.match(grid,/willChange: stableSeamless \|\| nativeLayout \? undefined/);
  assert.match(surface,/drawCoveredPhoto/);

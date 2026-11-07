@@ -4,8 +4,9 @@ import {scenePixelEdge} from './scenePixelGrid';
 import {regionRects,seamlessPhotoBase,paintPhotoRegion,type PhotoRegion} from './creativePhotoLayout';
 import {CreativeFeatherSurface} from './creativeFeatherSurface';
 const isWebKit=()=>/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
-/** One GPU surface per editor. Render just the visible physical-pixel viewport,
- * not an enormous zoomed composite. Source photos keep their original quality. */
+/**
+ * 每個編輯器一張 GPU 畫布。只畫看得到的實體像素 viewport，不畫巨大的放大合成；來源照片維持原畫質
+ */
 export class CreativeSeamless {
   private surface:HTMLCanvasElement|null=null;
   private colorTile:HTMLCanvasElement|null=null;
@@ -23,9 +24,10 @@ export class CreativeSeamless {
       base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;}),0,{width:1000,height:1000,xx:1000,xy:0,x0:0,yx:0,yy:1000,y0:0},true,isWebKit());
     surface.style.display='none';
   }
-  /** Resolve resident original photos INTO the main scene before the mask.
-   * Never ask the DOM compositor to filter two complementary alpha layers.
-   * Source uploads remain cached; there is no scene upload or CPU readback. */
+  /**
+   * 常駐的原圖在遮罩之前就畫「進」主場景，絕不讓 DOM 合成器去濾兩層互補的 alpha。來源上傳照樣快取，
+   * 不上傳場景、也不從 CPU 讀回
+   */
   /** live：手指還在滑桿上（無縫、佔比）。GPU 這層直接以 DOM 疊在主畫布正下方顯示、
    *  主畫布把照片那一塊挖空 —— 省掉每一格把 GPU 畫面複製進 2D 畫布（iOS 上那是一次
    *  同步讀回）。尺寸、像素格與主畫布完全相同；放開後回到下面那條單一畫布的路。 */
@@ -44,19 +46,16 @@ export class CreativeSeamless {
     }
     const surface=this.presentation||(this.presentation=document.createElement('canvas'));
     const main=ctx.canvas;
-    // Main is already a bounded viewport (with reusable pinch capacity), not
-    // a giant zoomed page. Use its IDENTICAL backing size and CSS rectangle.
-    // A second crop/DOM measurement gives the two canvases different CSS
-    // rounding and bilinear sample phases, even if logical edges agree.
+    // 主畫布本來就是有範圍的 viewport（加上可以重用的縮放容量），不是巨大的放大頁面，
+    // 所以用跟它「完全一樣」的暫存大小和 CSS 矩形。另外裁一次、量一次 DOM，
+    // 兩張畫布的 CSS 取整和雙線性取樣相位就會不同，就算邏輯邊緣一樣
     const l=0,t=0,W=main.width,H=main.height;
     if(surface.width!==W)surface.width=W;if(surface.height!==H)surface.height=H;
     const sources=base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;});
     const left=Math.max(0,page[0],x*m.a+m.e),top=Math.max(0,page[1],y*m.d+m.f);
     const right=Math.min(viewport[0],page[0]+page[2],(x+w)*m.a+m.e),bottom=Math.min(viewport[1],page[1]+page[3],(y+h)*m.d+m.f);
-    // Keep identical physical-pixel sampling within the bounded editor raster,
-    // including the main canvas's reusable pinch capacity.
-    // Photo texels continue under the opaque mask's filter footprint, while
-    // its exact half-open clip remains authoritative. No source crop changes.
+    // 在有範圍的編輯器點陣裡維持一模一樣的實體像素取樣，包含主畫布可重用的縮放容量。
+    // 照片像素延伸到不透明遮罩的濾鏡範圍下面，而它精確的半開區間裁切照樣說了算；來源裁切不變
     const view:SeamView={width:w,height:h,xx:W/m.a,xy:0,x0:(l-m.e)/m.a-x,yx:0,yy:H/m.d,y0:(t-m.f)/m.d-y,clip:[(left-l)/W,(top-t)/H,(right-l)/W,(bottom-t)/H],clipGuard:[2/W,2/H]};
     const parent=main.parentElement,liveLayer=live&&!!parent;
     /* WebKit（iPhone）：拖曳中直接把「已經有照片貼圖的那張 GPU 畫面」疊上去，不再另開一個
@@ -95,17 +94,15 @@ export class CreativeSeamless {
       ctx.clearRect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.restore();
       return true;
     }
-    // The GPU buffer is private, not an independently scaled DOM layer.
-    // Copy in the same task before its transient framebuffer is discarded.
+    // GPU 暫存是私有的，不是另外縮放的 DOM 圖層。在它暫時的畫面暫存被丟掉之前，同一個工作裡就複製出來
     if(liveLayer)paintSurface(surface);
     surface.remove();surface.style.display='none';delete surface.dataset.creativeLiveSeam;
     if(this.liveLayer){this.liveLayer.remove();this.liveLayer.style.display='none';}
     main.dataset.creativePhotoComposition='single-canvas';
     ctx.save();ctx.setTransform(1,0,0,1,0,0);
     ctx.beginPath();ctx.rect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.clip();
-    // Drawn straight into the 2D scene. On WebKit the surface renders sRGB
-    // (see drawSeamPreview srgbOutput), which drawImage reads correctly; no
-    // GPU readback that could come back empty and blank the photos.
+    // 直接畫進 2D 場景。WebKit 上這張畫布輸出 sRGB（見 drawSeamPreview 的 srgbOutput），drawImage 讀得正確；
+    // 不從 GPU 讀回，那可能讀到空的、讓照片變空白
     ctx.drawImage(surface,0,0);ctx.restore();return true;
   }
   beginFrame(){}
@@ -129,13 +126,12 @@ export class CreativeSeamless {
     const left=Math.max(0,Math.floor(x*m.a+m.e)),top=Math.max(0,Math.floor(y*m.d+m.f));
     const right=Math.min(ctx.canvas.width,Math.ceil((x+w)*m.a+m.e)),bottom=Math.min(ctx.canvas.height,Math.ceil((y+h)*m.d+m.f));
     if(right<=left||bottom<=top)return true;
-    // An evicted context never returns on the same element (iOS); start over.
+    // 被收掉的 context 在同一個元素上永遠不會回來（iOS），重新開始
     if(this.surface?.getContext('webgl2')?.isContextLost()){disposeSeamPreview(this.surface);this.surface.width=this.surface.height=1;this.surface=null;}
     const surface=this.surface||(this.surface=document.createElement('canvas'));
     const photos=base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0}));
     const sources=base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;});
-    // Tiles also bound full-resolution exports; every tile samples original
-    // coordinates and the exact same feather weights as interactive preview.
+    // 圖塊也限制原解析度存檔的範圍；每個圖塊都取樣原本的座標，羽化權重跟互動預覽完全一樣
     if(ctx.globalCompositeOperation==='copy'){
       ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);ctx.restore();
     }

@@ -13,7 +13,7 @@ export function getLocale(): Locale {
 }
 export function changeLocale(locale: Locale) {
   try { localStorage.setItem('abai.language', locale); } catch { return; }
-  // Show the restart immediately, even while the navigation waits for a response.
+  // 立刻顯示重新啟動，就算換頁還在等回應
   const cover = restartCover?.cloneNode(true) as HTMLElement | undefined;
   if (cover) {
   cover.setAttribute('role', 'status');
@@ -21,8 +21,7 @@ export function changeLocale(locale: Locale) {
   cover.style.transition = 'none';
   document.body.appendChild(cover);
   }
-  // Language changes are only exposed on Home. Reload static option catalogs
-  // together; never translate or modify project text, IDs, symbols, or artwork.
+  // 只有首頁能換語言。一起重新載入固定的選項目錄；絕不翻譯或修改作品的文字、ID、符號或圖案
   location.reload();
 }
 export function t(source: string, ...values: unknown[]): string {

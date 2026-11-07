@@ -1,4 +1,4 @@
-/** Only draw a fixed slot boundary when both neighbouring pages are at rest. */
+/** 相鄰兩頁都靜止時才畫固定的格位邊界 */
 export function settledSortSeams(
   poses: { index: number; x: number; scale: number }[],
   pageWidth: number,

@@ -1,8 +1,9 @@
 import type {PhotoRect} from './creativePhotoLayout';
-/** One filled outline, not two semitransparent intersecting strokes. */
+/** 一條填滿的外框，不是兩條半透明的交錯描邊 */
 export const SOLID_PLUS_PATH='M7.15 1H8.85V7.15H15V8.85H8.85V15H7.15V8.85H1V7.15H7.15Z';
-/** Only shared edges of two empty cells. No outer border, doubled strokes or
- * separator through an overlapping inset photo. */
+/**
+ * 只畫兩個空格共用的邊。沒有外框、不會畫兩次，也不會有分隔線穿過重疊的內嵌照片
+ */
 export function emptyCellSeparators(rects:PhotoRect[],empty:boolean[]){
   const lines:{x1:number;y1:number;x2:number;y2:number}[]=[],epsilon=1e-7;
   for(let i=0;i<rects.length;i++)for(let j=i+1;j<rects.length;j++){

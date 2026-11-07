@@ -1,4 +1,4 @@
-// Segment composed Hangul, kana marks and supplementary characters as one cell.
+// 組合的韓文、假名標記和補充平面字元都算成一格
 const segmenter=typeof Intl.Segmenter==='function'?new Intl.Segmenter(undefined,{granularity:'grapheme'}):null;
 export function artCharacters(text){const chars=segmenter?[...segmenter.segment(text)].map(x=>x.segment):[...text];return chars.slice(0,48);}
 export const needsCellFitting=chars=>chars.some(c=>/[^\x20-\x7e]/u.test(c));

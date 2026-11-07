@@ -4,8 +4,8 @@ import { CrossStarIcon, VortexIcon, ShapeLineIcon, RadialIcon, PATTERN_LINE_ICON
 import { SHAPE_IMAGES, ICON_IMAGES } from '../utils/shapeImages';
 import { GLYPH_HOLES, GLYPH_BTN, holeImgRatio } from '../utils/holeShapes';
 
-// Keep embedded icon bytes intact, but never reparse a huge base64 CSS mask
-// on each first panel layout. These tiny immutable asset URLs live with module.
+// 內嵌圖示的資料保持原樣，但第一次排面板時不要每次重新解析超大的 base64 CSS 遮罩。
+// 這些小的固定資源網址跟著模組存一份就好
 const patternIconUrls=new Map<string,string>();
 export const patternIconUrl=(source:string)=>{
   if(!source.startsWith('data:'))return source;

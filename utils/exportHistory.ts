@@ -59,7 +59,7 @@ interface ExportRecord extends ExportMeta {
   /**
    * 導出當下用的那張原圖。
    *
-   * ⚠️ 存的是「位元組」不是 Blob。
+   * 存的是「位元組」不是 Blob。
    * Blob 可以直接丟進 IndexedDB，但 iOS 的 WebKit 對這件事一直有問題 ——
    * 寫的時候不會報錯，關掉 App 再打開（或空間吃緊時）讀回來卻是空的。
    * 而這一份程式對「讀不到原圖」的處理是：listExports 直接過濾掉那一筆、

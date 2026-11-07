@@ -165,8 +165,7 @@ export interface FxDef {
 const amount = (id: string, def = 0): FxParamDef =>
   ({ id, label: '強度', icon: 'percent', min: 0, max: 100, def });
 
-// The lab's F-12: squared highlight isolation, three box-blur pairs,
-// a broad neutral bloom and 25 vertically offset narrow highlight exposures.
+// 實驗版的 F-12：平方的亮部隔離、三組方框模糊、大範圍中性的泛光，加上 25 道垂直錯開的窄亮部曝光
 const spillHighlight:FxPass={fromSource:true,body:`vec3 c=texture2D(uTex,uv).rgb;float m=clamp((dot(c,vec3(1./3.))-.55)/.45,0.,1.);if(uHighlightReady>.5){vec2 selection=uHighlightReady>1.5?texture2D(uHighlightSelection,vec2(.5)).rg:vec2(uHighlightCut,uHighlightTie);float bin=floor(dot(c,vec3(.299,.587,.114))*255.+.5);m=bin>selection.x?1.:bin==selection.x?selection.y:0.;}else{m*=m;}return vec4(c*m,1.);`};
 const spillBlur=(radius:number):FxPass[]=>Array.from({length:6},(_,i)=>({
  dir:(i%2?[0,1]:[1,0]) as [number,number],
@@ -673,8 +672,9 @@ interface Pool {
   narrow?: WebGLTexture;
   spillKey?: string;
   spillSeed?: WebGLTexture;
-  /** The last effect's input and pre-blend result from the previous call
-   *  (indices into texs), valid while blendKey matches. */
+  /**
+   * 上一次呼叫時最後一個特效的輸入和混合前的結果（texs 裡的編號），blendKey 一樣時才有效
+   */
   blendCache?: { key: string; from: number; layerIn: number };
   /** 疊加特效的分層快取：第 j 層算完的結果（key＝來源＋前 j 層的設定） */
   layerCache?: Map<number, { key: string; tex: WebGLTexture }>;
@@ -698,7 +698,7 @@ interface Ctx {
   highlightPixels?:Uint8Array;
   gpuHistogram?:GpuHighlightHistogram|null;
   renderedKey?:string;renderedScene?:FxScene;renderedColour?:FxColourInput;
-  // Geometry changes only recompose this texture; they do not rerun filters.
+  // 只改幾何時只重新合成這張貼圖，不重跑濾鏡
   photoResult?:{key:string;texture:WebGLTexture;full?:Uint8Array;plain?:Uint8Array;amount?:number};
   lowfiHalo?:LowfiHaloMask;
   colour?:{full:WebGLTexture;plain:WebGLTexture;target:WebGLTexture;w:number;h:number;fullValue?:Uint8Array;plainValue?:Uint8Array};
@@ -713,9 +713,10 @@ export type FxPlacement = { rect: number[]; uv: number[]; clip: number[];
   affine?: number[] };
 export type FxScene = { black: HTMLCanvasElement; white: HTMLCanvasElement; placements: FxPlacement[] };
 const sceneContexts=new WeakMap<WebGLRenderingContext,Ctx>();
-/** A shared final compositor for modern effects and the editor's legacy optics.
- * Effect kernels stay in photo coordinates; only this final pass enters scene
- * coordinates. No intermediate photo is read back or resampled on the CPU. */
+/**
+ * 新特效和編輯器舊的光學效果共用最後的合成器。特效卷積核留在照片座標裡，只有這最後一步進入場景座標；
+ * 中間的照片不讀回、也不在 CPU 上重新取樣
+ */
 function prepareFxScene(gl:WebGLRenderingContext,scene:FxScene){
  let c=sceneContexts.get(gl);
  if(!c){c={gl,canvas:gl.canvas as HTMLCanvasElement,quad:null!,progs:new Map(),pool:null,maxTex:gl.getParameter(gl.MAX_TEXTURE_SIZE)};sceneContexts.set(gl,c);}
@@ -736,7 +737,7 @@ function prepareFxScene(gl:WebGLRenderingContext,scene:FxScene){
  }
  return {c,program,changed};
 }
-/** Upload immutable scene endpoints during idle, never on the first FX tap. */
+/** 固定的場景端點趁閒置上傳，絕不放在第一次點特效時 */
 export function warmFxScene(surface:HTMLCanvasElement,scene:FxScene){
  const c=getCtx(surface);if(c)prepareFxScene(c.gl,scene);
 }
@@ -778,9 +779,8 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
   const lost=!!previous?.gl.isContextLost();
   if(previous&&!lost)return previous;
   if(previous&&lost){
-    // WebKit can evict an older context while another effect is being used.
-    // Returning that dead cache silently skips the effect on subsequent frames.
-    // Recover with fresh storage; do not wait for an optional restored event.
+    // 使用另一個特效時，WebKit 可能收掉比較舊的 context。回傳那個已經失效的快取會讓之後的畫格默默跳過特效，
+    // 所以用新的儲存重來，不等可能不會來的 restored 事件
     disposeFxScene(previous.gl);
     /* 畫面上的那張 surface 被收走 context 時，不能偷偷換成一張不在畫面上的新畫布：
        之後每一格都畫進那張看不到的畫布、還回報成功，畫面就卡在舊的那一格
@@ -813,16 +813,18 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
 }
 
 
-/** Something else (a HalationLayer presenting soft light / halation / leak)
- *  drew on this surface: the effects' "this exact frame is already shown"
- *  shortcut must not skip the next render. */
+/**
+ * 有別的東西（顯示柔光、光暈、漏光的 HalationLayer）畫在這張畫布上了：
+ * 特效「這一格已經顯示過」的捷徑不能跳過下一次繪製
+ */
 export function invalidateFxSurface(canvas:HTMLCanvasElement){
  const c=surfaces.get(canvas);if(!c)return;
  c.renderedKey=undefined;c.renderedScene=undefined;c.renderedColour=undefined;c.photoResult=undefined;
 }
 
-/** Release photo-sized storage after a native snapshot, retaining compiled
- * programs so the next edit does not have to compile the same shaders again. */
+/**
+ * 拍完原圖快照後放掉照片大小的儲存，保留編譯好的程式，下次編輯不必再編譯同樣的著色器
+ */
 export function compactFxSurface(canvas:HTMLCanvasElement){
  const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
  c.uploadKey=undefined;c.highlightKey=undefined;c.highlightBins=undefined;
@@ -866,8 +868,7 @@ export function disposeFxSurface(canvas:HTMLCanvasElement){
  if(c.plainTex)gl.deleteTexture(c.plainTex);
  if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);if(pool.spillSeed)gl.deleteTexture(pool.spillSeed);gl.deleteFramebuffer(pool.fb);}
   c.progs.forEach(p=>gl.deleteProgram(p));gl.deleteBuffer(c.quad);surfaces.delete(canvas);c.canvas.remove();c.canvas.width=c.canvas.height=canvas.width=canvas.height=1;
- // An explicitly disposed surface is never reused. Release the native context
- // too, rather than waiting for mobile Safari's nondeterministic GC.
+ // 明確釋放過的畫布絕不重用。原生的 context 也一起放掉，不等手機 Safari 不確定什麼時候才跑的回收
  gl.getExtension('WEBGL_lose_context')?.loseContext();
 }
 
@@ -943,14 +944,15 @@ function getPool(c: Ctx, w: number, h: number): Pool {
     texs: [makeTex(gl, w, h), makeTex(gl, w, h), makeTex(gl, w, h)],
     fb: gl.createFramebuffer()!,
   };
-  c.plainTex=undefined; // Transfer ownership, rather than keeping a fifth full-size texture.
+  c.plainTex=undefined; // 直接轉移擁有權，不再多留第五張全尺寸貼圖
   return c.pool;
 }
 
-/** Keep unedited and edited photos on the very same compositor surface.
- * Canvas2D and WebGL layers can rasterize a fractional CSS origin differently
- * on WebKit; toggling between them must not change the photograph's framing.
- * This is a full-resolution identity pass, not a reduced-quality proxy. */
+/**
+ * 沒編輯和編輯過的照片都放在同一張合成畫布上。
+ * WebKit 上 Canvas2D 和 WebGL 圖層對小數的 CSS 原點點陣化方式可能不同，在兩者之間切換不能改變照片的構圖。
+ * 這是原解析度的原樣複製，不是降畫質的代理
+ */
 export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,surface:HTMLCanvasElement,sourceCanvas?:HTMLCanvasElement|GpuImage):boolean{
  const c=getCtx(surface);if(!c||c.gl.isContextLost()||w>c.maxTex||h>c.maxTex||w<2||h<2)return false;
  const {gl}=c;
@@ -959,14 +961,14 @@ export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,s
   const program=compile(c,'__present_source','precision highp float;varying vec2 vUv;uniform sampler2D uTex;void main(){gl_FragColor=texture2D(uTex,vUv);}');
   if(!program)return false;
   if(sourceCanvas&&'texture' in sourceCanvas){
-   // Already a texture in this context (the colour stage's result): draw it.
+   // 已經是這個 context 裡的貼圖（色彩階段的結果），直接畫
    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,sourceCanvas.texture);
   }else{
    const source=c.pool?.w===w&&c.pool?.h===h?c.pool.src:(c.plainTex ||= makeTex(gl,w,h));
    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,source);
    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,(sourceCanvas as HTMLCanvasElement|undefined)||ctx.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
   }
-  c.uploadKey=undefined; // A later effect must not reuse a source-key from an earlier render.
+  c.uploadKey=undefined; // 後面的特效不能沿用前一次繪製的來源鍵
   c.renderedKey=undefined;
   c.photoResult=undefined;
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.disable(gl.BLEND);gl.disable(gl.DEPTH_TEST);gl.disable(gl.DITHER);
@@ -1046,15 +1048,17 @@ export function applyGlEffects(
   params: any,
   sourceKey?: string,
   surface?: HTMLCanvasElement,
-  /** Pixel-regression audit only: retain the original render graph. */
+  /** 只給像素回歸檢查用：保留原本的繪製流程 */
   auditReference = false,
   scene?: FxScene,
   colour?:FxColourInput,
-  /** Read the photo from this canvas instead of ctx2d.canvas (e.g. the colour
-   *  GPU's own canvas during a drag), with its luminance histogram if known. */
+  /**
+   * 從這張畫布讀照片，不從 ctx2d.canvas 讀（例如拖動時色彩 GPU 自己的畫布），知道亮度直方圖的話一起給
+   */
   sourceOverride?:{canvas?:HTMLCanvasElement;image?:GpuImage;bins?:Float64Array|null;
-    /** Write the result into this texture of the surface's context (same size)
-     *  instead of presenting it. */
+    /**
+     * 結果寫進這張畫布 context 裡的這張貼圖（同樣大小），不顯示
+     */
     toTexture?:WebGLTexture},
 ): HTMLCanvasElement | undefined {
   const active = FX_DEFS.filter(d => fxActive(params, d));
@@ -1069,8 +1073,7 @@ export function applyGlEffects(
   const outputW=scene?.black.width||w,outputH=scene?.black.height||h;
   const photoKey=sourceKey?`${sourceKey}|${w}x${h}|${JSON.stringify(params)}`:undefined;
   const renderKey=sourceKey?`${sourceKey}|${w}x${h}|${JSON.stringify(params)}|${JSON.stringify(scene?.placements)}`:undefined;
-  // A tab/selection repaint is not an effect change. Keep the already drawn
-  // full-quality frame instead of running every effect pass a second time.
+  // 分頁或選取的重畫不算改特效。保留已經畫好的完整畫質畫格，不要每個特效再跑一遍
   const toTexture=sourceOverride?.toTexture;
   if(!toTexture&&renderKey&&c.renderedKey===renderKey&&c.renderedScene===scene&&c.renderedColour===colour&&c.canvas.width===outputW&&c.canvas.height===outputH)return c.canvas;
   if(!toTexture){
@@ -1098,18 +1101,15 @@ export function applyGlEffects(
   let spillSelectionTexture:WebGLTexture|null=null;
   const image=sourceOverride?.image;
   const spillOn=active.some(d=>d.id==='fxExposureSpill');
-  /* The highlight percentile is computed on the GPU from the very texture the
-     effect reads (exact, every pixel), whatever the photo came from. Nothing
-     is read back, and a drag and its release select the same highlights. */
+  /* 亮部百分位數在 GPU 上從特效讀的那張貼圖算（精確、每個像素都算），不管照片從哪裡來。完全不讀回，
+     拖動中和放開後選到的亮部一樣 */
   if(spillOn&&c.gpuHistogram===undefined)c.gpuHistogram=GpuHighlightHistogram.create(gl);
   const gpuSpill=spillOn&&!!c.gpuHistogram;
   if(!colour&&spillOn&&!gpuSpill&&!image){
-    // Cached once per underlying photograph/color result. Range dragging
-    // only queries 256 bins; it never reads back or analyzes the GPU image.
+    // 每張照片或色彩結果快取一次。拖範圍只查 256 格，絕不讀回或分析 GPU 影像
     if(!uploadKey||c.highlightKey!==uploadKey||!c.highlightBins){
-      /* A percentile of the photo's luminance. Supplied by the caller when it
-         has it; otherwise read from a 128px copy — a full-resolution
-         getImageData here stalled every colour-slider step. */
+      /* 照片亮度的百分位數。呼叫端有的話直接給；沒有的話從 128px 的複本讀。
+         在這裡對原解析度 getImageData 會讓每一格色彩滑桿都卡住 */
       if(sourceOverride?.bins)c.highlightBins=sourceOverride.bins;
       else{
         const k=Math.min(1,128/Math.max(w,h)),hw=Math.max(1,Math.round(w*k)),hh=Math.max(1,Math.round(h*k));
@@ -1166,12 +1166,9 @@ export function applyGlEffects(
     gl.uniform1f(uniformLocation(gl,prog, 'uTime'), 0);
   };
 
-  /* A change of only the last effect's strength (its main slider) does not
-     change anything that effect computes: strength is applied by the final
-     blend with the effect's input. Both images from the previous call are
-     still in the pool, so only that blend is redrawn — the same pixels a
-     full render gives, without re-running every blur/glow pass per step.
-     (Light spill applies strength inside its own passes: excluded.) */
+  /* 只改最後一個特效的強度（它的主滑桿）時，那個特效算的東西都不變：強度是在最後跟特效的輸入混合時才套。
+     上一次的兩張圖都還在池裡，所以只重畫那次混合，像素跟完整繪製一樣，
+     不必每一格重跑所有模糊、光暈（漏光是在自己的步驟裡套強度，不適用） */
   const last=active[active.length-1];
   const blendKey=!auditReference&&rawUploadKey&&!last.handlesAmount&&last.id!=='fxExposureSpill'
     ? JSON.stringify([rawUploadKey,image?1:0,colour?[arrayId(colour.full),arrayId(colour.plain),colour.amount]:0,w,h,
@@ -1283,8 +1280,7 @@ export function applyGlEffects(
       if(d.id==='fxExposureSpill' && pool.spillKey!==spillKey)pool.spillKey=undefined;
       for (let i = 0; i < d.passes.length; i++) {
         if(spillKey && pool.spillKey===spillKey && pool.narrow && i<d.passes.length-1)continue;
-        // Wide and narrow blooms isolate the exact same highlights. Keep
-        // that full-resolution seed, instead of calculating it twice.
+        // 寬的和窄的泛光隔離的是完全一樣的亮部，原解析度的那一份留著，不要算兩次
         if(!auditReference&&d.id==='fxExposureSpill'&&i===7&&pool.spillSeed){fromTexture=pool.spillSeed;continue;}
         const pass = d.passes[i];
         const prog = compile(c, `${d.id}#${i}`, fxPassSource(d, pass));
@@ -1333,8 +1329,7 @@ export function applyGlEffects(
         from = to;
         fromTexture=target===texs[to]?undefined:target;
       }
-      // These effects already apply their own amount in the final shader.
-      // A second full-frame blend with amount=1 is just an expensive copy.
+      // 這些特效在最後的著色器裡已經自己套了強度，再用 amount=1 混合一次整格只是昂貴的複製
       if(d.handlesAmount&&!auditReference){cur=from;saveLayer(li);continue;}
       // 跟本層輸入按強度插值
       const blend = compile(c, '__blend', BLEND_FS);

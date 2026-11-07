@@ -13,7 +13,7 @@ test('swap pixels move with their photo cache and bypass editing overlays',()=>{
 });
 test('base selected frame is painted before foreground objects, not as a DOM border',()=>{
  const cell=s.slice(s.indexOf('return <div key={i} data-photo-cell'),s.indexOf('return <div key={i} data-photo-cell')+500);
- assert.doesNotMatch(cell,/border:/);assert.match(s,/Base-photo chrome belongs to the base layer/);
+ assert.doesNotMatch(cell,/border:/);assert.match(s,/底圖的外框屬於底圖層/);
  assert.match(s,/ctx\.clip\('evenodd'\)/);
 });
 test('base photos edit through the same image panel without shapes',()=>{

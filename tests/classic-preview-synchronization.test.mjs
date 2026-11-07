@@ -72,7 +72,7 @@ test('transition UI lifetime follows the actual pose, including equal-size mode 
 });
 
 test('alignment guides animate dashes in a separate slightly thinner scene entry above seams', () => {
-  const guide = grid.slice(grid.indexOf("vectorScene.set('__alignment-guides'"), grid.indexOf('// Measure container size dynamically', grid.indexOf("vectorScene.set('__alignment-guides'")));
+  const guide = grid.slice(grid.indexOf("vectorScene.set('__alignment-guides'"), grid.indexOf('// 動態量容器大小', grid.indexOf("vectorScene.set('__alignment-guides'")));
   assert.match(guide, /z: 475000/);
   assert.match(guide, /const width = 1.6 \/ k/);
   assert.match(guide, /ctx.setLineDash\(\[6\/k,5\/k\]\)/);

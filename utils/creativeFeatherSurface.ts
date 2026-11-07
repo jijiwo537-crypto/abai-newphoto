@@ -3,9 +3,10 @@ import {seamGeometry,seamImageTransform} from './seamlessLayout';
 import {regionRects,type PhotoRegion} from './creativePhotoLayout';
 import {CreativeViewportFeatherSurface} from './creativeViewportFeatherSurface';
 
-/** Color-managed, physical-pixel compositor. No WebGL readback, photo decode,
- * shader compile or resolution switch is allowed on the interactive path.
- * Only the cell whose source/crop changed is rerasterized. */
+/**
+ * 有色彩管理、用實體像素的合成器。互動路線上不允許 WebGL 讀回、解碼照片、編譯著色器或切換解析度；
+ * 只重新點陣化來源或裁切有變的那一格
+ */
 export class CreativeFeatherSurface {
   private targets=new WeakMap<HTMLCanvasElement,number>();
   private serial=0;
@@ -22,9 +23,8 @@ export class CreativeFeatherSurface {
       const density=decoded.has(p.src)?1/tr.scale:1;
       return bytes+4*(Math.ceil(g.ew*density)+2)*(Math.ceil(g.eh*density)+2);
     },0);
-    // Large originals must not create a second unbounded decoded-photo set.
-    // Fall back to the original physical-viewport compositor, not a lower-DPI
-    // snapshot. Preview and exports still sample the same original pixels.
+    // 大的原圖不能再多做一整組沒有上限的解碼照片。退回原本用實體 viewport 的合成器，不是較低 DPI 的快照；
+    // 預覽和存檔照樣取樣同樣的原圖像素
     if(import.meta.env.DEV)ctx.canvas.dataset.featherBytes=String(nativeBytes);
     if(nativeBytes>448*1024*1024){
       if(import.meta.env.DEV)ctx.canvas.dataset.featherMode='viewport';
@@ -37,9 +37,8 @@ export class CreativeFeatherSurface {
     const right=Math.min(ctx.canvas.width,Math.ceil((x+w)*m.a+m.e)),bottom=Math.min(ctx.canvas.height,Math.ceil((y+h)*m.d+m.f));
     if(right<=left||bottom<=top)return true;
     let id=this.targets.get(ctx.canvas);if(id===undefined){id=++this.serial;this.targets.set(ctx.canvas,id);}
-    // A preview transform changes coordinates, not resource identity. Reuse
-    // these backing stores in capacity buckets instead of allocating nine new
-    // canvases per pinch frame. Pixel coordinates remain exact, never quantized.
+    // 預覽變換改的是座標，不是資源本身。這些暫存依容量級距重用，不要每個縮放畫格配置九張新畫布；
+    // 像素座標維持精確，不量化
     const key=[id,(w/h).toFixed(8),region.templateIndex,region.arrangement,region.photos.length].join('|');
     let scene=this.scenes.get(key);
     if(!scene){this.clearNative();scene={out:document.createElement('canvas'),cells:[]};this.scenes.set(key,scene);}
@@ -47,9 +46,8 @@ export class CreativeFeatherSurface {
     this.scenes.delete(key);this.scenes.set(key,scene);
     while(this.scenes.size>3){const oldest=this.scenes.keys().next().value!;const old=this.scenes.get(oldest)!;old.out.width=old.out.height=1;old.cells.forEach(c=>c.canvas.width=c.canvas.height=1);this.scenes.delete(oldest);}
     const out=get2dWide(scene.out)!;out.setTransform(1,0,0,1,0,0);out.clearRect(0,0,scene.out.width,scene.out.height);out.globalCompositeOperation='lighter';
-    // Feather in original-photo pixel space once. Preview magnification is not
-    // part of a cell's identity: pinching samples these immutable originals,
-    // rather than resizing and rebuilding every mask on every pointer frame.
+    // 在原圖像素空間羽化一次。預覽放大不屬於格子的身分：縮放時取樣這些固定的原圖，
+    // 不是每個指標畫格都改大小、重建每個遮罩
     for(let i=0;i<rects.length;i++){
       const p=region.photos[i],g=seamGeometry(rects,i,logicalW,logicalH,region.seamlessAmount||0);
       const image=decoded.get(p.src),cropKey=JSON.stringify([p,g]);
@@ -60,8 +58,7 @@ export class CreativeFeatherSurface {
       if(cell.key!==cropKey||cell.image!==image){
         const tr=seamImageTransform({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0},p.width,p.height,g);
         const ix=tr.cx+tr.tx-p.width*tr.scale/2,iy=tr.cy+tr.ty-p.height*tr.scale/2;
-        // Integer source-pixel origin makes the cached photo a 1:1 copy. The
-        // only interpolation is the same final viewport sampling as a photo.
+        // 整數的來源像素原點讓快取的照片是 1:1 的複本，唯一的內插就是跟照片一樣的最後 viewport 取樣
         const density=image?1/tr.scale:1;
         const sx=Math.floor((g.ex-ix)*density),sy=Math.floor((g.ey-iy)*density);
         const dx=ix+sx/density,dy=iy+sy/density;
@@ -80,8 +77,7 @@ export class CreativeFeatherSurface {
       out.beginPath();out.rect(g.ex,g.ey,g.ew,g.eh);out.clip();out.imageSmoothingEnabled=true;out.imageSmoothingQuality='high';
       out.drawImage(cell.canvas,cell.x,cell.y,cell.canvas.width*cell.scale,cell.canvas.height*cell.scale);out.restore();
     }
-    // Fill only the sub-byte rounding residue of complementary alpha ramps.
-    // This stays on the canvas compositor; no synchronous CPU pixel readback.
+    // 只補互補 alpha 漸層取整後不到一個位元組的殘差。這留在畫布合成器上做，不同步讀回 CPU 像素
     out.globalCompositeOperation='destination-over';out.fillStyle='#121212';out.fillRect(0,0,scene.out.width,scene.out.height);out.globalCompositeOperation='source-over';
     ctx.drawImage(scene.out,0,0,right-left,bottom-top,(left-m.e)/m.a,(top-m.f)/m.d,(right-left)/m.a,(bottom-top)/m.d);
     const bytes=(s:typeof scene)=>4*(s.out.width*s.out.height+s.cells.reduce((n,c)=>n+c.canvas.width*c.canvas.height,0));

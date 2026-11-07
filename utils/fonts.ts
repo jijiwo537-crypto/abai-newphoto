@@ -336,7 +336,7 @@ export function prepareFontSample(font: FontDef): Promise<void> {
 }
 
 let warmingSamples = false;
-/** Start on app mount, not when the font menu is opened. Limit concurrent downloads. */
+/** App 掛載時就開始，不是等打開字型選單；限制同時下載的數量 */
 export function warmFontSamples() {
   if (warmingSamples || typeof document === 'undefined') return;
   warmingSamples = true;
@@ -347,7 +347,7 @@ export function warmFontSamples() {
   void Promise.all(Array.from({ length: 4 }, worker));
 }
 
-/** Warm the actual document characters too; CJK fonts use unicode-range subsets. */
+/** 也預熱文件裡實際用到的字；中日韓字型是用 unicode-range 分段的 */
 export function warmTextFonts(text: string) {
   const queue = [...FONTS];
   let cancelled = false;

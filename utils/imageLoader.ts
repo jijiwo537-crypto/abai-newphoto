@@ -31,10 +31,8 @@ export async function initMagick() {
 }
 
 // -------------------------------------------------------------
-// RAW Embedded JPEG Extractor (Bulletproof)
-// Most camera RAW formats (ARW, CR2, NEF, DNG) embed a full-size
-// JPEG preview. Extracting it directly from bytes is instant and 
-// avoids heavy WebAssembly decoder crashes.
+// RAW 內嵌 JPEG 擷取：大部分相機 RAW（ARW、CR2、NEF、DNG）都內嵌一張全尺寸的 JPEG 預覽，
+// 直接從位元組取出來是瞬間的事，也避開笨重的 WebAssembly 解碼器當掉
 // -------------------------------------------------------------
 function getJpegSizeFromRaw(bytes: Uint8Array, start: number): number {
   let i = start + 2; 
@@ -51,7 +49,7 @@ function getJpegSizeFromRaw(bytes: Uint8Array, start: number): number {
           i++; continue; 
       }
       if (marker === 0xDA) { // SOS (Start of Scan)
-          // Enter compressed entropy data and scan blindly for EOI
+          // 進入壓縮的熵編碼資料，直接往後找 EOI
           let j = i + 2;
           while (j < bytes.length - 1) {
               if (bytes[j] === 0xFF && bytes[j + 1] === 0xD9) return j + 2 - start;
@@ -59,7 +57,7 @@ function getJpegSizeFromRaw(bytes: Uint8Array, start: number): number {
           }
           return -1;
       }
-      // Skip variable length segments
+      // 跳過長度不固定的區段
       if (i + 3 < bytes.length) {
           const len = (bytes[i + 2] << 8) | bytes[i + 3];
           i += 2 + len;
@@ -82,7 +80,7 @@ async function extractLargestJpegFromRaw(file: File, onPreview?: (url: string) =
     if (bytes[i] === 0xFF && bytes[i + 1] === 0xD8) {
       const size = getJpegSizeFromRaw(bytes, i);
       
-      // Fire low-res preview instantly for the first reasonable JPEG found
+      // 找到第一張像樣的 JPEG 就馬上給低解析度預覽
       if (size !== -1 && !previewFired && size > 5000 && onPreview) {
           const previewBlob = new Blob([bytes.slice(i, i + size)], { type: 'image/jpeg' });
           onPreview(URL.createObjectURL(previewBlob));
@@ -94,12 +92,12 @@ async function extractLargestJpegFromRaw(file: File, onPreview?: (url: string) =
         bestBlob = new Blob([bytes.slice(i, i + size)], { type: 'image/jpeg' });
       }
       if (size !== -1) {
-        i += size - 1; // Skip the jpeg we just found
+        i += size - 1; // 跳過剛找到的那張 JPEG
       }
     }
   }
 
-  // If we found a JPEG larger than 50KB, it's definitely a preview/high-res image.
+  // 找到超過 50KB 的 JPEG，那一定是預覽或高解析度的圖
   if (bestBlob && largestSize > 50000) {
     return URL.createObjectURL(bestBlob);
   }
@@ -113,7 +111,7 @@ export async function processImageFile(file: File, onPreview?: (url: string) => 
   const isHeic = ['heic', 'heif', 'heics'].includes(extension) || mimeType.includes('heic') || mimeType.includes('heif');
   const isRaw = ['arw', 'cr2', 'cr3', 'nef', 'dng', 'raf', 'orf', 'rw2', 'srw', 'pef', 'x3f'].includes(extension);
 
-  // 1. First, attempt to check if the browser natively supports rendering this file.
+  // 1. 先看瀏覽器能不能直接顯示這個檔
   try {
     const nativeUrl = URL.createObjectURL(file);
     const isSupported = await new Promise<boolean>((resolve) => {
@@ -180,7 +178,7 @@ export async function processImageFile(file: File, onPreview?: (url: string) => 
       if (previewUrl) return previewUrl;
   }
 
-  // 3. If it's a HEIC file, attempt heic2any.
+  // 3. HEIC 的話試 heic2any
   if (isHeic) {
     try {
       const convertedBlob = await heic2any({
@@ -196,7 +194,7 @@ export async function processImageFile(file: File, onPreview?: (url: string) => 
     }
   } 
   
-  // 4. Last Resort: Force convert using ImageMagick WASM (for TIFF, PSD, failing HEIC/RAW, etc.)
+  // 4. 最後手段：用 ImageMagick WASM 強制轉檔（TIFF、PSD，以及前面失敗的 HEIC／RAW 等）
   try {
     await initMagick();
     const arrayBuffer = await file.arrayBuffer();
@@ -217,7 +215,7 @@ export async function processImageFile(file: File, onPreview?: (url: string) => 
   } catch (err) {
     console.error('Error processing special format image with ImageMagick:', err);
     
-    // final desperate fallback for any other files that have standard structure
+    // 其他結構標準的檔案的最後備援
     try {
          const desperationUrl = await extractLargestJpegFromRaw(file);
          if (desperationUrl) return desperationUrl;

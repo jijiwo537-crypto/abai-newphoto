@@ -1,4 +1,4 @@
-/** One material for floating menus; controls inside remain opaque. */
+/** 浮動選單共用的材質；裡面的控制項維持不透明 */
 export const PREMIUM_GLASS = {
   background: 'rgba(10,10,12,.94)',
   backdropFilter: 'blur(28px) saturate(110%)',

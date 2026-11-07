@@ -1,13 +1,8 @@
 /**
- * The ONE framing rule for a photo inside a multi-page layout cell.
- *
- * Every preview path (GPU surface, 2D effect surface, inset SVG, DOM cells)
- * and the export call this, so what is on screen is what is saved.
- *
- * frameW/frameH: the cell's slot, i.e. rect.w × area including its share of
- * the gutter (the photo is centred on the cell and the gutter only clips it).
- * Offsets are fractions of that same slot. The 1.02 bleed covers antialiased
- * clip edges; it is multiplicative so every zoom keeps the same proportion.
+ * 跨頁拼圖格子裡照片的唯一一套構圖規則。
+ * 所有預覽路線（GPU 畫布、2D 特效畫布、內嵌 SVG、DOM 格子）和存檔都呼叫它，畫面上看到的就是存出來的。
+ * frameW/frameH：格子的格位，也就是 rect.w × 面積，含分到的間距（照片置中在格子上，間距只負責裁切）。
+ * 位移是同一個格位的比例。1.02 的出血蓋住反鋸齒的裁切邊；用乘的，任何縮放比例都一樣
  */
 export const CELL_COVER_BLEED = 1.02;
 

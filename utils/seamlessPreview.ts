@@ -3,8 +3,9 @@ import { configureWebglWide, get2dWide } from './colorSpace';
 export type SeamTexture = { image: CanvasImageSource; width: number; height: number } | null;
 export type SeamView = { width:number;height:number;xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;isolated?:boolean;sealEdges?:boolean;radii?:number[];dims?:number[];crops?:{tx:number;ty:number;scale:number;angle:number}[];viewport?:number[];clip?:number[];clipGuard?:[number,number];other?:{xx:number;xy:number;x0:number;yx:number;yy:number;y0:number;clip:number[]} };
 
-/** Original-size source textures + physical-pixel viewport rendering. Fusion
- * changes uniforms only; dragging and resting use the identical quality path. */
+/**
+ * 原尺寸的來源貼圖加上實體像素的 viewport 繪製。融合只改 uniform；拖動和靜止用一模一樣的畫質路線
+ */
 /* Safari 的原圖要自己做一次色彩管理再上傳（見下面 draw 的最後一條路）：畫進 2D 畫布 → getImageData →
    預乘透明度 → 上傳原始位元組。一張 12MP 照片這樣做在主執行緒上一口氣要好幾百毫秒，拉照片進佈局時
    整個畫面會停住。改成「一次一條」：每條約 40 萬像素（一格內就做完），中間讓出主執行緒，畫面照常更新；
@@ -64,8 +65,9 @@ class SeamGpu {
   private maxTextureUnits:number;
   private uniforms=new Map<WebGLProgram,Map<string,WebGLUniformLocation|null>>();
   private lastPresentation:(()=>void)|null=null;
-  /** Which images each target last drew. A shared renderer serves many
-   *  targets; a texture is only "inactive" when no target still shows it. */
+  /**
+   * 每個目標上一次畫了哪些圖。一個共用繪製服務很多目標；沒有任何目標還在顯示它，貼圖才算「沒在用」
+   */
   private targetSets=new Map<HTMLCanvasElement,Set<CanvasImageSource>>();
   /** 正在分條準備完整解析度的原圖（這段期間先用 1024 的小材質頂著） */
   private pendingFull=new Map<CanvasImageSource,string>();
@@ -78,9 +80,8 @@ class SeamGpu {
     this.canvas=this.transferred?new OffscreenCanvas(canvas.width,canvas.height):canvas;
     const gl=this.canvas.getContext('webgl2',{alpha:true,antialias:false,premultipliedAlpha:false,preserveDrawingBuffer:!presentationOnly}) as WebGL2RenderingContext|null;
     if(!gl)throw new Error('無縫拼圖 GPU 無法啟動');this.gl=gl;
-    // srgbOutput: this surface is drawn into a 2D canvas with drawImage. WebKit
-    // treats a WebGL canvas as sRGB there, so render sRGB (colour-managed
-    // uploads) instead of Display-P3 bytes it would misread as washed out.
+    // srgbOutput：這張畫布會被 drawImage 畫進 2D 畫布。WebKit 在那裡把 WebGL 畫布當成 sRGB，
+    // 所以要輸出 sRGB（上傳時做色彩管理），不能輸出 Display-P3 的值，不然會被讀成褪色
     this.color=srgbOutput?{colorSpace:'srgb',directUpload:false}:configureWebglWide(gl);
     this.maxTextureUnits=gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
     this.canvas.addEventListener('webglcontextlost',e=>{this.invalid=true;e.preventDefault();if(this.transferred)canvas.dispatchEvent(new Event('webglcontextlost',{cancelable:true}));},{once:true});
@@ -91,19 +92,17 @@ class SeamGpu {
   dispose(){const gl=this.gl;for(const t of this.textures.values())gl.deleteTexture(t);for(const p of this.programs.values())gl.deleteProgram(p);gl.deleteBuffer(this.buffer);this.textures.clear();this.textureBytes.clear();this.revisions.clear();this.programs.clear();this.uniforms.clear();this.lastPresentation=null;if(!gl.isContextLost())gl.getExtension('WEBGL_lose_context')?.loseContext();}
   get lost(){return this.invalid||this.gl.isContextLost();}
   get surface(){return this.canvas as HTMLCanvasElement;}
-  /** A target went away: its textures become inactive (evictable). */
+  /** 目標沒了：它的貼圖變成沒在用（可以淘汰） */
   forget(target:HTMLCanvasElement){
     const set=this.targetSets.get(target);if(!set)return;this.targetSets.delete(target);
     const still=new Set<CanvasImageSource>();for(const other of this.targetSets.values())for(const image of other)still.add(image);
     for(const image of set){if(still.has(image)||!(image instanceof HTMLCanvasElement))continue;const tex=this.textures.get(image);if(tex)this.gl.deleteTexture(tex);this.textures.delete(image);this.textureBytes.delete(image);this.revisions.delete(image);}
   }
   copyPixels(ctx:CanvasRenderingContext2D,x:number,y:number,presentation?:HTMLCanvasElement){
-    // Chromium transfers the rendered bitmap into the displayed canvas and
-    // clears the OffscreenCanvas framebuffer. Read the displayed bitmap, not
-    // the now-empty framebuffer; WebKit and tiled exports still read raw GL.
+    // Chromium 會把畫好的點陣轉進顯示的畫布，並清空 OffscreenCanvas 的畫面暫存。讀顯示的點陣，
+    // 不讀已經空了的暫存；WebKit 和分塊存檔照樣讀原始的 GL
     if(this.transferred&&presentation){ctx.drawImage(presentation,x,y);return;}
-    // A displayed WebGL canvas need not retain an extra framebuffer copy.
-    // Pixel audits/exports explicitly redraw before reading, in the same task.
+    // 顯示中的 WebGL 畫布不需要多留一份畫面暫存。像素檢查和存檔在同一個工作裡明確重畫再讀
     if(this.presentationOnly)this.lastPresentation?.();
     const gl=this.gl,w=this.canvas.width,h=this.canvas.height;
     const raw=new Uint8Array(w*h*4),pixels=new Uint8ClampedArray(raw.length);
@@ -195,17 +194,15 @@ class SeamGpu {
     const active=new Set<CanvasImageSource>();for(const set of this.targetSets.values())for(const image of set)active.add(image);
     const incoming=sources.reduce((n,s)=>n+(s&&!this.textures.has(s.image)?s.width*s.height*4*4/3:0),0);
     let resident=Array.from(this.textureBytes.values()).reduce((a,b)=>a+b,0);
-    // Edited canvases are transient results, not reusable photo originals.
-    // Release them as soon as another result replaces them, rather than
-    // retaining a second native-size copy throughout repeated edits/swaps.
+    // 編輯過的畫布是暫時的結果，不是可以重用的照片原圖。一被別的結果取代就放掉，
+    // 不要在反覆編輯、換照片時一直多留一份原圖大小的複本
     for(const [image,tex] of this.textures){
       if(active.has(image))continue;
       if(!(image instanceof HTMLCanvasElement)&&resident+incoming<=32*1024*1024&&this.textures.size<=12)continue;
       resident-=this.textureBytes.get(image)||0;gl.deleteTexture(tex);this.textures.delete(image);this.textureBytes.delete(image);this.revisions.delete(image);
     }
     if(count>this.maxTextureUnits)throw new Error('佈局相片數超過 GPU 上限');
-    // A shared surface only grows: layouts of different sizes render into its
-    // lower-left corner instead of reallocating the drawing buffer per draw.
+    // 共用畫布只會變大：不同大小的版面畫在它的左下角，不必每次繪製都重新配置畫面暫存
     if(this.shared){if(this.canvas.width<target.width)this.canvas.width=target.width;if(this.canvas.height<target.height)this.canvas.height=target.height;}
     else{if(this.canvas.width!==target.width)this.canvas.width=target.width;if(this.canvas.height!==target.height)this.canvas.height=target.height;}
     gl.viewport(0,0,target.width,target.height);const p=this.program(count);gl.useProgram(p);
@@ -228,31 +225,26 @@ class SeamGpu {
       gl.activeTexture(gl.TEXTURE0+i);
       const image=source?.image||this.blank;let tex=this.textures.get(image);
       const revision=(image as HTMLCanvasElement).dataset?.seamRevision||'';
-      // Immutable edited photos are colour-managed once at texture upload,
-      // just like originals. Only live mutable effect canvases need the shader
-      // conversion, avoiding repeated gamma powers during preview zoom.
+      // 編輯好的固定照片跟原圖一樣，在上傳貼圖時做一次色彩管理。只有即時、會變的特效畫布需要在著色器裡轉換，
+      // 預覽縮放時才不會一直重複算 gamma 次方
       const srgbCanvas=image instanceof HTMLCanvasElement&&!!revision&&image.dataset.regionImmutable!=='1';
-      /* Memory: a native 12MP texture plus mipmaps is ~64MB. Previews sample
-         at screen density, so cap their textures to what a phone screen can
-         show (more photos -> each smaller). iOS kills the page when several
-         full-size originals are resident at once. Exports (direct) keep the
-         original resolution. UVs are normalised, so geometry is unchanged. */
+      /* 記憶體：一張 1200 萬像素的原生貼圖加上 mipmap 約 64MB。預覽是用螢幕密度取樣，
+         所以貼圖上限設成手機螢幕看得到的程度（照片越多，每張越小）。同時常駐好幾張全尺寸原圖時 iOS 會關掉網頁。
+         存檔（直接畫）維持原解析度；UV 是正規化的，幾何不變 */
       const limit=this.direct?Infinity:count<=2?4096:count<=4?3072:2048;
       const sw=source?.width||1,sh=source?.height||1,shrink=Math.min(1,limit/Math.max(sw,sh));
       const uploadW=Math.max(1,Math.round(sw*shrink)),uploadH=Math.max(1,Math.round(sh*shrink));
       if(!tex||this.revisions.get(image)!==revision){tex||=gl.createTexture()!;gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);
         if(srgbCanvas){
-          // Photo effects are explicitly sRGB. Import their resident canvas
-          // directly and convert primaries in the shader, avoiding a synchronous
-          // GPU -> CPU -> GPU readback on every effect input in Safari.
+          // 照片特效明確是 sRGB。直接匯入它常駐的畫布、在著色器裡轉換原色，
+          // Safari 上每次特效輸入才不必同步 GPU → CPU → GPU 讀回
           gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,gl.NONE);
           gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image as TexImageSource);
           gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL,gl.BROWSER_DEFAULT_WEBGL);
         }else if(this.color.directUpload&&!(limit<Math.max(source?.width||1,source?.height||1))){
           gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image as TexImageSource);
         }else if(this.color.directUpload){
-          // Preview texture capped to display demand (see limit), drawn once
-          // through a colour-managed canvas in the output space.
+          // 預覽貼圖上限是顯示需要的大小（見 limit），透過有色彩管理的畫布在輸出色域裡畫一次
           const small=document.createElement('canvas');small.width=uploadW;small.height=uploadH;
           const g2=small.getContext('2d',{colorSpace:this.color.colorSpace})!;g2.imageSmoothingQuality='high';g2.drawImage(image,0,0,uploadW,uploadH);
           gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,small);
@@ -288,24 +280,20 @@ class SeamGpu {
             }finally{bmp?.close();}
           })();
         }else{
-          // Safari's DOM texture importer can apply the profile twice. Manage
-          // ICC conversion explicitly once at original resolution, then upload
-          // raw bytes in the output color space (no per-gesture readback).
+          // Safari 的 DOM 貼圖匯入可能把描述檔套兩次。自己在原解析度做一次 ICC 轉換，
+          // 再用輸出色域上傳原始位元組（每個手勢都不讀回）
           const pixels=document.createElement('canvas');pixels.width=uploadW;pixels.height=uploadH;
           const ctx=pixels.getContext('2d',{colorSpace:this.color.colorSpace})!;ctx.imageSmoothingQuality='high';ctx.drawImage(image,0,0,uploadW,uploadH);
           const data=ctx.getImageData(0,0,pixels.width,pixels.height);
-          // Typed-array uploads do not perform UNPACK_PREMULTIPLY_ALPHA_WEBGL.
+          // 型別陣列上傳不會做 UNPACK_PREMULTIPLY_ALPHA_WEBGL
           for(let k=0;k<data.data.length;k+=4){const a=data.data[k+3]/255;if(a!==1){data.data[k]*=a;data.data[k+1]*=a;data.data[k+2]*=a;}}
           gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
           gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,pixels.width,pixels.height,0,gl.RGBA,gl.UNSIGNED_BYTE,data.data);
           pixels.width=pixels.height=1;
         }
-        // One immutable antialiasing pyramid per original prevents fine photo
-        // details shimmering when minified. Trilinear sampling is continuous;
-        // dragging and resting never switch resolution/quality modes.
-        // These placements have no perspective or nonuniform texture stretch;
-        // ordinary trilinear mipmaps already sample their isotropic footprint.
-        // Forcing maximum anisotropy adds work without additional image detail.
+        // 每張原圖一份固定的反鋸齒金字塔，縮小時照片的細節才不會閃爍。三線性取樣是連續的，
+        // 拖動和靜止時都不切換解析度或畫質模式。這些擺放沒有透視或不等比的貼圖拉伸，
+        // 一般的三線性 mipmap 已經取樣到等向的範圍；強制最大非等向過濾只會多花工夫，不會多出細節
         gl.generateMipmap(gl.TEXTURE_2D);
         this.uploads++;this.textures.set(image,tex);this.revisions.set(image,revision);this.textureBytes.set(image,(srgbCanvas?(source?.width||1)*(source?.height||1):uploadW*uploadH)*4*4/3);
       }else {gl.bindTexture(gl.TEXTURE_2D,tex);this.textures.delete(image);this.textures.set(image,tex);if(this.placeholder.has(image))this.incomplete=true;}
@@ -347,21 +335,17 @@ const renderers=new WeakMap<HTMLCanvasElement,SeamGpu>();
  *  要直接當 DOM 圖層顯示、而且保留 Display-P3 標記時用。 */
 export function drawSeamPreview(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView,presentationOnly=false,srgbOutput=false,noTransfer=false){
   let gpu=renderers.get(target);
-  // A canvas's colour mode is fixed by its first renderer; a mismatch would
-  // silently keep the wrong (washed-out on WebKit) output. Fail loudly.
+  // 畫布的色彩模式由第一個繪製決定；不一致的話會默默維持錯的輸出（WebKit 上會褪色），所以直接報錯
   if(gpu&&!gpu.lost&&gpu.srgbOutput!==srgbOutput)throw new Error('Seam surface colour mode mismatch');
   if(!gpu||gpu.lost){gpu=new SeamGpu(target,false,presentationOnly,srgbOutput,false,noTransfer);renderers.set(target,gpu);}gpu.draw(target,cells,rects,sources,amount,view);
 }
 export function disposeSeamPreview(target:HTMLCanvasElement){renderers.get(target)?.dispose();renderers.delete(target);}
 
-/* Multi-page layouts: ONE WebGL renderer for the whole editor. Each layout
-   used to own a context; with several pages iOS evicted the oldest (photos
-   went grey) and every layout compiled its own shaders and kept its own
-   copies. Now every layout paints a plain 2D canvas that receives a copy of
-   its frame: off-screen pages are static bitmaps with no GPU context, and a
-   lost context never blanks anything (2D pixels persist; the next paint
-   simply recreates the renderer). The renderer outputs sRGB, which is how
-   WebKit reads a WebGL canvas in drawImage (see srgbOutput). */
+/* 跨頁拼圖：整個編輯器只用一個 WebGL 繪製。每個版面各有一個 context 的話，
+   頁數一多 iOS 就會收掉最舊的（照片變灰），每個版面也各自編譯著色器、各留一份複本。
+   所以每個版面都畫在一般的 2D 畫布上，接收自己那一格的複本：畫面外的頁面是不需要 GPU context 的靜態點陣，
+   context 掉了也不會讓任何東西變空白（2D 像素還在，下次繪製時重建繪製就好）。繪製輸出 sRGB，
+   WebKit 用 drawImage 讀 WebGL 畫布時就是這樣解讀（見 srgbOutput） */
 let sharedGpu:SeamGpu|null=null;
 /** 回傳 false＝這次沒畫成（GPU 掉了、畫布記憶體不夠拿不到 2D）：目標畫布保留原本的像素，
  *  呼叫的一方要讓上一張繼續顯示。以前在 GPU 掉了的那一格照樣用 copy 把（全透明的）結果蓋上去，
@@ -379,21 +363,23 @@ export function drawSeamShared(target:HTMLCanvasElement,cells:SeamPhoto[],rects:
   const g=get2dWide(target),src=sharedGpu.surface,w=target.width,h=target.height;
   if(!g)return false;
   g.save();g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='copy';g.imageSmoothingEnabled=false;
-  // WebGL's origin is bottom-left: the viewport rows are the LAST h rows.
+  // WebGL 的原點在左下：viewport 的列是「最後」h 列
   g.drawImage(src,0,src.height-h,w,h,0,0,w,h);g.restore();
   target.dataset.seamPainted='1';
   return true;
 }
 export function releaseSeamShared(target:HTMLCanvasElement){sharedGpu?.forget(target);}
-/** A 2D collage composition cannot display the WebGL layer directly. On
- * WebKit use tagged raw pixels, avoiding its second DOM color conversion. */
+/**
+ * 2D 拼圖合成沒辦法直接顯示 WebGL 圖層。WebKit 上用帶標記的原始像素，避開它在 DOM 的第二次色彩轉換
+ */
 export function copySeamPreviewPixels(target:HTMLCanvasElement,ctx:CanvasRenderingContext2D,x=0,y=0){
   const gpu=renderers.get(target);if(!gpu)throw new Error('Missing seam renderer');gpu.copyPixels(ctx,x,y,target);
 }
 
-/** Export uses exactly the preview's original textures and complementary
- * weights. Bounded tiles avoid a full-resolution GPU framebuffer allocation;
- * tagged raw pixels avoid WebKit's drawImage(WebGL) color-space conversion. */
+/**
+ * 存檔用的就是預覽的原圖貼圖和互補權重。限制圖塊大小，避免配置原解析度的 GPU 畫面暫存；
+ * 帶標記的原始像素避開 WebKit 的 drawImage(WebGL) 色域轉換
+ */
 export async function renderSeamlessGpu(cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],width:number,height:number,amount:number,cancelled:()=>boolean){
   const out=document.createElement('canvas');out.width=Math.max(1,Math.round(width));out.height=Math.max(1,Math.round(height));const ctx=get2dWide(out)!;
   const tile=document.createElement('canvas');tile.width=Math.min(1024,out.width);tile.height=Math.min(1024,out.height);

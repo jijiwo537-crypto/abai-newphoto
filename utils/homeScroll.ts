@@ -1,6 +1,6 @@
 export const clampHomeScroll = (position: number, extent: number) => Math.max(0, Math.min(Math.max(0, extent), position));
 
-/** Keep WebKit's native touch tracking and momentum; only block outward edge pulls. */
+/** 保留 WebKit 原生的觸控追蹤和慣性，只擋往外拉的邊緣回彈 */
 export function installHomeScroll(el: HTMLElement) {
   let x = 0, y = 0;
   let axis: 'x' | 'y' | null = null;

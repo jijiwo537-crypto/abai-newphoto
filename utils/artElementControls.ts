@@ -1,5 +1,4 @@
-// First visits activate an element, not every subsequent visit. Keep this UI
-// preference separate from the artwork's undoable on/off settings.
+// 第一次進來時啟用元素，之後不會每次都啟用。這個介面偏好跟作品裡可以復原的開關設定分開存
 export function firstTrackingElementVisit(visited, key) {
  if (visited.has(key)) return false;
  visited.add(key);

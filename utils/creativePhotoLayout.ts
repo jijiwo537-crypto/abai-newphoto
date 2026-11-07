@@ -1,7 +1,7 @@
-/** A photo region is one scene surface, not a stack of floating objects.
- * Coordinates are continuous and shared by painting and swapping. Originals are
- * drawn directly at the requested preview/export scale; no composite thumbnail
- * is substituted while zooming. */
+/**
+ * 照片區域是一個場景畫布，不是一疊浮動物件。座標是連續的，繪製和換照片共用；
+ * 原圖直接用要求的預覽或存檔倍率畫，縮放時不換成合成的縮圖
+ */
 import { TEMPLATE_MAP } from './layoutTemplates';
 import {drawCoveredPhoto} from './coveredPhoto';
 export const CREATIVE_PHOTO_LIMIT = 9;
@@ -10,11 +10,11 @@ export type PhotoArrangement = 'grid' | 'horizontal' | 'vertical' | 'feature';
 export type RegionPhoto = { src: string; width: number; height: number; zoom?: number; offsetX?: number; offsetY?: number; fx?: any; origSrc?: string; geo?: any };
 export type PhotoRegion = { photos: RegionPhoto[]; arrangement: PhotoArrangement; landscape: boolean; templateIndex?: number; multi?: boolean; overflowPhotos?: RegionPhoto[]; seamless?: boolean; seamlessAmount?: number };
 export type PhotoRect = { x: number; y: number; w: number; h: number; squareOverlay?:boolean; overlayAspect?:number };
-/** Layout changes redistribute patterns, never change the user's count. */
+/** 換版面會重新分配圖案，絕不改使用者設的數量 */
 export function creativePatternCountForLayout(count:number,from:string,to:string){
   return Math.min(30,Math.max(0,Math.round(count)));
 }
-/** Keep old switch-based drafts readable, including enabled minimum feather. */
+/** 用舊的開關格式存的草稿也要讀得懂，包含開著的最小羽化 */
 export function creativeSeamlessSliderValue(region:PhotoRegion){
   const amount=Math.max(0,Math.min(100,Math.round(region.seamlessAmount||0)));
   return region.seamless?Math.max(1,amount):0;
@@ -24,7 +24,7 @@ export function withCreativeSeamlessAmount(region:PhotoRegion,value:number):Phot
   return {...region,seamless:amount>=1,seamlessAmount:amount};
 }
 
-/** Creative-only additions: persisted cross-page template indices remain unchanged. */
+/** 只有創意拼圖新增的：存下來的跨頁範本編號不變 */
 const overlayTemplate=(name:string,positions:('top'|'bottom')[],aspect:number)=>{const width=aspect===1?.32:.384;return {name,rects:[
   {x:0,y:0,w:1,h:.5},{x:0,y:.5,w:1,h:.5},
   ...positions.map(side=>({x:(1-width)/2,y:(side==='top'?.25:.75)-width/(2*aspect),w:width,h:width/aspect,overlayAspect:aspect})),
@@ -37,11 +37,12 @@ const CREATIVE_TEMPLATE_MAP:Record<number,{name:string;rects:PhotoRect[]}[]>={..
 export function photoTemplates(count: number) {
   return CREATIVE_TEMPLATE_MAP[count] || [];
 }
-/** Picker choices exclude single-photo layouts, without invalidating old drafts. */
+/** 選單裡排除單張照片的版面，但舊草稿照樣有效 */
 export const PHOTO_LAYOUT_COUNTS=[2,3,4,5,6,7,8,9,10] as const;
 let dimSource:CanvasImageSource|null=null,dimCanvas:HTMLCanvasElement|null=null;
-/** Darken RGB while retaining the source alpha; one full-resolution cached
- * source only. In particular, an opaque overlay photo remains opaque. */
+/**
+ * 只把 RGB 變暗、保留來源的 alpha；只快取一份原解析度的來源。尤其不透明的疊放照片要維持不透明
+ */
 export function dimmedPhotoSource(source:CanvasImageSource):CanvasImageSource{
   if(source===dimSource&&dimCanvas)return dimCanvas;
   const image=source as any,w=image.naturalWidth||image.videoWidth||image.width,h=image.naturalHeight||image.videoHeight||image.height;
@@ -54,8 +55,9 @@ export function dimmedPhotoSource(source:CanvasImageSource):CanvasImageSource{
   dimSource=source;return canvas;
 }
 export function clearPhotoDimmer(){if(dimCanvas)dimCanvas.width=dimCanvas.height=1;dimSource=null;}
-/** Isolate only visible screen pixels. Direct original sampling, unchanged
- * density/alpha, even when the photo is zoomed far beyond the viewport. */
+/**
+ * 只隔離看得到的螢幕像素。直接取樣原圖，密度和 alpha 不變，照片放大到遠超過 viewport 也一樣
+ */
 export function drawDimmedPhoto(ctx:CanvasRenderingContext2D,source:CanvasImageSource,sx:number,sy:number,sw:number,sh:number,dx:number,dy:number,dw:number,dh:number){
  const m=ctx.getTransform(),corners=[[dx,dy],[dx+dw,dy],[dx,dy+dh],[dx+dw,dy+dh]].map(([x,y])=>m.transformPoint({x,y}));
  const left=Math.max(0,Math.floor(Math.min(...corners.map(p=>p.x))-1)),top=Math.max(0,Math.floor(Math.min(...corners.map(p=>p.y))-1));
@@ -69,7 +71,7 @@ export function drawDimmedPhoto(ctx:CanvasRenderingContext2D,source:CanvasImageS
  g.setTransform(1,0,0,1,0,0);g.globalCompositeOperation='source-atop';g.fillStyle='rgba(0,0,0,.65)';g.fillRect(0,0,w,h);g.globalCompositeOperation='source-over';
  ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(canvas,0,0,w,h,left,top,w,h);ctx.restore();
 }
-/** Quick choices do not change persisted catalog indices. */
+/** 快速選項不改存檔的目錄編號 */
 export function quickPhotoTemplateIndices(count:number){
   const templates=photoTemplates(count);
   return count===4?[0,1,2,templates.findIndex(t=>t.name==='上下雙層方形')]:[0,1,2,3];
@@ -82,7 +84,7 @@ export function regionRects(region: PhotoRegion, width = 1, height = 1): PhotoRe
     return { ...r, x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h };
   });
 }
-/** Feather the two background halves only; foreground insets stay untouched. */
+/** 只羽化背景的兩半；前景的內嵌照片不動 */
 export function seamlessPhotoBase(region:PhotoRegion):PhotoRegion|null{
   const rects=regionRects(region),overlay=rects.findIndex(r=>r.squareOverlay||r.overlayAspect);
   if(overlay===2&&rects.slice(2).every(r=>r.squareOverlay||r.overlayAspect))
@@ -118,7 +120,7 @@ export function photoRegionRects(count: number, arrangement: PhotoArrangement = 
     return [{ x: 0, y: 0, w: .6, h: 1 }, ...tail.map(r => ({ x: .6 + r.x * .4, y: r.y, w: r.w * .4, h: r.h }))];
   }
   const rows = Math.ceil(Math.sqrt(n));
-  // Balance the final row; there are no blank cells when importing 5/7/8 photos.
+  // 最後一列平均分配；導入 5、7、8 張時不會有空格
   const perRow = Math.floor(n / rows), extra = n % rows;
   return Array.from({ length: rows }, (_, row) => {
     const cols = perRow + (row < extra ? 1 : 0);
@@ -131,7 +133,7 @@ export function photoRegionRects(count: number, arrangement: PhotoArrangement = 
 
 export function photoRegionHit(rects: PhotoRect[], x: number, y: number): number {
   if (x < 0 || y < 0 || x > 1 || y > 1) return -1;
-  // Overlay templates are painted last and must own their frontmost hit.
+  // 疊放範本最後畫，最上層的點擊也要歸它
   for(let i = rects.length - 1; i >= 0; i--){const r=rects[i];if(x >= r.x && y >= r.y && x < r.x+r.w+1e-10 && y < r.y+r.h+1e-10)return i;}
   return -1;
 }
@@ -147,7 +149,7 @@ export function paintPhotoRegion(ctx: CanvasRenderingContext2D, region: PhotoReg
   decoded: Map<string, HTMLImageElement>, x: number, y: number, w: number, h: number, dimIndex = -1, indices?:readonly number[]) {
   const rects = regionRects(region, w, h);
   const previousComposite = ctx.globalCompositeOperation;
-  // A multi-image draw must not use `copy` per cell (it erases previous cells).
+  // 一次畫多張圖時，每一格不能用 `copy`（會清掉前面的格子）
   if (previousComposite === 'copy') {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -163,7 +165,7 @@ export function paintPhotoRegion(ctx: CanvasRenderingContext2D, region: PhotoReg
     /* 裁切座標是照片的邏輯尺寸（原圖尺寸）；手上這張可能是縮小過的（見 utils/photoTiers），換算到它的像素 */
     const c=photoCrop(photo,dw,dh),iw=(img as any).naturalWidth||(img as any).width||photo.width,kx=iw/Math.max(1,photo.width),ky=((img as any).naturalHeight||(img as any).height||photo.height)/Math.max(1,photo.height);
     const sx=c.sx*kx,sy=c.sy*ky,sw=c.sw*kx,sh=c.sh*ky;
-    // Darken only the visible sampling footprint, never duplicate a 48MP source.
+    // 只把看得到的取樣範圍變暗，絕不複製一份 4800 萬像素的來源
     if(i!==dimIndex)drawCoveredPhoto(ctx,img,sx,sy,sw,sh,dx,dy,dw,dh);
     else{
       drawDimmedPhoto(ctx,img,sx,sy,sw,sh,dx,dy,dw,dh);

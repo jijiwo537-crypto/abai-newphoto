@@ -269,8 +269,9 @@ export const glyphInk = (holeType: string, str: string, sz: number) => {
 };
 
 const patternBoundsCache = new Map<string, {x:number;y:number;w:number;h:number}>();
-/** Measure the very same path used for painting, once at a fixed reference size.
- * Size/angle sliders only scale this box; they never read canvas pixels. */
+/**
+ * 用跟繪製完全一樣的路徑，在固定的參考大小量一次。大小、角度滑桿只縮放這個框，絕不讀畫布像素
+ */
 export function patternPathBounds(type: string, size: number) {
   let box = patternBoundsCache.get(type);
   if (!box) {
@@ -298,8 +299,8 @@ export function patternPathBounds(type: string, size: number) {
 const TEXT_TMP_MAX = 1024;
 const TEXT_TMP_KEEP = 48;
 const textTmpPool = new Map<number, HTMLCanvasElement>();
-// Ceiling-resolution immutable tiles, opt-in for the creative pattern renderer.
-// Unlike the scratch pool, hits skip font rasterization and color compositing.
+// 用上限解析度做的固定圖塊，創意拼圖的圖案繪製可以選擇使用
+// 跟暫存池不同，命中時連字型點陣化和顏色合成都省掉
 const patternRasterCache = new Map<string, {canvas:HTMLCanvasElement; size:number; pad:number; family:string}>();
 let patternRasterBytes = 0;
 const PATTERN_RASTER_BUDGET = 64 * 1024 * 1024;
@@ -335,8 +336,7 @@ export const drawTextShape = (
   const image = isImageHole(holeType) ? getHoleImg(holeType) : null;
   if (reuseRaster && sz > 0 && (isDestinationOut || typeof fillStyle === 'string')
       && (!image || (image.complete && image.naturalWidth > 0))) {
-    // Always round resolution UP. Rotation and requested dimensions are applied
-    // when compositing, so adjusting either does not rerasterize every pattern.
+    // 解析度一律往上取。旋轉和要求的尺寸在合成時才套，改任一個都不會重新點陣化每個圖案
     let resolution = Math.pow(1.12, Math.ceil(Math.log(Math.max(1,sz*density))/Math.log(1.12)));
     /* 上限：圖片圖案的細節不會多於原圖本身；字形貼圖邊長不超過 PATTERN_TILE_MAX。
        超出的部分由合成時的高品質縮放補上，肉眼看起來一樣。 */
@@ -359,8 +359,7 @@ export const drawTextShape = (
       ...[bounds.w,bounds.h,bounds.ox,bounds.oy].map(v=>(v/resolution).toFixed(6))]);
     if (tileSide*tileSide*4 <= PATTERN_RASTER_BUDGET) {
       let tile = patternRasterCache.get(key);
-      // A larger existing tile is also valid for a smaller instance. Variation
-      // must not allocate one bitmap per pattern when all share the same artwork.
+      // 已經有的較大圖塊也能給較小的實例用。所有圖案共用同一個圖形時，大小變化不能讓每個圖案各配一張點陣
       let hitKey=key;
       if (!tile) for (const [candidateKey,candidate] of patternRasterCache) {
         if(candidate.family===family && candidate.size>=resolution && (!tile || candidate.size<tile.size)) {
@@ -591,8 +590,7 @@ export const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: n
       let rotCross = (Math.PI / 2) * 3;
       ctx.moveTo(cx, cy - r);
       for (let i = 0; i < 4; i++) {
-        // The first outer point IS the start point: a zero-length segment
-        // there made the top join rasterize differently from the other three.
+        // 外圈第一個點「就是」起點：在那裡多一段零長度的線，上方的接角點陣化會跟另外三個不一樣
         if (i > 0) ctx.lineTo(cx + Math.cos(rotCross) * r, cy + Math.sin(rotCross) * r);
         rotCross += stepCross;
         ctx.lineTo(cx + Math.cos(rotCross) * (r * 0.25), cy + Math.sin(rotCross) * (r * 0.25)); 

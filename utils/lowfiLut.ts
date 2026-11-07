@@ -4,7 +4,7 @@ let image:HTMLImageElement|null=null;
 let repaired:HTMLCanvasElement|null=null;
 let ready:Promise<void>|null=null;
 const textures=new WeakMap<WebGLRenderingContext|WebGL2RenderingContext,{tex:WebGLTexture;uploaded:boolean}>();
-/** Decode the user's original 8×8 / 64-slice LUT once, never during dragging. */
+/** 使用者原本的 8×8／64 切片 LUT 只解碼一次，絕不在拖動時解 */
 export function warmLowfiLut(){
  if(ready)return ready;
  if(typeof Image==='undefined')return Promise.resolve();

@@ -1,5 +1,4 @@
-// The same two box passes and Uint8Clamped rounding as fastBlur, but only
-// the alpha channel used by halation. Reuse both buffers while dragging.
+// 跟 fastBlur 一樣的兩次方框模糊和 Uint8Clamped 取整，但只做光暈要用的 alpha 通道。拖動時重用兩份暫存
 export function blurAlpha(source, output, scratch, w, h, radius) {
   output.set(source);
   if (radius < 1) return output;
@@ -9,8 +8,7 @@ export function blurAlpha(source, output, scratch, w, h, radius) {
       const start = line * lineStride;
       let sum = (r + 1) * src[start];
       for (let k = 1; k <= r; k++) sum += src[start + Math.min(k, length - 1) * stride];
-      // Avoid per-pixel clamps/multiplications for the main scan. Keep the
-      // general branch for panoramas whose short side is smaller than radius.
+      // 主要的掃描避免逐像素限制範圍和乘法；短邊比半徑還小的全景照照樣走一般的分支
       if (2 * r + 1 < length) {
         let target=start, right=start+(r+1)*stride, left=start;
         const first=src[start],last=src[start+(length-1)*stride];

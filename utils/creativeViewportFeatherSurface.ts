@@ -2,14 +2,14 @@ import {get2dWide} from './colorSpace';
 import {seamGeometry,seamImageTransform} from './seamlessLayout';
 import {regionRects,type PhotoRegion} from './creativePhotoLayout';
 
-/** Color-managed, physical-pixel compositor. No WebGL readback, photo decode,
- * shader compile or resolution switch is allowed on the interactive path.
- * Only the cell whose source/crop changed is rerasterized. */
+/**
+ * 有色彩管理、用實體像素的合成器。互動路線上不允許 WebGL 讀回、解碼照片、編譯著色器或切換解析度；
+ * 只重新點陣化來源或裁切有變的那一格
+ */
 export class CreativeViewportFeatherSurface {
   private targets=new WeakMap<HTMLCanvasElement,number>();
   private serial=0;
-  // Separable alpha ramps need one row/column, not a full-photo gradient
-  // rasterization. Each sample is still at the exact physical viewport DPI.
+  // 可分離的 alpha 漸層只需要一列或一欄，不必點陣化整張照片的漸層；每個取樣照樣是精確的實體 viewport DPI
   private horizontal=document.createElement('canvas');
   private vertical=document.createElement('canvas');
   private scenes=new Map<string,{out:HTMLCanvasElement;cells:{canvas:HTMLCanvasElement;key:string;x:number;y:number;image?:HTMLImageElement}[]}>();
@@ -19,9 +19,8 @@ export class CreativeViewportFeatherSurface {
     const right=Math.min(ctx.canvas.width,Math.ceil((x+w)*m.a+m.e)),bottom=Math.min(ctx.canvas.height,Math.ceil((y+h)*m.d+m.f));
     if(right<=left||bottom<=top)return true;
     let id=this.targets.get(ctx.canvas);if(id===undefined){id=++this.serial;this.targets.set(ctx.canvas,id);}
-    // A preview transform changes coordinates, not resource identity. Reuse
-    // these backing stores in capacity buckets instead of allocating nine new
-    // canvases per pinch frame. Pixel coordinates remain exact, never quantized.
+    // 預覽變換改的是座標，不是資源本身。這些暫存依容量級距重用，不要每個縮放畫格配置九張新畫布；
+    // 像素座標維持精確，不量化
     const key=[id,(x/w).toFixed(8),(y/h).toFixed(8),(w/h).toFixed(8),region.templateIndex,region.arrangement,region.photos.length].join('|');
     let scene=this.scenes.get(key);
     if(!scene){scene={out:document.createElement('canvas'),cells:[]};this.scenes.set(key,scene);}
@@ -61,8 +60,7 @@ export class CreativeViewportFeatherSurface {
       }
       out.drawImage(cell.canvas,0,0,r-l,b-t,cell.x-left,cell.y-top,r-l,b-t);
     }
-    // Fill only the sub-byte rounding residue of complementary alpha ramps.
-    // This stays on the canvas compositor; no synchronous CPU pixel readback.
+    // 只補互補 alpha 漸層取整後不到一個位元組的殘差。這留在畫布合成器上做，不同步讀回 CPU 像素
     out.globalCompositeOperation='destination-over';out.fillStyle='#121212';out.fillRect(0,0,scene.out.width,scene.out.height);out.globalCompositeOperation='source-over';
     ctx.drawImage(scene.out,0,0,right-left,bottom-top,(left-m.e)/m.a,(top-m.f)/m.d,(right-left)/m.a,(bottom-top)/m.d);
     const bytes=(s:typeof scene)=>4*(s.out.width*s.out.height+s.cells.reduce((n,c)=>n+c.canvas.width*c.canvas.height,0));

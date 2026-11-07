@@ -740,8 +740,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     if (c.tool === 'liquify') {
       liquifyDab(s.lq, p.x, p.y, dx, dy, R, c.force / 100 * 0.9, c.lqMode);
       strokePtsRef.current.push(p.x, p.y, dx, dy);
-      // Only field cells inside this brush changed. Expanding twice by the
-      // accumulated displacement redrew most of the image on every move.
+      // 只有筆刷範圍內的網格變了。照累積位移擴兩次範圍的話，每動一下幾乎整張都要重畫
       const e = Math.ceil(R + 2 * LIQUIFY_SCALE + 2);
       return { x: p.x - e, y: p.y - e, w: e * 2, h: e * 2 };
     }

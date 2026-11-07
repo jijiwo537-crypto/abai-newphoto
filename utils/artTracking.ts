@@ -1,5 +1,5 @@
-// ABAI original image-analysis renderer. No third-party code or visual assets.
-// Derived from our own effects-lab implementation, with an independent app composition.
+// ABAI 原創的影像分析繪製，沒有用到第三方程式碼或視覺素材。從我們自己的特效實驗版本延伸而來，
+// App 裡的組合是獨立的
 import {blurredSource,makeLinks} from './artMaterials.ts';
 import {mosaicGrid,rankCandidates,scopedCandidates} from './artSampling.ts';
 export const trackingDefaults={mode:'mosaic',detection:'combined',threshold:30,count:0,size:100,pixels:16,blur:20,circles:55,minDistance:55,block:16,minRadius:4,maxRadius:60,stroke:1,labelSize:8,opacity:1,imageOpacity:1,links:150 /* 鄰近連線的預設距離 */,lineWeight:.8,chain:false,chainCount:11,angle:null as number|null,baseRadius:200,ratio:.83,intersections:true,markerSize:5,frame:false,frameSize:68,dash:8,frameStroke:1,starSize:40,starPoints:4,textSize:12,topLeft:'ABAI / VISION',topRight:'IMAGE ANALYSIS',bottomLeft:'SIGNAL / 001',bottomRight:'OBSERVATION',labels:false,palette:'#ffffff',background:'#111111',shape:'circle',format:'1200x1600',noise:false,textureOpacity:.5,texture:null,zones:[],zoneStroke:true,seed:42,linkMode:'tree',materialStrength:100,shapes:['circle'] as string[],materials:[] as string[],nodeSeed:42,variation:80,sizeVariation:0,golden:false,goldenSize:76,goldenAngle:0};
@@ -10,8 +10,7 @@ function canvas(w,h=w){const c=document.createElement('canvas');c.width=w;c.heig
 function random(seed){let s=seed>>>0;return()=>{s=(Math.imul(s,1664525)+1013904223)>>>0;return s/4294967296;};}
 export function trackingRadius(o,rand,k=1){const variation=Math.max(0,Math.min(1,o.variation/100));return o.maxRadius*(1-variation+variation*rand)*k;}
 export function trackingFrameExtent(radius,variation,randomValue,index){
- // Every fourth frame (per contour type) stays square, even at full variation.
- // The long side stays within the size setting; only its aspect ratio varies.
+ // 每種輪廓每四個框有一個維持正方形，變化開到最大也一樣。長邊不超過大小設定，只變長寬比
  const v=Math.max(0,Math.min(1,variation/100)),t=Math.max(0,Math.min(1,randomValue));
  const ratio=index%4===0?1:1+4*v*Math.abs(t*2-1);
  return t<.5?{rx:radius,ry:radius/ratio}:{rx:radius/ratio,ry:radius};
@@ -80,9 +79,8 @@ export function renderTracking(c,source,strength=.6,options:Partial<TrackingOpti
  }):[];
  if(!o.vectorOnly&&regions.length){
  c.save();
- // Apply identical circular exclusions once to the entire material layer,
- // not once per zone (30 masks previously rebuilt 1,650 circle clips/frame).
- // Separate clips retain union-of-holes semantics even when circles overlap.
+ // 同樣的圓形挖空對整層材質只套一次，不是每個區域各套一次（30 個遮罩的話每格要重建 1,650 個圓形裁切）。
+ // 用分開的裁切，圓形重疊時照樣是「所有洞的聯集」
  for(let j=0;j<nodes.length;j++){if(o.shapes[j%o.shapes.length]!=='circle')continue;const n=nodes[j];c.beginPath();c.rect(0,0,w,h);c.moveTo(n.x+n.radius,n.y);c.arc(n.x,n.y,n.radius,0,Math.PI*2,true);c.clip();}
  for(const {mode,rw,rh,x,y} of regions){
  c.save();c.beginPath();c.rect(x,y,rw,rh);c.clip();
@@ -123,13 +121,11 @@ export function renderTracking(c,source,strength=.6,options:Partial<TrackingOpti
  if(o.labelSize>0){const text=Math.round(n.x)+','+Math.round(n.y),width=c.measureText(text).width;c.fillText(text,Math.min(w-width-4*k,n.x+rx+3*k),Math.max(o.labelSize*k,n.y-3*k));}});
  if(o.frame){const size=Math.min(w,h)*o.frameSize/100,x=(w-size)/2,y=(h-size)/2;c.lineWidth=o.frameStroke*k;c.setLineDash([o.dash*k,o.dash*k]);c.strokeRect(x,y,size,size);c.beginPath();c.moveTo(w/2,y);c.lineTo(w/2,y+size);c.moveTo(x,h/2);c.lineTo(x+size,h/2);c.stroke();c.setLineDash([]);c.beginPath();for(let i=0;i<o.starPoints;i++){const a=i*Math.PI/o.starPoints,dx=Math.cos(a)*o.starSize*k/2,dy=Math.sin(a)*o.starSize*k/2;c.moveTo(w/2-dx,h/2-dy);c.lineTo(w/2+dx,h/2+dy);}c.stroke();}
  if(o.golden){
-  // Nested golden rectangles with true quarter-circle arcs, expressed as
-  // analytic SVG paths in the preview and the same geometry at export.
+  // 一層層的黃金矩形加上真正的四分之一圓弧，預覽時是解析的 SVG 路徑，存檔時用同樣的幾何
   const phi=(1+Math.sqrt(5))/2,size=Math.min(w,h)*o.goldenSize/100;
   const angle=(o.goldenAngle||0)*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle);
   const rotate=(x,y)=>[w/2+(x-w/2)*cos-(y-h/2)*sin,h/2+(x-w/2)*sin+(y-h/2)*cos];
-  // Rotate analytic coordinates, not a raster. Canvas and SVG use identical
-  // geometry, including arcs and the fixed center at every size and angle.
+  // 旋轉的是解析座標，不是點陣。Canvas 和 SVG 用一模一樣的幾何，包含圓弧，以及在任何大小和角度下固定的中心
   const rectangle=(x,y,rw,rh)=>{c.beginPath();c.moveTo(...rotate(x,y));c.lineTo(...rotate(x+rw,y));c.lineTo(...rotate(x+rw,y+rh));c.lineTo(...rotate(x,y+rh));c.closePath();c.stroke();};
   let rw=size,rh=size/phi,x=(w-rw)/2,y=(h-rh)/2;c.lineWidth=o.stroke*k;rectangle(x,y,rw,rh);
   for(let i=0;i<9;i++){const side=Math.min(rw,rh),dir=i%4;let sx=x,sy=y,cx,cy,a;

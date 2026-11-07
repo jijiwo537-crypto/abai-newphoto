@@ -513,7 +513,6 @@ const LEAK_TOOLS: ToolDef[] = [
   { id: 'leakHue', label: '色相', icon: 'palette', min: 0, max: 360 },
 ];
 
-// ... (helpers remain same)
 export function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   let r, g, b;
   if (s === 0) {
@@ -536,8 +535,7 @@ export function hslToRgb(h: number, s: number, l: number): [number, number, numb
   return [(r * 255 + 0.5) | 0, (g * 255 + 0.5) | 0, (b * 255 + 0.5) | 0];
 }
 
-// ... (getSplineY, generateCurveLut, boxBlurH, boxBlurV, fastBlur, precomputeSharpenDetail, generateNoisePattern - no changes)
-// --- CURVE SPLINE MATH ---
+// 曲線樣條計算
 function getSplineY(x: number, points: Point[]): number {
     const pts = [...points].sort((a,b)=>a.x-b.x);
     const n = pts.length;
@@ -585,16 +583,13 @@ export function generateCurveLut(channelPoints: Point[]): Uint8Array {
     return lut;
 }
 
-// 60FPS Optimization: Pre-calculate Exposure, Contrast, and Brightness into a single 1D LUT
-// Reuses the output buffer to prevent Garbage Collection stutter.
-// Shared, byte-identical colour maths can also run in a worker.
+// 曝光、對比、亮度預先合成一張 1D LUT，重用輸出暫存避免垃圾回收造成卡頓。
+// 共用、逐位元組相同的色彩計算也能在 worker 裡跑
 export { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceGain } from '../utils/photoToneMath';
 import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
-/* Cache keys name the photo by a short id, not by its source string: a
-   data: URL is megabytes, and serialising it into a key on every slider step
-   cost ~15ms per frame. */
+/* 快取鍵用短 id 代表照片，不用來源字串：data: 網址有好幾 MB，每格滑桿都把它串進鍵裡，一格就要多花約 15ms */
 const SRC_IDS = new Map<string, number>();
 const srcIdOf = (src: string) => { let id = SRC_IDS.get(src); if (id === undefined) { id = SRC_IDS.size + 1; SRC_IDS.set(src, id); } return id; };
 const IDENTITY_BASE_LUT = Uint8Array.from({ length: 256 }, (_, i) => i);
@@ -683,7 +678,7 @@ function precomputeSharpenDetail(sourceData: Uint8ClampedArray, w: number, h: nu
       for (let c = 0; c < 3; c++) {
          const val = sourceData[i + c];
          const avg = (sourceData[up + c] + sourceData[down + c] + sourceData[left + c] + sourceData[right + c]) * 0.25;
-         detail[i + c] = (val - avg) >> 1; // Fit perfectly into Int8
+         detail[i + c] = (val - avg) >> 1; // 剛好放進 Int8
       }
     }
   }
@@ -731,7 +726,6 @@ export function generateNoisePattern(type: 'grain' | 'color', size: number = 512
    這裡沿用同一份（見檔頭的 import），行為一個字都沒有變。 */
 
 
-// ... (ImageEditorProps and BufferSet interfaces remain same)
 interface ImageEditorProps {
   /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
   histKey?: string | null;
@@ -834,8 +828,7 @@ const FastSlider = React.memo(({
 }: FastSliderProps) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const valueTextRef = useRef<HTMLSpanElement>(null);
-    // Stored legacy threshold stays compatible with existing projects. The
-    // user-facing range now means the brightest N percent, increasing right.
+    // 存的舊門檻值跟現有作品相容；介面上的範圍代表最亮的前 N%，往右變大
     const displayValue = effectControlValue(toolId,value);
 
     useEffect(() => {
@@ -954,7 +947,7 @@ const FastSlider = React.memo(({
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     if (onValueClick) onValueClick(toolId);
-                                    else onReset(e, toolId); // Fallback to onReset if onValueClick not provided
+                                    else onReset(e, toolId); // 沒給 onValueClick 就退回用 onReset
                                 }}
                                 onTouchEnd={(e) => {
                                     e.stopPropagation();
@@ -1001,7 +994,7 @@ const FastSlider = React.memo(({
 
 const formatExifDate = (rawDateStr: string): string => {
   if (!rawDateStr || rawDateStr === '未知' || rawDateStr === '-') return '-';
-  // Standard EXIF date format is YYYY:MM:DD HH:MM:SS or similar
+  // 標準 EXIF 日期格式是 YYYY:MM:DD HH:MM:SS 或類似格式
   const regex = /^(\d{4})[-:](\d{2})[-:](\d{2})\s+(\d{2}):(\d{2})/;
   const match = rawDateStr.trim().match(regex);
   if (match) {
@@ -1332,7 +1325,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setDismissedMaskHint(false);
   }, [imageSrc]);
 
-  // EXIF Metadata State
+  // EXIF 中繼資料狀態
   const [showExifPanel, setShowExifPanel] = useState(false);
   /* 點面板以外的任何地方就收起來。
      光靠那片 fixed inset-0 的遮罩不保險 —— 只要祖先有 backdrop-filter／
@@ -1549,7 +1542,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   useEffect(() => () => revokeUrlsLater(finalImagesRef.current as any, 15000), []);
   const [isPortrait, setIsPortrait] = useState(false);
 
-  // Curve Specific State
+  // 曲線專用的狀態
   const [currentCurveChannel, setCurrentCurveChannel] = useState<CurveChannel>('rgb');
   const [dragPointIdx, setDragPointIdx] = useState<number>(-1);
   const lastCurveTapRef = useRef<number>(0);
@@ -1922,9 +1915,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (canvas) {
       const parent = canvas.offsetParent as HTMLElement | null;
       if (parent) {
-        // 遮色片 SVG 和 canvas 一起位于缩放层内，所以这里必须保存「层内坐标」，
-        // 不能用 getBoundingClientRect()：后者包含当前缩放倍率，复位 transform 又
-        // 不会触发 ResizeObserver，之后创建的遮色片就会沿用放大后的错误尺寸。
+        // 遮色片 SVG 和 canvas 一起位於縮放層內，所以這裡必須保存「層內座標」，
+        // 不能用 getBoundingClientRect()：後者包含當前縮放倍率，復位 transform 又
+        // 不會觸發 ResizeObserver，之後創建的遮色片就會沿用放大後的錯誤尺寸。
         const next = { width: canvas.offsetWidth, height: canvas.offsetHeight, top: canvas.offsetTop, left: canvas.offsetLeft };
         /* 沒變就回傳原物件：每次切分頁都會量一次（加上 ResizeObserver 一掛上就回報一次），
            以前每次都塞一個新物件，等於整個編輯器白白多 render 兩遍。 */
@@ -1937,7 +1930,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const canvas = displayCanvasRef.current;
     if (!canvas) return;
     
-    // Initial measure
+    // 第一次量尺寸
     updateCanvasBounds();
     
     const observer = new ResizeObserver(() => {
@@ -2413,7 +2406,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [activeCategory, params.maskId, params.masks?.length]);
 
-  // Single Canvas for all rendering
+  // 所有繪製共用一張畫布
   const displayCanvasRef = useRef<HTMLCanvasElement>(null);
   const fxSurfaceRef=useRef<HTMLCanvasElement>(null);
   /** 這一次重畫是按了濾鏡／特效按鈕觸發的：走 GPU 直出 */
@@ -2437,13 +2430,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const fxInputKeyRef=useRef('');
   const legacyPreviewRef=useRef<{kind:LegacyKind;key:string}|null>(null);
   const showFxSurface=(shown:boolean)=>{
-    // Both surfaces share the same absolute box and the parent's transform.
-    // Present the GPU result directly: copying it to 2D forces a synchronous
-    // framebuffer readback on iOS for every slider frame.
+    // 兩張畫布共用同一個 absolute 方塊和上層的 transform。直接顯示 GPU 的結果：複製到 2D 的話，
+    // iOS 上每格滑桿都要同步讀回一次畫面
     fxSurfaceShownRef.current=shown;
     const surface=fxSurfaceRef.current,display=displayCanvasRef.current;
     if(surface)surface.style.visibility=shown?'visible':'hidden';
-    // Keep the original canvas hit-testable for zoom and mask gestures.
+    // 原本的畫布保持可以點擊，縮放和遮罩手勢要用
     if(display){display.style.visibility='visible';display.style.opacity=shown?'0':'1';}
   };
   const visibleEditorCanvas=()=>fxSurfaceShownRef.current ? fxSurfaceRef.current : displayCanvasRef.current;
@@ -2457,10 +2449,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const helperCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const originalImgRef = useRef<HTMLImageElement | null>(null);
   
-  // Ref for showOriginal to be accessed inside loop
+  // 迴圈裡要讀 showOriginal，用 ref 存
   const showOriginalRef = useRef(false);
 
-  // Buffer management - full is now lazily allocated on save
+  // 暫存管理：完整尺寸那份等存檔時才配置
   const buffers = useRef<{ preview: BufferSet, fast: BufferSet }>({ 
       preview: { source: null, dest: null, shared: null, lutted: null, lut0: null, lut100: null, temp: null, sharpenDetail: null, w: 0, h: 0 },
       fast: { source: null, dest: null, shared: null, lutted: null, lut0: null, lut100: null, temp: null, sharpenDetail: null, w: 0, h: 0 }
@@ -2470,10 +2462,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (sharpenTimerRef.current !== null) clearTimeout(sharpenTimerRef.current);
   }, []);
 
-  // Reusable 1D LUT buffer to avoid GC stutter during slider interaction
+  // 重用的 1D LUT 暫存，拖滑桿時避免垃圾回收造成卡頓
   const baseCorrectionLutRef = useRef<Uint8Array>(new Uint8Array(256));
 
-  // Patterns for Grain/Noise Overlay
+  // 顆粒／雜訊疊層用的圖樣
   const grainPatternRef = useRef<HTMLCanvasElement | null>(null);
   const noisePatternRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -2515,7 +2507,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const renderTimeoutRef = useRef<any>(null);
   const lastSliderMoveTimeRef = useRef(0);
   
-  // Optimize re-renders by caching the last processed pixels state with zero-cost primitive checks
+  // 快取上一次處理過的像素狀態，用幾乎零成本的基本型別比對，減少重新 render
   /** b.lut0（只有調節、沒有濾鏡的那一份）上次是照什麼算出來的 */
   /* lut0（只有調節、沒有濾鏡的那一份）跟選哪顆濾鏡無關，所以只要調節沒動就能一直沿用。
      但畫面會在「低解析度代理」與「完整預覽」兩種尺寸之間交替，只記一份的話
@@ -2546,14 +2538,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       selectedLutIdx: -1, bufferWidth: 0, lutSize: 0, curvesRef: null, hslRef: null
   });
 
-  // Curve Cache
+  // 曲線快取
   const lastCurveLutStrRef = useRef<string>('');
   const curveLutsCacheRef = useRef<{ rgb: Uint8Array, r: Uint8Array, g: Uint8Array, b: Uint8Array } | null>(null);
   
-  // Track user-set blur to restore it when switching away from filters that force blur (f16/f17)
+  // 記住使用者設的模糊，切離會強制模糊的濾鏡（f16/f17）時還原
   const userManualBlurRef = useRef<number>(0);
 
-  // Buffer cache for fast highlights/shadows rendering during drag interaction
+  // 拖動時快速畫亮部、陰影用的暫存
   const extremeBuffersRef = useRef<{
     activeToolId: string;
     base: Uint8ClampedArray | null;
@@ -2566,7 +2558,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     max: null
   });
 
-  // A cache for pixel processing results of each filter to make switching instantaneous
+  // 每個濾鏡的像素處理結果都快取，切換才會即時
   /** 目前緩衝區裡裝的是哪一張照片的像素（批量編輯換照片時會變） */
   const buffersSrcRef = useRef<string>('');
   /** 預覽緩衝區的 source 目前混進的是哪一組發光（每換一組加一號；0 ＝ 原圖） */
@@ -3008,7 +3000,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     /* 拖遮色片的「調節」滑桿（原解析度）：結果直接畫進照片本身那張畫布，不另外疊一層。
        iPhone 上疊在上面的那一層會被另外對齊到整數像素，跟底下的照片差半個像素 ——
        看起來就是「只有遮色片的地方在動」。畫在同一張畫布上就不可能錯開。
-       選取範圍這時候也用正式那一套（不走拖曳用的快速版），放手前後一模一样 */
+       選取範圍這時候也用正式那一套（不走拖曳用的快速版），放手前後一模一樣 */
     const inBase = maskSliderLiveRef.current && !maskRangeDragRef.current && !!pre && !!disp
       && pre.width === w && pre.height === h && disp.width === w && disp.height === h;
     // 顏色／明度範圍看的是拖曳開始時那張畫面（pre），拖的時候用縮小的那張算選取
@@ -3322,9 +3314,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
    * 烤表 → GPU 畫 → 複製進 target 畫布。need 有給就順便把像素讀回來。
    * 任何一步失敗都回傳 false，呼叫端原封不動走回 CPU 路徑。
    */
-  /* Front-stage parameters for the GPU, with the two 1-D tables cached so
-     an exposure / white-balance drag re-uploads nothing but uniforms, and a
-     brightness/contrast/shadows/highlights drag only a 1025-entry table. */
+  /* GPU 前段的參數，兩張 1D 表會快取：拖曝光、白平衡時只重新上傳 uniform，
+     拖亮度、對比、陰影、亮部時只上傳 1025 筆的表 */
   /* 局部陰影／亮部（utils/localTone）：每張來源算一次保邊亮度底圖，滑桿只重算 1025 格的增益表。
      陰影、亮部都是 0 的時候完全不碰，畫面、速度都跟以前一樣。 */
   const localBaseCacheRef = useRef<Map<string, LocalBase>>(new Map());
@@ -3358,7 +3349,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const hslKey = JSON.stringify(p.hsl);
     if (c.hslKey !== hslKey) {
       c.hslKey = hslKey;
-      // Same scaling as photoPixelCore: hue ±15°, saturation ±50 %, lightness ±10 %.
+      // 跟 photoPixelCore 一樣的換算：色相 ±15°、飽和度 ±50%、明度 ±10%
       c.hsl = isHslIdentity(p.hsl) ? null : {
         h: Float32Array.from(p.hsl, b => b.h / 100 * 15),
         s: Float32Array.from(p.hsl, b => b.s / 100 * 0.5),
@@ -3383,18 +3374,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         if (!g.setSource(src, w, h)) return false;
         gpuSrcKeyRef.current = srcKey;
       }
-      /* ── Front stage on the GPU (uniforms) ─────────────────────────────
-         White balance, exposure, the tone curve, curves and saturation are
-         evaluated per pixel in the shader from a few numbers and two tiny
-         1-D tables. Dragging any of those sliders (or a curve point) never
-         bakes a 3D table — that bake was what made every slider and the
-         curve editor stutter. */
+      /* GPU 上的前段（uniform）：白平衡、曝光、色調曲線、曲線和飽和度，
+         都在著色器裡用幾個數字和兩張很小的 1D 表逐像素算。拖這些滑桿（或曲線點）不會重做 3D 表，
+         重做 3D 表就是每個滑桿和曲線編輯器卡頓的原因 */
       const front = gpuFrontFor(p, localFor(p, src, w, h, srcKey));
-      /* ── Film LUT: the only 3D table left ───────────────────────────────
-         Vibrance and HSL are in the shader too, so this table depends on
-         nothing but which film is applied. It is always the fine 65³ grid
-         (baked once per film, cached): no slider ever rebuilds it, and the
-         preview during a drag is exactly the preview after release. */
+      /* 底片 LUT 是唯一剩下的 3D 表：自然飽和度和 HSL 也在著色器裡，所以這張表只跟套哪一種底片有關。
+         它一律是細的 65³ 網格（每種底片做一次、快取起來），沒有任何滑桿會重做它，拖動中的預覽跟放開後完全一樣 */
       if (!film || !p.lutAmount) {
         if (!g.setFront(front, false)) return false;
       } else {
@@ -3429,23 +3414,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       return false;
     }
   };
-  /* Effects that draw on the 2D canvas between the colour stage and the
-     GLSL effects; while any is on, the direct GPU path cannot be used. */
+  /* 在色彩階段和 GLSL 特效之間畫在 2D 畫布上的特效；只要有一個開著，就不能走 GPU 直通 */
   const uses2dEffects = (p: EditorParams) => !!(p.grain || p.colorNoise || p.colorNoise2 || p.blur || p.soft || p.leakOpacity || p.fringeIntensity || p.vignette || anyMask(p));
-  /** The 2D display buffers were skipped by the direct path; the next normal
-      render must recompute them even if the parameters did not change. */
+  /**
+   * 直通路線會跳過 2D 顯示暫存，下一次一般 render 就算參數沒變也要重算
+   */
   const displayStaleRef = useRef(false);
-  /** The final colour image (film strength mixed in the shader) on the colour
-      GPU's own canvas, with no copy into a 2D canvas. */
+  /**
+   * 最後的色彩結果（底片強度在著色器裡混合）留在色彩 GPU 自己的畫布上，不複製到 2D 畫布
+   */
   const gpuFinal = (p: EditorParams, film: Uint8ClampedArray | null, filmSize: number, filmKey: string, srcKey: string, b: { source: Uint8ClampedArray | null; w: number; h: number }): HTMLCanvasElement | null => {
     const g = getGpu();
     return g && gpuColourOn(g, gpuSrcKeyRef, p, film, filmSize, filmKey, srcKey, b) ? g.draw() : null;
   };
-  /* The colour stage inside the on-screen effect surface's own WebGL2
-     context. Its result is a texture there, which the effects (GLSL effects,
-     soft light, halation, leak) read directly: no full-resolution copy of the
-     photo from one GPU context to another on each slider step, and no
-     readback. Same shader and inputs as getGpu(), so the same 8-bit pixels. */
+  /* 色彩階段放在畫面上特效畫布自己的 WebGL2 context 裡。結果就是那裡的貼圖，
+     特效（GLSL 特效、柔光、光暈、漏光）直接讀；每格滑桿不必把整張照片從一個 GPU context 複製到另一個，
+     也不用讀回。著色器和輸入跟 getGpu() 一樣，所以 8 位元的像素也一樣 */
   const surfaceGpuRef = useRef<LutGpu | null | undefined>(undefined);
   const surfaceSrcKeyRef = useRef('');
   const getSurfaceGpu = (): LutGpu | null => {
@@ -3602,7 +3586,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     } catch { return false; }
   };
   useEffect(() => () => { surfaceGpuRef.current?.dispose(); surfaceGpuRef.current = null; }, []);
-  // After a drag rendered through the direct GPU path, run one normal render.
+  // 拖動時走了 GPU 直通的話，放開後跑一次一般的 render
   useEffect(() => { if (!isInteracting && displayStaleRef.current) isDirtyRef.current = true; }, [isInteracting]);
   const pixelBufferCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -3754,7 +3738,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   } | null>(null);
 
 
-  // ... (getCurveLuts, useEffect refs, addToHistory, undo, redo, loadLut - no changes)
   const getCurveLuts = (curves: Curves) => {
       const s = JSON.stringify(curves);
       if (s !== lastCurveLutStrRef.current || !curveLutsCacheRef.current) {
@@ -3812,9 +3795,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     };
     // 卡片可能下一幀才掛上來（分頁剛切換）：那就再對一次
     if (!center()) requestAnimationFrame(center);
-  }, [activeCategory]); // Only trigger on category switch
+  }, [activeCategory]); // 只在切換類別時觸發
 
-  // Force close or open the mask overlay depending on activeCategory
+  // 依 activeCategory 強制關閉或打開遮罩疊層
   useEffect(() => {
     /* 只是紅色範圍的開關：照片本身一個像素都沒變，不必把整條管線重跑一次
        （有遮色片時進出遮色片頁以前每次都要重算整張，大照片在手機上要半秒以上）。
@@ -4019,7 +4002,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
   }, [lutList, ensureLutData]);
 
-  // Eagerly preload all LUTs in the background sequentially to ensure instant filter switching without clogging network
+  // 在背景依序預載所有 LUT，切濾鏡才會即時，也不會塞爆網路
   useEffect(() => {
      // 手指還在滑桿上就先停 —— 解一顆濾鏡要跑 64³ 次迴圈，是一整塊同步運算，
      // 排在拖曳中間就是一次掉格。放開手之後這一輪會重跑，載過的會直接跳過，不會白做。
@@ -4477,7 +4460,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     addToHistory(nextParams, selectedLutIdx, isSoftActive, isBlurActive, isGrainActive, nextActive, softManuallyAdjusted, blurManuallyAdjusted, grainManuallyAdjusted, nextHalationManual);
   };
 
-  // ... (handleEffectToolSelect, applyComplexEffects)
   /* 特效的著色器是「第一次用到才編譯」，20 幾支一起編就是進特效分頁要等一秒的主因
      （量到第一次進去 902ms，第二次進去 25ms）。編輯器開好之後趁空檔一支一支先編起來，
      真的點進去時就已經是熱的。排在 idle 裡，不跟預覽搶主執行緒。 */
@@ -4632,15 +4614,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     !!EFFECT_DETAIL_CAT[toolId] || !!(FX_TOOLS[toolId] && FX_TOOLS[toolId].length > 1);
 
   const fxInputKey=(p:EditorParams)=>`${srcIdent()}|${selectedLutIdx}|${!!lutDataRef.current[lutList[selectedLutIdx]?.id]}|${activeCategory}|${JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('fx'))))}|${forceRecalculateEffectsRef.current}`;
-  /* Luminance histogram of the colour-processed photo (for soft light).
-     Source data, in order of preference:
-       · colourSampleRef — 128px reads of the GPU colour result without and
-         with the film, taken when the colours were last computed;
-       · the CPU result buffers, only when cpuColourKeyRef says they hold
-         exactly the current colours (on the GPU path they are stale);
-       · otherwise null → the soft layer samples the canvas itself.
-     The film strength is applied by mixing the two samples, so moving the
-     strength slider never needs new colour data. */
+  /* 調色後照片的亮度直方圖（柔光用）。資料來源依優先順序：
+     ‧colourSampleRef：上次算顏色時，從 GPU 色彩結果讀的 128px 樣本，有底片和沒底片各一份；
+     ‧CPU 的結果暫存：只有 cpuColourKeyRef 說它剛好是目前的顏色時才用（走 GPU 時它是舊的）；
+     ‧都沒有就回傳 null，柔光層自己從畫布取樣。
+     底片強度靠混合兩份樣本，拖強度滑桿不需要新的色彩資料 */
   const colourSampleRef = useRef<{ key: string; d0: Uint8Array | null; d1: Uint8Array | null }>({ key: '', d0: null, d1: null });
   const cpuColourKeyRef = useRef('');
   const colourBinsRef = useRef<{ key: string; bins: Float64Array | null }>({ key: '', bins: null });
@@ -4731,7 +4709,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     let noise2NeedsLazyRefine = false;
     let halationNeedsLazyRefine = false;
 
-    // 1. GRAIN (Fast overlay, always run)
+    // 1. 顆粒（快速疊層，一定會跑）
     if (p.grain > 0 && grainPatternRef.current) {
         ctx.save();
         ctx.globalCompositeOperation = 'overlay';
@@ -4741,7 +4719,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         }
         const pattern = compiledGrainPatternRef.current;
         if (pattern) {
-            // Apply scale to make grain size resolution-independent (based on 1080p reference)
+            // 依解析度縮放，顆粒大小才不受解析度影響（以 1080p 為基準）
             const grainScale = scale; 
             ctx.scale(grainScale, grainScale);
             ctx.fillStyle = pattern;
@@ -4750,7 +4728,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         ctx.restore();
     }
 
-    // 2. COLOR NOISE (Fast overlay, always run)
+    // 2. 彩色雜訊（快速疊層，一定會跑）
     if (p.colorNoise > 0 && noisePatternRef.current) {
         ctx.save();
         ctx.globalCompositeOperation = 'overlay';
@@ -4768,7 +4746,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         ctx.restore();
     }
 
-    // 3. COLOR NOISE II (Advanced masked, cache-supported)
+    // 3. 彩色雜訊 II（進階遮罩，有快取）
     let useNoise2Cache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedNoise2CanvasRef.current && noise2CacheStateRef.current) {
         const c = noise2CacheStateRef.current;
@@ -4854,7 +4832,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         ctx.restore();
     }
 
-    // 4. BLUR (Cache-supported)
+    // 4. 模糊（有快取）
     let useBlurCache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedBlurCanvasRef.current && blurCacheStateRef.current) {
         const c = blurCacheStateRef.current;
@@ -4925,7 +4903,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         ctx.restore();
     }
 
-    // 5. SOFT LIGHT GLOW (Cache-supported)
+    // 5. 柔光（有快取）
     let useSoftCache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedSoftCanvasRef.current && softCacheStateRef.current) {
         const c = softCacheStateRef.current;
@@ -5037,7 +5015,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       ctx.restore();
     }
 
-    // 6. LIGHT LEAK (Always run, fast gradient overlay)
+    // 6. 漏光（一定會跑，快速的漸層疊層）
     if (p.leakOpacity > 0) {
         if(!baking&&!forceRecalculateEffectsRef.current&&ctx.canvas===displayCanvasRef.current&&fxSurfaceRef.current&&!p.fringeIntensity&&!p.vignette&&!anyMask(p)&&!hasActiveFx(p)){
           const key=legacyInputKey(p,w,h,'leak');leakPresentRef.current ||=new HalationLayer(fxSurfaceRef.current);
@@ -5065,7 +5043,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         ctx.restore();
     }
 
-    // 7. HALATION / FRINGE (Cache-supported)
+    // 7. 光暈／色邊（有快取）
     let useHalationCache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedHalationCanvasRef.current && halationCacheStateRef.current) {
         const c = halationCacheStateRef.current;
@@ -5103,7 +5081,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     if (p.fringeIntensity > 0 && !baking && !forceRecalculateEffectsRef.current) {
         const {fringeIntensity,fringeSize,fringeFeather,fringeHue,...upstream}=p;
-        // Parameters after this layer do not alter its source pixels.
+        // 這一層之後的參數不會改到它的來源像素
         const input=Object.fromEntries(Object.entries(upstream).filter(([key])=>!key.startsWith('fx')&&key!=='vignette'));
         const key=JSON.stringify([srcIdent(),w,h,lutId,toneStr,input]);
         halationLayerRef.current ||= new HalationLayer();
@@ -5210,12 +5188,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         ctx.restore();
     }
 
-    // 8. VIGNETTE (Pre-calculated extreme state, slider controls opacity/strength)
+    // 8. 暗角（預先算好最強的狀態，滑桿控制透明度／強度）
     if (p.vignette > 0) {
       ctx.save(); 
       ctx.globalCompositeOperation = 'multiply';
       
-      // Calculate/cache the extreme vignette canvas only when dimensions change
+      // 尺寸變了才重算、快取最強的暗角畫布
       if (!cachedVignetteCanvasRef.current || 
           cachedVignetteCanvasRef.current.width !== w || 
           cachedVignetteCanvasRef.current.height !== h) {
@@ -5229,7 +5207,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           const vCtx = vCvs.getContext('2d')!;
           vCtx.clearRect(0, 0, w, h);
           
-          // Create extreme gradient (maximum vignette depth: fully black at corners)
+          // 做最強的漸層（暗角最深：四角全黑）
           const grad = vCtx.createRadialGradient(w/2, h/2, w/3, w/2, h/2, Math.max(w, h));
           grad.addColorStop(0, "rgba(0,0,0,0)"); 
           grad.addColorStop(1, "rgba(0,0,0,1.0)");
@@ -5410,8 +5388,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
            預覽與導出走的是同一支函式，兩邊看到的結果一致。
            全部強度都是 0 的話這裡直接跳過，不會有任何額外成本。 */
     if (hasActiveFx(p)) {
-      // GLSL-only slider changes do not change this pipeline's input pixels.
-      // Retain the upload and highlight convolution at their full resolution.
+      // 只改 GLSL 的滑桿不會改變這條管線的輸入像素，上傳和亮部卷積維持原解析度
       const sourceKey=!baking && !needsRefinement ? fxInputKey(p) : undefined;
       const surface=!baking && ctx.canvas===displayCanvasRef.current ? fxSurfaceRef.current : null;
       const painted=applyGlEffects(ctx,w,h,p,sourceKey,surface||undefined);
@@ -5441,7 +5418,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     
     const len = b.source.length;
     
-    // Allocate local buffers for rendering this off-screen step
+    // 配置這一步離屏繪製用的暫存
     const tempDest = new Uint8ClampedArray(len);
     const tempLut0 = new Uint8ClampedArray(len);
     const tempLut100 = activeLut ? new Uint8ClampedArray(len) : null;
@@ -5485,16 +5462,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const localBaseCorrectionLut = new Uint8Array(256);
     generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, localBaseCorrectionLut);
     
-    // 1. Generate tempLut0 with 0% LUT influence
+    // 1. 產生 LUT 影響 0% 的 tempLut0
     processPixels(b.source, tempLut0, b.w, b.h, p, null, 0, localBaseCorrectionLut, b.sharpenDetail, false, getCurveLuts(p.curves), localFor(p, b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdent()}`));
     
-    // 2. Generate tempLut100 with 100% LUT influence (if activeLut is present)
+    // 2. 產生 LUT 影響 100% 的 tempLut100（有 activeLut 時）
     if (activeLut && tempLut100) {
         const p100 = { ...p, lutAmount: 100 };
         processPixels(b.source, tempLut100, b.w, b.h, p100, activeLut.data, lutSize, localBaseCorrectionLut, b.sharpenDetail, false, getCurveLuts(p.curves), localFor(p, b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdent()}`));
     }
     
-    // 3. Blend them based on lutAmount
+    // 3. 依 lutAmount 混合兩者
     if (activeLut && tempLut100) {
         const amount = p.lutAmount / 100;
         const invAmount = 1.0 - amount;
@@ -5586,8 +5563,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const warmFastPreview = useCallback(() => {
     const t = activeToolIdRef.current;
     if (!FAST_BLEND_TOOLS.includes(t)) return false;
-    // With a usable GPU the drag re-bakes the real colour table; the
-    // crossfade images would only cost memory and idle time.
+    // GPU 能用的話，拖動時重做真正的色彩表；交叉淡化的圖只會浪費記憶體和閒置時間
     const pb = buffers.current.preview, pp = paramsRef.current;
     if (!pp.sharpen && !pp.colorNoise2 && pb.source && getGpu()?.fits(pb.w, pb.h)) return false;
     return buildFastStage(t);
@@ -5600,7 +5576,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setIsInteracting(true);
     fastPreviewCacheRef.current.active = false;
     isDirtyRef.current = true;
-    lastRenderDurationRef.current = 12; // Reset interaction timing to avoid carry-over throttles
+    lastRenderDurationRef.current = 12; // 重設互動計時，避免上一次的節流延續下來
 
     if (!FAST_BLEND_TOOLS.includes(toolId)) return;
     {
@@ -5660,15 +5636,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const activeToolId = activeToolIdRef.current;
     const cache = fastPreviewCacheRef.current;
 
-    // The extreme-blend proxy canvases are built at full preview resolution, so that path
-    // must keep using the preview buffer. Everything else drops to the low-res proxy while
-    // the user drags and snaps back to full resolution on release.
+    // 極端混合的代理畫布是用完整預覽解析度做的，所以那條路線要繼續用預覽暫存。其他的拖動時改用低解析度代理，
+    // 放開就回到完整解析度
     const FAST_BLEND_TOOLS = ['brightness', 'exposure', 'contrast', 'highlights', 'shadows', 'temp', 'tint', 'sat', 'vib'];
-    /* The three-image crossfade is only a stand-in for devices without a
-       usable GPU. Exposure, white balance and the tone curve are non-linear,
-       so "halfway between 0 and +100" is not what +50 looks like. With the
-       GPU path the colour table is re-baked every frame (33³, ~2ms), so the
-       drag shows exactly what release will show. */
+    /* 三張圖交叉淡化只是給沒有可用 GPU 的裝置的替代做法。曝光、白平衡和色調曲線都是非線性的，
+       「0 跟 +100 的中間」不等於 +50 的樣子。走 GPU 時每格都重做色彩表（33³，約 2ms），
+       拖動中看到的就是放開後的結果 */
     const pb = buffers.current.preview;
     const gpuLiveColour = !p.sharpen && !p.colorNoise2 && !!pb.source && !!getGpu()?.fits(pb.w, pb.h);
     const isFastBlendActive = isInteracting && !gpuLiveColour && !hasGlow(p) &&
@@ -5752,7 +5725,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     showFxSurface(false);fxInputKeyRef.current='';
 
-    // Maintain offscreen pixel buffer canvas for putImageData with willReadFrequently
+    // putImageData 用的離屏像素畫布，設 willReadFrequently
     if (!pixelBufferCanvasRef.current) {
         pixelBufferCanvasRef.current = document.createElement('canvas');
     }
@@ -5768,7 +5741,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     /** 顏色之後要套的特效：發光類已經混在 b.source（或 GPU 那張貼圖）裡了 */
     const pPost = stripGlow(pRender);
 
-    // Check if we are at effectively original state (No edits)
+    // 檢查是不是等於原圖（沒有任何編輯）
     const isNoEdits = currentIdx === 0 && 
         pRender.brightness === 0 && pRender.exposure === 0 && pRender.contrast === 0 && 
         pRender.highlights === 0 && pRender.shadows === 0 && !pRender.whites && !pRender.blacks && pRender.temp === 0 && pRender.tint === 0 && 
@@ -5823,22 +5796,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const tapFast = tapFastRef.current || (!anyMask(pRender) && !showOriginalRef.current);
     tapFastRef.current = false;
 
-    /* ── Direct GPU path while dragging ─────────────────────────────────
-       When nothing after the colour stage draws on the 2D canvas (no grain,
-       blur, soft light, leak, halation, vignette or gradient mask), the
-       colour result is a GPU image that goes straight to the on-screen GPU
-       surface — through the GLSL effects if any are on. This removes the
-       two or three full-resolution canvas-to-canvas copies per frame
-       (WebGL → 2D → 2D → WebGL) that a phone pays for on every slider step.
-       The pixels are the same 8-bit values the normal path produces; after
-       release one normal render brings the 2D buffers up to date. */
+    /* 拖動時的 GPU 直通：
+       色彩階段之後如果沒有東西畫在 2D 畫布上（沒有顆粒、模糊、柔光、漏光、光暈、暗角或漸層遮罩），
+       色彩結果就是一張 GPU 圖，直接送到畫面上的 GPU 畫布，有開 GLSL 特效就經過特效。
+       這樣每格省掉兩三次整張畫布對畫布的複製（WebGL → 2D → 2D → WebGL），手機每拖一格滑桿都要付這個成本。
+       像素跟一般路線一樣是同樣的 8 位元值；放開後跑一次一般 render 把 2D 暫存更新 */
     if ((isInteracting || tapFast) && !isFastBlendActive && fxSurfaceRef.current && b.source && !pRender.sharpen && !pRender.colorNoise2 && !uses2dEffects(pPost)) {
         const srcKey = `${b.w}x${b.h}|${srcIdent()}`;
         const spill = !!pPost.fxExposureSpill;
         const filmKey = activeLut ? `${lut.id}#${lutSize}` : '';
-        /* Colour stage in the surface's own context: the effects read its
-           texture, nothing crosses between GPU contexts, nothing is read
-           back (Lo-fi's halo mask is computed on the GPU too). */
+        /* 色彩階段放在畫布自己的 context：特效直接讀它的貼圖，
+           不跨 GPU context、也不讀回（Lo-fi 的光暈遮罩也在 GPU 上算） */
         const image = gpuFinalImage(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b);
         if (image) {
             const surface = fxSurfaceRef.current;
@@ -5859,15 +5827,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             if (shown) { showFxSurface(true); displayStaleRef.current = true; cvs.style.filter = 'none'; return; }
         }
     }
-    /* Same while dragging with 2D effects on: the colour result reaches the
-       2D canvas in one copy (instead of two full-size intermediate canvases),
-       then the effects run as usual. */
+    /* 開著 2D 特效拖動時也一樣：色彩結果一次複製到 2D 畫布（不經過兩張全尺寸的中間畫布），特效照常跑 */
     if ((isInteracting || tapFast) && !isFastBlendActive && b.source && !pRender.sharpen && !pRender.colorNoise2 && uses2dEffects(pPost)) {
         const srcKey = `${b.w}x${b.h}|${srcIdent()}`;
         const filmKey = activeLut ? `${lut.id}#${lutSize}` : '';
-        /* Only soft light, halation or light leak on: its GPU layer presents
-           on the effect surface. With the colour stage in that same context
-           it takes the colour result as a texture — no copy, no readback. */
+        /* 只開了柔光、光暈或漏光：它的 GPU 圖層顯示在特效畫布上。
+           色彩階段在同一個 context 裡時直接拿色彩結果當貼圖，不複製也不讀回 */
         const p0 = pPost, kind = legacyGpuKind(p0);
         if (kind && fxSurfaceRef.current) {
             const image = gpuFinalImage(pRender, activeLut ? activeLut.data : null, lutSize, filmKey, srcKey, b);
@@ -5891,9 +5856,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     colourBinsRef.current = { key: `${colourKeyOf(pRender)}|${a}`, bins: highlightHistogram(d) };
                 }
             }
-            /* Fallback when the surface has no WebGL2 colour stage: the layer
-               reads the colour GPU's canvas and presents on the GPU surface —
-               the 2D canvas is not touched at all. */
+            /* 畫布沒有 WebGL2 色彩階段時的備援：圖層讀色彩 GPU 的畫布、顯示在 GPU 畫布上，完全不碰 2D 畫布 */
             if (kind && fxSurfaceRef.current) {
                 const layer = legacyLayer(kind, fxSurfaceRef.current);
                 const key = legacyInputKey(p0, b.w, b.h, kind);
@@ -5916,7 +5879,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (isFastBlendActive) {
         // Fast proxy GPU-accelerated blending: handled entirely on the GPU in the drawing step below for maximum FPS.
     } else {
-        // Zero-cost sub-microsecond check: Separate pixel processing params from composite effects
+        // 幾乎零成本的檢查：把像素處理的參數跟合成特效分開
         const lastP = lastProcessedParamsRef.current;
         let shouldReprocessPixels =
             pRender.brightness !== lastP.brightness ||
@@ -5979,8 +5942,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                換濾鏡時這張表就會直接命中快取，一次都不用重烤。 */
             const okBase = gpuPaint(lut0CanvasRef.current, b.source, b.w, b.h,
                 { ...pRender, lutAmount: 0 }, null, 0, grid, srcKey, null, 'none');
-            // Soft light needs the colour result's luminance histogram: read a
-            // 128px copy from the colour GPU itself (no 2D canvas readback).
+            // 柔光需要色彩結果的亮度直方圖：直接從色彩 GPU 讀 128px 的複本（不從 2D 畫布讀回）
             const wantBins = pRender.soft > 0;
             const small0 = okBase && wantBins ? getGpu()?.readSmall() ?? null : null;
             let small100: { data: Uint8Array } | null = null;
@@ -6084,7 +6046,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     };
                 }
                 
-                // 2. Generate b.lut100: Base adjustments applied with 100% LUT influence (if activeLut is present)
+                // 2. 產生 b.lut100：基本調整加上 100% 的 LUT 影響（有 activeLut 時）
                 if (activeLut) {
                     const p100 = { ...pRender, lutAmount: 100 };
                     processPixels(b.source, b.lut100!, b.w, b.h, p100, activeLut.data, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves), localFor(p100, b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdent()}`));
@@ -6096,7 +6058,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     cacheFilterPixels(lut.id, pRender, b.w, b.h, b.lut0!, activeLut ? b.lut100! : null);
                 }
                 
-                // Cache the processed parameters with zero allocations
+                // 快取處理過的參數，不配置新記憶體
                 lastProcessedParamsRef.current = {
                     brightness: pRender.brightness,
                     exposure: pRender.exposure,
@@ -6118,7 +6080,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 };
             }
 
-            // Sync with GPU-backed offscreen canvases for instant rendering during slider adjustments
+            // 跟 GPU 的離屏畫布同步，拖滑桿時才能即時顯示
             if (!lut0CanvasRef.current) {
                 lut0CanvasRef.current = document.createElement('canvas');
             }
@@ -6144,8 +6106,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             }
         }
 
-        // Perform linear blending between b.lut0 and b.lut100 on the CPU ONLY when idle
-        // to keep b.dest 100% accurate without any UI overhead during drag
+        // 只在閒置時用 CPU 混合 b.lut0 和 b.lut100，b.dest 才會完全準確，拖動時介面也不會多負擔
         if (!isInteracting && !gpuDone) {
             if (activeLut) {
                 const len = b.source.length;
@@ -6168,9 +6129,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         }
     }
     
-    // Always put valid pixels to canvas before applying effects.
-    // If we are in interactive adjustment blend mode, blend the pre-calculated offscreen canvases on the GPU for 120 FPS.
-    // If we are adjusting filter strength (or anything else), draw the GPU-accelerated canvases for 120fps.
+    // 套特效前一定先把有效的像素放上畫布。在互動的調整混合模式下，用 GPU 混合預先算好的離屏畫布；
+    // 調濾鏡強度（或其他東西）時，畫 GPU 加速的畫布
     if (isFastBlendActive) {
         const val = pRender[activeToolId as keyof EditorParams] as number;
         const amount = val / 100;
@@ -6206,7 +6166,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     cvs.style.filter = 'none';
     
     const scale = Math.max(b.w, b.h) / 1080;
-    // Pass b.dest as sourcePixelData for noise masking
+    // 把 b.dest 當成雜訊遮罩的 sourcePixelData
     applyComplexEffects(ctx, b.w, b.h, pPost, scale, b.shared, isInteracting, false, b.dest);
     /* 遮色片那一頁（沒有 GPU 特效時）照片一律直接看 2D 畫布，不轉到 GPU 那層顯示：
        拖遮色片滑桿時即時疊層是畫在 2D 畫布上的，放手後如果換成 GPU 那層顯示，同一張照片換了一個顯示層，
@@ -6389,7 +6349,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       rememberDecoded(activeSrc, img);
       setIsPortrait(img.height > img.width);
 
-      // Update dimensions dynamically
+      // 動態更新尺寸
       setImageDimensions(`${img.naturalWidth}×${img.naturalHeight}`);
 
       noteBufferGeo(null);
@@ -6453,7 +6413,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     };
   }, [activeSrc, onCancel]);
 
-  // Handle Loading State manually since it might take a second to build buffers
+  // 自己處理載入狀態，建立暫存可能要一秒左右
   const [isEditorLoading, setIsEditorLoading] = useState(true);
 
   // 構圖會改變來源畫面的尺寸與內容，所以緩衝區的建立必須能重跑。第一次載入與每次套用
@@ -6468,7 +6428,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (!Number.isFinite(srcW) || !Number.isFinite(srcH) || srcW <= 0 || srcH <= 0) return;
       if (sharpenTimerRef.current !== null) clearTimeout(sharpenTimerRef.current);
       if (initial) bufferGeoRef.current = DEFAULT_GEO;
-      // Preview Size
+      // 預覽尺寸
       const PREVIEW_SIZE = 1800;
       let pw = srcW, ph = srcH;
       if (pw > PREVIEW_SIZE || ph > PREVIEW_SIZE) { const r = Math.min(PREVIEW_SIZE / pw, PREVIEW_SIZE / ph); pw = (pw * r) | 0; ph = (ph * r) | 0; }
@@ -6505,10 +6465,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           }
       };
 
-      // Interactive proxy: a downscaled copy of the preview buffer. Tools that have to
-      // re-run the whole pixel pipeline on every pointer move (curves, mask, and every
-      // effect that is not in FAST_BLEND_TOOLS) render against this while dragging, then
-      // fall back to the full preview buffer the moment the finger lifts.
+      // 互動代理：預覽暫存縮小的複本。每次指標移動都要重跑整條像素管線的工具（曲線、遮罩，
+      // 以及不在 FAST_BLEND_TOOLS 裡的特效）拖動時用它畫，手指一放開就回到完整預覽暫存
       /* 代理的長寬一定要跟預覽「完全同一個比例」。
          以前是 (w*r)|0 直接截掉小數，例如 3024×4032 會變成 675×900 —— 比例差了
          千分之一。畫布是用 object-contain 排版的，它會照畫布「自己的」比例去留黑邊，
@@ -6597,7 +6555,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         hsl: DEFAULT_HSL.map((band, i) => i === 0 ? { ...band, h: 1 } : { ...band }),
       };
       
-      // Warmup logic using shared buffer
+      // 用共用暫存預熱
       generateBaseCorrectionLut(0,0,0, baseCorrectionLutRef.current);
       if (initial) {
         // 這兩趟空跑是為了讓 JIT 先把像素迴圈編譯起來，整個編輯器開著只需要做一次。
@@ -6605,9 +6563,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         if (!pipelineWarmedRef.current) {
           processPixels(pData, buffers.current.preview.dest!, pw, ph, WARMUP_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, getCurveLuts(WARMUP_PARAMS.curves));
           processPixels(pData, buffers.current.preview.dest!, pw, ph, DEFAULT_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, getCurveLuts(DEFAULT_PARAMS.curves));
-          // HSL 分支以前没有被上面两次身分参数覆盖，首次拖动时才触发 JIT，
-          // 因而只在前几次手势卡顿。用最多 192×192 的工作区先跑两次，足以
-          // 优化热点，又不会拿整张 1800px 预览做无意义的重运算。
+          // HSL 分支以前沒有被上面兩次身分參數覆蓋，首次拖動時才觸發 JIT，
+          // 因而只在前幾次手勢卡頓。用最多 192×192 的工作區先跑兩次，足以
+          // 最佳化熱點，又不會拿整張 1800px 預覽做無意義的重運算。
           const hw = Math.min(pw, 192), hh = Math.min(ph, 192);
           const hLen = hw * hh * 4;
           const hSrc = pData.subarray(0, hLen);
@@ -6649,7 +6607,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         lastRenderTimeRef.current = 0;
       }
 
-      // Instantly unlock UI, run sharp block async
+      // 立刻解鎖介面，銳利化那段非同步跑
       if (initial) {
         setIsEditorLoading(false);
         /* 解析遮罩收起來後再明確排一個完整畫質繪製幀。這不是等互動重畫：
@@ -6705,21 +6663,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   useEffect(() => { buildBuffersFromRef.current = buildBuffersFrom; }, [buildBuffersFrom]);
 
 
-  // ... (rest of the component, render loop, UI handlers, JSX remain same as previous version)
   const isInteractingRef = useRef(isInteracting);
   useEffect(() => {
     isInteractingRef.current = isInteracting;
-    // Entering or leaving a drag swaps the render target between the low-res proxy and the
-    // full preview buffer, so force one render at the new resolution.
+    // 開始或結束拖動時，繪製目標會在低解析度代理和完整預覽暫存之間切換，所以用新的解析度強制畫一次
     isDirtyRef.current = true;
     lastRenderTimeRef.current = 0;
   }, [isInteracting]);
 
   const lastRenderTimeRef = useRef<number>(0);
-  const lastRenderDurationRef = useRef<number>(16); // Default 16ms
+  const lastRenderDurationRef = useRef<number>(16); // 預設 16ms
 
-  // Unified, high-performance continuous requestAnimationFrame scheduler
-  // Eliminates race conditions, enables 60fps renders, and processes before/after comparing cleanly
+  // 統一的 requestAnimationFrame 連續排程：不會互相搶、能維持 60fps，前後對比也處理得乾淨
   useEffect(() => {
     let rafId: number;
     let isActive = true;
@@ -6792,9 +6747,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     dctx.drawImage(compareSnapRef.current, 0, 0, b.w, b.h);
                     dctx.globalCompositeOperation = 'source-over';
                     cvs.style.filter = 'none';
-                    // Comparison presented the original on the GPU surface.
-                    // Restoring only the hidden 2D canvas leaves that original
-                    // visible forever (notably mosaic / glass-brick effects).
+                    // 對比時原圖是顯示在 GPU 畫布上的。只還原藏起來的 2D 畫布的話，
+                    // 原圖會一直留在畫面上（馬賽克、玻璃磚特效特別明顯）
                     presentEditorSource(dctx, b.w, b.h);
                     lastRenderedShowOriginalRef.current = false;
                     lastRenderTimeRef.current = now;
@@ -6804,7 +6758,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             }
 
             if ((isDirtyRef.current || flipped) && uiFirstRef.current && !interacting && !studioPaintNowRef.current) {
-                // The tapped card / tab paints in this frame; the photo follows in the next.
+                // 點的卡片或分頁這一格先畫，照片下一格再跟上
                 uiFirstRef.current = false;
                 shotHoldUntilRef.current = 0;   // 使用者點了東西：不再等，下一格就照常畫
                 rafId = requestAnimationFrame(tick);
@@ -6836,8 +6790,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             if (isDirtyRef.current || flipped) {
                 const elapsed = now - lastRenderTimeRef.current;
 
-                // Consume the latest parameters once per display frame; do not add
-                // a timer after slider input or defer the visible effect until release.
+                // 每個顯示畫格讀一次最新的參數；滑桿輸入後不加計時器，也不把看得到的效果拖到放開才顯示
                 const throttleMs = 0;
                 
                 if (elapsed >= throttleMs) {
@@ -6846,7 +6799,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     lastRenderTimeRef.current = now;
                     
                     {
-                        // For non-interactive/final renders, do it synchronously to ensure instant high-quality paint
+                        // 不是互動中的最後一次繪製就同步做，馬上畫出高畫質
                         if (renderTimeoutRef.current) {
                             clearTimeout(renderTimeoutRef.current);
                             renderTimeoutRef.current = null;
@@ -6887,7 +6840,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const resetParam = (id: keyof EditorParams) => {
     let defaultValue = DEFAULT_PARAMS[id];
     
-    // Specific defaults based on current LUT
+    // 依目前 LUT 的預設值
     const url = lutList[selectedLutIdx]?.url || '';
     const lutId = lutList[selectedLutIdx]?.id || 'none';
     if (id === 'lutAmount') {
@@ -6906,7 +6859,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
     const nextParams = { ...params, [id]: defaultValue };
 
-    // Update manually adjusted state and active toggles if resetting specific parameters
+    // 重設個別參數時，一起更新手動調過的狀態和開關
     let nextSoftActive = isSoftActive;
     let nextBlurActive = isBlurActive;
     let nextGrainActive = isGrainActive;
@@ -7161,7 +7114,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const recordProgress = useCallback(async () => {
     /* 是否需要詢問已由 requestLeave 按實際成品判斷。
        恢復的已編輯專案會把當前成品設成 history 第 0 格，因此這裡不能再用
-       historyIndex <= 0 跳過；否则按了「儲存」也不會寫入歷史紀錄。 */
+       historyIndex <= 0 跳過；否則按了「儲存」也不會寫入歷史紀錄。 */
     const cv = visibleEditorCanvas();
     if (!cv || !cv.width || !cv.height) return;
     try {
@@ -7600,8 +7553,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   : (i === safeIdx ? cloneSnap(base).geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
               };
               const img = await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
-              // Only lowfi exports depend on this LUT; other formats/effects
-              // must not be blocked by a lookup-image network failure.
+              // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
               if (exportFormat !== 'heic') {
                 // JPG／PNG：大照片走原尺寸分段存檔（見 renderFullUrl），一般照片跟以前一樣
@@ -7636,7 +7588,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }, 100);
   };
   
-  // ... (activeTool useMemo and remaining UI render logic is identical)
   const activeTool = useMemo(() => {
     if (activeToolId === 'filter_select') {
       if (selectedLutIdx === 0) return null;
@@ -7856,7 +7807,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const DETAIL_CATS = ['fx', 'soft', 'leak', 'halation'];
   const detailSwitch = DETAIL_CATS.includes(activeCategory) || DETAIL_CATS.includes(prevCategoryRef.current);
 
-  /* 遮色片还没建立时，版面跟建立后保持一致，只锁住暂时不能使用的控制项。 */
+  /* 遮色片還沒建立時，版面跟建立後保持一致，只鎖住暫時不能使用的控制項。 */
   /* 拖遮色片形狀時 params 這份 state 不會每一步更新（參考線直接改屬性），
      拖曳中若有別的原因 render，參考線要照最新的位置畫，不能跳回按下去那一刻 */
   const maskView = activeDragRef.current ? paramsRef.current : params;
@@ -8131,7 +8082,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const subStripHidden = activeCategory === 'compose' || ownPanel;
 
 
-  // Every effect detail page uses the same fixed slider + parameter strip.
+  // 每個特效細節頁都用同一組固定的滑桿和參數列
   /* 從構圖直接切到別的分頁 ＝ 等同按了「完成」，裁切照樣套用。
      只有明確按「取消」才會丟掉（onCancel 會先把 draftGeo 清成 null，
      所以這個 effect 不會重複套一次）。 */
@@ -8147,9 +8098,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 進構圖之前待在哪一頁 —— 按完成之後回去那一頁，不要一律跳回濾鏡 */
   const beforeComposeRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
 
-  /** 左上返回与构图内的取消共用同一条“放弃草稿几何”路径。
-      先同步清空 draft，再切回进入构图前的分页，避免离开构图的自动套用 effect
-      在同一批更新中读到旧 draft，并确保它绝不会继续冒泡成退出整个编辑器。 */
+  /** 左上返回與構圖內的取消共用同一條“放棄草稿幾何”路徑。
+      先同步清空 draft，再切回進入構圖前的分頁，避免離開構圖的自動套用 effect
+      在同一批更新中讀到舊 draft，並確保它絕不會繼續冒泡成退出整個編輯器。 */
   const cancelCompose = useCallback(() => {
     const previous = beforeComposeRef.current;
     releaseComposePreview();
@@ -8229,7 +8180,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       e.stopPropagation();
       setDragPointIdx(idx);
       setIsInteracting(true);
-      lastRenderDurationRef.current = 12; // Reset duration to prevent slow throttle carry-over
+      lastRenderDurationRef.current = 12; // 重設時間，避免慢速節流延續下來
   };
   
   const handleCurveMove = (e: React.MouseEvent | React.TouchEvent) => {
@@ -8250,10 +8201,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const newCurves = { ...paramsRef.current.curves, [currentCurveChannel]: newPoints };
     paramsRef.current = { ...paramsRef.current, curves: newCurves };
     isDirtyRef.current = true;
-    /* Do not re-render the editor per move: that rebuilt the whole React tree
-       (~every panel) on each frame and was what made curves unusable. The
-       canvas loop reads paramsRef; the curve graphic is updated in place and
-       React state is written once, on release (handleCurveEndDrag). */
+    /* 拖動時不要每動一下就重新 render 編輯器：每格都重建整棵 React 樹（幾乎所有面板）會讓曲線根本沒辦法用。
+       畫布迴圈讀 paramsRef，曲線圖形直接就地更新，React state 只在放開時寫一次（handleCurveEndDrag） */
     paintCurveSvg(newPoints);
   };
   const curvePathRef = useRef<SVGPathElement | null>(null);
@@ -8342,7 +8291,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
          lastCreatedTimeRef.current = e.timeStamp;
          setDragPointIdx(newIdx);
          setIsInteracting(true);
-         lastRenderDurationRef.current = 12; // Reset duration to prevent slow throttle carry-over
+         lastRenderDurationRef.current = 12; // 重設時間，避免慢速節流延續下來
     }
   };
 
@@ -8579,7 +8528,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       {saveState !== 'success' && (
       <header ref={editorHeaderRef} className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 ${exportMenuOpen ? '' : 'backdrop-blur-xl'} ${showExifPanel || (exportMenuOpen && !STUDIO_CATS.includes(activeCategory)) ? 'z-[90]' : 'z-20'}`}>
         <div className="w-20">
-            {/* 构图中的返回只退出构图并丢弃 draftGeo；其他分页才离开编辑器。 */}
+            {/* 構圖中的返回只退出構圖並丟棄 draftGeo；其他分頁才離開編輯器。 */}
             <button
               onClick={activeCategory === 'compose' ? cancelCompose : requestLeave}
               aria-label={activeCategory === 'compose' ? '退出构图并放弃变更' : '返回'}
@@ -8711,7 +8660,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         >
           <TransformComponent wrapperClass="!w-full !h-full absolute inset-0" contentClass="!w-full !h-full flex items-center justify-center p-4">
             <div className="relative shadow-2xl w-full h-full flex items-center justify-center">
-              {/* Sizing wrapper to ensure canvas and interactive overlay scale/move together perfectly */}
+              {/* 尺寸外層，讓畫布和互動疊層一起縮放、移動 */}
               <div
                 ref={previewFitRef}
                 /* 預覽框尺寸是量測結果，不應該做補間；首次進頁若從暫存高度動畫到
@@ -8729,7 +8678,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   maxWidth: 'none',
                 }}
               >
-                {/* Single Canvas for Display and Compare */}
+                {/* 顯示和對比共用一張畫布 */}
                 {/* objectFit:'fill' 而不是 object-contain：外面那層已經用 aspectRatio
                     鎖成正確比例了，這裡再讓畫布「照自己的比例」留黑邊，
                     只要畫布尺寸換一下（全解析度↔代理）黑邊就會跟著變、圖片就位移。
@@ -8762,7 +8711,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   </div>
                 )}
 
-              {/* Linear Mask Interactive Vector Overlay */}
+              {/* 線性遮罩的互動向量疊層 */}
               {activeCategory === 'mask' && canvasBounds.width > 0 && (
                 <>
                   <svg
@@ -8792,7 +8741,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   })()}
 
                   <g transform={`translate(${canvasBounds.left}, ${canvasBounds.top})`}>
-                    {/* Vector guides */}
+                    {/* 向量參考線 */}
                     {params.maskCreated && (maskView.maskType ?? 'linear') === 'linear' && !maskPicking && !maskDeselected && !(isInteracting && !activeDragRef.current) && (
                       <g
                         id="ui-guides"
@@ -8801,7 +8750,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       }}
                       transform={`translate(${maskView.maskCx * canvasBounds.width}, ${maskView.maskCy * canvasBounds.height}) rotate(${(maskView.maskAngle * 180) / Math.PI})`}
                     >
-                      {/* Connecting axis line */}
+                      {/* 連接的軸線 */}
                       <line
                         data-mask-axis
                         className="pointer-events-none"
@@ -8814,7 +8763,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         strokeDasharray="2,4"
                       />
 
-                      {/* Rotator group */}
+                      {/* 旋轉控制組 */}
                       <g
                         id="ui-rotator-group"
                         style={{
@@ -8825,7 +8774,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         data-mask-rot
                         transform={`translate(${maskView.maskD * canvasBounds.width}, 0)`}
                       >
-                        {/* Rotator Arm */}
+                        {/* 旋轉臂 */}
                         <line
                           className="pointer-events-none"
                           x1={0}
@@ -8846,7 +8795,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           strokeWidth="1.5px"
                           strokeLinecap="round"
                         />
-                        {/* Rotator handle */}
+                        {/* 旋轉把手 */}
                         <circle
                           cx={35}
                           cy={0}
@@ -8869,7 +8818,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         />
                       </g>
 
-                      {/* Start line (100% boundary) */}
+                      {/* 起點線（100% 邊界） */}
                       <g data-mask-start transform={`translate(${-maskView.maskD * canvasBounds.width}, 0)`}>
                         <line
                           x1={0}
@@ -8903,7 +8852,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         />
                       </g>
 
-                      {/* End line (0% boundary) */}
+                      {/* 終點線（0% 邊界） */}
                       <g data-mask-end transform={`translate(${maskView.maskD * canvasBounds.width}, 0)`}>
                         <line
                           x1={0}
@@ -8937,7 +8886,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         />
                       </g>
 
-                      {/* Center line */}
+                      {/* 中心線 */}
                       <g>
                         <line
                           x1={0}
@@ -8972,7 +8921,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         />
                       </g>
 
-                      {/* Center Positioning Pin */}
+                      {/* 中心定位點 */}
                       <g>
                         <rect
                           x={-16}
@@ -9465,7 +9414,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           </button>
         )}
 
-        {/* Compare Button */}
+        {/* 對比按鈕 */}
         {(() => {
         const compareButton = (
         <button
@@ -9598,7 +9547,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         </motion.div>}
         </AnimatePresence>, detailPanelHost)}
 
-        {/* --- CURVE OVERLAY UI --- */}
+        {/* 曲線疊層介面 */}
         {detailPanelHost && createPortal(<AnimatePresence>
         {activeToolId === 'curves' && <motion.div key="curves" data-curves-panel
            /* 離開時直接收掉：留著淡出的話，下一個工具出現的那一下會看到這一層的殘影 */
@@ -9607,7 +9556,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
            style={{ height: '250px', bottom: 12, background: 'transparent', pointerEvents: 'none' }}
         >
            <div className="flex items-center justify-center w-full h-full relative pointer-events-none">
-               {/* Wrapper to center the box, with controls anchored relative to it. Enable pointer events for children. */}
+               {/* 讓方塊置中、控制項相對它定位的外層；子元素可以點 */}
                {/* pointer-events 不會被祖先的 none 蓋掉：只要子孫自己寫 auto，
                    即使外層是 none 它照樣吃得到觸控。曲線收起來的時候這一塊
                    （240×240 的格子加左邊那排通道點）是看不見但還在原地的，
@@ -9615,7 +9564,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    所以這裡也要跟著開關。 */}
                <div className={`relative ${activeToolId === 'curves' ? 'pointer-events-auto' : 'pointer-events-none'}`}>
                    
-                   {/* Left Controls */}
+                   {/* 左側控制項 */}
                    {/* 色點與重置鍵都縮成 26px（原本 32px 的八成）。
                         原本是 justify-between 撐滿 242px，變小之後空隙會跟著變大，
                         所以改成置中＋固定 16px 間距（也是原本 20px 的八成）。 */}
@@ -9647,7 +9596,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                        </button>
                    </div>
 
-                   {/* Curve Box */}
+                   {/* 曲線方塊 */}
                    {/* 外框就是格線的最外面那一圈：跟裡面的線同色同粗，
                         整塊看起來才是一張完整的 4×4 格線。 */}
                    <div className="relative w-[240px] h-[240px] bg-transparent border border-white shrink-0 touch-none rounded-sm"
@@ -9814,7 +9763,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           setIsInteracting(false); 
                           fastPreviewCacheRef.current.active = false; 
                           
-                          // Check which parameters were modified and update states
+                          // 檢查改了哪些參數並更新狀態
                           const p = paramsRef.current;
                           const id = activeTool?.id;
                           
@@ -10142,10 +10091,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           const enterCompose = () => {
               if (activeCategory === 'compose') return;
               if (activeCategory !== 'compose') beforeComposeRef.current = { cat: activeCategory, tool: activeToolId };
-              // Capture the actual, already fitted preview before the compose
-              // footer changes the available space. previewAspect is a {w,h}
-              // object, never a numeric ratio; dividing by it produced NaN and
-              // invalid crop geometry after the first pointer move.
+              // 在合成底部改變可用空間之前，先擷取實際已經縮放好的預覽。previewAspect 是 {w,h} 物件，不是數字比例；
+              // 拿它來除會得到 NaN，第一次移動指標後裁切幾何就壞了
               const bounds = previewFitRef.current?.getBoundingClientRect();
               composeStageLimitRef.current = bounds && Number.isFinite(bounds.width) && Number.isFinite(bounds.height) && bounds.width > 0 && bounds.height > 0
                 ? {width:bounds.width,height:bounds.height} : previewFitSize;

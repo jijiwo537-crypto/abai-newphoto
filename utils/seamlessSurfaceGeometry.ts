@@ -12,8 +12,7 @@ export function resolveSeamSurface(points:Point[],worldW:number,worldH:number,la
   if(axis)bounds={left:bounds.left-grow!.l,top:bounds.top-grow!.t,right:bounds.right+grow!.r,bottom:bounds.bottom+grow!.b};
   const forward=new DOMMatrix([(b.x-a.x)/worldW,(b.y-a.y)/worldW,(c.x-a.x)/worldH,(c.y-a.y)/worldH,a.x,a.y]);
   const inverse=forward.inverse();
-  // A screen pixel always samples the same world point, even as the visible
-  // rectangle grows/shrinks by a pixel. No independently rounded photo offsets.
+  // 螢幕上的一個像素永遠取樣同一個世界座標點，就算看得到的矩形大一個或小一個像素也一樣；照片位移不各自取整
   const left=Math.floor(Math.max(bounds.left,clip.left)*dpr)/dpr,top=Math.floor(Math.max(bounds.top,clip.top)*dpr)/dpr;
   const right=Math.ceil(Math.min(bounds.right,clip.right)*dpr)/dpr,bottom=Math.ceil(Math.min(bounds.bottom,clip.bottom)*dpr)/dpr;
   if(right<=left||bottom<=top||!Number.isFinite(inverse.a))return null;

@@ -17,9 +17,10 @@ export type PhotoClip = { x: number; y: number; width: number; height: number } 
 export type PhotoPaint = { source: HTMLImageElement; width: number; height: number;
   radius: number; pad: number; edgePads?: number[]; edges: boolean[]; clip: PhotoClip; dim: number };
 
-/** A photo keeps its original decoded texture. SVG coordinates, unlike nested
- * HTML layout boxes, retain fractional geometry throughout native zoom. No
- * readback, thumbnail substitution or per-frame photo-sized raster is involved. */
+/**
+ * 照片一直用原本解碼的貼圖。SVG 座標不像層層的 HTML 版面，原生縮放時小數點也保得住；
+ * 不讀回、不換縮圖、也不會每格產生照片大小的點陣
+ */
 export class ClassicPhotoLayer {
   readonly root = document.createElementNS(NS, 'svg');
   private clipRect = document.createElementNS(NS, 'rect');
@@ -58,8 +59,7 @@ export class ClassicPhotoLayer {
         const text = String(value); if (el.getAttribute(name) !== text) el.setAttribute(name, text);
       }
     };
-    // No viewBox rescaling: these are exactly the same logical units as ink and
-    // page positions. Keep the viewport extent independent of any one photo.
+    // 不重設 viewBox：跟線條、頁面位置完全同一套邏輯單位。viewport 的範圍不能跟著某一張照片
     const column = this.root.parentElement?.parentElement;
     attr(this.root, { width: parseFloat(column?.style.width || '1'), height: parseFloat(column?.style.height || '1') });
     attr(this.content, { transform: `matrix(${matrix.a} ${matrix.b} ${matrix.c} ${matrix.d} ${matrix.e} ${matrix.f})` });

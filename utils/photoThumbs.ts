@@ -1,13 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-/* Small JPEG thumbnails for the camera roll.
- *
- * The shutter preview and the gallery grid used to show every 12MP photo
- * through <img src={fullPhoto}>. Each one is decoded at full size (~50MB of
- * pixels on iPhone) just to fill a 56px square; a handful of shots plus the
- * capture buffers was enough for iOS to kill the page (white screen, then
- * reload). Thumbnails are made once, one photo at a time, and the full photo
- * is only decoded when it is opened in the editor. */
+/* 相機膠卷用的小 JPEG 縮圖。快門預覽和相簿格子如果直接用 <img src={原圖}> 顯示每張 1200 萬像素的照片，
+   每張都會以全尺寸解碼（iPhone 上約 50MB 像素），只為了填一個 56px 的方塊；拍幾張加上拍照暫存，
+   iOS 就會關掉網頁（白畫面後重新載入）。縮圖一張一張做一次，原圖只有在編輯器打開時才解碼 */
 export const THUMB_EDGE = 360;
 
 const encode = (canvas: HTMLCanvasElement) => new Promise<string | null>(resolve => {
@@ -15,7 +10,7 @@ const encode = (canvas: HTMLCanvasElement) => new Promise<string | null>(resolve
   catch { resolve(null); }
 });
 
-/** Thumbnail of a canvas that is already in memory (no extra decode). */
+/** 記憶體裡已經有的畫布做縮圖（不用另外解碼） */
 export const thumbFromCanvas = async (source: CanvasImageSource, w: number, h: number) => {
   if (!w || !h) return null;
   const k = Math.min(1, THUMB_EDGE / Math.max(w, h));
@@ -42,7 +37,7 @@ const thumbFromUrl = (src: string) => new Promise<string | null>(resolve => {
   img.src = src;
 });
 
-/** thumbs[src] for every photo; missing ones are generated sequentially. */
+/** 每張照片都有 thumbs[src]；缺的依序產生 */
 export function usePhotoThumbs(photos: string[]) {
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const ref = useRef(thumbs); ref.current = thumbs;
@@ -56,7 +51,7 @@ export function usePhotoThumbs(photos: string[]) {
     if (thumb) setThumbs(t => ({ ...t, [src]: thumb }));
   }, []);
   useEffect(() => {
-    // Drop thumbnails of photos that are gone.
+    // 丟掉已經不在的照片的縮圖
     const keep = new Set(photos);
     const stale = Object.keys(ref.current).filter(k => !keep.has(k));
     if (stale.length) {
@@ -70,7 +65,7 @@ export function usePhotoThumbs(photos: string[]) {
     void thumbFromUrl(next).then(url => {
       busy.current = false;
       if (!alive.current) { if (url) URL.revokeObjectURL(url); return; }
-      // Record a failure as the photo itself so it is not retried forever.
+      // 失敗時把照片本身記成縮圖，才不會一直重試
       setThumbs(t => ({ ...t, [next]: url ?? next }));
     });
   }, [photos, thumbs]);

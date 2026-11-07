@@ -1,7 +1,8 @@
 export type PatternDirection='left-right'|'right-left'|'top-bottom'|'bottom-top'|'random';
 function seed(id:string){let n=2166136261;for(const ch of id)n=Math.imul(n^ch.charCodeAt(0),16777619);return n>>>0;}
-/** Stable spatial ordering shared by preview and export. Mirrored instances
- * of one generated pattern retain the same start time. */
+/**
+ * 預覽和存檔共用的固定空間順序。同一個自動產生的圖案的鏡像實例，起始時間一樣
+ */
 export function patternEntranceRanks(holes:{id:string;x:number;y:number}[],direction:PatternDirection='left-right'){
  const sorted=holes.map((h,i)=>({h,i})).sort((a,b)=>{
   const delta=direction==='random'?seed(a.h.id)-seed(b.h.id)

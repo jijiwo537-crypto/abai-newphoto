@@ -21,5 +21,5 @@ test('feather resource keys depend on photo/crop, never preview zoom or pan',()=
  const s=readFileSync(new URL('../utils/creativeFeatherSurface.ts',import.meta.url),'utf8');
  assert.match(s,/cropKey=JSON.stringify\(\[p,g\]\)/);assert.match(s,/density=image\?1\/tr.scale:1/);
  assert.doesNotMatch(s,/cropKey=JSON.stringify\([^\n]*(?:m\.a|m\.e|left|right)/);
- assert.match(s,/Integer source-pixel origin/);
+ assert.match(s,/整數的來源像素原點/);
 });

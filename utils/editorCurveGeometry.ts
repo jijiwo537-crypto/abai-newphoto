@@ -3,7 +3,7 @@ export const isIdentityCurve = (points: Point[]) => points.length === 2
   && points[0].x === 0 && points[0].y === 0
   && points[1].x === 255 && points[1].y === 255;
 
-/** Sample the same mapping used by the LUT, including flat endpoint extensions. */
+/** 取樣跟 LUT 用的同一個對應，包含兩端平平延伸的部分 */
 export function boundedCurvePath(points: Point[], sample: (x: number, p: Point[]) => number): string {
   const p = [...points].sort((a, b) => a.x - b.x);
   let path = '';

@@ -1,4 +1,4 @@
-// Preserve the original three chromatic presets within a restrained rainbow.
+// 在收斂的彩虹色裡保留原本三組彩色預設
 import {LEGACY_TEXT_COLORS} from './colorPalettes.ts';
 const ORIGINAL_ART_SWATCHES=[
  ['#ffffff','白色'],['#ff7899','玫瑰'],['#ffd178','琥珀'],['#f5ee9e','柔黃'],

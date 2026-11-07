@@ -174,9 +174,10 @@ const glide = (el: HTMLElement, v0: number) => {
 
 let installed = false;
 
-/** Any slider is being dragged right now. Background work that would compete
-    with every slider step (e.g. rebuilding a cached scene) waits for it;
-    SLIDER_RELEASE_EVENT fires on window when the drag ends. */
+/**
+ * 現在有任何滑桿正在拖。會跟每一格滑桿搶資源的背景工作（例如重建快取的場景）要等它；
+ * 拖動結束時 window 上會發出 SLIDER_RELEASE_EVENT
+ */
 let held = 0;
 export const sliderHeld = () => held > 0;
 /* 給 utils/photoInteractionIdle 用（那支不 import 這支）：手指按在滑桿上時，背景工作要等 */

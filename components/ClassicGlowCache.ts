@@ -3,9 +3,10 @@ const cache = new Map<string, Glow>();
 let bytes = 0;
 const BUDGET = 64 * 1024 * 1024;
 
-/** Only the soft light field is cached. The sharp path is always drawn as a
- * vector in the current scene. One fixed density covers the full preview zoom
- * range, so starting/stopping a gesture never swaps quality tiers. */
+/**
+ * 只快取柔光的光場，銳利的線條每次都在目前場景裡用向量畫。整個預覽縮放範圍用同一個密度，
+ * 開始、結束手勢時不會換畫質
+ */
 export function paintCachedClassicGlow(ctx: CanvasRenderingContext2D, path: Path2D,
   key: string, width: number, height: number, lineWidth: number, dash: number[],
   color: string, blurs: number[]) {
@@ -24,8 +25,7 @@ export function paintCachedClassicGlow(ctx: CanvasRenderingContext2D, path: Path
     }
     const canvas = document.createElement('canvas');canvas.width = w;canvas.height = h;
     const g = canvas.getContext('2d');if (!g) return false;
-    // Cast the shadow into the texture while the source stroke stays outside.
-    // This prevents a cached raster stroke from replacing the live vector edge.
+    // 陰影投到貼圖裡，原本的線條留在外面，快取的點陣線條才不會取代即時的向量邊緣
     const offset = w + (width + pad * 2) * density;
     g.setTransform(density,0,0,density,pad*density-offset,pad*density);
     g.strokeStyle = color;g.lineWidth = lineWidth;g.lineCap = 'butt';g.setLineDash(dash);

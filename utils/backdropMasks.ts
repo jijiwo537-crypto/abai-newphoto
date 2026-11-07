@@ -1,7 +1,7 @@
 import {FX_DEFS} from './glEffects';
 import {blurRGBA} from './artMaterials';
 
-/** Material layers sample preceding scene ink, never a saved source photograph. */
+/** 材質圖層取樣的是前面已經畫好的場景，絕不是存下來的來源照片 */
 export const MASK_SHAPE_ITEMS = [
  {id:'mask-mosaic',kind:'mask-mosaic',filled:true,label:'方形馬賽克'},
  {id:'mask-bricks',kind:'mask-bricks',filled:true,label:'方形玻璃磚'},
@@ -10,11 +10,11 @@ export const MASK_SHAPE_ITEMS = [
  {id:'mask-negative-mono',kind:'mask-negative-mono',filled:true,label:'黑白負片'},
  {id:'mask-monochrome',kind:'mask-monochrome',filled:true,label:'方形黑白'},
 ] as const;
-// Old drafts keep rendering; removed materials are no longer in the picker.
+// 舊草稿照樣畫得出來；拿掉的材質不再出現在選單裡
 export const isBackdropMask=(kind?:string)=>MASK_SHAPE_ITEMS.some(s=>s.kind===kind)||kind==='mask-thermal'||kind==='mask-frost-circle'||kind==='mask-frost-feather';
 export const maskGeometry=(kind:string,settings:MaskSettings={})=>settings.maskShape||(kind.includes('circle')||kind.includes('feather')?'circle':'square');
 export type MaskSettings={maskShape?:'square'|'circle'|'star';maskAmount?:number;maskCells?:number;maskRefract?:number;maskFeather?:number};
-/** Glass bricks: default 20, at most 50 (older projects may have saved up to 60). */
+/** 玻璃磚：預設 20，最多 50（舊作品可能存到 60） */
 export const GLASS_DEFAULT_CELLS=20,GLASS_MAX_CELLS=50;
 export const glassCells=(settings:MaskSettings)=>Math.max(4,Math.min(GLASS_MAX_CELLS,settings.maskCells??GLASS_DEFAULT_CELLS));
 export const maskDefaults=(kind:string):MaskSettings=>({maskShape:kind.includes('circle')||kind.includes('feather')?'circle':'square',maskAmount:kind.includes('frost')?50:100,maskCells:kind==='mask-mosaic'?15:GLASS_DEFAULT_CELLS,maskRefract:100,maskFeather:kind==='mask-frost-feather'?35:0});
@@ -23,8 +23,9 @@ function clipMask(ctx:CanvasRenderingContext2D,w:number,h:number,shape:string){
  else if(shape==='star'){for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,r=i%2?.45:1,x=Math.cos(a)*w/2*r,y=Math.sin(a)*h/2*r;i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.closePath();}
  else ctx.rect(-w/2,-h/2,w,h);ctx.clip();
 }
-/** How far from a pixel this mask reads the scene beneath it, in the same
-    units as w/h. A tiled scene must render at least this much margin. */
+/**
+ * 這個遮罩從一個像素往外讀多遠的下層場景，單位跟 w/h 一樣。分塊繪製的場景至少要留這麼多邊
+ */
 export const maskSampleReach=(kind:string,w:number,h:number,settings:MaskSettings={})=>{
  if(kind==='mask-mosaic'){const n=Math.max(1,Math.floor((settings.maskCells??15)+.5));return w/n+2;}
  if(kind==='mask-bricks'){const n=glassCells(settings),rows=Math.max(1,Math.floor(n*h/w+.001));return Math.max(w/n,h/rows)*(1-1/GLASS_MAGNIFY)/2*Math.max(0,(settings.maskRefract??100)/100)+2;}
@@ -39,38 +40,29 @@ export function maskPhysicalBounds(m:DOMMatrix,w:number,h:number,width:number,he
 }
 
 const body=(id:string)=>FX_DEFS.find(d=>d.id===id)!.passes[0].body.replace(/texture2D\(uTex,\s*([^;]+?)\)\.rgb/g,'sampleBackdrop($1).rgb').replace('floor(fxGlassBlocks * uRes.y / uRes.x)','max(1., floor(fxGlassBlocks * uRes.y / uRes.x + .001))');
-/* Glass-brick refraction is a lens per brick, sized by the BRICK. The photo
-   effect displaces by a fraction of the whole image (0.06), which inside a
-   mask meant a magnification of 1 - 0.12 * bricks: about -1.6 (flipped) at
-   22 bricks and -6 at 60. A flipped, magnified view slides the other way
-   at (1 - magnification) times the brick's own motion, so scaling the mask
-   made the content of every brick race up and down. An upright zoom of
-   GLASS_MAGNIFY per brick keeps the faceted look; its content slides only
-   (1 - 1/GLASS_MAGNIFY) of the brick's motion, about 7x calmer. */
+/* 玻璃磚的折射是每塊磚一個鏡片，大小跟著「磚」走。照片特效的位移是整張圖的比例（0.06），
+   放進遮罩裡等於放大率 1 - 0.12 × 磚數：22 塊時約 -1.6（上下顛倒），60 塊時約 -6。
+   顛倒又放大的畫面會以磚本身動作的 (1 - 放大率) 倍往反方向滑，所以縮放遮罩時每塊磚裡的內容都上下狂飆。
+   每塊磚用 GLASS_MAGNIFY 的正向放大，保留切面的感覺，內容只滑動磚動作的 (1 - 1/GLASS_MAGNIFY)，
+   大約平穩 7 倍 */
 const GLASS_MAGNIFY=1.6;
 const bricksBody=(()=>{const b=body('fxGlass'),from='vec2 p = uv - n * fxGlassRefract * 0.06;';if(!b.includes(from))throw Error('mask glass refraction changed');
  return b.replace(from,`vec2 p = uv - n * fxGlassRefract * ${((1-1/GLASS_MAGNIFY)/2).toFixed(4)} / grid;`);})();
-/* A mask's mosaic tile is the AVERAGE of the photo under it, not a point
-   sample. Point samples (one, or a fixed 5x5 set) are tens of pixels apart
-   once a tile is large on a 3x screen: while the mask is scaled they hit or
-   miss photo detail and whole rows of tiles flicker, which reads as the grid
-   jumping up and down. A separate pass renders one fragment per tile with a
-   dense, tile-size-aware sample set (spacing <= ~2 physical px), so a tile's
-   colour changes continuously with the geometry. */
+/* 遮罩的馬賽克每一塊是底下照片的「平均」，不是單點取樣。在 3 倍螢幕上一塊變大之後，
+   單點（一個或固定 5×5）之間相距好幾十個像素：縮放遮罩時時而打到、時而錯過照片細節，整排的格子都在閃，
+   看起來像格子上下跳。另外跑一次、每塊一個片段，用跟著格子大小的密集取樣（間距約 2 個實體像素以內），
+   格子的顏色就會隨幾何連續變化 */
 const mosaicPoint='sampleBackdrop((cell + 0.5) / grid).rgb';
 const mosaicBody=(()=>{const b=body('fxMosaic');if(!b.includes(mosaicPoint))throw Error('mask mosaic sampling changed');
  return b.replace('vec3 c = '+mosaicPoint+';','vec3 c=texture2D(cellColors,(cell+.5)/cellCount).rgb;');})();
 const MOSAIC_MAX_SAMPLES=32;
 const mosaicSamples=(w:number,n:number,m:{a:number;b:number;c:number;d:number})=>Math.max(5,Math.min(MOSAIC_MAX_SAMPLES,Math.ceil(w/n*Math.max(Math.hypot(m.a,m.b),Math.hypot(m.c,m.d))/2)));
-/* The blur runs at a reduced resolution. Snap it to quarter-octave steps:
-   scaling a frosted mask changes sigma every frame, and a continuously
-   changing intermediate size reallocated the textures and moved the sampling
-   grid each frame (visible shimmer). Blur strength stays continuous. */
+/* 模糊用降低的解析度跑，並對齊到四分之一倍頻的級距：縮放毛玻璃遮罩時 sigma 每格都在變，
+   中間尺寸一直變的話每格都要重新配置貼圖、取樣網格也會跟著移（看得到閃爍）。模糊強度本身照樣連續 */
 const blurBandwidth=(sigma:number)=>Math.min(1,2**(Math.floor(Math.log2(6/Math.max(1,sigma))*4)/4));
 const vertex='attribute vec2 p;varying vec2 uv;void main(){uv=(p+1.)*.5;gl_Position=vec4(p,0.,1.);}';
 const header=`precision highp float;varying vec2 uv;uniform sampler2D image;uniform vec2 size;`;
-// The exact same 49-tap Gaussian, but weights are evaluated once per mask,
-// not 49 exponential functions for every pixel in both passes.
+// 一樣是 49 點的高斯，但權重每個遮罩只算一次，不必兩次都對每個像素算 49 次指數
 const blur=header+`uniform vec2 direction;uniform float stepSize;uniform float weights[25];void main(){vec4 sum=texture2D(image,uv)*weights[0];for(int i=1;i<=24;i++){vec2 d=direction*float(i)*stepSize;sum+=(texture2D(image,uv+d)+texture2D(image,uv-d))*weights[i];}gl_FragColor=sum;}`;
 const material=header+`
  uniform sampler2D softened,cellColors;uniform vec3 mapX,mapY,invX,invY;uniform vec2 uRes,sampleSize,origin,cellCount;
@@ -100,8 +92,7 @@ const material=header+`
   if(mode<1.5||mode>2.5)c=mix(original.rgb,c,amount);
   alpha*=original.a;gl_FragColor=vec4(c*alpha,alpha);
  }`;
-// Consecutive backdrop layers are one GPU composition, not N GPU→Canvas→GPU
-// round trips. Edges are analytic in the current physical viewport.
+// 連續的背景圖層是一次 GPU 合成，不是 N 趟 GPU→Canvas→GPU 來回。邊緣在目前的實體 viewport 裡解析地算
 const batchMaterial=material
  .replace('uniform float mode,circle,feather,amount,edgeAA;','uniform float mode,circle,feather,amount,edgeAA,objectOpacity;uniform vec2 starPoints[10];')
  .replace('vec4 sampleBackdrop(vec2 p){return texture2D(image,screenUV(p));}',`vec4 straight(vec4 c){return vec4(c.rgb/max(c.a,.00001),c.a);}vec4 sampleBackdrop(vec2 p){return straight(texture2D(image,screenUV(p)));}`)
@@ -152,13 +143,13 @@ class MaskGpu {
   const texture=()=>{const t=gl.createTexture()!;gl.bindTexture(gl.TEXTURE_2D,t);for(const [k,v]of [[gl.TEXTURE_MIN_FILTER,gl.LINEAR],[gl.TEXTURE_MAG_FILTER,gl.LINEAR],[gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE]])gl.texParameteri(gl.TEXTURE_2D,k,v);return t;};
   this.input=texture();this.first=texture();this.second=texture();this.frame=gl.createFramebuffer()!;
   this.cells=texture();gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
-  // Every sampler must be complete even when its runtime branch is unused.
-  // Otherwise WebKit can output transparent black until frost was used once.
+  // 每個取樣器都要完整，就算它在執行時的分支沒用到。不然 WebKit 可能在第一次用毛玻璃之前都輸出透明黑
   for(const t of [this.input,this.first,this.second,this.cells]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));}
  }
- /** Mosaic tiles: one fragment per tile, each the area average of the
-     backdrop beneath it. Leaves the tile texture bound on unit 2 and the
-     cellColors/cellCount uniforms set on the material program. */
+ /**
+  * 馬賽克格子：每塊一個片段，各自是底下背景的面積平均。格子貼圖留在 unit 2，
+  * cellColors/cellCount 的 uniform 設在材質程式上
+  */
  mosaicCells(cellProgram:WebGLProgram,material:WebGLProgram,input:WebGLTexture,m:{a:number;b:number;c:number;d:number;e:number;f:number},w:number,h:number,settings:MaskSettings,sampleWidth:number,sampleHeight:number,originX:number,originY:number){
   const gl=this.gl,blocks=settings.maskCells??15,n=Math.max(1,Math.floor(blocks+.5));
   const cols=Math.min(this.maxTextureSize,n),rows=Math.min(this.maxTextureSize,Math.max(1,Math.ceil(n*h/w-1e-6)));
@@ -196,8 +187,7 @@ class MaskGpu {
      const width=photo.source instanceof HTMLImageElement?photo.source.naturalWidth:photo.source.width,height=photo.source instanceof HTMLImageElement?photo.source.naturalHeight:photo.source.height;
      if(width>this.maxTextureSize||height>this.maxTextureSize)throw Error('mask photo texture too large');
      gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,photo.source);
-     // Retain full intrinsic pixels and use the same trilinear footprint at
-     // rest and during gestures. Minification must not alias fine photo detail.
+     // 保留完整的原始像素，靜止和手勢中都用同樣的三線性取樣範圍；縮小時不能讓照片細節產生鋸齒
      if('texStorage2D' in gl||(width&(width-1))===0&&(height&(height-1))===0){gl.generateMipmap(gl.TEXTURE_2D);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);}
      slot={source:photo.source,texture,width,height};backdropMaskDiagnostics.uploads++;
     }else{gl.bindTexture(gl.TEXTURE_2D,slot.texture);backdropMaskDiagnostics.reuses++;}
@@ -233,8 +223,7 @@ class MaskGpu {
    f('edgeAA',1/Math.max(1,Math.min(layer.w*Math.hypot(m.a,m.b),layer.h*Math.hypot(m.c,m.d))));f('objectOpacity',layer.opacity);f('feather',0);f('mode',layer.kind==='mask-mosaic'?0:layer.kind==='mask-bricks'?1:layer.kind==='mask-negative'?3:layer.kind==='mask-negative-mono'?6:layer.kind==='mask-monochrome'?4:layer.kind==='mask-thermal'?5:2);f('amount',layer.kind.includes('frost')||layer.kind==='mask-mosaic'||layer.kind==='mask-bricks'||layer.kind==='mask-negative'||layer.kind==='mask-negative-mono'?1:(settings.maskAmount??100)/100);
    f('fxMosaicBlocks',settings.maskCells??15);f('fxMosaicGap',0);f('fxMosaicShape',0);f('fxGlassBlocks',glassCells(settings));f('fxGlassRound',0);f('fxGlassRefract',(settings.maskRefract??100)/100);f('fxGlassBevel',0);
    const last=i===layers.length-1;gl.bindFramebuffer(gl.FRAMEBUFFER,last?null:this.frame);if(!last){const output=this.batchTextures[1+i%2];gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,output,0);input=output;}
-   // Outside the mask, use a cheap exact texture copy. Only its visible
-   // physical bounds need the material shader (including analytic edges).
+   // 遮罩外面用便宜的精確貼圖複製，只有看得到的實體範圍需要材質著色器（包含解析的邊緣）
    if(limited){gl.enable(gl.SCISSOR_TEST);gl.scissor(0,h-LH,LW,LH);}
    use(this.batchCopyProgram);gl.drawArrays(gl.TRIANGLES,0,6);gl.disable(gl.SCISSOR_TEST);use(program);
    const full=maskPhysicalBounds(m,layer.w,layer.h,w,h,2);
@@ -245,17 +234,15 @@ class MaskGpu {
  }
  render(source:HTMLCanvasElement,m:DOMMatrix,w:number,h:number,kind:string,settings:MaskSettings,b:{left:number;top:number;width:number;height:number},sigma:number,sourceStamp?:unknown,sourceKey:unknown='default'){
   const start=performance.now(),gl=this.gl;if(gl.isContextLost())throw Error('mask context lost');
-  // Capacity grows in small blocks; moving a mask never reallocates its source.
+  // 容量以小區塊增加；移動遮罩絕不重新配置它的來源
   const width=Math.ceil(b.width/64)*64,height=Math.ceil(b.height/64)*64;
   if(width>this.maxTextureSize||height>this.maxTextureSize)throw Error('mask texture too large');
   const resized=width>this.width||height>this.height;
   if(resized){this.width=Math.max(width,this.width);this.height=Math.max(height,this.height);}
-  // Upload the already-composited viewport directly. No 2D staging/readback;
-  // mask pose is a uniform, not an object-sized bitmap allocation.
+  // 直接上傳已經合成好的 viewport，不經過 2D 暫存或讀回；遮罩姿態是 uniform，不配置物件大小的點陣
   if(source.width>this.maxTextureSize||source.height>this.maxTextureSize)throw Error('mask source too large');
-  // Each logical layer has its own resident lower-ink texture. Alternating
-  // masks must not upload the entire viewport again just because another
-  // mask was painted between frames. This cache is bounded, not object-sized.
+  // 每個邏輯圖層有自己常駐的下層線條貼圖。遮罩交替出現時，
+  // 不能只因為兩格之間畫了別的遮罩就重新上傳整個 viewport。這個快取有上限，不跟物件大小走
   let slot=this.sources.get(sourceKey);
   if(!slot){
    const texture=this.sources.size?gl.createTexture()!:this.input;
@@ -285,9 +272,8 @@ class MaskGpu {
   if(kind.includes('frost')){
    const blurKey=`${sigma}|${source.width}x${source.height}`;
    if(unchanged&&this.lastBlur===blurKey)return this.canvas;
-   // Existing art-material Gaussian uses six samples per sigma. Only this
-   // deliberately band-limited blur is sampled at that bandwidth: original
-   // ink, negative/mosaic/brick sampling and analytic mask edges stay native.
+   // 現有的藝術材質高斯每個 sigma 取六個樣本。只有這個刻意限制頻寬的模糊用這個頻寬取樣：
+   // 原本的線條、負片、馬賽克、磚塊取樣和解析的遮罩邊緣都維持原解析度
    const bandwidth=blurBandwidth(sigma);
    const bw=Math.max(1,Math.ceil(source.width*bandwidth)),bh=Math.max(1,Math.ceil(source.height*bandwidth));
    if(bw!==this.blurWidth||bh!==this.blurHeight){this.blurWidth=bw;this.blurHeight=bh;for(const t of [this.first,this.second]){gl.bindTexture(gl.TEXTURE_2D,t);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,bw,bh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}}
@@ -297,8 +283,7 @@ class MaskGpu {
    gl.uniform1f(this.location(this.blurProgram,'stepSize'),step);gl.uniform1fv(this.location(this.blurProgram,'weights[0]'),weights);
    gl.bindFramebuffer(gl.FRAMEBUFFER,this.frame);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.first,0);gl.uniform2f(this.location(this.blurProgram,'direction'),1/bw,0);gl.drawArrays(gl.TRIANGLES,0,6);
    gl.bindTexture(gl.TEXTURE_2D,this.first);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.second,0);gl.uniform2f(this.location(this.blurProgram,'direction'),0,1/bh);gl.drawArrays(gl.TRIANGLES,0,6);
-   // Transfer only the blurred bandwidth, not a full-resolution GPU bitmap.
-   // Canvas clips/composites this material with native analytic edges below.
+   // 只傳模糊後的頻寬，不傳原解析度的 GPU 點陣。下面由 Canvas 用原生的解析邊緣裁切、合成這個材質
    if(this.canvas.width!==bw)this.canvas.width=bw;if(this.canvas.height!==bh)this.canvas.height=bh;
    gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,bw,bh);use(this.copyProgram);gl.bindTexture(gl.TEXTURE_2D,this.second);gl.drawArrays(gl.TRIANGLES,0,6);this.lastBlur=blurKey;return this.canvas;
   }
@@ -317,8 +302,9 @@ class MaskGpu {
   f('fxMosaicBlocks',settings.maskCells??15);f('fxMosaicGap',0);f('fxMosaicShape',0);f('fxGlassBlocks',glassCells(settings));f('fxGlassRound',0);f('fxGlassRefract',(settings.maskRefract??100)/100);f('fxGlassBevel',0);
   gl.drawArrays(gl.TRIANGLES,0,6);return this.canvas;
  }
- /** A target canvas went away: drop every reference to it so it can be
-     collected. Its texture slots stay allocated and simply re-upload. */
+ /**
+  * 目標畫布沒了：丟掉對它的所有參照，讓它能被回收。它的貼圖格位保留，下次重新上傳就好
+  */
  release(canvas:HTMLCanvasElement){
   for(const slot of this.sources.values())if(slot.source===canvas){slot.source=null;slot.stamp=null;slot.width=slot.height=0;}
   if(this.lastSource===canvas){this.lastSource=null;this.lastStamp=null;this.inputWidth=this.inputHeight=0;}
@@ -326,26 +312,23 @@ class MaskGpu {
  }
  dispose(){this.sources.clear();this.photoTextures.clear();this.gl.getExtension('WEBGL_lose_context')?.loseContext();this.canvas.width=this.canvas.height=1;this.lastSource=null;this.lastStamp=null;}
 }
-/* One GPU program set serves every target canvas. It used to be one WebGL
-   context + six compiled programs PER canvas (every preview tile, the prefix
-   cache, every classic scene surface): the first mask frame stalled on shader
-   compilation, and iOS's ~16 live-context limit started evicting the photo
-   renderers' contexts. Nothing in the renderer depends on which canvas it
-   draws into: sources are keyed by identity + stamp and the output is
-   consumed synchronously. */
+/* 所有目標畫布共用一組 GPU 程式。
+   每張畫布各一個 WebGL context 加六個編譯好的程式的話（每個預覽圖塊、前綴快取、每個經典場景畫布），
+   第一格遮罩會卡在編譯著色器，iOS 大約 16 個 context 的上限也會開始收掉照片繪製的 context。
+   繪製本身跟畫進哪張畫布無關：來源用身分加戳記當鍵，輸出也是同步用掉 */
 const renderers={shared:undefined as MaskGpu|null|undefined,failures:0};
 const maskRenderer=()=>{
  let renderer=renderers.shared;
  if(renderer===undefined||renderer?.gl.isContextLost()){
   renderer?.dispose();renderer=null;
   try{renderer=new MaskGpu();}catch(error){renderers.failures++;backdropMaskDiagnostics.lastError=String(error);}
-  // A device without usable WebGL keeps the full-resolution CPU fallback.
+  // 沒有可用 WebGL 的裝置保留原解析度的 CPU 備援
   renderers.shared=renderer??(renderers.failures<3?undefined:null);
  }
  return renderer;
 };
 const dropRenderer=(renderer:MaskGpu|null)=>{if(renderer&&renderer.gl.isContextLost()){renderer.dispose();if(renderers.shared===renderer)renderers.shared=undefined;}};
-/** Warm the shared programs before the first mask is added (idle time). */
+/** 第一個遮罩加進來之前，趁閒置預熱共用程式 */
 export const warmBackdropMasks=()=>{try{maskRenderer();}catch{}};
 export const backdropMaskDiagnostics={gpuFrames:0,cpuFrames:0,uploads:0,reuses:0,lastError:'',renderMs:0,compositeMs:0,uploadMs:0};
 const featherSurfaces=new WeakMap<HTMLCanvasElement,HTMLCanvasElement>();
@@ -357,8 +340,7 @@ export function drawBackdropMaskBatch(ctx:CanvasRenderingContext2D,layers:Backdr
   renderer=maskRenderer();
   if(!renderer)throw Error('mask batch fallback');const output=renderer.renderBatch(ctx.canvas,layers,photos,limit);backdropMaskDiagnostics.gpuFrames+=layers.length;backdropMaskDiagnostics.renderMs=performance.now()-start;
   const t=performance.now();ctx.save();try{
-   // Preserve untouched wide-gamut pixels outside the material footprints.
-   // Union contours all share winding even when an object was mirrored.
+   // 材質範圍外沒動到的廣色域像素保持原樣。聯集的輪廓全部共用同一個繞行方向，就算物件被鏡像也一樣
    ctx.beginPath();for(const layer of layers){const m=layer.matrix;ctx.setTransform(m.a,m.b,m.c,m.d,m.e,m.f);const shape=maskGeometry(layer.kind,layer.settings),reverse=m.a*m.d-m.b*m.c<0;
     if(shape==='circle'){ctx.moveTo(layer.w/2,0);ctx.ellipse(0,0,layer.w/2,layer.h/2,0,0,Math.PI*2,reverse);ctx.closePath();}
     else {const points=shape==='star'?Array.from({length:10},(_,i)=>{const a=-Math.PI/2+i*Math.PI/5,r=i%2?.45:1;return[Math.cos(a)*layer.w/2*r,Math.sin(a)*layer.h/2*r];}):[[-layer.w/2,-layer.h/2],[layer.w/2,-layer.h/2],[layer.w/2,layer.h/2],[-layer.w/2,layer.h/2]];if(reverse)points.reverse();points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();}
@@ -390,7 +372,7 @@ function fallbackMask(source:HTMLCanvasElement,m:DOMMatrix,w:number,h:number,kin
   data.data[i+3]=original[i+3]*alpha;
  }g.putImageData(data,0,0);return canvas;
 }
-/** ctx is object-local; source shares ctx.canvas's physical viewport coordinates. */
+/** ctx 是物件本地座標；source 跟 ctx.canvas 共用實體 viewport 座標 */
 export function drawBackdropMask(ctx:CanvasRenderingContext2D,kind:string,w:number,h:number,settings:MaskSettings={},source=ctx.canvas,sourceStamp?:unknown,sourceKey?:unknown){
  if(w<=0||h<=0)return;const m=ctx.getTransform();if(![m.a,m.b,m.c,m.d,m.e,m.f].every(Number.isFinite)||Math.abs(m.a*m.d-m.b*m.c)<1e-8)return;
  const sigma=kind.includes('frost')?Math.min(w*Math.hypot(m.a,m.b),h*Math.hypot(m.c,m.d))*.12*(settings.maskAmount??50)/100:0;
@@ -402,7 +384,7 @@ export function drawBackdropMask(ctx:CanvasRenderingContext2D,kind:string,w:numb
   if(renderer)backdropMaskDiagnostics.gpuFrames++;else backdropMaskDiagnostics.cpuFrames++;
  }catch(error){dropRenderer(renderer);renderer=null;backdropMaskDiagnostics.lastError=String(error);backdropMaskDiagnostics.cpuFrames++;console.warn('遮罩 GPU 改用安全備援',error);output=fallbackMask(source,m,w,h,kind,settings,b,sigma);}
  backdropMaskDiagnostics.renderMs=performance.now()-renderStart;const compositeStart=performance.now();ctx.save();try{
-  // Shape belongs to the native analytic clip, not a low-resolution blur bitmap.
+  // 形狀交給原生的解析裁切，不是低解析度的模糊點陣
   clipMask(ctx,w,h,maskGeometry(kind,settings));
   if(renderer&&kind.includes('frost')){
    const sx=output.width*b.left/source.width,sy=output.height*b.top/source.height,sw=output.width*b.width/source.width,sh=output.height*b.height/source.height;

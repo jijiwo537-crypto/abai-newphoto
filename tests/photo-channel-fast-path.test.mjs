@@ -7,7 +7,7 @@ import esbuild from 'esbuild';
 const seeded=()=>{let x=12345;return()=>((x=Math.imul(x^x>>>15,2246822507)+0x6d2b79f5|0)>>>0)/4294967296;};
 const load=async code=>{const rnd=Math.random;Math.random=seeded();try{return await load0(code);}finally{Math.random=rnd;}};
 const load0=async code=>{const out=await esbuild.build({stdin:{contents:code,resolveDir:'utils',sourcefile:'photoPixelCore.ts',loader:'ts'},bundle:true,format:'esm',write:false,platform:'neutral',logLevel:'silent'});return (await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'))).processPixels;};
-const stripped=source.replace(/  \/\/ With independent channel corrections[\s\S]*?(?=  \/\/ Split into explicit loops)/,'');
+const stripped=source.replace(/  \/\/ 各通道的修正互相獨立時[\s\S]*?(?=  \/\/ 拆成明確的迴圈)/,'');
 assert.notEqual(stripped,source,'fast-path block must exist');
 const fast=await load(source),reference=await load(stripped);
 test('full-resolution channel fast path is byte-identical to existing tetrahedral pipeline',()=>{

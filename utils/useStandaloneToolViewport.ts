@@ -1,8 +1,8 @@
 import {useLayoutEffect,useRef} from 'react';
 
-/** Same physical-edge anchoring used by ArtStudio for iOS Home Screen apps.
- * WebKit can already subtract the status bar from dvh. Subtracting it again
- * leaves an extra black strip below the toolbar; normal Safari is unaffected.
+/**
+ * 跟 ArtStudio 一樣，在 iOS 主畫面 App 用實體邊緣定位。WebKit 可能已經從 dvh 扣掉狀態列，
+ * 再扣一次會在工具列下面多一條黑邊；一般的 Safari 不受影響
  */
 export function useStandaloneToolViewport(){
  const ref=useRef<HTMLDivElement>(null);

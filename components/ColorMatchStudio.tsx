@@ -280,7 +280,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const my = Math.max(0, (kk - 1) * c.h * 0.5);
     setViewT({ k: kk, tx: Math.max(-mx, Math.min(mx, tx)), ty: Math.max(-my, Math.min(my, ty)) });
   }, []);
-  // A reference changes color, not the original photograph's framing.
+  // 參考圖改的是顏色，不是原圖的構圖
   useEffect(() => { setViewT({ k: 1, tx: 0, ty: 0 }); }, [imageSrc]);
 
   const onStageDown = (e: React.PointerEvent) => {
@@ -463,7 +463,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       const pw=useWeight();
       if(pw){gl.setProtectMap(packWeight(pw.weight),pw.w,pw.h);glWeightRef.current=weightRef.current;}
       else gl.clearProtectMap();
-      // Upload, draw, and reveal atomically before the browser presents a frame.
+      // 上傳、繪製、顯示要在瀏覽器顯示下一格之前一次做完
       glReadyRef.current = gl.draw(luts[picked] ? picked : 'mkl',strength/100,0,luts[picked] ? keepL : 1);
     } catch { glReadyRef.current = false; }
     if (glReadyRef.current) present();
@@ -689,7 +689,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         return;
       }
     }
-    // History and browser previews remain lossless PNG; the shared file uses the chosen encoder.
+    // 歷史紀錄和瀏覽器預覽維持無損 PNG；分享出去的檔案用選的編碼
     const previewUrl = await canvasToUrl(canvas);
     if (!previewUrl) throw new Error('Unable to encode preview');
     let fileUrl = previewUrl;

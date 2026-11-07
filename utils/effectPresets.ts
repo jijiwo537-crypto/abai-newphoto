@@ -1,4 +1,4 @@
-/** Shared by activation and thumbnails. No separate exaggerated demo settings. */
+/** 啟用和縮圖共用，不另外做誇張的展示設定 */
 export const LEGACY_EFFECT_PRESETS = {
  softLight:{soft:100,softThreshold:80},
  halation:{fringeIntensity:100,fringeSize:10,fringeFeather:100,fringeHue:8},

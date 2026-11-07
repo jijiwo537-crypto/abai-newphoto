@@ -1,7 +1,8 @@
 import {isWebgl2} from './fxSurfaceGl';
 import {uniformLocation} from './uniformLocation';
-/** Full-resolution luminance histogram and percentile selection on the GPU.
- * Neither photograph pixels nor histogram counters cross back to the CPU. */
+/**
+ * 原解析度的亮度直方圖和百分位數選取都在 GPU 上做，照片像素和直方圖計數都不回到 CPU
+ */
 export class GpuHighlightHistogram {
  diagnostic?:number[];
  private program:WebGLProgram;private vertices:WebGLBuffer;private texture:WebGLTexture;private framebuffer:WebGLFramebuffer;
@@ -9,9 +10,8 @@ export class GpuHighlightHistogram {
  private constructor(private gl:WebGLRenderingContext,p:WebGLProgram,b:WebGLBuffer,t:WebGLTexture,f:WebGLFramebuffer,private textureType:number,private internal:number,private sumInternal:number){this.program=p;this.vertices=b;this.texture=t;this.framebuffer=f;}
  static create(gl:WebGLRenderingContext){
   if(!gl.getParameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS))return null;
-  // WebGL2 has float textures built in; rendering to them needs
-  // EXT_color_buffer_float, and blending 32-bit floats EXT_float_blend
-  // (16-bit float targets blend without it). Storage must be sized there.
+  // WebGL2 內建浮點貼圖；要畫進去需要 EXT_color_buffer_float，
+  // 混合 32 位元浮點需要 EXT_float_blend（16 位元浮點目標不需要）。儲存大小要在這裡決定
   const gl2=isWebgl2(gl)?gl:null;
   let textureType:number,internal:number,sumInternal:number;
   if(gl2){
@@ -41,8 +41,8 @@ export class GpuHighlightHistogram {
  prepare(source:WebGLTexture,w:number,h:number,key:string|undefined,coverage:number,quad:WebGLBuffer,compile:(key:string,fs:string)=>WebGLProgram|null){
   const gl=this.gl,n=w*h;gl.bindBuffer(gl.ARRAY_BUFFER,this.vertices);
   if(n>16777216)return null;
-  // Encode alpha in four base-4 digits. At most 512 samples contribute to a
-  // shard, keeping every half-float counter exact (512*3 < 2048), even for PNG.
+  // alpha 用四位 4 進位數字編碼。每個分片最多 512 個樣本，每個半精度浮點計數都精確（512×3 < 2048），
+  // PNG 也一樣
   const rows=Math.max(128,2**Math.ceil(Math.log2(Math.ceil(n/512))));
   if(rows!==this.rows&&rows>gl.getParameter(gl.MAX_TEXTURE_SIZE))return null;
   if(rows!==this.rows){this.rows=rows;this.key=undefined;gl.activeTexture(gl.TEXTURE7);gl.bindTexture(gl.TEXTURE_2D,this.texture);gl.texImage2D(gl.TEXTURE_2D,0,this.internal,256,rows,0,gl.RGBA,this.textureType,null);this.sums.forEach(t=>gl.deleteTexture(t));this.sums=[];}
@@ -63,7 +63,7 @@ export class GpuHighlightHistogram {
   gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.useProgram(reduce);
   let input=this.texture,activeRows=rows,inputHeight=rows,index=0;
   while(activeRows>1){const next=Math.ceil(activeRows/16),target=this.sums[index%2];gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,input);gl.uniform1i(uniformLocation(gl,reduce,'uTex'),0);gl.uniform2f(uniformLocation(gl,reduce,'uInputSize'),256,inputHeight);gl.uniform1f(uniformLocation(gl,reduce,'uRows'),activeRows);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,target,0);gl.viewport(0,0,256,next);gl.drawArrays(gl.TRIANGLES,0,3);input=target;inputHeight=height;activeRows=next;index++;}
-  // Keep the reduced histogram in sums[0] regardless of pass count.
+  // 不管跑幾次，縮減後的直方圖都放在 sums[0]
   if(input!==this.sums[0])this.sums.reverse();this.key=key;
   }
   gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.useProgram(select);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sums[0]);gl.uniform1i(uniformLocation(gl,select,'uTex'),0);gl.uniform1f(uniformLocation(gl,select,'uHeight'),height);gl.uniform1f(uniformLocation(gl,select,'uCount'),n);gl.uniform1f(uniformLocation(gl,select,'uCoverage'),coverage);gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.selection,0);gl.viewport(0,0,1,1);gl.drawArrays(gl.TRIANGLES,0,3);

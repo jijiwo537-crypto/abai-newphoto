@@ -36,8 +36,7 @@ const MAX_TOTAL_PX = 48e6;
 const MAX_ENTRY_PX = 8e6;
 const MAX_SIDE = 8192;
 let totalPx = 0;
-/* document.fonts.check is expensive (it walks the whole font stack) and was
-   called on every frame of a pinch. Once a font is ready it stays ready. */
+/* document.fonts.check 很耗時（會走過整個字型堆疊），縮放時每一格都會呼叫。字型一旦好了就一直是好的 */
 const readyFonts = new Set<string>();
 const fontReady = (font: string) => {
   if (readyFonts.has(font)) return true;
@@ -107,9 +106,8 @@ export function drawStableText(ctx: CanvasRenderingContext2D, mode: 'fill' | 'st
     hit = { canvas, x: -left, y: -top, w: canvas.width / lv, h: canvas.height / lv, px: canvas.width * canvas.height };
     cache.set(key, hit); totalPx += hit.px; evict();
   }
-  // The raster is at most 2x the on-screen size (power-of-two level), so
-  // plain bilinear is visually identical; 'high' runs an expensive
-  // multi-pass downscale on every frame and made pinch-zooming text stutter.
+  // 點陣最多是螢幕大小的 2 倍（2 的次方級距），一般的雙線性看起來完全一樣；'high' 每格都要做昂貴的多次縮小，
+  // 縮放文字時會卡
   const smoothing = ctx.imageSmoothingEnabled, quality = ctx.imageSmoothingQuality;
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low';
   ctx.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h);

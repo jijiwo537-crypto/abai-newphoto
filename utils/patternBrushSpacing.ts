@@ -1,6 +1,7 @@
-/** Ink bounds in scene units, independent of preview zoom and pointer rate.
- * A rotated ink rectangle is conservatively enclosed, so even its corners
- * cannot touch another stamp. Manual transforms do not use this constraint. */
+/**
+ * 場景單位的線條範圍，跟預覽縮放和指標頻率無關。旋轉過的線條矩形用保守的外框包住，
+ * 連轉角都碰不到另一個印記。手動變形不受這個限制
+ */
 export type StampBounds = { x: number; y: number; w: number; h: number; size: number };
 export function stampBounds(x: number, y: number, w: number, h: number, angle: number, size: number): StampBounds {
   const a = angle * Math.PI / 180, c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
@@ -11,8 +12,9 @@ export function stampsHaveSafeGap(a: StampBounds, b: StampBounds): boolean {
   const dy = Math.max(0, Math.abs(a.y - b.y) - (a.h + b.h) / 2);
   return Math.hypot(dx, dy) + 1e-8 >= Math.max(a.size, b.size) / 2;
 }
-/** Only consecutive ink in this stroke controls cadence. Existing artwork is
- * never a placement veto. The previous centre interval is reduced by 20%. */
+/**
+ * 只有這一筆裡連續的線條決定節奏，現有的作品絕不會否決擺放位置。中心間隔比之前縮短 20%
+ */
 export function brushStepReached(a: StampBounds, b: StampBounds): boolean {
   const dx=Math.abs(a.x-b.x),dy=Math.abs(a.y-b.y),d=Math.hypot(dx,dy);
   if(!d)return false;

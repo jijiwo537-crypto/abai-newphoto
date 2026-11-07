@@ -1,4 +1,4 @@
-/** Reusable narrow strips instead of blurring an entire scene for each link. */
+/** 重用的窄條，不必每條連結都模糊整個場景 */
 export class LinkGlowTiles {
  private cache=new Map<string,{canvas:HTMLCanvasElement,pad:number}>();
  draw(g:CanvasRenderingContext2D,x1:number,y1:number,x2:number,y2:number,width:number,color:string,dashed:boolean){

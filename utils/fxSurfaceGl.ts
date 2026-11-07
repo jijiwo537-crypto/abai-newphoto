@@ -1,15 +1,8 @@
-/* One GPU context per on-screen effect surface.
- *
- * glEffects and the HalationLayers that present on the same canvas all call
- * getContext on it and share the one context the browser returns. A canvas
- * marked with preferWebgl2() gets a WebGL2 context instead, so the colour
- * stage (LutGpu, which needs 3D textures) can render into the same context
- * and hand its result to the effects as a texture: no copy of the photo from
- * one GPU context to another on every slider step.
- *
- * The WebGL1 shaders of the effects run unchanged on WebGL2. A canvas must
- * be marked before anything asks it for a context.
- */
+/* 畫面上每張特效畫布一個 GPU context。
+   glEffects 和顯示在同一張畫布上的 HalationLayer 都對它呼叫 getContext，共用瀏覽器回傳的那一個。
+   用 preferWebgl2() 標記過的畫布會拿到 WebGL2，色彩階段（LutGpu，需要 3D 貼圖）才能畫進同一個 context，
+   把結果當貼圖交給特效：每格滑桿不必把照片從一個 GPU context 複製到另一個。
+   特效的 WebGL1 著色器在 WebGL2 上照樣能跑。一定要在任何地方跟它要 context 之前就先標記 */
 const webgl2 = new WeakSet<HTMLCanvasElement>();
 
 export function preferWebgl2(canvas: HTMLCanvasElement) { webgl2.add(canvas); }
@@ -27,6 +20,7 @@ export function surfaceGl(canvas: HTMLCanvasElement, attrs: WebGLContextAttribut
 export const isWebgl2 = (gl: WebGLRenderingContext | null | undefined): gl is WebGL2RenderingContext =>
   typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext;
 
-/** A photo that is already a texture in the surface's own context. Rows are
- *  bottom-up, as a canvas uploaded with UNPACK_FLIP_Y_WEBGL. */
+/**
+ * 已經是這張畫布自己 context 裡的貼圖的照片。列是由下往上的，跟用 UNPACK_FLIP_Y_WEBGL 上傳的畫布一樣
+ */
 export type GpuImage = { texture: WebGLTexture; w: number; h: number };

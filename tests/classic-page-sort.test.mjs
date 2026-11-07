@@ -14,7 +14,7 @@ test('page sorting vector ink uses the page CSS matrix, not its own easing clock
 });
 
 test('seams retain their stacking order and reveal only after settle, with a fade', () => {
-  const seams = source.slice(source.indexOf("vectorScene.set('__page-seams'"), source.indexOf('// Measure container size dynamically'));
+  const seams = source.slice(source.indexOf("vectorScene.set('__page-seams'"), source.indexOf('// 動態量容器大小'));
   assert.match(seams, /settledSortSeams/);
   assert.match(seams, /globalAlpha = t \* t \* \(3 - 2 \* t\)/);
   assert.match(seams, /z: 400000/);

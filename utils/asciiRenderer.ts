@@ -1,7 +1,7 @@
 import {ASCII_PRESETS,ASCII_RANGE_LOWS} from './asciiControls';
 export interface AsciiOptions { characters:string; columns:number; low:number; high:number; metric:number; invert:boolean; color:boolean; background:boolean; glow?:number; ranges?:number[]; }
 export const ASCII_DEFAULTS:AsciiOptions={characters:ASCII_PRESETS[0],columns:96,low:20,high:100,metric:0,invert:false,color:false,background:true,glow:0,ranges:[...ASCII_RANGE_LOWS]};
-/** Persistent GPU image + glyph atlas. Slider changes only update uniforms. */
+/** 常駐的 GPU 影像加上字形圖集，滑桿變動只更新 uniform */
 export class AsciiRenderer {
  private gl:WebGLRenderingContext; private program:WebGLProgram; private textures:WebGLTexture[]=[]; private buffer:WebGLBuffer; private chars=''; private count=1;
  constructor(private canvas:HTMLCanvasElement){

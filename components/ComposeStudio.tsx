@@ -132,7 +132,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   const [nudge, setNudge] = useState({ x: 0, y: 0 });
   /** 拖滑桿或縮放時先用低解析度重算，不然每動一格都要重取樣整張圖，看起來就是一幀一幀的 */
   const [live, setLive] = useState(false);
-  /** 九宫格只在裁切框正在移动／缩放时显示；DOM 常驻才能完整播放离场淡出。 */
+  /** 九宮格只在裁切框正在移動／縮放時顯示；DOM 常駐才能完整播放離場淡出。 */
   const [cropInteracting, setCropInteracting] = useState(false);
 
   const geoRef = useRef(geo);
@@ -419,7 +419,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       osc.connect(gain).connect(ctx.destination);
       osc.start(now);
       osc.stop(now + 0.03);
-    } catch { /* 静音模式或浏览器限制时保留触觉反馈 */ }
+    } catch { /* 靜音模式或瀏覽器限制時保留觸覺回饋 */ }
     try { navigator.vibrate?.(4); } catch { /* iOS 网页可能不提供 vibration */ }
   }, []);
 
@@ -444,8 +444,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       onPointerMove={(e) => {
         const drag = rulerDragRef.current;
         if (!drag) return;
-        // 以可见宽度换算范围，但把灵敏度收敛到 72%；细小手势更精确，
-        // 从屏幕一侧连续拖到另一侧仍足以抵达端点。
+        // 以可見寬度換算範圍，但把靈敏度收斂到 72%；細小手勢更精確，
+        // 從螢幕一側連續拖到另一側仍足以抵達端點。
         const raw = Math.max(min, Math.min(max, drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min) * sensitivity));
         const tick = Math.round(raw / step);
         setRulerVisual(raw);
@@ -468,15 +468,15 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       </span>
       {Array.from({ length: Math.round((max - min) / step) + 1 }, (_, i) => min + i * step).map(tickValue => {
         const shown = rulerVisual ?? value;
-        // 视觉间距与手势灵敏度分离：完整范围仍可一划到底，刻度本身不会挤成一片。
+        // 視覺間距與手勢靈敏度分離：完整範圍仍可一劃到底，刻度本身不會擠成一片。
         const offset = ((tickValue - shown) / step) * 6;
         if (Math.abs(offset) > 190) return null;
         const nearest = Math.round(shown / step) * step;
         const active = Math.abs(tickValue - nearest) < step / 2;
         const major = Math.round(tickValue / step) % 10 === 0;
         const zero = Math.abs(tickValue) < step / 2;
-        // 零刻度离开中央、缩回短状态后仍保留一点识别度：只比十格主刻度
-        // 高 2px、亮一点，不抢中央活动刻度的视觉焦点。
+        // 零刻度離開中央、縮回短狀態後仍保留一點識別度：只比十格主刻度
+        // 高 2px、亮一點，不搶中央活動刻度的視覺焦點。
         const baseHeight = zero ? 19 : (major ? 17 : 10);
         const baseOpacity = zero ? 0.68 : (major ? 0.52 : 0.28);
         return (
@@ -488,8 +488,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
               height: active ? 27 : baseHeight,
               opacity: active ? 1 : baseOpacity,
               transform: 'translateX(-50%)',
-              // 经过中央时立即升高；只有离开中央才用 280ms 回落。
-              // 快速拖动时，连续几根旧刻度依序衰减，形成由高到低的尾波。
+              // 經過中央時立即升高；只有離開中央才用 280ms 回落。
+              // 快速拖動時，連續幾根舊刻度依序衰減，形成由高到低的尾波。
               transition: active
                 ? 'none'
                 : `height 280ms cubic-bezier(0.22,1,0.36,1), opacity 280ms ease${rulerVisual === null ? ', left 180ms cubic-bezier(0.2,0.8,0.2,1)' : ''}`,
@@ -611,8 +611,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
             onPointerUp={onHandleUp}
             onPointerCancel={onHandleUp}
           >
-            {/* 三分格线只在拖动／缩放裁切框时出现。元素不拆掉，确保松手后的
-                500ms 离场不会被 React 直接截断。 */}
+            {/* 三分格線只在拖動／縮放裁切框時出現。元素不拆掉，確保鬆手後的
+                500ms 離場不會被 React 直接截斷。 */}
             <div
               className="absolute inset-0 pointer-events-none"
               style={{

@@ -1,6 +1,6 @@
 type Frame = {iw:number;ih:number;layout:string};
 type Pose = {x:number;y:number;w:number;h:number};
-/** Same immutable starting pose for live occupancy and its final commit. */
+/** 即時佔位和最後提交用同一個固定的起始姿態 */
 export function reframeBasePhoto(t:Pose,prev:Frame,next:Frame,bw:number,bh:number,multi:boolean,around:string):Pose {
   const oldK=prev.layout===around?Math.max(prev.iw/Math.max(1,bw),prev.ih/Math.max(1,bh)):1;
   const newK=next.layout===around?Math.max(next.iw/Math.max(1,bw),next.ih/Math.max(1,bh)):1;

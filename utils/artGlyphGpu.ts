@@ -1,9 +1,7 @@
-// Font outlines are rasterized at the current screen pixel size. Only a small
-// font atlas is uploaded, avoiding full-screen Canvas2D readbacks on iOS.
+// 字型外框用目前的螢幕像素大小點陣化，只上傳一張小的字型圖集，iOS 上不必整個畫面從 Canvas2D 讀回
 const states=new WeakMap();
 import {fitArtGlyph} from './artCharacters.ts';
-// Isolated glyphs at the current physical pixel size. Halo generation uses
-// a separable GPU Gaussian: WebKit's large Canvas shadows can become square.
+// 用目前的實體像素大小畫單獨的字形。光暈用可分離的 GPU 高斯模糊：WebKit 的大範圍 Canvas 陰影可能會變成方形
 export function makeGlyphAtlases(chars,font,ratio,cw,ch,cellFit){
  const sigma=cw*.16,pad=Math.ceil(Math.max(font*.6,sigma*4+2));
  const cellW=Math.ceil(Math.max(font,cw)+pad*2),cellH=Math.ceil(Math.max(font*ratio*1.6,ch)+pad*2);
@@ -21,9 +19,8 @@ export function makeGlyphAtlases(chars,font,ratio,cw,ch,cellFit){
 }
 function blurGlyphAtlas(s,ink,sigma,cellW,cellH){
  const {gl}=s;
- // Glow is a low-frequency field, unlike the sharp ink. Integrate coverage
- // before Gaussian sampling so a large glyph cannot produce a striped halo
- // from widely spaced kernel taps. Ink always retains full screen resolution.
+ // 光暈是低頻的光場，跟銳利的線條不同。高斯取樣前先積分覆蓋率，
+ // 大字才不會因為卷積核取樣點離太遠而出現條紋光暈。線條一律保留完整的螢幕解析度
  const shrink=Math.min(1,4/sigma),workCellW=Math.ceil(cellW*shrink),workCellH=Math.ceil(cellH*shrink);
  let softInk=ink;
  if(shrink<1){

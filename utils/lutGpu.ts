@@ -280,10 +280,8 @@ export class LutGpu {
   }
 
   /**
-   * A colour stage inside another WebGL2 context (an on-screen effect
-   * surface). It renders into its own texture there — see drawImage() —
-   * which the effects of that context read directly: the photo never has to
-   * be copied between GPU contexts. The surface's own drawing is untouched.
+   * 放在另一個 WebGL2 context（畫面上的特效畫布）裡的色彩階段。它畫進自己在那裡的貼圖（見 drawImage()），
+   * 那個 context 的特效直接讀：照片完全不必在 GPU context 之間複製。畫布本身的繪製不受影響
    */
   static createOn(gl: WebGL2RenderingContext): LutGpu | null {
     if (!(gl.canvas instanceof HTMLCanvasElement)) return null;
@@ -302,7 +300,7 @@ export class LutGpu {
       const name = String(
         (dbg && gl.getParameter((dbg as any).UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '',
       ).toLowerCase();
-      // __ABAI_ALLOW_SOFT_GL: test harnesses only (profiling the GPU path headless).
+      // __ABAI_ALLOW_SOFT_GL：只給測試環境用（無頭模式下分析 GPU 路線的效能）
       if (/swiftshader|llvmpipe|softpipe|software|microsoft basic/.test(name) && !(globalThis as any).__ABAI_ALLOW_SOFT_GL) return null;
     } catch { /* 拿不到就當作是真的顯示卡 */ }
 
@@ -414,10 +412,8 @@ export class LutGpu {
   }
 
   /**
-   * Front stage parameters (null = off, the old "everything in the 3D LUT"
-   * behaviour). tone: 1025 floats (encoded 0…1 → 0…1); curves: 256 RGBA
-   * bytes (R,G,B channel curves, A master curve). Arrays are uploaded only
-   * when a different array object is passed in.
+   * 前段參數（null＝關閉，也就是「全部放進 3D LUT」的做法）。tone：1025 個浮點數（編碼值 0…1 → 0…1）；
+   * curves：256 個 RGBA 位元組（R、G、B 通道曲線，A 是總曲線）。只有傳進不同的陣列物件才重新上傳
    */
   setFront(f: { wb: number[] | null; k: number; peak: number; tone: Float32Array | null; curves: Uint8Array | null; sat: number;
     vib?: number; hsl?: { h: Float32Array; s: Float32Array; l: Float32Array } | null; grade?: GradeFast | null;
@@ -461,7 +457,7 @@ export class LutGpu {
       this.curveTex = table(4, this.curveTex, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, f.curves));
       this.lastCurve = f.curves;
     } else if (this.curveTex) { gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, this.curveTex); }
-    // Samplers that are declared must be complete even when unused.
+    // 宣告了的取樣器就算沒用到也要完整
     if (!this.toneTex) this.toneTex = table(3, null, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.R16F, 2, 1, 0, gl.RED, gl.FLOAT, new Float32Array([0, 1])));
     if (!this.curveTex) this.curveTex = table(4, null, () => gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4)));
     // 局部陰影／亮部：底圖（unit 6）與增益表（unit 7），換了陣列才重新上傳
@@ -508,21 +504,19 @@ export class LutGpu {
   private outTex: WebGLTexture | null = null;
   private outFbo: WebGLFramebuffer | null = null;
   private outSize = '';
-  /** Other users of a shared context may leave these set; uploads of typed
-      arrays here assume tightly packed, unflipped, unpremultiplied rows. */
+  /**
+   * 共用 context 的其他使用者可能留著這些設定；這裡上傳型別陣列時假設列是緊密排列、不翻轉、不預乘的
+   */
   private unpackDefaults() {
     const gl = this.gl;
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
   }
   /**
-   * Shared mode: draw the colour result into this stage's own texture of the
-   * shared context and return it (rows bottom-up, like a canvas uploaded with
-   * UNPACK_FLIP_Y_WEBGL). Same shader, inputs and 8-bit output as draw().
-   * All state it relies on is bound here, since the context is shared.
-   * `source` replaces the uploaded photo: a texture of this context with the
-   * same size and the same row order as setSource() (top-down), e.g. one made
-   * by flipInto(); it is sampled exactly as the uploaded photo would be.
+   * 共用模式：把色彩結果畫進共用 context 裡這個階段自己的貼圖並回傳（列由下往上，
+   * 跟用 UNPACK_FLIP_Y_WEBGL 上傳的畫布一樣）。著色器、輸入和 8 位元輸出跟 draw() 一樣。
+   * 因為 context 是共用的，用到的所有狀態都在這裡綁定。`source` 取代上傳的照片：這個 context 的貼圖，
+   * 大小和列順序要跟 setSource() 一樣（由上往下），例如 flipInto() 做出來的；取樣方式跟上傳的照片完全相同
    */
   drawImage(source?: WebGLTexture | null): { texture: WebGLTexture; w: number; h: number } | null {
     if (!this.shared || this.lost || !this.srcW || (!this.lutSize && !(this.frontOn && !this.backOn))) return null;
@@ -531,7 +525,7 @@ export class LutGpu {
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.outTex);
     if (this.outSize !== `${w}x${h}`) {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-      // Read at texel centres only, by every consumer.
+      // 所有使用者都只在像素中心讀
       for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
       this.outSize = `${w}x${h}`;
     }
@@ -553,9 +547,10 @@ export class LutGpu {
     return { texture: this.outTex!, w, h };
   }
 
-  /** Shared mode: the unedited source photo as a texture of this context with
-   *  rows bottom-up (as a canvas uploaded with UNPACK_FLIP_Y), the input the
-   *  effects expect. Made once per source (setSource clears it). */
+  /**
+   * 共用模式：沒編輯的來源照片，以這個 context 裡列由下往上的貼圖存著（跟用 UNPACK_FLIP_Y 上傳的畫布一樣），
+   * 就是特效要的輸入。每個來源做一次（setSource 會清掉）
+   */
   private upTex: WebGLTexture | null = null;
   private upValid = '';
   private upProg: WebGLProgram | null = null;
@@ -572,8 +567,9 @@ export class LutGpu {
     return { texture: this.upTex!, w, h };
   }
   private srcGen = 0;
-  /** Copy a w×h texture of this context into another one with the rows in
-   *  the opposite order (top-down ⇄ bottom-up). dst must be allocated. */
+  /**
+   * 把這個 context 裡 w×h 的貼圖複製到另一張，列的順序相反（由上往下 ⇄ 由下往上）。dst 要先配置好
+   */
   private flipFbo: WebGLFramebuffer | null = null;
   flipInto(src: WebGLTexture, dst: WebGLTexture, w: number, h: number): boolean {
     if (!this.shared || this.lost) return false;
@@ -599,9 +595,10 @@ precision highp float;uniform sampler2D uImage;in vec2 vUv;out vec4 fragColor;vo
     return true;
   }
 
-  /** The current colour result at ≤maxSide px (RGBA, rows bottom-up), read
-   *  from a tiny framebuffer. Only this small draw is waited for — not the
-   *  2D canvas pipeline — so it is cheap enough to do per slider step. */
+  /**
+   * 目前的色彩結果，最多 maxSide px（RGBA，列由下往上），從很小的畫面暫存讀出。
+   * 只等這次小繪製完成、不等 2D 畫布的管線，所以每格滑桿做一次也夠便宜
+   */
   private smallTex: WebGLTexture | null = null;
   private smallFbo: WebGLFramebuffer | null = null;
   private smallSize = '';
@@ -641,7 +638,7 @@ precision highp float;uniform sampler2D uImage;in vec2 vUv;out vec4 fragColor;vo
 
   dispose() {
     if (this.shared) {
-      // The context belongs to the surface; release only this stage's storage.
+      // context 屬於畫布本身，只放掉這個階段自己的儲存
       const gl = this.gl;
       for (const t of [this.imgTex, this.lutTex, this.plainTex, this.toneTex, this.curveTex, this.baseTex, this.gainTex, this.outTex, this.smallTex, this.upTex]) if (t) gl.deleteTexture(t);
       for (const f of [this.outFbo, this.smallFbo, this.flipFbo]) if (f) gl.deleteFramebuffer(f);

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 
-/** Keep the tool's layout viewport stable while iOS pans its visual viewport. */
+/** iOS 平移視覺 viewport 時，工具的版面 viewport 保持穩定 */
 export function useKeyboardRecovery() {
   useEffect(() => {
     let origin: { x: number; y: number; height: number } | null = null;

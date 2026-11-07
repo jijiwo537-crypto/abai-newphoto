@@ -84,20 +84,16 @@ let gpuC0: HTMLCanvasElement | null = null;
 let gpuC1: HTMLCanvasElement | null = null;
 const colorBakeCache = new Map<string, Uint8Array>();
 const strengthPairCache=new Map<string,{full:Uint8Array;plain:Uint8Array}>();
-// A spatial-effect slider does not change its photograph's colour result.
-// Retain that exact full-resolution input, and keep the effect render target
-// separate: never read the previous effect result as the next frame's source.
+// 空間特效的滑桿不會改變照片的色彩結果。保留那份精確的原解析度輸入，特效的繪製目標分開：
+// 絕不把上一次的特效結果當成下一格的來源
 type EffectInput={key:string;source:HTMLCanvasElement;surface:HTMLCanvasElement;colourInput?:FxColourInput;rawKey?:string;viaImage?:boolean};
 const effectInputs = new WeakMap<HTMLCanvasElement, EffectInput>();
 const gpuSourceKeys=new WeakMap<LutGpu,string>();
 const opticalInputs=new WeakMap<HTMLCanvasElement,{key:string;source:HTMLCanvasElement;layer:HalationLayer;canvas?:HTMLCanvasElement}>();
 const opticalKeys = new Set(['soft','softThreshold','softRadius','softColor','fringeIntensity','fringeSize','fringeFeather','fringeHue','leakOpacity','leakAngle','leakHue','blur','colorNoise','vignette']);
-/* ── Colour stage inside an effect surface's own GPU context ───────────────
-   An effect surface (marked WebGL2) also hosts a LutGpu. The photo's colour
-   result is drawn there as a texture and the effects read it directly: no
-   full-resolution copies GPU → 2D canvas → 2D canvas → GPU on each colour
-   slider step. Same baked tables and shader as gpuColorChain; the film
-   strength blend happens in the shader instead of 2D compositing. */
+/* 色彩階段放在特效畫布自己的 GPU context 裡：特效畫布（標記為 WebGL2）也放一個 LutGpu。
+   照片的色彩結果畫在那裡當貼圖，特效直接讀：每格色彩滑桿不必把原解析度複製 GPU → 2D 畫布 → 2D 畫布 → GPU。
+   烤好的表和著色器跟 gpuColorChain 一樣；底片強度的混合在著色器裡做，不用 2D 合成 */
 const newSurface=()=>{const c=document.createElement('canvas');preferWebgl2(c);return c;};
 const surfaceGpus=new WeakMap<HTMLCanvasElement,LutGpu|null>();
 let surfacePixels:HTMLCanvasElement|null=null;
@@ -133,7 +129,7 @@ function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:
     const baseLut=new Uint8Array(256);generateBaseCorrectionLut(p.exposure,p.contrast,p.brightness,baseLut);
     g.setFront(null);
     if(residentStrength&&lut&&p.hsl.every(b=>!b.h&&!b.s&&!b.l)){
-      // Same endpoints and weight as gpuColorChain's resident path.
+      // 跟 gpuColorChain 常駐路線一樣的端點和權重
       const params={...p,lutAmount:100},pairKey=JSON.stringify(params)+'|'+srcToken(lut.data);
       let pair=strengthPairCache.get(pairKey);
       if(!pair){
@@ -220,8 +216,9 @@ function noiseLayerFor(w:number,h:number):HTMLCanvasElement|null{
   noiseLayers.set(k,c);return c;
 }
 export const supportsResidentPhotoEffects=(fx:PhotoFx={})=>hasActiveFx(fx)||!!(fx.soft||fx.fringeIntensity||fx.leakOpacity||fx.blur||fx.vignette||fx.colorNoise);
-/** Prime the SAME context used by the selected base photo, not a throwaway
- * thumbnail context. No pixels or effect values are changed by preflight. */
+/**
+ * 預熱的是選中底圖實際用的「同一個」context，不是丟掉就算的縮圖 context。預檢不會改任何像素或特效數值
+ */
 export function warmPhotoFxSurface(input:HTMLCanvasElement,id:string,scene?:FxScene){
   if(['softLight','halation','lightLeak'].includes(id)){
     let optical=opticalInputs.get(input);
@@ -265,9 +262,10 @@ export function settlePhotoFx(result:HTMLCanvasElement,out:HTMLCanvasElement):HT
   releasePhotoFxSurface(out);releasePhotoFxReadbacks(out);
   return out;
 }
-/** Native-resolution baking is finished once the caller has its immutable
- * result. Drop CPU readbacks and duplicate blend canvases, not result pixels
- * or the live editing compositor. */
+/**
+ * 呼叫端拿到固定的結果後，原解析度的烘焙就結束了。丟掉 CPU 讀回和重複的混合畫布，不丟結果像素，
+ * 也不丟即時編輯的合成器
+ */
 /** 來源畫布的內容換了（例如影片落了新的一格、畫在同一張畫布上）：
  *  讓它拿一個新編號，GPU 上那張舊貼圖就不會被當成這一格繼續用。 */
 export function forgetPhotoFxSource(source:CanvasImageSource){if(source&&typeof source==='object')srcIds.delete(source as object);}
@@ -313,9 +311,8 @@ const gpuColorChain = (
       }
       gpuSourceKeys.set(g,srcKey);
     }
-    // Film strength is affine when the downstream HSL is unchanged. Cache
-    // the endpoints, not 100 separately baked strengths. This is confined to
-    // the live base-photo compositor; exports retain their established path.
+    // 下游的 HSL 沒變時，底片強度是仿射的。快取兩個端點，不必分別烤 100 種強度。只用在即時的底圖合成器；
+    // 存檔維持原本的路線
     if(residentStrength&&lut&&p.hsl.every(b=>!b.h&&!b.s&&!b.l)){
       const params={...p,lutAmount:100},pairKey=JSON.stringify(params)+'|'+srcToken(lut.data);
       let pair=strengthPairCache.get(pairKey);
@@ -551,8 +548,9 @@ export function loadLut(
   return task;
 }
 
-/** Start preparing the editor's actual LUT cache before any filter panel opens.
- * Camera image prefetch alone does not prepare these decoded colour tables. */
+/**
+ * 任何濾鏡面板打開之前，就開始準備編輯器實際用的 LUT 快取。只預抓相機的圖片不會準備這些解碼好的色彩表
+ */
 export async function warmEditorLuts(list: readonly {id:string;url:string}[]): Promise<void> {
   let next=0;
   const entries=list.filter(l=>l.url&&l.id!=='none');
@@ -639,7 +637,7 @@ export function bakePhotoFxLut(fx?: PhotoFx, size = 33): { tex: Uint8Array; size
   const withFilm = bake(film);
   /* 強度 100% 或根本沒挑濾鏡：一顆表就夠 */
   if (!film || amt >= 1) return { tex: bakedToTexture(withFilm), size: n };
-  /* ⚠ 這裡的混合方式**刻意跟 applyPhotoFx 一模一樣**（那是照片與匯出走的路）。
+  /* 這裡的混合方式**刻意跟 applyPhotoFx 一模一樣**（那是照片與匯出走的路）。
      兩邊用同一種算法，影片跟照片、預覽跟成品才會是同一個顏色 ——
      這一段看起來可以合併成一次，但那會讓濾鏡的濃淡跟現有成品對不上。 */
   const noFilm = bake(null);
@@ -750,9 +748,8 @@ export function applyPhotoFx(
   // 一種光學特效（柔光／光暈／漏光／朦朧），或只有噪點＋暗角（simple）
   if(opts?.gpuSurface&&opts.cacheSource&&!hasActiveFx(fx)&&((n:number,simple:boolean)=>n===1&&!simple||!n&&simple)([fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur].filter(Boolean).length,!!(fx.colorNoise||fx.vignette))){
     const kind=fx.soft?'soft':fx.fringeIntensity?'halo':fx.leakOpacity?'leak':fx.blur?'blur':'simple';
-    // The optical family shares one source and one context. The active kind
-    // belongs to the render key, NOT the allocation key: switching soft/halo/
-    // leak used to dispose and recompile the entire WebGL renderer each time.
+    // 光學類別共用一個來源和一個 context。目前的種類屬於繪製鍵，「不」屬於配置鍵：
+    // 不然切換柔光、光暈、漏光時每次都要釋放、重新編譯整個 WebGL 繪製
     const baseFx=Object.fromEntries(Object.entries(fx).filter(([k])=>!opticalKeys.has(k))) as PhotoFx;
     const sourceKey=effectInputKey(source,oW,oH,baseFx);
     const key=sourceKey+'|'+kind;
@@ -761,9 +758,8 @@ export function applyPhotoFx(
       if(optical){optical.layer.dispose();releasePhotoFxSurface(optical.source);optical.source.width=optical.source.height=1;}
       {const lc=newSurface();optical={key:'',source:document.createElement('canvas'),layer:new HalationLayer(lc),canvas:lc};}opticalInputs.set(out,optical);
     }
-    /* Colour stage in the layer's own GPU context: the layer reads the colour
-       result as a texture (see surfaceColourImage). Otherwise the colour
-       result is drawn into optical.source once per colour state. */
+    /* 色彩階段放在圖層自己的 GPU context：圖層把色彩結果當貼圖讀（見 surfaceColourImage）。
+       不然每種色彩狀態把結果畫進 optical.source 一次 */
     const plainColour=!getLoadedLut(baseFx.lut)&&ADJUST_KEYS.every(([k])=>!baseFx[k]);
     const image=!plainColour&&optical.canvas?surfaceColourImage(optical.canvas,source,oW,oH,baseFx,false):null;
     if(image)optical.key='';
@@ -790,8 +786,7 @@ export function applyPhotoFx(
     const result = applyGlEffects(retained.source.getContext('2d')!, oW, oH, fx, inputKey, retained.surface, false, opts?.scene,retained.colourInput);
     if (result) return result;
   }
-  // Filter + spatial effects previously crossed GPU -> CPU canvas -> GPU on
-  // every strength input. Keep the source and LUT in the effect context.
+  // 濾鏡加空間特效時，不要每次調強度都 GPU → CPU 畫布 → GPU 跑一趟。來源和 LUT 留在特效的 context 裡
   const residentFilm=opts?.scene&&residentEffects?getLoadedLut(fx.lut):null;
   if(residentFilm&&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)&&toParams(fx).hsl.every(b=>!b.h&&!b.s&&!b.l)){
     const started=import.meta.env.DEV?performance.now():0;
@@ -806,7 +801,7 @@ export function applyPhotoFx(
     const result=applyGlEffects(record.source.getContext('2d')!,oW,oH,fx,inputKey,record.surface,false,opts!.scene,record.colourInput);
     if(result){if(import.meta.env.DEV)result.dataset.colourFxTiming=JSON.stringify({total:performance.now()-started,phases:result.dataset.fxPhases});return result;}
   }
-  // Colour stage in the effect surface's own context (see surfaceColourImage).
+  // 色彩階段放在特效畫布自己的 context 裡（見 surfaceColourImage）
   const colourOnly=!getLoadedLut(fx.lut)&&ADJUST_KEYS.every(([k])=>!fx[k]);
   if(residentEffects&&!colourOnly&&!(fx as any).fxLowfi&&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)){
     const record:EffectInput=retained||{key:'',source:document.createElement('canvas'),surface:newSurface()};
@@ -831,9 +826,8 @@ export function applyPhotoFx(
       return record.surface;
     }
   }
-  // A CPU-backed output forces GPU results back to main memory on every
-  // slider frame. Cached photo sources are read once; their live output must
-  // remain GPU-backed. Other callers keep their established CPU behaviour.
+  // 輸出用 CPU 畫布的話，每格滑桿都要把 GPU 結果搬回主記憶體。快取的照片來源只讀一次，
+  // 即時輸出要留在 GPU 上；其他呼叫端維持原本的 CPU 行為
   realizeGlow(source);
   const ctx = out.getContext('2d', { willReadFrequently: !opts?.gpuSurface })!;
   /* 沿用上一輪那張畫布時，裡面的東西還在。下面的 drawImage 是「整張鋪滿」，
@@ -875,8 +869,7 @@ export function applyPhotoFx(
 
   const baseLut = new Uint8Array(256);
   generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseLut);
-  // Identity colour is exactly the source, including its original alpha.
-  // Spatial effects alone must not trigger an unnecessary LUT render/readback.
+  // 不改顏色時就是來源本身，包含原本的 alpha。只有空間特效時不能觸發多餘的 LUT 繪製或讀回
   const identityColour = !lut && ADJUST_KEYS.every(([k]) => !fx[k]);
   let gpuOk = identityColour;
   if (identityColour && hit) ctx.drawImage(source, 0, 0, out.width, out.height);

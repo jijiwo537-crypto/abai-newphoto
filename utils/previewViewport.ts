@@ -1,4 +1,4 @@
-/** Crop raster work, not resolution. Coordinates remain in full-scene pixels. */
+/** 裁的是點陣化的工作量，不是解析度；座標維持整個場景的像素 */
 export function previewViewport(fullW:number, fullH:number, frame:{left:number;top:number;width:number;height:number}, stage:{left:number;top:number;right:number;bottom:number}, overscan=24) {
  const sx=fullW/Math.max(1,frame.width),sy=fullH/Math.max(1,frame.height);
  const x=Math.max(0,Math.min(fullW-1,Math.floor((stage.left-overscan-frame.left)*sx)));

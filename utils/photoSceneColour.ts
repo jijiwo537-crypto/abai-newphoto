@@ -39,8 +39,10 @@ void main(){
  outColor=vec4(clamp(black+coverage*changed,0.,1.),original.a);
 }`;
 
-/** Verification only: WebKit's drawImage(WebGL canvas) can lose the buffer's
- * P3 tag. Read the explicitly tagged pixels instead; never used on slider frames. */
+/**
+ * 只用來驗證：WebKit 的 drawImage(WebGL 畫布) 可能弄丟暫存的 P3 標記，所以改讀明確帶標記的像素；
+ * 滑桿畫格絕不用這個
+ */
 export function copySceneColourPixels(canvas:HTMLCanvasElement,ctx:CanvasRenderingContext2D){
  const gl=canvas.getContext('webgl2')!;const w=canvas.width,h=canvas.height;
  const bytes=new Uint8Array(w*h*4);gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
@@ -48,10 +50,10 @@ export function copySceneColourPixels(canvas:HTMLCanvasElement,ctx:CanvasRenderi
  ctx.putImageData(new ImageData(flipped,w,h,{colorSpace:canvas.dataset.previewColourSpace==='display-p3'?'display-p3':'srgb'}),0,0);
 }
 
-/** Display the resident scene directly. Never read a WebGL photo back into the
- * 2D collage per slider frame (especially expensive in WebKit). The three
- * immutable scenes describe the selected photo's contribution, including
- * holes, masks, translucent foregrounds and overlapping photos. */
+/**
+ * 直接顯示常駐的場景，絕不每格滑桿都把 WebGL 照片讀回 2D 拼圖（WebKit 上特別貴）。
+ * 三個固定的場景描述選中照片的貢獻，包含挖洞、遮罩、半透明前景和重疊的照片
+ */
 export class PhotoSceneColour {
  readonly canvas=document.createElement('canvas');
  private gl:WebGL2RenderingContext|null=null;
@@ -75,15 +77,13 @@ export class PhotoSceneColour {
   private colourSpace:{colorSpace:'srgb'|'display-p3';directUpload:boolean}={colorSpace:'srgb',directUpload:false};
  signature='';width=0;height=0;scale=0;
  constructor(){
-  // Start decoding and compiling the worker when the scene is created, not on
-  // the first slider input. Warm-up stays off the UI thread and is interruptible.
+  // 建立場景時就開始解碼、編譯 worker，不等第一次滑桿輸入。預熱不在介面執行緒上跑，也可以中斷
   if(typeof Worker!=='undefined'&&this.ensureWorker())this.worker!.postMessage({warm:photoFxParams({})});
   this.canvas.addEventListener('webglcontextlost',event=>{
    event.preventDefault();this.generation++;this.pending=null;this.requestedKey='';this.hide();
   });
   this.canvas.addEventListener('webglcontextrestored',()=>{
-   // Restored contexts invalidate every GPU resource. Rebuild from the exact
-   // scene on the next paint; never keep displaying a stale colour surface.
+   // context 恢復後所有 GPU 資源都失效。下次繪製時從精確的場景重建，絕不繼續顯示過時的色彩畫布
    this.gl=null;this.program=null;this.textures=[];this.lut=null;this.plainLut=null;this.paired=false;
    this.signature='';this.key='';this.film=undefined;this.masterMode=false;
   });
@@ -127,8 +127,7 @@ export class PhotoSceneColour {
   this.signature=signature;this.width=main.width;this.height=main.height;this.scale=scale;this.key='';this.film=undefined;
   this.generation++;this.requestedKey='';this.pending=null;
   main.parentElement?.append(this.canvas);
-  // Preflight the actual float master texture and tetrahedral shader, rather
-  // than the old RGBA8 path (which left float allocation on the first drag).
+  // 預檢實際的浮點主貼圖和四面體著色器，不是舊的 RGBA8 路線（那會讓浮點配置留到第一次拖動）
   const identity=new Float32Array(32*32*32*4);
   for(let b=0;b<32;b++)for(let g=0;g<32;g++)for(let r=0;r<32;r++){const i=((b*32+g)*32+r)*4;identity.set([r/31,g/31,b/31,1],i);}
   gl.useProgram(this.program!);this.installLut(identity,true);
@@ -147,8 +146,7 @@ export class PhotoSceneColour {
   gl.useProgram(p);
   gl.uniform1i(uniformLocation(gl,p,'wide'),this.colourSpace.colorSpace==='display-p3'?1:0);
   if(key!==this.key||film!==this.film){
-   // Import-time worker preparation uses the identical floating-point master
-   // pipeline. Only consume it for an otherwise unadjusted photo.
+   // 導入時的 worker 準備用的是同一條浮點主管線，只在照片沒有其他調整時直接用
    if(fx.lut&&this.canPair(fx)&&key===this.bakeKey({lut:fx.lut,lutAmount:100})){
     const prepared=getPreparedFilterPair(fx.lut);
     if(prepared)this.lutCache.set(key,{...prepared,film,master:true});
@@ -166,13 +164,10 @@ export class PhotoSceneColour {
    if(lut)this.installLut(lut.tex,false);
    this.key=key;this.film=film;}
   }
-  /* The tables for these settings are still being baked in the worker. If
-     this surface is not already showing a frame of this photo's colours,
-     do not present one now: it would use whatever table is installed — the
-     identity table after prepare(), or a stale one — and flash the photo
-     unadjusted or black (e.g. when an effect is slid to 0 and the preview
-     switches to this surface). The caller then draws its regular path; the
-     worker's result is presented on the next paint. */
+  /* 這組設定的表還在 worker 裡烤。如果這張畫布還沒顯示過這張照片的顏色，現在不要顯示：
+     它會用目前裝著的表（prepare() 之後是不變的表，或是舊的），
+     照片會閃成沒調整的樣子或全黑（例如把特效拉到 0、預覽切到這張畫布時）。呼叫端改走一般路線畫；
+     worker 的結果下次繪製時再顯示 */
   /* 只有「這張照片還沒有任何一張算好的色表」（剛備好場景，key 是空的）才退回一般畫法。
      以前只要這層還沒顯示過、而新色表又還在烤，就退回去用 CPU 整張重算 —— 第一次拖調節滑桿時
      每一格都是這樣（值一直在變，烤好的那張永遠追不上），預覽就一格一格的；停一下讓它顯示出來之後
@@ -197,7 +192,7 @@ export class PhotoSceneColour {
   const times=JSON.parse(this.canvas.dataset.colourFrameTimes||'[]');times.push(performance.now());this.canvas.dataset.colourFrameTimes=JSON.stringify(times.slice(-100));
  }
  hide(){this.canvas.style.display='none';}
- /** Called when a baked table arrives for a surface that is not presented. */
+ /** 沒在顯示的畫布收到烤好的表時呼叫 */
  onReady?:()=>void;
  private ensureWorker(){
   if(this.workerFailed)return false;
@@ -217,7 +212,7 @@ export class PhotoSceneColour {
       this.lutCache.set(this.key,{tex:e.data.tex,plain:e.data.plain,film:this.film,master:!!e.data.master});
       while(this.lutCache.size>8)this.lutCache.delete(this.lutCache.keys().next().value!);
       gl.drawArrays(gl.TRIANGLES,0,3);this.recordFrame();
-      // Not presented yet (see draw): let the owner repaint with it now.
+      // 還沒顯示（見 draw）：讓擁有者現在用它重畫
       if(this.canvas.style.display==='none')this.onReady?.();
       if(import.meta.env.DEV){const jobs=JSON.parse(this.canvas.dataset.colourJobs||'[]');jobs.push({at:performance.now(),bake:e.data.bakeMs,total:performance.now()-this.workerStarted});this.canvas.dataset.colourJobs=JSON.stringify(jobs.slice(-100));}
      }

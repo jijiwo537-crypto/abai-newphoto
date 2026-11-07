@@ -126,8 +126,8 @@ import { isBlurShape, blurShapeDefault } from '../utils/blurShapes';
 import { ExportActionLift } from './ExportActionLift';
 import type { ExitChoice } from '../types';
 
-// Keep embedded icon bytes intact, but never reparse a huge base64 CSS mask
-// on each first panel layout. These tiny immutable asset URLs live with module.
+// 內嵌圖示的資料保持原樣，但第一次排面板時不要每次重新解析超大的 base64 CSS 遮罩。
+// 這些小的固定資源網址跟著模組存一份就好
 const warmedPatternIcons=new Set<string>();
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
@@ -364,13 +364,14 @@ const objKeyOf = (list: any[]) =>
  * 路徑的座標是「左上角 (0,0) 到 (w,h)」，呼叫端負責搬到框心。
  */
 const shapePathCache = new Map<string, Path2D>();
-/** Original contain-fit preview: the same 16px inset on every aspect ratio. */
+/** 預覽照原比例縮進來，不管什麼比例四周都留 16px */
 export const creativePreviewFit = (stageW: number, stageH: number, w: number, h: number) =>
   Math.min(Math.max(1, stageW - 32) / w,
     Math.max(1, stageH - 32) / h);
 
-/** Resolve a custom mask photo in mask-local units, preserving its crop when
- * the layout changes. Legacy drafts keep their original centred cover. */
+/**
+ * 自訂遮罩照片用遮罩自己的單位算，版面改了裁切也不會跑掉。舊草稿維持原本置中填滿
+ */
 export const resolveMaskPhotoTransform = (t: any, iw: number, ih: number, fw: number, fh: number) => {
   const cover = Math.max(fw / Math.max(1, iw), fh / Math.max(1, ih));
   if (!t?.frameW || !t?.frameH) {
@@ -527,8 +528,8 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const hug = measuredShapeInk(o);
   if (hug) return { x: hug.x * scale - gap, y: hug.y * scale - gap, w: hug.w * scale + gap * 2, h: hug.h * scale + gap * 2 };
   if (o.sym) {
-    /* 外框使用固定基础字级的规范化几何，再跟物件一起等比缩放。
-       缩放期间不可按每一帧的新字级重新扫描 alpha，否则 iOS 会卡顿且框会跳。 */
+    /* 外框使用固定基礎字級的規範化幾何，再跟物件一起等比縮放。
+       縮放期間不可按每一幀的新字級重新掃描 alpha，否則 iOS 會卡頓且框會跳。 */
     const text = o.text || o.sym;
     const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
     const layout = measureSymbolUnitLayout(text, fam, o.sym ? 100 : (o.size || 40));
@@ -545,8 +546,7 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     if (contour) return { x:contour.x-gap, y:contour.y-gap, w:contour.w+gap*2, h:contour.h+gap*2 };
     const fit = SHAPE_FIT[o.kind] || [0, 0, 1, 1];
     const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * scale / 160;
-    // The frame follows the same continuous stroke geometry as the painter.
-    // In particular grids use a 1.5-unit base stroke, not a six-unit stroke.
+    // 外框跟繪製用同一套連續的線條幾何，格線的基本線寬是 1.5 單位，不是 6
     const line = GRID_SHAPE_KINDS.has(o.kind)
       ? 1.5 * unit * Math.max(1, Math.min(3, (o.lineW ?? 6) / 6))
       : Math.max(.4 * scale, (o.lineW ?? 6) * unit);
@@ -1426,9 +1426,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>{
     let cancelled=false;const sources=new Set(photoRegion?.photos.map(p=>p.src).filter(Boolean));
     for(const [src,bitmap] of regionDrawables.current)if(!sources.has(src)){bitmap.close();regionDrawables.current.delete(src);}
-    // The normal grid renderer already retains original GPU textures. Native
-    // ImageBitmaps duplicate every decoded photograph and are needed only by
-    // the surrounding-layout CPU fallback, not by swapping or grid zoom.
+    // 一般格子的繪製本來就留著原本的 GPU 貼圖。原生 ImageBitmap 會把每張解碼好的照片再複製一份，
+    // 只有周圍版面的 CPU 備援才用得到，換照片或縮放格子都不需要
     const needsPinnedBitmap=layout===AROUND;
     if(!needsPinnedBitmap){for(const bitmap of regionDrawables.current.values())bitmap.close();regionDrawables.current.clear();}
     void(async()=>{for(const src of needsPinnedBitmap?sources:[]){
@@ -1440,8 +1439,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         await awaitPhotoIdle();if(cancelled)return;
         surface=document.createElement('canvas');surface.width=bitmap.width;surface.height=bitmap.height;
         const g=get2dWide(surface)!;g.drawImage(bitmap,0,0);
-        // Materialize deferred decode/upload while idle, not in the first
-        // geometry draw. This single-pixel read does not resample the source.
+        // 延後的解碼／上傳趁閒置時做完，不要拖到第一次畫幾何。只讀一個像素，不會重新取樣原圖
         g.getImageData(0,0,1,1);bitmap.close();bitmap=null;
         const drawable=await createImageBitmap(surface);surface.width=surface.height=1;
         if(cancelled){drawable.close();return;}
@@ -1451,10 +1449,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     await awaitPhotoIdle();if(cancelled)return;
     const region=photoRegionRef.current;
-    // Long-press swap thumbnails are ready before the first hold.
+    // 長按換照片用的縮圖在第一次按住前就準備好
     if(region&&region.photos.length>1)for(const p of region.photos){const img=p.src&&decodedRegionPhotos.current.get(p.src);if(img?.naturalWidth)swapThumb(p.src,img,Math.round(80*window.devicePixelRatio));}
-    // Only a seamless region uses this GPU surface; warming it for every
-    // multi-photo layout kept every original resident on the GPU.
+    // 只有無縫區域會用到這張 GPU 畫布；每種多圖版面都預熱的話，每張原圖都會一直佔著 GPU
     if(region&&region.photos.length>1&&region.seamless){
       const decoded=new Map(decodedRegionPhotos.current);
       try{creativeSeam.current??=new CreativeSeamless();creativeSeam.current.warm(region,decoded);}catch{}
@@ -1531,7 +1528,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [objects, setObjects] = useState<any[]>([]);
   const objectsRef = useRef<any[]>([]);
   const maskSliderLive=useRef<{id:string;patch:any}|null>(null);
-  // A mask slider being dragged paints from the ref; keep its live values.
+  // 正在拖的遮罩滑桿從 ref 畫，保留它的即時值
   objectsRef.current = maskSliderLive.current ? objects.map(o => o.id === maskSliderLive.current!.id ? { ...o, ...maskSliderLive.current!.patch } : o) : objects;
   const [selectedObj, setSelectedObj] = useState<string | null>(null);
   /** 最初匯入的底圖不是「新增圖片」物件；它有自己獨立、只負責構圖的選取狀態。 */
@@ -1640,8 +1637,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>()=>regionColour.current?.dispose(),[]);
   const regionSceneStamp=useRef<{key:string;renderer:any;scale:number;source:CanvasImageSource;w:number;h:number;sceneW:number;sceneH:number}|null>(null);
   regionBlend.current??=new PhotoAdjustmentBlend(()=>{
-    // Warming the cache does not change the visible result. Repainting the
-    // exact collage here queues avoidable GPU work just before the first drag.
+    // 預熱快取不改變看到的結果。這裡重畫整張拼圖，只會在第一次拖動前多排一堆 GPU 工作
     if(import.meta.env.DEV&&canvasRef.current)canvasRef.current.dataset.regionBlendReady=String(regionBlend.current?.isReady);
   });
   useEffect(()=>()=>regionBlend.current?.clear(),[]);
@@ -1713,14 +1709,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        特效要在多 3 倍的像素上算 —— 那就是「圖片放很大時拖滑桿很卡」。 */
     required/=SUPERSAMPLE;
     const id=`region-fx-${index}@${photo.src}`;
-    // Reserve the source's normal photo-resolution tier before its first
-    // effect input. A preview pinch must not cross the old 1600 -> 2048 tier
-    // and rebuild the whole filter/effect pipeline under the fingers.
-    // Larger originals still grow to physical display demand; no lower-quality
-    // interaction mode is used and only the current slot owns a shader pool.
-    // Floor 2048 (was 4096 = ~50MB per edited photo, all resident at once,
-    // which crashed iOS with several edited photos). It still grows to the
-    // physical display demand when the view is zoomed in.
     /* 特效的工作尺寸＝畫面上實際需要的 1.5 倍（至少 1024）：多留的那一截讓雙指縮放時不必一直重算；
        放得比這更大時照樣會長上去（容量只增不減，存檔另外用成品需要的解析度算）。
        以前一律至少 2048 —— 6 格排版裡一格在畫面上才 500 多像素，每張編輯過的照片
@@ -1729,7 +1717,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const cap=photoPreviewCapacity(required,regionPreviewCaps.current.get(id)||0,sourceSize,1024);
     regionPreviewCaps.current.set(id,cap);return cap;
   };
-  /** Export-sized effect pixels are one-shot; release them after an export. */
+  /** 存檔用的特效像素只用一次，存完就放掉 */
   const releaseExportFx = () => {
     for (const [key, entry] of objFxCache.current) if (key.startsWith('export-')) {
       if (entry.cv instanceof HTMLCanvasElement) entry.cv.width = entry.cv.height = 1;
@@ -1755,9 +1743,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     let exportCap=0;
     if(!isMain&&o.id?.startsWith('region-fx-')){
       const preview=objFxCache.current.get(o.id);
-      /* Export: effects at exactly the pixels this cell needs in the output
-         (cell size x crop zoom), up to the original — not a fixed 2400 cap
-         that left edited photos softer than unedited ones. */
+      /* 存檔時特效剛好算到這一格在成品裡需要的像素（格子大小 × 裁切縮放），最多到原圖；不用固定 2400 的上限，
+         那會讓編輯過的照片比沒編輯的還糊 */
       const native=Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height);
       const slot=Number(o.id.slice('region-fx-'.length).split('@')[0]),t=latestImageTransform.current;
       const cell=photoRegionRef.current&&regionRects(photoRegionRef.current,Math.abs(t.w),Math.abs(t.h))[slot];
@@ -1766,8 +1753,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         required=Math.min(native,Math.ceil(logical*Math.max(dw*k/Math.max(1,crop.sw),dh*k/Math.max(1,crop.sh))));}
       exportCap=required;
       if(!hasShape&&preview?.key.startsWith(JSON.stringify([o.fx,shape])+'|')&&Math.max(preview.cv.width,preview.cv.height)>=required)return preview.cv;
-      // History/export must not replace a live photo's work surface or cache
-      // key with a different-sized result halfway through a gesture.
+      // 歷史紀錄和存檔不能在手勢進行到一半時，用不同尺寸的結果換掉正在用的照片工作畫布或快取鍵
       o={...o,id:`export-${o.id}`};
     }
     /* 影片裁切過的話，就算沒有效果也沒有形狀，也還是要走下面那條路
@@ -1805,8 +1791,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           第一次一樣了，逐次判斷會在 640 與 1600 之間來回重算（實測 640 與
           1600 各算了 30 次，等於完全沒省到）。 */
     const regionPhoto = o.id?.startsWith('region-fx-');
-    // The very first change counts too: an image that never had effects has
-    // no previous key, and its first slider frame used to run at full 1600px.
+    // 第一次變動也要算：從沒套過特效的照片沒有前一個鍵，不算的話第一格滑桿會用滿 1600px 去算
     if (isMain && !regionPhoto && lv.key !== baseKey && (lv.key || hasPhotoFx(o.fx))) lv.liveUntil = now + 300;
     /* 圖片物件的效果現在在 GPU 上算（見下面 gpuSurface），拖曳中直接用正式尺寸與正式取樣：
        以前拖滑桿時先算 640 的近似版、停手再補 1600 的 —— 拖曳中看到的是糊的、放開還會跳一下。
@@ -1818,22 +1803,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        圖形與文字糊。預覽維持 1600（拖曳中 640），手感完全沒動到。 */
     let cap = live ? 640 : (isMain ? 1600 : 2400);
     if (exportCap) cap = exportCap;
-    // Base-photo previews must use the preview route, not the export route.
-    // Keep ordinary full preview density (never its live/640 shortcut), and
-    // grow it to the actual canvas pixel footprint when the view is enlarged.
+    // 底圖預覽要走預覽的路線，不走存檔的。維持一般的完整預覽密度（不用即時的 640 捷徑），
+    // 畫面放大時長到畫布實際的像素大小
     if (isMain && regionPhoto) {
-      // Photo cells use independent crop coordinates. Their preview density
-      // must be derived from that cell, not from all the other photos.
+      // 照片格各有自己的裁切座標，預覽密度要從這一格算，不是看其他所有照片
       const slot=Number(o.id.slice('region-fx-'.length).split('@')[0]);
-      // Use the actual photo's device-pixel footprint (including crop zoom),
-      // not the entire nine-photo region or the native file size. Capacity
-      // only grows, and always exceeds physical display demand; no live/640
-      // quality shortcut is used for a base photograph.
+      // 用照片實際佔的裝置像素（含裁切縮放），不是整個九宮格區域或原始檔案大小。容量只增不減，
+      // 一定大於螢幕實際需要；底圖不走即時 640 的畫質捷徑
       cap=regionEffectCapacity(o,slot,o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height,onScreenPx);
-      /* The settled snapshot used to be native size (~48MB per 12MP photo,
-         kept for every edited photo): several edited photos crashed iOS.
-         Preview only needs display density (capacity already grows with
-         zoom); exports recompute effects at the output size. */
+      /* 穩定後的快照只做到螢幕密度（容量會跟著放大長上去）。做成原圖大小的話，一張 1200 萬像素就是約 48MB，
+         每張編輯過的照片都留一份，幾張下來 iOS 就會關掉網頁；存檔時特效另外依成品大小重算 */
       if(prepareNative)cap=Math.max(cap,Math.min(1600,Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height)));
     }
     /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
@@ -1847,15 +1826,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const isVid = vTok !== 0 || isVideoEl(o.img);
     const key = baseKey + '|' + cap + '|lutReady:' + !!getLoadedLut(o.fx?.lut) + (isVid ? '|v' + vTok : '') + (isMain && shape.f && onScreenPx > 0 ? '|m' + maskPxFor(onScreenPx) : '');
     const hit = objFxCache.current.get(o.id);
-    // An immutable original-resolution result is independent of the display
-    // footprint. Zoom/occupancy changes sample it; they never rebake effects.
+    // 原圖解析度的結果是固定的，跟畫面上佔多大無關。縮放、佔位變了只是取樣它，不重算特效
     if(hit?.cv instanceof HTMLCanvasElement&&hit.cv.dataset.regionImmutable==='1'
       &&hit.key.startsWith(baseKey+'|')&&hit.key.includes('|lutReady:'+!!getLoadedLut(o.fx?.lut))
       &&Math.max(hit.cv.width,hit.cv.height)>=cap)return hit.cv;
-    // A geometry-only redraw must not prepare effects or touch a GPU pool.
-    // In particular the fallback blend preparation used to precede this hit.
-    // The key contains every pixel-affecting parameter. A selected photo's
-    // crop, hover or tab change must not rebuild its effect endpoints.
+    // 只動幾何的重畫不能準備特效、不能碰 GPU 池（備援的混合準備也要排在這之後）。
+    // 鍵裡包含所有會影響像素的參數；選取照片後的裁切、hover、切分頁都不該重建它的特效端點
     if (hit && hit.key === key) return hit.cv;
     /* ── 這裡以前有一個「影片＋形狀就限速到 20fps」的閘門，已經拿掉 ────────
        當初加它是因為那條路一格要開三、四張離屏畫布，一秒六十次會把記憶體灌爆。
@@ -1977,26 +1953,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         result=snap;
       }
       if(regionPhoto&&isMain&&reuse&&base!==reuse&&!regionSliderHeld.current&&!regionTouches.current.size&&(!regionPhotoEditingRef.current||prepareNative)){
-        // Geometry-only rendering needs immutable photo pixels, not an entire
-        // native-size shader pool. Release the pool immediately after copying,
-        // including when the user never pauses long enough for an idle job.
+        // 只畫幾何只需要固定的照片像素，不需要一整個原圖大小的著色器池。複製完立刻放掉，
+        // 使用者一直沒停下來讓閒置工作跑也一樣
         const snapshot=hit?.cv instanceof HTMLCanvasElement&&hit.cv.dataset.regionImmutable==='1'?hit.cv:document.createElement('canvas');
         if(snapshot.width!==base.width)snapshot.width=base.width;
         if(snapshot.height!==base.height)snapshot.height=base.height;
         snapshot.getContext('2d')!.clearRect(0,0,snapshot.width,snapshot.height);
         snapshot.getContext('2d')!.drawImage(base,0,0);snapshot.dataset.regionImmutable='1';result=snapshot;regionStaticSnapshot.current={cv:snapshot};
-        // Keep only the selected photograph warm. Other slots are compacted
-        // here and the selection lifecycle below releases the previous slot.
-        // Compacting this input after every slider pause caused the next input
-        // to allocate/upload its whole effect pipeline again.
+        // 只讓選中的那張保持預熱。其他格在這裡壓縮，前一格交給下面的選取流程放掉。每次滑桿一停就壓縮這張的話，
+        // 下一次操作又要重新配置、上傳整條特效管線
         if(!selectedBase||prepareNative)compactPhotoFxSurface(reuse);
         releasePhotoFxReadbacks(srcEl);
       }
       objFxCache.current.set(o.id, { key, cv: result });
       if(result instanceof HTMLCanvasElement)result.dataset.seamRevision=key;
-      // Explicitly release replaced native snapshots. Waiting for WebKit's
-      // garbage collection can retain dozens of 50 MB photo buffers after
-      // repeated edits and trigger a tab-process restart.
+      // 被換掉的原圖快照要明確放掉。等 WebKit 回收的話，反覆編輯後可能留著幾十個 50MB 的照片暫存，
+      // 整個分頁會被重啟
       if(regionPhoto&&hit?.cv!==result&&hit?.cv instanceof HTMLCanvasElement&&hit.cv.dataset.regionImmutable==='1')hit.cv.width=hit.cv.height=1;
       finish(); return result;
     }
@@ -2446,8 +2418,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 兩指縮放物件的期間把那排白色鍵收起來 —— 它掛在物件下緣，
      物件一邊變大它就一邊亂跳（經典拼圖也是這樣處理的）。 */
   const [objPinching, setObjPinching] = useState(false);
-  /* 符号大小滑杆连续输入时只画完整字形，停止逐单元常驻动画。
-     计时器只负责判断手指已停下，不触发每格额外 React render。 */
+  /* 符號大小滑桿連續輸入時只畫完整字形，停止逐單元常駐動畫。
+     計時器只負責判斷手指已停下，不觸發每格額外 React render。 */
   const symbolSizeTuningRef = useRef(false);
   const symbolSizeTimerRef = useRef<number | null>(null);
   useEffect(() => () => {
@@ -2521,7 +2493,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [selectedPatternSide, setSelectedPatternSide] = useState<'image' | 'mask'>('image');
   const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null); 
   const [maskImageState, setMaskImageState] = useState<any>(null);
-  /** 自訂遮罩的網址要活到草稿真正寫入；过早 revoke 会让下一次自动保存读不到。 */
+  /** 自訂遮罩的網址要活到草稿真正寫入；過早 revoke 會讓下一次自動保存讀不到。 */
   const maskDraftUrlRef = useRef<string | null>(null);
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const latestImageTransform=useRef(imageTransform);latestImageTransform.current=imageTransform;
@@ -2553,9 +2525,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (objPinchRef.current?.id === o.id || objStretchRef.current?.id === o.id) continue;
       const key = JSON.stringify([o.text, o.fontFamily, o.size, o.bold, o.italic, o.letterSpacing, o.strokeWidth]);
       if (textFitKeys.current.get(o.id) === key) continue;
-      // Wait for the font at most once per text state, then measure anyway:
-      // fonts.check can stay false for a stack, which used to re-schedule
-      // this effect forever (React "maximum update depth").
+      // 每種文字狀態最多等一次字型，之後不管怎樣都量。fonts.check 對某些字型堆疊可能一直是 false，
+      // 不這樣會一直重排這個 effect（React 的 maximum update depth）
       const waited = textFontWaits.current.has(key);
       const box = plainTextBox(o, waited);
       if (!box) { textFontWaits.current.add(key); void ensureFont(o.fontFamily || DEFAULT_FONT).finally(() => setTextFitTick(t => t + 1)); continue; }
@@ -2592,14 +2563,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const objEditText = activeTab === 'objedit' && !colorPickerTarget && objects.some(o=>o.id===selectedObj&&o.type==='text');
   useEffect(()=>{
     const index=selectedRegionPhoto??0,photo=photoRegion?.photos[index];
-    // Never bake a native-size master between clicks in the editing panel.
-    // The resident live pipeline already presents the current effect; native
-    // snapshots are prepared only after leaving editing, without competing
-    // with the next tap for allocation, upload or readback work.
+    // 在編輯面板裡點來點去時，絕不做原圖大小的成品。常駐的即時管線已經在顯示目前的特效；
+    // 離開編輯後才準備原圖快照，不跟下一次點擊搶配置、上傳或讀回
     if(!photo||!hasPhotoFx(photo.fx)||activeTab==='motion'||objEditImage)return;
     let cancelled=false;
-    // Prepare reusable exact photo pixels after an edit settles, not on the
-    // first occupancy input. The final scene stays visible and untouched.
+    // 編輯停下來之後才準備可重用的精確照片像素，不是在第一次佔位時。最後的畫面保持顯示、不動它
     void awaitPhotoIdle().then(()=>{
       if(cancelled||regionPhotoEditingRef.current||!canvasRef.current)return;
       const original=decodedRegionPhotos.current.get(photo.src);if(!original)return;
@@ -2614,8 +2582,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       snapshot.getContext('2d')!.drawImage(cv,0,0);
       snapshot.dataset.regionImmutable='1';
       objFxCache.current.set(id,{key:cached.key,cv:snapshot});regionStaticSnapshot.current={cv:snapshot};
-      // The immutable snapshot owns these pixels; keep compiled programs but
-      // release redundant native-size render targets.
+      // 固定快照已經有這些像素了；編譯好的程式留著，多餘的原圖大小繪製目標放掉
       releasePhotoFxReadbacks(original);
       const scratch=vidScratchRef.current.get(id);
       if(scratch){for(const item of Object.values(scratch))if(item instanceof HTMLCanvasElement&&item!==snapshot)item.width=item.height=1;vidScratchRef.current.delete(id);}
@@ -2623,19 +2590,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return ()=>{cancelled=true;};
   },[photoRegion,objEditImage,selectedRegionPhoto,activeTab]);
   useEffect(()=>{
-    // Keep ONE current photo's shader surface through tab switches. Leaving
-    // editing is not a source change; destroying it here recompiles on return.
+    // 切分頁時保留「一張」目前照片的著色器畫布。離開編輯不是換照片，在這裡銷毀的話回來又要重新編譯
     const selectedKey=selectedRegionPhoto??(photoRegionRef.current?.photos.length?0:null);
     const currentSrc=selectedKey===null?null:photoRegionRef.current?.photos[selectedKey]?.src;
     const keep=currentSrc?`region-fx-${selectedKey}@${currentSrc}`:null;
     let cancelled=false;
-    // Retiring a GPU photo can require a full-size readback. Never put it on
-    // the click that should only reveal selection chrome.
+    // 收掉 GPU 照片可能要整張讀回，絕不能放在只是要顯示選取框的那次點擊上
     void awaitPhotoIdle().then(()=>{if(cancelled)return;for(const [key,surface] of regionFxSurfaces.current){
       if(key===keep)continue;
       const cached=objFxCache.current.get(key);
-      // Snapshot once, at unchanged resolution. Geometry edits reuse these
-      // exact pixels instead of keeping a GPU pipeline for every old photo.
+      // 用原解析度拍一次快照。之後改幾何都用這份像素，不必替每張舊照片留一條 GPU 管線
       if(cached&&!(cached.cv instanceof HTMLCanvasElement&&cached.cv.dataset.regionImmutable==='1')){const snapshot=document.createElement('canvas');snapshot.width=cached.cv.width;snapshot.height=cached.cv.height;snapshot.getContext('2d')!.drawImage(cached.cv,0,0);snapshot.dataset.regionImmutable='1';objFxCache.current.set(key,{key:cached.key,cv:snapshot});}
       releasePhotoFxSurface(surface);surface.width=surface.height=1;regionFxSurfaces.current.delete(key);
       const scratch=vidScratchRef.current.get(key);if(scratch){for(const cv of Object.values(scratch))if(cv instanceof HTMLCanvasElement)cv.width=cv.height=1;vidScratchRef.current.delete(key);}
@@ -2644,15 +2608,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       regionColour.current?.hide();
       const resident=regionSpatial.current;
       if(resident?.shown)resident.shown.style.display='none';
-      // Geometry sliders consume a 2D snapshot, not repeated WebGL->2D
-      // readbacks. Keep the shader itself warm for the next edit.
-      // The settled-edit effect already keeps exact reusable pixels. A tab
-      // click must not synchronously read back another multi-megapixel GPU frame.
+      // 幾何滑桿讀 2D 快照，不重複從 WebGL 讀回 2D；著色器本身保持預熱給下一次編輯。
+      // 編輯停下來時已經留好精確的可重用像素，點分頁不能同步再讀回一張好幾百萬像素的 GPU 畫面
       regionBlend.current?.clear();
-      // The prior selectedKey===null condition never ran for a populated
-      // collage (it falls back to photo zero). It retained a full editing
-      // framebuffer and native effect pool alongside the geometry renderer.
-      // Preserve compiled programs, but release those unused pixel buffers.
+      // 有照片的拼圖沒有選取時會退回第 0 張，所以不能用 selectedKey===null 判斷，
+      // 否則完整的編輯暫存和原圖特效池會跟幾何繪製一起一直留著。編譯好的程式保留，用不到的像素暫存放掉
       if(resident){
         compactPhotoFxSurface(resident.input);
         resident.scene.black.width=resident.scene.black.height=1;
@@ -2660,13 +2620,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         resident.shown?.remove();regionSpatial.current=null;
       }
     }
-    // Changing the first slot during a swap is not entering image editing.
-    // Do not upload/re-prime all effect kernels behind a geometry-only swap.
+    // 換照片時第一格變了不等於進入照片編輯，只換幾何時不要重新上傳、預熱所有特效
     if(selectedKey===null||!objEditImage)return()=>{cancelled=true;};
     void(async()=>{
-      // Prime the actual source/pool while the imported photo is idle, before
-      // opening the editor. Shader-only warm-up leaves the first texture upload
-      // and framebuffer allocation on the first effect click in WebKit.
+      // 照片導入後趁閒置先預熱實際的來源和池，在打開編輯器之前。只預熱著色器的話，
+      // WebKit 第一次上傳貼圖、配置暫存還是會落在第一次點特效時
       await awaitPhotoIdle();
       const source=currentSrc&&decodedRegionPhotos.current.get(currentSrc);
       if(!cancelled&&source&&regionPrimedSource.current!==currentSrc&&!regionSpatial.current?.shown&&!hasPhotoFx(photoRegionRef.current?.photos[selectedKey]?.fx)&&!activePointers.current.size){
@@ -2676,8 +2634,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         applyPhotoFx(source,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),{...FX_PARAM_DEFAULTS,fxExposureSpill:100},{cacheSource:true,gpuSurface:true,out:regionSpatialInput.current});
         regionPrimedSource.current=currentSrc!;
       }
-      // One shader family per idle slot. Real pointer interactions take
-      // priority; shader compilation never changes preview quality.
+      // 每個閒置時段只預熱一組著色器。真正的觸控操作優先；編譯著色器不會改變預覽畫質
       for(const id of ['fxMosaic','softLight','halation','lightLeak',...FX_DEFS.filter(d=>d.id!=='fxMosaic').map(d=>d.id)]){
         await awaitPhotoIdle();if(cancelled)return;
         regionSpatialInput.current??=document.createElement('canvas');
@@ -2699,7 +2656,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (editingTextId) {
       const el = editingFieldRef.current;
       el?.focus({ preventScroll: true });
-      // Continue typing at the end of the existing text.
+      // 接在現有文字的最後面繼續打
       if (el) { const n = el.value.length; try { el.setSelectionRange(n, n); } catch {} }
     }
   }, [editingTextId]);
@@ -2733,8 +2690,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const footerRef = useRef<HTMLElement>(null);
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
-  // Compile the shared mask programs while the shape list is merely open,
-  // so tapping a mask does not wait on shader compilation.
+  // 形狀清單一打開就先編譯共用的遮罩程式，點遮罩時才不用等編譯
   // 遮罩著色器開場就在空檔暖好了；這裡只是保險，而且會等面板滑出來之後才做（見 fxWarmup）
   useEffect(()=>{if(addSub==='shape')warmMasksAfterPanelOpens();},[addSub]);
   /** 新增清單目前亮白框的選項，以及真正交給上方畫筆連續生成的選項。 */
@@ -2767,8 +2723,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [tuneTool, setTuneTool] = useState('');
   regionBlendTool.current=activeTab==='objedit'&&(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune'&&BLEND_ADJUSTMENTS.has(tuneTool))?(adjustSub==='filter'?'brightness':tuneTool):'';
   regionColourActive.current=activeTab!=='motion'&&activeTab!=='setting'&&(baseSelected||selectedRegionPhoto!==null);
-  // Existing effects remain on the GPU when switching to filters/adjustments.
-  // The tab is UI state, not a reason to fall back to a native-size CPU render.
+  // 切到濾鏡、調節時，已經套上的特效留在 GPU 上。分頁只是介面狀態，不是改用原圖大小 CPU 繪製的理由
   regionSpatialActive.current=activeTab!=='motion'&&activeTab!=='setting'&&(baseSelected||selectedRegionPhoto!==null);
   useEffect(()=>{
     let cancelled=false;
@@ -2880,8 +2835,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     key: string; c: HTMLCanvasElement; rx: number; ry: number; rw: number; rh: number;
   } | null>>({ image: null, mask: null });
   const linkGlowScratchRef = useRef<HTMLCanvasElement | null>(null);
-  // Link light is independent of pattern rotation and size. Cache it before
-  // knocking out the current pattern silhouettes, not after that dynamic step.
+  // 連結光跟圖案的旋轉、大小無關。在挖掉目前圖案剪影之前就快取，不要放在那個會變動的步驟之後
   const linkLightCacheRef = useRef<Record<string, { key: string; canvas: HTMLCanvasElement }>>({});
   /** 一顆圖案的光暈成品，鍵＝真正決定長相的那幾項（見 glowInto） */
   const glowBmpRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
@@ -3024,7 +2978,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (sn.env) applyEnvRef.current(sn.env);
     setHoles(sn.holes.map(h => ({ ...h })));
     setObjects(sn.objects.map(o => ({ ...o, fx: o.fx ? { ...o.fx } : o.fx })));
-    // Keep the selection, unless the restored state no longer has it.
+    // 保留選取，除非還原後的狀態裡已經沒有它
     if (selectedObjRef.current && !sn.objects.some(o => o.id === selectedObjRef.current)) setSelectedObj(null);
     if (selectedTarget && !sn.holes.some(h => h.id === selectedTarget || h.id + '_paired' === selectedTarget)) setSelectedTarget(null);
     /* 套用 env 會連帶觸發「換排版就重灑圖案」那類 effect，
@@ -3085,16 +3039,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   // 這裡只負責把面板上的設定存起來、以及接續時套回去。
   const restoredRef = useRef(false);
   useEffect(() => {
-    /* 必须等底图建立 baseW/baseH 后才恢复。以前在空画布阶段先套位置，
-       随后的底图初始化又随机生成一次图案，保存的位置便被覆盖。 */
+    /* 必須等底圖建立 baseW/baseH 後才恢復。以前在空畫布階段先套位置，
+       隨後的底圖初始化又隨機生成一次圖案，保存的位置便被覆蓋。 */
     if (restoredRef.current || !initialState || !imageState) return;
     restoredRef.current = true;
     restoringRef.current = true;
     const st = initialState;
     if (st.__completeDraft === 1) {
       const maskSrc = st.maskImageState?.src;
-      /* 先套纯数据；自订遮罩要等 Image 解码完成后再放入画布，不能把数据库
-         还原出的普通对象当成 CanvasImageSource，否则会直接造成黑屏。 */
+      /* 先套純數據；自訂遮罩要等 Image 解碼完成後再放入畫布，不能把數據庫
+         還原出的普通對象當成 CanvasImageSource，否則會直接造成黑屏。 */
       applyEnvRef.current({ ...st, maskImageState: null });
       if (maskSrc) {
         const restoredMask = new Image();
@@ -3171,12 +3125,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         im.src = o.src;
       });
     }
-    /* 不论来自自动草稿还是历史项目，进入时都从干净的未选中画面开始。 */
+    /* 不論來自自動草稿還是歷史項目，進入時都從乾淨的未選中畫面開始。 */
     setSelectedObj(null);
     setSelectedTarget(null);
     setShapeSel(null);
-    /* 等同一批 state 完成后，把恢复后的内容设为历史基线。
-       之后只有真正的新编辑会让返回键询问是否保存。 */
+    /* 等同一批 state 完成後，把恢復後的內容設為歷史基線。
+       之後只有真正的新編輯會讓返回鍵詢問是否保存。 */
     const settle = window.setTimeout(() => {
       resetHistory(
         loadedHoles || holesRef.current,
@@ -3187,8 +3141,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return () => window.clearTimeout(settle);
   }, [initialState, imageState, resetHistory]);
 
-  /* 每秒只覆盖同一个 META_KEY。画面状态从 ref 读取，因此不会在这里引用
-     尚未声明的动画状态，也不会重现上次导入后黑屏的运行时错误。 */
+  /* 每秒只覆蓋同一個 META_KEY。畫面狀態從 ref 讀取，因此不會在這裡引用
+     尚未聲明的動畫狀態，也不會重現上次導入後黑屏的運行時錯誤。 */
   useEffect(() => {
     if (!imageState) return;
     const persistLatest = () => {
@@ -3198,7 +3152,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         Boolean(initialState) || histRef.current.index > 0 || dirtyRef.current;
       if (!hasEditedContent) return;
       const sourceEnv = envSrcRef.current || {};
-      /* 选中状态属于临时 UI，不是作品内容；草稿永远只保存编辑结果。 */
+      /* 選中狀態屬於臨時 UI，不是作品內容；草稿永遠只保存編輯結果。 */
       const { selectedObj: _selectedObj, selectedTarget: _selectedTarget, ...env } = sourceEnv;
       saveToolDraft('collage', null, {
         ...env,
@@ -3208,8 +3162,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         __histKey: histKey || initialState?.__histKey || null,
       });
     };
-    /* 首次恢复的 setState 要先完成；第一份新快照从一秒后开始写，避免默认值
-       在同一轮 effect 中覆盖刚载入的草稿。 */
+    /* 首次恢復的 setState 要先完成；第一份新快照從一秒後開始寫，避免預設值
+       在同一輪 effect 中覆蓋剛載入的草稿。 */
     const timer = window.setInterval(persistLatest, 1000);
     return () => window.clearInterval(timer);
   }, [imageState, initialState, histKey]);
@@ -3281,7 +3235,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       let bw = w0, bh = h0;
       const originalW = bw;
       const originalH = bh;
-      // Limit working resolution to 1080px for stability
+      // 為了穩定，工作解析度最多 1080px
       if (Math.max(bw, bh) > 1080) {
         const s = 1080 / Math.max(bw, bh);
         bw *= s;
@@ -3536,7 +3490,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 還原上一步時「數量」也會跟著回到舊值，但圖案本身已經從快照拿回來了 ——
        這時候再重灑一次就會變成一組全新的隨機圖案，上一步就等於回不去。 */
     if (restoringRef.current) {
-      /* 恢复草稿的第一张底图也不能重撒图案；保存坐标会由上面的恢复 effect 套回。 */
+      /* 恢復草稿的第一張底圖也不能重撒圖案；保存座標會由上面的恢復 effect 套回。 */
       if (initialState) return;
       if (!fresh) return;
     }
@@ -3839,8 +3793,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
 
   const isHoleFullyInsideMask = useCallback((h: any, s: number, maskW: number, maskH: number) => {
-    // Generated patterns retain the inset rule. A manually placed pattern is
-    // clipped at the canvas boundary, never removed as a whole on contact.
+    // 自動產生的圖案照樣內縮；手動放的圖案在畫布邊緣裁掉，不會一碰到邊就整個消失
     if (h.manuallyPlaced) return true;
     /* 並排的四種（2～5）跟四周包圍一樣：圖案可以跨過遮罩的邊，跨出去的那一半由另一側畫
        （見 render 裡的 maskPlacements），所以不再因為沒完全落在遮罩裡就整顆拿掉。 */
@@ -4027,8 +3980,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const finishRegionEdit=()=>{
     regionSliderHeld.current=false;
     regionBlend.current?.setHeld(false);
-    // Replace the interaction composite with the exact shared pipeline now,
-    // not at the thumbnail debounce deadline.
+    // 現在就把互動用的合成換成共用的精確管線，不要等縮圖的延遲時間到
     regionLiveUntil.current=performance.now()+350;
     if(regionThumbTimer.current!==null)clearTimeout(regionThumbTimer.current);
     regionThumbTimer.current=setTimeout(()=>{regionThumbTimer.current=null;if(!regionSliderHeld.current)regionPaintRef.current();},400);
@@ -4083,8 +4035,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const region=photoRegionRef.current;
     const photos=region?.photos.map((p,i)=>a.kind==='region'&&a.index===i?pb:b.kind==='region'&&b.index===i?pa:p);
     if(region&&photos){
-      // Effect pixels belong to the photograph, not its slot. Moving a ready
-      // photograph must not synchronously rebake its full-resolution effects.
+      // 特效像素屬於照片，不屬於格子。已經算好的照片換位置時，不能同步重算原圖解析度的特效
       for(const cache of [objFxCache.current,fxLiveRef.current,regionPreviewCaps.current,regionFxSurfaces.current,vidScratchRef.current] as Map<string,any>[]){
         const ka=a.kind==='region'?`region-fx-${a.index}@${pa.src}`:a.id;
         const kb=b.kind==='region'?`region-fx-${b.index}@${pb.src}`:b.id;
@@ -4101,9 +4052,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const next=objectsRef.current.map(o=>{
       const p=a.kind==='object'&&a.id===o.id?pb:b.kind==='object'&&b.id===o.id?pa:null;
       if(!p)return o;
-      // A region is a crop slot, whereas an added image is a free photograph.
-      // Reusing the old free image's width/height stretches a replacement with
-      // another aspect ratio. Keep its centre and area, use the new source ratio.
+      // 區域是裁切格，加入的圖片是自由擺放的照片。沿用舊圖的寬高的話，換上不同比例的照片會被拉長；
+      // 所以保留中心和面積，比例用新照片的
       const scale=Math.sqrt(Math.abs(o.w*o.h)/Math.max(1,p.width*p.height));
       const w=p.width*scale,h=p.height*scale;
       return {...o,x:o.x+(o.w-w)/2,y:o.y+(o.h-h)/2,w,h,
@@ -4129,8 +4079,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useLayoutEffect(()=>{
     const c=regionThumbRef.current,img=regionSwapPhoto&&decodedRegionPhotos.current.get(regionSwapPhoto);if(!c||!img)return;
     const size=Math.round(80*window.devicePixelRatio);c.width=c.height=size;const g=get2dWide(c);
-    // Downscaling a native-size original on every long press is a visible
-    // stall on phones; the square thumbnail is cached per photograph.
+    // 每次長按都把原圖縮小一次，手機上會明顯卡一下；方形縮圖每張照片快取一份
     if(g){const thumb=swapThumb(regionSwapPhoto!,img,size);g.drawImage(thumb,0,0,size,size);}
     const p=regionThumbPoint.current;c.style.transform=`translate3d(${p.x}px,${p.y}px,0) translate(-50%,-50%)`;
   },[regionSwapPhoto]);
@@ -4153,7 +4102,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const regionPointerDown=(e:React.PointerEvent)=>{
     if(motionLockRef.current||brushMode!=='off'||(e.target as Element).closest('button,input,.no-pointer-events'))return;
-    // A second finger turns a pending empty-cell tap into a gesture.
+    // 第二根手指會把等待中的空格點擊變成手勢
     if(emptyCellTap.current&&emptyCellTap.current.id!==e.pointerId)emptyCellTap.current.moved=true;
     photoGestureIds.current.add(e.pointerId);
     photoGestureRelease.current??=holdPhotoInteraction();
@@ -4165,11 +4114,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const leavingSelectedPhoto=!!source&&(
       selectedRegionPhotoRef.current!==null&&(source.kind!=='region'||source.index!==selectedRegionPhotoRef.current)
       ||baseSelectedRef.current&&(source.kind!=='region'||source.index!==0));
-    // Selection owns the gesture, not the photo underneath the first finger.
-    // The capture layer must not turn a selected object/pattern into a photo tap.
+    // 手勢歸選取的物件，不歸第一根手指下面那張照片。攔截層不能把選中的物件或圖案當成點照片
     const otherSelection=!!selectedObjRef.current||!!selectedTarget||baseSelectedRef.current||maskSelectedRef.current;
-    // An EMPTY selected cell has no photo to pan/zoom: it must not own the
-    // gesture, or every tap is swallowed and the cell can never be deselected.
+    // 選中的「空」格沒有照片可以拖或縮放，不能佔住手勢，不然每次點擊都被吃掉、永遠取消不了選取
     const selectedHasPhoto=selectedRegionPhotoRef.current!==null&&!!photoRegionRef.current?.photos[selectedRegionPhotoRef.current]?.src;
     const own=regionTouches.current.size>0||(!otherSelection&&selectedHasPhoto);
     if(own){
@@ -4201,9 +4148,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           /* 空格子：等「放開而且沒有移動」才算點一下 —— 手指只是落在空格上開始
              捏合或拖曳時不該跳出相簿。這一下也只選中這一格，不讓底下的畫布
              把它當成點底圖（以前會把整張底圖框起來）。 */
-          // Not stopped here: the canvas keeps this pointer in its tracker (and
-          // ignores it as a single tap), so a second finger still pinches the
-          // view or the selected object even when it starts over an empty cell.
+          // 這裡不擋：畫布的追蹤器會留著這個指標（當成單點時忽略），所以第二根手指就算從空格開始，
+          // 照樣能縮放畫面或選中的物件
           emptyCellTap.current={id:e.pointerId,index:source.index,x:e.clientX,y:e.clientY,moved:false};
           return;
         }
@@ -4224,7 +4170,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionPointerMove=(e:React.PointerEvent)=>{
     const empty=emptyCellTap.current;
     if(empty?.id===e.pointerId){if(Math.hypot(e.clientX-empty.x,e.clientY-empty.y)>8)empty.moved=true;
-      // Alone it is only a tap candidate; as part of a pinch the canvas needs its moves.
+      // 單獨一根只算可能的點擊；如果是雙指縮放的一部分，畫布需要它的移動
       if(activePointers.current.size<=1){e.stopPropagation();return;}}
     const tap=regionTap.current;
     if(tap?.id===e.pointerId&&Math.hypot(e.clientX-tap.x,e.clientY-tap.y)>8)tap.moved=true;
@@ -4239,9 +4185,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(regionThumbRef.current)regionThumbRef.current.style.transform=`translate3d(${e.clientX}px,${e.clientY}px,0) translate(-50%,-50%)`;
         const hover=photoAt(e.clientX,e.clientY,true);
         if(JSON.stringify(hover)!==JSON.stringify(swapHoverRef.current)){
-          // Hover feedback is a canvas repaint only. Setting React state here
-          // re-rendered the whole editor and painted the scene a second time
-          // on every target change, which made dragging between photos stutter.
+          // hover 的回饋只重畫畫布。在這裡設 React state 會讓整個編輯器重新 render、每換一個目標就多畫一次場景，
+          // 在照片之間拖動會卡
           swapHoverRef.current=hover;
           if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
         }
@@ -4265,7 +4210,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(empty?.id===e.pointerId){
       emptyCellTap.current=null;photoGestureIds.current.delete(e.pointerId);
       if(!photoGestureIds.current.size){photoGestureRelease.current?.();photoGestureRelease.current=null;}
-      // The canvas still receives this release to drop the pointer it tracked.
+      // 畫布照樣收到這次放開，好丟掉它追蹤的指標
       if(!empty.moved&&e.type!=='pointercancel'&&activePointers.current.size<=1){
         selectedRegionPhotoRef.current=empty.index;setSelectedRegionPhoto(empty.index);
         selectedObjRef.current=null;baseSelectedRef.current=false;maskSelectedRef.current=false;
@@ -4286,8 +4231,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         selectedRegionPhotoRef.current=tap.index;setSelectedRegionPhoto(tap.index);
         selectedObjRef.current=null;baseSelectedRef.current=false;maskSelectedRef.current=false;
         setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);
-        // The existing processed photo pixels are already available. Draw
-        // their frame immediately; scene warm-up is not selection feedback.
+        // 處理好的照片像素已經有了，立刻畫外框；場景預熱不算選取回饋
         regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
         regionPaintRef.current();
       }
@@ -4347,7 +4291,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     g.font = `${o.italic ? 'italic ' : ''}${o.bold ? 800 : 400} ${o.size || 40}px ${fontStack(o.fontFamily || DEFAULT_FONT)}`;
     (g as any).letterSpacing = `${spacing}px`;
     const total = text ? g.measureText(text).width : 0, start = spacing / 2 - total / 2;
-    // Caret stops at grapheme boundaries (UTF-16 offsets for the field).
+    // 游標停在字素邊界（輸入欄用 UTF-16 位移）
     let best = 0, bestD = Math.abs(lx - start), at = 0;
     for (const ch of Array.from(text) as string[]) {
       at += ch.length;
@@ -4355,7 +4299,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (d < bestD) { bestD = d; best = at; }
     }
     e.preventDefault(); e.stopPropagation();
-    textOpenAtRef.current = performance.now();   // the tap must not end editing
+    textOpenAtRef.current = performance.now();   // 這次點擊不能結束編輯
     try { field.focus({ preventScroll: true }); field.setSelectionRange(best, best); } catch {}
     regionPaintRef.current();
     return true;
@@ -4370,7 +4314,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const target = e.target as HTMLElement;
     if (!target || target.closest('.no-pointer-events')) return;
     
-    // Check if we already have this pointer to prevent potential browser issues
+    // 檢查是不是已經有這個指標，避免瀏覽器的怪問題
     if (activePointers.current.has(e.pointerId)) {
       activePointers.current.delete(e.pointerId);
     }
@@ -4394,8 +4338,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const sx = (geometry?.cw || canvasRef.current.width / ps) / rect.width, sy = (geometry?.ch || canvasRef.current.height / ps) / rect.height;
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState.globalScale || 1, offs = getLayoutOffsets();
-    // An unselected multi-photo cell is a tap candidate, not a crop gesture.
-    // Keep its pointer in the shared tracker so a second finger zooms the scene.
+    // 沒選中的多圖格子只算可能的點擊，不是裁切手勢。指標留在共用追蹤器裡，第二根手指才能縮放場景
     if(activePointers.current.size===1&&(regionTap.current?.id===e.pointerId||emptyCellTap.current?.id===e.pointerId)){e.stopPropagation();return;}
     const animatedOrder = animRef.current
       ? new Map([...holesRef.current].sort((a,b)=>(a.x-b.x)||(a.y-b.y)).map((h,i)=>[h.id,i])) : null;
@@ -4444,8 +4387,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         else if (inMask) clickedSide = 'mask';
       }
 
-      // Once selected, base/custom-mask photos can be edited from any point in
-      // the preview workspace. Only a stationary tap outside deselects them.
+      // 底圖或自訂遮罩照片選中後，在預覽工作區任何地方都能編輯；只有在外面原地點一下才取消選取
       if(brushMode==='off'&&offs&&(baseSelectedRef.current||maskSelectedRef.current)){
         e.stopPropagation();
         const mask=maskSelectedRef.current&&!!maskImageState?.img;
@@ -4517,8 +4459,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  變成在調形狀裡的位置。 */
               shapeIfTap: !!o.img && isImgShaped(o.imgShape) && hitShapeOf(o, x, y),
             };
-            /* pointerdown 只是按下，不代表已经拖动。真正超过移动门槛时，
-               handlePointerMove 才会隐藏框；轻点同一物件不再闪一下。 */
+            /* pointerdown 只是按下，不代表已經拖動。真正超過移動門檻時，
+               handlePointerMove 才會隱藏框；輕點同一物件不再閃一下。 */
             return;
           }
           const cur0 = selId ? list.find(z => z.id === selId) : null;
@@ -4591,7 +4533,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
 
           if (localX >= 0 && localY >= 0) {
-            // Initial contact and subsequent stamps use identical ink spacing.
+            // 第一下和之後的每一筆用一樣的筆觸間距
             {
               const newHole = {
                 id: Math.random().toString(36).substr(2, 9),
@@ -4694,8 +4636,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 選中物件時兩指是在縮放／旋轉那個物件 —— 不再縮放整個預覽。
          沒選中任何東西時才會落到下面那條「雙指縮放預覽」。 */
       e.stopPropagation();
-      // A queued drag sample must be committed before taking the pinch origin.
-      // Otherwise a second finger within the same frame restores the old pose.
+      // 取雙指縮放的起點前，排隊中的拖動要先套用，不然同一格裡加進第二根手指會回到舊的姿態
       flushSync(() => flushMoveNow());
       objDragRef.current = null;
       /* 第一根手指落在形狀外面時，上面那一段已經把「選中形狀」退掉了 ——
@@ -4743,7 +4684,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     } else if (activePointers.current.size === 2 && !regionScenePinch.current && selectedTarget) {
       e.stopPropagation();
-      // Preserve the latest drag position when a second finger joins the gesture.
+      // 第二根手指加入時保留最新的拖動位置
       flushMoveNow();
       const pts: any[] = Array.from(activePointers.current.values());
       const p1 = { x: (pts[0].clientX - rect.left) * sx, y: (pts[0].clientY - rect.top) * sy };
@@ -5073,12 +5014,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if (!alive) return;
         if (!l.url || getLoadedLut(l.id)) continue;
         await loadLut(l.id, l.url);
-        // A decoded background card is not a scene edit. Do not rebuild the
-        // collage's React tree while the user is pinching or sliding.
+        // 背景卡片解碼好不算編輯場景，使用者正在縮放或拖滑桿時不要重建拼圖的 React 樹
         await awaitPhotoIdle();
         if (!alive) return;
         setLutRevision(n => n + 1);
-        // Loading another card must not invalidate the full-size GPU scene.
+        // 載入另一張卡片不能讓全尺寸的 GPU 場景失效
         if(photoRegionRef.current?.photos.some(p=>p.fx?.lut===l.id)||objectsRef.current.some(o=>o.fx?.lut===l.id))setFxTick(t => t + 1);
       }
     })();
@@ -5268,8 +5208,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 textStretchBaseW: pin.textStretchBaseW0 * k,
                 textStretchBaseH: pin.textStretchBaseH0 * k,
               } : null),
-              /* 整体缩放时纹理与图形一起缩放，网格数量保持不变；
-                 四边挤压走另一条路径，不会改这两个基准。 */
+              /* 整體縮放時紋理與圖形一起縮放，網格數量保持不變；
+                 四邊擠壓走另一條路徑，不會改這兩個基準。 */
               textureBaseW: pin.textureBaseW0 * k,
               textureBaseH: pin.textureBaseH0 * k,
               x: sx0, y: sy0, rot: nrot }
@@ -5367,7 +5307,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }
 
         if (localX >= 0 && localY >= 0) {
-          // Test scene-space ink, including size variation and rotation.
+          // 用場景座標的線條來判斷，包含大小變化和旋轉
           if (localX !== lastDrawPosRef.current.x || localY !== lastDrawPosRef.current.y) {
             const newHole = {
               id: Math.random().toString(36).substr(2, 9),
@@ -5453,7 +5393,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ? [resized, { ...h, id: h.id + '_paired', side: side === 'image' ? 'mask' : 'image' }]
           : [resized];
       }); livePatternPaintRef.current(); });
-      // Update start distance to allow continuous pinch
+      // 更新起始距離，縮放才能連續
       intr.startDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
     }
   };
@@ -5569,8 +5509,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     stripeN, stripeDir, stripeA, stripeB, holeType, customText, getHoleSize, holeAngle, maskScale,
     objects, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching,
     fxTick, linkMode, linkColor, glowMode, holeGlow, holeGlowColor, glowIdle]);
-  // Committing the selected slider changes React's callback identity, but not
-  // the cached scene endpoints. Only actual scene edits invalidate those.
+  // 提交選中的滑桿會改變 React 回呼的身分，但不影響快取的場景端點；只有真正改到場景才讓它們失效
   const regionSceneValue=[imageState,imageState?.img?.src,maskImageState?.img?.src,
     photoRegion&&{...photoRegion,photos:photoRegion.photos.map((p,i)=>i===(selectedRegionPhotoRef.current??0)?{...p,fx:{...p.fx,[regionBlendTool.current]:0}}:p)},
     swapSource,selectedRegionPhoto,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,
@@ -5578,12 +5517,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     objects,shapeSel,selectedObj,selectedTarget,selectedPatternSide,baseSelected,editingTextId,guides,tuningEdge,objDragging,objPinching,objStretching,
     fxTick,linkMode,linkColor,glowMode,holeGlow,holeGlowColor,glowIdle];
   regionSceneKey.current=JSON.stringify(regionSceneValue,compactSceneValue);
-  // Selection, pills, gestures and tabs are UI, not scene pixels. Including
-  // them invalidated 2/3 full-scene endpoint captures on every navigation.
+  // 選取、標籤、手勢和分頁是介面，不是場景像素。算進去的話，每次切換都會讓三分之二的整張場景端點快照失效
   const gpuSceneFingerprint=useMemo(()=>JSON.stringify([
     imageState,imageState?.img?.src,maskImageState?.img?.src,
-    // The selected photo's crop is a compositor uniform. Black/white scene
-    // coverage is unchanged by panning/zooming INSIDE its cell.
+    // 選中照片的裁切是合成器的 uniform。在格子「裡面」拖動或縮放，場景的黑白覆蓋範圍不變
     photoRegion&&{...photoRegion,photos:photoRegion.photos.map((p,j)=>j===(selectedRegionPhotoRef.current??0)?{...p,fx:{},zoom:1,offsetX:0,offsetY:0}:p)},
     layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,
     stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,
@@ -5656,12 +5593,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const debugSection=(name:string)=>{if(import.meta.env.DEV){const now=performance.now();debugSections[name]=now-debugPrevious;debugPrevious=now;}};
     const {selectedTarget, selectedPatternSide, selectedObj, baseSelected} = chromeSelectionRef.current;
     if (!imageState) return;
-    // All painting routes share this guard, including pause/selection effects.
-    // Resizing a canvas clears it immediately, so never resize during the tween.
+    // 所有繪製路線共用這道檢查，包含暫停和選取的 effect。改畫布大小會立刻清空它，所以過渡動畫進行中絕不改大小
     if (targetCanvas === canvasRef.current && performance.now() < motionTransitionUntilRef.current) return;
     const stamp=regionSceneStamp.current,index=selectedRegionPhotoRef.current??0,photo=photoRegion?.photos[index];
-    // Backdrop-dependent materials are nonlinear. Black/white photo endpoints
-    // cannot reconstruct them; use the shared live scene when masks are present.
+    // 依賴背景的材質是非線性的，黑白兩個照片端點組不回來；有遮罩時用共用的即時場景
     const hasBackdrop=objectsRef.current.some(o=>isBackdropMask(o.kind));
     if(targetCanvas===canvasRef.current){creativeSeam.current?.beginFrame();targetCanvas.dataset.creativePhotoComposition='single-canvas';}
     if(targetCanvas===canvasRef.current&&(regionHold.current?.active||swapPaintForced.current)){
@@ -5690,8 +5625,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const editGateOpen=baseEditGate.current||!basePhotoEditing;
     // 圖片物件那張 GPU 合成（objComposite）只在它自己那條路上顯示；其他畫法一律先收起來
     if(targetCanvas===canvasRef.current&&!previewCapture&&objComposite.current?.shown&&(selectedObj!==objComposite.current.id||activeTab!=='objedit'))objComposite.current.shown.style.display='none';
-    // A resident photo-edit surface contains the old complete scene. It must
-    // never obscure subsequent live object/glow painting after leaving editing.
+    // 常駐的照片編輯畫布裡是舊的完整場景，離開編輯後絕不能蓋住之後即時畫的物件或光暈
     if(targetCanvas===canvasRef.current&&!basePhotoEditing&&!regionPreflight.current){
       regionColour.current?.hide();
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
@@ -5711,9 +5645,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         let resident=regionSpatial.current;
         if(!resident||resident.key!==key||resident.scale!==renderScale||resident.scene.black.width!==targetCanvas.width||resident.scene.black.height!==targetCanvas.height){
           if(import.meta.env.DEV){targetCanvas.dataset.spatialRebuilds=String(Number(targetCanvas.dataset.spatialRebuilds||0)+1);targetCanvas.dataset.sceneRebuildReason=JSON.stringify({key:resident?.key!==key,scale:[resident?.scale,renderScale],size:[resident?.scene.black.width,resident?.scene.black.height,targetCanvas.width,targetCanvas.height]});}
-          // Scene geometry changes, not the immutable photo or its shaders.
-          // Keep the actual GPU context; repeatedly rebuilding it exhausts
-          // WebKit's context and canvas memory budgets after several edits.
+          // 變的是場景幾何，不是固定的照片或它的著色器。保留原本的 GPU context；一直重建的話，
+          // 編輯幾次後就會用完 WebKit 的 context 和畫布記憶體額度
           resident?.shown?.remove();
           if(resident){resident.scene.black.width=resident.scene.black.height=resident.scene.white.width=resident.scene.white.height=1;}
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
@@ -5731,8 +5664,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           resident={key,scale:renderScale,scene:{black:scenes[0],white:scenes[1],placements},input:resident?.input||regionSpatialInput.current};regionSpatial.current=resident;
         }
         if(resident.scene.placements.length>0&&resident.scene.placements.length<=8){
-          // Mutate only UV uniforms on the SAME scene identity. Replacing the
-          // scene object would re-upload two full canvases on every movement.
+          // 同一個場景只改 UV uniform。換掉場景物件的話，每動一下都要重新上傳兩張完整畫布
           for(const placement of resident.scene.placements)if(photoRegion?.multi||photoRegion!.photos.length>1){
             const crop=photoCrop(photo!,Math.abs(placement.rect[2]),Math.abs(placement.rect[3]));
             placement.uv=[crop.sx/photo!.width,crop.sy/photo!.height,crop.sw/photo!.width,crop.sh/photo!.height];
@@ -5759,9 +5691,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
       if(regionColourActive.current&&original&&supportsSceneColour(photo?.fx)&&!sceneGeometryGesture&&!regionTouches.current.size&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
         regionColour.current??=new PhotoSceneColour();const colour=regionColour.current;colour.onReady=()=>regionPaintRef.current();
-        // Colour endpoints contain the actual cropped photograph, not just
-        // coverage. Unlike the spatial compositor they cannot reuse pixels
-        // captured before a pan/zoom of that photograph.
+        // 顏色端點裡是實際裁切後的照片，不只是覆蓋範圍。跟空間合成不同，照片拖動或縮放後就不能沿用之前拍的像素
         const signature=regionGpuSceneKey.current+'|crop:'+JSON.stringify([photo?.zoom,photo?.offsetX,photo?.offsetY]);
         if(!colour.ready||colour.signature!==signature||colour.width!==targetCanvas.width||colour.height!==targetCanvas.height||colour.scale!==renderScale){
           if(import.meta.env.DEV){targetCanvas.dataset.colourRebuilds=String(Number(targetCanvas.dataset.colourRebuilds||0)+1);targetCanvas.dataset.sceneRebuildReason=JSON.stringify({key:colour.signature!==signature,scale:[colour.scale,renderScale],size:[colour.width,colour.height,targetCanvas.width,targetCanvas.height]});}
@@ -5781,8 +5711,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               source.width=source.height=1;
             }
             colour.prepare(targetCanvas,signature,renderScale,scenes);
-            // These exact endpoints are also needed by spatial effects.
-            // Capture once while entering editing, not on the first FX click.
+            // 空間特效也要用這組精確端點，進入編輯時拍一次，不要拖到第一次點特效
             const previous=regionSpatial.current;
             /* 特效那一條的場景還是同一個（只有照片的裁切變了）就留著：換一份新的會讓它
                下一格把兩張場景整張讀回、重新上傳。 */
@@ -5791,9 +5720,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             previous?.shown?.remove();
             if(previous){previous.scene.black.width=previous.scene.black.height=previous.scene.white.width=previous.scene.white.height=1;}
             regionSpatialInput.current??=document.createElement('canvas');
-            // Spatial coverage does not include crop coordinates: those are
-            // UV uniforms. Keeping the colour-only crop suffix here discarded
-            // the already primed scene on the very first effect click.
+            // 空間覆蓋範圍不含裁切座標（那些是 UV uniform）。這裡如果留著只給顏色用的裁切後綴，
+            // 第一次點特效就會丟掉已經預熱好的場景
             regionSpatial.current={key:regionGpuSceneKey.current,scale:renderScale,scene:{black:scenes[1],white:scenes[2],placements},input:regionSpatialInput.current};
             }
             const prepared=regionSpatial.current;
@@ -5802,16 +5730,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             void (async()=>{while(adjustSubRef.current!=='effect'||activeTabRef.current!=='objedit'){await new Promise(r=>setTimeout(r,300));if(regionSpatial.current!==prepared||leavingRef.current)return;}})().then(()=>awaitPhotoIdle()).then(async()=>{
               if(regionSpatial.current!==prepared||leavingRef.current||!regionColourActive.current)return;
               warmPhotoFxSurface(prepared.input,'fxMosaic',prepared.scene);
-              // Compile-only preflight misses the costly first real texture
-              // upload/pool allocation. Prime the actual source and compositor
-              // offscreen; no effect is applied to the user's photo here.
-              // Allocate/upload offscreen only while this spatial surface has
-              // NEVER been presented. A visible effect surface must never be
-              // repainted by a delayed warm-up task.
+              // 只編譯的預檢抓不到第一次真正上傳貼圖、配置池的成本，所以在畫面外預熱實際的來源和合成器；
+              // 這裡不會對使用者的照片套任何特效。只有在這張空間畫布「從沒」顯示過時才在畫面外配置、上傳；
+              // 已經看得到的特效畫布絕不能被延後的預熱重畫
               if(!prepared.shown&&supportsSceneColour(photoRegionRef.current?.photos[index]?.fx))
                 applyPhotoFx(original,iw,ih,{...FX_PARAM_DEFAULTS,...photo?.fx,fxMosaic:100},{cacheSource:true,gpuSurface:true,out:prepared.input,scene:prepared.scene});
-              // These two families additionally upload a LUT / analyze the
-              // photograph's highlights. Prime them in separate idle slots.
+              // 這兩組還要上傳 LUT、分析照片的亮部，各自排在不同的閒置時段預熱
               for(const id of ['fxLowfi','fxExposureSpill']){
                 if(id==='fxLowfi')await warmLowfiLut();
                 await awaitPhotoIdle();
@@ -5930,7 +5854,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （主人說的「向左上裁切」）。這個倍率就是縮小的比例。 */
     const kIn = layout === AROUND
       ? Math.max(iw / Math.max(1, sw), ih / Math.max(1, sh)) : 1;
-    /* ⚠ 尺寸一定要用整數比對。
+    /* 尺寸一定要用整數比對。
        canvas.width 的 setter 會把小數截掉，而 offs.cw 幾乎都是小數
        （實測 1402.1706749406885）。拿小數去比「尺寸有沒有變」永遠不相等，
        於是每畫一格都會走進去指派一次 —— 而指派 canvas.width 就算值一樣，
@@ -5939,19 +5863,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        iOS 的畫布記憶體一碰到上限就把整頁收掉 —— 那就是閃退。
        截成整數之後畫出來的尺寸跟以前一模一樣（setter 本來就是這樣截的）。 */
     const tW = Math.max(1, offs.cw | 0), tH = Math.max(1, offs.ch | 0);
-    // Raster dimensions are integers, scene dimensions are continuous. Map
-    // them once for every layer; do not let each photo inherit a changing
-    // fractional CSS stretch when the preview crosses a backing-size step.
+    // 點陣尺寸是整數，場景尺寸是連續的。每一層都用同一次換算，預覽跨過暫存大小的級距時，
+    // 每張照片才不會各自帶著變動的小數 CSS 拉伸
     const rasterX=isMain?tW/offs.cw:1;
     const rasterY=isMain?tH/offs.ch:1;
-    // Static layers use full-scene coordinates but rasterize only the viewport.
-    // Animations and exports retain their existing full-frame renderer.
+    // 靜態圖層用整個場景的座標，但只點陣化看得到的範圍。動畫和存檔還是用原本的整格繪製
     const canWindow = isMain && !forceFullPreviewRef.current && !animRef.current
       && !motionLockRef.current && stageRef.current && uiRect.width > 0;
     const vp = sceneTileWindow.current || (canWindow ? previewViewport(tW,tH,uiRect,stageRef.current!.getBoundingClientRect()) : {x:0,y:0,w:tW,h:tH});
     const windowed = vp.x!==0 || vp.y!==0 || vp.w!==tW || vp.h!==tH;
-    // Reuse capacity while pinching, without changing the physical pixel/CSS
-    // mapping. Spare backing pixels are cleared, so no scene can leak out.
+    // 縮放時沿用容量，不改實體像素和 CSS 的對應。多出來的暫存像素會清掉，場景不會漏出去
     const bucketed=isMain&&!previewCapture&&canWindow&&baseCssWRef.current>0&&(!!viewPinchRef.current||performance.now()<wheelUntilRef.current);
     let backingW=bucketed?Math.ceil(vp.w/256)*256:vp.w,backingH=bucketed?Math.ceil(vp.h/256)*256:vp.h;
     if(targetCanvas===canvasRef.current){
@@ -5978,20 +5899,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     frameContext.save();
     try {
     ctx.setTransform(rasterX, 0, 0, rasterY, -vp.x, -vp.y);
-    // Retained backing capacity is transparent storage, not extra page area.
-    // Map the continuous page clip to the exact integer raster boundary.
+    // 保留的暫存容量是透明的儲存空間，不是多出來的頁面。把連續的頁面裁切對到精確的整數點陣邊界
     ctx.beginPath();ctx.rect(0,0,offs.cw,offs.ch);ctx.clip();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    // A plain object selection is an SVG overlay above the canvas: the scene
-    // pixels are identical, so pinch-zooming with a selected mask/shape keeps
-    // using the immutable tiles. Only a shape-outline selection (stroked
-    // into the canvas) needs the live painter.
+    // 一般的物件選取是畫布上方的 SVG 疊層，場景像素一樣，所以選著遮罩或形狀縮放時還是用固定的圖塊；
+    // 只有形狀外框的選取（描進畫布裡）才需要即時繪製
     const sceneIsStatic=liveMaskScale.current===null&&!(selectedObj&&shapeSel)&&!selectedTarget&&!baseSelected&&selectedRegionPhotoRef.current===null&&!regionPhotoEditingRef.current&&!animRef.current&&!motionTargetFlashRef.current&&!editingTextId&&!swapSource&&!regionSliderHeld.current&&!regionHold.current?.active
       &&!objDragRef.current&&!objPinchRef.current&&!objStretchRef.current&&!baseDragRef.current&&!basePinchRef.current&&!interactionRef.current
       &&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
-    // No source rasterization, shader upload, per-object rounding, or rebuilding
-    // at a new zoom. Every pixel uses the same immutable parent coordinate map.
+    // 不點陣化來源、不上傳著色器、不逐物件取整、換縮放也不重建。每個像素都用同一份固定的上層座標對應
     const liveSceneKey=JSON.stringify([backdropSceneFingerprint,objects,photoRegion,lutRevision],compactSceneValue);
     if(targetCanvas===canvasRef.current&&!previewCapture&&sceneIsStatic&&stableScene.current.paint(ctx,liveSceneKey,offs.cw,offs.ch)){
       regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
@@ -6013,11 +5930,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(import.meta.env.DEV){targetCanvas.dataset.sceneSnapshot='pinch-snapshot';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);}
       return;
     }
-    /* Objects just added (palette tap, import) are appended on top of a scene
-       the tiles already hold. Paint those tiles and draw only the new objects:
-       re-rendering every photograph/effect live for one new shape was the
-       visible delay after tapping an item. Pixels match the tile view the
-       user was already looking at. */
+    /* 剛加入的物件（點色票、導入）疊在圖塊已經有的場景上面。畫好圖塊、只畫新物件就好；
+       為了一個新形狀把所有照片和特效即時重畫，就是點了之後明顯延遲的原因。像素跟使用者原本看到的圖塊畫面一致 */
     let tilePrefix:any[]|null=null;
     // 磚塊解析度不夠這個倍率（放很大）時不用它：會糊，改畫即時的
     const tilesSharp=(()=>{ctx.save();ctx.setTransform(rasterX,0,0,rasterY,0,0);const ok=stableScene.current.sharpFor(ctx,offs.cw,offs.ch);ctx.restore();return ok;})();
@@ -6182,7 +6096,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        這樣拖「比例」滑桿時就少一張跟著長寬變的全尺寸畫布。 */
     const bW = hasMaskImg ? Math.max(1, maskW | 0) : TILE;
     const bH = hasMaskImg ? Math.max(1, maskH | 0) : TILE;
-    /* ⚠ 遮罩本身的長寬一定要進這把鑰匙。底稿現在可能只有 8×8（純色的情況），
+    /* 遮罩本身的長寬一定要進這把鑰匙。底稿現在可能只有 8×8（純色的情況），
        光看 bW/bH 是看不出「遮罩變大變小了」的 —— 少了這兩個，拖比例滑桿時
        紋理就不會跟著重新鋪滿。 */
     const maskPhoto = hasMaskImg ? resolveMaskPhotoTransform(maskTransform,
@@ -6260,20 +6174,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (isMain) maskCacheKeyRef.current = maskKey;
 
     const regionDecoded = new Map(decodedRegionPhotos.current);
-    // ImageBitmap pins decoded native pixels. HTMLImageElement can lazily
-    // re-decode its compressed source after memory eviction in the first pinch.
-    // No resize, quality reduction or per-zoom image loading is involved.
-    // The seamless GPU compositor pins its own original textures. Import the
-    // tagged originals directly: WebKit can discard a P3 bitmap's profile.
-    // Plain and feathered photo grids share the resident original textures.
-    // Changing seam strength must not replace every GPU source with an
-    // ImageBitmap and then upload the originals again on the first input.
+    // ImageBitmap 會把解碼好的原圖像素釘住；
+    // HTMLImageElement 在第一次縮放、記憶體被回收後可以從壓縮檔重新解碼，不涉及改尺寸、降畫質或每次縮放重讀。
+    // 無縫 GPU 合成器自己釘住原圖貼圖，直接匯入帶色彩描述檔的原圖：WebKit 可能丟掉 P3 bitmap 的描述檔。
+    // 一般和羽化的照片格子共用常駐的原圖貼圖；調接縫強度不能把每個 GPU 來源換成 ImageBitmap，
+    // 第一次操作時又重新上傳一次原圖
     if(isMain&&!photoRegion?.seamless&&(layout===AROUND||hasBackdrop||animRef.current||regionHold.current?.active))for(const [src,bitmap] of regionDrawables.current)regionDecoded.set(src,bitmap as unknown as HTMLImageElement);
     const regionForPaint = photoRegion ? {...photoRegion,photos:photoRegion.photos.map((p,i)=>{
       const original = decodedRegionPhotos.current.get(p.src);
-      // Endpoint captures must replace even an UNEDITED photo. Otherwise
-      // black and white endpoints both contain the original, coverage is zero,
-      // and the resident compositor silently displays an unchanged image.
+      // 端點快照連「沒編輯過」的照片也要換。不然黑白兩組端點都是原圖、覆蓋範圍是零，
+      // 常駐的合成器就默默顯示沒變的圖
       const capturingPhoto=regionWarmStage.current?.index===i;
       if (!original || (!capturingPhoto&&(!p.fx || !hasPhotoFx(p.fx)) && !(isMain&&objEditImage&&regionBlendTool.current&&i===(selectedRegionPhotoRef.current??0)))) return p;
       const fxStarted = import.meta.env.DEV ? performance.now() : 0;
@@ -6286,19 +6196,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         targetCanvas.dataset.regionFxBackend=(processed as HTMLCanvasElement).dataset?.colorBackend || '';
       }
       if (!processed) return p;
-      // Reused effect canvases are mutable: feather caches must see parameter
-      // revisions even when the canvas identity is unchanged.
+      // 重用的特效畫布內容會變：就算畫布是同一個，羽化快取也要看得到參數的版本變化
       const src=`region-processed-${i}@${p.src}@${JSON.stringify(p.fx)}@${(processed as HTMLCanvasElement).width}x${(processed as HTMLCanvasElement).height}`;
       regionDecoded.set(src, processed as HTMLImageElement);
-      // Crop coordinates must use the processed surface dimensions, not the
-      // original decode dimensions (the shared effects renderer may cap size).
+      // 裁切座標要用處理後畫布的尺寸，不是原圖解碼的尺寸（共用的特效繪製可能限制大小）
       return {...p,src,width:(processed as any).naturalWidth || (processed as any).width,
         height:(processed as any).naturalHeight || (processed as any).height};
     })} : null;
-    // Native source textures are invariant under preview zoom. Reconstruct
-    // this photo-only backdrop on the GPU rather than uploading the enlarged
-    // 2D viewport every frame. Complex/vector/pattern scenes retain the general
-    // compositor; never rasterize their edges into a lower-density snapshot.
+    // 原圖貼圖不受預覽縮放影響，這個只有照片的背景在 GPU 上重建，不要每格上傳放大後的 2D 畫面。
+    // 複雜、向量或圖案的場景照樣走一般合成器，邊緣絕不點陣化成較低密度的快照
     const maskPhotosReady=!photoRegion||(photoRegion.photos.every(p=>p.src&&decodedRegionPhotos.current.has(p.src))&&regionRects(photoRegion,iw,ih).length===photoRegion.photos.length);
     const directMaskPhotos:BackdropPhotoLayer[]|null=isMain&&!previewCapture&&hasBackdrop&&maskPhotosReady&&layout!==AROUND&&(layout===FULL||patternType==='none'&&!maskImageState)&&!holes.length&&!animRef.current&&!regionHold.current?.active&&!swapSource&&!baseSelected&&selectedRegionPhotoRef.current===null&&!photoRegion?.seamless&&objects.every(o=>!o.below&&o.type==='shape'&&isBackdropMask(o.kind)&&o.kind!=='mask-frost-feather')?[]:null;
     const drawBase = (g: CanvasRenderingContext2D, img: any, x: number, y: number, w: number, h: number, allowDim = false, clip?:number[]) => {
@@ -6354,9 +6260,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.beginPath();
       const matrix=ctx.getTransform();
       if(isMain&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&photoRegion&&layout!==AROUND&&img===baseImg&&matrix.b===0&&matrix.c===0&&matrix.a>0&&matrix.d>0){
-        // The GPU window accepts pixel centres, not antialiased fractional
-        // canvas clips. Use the same integer ownership for its transparent
-        // main-canvas window, without changing source crop or logical geometry.
+        // GPU 視窗吃的是像素中心，不是反鋸齒的小數畫布裁切。主畫布上的透明視窗也用同一套整數歸屬，
+        // 不改來源裁切或邏輯幾何
         const left=scenePixelEdge(ox,matrix.a,matrix.e),top=scenePixelEdge(oy,matrix.d,matrix.f);
         const right=scenePixelEdge(ox+w,matrix.a,matrix.e),bottom=scenePixelEdge(oy+h,matrix.d,matrix.f);
         ctx.setTransform(1,0,0,1,0,0);ctx.rect(left,top,right-left,bottom-top);ctx.setTransform(matrix);
@@ -6447,20 +6352,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const drawCentreImage = () => {
       drawImg(baseImg as any, imageTransform, offs.ix, offs.iy, iw, ih, kIn, true);
       drawEmptyCellPrompts();
-      // Base-photo chrome belongs to the base layer, beneath objects/patterns.
+      // 底圖的外框屬於底圖層，在物件和圖案下面
       const index = selectedRegionPhotoRef.current;
       if (!isMain || !photoRegion?.multi || index === null || activeTab === 'motion' || hideChromeRef.current || animRef.current) return;
       const t=imageTransform,rects=regionRects(photoRegion,t.w*s*kIn,t.h*s*kIn),r=rects[index];
       if (!r) return;
       ctx.save();ctx.beginPath();ctx.rect(offs.ix,offs.iy,iw,ih);ctx.clip();
-      // Higher photo cells in overlay layouts must also cover this base frame.
+      // 疊放版面裡較上層的照片格也要蓋住這個底圖外框
       rects.forEach((cell,i)=>{if(i>index&&photoRegion.photos[i].src){
         ctx.beginPath();ctx.rect(offs.ix,offs.iy,iw,ih);
         ctx.rect(offs.ix+(t.x+cell.x*t.w)*s*kIn,offs.iy+(t.y+cell.y*t.h)*s*kIn,cell.w*t.w*s*kIn,cell.h*t.h*s*kIn);
         ctx.clip('evenodd');
       }});
       ctx.strokeStyle='white';ctx.lineWidth=uiPx;ctx.setLineDash([4*uiPx,4*uiPx]);
-      // Keep the entire stroke inside the cell, including the clipped outer edges.
+      // 整條線都留在格子裡，包含被裁掉的外緣
       ctx.strokeRect(offs.ix+(t.x+r.x*t.w)*s*kIn+uiPx/2,offs.iy+(t.y+r.y*t.h)*s*kIn+uiPx/2,Math.max(0,r.w*t.w*s*kIn-uiPx),Math.max(0,r.h*t.h*s*kIn-uiPx));
       ctx.restore();
     };
@@ -6729,10 +6634,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           現在**只有跨過階梯的那一格才算一次**，中間十幾格全部是現成的。
           刻意只往「上」取：小圖永遠比要用的大，縮下去不會糊。 */
     const SZ_STEP = 1.12;
-    // All instances of one shape share a high-resolution glow master per side.
-    // Variable-size patterns previously cycled through >24 large bitmaps and
-    // evicted one another within the same frame, recomputing blur continuously.
-    // The master is always at least as large as the largest drawn instance.
+    // 同一種形狀的所有實例每一邊共用一張高解析度的光暈母版。
+    // 大小不一的圖案會在超過 24 張大點陣之間輪替、同一格裡互相擠掉，模糊一直重算。
+    // 母版至少跟畫出來最大的那個一樣大
     let glowRasterSize = 0;
     /** 圖案發光的強度（跟圖形同一套：滑桿 100 ＝ 3） */
     const holeGlowAmt = glowAmount(glowFromUi(holeGlow));
@@ -6755,9 +6659,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       tmp.width = side; tmp.height = side;
       const tg = get2dWide(tmp);
       if (!tg) return null;
-      // Render only the shadow, translating the solid caster completely outside
-      // the bitmap. No destination-out fringe or second antialiased knockout:
-      // those leave a zoom-dependent unlit outline around the visible pattern.
+      // 只畫陰影，把實心的投影物整個移到點陣外面。不用 destination-out 的邊，也不做第二次反鋸齒挖空：
+      // 那些會在看得到的圖案周圍留下隨縮放變化的暗邊
       const casterOffset = side * 2;
       tg.shadowColor = gcol;
       tg.shadowOffsetX = casterOffset;
@@ -6772,8 +6675,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       tg.globalCompositeOperation = 'source-over';
       (tmp as any).__sz = szQ;
       cache.set(key, tmp);
-      // Count bytes, not just entries: a zoomed glyph can be several megapixels.
-      // Eviction changes reuse only; never changes the pixels being rendered.
+      // 用位元組數算，不只算筆數：放大後的一個字可能好幾百萬像素。淘汰只影響能不能重用，不會改到正在畫的像素
       let cachedPixels = 0;
       for (const bitmap of cache.values()) cachedPixels += bitmap.width * bitmap.height;
       while (cache.size > 1 && (cache.size > 24 || cachedPixels > 12_000_000)) {
@@ -6885,9 +6787,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ) => {
       if (!glowOn(side) || (!items.length && !pairs.length)) return;
       glowRasterSize = items.reduce((largest,it)=>Math.max(largest,it.sz),0);
-      // Reserve common pattern glows at the maximum view footprint before
-      // pinching. Only soft light is cached; shape edges remain live vectors.
-      // Never cap the required size: oversized patterns retain their density.
+      // 縮放前先用最大可能的畫面大小預留常用圖案的光暈。只快取柔光，形狀邊緣還是即時向量；需要的大小不設上限，
+      // 超大圖案也維持密度
       if(isMain&&!animRef.current&&!isTextHole(holeType))glowRasterSize=Math.max(glowRasterSize,
         Math.min(768,glowRasterSize/Math.max(1,viewTRef.current.k)*maxZoomRef.current));
       const a0 = animRef.current;
@@ -6953,7 +6854,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         return;
       }
       if (isMain) {
-        // Return the expired layer to the scratch pool instead of allocating/copying it.
+        // 過期的圖層還給暫存池，不重新配置、不複製
         if (cached) glowLayerRef.current = cached.c;
         cacheSlot[side] = null;
       }
@@ -6988,13 +6889,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               if (arr) arr.push(pr); else buckets.set(key, [pr]);
             });
             if (buckets.size) {
-              // Fully opaque links need no group-opacity isolation. Source-over
-              // is associative here, so paint the exact same three shadow passes
-              // directly instead of clearing/copying another zoom-sized canvas.
-              // Animated/fading groups retain the isolated compositing below.
+              // 完全不透明的連結不需要群組透明度隔離。這裡 source-over 有結合律，直接畫同樣的三次陰影就好，
+              // 不用再清空、複製一張縮放大小的畫布。有動畫或淡入淡出的群組照樣走下面隔離的合成
               if (buckets.size === 1 && buckets.has(1)) {
-                // For static solid links, shadow three narrow strips per unique
-                // length once. Object-size changes no longer reblur megapixels.
+                // 靜態實心連結，每種長度只做一次三條窄條的陰影，物件大小變了不必重新模糊幾百萬像素
                 if(!a0 && linkMode==='solid'){
                   const tiles=linkGlowTilesRef.current ||= new LinkGlowTiles();
                   gg.save();gg.globalAlpha=1;
@@ -7007,8 +6905,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     const pa=hA(a),pb=hA(b);
                     return `${pa.x},${pa.y},${pb.x},${pb.y}`;
                   }).join(';');
-                // Never retain another full zoom-sized framebuffer. This cache
-                // is an optimization, so bypass it when its memory cost is high.
+                // 絕不再多留一張縮放大小的完整畫布。這個快取只是加速用，記憶體成本高的時候直接跳過
                 const retainLight = isMain && gg.canvas.width * gg.canvas.height <= 4_000_000;
                 if (!retainLight && linkLightCacheRef.current[side]) {
                   const expired = linkLightCacheRef.current[side].canvas;
@@ -7081,11 +6978,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         gg => {
           // 本體一律用滿透明度挖掉，剩下的才是純粹的光暈
           // 挖除仍照「全部的本體」來，互相挖除的結果才跟以前一致
-          // Image masks already have fractional alpha at their silhouette. A
-          // second destination-out pass multiplies that coverage by (1-alpha),
-          // cutting an unlit rim out of the halo. Keep the shadow continuous
-          // underneath the image; the visible image (or mask cutout) is composed
-          // once afterwards. Vector-pattern behavior is intentionally unchanged.
+          // 圖片遮罩的剪影邊緣本來就有半透明。再做一次 destination-out 會把覆蓋率乘上 (1-alpha)，
+          // 在光暈上挖出一圈沒光的邊。陰影在圖片下面保持連續，看得到的圖片（或遮罩挖空）之後只合成一次。
+          // 向量圖案的行為刻意不變
           if (!isImageHole(holeType)) {
             items.forEach(it => eraseGlowBody(gg, it.h, it.sz, it.ang, it.x, it.y, Math.max(1, s)));
           }
@@ -7100,7 +6995,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 保留這張完整解析度圖層並移交所有權；下次內容變動再收回重用。
          避免大倍率超過舊快取上限後，每次無關操作都重新計算發光。 */
       if (isMain && done && done.rw > 0 && done.rh > 0) {
-        // Transfer ownership; no second full-resolution copy or large-zoom cache cutoff.
+        // 直接轉移擁有權；不再複製一份原解析度，也沒有大縮放時的快取上限
         cacheSlot[side] = { key: sig, c: done.lay, rx: done.rx, ry: done.ry, rw: done.rw, rh: done.rh };
         if (glowLayerRef.current === done.lay) glowLayerRef.current = null;
       }
@@ -7204,7 +7099,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const A = hA(h);
         if (!A.on) return;
         const sz = getHoleSize(h) * A.k * s;
-        // 五角星与十字星的可见墨水重心略偏上，方形选中框同步上提一点。
+        // 五角星與十字星的可見墨水重心略偏上，方形選中框同步上提一點。
         const currentAngle = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
         imagePlacements(h, sz, A.x * s, A.y * s).forEach(([dx, dy]) => {
         const hx = A.x * s + dx, hy = A.y * s + dy;
@@ -7213,7 +7108,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const mxp = dx || dy ? A.x * s : hx * rx, myp = dx || dy ? A.y * s : hy * ry;
         ctx.save();
         ctx.globalAlpha = A.a;
-        // Stable per-pattern assignment: changing zoom or redrawing must not reroll colors.
+        // 每個圖案固定分配顏色：換縮放或重畫都不能重新亂數配色
         const stripeSeed = String(h.id).split('').reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
         const patternFill = isStripeLikeTex(patternType) && !maskImageState ? (stripeSeed % 2 ? stripeA : stripeB) : basePat;
         ctx.fillStyle = patternFill;
@@ -7264,17 +7159,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const lmW = windowed ? Math.max(0,Math.ceil(Math.min(maskW,vp.x+vp.w-offs.mx)-maskX)) : Math.ceil(maskW);
     const lmH = windowed ? Math.max(0,Math.ceil(Math.min(maskH,vp.y+vp.h-offs.my)-maskY)) : Math.ceil(maskH);
     if(lmW<1 || lmH<1) return;
-    // The source bitmap must continue beyond its logical edge. drawImage
-    // otherwise antialiases its own fractional rectangle even under an exact
-    // integer clip, introducing transparent texels inside the shared boundary.
-    // Padding changes storage only: all artwork keeps its original coordinates.
+    // 來源點陣要超出邏輯邊緣一點。不然就算整數裁切，drawImage 也會對自己的小數矩形做反鋸齒，
+    // 在共用邊界裡留下透明像素。補邊只改儲存，所有圖案的座標不變
     const maskGuard=2,maskStorageW=lmW+maskGuard*2,maskStorageH=lmH+maskGuard*2;
     const pasteMask=()=>{
       ctx.save();
       const matrix=ctx.getTransform();
       if(isMain&&!animRef.current&&layout!==AROUND&&!hasBackdrop&&!regionHold.current?.active&&matrix.b===0&&matrix.c===0&&matrix.a>0&&matrix.d>0){
-        // Same half-open pixel partition as drawImg: the common image/mask
-        // edge is quantized once by the same rule, never by separate widths.
+        // 跟 drawImg 一樣用半開區間分像素：圖片和遮罩共用的邊用同一條規則取整一次，不各自用不同寬度
         const left=scenePixelEdge(offs.mx,matrix.a,matrix.e),top=scenePixelEdge(offs.my,matrix.d,matrix.f);
         const right=scenePixelEdge(offs.mx+maskW,matrix.a,matrix.e),bottom=scenePixelEdge(offs.my+maskH,matrix.d,matrix.f);
         ctx.setTransform(1,0,0,1,0,0);ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();ctx.setTransform(matrix);
@@ -7314,9 +7206,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     lmx.globalAlpha = 1;
     lmx.globalCompositeOperation = 'copy';
     // 純色的底稿只有 8×8（見上面 plainMask），這裡直接填色，不要把小塊拉大
-    // Storage rounds outward; logical clipping above determines the final
-    // edge. Fill the whole storage so a fractional last texel cannot expose
-    // the dark page backing. Texture coordinates are not stretched.
+    // 儲存往外取整，最後的邊緣由上面的邏輯裁切決定。整個儲存區都要填滿，
+    // 小數的最後一個像素才不會露出底下的深色頁面；貼圖座標不拉伸
     lmx.fillStyle=maskColor;lmx.fillRect(-maskGuard,-maskGuard,Math.ceil(maskW)+maskGuard*2,Math.ceil(maskH)+maskGuard*2);
     if(!plainMask){lmx.globalCompositeOperation='source-over';lmx.drawImage(fCanvas,0,0);}
     const maskPairs = linksFor('mask').filter(([a, b]) =>
@@ -7541,8 +7432,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.globalAlpha = flattened ? 1 : objectAlpha;
       if (o.type==='shape'&&isBackdropMask(o.kind)) {
         if(maskBatch){maskBatch.push({kind:o.kind,w:o.w*s,h:o.h*s,settings:o,matrix:ctx.getTransform(),opacity:ctx.globalAlpha});ctx.restore();return;}
-        // Cache unchanged lower ink, not the mask bitmap. Dragging changes only
-        // shader/clip geometry; source pixels are uploaded again only on an edit.
+        // 快取的是沒變的下層線條，不是遮罩點陣。拖動只改著色器和裁切幾何，只有編輯時才重新上傳來源像素
         const maskIndex=objIndex.get(o.id)??0;
         const lower=objects.filter((item,index)=>o.below?item.below&&index<maskIndex:item.below||index<maskIndex).map(item=>{const map=backdropObjectTokens.current;if(!map.has(item))map.set(item,++backdropObjectSerial.current);return map.get(item);});
         const sourceStamp=isMain&&!animRef.current&&!f&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img))
@@ -7871,8 +7761,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.restore();
         }
       } else if (o.type === 'text') {
-        // Layout text at a stable logical font size. Preview magnification is
-        // a scene transform, not a new font/letter-spacing measurement.
+        // 文字用固定的邏輯字級排版。預覽放大是場景變換，不重新量字型和字距
         const textSceneScale=s;if(!o.sym)ctx.scale(textSceneScale,textSceneScale);
         { const s=o.sym?textSceneScale:1;
         // 正在畫布上直接編輯時，字交給疊在上面的 textarea 顯示
@@ -7914,8 +7803,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const pre = sel ? ctx.measureText(text.slice(0, sel)).width - spacingPx / 2 : 0;
           const m = ctx.getTransform();
           const fontPx = (o.sym ? o.size : pinFont) * s;
-          // A DOM caret over the canvas: 2 CSS px wide and blinking with CSS,
-          // like the multi-page collage, without repainting the scene to blink.
+          // 畫布上方用 DOM 畫游標：2 個 CSS px 寬、用 CSS 閃爍，跟跨頁拼圖一樣，閃爍時不必重畫場景
           const el = editCaretRef.current;
           if (!el) return;
           const x = spacingShift - total / 2 + pre, top = m.transformPoint({ x, y: -fontPx * .6 }), bottom = m.transformPoint({ x, y: fontPx * .6 });
@@ -7931,8 +7819,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            不校正的話，前進寬度／em 方框跟墨水差多少，符號就偏出框多少 ——
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
         const symbolLayout = o.sym
-          /* 几何只按物件基础字级量一次。s 在缩放手势中每帧变化，只用于下面的
-             数值乘法，不再制造几百份不同字级的 alpha 扫描与缓存。 */
+          /* 幾何只按物件基礎字級量一次。s 在縮放手勢中每幀變化，只用於下面的
+             數值乘法，不再製造幾百份不同字級的 alpha 掃描與緩存。 */
           ? measureSymbolUnitLayout(o.text || '', fam, 100)
           : null;
         const symbolUnitScale = o.sym ? (o.size || 40) / 100 : 1;
@@ -8025,20 +7913,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             return;
           }
           if (!unitLayout) {
-            // Cached raster under the continuous matrix: no per-scale re-hinting jitter.
+            // 快取的點陣套在連續矩陣下：不會因為每個縮放倍率重新微調字形而抖動
             if (drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx + spacingShift, tdy)) return;
             if (stroke) ctx.strokeText(o.text || '', tdx + spacingShift, tdy);
             else ctx.fillText(o.text || '', tdx + spacingShift, tdy);
             return;
           }
           const now = f?.idleT ?? 0;
-          /* 进场最后一帧所有倍率已回到 1 时，立即交回原生 grapheme 渲染。
-             这样位置完全沿用静止版，也不会因拆分 combining marks 留下抗锯齿跳帧。 */
+          /* 進場最後一幀所有倍率已回到 1 時，立即交回原生 grapheme 渲染。
+             這樣位置完全沿用靜止版，也不會因拆分 combining marks 留下抗鋸齒跳幀。 */
           const sequenceAnimating = !objDragging && !objPinching && !symbolSizeTuningRef.current
             && o.mo?.in === 'bubble' && seqIn !== null && seqIn < 1 - 1e-6;
-          /* 普通显示、拖移和双指缩放只画完整字符串一次。泡泡／缩放 II
-             才启用切片；切片不是重新排字，而是重复绘制同一份完整 native
-             shaping 后按原始字素区间裁切，因此拼回 1 倍时逐像素相同。 */
+          /* 普通顯示、拖移和雙指縮放只畫完整字符串一次。泡泡／縮放 II
+             才啟用切片；切片不是重新排字，而是重複繪製同一份完整 native
+             shaping 後按原始字素區間裁切，因此拼回 1 倍時逐像素相同。 */
           const useSlices = sequenceAnimating || individualBreathe;
           if (!useSlices) {
             paintWholeSymbol(stroke);
@@ -8085,8 +7973,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const unitAlphas = seqIn === null
             ? new Array(count).fill(1)
             : unitProgress.map(q => Math.min(1, q * 3));
-          /* 缩放 II 接手的精确第一帧仍画一次完整原生字符串；下一帧切片
-             只产生极小倍率变化，不会在交界处出现抗锯齿闪线。 */
+          /* 縮放 II 接手的精確第一幀仍畫一次完整原生字符串；下一幀切片
+             只產生極小倍率變化，不會在交界處出現抗鋸齒閃線。 */
           if (individualBreathe && unitScales.every(value => Math.abs(value - 1) < 1e-6)) {
             paintWholeSymbol(stroke);
             return;
@@ -8162,7 +8050,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const flashingTarget = flashProgress >= 0 && flashProgress < 1;
       if (isMain && !hideChromeRef.current && !objDragging && !objPinching && !objStretching
           && flashingTarget && !tuningEdge) {
-        // 所有选中框统一为实线；虚线只保留给内容本身的描边样式。
+        // 所有選中框統一為實線；虛線只保留給內容本身的描邊樣式。
         ctx.strokeStyle = '#ffffff';
         if (flashingTarget) ctx.globalAlpha = Math.sin(Math.PI * flashProgress) * 0.92;
         // 符號的外框刻意比圖片／圖形再輕一階，避免細小符號被白框搶走焦點.
@@ -8229,9 +8117,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }
       }
       if (!layer) {
-        // Reuse unchanged, unselected vector/text objects at their exact backing
-        // resolution. The moving object remains live; exports and animations
-        // always use the original painter. No lower-resolution interaction tier.
+        // 沒變、沒選中的向量和文字物件，用剛好的暫存解析度重用；正在動的物件即時畫，存檔和動畫一律用原本的繪製，
+        // 沒有較低解析度的互動模式
         const eligible = isMain && !previewCapture && !f && o.type !== 'image' && !isBackdropMask(o.kind) && o.id !== selectedObj
           && o.id !== editingTextId && !motionTargetFlashRef.current;
         const tiles = staticObjectTilesRef.current;
@@ -8501,7 +8388,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 轉圈圈每一根濃淡不同，要一根一根剪、一根一根貼（clipShapePieces） */
         clipShapePieces(ctx2, holeType, hx, hy, sz, () => {
           /* 形狀可以轉，但貼進去的圖不能跟著轉 —— 先把旋轉拿掉再貼。
-             ⚠ 這裡不能重設成「單位矩陣」：開了暫存層的時候，整個座標系本來就
+             這裡不能重設成「單位矩陣」：開了暫存層的時候，整個座標系本來就
              往回平移了 (-rx0, -ry0)，重設成單位矩陣會讓貼上去的圖整個偏移
              (rx0, ry0) —— 剪裁範圍還在原位，所以幾乎什麼都貼不進去，
              整層等於空的。那正是「物件怎麼往下移都壓不到遮罩區的圖案下面」的原因：
@@ -8522,7 +8409,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       });
       if (maskLinks.length && (linkColor || pat)) {
         /* 連線也要一起補畫，不然 below 的物件會壓在線上面。
-           ⚠ 沒有自己指定顏色時，線的「顏色」就是墊在遮罩底下那張照片
+           沒有自己指定顏色時，線的「顏色」就是墊在遮罩底下那張照片
            （遮罩那一層是把線挖穿的），也就是上面這顆 pattern。
            pattern 是釘在「畫的當下那個座標系」上的 —— 以前這裡為了對上
            線的座標，先把座標系推到遮罩原點再描線，於是 pattern 也跟著位移了
@@ -8550,8 +8437,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!isMain) bd.width = 0;
     };
 
-    // The prefix is keyed on the viewport; while the view itself is being
-    // pinched every frame has a new key, so building it is a pure extra copy.
+    // 前綴的鍵跟著 viewport 走；畫面本身在縮放時每一格的鍵都不同，做它只是多複製一次
     const viewMoving=!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
     const maskPrefix=isMain&&!previewCapture&&!viewMoving&&!directMaskPhotos&&hasBackdrop&&objects.some(o=>o.id===selectedObj&&isBackdropMask(o.kind))&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
     /* 拖曳／兩指縮放／擠壓一個物件時，它底下的整個畫面（照片、遮罩、圖案、
@@ -8564,8 +8450,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     debugSection('prepare');
     const prefixEnd=maskPrefix?aboveObjs.findIndex(o=>o.id===selectedObj&&isBackdropMask(o.kind)):liftPrefix?movingIndex:-1;
     const prefixAbove=prefixEnd>0?aboveObjs.slice(0,prefixEnd):[];
-    // Live sliders and in-cell crop gestures update refs before React state.
-    // Include the actual photo revision, not only the last committed render.
+    // 即時滑桿和格子裡的裁切手勢會先更新 ref 再更新 React state，所以要算進照片實際的版本，
+    // 不能只看最後一次提交的 render
     const livePhotoKey=JSON.stringify(photoRegion,compactSceneValue);
     const prefixKey=prefixCacheable?`${backdropSceneFingerprint}|${livePhotoKey}|${[...belowObjs,...prefixAbove].map(item=>{const tokens=backdropObjectTokens.current;if(!tokens.has(item))tokens.set(item,++backdropObjectSerial.current);return tokens.get(item);}).join(',')}|${s}|${vp.x},${vp.y}|${targetCanvas.width}x${targetCanvas.height}`:'';
     const cachedPrefix=prefixCacheable&&backdropPrefix.current?.key===prefixKey?backdropPrefix.current:null;
@@ -8614,11 +8500,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       backdropPrefix.current={key:prefixKey,canvas:prefix};
     }
 
-    // ctx.beginPath();
-    // if (layout.includes('bottom') || layout.includes('top')) { ctx.moveTo(0, sh); ctx.lineTo(sw, sh); }
-    // else { ctx.moveTo(sw, 0); ctx.lineTo(sw, sh); }
-    // ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = sgs; ctx.stroke();
-
     drawObjects(tilePrefix||aboveObjs.slice(prefixAbove.length));
 
     /* ── 歷史紀錄的縮圖，就在這一行拍 ────────────────────────────────
@@ -8653,9 +8534,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const tg = tc.getContext('2d');
           if (tg) {
             tg.imageSmoothingQuality = 'high';
-            // Base selection is intentionally part of scene ordering, but must
-            // never leak into history/draft thumbnails. This clean render is
-            // bounded to the existing thumbnail size, not the live preview.
+            // 底圖的選取刻意算在場景順序裡，但絕不能跑進歷史紀錄和草稿縮圖。這次乾淨的重畫限制在現有的縮圖大小，
+            // 不是即時預覽的大小
             if (selectedRegionPhotoRef.current !== null || creativeSeam.current?.shown) renderToCanvas(tc, s * tk);
             else tg.drawImage(targetCanvas, 0, 0, tw, th);
           }
@@ -8663,8 +8543,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     }
 
-    // Alignment chrome is an animated SVG above the scene. Moving its dash
-    // phase must never repaint the original photographs or feather surfaces.
+    // 對齊輔助是場景上方有動畫的 SVG，虛線的相位在動時絕不能重畫原圖或羽化畫布
 
     /* 有造型的圖片仍沿著造型本身描框；一般矩形框與底圖虛線框改由畫布上方
        的獨立 SVG overlay 顯示。overlay 不受畫布裁切，因此靠著黑色遮罩或
@@ -8701,7 +8580,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.setLineDash([4.8 * uiPx, 4.8 * uiPx]);
       const frameOne = (h: any, x: number, y: number,side:'image'|'mask') => {
         const A = hA(h);
-        // Resting artwork determines eligibility; a fade animation never removes its frame.
+        // 是否顯示看靜止時的作品；淡入淡出的動畫不會讓外框消失
         const restSize=getHoleSize(h)*s;
         const restBox=isTextHole(holeType)?(()=>{const b=glyphInk(holeType,holeGlyph(holeType,customText,h),restSize);return {x:-b.w/2,y:-b.h/2,w:b.w,h:b.h};})():patternPathBounds(holeType,restSize);
         const angle=(h.angle??holeAngle)*Math.PI/180,cs=Math.cos(angle),sn=Math.sin(angle);
@@ -8836,8 +8715,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
     } finally { frameContext.restore(); }
-    // Resident photos were resolved into this scene before its mask/objects.
-    // There is only one DOM canvas to filter at the final CSS scale.
+    // 常駐的照片在遮罩和物件之前就已經畫進這個場景。最後的 CSS 縮放只要對一張 DOM 畫布套濾鏡
     if(targetCanvas===canvasRef.current)creativeSeam.current?.flush();
     /* editingTextId 一定要在這裡：正在畫布上打字的那一段字是「不畫」的
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
@@ -9034,8 +8912,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
   }, [imageState, renderToCanvas, previewScale, layout, maskScale, canvasRatio, maxPreviewScale]);
 
-  // The layout catalog grows the footer. Follow its actual animated stage size,
-  // using the same contain geometry as the normal preview (not a second scale).
+  // 版面目錄會把底部撐高。跟著它實際的動畫舞台大小，用跟一般預覽一樣的 contain 幾何（不另外縮放）
   useLayoutEffect(() => {
     const stage=stageRef.current;
     if(!stage||!imageState)return;
@@ -9469,7 +9346,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         glowIdle === 'glitch' ? 0.9 : 1),
       /** 這一格的時間，畫布端要拿它算虛線描邊的動畫 */
       t,
-      /** 除了图案以外，图片、文字、符号与普通图形的发光都保持静止。 */
+      /** 除了圖案以外，圖片、文字、符號與普通圖形的發光都保持靜止。 */
       glowObj: (_o: any) => 1,
     };
   }, [moShape, moLink, hasLink, linkStart, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText]);
@@ -9524,22 +9401,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(!imageState||!photoRegion?.photos.length||regionShadersPrimed.current)return;
     let cancelled=false;
     void(async()=>{
-      // Wait for the actual import geometry/source, not a fixed idle timeout.
-      // The first render can still have a zero-sized placeholder canvas.
+      // 等實際的導入幾何和來源，不是固定的閒置時間。第一次 render 時畫布可能還是零大小的佔位
       for(let i=0;i<60;i++){
         await new Promise<void>(r=>requestAnimationFrame(()=>r()));
         if(cancelled)return;
         const cv=canvasRef.current,p=photoRegionRef.current?.photos[0];
         if(cv&&cv.width>32&&cv.height>32&&previewScaleRef.current>0&&latestImageTransform.current.w>0&&latestImageTransform.current.h>0&&p&&decodedRegionPhotos.current.has(p.src))break;
       }
-      // Downloading the lowfi LUT must not hold up unrelated optical shader
-      // preflight. Its own ready callback repaints once the LUT is available.
+      // 下載 lowfi LUT 不能卡住其他光學著色器的預檢；LUT 好了它自己的回呼會重畫一次
       void warmLowfiLut().catch(()=>{});
       await awaitPhotoIdle();
       const cv=canvasRef.current,p=photoRegionRef.current?.photos[0];
       if(cancelled||!cv||cv.width<=32||!p||hasPhotoFx(p.fx)||activePointers.current.size)return;
-      // Capture unchanged scene coverage at import time, not on the first
-      // effect click. No effect is enabled and the visible result is unchanged.
+      // 導入時就拍下沒變的場景覆蓋範圍，不要拖到第一次點特效。這時沒有套任何特效，看到的結果不變
       try{
         regionPreflight.current=true;renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);
         const ready=regionSpatial.current,source=decodedRegionPhotos.current.get(p.src);
@@ -9557,8 +9431,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             if(regionPrimedIds.current.has(id))continue;
             await awaitPhotoIdle();if(cancelled)return;
             const primed=applyPhotoFx(source,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),{...FX_PARAM_DEFAULTS,[id]:100},{cacheSource:true,gpuSurface:true,out:ready.input,scene:ready.scene});
-            // WebKit can defer the real texture/shader work until presentation.
-            // Fence only this import-time preflight, never an interaction frame.
+            // WebKit 可能把真正的貼圖和著色器工作延到顯示時才做。只在導入時的預檢等它完成，互動的畫格絕不等
             if(primed instanceof HTMLCanvasElement&&primed!==ready.input)(primed.getContext('webgl2')||primed.getContext('webgl'))?.finish();
             regionPrimedIds.current.add(id);
           }
@@ -9575,9 +9448,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     document.addEventListener('abai:qa-preview-reference',reference);
     return()=>document.removeEventListener('abai:qa-preview-reference',reference);
   },[]);
-  // Pinch frames update only scene geometry and the full-density canvas.
-  // Commit the final view to React on release; the tool panels do not need to
-  // rebuild their entire tree sixty times per second during a canvas gesture.
+  // 縮放的每一格只更新場景幾何和完整密度的畫布，放開手指才把最後的視角交給 React；畫布手勢進行時，
+  // 工具面板不需要每秒重建 60 次
   liveViewPaintRef.current = baseCss && imageState ? next => {
     const frame=motionFrameRef.current, canvas=canvasRef.current;
     if(!frame || !canvas)return;
@@ -9963,7 +9835,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     selectedRegionPhotoRef.current = null;
     setSelectedObj(null); setSelectedTarget(null); setBaseSelected(false); setMaskSelected(false);
     setSelectedRegionPhoto(null);
-    // The FLIP transition must start with a complete scene, never a viewport tile.
+    // FLIP 過渡一開始一定要是完整的場景，不能是 viewport 的圖塊
     forceFullPreviewRef.current=true;
     if(canvasRef.current)renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);
     forceFullPreviewRef.current=false;
@@ -10348,7 +10220,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if (await ensureTiersRef.current(exportScaleNow() * 1.25, true)) await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         const { originalW, originalH, baseW, baseH } = imageState;
         
-        // 1. Calculate the collage total size at original resolution
+        // 1. 用原解析度算拼圖的總尺寸
         const rawSize = collageSizeOf(layout, originalW, originalH, maskScale, canvasRatio);
 
         /* 兩道保險，缺一不可：
@@ -10383,7 +10255,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         setFinalImage(url);
         setSaveState('success');
         
-        // Explicit cleanup
+        // 明確清掉
         exportCanvas.width = 0; exportCanvas.height = 0;
       } catch (e) {
         console.error("Failed to save collage", e);
@@ -10493,8 +10365,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const photoLayoutTimerRef=useRef<number>();
   useEffect(()=>()=>window.clearTimeout(photoLayoutTimerRef.current),[]);
   const changePhotoLayoutOpen=(open:boolean)=>{
-    // Preserve a complete scene through the geometric tween: no canvas clears,
-    // intermediate composites or photo re-encoding on each animation frame.
+    // 幾何過渡期間保持完整的場景：每個動畫畫格都不清畫布、不做中間合成、不重新編碼照片
     window.clearTimeout(photoLayoutTimerRef.current);
     motionTransitionUntilRef.current=0;
     forceFullPreviewRef.current=true;
@@ -10530,7 +10401,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         return openTiered(src,f.type,TIER_MULTI_START).then(t=>{decodedRegionPhotos.current.set(src,t.img);return {src,width:t.ow,height:t.oh};})
           .catch(()=>{URL.revokeObjectURL(src);throw Error('圖片無法讀取');});
       }));
-      // Do not overwrite a different layout selected while decoding.
+      // 解碼期間使用者選了別的版面的話，不要蓋掉
       if(photoRegionRef.current!==old)return;
       commitRegion({...old,photos:old.photos.map((p,i)=>slots.includes(i)?photos[slots.indexOf(i)]||p:p)});
     }catch(error){console.error(error);alert('圖片讀取失敗，請重新選擇圖片');}
@@ -11076,9 +10947,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               wheelCommitRef.current=setTimeout(()=>{wheelCommitRef.current=null;wheelUntilRef.current=0;flushView(true);wheelPhotoReleaseRef.current?.();wheelPhotoReleaseRef.current=null;},160);
               const c = stageBox();
               const v = viewTRef.current;
-              // Trackpads emit small deltas at refresh rate. A fixed 18% jump
-              // per event forces full-range backing changes even for a tiny
-              // movement. Respect distance while retaining the same limits.
+              // 觸控板會用螢幕更新率送出很小的位移。每次固定跳 18% 的話，動一點點也會讓暫存大小大幅變動；改成照距離算，
+              // 上下限不變
               const delta=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?c.h:1);
               const k = Math.max(1, Math.min(6, v.k * Math.exp(Math.max(-.1655,Math.min(.1655,-delta*.002)))));
               const ax = e.clientX - c.x, ay = e.clientY - c.y;
@@ -11097,16 +10967,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               }}
             >
               {/* 畫布外面包一層「位置基準」，影片才有東西可以對齊。
-                  ⚠ 這一層的尺寸要**跟畫布一模一樣**，不能只寫 max-width:100%：
+                  這一層的尺寸要**跟畫布一模一樣**，不能只寫 max-width:100%：
                   放大之後畫布會超過 100%，外框卻被夾住，裡面的百分比就會
                   對到一個比畫布小的框 —— 影片於是愈放大偏得愈多。
                   所以這裡照抄畫布那一組尺寸規則。 */}
               <div ref={motionFrameRef} style={{
                 position: 'relative', lineHeight: 0, flexShrink: 0,
                 transformOrigin: 'top left',
-                // A blurred shadow on a continuously resized, viewport-sized
-                // canvas forces WebKit to rasterize another large layer every
-                // pinch frame. This is chrome, not image/glow content.
+                // 在一直改大小的整個畫面大的畫布上加模糊陰影，WebKit 每個縮放畫格都要再點陣化一層大圖。這只是介面裝飾，
+                // 不是圖片或光暈內容
                 boxShadow: 'none',
                 transition: (motionUiOn || previousMotionTabRef.current || motionTransitioning) ? 'none'
                   : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? 'none' : 'width 90ms linear, height 90ms linear',
@@ -11268,8 +11137,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const boxH = o.sym ? Math.max(o.h, (o.size || 40) * 1.6) : o.h / stretchY;
           const left = r.left - sr.left + (o.x + o.w / 2 - boxW / 2) * k;
           const top = r.top - sr.top + (o.y + o.h / 2 - boxH / 2) * k;
-          // Safari auto-zooms small native text fields. Keep the native font at
-          // least 16px, then scale the field around its unchanged visual centre.
+          // Safari 會自動放大字太小的原生輸入欄。原生字級至少 16px，再以不變的視覺中心縮放輸入欄
           const inputScale = Math.min(1, ((o.size || 40) * k) / 16);
           /* 收工時如果整段被刪光了就把東西放回去，不然會留下一個看不見的空框：
              一般文字放回預設的「輸入文字」，符號放回它自己那一顆。 */
@@ -11344,8 +11212,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 fontSize: (o.size || 40) * k / inputScale,
                 letterSpacing: `${(o.letterSpacing || 0) * k / inputScale}px`,
                 lineHeight: `${boxH * k / inputScale}px`,
-                // The canvas shows the text itself (same pixels as when not
-                // editing); this field only provides the caret and keyboard.
+                // 文字本身由畫布顯示（跟沒在編輯時同樣的像素），這個輸入欄只提供游標和鍵盤
                 color: o.sym ? (o.color || '#FFFFFF') : 'transparent',
                 WebkitTextFillColor: o.sym ? undefined : 'transparent',
                 caretColor: '#FFFFFF',
@@ -11355,8 +11222,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               }}
             />
           );
-          // Portal: a fixed element inside the transformed stage would be
-          // positioned relative to that transform, not to the screen.
+          // 用 portal：在有 transform 的舞台裡放 fixed 元素，位置會相對那個 transform，而不是螢幕
           return o.sym ? field : createPortal(<>{field}
             <div ref={editCaretRef} aria-hidden style={{position:'fixed',left:0,top:0,width:2,height:0,borderRadius:1,background:'#FFFFFF',
               pointerEvents:'none',zIndex:56,transformOrigin:'1px 0',display:'none',animation:'abai-caret-blink 1s steps(1) infinite'}}/>
@@ -11794,8 +11660,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           if (t === AROUND && layout !== AROUND) setHoleSize(v => Math.min(100, v + 10));
                           else if (t !== AROUND && layout === AROUND) setHoleSize(v => Math.max(0, v - 10));
                           setSelectedTarget(null);
-                          // Count changes regenerate once via the existing effect;
-                          // unchanged counts (including the cap) regenerate here.
+                          // 數量變了由現有的 effect 重新產生一次；數量沒變（包含到達上限）就在這裡重新產生
                           if (holeCount === desiredCount) {
                             generateRandomHoles(true, t, 'none', desiredCount,t===FULL?'3:4':leavingFull?restoredRatio:undefined);
                           }
@@ -12184,9 +12049,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               })()}
               {activeTab === 'objedit' && (() => {
                 const editRegionIndex = selectedRegionPhoto ?? (baseSelected ? 0 : null);
-                // Live editing owns the ref until the gesture/debounce commits.
-                // A tab/effect-card render must not feed the previous React
-                // snapshot back into ImageAdjustPanel and erase a newer FX.
+                // 即時編輯在手勢或延遲提交之前都由 ref 負責。
+                // 分頁或特效卡片 render 時不能把前一份 React 快照回灌到 ImageAdjustPanel、蓋掉比較新的特效
                 const regionPhoto = editRegionIndex !== null ? photoRegionRef.current?.photos[editRegionIndex] : null;
                 const regionEditing = !!regionPhoto?.src;
                 /* 底是影片：選中底的時候編輯的就是那段影片本人（濾鏡、調節、特效、構圖）。
@@ -13020,8 +12884,9 @@ const useRafOnChange = (onChange: (v: number) => void) => {
   return { push, flush };
 };
 
-/** This leaf owns the slider feedback. The large editor only commits state
- * at gesture end; its paint scheduler consumes the latest value each frame. */
+/**
+ * 滑桿的回饋由這個小元件自己處理。大的編輯器只在手勢結束時提交 state，它的繪製排程每格讀最新的值
+ */
 const RegionLiveRange=({value,onChange,onCommit,onStart,min=0,max=100,step=1,label='融合程度'}:{value:number;onChange:(v:number)=>void;onCommit:()=>void;onStart?:()=>void;min?:number;max?:number;step?:number;label?:string})=>{
   const [shown,setShown]=React.useState(value);
   const release=React.useRef<(()=>void)|null>(null);

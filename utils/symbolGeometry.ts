@@ -32,9 +32,9 @@ export type SymbolUnitLayout = {
   /** 動畫用的可見小單元；附加點、星、弧線可以各自取得時間相位。 */
   units: string[];
   centers: number[];
-  /** 每个动画单元继承自哪一个稳定 grapheme，只用于辨认原生叠合关系。 */
+  /** 每個動畫單元繼承自哪一個穩定 grapheme，只用於辨認原生疊合關係。 */
   unitClusters: number[];
-  /** 每个动画片段在整串原生 shaping 中的水平裁切范围（基准字号 px）。 */
+  /** 每個動畫片段在整串原生 shaping 中的水平裁切範圍（基準字號 px）。 */
   unitLefts: number[];
   unitRights: number[];
   /** 每段真正可見墨水的中心；動畫以此縮放，避免圖案在片段內滑動。 */
@@ -469,9 +469,9 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
  */
 export const measureSymbolInkAtSize = (text: string, family: string, fontSize: number): SymbolInk => {
   const size = Math.max(8, Math.round(fontSize * 1000) / 1000);
-  /* Canvas 在 iPhone 上实际以 DPR=2/3 rasterize；若只用 CSS 字号扫描，
-     冷门字形的 hinting 会和画面相差数像素，框就会偏。用同一设备倍率扫描，
-     最后仍除回 scanSize，所以回传几何单位不变。 */
+  /* Canvas 在 iPhone 上實際以 DPR=2/3 rasterize；若只用 CSS 字號掃描，
+     冷門字形的 hinting 會和畫面相差數像素，框就會偏。用同一裝置倍率掃描，
+     最後仍除回 scanSize，所以回傳幾何單位不變。 */
   const dpr = typeof window !== 'undefined'
     ? Math.max(1, Math.min(3, window.devicePixelRatio || 1)) : 1;
   const rasterSize = size * dpr;
@@ -667,8 +667,8 @@ const measureStandaloneCompositionCenter = (
  * Intl.Segmenter 會把代理對、附加記號與變體選擇符留在同一顆字素內，因此既不會
  * 把符號拆壞，也不會因整串含一個附加記號就讓整顆符號完全失去逐顆動畫。
  */
-/* 靜止排版仍使用瀏覽器的完整 grapheme。這份切分只负责位置与外框，
-   不参与泡泡／缩放 II 的节奏，避免动画需求反过来改变原符号位置。 */
+/* 靜止排版仍使用瀏覽器的完整 grapheme。這份切分只負責位置與外框，
+   不參與泡泡／縮放 II 的節奏，避免動畫需求反過來改變原符號位置。 */
 const splitSymbolClusters = (text: string): string[] => {
   let raw: string[] = [];
   try {
@@ -1389,7 +1389,7 @@ export const measureSymbolUnitLayout = (
         right: -total / 2 + ctx.measureText(originalClusters.slice(0, i + 1).join('')).width,
       }));
     }
-  } catch { /* 等分范围仍可安全绘制 */ }
+  } catch { /* 等分範圍仍可安全繪製 */ }
   const safeSlices = findSafeSymbolSlices(text, family, size, nativeSpans);
   const unitPivots: number[] = [];
   const unitPivotsY: number[] = [];

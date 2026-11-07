@@ -24,9 +24,9 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  const standalone=(navigator as Navigator & {standalone?:boolean}).standalone===true;
  const root=useRef<HTMLDivElement>(null);
  useLayoutEffect(()=>{
-  // Keep the application's viewport metadata untouched. An absolute editor
-  // participates in WebKit's document bounds (unlike the stale fixed viewport
-  // in Home Screen apps), keeping bottom controls visible and hit-testable.
+  // 不動 App 的 viewport 設定。
+  // 編輯器用 absolute 定位才會算進 WebKit 的文件範圍（主畫面 App 的 fixed viewport 會過時），
+  // 下方的控制列才看得到、點得到
   if(!(navigator as Navigator & {standalone?:boolean}).standalone)return;
   const visual=window.visualViewport;
   const align=()=>{
@@ -45,8 +45,7 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[compare,setCompare]=useState(false),[ready,setReady]=useState(false);
  const [placing,setPlacing]=useState(false),[sourceRevision,setSourceRevision]=useState(0);
  useEffect(()=>{
-  // Suppress only this row's edge rubber-banding. Interior horizontal swipes
-  // remain native; no document or other editor gesture behavior is changed.
+  // 只擋掉這一列邊緣的回彈。列裡面的左右滑動照舊是原生的，其他手勢都不受影響
   const rows=root.current?.querySelectorAll<HTMLElement>('.art-scroll');
   const cleanups:(()=>void)[]=[];
   rows?.forEach(row=>{
@@ -118,8 +117,7 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  },[ready,effect,settings,tracking]);
  const paintLatest=useRef({draw,compare});
  useLayoutEffect(()=>{
-  // One uninterrupted paint queue: incoming slider events replace the pending
-  // settings, never cancel a frame that was already ready to paint.
+  // 只有一條繪製佇列：滑桿新來的值直接蓋掉還沒畫的設定，不會取消已經準備好要畫的那一格
   paintLatest.current={draw,compare};
   if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;const next=paintLatest.current;next.draw(next.compare);});
  },[draw,compare]);

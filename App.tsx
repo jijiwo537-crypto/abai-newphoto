@@ -44,7 +44,7 @@ const LUT_LIST = [
   { id: 'f23', name: 'F23', url: './luts/f23.webp' },
 ];
 
-// Expanded support for RAW and HEIC formats, and fallback for all other types to be caught by ImageMagick
+// 支援 RAW、HEIC，其他格式交給 ImageMagick 處理
 /* 收哪些檔案統一由 utils/fileTypes 決定（以前這串複製在三個檔案裡，內容還不一樣）*/
 const RAW_ACCEPT = SHARED_RAW_ACCEPT;
 
@@ -108,7 +108,7 @@ const preloadHistoryImage = async (src?: string | null) => {
 
 const App: React.FC = () => {
   useEffect(() => {
-    // Optional font downloads must never join the startup font-ready barrier.
+    // 選用字型的下載不能卡住開機時等字型的那一步
     if (!document.getElementById('boot')) { warmFontSamples(); return; }
     const observer = new MutationObserver(() => {
       if (!document.getElementById('boot')) { observer.disconnect(); warmFontSamples(); }
@@ -257,7 +257,7 @@ const App: React.FC = () => {
       setIsImporting(false);
       setImportPreviewUrl(null);
     }
-    /* ⚠ 一定要把上一份的狀態清掉。
+    /* 一定要把上一份的狀態清掉。
        這一支是「匯入新照片、開一份新的經典拼圖」——首頁的版型按鈕與成品頁的
        「拼下一組」都走這裡。以前只清了 histKey，toolDraftState 還留著上一份
        （從最近作品點回來、或接續草稿時會被設起來），新開的那一份就照著它
@@ -364,8 +364,7 @@ const App: React.FC = () => {
   const handleMatchRefChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      // Reference imports must not cover the original preview with the app's
-      // full-screen black import overlay, even while decoding HEIC/RAW files.
+      // 導入參考圖時不能用全螢幕的黑色導入畫面蓋住原圖預覽，解 HEIC／RAW 時也一樣
       setMatchReferenceLoading(true);
       try {
         setMatchRef(await processImageFile(file));
@@ -415,7 +414,7 @@ const App: React.FC = () => {
         setImportPreviewUrl(null);
       }
     }
-    // Reset value to allow selecting the same file again
+    // 清掉值，才能再選同一個檔案
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -465,8 +464,8 @@ const App: React.FC = () => {
       const draft = await loadToolDraft();
       if (!draft) { await clearToolDraft(); setResume(null); return; }
       setToolDraftState(draft.state ?? null);
-      /* 自动恢复也要延续原历史项目的身份；否则工具会生成新 key，
-         再次储存时历史中就会多出一份完全相同的项目。 */
+      /* 自動恢復也要延續原歷史項目的身份；否則工具會生成新 key，
+         再次儲存時歷史中就會多出一份完全相同的項目。 */
       setHistKey(draft.state?.__histKey ?? null);
       if (draft.tool === 'editor') {
         setEditorImage(draft.src);

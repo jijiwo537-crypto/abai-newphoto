@@ -26,8 +26,7 @@ self.onmessage=async(event:MessageEvent)=>{
    const tex=bakePixelMaster({...params,lutAmount:100},film);
    self.postMessage({id,key,generation,tex,plain,master:true,bakeMs:performance.now()-started},[tex.buffer,plain.buffer]);return;
   }
-  // The existing photo pipeline blends film twice. With identity HSL/curves
-  // this is algebraically the same film weight squared, without a second bake.
+  // 現有的照片流程會混合兩次底片。HSL 和曲線不變時，數學上就是底片權重的平方，不必烤第二次
   const amount=params.lutAmount/100;
   const tex=bakePixelMaster({...params,lutAmount:film&&amount<1?params.lutAmount*amount:params.lutAmount},film);
   self.postMessage({id,key,generation,tex,master:true,bakeMs:performance.now()-started},[tex.buffer]);

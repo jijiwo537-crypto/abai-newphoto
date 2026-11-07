@@ -1,6 +1,6 @@
 import { patternGlyph } from './pattern';
 
-/** Compress individual glyphs, never their centres or the texture spacing. */
+/** 壓縮的是各個字形，絕不動它們的中心或圖樣間距 */
 export function maskTextureScale(value = 50) {
   const v = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 50));
   return { x: v > 50 ? 1 - (v - 50) * .018 : 1,
@@ -23,7 +23,7 @@ function outline(type:string):Point[]{
 }
 const area=(p:Point[])=>Math.abs(p.reduce((s,v,i)=>{const n=p[(i+1)%p.length];return s+v[0]*n[1]-n[0]*v[1];},0))/2;
 
-/** Visible glyph area after the real rectangular mask clip, including squash. */
+/** 真正的矩形遮罩裁切之後看得到的字形面積，包含壓扁 */
 export function maskTextureVisibility(type:string,px:number,py:number,rx:number,ry:number,width:number,height:number){
   if(px>=rx*2&&px+rx*2<=width&&py>=ry*2&&py+ry*2<=height)return 1;
   const unit=outline(type);
@@ -47,14 +47,13 @@ export const maskTextureSizeToUi=(value:number)=>Math.round(Math.max(0,Math.min(
 export const maskTextureSquashFromUi=(value:number)=>20+Math.max(0,Math.min(100,value))*.6;
 export const maskTextureSquashToUi=(value:number)=>Math.round(Math.max(0,Math.min(100,(value-20)/.6))*1e8)/1e8;
 
-/** Keep mostly visible glyphs, hiding half-glyph boundary ties as requested. */
+/** 保留大部分看得到的字形；剛好卡在邊界一半的照要求藏起來 */
 export function paintMaskTexture(ctx: CanvasRenderingContext2D, type: string,
   width: number, height: number, radius: number, gap: number, squash = 50) {
   if (!(width > 0 && height > 0 && radius > 0 && gap > 0)) return;
   const {x, y} = maskTextureScale(squash);
   const dy = gap * Math.sqrt(3) / 2;
-  // Stars/hearts extend beyond the nominal circle radius; use a conservative
-  // intersection bound so a partially visible tip can never be culled.
+  // 星星和愛心會超出名目的圓形半徑，用保守的相交範圍，露出一點尖角的也絕不會被剔除
   const rx = radius * x * 2, ry = radius * y * 2;
   ctx.save();
   ctx.beginPath(); ctx.rect(0, 0, width, height); ctx.clip();

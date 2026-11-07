@@ -1,6 +1,6 @@
-/** One coordinate system and one screen-density surface per stacking run.
- * Interaction DOM is deliberately not used to measure or place object ink.
- * Pinch, scroll and animation all repaint the same logical scene coordinates.
+/**
+ * 每一段疊放順序只用一套座標、一張螢幕密度的畫布。物件線條的位置不靠互動用的 DOM 去量；
+ * 雙指縮放、捲動、動畫都重畫同一組邏輯座標
  */
 import { ClassicPhotoLayer, type PhotoPaint } from './ClassicPhotoLayer';
 import {disposeBackdropMasks} from '../utils/backdropMasks';
@@ -28,7 +28,7 @@ export type SceneEntry = {
   z: number;
   opacity?: number | (() => number);
   animateUntil?: number | (() => number);
-  /** Lower-ink revision; undefined opts dynamic/unknown content out of caching. */
+  /** 下層線條的版本號；undefined 表示內容是動態或不明的，不快取 */
   backdropKey?: () => unknown;
   paint: (ctx: CanvasRenderingContext2D, pixelsPerUnit: number) => void | SceneBounds;
 };
@@ -63,8 +63,10 @@ export class ClassicVectorScene {
   private backdropTokens = new WeakMap<object,number>();
   private backdropSerial = 0;
 
-  /** Replay lower ink into the same physical viewport. DOM photos/layouts and
-   * vector entries share this snapshot; UI, guides and higher ink are excluded. */
+  /**
+   * 把下層線條重播到同一個實體 viewport。DOM 照片、版面和向量物件共用這份快照；
+   * 介面、參考線和上層線條不算在內
+   */
   /** frozen：手指正拖著／縮放這個遮罩本身 —— 它底下的東西不可能變，同一個視角就沿用
       上一格抓好的底圖，不再每一格把整個下層場景重畫一次（多遮罩時這是最大的成本）。 */
   backdrop(target: CanvasRenderingContext2D, z: number, density: number, root: DOMMatrix, frozen=false) {
@@ -114,10 +116,10 @@ export class ClassicVectorScene {
       const pose=cssMatrix(page);keys.push(['page',page.dataset.pageId,pageZ,pose.m.toString(),pose.w,pose.h,getComputedStyle(page).backgroundColor,this.pagePatternPainter&&token(this.pagePatternPainter),this.pagePatternKey?.(page.dataset.pageId!)]);
       jobs.push({z:pageZ,paint:()=>{const {m,w,h}=cssMatrix(page);setScreen(m);g.fillStyle=getComputedStyle(page).backgroundColor;g.fillRect(0,0,w,h);this.pagePatternPainter?.(g,page.dataset.pageId!,w,h);}});
     }
-    // Layout SVG image CTMs include cell cropping, rotation, page pose and zoom.
+    // 版面 SVG 圖片的 CTM 已經包含格子裁切、旋轉、頁面姿態和縮放
     for(const node of host.querySelectorAll<SVGGraphicsElement>('[data-layout-wrapper] svg image, [data-layout-wrapper] svg rect')){
       if(node.closest('defs')||owned(node)||level(node)>=z)continue;
-      // Layout clips/materials can update independently of entry registration.
+      // 版面的裁切和材質可能自己更新，跟物件登記無關
       cacheable=false;
       jobs.push({z:level(node),paint:()=>{
         const m=node.getScreenCTM();if(!m)return;g.globalAlpha=alpha(node);
@@ -167,9 +169,8 @@ export class ClassicVectorScene {
 
   private onScroll = () => {
     const viewport = this.viewport;
-    // Pinch applies scrollLeft and then synchronously paints the final pose.
-    // The browser delivers its scroll event afterwards; repainting that already
-    // committed position would render every layer twice for the same gesture.
+    // 雙指縮放時先設 scrollLeft、馬上畫最後的姿態，瀏覽器之後才送 scroll 事件；這時再畫一次，
+    // 同一個手勢每層都會畫兩遍
     if (!viewport || (viewport.scrollLeft === this.paintedScrollLeft
       && viewport.scrollTop === this.paintedScrollTop)) return;
     /* 單純捲動（倍率沒變）而且畫面外多畫的那圈還蓋得住：不必重畫，畫布本來就跟著內容走。
@@ -210,8 +211,7 @@ export class ClassicVectorScene {
     this.viewport = viewport;
     this.scale = scale;
     viewport.addEventListener('scroll', this.onScroll, { passive: true });
-    // Geometry changes must repaint before the same frame is composited. Queuing
-    // another rAF here leaves the old inverse scale visible for one frame.
+    // 幾何變了一定要在同一格合成前重畫，再排一次 rAF 會讓舊的反向縮放多留一格
     host.parentElement?.addEventListener('abai-preview-transform', this.flush);
     this.observer = new ResizeObserver(this.invalidate);
     this.observer.observe(viewport);
@@ -283,25 +283,22 @@ export class ClassicVectorScene {
     const hr = host.getBoundingClientRect(), vr = viewport.getBoundingClientRect();
     this.paintedScrollLeft = viewport.scrollLeft;
     this.paintedScrollTop = viewport.scrollTop;
-    // Snapshot geometry before any photo/SVG/canvas writes. Every object on a
-    // page consumes the same pose, avoiding read/write layout thrashing N times
-    // per frame during page dragging and settle (including very small shapes).
+    // 任何照片／SVG／畫布寫入前先拍下幾何。同一頁的物件都用同一個姿態，
+    // 拖頁面和回彈時才不會每格讀寫交錯、版面重算 N 次（很小的形狀也一樣）
     const pages = Array.from(host.querySelectorAll<HTMLElement>(':scope > [data-page-id]'));
     this.pageMatrices = pages.map(page => {
       const transform = getComputedStyle(page).transform;
       return new DOMMatrixReadOnly(transform === 'none' ? undefined : transform);
     });
-    // Separators use the same pre-paint snapshot as page content. Reading their
-    // bounds after updating native SVG photos would force layout during paint.
+    // 分隔線跟頁面內容用同一份繪製前的快照。更新原生 SVG 照片之後才去讀邊界，會在繪製中強迫版面重算
     this.pageRects = pages.map(page => {
       const rect = page.getBoundingClientRect();
       return { x: (rect.left - hr.left) / k, y: (rect.top - hr.top) / k,
         width: rect.width / k, height: rect.height / k };
     });
-    // Keep the same supersampling during gestures, animation and at rest.
+    // 手勢、動畫、靜止時都用同樣的超取樣
     const dpr = Math.max(1, window.devicePixelRatio || 1) * 1.5;
-    // Constant screen-sized backing stores, never object-sized textures. A large
-    // object therefore does not allocate a huge bitmap or change resolution on up.
+    // 暫存畫布固定是螢幕大小，不跟著物件大小。物件再大也不會配出巨大的點陣，放開手指時解析度也不變
     const w = Math.max(1, Math.ceil(vr.width + SCENE_MARGIN * 2));
     const h = Math.max(1, Math.ceil(vr.height + SCENE_MARGIN * 2));
     const x = (vr.left - hr.left - SCENE_MARGIN) / k;
@@ -315,7 +312,7 @@ export class ClassicVectorScene {
       .filter(node => !(node as SVGSVGElement).dataset.classicPhoto)
       .filter(node => !(node as HTMLElement).dataset.classicSceneHit)
       .map(node => Number((node as HTMLElement).style.zIndex)).filter(Number.isFinite);
-    // Native photographs are stacking barriers, not pixels in a 2D framebuffer.
+    // 原生照片是疊放順序的分界，不是 2D 畫布裡的像素
     barriers.push(...entries.filter(e => e.nativePhoto).map(e => e.z));
     for (const entry of entries) if (entry.nativePhoto) {
       let photo = this.photos.get(entry.nativePhoto);
@@ -323,8 +320,7 @@ export class ClassicVectorScene {
       photo.root.dataset.classicPhoto = entry.nativePhoto;
       photo.root.style.zIndex = String(entry.z);
       photo.root.style.opacity = String(typeof entry.opacity === 'function' ? entry.opacity() : entry.opacity ?? 1);
-      // This 1x1 context is only an affine-transform stack; no image is painted
-      // into it. Sorting and motion use exactly the existing scene transforms.
+      // 這個 1×1 的 context 只拿來當仿射變換堆疊，什麼都不畫進去。排序和動態完全沿用場景原本的變換
       if (!this.photoContext) {
         const scratch = document.createElement('canvas'); scratch.width = scratch.height = 1;
         this.photoContext = scratch.getContext('2d')!;
@@ -344,9 +340,8 @@ export class ClassicVectorScene {
       const canvas = this.surfaces.pop()!;
       disposeBackdropMasks(canvas);canvas.remove(); canvas.width = canvas.height = 1;
     }
-    // Prepare every stacking surface before measuring any of them. Alternating
-    // photo/vector layers otherwise force a fresh layout for each surface on
-    // every pinch/sort frame, even when the vector itself is only a few pixels.
+    // 先準備好每一層畫布，再一起量。照片和向量層交錯時，不這樣做每個縮放、排序的畫格每一層都要重排一次版面，
+    // 就算向量只有幾個像素大
     const prepared = runs.map((run, i) => {
       let canvas = this.surfaces[i];
       if (!canvas) {
@@ -357,15 +352,13 @@ export class ClassicVectorScene {
         this.surfaces[i] = canvas;
       }
       const nativeZoom = !!(host.parentElement?.style as any)?.zoom;
-      // Cancel native layout zoom on the framebuffer itself. Repeatedly changing
-      // width / k made WebKit round its layout width differently at each pinch
-      // step, then resample that framebuffer a second time in the compositor.
+      // 在畫布本身抵消原生的版面縮放。一直改 width / k 的話，WebKit 每一步縮放的寬度捨入都不一樣，
+      // 合成時還會再重新取樣一次
       (canvas.style as any).zoom = nativeZoom ? String(1 / k) : '';
       canvas.style.left = '0px';
       canvas.style.top = '0px';
-      // Keep CSS layout and backing-store dimensions constant during a pinch.
-      // Cancelling the ancestor scale in the same affine transform avoids
-      // independently rounded width/k, height/k, left and top layout values.
+      // 縮放時 CSS 版面和暫存畫布的尺寸都不變。在同一個仿射變換裡抵消上層的縮放，
+      // 避免 width/k、height/k、left、top 各自捨入
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
       canvas.style.transform = nativeZoom ? 'none' : `translate(${x}px, ${y}px) scale(${1 / k})`;
@@ -385,17 +378,15 @@ export class ClassicVectorScene {
     });
     const measured = prepared.map(surface => ({ ...surface, rect: surface.canvas.getBoundingClientRect() }));
     measured.forEach(({ run, canvas, pw, ph, rect }) => {
-      // CSS layout is rounded by WebKit; map the actual surface rectangle back
-      // onto scene coordinates instead of assuming requested CSS values stuck.
+      // WebKit 會把 CSS 版面取整數，所以用畫布實際的矩形換回場景座標，不假設設下去的值原封不動
       const sx = pw / Math.max(.0001, rect.width);
       const sy = ph / Math.max(.0001, rect.height);
       const matrix: [number, number, number, number, number, number] =
         [sx * k, 0, 0, sy * k, (hr.left - rect.left) * sx, (hr.top - rect.top) * sy];
       const ctx = canvas.getContext('2d')!;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      // Erase the previous ink footprint, not a whole high-density viewport
-      // for a handful of tiny rings. Pixel density and vector drawing are
-      // unchanged. Unknown/animated painters retain the full-surface fallback.
+      // 只擦掉上一次線條佔的範圍，不為了幾個小圓圈清整個高密度畫面。像素密度和向量繪製不變；
+      // 不明或有動畫的繪製照樣整張清
       const old = this.damage.get(canvas);
       if (old) {
         const left=Math.max(0,old.x),top=Math.max(0,old.y);

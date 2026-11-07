@@ -2,8 +2,9 @@ import React, { useId } from 'react';
 import { PatternOpts, stripeBand, gingAngleUi, STRIPE_A, STRIPE_B } from '../utils/pattern';
 import { spacedTextureRadius } from '../utils/textureSpacing';
 
-/** Logical vector geometry stays unchanged throughout a pinch. The browser
- * samples paths at the current display scale, never a capped preview bitmap. */
+/**
+ * 縮放全程向量的邏輯幾何不變。瀏覽器用目前的顯示倍率取樣路徑，絕不用有上限的預覽點陣
+ */
 export const PatternLayer: React.FC<{w:number;h:number;opts:PatternOpts}> = React.memo(({w,h,opts:o}) => {
   const id = `texture-${useId().replace(/:/g,'')}`;
   if(o.type==='none'||w<=0||h<=0)return null;

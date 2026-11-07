@@ -334,7 +334,7 @@ export function liquifyDab(
       const ox = x - mcx, oy = y - mcy;
       const t2 = (ox * ox + oy * oy) / (mr * mr);
       if (t2 >= 1) continue;
-      const k = 1 - t2, w = k * k * force;   // Same C1 falloff, without sqrt/square per cell.
+      const k = 1 - t2, w = k * k * force;   // 一樣的 C1 衰減，不必每格算開根號和平方
       const i = (y * f.w + x) * 2;
       let ax: number, ay: number;
       if (mode === 'push') { ax = -dx * w; ay = -dy * w; }
@@ -368,9 +368,8 @@ export function recomputeLiquifyMax(f: LiquifyField) {
 /** 把 src 依位移場變形後寫入 target；可重用大於 rect 的緩衝區。 */
 export function warpRegion(src: ImageData, W: number, H: number, f: LiquifyField, target: ImageData, rect: Rect) {
   const out = target.data, sd = src.data;
-  // Grid X interpolation is identical on every scanline. Compute it once;
-  // Y weights/row offsets once per row, instead of clamping four neighbours
-  // and calling sampleLiquify for every photograph pixel.
+  // 網格 X 方向的內插每一條掃描線都一樣，只算一次；Y 的權重和列位移每列算一次，
+  // 不必對每個照片像素限制四個鄰居範圍、呼叫 sampleLiquify
   const ax=new Int32Array(rect.w),bx=new Int32Array(rect.w),xt=new Float64Array(rect.w);
   for(let x=0;x<rect.w;x++){const fx=(rect.x+x)/LIQUIFY_SCALE,a=Math.floor(fx);ax[x]=clamp(a,0,f.w-1)*2;bx[x]=clamp(a+1,0,f.w-1)*2;xt[x]=fx-a;}
   for (let y = 0; y < rect.h; y++) {

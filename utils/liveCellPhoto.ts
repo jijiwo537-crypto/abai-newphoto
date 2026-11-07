@@ -6,8 +6,9 @@ export function subscribeCellPhoto(id:string,listener:Listener){
   let set=listeners.get(id);if(!set)listeners.set(id,set=new Set());set.add(listener);
   return()=>{set!.delete(listener);if(!set!.size)listeners.delete(id);};
 }
-/** Drag frames update only the photo surface. The document is committed once
- * at the end of the gesture, so other pages and controls are not rebuilt. */
+/**
+ * 拖動的畫格只更新照片畫布，手勢結束時才提交一次文件，其他頁面和控制項不會重建
+ */
 export function updateCellPhoto(id:string,fx:PhotoFx){listeners.get(id)?.forEach(fn=>fn(fx));}
 
 const primers=new Map<string,Set<()=>void>>();
@@ -15,8 +16,9 @@ export function subscribeCellPrime(id:string,listener:()=>void){
   let set=primers.get(id);if(!set)primers.set(id,set=new Set());set.add(listener);
   return()=>{set!.delete(listener);if(!set!.size)primers.delete(id);};
 }
-/** The photo was opened for editing: prepare its live preview pipeline while
- * idle, so the first slider frame does not pay for decode/upload/compile. */
+/**
+ * 照片打開編輯了：趁閒置準備它的即時預覽管線，第一格滑桿才不用付解碼、上傳、編譯的成本
+ */
 export function primeCellPhoto(id:string){primers.get(id)?.forEach(fn=>fn());}
 
 /* 正在編輯（調整面板開著）的那一格。編輯中先用 1800px 的預覽顯示（比螢幕需要的還細），

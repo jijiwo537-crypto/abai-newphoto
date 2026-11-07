@@ -1,6 +1,5 @@
-// Native-resolution material composition: no per-frame GPU -> 2D readback.
-// Analytic overlay remains SVG. Material ordering and circular exclusions use
-// the same scene as the Canvas fallback, with no gesture-time quality switch.
+// 原解析度的材質合成：每格不從 GPU 讀回 2D。分析疊層維持 SVG。
+// 材質的順序和圓形挖空跟 Canvas 備援用同一個場景，手勢中不切換畫質
 import {trackingMaterialScene} from './artTracking.ts';
 import {mosaicGrid} from './artSampling.ts';
 const states=new WeakMap();

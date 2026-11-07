@@ -216,7 +216,7 @@ interface CellRect {
   squareOverlay?: boolean;
 }
 
-// Keep inset photos genuinely square, including portrait/landscape layouts.
+// 內嵌的照片一定是真正的正方形，直式、橫式版面也一樣
 const resolveLayoutRect = (rect: CellRect, width: number, height: number, size = 80): CellRect => {
   if (!rect.squareOverlay) return rect;
   const side = Math.min(width, height) * .256 * (.5 + Math.max(50, Math.min(100, size)) / 100);
@@ -269,8 +269,7 @@ const getVideoDimensions = (url: string): Promise<{ width: number; height: numbe
     const posterReady = new Promise<string | undefined>(r => { resolvePoster = r; });
     pendingVideoPosters.set(url, posterReady);
     const dimensions = () => ({ width: v.videoWidth || 800, height: v.videoHeight || 600, posterReady });
-    // Metadata is sufficient to place the layer; decoding its thumbnail must
-    // not hold the import queue (especially on iOS with large HEVC files).
+    // 有中繼資料就能放圖層；解縮圖不能卡住導入佇列（尤其 iOS 上很大的 HEVC 檔）
     v.onloadedmetadata = () => resolve(dimensions());
     const finish = (poster?: string) => {
       if (done) return; done = true;
@@ -384,7 +383,7 @@ const layoutBox = (
   return { w: rw * fit, h: rh * fit };
 };
 
-// The shared catalog preserves existing template indexes and saved projects.
+// 共用的目錄保留原本的範本編號，舊作品才打得開
 
 
 interface ColorPickerProps {
@@ -758,9 +757,10 @@ const textureGlyphD = (kind: 'star' | 'heart', cx: number, cy: number, r: number
     + `C ${P(cx + s * 0.55, cy - s * 1.15)} ${P(cx + s * 1.5, cy - s * 0.2)} ${P(cx, cy + s * 0.85)} Z`;
 };
 
-/** Affine squeezing sharpens corners. A fixed miter limit bevels them halfway
- * through a gesture; scale its allowance by the deformation's condition number.
- * This changes joins only, not the object's path, size or snapping geometry. */
+/**
+ * 仿射擠壓會讓轉角變尖。固定的 miter limit 會在手勢進行到一半時把轉角切平，所以依變形的條件數放寬。
+ * 只影響接角，不改物件的路徑、大小或吸附幾何
+ */
 export const shapeMiterLimit = (w: number, h: number, base = 4) =>
   base * Math.max(1, Math.max(Math.abs(w), Math.abs(h)) / Math.max(0.001, Math.min(Math.abs(w), Math.abs(h))));
 
@@ -804,14 +804,14 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
     const k = Math.min(480 / Math.min(o.w, o.h), 2400 / long), bw = o.w * k, bh = o.h * k, unit = base * k / 160;
     const lw = Math.max(0.4 * k, (o.lineW ?? 6) * unit), sw = Math.min(8, Math.max(0, o.strokeW || 0)) * unit;
     const solid = o.filled && o.kind !== 'line';
-    // Glyph patterns can be several times wider than their box (`<333`).
+    // 字形圖案可能比它的框寬好幾倍（`<333`）
     const glyph = o.kind === 'hole' && isTextHole(o.hole || '');
     const pad = Math.ceil(glyph ? Math.max(bw, bh) * 1.6 : Math.min(Math.max(bw, bh), lw * shapeMiterLimit(bw, bh)) + sw * 2 + 8);
     const cv = document.createElement('canvas'); cv.width = Math.ceil(bw + pad * 2); cv.height = Math.ceil(bh + pad * 2);
     const g = cv.getContext('2d', { willReadFrequently: true });
     if (g) {
       g.translate(pad, pad); g.fillStyle = g.strokeStyle = '#fff';
-      // Same join state both scene painters set before every shape kind.
+      // 兩個場景繪製在畫每種形狀前都設同樣的接角狀態
       g.lineJoin = 'miter'; g.lineCap = 'butt'; g.miterLimit = o.miterLimit ?? shapeMiterLimit(bw, bh); g.lineWidth = lw;
       if (o.kind === 'hole') {
         g.translate(bw / 2, bh / 2);
@@ -946,8 +946,8 @@ export const shapePathD = (
         + `L ${P(0, r)} Q ${P(0, 0)} ${P(r, 0)} Z`;
     }
     case 'triangle': {
-      // 四边挤压必须真正改变路径本身；三角形直接占满当前 w×h，
-      // 不能再强制维持正三角形后只在变大的外框里重新置中。
+      // 四邊擠壓必須真正改變路徑本身；三角形直接佔滿當前 w×h，
+      // 不能再強制維持正三角形後只在變大的外框裡重新置中。
       return poly([[w / 2, 0], [w, h], [0, h]]);
     }
     case 'diamond':
@@ -1185,8 +1185,7 @@ export const shapePathD = (
     }
     case 'grid-orbits': {
       const step = Math.min(gbw,gbh) / 12;
-      // A ring is a complete unit. Stretching reveals additional complete rings,
-      // never the clipped arcs of a circle larger than the available short side.
+      // 一個圓環就是完整的一個單位。拉長時多露出幾個完整的圓環，絕不露出比短邊還大的圓被裁掉的弧
       const count = Math.max(1, Math.floor(Math.min(w,h) / 2 / step));
       let d = '';
       for (let i = 0; i < count; i++) {
@@ -1377,13 +1376,13 @@ export const shapeSupportsStretch = (shape: string | undefined, filled: boolean 
   if (shape === 'hole') return holeCanStretch(holeType, filled);
   return filled ? STRETCH_SOLID_KINDS.has(shape) : STRETCH_OUTLINE_KINDS.has(shape);
 };
-/** 羽化只开放给前十个基础实心路径图形；第十一个实心十字星不支持。 */
+/** 羽化只開放給前十個基礎實心路徑圖形；第十一個實心十字星不支持。 */
 export const shapeSupportsFeather = (_shape: string | undefined, _filled: boolean | undefined, _holeType?: string) => false;
 export const shapeFeatherBlur = (w: number, h: number, value?: number) =>
   Math.max(0, Math.min(w, h) * (Math.max(0, Math.min(100, value || 0)) / 100) * 0.03);
 
-/** 将实心图形先画到独立画布，再用内缩模糊 alpha 遮罩合成。
- * 与图片边缘羽化一样，改变的是边缘透明度，而不是给硬边图形加一层视觉 blur。 */
+/** 將實心圖形先畫到獨立畫布，再用內縮模糊 alpha 遮罩合成。
+ * 與圖片邊緣羽化一樣，改變的是邊緣透明度，而不是給硬邊圖形加一層視覺 blur。 */
 export const drawFeatheredShapeBody = (
   target: CanvasRenderingContext2D,
   kind: string, w: number, h: number, _feather: number | undefined,
@@ -1831,7 +1830,7 @@ export const drawCompositeShapeBody = (
   target.stroke(ring);
   const extra = Math.max(0, Math.min(100, style.outlineWidth || 0)) / 100 * target.lineWidth * 2;
   if (extra > 0) {
-    // Preserve the original inner edge; add ink only outside the ring centreline.
+    // 保留原本的內緣，只在圓環中心線外側加粗
     const outside = new Path2D();
     const allowance = target.lineWidth * target.miterLimit + extra * 2 * target.miterLimit;
     outside.rect(-allowance, -allowance, w + allowance * 2, h + allowance * 2);
@@ -2159,14 +2158,14 @@ export const SmoothRange: React.FC<{
     draggingRef.current = false;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
-    // Parent pointer-up capture may re-render the old controlled value before
-    // this handler runs. Commit the last actual input sample, not that DOM value.
+    // 上層的 pointer-up 攔截可能在這個處理之前就用舊的受控值重新 render。提交最後一次實際的輸入值，
+    // 不是那個 DOM 值
     const next = pendingRef.current;
     pendingRef.current = next;
     onValueRef.current(next);
-    // The thumb moved continuously; settle it on the delivered (stepped) value.
+    // 拇指是連續移動的，最後停在送出去的（有級距的）值上
     if (inputRef.current) inputRef.current.value = String(next);
-    // Finish the draft only after its final input sample has been delivered.
+    // 最後一次輸入值送出後才結束草稿
     if (wasDragging) onInteractionRef.current?.(false);
   };
   return (
@@ -2507,14 +2506,14 @@ export const SymbolPicker: React.FC<{
 };
 
 /**
- * 空格提示必须属于它所在的布局图层。
+ * 空格提示必須屬於它所在的佈局圖層。
  *
- * 提示直接留在布局 wrapper 内，因此会和格子一起参与 59/60/61… 的交错层级：
- * 在它上面的照片、文字、图形或符号会自然盖住它，不再由 document.body 上的
- * 全画面 Portal 无条件压在最前面。
+ * 提示直接留在佈局 wrapper 內，因此會和格子一起參與 59/60/61… 的交錯層級：
+ * 在它上面的照片、文字、圖形或符號會自然蓋住它，不再由 document.body 上的
+ * 全畫面 Portal 無條件壓在最前面。
  *
- * 提示使用同一个 SVG 世界坐标，和格子一起连续缩放。字体不逐帧重排，
- * 也没有第二个反向缩放层，避免 WebKit 的两套取整规则互相拉扯。
+ * 提示使用同一個 SVG 世界座標，和格子一起連續縮放。字體不逐幀重排，
+ * 也沒有第二個反向縮放層，避免 WebKit 的兩套取整規則互相拉扯。
  */
 const LayoutEmptyPromptLayer: React.FC<{
   cells: { x: number; y: number; w: number; h: number }[];
@@ -3238,7 +3237,7 @@ export type ImageAdjustPanelProps = {
   hideCompose?: boolean;
   /** 滑桿排成一排：名稱、軌道、數值全部同一列，上面不再有一排字 */
   inlineSlider?: boolean;
-  /** Region editing paints from refs; only this small panel updates while tuning. */
+  /** 區域編輯從 ref 畫；調整時只有這個小面板會更新 */
   isolateFxUpdates?: boolean;
   onAdjustmentStart?: () => void;
   onAdjustmentCommit?: () => void;
@@ -3419,8 +3418,7 @@ useEffect(()=>{
 /* 點特效卡片＝只留這一顆（其他整組歸零）；
    長按＝疊在現在這些上面，好幾個同時生效（再長按一次就關掉那一顆）。 */
 const pickEffect = (id: string) => {
-  // Base photos use a dedicated GPU surface. Compiling the unrelated shared
-  // thumbnail context here blocks the click and then compiles everything twice.
+  // 底圖用專屬的 GPU 畫布。在這裡編譯無關的共用縮圖 context 會卡住點擊，之後還要全部再編譯一次
   if (FX_DETAIL[id]&&!isolateFxUpdates) warmFx(id);
   setEffectCard(id);
   setEffectDetail(false);
@@ -3506,7 +3504,7 @@ const editorSlider = (
         // 白點連續；值照原本的刻度取整（發光強度只有 20 格也不再一格一格跳）。
         const v=snapToStep(Number(e.target.value),min,max,step);
         if(isolateFxUpdates){
-          // Isolated edits never re-render this panel: label the value directly.
+          // 單獨的編輯不會讓這個面板重新 render，直接改數值標籤
           const row=e.currentTarget.closest('[data-adjust-slider]');
           const number=row?.querySelector('[data-adjust-number]');
           if(number)number.textContent=step<1?v.toFixed(1):String(v);
@@ -3554,7 +3552,7 @@ const editorSlider = (
 };
 
 
-// Fixed 5rem full-width slider + 6rem parameter buttons, shared by both collages.
+// 固定 5rem 的全寬滑桿加上 6rem 的參數按鈕，兩個拼圖共用
 const fxDetailOpen = adjustSub === 'effect' && effectDetail && !!effectCard;
 const detailTools = (FX_DETAIL[effectCard] || (FX_SUB_TOOLS[effectCard] || []).map(
  ([k,l,,mn,mx,d]) => [k,l,mn,mx,d] as [string,string,number,number,number]))
@@ -3760,8 +3758,7 @@ return (
       {adjustSub === 'effect' && !fxDetailOpen && FX_ROOT_TOOLS.map(([id, label], fi) => {
         const amountId = fxAmountId(id);
         const on = fxVal(amountId, 0) !== 0;
-        // Selection is UI state, not the amount of the applied effect. Zero
-        // must leave the card selected and its detail editor reachable.
+        // 選取是介面狀態，不是特效的強度。調到 0 時卡片要保持選取，細節編輯也要進得去
         const selected = effectCard === id;
         const detail = FX_DETAIL[id] || FX_SUB_TOOLS[id];
         const hasDetail = !!detail && detail.length > 1;
@@ -3895,8 +3892,7 @@ return (
           active={composeOpen ? id === 'compose' : adjustSub === id}
           onClick={() => {
             if (id === 'compose') { openComposeFor(img.id); return; }
-            // Let the new controls paint before background thumbnail shaders
-            // occupy the main thread. This does not change preview resolution.
+            // 先讓新的控制項畫出來，背景縮圖的著色器再佔主執行緒；預覽解析度不變
             deferHeavyWork();
             /* 從構圖切到別的分類：先把當下裁切的結果確認掉再切過去 ——
                不然構圖介面會一直蓋在上面，看起來就只是「圖標亮了但沒反應」。 */
@@ -4674,7 +4670,7 @@ const previewMask = (aspect: number, radiusPct: number, featherPct: number, kind
      拖羽化滑桿時每換一個數字就要做一次，那 13.6 毫秒正是「很卡」。
      羽化本來就是一片平滑的過渡，放大貼上看不出任何差別；
      沒有羽化的（純外形／圓角）邊緣是硬的，維持 400 不動。
-     ⚠ 匯出走的是另一條全解析度的路（makeShapeMask），成品一個像素都沒變。 */
+     匯出走的是另一條全解析度的路（makeShapeMask），成品一個像素都沒變。 */
   const MAX = featherPct > 0 ? 240 : 400;
   const w = aspect >= 1 ? MAX : Math.max(16, Math.round(MAX * aspect));
   const h = aspect >= 1 ? Math.max(16, Math.round(MAX / aspect)) : MAX;
@@ -4817,8 +4813,7 @@ const CardSourceThumb:React.FC<{src:string}>=({src})=>{
   },[src]);
   return <canvas ref={ref} width={CARD_W*CARD_DPR} height={CARD_H*CARD_DPR} className="absolute inset-0 w-full h-full object-cover"/>;
 };
-// A panel contains dozens of cold cards. Independent idle callbacks all wake
-// together and used to compile every thumbnail before the next input event.
+// 一個面板有幾十張還沒算的卡片。各自的閒置回呼會一起醒來，在下一次輸入前把所有縮圖編譯完，所以要排隊
 let cardThumbWork:Promise<void>=Promise.resolve();
 function queueCardThumb(work:()=>void,cancelled:()=>boolean):Promise<void>{
   const task=cardThumbWork.then(async()=>{
@@ -4858,17 +4853,14 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
     const detach=()=>{dead=true;mount?.replaceChildren();};
     const copy = (thumb: HTMLCanvasElement) => {
       const host=ref.current;if(dead||!host)return;
-      // The immutable cached canvas is already a complete thumbnail. Reparent
-      // it instead of reading/copying every cached GPU bitmap on every tab.
-      // Concurrent panels get an isolated copy; the normal single editor does
-      // not allocate or upload another bank of canvases/full-size <img>s.
+      // 固定的快取畫布本來就是完整的縮圖，直接搬過去，不要每次切分頁都把每張快取的 GPU 點陣讀出來複製。
+      // 同時開好幾個面板時各給一份複本；一般單一編輯器不會再配置、上傳一整組畫布或全尺寸 <img>
       let shown=thumb;
       if(thumb.parentElement?.isConnected&&thumb.parentElement!==host){shown=document.createElement('canvas');shown.width=thumb.width;shown.height=thumb.height;shown.getContext('2d')!.drawImage(thumb,0,0);}
       shown.style.cssText='width:100%;height:100%;display:block;object-fit:cover';
       host.replaceChildren(shown);setPaintedKey(cacheKey);
     };
-    // Cache hits must paint before the first visible frame, not after an idle
-    // wait plus the card's stagger delay. Only cold computation is deferred.
+    // 快取命中要在第一次看得到的畫格前就畫好，不要等閒置再加上卡片錯開的延遲。只有要重算的才延後
     const cached=cardThumbCache.get(cacheKey);
     if(cached){copy(cached);return detach;}
     const paint = async () => {
@@ -5060,9 +5052,9 @@ export interface FloatingImage {
   shapeLineW?: number;
   /** 刺繡線條的間距（0～100） */
   shapeLineGap?: number;
-  /** 新增／首次挤压时的线宽基准，挤压只改变轮廓比例、不改变笔画粗细 */
+  /** 新增／首次擠壓時的線寬基準，擠壓只改變輪廓比例、不改變筆畫粗細 */
   shapeLineBase?: number;
-  /** 点点／星星／爱心纹理的原始坐标系；挤压时整层随宽高变形 */
+  /** 點點／星星／愛心紋理的原始座標系；擠壓時整層隨寬高變形 */
   shapeTextureBaseW?: number;
   shapeTextureBaseH?: number;
   /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例，跟圖片描邊同一套） */
@@ -5071,7 +5063,7 @@ export interface FloatingImage {
   shapeGlow?: number | boolean;
   /** 圖形發光的顏色。沒設就用圖形自己的顏色 */
   shapeGlowColor?: string;
-  /** 实心基础图形的边缘羽化 0～100。 */
+  /** 實心基礎圖形的邊緣羽化 0～100。 */
   shapeFeather?: number;
   /** 發光顏色是不是已經給過預設值了（只在第一次打開發光時帶入圖層自己的顏色） */
   glowInit?: boolean;
@@ -5482,7 +5474,7 @@ const VideoLayer: React.FC<{
     /* 再壓一層 40ms 的合併：拖羽化滑桿時一秒會來六十個新數字，
        每一個都去編一張 PNG 再解碼，畫面就一路卡著。
 
-       ⚠ **第一次**不進這個合併（手上還沒有任何遮罩可以頂著）。
+       **第一次**不進這個合併（手上還沒有任何遮罩可以頂著）。
        原本不分第一次：拉下羽化之後要等 40 毫秒＋解碼才會有遮罩，而這段時間
        滑桿已經被拖到十幾了 —— 邊緣是「先完全不變，然後一次跳成很柔」，
        那一下看起來就是畫面閃了一下。第一張立刻做，之後才需要合併。 */
@@ -5514,8 +5506,7 @@ const VideoLayer: React.FC<{
   useEffect(() => {
     const video = ref.current;
     if (!video) return;
-    // The animation controls and live renderer must share the visible decoder.
-    // Previously getPreviewVideo created a second autoplaying video per URL.
+    // 動畫控制和即時繪製要共用畫面上那個解碼器，不然 getPreviewVideo 會替每個網址再建一個自動播放的影片
     const previous = previewVideos.get(image.src);
     if (previous && previous !== video && !previous.isConnected) {
       previous.pause();
@@ -5567,7 +5558,7 @@ const VideoLayer: React.FC<{
      整個框、不留信箱邊。預覽如果用 contain，只要圖層框的長寬比跟原圖差一點點
      （匯入時取整就會差），四周就會多出零點幾 px 的空白 —— 貼齊畫布邊緣時那就
      是一條白縫，而匯出沒有。用 fill 才跟匯出一致。 */
-  /* ⚠ 影片與 GPU 畫布是**疊在一起**的兩層，所以兩個都要絕對定位。
+  /* 影片與 GPU 畫布是**疊在一起**的兩層，所以兩個都要絕對定位。
      以前影片「讓開」時會被改成 position:absolute，畫布才會回到左上角；
      現在讓開只動透明度、影片一直在原位，要是還照文件流排，
      畫布就會被擠到影片正下方（實測整整低了一個圖層的高度）。 */
@@ -5582,7 +5573,7 @@ const VideoLayer: React.FC<{
      glCanvas 已經變成 null、glLive 卻還是 true —— 影片被藏起來、
      畫布又不在，畫面就空了（實測連續空白 120 毫秒）。 */
   const stepAside = !!hidden && !!glCanvas;
-  /* ⚠ 讓開＝**什麼都不做**：影片一直在原位、一直是不透明的，
+  /* 讓開＝**什麼都不做**：影片一直在原位、一直是不透明的，
      只是被上面那張不透明的 GPU 畫布整片蓋住。
 
      為什麼可以這樣：這條路從來不把形狀遮罩交給 WebGL（videoGl 的 setMask
@@ -5622,10 +5613,10 @@ const VideoLayer: React.FC<{
     />
   );
   /* GPU 畫布：跟上面那個 <video> 套同一份 style。
-     ⚠ 它是 WebGL 畫布，**絕對不能**被 drawImage 到 2D 畫布上 ——
+     它是 WebGL 畫布，**絕對不能**被 drawImage 到 2D 畫布上 ——
      那會強迫把畫面從顯示卡讀回 CPU，實測一次 104 毫秒，整個優勢就沒了。
      所以這裡是「直接掛在畫面上讓瀏覽器合成」，中間沒有任何一次回讀。 */
-  /* ⚠ 畫布在「還沒畫出任何東西」之前是**看不見**的。
+  /* 畫布在「還沒畫出任何東西」之前是**看不見**的。
      它一被掛上去就是蓋在影片上面的一層，而剛建立的 WebGL 畫布是
      300×150 的空緩衝區（實測：掛上去 33 毫秒之後才第一次畫）——
      那 33 毫秒它蓋著影片、自己又什麼都沒有，就是「第一次套濾鏡／套特效時
@@ -5674,7 +5665,7 @@ const VideoLayer: React.FC<{
       image.scale, image.width, image.height],
   );
 
-  /* ⚠ 這裡**只有一種回傳結構**，而且不管有沒有形狀／描邊／發光都一樣。
+  /* 這裡**只有一種回傳結構**，而且不管有沒有形狀／描邊／發光都一樣。
      以前是依情況回傳三種不同深度的樹（裸 <video>／包一層／包兩層）——
      只要在這幾種之間切換，React 就會把 <video> 拆掉重建，
      而重建一個 <video> 等於重新載入：畫面會空一下、播放也從頭來。
@@ -5797,7 +5788,7 @@ const useVideoFxGl = (
          停下來 180 毫秒之後再補一顆完整的 33³。
          所以「拖的時候順、放手之後精準」，而匯出永遠走的是另一條完整的路。 */
       const cur = fxRef.current;
-      /* ⚠ 只認「顏色」那幾個欄位。以前是整包 fx 當鍵，所以拖特效強度、圓角、
+      /* 只認「顏色」那幾個欄位。以前是整包 fx 當鍵，所以拖特效強度、圓角、
          羽化這些跟顏色無關的滑桿時，每一格也會重烤一顆表（白花 8～11 毫秒）。 */
       const key = `${colorKeyOf(cur)}|${lutRevision}`;
       const now = performance.now();
@@ -5822,7 +5813,7 @@ const useVideoFxGl = (
       /* 畫出來的大小＝畫面上真正的實體像素。裁切過的話，版面是把「整格」
          放大之後再用 overflow 切，所以這裡要照那個放大後的尺寸開。
          幾何完全交給 VideoLayer 既有的那份 CSS（geoCssBox），這裡只管像素。 */
-      /* ⚠ 尺寸**只能**問「這張畫布真正被擺在哪個框裡」。
+      /* 尺寸**只能**問「這張畫布真正被擺在哪個框裡」。
          以前量不到就退回 boxW/boxH（圖層框）—— 但裁切過的圖層，那兩個數字
          跟畫布實際被拉伸到的大小長寬比是不一樣的，畫出來就被壓扁。
          而「量不到」是真的會發生：把濾鏡切回原始時這張畫布會被拔下來，
@@ -5839,7 +5830,7 @@ const useVideoFxGl = (
            而畫布是被清空的 —— 這時候一定要讓底下的 <video> 回來頂著，
            不然那一格看到的是背景色（黑底就是閃黑）。
 
-           ⚠ 「顯形」還要多等兩格。畫布是新長出來的一層，合成器第一次
+           「顯形」還要多等兩格。畫布是新長出來的一層，合成器第一次
            把它排進畫面時那一格是黑的（實測：第一次套特效必定黑一格，
            第二次以後完全不會 —— 因為那時候這一層早就在了）。
            讓它先在**看不見**的狀態下被畫上兩三格，合成器把這一層準備好之後
@@ -5906,7 +5897,7 @@ const classicScenePath = (image: FloatingImage, ringReveal = 1) => {
   return path;
 };
 
-/** Scene painter: fixed local geometry, one scene transform, no DOM measurements. */
+/** 場景繪製：固定的區域幾何、一次場景變換、不量 DOM */
 const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
   motionFrame: ObjectMotionFrame | null | undefined, backingScale: number, cacheGlow = false) => {
   const drawW = image.width, drawH = image.height, contentScale = 1;
@@ -5914,8 +5905,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
     || (image.mo?.idle === 'symbol-breathe2' && motionFrame?.idleT !== undefined));
   ctx.save();
   if (image.shape === 'hole') {
-    // This helper owns an internal bitmap. Feed it actual display pixels, not
-    // logical object pixels, so glyph/image-backed shapes stay sharp during pinch.
+    // 這個工具函式自己有一張點陣。餵它實際的顯示像素，不是物件的邏輯像素，字形和圖片做成的形狀在縮放時才清楚
     const rasterScale = Math.max(1, backingScale);
     ctx.scale(1 / rasterScale, 1 / rasterScale);
     drawHoleShape(ctx, {
@@ -5983,8 +5973,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           const cached = cacheGlow && GRID_SHAPE_KINDS.has(image.shape) && !solid
             && paintCachedClassicGlow(ctx,path,glowKey,drawW,drawH,lw,ctx.getLineDash(),image.shapeGlowColor||color,blurs);
           if (cached) {
-            // Preserve the three source-stroke passes from the shadow renderer.
-            // These remain actual vector strokes, including during object pinch.
+            // 保留陰影繪製的三次原始描邊。這些一直是真正的向量描邊，物件縮放時也是
             for (let i=0;i<3;i++) ctx.stroke(path);
           } else {
           ctx.save();
@@ -6083,7 +6072,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       const unitMotionFrame = usesUnitMotion && lines.length === 1 ? motionFrame : null;
       const drawAnimatedUnits = (stroke = false) => {
         if (!unitMotionFrame && !image.sym) {
-          // Cached raster under the continuous matrix: no per-scale re-hinting jitter.
+          // 快取的點陣套在連續矩陣下：不會因為每個縮放倍率重新微調字形而抖動
           lines.forEach((line, i) => {
             const y = startY + i * lineH + dy;
             if (drawStableText(ctx, stroke ? 'stroke' : 'fill', line, dx, y)) return;
@@ -6095,7 +6084,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           image.text || '', family, size, stroke ? 'stroke' : 'fill',
           stroke ? (image.strokeColor || '#000000') : (image.color || '#FFFFFF'),
           stroke ? (image.strokeWidth || 0) * 2 : 0,
-          // Stable high-density masks: preview zoom must not swap raster bounds.
+          // 穩定的高密度遮罩：預覽縮放不能換點陣的範圍
           7,
           image.sym ? undefined : {
             plainText: true,
@@ -6230,7 +6219,7 @@ export const makeSymbolItem = (txt: string, cx: number, cy: number, pw: number):
 };
 export { prepareClassicSymbolPlacement, TEXT_PLACEHOLDER };
 
-/** Shared local animation painter for the preview and exported frames. */
+/** 預覽和存檔的影格共用同一個區域動畫繪製 */
 export const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
   motionFrame: ObjectMotionFrame | null | undefined, density: number, cacheGlow = false) => {
   const phase = motionFrame?.gridWave;
@@ -6337,12 +6326,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     width: number; height: number; x: number; y: number; rotationRad: number;
   } | null>(null);
 
-  /* iOS 偶尔会把最后一个 pointerup/touchend 送到被重新合成后的祖先，而不是
-     起手的物件节点。局部 isDragging/isScaling 若因此卡住，外框和药丸就永远
-     过不了显示条件。和创意拼图一样加全域兜底；延后一格让正常的局部收尾先跑。 */
+  /* iOS 偶爾會把最後一個 pointerup/touchend 送到被重新合成後的祖先，而不是
+     起手的物件節點。局部 isDragging/isScaling 若因此卡住，外框和藥丸就永遠
+     過不了顯示條件。和創意拼圖一樣加全域兜底；延後一格讓正常的局部收尾先跑。 */
   useEffect(() => {
-    /* 监听器必须在手势开始前就存在。若等 isDragging/isScaling render 后才挂，
-       极快的按下／放开可能已错过 pointerup，选中框便会一直隐藏。 */
+    /* 監聽器必須在手勢開始前就存在。若等 isDragging/isScaling render 後才掛，
+       極快的按下／放開可能已錯過 pointerup，選中框便會一直隱藏。 */
     let timer = 0;
     const finish = () => {
       window.clearTimeout(timer);
@@ -6446,7 +6435,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         offset += t.length;
       }
       e.preventDefault(); e.stopPropagation();
-      textOpenAt.current = performance.now();   // this tap must not end editing
+      textOpenAt.current = performance.now();   // 這次點擊不能結束編輯
       try { field.focus({ preventScroll: true }); field.setSelectionRange(best, best); } catch {}
       setTextCaret(best);
     };
@@ -6482,9 +6471,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     if (image.sym) {
       let alive = true;
       const fam = (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT));
-      /* 与创意拼图完全同源：新增、显示、命中和选中框都使用 symbolBox /
-         measureSymbolInk。以前这里又用 SVG getBBox 覆盖一次尺寸，等于同一个
-         符号同时拥有 Canvas 与 SVG 两套边界，放大后框必然逐渐对不上。 */
+      /* 與創意拼圖完全同源：新增、顯示、命中和選中框都使用 symbolBox /
+         measureSymbolInk。以前這裡又用 SVG getBBox 覆蓋一次尺寸，等於同一個
+         符號同時擁有 Canvas 與 SVG 兩套邊界，放大後框必然逐漸對不上。 */
       ensureFont(fam).then(() => {
         if (!alive) return;
         /* 新增符號時已在真正字體載入後量過同一個字級；沿用該快取，
@@ -6511,10 +6500,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       return () => { alive = false; };
     }
     const measure = () => {
-      /* 可见文字现在走 Canvas／快照，旧的隐藏 DOM span 位于已经不会进入的
-         fallback 分支，因此 textMeasureRef 永远是 null，文字便一直保留新增时
-         70% 页宽的大盒。直接用最终绘制引擎的 measureText 量同一套字体、字号
-         与字距，框只包真正排版宽高；尺寸改变时同时守住中心。 */
+      /* 可見文字現在走 Canvas／快照，舊的隱藏 DOM span 位於已經不會進入的
+         fallback 分支，因此 textMeasureRef 永遠是 null，文字便一直保留新增時
+         70% 頁寬的大盒。直接用最終繪製引擎的 measureText 量同一套字體、字號
+         與字距，框只包真正排版寬高；尺寸改變時同時守住中心。 */
       const c = document.createElement('canvas');
       const g = c.getContext('2d');
       if (!g) return;
@@ -6606,19 +6595,19 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   const drawnSrcRef = useRef<string | null>(null);
   /* 物件本體、選中框、控制點必須共用同一組「實體像素對齊後」尺寸。
      以前本體外殼使用 snapPx2，但 SVG／文字與 frameRect 仍用未取整尺寸；
-     缩放经过半像素边界时，两边会在不同帧进位，看起来就是图形在框内抖动。 */
-  // 四边挤压期间不能逐帧取整：取整点会让本应固定的对边在两个实体像素间跳。
-  // 放手后再恢复像素对齐，静止画面仍保持锐利。
+     縮放經過半像素邊界時，兩邊會在不同幀進位，看起來就是圖形在框內抖動。 */
+  // 四邊擠壓期間不能逐幀取整：取整點會讓本應固定的對邊在兩個實體像素間跳。
+  // 放手後再恢復像素對齊，靜止畫面仍保持銳利。
   const stretching = !!stretchStart.current;
   /* 互動中絕不能逐幀跨越實體像素取整點：縮放、旋轉或拖曳時若每一格都
      Math.round，物件中心會在相鄰像素間跳。手勢期間保留連續幾何，放手後才
      一次吸回實體像素格，兼顧操作穩定與靜止清晰度。 */
   const liveGeometry = stretching || isScaling || isDragging || hideChrome;
-  /* 对齐线出现时，物件边缘必须严格使用吸附后的逻辑坐标；若再用 snapPx/snapPx2
-     二次取整，本体会相对页面移动半个像素，产生白缝或越过蓝线。 */
-  /* 照片本体不能在放手后再各自取整位置与尺寸。页面与照片处于同一个逻辑
-     坐标系，吸附后的边本来已经严格相等；二次取整会让两者相差半个设备像素，
-     预览就露出白缝。文字／图形仍保留既有静止取整以维持锐利。 */
+  /* 對齊線出現時，物件邊緣必須嚴格使用吸附後的邏輯座標；若再用 snapPx/snapPx2
+     二次取整，本體會相對頁面移動半個像素，產生白縫或越過藍線。 */
+  /* 照片本體不能在放手後再各自取整位置與尺寸。頁面與照片處於同一個邏輯
+     座標系，吸附後的邊本來已經嚴格相等；二次取整會讓兩者相差半個裝置像素，
+     預覽就露出白縫。文字／圖形仍保留既有靜止取整以維持銳利。 */
   const isPlainRaster = image.text === undefined && !image.shape;
   /* 向量物件也始終保留連續幾何。舊做法在第一次拖動時才從 snapPx2 切到
      浮點尺寸，光是切換模式就會重建一次 Canvas，因此圖形第一下會黏住；
@@ -6708,7 +6697,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   const videoWantsGl = isVid && !glDead && vidReady && hasPhotoFx(image.fx);
   const wantsShapeCanvas = image.text === undefined && !isVid && shapeImgReady && hasShapeWork;
   if (wantsShapeCanvas) usedCanvasRef.current = true;
-  /* ⚠ 影片**不走**這條 2D 形狀畫布。
+  /* 影片**不走**這條 2D 形狀畫布。
      一開始我讓它走了，結果每格 104 毫秒 —— 因為那條路會 drawImage(GPU 畫布)，
      而那一下等於把整張畫面從顯示卡讀回 CPU（實測就是 104 毫秒，
      跟 videoGl 檔頭寫的完全一致）。影片的成品直接讓瀏覽器合成，不經過 2D。 */
@@ -7038,7 +7027,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     onShapeTap?.(e.clientX, e.clientY);
     onSelect();
     
-    // Forbid moving two images at the same time
+    // 不能同時移動兩張圖
     if (globalDragPointerId !== null && globalDragPointerId !== e.pointerId) {
       return;
     }
@@ -7375,8 +7364,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      圖形把 scale 掛在外層 wrapper：父層預覽倍率或動畫倍率一變，WebKit 會
      分別量 wrapper transform 與選中框實際尺寸，兩者便會在相鄰實體像素間
      來回取整。創意拼圖只有一份最終外框；經典拼圖現在也遵守同一契約。 */
-  // Keep the decoder's CSS box fixed throughout an object pinch. Only its
-  // transform changes, just as the native photo layer's geometry does.
+  // 物件縮放的整個過程中，解碼器的 CSS 方塊大小固定，只改 transform，跟原生照片層的幾何一樣
   const stableVectorTransform = !!image.isVideo;
   const wrapGeo: React.CSSProperties = {
     position: 'absolute',
@@ -7517,8 +7505,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     : { x: 0, y: 0 };
 
   const isCanvasVector = !!image.shape || image.text !== undefined;
-  // Plain photos share the screen-density scene with vectors. Native zoom on
-  // nested <img> boxes rounds their edges independently from the page geometry.
+  // 一般照片跟向量共用螢幕密度的場景。巢狀 <img> 用原生縮放的話，邊緣的取整會跟頁面幾何對不上
   const isScenePhoto = !isCanvasVector && !image.isVideo && shapeImgReady
     && !plainImageWave && !image.feather && !image.imgGlow && !image.imgStrokeWidth
     && !isImgShaped(image.imgShape) && !hasPhotoFx(image.fx);
@@ -7550,11 +7537,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         return ((current.opacity ?? 100) / 100)
           * ((sceneMotionFrame ? sceneMotionFrame(current, stackIndex) : motionFrame)?.a ?? 1);
       },
-      // Sorting is driven by the page's shared frame clock, not a second loop.
+      // 排序跟著頁面共用的畫格時鐘走，不另外跑一個迴圈
       animateUntil: sortPage ? 0 : shift.at + 220,
       backdropKey: () => {
-        // A draft, motion frame or sorting pose is content, not selection UI.
-        // Unknown DOM/video layers are opted out by the scene collector.
+        // 草稿、動畫畫格或排序姿態是內容，不是選取介面。不明的 DOM、影片圖層由場景收集器排除
         const current={...committedImage,...classicVectorDraft(committedImage.id)};
         const source=current.src?getPreviewImg(pvSrcRef.current):null;
         return JSON.stringify([Object.fromEntries(Object.entries(current).filter(([key])=>key!=='src')),
@@ -7564,13 +7550,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       },
       paint: (ctx, density) => {
         const backdropRoot=ctx.getTransform();
-        // Live slider values belong to the renderer too, not only the React
-        // editor. Read the latest draft at paint time so a queued scene frame
-        // cannot replay the pre-drag glow/style while React is committing.
+        // 即時滑桿的值也屬於繪製，不只是 React 編輯器的事。畫的時候讀最新的草稿，
+        // 排隊中的場景畫格才不會在 React 提交時重播拖動前的光暈或樣式
         const image = { ...committedImage, ...classicVectorDraft(committedImage.id) };
         let photoClip: { x: number; y: number; width: number; height: number } | null = null;
-        // Read the shared clock at paint time, not a React render from an
-        // earlier animation frame. The image geometry remains immutable.
+        // 畫的時候讀共用時鐘，不是更早那一格的 React render；圖片幾何保持不變
         const motionFrame = sceneMotionFrame ? sceneMotionFrame(image, stackIndex) : registeredMotionFrame;
         const t = Math.min(1, (performance.now() - shift.at) / 220);
         const q = 1 - Math.pow(1 - t, 3);
@@ -7578,8 +7562,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         let shiftY = shift.fromY + (shift.ty - shift.fromY) * q;
         let shiftS = shift.fromS + (shift.s - shift.fromS) * q;
         if (sortPage) {
-          // Sorting ink follows the actual page compositor, not a second easing
-          // clock. In particular, release must not start a new cubic-out tween.
+          // 排序時的線條跟著實際的頁面合成走，不另外用一個緩動時鐘。尤其放開時不能再開一段新的 cubic-out 過渡
           const matrix = scene.pageTransform(sortPage.index);
           if (!matrix) return;
           shiftS = matrix.a;
@@ -7587,9 +7570,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           const cy = sortPage.height / 2;
           shiftX = matrix.e + (1 - shiftS) * (cx - image.x - image.width / 2);
           shiftY = matrix.f + (1 - shiftS) * (cy - image.y - image.height / 2);
-          // Clip against the current canvas before applying the page's lift.
-          // After reordering, hidden source pixels can become visible inside
-          // the destination canvas; never bake the old outer mask into an object.
+          // 先用目前的畫布裁切，再套頁面的抬起。重新排序後，原本藏住的來源像素可能會在目的畫布裡露出來；
+          // 舊的外框遮罩絕不能烤進物件裡
           const halfW = image.width * image.scale / 2;
           const halfH = image.height * image.scale / 2;
           const imageCx = image.x + image.width / 2, imageCy = image.y + image.height / 2;
@@ -7597,11 +7579,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             && imageCx - halfW >= sortPage.clipLeft - 1e-6
             && imageCx + halfW <= sortPage.clipLeft + sortPage.totalWidth + 1e-6
             && imageCy - halfH >= -1e-6 && imageCy + halfH <= sortPage.height + 1e-6;
-          // The strip owns clipping until a page is lifted. Applying the same
-          // fractional boundary again in SVG multiplies antialias coverage and
-          // changes the edge when entering/leaving sorting, especially for
-          // oversized photos. Independent clips are needed only while the
-          // strip's overflow clip is disabled for drag/settle.
+          // 頁面沒抬起時由整條負責裁切。同一條小數邊界在 SVG 再裁一次會讓反鋸齒覆蓋率相乘，進出排序時邊緣會變，
+          // 尤其是超大的照片。只有拖動、回彈時整條的 overflow 裁切關掉，才需要各自裁
           if (sortPage.clipContents && !containedPhoto) {
             ctx.beginPath();
             photoClip = { x: sortPage.clipLeft * shiftS + matrix.e + (1 - shiftS) * cx,
@@ -7637,8 +7616,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           if (source.complete && source.naturalWidth) {
             const cx = image.x + image.width / 2, cy = image.y + image.height / 2;
             const hw = image.width * image.scale / 2, hh = image.height * image.scale / 2;
-            // A fraction of one source texel is numerical tolerance, not a new
-            // snap range. Guard all four aligned edges, including single pages.
+            // 不到一個來源像素的差距只是數值誤差，不算新的吸附範圍。四條對齊的邊都要防，單頁也一樣
             const tolerance = Math.max(1e-6, Math.min(.05, image.width * image.scale / source.naturalWidth / 2));
             const atX = (x: number) => !!maxTextWidth && Math.abs(x - Math.round(x / maxTextWidth) * maxTextWidth) <= tolerance;
             const coverage = 2 * Math.max(1, window.devicePixelRatio || 1) * 1.5 / Math.max(.001, density * Math.abs(scale));
@@ -7646,21 +7624,16 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             const still = !motionFrame || ((motionFrame.k ?? 1) === 1 && !(motionFrame.dx || motionFrame.dy || motionFrame.rot));
             if (scene.paintPhoto(ctx, { source, width: image.width, height: image.height,
               radius: image.imgRadius ? cornerR(image.imgRadius, image.width, image.height) : 0,
-              // Only the tiny cached edge textures change their coverage;
-              // the original photograph and its logical rectangle stay intact.
-              // A logical-pixel guard becomes subpixel at minimum zoom. Keep
-              // two screen pixels of source-edge coverage, including while the
-              // compositor rounds the background and SVG clip independently.
+              // 只改那幾張很小的邊緣快取貼圖的覆蓋率；原照片和它的邏輯矩形不動。用邏輯像素當防護，
+              // 縮到最小時會小於一個像素，所以保留兩個螢幕像素的來源邊緣覆蓋，合成器各自取整背景和 SVG 裁切時也一樣
               pad: coverage,
               edgePads: [Math.abs(cx-hw)<=tolerance ? coverage : 0,
                 Math.abs(cx+hw-stripWidth)<=tolerance ? coverage : 0],
               edges: image.rotation % 360 === 0 && still
                 ? [atX(cx - hw), atX(cx + hw), Math.abs(cy - hh) <= tolerance, Math.abs(cy + hh - canvasHeight) <= tolerance]
                 : [false, false, false, false],
-              // Normal mode already clips the complete strip once. Clipping
-              // each SVG again at that same fractional edge multiplies edge
-              // coverage, and switches antialiasing when sorting starts/ends.
-              // Only a lifted page needs its independent sorting footprint.
+              // 一般模式下整條已經裁過一次。在同一條小數邊緣再裁每個 SVG 會讓邊緣覆蓋率相乘，
+              // 排序開始、結束時反鋸齒也會切換；只有抬起的頁面需要自己的排序範圍
               clip: photoClip,
               dim: isSwapTarget ? .45 : isSwapSource ? .3 : 0 })) return;
             if (image.imgRadius) {
@@ -7670,10 +7643,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               ctx.clip();
             }
             if (!image.imgRadius && image.rotation % 360 === 0 && !motionFrame) {
-              // Extend only the outermost source texel at an exactly aligned
-              // page edge. Do not resize the photo or change snap/export geometry.
-              // Separate DOM-background / canvas-ink antialiasing otherwise lets
-              // a fraction of the background through, especially during page lift.
+              // 只在剛好對齊的頁面邊緣延伸最外面那一個來源像素，不改照片大小，也不改吸附或存檔幾何。
+              // 不然 DOM 背景和畫布線條各自反鋸齒，會透出一點背景，抬起頁面時特別明顯
               const pageWidth = maxTextWidth, pageHeight = canvasHeight;
               if (pageWidth && pageHeight) {
                 const cx = image.x + image.width / 2, cy = image.y + image.height / 2;
@@ -7733,10 +7704,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   });
   useLayoutEffect(() => {
     if (!scene || !isSceneInk || isTextEditing) return;
-    // SmoothRange already delivers one sample per animation frame. Paint that
-    // sample in the same frame rather than scheduling a second frame behind
-    // React/gesture commits. The painter reads the draft directly, so this does
-    // not depend on a parent render or on the pointer-up commit.
+    // SmoothRange 每個動畫畫格只送一個值，在同一格畫掉，不要排在 React 或手勢提交後面再等一格。
+    // 繪製直接讀草稿，所以不靠上層 render，也不靠 pointer-up 的提交
     return subscribeClassicVectorDraft(committedImage.id, () => scene.flush());
   }, [scene, isSceneInk, isTextEditing, committedImage.id]);
   useLayoutEffect(() => () => scene?.remove(image.id), [scene, image.id]);
@@ -7881,9 +7850,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         /* 框線本身約 1.05 個螢幕像素且以路徑為中心繪製。保留略大於半根框線
            的距離，就能讓框緊貼墨水外緣、又不會有任何一半壓到圖形；原本固定
            2px 會讓愛心、星形等內容內縮的圖形看起來隔著一圈空白。 */
-        /* 图形框若只离墨水 0.65px，框线内半边会与抗锯齿边缘混在一起，静止时
-           看起来像图形自带一条杂色细边；双指缩放时框隐藏，所以细边又突然
-           消失。图形多留一个屏幕像素级的净空，框仍紧贴但绝不覆盖本体。 */
+        /* 圖形框若只離墨水 0.65px，框線內半邊會與抗鋸齒邊緣混在一起，靜止時
+           看起來像圖形自帶一條雜色細邊；雙指縮放時框隱藏，所以細邊又突然
+           消失。圖形多留一個螢幕像素級的淨空，框仍緊貼但絕不覆蓋本體。 */
         const gap = (image.shape ? 1.25 : 0.65) / kNow;
         if (image.shape === 'hole') {
           /* 借來的圖案：拿畫預覽時同一支算「會超出多少」，但把發光關掉 ——
@@ -7895,9 +7864,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         }
         if (!image.shape || !shapeStroke) return { x: gap, y: gap };
         // shapeStroke 是 viewBox 單位，乘回 scale 才是外框那一層的 px
-        // The scene paints the original path with object scale, whereas the
-        // legacy DOM stroke descriptor divides by renderScale. Undo that
-        // compensation when measuring actual scene ink (not the UI stroke).
+        // 場景用物件的縮放畫原本的路徑，舊的 DOM 描邊參數則會除以 renderScale。
+        // 量場景實際的線條時要把這個補償扣回來（介面上的描邊不用）
         const lwPx = shapeStroke.lw * renderScale * sc;
         const outPx = shapeStroke.outer * renderScale * sc;
         const half = (image.shapeFilled && image.shape !== 'line') ? 0 : lwPx / 2;
@@ -7910,16 +7878,16 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       const frameInk = contourInk ? [contourInk.x/image.width,contourInk.y/image.height,contourInk.w/image.width,contourInk.h/image.height] : image.shape && image.shape !== 'hole'
         ? (SHAPE_FIT[image.shape] || [0, 0, 1, 1])
         : null;
-      /* 跟創意拼圖的 objectSelectionInk 完全相同：使用共用的 symInk、字号、
-         描边和固定 2 个屏幕像素留白，不再拿储存用的 width/height 外盒加框。 */
+      /* 跟創意拼圖的 objectSelectionInk 完全相同：使用共用的 symInk、字號、
+         描邊和固定 2 個螢幕像素留白，不再拿儲存用的 width/height 外盒加框。 */
       const symbolFrame = image.sym ? (() => {
         const ink = measureSymbolStickerInk(
           image.text || image.sym!, (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)),
         );
         const size = image.fontSize || 40;
         const sc = image.scale || 1;
-        /* 与 CollageTool.objectSelectionInk 逐项相同。符号本体也已改回同一支
-           Canvas measureSymbolInk 绘制，因此这里不再混入任何 SVG 度量。 */
+        /* 與 CollageTool.objectSelectionInk 逐項相同。符號本體也已改回同一支
+           Canvas measureSymbolInk 繪製，因此這裡不再混入任何 SVG 度量。 */
         const inkW = ink.w * size * sc;
         const inkH = ink.h * size * sc;
         const edge = 2 / kNow + (image.strokeWidth || 0) * (size / 40) * sc;
@@ -7941,7 +7909,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         strokeW: image.shapeStrokeW, innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth,
         textureBaseW: image.shapeTextureBaseW, textureBaseH: image.shapeTextureBaseH,
         maskShape: (image as any).maskShape,
-        // The classic hole painter leaves the canvas default miter limit.
+        // 經典挖洞繪製沿用畫布預設的 miter limit
         miterLimit: image.shape === 'hole' ? 10 : undefined,
       }) : null;
       // 字形圖案的墨水依字型在不同字級的描繪略有差異，頂端多留一點。
@@ -8149,9 +8117,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       className="floating-image-wrapper group/floating"
       style={{
         ...wrapGeo,
-        // Sorting uses the scene's shared page matrix for visible vector ink.
-        // Its normal-edit hit target is inactive until sorting finishes; keeping
-        // it hidden lets the page move without rebuilding every vector's editor.
+        // 排序時看得到的向量線條用場景共用的頁面矩陣。一般編輯的點擊範圍在排序結束前不作用；先藏起來，
+        // 頁面移動時才不必重建每個向量的編輯器
         visibility: scene && sortPage && isCanvasVector ? 'hidden' : undefined,
         ...(sortPage?.clipContents ? { clipPath: (() => {
           const rad = -image.rotation * Math.PI / 180;
@@ -8162,8 +8129,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           const left = sortPage.clipLeft, right = left + sortPage.totalWidth;
           const halfX = (Math.abs(Math.cos(rad)) * boxW + Math.abs(Math.sin(rad)) * boxH) / 2;
           const halfY = (Math.abs(Math.sin(rad)) * boxW + Math.abs(Math.cos(rad)) * boxH) / 2;
-          // Do not antialias the same aligned image edge a second time with a
-          // coincident clip polygon. That exposes a hairline of page background.
+          // 同一條對齊的圖片邊緣不要用重疊的裁切多邊形再反鋸齒一次，會露出一條細細的頁面背景
           if (cx - halfX >= left - .000001 && cx + halfX <= right + .000001
             && cy - halfY >= -.000001 && cy + halfY <= sortPage.height + .000001) return undefined;
           return `polygon(${[[left, 0], [right, 0], [right, sortPage.height], [left, sortPage.height]].map(([x, y]) => {
@@ -8446,8 +8412,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             inset: 'calc(-1 * var(--preview-inverse-half, 0.5px))',
             width: 'calc(100% + 2 * var(--preview-inverse-half, 0.5px))',
             height: 'calc(100% + 2 * var(--preview-inverse-half, 0.5px))',
-            // Tailwind's img max-width:100% clipped the extra sampling column
-            // but retained the negative left inset, leaving the right edge short.
+            // Tailwind 對 img 設的 max-width:100% 會裁掉多出來的取樣欄，但負的左側位移還在，右邊就會短一截
             maxWidth: 'none',
             objectFit: 'fill', pointerEvents: 'none',
           }}
@@ -8526,11 +8491,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
 };
 
 /* 一顆物件移動或調滑桿時，父層的 floatingImages 會每幀換一次陣列；沒有
-   memo 的話畫面上每一顆圖形都會重新跑路徑、字形量測與 Canvas 配置准备。
-   这正是「只要画面上有图形，所有东西都变卡」的共同原因。物件数据采用
-   immutable 更新，所以 image 参考没变就代表该物件完全没变；函数 props
-   仅是父层行内包装，不应迫使未变化物件重绘。被选取／拖动的物件本身仍会
-   正常逐帧更新，切换选择、图层、动画与页面倍率也都明确列入比较。 */
+   memo 的話畫面上每一顆圖形都會重新跑路徑、字形量測與 Canvas 配置準備。
+   這正是「只要畫面上有圖形，所有東西都變卡」的共同原因。物件數據採用
+   immutable 更新，所以 image 參考沒變就代表該物件完全沒變；函數 props
+   僅是父層行內包裝，不應迫使未變化物件重繪。被選取／拖動的物件本身仍會
+   正常逐幀更新，切換選擇、圖層、動畫與頁面倍率也都明確列入比較。 */
 const sameDragShift = (
   a: FloatingImageComponentProps['dragShift'],
   b: FloatingImageComponentProps['dragShift'],
@@ -8540,8 +8505,7 @@ const sameSortSceneShift = (a: FloatingImageComponentProps, b: FloatingImageComp
   !!a.scene && a.scene === b.scene && !!a.sortPage && !!b.sortPage
   && (!!a.image.shape || a.image.text !== undefined)
   && !a.isSelected && !b.isSelected && !a.isTextEditing && !b.isTextEditing
-  // Lift/drop still changes stacking order. Position and scale are sampled
-  // directly from the page by ClassicVectorScene on every parent commit.
+  // 抬起、放下還是會改疊放順序。位置和縮放由 ClassicVectorScene 在每次上層提交時直接從頁面取
   && !!a.dragShift?.live === !!b.dragShift?.live;
 
 const FloatingImageComponent = React.memo(FloatingImageComponentBase, (a, b) =>
@@ -8703,7 +8667,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [motionTargetId, setMotionTargetId] = useState<string | null>(null);
   const [motionFlash, setMotionFlash] = useState<{ id: string; nonce: number } | null>(null);
   const motionFlashTimerRef = useRef<number | null>(null);
-  /** 手指正在移动任一已选物件；期间统一隐藏选中框与白色药丸 */
+  /** 手指正在移動任一已選物件；期間統一隱藏選中框與白色藥丸 */
   const [selectionDragging, setSelectionDragging] = useState(false);
   const selectionDraggingRef = useRef(false);
   /* iPhone 的觸控事件頻率可能高於螢幕更新率。把同一畫面幀內的中間狀態全部
@@ -8931,8 +8895,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return { bw: w * c + h * sn, bh: w * sn + h * c };
   };
 
-  /** 自由图片拖动时不可进入图形图层的占用范围。选中框使用旋转后的外接矩形，
-      与画面上真正看见的范围一致；边缘刚好相贴不算重叠。 */
+  /** 自由圖片拖動時不可進入圖形圖層的佔用範圍。選中框使用旋轉後的外接矩形，
+      與畫面上真正看見的範圍一致；邊緣剛好相貼不算重疊。 */
   const floatingBoundsAt = (f: FloatingImage, x = f.x, y = f.y) => {
     const ext = rotExtent(f.width * (f.scale || 1), f.height * (f.scale || 1), f.rotation || 0);
     const cx = x + f.width / 2, cy = y + f.height / 2;
@@ -9035,8 +8999,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (!enableSnapping) {
       return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
     }
-    // Pages now share exact boundaries (the seam is only ink). Large objects
-    // can reach a boundary several pages away from their centre.
+    // 頁面共用精確的邊界（接縫只是線條）。大物件可能碰到離它中心好幾頁遠的邊界
     const pageRects = getAllPageRects();
     if (pageRects.length === 0) {
       return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
@@ -9057,11 +9020,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        最後旋轉四個角取得精確可見外接框。 */
     const visibleOffsets = floatingInkOffsets(movingItem, imgWidth, imgHeight, imgScale, rot);
 
-    // Center coordinates for raw input
+    // 原始輸入的中心座標
     const rawCenterX = rawX + imgWidth / 2;
     const rawCenterY = rawY + imgHeight / 2;
 
-    // Edges for raw input
+    // 原始輸入的邊緣
     const rawLeft = rawCenterX + visibleOffsets.l;
     const rawRight = rawCenterX + visibleOffsets.r;
     const rawTop = rawCenterY + visibleOffsets.t;
@@ -9072,14 +9035,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     let fitScale: number | undefined;
     const guidelines: AlignmentGuideline[] = [];
 
-    // 1. Vertical snapping (determines snappedX)
+    // 1. 垂直吸附（決定 snappedX）
     let minDiffX = Infinity;
     let bestSnapX = rawX;
     let bestGuidelineX: number | null = null;
 
-    // Check ALL pages' boundaries (centerX, left edge, right edge)
+    // 檢查所有頁面的邊界（中心 X、左緣、右緣）
     pageRects.forEach(pageRect => {
-      // Page centerX (only if not edgeOnly)
+      // 頁面中心 X（不是 edgeOnly 時才算）
       if (!edgeOnly && ownPageRectsForFit.includes(pageRect)) {
         const diffCenterX = rawCenterX - pageRect.centerX;
         if (Math.abs(diffCenterX) < SNAP_THRESHOLD && Math.abs(diffCenterX) < Math.abs(minDiffX)) {
@@ -9089,7 +9052,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }
       }
 
-      // Page left edge
+      // 頁面左緣
       const visualLeft = pageRect.left - (seamBleed && pageRect.pageIdx > 0 ? seamBleed : 0);
       const diffLeft = rawLeft - pageRect.left;
       if (Math.abs(diffLeft) < SNAP_THRESHOLD && Math.abs(diffLeft) < Math.abs(minDiffX)) {
@@ -9102,7 +9065,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           ? pageRect.left - seamBleed : pageRect.left;
       }
 
-      // Page right edge
+      // 頁面右緣
       const visualRight = pageRect.right + (seamBleed && pageRect.pageIdx < pages.length - 1 ? seamBleed : 0);
       const diffRight = rawRight - pageRect.right;
       if (Math.abs(diffRight) < SNAP_THRESHOLD && Math.abs(diffRight) < Math.abs(minDiffX)) {
@@ -9127,7 +9090,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       });
     }
 
-    // Image-to-image vertical edge snapping
+    // 圖片之間的垂直邊緣吸附
     if (!edgeOnly) floatingImages.forEach(other => {
       if (other.id === imgId) return;
 
@@ -9136,7 +9099,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const otherLeft = otherCenterX - otherW / 2;
       const otherRight = otherCenterX + otherW / 2;
 
-      // Center-to-center alignment
+      // 中心對中心
       const diffCCX = rawCenterX - otherCenterX;
       if (Math.abs(diffCCX) < SNAP_THRESHOLD && Math.abs(diffCCX) < Math.abs(minDiffX)) {
         minDiffX = diffCCX;
@@ -9144,28 +9107,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         bestGuidelineX = otherCenterX;
       }
 
-      // Current Left edge with other Left edge
+      // 自己的左緣對別張的左緣
       const diffLL = rawLeft - otherLeft;
       if (Math.abs(diffLL) < SNAP_THRESHOLD && Math.abs(diffLL) < Math.abs(minDiffX)) {
         minDiffX = diffLL;
         bestSnapX = otherLeft - visibleOffsets.l - imgWidth / 2;
         bestGuidelineX = otherLeft;
       }
-      // Current Left edge with other Right edge
+      // 自己的左緣對別張的右緣
       const diffLR = rawLeft - otherRight;
       if (Math.abs(diffLR) < SNAP_THRESHOLD && Math.abs(diffLR) < Math.abs(minDiffX)) {
         minDiffX = diffLR;
         bestSnapX = otherRight - visibleOffsets.l - imgWidth / 2;
         bestGuidelineX = otherRight;
       }
-      // Current Right edge with other Left edge
+      // 自己的右緣對別張的左緣
       const diffRL = rawRight - otherLeft;
       if (Math.abs(diffRL) < SNAP_THRESHOLD && Math.abs(diffRL) < Math.abs(minDiffX)) {
         minDiffX = diffRL;
         bestSnapX = otherLeft - visibleOffsets.r - imgWidth / 2;
         bestGuidelineX = otherLeft;
       }
-      // Current Right edge with other Right edge
+      // 自己的右緣對別張的右緣
       const diffRR = rawRight - otherRight;
       if (Math.abs(diffRR) < SNAP_THRESHOLD && Math.abs(diffRR) < Math.abs(minDiffX)) {
         minDiffX = diffRR;
@@ -9186,8 +9149,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          而且**把對齊線一起挪過去** —— 線畫在哪裡，邊緣就在哪裡，
          看到的是 100% 重合。 */
       const gx: number = bestGuidelineX;
-      /* 不再做第二次像素取整或向外覆边。吸附公式已经让边缘与 guideline
-         完全相等；这里再移动一次就会变成用户看到的“已经超过蓝线”。 */
+      /* 不再做第二次像素取整或向外覆邊。吸附公式已經讓邊緣與 guideline
+         完全相等；這裡再移動一次就會變成使用者看到的“已經超過藍線”。 */
       guidelines.push({ type: 'vertical', coord: gx });
     }
     /* 圖層比頁面「幾乎一樣寬」時，左緣貼齊與右緣貼齊是兩個相差零點幾 px 的位置，
@@ -9206,14 +9169,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        px，置中之後兩側各留 0.25px，抗鋸齒就會把那條縫顯示出來。這裡順便回報一個
        「確實覆蓋整頁再多半個像素」的倍率，讓拖曳也能把最後那一點補起來。
        頁面本來就會裁掉超出的部分，所以多蓋的完全看不到。 */
-    // 2. Horizontal snapping (determines snappedY)
+    // 2. 水平吸附（決定 snappedY）
     let minDiffY = Infinity;
     let bestSnapY = rawY;
     let bestGuidelineY: number | null = null;
 
-    // Check ALL pages' boundaries (centerY, top edge, bottom edge)
+    // 檢查所有頁面的邊界（中心 Y、上緣、下緣）
     pageRects.forEach(pageRect => {
-      // Page centerY (only if not edgeOnly)
+      // 頁面中心 Y（不是 edgeOnly 時才算）
       if (!edgeOnly) {
         const diffCenterY = rawCenterY - pageRect.centerY;
         if (Math.abs(diffCenterY) < SNAP_THRESHOLD && Math.abs(diffCenterY) < Math.abs(minDiffY)) {
@@ -9223,26 +9186,26 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }
       }
 
-      // Page top edge
+      // 頁面上緣
       const diffTop = rawTop - pageRect.top;
       if (Math.abs(diffTop) < SNAP_THRESHOLD && Math.abs(diffTop) < Math.abs(minDiffY)) {
         minDiffY = diffTop;
-        // Bleed 1px outwards (top) to prevent subpixel edge gap in browser preview
+        // 往外多出 1px（上方），預覽才不會因為次像素留下縫
         bestSnapY = pageRect.top - visibleOffsets.t - imgHeight / 2;
         bestGuidelineY = pageRect.top;
       }
 
-      // Page bottom edge
+      // 頁面下緣
       const diffBottom = rawBottom - pageRect.bottom;
       if (Math.abs(diffBottom) < SNAP_THRESHOLD && Math.abs(diffBottom) < Math.abs(minDiffY)) {
         minDiffY = diffBottom;
-        // Bleed 1px outwards (bottom) to prevent subpixel edge gap in browser preview
+        // 往外多出 1px（下方），預覽才不會因為次像素留下縫
         bestSnapY = pageRect.bottom - visibleOffsets.b - imgHeight / 2;
         bestGuidelineY = pageRect.bottom;
       }
     });
 
-    // Image-to-image horizontal edge snapping
+    // 圖片之間的水平邊緣吸附
     if (!edgeOnly) floatingImages.forEach(other => {
       if (other.id === imgId) return;
 
@@ -9251,7 +9214,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const otherTop = otherCenterY - otherH / 2;
       const otherBottom = otherCenterY + otherH / 2;
 
-      // Center-to-center alignment
+      // 中心對中心
       const diffCCY = rawCenterY - otherCenterY;
       if (Math.abs(diffCCY) < SNAP_THRESHOLD && Math.abs(diffCCY) < Math.abs(minDiffY)) {
         minDiffY = diffCCY;
@@ -9259,28 +9222,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         bestGuidelineY = otherCenterY;
       }
 
-      // Current Top edge with other Top edge
+      // 自己的上緣對別張的上緣
       const diffTT = rawTop - otherTop;
       if (Math.abs(diffTT) < SNAP_THRESHOLD && Math.abs(diffTT) < Math.abs(minDiffY)) {
         minDiffY = diffTT;
         bestSnapY = otherTop - visibleOffsets.t - imgHeight / 2;
         bestGuidelineY = otherTop;
       }
-      // Current Top edge with other Bottom edge
+      // 自己的上緣對別張的下緣
       const diffTB = rawTop - otherBottom;
       if (Math.abs(diffTB) < SNAP_THRESHOLD && Math.abs(diffTB) < Math.abs(minDiffY)) {
         minDiffY = diffTB;
         bestSnapY = otherBottom - visibleOffsets.t - imgHeight / 2;
         bestGuidelineY = otherBottom;
       }
-      // Current Bottom edge with other Top edge
+      // 自己的下緣對別張的上緣
       const diffBT = rawBottom - otherTop;
       if (Math.abs(diffBT) < SNAP_THRESHOLD && Math.abs(diffBT) < Math.abs(minDiffY)) {
         minDiffY = diffBT;
         bestSnapY = otherTop - visibleOffsets.b - imgHeight / 2;
         bestGuidelineY = otherTop;
       }
-      // Current Bottom edge with other Bottom edge
+      // 自己的下緣對別張的下緣
       const diffBB = rawBottom - otherBottom;
       if (Math.abs(diffBB) < SNAP_THRESHOLD && Math.abs(diffBB) < Math.abs(minDiffY)) {
         minDiffY = diffBB;
@@ -9358,7 +9321,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     setChromeLayer(node);
   }, []);
 
-  // Workspace-wide interaction for selected floating images
+  // 選中浮動圖片時，整個工作區都能操作
   const wsDragStart = useRef<{
     startX: number;
     startY: number;
@@ -9477,7 +9440,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
   };
 
-  // Keyboard listener to delete selected floating image on Delete/Backspace keypress
+  // 按 Delete／Backspace 刪掉選中的浮動圖片
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (selectedFloatingId && (e.key === 'Delete' || e.key === 'Backspace')) {
@@ -9543,7 +9506,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   /* 切換編輯目標時一律回到各自最外層。圖片回到「濾鏡」，不能把上一張
      圖片停留的造型／特效細頁直接套到新目標；文字與圖形面板另外用 layer.id
-     当 key，切回去也会重新建立自己的最外层页面。 */
+     當 key，切回去也會重新建立自己的最外層頁面。 */
   useEffect(() => {
     if (vectorTuningIdRef.current) clearClassicVectorDraft(vectorTuningIdRef.current);
     vectorTuningIdRef.current = null;
@@ -9568,9 +9531,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const openComposeFor = (id: string) => {
     const layer = floatingImages.find(f => f.id === id);
-    /* 布局小格不是 floatingImages 图层。编辑面板会为它建立一个临时 layer，
-       以前这里又只回头找 floatingImages，所以点击“构图”必定直接 return。
-       现在明确记录格子所属布局与索引，套用时再准确写回该格。 */
+    /* 佈局小格不是 floatingImages 圖層。編輯面板會為它建立一個臨時 layer，
+       以前這裡又只回頭找 floatingImages，所以點擊“構圖”必定直接 return。
+       現在明確記錄格子所屬佈局與索引，套用時再準確寫回該格。 */
     if (!layer) {
       if (selectedIndex === null || !selectedLayoutId) return;
       const layoutHit = pages.flatMap(p => p.layouts).find(l => l.id === selectedLayoutId);
@@ -9610,8 +9573,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const applyComposeToLayer = () => {
     const st = composeState;
     if (!st) return;
-    /* 布局格子的构图直接烤回该格；不经过 floatingImages，也不会误写当前页
-       上另一个同索引的布局。 */
+    /* 佈局格子的構圖直接烤回該格；不經過 floatingImages，也不會誤寫當前頁
+       上另一個同索引的佈局。 */
     if (st.cell) {
       const sw = (st.img as any).naturalWidth || st.img.width;
       const sh = (st.img as any).naturalHeight || st.img.height;
@@ -9983,8 +9946,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const handleVectorTuning = (id: string, active: boolean) => {
     if (active) {
-      // The touch proxy and the input can both announce the same gesture.
-      // Never discard the already-published draft on a repeated start.
+      // 觸控代理和輸入欄可能都宣告同一個手勢。重複的開始事件絕不能丟掉已經送出的草稿
       if (vectorTuningIdRef.current === id) return;
       if (vectorTuningIdRef.current && vectorTuningIdRef.current !== id) {
         clearClassicVectorDraft(vectorTuningIdRef.current);
@@ -10072,8 +10034,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 正在拖的是哪一頁（拖的就是畫布上真正的那一頁） */
   const [pageDragIdx, setPageDragIdx] = useState<number | null>(null);
   const [pagesVisual, setPagesVisual] = useState(false);
-  // Preserve the pre-sort outer-mask footprint even when a boundary page moves
-  // into the middle. Hidden portions must not reappear on release.
+  // 就算邊界頁移到中間，也保留排序前的外框遮罩範圍；放開時藏住的部分不能又跑出來
   const sortOriginalIndices = useRef<Map<string, number> | null>(null);
   const sortObjectOwners = useRef<Map<string, string> | null>(null);
   const sortingPageOf = (f: FloatingImage, stride: number, count: number) => {
@@ -10344,8 +10305,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         setDragSettle({ page: to, x: remainder, s: PAGE_DRAG_SCALE, ease: false });
         cancelAnimationFrame(settleFrameRef.current);
         requestAnimationFrame(() => requestAnimationFrame(() => {
-          // A single frame clock drives the page, photo wrappers and vector ink.
-          // Independent compositor transitions can run a frame ahead of Canvas.
+          // 頁面、照片外層和向量線條由同一個畫格時鐘驅動。各自的合成器過渡可能比畫布快一格
           const start = performance.now();
           const tick = (now: number) => {
             const t = Math.min(1, (now - start) / 220);
@@ -10436,8 +10396,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [selectedRatio, setSelectedRatio] = useState('3:4');
   const [isLandscape, setIsLandscape] = useState(false);
   const changePageShape = (ratio = selectedRatio, landscape = isLandscape) => {
-    // Freeze legacy layouts before changing the page. Never overwrite an
-    // explicitly edited layout ratio, direction, crop or transform.
+    // 改頁面之前先把舊版面凍結。使用者明確改過的版面比例、方向、裁切或變形絕不能蓋掉
     setPages(prev => prev.map(p => p.layouts.some(l => !l.ratio) ? {...p,
       layouts: p.layouts.map(l => l.ratio ? l : {...l, ratio: selectedRatio, landscape: isLandscape}),
     } : p));
@@ -10445,7 +10404,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
   const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
-  // Warm the selected cell's live effect pipeline as soon as its editor opens.
+  // 選中格子的編輯器一打開，就預熱它的即時特效管線
   const primedCellId=activeTab==='adjust'&&!selectedFloatingId&&selectedIndex!==null&&selectedLayoutId
     ?activePage?.layouts.find(l=>l.id===selectedLayoutId)?.images[selectedIndex]?.id:undefined;
   useEffect(()=>{if(primedCellId)primeCellPhoto(primedCellId);setEditingCell(primedCellId||null);},[primedCellId]);
@@ -10461,10 +10420,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     else if (ratio === '2:3') { ratioW = landscape ? 3 : 2; ratioH = landscape ? 2 : 3; }
     else if (ratio === '9:16') { ratioW = landscape ? 16 : 9; ratioH = landscape ? 9 : 16; }
     else if (ratio === '4:5') { ratioW = landscape ? 5 : 4; ratioH = landscape ? 4 : 5; }
-    /* 画布尺寸必须是比例的整数倍。以前宽、高各自 Math.round，标示为 3:4 的
-       画布实际会变成 341×454（不是 3:4）；一张严格 600×800 的照片无论怎么
-       等比缩放，都不可能同时贴齐四边，预览与导出自然会留下次像素白缝。
-       用同一个整数单位生成两边，页面与同长宽比照片才能数学上完全重合。 */
+    /* 畫布尺寸必須是比例的整數倍。以前寬、高各自 Math.round，標示為 3:4 的
+       畫布實際會變成 341×454（不是 3:4）；一張嚴格 600×800 的照片無論怎麼
+       等比縮放，都不可能同時貼齊四邊，預覽與導出自然會留下次像素白縫。
+       用同一個整數單位生成兩邊，頁面與同長寬比照片才能數學上完全重合。 */
     const unit = Math.max(1, Math.floor(Math.min(maxW / ratioW, maxH / ratioH)));
     return { width: ratioW * unit, height: ratioH * unit };
   };
@@ -10597,8 +10556,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      所以取消一次不會順手把背景的工作也殺掉。 */
   const exportRunRef = useRef(0);
   const [videoLabel, setVideoLabel] = useState('正在匯出成品');
-  // One exported file per page. The object URLs are mirrored into a ref so they can be
-  // revoked without making every consumer depend on the state value.
+  // 每頁存一個檔。物件網址同步存一份到 ref，收掉時才不必讓每個使用的地方都依賴這個 state
   const [finalImages, setFinalImages] = useState<string[]>([]);
   /** 每一頁匯出的是圖片還是影片（有影片圖層的那一頁會輸出影片） */
   const [finalKinds, setFinalKinds] = useState<('image' | 'video')[]>([]);
@@ -10654,8 +10612,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   useEffect(() => () => { finalImagesRef.current.forEach(u => URL.revokeObjectURL(u)); }, []);
   /** 頁面順序模式：操作欄往下滑、畫布往下移到中央、每一頁下面出現握把與刪除鍵 */
   const pagesMode = activeTab === 'pages';
-  // One pose per frame for displaced pages, photos and vector ink. Independent
-  // CSS transitions otherwise start on different commits/compositor frames.
+  // 移位的頁面、照片和向量線條每一格用同一個姿態。各自用 CSS 過渡的話，會在不同的提交或合成畫格開始
   useLayoutEffect(() => {
     if (!pagesMode || pageDragIdx === null) {
       sortShiftFrameRef.current = {};
@@ -10864,9 +10821,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const needsDomMotion = useCallback((item: FloatingImage) => {
     if (item.shape || item.text !== undefined || !hasConfiguredMotion(item)) return false;
     const cfg = classicObjectMotionOf(item.mo);
-    // Unfiltered photographs already animate directly in ClassicVectorScene.
-    // Re-rendering the entire editor for these frames duplicates that work and
-    // makes a page containing video + animated photos expensive to pan.
+    // 沒套濾鏡的照片已經直接在 ClassicVectorScene 裡動。為了這些畫格重新 render 整個編輯器是重複工作，
+    // 頁面上有影片加動畫照片時拖動會很吃力
     return cfg.in === 'grid-wave' || cfg.idle === 'grid-wave'
       || !!item.feather || !!item.imgGlow || !!item.imgStrokeWidth
       || isImgShaped(item.imgShape) || hasPhotoFx(item.fx);
@@ -10996,8 +10952,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          ProMotion 與高幀影片所在裝置則可跟到 120fps。 */
       const t = ((now - started) / 1000) % motionTotal;
       motionClockRef.current = t;
-      // Canvas-only animation follows the same direct clock-to-paint path as
-      // creative collage. Do not rebuild the whole editor for every unit pulse.
+      // 只用畫布的動畫跟創意拼圖一樣，時鐘直接驅動繪製。不要每次單位脈衝都重建整個編輯器
       vectorScene.flush();
       paintLayoutMotion(t);
       paintChromeMotion(t);
@@ -11076,9 +11031,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const motionFitScale = Math.max(.24, Math.min(
     1,
     (Math.max(120, containerSize.width - 32)) / Math.max(1, previewW),
-    /* containerSize 已经扣除了工作区上下各 8px 的 py-2。播放列是 absolute，
-       所以必须扣掉它的真实高度与 bottom-3 的 12px；这样画布下缘到播放列
-       顶部会保留 8px，刚好等于画布上缘到工作区顶部的 8px。
+    /* containerSize 已經扣除了工作區上下各 8px 的 py-2。播放列是 absolute，
+       所以必須扣掉它的真實高度與 bottom-3 的 12px；這樣畫布下緣到播放列
+       頂部會保留 8px，剛好等於畫布上緣到工作區頂部的 8px。
        不再使用 userZoom：不論進入前把預覽放多大／多小，動畫頁尺寸都固定。 */
     (Math.max(100, containerSize.height - motionBarHeight - 12)) / Math.max(1, previewH),
   ));
@@ -11105,15 +11060,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    */
   const pageCtlRefs = useRef(new Map<string, HTMLDivElement>());
   const embeddedSeamsRef = useRef(false);
-  /* 一般预览、选中物件与动画页都只使用外层那条固定屏幕像素分隔线。
-     以前选中时会在「外层线／页面槽内线」之间交棒：两层坐标并非同一套，
-     过渡帧便会露出白槽，动画缩放时也像有一条线停在原地。
-     只有页面排序真的会把单页移走，才需要绑定在页面上的分隔线。 */
-  /* 有选中物件时，分割线必须和物件处在同一个画布堆叠上下文，才能确定压在
-     chrome layer 下面。外层固定线即使写再小的 z-index，也可能因为父层建立了
-     stacking context 而盖住传送出来的选中框、控制点和白色药丸。 */
-  /* 影片页的分割线直接绑在滚动的页面带上，不再由外层量位置追赶。
-     手指移动多少，分割线就会在同一帧移动多少。 */
+  /* 一般預覽、選中物件與動畫頁都只使用外層那條固定螢幕像素分隔線。
+     以前選中時會在「外層線／頁面槽內線」之間交棒：兩層座標並非同一套，
+     過渡幀便會露出白槽，動畫縮放時也像有一條線停在原地。
+     只有頁面排序真的會把單頁移走，才需要綁定在頁面上的分隔線。 */
+  /* 有選中物件時，分割線必須和物件處在同一個畫布堆疊上下文，才能確定壓在
+     chrome layer 下面。外層固定線即使寫再小的 z-index，也可能因為父層建立了
+     stacking context 而蓋住傳送出來的選中框、控制點和白色藥丸。 */
+  /* 影片頁的分割線直接綁在滾動的頁面帶上，不再由外層量位置追趕。
+     手指移動多少，分割線就會在同一幀移動多少。 */
   const embeddedSeams = pagesMode || pageDragIdx !== null || anySelected || activeTab === 'motion';
   embeddedSeamsRef.current = embeddedSeams;
   /** 頁面控制鍵與畫布共用的定位根；不能使用 viewport-fixed，否則瀏覽器
@@ -11140,9 +11095,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const col=pagesColRef.current,chrome=chromeLayerRef.current;
     const fraction=stripLayoutFractionRef.current;
     const x=fraction.x+stripSubpixelXRef.current*k;
-    // Keep one 2D affine transform for the entire gesture. Switching between
-    // scale() and translate3d()+scale() as scroll rounding crosses zero makes
-    // WebKit promote/demote the strip, invalidating its rasterization mid-pinch.
+    // 整個手勢都用同一個 2D 仿射變換。捲動取整跨過零時在 scale() 和 translate3d()+scale() 之間切換，
+    // WebKit 會把整條升降圖層，縮放到一半點陣化就失效了
     if(col)col.style.transform=`translate(${x}px, ${fraction.y}px) scale(${k})`;
     if(chrome){chrome.style.left='0px';chrome.style.top='0px';chrome.style.transform=`translate(${x/k}px, ${fraction.y/k}px)`;}
   },[]);
@@ -11160,8 +11114,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const kAnchorRef = useRef(0);
   const pendingModeAnchorRef = useRef<number | null>(null);
   const prevPagesScaleRef = useRef(pagesScale);
-  /** 第一次挂载只是建立真实画布几何，不是一次模式切换；若也跑 300ms 动画，
-      继续编辑时恢复画面会从旧的默认位置向下滑到正确中心。 */
+  /** 第一次掛載只是建立真實畫布幾何，不是一次模式切換；若也跑 300ms 動畫，
+      繼續編輯時恢復畫面會從舊的預設位置向下滑到正確中心。 */
   const scaleLayoutInitializedRef = useRef(false);
   const containerWRef = useRef(0);
   const plusVisibleRef = useRef(true);
@@ -11186,8 +11140,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const layoutX=Math.round(m),layoutY=Math.round(stripTopRef.current);
     stripLayoutFractionRef.current={x:m-layoutX,y:stripTopRef.current-layoutY};
     if (shell) {
-      // Integer layout plus fractional transform avoids 1/64px layout snapping
-      // moving the preview centre backwards during an otherwise monotonic pinch.
+      // 整數版面加上小數 transform，避免 1/64px 的版面對齊讓本來一路放大的預覽中心往回跳
       shell.style.marginLeft = `${layoutX}px`;
       shell.style.marginTop = `${layoutY}px`;
       shell.style.width = `${(n * pw) * k}px`;
@@ -11201,7 +11154,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          文字、符號、圖形和分割線因此可能在不同幀落到不同實體像素。整排只做
          一次 scale 後，所有內容先在同一座標系合成，再一起縮放，彼此不可能抖開。 */
       col.style.setProperty('--preview-scale', String(k));
-      /* 页面内分割线每一帧直接读取反倍率，不等待 React 重绘。 */
+      /* 頁面內分割線每一幀直接讀取反倍率，不等待 React 重繪。 */
       col.style.setProperty('--preview-inverse-scale', `${1 / Math.max(0.0001, k)}px`);
       col.style.setProperty('--preview-inverse-half', `${0.5 / Math.max(0.0001, k)}px`);
       /* 分割線改由 SVG non-scaling-stroke 固定螢幕粗度。這裡只算一次最接近
@@ -11214,18 +11167,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 寬度補償只交給 compositor 的 scaleX，不再每幀重做 layout。 */
       col.style.setProperty('--preview-seam-inverse', String(1 / Math.max(0.0001, k)));
       col.style.setProperty('--preview-guide-scale', `${2 / Math.max(0.0001, k)}px`);
-      /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
-         每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
+      /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍會被 zoom 放大。
+         每幀把佈局格線的內容線寬反向除掉 k，最終落到螢幕永遠是 1px。 */
       col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
-      // CSS zoom relayouts every descendant, rounding each media box separately.
-      // One affine transform keeps backgrounds, native SVG photos and video on
-      // the same geometry. ClassicVectorScene still paints at display density;
-      // do not promote/cache the whole strip as a low-resolution bitmap.
+      // CSS zoom 會重排每個子元素、各自取整每個媒體方塊。用一個仿射變換，
+      // 背景、原生 SVG 照片和影片才在同一套幾何上。ClassicVectorScene 照樣用顯示密度畫；
+      // 不要把整條升成低解析度的點陣快取
       (col.style as any).zoom = '';
       col.style.transformOrigin = '0 0';
       col.style.willChange = '';
-      /* 固定在萤幕坐标层的空格提示收到通知后才量中心点。
-         事件只排一个 rAF，不在手势处理内同步读取版面。 */
+      /* 固定在螢幕座標層的空格提示收到通知後才量中心點。
+         事件只排一個 rAF，不在手勢處理內同步讀取版面。 */
     }
     const chrome = chromeLayerRef.current;
     if (chrome) {
@@ -11292,9 +11244,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       kAnchorRef.current = pendingModeAnchorRef.current;
       pendingModeAnchorRef.current = null;
     } else if (el && column && containerSize.width > 0) {
-      // Capture the visible frame, not the previous target scale. A transition
-      // can be interrupted before that target is reached, and scroll rounding
-      // compensation is already included in the column's rendered position.
+      // 擷取看得到的那一格，不是上一個目標縮放。過渡可能在到達目標前就被打斷，
+      // 而捲動取整的補償已經算在欄位實際的位置裡
       const viewport = el.getBoundingClientRect();
       const rendered = column.getBoundingClientRect();
       kAnchorRef.current = (viewport.left + el.clientWidth / 2 - rendered.left)
@@ -11337,7 +11288,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const i = pagesRef.current.findIndex(pg => pg.id === id);
       if (i < 0) return;
       node.style.transform =
-        /* 与两个灰色按钮彼此的 gap-1.5 完全相同：页面下缘到按钮也是 6px。 */
+        /* 與兩個灰色按鈕彼此的 gap-1.5 完全相同：頁面下緣到按鈕也是 6px。 */
         `translate3d(${left0 + k * (i * stride + previewWRef.current / 2) - rootLeft}px, ${bottom + 6 - rootTop}px, 0) translateX(-50%)`;
       node.style.visibility = 'visible';
     });
@@ -11349,20 +11300,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       let alpha = motionModeRef.current ? 0 : 1;
       let transitionProgress = 1;
       if (transition && kAnimRef.current) {
-        /* 用跟画布同一条 300ms 时间轴，不再用倍率反推进度。若进出前后倍率
-           恰好相同，倍率差是 0，旧逻辑会直接跳到终点，形成第一下闪／抖。 */
+        /* 用跟畫布同一條 300ms 時間軸，不再用倍率反推進度。若進出前後倍率
+           恰好相同，倍率差是 0，舊邏輯會直接跳到終點，形成第一下閃／抖。 */
         const linearProgress = Math.max(0, Math.min(1,
           (performance.now() - kAnimRef.current.t0) / 300));
         transitionProgress = 1 - Math.pow(1 - linearProgress, 3);
         alpha = transition.kind === 'enter'
           ? 1 - transitionProgress
-          /* 退出刚开始是位移最快的一段，先保持不可见；进入缓和段后再一次渐显，
-             用户不会看到加号先跳一下、随后又跟版面归位的“两段抖动”。 */
+          /* 退出剛開始是位移最快的一段，先保持不可見；進入緩和段後再一次漸顯，
+             使用者不會看到加號先跳一下、隨後又跟版面歸位的“兩段抖動”。 */
           : Math.max(0, Math.min(1, (transitionProgress - .22) / .78));
       }
       const animateWithPreview = !!transition || motionModeRef.current;
-      /* 一般模式的加号始终是屏幕 1 倍。退出时直接从动画倍率平顺回到 1，
-         不会先跟着 userZoom 到终点、下一帧又跳回 1，造成两段抖动。 */
+      /* 一般模式的加號始終是螢幕 1 倍。退出時直接從動畫倍率平順回到 1，
+         不會先跟著 userZoom 到終點、下一幀又跳回 1，造成兩段抖動。 */
       const plusScale = transition
         ? (transition.kind === 'enter'
             ? 1 + (transition.to - 1) * transitionProgress
@@ -11385,7 +11336,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
   }, []);
 
-  /* 选中／取消选中与拖起／放下页面时，立即在外层固定线和内层线之间交棒。 */
+  /* 選中／取消選中與拖起／放下頁面時，立即在外層固定線和內層線之間交棒。 */
   useLayoutEffect(() => {
     positionPageCtls();
   }, [embeddedSeams, activeGuidelines, positionPageCtls]);
@@ -11394,8 +11345,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     let raf = 0;
     const tick = () => {
       const anim = kAnimRef.current;
-      // Pinch already commits geometry and ink together in its touch handler.
-      // An idle transition loop must not repeat that work twice each frame.
+      // 縮放時觸控處理已經一起提交幾何和線條，閒置的過渡迴圈不能每格再做兩次
       if (!anim) { raf = requestAnimationFrame(tick); return; }
       if (anim) {
         const t = Math.min(1, (performance.now() - anim.t0) / 300);
@@ -11439,7 +11389,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 所以這層只跟捲動與模式動畫有關。拖曳的位移放在「內層」、由 React
       // 跟內容用同一次 render 寫出來，兩邊永遠同一帧、速度不可能不一樣。
       positionPageCtls();
-      // Paint only after scroll rounding and its subpixel compensation are final.
+      // 等捲動取整和它的次像素補償都定了才畫
       pagesColRef.current?.dispatchEvent(new Event('abai-preview-transform'));
       // 離開這個模式後還要再跑到動畫結束，位移才有東西補
       /* 原本是寫死的 k === 1；有了使用者縮放之後，目標值不一定是 1，
@@ -11451,9 +11401,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return () => cancelAnimationFrame(raf);
   }, [pagesMode, pagesScale, activeTab, positionPageCtls, applyStripGeometry]);
 
-  // Decode the filter tables while the editor is idle (like the creative
-  // collage and home editor), so the first filter tap applies immediately
-  // instead of waiting for its LUT to download, decode and repair.
+  // 編輯器閒置時先解好濾鏡表（跟創意拼圖、首頁編輯器一樣），第一次點濾鏡就能立刻套上，
+  // 不必等 LUT 下載、解碼、修復
   useEffect(() => { warmPhotoEffectsWhenIdle(); warmGlyphIconsWhenIdle(); }, []);
   useEffect(() => {
     let alive = true;
@@ -11483,8 +11432,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     && selectedIndex === null && !selectedFloatingId;
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
-  // Compile the shared mask programs while the shape list is merely open,
-  // so tapping a mask does not wait on shader compilation.
+  // 形狀清單一打開就先編譯共用的遮罩程式，點遮罩時才不用等編譯
   // 遮罩著色器開場就在空檔暖好了；這裡只是保險，而且會等面板滑出來之後才做（見 fxWarmup）
   useEffect(()=>{if(addSub==='shape')warmMasksAfterPanelOpens();},[addSub]);
   /* 離開「新增」分頁就回到最外層：下次再進來看到的是那幾顆大按鈕，
@@ -11605,7 +11553,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
   }, [images.length]);
 
-  // Drag and drop to swap states
+  // 拖放換位置的狀態
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [hoveredSwapTargetIndex, setHoveredSwapTargetIndex] = useState<number | null>(null);
@@ -11616,7 +11564,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     bottom: boolean;
   }>({ left: false, right: false, top: false, bottom: false });
 
-  // Mobile Touch States
+  // 手機觸控的狀態
   const [touchDraggedIndex, setTouchDraggedIndex] = useState<number | null>(null);
   const [cellThumbReady, setCellThumbReady] = useState('');
   const [floatThumbReady, setFloatThumbReady] = useState('');
@@ -11649,19 +11597,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const touchDragOverIndexRef = useRef<number | null>(null);
   const touchPosRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Long press refs for mobile touch drag-to-swap
+  // 手機長按拖動換位置用的 ref
   const longPressTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isLongPressedRef = useRef<boolean>(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
-  /** 长按成立前持续记录手指真实位置，缩图出现时才会正好以手指为中心。 */
+  /** 長按成立前持續記錄手指真實位置，縮圖出現時才會正好以手指為中心。 */
   const pendingLongPressPosRef = useRef<{ x: number; y: number } | null>(null);
-  // Cells keep touch-action:none so long-press reordering can own the gesture, which also
-  // killed the native horizontal scroll everywhere a photo covers the canvas. While no
-  // long-press is in flight we drive that scroll ourselves from the raw touch delta.
+  // 格子要維持 touch-action:none，長按排序才拿得到手勢，但這樣照片蓋住畫布的地方原生的左右捲動就沒了。
+  // 沒有長按進行中時，用原始觸控位移自己捲
   const cellSwipeRef = useRef<{ lastX: number; active: boolean } | null>(null);
 
-  // Long-press swapping for free-standing images, and the shared drop-target highlight
-  // used by both the cell drag and this one.
+  // 浮動圖片的長按換位置，以及格子拖動和這裡共用的放置目標提示
   const floatSwapRef = useRef<{
     id: string; src: string; startX: number; startY: number;
     lastX: number; lastY: number; swiping: boolean; dragging: boolean;
@@ -11692,7 +11638,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const pointerStartPosRef = useRef<{ x: number; y: number } | null>(null);
   const dragOrMoveOccurredRef = useRef<boolean>(false);
 
-  // Pointer state for dragging to pan the image inside the selected cell
+  // 在選中的格子裡拖動照片用的指標狀態
   const pointerState = useRef({
     isDraggingContent: false,
     // 只認第一根手指：第二根落下就是要縮放，不是要平移
@@ -11720,17 +11666,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   useLayoutEffect(() => {
     if (pages.length < 2) {
       vectorScene.remove('__page-seams');
-      // Single pages need the same atomic photo/page commit during drag settle;
-      // removing the separator must not defer their ink until the next frame.
-      // (flushSoon still paints before this frame is composited, once per commit.)
+      // 單頁在拖動回彈時也要一次提交照片和頁面；
+      // 拿掉分隔線不能讓線條拖到下一格才畫（flushSoon 照樣在這格合成前畫，每次提交一次）
       vectorScene.flushSoon();
       return;
     }
     vectorScene.set('__page-seams', {
       z: 400000,
-      // Only revealed seams need autonomous fade frames. Page motion already
-      // commits the complete scene synchronously; a perpetual 240 ms timer
-      // rendered it a second time during every drag/pinch frame.
+      // 只有露出來的接縫需要自己的淡入畫格。頁面移動時已經同步提交整個場景；
+      // 一直跑的 240ms 計時器會讓每個拖動、縮放畫格多畫一次
       animateUntil: () => pagesMode
         ? Math.max(0, ...sortSeamVisibleSince.current.values()) + 160 : 0,
       paint: ctx => {
@@ -11757,19 +11701,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             if (!since.has(slot)) since.set(slot, performance.now());
             const t = Math.min(1, (performance.now() - since.get(slot)!) / 160);
             ctx.globalAlpha = t * t * (3 - 2 * t);
-            // Slots do not move. Moving pages never carry a separator with them.
+            // 格位不動，移動的頁面不會帶著分隔線走
             seam(slot * previewW - width / 2, 0, previewH);
           }
           ctx.globalAlpha = 1;
           return bounds;
         }
-        // Normal-mode seams are already visible. Preserve that visibility when
-        // entering sorting; only seams actually hidden by a drag should fade in.
+        // 一般模式下接縫本來就看得到，進入排序時維持；只有真的被拖動藏住的接縫才淡入
         for (let slot = 1; slot < pages.length; slot++) {
           sortSeamVisibleSince.current.set(slot, performance.now() - 160);
         }
-        // Read the same rendered page edge during reordering; no second CSS
-        // transform, inverse scale or independent compositor animation.
+        // 重新排序時讀同一條實際畫出來的頁面邊緣；不另外加 CSS transform、反向縮放或合成器動畫
         vectorScene.pageBounds().forEach((r, i) => {
           if (!i) return;
           seam(r.x - width / 2, r.y, r.height);
@@ -11781,7 +11723,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     vectorScene.flushSoon();
   });
 
-  // Guides use the same frame transform as seams, with an independent width.
+  // 參考線跟接縫用同一個畫格變換，寬度另外算
   useLayoutEffect(() => {
     if (!activeGuidelines.length) {
       vectorScene.remove('__alignment-guides');
@@ -11818,7 +11760,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     vectorScene.flushSoon();
   }, [activeGuidelines, pages.length, previewW, previewH, vectorScene]);
 
-  // Measure container size dynamically
+  // 動態量容器大小
   useEffect(() => {
     if (!containerRef.current) return;
     const observer = new ResizeObserver((entries) => {
@@ -11834,7 +11776,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return () => observer.disconnect();
   }, []);
 
-  // Automatically clamp image offsets when layout, ratio, gap, or preview dimensions change to prevent shifting and empty spaces
+  // 版面、比例、間距或預覽尺寸改變時自動把圖片位移限制在範圍內，避免跑位、露出空白
   const imagesStateKey = images.map(img => `${img.zoom || 1}-${img.rotation || 0}-${img.url || ''}`).join(',');
 
   useEffect(() => {
@@ -12068,7 +12010,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 格子在畫面上的實際大小會乘上整組佈局的縮放；把螢幕位移換算成格內偏移時要跟著乘。 */
   const layoutScale = activeLayout?.t?.scale ?? 1;
 
-  // Pointer event handlers for panning the image inside the selected cell
+  // 在選中的格子裡拖動照片的指標事件
   const handleContentPointerDown = (e: React.PointerEvent<HTMLDivElement>, idx: number) => {
     if (selectedIndex !== idx) return;
     if (isLongPressedRef.current) return;
@@ -12082,7 +12024,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
 
-    // Reset move flag for content panning
+    // 重設內容拖動的移動旗標
     dragOrMoveOccurredRef.current = false;
     pointerStartPosRef.current = { x: e.clientX, y: e.clientY };
 
@@ -12112,7 +12054,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     e.stopPropagation();
 
-    // Check distance for click cancellation
+    // 看距離決定要不要取消點擊
     if (pointerStartPosRef.current) {
       const dx = e.clientX - pointerStartPosRef.current.x;
       const dy = e.clientY - pointerStartPosRef.current.y;
@@ -12166,9 +12108,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       let newOffsetX = calculatedOffsetX;
       let newOffsetY = calculatedOffsetY;
 
-      const snapThreshold = 0.015; // Snapping threshold
+      const snapThreshold = 0.015; // 吸附門檻
 
-      // Snap & collision detection for X
+      // X 方向的吸附和碰撞偵測
       if (maxShiftX > 0) {
         if (Math.abs(calculatedOffsetX - maxShiftX) <= snapThreshold) {
           newOffsetX = maxShiftX;
@@ -12177,7 +12119,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }
       }
 
-      // Snap & collision detection for Y
+      // Y 方向的吸附和碰撞偵測
       if (maxShiftY > 0) {
         if (Math.abs(calculatedOffsetY - maxShiftY) <= snapThreshold) {
           newOffsetY = maxShiftY;
@@ -12186,11 +12128,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }
       }
 
-      // Strictly clamp to prevent showing empty black areas
+      // 嚴格限制範圍，不露出黑色空白
       newOffsetX = Math.max(-maxShiftX, Math.min(maxShiftX, newOffsetX));
       newOffsetY = Math.max(-maxShiftY, Math.min(maxShiftY, newOffsetY));
 
-      // Determine active collisions based on final clamped positions
+      // 用最後限制過的位置判斷目前碰到哪些
       const collisionMargin = 0.001;
       const leftColliding = maxShiftX > 0 && Math.abs(newOffsetX - maxShiftX) <= collisionMargin;
       const rightColliding = maxShiftX > 0 && Math.abs(newOffsetX - (-maxShiftX)) <= collisionMargin;
@@ -12224,14 +12166,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
   };
 
-  // HTML5 Drag and Drop handlers for swapping images
+  // HTML5 拖放換圖片
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, idx: number) => {
     if (pointerState.current.isDraggingContent) {
       e.preventDefault();
       return;
     }
 
-    // Set drag image to match the original aspect ratio with no rounded corners
+    // 拖動預覽圖照原比例、不要圓角
     const img = e.currentTarget.querySelector('img');
     if (img) {
       const container = document.createElement('div');
@@ -12239,7 +12181,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const h_nat = images[idx]?.naturalHeight || img.naturalHeight || 600;
       const aspect = w_nat / h_nat;
 
-      // Base size of 200px on the larger side
+      // 長邊基準 200px
       let dragW = 200;
       let dragH = 200;
       if (aspect >= 1) {
@@ -12284,7 +12226,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }, 0);
     }
 
-    // Wrap in setTimeout so the browser finishes capturing the drag image before we hide the source cell's image
+    // 包在 setTimeout 裡，讓瀏覽器先拍好拖動預覽圖，再藏起來源格子的圖
     setTimeout(() => {
       setDraggedIndex(idx);
     }, 0);
@@ -12311,7 +12253,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     setImages(prev => {
       const copy = [...prev];
       const temp = { ...copy[draggedIndex] };
-      // After swapping, both images must become fully filling/occupying the cell (zoom = 1.0, offsetX = 0, offsetY = 0)
+      // 換完之後兩張都要填滿格子（zoom = 1.0、offsetX = 0、offsetY = 0）
       copy[draggedIndex] = {
         ...copy[idx],
         zoom: 1.0,
@@ -12364,10 +12306,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const handleCellTouchStart = (e: React.TouchEvent<HTMLDivElement>, idx: number, layoutId: string) => {
     const isSelected = selectedIndex === idx;
 
-    // Reset touch movement tracking
+    // 重設觸控移動的追蹤
     dragOrMoveOccurredRef.current = false;
 
-    // Clear any existing long-press timer
+    // 清掉現有的長按計時器
     if (longPressTimeoutRef.current) {
       clearTimeout(longPressTimeoutRef.current);
       longPressTimeoutRef.current = null;
@@ -12384,9 +12326,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     //     但長按 150ms 之後就切換成「拖曳交換這一格的照片」。
 
     if (e.touches.length >= 2) {
-      /* 第二根手指交由最外层 workspace 判断是缩放物件或缩放预览。
-         这里只取消这张格子自己的长按计时，不再重设画布、pointer、zoom 等
-         全域状态；先前那种整批接管正是 iOS 上双指手势被吃掉的原因。 */
+      /* 第二根手指交由最外層 workspace 判斷是縮放物件或縮放預覽。
+         這裡只取消這張格子自己的長按計時，不再重設畫布、pointer、zoom 等
+         全域狀態；先前那種整批接管正是 iOS 上雙指手勢被吃掉的原因。 */
       if (longPressTimeoutRef.current) {
         clearTimeout(longPressTimeoutRef.current);
         longPressTimeoutRef.current = null;
@@ -12396,7 +12338,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return;
     } else if (e.touches.length === 1) {
       wasZoomingRef.current = false;
-      // Prevent dragging empty cells
+      // 空格子不能拖
       const thisLayout = pages.flatMap(p => p.layouts).find(l => l.id === layoutId);
       if (!thisLayout?.images[idx]?.url) {
         // 空格子沒有長按交換，但仍要記起點，滑動時才判斷得出這是拖曳而不是點擊
@@ -12420,7 +12362,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const point = pendingLongPressPosRef.current || { x: touch.clientX, y: touch.clientY };
         isLongPressedRef.current = true;
 
-        // Ensure pointer content dragging is fully disabled when long-press triggers
+        // 長按觸發時，確定指標的內容拖動完全關掉
         pointerState.current.isDraggingContent = false;
         pointerState.current.cellIdx = -1;
         // 長按交換勝過「搬動整組佈局」與畫布捲動
@@ -12429,7 +12371,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         panRef.current = null;
         wsGestureRef.current = null;
 
-        // Vibrate to give physical feedback to the user (if supported)
+        // 有支援的話震動一下當作回饋
         if (navigator.vibrate) {
           navigator.vibrate(40);
         }
@@ -12438,7 +12380,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
            放手時交換）都是對「選中的佈局」做的，所以這裡把它暫時選起來，放手後再取消。 */
         if (selectedLayoutId !== layoutId) { swapAutoSelectRef.current = true; setSelectedLayoutId(layoutId); setSelectedIndex(null); }
 
-        // Initialize custom touch drag state
+        // 初始化自訂的觸控拖動狀態
         touchPosRef.current = point;
         touchDragState.current = {
           startX: point.x,
@@ -12466,8 +12408,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       let newZoom = touchZoomState.current.startZoom * factor;
       newZoom = Math.max(1.0, Math.min(5.0, newZoom));
 
-      // Calculate and clamp offsets simultaneously inside the state setter
-      // to completely prevent any frame from showing empty space borders
+      // 在 state setter 裡一起算位移並限制範圍，任何一格都不會露出空白邊
       setImages(prev => prev.map((cell, i) => {
         if (i !== idx) return cell;
 
@@ -12510,7 +12451,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }));
     } else if (e.touches.length === 1) {
       if (wasZoomingRef.current) {
-        // Prevent drag behavior if we were just zooming and one finger is still down
+        // 剛剛在縮放、還有一根手指沒放開的話，不要變成拖動
         return;
       }
       const touch = e.touches[0];
@@ -12524,24 +12465,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }
       }
 
-      // If long press has not triggered yet, check if finger moved too far to cancel
+      // 長按還沒觸發時，手指移太遠就取消
       if (!isLongPressedRef.current) {
         if (touchStartPosRef.current) {
           const dx = touch.clientX - touchStartPosRef.current.x;
           const dy = touch.clientY - touchStartPosRef.current.y;
           if (Math.hypot(dx, dy) > 10) {
-            // Cancel long press timeout
+            // 取消長按計時
             if (longPressTimeoutRef.current) {
               clearTimeout(longPressTimeoutRef.current);
               longPressTimeoutRef.current = null;
             }
           }
         }
-        return; // Skip dragging behavior until long pressed
+        return; // 長按之前不拖動
       }
 
       if (touchDragState.current) {
-        // Prevent default screen scrolling during mobile touch drags
+        // 手機觸控拖動時擋掉畫面捲動
         if (e.cancelable) {
           e.preventDefault();
         }
@@ -12562,7 +12503,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           touchDragOverIndexRef.current = hoveredIdx;
           setTouchDragOverIndex(hoveredIdx);
         }
-        // A cell can also be dropped onto a free-standing image, or onto a cell of ANOTHER layout.
+        // 格子也可以拖到浮動圖片上，或「另一個」版面的格子上
         const swapTarget = getSwapTargetFromPoint(touch.clientX, touch.clientY);
         const otherLayoutCell = !!swapTarget && swapTarget.kind === 'cell' && !!swapTarget.layoutId && swapTarget.layoutId !== layoutId;
         setSwapOverTarget(swapTarget && (swapTarget.kind === 'floating' || otherLayoutCell) ? swapTarget : null);
@@ -12575,7 +12516,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       wasZoomingRef.current = false;
     }
 
-    // Clear any active long-press timer
+    // 清掉進行中的長按計時器
     if (longPressTimeoutRef.current) {
       clearTimeout(longPressTimeoutRef.current);
       longPressTimeoutRef.current = null;
@@ -12587,7 +12528,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     if (touchDragState.current) {
       if (isLongPressedRef.current && touchDragState.current.hasMoved) {
-        // Perform Touch Swap
+        // 執行觸控換位置
         const targetOverIndex = touchDragOverIndexRef.current;
         const floatTarget = swapOverRef.current;
         const fromIdx = touchDragState.current.currentIndex;
@@ -12641,7 +12582,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           }
         }
       } else {
-        // Simple touch tap - select the cell (only if we didn't move/drag)
+        // 單純點一下（沒移動、沒拖動）就選取格子
         if (!dragOrMoveOccurredRef.current) {
           selectCellOrLayout(layoutId, idx);
         }
@@ -12656,7 +12597,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       setSwapOverTarget(null);
       touchPosRef.current = null;
     } else {
-      // Regular touch release without starting drag state
+      // 一般放開，沒有進入拖動狀態
       if (!isLongPressedRef.current && !dragOrMoveOccurredRef.current) {
         selectCellOrLayout(layoutId, idx);
       }
@@ -12670,7 +12611,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     touchHandledAtRef.current = Date.now();
   };
 
-  // Cleanup long press timer on unmount
+  // 卸載時清掉長按計時器
   useEffect(() => {
     return () => {
       if (longPressTimeoutRef.current) {
@@ -12682,7 +12623,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 這批匯入的圖只放一次（等版面量好之後才放，見下面） */
   const initialPlacedRef = useRef(false);
 
-  // Initialize with initialFiles if provided
+  // 有傳 initialFiles 的話先放進來
   useEffect(() => {
     /* 一定要等畫布量好才放。
        這支以前只掛在 [initialFiles] 上，第一次執行時 containerSize 還是 0 ——
@@ -12711,7 +12652,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const previewW = previewWRef.current;
           const previewH = previewHRef.current;
 
-          const margin = 12; // comfortable margin from boundaries
+          const margin = 12; // 離邊界留一點舒服的距離
           const maxAllowedW = Math.max(10, previewW - 2 * margin);
           const maxAllowedH = Math.max(10, previewH - 2 * margin);
 
@@ -12758,7 +12699,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           let y = baseY + (idx * offsetStep);
 
           if (idx > 0) {
-            // Clamp to stay strictly inside the margin
+            // 嚴格限制在邊距內
             x = Math.max(minX, Math.min(x, maxX));
             y = Math.max(minY, Math.min(y, maxY));
           }
@@ -12786,7 +12727,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      清空的動作要是還留在裡面，量好尺寸的那一刻就會把剛放好的圖全部清掉。 */
   useEffect(() => {
     return () => {
-      // Cleanup URLs on unmount
+      // 卸載時收掉網址
       setImages(prev => {
         prev.forEach(img => {
           /* revoke */
@@ -12890,7 +12831,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /**
    * 離開拼圖＝這一份結束了。
    *
-   * ⚠ **不等歷史紀錄做完**。以前這裡是 `await recordProgress()` 才 onHome()，
+   * **不等歷史紀錄做完**。以前這裡是 `await recordProgress()` 才 onHome()，
    * 而 recordProgress 要把整張拼圖重烤一次 —— 按下返回鍵之後要乾等好幾秒，
    * 畫面完全沒有反應。
    *
@@ -12946,7 +12887,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return () => window.clearInterval(timer);
   }, [draftReady]);
 
-  // When image count changes, reset selected index if out of bounds, and clamp templateIndex
+  // 圖片數量變了，選取的編號超出範圍就重設，templateIndex 也限制在範圍內
   useEffect(() => {
     const templates = TEMPLATE_MAP[images.length] || [];
     if (templateIndex >= templates.length) {
@@ -12979,7 +12920,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const previewW = previewWRef.current;
       const previewH = previewHRef.current;
 
-      const margin = 12; // comfortable margin from boundaries
+      const margin = 12; // 離邊界留一點舒服的距離
       const maxAllowedW = Math.max(10, previewW - 2 * margin);
       const maxAllowedH = Math.max(10, previewH - 2 * margin);
       
@@ -13022,7 +12963,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       let x = baseX + (idx * offsetStep);
       let y = baseY + (idx * offsetStep);
       
-      // Clamp to stay strictly inside the margin for the active page
+      // 嚴格限制在目前頁面的邊距內
       x = Math.max(minX, Math.min(x, maxX));
       y = Math.max(minY, Math.min(y, maxY));
       
@@ -13080,14 +13021,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       });
       return {...layout, images: updated};
     })})));
-    /* Batch import commits to its original layout even if the selection changes
-       while photographs are decoding. */
+    /* 批次導入一律放進原本的版面，照片解碼期間使用者換了選取也一樣 */
     setSlotToUpload(null);
     if (replaceInputRef.current) replaceInputRef.current.value = '';
   };
   const handleRemoveImage = (index: number) => {
     const cell = images[index];
-    /* revoke */
+    /* 收掉 */
     const updated = images.filter((_, idx) => idx !== index);
     setImages(updated);
     setSelectedIndex(null);
@@ -13146,16 +13086,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return null;
   };
 
-  // A long-press drag can start from a layout cell or from a free-standing image, and can
-  // land on either kind, so drop targets are resolved for both. Stickers sit above the
-  // cells, so whichever is on top at that point wins.
+  // 長按拖動可以從版面格子或浮動圖片開始，也可以放到其中任何一種上，所以兩種放置目標都要找。貼圖在格子上面，
+  // 那個位置最上層的那個優先
   const getSwapTargetFromPoint = (clientX: number, clientY: number): SwapTarget | null => {
     for (const elem of pointStack(clientX, clientY)) {
       const fEl = elem.closest('[data-floating-id]');
       if (fEl) {
         const id = fEl.getAttribute('data-floating-id');
-        /* 只有真正的自由图片能成为交换目标。
-           图形与文字不接收拖入，也不再挡住底下的格子：跳过它们继续往下找。 */
+        /* 只有真正的自由圖片能成為交換目標。
+           圖形與文字不接收拖入，也不再擋住底下的格子：跳過它們繼續往下找。 */
         if (isPhotoFloating(id)) {
           const target = floatingImages.find(f => f.id === id)!;
           if (target.isVideo && touchDragState.current) return null;
@@ -13177,9 +13116,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return null;
   };
 
-  // Swapping a picture into a free-standing frame has to re-derive the frame's box from the
-  // incoming aspect ratio, otherwise the picture would be stretched. The frame's longest
-  // side, its position and its rotation are preserved.
+  // 把照片換進浮動外框時，外框要照新照片的比例重新算，不然照片會被拉長。外框的長邊、位置和旋轉保持不變
   const reframeFloating = (box: { width: number; height: number }, url: string): Promise<{ width: number; height: number }> =>
     new Promise(resolve => {
       const longest = Math.max(box.width, box.height);
@@ -13215,7 +13152,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return;
     }
 
-    // Mixed: one side is a layout cell, the other a free-standing image.
+    // 混合：一邊是版面格子，一邊是浮動圖片
     const cellIdx = source.kind === 'cell' ? source.idx : (target as { kind: 'cell'; idx: number }).idx;
     const floatId = source.kind === 'floating' ? source.id : (target as { kind: 'floating'; id: string }).id;
     // 目標格子可能屬於「沒有被選中的佈局」，所以要指名是哪一個佈局
@@ -13233,8 +13170,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const cell = cellImages[cellIdx];
     const float = floatingImages.find(f => f.id === floatId);
     if (!cell || !float) return;
-    // Layout cells render still images only. Never move a video into a cell
-    // and delete its playable layer; leave both layers intact instead.
+    // 版面格子只放靜態圖片。絕不把影片移進格子又刪掉它可以播放的圖層；這種情況兩個圖層都不動
     if (float.isVideo) return;
     // 格子必須拿到新圖的原始長寬，否則 cover 會用上一張圖的比例算，畫面就被拉扁了
     const incoming = await getImageDimensions(float.src);
@@ -13282,11 +13218,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     floatSwapTimerRef.current = setTimeout(() => {
       const s = floatSwapRef.current;
       if (!s || s.swiping) return;
-      // 使用计时结束这一刻的真实触点，不沿用刚按下时可能已有漂移的旧坐标。
+      // 使用計時結束這一刻的真實觸點，不沿用剛按下時可能已有漂移的舊座標。
       s.startX = s.lastX;
       s.startY = s.lastY;
       s.dragging = true;
-      // A swap drag wins over the free-move drag the canvas handler would otherwise run.
+      // 換位置的拖動優先於畫布本來會處理的自由移動
       globalFloatingTouchState.current = null;
       // 也要把畫布的捲動／物件手勢一起取消，長按拖曳時頁面不該跟著滑
       stopInertia();
@@ -13446,9 +13382,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           if (px < SNAP && px < best) { best = px; bestScale = cand; bestExtent = extent; }
         });
       });
-      // Keep a captured edge until it really leaves the 7px release band.
-      // One shared raw/snap threshold otherwise flips the entire layout at
-      // slow-pinch sensor noise, even when the feathered photo master is stable.
+      // 抓到的邊緣要真的離開 7px 的放開範圍才放。原始值和吸附共用一個門檻的話，
+      // 慢慢縮放時感測器的雜訊就會讓整個版面來回跳，就算羽化照片的母版是穩定的
       const locked = layoutScaleSnapRef.current;
       if (locked && locked.id === targetId && Math.abs(locked.scale - ns) * locked.extent / 2 * Math.max(.0001, kRef.current) <= 7) {
         ns = locked.scale;
@@ -13821,8 +13756,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     panRef.current = null;
     const el = containerRef.current, column = pagesColRef.current;
     if (!el || !column) return;
-    // Capture BEFORE React changes the tab's layout. The mode animation owns
-    // all subsequent positioning; the previous pan must never resume on up.
+    // 在 React 改分頁版面「之前」先擷取。之後的位置全部交給模式動畫，放開手指時前一次的拖動絕不能接著跑
     const viewport = el.getBoundingClientRect();
     pendingModeAnchorRef.current = (viewport.left + el.clientWidth / 2
       - column.getBoundingClientRect().left) / Math.max(.0001, kRef.current);
@@ -14038,9 +13972,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
 
     const scope = gestureScope(e.target as Element);
-    /* 第二根手指很容易刚好落在选中框控制点或透明交互层上；这些元素会让
-       gestureScope 回 none。单指仍然必须尊重它，但已选中的自由物件遇到双指时
-       要无条件交给缩放／旋转，不能因为第二根手指的位置而整次失效。 */
+    /* 第二根手指很容易剛好落在選中框控制點或透明互動層上；這些元素會讓
+       gestureScope 回 none。單指仍然必須尊重它，但已選中的自由物件遇到雙指時
+       要無條件交給縮放／旋轉，不能因為第二根手指的位置而整次失效。 */
     const lockedTarget = wsTouchTargetRef.current;
     const selectedObjectPinch = e.touches.length >= 2
       && !!lockedTarget && lockedTarget.kind !== 'canvas';
@@ -14166,8 +14100,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
       canvasZoomRef.current = { startDist: d, baseZoom: k0, anchorC, anchorPx, lastZoom: k0 };
-      // The gesture takes ownership of the current pose. A still-running mode
-      // tween must never write a second pose between touch samples.
+      // 手勢接手目前的姿態。還在跑的模式過渡絕不能在兩次觸控取樣之間再寫一次姿態
       kAnimRef.current = null;
       plusMotionTransitionRef.current = null;
       setPagesVisual(false);
@@ -14215,8 +14148,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const rawZ = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cz.baseZoom * (d / cz.startDist)));
       // 觸控距離會在相鄰事件間抖動零點幾個像素；直接把每一筆噪聲寫入 zoom
       // 會讓整張預覽反覆放大縮小。輕量低通只濾掉這種高頻抖動，手勢方向與範圍不變。
-      // Preserve continuous motion at slow pinch speeds. A dead zone here
-      // accumulates sub-threshold movement and then jumps the whole canvas.
+      // 慢慢縮放時也要連續。這裡設死區的話，門檻以下的移動會累積起來，然後整個畫布突然跳一下
       const z = cz.lastZoom + (rawZ - cz.lastZoom) * 0.72;
       cz.lastZoom = z;
       userZoomRef.current = z;
@@ -14327,8 +14259,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
              真正吸住，鬆手位置也像差了一格。現在候選倍率、4px 進入門檻、
              7px 離開遲滯與固定中心都只走這一條路。 */
           if (target && enableSnapping) {
-            /* 门槛统一用屏幕像素。之前这里把内容坐标误当成屏幕像素；预览缩放后
-               会提早／延后吸附。现在无论画布倍率多少，都是离边缘 4px 才锁定。 */
+            /* 門檻統一用螢幕像素。之前這裡把內容座標誤當成螢幕像素；預覽縮放後
+               會提早／延後吸附。現在無論畫布倍率多少，都是離邊緣 4px 才鎖定。 */
             const previewK = Math.max(.0001, kRef.current || 1);
             const SNAP_IN = 4, SNAP_OUT = 7;
             const cx = target.x + target.width / 2;
@@ -14355,8 +14287,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 if (px < SNAP_IN && px < best) { best = px; bestScale = cand; bestExtent = extent; }
               });
             });
-            /* 吸住後使用较宽的离开门槛。没有迟滞时，手指的微小噪声会让倍率
-               在 raw/snap 两个值之间逐帧切换，视觉上就是图形与符号抖动。 */
+            /* 吸住後使用較寬的離開門檻。沒有遲滯時，手指的微小雜訊會讓倍率
+               在 raw/snap 兩個值之間逐幀切換，視覺上就是圖形與符號抖動。 */
             if (g.snapScale !== undefined) {
               const px = Math.abs(ns - g.snapScale) * (g.snapExtent ?? Math.max(ext.bw, ext.bh)) / 2 * previewK;
               if (px <= SNAP_OUT) ns = g.snapScale;
@@ -14367,8 +14299,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               g.snapExtent = bestExtent;
               ns = bestScale;
             }
-            /* 后续低通与当前真正画出的倍率使用同一个基准，不能让 lastScale 还停在
-               吸附前的值，否则下一帧会先向外漂再被迟滞拉回，边缘会细微抖动。 */
+            /* 後續低通與當前真正畫出的倍率使用同一個基準，不能讓 lastScale 還停在
+               吸附前的值，否則下一幀會先向外漂再被遲滯拉回，邊緣會細微抖動。 */
             g.lastScale = ns;
           }
           let nextGuidelines: AlignmentGuideline[] | null = null;
@@ -14575,9 +14507,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     inertiaRef.current = requestAnimationFrame(step);
   };
 
-  /* React 的 onTouchEnd 在 Safari 重建合成层的同一帧偶尔收不到。用 window 捕获
-     最后一根手指离开的事件，并延后到本轮事件结束后检查；正常收尾已执行时这
-     是无操作，漏掉时则统一清掉所有会隐藏外框／药丸的旗标与手势引用。 */
+  /* React 的 onTouchEnd 在 Safari 重建合成層的同一幀偶爾收不到。用 window 捕獲
+     最後一根手指離開的事件，並延後到本輪事件結束後檢查；正常收尾已執行時這
+     是無操作，漏掉時則統一清掉所有會隱藏外框／藥丸的旗標與手勢引用。 */
   useEffect(() => {
     let timer = 0;
     const restoreChrome = () => {
@@ -14607,8 +14539,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
     const finishTouch = (e: TouchEvent) => { if (e.touches.length === 0) restoreChrome(); };
     const finishVisibility = () => { if (document.visibilityState !== 'visible') restoreChrome(); };
-    /* Pointer Events 与 Touch Events 在不同 iOS／WebView 版本不一定同时送达。
-       记录仍按着的 pointer，最后一根离开时才恢复，避免双指缩放先放开一根就闪框。 */
+    /* Pointer Events 與 Touch Events 在不同 iOS／WebView 版本不一定同時送達。
+       記錄仍按著的 pointer，最後一根離開時才恢復，避免雙指縮放先放開一根就閃框。 */
     const activePointers = new Set<number>();
     const pointerDown = (e: PointerEvent) => { activePointers.add(e.pointerId); };
     const pointerFinish = (e: PointerEvent) => {
@@ -15091,9 +15023,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }finally{ctx.restore();}continue;
       }
       if (fImg.shape || fImg.text !== undefined) {
-        // Compose in physical target coordinates. Object-local scratch bounds
-        // cannot be compared to page-local canvas dimensions after translation
-        // or animation; doing so clipped later-page objects and leaked layers.
+        // 用實際目標的座標合成。平移或動畫之後，物件本地的暫存範圍不能拿來跟頁面本地的畫布尺寸比，
+        // 那樣會裁掉後面頁面的物件、漏出圖層
         const opacity = ((fImg.opacity ?? 100) / 100) * (frame?.a ?? 1);
         if (opacity <= 0) continue;
         const off = opacity < 1 ? scratch('vector-frame', ctx.canvas.width, ctx.canvas.height) : null;
@@ -15468,7 +15399,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      直接顯示匯出成品（見上面 igShots），這一整段已經沒有任何人呼叫，
      留著只會讓人以為 IG 預覽走的是它。整段移除。 */
 
-  // Export to Canvas
+  // 輸出到畫布
   /**
    * 匯出。
    * silent = true 時不動任何畫面狀態，直接把每一頁的圖回傳 ——
@@ -15593,7 +15524,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             ctx.translate(-(pageOffsetX + targetW / 2), -targetH / 2);
           }
 
-          // Draw layout images for this page!
+          // 畫這一頁的版面圖片
           const pageTemplates = TEMPLATE_MAP[layout.images.length] || [];
           const pageActiveTemplate = pageTemplates[layout.templateIndex] || pageTemplates[0] || { name: '預設', rects: [] };
 
@@ -15619,7 +15550,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const img = cell?.url ? await loadExportImage(cell.url) : null;
             try {
 
-            // Base cell coordinates with pixel snapping to prevent gaps (shifted by pageOffsetX)
+            // 格子的基本座標，對齊像素避免出現縫（已經加上 pageOffsetX）
             // 與預覽同一套幾何：整體內縮半個間距，格子再各留半個 padding
             const inset = canvasGap / 2;
             /* 佈局可以有自己的長寬比，框不一定等於整頁 —— 跟預覽呼叫同一支
@@ -15640,7 +15571,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const bx = leftPx;
             const by = topPx;
 
-            // Apply gap padding
+            // 套用間距
             const ix = bx + canvasGap / 2;
             const iy = by + canvasGap / 2;
             const iw = bw - canvasGap;
@@ -15653,7 +15584,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               ? cornerR(cell.imgRadius, iw, ih)
               : canvasRadius;
 
-            // Draw solid background for the cell slot
+            // 格位先畫實心背景
             ctx.save();
             ctx.beginPath();
             if (ctx.roundRect) {
@@ -15667,7 +15598,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
             if (!cell || !img) continue;
 
-            // Draw image inside clipping path
+            // 在裁切路徑裡畫圖片
             ctx.save();
             ctx.beginPath();
             if (ctx.roundRect) {
@@ -15706,10 +15637,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const centerX = boxX + inset + (rect.x + rect.w / 2) * areaW;
             const centerY = boxY + inset + (rect.y + rect.h / 2) * areaH;
 
-            // Perform transformations
+            // 套用變形
             ctx.translate(centerX, centerY);
 
-            // Apply user shifts (in unrotated coordinate space to match preview)
+            // 套用使用者的位移（在未旋轉的座標裡算，跟預覽一致）
             ctx.translate(place.dx, place.dy);
 
             ctx.rotate(place.angle);
@@ -15836,7 +15767,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                判斷跨頁時留 1.5px 的容差：貼齊邊緣時圖層會往外多蓋半個像素
                （不然預覽會露出抗鋸齒的白縫），那半個像素不能被當成「跨頁」。 */
             const TOL = 1.5 * scaleFactor;
-            /* ⚠ 左右邊界要用「中心 ± 一半」，而且是**縮放與旋轉之後**的那個一半 ——
+            /* 左右邊界要用「中心 ± 一半」，而且是**縮放與旋轉之後**的那個一半 ——
                也就是上面 minX／maxX 用的同一組數字。
 
                以前這裡是「沒有縮放時的左邊」＋「縮放後的寬度」。CSS 的 scale
@@ -16005,9 +15936,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           的內容當成第一帧 —— 畫布還是空的就會錄到一段黑畫面，而第一次合成又
           特別慢（要載入影片、解碼、套濾鏡），黑掉的那段就更長。
         */
-        // Warm glyph masks / effect surfaces before starting the recording clock.
-        // Otherwise a transparent entry frame postpones all first-use work to
-        // the first visible frame, leaving the recorded opening blank too long.
+        // 開始錄製計時前先預熱字形遮罩和特效畫布。
+        // 不然透明的開場畫格會把所有第一次使用的工作都推到第一個看得到的畫格，錄出來的開頭會空白太久
         await composite(Math.min(dur * .5, 1.2));
         await composite(0);
 
@@ -16435,7 +16365,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               它一冒出來，上面的轉圈就被往上頂一截，看起來像畫面自己抖了一下；
               而且寫的是「取消，回到編輯」。現在改成一開始就在、就寫「取消匯出」。
 
-              ⚠ 它是**絕對定位**掛在正中央下方的，不排進上面那個直排裡。
+              它是**絕對定位**掛在正中央下方的，不排進上面那個直排裡。
               上一版我把它當成直排的第四個孩子（mt-8），外層又是
               justify-center —— 多這一顆等於把「轉圈＋文字」那一組整個往上頂了
               44 像素。匯出動畫的位置一變，緊接著跳出來的成品頁（它的圖是照
@@ -16461,7 +16391,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         </div>
       )}
 
-      {/* Top Header */}
+      {/* 頂部標題列 */}
       <header
         className={`relative h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-50 bg-black/90 backdrop-blur-md ${igPreview ? 'vis-off' : ''}`}
         /* IG 預覽期間只隱藏、不移出版面。display:none 會讓工作區突然增高，
@@ -16582,7 +16512,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           {exportOptionsOpen&&<CollageExportOptions label="跨頁拼圖匯出設定" panelRef={exportOptionsRef} imageFormat={imageExportFormat} videoFormat={videoExportFormat} fps={videoExportFps} quality={videoExportQuality} onImage={setImageExportFormat} onVideo={setVideoExportFormat} onFps={setVideoExportFps} onQuality={setVideoExportQuality}/>}
         </header>
 
-      {/* Hidden File Inputs */}
+      {/* 隱藏的檔案輸入 */}
       <input
         type="file"
         ref={fileInputRef}
@@ -16608,7 +16538,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         className="hidden"
       />
 
-      {/* Main Workspace Layout */}
+      {/* 主要工作區版面 */}
       {/* 整個工作區的空白（含頁面上下的黑底）都能用來取消選取：
           佈局放大時幾乎蓋滿整頁，只靠頁面內的細長空白很難點到 */}
       {/* z-0 讓整個工作區自成一個堆疊環境：裡面的照片是 60、62、64⋯⋯，
@@ -16655,10 +16585,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           applyTapSelection(target);
         }}
       >
-        {/* Left/Top Collage Preview Area */}
+        {/* 左側／上方的拼圖預覽區 */}
         <div 
           className={`flex-1 flex items-start ${activeTab === 'motion' ? 'touch-pan-x' : 'touch-none'} justify-start py-2 bg-[#070707] relative overflow-x-auto overflow-y-hidden select-none no-scrollbar overscroll-x-contain`}
-          /* 拖起的页面必须位于屏幕坐标分割线之上；平时不建立额外层级。 */
+          /* 拖起的頁面必須位於螢幕座標分割線之上；平時不建立額外層級。 */
           style={{ zIndex: pageDragIdx !== null ? 50 : undefined, overflowAnchor: 'none' }}
           ref={containerRef}
           data-grid-preview-viewport="1"
@@ -16758,9 +16688,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   進出這個模式時，版面要跟著縮放倍率一起連續變化才會絲滑，
                   交給 React 寫的話尺寸會一次跳到目標值、只有縮放在慢慢跑。
                 */}
-                {/* Keep the workspace shadow in screen units. Scaling its blur
-                    with the entire strip needlessly enlarges WebKit's offscreen
-                    surface; media resolution and page geometry stay unchanged. */}
+                {/* 工作區的陰影用螢幕單位。跟著整條一起縮放模糊只會讓 WebKit 的離屏畫布白白變大；媒體解析度和頁面幾何不變 */}
                 <div ref={stripShellRef} className={`flex-shrink-0 relative ${pageDragIdx !== null || dragSettle ? '' : 'shadow-[0_25px_60px_rgba(0,0,0,0.8)]'}`}>
                 <div
                   ref={pagesColRef}
@@ -16789,9 +16717,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                          清掉舊範圍，於是圖形邊緣一路留下殘影；各子層分別合成時也會
                          因小數座標取整不同而互相抖動。把整排內容設成同一個 paint
                          containment，瀏覽器每幀會以這個完整區域失效與合成。 */
-                      /* 排序时页面会离开原来的整排边界，paint containment 会像
-                         左右黑色遮罩一样把浮起的页面切掉，因此此模式必须关闭；
-                         一般编辑仍保留 paint containment 来避免互动残影。 */
+                      /* 排序時頁面會離開原來的整排邊界，paint containment 會像
+                         左右黑色遮罩一樣把浮起的頁面切掉，因此此模式必須關閉；
+                         一般編輯仍保留 paint containment 來避免互動殘影。 */
                       /* `contain: paint` 會讓 iOS WebKit 先把整排頁面拍成一張
                          當下倍率的點陣合成層；之後捏合只是拉伸那張快照，所以
                          照片、影片、文字、符號與圖形會一起變糊。頁面本來已有
@@ -16807,12 +16735,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         guide => guide.type === 'vertical'
                           && Math.abs(guide.coord - seamGuideX) <= 0.75 / previewScale
                       );
-                      /* 排序模式的分隔线挂在右侧页面本体上，和页面共用同一个
-                         transform／transition；不再留在静止的 1px flex 槽里。 */
+                      /* 排序模式的分隔線掛在右側頁面本體上，和頁面共用同一個
+                         transform／transition；不再留在靜止的 1px flex 槽裡。 */
                       const pageMove = pageContentShift(pageIdx);
                       return (
                         <React.Fragment key={page.id}>
-                          {/* Pages share an edge; the seam is ink, never a layout gap. */}
+                          {/* 頁面共用一條邊；接縫是線條，絕不是版面間距 */}
 
                           <div
                             id={pageIdx === 0 ? "grid-preview-container" : `grid-preview-container-${pageIdx}`}
@@ -16925,9 +16853,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   })() : undefined,
                                   transition: 'none',
                                   zIndex: 59 + (layout.z ?? 0) * 2,
-                                  /* native zoom 不能让每个格子各自成为取整／合成单位。
-                                     整个布局固定在同一个合成坐标系，缩放时格子、本体与
-                                     共享边界作为一块移动，不会各自跳到相邻像素。 */
+                                  /* native zoom 不能讓每個格子各自成為取整／合成單位。
+                                     整個佈局固定在同一個合成座標系，縮放時格子、本體與
+                                     共享邊界作為一塊移動，不會各自跳到相鄰像素。 */
                                   isolation: 'isolate',
                                   backfaceVisibility: stableSeamless || nativeLayout ? undefined : 'hidden',
                                   willChange: stableSeamless || nativeLayout ? undefined : 'transform',
@@ -17011,11 +16939,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   const topPx = inset + rect.y * areaH;
                                   const bottomPx = inset + (rect.y + rect.h) * areaH;
 
-                                  /* 预览缩放期间整棵 React 树不会逐帧重绘，外层 native zoom
-                                     会负责连续缩放。格子若先各自 Math.round，再交给 zoom，
-                                     每一条边会在不同倍率跨过像素格：格子会抖，公共分割线也会
-                                     忽隐忽现。这里让相邻格直接共享同一组浮点边界，整块布局只
-                                     光栅化一次；静止与手势期间都不再切换几何规则。 */
+                                  /* 預覽縮放期間整棵 React 樹不會逐幀重繪，外層 native zoom
+                                     會負責連續縮放。格子若先各自 Math.round，再交給 zoom，
+                                     每一條邊會在不同倍率跨過像素格：格子會抖，公共分割線也會
+                                     忽隱忽現。這裡讓相鄰格直接共享同一組浮點邊界，整塊佈局只
+                                     光柵化一次；靜止與手勢期間都不再切換幾何規則。 */
                                   const l0 = leftPx, t0 = topPx;
                                   const cellWidth = Math.max(1, rightPx - leftPx);
                                   const cellHeight = Math.max(1, bottomPx - topPx);
@@ -17062,7 +16990,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     );
                                   }
 
-                                  // Empty Slot Card UI
+                                  // 空格位的卡片介面
                                   if (cell.url === '') {
                                     return (
                                       <div
@@ -17129,9 +17057,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           }`}
                                           style={{
                                             borderRadius: `${radius}px`,
-                                            /* 新增布局的 radius 是 0。此时建立 WebKit mask 只会把每个
-                                               相邻格子拆成独立合成层，重绘时从中间漏出页面白底；真正
-                                               有圆角时才需要这个抗锯齿遮罩。 */
+                                            /* 新增佈局的 radius 是 0。此時建立 WebKit mask 只會把每個
+                                               相鄰格子拆成獨立合成層，重繪時從中間漏出頁面白底；真正
+                                               有圓角時才需要這個抗鋸齒遮罩。 */
                                             ...(!nativeLayout && radius > 0 ? { WebkitMaskImage: '-webkit-radial-gradient(white, black)' } : null),
                                           }}
                                         >
@@ -17255,8 +17183,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           isSelected ? 'z-20' : ''
                                         }`}
                                         style={{
-                                          // One rounded clip only: a dark backing under the
-                                          // antialiased photo edge creates a visible dark rim.
+                                          // 只裁一次圓角：在反鋸齒的照片邊緣下面墊深色底，會看到一圈暗邊
                                           backgroundColor: 'transparent',
                                           // 這一格自己設了圓角就蓋掉佈局那根共用滑桿
                                           borderRadius: !layout.seamless && cell.imgRadius
@@ -17297,7 +17224,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             : <img src={pvCellSrc} alt="cell" style={photoStyle} />)}</div>;
                                         })()}
 
-                                        {/* Thin solid outline on top of the image */}
+                                        {/* 圖片上方的細實線外框 */}
                                         {isSelected && !chromeLayer && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (() => {
                                           /* 跟創意拼圖選中底圖同一款：1 螢幕像素的白色虛線（4／4），
                                              整條線畫在格子內側，不加陰影。 */
@@ -17311,7 +17238,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           );
                                         })()}
 
-                                        {/* Drag Over Highlight Overlay - Simplified with React state */}
+                                        {/* 拖到上方時的提示疊層（用 React state） */}
                                         {(() => {
                                           const isFloatSwapOver = swapOver?.kind === 'cell' && swapOver.idx === idx && swapOver.layoutId === layout.id;
                                           return (
@@ -17427,10 +17354,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 });
                               })()}
 
-                              {/* 空格子的分割线集中在同一个 SVG 中绘制。原本每格各画一圈
-                                  dashed border，相邻边会重叠成两个独立合成层；native zoom
-                                  时两层取整不同便会闪烁或有一层暂时消失。单一向量层共享
-                                  坐标，non-scaling-stroke 则让线宽不随预览放大缩小。 */}
+                              {/* 空格子的分割線集中在同一個 SVG 中繪製。原本每格各畫一圈
+                                  dashed border，相鄰邊會重疊成兩個獨立合成層；native zoom
+                                  時兩層取整不同便會閃爍或有一層暫時消失。單一向量層共享
+                                  座標，non-scaling-stroke 則讓線寬不隨預覽放大縮小。 */}
                               {!nativeInset && layout.images.some(cell => !cell || cell.url === '') && (() => {
                                 const emptyRects = pageActiveTemplate.rects.flatMap((rawRect, idx) => {
                                   const cell = layout.images[idx];
@@ -17445,10 +17372,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   const h = Math.max(0, rect.h * areaH - gap);
                                   return [{ idx, x, y, w, h }];
                                 });
-                                /* 所有矩形作为同一个 path 的子路径一次栅格化。即使横线与
-                                   竖线在交点相遇，也只会混合一次 alpha，不会叠成更白的点。 */
-                                // The outer perimeter is not a grid line. Shared
-                                // empty-cell edges are emitted once, not per cell.
+                                /* 所有矩形作為同一個 path 的子路徑一次點陣化。即使橫線與
+                                   豎線在交點相遇，也只會混合一次 alpha，不會疊成更白的點。 */
+                                // 最外圍不算格線。相鄰空格共用的邊只畫一次，不是每格各畫
                                 const d = emptyCellSeparators(pageActiveTemplate.rects.map(r=>resolveLayoutRect(r,lw-gap,lh-gap,layout.overlaySize)),layout.images.map(c=>!c?.url))
                                   .map(l=>`M${gap/2+l.x1*(lw-gap)} ${gap/2+l.y1*(lh-gap)}L${gap/2+l.x2*(lw-gap)} ${gap/2+l.y2*(lh-gap)}`).join(' ');
                                 const selectedEmpty = emptyRects.find(r =>
@@ -17710,8 +17636,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         scene={vectorScene}
                         sceneMotionFrame={sceneMotionFrame}
                         image={fImg}
-                        // Vector ink animates in the scene. Its invisible hit
-                        // wrapper must keep the stable logical object bounds.
+                        // 向量線條在場景裡動，它看不見的點擊範圍要維持固定的物件邏輯邊界
                         motionFrame={needsDomMotion(fImg)
                           ? frameForItem(fImg, fIdx, motionTime)
                           : null}
@@ -17869,7 +17794,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                所以要除掉預覽倍率；固定支點公式仍在下面，沒有搬整張圖。 */
                             const SNAP_THRESHOLD = 4 / Math.max(0.001, kRef.current || 1);
                             
-                            // Unsnapped position of the dragged corner
+                            // 被拖的那個角未吸附的位置
                             const rawCornerX = pivotContainerX + newScale * K_x;
                             const rawCornerY = pivotContainerY + newScale * K_y;
 
@@ -17885,8 +17810,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
                             if (enableSnapping) {
                               pageRects.forEach(pageRect => {
-                                // Vertical guidelines (left, right)
-                              // Left edge
+                                // 垂直參考線（左、右）
+                              // 左緣
                               const diffLeft = rawCornerX - pageRect.left;
                               if (Math.abs(diffLeft) < SNAP_THRESHOLD && Math.abs(diffLeft) < Math.abs(minDiffX)) {
                                 if (Math.abs(K_x) > 1e-5) {
@@ -17900,7 +17825,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 }
                               }
 
-                              // Right edge
+                              // 右緣
                               const diffRight = rawCornerX - pageRect.right;
                               if (Math.abs(diffRight) < SNAP_THRESHOLD && Math.abs(diffRight) < Math.abs(minDiffX)) {
                                 if (Math.abs(K_x) > 1e-5) {
@@ -17914,8 +17839,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 }
                               }
 
-                              // Horizontal guidelines (top, bottom)
-                              // Top edge
+                              // 水平參考線（上、下）
+                              // 上緣
                               const diffTop = rawCornerY - pageRect.top;
                               if (Math.abs(diffTop) < SNAP_THRESHOLD && Math.abs(diffTop) < Math.abs(minDiffY)) {
                                 if (Math.abs(K_y) > 1e-5) {
@@ -17929,7 +17854,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 }
                               }
 
-                              // Bottom edge
+                              // 下緣
                               const diffBottom = rawCornerY - pageRect.bottom;
                               if (Math.abs(diffBottom) < SNAP_THRESHOLD && Math.abs(diffBottom) < Math.abs(minDiffY)) {
                                 if (Math.abs(K_y) > 1e-5) {
@@ -17943,12 +17868,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 }
                               }
                             });
-                            } // End of first enableSnapping
+                            } // 第一段 enableSnapping 結束
 
-                            // Image-to-image edge snapping when scaling
+                            // 縮放時圖片之間的邊緣吸附
                             if (enableSnapping) {
                               floatingImages.forEach(other => {
-                                if (other.id === fImg.id) return; // Skip self
+                                if (other.id === fImg.id) return; // 跳過自己
 
                                 const otherW = other.width * other.scale;
                                 const otherH = other.height * other.scale;
@@ -17959,9 +17884,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const otherTop = otherCenterY - otherH / 2;
                               const otherBottom = otherCenterY + otherH / 2;
 
-                              // Check vertical alignment with otherLeft
-                              // If current corner is 'tr' or 'br' (Right edge), we align our Right edge to otherLeft.
-                              // To bleed, we want to align to otherLeft + 1. Otherwise, no bleed (just otherLeft).
+                              // 檢查跟 otherLeft 的垂直對齊：拖的是 'tr' 或 'br'（右緣）時，把右緣對到 otherLeft；
+                              // 要出血就對 otherLeft + 1，不然就是 otherLeft
                               const targetLeft = (corner === 'tr' || corner === 'br') ? (otherLeft + 1) : otherLeft;
                               const diffLeft = rawCornerX - targetLeft;
                               if (Math.abs(diffLeft) < SNAP_THRESHOLD && Math.abs(diffLeft) < Math.abs(minDiffX)) {
@@ -17971,14 +17895,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     minDiffX = diffLeft;
                                     bestScaleX = s;
                                     bestGuidelineX = otherLeft;
-                                    isPageBoundarySnapX = false; // prefer image snapping
+                                    isPageBoundarySnapX = false; // 圖片吸附優先
                                   }
                                 }
                               }
 
-                              // Check vertical alignment with otherRight
-                              // If current corner is 'tl' or 'bl' (Left edge), we align our Left edge to otherRight.
-                              // To bleed, we want to align to otherRight - 1. Otherwise, no bleed (just otherRight).
+                              // 檢查跟 otherRight 的垂直對齊：拖的是 'tl' 或 'bl'（左緣）時，把左緣對到 otherRight；
+                              // 要出血就對 otherRight - 1，不然就是 otherRight
                               const targetRight = (corner === 'tl' || corner === 'bl') ? (otherRight - 1) : otherRight;
                               const diffRight = rawCornerX - targetRight;
                               if (Math.abs(diffRight) < SNAP_THRESHOLD && Math.abs(diffRight) < Math.abs(minDiffX)) {
@@ -17988,14 +17911,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     minDiffX = diffRight;
                                     bestScaleX = s;
                                     bestGuidelineX = otherRight;
-                                    isPageBoundarySnapX = false; // prefer image snapping
+                                    isPageBoundarySnapX = false; // 圖片吸附優先
                                   }
                                 }
                               }
 
-                              // Check horizontal alignment with otherTop
-                              // If current corner is 'bl' or 'br' (Bottom edge), we align our Bottom edge to otherTop.
-                              // To bleed, we want to align to otherTop + 1. Otherwise, no bleed (just otherTop).
+                              // 檢查跟 otherTop 的水平對齊：拖的是 'bl' 或 'br'（下緣）時，把下緣對到 otherTop；
+                              // 要出血就對 otherTop + 1，不然就是 otherTop
                               const targetTop = (corner === 'bl' || corner === 'br') ? (otherTop + 1) : otherTop;
                               const diffTop = rawCornerY - targetTop;
                               if (Math.abs(diffTop) < SNAP_THRESHOLD && Math.abs(diffTop) < Math.abs(minDiffY)) {
@@ -18005,14 +17927,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     minDiffY = diffTop;
                                     bestScaleY = s;
                                     bestGuidelineY = otherTop;
-                                    isPageBoundarySnapY = false; // prefer image snapping
+                                    isPageBoundarySnapY = false; // 圖片吸附優先
                                   }
                                 }
                               }
 
-                              // Check horizontal alignment with otherBottom
-                              // If current corner is 'tl' or 'tr' (Top edge), we align our Top edge to otherBottom.
-                              // To bleed, we want to align to otherBottom - 1. Otherwise, no bleed (just otherBottom).
+                              // 檢查跟 otherBottom 的水平對齊：拖的是 'tl' 或 'tr'（上緣）時，把上緣對到 otherBottom；
+                              // 要出血就對 otherBottom - 1，不然就是 otherBottom
                               const targetBottom = (corner === 'tl' || corner === 'tr') ? (otherBottom - 1) : otherBottom;
                               const diffBottom = rawCornerY - targetBottom;
                               if (Math.abs(diffBottom) < SNAP_THRESHOLD && Math.abs(diffBottom) < Math.abs(minDiffY)) {
@@ -18022,14 +17943,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     minDiffY = diffBottom;
                                     bestScaleY = s;
                                     bestGuidelineY = otherBottom;
-                                    isPageBoundarySnapY = false; // prefer image snapping
+                                    isPageBoundarySnapY = false; // 圖片吸附優先
                                   }
                                 }
                               }
                             });
-                            } // End of if (enableSnapping)
+                            } // if (enableSnapping) 結束
 
-                            // Choose the stronger snap (the one with smaller diff)
+                            // 選吸得比較緊的那個（差距比較小的）
                             const snapX = bestGuidelineX !== null;
                             const snapY = bestGuidelineY !== null;
 
@@ -18063,7 +17984,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
                             // 吸附候選也不能繞過共用最小倍率。
                             finalScale = Math.max(floatingScaleFloor(fImg), finalScale);
-                            // Calculate the final (newX, newY) based on finalScale to keep pivot fixed
+                            // 用 finalScale 算最後的 (newX, newY)，讓支點不動
                             const R = (fImg.rotation * Math.PI) / 180;
                             const oppositeOffsetRotX = oppositeLocalX * Math.cos(R) - oppositeLocalY * Math.sin(R);
                             const oppositeOffsetRotY = oppositeLocalX * Math.sin(R) + oppositeLocalY * Math.cos(R);
@@ -18187,7 +18108,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       對齊狀態都沿用同一個 1px 螢幕線寬，避免跨過物件時因不同
                       合成表面取樣而看成另一條較細的線。
                     */}
-                    {/* Seam ink is painted once by the screen-density scene. */}
+                    {/* 接縫線條由螢幕密度的場景畫一次 */}
 
                     {selectedBrushId && (() => {
                       const stroke = brushStrokes.find(s => s.id === selectedBrushId);
@@ -18216,7 +18137,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         「從任何地方都能拖」的代價是畫布完全不能左右滑。已移除 ——
                         要移動圖片直接拖那張圖即可，點空白處仍然是取消選取。 */}
 
-                    {/* Alignment guides share the screen-density scene; no scaled DOM duplicate. */}
+                    {/* 對齊參考線共用螢幕密度的場景，不另外做一份縮放的 DOM */}
                   </div>
 
                 </div>
@@ -18230,13 +18151,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   ref={setChromeLayerNode}
                   className="absolute pointer-events-none"
                   style={{
-                    // Hide selection ink in the very first sorting frame. The
-                    // effect that clears selection runs later; a page-filling
-                    // photo's white selection stroke must not flash around the
-                    // page while the content starts its transition.
-                    // Descendants explicitly set visibility:visible, which
-                    // overrides an inherited hidden value. Remove this entire
-                    // UI paint subtree during the mode transition instead.
+                    // 排序的第一格就藏起選取線條。清選取的 effect 比較晚才跑，
+                    // 填滿頁面的照片的白色選取框不能在內容開始過渡時在頁面周圍閃一下。子元素明確設了 visibility:visible，
+                    // 會蓋過繼承的 hidden，所以模式過渡期間直接拿掉整個介面繪製的子樹
                     display: pagesMode || pagesVisual ? 'none' : undefined,
                     left: stripSubpixelXRef.current,
                     top: 0,
@@ -18248,7 +18165,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 />
                 </div>
 
-                {/* Plus Button to add more pages (Maximum 25 pages total, i.e., addedPagesCount < 24) */}
+                {/* 加頁面的加號按鈕（最多 25 頁，也就是 addedPagesCount < 24） */}
                 {addedPagesCount < 24 && (
                   <button
                     ref={addPageBtnRef}
@@ -18327,7 +18244,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         )}
       </div>
 
-      {/* Bottom Tabbed Controller */}
+      {/* 底部分頁控制區 */}
       {/* 高度所有分頁都一樣：切到圖片編輯時畫布不會突然變小。
           下限是編輯那組操作欄的實際高度（分頁列＋80＋96＋71），
           螢幕夠高就用 36dvh − 6px（分類列改成純文字、高度 44＋26，比舊的圖示列矮 6px）。 */}
@@ -18337,7 +18254,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         style={{ height: 'max(calc(36dvh - 6px), 304px)', visibility: igPreview ? 'hidden' : undefined }}
       >
         <div className="flex-1 flex flex-col h-full overflow-hidden">
-          {/* Tabs list */}
+          {/* 分頁列表 */}
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a] shrink-0 overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar">
             {['ratio', 'pages', 'add', 'adjust', 'color', 'motion'].map(id => {
               let iconEl = null;
@@ -18392,7 +18309,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             })}
           </div>
 
-          {/* Tabs Content */}
+          {/* 分頁內容 */}
           <div style={imageEditMode || textEditMode ? undefined : { '--pt': '16px', '--pb': '16px' } as React.CSSProperties} className={`flex-1 min-h-0 no-scrollbar ${imageEditMode ? '' : textEditMode ? 'px-4 py-0' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
 
             {activeTab === 'motion' && (() => {
@@ -18789,7 +18706,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       </p>
                     </div>
                   ) : (
-                    /* Adjustment sliders - top aligned, smooth and stable without layout jitter */
+                    /* 調整滑桿：靠上對齊、平順穩定、版面不抖動 */
                     <div className="w-full min-w-0 space-y-4">
                       {/* 這個佈局自己的比例。跟最左邊那一頁的「版型比例」是兩回事：
                           那邊調的是整張頁面，這裡只調選中的這一個佈局。
@@ -18850,7 +18767,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         </div>
                       </div>
 
-                      {/* Gap slider */}
+                      {/* 間距滑桿 */}
                       {isInsetLayout(activeLayout) ? <div className="space-y-1.5">
                         <div className="flex justify-between text-[11px] font-bold text-white/70"><span>大小</span><span className="font-mono text-white">{Math.round((Math.max(50, activeLayout?.overlaySize ?? 80) - 50) * 2)}</span></div>
                         <LiveRange ariaLabel="大小" min={0} max={100} step={1} value={(Math.max(50, activeLayout?.overlaySize ?? 80) - 50) * 2}
@@ -18877,7 +18794,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         return <>
                           <LayoutGeomSlider label="間距" field="gap" min={0} max={25} value={gap} previewId={activeLayout?.id}
                             live={liveGeom} onStart={clearCell} onValue={setGap} />
-                          {/* Radius slider */}
+                          {/* 圓角滑桿 */}
                           <LayoutGeomSlider label="圓角" field="radius" min={0} max={30} value={radius} previewId={activeLayout?.id}
                             live={liveGeom} onStart={clearCell} onValue={setRadius} />
                         </>;
@@ -19167,7 +19084,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         />
       )}
 
-      {/* Thumbnail following the finger while a free-standing image is long-press dragged */}
+      {/* 長按拖動浮動圖片時跟著手指的縮圖 */}
       {(floatDragPreloadSrc || floatDragSrc) && (
         <div
           id="float-drag-thumbnail"
@@ -19190,7 +19107,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         </div>
       )}
 
-      {/* Floating cell thumbnail following user's finger on mobile - Square design */}
+      {/* 手機上跟著手指的格子縮圖（方形） */}
       {cellDragPreview && (
         <div
           id="mobile-drag-floating-thumbnail"

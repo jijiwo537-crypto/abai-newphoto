@@ -6,7 +6,7 @@ import { processImageFile } from '../utils/imageLoader';
 
 interface GalleryOverlayProps {
   photos: string[];
-  /** Small previews; the grid never decodes full-resolution photos. */
+  /** 小預覽；格狀列表從不解碼原解析度的照片 */
   thumbs?: Record<string, string>;
   onClose: () => void;
   onDelete: (index: number) => void;

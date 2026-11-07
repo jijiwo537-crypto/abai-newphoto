@@ -64,7 +64,7 @@ const GLOW_CPU_IDS = ['soft', 'halation'];
 const FX_VERT = FX_VS;
 
 /** 最後一趟：把跑完特效的結果套上形狀遮罩、預乘 alpha，畫到畫面上。
-    ⚠ 遮罩要翻 y —— 特效那幾支用的頂點著色器不翻轉，跟下面 VERT 相反。 */
+    遮罩要翻 y —— 特效那幾支用的頂點著色器不翻轉，跟下面 VERT 相反。 */
 const FX_OUT_FS = `precision highp float;
 varying vec2 vUv;
 uniform sampler2D uTex;
@@ -179,7 +179,7 @@ export class VideoGl {
       const gl = canvas.getContext('webgl2', {
         alpha: true, premultipliedAlpha: false, antialias: false,
         depth: false, stencil: false,
-        /* ⚠ 一定要保留上一格。
+        /* 一定要保留上一格。
            關掉的話，只要有一次「合成器要畫這張畫布、但這一格還沒重畫」
            （React 剛換完樣式、頁面剛捲動、影片剛好沒吐新影格…），
            拿到的就是一塊空的緩衝區 —— 螢幕上看到的是整片黑。
@@ -557,7 +557,7 @@ export class VideoGl {
         this.canvas.width = W; this.canvas.height = H;
       }
       const c = this.crop;
-      /* ⚠ 著色器沒全部編好、或材質池配不出來，就**退回單趟那條路**
+      /* 著色器沒全部編好、或材質池配不出來，就**退回單趟那條路**
          （只有顏色，沒有特效）—— 畫面照樣有東西。
          以前是中途 return false，而那時候畫布已經被清空，
          看到的就是底色：那正是「第一次套特效閃黑一下」。 */

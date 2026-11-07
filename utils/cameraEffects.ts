@@ -28,7 +28,7 @@ vec3 lowfiColor(vec3 c,vec2 uv,vec2 res,float lum){
 vec2 lowfiShift(vec2 uv){vec2 d=uv-.5;return d*${param(lowfi,'fxLowfiAberration').toFixed(1)}*.00008*(.15+dot(d,d)*3.);}
 `;
 
-/** GPU-only sampled percentile: never synchronously read camera pixels to CPU. */
+/** 只在 GPU 上取樣百分位數：絕不同步把相機像素讀到 CPU */
 export const CAMERA_HIGHLIGHT_FS=`#version 300 es
 precision highp float;
 uniform sampler2D u_tex;

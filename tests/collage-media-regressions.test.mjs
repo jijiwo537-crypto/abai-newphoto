@@ -6,7 +6,7 @@ const grid = readFileSync(new URL('../components/GridLayoutTool.tsx', import.met
 const creative = readFileSync(new URL('../components/CollageTool.tsx', import.meta.url), 'utf8');
 
 test('classic media uses a shared affine preview transform, not per-child CSS zoom layout', () => {
-  const block = grid.slice(grid.indexOf('// CSS zoom relayouts every descendant'), grid.indexOf('// CSS zoom relayouts every descendant') + 650);
+  const block = grid.slice(grid.indexOf('// CSS zoom 會重排每個子元素'), grid.indexOf('// CSS zoom 會重排每個子元素') + 469);
   assert.match(block, /zoom = ''/);
   assert.match(grid,/col.style.transform=`translate\(\$\{x\}px, \$\{fraction.y\}px\) scale\(\$\{k\}\)`/);
   assert.match(grid,/stripLayoutFractionRef.current=\{x:m-layoutX,y:stripTopRef.current-layoutY\}/);

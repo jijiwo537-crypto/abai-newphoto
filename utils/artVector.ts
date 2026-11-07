@@ -1,7 +1,7 @@
 import {paintColorGlyphs} from './artGlyphGpu.ts';
 import {artCharacters,needsCellFitting,fitArtGlyph} from './artCharacters.ts';
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
-// Retain analytic paths and font outlines in the DOM, never a zoomed bitmap.
+// DOM 裡保留解析的路徑和字型外框，絕不用放大的點陣
 export class SVGContext{
  declare target:Element|null;declare cursor:number;declare parts:string[];declare path:string;declare stack:Partial<SVGContext>[];
  declare globalAlpha:number;declare strokeStyle:string;declare fillStyle:string;declare lineWidth:number;declare font:string;
@@ -24,9 +24,8 @@ let sampled=null;
 let samplingSource=null;
 function sourceForSampling(source){
  if(samplingSource?.source===source)return samplingSource.canvas;
- // Keep the original-resolution photo in a CPU-readable surface once. Density
- // changes no longer repeatedly decode/transfer the same image before readback.
- // This is an exact source copy, not a lower-resolution interaction preview.
+ // 原解析度的照片只放進 CPU 可讀的畫布一次，改密度時不必每次讀回前都重新解碼、傳輸同一張圖。
+ // 這是完全一樣的來源複本，不是較低解析度的互動預覽
  const canvas=document.createElement('canvas');canvas.width=source.width;canvas.height=source.height;
  const g=canvas.getContext('2d',{willReadFrequently:true});g.drawImage(source,0,0);g.getImageData(0,0,1,1);
  samplingSource={source,canvas};return canvas;
@@ -45,25 +44,22 @@ export function asciiLayout(source,o){
 }
 export function asciiVector(source,o){
  const {w,h,cols,cw,ch,lines,chars,cellFit}=asciiLayout(source,o);let out='';
- // One vector text run per row, even in original-color mode. The tiny sampling
- // map supplies only the fill color, not the glyph edges or their resolution.
- // Nearest-neighbor cells retain the same flat sample colors as individual glyphs.
+ // 每一行一段向量文字，原色模式也一樣。很小的取樣圖只提供填色，不決定字形邊緣或解析度；
+ // 最近鄰的格子保留跟單獨字形一樣的平面取樣色
  out=lines.map((line,y)=>line.text.trim()?`<text x="${cw*.11}" y="${(y+.5)*ch}" xml:space="preserve" textLength="${(cols-.22)*cw}" lengthAdjust="spacing" fill="#fff">${escape(line.text)}</text>`:'').join('');
  if(cellFit){const g=document.createElement('canvas').getContext('2d'),metrics=new Map(chars.map(c=>[c,fitArtGlyph(g,c,cw*1.3,cw*.82,ch*.82)]));out=lines.map((line,y)=>line.cells.map((c,x)=>{const m=metrics.get(c);return !m||!c.trim()?'':`<text x="${(x+.5)*cw+m.x}" y="${(y+.5)*ch+m.y}" font-size="${m.font}" dominant-baseline="alphabetic" fill="#fff">${escape(c)}</text>`;}).join('')).join('');}
- // clipPath children must be direct shapes/text, not a nested <g> (WebKit and
- // Chromium discard grouped clipping text). Inherit typography on the clip.
+ // clipPath 的子元素要直接是形狀或文字，不能包在 <g> 裡（WebKit 和 Chromium 會丟掉群組裡的裁切文字）。
+ // 字型設定由裁切本身繼承
  const glyphs=`<clipPath id="glyph-ink" font-family="monospace" font-size="${cw*1.3}" dominant-baseline="central" style="white-space:pre;font-kerning:none;font-variant-ligatures:none">${out}</clipPath>`;
  const glow=o.glow?`<defs><filter id="glyph-glow" x="-100%" y="-100%" width="300%" height="300%"><feGaussianBlur stdDeviation="${cw*.16}"/><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`:'';
- // Both white and colored glyphs share one analytic clipping layer. Individual
- // text paints needlessly re-rasterize each row in WebKit while sliders move.
+ // 白色和彩色字形共用一層解析的裁切。各自畫文字的話，滑桿在動時 WebKit 會白白重新點陣化每一行
  if(o.color&&!sampled.colors)sampled.colors=sampled.canvas.toDataURL('image/png');
  return `<defs>${glyphs}</defs>${glow}<g ${o.glow?'filter="url(#glyph-glow)"':''}>${o.color?`<image href="${sampled.colors}" width="${w}" height="${h}" preserveAspectRatio="none" style="image-rendering:pixelated" clip-path="url(#glyph-ink)"/>`:`<rect width="${w}" height="${h}" fill="white" clip-path="url(#glyph-ink)"/>`}</g>`;
 }
 let inkLayout;
 export function paintAsciiViewport(target,mask,source,o,rect,viewport,dpr,colored){
- // Rasterize the font outlines directly at the current screen pixel density,
- // never magnify an image-sized glyph bitmap. The backing is the visible
- // viewport, not a giant offscreen photo. Every zoom frame remains sharp.
+ // 直接用目前的螢幕像素密度點陣化字型外框，絕不放大圖片大小的字形點陣。暫存是看得到的 viewport，
+ // 不是巨大的離屏照片；每個縮放畫格都保持銳利
  const key=JSON.stringify([o.columns,o.characters,o.metric,o.low]);
  if(inkLayout?.source!==source||inkLayout.key!==key)inkLayout={source,key,layout:asciiLayout(source,o)};
  const {cw,ch,lines,colors,w,h,chars,cellFit}=inkLayout.layout;
