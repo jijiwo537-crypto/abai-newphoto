@@ -14740,16 +14740,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   /** 存成圖片時用完就放掉（見 drawPageLayout 的 release） */
   const dropExportImage = (url: string) => { exportImgCache.current.delete(url); };
+  /* 還在讀的那幾張也記著：「先讀下一張」跟「真的要畫時」拿到的是同一次讀取，不會讀兩遍 */
+  const exportImgPending = useRef(new Map<string, Promise<HTMLImageElement | null>>());
   const loadExportImage = (url: string) => {
     const cache = exportImgCache.current;
     if (cache.has(url)) return Promise.resolve(cache.get(url)!);
-    return new Promise<HTMLImageElement | null>((resolve) => {
+    const pending = exportImgPending.current.get(url);
+    if (pending) return pending;
+    const p = new Promise<HTMLImageElement | null>((resolve) => {
       const i = new Image();
-      i.onload = () => { cache.set(url, i); resolve(i); };
-      i.onerror = () => { cache.set(url, null); resolve(null); };
+      i.onload = () => { exportImgPending.current.delete(url); cache.set(url, i); resolve(i); };
+      i.onerror = () => { exportImgPending.current.delete(url); cache.set(url, null); resolve(null); };
       i.src = url;
     });
+    exportImgPending.current.set(url, p);
+    return p;
   };
+  /** 存檔時「畫這一張的同時先讀下一張」：只是先開始讀，不等它 */
+  const prefetchExportImage = (url?: string) => { if (url) void loadExportImage(url); };
 
   /**
    * 匯出時把文字圖層畫上去。字級、字距、行高、換行規則都跟預覽同一套，
@@ -15636,6 +15644,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
           for (const [idx, rawRect] of pageActiveTemplate.rects.entries()) {
             const cell = layout.images[idx];
+            /* 畫這一格的同時先讀下一格（同一時間最多兩張原圖）：存檔速度接近以前一次全讀，記憶體只多一張 */
+            if (release) prefetchExportImage(layout.images.slice(idx + 1).find(c => c?.url)?.url);
             const img = cell?.url ? await loadExportImage(cell.url) : null;
             try {
 
@@ -15751,6 +15761,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         isVideo?: boolean; src?: string; motionItem?: FloatingImage;
         /** 設了動畫的佈局（整組當成一張圖片動） */
         layoutMotion?: LayoutItem;
+        /** 這一層要畫的第一張原圖（存檔時先讀，見 prefetchExportImage） */
+        firstUrl?: string;
         /* live 只有影片那條「一秒要畫三十次」的路會傳（見 LiveDraw） */
         run: (c: CanvasRenderingContext2D, live?: LiveDraw, motionAt?: number) => Promise<void>;
       }[] = [];
@@ -15768,6 +15780,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             minX: left,
             maxX: left + lbw,
             layoutMotion: layoutHasMotion(lay) ? lay : undefined,
+            firstUrl: lay.images.find(c => c.url)?.url,
             run: async (c, _live, motionAt) => {
               const f = motionAt !== undefined && layoutHasMotion(lay) ? layoutMotionFrame(lay, motionAt) : null;
               if (!f) return drawPageLayout(c, pageIdx, lay, motionAt === undefined);
@@ -15840,6 +15853,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           maxX: cx + half,
           isVideo: !!fImg.isVideo,
           src: fImg.src,
+          // 文字、圖形沒有原圖；影片不先讀
+          firstUrl: fImg.isVideo || fImg.text !== undefined || fImg.shape ? undefined : fImg.src,
           motionItem: fImg,
           /* 裁在自己那一頁裡面。貼齊畫布邊緣時圖層會刻意往外多蓋半個像素
              （不然預覽會露出一條抗鋸齒的白縫），預覽有 overflow:hidden 擋著，
@@ -16177,8 +16192,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
         ctx.save();
         ctx.translate(-pageLeft, 0);
-        for (const job of drawJobs) {
-          if (job.maxX <= pageLeft || job.minX >= pageLeft + targetW) continue;
+        const onPage = drawJobs.filter(job => !(job.maxX <= pageLeft || job.minX >= pageLeft + targetW));
+        for (const [n, job] of onPage.entries()) {
+          // 畫這一層的同時先讀下一層的第一張原圖（見 prefetchExportImage）
+          prefetchExportImage(onPage[n + 1]?.firstUrl);
           await job.run(ctx);
         }
         ctx.restore();
