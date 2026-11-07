@@ -3412,24 +3412,26 @@ const cardSrc = !panelIsVideo ? img.src
   : knownPoster || (madePoster?.url === videoUrl ? madePoster.poster : BLANK_CARD_SRC);
 useEffect(()=>{
   let cancelled=false;
-  // 卡片縮圖很小：用預覽小副本就夠了（見 utils/previewCopies）
-  const source=getPreviewImg(previewSrc(cardSrc,0));
-  const prime=()=>{if(cancelled||!source.naturalWidth)return;
+  // 卡片縮圖很小：用預覽小副本就夠了（見 utils/previewCopies）；卡片小圖已經做好就連讀都不讀
+  const key0=previewSrc(cardSrc,0),cutOf=()=>cardSourceThumbCache.get(key0);
+  const source=cutOf()?null:getPreviewImg(key0);
+  const prime=()=>{if(cancelled||(!cutOf()&&!source?.naturalWidth))return;
     for(const [id] of FX_ROOT_TOOLS){
       /* 柔光ll 第一次要編譯十幾段顯示卡程式（其他特效一張只要零點零幾秒）：不先備，
          等真的打開特效頁、卡片出現時才算，不會在使用者拖別的滑桿時突然卡住 */
       if(id==='fxExposureSpill')continue;
       const key=`${cardSrc}|fx:${id}`;
       if(cardThumbCache.has(key))continue;
-      void queueCardThumb(()=>{if(cardThumbCache.has(key))return;const thumb=makeCardThumb(source,effectPreset(id,FX_DEFS) as PhotoFx);if(thumb)putCardThumb(key,thumb);},()=>cancelled);
+      void queueCardThumb(()=>{if(cardThumbCache.has(key))return;const preset=effectPreset(id,FX_DEFS) as PhotoFx,cut=cutOf();
+        const thumb=cut?applyPhotoFx(cut,CARD_W*CARD_DPR,CARD_H*CARD_DPR,preset):source?makeCardThumb(source,preset):null;if(thumb)putCardThumb(key,thumb);},()=>cancelled);
     }
   };
   /* 特效卡片的縮圖是「先備著」的（打開特效頁時卡片自己會算）：進編輯頁之後等 2.5 秒再開始。
      有幾張特效第一次要編譯很多段顯示卡程式（柔光ll 一張就要編十幾段），一開編輯頁就算的話，
      常常剛好撞上使用者第一下拖濾鏡、調節滑桿 —— 那就是「剛開始預覽一卡一卡、過一陣子就好」 */
-  const start=()=>{if(source.complete)prime();else source.addEventListener('load',prime,{once:true});};
+  const start=()=>{if(!source||source.complete)prime();else source.addEventListener('load',prime,{once:true});};
   const t=window.setTimeout(start,2500);
-  return()=>{cancelled=true;clearTimeout(t);source.removeEventListener('load',prime);};
+  return()=>{cancelled=true;clearTimeout(t);source?.removeEventListener('load',prime);};
 },[cardSrc]);
 
 /* ── 兩段式的那幾顆（形狀／描邊／發光）按下去要立刻有反應 ──────────────
@@ -4822,16 +4824,20 @@ const cardSourceThumbCache=new Map<string,HTMLCanvasElement>();
 const CardSourceThumb:React.FC<{src:string}>=({src})=>{
   const ref=useRef<HTMLCanvasElement|null>(null);
   useLayoutEffect(()=>{
-    let dead=false;const img=getPreviewImg(previewSrc(src,0));
+    /* 卡片的底圖跟縮圖共用同一份小圖（見 makeCardThumb）：已經有了就直接畫，不再去讀原圖 */
+    const key=previewSrc(src,0),ready=cardSourceThumbCache.get(key);
+    if(ready){ref.current?.getContext('2d')!.drawImage(ready,0,0);return;}
+    let dead=false;const img=getPreviewImg(key);
     const paint=()=>{
       if(dead||!ref.current||!img.naturalWidth)return;
-      let base=cardSourceThumbCache.get(src);
+      let base=cardSourceThumbCache.get(key);
       if(!base){
         base=document.createElement('canvas');base.width=CARD_W*CARD_DPR;base.height=CARD_H*CARD_DPR;
         const scale=Math.max(base.width/img.naturalWidth,base.height/img.naturalHeight);
         base.getContext('2d')!.drawImage(img,(base.width-img.naturalWidth*scale)/2,(base.height-img.naturalHeight*scale)/2,img.naturalWidth*scale,img.naturalHeight*scale);
         if(cardSourceThumbCache.size>=20){const key=cardSourceThumbCache.keys().next().value!;const old=cardSourceThumbCache.get(key)!;old.width=old.height=1;cardSourceThumbCache.delete(key);}
-        cardSourceThumbCache.set(src,base);
+        cardSourceThumbCache.set(key,base);
+        dropBigPreviewImg(img);
       }
       ref.current.getContext('2d')!.drawImage(base,0,0);
     };
@@ -4864,6 +4870,7 @@ const makeCardThumb = (img: HTMLImageElement, fx: PhotoFx): HTMLCanvasElement | 
     cut.getContext('2d')!.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);
     if(cardSourceThumbCache.size>=20){const key=cardSourceThumbCache.keys().next().value!;const old=cardSourceThumbCache.get(key)!;old.width=old.height=1;cardSourceThumbCache.delete(key);}
     cardSourceThumbCache.set(img.src,cut);
+    dropBigPreviewImg(img);
   }
   return applyPhotoFx(cut, w, h, fx);
 };
@@ -4899,14 +4906,20 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
       if (dead || !cvs) return;
       let thumb = cardThumbCache.get(cacheKey);
       if (!thumb) {
-        const img = getPreviewImg(previewSrc(src, 0));
-        if (!img.complete || !img.naturalWidth) {
-          const ready = () => { if (!dead) paint(); };
-          img.addEventListener('load', ready, { once: true });
-          if (img.decode) img.decode().then(ready).catch(() => {});
-          return;
+        /* 這張照片的卡片小圖已經做好了就直接拿它套效果，不必再把原圖讀進來 */
+        const cut0 = cardSourceThumbCache.get(previewSrc(src, 0));
+        let made: HTMLCanvasElement | null;
+        if (cut0) made = applyPhotoFx(cut0, CARD_W * CARD_DPR, CARD_H * CARD_DPR, fx);
+        else {
+          const img = getPreviewImg(previewSrc(src, 0));
+          if (!img.complete || !img.naturalWidth) {
+            const ready = () => { if (!dead) paint(); };
+            img.addEventListener('load', ready, { once: true });
+            if (img.decode) img.decode().then(ready).catch(() => {});
+            return;
+          }
+          made = makeCardThumb(img, fx);
         }
-        const made = makeCardThumb(img, fx);
         if (!made || !made.width || !made.height) return;
         putCardThumb(cacheKey,made);
         thumb = made;
@@ -4957,6 +4970,12 @@ const CellFxImage: React.FC<{id:string;url:string;fx:PhotoFx;style:React.CSSProp
   return <div ref={host} style={style}/>;
 };
 
+/** 卡片縮圖做好了：大張的來源（原圖）就不必留在快取裡了。卡片才幾十個點寬，以前每張照片的原圖
+    為了做卡片一直解開著（一張 1200 萬像素約 48MB），編輯幾張照片之後就把記憶體吃光。
+    還有人在用的那個元素不受影響（只是這裡不再替它留著） */
+const dropBigPreviewImg = (img: HTMLImageElement) => {
+  if (img.naturalWidth * img.naturalHeight > 4_000_000 && previewImgCache.get(img.src) === img) previewImgCache.delete(img.src);
+};
 const getPreviewImg = (src: string) => {
   let el = previewImgCache.get(src);
   if (!el) {
@@ -14707,6 +14726,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     setTimeout(on, 3000);
   });
 
+  /** 存成圖片時用完就放掉（見 drawPageLayout 的 release） */
+  const dropExportImage = (url: string) => { exportImgCache.current.delete(url); };
   const loadExportImage = (url: string) => {
     const cache = exportImgCache.current;
     if (cache.has(url)) return Promise.resolve(cache.get(url)!);
@@ -15052,6 +15073,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     scaleFactor: number,
     live?: LiveDraw,
     motionFrame?: ObjectMotionFrame | null,
+    /** 存成圖片：每張畫完就把原圖放掉（錄影片時每一格都要重畫，不能放） */
+    release = false,
   ) => {
     /* 逐帧合成時，中間畫布只算到「這一格真的會被看到的大小」，
        而且整輪共用同一批畫布（見 LiveDraw 的說明）。 */
@@ -15342,6 +15365,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.drawImage(src, -drawW / 2, -drawH / 2, drawW, drawH);
       ctx.restore();
       if (frame) ctx.restore();
+      /* 存成圖片（不是逐格錄影片、也不是一直在重畫的即時預覽）：畫完就把這張原圖放掉，
+         同一時間只解開一張。以前 20 幾張圖層的原圖會在存檔時全部同時解開（實測將近 1.5GB） */
+      if (release && !live && !fImg.isVideo && fImg.src) dropExportImage(fImg.src);
     }
   };
 
@@ -15555,7 +15581,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
       // 每個物件仍然用「整條頁面帶」的座標計算，畫的時候再把畫布平移到該頁，
       // 所以被拖到隔壁頁的東西一樣會正確接續過去。
-      const drawPageLayout = async (ctx: CanvasRenderingContext2D, pageIdx: number, layout: LayoutItem) => {
+      /* release＝存成圖片（不是逐格錄影片）：每一格畫完就把那張原圖放掉，同一時間只解開一張原圖。
+         以前整次匯出的原圖全部留在快取裡、而且永遠不清 —— 20 幾張照片就是將近 1GB，iPhone 存檔時閃退 */
+      const drawPageLayout = async (ctx: CanvasRenderingContext2D, pageIdx: number, layout: LayoutItem, release = false) => {
         const pageOffsetX = pageIdx * targetW;
         {
           const gap = isInsetLayout(layout) ? 0 : layout.gap;
@@ -15579,22 +15607,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const pageTemplates = TEMPLATE_MAP[layout.images.length] || [];
           const pageActiveTemplate = pageTemplates[layout.templateIndex] || pageTemplates[0] || { name: '預設', rects: [] };
 
-          // Load images for this specific page
-          const imageLoaders = layout.images.map(cell => cell.url ? loadExportImage(cell.url) : Promise.resolve(null));
+          // 無縫的那種要整組一起合成，照舊一次讀齊；一般佈局改成一格一格讀（見下面的迴圈）
+          const seamlessHere = !!layout.seamless && !isInsetLayout(layout);
+          const loadedImages = seamlessHere
+            ? await Promise.all(layout.images.map(cell => cell.url ? loadExportImage(cell.url) : Promise.resolve(null)))
+            : [];
 
-          const loadedImages = await Promise.all(imageLoaders);
-
-          if (layout.seamless && !isInsetLayout(layout)) {
+          if (seamlessHere) {
             const box = layoutBox(layout, targetW, targetH);
             const merged = await renderSeamlessLayout(layout.images, pageActiveTemplate.rects.map(r => resolveLayoutRect(r, box.w, box.h, layout.overlaySize)), box.w, box.h, layout.seamlessAmount ?? 0, lutRevision);
             ctx.drawImage(merged, pageOffsetX + (targetW-box.w)/2, (targetH-box.h)/2, box.w, box.h);
             ctx.restore();
+            if (release) layout.images.forEach(cell => { if (cell.url) dropExportImage(cell.url); });
             return;
           }
 
-          pageActiveTemplate.rects.forEach((rawRect, idx) => {
+          for (const [idx, rawRect] of pageActiveTemplate.rects.entries()) {
             const cell = layout.images[idx];
-            const img = loadedImages[idx];
+            const img = cell?.url ? await loadExportImage(cell.url) : null;
+            try {
 
             // Base cell coordinates with pixel snapping to prevent gaps (shifted by pageOffsetX)
             // 與預覽同一套幾何：整體內縮半個間距，格子再各留半個 padding
@@ -15623,7 +15654,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const iw = bw - canvasGap;
             const ih = bh - canvasGap;
 
-            if (iw <= 0 || ih <= 0) return;
+            if (iw <= 0 || ih <= 0) continue;
 
             /* 這一格自己設了圓角就蓋掉佈局那根共用滑桿（跟預覽同一套） */
             const cellRadius = cell?.imgRadius
@@ -15642,7 +15673,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             ctx.fill();
             ctx.restore();
 
-            if (!cell || !img) return;
+            if (!cell || !img) continue;
 
             // Draw image inside clipping path
             ctx.save();
@@ -15655,17 +15686,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             ctx.clip();
             ctx.globalAlpha *= (cell.opacity ?? 100) / 100;
 
-            /* 套了濾鏡／調節／特效就先算出處理過的那一張，再照原本的
-               裁切與縮放畫上去 —— 跟預覽用的是同一支 applyPhotoFx。 */
-            const src: CanvasImageSource = hasPhotoFx(cell.fx)
-              ? applyPhotoFx(
-                  img,
-                  Math.max(1, Math.round((img.naturalWidth || img.width))),
-                  Math.max(1, Math.round((img.naturalHeight || img.height))),
-                  cell.fx!,
-                )
-              : img;
-
             const imgW = img.naturalWidth || img.width;
             const imgH = img.naturalHeight || img.height;
 
@@ -15677,6 +15697,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const slotW = rect.w * areaW, slotH = rect.h * areaH;
             const place = cellPhotoPlacement(slotW, slotH, imgW, imgH, cell);
             const finalScale = place.scale;
+
+            /* 套了濾鏡／調節／特效就先算出處理過的那一張，再照原本的裁切與縮放畫上去 —— 跟預覽同一支 applyPhotoFx。
+               算的大小＝這張照片在成品裡實際畫出來的像素（跟創意拼圖的匯出同一個原則），不超過原圖：
+               以前一律用原圖全尺寸（1200 萬像素）算，套柔光之類的特效時顯示卡要開好幾張同樣大的暫存，
+               編輯過幾張再存檔就把記憶體撐爆。成品裡多出來的像素本來就會被縮掉，畫質不變 */
+            const outK = Math.min(1, finalScale * Math.abs(ltScale || 1));
+            const src: CanvasImageSource = hasPhotoFx(cell.fx)
+              ? applyPhotoFx(
+                  img,
+                  Math.max(1, Math.ceil(imgW * outK)),
+                  Math.max(1, Math.ceil(imgH * outK)),
+                  cell.fx!,
+                )
+              : img;
             const centerX = boxX + inset + (rect.x + rect.w / 2) * areaW;
             const centerY = boxY + inset + (rect.y + rect.h / 2) * areaH;
 
@@ -15692,7 +15726,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             ctx.scale(finalScale, finalScale);
             ctx.drawImage(src, -imgW / 2, -imgH / 2, imgW, imgH);
             ctx.restore();
-          });
+            } finally { if (release && cell?.url) dropExportImage(cell.url); }
+          }
           ctx.restore();
         }
       };
@@ -15723,7 +15758,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             layoutMotion: layoutHasMotion(lay) ? lay : undefined,
             run: async (c, _live, motionAt) => {
               const f = motionAt !== undefined && layoutHasMotion(lay) ? layoutMotionFrame(lay, motionAt) : null;
-              if (!f) return drawPageLayout(c, pageIdx, lay);
+              if (!f) return drawPageLayout(c, pageIdx, lay, motionAt === undefined);
               if (f.gridWave !== undefined && (f.waveMix ?? 1) > 1e-5) {
                 /* 波浪：先把整組佈局畫進一張有安全邊界的離屏畫布，再用跟圖片相同的
                    直條正弦位移貼回來（見下面浮動圖片的波浪）。 */
@@ -15827,7 +15862,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const frame = motionAt === undefined || !hasConfiguredMotion(fImg)
                 ? null
                 : frameForItem(fImg, i, motionAt);
-              await drawFloatingLayers(c, [fImg], scaleFactor, live, frame);
+              await drawFloatingLayers(c, [fImg], scaleFactor, live, frame, motionAt === undefined);
             } finally {
               c.restore();
             }
@@ -16166,6 +16201,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (cancelled()) return;
       alert('存檔失敗，請重試');
       setExportState('idle');
+    } finally {
+      /* 這次匯出讀進來的原圖全部放掉（一直開著的即時預覽畫布還要用，那種才留著）。
+         以前這個快取從來不清：匯出過一次之後，每一張原圖都永遠留在記憶體裡 */
+      if (!live) exportImgCache.current.clear();
     }
   };
 

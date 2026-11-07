@@ -14,8 +14,8 @@ test('base FX paints live, commits on release, and retains its full-resolution p
  assert.match(collage,/fxCanvasOf\(\{\.\.\.p,id:`region-fx-\$\{i\}@\$\{p.src\}`,img:original\}, isMain/);
  assert.match(collage,/if \(isMain && regionPhoto\) \{[\s\S]{0,700}cap=regionEffectCapacity\(o,slot,[^\n]*onScreenPx\)/);
  assert.match(collage,/const cap=photoPreviewCapacity\(required,/);
- // 容量只增不減；下限改成 min(原圖, 2048)（原本整張原圖大小，多張照片時 iOS 會記憶體爆掉）
- assert.match(collage,/Math.max\(regionPreviewCaps.current.get\(id\)\|\|0,Math.min\(sourceSize,2048\)\)/);
+ // 容量只增不減；工作尺寸＝畫面需要的 1.5 倍、下限 1024（以前一律至少 2048，多張照片反覆編輯時 iOS 記憶體爆掉）
+ assert.match(collage,/required\*=1\.5;\s*const cap=photoPreviewCapacity\(required,regionPreviewCaps\.current\.get\(id\)\|\|0,sourceSize,1024\)/);
  assert.match(collage,/const live = isMain && !regionPhoto/);
  assert.match(collage,/isolateFxUpdates=\{regionEditing\|\|liveObjFx\}/);
  assert.match(collage,/onAdjustmentCommit=\{regionEditing \? finishRegionEdit : liveObjFx \? commitObjFxLive : undefined\}/);

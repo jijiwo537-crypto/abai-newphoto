@@ -235,7 +235,7 @@ const MAX_PREVIEW_PIXELS = 56_000_000;
 const SUPERSAMPLE = 1.8;
 /* 照片一開始做多大（長邊，見 utils/photoTiers）。之後依實際需要（成品＋預覽放大）自動換更清楚的：
    單張當底＝成品長邊上限（12MP 的 4032 原圖不動）；多張排版的每一格與浮動物件用不到那麼大。 */
-const TIER_SINGLE_START = 4096, TIER_MULTI_START = 2560, TIER_OBJECT_START = 2048;
+const TIER_SINGLE_START = 4096, TIER_MULTI_START = 2048, TIER_OBJECT_START = 2048;
 /**
  * 「等畫面真的畫出來、而且瀏覽器有空了再做」。
  *
@@ -1751,7 +1751,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Floor 2048 (was 4096 = ~50MB per edited photo, all resident at once,
     // which crashed iOS with several edited photos). It still grows to the
     // physical display demand when the view is zoomed in.
-    const cap=photoPreviewCapacity(required,Math.max(regionPreviewCaps.current.get(id)||0,Math.min(sourceSize,2048)),sourceSize);
+    /* 特效的工作尺寸＝畫面上實際需要的 1.5 倍（至少 1024）：多留的那一截讓雙指縮放時不必一直重算；
+       放得比這更大時照樣會長上去（容量只增不減，存檔另外用成品需要的解析度算）。
+       以前一律至少 2048 —— 6 格排版裡一格在畫面上才 500 多像素，每張編輯過的照片
+       光暫存就多佔十幾 MB，反覆編輯幾張照片之後 iPhone 會因為記憶體不夠把網頁關掉 */
+    required*=1.5;
+    const cap=photoPreviewCapacity(required,regionPreviewCaps.current.get(id)||0,sourceSize,1024);
     regionPreviewCaps.current.set(id,cap);return cap;
   };
   /** Export-sized effect pixels are one-shot; release them after an export. */
@@ -10368,7 +10373,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       try {
         // 照片的細節先補到成品需要的程度（見 utils/photoTiers），存出來才跟原圖一樣清楚
         /* 有換上新的那張的話等兩格：物件身上的照片是 React 的狀態，要等它真的換好，下面才畫得到新的 */
-        if (await ensureTiersRef.current(exportScaleNow(), true)) await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        /* 存檔多要 25%：照片要再縮一次才畫進成品，來源只比成品大一點點的話，兩次縮小會讓細節略軟
+           （實測少約 6% 的銳利度）。多留這一截，成品就跟用大張原圖畫的一樣清楚 */
+        if (await ensureTiersRef.current(exportScaleNow() * 1.25, true)) await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         const { originalW, originalH, baseW, baseH } = imageState;
         
         // 1. Calculate the collage total size at original resolution

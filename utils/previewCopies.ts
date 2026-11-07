@@ -11,9 +11,13 @@
 import { useEffect, useState } from 'react';
 import { get2dWide } from './colorSpace';
 
-export const PREVIEW_LONG = 2048;
+/* 兩級小副本：一般大小的圖層（例如一頁放二十幾張）只要 1024，拉大才做 2048，再大才用原圖。
+   一頁二十幾張的時候，只用一級 2048 的話預覽光照片就要兩百多 MB */
+export const PREVIEW_LONG = 1024;
+export const PREVIEW_MID = 2048;
 
-interface Entry { small: string | null; smallLong: number; long: number; orig: HTMLImageElement | null; origReady: boolean; origLoading: boolean }
+interface Entry { small: string | null; smallLong: number; long: number; orig: HTMLImageElement | null; origReady: boolean; origLoading: boolean;
+  mid: string | null; midLong: number; midLoading: boolean; type: string }
 const copies = new Map<string, Entry>();
 const pending = new Map<string, Promise<void>>();
 let version = 0;
@@ -32,6 +36,22 @@ export const previewZoom = () => viewZoom;
 const loadImg = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
   const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('load')); im.src = src;
 });
+/** 原圖縮成長邊 target 的一份（高品質縮小、廣色域照片維持廣色域、有透明的維持透明），回傳網址 */
+async function shrink(im: HTMLImageElement, target: number, type: string): Promise<string> {
+  const w = im.naturalWidth, h = im.naturalHeight, k = target / Math.max(w, h);
+  const cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
+  const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+  try {
+    const g = get2dWide(c); if (!g) throw new Error('no 2d');
+    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(im, 0, 0, cw, ch);
+    const alpha = /png|webp|gif|avif/i.test(type);
+    const blob = await new Promise<Blob | null>(r => c.toBlob(r, alpha ? 'image/png' : 'image/jpeg', alpha ? undefined : 0.95));
+    if (!blob) throw new Error('encode');
+    const u = URL.createObjectURL(blob);
+    const s = await loadImg(u); try { await s.decode?.(); } catch { /* ok */ }
+    return u;
+  } finally { c.width = c.height = 0; }
+}
 
 /** 導入照片時呼叫（等它做完再放進畫面）：原圖比 PREVIEW_LONG 大就做一份小副本 */
 export function ensurePreviewCopy(url: string, type = ''): Promise<void> {
@@ -42,7 +62,7 @@ export function ensurePreviewCopy(url: string, type = ''): Promise<void> {
     try {
       const im = await loadImg(url);
       const w = im.naturalWidth, h = im.naturalHeight, long = Math.max(w, h);
-      if (!long || long <= PREVIEW_LONG * 1.15) { copies.set(url, { small: null, smallLong: long, long, orig: im, origReady: true, origLoading: false }); return; }
+      if (!long || long <= PREVIEW_LONG * 1.15) { copies.set(url, { small: null, smallLong: long, long, orig: im, origReady: true, origLoading: false, mid: null, midLong: 0, midLoading: false, type }); return; }
       const k = PREVIEW_LONG / long, cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
       const c = document.createElement('canvas'); c.width = cw; c.height = ch;
       try {
@@ -53,10 +73,10 @@ export function ensurePreviewCopy(url: string, type = ''): Promise<void> {
         if (!blob) throw new Error('encode');
         const small = URL.createObjectURL(blob);
         const s = await loadImg(small); try { await s.decode?.(); } catch { /* ok */ }
-        copies.set(url, { small, smallLong: PREVIEW_LONG, long, orig: null, origReady: false, origLoading: false });
+        copies.set(url, { small, smallLong: PREVIEW_LONG, long, orig: null, origReady: false, origLoading: false, mid: null, midLong: 0, midLoading: false, type });
       } finally { c.width = c.height = 0; }
     } catch {
-      copies.set(url, { small: null, smallLong: 0, long: 0, orig: null, origReady: true, origLoading: false });
+      copies.set(url, { small: null, smallLong: 0, long: 0, orig: null, origReady: true, origLoading: false, mid: null, midLong: 0, midLoading: false, type });
     } finally { pending.delete(url); }
     bump();
   })();
@@ -72,6 +92,16 @@ export function previewSrc(url: string, need = 0): string {
   const e = url ? copies.get(url) : undefined;
   if (!e || !e.small) return url;
   if (need <= e.smallLong * 0.98) return e.small;
+  // 中間那一級：原圖比 2048 大很多才值得做
+  if (e.long > PREVIEW_MID * 1.15 && need <= PREVIEW_MID * 0.98) {
+    if (e.mid) return e.mid;
+    if (!e.midLoading) {
+      e.midLoading = true;
+      loadImg(url).then(im => shrink(im, PREVIEW_MID, e.type)).then(u => { if (copies.get(url) === e) { e.mid = u; e.midLong = PREVIEW_MID; bump(); } else URL.revokeObjectURL(u); })
+        .catch(() => { e.midLoading = false; });
+    }
+    return e.small;
+  }
   if (e.origReady) return url;
   if (!e.origLoading) {
     e.origLoading = true;
@@ -92,6 +122,6 @@ export const subscribePreviewCopies = (f: (v: number) => void) => { subs.add(f);
 
 /** 離開跨頁拼圖時收掉小副本 */
 export function forgetPreviewCopies() {
-  for (const e of copies.values()) if (e.small) URL.revokeObjectURL(e.small);
+  for (const e of copies.values()) { if (e.small) URL.revokeObjectURL(e.small); if (e.mid) URL.revokeObjectURL(e.mid); }
   copies.clear(); pending.clear(); viewZoom = 1;
 }
