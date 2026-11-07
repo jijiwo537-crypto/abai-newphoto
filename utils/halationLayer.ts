@@ -1,4 +1,4 @@
-import {blurAlpha} from './alphaBoxBlur.js';
+import {blurAlpha} from './alphaBoxBlur';
 import {highlightHistogram,selectHighlights} from './highlightSelection';
 import {composeFxScene,disposeFxScene,invalidateFxSurface,type FxScene} from './glEffects';
 import {uniformLocation} from './uniformLocation';

@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {highlightHistogram,selectHighlights,highlightWeight} from '../utils/highlightSelection.js';
-import {mosaicGrid,rankCandidates,scopedCandidates} from '../utils/artSampling.js';
-import {fineSliderValue} from '../utils/sliderPrecision.js';
-import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues.js';
-import {trackingDefaults} from '../utils/artTracking.js';
+import {highlightHistogram,selectHighlights,highlightWeight} from '../utils/highlightSelection.ts';
+import {mosaicGrid,rankCandidates,scopedCandidates} from '../utils/artSampling.ts';
+import {fineSliderValue} from '../utils/sliderPrecision.ts';
+import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues.ts';
+import {trackingDefaults} from '../utils/artTracking.ts';
 import {readFileSync} from 'node:fs';
 test('both soft lights select the requested brightest fraction, including dim and tied photos',()=>{
  for(const values of [Array.from({length:256},(_,i)=>i),Array.from({length:256},(_,i)=>Math.floor(i/8)),Array(256).fill(12),Array.from({length:256},(_,i)=>225+Math.floor(i/9))]){

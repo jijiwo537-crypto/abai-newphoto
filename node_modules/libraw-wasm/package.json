@@ -1,0 +1,41 @@
+{
+	"name": "libraw-wasm",
+	"version": "1.6.0",
+	"description": "LibRaw WASM bindings to be able to use it in the browser.",
+	"main": "dist/index.js",
+	"type": "module",
+	"types": "dist/index.d.ts",
+	"directories": {
+		"lib": "lib"
+	},
+	"scripts": {
+		"example": "python -m http.server 9000",
+		"build": "node build.js",
+		"compile": "bash compileLibraw.sh",
+		"test": "node test/worker-reply-routing.test.mjs",
+		"test:integration": "node test/integration/decode.test.mjs"
+	},
+	"files": [
+		"dist/*"
+	],
+	"author": "ybouane",
+	"contributors": [
+		"BeseBarni",
+		"lexluthor0304",
+		"gwennlbh",
+		"hrueger"
+	],
+	"license": "ISC",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ybouane/LibRaw-Wasm.git"
+	},
+	"bugs": {
+		"url": "https://github.com/ybouane/LibRaw-Wasm/issues"
+	},
+	"homepage": "https://github.com/ybouane/LibRaw-Wasm#readme",
+	"devDependencies": {
+		"esbuild": "^0.28.1",
+		"playwright": "^1.56.0"
+	}
+}

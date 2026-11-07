@@ -1,5 +1,5 @@
 import lutUrl from '../assets/lowfi-lut.jpg?url';
-import {repairedLutCanvas} from './lutAtlasRepair.js';
+import {repairedLutCanvas} from './lutAtlasRepair';
 let image:HTMLImageElement|null=null;
 let repaired:HTMLCanvasElement|null=null;
 let ready:Promise<void>|null=null;

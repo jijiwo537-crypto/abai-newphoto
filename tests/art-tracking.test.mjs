@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {trackingDefaults,circleIntersections} from '../utils/artTracking.js';
+import {trackingDefaults,circleIntersections} from '../utils/artTracking.ts';
 test('ABAI tracking starts with its own restrained composition',()=>{
  assert.equal(trackingDefaults.chain,false);assert.equal(trackingDefaults.frame,false);
  assert.equal(trackingDefaults.labels,false);assert.equal(trackingDefaults.circles,55);

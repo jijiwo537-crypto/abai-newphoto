@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {LEGACY_TEXT_COLORS,TEXT_COLORS,SHAPE_COLORS,DEFAULT_COLORS,STROKE_COLORS,MASK_DEEP_COLORS,CREATIVE_MASK_COLORS} from '../utils/colorPalettes.js';
-import {ART_SWATCHES} from '../utils/artColors.js';
+import {LEGACY_TEXT_COLORS,TEXT_COLORS,SHAPE_COLORS,DEFAULT_COLORS,STROKE_COLORS,MASK_DEEP_COLORS,CREATIVE_MASK_COLORS} from '../utils/colorPalettes.ts';
+import {ART_SWATCHES} from '../utils/artColors.ts';
 test('text preserves every original swatch in its original order',()=>{
  assert.deepEqual(TEXT_COLORS.slice(0,16),LEGACY_TEXT_COLORS);
  assert.deepEqual(LEGACY_TEXT_COLORS.slice(0,2),['#000000','#FFFFFF']);

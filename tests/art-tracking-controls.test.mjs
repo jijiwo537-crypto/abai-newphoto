@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {trackingDefaults,trackingRadius,trackingFrameExtent,trackingZones,trackingChainAngle,trackingCircleChain,redistributeRegions,renderTracking,invalidateTracking} from '../utils/artTracking.js';
-import {firstTrackingElementVisit,preciseAngle} from '../utils/artElementControls.js';
-import {ART_SWATCHES,artHexToHsv,artHsvToHex} from '../utils/artColors.js';
-import {SVGContext} from '../utils/artVector.js';
+import {trackingDefaults,trackingRadius,trackingFrameExtent,trackingZones,trackingChainAngle,trackingCircleChain,redistributeRegions,renderTracking,invalidateTracking} from '../utils/artTracking.ts';
+import {firstTrackingElementVisit,preciseAngle} from '../utils/artElementControls.ts';
+import {ART_SWATCHES,artHexToHsv,artHsvToHex} from '../utils/artColors.ts';
+import {SVGContext} from '../utils/artVector.ts';
 const ui=readFileSync(new URL('../components/ArtStudio.tsx',import.meta.url),'utf8');
 const css=readFileSync(new URL('../components/ArtStudio.css',import.meta.url),'utf8');
 test('outline variation changes radius, never center or maximum size',()=>{
@@ -108,7 +108,7 @@ test('circle defaults follow each photo diagonal exactly and use size 200',()=>{
  assert.match(ui,/Math.round\(trackingChainAngle\(tracking,dimensions.w,dimensions.h\)\)/);
 });
 test('sliders preserve the pending paint, source pixels and direct GPU material result',()=>{
- const gpu=readFileSync(new URL('../utils/artTrackingGpu.js',import.meta.url),'utf8'),vectors=readFileSync(new URL('../utils/artVector.js',import.meta.url),'utf8');
+ const gpu=readFileSync(new URL('../utils/artTrackingGpu.ts',import.meta.url),'utf8'),vectors=readFileSync(new URL('../utils/artVector.ts',import.meta.url),'utf8');
  assert.match(ui,/if\(!frame.current\)frame.current=requestAnimationFrame/);assert.doesNotMatch(ui,/useEffect\(\(\)=>\{cancelAnimationFrame\(frame.current\)/);
  assert.match(ui,/tr\('數量','count',0,30\)/);assert.match(ui,/new SVGContext\(vector.current\)/);
  assert.match(ui,/trackingGpu.current\?\.style.display==='block'\?trackingGpu.current/);

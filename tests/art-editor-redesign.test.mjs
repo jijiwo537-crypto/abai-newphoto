@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {trackingDefaults} from '../utils/artTracking.js';
-import {asciiVector} from '../utils/artVector.js';
+import {trackingDefaults} from '../utils/artTracking.ts';
+import {asciiVector} from '../utils/artVector.ts';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 test('outline and material selection use arrays without a none button',()=>{
  const s=read('components/ArtStudio.tsx');
@@ -20,7 +20,7 @@ test('export clipping text is directly inside clipPath, with no invisible nested
  }finally{globalThis.document=old;}
 });
 test('preview uses screen-density font outlines with no release-quality switching',()=>{
- const s=read('utils/artVector.js'),gpu=read('utils/artGlyphGpu.js'),css=read('components/ArtStudio.css');
+ const s=read('utils/artVector.ts'),gpu=read('utils/artGlyphGpu.ts'),css=read('components/ArtStudio.css');
  assert.match(s,/viewport.width\*dpr/);assert.match(s,/viewport.height\*dpr/);assert.match(s,/paintColorGlyphs/);
  assert.doesNotMatch(gpu,/texImage2D[^\n]*,mask\)/);assert.match(gpu,/gl\.DYNAMIC_DRAW/);
  assert.match(css,/left:50%;transform:translateX\(-50%\)/);assert.match(css,/height:46px;padding:4px 16px 0/);

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from '/Users/abai/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/sharp/dist/index.cjs';
-import {repairLutAtlas} from '../utils/lutAtlasRepair.js';
+import {repairLutAtlas} from '../utils/lutAtlasRepair.ts';
 const root=path.resolve(import.meta.dirname,'..');
 const files=['assets/lowfi-lut.jpg','public/luts/f3.webp','public/luts/f19.webp'];
 const results=[];

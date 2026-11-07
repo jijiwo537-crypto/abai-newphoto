@@ -1,4 +1,4 @@
-import {repairLutAtlas,needsLutAtlasRepair} from './lutAtlasRepair.js';
+import {repairLutAtlas,needsLutAtlasRepair} from './lutAtlasRepair';
 import {bakePixelMaster} from './photoPixelCore';
 
 self.onmessage=async({data:{id,url,params,cached}}:MessageEvent)=>{

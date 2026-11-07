@@ -6,7 +6,7 @@ import {GridLayoutTool,ShapeEditorPanel,TextEditorPanel,ColorPickerPage} from '.
 import {ArtColorControls} from '../components/ArtColorControls';
 import {applyGlEffects,FX_DEFAULTS,disposeFxSurface} from '../utils/glEffects';
 import {warmLowfiLut} from '../utils/lowfiLut';
-import {DEFAULT_COLORS,CREATIVE_MASK_COLORS} from '../utils/colorPalettes.js';
+import {DEFAULT_COLORS,CREATIVE_MASK_COLORS} from '../utils/colorPalettes';
 const query=new URLSearchParams(location.search);
 const shape:any={id:'palette-shape',src:'',shape:'circle',shapeFilled:true,x:40,y:60,width:120,height:120,scale:1,rotation:0,color:'#FFFFFF',shapeGlow:20};
 function Panels(){const [mode,setMode]=useState('shape'),[revision,setRevision]=useState(0),[layer,setLayer]=useState(shape),[color,setColor]=useState('#FFFFFF');

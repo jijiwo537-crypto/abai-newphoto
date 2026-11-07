@@ -22,7 +22,7 @@ import { bakeColorLut, bakedToTexture } from './lutBake';
 import { LutGpu } from './lutGpu';
 import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from './fxSurfaceGl';
 import { loadCachedLut, saveCachedLut } from './lutStore';
-import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from './lutAtlasRepair.js';
+import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from './lutAtlasRepair';
 import {HalationLayer} from './halationLayer';
 import { hasGlow, glowSig, stripGlow, pickGlow, GLOW_FX_IDS } from './glowFx';
 

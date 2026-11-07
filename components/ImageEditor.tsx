@@ -13,7 +13,7 @@ import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
 import { isIdentityCurve, boundedCurvePath } from '../utils/editorCurveGeometry';
 import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
-import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from '../utils/lutAtlasRepair.js';
+import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from '../utils/lutAtlasRepair';
 import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
 import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from '../utils/fxSurfaceGl';

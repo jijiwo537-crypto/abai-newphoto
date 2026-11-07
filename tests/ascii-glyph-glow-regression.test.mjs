@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const read=name=>readFileSync(new URL('../'+name,import.meta.url),'utf8');
 test('actual special-character preview uses isolated soft halo, not eight shifted glyphs',()=>{
- const s=read('utils/artGlyphGpu.js');
+ const s=read('utils/artGlyphGpu.ts');
  assert.match(s,/makeGlyphAtlases/);assert.match(s,/g\.clip\(\)/);assert.match(s,/exp\(-\.5\*x\*x\)/);assert.match(s,/blurGlyphAtlas/);
  assert.match(s,/ink\+soft\*\(1\.-ink\)/);assert.match(s,/vec4\(rgb\*a,a\)/);
  assert.doesNotMatch(s,/angle=float\(i\)|cos\(angle\)|g\.filter=|g\.shadowBlur=/);

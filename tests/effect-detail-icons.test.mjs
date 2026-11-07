@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {effectDetailIcon} from '../utils/effectDetailIcons.js';
+import {effectDetailIcon} from '../utils/effectDetailIcons.ts';
 
 const source=name=>readFileSync(new URL('../components/'+name,import.meta.url),'utf8');
 

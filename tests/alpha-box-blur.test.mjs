@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {blurAlpha} from '../utils/alphaBoxBlur.js';
+import {blurAlpha} from '../utils/alphaBoxBlur.ts';
 
 test('compact halation kernel matches four clamped Uint8 box passes exactly',()=>{
   const w=31,h=23,source=Uint8ClampedArray.from({length:w*h},(_,i)=>(i*71+i*i*13)%256);

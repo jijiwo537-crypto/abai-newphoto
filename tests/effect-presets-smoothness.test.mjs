@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {effectPreset} from '../utils/effectPresets.js';
-import {effectControlStep,isContinuousEffectControl} from '../utils/effectControlValues.js';
-import {fineSliderValue} from '../utils/sliderPrecision.js';
+import {effectPreset} from '../utils/effectPresets.ts';
+import {effectControlStep,isContinuousEffectControl} from '../utils/effectControlValues.ts';
+import {fineSliderValue} from '../utils/sliderPrecision.ts';
 const read=path=>readFileSync(new URL('../'+path,import.meta.url),'utf8');
 test('effect thumbnails and activation use the same actual presets',()=>{
  const definitions=[{id:'fxExample',onAmount:60,params:[{id:'range',def:20},{id:'radius',def:50}]}];

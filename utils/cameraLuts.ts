@@ -1,4 +1,4 @@
-import {needsLutAtlasRepair,repairedLutCanvas} from './lutAtlasRepair.js';
+import {needsLutAtlasRepair,repairedLutCanvas} from './lutAtlasRepair';
 const decoded = new Map<string, HTMLImageElement>();
 const pending = new Map<string, Promise<HTMLImageElement>>();
 

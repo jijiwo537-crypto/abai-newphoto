@@ -1,4 +1,4 @@
-import {ASCII_PRESETS,ASCII_RANGE_LOWS} from './asciiControls.js';
+import {ASCII_PRESETS,ASCII_RANGE_LOWS} from './asciiControls';
 export interface AsciiOptions { characters:string; columns:number; low:number; high:number; metric:number; invert:boolean; color:boolean; background:boolean; glow?:number; ranges?:number[]; }
 export const ASCII_DEFAULTS:AsciiOptions={characters:ASCII_PRESETS[0],columns:96,low:20,high:100,metric:0,invert:false,color:false,background:true,glow:0,ranges:[...ASCII_RANGE_LOWS]};
 /** Persistent GPU image + glyph atlas. Slider changes only update uniforms. */

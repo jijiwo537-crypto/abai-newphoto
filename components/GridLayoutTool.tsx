@@ -40,7 +40,7 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, settlePhotoF
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
-import {DEFAULT_COLORS,SHAPE_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes.js';
+import {DEFAULT_COLORS,SHAPE_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
 import {effectControlValue,effectStoredValue,effectControlMin,effectControlStep} from '../utils/effectControlValues';
 import {effectPreset} from '../utils/effectPresets';
 import {effectDetailIcon} from '../utils/effectDetailIcons';
@@ -694,7 +694,7 @@ const TEXT_COLORS = [...NEW_TEXT_COLORS];
  * 發光、描邊、圖形三個地方看到的就是同一個東西。
  */
 export const swatchStrip = (
-  value: string | undefined, colors: string[], onPick: (c: string) => void, big = false,
+  value: string | undefined, colors: readonly string[], onPick: (c: string) => void, big = false,
 ) => (
   <div className={`flex items-center overflow-x-auto no-scrollbar min-w-0 px-0.5 py-0.5 ${big ? 'gap-2 w-full' : 'gap-1.5'}`}>
     <CustomColorButton value={value || '#FFFFFF'} onPick={onPick} size={big ? 32 : 24} />

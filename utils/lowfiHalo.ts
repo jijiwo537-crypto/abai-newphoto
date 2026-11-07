@@ -1,4 +1,4 @@
-import {blurAlpha} from './alphaBoxBlur.js';
+import {blurAlpha} from './alphaBoxBlur';
 const header='precision highp float; varying vec2 vUv; uniform sampler2D uTex;';
 export const LOWFI_HALO_SEED=header+'void main(){float l=dot(texture2D(uTex,vUv).rgb,vec3(.299,.587,.114));float a=pow(max(0.,(l-160./255.)/(95./255.)),1.5);gl_FragColor=vec4(0.,0.,0.,floor(a*255.+.5)/255.);}';
 export const LOWFI_HALO_BLUR=header+'uniform vec2 uStep;uniform float uRadius;void main(){float a=0.;for(int i=-5;i<=5;i++){if(abs(float(i))<=uRadius)a+=texture2D(uTex,vUv+float(i)*uStep).a;}gl_FragColor=vec4(0.,0.,0.,floor(a/(2.*uRadius+1.)*255.+.5)/255.);}';

@@ -1,4 +1,4 @@
-import {makeGlyphAtlases,paintColorGlyphs} from '../utils/artGlyphGpu.js';
+import {makeGlyphAtlases,paintColorGlyphs} from '../utils/artGlyphGpu.ts';
 void(async()=>{
  await document.fonts.ready;
  const symbols=['·','•','。','o','⭒','✧','✦','⭑','✶','中','あ','한'];
