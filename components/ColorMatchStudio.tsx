@@ -133,7 +133,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
   };
   const deleteRef = (id: string, url: string) => {
     removeMatchRef(id);
-    if (referenceSrc === url) setReferenceSrc(null);
+    /* 刪的是正在仿的那張：仿色整個停下來（AI 那段也關掉），轉圈一起收掉 */
+    if (referenceSrc === url) { setReferenceSrc(null); cancelAiColorMatch(); setBusy(false); setAiBusy(false); }
   };
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
   const sg = useStudioGeo(embedded ? geo : null, srcImg ? srcImg.naturalWidth || srcImg.width : 0, srcImg ? srcImg.naturalHeight || srcImg.height : 0);
@@ -356,7 +357,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     while (c.size > 12) c.delete(c.keys().next().value as string);
   };
   useEffect(() => {
-    if (!srcImg || !refImg) { setLuts(null); return; }
+    if (!srcImg || !refImg) { setLuts(null); if (!refImg) { setBusy(false); setAiBusy(false); } return; }
     let cancelled = false;
     if (lutCacheRef.current.src !== srcImg) lutCacheRef.current = { src: srcImg, map: new Map() };
     const refKey = refImg.src;
@@ -994,7 +995,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
                 <button onClick={() => { if (!on) setReferenceSrc(r.url); }} data-cm-ref={r.id} aria-pressed={on} aria-label="參考圖片"
                   className="block w-full h-full rounded-lg overflow-hidden bg-[#1a1a1a] active:scale-95 transition-transform">
                   <img src={r.url} alt="" draggable={false} className="w-full h-full object-cover" />
-                  {on && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
+                  {on && <div className="absolute inset-0 rounded-lg border border-dashed border-white pointer-events-none" />}
                 </button>
                 {on && <button onClick={() => deleteRef(r.id, r.url)} data-cm-delref aria-label="刪除這張參考圖"
                   className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center active:scale-90">

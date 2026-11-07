@@ -9,6 +9,19 @@ let base: Cvs | null = null, la: Cvs | null = null;
 const pre = new Map<number, Cvs>();
 const eroded = new Map<string, Eroded>();
 const braille = new Map<string, string[]>();
+/* 門檻做完的整張圖：跟字數（數量）無關。拖數量時門檻不變，留著直接縮成點字，不用每格都重做整張門檻 */
+const thr = new Map<string, Cvs>();
+const thresholded = (lines: number, thicken: number, level: number) => {
+  const k = `${lines}|${thicken}|${level}`;
+  let c = thr.get(k);
+  if (!c) c = thresholdEroded(erodedFor(lines, thicken), level);
+  touch(thr, k, c, 2, x => { x.width = x.height = 0; });
+  return c;
+};
+/* 拖滑桿時明暗對照表先不算：它一格就要做一次整張門檻，做到一半新的值進來就得等它做完
+   （拖數量時每個字數都要一份，以前就是這樣拖起來卡、拖很多次才順）。停手 0.5 秒後才開始 */
+let lastJobAt = 0, idleTimer = 0;
+const IDLE_MS = 500;
 /* 明暗滑桿的對照表：閒下來時一次算一格（每格就是一次門檻＋點字），算完整條才送回主畫面 */
 const curveDone = new Set<string>();
 let curveJob: { key: string; lines: number; thicken: number; width: number; k: number; fills: Float32Array } | null = null;
@@ -41,12 +54,9 @@ function run() {
     try {
       const k = `${j.lines}|${j.thicken}|${j.level}|${j.width}`;
       let full = braille.get(k);
-      if (!full) {
-        const img = thresholdEroded(erodedFor(j.lines, j.thicken), j.level);
-        full = toBraille(img, 128, j.width);
-        img.width = img.height = 0;
-      }
-      touch(braille, k, full, 48);
+      if (!full) full = toBraille(thresholded(j.lines, j.thicken, j.level), 128, j.width);
+      touch(braille, k, full, 160);
+      lastJobAt = performance.now();
       (self as any).postMessage({ id: j.id, ok: true, full });
       const ck = `${j.lines}|${j.thicken}|${j.width}`;
       if (!curveDone.has(ck) && curveJob?.key !== ck) curveJob = { key: ck, lines: j.lines, thicken: j.thicken, width: j.width, k: 0, fills: new Float32Array(CURVE_N) };
@@ -57,6 +67,12 @@ function run() {
         .filter(l => l >= 0 && l <= 20 && (l === 0 || la))
         .map(l => ({ lines: l, thicken: j.thicken }));
     } catch (e) { (self as any).postMessage({ id: j.id, ok: false, error: String(e) }); }
+  } else if (spec.length) {
+    const s = spec.shift()!;
+    try { erodedFor(s.lines, s.thicken); } catch { spec = []; }
+  } else if (curveJob && performance.now() - lastJobAt < IDLE_MS) {
+    if (!idleTimer) idleTimer = setTimeout(() => { idleTimer = 0; schedule(); }, IDLE_MS - (performance.now() - lastJobAt) + 5) as any;
+    return;
   } else if (curveJob) {
     const c = curveJob;
     try {
@@ -66,7 +82,7 @@ function run() {
       if (!full) {
         const img = thresholdEroded(erodedFor(c.lines, c.thicken), level);
         full = toBraille(img, 128, c.width); img.width = img.height = 0;
-        touch(braille, bk, full, 48);
+        touch(braille, bk, full, 160);
       }
       c.fills[c.k++] = fillOf(full);
       if (c.k >= CURVE_N) {
@@ -74,9 +90,6 @@ function run() {
         (self as any).postMessage({ id: 0, type: 'curve', lines: c.lines, thicken: c.thicken, width: c.width, curve: c.fills });
       }
     } catch { curveJob = null; }
-  } else if (spec.length) {
-    const s = spec.shift()!;
-    try { erodedFor(s.lines, s.thicken); } catch { spec = []; }
   }
   if (job || curveJob || spec.length) schedule();
 }
@@ -86,7 +99,7 @@ self.onmessage = (e: MessageEvent) => {
   const m = e.data;
   if (m.type === 'init') {
     base = fromBitmap(m.base); la = null; lastLines = -1;
-    pre.forEach(c => { c.width = c.height = 0; }); pre.clear(); eroded.clear(); braille.clear(); curveDone.clear(); curveJob = null; spec = [];
+    pre.forEach(c => { c.width = c.height = 0; }); pre.clear(); eroded.clear(); braille.clear(); thr.forEach(c => { c.width = c.height = 0; }); thr.clear(); curveDone.clear(); curveJob = null; spec = [];
     (self as any).postMessage({ id: m.id, ok: true });
   } else if (m.type === 'lineArt') {
     la = fromBitmap(m.la);
@@ -94,6 +107,7 @@ self.onmessage = (e: MessageEvent) => {
     pre.forEach((c, k) => { if (k > 0) { c.width = c.height = 0; pre.delete(k); } });
     eroded.forEach((_, k) => { if (!k.startsWith('0|')) eroded.delete(k); });
     braille.forEach((_, k) => { if (!k.startsWith('0|')) braille.delete(k); });
+    thr.forEach((c, k) => { if (!k.startsWith('0|')) { c.width = c.height = 0; thr.delete(k); } });
     curveDone.forEach(k => { if (!k.startsWith('0|')) curveDone.delete(k); }); curveJob = null;
     (self as any).postMessage({ id: m.id, ok: true });
   } else if (m.type === 'render') {

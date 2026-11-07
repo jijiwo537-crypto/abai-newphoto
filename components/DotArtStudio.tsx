@@ -550,7 +550,10 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         {/* 生成中：只有正中間一個轉圈（跟仿色同一款），完整的點陣出來之前不顯示任何點 */}
         {(status === 'loading' || (status === 'ready' && !rendered)) && (
           <div data-dot-art-refining className="absolute inset-0 flex items-center justify-center pointer-events-none" role="status" aria-label="生成中">
-            <BusySpinner text={status === 'ready' && modelReady ? '正在生成點陣圖' : '正在偵測輪廓'} />
+            {/* 偵測輪廓（第一次要跑模型，比較久）時一句一句換，停在最後一句；生成點陣很快，只有一句 */}
+            {status === 'ready' && modelReady
+              ? <React.Fragment key="gen"><BusySpinner text="正在生成點陣圖" /></React.Fragment>
+              : <React.Fragment key="detect"><BusySpinner text="正在偵測輪廓" texts={['正在偵測輪廓', '分析明暗層次', '描繪線條細節', '整理點陣排列']} hold /></React.Fragment>}
           </div>
         )}
         {/* 左下：目前的照片，點一下換一張；右下：反轉 */}

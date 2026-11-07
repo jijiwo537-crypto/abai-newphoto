@@ -223,7 +223,7 @@ export class DotArtSession {
       if (k < CURVE_N) setTimeout(step, 0);
       else { if (this.curveRun === run) this.curveRun = null; this.curveKeys.add(key); this.onCurve?.(key, fills); }
     };
-    setTimeout(step, 30);
+    setTimeout(step, 500);   // 停手一下才開始（拖數量、輪廓時每一格都會換一份，邊拖邊算會卡）
   }
   private async lineInWorker(s: DotArtSettings, level: number): Promise<{ full: string[] } | null> {
     if (!this.useWorker || !lineStageWorker()) return null;
