@@ -160,7 +160,9 @@ export function paintPhotoRegion(ctx: CanvasRenderingContext2D, region: PhotoReg
     const photo = region.photos[i], img = decoded.get(photo.src);
     const dx = x + r.x * w, dy = y + r.y * h, dw = r.w * w, dh = r.h * h;
     if (!img) {ctx.save();ctx.fillStyle='#0c0c0c';ctx.fillRect(dx,dy,dw,dh);ctx.restore();return;}
-    const {sx,sy,sw,sh}=photoCrop(photo,dw,dh);
+    /* 裁切座標是照片的邏輯尺寸（原圖尺寸）；手上這張可能是縮小過的（見 utils/photoTiers），換算到它的像素 */
+    const c=photoCrop(photo,dw,dh),iw=(img as any).naturalWidth||(img as any).width||photo.width,kx=iw/Math.max(1,photo.width),ky=((img as any).naturalHeight||(img as any).height||photo.height)/Math.max(1,photo.height);
+    const sx=c.sx*kx,sy=c.sy*ky,sw=c.sw*kx,sh=c.sh*ky;
     // Darken only the visible sampling footprint, never duplicate a 48MP source.
     if(i!==dimIndex)drawCoveredPhoto(ctx,img,sx,sy,sw,sh,dx,dy,dw,dh);
     else{

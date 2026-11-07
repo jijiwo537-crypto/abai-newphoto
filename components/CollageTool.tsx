@@ -131,6 +131,7 @@ const warmedPatternIcons=new Set<string>();
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
 import { preferredVideoFrameRate } from '../utils/videoFrameRate';
+import { openTiered, ensureTier, tierOf, forgetTiered } from '../utils/photoTiers';
 
 /** 四周包圍：遮罩把原圖整圈包起來 */
 const AROUND = 'mask-around';
@@ -232,6 +233,9 @@ const MAX_PREVIEW_PIXELS = 56_000_000;
    這是「畫質」唯一的旋鈕，而且從頭到尾只有這一個數字 ——
    下面所有跟倍率有關的計算都引用它，所以任何縮放倍率下的銳利度都一致。 */
 const SUPERSAMPLE = 1.8;
+/* 照片一開始做多大（長邊，見 utils/photoTiers）。之後依實際需要（成品＋預覽放大）自動換更清楚的：
+   單張當底＝成品長邊上限（12MP 的 4032 原圖不動）；多張排版的每一格與浮動物件用不到那麼大。 */
+const TIER_SINGLE_START = 4096, TIER_MULTI_START = 2560, TIER_OBJECT_START = 2048;
 /**
  * 「等畫面真的畫出來、而且瀏覽器有空了再做」。
  *
@@ -1504,12 +1508,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const loadRegion = async (region: PhotoRegion) => {
     await Promise.all([...region.photos,...(region.overflowPhotos||[])].map(photo => {
       if (!photo.src || decodedRegionPhotos.current.has(photo.src)) return Promise.resolve();
-      return new Promise<void>((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => { decodedRegionPhotos.current.set(photo.src, img); resolve(); };
-        img.onerror = reject;
-        img.src = photo.src;
-      });
+      // 只做成品用得到的解析度（見 utils/photoTiers）；之後需要更清楚時會自動換上
+      return openTiered(photo.src, '', region.photos.length > 1 ? TIER_MULTI_START : TIER_SINGLE_START)
+        .then(t => { decodedRegionPhotos.current.set(photo.src, t.img); });
     }));
     return {...region,multi:region.multi ?? region.photos.length>1};
   };
@@ -1729,8 +1730,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const cell=photoRegionRef.current&&regionRects(photoRegionRef.current,Math.abs(transform.w),Math.abs(transform.h))[index];
     const scale=onScreenPx/Math.max(1,Math.abs(transform.w),Math.abs(transform.h));
     let required=onScreenPx;
-    if(cell){const dw=Math.abs(transform.w)*cell.w,dh=Math.abs(transform.h)*cell.h,crop=photoCrop(photo,dw,dh);
-      required=sourceSize*Math.max(dw*scale/Math.max(1,crop.sw),dh*scale/Math.max(1,crop.sh));}
+    /* 裁切座標是照片的「邏輯尺寸」（原圖尺寸，見 utils/photoTiers）；需要的細節也照原圖算，
+       最後才夾到手上這張的大小 */
+    if(cell){const dw=Math.abs(transform.w)*cell.w,dh=Math.abs(transform.h)*cell.h,crop=photoCrop(photo,dw,dh),logical=Math.max(photo.width||w,photo.height||h);
+      required=Math.min(sourceSize,logical*Math.max(dw*scale/Math.max(1,crop.sw),dh*scale/Math.max(1,crop.sh)));}
     /* 畫布本身多給了 SUPERSAMPLE 倍（給圖形邊緣抗鋸齒用的），照片不需要：照片的特效只要
        跟螢幕實際的裝置像素一樣細就好。以前照著畫布算，照片在格子裡放大或畫面放大時，
        特效要在多 3 倍的像素上算 —— 那就是「圖片放很大時拖滑桿很卡」。 */
@@ -1780,8 +1783,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const slot=Number(o.id.slice('region-fx-'.length).split('@')[0]),t=latestImageTransform.current;
       const cell=photoRegionRef.current&&regionRects(photoRegionRef.current,Math.abs(t.w),Math.abs(t.h))[slot];
       let required=native;
-      if(cell&&onScreenPx>0){const dw=Math.abs(t.w)*cell.w,dh=Math.abs(t.h)*cell.h,crop=photoCrop(o,dw,dh),k=onScreenPx/Math.max(1,Math.abs(t.w),Math.abs(t.h));
-        required=Math.min(native,Math.ceil(native*Math.max(dw*k/Math.max(1,crop.sw),dh*k/Math.max(1,crop.sh))));}
+      if(cell&&onScreenPx>0){const dw=Math.abs(t.w)*cell.w,dh=Math.abs(t.h)*cell.h,crop=photoCrop(o,dw,dh),k=onScreenPx/Math.max(1,Math.abs(t.w),Math.abs(t.h)),logical=Math.max(o.width||native,o.height||native);
+        required=Math.min(native,Math.ceil(logical*Math.max(dw*k/Math.max(1,crop.sw),dh*k/Math.max(1,crop.sh))));}
       exportCap=required;
       if(!hasShape&&preview?.key.startsWith(JSON.stringify([o.fx,shape])+'|')&&Math.max(preview.cv.width,preview.cv.height)>=required)return preview.cv;
       // History/export must not replace a live photo's work surface or cache
@@ -1811,7 +1814,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        那幾格是小一號的。匯出走的是另一張畫布（isMain 為 false），
        永遠不會落到這條路上。 */
     const now = performance.now();
-    const baseKey = JSON.stringify([o.fx, shape]);
+    /* 照片換成更清楚的那一張（見 utils/photoTiers）時，算好的效果要重算：鑰匙帶著來源的尺寸 */
+    const baseKey = JSON.stringify([o.fx, shape, isVideoEl(o.img) ? 0 : (o.img.naturalWidth || o.img.width || 0)]);
     let lv = fxLiveRef.current.get(o.id);
     if (!lv) { lv = { key: '', at: 0, liveUntil: 0 }; fxLiveRef.current.set(o.id, lv); }
     /* 「正在連續改動」的判斷有兩個重點：
@@ -3081,6 +3085,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (!imageState) return;
     if (!objHistoryReadyRef.current) { objHistoryReadyRef.current = true; return; }
     if (restoringRef.current) return;
+    /* 跟歷史目前那一格一模一樣（例如照片換成更清楚的那一張，見 utils/photoTiers：只換了畫用的那張）：
+       沒有任何可以上一步的東西，按鈕不要亮 */
+    const cur = histRef.current.history[histRef.current.index];
+    if (cur && objKeyOf(cur.objects) === objKeyOf(objects) && sameHoles(cur.holes, holesRef.current)) {
+      if (dirtyRef.current) { dirtyRef.current = false; setDirty(false); }
+      return;
+    }
     markDirty();                                   // 按鈕當下就要亮
     const t = setTimeout(() => {
       if (!restoringRef.current) pushHistory(holesRef.current, objectsRef.current);
@@ -3336,20 +3347,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     try {
       const sources = [url, ...picked.slice(1, CREATIVE_PHOTO_LIMIT).map(f => URL.createObjectURL(f))];
-      const photos = await Promise.all(sources.map(src => new Promise<{ src: string; width: number; height: number }>((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          decodedRegionPhotos.current.set(src, img);
-          resolve({ src, width: img.naturalWidth, height: img.naturalHeight });
-        };
-        img.onerror = reject;
-        img.src = src;
+      /* 每張只做成品用得到的解析度（見 utils/photoTiers）：width/height 一律是原圖尺寸，
+         排版、裁切、存檔尺寸都跟以前一樣照原圖算；需要更清楚時（放大、存檔）會自動從原檔換上 */
+      const start = sources.length > 1 ? TIER_MULTI_START : TIER_SINGLE_START;
+      const types = [file.type, ...picked.slice(1, CREATIVE_PHOTO_LIMIT).map(f => f.type)];
+      const photos = await Promise.all(sources.map((src, i) => openTiered(src, types[i] || '', start).then(t => {
+        decodedRegionPhotos.current.set(src, t.img);
+        return { src, width: t.ow, height: t.oh };
       })));
       if (epoch !== photoImportEpoch.current) return;
       setPhotoRegion({ photos, arrangement: 'grid', templateIndex: 0, multi: photos.length > 1, landscape: photos[0].width > photos[0].height });
       setSelectedRegionPhoto(null);
       const img = decodedRegionPhotos.current.get(url)!;
-      place(img, img.naturalWidth, img.naturalHeight, photos.length > 1);
+      place(img, photos[0].width, photos[0].height, photos.length > 1);
       addExtras();
     } catch (error) {
       console.error('Creative photo region import failed', error);
@@ -3720,9 +3730,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }).catch(() => alert('這段影片讀不進來，換一個格式試試（MP4 最穩）'));
       return;
     }
-    const im = new Image();
-    im.onload = () => place(im, im.width, im.height);
-    im.src = url;
+    // 只做成品用得到的解析度（見 utils/photoTiers）；物件被放大、存檔時會自動換成更清楚的
+    void openTiered(url, f.type, TIER_OBJECT_START).then(t => place(t.img, t.ow, t.oh)).catch(() => {});
   }, []);
 
   /** 一次把一批檔案加成物件（相簿多選）。順序照使用者選的順序。
@@ -8935,8 +8944,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 底是影片的話，要留的是那段影片本人，不是它的某一格。
          addExport 會 fetch 這條網址、把位元組收成附件，所以直接把 object URL
          交出去就行 —— 從歷史紀錄點回來時拿到的還是一段影片，不是一張截圖。 */
+      const p0 = photoRegionRef.current?.photos[0];
       if (isVideoEl(imageState.img) && photoUrlRef.current) {
         srcUrl = photoUrlRef.current;
+      } else if (p0?.src && tierOf(p0.src)) {
+        /* 分級管理的照片（見 utils/photoTiers）：畫用的那張可能是縮小過的，直接交原始檔（畫質跟原圖一樣） */
+        srcUrl = p0.src;
       } else {
         const sc = document.createElement('canvas');
         sc.width = imageState.originalW || imageState.baseW;
@@ -10243,6 +10256,91 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       setVideoProg(null);
     }
   }, [getLayoutOffsets, imageState, videoProg, buildAnim, motionTotal, renderToCanvas, layout, maskScale, allVideos,videoExportFormat,videoExportFps,videoExportQuality]);
+  /* ── 照片解析度分級（見 utils/photoTiers）─────────────────────────────
+     每張照片只留「成品＋預覽目前需要」的解析度。這裡算出每張照片現在需要多少，
+     不夠的就從原檔做一張更清楚的換上去：
+       ‧ 成品需要多少：跟存檔同一條算式算出成品倍率，照片在成品裡實際佔多大（含格子裡的放大）；
+       ‧ 預覽需要多少：目前畫面的倍率（含雙指放大）換成螢幕的實際像素；
+     兩者取大。存檔前一定會先等它補齊，所以存出來的成品跟以前一樣清楚。 */
+  const exportScaleNow = () => {
+    const st = imageStateRef.current;
+    if (!st || !st.baseW) return 1;
+    const rawSize = collageSizeOf(layout, st.originalW, st.originalH, maskScale, canvasRatio);
+    const rawLong = Math.max(rawSize.w, rawSize.h);
+    let f = rawLong > 0 && rawLong < EXPORT_MIN_DIM ? EXPORT_MIN_DIM / rawLong : 1.0;
+    if (rawLong * f > MAX_FINAL_DIM) f = MAX_FINAL_DIM / rawLong;
+    const area = rawSize.w * f * rawSize.h * f;
+    if (area > MAX_EXPORT_PIXELS) f *= Math.sqrt(MAX_EXPORT_PIXELS / area);
+    return Math.floor(st.originalW * f) / st.baseW;
+  };
+  /** 每張照片（用原始檔的網址當代號）在倍率 scale 下需要的長邊 */
+  const tierNeeds = (scale: number) => {
+    const need = new Map<string, number>();
+    const add = (src: string | undefined, v: number) => { if (src && v > 0 && Number.isFinite(v)) need.set(src, Math.max(need.get(src) || 0, v)); };
+    const st = imageStateRef.current, region = photoRegionRef.current, T = latestImageTransform.current;
+    if (st && region && T) {
+      const off = getLayoutOffsetsRef.current?.();
+      const kk = layout === AROUND && off ? Math.max(off.iw / Math.max(1, st.baseW), off.ih / Math.max(1, st.baseH)) : 1;
+      const tw = Math.abs(T.w) * kk, th = Math.abs(T.h) * kk;
+      const multi = region.multi || region.photos.length > 1;
+      const rects = multi ? regionRects(region, Math.abs(T.w), Math.abs(T.h)) : null;
+      region.photos.forEach((p, i) => {
+        if (!p.src) return;
+        if (!multi) { add(p.src, Math.max(tw, th) * scale); return; }
+        const cell = rects![i]; if (!cell) return;
+        const dw = tw * cell.w * scale, dh = th * cell.h * scale, crop = photoCrop(p, dw, dh), logical = Math.max(p.width || 0, p.height || 0);
+        add(p.src, logical * Math.max(dw / Math.max(1e-6, crop.sw), dh / Math.max(1e-6, crop.sh)));
+      });
+    }
+    for (const o of objectsRef.current) if (o.type === 'image' && o.src && o.img && !isVideoEl(o.img))
+      add(o.src, Math.max(Math.abs(o.w || 0), Math.abs(o.h || 0)) * scale * Math.max(1, o.imgShapeZoom || 1));
+    return need;
+  };
+  /** 換上更清楚的那一張：只換「畫用的那張」，排版、裁切、復原紀錄都不動 */
+  const swapTier = (src: string, img: HTMLImageElement) => {
+    let changed = false;
+    const old = decodedRegionPhotos.current.get(src);
+    if (old && old !== img) {
+      decodedRegionPhotos.current.set(src, img);
+      const bm = regionDrawables.current.get(src); if (bm) { bm.close(); regionDrawables.current.delete(src); }
+      forgetPhotoFxSource(old);
+      changed = true;
+    }
+    if (objectsRef.current.some(o => o.src === src && o.img && o.img !== img && !isVideoEl(o.img))) {
+      setObjects(list => list.map(o => o.src === src && o.img && o.img !== img && !isVideoEl(o.img) ? { ...o, img } : o));
+      changed = true;
+    }
+    if (changed) setFxTick(n => n + 1);
+  };
+  /** 把 scale 倍率需要的細節補齊（wait＝等全部做完，存檔前用） */
+  const ensureTiers = async (scale: number, wait: boolean): Promise<boolean> => {
+    const jobs: Promise<void>[] = [];let swapped = false;
+    for (const [src, required] of tierNeeds(scale)) {
+      const t = tierOf(src);
+      if (!t) continue;
+      // 復原到比較舊的那一步時物件身上可能是舊的那張：現有最清楚的那張已經夠的話直接換回來
+      if (t.tier >= required * 0.98) { if (objectsRef.current.some(o => o.src === src && o.img && o.img !== t.img && !isVideoEl(o.img))) { swapTier(src, t.img); swapped = true; } continue; }
+      jobs.push(ensureTier(src, required).then(img => { if (img && !leavingRef.current) { swapTier(src, img); swapped = true; } }));
+    }
+    if (wait && jobs.length) await Promise.all(jobs);
+    return swapped;
+  };
+  const ensureTiersRef = useRef(ensureTiers); ensureTiersRef.current = ensureTiers;
+  /* 版面、格子、物件大小、畫面放大有變：停下來、閒下來之後檢查一次（做新的那張要一點時間，不在手指還在動的時候做） */
+  useEffect(() => {
+    if (!imageState) return;
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      void awaitPhotoIdle().then(() => {
+        if (cancelled || leavingRef.current) return;
+        // 預覽畫布比螢幕多畫 SUPERSAMPLE 倍（給圖形邊緣用的），照片只要跟螢幕的實際像素一樣細
+        const preview = previewScaleRef.current / SUPERSAMPLE;
+        void ensureTiersRef.current(Math.max(exportScaleNow(), preview), false);
+      });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [imageState, photoRegion, objects, layout, maskScale, canvasRatio, imageTransform, previewScale, viewT]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => forgetTiered(), []);
   const handleSave = () => {
     if (!imageState) return;
     setSelectedTarget(null);
@@ -10251,6 +10349,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     
     setTimeout(async () => {
       try {
+        // 照片的細節先補到成品需要的程度（見 utils/photoTiers），存出來才跟原圖一樣清楚
+        /* 有換上新的那張的話等兩格：物件身上的照片是 React 的狀態，要等它真的換好，下面才畫得到新的 */
+        if (await ensureTiersRef.current(exportScaleNow(), true)) await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
         const { originalW, originalH, baseW, baseH } = imageState;
         
         // 1. Calculate the collage total size at original resolution
@@ -10276,7 +10377,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 存成圖片時一律用「靜態的那一張」：所有元素都在自己的原位、
            原尺寸。不然會存到動畫半途，位置跟編輯時看到的對不上。 */
         animRef.current = null;
-        renderToCanvas(exportCanvas, exportScale);
+        renderToCanvasRef.current(exportCanvas, exportScale);
         releaseExportFx();
         
         // 用所選格式編碼，再持有 blob 網址，避免 dataURL 額外的字串記憶體。
@@ -10430,9 +10531,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const first=regionUploadIndex.current;const slots=[first,...empty.filter(i=>i!==first)];
     try{
       const normalized=await normalizeImageFiles(files.slice(0,slots.length));
-      const photos=await Promise.all(normalized.map(f=>new Promise<any>((resolve,reject)=>{
-        const src=URL.createObjectURL(f),img=new Image();img.onload=()=>{decodedRegionPhotos.current.set(src,img);resolve({src,width:img.naturalWidth,height:img.naturalHeight});};img.onerror=()=>{URL.revokeObjectURL(src);reject(Error('圖片無法讀取'));};img.src=src;
-      })));
+      const photos=await Promise.all(normalized.map(f=>{
+        const src=URL.createObjectURL(f);
+        return openTiered(src,f.type,TIER_MULTI_START).then(t=>{decodedRegionPhotos.current.set(src,t.img);return {src,width:t.ow,height:t.oh};})
+          .catch(()=>{URL.revokeObjectURL(src);throw Error('圖片無法讀取');});
+      }));
       // Do not overwrite a different layout selected while decoding.
       if(photoRegionRef.current!==old)return;
       commitRegion({...old,photos:old.photos.map((p,i)=>slots.includes(i)?photos[slots.indexOf(i)]||p:p)});
