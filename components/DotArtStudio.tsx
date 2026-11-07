@@ -12,16 +12,17 @@ import { useStandaloneToolViewport, standaloneToolViewportCSS } from '../utils/u
 import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, prepareDotArtImage, warmLineArtModel, type DotArtFrame, type DotArtSettings, curveT, CURVE_N } from '../utils/dotArt';
 
 type Kind = 'line' | 'shade';
-type ToolId = 'width' | 'threshold' | 'lines' | 'spacing' | 'draw' | 'erase';
+type ToolId = 'width' | 'threshold' | 'lines' | 'spacing' | 'glow' | 'draw' | 'erase';
 interface ToolDef { id: ToolId; label: string; glyph: React.ReactNode; min: number; max: number }
 /* 數量＝橫向幾個字（越多點越多、越細）；輪廓＝照片裡的輪廓線描出多少；間距＝點幾個一組排。
    圖示沿用其他功能的同名工具：數量＝特效的「數量」、間距＝多格拼圖描邊的「間距」、明暗＝調節的亮度、
-   筆刷＝人像修容、擦除＝遮色片的擦除；輪廓沒有同名的，用線稿常用的鉛筆 */
+   筆刷＝人像修容、擦除＝遮色片的擦除；輪廓用空心星星；發光＝一顆亮點加兩圈光暈 */
 const TOOLS: ToolDef[] = [
   { id: 'width', label: '數量', glyph: <Icon name="apps" className="text-xl" />, min: 0, max: 100 },
   { id: 'threshold', label: '明暗', glyph: <Icon name="light_mode" className="text-xl" />, min: 0, max: 100 },
-  { id: 'lines', label: '輪廓', glyph: <Icon name="edit" className="text-xl" />, min: 0, max: 20 },
+  { id: 'lines', label: '輪廓', glyph: <Icon name="star_outline" className="text-xl" />, min: 0, max: 20 },
   { id: 'spacing', label: '間距', glyph: <Glyph k="gap" size={20} />, min: 1, max: 8 },
+  { id: 'glow', label: '發光', glyph: <Icon name="dot_glow" className="text-xl" />, min: 0, max: 100 },
   { id: 'draw', label: '筆刷', glyph: <Icon name="brush" className="text-xl" />, min: 1, max: 8 },
   { id: 'erase', label: '擦除', glyph: <Glyph k="erase" size={20} />, min: 1, max: 8 },
 ];
@@ -150,6 +151,33 @@ const drawDots = (g: CanvasRenderingContext2D, b: Bits, L: Layout, cw: number, c
   }
 };
 
+/* ── 發光：把白點縮小再放大疊起來（一層一層對半縮、再一層一層放大加回去），就是柔和的光暈 ──
+   全部用畫布的 drawImage 做（顯示卡算），不逐點算，所以拖滑桿、畫點都不會卡。
+   光暈大小跟著「一個字多寬」走：預覽、存成圖片兩邊大小不同，光暈看起來的比例一樣。
+   滑桿只改光暈那一層的透明度（不用重算），所以拖起來跟一般滑桿一樣順。 */
+type GlowPool = HTMLCanvasElement[];
+const GLOW_GAIN = 2;   // 光暈本身先放大幾倍（點很細，平均下來很淡）
+const glowLayer = (src: HTMLCanvasElement, cwPx: number, pool: GlowPool) => {
+  const K = Math.max(1, Math.round(Math.log2(Math.max(2, 2 * cwPx)))), k0 = Math.max(1, K - 3), unit = 2 ** K;
+  const pad = Math.ceil(3 * cwPx / unit) * unit;
+  const W0 = Math.ceil((src.width + 2 * pad) / unit) * unit, H0 = Math.ceil((src.height + 2 * pad) / unit) * unit;
+  const lv = (k: number) => {
+    const c = pool[k] || (pool[k] = document.createElement('canvas')), w = W0 >> k, h = H0 >> k;
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } else c.getContext('2d')!.clearRect(0, 0, w, h);
+    const g = c.getContext('2d')!; g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1; g.imageSmoothingEnabled = true;
+    return c;
+  };
+  ctxOf(lv(1)).drawImage(src, pad / 2, pad / 2, src.width / 2, src.height / 2);
+  for (let k = 2; k <= K; k++) ctxOf(lv(k)).drawImage(pool[k - 1], 0, 0, W0 >> k, H0 >> k);
+  for (let k = K - 1; k >= k0; k--) { const g = ctxOf(pool[k]); g.globalCompositeOperation = 'lighter'; g.drawImage(pool[k + 1], 0, 0, W0 >> k, H0 >> k); }
+  const out = pool[k0], g = ctxOf(out);
+  g.globalCompositeOperation = 'lighter';
+  for (let i = 1; i < GLOW_GAIN; i++) g.drawImage(out, 0, 0);
+  g.globalCompositeOperation = 'source-over';
+  return { c: out, pad, scale: 2 ** k0, W0, H0 };
+};
+const ctxOf = (c: HTMLCanvasElement) => c.getContext('2d')!;
+
 /** 一筆畫改到哪些點：位置、改之前、改之後（復原／重做只記差異，不用每筆存一整張） */
 interface Step { key: string; idx: number[]; before: number[]; after: number[] }
 
@@ -165,6 +193,10 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const [gap, setGap] = useState({ x: 2, y: 4 });
   const gx = Math.round(gap.x), gy = Math.round(gap.y);
   const [brush, setBrush] = useState(2);
+  /* 發光：0＝不發光（預設），只影響畫面與存成的圖片，複製的點字文字不受影響 */
+  const [glow, setGlow] = useState(0);
+  const glowOn = glow > 0.5;
+  const glowOnRef = useRef(glowOn); glowOnRef.current = glowOn;
   const [tool, setTool] = useState<ToolId>('width');
   const [frame, setFrame] = useState<DotArtFrame | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -208,7 +240,13 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     lines: snap('lines', raw[kind].lines), thicken: DOT_ART_DEFAULTS.thicken,
   };
   const want = `${kind}|${settings.width}|${settings.threshold}|${settings.lines}|${modelReady}`;
-  const wantRef = useRef({ key: want, kind, settings }); wantRef.current = { key: want, kind, settings };
+  const otherKind: Kind = kind === 'line' ? 'shade' : 'line';
+  const otherSettings: DotArtSettings = {
+    width: widthOf(raw[otherKind].width), threshold: snap('threshold', raw[otherKind].threshold),
+    lines: snap('lines', raw[otherKind].lines), thicken: DOT_ART_DEFAULTS.thicken,
+  };
+  const wantRef = useRef({ key: want, kind, settings, otherKind, otherSettings });
+  wantRef.current = { key: want, kind, settings, otherKind, otherSettings };
   const [editKey, setEditKey] = useState('');
   /** 明暗對照表：每個「線稿／陰影＋輪廓」一份（換照片時清掉） */
   const curves = useRef(new Map<string, Float32Array>());
@@ -229,8 +267,30 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         await new Promise(r => requestAnimationFrame(() => r(null)));
       }
     } finally { busy.current = false; }
+    /* 停下來 0.4 秒後，先把另一種（線稿／陰影）照它目前的設定算好：切過去時直接拿現成的 */
+    clearTimeout(prewarmTimer.current);
+    prewarmTimer.current = window.setTimeout(async () => {
+      const s2 = session.current, j = wantRef.current;
+      if (!s2 || s2 !== s || busy.current || shown.current !== j.key) return;
+      busy.current = true;
+      try { await s2.renderWithCurve(j.otherKind, j.otherSettings, true); } catch { /* 只是預先算，失敗就等真的切過去再算 */ }
+      finally { busy.current = false; }
+      if (session.current === s2 && shown.current !== wantRef.current.key) pumpRef.current();
+    }, 400);
   }, []);
-  useEffect(() => { if (status === 'ready' && modelReady) pump(); }, [want, status, modelReady, pump]);
+  const prewarmTimer = useRef(0);
+  const pumpRef = useRef(pump); pumpRef.current = pump;
+  useEffect(() => () => clearTimeout(prewarmTimer.current), []);
+  /* 切線稿／陰影：先讓按鈕亮起來（畫面先更新一次），再開始算，按下去不會頓一下 */
+  const lastKind = useRef(kind);
+  useEffect(() => {
+    if (!(status === 'ready' && modelReady)) return;
+    if (lastKind.current === kind) { pump(); return; }
+    lastKind.current = kind;
+    let t = 0;
+    const r = requestAnimationFrame(() => { t = window.setTimeout(pump, 0); });
+    return () => { cancelAnimationFrame(r); clearTimeout(t); };
+  }, [want, status, modelReady, pump]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   /* 算出來的點陣（含反轉）＋手畫的點＝畫面上的點陣 */
   const baseBits = useMemo(() => (frame ? textToBits(frame, inverted) : null), [frame, inverted]);
@@ -259,6 +319,18 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const layout = useMemo(() => (bits ? layoutFor(bits.W, bits.H, gx, gy) : null), [bits?.W, bits?.H, gx, gy]);   // eslint-disable-line react-hooks/exhaustive-deps
   const layoutRef = useRef(layout); layoutRef.current = layout;
   const geom = useRef({ cw: 1, ch: CH, C: 0, R: 0, dpr: 1 });
+  /* 發光那一層：放在點的後面，大小比點陣多出一圈（光暈會超出最外面的點） */
+  const glowCvs = useRef<HTMLCanvasElement>(null), glowPool = useRef<GlowPool>([]);
+  const paintGlow = useCallback(() => {
+    const c = cvs.current, o = glowCvs.current;
+    if (!c || !o) return;
+    if (!glowOnRef.current || !c.width || !c.height) { if (o.width) { o.width = o.height = 0; } return; }
+    const { cw, dpr } = geom.current, L = glowLayer(c, cw * dpr, glowPool.current);
+    if (o.width !== L.c.width || o.height !== L.c.height) { o.width = L.c.width; o.height = L.c.height; }
+    const g = ctxOf(o); g.clearRect(0, 0, o.width, o.height); g.drawImage(L.c, 0, 0);
+    o.style.left = `${-L.pad / dpr}px`; o.style.top = `${-L.pad / dpr}px`;
+    o.style.width = `${L.W0 / dpr}px`; o.style.height = `${L.H0 / dpr}px`;
+  }, []);
   const paint = useCallback((b: Bits | null, L: Layout | null) => {
     const c = cvs.current; if (!c) return;
     if (!b || !L || !boxSize.w || !boxSize.h) { c.width = c.height = 0; return; }
@@ -274,8 +346,12 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     g.fillStyle = '#fff'; g.beginPath();
     drawDots(g, b, L, cw, ch, 0, 0);
     g.fill();
-  }, [boxSize]);
+    paintGlow();
+  }, [boxSize, paintGlow]);
   useLayoutEffect(() => { paint(bits, layout); }, [bits, layout, paint]);
+  /* 發光從 0 拉起來時才建那一層（之後拖滑桿只改透明度）；拉回 0 就放掉 */
+  useLayoutEffect(() => { paintGlow(); if (!glowOn) glowPool.current.forEach(c => { c.width = c.height = 0; }); }, [glowOn, paintGlow]);
+  useEffect(() => () => { glowPool.current.forEach(c => { c.width = c.height = 0; }); }, []);
 
   /* ── 畫筆：只改點陣、只重畫改到的格子（每一下都重排整張字、重畫整張，在手機上會卡到分頁被關掉） ── */
   const drawing = tool === 'draw' || tool === 'erase';
@@ -295,6 +371,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
       if (b.d[i]) g.rect(cx - sz / 2, cy - sz / 2, sz, sz);
     });
     g.fill(); s.dirty.clear();
+    paintGlow();
   };
   const dab = (px: number, py: number) => {
     const s = stroke.current, b = bitsRef.current;
@@ -373,17 +450,29 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     if (!b || !o || !L || saving) return;
     setSaving(true);
     try {
-      // 只存有點的範圍（跟複製的文字同一塊），四周各留一個字寬的黑邊
+      // 只存有點的範圍（跟複製的文字同一塊），四周各留一個字寬的黑邊（有發光時留三個字寬，光暈才不會被切掉）
       const x0 = o.x0 * 2, x1 = (o.x0 + o.cols) * 2, y0 = o.y0 * 4, y1 = (o.y0 + o.rows) * 4;
       const spanX = L.x.pos[x1 - 1] - L.x.pos[x0], spanY = L.y.pos[y1 - 1] - L.y.pos[y0];
-      const cw = Math.max(4, Math.min(32, 4096 / (spanX + 2), 4096 / (spanY * CH + 2))), ch = cw * CH;
+      const M = glowOn ? 3 : 1;
+      const cw = Math.max(4, Math.min(32, 4096 / (spanX + 2 * M), 4096 / (spanY * CH + 2 * M))), ch = cw * CH;
       const c = document.createElement('canvas');
-      c.width = Math.round(spanX * cw + 2 * cw); c.height = Math.round(spanY * ch + 2 * cw);
+      c.width = Math.round(spanX * cw + 2 * M * cw); c.height = Math.round(spanY * ch + 2 * M * cw);
+      /* 點先畫在透明的一層（發光要從這層算），再疊到黑底上：黑底 → 光暈 → 點 */
+      const dots = document.createElement('canvas'); dots.width = c.width; dots.height = c.height;
+      const gd = dots.getContext('2d')!;
+      gd.fillStyle = '#fff'; gd.beginPath();
+      drawDots(gd, b, L, cw, ch, M * cw - L.x.pos[x0] * cw, M * cw - L.y.pos[y0] * ch, x0, y0, x1, y1);
+      gd.fill();
       const g = c.getContext('2d')!;
       g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
-      g.fillStyle = '#fff'; g.beginPath();
-      drawDots(g, b, L, cw, ch, cw - L.x.pos[x0] * cw, cw - L.y.pos[y0] * ch, x0, y0, x1, y1);
-      g.fill();
+      if (glowOn) {
+        const pool: GlowPool = [], G = glowLayer(dots, cw, pool);
+        g.globalAlpha = Math.min(1, glow / 100); g.imageSmoothingEnabled = true;
+        g.drawImage(G.c, -G.pad, -G.pad, G.W0, G.H0);
+        g.globalAlpha = 1;
+        pool.forEach(x => { x.width = x.height = 0; });
+      }
+      g.drawImage(dots, 0, 0); dots.width = dots.height = 0;
       const blob = await new Promise<Blob | null>(r => c.toBlob(r, 'image/png'));
       c.width = c.height = 0;
       if (blob) setExportUrl(URL.createObjectURL(blob));
@@ -395,9 +484,10 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const curveKey = `${kind}|${settings.lines}|${settings.width}`, curve = curves.current.get(curveKey) ?? null;
   const thrNow = raw[kind].threshold;
   const thrSlider = thrPos.current && thrPos.current.key === curveKey && thrPos.current.t === thrNow ? thrPos.current.p : posOfT(curve, thrNow);
-  const value = isBrush ? brush : cur.id === 'spacing' ? 0 : cur.id === 'threshold' ? thrSlider : raw[kind][cur.id as keyof DotArtSettings];
+  const value = isBrush ? brush : cur.id === 'spacing' ? 0 : cur.id === 'glow' ? glow : cur.id === 'threshold' ? thrSlider : raw[kind][cur.id as keyof DotArtSettings];
   const setValue = (v: number) => {
     if (isBrush) setBrush(v);
+    else if (cur.id === 'glow') setGlow(v);
     else if (cur.id === 'threshold') {
       const t = Math.max(0.01, Math.min(0.99, snap('threshold', tOfPos(curve, v))));
       thrPos.current = { key: curveKey, t, p: v };
@@ -448,9 +538,13 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
       {/* 成品：黑底白點；筆刷／擦除時手指直接在上面畫 */}
       <div ref={box} className="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-black" style={{ paddingBottom: BOTTOM_ROW - 16 }}>
         {status === 'error' && <p className="absolute text-[12px] text-white/60">無法處理這張照片</p>}
-        <canvas ref={cvs} data-dot-art-canvas className={status === 'ready' && rendered && bits ? '' : 'hidden'}
-          style={{ touchAction: drawing ? 'none' : 'auto' }}
-          onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
+        <div className={`relative ${status === 'ready' && rendered && bits ? '' : 'hidden'}`}>
+          <canvas ref={glowCvs} data-dot-art-glow aria-hidden className="absolute pointer-events-none"
+            style={{ opacity: Math.min(1, glow / 100), display: glowOn ? 'block' : 'none' }} />
+          <canvas ref={cvs} data-dot-art-canvas className="relative block"
+            style={{ touchAction: drawing ? 'none' : 'auto' }}
+            onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
+        </div>
         {rendered && finalText && <pre data-dot-art-text hidden>{finalText}</pre>}
         {status === 'ready' && rendered && !frame && <p className="absolute text-[12px] text-white/50">畫面全空白，調一下明暗</p>}
         {/* 生成中：只有正中間一個轉圈（跟仿色同一款），完整的點陣出來之前不顯示任何點 */}

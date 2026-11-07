@@ -241,8 +241,20 @@ export class DotArtSession {
     } catch (e) { console.warn('dot art worker → main thread', e); this.useWorker = false; return null; }
   }
   async render(kind: 'line' | 'shade', s0: DotArtSettings): Promise<DotArtFrame | null> { return (await this.renderWithCurve(kind, s0)).frame; }
-  async renderWithCurve(kind: 'line' | 'shade', s0: DotArtSettings): Promise<DotArtRender> {
+  /** 算好的成品（同一張照片、同樣設定）：線稿／陰影來回切、滑桿拖回原處時直接拿，不重算 */
+  private frames = new Map<string, DotArtRender>();
+  /** prewarm＝閒下來時先算好另一種（不去動明暗對照表的排程） */
+  async renderWithCurve(kind: 'line' | 'shade', s0: DotArtSettings, prewarm = false): Promise<DotArtRender> {
     const s = this.modelReady ? s0 : { ...s0, lines: 0 };
+    const fk = `${kind}|${s.lines}|${s.thicken}|${s.width}|${kind === 'line' ? Math.round(255 * (1 - (s.threshold || 0.5))) : s.threshold}`;
+    const hit = this.frames.get(fk);
+    if (hit) { this.frames.delete(fk); this.frames.set(fk, hit); return hit; }
+    const r = await this.compute(kind, s, prewarm);
+    this.frames.set(fk, r);
+    while (this.frames.size > 64) this.frames.delete(this.frames.keys().next().value as string);
+    return r;
+  }
+  private async compute(kind: 'line' | 'shade', s: DotArtSettings, prewarm: boolean): Promise<DotArtRender> {
     let full: string[] | null = null;
     if (kind === 'line') {
       const level = Math.round(255 * (1 - (s.threshold || 0.5))), ek = `${s.lines}|${s.thicken}`, key = `${ek}|${level}`;
@@ -259,12 +271,12 @@ export class DotArtSession {
           this.line.set(key, c);
         }
         full = toBraille(c, 128, s.width);
-        this.sampleCurve('line', s);
+        if (!prewarm) this.sampleCurve('line', s);
       }
     } else {
       const pre = await this.preFor(s.lines);
       full = toBraille(ditherAt(pre, s.width, 2 * s.threshold), 128, s.width);
-      this.sampleCurve('shade', s);
+      if (!prewarm) this.sampleCurve('shade', s);
     }
     const t = trimAt(full);
     return { frame: t ? { text: t.lines.join('\n'), left: t.left, top: t.top, cols: full[0]?.length || s.width, rows: full.length } : null };
