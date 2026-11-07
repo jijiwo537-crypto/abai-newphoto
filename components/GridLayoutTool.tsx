@@ -25,6 +25,7 @@ import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface,layoutGeomPreviews} from './LayoutPhotoSurface';
 import {ensurePreviewCopy,previewSrc,usePreviewCopies,setPreviewZoom,previewZoom,forgetPreviewCopies} from '../utils/previewCopies';
+import {registerTrim} from '../utils/memoryPressure';
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import {drawStableText, hasEmoji} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
@@ -4943,6 +4944,14 @@ const CardThumbFast = React.memo(CardThumb, (a, b) => a.src === b.src && a.cache
 
 /** 預覽重畫時要馬上有圖可以畫，所以原圖載過一次就留著。 */
 const previewImgCache = new Map<string, HTMLImageElement>();
+/* 記憶體吃緊時（見 utils/memoryPressure）：預覽用的圖片快取、卡片縮圖都可以重建。
+   畫面上正在用的元素各自還拿著自己的那一份，不受影響 */
+registerTrim('grid-preview-caches', () => {
+  previewImgCache.clear();
+  cardThumbCache.clear();
+  for (const c of cardSourceThumbCache.values()) c.width = c.height = 1;
+  cardSourceThumbCache.clear();
+});
 /**
  * 佈局格子的照片。沒有套濾鏡就是原本那張 <img>（完全不變）；
  * 套了就換成 canvas，用跟浮動圖片同一支 applyPhotoFx 算，
@@ -10590,6 +10599,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
   }, []);
   const [exportState, setExportState] = useState<'idle' | 'processing' | 'success'>('idle');
+  const exportStateRef = useRef(exportState); exportStateRef.current = exportState;
   const [exportOptionsOpen,setExportOptionsOpen]=useState(false);
   const [imageExportFormat,setImageExportFormat]=useState<'png'|'jpg'|'heic'>('png');
   const [videoExportFormat,setVideoExportFormat]=useState<CollageVideoFormat>('auto');
@@ -14714,6 +14724,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   /** 匯出時同一張圖可能要畫在好幾頁上，載一次就好。 */
   const exportImgCache = useRef<Map<string, HTMLImageElement | null>>(new Map());
+  /* 記憶體吃緊時：沒在存檔就把存檔用的原圖快取清掉 */
+  useEffect(() => registerTrim('grid-export-cache', () => { if (exportStateRef.current !== 'processing') exportImgCache.current.clear(); }), []);
   /**
    * 匯出影片圖層時用的來源：直接拿預覽在播的那個 video 元素，
    * 所以存出來的就是畫面上看到的那一格。

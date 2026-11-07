@@ -10,6 +10,7 @@
  * 程式裡存的永遠是原圖網址；只有「畫到預覽上」的那幾個地方透過 previewSrc() 換成適合的那一份。 */
 import { useEffect, useState } from 'react';
 import { get2dWide } from './colorSpace';
+import { registerTrim } from './memoryPressure';
 
 /* 兩級小副本：一般大小的圖層（例如一頁放二十幾張）只要 1024，拉大才做 2048，再大才用原圖。
    一頁二十幾張的時候，只用一級 2048 的話預覽光照片就要兩百多 MB */
@@ -125,3 +126,10 @@ export function forgetPreviewCopies() {
   for (const e of copies.values()) { if (e.small) URL.revokeObjectURL(e.small); if (e.mid) URL.revokeObjectURL(e.mid); }
   copies.clear(); pending.clear(); viewZoom = 1;
 }
+
+/* 記憶體吃緊時：放掉已經讀進來的大原圖（還要用的時候 previewSrc 會先用小副本、再重新讀） */
+registerTrim('previewCopies', () => {
+  let changed = false;
+  for (const e of copies.values()) if (e.small && e.orig) { e.orig = null; e.origReady = false; e.origLoading = false; changed = true; }
+  if (changed) bump();
+});

@@ -18,6 +18,7 @@
 		AB0000000000000000000011 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000001 /* MainViewController.swift */; };
 		AB0000000000000000000012 /* HeicExportPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000002 /* HeicExportPlugin.swift */; };
 		AB0000000000000000000013 /* RawDecodePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000003 /* RawDecodePlugin.swift */; };
+		AB0000000000000000000014 /* MemoryPressurePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000004 /* MemoryPressurePlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +35,7 @@
 		AB0000000000000000000001 /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
 		AB0000000000000000000002 /* HeicExportPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeicExportPlugin.swift; sourceTree = "<group>"; };
 		AB0000000000000000000003 /* RawDecodePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RawDecodePlugin.swift; sourceTree = "<group>"; };
+		AB0000000000000000000004 /* MemoryPressurePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryPressurePlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -73,6 +75,7 @@
 				AB0000000000000000000001 /* MainViewController.swift */,
 				AB0000000000000000000002 /* HeicExportPlugin.swift */,
 				AB0000000000000000000003 /* RawDecodePlugin.swift */,
+				AB0000000000000000000004 /* MemoryPressurePlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -168,6 +171,7 @@
 				AB0000000000000000000011 /* MainViewController.swift in Sources */,
 				AB0000000000000000000012 /* HeicExportPlugin.swift in Sources */,
 				AB0000000000000000000013 /* RawDecodePlugin.swift in Sources */,
+				AB0000000000000000000014 /* MemoryPressurePlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
