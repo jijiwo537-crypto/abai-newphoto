@@ -8,6 +8,7 @@ import { Glyph } from './Glyph';
 import { SaveButton } from './SaveButton';
 import { BusySpinner } from './BusySpinner';
 import { ExportActionLift } from './ExportActionLift';
+import { SLIDER_RELEASE_EVENT } from '../utils/sliderTouch';
 import { useStandaloneToolViewport, standaloneToolViewportCSS } from '../utils/useStandaloneToolViewport';
 import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, prepareDotArtImage, warmLineArtModel, type DotArtFrame, type DotArtSettings, curveT, CURVE_N } from '../utils/dotArt';
 
@@ -83,6 +84,8 @@ const CH = 1.532, DOT = 0.19;
 /** 預覽下緣懸空那一排（換照片／線稿陰影／反轉）佔的高度：點陣畫在它上面，手指畫點時不會被按鈕擋到 */
 const BOTTOM_ROW = 68;
 const RX = 9.5 / 14, RY = 8 / 12;
+/** 平均點距（字寬）：橫向一個字 2 點、直向一個字高 4 點；筆刷半徑以兩者的幾何平均當一格 */
+const PITCH_X = 0.5, PITCH_Y = CH / 4, PITCH = Math.sqrt(PITCH_X * PITCH_Y);
 /** 一個方向上每個點的中心位置（以字寬／字高為單位）。n＝點數、cells＝格數、per＝每格幾點、g＝幾點一組、phase＝分組起點 */
 const axis = (n: number, cells: number, per: number, g: number, r: number, phase: number) => {
   const p = 1 / per, sIn = g * p / (g - 1 + 1 / r), extra = sIn / r - sIn, pos = new Float64Array(n);
@@ -295,6 +298,9 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const [gap, setGap] = useState({ x: 2, y: 4 });
   const gx = Math.round(gap.x), gy = Math.round(gap.y);
   const [brush, setBrush] = useState(2);
+  /* 調筆刷大小時，預覽正中間顯示一個空心圓＝實際筆刷大小（跟美顏的修容筆一樣） */
+  const [sizingBrush, setSizingBrush] = useState(false);
+  useEffect(() => { const off = () => setSizingBrush(false); window.addEventListener(SLIDER_RELEASE_EVENT, off); return () => window.removeEventListener(SLIDER_RELEASE_EVENT, off); }, []);
   /* 發光：0＝不發光（預設），只影響畫面與存成的圖片，複製的點字文字不受影響 */
   const [glow, setGlow] = useState(0);
   const glowOn = glow > 0.5;
@@ -485,10 +491,13 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     if (!s || !b) return;
     let m = edits.current.get(editKey);
     if (!m || m.length !== b.d.length) { m = new Uint8Array(b.d.length); edits.current.set(editKey, m); }
+    /* 筆刷在畫面上是正圓（橫向點距 0.5 字寬、直向 0.383 字寬不一樣，換算成畫面距離再比），
+       跟調大小時中間那個圈一樣大 */
     const rad = Math.max(0.5, Math.round(brush) - 0.5), v = tool === 'draw' ? 1 : 2;
-    for (let y = Math.floor(py - rad); y <= Math.ceil(py + rad); y++) for (let x = Math.floor(px - rad); x <= Math.ceil(px + rad); x++) {
+    const kx = PITCH_X / PITCH, ky = PITCH_Y / PITCH, rx = rad / kx, ry = rad / ky;
+    for (let y = Math.floor(py - ry); y <= Math.ceil(py + ry); y++) for (let x = Math.floor(px - rx); x <= Math.ceil(px + rx); x++) {
       if (x < 0 || y < 0 || x >= b.W || y >= b.H) continue;
-      if (Math.hypot(x + 0.5 - px, y + 0.5 - py) > rad) continue;
+      if (Math.hypot((x + 0.5 - px) * kx, (y + 0.5 - py) * ky) > rad) continue;
       const i = y * b.W + x;
       if (m[i] === v) continue;
       if (!s.changed.has(i)) s.changed.set(i, m[i]);
@@ -604,12 +613,16 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     else setRaw(r => ({ ...r, [kind]: { ...r[kind], [cur.id]: v } }));
   };
   /* 一列滑桿：名稱｜滑桿｜數值（跟美顏同一款） */
-  const sliderRow = (label: string, min: number, max: number, v: number, shown: string, set: (v: number) => void) => (
+  const sliderRow = (label: string, min: number, max: number, v: number, shown: string, set: (v: number) => void, sizing = false) => (
     <div className="flex items-center gap-3 h-6" key={label}>
       <span className="text-[10px] font-bold tracking-[0.15em] text-white/40 w-12 shrink-0">{label}</span>
       <div className="slider-wrap flex-1" style={{ height: 16 }}>
         <input type="range" aria-label={label} min={min} max={max} step="any" value={v}
-          onChange={e => set(Number(e.target.value))} className="premium-slider w-full" />
+          onChange={e => set(Number(e.target.value))} className="premium-slider w-full"
+          onPointerDown={sizing ? () => setSizingBrush(true) : undefined}
+          onPointerUp={sizing ? () => setSizingBrush(false) : undefined}
+          onPointerCancel={sizing ? () => setSizingBrush(false) : undefined}
+          onBlur={sizing ? () => setSizingBrush(false) : undefined} />
       </div>
       <span className="text-[11px] font-mono tabular-nums text-white/80 w-8 text-right shrink-0">{shown}</span>
     </div>
@@ -654,6 +667,15 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
             onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
         </div>
         {rendered && finalText && <pre data-dot-art-text hidden>{finalText}</pre>}
+        {/* 筆刷大小的空心圓：固定在點陣正中間，大小＝實際筆刷（用 DOM 畫，邊緣平滑） */}
+        {sizingBrush && isBrush && bits && (() => {
+          const bx = box.current?.getBoundingClientRect(), cr = cvs.current?.getBoundingClientRect();
+          if (!bx || !cr || !cr.width) return null;
+          const R = Math.max(0.5, Math.round(brush) - 0.5) * PITCH * geom.current.cw;
+          const cx = cr.left - bx.left + cr.width / 2, cy = cr.top - bx.top + cr.height / 2;
+          return <div data-dot-brush-ring className="absolute pointer-events-none z-20 rounded-full border-2 border-white"
+            style={{ left: cx - R, top: cy - R, width: 2 * R, height: 2 * R}} />;
+        })()}
         {status === 'ready' && rendered && !frame && <p className="absolute text-[12px] text-white/50">畫面全空白，調一下明暗</p>}
         {/* 生成中：只有正中間一個轉圈（跟仿色同一款），完整的點陣出來之前不顯示任何點 */}
         {(status === 'loading' || (status === 'ready' && !rendered)) && (
@@ -693,7 +715,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
           {sliderRow('橫向', 1, 8, gap.x, String(gx), v => setGap(g => ({ ...g, x: v })))}
           {sliderRow('直向', 1, 8, gap.y, String(gy), v => setGap(g => ({ ...g, y: v })))}
         </>) : sliderRow(isBrush ? '筆刷' : cur.label, cur.min, cur.max, value,
-          String(Math.round(value)), setValue)}
+          String(Math.round(value)), setValue, isBrush)}
       </div>
 
       {/* 工具列：跟美顏同一款（64px 按鈕列＋12px 底部距離） */}
