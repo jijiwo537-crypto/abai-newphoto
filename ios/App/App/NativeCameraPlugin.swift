@@ -82,7 +82,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             DispatchQueue.main.async {
                 guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有 WebView"); return }
                 if self.view == nil {
-                    guard let v = ABAIMetalView(frame: .zero) else { call.reject("這台裝置沒有 Metal"); return }
+                    guard let v = ABAIMetalView.make(frame: .zero) else { call.reject("這台裝置沒有 Metal"); return }
                     v.fill = true
                     parent.insertSubview(v, belowSubview: web)
                     self.view = v

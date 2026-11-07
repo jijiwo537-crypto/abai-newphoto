@@ -30,8 +30,13 @@ final class ABAIMetalView: MTKView, MTKViewDelegate {
     /// true＝填滿畫面（相機觀景窗），false＝照原比例完整放進來（編輯預覽）
     var fill = false
 
-    init?(frame: CGRect) {
+    /// 沒有 Metal 的裝置回 nil
+    static func make(frame: CGRect) -> ABAIMetalView? {
         guard let device = MTLCreateSystemDefaultDevice(), let q = device.makeCommandQueue() else { return nil }
+        return ABAIMetalView(frame: frame, device: device, queue: q)
+    }
+
+    private init(frame: CGRect, device: MTLDevice, queue q: MTLCommandQueue) {
         commandQueue = q
         ciContext = CIContext(mtlDevice: device, options: [
             .workingColorSpace: ABAIImageCore.linearP3,
@@ -106,7 +111,7 @@ public class NativePreviewPlugin: CAPPlugin, CAPBridgedPlugin {
         DispatchQueue.main.async {
             guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有 WebView"); return }
             if self.view == nil {
-                guard let v = ABAIMetalView(frame: .zero) else { call.reject("這台裝置沒有 Metal"); return }
+                guard let v = ABAIMetalView.make(frame: .zero) else { call.reject("這台裝置沒有 Metal"); return }
                 parent.insertSubview(v, belowSubview: web)
                 self.view = v
             }

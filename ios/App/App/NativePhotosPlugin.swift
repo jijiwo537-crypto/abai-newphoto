@@ -61,6 +61,7 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
         pickCall = nil
         if results.isEmpty { call.resolve(["items": []]); return }
         var items = [[String: Any]?](repeating: nil, count: results.count)
+        let lock = NSLock()
         let group = DispatchGroup()
         for (i, r) in results.enumerated() {
             let provider = r.itemProvider
@@ -88,7 +89,7 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
                 if !isMovie, let s = ABAIImageCore.pixelSize(of: dest) {
                     item["width"] = Int(s.width); item["height"] = Int(s.height)
                 }
-                items[i] = item
+                lock.lock(); items[i] = item; lock.unlock()
             }
         }
         group.notify(queue: .main) { call.resolve(["items": items.compactMap { $0 }]) }

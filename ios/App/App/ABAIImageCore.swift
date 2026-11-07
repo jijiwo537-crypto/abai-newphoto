@@ -35,7 +35,6 @@ enum ABAIImageCore {
         .workingColorSpace: linearP3,
         .workingFormat: CIFormat.RGBAh,
         .cacheIntermediates: false,
-        .name: "ABAIImageCore",
     ])
 
     // MARK: 暫存檔
@@ -187,9 +186,13 @@ enum ABAIImageCore {
         let size = w / 8
         // 一律用 sRGB 讀出 8 位元值：LUT 本身就是在 sRGB 編碼值上做的
         var px = [UInt8](repeating: 0, count: w * h * 4)
-        guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                                  space: sRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let drawn: Bool = px.withUnsafeMutableBytes { buf in
+            guard let ctx = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: sRGB, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard drawn else { return nil }
         if url.lastPathComponent == "f3.webp" || url.lastPathComponent == "f19.webp" {
             repairAtlas(&px, width: w)
         }

@@ -42,10 +42,17 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
       - run: npx cap sync ios
       - name: 編譯（模擬器）
+        # 編譯失敗一定要讓這一步變紅：輸出先存檔，失敗時把所有錯誤列出來
         run: |
-          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+          set -o pipefail
+          if ! xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build | tail -40
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build > xcodebuild.log 2>&1; then
+            grep -E "error:|warning: 找不到" xcodebuild.log | sort -u | head -80
+            tail -30 xcodebuild.log
+            exit 1
+          fi
+          grep -E "warning: .*(ABAI|Native|Haptics|VideoWriter|PhotoEditing)" xcodebuild.log | sort -u | head -40 || true
           test -d build/Build/Products/Debug-iphonesimulator/App.app
       - name: 在模擬器開起來截圖
         run: |
