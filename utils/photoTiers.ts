@@ -12,6 +12,7 @@
  *     預覽放大到超過現有細節、或要存檔時，從原檔重新做一張更清楚的換上去。
  * 所以成品的畫質不會變差，只是不再為「根本用不到的像素」付記憶體。 */
 import { loadImage as loadImg, resampleImage, fitLong } from './imageResample';
+import { registerBudget, scheduleBudgetCheck } from './memoryBudget';
 
 /** 長邊的分級。分級是為了不要每放大一點點就重做一張 */
 export const TIER_STEPS = [1280, 1600, 2048, 2560, 3072, 3584, 4096, 4608, 5120, 6144, 7168, 8192];
@@ -59,6 +60,7 @@ export async function openTiered(src: string, type: string, initialLong: number)
   const prev = reg.get(src);
   if (prev) prev.made.forEach(u => URL.revokeObjectURL(u));
   reg.set(src, { ow, oh, alpha, img, tier: img === head ? long : tier, job: null, made });
+  scheduleBudgetCheck();
   return { img, ow, oh };
 }
 
@@ -89,6 +91,7 @@ export function ensureTier(src: string, required: number): Promise<HTMLImageElem
       if (reg.get(src) !== e) { if (url) URL.revokeObjectURL(url); return null; }
       if (url) e.made.push(url);
       e.img = img; e.tier = tier >= long ? long : tier;
+      scheduleBudgetCheck();
       return img;
     } catch { return null; }
   }).finally(() => { if (e.job?.p === p) e.job = null; });
@@ -101,3 +104,10 @@ export function forgetTiered(src?: string) {
   const list = src ? [src] : [...reg.keys()];
   for (const s of list) { const e = reg.get(s); if (!e) continue; e.made.forEach(u => URL.revokeObjectURL(u)); reg.delete(s); }
 }
+
+/* 計入共用記憶體預算：這些是畫面和存檔正在用的那一張，不能放，但會讓其他快取讓出空間 */
+registerBudget('photoTiers', {
+  bytes: () => { let n = 0; for (const e of reg.values()) { const k = e.tier / Math.max(e.ow, e.oh); n += Math.round(e.ow * k) * Math.round(e.oh * k) * 4; } return n; },
+  oldestIdle: () => Infinity,
+  evictIdle: () => false,
+});

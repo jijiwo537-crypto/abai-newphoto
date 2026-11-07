@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react';
 import { loadImage as loadImg, resampleImage, fitLong } from './imageResample';
 import { registerTrim } from './memoryPressure';
+import { registerBudget, scheduleBudgetCheck } from './memoryBudget';
 
 /* 兩級小副本：一般大小的圖層（例如一頁放二十幾張）只要 1024，拉大才做 2048，再大才用原圖。
    一頁二十幾張的時候，只用一級 2048 的話預覽光照片就要兩百多 MB */
@@ -18,7 +19,9 @@ export const PREVIEW_LONG = 1024;
 export const PREVIEW_MID = 2048;
 
 interface Entry { small: string | null; smallLong: number; long: number; orig: HTMLImageElement | null; origReady: boolean; origLoading: boolean;
-  mid: string | null; midLong: number; midLoading: boolean; type: string }
+  mid: string | null; midLong: number; midLoading: boolean; type: string;
+  /** 畫面上是不是正在用原圖；不用了從什麼時候開始（共用記憶體預算靠它挑要放掉哪一張） */
+  wantOrig?: boolean; wantAt?: number; idleAt?: number }
 const copies = new Map<string, Entry>();
 const pending = new Map<string, Promise<void>>();
 let version = 0;
@@ -63,6 +66,16 @@ export function ensurePreviewCopy(url: string, type = ''): Promise<void> {
   return p;
 }
 
+/* need=0 是縮圖、卡片這類「不知道多大」的查詢，不算數；同一張照片可能好幾處同時在畫，
+   剛剛（1.5 秒內）還有人要原圖就先不算閒置 */
+const origIdle = (e: Entry, need: number) => {
+  if (!e.wantOrig || need <= 0) return;
+  const now = Date.now();
+  if (now - (e.wantAt || 0) < 1500) return;
+  e.wantOrig = false; e.idleAt = now;
+  if (e.orig) scheduleBudgetCheck();
+};
+
 /**
  * 預覽上畫這張照片要用哪一份網址。need＝畫面上它實際佔的「裝置像素」長邊（不知道就傳 0）。
  * 小副本夠清楚就用小副本；不夠的話原圖解碼好了就用原圖，還沒好就先用小副本、同時開始讀原圖。
@@ -70,9 +83,10 @@ export function ensurePreviewCopy(url: string, type = ''): Promise<void> {
 export function previewSrc(url: string, need = 0): string {
   const e = url ? copies.get(url) : undefined;
   if (!e || !e.small) return url;
-  if (need <= e.smallLong * 0.98) return e.small;
+  if (need <= e.smallLong * 0.98) { origIdle(e, need); return e.small; }
   // 中間那一級：原圖比 2048 大很多才值得做
   if (e.long > PREVIEW_MID * 1.15 && need <= PREVIEW_MID * 0.98) {
+    origIdle(e, need);
     if (e.mid) return e.mid;
     if (!e.midLoading) {
       e.midLoading = true;
@@ -81,10 +95,11 @@ export function previewSrc(url: string, need = 0): string {
     }
     return e.small;
   }
+  e.wantOrig = true; e.wantAt = Date.now();
   if (e.origReady) return url;
   if (!e.origLoading) {
     e.origLoading = true;
-    loadImg(url).then(async im => { try { await im.decode?.(); } catch { /* ok */ } e.orig = im; e.origReady = true; bump(); })
+    loadImg(url).then(async im => { try { await im.decode?.(); } catch { /* ok */ } e.orig = im; e.origReady = true; bump(); scheduleBudgetCheck(); })
       .catch(() => { e.origLoading = false; });
   }
   return e.small;
@@ -110,4 +125,16 @@ registerTrim('previewCopies', () => {
   let changed = false;
   for (const e of copies.values()) if (e.small && e.orig) { e.orig = null; e.origReady = false; e.origLoading = false; changed = true; }
   if (changed) bump();
+});
+
+/* 共用記憶體預算：已經讀進來、但畫面已經不用的原圖（放大看完又縮回去）算閒置，超過預算時從最久的放掉 */
+const idleOrig = () => {
+  let pick: Entry | null = null;
+  for (const e of copies.values()) if (e.small && e.orig && !e.wantOrig && (!pick || (e.idleAt || 0) < (pick.idleAt || 0))) pick = e;
+  return pick;
+};
+registerBudget('previewCopies', {
+  bytes: () => { let n = 0; for (const e of copies.values()) if (e.small && e.orig) n += e.orig.naturalWidth * e.orig.naturalHeight * 4; return n; },
+  oldestIdle: () => idleOrig()?.idleAt ?? Infinity,
+  evictIdle: () => { const e = idleOrig(); if (!e) return false; e.orig = null; e.origReady = false; e.origLoading = false; return true; },
 });
