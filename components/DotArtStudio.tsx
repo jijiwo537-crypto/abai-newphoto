@@ -151,32 +151,134 @@ const drawDots = (g: CanvasRenderingContext2D, b: Bits, L: Layout, cw: number, c
   }
 };
 
-/* ── 發光：把白點縮小再放大疊起來（一層一層對半縮、再一層一層放大加回去），就是柔和的光暈 ──
-   全部用畫布的 drawImage 做（顯示卡算），不逐點算，所以拖滑桿、畫點都不會卡。
-   光暈大小跟著「一個字多寬」走：預覽、存成圖片兩邊大小不同，光暈看起來的比例一樣。
-   滑桿只改光暈那一層的透明度（不用重算），所以拖起來跟一般滑桿一樣順。 */
-type GlowPool = HTMLCanvasElement[];
-const GLOW_GAIN = 2;   // 光暈本身先放大幾倍（點很細，平均下來很淡）
-const glowLayer = (src: HTMLCanvasElement, cwPx: number, pool: GlowPool) => {
-  const K = Math.max(1, Math.round(Math.log2(Math.max(2, 2 * cwPx)))), k0 = Math.max(1, K - 3), unit = 2 ** K;
-  const pad = Math.ceil(3 * cwPx / unit) * unit;
-  const W0 = Math.ceil((src.width + 2 * pad) / unit) * unit, H0 = Math.ceil((src.height + 2 * pad) / unit) * unit;
-  const lv = (k: number) => {
-    const c = pool[k] || (pool[k] = document.createElement('canvas')), w = W0 >> k, h = H0 >> k;
-    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } else c.getContext('2d')!.clearRect(0, 0, w, h);
-    const g = c.getContext('2d')!; g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1; g.imageSmoothingEnabled = true;
-    return c;
-  };
-  ctxOf(lv(1)).drawImage(src, pad / 2, pad / 2, src.width / 2, src.height / 2);
-  for (let k = 2; k <= K; k++) ctxOf(lv(k)).drawImage(pool[k - 1], 0, 0, W0 >> k, H0 >> k);
-  for (let k = K - 1; k >= k0; k--) { const g = ctxOf(pool[k]); g.globalCompositeOperation = 'lighter'; g.drawImage(pool[k + 1], 0, 0, W0 >> k, H0 >> k); }
-  const out = pool[k0], g = ctxOf(out);
-  g.globalCompositeOperation = 'lighter';
-  for (let i = 1; i < GLOW_GAIN; i++) g.drawImage(out, 0, 0);
-  g.globalCompositeOperation = 'source-over';
-  return { c: out, pad, scale: 2 ** k0, W0, H0 };
+/* ── 發光：直接從「哪些點亮著」算出光暈，不去縮放畫好的圖 ──
+   以前是把畫好的點一層層縮小再放大（很快，但放大時是一格一格的直線內插，近看光暈邊緣有一圈圈斷層）。
+   現在：
+     1. 每個亮點的面積分到一張細格子上（每格 1/4 個字寬，用小數精確分配到相鄰四格）；
+     2. 用三種大小的高斯模糊（0.5、1、2 個字寬）疊成光暈：近的亮、遠的淡，跟真的光一樣一路漸淡；
+     3. 亮度用「1 − e^(−x)」平滑收頂（密的地方不會硬切成一片白）；
+     4. 轉成 8 位元時加一點點雜訊（dither），最暗那一段不會出現一階一階的色帶。
+   全部是小格子上的加減（幾十萬格），手機上幾毫秒；光暈大小跟著字寬走，預覽與存出來的圖看起來一樣。
+   滑桿只改這一層的透明度，不用重算。最大值＝原本的 60%（滑桿照樣是 0～100）。 */
+const GLOW_CELL = 0.25;          // 格子大小（字寬）
+const GLOW_PAD = 6;              // 四周多留幾個字寬（光暈最外圈約 3 個標準差，不會被切掉）
+const GLOW_SIGMAS = [0.5, 1, 2]; // 三層光暈的大小（字寬）
+const GLOW_WEIGHTS = [0.5, 0.3, 0.2];
+const GLOW_GAIN = 12;            // 點很細，平均下來很淡，先放大再平滑收頂
+const GLOW_MAX = 0.6;       // 滑桿拉滿＝原本的 60
+/** 三次方塊模糊 ≈ 高斯：每次的半徑 */
+const boxRadii = (sigma: number) => {
+  const n = 3, wIdeal = Math.sqrt(12 * sigma * sigma / n + 1);
+  let wl = Math.floor(wIdeal); if (wl % 2 === 0) wl--;
+  const wu = wl + 2, m = Math.round((12 * sigma * sigma - n * wl * wl - 4 * n * wl - 3 * n) / (-4 * wl - 4));
+  return [0, 1, 2].map(i => ((i < m ? wl : wu) - 1) / 2);
 };
-const ctxOf = (c: HTMLCanvasElement) => c.getContext('2d')!;
+/** 橫向方塊模糊（滑動總和，界外當 0） */
+const boxH = (src: Float32Array, dst: Float32Array, W: number, H: number, r: number) => {
+  const inv = 1 / (2 * r + 1);
+  for (let y = 0, o = 0; y < H; y++, o += W) {
+    let acc = 0;
+    for (let i = 0; i <= r && i < W; i++) acc += src[o + i];
+    for (let i = 0; i < W; i++) {
+      dst[o + i] = acc * inv;
+      if (i + r + 1 < W) acc += src[o + i + r + 1];
+      if (i - r >= 0) acc -= src[o + i - r];
+    }
+  }
+};
+/** 縱向方塊模糊：一整列一整列加減（記憶體連續，比一行一行跳著讀快很多） */
+const boxV = (src: Float32Array, dst: Float32Array, W: number, H: number, r: number, acc: Float32Array) => {
+  const inv = 1 / (2 * r + 1);
+  acc.fill(0, 0, W);
+  for (let y = 0; y <= r && y < H; y++) { const o = y * W; for (let x = 0; x < W; x++) acc[x] += src[o + x]; }
+  for (let y = 0; y < H; y++) {
+    const o = y * W;
+    for (let x = 0; x < W; x++) dst[o + x] = acc[x] * inv;
+    if (y + r + 1 < H) { const q = (y + r + 1) * W; for (let x = 0; x < W; x++) acc[x] += src[q + x]; }
+    if (y - r >= 0) { const q = (y - r) * W; for (let x = 0; x < W; x++) acc[x] -= src[q + x]; }
+  }
+};
+const gaussInPlace = (a: Float32Array, tmp: Float32Array, W: number, H: number, sigma: number, acc: Float32Array) => {
+  for (const r of boxRadii(sigma)) { if (r <= 0) continue; boxH(a, tmp, W, H, r); boxV(tmp, a, W, H, r, acc); }
+};
+/** 縮成一半（2×2 平均，總光量不變） */
+const half = (src: Float32Array, W: number, H: number, dst: Float32Array) => {
+  const w = W >> 1, h = H >> 1;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = 2 * y * W + 2 * x;
+    dst[y * w + x] = 0.25 * (src[i] + src[i + 1] + src[i + W] + src[i + W + 1]);
+  }
+  return { w, h };
+};
+/** 小格子的值用雙線性內插放大 f 倍，乘上 k 加進 dst（格子中心對齊） */
+const addUp = (src: Float32Array, w: number, h: number, f: number, dst: Float32Array, W: number, H: number, k: number) => {
+  for (let y = 0; y < H; y++) {
+    const fy = Math.min(h - 1, Math.max(0, (y + 0.5) / f - 0.5)), y0 = Math.min(h - 2, Math.floor(fy)), ty = fy - y0;
+    const r0 = Math.max(0, y0) * w, r1 = Math.min(h - 1, y0 + 1) * w, o = y * W;
+    for (let x = 0; x < W; x++) {
+      const fx = Math.min(w - 1, Math.max(0, (x + 0.5) / f - 0.5)), x0 = Math.min(w - 2, Math.floor(fx)), tx = fx - x0;
+      const a = src[r0 + x0], b = src[r0 + x0 + 1], c = src[r1 + x0], d = src[r1 + x0 + 1];
+      dst[o + x] += k * ((a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty);
+    }
+  }
+};
+/** 平滑收頂 255·(1 − e^(−GAIN·x)) 先算成表（中間線性內插，誤差遠小於 1/255） */
+const GLOW_LUT_N = 2048, GLOW_LUT_K = GLOW_LUT_N / (8 / GLOW_GAIN);
+const GLOW_LUT = Float32Array.from({ length: GLOW_LUT_N }, (_, k) => 255 * (1 - Math.exp(-GLOW_GAIN * k / GLOW_LUT_K)));
+/** 光暈用的暫存（每次大小一樣就沿用，畫點時每一格都要算一次，不用一直配新的記憶體）。
+    雜訊是固定的（每次一樣，畫點時光暈不會閃） */
+let glowMem: { n: number; base: Float32Array; field: Float32Array; tmp: Float32Array; m1: Float32Array; m2: Float32Array; acc: Float32Array; noise: Float32Array; img: ImageData | null } | null = null;
+const glowBuf = (n: number, W: number) => {
+  if (!glowMem || glowMem.n !== n || glowMem.acc.length < W) {
+    const noise = new Float32Array(n); let seed = 12345;
+    for (let i = 0; i < n; i++) { seed = (seed * 1103515245 + 12345) >>> 0; noise[i] = seed / 4294967296 - 0.5; }
+    glowMem = { n, base: new Float32Array(n), field: new Float32Array(n), tmp: new Float32Array(n), m1: new Float32Array(n >> 2), m2: new Float32Array(n >> 4), acc: new Float32Array(W), noise, img: null };
+  }
+  return glowMem;
+};
+/** 算光暈：回傳一張小畫布（白色、透明度＝光的強度）和它對應的位置（以字寬為單位，含四周 GLOW_PAD） */
+const glowField = (b: Bits, L: Layout, out?: HTMLCanvasElement) => {
+  const C = b.W / 2, R = b.H / 4, g = GLOW_CELL;
+  const W = Math.ceil((C + 2 * GLOW_PAD) / g), H = Math.ceil((R * CH + 2 * GLOW_PAD) / g), n = W * H;
+  const buf = glowBuf(n, W), base = buf.base, field = buf.field, tmp = buf.tmp, acc = buf.acc;
+  base.fill(0); field.fill(0);
+  const area = DOT * DOT / (g * g), px = L.x.pos, py = L.y.pos;
+  for (let y = 0; y < b.H; y++) {
+    const fy = (py[y] * CH + GLOW_PAD) / g - 0.5, y0 = Math.floor(fy), ty = fy - y0, row = y * b.W;
+    if (y0 < 0 || y0 + 1 >= H) continue;
+    for (let x = 0; x < b.W; x++) {
+      if (!b.d[row + x]) continue;
+      const fx = (px[x] + GLOW_PAD) / g - 0.5, x0 = Math.floor(fx), tx = fx - x0;
+      if (x0 < 0 || x0 + 1 >= W) continue;
+      const i = y0 * W + x0;
+      base[i] += area * (1 - tx) * (1 - ty); base[i + 1] += area * tx * (1 - ty);
+      base[i + W] += area * (1 - tx) * ty; base[i + W + 1] += area * tx * ty;
+    }
+  }
+  /* 三層光暈：小的在細格子上模糊；大的兩層先縮成 1/2、1/4 的格子再模糊（大的光暈本來就很柔，
+     放在粗格子上算結果幾乎一樣，但快很多），最後雙線性放大加回細格子 */
+  const [s0, s1, s2] = GLOW_SIGMAS.map(x => x / g), [w0, w1, w2] = GLOW_WEIGHTS;
+  const A = half(base, W, H, buf.m1);                 // 1/2 格子（模糊前先留一份原始的）
+  const B = half(buf.m1, A.w, A.h, buf.m2);           // 1/4 格子
+  gaussInPlace(buf.m1, tmp, A.w, A.h, Math.sqrt(Math.max(0, (s1 / 2) ** 2 - 0.25)), acc);
+  gaussInPlace(buf.m2, tmp, B.w, B.h, Math.sqrt(Math.max(0, (s2 / 4) ** 2 - 0.27)), acc);
+  gaussInPlace(base, tmp, W, H, s0, acc);
+  for (let i = 0; i < n; i++) field[i] = w0 * base[i];
+  addUp(buf.m1, A.w, A.h, 2, field, W, H, w1);
+  addUp(buf.m2, B.w, B.h, 4, field, W, H, w2);
+  const c = out || document.createElement('canvas');
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const gc = c.getContext('2d')!;
+  if (!buf.img || buf.img.width !== W || buf.img.height !== H) { buf.img = gc.createImageData(W, H); buf.img.data.fill(255); }
+  const d = buf.img.data, noise = buf.noise;
+  for (let i = 0, j = 3; i < n; i++, j += 4) {
+    const v = field[i] * GLOW_LUT_K, k = v | 0;
+    const a = (k >= GLOW_LUT_N - 1 ? 255 : GLOW_LUT[k] + (GLOW_LUT[k + 1] - GLOW_LUT[k]) * (v - k)) + noise[i];
+    d[j] = a <= 0 ? 0 : a >= 255 ? 255 : (a + 0.5) | 0;
+  }
+  gc.putImageData(buf.img, 0, 0);
+  return { c, cell: g, pad: GLOW_PAD };
+};
 
 /** 一筆畫改到哪些點：位置、改之前、改之後（復原／重做只記差異，不用每筆存一整張） */
 interface Step { key: string; idx: number[]; before: number[]; after: number[] }
@@ -320,16 +422,14 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   const layoutRef = useRef(layout); layoutRef.current = layout;
   const geom = useRef({ cw: 1, ch: CH, C: 0, R: 0, dpr: 1 });
   /* 發光那一層：放在點的後面，大小比點陣多出一圈（光暈會超出最外面的點） */
-  const glowCvs = useRef<HTMLCanvasElement>(null), glowPool = useRef<GlowPool>([]);
+  const glowCvs = useRef<HTMLCanvasElement>(null);
   const paintGlow = useCallback(() => {
-    const c = cvs.current, o = glowCvs.current;
+    const c = cvs.current, o = glowCvs.current, b = bitsRef.current, L = layoutRef.current;
     if (!c || !o) return;
-    if (!glowOnRef.current || !c.width || !c.height) { if (o.width) { o.width = o.height = 0; } return; }
-    const { cw, dpr } = geom.current, L = glowLayer(c, cw * dpr, glowPool.current);
-    if (o.width !== L.c.width || o.height !== L.c.height) { o.width = L.c.width; o.height = L.c.height; }
-    const g = ctxOf(o); g.clearRect(0, 0, o.width, o.height); g.drawImage(L.c, 0, 0);
-    o.style.left = `${-L.pad / dpr}px`; o.style.top = `${-L.pad / dpr}px`;
-    o.style.width = `${L.W0 / dpr}px`; o.style.height = `${L.H0 / dpr}px`;
+    if (!glowOnRef.current || !b || !L || !c.width || !c.height) { if (o.width) { o.width = o.height = 0; } return; }
+    const { cw } = geom.current, G = glowField(b, L, o);
+    o.style.left = `${-G.pad * cw}px`; o.style.top = `${-G.pad * cw}px`;
+    o.style.width = `${o.width * G.cell * cw}px`; o.style.height = `${o.height * G.cell * cw}px`;
   }, []);
   const paint = useCallback((b: Bits | null, L: Layout | null) => {
     const c = cvs.current; if (!c) return;
@@ -350,8 +450,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
   }, [boxSize, paintGlow]);
   useLayoutEffect(() => { paint(bits, layout); }, [bits, layout, paint]);
   /* 發光從 0 拉起來時才建那一層（之後拖滑桿只改透明度）；拉回 0 就放掉 */
-  useLayoutEffect(() => { paintGlow(); if (!glowOn) glowPool.current.forEach(c => { c.width = c.height = 0; }); }, [glowOn, paintGlow]);
-  useEffect(() => () => { glowPool.current.forEach(c => { c.width = c.height = 0; }); }, []);
+  useLayoutEffect(() => { paintGlow(); }, [glowOn, paintGlow]);
 
   /* ── 畫筆：只改點陣、只重畫改到的格子（每一下都重排整張字、重畫整張，在手機上會卡到分頁被關掉） ── */
   const drawing = tool === 'draw' || tool === 'erase';
@@ -371,8 +470,16 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
       if (b.d[i]) g.rect(cx - sz / 2, cy - sz / 2, sz, sz);
     });
     g.fill(); s.dirty.clear();
-    paintGlow();
+    glowSoon();
   };
+  /* 畫點時光暈不用每一格都重算：點先畫上去，光暈最多每 60ms 跟上一次，放開手指時一定補上最後一次 */
+  const glowTimer = useRef(0), glowAt = useRef(0);
+  const glowSoon = () => {
+    if (!glowOnRef.current || glowTimer.current) return;
+    const wait = Math.max(0, 60 - (performance.now() - glowAt.current));
+    glowTimer.current = window.setTimeout(() => { glowTimer.current = 0; glowAt.current = performance.now(); paintGlow(); }, wait);
+  };
+  useEffect(() => () => clearTimeout(glowTimer.current), []);
   const dab = (px: number, py: number) => {
     const s = stroke.current, b = bitsRef.current;
     if (!s || !b) return;
@@ -415,6 +522,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     const s = stroke.current; if (!s) return;
     if (s.raf) cancelAnimationFrame(s.raf);
     flush(); stroke.current = null;
+    clearTimeout(glowTimer.current); glowTimer.current = 0; paintGlow();
     if (s.changed.size) {
       const m = edits.current.get(editKey)!, idx = [...s.changed.keys()];
       undoStack.current.push({ key: editKey, idx, before: idx.map(i => s.changed.get(i)!), after: idx.map(i => m[i]) });
@@ -450,10 +558,10 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     if (!b || !o || !L || saving) return;
     setSaving(true);
     try {
-      // 只存有點的範圍（跟複製的文字同一塊），四周各留一個字寬的黑邊（有發光時留三個字寬，光暈才不會被切掉）
+      // 只存有點的範圍（跟複製的文字同一塊），四周各留一個字寬的黑邊（有發光時留五個字寬，光暈才不會被切掉）
       const x0 = o.x0 * 2, x1 = (o.x0 + o.cols) * 2, y0 = o.y0 * 4, y1 = (o.y0 + o.rows) * 4;
       const spanX = L.x.pos[x1 - 1] - L.x.pos[x0], spanY = L.y.pos[y1 - 1] - L.y.pos[y0];
-      const M = glowOn ? 3 : 1;
+      const M = glowOn ? 5 : 1;
       const cw = Math.max(4, Math.min(32, 4096 / (spanX + 2 * M), 4096 / (spanY * CH + 2 * M))), ch = cw * CH;
       const c = document.createElement('canvas');
       c.width = Math.round(spanX * cw + 2 * M * cw); c.height = Math.round(spanY * ch + 2 * M * cw);
@@ -466,11 +574,11 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
       const g = c.getContext('2d')!;
       g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
       if (glowOn) {
-        const pool: GlowPool = [], G = glowLayer(dots, cw, pool);
-        g.globalAlpha = Math.min(1, glow / 100); g.imageSmoothingEnabled = true;
-        g.drawImage(G.c, -G.pad, -G.pad, G.W0, G.H0);
+        const G = glowField(b, L), ox = M * cw - L.x.pos[x0] * cw, oy = M * cw - L.y.pos[y0] * ch;
+        g.globalAlpha = GLOW_MAX * Math.min(1, glow / 100); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+        g.drawImage(G.c, ox - G.pad * cw, oy - G.pad * cw, G.c.width * G.cell * cw, G.c.height * G.cell * cw);
         g.globalAlpha = 1;
-        pool.forEach(x => { x.width = x.height = 0; });
+        G.c.width = G.c.height = 0;
       }
       g.drawImage(dots, 0, 0); dots.width = dots.height = 0;
       const blob = await new Promise<Blob | null>(r => c.toBlob(r, 'image/png'));
@@ -540,7 +648,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         {status === 'error' && <p className="absolute text-[12px] text-white/60">無法處理這張照片</p>}
         <div className={`relative ${status === 'ready' && rendered && bits ? '' : 'hidden'}`}>
           <canvas ref={glowCvs} data-dot-art-glow aria-hidden className="absolute pointer-events-none"
-            style={{ opacity: Math.min(1, glow / 100), display: glowOn ? 'block' : 'none' }} />
+            style={{ opacity: GLOW_MAX * Math.min(1, glow / 100), display: glowOn ? 'block' : 'none' }} />
           <canvas ref={cvs} data-dot-art-canvas className="relative block"
             style={{ touchAction: drawing ? 'none' : 'auto' }}
             onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />

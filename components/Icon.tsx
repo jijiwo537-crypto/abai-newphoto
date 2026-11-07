@@ -26,8 +26,9 @@ const INLINE: Record<string, string> = {
   /* 色輪：一個圓（色輪）、一個偏離中心的實心點（調整點），跟 Material 圖示同一種線寬 */
   /* 空心星星（點陣的輪廓）：五角星外框，線寬跟其他圖示一樣 */
   star_outline: '<path fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round" d="M12 3.3l2.6 5.5 6 .8-4.4 4.1 1.1 5.9L12 16.7l-5.3 2.9 1.1-5.9-4.4-4.1 6-.8z"/>',
-  /* 發光（點陣）：中間一顆實心亮點，外面兩圈光暈（外圈是斷開的，越外越淡的感覺） */
-  dot_glow: '<circle cx="12" cy="12" r="3" fill="#fff"/><circle cx="12" cy="12" r="6" fill="none" stroke="#fff" stroke-width="1.6"/><circle cx="12" cy="12" r="9.3" fill="none" stroke="#fff" stroke-width="1.4" stroke-dasharray="2.4 2.47" stroke-linecap="round"/>',
+  /* 發光（點陣）：一顆四芒的閃光（四邊內凹的星形，發光、閃耀常用的樣子）加右上角一顆小閃光；
+     跟「明暗」的太陽、「輪廓」的五角星分得開，線寬跟其他圖示一樣 */
+  dot_glow: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><path d="M10 4.5c.55 4.3 2.7 6.45 7 7-4.3.55-6.45 2.7-7 7-.55-4.3-2.7-6.45-7-7 4.3-.55 6.45-2.7 7-7z"/></g><path fill="#fff" d="M18.2 2.6c.3 1.75 1.05 2.5 2.8 2.8-1.75.3-2.5 1.05-2.8 2.8-.3-1.75-1.05-2.5-2.8-2.8 1.75-.3 2.5-1.05 2.8-2.8z"/>',
   /* 磨皮：一顆水滴（滋潤、變光滑）加一道柔和的反光，線條粗細跟其他圖示一致 */
   skin_smooth: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2C8.3 7.6 6 10.9 6 14.1a6 6 0 0 0 12 0c0-3.2-2.3-6.5-6-10.9z"/><path d="M9.1 14.6a3.1 3.1 0 0 0 2.4 2.7"/></g>',
   /* 色輪：一個圓、正中心一個實心點 */
