@@ -28,16 +28,11 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "available", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "decode", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "decodeFile", returnType: CAPPluginReturnPromise),
     ]
 
-    /// 共用一個 CIContext：每次都新建的話，每張圖都要重新配置 GPU 資源。
-    private lazy var ciContext: CIContext = {
-        // 用 sRGB 工作色空間，跟網頁那邊的畫布一致
-        return CIContext(options: [
-            .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB) as Any,
-            .useSoftwareRenderer: false,
-        ])
-    }()
+    /// 共用原生影像核心的 context（線性 P3、16 位元浮點）：RAW 的寬色域不會在中間被切掉
+    private var ciContext: CIContext { ABAIImageCore.context }
 
     /// 網頁那邊拿來探「外掛在不在」用的。存在就回 true。
     @objc func available(_ call: CAPPluginCall) {
@@ -64,6 +59,29 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
                 ])
             } catch {
                 call.reject("RAW 解碼失敗：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// 讀檔案路徑、寫檔案路徑（不經過 base64）。照片從系統選擇器來的時候走這條。
+    /// 參數：path、exposure（EV，預設 0）、boost（0＝線性、1＝相機階調）
+    @objc func decodeFile(_ call: CAPPluginCall) {
+        guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? "") else { call.reject("沒有路徑"); return }
+        let ev = Float(call.getDouble("exposure") ?? 0), boost = Float(call.getDouble("boost") ?? 1)
+        DispatchQueue.global(qos: .userInitiated).async {
+            autoreleasepool {
+                guard let filter = CIRAWFilter(imageURL: url) else { call.reject(RawError.notRaw.localizedDescription); return }
+                filter.isDraftModeEnabled = false
+                filter.boostAmount = boost
+                filter.exposure = ev
+                filter.isGamutMappingEnabled = true
+                guard let output = filter.outputImage, output.extent.width > 0 else { call.reject(RawError.renderFailed.localizedDescription); return }
+                do {
+                    let data = try ABAIImageCore.encode(output, format: .jpeg, quality: 0.97)
+                    let out = ABAIImageCore.newFileURL(ext: "jpg")
+                    try data.write(to: out)
+                    call.resolve(["path": out.path, "width": Int(output.extent.width), "height": Int(output.extent.height)])
+                } catch { call.reject(error.localizedDescription) }
             }
         }
     }
@@ -96,7 +114,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         let extent = output.extent
         guard extent.width > 0, extent.height > 0 else { throw RawError.renderFailed }
 
-        guard let cg = ciContext.createCGImage(output, from: extent) else {
+        guard let cg = ciContext.createCGImage(output, from: extent, format: .RGBA8, colorSpace: ABAIImageCore.displayP3) else {
             throw RawError.renderFailed
         }
         let image = UIImage(cgImage: cg)

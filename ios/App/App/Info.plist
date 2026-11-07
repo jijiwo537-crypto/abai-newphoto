@@ -63,8 +63,10 @@
 	<key>NSCameraUsageDescription</key>
 	<string>拍照時需要使用相機。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>選擇要編輯的照片時需要讀取相簿。</string>
+	<string>在「照片」App 裡保留原圖、讓你之後能回復或接著修改 ABAI 的編輯時，需要讀取相簿。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>把編輯好的照片存進相簿。</string>
+	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
+	<true/>
 </dict>
 </plist>
