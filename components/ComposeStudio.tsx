@@ -278,7 +278,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         if (top) { const ny = Math.max(0, Math.min(s.y + s.h - MIN_CROP, s.y + dy)); h = s.y + s.h - ny; y = ny; }
         if (bottom) { h = Math.max(MIN_CROP, Math.min(1 - s.y, s.h + dy)); }
       } else {
-        /* 鎖比例。這裡以前有兩個毛病，都改掉了：
+        /* 鎖比例。這裡要避開兩個毛病：
 
            ① 頂到邊之後繼續拖，框會從「對角」長出去。
               原因是算完新的寬高之後，收尾是把「位置」夾回畫面內
@@ -291,7 +291,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
               原因是舊寫法看到 left||right 就只用寬度去推高度，dy 整個
               沒用到 —— 手指往下拉沒反應、只有左右滑才會變大小，
               角也就跟著跑掉、不在手指底下了。
-              現在改成把手指投影到那條對角線上（正交投影），
+              做法是把手指投影到那條對角線上（正交投影），
               角會盡可能貼著手指走，斜著拉也順。 */
         const nRatio = activeRatio * (stageSize.h / stageSize.w);
 
@@ -542,7 +542,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         {/* 高度用跟一般預覽同一條上限夾住，兩邊算出來的尺寸才會一模一樣
              （不夾的話 flex-1 的可用高會因為底部欄的小數而差 1px） */}
         {/* 兩指縮放掛在最外面這一層，不是掛在裁切框上。
-             以前只有裁切框自己接得到，所以框拖小之後，兩指放在框外面
+             不能只有裁切框自己接得到，不然框拖小之後，兩指放在框外面
              （壓暗的那一圈、甚至照片旁邊的黑邊）捏了完全沒反應 ——
              但那正是框小的時候手指最自然會放的位置。
              現在整個預覽區都算數：觸控事件會從裁切框、從角上的把手一路冒泡
@@ -567,7 +567,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           onTouchCancel={onStageTouchEnd}
         >
         {/* 在框外面按下去也能搬裁切框。
-             以前只有框「裡面」接得到手勢，框拖小之後想再挪位置，
+             不能只有框「裡面」接得到手勢，不然框拖小之後想再挪位置，
              手指非得先戳進那一小塊才行。落在框上或角上時，那邊自己會
              stopPropagation，所以走不到這裡 —— 兩種操作不會打架。 */}
         <div

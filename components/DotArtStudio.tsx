@@ -27,7 +27,7 @@ const TOOLS: ToolDef[] = [
   { id: 'draw', label: '筆刷', glyph: <Icon name="brush" className="text-xl" />, min: 1, max: 8 },
   { id: 'erase', label: '擦除', glyph: <Glyph k="erase" size={20} />, min: 1, max: 8 },
 ];
-/** 數量滑桿看起來是 0～100，實際是 40～100 個字（0 → 40 字、100 → 100 字；40 字＝以前滑桿的 25） */
+/** 數量滑桿看起來是 0～100，實際是 40～100 個字（0 → 40 字、100 → 100 字；40 字＝舊版滑桿的 25） */
 const WIDTH_MIN = 40, WIDTH_MAX = 100;
 const widthOf = (v: number) => Math.round(WIDTH_MIN + (WIDTH_MAX - WIDTH_MIN) * Math.round(v) / 100);
 const sliderOfWidth = (w: number) => (w - WIDTH_MIN) / (WIDTH_MAX - WIDTH_MIN) * 100;
@@ -157,7 +157,7 @@ const drawDots = (g: CanvasRenderingContext2D, b: Bits, L: Layout, cw: number, c
 };
 
 /* ── 發光：直接從「哪些點亮著」算出光暈，不去縮放畫好的圖 ──
-   以前是把畫好的點一層層縮小再放大（很快，但放大時是一格一格的直線內插，近看光暈邊緣有一圈圈斷層）。
+   不把畫好的點一層層縮小再放大：很快，但放大時是一格一格的直線內插，近看光暈邊緣有一圈圈斷層。
    現在：
      1. 每個亮點的面積分到一張細格子上（每格 1/4 個字寬，用小數精確分配到相鄰四格）；
      2. 用三種大小的高斯模糊（0.3、0.6、1.2 個字寬）疊成光暈：近的亮、遠的淡，跟真的光一樣一路漸淡；

@@ -26,7 +26,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, thumbs =
           return new Promise<string>((resolve) => {
             const img = new Image();
             /* 直接用讀進來的檔案（瀏覽器本來就能顯示），不整張畫進畫布重新編碼：
-               48MP 照片超過手機畫布上限，以前匯入就是空白或閃退；不重編碼也完全無損 */
+               48MP 照片超過手機畫布上限，直接匯入會空白或閃退；不重編碼也完全無損 */
             img.onload = () => resolve(objectUrl);
             img.onerror = () => {
               URL.revokeObjectURL(objectUrl);
@@ -80,7 +80,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, thumbs =
                 /> : <button aria-label={`Capture ${idx}`} onClick={() => onEdit(src, idx)} className="w-full h-full rounded-lg bg-white/10 animate-pulse" />}
                 {/* 刪除鍵：固定 26×26 的正圓，圖示用行高歸零 + flex 置中，
                     不然圖示字的行高會把它撐成不對稱的形狀、看起來沒對準。
-                    另外原本是 hover 才浮現 —— 手機沒有 hover，等於按不到。 */}
+                    另外不做成 hover 才浮現 —— 手機沒有 hover，等於按不到。 */}
                 <button 
                   onClick={(e) => { e.stopPropagation(); onDelete(idx); }}
                   aria-label="刪除"

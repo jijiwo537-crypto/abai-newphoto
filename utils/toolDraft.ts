@@ -220,7 +220,7 @@ async function internalizeState(value: any, urls = new Map<string, string>()): P
  */
 export async function saveDraft(tool: ToolKind, src: string | null, state: any, resumable = true): Promise<void> {
   if (saving) {
-    /* 佇列只有一格，以前是直接覆蓋 —— 那會把「還沒寫進去的那張照片」蓋掉。
+    /* 佇列只有一格，不能直接覆蓋 —— 那會把「還沒寫進去的那張照片」蓋掉。
        實際發生過的順序：選完照片的那一次存檔被排進佇列，緊接著的參數自動存檔
        （src 是 null）把整格換掉，結果草稿只有參數、沒有照片，
        「繼續上次的編輯」回來就是一片空白。
@@ -255,7 +255,7 @@ export async function saveDraft(tool: ToolKind, src: string | null, state: any, 
       if (!(existing instanceof Blob) || !existing.size) return;
     }
     /* state 給 null 的意思跟 src 一樣是「不要動它」（見上面的說明）。
-       以前是不分青紅皂白直接寫進去，於是「只存照片」那一次
+       不能不分青紅皂白直接寫進去，不然「只存照片」那一次
        （state 是 null）會把先前存好的參數清成 null。 */
     const prev = state == null
       ? await tx<ToolDraftMeta>('readonly', s => s.get(META_KEY) as IDBRequest<ToolDraftMeta>)

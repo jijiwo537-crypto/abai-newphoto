@@ -448,7 +448,7 @@ const glowOnly = (p: EditorParams): EditorParams => ({
  *  以及每一個新特效自己那幾根）。
  *
  * 點一張特效卡片＝從頭來過：整組回到預設值，而不是只把強度歸位 ——
- * 以前只重設強度，上一次在細項面板裡調過的東西會留著，
+ * 不能只重設強度，不然上一次在細項面板裡調過的東西會留著，
  * 於是「同一顆特效點兩次」得到的結果不一樣。
  */
 const EFFECT_ALL_KEYS: string[] = Array.from(new Set([
@@ -717,7 +717,7 @@ export function generateNoisePattern(type: 'grain' | 'color', size: number = 512
  *
  * 這件事本來是靠比對檔名決定的（url.includes('IMG_9026') 之類）。
  * 濾鏡檔改名成 f1…f23 之後那些比對就通通對不上，所有濾鏡都變成 100 ——
- * 看起來就是「每一顆都比以前濃」。改成直接用濾鏡 id 對照，
+ * 看起來就是「每一顆都比較濃」。改成直接用濾鏡 id 對照，
  * 以後換檔名、換圖床都不會再影響到強度。
  *
  * 沒列在這裡的就是 100。
@@ -730,7 +730,7 @@ interface ImageEditorProps {
   /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
   histKey?: string | null;
   imageSrc: string;
-  /** 批量編輯：這次匯入的所有照片。沒給或只有一張時，介面跟以前完全一樣。 */
+  /** 批量編輯：這次匯入的所有照片。沒給或只有一張時，就是一般的單張介面。 */
   batchSrcs?: string[];
   /** 批量編輯裡按「新增」：再挑照片接進來 */
   onAddPhotos?: () => void;
@@ -1167,7 +1167,7 @@ const ThumbCanvas = React.memo<{
   const copy = useRef<HTMLCanvasElement | null>(null);
   const drawn = useRef('');
   /* 倉庫裡那張畫布本身就掛上來（搬節點，不複製像素）—— 跟創意拼圖的卡片同一招。
-     以前每次進分頁都新建 20 幾張畫布、配置 GPU 記憶體再 putImageData 一整張，
+     不要每次進分頁都新建 20 幾張畫布、配置 GPU 記憶體再 putImageData 一整張，
      切到「濾鏡」「特效」那一下的延遲主要就是這個。
      還沒算到自己那一格時頂著的 fallback（大家共用同一張）才複製一份。 */
   const paint = useCallback(() => {
@@ -1920,7 +1920,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         // 不會觸發 ResizeObserver，之後創建的遮色片就會沿用放大後的錯誤尺寸。
         const next = { width: canvas.offsetWidth, height: canvas.offsetHeight, top: canvas.offsetTop, left: canvas.offsetLeft };
         /* 沒變就回傳原物件：每次切分頁都會量一次（加上 ResizeObserver 一掛上就回報一次），
-           以前每次都塞一個新物件，等於整個編輯器白白多 render 兩遍。 */
+           不要每次都塞一個新物件，不然整個編輯器白白多 render 兩遍。 */
         setCanvasBounds(prev => prev && prev.width === next.width && prev.height === next.height && prev.top === next.top && prev.left === next.left ? prev : next);
       }
     }
@@ -2293,7 +2293,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!MASK_TOOLS.some(x => x.id === activeToolId)) setActiveToolId(MASK_DEFAULT_TOOL[masks[i].maskType]);
     commitMaskParams(loadMask(p, masks[i], masks, i));
     /* 紅色範圍當場換成新選的這一個（線性、放射、筆刷不必看畫面，馬上畫得出來），
-       不必等整條管線重畫完 —— 以前中間會有一段完全沒有紅色。
+       不必等整條管線重畫完 —— 不然中間會有一段完全沒有紅色。
        顏色／明度範圍要看畫面：先拿上一次畫好、留下來的那份頂著，管線畫好就換成精確的；
        從來沒畫過（例如剛載入）才先收掉，不能先露出舊的那一個。 */
     const ov = maskOverlayCanvasRef.current, np = paramsRef.current, nm = snapOf(np);
@@ -2330,7 +2330,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     commitMaskParams(loadMask(p, masks[idx], masks, idx));
   };
   /* 右側工具欄的按鈕：先讓按鈕本身的變化畫出來（這一格），照片下一格才重畫 ——
-     以前同一格裡先跑整條管線，按鈕要等照片算完才變（手機上慢半秒以上） */
+     不在同一格裡先跑整條管線，不然按鈕要等照片算完才變（手機上慢半秒以上） */
   const toggleMaskInvert = () => { uiFirstRef.current = true; commitMaskParams({ ...paramsRef.current, maskInvert: !paramsRef.current.maskInvert }); };
   const toggleMaskOverlay = () => {
     const p = paramsRef.current, next = { ...p, maskShowOverlay: !p.maskShowOverlay };
@@ -2568,7 +2568,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 人像／仿色剛交回來、還在背景編碼的那一張：緩衝區先用暫時的鍵，畫面照樣當作是這張照片 */
   const bufferAliasRef = useRef<{ key: string; for: string } | null>(null);
   /* 緩衝區是照哪一組構圖組出來的。所有快取（GPU 原圖貼圖、濾鏡結果、發光、特效輸入）都認這個鍵：
-     以前只認照片編號，翻轉、同比例裁切這類「尺寸不變」的構圖之後，快取還是舊的那張，
+     不能只認照片編號：翻轉、同比例裁切這類「尺寸不變」的構圖之後，快取會還是舊的那張，
      預覽就跳回沒構圖的樣子（導出不受影響）。 */
   const bufGeoSigRef = useRef('');
   const noteBufferGeo = (g: GeoParams | null) => {
@@ -2705,7 +2705,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const viewedImgRef = useRef<Map<string, HTMLImageElement>>(new Map());
 
   /* ---- 底下那條批量縮圖列的小圖 -----------------------------------------
-     格子只有 36×36，但以前 <img> 的 src 直接掛的是原圖 ——
+     格子只有 36×36，<img> 的 src 不能直接掛原圖 ——
      瀏覽器會把每一張都完整解碼、而且只要那個 <img> 還在畫面上就一直留著。
      十張 1200 萬像素的照片就是好幾百 MB 的點陣圖釘在記憶體裡，
      拖滑桿時的卡頓、以及照片一多就變慢，都是從這裡來的。
@@ -2964,7 +2964,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const lut100CanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   /* ── 遮色片用的兩張離屏畫布 ────────────────────────────────────────────
-     以前這兩張是每一幀 document.createElement 出來的，1800×1350 兩張，
+     這兩張不要每一幀 document.createElement 出來（1800×1350 兩張），
      拖一次遮色片就是幾百張畫布的配置與回收。改成整個編輯階段共用同兩張。
      maskTemp：整張套上遮色片調整後的樣子（沒有去背，所以可以留著重複用）
      maskOut ：把 maskTemp 用漸層去背之後、真正要疊回畫面的那張
@@ -3043,7 +3043,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const maskPreKeyOf = (p: EditorParams, w: number, h: number, list: MaskSnap[], active: number) =>
     `${w}x${h}|${srcIdent()}|${selectedLutIdxNowRef.current}|${JSON.stringify(Object.entries(p).filter(([k]) => !k.startsWith('mask')))}|${JSON.stringify(list.filter((_, i) => i !== active))}`;
   /* full：拖的是遮色片的「調節」滑桿（曝光、色溫…）。選取範圍整段都不變，所以疊層直接用原解析度 ——
-     以前一律縮到 1100 再放大貼回去，細線會糊一點、偏一個像素，放手換回原解析度時看起來就像照片動了一下。
+     不一律縮到 1100 再放大貼回去：細線會糊一點、偏一個像素，放手換回原解析度時看起來就像照片動了一下。
      拖形狀、刷筆刷、拖範圍類的滑桿每一格都要重算選取範圍，才維持縮小的版本（跟得上手指） */
   const primeMaskLive = (p: EditorParams, overlay: boolean, full = false) => {
     if (maskLiveRef.current) {
@@ -3124,7 +3124,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const maskLiveRafRef = useRef(0);
   const maskRangeDragRef = useRef(false);
   /* 遮色片即時疊層用的 GPU。iPhone 同時開太多 GPU 畫布時會把舊的收走（lost）：
-     以前收走就一直退回 CPU（每一格整張逐點算，拖滑桿就是「有時候會卡」），現在被收走就重開一個 */
+     被收走時不一直退回 CPU（每一格整張逐點算，拖滑桿就是「有時候會卡」），而是重開一個 */
   const maskGpu = () => {
     if (maskGpuRef.current === undefined || maskGpuRef.current?.lost) { maskGpuRef.current = LutGpu.create(); maskGpuSrcRef.current = ''; }
     return maskGpuRef.current;
@@ -3317,7 +3317,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* GPU 前段的參數，兩張 1D 表會快取：拖曝光、白平衡時只重新上傳 uniform，
      拖亮度、對比、陰影、亮部時只上傳 1025 筆的表 */
   /* 局部陰影／亮部（utils/localTone）：每張來源算一次保邊亮度底圖，滑桿只重算 1025 格的增益表。
-     陰影、亮部都是 0 的時候完全不碰，畫面、速度都跟以前一樣。 */
+     陰影、亮部都是 0 的時候完全不碰，畫面、速度都不受影響。 */
   const localBaseCacheRef = useRef<Map<string, LocalBase>>(new Map());
   const localGainRef = useRef<{ key: string; gain: Float32Array | null }>({ key: '', gain: null });
   const localFor = (p: EditorParams, src: Uint8ClampedArray | null | undefined, w: number, h: number, key: string) => {
@@ -3455,7 +3455,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return g.drawImage(glow);
   };
 
-  /* 閒著的時候先把畫面那塊 GPU 表面上的顏色那一段建好、原圖傳上去。以前是第一次
+  /* 閒著的時候先把畫面那塊 GPU 表面上的顏色那一段建好、原圖傳上去。不要等到第一次
      拖過 0 的那一格才當場編譯＋上傳（實測半秒），拖滑桿時就會「突然卡一下」。 */
   const warmSurfaceColour = () => {
     const b = buffers.current.preview;
@@ -3669,7 +3669,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const halationPresentRef=useRef<HalationLayer|null>(null),softPresentRef=useRef<HalationLayer|null>(null);
   const leakPresentRef=useRef<HalationLayer|null>(null),blurPresentRef=useRef<HalationLayer|null>(null),simplePresentRef=useRef<HalationLayer|null>(null);
   /** 按了特效卡片：下一幀先讓按鈕／分頁的變化畫出來，再下一幀才算圖。
-      以前點下去是「UI 跟整張圖在同一幀一起出來」，算圖多久按鈕就慢多久才亮。 */
+      不讓點下去時「UI 跟整張圖在同一幀一起出來」，不然算圖多久按鈕就慢多久才亮。 */
   const uiFirstRef = useRef(false);
   /* 在特效頁閒著的時候，一顆一顆把特效的著色器（在畫面那塊 GPU 表面上）先編好，
      柔光／光暈／漏光的圖層也先建好 —— 第一次點某顆特效時就不用當場編譯。
@@ -3761,7 +3761,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (maskSkipDirtyRef.current) { maskSkipDirtyRef.current = false; return; }
     isDirtyRef.current = true;
   }, [params]);
-  /* 這裡以前還會順手把 isDirtyRef 設成 true。拿掉了 ——
+  /* 這裡不要順手把 isDirtyRef 設成 true。拿掉了 ——
      繪圖迴圈本來就會單獨比對「這一幀要顯示原圖嗎」跟上一幀不同就重畫，
      不需要靠髒旗標。而且掛著髒旗標會讓迴圈分不出「使用者按了前後對比」
      跟「畫面真的有東西變了」，放開按鈕時就沒辦法直接把按下去之前那張貼回來
@@ -3772,7 +3772,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      （在最前面或最後面的，捲到盡頭為止，盡量靠近中間）。沒有套用任何一顆
      ＝停在「原始」，就是最前面。
      用 useLayoutEffect：在畫出來之前就把捲動位置設好，才不會先閃一下最前面。
-     以前濾鏡是用寫死的卡片寬度（80）與間距（16）去算，跟實際的卡片（64、8）
+     濾鏡不能用寫死的卡片寬度（80）與間距（16）去算，跟實際的卡片（64、8）
      對不上，越後面的濾鏡偏得越多；特效則一律回到最前面。改成量按鈕本身。 */
   useLayoutEffect(() => {
     const container = toolsScrollRef.current;
@@ -3800,7 +3800,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   // 依 activeCategory 強制關閉或打開遮罩疊層
   useEffect(() => {
     /* 只是紅色範圍的開關：照片本身一個像素都沒變，不必把整條管線重跑一次
-       （有遮色片時進出遮色片頁以前每次都要重算整張，大照片在手機上要半秒以上）。
+       （有遮色片時不要每次進出遮色片頁都重算整張，大照片在手機上要半秒以上）。
        標記起來，下一格只更新紅色那一層（見 paintOverlayOnly）。 */
     if (activeCategory === 'mask') {
       if (paramsRef.current.maskCreated && !paramsRef.current.maskShowOverlay) {
@@ -3875,7 +3875,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [historyIndex, history, isSoftActive, isBlurActive, isGrainActive, isHalationActive, softManuallyAdjusted, blurManuallyAdjusted, grainManuallyAdjusted, halationManuallyAdjusted]);
 
   /* 「顯示紅色範圍」是看的方式，不是照片的編輯：復原／重做不能把它改回當時的樣子
-     （以前關掉紅色之後按復原，紅色又自己跑出來，看起來就像沒消失） */
+     （不然關掉紅色之後按復原，紅色又自己跑出來，看起來就像沒消失） */
   const keepViewPrefs = (p: EditorParams): EditorParams => ({ ...p, maskShowOverlay: paramsRef.current.maskShowOverlay });
   const undo = () => {
     if (historyIdxRef.current > 0) {
@@ -3946,7 +3946,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!loadingPromisesRef.current[lut.id]) {
       LUT_IN_FLIGHT.add(lut.id);
       loadingPromisesRef.current[lut.id] = (async () => {
-        // 先問本機：以前解過的表直接讀回來，不用下載也不用重新解碼重排
+        // 先問本機：解過的表直接讀回來，不用下載也不用重新解碼重排
         const cacheUrl=needsLutAtlasRepair(lut.url)?lut.url+'#'+LUT_ATLAS_REPAIR_REVISION:lut.url;
         const cached = await loadCachedLut(lut.id, cacheUrl);
         if (cached) {
@@ -4029,7 +4029,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        - 參數停下來 300ms 之後才算（拖滑桿的當下不算）
      離開濾鏡分頁就完全沒有成本。                                            */
   /* 卡片是 64×76 CSS px，用螢幕的實際像素密度去算（手機是 2 或 3 倍），
-     貼上去就是原生解析度，不會糊。以前為了求快只用 2 倍、還分成
+     貼上去就是原生解析度，不會糊。不為了求快只用 2 倍、還分成
      「先低解析鋪滿、再高解析蓋上去」兩輪，那個蓋上去的瞬間就是會抖一下的原因。
      改成畫布直畫（少掉 PNG 編碼與解碼）之後一輪就夠快，所以只算一輪、
      只有最終品質。整排不會空白是靠 fallback：還沒輪到的格子先畫
@@ -4093,7 +4093,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return c;
   };
   /* ── 濾鏡／特效按鈕的縮圖 ──────────────────────────────────────────
-     以前是「點進濾鏡／特效頁才開始算」，而且換一張照片特效那排就整排重算，
+     不等「點進濾鏡／特效頁才開始算」，換一張照片時特效那排也不整排重算，
      所以每次點進去、每次換照片，縮圖都要等一下才出來。
      現在：照片一載好就在背景（閒著的時候、一格一格讓出主執行緒）把這張的兩排都算好，
      接著把多圖編輯裡其他照片的也算好。每一格各自記得「是哪張原圖、哪一顆」算的，
@@ -4521,7 +4521,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
    *
    * 現在真的有開著的特效 → 選中它，上面那根強度滑桿跟著出現；
    * 一個都沒開（＝停在「原始」）→ 誰都不選，上面就不該有滑桿。
-   * 以前是一律選第一顆（柔光）的強度鍵，所以明明停在「原始」，
+   * 不能一律選第一顆（柔光）的強度鍵，不然明明停在「原始」，
    * 上面卻掛著一根調不到東西的柔光滑桿 —— 那根拖了也看不出變化，
    * 因為柔光根本沒開。
    */
@@ -4559,7 +4559,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
     /* 一次只能套一個特效，而且點下去就是「從頭來過」：
        所有特效的參數（含每一顆的細項）先全部打回預設，再把這一顆打開。
-       以前只把別顆的強度歸零、而且這一顆已經開著就整個不動 ——
+       不能只把別顆的強度歸零、而且這一顆已經開著就整個不動 ——
        於是上一次在細項面板調過的門檻／半徑／色相會留著，
        同一顆特效點兩次得到的結果不一樣。現在點一下就是乾淨的預設狀態。
        四顆開關（柔光／朦朧／噪點／光暈）的狀態也要跟著關掉，
@@ -4658,7 +4658,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   /* 只開了「一種」舊式特效（柔光／光暈／漏光／朦朧，或噪點＋暗角）而且後面沒有別的東西
      要畫在 2D 上：那一層直接在畫面那塊 GPU 表面上算、直接顯示。拖曳中與放開後走同一條，
-     所以拖到哪一格、放開就是哪一格；朦朧與噪點以前每動一格都要在 CPU 上整張重算再複製。 */
+     所以拖到哪一格、放開就是哪一格；朦朧與噪點不在每動一格時都在 CPU 上整張重算再複製。 */
   const legacyGpuKind=(p:EditorParams):LegacyKind|null=>{
     if(p.grain||p.colorNoise2||anyMask(p)||p.sharpen||hasActiveFx(p))return null;
     const optical=[p.soft>0&&'soft',p.fringeIntensity>0&&'halation',p.leakOpacity>0&&'leak',p.blur>0&&'blur'].filter(Boolean) as LegacyKind[];
@@ -4678,7 +4678,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     :kind==='blur'?layer.renderBlur(ctx,w,h,key,p.blur)
     :noisePatternRef.current?layer.renderSimple(ctx,w,h,key,p,noisePatternRef.current,p.colorNoise>0?noiseLayerFor(w,h):null):null;
   /* 噪點層用 2D 畫布照原本 applyComplexEffects 的方式鋪一次（同一張圖樣、同一個縮放），
-     GPU 只負責 overlay —— 噪點長得跟以前 2D 疊出來的一模一樣，尺寸不變就一直沿用。 */
+     GPU 只負責 overlay —— 噪點跟 2D 疊出來的一模一樣，尺寸不變就一直沿用。 */
   const noiseLayerRef=useRef<HTMLCanvasElement|null>(null);
   const noiseLayerFor=(w:number,h:number)=>{
     let c=noiseLayerRef.current;const pattern=noisePatternRef.current;
@@ -5496,14 +5496,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      亮度那一類滑桿拖起來之所以是滿格的，是因為事先把「這根滑桿轉到 0／−100／
      ＋100」三張畫面各算一份，拖曳中就只是在三張之間做 GPU 混合。
 
-     問題是那三份以前是**手指按下去的那一瞬間**才同步算的：全解析度跑三趟
+     問題是那三份如果在**手指按下去的那一瞬間**才同步算：全解析度跑三趟
      processPixels，量到手一碰滑桿主執行緒就被佔住 270～303ms（亮度 303、
      曝光 289、對比 270），而且每按一次就來一次。
 
      改成趁閒置先算好：使用者是先點工具、再去碰滑桿的，中間那段時間畫面
      完全閒著。繪圖迴圈的閒置分支每一輪只算三份裡的一份（約 95ms），
      分三輪做完，按下去的時候通常一步都不用做。
-     沒先算完也不會壞 —— setupFastPreview 會把缺的補上，行為跟以前一樣。 */
+     沒先算完也不會壞 —— setupFastPreview 會把缺的補上。 */
   const FAST_BLEND_TOOLS = ['brightness', 'exposure', 'contrast', 'highlights', 'shadows', 'temp', 'tint', 'sat', 'vib'];
 
   /** 已經先算好的那份是「給誰、照什麼參數」算的；stage 是三份裡算到第幾份 */
@@ -5671,14 +5671,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        鬆手畫的是全解析度。凡是會看鄰居像素的運算（銳化、模糊、顆粒、暈影、
        清晰度…）在兩種解析度上算出來就是不一樣，所以一放手畫面就跳一下。
 
-       以前只有「新特效」那幾個工具會嘗試留在全解析度。現在改成**所有工具都先
+       不只「新特效」那幾個工具會嘗試留在全解析度。做法是**所有工具都先
        試著用全解析度**，只有真的算不動才降級，而且留一段遲滯避免來回跳：
          · 一次超過 60ms → 降到代理（保順暢）
          · 回到 24ms 以下 → 升回全解析度（保一致）
        在手機上拍的一般照片、以及大多數裝置上，這代表拖曳中畫的就是鬆手那一張，
        完全沒有落差；只有又大又慢的情況才會暫時降級。 */
     /* 拖曳中**一律用全解析度**，低解析度代理已經完全不用了。
-       以前這裡有一段「算太慢就降級成 ≤900px 的代理、快了再升回來」的自動調節，
+       這裡不做「算太慢就降級成 ≤900px 的代理、快了再升回來」的自動調節，
        但那正是主人說的「拖動滑桿時圖片會變低像素的感覺」——
        只要有一幀超過 60ms 就會掉下去，掉下去的那段時間畫面就是糊的。
        主人明確說過寧可慢一點也不要畫質降級，而且顏色鏈已經交給 GPU
@@ -6468,7 +6468,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       // 互動代理：預覽暫存縮小的複本。每次指標移動都要重跑整條像素管線的工具（曲線、遮罩，
       // 以及不在 FAST_BLEND_TOOLS 裡的特效）拖動時用它畫，手指一放開就回到完整預覽暫存
       /* 代理的長寬一定要跟預覽「完全同一個比例」。
-         以前是 (w*r)|0 直接截掉小數，例如 3024×4032 會變成 675×900 —— 比例差了
+         不用 (w*r)|0 直接截掉小數，例如 3024×4032 會變成 675×900 —— 比例差了
          千分之一。畫布是用 object-contain 排版的，它會照畫布「自己的」比例去留黑邊，
          比例一變、黑邊就變，圖片就整個位移了半個像素左右 ——
          那就是主人說的「拖濾鏡滑桿時圖片會異常位移」。
@@ -6563,7 +6563,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         if (!pipelineWarmedRef.current) {
           processPixels(pData, buffers.current.preview.dest!, pw, ph, WARMUP_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, getCurveLuts(WARMUP_PARAMS.curves));
           processPixels(pData, buffers.current.preview.dest!, pw, ph, DEFAULT_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, getCurveLuts(DEFAULT_PARAMS.curves));
-          // HSL 分支以前沒有被上面兩次身分參數覆蓋，首次拖動時才觸發 JIT，
+          // HSL 分支如果沒有被上面兩次身分參數覆蓋，要到首次拖動時才觸發 JIT，
           // 因而只在前幾次手勢卡頓。用最多 192×192 的工作區先跑兩次，足以
           // 最佳化熱點，又不會拿整張 1800px 預覽做無意義的重運算。
           const hw = Math.min(pw, 192), hh = Math.min(ph, 192);
@@ -6735,7 +6735,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     const sctx = snap.getContext('2d')!;
                     sctx.globalCompositeOperation = 'copy';
                     /* 一定要縮放到 b.w×b.h：畫面上看得到的那張可能是 GPU 特效畫布，尺寸跟緩衝區不一樣。
-                       以前照原尺寸貼在 (0,0)，比較小的那張放開時就縮在左上角（「縮小又往左上跑」）。 */
+                       不照原尺寸貼在 (0,0)，不然比較小的那張放開時就縮在左上角（「縮小又往左上跑」）。 */
                     const shown = visibleEditorCanvas() || cvs;
                     if (shown.width > 0 && shown.height > 0) sctx.drawImage(shown, 0, 0, b.w, b.h);
                     sctx.globalCompositeOperation = 'source-over';
@@ -6911,7 +6911,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const oh = img.naturalHeight || img.height;
     // 存檔用原始解析度重跑一次構圖，預覽時的 2400px 版本只是給畫面看的
     /* 只有裁切（沒有旋轉、翻轉、透視、縮放）時不必先組出原尺寸的整張：直接從原圖切那一塊畫下去。
-       48MP 照片原尺寸裁切出來的那張常常就超過手機的畫布上限，以前在這一步就是空的 */
+       48MP 照片原尺寸裁切出來的那張常常就超過手機的畫布上限，直接做的話這一步就是空的 */
     /* 沒有梯形的構圖（旋轉、翻轉、微調角度、縮放、平移、裁切）整條就是一個仿射變換（見 geoAffine），
        直接用矩陣從原圖畫，不必先組出原尺寸整張 —— 大照片原尺寸組出來就超過手機畫布上限 */
     const aff = affineOf(g, ow, oh);
@@ -7035,7 +7035,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const aff = affineOf(g, ow, oh);
     const out = isGeoIdentity(g) ? { w: ow, h: oh } : aff;
     const big = !!out && (forceFullResRef() || safeScale(out.w, out.h) < 1);
-    /* 只有梯形透視不是仿射、不能逐條畫原圖：用畫布上限 1600 萬算（跟以前一樣），1200 萬像素以下不縮小 */
+    /* 只有梯形透視不是仿射、不能逐條畫原圖：用畫布上限 1600 萬算，1200 萬像素以下不縮小 */
     if (!out) return canvasToUrl(renderOneCanvas(img, snap, MOBILE_MAX_PIXELS), type, quality);
     if (!big) return canvasToUrl(renderOneCanvas(img, snap), type, quality);
     keepOriginalRef.current = { data: null };
@@ -7556,7 +7556,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
               if (exportFormat !== 'heic') {
-                // JPG／PNG：大照片走原尺寸分段存檔（見 renderFullUrl），一般照片跟以前一樣
+                // JPG／PNG：大照片走原尺寸分段存檔（見 renderFullUrl），一般照片照一般流程
                 out.push(await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
               } else {
                 // HEIC（App 才有）：先原尺寸做出無損 PNG（見 renderFullUrl），再交給原生編碼器轉 HEIC
@@ -7768,7 +7768,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return { left: b.left + (b.width - width) / 2, top: b.top + (b.height - height) / 2, width, height };
   }, [previewAspect, previewBoxSize, previewBoxClient]);
 
-  /* 進出 HSL／色輪時圖片縮放的過場：以前直接對寬、高、下邊距做 CSS transition，
+  /* 進出 HSL／色輪時圖片縮放的過場：不直接對寬、高、下邊距做 CSS transition，
      260ms 裡每一幀都重新排版，畫布的 ResizeObserver 也每一幀都回報 → 整個編輯器
      每一幀 render 一次，手機上就是偶爾卡一下。改成 FLIP：尺寸一次到位（只排版、
      只回報一次），再用 transform 從舊的位置大小補回去，補間完全交給合成器。 */
@@ -7825,7 +7825,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      所以按「完成」或切去別的分頁都是立刻的，不用等算圖。 */
   /* 兩段：
      一、按下去的這一拍：像素直接裝進緩衝區（暫用一個代號當鍵），畫面當場就是新的；
-     二、背景把它編成 JPEG（toBlob 不擋主執行緒，toDataURL 同步要兩三百毫秒 —— 就是以前切分頁卡一下的元兇），
+     二、背景把它編成 JPEG（toBlob 不擋主執行緒，toDataURL 同步要兩三百毫秒，會讓切分頁卡一下），
         好了才把來源清單換成那個網址。存檔會先等這一段做完。 */
   const studioInstallRef = useRef<Promise<void>>(Promise.resolve());
   /** 每個工具（beauty／match）這一次掛上來最後交出去的那張（工具看到自己交出去的照片回來，不用重開） */
@@ -8027,7 +8027,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const beautyPainted = useCallback(() => setStudioPainted(v => v.beauty === beautyKey ? v : { ...v, beauty: beautyKey }), [beautyKey]);
   const matchPainted = useCallback(() => setStudioPainted(v => v.match === matchKey ? v : { ...v, match: matchKey }), [matchKey]);
   /* 保底：真的一直沒回報（例如圖解不開）也不能卡在編輯器畫面。
-     不能太短：編輯過的照片是一張新的大圖，iPhone 上解碼要一兩秒 —— 以前 0.7 秒就硬翻過去，
+     不能太短：編輯過的照片是一張新的大圖，iPhone 上解碼要一兩秒 —— 0.7 秒就硬翻過去的話，
      工具的照片還沒畫出來，看到的就是一整塊黑。等待時編輯器自己的預覽一直在（同一個框），所以多等不會黑 */
   const [studioForce, setStudioForce] = useState('');
   const studioWaitKey = activeCategory === 'beauty' ? beautyKey : activeCategory === 'match' ? matchKey : '';
@@ -9240,7 +9240,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         })()}
         
       {/* 批量編輯的縮圖列：跟「前後對比」同一排（畫面底部那一條），
-            只有多張時才出現，浮在畫面上不佔版面 —— 單張時的編輯介面跟以前一樣。
+            只有多張時才出現，浮在畫面上不佔版面 —— 單張時的編輯介面不受影響。
             點一下＝換成預覽這一張；再點一下已選中的那張才會跳出小選單。 */}
         {saveState !== 'success' && srcList.length > 1 && (
           <div
@@ -9374,7 +9374,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             disabled={!hasMergeable}
             /* 固定寬度：底下的字會在「合併特效／合併濾鏡／已合併N」之間換，
                寬度跟著字變的話，置中在上面的圖標就會左右跳。 */
-            /* 多圖編輯時左下角是縮圖列：以前合併鍵就藏在第一張縮圖底下，點縮圖稍微偏一點（縮圖之間的縫、
+            /* 多圖編輯時左下角是縮圖列：合併鍵不能藏在第一張縮圖底下，不然點縮圖稍微偏一點（縮圖之間的縫、
                縮圖上緣）就會按到看不見的合併 —— 濾鏡／特效突然變回「原始」、畫面卻還是套著的樣子。
                多張時往上挪到縮圖列上面，兩個永遠不會疊在一起。 */
             className={`absolute ${srcList.length > 1 ? 'bottom-[58px]' : 'bottom-2'} left-2 w-14 py-2 flex flex-col items-center justify-center gap-1 select-none touch-none z-20 text-white active:scale-90 transition-transform`}
@@ -9386,7 +9386,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 不吃 currentColor（按鈕停用時會被瀏覽器調淡）。 */}
             {/* 上面那片菱形自己一個 HTML 圖層（獨立的 svg），動畫只動這個圖層的 transform：
                 交給合成器（GPU）播，主執行緒在烤圖時就算忙，壓下去的動畫也一格都不會卡。
-                （以前動的是 svg 裡面的 path，那種動畫只能在主執行緒上跑，一烤圖就停住。）
+                （不動 svg 裡面的 path：那種動畫只能在主執行緒上跑，一烤圖就停住。）
                 下面那片的遮罩固定在上面那片的原位：壓下去時上面那片蓋過下面那片，正好是「壓進去」的樣子。 */}
             <span className="relative block w-[28px] h-[23px]">
               <svg width="28" height="23" viewBox="0 0 34 28" fill="none" xmlns="http://www.w3.org/2000/svg"
@@ -9566,7 +9566,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    
                    {/* 左側控制項 */}
                    {/* 色點與重置鍵都縮成 26px（原本 32px 的八成）。
-                        原本是 justify-between 撐滿 242px，變小之後空隙會跟著變大，
+                        不用 justify-between 撐滿 242px，不然變小之後空隙會跟著變大，
                         所以改成置中＋固定 16px 間距（也是原本 20px 的八成）。 */}
                    <div className="absolute right-full top-0 h-[242px] flex flex-col justify-center items-center gap-4 pr-3">
                        {([['rgb', '#ffffff'], ['r', '#ff3b30'], ['g', '#4cd964'], ['b', '#007aff']] as const).map(([ch, col]) => (

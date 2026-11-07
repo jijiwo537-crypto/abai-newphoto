@@ -29,7 +29,7 @@ export function supportsP3(): boolean {
 
 /**
  * 取 2D 繪圖環境，支援的話用 Display P3。
- * 不支援的瀏覽器會拿到跟以前一模一樣的 sRGB 環境，行為不變。
+ * 不支援的瀏覽器會拿到一般的 sRGB 環境，行為不變。
  */
 export function get2dWide(
   canvas: HTMLCanvasElement,

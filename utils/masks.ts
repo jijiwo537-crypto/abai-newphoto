@@ -159,7 +159,7 @@ export const brushCanvas = (id: string, m: MaskSnap, w: number, h: number) => {
 
 /* 範圍類遮色片要看的那張畫面，每一點的 Lab（顏色範圍用）跟 Y（明度範圍用）只跟畫面有關，
    跟滑桿無關：同一張畫面只算一次留著。拖「範圍」「平滑」時每一格就只剩一個門檻比較的迴圈 ——
-   以前每一格都把整張重新轉一次 Lab（每點三次開立方根），那就是拖起來卡的原因。 */
+   不要每一格都把整張重新轉一次 Lab（每點三次開立方根），那就是拖起來卡的原因。 */
 type SrcStats = { key: string; w: number; h: number; lab: Float32Array | null; y: Float32Array | null; rgba: Uint8ClampedArray };
 const srcStats: SrcStats[] = [];
 const statsOf = (src: CanvasImageSource, sw: number, sh: number, baseKey: string): SrcStats => {

@@ -103,7 +103,7 @@ const queueBlurBuild = (key: string, build: () => void) => {
     blurListeners.forEach(f => { try { f(); } catch { /* 忽略 */ } });
   }, 200);
 };
-/* 拖滑桿不會一格一格跳：盒狀模糊的半徑只能是整數像素，以前光柵大小固定、半徑跟著滑桿變，
+/* 拖滑桿不會一格一格跳：盒狀模糊的半徑只能是整數像素，如果光柵大小固定、半徑跟著滑桿變，
    半徑一取整數，糊的程度就一階一階地跳。現在反過來 —— 盒狀半徑固定（BOX_R 像素），
    改成讓「光柵有多大」跟著模糊值連續變化：糊得越多，光柵越小（也越快算）。 */
 const BOX_R = 5, BOX_SIGMA = Math.sqrt(BOX_R * (BOX_R + 1));   // 三次盒狀模糊 ≈ 這個 σ 的高斯
@@ -116,7 +116,7 @@ export const drawBlurredShape = (
   if (aw < 0.5 || ah < 0.5) return;
   /* 長寬比照「對數」分格（每格約 6%），擠壓時只在跨格的那一下才重糊一次，
      格子裡面就把同一張糊好的圖照實際長寬拉伸貼上 —— 壓得很扁也不會每一格都重算。
-     （以前是 0.01 一格：長寬比 10 的時候幾乎每動一下就要重糊一張大圖） */
+     （不用 0.01 一格：長寬比 10 的時候幾乎每動一下就要重糊一張大圖） */
   const ra = aw / ah, aspect = Math.exp(Math.round(Math.log(ra) / 0.06) * 0.06);
   const v = Math.max(0, Math.min(100, value ?? blurShapeDefault(kind)));
   const key = `${kind}|${aspect.toFixed(4)}|${color}|${Math.round(v * 10) / 10}`;

@@ -88,7 +88,7 @@ const LIQUIFY_PRESETS: {
 // 座標一律存工作解析度的像素值，重播時乘上縮放比即可。
 type Op =
   | { k: 'heal'; x: number; y: number; r: number }
-  | { k: 'wrinkle'; pts: number[]; r: number; amount: number }   // 舊版去皺（每點疊一次），只為了讀得回以前的草稿
+  | { k: 'wrinkle'; pts: number[]; r: number; amount: number }   // 舊版去皺（每點疊一次），只為了讀得回舊草稿
   | { k: 'stroke'; kind: StrokeKind; pts: number[]; r: number; strength: number }
   | { k: 'makeup'; pts: number[]; r: number; strength: number; rgb: [number, number, number] }
   | { k: 'liquify'; pts: number[]; r: number; force: number; mode: LiquifyMode }
@@ -1927,7 +1927,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
         {/* 修補的兩個框：A（目標）實線、B（來源）虛線，都是一條細白線，兩個都可以拖。
             畫在縮放層外面（不跟著 CSS 縮放一起被放大），任何倍率下線條都一樣細、一樣清楚 ——
-            以前放在縮放層裡，放大時整層是當成一張圖被拉大的，線就糊了。 */}
+            放在縮放層裡的話，放大時整層會被當成一張圖拉大，線就糊了。 */}
         {tool === 'clone' && healEdit && sessionRef.current && !showOriginal && (
           <svg data-heal-overlay className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-[5]">
             <g ref={healRootRef}>

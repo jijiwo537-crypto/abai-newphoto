@@ -267,7 +267,7 @@ class SeamGpu {
           void (async()=>{
             await yieldTask();if(!alive())return;
             let bmp=await createImageBitmap(image as ImageBitmapSource,{imageOrientation:'from-image'}).catch(()=>null);
-            // 尺寸跟原圖對不上（例如沒照 EXIF 轉向）就不用它，照舊直接畫原圖，方向與色彩跟以前完全一樣
+            // 尺寸跟原圖對不上（例如沒照 EXIF 轉向）就不用它，照舊直接畫原圖，方向與色彩不變
             if(bmp&&(bmp.width!==sw||bmp.height!==sh)){bmp.close();bmp=null;}
             try{
               const src:CanvasImageSource=bmp||image;
@@ -312,7 +312,7 @@ class SeamGpu {
     else if(view.clip&&!view.other){
       /* 有裁切範圍時，範圍外著色器本來就輸出全透明：只讓 GPU 算範圍（含濾波護邊）裡的像素，
          外面直接清成透明 —— 結果逐像素相同。創意拼圖的畫布含捏合預留空間，
-         以前整張（將近兩倍可見面積）每一格都跑完整個著色器。 */
+         不讓整張（將近兩倍可見面積）每一格都跑完整個著色器。 */
       const W=target.width,H=target.height,c=view.clip,g=view.clipGuard||[0,0];
       const x0=Math.max(0,Math.floor((c[0]-g[0])*W)-1),x1=Math.min(W,Math.ceil((c[2]+g[0])*W)+1);
       const top=Math.max(0,Math.floor((c[1]-g[1])*H)-1),bottom=Math.min(H,Math.ceil((c[3]+g[1])*H)+1);
@@ -348,7 +348,7 @@ export function disposeSeamPreview(target:HTMLCanvasElement){renderers.get(targe
    WebKit 用 drawImage 讀 WebGL 畫布時就是這樣解讀（見 srgbOutput） */
 let sharedGpu:SeamGpu|null=null;
 /** 回傳 false＝這次沒畫成（GPU 掉了、畫布記憶體不夠拿不到 2D）：目標畫布保留原本的像素，
- *  呼叫的一方要讓上一張繼續顯示。以前在 GPU 掉了的那一格照樣用 copy 把（全透明的）結果蓋上去，
+ *  呼叫的一方要讓上一張繼續顯示。在 GPU 掉了的那一格不能照樣用 copy 把（全透明的）結果蓋上去，
  *  整個佈局就一下子消失。 */
 export function drawSeamShared(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView):boolean{
   if(sharedGpu?.lost){sharedGpu.dispose();sharedGpu=null;}

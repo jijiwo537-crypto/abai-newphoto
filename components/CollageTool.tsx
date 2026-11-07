@@ -176,7 +176,7 @@ const AROUND_STEPS = 125;
 const aroundK = (b: number) => 1 / (1 + 2 * Math.max(0, b));
 /** 中間照片佔畫布的比例 → b */
 const aroundB = (k: number) => Math.max(0, (1 / Math.max(0.01, k) - 1) / 2);
-/** 四周包圍的預設：邊框是圖片的 1/3（跟以前預設看起來一樣） */
+/** 四周包圍的預設：邊框是圖片的 1/3 */
 const AROUND_SCALE = aroundK(1 / 3);
 /** 四邊那四種排版的預設比例：遮罩佔一半（1/2） */
 const DEFAULT_MASK_SCALE = 0.5;
@@ -186,7 +186,7 @@ const MAX_FINAL_DIM = 4096;
 /* 手機（iPhone 單張畫布上限約 1677 萬像素）壓在 1600 萬，超過畫布是空的、記憶體也會爆而閃退；電腦維持 2000 萬 */
 const MAX_EXPORT_PIXELS = isMobileDevice() ? MOBILE_MAX_PIXELS : 20_000_000;
 /* 匯出的「底線解析度」（長邊）。
-   以前成品最大就是原圖那麼大（finalScale 封頂 1.0）—— 照片小的時候，
+   如果成品最大只到原圖那麼大（finalScale 封頂 1.0）—— 照片小的時候，
    畫在上面的圖案、圖形、文字、連線、紋理就只分到那幾個像素，邊緣自然糊。
    實測（量「從一邊過渡到另一邊要幾個像素」）：
      原圖 900×600  → 成品 900×900   邊緣 2px，第 90 百分位 3px
@@ -271,7 +271,7 @@ const maskDims = (layout: string, bw: number, bh: number, maskScale: number) => 
     /* 四周包圍：遮罩就是整張畫布，而且大小固定＝原圖大小。
        「比例」只縮中間那張照片，完全不動遮罩。
 
-       以前是反過來的 —— 比例愈大就把畫布往外撐（原圖×(1+2×比例)），
+       反過來做的話 —— 比例愈大就把畫布往外撐（原圖×(1+2×比例)），
        於是拉比例時整張畫布的尺寸每一格都在變：圖案的座標系跟著變（圖案會跑掉）、
        主畫布與遮罩層每一格都要重新配置（滑桿因此只剩 8.5fps）。
        畫布固定之後，這三件事一次解決。 */
@@ -668,7 +668,7 @@ const ParamStrip: React.FC<{ items: ParamItem[] }> = ({ items }) => {
 };
 
 /* ── 連線 ──────────────────────────────────────────────────────────
-   每一種圖案都能連線。以前只開放前六種「單一封閉形狀」，理由是字符類的
+   每一種圖案都能連線。如果只開放前六種「單一封閉形狀」，理由會是字符類的
    中心點不明確、連起來會像亂畫 —— 但那個中心點的問題已經在 drawTextShape
    裡修掉了（改成對齊字真正的墨水中心），所以字符、數字、漩渦現在也都
    接得準，沒有理由再擋。 */
@@ -1050,7 +1050,7 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
     case 'signal': return { ...FLAT, ringReveal: (1 + Math.cos(t * speed * Math.PI / 2)) / 2 };
     case 'grid-wave': return { ...FLAT, gridWave: (t * speed * 0.22 + phase / (Math.PI * 2)) };
     /* 縮放：單純一顆正弦，大…小…大…小，在兩個固定大小之間來回。
-       （以前是兩個不同週期的正弦疊起來，所以每一次的最大最小都不一樣 ——
+       （兩個不同週期的正弦疊起來的話，每一次的最大最小都不一樣 ——
          看起來就是「不規則」，那不是要的。）
 
        同時要「每個圖案的節奏不一樣，但各自看都是規律的」，
@@ -1099,7 +1099,7 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
    用指數對應而不是線性：線性的話中段幾乎感覺不到差別，
    而兩端又變化太劇烈。0 → 10 秒、50 → 1.7 秒、100 → 0.3 秒。 */
 /* 滑桿還是 0～100，只是最慢端整個往上收：
-   以前 0 對應 10 秒，慢到幾乎看不出在動；現在 0 對應 3.49 秒
+   0 如果對應 10 秒，會慢到幾乎看不出在動；現在 0 對應 3.49 秒
    （＝舊刻度的 30 那一格），整條滑桿都落在真的有用的區間裡。 */
 const SPEED_SLOW = 3.49, SPEED_FAST = 0.3;
 export const durFromSpeed = (sp: number) =>
@@ -1215,7 +1215,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
   const [hexInput, setHexInput] = useState(color);
 
   /* 拖色相／飽和度／明度時，白點只看自己的狀態，顏色一幀交給編輯器一次 ——
-     以前每動一下就讓整個編輯器重畫一次，白點要等它畫完才前進。
+     如果每動一下就讓整個編輯器重畫一次，白點要等它畫完才前進。
      編輯器晚一幀回傳的舊顏色不能把白點拉回去：自己送出去的顏色一律略過。 */
   const colorFrame = useRef(0), colorPending = useRef<string | null>(null), sentColors = useRef<string[]>([]);
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -1492,7 +1492,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [canvasRatioBeforeFull, setCanvasRatioBeforeFull] = useState<CanvasRatio|null>(null);
   const [holeType, setHoleType] = useState(initialPattern); 
   const [customText, setCustomText] = useState('Abai'); 
-  // 開場的圖案也照每個圖案自己的起始大小（以前固定 25，星星切走再切回來就變成 35）
+  // 開場的圖案也照每個圖案自己的起始大小（不能固定 25，不然星星切走再切回來就變成 35）
   const [holeSize, setHoleSize] = useState(() => patternDefaultSize(initialPattern, patternSizes)); 
   const [sizeJitter, setSizeJitter] = useState(0); 
   const [holeAngle, setHoleAngle] = useState(0);
@@ -1606,14 +1606,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const regionColour=useRef<PhotoSceneColour|null>(null);
   const baseEditingWas=useRef(false),baseEditGate=useRef(true);
-  /* 調色用的背景執行緒一導入照片就先開、先預熱（在背景跑，不佔畫面）：以前是第一次調整時才開，
+  /* 調色用的背景執行緒一導入照片就先開、先預熱（在背景跑，不佔畫面）：等第一次調整才開的話，
      第一下拖滑桿就排在預熱後面、而且烤色表的程式還沒熱，頭幾秒預覽一格一格的 */
   useEffect(()=>{if(!imageState||isVideoEl(imageState.img))return;const id=window.setTimeout(()=>{if(leavingRef.current)return;
     regionColour.current??=new PhotoSceneColour();regionColour.current.onReady=()=>regionPaintRef.current();},1200);return()=>clearTimeout(id);},[imageState]);
   const regionColourActive=useRef(false);
   const regionSpatialActive=useRef(false);
   /* 圖片物件拖效果滑桿：場景先拍兩張（這顆物件換成全黑／全白），之後每一格只在 GPU 上把
-     「黑＋(白−黑)×照片」合成出來直接顯示 —— 跟底圖照片同一招。以前每一格都要把 GPU 算好的
+     「黑＋(白−黑)×照片」合成出來直接顯示 —— 跟底圖照片同一招。不這樣做的話每一格都要把 GPU 算好的
      照片複製回 2D（iPhone 上是一次整張讀回）再把整個拼圖重畫一次。 */
   const objWarmStage=useRef<{id:string;canvas:HTMLCanvasElement}|null>(null);
   const objCompositeBaseRef=useRef('');
@@ -1705,13 +1705,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(cell){const dw=Math.abs(transform.w)*cell.w,dh=Math.abs(transform.h)*cell.h,crop=photoCrop(photo,dw,dh),logical=Math.max(photo.width||w,photo.height||h);
       required=Math.min(sourceSize,logical*Math.max(dw*scale/Math.max(1,crop.sw),dh*scale/Math.max(1,crop.sh)));}
     /* 畫布本身多給了 SUPERSAMPLE 倍（給圖形邊緣抗鋸齒用的），照片不需要：照片的特效只要
-       跟螢幕實際的裝置像素一樣細就好。以前照著畫布算，照片在格子裡放大或畫面放大時，
+       跟螢幕實際的裝置像素一樣細就好。如果照著畫布算，照片在格子裡放大或畫面放大時，
        特效要在多 3 倍的像素上算 —— 那就是「圖片放很大時拖滑桿很卡」。 */
     required/=SUPERSAMPLE;
     const id=`region-fx-${index}@${photo.src}`;
     /* 特效的工作尺寸＝畫面上實際需要的 1.5 倍（至少 1024）：多留的那一截讓雙指縮放時不必一直重算；
        放得比這更大時照樣會長上去（容量只增不減，存檔另外用成品需要的解析度算）。
-       以前一律至少 2048 —— 6 格排版裡一格在畫面上才 500 多像素，每張編輯過的照片
+       不設 2048 的下限 —— 6 格排版裡一格在畫面上才 500 多像素，每張編輯過的照片
        光暫存就多佔十幾 MB，反覆編輯幾張照片之後 iPhone 會因為記憶體不夠把網頁關掉 */
     required*=1.5;
     const cap=photoPreviewCapacity(required,regionPreviewCaps.current.get(id)||0,sourceSize,1024);
@@ -1775,7 +1775,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
        這裡只在「上一次算得很慢、而且就是剛剛」的時候才降一級：那必然是
        手指還按在滑桿上。手一停（220ms 沒有新的變化）就自動用完整尺寸重算，
-       所以**停下來看到的、以及匯出的，跟以前一模一樣**，只有拖曳過程中的
+       所以**停下來看到的、以及匯出的，都是完整的結果**，只有拖曳過程中的
        那幾格是小一號的。匯出走的是另一張畫布（isMain 為 false），
        永遠不會落到這條路上。 */
     const now = performance.now();
@@ -1794,7 +1794,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 第一次變動也要算：從沒套過特效的照片沒有前一個鍵，不算的話第一格滑桿會用滿 1600px 去算
     if (isMain && !regionPhoto && lv.key !== baseKey && (lv.key || hasPhotoFx(o.fx))) lv.liveUntil = now + 300;
     /* 圖片物件的效果現在在 GPU 上算（見下面 gpuSurface），拖曳中直接用正式尺寸與正式取樣：
-       以前拖滑桿時先算 640 的近似版、停手再補 1600 的 —— 拖曳中看到的是糊的、放開還會跳一下。
+       拖滑桿時不先算 640 的近似版、停手再補 1600：那樣拖曳中看到的是糊的、放開還會跳一下。
        影片每一格都要重算，仍保留原本的做法。 */
     const objectGpu = isMain && !regionPhoto && !isVideoEl(o.img);
     const live = isMain && !regionPhoto && !objectGpu && lv.liveUntil > now;
@@ -1833,7 +1833,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 只動幾何的重畫不能準備特效、不能碰 GPU 池（備援的混合準備也要排在這之後）。
     // 鍵裡包含所有會影響像素的參數；選取照片後的裁切、hover、切分頁都不該重建它的特效端點
     if (hit && hit.key === key) return hit.cv;
-    /* ── 這裡以前有一個「影片＋形狀就限速到 20fps」的閘門，已經拿掉 ────────
+    /* ── 不對「影片＋形狀」限速到 20fps ────────
        當初加它是因為那條路一格要開三、四張離屏畫布，一秒六十次會把記憶體灌爆。
        現在那幾張都固定重複使用（vidScratchRef），而且工作尺寸夾到了螢幕上
        真正的大小（見上面的 onScreenPx）—— 一格的成本已經跟「不套形狀」同一個
@@ -1847,7 +1847,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          cv／off —— 只有套了形狀才會用到的那兩張（見下面）
        尺寸一樣就連 width 都不重設，等於整段完全不配置記憶體。 */
     let scratch: VidScratch | null = null;
-    /* 圖片物件在預覽時也固定用這一組：以前每動一下滑桿就開一張新畫布（停手再開一張
+    /* 圖片物件在預覽時也固定用這一組：不要每動一下滑桿就開一張新畫布（停手再開一張
        1600px 的），舊的留給垃圾回收 —— iOS 收畫布記憶體很慢，反覆套用、調整特效時
        幾十張堆在記憶體裡，分頁就被系統砍掉重開。匯出（isMain=false）照舊各自一張。 */
     if (isVid || o.id?.startsWith('region-fx-') || isMain) {
@@ -2019,7 +2019,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       else { off.width = offW; off.height = offH; }
       const oc = off.getContext('2d')!;
       /* 效果的成品（GPU 那張）先抄成一張 2D 的留著：拖羽化、圓角、描邊這些「造型」滑桿時，
-         效果本身沒有變，以前每一格都要把 GPU 那張整張抄進 2D 畫布 —— iPhone 上那一下等於
+         效果本身沒有變，只是不必每一格都把 GPU 那張整張抄進 2D 畫布 —— iPhone 上那一下等於
          整張讀回，就是拖造型滑桿卡的主因。現在效果沒變就直接用這張，只重做遮罩那一步。
          只留目前這一顆（一張畫布），效果一變就重抄。 */
       let src3: CanvasImageSource = base;
@@ -2174,7 +2174,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const L = cx - bw / 2, R = cx + bw / 2, T = cy - bh / 2, B = cy + bh / 2;
     const xs = [0, o.cw, ...seams.xs, ...(edgeOnly ? [] : others.xs)];
     const ys = [0, o.ch, ...seams.ys, ...(edgeOnly ? [] : others.ys)];
-    /* 底圖與遮罩各自的中心。以前只有「整張成品畫布」的中心會亮線，
+    /* 底圖與遮罩各自的中心。不只「整張成品畫布」的中心會亮線，
        左右／上下排版時，物件移到某一半的正中央完全沒有回饋。 */
     const regionCenters = (() => {
       const st = imageState;
@@ -2227,7 +2227,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      * 單軸吸附：候選是「這條線」＋「中心要位移多少才貼上去」。
      *  1. 中心線只跟「物件中心」配對 —— 邊緣碰到中心線不算對齊。
      *  2. 取最近的那一條，不是第一條符合的。
-     *  3. 兩條一樣近但要往相反方向拉，就不要動 —— 以前是這一格黏一邊、
+     *  3. 兩條一樣近但要往相反方向拉，就不要動 —— 不然會這一格黏一邊、
      *     下一格黏另一邊，看起來就是在抖。
      */
     const others = objLinesRef.current(selfId);
@@ -2808,7 +2808,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const motionLockRef = useRef(false);
   const interactionRef = useRef<any>(null);
   const holesRef = useRef<any[]>([]);
-  /* 拖曳／雙指縮放圖案時的即時位置。以前每一格都 setHoles，整個編輯器（一萬多行的元件）
+  /* 拖曳／雙指縮放圖案時的即時位置。如果每一格都 setHoles，整個編輯器（一萬多行的元件）
      跟著重畫一次 —— 手機上這就是拖圖案「有點卡」的來源。現在手指在動時只改這裡、
      直接重畫畫布與選取框，放手時才交給 React（見 flushMoveNow）。 */
   const liveHolesRef = useRef<any[]|null>(null);
@@ -2816,7 +2816,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const patternFrameRectRef = useRef<SVGRectElement|null>(null);
   const patternFrameGroupRef = useRef<SVGGElement|null>(null);
   /* ── 發光用的暫存畫布，一定要活在畫面之外 ──────────────────────────
-     這兩個原本是宣告在「畫一張」那支函式裡面的區域變數，所以**每畫一格
+     這兩個如果宣告在「畫一張」那支函式裡面當區域變數，**每畫一格
      就重新 new 一張 canvas**：整層那張是整個預覽那麼大（例如 1571×1350），
      光是配置與清空就要搬好幾 MB；一顆圖案那張也是每顆都重來。
      搬成 ref 之後，同一張畫布從頭用到尾，只有尺寸真的變了才重新配置。 */
@@ -3039,7 +3039,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   // 這裡只負責把面板上的設定存起來、以及接續時套回去。
   const restoredRef = useRef(false);
   useEffect(() => {
-    /* 必須等底圖建立 baseW/baseH 後才恢復。以前在空畫布階段先套位置，
+    /* 必須等底圖建立 baseW/baseH 後才恢復。在空畫布階段先套位置的話，
        隨後的底圖初始化又隨機生成一次圖案，保存的位置便被覆蓋。 */
     if (restoredRef.current || !initialState || !imageState) return;
     restoredRef.current = true;
@@ -3075,8 +3075,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (st.sizeJitter !== undefined) setSizeJitter(st.sizeJitter);
     if (st.holeAngle !== undefined) setHoleAngle(st.holeAngle);
     if (st.holeCount !== undefined) setHoleCount(Math.min(30, Math.max(0, st.holeCount)));
-    /* 以前並排排版的圖案是成對的（side 'both'）。現在不成對了，讀到舊作品時
-       拆成一顆挖空、一顆實心兩顆獨立的圖案 —— 畫面跟以前一模一樣。 */
+    /* 舊版並排排版的圖案是成對的（side 'both'）。現在不成對了，讀到舊作品時
+       拆成一顆挖空、一顆實心兩顆獨立的圖案 —— 畫面不變。 */
     const lay0 = st.layout || layout;
     const loadedHoles = !Array.isArray(st.holes) ? null : lay0 !== AROUND && lay0 !== FULL
       ? st.holes.flatMap((h: any) => (h.side || 'both') === 'both'
@@ -3213,7 +3213,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (!file) return;
     /* 這張照片就是草稿要存的那張（回來才接得回去）。
        saveDraft 內部是 `fetch(url)` 把位元組讀進 IndexedDB —— 那是非同步的，
-       所以這個網址在讀完之前不能回收。以前是 img.onload 一觸發就 revoke，
+       所以這個網址在讀完之前不能回收。不能 img.onload 一觸發就 revoke，
        小張的圖解碼比讀取還快，那個 fetch 就拿到 ERR_FILE_NOT_FOUND、
        被 catch 吞掉，草稿於是存不到照片。
 
@@ -3283,7 +3283,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     try {
       const sources = [url, ...picked.slice(1, CREATIVE_PHOTO_LIMIT).map(f => URL.createObjectURL(f))];
       /* 每張只做成品用得到的解析度（見 utils/photoTiers）：width/height 一律是原圖尺寸，
-         排版、裁切、存檔尺寸都跟以前一樣照原圖算；需要更清楚時（放大、存檔）會自動從原檔換上 */
+         排版、裁切、存檔尺寸一律照原圖算；需要更清楚時（放大、存檔）會自動從原檔換上 */
       const start = sources.length > 1 ? TIER_MULTI_START : TIER_SINGLE_START;
       const types = [file.type, ...picked.slice(1, CREATIVE_PHOTO_LIMIT).map(f => f.type)];
       const photos = await Promise.all(sources.map((src, i) => openTiered(src, types[i] || '', start).then(t => {
@@ -3362,7 +3362,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       panel?.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' });
     });
     /* 每種圖案都有自己固定的起始大小（utils/patternDefaults.ts）。
-       沒列到的以前是「沿用上一個圖案的大小」，從大的切過去就一直是大的，
+       沒列到的如果「沿用上一個圖案的大小」，從大的切過去就一直是大的，
        來回切換看起來越變越大；現在沒列到的一律回到 25。
        四周包圍進來時大小會補 +10（見排版按鈕），換圖案也要照樣補上 ——
        不然在包圍裡換一次圖案、再離開，就會比原本小 10。 */
@@ -3452,7 +3452,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             decoupled.push({ ...h, id: h.id + '_msk', side: 'mask' });
           } else decoupled.push(h);
         });
-        /* 一定要寫回去。以前這裡拿 sameHoles 擋著 —— 但它比的是「畫出來
+        /* 一定要寫回去。這裡不能拿 sameHoles 擋著 —— 它比的是「畫出來
            長什麼樣」，而拆開前後畫面本來就一樣，所以永遠成立、狀態從來
            沒被換掉，兩顆還是黏在同一筆資料上（那正是「關掉對稱還是會一起動」）。
            畫面沒變的時候只是不佔一格上一步，資料照換。 */
@@ -3804,7 +3804,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
     if (isTextHole(holeType)) {
       const renderStr = holeGlyph(holeType, customText, h);
-      // 量的是「看得見的那一塊」，跟畫出來的完全一致（以前量的是另一支字型的前進寬度）
+      // 量的是「看得見的那一塊」，跟畫出來的完全一致（不是另一支字型的前進寬度）
       const ink = glyphInk(holeType, renderStr, sz);
       const tw = ink.w, th = ink.h;
       return (
@@ -4005,7 +4005,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return photoRegionHit(regionRects(region,t.w*k,t.h*k),(x-off.ix-t.x*k)/(t.w*k),(y-off.iy-t.y*k)/(t.h*k));
   };
   /** forSwap：長按互換用。疊在照片上的圖形、文字、符號、遮罩與圖案只是裝飾，
-      不能擋住底下的照片（以前它們的整個外框都會擋，拿不起來、也放不下去）；
+      不能擋住底下的照片（整個外框都擋的話，照片拿不起來、也放不下去）；
       只有真正的圖片物件算數，以及「已經選中」的物件（它有自己的手勢）。 */
   const photoAt=(clientX:number,clientY:number,forSwap=false):PhotoSource|null=>{
     const p=regionCoordinates(clientX,clientY);if(!p)return null;
@@ -4147,7 +4147,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(!photoContent(source)?.src){
           /* 空格子：等「放開而且沒有移動」才算點一下 —— 手指只是落在空格上開始
              捏合或拖曳時不該跳出相簿。這一下也只選中這一格，不讓底下的畫布
-             把它當成點底圖（以前會把整張底圖框起來）。 */
+             把它當成點底圖（不是把整張底圖框起來）。 */
           // 這裡不擋：畫布的追蹤器會留著這個指標（當成單點時忽略），所以第二根手指就算從空格開始，
           // 照樣能縮放畫面或選中的物件
           emptyCellTap.current={id:e.pointerId,index:source.index,x:e.clientX,y:e.clientY,moved:false};
@@ -4394,8 +4394,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const t=mask?currentMaskPhoto(offs):imageTransform;
         baseDragRef.current={startX:x,startY:y,x:t.x,y:t.y,t,moved:false,mask};
         /* 底圖選中時，拖動一律是在移底圖；但「沒移動的輕點」如果落在圖案上，
-           就改成選中那顆圖案（以前會被底圖吃掉，圖案永遠點不到）。 */
-        /* 物件也一樣：輕點到上面的物件就換成選中那個物件（以前選中底圖時物件永遠點不到）。
+           就改成選中那顆圖案（不然會被底圖吃掉，圖案永遠點不到）。 */
+        /* 物件也一樣：輕點到上面的物件就換成選中那個物件（不然選中底圖時物件永遠點不到）。
            順序照真正的疊放：圖案之上的物件 → 圖案 → 圖案之下的物件。 */
         let pickHole:any=null,pickObj:any=null;
         if(activePointers.current.size===1){
@@ -4409,7 +4409,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
       /* ── 誰在上面就先選誰 ──────────────────────────────────────────
          物件分兩種：沒有標 below 的疊在圖案「之上」，標了 below 的在「之下」。
-         以前不管哪一種都比圖案優先，所以物件明明被圖案蓋住，點下去選到的
+         如果不管哪一種都比圖案優先，物件明明被圖案蓋住，點下去選到的
          還是物件。現在照真正的疊放順序判斷：
            ① 先找在圖案之上的物件
            ② 再看有沒有點到圖案
@@ -4595,7 +4595,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         } else {
           /* 還沒選中的圖案：這一下只能「點選」，不能順手拖走。
              放開時沒移動才算選中，移動了就什麼都不做 ——
-             跟浮動物件（照片、文字）本來就是同一套手感，圖案以前漏掉了。
+             跟浮動物件（照片、文字）同一套手感，圖案也要一樣。
              要縮放（兩指）本來就已經要先選中，所以三種操作現在一致：
              都得先點一下選起來。 */
           interactionRef.current = { type: 'select_hole', id: hitHole.id, startX: x, startY: y, isClick: true, hitItself: true, clickedSide };
@@ -4730,7 +4730,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       interactionRef.current = null;
       lastDrawPosRef.current = null;
       /* 第一根手指按在物件上（大遮罩幾乎一定會）就開始了「拖物件／點選」；第二根手指
-         落下變成縮放預覽時要收掉 —— 以前它一直留著，整段縮放都被當成「正在編輯」，
+         落下變成縮放預覽時要收掉 —— 不然它一直留著，整段縮放都被當成「正在編輯」，
          每一格把整個場景連遮罩重算一次（不能用縮放快照），放大縮小特別卡。
          拖曳是即時寫回的，收掉不會丟東西；放開時也不會再誤選那個物件。 */
       if (objDragRef.current) {
@@ -4948,7 +4948,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 「這張拼圖畫到多細就夠了」——照它在螢幕上實際佔幾個裝置像素反推。
      ×1.35 的超取樣與 0.25 的進位跟下面那支防抖用的是同一條算式。
 
-     以前這裡還夾了一個 Math.max(1, …)，也就是「畫布永遠不小於工作解析度」。
+     這裡不夾 Math.max(1, …)，也就是不保證「畫布永遠不小於工作解析度」。
      四周包圍時工作解析度是 原圖×(1+2×比例)，比例拉到 1/1.4 就變成 2623×1967
      ——但螢幕上只有 358 CSS px（716 個裝置像素）。等於每一格都在畫 13 倍
      用不到的像素，拉比例滑桿因此只剩 8.5fps。
@@ -4961,7 +4961,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 影片播放中用的倍率：剛好「一個畫布像素對一個螢幕裝置像素」（見影片那支迴圈）
     deviceScaleRef.current = (cssW * k * dpr) / csW;
     /* 畫布至少要有「螢幕裝置像素 × 1.35」那麼細，而且不低於工作解析度。
-       （四周包圍以前會把工作解析度撐到兩千多、遠超過螢幕需要的，
+       （四周包圍會把工作解析度撐到兩千多、遠超過螢幕需要的，
          那個浪費現在從源頭解掉了 —— 它的畫布跟原圖一樣大，
          所以這裡不必再為它破例。） */
     const want = Math.min(maxPreviewScale(), Math.max(1, (cssW * k * dpr * SUPERSAMPLE) / csW));
@@ -5400,7 +5400,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   const handlePointerUp = (e: React.PointerEvent) => {
     /* 動畫頁：每一次「點一下」物件或圖案（沒有拖動）都重新閃一次虛線框，同一個物件反覆點也一樣。
-       以前只在「選取換了人」時才閃 —— 點已經選著的那個、或閃完之後再點同一個，就什麼都不出現。 */
+       不能只在「選取換了人」時才閃 —— 點已經選著的那個、或閃完之後再點同一個，就什麼都不會出現。 */
     const motionTapTarget = motionLockRef.current ? (() => {
       const d = objDragRef.current;
       if (d && !d.moved && !d.fromBlank) return (d.pickId ?? d.id) as string;
@@ -5606,7 +5606,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const basePhotoEditing=activeTab==='objedit'&&!selectedObj&&(baseSelected||selectedRegionPhotoRef.current!==null);
     /* 剛進編輯頁的那一格：先照一般的畫法畫（跟進來前一模一樣），讓編輯頁的面板馬上出來；
        顯示卡那邊要備的場景（整張重畫三次再上傳）等面板畫出來之後的下一格才做。
-       以前全部擠在按下去的那一格，按「編輯」要等好一下才換頁。 */
+       不要全部擠在按下去的那一格，不然按「編輯」要等好一下才換頁。 */
     if(targetCanvas===canvasRef.current&&!previewCapture){
       if(basePhotoEditing&&!baseEditingWas.current){
         baseEditGate.current=false;
@@ -5634,7 +5634,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
       const sceneGeometryGesture=!!objDragRef.current||!!objPinchRef.current||!!objStretchRef.current||!!baseDragRef.current||!!basePinchRef.current||!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
       /* 只剩顏色（例如特效拖回 0）而顏色那一條的場景還沒更新（照片在格子裡平移／縮放過）：
-         繼續用已經備好的這一條把顏色畫進場景。以前一碰到 0 就整個場景重拍三次（實測兩三秒），
+         繼續用已經備好的這一條把顏色畫進場景。一碰到 0 就整個場景重拍三次的話（實測兩三秒），
          離開 0 又把場景整張讀回重傳 —— 那就是「拖到最邊邊突然很卡」。 */
       const colourSignature=regionGpuSceneKey.current+'|crop:'+JSON.stringify([photo?.zoom,photo?.offsetX,photo?.offsetY]);
       const colourStale=!regionColour.current?.ready||regionColour.current.signature!==colourSignature||regionColour.current.width!==targetCanvas.width||regionColour.current.height!==targetCanvas.height||regionColour.current.scale!==renderScale;
@@ -5725,7 +5725,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             regionSpatial.current={key:regionGpuSceneKey.current,scale:renderScale,scene:{black:scenes[1],white:scenes[2],placements},input:regionSpatialInput.current};
             }
             const prepared=regionSpatial.current;
-            /* 這幾個是「特效」用的預熱：等使用者打開特效那一頁才做。以前一備好就做，常常剛好撞上
+            /* 這幾個是「特效」用的預熱：等使用者打開特效那一頁才做。一備好就做的話，常常剛好撞上
                第一下拖濾鏡／調節滑桿（柔光ll 第一次要編十幾段顯示卡程式），預覽就卡住一下 */
             void (async()=>{while(adjustSubRef.current!=='effect'||activeTabRef.current!=='objedit'){await new Promise(r=>setTimeout(r,300));if(regionSpatial.current!==prepared||leavingRef.current)return;}})().then(()=>awaitPhotoIdle()).then(async()=>{
               if(regionSpatial.current!==prepared||leavingRef.current||!regionColourActive.current)return;
@@ -5850,7 +5850,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const iw = offs.iw;
     const ih = offs.ih;
     /* 中間那一格比整張畫布小，照片要**等比例縮小**塞進去 ——
-       以前是拿原尺寸直接畫、再用小框裁掉，看到的就只有左上角那一塊
+       如果拿原尺寸直接畫、再用小框裁掉，看到的就只有左上角那一塊
        （主人說的「向左上裁切」）。這個倍率就是縮小的比例。 */
     const kIn = layout === AROUND
       ? Math.max(iw / Math.max(1, sw), ih / Math.max(1, sh)) : 1;
@@ -5861,7 +5861,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        瀏覽器也會把整塊點陣丟掉重新配置。一張 1402×1401 是 7.5MB，
        滑桿一秒動幾十格就是每秒幾百 MB 的畫布記憶體來回，
        iOS 的畫布記憶體一碰到上限就把整頁收掉 —— 那就是閃退。
-       截成整數之後畫出來的尺寸跟以前一模一樣（setter 本來就是這樣截的）。 */
+       截成整數之後畫出來的尺寸不變（setter 本來就是這樣截的）。 */
     const tW = Math.max(1, offs.cw | 0), tH = Math.max(1, offs.ch | 0);
     // 點陣尺寸是整數，場景尺寸是連續的。每一層都用同一次換算，預覽跨過暫存大小的級距時，
     // 每張照片才不會各自帶著變動的小數 CSS 拉伸
@@ -5918,7 +5918,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     /* 放大縮小預覽不改變任何內容：遮罩的結果、照片、圖形都一樣，只是看的倍率
        不同。完整的預備畫面（上面的 tiles）還沒做好時（剛改過東西的那幾秒），
-       以前每一幀都把整個場景連遮罩重新算一次。現在改用「最近一次在靜止時畫好
+       不要每一幀都把整個場景連遮罩重新算一次。改用「最近一次在靜止時畫好
        的整張成品」直接縮放貼上，手勢期間零計算；手放開後才照新倍率畫清楚一次。 */
     const viewMovingNow=!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
     const pinchSnap=pinchSnapRef.current;
@@ -5976,7 +5976,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     }
     ctx.save();
-    /* 局部重畫的裁切框要對齊實際像素。以前直接用場景座標裁（底下還有 rasterX 的小數縮放），
+    /* 局部重畫的裁切框要對齊實際像素。直接用場景座標裁的話（底下還有 rasterX 的小數縮放），
        框的邊緣落在半個像素上 → 每拖一格就在舊框的邊上留一條淡淡的線，拖過的地方一圈圈殘影。 */
     if(dirtyPatternRect){const r=dirtyPatternRect;
       const x0=Math.floor(r.x*rasterX-vp.x),y0=Math.floor(r.y*rasterY-vp.y),x1=Math.ceil((r.x+r.w)*rasterX-vp.x),y1=Math.ceil((r.y+r.h)*rasterY-vp.y);
@@ -6231,7 +6231,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         creativeSeam.current ||= new CreativeSeamless();
         /* 有遮罩時也走 GPU：照片先畫進主畫布、遮罩再取主畫布當底，看到的就是正確的照片。
              只有「拖曳中疊在畫布底下的那一層」不能用（遮罩取不到照片），所以有遮罩時不開那層。
-             以前有遮罩就退回逐格在原圖尺寸重新羽化的 2D 路，每動一下就重算每一格，非常卡。 */
+             有遮罩時不退回逐格在原圖尺寸重新羽化的 2D 路，那樣每動一下就重算每一格，非常卡。 */
           if(photoRegion.seamless&&g===ctx&&targetCanvas===canvasRef.current&&!previewCapture&&layout!==AROUND&&!animRef.current&&!regionHold.current?.active&&dim<0){
           const m=g.getTransform(),bounds=clip||[0,0,tW,tH];
           // 拖滑桿（無縫、佔比…）的那幾格：GPU 那層直接疊在畫布底下顯示，不複製進 2D 畫布
@@ -6320,8 +6320,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     /* 空格子的「＋ 新增圖片」與空格之間的虛線，屬於照片那一層：畫在畫布裡、
        照片之後、所有物件與圖案之前，所以任何東西擺上去都會蓋過它。
-       以前它是疊在整張畫布上方的另一層，連圖形、文字都壓在它底下。
-       大小跟以前一樣以「未縮放預覽」的螢幕像素為準（放大預覽時一起變大）。
+       不能疊在整張畫布上方當另一層，不然連圖形、文字都壓在它底下。
+       大小以「未縮放預覽」的螢幕像素為準（放大預覽時一起變大）。
        只畫在螢幕上的預覽（含預備好的畫面），匯出不會有。 */
     const drawEmptyCellPrompts = () => {
       if (!isMain || !photoRegion?.multi) return;
@@ -6402,7 +6402,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const shapeMo = rawShapeMo.idle === 'grid-wave'
         ? { ...rawShapeMo, idle: 'pattern-breathe' }
         : rawShapeMo;
-      /* 常駐波浪是一整群小圖案共用的同一條時間軸。以前 composeMo 為每顆
+      /* 常駐波浪是一整群小圖案共用的同一條時間軸。如果 composeMo 為每顆
          圖案加入 hash phase，加上每顆進場結束時間不同，結果相鄰兩顆也在
          不同波形上，看起來像亂飄。現在只讓 x 位置決定波峰／波谷；每顆仍
          是獨立單位、輪廓完全不變，只做自己的垂直位移。 */
@@ -6518,7 +6518,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        **每次 17.9ms**，是發光會卡的唯一原因（相對地，每顆圖案的光暈
        蓋上去總共只花 2.5ms —— 那個早就被快取解決了）。
 
-       現在改成：把範圍換算成畫布上的實際像素，暫存層只開那麼大，
+       做法：把範圍換算成畫布上的實際像素，暫存層只開那麼大，
        畫的時候整個座標系往回平移，貼回去時再平移回原位。
        範圍外本來就是全透明、貼上去也不會有任何改變，所以**畫面完全一樣**，
        只是不再每格搬運兩百萬個像素。
@@ -6616,9 +6616,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        這樣光的亮度對透明度是**嚴格線性**的，跟圖案本體完全同一條曲線。 */
     /* 這張小圖只由「形狀、字、大小、角度、顏色」決定 —— 位置與透明度都不影響它。
        所以照這五項當鍵存起來：同一格裡所有一樣大的圖案共用同一張，
-       兩側（圖片／遮罩）也共用。原本是每顆圖案都重疊一次三段模糊，
+       兩側（圖片／遮罩）也共用。不讓每顆圖案都重疊一次三段模糊，
        11 顆 × 2 側就是 22 次高斯；現在通常只算 1 次。
-       畫出來的像素跟以前一模一樣，不是降畫質的做法。 */
+       畫出來的像素不變，不是降畫質的做法。 */
     /* 這張小圖只由「形狀、字、大小、顏色」決定 —— 位置、角度、透明度都不影響它。
 
        兩個關鍵設計，都是為了在手機上拖滑桿時**完全不用重算模糊**：
@@ -6977,7 +6977,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         },
         gg => {
           // 本體一律用滿透明度挖掉，剩下的才是純粹的光暈
-          // 挖除仍照「全部的本體」來，互相挖除的結果才跟以前一致
+          // 挖除仍照「全部的本體」來，互相挖除的結果才正確
           // 圖片遮罩的剪影邊緣本來就有半透明。再做一次 destination-out 會把覆蓋率乘上 (1-alpha)，
           // 在光暈上挖出一圈沒光的邊。陰影在圖片下面保持連續，看得到的圖片（或遮罩挖空）之後只合成一次。
           // 向量圖案的行為刻意不變
@@ -7135,7 +7135,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     let lmc: HTMLCanvasElement = isMain ? lowerMaskCanvasRef.current : document.createElement('canvas');
     const drawMaskLayer = () => {
     if(directMaskPhotos){const rect=[offs.mx-vp.x,offs.my-vp.y,maskW,maskH];directMaskPhotos.push({source:bCanvas,key:`mask-solid-${maskColor}`,rect,uv:[0,0,1,1],clip:rect});}
-    /* ── 這裡以前是動畫閃退的主因 ───────────────────────────────────────
+    /* ── 這裡是動畫閃退的關鍵 ───────────────────────────────────────
        原本每一格都寫一次 lmc.width / lmc.height。指派 canvas.width 就算值
        完全一樣，瀏覽器也會把整塊點陣**重新配置**一次。播動畫時一秒 30 格、
        這張又是整片遮罩那麼大，實測是每秒 77.9MB 的畫布記憶體丟掉重開 ——
@@ -7406,7 +7406,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         && texOf(o) === 'none' && !COMPOSITE_SHAPE_KINDS.has(o.kind) && !TRACK_SQUARE_KINDS.has(o.kind as string)
         && !GRID_SHAPE_KINDS.has(o.kind) && !(o.kind === 'hole' && f?.rayK !== undefined);
       const flattenShapeAlpha = o.type === 'shape' && !isBackdropMask(o.kind) && objectAlpha < 0.999 && !singleStroke;
-      /* 半透明圖形的暫存層只用到它自己那一塊：以前每一顆都清一整張畫布、再把整張畫布
+      /* 半透明圖形的暫存層只用到它自己那一塊：不要每一顆都清一整張畫布、再把整張畫布
          貼回來 —— 進場動畫時每一顆都在淡入，四十顆就是每一格清＋貼四十次全螢幕，
          物件一多就卡到幾乎不動。改成只算這一顆的外框（含發光、描邊的餘裕）。 */
       const flatBox = flattenShapeAlpha && !internalWave ? (() => {
@@ -7585,7 +7585,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 從圖案借過來的那幾種：直接走圖案本來那條管線畫。
            文字／圖片類的圖案只有實心（沒有空心版），跟清單一致。
 
-           這一段以前畫完就 return，那是三個災情的同一個源頭：
+           這一段如果畫完就 return，會同時造成三個問題：
              ① 只 restore 了自己那一層，最外面那一層（把原點搬到框心的那個
                 translate）沒有還原 —— 後面每一個物件、遮罩、連線都疊在上一個
                 的座標系上畫，所以整批往右下角愈跑愈遠；
@@ -7766,7 +7766,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         { const s=o.sym?textSceneScale:1;
         // 正在畫布上直接編輯時，字交給疊在上面的 textarea 顯示
         /* 輸入中也照常由畫布畫字：輸入框只負責游標與鍵盤，本身的字是透明的。
-           以前把字交給 DOM 輸入框顯示，解析度、字距與基線都跟畫布不同，
+           不把字交給 DOM 輸入框顯示：它的解析度、字距與基線都跟畫布不同，
            一打字字就變糊、位置也跟著跳。只有內容還是佔位文字時不畫。 */
 
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
@@ -8068,7 +8068,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         } else {
           /* 第一段：選中的是「圖片」。有形狀的話框要縮到剛好包住那個圖案 ——
              不然愛心上面那片空白、星星底下那條也會被框進去。
-             沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
+             沒有形狀時 imgShapeInk 回傳整個框，畫出來就是一般的矩形。 */
           // 圖片框的內緣剛好貼齊圖片，不留下空隙也不蓋住像素。
           const ink = objectSelectionInk(o, s, selectionFrameGap(o) * uiPx);
           ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
@@ -8394,7 +8394,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              整層等於空的。那正是「物件怎麼往下移都壓不到遮罩區的圖案下面」的原因：
              補畫這一層根本沒畫出東西。要還原成「這一層自己的原點」。 */
           ctx2.setTransform(1, 0, 0, 1, useLayer ? -rx0 : -vp.x, useLayer ? -ry0 : -vp.y);
-          /* 只貼這個洞蓋得到的那一小塊。以前是整張貼（幾百萬像素）再靠 clip 蓋掉，
+          /* 只貼這個洞蓋得到的那一小塊。不整張貼（幾百萬像素）再靠 clip 蓋掉，
              一個洞一次、十幾個洞就是十幾次。剪裁範圍本來就把外面擋掉了，
              所以貼出來的像素完全一樣。 */
           const r0 = sz;   // 旋轉之後最遠也不會超過 sz（半徑 0.71×sz）
@@ -8411,7 +8411,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 連線也要一起補畫，不然 below 的物件會壓在線上面。
            沒有自己指定顏色時，線的「顏色」就是墊在遮罩底下那張照片
            （遮罩那一層是把線挖穿的），也就是上面這顆 pattern。
-           pattern 是釘在「畫的當下那個座標系」上的 —— 以前這裡為了對上
+           pattern 是釘在「畫的當下那個座標系」上的 —— 如果這裡為了對上
            線的座標，先把座標系推到遮罩原點再描線，於是 pattern 也跟著位移了
            (offs.mx, offs.my)。上下並排時那正好是一整張照片的高度，
            取到的是那張圖上完全空白的地方 → 等於拿透明色描線 → 什麼都沒畫出來。
@@ -8479,7 +8479,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     } else {
       /* below 的物件是「遮罩色塊之上、所有圖案之下」：
          先鋪底圖與遮罩色塊 → 畫物件 → 再把兩側的圖案補回最上層。
-         以前物件是畫在 drawMaskLayer 之前，所以整個沉到遮罩色塊底下、
+         物件如果畫在 drawMaskLayer 之前，會整個沉到遮罩色塊底下、
          在遮罩那一半完全看不見 —— 那是不對的。 */
       if (!patternBaseHit) { drawCentreImage(); drawBackdrop(); snapPatternBase(); }
       debugSection('photographs');
@@ -8507,7 +8507,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        在這裡拍，縮圖天生就是乾淨的，離開時不用為了抹掉選取框再重畫一次。
 
        為什麼要這樣做：返回鍵按下去要**立刻**退出，任何同步工作都不能留在
-       那條路上。以前是按下去才現拍（重畫一次 ＋ 編一張 JPEG ＋ 大圖再編一次），
+       那條路上。不要按下去才現拍（重畫一次 ＋ 編一張 JPEG ＋ 大圖再編一次），
        所以底圖愈大等愈久。現在畫面每畫一次就順手留一張，返回鍵那一下
        手上已經有圖了，一格都不用再算。
        0.4 秒才留一次，播影片時多出來的成本可以忽略（實測一次約 2 毫秒）。 */
@@ -8623,7 +8623,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 選取框只畫在螢幕上那張。畫布可能被畫得更細，所以尺寸與座標都要乘上 s，
        不然放大重畫之後虛線框會停在原本的小尺寸、對不上那個洞。
 
-       條件以前還多一個 interactionRef.current，也就是「手指還按著」才畫。
+       條件不能多一個 interactionRef.current，也就是不能只在「手指還按著」時才畫。
        圖案改成要先點選才能操作之後，選中這件事是發生在**放開**的那一刻 ——
        那時候 interactionRef 已經清掉了，於是框子一放手就不見，
        等於根本看不到自己選了哪一顆。選取是一個會留著的狀態，框就該一直在。
@@ -8656,7 +8656,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
             const renderStr = holeGlyph(holeType, customText, h);
-            /* 框的大小跟著「看得見的那一塊」走。以前量的是 sans-serif 的
+            /* 框的大小跟著「看得見的那一塊」走。不能量 sans-serif 的
                前進寬度、高度直接拿字級 —— 跟真正畫出來的字對不起來，
                所以有些圖案框不到。 */
             const ink = glyphInk(holeType, renderStr, sz);
@@ -8683,7 +8683,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
             const renderStr = holeGlyph(holeType, customText, h);
-            /* 框的大小跟著「看得見的那一塊」走。以前量的是 sans-serif 的
+            /* 框的大小跟著「看得見的那一塊」走。不能量 sans-serif 的
                前進寬度、高度直接拿字級 —— 跟真正畫出來的字對不起來，
                所以有些圖案框不到。 */
             const ink = glyphInk(holeType, renderStr, sz);
@@ -8842,7 +8842,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash, symmetryEnabled,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
         glowMode, holeGlow, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
-        /* 新增進來的內容（圖片／文字／圖形）也要一起記 —— 以前這一項不存在，
+        /* 新增進來的內容（圖片／文字／圖形）也要一起記 —— 少了這一項的話，
            所以從歷史紀錄點回來時，設定都在、但「先前導入的東西」整批不見。
 
            img 是 DOM 元素，JSON 化之後只會剩一個空物件，所以先拿掉；
@@ -8899,13 +8899,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const cs = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale, canvasRatio);
       const dpr = Math.min(3, window.devicePixelRatio || 1);
       // 上限＝「畫得到的最細畫布」對應到螢幕上的倍率
-      /* 除以 SUPERSAMPLE：以前只保證「1 個畫布像素 ≥ 1 個裝置像素」，
+      /* 除以 SUPERSAMPLE：只保證「1 個畫布像素 ≥ 1 個裝置像素」不夠，
          所以放到最大時細緻度會從 1.4 一路掉到 1.01 —— 那就是「放大之後
          畫質變了」的來源（實測 1.46→1.37→1.43→1.39→1.16→1.01）。
-         現在改成「放到最大時也還要有 SUPERSAMPLE 倍」，
+         改成「放到最大時也還要有 SUPERSAMPLE 倍」，
          也就是任何倍率下的細緻度都一樣，代價是最大倍率會變小。 */
       const z = (cs.w * maxPreviewScale()) / Math.max(1, (cssW || r.width) * dpr * SUPERSAMPLE);
-      /* 以前這裡硬給 1.5 的下限：畫布明明畫不到那麼細，卻還讓你放大到 1.5 倍 ——
+      /* 這裡不硬給 1.5 的下限：畫布明明畫不到那麼細，卻還讓你放大到 1.5 倍 ——
          那段就是一定會糊的區間。改成「畫得到多少就只給多少」，
          任何倍率下都保證 1 個畫布像素 ≥ 1 個裝置像素。 */
       maxZoomRef.current = Math.max(1, Math.min(6, Math.floor(z * 20) / 20));
@@ -8968,7 +8968,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了。
      這裡要做兩件事，而且都必須在「瀏覽器畫下一格之前」完成：
-       ① 直接算出新的版面尺寸（以前是先設成 null 讓 max-w/max-h 自己貼合一次，
+       ① 直接算出新的版面尺寸（不先設成 null 讓 max-w/max-h 自己貼合一次，
           下一格再換成算好的 —— 中間那一格是舊比例硬塞進新框）。
        ② 立刻把畫布重畫一次。畫布的 CSS 尺寸換成新比例、但裡面還是舊那張圖時，
           那一格會被拉伸成不同的長寬比 —— 那就是換排版時看到的果凍。
@@ -8992,7 +8992,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         setBaseCss({ w: cssW0, h: cs.h * f });
       } else setBaseCss(null);
       /* 這一格要畫多細，直接照「它在螢幕上佔幾個裝置像素」算 ——
-         以前是寫死 1（＝工作解析度）。四周包圍把工作解析度撐到兩千多之後，
+         不寫死 1（＝工作解析度）。四周包圍把工作解析度撐到兩千多之後，
          寫死 1 等於每動一格滑桿就畫一張五百萬像素、而螢幕只吃得下 70 萬。
          算出來跟防抖那支完全同一條式子，所以拖曳中與停下來畫的是同一張，
          不會有「放手才變清楚」的落差。 */
@@ -9062,7 +9062,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const off = getLayoutOffsets();
         if (!off) return;
         /* 長邊照螢幕實際能顯示的裝置像素給（再乘 1.15 超取樣），上限 1600。
-           以前固定 900，在 3 倍螢幕上等於被拉大 1.3 倍，看起來就是糊的。 */
+           不固定 900：在 3 倍螢幕上等於被拉大 1.3 倍，看起來就是糊的。 */
         const dpr = Math.min(3, window.devicePixelRatio || 1);
         const shown = Math.min(window.innerWidth, 520);
         const scale = Math.min(1600, Math.max(900, shown * dpr * 1.15)) / Math.max(off.cw, off.ch);
@@ -9300,7 +9300,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return {
       hole: (h: any, _i: number) => composeMo(shapeCfg(h), t, hashId(h.id) % 628 / 100),
       /* 每條線各自等自己的兩端冒出來才開始畫，而且「每條線畫的時間都一樣長」。
-         以前是讓所有線在同一個時間點收工，晚開始的那幾條就被壓縮成很短的時間，
+         不讓所有線在同一個時間點收工，不然晚開始的那幾條會被壓縮成很短的時間，
          看起來就是「畫到後面突然變快」。現在速度從頭到尾一致。 */
       link: (ia: number, ib: number) => {
         if (!hasLink) return 1;
@@ -9378,7 +9378,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       &&!editingTextId&&!swapSource&&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
     void awaitPhotoIdle().then(()=>{
       if(!valid())return;
-      /* 磚塊最多 SCENE_TILE_MAX_PIXELS（約 48MB）。以前直接用預覽的最高倍率 —— 靜止時就佔一百多 MB，
+      /* 磚塊最多 SCENE_TILE_MAX_PIXELS（約 48MB）。不直接用預覽的最高倍率 —— 那樣靜止時就佔一百多 MB，
          iPhone 上是分頁被系統砍掉重開的主因之一。放得比磚塊還大時改畫即時的（見 sharpFor），畫質不變。 */
       const g1=layoutGeometry(layout,imageState.baseW,imageState.baseH,maskScale,canvasRatio);
       const scale=Math.min(maxPreviewScale(),Math.sqrt(SCENE_TILE_MAX_PIXELS/Math.max(1,g1.cw*g1.ch)));
@@ -9422,7 +9422,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height;
           const transform=latestImageTransform.current;
           /* 預熱只是讓顯示卡先把各特效的程式編譯好（第一次點特效才不會頓一下），跟圖多大無關：
-             用長邊 PRIME_LONG 的小圖跑就夠了。以前用預覽的實際大小跑六種特效，
+             用長邊 PRIME_LONG 的小圖跑就夠了。不用預覽的實際大小跑六種特效，
              一進來就多佔約 90MB 的畫布記憶體、主畫面卡住將近 2 秒 —— iPhone 上一進創意拼圖就閃退的主因之一。
              真的點特效時才依實際大小配置（配置很快，慢的是編譯，那已經做好了）。 */
           const cap=regionEffectCapacity(p,0,w,h,Math.max(Math.abs(transform.w),Math.abs(transform.h))*previewScaleRef.current),k=Math.min(1,cap/Math.max(w,h),PRIME_LONG/Math.max(w,h));
@@ -9549,7 +9549,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        ‧ **播放中改用「一個畫布像素對一個裝置像素」。** 靜止畫面用 1.8 倍
          超取樣是為了邊緣的抗鋸齒，那在會動的東西上根本看不出來，
          卻要多付 1.8² ＝ 3.24 倍的像素工。停下來（或本來就沒有影片）
-         時立刻補畫一張完整倍率的，所以「看著不動的那一張」跟以前一樣細。
+         時立刻補畫一張完整倍率的，所以「看著不動的那一張」是完整的細節。
        ‧ **跟不上的時候讓的是解析度，不是格數。** 這是專業剪輯軟體的做法：
          播放中沒有人在看單一格的銳利度，但只要掉到 20 格以下馬上就覺得卡。
          所以保險絲改成調 quality（播放中的畫布倍率），格數固定守在 30；
@@ -9589,7 +9589,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!cv) return;
       /* 播放時只畫螢幕實際需要的像素；原本的 1.8x 超取樣會把每格成本放大
          3.24 倍，手機第一秒建立快取時尤其明顯。靜止重畫仍走完整倍率。 */
-      /* 以前這裡寫死 0.55 —— 但 previewScale 永遠 ≥ 1（單位是作品的工作尺寸，不是螢幕），
+      /* 這裡不寫死 0.55 —— previewScale 永遠 ≥ 1（單位是作品的工作尺寸，不是螢幕），
          所以影片一播放畫布就只剩工作尺寸的 0.55 倍，手機上大約只有螢幕實際像素的一半，
          影片看起來就糊糊的。改成「剛好對上螢幕的裝置像素」：每個螢幕像素都有自己的
          畫布像素（最清楚的程度），只是不做靜止畫面那 1.35 倍的抗鋸齒超取樣。 */
@@ -9751,7 +9751,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     glowMode, holeGlow, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
     linkMode, linkColor,
     moShape, moLink, motionHold,
-    /* 選取不是作品內容：不記進復原紀錄（以前選一下東西也算一步，按復原
+    /* 選取不是作品內容：不記進復原紀錄（不然選一下東西也算一步，按復原
        會先倒回「選了什麼」，看起來像沒反應或亂跳）。跟 Figma／Procreate 一樣，
        復原只改內容，選取維持現狀；被復原掉的物件才會自動取消選取。 */
   };
@@ -9844,7 +9844,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     motionFrameAnimationRef.current?.cancel();
     if (frame && first && first.width > 0 && first.height > 0) {
       /* 每一格重新量「現在真正的終點」，畫面從出發的框往它內插。
-         以前是一開始量一次終點、用固定的 transform 動畫 —— 但從「更多圖片排版」切過來時，
+         不在一開始量一次終點、用固定的 transform 動畫 —— 從「更多圖片排版」切過來時，
          工具欄還在從 48dvh 縮回 34dvh（300ms），預覽的版面一路在變大，固定的縮放再乘上去，
          畫面就先放大過頭再縮回來（像打了兩個關鍵幀）。改成每格對準當下的終點，
          版面怎麼變都只會是一段順的過場。 */
@@ -9941,7 +9941,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [activeTab === 'motion']);
 
   /* 第二篇貼文的動畫：直接在一張 canvas 上「當場播」。
-     以前是先用 MediaRecorder 錄成影片再放 —— 錄影是即時的，一圈幾秒就要等幾秒，
+     不先用 MediaRecorder 錄成影片再放 —— 錄影是即時的，一圈幾秒就要等幾秒，
      所以會停在那邊很久、然後突然閃一下才開始播。現在開啟預覽就立刻在動。 */
   const igCanvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -10006,12 +10006,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     let exportStream:MediaStream|null=null;
     try {
       /* renderScale 是「相對於工作區大小」的倍率，不是像素數 ——
-         以前寫成 min(1, 720/長邊)，長邊本來就小於 720 的話等於 scale=1，
+         不能寫成 min(1, 720/長邊)：長邊本來就小於 720 的話等於 scale=1，
          影片就只剩工作區那點解析度，放大來看當然糊。
          現在走的是「跟存成圖片完全同一條算式」，只是多一個 MOTION_MAX_DIM
          的上限（編碼器與記憶體的現實），所以影片的清晰度就是成品本人。 */
       /* 經典拼圖的影片輸出只有一套座標：先以實際頁面大小決定輸出倍率，
-         每一幀再用同一倍率合成。創意拼圖以前從 originalW/baseW 反推倍率；
+         每一幀再用同一倍率合成。創意拼圖不從 originalW/baseW 反推倍率；
          圖片經過裁切或編輯後，兩者不一定還是同一個座標系，動畫的 dx/dy
          便會被額外放大而嚴重跑位。這裡直接以 renderToCanvas 真正使用的
          工作區 off.cw/off.ch 為基準，預覽與輸出從頭到尾只剩一套座標。 */
@@ -10125,7 +10125,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      不夠的就從原檔做一張更清楚的換上去：
        ‧ 成品需要多少：跟存檔同一條算式算出成品倍率，照片在成品裡實際佔多大（含格子裡的放大）；
        ‧ 預覽需要多少：目前畫面的倍率（含雙指放大）換成螢幕的實際像素；
-     兩者取大。存檔前一定會先等它補齊，所以存出來的成品跟以前一樣清楚。 */
+     兩者取大。存檔前一定會先等它補齊，所以存出來的成品照樣是完整的清晰度。 */
   const exportScaleNow = () => {
     const st = imageStateRef.current;
     if (!st || !st.baseW) return 1;
@@ -10704,7 +10704,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
       {saveState === 'processing' && (
         /* 這一層是蓋住返回鍵的，所以它**一定**要有出口。
-           以前沒有：導出萬一在某一步卡住（見 canvasToUrl 那支的看門狗），
+           一定要有：導出萬一在某一步卡住（見 canvasToUrl 那支的看門狗），
            畫面就永遠停在這裡，連退回主頁都做不到。
            現在等超過六秒還沒好就多出一顆返回鍵（見 StuckEscape）—— 正常的導出
            兩三秒就結束，根本看不到它。 */
@@ -11244,7 +11244,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const ps = drawnScaleRef.current;
           const k = r.width / Math.max(1, getLayoutOffsets()?.cw || cvsEl.width / ps);   // 畫布內部單位 → CSS
           /* ── 這排鍵要貼著「畫面上真的看得到的那個選取框」 ──────────────────
-             以前是拿 o.x / o.y / o.w / o.h 直接算，也就是物件的「原始方框」。
+             不能拿 o.x / o.y / o.w / o.h 直接算，那是物件的「原始方框」。
              但畫出來的框有兩件事會讓它跟原始方框不一樣：
                ① 選了外形（圓形／星星／愛心）或裁切過，框會縮到剛好包住實際的圖
                   （imgShapeInk）—— 愛心上面那片空白不算在內。
@@ -11351,7 +11351,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 { t: o.type === 'text' ? (o.sym ? '編輯符號' : '編輯文字') : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => { setColorPickerTarget(null); setActiveTab('objedit'); }), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
               ].map(b => (
-                /* 鬆手才觸發。以前綁在 onPointerDown，手指一碰到就動作 ——
+                /* 鬆手才觸發。不綁在 onPointerDown，不然手指一碰到就動作 ——
                    碰錯了也來不及滑開取消，而且複製／刪除這種不好還原的動作
                    按下去就發生了。改成 onClick：一定要「在同一顆按鈕上按下並放開」
                    才算數，中途滑走就取消，跟系統按鈕的手感一致。
@@ -11464,7 +11464,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
       {/* 影片那顆選擇器已經拿掉：創意拼圖不收影片了 */}
 
-      <footer ref={footerRef} className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-[transform,height] duration-300 ease-out flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} /* 高度是固定的：以前是「圖片編輯頁點出滑桿才長高」，
+      <footer ref={footerRef} className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-[transform,height] duration-300 ease-out flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} /* 高度是固定的：不做成「圖片編輯頁點出滑桿才長高」，
                     工具欄一長高，上面的舞台就矮一截，預覽圖跟著往上跳一下
                     （實測 287px → 300px，畫面位移 6.5px）。
                     一律用最高的那個值，進哪一頁、開不開滑桿，預覽都不會動。
@@ -11674,7 +11674,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   {photoRegion?.multi ? photoLayoutControls : ratioControls}
                 </div>
 
-                  {/* 原本的比例滑桿實際控制遮罩佔圖片多少，現在改名為「佔比」。
+                  {/* 這個比例滑桿實際控制遮罩佔圖片多少，所以叫「佔比」。
                       並排的四種：滑桿 0 = 1/1（遮罩跟原圖一樣大）、100 = 1/5
                       （最細的一條），分母 = 1 + 值×0.04，所以 50 就是 1/3。
                       四周包圍：1/N 是「單邊邊框寬度佔圖片的比例」，滑到最後
@@ -12095,7 +12095,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   if(isBackdropMask(sel.kind)){
                     /* 拖遮罩滑桿時不經過 React：每一格只改 objectsRef 再直接重畫畫布
                        （renderToCanvas 讀的就是 objectsRef），放開才寫回 state。
-                       以前每一格都 setObjects → 整個創意拼圖（上千個元素）重新 render，
+                       如果每一格都 setObjects → 整個創意拼圖（上千個元素）重新 render，
                        折射、格數滑桿才會一頓一頓。 */
                     const live=(d:any)=>{
                       if(!maskSliderLive.current){patch(d);return;}
@@ -12423,11 +12423,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       set={(d: any) => {
                         /* 圖片物件拖效果滑桿：跟遮罩滑桿同一招 —— 只改 objectsRef、直接重畫畫布，
                            放開才寫回 state（整個創意拼圖不必每一格重新 render）。
-                           拖到 0（變回沒有效果）或從 0 拖出來也一樣走這條：以前那一格要整個
+                           拖到 0（變回沒有效果）或從 0 拖出來也一樣走這條：不然那一格要整個
                            創意拼圖重新 render，就是「拖到最邊邊會卡一下」。 */
                         const held=maskSliderLive.current;
                         /* 造型分頁的滑桿（羽化、圓角、描邊、發光…）也走同一條：拖的時候只改
-                           objectsRef、直接重畫，放開才寫回 state。以前每一格都讓整個創意拼圖重新
+                           objectsRef、直接重畫，放開才寫回 state。不要每一格都讓整個創意拼圖重新
                            render、整張重畫好幾次。 */
                         const liveKeys=Object.keys(d).length>0&&Object.entries(d).every(([k,v])=>k==='fx'||typeof v==='number');
                         if(liveObjFx&&held?.id===sel.id&&liveKeys){

@@ -54,7 +54,7 @@ out vec4 outColor;
 /* 曝光與色溫在「線性光」裡算（跟真的相機與 Lightroom 同一種做法）：
    ① sRGB 解碼成線性 → ② 曝光 ×2^EV、色溫用 R／B 通道倍率（von Kries 式，
    亮度不變）→ ③ 超出範圍的亮部用平滑肩部收回，不再硬切成一片死白 → ④ 編回 sRGB。
-   沒調任何東西時（EV 0、5000K）整條路徑是恆等，畫面跟以前相同（只多了看不見的抖色）。 */
+   沒調任何東西時（EV 0、5000K）整條路徑是恆等，畫面不變（只多了看不見的抖色）。 */
 vec3 toLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
 vec3 toEncoded(vec3 c) { return mix(c * 12.92, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
 vec3 kelvinGain(float kelvin) {
@@ -243,7 +243,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   const previewSizeRef=useRef({w:0,h:0});
   const displayBoxRef=useRef(displayBox);
   displayBoxRef.current=displayBox;
-  /* 切換比例時的抖動：以前畫布跟著框的大小走，300ms 的動畫裡每一格框變一點、畫布就重配一次
+  /* 切換比例時的抖動：畫布如果跟著框的大小走，300ms 的動畫裡每一格框變一點、畫布就重配一次
      （重配＝清空重畫，內容的裁切也每格跳一下）。現在畫布固定是「整個感光元件的比例」，
      大小以這個比例最後的框為準（只在換比例的那一下重配一次），框裡看到哪一塊交給 CSS 的
      object-fit: cover —— 那跟拍照時從中間裁的方式完全一樣，動畫中每一格都是平順縮放。 */
@@ -262,7 +262,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     read();video.addEventListener('loadedmetadata',read);video.addEventListener('resize',read);
     return()=>{video.removeEventListener('loadedmetadata',read);video.removeEventListener('resize',read);};
   },[video]);
-  /* 1:1 → 16:9 會抖一下：框同時「變窄又變高」，以前用 object-fit: cover，畫面的放大倍率是
+  /* 1:1 → 16:9 會抖一下：框同時「變窄又變高」，用 object-fit: cover 的話畫面的放大倍率是
      max(寬比, 高比) —— 動畫前半段由寬度決定（越縮越小）、後半段換成高度決定（越放越大），
      所以畫面先縮一下再放大。現在畫布自己有 CSS 大小＝「蓋滿最後那個框」的大小，置中，
      跟框用同一條曲線過渡：倍率從頭到尾單向變化，框只是負責裁切。 */
@@ -336,7 +336,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
    * 存到，第二張就很容易只剩黑畫面。這個旗標讓兩條繪製路徑確實互斥。
    */
   const stillActiveRef = useRef(false);
-  /* 曝光／色溫／濾鏡也一律走 ref。以前它們在 render loop 的依賴裡，
+  /* 曝光／色溫／濾鏡也一律走 ref。它們不能放在 render loop 的依賴裡，
      滑桿每動一格（色溫是 50K 一格）就把整個迴圈拆掉重建一次，
      拉起來就是一頓一頓的。現在迴圈只建立一次，每一幀讀最新值。 */
   const paramRef = useRef({ exposure, kelvin, isUserFacing });
@@ -357,7 +357,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       }
       return cv;
     },
-    /** 快門取完全解析度的那一幀之後立刻縮回預覽尺寸並補畫。以前要等下一個
+    /** 快門取完全解析度的那一幀之後立刻縮回預覽尺寸並補畫。不然要等下一個
         animation frame 才縮回，全解析度的 drawing buffer（含 preserveDrawingBuffer
         的第二份與特效中間緩衝）會跟 2D 裁切畫布、JPEG 編碼同時佔著記憶體。 */
     restorePreview: () => {
@@ -533,7 +533,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
     /* 一幀的完整畫法。預覽跟「拍全解析度靜態照」共用這一段，
        所以拍下來的顏色、特效跟畫面上看到的一定一致。 */
-    /* 著色器參數的位置每個程式只查一次。以前每一幀要查幾十次
+    /* 著色器參數的位置每個程式只查一次。不然每一幀要查幾十次
        （getUniformLocation 在 iOS 上是同步的字串查表）。 */
     const uniformCache = new Map<WebGLProgram, Map<string, WebGLUniformLocation | null>>();
     const uloc = (p: WebGLProgram, name: string) => {
@@ -685,7 +685,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     const previewLimit=gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number;
     /* 只在「真的有東西變了」時才畫：相機送來新影格（requestVideoFrameCallback），
        或曝光／色溫／效果／變焦／濾鏡／畫布尺寸改了。螢幕是 60–120Hz，串流只有
-       30fps；以前每一個螢幕幀都重新上傳同一張影格、重跑所有效果，白白耗電發熱。
+       30fps；不要每一個螢幕幀都重新上傳同一張影格、重跑所有效果，白白耗電發熱。
        不支援 rVFC 的瀏覽器維持每幀都畫。 */
     const rvfc = typeof (video as any)?.requestVideoFrameCallback === 'function';
     let newFrame = true, frameHandle = 0, lastState = '', lastLut: WebGLTexture | null = null;
@@ -707,7 +707,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
           newFrame = false; lastState = state; lastLut = lutTexRef.current;
           draw(video, gl.canvas.width, gl.canvas.height);
           /* 預熱：相機穩定後（約半秒）把所有特效的暫存貼圖配好、每個著色器都真的畫過一次。
-             iPhone 的著色器是第一次用到時才編譯，暫存也是第一次才配置 —— 以前就是這個讓「第一次開／關特效」卡一下。
+             iPhone 的著色器是第一次用到時才編譯，暫存也是第一次才配置 —— 這就是「第一次開／關特效」會卡一下的原因。
              同一個工作裡接著再畫一次正常畫面，所以使用者看不到預熱那一格 */
           if (!warmed && ++drawnFrames > 15) {
             warmed = true;

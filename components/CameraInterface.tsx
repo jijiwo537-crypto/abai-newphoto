@@ -278,7 +278,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [countdown, setCountdown] = useState<number | null>(null);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
-  // 磨皮已移除：清掉以前記住的開關
+  // 磨皮已移除：清掉舊版記住的開關
   useEffect(() => { try { localStorage.removeItem('abai-camera-skin-v3'); } catch { /* 私密模式 */ } }, []);
   
   const [focalLengthMm, setFocalLengthMm] = useState<string | null>(null);
@@ -686,7 +686,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
     /* 把點到的位置換算成 0–1 的座標送給相機，才是真的「點哪裡對哪裡」。
        同時把測光點也指過去（專業相機 app 都是這樣一起做的）。
-       裝置不支援指定座標時退回原本的持續自動對焦，行為跟以前一樣。 */
+       裝置不支援指定座標時退回原本的持續自動對焦。 */
     if (videoTrack && capabilities) {
         const nx = Math.min(1, Math.max(0, x / (rect.width || 1)));
         const ny = Math.min(1, Math.max(0, y / (rect.height || 1)));
@@ -701,10 +701,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   };
 
   /* 對焦卡頓：
-     ① applyConstraints 會讓相機重新設定一次（部分裝置那一下會停送一兩格），以前它跟對焦框的
+     ① applyConstraints 會讓相機重新設定一次（部分裝置那一下會停送一兩格），如果它跟對焦框的
         第一格擠在同一個事件裡，畫面要等它回來才畫得出對焦框 —— 看起來就是點下去頓一下。
         現在先讓對焦框畫出來（下一格之後才送），
-     ② 連點的時候以前每一下都送一次，上一次還沒套完又來一次，相機就一直在重設。
+     ② 連點時如果每一下都送一次，上一次還沒套完又來一次，相機就會一直在重設。
         現在同時間只會有一個在路上，排隊的只留最新的那一個點。 */
   const focusApplyRef = useRef<{ busy: boolean; next: { track: MediaStreamTrack; adv: any } | null }>({ busy: false, next: null });
   const queueFocusConstraints = (track: MediaStreamTrack, adv: any) => {
@@ -915,7 +915,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, []);
 
   /* 快門鍵的手感：按下縮到 0.86、放開彈回。用 Web Animations 跑 transform —— 這種動畫在合成器上跑，
-     拍照時主執行緒卡住也不會停格（以前用 class 切換＋CSS transition，要等主執行緒才會開始動） */
+     拍照時主執行緒卡住也不會停格（用 class 切換＋CSS transition 的話，要等主執行緒才會開始動） */
   const shutterInnerRef = useRef<HTMLDivElement>(null);
   const shutterAnimRef = useRef<Animation | null>(null);
   const shutterDownRef = useRef(false);
@@ -1040,7 +1040,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         break;
     }
 
-    /* 4:3、1:1 比 3:2 矮。外層是貼底排的，以前矮的框就整個沉到底、上面空一大塊。
+    /* 4:3、1:1 比 3:2 矮。外層是貼底排的，不處理的話矮的框會整個沉到底、上面空一大塊。
        改成放在 3:2 那一格的正中間 —— 框的中心跟 3:2 時一樣，切換比例時是上下一起收，
        不是只有上緣往下掉。 */
     return { w: targetW, h: targetH, mb: Math.max(0, (h32 - targetH) / 2) };
@@ -1070,7 +1070,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             setLocalImportPreviewUrl(previewUrl);
         });
         /* 直接用讀進來的檔案（瀏覽器本來就能顯示，方向也已經轉正），不再整張畫進畫布重新編成 PNG：
-           48MP 的 iPhone 照片超過手機的畫布上限，以前在這一步就是空白或閃退；不重編碼也完全無損 */
+           48MP 的 iPhone 照片超過手機的畫布上限，直接畫的話這一步就是空白或閃退；不重編碼也完全無損 */
         const img = new Image();
         img.onload = () => {
             ownedUrlsRef.current.add(objectUrl);

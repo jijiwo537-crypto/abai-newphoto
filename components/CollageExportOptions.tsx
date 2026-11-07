@@ -4,7 +4,7 @@ import {canExportHeic} from '../utils/heicExport';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 type Props={label:string;panelRef:React.Ref<HTMLDivElement>;imageFormat:'jpg'|'png'|'heic';videoFormat:CollageVideoFormat;fps:number;quality:number;
  onImage:(v:'jpg'|'png'|'heic')=>void;onVideo:(v:CollageVideoFormat)=>void;onFps:(v:number)=>void;onQuality:(v:number)=>void};
-/* 切換按鈕時會閃一下（電腦上特別明顯）：面板原本是毛玻璃（backdrop-filter），
+/* 切換按鈕時會閃一下（電腦上特別明顯）：面板如果用毛玻璃（backdrop-filter），
    裡面的按鈕一按就有縮放動畫，Chrome 會因此把整片毛玻璃重新取樣、閃一格；
    再加上每按一次整個編輯器都要重新 render，亮起來的那顆會慢半拍。
    所以這個面板改成不透明的底、按鈕不做縮放與漸變，選中的那顆先在面板裡立刻亮起，

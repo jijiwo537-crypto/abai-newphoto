@@ -1,11 +1,11 @@
 /* 照片的「解析度分級」：每張照片只留成品真正用得到的解析度。
  *
- * 以前創意拼圖裡的每張照片都以原始尺寸留在記憶體裡（一張 1200 萬像素解開約 48MB，
+ * 照片如果都以原始尺寸留在記憶體裡（一張 1200 萬像素解開約 48MB，
  * 4800 萬像素約 190MB）——但成品最大就是長邊 4096，一張只佔一小格的照片，
  * 存檔時實際只會用到幾百萬像素，多的全部被縮掉。放好幾張大照片時記憶體爆掉、網頁閃退。
  *
  * 做法（跟專業拼圖軟體一樣）：
- *   ‧ 照片的「邏輯尺寸」永遠是原圖尺寸（排版、裁切、存檔尺寸全部照原圖算，跟以前一模一樣）；
+ *   ‧ 照片的「邏輯尺寸」永遠是原圖尺寸（排版、裁切、存檔尺寸全部照原圖算）；
  *   ‧ 實際拿來畫的那張（drawable）只做到「需要的長邊」：成品需要多少＋一點餘裕，
  *     原圖比這個小就直接用原圖，不重新編碼；
  *   ‧ 原始檔案一直留著（只是壓縮過的檔案，幾 MB）：照片被放大、換成更大的格子、
@@ -55,7 +55,7 @@ export async function openTiered(src: string, type: string, initialLong: number)
   let img = head, made: string[] = [];
   if (tier < long) {
     try { const m = await make(src, { ow, oh, alpha }, tier); if (m) { img = m.img; made = [m.url]; } }
-    catch { /* 做不出來就用原圖（跟以前一樣），不影響功能 */ }
+    catch { /* 做不出來就用原圖，不影響功能 */ }
   }
   const prev = reg.get(src);
   if (prev) prev.made.forEach(u => URL.revokeObjectURL(u));

@@ -45,7 +45,7 @@ const LUT_LIST = [
 ];
 
 // 支援 RAW、HEIC，其他格式交給 ImageMagick 處理
-/* 收哪些檔案統一由 utils/fileTypes 決定（以前這串複製在三個檔案裡，內容還不一樣）*/
+/* 收哪些檔案統一由 utils/fileTypes 決定（不要在各檔案各寫一串，內容容易不一致）*/
 const RAW_ACCEPT = SHARED_RAW_ACCEPT;
 
 import { processImageFile, normalizeImageFiles } from './utils/imageLoader';
@@ -150,7 +150,7 @@ const App: React.FC = () => {
   }, []);
   useEffect(() => { if (currentView === 'home') appUpdates.current?.retry(); }, [currentView]);
   const [editorImage, setEditorImage] = useState<string | null>(null);
-  /** 批量編輯：這次匯入的所有照片（只有一張時就跟以前一樣） */
+  /** 批量編輯：這次匯入的所有照片（只有一張時就是一般的單張編輯） */
   const [editorImages, setEditorImages] = useState<string[]>([]);
   const [collageInitialFile, setCollageInitialFile] = useState<File | null>(null);
   /** 創意拼圖入口一次選了好幾個時，第一個之後的那些 */
@@ -213,7 +213,7 @@ const App: React.FC = () => {
   }, []);
 
   /** 創意拼圖：第一個當底，其餘的自動變成物件（相簿多選） */
-  /* 拼圖的入口以前是把 File 原封不動丟給工具，工具再自己 createObjectURL ——
+  /* 拼圖的入口如果把 File 原封不動丟給工具、讓工具自己 createObjectURL ——
      所以 RAW／HEIC 這種瀏覽器讀不懂的檔案到那裡就是一張載不出來的 <img>，
      畫面空白。這裡先解碼成一般 JPEG 再交出去，工具那邊一行都不用改。
      一般的 JPEG/PNG 會原樣放行，不會多轉一次、也不會掉畫質。 */
@@ -259,7 +259,7 @@ const App: React.FC = () => {
     }
     /* 一定要把上一份的狀態清掉。
        這一支是「匯入新照片、開一份新的經典拼圖」——首頁的版型按鈕與成品頁的
-       「拼下一組」都走這裡。以前只清了 histKey，toolDraftState 還留著上一份
+       「拼下一組」都走這裡。只清 histKey 不夠，toolDraftState 會留著上一份
        （從最近作品點回來、或接續草稿時會被設起來），新開的那一份就照著它
        把舊的頁面全部還原回去 —— 那正是「拼下一組之後頁數還是上一份的」。
        創意拼圖與編輯那兩支本來就有清，這裡補上，三個入口的行為就一致了。 */
@@ -614,7 +614,7 @@ const App: React.FC = () => {
         onChange={handleAddPhotosChange}
       />
 
-      {/* 編輯可以一次選多張（批量編輯）；只選一張時跟以前完全一樣 */}
+      {/* 編輯可以一次選多張（批量編輯）；只選一張時就是一般的單張流程 */}
       <input
         type="file"
         ref={fileInputRef}

@@ -41,7 +41,7 @@ uniform sampler2D uCtx;
 uniform float uHasCtx;
 /* 防斷層的保護遮罩：R ＝ 膚色保護、G ＝ 紅色權重。已經在 CPU 上做完
    補洞與羽化，所以它看得到鄰居 —— 臉上那塊偏青的皮膚也一起受保護。
-   uHasMask 是 0 的時候整條路退回原本的逐像素判斷，結果跟以前一模一樣。 */
+   uHasMask 是 0 的時候整條路退回原本的逐像素判斷。 */
 uniform sampler2D uProtectMap;
 uniform float uHasMask;
 uniform float uStrength;
@@ -216,7 +216,7 @@ void main() {
      順序跟調校台一致（先防斷層再合併會在兩塊接壤處偏掉）。 */
   float mw = texture(uProtectMap, vUv).r;
   /* 保護只來自遮罩（找臉、學這個人的膚色算出來的，見 utils/skinProtect）。
-     沒有遮罩＝照片裡沒有臉＝完全不保護。以前「只看顏色像不像膚色／是不是紅色」的內建保護已拿掉 */
+     沒有遮罩＝照片裡沒有臉＝完全不保護。不再用「只看顏色像不像膚色／是不是紅色」的內建保護 */
   float rw = uHasMask > 0.5 ? mw : 0.0;
   // 亮度一律用原圖的（只換顏色不動明暗），色度依保護程度混合
   vec2 ab = mix(labIn.yz, labOut.yz, 1.0 - rw);
@@ -230,7 +230,7 @@ void main() {
       if (d > PI) d -= 2.0 * PI;
       if (d < -PI) d += 2.0 * PI;
       /* 往洋紅偏的那一邊（負的）打折。
-         以前是 if (d < 0.0) 一刀切 —— 值接得上但斜率是斷的，強度放大之後
+         不用 if (d < 0.0) 一刀切 —— 值接得上但斜率是斷的，強度放大之後
          畫面上會看到一條硬邊。改成在一小段角度內平滑接起來。 */
       float gate = smoothstep(0.0, 1.0, clamp(-d / HUE_SOFT, 0.0, 1.0));
       float h2 = hIn + d * (1.0 - uRedDamp * rw * gate);
@@ -256,7 +256,7 @@ void main() {
   float lim = max(cIn, max(min(cIn * uMaxSat, cap), uSatRoom));
   if (cOut > lim && cOut > 1e-6) ab *= lim / cOut;
   /* 強度在 Lab 裡混合，最後只做一次柔性色域壓縮 —— 跟 CPU 版同一條路。
-     以前是先把結果夾進 sRGB、再用 RGB 做 mix，強度超過 1 時會把已經夾過的值
+     不先把結果夾進 sRGB、再用 RGB 做 mix：強度超過 1 時會把已經夾過的值
      再往外拉、最後又被畫面緩衝區夾一次；兩次硬夾疊起來就把紅色那種
      本來就貼著色域邊緣的區域整片壓平，邊界出現硬變。 */
   float Lt = mix(labOut.x, labIn.x, 0.5 * rw);

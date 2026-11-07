@@ -104,7 +104,7 @@ const raysAt = (rays: Ray[], x: number, y: number): number => {
     const along = x * ry.ux + y * ry.uy;
     if (along > ry.L || along < -ry.sig * 14) continue;
     /* 根部是圓頭：中心後面那一段用「到中心的距離」算，平滑淡掉。
-       以前在根部後面直接切一刀，寬的芒（柔光十字、光條）兩側柔光散得開，
+       不在根部後面直接切一刀，不然寬的芒（柔光十字、光條）兩側柔光散得開，
        切口就成了一條直直的硬邊，中心附近看起來像色塊。 */
     const side = -x * ry.uy + y * ry.ux;
     const perp = along >= 0 ? Math.abs(side) : Math.sqrt(side * side + along * along);
@@ -213,7 +213,7 @@ const renderSprite = (spec: StarBurstSpec, N: number, color: string): HTMLCanvas
     }
   }
   /* 存成「黑底、不透明」的光：用 'lighter' 貼上去，黑色（0）等於什麼都不加。
-     以前存成「透明度＝亮度」，暗的地方透明度只剩 1～2 階，手機瀏覽器內部預乘時
+     不存成「透明度＝亮度」：暗的地方透明度只剩 1～2 階，手機瀏覽器內部預乘時
      把顏色算歪 → 一小塊一小塊的彩色雜點。三個通道共用同一個雜點，也不會有彩色雜訊。 */
   for (let i = 0, o = 0; i < LR.length; i++, o += 4) {
     if (LR[i] <= 0 && LG[i] <= 0 && LB[i] <= 0) continue;

@@ -157,7 +157,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const strengthInputRef = useRef<HTMLInputElement>(null);
   const strengthTextRef = useRef<HTMLSpanElement>(null);
   /** v：最後一次拖到的值；pending：還沒存回狀態。兩件事分開記 ——
-      以前存回狀態時把 v 清成 -1，剛好排在後面的那一格就用 -1 去畫（＝強度 0＝原圖），點一下或突然停下就會閃成原圖 */
+      存回狀態時不能把 v 清成 -1：剛好排在後面的那一格會用 -1 去畫（＝強度 0＝原圖），點一下或突然停下就會閃成原圖 */
   const liveStrengthRef = useRef<{ v: number; pending: boolean; raf: number; timer: number }>({ v: 100, pending: false, raf: 0, timer: 0 });
   const paintRef = useRef<(s?: number) => void>(() => {});
   /** 拖滑桿的每一格：數字直接改、下一格畫面 GPU 重畫一次（一格最多一次） */
@@ -243,7 +243,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   /** 用 state 是為了讓備援畫布真的被藏起來（ref 改了不會重繪） */
   const [glReady, setGlReady] = useState(false);
   /* GPU 只負責算，畫面上看到的永遠是同一張一般畫布（canvasRef）：GPU 算完直接複製過去。
-     以前是把 GPU 畫布本身掛上去顯示 —— iPhone 的 Safari 擺 WebGL 畫布的位置跟一般畫布差零點幾個像素，
+     不把 GPU 畫布本身掛上去顯示 —— iPhone 的 Safari 擺 WebGL 畫布的位置跟一般畫布差零點幾個像素，
      導入參考圖（換成 GPU 畫布顯示）之後，前後對比、切換分頁時照片就看得出在動。 */
   const present = () => {
     const gl = glRef.current, cvs = canvasRef.current;
@@ -383,7 +383,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         const rMap = await buildSkinMap(refImg, rw, rh);
         if (cancelled) return;
         /* 保護權重＝紅色（色相）保護 ∪ 找臉的膚色保護，取大的那一個。
-           紅色保護跟以前一樣一直都在：沒有它的話紅色、橘色會被拉得太飽和（實測整體彩度高出一倍） */
+           紅色保護一直都在：沒有它的話紅色、橘色會被拉得太飽和（實測整體彩度高出一倍） */
         const hue = skinRef.current.hue;
         let weight: Float32Array | null = hue ? hue.weight : null;
         if (sMap.faces) {
@@ -513,7 +513,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const showSide = (original: boolean) => {
     const im = originalRef.current, cvs = canvasRef.current;
     /* 嵌在編輯器裡：原圖直接畫在「正在顯示的那張畫布」上 —— 同一個元素、同一個位置。
-       以前是另外蓋一張畫布，位置用 offsetLeft／offsetTop（整數像素）算，照片在 102.5 時就差半個像素，
+       不另外蓋一張畫布、用 offsetLeft／offsetTop（整數像素）算位置：照片在 102.5 時就差半個像素，
        按下跟放開看得出照片在跳 */
     if (embedded && im && cvs && ready) {
       if (original) {
@@ -884,7 +884,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           applyView(k, ax - ((ax - v.tx) / v.k) * k, ay - ((ay - v.ty) / v.k) * k);
         }}
       >
-        {/* 縮放層。內距與置中原封不動搬進來，1 倍時的版面跟以前一模一樣 */}
+        {/* 縮放層。內距與置中原封不動搬進來，1 倍時的版面不變 */}
         <div
           ref={zoomRef}
           data-color-match-zoom

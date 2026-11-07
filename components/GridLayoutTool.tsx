@@ -252,7 +252,7 @@ const isVideoFile = (f: File) => f.type.startsWith('video/') || /\.(mp4|mov|m4v|
  * 影片的尺寸，順便烤一張「第一格」。
  *
  * 那張第一格是給濾鏡／特效卡片牆用的：卡片是拿一條網址塞進 <img> 去重畫縮圖的，
- * 而 <img src="blob:…mp4"> 永遠載不出來 —— 所以以前影片圖層的卡片牆整面是空的，
+ * 而 <img src="blob:…mp4"> 永遠載不出來 —— 不處理的話影片圖層的卡片牆整面是空的，
  * 使用者根本看不到每個濾鏡長什麼樣（「影片大部分東西不能調整」的一部分）。
  * 烤一張 PNG 當卡片的來源，卡片就跟圖片圖層長得一模一樣。
  * 真正畫到畫面上的仍然是影片本人，這張只給卡片看。
@@ -551,7 +551,7 @@ const FX_CARD_KEYS: Record<string, string[]> = Object.fromEntries(
  * 數字也就是 DEFAULT_PARAMS 裡的那些：柔光門檻 70、擴散 100、光暈擴散 10、
  * 羽化 100、色相 8、漏光角度 45、色相 15…）。
  *
- * 以前點特效卡片只把「別顆的強度」歸零，細項一律留著 —— 於是先在柔光的細項
+ * 點特效卡片不能只把「別顆的強度」歸零、細項一律留著 —— 不然先在柔光的細項
  * 面板把門檻拉到 20，再去點別顆、回頭再點柔光，門檻還是 20；同一顆特效打開
  * 兩次得到不一樣的結果，跟編輯頁也對不起來。
  */
@@ -576,7 +576,7 @@ const SHAPE_TOOLS: [string, string, string, number, number, number][] = [
 ];
 
 /* 「形狀」進來之後**不預先選任何一顆**。
-   以前是固定停在圓角上，所以一進造型頁圓角就亮著、下面還多出一根滑桿 ——
+   不固定停在圓角上，不然一進造型頁圓角就亮著、下面還多出一根滑桿 ——
    看起來像已經選好了，但使用者其實還沒挑。現在跟其他分頁一樣：
    全部都是暗的，點下去才亮、才長出那一根滑桿。 */
 
@@ -793,7 +793,7 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
   const key = JSON.stringify([o.kind, o.hole, o.text, o.hole === 'random-num' ? o.id : '', o.miterLimit, !!o.filled, Math.round(o.w / o.h * 1e4), o.lineW ?? 6, Math.round(base / long * 1e4),
     Math.round((o.textureBaseW || o.w) / o.w * 1e3), Math.round((o.textureBaseH || o.h) / o.h * 1e3), o.strokeW || 0, o.innerSize, o.outlineWidth]);
   /* 快取存的是「長邊＝1」的比例：key 只看長寬比，同比例、不同大小的圖形共用同一份，
-     取出來再乘回這顆的長邊（以前直接存物件座標，換一顆大小不同的就套到別人的框）。 */
+     取出來再乘回這顆的長邊（直接存物件座標的話，換一顆大小不同的就套到別人的框）。 */
   const scaled = (u: { x: number; y: number; w: number; h: number } | null) =>
     u && { x: u.x * long, y: u.y * long, w: u.w * long, h: u.h * long };
   if (shapeInkCache.has(key)) return scaled(shapeInkCache.get(key)!);
@@ -873,7 +873,7 @@ export type TrackOutline = { w: number; color: string } | null | undefined;
 /** 外框類的選中框：線畫完之後，最後再把每個小方塊疊在最上面 ——
     有描邊的話，每個方塊先墊一個大一圈的描邊色方塊，所以每個方塊四周都有自己的一圈描邊，
     連跟線條接起來的地方也會有一條描邊把方塊和線隔開。其他圖形什麼都不做。
-    方塊的大小＝路徑上那個方塊外框再加半條線寬（跟以前描線描出來的大小一樣）。 */
+    方塊的大小＝路徑上那個方塊外框再加半條線寬（跟描線描出來的大小一樣）。 */
 export const fillTrackSquares = (ctx: CanvasRenderingContext2D, kind: string | undefined, w: number, h: number, gbw = w, gbh = h,
   lw = ctx.lineWidth, outline?: TrackOutline) => {
   if (!kind || !TRACK_SQUARE_KINDS.has(kind)) return;
@@ -1025,7 +1025,7 @@ export const shapePathD = (
        選中框＝方框＋四個角的實心小方塊（track-select8 四邊中間也有）；交叉框＝方框＋兩條對角線。
        小方塊的大小照「沒被擠壓過」的框（gbw／gbh）算，四邊擠壓時維持正方形。
        這是邊框類（只描邊）的圖形：路徑只有方框和每個小方塊的「外框」，
-       小方塊的裡面由 fillTrackSquares 另外填滿（以前用一大一小兩圈加十字描出來，
+       小方塊的裡面由 fillTrackSquares 另外填滿（不用一大一小兩圈加十字描出來，
        放大之後線條之間就露出縫，看得出是線拼的）。描邊沿著小方塊外框走，跟方框連成一圈。 */
     case 'track-select':
     case 'track-select8': {
@@ -1063,7 +1063,7 @@ export const shapePathD = (
       return `M ${P(cx, cy - b * 0.25)} `
         + `C ${P(cx + a * 0.6, cy - b)} ${P(cx + a * 1.3, cy - b * 0.1)} ${P(cx, cy + b * 0.9)} `
         + `C ${P(cx - a * 1.3, cy - b * 0.1)} ${P(cx - a * 0.6, cy - b)} ${P(cx, cy - b * 0.25)} Z`;
-    /* 以前圖案按鈕上那顆愛心（lucide 圖示）的樣子 */
+    /* 舊版圖案按鈕上那顆愛心（lucide 圖示）的樣子 */
     case 'heart-icon':
       return unitShapeD(HEART_ICON, 0, 0, w, h, true);
     /* 虛線星芒、轉圈圈：一根根圓頭膠囊（utils/heartShapes.ts） */
@@ -1694,7 +1694,7 @@ export const insetShapePath = (
 };
 
 /* 圓形外框裡的愛心／星星：用「離中心最遠的那一點」決定大小，中心也取讓最遠點最近的位置。
-   以前沿用方形的算法（照外接方框置中、照方框寬度縮放），愛心兩瓣的角落會先碰到圓邊，
+   不能沿用方形的算法（照外接方框置中、照方框寬度縮放），愛心兩瓣的角落會先碰到圓邊，
    放大一點就超出圓形，看起來也偏下。 */
 const pathSamples = (d: string) => {
   const t = d.match(/[MLCQZ]|-?\d*\.?\d+(?:e-?\d+)?/g) || [];
@@ -2204,7 +2204,7 @@ export const CrossStarIcon = ({ size = 20, strokeWidth = 1.5, filled = false }) 
     strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
   >
     {/* 跟畫面上真正畫出來的十字星（holeShapes.ts 的 drawShapePath 'cross-star'：
-        直線四角星、內圈半徑 0.25）同一個形狀。以前按鈕上是弧形的，跟生成出來的不一樣；
+        直線四角星、內圈半徑 0.25）同一個形狀。按鈕上的樣子要跟生成出來的一樣，不能是弧形的；
         那個弧形的樣子現在是獨立的圖形 sparkle4。 */}
     <path d="M 12 2 L 13.768 10.232 L 22 12 L 13.768 13.768 L 12 22 L 10.232 13.768 L 2 12 L 10.232 10.232 Z" />
   </svg>
@@ -2319,7 +2319,7 @@ export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
                            沒選中時是暗的（#555），選中才變白。
-                           （原本是用 filter 硬染成白色，所以永遠亮著。） */
+                           （不用 filter 硬染成白色，那樣會永遠亮著。） */
                         <span
                           aria-hidden
                           style={{
@@ -2496,7 +2496,7 @@ export const SymbolPicker: React.FC<{
       </div>
       {/* 一次渲染完整清單，避免往下滑到一半才等待下一批。
           少數碼位在 iOS 沒有單色字身時仍會退回 Color Emoji；選單統一轉成白色（跟新增到畫布後一致）。
-          濾鏡只套在整片清單這一層：以前每一顆符號各自一個濾鏡，幾百層濾鏡讓 Safari 捲到哪才畫到哪。
+          濾鏡只套在整片清單這一層：每一顆符號各自一個濾鏡的話，幾百層濾鏡會讓 Safari 捲到哪才畫到哪。
           這一層裡面本來就全是白色（底色、外框都是半透明白），套上去不會變。 */}
       <div className="flex flex-wrap gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}>
         {symbolButtons}
@@ -3287,7 +3287,7 @@ useLayoutEffect(() => {
 }, [adjustSub, img.id]);
 const pendingCommit = useRef<ReturnType<typeof setTimeout> | null>(null);
 /* 調整滑桿：白點由瀏覽器原生即時移動（不受控），交給編輯器的值一幀一次。
-   以前非隔離模式下白點綁在整個編輯器的 state 上，每動一下都要等整棵重畫完
+   非隔離模式下白點如果綁在整個編輯器的 state 上，每動一下都要等整棵重畫完
    白點才前進 —— 物件一多就變成一幀一幀地跳。 */
 const editorDrag = useRef(false);
 const editorFrame = useRef(0);
@@ -3312,7 +3312,7 @@ useLayoutEffect(() => {
   setLocalFx(liveFx.current);
 },[img.id,img.fx,isolateFxUpdates]);
 const finishAdjustment = () => {
-  /* 造型分頁的滑桿（羽化、圓角…）不走 setFx，pendingCommit 一直是 null —— 以前放手時
+  /* 造型分頁的滑桿（羽化、圓角…）不走 setFx，pendingCommit 一直是 null —— 所以放手時
      就直接 return，拖的值從來沒寫回文件：畫面上有羽化，但面板讀到的還是 0，
      下一次一碰滑桿白點就跳回 0。按下過滑桿就一定要寫回。 */
   const started=sliderHeld.current;
@@ -3330,7 +3330,7 @@ useEffect(() => () => {
 },[]);
 const fx = isolateFxUpdates ? liveFx.current : (img.fx || {});
 /* 點卡片（特效、濾鏡、原始）時：面板（卡片的框、下面那根滑桿）先換好、先畫出來，
-   照片的效果下一格才套。以前是同一個點擊裡先把效果整個算完、面板才跟著重畫 ——
+   照片的效果下一格才套。不在同一個點擊裡先把效果整個算完、面板才跟著重畫 ——
    手指一按卡片的按壓動畫就出來了，滑桿卻要等效果算完才換，看起來就是「慢一拍」。 */
 // 排程時記下當時那一張的 set：換選別張照片時也只會寫回原本那一張
 const deferredFx = useRef<{ raf: number; next: PhotoFx; set: (d: any) => void } | null>(null);
@@ -3455,7 +3455,7 @@ const CATS = ([
 const toolBtn = (id: string, label: string, icon: string | React.ReactNode, active: boolean, adjusted: boolean, onClick: () => void) => (
   <button key={id} onClick={onClick} className="flex flex-col items-center gap-1 shrink-0 group w-16">
     {/* 按下去的回饋：只是稍微放大一點點，別的都不動。
-        以前是「放大到跟選中一樣大（1.10）＋ 150ms 的 transition-all」——
+        不用「放大到跟選中一樣大（1.10）＋ 150ms 的 transition-all」——
         那一圈是 40px，1.10 等於上下各長 2px，而且是慢慢脹上去的；
         下面又緊接著文字，往下長的那 2px 被文字擋著、往上那 2px 是空的，
         看起來就變成「圖標往上跑了一下」。
@@ -3494,7 +3494,7 @@ const editorSlider = (
 ) => {
   const input = (cls: string) => (
     <input
-      /* 換濾鏡＝換一根新的滑桿（白點直接在新的強度）。以前 key 沒有濾鏡，同一根滑桿沿用，
+      /* 換濾鏡＝換一根新的滑桿（白點直接在新的強度）。key 裡要有濾鏡：不然同一根滑桿會沿用，
          而點卡片時剛排了寫回的計時，下面那行 ref 不會去更新白點 —— 白點要等寫回之後才跳過去。 */
       key={`${img.id}|${adjustSub}|${tuneTool}|${shapeTool}|${effectCard}|${detailTool}|${adjustSub === 'filter' ? (fx.lut || '') : ''}`}
       type="range" aria-label={label} min={min} max={max} step="any"
@@ -3679,7 +3679,7 @@ return (
                 if(!loaded)return;
               } else setLoadingLut(null);
               /* 強度用跟編輯頁同一份預設值（F3 是 70、F12 是 50…）——
-                 以前這裡一律 100，同一顆濾鏡在拼圖裡就比編輯頁濃。 */
+                 這裡不能一律 100，不然同一顆濾鏡在拼圖裡就比編輯頁濃。 */
               setFx({ lut: l.id, lutAmount: lutDefaultAmount(l.id) }, true);
               /* lutRevision 在整個跨頁拼圖那一層：同一次點擊裡一起更新的話，面板（卡片框、滑桿）要等整個
                  編輯器重畫完才一起出來。低優先度：面板先換好，其他的下一刻跟上（跟特效卡片同一招）。 */
@@ -3915,7 +3915,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
   const [hexInput, setHexInput] = useState(color);
 
   /* 拖色相／飽和度／明度時，白點只看自己的狀態，顏色一幀交給編輯器一次 ——
-     以前每動一下就讓整個編輯器重畫一次，白點要等它畫完才前進。
+     如果每動一下就讓整個編輯器重畫一次，白點要等它畫完才前進。
      編輯器晚一幀回傳的舊顏色不能把白點拉回去：自己送出去的顏色一律略過。 */
   const colorFrame = useRef(0), colorPending = useRef<string | null>(null), sentColors = useRef<string[]>([]);
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -4031,7 +4031,7 @@ interface AlignmentGuideline {
 /**
  * 圓角半徑：百分比一律吃「短邊」，四個角都是正圓弧。
  *
- * 以前是水平吃寬、垂直吃高（＝CSS 的 border-radius: N%），角變成橢圓：
+ * 不用水平吃寬、垂直吃高（＝CSS 的 border-radius: N%），那樣角會變成橢圓：
  * 直立的格子 rx 很小、ry 很大，上下那條邊才走一點點就急轉彎，看起來
  * 就是「邊上突然多一個角」。正圓角走的是四分之一圓，接到直邊的曲率
  * 變化平順，也才是修圖軟體的做法。
@@ -4068,7 +4068,7 @@ export const roundRectPath = (
  * 路徑直接借用「新增圖形」那一份（shapePathD）—— 兩邊畫出來的圓形、星星、
  * 愛心因此是同一顆，不會出現「圖形的星星跟圖片的星星長得不一樣」。
  *
- * 最要緊的一條規矩：**沒設形狀時，這幾支的行為要跟以前一模一樣。**
+ * 最要緊的一條規矩：**沒設形狀時，這幾支的行為要跟一般矩形完全一樣。**
  * 所有既有的圖片都沒有 imgShape，一律走 isImgShaped() 為 false 的那條路，
  * 也就是原本的 roundRectPath／drawImage，一個像素都不會變。
  */
@@ -4145,7 +4145,7 @@ export const imgShapeXform = (kind: string, w: number, h: number) => {
  * 鋪好圖片的外框路徑，然後跑 run()。
  *
  * 沒有形狀 → 照舊把圓角矩形鋪在畫布上，run() 收到 undefined，
- *            呼叫端就跟以前一樣用 fill()／stroke()。
+ *            呼叫端照樣用 fill()／stroke()。
  * 有形狀   → 把畫布原點搬到 (x,y)，run() 收到一個 Path2D，
  *            呼叫端改用 fill(p)／stroke(p)。跑完會把畫布狀態還原。
  *
@@ -4172,7 +4172,7 @@ export const withImgOutline = (
  * 形狀真正「有畫到」的那一塊，回傳的是在原本那個 w×h 框裡的位置與大小。
  *
  * 選取框照這個畫，就會剛好把看得見的圖案包住 —— 愛心上面那片空白、
- * 星星底下那條，都不會被框進去。沒有形狀時回傳整個框，跟以前一模一樣。
+ * 星星底下那條，都不會被框進去。沒有形狀時回傳整個框。
  * 用的是跟按鈕小圖同一份 SHAPE_FIT，所以框與圖案永遠對得上。
  */
 export const imgShapeInk = (kind: string | undefined, w: number, h: number) => {
@@ -4341,7 +4341,7 @@ const tripleBoxKernel = (r: number) => {
 };
 /* 只在「值有變化」的地方附近做卷積：離任何一個變化點超過 3r 的像素，
    模糊前後一模一樣（整段都是同一個值），直接照抄。羽化的遮罩只有邊緣那一圈
-   在變，所以低羽化值時要算的像素從整張變成邊上薄薄一圈（以前拖到接近 0
+   在變，所以低羽化值時要算的像素從整張變成邊上薄薄一圈（不然拖到接近 0
    反而最卡：每一格都把一百萬個像素整張模糊六次）。結果跟逐格做三次是同一個數學式
    （形狀往內縮了 3r+1，四邊永遠是 0，橫直的先後順序不影響結果）。
    兩個方向都照列（row-major）順著記憶體走，不跳著讀。 */
@@ -4465,7 +4465,7 @@ export const makeShapeMask = (
   const R = Math.max(0, cornerR(rp, c.width, c.height) - inset);
   /* 羽化帶寬一點的時候，模糊在縮小 d 倍的那一張上算，而且**直接把那張小的交回去**，
      由呼叫端畫上去時讓 GPU 一次放大（呼叫端本來就是照目標尺寸 drawImage）。
-     以前是在 CPU 上把小張用高品質平滑放大回原尺寸 —— iPhone 上那一步本身就要幾十毫秒，
+     不在 CPU 上把小張用高品質平滑放大回原尺寸 —— iPhone 上那一步本身就要幾十毫秒，
      羽化越大越常走這條，就是「接近 100 特別卡」。
      縮小後的半徑通常不是整數，用小數半徑的盒狀模糊（tripleBoxKernel），模糊寬度連續；
      再扣掉「縮小時的平均」與「放大時的雙線性內插」本身帶來的那一點點模糊
@@ -4941,7 +4941,7 @@ const CellFxImage: React.FC<{id:string;url:string;fx:PhotoFx;style:React.CSSProp
   return <div ref={host} style={style}/>;
 };
 
-/** 卡片縮圖做好了：大張的來源（原圖）就不必留在快取裡了。卡片才幾十個點寬，以前每張照片的原圖
+/** 卡片縮圖做好了：大張的來源（原圖）就不必留在快取裡了。卡片才幾十個點寬，每張照片的原圖
     為了做卡片一直解開著（一張 1200 萬像素約 48MB），編輯幾張照片之後就把記憶體吃光。
     還有人在用的那個元素不受影響（只是這裡不再替它留著） */
 const dropBigPreviewImg = (img: HTMLImageElement) => {
@@ -5526,7 +5526,7 @@ const VideoLayer: React.FC<{
   }, [paused, image.src]);
   /* ── 圖片在形狀裡的位置與縮放（imgShapeX／Y／Zoom）──────────────────
      照片那條路是 drawImgBase 在畫的時候套上去的；影片沒有經過那一支，
-     所以以前「套了形狀之後怎麼拖都不會動」。這裡用完全同一條算式，
+     不然會「套了形狀之後怎麼拖都不會動」。這裡用完全同一條算式，
      只是換成 CSS：先開一個「形狀視窗」把影片按那個位置與大小擺好，
      外面那層再用形狀遮罩切出來。倍率 1、沒位移時，這個視窗剛好等於整個框。 */
   const shaped = isImgShaped(shapeKind);
@@ -5559,7 +5559,7 @@ const VideoLayer: React.FC<{
      （匯入時取整就會差），四周就會多出零點幾 px 的空白 —— 貼齊畫布邊緣時那就
      是一條白縫，而匯出沒有。用 fill 才跟匯出一致。 */
   /* 影片與 GPU 畫布是**疊在一起**的兩層，所以兩個都要絕對定位。
-     以前影片「讓開」時會被改成 position:absolute，畫布才會回到左上角；
+     影片「讓開」時不能改成 position:absolute 才讓畫布回到左上角；
      現在讓開只動透明度、影片一直在原位，要是還照文件流排，
      畫布就會被擠到影片正下方（實測整整低了一個圖層的高度）。 */
   const plain: React.CSSProperties = style
@@ -5569,7 +5569,7 @@ const VideoLayer: React.FC<{
     ? geoCssBox(nat.w, nat.h, geo!, innerW, innerH)
     : null;
   /* 讓開只在「GPU 那張畫布真的在場」時才成立。
-     以前只看 hidden（＝glLive），而把濾鏡按回「原始」的那一格，
+     不能只看 hidden（＝glLive），不然把濾鏡按回「原始」的那一格，
      glCanvas 已經變成 null、glLive 卻還是 true —— 影片被藏起來、
      畫布又不在，畫面就空了（實測連續空白 120 毫秒）。 */
   const stepAside = !!hidden && !!glCanvas;
@@ -5641,7 +5641,7 @@ const VideoLayer: React.FC<{
 
   const innerRaw = glHost ? <>{vid}{glHost}</> : vid;
   /* 形狀視窗。沒有形狀時（shaped=false）它剛好等於整個框，
-     等同於以前直接放 inner，一個像素都沒有變。 */
+     等同於直接放 inner，一個像素都沒有變。 */
   const inner = (
     <div
       style={{
@@ -5666,7 +5666,7 @@ const VideoLayer: React.FC<{
   );
 
   /* 這裡**只有一種回傳結構**，而且不管有沒有形狀／描邊／發光都一樣。
-     以前是依情況回傳三種不同深度的樹（裸 <video>／包一層／包兩層）——
+     不依情況回傳三種不同深度的樹（裸 <video>／包一層／包兩層）——
      只要在這幾種之間切換，React 就會把 <video> 拆掉重建，
      而重建一個 <video> 等於重新載入：畫面會空一下、播放也從頭來。
      那正是「調整影片時它一直短暫消失」的其中一個來源。
@@ -5788,7 +5788,7 @@ const useVideoFxGl = (
          停下來 180 毫秒之後再補一顆完整的 33³。
          所以「拖的時候順、放手之後精準」，而匯出永遠走的是另一條完整的路。 */
       const cur = fxRef.current;
-      /* 只認「顏色」那幾個欄位。以前是整包 fx 當鍵，所以拖特效強度、圓角、
+      /* 只認「顏色」那幾個欄位。不拿整包 fx 當鍵，不然拖特效強度、圓角、
          羽化這些跟顏色無關的滑桿時，每一格也會重烤一顆表（白花 8～11 毫秒）。 */
       const key = `${colorKeyOf(cur)}|${lutRevision}`;
       const now = performance.now();
@@ -5814,11 +5814,11 @@ const useVideoFxGl = (
          放大之後再用 overflow 切，所以這裡要照那個放大後的尺寸開。
          幾何完全交給 VideoLayer 既有的那份 CSS（geoCssBox），這裡只管像素。 */
       /* 尺寸**只能**問「這張畫布真正被擺在哪個框裡」。
-         以前量不到就退回 boxW/boxH（圖層框）—— 但裁切過的圖層，那兩個數字
+         量不到時不退回 boxW/boxH（圖層框）—— 裁切過的圖層，那兩個數字
          跟畫布實際被拉伸到的大小長寬比是不一樣的，畫出來就被壓扁。
          而「量不到」是真的會發生：把濾鏡切回原始時這張畫布會被拔下來，
          下次再套濾鏡的那一格它還沒被掛回去，parentElement 就是 null。
-         現在改成量不到就這一格不畫（底下的 <video> 還在頂著，畫面照常）。 */
+         量不到就這一格不畫（底下的 <video> 還在頂著，畫面照常）。 */
       const el = gl.canvas.parentElement;
       const cw = el ? el.clientWidth : 0;
       const ch = el ? el.clientHeight : 0;
@@ -6363,7 +6363,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     };
   }, []);
 
-  /** 畫布縮放倍率；沒傳就是 1（＝跟以前一模一樣） */
+  /** 畫布縮放倍率；沒傳就是 1（不縮放） */
   const canvasK = () => (canvasKRef?.current || 1);
 
   const getClientCenter = () => {
@@ -6454,7 +6454,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   }, [isTextEditing, image.text]);
   // 量測用的是另一個「永遠 1 倍大」的隱藏 span，跟 scale 完全脫鉤。
   //
-  // 而且只有「真的會改變排版的東西」變了才量：以前 onChange 是行內箭頭函式，
+  // 而且只有「真的會改變排版的東西」變了才量：onChange 是行內箭頭函式，
   // 每次 render 都是新的參考，捏合的每一格都會跑進來強制同步 reflow
   // （offsetWidth/offsetHeight），手機上就是一邊縮放一邊抖。
   const onChangeRef = useRef(onChange);
@@ -6472,7 +6472,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       let alive = true;
       const fam = (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT));
       /* 與創意拼圖完全同源：新增、顯示、命中和選中框都使用 symbolBox /
-         measureSymbolInk。以前這裡又用 SVG getBBox 覆蓋一次尺寸，等於同一個
+         measureSymbolInk。這裡不再用 SVG getBBox 覆蓋一次尺寸，不然等於同一個
          符號同時擁有 Canvas 與 SVG 兩套邊界，放大後框必然逐漸對不上。 */
       ensureFont(fam).then(() => {
         if (!alive) return;
@@ -6594,7 +6594,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   const rafRef = useRef(0);
   const drawnSrcRef = useRef<string | null>(null);
   /* 物件本體、選中框、控制點必須共用同一組「實體像素對齊後」尺寸。
-     以前本體外殼使用 snapPx2，但 SVG／文字與 frameRect 仍用未取整尺寸；
+     本體外殼用 snapPx2 的話，SVG／文字與 frameRect 仍用未取整尺寸；
      縮放經過半像素邊界時，兩邊會在不同幀進位，看起來就是圖形在框內抖動。 */
   // 四邊擠壓期間不能逐幀取整：取整點會讓本應固定的對邊在兩個實體像素間跳。
   // 放手後再恢復像素對齊，靜止畫面仍保持銳利。
@@ -6656,13 +6656,13 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   }, [pvSrc, image.text]);
 
   /* ── 影片也要能調 ──────────────────────────────────────────────────
-     以前這裡把影片整個排除在 canvas 那條路之外，所以濾鏡、圓角、羽化、
+     這裡不把影片排除在 canvas 那條路之外，不然濾鏡、圓角、羽化、
      描邊、發光在影片上**全部按了沒反應**（面板照樣長出來，只是不會動）。
      原因不是懶得做，是那條路的第一個動作 `drawImage(來源, …)` 對影片太貴：
      一段 1080p 的片子，光這一下在手機等級的 CPU 上就要 20.9 毫秒，
      一秒 30 格根本畫不完。
 
-     現在改成：影片的影格先由 utils/videoGl 上到 GPU（1.0 毫秒，而且不佔
+     做法：影片的影格先由 utils/videoGl 上到 GPU（1.0 毫秒，而且不佔
      主執行緒），顏色鏈用烤好的 33³ 查色表在著色器裡查完，
      再把**那張已經是 RGB 的小畫布**餵進原本這條路。
      於是圓角／羽化／描邊／發光那一整段程式碼一行都不用改，
@@ -6705,7 +6705,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
 
   /* 濾鏡／調節算一次就留著。固定用長邊算，捏合時尺寸一直變也不會重算。
 
-     以前拖滑桿時會先降到 380 長邊算一張「快的」，手停下來再補算全尺寸。
+     拖滑桿時不先降到 380 長邊算一張「快的」、手停下來再補算全尺寸。
      那正是主人說的「拖動滑桿時圖片會有像素感」—— 380 比畫面上真正的實體像素
      少了一大截，拖的過程中看到的就是放大的糊圖。
 
@@ -6713,7 +6713,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      全尺寸本來就跑得動，所以拖曳中與靜止時**用同一個尺寸**：
      畫面上有幾個實體像素就算幾個。拖曳中看到的就是最終那一張。 */
   /* 正式那一張要算到「畫面上真的有幾個實體像素」。
-     以前固定 720，比實際顯示的像素少一大截，所以一套上濾鏡或特效，
+     不固定 720：比實際顯示的像素少一大截，一套上濾鏡或特效，
      照片就明顯變糊。上限 1400 是為了不讓超大格子把一次重算拖太久。 */
   const fxFullMax = () => {
     const dpr = Math.min(4, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1);
@@ -6892,7 +6892,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         if (!oc) return;
         oc.setTransform(1, 0, 0, 1, 0, 0); oc.globalCompositeOperation = 'source-over'; oc.globalAlpha = 1;
         oc.clearRect(0, 0, ow, ohh);
-        /* 效果的成品是 GPU 那張：拖造型滑桿（羽化、圓角…）時效果沒變，以前每一格都要把它整張抄進
+        /* 效果的成品是 GPU 那張：拖造型滑桿（羽化、圓角…）時效果沒變，不必每一格都把它整張抄進
            2D 畫布（iPhone 上等於整張讀回）。同一份效果第二次用到時抄一張 2D 的留著，之後直接用。 */
         let src3: CanvasImageSource = base;
         const fxHit = fxCacheRef.current;
@@ -6915,7 +6915,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             const m = previewMask(boxW / boxH, image.imgRadius || 0, image.feather, kind);
             oc.drawImage(m, strokeExtent, strokeExtent, iw, ih);
           } else {
-            /* 只有圓角、沒有羽化：以前也走那張 400px 的遮罩再拉大，
+            /* 只有圓角、沒有羽化：不走那張 400px 的遮罩再拉大，
                硬邊被放大就變成階梯狀的鋸齒。改成直接在這張畫布上填路徑 ——
                原生解析度、瀏覽器自己抗鋸齒，邊緣才會乾淨。 */
             const R = cornerR(image.imgRadius || 0, iw, ih);
@@ -6970,7 +6970,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     };
     drawRef.current = draw;
     /* 低解析度那張只給「連續在動」的情況用（拖滑桿）。
-       以前只要 fx 值一變就先畫 380 的、220ms 後再換成正式的 ——
+       fx 值一變時不先畫 380 的、220ms 後再換成正式的 ——
        所以「點一下濾鏡」也會先出現一張糊的、再跳成清楚的，看起來就是閃一下。
        改成看距離上一次變動多久：點一下（單一次變動）直接畫正式的，不閃；
        拖滑桿（連續變動）才走快的那條，維持原本的流暢度。 */
@@ -7420,7 +7420,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}${motionFrame ? `translate3d(${motionFrame.dx * boxW}px, ${motionFrame.dy * boxH}px, 0) scale(${motionFrame.k * (motionFrame.fx ?? 1)}, ${motionFrame.k}) ` : ''}${stableVectorTransform ? `scale(${image.scale}) ` : ''}rotate(${image.rotation + (motionFrame?.rot || 0)}deg)`
       : undefined,
     /* 過場一定要跟頁面容器那邊「一模一樣」（220ms、同一條曲線）。
-       以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
+       兩邊的時間和曲線要一樣，不能一邊 200ms ease-out、一邊 220ms cubic-bezier(0.2,0,0,1)：
        兩者同時起跑卻走不同的速度、也不同時到，排頁面時就會看到圖層跟頁面
        分家 —— 那就是「圖片跟頁面沒有完全同步」的另一半。 */
     transition: sortPage ? 'none' : dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
@@ -7677,7 +7677,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             const pad = 1.5 / Math.max(.001, density * Math.abs(scale));
             /* 整條頁面最外圈（第一頁左邊、最後一頁右邊、上下兩邊）：跟照片完全同一個量 ——
                往外多蓋三個螢幕像素，只讓整條頁面那一刀去切（照片的 coverage／edgePads）。
-               以前只多蓋 1.5 個裝置像素（約半個螢幕像素），縮放時頁面邊緣一落在小數像素上就蓋不滿。
+               只多蓋 1.5 個裝置像素（約半個螢幕像素）不夠，縮放時頁面邊緣一落在小數像素上就蓋不滿。
                頁與頁中間的交界照舊只多蓋一點點，不能壓到隔壁那一頁。 */
             const cover = 2 * Math.max(1, window.devicePixelRatio || 1) * 1.5 / Math.max(.001, density * Math.abs(scale));
             const stripW = maxTextWidth * (pagesContainerRef.current?.querySelectorAll(':scope > [data-page-id]').length || 1);
@@ -8421,7 +8421,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
 
       {/* 拖曳來源與拖放目標都只是變暗，不用半透明也不加白框。
           變暗的那一塊要跟圖層現在的形狀一樣 —— 圓角、羽化、愛心、星星…
-          都跟著走（以前不管形狀怎麼改，暗下去的永遠是一個方塊）。
+          都跟著走（不然不管形狀怎麼改，暗下去的永遠是一個方塊）。
           用的是跟影片圖層同一支 shapeParts，所以兩邊不可能長得不一樣。 */}
       {(isSwapTarget || isSwapSource) && !(scene && isScenePhoto) && (
         <div
@@ -8846,7 +8846,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 下一頁的左緣是兩個相差 1px 的獨立吸附點 —— 拖過去時會亮一次、再往前 1px
    * 又亮一次，看起來就像同一條邊觸發了兩次。改成只跟自己這一頁對齊之後，
    * 一條邊就只有一個吸附位置。
-   * 中心點不在任何一頁上（例如拖到頁面外的空白處）時退回全部，行為跟以前一樣。
+   * 中心點不在任何一頁上（例如拖到頁面外的空白處）時退回全部。
    */
   const pageRectsNear = (rects: ReturnType<typeof getAllPageRects>, centerX: number) => {
     const own = rects.filter(r => centerX >= r.left - 0.5 && centerX <= r.right + 0.5);
@@ -8914,7 +8914,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   /* 吸附與對齊線一律用「選取框」那一塊（看得見的墨水），跟畫面上的框完全
      同一份量法：圖形／圖案／遮罩用 measureShapeInk，符號用字形墨水，其他
-     （照片、一般文字）就是整個框。以前圖案與符號拿整個外框算，框明明還沒
+     （照片、一般文字）就是整個框。圖案與符號不能拿整個外框算，框明明還沒
      碰到邊，對齊線就先亮了。回傳相對於框心的範圍（已含旋轉）。 */
   const floatingInkOffsets = (item: FloatingImage | undefined, w: number, h: number, scale: number, rot: number) => {
     let fx0 = 0, fx1 = 1, fy0 = 0, fy1 = 1;
@@ -9144,8 +9144,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          混在一起，看起來就是一條髮絲白線（只有預覽會，匯出是畫在 canvas 上），
          所以吸附完還要把邊緣挪到實體像素格線上。
 
-         以前只挪物件、對齊線留在原處，於是「線亮了，可是東西沒有剛好貼上去」；
-         而且是往外捨入，最多差一整個實體像素。現在改成就近捨入（最多差半個），
+         不能只挪物件、把對齊線留在原處，不然會「線亮了，可是東西沒有剛好貼上去」；
+         而且是往外捨入，最多差一整個實體像素。做法是就近捨入（最多差半個），
          而且**把對齊線一起挪過去** —— 線畫在哪裡，邊緣就在哪裡，
          看到的是 100% 重合。 */
       const gx: number = bestGuidelineX;
@@ -9532,7 +9532,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const openComposeFor = (id: string) => {
     const layer = floatingImages.find(f => f.id === id);
     /* 佈局小格不是 floatingImages 圖層。編輯面板會為它建立一個臨時 layer，
-       以前這裡又只回頭找 floatingImages，所以點擊“構圖”必定直接 return。
+       這裡不能只回頭找 floatingImages，不然點擊「構圖」必定直接 return。
        現在明確記錄格子所屬佈局與索引，套用時再準確寫回該格。 */
     if (!layer) {
       if (selectedIndex === null || !selectedLayoutId) return;
@@ -9550,7 +9550,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return;
     }
     /* ── 影片走另一條 ────────────────────────────────────────────────
-       以前這裡不管三七二十一都開一張 <img> 去讀那條網址。影片的網址
+       這裡不要不管三七二十一都開一張 <img> 去讀那條網址。影片的網址
        <img> 是讀不到的 → onload 永遠不會來 → 構圖介面根本打不開；
        就算硬打開，套用時又會把 src 換成烤好的 PNG，而圖層還標著 isVideo，
        於是 <video src="…png"> 播不出任何東西 —— 那就是「裁切後影片直接消失」。
@@ -10186,7 +10186,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         什麼時候「這個方向捲到底了」：
 
         自動捲動會回頭把 dragStartX 補掉，所以「捲了多少」也會算進拖曳位移裡。
-        以前的煞車是看那個位移有沒有到頂 —— 那會變成棘輪：一到頂就停，手指
+        煞車不能看那個位移有沒有到頂 —— 那會變成棘輪：一到頂就停，手指
         往回一點位移就掉下來、又開始捲，捲又把位移推回頂端⋯⋯在最邊邊來回晃
         就等於一直往那邊捲個不停。
 
@@ -10382,7 +10382,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return next;
     });
     /* 這裡一定要用 pageOfFloating（跟畫面上判斷「這個圖層屬於哪一頁」是同一支）。
-       以前是自己再算一次、而且只夾了下界沒夾上界：中心點落在最後一頁右緣外面的
+       不自己再算一次，也不能只夾下界不夾上界：中心點落在最後一頁右緣外面的
        圖層會算出 count（不存在的頁），remap 原封不動回傳，於是拖曳中它跟著最後
        一頁走、放手卻留在原地 —— 那就是「圖片跟頁面沒有完全同步」。 */
     setFloatingImages(prev => prev.map(f => {
@@ -10420,7 +10420,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     else if (ratio === '2:3') { ratioW = landscape ? 3 : 2; ratioH = landscape ? 2 : 3; }
     else if (ratio === '9:16') { ratioW = landscape ? 16 : 9; ratioH = landscape ? 9 : 16; }
     else if (ratio === '4:5') { ratioW = landscape ? 5 : 4; ratioH = landscape ? 4 : 5; }
-    /* 畫布尺寸必須是比例的整數倍。以前寬、高各自 Math.round，標示為 3:4 的
+    /* 畫布尺寸必須是比例的整數倍。寬、高不各自 Math.round，不然標示為 3:4 的
        畫布實際會變成 341×454（不是 3:4）；一張嚴格 600×800 的照片無論怎麼
        等比縮放，都不可能同時貼齊四邊，預覽與導出自然會留下次像素白縫。
        用同一個整數單位生成兩邊，頁面與同長寬比照片才能數學上完全重合。 */
@@ -11061,7 +11061,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const pageCtlRefs = useRef(new Map<string, HTMLDivElement>());
   const embeddedSeamsRef = useRef(false);
   /* 一般預覽、選中物件與動畫頁都只使用外層那條固定螢幕像素分隔線。
-     以前選中時會在「外層線／頁面槽內線」之間交棒：兩層座標並非同一套，
+     選中時不在「外層線／頁面槽內線」之間交棒：兩層座標並非同一套，
      過渡幀便會露出白槽，動畫縮放時也像有一條線停在原地。
      只有頁面排序真的會把單頁移走，才需要綁定在頁面上的分隔線。 */
   /* 有選中物件時，分割線必須和物件處在同一個畫布堆疊上下文，才能確定壓在
@@ -11124,7 +11124,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /**
    * 整排頁面在縮放倍率 k 之下該有的版面。**尺寸、留白、捲動位置全部由 k 算出來**，
    * 動畫每一帧重算一次 —— 這樣縮放的過程中版面本身永遠是對的，
-   * 不會像以前那樣「外殼的大小和位置瞬間換成新的、只有縮放在慢慢跑」，
+   * 不會「外殼的大小和位置瞬間換成新的、只有縮放在慢慢跑」，
    * 一進去整排就先瞬移一百多 px 再縮小。
    */
   const applyStripGeometry = useCallback((k: number, liveTransform = false) => {
@@ -11236,7 +11236,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     /* 記下動畫開始時「畫面正中央對到的那個內容座標」（未縮放單位），
        整段動畫都把同一個座標擺回正中央 —— 也就是原地縮放。
-       以前記的是「最接近中央的那一頁」再把那一頁擺到正中間：只要中心
+       不記「最接近中央的那一頁」再把那一頁擺到正中間：只要中心
        不是剛好落在某一頁正中央，第一帧就會被硬拉過去，那就是「一開始就跳」。 */
     const el = containerRef.current;
     const column = pagesColRef.current;
@@ -11392,7 +11392,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 等捲動取整和它的次像素補償都定了才畫
       pagesColRef.current?.dispatchEvent(new Event('abai-preview-transform'));
       // 離開這個模式後還要再跑到動畫結束，位移才有東西補
-      /* 原本是寫死的 k === 1；有了使用者縮放之後，目標值不一定是 1，
+      /* 不寫死 k === 1；有了使用者縮放之後，目標值不一定是 1，
          改成「沒有動畫、而且已經到達目標倍率」就收工，不會一直空轉。 */
       if (!pagesMode && !kAnimRef.current && Math.abs(k - pagesScale) < 0.0001) return;
       raf = requestAnimationFrame(tick);
@@ -11483,7 +11483,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           return prev;
         }
 
-        /* 以前只留 30 格，編久一點就退不回最初的樣子了。
+        /* 只留 30 格的話，編久一點就退不回最初的樣子了。
            改用共用的 pushHistoryEntry：留到 500 格，而且第 0 格永遠留著。
            一格只是參數的淺拷貝（圖片是共用參照），所以放寬不會吃記憶體。 */
         return pushHistoryEntry(prev.history, prev.index, stateToSave);
@@ -11952,11 +11952,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                圖不會被壓扁，而且原本在框內的一定還在框內
 
      ── 大小那一項為什麼要分兩種 ─────────────────────────────────────
-     以前不管變大變小都取 min，那是**不可逆**的：
+     不能不管變大變小都取 min，那是**不可逆**的：
      直式 → 橫式時 (sx, sy) = (1, 0.56)，取 min 縮成 0.56；
      切回來 (1, 1.77) 取 min 卻是 1 —— 沒有還原。所以只要來回切幾次，
      物件就一路縮下去（實測 56px → 32 → 18 → 10 → 8 → 6 → 4）。
-     改成「頁面變小取 min、變大取 max」：變小的方向跟以前一模一樣
+     「頁面變小取 min、變大取 max」：變小的方向行為不變
      （不會有東西被裁掉），變大的方向剛好是它的反運算，來回切就原地不動。
      面積剛好沒變的那種（例如長寬互換）走幾何平均＝1，同樣是對稱的。 */
   const pageFrameRef = useRef<{ w: number; h: number } | null>(null);
@@ -12537,7 +12537,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           void applySwap({ kind: 'cell', idx: fromIdx, src: images[fromIdx]?.url || '' }, floatTarget);
         } else if (floatTarget && floatTarget.kind === 'cell' && floatTarget.layoutId && floatTarget.layoutId !== layoutId) {
           /* 拖到「另一個佈局」的格子：兩格整個對調（跟同一個佈局裡互換一樣，裁切位置歸零）。
-             以前只找得到同一個佈局的格子，拖到別的佈局上放手什麼都不會發生。 */
+             不能只找同一個佈局的格子，不然拖到別的佈局上放手什麼都不會發生。 */
           const toLayout = floatTarget.layoutId, toIdx = floatTarget.idx;
           setPages(prev => {
             const all = prev.flatMap(p => p.layouts);
@@ -12626,7 +12626,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   // 有傳 initialFiles 的話先放進來
   useEffect(() => {
     /* 一定要等畫布量好才放。
-       這支以前只掛在 [initialFiles] 上，第一次執行時 containerSize 還是 0 ——
+       這支不能只掛在 [initialFiles] 上，第一次執行時 containerSize 還是 0 ——
        previewW/previewH 那時候是保底的 150×200，而不是真正的頁面大小。
        於是「置中」是照 150×200 算的，換算到真的頁面上就變成偏左上一大塊。
        改成等 containerMeasured 之後才放，第一張才會真的在正中央。 */
@@ -12831,11 +12831,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /**
    * 離開拼圖＝這一份結束了。
    *
-   * **不等歷史紀錄做完**。以前這裡是 `await recordProgress()` 才 onHome()，
+   * **不等歷史紀錄做完**。這裡不 `await recordProgress()` 才 onHome()，
    * 而 recordProgress 要把整張拼圖重烤一次 —— 按下返回鍵之後要乾等好幾秒，
    * 畫面完全沒有反應。
    *
-   * 現在改成：先把烤縮圖那件事「發動」（它前面那段是同步的，趁元件還在時跑掉），
+   * 做法：先把烤縮圖那件事「發動」（它前面那段是同步的，趁元件還在時跑掉），
    * 然後**立刻**回主頁；剩下的部分在背景自己跑完再寫進歷史。
    * 這樣做安全的原因是 handleExport 只依賴：
    *   ‧ 閉包裡的 pages / floatingImages（值，元件收掉也還在）
@@ -13062,7 +13062,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   /* 長按互換找目標時，看的是「手指底下整疊元素」，不是只看最上面那一個：
      圖形、文字、符號（以及選取框、工具列這類介面）疊在格子上方時，
-     以前會直接擋住，底下的格子永遠收不到這張照片。現在跳過它們往下找，
+     不然會直接擋住，底下的格子永遠收不到這張照片。現在跳過它們往下找，
      第一個「照片格子」或「自由圖片」才算數。 */
   const pointStack = (clientX: number, clientY: number) =>
     (document.elementsFromPoint ? document.elementsFromPoint(clientX, clientY) : [document.elementFromPoint(clientX, clientY)].filter(Boolean)) as Element[];
@@ -13482,7 +13482,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 畫面上的 z-index 一般圖片是 60 + 2i、佈局是 59 + 2z，兩邊剛好交錯 ——
    * 也就是「佈局的 z」＝「它下面有幾張一般圖片」。這裡把兩邊攤平成一條
    * 由下到上的清單，上移／下移就只是跟清單裡的隔壁換位子。
-   * 以前兩邊各排各的（圖片只跟圖片換、佈局只跟佈局換），圖片永遠爬不到
+   * 兩邊不各排各的（圖片只跟圖片換、佈局只跟佈局換），不然圖片永遠爬不到
    * 最上面那組佈局上面，這就是「圖片無法超過佈局的圖層」的原因。
    */
   type StackRef = { kind: 'float' | 'layout'; id: string };
@@ -13962,10 +13962,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       shapeSelUndoRef.current = null;
       if (shapeSelRef.current && !tapInShapeRef.current) {
         /* 按在形狀外面。
-           以前這裡就直接退出「選中形狀」了 —— 於是「從形狀外面拖」永遠變成
+           這裡不能直接退出「選中形狀」—— 不然「從形狀外面拖」永遠變成
            搬動整個圖層，而不是挪動圖片在形狀裡的位置。
-           現在改成先記著，放開手的時候再看：
-             ‧ 只是點一下（幾乎沒移動）→ 才真的退出去（行為跟以前一樣）
+           做法是先記著，放開手的時候再看：
+             ‧ 只是點一下（幾乎沒移動）→ 才真的退出去
              ‧ 拖了一段            → 不退出，整段拖曳都是在挪動形狀裡的圖片 */
         shapeExitPendingRef.current = shapeSelRef.current;
       }
@@ -14088,7 +14088,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          手指落在哪裡都一樣，畫面中央那個東西就待在中央不動。
          記下正中央此刻對到的那個內容座標（未縮放單位），整段手勢都把它
          擺回正中央。
-         （以前記的是「離中心最近的那一頁」再把那一頁擺到正中間 —— 只要
+         （不記「離中心最近的那一頁」再把那一頁擺到正中間 —— 只要
          中心不在某頁正中央，手指一碰下去第一帧就會被拉過去。） */
       const k0 = kRef.current || 1;
       const anchorPx = w / 2;
@@ -14241,7 +14241,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             straight = Math.abs(wrap180(rot - nearest)) <= ROT_SNAP;
             if (straight) rot = nearest;
           }
-          /* 雙指縮放時也要吸附畫布邊界並顯示輔助線 —— 以前只有拖曳和拉四角
+          /* 雙指縮放時也要吸附畫布邊界並顯示輔助線 —— 不能只有拖曳和拉四角
              才有，捏合完全沒有，很難把圖縮到剛好貼齊畫布。
              中心點在捏合時不動，所以只有「四個邊界」會隨倍率移動：把倍率解成
              「這條邊剛好落在畫布邊界上」的值，最近的那一個在門檻內就吸附過去。 */
@@ -14259,7 +14259,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
              真正吸住，鬆手位置也像差了一格。現在候選倍率、4px 進入門檻、
              7px 離開遲滯與固定中心都只走這一條路。 */
           if (target && enableSnapping) {
-            /* 門檻統一用螢幕像素。之前這裡把內容座標誤當成螢幕像素；預覽縮放後
+            /* 門檻統一用螢幕像素。這裡不能把內容座標當成螢幕像素；預覽縮放後
                會提早／延後吸附。現在無論畫布倍率多少，都是離邊緣 4px 才鎖定。 */
             const previewK = Math.max(.0001, kRef.current || 1);
             const SNAP_IN = 4, SNAP_OUT = 7;
@@ -15287,7 +15287,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
       if (frame) ctx.restore();
       /* 存成圖片（不是逐格錄影片、也不是一直在重畫的即時預覽）：畫完就把這張原圖放掉，
-         同一時間只解開一張。以前 20 幾張圖層的原圖會在存檔時全部同時解開（實測將近 1.5GB） */
+         同一時間只解開一張。不然 20 幾張圖層的原圖會在存檔時全部同時解開（實測將近 1.5GB） */
       if (release && !live && !fImg.isVideo && fImg.src) dropExportImage(fImg.src);
     }
   };
@@ -15307,7 +15307,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   })();
   /* IG 預覽顯示的就是「匯出的成品」本人 —— 打開時用同一支 handleExport
      算一次（壓低解析度、不動任何畫面狀態），顯示回傳的那幾張圖。
-     以前 IG 預覽是另外用 DOM 重畫一次，兩份程式碼永遠會有對不上的地方
+     IG 預覽不另外用 DOM 重畫一次，兩份程式碼永遠會有對不上的地方
      （比例、裁切、跨頁、次像素…），改成共用同一條管線就不可能不一樣。 */
   const [igShots, setIgShots] = useState<string[]>([]);
   /** 每一頁的成品是圖還是影片（影片那幾頁要放 <video> 才會動） */
@@ -15323,7 +15323,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     (async () => {
       /* 這一疊裡有影片嗎。有的話就走「現場合成」那條路：
          有影片的那幾頁交出一張一直在重畫的畫布，打開的當下就在動。
-         以前是先出靜態圖、背景再用 MediaRecorder 錄一段真正的影片換上去 ——
+         不先出靜態圖、背景再用 MediaRecorder 錄一段真正的影片換上去 ——
          錄影是即時的，八秒的片子就要等八秒（「剛開始都不會動、要等很久」），
          而且錄的時候編碼器跟合成搶 CPU，掉的格是直接烤進檔案裡的（「播起來很卡」）。 */
       /* IG 預覽不只影片要持續重畫；頁面上只要有經典拼圖動畫，也必須走
@@ -15351,7 +15351,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         return;   // 算不出來就留著備援，不要清成空白
       }
       /* 先把每一張都解碼完再交給畫面。
-         以前是拿到網址就立刻 setState，<img> 還在解碼的那幾百毫秒畫面上是空的，
+         不能拿到網址就立刻 setState，<img> 還在解碼的那幾百毫秒畫面上是空的，
          看起來就是「進 IG 預覽時整片白」。等解碼完再換就沒有那段空窗。 */
       await Promise.all(urls.map(u => new Promise<void>(res => {
         const im = new Image();
@@ -15407,7 +15407,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 定義上不可能不一樣）。previewWidth 用來壓低解析度，預覽不需要 4096。
    *
    * stillOnly = true：有影片的那一頁也出「一張圖」，不去錄影片。
-   * IG 預覽與歷史紀錄縮圖都只需要一張圖 —— 以前這兩個地方會為了一張縮圖
+   * IG 預覽與歷史紀錄縮圖都只需要一張圖 —— 不能讓這兩個地方為了一張縮圖
    * 去錄一段完整的影片（實測 8 秒），而 IgPreview 拿到影片網址是塞進 <img>，
    * 結果就是**有影片時 IG 預覽整片空白**、離開拼圖也要多等好幾秒。
    */
@@ -15503,7 +15503,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 每個物件仍然用「整條頁面帶」的座標計算，畫的時候再把畫布平移到該頁，
       // 所以被拖到隔壁頁的東西一樣會正確接續過去。
       /* release＝存成圖片（不是逐格錄影片）：每一格畫完就把那張原圖放掉，同一時間只解開一張原圖。
-         以前整次匯出的原圖全部留在快取裡、而且永遠不清 —— 20 幾張照片就是將近 1GB，iPhone 存檔時閃退 */
+         整次匯出的原圖不能全部留在快取裡、永遠不清 —— 20 幾張照片就是將近 1GB，iPhone 存檔時會閃退 */
       const drawPageLayout = async (ctx: CanvasRenderingContext2D, pageIdx: number, layout: LayoutItem, release = false) => {
         const pageOffsetX = pageIdx * targetW;
         {
@@ -15545,7 +15545,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
           for (const [idx, rawRect] of pageActiveTemplate.rects.entries()) {
             const cell = layout.images[idx];
-            /* 畫這一格的同時先讀下一格（同一時間最多兩張原圖）：存檔速度接近以前一次全讀，記憶體只多一張 */
+            /* 畫這一格的同時先讀下一格（同一時間最多兩張原圖）：存檔速度接近一次全讀，記憶體只多一張 */
             if (release) prefetchExportImage(layout.images.slice(idx + 1).find(c => c?.url)?.url);
             const img = cell?.url ? await loadExportImage(cell.url) : null;
             try {
@@ -15614,7 +15614,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
             /* 取景跟預覽完全同一條規則（utils/layoutCellPhoto）：以「沒取整」的
                格子槽（含它那一份間距）計算縮放與位移，照片中心＝格子中心。
-               以前這裡用扣掉間距、又取整過的內框，縮放係數也不同
+               這裡不用扣掉間距、又取整過的內框，縮放係數也要一致
                （×1.015＋0.005 對預覽的 ×1.02），匯出構圖會跟畫面差一點。
                取整只留給上面的裁切框（相鄰格共用同一條像素邊界、不露縫）。 */
             const slotW = rect.w * areaW, slotH = rect.h * areaH;
@@ -15623,7 +15623,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
             /* 套了濾鏡／調節／特效就先算出處理過的那一張，再照原本的裁切與縮放畫上去 —— 跟預覽同一支 applyPhotoFx。
                算的大小＝這張照片在成品裡實際畫出來的像素（跟創意拼圖的匯出同一個原則），不超過原圖：
-               以前一律用原圖全尺寸（1200 萬像素）算，套柔光之類的特效時顯示卡要開好幾張同樣大的暫存，
+               不一律用原圖全尺寸（1200 萬像素）算：套柔光之類的特效時顯示卡要開好幾張同樣大的暫存，
                編輯過幾張再存檔就把記憶體撐爆。成品裡多出來的像素本來就會被縮掉，畫質不變 */
             const outK = Math.min(1, finalScale * Math.abs(ltScale || 1));
             const src: CanvasImageSource = hasPhotoFx(cell.fx)
@@ -15770,7 +15770,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             /* 左右邊界要用「中心 ± 一半」，而且是**縮放與旋轉之後**的那個一半 ——
                也就是上面 minX／maxX 用的同一組數字。
 
-               以前這裡是「沒有縮放時的左邊」＋「縮放後的寬度」。CSS 的 scale
+               這裡不能是「沒有縮放時的左邊」＋「縮放後的寬度」。CSS 的 scale
                是以中心為原點的，所以那一段整個往右偏了 寬×(倍率-1)÷2：
                放大過的圖層，這裡算出來的頁碼就跟 minX／maxX 對不起來 ——
                某一頁被判定成「這一頁有影片」（照 minX／maxX），畫的時候卻被
@@ -16014,7 +16014,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        * IG 預覽用的「活的」那一頁：不錄影，直接把這一頁持續合成到一張畫布上，
        * 那張畫布掛到畫面上讓瀏覽器合成。
        *
-       * 以前是先用 MediaRecorder 錄一段再放。錄影是**即時**的 ——
+       * 不先用 MediaRecorder 錄一段再放。錄影是**即時**的 ——
        * 八秒的片子就得等八秒才會開始動（主人說的「要等很久才播」），
        * 而且錄的時候編碼器跟合成搶同一顆 CPU，錄出來的東西本身就是掉格的
        * （「播起來很卡」）。
@@ -16132,7 +16132,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       setExportState('idle');
     } finally {
       /* 這次匯出讀進來的原圖全部放掉（一直開著的即時預覽畫布還要用，那種才留著）。
-         以前這個快取從來不清：匯出過一次之後，每一張原圖都永遠留在記憶體裡 */
+         這個快取一定要清：不清的話匯出過一次之後，每一張原圖都永遠留在記憶體裡 */
       if (!live) exportImgCache.current.clear();
     }
   };
@@ -16361,9 +16361,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             <span className="text-[11px] tracking-[0.3em] text-white/60 tabular-nums">{Math.round(videoProg * 100)}%</span>
           )}
           <span className="text-[11px] text-white/50 tracking-widest">{videoLabel}</span>
-          {/* 取消鍵。以前是「卡住六秒才長出來」的那顆（見 StuckEscape）——
+          {/* 取消鍵。不做成「卡住六秒才長出來」的那顆（見 StuckEscape）——
               它一冒出來，上面的轉圈就被往上頂一截，看起來像畫面自己抖了一下；
-              而且寫的是「取消，回到編輯」。現在改成一開始就在、就寫「取消匯出」。
+              而且寫的是「取消，回到編輯」。做法是一開始就在、就寫「取消匯出」。
 
               它是**絕對定位**掛在正中央下方的，不排進上面那個直排裡。
               上一版我把它當成直排的第四個孩子（mt-8），外層又是
@@ -16820,7 +16820,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 data-seamless={layout.seamless && !insetLayout ? 'true' : undefined}
                                 className="absolute"
                                 style={{
-                                  /* 位置一律用 transform 擺（以前只有無縫這樣做）。用 left/top 時佈局常落在
+                                  /* 位置一律用 transform 擺（無縫和一般一樣）。用 left/top 時佈局常落在
                                      22.6px 這種非整數位置，瀏覽器會在「放大之前」先把它取整到整數像素，
                                      放大後誤差跟著放大：畫面放大時裡面的照片偏掉一兩個像素、邊緣露出白線，
                                      而且誤差隨倍率一直變 —— 就是縮放時照片在框裡抖。transform 不取整。 */
@@ -17585,7 +17585,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               })()}
                               {/* 選中佈局裡的一格照片：虛線框畫在外框層（跟整組佈局的框同一層），
                                   不再畫在格子裡面 —— 格子是內容的一部分，放大預覽時被當成一張圖拉大，線就糊了；
-                                  而且以前線是壓在照片內側最外圈的。現在框線的內緣剛好貼著照片外緣，
+                                  而且線不能壓在照片內側最外圈。現在框線的內緣剛好貼著照片外緣，
                                   不管放多大都是 1 個螢幕像素、清楚的。 */}
                               {chromeLayer && isThisLayoutSelected && selectedIndex !== null && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && !!layout.images[selectedIndex]?.url && (() => {
                                 const raw = pageActiveTemplate.rects[selectedIndex];
@@ -17959,7 +17959,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                  圖層框的長寬比跟頁面通常會差零點幾 px（匯入時取整造成），
                                  取小的那個等於留一條白縫在另一邊；取大的只是多蓋出去
                                  零點幾 px，而頁面本來就會裁掉超出的部分，所以四邊都不露白。
-                                 這也是「由外而內沒縫、由內而外有縫」的成因 —— 以前是看
+                                 這也是「由外而內沒縫、由內而外有縫」的成因 —— 不能只看
                                  哪一軸比較近就聽誰的，方向不同結果就不同。 */
                               if (bestScaleX >= bestScaleY) {
                                 finalScale = bestScaleX;
@@ -18496,7 +18496,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 if (liveFloat && 'fx' in patch && Object.keys(patch).length === 1) {
                   const next = (patch as any).fx as PhotoFx;
                   /* 本來就有效果（這一層正用自己的畫布畫）就一律走即時通道，拖到 0 也是 ——
-                     0 那一格這張畫布直接畫原圖，放開才寫回文件。以前碰到 0 就整份文件更新、
+                     0 那一格這張畫布直接畫原圖，放開才寫回文件。碰到 0 時不要整份文件更新、
                      整個畫面重新 render，那就是「拖到最邊邊突然卡一下」。從無到有仍交給文件（要換畫法）。 */
                   if (hasPhotoFx(img.fx)) {
                     pendingFloatFx.current.set(img.id, next);updateCellPhoto(img.id, next);return;
@@ -18504,7 +18504,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   pendingFloatFx.current.delete(img.id);
                 }
                 /* 造型分頁的滑桿（羽化、圓角、描邊、發光…）：拖的時候只更新這一張圖層
-                   （跟向量圖形同一個即時草稿），放開才寫回文件 —— 以前每一格整個編輯器重新 render。 */
+                   （跟向量圖形同一個即時草稿），放開才寫回文件 —— 不讓每一格整個編輯器重新 render。 */
                 if (liveFloat && !('fx' in patch) && Object.keys(patch).length > 0 && Object.values(patch).every(v => typeof v === 'number')) {
                   pendingFloatShape.current.set(img.id, { ...(pendingFloatShape.current.get(img.id) || {}), ...patch });
                   publishClassicVectorDraft(img.id, patch);
@@ -18654,7 +18654,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 <div
                   key={activeTab === 'layout' ? 'layout-create' : `layout-edit-${selectedLayoutId}`}
                   /* -mx-2 px-2：內容位置不變，但裁切範圍左右各多 8px —— 滑桿白點拉到兩端時
-                     會超出滑桿本身 7px，以前剛好被這層的 overflow 切掉半顆。 */
+                     會超出滑桿本身 7px，不處理的話剛好被這層的 overflow 切掉半顆。 */
                   className={`w-full min-w-0 flex-1 -mx-2 px-2 ${activeTab === 'layout' ? 'edge-scroll overflow-y-auto overflow-x-hidden no-scrollbar' : 'h-full overflow-hidden'}`}
                   data-layout-editor={layoutEditMode ? 'true' : undefined}
                   style={{ overscrollBehavior: 'none' }}
@@ -19189,12 +19189,12 @@ export const shapePatternIconItem = (s: string): ShapeItem | null =>
   : SHAPE_PATTERNS[s] ? { id: 'pat-' + s, kind: SHAPE_PATTERNS[s], filled: true } : null;
 
 /* ── 用路徑畫的圖案（圓、方、愛心、星星…）的按鈕小圖 ──────────────────
-   以前這幾顆用的是圖示庫的「空心外框」圖示，跟真正灑出來的實心圖案長得不一樣。
+   不用圖示庫的「空心外框」圖示，那跟真正灑出來的實心圖案長得不一樣。
    改成直接拿畫圖案的那一支（fillShapePath）畫一次，縮到按鈕大小 ——
    按鈕上看到的就是畫面上會出現的樣子。顏色一樣跟著按鈕走（currentColor）。 */
 export const PATH_PATTERN_ICONS = new Set(['circle', 'square', 'heart', 'star', 'star-rounded', 'sparkle4', 'cross-star', 'hexstar', 'burst-dash', 'spinner',
   'q-mark', 'anger-mark', 'excl-mark', 'p-star-o', 'p-sparkle4-o']);
-/* 以前是畫在 canvas 上、再當 CSS 遮罩貼到按鈕上 —— 有些手機遮罩沒載到，
+/* 不畫在 canvas 上再當 CSS 遮罩貼到按鈕上 —— 有些手機遮罩沒載到，
    按鈕上就只剩一整塊方框。改成跟圖形的圖標一樣用 SVG：
    拿一個「只記錄路徑」的假畫布跑一次畫圖案的那一支（fillShapePath），
    把路徑原封不動轉成 SVG 的 path，形狀還是跟畫面上灑出來的一模一樣。 */

@@ -59,7 +59,7 @@ const srcToken = (o: any): string => {
 };
 /* ── 來源像素快取 ────────────────────────────────────────────────────
    拖調整滑桿時，每動一格都要把同一張圖重新跑一次管線。變的只有「參數」，
-   來源那張圖從頭到尾一模一樣 —— 但以前每一格都要重做
+   來源那張圖從頭到尾一模一樣 —— 不然每一格都要重做
    drawImage → getImageData → 複製一份，實測光這三步就佔掉整段拖曳
    將近四成的時間，而且每格丟掉一兩 MB 給垃圾回收。
 
@@ -158,7 +158,7 @@ function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:
 }
 /* ── 發光在 GPU 上算、直接交給顏色那一段 ─────────────────────────────
    跟編輯頁（ImageEditor 的 glowGpu）同一套：原圖上傳一次，光畫進同一個 context 的貼圖，
-   翻成與原圖同一種列序，顏色那一段取這張。以前每動一格：光算好 → 複製回 2D 畫布
+   翻成與原圖同一種列序，顏色那一段取這張。不要每動一格就：光算好 → 複製回 2D 畫布
    （iPhone 上是整張讀回）→ 再整張上傳給顏色那一段。 */
 type PendingGlow={source:CanvasImageSource;w:number;h:number;fx:PhotoFx;opts?:{cacheSource?:boolean;gpuSurface?:boolean;out?:HTMLCanvasElement}};
 const pendingGlows=new WeakMap<HTMLCanvasElement,PendingGlow>();
@@ -251,7 +251,7 @@ export function releasePhotoFxSurface(input:HTMLCanvasElement){
 }
 /** 一次性的原尺寸成品（放開滑桿後、閒下來才算的那張）：把結果留在呼叫端自己那張
  *  2D 畫布上，然後把這一趟開的 GPU 管線（WebGL context、原尺寸貼圖）立刻收掉。
- *  以前每一張編輯過的照片都各自留著一兩個原尺寸的 WebGL context：編輯幾張就超過
+ *  不讓每一張編輯過的照片都各自留著一兩個原尺寸的 WebGL context：編輯幾張就超過
  *  iOS 的 context 上限、記憶體也爆掉，分頁被系統重開。下次再改時重新開就好。 */
 export function settlePhotoFx(result:HTMLCanvasElement,out:HTMLCanvasElement):HTMLCanvasElement{
   if(result!==out){
@@ -497,7 +497,7 @@ export function loadLut(
   if (pending) return pending;
 
   const task = (async (): Promise<LutData | null> => {
-    // 先問本機：以前解過的表直接讀回來，不用下載也不用重新解碼
+    // 先問本機：解過的表直接讀回來，不用下載也不用重新解碼
     const cacheUrl=needsLutAtlasRepair(url)?url+'#'+LUT_ATLAS_REPAIR_REVISION:url;
     const cached = await loadCachedLut(id, cacheUrl);
     const decoded=await decodeLutOffThread(url,id,cached||undefined);
@@ -815,7 +815,7 @@ export function applyPhotoFx(
   }
   /* 只有調色（曝光、色溫、濾鏡…）、沒有任何特效，而且呼叫端要的是 GPU 畫面：
      顏色在效果表面自己的 GPU context 裡算，結果直接畫在那張 GPU 畫布上回傳 ——
-     跟主頁編輯同一招（presentFxSource）。以前走下面的 2D 路，每動一格都把 GPU
+     跟主頁編輯同一招（presentFxSource）。不走下面的 2D 路，不然每動一格都把 GPU
      的結果複製進 2D 畫布（iPhone 上是一次整張讀回）。 */
   if(opts?.gpuSurface&&opts.cacheSource&&!opts.scene&&!colourOnly&&!hasActiveFx(fx)&&!(fx as any).fxLowfi
     &&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)){
@@ -883,7 +883,7 @@ export function applyPhotoFx(
      而只憑一次取樣下永久判斷，反而會在真手機上誤判成「不要用 GPU」。 */
   if (!identityColour) {
     const amt = (fx.lutAmount ?? 100) / 100;
-    /* 來源鍵：來源物件的身分 ＋ 尺寸。以前是「尺寸＋四個取樣點」，
+    /* 來源鍵：來源物件的身分 ＋ 尺寸。不用「尺寸＋四個取樣點」，
        但取樣點得先把整張像素讀出來 —— 為了算一把鑰匙付一次全圖回讀，
        正是上面要省掉的那一步。改成給每個來源物件一個固定編號（WeakMap），
        同一張圖重畫時鑰匙一樣，貼圖就不必重傳。 */
@@ -1149,7 +1149,7 @@ export const lutDefaultAmount = (lutId?: string) =>
 /**
  * 「這包 fx 裡跟**顏色**有關的部分」的指紋。
  *
- * 查色表只吃這幾個欄位（見 toParams）。以前 GPU 那邊是拿整包 fx 當快取鍵，
+ * 查色表只吃這幾個欄位（見 toParams）。GPU 那邊不拿整包 fx 當快取鍵，
  * 所以拖「特效強度」「圓角」「羽化」這些跟顏色完全無關的滑桿時，
  * 每一格也會重烤一顆表 —— 白花 8～11 毫秒。
  */

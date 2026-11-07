@@ -23,7 +23,7 @@ export { isAuthReady };
  * 驗證信裡，使用者在信箱點下去只會得到一個打不開的網址。所以原生環境改用
  * 網頁版的正式網址（環境變數 VITE_SITE_URL，見 env.example）。
  *
- * 網頁版永遠走 else 那半邊，跟以前完全一樣。
+ * 網頁版永遠走 else 那半邊。
  */
 const WEB_ORIGIN = String((import.meta as any).env?.VITE_SITE_URL ?? '').replace(/\/+$/, '');
 const emailRedirect = (): string =>

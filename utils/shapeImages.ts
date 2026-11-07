@@ -12,7 +12,7 @@
 import { STAR_BURSTS, starBurstMaskURL, warmGlint, type StarBurstSpec } from './starBursts';
 
 /** 圖片形狀的圖案：id → 圖片。CollageTool 會照這張表建立對應的圖案。
- *  <333*（pic333）與 Abai 字樣以前放在這裡，現在描成向量了（utils/vectorShapes.ts），
+ *  <333*（pic333）與 Abai 字樣已經描成向量（utils/vectorShapes.ts），
  *  放大也不會糊；這張表只剩執行時才畫的那幾個模糊圖案（GridLayoutTool 的 SHAPE_PATTERNS）。 */
 export const SHAPE_IMAGES: Record<string, string> = {};
 

@@ -158,7 +158,7 @@ export const glyphFont = (holeType: string, sz: number) =>
    textAlign:'center' 對的是**前進寬度**、textBaseline:'middle' 對的是
    **em 方框**，兩個都不是墨水。一般的字差不多，但像 ᯽、𓇼、𖤐 這些冷門的
    Unicode 字，退回系統字型之後左右留白常常差很多 —— 畫出來就整個偏到一邊，
-   而選取框與命中判定都是以中心點、以前進寬度算的，於是框框不到它、
+   而選取框與命中判定都是以中心點、前進寬度算的，於是框框不到它、
    也很難點到（主人說的「倒數第二個圖案嚴重偏右」）。
 
    上一版是用 measureText 的 actualBoundingBox* 來校正。那是「字型宣告的」
@@ -290,11 +290,11 @@ export function patternPathBounds(type: string, size: number) {
 }
 
 
-/* 字符圖案的暫存畫布池。以前每畫一顆就開一張新的 —— 一格畫面裡幾十顆、
+/* 字符圖案的暫存畫布池。不要每畫一顆就開一張新的 —— 一格畫面裡幾十顆、
    左右兩側都要畫，實測拖一顆字符圖案時每秒開 398 張畫布。
    同一顆圖案每一格用的尺寸都一樣，所以照「邊長」收在池子裡就幾乎都命中。
    刻意做成「尺寸剛好」而不是共用一張大的：大小一樣、drawImage 也用原本
-   那個三參數的寫法，畫出來才跟以前一個位元都不差。
+   那個三參數的寫法，畫出來才一個位元都不差。
    匯出那種特別大的尺寸不入池，免得一直佔著幾十 MB。 */
 const TEXT_TMP_MAX = 1024;
 const TEXT_TMP_KEEP = 48;
@@ -317,7 +317,7 @@ export const drawTextShape = (
   fillStyle: any,
   isDestinationOut: boolean = false,
   holeAngle: number = 0,
-  /* 預設就重用點陣：以前沒有任何呼叫端打開它，字形／圖片圖案（<333、pic333、
+  /* 預設就重用點陣：不然沒有任何呼叫端會打開它，字形／圖片圖案（<333、pic333、
      abai…）每畫一次都要在螢幕解析度重新開一張暫存畫布、貼圖、上色再合成 ——
      放得很大或放大預覽時，每一幀都在配置幾百萬像素的畫布，就是那個「很卡」。 */
   reuseRaster: boolean = true
@@ -390,11 +390,11 @@ export const drawTextShape = (
       targetCtx.restore();return;
     }
   }
-  /* 暫存畫布只要「這個字轉一圈都還在裡面」就夠了。以前一律開 sz×3 見方，
+  /* 暫存畫布只要「這個字轉一圈都還在裡面」就夠了。不一律開 sz×3 見方，
      像 ᯽ 這種字有九成面積是空的，卻每一顆、每一格都要被 drawImage 合成一次
      （實測合成佔掉拖曳字符圖案時將近三成的時間）。
      半徑用 glyphRadius 實際量出來的，而且只縮不放（跟舊的取小的那個）——
-     所以畫出來跟以前一個像素都不差，連原本會被裁掉的長文字也照樣裁在同一個地方。 */
+     所以畫出來一個像素都不差，連原本會被裁掉的長文字也照樣裁在同一個地方。 */
   const oldPad = Math.ceil(sz * 1.5);
   const pad = ink.r > 0.5
     ? Math.max(2, Math.min(oldPad, Math.ceil(ink.r) + 2))
@@ -674,7 +674,7 @@ export const paintStripes = (
   const x0 = -covW / 2, y0 = -covH / 2;
   /* 先鋪滿第一個顏色，再只畫第二個顏色的那幾條 ——
      每條邊只被畫一次，就是乾淨的一個反鋸齒像素。
-     （以前是一條一條輪流畫、每條多鋪 0.6px 擋接縫，兩條會在同一個像素上
+     （不一條一條輪流畫、每條多鋪 0.6px 擋接縫：那樣兩條會在同一個像素上
        各畫一次，邊緣因此變成兩像素寬的漸變。詳見 utils/pattern 的同名說明。） */
   c.fillStyle = a;
   c.fillRect(x0, y0, covW, covH);
@@ -1009,7 +1009,7 @@ export const STAR_BURST_ITEMS: HoleShapeItem[] = STAR_BURSTS
 /**
  * 圖形發光的強度換算。面板上是一根 0～100 的滑桿，畫的時候拿它去乘發光的半徑。
  *
- * 舊資料相容：以前經典拼圖以 true／false 儲存開關，因此 boolean true 仍代表滿格。
+ * 舊資料相容：舊版經典拼圖以 true／false 儲存開關，因此 boolean true 仍代表滿格。
  * 數字一律視為現在滑桿的 0～100；尤其數字 1 必須保持 1%，不能跳成 100%。
  */
 export const glowAmount = (g: number | boolean | undefined): number => {

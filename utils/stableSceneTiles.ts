@@ -27,7 +27,7 @@ export class StableSceneTiles {
     const extra=Math.ceil(Math.max(0,reach));
     if(!(extra<=SCENE_TILE_MAX_REACH)){this.dropPartial();this.status='sampling reach';return false;}
     // 跟瀏覽器或 App 的記憶體無關：場景太大就直接不做，不降低密度，也不配置沒有上限的背景快取
-    /* 以前上限 256MB：預覽靜止時這組磚塊在 iPhone 上就吃掉一百多 MB，再加上解碼的原圖、
+    /* 上限不用 256MB：預覽靜止時這組磚塊在 iPhone 上就會吃掉一百多 MB，再加上解碼的原圖、
        GPU 畫面，分頁很容易被系統砍掉重開。磚塊只是「靜止時的快取」，呼叫端已經把解析度
        壓在 SCENE_TILE_MAX_PIXELS 以內；這裡留一個同量級的保險。 */
     const budget=SCENE_TILE_MAX_PIXELS*4*1.25;

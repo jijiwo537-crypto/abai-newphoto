@@ -24,7 +24,7 @@ export const PatternIcon = ({ s }: { s: string }) => (
       /* 去背的圖：拿它當遮罩、底色用 currentColor，
          顏色就跟旁邊那些圖示走同一條規則 ——
          沒選中時是暗的（#555），選中才變白。
-         （原本是用 filter 硬染成白色，所以永遠亮著。） */
+         （不用 filter 硬染成白色，那樣會永遠亮著。） */
       <span
         aria-hidden
         style={{

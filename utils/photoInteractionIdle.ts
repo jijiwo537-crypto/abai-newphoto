@@ -10,7 +10,7 @@ const sliderHeld=()=>!!(globalThis as any).__abaiSliderHeld?.();
 if(typeof window!=='undefined'&&window.addEventListener)window.addEventListener('abai-slider-release',()=>deferHeavyWork(600));
 /** 繪製端的同步檢查，給不重要的草稿縮圖用 */
 /* 手指正按在任何一根滑桿上也算忙：滑桿不一定每一根都有登記 holdPhotoInteraction（例如編輯頁的調節滑桿），
-   以前拖滑桿時背景的卡片縮圖照樣一張一張算，預覽就一卡一卡的 */
+   拖滑桿時背景的卡片縮圖不能照樣一張一張算，不然預覽會一卡一卡的 */
 const busyNow=()=>holds.size>0||now()<busyUntil||sliderHeld();
 export function isPhotoInteractionBusy(){return busyNow();}
 /**

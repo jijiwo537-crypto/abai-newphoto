@@ -143,7 +143,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       const vis={left:Math.max(0,clip?.left??0),top:Math.max(0,clip?.top??0),right:Math.min(innerWidth,clip?.right??innerWidth),bottom:Math.min(innerHeight,clip?.bottom??innerHeight)};
       /* 整個佈局在手勢中當成「一張圖片」：
          放大縮小、平移時，已經畫好的這張畫布直接跟著頁面一起縮放移動（純合成，不重畫）——
-         以前每動一格都整張重畫三次，每次還要從 GPU 讀回幾百萬像素：拖起來卡，而且每一格
+         不要每動一格都整張重畫三次、每次還要從 GPU 讀回幾百萬像素：拖起來卡，而且每一格
          重新對齊像素，佈局裡的照片看起來會抖。只有畫好的範圍蓋不住畫面時才補畫一次，
          手勢停下來（160ms 沒有新的變化）再照實際倍率畫一張最清楚的。
          平常（停著）在看得到的範圍外多畫一圈：快速滑動時剛滑進來的部分已經畫好；
@@ -401,7 +401,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
            直接疊在原位顯示（同一個裁切、旋轉、圓角、透明度），2D 這張不再每一格把它
            複製進來 —— iPhone 上那一下是整張從 GPU 讀回，是拖滑桿最主要的成本。
            放開後一樣疊著那一張（拖曳中最後一格＝放開那一格），閒下來算好原圖尺寸
-           的成品才換回這張 2D 畫布（以前也是在那個時候換）。 */
+           的成品才換回這張 2D 畫布。 */
         const overlayIdx=previewCells.length===1&&sources[previewCells[0]]?.image instanceof HTMLCanvasElement?previewCells[0]:-1;
         if(overlayIdx>=0)contents[overlayIdx]='overlay';
         const geom=JSON.stringify([W,H,v,gap,radius,noVisibleGutter,rects,crops,radii,sources.map((t,i)=>i===overlayIdx?'overlay':t&&[t.width,t.height]),cells.map(c=>[c.opacity??100])]);

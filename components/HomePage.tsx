@@ -462,7 +462,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   /**
    * 點「模板」要捲到哪裡 —— 靈感區的頂端。
    *
-   * 以前這裡要多算一段：廣告版位是「絕對定位往下多長 50px」的，那一截
+   * 這裡不用多算一段：廣告版位是「絕對定位往下多長 50px」的，那一截
    * 會蓋在 libRef 上面，捲到定位之後搜尋欄上方還看得到它的下緣。
    * 版位拿掉之後沒有東西會蓋過來了，直接捲到 libRef 的頂端就對。
    */
@@ -550,7 +550,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
      **優先交給 CSS 的捲動時間軸**（styles.css 裡的 .home-hero）：
      整段動畫由合成執行緒照捲動位置自己算，主執行緒完全不參與 ——
-     這正是抖動的解法。原本是 JS 監聽捲動、再排進 requestAnimationFrame 改
+     這正是抖動的解法。不用 JS 監聽捲動、再排進 requestAnimationFrame 改
      transform：捲動跑在合成執行緒、算式跑在主執行緒，中間又壓了一格 rAF，
      兩邊只要差一格，畫面上就是「圖跟著手指抖一下」。
 
@@ -765,7 +765,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       return;
     }
     /* 過了門檻就當場換，不再等。
-       以前這裡壓了 120ms 才換（怕在捲動途中重繪一次首頁會頓一下），
+       這裡不壓 120ms 才換（原本是怕在捲動途中重繪一次首頁會頓一下），
        但那 120ms 在手上就是「滑過去了、它慢半拍才亮」—— 主人說的那個延遲感
        就是它。門檻本身是個確定的位置，越過去的那一格就該亮。 */
     if (next === navRef.current) return;
@@ -819,7 +819,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         const v = localStorage.getItem(PREVIEW_KEY(k));
         if (v) next[k] = v;
       }
-      // 橫幅以前存在自己那一格，搬過來（只搬一次，新的那格沒東西才搬）
+      // 橫幅舊版存在自己那一格，搬過來（只搬一次，新的那格沒東西才搬）
       if (!next.promo) {
         const old = localStorage.getItem(PROMO_BG_KEY);
         if (old) { next.promo = old; try { localStorage.setItem(PREVIEW_KEY('promo'), old); } catch {} }
@@ -872,7 +872,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   }, []);
 
   /** 主視覺要畫哪一張：**只認自己匯入的那張**。
-      以前沒挑的時候會自動抓最近一張作品（recent[0]）—— 於是每存一次檔，
+      沒挑的時候不要自動抓最近一張作品（recent[0]）—— 不然每存一次檔，
       首頁最上面那張大圖就自己換掉了，人沒挑過卻一直在變。
       現在沒匯入就是空的（點下去挑一張），存檔再也不會動到它。 */
   const heroSrc = previews.hero || null;
@@ -1052,7 +1052,7 @@ export const HomePage: React.FC<HomePageProps> = ({
            設計稿是 overflow:hidden，但那是在 844 高的框裡量的；矮一點的機型會被切掉，
            所以改成可捲動＋藏捲軸（設計稿本來就掛了 no-sb）。 */}
       {/* --- 修圖／模板 與 我的 ---
-           兩頁疊在同一格裡，換頁時左右滑過去（以前是直接抽換，畫面會硬跳一下）。
+           兩頁疊在同一格裡，換頁時左右滑過去（直接抽換的話畫面會硬跳一下）。
            外面這一層負責「有多大」，裡面兩頁各自 absolute inset-0 疊著；
            分頁列不在這一層裡，所以它不會跟著滑。 */}
       <div className="relative flex-1 min-h-0 overflow-hidden">
@@ -1194,7 +1194,7 @@ export const HomePage: React.FC<HomePageProps> = ({
              參考圖上半是一整塊主視覺，品牌字壓在它的左下角。
              這一塊用 flex-1 把「一屏扣掉下面那一疊」剩下的高度全部吃掉 ——
              不管機型多高多矮，第一屏永遠剛剛好一屏，下面那一疊不會被擠出去，
-             也不會反過來壓到上面（以前是 mt-auto 貼著下緣排，長一點就會打架）。
+             也不會反過來壓到上面（用 mt-auto 貼著下緣排的話，長一點就會打架）。
              -mx-5 是把它撐回滿版：文字與按鈕有 20px 邊界，主視覺沒有。 */}
         {/* 上下限放寬到「正常手機都碰不到」：碰到上限的話，多出來的高度就會掉到
              最下面變成一塊死留白，縮圖到分頁列的間距就不等於歷史紀錄的上緣間距了。
@@ -1238,7 +1238,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           {/* 聯絡鈕：圖示沒換，只是照參考圖改成細框的小圓。 */}
 
           {/* 品牌字：靠左、貼在主視覺左下角。
-               字級與間距也照參考圖的比例縮到位（以前置中、而且大了快一倍）。
+               字級與間距也照參考圖的比例縮到位（不置中，大小也要照參考圖）。
                字型、顏色、字重、文字內容都沒動。
                中間那行副標拿掉了，所以按鈕的上緣間距補回它原本佔的位置。 */}
           <div
@@ -1379,9 +1379,9 @@ export const HomePage: React.FC<HomePageProps> = ({
              中間沒有折角，所以看不到帶狀邊）。往上多長 34px，
              純黑那一點落在這一段內 9px 處，離搜尋欄上緣還有 17px。
 
-             這一層以前掛 zIndex:-1 —— 負的 z-index 子層在「會動的父層」裡會自己
+             這一層不掛 zIndex:-1 —— 負的 z-index 子層在「會動的父層」裡會自己
              變成一個合成層，捲動時兩層的邊各自四捨五入，就會閃出一條線。
-             現在改成：這一層不指定 z-index，下面的內容包一層 relative；
+             做法：這一層不指定 z-index，下面的內容包一層 relative；
              兩個都是 z-index auto，就照 DOM 順序畫，內容自然蓋在它上面，
              不用負值也就沒有那條縫。 */}
         <div
@@ -1391,7 +1391,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                搜尋欄在這一段的 (瀏海高 + 14) 處，羽化長 43px、從這一層的頂端算起，
                所以頂端訂在 (瀏海高 + 2 − 43) —— 羽化結束的位置永遠落在
                搜尋欄上方 12px，不管有沒有瀏海都一樣近。
-               以前寫死 -34，在有瀏海的手機上羽化會停在搜尋欄上面 50 幾 px，
+               不寫死 -34：在有瀏海的手機上羽化會停在搜尋欄上面 50 幾 px，
                中間隔著一大段純黑，那就是「遮罩離搜尋欄太遠」。 */
             top: 'calc(env(safe-area-inset-top, 0px) - 41px)',
             background:

@@ -29,7 +29,7 @@ let lastHdrPage = 0;
 const CH_COLOUR: Record<string, string> = { r: '#ff6b6b', g: '#5fd47a', b: '#6b9bff' };
 
 /* 盤面上不會動的部分（色環、深色盤面、外框、十字線）先畫成一張點陣圖，每個尺寸只畫一次。
-   以前用 conic／radial 漸層＋box-shadow，每個色輪都要瀏覽器即時光柵化，
+   不用 conic／radial 漸層＋box-shadow，那樣每個色輪都要瀏覽器即時光柵化，
    進色輪那一格四個一起畫，手機上就是「卡一下才出來」。點陣圖只要貼上去。 */
 const discCache = new Map<string, string>();
 const decoded: HTMLImageElement[] = [];

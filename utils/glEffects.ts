@@ -559,7 +559,7 @@ export const FX_DEFS: FxDef[] = [
     ],
     passes: [{
       body: `
-  /* 不做曲面變形：以前這裡會把 uv 往外拱成球面，再用 inside 把拱出畫面的部分切黑。
+  /* 不做曲面變形：不把 uv 往外拱成球面、再用 inside 把拱出畫面的部分切黑。
      曲率就算設 0，uv → cc → p 這一趟浮點來回也會讓最邊緣那一排落在 0/1 之外，
      於是邊上就多出一圈黑，看起來就是「畫面被拱成曲面」。整段拿掉，p 直接就是 uv。 */
   vec2 p = uv;
@@ -1176,7 +1176,7 @@ export function applyGlEffects(
     : undefined;
   const blendHit=!!blendKey&&pool.blendCache?.key===blendKey;
   /* ── 疊加特效的分層快取 ──
-     以前每改一個特效（開一個新的、拖某一個的滑桿），整串特效都從頭重算一次，
+     不要每改一個特效（開一個新的、拖某一個的滑桿）就整串特效從頭重算一次，
      疊越多就越慢。現在每一層算完的結果會留著（key＝來源照片＋前面每一層的設定），
      下一次只要前面幾層沒變，就直接從快取那一層接著算，前面的全部跳過。
      例：疊了 6 個特效，開第 7 個（排在後面）只要算 1 層，不是 7 層。
@@ -1232,7 +1232,7 @@ export function applyGlEffects(
     }else if(spillOn&&image&&sourceOverride?.bins)spillSelection=selectHighlights(sourceOverride.bins,params.fxSpillRange??20);
     let gpuHalo=false;
     /* 低保真的光暈遮罩一律在 GPU 上算（跟 CPU 那份同樣的 800px 亮部、同樣的盒狀模糊與進位）。
-       以前只有拼圖底圖這樣做；編輯頁每換一次來源就把整張讀回 CPU 再算一次。 */
+       不只拼圖底圖這樣做；編輯頁每換一次來源就把整張讀回 CPU 再算一次。 */
     if(!auditReference&&!skipHead&&active.some(d=>d.id==='fxLowfi')){
       c.lowfiHalo ||= new LowfiHaloMask();
       gpuHalo=c.lowfiHalo.prepareGpu(gl,srcTex,w,h,uploadKey,fb,(key,fs)=>compile(c,key,fs));

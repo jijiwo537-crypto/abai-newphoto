@@ -1,6 +1,6 @@
 /* 逐格輸出影片（不是即時錄影）。
  *
- * 以前的做法是 canvas.captureStream ＋ MediaRecorder「即時」錄：錄影跟著牆上
+ * 不用 canvas.captureStream ＋ MediaRecorder「即時」錄：錄影跟著牆上
  * 時鐘走，合成一格只要慢一點（濾鏡、特效、好幾段影片），那一格就直接被丟掉，
  * 錄出來的檔案本身就是一頓一頓的 —— 而且這是烤進檔案裡的，播放器救不回來。
  *

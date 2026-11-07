@@ -18,7 +18,7 @@ export const HEART_MAIN: UnitShape = {
   ],
 };
 
-/** 以前圖案按鈕上那顆愛心（lucide 的 Heart 圖示）的外形。寬:高 ≈ 1.11 */
+/** 舊版圖案按鈕上那顆愛心（lucide 的 Heart 圖示）的外形。寬:高 ≈ 1.11 */
 const L = (x: number, y: number): [number, number] => [(x - 2) / 20, (y - 3) / 18];
 const c = (a: number, b: number, d: number, e: number, f: number, g: number): Seg => [...L(a, b), ...L(d, e), ...L(f, g)] as Seg;
 export const HEART_ICON: UnitShape = {

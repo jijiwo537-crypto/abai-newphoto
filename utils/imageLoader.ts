@@ -231,7 +231,7 @@ export async function processImageFile(file: File, onPreview?: (url: string) => 
  *
  * ── 為什麼需要這一支 ──────────────────────────────────────────────
  * processImageFile 回傳的是一條網址，但拼圖那幾支工具收的是 File
- * （它們自己 createObjectURL、自己丟進 <img>）。所以以前只有「編輯」「相機」
+ * （它們自己 createObjectURL、自己丟進 <img>）。所以只有「編輯」「相機」
  * 「相簿」走得到解碼，**拼圖的入口與工具內的匯入完全沒有解碼**——
  * 丟一張 RAW 或 HEIC 進創意拼圖，<img> 載不出來，畫面就是空的。
  * 這一支把解碼補在最前面，而且回傳還是 File，所以下游一行都不用改。

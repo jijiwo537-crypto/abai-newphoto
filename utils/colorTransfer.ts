@@ -68,7 +68,7 @@ function labToRgb(L: number, a: number, bb: number, out: number[]): void {
  *
  * 為什麼一定要這樣做
  * ─────────────────────────────────────────────────────────────
- * labToRgb 原本是把 R、G、B 各自夾回 0～1。那是硬性截斷，會造成兩件事：
+ * labToRgb 不能把 R、G、B 各自夾回 0～1。那是硬性截斷，會造成兩件事：
  *   ① 三個通道被夾的程度不一樣 → 色相跟著歪掉（紅的被夾成橘的）
  *   ② 一旦某個通道貼到 255 就再也不動 → 一整片區域被壓成同一個值，
  *      相鄰的漸層被壓平，邊界上就出現一條「硬變」
@@ -205,7 +205,7 @@ export type Samples = { r: Float64Array; g: Float64Array; b: Float64Array; n: nu
 /**
  * 取樣給統計用。
  *
- * 原本是「每隔 step 顆取一顆」。問題是影像是一列一列排的：只要 step 整除
+ * 不用「每隔 step 顆取一顆」。問題是影像是一列一列排的：只要 step 整除
  * 每列的寬度，取到的就永遠是同幾條直行。實測 900×675 的圖 step 會是 12，
  * 而 900 剛好被 12 整除 —— 全張圖只有 75 條直行（8%）被看到，其餘 92% 完全
  * 沒進統計。畫面左右兩半顏色不同的照片，平均值與共變異數就整個偏掉，
@@ -352,7 +352,7 @@ function build1DMap(from: Float64Array, to: Float64Array, bins = 96) {
 /**
  * 範圍外要「延伸」而不是「亂長」。
  * 烘 LUT 時會去問整個 RGB 立方體的角落，那些顏色原圖裡根本沒有，
- * 落在取樣範圍外。以前直接平移，疊了幾輪之後就飛掉（IDT 整個壞掉就是這個原因）。
+ * 落在取樣範圍外。不能直接平移，疊了幾輪之後就飛掉（IDT 整個壞掉就是這個原因）。
  * 現在延伸的量會被限制在目標範圍附近，不會愈跑愈遠。
  */
 const apply1D = (m: ReturnType<typeof build1DMap>, v: number): number => {
@@ -614,7 +614,7 @@ export type ApplyOptions = {
   /**
    * 防斷層用的空間保護遮罩（utils/protectMask 算好的）。
    * 給了就用遮罩上的權重，沒給就退回原本「只看這一顆像素的顏色」的判斷 ——
-   * 兩條路的其餘計算完全一樣，所以不給遮罩時結果跟以前一位元不差。
+   * 兩條路的其餘計算完全一樣，所以不給遮罩時結果一位元不差。
    */
   protect?: ProtectLike | null;
   /** 有 protect 時必填：data 的寬（要換算 x / y 才取樣得到遮罩） */
@@ -873,7 +873,7 @@ export function applyLut(
       const u = ((k % iw) + 0.5) / iw, v = (((k / iw) | 0) + 0.5) / ih;
       w = sampleMaskAt(pm!.weight, pm!.w, pm!.h, u, v);
     } else {
-      w = 0;   // 沒有遮罩＝照片裡沒有臉：完全不保護（以前只看顏色的內建保護已拿掉）
+      w = 0;   // 沒有遮罩＝照片裡沒有臉：完全不保護（不再用只看顏色的內建保護）
     }
 
     // 亮度也換（AI 仿色）時，皮膚的亮度只跟一半 —— 跟 GPU 版同一條式子
@@ -884,7 +884,7 @@ export function applyLut(
 
     if (w > 0) {
       /* 一、往洋紅偏的部分打折（洋紅在紅的「下面」，所以差值是負的那一邊）。
-         以前是 if (d < 0) 一刀切 —— 值接得上但斜率是斷的，強度拉到 200
+         不用 if (d < 0) 一刀切 —— 值接得上但斜率是斷的，強度拉到 200
          會把那個轉折放大兩倍，畫面上就看得到一條硬邊。改成在一小段角度內
          平滑接起來，處處連續、斜率也連續。 */
       const cNow = Math.hypot(A, BB);
@@ -917,7 +917,7 @@ export function applyLut(
     const lim = satCeiling(cIn, A, BB);
     if (cOut > lim && cOut > 1e-6) { const k = lim / cOut; A *= k; BB *= k; }
 
-    /* 強度在 Lab 裡混合，而不是算完 RGB 再混：以前是先把結果夾進 sRGB、
+    /* 強度在 Lab 裡混合，而不是算完 RGB 再混：先把結果夾進 sRGB、
        再用 RGB 做 src + (res - src) * s，強度超過 1 時等於把「已經被夾過的值」
        再往外拉，最後又被 Uint8ClampedArray 夾一次 —— 兩次硬夾疊在一起，
        紅色那種本來就貼著色域邊緣的顏色會整片壓平。

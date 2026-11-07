@@ -62,13 +62,13 @@ export type IgPreviewProps = {
   /**
    * 每一頁的成品是圖還是影片（順序＝頁序）。
    * 有影片的那一頁要放 <video> 才會動 —— 只給 <img> 的話畫面是定格的。
-   * 沒傳就一律當成圖片（跟以前完全一樣）。
+   * 沒傳就一律當成圖片。
    */
   kinds?: ('image' | 'video')[];
   /**
    * 有影片的那幾頁改成掛一張「一直在重畫的畫布」（順序＝頁序，沒有的那頁是 null）。
    * 貼文裡看到的就是即時合成的畫面：打開的當下就在動，也不會有掉格被烤進檔案裡。
-   * 沒傳就照舊走 shots／kinds（跟以前完全一樣）。
+   * 沒傳就照舊走 shots／kinds。
    */
   canvases?: (HTMLCanvasElement | null)[];
   /**
@@ -87,7 +87,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   shots, frame, pageCount, faces, hasVideo = (_pageIdx: number) => false, supported = true,
   slot = '', embedded = false, flow = false, video, kinds, canvases, mediaNode, music, onMusicChange, onClose,
 }) => {
-  /** 這一篇貼文自己的存檔前綴。沒有 slot 就完全等於以前的鍵名。 */
+  /** 這一篇貼文自己的存檔前綴。沒有 slot 就沿用原本的鍵名。 */
   const KEY = (k: string) => `abai_ig_${slot ? slot + '_' : ''}${k}`;
   const igStripRef = useRef<HTMLDivElement>(null);
   const igTrackRef = useRef<HTMLDivElement>(null);
@@ -292,7 +292,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   /**
    * 同一份資料，fetch 與 JSONP「同時」發出去，誰先拿到有東西的就用誰。
    *
-   * 以前是「先 fetch、失敗了才換 JSONP」—— 但 Apple 的搜尋端點沒有 CORS 標頭，
+   * 不做「先 fetch、失敗了才換 JSONP」—— Apple 的搜尋端點沒有 CORS 標頭，
    * fetch 那條註定要等到逾時才會倒下，四個商店一起排隊等下來就是十幾秒，
    * 使用者早就認定「搜尋壞了」。同時發就只花其中快的那一條的時間。
    */
@@ -576,9 +576,9 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   /**
    * 搜尋結果上方那一排歌手。
    *
-   * 以前只靠 entity=musicArtist 那一支，它打歌名時回空的，那一排就整個不見 ——
+   * 不能只靠 entity=musicArtist 那一支，它打歌名時回空的，那一排就整個不見 ——
    * 這就是主人說的「有時候有、有時候沒有」。
-   * 現在改成兩邊合起來：那一支查到的，加上「搜尋結果裡實際出現的每一位歌手」。
+   * 做法是兩邊合起來：那一支查到的，加上「搜尋結果裡實際出現的每一位歌手」。
    * 只要搜得到歌，就一定看得到歌手。
    *
    * 歌曲資料裡本來就有 artistId，靠它就能認出「這一排該有誰」；
@@ -694,7 +694,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '');
     const nq = norm(term);
     if (!nq) return undefined;
-    /* 以前只要有結果就拿第一位，打歌名（例如「告白氣球」）時會被硬塞
+    /* 不能有結果就拿第一位，不然打歌名（例如「告白氣球」）時會被硬塞
        一位不相干歌手的兩百首歌，把真正的關鍵字結果全部擠到後面去。 */
     return artists.find(a => norm(a.name) === nq)
       || artists.find(a => norm(a.name).includes(nq) || nq.includes(norm(a.name)));
@@ -857,7 +857,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   ): Track[] => {
     const q: Record<string, Track[]> = {};
     /* 一律照原本的順序，不再換起點。
-       以前每次打開面板會隨機換一個開頭，是為了讓畫面看起來不那麼一成不變；
+       不在每次打開面板時隨機換一個開頭（那只是為了讓畫面看起來不那麼一成不變）；
        但現在每個分頁講明了就是「每日 Top 100」，名次就是內容的一部分 ——
        第一名要真的排第一。
 
@@ -976,7 +976,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
    *   3. 台灣每日榜裡，Apple 標成這個曲風的歌
    *   4. 該國每日榜裡，Apple 標成這個曲風的歌
    * 四條都拿不到就回空的。
-   * 以前最後會退回「整份每日榜」—— 韓語那一頁因此變成韓國每日榜（什麼語言都有），
+   * 最後不退回「整份每日榜」—— 不然韓語那一頁會變成韓國每日榜（什麼語言都有），
    * 那就是主人說的「根本不是韓國流行樂」。寧可說拿不到，也不端別的東西上來。
    */
   const oneStore = async (key: string): Promise<{ list: Track[]; how: string }> => {
@@ -1067,7 +1067,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
         shownRef.current = cached.length;
         setMusicList(cached);
         setMusicLoading(false);
-        /* 這裡以前直接 return，上面剛剛才被清空的「歌手那一排」就再也沒被填回去 ——
+        /* 這裡不能直接 return，不然上面剛剛才被清空的「歌手那一排」就再也沒被填回去 ——
            同一個字第一次搜有歌手、第二次（走快取）就整排不見，
            那正是主人說的「有時候會出現、有時候不會」。 */
         const back = mergeArtists([], cached, src.term);
@@ -1082,7 +1082,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
         return;
       }
       /* 所有來源「同時」發，而且誰先回來就先顯示誰。
-         以前是一段一段接力（直連失敗才轉送、台灣查不到才問美國），
+         不一段一段接力（直連失敗才轉送、台灣查不到才問美國），
          每一段都要等上一段逾時，加起來就是主人說的「要等很久」。
          現在全部並行，畫面在第一份結果回來的那一刻就有東西，
          其餘的回來再補進去，不必等最慢的那一條。 */
@@ -1759,7 +1759,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
               />
               <div className="flex-1 min-w-0">
                 {/* 帳號名字：一直都是同一個 input，點下去就能改、Enter 或點別的地方存檔。
-                    以前是「平常顯示 <button>、點了才換成 <input>」—— 兩種元素的行高與
+                    不做成「平常顯示 <button>、點了才換成 <input>」—— 兩種元素的行高與
                     內距差那麼一點點，換過去的瞬間名字與底下的音訊列就會抖一下。
                     永遠是同一個元素就不會有那一下。高度也寫死，字數變動不會撐開。 */}
                 <input
@@ -1815,7 +1815,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                 className={flow ? 'w-full overflow-hidden' : 'flex-1 min-h-0 w-full overflow-hidden'}
 
                 /* pan-y：橫的交給我們自己接（翻頁），直的還給瀏覽器（外層上下捲）。
-                   以前寫 none 等於連直的也一起擋掉 —— 手指落在圖片上時
+                   寫 none 的話等於連直的也一起擋掉 —— 手指落在圖片上時
                    整頁就滑不動了，那正是「有時候滑不到下一篇」的原因。
                    單頁貼文根本不需要接手勢，直接 auto。 */
                 style={{
