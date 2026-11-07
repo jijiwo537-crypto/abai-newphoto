@@ -158,14 +158,14 @@ const drawDots = (g: CanvasRenderingContext2D, b: Bits, L: Layout, cw: number, c
    以前是把畫好的點一層層縮小再放大（很快，但放大時是一格一格的直線內插，近看光暈邊緣有一圈圈斷層）。
    現在：
      1. 每個亮點的面積分到一張細格子上（每格 1/4 個字寬，用小數精確分配到相鄰四格）；
-     2. 用三種大小的高斯模糊（0.5、1、2 個字寬）疊成光暈：近的亮、遠的淡，跟真的光一樣一路漸淡；
+     2. 用三種大小的高斯模糊（0.3、0.6、1.2 個字寬）疊成光暈：近的亮、遠的淡，跟真的光一樣一路漸淡；
      3. 亮度用「1 − e^(−x)」平滑收頂（密的地方不會硬切成一片白）；
      4. 轉成 8 位元時加一點點雜訊（dither），最暗那一段不會出現一階一階的色帶。
    全部是小格子上的加減（幾十萬格），手機上幾毫秒；光暈大小跟著字寬走，預覽與存出來的圖看起來一樣。
    滑桿只改這一層的透明度，不用重算。最大值＝原本的 60%（滑桿照樣是 0～100）。 */
 const GLOW_CELL = 0.25;          // 格子大小（字寬）
-const GLOW_PAD = 6;              // 四周多留幾個字寬（光暈最外圈約 3 個標準差，不會被切掉）
-const GLOW_SIGMAS = [0.5, 1, 2]; // 三層光暈的大小（字寬）
+const GLOW_PAD = 4;              // 四周多留幾個字寬（光暈最外圈約 3 個標準差，不會被切掉）
+const GLOW_SIGMAS = [0.3, 0.6, 1.2]; // 三層光暈的大小（字寬）
 const GLOW_WEIGHTS = [0.5, 0.3, 0.2];
 const GLOW_GAIN = 12;            // 點很細，平均下來很淡，先放大再平滑收頂
 const GLOW_MAX = 0.6;       // 滑桿拉滿＝原本的 60
@@ -258,17 +258,16 @@ const glowField = (b: Bits, L: Layout, out?: HTMLCanvasElement) => {
       base[i + W] += area * (1 - tx) * ty; base[i + W + 1] += area * tx * ty;
     }
   }
-  /* 三層光暈：小的在細格子上模糊；大的兩層先縮成 1/2、1/4 的格子再模糊（大的光暈本來就很柔，
-     放在粗格子上算結果幾乎一樣，但快很多），最後雙線性放大加回細格子 */
+  /* 三層光暈：小的兩層在細格子上接著模糊（中的從小的再模糊上去）；最大那層先縮成 1/2 的格子再模糊
+     （大的光暈本來就很柔，放在粗一點的格子上算結果幾乎一樣，但快很多），最後雙線性放大加回細格子 */
   const [s0, s1, s2] = GLOW_SIGMAS.map(x => x / g), [w0, w1, w2] = GLOW_WEIGHTS;
   const A = half(base, W, H, buf.m1);                 // 1/2 格子（模糊前先留一份原始的）
-  const B = half(buf.m1, A.w, A.h, buf.m2);           // 1/4 格子
-  gaussInPlace(buf.m1, tmp, A.w, A.h, Math.sqrt(Math.max(0, (s1 / 2) ** 2 - 0.25)), acc);
-  gaussInPlace(buf.m2, tmp, B.w, B.h, Math.sqrt(Math.max(0, (s2 / 4) ** 2 - 0.27)), acc);
+  gaussInPlace(buf.m1, tmp, A.w, A.h, Math.sqrt(Math.max(0, (s2 / 2) ** 2 - 0.25)), acc);
   gaussInPlace(base, tmp, W, H, s0, acc);
   for (let i = 0; i < n; i++) field[i] = w0 * base[i];
-  addUp(buf.m1, A.w, A.h, 2, field, W, H, w1);
-  addUp(buf.m2, B.w, B.h, 4, field, W, H, w2);
+  gaussInPlace(base, tmp, W, H, Math.sqrt(s1 * s1 - s0 * s0), acc);
+  for (let i = 0; i < n; i++) field[i] += w1 * base[i];
+  addUp(buf.m1, A.w, A.h, 2, field, W, H, w2);
   const c = out || document.createElement('canvas');
   if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
   const gc = c.getContext('2d')!;
@@ -567,10 +566,10 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     if (!b || !o || !L || saving) return;
     setSaving(true);
     try {
-      // 只存有點的範圍（跟複製的文字同一塊），四周各留一個字寬的黑邊（有發光時留五個字寬，光暈才不會被切掉）
+      // 只存有點的範圍（跟複製的文字同一塊），四周各留一個字寬的黑邊（有發光時留三個字寬，光暈才不會被切掉）
       const x0 = o.x0 * 2, x1 = (o.x0 + o.cols) * 2, y0 = o.y0 * 4, y1 = (o.y0 + o.rows) * 4;
       const spanX = L.x.pos[x1 - 1] - L.x.pos[x0], spanY = L.y.pos[y1 - 1] - L.y.pos[y0];
-      const M = glowOn ? 5 : 1;
+      const M = glowOn ? 3 : 1;
       const cw = Math.max(4, Math.min(32, 4096 / (spanX + 2 * M), 4096 / (spanY * CH + 2 * M))), ch = cw * CH;
       const c = document.createElement('canvas');
       c.width = Math.round(spanX * cw + 2 * M * cw); c.height = Math.round(spanY * ch + 2 * M * cw);
