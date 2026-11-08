@@ -8,6 +8,7 @@ interface NativeImageApi {
   info(o: { path: string }): Promise<{ width: number; height: number }>;
   downsample(o: { path: string; maxPixel: number; quality?: number }): Promise<{ path: string; width: number; height: number }>;
   writeTemp(o: { data: string; ext: string }): Promise<{ path: string }>;
+  appendTemp(o: { data: string; ext: string; path?: string }): Promise<{ path: string }>;
   render(o: Record<string, unknown>): Promise<{ path: string; width: number; height: number }>;
   encode(o: { path?: string; data?: string; format: string; quality?: number }): Promise<{ path: string }>;
   remove(o: { path: string }): Promise<void>;
@@ -59,4 +60,21 @@ export async function watchNativeMemoryBudget(): Promise<void> {
   };
   void tick();
   setInterval(tick, 5000);
+}
+
+/** 把網頁的檔案（Blob）寫到原生暫存資料夾，回傳路徑。分段傳（每段 3MB），大圖也不會卡在橋接上 */
+export async function blobToNativeFile(blob: Blob, ext: string): Promise<string> {
+  const p = await nativeImage();
+  if (!p) throw new Error('沒有原生影像外掛');
+  const CHUNK = 3 * 1024 * 1024;
+  let path: string | undefined;
+  for (let off = 0; off < blob.size || off === 0; off += CHUNK) {
+    const part = blob.slice(off, off + CHUNK);
+    const buf = new Uint8Array(await part.arrayBuffer());
+    let s = '';
+    for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000) as unknown as number[]);
+    path = (await p.appendTemp({ data: btoa(s), ext, path })).path;
+    if (blob.size === 0) break;
+  }
+  return path!;
 }

@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { prepareFiles, shareFiles } from '../utils/shareAll';
+import { isNative } from '../utils/native';
+import { saveToPhotos } from '../utils/nativePhotos';
 
 /**
  * 存檔按鈕。
@@ -17,7 +19,22 @@ export const SaveButton: React.FC<{
   label?: string;
 }> = ({ urls, className, label }) => {
   const [files, setFiles] = useState<File[]>([]);
+  /* App 裡直接存進相簿：按下去顯示「儲存中…」，存好變成「已存到相簿」，失敗就說原因 */
+  const [phase, setPhase] = useState<'idle' | 'saving' | 'saved'>('idle');
   const key = urls.join('|');
+  useEffect(() => { setPhase('idle'); }, [key]);
+  const save = async () => {
+    if (!isNative()) { void shareFiles(files); return; }
+    if (phase === 'saving') return;
+    setPhase('saving');
+    const r = await saveToPhotos(files);
+    if (!r) { setPhase('idle'); void shareFiles(files); return; }
+    if (r.status === 'saved') { setPhase('saved'); window.setTimeout(() => setPhase('idle'), 2200); return; }
+    setPhase('idle');
+    alert(/denied|權限|authoriz/i.test(r.error || '')
+      ? '沒有存到相簿的權限。請到「設定 → ABAI → 照片」打開「僅限加入照片」後再試一次。'
+      : `存檔失敗：${r.error || '請再試一次'}`);
+  };
 
   useEffect(() => {
     if (!urls.length) { setFiles([]); return; }
@@ -38,11 +55,11 @@ export const SaveButton: React.FC<{
 
   return (
     <button
-      onClick={(e) => { e.stopPropagation(); if (ready) shareFiles(files); }}
-      disabled={!ready}
+      onClick={(e) => { e.stopPropagation(); if (ready) void save(); }}
+      disabled={!ready || phase === 'saving'}
       className={className ?? `h-12 rounded-full bg-white text-black font-black tracking-widest uppercase text-sm shadow-lg shadow-white/10 transition-all ${ready ? 'active:scale-95' : 'opacity-40'}`}
     >
-      {ready ? text : '準備中…'}
+      {!ready ? '準備中…' : phase === 'saving' ? '儲存中…' : phase === 'saved' ? '已存到相簿' : text}
     </button>
   );
 };

@@ -29,6 +29,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "info", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "downsample", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "writeTemp", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "appendTemp", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "render", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "encode", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "remove", returnType: CAPPluginReturnPromise),
@@ -95,6 +96,28 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
             let out = ABAIImageCore.newFileURL(ext: ext)
             do { try data.write(to: out); call.resolve(["path": out.path]) }
             catch { call.reject(error.localizedDescription) }
+        }
+    }
+
+    /// 分段寫檔：大檔案一次用 base64 傳過來會太大，切成幾 MB 一段依序接上。
+    /// 第一段不給 path（建新檔），之後每段帶上一段回傳的 path
+    @objc func appendTemp(_ call: CAPPluginCall) {
+        guard let b64 = call.getString("data"), let data = Data(base64Encoded: b64) else { call.reject("沒有資料"); return }
+        let ext = call.getString("ext") ?? "bin"
+        let given = call.getString("path").flatMap { ABAIImageCore.fileURL(from: $0) }
+        queue.async {
+            let url = given ?? ABAIImageCore.newFileURL(ext: ext)
+            do {
+                if given == nil || !FileManager.default.fileExists(atPath: url.path) {
+                    try data.write(to: url)
+                } else {
+                    let h = try FileHandle(forWritingTo: url)
+                    defer { try? h.close() }
+                    try h.seekToEnd()
+                    try h.write(contentsOf: data)
+                }
+                call.resolve(["path": url.path])
+            } catch { call.reject(error.localizedDescription) }
         }
     }
 

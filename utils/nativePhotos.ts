@@ -7,9 +7,10 @@
  *   照片如果是從選擇器選來的、而且使用者允許完整相簿權限，就存成「原本那張照片的可逆編輯」：
  *   Photos 保留原圖，隨時能回復。 */
 import { isNative } from './native';
-import { nativePlugin, rememberNativeFile, fileSrc, blobToBase64 } from './nativeBridge';
-import { nativeImage, withBackgroundTask } from './nativeImage';
+import { nativePlugin, rememberNativeFile, fileSrc } from './nativeBridge';
+import { nativeImage, withBackgroundTask, blobToNativeFile } from './nativeImage';
 import { haptic } from './haptics';
+import { PHOTO_EXTS, RAW_EXTS, VIDEO_EXTS } from './fileTypes';
 
 interface PickedItem { path: string; name: string; type: string; size: number; assetId?: string; width?: number; height?: number }
 interface NativePhotosApi {
@@ -38,15 +39,19 @@ export async function pickNativeFiles(limit: number, filter: 'images' | 'videos'
   return files;
 }
 
-/** 這個 input 收的是照片／影片嗎？（其他種類照舊用網頁的選擇器） */
+/** 這個 input 收的是照片／影片嗎？（字型、LUT 這類其他檔案照舊用網頁的選擇器）
+ *  副檔名清單跟 utils/fileTypes 同一份：RAW、PSD、EXR 這些也都算照片 */
+const IMAGE_EXT = new Set([...PHOTO_EXTS, ...RAW_EXTS]);
+const VIDEO_EXT = new Set(VIDEO_EXTS);
 function mediaFilter(input: HTMLInputElement): 'images' | 'videos' | 'any' | null {
   const accept = (input.accept || '').toLowerCase();
   if (!accept) return null;
   const parts = accept.split(',').map(s => s.trim()).filter(Boolean);
-  const img = parts.some(s => s.startsWith('image/') || /^\.(jpe?g|png|heic|heif|webp|gif|avif|dng|cr2|cr3|nef|arw|raf|orf|rw2|tiff?)$/.test(s));
-  const vid = parts.some(s => s.startsWith('video/') || /^\.(mov|mp4|m4v)$/.test(s));
-  const other = parts.some(s => !(s.startsWith('image/') || s.startsWith('video/') || /^\.(jpe?g|png|heic|heif|webp|gif|avif|dng|cr2|cr3|nef|arw|raf|orf|rw2|tiff?|mov|mp4|m4v)$/.test(s)));
-  if (other) return null;
+  const kind = (s: string) => s.startsWith('image/') ? 'img' : s.startsWith('video/') ? 'vid'
+    : s.startsWith('.') && IMAGE_EXT.has(s.slice(1)) ? 'img' : s.startsWith('.') && VIDEO_EXT.has(s.slice(1)) ? 'vid' : 'other';
+  const kinds = parts.map(kind);
+  if (kinds.includes('other')) return null;
+  const img = kinds.includes('img'), vid = kinds.includes('vid');
   return img && vid ? 'any' : img ? 'images' : vid ? 'videos' : null;
 }
 
@@ -84,20 +89,23 @@ let saveContext: SaveContext | null = null;
 export function setSaveContext(ctx: SaveContext | null) { saveContext = ctx; }
 
 /** 存進相簿。回傳 null＝不是 App（呼叫端走原本的分享／下載） */
-export async function saveToPhotos(files: File[]): Promise<'saved' | 'failed' | null> {
+export interface SaveOutcome { status: 'saved' | 'failed'; error?: string }
+/** 存進相簿。回傳 null＝不是 App 或這版 App 沒有相簿外掛（呼叫端走原本的分享／下載） */
+export async function saveToPhotos(files: File[]): Promise<SaveOutcome | null> {
   const p = await nativePhotos();
   const img = await nativeImage();
   if (!p || !img) return null;
   return withBackgroundTask('abai-save', async () => {
-    let ok = 0;
+    let ok = 0, error = '';
     const single = files.length === 1 ? saveContext : null;
     if (single?.assetId) {
       try { await p.authorize({ level: 'readWrite' }); } catch { /* 沒給就存成新照片 */ }
     }
     for (const f of files) {
+      let path = '';
       try {
-        const ext = (f.name.split('.').pop() || (f.type.split('/')[1] ?? 'jpg')).toLowerCase();
-        const { path } = await img.writeTemp({ data: await blobToBase64(f), ext });
+        const ext = (f.name.includes('.') ? f.name.split('.').pop()! : (f.type.split('/')[1] ?? 'jpg')).toLowerCase();
+        path = await blobToNativeFile(f, ext);
         const kind = f.type.startsWith('video') ? 'video' : 'photo';
         await p.save({
           path, kind,
@@ -105,11 +113,14 @@ export async function saveToPhotos(files: File[]): Promise<'saved' | 'failed' | 
           adjustment: single?.adjustment ? JSON.stringify({ app: 'abai', v: 1, at: Date.now(),
             state: typeof single.adjustment === 'function' ? (single.adjustment as () => unknown)() : single.adjustment }) : undefined,
         });
-        img.remove({ path }).catch(() => {});
         ok++;
-      } catch { /* 下一個 */ }
+      } catch (e: any) {
+        error = String(e?.message ?? e ?? '');
+      } finally {
+        if (path) img.remove({ path }).catch(() => {});
+      }
     }
     haptic(ok === files.length ? 'success' : 'error');
-    return ok === files.length ? 'saved' : 'failed';
+    return ok === files.length ? { status: 'saved' } : { status: 'failed', error: error || '存檔失敗' };
   });
 }

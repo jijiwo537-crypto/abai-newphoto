@@ -134,7 +134,8 @@ export async function shareFiles(files: File[]): Promise<ShareResult> {
   // 網頁版永遠不會進到這個 if 裡面。
   if (isNative()) {
     const saved = await saveToPhotos(files);
-    if (saved === 'saved') return 'downloaded';
+    if (saved?.status === 'saved') return 'downloaded';
+    if (saved) return 'failed';
     return nativeShare(files);
   }
   if (canShareFiles(files)) {

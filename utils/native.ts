@@ -51,6 +51,12 @@ export async function setupNativeShell(): Promise<void> {
     installNativeFilePicker();
     prepareHaptics();
     void watchNativeMemoryBudget();
+    /* 測試期的保險：這版 App 沒有包到原生外掛的話（打包時漏了步驟），直接講清楚，
+       不要默默退回網頁的選照片和存檔，讓人以為是 bug */
+    const { nativePlugin } = await import('./nativeBridge');
+    if (!(await nativePlugin('NativePhotos'))) {
+      setTimeout(() => alert('這個版本沒有包到 ABAI 的原生功能（系統相簿、直接存相簿等）。\n請在 Mac 上執行 ios/prepare-device.sh 重新打包後再裝一次。'), 1500);
+    }
   } catch { /* 舊版 App 沒有這些外掛：照網頁的方式跑 */ }
   try {
     const { StatusBar, Style } = await import('@capacitor/status-bar');

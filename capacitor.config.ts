@@ -19,6 +19,11 @@ const config: CapacitorConfig = {
     /* 網頁還沒畫出來、以及橡皮筋回彈時露出來的底色。跟 App 的黑底一致，
        不設的話會閃一下白色，很像當掉。 */
     backgroundColor: '#000000',
+    /* 整個 WebView 不跟著手指回彈、不能整頁捲動：版面本來就是固定一頁，
+       需要捲動的地方（首頁清單、面板）都是自己的捲動區塊。這樣才不會一拉就露出網頁感 */
+    scrollEnabled: false,
+    /* 長按圖片、連結不跳出 Safari 的預覽卡片 */
+    allowsLinkPreview: false,
   },
 
   plugins: {
