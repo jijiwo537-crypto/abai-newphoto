@@ -66,6 +66,8 @@ import type { ExitChoice } from './types';
 import { watchAppUpdates } from './utils/appUpdate';
 import { detectUnexpectedExit, markToolActive, markToolInactive } from './utils/crashRecovery';
 import { trimMemory, watchMemoryPressure } from './utils/memoryPressure';
+import { isNative } from './utils/native';
+import { MOBILE_MAX_PIXELS } from './utils/exportLimits';
 
 const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
   layout: '跨頁拼圖',
@@ -716,7 +718,9 @@ const App: React.FC = () => {
         const file=e.target.files?.[0];e.target.value='';if(!file)return;
         setIsImporting(true);setImportPreviewUrl(null);
         try {
-          setArtImage(await processImageFile(file,u=>setImportPreviewUrl(u)));
+          /* App 裡大照片先在原生端縮到藝術效果的工作尺寸，網頁不必解開整張原圖 */
+          const capped=isNative()?await import('./utils/nativeImage').then(m=>m.nativeImportCapped(file,MOBILE_MAX_PIXELS)).catch(()=>null):null;
+          setArtImage(capped??await processImageFile(file,u=>setImportPreviewUrl(u)));
           setCurrentView('art');
         } catch { alert('無法處理此圖片格式'); }
         finally { setIsImporting(false);setImportPreviewUrl(null); }

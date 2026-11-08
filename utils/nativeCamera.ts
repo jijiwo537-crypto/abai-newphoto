@@ -5,13 +5,14 @@ import { nativeImage } from './nativeImage';
 
 export interface NativeCameraApi {
   available(): Promise<{ available: boolean; proRAW: boolean }>;
-  start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; lut?: string; amount?: number; proRAW?: boolean }): Promise<{ proRAW: boolean; maxWidth: number; maxHeight: number }>;
+  start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; lut?: string; amount?: number; proRAW?: boolean }): Promise<{ proRAW: boolean; maxWidth: number; maxHeight: number; flash?: boolean; screenFlash?: boolean }>;
   stop(): Promise<void>;
   setRect(o: { x: number; y: number; w: number; h: number }): Promise<void>;
   capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean }): Promise<{ path: string; width: number; height: number; rawPath?: string }>;
   setZoom(o: { uiZoom?: number; factor?: number }): Promise<{ factor: number }>;
   focus(o: { x: number; y: number }): Promise<void>;
   setExposureBias(o: { ev: number }): Promise<void>;
+  setWhiteBalance(o: { kelvin?: number; auto?: boolean }): Promise<void>;
   setLut(o: { lut: string; amount?: number }): Promise<void>;
   addListener(event: 'shutter' | 'zoom', cb: (data: any) => void): Promise<{ remove: () => void }>;
 }

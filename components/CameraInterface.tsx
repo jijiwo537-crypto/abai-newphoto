@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { isNative } from '../utils/native';
 import { nativeCamera, captureNative, lutFileName } from '../utils/nativeCamera';
+import { haptic, dialHaptic } from '../utils/haptics';
 import { nativePhotos } from '../utils/nativePhotos';
 import { punchThrough } from '../utils/nativePreview';
 import { Icon } from './Icon';
@@ -278,12 +279,34 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      觀景窗由原生畫、即時套濾鏡；即時特效在這個模式不套用。 */
   const [proAvailable, setProAvailable] = useState(false);
   const [proRawSupported, setProRawSupported] = useState(false);
-  const [proMode, setProMode] = useState(false);
+  /* App 裡預設就用原生相機（真正的閃光燈、真正的拍照、全解析度）。
+     即時特效只有網頁的觀景窗畫得出來：打開特效時自動換成網頁相機，關掉特效就換回來。 */
+  const [proPreferred, setProPreferred] = useState(true);
+  const proMode = proAvailable && proPreferred && !fxOn;
+  const setProMode = (f: (v: boolean) => boolean) => setProPreferred(v => f(v));
   const [proRaw, setProRaw] = useState(false);
   const proModeRef = useRef(false); proModeRef.current = proMode;
+  /* App 裡先確定有沒有原生相機，再決定要不要開網頁相機：不然一進來會先開網頁相機、馬上又換掉，畫面閃一下 */
+  const [proProbed, setProProbed] = useState(() => !isNative());
+  /** 原生相機開起來後回報的：這顆鏡頭有沒有閃光燈（前鏡頭是螢幕補光） */
+  const [nativeFlash, setNativeFlash] = useState(false);
+  const proProbedRef = useRef(proProbed); proProbedRef.current = proProbed;
+  /* 開了特效、原生相機暫時換成即時預覽相機時，講一聲（閃光燈這時改成持續補光） */
+  const fxSwitchRef = useRef(false);
+  useEffect(() => {
+    const switched = proAvailable && proPreferred && fxOn;
+    if (switched && !fxSwitchRef.current) setCaptureNotice('特效使用即時預覽相機，關掉特效就換回原生相機');
+    fxSwitchRef.current = switched;
+  }, [proAvailable, proPreferred, fxOn]);
   useEffect(() => {
     if (!isNative()) return;
-    void nativeCamera().then(c => c?.available().then(r => { setProAvailable(!!r.available); setProRawSupported(!!r.proRAW); })).catch(() => {});
+    let done = false;
+    const finish = () => { if (!done) { done = true; setProProbed(true); } };
+    const t = setTimeout(finish, 2500);
+    void nativeCamera()
+      .then(c => c ? c.available().then(r => { setProAvailable(!!r.available); setProRawSupported(!!r.proRAW); }) : undefined)
+      .catch(() => {})
+      .finally(() => { clearTimeout(t); finish(); });
   }, []);
   
   // 預設比例 3:2
@@ -416,7 +439,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         streamRef.current.getTracks().forEach(track => track.stop());
       }
       // 專業模式由原生相機接手，網頁這邊不開串流（同一時間只能有一方用相機）
-      if (proModeRef.current) { streamRef.current = null; return; }
+      if (proModeRef.current || !proProbedRef.current) { streamRef.current = null; return; }
       
       try {
         const constraints: MediaStreamConstraints = {
@@ -519,7 +542,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [facingMode, videoEl, proMode]);
+  }, [facingMode, videoEl, proMode, proProbed]);
 
   /* ---------- 閃光燈 ----------
      網頁連拍管線只使用不會暫停串流的 torch 約束。ImageCapture.takePhoto
@@ -528,7 +551,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /* 注意是比對「值」不是「有沒有這個鍵」：部分裝置會列出 torch 但值是 false，
      只看鍵存不存在的話會誤判成有閃光燈，按下去卻什麼都不會發生。 */
   const hasTorch = (capabilities as any)?.torch === true;
-  const flashAvailable = hasTorch;
+  /* 原生相機：後鏡頭是真的閃光燈（拍的那一下才閃，會先預閃測光），前鏡頭是螢幕補光 */
+  const flashAvailable = proMode ? nativeFlash : hasTorch;
 
   /* 沒有閃光燈的鏡頭就把開關關掉，不然按鈕亮著卻不會亮燈 */
   useEffect(() => { if (!flashAvailable && flashOn) setFlashOn(false); }, [flashAvailable, flashOn]);
@@ -619,17 +643,20 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     }
   };
 
-  /** 相機刻度保持安靜；只去重狀態更新，避免拖動時重複渲染同一格。 */
+  /** 刻度轉盤：同一格只算一次。App 裡每一格都有段落感（網頁版保持安靜）：
+   *  曝光每 0.1 EV 一下、整數 EV 和 0 明顯一點；白平衡每 100K 一下、整千和預設 5500K 明顯一點；到頭是擋塊 */
   const triggerCameraTick = useCallback((control: 'kelvin' | 'exposure', index: number) => {
     const key = `${control}:${index}`;
     if (lastCameraTickRef.current === key) return;
     lastCameraTickRef.current = key;
+    if (control === 'exposure') dialHaptic(index, 21, index % 10 === 0);
+    else { const k = 2500 + index * 100; dialHaptic(index, 66, k % 1000 === 0 || k === 5500); }
   }, []);
 
   /** 目前鏡頭的等效焦段（小框構圖的焦段＝這個 × 框的倍率） */
   const lensMm = parseInt(ZOOM_STEPS.find(z => z.label === settings.focalLength)?.mm || '24', 10) || 24;
   const handleZoomClick = (val: string) => {
-    triggerHaptic();
+    haptic('detentMajor');
     if (proModeRef.current) void nativeCamera().then(c => c?.setZoom({ uiZoom: parseFloat(val) || 1 }));
     setSettings(prev => ({ ...prev, focalLength: val }));
     const mm = parseInt(ZOOM_STEPS.find(z => z.label === val)?.mm || '', 10);
@@ -949,8 +976,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       if (!cam || !el || !alive) return;
       const rect = () => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; };
       try {
-        await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: 1, proRAW: true });
-      } catch { if (alive) { setProMode(false); setCaptureNotice('專業模式無法啟動，已換回一般相機'); } return; }
+        const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: 1, proRAW: true });
+        if (alive) setNativeFlash(!!info?.flash);
+        /* 開起來就把目前的曝光、白平衡套上去 */
+        void cam.setExposureBias({ ev: parseFloat(nativeParamsRef.current.exposure) || 0 }).catch(() => {});
+        void cam.setWhiteBalance(nativeParamsRef.current.kelvin === 5500 ? { auto: true } : { kelvin: nativeParamsRef.current.kelvin }).catch(() => {});
+      } catch { if (alive) { setProPreferred(false); setCaptureNotice('原生相機無法啟動，已換成一般相機'); } return; }
       if (!alive) { void cam.stop(); return; }
       restore = punchThrough(el, canvas ? [canvas] : []);
       ro = new ResizeObserver(() => { void cam.setRect(rect()).catch(() => {}); });
@@ -963,6 +994,15 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proMode, facingMode, editingPhoto]);
+  /* 原生相機：曝光、白平衡直接調鏡頭本身（拍出來的照片就是這樣，不是事後調亮） */
+  const nativeParamsRef = useRef({ exposure: settings.exposure, kelvin: settings.kelvin });
+  nativeParamsRef.current = { exposure: settings.exposure, kelvin: settings.kelvin };
+  useEffect(() => {
+    if (proMode) void nativeCamera().then(c => c?.setExposureBias({ ev: parseFloat(settings.exposure) || 0 })).catch(() => {});
+  }, [proMode, settings.exposure]);
+  useEffect(() => {
+    if (proMode) void nativeCamera().then(c => c?.setWhiteBalance(settings.kelvin === 5500 ? { auto: true } : { kelvin: settings.kelvin })).catch(() => {});
+  }, [proMode, settings.kelvin]);
   useEffect(() => {
     if (proMode) void nativeCamera().then(c => c?.setLut({ lut: lutFileName(lutList[selectedLutIdx]?.url), amount: 1 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1201,7 +1241,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             onPointerCancel={onFramePointerEnd}
           >
             {/* 返回鍵屬於相機畫面本身，和右上角的更多按鈕平行對稱。 */}
-            {!showGallery && !editingPhoto && activeControl !== 'filters' && activeControl !== 'effects' && (
+            {/* 濾鏡列打開時也留著：選濾鏡時一樣要能直接回主頁 */}
+            {!showGallery && !editingPhoto && activeControl !== 'effects' && (
               <div className="absolute top-1 left-2 z-50">
                 <button
                   aria-label="返回主頁"
@@ -1433,7 +1474,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 onClick={() => setFlashOn(!flashOn)}
               >
                   <Icon name="bolt" className="text-[25px]" fill={flashOn} />
-                  <span aria-hidden className={`absolute bottom-[5px] left-1/2 -ml-[2px] w-1 h-1 rounded-full bg-white transition-[opacity,transform] duration-300 ${flashOn && flashAvailable ? 'opacity-100 scale-100' : 'opacity-0 scale-0'}`} />
               </button>
 
               <button aria-label="開啟特效" onClick={() => setActiveControl('effects')} className="relative p-3 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] shrink-0 text-white/90">
@@ -1452,7 +1492,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                  {lutList.map((lut, idx) => (
                    <button
                     key={lut.id}
-                    onClick={() => { triggerHaptic(); setSelectedLutIdx(idx); }}
+                    onClick={() => { haptic('tick'); setSelectedLutIdx(idx); }}
                     className={`shrink-0 h-8 px-3.5 rounded-full text-[12px] font-medium whitespace-nowrap ring-1 ring-inset transition-[background-color,color,transform] duration-200 active:scale-95 ${selectedLutIdx === idx ? 'bg-white text-black ring-white' : 'bg-white/[0.07] text-white/70 ring-white/10'}`}
                    >
                      {lut.url ? lut.name : '原始'}
@@ -1563,6 +1603,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 /* 拍照那一下主執行緒會忙一陣子（讀畫面、編碼）。按鈕的縮放動畫交給合成器跑（Web Animations），
                    真正開始拍再晚兩格，讓動畫先開始 —— 主執行緒忙的時候動畫照樣順 */
                 if (!shutterAnimRef.current) shutterPress(true, true);
+                if (countdown === null) haptic('shutter');
                 requestAnimationFrame(() => requestAnimationFrame(handleShutterClick));
               }}
             >

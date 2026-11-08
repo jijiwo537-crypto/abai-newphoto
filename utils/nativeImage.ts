@@ -1,6 +1,6 @@
 /* 原生影像核心的網頁端（對應 ios/App/App/NativeImagePlugin.swift）。
  * 網頁版每一支都回 null／什麼都不做，呼叫端照原本的網頁流程走。 */
-import { nativePlugin, fileSrc } from './nativeBridge';
+import { nativePlugin, fileSrc, nativePathOf } from './nativeBridge';
 import { setImageBudget } from './memoryBudget';
 
 interface NativeImageApi {
@@ -30,6 +30,21 @@ export async function nativeImageSize(path: string): Promise<{ width: number; he
   const p = await nativeImage();
   if (!p) return null;
   try { return await p.info({ path }); } catch { return null; }
+}
+
+/** 匯入給「工作尺寸有上限」的工具（例如藝術效果最多 1600 萬像素）：
+ *  從相簿選來、超過上限的照片在原生端解碼時就縮好，WebKit 不必先把整張 4800 萬像素解開
+ *  （光那一下就要約 200MB，前面編輯過很多東西時，網頁會因此被系統收掉，看起來就是閃退）。
+ *  工具本來就會縮到同一個尺寸，所以成品一樣。回傳 null＝不需要／做不到，照原本的方式讀。 */
+export async function nativeImportCapped(file: Blob, maxPixels: number): Promise<string | null> {
+  const path = nativePathOf(file);
+  if (!path) return null;
+  const size = await nativeImageSize(path);
+  if (!size || !size.width || !size.height || size.width * size.height <= maxPixels * 1.02) return null;
+  const long = Math.max(size.width, size.height), short = Math.min(size.width, size.height);
+  const maxLong = Math.floor(Math.sqrt(maxPixels * long / short));
+  const r = await nativeDownsample(path, maxLong);
+  return r?.url ?? null;
 }
 
 /** 存檔這類「做到一半不能停」的事：切到背景時系統再多給一點時間 */

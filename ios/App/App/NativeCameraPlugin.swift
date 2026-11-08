@@ -39,6 +39,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         CAPPluginMethod(name: "setZoom", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "focus", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setExposureBias", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setWhiteBalance", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setLut", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setRect", returnType: CAPPluginReturnPromise),
     ]
@@ -96,8 +97,12 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                     do {
                         try self.configure()
                         if !self.session.isRunning { self.session.startRunning() }
+                        /* 後鏡頭：真的閃光燈；前鏡頭：螢幕補光（跟內建相機一樣把整個螢幕打亮） */
+                        let ledFlash = self.photoOutput.supportedFlashModes.contains(.on)
                         call.resolve(["proRAW": self.photoOutput.isAppleProRAWEnabled,
-                                      "maxWidth": self.maxDimensions.width, "maxHeight": self.maxDimensions.height])
+                                      "maxWidth": self.maxDimensions.width, "maxHeight": self.maxDimensions.height,
+                                      "flash": ledFlash || self.position == .front,
+                                      "screenFlash": !ledFlash && self.position == .front])
                     } catch { call.reject(error.localizedDescription) }
                 }
             }
@@ -210,7 +215,13 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     @objc func capture(_ call: CAPPluginCall) {
         sessionQueue.async {
             guard self.pendingCapture == nil else { call.reject("上一張還在處理"); return }
-            let wantRaw = (call.getBool("raw") ?? false) && self.photoOutput.isAppleProRAWEnabled
+            /* 相機還沒開好（或剛關掉）就按快門：capturePhoto 會丟例外讓 App 閃退，先擋下來 */
+            guard self.session.isRunning, let conn = self.photoOutput.connection(with: .video), conn.isEnabled, conn.isActive else {
+                call.reject("相機還沒準備好"); return
+            }
+            /* 開閃光燈時不拍 RAW：RAW 不一定支援閃光燈，混在一起設定會讓系統丟例外 */
+            let flashWanted = (call.getString("flash") ?? "off") != "off"
+            let wantRaw = (call.getBool("raw") ?? false) && self.photoOutput.isAppleProRAWEnabled && !flashWanted
             let hevc = self.photoOutput.availablePhotoCodecTypes.contains(.hevc)
             let processed: [String: Any] = [AVVideoCodecKey: hevc ? AVVideoCodecType.hevc : AVVideoCodecType.jpeg]
             let settings: AVCapturePhotoSettings
@@ -228,7 +239,42 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             }
             self.captured = [:]
             self.pendingCapture = call
-            self.photoOutput.capturePhoto(with: settings, delegate: self)
+            let wantFlash = (call.getString("flash") ?? "off") == "on"
+            if wantFlash && settings.flashMode == .off && self.position == .front {
+                /* 前鏡頭沒有閃光燈：螢幕整片打白、亮度拉滿，等一下下讓測光跟上，再拍 */
+                DispatchQueue.main.async {
+                    self.beginScreenFlash()
+                    self.sessionQueue.asyncAfter(deadline: .now() + 0.28) {
+                        self.photoOutput.capturePhoto(with: settings, delegate: self)
+                    }
+                }
+            } else {
+                self.photoOutput.capturePhoto(with: settings, delegate: self)
+            }
+        }
+    }
+
+    private var flashView: UIView?
+    private var savedBrightness: CGFloat?
+
+    private func beginScreenFlash() {
+        guard flashView == nil, let window = bridge?.webView?.window else { return }
+        let v = UIView(frame: window.bounds)
+        v.backgroundColor = UIColor(red: 1, green: 0.97, blue: 0.92, alpha: 1)   // 偏暖一點的白，膚色比較好看
+        v.isUserInteractionEnabled = false
+        window.addSubview(v)
+        flashView = v
+        savedBrightness = UIScreen.main.brightness
+        UIScreen.main.brightness = 1
+    }
+
+    private func endScreenFlash() {
+        DispatchQueue.main.async {
+            guard let v = self.flashView else { return }
+            self.flashView = nil
+            if let b = self.savedBrightness { UIScreen.main.brightness = b }
+            self.savedBrightness = nil
+            UIView.animate(withDuration: 0.18, animations: { v.alpha = 0 }, completion: { _ in v.removeFromSuperview() })
         }
     }
 
@@ -247,6 +293,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     public func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
         let call = pendingCapture
         pendingCapture = nil
+        endScreenFlash()
         if let e = error { call?.reject(e.localizedDescription); return }
         if captured["path"] == nil, let raw = captured["rawPath"] { captured["path"] = raw }
         call?.resolve(captured)
@@ -274,8 +321,9 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             guard let d = self.device, (try? d.lockForConfiguration()) != nil else { call.resolve(); return }
             /* 感光元件的座標是橫的：直拿時畫面的 (x, y) 對應到 (y, 1 - x) */
             let p = CGPoint(x: y, y: self.position == .front ? x : 1 - x)
-            if d.isFocusPointOfInterestSupported { d.focusPointOfInterest = p; d.focusMode = .autoFocus }
-            if d.isExposurePointOfInterestSupported { d.exposurePointOfInterest = p; d.exposureMode = .autoExpose }
+            /* 每一項都先確認這顆鏡頭支援，不支援的設定會讓系統丟例外 */
+            if d.isFocusPointOfInterestSupported && d.isFocusModeSupported(.autoFocus) { d.focusPointOfInterest = p; d.focusMode = .autoFocus }
+            if d.isExposurePointOfInterestSupported && d.isExposureModeSupported(.autoExpose) { d.exposurePointOfInterest = p; d.exposureMode = .autoExpose }
             d.isSubjectAreaChangeMonitoringEnabled = true
             d.unlockForConfiguration()
             call.resolve()
@@ -288,6 +336,25 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             guard let d = self.device, (try? d.lockForConfiguration()) != nil else { call.resolve(); return }
             d.setExposureTargetBias(max(d.minExposureTargetBias, min(d.maxExposureTargetBias, ev)), completionHandler: nil)
             d.unlockForConfiguration()
+            call.resolve()
+        }
+    }
+
+    /// kelvin：色溫（2500～9000）；auto＝true 或沒給就交回自動白平衡
+    @objc func setWhiteBalance(_ call: CAPPluginCall) {
+        let auto = call.getBool("auto") ?? (call.getDouble("kelvin") == nil)
+        let kelvin = Float(call.getDouble("kelvin") ?? 5500)
+        sessionQueue.async {
+            guard let d = self.device, (try? d.lockForConfiguration()) != nil else { call.resolve(); return }
+            defer { d.unlockForConfiguration() }
+            if auto || !d.isLockingWhiteBalanceWithCustomDeviceGainsSupported {
+                if d.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) { d.whiteBalanceMode = .continuousAutoWhiteBalance }
+                call.resolve(); return
+            }
+            var g = d.deviceWhiteBalanceGains(for: AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: kelvin, tint: 0))
+            let maxG = d.maxWhiteBalanceGain
+            g.redGain = max(1, min(maxG, g.redGain)); g.greenGain = max(1, min(maxG, g.greenGain)); g.blueGain = max(1, min(maxG, g.blueGain))
+            d.setWhiteBalanceModeLocked(with: g, completionHandler: nil)
             call.resolve()
         }
     }

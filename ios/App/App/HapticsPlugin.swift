@@ -20,16 +20,18 @@ public class HapticsPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "impact", returnType: CAPPluginReturnNone),
         CAPPluginMethod(name: "notify", returnType: CAPPluginReturnNone),
         CAPPluginMethod(name: "prepare", returnType: CAPPluginReturnNone),
+        CAPPluginMethod(name: "shutter", returnType: CAPPluginReturnNone),
     ]
 
     private lazy var selectionGen = UISelectionFeedbackGenerator()
     private lazy var light = UIImpactFeedbackGenerator(style: .light)
     private lazy var medium = UIImpactFeedbackGenerator(style: .medium)
     private lazy var rigid = UIImpactFeedbackGenerator(style: .rigid)
+    private lazy var soft = UIImpactFeedbackGenerator(style: .soft)
     private lazy var notifier = UINotificationFeedbackGenerator()
 
     @objc func prepare(_ call: CAPPluginCall) {
-        DispatchQueue.main.async { self.selectionGen.prepare(); self.light.prepare(); self.rigid.prepare() }
+        DispatchQueue.main.async { self.selectionGen.prepare(); self.light.prepare(); self.rigid.prepare(); self.soft.prepare() }
     }
 
     /// 刻度感：滑桿經過 0、切換選項
@@ -42,9 +44,21 @@ public class HapticsPlugin: CAPPlugin, CAPBridgedPlugin {
         let style = call.getString("style") ?? "light"
         let intensity = CGFloat(call.getDouble("intensity") ?? 1)
         DispatchQueue.main.async {
-            let g: UIImpactFeedbackGenerator = style == "rigid" ? self.rigid : (style == "medium" ? self.medium : self.light)
+            let g: UIImpactFeedbackGenerator = style == "rigid" ? self.rigid : style == "medium" ? self.medium : style == "soft" ? self.soft : self.light
             g.impactOccurred(intensity: intensity)
             g.prepare()
+        }
+    }
+
+    /// 快門：先一下俐落的「喀」（快門簾落下），55ms 後一下很輕的回彈 —— 像機械快門，而不是一般的按鈕震動
+    @objc func shutter(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.rigid.impactOccurred(intensity: 0.95)
+            self.rigid.prepare()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.055) {
+                self.soft.impactOccurred(intensity: 0.45)
+                self.soft.prepare()
+            }
         }
     }
 

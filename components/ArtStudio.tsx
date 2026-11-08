@@ -1,5 +1,5 @@
 import {LiveRange} from './LiveRange';
-import {isHomeScreenWebApp} from '../utils/native';
+import {isHomeScreenWebApp,isNative} from '../utils/native';
 import { safeImage, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
 import {TransformWrapper,TransformComponent} from 'react-zoom-pan-pinch';
 import React,{useState,useRef,useEffect,useLayoutEffect,useCallback} from 'react';
@@ -209,7 +209,7 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
     {section==='細節'&&tracking.materials.length>0&&<><div className="art-detail-ranges">{tracking.materials.includes('mosaic')&&tr('馬賽克','pixels',2,60)}{tracking.materials.includes('glass')&&tr('霧化','blur',0,60)}</div>{tt('框線','zoneStroke')}</>}
    </>}
   </div></section>
-  <input hidden ref={input} type="file" accept="image/*" onChange={async e=>{const f=e.target.files?.[0];e.target.value='';if(!f)return;const revision=++importRevision.current;setBusy(true);setReady(false);setError('');setCompare(false);try{const next=await processImageFile(f);if(revision===importRevision.current){setSrc(next);setSourceRevision(revision);setTracking(s=>({...s,zones:[]}));}}catch(err){if(revision===importRevision.current)setError(String(err));}finally{if(revision===importRevision.current)setBusy(false);}}}/>
+  <input hidden ref={input} type="file" accept="image/*" onChange={async e=>{const f=e.target.files?.[0];e.target.value='';if(!f)return;const revision=++importRevision.current;setBusy(true);setReady(false);setError('');setCompare(false);try{const next=(isNative()?await import('../utils/nativeImage').then(m=>m.nativeImportCapped(f,MOBILE_MAX_PIXELS)).catch(()=>null):null)??await processImageFile(f);if(revision===importRevision.current){setSrc(next);setSourceRevision(revision);setTracking(s=>({...s,zones:[]}));}}catch(err){if(revision===importRevision.current)setError(String(err));}finally{if(revision===importRevision.current)setBusy(false);}}}/>
   {exportFile&&<div data-export-screen className="art-export" role="dialog" aria-modal="true" aria-label="儲存預覽"><ExportActionLift/><header><button aria-label="返回主頁" onClick={onClose}><ChevronLeft size={22}/></button></header><div data-export-media className="art-export-image">{exportUrl&&<img className="allow-callout" src={exportPreview||exportUrl} alt="匯出預覽"/>}</div><footer data-export-actions>{exportUrl&&<SaveButton urls={[exportUrl]}/>}<div><button onClick={()=>setExportFile(null)}>繼續編輯</button><button onClick={()=>{setExportFile(null);input.current?.click();}}>修下一張</button></div></footer></div>}
   {error&&<div role="alert" className="art-error" onClick={()=>setError('')}>{error}</div>}
  </div>;

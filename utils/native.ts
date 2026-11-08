@@ -64,7 +64,7 @@ export async function setupNativeShell(): Promise<void> {
         configurable: true,
         value: (pattern: number | number[]) => {
           const ms = Array.isArray(pattern) ? Math.max(0, ...pattern) : pattern;
-          if (ms > 0) haptic(ms >= 30 ? 'snap' : 'tick');
+          if (ms > 0) haptic(ms >= 30 ? 'snap' : 'press');
           return true;
         },
       });
