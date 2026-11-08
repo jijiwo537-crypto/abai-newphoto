@@ -14,6 +14,10 @@ on:
         description: '上傳到 TestFlight'
         type: boolean
         default: false
+      scenarios:
+        description: '模擬器自動測試要跑哪些情境（空白＝全部）'
+        type: string
+        default: ''
   push:
     branches: [main]
     paths:
@@ -85,11 +89,10 @@ jobs:
               sleep 4; xcrun simctl io "$DEV" screenshot "shots/$tag-$(printf %02d $i).png" >/dev/null 2>&1 || true
             done
           }
-          run_qa save 40
-          run_qa video 60
-          run_qa gallery 32
-          for t in art dot edit beauty match collage layout; do run_qa "tool:$t" 32; done
-          run_qa layoutvideo 120
+          LIST="${{ inputs.scenarios }}"
+          [ -z "$LIST" ] && LIST="save:40 video:60 tool:art:32 tool:dot:32 tool:edit:32 tool:beauty:32 tool:match:32 tool:collage:32 tool:layout:32 layoutvideo:150 gallery:32"
+          # 相簿情境放最後：模擬器會跳系統的權限詢問框，而且框會一直留在畫面上
+          for item in $LIST; do run_qa "${item%:*}" "${item##*:}"; done
           DATA=$(xcrun simctl get_app_container "$DEV" com.abai.photo data 2>/dev/null || true)
           cp "$DATA/Documents/abaiqa.log" shots/qa.log 2>/dev/null || echo "沒有 abaiqa.log" > shots/qa.log
           xcrun simctl spawn "$DEV" log show --style compact --last 40m --predicate 'process == "App"' 2>/dev/null | grep -E "ABAIQA|⚡️|error|Error|JS Eval" | tail -600 > shots/app.log || true
