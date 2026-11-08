@@ -121,7 +121,8 @@ export async function saveToPhotos(files: File[]): Promise<SaveOutcome | null> {
   if (!p || !img) return null;
   return withBackgroundTask('abai-save', async () => {
     let ok = 0, error = '';
-    const single = files.length === 1 ? saveContext : null;
+    /* 一律存成一張新照片（不覆蓋原圖）：使用者要的是「多一張成品」 */
+    const single: SaveContext | null = null;
     if (single?.assetId) {
       try { await p.authorize({ level: 'readWrite' }); } catch { /* 沒給就存成新照片 */ }
     }

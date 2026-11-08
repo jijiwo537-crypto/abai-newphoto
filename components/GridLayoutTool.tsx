@@ -16390,6 +16390,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               也就是主人說的「導出成果的畫面往下了」。
               改成絕對定位之後，轉圈與文字回到「完全沒有這顆鍵」時的位置，
               而這顆鍵在不在、什麼時候出現，都不會讓任何東西位移。 */}
+          {/* 只有匯出影片才有取消鍵；純圖片很快就好，不需要 */}
+          {videoProg !== null && (
           <button
             type="button"
             onClick={(e) => {
@@ -16405,6 +16407,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           >
             取消匯出
           </button>
+          )}
         </div>
       )}
 

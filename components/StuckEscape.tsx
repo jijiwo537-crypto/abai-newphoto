@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 
 /** 卡住多久之後才長出那顆出口鍵（毫秒） */
-export const STUCK_MS = 6000;
+/* 真的卡住才出現（正常存圖片都遠低於這個時間），平常不會看到 */
+export const STUCK_MS = 25000;
 
 /**
  * 「正在存檔／正在匯出／處理中」那種蓋滿整個畫面的一層，一定會蓋住返回鍵。

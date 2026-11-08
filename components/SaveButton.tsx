@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { prepareFiles, shareFiles } from '../utils/shareAll';
 import { isNative } from '../utils/native';
 import { saveToPhotos } from '../utils/nativePhotos';
@@ -14,6 +15,8 @@ import { saveToPhotos } from '../utils/nativePhotos';
  */
 /** 已經自動存過的成品（同一份不重複存，例如成品頁重新顯示時） */
 const autoSaved = new Set<string>();
+/** 自動存檔已經結束（成功或失敗）的成品：成品頁不再蓋著 */
+const autoDone = new Set<string>();
 export const SaveButton: React.FC<{
   urls: string[];
   className?: string;
@@ -23,6 +26,7 @@ export const SaveButton: React.FC<{
   const [files, setFiles] = useState<File[]>([]);
   /* App 裡直接存進相簿：按下去顯示「儲存中…」，存好變成「已存到相簿」，失敗就說原因 */
   const [phase, setPhase] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [, setTick] = useState(0);
   const key = urls.join('|');
   useEffect(() => { setPhase('idle'); }, [key]);
   const save = async () => {
@@ -51,7 +55,10 @@ export const SaveButton: React.FC<{
   useEffect(() => {
     if (!isNative() || !files.length || autoSaved.has(key)) return;
     autoSaved.add(key);
-    void save();
+    const uncover = () => { autoDone.add(key); setTick(t => t + 1); };
+    /* 保險：存檔 30 秒都沒回來就先掀開，不讓畫面一直蓋著 */
+    const t = setTimeout(uncover, 30000);
+    void save().finally(() => { clearTimeout(t); uncover(); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files, key]);
 
@@ -63,7 +70,15 @@ export const SaveButton: React.FC<{
       : (videos ? '儲存影片' : '儲存圖片')
   );
 
+  /* App：成品頁先被一層跟匯出時一樣的黑色轉圈蓋住，存進相簿完成的那一刻才掀開 ——
+     「看到成品頁」和「照片真的存好＋震動」是同一個瞬間 */
+  const covering = isNative() && !autoDone.has(key) && urls.length > 0;
   return (
+    <>
+    {covering && createPortal(
+      <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center" aria-label="儲存中">
+        <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
+      </div>, document.body)}
     <button
       onClick={(e) => { e.stopPropagation(); if (ready) void save(); }}
       disabled={!ready || phase === 'saving'}
@@ -71,5 +86,6 @@ export const SaveButton: React.FC<{
     >
       {!ready ? (isNative() ? '儲存中…' : '準備中…') : phase === 'saving' ? '儲存中…' : phase === 'saved' ? '✓ 已存到相簿' : text}
     </button>
+    </>
   );
 };
