@@ -3172,7 +3172,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => {
     if (initialFile) {
       const e = { target: { files: [initialFile, ...(initialExtras || [])] } } as any;
-      handleImageUpload(e);
+      /* 照片還在準備（解碼、做合適的解析度）時，接著主頁的導入畫面一樣顯示純黑底＋圓環，
+         照片畫上去之後才收掉 —— 不會先露出一片黑的空舞台 */
+      setImportBusy(true);
+      void Promise.resolve(handleImageUpload(e)).catch(() => {}).finally(() => {
+        requestAnimationFrame(() => requestAnimationFrame(() => setImportBusy(false)));
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialFile]);
@@ -3187,6 +3192,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const baseVidRef = useRef<HTMLVideoElement | null>(null);
 
   const addMediaFilesRef = useRef<(files: File[]) => void>(() => {});
+  const [importBusy, setImportBusy] = useState(false);
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     /* 先把元素抓起來再 await —— 這支現在是非同步的，等解碼回來之後
        才去碰 e.target 會依賴「事件物件還活著」。React 19 不回收事件所以
@@ -10413,6 +10419,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   return (
     <div onPointerDownCapture={()=>deferHeavyWork(600)} onClickCapture={()=>deferHeavyWork(600)} className="safe-top flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
+      {importBusy && createPortal(
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black" data-creative-import-loading="1">
+          <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" role="status" aria-label="載入中" />
+        </div>, document.body)}
       {regionSwapPhoto && createPortal(<canvas ref={regionThumbRef} data-creative-swap-thumbnail="1"
         className="fixed pointer-events-none z-[9999] border-2 border-white rounded-[8px]"
         style={{ left: 0, top: 0, width: 80, height: 80, boxShadow: '0 4px 14px rgba(0,0,0,.34)' }} />,document.body)}

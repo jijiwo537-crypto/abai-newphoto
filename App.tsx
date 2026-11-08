@@ -76,14 +76,10 @@ const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
 };
 
 /** 匯入、開啟歷史作品與儲存草稿共用同一顆載入動畫，避免各處長得只「很像」。 */
-const AppLoadingSpinner: React.FC = () => (
-  <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin shadow-[0_0_15px_rgba(255,255,255,0.5)]" aria-label="載入中" />
-);
+/* 導入照片時的載入畫面：純黑底、一個細圓環，跟存檔、草稿的載入同一款。
+   不加光暈、不放閃爍的文字，也不透出後面的主頁。 */
 const AppLoadingIndicator: React.FC = () => (
-  <div className="flex flex-col items-center gap-4 text-white">
-    <AppLoadingSpinner />
-    <p className="text-sm font-black tracking-[0.2em] uppercase animate-pulse drop-shadow-md">載入中...</p>
-  </div>
+  <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" role="status" aria-label="載入中" />
 );
 
 /** 與從歷史紀錄進入編輯器時完全相同的暗色載入圓環與文字規格。 */
@@ -580,11 +576,8 @@ const App: React.FC = () => {
     <div className="abai-shell">
      <div className="abai-frame">
       {isImporting && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
-          {importPreviewUrl && (
-             <img src={importPreviewUrl} alt="Preview" className="absolute inset-0 w-full h-full object-contain opacity-30 blur-sm mix-blend-screen" />
-          )}
-          <div className="relative z-10"><AppLoadingIndicator /></div>
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black">
+          <AppLoadingIndicator />
         </div>
       )}
 

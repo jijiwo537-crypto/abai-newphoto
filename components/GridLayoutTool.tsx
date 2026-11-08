@@ -12637,14 +12637,30 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       initialPlacedRef.current = true;
       const filesToLoad = initialFiles.slice(0, 25);
       const loadInitial = async () => {
-        const fImgs: FloatingImage[] = [];
+        /* 每張要先讀尺寸、做預覽用的小副本（見 utils/previewCopies：畫面上不用原圖，存檔照樣用原圖）。
+           同時做兩張（記憶體尖峰只多一張原圖），而且做好一張就照順序先放上畫面 ——
+           第一張馬上出現，不必等全部做完才一次冒出來。 */
+        const prepared = filesToLoad.map(f => ({ f, url: URL.createObjectURL(f), video: isVideoFile(f) }));
+        const tasks: Promise<{ width: number; height: number; poster?: string }>[] = new Array(prepared.length);
+        let next = 0;
+        const worker = async () => {
+          while (next < prepared.length) {
+            const i = next++;
+            const it = prepared[i];
+            tasks[i] = (async () => {
+              const dims = it.video ? await getVideoDimensions(it.url) : await getImageDimensions(it.url);
+              if (!it.video) await ensurePreviewCopy(it.url, it.f.type);
+              return dims as any;
+            })();
+            await tasks[i].catch(() => {});
+          }
+        };
+        void Promise.all([worker(), worker()]);
+        const waitFor = async (i: number) => { while (!tasks[i]) await new Promise(r => setTimeout(r, 16)); return tasks[i]; };
         for (let idx = 0; idx < filesToLoad.length; idx++) {
-          const f = filesToLoad[idx];
-          const url = URL.createObjectURL(f);
-          const video = isVideoFile(f);
-          const dims = video ? await getVideoDimensions(url) : await getImageDimensions(url);
-          // 預覽用的小副本（見 utils/previewCopies）：畫面上不用原圖，存檔照樣用原圖
-          if (!video) await ensurePreviewCopy(url, f.type);
+          const { url, video } = prepared[idx];
+          let dims: { width: number; height: number; poster?: string };
+          try { dims = await waitFor(idx); } catch { continue; }
 
           const aspect = dims.width / dims.height;
 
@@ -12705,7 +12721,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             y = Math.max(minY, Math.min(y, maxY));
           }
 
-          fImgs.push({
+          const placed: FloatingImage = {
             id: Math.random().toString(36).substring(2, 9),
             src: url,
             x,
@@ -12715,10 +12731,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             scale: 1.0,
             rotation: 0,
             ...(video ? { isVideo: true, poster: (dims as any).poster } : {}),
-          });
+          };
+          setFloatingImages(prev => idx === 0 ? [placed] : [...prev, placed]);
         }
         initialLoadingRef.current = false;
-        setFloatingImages(fImgs);
       };
       void loadInitial().catch(() => {}).finally(() => { initialLoadingRef.current = false; });
     }

@@ -96,6 +96,14 @@ const opticalKeys = new Set(['soft','softThreshold','softRadius','softColor','fr
    烤好的表和著色器跟 gpuColorChain 一樣；底片強度的混合在著色器裡做，不用 2D 合成 */
 const newSurface=()=>{const c=document.createElement('canvas');preferWebgl2(c);return c;};
 const surfaceGpus=new WeakMap<HTMLCanvasElement,LutGpu|null>();
+/* 每張輸出畫布只配一組 GPU 表面（一個 WebGL context），建了就記下來重複用。
+   顯示卡那條路這一次走不通時也照樣留著：不然下一格又建一個新的，拖滑桿時每一格都多一個
+   context，iOS 的上限（約 16 個）一到，整個分頁就會被系統關掉 */
+function inputRecord(out:HTMLCanvasElement):EffectInput{
+  let r=effectInputs.get(out);
+  if(!r){r={key:'',source:document.createElement('canvas'),surface:newSurface()};effectInputs.set(out,r);}
+  return r;
+}
 let surfacePixels:HTMLCanvasElement|null=null;
 function sourcePixels(source:CanvasImageSource,w:number,h:number,key:string):Uint8ClampedArray|null{
   const hit=srcPxCache.get(key);if(hit)return hit.px;
@@ -730,7 +738,7 @@ export function applyPhotoFx(
   const fxl = fx as any;
   if ((opts?.afterGlow || opts?.sceneColour && !fx.soft && !fx.fringeIntensity) && opts.scene && opts.gpuSurface && opts.cacheSource && !hasActiveFx(fx) && !fxl.fxLowfi
     && ![fx.blur, fx.colorNoise, fx.vignette, fx.leakOpacity].some(Boolean)) {
-    const record: EffectInput = effectInputs.get(out) || { key: '', source: document.createElement('canvas'), surface: newSurface() };
+    const record: EffectInput = inputRecord(out);
     const image = surfaceColourImage(record.surface, source, oW, oH, fx, true);
     const gl = image ? surfaceGl(record.surface) : null;
     if (image && gl) {
@@ -790,7 +798,7 @@ export function applyPhotoFx(
   const residentFilm=opts?.scene&&residentEffects?getLoadedLut(fx.lut):null;
   if(residentFilm&&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)&&toParams(fx).hsl.every(b=>!b.h&&!b.s&&!b.l)){
     const started=import.meta.env.DEV?performance.now():0;
-    const record:EffectInput=retained||{key:'',source:document.createElement('canvas'),surface:newSurface()};
+    const record:EffectInput=retained||inputRecord(out);
     const rawKey=`${srcToken(source)}|${oW}x${oH}`,params={...toParams(fx),lutAmount:100},base=new Uint8Array(256);
     generateBaseCorrectionLut(params.exposure,params.contrast,params.brightness,base);
     const pairKey=JSON.stringify(params)+'|'+srcToken(residentFilm.data);
@@ -804,7 +812,7 @@ export function applyPhotoFx(
   // 色彩階段放在特效畫布自己的 context 裡（見 surfaceColourImage）
   const colourOnly=!getLoadedLut(fx.lut)&&ADJUST_KEYS.every(([k])=>!fx[k]);
   if(residentEffects&&!colourOnly&&!(fx as any).fxLowfi&&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)){
-    const record:EffectInput=retained||{key:'',source:document.createElement('canvas'),surface:newSurface()};
+    const record:EffectInput=retained||inputRecord(out);
     const image=surfaceColourImage(record.surface,source,oW,oH,fx,!!opts?.scene);
     if(image){
       record.key=inputKey;record.viaImage=true;record.colourInput=undefined;record.rawKey=undefined;effectInputs.set(out,record);
@@ -819,7 +827,7 @@ export function applyPhotoFx(
      的結果複製進 2D 畫布（iPhone 上是一次整張讀回）。 */
   if(opts?.gpuSurface&&opts.cacheSource&&!opts.scene&&!colourOnly&&!hasActiveFx(fx)&&!(fx as any).fxLowfi
     &&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)){
-    const record:EffectInput=retained||effectInputs.get(out)||{key:'',source:document.createElement('canvas'),surface:newSurface()};
+    const record:EffectInput=retained||inputRecord(out);
     const image=surfaceColourImage(record.surface,source,oW,oH,fx,false);
     if(image&&presentFxSource(record.source.getContext('2d')!,oW,oH,record.surface,image)){
       record.key='';record.viaImage=true;record.colourInput=undefined;record.rawKey=undefined;effectInputs.set(out,record);
@@ -1103,7 +1111,7 @@ export function applyPhotoFx(
      所以兩邊調同一個特效會得到同一張圖。全部都是 0 就整段跳過。 */
   if (hasActiveFx(fx)) {
     if (residentEffects) {
-      const record = retained || { key: '', source: document.createElement('canvas'), surface: newSurface() };
+      const record = retained || inputRecord(out);
       if (record.source.width !== W) record.source.width = W;
       if (record.source.height !== H) record.source.height = H;
       const input = record.source.getContext('2d')!;
