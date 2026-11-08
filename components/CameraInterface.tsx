@@ -279,11 +279,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      觀景窗由原生畫、即時套濾鏡；即時特效在這個模式不套用。 */
   const [proAvailable, setProAvailable] = useState(false);
   const [proRawSupported, setProRawSupported] = useState(false);
-  /* App 裡預設就用原生相機（真正的閃光燈、真正的拍照、全解析度）。
-     即時特效只有網頁的觀景窗畫得出來：打開特效時自動換成網頁相機，關掉特效就換回來。 */
+  /* App 裡一律用原生相機（真正的閃光燈、真正的拍照）；特效也在原生觀景窗上畫，切換不會重開相機。
+     只有原生相機開不起來時才退回網頁相機。可以另外開的是 RAW。 */
   const [proPreferred, setProPreferred] = useState(true);
-  const proMode = proAvailable && proPreferred && !fxOn;
-  const setProMode = (f: (v: boolean) => boolean) => setProPreferred(v => f(v));
+  const proMode = proAvailable && proPreferred;
   const [proRaw, setProRaw] = useState(false);
   const proModeRef = useRef(false); proModeRef.current = proMode;
   /* App 裡先確定有沒有原生相機，再決定要不要開網頁相機：不然一進來會先開網頁相機、馬上又換掉，畫面閃一下 */
@@ -291,13 +290,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /** 原生相機開起來後回報的：這顆鏡頭有沒有閃光燈（前鏡頭是螢幕補光） */
   const [nativeFlash, setNativeFlash] = useState(false);
   const proProbedRef = useRef(proProbed); proProbedRef.current = proProbed;
-  /* 開了特效、原生相機暫時換成即時預覽相機時，講一聲（閃光燈這時改成持續補光） */
-  const fxSwitchRef = useRef(false);
-  useEffect(() => {
-    const switched = proAvailable && proPreferred && fxOn;
-    if (switched && !fxSwitchRef.current) setCaptureNotice('特效使用即時預覽相機，關掉特效就換回原生相機');
-    fxSwitchRef.current = switched;
-  }, [proAvailable, proPreferred, fxOn]);
+
   useEffect(() => {
     if (!isNative()) return;
     let done = false;
@@ -824,7 +817,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       capturingRef.current = true; setIsCapturing(true); setCaptureNotice('');
       try {
         const o = proOptsRef.current;
-        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, aspect: o.aspect, zoom: frameZoomRef.current });
+        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, aspect: o.aspect, zoom: frameZoomRef.current, fx: nativeFxRef.current });
         if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
         ownedUrlsRef.current.add(r.url);
         setPhotos(prev => [r.url, ...prev]);
@@ -978,6 +971,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       try {
         const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: 1, proRAW: true });
         if (alive) setNativeFlash(!!info?.flash);
+        void cam.setFx(nativeFxRef.current).catch(() => {});
         /* 開起來就把目前的曝光、白平衡套上去 */
         void cam.setExposureBias({ ev: parseFloat(nativeParamsRef.current.exposure) || 0 }).catch(() => {});
         void cam.setWhiteBalance(nativeParamsRef.current.kelvin === 5500 ? { auto: true } : { kelvin: nativeParamsRef.current.kelvin }).catch(() => {});
@@ -994,6 +988,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proMode, facingMode, editingPhoto]);
+  /* 原生相機的即時特效：直接畫在原生觀景窗上 */
+  const nativeFx = { soft: (fx.soft || 0) / 100, blur: (fx.blur || 0) / 100, lowfi: (fx.lowfi || 0) / 100 };
+  const nativeFxRef = useRef(nativeFx); nativeFxRef.current = nativeFx;
+  useEffect(() => {
+    if (proMode) void nativeCamera().then(c => c?.setFx(nativeFxRef.current)).catch(() => {});
+  }, [proMode, fx.soft, fx.blur, fx.lowfi]);
   /* 原生相機：曝光、白平衡直接調鏡頭本身（拍出來的照片就是這樣，不是事後調亮） */
   const nativeParamsRef = useRef({ exposure: settings.exposure, kelvin: settings.kelvin });
   nativeParamsRef.current = { exposure: settings.exposure, kelvin: settings.kelvin };
@@ -1342,18 +1342,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                             </button>
                         </div>
                         {proAvailable && (<>
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
-                                <Icon name="pro_camera" className="text-lg text-white/70" />
-                                <span>專業</span>
-                            </div>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setProMode(v => !v); triggerHaptic(); }}
-                                className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] border border-white/10 ${proMode ? 'bg-white/40' : 'bg-white/10'}`}
-                            >
-                                <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${proMode ? 'translate-x-5' : 'translate-x-0'}`} />
-                            </button>
-                        </div>
                         {proMode && proRawSupported && (
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">

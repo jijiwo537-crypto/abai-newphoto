@@ -56,23 +56,40 @@ export function requestThumb(id: string, done: (url: string) => void): () => voi
   };
 }
 
+/* 一次送一小批、最多三批同時在跑：一批裡有張要從 iCloud 下載，也不會卡住其他格子 */
+let inflight = 0;
+const retried = new Set<string>();
 async function flush() {
   timer = null;
   const p = source ?? await photoLibrary();
   if (!p) { queued = []; waiting.clear(); return; }
-  while (queued.length) {
-    const ids = queued.splice(0, 24);
-    try {
-      const { items } = await p.thumbs({ ids, size: THUMB_SIZE });
+  while (queued.length && inflight < 3) {
+    const ids = queued.splice(0, 12);
+    inflight++;
+    void p.thumbs({ ids, size: THUMB_SIZE }).then(({ items }) => {
       for (const it of items) {
         const url = fileSrc(it.path);
         thumbUrl.set(it.id, url);
         waiting.get(it.id)?.forEach(fn => fn(url));
         waiting.delete(it.id);
       }
-    } catch { /* 這一批拿不到就算了，格子保持灰底 */ }
-    for (const id of ids) if (!thumbUrl.has(id)) waiting.delete(id);
+    }).catch(() => { /* 整批失敗：下面重試一次 */ }).finally(() => {
+      inflight--;
+      /* 這一批沒拿到的：還有人在等就再試一次（剛開相簿時系統還在準備縮圖，偶爾會空手而回） */
+      for (const id of ids) {
+        if (thumbUrl.has(id) || !waiting.has(id)) continue;
+        if (retried.has(id)) { waiting.delete(id); continue; }
+        retried.add(id); queued.push(id);
+      }
+      if (queued.length && !timer) timer = setTimeout(flush, queued.length ? 120 : 16);
+    });
   }
+}
+
+/** 相簿一打開就先把第一頁的縮圖要好（不等格子出現在畫面上） */
+export function prefetchThumbs(ids: string[]) {
+  for (const id of ids) if (!thumbUrl.has(id) && !waiting.has(id)) { waiting.set(id, []); queued.push(id); }
+  if (queued.length && !timer) timer = setTimeout(flush, 0);
 }
 
 /** 把選好的照片（相簿 id）拿出原檔，變成一般的 File */

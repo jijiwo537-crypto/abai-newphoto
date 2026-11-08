@@ -40,6 +40,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         CAPPluginMethod(name: "focus", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setExposureBias", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setWhiteBalance", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setFx", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setLut", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setRect", returnType: CAPPluginReturnPromise),
     ]
@@ -90,6 +91,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                 }
                 self.view?.cube = self.cube
                 self.view?.amount = self.amount
+                self.view?.fx = self.fx
                 self.place(call, web: web)
                 NativePreviewPlugin.setWebTransparent(web, true)
                 self.installHardwareShutter(on: web)
@@ -176,7 +178,11 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         /* 最大解析度：這顆鏡頭目前格式支援的最大尺寸（4800 萬像素的機型就是 48MP） */
         if #available(iOS 16.0, *) {
             let dims = dev.activeFormat.supportedMaxPhotoDimensions
-            if let best = dims.max(by: { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }) {
+            /* 最多約 2400 萬像素：4800 萬像素的照片在原生端套濾鏡、特效時要好幾百 MB，
+               系統會直接把 App 收掉（拍照時重啟就是這個原因）。2400 萬像素已經是內建相機的預設解析度 */
+            let cap = 24_500_000
+            let fit = dims.filter { Int($0.width) * Int($0.height) <= cap }
+            if let best = (fit.isEmpty ? dims : fit).max(by: { Int($0.width) * Int($0.height) < Int($1.width) * Int($1.height) }) {
                 photoOutput.maxPhotoDimensions = best
             }
         }
@@ -338,6 +344,13 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             d.unlockForConfiguration()
             call.resolve()
         }
+    }
+
+    /// 即時特效（柔光、朦朧、低保真，0～1）：直接畫在原生觀景窗上，切換不用重開相機
+    private var fx = ABAICameraFx()
+    @objc func setFx(_ call: CAPPluginCall) {
+        let f = ABAICameraFx(call.options as? [String: Any])
+        DispatchQueue.main.async { self.fx = f; self.view?.fx = f; call.resolve() }
     }
 
     /// kelvin：色溫（2500～9000）；auto＝true 或沒給就交回自動白平衡

@@ -27,6 +27,8 @@ final class ABAIMetalView: MTKView, MTKViewDelegate {
     var source: CIImage? { didSet { setNeedsDisplay() } }
     var cube: ABAIImageCore.Cube? { didSet { setNeedsDisplay() } }
     var amount: Double = 1 { didSet { setNeedsDisplay() } }
+    /// 相機的即時特效（套在濾鏡之後）
+    var fx = ABAICameraFx() { didSet { if fx != oldValue { setNeedsDisplay() } } }
     /// true＝填滿畫面（相機觀景窗），false＝照原比例完整放進來（編輯預覽）
     var fill = false
 
@@ -69,6 +71,7 @@ final class ABAIMetalView: MTKView, MTKViewDelegate {
               let buffer = commandQueue.makeCommandBuffer() else { return }
         var img = src
         if let c = cube { img = ABAIImageCore.apply(cube: c, to: img, amount: amount) }
+        if fx.isOn { img = fx.apply(to: img) }
         /* 照原比例縮進畫面、置中 */
         let ds = drawableSize
         let e = img.extent

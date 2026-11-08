@@ -135,6 +135,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         let cubeB64 = call.getString("cube"), cubeSize = call.getInt("cubeSize") ?? 0
         let aspect = call.getDouble("aspect") ?? 0          // 寬÷高；有給就從中間裁成這個比例
         let zoom = max(1, call.getDouble("zoom") ?? 1)      // 再從中間放大裁切（相機的小框構圖）
+        let fx = ABAICameraFx(call.getObject("fx"))          // 相機特效（跟觀景窗同一套）
         queue.async {
             autoreleasepool {
                 var image: CIImage?
@@ -154,6 +155,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                 if let b = cubeB64, cubeSize > 1 { cube = ABAIImageCore.cube(base64: b, size: cubeSize) }
                 else if let n = lutName, let u = ABAIImageCore.bundledLut(n) { cube = ABAIImageCore.cube(fromAtlas: u) }
                 if let c = cube { img = ABAIImageCore.apply(cube: c, to: img, amount: amount) }
+                if fx.isOn { img = fx.apply(to: img) }
                 /* HDR：調完色的結果就是 HDR 那一張；SDR 那一張是把亮部壓回 1.0 以內的版本。
                    原圖本身沒有 HDR 資訊時，兩張一樣，就不帶增益圖。 */
                 var hdr: CIImage? = nil

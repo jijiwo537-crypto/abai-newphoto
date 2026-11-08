@@ -219,6 +219,29 @@ async function scenarioLayoutVideo() {
 
 let running = false;
 /** forced：原生直接叫的（外掛通不通都要跑） */
+/* 原生特效（相機用的柔光、朦朧、低保真）：模擬器沒有相機，拿一張測試照片走拍照後的同一條處理 */
+async function scenarioCamFx() {
+  const { nativeImage, blobToNativeFile } = await import('./nativeImage');
+  const { fileSrc } = await import('./nativeBridge');
+  const img = await nativeImage();
+  if (!img) { log('camfx: no NativeImage'); return; }
+  const path = await blobToNativeFile(await makePhoto(), 'jpg');
+  const px = async (p: string) => {
+    const im = new Image(); im.src = fileSrc(p); await im.decode();
+    const c = document.createElement('canvas'); c.width = 40; c.height = 30;
+    const g = c.getContext('2d')!; g.drawImage(im, 0, 0, 40, 30);
+    const d = g.getImageData(0, 0, 40, 30).data; let sum = 0; for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+    return { w: im.naturalWidth, h: im.naturalHeight, mean: Math.round(sum / (d.length / 4 * 3)), center: Array.from(g.getImageData(20, 15, 1, 1).data.slice(0, 3)).join(',') };
+  };
+  for (const fx of [{ soft: 0, blur: 0, lowfi: 0 }, { soft: .7, blur: 0, lowfi: 0 }, { soft: 0, blur: .7, lowfi: 0 }, { soft: 0, blur: 0, lowfi: .5 }, { soft: .7, blur: .7, lowfi: .5 }]) {
+    const t0 = performance.now();
+    try {
+      const r = await (img as any).render({ path, aspect: 2 / 3, fx, format: 'jpeg', quality: 0.9 });
+      log(`camfx ${JSON.stringify(fx)} → ${JSON.stringify(await px(r.path))} in ${Math.round(performance.now() - t0)}ms`);
+    } catch (e: any) { log(`camfx ${JSON.stringify(fx)} FAILED: ${String(e?.message ?? e)}`); }
+  }
+}
+
 export async function runNativeQA(forced?: string) {
   if (running) return;
   const probe = Promise.race([nativePlugin<QAApi>('ABAIQA'), new Promise<null>(r => setTimeout(() => r(null), 3000))]);
@@ -241,6 +264,7 @@ export async function runNativeQA(forced?: string) {
     if (scenario === 'save') await scenarioSave();
     else if (scenario === 'video') await scenarioVideo();
     else if (scenario === 'gallery') await scenarioGallery();
+    else if (scenario === 'camfx') await scenarioCamFx();
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
     else if (scenario.startsWith('tool:')) await scenarioTool(scenario.slice(5));
     log(`end ${scenario}`);

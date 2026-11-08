@@ -182,11 +182,16 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
             var out: [[String: Any]] = []
             let lock = NSLock()
             let group = DispatchGroup()
-            let opts = PHImageRequestOptions()
-            opts.deliveryMode = .highQualityFormat
-            opts.resizeMode = .fast
-            opts.isNetworkAccessAllowed = true
-            opts.isSynchronous = false
+            /* 先只用手機上現成的資料（很快，iCloud 最佳化的照片手機上也一定有縮圖）；
+               真的沒有才允許從 iCloud 下載。每一張單獨完成，不會整批等最慢的那張 */
+            func request(_ a: PHAsset, network: Bool, done: @escaping (UIImage?) -> Void) {
+                let o = PHImageRequestOptions()
+                o.deliveryMode = .highQualityFormat
+                o.resizeMode = .fast
+                o.isNetworkAccessAllowed = network
+                o.isSynchronous = false
+                self.imageManager.requestImage(for: a, targetSize: CGSize(width: size, height: size), contentMode: .aspectFill, options: o) { img, _ in done(img) }
+            }
             for id in ids {
                 let url = self.thumbURL(id, size)
                 if FileManager.default.fileExists(atPath: url.path) {
@@ -194,12 +199,14 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
                 }
                 guard let a = byId[id] else { continue }
                 group.enter()
-                self.imageManager.requestImage(for: a, targetSize: CGSize(width: size, height: size), contentMode: .aspectFill, options: opts) { img, info in
+                let finish: (UIImage?) -> Void = { img in
                     defer { group.leave() }
-                    if (info?[PHImageResultIsDegradedKey] as? Bool) == true { group.enter(); return }   // 之後還會再回呼一次正式的
                     guard let img = img, let data = img.jpegData(compressionQuality: 0.82) else { return }
                     try? data.write(to: url)
                     lock.lock(); out.append(["id": id, "path": url.path]); lock.unlock()
+                }
+                request(a, network: false) { img in
+                    if img != nil { finish(img) } else { request(a, network: true, done: finish) }
                 }
             }
             group.notify(queue: .global()) { call.resolve(["items": out]) }

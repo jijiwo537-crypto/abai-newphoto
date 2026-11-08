@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   type GalleryFilter, type LibraryAlbum, type LibraryAsset, type LibraryStatus, type PhotoLibraryApi,
-  cachedThumb, exportAssets, requestThumb, setThumbSource,
+  cachedThumb, exportAssets, prefetchThumbs, requestThumb, setThumbSource,
 } from '../utils/nativeGallery';
 import { haptic } from '../utils/haptics';
 
@@ -17,7 +17,7 @@ const PAGE = 150;
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 
 const CSS = `
-@keyframes abg-pop { 0% { transform: scale(.4); opacity: 0 } 60% { transform: scale(1.15); opacity: 1 } 100% { transform: scale(1) } }
+@keyframes abg-pop { from { transform: scale(.86); opacity: 0 } to { transform: scale(1); opacity: 1 } }
 @keyframes abg-shimmer { 0% { opacity: .55 } 50% { opacity: .9 } 100% { opacity: .55 } }
 @keyframes abg-spin { to { transform: rotate(360deg) } }
 @keyframes abg-shake { 0%,100% { transform: translateX(0) } 25% { transform: translateX(-5px) } 75% { transform: translateX(5px) } }
@@ -27,7 +27,7 @@ const CSS = `
 .abg-cell img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .28s ease, transform .32s ${EASE}; -webkit-user-drag: none; user-select: none; -webkit-touch-callout: none; }
 .abg-cell img.on { opacity: 1 }
 .abg-cell.sel img { transform: scale(.9); }
-.abg-cell .ring { position: absolute; inset: 0; border: 2.5px solid #fff; opacity: 0; transition: opacity .2s ease; pointer-events: none; }
+.abg-cell .ring { position: absolute; inset: 0; border: 1.5px dashed rgba(255,255,255,.95); opacity: 0; transition: opacity .2s ease; pointer-events: none; }
 .abg-cell.sel .ring { opacity: 1 }
 .abg-cell .skel { position: absolute; inset: 0; background: #2c2c2e; animation: abg-shimmer 1.4s ease-in-out infinite; }
 .abg-cell:active img.on { filter: brightness(.82) }
@@ -74,7 +74,7 @@ const Cell = React.memo(function Cell({ a, order, multi, onTap }: {
       {multi && (
         <span className="absolute top-1.5 right-1.5 w-[22px] h-[22px] rounded-full flex items-center justify-center pointer-events-none"
           style={sel
-            ? { background: '#fff', color: '#000', animation: `abg-pop .32s ${EASE}`, boxShadow: '0 1px 4px rgba(0,0,0,.35)' }
+            ? { background: '#fff', color: '#000', animation: 'abg-pop .18s ease-out', boxShadow: '0 1px 4px rgba(0,0,0,.35)' }
             : { border: '1.5px solid rgba(255,255,255,.9)', background: 'rgba(0,0,0,.18)', boxShadow: '0 0 2px rgba(0,0,0,.4)' }}>
           {sel && <span className="text-[12px] font-black leading-none">{order}</span>}
         </span>
@@ -155,6 +155,7 @@ export const NativeGallery: React.FC<{
       const r = await api.assets({ album: album.id, filter, offset, limit: PAGE });
       if (gen !== genRef.current) return;
       setTotal(r.total);
+      if (reset) prefetchThumbs(r.items.slice(0, 60).map(a => a.id));
       setItems(prev => reset ? r.items : [...prev, ...r.items]);
     } catch {
       if (gen === genRef.current && reset) { setItems([]); setTotal(0); }
