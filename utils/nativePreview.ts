@@ -31,20 +31,37 @@ function isHdr(path: string): Promise<boolean> {
   return p;
 }
 
-/** 把 el 這一塊和它的上層背景挖成透明，回傳還原的函式 */
+/** 把 el 這一塊和它的上層背景挖成透明，回傳還原的函式。
+ *  不去讀、寫元素原本的背景色（以前是記下來再寫回去）：主頁也會改 html／body 的背景色，
+ *  兩邊各自「記下再還原」，順序一錯就會把「透明」當成原本的顏色還原回去 ——
+ *  離開相機之後頂部一直透出底色（白條）就是這樣來的。
+ *  改成加一個標記（有幾個地方在挖就記幾次），樣式表用 !important 蓋過，拿掉標記就自動回到原本的顏色。 */
+const PUNCH_ATTR = 'data-abai-punch';
+let punchStyleInstalled = false;
+function installPunchStyle() {
+  if (punchStyleInstalled) return;
+  punchStyleInstalled = true;
+  const st = document.createElement('style');
+  st.textContent = `[${PUNCH_ATTR}]{background-color:transparent!important;background-image:none!important}[data-abai-punch-hide]{visibility:hidden!important}`;
+  document.head.appendChild(st);
+}
+const bump = (n: HTMLElement, attr: string, d: number) => {
+  const v = (parseInt(n.getAttribute(attr) || '0', 10) || 0) + d;
+  if (v > 0) n.setAttribute(attr, String(v)); else n.removeAttribute(attr);
+};
 export function punchThrough(el: HTMLElement, hide: HTMLElement[]): () => void {
-  const restore: (() => void)[] = [];
-  for (let n: HTMLElement | null = el; n; n = n.parentElement) {
-    const prev = n.style.backgroundColor;
-    n.style.backgroundColor = 'transparent';
-    restore.push(() => { n!.style.backgroundColor = prev; });
-  }
-  for (const h of hide) {
-    const prev = h.style.visibility;
-    h.style.visibility = 'hidden';
-    restore.push(() => { h.style.visibility = prev; });
-  }
-  return () => restore.reverse().forEach(f => f());
+  installPunchStyle();
+  const nodes: HTMLElement[] = [];
+  for (let n: HTMLElement | null = el; n; n = n.parentElement) nodes.push(n);
+  nodes.forEach(n => bump(n, PUNCH_ATTR, 1));
+  hide.forEach(h => bump(h, 'data-abai-punch-hide', 1));
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    nodes.forEach(n => bump(n, PUNCH_ATTR, -1));
+    hide.forEach(h => bump(h, 'data-abai-punch-hide', -1));
+  };
 }
 
 export function useNativeHdrPreview(opts: {
