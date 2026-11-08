@@ -200,7 +200,7 @@ async function scenarioLayoutVideo() {
 
 export async function runNativeQA() {
   qa = await nativePlugin<QAApi>('ABAIQA');
-  if (!qa) return;
+  if (!qa) { console.log('ABAIQA plugin missing'); return; }
   const { scenario } = await qa.scenario();
   if (!scenario) return;
   /* 測試時不要被「這版沒有原生功能」之類的提示框卡住，提示內容照樣記下來 */

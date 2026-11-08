@@ -19,14 +19,37 @@ public class QAPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "log", returnType: CAPPluginReturnPromise),
     ]
 
+    /// 同一份紀錄也寫進 App 的 Documents/abaiqa.log，CI 從模擬器裡直接拿檔案（不靠系統紀錄）
+    private static func write(_ line: String) {
+        NSLog("ABAIQA %@", line)
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("abaiqa.log")
+        let data = Data("\(Date().timeIntervalSince1970) \(line)\n".utf8)
+        if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(data); try? h.close() }
+        else { try? data.write(to: url) }
+    }
+
+    private static var scenarioName: String {
+        if let v = UserDefaults.standard.string(forKey: "abaiQA"), !v.isEmpty { return v }
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-abaiQA"), i + 1 < args.count { return args[i + 1] }
+        return ProcessInfo.processInfo.environment["ABAI_QA"] ?? ""
+    }
+
+    public override func load() {
+        let s = Self.scenarioName
+        if !s.isEmpty { Self.write("native loaded scenario=\(s) args=\(ProcessInfo.processInfo.arguments.dropFirst().joined(separator: " "))") }
+    }
+
     @objc func available(_ call: CAPPluginCall) { call.resolve(["available": true]) }
 
     @objc func scenario(_ call: CAPPluginCall) {
-        call.resolve(["scenario": UserDefaults.standard.string(forKey: "abaiQA") ?? ""])
+        let s = Self.scenarioName
+        if !s.isEmpty { Self.write("web asked scenario=\(s)") }
+        call.resolve(["scenario": s])
     }
 
     @objc func log(_ call: CAPPluginCall) {
-        NSLog("ABAIQA %@", call.getString("msg") ?? "")
+        Self.write(call.getString("msg") ?? "")
         call.resolve()
     }
 }
