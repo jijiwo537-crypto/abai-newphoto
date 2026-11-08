@@ -39,6 +39,7 @@ public class VideoWriterPlugin: CAPPlugin, CAPBridgedPlugin {
         let fps: Int32
         let width: Int, height: Int
         var task: UIBackgroundTaskIdentifier = .invalid
+        var lastIndex = -1
         init(writer: AVAssetWriter, input: AVAssetWriterInput, adaptor: AVAssetWriterInputPixelBufferAdaptor, url: URL, fps: Int32, width: Int, height: Int) {
             self.writer = writer; self.input = input; self.adaptor = adaptor; self.url = url; self.fps = fps; self.width = width; self.height = height
         }
@@ -124,11 +125,19 @@ public class VideoWriterPlugin: CAPPlugin, CAPBridgedPlugin {
                     ctx.draw(img, in: CGRect(x: 0, y: 0, width: job.width, height: job.height))
                 }
                 CVPixelBufferUnlockBaseAddress(buffer, [])
-                /* 編碼器忙的時候等一下，不丟格 */
+                /* 編碼器忙的時候等一下，不丟格。
+                   等不到、或編碼器已經出錯，就回報失敗（網頁那邊會改用別的編碼方式）——
+                   絕對不能硬塞：AVAssetWriter 在「還沒準備好」或「已經失敗」時被 append 會直接丟例外，整個 App 閃退。 */
                 var waited = 0
-                while !job.input.isReadyForMoreMediaData && waited < 2000 { usleep(1000); waited += 1 }
+                while !job.input.isReadyForMoreMediaData && job.writer.status == .writing && waited < 10_000 { usleep(1000); waited += 1 }
+                guard job.writer.status == .writing else {
+                    call.reject(job.writer.error?.localizedDescription ?? "影片編碼器停止了"); return
+                }
+                guard job.input.isReadyForMoreMediaData else { call.reject("影片編碼器忙不過來"); return }
+                /* 同一格送兩次（網頁重試）就當作成功，時間戳不能倒退也不能重複 */
+                guard index > job.lastIndex else { call.resolve(); return }
                 let ok = job.adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index), timescale: job.fps))
-                if ok { call.resolve() } else { call.reject(job.writer.error?.localizedDescription ?? "寫入失敗") }
+                if ok { job.lastIndex = index; call.resolve() } else { call.reject(job.writer.error?.localizedDescription ?? "寫入失敗") }
             }
         }
     }
@@ -137,6 +146,12 @@ public class VideoWriterPlugin: CAPPlugin, CAPBridgedPlugin {
         let id = call.getInt("id") ?? 0
         queue.async {
             guard let job = self.jobs.removeValue(forKey: id) else { call.reject("找不到這個輸出"); return }
+            /* 編碼器已經出錯就不能 markAsFinished／finishWriting（一樣會丟例外） */
+            guard job.writer.status == .writing else {
+                DispatchQueue.main.async { UIApplication.shared.endBackgroundTask(job.task) }
+                try? FileManager.default.removeItem(at: job.url)
+                call.reject(job.writer.error?.localizedDescription ?? "影片輸出失敗"); return
+            }
             job.input.markAsFinished()
             job.writer.finishWriting {
                 DispatchQueue.main.async { UIApplication.shared.endBackgroundTask(job.task) }
@@ -153,7 +168,7 @@ public class VideoWriterPlugin: CAPPlugin, CAPBridgedPlugin {
 
     private func abort(_ id: Int) {
         guard let job = jobs.removeValue(forKey: id) else { return }
-        job.writer.cancelWriting()
+        if job.writer.status == .writing { job.writer.cancelWriting() }
         try? FileManager.default.removeItem(at: job.url)
         DispatchQueue.main.async { UIApplication.shared.endBackgroundTask(job.task) }
     }
