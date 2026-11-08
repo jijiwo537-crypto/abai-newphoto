@@ -8,6 +8,8 @@
 
 import Foundation
 import Capacitor
+import UIKit
+import os
 
 @objc(QAPlugin)
 public class QAPlugin: CAPPlugin, CAPBridgedPlugin {
@@ -41,6 +43,17 @@ public class QAPlugin: CAPPlugin, CAPBridgedPlugin {
         let s = Self.scenarioName
         guard !s.isEmpty else { return }
         Self.write("native loaded scenario=\(s) args=\(ProcessInfo.processInfo.arguments.dropFirst().joined(separator: " "))")
+        /* App 切到背景、收到記憶體警告、網頁的處理程序被系統收掉：都記下來 */
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in Self.write("native: did enter background") }
+        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in Self.write("native: will enter foreground") }
+        nc.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { _ in
+            Self.write("native: MEMORY WARNING available=\(os_proc_available_memory() / 1_048_576)MB")
+        }
+        nc.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { _ in Self.write("native: will terminate") }
+        Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            Self.write("native: alive, available memory \(os_proc_available_memory() / 1_048_576)MB")
+        }
         /* 不完全靠網頁來問：過幾秒原生自己看網頁的狀態，必要時直接叫網頁開始，
            之後每秒把網頁攢下來的紀錄（window.__abaiQALog）收過來 */
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
