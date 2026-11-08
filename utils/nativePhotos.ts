@@ -75,7 +75,10 @@ export function installNativeFilePicker() {
   const open = async (input: HTMLInputElement, filter: 'images' | 'videos' | 'any') => {
     const limit = input.multiple ? 0 : 1;
     let files: File[] | null = null;
-    try {
+    /* 自動測試（utils/nativeQA）先放好的檔案：直接用，不開相簿 */
+    const qa = (window as any).__abaiQAFiles as ((f: typeof filter) => File[] | null) | undefined;
+    if (qa) files = qa(filter);
+    if (!files) try {
       if (gallery) files = await openGallery({ limit, filter });
       /* 自己的相簿用不了（權限被拒、使用者選了系統的）→ 系統照片選擇器 */
       if (files === null) files = await pickNativeFiles(limit, filter);

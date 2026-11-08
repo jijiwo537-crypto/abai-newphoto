@@ -158,13 +158,26 @@ const TOOL_ENTRY: Record<string, RegExp> = {
   beauty: /美顏/, match: /仿色/, edit: /^\s*編輯\s*$|add_photo_alternate\s*編輯/,
 };
 
+/* 模擬器的相簿權限沒辦法自動給「完整取用」（iOS 18 一定會跳系統詢問框），
+   所以工具測試直接把測試用的照片／影片交給匯入那一步，不經過相簿畫面 */
+let qaVideo: File | null = null;
+async function provideFiles(n: number) {
+  const photos: File[] = [];
+  for (let i = 0; i < n; i++) photos.push(await makePhoto());
+  (window as any).__abaiQAFiles = (filter: string) => {
+    log(`import intercepted (filter=${filter}) → ${filter === 'videos' || (filter === 'any' && qaVideo) ? 'video' : `${n} photo(s)`}`);
+    if (filter === 'videos' || (filter === 'any' && qaVideo)) return qaVideo ? [qaVideo] : photos;
+    return photos;
+  };
+}
+
 async function scenarioTool(name: string) {
   const re = TOOL_ENTRY[name];
   if (!re) { log(`unknown tool ${name}`); return; }
+  await provideFiles(name === 'collage' || name === 'layout' ? 2 : 1);
   const btn = await waitFor(() => findButton(re), 15000, `主頁的 ${name} 按鈕`);
   log(`tool ${name}: tap "${(btn.getAttribute('aria-label') || btn.textContent || '').trim().slice(0, 20)}"`);
   click(btn);
-  await pickInGallery(name === 'collage' || name === 'layout' ? 2 : 1);
   for (const t of [3000, 4000, 6000]) {
     await sleep(t);
     logLayout(`tool ${name} +${t}`);
@@ -174,9 +187,13 @@ async function scenarioTool(name: string) {
 
 /* 跨頁拼圖選一段影片、按儲存，盯著進度 */
 async function scenarioLayoutVideo() {
+  /* 先做一段 4 秒的測試影片，當成「從相簿選的影片」 */
+  const v = await encodeTest('native', 120);
+  if (!v) { log('layoutvideo: could not make a test video'); return; }
+  qaVideo = new File([v], 'qa.mp4', { type: 'video/mp4' });
+  await provideFiles(1);
   const btn = await waitFor(() => findButton(TOOL_ENTRY.layout), 15000, '跨頁拼圖按鈕');
   click(btn);
-  await pickInGallery(1, true);
   await sleep(6000);
   logButtons('layoutvideo editor');
   const save = await waitFor(() => findButton(/^(儲存|匯出|完成|下一步)/), 10000, '儲存按鈕').catch(() => null);
