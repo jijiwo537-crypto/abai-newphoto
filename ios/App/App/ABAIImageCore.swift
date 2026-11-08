@@ -183,7 +183,12 @@ enum ABAIImageCore {
               let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
         let w = img.width, h = img.height
         guard w == h, w % 8 == 0 else { return nil }
-        let size = w / 8
+        /* 8×8 格、共 64 層藍色。每格可能是 64px（相機濾鏡）或更大（低保真那張是 128px）：
+           一律做成 64³ 的色彩表，大格子就等距取 64 個點 —— 不能拿格子寬度當層數，會讀出界 */
+        let tile = w / 8
+        let size = min(tile, 64)
+        guard size >= 2 else { return nil }
+        let pick = { (n: Int) -> Int in tile == size ? n : Int((Double(n) * Double(tile - 1) / Double(size - 1)).rounded()) }
         // 一律用 sRGB 讀出 8 位元值：LUT 本身就是在 sRGB 編碼值上做的
         var px = [UInt8](repeating: 0, count: w * h * 4)
         let drawn: Bool = px.withUnsafeMutableBytes { buf in
@@ -198,11 +203,13 @@ enum ABAIImageCore {
         }
         var floats = [Float](repeating: 0, count: size * size * size * 4)
         var o = 0
-        for b in 0..<size {
-            let tx = (b % 8) * size, ty = (b / 8) * size
+        for bi in 0..<size {
+            /* 層數不是 64 的時候（小於 64px 的格子）一樣要對到正確的藍色層 */
+            let b = size == 64 ? bi : Int((Double(bi) * 63 / Double(size - 1)).rounded())
+            let tx = (b % 8) * tile, ty = (b / 8) * tile
             for g in 0..<size {
                 for r in 0..<size {
-                    let i = ((ty + g) * w + tx + r) * 4
+                    let i = ((ty + pick(g)) * w + tx + pick(r)) * 4
                     floats[o] = Float(px[i]) / 255
                     floats[o + 1] = Float(px[i + 1]) / 255
                     floats[o + 2] = Float(px[i + 2]) / 255
