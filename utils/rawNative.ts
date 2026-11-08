@@ -41,7 +41,8 @@ async function getPlugin(): Promise<any | null> {
   if (!isNative()) return null;
   try {
     const { registerPlugin } = await import('@capacitor/core');
-    const p: any = registerPlugin(PLUGIN_NAME);
+    const { unthenable } = await import('./nativeBridge');
+    const p: any = unthenable(registerPlugin(PLUGIN_NAME) as object);
     /* registerPlugin 對「根本沒實作」的外掛也會給你一個物件，
        所以要真的呼叫一次才知道在不在。用 available() 這支很便宜的探針。 */
     const ok = await p.available();

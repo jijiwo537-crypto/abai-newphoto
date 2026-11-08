@@ -6,6 +6,14 @@ import { isNative } from './native';
 
 const probes = new Map<string, Promise<any | null>>();
 
+/** Capacitor 的外掛物件對「任何」屬性名稱都會回一支方法，連 then 也是。
+ *  把它從 async 函式回傳（或 await 它），JavaScript 會當它是 Promise、去呼叫 then，
+ *  原生那邊回「then() 沒實作」，結果那個 await 永遠等不到 —— 存檔、影片輸出、相簿全部卡住。
+ *  包一層：then 一律是 undefined，其他照舊交給原本的外掛物件。 */
+export function unthenable<T extends object>(plugin: T): T {
+  return new Proxy(plugin, { get: (target, key) => (key === 'then' ? undefined : Reflect.get(target, key)) });
+}
+
 /** 拿某個 App 內建外掛；不是 App、或這版 App 沒有這支外掛，回 null（只探一次） */
 export function nativePlugin<T = any>(name: string): Promise<T | null> {
   if (!isNative()) return Promise.resolve(null);
@@ -14,7 +22,7 @@ export function nativePlugin<T = any>(name: string): Promise<T | null> {
     p = (async () => {
       try {
         const { registerPlugin } = await import('@capacitor/core');
-        const plugin: any = registerPlugin(name);
+        const plugin: any = unthenable(registerPlugin(name) as object);
         /* registerPlugin 對沒實作的外掛也會給物件，要真的呼叫一次才知道在不在 */
         const r = await plugin.available();
         return r?.available ? plugin : null;
