@@ -63,8 +63,9 @@ jobs:
           xcrun simctl bootstatus "$DEV" -b
           xcrun simctl install "$DEV" build/Build/Products/Debug-iphonesimulator/App.app
           # 相簿權限先給好（完整取用），自動測試才不會停在系統的詢問框
-          xcrun simctl privacy "$DEV" grant all com.abai.photo || true
-          xcrun simctl privacy "$DEV" grant photos com.abai.photo || true
+          # （只給 photos：再另外給 photos-add 會把它降成「僅限加入」）
+          xcrun simctl privacy "$DEV" grant photos com.abai.photo
+          sqlite3 ~/Library/Developer/CoreSimulator/Devices/$DEV/data/Library/TCC/TCC.db "select service, client, auth_value from access" 2>&1 | head || true
           mkdir -p shots
           xcrun simctl launch "$DEV" com.abai.photo -AppleLanguages '(zh-Hant)' -AppleLocale zh_TW
           sleep 15; xcrun simctl io "$DEV" screenshot shots/0-launch.png
