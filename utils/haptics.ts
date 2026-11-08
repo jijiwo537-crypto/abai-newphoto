@@ -67,11 +67,10 @@ export function sliderHaptic(prev: number, next: number, min: number, max: numbe
   if (seg(prev) !== seg(next)) haptic('detent');
 }
 
-/** 刻度轉盤用（相機的曝光、白平衡）：每一格都有段落感，主刻度、預設值明顯一點，到頭是擋塊 */
-export function dialHaptic(index: number, count: number, major: boolean) {
+/** 刻度轉盤用（相機的曝光、白平衡）：跟編輯頁「構圖角度」轉盤同一種手感 —— 每一格一下柔和、乾淨的輕觸 */
+export function dialHaptic(_index: number, _count: number, _major: boolean) {
   if (!isNative()) return;
-  if (index <= 0 || index >= count - 1) haptic('edge');
-  else haptic(major ? 'detentMajor' : 'detent');
+  haptic('press');
 }
 
 /* App 裡的開關、分頁、選項：點下去就有「選取」的觸感。

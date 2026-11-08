@@ -1340,10 +1340,6 @@ export const HomePage: React.FC<HomePageProps> = ({
           className="relative flex-1 min-w-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
           style={{ background: 'rgba(255,255,255,.03)' }}
         >
-          {/* 背景是一小段點字圖案（純文字，不用圖檔） */}
-          <span aria-hidden="true" className="absolute right-1 top-1 bottom-1 flex items-center text-white/[0.13] whitespace-pre leading-[1] pointer-events-none select-none" style={{ fontSize: 9, fontFamily: 'monospace' }}>
-            {'⠀⣠⣴⣶⣶⣦⣄⠀\n⣾⣿⠿⠿⠿⠿⣿⣷\n⣿⡇⢸⣿⣿⡇⢸⣿\n⢿⣷⣤⣤⣤⣤⣾⡿\n⠀⠙⠻⠿⠿⠟⠋⠀'}
-          </span>
           <div className="relative px-[14px] pt-7 pb-4">
             <span className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">點陣文字</span>
             <span className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65 truncate">將圖片轉點陣圖案</span>

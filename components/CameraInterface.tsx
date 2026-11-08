@@ -967,7 +967,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       const canvas = viewfinderRef.current?.getCanvas?.() ?? null;
       const el = canvas?.parentElement;
       if (!cam || !el || !alive) return;
-      const rect = () => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; };
+      /* 圓角照觀景窗外框（rounded-camera）：原生畫面在網頁底下，要自己切成一樣的圓角 */
+      const frame = (el.closest('.rounded-camera') as HTMLElement | null) ?? el;
+      const rect = () => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, radius: parseFloat(getComputedStyle(frame).borderTopLeftRadius) || 0 }; };
       try {
         const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: 1, proRAW: true });
         if (alive) setNativeFlash(!!info?.flash);
@@ -1435,7 +1437,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       </main>
 
       {/* 比上一版下移 16px；仍比最初多留 24px，底部不會再顯得擁擠。 */}
-      <section className="flex flex-col px-6 pt-4 pb-16">
+      <section className="flex flex-col px-6 pt-4 pb-12">
         <div className={`flex justify-center relative mb-2 h-14`}>
           {activeControl === 'none' ? (
             <div data-camera-main-row key="camera-main-controls" className="flex items-center justify-between w-full max-sm px-0 h-14 gap-1 overflow-x-auto no-scrollbar [&>button]:w-[52px] [&>button]:h-[52px] [&>button]:flex [&>button]:items-center [&>button]:justify-center">

@@ -144,6 +144,11 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         guard let v = view, let x = call.getDouble("x"), let y = call.getDouble("y"),
               let w = call.getDouble("w"), let h = call.getDouble("h") else { return }
         v.frame = CGRect(x: web.frame.minX + x, y: web.frame.minY + y, width: w, height: h)
+        /* 跟網頁的觀景窗外框一樣的圓角 */
+        let r = CGFloat(call.getDouble("radius") ?? 0)
+        v.layer.cornerRadius = r
+        v.layer.cornerCurve = .continuous
+        v.layer.masksToBounds = r > 0
     }
 
     private var maxDimensions: CMVideoDimensions {
