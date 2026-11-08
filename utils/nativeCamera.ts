@@ -28,11 +28,13 @@ export async function captureNative(o: {
   flash: 'off' | 'on' | 'auto'; raw: boolean; lut: string; aspect: number; zoom: number;
   /** 相機特效（0～1），拍出來的照片跟觀景窗看到的一樣 */
   fx?: { soft: number; blur: number; lowfi: number };
+  /** 色溫（跟觀景窗一樣的公式），拍出來的照片跟看到的一樣 */
+  kelvin?: number;
 }): Promise<{ url: string; rawPath?: string } | null> {
   const cam = await nativeCamera(), img = await nativeImage();
   if (!cam || !img) return null;
   const shot = await cam.capture({ flash: o.flash, raw: o.raw });
-  const out = await img.render({ path: shot.path, lut: o.lut || undefined, amount: 1, aspect: o.aspect, zoom: o.zoom, fx: o.fx, format: 'jpeg', quality: 0.95 });
+  const out = await img.render({ path: shot.path, lut: o.lut || undefined, amount: 1, aspect: o.aspect, zoom: o.zoom, fx: o.fx, kelvin: o.kelvin, format: 'jpeg', quality: 0.95 });
   img.remove({ path: shot.path }).catch(() => {});
   const blob = await (await fetch(fileSrc(out.path))).blob();
   img.remove({ path: out.path }).catch(() => {});

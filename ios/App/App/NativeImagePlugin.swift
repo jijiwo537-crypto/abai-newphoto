@@ -136,6 +136,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         let aspect = call.getDouble("aspect") ?? 0          // 寬÷高；有給就從中間裁成這個比例
         let zoom = max(1, call.getDouble("zoom") ?? 1)      // 再從中間放大裁切（相機的小框構圖）
         let fx = ABAICameraFx(call.getObject("fx"))          // 相機特效（跟觀景窗同一套）
+        let kelvin = call.getDouble("kelvin")                // 相機色溫（跟觀景窗同一條公式）
         queue.async {
             autoreleasepool {
                 var image: CIImage?
@@ -151,6 +152,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                     if zoom > 1.001 { e = e.insetBy(dx: e.width * (1 - 1 / zoom) / 2, dy: e.height * (1 - 1 / zoom) / 2) }
                     img = img.cropped(to: e.integral).transformed(by: CGAffineTransform(translationX: -e.integral.minX, y: -e.integral.minY))
                 }
+                if let k = kelvin { img = ABAIImageCore.kelvin(img, k) }
                 var cube: ABAIImageCore.Cube?
                 if let b = cubeB64, cubeSize > 1 { cube = ABAIImageCore.cube(base64: b, size: cubeSize) }
                 else if let n = lutName, let u = ABAIImageCore.bundledLut(n) { cube = ABAIImageCore.cube(fromAtlas: u) }

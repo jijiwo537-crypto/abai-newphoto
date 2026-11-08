@@ -817,7 +817,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       capturingRef.current = true; setIsCapturing(true); setCaptureNotice('');
       try {
         const o = proOptsRef.current;
-        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, aspect: o.aspect, zoom: frameZoomRef.current, fx: nativeFxRef.current });
+        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, aspect: o.aspect, zoom: frameZoomRef.current, fx: nativeFxRef.current, kelvin: nativeParamsRef.current.kelvin });
         if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
         ownedUrlsRef.current.add(r.url);
         setPhotos(prev => [r.url, ...prev]);
@@ -976,8 +976,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         void cam.setFx(nativeFxRef.current).catch(() => {});
         /* 開起來就把目前的曝光、白平衡套上去 */
         void cam.setExposureBias({ ev: parseFloat(nativeParamsRef.current.exposure) || 0 }).catch(() => {});
-        void cam.setWhiteBalance(nativeParamsRef.current.kelvin === 5500 ? { auto: true } : { kelvin: nativeParamsRef.current.kelvin }).catch(() => {});
-      } catch { if (alive) { setProPreferred(false); setCaptureNotice('原生相機無法啟動，已換成一般相機'); } return; }
+        void cam.setWhiteBalance({ kelvin: nativeParamsRef.current.kelvin }).catch(() => {});
+      } catch (e: any) {
+        /* 被後面那一次開相機取代（翻轉鏡頭、換頁）不算失敗；真的開不起來才換成網頁相機 */
+        if (alive && !/superseded/.test(String(e?.message ?? e))) { setProPreferred(false); setCaptureNotice('原生相機無法啟動，已換成一般相機'); }
+        return;
+      }
       if (!alive) { void cam.stop(); return; }
       restore = punchThrough(el, canvas ? [canvas] : []);
       ro = new ResizeObserver(() => { void cam.setRect(rect()).catch(() => {}); });
@@ -1003,7 +1007,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (proMode) void nativeCamera().then(c => c?.setExposureBias({ ev: parseFloat(settings.exposure) || 0 })).catch(() => {});
   }, [proMode, settings.exposure]);
   useEffect(() => {
-    if (proMode) void nativeCamera().then(c => c?.setWhiteBalance(settings.kelvin === 5500 ? { auto: true } : { kelvin: settings.kelvin })).catch(() => {});
+    if (proMode) void nativeCamera().then(c => c?.setWhiteBalance({ kelvin: settings.kelvin })).catch(() => {});
   }, [proMode, settings.kelvin]);
   useEffect(() => {
     if (proMode) void nativeCamera().then(c => c?.setLut({ lut: lutFileName(lutList[selectedLutIdx]?.url), amount: 1 }));

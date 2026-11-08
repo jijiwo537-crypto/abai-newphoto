@@ -247,6 +247,19 @@ enum ABAIImageCore {
         }
     }
 
+    /// 色溫：跟網頁觀景窗（components/Viewfinder.tsx 的 kelvinGain）同一條公式，在線性光上乘 R、B 增益、亮度不變
+    static func kelvin(_ image: CIImage, _ k: Double) -> CIImage {
+        let t = (k - 5000) / 5000
+        var r = pow(2, t * 0.55), g = 1.0, b = pow(2, -t * 0.55)
+        let n = r * 0.2126 + g * 0.7152 + b * 0.0722
+        r /= n; g /= n; b /= n
+        return image.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: r, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: g, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: b, w: 0),
+        ])
+    }
+
     /// 套 3D 色彩表（在 sRGB 編碼值上查表，跟網頁一致），amount 0～1 跟原圖混合
     static func apply(cube: Cube, to image: CIImage, amount: Double = 1) -> CIImage {
         guard amount > 0.001, let f = CIFilter(name: "CIColorCubeWithColorSpace") else { return image }

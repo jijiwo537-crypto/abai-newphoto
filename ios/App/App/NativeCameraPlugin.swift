@@ -77,10 +77,14 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     /* 開、關相機的順序號碼：關掉之後，還在路上的「開相機」就作廢 ——
        不然它晚一步把網頁設成透明，離開相機後網頁就一直是透明的（狀態列透出白色） */
     private var generation = 0
+    private let genLock = NSLock()
+    private func nextGeneration() -> Int { genLock.lock(); defer { genLock.unlock() }; generation += 1; return generation }
+    private func currentGeneration() -> Int { genLock.lock(); defer { genLock.unlock() }; return generation }
 
     @objc func start(_ call: CAPPluginCall) {
-        generation += 1
-        let gen = generation
+        /* 號碼在收到呼叫的當下就拿（照網頁呼叫的先後），不是排到主執行緒才拿：
+           翻轉鏡頭是「先關、再開」，關的號碼晚一步生效的話，會把剛開的相機誤判成作廢 */
+        let gen = nextGeneration()
         position = call.getString("position") == "front" ? .front : .back
         proRAW = call.getBool("proRAW") ?? false
         amount = call.getDouble("amount") ?? 1
@@ -88,7 +92,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         AVCaptureDevice.requestAccess(for: .video) { granted in
             guard granted else { call.reject("沒有相機權限"); return }
             DispatchQueue.main.async {
-                guard gen == self.generation else { call.reject("相機已經關掉"); return }
+                guard gen == self.currentGeneration() else { call.reject("superseded"); return }
                 guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有 WebView"); return }
                 if self.view == nil {
                     guard let v = ABAIMetalView.make(frame: .zero) else { call.reject("這台裝置沒有 Metal"); return }
@@ -99,6 +103,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                 self.view?.cube = self.cube
                 self.view?.amount = self.amount
                 self.view?.fx = self.fx
+                self.view?.kelvin = self.kelvin
                 self.place(call, web: web)
                 NativePreviewPlugin.setWebTransparent(web, true)
                 self.installHardwareShutter(on: web)
@@ -120,7 +125,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     }
 
     @objc func stop(_ call: CAPPluginCall) {
-        DispatchQueue.main.async { self.generation += 1 }
+        _ = nextGeneration()
         sessionQueue.async {
             if self.session.isRunning { self.session.stopRunning() }
             DispatchQueue.main.async {
@@ -367,23 +372,12 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         DispatchQueue.main.async { self.fx = f; self.view?.fx = f; call.resolve() }
     }
 
-    /// kelvin：色溫（2500～9000）；auto＝true 或沒給就交回自動白平衡
+    /// kelvin：色溫（2500～9000）。照網頁觀景窗同一條公式算 R、B 增益，套在畫面上（觀景窗、拍出來的照片都一樣）。
+    /// 不鎖鏡頭本身的白平衡：三鏡頭這類組合鏡頭大多不支援自訂增益，鎖不住就等於沒反應
+    private var kelvin: Double = 5500
     @objc func setWhiteBalance(_ call: CAPPluginCall) {
-        let auto = call.getBool("auto") ?? (call.getDouble("kelvin") == nil)
-        let kelvin = Float(call.getDouble("kelvin") ?? 5500)
-        sessionQueue.async {
-            guard let d = self.device, (try? d.lockForConfiguration()) != nil else { call.resolve(); return }
-            defer { d.unlockForConfiguration() }
-            if auto || !d.isLockingWhiteBalanceWithCustomDeviceGainsSupported {
-                if d.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) { d.whiteBalanceMode = .continuousAutoWhiteBalance }
-                call.resolve(); return
-            }
-            var g = d.deviceWhiteBalanceGains(for: AVCaptureDevice.WhiteBalanceTemperatureAndTintValues(temperature: kelvin, tint: 0))
-            let maxG = d.maxWhiteBalanceGain
-            g.redGain = max(1, min(maxG, g.redGain)); g.greenGain = max(1, min(maxG, g.greenGain)); g.blueGain = max(1, min(maxG, g.blueGain))
-            d.setWhiteBalanceModeLocked(with: g, completionHandler: nil)
-            call.resolve()
-        }
+        let k = (call.getBool("auto") ?? false) ? 5500 : (call.getDouble("kelvin") ?? 5500)
+        DispatchQueue.main.async { self.kelvin = k; self.view?.kelvin = k; call.resolve() }
     }
 
     @objc func setLut(_ call: CAPPluginCall) {
