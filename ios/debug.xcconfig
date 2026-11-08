@@ -1,1 +1,4 @@
 CAPACITOR_DEBUG = true
+
+// 這台 Mac 自己的設定（例如免費帳號用的 Bundle ID），由 ios/prepare-device.sh 產生、不提交
+#include? "debug.local.xcconfig"
