@@ -28,6 +28,7 @@ import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface,layoutGeomPreviews} from './LayoutPhotoSurface';
 import {ensurePreviewCopy,previewSrc,usePreviewCopies,setPreviewZoom,previewZoom,forgetPreviewCopies} from '../utils/previewCopies';
+import { previewSurfaceDpr, previewEffectLongEdge } from '../utils/previewSurfaceBudget';
 import {registerTrim} from '../utils/memoryPressure';
 import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
 registerTrim('selected-animation-surfaces', releaseSelectedMotionSurfaces);
@@ -6604,13 +6605,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
        geoDpr —— 螢幕「真正」的實體像素密度。版面盒要吸到它的格線上才叫對齊；
                  iPhone 常見是 3，之前拿被上限砍到 2 的那個去吸等於吸到半格，
                  在 3 倍螢幕上根本沒對齊，縮放時照樣沿路留殘影。
-       shapeDpr —— 只決定 canvas 內部要開幾個像素（上限 2 是記憶體考量）。 */
+       shapeDpr —— 只決定 canvas 內部像素密度，必須同時受畫布面積限制。 */
   const geoDpr = Math.min(4, Math.max(1, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1));
-  // 預覽放大後也按實際螢幕像素重畫，而不是把原本的低解析畫布硬拉大。
-  /* 不能以「手勢開始那一刻」的倍率建立低解析畫布，再讓整頁 transform 把它
-     放大。固定按經典拼圖允許的最高預覽倍率預留實體像素，縮放前、中、後都
-     使用同一份高解析 backing store，照片特效與影片不會先糊再補清楚。 */
-  const shapeDpr = Math.min(8, geoDpr * 3);
   /** 把長度吸到整數個實體像素（見 wrapGeo 的說明） */
   const snapPx = (v: number) => Math.round(v * geoDpr) / geoDpr;
   /** 吸到「偶數個」實體像素 —— 這樣一半也還落在格線上（見 wrapGeo） */
@@ -6641,6 +6637,15 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     || image.text !== undefined || !!image.shape;
   const boxW = exactAlignedGeometry ? image.width * image.scale : snapPx2(image.width * image.scale);
   const boxH = exactAlignedGeometry ? image.height * image.scale : snapPx2(image.height * image.scale);
+  /* 形狀、發光、影片與特效不能隨物件尺寸無限制配置 backing store。
+     例如 2000×2700 的照片以 8 倍密度會要求約 1.4 GB 的單張 RGBA 畫布，
+     WebKit 會停頓甚至終止頁面。超出預算時反向降低內部密度；均勻縮放到
+     預算後 W/H 保持固定，拖曳白點不再每一幀重新配置越來越大的畫布。 */
+  const surfacePad = ((image.imgGlow ? Math.ceil(GLOW_BLUR_UNIT * GLOW_EXTENT) : 0)
+    + (image.imgStrokeWidth ? 20 : 0)) * image.scale;
+  const surfaceW = Math.max(1, boxW + 2 * surfacePad);
+  const surfaceH = Math.max(1, boxH + 2 * surfacePad);
+  const shapeDpr = previewSurfaceDpr(surfaceW, surfaceH, Math.min(8, geoDpr * 3));
   /* 畫到預覽上用「夠清楚就好」的那一份（見 utils/previewCopies）：一般大小用小副本，
      拉大或畫面放大到小副本不夠時才換原圖。存檔、構圖照樣用原圖 */
   usePreviewCopies();
@@ -6742,7 +6747,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      照片就明顯變糊。上限 1400 是為了不讓超大格子把一次重算拖太久。 */
   const fxFullMax = () => {
     const dpr = Math.min(4, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1);
-    return Math.min(4096, Math.max(1080, Math.round(Math.max(boxW, boxH) * dpr * Math.max(1, canvasK()))));
+    /* 特效來源跟顯示畫布分開受控。用固定 2048／3072 階梯避免拖動尺寸時
+       MAX 每幀改變，造成每幀重新跑整條濾鏡鏈及重新配置 GPU 紋理。 */
+    const wanted = Math.max(boxW, boxH) * dpr * Math.max(1, canvasK());
+    return previewEffectLongEdge(wanted);
   };
   const fxCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
   const fxFastRef = useRef(false);
@@ -6821,7 +6829,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     let alive = true;
     const draw = () => {
       if (!alive || !img.naturalWidth) return;
-      const dpr = Math.max(2, Math.min(4, geoDpr * Math.max(1, canvasK())));
+      /* 波浪另外有來源與輸出兩張畫布；同樣以可見畫面預算約束，
+         否則放大過的照片一套波浪就可能同時配置兩張超大 RGBA。 */
+      const dpr = previewSurfaceDpr(boxW + glowPad * 2, boxH + waveImagePad * 2,
+        Math.max(2, Math.min(4, geoDpr * Math.max(1, canvasK()))));
       const W = Math.max(1, Math.round((boxW + glowPad * 2) * dpr));
       const pad = waveImagePad * dpr;
       const bodyH = Math.max(1, Math.round(boxH * dpr));
