@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { prepareFiles, shareFiles } from '../utils/shareAll';
 import { isNative } from '../utils/native';
@@ -84,10 +84,18 @@ export const SaveButton: React.FC<{
   /* App：成品頁先被一層跟匯出時一樣的黑色轉圈蓋住，存進相簿完成的那一刻才掀開 ——
      「看到成品頁」和「照片真的存好＋震動」是同一個瞬間 */
   const covering = isNative() && !autoDone.has(key) && urls.length > 0;
+  /* 蓋在跟工具存檔畫面同一個框裡（工具頁扣掉了狀態列的高度）：
+     蓋在整個螢幕上的話，正中央會比工具的存檔畫面高半個狀態列，轉圈就往上跳 */
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [coverHost, setCoverHost] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    setCoverHost((btnRef.current?.closest('.safe-top') as HTMLElement | null) ?? document.body);
+  }, []);
   return (
     <>
-    {covering && createPortal(coverLayer(), document.body)}
+    {covering && coverHost && createPortal(coverLayer(), coverHost)}
     <button
+      ref={btnRef}
       onClick={(e) => { e.stopPropagation(); if (ready) void save(); }}
       disabled={!ready || phase === 'saving'}
       className={className ?? `h-12 rounded-full bg-white text-black font-black tracking-widest uppercase text-sm shadow-lg shadow-white/10 transition-all ${ready ? 'active:scale-95' : 'opacity-40'}`}

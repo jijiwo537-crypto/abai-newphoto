@@ -12,6 +12,7 @@ import {
   cachedThumb, exportAssets, prefetchThumbs, requestThumb, setThumbSource,
 } from '../utils/nativeGallery';
 import { haptic } from '../utils/haptics';
+import { ImportSpinner } from './BusySpinner';
 
 const PAGE = 150;
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
@@ -387,7 +388,7 @@ export const NativeGallery: React.FC<{
         {/* 讀原檔時：跟接下來匯入畫面一模一樣的黑底轉圈，兩段接起來看起來就是同一個 */}
         {exporting && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-black">
-            <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" />
+            <ImportSpinner belowStatusBar />
           </div>
         )}
       </div>

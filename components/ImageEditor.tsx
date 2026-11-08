@@ -1,4 +1,5 @@
 
+import { ImportSpinner } from './BusySpinner';
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
@@ -8465,11 +8466,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       {saveState === 'idle' && (isEditorLoading || !previewLayoutReady) && (
         /* 首次解碼期間必須完全遮住預覽；半透明遮罩會把底下 canvas 從初始尺寸
            切換到正確比例的那一幀透出來，看起來就像圖片上下抖了一下。 */
-        <div data-editor-initial-loading className="absolute inset-0 z-[120] flex items-center justify-center bg-[#080808]">
-          <div className="flex flex-col items-center gap-4 text-white">
-            <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
-            <p className="text-[10px] font-black tracking-[0.2em] uppercase animate-pulse opacity-70">解析中...</p>
-          </div>
+        <div data-editor-initial-loading className="fixed inset-0 z-[120] flex items-center justify-center bg-[#080808]">
+          {/* 跟匯入時同一款、同一個位置（蓋滿工具頁的框、正中央），從匯入接過來不會跳、不會換字 */}
+          <ImportSpinner />
         </div>
       )}
 

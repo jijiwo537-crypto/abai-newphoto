@@ -1,4 +1,5 @@
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
+import { ImportSpinner } from './BusySpinner';
 import { StuckEscape } from './StuckEscape';
 import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
@@ -1765,11 +1766,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       `}</style>
 
       {saveState === 'idle' && isLoading && !embedded && (
-        <div className="absolute inset-0 z-[120] flex items-center justify-center bg-[#080808]/80 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="flex flex-col items-center gap-4 text-white">
-            <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
-            <p className="text-[10px] font-black tracking-[0.2em] uppercase animate-pulse opacity-70">解析中...</p>
-          </div>
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-[#080808]/80 backdrop-blur-md">
+          {/* 跟匯入時同一款、同一個位置（蓋滿工具頁的框、正中央），從匯入接過來不會跳、不會換字 */}
+          <ImportSpinner />
         </div>
       )}
 

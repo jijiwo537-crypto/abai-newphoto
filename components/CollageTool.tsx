@@ -96,6 +96,7 @@ import { paintMaskTexture, maskTextureSizeFromUi, maskTextureSizeToUi, maskTextu
 import { spacedTextureRadius, maskTextureGapFromUi, maskTextureGapToUi } from '../utils/textureSpacing';
 import { ComposeStudio } from './ComposeStudio';
 import { StuckEscape } from './StuckEscape';
+import { ImportSpinner } from './BusySpinner';
 /* 影片：包成一個「長得跟 <img> 一樣」的來源，畫布那邊一行都不必改。
    詳細的理由與做法寫在 utils/videoSource.ts 的檔頭。 */
 import {
@@ -10421,7 +10422,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     <div onPointerDownCapture={()=>deferHeavyWork(600)} onClickCapture={()=>deferHeavyWork(600)} className="safe-top flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
       {importBusy && createPortal(
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black" data-creative-import-loading="1">
-          <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" role="status" aria-label="載入中" />
+          <ImportSpinner belowStatusBar />
         </div>, document.body)}
       {regionSwapPhoto && createPortal(<canvas ref={regionThumbRef} data-creative-swap-thumbnail="1"
         className="fixed pointer-events-none z-[9999] border-2 border-white rounded-[8px]"

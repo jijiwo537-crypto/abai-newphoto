@@ -67,6 +67,7 @@ import { watchAppUpdates } from './utils/appUpdate';
 import { detectUnexpectedExit, markToolActive, markToolInactive } from './utils/crashRecovery';
 import { trimMemory, watchMemoryPressure } from './utils/memoryPressure';
 import { isNative } from './utils/native';
+import { ImportSpinner } from './components/BusySpinner';
 import { MOBILE_MAX_PIXELS } from './utils/exportLimits';
 
 const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
@@ -579,7 +580,7 @@ const App: React.FC = () => {
      <div className="abai-frame">
       {isImporting && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black">
-          <AppLoadingIndicator />
+          <ImportSpinner belowStatusBar />
         </div>
       )}
 
