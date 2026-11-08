@@ -985,7 +985,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
             <div className="relative w-full h-[76px] rounded-lg border border-dashed border-white/30 bg-white/[0.03] flex flex-col items-center justify-center gap-1 text-white/50">
               {refAdding ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 : <Icon name="add_photo_alternate" className="text-2xl" />}
-              <span className="text-[8px] font-black tracking-widest">新增</span>
+              <span className="text-[8px] font-black tracking-widest">新增參考圖</span>
             </div>
           </button>
           {refs.map(r => {
@@ -995,7 +995,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
                 <button onClick={() => { if (!on) setReferenceSrc(r.url); }} data-cm-ref={r.id} aria-pressed={on} aria-label="參考圖片"
                   className="block w-full h-full rounded-lg overflow-hidden bg-[#1a1a1a] active:scale-95 transition-transform">
                   <img src={r.url} alt="" draggable={false} className="w-full h-full object-cover" />
-                  {on && <div className="absolute inset-0 rounded-lg border border-dashed border-white pointer-events-none" />}
+                  {on && <div className="absolute inset-0 rounded-lg border border-white pointer-events-none" />}
                 </button>
                 {on && <button onClick={() => deleteRef(r.id, r.url)} data-cm-delref aria-label="刪除這張參考圖"
                   className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center active:scale-90">

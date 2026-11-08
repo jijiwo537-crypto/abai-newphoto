@@ -99,6 +99,18 @@ function syncSpinners() {
   new MutationObserver(list => {
     let hit = false;
     for (const m of list) m.addedNodes.forEach(n => { if (n.nodeType === 1) hit = true; });
-    if (hit) requestAnimationFrame(() => align(document));
+    if (hit) requestAnimationFrame(() => { align(document); rememberBusyOverlay(); });
   }).observe(document.body, { childList: true, subtree: true });
+}
+
+/* 記住最近一次「全畫面轉圈」那一層長什麼樣子（各工具的匯出畫面不太一樣）。
+   成品頁要先蓋一層等存相簿時，就原樣用這一層 —— 轉圈位置、字都一樣，看起來是同一段 */
+function rememberBusyOverlay() {
+  const spin = Array.from(document.querySelectorAll('.animate-spin')).find(el => (el as HTMLElement).offsetWidth >= 40);
+  const layer = spin?.closest('.fixed.inset-0') as HTMLElement | null;
+  if (!layer || layer.closest('[data-abai-save-cover]')) return;
+  const clone = layer.cloneNode(true) as HTMLElement;
+  clone.classList.remove('animate-in', 'fade-in');
+  clone.querySelectorAll('button').forEach(b => b.remove());
+  (window as any).__abaiBusyOverlay = { html: clone.outerHTML, at: Date.now() };
 }

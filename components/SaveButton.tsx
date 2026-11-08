@@ -15,6 +15,18 @@ import { saveToPhotos } from '../utils/nativePhotos';
  */
 /** 已經自動存過的成品（同一份不重複存，例如成品頁重新顯示時） */
 const autoSaved = new Set<string>();
+/** 存相簿時蓋在成品頁上的那一層：剛剛匯出畫面（幾秒內）原樣接上；沒有就用標準的黑底轉圈 */
+function coverLayer() {
+  const last = (window as any).__abaiBusyOverlay as { html: string; at: number } | undefined;
+  if (last && Date.now() - last.at < 15000) {
+    return <div data-abai-save-cover="" style={{ position: 'fixed', inset: 0, zIndex: 10000 }} dangerouslySetInnerHTML={{ __html: last.html }} />;
+  }
+  return (
+    <div data-abai-save-cover="" className="fixed inset-0 z-[10000] bg-black/90 backdrop-blur-md flex items-center justify-center" aria-label="儲存中">
+      <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
+    </div>
+  );
+}
 /** 自動存檔已經結束（成功或失敗）的成品：成品頁不再蓋著 */
 const autoDone = new Set<string>();
 export const SaveButton: React.FC<{
@@ -75,10 +87,7 @@ export const SaveButton: React.FC<{
   const covering = isNative() && !autoDone.has(key) && urls.length > 0;
   return (
     <>
-    {covering && createPortal(
-      <div className="fixed inset-0 z-[10000] bg-black/90 backdrop-blur-md flex items-center justify-center" aria-label="儲存中">
-        <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
-      </div>, document.body)}
+    {covering && createPortal(coverLayer(), document.body)}
     <button
       onClick={(e) => { e.stopPropagation(); if (ready) void save(); }}
       disabled={!ready || phase === 'saving'}
