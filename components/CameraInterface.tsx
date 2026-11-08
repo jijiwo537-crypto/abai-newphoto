@@ -982,7 +982,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         if (alive && !/superseded/.test(String(e?.message ?? e))) { setProPreferred(false); setCaptureNotice('原生相機無法啟動，已換成一般相機'); }
         return;
       }
-      if (!alive) { void cam.stop(); return; }
+      if (!alive) return;
       restore = punchThrough(el, canvas ? [canvas] : []);
       ro = new ResizeObserver(() => { void cam.setRect(rect()).catch(() => {}); });
       ro.observe(el);

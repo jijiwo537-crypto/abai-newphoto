@@ -133,7 +133,6 @@ const App: React.FC = () => {
   /* 上次是不是在工具裡被系統強制關掉的（見 utils/crashRecovery）。一定要在第一次 render 就讀：
      下面那個 effect 一回到首頁就會把記號清掉 */
   const [crashed] = useState(() => detectUnexpectedExit());
-  const [recoveredToast, setRecoveredToast] = useState(false);
 
   /* 首頁的「最近輸出」。每次回到首頁重讀一次，剛導出的那張才會馬上出現 */
   const [recentExports, setRecentExports] = useState<ExportMeta[]>([]);
@@ -557,7 +556,7 @@ const App: React.FC = () => {
        留著的可能是更早、別的作品，那就照一般流程讓使用者自己選 */
     if (resume.kind !== crashed.tool || resume.at < crashed.since - 1000) return;
     autoResumed.current = true;
-    void handleResume().then(() => { setRecoveredToast(true); window.setTimeout(() => setRecoveredToast(false), 3500); });
+    void handleResume();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crashed, resume]);
   /* 在工具裡就打心跳；回到首頁＝正常離開 */
@@ -661,11 +660,6 @@ const App: React.FC = () => {
         }}
       />
 
-      {recoveredToast && (
-        <div role="status" className="fixed left-1/2 -translate-x-1/2 top-[calc(env(safe-area-inset-top)+64px)] z-[400] px-4 py-2 rounded-full bg-black/80 backdrop-blur-md border border-white/10 text-[12px] text-white/90 whitespace-nowrap pointer-events-none animate-in fade-in duration-200">
-          剛才被系統關閉了，已為你接回剛才的編輯
-        </div>
-      )}
       {/* 上次還沒做完的東西：先問，不要直接跳進去（被系統關掉的那種會自動接回，見上面） */}
       {resume && currentView === 'home' && !(autoPending && !autoResumed.current) && (
         <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">

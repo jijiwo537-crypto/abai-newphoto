@@ -1,3 +1,4 @@
+import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, applySelectedPatternAppearance, selectedPatternGlow, type SelectedFrame } from '../utils/selectedAnimations';
 
 import { waveWarp, revealPathD } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
@@ -725,7 +726,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; ringReveal?: number; waveMix?: number; idleT?: number; rayK?: number };
+export type MoFrame = { lab?: SelectedFrame; k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; ringReveal?: number; waveMix?: number; idleT?: number; rayK?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -1147,6 +1148,8 @@ export const moOf = (o: any): MoCfg => {
  * 交棒處用 0.35 秒淡入接上常駐，不然從進場切到常駐會跳一下。
  */
 const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number } => {
+  const lab = selectedFrame(cfg, t, phase);
+  if (lab) return { ...FLAT, fx: 1, lab };
   /* 「無」不是一段看不見的進場動畫：它沒有 delay、也沒有 duration。
      舊版仍先空等 cfg.delay + cfg.dur，使用者就會看到畫面靜止幾秒才開始常駐。 */
   const hasIntro = cfg.in !== 'none';
@@ -6397,7 +6400,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        位移的單位是圖案自己的大小，所以大圖案飄得多、小圖案飄得少。 */
     const holeOrder = new Map<string, number>();
     [...holes].sort((a, b) => (a.x - b.x) || (a.y - b.y)).forEach((h, i) => holeOrder.set(h.id, i));
-    type HA = { k: number; x: number; y: number; rot: number; a: number; fx: number; on: boolean; burst: number };
+    type HA = { lab?: SelectedFrame; k: number; x: number; y: number; rot: number; a: number; fx: number; on: boolean; burst: number };
     const holeFrames = new Map<any, HA>();
     const calculateHoleFrame = (h: any): HA => {
       const a = animRef.current;
@@ -6455,7 +6458,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         patternAlpha = 1 + ((1 - strength * (1 - pulse)) - 1) * attack;
       }
       return {
-        k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base + waveY, rot: f.rot, a: f.a * patternAlpha, fx: f.fx,
+        lab: f.lab, k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base + waveY + selectedPatternOffset(f.lab, base), rot: f.rot, a: f.a * patternAlpha, fx: f.fx,
         burst: f.burst || 0,
         // 放射線還在的時候，就算圖案本身還沒亮起來也要留著這一格
         on: (f.k > 0.002 && f.a > 0.004) || (f.burst || 0) > 0.01,
@@ -6500,14 +6503,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       g.restore();
     };
     const glowOn = (side: 'image' | 'mask') =>
-      glowMode === 'both' || (glowMode === 'mask' && side === 'mask') || (glowMode === 'image' && side === 'image');
+      (animRef.current && moShapeCfgRef.current.idle === 'lab-P-L04') || glowMode === 'both' || (glowMode === 'mask' && side === 'mask') || (glowMode === 'image' && side === 'image');
     // 與圖形一致，保留使用者選定的光暈色，不按背景改成白色。
-    const glowColorOf = (_side: 'image' | 'mask') => holeGlowColor;
+    const glowColorOf = (_side: 'image' | 'mask') => moShapeCfgRef.current.idle === 'lab-P-L04' && animRef.current ? '#e4ffd9' : holeGlowColor;
     /* 三層疊起來的濃度不等於一層的濃度：0.2 疊三次會變成 0.49。
        把每一層開三次方根回去，疊完剛好等於本來要的那個值。 */
     const layerAlpha = (a: number) => (a >= 1 ? 1 : 1 - Math.pow(1 - Math.max(0, a), 1 / 3));
     /** 發光自己的常駐動畫（每顆圖案用自己的相位，'blink' 則一律同步） */
-    const glowBeat = (h: any) => { const an = animRef.current; return an?.glow ? an.glow(h) : 1; };
+    const glowBeat = (h: any) => { if (moShapeCfgRef.current.idle === 'lab-P-L04' && animRef.current) return selectedPatternGlow(hA(h).lab); const an = animRef.current; return an?.glow ? an.glow(h) : 1; };
     const glowBeatLink = (h: any) => { const an = animRef.current; return an?.glowLink ? an.glowLink(h) : 1; };
 
     /* ── 發光為什麼一定要另外開一層畫 ────────────────────────────────
@@ -6650,7 +6653,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 母版至少跟畫出來最大的那個一樣大
     let glowRasterSize = 0;
     /** 圖案發光的強度（跟圖形同一套：滑桿 100 ＝ 3） */
-    const holeGlowAmt = glowAmount(glowFromUi(holeGlow));
+    const holeGlowAmt = moShapeCfgRef.current.idle === 'lab-P-L04' && animRef.current ? .5 : glowAmount(glowFromUi(holeGlow));
     /** 光暈的半邊要裝得下：本體 0.5×sz ＋ 3σ（σ ＝ 最大那段模糊的一半 ＝ 0.0675×強度×sz） */
     const glowHalf = (sz: number) => sz * ((isTextHole(holeType) ? 0.8 : 0.55) + 0.21 * holeGlowAmt);
     const glowBmp = (h: any, sz: number, gcol: string) => {
@@ -7119,6 +7122,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const mxp = dx || dy ? A.x * s : hx * rx, myp = dx || dy ? A.y * s : hy * ry;
         ctx.save();
         ctx.globalAlpha = A.a;
+        applySelectedPatternAppearance(ctx, A.lab, sz, hx, hy);
         // 每個圖案固定分配顏色：換縮放或重畫都不能重新亂數配色
         const stripeSeed = String(h.id).split('').reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
         const patternFill = isStripeLikeTex(patternType) && !maskImageState ? (stripeSeed % 2 ? stripeA : stripeB) : basePat;
@@ -7260,6 +7264,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const px = A.x * s + dx, py = A.y * s + dy;
       lmx.save();
       lmx.globalAlpha = A.a;
+      applySelectedPatternAppearance(lmx, A.lab, sz, px, py);
       if (isTextHole(holeType)) {
         const tText = holeGlyph(holeType, customText, h);
         drawTextShape(lmx, holeType, tText, px, py, sz, null, true, currentAngle);
@@ -7341,6 +7346,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 四周包圍的洞本來就是遮罩座標，對應點就是自己
         ctx.save();
         ctx.globalAlpha = A.a;
+        applySelectedPatternAppearance(ctx, A.lab, sz, hx, hy);
         if (isTextHole(holeType)) {
           drawTextShape(ctx, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, currentAngle);
         } else {
@@ -7878,6 +7884,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             sticker.w * stickerScale, sticker.h * stickerScale);
         };
         const drawText = (stroke = false) => {
+          if (f?.lab) {
+            const rasterFontPx = o.sym ? stickerFontPx : 96, rasterScale = o.sym ? stickerScale : pinFont * s / rasterFontPx;
+            const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
+            const raster = rasterizeSymbolAnimationLayers(o.text || '', fam, rasterFontPx, stroke ? 'stroke' : 'fill',
+              typeof paintStyle === 'string' ? paintStyle : (o.color || '#fff'),
+              stroke ? ctx.lineWidth / Math.max(.001, rasterScale) : 0, Math.max(3, Math.min(7, rasterScale * 2.25)),
+              o.sym ? undefined : { plainText: true, fontWeight: weight, fontStyle: o.italic ? 'italic' : 'normal', letterSpacing: spacingPx * rasterFontPx / Math.max(1, pinFont * s) });
+            if (raster) {
+              raster.layers.forEach((layer, index) => {
+                ctx.save();ctx.translate(tdx + layer.pivotX * rasterScale, tdy + layer.pivotY * rasterScale);
+                paintSelectedAnimation(ctx, f.lab, layer.w * rasterScale, layer.h * rasterScale, g =>
+                  g.drawImage(layer.canvas, (layer.x-layer.pivotX)*rasterScale, (layer.y-layer.pivotY)*rasterScale, layer.w*rasterScale, layer.h*rasterScale), index, raster.layers.length);
+                ctx.restore();
+              });return;
+            }
+          }
           if (textUnitBreathe) {
             /* 一般文字的縮放 II 也必須先完整排版一次，再從同一張成品分層。
                逐字重新 fillText 會破壞 kerning、組合字、粗斜體與自訂字距。 */
@@ -8091,6 +8113,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       ctx.restore();
       };
+      if (f?.lab && o.type === 'shape') {
+        ctx.save();
+        ctx.translate((o.x + o.w / 2) * s, (o.y + o.h / 2) * s);
+        ctx.rotate((o.rot || 0) * Math.PI / 180);
+        paintSelectedAnimation(ctx, f.lab, o.w * s, o.h * s, g => {
+          g.save();g.rotate(-(o.rot || 0) * Math.PI / 180);g.translate(-(o.x + o.w / 2) * s, -(o.y + o.h / 2) * s);paintObject(g);g.restore();
+        });
+        ctx.restore();return;
+      }
       /* 進場／常駐動畫在縮放（果凍、旋轉、翻轉、流星、縮放…）時，發光、描邊、文字光暈
          都是 canvas 的 shadow。shadow 不吃座標縮放，而且 Safari 遇到非等比縮放
          （翻轉時 X 被壓扁）會直接不畫 —— 就是「翻轉時發光消失、播完才出現」。
@@ -9309,7 +9340,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ? 0 : moShape.delay + (ranks.get(orderedHoles[i]?.id) ?? i) * stepH + POP * 0.2;
     const ez = linkEase(moLink.ease);
     return {
-      hole: (h: any, _i: number) => composeMo(shapeCfg(h), t, hashId(h.id) % 628 / 100),
+      hole: (h: any, _i: number) => composeMo(shapeCfg(h), t, moShape.idle.startsWith('lab-') ? _i * 2.39996 : hashId(h.id) % 628 / 100),
       /* 每條線各自等自己的兩端冒出來才開始畫，而且「每條線畫的時間都一樣長」。
          不讓所有線在同一個時間點收工，不然晚開始的那幾條會被壓縮成很短的時間，
          看起來就是「畫到後面突然變快」。現在速度從頭到尾一致。 */
@@ -9327,7 +9358,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const phase = (hashId(o.id) % 628) / 100 + i * 0.7;
         /* 散落圖形邊框：整個邊框不動，改成每一顆圖形各自跑同一套進場／常駐。
            果凍I＝每顆同時各自果凍；果凍II＝從左上開始順時針一顆接一顆（跟圖案那組錯開的算法一樣） */
-        if (o.type === 'shape' && o.kind === FRAME_SCATTER) {
+        if (o.type === 'shape' && o.kind === FRAME_SCATTER && !cfg.in.startsWith('lab-') && !cfg.idle.startsWith('lab-')) {
           const seq = cfg.in === 'pop-seq';
           const POP = Math.min(0.5, cfg.dur * 0.45);
           return { ...FLAT, fx: 1, burst: 0, scatterItem: (rank: number, n: number, idx: number) => {
@@ -12584,7 +12615,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const isGridTarget = !!selObj && selObj.type === 'shape' && GRID_SHAPE_KINDS.has(selObj.kind);
                 const isGlintTarget = !!selObj && selObj.type === 'shape' && selObj.kind === 'hole' && String(selObj.hole || '').startsWith('sb-');
                 const isScatterTarget = !!selObj && selObj.type === 'shape' && selObj.kind === FRAME_SCATTER;
-                const kinds = isScatterTarget ? SCATTER_IN_KINDS : moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
+                const legacyKinds = isScatterTarget ? SCATTER_IN_KINDS : moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
+                const labTarget = moTarget === 'shape' ? 'pattern' : isSymbolTarget ? 'symbol' : isTextTarget ? 'text' : selObj?.type === 'shape' ? 'shape' : null;
+                const kinds = [...legacyKinds, ...(labTarget ? selectedKinds(labTarget, 'entry') : [])];
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}
@@ -12663,7 +12696,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {(isScatterTarget ? SCATTER_IDLE_KINDS : moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : isGlintTarget ? GLINT_IDLE_KINDS_C : IDLE_KINDS).map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
+                          {[...(isScatterTarget ? SCATTER_IDLE_KINDS : moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : isGlintTarget ? GLINT_IDLE_KINDS_C : IDLE_KINDS), ...(labTarget ? selectedKinds(labTarget, 'idle') : [])].map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>

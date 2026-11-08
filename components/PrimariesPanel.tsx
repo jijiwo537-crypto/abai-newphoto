@@ -1,3 +1,5 @@
+import { haptic, dialHaptic } from '../utils/haptics';
+import { crossedDialMark } from '../utils/hapticDetents';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { clamp, fmt, RING_STOPS, useDrag, ResetIcon, type Ev } from './grade/controls';
 import {
@@ -156,22 +158,29 @@ const WheelUnit: React.FC<Ev & { id: WheelId; label: string; w: YRGB; D: number;
   let px = (cb / s.edge) * R, py = (-cr / s.edge) * R;
   { const r = Math.hypot(px, py); if (r > R) { px *= R / r; py *= R / r; } }
   const pos = useRef({ x: 0, y: 0 });
+  const atCenter = useRef(true);
   const wheel = useDrag({
-    onStart: () => { pos.current = { x: px, y: py }; onStart(); },
+    onStart: () => { pos.current = { x: px, y: py }; atCenter.current = Math.hypot(px,py)<=2; onStart(); },
     onMove: (dx, dy) => {
       const p = pos.current; p.x += dx * 0.6; p.y += dy * 0.6;
       const r = Math.hypot(p.x, p.y); if (r > R) { p.x *= R / r; p.y *= R / r; }
-      onChange(wheelToRgb(w, s.neutral, (p.x / R) * s.edge, (-p.y / R) * s.edge));
+      const centered = Math.hypot(p.x,p.y)<=2;
+      if(centered&&!atCenter.current)haptic('detentMajor');
+      atCenter.current=centered;
+      onChange(wheelToRgb(w, s.neutral, centered?0:(p.x / R) * s.edge, centered?0:(-p.y / R) * s.edge));
     },
     onEnd,
-    onDouble: () => { onStart(); onChange(wheelToRgb(w, s.neutral, 0, 0)); onEnd(); },
+    onDouble: () => { if(px||py)haptic('detentMajor'); onStart(); onChange(wheelToRgb(w, s.neutral, 0, 0)); onEnd(); },
   });
   /* 主轉盤：有 Y 的（暗部／中間調／亮部）改 Y；沒有的（偏移、Log）三個通道一起改 */
   const level = s.hasY ? w.y : (w.r + w.g + w.b) / 3;
   const [jogX, setJogX] = useState(0);
+  const jogTravel = useRef(0);
+  const jogTick = (dx:number) => {const previous=jogTravel.current; jogTravel.current+=dx; if(crossedDialMark(previous,jogTravel.current))dialHaptic(Math.round(jogTravel.current/6),0,false);};
   const jog = useDrag({
-    onStart, onEnd,
+    onStart: () => { jogTravel.current=0; onStart(); }, onEnd,
     onMove: dx => {
+      jogTick(dx);
       setJogX(x => x + dx);
       const dv = dx * s.jog;
       onChange(s.hasY ? { ...w, y: clamp(w.y + dv, s.min, s.max) }
@@ -204,20 +213,27 @@ const HdrUnit: React.FC<Ev & { id: HdrZoneId | 'global'; label: string; w: HdrWh
   let px = w.x * R, py = -w.y * R;
   { const r = Math.hypot(px, py); if (r > R) { px *= R / r; py *= R / r; } }
   const pos = useRef({ x: 0, y: 0 });
+  const atCenter = useRef(true);
   const wheel = useDrag({
-    onStart: () => { pos.current = { x: px, y: py }; onStart(); },
+    onStart: () => { pos.current = { x: px, y: py }; atCenter.current = Math.hypot(px,py)<=2; onStart(); },
     onMove: (dx, dy) => {
       const p = pos.current; p.x += dx * 0.6; p.y += dy * 0.6;
       const r = Math.hypot(p.x, p.y); if (r > R) { p.x *= R / r; p.y *= R / r; }
-      onChange({ ...w, x: p.x / R, y: -p.y / R });
+      const centered = Math.hypot(p.x,p.y)<=2;
+      if(centered&&!atCenter.current)haptic('detentMajor');
+      atCenter.current=centered;
+      onChange({ ...w, x: centered?0:p.x / R, y: centered?0:-p.y / R });
     },
     onEnd,
-    onDouble: () => { onStart(); onChange({ ...w, x: 0, y: 0 }); onEnd(); },
+    onDouble: () => { if(px||py)haptic('detentMajor'); onStart(); onChange({ ...w, x: 0, y: 0 }); onEnd(); },
   });
   const [jogX, setJogX] = useState(0);
+  const jogTravel = useRef(0);
+  const jogTick = (dx:number) => {const previous=jogTravel.current; jogTravel.current+=dx; if(crossedDialMark(previous,jogTravel.current))dialHaptic(Math.round(jogTravel.current/6),0,false);};
   const jog = useDrag({
-    onStart, onEnd,
-    onMove: dx => { setJogX(x => x + dx); onChange({ ...w, exp: clamp(w.exp + dx * 0.01, -4, 4) }); },
+    onStart: () => { jogTravel.current=0; onStart(); }, onEnd,
+    onMove: dx => {
+      jogTick(dx); setJogX(x => x + dx); onChange({ ...w, exp: clamp(w.exp + dx * 0.01, -4, 4) }); },
     onDouble: () => { onStart(); onChange({ ...w, exp: 0 }); onEnd(); },
   });
   const zone = 'range' in w;

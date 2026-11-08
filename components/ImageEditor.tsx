@@ -1,3 +1,5 @@
+import { haptic } from '../utils/haptics';
+import { crossedZero } from '../utils/hapticDetents';
 
 import { ImportSpinner } from './BusySpinner';
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
@@ -835,6 +837,7 @@ const FastSlider = React.memo(({
     const valueTextRef = useRef<HTMLSpanElement>(null);
     // 存的舊門檻值跟現有作品相容；介面上的範圍代表最亮的前 N%，往右變大
     const displayValue = effectControlValue(toolId,value);
+    const lastHapticValue = useRef(displayValue);
 
     useEffect(() => {
         if (inputRef.current) {
@@ -843,6 +846,7 @@ const FastSlider = React.memo(({
         if (valueTextRef.current) {
             valueTextRef.current.textContent = displayValue.toFixed(0);
         }
+        lastHapticValue.current = displayValue;
     }, [value, toolId]);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -853,6 +857,8 @@ const FastSlider = React.memo(({
                 inputRef.current.value = "0";
             }
         }
+        if (crossedZero(lastHapticValue.current, val)) haptic('detentMajor');
+        lastHapticValue.current = val;
         if (valueTextRef.current) {
             valueTextRef.current.textContent = val.toFixed(0);
         }
@@ -9862,7 +9868,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           }}
         >
           {activeCategory === 'filter' && lutList.map((lut, idx) => (
-            <button key={lut.id} onClick={() => handleFilterSelect(idx)} data-filter-card={lut.id} className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
+            <button key={lut.id} onClick={() => handleFilterSelect(idx)} data-filter-card={lut.id} data-haptic="tick" className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
               {/* 沒選中時完全不畫邊框 —— 之前用 border-2 border-transparent，
                   那 2px 露出的是後面的底色，在縮圖旁邊看起來就是一圈灰框。
                   選中改用內描邊的 ring，畫在框內，不會影響版面也不會有位移。 */}
@@ -9904,7 +9910,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           {/* 「原始」：排在最前面，點下去就是把所有特效關掉。
                縮圖直接用那張「沒套任何特效」的底圖。 */}
           {activeCategory === 'effects' && (
-            <button data-fx-tool="fxNone" onClick={clearAllEffects}
+            <button data-fx-tool="fxNone" data-haptic="tick" onClick={clearAllEffects}
                     className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
               <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
                 <div className="absolute inset-0 bg-[#1a1a1a]" />
@@ -9922,7 +9928,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             </button>
           )}
           {activeCategory === 'effects' && EFFECT_TOOLS.map(tool => (
-            <button key={tool.id} data-fx-tool={tool.id} onClick={() => handleEffectToolSelect(tool.id)} className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
+            <button key={tool.id} data-fx-tool={tool.id} data-haptic="tick" onClick={() => handleEffectToolSelect(tool.id)} className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
               <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
                 {/* 這一格還沒算到就先畫沒套特效的底圖，整排才不會有空洞 */}
                 <div className="absolute inset-0 bg-[#1a1a1a]" />

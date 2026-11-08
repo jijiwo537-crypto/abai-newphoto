@@ -37,7 +37,7 @@ export const EditBar: React.FC<{ children: React.ReactNode; scroll?: boolean; cl
 };
 
 export const EditBarTab: React.FC<{ active: boolean; label: string; onClick: () => void; scroll?: boolean; id?: string }> = ({ active, label, onClick, scroll, id }) => (
-  <button onClick={onClick} data-edit-tab={id} data-edit-tab-on={active ? '1' : '0'}
+  <button onClick={onClick} data-haptic="tick" data-edit-tab={id} data-edit-tab-on={active ? '1' : '0'}
     style={scroll ? { width: 'calc((100% - 12px) / 7)' } : undefined}
     /* 文字顏色直接換（不淡入）：顏色漸變在 iPhone 上跑在主執行緒，切頁後那幾格在重畫預覽時會停在半路、
        看起來慢一拍才亮。底下那條線是 transform／opacity（交給合成器），照樣有動畫 */

@@ -1,3 +1,4 @@
+import { selectedKinds, paintSelectedAnimation } from '../utils/selectedAnimations';
 import { EditBar, EditBarTab } from './EditBar';
 import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
@@ -28,6 +29,8 @@ import { SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface,layoutGeomPreviews} from './LayoutPhotoSurface';
 import {ensurePreviewCopy,previewSrc,usePreviewCopies,setPreviewZoom,previewZoom,forgetPreviewCopies} from '../utils/previewCopies';
 import {registerTrim} from '../utils/memoryPressure';
+import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
+registerTrim('selected-animation-surfaces', releaseSelectedMotionSurfaces);
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import {drawStableText, hasEmoji} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
@@ -5902,7 +5905,7 @@ const classicScenePath = (image: FloatingImage, ringReveal = 1) => {
 const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
   motionFrame: ObjectMotionFrame | null | undefined, backingScale: number, cacheGlow = false) => {
   const drawW = image.width, drawH = image.height, contentScale = 1;
-  const usesUnitMotion = image.text !== undefined && (motionFrame?.seq !== undefined
+  const usesUnitMotion = image.text !== undefined && (motionFrame?.lab !== undefined || motionFrame?.seq !== undefined
     || (image.mo?.idle === 'symbol-breathe2' && motionFrame?.idleT !== undefined));
   ctx.save();
   if (image.shape === 'hole') {
@@ -6072,6 +6075,22 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       const dy = ink ? -ink.cy * size : 0;
       const unitMotionFrame = usesUnitMotion && lines.length === 1 ? motionFrame : null;
       const drawAnimatedUnits = (stroke = false) => {
+        if (motionFrame?.lab) {
+          const total = lines.reduce((n,line) => n + Array.from(line).length, 0);
+          let offset = 0;
+          lines.forEach((line,lineIndex) => {
+            const raster = rasterizeSymbolAnimationLayers(line, family, size, stroke ? 'stroke' : 'fill',
+              stroke ? (image.strokeColor || '#000000') : (image.color || '#FFFFFF'),
+              stroke ? (image.strokeWidth || 0)*2 : 0, 7,
+              image.sym ? undefined : {plainText:true,fontWeight:image.bold?700:400,fontStyle:image.italic?'italic':'normal',letterSpacing:spacing});
+            if (!raster) return;
+            raster.layers.forEach((layer,index) => {
+              ctx.save();ctx.translate(dx+layer.pivotX,dy+startY+lineIndex*lineH+layer.pivotY);
+              paintSelectedAnimation(ctx,motionFrame.lab,layer.w,layer.h,g=>g.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h),offset+index,total);
+              ctx.restore();
+            });offset += raster.layers.length;
+          });return;
+        }
         if (!unitMotionFrame && !image.sym) {
           // 快取的點陣套在連續矩陣下：不會因為每個縮放倍率重新微調字形而抖動
           lines.forEach((line, i) => {
@@ -6129,9 +6148,9 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
              因此動畫與靜止共用同一個中心，不會向左漂移或重排組合字。 */
           ctx.translate(dx + layer.pivotX, dy + layer.pivotY);
           ctx.scale(scale, scale);
-          ctx.drawImage(layer.canvas,
+          paintSelectedAnimation(ctx, unitMotionFrame.lab, layer.w, layer.h, g => g.drawImage(layer.canvas,
             layer.x - layer.pivotX, layer.y - layer.pivotY,
-            layer.w, layer.h);
+            layer.w, layer.h), index, count);
           ctx.restore();
         });
       };
@@ -6223,6 +6242,11 @@ export { prepareClassicSymbolPlacement, TEXT_PLACEHOLDER };
 /** 預覽和存檔的影格共用同一個區域動畫繪製 */
 export const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
   motionFrame: ObjectMotionFrame | null | undefined, density: number, cacheGlow = false) => {
+  if (motionFrame?.lab && image.text === undefined) {
+    paintSelectedAnimation(ctx, motionFrame.lab, image.width, image.height,
+      g => paintClassicSceneVector(g, image, motionFrame, density, cacheGlow));
+    return;
+  }
   const phase = motionFrame?.gridWave;
   const mix = motionFrame?.waveMix ?? 1;
   if (phase === undefined || mix <= 1e-5) {
@@ -10689,7 +10713,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   }, []);
   const frameForItem = useCallback((item: FloatingImage, index: number, time: number): ObjectMotionFrame => {
     /* 散落圖形邊框：整個邊框不動，每一顆圖形各自跑（果凍I 同時、果凍II 從左上順時針一顆一顆） */
-    if (item.shape === FRAME_SCATTER) {
+    if (item.shape === FRAME_SCATTER && !String(item.mo?.in || '').startsWith('lab-') && !String(item.mo?.idle || '').startsWith('lab-')) {
       const cfg = timedMotionConfig(item), phase = motionPhase(item, index);
       const seq = cfg.in === 'pop-seq', POP = Math.min(.5, cfg.dur * .45);
       return { k: 1, dx: 0, dy: 0, rot: 0, a: 1, fx: 1, scatterItem: (rank: number, n: number, idx: number) => {
@@ -18358,7 +18382,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const isSpecialLineTarget = !!target?.shape && SPECIAL_LINE_KINDS.has(target.shape);
               const isTextTarget = target?.text !== undefined && !target.sym;
               const baseIntro = OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce');
-              const introKinds = target?.shape === FRAME_SCATTER
+              const legacyIntroKinds = target?.shape === FRAME_SCATTER
                 ? baseIntro.filter(([id]) => id !== 'flip').flatMap(([id, name]): (readonly [string, string])[] => id === 'pop' ? [['pop', '果凍I'], ['pop-seq', '果凍II']] : [[id, name]]) as unknown as typeof baseIntro
                 : target?.sym
                 ? SYMBOL_OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce')
@@ -18374,7 +18398,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const isGlintTarget = target?.shape === 'hole' && String(target?.holeType || '').startsWith('sb-');
               const isScatterTarget = target?.shape === FRAME_SCATTER;
               /* 散落圖形：波浪換成呼吸（每顆各自的透明度呼吸） */
-              const idleKinds = isScatterTarget ? baseIdle.map(([id, name]) => id === 'grid-wave' ? ['scatter-breathe', '呼吸'] as const : [id, name] as const) : isGlintTarget ? GLINT_IDLE_KINDS.map(([id, name]) => [id, name] as const) : target?.sym
+              const legacyIdleKinds = isScatterTarget ? baseIdle.map(([id, name]) => id === 'grid-wave' ? ['scatter-breathe', '呼吸'] as const : [id, name] as const) : isGlintTarget ? GLINT_IDLE_KINDS.map(([id, name]) => [id, name] as const) : target?.sym
                 ? baseIdle.filter(([id]) => id !== 'grid-wave').flatMap(([id, name]) =>
                     id === 'breathe' ? [[id, '縮放I'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
                 : isTextTarget
@@ -18383,6 +18407,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   : targetIsImage
                     ? baseIdle.map(([id, name]) => id === 'spin' ? ['image-breathe', '呼吸'] as const : [id, name] as const)
                     : baseIdle.map(([id, name]) => id === 'spin' && target?.shape === 'grid-orbits' ? ['signal', '信號'] as const : [id, name] as const);
+              const labTarget = target?.sym ? 'symbol' : isTextTarget ? 'text' : target?.shape ? 'shape' : null;
+              const introKinds = [...legacyIntroKinds, ...(labTarget ? selectedKinds(labTarget, 'entry').map(x => [x.id,x.name] as const) : [])];
+              const idleKinds = [...legacyIdleKinds, ...(labTarget ? selectedKinds(labTarget, 'idle').map(x => [x.id,x.name] as const) : [])];
               const pickIntro = (id: string) => {
                 /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
                 patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) }

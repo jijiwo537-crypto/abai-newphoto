@@ -1,4 +1,6 @@
+import { selectedFrame, type SelectedFrame } from './selectedAnimations';
 export type ObjectMotionFrame = {
+  lab?: SelectedFrame;
   k: number;
   /** 翻轉／流星只在水平方向需要的額外倍率。 */
   fx?: number;
@@ -122,6 +124,8 @@ export const objectMotionFrame = (
   phase = 0,
 ): ObjectMotionFrame => {
   const cfg = objectMotionOf(value);
+  const lab = selectedFrame(cfg, time, phase);
+  if (lab) return { ...flat, lab };
   const hasIntro = cfg.in !== 'none';
   const introEnd = hasIntro ? cfg.delay + Math.max(.01, cfg.dur) : 0;
   const p = hasIntro ? clamp((time - cfg.delay) / Math.max(.01, cfg.dur)) : 1;

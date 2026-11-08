@@ -108,6 +108,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                 NativePreviewPlugin.setWebTransparent(web, true)
                 self.installHardwareShutter(on: web)
                 self.sessionQueue.async {
+                    guard gen == self.currentGeneration() else { call.reject("superseded"); return }
                     do {
                         ABAICameraFx.prewarm()
                         try self.configure()
@@ -125,10 +126,12 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     }
 
     @objc func stop(_ call: CAPPluginCall) {
-        _ = nextGeneration()
+        let stopGeneration = nextGeneration()
         sessionQueue.async {
+            guard stopGeneration == self.currentGeneration() else { call.resolve(); return }
             if self.session.isRunning { self.session.stopRunning() }
             DispatchQueue.main.async {
+                guard stopGeneration == self.currentGeneration() else { call.resolve(); return }
                 self.view?.removeFromSuperview(); self.view = nil
                 if let i = self.interaction, let web = self.bridge?.webView { web.removeInteraction(i) }
                 self.interaction = nil

@@ -10,6 +10,7 @@
  *   shutter      快門：俐落的一下＋很輕的回彈（機械快門感）
  *   success | error  存檔完成／失敗
  * 呼叫是「射後不理」：不等原生回覆，不會拖慢手勢。 */
+import { crossedZero } from './hapticDetents';
 import { isNative } from './native';
 import { nativePlugin } from './nativeBridge';
 
@@ -61,6 +62,7 @@ export function haptic(kind: Kind) {
  *  ‧ 拉到頭硬硬的一下 */
 export function sliderHaptic(prev: number, next: number, min: number, max: number) {
   if (!isNative() || prev === next || !(max > min)) return;
+  if (crossedZero(prev,next)) { haptic('detentMajor'); return; }
   if ((next <= min && prev > min) || (next >= max && prev < max)) { haptic('edge'); return; }
   if (min < 0 && max > 0 && (prev < 0 ? next >= 0 : prev > 0 ? next <= 0 : false)) { haptic('detentMajor'); return; }
   const seg = (v: number) => Math.floor(((v - min) / (max - min)) * 20 + 1e-9);
