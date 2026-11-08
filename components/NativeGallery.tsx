@@ -27,7 +27,7 @@ const CSS = `
 .abg-cell img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .28s ease, transform .32s ${EASE}; -webkit-user-drag: none; user-select: none; -webkit-touch-callout: none; }
 .abg-cell img.on { opacity: 1 }
 .abg-cell.sel img { transform: scale(.9); }
-.abg-cell .ring { position: absolute; inset: 0; border: 1.5px dashed rgba(255,255,255,.95); opacity: 0; transition: opacity .2s ease; pointer-events: none; }
+.abg-cell .ring { position: absolute; inset: 0; border: 2px solid #fff; opacity: 0; transition: opacity .2s ease; pointer-events: none; }
 .abg-cell.sel .ring { opacity: 1 }
 .abg-cell .skel { position: absolute; inset: 0; background: #2c2c2e; animation: abg-shimmer 1.4s ease-in-out infinite; }
 .abg-cell:active img.on { filter: brightness(.82) }
@@ -381,10 +381,10 @@ export const NativeGallery: React.FC<{
         </div>
 
         {/* 把原檔拿出來的時候 */}
+        {/* 讀原檔時：跟接下來匯入畫面一模一樣的黑底轉圈，兩段接起來看起來就是同一個 */}
         {exporting && (
-          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-black/70 backdrop-blur-sm">
-            <Spinner />
-            <span className="text-[14px] text-white/80">{multi && picked.length > 1 ? `正在讀取 ${picked.length} 個項目…` : '正在讀取…'}</span>
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-black">
+            <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" />
           </div>
         )}
       </div>

@@ -76,7 +76,7 @@ export const SaveButton: React.FC<{
   return (
     <>
     {covering && createPortal(
-      <div className="fixed inset-0 z-[10000] bg-black flex items-center justify-center" aria-label="儲存中">
+      <div className="fixed inset-0 z-[10000] bg-black/90 backdrop-blur-md flex items-center justify-center" aria-label="儲存中">
         <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
       </div>, document.body)}
     <button
@@ -84,7 +84,7 @@ export const SaveButton: React.FC<{
       disabled={!ready || phase === 'saving'}
       className={className ?? `h-12 rounded-full bg-white text-black font-black tracking-widest uppercase text-sm shadow-lg shadow-white/10 transition-all ${ready ? 'active:scale-95' : 'opacity-40'}`}
     >
-      {!ready ? (isNative() ? '儲存中…' : '準備中…') : phase === 'saving' ? '儲存中…' : phase === 'saved' ? '✓ 已存到相簿' : text}
+      {!ready ? (isNative() ? '儲存中…' : '準備中…') : phase === 'saving' ? '儲存中…' : phase === 'saved' ? '已存到相簿' : text}
     </button>
     </>
   );

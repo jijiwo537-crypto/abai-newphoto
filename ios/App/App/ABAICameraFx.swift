@@ -89,6 +89,19 @@ struct ABAICameraFx: Equatable {
             .cropped(to: e)
     }
 
+    /// 先把特效的 GPU 程式準備好（第一次用到時要編譯，點特效那一下才不會卡）
+    private static var warmed = false
+    static func prewarm() {
+        guard !warmed else { return }
+        warmed = true
+        DispatchQueue.global(qos: .utility).async {
+            let img = CIImage(color: CIColor(red: 0.6, green: 0.5, blue: 0.4)).cropped(to: CGRect(x: 0, y: 0, width: 64, height: 64))
+            var fx = ABAICameraFx(); fx.soft = 1; fx.blur = 1; fx.lowfi = 1
+            let ctx = CIContext()
+            _ = ctx.createCGImage(fx.apply(to: img), from: img.extent)
+        }
+    }
+
     /// 套在已經上好相機濾鏡的畫面上（觀景窗每一格、拍好的照片都走這裡）
     func apply(to input: CIImage) -> CIImage {
         guard isOn else { return input }

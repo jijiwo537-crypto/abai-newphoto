@@ -70,6 +70,7 @@ export async function setupNativeShell(): Promise<void> {
       });
     } catch { /* 改不了就算了 */ }
     void watchNativeMemoryBudget();
+    syncSpinners();
     /* 測試期的保險：這版 App 沒有包到原生外掛的話（打包時漏了步驟），直接講清楚，
        不要默默退回網頁的選照片和存檔，讓人以為是 bug */
     const { nativePlugin } = await import('./nativeBridge');
@@ -85,4 +86,19 @@ export async function setupNativeShell(): Promise<void> {
   } catch {
     /* 外掛沒裝、或這個平台不支援，就當作沒這回事 —— 不能因此讓 App 起不來 */
   }
+}
+
+/* 畫面上先後出現的轉圈（相簿讀檔 → 匯入、匯出 → 存相簿）其實是不同的元素，
+   各自從頭開始轉，接手的那一下會「跳一格」，看起來像兩段轉圈。
+   App 裡把所有轉圈的動畫都對齊同一個時鐘：換手時角度連續，看起來就是同一個一直在轉。 */
+function syncSpinners() {
+  const align = (root: ParentNode) => {
+    const els = root.querySelectorAll?.('.animate-spin') ?? [];
+    els.forEach(el => el.getAnimations?.().forEach(a => { try { a.startTime = 0; } catch { /* 不支援就算了 */ } }));
+  };
+  new MutationObserver(list => {
+    let hit = false;
+    for (const m of list) m.addedNodes.forEach(n => { if (n.nodeType === 1) hit = true; });
+    if (hit) requestAnimationFrame(() => align(document));
+  }).observe(document.body, { childList: true, subtree: true });
 }

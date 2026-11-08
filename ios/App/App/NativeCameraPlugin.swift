@@ -74,7 +74,13 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
 
     // MARK: 開啟、關閉
 
+    /* 開、關相機的順序號碼：關掉之後，還在路上的「開相機」就作廢 ——
+       不然它晚一步把網頁設成透明，離開相機後網頁就一直是透明的（狀態列透出白色） */
+    private var generation = 0
+
     @objc func start(_ call: CAPPluginCall) {
+        generation += 1
+        let gen = generation
         position = call.getString("position") == "front" ? .front : .back
         proRAW = call.getBool("proRAW") ?? false
         amount = call.getDouble("amount") ?? 1
@@ -82,6 +88,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         AVCaptureDevice.requestAccess(for: .video) { granted in
             guard granted else { call.reject("沒有相機權限"); return }
             DispatchQueue.main.async {
+                guard gen == self.generation else { call.reject("相機已經關掉"); return }
                 guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有 WebView"); return }
                 if self.view == nil {
                     guard let v = ABAIMetalView.make(frame: .zero) else { call.reject("這台裝置沒有 Metal"); return }
@@ -97,6 +104,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                 self.installHardwareShutter(on: web)
                 self.sessionQueue.async {
                     do {
+                        ABAICameraFx.prewarm()
                         try self.configure()
                         if !self.session.isRunning { self.session.startRunning() }
                         /* 後鏡頭：真的閃光燈；前鏡頭：螢幕補光（跟內建相機一樣把整個螢幕打亮） */
@@ -112,6 +120,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     }
 
     @objc func stop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { self.generation += 1 }
         sessionQueue.async {
             if self.session.isRunning { self.session.stopRunning() }
             DispatchQueue.main.async {

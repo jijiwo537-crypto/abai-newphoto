@@ -1261,7 +1261,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               exposure={parseFloat(settings.exposure)}
               kelvin={settings.kelvin}
               isUserFacing={visualFacingMode === 'user'}
-              fx={fx}
+              /* 原生相機時特效由原生端畫，網頁這張（被挖空、看不到）不必再跟著算一次 */
+              fx={proMode ? FX_ZERO : fx}
               digitalZoom={digitalZoom}
               displayBox={frameDims()}
               /* click 保留為鍵盤／舊版 WebKit 的保底；新 iOS 由 pointerup 立即觸發。 */

@@ -13,6 +13,14 @@ class MainViewController: CAPBridgeViewController {
         overrideUserInterfaceStyle = .dark
     }
 
+    /* Capacitor 的「畫面」就是網頁本身；網頁變透明時透出來的是更後面的視窗底色（系統預設白色）。
+       視窗和網頁的上一層也一律塗黑。 */
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        view.window?.backgroundColor = .black
+        view.superview?.backgroundColor = .black
+    }
+
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(HeicExportPlugin())
         bridge?.registerPluginInstance(RawDecodePlugin())
