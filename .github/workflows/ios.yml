@@ -54,16 +54,35 @@ jobs:
           fi
           grep -E "warning: .*(ABAI|Native|Haptics|VideoWriter|PhotoEditing)" xcodebuild.log | sort -u | head -40 || true
           test -d build/Build/Products/Debug-iphonesimulator/App.app
-      - name: 在模擬器開起來截圖
+      - name: 在模擬器開起來截圖、跑自動測試
+        # 每個情境（見 utils/nativeQA.ts）各開一次 App：App 自己點按鈕、開相簿、輸出影片，
+        # 這裡每 4 秒截一張圖，最後把 App 寫的 ABAIQA 紀錄收成 shots/qa.log
         run: |
           DEV=$(xcrun simctl list devices available | grep -m1 -E 'iPhone 1[5-9]( Pro)? \(' | sed -E 's/.*\(([0-9A-F-]{36})\).*/\1/')
           xcrun simctl boot "$DEV"
           xcrun simctl bootstatus "$DEV" -b
           xcrun simctl install "$DEV" build/Build/Products/Debug-iphonesimulator/App.app
-          xcrun simctl launch "$DEV" com.abai.photo
+          xcrun simctl privacy "$DEV" grant photos com.abai.photo || true
+          xcrun simctl privacy "$DEV" grant photos-add com.abai.photo || true
           mkdir -p shots
-          sleep 15; xcrun simctl io "$DEV" screenshot shots/1-launch.png
-          sleep 15; xcrun simctl io "$DEV" screenshot shots/2-after30s.png
+          xcrun simctl launch "$DEV" com.abai.photo -AppleLanguages '(zh-Hant)' -AppleLocale zh_TW
+          sleep 15; xcrun simctl io "$DEV" screenshot shots/0-launch.png
+          run_qa() {
+            tag=$(echo "$1" | tr ':' '-')
+            xcrun simctl terminate "$DEV" com.abai.photo >/dev/null 2>&1 || true
+            sleep 1
+            xcrun simctl launch "$DEV" com.abai.photo -abaiQA "$1" -AppleLanguages '(zh-Hant)' -AppleLocale zh_TW
+            for i in $(seq 1 $(( $2 / 4 ))); do
+              sleep 4; xcrun simctl io "$DEV" screenshot "shots/$tag-$(printf %02d $i).png" >/dev/null 2>&1 || true
+            done
+          }
+          run_qa save 40
+          run_qa video 60
+          run_qa gallery 32
+          for t in art dot edit beauty match collage layout; do run_qa "tool:$t" 32; done
+          run_qa layoutvideo 120
+          xcrun simctl spawn "$DEV" log show --style compact --last 40m --predicate 'eventMessage CONTAINS "ABAIQA"' > shots/qa.log 2>&1 || true
+          grep -o 'ABAIQA.*' shots/qa.log | head -400 || true
       - uses: actions/upload-artifact@v4
         with:
           name: simulator-screenshots

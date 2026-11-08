@@ -1,8 +1,10 @@
-/* 系統照片選擇器、存進相簿（對應 ios/App/App/NativePhotosPlugin.swift）。
+/* 選照片、存進相簿（對應 ios/App/App/NativePhotosPlugin.swift、PhotoLibraryPlugin.swift）。
  *
- * ‧ installNativeFilePicker：App 裡所有「選照片／影片」的 <input type=file> 一律改用系統照片選擇器。
- *   不需要相簿權限，原檔（HEIC 就是 HEIC）直接交給原生端；選好的檔案照樣塞回那個 input、
- *   觸發 change 事件，所以各個工具的程式完全不用改。其他種類的檔案（字型、LUT…）照舊用網頁的選擇器。
+ * ‧ installNativeFilePicker：App 裡所有「選照片／影片」的 <input type=file> 一律直接打開
+ *   App 自己的相簿畫面（components/NativeGallery），不會再出現「拍照／照片圖庫／選擇檔案」那個選單。
+ *   相簿權限被拒、或使用者在相簿畫面選了「改用系統的照片選擇器」，就改開系統的照片選擇器（那個不需要權限）。
+ *   選好的檔案照樣塞回那個 input、觸發 change 事件，所以各個工具的程式完全不用改。
+ *   其他種類的檔案（字型、LUT…）照舊用網頁的選擇器。
  * ‧ saveToPhotos：「儲存圖片」直接存進相簿（不跳分享面板），存到一半切到背景也會做完。
  *   照片如果是從選擇器選來的、而且使用者允許完整相簿權限，就存成「原本那張照片的可逆編輯」：
  *   Photos 保留原圖，隨時能回復。 */
@@ -11,6 +13,7 @@ import { nativePlugin, rememberNativeFile, fileSrc } from './nativeBridge';
 import { nativeImage, withBackgroundTask, blobToNativeFile } from './nativeImage';
 import { haptic } from './haptics';
 import { PHOTO_EXTS, RAW_EXTS, VIDEO_EXTS } from './fileTypes';
+import { openGallery, photoLibrary } from './nativeGallery';
 
 interface PickedItem { path: string; name: string; type: string; size: number; assetId?: string; width?: number; height?: number }
 interface NativePhotosApi {
@@ -64,12 +67,19 @@ let installed = false;
 export function installNativeFilePicker() {
   if (installed || !isNative()) return;
   installed = true;
-  /* 先確定這版 App 真的有系統選擇器，才接手；沒有的話一律照網頁原本的選擇器，不會變成「點了沒反應」 */
+  /* 先確定這版 App 真的有相簿（自己的或系統的），才接手；都沒有就照網頁原本的選擇器，不會變成「點了沒反應」 */
   let ready = false;
-  void nativePhotos().then(p => { ready = !!p; });
+  let gallery = false;
+  void nativePhotos().then(p => { ready = ready || !!p; });
+  void photoLibrary().then(p => { gallery = !!p; ready = ready || !!p; });
   const open = async (input: HTMLInputElement, filter: 'images' | 'videos' | 'any') => {
-    let files: File[] | null;
-    try { files = await pickNativeFiles(input.multiple ? 0 : 1, filter); }
+    const limit = input.multiple ? 0 : 1;
+    let files: File[] | null = null;
+    try {
+      if (gallery) files = await openGallery({ limit, filter });
+      /* 自己的相簿用不了（權限被拒、使用者選了系統的）→ 系統照片選擇器 */
+      if (files === null) files = await pickNativeFiles(limit, filter);
+    }
     catch (e: any) { alert(`開不了相簿：${String(e?.message ?? e ?? '')}`); return; }
     if (!files) return;
     if (!files.length) return;                       // 使用者按了取消

@@ -26,6 +26,8 @@
 		AB0000000000000000000109 /* NativeCameraPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000009 /* NativeCameraPlugin.swift */; };
 		AB000000000000000000010A /* HapticsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000000A /* HapticsPlugin.swift */; };
 		AB000000000000000000010B /* VideoWriterPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000000B /* VideoWriterPlugin.swift */; };
+		AB000000000000000000010C /* PhotoLibraryPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000000C /* PhotoLibraryPlugin.swift */; };
+		AB000000000000000000010D /* QAPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000000D /* QAPlugin.swift */; };
 		AB00000000000000000001F0 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = AB00000000000000000000F0 /* PrivacyInfo.xcprivacy */; };
 		AB000000000000000000E005 /* PhotoEditingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000E003 /* PhotoEditingViewController.swift */; };
 		AB000000000000000000E006 /* ABAIImageCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000005 /* ABAIImageCore.swift */; };
@@ -54,6 +56,8 @@
 		AB0000000000000000000009 /* NativeCameraPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCameraPlugin.swift; sourceTree = "<group>"; };
 		AB000000000000000000000A /* HapticsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticsPlugin.swift; sourceTree = "<group>"; };
 		AB000000000000000000000B /* VideoWriterPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoWriterPlugin.swift; sourceTree = "<group>"; };
+		AB000000000000000000000C /* PhotoLibraryPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryPlugin.swift; sourceTree = "<group>"; };
+		AB000000000000000000000D /* QAPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QAPlugin.swift; sourceTree = "<group>"; };
 		AB00000000000000000000F0 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		AB000000000000000000E002 /* ABAIEdit.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = ABAIEdit.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB000000000000000000E003 /* PhotoEditingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoEditingViewController.swift; sourceTree = "<group>"; };
@@ -138,6 +142,8 @@
 				AB0000000000000000000009 /* NativeCameraPlugin.swift */,
 				AB000000000000000000000A /* HapticsPlugin.swift */,
 				AB000000000000000000000B /* VideoWriterPlugin.swift */,
+				AB000000000000000000000C /* PhotoLibraryPlugin.swift */,
+				AB000000000000000000000D /* QAPlugin.swift */,
 				AB00000000000000000000F0 /* PrivacyInfo.xcprivacy */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -305,6 +311,8 @@
 				AB0000000000000000000109 /* NativeCameraPlugin.swift in Sources */,
 				AB000000000000000000010A /* HapticsPlugin.swift in Sources */,
 				AB000000000000000000010B /* VideoWriterPlugin.swift in Sources */,
+				AB000000000000000000010C /* PhotoLibraryPlugin.swift in Sources */,
+				AB000000000000000000010D /* QAPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

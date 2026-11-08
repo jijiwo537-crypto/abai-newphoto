@@ -16,6 +16,11 @@ import { Capacitor } from '@capacitor/core';
  * 注意：**「加到主畫面」的 PWA 一樣回 false**。那個本質上還是 Safari，
  * 走的是網頁那條路 —— 這正是我們要的，不能讓現有使用者的行為變掉。
  */
+/** 「加到主畫面」的網頁版（不是包好的 App）。那一版的 WebKit 有自己的視窗怪現象，
+ *  幾個工具要額外補償；包好的 App 沒有這個現象，套了反而整個畫面往下移 */
+export const isHomeScreenWebApp = (): boolean =>
+  (navigator as Navigator & { standalone?: boolean }).standalone === true && !isNative();
+
 export const isNative = (): boolean => {
   try {
     return Capacitor.isNativePlatform();
@@ -49,6 +54,18 @@ export async function setupNativeShell(): Promise<void> {
     ]);
     installNativeFilePicker();
     prepareHaptics();
+    /* iPhone 的網頁沒有 navigator.vibrate：App 裡接到原生的觸覺回饋，原本寫好的震動點就都會震 */
+    const { haptic } = await import('./haptics');
+    try {
+      Object.defineProperty(navigator, 'vibrate', {
+        configurable: true,
+        value: (pattern: number | number[]) => {
+          const ms = Array.isArray(pattern) ? Math.max(0, ...pattern) : pattern;
+          if (ms > 0) haptic(ms >= 30 ? 'snap' : 'tick');
+          return true;
+        },
+      });
+    } catch { /* 改不了就算了 */ }
     void watchNativeMemoryBudget();
     /* 測試期的保險：這版 App 沒有包到原生外掛的話（打包時漏了步驟），直接講清楚，
        不要默默退回網頁的選照片和存檔，讓人以為是 bug */
@@ -65,4 +82,6 @@ export async function setupNativeShell(): Promise<void> {
   } catch {
     /* 外掛沒裝、或這個平台不支援，就當作沒這回事 —— 不能因此讓 App 起不來 */
   }
+  /* 自動測試（只有 CI 用啟動參數打開時才會做事） */
+  void import('./nativeQA').then(m => m.runNativeQA()).catch(() => {});
 }

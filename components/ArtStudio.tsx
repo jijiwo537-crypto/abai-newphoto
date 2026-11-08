@@ -1,4 +1,5 @@
 import {LiveRange} from './LiveRange';
+import {isHomeScreenWebApp} from '../utils/native';
 import { safeImage, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
 import {TransformWrapper,TransformComponent} from 'react-zoom-pan-pinch';
 import React,{useState,useRef,useEffect,useLayoutEffect,useCallback} from 'react';
@@ -21,13 +22,13 @@ type EffectId='ascii'|'tracking';
 const EFFECTS=[{id:'ascii' as const,name:'ASCII'},{id:'tracking' as const,name:'視覺追蹤'}];
 
 export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:string}){
- const standalone=(navigator as Navigator & {standalone?:boolean}).standalone===true;
+ const standalone=isHomeScreenWebApp();
  const root=useRef<HTMLDivElement>(null);
  useLayoutEffect(()=>{
   // 不動 App 的 viewport 設定。
   // 編輯器用 absolute 定位才會算進 WebKit 的文件範圍（主畫面 App 的 fixed viewport 會過時），
   // 下方的控制列才看得到、點得到
-  if(!(navigator as Navigator & {standalone?:boolean}).standalone)return;
+  if(!isHomeScreenWebApp())return;
   const visual=window.visualViewport;
   const align=()=>{
    if(document.activeElement?.matches('input,textarea,[contenteditable=true]'))return;

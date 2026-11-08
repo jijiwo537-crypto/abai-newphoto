@@ -1,4 +1,5 @@
 import {useLayoutEffect,useRef} from 'react';
+import {isHomeScreenWebApp} from './native';
 
 /**
  * 跟 ArtStudio 一樣，在 iOS 主畫面 App 用實體邊緣定位。WebKit 可能已經從 dvh 扣掉狀態列，
@@ -6,7 +7,7 @@ import {useLayoutEffect,useRef} from 'react';
  */
 export function useStandaloneToolViewport(){
  const ref=useRef<HTMLDivElement>(null);
- const standalone=(navigator as Navigator&{standalone?:boolean}).standalone===true;
+ const standalone=isHomeScreenWebApp();
  useLayoutEffect(()=>{
   if(!standalone)return;
   const visual=window.visualViewport;

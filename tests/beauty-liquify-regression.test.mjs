@@ -45,7 +45,7 @@ assert.match(beauty,/data-beauty-toolbar/);
 assert.match(beauty,/useStandaloneToolViewport/);
 assert.match(beauty,/beauty-swatch-outline.*viewBox="0 0 32 32"/);
 const viewport=readFileSync(new URL('../utils/useStandaloneToolViewport.ts',import.meta.url),'utf8');
-assert.match(viewport,/standalone.*===true/);
+assert.match(viewport,/standalone=isHomeScreenWebApp\(\)/);
 assert.match(viewport,/height:auto!important;max-height:none!important;margin-top:0/);
 assert.match(viewport,/bottom:calc\(-1 \* \(env\(safe-area-inset-top/);
 assert.match(viewport,/removeEventListener\('resize',align\)/);

@@ -39,9 +39,11 @@ export async function encodeCanvasFrames(o: {
   onProgress?: (fraction: number) => void;
   aborted?: () => boolean;
   type?: string;
+  /** 只用網頁的編碼器（自動測試用） */
+  webOnly?: boolean;
 }): Promise<Blob | null> {
   /* App 裡優先用原生的硬體 HEVC（檔案更小、切到背景也能編完）；做不到再走 WebCodecs */
-  if (isNative()) {
+  if (isNative() && !o.webOnly) {
     const { encodeCanvasFramesNative } = await import('./nativeVideo');
     const native = await encodeCanvasFramesNative(o).catch(() => null);
     if (native) return native;

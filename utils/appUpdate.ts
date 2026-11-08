@@ -10,6 +10,8 @@ const scriptOf = (doc: Document) =>
 export function watchAppUpdates(canReload: () => boolean): { stop: () => void; retry: () => void } {
   const none = { stop: () => {}, retry: () => {} };
   if (!import.meta.env.PROD || typeof window === 'undefined') return none;
+  /* 包好的 App 用的是裝在手機裡的那一份，不從網站換版（換版靠 App 更新） */
+  if ((window as any).Capacitor?.isNativePlatform?.()) return none;
   const current = scriptOf(document);
   if (!current) return none;
   let pending = '', checking = false, last = 0;
