@@ -48,7 +48,8 @@ export const APP_SCHEME = 'com.abai.photo';
 export async function setupNativeShell(): Promise<void> {
   if (!isNative()) return;
   /* 自動測試（只有 CI 用啟動參數打開時才會做事；不等下面任何一步） */
-  void import('./nativeQA').then(m => m.runNativeQA()).catch(e => console.log('ABAIQA import failed', String(e)));
+  (window as any).__abaiQA = (s: string) => { void import('./nativeQA').then(m => m.runNativeQA(s)).catch(e => ((window as any).__abaiQALog ||= []).push(`import failed ${String(e)}`)); };
+  void import('./nativeQA').then(m => m.runNativeQA()).catch(e => ((window as any).__abaiQALog ||= []).push(`import failed ${String(e)}`));
   /* 原生功能：系統照片選擇器、觸覺回饋、照系統實際記憶體調整的照片快取預算 */
   try {
     const [{ installNativeFilePicker }, { prepareHaptics }, { watchNativeMemoryBudget }] = await Promise.all([

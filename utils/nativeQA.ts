@@ -13,7 +13,9 @@ import { nativePlugin } from './nativeBridge';
 interface QAApi { scenario(): Promise<{ scenario: string }>; log(o: { msg: string }): Promise<void> }
 
 let qa: QAApi | null = null;
-const log = (msg: string) => { void qa?.log({ msg }); };
+/* 紀錄同時放進 window.__abaiQALog：原生那邊每秒來收一次（外掛呼叫不通時也拿得到） */
+const buf: string[] = ((window as any).__abaiQALog ||= []);
+const log = (msg: string) => { if (qa) void qa.log({ msg }).catch(() => buf.push(msg)); else buf.push(msg); };
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 async function waitFor<T>(fn: () => T | null | undefined | false, ms: number, what: string): Promise<T> {
@@ -198,11 +200,20 @@ async function scenarioLayoutVideo() {
   logButtons('layoutvideo end');
 }
 
-export async function runNativeQA() {
-  qa = await nativePlugin<QAApi>('ABAIQA');
-  if (!qa) { console.log('ABAIQA plugin missing'); return; }
-  const { scenario } = await qa.scenario();
+let running = false;
+/** forced：原生直接叫的（外掛通不通都要跑） */
+export async function runNativeQA(forced?: string) {
+  if (running) return;
+  const probe = Promise.race([nativePlugin<QAApi>('ABAIQA'), new Promise<null>(r => setTimeout(() => r(null), 3000))]);
+  qa = await probe;
+  let scenario = forced || '';
+  if (!scenario && qa) {
+    try { scenario = (await qa.scenario()).scenario; } catch (e: any) { buf.push(`scenario() failed: ${String(e?.message ?? e)}`); }
+  }
   if (!scenario) return;
+  if (running) return;
+  running = true;
+  if (!qa) buf.push('plugin ABAIQA not reachable from web; logging through window.__abaiQALog');
   /* 測試時不要被「這版沒有原生功能」之類的提示框卡住，提示內容照樣記下來 */
   window.alert = (m?: unknown) => log(`alert: ${String(m)}`);
   window.addEventListener('error', e => log(`js error: ${e.message}`));

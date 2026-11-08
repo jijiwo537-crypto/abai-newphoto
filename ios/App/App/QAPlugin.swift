@@ -35,16 +35,38 @@ public class QAPlugin: CAPPlugin, CAPBridgedPlugin {
         return ProcessInfo.processInfo.environment["ABAI_QA"] ?? ""
     }
 
+    private var asked = false
+
     public override func load() {
         let s = Self.scenarioName
-        if !s.isEmpty { Self.write("native loaded scenario=\(s) args=\(ProcessInfo.processInfo.arguments.dropFirst().joined(separator: " "))") }
+        guard !s.isEmpty else { return }
+        Self.write("native loaded scenario=\(s) args=\(ProcessInfo.processInfo.arguments.dropFirst().joined(separator: " "))")
+        /* 不完全靠網頁來問：過幾秒原生自己看網頁的狀態，必要時直接叫網頁開始，
+           之後每秒把網頁攢下來的紀錄（window.__abaiQALog）收過來 */
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self = self, let web = self.bridge?.webView else { Self.write("native: no webView"); return }
+            let diag = "JSON.stringify({ href: location.href, cap: !!window.Capacitor, native: !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()), headers: ((window.Capacitor && window.Capacitor.PluginHeaders) || []).map(function(h){ return h.name; }), hook: typeof window.__abaiQA, root: (document.getElementById('root')||{}).childElementCount })"
+            web.evaluateJavaScript(diag) { r, e in
+                Self.write("native diag: \(r ?? "nil") \(e?.localizedDescription ?? "")")
+                if !self.asked {
+                    web.evaluateJavaScript("typeof window.__abaiQA === 'function' ? (window.__abaiQA('\(s)'), 'kicked') : 'no hook'") { r2, e2 in
+                        Self.write("native kick: \(r2 ?? "nil") \(e2?.localizedDescription ?? "")")
+                    }
+                }
+            }
+            Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+                web.evaluateJavaScript("(window.__abaiQALog || []).splice(0).join('\\n')") { r, _ in
+                    if let t = r as? String, !t.isEmpty { t.split(separator: "\n").forEach { Self.write("web: " + $0) } }
+                }
+            }
+        }
     }
 
     @objc func available(_ call: CAPPluginCall) { call.resolve(["available": true]) }
 
     @objc func scenario(_ call: CAPPluginCall) {
         let s = Self.scenarioName
-        if !s.isEmpty { Self.write("web asked scenario=\(s)") }
+        if !s.isEmpty { asked = true; Self.write("web asked scenario=\(s)") }
         call.resolve(["scenario": s])
     }
 
