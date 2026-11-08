@@ -9373,6 +9373,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           && activeCategory !== 'mask' && activeCategory !== 'adjust' && activeCategory !== 'template' && (
           <button
             aria-label="合併特效"
+            data-haptic="tick"
             onClick={hasMergeable ? (e) => {
               /* 點下去的回饋：上面的菱形往下壓進下面那一層、再回到原位
                  （第一幀＝最後一幀＝原本的樣子）。時長與曲線跟創意拼圖「隨機圖案」

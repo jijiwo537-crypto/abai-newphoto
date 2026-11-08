@@ -249,7 +249,7 @@ enum ABAIImageCore {
 
     /// 色溫：跟網頁觀景窗（components/Viewfinder.tsx 的 kelvinGain）同一條公式，在線性光上乘 R、B 增益、亮度不變
     static func kelvin(_ image: CIImage, _ k: Double) -> CIImage {
-        let t = (k - 5000) / 5000 * 0.3
+        let t = (k - 5000) / 5000 * 0.6
         var r = pow(2, t * 0.55), g = 1.0, b = pow(2, -t * 0.55)
         let n = r * 0.2126 + g * 0.7152 + b * 0.0722
         r /= n; g /= n; b /= n

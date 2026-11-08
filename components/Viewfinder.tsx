@@ -58,7 +58,7 @@ out vec4 outColor;
 vec3 toLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
 vec3 toEncoded(vec3 c) { return mix(c * 12.92, 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
 vec3 kelvinGain(float kelvin) {
-    float temp = (kelvin - 5000.0) / 5000.0 * 0.3;
+    float temp = (kelvin - 5000.0) / 5000.0 * 0.6;
     vec3 g = vec3(exp2(temp * 0.55), 1.0, exp2(-temp * 0.55));
     return g / dot(g, vec3(0.2126, 0.7152, 0.0722));
 }
