@@ -10574,14 +10574,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       {saveState !== 'success' && videoProg !== null && (
         <div className="fixed inset-0 z-[116] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center gap-4">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
+          {/* 轉圈固定在正中央，進度、字、取消鍵掛在下方 */}
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 40px)' }} className="flex flex-col items-center gap-4">
           <span className="text-[11px] tracking-[0.3em] text-white/60 tabular-nums">{Math.round(videoProg * 100)}%</span>
-          <span className="text-[11px] text-white/50 tracking-widest">正在匯出影片</span>
+          <span data-busy-label className="text-[11px] text-white/50 tracking-widest">正在匯出影片</span>
           <button
             onClick={() => { videoAbortRef.current = true; }}
             className="mt-2 px-6 h-10 rounded-full border border-white/20 bg-white/5 text-white text-[11px] font-bold tracking-widest hover:bg-white/10 active:scale-95 transition-all"
           >
             取消匯出
           </button>
+          </div>
         </div>
       )}
 
@@ -10723,8 +10726,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            現在等超過六秒還沒好就多出一顆返回鍵（見 StuckEscape）—— 正常的導出
            兩三秒就結束，根本看不到它。 */
         <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
-          <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
-          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">正在存檔</p>
+          {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
+          <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin"></div>
+          <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
           <StuckEscape onEscape={() => setSaveState('idle')} />
         </div>
       )}

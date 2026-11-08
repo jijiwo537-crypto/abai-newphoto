@@ -17,13 +17,12 @@ import { saveToPhotos } from '../utils/nativePhotos';
 const autoSaved = new Set<string>();
 /** 存相簿時蓋在成品頁上的那一層：剛剛匯出畫面（幾秒內）原樣接上；沒有就用標準的黑底轉圈 */
 function coverLayer() {
-  const last = (window as any).__abaiBusyOverlay as { html: string; at: number } | undefined;
-  if (last && Date.now() - last.at < 15000) {
-    return <div data-abai-save-cover="" style={{ position: 'fixed', inset: 0, zIndex: 10000 }} dangerouslySetInnerHTML={{ __html: last.html }} />;
-  }
+  const last = (window as any).__abaiBusyLabel as { text: string; cls: string; at: number } | undefined;
+  const label = last && Date.now() - last.at < 15000 ? last : null;
   return (
     <div data-abai-save-cover="" className="fixed inset-0 z-[10000] bg-black/90 backdrop-blur-md flex items-center justify-center" aria-label="儲存中">
       <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
+      {label && <span className={label.cls} style={{ position: 'absolute', left: 0, right: 0, top: label.cls.includes('text-lg') ? 'calc(50% + 44px)' : 'calc(50% + 40px)', textAlign: 'center' }}>{label.text}</span>}
     </div>
   );
 }

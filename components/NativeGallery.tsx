@@ -126,6 +126,9 @@ export const NativeGallery: React.FC<{
   const close = useCallback((files: File[] | null) => {
     if (closedRef.current) return;
     closedRef.current = true;
+    /* 選好了：不要往下滑（滑動中轉圈會跟著移動），直接交出去，
+       接手的匯入畫面是同一個位置、同一款的黑底轉圈 */
+    if (files && files.length) { onClose(files); return; }
     setShown(false);
     setTimeout(() => onClose(files), 360);
   }, [onClose]);
@@ -284,7 +287,7 @@ export const NativeGallery: React.FC<{
                     transform: picked.length ? 'scale(1)' : 'scale(.96)',
                     animation: shake ? 'abg-shake .3s ease' : undefined,
                   }} key={shake}>
-                  {picked.length ? `完成（${picked.length}）` : '完成'}
+                  完成
                 </button>
               )}
             </div>

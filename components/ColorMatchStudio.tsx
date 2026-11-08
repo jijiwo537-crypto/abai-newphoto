@@ -706,7 +706,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   };
 
   const handleSave = () => {
-    if (!srcImg || !luts || saving) return;
+    if (!srcImg || saving || (!luts && refImg)) return;
     setFormatOpen(false);
     setSaveError('');
     const savingStarted = performance.now();
@@ -715,6 +715,14 @@ export const ColorMatchStudio: React.FC<Props> = ({
       Math.max(0, 450 - (performance.now() - savingStarted)),
     );
     setSaving(true);
+    if (!luts) {
+      /* 還沒仿色：原圖照樣輸出（同一個尺寸上限） */
+      const { w, h } = safeSize(srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height);
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const g = c.getContext('2d')!; g.imageSmoothingQuality = 'high'; g.drawImage(srcImg, 0, 0, w, h);
+      saveCanvas(c).catch(() => setSaveError('儲存失敗，請再試一次')).finally(finishSaving);
+      return;
+    }
     // 手機上成品面積有上限（見 utils/exportLimits），48MP 照片才不會閃退
     const { w, h } = safeSize(srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height);
     // GPU 一次畫完，全解析度也是瞬間 —— 按下去就直接進導出畫面，不用等
@@ -748,7 +756,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
     }, 30);
   };
 
-  const ready = !!(srcImg && refImg && luts);
+  /* 還沒選參考圖（還沒仿色）也能存：存的就是原圖 */
+  const ready = !!(srcImg && (luts || !refImg));
   const geoReady = !sg.gh || !!sg.wrapStyle?.transform;
   useEffect(() => { if (ready && geoReady) onPaintedRef.current?.(); }, [ready, geoReady]);
   /* 佔位原圖解好了：有構圖的話等構圖那層量好尺寸才回報（不然翻過來那一格是空的） */
@@ -1054,8 +1063,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
 
       {saving && (
         <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
-          <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6" />
-          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">{embedded ? '套用中' : '儲存中'}</p>
+          {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
+          <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
+          <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">{embedded ? '套用中' : '儲存中'}</p>
           <StuckEscape onEscape={() => setSaving(false)} />
         </div>
       )}

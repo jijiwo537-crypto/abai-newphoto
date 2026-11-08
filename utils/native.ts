@@ -93,24 +93,20 @@ export async function setupNativeShell(): Promise<void> {
    App 裡把所有轉圈的動畫都對齊同一個時鐘：換手時角度連續，看起來就是同一個一直在轉。 */
 function syncSpinners() {
   const align = (root: ParentNode) => {
-    const els = root.querySelectorAll?.('.animate-spin') ?? [];
-    els.forEach(el => el.getAnimations?.().forEach(a => { try { a.startTime = 0; } catch { /* 不支援就算了 */ } }));
+    /* 在畫面畫出來之前就對齊（不等下一格），才不會先轉一格再跳 */
+    const els = root.querySelectorAll?.('.animate-spin, .animate-pulse') ?? [];
+    els.forEach(el => el.getAnimations?.().forEach(a => { try { if (a.startTime !== 0) a.startTime = 0; } catch { /* 不支援就算了 */ } }));
   };
   new MutationObserver(list => {
     let hit = false;
     for (const m of list) m.addedNodes.forEach(n => { if (n.nodeType === 1) hit = true; });
-    if (hit) requestAnimationFrame(() => { align(document); rememberBusyOverlay(); });
+    if (hit) { align(document); rememberBusyLabel(); }
   }).observe(document.body, { childList: true, subtree: true });
 }
 
-/* 記住最近一次「全畫面轉圈」那一層長什麼樣子（各工具的匯出畫面不太一樣）。
-   成品頁要先蓋一層等存相簿時，就原樣用這一層 —— 轉圈位置、字都一樣，看起來是同一段 */
-function rememberBusyOverlay() {
-  const spin = Array.from(document.querySelectorAll('.animate-spin')).find(el => (el as HTMLElement).offsetWidth >= 40);
-  const layer = spin?.closest('.fixed.inset-0') as HTMLElement | null;
-  if (!layer || layer.closest('[data-abai-save-cover]')) return;
-  const clone = layer.cloneNode(true) as HTMLElement;
-  clone.classList.remove('animate-in', 'fade-in');
-  clone.querySelectorAll('button').forEach(b => b.remove());
-  (window as any).__abaiBusyOverlay = { html: clone.outerHTML, at: Date.now() };
+/* 記住最近一次全畫面轉圈下方的字（「儲存中」「正在匯出成品」…）：
+   成品頁等存相簿時蓋的那一層用同一句，看起來就是同一段 */
+function rememberBusyLabel() {
+  const el = document.querySelector('[data-busy-label]') as HTMLElement | null;
+  if (el && !el.closest('[data-abai-save-cover]')) (window as any).__abaiBusyLabel = { text: el.textContent || '', cls: el.className, at: Date.now() };
 }

@@ -16374,10 +16374,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {exportState === 'processing' && (
         <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center gap-4 animate-in fade-in duration-300">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
-          {videoProg !== null && (
-            <span className="text-[11px] tracking-[0.3em] text-white/60 tabular-nums">{Math.round(videoProg * 100)}%</span>
-          )}
-          <span className="text-[11px] text-white/50 tracking-widest">{videoLabel}</span>
+          {/* 轉圈固定在正中央，百分比和字掛在下方（存相簿那一層的轉圈位置才會完全一樣） */}
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 40px)' }} className="flex flex-col items-center gap-4">
+            {videoProg !== null && (
+              <span className="text-[11px] tracking-[0.3em] text-white/60 tabular-nums">{Math.round(videoProg * 100)}%</span>
+            )}
+            <span data-busy-label className="text-[11px] text-white/50 tracking-widest">{videoLabel}</span>
+          </div>
           {/* 取消鍵。不做成「卡住六秒才長出來」的那顆（見 StuckEscape）——
               它一冒出來，上面的轉圈就被往上頂一截，看起來像畫面自己抖了一下；
               而且寫的是「取消，回到編輯」。做法是一開始就在、就寫「取消匯出」。
@@ -16402,7 +16405,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               setVideoProg(null);
               setExportState('idle');
             }}
-            style={{ position: 'absolute', left: '50%', top: 'calc(50% + 86px)', transform: 'translateX(-50%)' }}
+            style={{ position: 'absolute', left: '50%', top: 'calc(50% + 110px)', transform: 'translateX(-50%)' }}
             className="px-6 h-10 rounded-full border border-white/25 text-white/80 text-[12px] font-bold tracking-[0.2em] active:scale-95 transition-transform"
           >
             取消匯出
