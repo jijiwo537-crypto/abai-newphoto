@@ -62,10 +62,17 @@ jobs:
           xcrun simctl boot "$DEV"
           xcrun simctl bootstatus "$DEV" -b
           xcrun simctl install "$DEV" build/Build/Products/Debug-iphonesimulator/App.app
-          # 相簿權限先給好（完整取用），自動測試才不會停在系統的詢問框
-          # （只給 photos：再另外給 photos-add 會把它降成「僅限加入」）
-          xcrun simctl privacy "$DEV" grant photos com.abai.photo
-          sqlite3 ~/Library/Developer/CoreSimulator/Devices/$DEV/data/Library/TCC/TCC.db "select service, client, auth_value from access" 2>&1 | head || true
+          # 相簿權限先給好（完整取用＋加入），自動測試才不會停在系統的詢問框。
+          # simctl privacy 對照片的「完整取用」在新版模擬器上不一定生效，所以直接寫進模擬器的權限資料庫，再重開模擬器
+          xcrun simctl privacy "$DEV" grant photos com.abai.photo || true
+          TCC=~/Library/Developer/CoreSimulator/Devices/$DEV/data/Library/TCC/TCC.db
+          for svc in kTCCServicePhotos kTCCServicePhotosAdd; do
+            sqlite3 "$TCC" "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, flags) VALUES ('$svc','com.abai.photo',0,2,2,1,0);" || true
+          done
+          sqlite3 "$TCC" "select service, client, auth_value from access where client='com.abai.photo'" || true
+          xcrun simctl shutdown "$DEV"
+          xcrun simctl boot "$DEV"
+          xcrun simctl bootstatus "$DEV" -b
           mkdir -p shots
           xcrun simctl launch "$DEV" com.abai.photo -AppleLanguages '(zh-Hant)' -AppleLocale zh_TW
           sleep 15; xcrun simctl io "$DEV" screenshot shots/0-launch.png
