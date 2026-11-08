@@ -28,14 +28,19 @@ export async function pickNativeFiles(limit: number, filter: 'images' | 'videos'
   if (!p) return null;
   const { items } = await p.pick({ limit, filter });
   const files: File[] = [];
+  let lastError = '';
   for (const it of items) {
     try {
-      const blob = await (await fetch(fileSrc(it.path))).blob();
+      const res = await fetch(fileSrc(it.path));
+      if (!res.ok) throw new Error(`讀檔失敗（${res.status}）`);
+      const blob = await res.blob();
       const f = new File([blob], it.name || 'photo', { type: it.type || blob.type, lastModified: Date.now() });
       rememberNativeFile(f, it.path, it.assetId);
       files.push(f);
-    } catch { /* 這一個讀不到就跳過 */ }
+    } catch (e: any) { lastError = String(e?.message ?? e ?? ''); }
   }
+  /* 選了卻一張都讀不進來：說清楚，不要看起來像沒反應 */
+  if (items.length && !files.length) throw new Error(lastError || '照片讀不進來');
   return files;
 }
 
@@ -59,21 +64,27 @@ let installed = false;
 export function installNativeFilePicker() {
   if (installed || !isNative()) return;
   installed = true;
+  /* 先確定這版 App 真的有系統選擇器，才接手；沒有的話一律照網頁原本的選擇器，不會變成「點了沒反應」 */
+  let ready = false;
+  void nativePhotos().then(p => { ready = !!p; });
   const open = async (input: HTMLInputElement, filter: 'images' | 'videos' | 'any') => {
-    let files: File[] | null = null;
-    try { files = await pickNativeFiles(input.multiple ? 0 : 1, filter); } catch { files = null; }
-    if (files === null) { input.dataset.abaiNativePicker = 'off'; input.click(); delete input.dataset.abaiNativePicker; return; }
-    if (!files.length) return;
-    const dt = new DataTransfer();
-    files.forEach(f => dt.items.add(f));
-    input.files = dt.files;
+    let files: File[] | null;
+    try { files = await pickNativeFiles(input.multiple ? 0 : 1, filter); }
+    catch (e: any) { alert(`開不了相簿：${String(e?.message ?? e ?? '')}`); return; }
+    if (!files) return;
+    if (!files.length) return;                       // 使用者按了取消
+    try {
+      const dt = new DataTransfer();
+      files.forEach(f => dt.items.add(f));
+      input.files = dt.files;
+    } catch (e: any) { alert(`照片交不進來：${String(e?.message ?? e ?? '')}`); return; }
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
   };
   /* 用 capture 在最前面攔：程式裡 input.click() 和使用者點 <label> 都會經過這裡 */
   document.addEventListener('click', e => {
     const t = e.target;
-    if (!(t instanceof HTMLInputElement) || t.type !== 'file' || t.dataset.abaiNativePicker === 'off') return;
+    if (!ready || !(t instanceof HTMLInputElement) || t.type !== 'file') return;
     const filter = mediaFilter(t);
     if (!filter) return;
     e.preventDefault();

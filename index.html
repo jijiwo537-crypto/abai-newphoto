@@ -5,6 +5,19 @@
     <style>html,body{background:#000;margin:0}#boot{background:#000}</style>
     <meta name="abai-build" content="20260912-layout-baseline-verified" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+    <script id="native-standalone">
+        /* 包成 App（Capacitor）時，畫面跟「加到主畫面」的版本完全一樣：全螢幕、延伸到動態島後面。
+           整個版面是照主畫面版調的，所以讓 App 也走同一條（navigator.standalone＝true）。
+           Capacitor 會在網頁的任何程式之前先注入 window.Capacitor，這裡就判斷得到。網頁版不受影響。 */
+        (function () {
+            try {
+                var cap = window.Capacitor;
+                if (cap && cap.isNativePlatform && cap.isNativePlatform() && navigator.standalone !== true) {
+                    Object.defineProperty(Navigator.prototype, 'standalone', { get: function () { return true; }, configurable: true });
+                }
+            } catch (e) { /* 改不了就照原本的判斷 */ }
+        })();
+    </script>
     <script id="boot-geometry">
         /* Set the logo's coordinates before its first paint. On iOS standalone,
            viewport height can settle in multiple steps while launching. The

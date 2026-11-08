@@ -30,11 +30,10 @@ const config: CapacitorConfig = {
     StatusBar: {
       /* Capacitor 的命名以「背景」為準：DARK ＝ 深色背景，所以時間、電量是白字 */
       style: 'DARK',
-      backgroundColor: '#000000',
-      /* 刻意設 false：讓畫面延伸到瀏海底下會把 100vh 連狀態列一起算進去，
-         版面會整個被撐開（網頁版試過兩次都是這樣壞的）。要做也要等能在
-         模擬器上邊改邊看的時候。 */
-      overlaysWebView: false,
+      /* 畫面延伸到狀態列和動態島後面 —— 跟「加到主畫面」的版本一模一樣（那一版是
+         black-translucent），整個版面也是照那個樣子調的。設成 false 的話，網頁會被往下擠，
+         動態島那一排變成一條黑色色塊，底部的空間也會算錯。 */
+      overlaysWebView: true,
     },
   },
 };
