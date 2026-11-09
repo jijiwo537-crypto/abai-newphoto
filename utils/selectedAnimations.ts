@@ -37,10 +37,9 @@ export function selectedFrame(cfg:{in:string;idle:string;delay:number;dur:number
  return {id:cfg.idle,p:1,t:Math.max(0,time-end+shift),amount:clamp(cfg.amp/100),speed,phase,clock:t};
 }
 /* ───────────── 失焦（T-L20／S-L20／P-L20） ─────────────
-   每個目標：模糊的時間＝清楚的時間（以模糊一半的那一刻為分界），進出都用很長的
-   smootherstep 緩動，沒有任何突然的停頓或起步。
-   多個目標分成 2 組（兩個目標）或 3 組（三個以上），曲線完全相同、只錯開 1/組數 週期，
-   因此上一組開始變清楚時，下一組就已經慢慢模糊起來，彼此交疊接棒。 */
+   每個目標：沿著一條完整的餘弦慢慢失焦、再慢慢對焦，一直在變、沒有停頓；
+   模糊的時間＝清楚的時間。多個目標分成 2 組（兩個目標）或 3 組（三個以上），
+   曲線完全相同、只錯開 1/組數 週期，上一組在變清楚時下一組已經慢慢模糊起來。 */
 const DEFOCUS_SEQ3=[0,2,1,2,0,1,0,1,2,1,0,2]; // 每 3 個一組都是完整排列，相鄰兩個不會同組
 export function defocusGroup(index:number,count:number){
  const n=Math.max(1,Math.floor(count)),i=Math.max(0,Math.floor(index));
@@ -48,23 +47,22 @@ export function defocusGroup(index:number,count:number){
  if(n===2)return {group:i%2,groups:2};
  return {group:DEFOCUS_SEQ3[i%DEFOCUS_SEQ3.length],groups:3};
 }
-const smoother=(v:number)=>{v=clamp(v);return v*v*v*(v*(v*6-15)+10);};
 /** 一輪的秒數（模糊一半、清楚一半）。 */
 export const defocusPeriod=(speed:number)=>Math.max(.5,4.2/Math.max(.05,speed));
 /** 0＝完全清楚、1＝最模糊。 */
 export function defocusLevel(clock:number,speed:number,group:number,groups:number){
- const RAMP=.22; // 每段漸變占一輪的比例；半模糊點在 u=0（變模糊）與 u=.5（變清楚）
- let u=clock/defocusPeriod(speed)-group/Math.max(1,groups)+.5+RAMP/2+.06; // t=0 時第一組是清楚的
- u-=Math.floor(u);
- if(u>=1-RAMP/2)return smoother((u-(1-RAMP/2))/RAMP);
- if(u<RAMP/2)return smoother((u+RAMP/2)/RAMP);
- if(u<.5-RAMP/2)return 1;
- if(u<.5+RAMP/2)return 1-smoother((u-(.5-RAMP/2))/RAMP);
- return 0;
+ /* 一輪完整的餘弦：一直在柔和地變化，沒有「停在清楚／停在模糊」的平台，
+    所以不會像開關一樣一下清楚一下模糊。0.5 以上（偏模糊）與以下（偏清楚）各占半輪；
+    t=0 時第一組是完全清楚。各組同一條曲線、錯開 1/組數 週期，交疊接棒。 */
+ const u=clock/defocusPeriod(speed)-group/Math.max(1,groups);
+ return (1-Math.cos(u*Math.PI*2))/2;
 }
 const defocusOf=(frame:SelectedFrame,index:number,count:number)=>{
  const {group,groups}=defocusGroup(index,count);
- return defocusLevel(frame.clock??frame.t,frame.speed,group,groups)*frame.amount*smooth(frame.t/.6);
+ /* 眼睛對「剛開始變模糊」那一點點最敏感：模糊半徑若跟曲線成正比，起頭看起來會突然糊掉。
+    用 1.6 次方讓起頭更緩，中段之後才明顯，整體感覺是平順地漸漸失焦再漸漸對焦。 */
+ const level=defocusLevel(frame.clock??frame.t,frame.speed,group,groups);
+ return Math.pow(level,1.6)*frame.amount*smooth(frame.t/.6);
 };
 const densityOf=(ctx:CanvasRenderingContext2D)=>{const m=ctx.getTransform();return Math.max(.01,Math.hypot(m.a,m.b),Math.hypot(m.c||0,m.d||0));};
 /* iOS 的 WKWebView 不一定真的會畫 Canvas filter（屬性可能不存在，或設定了卻沒效果），
@@ -213,6 +211,12 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
  const spec=catalog.get(frame.id); if(!spec){paint(ctx);return;}
  const w=Math.max(.01,width),h=Math.max(.01,height),r=Math.max(w,h)/2;
  const code=spec.code,entry=spec.phase==='entry';
+ /* 足跡：一顆一顆照節拍踩出來。節拍平均分在整段進場時間裡，第一顆要等一拍才出現，
+    所以起始 0 的第一格畫面上什麼都沒有（舊版第一顆在第 0 格就已經亮著）。 */
+ if(code==='S-E04'&&entry){
+  if(frame.p<(index+1)/(Math.max(1,count)+1))return;
+  paint(ctx);return;
+ }
  const p=clamp(frame.p*(1+.13*Math.max(0,count-1))-.13*index),q=1-(1-p)**3;
  if(entry&&p<=0)return;
  if(entry&&p>=1){paint(ctx);return;}
