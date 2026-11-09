@@ -104,6 +104,16 @@ const loadImage = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
   im.src = src;
 });
 /** 畫布上是不是真的有畫面（取正中間與四分之一處幾個點；讀不到像素就當作有） */
+/** 讀照片像素；讀出來整片空白（WebKit 上 <img> 畫進畫布偶爾如此）就改成直接讀檔、用 createImageBitmap 解碼再讀 */
+const safePixels = async (img: HTMLImageElement, max: number): Promise<ImageData> => {
+  const d = toImageData(img, max);
+  if (!blankData(d) || typeof createImageBitmap !== 'function') return d;
+  try {
+    const bmp = await createImageBitmap(await (await fetch(img.src)).blob());
+    try { const d2 = toImageData(img, max, bmp); return blankData(d2) ? d : d2; } finally { bmp.close(); }
+  } catch { return d; }
+};
+const blankData = (d: ImageData) => { for (let i = 3; i < d.data.length; i += 4 * 997) if (d.data[i]) return false; return true; };
 const hasPixels = (c: HTMLCanvasElement) => {
   try {
     const g = c.getContext('2d', { willReadFrequently: false });
@@ -115,7 +125,8 @@ const hasPixels = (c: HTMLCanvasElement) => {
   } catch { return true; }
 };
 
-const toImageData = (img: HTMLImageElement, max: number): ImageData => {
+/** img：要讀的照片；from：實際拿來畫的來源（同一張照片用別的方式解碼出來的點陣圖，見 plainBmpRef） */
+const toImageData = (img: HTMLImageElement, max: number, from: CanvasImageSource = img): ImageData => {
   const s = Math.min(1, max / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
   const w = Math.max(1, Math.round((img.naturalWidth || img.width) * s));
   const h = Math.max(1, Math.round((img.naturalHeight || img.height) * s));
@@ -123,7 +134,7 @@ const toImageData = (img: HTMLImageElement, max: number): ImageData => {
   c.width = w; c.height = h;
   const x = c.getContext('2d', { willReadFrequently: true })!;
   x.imageSmoothingQuality = 'high';
-  x.drawImage(img, 0, 0, w, h);
+  x.drawImage(from, 0, 0, w, h);
   return x.getImageData(0, 0, w, h);
 };
 
@@ -155,6 +166,18 @@ export const ColorMatchStudio: React.FC<Props> = ({
       Safari／App（WebKit）上，把 <img> 畫進畫布有時候整片空白、不報錯也不會好；
       這條路是 WebKit 最穩的解碼方式，沒選參考圖時的畫面優先用它 */
   const plainBmpRef = useRef<{ img: HTMLImageElement; bmp: ImageBitmap } | null>(null);
+  /** 那張點陣圖解碼中的 promise（仿色要用照片像素時先等它，最多幾秒） */
+  const plainBmpWaitRef = useRef<{ img: HTMLImageElement; p: Promise<void> } | null>(null);
+  /** 讀照片像素：有另一條路解出的點陣圖就用它（WebKit 上 <img> 畫進畫布可能整片空白） */
+  const pixelsOf = (im: HTMLImageElement, max: number) => {
+    const pb = plainBmpRef.current;
+    return toImageData(im, max, pb && pb.img === im ? pb.bmp : im);
+  };
+  const waitBmp = async (im: HTMLImageElement) => {
+    const w = plainBmpWaitRef.current;
+    if (!w || w.img !== im || plainBmpRef.current?.img === im) return;
+    await Promise.race([w.p, new Promise(r => setTimeout(r, 5000))]);
+  };
   const sg = useStudioGeo(embedded ? geo : null, srcImg ? srcImg.naturalWidth || srcImg.width : 0, srcImg ? srcImg.naturalHeight || srcImg.height : 0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
@@ -272,7 +295,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (cvs.width !== gl.canvas.width || cvs.height !== gl.canvas.height) { cvs.width = gl.canvas.width; cvs.height = gl.canvas.height; }
     const g = cvs.getContext('2d');
     if (g) { g.clearRect(0, 0, cvs.width, cvs.height); g.drawImage(gl.canvas, 0, 0); }
+    /* 自我檢查：GPU 那張複製過來是空的（WebKit 偶爾會這樣），之後都改用 CPU 畫，馬上重畫一次 */
+    if (!hasPixels(cvs)) { glBrokenRef.current = true; glReadyRef.current = false; requestAnimationFrame(() => paintRef.current()); }
   };
+  const glBrokenRef = useRef(false);
   /** 還沒仿色（沒選參考圖）時畫布上的樣子：直接把解碼好的原圖縮進去。
       不經過 getImageData —— iPhone 上那一步讀不到像素時（大圖、檔案來源）畫面會整個空掉，
       要等點了參考圖才出現；drawImage 一定畫得出來 */
@@ -385,7 +411,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
 
   useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){plainBmpRef.current=null;
       /* 另一條路解碼（見 plainBmpRef）：解好就重畫一次；這條路失敗也沒關係，照舊用 <img> */
-      if (typeof createImageBitmap === 'function') fetch(imageSrc).then(r => r.blob()).then(b => {
+      if (typeof createImageBitmap === 'function') plainBmpWaitRef.current = { img: image, p: fetch(imageSrc).then(r => r.blob()).then(b => {
         const W0 = image.naturalWidth || image.width, H0 = image.naturalHeight || image.height, k = Math.min(1, PREVIEW_MAX / Math.max(W0, H0));
         return createImageBitmap(b, { resizeWidth: Math.max(1, Math.round(W0 * k)), resizeHeight: Math.max(1, Math.round(H0 * k)), resizeQuality: 'high' } as ImageBitmapOptions)
           .catch(() => createImageBitmap(b));
@@ -393,9 +419,11 @@ export const ColorMatchStudio: React.FC<Props> = ({
         if (!active || srcImgRef.current !== image) { bmp.close(); return; }
         plainBmpRef.current?.bmp.close();
         plainBmpRef.current = { img: image, bmp };
+        /* 預覽像素（GPU 貼圖、CPU 仿色都從它來）也改用這張重算：原本那份可能是空白的 */
+        try { const d = toImageData(image, PREVIEW_MAX, bmp); if (!blankData(d)) { previewSrcRef.current = image; setPreview(d); } } catch { /* 照舊 */ }
         if (!lutsPickedRef.current && canvasRef.current) drawPlain(canvasRef.current);
-      }).catch(() => {});
-skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */try{const d=toImageData(image, PREVIEW_MAX);/* 全透明＝照片還沒解碼好，先不要用（不然會一直貼一張空白） */if(d.data[3]||d.data[(d.data.length>>1)&~3|3]){previewSrcRef.current=image;setPreview(d);}else previewSrcRef.current=null;}catch(e){previewSrcRef.current=null;console.error('preview',e);}}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
+      }).catch(() => {}) };
+skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */try{const d=toImageData(image, PREVIEW_MAX);/* 全透明＝照片還沒解碼好，先不要用（不然會一直貼一張空白） */if(!blankData(d)){previewSrcRef.current=image;setPreview(d);}else previewSrcRef.current=null;}catch(e){previewSrcRef.current=null;console.error('preview',e);}}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
     /* 算過的參考圖：不等圖片解碼，這一下就換上它的顏色（解碼完的那一次會直接命中快取，不會再算） */
@@ -457,14 +485,17 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
         /* 統計用縮圖的每一顆像素都算進去，但兩張都先拿掉皮膚：皮膚另外保護，
            「顏色怎麼對應」只從其他地方學 —— 參考圖裡的人臉不會把原圖的天空、衣服拉成膚色，
            原圖的大片皮膚也不會把對應整個帶偏。 */
-        const sData = toImageData(srcImg, STAT_MAX), rData = toImageData(refImg, STAT_MAX);
+        await waitBmp(srcImg);
+        if (cancelled) return;
+        const sData = pixelsOf(srcImg, STAT_MAX), rData = await safePixels(refImg, STAT_MAX);
+        if (cancelled) return;
         const sStat = sampleRgb(withoutSkin(sData.data, sData.width, sData.height, sMap), Infinity);
         const rStat = sampleRgb(withoutSkin(rData.data, rData.width, rData.height, rMap), Infinity);
         const out: Record<string, Lut3D> = {};
         // 33³ 跟調校台同一個尺寸；比 25³ 多 2.3 倍格點，漸層更平順，也才對得起來
         for (const m of METHODS) out[m] = bakeFor(m, sStat, rStat, 33);
         if (cancelled) return;
-        if (previewSrcRef.current !== srcImg) { previewSrcRef.current = srcImg; setPreview(toImageData(srcImg, PREVIEW_MAX)); }
+        if (previewSrcRef.current !== srcImg) { previewSrcRef.current = srcImg; setPreview(pixelsOf(srcImg, PREVIEW_MAX)); }
         cacheLuts(refKey, out);
         luts0Ref.current = out;
         setLuts(out);
@@ -525,6 +556,7 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
       if(pw){gl.setProtectMap(packWeight(pw.weight),pw.w,pw.h);glWeightRef.current=weightRef.current;}
       else gl.clearProtectMap();
       // 上傳、繪製、顯示要在瀏覽器顯示下一格之前一次做完
+      if (glBrokenRef.current) throw new Error('gl copy blank');
       glReadyRef.current = gl.draw(luts[picked] ? picked : 'mkl',strength/100,0,luts[picked] ? keepL : 1);
     } catch { glReadyRef.current = false; }
     if (glReadyRef.current) present();
@@ -537,7 +569,7 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
     const st = (strengthOverride ?? strength) / 100;
     const pw = useWeight();
     const gl = glRef.current;
-    if (gl && glReadyRef.current && luts?.[picked]) {
+    if (gl && glReadyRef.current && !glBrokenRef.current && luts?.[picked]) {
       // 權重換了才重傳貼圖（拉滑桿時整張圖只有一次乘加 + 一次上傳，幾毫秒）
       if (pw && glWeightRef.current !== weightRef.current) {
         gl.setProtectMap(packWeight(pw.weight), pw.w, pw.h);
