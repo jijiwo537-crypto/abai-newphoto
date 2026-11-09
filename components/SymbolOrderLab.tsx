@@ -7,7 +7,8 @@ import { SymbolGlyph } from './GridLayoutTool';
 import { SYMBOLS, SYMBOL_LAYOUT } from '../utils/symbols';
 import { packSymbols } from '../utils/symbolPack';
 
-const STORE = 'abai-order-tool-symbols-v2';
+/* v3：之前存在瀏覽器裡的工作中清單（自動排列、拖曳過、還沒交出去的）一次作廢，打開就是 App 目前的順序（＝使用者最後交來的那份） */
+const STORE = 'abai-order-tool-symbols-v3';
 const HOLD_MS = 280;
 /* 預覽框的寬度＝「這支手機的螢幕寬」（在手機上打開時）：App 的符號清單是螢幕寬減左右各 16 點，
    不同型號的 iPhone 寬度不一樣（390、393、402…），固定用 13 Pro 的 390 的話，
