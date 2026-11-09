@@ -10997,7 +10997,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       raf = requestAnimationFrame(tick);
       /* 某一格畫很久（第一次做星芒貼圖等）時，一格最多只往前走 1/30 秒，
          進場動畫才不會被那幾格吃掉、只剩頭尾兩格。 */
-      if (now - last > 1000 / 30) started += now - last - 1000 / 30;
+      /* 只有真正的卡頓（超過 0.1 秒）才扣時間；一般稍慢的格子照實際時間走，動畫不會一格一格變慢。 */
+      if (now - last > 100) started += now - last - 1000 / 30;
       last = now;
       // 動畫播放中，背景暖機（特效著色器編譯等）一律延後，不插進動畫中間
       deferHeavyWork(400);
@@ -18506,27 +18507,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 const u = ciUi(m);
                 const di = m.in !== 'none' ? defUi('in', m.in) : u, dd = m.idle !== 'none' ? defUi('idle', m.idle) : u;
                 return {
-                  inSpeed: m.shIn ?? Math.round(toShared(u.inSpeed, di.inSpeed)),
-                  amp: m.shAmp ?? Math.round(toShared(u.amp, dd.amp)),
-                  speed: m.shSpeed ?? Math.round(toShared(u.speed, dd.speed)),
+                  inSpeed: m.shIn ?? (m.in === 'none' ? SHARED_MID : Math.round(toShared(u.inSpeed, di.inSpeed))),
+                  amp: m.shAmp ?? (m.idle === 'none' ? SHARED_MID : Math.round(toShared(u.amp, dd.amp))),
+                  speed: m.shSpeed ?? (m.idle === 'none' ? SHARED_MID : Math.round(toShared(u.speed, dd.speed))),
                 };
               };
               const shFrom = (f: 'inSpeed' | 'amp' | 'speed', v: number, m: typeof cfg): Partial<typeof cfg> => {
                 const def = (f === 'inSpeed' ? defUi('in', m.in) : defUi('idle', m.idle))[f];
                 return { ...ciFrom(f, fromShared(v, def), m), ...(f === 'inSpeed' ? { shIn: v } : f === 'amp' ? { shAmp: v } : { shSpeed: v }) };
               };
+              /* 共用滑桿的位置屬於物件：選任何動畫（包括從「無」第一次選）都不改變數字，
+                 只換成「新動畫在這個位置的程度」 */
               const pickIntro = (id: string) => {
-                /* 已經有進場動畫時換別的：共用滑桿的數字不變 */
-                if (id !== 'none' && cfg.in !== 'none') patchMotion({ in: id, ...shFrom('inSpeed', shUi(cfg).inSpeed, { ...cfg, in: id }) });
-                else patchMotion({ ...firstIntro(id, cfg.in), ...(id !== 'none' ? { shIn: SHARED_MID } : {}) });
+                if (id === 'none') patchMotion({ in: 'none' });
+                else {
+                  const sh = shUi(cfg), first = firstIntro(id, cfg.in), next = { ...cfg, ...first };
+                  patchMotion({ ...first, ...shFrom('inSpeed', sh.inSpeed, next) });
+                }
                 replayMotion();
               };
               const pickIdle = (id: string) => {
-                /* 已經有常駐動畫時換別的：共用滑桿的數字不變 */
-                if (id !== 'none' && cfg.idle !== 'none') {
-                  const sh = shUi(cfg), next = { ...cfg, idle: id };
-                  patchMotion({ idle: id, ...shFrom('amp', sh.amp, next), ...shFrom('speed', sh.speed, next) });
-                } else patchMotion({ ...firstIdle(id), ...(id !== 'none' ? { shAmp: SHARED_MID, shSpeed: SHARED_MID } : {}) });
+                if (id === 'none') patchMotion({ idle: 'none' });
+                else {
+                  const sh = shUi(cfg), first = firstIdle(id), next = { ...cfg, ...first };
+                  patchMotion({ ...first, ...shFrom('amp', sh.amp, next), ...shFrom('speed', sh.speed, next) });
+                }
                 replayMotion();
               };
               const chip = (on: boolean) => `px-3 h-8 shrink-0 rounded-[8px] border text-[11px] font-bold tracking-wider transition-all flex items-center gap-1.5 ${on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
