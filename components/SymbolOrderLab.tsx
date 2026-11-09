@@ -1,54 +1,66 @@
-/* 排序工具的「符號」頁：長按一顆約 0.3 秒，浮起來後拖到新位置放開。
+/* 排序工具的「符號」頁：長按一顆約 0.3 秒，浮起來後拖到新位置放開；也可以新增、刪除符號。
    預覽用 App「新增符號」同一套按鈕（SymbolGlyph＋同樣的樣式），放在 iPhone 13 Pro 的寬度裡
    （390 點寬、左右各 16 點邊距 ＝ 內容 358 點），排成幾排、哪裡換行都跟手機上一樣。
    注意：電腦沒有 iPhone 的字型（PingFang），符號寬度會略有不同；用 iPhone 打開這頁最準。 */
 import React, { useEffect, useRef, useState } from 'react';
-import { SymbolGlyph, symbolStretches } from './GridLayoutTool';
+import { SymbolGlyph } from './GridLayoutTool';
 import { SYMBOLS } from '../utils/symbols';
 
-const STORE = 'abai-order-tool-symbols-v1';
+const STORE = 'abai-order-tool-symbols-v2';
 const HOLD_MS = 280;
 const CAT_STORE = 'abai-order-tool-symbol-cats-v1';
 const CAT_COLORS = ['#ff5a5a', '#ffb02e', '#4cd964', '#3fa9ff', '#c77dff'];
-/** 存的是「目前 App 順序裡的位置」排成的新順序；App 的清單變了就作廢 */
-/** 用整串內容（含順序）算指紋：清單換了順序或內容，舊的拖曳結果就作廢 —— 以前只比總長度，換順序後還在套舊的排法，所以看起來跟 App 不一樣 */
+/** App 目前清單的指紋：App 的清單換了，這頁存著的舊編輯就作廢、回到 App 目前的樣子 */
 const SIG = (() => { let h = 0; for (const c of SYMBOLS.join('\u0001')) h = (h * 31 + c.codePointAt(0)!) | 0; return h; })();
-const loadOrder = (): number[] => {
+/** 存的是整份清單（符號本身），新增、刪除、換順序都在裡面 */
+const loadList = (): string[] => {
   try {
     const v = JSON.parse(localStorage.getItem(STORE) || 'null');
-    if (v && Array.isArray(v.order) && v.order.length === SYMBOLS.length && v.sig === SIG) return v.order;
+    if (v && Array.isArray(v.list) && v.sig === SIG && v.list.every((s: unknown) => typeof s === 'string')) return v.list;
   } catch { /* 私密模式 */ }
-  return SYMBOLS.map((_, i) => i);
+  return SYMBOLS.slice();
 };
+/** 複製出去的清單用 \uXXXX 寫：組合附加符號在複製貼上時才不會被改壞（同 utils/symbols.ts 的理由） */
+const escapeSym = (s: string) => JSON.stringify(s).replace(/[\u007f-￿]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
 
 export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
-  const [order, setOrder] = useState<number[]>(loadOrder);
-  const [drag, setDrag] = useState<{ idx: number; pointerId: number; dx: number; dy: number; x: number; y: number; w: number; h: number } | null>(null);
+  const [list, setList] = useState<string[]>(loadList);
+  const [drag, setDrag] = useState<{ sym: string; pointerId: number; dx: number; dy: number; x: number; y: number; w: number; h: number } | null>(null);
   const dragRef = useRef(drag); dragRef.current = drag;
   const hold = useRef<{ x: number; y: number; pointerId: number; timer: number } | null>(null);
   useEffect(() => {
-    try { localStorage.setItem(STORE, JSON.stringify({ order, sig: SIG })); } catch { /* 私密模式 */ }
-  }, [order]);
-  const changed = order.some((v, i) => v !== i);
+    try { localStorage.setItem(STORE, JSON.stringify({ list, sig: SIG })); } catch { /* 私密模式 */ }
+  }, [list]);
+  const changed = list.length !== SYMBOLS.length || list.some((v, i) => v !== SYMBOLS[i]);
+  const added = list.filter(s => !SYMBOLS.includes(s)).length, removed = SYMBOLS.filter(s => !list.includes(s)).length;
   /* 分類：最多 5 類。用符號本身的內容記（不是位置），App 換順序也不會跑掉 */
   const [cats, setCats] = useState<{ names: string[]; of: Record<string, number> }>(() => {
     try { const v = JSON.parse(localStorage.getItem(CAT_STORE) || 'null'); if (v && Array.isArray(v.names) && v.of) return v; } catch { /* 私密模式 */ }
     return { names: ['', '', '', '', ''], of: {} };
   });
   useEffect(() => { try { localStorage.setItem(CAT_STORE, JSON.stringify(cats)); } catch { /* 私密模式 */ } }, [cats]);
-  /** 目前拿在手上的分類（-1＝沒拿，點符號不會分類；-2＝橡皮擦） */
+  /** 手上拿的工具：-1＝沒拿（點符號沒反應）；0～4＝分類；-2＝橡皮擦（取消分類）；-3＝刪除符號 */
   const [brush, setBrush] = useState(-1);
   const draggedRef = useRef(false);
-  const tagged = Object.keys(cats.of).length;
-  const onTap = (idx: number) => {
+  const tagged = list.filter(s => cats.of[s] !== undefined).length;
+  const onTap = (sym: string) => {
     if (draggedRef.current) { draggedRef.current = false; return; }
+    if (brush === -3) { setList(l => l.filter(s => s !== sym)); onToast('已刪除（按「重設」可以全部復原）'); return; }
     if (brush === -1) return;
-    const key = SYMBOLS[idx];
     setCats(c => {
       const of = { ...c.of };
-      if (brush === -2 || of[key] === brush) delete of[key]; else of[key] = brush;
+      if (brush === -2 || of[sym] === brush) delete of[sym]; else of[sym] = brush;
       return { ...c, of };
     });
+  };
+  /* 新增：貼上或打字，加在最後面（再拖到想要的位置） */
+  const [draft, setDraft] = useState('');
+  const addSym = () => {
+    const s = draft.trim();
+    if (!s) return;
+    if (list.includes(s)) { onToast('清單裡已經有這個符號'); return; }
+    setList(l => [...l, s]); setDraft('');
+    onToast('已加在最後面，長按可以拖到想要的位置');
   };
   // 拖曳中不讓頁面跟著捲動（iOS 要在 touchmove 上 preventDefault，而且不能是 passive）
   useEffect(() => {
@@ -58,7 +70,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   }, []);
 
   const cancelHold = () => { if (hold.current) { clearTimeout(hold.current.timer); hold.current = null; } };
-  const onDown = (e: React.PointerEvent, idx: number) => {
+  const onDown = (e: React.PointerEvent, sym: string) => {
     if (dragRef.current) return;
     const el = e.currentTarget as HTMLElement, r = el.getBoundingClientRect();
     const sx = e.clientX, sy = e.clientY, pointerId = e.pointerId;
@@ -68,7 +80,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       try { el.setPointerCapture(pointerId); } catch { /* 舊瀏覽器 */ }
       navigator.vibrate?.(8);
       draggedRef.current = true;
-      setDrag({ idx, pointerId, dx: sx - r.left, dy: sy - r.top, x: sx, y: sy, w: r.width, h: r.height });
+      setDrag({ sym, pointerId, dx: sx - r.left, dy: sy - r.top, x: sx, y: sy, w: r.width, h: r.height });
     }, HOLD_MS) };
   };
   const onMove = (e: React.PointerEvent) => {
@@ -80,31 +92,34 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
     setDrag({ ...d, x: e.clientX, y: e.clientY });
     const target = document.elementsFromPoint(e.clientX, e.clientY)
       .map(n => (n as HTMLElement).closest?.('[data-sym]') as HTMLElement | null)
-      .find(n => n && Number(n.dataset.sym) !== d.idx);
+      .find(n => n && list[Number(n.dataset.sym)] !== d.sym);
     if (!target) return;
-    const to = Number(target.dataset.sym);
-    setOrder(o => {
-      const a = o.slice(), from = a.indexOf(d.idx), at = a.indexOf(to);
+    const to = list[Number(target.dataset.sym)];
+    setList(o => {
+      const a = o.slice(), from = a.indexOf(d.sym), at = a.indexOf(to);
       if (from < 0 || at < 0) return o;
-      a.splice(from, 1); a.splice(at, 0, d.idx);
+      a.splice(from, 1); a.splice(at, 0, d.sym);
       return a;
     });
   };
   const onUp = (e: React.PointerEvent) => { cancelHold(); if (dragRef.current?.pointerId === e.pointerId) setDrag(null); };
 
   const copyText = () => [
-    '【ABAI 符號順序 v1】請把「新增符號」改成這個順序（數字是目前 App 清單裡的第幾顆，從 0 開始）：',
-    order.join(','),
-    ...(tagged ? ['', '【分類】（同一類的放在一起；數字同上）', ...cats.names.map((n, k) => {
-      const ids = order.filter(i => cats.of[SYMBOLS[i]] === k);
+    '【ABAI 符號清單 v2】請把「新增符號」改成這份清單（照這個順序；新增、刪除都已經算進去）：',
+    `共 ${list.length} 顆（新增 ${added}、刪除 ${removed}）`,
+    '[',
+    ...list.map(s => `  ${escapeSym(s)},`),
+    ']',
+    ...(tagged ? ['', '【分類】（數字＝上面清單的第幾顆，從 0 開始）', ...cats.names.map((n, k) => {
+      const ids = list.map((s, i) => (cats.of[s] === k ? i : -1)).filter(i => i >= 0);
       return ids.length ? `第${k + 1}類「${n || '未命名'}」：${ids.join(',')}` : '';
-    }).filter(Boolean), `未分類：${order.filter(i => cats.of[SYMBOLS[i]] === undefined).join(',')}`] : []),
+    }).filter(Boolean), `未分類：${list.map((s, i) => (cats.of[s] === undefined ? i : -1)).filter(i => i >= 0).join(',')}`] : []),
   ].join('\n');
   const copy = async () => {
     const t = copyText();
     try { await navigator.clipboard.writeText(t); }
     catch { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch { /* ignore */ } ta.remove(); }
-    onToast(tagged ? '已複製符號順序與分類' : '已複製符號順序');
+    onToast('已複製符號清單');
   };
 
   return (
@@ -112,15 +127,27 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       <div className="flex items-center justify-between gap-2 mb-3">
         <p className="text-[11px] text-white/45 leading-relaxed">預覽＝iPhone 13 Pro 的寬度。電腦沒有 iPhone 的字型，用 iPhone 打開這頁最準。</p>
         <div className="flex gap-2 shrink-0">
-          <button onClick={() => { setOrder(SYMBOLS.map((_, i) => i)); onToast('已回到 App 目前的順序'); }}
+          <button onClick={() => { if (!changed || confirm('回到 App 目前的清單？（新增、刪除、排序都會復原）')) { setList(SYMBOLS.slice()); onToast('已回到 App 目前的清單'); } }}
             className="h-8 px-3 rounded-full border border-white/15 text-[12px] text-white/70">重設</button>
           <button onClick={copy} disabled={!changed && !tagged}
-            className={`h-8 px-3 rounded-full text-[12px] font-bold ${changed || tagged ? 'bg-white text-black' : 'bg-white/10 text-white/35'}`}>複製順序</button>
+            className={`h-8 px-3 rounded-full text-[12px] font-bold ${changed || tagged ? 'bg-white text-black' : 'bg-white/10 text-white/35'}`}>複製清單</button>
+        </div>
+      </div>
+      {/* 新增／刪除 */}
+      <div className="mb-3 rounded-2xl border border-white/10 p-3">
+        <p className="text-[11px] text-white/45 mb-2">新增：貼上符號後按「加入」（會放在最後面）。刪除：按「刪除模式」再點符號。目前 {list.length} 顆{added || removed ? `（新增 ${added}、刪除 ${removed}）` : ''}</p>
+        <div className="flex gap-2">
+          <input value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addSym(); }} placeholder="貼上新的符號"
+            className="flex-1 min-w-0 h-9 px-3 rounded-full bg-white/5 border border-white/15 text-[13px] text-white outline-none placeholder:text-white/35" />
+          <button onClick={addSym} disabled={!draft.trim()}
+            className={`h-9 px-3 rounded-full text-[12px] font-bold ${draft.trim() ? 'bg-white text-black' : 'bg-white/10 text-white/35'}`}>加入</button>
+          <button onClick={() => setBrush(b => (b === -3 ? -1 : -3))}
+            className={`h-9 px-3 rounded-full border text-[12px] ${brush === -3 ? 'border-[#ff5a5a] text-[#ff5a5a] bg-[#ff5a5a22]' : 'border-white/15 text-white/60'}`}>{brush === -3 ? '刪除中…（再按結束）' : '刪除模式'}</button>
         </div>
       </div>
       {/* 分類：先點上面一類（可以改名字），再點下面的符號 —— 點一下加入、再點一下取消。長按拖曳照常可以用 */}
       <div className="mb-3 rounded-2xl border border-white/10 p-3">
-        <p className="text-[11px] text-white/45 mb-2">分類（最多 5 類）：先選一類，再點符號。已分類 {tagged} / {SYMBOLS.length}</p>
+        <p className="text-[11px] text-white/45 mb-2">分類（最多 5 類）：先選一類，再點符號。已分類 {tagged} / {list.length}</p>
         <div className="flex flex-wrap gap-2">
           {cats.names.map((n, k) => (
             <div key={k} onClick={() => setBrush(b => (b === k ? -1 : k))}
@@ -130,7 +157,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
               <input value={n} placeholder={`第${k + 1}類`} onClick={e => { e.stopPropagation(); setBrush(k); }}
                 onChange={e => { const v = e.target.value; setCats(c => { const names = c.names.slice(); names[k] = v; return { ...c, names }; }); }}
                 className="w-20 border-0 p-0 bg-transparent text-[12px] text-white outline-none placeholder:text-white/35" />
-              <span className="text-[10px] text-white/40 pr-1">{Object.values(cats.of).filter(v => v === k).length}</span>
+              <span className="text-[10px] text-white/40 pr-1">{list.filter(s => cats.of[s] === k).length}</span>
             </div>
           ))}
           <button onClick={() => setBrush(b => (b === -2 ? -1 : -2))}
@@ -139,20 +166,20 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
             className="h-9 px-3 rounded-full border border-white/15 text-[12px] text-white/60">清除分類</button>
         </div>
       </div>
-      {/* 手機框：390 寬、內容左右各 16 */}
+      {/* 手機框：390 寬（外框線各 1 點另外算，所以是 392）、內容左右各 16 ＝ 358 */}
       {/* 固定 390 寬：在手機上會吃掉頁面左右的留白、剛好等於螢幕寬；在電腦上置中 */}
-      <div className="rounded-[28px] border border-white/15 bg-black overflow-hidden" style={{ width: 390, marginLeft: 'calc((100% - 390px) / 2)' }}>
+      <div className="rounded-[28px] border border-white/15 bg-black overflow-hidden" style={{ width: 392, marginLeft: 'calc((100% - 392px) / 2)' }}>
         <div className="pt-1" style={{ padding: '12px 16px 24px' }}>
           <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
-          {/* 跟 App 同一層濾鏡：整片轉白（彩色 emoji 也一樣） */}
           <div className="flex flex-wrap gap-1.5 pb-4 mt-3">
-            {order.map(idx => (
-              <button key={idx} data-sym={idx}
-                onPointerDown={e => onDown(e, idx)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
-                onContextMenu={e => e.preventDefault()} onClick={() => onTap(idx)}
-                style={{ boxShadow: cats.of[SYMBOLS[idx]] !== undefined ? `inset 0 0 0 2px ${CAT_COLORS[cats.of[SYMBOLS[idx]]]}` : undefined, opacity: drag?.idx === idx ? .25 : 1, WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none', touchAction: drag ? 'none' : 'manipulation' }}
-                className={`${symbolStretches(SYMBOLS[idx]) ? 'grow ' : ''}min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 inline-flex items-center justify-center text-white/85`}>
-                <span style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}><SymbolGlyph text={SYMBOLS[idx]} /></span>
+            {list.map((sym, i) => (
+              <button key={sym} data-sym={i}
+                onPointerDown={e => onDown(e, sym)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+                onContextMenu={e => e.preventDefault()} onClick={() => onTap(sym)}
+                style={{ boxShadow: brush === -3 ? 'inset 0 0 0 1px #ff5a5a88' : cats.of[sym] !== undefined ? `inset 0 0 0 2px ${CAT_COLORS[cats.of[sym]]}` : undefined, opacity: drag?.sym === sym ? .25 : 1, WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none', touchAction: drag ? 'none' : 'manipulation' }}
+                className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border inline-flex items-center justify-center text-white/85 ${SYMBOLS.includes(sym) ? 'border-white/10' : 'border-dashed border-white/50'}`}>
+                {/* 跟 App 同一層濾鏡：整片轉白（彩色 emoji 也一樣） */}
+                <span style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}><SymbolGlyph text={sym} /></span>
               </button>
             ))}
           </div>
@@ -161,7 +188,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       {drag && (
         <div style={{ position: 'fixed', left: drag.x - drag.dx, top: drag.y - drag.dy, width: drag.w, height: drag.h, pointerEvents: 'none', zIndex: 50, filter: 'grayscale(1) brightness(0) invert(1)' }}
           className="rounded-[10px] bg-white/15 border border-white/40 inline-flex items-center justify-center text-white shadow-2xl">
-          <SymbolGlyph text={SYMBOLS[drag.idx]} />
+          <SymbolGlyph text={drag.sym} />
         </div>
       )}
     </div>
