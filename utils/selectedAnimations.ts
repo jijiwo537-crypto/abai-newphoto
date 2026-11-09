@@ -23,9 +23,10 @@ export function selectedFrame(cfg:{in:string;idle:string;delay:number;dur:number
  return catalog.has(cfg.idle)?{id:cfg.idle,p:1,t:Math.max(0,time-end),amount:clamp(cfg.amp/100),speed:Math.max(.05,cfg.speed),phase,clock:time}:undefined;
 }
 /* ───────────── 失焦（T-L20／S-L20／P-L20） ─────────────
-   規律：清楚停留 → 平滑變模糊 → 模糊停一下 → 平滑變回清楚 → 清楚停留，一直循環。
-   一個目標只有一個時機；多個目標（文字的每個字、符號的每個單位、每顆圖案）
-   分成 2 組（兩個目標）或 3 組（三個以上），各組節奏完全相同、只錯開 1/組數 週期。 */
+   每個目標：模糊的時間＝清楚的時間（以模糊一半的那一刻為分界），進出都用很長的
+   smootherstep 緩動，沒有任何突然的停頓或起步。
+   多個目標分成 2 組（兩個目標）或 3 組（三個以上），曲線完全相同、只錯開 1/組數 週期，
+   因此上一組開始變清楚時，下一組就已經慢慢模糊起來，彼此交疊接棒。 */
 const DEFOCUS_SEQ3=[0,2,1,2,0,1,0,1,2,1,0,2]; // 每 3 個一組都是完整排列，相鄰兩個不會同組
 export function defocusGroup(index:number,count:number){
  const n=Math.max(1,Math.floor(count)),i=Math.max(0,Math.floor(index));
@@ -33,15 +34,19 @@ export function defocusGroup(index:number,count:number){
  if(n===2)return {group:i%2,groups:2};
  return {group:DEFOCUS_SEQ3[i%DEFOCUS_SEQ3.length],groups:3};
 }
+const smoother=(v:number)=>{v=clamp(v);return v*v*v*(v*(v*6-15)+10);};
+/** 一輪的秒數（模糊一半、清楚一半）。 */
+export const defocusPeriod=(speed:number)=>Math.max(.8,4.2/Math.max(.05,speed));
 /** 0＝完全清楚、1＝最模糊。 */
 export function defocusLevel(clock:number,speed:number,group:number,groups:number){
- const period=Math.max(.6,4.2/Math.max(.05,speed));
- let u=clock/period-group/Math.max(1,groups);u-=Math.floor(u);
- // 0–.28 清楚｜.28–.48 變模糊｜.48–.6 模糊停留｜.6–.8 變清楚｜.8–1 清楚
- if(u<.28||u>=.8)return 0;
- if(u<.48)return smooth((u-.28)/.2);
- if(u<.6)return 1;
- return 1-smooth((u-.6)/.2);
+ const RAMP=.22; // 每段漸變占一輪的比例；半模糊點在 u=0（變模糊）與 u=.5（變清楚）
+ let u=clock/defocusPeriod(speed)-group/Math.max(1,groups)+.5+RAMP/2+.06; // t=0 時第一組是清楚的
+ u-=Math.floor(u);
+ if(u>=1-RAMP/2)return smoother((u-(1-RAMP/2))/RAMP);
+ if(u<RAMP/2)return smoother((u+RAMP/2)/RAMP);
+ if(u<.5-RAMP/2)return 1;
+ if(u<.5+RAMP/2)return 1-smoother((u-(.5-RAMP/2))/RAMP);
+ return 0;
 }
 const defocusOf=(frame:SelectedFrame,index:number,count:number)=>{
  const {group,groups}=defocusGroup(index,count);
@@ -66,38 +71,50 @@ export function canvasBlurSupported(){
  }catch{filterOK=false;}
  return filterOK;
 }
-let bufA:HTMLCanvasElement|undefined,bufB:HTMLCanvasElement|undefined;
-const TAPS=[[-2,1/16],[-1,4/16],[0,6/16],[1,4/16],[2,1/16]] as const;
-/** 以「螢幕像素」為單位的模糊半徑畫出 paint；extent 是內容在本地座標中距原點的最大距離。 */
+let blurCanvas:HTMLCanvasElement|undefined,blurCtx:CanvasRenderingContext2D|null=null;
+let blurF:Float32Array=new Float32Array(0),blurT:Float32Array=new Float32Array(0);
+/** 以「螢幕像素」的高斯 σ 畫出 paint；extent 是內容在本地座標中距原點的最大距離。 */
 export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void){
- if(!(deviceBlur>.35)){paint(ctx);return;}
- /* 不使用 Canvas filter：Safari／iOS 對 ctx.filter 的半徑有上限，超過就整個忽略
-    （乘上螢幕密度後很容易超過），結果就是「完全沒有模糊」。自己做的模糊各瀏覽器一致。
+ if(!(deviceBlur>.3)){paint(ctx);return;}
+ /* 不使用 Canvas filter：Safari／iOS 對 ctx.filter 的半徑有上限，超過就整個忽略。
+    改成真正的高斯模糊（預乘透明度、浮點運算，沒有殘影或色階）。
     出錯時退回直接畫，絕不讓一格例外把整段動畫停掉。 */
- try{blurOffscreen(ctx,deviceBlur,extent,paint);}catch{paint(ctx);}
+ try{gaussianOffscreen(ctx,deviceBlur,extent,paint);}catch{paint(ctx);}
 }
-function blurOffscreen(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void){
- const density=densityOf(ctx),R=extent+deviceBlur*3/density;
- const k=Math.max(1,deviceBlur/1.5);
- const N=Math.min(512,Math.ceil(2*R*density/k));
- if(N<2||typeof document==='undefined'){paint(ctx);return;}
- const scale=N/(2*R),s=deviceBlur*scale/density; // 取樣間距（緩衝區像素）＝高斯 σ
- bufA??=document.createElement('canvas');bufB??=document.createElement('canvas');
- for(const b of [bufA,bufB]){if(b.width!==N||b.height!==N){b.width=N;b.height=N;}}
- const a=bufA.getContext('2d'),b=bufB.getContext('2d');
- if(!a||!b){paint(ctx);return;}
- a.setTransform(1,0,0,1,0,0);a.globalAlpha=1;a.globalCompositeOperation='source-over';a.filter='none';a.clearRect(0,0,N,N);
- a.setTransform(scale,0,0,scale,N/2,N/2);a.imageSmoothingEnabled=true;a.imageSmoothingQuality='high';
- paint(a);
- a.setTransform(1,0,0,1,0,0);
- // 'lighter' 是預乘色的直接相加，以權重當透明度就是精確的加權平均（透明邊緣也不會變黑）
- b.setTransform(1,0,0,1,0,0);b.clearRect(0,0,N,N);b.globalCompositeOperation='lighter';
- for(const [o,w] of TAPS){b.globalAlpha=w;b.drawImage(bufA,o*s,0);}
- a.clearRect(0,0,N,N);a.globalCompositeOperation='lighter';
- for(const [o,w] of TAPS){a.globalAlpha=w;a.drawImage(bufB,0,o*s);}
- a.globalCompositeOperation='source-over';a.globalAlpha=1;b.globalCompositeOperation='source-over';b.globalAlpha=1;
+function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void){
+ if(typeof document==='undefined'){paint(ctx);return;}
+ const density=densityOf(ctx),R=extent+sigma*3.2/density;
+ // 先縮小到 σ≈1.3 個緩衝像素再做精確高斯：模糊後的影像沒有高頻，雙線性放大回去依然平滑。
+ const k=Math.max(1,sigma/1.3);
+ const N=Math.max(2,Math.min(150,Math.ceil(2*R*density/k)));
+ const scale=N/(2*R),sb=sigma*scale/density;
+ if(!blurCanvas){blurCanvas=document.createElement('canvas');blurCtx=blurCanvas.getContext('2d',{willReadFrequently:true}) as CanvasRenderingContext2D|null;}
+ const g=blurCtx;if(!g){paint(ctx);return;}
+ if(blurCanvas.width!==N||blurCanvas.height!==N){blurCanvas.width=N;blurCanvas.height=N;}
+ g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='source-over';g.clearRect(0,0,N,N);
+ g.setTransform(scale,0,0,scale,N/2,N/2);g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';
+ paint(g);
+ g.setTransform(1,0,0,1,0,0);
+ const img=g.getImageData(0,0,N,N),d=img.data,len=N*N*4;
+ if(blurF.length<len){blurF=new Float32Array(len);blurT=new Float32Array(len);}
+ const F=blurF,T=blurT;
+ for(let i=0;i<len;i+=4){const al=d[i+3]/255;F[i]=d[i]*al;F[i+1]=d[i+1]*al;F[i+2]=d[i+2]*al;F[i+3]=d[i+3];}
+ const rad=Math.max(1,Math.ceil(sb*3)),w=new Float32Array(rad*2+1);
+ let sum=0;for(let j=-rad;j<=rad;j++){const v=Math.exp(-(j*j)/(2*sb*sb));w[j+rad]=v;sum+=v;}
+ for(let j=0;j<w.length;j++)w[j]/=sum;
+ // 水平：F → T
+ for(let y=0;y<N;y++){const row=y*N;for(let x=0;x<N;x++){let r=0,gg=0,b=0,a=0;
+  const j0=Math.max(-rad,-x),j1=Math.min(rad,N-1-x);
+  for(let j=j0;j<=j1;j++){const q=(row+x+j)*4,wt=w[j+rad];r+=F[q]*wt;gg+=F[q+1]*wt;b+=F[q+2]*wt;a+=F[q+3]*wt;}
+  const o=(row+x)*4;T[o]=r;T[o+1]=gg;T[o+2]=b;T[o+3]=a;}}
+ // 垂直：T → 輸出（反預乘）
+ for(let y=0;y<N;y++){const j0=Math.max(-rad,-y),j1=Math.min(rad,N-1-y);for(let x=0;x<N;x++){let r=0,gg=0,b=0,a=0;
+  for(let j=j0;j<=j1;j++){const q=((y+j)*N+x)*4,wt=w[j+rad];r+=T[q]*wt;gg+=T[q+1]*wt;b+=T[q+2]*wt;a+=T[q+3]*wt;}
+  const o=(y*N+x)*4;
+  if(a>.02){const inv=255/a;d[o]=r*inv;d[o+1]=gg*inv;d[o+2]=b*inv;d[o+3]=a;}else{d[o]=d[o+1]=d[o+2]=d[o+3]=0;}}}
+ g.putImageData(img,0,0);
  ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
- ctx.drawImage(bufA,-R,-R,2*R,2*R);
+ ctx.drawImage(blurCanvas,-R,-R,2*R,2*R);
 }
 
 /** Draw in the existing object's local coordinates. No fixed-resolution frame cache. */
@@ -148,7 +165,7 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
    } else if(code==='T-L20'||code==='S-L20'){
     // 失焦：模糊半徑跟著物件大小與目前解析度（預覽／匯出一致），各組依 defocusGroup 錯開。
     const level=defocusOf(frame,index,count);
-    paintBlurred(ctx,level*Math.max(4,r*.4)*density,Math.hypot(w,h),paint);return;
+    paintBlurred(ctx,level*Math.max(3,r*.28)*density,Math.hypot(w,h)*.8,paint);return;
    }
    paint(ctx);
   }

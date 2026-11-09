@@ -60,8 +60,16 @@ try {
  // 同一個規律：每組曲線相同，只是錯開 1/組數 週期；並且有完全清楚與完全模糊的時段。
  const P=4.2;
  for(const t of [0,.3,1.1,2.2,3.9])assert.ok(Math.abs(m.defocusLevel(t,1,1,3)-m.defocusLevel(t-P/3,1,0,3))<1e-9);
- const samples=Array.from({length:420},(_,i)=>m.defocusLevel(i/100,1,0,1));
- assert.ok(samples.filter(v=>v===0).length>150&&samples.filter(v=>v===1).length>30,'sharp hold and blurred hold');
+ const samples=Array.from({length:4200},(_,i)=>m.defocusLevel(i/1000,1,0,1));
+ const blurred=samples.filter(v=>v>.5).length;
+ assert.ok(Math.abs(blurred-2100)<=10,`blurred time equals sharp time (${blurred}/4200)`);
+ assert.equal(m.defocusLevel(0,1,0,1),0,'starts sharp');
+ for(let i=1;i<samples.length;i++)assert.ok(Math.abs(samples[i]-samples[i-1])<.01,'no sudden jumps');
+ // 交疊接棒：下一組在上一組還沒完全清楚前就開始模糊。
+ for(const G of [2,3]){
+  let overlap=false;for(let i=0;i<4200;i++){const t=i/1000;if(m.defocusLevel(t,1,0,G)>.05&&m.defocusLevel(t,1,1,G)>.05)overlap=true;}
+  assert.ok(overlap,`${G} groups overlap their hand-off`);
+ }
  m.setCanvasBlurSupportedForTest(false);
  let painted=0;const fb={...ctx,getTransform(){return {a:2,b:0};}};
  m.paintSelectedAnimation(fb,m.selectedFrame({...cfg,idle:'lab-T-L20'},2,.4),40,50,()=>painted++);
