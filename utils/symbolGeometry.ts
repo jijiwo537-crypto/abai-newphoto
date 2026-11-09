@@ -1484,18 +1484,14 @@ export const symbolBreatheScale = (
   speed: number,
 ) => {
   const t = Math.max(0, time);
-  const timeline = ((index % 3) + 3) % 3;
-  /* 三條時間線都從正弦波的零交點開始，方向與速度在起步當下就確定。
-     舊版的 120° 相位會讓本來要縮小的單位先放大約半秒才折返，看起來像
-     猶豫；現在第二條從縮小開始，第一、三條從放大開始且速度略微錯開。 */
+  /* 奇數與偶數字素共用兩條相反的時間線，相鄰字永遠一大一小。 */
   const angularRate = 1.5 * Math.max(.05, speed);
-  const rate = [1, .94, 1.06][timeline];
-  const direction = timeline === 1 ? -1 : 1;
+  const direction = index % 2 === 0 ? 1 : -1;
   /* 僅讓振幅用 smootherstep 從零平滑展開。三組都精確從 1 倍、零速度
      起步，但第一個有效變化就沿著各自被分配的方向前進，不會中途折返。 */
   const attackP = Math.min(1, t / .55);
   const attack = attackP * attackP * attackP * (attackP * (attackP * 6 - 15) + 10);
-  const wave = direction * Math.sin(t * angularRate * rate);
+  const wave = direction * Math.sin(t * angularRate);
   return 1 + wave * Math.max(0, amp) / 100 * .18 * attack;
 };
 

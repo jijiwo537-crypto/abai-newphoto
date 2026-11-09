@@ -18435,16 +18435,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     : baseIdle.map(([id, name]) => id === 'spin' && target?.shape === 'grid-orbits' ? ['signal', '信號'] as const : [id, name] as const);
               const labTarget = target?.sym ? 'symbol' : isTextTarget ? 'text' : target?.shape ? 'shape' : null;
               const introKinds: readonly (readonly [string, string])[] = isTextTarget
-                ? [['none','無'],['rise','升起'],['fade','淡入l'],['lab-T-E03','淡入ll'],
-                   ['drop','落下'],['flip','翻轉'],['pop','果凍l'],['lab-T-E07','果凍ll'],
-                   ['bounce','彈跳']] as const
+                ? [['none','無'],['bounce','彈跳'],['fade','淡入l'],['lab-T-E03','淡入ll'],
+                   ['rise','升起'],['drop','落下'],['pop','果凍l'],['lab-T-E07','果凍ll']] as const
                 : [...(target?.sym ? legacyIntroKinds.filter(([id]) => !['spin','flip','fade'].includes(id)) : legacyIntroKinds),
                    ...(labTarget ? selectedKinds(labTarget, 'entry').map(x => [x.id,x.name] as const) : [])];
               const idleKinds: readonly (readonly [string, string])[] = isTextTarget
                 ? [...legacyIdleKinds.filter(([id]) => id === 'none' || id === 'float'),
                    ['grid-wave','波浪l'] as const, ['lab-T-L15','波浪ll'] as const,
-                   ...legacyIdleKinds.filter(([id]) => id !== 'none' && id !== 'float' && id !== 'grid-wave'),
-                   ...selectedKinds('text', 'idle').filter(x => x.code !== 'T-L15').map(x => [x.id,x.name] as const)]
+                   ...legacyIdleKinds.filter(([id]) => !['none','float','grid-wave','breathe','symbol-breathe2'].includes(id)),
+                   ...selectedKinds('text', 'idle').filter(x => x.code !== 'T-L15').map(x => [x.id,x.name] as const),
+                   ['breathe','縮放l'],['symbol-breathe2','縮放ll']] as const
                 : [...(target?.sym ? legacyIdleKinds.filter(([id]) => ['none','float','breathe','symbol-breathe2'].includes(id)) : legacyIdleKinds),
                    ...(labTarget ? selectedKinds(labTarget, 'idle').map(x => [x.id,x.name] as const) : [])];
               const pickIntro = (id: string) => {

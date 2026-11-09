@@ -45,10 +45,7 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
     const k=1-Math.exp(-p*7)*Math.cos(p*8);
     ctx.scale(Math.max(.001,k),Math.max(.001,k));
    } else if(code==='S-E04'){
-    // 足跡：各字素依原排列逐顆亮起；不搬動整串，也不在結束幀重排。
-    ctx.globalAlpha*=smooth(p);
-    const k=.84+.16*q;
-    ctx.scale(k,k);
+    // 足跡逐顆直接亮起，沒有透明度或大小漸變。
    } else if(code==='S-E10'){
     ctx.rotate((1-q)*-.9);
     ctx.scale(Math.max(.001,q),Math.max(.001,q));
@@ -62,7 +59,7 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
   } else {
    if(code==='T-L04'){
     // 閃爍是一整個字串共用的規律亮滅，只保留速度參數。
-    ctx.globalAlpha*=.5+.5*Math.cos(frame.t*frame.speed*3.2);
+    ctx.globalAlpha*=Math.cos(frame.t*frame.speed*3.2)>=0?1:0;
    } else if(code==='T-L01'||code==='S-L01'){
     ctx.globalAlpha*=1-a*(1-Math.cos(v))*en/2;
    } else if(code==='S-L03'){
@@ -70,9 +67,9 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
    } else if(code==='S-L07'){
     ctx.scale(Math.max(.02,1-(1-Math.abs(Math.cos(v)))*.8*a*en),1);
    } else if(code==='T-L20'||code==='S-L20'){
-    // 小字和小圖案原先只有不到 1px 的模糊，幾乎看不到。用實際畫面像素
-    // 設下限，開始播放後立即進入失焦／清晰循環，四種目標共用同一算法。
-    const blur=(1-Math.cos(v))*a*smooth(frame.t/.3)*Math.min(18,Math.max(3,r*.16))*density;
+    // Canvas filter 的半徑是輸出像素；已在同一變換矩陣內繪圖，無須再乘
+    // density。先前反覆相乘容易超出 Safari 的濾鏡範圍而被忽略。
+    const blur=(1-Math.cos(v))*a*Math.min(18,Math.max(5,r*.16));
     ctx.filter=`blur(${blur}px)`;
    }
    paint(ctx);
@@ -93,7 +90,7 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
   const sx=1-(1-Math.abs(Math.cos(v)))*.8*frame.amount*en;
   ctx.translate(x,y);ctx.scale(sx,1);ctx.translate(-x,-y);
  }
- if(frame.id==='lab-P-L20')ctx.filter=`blur(${(1-Math.cos(v))*frame.amount*smooth(frame.t/.3)*Math.min(18,Math.max(3,size*.16))*Math.hypot(ctx.getTransform().a,ctx.getTransform().b)}px)`;
+ if(frame.id==='lab-P-L20')ctx.filter=`blur(${(1-Math.cos(v))*frame.amount*Math.min(18,Math.max(5,size*.16))}px)`;
 }
 export function selectedPatternGlow(frame:SelectedFrame|undefined) {
  if(frame?.id!=='lab-P-L04')return 0;

@@ -6445,7 +6445,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       let patternAlpha = 1;
       if (shapeMo.idle === 'lab-P-L02' && groupIdleT > 0) {
         // 全體圖案共用一個時鐘；從完整顯示開始，等時長地消失、出現。
-        patternAlpha = (1 + Math.cos(groupIdleT * Math.max(.05, shapeMo.speed) * 3.2)) / 2;
+        patternAlpha = Math.cos(groupIdleT * Math.max(.05, shapeMo.speed) * 3.2) >= 0 ? 1 : 0;
       }
       if (shapeMo.idle === 'pattern-breathe' && f.idleT !== undefined) {
         /* 每顆依自己的隨機 id 取得獨立相位與速度，不再按照相鄰順序刻意
@@ -12630,17 +12630,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const legacyKinds = isScatterTarget ? SCATTER_IN_KINDS : moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
                 const labTarget = moTarget === 'shape' ? 'pattern' : isSymbolTarget ? 'symbol' : isTextTarget ? 'text' : selObj?.type === 'shape' ? 'shape' : null;
                 const kinds = isTextTarget
-                  ? [{id:'none',name:'無'},{id:'rise',name:'升起'},{id:'fade',name:'淡入l'},{id:'lab-T-E03',name:'淡入ll'},
-                     {id:'drop',name:'落下'},{id:'flip',name:'翻轉'},{id:'pop',name:'果凍l'},{id:'lab-T-E07',name:'果凍ll'},
-                     {id:'bounce',name:'彈跳'}]
+                  ? [{id:'none',name:'無'},{id:'bounce',name:'彈跳'},{id:'fade',name:'淡入l'},{id:'lab-T-E03',name:'淡入ll'},
+                     {id:'rise',name:'升起'},{id:'drop',name:'落下'},{id:'pop',name:'果凍l'},{id:'lab-T-E07',name:'果凍ll'}]
                   : [...(isSymbolTarget ? legacyKinds.filter(k => !['spin','flip','fade'].includes(k.id)) : legacyKinds),
                      ...(labTarget ? selectedKinds(labTarget, 'entry') : [])];
                 const baseIdleKinds = isScatterTarget ? SCATTER_IDLE_KINDS : moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : isGlintTarget ? GLINT_IDLE_KINDS_C : IDLE_KINDS;
                 const idleKinds = isTextTarget
                   ? [...baseIdleKinds.filter(k => k.id === 'none' || k.id === 'float'),
                      {id:'grid-wave',name:'波浪l'},{id:'lab-T-L15',name:'波浪ll'},
-                     ...baseIdleKinds.filter(k => !['none','float','grid-wave'].includes(k.id)),
-                     ...selectedKinds('text','idle').filter(k => k.code !== 'T-L15')]
+                     ...baseIdleKinds.filter(k => !['none','float','grid-wave','breathe','symbol-breathe2'].includes(k.id)),
+                     ...selectedKinds('text','idle').filter(k => k.code !== 'T-L15'),
+                     {id:'breathe',name:'縮放l'},{id:'symbol-breathe2',name:'縮放ll'}]
                   : [...(isSymbolTarget ? baseIdleKinds.filter(k => ['none','float','breathe','symbol-breathe2'].includes(k.id)) : baseIdleKinds),
                      ...(labTarget ? selectedKinds(labTarget, 'idle') : [])];
                 return (
