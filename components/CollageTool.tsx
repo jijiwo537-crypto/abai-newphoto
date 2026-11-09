@@ -15,7 +15,7 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, scatterAllNoGlow } from '../utils/frameShapes';
@@ -1204,7 +1204,10 @@ export const sharedUi = (cur: MoCfg, c: MotionTargetCtx) => {
 /** 共用滑桿的數字 → 寫進設定（實際值依這個動畫自己的預設與刻度換算，並記住共用滑桿的位置） */
 export const sharedFromUi = (f: SharedField, s: number, cur: MoCfg, c: MotionTargetCtx): Partial<MoCfg> => {
   const def = (f === 'inSpeed' ? motionDefaultUi(c, 'in', cur.in) : motionDefaultUi(c, 'idle', cur.idle))[f];
-  return { ...motionFromUi(f, fromShared(s, def), cur, c), [SH_KEY[f]]: s };
+  const key = f === 'inSpeed' ? 'dur' : f;
+  const at = (v: number) => (({ ...cur, ...motionFromUi(f, v, cur, c) }) as any)[key] as number;
+  const val = floorActual(f, actualOnScale(fromShared(s, def), at, f === 'inSpeed'));
+  return { [key]: val, [SH_KEY[f]]: s } as Partial<MoCfg>;
 };
 /** 換動畫種類時寫進設定的內容。
     共用滑桿：已經有動畫時換成別的，面板上的數字不變，新動畫依「自己的預設＋同一個共用位置」換算；

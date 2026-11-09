@@ -12,7 +12,7 @@ import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import {exportHeic} from '../utils/heicExport';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
@@ -18514,7 +18514,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               };
               const shFrom = (f: 'inSpeed' | 'amp' | 'speed', v: number, m: typeof cfg): Partial<typeof cfg> => {
                 const def = (f === 'inSpeed' ? defUi('in', m.in) : defUi('idle', m.idle))[f];
-                return { ...ciFrom(f, fromShared(v, def), m), ...(f === 'inSpeed' ? { shIn: v } : f === 'amp' ? { shAmp: v } : { shSpeed: v }) };
+                const key = f === 'inSpeed' ? 'dur' : f;
+                const at = (u: number) => (({ ...m, ...ciFrom(f, u, m) }) as any)[key] as number;
+                const val = floorActual(f, actualOnScale(fromShared(v, def), at, f === 'inSpeed'));
+                return { [key]: val, ...(f === 'inSpeed' ? { shIn: v } : f === 'amp' ? { shAmp: v } : { shSpeed: v }) } as Partial<typeof cfg>;
               };
               /* 共用滑桿的位置屬於物件：選任何動畫（包括從「無」第一次選）都不改變數字，
                  只換成「新動畫在這個位置的程度」 */

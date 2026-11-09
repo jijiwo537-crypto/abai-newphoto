@@ -34,7 +34,7 @@ export function selectedFrame(cfg:{in:string;idle:string;delay:number;dur:number
  if(time<end) return catalog.has(cfg.in)?{id:cfg.in,p:clamp((time-cfg.delay)/Math.max(.01,cfg.dur)),t:0,amount:1,speed:1,phase}:undefined;
  if(!catalog.has(cfg.idle))return undefined;
  const speed=Math.max(.05,cfg.speed),t=continuousTime(`${cfg.idle}|${phase}`,time,speed),shift=t-time;
- return {id:cfg.idle,p:1,t:Math.max(0,time-end+shift),amount:clamp(cfg.amp/100),speed,phase,clock:t};
+ return {id:cfg.idle,p:1,t:Math.max(0,time-end+shift),amount:Math.max(0,Math.min(3,cfg.amp/100)),speed,phase,clock:t};  // 幅度可超過 100（共用滑桿往上延伸）
 }
 /* ───────────── 失焦（T-L20／S-L20／P-L20） ─────────────
    節奏照「呼吸」：一條連續的餘弦，在清楚與模糊之間不停來回，兩端都不特別停留。
@@ -388,7 +388,7 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
     // 閃爍是一整個字串共用的規律亮滅，只保留速度參數。
     ctx.globalAlpha*=Math.cos(frame.t*frame.speed*3.2)>=0?1:0;
    } else if(code==='T-L01'||code==='S-L01'){
-    ctx.globalAlpha*=1-a*(1-Math.cos(v))*en/2;
+    ctx.globalAlpha*=Math.max(0,1-a*(1-Math.cos(v))*en/2);
    } else if(code==='S-L03'){
     ctx.rotate(wave*.15*a);
    } else if(code==='S-L07'){
@@ -416,7 +416,7 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
  if(!frame)return;
  const en=smooth(frame.t/1.2),v=frame.t*frame.speed*1.5+frame.phase;
  if(frame.id==='lab-P-L07'){
-  const sx=1-(1-Math.abs(Math.cos(v)))*.8*frame.amount*en;
+  const sx=Math.max(.02,1-(1-Math.abs(Math.cos(v)))*.8*frame.amount*en);
   ctx.translate(x,y);ctx.scale(sx,1);ctx.translate(-x,-y);
  }
  // 失焦不在這裡設 ctx.filter（iOS 不支援），改由 paintSelectedPattern 做真正的高斯模糊。
