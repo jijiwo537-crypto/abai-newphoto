@@ -1,4 +1,4 @@
-import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, bumpBlurGeneration, type SelectedFrame } from '../utils/selectedAnimations';
+import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
 import { waveWarp, revealPathD } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
@@ -1227,6 +1227,15 @@ export const motionSwitchPatch = (d: Partial<MoCfg>, c: MotionTargetCtx, cur: Mo
     return { ...motionPickPatch({ in: d.in }, c, cur.in), ...sharedFromUi('inSpeed', sh.inSpeed, next, c) };
   }
   return motionPickPatch(d, c, cur.in);
+};
+/** 新物件一開始就帶的動畫：照「從無選這個動畫」同一套算（共用滑桿都在 50＝各動畫自己的預設），
+    不手寫數字 —— 手寫的值跟動畫預設對不上，滑桿一打開就不是 50 */
+export const startMotion = (o: any, pick: { in?: string; idle?: string }): MoCfg => {
+  const c = motionTargetCtxOf(o);
+  let cur = { ...(c.pattern ? PATTERN_MO_DEFAULT : MO_DEFAULT), in: 'none', idle: 'none' } as MoCfg;
+  if (pick.in && pick.in !== 'none') cur = { ...cur, ...motionSwitchPatch({ in: pick.in }, c, cur) } as MoCfg;
+  if (pick.idle && pick.idle !== 'none') cur = { ...cur, ...motionSwitchPatch({ idle: pick.idle }, c, cur) } as MoCfg;
+  return cur;
 };
 /** 設定 → 面板上滑桿顯示的 0～100 數字 */
 export const motionUi = (cur: MoCfg, c: MotionTargetCtx) => {
@@ -3727,7 +3736,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         fontFamily: SYMBOL_FONT, bold: false, italic: false,
         letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
         glow: 0, glowColor: '#ffffff',
-        mo: { ...MO_DEFAULT, in: 'bubble', dur: durFromSpeed(80), idle: 'symbol-breathe2', amp: 60, speed: 1.2 },
+        mo: startMotion({ type: 'text', sym: txt }, { in: 'bubble', idle: 'symbol-breathe2' }),
         x: cx - w / 2, y: cy - h / 2, w, h, rot: 0,
       };
     }
@@ -3749,7 +3758,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: CREATIVE_DUAL_INNER } : null),
         x: cx - w / 2, y: cy - h / 2, w, h, rot: it.rot || 0,
         ...(SPECIAL_LINE_KINDS.has(it.kind)
-          ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } }
+          ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'draw' }) }
           : null),
       };
     }
@@ -7314,7 +7323,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           fillShapePath(g, holeType, mxp, myp, sz);
         }
         drawBurst(g, h, sz, mxp, myp, A.burst, patternFill);
-        }, blurKey(h, `c|${dx},${dy}`));
+        }, blurKey(h, `c|${dx},${dy}|${holeType}|${String(customText)}|${sz.toFixed(2)}|${currentAngle}|${A.burst.toFixed(2)}|${patternType}|${maskImageState ? 1 : 0}|${stripeA}|${stripeB}|${maskKey}|${plainMask ? maskColor : ''}`));
         ctx.restore();
         });
       });
@@ -7454,7 +7463,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         g.strokeStyle = '#000';
         fillShapePath(g, holeType, 0, 0, sz, () => g.stroke());
       }
-      }, blurKey(h, `m|${dx},${dy}`));
+      }, blurKey(h, `m|${dx},${dy}|${holeType}|${String(customText)}|${sz.toFixed(2)}|${currentAngle}|${A.burst.toFixed(2)}|${s}`));
       lmx.restore();
       if (A.burst > 0.01) {
         lmx.save();
@@ -7532,7 +7541,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           fillShapePath(g, holeType, hx, hy, sz);
         }
         drawBurst(g, h, sz, hx, hy, A.burst, pat);
-        }, blurKey(h, 'w'));
+        }, blurKey(h, `w|${holeType}|${String(customText)}|${sz.toFixed(2)}|${currentAngle}|${A.burst.toFixed(2)}|${maskKey}`));
         ctx.restore();
       });
       ctx.restore();
@@ -8298,7 +8307,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 失焦快取的身分＝這個物件（範圍跟舊的一樣：對角線的 0.8 倍）
         paintSelectedAnimation(ctx, f.lab, o.w * s, o.h * s, g => {
           g.save();g.rotate(-(o.rot || 0) * Math.PI / 180);g.translate(-(o.x + o.w / 2) * s, -(o.y + o.h / 2) * s);paintObject(g);g.restore();
-        }, 0, 1, { x: -o.w * s * .8, y: -o.h * s * .8, w: o.w * s * 1.6, h: o.h * s * 1.6, src: o });
+        }, 0, 1, { x: -o.w * s * .8, y: -o.h * s * .8, w: o.w * s * 1.6, h: o.h * s * 1.6,
+          // 身分＝物件 id＋外觀（不含位置與動畫設定）：拖動、拉動畫滑桿都沿用同一份模糊
+          src: blurKeyOf(`shape|${o.id}|${s}|${JSON.stringify({ ...o, x: 0, y: 0, mo: 0 })}`) });
         ctx.restore();return;
       }
       /* 進場／常駐動畫在縮放（果凍、旋轉、翻轉、流星、縮放…）時，發光、描邊、文字光暈
@@ -9598,10 +9609,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(import.meta.env.DEV&&stageRef.current)stageRef.current.dataset.photoTransforms=JSON.stringify(photoRegionRef.current?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0})));
   };
   renderToCanvasRef.current = renderToCanvas;
-  /* 畫面的設定變了（renderToCanvas 只在它用到的東西改變時重建）：失焦的分檔模糊快取全部作廢，
-     下一格照新內容重算。純播放動畫時它不會變，快取一直沿用 */
-  const blurGenForRef = useRef<unknown>(null);
-  if (blurGenForRef.current !== renderToCanvas) { blurGenForRef.current = renderToCanvas; bumpBlurGeneration(); }
   useEffect(()=>{
     if(!imageState||stableScene.current.key===stableSceneKey||objEditImage||selectedRegionPhoto!==null||baseSelected||shapeSel||selectedTarget)return;
     let cancelled=false;
@@ -12156,14 +12163,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
                     /* 新增符號即使用符號專屬預設：泡泡進場、縮放 II 常駐。 */
-                    mo: {
-                      ...MO_DEFAULT,
-                      in: 'bubble',
-                      dur: durFromSpeed(80),
-                      idle: 'symbol-breathe2',
-                      amp: 60,
-                      speed: 1.2,
-                    },
+                    mo: startMotion({ type: 'text', sym: txt }, { in: 'bubble', idle: 'symbol-breathe2' }),
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
                   }]);
                   setSelectedObj(id);
@@ -12199,11 +12199,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     x: frame ? offs2.ix + offs2.iw / 2 - w / 2 : offs2.cw / 2 - w / 2,
                     y: frame ? offs2.iy + offs2.ih / 2 - h / 2 : offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
-                    ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } } : {}),
+                    ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'draw' }) } : {}),
                     // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
                     ...(it.kind === 'hole' && String(it.hole || '').startsWith('sb-')
                       ? (() => { const idle = glintHasRing(it.hole) ? 'spin' : 'breathe';
-                          return { mo: { ...MO_DEFAULT, idle, ...idleDefaults(idle, { shape: true, glint: true }) } }; })() : {}),
+                          return { mo: startMotion({ type: 'shape', kind: it.kind, hole: it.hole }, { in: MO_DEFAULT.in, idle }) }; })() : {}),
                     // 邊框：沒有預設動畫（不進場、不常駐）
                     ...(frame ? { mo: { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: frameRangeDefault(it.kind), frameFeather: MIST_FEATHER_DEFAULT, frameRound: MIST_ROUND_DEFAULT, dotSize: MIST_TEX_SIZE_DEFAULT, dotGap: MIST_TEX_GAP_DEFAULT } : {}),
                   }]);
