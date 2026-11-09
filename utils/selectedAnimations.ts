@@ -201,16 +201,16 @@ export function blurKeyOf(id:string){let k=idKeys.get(id);if(!k){k={};idKeys.set
       空閒時（requestIdleCallback）才把缺的補上，播放、拖動、拉滑桿都不會被卡住。
    畫質：每檔存的解析度讓「存起來那張自己的模糊」至少 4 像素 —— 放大回螢幕是平滑曲面，沒有格子紋。 */
 type Lv={c:HTMLCanvasElement;x:number;y:number;w:number;h:number;bytes:number};
-type Stack={key:string;d0:number;lv:Map<number,Lv>;bytes:number;used:number;paint:(g:CanvasRenderingContext2D)=>void;style:any;hw:number;hh:number;cx:number;cy:number;pending:Set<number>;up?:Stack};
-/* 每檔 σ ×2^¼（約 1.19 倍）。相鄰兩檔再依變異數連續混合：模糊量是連續變化的，不會一檔一檔地跳 */
-const LV_RATIO=Math.pow(2,.25),LV_BASE=.5;
+type Stack={key:string;d0:number;lv:Map<number,Lv>;bytes:number;used:number;paint:(g:CanvasRenderingContext2D)=>void;style:any;hw:number;hh:number;cx:number;cy:number;pending:Set<number>;up?:Stack;out?:HTMLCanvasElement};
+/* 每檔 σ ×√2，相鄰兩檔依變異數連續混合：模糊量是連續變化的，不會一檔一檔地跳；檔數少，預先算的工作也少 */
+const LV_RATIO=Math.SQRT2,LV_BASE=.6;
 const lvSigma=(k:number)=>k<0?0:LV_BASE*Math.pow(LV_RATIO,k);
 const stacks=new Map<object,Stack>();
 let stackBytes=0,stackClock=0;
 const STACK_BUDGET=160*1024*1024;
-const freeStack=(k:object)=>{const st=stacks.get(k);if(!st)return;st.lv.forEach(l=>{l.c.width=l.c.height=0;});stackBytes-=st.bytes;stacks.delete(k);};
+const freeStack=(k:object)=>{const st=stacks.get(k);if(!st)return;st.lv.forEach(l=>{l.c.width=l.c.height=0;});if(st.out)st.out.width=st.out.height=0;stackBytes-=st.bytes;stacks.delete(k);};
 const evictStacks=(keep:object)=>{while(stackBytes>STACK_BUDGET&&stacks.size>1){let old:object|null=null,u=Infinity;stacks.forEach((st,k)=>{if(k!==keep&&st.used<u){u=st.used;old=k;}});if(old)freeStack(old);else break;}};
-let lvOut:HTMLCanvasElement|undefined;
+const budget={at:-1e9,left:0};
 /** 一次真正的高斯模糊（三次框模糊，預乘透明度、浮點）：直接在 ImageData 上做 */
 function gaussInPlace(d:ImageData,sigma:number){
  if(sigma<.2)return;
@@ -255,7 +255,7 @@ function buildLevel(st:Stack,k:number):Lv|null{
 /* 空閒時補算缺的檔：一次一檔，量時間，超過就留給下一次空閒 */
 const queue:{st:Stack;k:number;key:object;up?:boolean}[]=[];
 let idleOn=false;
-const ric:(f:()=>void)=>void=(f)=>{const w=globalThis as any;if(typeof w.requestIdleCallback==='function')w.requestIdleCallback(f,{timeout:300});else setTimeout(f,16);};
+const ric:(f:()=>void)=>void=(f)=>{const w=globalThis as any;if(typeof w.requestIdleCallback==='function')w.requestIdleCallback(f,{timeout:60});else setTimeout(f,16);};
 function pump(){
  idleOn=false;const t0=performance.now();
  while(queue.length&&performance.now()-t0<5){
@@ -302,6 +302,16 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  want(st,k,cacheKey);want(st,k+1,cacheKey);want(st,k+2,cacheKey);want(st,k+3,cacheKey);
  let kA=k,kB=k+1;
  const has=(i:number)=>i<0||st!.lv.has(i);
+ /* 這一格要用的兩檔還沒好：在這一格裡用一小段固定的時間（全部物件合計每格約 2 毫秒）先做出來，
+    不只等空閒時間 —— 播放中手機很少有空閒，等不到的話就會在「只有一檔」與「兩檔混合」之間跳（看起來像在閃、在抖） */
+ for(const i of [kA,kB]){
+  if(has(i))continue;
+  const now=performance.now();
+  if(now-budget.at>12){budget.at=now;budget.left=2;}
+  if(budget.left<=0)break;
+  const l=buildLevel(st,i);budget.left-=performance.now()-now;
+  if(!l)break;st.lv.set(i,l);st.bytes+=l.bytes;stackBytes+=l.bytes;st.pending.delete(i);
+ }
  if(!has(kB)){ // 上面那檔還沒好：只用下面那檔（或往下找最近的）
   t=0;while(kA>=0&&!st.lv.has(kA))kA--;
  } else if(!has(kA)){t=1;}
@@ -324,16 +334,18 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  const X0=Math.floor(Math.min(...pts.map(p=>p[0]))),Y0=Math.floor(Math.min(...pts.map(p=>p[1])));
  const W=Math.ceil(Math.max(...pts.map(p=>p[0])))-X0,H=Math.ceil(Math.max(...pts.map(p=>p[1])))-Y0;
  if(W<=0||H<=0||W*H>8e6){ctx.restore();return false;}
- lvOut??=document.createElement('canvas');
- if(lvOut.width<W||lvOut.height<H){lvOut.width=Math.max(lvOut.width,W);lvOut.height=Math.max(lvOut.height,H);}
- const go=lvOut.getContext('2d')!;
+ /* 每個物件自己一張混合用的畫布（不共用）：同一格裡把共用畫布畫完、貼出去、清掉再給下一個用，
+    iPhone 的 Safari 偶爾會貼成「已經清掉的那張」→ 圖案一閃就不見 */
+ const out=st.out??=document.createElement('canvas');
+ if(out.width<W||out.height<H){out.width=Math.max(out.width,W);out.height=Math.max(out.height,H);}
+ const go=out.getContext('2d')!;
  go.setTransform(1,0,0,1,0,0);go.globalAlpha=1;go.globalCompositeOperation='source-over';go.clearRect(0,0,W,H);
  go.setTransform(mt.a,mt.b,mt.c,mt.d,mt.e-X0,mt.f-Y0);
  go.imageSmoothingEnabled=true;go.imageSmoothingQuality='low';go.globalCompositeOperation='lighter';
  Object.assign(go,st.style);
  drawLv(go,kA,1-t);drawLv(go,kB,t);
  go.globalAlpha=1;go.globalCompositeOperation='source-over';
- ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=a0;ctx.drawImage(lvOut,0,0,W,H,X0,Y0,W,H);
+ ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=a0;ctx.drawImage(out,0,0,W,H,X0,Y0,W,H);
  ctx.restore();
  return true;
 }

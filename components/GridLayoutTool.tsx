@@ -6091,7 +6091,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
               stroke ? (image.strokeColor || '#000000') : (image.color || '#FFFFFF'),
               stroke ? (image.strokeWidth || 0)*2 : 0, 7,
               image.sym ? undefined : {plainText:true,fontWeight:image.bold?700:400,fontStyle:image.italic?'italic':'normal',letterSpacing:spacing});
-            if (!raster) return;
+            // 字型還沒載入好時沒有貼圖：這一行照一般文字畫（不要整行消失，也不要用備用字型的貼圖）
+            if (!raster) { const y = startY + lineIndex * lineH + dy; if (stroke) ctx.strokeText(line, dx, y); else ctx.fillText(line, dx, y); offset += Array.from(line).length; return; }
             raster.layers.forEach((layer,index) => {
               ctx.save();ctx.translate(dx+layer.pivotX,dy+startY+lineIndex*lineH+layer.pivotY);
               paintSelectedAnimation(ctx,motionFrame.lab,layer.w,layer.h,g=>g.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h),offset+index,total,{x:layer.x-layer.pivotX,y:layer.y-layer.pivotY,w:layer.w,h:layer.h,src:layer.canvas});
@@ -14795,7 +14796,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         stroke ? (fImg.strokeWidth || 0) * 2 * scaleFactor * fImg.scale : 0,
         Math.max(2, Math.min(5, window.devicePixelRatio || 1)),
       );
-      if (!raster) return;
+      // 字型還沒載入好時沒有貼圖：照一般文字畫（不要消失）
+      if (!raster) { lines.forEach((ln, i) => stroke ? ctx.strokeText(ln, symDx, startY + i * lineH + symDy) : ctx.fillText(ln, symDx, startY + i * lineH + symDy)); return; }
       const count = raster.layers.length;
       const bubbleSpan = 1 + Math.max(0, count - 1) * .2;
       raster.layers.forEach((layer, index) => {

@@ -837,6 +837,9 @@ export const rasterizeSymbolAnimationLayers = (
       void fonts.load(fontCss, renderText).catch(() => {});
     }
   } catch { /* 字型 API 不可用時照舊 */ }
+  /* 字型還沒好：不要用備用字型做貼圖（畫出來就是「突然換了字體」，好了又換回來）。
+     回傳 null，呼叫端照一般文字畫這一格；字型一載入好，下一格就有正確字型的貼圖 */
+  if (!fontReady) return null;
   try {
     const probe = document.createElement('canvas').getContext('2d');
     if (!probe) return null;

@@ -7632,6 +7632,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
       if (f && !noScale && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
+      /* 物件本身的座標系（位移＋旋轉＋動畫縮放）：選中框之後要用這個畫，
+         不能沿用文字自己加上去的字級、擠壓縮放，不然框會被放大、偏移（動畫頁的虛線框就是這樣變大） */
+      const objBaseT = ctx.getTransform();
       ctx.globalAlpha = flattened ? 1 : objectAlpha;
       if (o.type==='shape'&&isBackdropMask(o.kind)) {
         if(maskBatch){maskBatch.push({kind:o.kind,w:o.w*s,h:o.h*s,settings:o,matrix:ctx.getTransform(),opacity:ctx.globalAlpha});ctx.restore();return;}
@@ -8271,6 +8274,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (isMain && !hideChromeRef.current && !objDragging && !objPinching && !objStretching
           && flashingTarget && !tuningEdge) {
         // 所有選中框統一為實線；虛線只保留給內容本身的描邊樣式。
+        ctx.setTransform(objBaseT);
         ctx.strokeStyle = '#ffffff';
         if (flashingTarget) ctx.globalAlpha = Math.sin(Math.PI * flashProgress) * 0.92;
         // 符號的外框刻意比圖片／圖形再輕一階，避免細小符號被白框搶走焦點.
