@@ -2414,8 +2414,8 @@ const FontCard: React.FC<{
  * 也不會變成「…」。字型晚一點才載好時寬度會變，所以 fonts.ready 之後
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
-/** 長的符號（按鈕超過約半排寬）：那一排剩下的空間由它撐滿，不留一大塊空白。短符號維持原本寬度，不會被拉成大格子 */
-export const symbolStretches = (text: string, base = 15) => measureSymbolAdvance(symbolTextPresentation(text), SYMBOL_FONT, base) >= 144;
+/** 較長的符號（按鈕超過約三分之一排寬）：那一排剩下的空間由它撐滿，不留一大塊空白。短符號維持原本寬度，不會被拉成大格子 */
+export const symbolStretches = (text: string, base = 15) => measureSymbolAdvance(symbolTextPresentation(text), SYMBOL_FONT, base) >= 104;
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
   /* 不再為清單中的每一顆建立 state、ResizeObserver 與 fonts.ready 回呼。
      那套做法會讓幾百顆按鈕先用 fallback 畫一遍，再同時換字體與縮放一次，
@@ -2506,7 +2506,7 @@ export const SymbolPicker: React.FC<{
           少數碼位在 iOS 沒有單色字身時仍會退回 Color Emoji；選單統一轉成白色（跟新增到畫布後一致）。
           濾鏡只套在整片清單這一層：每一顆符號各自一個濾鏡的話，幾百層濾鏡會讓 Safari 捲到哪才畫到哪。
           這一層裡面本來就全是白色（底色、外框都是半透明白），套上去不會變。 */}
-      <div className="flex flex-wrap justify-center gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}>
+      <div className="flex flex-wrap gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}>
         {symbolButtons}
       </div>
     </div>
