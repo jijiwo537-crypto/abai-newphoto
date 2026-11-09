@@ -2414,8 +2414,6 @@ const FontCard: React.FC<{
  * 也不會變成「…」。字型晚一點才載好時寬度會變，所以 fonts.ready 之後
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
-/** 較長的符號（按鈕超過約三分之一排寬）：那一排剩下的空間由它撐滿，不留一大塊空白。短符號維持原本寬度，不會被拉成大格子 */
-export const symbolStretches = (text: string, base = 15) => measureSymbolAdvance(symbolTextPresentation(text), SYMBOL_FONT, base) >= 104;
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
   /* 不再為清單中的每一顆建立 state、ResizeObserver 與 fonts.ready 回呼。
      那套做法會讓幾百顆按鈕先用 fallback 畫一遍，再同時換字體與縮放一次，
@@ -2423,7 +2421,13 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
      有快取的純量測；第一次繪製前就已經得到最終尺寸。 */
   const displayText = symbolTextPresentation(text);
   const naturalWidth = measureSymbolAdvance(displayText, SYMBOL_FONT, base);
-  const fontSize = base * Math.min(1, 252 / Math.max(1, naturalWidth));
+  /* 最寬到一整排（iPhone 內容寬 358 − 按鈕左右內距與框 26 ＝ 332）：以前上限 252，
+     長邊框被縮小塞進 278 的格子，右邊固定空一塊；現在一整排剛好放滿，字也比較大、看得清楚 */
+  const nw = Math.max(1, naturalWidth);
+  /* 螢幕比 13 Pro 窄（例如 SE、mini）時，用畫面寬度再限制一次，長符號不會戳出按鈕 */
+  const fontSize = nw > 200
+    ? `min(${base * Math.min(1, 332 / nw)}px, calc((100vw - 58px) * ${base / nw}))`
+    : base * Math.min(1, 332 / nw);
   return (
     <span
       className="inline-flex max-w-full items-center justify-center whitespace-pre text-center"
@@ -2481,7 +2485,7 @@ export const SymbolPicker: React.FC<{
       onClick={() => { onPickRef.current(symbol); }}
       aria-label={symbol}
       aria-pressed={selected === symbol}
-      className={`${symbolStretches(symbol) ? 'grow ' : ''}min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
+      className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
     >
       <span style={{ opacity: symbolFaceReady ? 1 : 0 }}>
         <SymbolGlyph text={symbol} />
