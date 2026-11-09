@@ -14,7 +14,7 @@ import { LinkGlowTiles } from '../utils/linkGlowTiles';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
-import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
+import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} from '../utils/collageVideoFormat';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
@@ -9369,7 +9369,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [imageExportFormat,setImageExportFormat]=useState<'png'|'jpg'|'heic'>('png');
   const [videoExportFormat,setVideoExportFormat]=useState<CollageVideoFormat>('auto');
   const [videoExportFps,setVideoExportFps]=useState(0);
-  const [videoExportQuality,setVideoExportQuality]=useState(40_000_000);
+  /** 影片畫質＝短邊解析度（720／1080／1440／2160）；預設 1080p：清楚、存得快 */
+  const [videoExportQuality,setVideoExportQuality]=useState(1080);
   const exportOptionsRef=useRef<HTMLDivElement>(null);
   useEffect(()=>{
     if(!exportOptionsOpen)return;
@@ -10263,17 +10264,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          工作區 off.cw/off.ch 為基準，預覽與輸出從頭到尾只剩一套座標。 */
       const vids = allVideos();
       const hasVid = vids.length > 0;
-      const cap = Math.min(hasVid ? MOTION_MAX_DIM_VIDEO : MOTION_MAX_DIM, MAX_FINAL_DIM);
+      /* 解析度＝匯出設定選的畫質（短邊 720／1080／1440／2160），見 videoScaleFor */
       const logicalW = Math.max(1, off.cw);
       const logicalH = Math.max(1, off.ch);
-      const logicalLong = Math.max(logicalW, logicalH);
-      let scale = Math.min(cap / logicalLong, Math.max(1, EXPORT_MIN_DIM / logicalLong));
-      if (hasVid) {
-        const area = logicalW * scale * logicalH * scale;
-        if (area > MOTION_MAX_PIXELS_VIDEO) {
-          scale *= Math.sqrt(MOTION_MAX_PIXELS_VIDEO / area);
-        }
-      }
+      let scale = videoScaleFor(videoExportQuality, logicalW, logicalH);
       /* 固定到 1/1000，避免浮點尾數令 canvas 在逐幀重畫時偶爾差一個像素。 */
       scale = Math.max(0.001, Math.floor(scale * 1000) / 1000);
       // 錄到的第一格就要是影片的第一格，所以先全部倒帶再開始
@@ -10296,7 +10290,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const fps = videoExportFps || preferredVideoFrameRate(vids);
         try {
           blob = await encodeCanvasFrames({
-            canvas: cv, fps, frames: Math.max(1, Math.round(span * fps)), bitrate: videoExportQuality,
+            canvas: cv, fps, frames: Math.max(1, Math.round(span * fps)), bitrate: videoBitrateFor(cv.width, cv.height, fps),
             type: videoExportFormat === 'mov' ? 'video/quicktime' : 'video/mp4',
             draw: async (_i, t) => {
               if (hasVid) await seekVideosTo(vids, t + .5 / fps);
@@ -10318,7 +10312,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 動態成品至少 50fps；高幀率影片素材則保留其來源幀率。 */
         const stream = (cv as any).captureStream(videoExportFps || preferredVideoFrameRate(vids));
         exportStream=stream;
-        const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoExportQuality });
+        const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoBitrateFor(cv.width, cv.height, videoExportFps || preferredVideoFrameRate(vids)) });
         const chunks: Blob[] = [];
         rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
         const done = new Promise<Blob>(res => { rec.onstop = () => res(new Blob(chunks, { type: mime || 'video/webm' })); });
