@@ -270,7 +270,7 @@ const drawCanonical = (
     /* 第四排第二顆：中點與其下方兩個 combining marks 是一個視覺單位，
        不能在泡泡／縮放 II 分成三顆散開；同時只限定這個結構，避免牽動
        其他原本正常的符號。 */
-    const fourthRowSecond=SYMBOLS[14];
+    const fourthRowSecond="\ud800\udcc6\u00b7\u0329\u0359\u208a\u02da\u22b9"; // 𐃆·̩͙₊˚⊹（清單順序可調整，所以直接寫字串）
     const specialDotAdjusted=text!==fourthRowSecond||(
       layout.units.includes('\u00b7\u0329\u0359')
       &&!layout.units.includes('\u0329')&&!layout.units.includes('\u0359')
