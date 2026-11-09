@@ -162,6 +162,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
   };
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
   const srcImgRef = useRef(srcImg); srcImgRef.current = srcImg;
+  /* ── 暫時的偵錯面板（仿色預覽空白的問題，抓到原因就拿掉） ── */
+  const diagRef = useRef<Record<string, string>>({});
+  const diagElRef = useRef<HTMLPreElement>(null);
   /** 同一張照片用另一條路解碼出來的點陣圖（直接讀檔 → createImageBitmap，已縮到預覽大小）。
       Safari／App（WebKit）上，把 <img> 畫進畫布有時候整片空白、不報錯也不會好；
       這條路是 WebKit 最穩的解碼方式，沒選參考圖時的畫面優先用它 */
@@ -409,7 +412,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { gl?.dispose(); glRef.current = null; };
   }, []);
 
-  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){plainBmpRef.current=null;
+  useEffect(() => { diagRef.current.load = 'loading'; let active=true; loadImage(imageSrc).then(image=>{if(active){plainBmpRef.current=null;diagRef.current.load = `ok ${image.naturalWidth}x${image.naturalHeight}`;diagRef.current.bmp = 'pending';
       /* 另一條路解碼（見 plainBmpRef）：解好就重畫一次；這條路失敗也沒關係，照舊用 <img> */
       if (typeof createImageBitmap === 'function') plainBmpWaitRef.current = { img: image, p: fetch(imageSrc).then(r => r.blob()).then(b => {
         const W0 = image.naturalWidth || image.width, H0 = image.naturalHeight || image.height, k = Math.min(1, PREVIEW_MAX / Math.max(W0, H0));
@@ -419,11 +422,12 @@ export const ColorMatchStudio: React.FC<Props> = ({
         if (!active || srcImgRef.current !== image) { bmp.close(); return; }
         plainBmpRef.current?.bmp.close();
         plainBmpRef.current = { img: image, bmp };
+        diagRef.current.bmp = `ok ${bmp.width}x${bmp.height}`;
         /* 預覽像素（GPU 貼圖、CPU 仿色都從它來）也改用這張重算：原本那份可能是空白的 */
         try { const d = toImageData(image, PREVIEW_MAX, bmp); if (!blankData(d)) { previewSrcRef.current = image; setPreview(d); } } catch { /* 照舊 */ }
         if (!lutsPickedRef.current && canvasRef.current) drawPlain(canvasRef.current);
-      }).catch(() => {}) };
-skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */try{const d=toImageData(image, PREVIEW_MAX);/* 全透明＝照片還沒解碼好，先不要用（不然會一直貼一張空白） */if(!blankData(d)){previewSrcRef.current=image;setPreview(d);}else previewSrcRef.current=null;}catch(e){previewSrcRef.current=null;console.error('preview',e);}}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
+      }).catch(e => { diagRef.current.bmp = 'FAIL ' + String(e).slice(0, 60); }) };
+skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */try{const d=toImageData(image, PREVIEW_MAX);/* 全透明＝照片還沒解碼好，先不要用（不然會一直貼一張空白） */diagRef.current.pv0 = blankData(d) ? 'BLANK' : 'ok';if(!blankData(d)){previewSrcRef.current=image;setPreview(d);}else previewSrcRef.current=null;}catch(e){diagRef.current.pv0 = 'ERR ' + String(e).slice(0, 60);previewSrcRef.current=null;console.error('preview',e);}}}).catch(e => { diagRef.current.load = 'FAIL ' + String(e && (e as any).type || e).slice(0, 40); });return()=>{active=false;}; }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
     /* 算過的參考圖：不等圖片解碼，這一下就換上它的顏色（解碼完的那一次會直接命中快取，不會再算） */
@@ -885,10 +889,36 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
   const viewport=useStandaloneToolViewport();
   const srcAspect = srcImg ? (srcImg.naturalWidth || srcImg.width) / Math.max(1, srcImg.naturalHeight || srcImg.height) : (align ? align.width / align.height : null);
   const fitPad = useAlignPad(embedded ? align : null, stageRef, srcAspect);
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const el = diagElRef.current, c = canvasRef.current;
+      if (!el) return;
+      const d = diagRef.current, L: string[] = ['仿色偵錯 v1'];
+      L.push(`src: ${imageSrc.slice(0, 5)} ${imageSrc.length}`);
+      L.push(`img: ${d.load || '-'} | 預覽: ${d.pv0 || '-'} | 點陣圖: ${d.bmp || '-'}`);
+      L.push(`ready ${ready ? 1 : 0} ph ${phShown ? 1 : 0} preview ${preview ? `${preview.width}x${preview.height}${blankData(preview) ? ' BLANK' : ''}` : '無'} luts ${luts ? Object.keys(luts).length : 0} picked ${picked}`);
+      L.push(`gl ${glRef.current ? 1 : 0} glReady ${glReadyRef.current ? 1 : 0} glBroken ${glBrokenRef.current ? 1 : 0}`);
+      if (c) {
+        const r = c.getBoundingClientRect(), cs = getComputedStyle(c);
+        let px = '?'; try { const g = c.getContext('2d'); px = g ? Array.from(g.getImageData(c.width >> 1, c.height >> 1, 1, 1).data).join(',') : 'no2d'; } catch (e) { px = 'ERR ' + String(e).slice(0, 30); }
+        L.push(`canvas ${c.width}x${c.height} 顯示 ${Math.round(r.width)}x${Math.round(r.height)} @${Math.round(r.left)},${Math.round(r.top)} 中心像素 ${px}`);
+        L.push(`css display ${cs.display} vis ${cs.visibility} op ${cs.opacity} 有畫面 ${hasPixels(c) ? 1 : 0}`);
+        let a: HTMLElement | null = c.parentElement, hid = '';
+        while (a) { const s2 = getComputedStyle(a); if (s2.visibility === 'hidden' || s2.opacity === '0' || s2.display === 'none') hid += `${a.tagName}.${(a.className || '').toString().slice(0, 30)}(${s2.display}/${s2.visibility}/${s2.opacity}) `; a = a.parentElement; }
+        L.push(`被藏的外層: ${hid || '無'}`);
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) as HTMLElement | null;
+        L.push(`中心最上層: ${top ? `${top.tagName}.${(top.className || '').toString().slice(0, 50)}` : '無'}${top === c ? '（就是畫布）' : ''}`);
+      } else L.push('canvas: 沒有');
+      el.textContent = L.join('\n');
+    }, 500);
+    return () => clearInterval(id);
+  });
+
   return (
     <div ref={embedded ? undefined : viewport.ref} data-match-embedded={embedded ? '1' : undefined}
       className={embedded ? 'absolute inset-0 bg-[#080808] flex flex-col text-white overflow-hidden'
         : `safe-top relative w-full h-[100dvh] bg-[#080808] flex flex-col text-white ${viewport.standalone?'standalone-tool-viewport':''}`}>
+      <pre ref={diagElRef} style={{ position: 'absolute', left: 4, right: 4, top: 52, zIndex: 999, pointerEvents: 'none', fontSize: 9, lineHeight: 1.35, color: '#0f0', background: 'rgba(0,0,0,.75)', padding: 4, whiteSpace: 'pre-wrap', margin: 0 }} />
       {/* 滑桿樣式跟編輯器一模一樣 —— 那邊是寫在自己的 style 區塊裡，
           只有編輯器掛著的時候才存在，所以這裡要自己帶一份。 */}
       <style>{`
