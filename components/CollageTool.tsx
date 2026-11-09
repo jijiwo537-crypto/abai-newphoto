@@ -1,4 +1,4 @@
-import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, type SelectedFrame } from '../utils/selectedAnimations';
+import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, bumpBlurGeneration, type SelectedFrame } from '../utils/selectedAnimations';
 
 import { waveWarp, revealPathD } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
@@ -7314,7 +7314,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           fillShapePath(g, holeType, mxp, myp, sz);
         }
         drawBurst(g, h, sz, mxp, myp, A.burst, patternFill);
-        });
+        }, blurKey(h, `c|${dx},${dy}`));
         ctx.restore();
         });
       });
@@ -7454,7 +7454,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         g.strokeStyle = '#000';
         fillShapePath(g, holeType, 0, 0, sz, () => g.stroke());
       }
-      });
+      }, blurKey(h, `m|${dx},${dy}`));
       lmx.restore();
       if (A.burst > 0.01) {
         lmx.save();
@@ -7532,7 +7532,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           fillShapePath(g, holeType, hx, hy, sz);
         }
         drawBurst(g, h, sz, hx, hy, A.burst, pat);
-        });
+        }, blurKey(h, 'w'));
         ctx.restore();
       });
       ctx.restore();
@@ -8295,9 +8295,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.save();
         ctx.translate((o.x + o.w / 2) * s, (o.y + o.h / 2) * s);
         ctx.rotate((o.rot || 0) * Math.PI / 180);
+        // 失焦快取的身分＝這個物件（範圍跟舊的一樣：對角線的 0.8 倍）
         paintSelectedAnimation(ctx, f.lab, o.w * s, o.h * s, g => {
           g.save();g.rotate(-(o.rot || 0) * Math.PI / 180);g.translate(-(o.x + o.w / 2) * s, -(o.y + o.h / 2) * s);paintObject(g);g.restore();
-        });
+        }, 0, 1, { x: -o.w * s * .8, y: -o.h * s * .8, w: o.w * s * 1.6, h: o.h * s * 1.6, src: o });
         ctx.restore();return;
       }
       /* 進場／常駐動畫在縮放（果凍、旋轉、翻轉、流星、縮放…）時，發光、描邊、文字光暈
@@ -9597,6 +9598,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(import.meta.env.DEV&&stageRef.current)stageRef.current.dataset.photoTransforms=JSON.stringify(photoRegionRef.current?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0})));
   };
   renderToCanvasRef.current = renderToCanvas;
+  /* 畫面的設定變了（renderToCanvas 只在它用到的東西改變時重建）：失焦的分檔模糊快取全部作廢，
+     下一格照新內容重算。純播放動畫時它不會變，快取一直沿用 */
+  const blurGenForRef = useRef<unknown>(null);
+  if (blurGenForRef.current !== renderToCanvas) { blurGenForRef.current = renderToCanvas; bumpBlurGeneration(); }
   useEffect(()=>{
     if(!imageState||stableScene.current.key===stableSceneKey||objEditImage||selectedRegionPhoto!==null||baseSelected||shapeSel||selectedTarget)return;
     let cancelled=false;

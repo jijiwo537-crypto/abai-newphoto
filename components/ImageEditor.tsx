@@ -3012,7 +3012,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        iPhone 上疊在上面的那一層會被另外對齊到整數像素，跟底下的照片差半個像素 ——
        看起來就是「只有遮色片的地方在動」。畫在同一張畫布上就不可能錯開。
        選取範圍這時候也用正式那一套（不走拖曳用的快速版），放手前後一模一樣 */
-    const inBase = maskSliderLiveRef.current && !maskRangeDragRef.current && !!pre && !!disp
+    /* 線性、放射漸層的選取範圍是純幾何（很便宜）：拖它的把手時也一樣用原解析度、畫進照片那張畫布。
+       以前拖把手時走縮小（長邊 1100）的疊層、浮在照片上面：遮色片蓋到的地方會變糊，
+       而且疊層跟底下照片對齊的方式不同，看起來就是那一塊在位移 */
+    const geo = m.maskType === 'linear' || m.maskType === 'radial';
+    const inBase = (geo || (maskSliderLiveRef.current && !maskRangeDragRef.current)) && !!pre && !!disp
       && pre.width === w && pre.height === h && disp.width === w && disp.height === h;
     // 顏色／明度範圍看的是拖曳開始時那張畫面（pre），拖的時候用縮小的那張算選取
     maskAlpha(al, maskCacheId(m), m, w, h, pre, `live|${maskLivePreKeyRef.current}`, !inBase);
@@ -3057,6 +3061,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      不一律縮到 1100 再放大貼回去：細線會糊一點、偏一個像素，放手換回原解析度時看起來就像照片動了一下。
      拖形狀、刷筆刷、拖範圍類的滑桿每一格都要重算選取範圍，才維持縮小的版本（跟得上手指） */
   const primeMaskLive = (p: EditorParams, overlay: boolean, full = false) => {
+    // 線性／放射：選取範圍算起來很便宜，一律原解析度（見 paintMaskLive 的 geo）
+    { const t = snapOf(p).maskType; if (t === 'linear' || t === 'radial') full = true; }
     if (maskLiveRef.current) {
       // 已經掛著：要原解析度但手上的是縮小版（剛拖過形狀）就重掛一次
       const pre = maskLivePreRef.current, de = displayCanvasRef.current;

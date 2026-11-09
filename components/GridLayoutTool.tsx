@@ -6253,7 +6253,9 @@ export const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image:
   motionFrame: ObjectMotionFrame | null | undefined, density: number, cacheGlow = false) => {
   if (motionFrame?.lab && image.text === undefined) {
     paintSelectedAnimation(ctx, motionFrame.lab, image.width, image.height,
-      g => paintClassicSceneVector(g, image, motionFrame, density, cacheGlow));
+      g => paintClassicSceneVector(g, image, motionFrame, density, cacheGlow), 0, 1,
+      // 失焦快取的身分＝這個物件（範圍跟舊的一樣：對角線的 0.8 倍）
+      { x: -image.width * .8, y: -image.height * .8, w: image.width * 1.6, h: image.height * 1.6, src: image });
     return;
   }
   const phase = motionFrame?.gridWave;
