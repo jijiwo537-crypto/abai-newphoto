@@ -2479,7 +2479,7 @@ export const SymbolPicker: React.FC<{
       onClick={() => { onPickRef.current(symbol); }}
       aria-label={symbol}
       aria-pressed={selected === symbol}
-      className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
+      className={`grow min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
     >
       <span style={{ opacity: symbolFaceReady ? 1 : 0 }}>
         <SymbolGlyph text={symbol} />
