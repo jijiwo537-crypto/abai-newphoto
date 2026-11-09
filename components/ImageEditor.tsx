@@ -3015,11 +3015,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     /* 線性、放射漸層的選取範圍是純幾何（很便宜）：拖它的把手時也一樣用原解析度、畫進照片那張畫布。
        以前拖把手時走縮小（長邊 1100）的疊層、浮在照片上面：遮色片蓋到的地方會變糊，
        而且疊層跟底下照片對齊的方式不同，看起來就是那一塊在位移 */
-    const geo = m.maskType === 'linear' || m.maskType === 'radial';
-    const inBase = (geo || (maskSliderLiveRef.current && !maskRangeDragRef.current)) && !!pre && !!disp
-      && pre.width === w && pre.height === h && disp.width === w && disp.height === h;
-    // 顏色／明度範圍看的是拖曳開始時那張畫面（pre），拖的時候用縮小的那張算選取
-    maskAlpha(al, maskCacheId(m), m, w, h, pre, `live|${maskLivePreKeyRef.current}`, !inBase);
+    /* 所有種類（線性、放射、筆刷、顏色範圍、明度範圍）拖的時候都一樣：原解析度、直接畫進照片那張畫布 */
+    const inBase = !!pre && !!disp && pre.width === w && pre.height === h && disp.width === w && disp.height === h;
+    /* 顏色／明度範圍在拖「範圍類」滑桿時每一格都要逐點重算選取，用快速版（同一份公式、略省精度）跟得上手指 */
+    const fastSel = !inBase || (maskRangeDragRef.current && (m.maskType === 'color' || m.maskType === 'luma'));
+    maskAlpha(al, maskCacheId(m), m, w, h, pre, `live|${maskLivePreKeyRef.current}`, fastSel);
     const g = el.getContext('2d')!;
     g.globalCompositeOperation = 'copy'; g.drawImage(adj, 0, 0, w, h);
     g.globalCompositeOperation = 'destination-in'; g.drawImage(al, 0, 0);
@@ -3033,8 +3033,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       el.style.display = 'none';
     } else el.style.display = 'block';
     if (maskOverlayCanvasRef.current) maskOverlayCanvasRef.current.style.display = 'none';   // 疊層自己有紅色
+    /* 平常照片是透過 GPU 那層顯示的：即時疊層畫在 2D 畫布上，一定要讓 2D 畫布是看得到的那一層，
+       不然滑桿拖了畫面沒反應、放手（整條重畫）才變 */
+    if (fxSurfaceShownRef.current) showFxSurface(false);
     maskLiveRef.current = true;
+    maskLivePaintAtRef.current = performance.now();
   };
+  /** 即時疊層上一次真的畫出來的時間（見畫面迴圈：太久沒畫就照常整條重畫，不會卡在「拖了沒反應」） */
+  const maskLivePaintAtRef = useRef(0);
   /** 拖曳／塗抹的每一步：疊層已經掛著就直接重挖一次，不重跑管線 */
   const updateMaskLive = (p: EditorParams) => {
     const el = maskLiveCanvasRef.current;
@@ -3061,8 +3067,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      不一律縮到 1100 再放大貼回去：細線會糊一點、偏一個像素，放手換回原解析度時看起來就像照片動了一下。
      拖形狀、刷筆刷、拖範圍類的滑桿每一格都要重算選取範圍，才維持縮小的版本（跟得上手指） */
   const primeMaskLive = (p: EditorParams, overlay: boolean, full = false) => {
-    // 線性／放射：選取範圍算起來很便宜，一律原解析度（見 paintMaskLive 的 geo）
-    { const t = snapOf(p).maskType; if (t === 'linear' || t === 'radial') full = true; }
+    // 一律原解析度（見 paintMaskLive）：縮小的疊層會變糊、跟照片差半個像素
+    full = true; void full;
     if (maskLiveRef.current) {
       // 已經掛著：要原解析度但手上的是縮小版（剛拖過形狀）就重掛一次
       const pre = maskLivePreRef.current, de = displayCanvasRef.current;
@@ -5348,7 +5354,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         /* 拖遮色片的「調節」滑桿：選取範圍不變，直接用原解析度（縮小再放大會糊、偏一個像素，放手時看起來像照片動了一下）。
            拖形狀、刷筆刷、拖範圍類的滑桿每一格都要重算選取範圍，才用縮小的（跟得上手指） */
         const gq = maskGpu();
-        const liveK = sliderLive && !maskRangeDragRef.current && ((gq && gq.fits(w, h)) || w * h <= MASK_LIVE_CPU_FULL) ? 1 : Math.min(1, MASK_LIVE_MAX / Math.max(w, h));
+        /* 所有拖曳（形狀、筆刷、範圍類滑桿）一律原解析度：縮小的疊層會變糊、跟照片差半個像素（看起來就是那一塊在位移）。
+           只有沒有 GPU、照片又大的時候才縮小（CPU 每一格逐點算跟不上） */
+        const liveK = ((gq && gq.fits(w, h)) || w * h <= MASK_LIVE_CPU_FULL) ? 1 : Math.min(1, MASK_LIVE_MAX / Math.max(w, h));
         const lw = Math.max(1, Math.round(w * liveK));
         const lh = Math.max(1, Math.round(h * liveK));
         const preKey = `${w}x${h}|${srcIdent()}|${selectedLutIdx}|${JSON.stringify(Object.entries(p).filter(([k]) => !k.startsWith('mask')))}|${JSON.stringify(maskItems.filter((_, i) => i !== maskAct))}`;
@@ -6802,7 +6810,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 return;
             }
             /* 拖遮色片滑桿、即時疊層已經掛好：每一格都由疊層自己畫，管線不重跑（放手時會補一次完整的） */
-            if (isDirtyRef.current && !flipped && maskLiveRef.current && (maskSliderLiveRef.current || !!activeDragRef.current || maskPaintingRef.current)) isDirtyRef.current = false;
+            /* 只在疊層最近真的有畫（0.25 秒內）才跳過：疊層因為任何原因沒在畫，就照常整條重畫，
+               不會出現「拖滑桿沒反應、放手才變」 */
+            if (isDirtyRef.current && !flipped && maskLiveRef.current && (maskSliderLiveRef.current || !!activeDragRef.current || maskPaintingRef.current)
+              && now - maskLivePaintAtRef.current < 250) isDirtyRef.current = false;
             /* 只有紅色範圍的開關變了：只畫那一層，照片不重算 */
             if (isDirtyRef.current && !flipped && overlayOnlyRef.current) {
                 overlayOnlyRef.current = false;
