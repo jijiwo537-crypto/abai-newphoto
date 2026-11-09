@@ -4,7 +4,7 @@
    注意：電腦沒有 iPhone 的字型（PingFang），符號寬度會略有不同；用 iPhone 打開這頁最準。 */
 import React, { useEffect, useRef, useState } from 'react';
 import { SymbolGlyph } from './GridLayoutTool';
-import { SYMBOLS, REMOVED_SYMBOLS } from '../utils/symbols';
+import { SYMBOLS } from '../utils/symbols';
 import { packSymbols } from '../utils/symbolPack';
 
 const STORE = 'abai-order-tool-symbols-v2';
@@ -46,7 +46,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   const tagged = list.filter(s => cats.of[s] !== undefined).length;
   const onTap = (sym: string) => {
     if (draggedRef.current) { draggedRef.current = false; return; }
-    if (brush === -3) { if (!SYMBOLS.includes(sym) && !REMOVED_SYMBOLS.includes(sym)) setExtraGone(g => (g.includes(sym) ? g : [...g, sym])); setList(l => l.filter(s => s !== sym)); onToast('已刪除（下面「已刪除」區點一下可以加回來）'); return; }
+    if (brush === -3) { if (!SYMBOLS.includes(sym)) setExtraGone(g => (g.includes(sym) ? g : [...g, sym])); setList(l => l.filter(s => s !== sym)); onToast('已刪除（下面「已刪除」區點一下可以加回來）'); return; }
     if (brush === -1) return;
     setCats(c => {
       const of = { ...c.of };
@@ -54,9 +54,9 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       return { ...c, of };
     });
   };
-  /** 不在清單裡的符號：App 原本有、這裡刪掉的，加上已經從 App 拿掉的（REMOVED_SYMBOLS）、自己新增後又刪掉的 */
+  /** 在這裡誤刪、還沒交出去的符號：App 清單裡有、這裡刪掉的，加上自己新增後又刪掉的（已經從 App 拿掉的不列） */
   const [extraGone, setExtraGone] = useState<string[]>([]);
-  const gone = [...SYMBOLS, ...REMOVED_SYMBOLS, ...extraGone].filter((s, i, a) => a.indexOf(s) === i && !list.includes(s));
+  const gone = [...SYMBOLS, ...extraGone].filter((s, i, a) => a.indexOf(s) === i && !list.includes(s));
   const restore = (sym: string) => { setList(l => (l.includes(sym) ? l : [...l, sym])); onToast('已加回清單最後面'); };
   /* 新增：貼上或打字，加在最後面（再拖到想要的位置） */
   const [draft, setDraft] = useState('');
