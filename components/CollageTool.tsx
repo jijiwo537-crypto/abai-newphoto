@@ -15,7 +15,7 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, DEFOCUS_IDS, defocusSpeedToUi, defocusSpeedFromUi } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, scatterAllNoGlow } from '../utils/frameShapes';
@@ -12753,6 +12753,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                   : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedToUi(cur.speed)
                                   : cur.idle === 'breathe' && isGlintTarget ? glintZoomSpeedToUi(cur.speed)
                                   : cur.idle === 'glint-blink' ? blinkSpeedToUi(cur.speed)
+                                  : DEFOCUS_IDS.has(cur.idle) ? defocusSpeedToUi(cur.speed)
                                   : idleSpeedToUi(cur.speed)}
                               min={0} max={100}
                               step={1}
@@ -12767,6 +12768,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                     : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedFromUi(v)
                                     : cur.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
                                     : cur.idle === 'glint-blink' ? blinkSpeedFromUi(v)
+                                    : DEFOCUS_IDS.has(cur.idle) ? defocusSpeedFromUi(v)
                                     : idleSpeedFromUi(v),
                               })} />
                             </div>

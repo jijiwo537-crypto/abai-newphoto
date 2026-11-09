@@ -21,6 +21,10 @@ const clampUi = (u: number) => Math.max(0, Math.min(100, u));
 /** 常駐動畫的一般速度：內部倍率 0.2～1.8（舊面板 20～180） */
 export const idleSpeedToUi = (speed: number) => Math.round(clampUi((speed * 100 - 20) / 1.6));
 export const idleSpeedFromUi = (ui: number) => (20 + clampUi(ui) * 1.6) / 100;
+/** 失焦的速度：最小值同一般刻度 0.2，最大值提高三倍到 5.4 */
+export const DEFOCUS_IDS = new Set(['lab-T-L20', 'lab-S-L20', 'lab-P-L20']);
+export const defocusSpeedToUi = (speed: number) => Math.round(clampUi((speed * 100 - 20) / 5.2));
+export const defocusSpeedFromUi = (ui: number) => (20 + clampUi(ui) * 5.2) / 100;
 /** 預設速度：舊的 0.9 換算是 43.75，取最接近的 0 結尾 40（＝0.84） */
 export const IDLE_SPEED_DEFAULT = idleSpeedFromUi(40);
 

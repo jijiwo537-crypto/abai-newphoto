@@ -14,6 +14,8 @@
  */
 
 /** 檔案選擇器要接受的影片格式 */
+import { nativePathOf, fileSrc } from './nativeBridge';
+
 export const VIDEO_ACCEPT = 'video/*,.mp4,.m4v,.mov,.webm,.ogv,.3gp';
 
 /* 有些系統（尤其相簿匯出的 .mov）給的 MIME 是空的，只好退回看副檔名 */
@@ -79,7 +81,15 @@ const hostOf = (): HTMLDivElement => {
  * 一定要等到 `loadeddata`（readyState ≥ 2）才算好：只等 `loadedmetadata`
  * 的話寬高有了、第一格卻還沒解出來，那時候 drawImage 畫出來是空白的。
  */
-export const loadVideoEl = (url: string): Promise<HTMLVideoElement> =>
+/* iOS App（WKWebView、capacitor:// 頁面）常常播不了 blob: 網址的影片 —— 解碼器拿不到
+   可以分段讀取（Range）的來源，就只會觸發 error。從相簿選進來的影片在原生端有實體檔，
+   改用 Capacitor 的檔案網址（支援 Range）播放；任一來源失敗就換另一個再試一次。 */
+export const loadVideoEl = (url: string): Promise<HTMLVideoElement> => {
+  const path = nativePathOf(url);
+  if (!path) return loadVideoFrom(url);
+  return loadVideoFrom(fileSrc(path)).catch(() => loadVideoFrom(url));
+};
+const loadVideoFrom = (url: string): Promise<HTMLVideoElement> =>
   new Promise((resolve, reject) => {
     const el = document.createElement('video');
     /* muted 是自動播放的唯一條件（所有瀏覽器都一樣）。

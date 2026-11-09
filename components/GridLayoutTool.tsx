@@ -12,7 +12,7 @@ import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import {exportHeic} from '../utils/heicExport';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, DEFOCUS_IDS, defocusSpeedToUi, defocusSpeedFromUi } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
@@ -7481,7 +7481,15 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         : undefined,
       transition: sortPage ? 'none' : dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
     };
-  })() : wrapGeo;
+  })() : motionFrame ? {
+    /* 照片套了濾鏡／特效／羽化／發光／描邊／形狀後，動畫改走 DOM（wrapGeo 帶著
+       motionFrame 的位移縮放）。外框容器不能再吃那一份：動畫時鐘會在
+       data-chrome-motion 上另外套一次同一格，兩份疊加就是「一調整圖片，選中框就偏掉」。 */
+    ...wrapGeo,
+    transform: (stableVectorTransform || dragShift || (image.rotation % 360) !== 0)
+      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}${stableVectorTransform ? `scale(${image.scale}) ` : ''}rotate(${image.rotation}deg)`
+      : undefined,
+  } : wrapGeo;
 
   /* 選取框、四角圓球、工具列 —— 統稱「外框」。
      這一整組會被搬到 chromeLayer 那一層去畫（那一層不在 overflow-hidden 底下），
@@ -18514,6 +18522,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedToUi(cfg.speed)
                             : cfg.idle === 'breathe' && isGlintTarget ? glintZoomSpeedToUi(cfg.speed)
                             : cfg.idle === 'glint-blink' ? blinkSpeedToUi(cfg.speed)
+                            : DEFOCUS_IDS.has(cfg.idle) ? defocusSpeedToUi(cfg.speed)
                             : idleSpeedToUi(cfg.speed)}
                         min={0} max={100}
                         step={1} onCommit={replayMotion}
@@ -18523,7 +18532,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : cfg.idle === 'grid-wave' ? .2 + v * .018
                           : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedFromUi(v)
                           : cfg.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
-                          : cfg.idle === 'glint-blink' ? blinkSpeedFromUi(v) : idleSpeedFromUi(v)})}/>
+                          : cfg.idle === 'glint-blink' ? blinkSpeedFromUi(v) : DEFOCUS_IDS.has(cfg.idle) ? defocusSpeedFromUi(v) : idleSpeedFromUi(v)})}/>
                       </div>
                     </div>}
                   </>}

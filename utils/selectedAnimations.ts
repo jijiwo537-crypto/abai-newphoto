@@ -17,10 +17,24 @@ export const selectedKinds = (target: SelectedTarget, phase: 'entry'|'idle') => 
 export type SelectedFrame = { id:string; p:number; t:number; amount:number; speed:number; phase:number; clock?:number; slot?:number; slots?:number };
 const clamp=(v:number)=>Math.max(0,Math.min(1,v));
 const smooth=(v:number)=>{v=clamp(v);return v*v*(3-2*v);};
+/* 拖動速度滑桿時，所有常駐動畫的相位都是「時間 × 速度」：速度一變，相位整段跳到別處，
+   畫面就一頓一頓的（失焦的週期長，最明顯）。這裡記住每個動畫上一次的速度，速度改變時
+   把時間平移，讓「此刻的相位」不變，之後才用新速度往前走。時間倒退（重播、循環、匯出
+   從頭開始）就清掉平移，回到純粹由時間決定的畫面，預覽與匯出仍然一致。 */
+const speedAnchors=new Map<string,{speed:number;time:number;off:number}>();
+function continuousTime(key:string,time:number,speed:number){
+ const a=speedAnchors.get(key);
+ if(!a||time<a.time-1e-6){speedAnchors.set(key,{speed,time,off:0});if(speedAnchors.size>256)speedAnchors.delete(speedAnchors.keys().next().value as string);return time;}
+ if(Math.abs(a.speed-speed)>1e-9){a.off=(time+a.off)*a.speed/speed-time;a.speed=speed;}
+ a.time=time;
+ return time+a.off;
+}
 export function selectedFrame(cfg:{in:string;idle:string;delay:number;dur:number;amp:number;speed:number}, time:number, phase=0): SelectedFrame | undefined {
  const end=cfg.in==='none'?0:cfg.delay+Math.max(.01,cfg.dur);
  if(time<end) return catalog.has(cfg.in)?{id:cfg.in,p:clamp((time-cfg.delay)/Math.max(.01,cfg.dur)),t:0,amount:1,speed:1,phase}:undefined;
- return catalog.has(cfg.idle)?{id:cfg.idle,p:1,t:Math.max(0,time-end),amount:clamp(cfg.amp/100),speed:Math.max(.05,cfg.speed),phase,clock:time}:undefined;
+ if(!catalog.has(cfg.idle))return undefined;
+ const speed=Math.max(.05,cfg.speed),t=continuousTime(`${cfg.idle}|${phase}`,time,speed),shift=t-time;
+ return {id:cfg.idle,p:1,t:Math.max(0,time-end+shift),amount:clamp(cfg.amp/100),speed,phase,clock:t};
 }
 /* ───────────── 失焦（T-L20／S-L20／P-L20） ─────────────
    每個目標：模糊的時間＝清楚的時間（以模糊一半的那一刻為分界），進出都用很長的
@@ -36,7 +50,7 @@ export function defocusGroup(index:number,count:number){
 }
 const smoother=(v:number)=>{v=clamp(v);return v*v*v*(v*(v*6-15)+10);};
 /** 一輪的秒數（模糊一半、清楚一半）。 */
-export const defocusPeriod=(speed:number)=>Math.max(.8,4.2/Math.max(.05,speed));
+export const defocusPeriod=(speed:number)=>Math.max(.5,4.2/Math.max(.05,speed));
 /** 0＝完全清楚、1＝最模糊。 */
 export function defocusLevel(clock:number,speed:number,group:number,groups:number){
  const RAMP=.22; // 每段漸變占一輪的比例；半模糊點在 u=0（變模糊）與 u=.5（變清楚）
