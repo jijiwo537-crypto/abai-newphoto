@@ -59,16 +59,15 @@ try {
   for(let i=1;i<n;i++)assert.notEqual(g[i].group,g[i-1].group,'neighbours differ');
  }
  // 同一個規律：每組曲線相同，只是錯開 1/組數 週期；並且有完全清楚與完全模糊的時段。
- const P=4.2;
+ const P=Math.PI*2/1.5;
  for(const t of [0,.3,1.1,2.2,3.9])assert.ok(Math.abs(m.defocusLevel(t,1,1,3)-m.defocusLevel(t-P/3,1,0,3))<1e-9);
  const samples=Array.from({length:4200},(_,i)=>m.defocusLevel(i/1000,1,0,1));
  assert.equal(m.defocusLevel(0,1,0,1),0,'starts sharp');
  for(let i=1;i<samples.length;i++)assert.ok(Math.abs(samples[i]-samples[i-1])<.01,'no sudden jumps');
  // 對稱：變模糊與變清楚花一樣的時間（以週期中點為鏡像）
- for(const t of [.3,.9,1.7])assert.ok(Math.abs(m.defocusLevel(t,1,0,1)-m.defocusLevel(4.2-t,1,0,1))<1e-9,'symmetric rise and fall');
- // 最模糊只有一瞬間：頂點前後 0.1 秒內就明顯下降（餘弦在這裡幾乎不變）
- {const peak=m.defocusLevel(2.1,1,0,1),near=m.defocusLevel(2.2,1,0,1);
-  assert.ok(peak>.999&&peak-near>.06,`peak is momentary (${peak.toFixed(3)} → ${near.toFixed(3)})`);}
+ for(const t of [.3,.9,1.7])assert.ok(Math.abs(m.defocusLevel(t,1,0,1)-m.defocusLevel(P-t,1,0,1))<1e-9,'symmetric rise and fall');
+ // 跟呼吸同一條曲線：(1−cos)/2，週期 2π/(1.5×速度)
+ for(const t of [.37,1.2,2.5,3.9])assert.ok(Math.abs(m.defocusLevel(t,1,0,1)-(1-Math.cos(t*1.5))/2)<1e-9,'defocus follows the breathing curve');
  // 交疊接棒：下一組在上一組還沒完全清楚前就開始模糊。
  for(const G of [2,3]){
   let overlap=false;for(let i=0;i<4200;i++){const t=i/1000;if(m.defocusLevel(t,1,0,G)>.05&&m.defocusLevel(t,1,1,G)>.05)overlap=true;}

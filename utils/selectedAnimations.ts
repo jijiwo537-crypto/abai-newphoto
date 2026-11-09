@@ -37,9 +37,8 @@ export function selectedFrame(cfg:{in:string;idle:string;delay:number;dur:number
  return {id:cfg.idle,p:1,t:Math.max(0,time-end+shift),amount:clamp(cfg.amp/100),speed,phase,clock:t};
 }
 /* ───────────── 失焦（T-L20／S-L20／P-L20） ─────────────
-   每個目標：從清楚緩緩失焦，到最模糊的那一瞬間立刻開始對焦回來（頂端不停留），
-   變模糊與變清楚花一樣的時間。多個目標分成 2 組（兩個目標）或 3 組（三個以上），
-   曲線完全相同、只錯開 1/組數 週期，上一組在變清楚時下一組已經慢慢模糊起來。 */
+   節奏照「呼吸」：一條連續的餘弦，在清楚與模糊之間不停來回，兩端都不特別停留。
+   多個目標分成 2 組（兩個目標）或 3 組（三個以上），曲線相同、只錯開 1/組數 週期。 */
 const DEFOCUS_SEQ3=[0,2,1,2,0,1,0,1,2,1,0,2]; // 每 3 個一組都是完整排列，相鄰兩個不會同組
 export function defocusGroup(index:number,count:number){
  const n=Math.max(1,Math.floor(count)),i=Math.max(0,Math.floor(index));
@@ -48,23 +47,19 @@ export function defocusGroup(index:number,count:number){
  return {group:DEFOCUS_SEQ3[i%DEFOCUS_SEQ3.length],groups:3};
 }
 /** 一輪的秒數（模糊一半、清楚一半）。 */
-export const defocusPeriod=(speed:number)=>Math.max(.5,4.2/Math.max(.05,speed));
+export const defocusPeriod=(speed:number)=>Math.max(.5,Math.PI*2/1.5/Math.max(.05,speed));
 /** 0＝完全清楚、1＝最模糊。 */
 export function defocusLevel(clock:number,speed:number,group:number,groups:number){
- /* 尖頂曲線：從清楚開始緩緩變模糊，到最模糊的那一刻立刻轉頭變清楚，頂端沒有停留
-    （餘弦的頂端是平的，最模糊時會「停一下」）。底部是平順的：清楚的狀態會自然多待一會兒。
-    變模糊與變清楚各占半輪、左右對稱；t=0 時第一組完全清楚；各組錯開 1/組數 週期。 */
- let u=clock/defocusPeriod(speed)-group/Math.max(1,groups);
- u-=Math.floor(u);
- const v=1-Math.abs(2*u-1);           // 三角形：0 → 1（u=.5 尖頂）→ 0
- return Math.pow(v,1.5);              // 底部變緩、頂部仍是尖的
+ /* 跟「呼吸」同一條曲線：(1−cos)/2，同樣的週期（速度 1 時約 4.2 秒，呼吸是 2π/1.5）。
+    一直在清楚與模糊之間來回，不會特別停在任何一端；t=0 時第一組是清楚的。
+    各組同一條曲線、錯開 1/組數 週期。 */
+ const u=clock/defocusPeriod(speed)-group/Math.max(1,groups);
+ return (1-Math.cos(u*Math.PI*2))/2;
 }
 const defocusOf=(frame:SelectedFrame,index:number,count:number)=>{
  const {group,groups}=defocusGroup(index,count);
- /* 眼睛對「剛開始變模糊」那一點點最敏感：模糊半徑若跟曲線成正比，起頭看起來會突然糊掉。
-    用 1.6 次方讓起頭更緩，中段之後才明顯，整體感覺是平順地漸漸失焦再漸漸對焦。 */
- const level=defocusLevel(frame.clock??frame.t,frame.speed,group,groups);
- return Math.pow(level,1.6)*frame.amount*smooth(frame.t/.6);
+ // 模糊半徑直接跟曲線成正比（不再加任何次方），節奏與呼吸的明暗完全一樣
+ return defocusLevel(frame.clock??frame.t,frame.speed,group,groups)*frame.amount*smooth(frame.t/.6);
 };
 const densityOf=(ctx:CanvasRenderingContext2D)=>{const m=ctx.getTransform();return Math.max(.01,Math.hypot(m.a,m.b),Math.hypot(m.c||0,m.d||0));};
 /* iOS 的 WKWebView 不一定真的會畫 Canvas filter（屬性可能不存在，或設定了卻沒效果），
