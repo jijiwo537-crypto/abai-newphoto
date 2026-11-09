@@ -16,6 +16,7 @@ import { FrameLab, LAB_FRAMES, STORE_FRAME_PICK, STORE_FRAME_RANGE, loadFramePic
 import { frameRangeDefault, FRAME_SCATTER } from './utils/frameShapes';
 import { ToneIconLab, STORE_TONE_ICON, loadToneIconPick } from './components/ToneIconLab';
 import { HS_PAIRS, WB_PAIRS } from './utils/toneIconSets';
+import { SymbolOrderLab } from './components/SymbolOrderLab';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
 const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o', 'track-select-o', 'track-select8-o', 'track-cross-o']);
@@ -109,7 +110,7 @@ type Drag = { group: string; id: string; pointerId: number; dx: number; dy: numb
 function OrderTool() {
   const base = useMemo(defaultGroups, []);
   const [groups, setGroups] = useState<Group[]>(() => load(base));
-  const [tab, setTab] = useState<'pattern' | 'shape' | 'size' | 'burst' | 'frame' | 'icon'>('pattern');
+  const [tab, setTab] = useState<'pattern' | 'shape' | 'size' | 'burst' | 'frame' | 'icon' | 'symbol'>('pattern');
   /** 「圖標」頁挑中的高光／陰影／白色／黑色圖標方案 */
   const [toneIcon, setToneIcon] = useState(loadToneIconPick);
   useEffect(() => { try { toneIcon.hs || toneIcon.wb ? localStorage.setItem(STORE_TONE_ICON, JSON.stringify(toneIcon)) : localStorage.removeItem(STORE_TONE_ICON); } catch {} }, [toneIcon]);
@@ -318,7 +319,7 @@ function OrderTool() {
   };
   const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小、星芒的勾選、刪除和自訂也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setTexIds([]); setSizes({}); setBursts([]); setToneIcon({ hs: '', wb: '' }); try { localStorage.removeItem('abai-order-tool-starburst-deleted-v1'); localStorage.removeItem('abai-order-tool-starburst-custom-v1'); } catch {} window.dispatchEvent(new Event('abai-burst-reset')); } };
 
-  const shown = tab === 'size' || tab === 'burst' || tab === 'frame' || tab === 'icon' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
+  const shown = tab === 'size' || tab === 'burst' || tab === 'frame' || tab === 'icon' || tab === 'symbol' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
   const dragged = drag && groups.find(g => g.key === drag.group)?.items.find(i => i.id === drag.id);
   const anyChanged = groups.some(changed) || framePicks.length > 0 || texIds.length > 0 || stretchIds.length > 0 || deleteIds.length > 0 || Object.keys(sizes).length > 0 || bursts.length > 0 || !!toneIcon.hs || !!toneIcon.wb;
   const sizeList = (groups.find(g => g.key === 'pattern')?.items || []).filter(i => !i.fromShape);
@@ -344,10 +345,10 @@ function OrderTool() {
               <button onClick={copy} className={`h-9 px-4 rounded-full text-[13px] font-bold active:scale-95 ${anyChanged ? 'bg-white text-black' : 'bg-white/15 text-white'}`}>複製有改的</button>
             </div>
           </div>
-          <div className="mt-3 grid grid-cols-6 gap-1 p-1 rounded-full bg-white/[0.06]">
-            {(['pattern', 'shape', 'size', 'burst', 'frame', 'icon'] as const).map(k => (
+          <div className="mt-3 grid grid-cols-7 gap-1 p-1 rounded-full bg-white/[0.06]">
+            {(['pattern', 'shape', 'symbol', 'size', 'burst', 'frame', 'icon'] as const).map(k => (
               <button key={k} onClick={() => setTab(k)} className={`h-8 rounded-full text-[12px] font-bold transition-colors ${tab === k ? 'bg-white text-black' : 'text-white/55'}`}>
-                {k === 'pattern' ? '圖案' : k === 'shape' ? '圖形' : k === 'size' ? '圖案大小' : k === 'burst' ? '星芒' : k === 'frame' ? '邊框' : '圖標'}
+                {k === 'pattern' ? '圖案' : k === 'shape' ? '圖形' : k === 'symbol' ? '符號' : k === 'size' ? '大小' : k === 'burst' ? '星芒' : k === 'frame' ? '邊框' : '圖標'}
               </button>
             ))}
           </div>
@@ -405,6 +406,7 @@ function OrderTool() {
           </div>
         )}
         {tab === 'shape' && <div className="mt-3 text-[10px] text-white/35">圖形是創意拼圖與跨頁拼圖共用的</div>}
+        {tab === 'symbol' && <SymbolOrderLab onToast={flash} />}
         {tab === 'icon' && <ToneIconLab picked={toneIcon} onPick={p => { const sel = (p.hs && p.hs !== toneIcon.hs) || (p.wb && p.wb !== toneIcon.wb); setToneIcon(p); flash(sel ? '已選這對圖標' : '已取消'); }} />}
         {tab === 'frame' && (
           <FrameLab photo={photo} onPickPhoto={setPhoto} picked={framePicks} ranges={frameRanges}

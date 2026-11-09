@@ -69,7 +69,7 @@ export const PATTERN_IDLE_DEFAULTS: Record<string, { amp?: number; speed?: numbe
   jitter: { amp: 60, speed: 1.48 },                           // 抖動：幅度 60、速度 80（1.48）
   breathe: { amp: 50 },                                       // 縮放：幅度 50
   spin: { speed: 1.32 },                                      // 旋轉：速度 70（1.32）
-  'lab-P-L04': { amp: 50 },                                   // 發光：幅度 50
+  'lab-P-L04': { amp: 50, speed: 1.8 },                       // 發光：幅度 50、速度＝原本刻度的 100（1.8）
   'lab-P-L07': { amp: 55 },                                   // 翻面：幅度 55
   'lab-P-L20': { amp: 50, speed: .2 + 5.2 * .35 },            // 失焦：幅度 50、速度 35（2.02）
 };
@@ -94,7 +94,7 @@ export const rangedSpeedFromUi = (id: string, ui: number) => {
 /** 進場動畫的速度預設（面板 0～100）；沒列出的照一般預設 70。 */
 export function entrySpeedDefaultUi(kind: string, target: { symbol?: boolean; line?: boolean; glint?: boolean; image?: boolean; plainShape?: boolean }): number | undefined {
   if (kind === 'spring' && (target.image || target.plainShape)) return 60;   // 圖片、一般圖形的流星
-  if (target.symbol) return ({ 'lab-S-E04': 50, 'lab-S-E10': 50, 'lab-S-E03': 65 } as Record<string, number>)[kind];  // 足跡、旋轉 50；淡入 65
+  if (target.symbol) return ({ 'lab-S-E04': 60, 'lab-S-E10': 50, 'lab-S-E03': 65 } as Record<string, number>)[kind];  // 足跡 60；旋轉 50；淡入 65
   if (target.line && kind === 'draw') return 30;      // 線條畫筆
   if (target.glint && kind === 'fade') return 90;     // 星芒淡入
   return undefined;

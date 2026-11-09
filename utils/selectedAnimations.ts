@@ -121,7 +121,7 @@ function boxBlur(src:Float32Array,dst:Float32Array,r0:number,fa:number,step:numb
 }
 let blurF:Float32Array=new Float32Array(0),blurT:Float32Array=new Float32Array(0);
 /** 以「螢幕像素」的高斯 σ 畫出 paint；extent 是內容在本地座標中距原點的最大距離。 */
-export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0){
+export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0,cacheKey?:object){
  if(!(deviceBlur>.3)){paint(ctx);return;}
  /* 不使用 Canvas filter：Safari／iOS 對 ctx.filter 的半徑有上限，超過就整個忽略。
     改成真正的高斯模糊（預乘透明度、浮點運算，沒有殘影或色階）。
@@ -129,8 +129,8 @@ export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,exte
  try{
   const force=(globalThis as any).__cpuBlur;
   const useMip=force===undefined?chooseMip():!force;
-  if(useMip&&mipBlur(ctx,deviceBlur,extent,paint,cx,cy))return;
-  gaussianOffscreen(ctx,deviceBlur,extent,paint,cx,cy);
+  if(useMip&&mipBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey))return;
+  gaussianOffscreen(ctx,deviceBlur,extent,paint,cx,cy,cacheKey);
  }catch{paint(ctx);}
 }
 /* 兩種模糊各有適合的裝置：畫布在 GPU 上（iPhone）時，讀回像素的 CPU 版每次都要等 GPU，
@@ -182,63 +182,110 @@ export const blurPickForTest=()=>blurTrial.pick;
      ④ 要求的 σ 落在 σn 與 σn+1 之間時，依變異數線性混合兩層（'lighter' 疊加＝精確的加權平均），
         所以模糊量是連續的，沒有一檔一檔的跳動。 */
 const MIP_SIGMA=(n:number)=>n<=0?0:MIP_SIGMA_BASE*Math.pow(2,n);
-let MIP_SIGMA_BASE=.54;          // 經實測校正：縮一半再逐級放大回來的等效 σ（第 n 層 ≈ 0.54×2ⁿ 像素）
+let MIP_SIGMA_BASE=.74;          // 經實測校正（見 calib）：第 n 層的等效 σ ≈ 基準×2ⁿ 像素
 export const setMipSigmaBaseForTest=(v:number)=>{MIP_SIGMA_BASE=v;};
-const mipPool:HTMLCanvasElement[]=[],upPool:HTMLCanvasElement[]=[];
+const MAX_LEVELS=8;
+/* 每個字（貼圖）一份金字塔快取：失焦時字本身不變、只有模糊量在變，
+   所以每一格只要從快取取兩層放大混合，不必重畫、重縮。
+   只要縮放／旋轉（變換的線性部分）沒變就沿用；移動只是平移，最後貼上時跟著位移。 */
+type Pyr={key:string;levels:number;W:number;H:number;ix0:number;iy0:number;e0:number;f0:number;L:HTMLCanvasElement[];bytes:number;used:number};
+const pyrCache=new Map<object,Pyr>();
+let pyrBytes=0,pyrClock=0;
+const PYR_BUDGET=96*1024*1024;
+const freePyr=(k:object)=>{const p=pyrCache.get(k);if(!p)return;p.L.forEach(c=>{c.width=c.height=0;});pyrBytes-=p.bytes;pyrCache.delete(k);};
+const evictPyr=()=>{while(pyrBytes>PYR_BUDGET&&pyrCache.size){let old:object|null=null,u=Infinity;pyrCache.forEach((p,k)=>{if(p.used<u){u=p.used;old=k;}});if(old)freePyr(old);else break;}};
+let scratchPyr:HTMLCanvasElement[]=[];
 let mipOut:HTMLCanvasElement|undefined;
-const poolCanvas=(pool:HTMLCanvasElement[],i:number,w:number,h:number)=>{
- while(pool.length<=i)pool.push(document.createElement('canvas'));
- const c=pool[i];
- if(c.width<w||c.height<h){c.width=Math.max(c.width,w);c.height=Math.max(c.height,h);}
- return c;
-};
-function mipBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number):boolean{
+const sizeCanvas=(c:HTMLCanvasElement,w:number,h:number)=>{if(c.width!==w||c.height!==h){c.width=w;c.height=h;}return c;};
+const prep2d=(g:CanvasRenderingContext2D)=>{g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='source-over';g.imageSmoothingEnabled=true;g.imageSmoothingQuality='low';};
+/** 平滑的縮一半（Kawase）：四個斜角各偏一個來源像素、各取 2×2 平均再平均，結果沒有方塊感 */
+function kawaseDown(src:HTMLCanvasElement,sw:number,sh:number,dst:HTMLCanvasElement){
+ const w=sw>>1,h=sh>>1,g=sizeCanvas(dst,w,h).getContext('2d')!;
+ prep2d(g);g.clearRect(0,0,w,h);g.globalCompositeOperation='lighter';g.globalAlpha=.25;
+ for(const [ox,oy] of [[-.5,-.5],[.5,-.5],[-.5,.5],[.5,.5]])g.drawImage(src,0,0,sw,sh,ox,oy,w,h);
+ g.globalAlpha=1;g.globalCompositeOperation='source-over';
+}
+function mipBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number,cacheKey?:object):boolean{
  if(typeof document==='undefined')return false;
- let n=0;while(MIP_SIGMA(n+1)<=sigma&&n<8)n++;
+ let n=0;while(MIP_SIGMA(n+1)<=sigma&&n<MAX_LEVELS-1)n++;
  const lo=MIP_SIGMA(n),hi=MIP_SIGMA(n+1),t=Math.max(0,Math.min(1,(sigma*sigma-lo*lo)/(hi*hi-lo*lo)));
- const levels=n+1,S=1<<levels;
- const mt=ctx.getTransform(),P=Math.ceil(3*Math.max(sigma,hi*.5))+S;
- const xs:number[]=[],ys:number[]=[];
- for(const [lx,ly] of [[cx-extent,cy-extent],[cx+extent,cy-extent],[cx-extent,cy+extent],[cx+extent,cy+extent]]){xs.push(mt.a*lx+mt.c*ly+mt.e);ys.push(mt.b*lx+mt.d*ly+mt.f);}
- /* 原點對齊到 S 的倍數：每一層的「大格子」都落在固定的螢幕格線上，
-    換層數（padding 改變）時各層內容完全相同，模糊量不會跳。 */
- const ix0=Math.floor((Math.min(...xs)-P)/S)*S,iy0=Math.floor((Math.min(...ys)-P)/S)*S;
- const W=Math.ceil((Math.ceil(Math.max(...xs))+P-ix0)/S)*S,H=Math.ceil((Math.ceil(Math.max(...ys))+P-iy0)/S)*S;
- if(W*H>4e6)return false;
- const prep=(g:CanvasRenderingContext2D)=>{g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='source-over';g.imageSmoothingEnabled=true;g.imageSmoothingQuality='low';};
- // ① L0：螢幕像素格子上的原始內容
- const L0=poolCanvas(mipPool,0,W,H),g0=L0.getContext('2d')!;
- prep(g0);g0.clearRect(0,0,W,H);
- g0.setTransform(mt.a,mt.b,mt.c,mt.d,mt.e-ix0,mt.f-iy0);g0.imageSmoothingEnabled=ctx.imageSmoothingEnabled;g0.imageSmoothingQuality=ctx.imageSmoothingQuality;
- g0.fillStyle=ctx.fillStyle;g0.strokeStyle=ctx.strokeStyle;g0.lineWidth=ctx.lineWidth;g0.lineJoin=ctx.lineJoin;g0.lineCap=ctx.lineCap;
- paint(g0);
- // ② 逐次縮一半
- for(let i=1;i<=levels;i++){
-  const src=mipPool[i-1],c=poolCanvas(mipPool,i,W>>i,H>>i),g=c.getContext('2d')!;
-  prep(g);g.clearRect(0,0,W>>i,H>>i);g.drawImage(src,0,0,W>>(i-1),H>>(i-1),0,0,W>>i,H>>i);
+ const mt=ctx.getTransform();
+ /* 快取只準備目前用得到的層數（多留一層）；模糊變更強、需要更多層時才重建一次，
+    跑過一輪之後就夠用，不會為了最壞情況開一張超大的畫布。 */
+ const key=`${mt.a.toFixed(4)},${mt.b.toFixed(4)},${mt.c.toFixed(4)},${mt.d.toFixed(4)},${extent.toFixed(2)},${cx.toFixed(2)},${cy.toFixed(2)}`;
+ let pyr=cacheKey?pyrCache.get(cacheKey):undefined;
+ const need=Math.min(MAX_LEVELS,n+(cacheKey?2:1));
+ if(!pyr||pyr.key!==key||pyr.levels<n+1){
+  const levels=Math.max(need,pyr&&pyr.key===key?pyr.levels:0),S=1<<levels;
+  const P=Math.ceil(3*MIP_SIGMA(levels))+S;
+  if(cacheKey)freePyr(cacheKey);
+  const xs:number[]=[],ys:number[]=[];
+  for(const [lx,ly] of [[cx-extent,cy-extent],[cx+extent,cy-extent],[cx-extent,cy+extent],[cx+extent,cy+extent]]){xs.push(mt.a*lx+mt.c*ly+mt.e);ys.push(mt.b*lx+mt.d*ly+mt.f);}
+  const ix0=Math.floor((Math.min(...xs)-P)/S)*S,iy0=Math.floor((Math.min(...ys)-P)/S)*S;
+  const W=Math.ceil((Math.ceil(Math.max(...xs))+P-ix0)/S)*S,H=Math.ceil((Math.ceil(Math.max(...ys))+P-iy0)/S)*S;
+  if(W*H>6e6)return false;
+  const L:HTMLCanvasElement[]=cacheKey?[]:scratchPyr;
+  const canvasAt=(i:number)=>{while(L.length<=i)L.push(document.createElement('canvas'));return L[i];};
+  const L0=sizeCanvas(canvasAt(0),W,H),g0=L0.getContext('2d')!;
+  prep2d(g0);g0.clearRect(0,0,W,H);
+  g0.setTransform(mt.a,mt.b,mt.c,mt.d,mt.e-ix0,mt.f-iy0);g0.imageSmoothingEnabled=ctx.imageSmoothingEnabled;g0.imageSmoothingQuality=ctx.imageSmoothingQuality;
+  g0.fillStyle=ctx.fillStyle;g0.strokeStyle=ctx.strokeStyle;g0.lineWidth=ctx.lineWidth;g0.lineJoin=ctx.lineJoin;g0.lineCap=ctx.lineCap;
+  paint(g0);
+  for(let i=1;i<=levels;i++)kawaseDown(L[i-1],W>>(i-1),H>>(i-1),canvasAt(i));
+  let bytes=0;for(let i=0;i<=levels;i++)bytes+=(W>>i)*(H>>i)*4;
+  pyr={key,levels,W,H,ix0,iy0,e0:mt.e,f0:mt.f,L,bytes,used:0};
+  if(cacheKey){pyrCache.set(cacheKey,pyr);pyrBytes+=bytes;evictPyr();}
  }
- // ③ 第 m 層一路放大回原尺寸（每次一倍）
- const up=(m:number):HTMLCanvasElement=>{
-  if(m===0)return mipPool[0];
-  let cur=mipPool[m];
-  for(let j=m-1;j>=0;j--){
-   const c=poolCanvas(upPool,j,W>>j,H>>j),g=c.getContext('2d')!;
-   prep(g);g.clearRect(0,0,W>>j,H>>j);g.drawImage(cur,0,0,W>>(j+1),H>>(j+1),0,0,W>>j,H>>j);cur=c;
-  }
-  return cur;
- };
- // ④ 依變異數混合相鄰兩層
+ pyr.used=++pyrClock;
+ const {W,H,L}=pyr;
+ /* 兩層各自用高品質放大到原尺寸，依變異數混合（'lighter' 疊加＝精確的加權平均） */
  mipOut??=document.createElement('canvas');
- if(mipOut.width<W||mipOut.height<H){mipOut.width=Math.max(mipOut.width,W);mipOut.height=Math.max(mipOut.height,H);}
- const go=mipOut.getContext('2d')!;prep(go);go.clearRect(0,0,W,H);go.globalCompositeOperation='lighter';
- if(t<1){go.globalAlpha=1-t;go.drawImage(up(n),0,0,W,H,0,0,W,H);}
- if(t>0){go.globalAlpha=t;go.drawImage(up(n+1),0,0,W,H,0,0,W,H);}
+ const out=sizeCanvas(mipOut,Math.max(mipOut.width,W),Math.max(mipOut.height,H)),go=out.getContext('2d')!;
+ prep2d(go);go.clearRect(0,0,W,H);go.imageSmoothingQuality='high';go.globalCompositeOperation='lighter';
+ const draw=(m:number,alpha:number)=>{if(alpha<=0)return;go.globalAlpha=alpha;go.drawImage(L[m],0,0,W>>m,H>>m,0,0,W,H);};
+ draw(n,1-t);draw(Math.min(n+1,L.length-1),t);
  go.globalAlpha=1;go.globalCompositeOperation='source-over';
- ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(mipOut,0,0,W,H,ix0,iy0,W,H);ctx.restore();
+ // 移動時沿用快取，只把結果跟著平移
+ ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(out,0,0,W,H,pyr.ix0+(mt.e-pyr.e0),pyr.iy0+(mt.f-pyr.f0),W,H);ctx.restore();
  return true;
 }
-function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0){
+/* CPU 模糊的「上一張」快取：暫停時模糊量不變，拖動、重畫都直接沿用（平移貼上），不再重算。 */
+const cpuLast=new WeakMap<object,{key:string;e0:number;f0:number;canvas:HTMLCanvasElement;x:number;y:number}>();
+const cpuSeen=new WeakMap<object,string>();
+function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0,cacheKey?:object){
  if(typeof document==='undefined'){paint(ctx);return;}
+ const mt0=ctx.getTransform();
+ const ckey=cacheKey?`${sigma.toFixed(3)},${mt0.a.toFixed(4)},${mt0.b.toFixed(4)},${mt0.c.toFixed(4)},${mt0.d.toFixed(4)},${extent.toFixed(2)},${cx.toFixed(2)},${cy.toFixed(2)}`:'';
+ if(cacheKey){
+  const hit=cpuLast.get(cacheKey);
+  if(hit&&hit.key===ckey){ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(hit.canvas,hit.x+(mt0.e-hit.e0),hit.y+(mt0.f-hit.f0));ctx.restore();return;}
+ }
+ /* 沒命中：同一個模糊狀態連續出現第二次（＝暫停中）才建立快取；播放中每一格都不同，直接算、不多配置畫布 */
+ const seen=cacheKey?cpuSeen.get(cacheKey):undefined;
+ if(cacheKey)cpuSeen.set(cacheKey,ckey);
+ if(cacheKey&&seen===ckey){
+  const cv=document.createElement('canvas');
+  const r=renderCpuBlurToDevice(ctx,sigma,extent,paint,cx,cy,cv);
+  if(r){cpuLast.set(cacheKey,{key:ckey,e0:mt0.e,f0:mt0.f,canvas:cv,x:r.x,y:r.y});ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(cv,r.x,r.y);ctx.restore();return;}
+ }
+ gaussianCore(ctx,sigma,extent,paint,cx,cy);
+}
+/** 把 CPU 模糊的結果畫進一張「螢幕座標」的小畫布 cv，回傳它在螢幕上的位置 */
+function renderCpuBlurToDevice(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number,cv:HTMLCanvasElement){
+ const mt=ctx.getTransform(),pad=Math.ceil(sigma*3.2)+2;
+ const xs:number[]=[],ys:number[]=[];
+ for(const [lx,ly] of [[cx-extent,cy-extent],[cx+extent,cy-extent],[cx-extent,cy+extent],[cx+extent,cy+extent]]){xs.push(mt.a*lx+mt.c*ly+mt.e);ys.push(mt.b*lx+mt.d*ly+mt.f);}
+ const x=Math.floor(Math.min(...xs))-pad,y=Math.floor(Math.min(...ys))-pad;
+ const w=Math.ceil(Math.max(...xs))+pad-x,h=Math.ceil(Math.max(...ys))+pad-y;
+ if(w*h>4e6)return null;
+ cv.width=w;cv.height=h;
+ const g=cv.getContext('2d')!;
+ g.setTransform(mt.a,mt.b,mt.c,mt.d,mt.e-x,mt.f-y);g.imageSmoothingEnabled=ctx.imageSmoothingEnabled;g.imageSmoothingQuality=ctx.imageSmoothingQuality;
+ g.fillStyle=ctx.fillStyle;g.strokeStyle=ctx.strokeStyle;g.lineWidth=ctx.lineWidth;g.lineJoin=ctx.lineJoin;g.lineCap=ctx.lineCap;
+ gaussianCore(g,sigma,extent,paint,cx,cy);
+ return {x,y};
+}
+function gaussianCore(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0){
  /* 抖動的成因與做法：
     ① 縮小倍率 k 若連續變化，取樣格子每一格都相對內容滑動；
     ② 就算 k 取整數，一次大比例縮小時瀏覽器會用 mipmap，不同比例的 mipmap 有不同的
@@ -343,7 +390,7 @@ function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:numb
 
 /** Draw in the existing object's local coordinates. No fixed-resolution frame cache. */
 /** box：paint 實際畫的範圍（本地座標，可省略）。給了的話模糊緩衝會剛好包住它，不必照最壞情況開大。 */
-export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:SelectedFrame|undefined, width:number,height:number, paint:(g:CanvasRenderingContext2D)=>void,index=0,count=1,box?:{x:number;y:number;w:number;h:number}) {
+export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:SelectedFrame|undefined, width:number,height:number, paint:(g:CanvasRenderingContext2D)=>void,index=0,count=1,box?:{x:number;y:number;w:number;h:number;src?:object}) {
  if(!frame){paint(ctx);return;}
  const spec=catalog.get(frame.id); if(!spec){paint(ctx);return;}
  const w=Math.max(.01,width),h=Math.max(.01,height),r=Math.max(w,h)/2;
@@ -397,7 +444,7 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
     // 失焦：模糊半徑跟著物件大小與目前解析度（預覽／匯出一致），各組依 defocusGroup 錯開。
     const level=defocusOf(frame,index,count);
     const sg=level*Math.max(3,r*.28)*density;
-    if(box)paintBlurred(ctx,sg,Math.hypot(box.w,box.h)/2,paint,box.x+box.w/2,box.y+box.h/2);
+    if(box)paintBlurred(ctx,sg,Math.hypot(box.w,box.h)/2,paint,box.x+box.w/2,box.y+box.h/2,box.src);
     else paintBlurred(ctx,sg,Math.hypot(w,h)*.8,paint);
     return;
    }
