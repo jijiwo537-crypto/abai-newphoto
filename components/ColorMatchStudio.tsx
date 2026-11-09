@@ -334,7 +334,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { gl?.dispose(); glRef.current = null; };
   }, []);
 
-  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){skinRef.current=null;weightRef.current=null;setSrcImg(image);}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
+  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */previewSrcRef.current=image;setPreview(toImageData(image, PREVIEW_MAX));}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
     /* 算過的參考圖：不等圖片解碼，這一下就換上它的顏色（解碼完的那一次會直接命中快取，不會再算） */
@@ -444,7 +444,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           return n;
         });
       })
-      .catch(e => { if (cancelled) return; console.error('ai color match', e); setAiError('AI 仿色失敗，請再試一次'); setPicked('mkl'); })
+      .catch(e => { if (cancelled) return; console.error('ai color match', e); setPicked('mkl'); })
       .finally(() => { done = true; if (!cancelled) { setBusy(false); setAiBusy(false); } aiFor.current = null; });
     return () => { cancelled = true; aiFor.current = null; stopWait(); if (!done) { cancelAiColorMatch(); setBusy(false); setAiBusy(false); } };
   }, [picked, srcImg, refImg, luts]);

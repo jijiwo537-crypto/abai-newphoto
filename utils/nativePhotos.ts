@@ -9,7 +9,7 @@
  *   照片如果是從選擇器選來的、而且使用者允許完整相簿權限，就存成「原本那張照片的可逆編輯」：
  *   Photos 保留原圖，隨時能回復。 */
 import { isNative } from './native';
-import { nativePlugin, rememberNativeFile, fileSrc } from './nativeBridge';
+import { nativePlugin, rememberNativeFile, fileSrc, isVideoItem, nativeVideoFile } from './nativeBridge';
 import { nativeImage, withBackgroundTask, blobToNativeFile } from './nativeImage';
 import { haptic } from './haptics';
 import { PHOTO_EXTS, RAW_EXTS, VIDEO_EXTS } from './fileTypes';
@@ -34,8 +34,9 @@ export async function pickNativeFiles(limit: number, filter: 'images' | 'videos'
   let lastError = '';
   for (const it of items) {
     try {
+      if (isVideoItem(it)) { files.push(nativeVideoFile(it)); continue; }
       const res = await fetch(fileSrc(it.path));
-      if (!res.ok) throw new Error(`讀檔失敗（${res.status}）`);
+      if (!res.ok) throw new Error(`${it.name || '檔案'} 讀檔失敗（${res.status}）`);
       const blob = await res.blob();
       const f = new File([blob], it.name || 'photo', { type: it.type || blob.type, lastModified: Date.now() });
       rememberNativeFile(f, it.path, it.assetId);
