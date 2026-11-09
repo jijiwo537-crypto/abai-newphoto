@@ -197,8 +197,9 @@ function SliderRow({ label, field, st, onChange, onRange, onCommit }: {
       <div className="flex items-baseline justify-between mb-1">
         <span className="text-[13px] text-white/80">{label}</span>
         <span className="flex items-baseline gap-3 tabular-nums">
-          <span className="text-[11px] text-white/35">預設 {st.defUi}</span>
+          <span className="text-[11px] text-white/35">共用滑桿 50 時＝現在的</span>
           <span className={`text-[18px] font-bold min-w-[2.5ch] text-right ${st.ui !== st.defUi ? 'text-[#ff9b80]' : 'text-white'}`}>{st.ui}</span>
+          {st.ui !== st.defUi && <span className="text-[11px] text-white/35">（原本 {st.defUi}）</span>}
         </span>
       </div>
       <DragSlider value={st.ui} def={st.defUi} onChange={onChange} onCommit={onCommit} />
@@ -218,7 +219,7 @@ function SliderRow({ label, field, st, onChange, onRange, onCommit }: {
           <button onClick={() => setOpen(o => !o)}
             className={`h-8 px-3 whitespace-nowrap rounded-[8px] text-[12px] ${open || st.custom ? 'bg-white/15 text-white' : 'bg-white/[.06] text-white/70'}`}>範圍{st.custom ? ' ●' : ''}</button>
           <button disabled={st.ui === st.defUi} onClick={() => { onChange(st.defUi); onCommit?.(); }}
-            className={`h-8 px-3 rounded-[8px] text-[12px] ${st.ui !== st.defUi ? 'bg-white/10 text-white' : 'text-white/20'}`}>回到預設</button>
+            className={`h-8 px-3 rounded-[8px] text-[12px] ${st.ui !== st.defUi ? 'bg-white/10 text-white' : 'text-white/20'}`}>回到原本</button>
         </div>
       </div>
       {open && (
@@ -316,13 +317,13 @@ function Main() {
     const parts = fs.filter(f => v[f] !== undefined || v.range?.[f]).map(f => {
       const st = r.fields[f], u = UNIT[f], seg: string[] = [];
       if (st.custom) seg.push(`範圍（滑桿 0～100）${fmt(st.appRange[0])}～${fmt(st.appRange[1])}${u} → ${fmt(st.range[0])}～${fmt(st.range[1])}${u}`);
-      if (v[f] !== undefined) seg.push(`預設 ${st.appDefUi}（${fmt(st.defActual)}${u}）→ ${st.ui}（${fmt(st.actual)}${u}）`);
+      if (v[f] !== undefined) seg.push(`共用滑桿在 50 時，原本＝現在的 ${st.appDefUi}（${fmt(st.defActual)}${u}），改成＝現在的 ${st.ui}（${fmt(st.actual)}${u}）`);
       else seg.push(`預設實際值不變（${fmt(st.defActual)}${u}），在新範圍的滑桿上約是 ${st.ui}`);
       return `${FIELD_NAME[f]}：${seg.join('；')}`;
     });
     return { k, target: sc.label, phase, id, name, text: parts.join('｜') };
   }).filter(Boolean) as { k: string; target: string; phase: Phase; id: string; name: string; text: string }[], [edits]);
-  const copyText = ['請把以下動畫的預設值與滑桿範圍改成這樣（滑桿數字為創意拼圖動畫面板上的 0～100，括號內是實際數值）：',
+  const copyText = ['請把以下動畫的設定改成這樣（「現在的 X」是這個動畫目前在面板上 X 的效果，括號內是實際數值）：',
     ...list.map(r => `- ${r.target}｜${r.phase === 'in' ? '進場' : '常駐'}｜${r.name}（${r.id}）：${r.text}`)].join('\n');
   const copy = async () => {
     try { await navigator.clipboard.writeText(copyText); }
@@ -380,9 +381,9 @@ function Main() {
           </div>
           <p className="text-[11px] text-white/35">橘點＝這個動畫已經改過。</p>
           <div className="rounded-[12px] bg-white/[.04] border border-white/10 p-3 text-[11px] text-white/55 leading-relaxed">
-            <b className="text-white/80">App 的幅度、速度是共用滑桿：</b>換動畫時數字不變。共用滑桿在中間 50 時，每個動畫都照它自己的預設播
-            （也就是這裡調的數字）；往 0 或 100 拉，每個動畫各自從自己的預設走到自己刻度的兩端。
-            這個網站調的是「每個動畫自己的預設」與「自己刻度的範圍」。
+            <b className="text-white/80">怎麼用：</b>App 的幅度、速度是共用滑桿，換動畫時數字不變；共用滑桿在中間 50 時，每個動畫都照它自己的設定播。
+            這裡每個滑桿調的就是「共用滑桿在 50 時，這個動畫要像<b className="text-white/80">現在的</b>多少」。
+            例如把某動畫的速度拉到 30，就是「以後 50 的時候，要跟現在 30 一樣快」。往 0／100 拉時，它會從這個位置走到自己刻度的兩端（兩端可用「範圍」改）。
           </div>
         </section>
 
