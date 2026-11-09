@@ -1178,6 +1178,20 @@ export const motionPickPatch = (d: Partial<MoCfg>, c: MotionTargetCtx, curIn: st
   if (d.idle && c.line) return { ...d, amp: 20 };
   return d;
 };
+/** 換動畫種類時寫進設定的內容。
+    滑桿是「共用」的：已經有動畫時換成別的動畫，面板上幅度／速度（進場則是速度）的數字不變，
+    新動畫用自己的刻度去讀同一個數字。只有從「無」第一次選動畫時，才帶入那個動畫的預設值。 */
+export const motionSwitchPatch = (d: Partial<MoCfg>, c: MotionTargetCtx, cur: MoCfg): Partial<MoCfg> => {
+  if (d.idle !== undefined && d.idle !== 'none' && cur.idle !== 'none') {
+    const ui = motionUi(cur, c), next = { ...cur, idle: d.idle } as MoCfg;
+    return { idle: d.idle, ...motionFromUi('amp', ui.amp, next, c), ...motionFromUi('speed', ui.speed, next, c) };
+  }
+  if (d.in !== undefined && d.in !== 'none' && cur.in !== 'none') {
+    const ui = motionUi(cur, c), next = { ...cur, in: d.in } as MoCfg;
+    return { in: d.in, ...motionFromUi('inSpeed', ui.inSpeed, next, c) };
+  }
+  return motionPickPatch(d, c, cur.in);
+};
 /** 設定 → 面板上滑桿顯示的 0～100 數字 */
 export const motionUi = (cur: MoCfg, c: MotionTargetCtx) => {
   const breathScale = (cur.idle === 'pattern-breathe' && c.pattern) || (cur.idle === 'image-breathe' && c.type === 'image') || cur.idle === 'scatter-breathe';
@@ -6774,7 +6788,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 母版至少跟畫出來最大的那個一樣大
     let glowRasterSize = 0;
     /** 圖案發光的強度（跟圖形同一套：滑桿 100 ＝ 3） */
-    const holeGlowAmt = moShapeCfgRef.current.idle === 'lab-P-L04' && animRef.current ? .5 : glowAmount(glowFromUi(holeGlow));
+    const holeGlowAmt = moShapeCfgRef.current.idle === 'lab-P-L04' && animRef.current ? 1.5 : glowAmount(glowFromUi(holeGlow));
     /** 光暈的半邊要裝得下：本體 0.5×sz ＋ 3σ（σ ＝ 最大那段模糊的一半 ＝ 0.0675×強度×sz） */
     const glowHalf = (sz: number) => sz * ((isTextHole(holeType) ? 0.8 : 0.55) + 0.21 * holeGlowAmt);
     const glowBmp = (h: any, sz: number, gcol: string) => {
@@ -12673,7 +12687,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 };
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
                 const pickKind = (d: Partial<MoCfg>) => {
-                  setCur(motionPickPatch(d, motionTargetCtxOf(selObj), cur.in));
+                  setCur(motionSwitchPatch(d, motionTargetCtxOf(selObj), cur));
                   replayMotion();
                 };
                 /* 發光的常駐動畫不再自成一頁 —— 直接接在「本體」那一頁的最下面：
