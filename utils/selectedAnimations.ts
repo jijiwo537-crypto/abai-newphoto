@@ -140,14 +140,35 @@ function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:numb
     同一個 k 底下格子與內容的對應固定不變；換檔時兩邊都是無偏的平均，看不出位移。 */
  const density=densityOf(ctx),reach=extent*density+sigma*3.2;
  let k=1;while(k*2<=Math.max(1,sigma/1.5))k*=2;
+ const kSigma=k;   // 只看模糊量決定的倍率（還沒因為緩衝太大而加倍）
  while(2*Math.ceil(reach/k)>256)k*=2;
- const half=Math.max(1,Math.ceil(reach/k)),N=half*2,scale=density/k,R=half/scale,sb=sigma/k,M=N*k;
+ const mt=ctx.getTransform();
+ /* 模糊很小（k=1）時：緩衝直接用「螢幕的像素格子」—— 用跟畫面完全相同的變換把內容畫進去，
+    再一個像素對一個像素貼回去，不經過任何縮放取樣。模糊趨近 0 時就跟直接畫完全一樣，
+    快要變清楚的那一刻不會再「啪」地跳一下（舊版緩衝會多經過兩次取樣，本身就有一點糊，
+    一切換回直接畫就突然變清楚）。 */
+ let exact=false,ix0=0,iy0=0,NE=0;
+ /* 注意：要看 kSigma，不能看 k。字形外框一大，上面那行就會為了限制緩衝大小把 k 加倍，
+    連極小的模糊都變成半解析度 —— 那正是快清楚時的「斷層」。這條路自己限制大小。
+    只在模糊小於 1.5 像素時走這條：再大的模糊已經蓋過半解析度的那一點糊，不必付全解析度的成本。 */
+ if(kSigma===1&&sigma<1.5){
+  const Rl=extent+sigma*3.2/density,xs:number[]=[],ys:number[]=[];
+  for(const [lx,ly] of [[cx-Rl,cy-Rl],[cx+Rl,cy-Rl],[cx-Rl,cy+Rl],[cx+Rl,cy+Rl]]){xs.push(mt.a*lx+mt.c*ly+mt.e);ys.push(mt.b*lx+mt.d*ly+mt.f);}
+  ix0=Math.floor(Math.min(...xs));iy0=Math.floor(Math.min(...ys));
+  NE=Math.max(2,Math.ceil(Math.max(...xs))-ix0,Math.ceil(Math.max(...ys))-iy0);
+  exact=NE<=1024;
+ }
+ if(exact)k=1;
+ /* 縮小 k 倍再放大回來本身就帶一點糊（變異數約 C×(k²−1) 螢幕像素²）。從要求的模糊扣掉這部分，
+    整體模糊量才會跟全解析度一樣，在不同 k 之間、以及跟全解析度路徑交接時都不會跳。 */
+ const C=.19;
+ const half=Math.max(1,Math.ceil(reach/k)),N=exact?NE:half*2,scale=density/k,R=half/scale,sb=Math.sqrt(Math.max(0,sigma*sigma-C*(k*k-1)))/k,M=N*k;
  if(!blurCanvas){blurCanvas=document.createElement('canvas');blurCtx=blurCanvas.getContext('2d',{willReadFrequently:true}) as CanvasRenderingContext2D|null;}
  const g=blurCtx;if(!g){paint(ctx);return;}
  if(blurCanvas.width!==N||blurCanvas.height!==N){blurCanvas.width=N;blurCanvas.height=N;}
  g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='source-over';g.clearRect(0,0,N,N);
  /* 沒有旋轉時，把格子對齊到整數螢幕像素：內容反向位移同樣的量，位置不變。 */
- const mt=ctx.getTransform();let ox=0,oy=0;
+ let ox=0,oy=0;
  if(Math.abs(mt.b)<1e-9&&Math.abs(mt.c)<1e-9&&mt.a>0&&mt.d>0){
   const dx0=mt.a*(cx-R)+mt.e,dy0=mt.d*(cy-R)+mt.f;
   ox=(Math.round(dx0)-dx0)/mt.a;oy=(Math.round(dy0)-dy0)/mt.d;
@@ -157,7 +178,13 @@ function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:numb
   // 圖案的填色（花紋 pattern／漸層）、描邊設定由呼叫端事先設在 ctx 上，帶進緩衝一起畫
   q.fillStyle=ctx.fillStyle;q.strokeStyle=ctx.strokeStyle;q.lineWidth=ctx.lineWidth;q.lineJoin=ctx.lineJoin;q.lineCap=ctx.lineCap;
  };
- if(k===1||M>2048){prep(g,scale,N);paint(g);}
+ if(exact){
+  g.setTransform(mt.a,mt.b,mt.c,mt.d,mt.e-ix0,mt.f-iy0);g.imageSmoothingEnabled=ctx.imageSmoothingEnabled;g.imageSmoothingQuality=ctx.imageSmoothingQuality;
+  g.globalAlpha=1;g.globalCompositeOperation='source-over';
+  g.fillStyle=ctx.fillStyle;g.strokeStyle=ctx.strokeStyle;g.lineWidth=ctx.lineWidth;g.lineJoin=ctx.lineJoin;g.lineCap=ctx.lineCap;
+  paint(g);
+ }
+ else if(k===1||M>2048){prep(g,scale,N);paint(g);}
  else{
   const lv=halvingCanvases(M);
   let src=lv[0],size=M;const c0=src.getContext('2d')!;
@@ -182,14 +209,16 @@ function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:numb
  let minX=N,minY=N,maxX=-1,maxY=-1;
  for(let y=0;y<N;y++){const row=y*N*4;for(let x=0;x<N;x++){if(d[row+x*4+3]){if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;}}}
  if(maxX<0)return;
- const [r0,fa]=boxForVariance(sb*sb/3),m=3*(r0+1)+1;
+ /* 小模糊（全解析度路徑）一次方框就夠：模糊量相同，形狀差異看不出來，成本只有三分之一。 */
+ const passes=exact?1:3;
+ const [r0,fa]=boxForVariance(sb*sb/passes),m=passes*(r0+1)+1;
  const x0=Math.max(0,minX-m),x1=Math.min(N-1,maxX+m),y0=Math.max(0,minY-m),y1=Math.min(N-1,maxY+m);
  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const i=(y*N+x)*4,al=d[i+3]/255;F[i]=d[i]*al;F[i+1]=d[i+1]*al;F[i+2]=d[i+2]*al;F[i+3]=d[i+3];}
  /* 高斯＝三次方框模糊（瀏覽器的 CSS blur 也是這樣做）。以滑動總和實作，
     每個像素的成本跟模糊半徑無關；舊版直接卷積每像素要乘加最多 19×2 次，
     幾個字同時失焦就吃掉一整格的時間，拖速度滑桿時最明顯。
     方框兩端給小數權重，模糊量隨 σ 連續變化，不會一格一格跳。 */
- for(let pass=0;pass<3;pass++){
+ for(let pass=0;pass<passes;pass++){
   boxBlur(F,T,r0,fa,4,N*4,y0,y1,x0,x1);   // 水平：每一列
   boxBlur(T,F,r0,fa,N*4,4,x0,x1,y0,y1);   // 垂直：每一欄
  }
@@ -198,12 +227,14 @@ function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:numb
   if(a>.02){const inv=255/a;d[o]=F[o]*inv;d[o+1]=F[o+1]*inv;d[o+2]=F[o+2]*inv;d[o+3]=a;}else{d[o]=d[o+1]=d[o+2]=d[o+3]=0;}
  }
  g.putImageData(img,0,0);
+ if(exact){ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(blurCanvas,ix0,iy0);ctx.restore();return;}
  ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
  ctx.drawImage(blurCanvas,cx+ox-R,cy+oy-R,2*R,2*R);
 }
 
 /** Draw in the existing object's local coordinates. No fixed-resolution frame cache. */
-export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:SelectedFrame|undefined, width:number,height:number, paint:(g:CanvasRenderingContext2D)=>void,index=0,count=1) {
+/** box：paint 實際畫的範圍（本地座標，可省略）。給了的話模糊緩衝會剛好包住它，不必照最壞情況開大。 */
+export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:SelectedFrame|undefined, width:number,height:number, paint:(g:CanvasRenderingContext2D)=>void,index=0,count=1,box?:{x:number;y:number;w:number;h:number}) {
  if(!frame){paint(ctx);return;}
  const spec=catalog.get(frame.id); if(!spec){paint(ctx);return;}
  const w=Math.max(.01,width),h=Math.max(.01,height),r=Math.max(w,h)/2;
@@ -256,7 +287,10 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
    } else if(code==='T-L20'||code==='S-L20'){
     // 失焦：模糊半徑跟著物件大小與目前解析度（預覽／匯出一致），各組依 defocusGroup 錯開。
     const level=defocusOf(frame,index,count);
-    paintBlurred(ctx,level*Math.max(3,r*.28)*density,Math.hypot(w,h)*.8,paint);return;
+    const sg=level*Math.max(3,r*.28)*density;
+    if(box)paintBlurred(ctx,sg,Math.hypot(box.w,box.h)/2,paint,box.x+box.w/2,box.y+box.h/2);
+    else paintBlurred(ctx,sg,Math.hypot(w,h)*.8,paint);
+    return;
    }
    paint(ctx);
   }

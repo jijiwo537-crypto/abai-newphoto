@@ -6087,7 +6087,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             if (!raster) return;
             raster.layers.forEach((layer,index) => {
               ctx.save();ctx.translate(dx+layer.pivotX,dy+startY+lineIndex*lineH+layer.pivotY);
-              paintSelectedAnimation(ctx,motionFrame.lab,layer.w,layer.h,g=>g.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h),offset+index,total);
+              paintSelectedAnimation(ctx,motionFrame.lab,layer.w,layer.h,g=>g.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h),offset+index,total,{x:layer.x-layer.pivotX,y:layer.y-layer.pivotY,w:layer.w,h:layer.h});
               ctx.restore();
             });offset += raster.layers.length;
           });return;
@@ -6151,7 +6151,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           ctx.scale(scale, scale);
           paintSelectedAnimation(ctx, unitMotionFrame.lab, layer.w, layer.h, g => g.drawImage(layer.canvas,
             layer.x - layer.pivotX, layer.y - layer.pivotY,
-            layer.w, layer.h), index, count);
+            layer.w, layer.h), index, count,
+            { x: layer.x - layer.pivotX, y: layer.y - layer.pivotY, w: layer.w, h: layer.h });
           ctx.restore();
         });
       };
