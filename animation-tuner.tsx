@@ -1,47 +1,45 @@
-/* animation-tuner.html：調整「動畫預設值」的小工具。
-   整頁就是真正的創意拼圖（sandbox：不存草稿、不進首頁紀錄），動畫的繪製、滑桿刻度、
-   預設值都直接呼叫 App 裡同一份程式（motionPickPatch／motionUi／motionKindLists），
-   所以看到的效果與數字跟 App 完全一樣。
-   用法：在動畫頁照平常選動畫、拖滑桿；跟目前預設值不一樣的組合會自動記下來，
-   按「複製」把文字貼給 Claude，就會照這些數字改進 App。 */
+/* animation-tuner.html：調整「動畫預設值」的工具。
+   左邊選目標與動畫、右邊拖滑桿，中間是真正的創意拼圖（iframe，sandbox：不存草稿）即時播放。
+   預設值、滑桿刻度、動畫清單、數值換算都直接呼叫 App 裡同一份程式
+   （motionPickPatch／motionUi／motionFromUi／motionKindLists），效果與數字跟 App 完全一樣。
+   調好後按「複製」，把文字貼給 Claude，就會照這些數字改進 App。 */
 import './styles.css';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import {
-  CollageTool, MO_DEFAULT, PATTERN_MO_DEFAULT, moOf, motionKindLists, motionPickPatch, motionTargetCtxOf, motionUi,
+  CollageTool, MO_DEFAULT, PATTERN_MO_DEFAULT, motionFromUi, motionKindLists, motionPickPatch, motionTargetCtxOf, motionUi,
   type MoCfg, type MotionTargetCtx,
 } from './components/CollageTool';
 import { FRAME_SCATTER } from './utils/frameShapes';
 
+type Field = 'delay' | 'inSpeed' | 'amp' | 'speed';
 type Phase = 'in' | 'idle';
-type Rec = { key: string; target: string; phase: Phase; id: string; name: string; def: Record<string, number>; now: Record<string, number> };
-const STORE = 'abai-animation-tuner-v1';
-const FIELD_NAME: Record<string, string> = { delay: '起始', inSpeed: '速度', amp: '幅度', speed: '速度' };
+const FIELD_NAME: Record<Field, string> = { delay: '起始', inSpeed: '速度', amp: '幅度', speed: '速度' };
 /* 只有速度、沒有幅度滑桿的常駐動畫（跟 App 面板一致） */
 const NO_AMP = new Set(['lab-P-L02', 'lab-T-L04']);
+const STORE = 'abai-animation-tuner-v2';
 
-const targetName = (c: MotionTargetCtx) => c.pattern ? '圖案' : c.sym ? '符號' : c.type === 'text' ? '文字'
-  : c.type === 'image' ? '圖片' : c.scatter ? '散落邊框' : c.glint ? '星芒' : c.grid ? '網格圖形' : c.line ? '線條' : '圖形';
-
+/* ── 示範物件 ───────────────────────────────────────────────────────── */
 const holesGrid = () => {
   const out: any[] = [];
   for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) out.push({ id: `h${r}${c}`, x: 170 + c * 280, y: 170 + r * 280 });
   return out;
 };
 const T = { rot: 0, opacity: 100 };
-const SCENES: { key: string; label: string; chip?: string; state: () => any }[] = [
-  { key: 'pattern', label: '圖案', state: () => ({ holeCount: 9, holeType: 'star', holeSize: 40, holes: holesGrid(), objects: [] }) },
-  { key: 'text', label: '文字', chip: 'ABAI動畫', state: () => ({ holeCount: 0, objects: [{ id: 'tx', type: 'text', text: 'ABAI動畫', color: '#FFFFFF', x: 150, y: 420, w: 700, h: 160, size: 120, ...T }] }) },
-  { key: 'symbol', label: '符號', chip: '符號', state: () => ({ holeCount: 0, objects: [{ id: 'sy', type: 'text', text: '⋆.˚✮⋆˚.⋆', sym: '⋆.˚✮⋆˚.⋆', color: '#FFFFFF', x: 150, y: 420, w: 700, h: 160, size: 120, ...T }] }) },
-  { key: 'image', label: '圖片', chip: '圖片', state: () => ({ holeCount: 0, objects: [{ id: 'im', type: 'image', src: '', x: 300, y: 300, w: 400, h: 400, ...T }] }) },
-  { key: 'shape', label: '圖形', chip: '圖形', state: () => ({ holeCount: 0, objects: [{ id: 'sh', type: 'shape', kind: 'circle', filled: true, color: '#DCE7DB', x: 330, y: 330, w: 340, h: 340, lineW: 6, ...T }] }) },
-  { key: 'grid', label: '網格圖形', chip: '圖形', state: () => ({ holeCount: 0, objects: [{ id: 'gr', type: 'shape', kind: 'grid-cross', filled: false, color: '#DCE7DB', x: 200, y: 250, w: 600, h: 500, lineW: 6, ...T }] }) },
-  { key: 'line', label: '線條', chip: '圖形', state: () => ({ holeCount: 0, objects: [{ id: 'ln', type: 'shape', kind: 'wave', filled: false, color: '#DCE7DB', x: 150, y: 450, w: 700, h: 100, lineW: 6, ...T }] }) },
-  { key: 'glint', label: '星芒', chip: '圖形', state: () => ({ holeCount: 0, objects: [{ id: 'gl', type: 'shape', kind: 'hole', hole: 'sb-cross-thin', filled: true, color: '#FFFFFF', x: 300, y: 300, w: 400, h: 400, lineW: 6, ...T }] }) },
-  { key: 'scatter', label: '散落邊框', chip: '圖形', state: () => ({ holeCount: 0, objects: [{ id: 'sc', type: 'shape', kind: FRAME_SCATTER, filled: true, color: '#DCE7DB', x: 100, y: 100, w: 800, h: 800, lineW: 6, ...T }] }) },
-];
+type Scene = { key: string; label: string; target: string; chip?: string; obj?: any; state: () => any };
+const SCENES: Scene[] = ([
+  { key: 'pattern', label: '圖案', target: 'shape', state: () => ({ holeCount: 9, holeType: 'star', holeSize: 40, holes: holesGrid(), objects: [] }) },
+  { key: 'text', label: '文字', target: 'tx', chip: 'ABAI動畫', obj: { id: 'tx', type: 'text', text: 'ABAI動畫', color: '#FFFFFF', x: 150, y: 420, w: 700, h: 160, size: 120, ...T } },
+  { key: 'symbol', label: '符號', target: 'sy', chip: '符號', obj: { id: 'sy', type: 'text', text: '⋆.˚✮⋆˚.⋆', sym: '⋆.˚✮⋆˚.⋆', color: '#FFFFFF', x: 150, y: 420, w: 700, h: 160, size: 120, ...T } },
+  { key: 'image', label: '圖片', target: 'im', chip: '圖片', obj: { id: 'im', type: 'image', src: '', x: 300, y: 300, w: 400, h: 400, ...T } },
+  { key: 'shape', label: '圖形', target: 'sh', chip: '圖形', obj: { id: 'sh', type: 'shape', kind: 'circle', filled: true, color: '#DCE7DB', x: 330, y: 330, w: 340, h: 340, lineW: 6, ...T } },
+  { key: 'grid', label: '網格圖形', target: 'gr', chip: '圖形', obj: { id: 'gr', type: 'shape', kind: 'grid-cross', filled: false, color: '#DCE7DB', x: 200, y: 250, w: 600, h: 500, lineW: 6, ...T } },
+  { key: 'line', label: '線條', target: 'ln', chip: '圖形', obj: { id: 'ln', type: 'shape', kind: 'wave', filled: false, color: '#DCE7DB', x: 150, y: 450, w: 700, h: 100, lineW: 6, ...T } },
+  { key: 'glint', label: '星芒', target: 'gl', chip: '圖形', obj: { id: 'gl', type: 'shape', kind: 'hole', hole: 'sb-cross-thin', filled: true, color: '#FFFFFF', x: 300, y: 300, w: 400, h: 400, lineW: 6, ...T } },
+  { key: 'scatter', label: '散落邊框', target: 'sc', chip: '圖形', obj: { id: 'sc', type: 'shape', kind: FRAME_SCATTER, filled: true, color: '#DCE7DB', x: 100, y: 100, w: 800, h: 800, lineW: 6, ...T } },
+] as (Omit<Scene, 'state'> & { state?: () => any })[]).map(s => s.obj ? { ...s, state: () => ({ holeCount: 0, objects: [{ ...s.obj, mo: { ...MO_DEFAULT, in: 'none', idle: 'none' } }] }) } : s as Scene);
+const ctxOf = (s: Scene): MotionTargetCtx => motionTargetCtxOf(s.obj || null);
 
-/** 示範照片：漸層＋幾塊色塊，看得出圖案挖在照片上的樣子 */
 const sampleCanvas = (a: string, b: string, c: string) => {
   const cv = document.createElement('canvas'); cv.width = 1200; cv.height = 1200;
   const g = cv.getContext('2d')!;
@@ -55,187 +53,273 @@ const sampleCanvas = (a: string, b: string, c: string) => {
 };
 const toFile = (cv: HTMLCanvasElement, name: string) => new Promise<File>(r => cv.toBlob(b => r(new File([b!], name, { type: 'image/jpeg' })), 'image/jpeg', .9));
 
-const loadRecs = (): Record<string, Rec> => { try { const v = JSON.parse(localStorage.getItem(STORE) || '{}'); return v && typeof v === 'object' ? v as Record<string, Rec> : {}; } catch { return {}; } };
-const saveRecs = (v: Record<string, Rec>) => { try { localStorage.setItem(STORE, JSON.stringify(v)); } catch { /* 私密模式：只是不保留 */ } };
-
-const diffText = (r: Rec) => Object.keys(r.now).filter(k => r.now[k] !== r.def[k]).map(k => `${FIELD_NAME[k]} ${r.def[k]} → ${r.now[k]}`).join('，');
-
-function App() {
+/* ── 嵌在中間的預覽（?embed=場景）：整頁就是 App 的創意拼圖 ─────────── */
+function Embed({ scene }: { scene: Scene }) {
   const [base, setBase] = useState<File | null>(null);
   const [imgSrc, setImgSrc] = useState('');
-  const [scene, setScene] = useState(SCENES[1]);
-  const [nonce, setNonce] = useState(0);
-  const [open, setOpen] = useState(false);
-  const [recs, setRecs] = useState<Record<string, Rec>>(() => loadRecs());
-  const [live, setLive] = useState<{ title: string; rows: { label: string; def: number; now: number }[] } | null>(null);
-  const [copied, setCopied] = useState(false);
-  useEffect(() => { saveRecs(recs); }, [recs]);
+  const [tuner, setTuner] = useState<{ target: string; mo: Partial<MoCfg>; hold?: number; replay?: number } | null>(null);
   useEffect(() => {
     void toFile(sampleCanvas('#f4a6a0', '#f7d9a8', '#8fb9d8'), 'sample.jpg').then(setBase);
     void toFile(sampleCanvas('#2b5876', '#4e4376', '#f3904f'), 'object.jpg').then(f => setImgSrc(URL.createObjectURL(f)));
+    const onMsg = (e: MessageEvent) => { if (e.origin === location.origin && e.data?.type === 'tuner-mo') setTuner(e.data.payload); };
+    window.addEventListener('message', onMsg);
+    window.parent?.postMessage({ type: 'tuner-ready' }, location.origin);
+    return () => window.removeEventListener('message', onMsg);
   }, []);
-
   const initialState = useMemo(() => {
     const st = scene.state();
     st.objects = st.objects.map((o: any) => o.type === 'image' ? { ...o, src: imgSrc } : o);
     return { layout: 'image-full', canvasRatio: '1:1', ...st };
-  }, [scene, imgSrc, nonce]);
-
-  /* 開好之後自動切到「動畫」分頁，物件場景再幫忙點選那個物件 */
+  }, [scene, imgSrc]);
+  /* 開好之後切到「動畫」分頁並選中示範物件，畫面跟在 App 裡調動畫時一樣 */
   useEffect(() => {
-    if (!base) return;
+    if (!base || !imgSrc) return;
     let stop = false, tries = 0;
     const step = () => {
       if (stop || ++tries > 200) return;
       const tab = document.querySelector<HTMLButtonElement>('[data-creative-tab="motion"]');
       if (!tab) { setTimeout(step, 100); return; }
-      if (tab.getAttribute('aria-selected') !== 'true' && !tab.dataset.tunerClicked) { tab.dataset.tunerClicked = '1'; tab.click(); }
+      if (!tab.dataset.tunerClicked) { tab.dataset.tunerClicked = '1'; tab.click(); }
       if (!scene.chip) return;
       const chip = [...document.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === scene.chip);
       if (chip) chip.click(); else setTimeout(step, 100);
     };
     const t = setTimeout(step, 300);
     return () => { stop = true; clearTimeout(t); };
-  }, [base, scene, nonce]);
+  }, [base, imgSrc, scene]);
+  if (!base || !imgSrc) return null;
+  return <CollageTool sandbox initialFile={base} initialState={initialState} tunerMotion={tuner} onHome={() => {}} onImportNew={() => {}} />;
+}
 
-  const onMotionChange = useCallback(({ objects, moShape, moTarget }: { objects: any[]; moShape: MoCfg; moTarget: string }) => {
-    if (moTarget === 'link' || moTarget.startsWith('glow')) { setLive(null); return; }
-    const obj = moTarget === 'shape' ? null : objects.find(o => o.id === moTarget);
-    if (moTarget !== 'shape' && !obj) { setLive(null); return; }
-    const ctx = motionTargetCtxOf(obj);
-    const cfg: MoCfg = obj ? moOf(obj) : (moShape.idle === 'grid-wave' ? { ...moShape, idle: 'pattern-breathe' } : moShape);
-    const start = ctx.pattern ? PATTERN_MO_DEFAULT : MO_DEFAULT;
-    const now = motionUi(cfg, ctx);
-    const { kinds, idleKinds } = motionKindLists(ctx);
-    const nameOf = (list: { id: string; name: string }[], id: string) => list.find(k => k.id === id)?.name || id;
-    const target = targetName(ctx);
-    const found: Rec[] = [];
-    if (cfg.in !== 'none') {
-      const def = motionUi({ ...start, ...motionPickPatch({ in: cfg.in }, ctx, 'pop') } as MoCfg, ctx);
-      found.push({ key: `${target}|in|${cfg.in}`, target, phase: 'in', id: cfg.in, name: nameOf(kinds, cfg.in),
-        def: { delay: def.delay, inSpeed: def.inSpeed }, now: { delay: now.delay, inSpeed: now.inSpeed } });
-    }
-    if (cfg.idle !== 'none') {
-      const def = motionUi({ ...start, ...motionPickPatch({ idle: cfg.idle }, ctx, cfg.in) } as MoCfg, ctx);
-      const keys = NO_AMP.has(cfg.idle) ? ['speed'] : ['amp', 'speed'];
-      found.push({ key: `${target}|idle|${cfg.idle}`, target, phase: 'idle', id: cfg.idle, name: nameOf(idleKinds, cfg.idle),
-        def: Object.fromEntries(keys.map(k => [k, (def as any)[k]])), now: Object.fromEntries(keys.map(k => [k, (now as any)[k]])) });
-    }
-    setLive({
-      title: target,
-      rows: found.flatMap(r => Object.keys(r.now).map(k => ({ label: `${r.phase === 'in' ? '進場' : '常駐'} ${r.name}・${FIELD_NAME[k]}`, def: r.def[k], now: r.now[k] }))),
-    });
-    /* 跟預設不一樣才記下（或更新）；切回預設不會自動刪掉，避免換來換去把調好的弄丟 */
-    setRecs(prev => {
-      let next = prev;
-      for (const r of found) {
-        if (!Object.keys(r.now).some(k => r.now[k] !== r.def[k])) continue;
-        const old = prev[r.key];
-        if (old && JSON.stringify(old.now) === JSON.stringify(r.now)) continue;
-        if (next === prev) next = { ...prev } as Record<string, Rec>;
-        next[r.key] = r;
-      }
-      return next;
-    });
-  }, []);
+/* ── 主頁 ───────────────────────────────────────────────────────────── */
+type Edits = Record<string, Partial<Record<Field, number>>>;
+const loadEdits = (): Edits => { try { const v = JSON.parse(localStorage.getItem(STORE) || '{}'); return v && typeof v === 'object' ? v as Edits : {}; } catch { return {}; } };
+const keyOf = (scene: string, phase: Phase, id: string) => `${scene}|${phase}|${id}`;
 
-  const list = (Object.values(recs) as Rec[]).sort((a, b) => a.key.localeCompare(b.key, 'zh-Hant'));
-  const copyText = [
-    '請把以下動畫的預設值改成這樣（創意拼圖動畫面板上的數字，0～100）：',
-    ...list.map(r => `- ${r.target}｜${r.phase === 'in' ? '進場' : '常駐'}｜${r.name}（${r.id}）：${diffText(r)}`),
-  ].join('\n');
-  const copy = async () => {
-    try { await navigator.clipboard.writeText(copyText); }
-    catch {
-      const ta = document.createElement('textarea'); ta.value = copyText; document.body.appendChild(ta); ta.select();
-      try { document.execCommand('copy'); } catch { /* 沒辦法就讓使用者自己選 */ }
-      ta.remove();
-    }
-    setCopied(true); setTimeout(() => setCopied(false), 1500);
-  };
+/** 某目標、某進場＋某常駐、套上修改後，實際寫進 App 的設定，以及兩邊的「預設」面板數字 */
+function computeCfg(scene: Scene, inId: string, idleId: string, edits: Edits) {
+  const c = ctxOf(scene);
+  const start: MoCfg = c.pattern ? PATTERN_MO_DEFAULT : MO_DEFAULT;
+  let cfg: MoCfg = { ...start, ...motionPickPatch({ in: inId }, c, 'pop') } as MoCfg;
+  const defIn = motionUi(cfg, c);
+  const ein = inId !== 'none' ? edits[keyOf(scene.key, 'in', inId)] || {} : {};
+  for (const f of ['delay', 'inSpeed'] as Field[]) if (ein[f] !== undefined) cfg = { ...cfg, ...motionFromUi(f, ein[f]!, cfg, c) };
+  cfg = { ...cfg, ...motionPickPatch({ idle: idleId }, c, cfg.in) } as MoCfg;
+  const defIdle = motionUi(cfg, c);
+  const eid = idleId !== 'none' ? edits[keyOf(scene.key, 'idle', idleId)] || {} : {};
+  for (const f of ['amp', 'speed'] as Field[]) if (eid[f] !== undefined) cfg = { ...cfg, ...motionFromUi(f, eid[f]!, cfg, c) };
+  return { cfg, defIn, defIdle, now: motionUi(cfg, c) };
+}
 
-  if (!base || !imgSrc) return <div style={{ padding: 24, color: '#888', fontSize: 13 }}>準備中…</div>;
-  const changedHere = live?.rows.filter(r => r.def !== r.now).length || 0;
+function SliderRow({ label, value, def, onChange, onCommit }: { label: string; value: number; def: number; onChange: (v: number) => void; onCommit?: () => void }) {
+  const changed = value !== def;
   return (
-    <>
-      <CollageTool key={`${scene.key}-${nonce}`} sandbox initialFile={base} initialState={initialState}
-        onMotionChange={onMotionChange} onHome={() => setOpen(true)} onImportNew={() => {}} />
-      <button onClick={() => setOpen(true)} data-tuner-toggle
-        style={{ position: 'fixed', left: 10, top: 'calc(env(safe-area-inset-top) + 62px)', zIndex: 2147483000 }}
-        className="h-8 px-3 rounded-full bg-white text-black text-[12px] font-bold shadow-lg flex items-center gap-1.5">
-        預設值{list.length > 0 && <span className="min-w-5 h-5 px-1 rounded-full bg-black text-white text-[11px] leading-5 text-center">{list.length}</span>}
-        {changedHere > 0 && <span className="w-1.5 h-1.5 rounded-full bg-[#ff7a59]" />}
-      </button>
-      {open && (
-        <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 2147483001, background: 'rgba(0,0,0,.55)' }}>
-          <div onClick={e => e.stopPropagation()}
-            className="absolute left-0 right-0 bottom-0 mx-auto max-w-[560px] bg-[#111] border-t border-white/10 rounded-t-[18px] text-white"
-            style={{ maxHeight: '86dvh', overflowY: 'auto', paddingBottom: 'calc(env(safe-area-inset-bottom) + 16px)' }}>
-            <div className="px-5 pt-4 pb-2 flex items-center justify-between sticky top-0 bg-[#111] z-10">
-              <span className="text-[15px] font-bold">動畫預設值</span>
-              <button onClick={() => setOpen(false)} className="text-white/50 text-[13px] px-2 py-1">關閉</button>
-            </div>
-            <div className="px-5">
-              <p className="text-[11px] text-white/45 leading-relaxed mb-3">
-                畫面就是 App 的創意拼圖（不會存草稿）。在動畫頁照平常選動畫、拖滑桿，
-                跟目前預設不一樣的數字會自動記在下面。全部調好按「複製」，把文字貼給 Claude。
-              </p>
-              <p className="text-[11px] font-bold text-white/40 tracking-widest mb-2">示範物件</p>
-              <div className="flex flex-wrap gap-2 mb-4">
-                {SCENES.map(s => (
-                  <button key={s.key} onClick={() => { setScene(s); setNonce(n => n + 1); setOpen(false); }}
-                    className={`h-8 px-3 rounded-[8px] border text-[12px] font-bold ${s.key === scene.key ? 'bg-white text-black border-white' : 'border-white/15 text-white/70'}`}>
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-              {live && live.rows.length > 0 && (
-                <>
-                  <p className="text-[11px] font-bold text-white/40 tracking-widest mb-2">目前選中的「{live.title}」</p>
-                  <div className="rounded-[12px] bg-white/[.04] border border-white/10 mb-4">
-                    {live.rows.map(r => (
-                      <div key={r.label} className="flex items-center justify-between px-3 py-2 text-[12px] border-b border-white/5 last:border-0">
-                        <span className="text-white/70">{r.label}</span>
-                        <span className="tabular-nums">
-                          <span className="text-white/40">預設 {r.def}</span>
-                          <span className={`ml-3 font-bold ${r.def !== r.now ? 'text-[#ff9b80]' : 'text-white/80'}`}>現在 {r.now}</span>
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-[11px] font-bold text-white/40 tracking-widest">要修改的預設值（{list.length}）</p>
-                {list.length > 0 && <button onClick={() => { if (confirm('清掉全部記錄？')) setRecs({}); }} className="text-[11px] text-white/40 px-1">全部清除</button>}
-              </div>
-              {list.length === 0 ? (
-                <p className="text-[12px] text-white/35 mb-4">還沒有。調整任一個滑桿，跟預設不一樣就會出現在這裡。</p>
-              ) : (
-                <div className="rounded-[12px] bg-white/[.04] border border-white/10 mb-4">
-                  {list.map(r => (
-                    <div key={r.key} className="flex items-start gap-2 px-3 py-2.5 border-b border-white/5 last:border-0">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[12px] font-bold">{r.target}｜{r.phase === 'in' ? '進場' : '常駐'}｜{r.name}</div>
-                        <div className="text-[12px] text-[#ff9b80] tabular-nums mt-0.5">{diffText(r)}</div>
-                      </div>
-                      <button onClick={() => setRecs(p => { const n = { ...p }; delete n[r.key]; return n; })}
-                        aria-label="刪除這一項" className="w-7 h-7 shrink-0 rounded-full text-white/40 text-[16px] leading-7">×</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <button disabled={!list.length} onClick={copy}
-                className={`w-full h-11 rounded-[12px] text-[14px] font-bold ${list.length ? 'bg-white text-black' : 'bg-white/10 text-white/30'}`}>
-                {copied ? '已複製' : '複製要修改的內容'}
-              </button>
-              {list.length > 0 && <pre className="mt-3 text-[11px] text-white/45 whitespace-pre-wrap break-words">{copyText}</pre>}
-            </div>
-          </div>
+    <div className="py-3">
+      <div className="flex items-baseline justify-between mb-2">
+        <span className="text-[13px] text-white/80">{label}</span>
+        <span className="flex items-baseline gap-3 tabular-nums">
+          <span className="text-[11px] text-white/35">預設 {def}</span>
+          <span className={`text-[18px] font-bold min-w-[2.5ch] text-right ${changed ? 'text-[#ff9b80]' : 'text-white'}`}>{value}</span>
+        </span>
+      </div>
+      <div className="relative h-6 flex items-center">
+        {/* 預設值的位置：一條細刻度 */}
+        <div className="absolute top-0 bottom-0 w-[2px] bg-white/25 rounded" style={{ left: `calc(${def}% - 1px)` }} />
+        <input type="range" min={0} max={100} step={1} value={value}
+          onChange={e => onChange(Number(e.target.value))}
+          onPointerUp={onCommit} onKeyUp={onCommit} onTouchEnd={onCommit}
+          className="w-full accent-white relative" />
+      </div>
+      <div className="flex justify-between mt-1">
+        <div className="flex gap-1">
+          {[-5, -1, 1, 5].map(d => (
+            <button key={d} onClick={() => { onChange(Math.max(0, Math.min(100, value + d))); onCommit?.(); }}
+              className="h-7 min-w-9 px-2 rounded-[7px] bg-white/[.06] text-[12px] text-white/70 tabular-nums active:bg-white/15">{d > 0 ? `+${d}` : d}</button>
+          ))}
         </div>
-      )}
-    </>
+        <button disabled={!changed} onClick={() => { onChange(def); onCommit?.(); }}
+          className={`h-7 px-3 rounded-[7px] text-[12px] ${changed ? 'bg-white/10 text-white' : 'text-white/20'}`}>回到預設</button>
+      </div>
+    </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
+function Main() {
+  const [sceneKey, setSceneKey] = useState('text');
+  const scene = SCENES.find(s => s.key === sceneKey)!;
+  const [sel, setSel] = useState<Record<string, { in: string; idle: string }>>({});
+  const cur = sel[sceneKey] || { in: 'none', idle: 'none' };
+  const [edits, setEdits] = useState<Edits>(() => loadEdits());
+  useEffect(() => { try { localStorage.setItem(STORE, JSON.stringify(edits)); } catch { /* 私密模式 */ } }, [edits]);
+  const [hold, setHold] = useState(1);
+  const [replay, setReplay] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+
+  const ctx = ctxOf(scene);
+  const { kinds, idleKinds } = useMemo(() => motionKindLists(ctx), [sceneKey]);
+  const { cfg, defIn, defIdle, now } = computeCfg(scene, cur.in, cur.idle, edits);
+
+  /* 把目前的設定送進中間的預覽 */
+  const send = useCallback(() => {
+    frameRef.current?.contentWindow?.postMessage({ type: 'tuner-mo', payload: { target: scene.target, mo: cfg, hold, replay } }, location.origin);
+  }, [scene.target, JSON.stringify(cfg), hold, replay]);
+  useEffect(() => { send(); }, [send]);
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => { if (e.origin === location.origin && e.data?.type === 'tuner-ready') send(); };
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, [send]);
+  /* 手機尺寸的預覽框，依可用空間等比縮放 */
+  useEffect(() => {
+    const el = boxRef.current; if (!el) return;
+    const fit = () => { const r = el.getBoundingClientRect(); setScale(Math.max(.3, Math.min(1, r.width / 390, r.height / 844))); };
+    fit(); const ro = new ResizeObserver(fit); ro.observe(el); return () => ro.disconnect();
+  }, []);
+
+  const pick = (phase: Phase, id: string) => {
+    setSel(s => ({ ...s, [sceneKey]: { ...cur, [phase]: id } }));
+    if (phase === 'in') setReplay(r => r + 1);
+  };
+  const setField = (phase: Phase, id: string, f: Field, v: number, def: number) => setEdits(e => {
+    const k = keyOf(sceneKey, phase, id);
+    const next = { ...(e[k] || {}) };
+    if (v === def) delete next[f]; else next[f] = v;
+    const out = { ...e };
+    if (Object.keys(next).length) out[k] = next; else delete out[k];
+    return out;
+  });
+  const modified = (phase: Phase, id: string) => !!edits[keyOf(sceneKey, phase, id)];
+
+  /* 修改清單：每一項顯示「預設 → 新值」（預設照該動畫單獨被選時的數字算） */
+  const list = useMemo(() => Object.entries(edits).map(([k, v]) => {
+    const [sk, phase, id] = k.split('|') as [string, Phase, string];
+    const sc = SCENES.find(s => s.key === sk); if (!sc) return null;
+    const c = ctxOf(sc), lists = motionKindLists(c);
+    const name = (phase === 'in' ? lists.kinds : lists.idleKinds).find(x => x.id === id)?.name || id;
+    const r = computeCfg(sc, phase === 'in' ? id : 'none', phase === 'idle' ? id : 'none', {});
+    const def = phase === 'in' ? r.defIn : r.defIdle;
+    const parts = (Object.keys(v) as Field[]).map(f => `${FIELD_NAME[f]} ${(def as any)[f]} → ${v[f]}`);
+    return { k, target: sc.label, phase, id, name, text: parts.join('，') };
+  }).filter(Boolean) as { k: string; target: string; phase: Phase; id: string; name: string; text: string }[], [edits]);
+  const copyText = ['請把以下動畫的預設值改成這樣（創意拼圖動畫面板上的數字，0～100）：',
+    ...list.map(r => `- ${r.target}｜${r.phase === 'in' ? '進場' : '常駐'}｜${r.name}（${r.id}）：${r.text}`)].join('\n');
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(copyText); }
+    catch { const ta = document.createElement('textarea'); ta.value = copyText; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch { /* ignore */ } ta.remove(); }
+    setCopied(true); setTimeout(() => setCopied(false), 1500);
+  };
+
+  const kindButton = (phase: Phase, k: { id: string; name: string }) => {
+    const on = (phase === 'in' ? cur.in : cur.idle) === k.id;
+    return (
+      <button key={k.id} onClick={() => pick(phase, k.id)}
+        className={`relative h-9 px-2 rounded-[9px] border text-[12px] font-bold ${on ? 'bg-white text-black border-white' : 'border-white/12 text-white/70 hover:bg-white/[.06]'}`}>
+        {k.name}
+        {k.id !== 'none' && modified(phase, k.id) && <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[#ff7a59]" />}
+      </button>
+    );
+  };
+
+  return (
+    <div className="min-h-[100dvh] bg-black text-white" style={{ fontFamily: 'system-ui, -apple-system, "PingFang TC", sans-serif' }}>
+      <header className="sticky top-0 z-10 bg-black/90 backdrop-blur border-b border-white/10">
+        <div className="max-w-[1400px] mx-auto px-4 h-14 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[15px] font-bold">動畫預設值調整</div>
+            <div className="text-[11px] text-white/40 truncate">選目標 → 選動畫 → 拖滑桿，中間即時預覽（跟 App 同一套程式）</div>
+          </div>
+          <button disabled={!list.length} onClick={copy}
+            className={`shrink-0 h-9 px-4 rounded-full text-[13px] font-bold ${list.length ? 'bg-white text-black' : 'bg-white/10 text-white/30'}`}>
+            {copied ? '已複製' : `複製修改內容${list.length ? `（${list.length}）` : ''}`}
+          </button>
+        </div>
+      </header>
+
+      <div className="max-w-[1400px] mx-auto p-4 grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)_360px]">
+        {/* 左：目標與動畫 */}
+        <section className="order-1 space-y-4">
+          <div>
+            <p className="text-[11px] font-bold text-white/40 tracking-widest mb-2">目標</p>
+            <div className="flex flex-wrap gap-1.5">
+              {SCENES.map(s => (
+                <button key={s.key} onClick={() => setSceneKey(s.key)}
+                  className={`h-8 px-3 rounded-full border text-[12px] font-bold ${s.key === sceneKey ? 'bg-white text-black border-white' : 'border-white/15 text-white/70'}`}>
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold text-white/40 tracking-widest mb-2">進場動畫</p>
+            <div className="grid grid-cols-4 gap-1.5">{kinds.map(k => kindButton('in', k))}</div>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold text-white/40 tracking-widest mb-2">常駐動畫</p>
+            <div className="grid grid-cols-4 gap-1.5">{idleKinds.map(k => kindButton('idle', k))}</div>
+          </div>
+          <p className="text-[11px] text-white/35">橘點＝這個動畫已經改過。</p>
+        </section>
+
+        {/* 中：預覽 */}
+        <section className="order-2 flex flex-col items-center">
+          <div ref={boxRef} className="w-full h-[62dvh] lg:h-[calc(100dvh-140px)] flex items-start justify-center">
+            <div style={{ width: 390 * scale, height: 844 * scale }} className="rounded-[28px] overflow-hidden border border-white/15 bg-black shrink-0">
+              <iframe ref={frameRef} key={sceneKey} title="預覽" src={`./animation-tuner.html?embed=${sceneKey}`}
+                style={{ width: 390, height: 844, border: 0, transform: `scale(${scale})`, transformOrigin: '0 0' }} />
+            </div>
+          </div>
+          <div className="w-full max-w-[420px] mt-3 flex items-center gap-3">
+            <button onClick={() => setReplay(r => r + 1)} className="h-9 px-4 rounded-full bg-white/10 text-[13px] font-bold">重播</button>
+            <span className="text-[12px] text-white/50 shrink-0">循環間隔 {hold} 秒</span>
+            <input type="range" min={0} max={10} step={.5} value={hold} onChange={e => setHold(Number(e.target.value))} className="flex-1 accent-white" />
+          </div>
+        </section>
+
+        {/* 右：參數 */}
+        <section className="order-3 space-y-4">
+          <div className="rounded-[14px] bg-white/[.04] border border-white/10 px-4 py-2">
+            <p className="text-[12px] font-bold pt-2">進場：{kinds.find(k => k.id === cur.in)?.name || '無'}</p>
+            {cur.in === 'none' ? <p className="text-[12px] text-white/35 py-3">左邊選一個進場動畫。</p> : <>
+              <SliderRow label="起始" value={now.delay} def={defIn.delay} onChange={v => setField('in', cur.in, 'delay', v, defIn.delay)} onCommit={() => setReplay(r => r + 1)} />
+              <SliderRow label="速度" value={now.inSpeed} def={defIn.inSpeed} onChange={v => setField('in', cur.in, 'inSpeed', v, defIn.inSpeed)} onCommit={() => setReplay(r => r + 1)} />
+            </>}
+          </div>
+          <div className="rounded-[14px] bg-white/[.04] border border-white/10 px-4 py-2">
+            <p className="text-[12px] font-bold pt-2">常駐：{idleKinds.find(k => k.id === cur.idle)?.name || '無'}</p>
+            {cur.idle === 'none' ? <p className="text-[12px] text-white/35 py-3">左邊選一個常駐動畫。</p> : <>
+              {!NO_AMP.has(cur.idle) && <SliderRow label="幅度" value={now.amp} def={defIdle.amp} onChange={v => setField('idle', cur.idle, 'amp', v, defIdle.amp)} />}
+              <SliderRow label="速度" value={now.speed} def={defIdle.speed} onChange={v => setField('idle', cur.idle, 'speed', v, defIdle.speed)} />
+            </>}
+          </div>
+          <div className="rounded-[14px] bg-white/[.04] border border-white/10 px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[12px] font-bold">要修改的預設值（{list.length}）</p>
+              {list.length > 0 && <button onClick={() => { if (confirm('清掉全部修改？')) setEdits({}); }} className="text-[11px] text-white/40">全部清除</button>}
+            </div>
+            {list.length === 0 ? <p className="text-[12px] text-white/35">還沒有。拖任一個滑桿，跟預設不同就會列在這裡。</p> : (
+              <div className="divide-y divide-white/5">
+                {list.map(r => (
+                  <div key={r.k} className="flex items-start gap-2 py-2">
+                    <button className="flex-1 min-w-0 text-left" onClick={() => { const sk = r.k.split('|')[0]; setSceneKey(sk); setSel(s => ({ ...s, [sk]: { ...(s[sk] || { in: 'none', idle: 'none' }), [r.phase]: r.id } })); }}>
+                      <div className="text-[12px] font-bold">{r.target}｜{r.phase === 'in' ? '進場' : '常駐'}｜{r.name}</div>
+                      <div className="text-[12px] text-[#ff9b80] tabular-nums">{r.text}</div>
+                    </button>
+                    <button aria-label="刪除這一項" onClick={() => setEdits(e => { const n = { ...e }; delete n[r.k]; return n; })} className="w-7 h-7 rounded-full text-white/40">×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {list.length > 0 && <pre className="mt-2 text-[11px] text-white/40 whitespace-pre-wrap break-words">{copyText}</pre>}
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+const embed = new URLSearchParams(location.search).get('embed');
+const embedScene = embed ? SCENES.find(s => s.key === embed) : null;
+ReactDOM.createRoot(document.getElementById('root')!).render(embedScene ? <Embed scene={embedScene} /> : <Main />);

@@ -1186,6 +1186,24 @@ export const motionUi = (cur: MoCfg, c: MotionTargetCtx) => {
       : idleSpeedToUi(cur.speed),
   };
 };
+/** 面板上滑桿的 0～100 數字 → 寫進設定的值（motionUi 的反函數；App 面板與預設值網站共用） */
+export const motionFromUi = (field: 'delay' | 'inSpeed' | 'amp' | 'speed', v: number, cur: MoCfg, c: MotionTargetCtx): Partial<MoCfg> => {
+  const breathScale = (cur.idle === 'pattern-breathe' && c.pattern) || (cur.idle === 'image-breathe' && c.type === 'image') || cur.idle === 'scatter-breathe';
+  if (field === 'delay') return { delay: delayFromUi(v) };
+  if (field === 'inSpeed') return { dur: durFromSpeed(cur.in === 'bubble' ? 50 + v / 2 : cur.in === 'pop-seq' && c.scatter ? seqSpeedFromUi(v) : v) };
+  if (field === 'amp') return { amp: breathScale ? patternBreathAmpFromUi(v) : v };
+  return {
+    speed: breathScale ? patternBreathSpeedFromUi(v)
+      : cur.idle === 'symbol-breathe2' && (c.sym || c.type === 'text') ? symbolBreathe2SpeedFromUi(v)
+      : cur.idle === 'grid-wave' && c.type !== 'shape' && !c.grid ? nonGridWaveSpeedFromUi(v)
+      : cur.idle === 'grid-wave' ? .2 + v * .018
+      : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedFromUi(v)
+      : cur.idle === 'breathe' && c.glint ? glintZoomSpeedFromUi(v)
+      : cur.idle === 'glint-blink' ? blinkSpeedFromUi(v)
+      : DEFOCUS_IDS.has(cur.idle) ? defocusSpeedFromUi(v)
+      : idleSpeedFromUi(v),
+  };
+};
 /** 某個目標在動畫面板上列出的進場／常駐種類（App 與動畫預設值網站共用） */
 export const motionKindLists = (c: MotionTargetCtx) => {
   const isText = c.type === 'text' && !c.sym;
@@ -1453,6 +1471,8 @@ interface CollageToolProps {
   onPatternSizeTuned?: (id: string, size: number) => void;
   /** 動畫預設值調整網站用：物件與圖案的動畫設定有變時回報（App 本身不傳） */
   onMotionChange?: (s: { objects: any[]; moShape: MoCfg; moTarget: string }) => void;
+  /** 動畫預設值網站用：直接套用某個目標（'shape'＝圖案，或物件 id）的動畫設定 */
+  tunerMotion?: { target: string; mo: Partial<MoCfg>; hold?: number; replay?: number } | null;
 }
 
 /** 「新增圖形」的整片清單。只在選中的那一顆換了才重畫（見 shapePickRef） */
@@ -1481,7 +1501,7 @@ const CreativeShapePicker = React.memo(({ selectedId, onPick }: { selectedId?: s
     ))}
   </>
 ));
-export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned, onMotionChange }) => {
+export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned, onMotionChange, tunerMotion = null }) => {
   const saveToolDraft: typeof saveToolDraftImpl = (...args) => sandbox ? Promise.resolve() as any : saveToolDraftImpl(...args);
   useKeyboardRecovery();
   const [imageState, setImageState] = useState<any>(null);
@@ -10135,6 +10155,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const patchMo = useCallback((id: string, d: Partial<MoCfg>) => {
     setObjects(prev => prev.map(o => o.id === id ? { ...o, mo: { ...moOf(o), ...d } } : o));
   }, []);
+  /* 動畫預設值網站：外部直接指定某個目標的動畫設定（App 本身不傳這個 prop） */
+  const tunerReplayRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!tunerMotion) return;
+    if (tunerMotion.target === 'shape') setMoShape(m => ({ ...m, ...tunerMotion.mo }));
+    else patchMo(tunerMotion.target, tunerMotion.mo);
+    if (tunerMotion.hold !== undefined) setMotionHold(tunerMotion.hold);
+    if (tunerMotion.replay !== undefined && tunerMotion.replay !== tunerReplayRef.current) {
+      const first = tunerReplayRef.current === undefined;
+      tunerReplayRef.current = tunerMotion.replay;
+      if (!first) setTimeout(() => replayMotion(), 0);
+    }
+  }, [tunerMotion, patchMo, replayMotion]);
 
   /* ── 匯出成影片 ────────────────────────────────────────────────
      跟預覽同一條算圖管線，只是畫在一張離屏畫布上。解析度直接吃
@@ -12770,12 +12803,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                           <CompactSlider label="起始" value={delayToUi(cur.delay)} min={0} max={100} step={1}
                             onCommit={replayMotion}
-                            onChange={(v: number) => setCur({ delay: delayFromUi(v) })} />
+                            onChange={(v: number) => setCur(motionFromUi('delay', v, cur, motionTargetCtxOf(selObj)))} />
                           <CompactSlider label="速度"
                             value={motionUi(cur, motionTargetCtxOf(selObj)).inSpeed}
                             min={0} max={100} step={1}
                             onCommit={replayMotion}
-                            onChange={(v: number) => setCur({ dur: durFromSpeed(cur.in === 'bubble' ? 50 + v / 2 : cur.in === 'pop-seq' && isScatterTarget ? seqSpeedFromUi(v) : v) })} />
+                            onChange={(v: number) => setCur(motionFromUi('inSpeed', v, cur, motionTargetCtxOf(selObj)))} />
                         </div>
 
                         {label('常駐動畫')}
@@ -12791,29 +12824,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             {cur.idle !== 'lab-P-L02' && cur.idle !== 'lab-T-L04' && <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-amp`} label="幅度"
                               value={motionUi(cur, motionTargetCtxOf(selObj)).amp}
                               min={0} max={100} step={1}
-                              onChange={(v: number) => setCur({
-                                amp: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
-                                  ? patternBreathAmpFromUi(v) : v,
-                              })} />}
+                              onChange={(v: number) => setCur(motionFromUi('amp', v, cur, motionTargetCtxOf(selObj)))} />}
                             <div className={cur.idle === 'lab-P-L02' || cur.idle === 'lab-T-L04' ? 'col-span-2' : undefined}>
                             <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-speed`} label="速度"
                               value={motionUi(cur, motionTargetCtxOf(selObj)).speed}
                               min={0} max={100}
                               step={1}
-                              onChange={(v: number) => setCur({
-                                speed: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
-                                  ? patternBreathSpeedFromUi(v)
-                                  : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
-                                  ? symbolBreathe2SpeedFromUi(v)
-                                  : cur.idle === 'grid-wave' && selObj?.type !== 'shape' && !isGridTarget
-                                    ? nonGridWaveSpeedFromUi(v)
-                                    : cur.idle === 'grid-wave' ? .2 + v * .018
-                                    : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedFromUi(v)
-                                    : cur.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
-                                    : cur.idle === 'glint-blink' ? blinkSpeedFromUi(v)
-                                    : DEFOCUS_IDS.has(cur.idle) ? defocusSpeedFromUi(v)
-                                    : idleSpeedFromUi(v),
-                              })} />
+                              onChange={(v: number) => setCur(motionFromUi('speed', v, cur, motionTargetCtxOf(selObj)))} />
                             </div>
                           </div>
                         )}
