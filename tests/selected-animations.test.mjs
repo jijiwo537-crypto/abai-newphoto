@@ -37,6 +37,7 @@ try {
  const cfg={in:'none',idle:'lab-P-L02',delay:0,dur:1,amp:100,speed:1};
  assert.equal(m.selectedPatternOffset(m.selectedFrame(cfg,0),100),0,'pattern starts at rest');
  assert.equal(m.selectedPatternOffset(m.selectedFrame(cfg,2),100),0,'pattern blink does not shift positions');
+ m.setCanvasBlurSupportedForTest(true);
  for(const id of ['lab-T-L20','lab-S-L20']){
   ctx.filter='none';m.paintSelectedAnimation(ctx,m.selectedFrame({...cfg,idle:id},2,.4),40,50,()=>{});
   assert.match(ctx.filter,/blur\([1-9]/,`${id} has visible defocus`);
@@ -44,6 +45,25 @@ try {
  ctx.filter='none';
  m.applySelectedPatternAppearance(ctx,m.selectedFrame({...cfg,idle:'lab-P-L20'},2,.4),40,0,0);
  assert.match(ctx.filter,/blur\([1-9]/,'pattern defocus is visible');
+ // 失焦：單一目標一個時機；兩個目標兩組；三個以上固定三組，且每組人數平均、相鄰不同組。
+ assert.deepEqual(m.defocusGroup(0,1),{group:0,groups:1});
+ assert.deepEqual([0,1].map(i=>m.defocusGroup(i,2).group),[0,1]);
+ for(const n of [3,5,9,24]){
+  const g=Array.from({length:n},(_,i)=>m.defocusGroup(i,n));
+  assert.ok(g.every(x=>x.groups===3),'at most three timings');
+  assert.equal(new Set(g.map(x=>x.group)).size,3,`${n} targets use all three timings`);
+  for(let i=1;i<n;i++)assert.notEqual(g[i].group,g[i-1].group,'neighbours differ');
+ }
+ // 同一個規律：每組曲線相同，只是錯開 1/組數 週期；並且有完全清楚與完全模糊的時段。
+ const P=4.2;
+ for(const t of [0,.3,1.1,2.2,3.9])assert.ok(Math.abs(m.defocusLevel(t,1,1,3)-m.defocusLevel(t-P/3,1,0,3))<1e-9);
+ const samples=Array.from({length:420},(_,i)=>m.defocusLevel(i/100,1,0,1));
+ assert.ok(samples.filter(v=>v===0).length>150&&samples.filter(v=>v===1).length>30,'sharp hold and blurred hold');
+ m.setCanvasBlurSupportedForTest(false);
+ let painted=0;const fb={...ctx,getTransform(){return {a:2,b:0};}};
+ m.paintSelectedAnimation(fb,m.selectedFrame({...cfg,idle:'lab-T-L20'},2,.4),40,50,()=>painted++);
+ assert.equal(painted,1,'fallback still paints once when no canvas filter');
+ m.setCanvasBlurSupportedForTest(undefined);
  assert.ok(m.selectedPatternGlow(m.selectedFrame({...cfg,idle:'lab-P-L04'},2,.4))>0,'pattern glow animates');
  const uiSources=(await Promise.all(['components/CollageTool.tsx','components/GridLayoutTool.tsx'].map(path=>readFile(path,'utf8')))).join('\n');
  for(const retired of ['lab-T-E01','lab-T-E04','lab-S-E07','lab-S-L02','lab-S-L04','lab-S-L11','lab-S-L18','lab-G-L04','lab-G-L06','lab-G-L11','lab-G-L20'])
