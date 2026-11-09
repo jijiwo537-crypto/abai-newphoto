@@ -380,8 +380,9 @@ function Main() {
           </div>
           <p className="text-[11px] text-white/35">橘點＝這個動畫已經改過。</p>
           <div className="rounded-[12px] bg-white/[.04] border border-white/10 p-3 text-[11px] text-white/55 leading-relaxed">
-            <b className="text-white/80">App 的滑桿是共用的：</b>物件第一次選動畫（從「無／靜止」選起）時，才會帶入這裡調的預設值；
-            之後在 App 裡換成別的動畫，面板上的數字會維持不變，由新動畫用自己的刻度去讀。
+            <b className="text-white/80">App 的幅度、速度是共用滑桿：</b>換動畫時數字不變。共用滑桿在中間 50 時，每個動畫都照它自己的預設播
+            （也就是這裡調的數字）；往 0 或 100 拉，每個動畫各自從自己的預設走到自己刻度的兩端。
+            這個網站調的是「每個動畫自己的預設」與「自己刻度的範圍」。
           </div>
         </section>
 

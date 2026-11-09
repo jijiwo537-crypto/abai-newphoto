@@ -15,7 +15,7 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, scatterAllNoGlow } from '../utils/frameShapes';
@@ -1117,6 +1117,8 @@ export type MoCfg = {
   direction?: PatternDirection;
   /** 常駐 */
   idle: string; amp: number; speed: number;
+  /** 共用滑桿目前的位置（0～100，50＝各動畫自己的預設）。舊作品沒有時由實際值推回。 */
+  shIn?: number; shAmp?: number; shSpeed?: number;
 };
 export const MO_DEFAULT: MoCfg = {
   delay: 0, dur: durFromSpeed(70), in: 'pop',
@@ -1178,19 +1180,45 @@ export const motionPickPatch = (d: Partial<MoCfg>, c: MotionTargetCtx, curIn: st
   if (d.idle && c.line) return { ...d, amp: 20 };
   return d;
 };
+/** 某個動畫自己的預設，換算成它自己刻度上的面板數字（共用滑桿在中間時就是這組） */
+export const motionDefaultUi = (c: MotionTargetCtx, phase: 'in' | 'idle', id: string) => {
+  const base = c.pattern ? PATTERN_MO_DEFAULT : MO_DEFAULT;
+  return motionUi({ ...base, ...motionPickPatch(phase === 'in' ? { in: id } : { idle: id }, c, 'pop') } as MoCfg, c);
+};
+type SharedField = 'inSpeed' | 'amp' | 'speed';
+const SH_KEY = { inSpeed: 'shIn', amp: 'shAmp', speed: 'shSpeed' } as const;
+/** 面板上共用滑桿要顯示的數字（存了就用存的，舊作品由實際值推回） */
+export const sharedUi = (cur: MoCfg, c: MotionTargetCtx) => {
+  const ui = motionUi(cur, c);
+  const di = cur.in !== 'none' ? motionDefaultUi(c, 'in', cur.in) : ui;
+  const dd = cur.idle !== 'none' ? motionDefaultUi(c, 'idle', cur.idle) : ui;
+  return {
+    inSpeed: cur.shIn ?? Math.round(toShared(ui.inSpeed, di.inSpeed)),
+    amp: cur.shAmp ?? Math.round(toShared(ui.amp, dd.amp)),
+    speed: cur.shSpeed ?? Math.round(toShared(ui.speed, dd.speed)),
+  };
+};
+/** 共用滑桿的數字 → 寫進設定（實際值依這個動畫自己的預設與刻度換算，並記住共用滑桿的位置） */
+export const sharedFromUi = (f: SharedField, s: number, cur: MoCfg, c: MotionTargetCtx): Partial<MoCfg> => {
+  const def = (f === 'inSpeed' ? motionDefaultUi(c, 'in', cur.in) : motionDefaultUi(c, 'idle', cur.idle))[f];
+  return { ...motionFromUi(f, fromShared(s, def), cur, c), [SH_KEY[f]]: s };
+};
 /** 換動畫種類時寫進設定的內容。
-    滑桿是「共用」的：已經有動畫時換成別的動畫，面板上幅度／速度（進場則是速度）的數字不變，
-    新動畫用自己的刻度去讀同一個數字。只有從「無」第一次選動畫時，才帶入那個動畫的預設值。 */
+    共用滑桿：已經有動畫時換成別的，面板上的數字不變，新動畫依「自己的預設＋同一個共用位置」換算；
+    從「無」第一次選動畫時，共用滑桿回到中間（＝那個動畫自己的預設）。 */
 export const motionSwitchPatch = (d: Partial<MoCfg>, c: MotionTargetCtx, cur: MoCfg): Partial<MoCfg> => {
   if (d.idle !== undefined && d.idle !== 'none' && cur.idle !== 'none') {
-    const ui = motionUi(cur, c), next = { ...cur, idle: d.idle } as MoCfg;
-    return { idle: d.idle, ...motionFromUi('amp', ui.amp, next, c), ...motionFromUi('speed', ui.speed, next, c) };
+    const sh = sharedUi(cur, c), next = { ...cur, idle: d.idle } as MoCfg;
+    return { idle: d.idle, ...sharedFromUi('amp', sh.amp, next, c), ...sharedFromUi('speed', sh.speed, next, c) };
   }
   if (d.in !== undefined && d.in !== 'none' && cur.in !== 'none') {
-    const ui = motionUi(cur, c), next = { ...cur, in: d.in } as MoCfg;
-    return { in: d.in, ...motionFromUi('inSpeed', ui.inSpeed, next, c) };
+    const sh = sharedUi(cur, c), next = { ...cur, in: d.in } as MoCfg;
+    return { in: d.in, ...sharedFromUi('inSpeed', sh.inSpeed, next, c) };
   }
-  return motionPickPatch(d, c, cur.in);
+  const p = motionPickPatch(d, c, cur.in);
+  if (d.idle !== undefined && d.idle !== 'none') return { ...p, shAmp: SHARED_MID, shSpeed: SHARED_MID };
+  if (d.in !== undefined && d.in !== 'none') return { ...p, shIn: SHARED_MID };
+  return p;
 };
 /** 設定 → 面板上滑桿顯示的 0～100 數字 */
 export const motionUi = (cur: MoCfg, c: MotionTargetCtx) => {
@@ -12829,10 +12857,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             onCommit={replayMotion}
                             onChange={(v: number) => setCur(motionFromUi('delay', v, cur, motionTargetCtxOf(selObj)))} />
                           <CompactSlider label="速度"
-                            value={motionUi(cur, motionTargetCtxOf(selObj)).inSpeed}
+                            value={sharedUi(cur, motionTargetCtxOf(selObj)).inSpeed}
                             min={0} max={100} step={1}
                             onCommit={replayMotion}
-                            onChange={(v: number) => setCur(motionFromUi('inSpeed', v, cur, motionTargetCtxOf(selObj)))} />
+                            onChange={(v: number) => setCur(sharedFromUi('inSpeed', v, cur, motionTargetCtxOf(selObj)))} />
                         </div>
 
                         {label('常駐動畫')}
@@ -12846,15 +12874,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         {cur.idle !== 'none' && (
                           <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                             {cur.idle !== 'lab-P-L02' && cur.idle !== 'lab-T-L04' && <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-amp`} label="幅度"
-                              value={motionUi(cur, motionTargetCtxOf(selObj)).amp}
+                              value={sharedUi(cur, motionTargetCtxOf(selObj)).amp}
                               min={0} max={100} step={1}
-                              onChange={(v: number) => setCur(motionFromUi('amp', v, cur, motionTargetCtxOf(selObj)))} />}
+                              onChange={(v: number) => setCur(sharedFromUi('amp', v, cur, motionTargetCtxOf(selObj)))} />}
                             <div className={cur.idle === 'lab-P-L02' || cur.idle === 'lab-T-L04' ? 'col-span-2' : undefined}>
                             <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-speed`} label="速度"
-                              value={motionUi(cur, motionTargetCtxOf(selObj)).speed}
+                              value={sharedUi(cur, motionTargetCtxOf(selObj)).speed}
                               min={0} max={100}
                               step={1}
-                              onChange={(v: number) => setCur(motionFromUi('speed', v, cur, motionTargetCtxOf(selObj)))} />
+                              onChange={(v: number) => setCur(sharedFromUi('speed', v, cur, motionTargetCtxOf(selObj)))} />
                             </div>
                           </div>
                         )}

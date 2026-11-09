@@ -32,6 +32,8 @@ export type ObjectMotionConfig = {
   idle: string;
   amp: number;
   speed: number;
+  /** 共用滑桿目前的位置（0～100，50＝各動畫自己的預設）。舊作品沒有時由實際值推回。 */
+  shIn?: number; shAmp?: number; shSpeed?: number;
 };
 
 export const OBJECT_MOTION_DEFAULT: ObjectMotionConfig = {
