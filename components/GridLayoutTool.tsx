@@ -56,7 +56,7 @@ import { CLASSIC_COORDINATE_VERSION, joinLegacyPages } from '../utils/classicPag
 import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
-import { SYMBOLS } from '../utils/symbols';
+import { SYMBOLS, SYMBOL_LAYOUT } from '../utils/symbols';
 import {
   measureSymbolInk, measureSymbolInkAtSize, measureSymbolStickerInk, measureSymbolAdvance, clearSymbolInkCache,
   symbolTextPresentation, rasterizeSymbolAnimationLayers, symbolBreatheScale, countSymbolAnimationBeats,
@@ -2414,7 +2414,7 @@ const FontCard: React.FC<{
  * 也不會變成「…」。字型晚一點才載好時寬度會變，所以 fonts.ready 之後
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
-export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
+export const SymbolGlyph: React.FC<{ text: string; base?: number; px?: number }> = ({ text, base = 15, px }) => {
   /* 不再為清單中的每一顆建立 state、ResizeObserver 與 fonts.ready 回呼。
      那套做法會讓幾百顆按鈕先用 fallback 畫一遍，再同時換字體與縮放一次，
      正是進頁面時「整片符號抖一下」與點擊延遲的來源。Canvas advance 是同步、
@@ -2425,9 +2425,10 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
      長邊框被縮小塞進 278 的格子，右邊固定空一塊；現在一整排剛好放滿，字也比較大、看得清楚 */
   const nw = Math.max(1, naturalWidth);
   /* 螢幕比 13 Pro 窄（例如 SE、mini）時，用畫面寬度再限制一次，長符號不會戳出按鈕 */
-  const fontSize = nw > 200
+  /* px：排序網站上記錄下來的實際大小（見 SYMBOL_LAYOUT）—— 有的話就照它畫，跟網站上看到的一模一樣 */
+  const fontSize = px ?? (nw > 200
     ? `min(${base * Math.min(1, 332 / nw)}px, calc((100vw - 58px) * ${base / nw}))`
-    : base * Math.min(1, 332 / nw);
+    : base * Math.min(1, 332 / nw));
   return (
     <span
       className="inline-flex max-w-full items-center justify-center whitespace-pre text-center"
@@ -2478,7 +2479,11 @@ export const SymbolPicker: React.FC<{
     symbolFontReady.then(() => { if (alive) setSymbolFaceReady(true); });
     return () => { alive = false; };
   }, []);
-  const symbolButtons = useMemo(() => SYMBOLS.map((symbol, index) => (
+  const symbolButtons = useMemo(() => SYMBOLS.flatMap((symbol, index) => [
+    /* 照排序網站記錄的換行位置換行（見 SYMBOL_LAYOUT）：寬度略有差異也不會整串錯開。
+       換行用一個佔滿整列、高度 0 的元素；它自己會多吃一次列間距，用負的上邊距抵掉 */
+    ...(index > 0 && SYMBOL_LAYOUT?.rows.includes(index)
+      ? [<div key={`br${index}`} aria-hidden="true" style={{ flexBasis: '100%', height: 0, marginTop: -6 }} />] : []),
     <button
       key={index}
       onPointerDown={() => onPrepareRef.current?.(symbol)}
@@ -2488,10 +2493,10 @@ export const SymbolPicker: React.FC<{
       className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/[0.012] border ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
     >
       <span style={{ opacity: symbolFaceReady ? 1 : 0 }}>
-        <SymbolGlyph text={symbol} />
+        <SymbolGlyph text={symbol} px={SYMBOL_LAYOUT?.px[symbol]} />
       </span>
     </button>
-  )), [selected, symbolFaceReady]);
+  ]), [selected, symbolFaceReady]);
 
   return (
     <div className="pt-1">

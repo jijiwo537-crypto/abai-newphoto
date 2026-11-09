@@ -3,8 +3,8 @@
    （390 點寬、左右各 16 點邊距 ＝ 內容 358 點），排成幾排、哪裡換行都跟手機上一樣。
    注意：電腦沒有 iPhone 的字型（PingFang），符號寬度會略有不同；用 iPhone 打開這頁最準。 */
 import React, { useEffect, useRef, useState } from 'react';
-import { SymbolGlyph, symbolFontReady } from './GridLayoutTool';
-import { SYMBOLS } from '../utils/symbols';
+import { SymbolGlyph } from './GridLayoutTool';
+import { SYMBOLS, SYMBOL_LAYOUT } from '../utils/symbols';
 import { packSymbols } from '../utils/symbolPack';
 
 const STORE = 'abai-order-tool-symbols-v2';
@@ -31,11 +31,6 @@ const escapeSym = (s: string) => JSON.stringify(s).replace(/[\u007f-￿]/g, c =>
 
 export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   const [list, setList] = useState<string[]>(loadList);
-  /* 跟 App 的「新增符號」一樣：等符號字型（含各種罕見字元的備用字型）都準備好、量寬度的快取清掉之後，
-     才用最終寬度排一次。沒等的話，一開始量到的寬度會被快取住 —— 長符號縮放後的大小跟 App 不同，
-     從那一排開始換行位置就錯開 */
-  const [fontsReady, setFontsReady] = useState(false);
-  useEffect(() => { let alive = true; symbolFontReady.then(() => { if (alive) setFontsReady(true); }); return () => { alive = false; }; }, []);
   const [drag, setDrag] = useState<{ sym: string; pointerId: number; dx: number; dy: number; x: number; y: number; w: number; h: number } | null>(null);
   const dragRef = useRef(drag); dragRef.current = drag;
   const hold = useRef<{ x: number; y: number; pointerId: number; timer: number } | null>(null);
@@ -175,6 +170,20 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
     }, 30);
   };
 
+  /** 從畫面上直接記錄排版：每顆符號實際的字級（像素）、每一排第一顆是第幾顆 */
+  const captureLayout = () => {
+    const grid = gridRef.current;
+    const els = grid ? (Array.from(grid.querySelectorAll('[data-sym]')) as HTMLElement[]).sort((a, b) => Number(a.dataset.sym) - Number(b.dataset.sym)) : [];
+    const px: number[] = [], rows: number[] = [];
+    let lastTop = NaN;
+    els.forEach((el, i) => {
+      const glyph = el.querySelector('span span') as HTMLElement | null;
+      px.push(glyph ? Math.round(parseFloat(getComputedStyle(glyph).fontSize) * 1000) / 1000 : 15);
+      const top = Math.round(el.getBoundingClientRect().top);
+      if (top !== lastTop) { rows.push(i); lastTop = top; }
+    });
+    return { w: FRAME_W - 32, rows, px };
+  };
   const copyText = () => [
     '【ABAI 符號清單 v2】請把「新增符號」改成這份清單（照這個順序；新增、刪除都已經算進去）：',
     `共 ${list.length} 顆（新增 ${added}、刪除 ${removed}）`,
@@ -185,6 +194,8 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       const ids = list.map((s, i) => (cats.of[s] === k ? i : -1)).filter(i => i >= 0);
       return ids.length ? `第${k + 1}類「${n || '未命名'}」：${ids.join(',')}` : '';
     }).filter(Boolean), `未分類：${list.map((s, i) => (cats.of[s] === undefined ? i : -1)).filter(i => i >= 0).join(',')}`] : []),
+    '', '【排版】（這支手機上實際看到的樣子：每顆的字級、每排從第幾顆開始。App 會照這個畫，跟這裡一模一樣）',
+    JSON.stringify(captureLayout()),
   ].join('\n');
   const copy = async () => {
     const t = copyText();
@@ -200,7 +211,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
         <div className="flex gap-2 shrink-0">
           <button onClick={() => { if (!changed || confirm('回到 App 目前的清單？（新增、刪除、排序都會復原）')) { setList(SYMBOLS.slice()); onToast('已回到 App 目前的清單'); } }}
             className="h-8 px-3 rounded-full border border-white/15 text-[12px] text-white/70">重設</button>
-          <button onClick={autoPack} disabled={packing || !fontsReady}
+          <button onClick={autoPack} disabled={packing}
             className="h-8 px-3 rounded-full border border-white/30 text-[12px] text-white">{packing ? '排列中…' : '自動排列'}</button>
           <button onClick={copy} disabled={!changed && !tagged}
             className={`h-8 px-3 rounded-full text-[12px] font-bold ${changed || tagged ? 'bg-white text-black' : 'bg-white/10 text-white/35'}`}>複製清單</button>
@@ -259,7 +270,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
           <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
           <div ref={gridRef} className="flex flex-wrap gap-1.5 pb-4 mt-3">
             {list.map((sym, i) => (
-              <SymItem key={sym} sym={sym} i={i} h={handlers} ready={fontsReady} dragging={!!drag} faded={drag?.sym === sym} dashed={!SYMBOLS.includes(sym)}
+              <SymItem key={sym} sym={sym} i={i} h={handlers} dragging={!!drag} faded={drag?.sym === sym} dashed={!SYMBOLS.includes(sym)}
                 ring={brush === -3 ? 'inset 0 0 0 1px #ff5a5a88' : cats.of[sym] !== undefined ? `inset 0 0 0 2px ${CAT_COLORS[cats.of[sym]]}` : undefined} />
             ))}
           </div>
@@ -276,7 +287,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
 }
 
 type H = { down: (e: React.PointerEvent, sym: string) => void; move: (e: React.PointerEvent) => void; up: (e: React.PointerEvent) => void; tap: (sym: string) => void };
-const SymItem = React.memo(function SymItem({ sym, i, h, dragging, faded, dashed, ring, ready }: { sym: string; i: number; h: H; dragging: boolean; faded: boolean; dashed: boolean; ring?: string; ready: boolean }) {
+const SymItem = React.memo(function SymItem({ sym, i, h, dragging, faded, dashed, ring }: { sym: string; i: number; h: H; dragging: boolean; faded: boolean; dashed: boolean; ring?: string }) {
   return (
     <button data-sym={i} data-key={sym}
       onPointerDown={e => h.down(e, sym)} onPointerMove={h.move} onPointerUp={h.up} onPointerCancel={h.up}
@@ -284,7 +295,7 @@ const SymItem = React.memo(function SymItem({ sym, i, h, dragging, faded, dashed
       style={{ boxShadow: ring, opacity: faded ? .25 : 1, WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none', touchAction: dragging ? 'none' : 'manipulation' }}
       className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border inline-flex items-center justify-center text-white/85 ${dashed ? 'border-dashed border-white/50' : 'border-white/10'}`}>
       {/* 跟 App 同一層濾鏡：整片轉白（彩色 emoji 也一樣） */}
-      <span style={{ filter: 'grayscale(1) brightness(0) invert(1)', opacity: ready ? 1 : 0 }}><SymbolGlyph key={ready ? 'r' : 'w'} text={sym} /></span>
+      <span style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}><SymbolGlyph text={sym} px={SYMBOL_LAYOUT?.px[sym]} /></span>
     </button>
   );
 });
