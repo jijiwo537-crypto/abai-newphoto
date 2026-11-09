@@ -3,7 +3,7 @@
    （390 點寬、左右各 16 點邊距 ＝ 內容 358 點），排成幾排、哪裡換行都跟手機上一樣。
    注意：電腦沒有 iPhone 的字型（PingFang），符號寬度會略有不同；用 iPhone 打開這頁最準。 */
 import React, { useEffect, useRef, useState } from 'react';
-import { SymbolGlyph } from './GridLayoutTool';
+import { SymbolGlyph, symbolStretches } from './GridLayoutTool';
 import { SYMBOLS } from '../utils/symbols';
 
 const STORE = 'abai-order-tool-symbols-v1';
@@ -151,7 +151,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
                 onPointerDown={e => onDown(e, idx)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
                 onContextMenu={e => e.preventDefault()} onClick={() => onTap(idx)}
                 style={{ boxShadow: cats.of[SYMBOLS[idx]] !== undefined ? `inset 0 0 0 2px ${CAT_COLORS[cats.of[SYMBOLS[idx]]]}` : undefined, opacity: drag?.idx === idx ? .25 : 1, WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none', touchAction: drag ? 'none' : 'manipulation' }}
-                className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 inline-flex items-center justify-center text-white/85">
+                className={`${symbolStretches(SYMBOLS[idx]) ? 'grow ' : ''}min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 inline-flex items-center justify-center text-white/85`}>
                 <span style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}><SymbolGlyph text={SYMBOLS[idx]} /></span>
               </button>
             ))}
