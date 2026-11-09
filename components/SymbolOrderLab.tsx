@@ -9,10 +9,12 @@ import { SYMBOLS } from '../utils/symbols';
 const STORE = 'abai-order-tool-symbols-v1';
 const HOLD_MS = 280;
 /** 存的是「目前 App 順序裡的位置」排成的新順序；App 的清單變了就作廢 */
+/** 用整串內容（含順序）算指紋：清單換了順序或內容，舊的拖曳結果就作廢 —— 以前只比總長度，換順序後還在套舊的排法，所以看起來跟 App 不一樣 */
+const SIG = (() => { let h = 0; for (const c of SYMBOLS.join('\u0001')) h = (h * 31 + c.codePointAt(0)!) | 0; return h; })();
 const loadOrder = (): number[] => {
   try {
     const v = JSON.parse(localStorage.getItem(STORE) || 'null');
-    if (v && Array.isArray(v.order) && v.order.length === SYMBOLS.length && v.sig === SYMBOLS.join('\u0001').length) return v.order;
+    if (v && Array.isArray(v.order) && v.order.length === SYMBOLS.length && v.sig === SIG) return v.order;
   } catch { /* 私密模式 */ }
   return SYMBOLS.map((_, i) => i);
 };
@@ -23,7 +25,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   const dragRef = useRef(drag); dragRef.current = drag;
   const hold = useRef<{ x: number; y: number; pointerId: number; timer: number } | null>(null);
   useEffect(() => {
-    try { localStorage.setItem(STORE, JSON.stringify({ order, sig: SYMBOLS.join('\u0001').length })); } catch { /* 私密模式 */ }
+    try { localStorage.setItem(STORE, JSON.stringify({ order, sig: SIG })); } catch { /* 私密模式 */ }
   }, [order]);
   const changed = order.some((v, i) => v !== i);
   // 拖曳中不讓頁面跟著捲動（iOS 要在 touchmove 上 preventDefault，而且不能是 passive）
@@ -101,7 +103,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
                 onPointerDown={e => onDown(e, idx)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
                 onContextMenu={e => e.preventDefault()}
                 style={{ opacity: drag?.idx === idx ? .25 : 1, WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none', touchAction: drag ? 'none' : 'manipulation' }}
-                className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 inline-flex items-center justify-center text-white/85">
+                className="grow min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 inline-flex items-center justify-center text-white/85">
                 <SymbolGlyph text={SYMBOLS[idx]} />
               </button>
             ))}
