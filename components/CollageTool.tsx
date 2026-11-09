@@ -10307,6 +10307,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         renderToCanvas(cv, scale);
       }
       if (!blob && !videoAbortRef.current) {
+        /* 退到即時錄影（逐格輸出失敗或不支援）：長邊壓回 1280。
+           即時錄影要在時間內畫完每一格、編碼器和畫布同時佔記憶體，太大會掉格，iPhone 上甚至可能被系統關掉 */
+        scale = Math.min(scale, Math.max(0.001, Math.floor(1280 / Math.max(logicalW, logicalH) * 1000) / 1000));
+        renderToCanvas(cv, scale);
         const mime = collageVideoMime(videoExportFormat);
         if(!mime)throw Error('此裝置不支援所選的影片格式');
         /* 動態成品至少 50fps；高幀率影片素材則保留其來源幀率。 */

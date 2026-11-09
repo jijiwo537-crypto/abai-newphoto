@@ -15927,7 +15927,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        * 錄影（匯出）與 IG 預覽的即時畫面共用這一份 —— 兩邊看到的東西
        * 是同一條程式碼畫出來的，不可能長得不一樣。
        */
-      const preparePageVideo = async (pageIdx: number, pageLeft: number) => {
+      const preparePageVideo = async (pageIdx: number, pageLeft: number, realtime = false) => {
         const pageJobs = drawJobs.filter(j =>
           j.maxX > pageLeft + 0.5 && j.minX < pageLeft + targetW - 0.5);
         const videoJobs = pageJobs.filter(j => j.isVideo);
@@ -15937,7 +15937,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
            1280，3:4 頁實際只剩 960px 寬，細字、符號與小圖形必然被放糊。 */
         /* 正式輸出：解析度＝匯出設定選的畫質（短邊 720／1080／1440／2160，見 videoScaleFor）。
            現在是逐格輸出（不是即時錄影），不必再為了即時編碼把長邊壓到 1280 */
-        const k = opts?.live ? Math.min(1, 2400 / Math.max(targetW, targetH)) : videoScaleFor(videoExportQuality, targetW, targetH);
+        const k = opts?.live ? Math.min(1, 2400 / Math.max(targetW, targetH))
+          : realtime ? Math.min(videoScaleFor(videoExportQuality, targetW, targetH), 1280 / Math.max(targetW, targetH))
+          : videoScaleFor(videoExportQuality, targetW, targetH);
         // 編碼器要求偶數邊長
         const VW = Math.max(2, Math.round(targetW * k / 2) * 2);
         const VH = Math.max(2, Math.round(targetH * k / 2) * 2);
@@ -16020,7 +16022,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       };
 
       const recordPageVideo = async (pageIdx: number, pageLeft: number): Promise<string> => {
-        const { rc, composite, dur, vids } = await preparePageVideo(pageIdx, pageLeft);
+        let { rc, composite, dur, vids } = await preparePageVideo(pageIdx, pageLeft);
 
         /* 逐格輸出（見 utils/frameExactVideo）：每一格先把影片停在那個時間點、
            合成完才交給編碼器，時間戳是算出來的 —— 合成多慢都不會掉格，
@@ -16047,6 +16049,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           }
           await seekVideosTo(vids, 0);
           await composite(0);
+        }
+        /* 退到即時錄影：長邊壓回 1280（跟以前一樣）。即時錄影要在時間內畫完每一格，
+           編碼器和畫布同時佔記憶體，太大會掉格，iPhone 上甚至可能被系統關掉 */
+        if (Math.max(rc.width, rc.height) > 1280) {
+          rc.width = 0; rc.height = 0;
+          ({ rc, composite, dur, vids } = await preparePageVideo(pageIdx, pageLeft, true));
         }
 
         const mime = collageVideoMime(videoExportFormat);
