@@ -8073,7 +8073,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 ctx.save();ctx.translate(tdx + layer.pivotX * rasterScale, tdy + layer.pivotY * rasterScale);
                 paintSelectedAnimation(ctx, f.lab, layer.w * rasterScale, layer.h * rasterScale, g =>
                   g.drawImage(layer.canvas, (layer.x-layer.pivotX)*rasterScale, (layer.y-layer.pivotY)*rasterScale, layer.w*rasterScale, layer.h*rasterScale), index, raster.layers.length,
-                  { x: (layer.x-layer.pivotX)*rasterScale, y: (layer.y-layer.pivotY)*rasterScale, w: layer.w*rasterScale, h: layer.h*rasterScale });
+                  { x: (layer.x-layer.pivotX)*rasterScale, y: (layer.y-layer.pivotY)*rasterScale, w: layer.w*rasterScale, h: layer.h*rasterScale, src: layer.canvas });
                 ctx.restore();
               });return;
             }

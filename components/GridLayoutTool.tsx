@@ -2009,16 +2009,17 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     }} />
   );
   if (isMistFrame(item.kind)) return (
-    // 霧白邊框：四邊、四角往外越來越白，中間空的
-    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+    /* 霧白邊框：四邊、四角往外越來越白，中間空的。
+       外框比例與大小跟其他邊框一樣（寬 0.78×、高 1.04× 的直式 3:4，細外框貼齊邊緣），並排時三顆一致。 */
+    <svg viewBox="0 0 60 80" width={size * .78} height={size * 1.04} aria-hidden="true" style={{ display: 'block' }}>
       <defs>
-        <filter id={`mist-${maskId}`} x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.6" /></filter>
-        <clipPath id={`mistc-${maskId}`}><rect x="2" y="2" width="20" height="20" /></clipPath>
+        <filter id={`mist-${maskId}`} x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="5" /></filter>
+        <clipPath id={`mistc-${maskId}`}><rect x="0" y="0" width="60" height="80" /></clipPath>
       </defs>
       <g clipPath={`url(#mistc-${maskId})`}>
-        <rect x="2" y="2" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="7" filter={`url(#mist-${maskId})`} />
+        <rect x="0" y="0" width="60" height="80" fill="none" stroke="currentColor" strokeWidth="14" opacity=".85" filter={`url(#mist-${maskId})`} />
       </g>
-      <rect x="2" y="2" width="20" height="20" fill="none" stroke="currentColor" strokeWidth=".6" opacity=".35" />
+      <rect x=".6" y=".6" width="58.8" height="78.8" fill="none" stroke="currentColor" strokeWidth="1.2" opacity=".35" />
     </svg>
   );
   const isLine = item.kind === 'line';
@@ -6087,7 +6088,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             if (!raster) return;
             raster.layers.forEach((layer,index) => {
               ctx.save();ctx.translate(dx+layer.pivotX,dy+startY+lineIndex*lineH+layer.pivotY);
-              paintSelectedAnimation(ctx,motionFrame.lab,layer.w,layer.h,g=>g.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h),offset+index,total,{x:layer.x-layer.pivotX,y:layer.y-layer.pivotY,w:layer.w,h:layer.h});
+              paintSelectedAnimation(ctx,motionFrame.lab,layer.w,layer.h,g=>g.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h),offset+index,total,{x:layer.x-layer.pivotX,y:layer.y-layer.pivotY,w:layer.w,h:layer.h,src:layer.canvas});
               ctx.restore();
             });offset += raster.layers.length;
           });return;
@@ -6152,7 +6153,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           paintSelectedAnimation(ctx, unitMotionFrame.lab, layer.w, layer.h, g => g.drawImage(layer.canvas,
             layer.x - layer.pivotX, layer.y - layer.pivotY,
             layer.w, layer.h), index, count,
-            { x: layer.x - layer.pivotX, y: layer.y - layer.pivotY, w: layer.w, h: layer.h });
+            { x: layer.x - layer.pivotX, y: layer.y - layer.pivotY, w: layer.w, h: layer.h, src: layer.canvas });
           ctx.restore();
         });
       };
