@@ -45,9 +45,10 @@ try {
   assert.equal(n,1,`${id} paints once`);
  }
  assert.ok(m.defocusLevel(2,1,0,1)>.9,'defocus is blurred at t=2');
- ctx.filter='none';
- m.applySelectedPatternAppearance(ctx,m.selectedFrame({...cfg,idle:'lab-P-L20'},2,.4),40,0,0);
- assert.match(ctx.filter,/blur\([1-9]/,'pattern defocus is visible');
+ ctx.filter='none';let pd=0;
+ m.paintSelectedPattern(ctx,m.selectedFrame({...cfg,idle:'lab-P-L20'},2,.4),40,0,0,()=>pd++);
+ assert.equal(ctx.filter,'none','pattern defocus does not rely on canvas filter');
+ assert.equal(pd,1,'pattern defocus paints once');
  // 失焦：單一目標一個時機；兩個目標兩組；三個以上固定三組，且每組人數平均、相鄰不同組。
  assert.deepEqual(m.defocusGroup(0,1),{group:0,groups:1});
  assert.deepEqual([0,1].map(i=>m.defocusGroup(i,2).group),[0,1]);
