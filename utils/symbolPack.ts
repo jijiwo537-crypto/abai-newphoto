@@ -8,7 +8,7 @@
  *  - 由上到下：一般符號 → 顏文字 → 邊框（邊框越長越下面）。
  *  - 每一排盡量排滿：同一區先用「最佳適配」裝箱，再隨機擾動幾千次挑空白最少的。
  *  - 顏文字一定集中在一起，中間不插別的符號。
- *  - 邊框排完還有一大塊空白的排（> fillOver），從一般符號裡挑剛好放得下的補上。
+ *  - 邊框只跟邊框同一排，不拿一般符號去補。
  *  - 最後用跟瀏覽器一樣的「由左到右、放不下就換行」模擬一次，確認排出來就是算的樣子。 */
 
 export interface PackInput {
@@ -70,8 +70,8 @@ export function packSymbols(o: PackInput): { order: number[]; rowGaps: number[] 
       }
     }
   };
-  /* 顏文字一定要排在一起：只拿一般符號去補邊框的排，顏文字的排不插別的符號 */
-  fill(brows);
+  /* 顏文字、邊框都不跟其他區的符號混在同一排（不補位） */
+  void fill;
   const prows = search(plain);
   const widest = (r: number[], g?: number) => Math.max(...r.filter(i => g === undefined || group[i] === g).map(i => w[i]));
   prows.sort((a, b) => widest(a) - widest(b));

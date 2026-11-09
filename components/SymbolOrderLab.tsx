@@ -17,9 +17,10 @@ const SIG = (() => { let h = 0; for (const c of SYMBOLS.join('\u0001')) h = (h *
 const loadList = (): string[] => {
   try {
     const v = JSON.parse(localStorage.getItem(STORE) || 'null');
-    if (v && Array.isArray(v.list) && v.sig === SIG && v.list.every((s: unknown) => typeof s === 'string')) return v.list;
+    /* 同一個符號只能有一顆：重複的會讓畫面分不清是哪一顆，拖曳時會一直複製出新的 */
+    if (v && Array.isArray(v.list) && v.sig === SIG && v.list.every((s: unknown) => typeof s === 'string')) return (v.list as string[]).filter((s, i, a) => a.indexOf(s) === i);
   } catch { /* 私密模式 */ }
-  return SYMBOLS.slice();
+  return SYMBOLS.filter((s, i, a) => a.indexOf(s) === i);
 };
 /** 複製出去的清單用 \uXXXX 寫：組合附加符號在複製貼上時才不會被改壞（同 utils/symbols.ts 的理由） */
 const escapeSym = (s: string) => JSON.stringify(s).replace(/[\u007f-￿]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
