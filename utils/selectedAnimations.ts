@@ -201,9 +201,8 @@ export function blurKeyOf(id:string){let k=idKeys.get(id);if(!k){k={};idKeys.set
       空閒時（requestIdleCallback）才把缺的補上，播放、拖動、拉滑桿都不會被卡住。
    畫質：每檔存的解析度讓「存起來那張自己的模糊」至少 4 像素 —— 放大回螢幕是平滑曲面，沒有格子紋。 */
 type Lv={c:HTMLCanvasElement;x:number;y:number;w:number;h:number;bytes:number};
-type Stack={key:string;d0:number;lv:Map<number,Lv>;bytes:number;used:number;paint:(g:CanvasRenderingContext2D)=>void;style:any;hw:number;hh:number;cx:number;cy:number;pending:Set<number>};
-/* 每檔 σ ×2^¼（約 1.19 倍）：相鄰兩檔幾乎分不出來，所以每一格只畫「最接近的那一檔」——
-   一次 drawImage，跟畫一個沒模糊的物件一樣輕，不再需要兩檔混合的暫存畫布 */
+type Stack={key:string;d0:number;lv:Map<number,Lv>;bytes:number;used:number;paint:(g:CanvasRenderingContext2D)=>void;style:any;hw:number;hh:number;cx:number;cy:number;pending:Set<number>;up?:Stack};
+/* 每檔 σ ×2^¼（約 1.19 倍）。相鄰兩檔再依變異數連續混合：模糊量是連續變化的，不會一檔一檔地跳 */
 const LV_RATIO=Math.pow(2,.25),LV_BASE=.5;
 const lvSigma=(k:number)=>k<0?0:LV_BASE*Math.pow(LV_RATIO,k);
 const stacks=new Map<object,Stack>();
@@ -242,6 +241,8 @@ function buildLevel(st:Stack,k:number):Lv|null{
  const x=st.cx-st.hw-padL,y=st.cy-st.hh-padL,wL=2*(st.hw+padL),hL=2*(st.hh+padL);
  const W=Math.max(1,Math.ceil(wL*d0*s)),H=Math.max(1,Math.ceil(hL*d0*s));
  if(W*H>4e6)return null;
+ /* 貼回去的大小要剛好等於畫布的像素格（W÷r），不能用取整前的寬度：
+    不然每一檔被拉伸的比例都差一點點，換檔時物件就會抖一下、位移一下 */
  const c=document.createElement('canvas');c.width=W;c.height=H;
  const g=c.getContext('2d',{willReadFrequently:true})!;
  const r=d0*s;g.setTransform(r,0,0,r,-x*r,-y*r);
@@ -249,22 +250,25 @@ function buildLevel(st:Stack,k:number):Lv|null{
  Object.assign(g,st.style);
  st.paint(g);
  if(sigma>0){g.setTransform(1,0,0,1,0,0);const d=g.getImageData(0,0,W,H);gaussInPlace(d,sigma*s);g.putImageData(d,0,0);}
- return {c,x,y,w:wL,h:hL,bytes:W*H*4};
+ return {c,x,y,w:W/r,h:H/r,bytes:W*H*4};
 }
 /* 空閒時補算缺的檔：一次一檔，量時間，超過就留給下一次空閒 */
-const queue:{st:Stack;k:number;key:object}[]=[];
+const queue:{st:Stack;k:number;key:object;up?:boolean}[]=[];
 let idleOn=false;
-const ric:(f:()=>void)=>void=(f)=>{const w=globalThis as any;if(typeof w.requestIdleCallback==='function')w.requestIdleCallback(f,{timeout:120});else setTimeout(f,16);};
+const ric:(f:()=>void)=>void=(f)=>{const w=globalThis as any;if(typeof w.requestIdleCallback==='function')w.requestIdleCallback(f,{timeout:300});else setTimeout(f,16);};
 function pump(){
  idleOn=false;const t0=performance.now();
- while(queue.length&&performance.now()-t0<8){
-  const {st,k,key}=queue.shift()!;st.pending.delete(k);
-  if(stacks.get(key)!==st||st.lv.has(k))continue;
+ while(queue.length&&performance.now()-t0<5){
+  const {st,k,key,up}=queue.shift()!;st.pending.delete(k);
+  const cur=stacks.get(key);
+  if(up?(!cur||cur.up!==st):cur!==st)continue;
+  if(st.lv.has(k))continue;
   const l=buildLevel(st,k);if(!l)continue;
-  st.lv.set(k,l);st.bytes+=l.bytes;stackBytes+=l.bytes;evictStacks(key);
+  st.lv.set(k,l);st.bytes+=l.bytes;if(!up){stackBytes+=l.bytes;evictStacks(key);}
  }
  if(queue.length&&!idleOn){idleOn=true;ric(pump);}
 }
+function wantOn(st:Stack,k:number,key:object){if(k<0||st.lv.has(k)||st.pending.has(k))return;st.pending.add(k);queue.push({st,k,key,up:true});if(!idleOn){idleOn=true;ric(pump);}}
 function want(st:Stack,k:number,key:object){if(k<0||st.lv.has(k)||st.pending.has(k))return;st.pending.add(k);queue.push({st,k,key});if(!idleOn){idleOn=true;ric(pump);}}
 function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number,cacheKey:object,rect?:{hw:number;hh:number}):boolean{
  const hw=rect?.hw??extent,hh=rect?.hh??extent;
@@ -272,11 +276,22 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  const mt=ctx.getTransform(),density=Math.max(.01,Math.hypot(mt.a,mt.b),Math.hypot(mt.c,mt.d));
  const key=`${hw.toFixed(2)},${hh.toFixed(2)},${cx.toFixed(2)},${cy.toFixed(2)}`;
  let st=stacks.get(cacheKey);
- /* 存的密度不夠（預覽放大很多）才重做；縮小、拖動、旋轉都沿用 */
- if(!st||st.key!==key||density>st.d0*1.3){
+ if(!st||st.key!==key){
   if(st)freeStack(cacheKey);
   st={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};stacks.set(cacheKey,st);
  }
+ /* 預覽放大很多（存的密度不夠細）：不在這一格重做 —— 先繼續用手上這一份（放大貼上，模糊的東西放大看不出差別），
+    同時在空閒時間準備一份更細的；需要的那幾檔都好了才換過去。捏合縮放時不會一直重做、不會卡 */
+ if(density>st.d0*1.3){
+  if(!st.up||density>st.up.d0*1.3){st.up={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};}
+  const up=st.up;up.paint=paint;
+  const s1=sigma*up.d0/density;let k1=-1;while(lvSigma(k1+1)<=s1&&k1<30)k1++;
+  wantOn(up,k1,cacheKey);wantOn(up,k1+1,cacheKey);
+  if((k1<0||up.lv.has(k1))&&up.lv.has(k1+1)){
+   const old=st;freeStack(cacheKey);up.used=old.used;stacks.set(cacheKey,up);
+   stackBytes+=up.bytes;st=up;
+  }
+ } else if(st.up&&density<=st.d0*1.3){st.up.lv.forEach(l=>{l.c.width=l.c.height=0;});st.up=undefined;}
  st.paint=paint;
  st.style={fillStyle:ctx.fillStyle,strokeStyle:ctx.strokeStyle,lineWidth:ctx.lineWidth,lineJoin:ctx.lineJoin,lineCap:ctx.lineCap};
  st.used=++stackClock;
@@ -302,8 +317,6 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  };
  ctx.save();ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='low';
  const a0=ctx.globalAlpha;
- // 依變異數取最接近的那一檔（檔與檔之間只差約 19%，看不出跳動）
- if(has(kB)&&has(kA))t=t<.5?0:1;
  if(t<=1e-3||t>=1-1e-3){const i=t>=1-1e-3?kB:kA;ctx.globalAlpha=a0;if(i<0){ctx.restore();ctx.save();paint(ctx);ctx.restore();return true;}drawLv(ctx,i,a0);ctx.restore();return true;}
  /* 兩檔混合：在一張螢幕對齊的小畫布上用 'lighter' 疊（＝精確的加權平均），再貼回去 */
  const L=st.lv.get(kB)!;   // 範圍以比較大的那檔為準

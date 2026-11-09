@@ -9,6 +9,10 @@ import { packSymbols } from '../utils/symbolPack';
 
 const STORE = 'abai-order-tool-symbols-v2';
 const HOLD_MS = 280;
+/* 預覽框的寬度＝「這支手機的螢幕寬」（在手機上打開時）：App 的符號清單是螢幕寬減左右各 16 點，
+   不同型號的 iPhone 寬度不一樣（390、393、402…），固定用 13 Pro 的 390 的話，
+   一排放得下的符號就跟你手機上的 App 不同 → 換行位置錯開、出現一排只剩一顆。電腦上維持 390。 */
+const FRAME_W = typeof window !== 'undefined' && window.innerWidth <= 520 ? Math.round(window.innerWidth) : 390;
 const CAT_STORE = 'abai-order-tool-symbol-cats-v1';
 const CAT_COLORS = ['#ff5a5a', '#ffb02e', '#4cd964', '#3fa9ff', '#c77dff'];
 /** App 目前清單的指紋：App 的清單換了，這頁存著的舊編輯就作廢、回到 App 目前的樣子 */
@@ -187,7 +191,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-3">
-        <p className="text-[11px] text-white/45 leading-relaxed">預覽＝iPhone 13 Pro 的寬度。請用 iPhone 打開這頁再按「自動排列」：每顆的寬度看字型，要用手機的才準。<br /><span className="text-white/30">App 清單版本 {(SIG >>> 0).toString(16).slice(-6)}・{SYMBOLS.length} 顆</span></p>
+        <p className="text-[11px] text-white/45 leading-relaxed">預覽寬度＝{FRAME_W === 390 && !(typeof window !== 'undefined' && window.innerWidth <= 520) ? 'iPhone 13 Pro（390）' : `這支手機（${FRAME_W}）`}，一排可用 {FRAME_W - 32} 點，跟這支手機上的 App 一樣。請用 iPhone 打開這頁再按「自動排列」。<br /><span className="text-white/30">App 清單版本 {(SIG >>> 0).toString(16).slice(-6)}・{SYMBOLS.length} 顆</span></p>
         <div className="flex gap-2 shrink-0">
           <button onClick={() => { if (!changed || confirm('回到 App 目前的清單？（新增、刪除、排序都會復原）')) { setList(SYMBOLS.slice()); onToast('已回到 App 目前的清單'); } }}
             className="h-8 px-3 rounded-full border border-white/15 text-[12px] text-white/70">重設</button>
@@ -245,7 +249,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       </div>
       {/* 手機框：390 寬（外框線各 1 點另外算，所以是 392）、內容左右各 16 ＝ 358 */}
       {/* 固定 390 寬：在手機上會吃掉頁面左右的留白、剛好等於螢幕寬；在電腦上置中 */}
-      <div className="rounded-[28px] border border-white/15 bg-black overflow-hidden" style={{ width: 392, marginLeft: 'calc((100% - 392px) / 2)' }}>
+      <div className="rounded-[28px] border border-white/15 bg-black overflow-hidden" style={{ width: FRAME_W + 2, marginLeft: `calc((100% - ${FRAME_W + 2}px) / 2)` }}>
         <div className="pt-1" style={{ padding: '12px 16px 24px' }}>
           <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
           <div ref={gridRef} className="flex flex-wrap gap-1.5 pb-4 mt-3">
