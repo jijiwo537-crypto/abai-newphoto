@@ -12215,6 +12215,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     {/* 按鈕與圖標尺寸跟經典拼圖的加號頁完全一致；
                         只差沒有「新增佈局」——創意拼圖的版面是排版＋遮罩決定的。 */}
                     {addSub === 'symbol' ? (
+                      /* 這一頁的外框左右各留 20 點；符號清單往外撐 4 點，變成跟跨頁拼圖、排序網站一樣的左右各 16 點，
+                         一排放得下的寬度才會一模一樣（不然同一個順序在這裡換行的位置會不同） */
+                      <div className="-mx-1">
                       <SymbolPicker
                         onBack={() => setAddSub('root')}
                         onPrepare={(symbol) => { prepareAddSymbol(symbol); }}
@@ -12226,6 +12229,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           addSymbol(symbol);
                         }}
                       />
+                      </div>
                     ) : addSub === 'root' ? (
                     /* key 是必要的：兩個分頁的最外層都是 <div>，沒有 key 的話
                        React 會當成同一顆、只換 className —— 清單那邊的 <button>
@@ -12242,14 +12246,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <div className="flex justify-center gap-2">
                       <button
                         onClick={() => objFileInputRef.current?.click()}
-                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
                         <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">匯入圖片</span>
                       </button>
                       <button
                         onClick={addText}
-                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
                         <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增文字</span>
@@ -12257,7 +12261,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       {/* 新增符號：內容之後再補，先把位置與外觀定下來 */}
                       <button
                         onClick={() => setAddSub('symbol')}
-                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
                         {/* 圖示不能用 Material 的 emoji_symbols：專案裡那份是**子集**，
                             只打包了真的有用到的 73 顆，emoji_symbols 不在裡面 ——
@@ -12269,7 +12273,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       </button>
                       <button
                         onClick={() => setAddSub('shape')}
-                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
                         <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80 translate-x-px" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增圖形</span>

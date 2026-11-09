@@ -1977,7 +1977,7 @@ export const GridShapePicker = React.memo(({ onPick }: { onPick: (it: any) => vo
               onClick={() => onPick(it)}
               aria-label={'label' in it ? String(it.label) : it.id}
               title={'label' in it ? String(it.label) : it.id}
-              className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
+              className="h-11 rounded-[10px] bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
             >
               {(it as any).hole
                 ? <HoleGlyph s={(it as any).hole} filled={(it as any).filled} />
@@ -2485,7 +2485,7 @@ export const SymbolPicker: React.FC<{
       onClick={() => { onPickRef.current(symbol); }}
       aria-label={symbol}
       aria-pressed={selected === symbol}
-      className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
+      className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/[0.012] border ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
     >
       <span style={{ opacity: symbolFaceReady ? 1 : 0 }}>
         <SymbolGlyph text={symbol} />
@@ -18735,14 +18735,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     onClick={() => {
                       setActiveTab('layout');
                     }}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="grid_view" className="text-[24px] text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增佈局</span>
                   </button>
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">匯入圖片</span>
@@ -18750,7 +18750,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   {/* 影片：圖示用 lucide 的 Film，跟創意拼圖那顆同一個 */}
                   <button
                     onClick={() => vidInputRef.current?.click()}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Film size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">匯入影片</span>
@@ -18759,7 +18759,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   <div className="flex justify-center gap-1.5">
                   <button
                     onClick={() => handleAddTextLayer()}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     {/* 跟文字編輯面板裡「字體」那一顆同一個圖示。
                         線寬調細對齊旁邊兩顆 Material 圖標；透明度改成掛在整個
@@ -18771,7 +18771,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   {/* 新增符號：內容之後再補，先把位置與外觀定下來 */}
                   <button
                     onClick={() => setAddSub('symbol')}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     {/* 圖示不能用 Material 的 emoji_symbols：專案裡那份是**子集**，
                         只打包了真的有用到的 73 顆，emoji_symbols 不在裡面 ——
@@ -18783,7 +18783,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   </button>
                   <button
                     onClick={() => setAddSub('shape')}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80 translate-x-px" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增圖形</span>
