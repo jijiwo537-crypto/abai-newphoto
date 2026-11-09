@@ -78,3 +78,14 @@ export const nativeAssetIdOf = (src: string | Blob | null | undefined): string |
   if (typeof src === 'string') return urlPath.get(src)?.assetId;
   return fileInfo.get(src)?.assetId;
 };
+
+/* 影片不讀進 JavaScript：在 iOS 用 fetch 讀 capacitor 檔案網址的影片常常直接失敗（狀態 0），
+   而且整段影片（動輒數百 MB）讀進記憶體也沒有必要。交給選擇器一個「空殼」File（名稱、類型正確），
+   記下它在原生端的路徑；播放、縮圖都直接讀那個檔（見 loadVideoEl、videoPoster）。 */
+export const isVideoItem = (it: { name?: string; type?: string }) =>
+  (it.type || '').startsWith('video/') || /\.(mov|mp4|m4v|3gp|avi|mkv|hevc|webm)$/i.test(it.name || '');
+export const nativeVideoFile = (it: { path: string; name?: string; type?: string; assetId?: string }) => {
+  const f = new File([], it.name || 'video.mov', { type: it.type || 'video/quicktime', lastModified: Date.now() });
+  rememberNativeFile(f, it.path, it.assetId);
+  return f;
+};

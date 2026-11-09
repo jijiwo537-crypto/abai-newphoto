@@ -1,3 +1,4 @@
+import { nativePathOf, fileSrc } from './nativeBridge';
 /* 影片的第一格縮圖（濾鏡／特效卡片牆、拖曳預覽用）。
  *
  * 卡片是把網址塞進 <img> 重畫的，影片網址畫不出東西，所以要先烤一張第一格。
@@ -23,6 +24,9 @@ export function videoPoster(url: string, maxSide = 512): Promise<string | undefi
 }
 
 function grab(url: string, maxSide: number): Promise<string | undefined> {
+  /* 從相簿選的影片：網址只是代表用的空殼，實際內容在原生端的檔案，直接讀那個檔 */
+  const native = nativePathOf(url);
+  if (native) url = fileSrc(native);
   return new Promise(resolve => {
     const v = document.createElement('video');
     v.muted = true; v.preload = 'auto'; (v as any).playsInline = true;

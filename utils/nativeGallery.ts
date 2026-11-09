@@ -5,7 +5,7 @@
  *   回傳 File[]：選好了（空陣列＝按了取消）
  *   回傳 null  ：用不了這個相簿（不是 App、這版 App 沒有、或使用者選擇改用系統選擇器）
  * 網頁版完全不會載入這支。 */
-import { nativePlugin, fileSrc, rememberNativeFile } from './nativeBridge';
+import { nativePlugin, fileSrc, rememberNativeFile, isVideoItem, nativeVideoFile } from './nativeBridge';
 
 export type GalleryFilter = 'images' | 'videos' | 'any';
 export type LibraryStatus = 'authorized' | 'limited' | 'denied' | 'restricted' | 'notDetermined';
@@ -101,8 +101,9 @@ export async function exportAssets(ids: string[]): Promise<File[]> {
   let lastError = '';
   for (const it of items) {
     try {
+      if (isVideoItem(it)) { files.push(nativeVideoFile(it)); continue; }
       const res = await fetch(fileSrc(it.path));
-      if (!res.ok) throw new Error(`讀檔失敗（${res.status}）`);
+      if (!res.ok) throw new Error(`${it.name || '檔案'} 讀檔失敗（${res.status}）`);
       const blob = await res.blob();
       const f = new File([blob], it.name || 'photo', { type: it.type || blob.type, lastModified: Date.now() });
       rememberNativeFile(f, it.path, it.assetId);
