@@ -1196,9 +1196,9 @@ export const sharedUi = (cur: MoCfg, c: MotionTargetCtx) => {
   const di = cur.in !== 'none' ? motionDefaultUi(c, 'in', cur.in) : ui;
   const dd = cur.idle !== 'none' ? motionDefaultUi(c, 'idle', cur.idle) : ui;
   return {
-    inSpeed: cur.shIn ?? Math.round(toShared(ui.inSpeed, di.inSpeed)),
-    amp: cur.shAmp ?? Math.round(toShared(ui.amp, dd.amp)),
-    speed: cur.shSpeed ?? Math.round(toShared(ui.speed, dd.speed)),
+    inSpeed: cur.shIn ?? (cur.in === 'none' ? SHARED_MID : Math.round(toShared(ui.inSpeed, di.inSpeed))),
+    amp: cur.shAmp ?? (cur.idle === 'none' ? SHARED_MID : Math.round(toShared(ui.amp, dd.amp))),
+    speed: cur.shSpeed ?? (cur.idle === 'none' ? SHARED_MID : Math.round(toShared(ui.speed, dd.speed))),
   };
 };
 /** 共用滑桿的數字 → 寫進設定（實際值依這個動畫自己的預設與刻度換算，並記住共用滑桿的位置） */
@@ -1210,18 +1210,20 @@ export const sharedFromUi = (f: SharedField, s: number, cur: MoCfg, c: MotionTar
     共用滑桿：已經有動畫時換成別的，面板上的數字不變，新動畫依「自己的預設＋同一個共用位置」換算；
     從「無」第一次選動畫時，共用滑桿回到中間（＝那個動畫自己的預設）。 */
 export const motionSwitchPatch = (d: Partial<MoCfg>, c: MotionTargetCtx, cur: MoCfg): Partial<MoCfg> => {
-  if (d.idle !== undefined && d.idle !== 'none' && cur.idle !== 'none') {
-    const sh = sharedUi(cur, c), next = { ...cur, idle: d.idle } as MoCfg;
-    return { idle: d.idle, ...sharedFromUi('amp', sh.amp, next, c), ...sharedFromUi('speed', sh.speed, next, c) };
+  /* 共用滑桿的位置屬於物件本身：選任何動畫（包括從「無」第一次選）都不會改變它的數字，
+     只會換成「新動畫在這個位置的程度」。從沒調過的物件，位置是中間 50（＝各動畫的預設程度）。 */
+  const sh = sharedUi(cur, c);
+  if (d.idle !== undefined) {
+    if (d.idle === 'none') return { idle: 'none' };
+    const next = { ...cur, ...motionPickPatch({ idle: d.idle }, c, cur.in) } as MoCfg;
+    return { ...motionPickPatch({ idle: d.idle }, c, cur.in), ...sharedFromUi('amp', sh.amp, next, c), ...sharedFromUi('speed', sh.speed, next, c) };
   }
-  if (d.in !== undefined && d.in !== 'none' && cur.in !== 'none') {
-    const sh = sharedUi(cur, c), next = { ...cur, in: d.in } as MoCfg;
-    return { in: d.in, ...sharedFromUi('inSpeed', sh.inSpeed, next, c) };
+  if (d.in !== undefined) {
+    if (d.in === 'none') return { in: 'none' };
+    const next = { ...cur, ...motionPickPatch({ in: d.in }, c, cur.in) } as MoCfg;
+    return { ...motionPickPatch({ in: d.in }, c, cur.in), ...sharedFromUi('inSpeed', sh.inSpeed, next, c) };
   }
-  const p = motionPickPatch(d, c, cur.in);
-  if (d.idle !== undefined && d.idle !== 'none') return { ...p, shAmp: SHARED_MID, shSpeed: SHARED_MID };
-  if (d.in !== undefined && d.in !== 'none') return { ...p, shIn: SHARED_MID };
-  return p;
+  return motionPickPatch(d, c, cur.in);
 };
 /** 設定 → 面板上滑桿顯示的 0～100 數字 */
 export const motionUi = (cur: MoCfg, c: MotionTargetCtx) => {
@@ -9573,6 +9575,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
   }, [moShape, moLink, hasLink, linkStart, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText]);
   const buildAnimRef=useRef(buildAnim);buildAnimRef.current=buildAnim;
+  const motionTotalRef=useRef(motionTotal);motionTotalRef.current=motionTotal;
 
   /* 播放迴圈。時鐘存在 ref 裡，所以換參數時會接著走、不跳回第一格。
      不再做人為 30fps 閘門；跟著裝置原生刷新更新，一般 iPhone 是 60fps，
@@ -9738,14 +9741,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 有一格畫很久（第一次畫很多顆星芒、要先做貼圖）時，時鐘不跟著跳過去：
          一格最多只往前走 1/30 秒，多出來的時間從起點扣掉。不然進場動畫的時間
          都花在那幾格上，畫面上只看得到頭尾兩格，像沒播出來。 */
-      if (now - last > 1000 / 30) t0 += now - last - 1000 / 30;
+      /* 只有真正的卡頓（超過 0.1 秒，例如第一次做貼圖）才把多出來的時間扣掉。
+         舊版門檻是 1/30 秒：只要一格稍慢（失焦＋拖滑桿時很常見），時鐘就被壓慢，
+         動畫看起來一格一格、而且變慢。 */
+      if (now - last > 100) t0 += now - last - 1000 / 30;
       last = now;
       /* 動畫播放中，背景的暖機工作（特效著色器編譯等，一支就卡主執行緒幾百毫秒）
          一律延後 —— 不然它會剛好插在進場動畫中間，物件一多就整段卡住。 */
       deferHeavyWork(400);
       try {
-        motionClockRef.current = (Math.max(0, now - t0) / 1000) % motionTotal;
-        animRef.current = buildAnim(motionClockRef.current);
+        motionClockRef.current = (Math.max(0, now - t0) / 1000) % motionTotalRef.current;
+        animRef.current = buildAnimRef.current(motionClockRef.current);
         if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, motionScaleRef.current);
       } catch (err) {
         // 單一格畫壞不該把整個工具帶走 —— 停下來、收回靜態就好
@@ -9757,7 +9763,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [motionOn, motionPlaying, motionSeq, imageState, videoProg, buildAnim, motionTotal]);
+  /* 迴圈透過 ref 讀 buildAnim／motionTotal：拖滑桿、移動物件時這兩個每一格都會換新，
+     放進依賴的話整個迴圈每一格都被拆掉重建（掉格、時鐘重算），滑桿就一頓一頓的。 */
+  }, [motionOn, motionPlaying, motionSeq, imageState, videoProg]);
 
   /* ── 影片自己的那支迴圈 ──────────────────────────────────────────────
      畫布不會因為影片播到下一格就自己重畫 —— 它只在「React 有東西變了」

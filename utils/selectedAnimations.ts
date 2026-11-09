@@ -126,7 +126,116 @@ export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,exte
  /* 不使用 Canvas filter：Safari／iOS 對 ctx.filter 的半徑有上限，超過就整個忽略。
     改成真正的高斯模糊（預乘透明度、浮點運算，沒有殘影或色階）。
     出錯時退回直接畫，絕不讓一格例外把整段動畫停掉。 */
- try{gaussianOffscreen(ctx,deviceBlur,extent,paint,cx,cy);}catch{paint(ctx);}
+ try{
+  const force=(globalThis as any).__cpuBlur;
+  const useMip=force===undefined?chooseMip():!force;
+  if(useMip&&mipBlur(ctx,deviceBlur,extent,paint,cx,cy))return;
+  gaussianOffscreen(ctx,deviceBlur,extent,paint,cx,cy);
+ }catch{paint(ctx);}
+}
+/* 兩種模糊各有適合的裝置：畫布在 GPU 上（iPhone）時，讀回像素的 CPU 版每次都要等 GPU，
+   全 GPU 版快得多；畫布在 CPU 上算（沒有顯示卡的環境）時則相反。不猜裝置，直接量「整格」的時間：
+   第一次用到模糊時，兩種各用 30 格（只算真的有畫模糊的格子），比平均每格時間，之後用快的那個；
+   每 2 分鐘再比一次。單看每次呼叫的耗時不準 —— 瀏覽器會把繪圖延後到之後才真正執行。 */
+const blurTrial={pick:'mip' as 'mip'|'cpu',mode:'mip' as 'mip'|'cpu',running:false,used:false,lastTrial:-1e9};
+/* 每格的間隔會落在固定的刻度上（例如 16.7／33.3 毫秒），中位數常常兩邊一樣；
+   用去掉最慢 10% 的平均：哪一邊比較常掉到下一個刻度，平均就會反映出來。 */
+const trimmedMean=(v:number[])=>{const a=[...v].sort((x,y)=>x-y);if(!a.length)return Infinity;const k=Math.max(1,Math.floor(a.length*.9));let t=0;for(let i=0;i<k;i++)t+=a[i];return t/k;};
+function chooseMip(){
+ const tr=blurTrial;tr.used=true;
+ const now=performance.now();
+ if(!tr.running&&now-tr.lastTrial>120000&&typeof requestAnimationFrame==='function'){
+  /* 先暖機 10 格（第一次做貼圖等一次性成本不算），再 A、B、A、B 交替各 15 格，
+     只算真的畫了模糊的格子，比兩邊的中位數：交替讓兩邊遇到一樣的情況，中位數不怕偶發的慢格。 */
+  tr.running=true;tr.lastTrial=now;
+  const plan:('warm'|'mip'|'cpu')[]=['warm','mip','cpu','mip','cpu'];
+  const got={mip:[] as number[],cpu:[] as number[]};
+  let stage=0,count=0,last=0;
+  tr.mode='mip';
+  const step=(t:number)=>{
+   if(last&&tr.used){
+    const kind=plan[stage];
+    if(kind!=='warm')got[kind].push(t-last);
+    if(++count>=(kind==='warm'?10:15)){
+     stage++;count=0;
+     if(stage>=plan.length){tr.pick=trimmedMean(got.cpu)<trimmedMean(got.mip)*.97?'cpu':'mip';tr.running=false;(globalThis as any).__abaiBlurTrial={mip:trimmedMean(got.mip),cpu:trimmedMean(got.cpu),pick:tr.pick};return;}
+     tr.mode=plan[stage]==='cpu'?'cpu':'mip';
+    }
+   }
+   last=t;tr.used=false;
+   if(performance.now()-tr.lastTrial>30000){tr.running=false;return;}   // 動畫停了：不要一直等
+   requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+ }
+ return (tr.running?tr.mode:tr.pick)==='mip';
+}
+export const blurPickForTest=()=>blurTrial.pick;
+
+/* ── 全 GPU 的模糊（不讀回像素）──────────────────────────────────────
+   iPhone 的畫布在 GPU 上，getImageData 每次都要等 GPU 畫完再整塊搬回 CPU；
+   每個失焦中的字每一格都做一次，動畫播放、拖動、縮放（連暫停時重畫也一樣）就嚴重卡頓。
+   這裡只用 drawImage：
+     ① 用跟畫面完全相同的變換，把內容畫在「螢幕像素格子」上（L0，模糊趨近 0 時就跟直接畫一樣）；
+     ② 每次剛好縮一半（2×2 平均）做出 L1、L2…；
+     ③ 第 n 層每次放大一倍、一路放大回原尺寸，得到模糊量 σn 的影像；
+     ④ 要求的 σ 落在 σn 與 σn+1 之間時，依變異數線性混合兩層（'lighter' 疊加＝精確的加權平均），
+        所以模糊量是連續的，沒有一檔一檔的跳動。 */
+const MIP_SIGMA=(n:number)=>n<=0?0:MIP_SIGMA_BASE*Math.pow(2,n);
+let MIP_SIGMA_BASE=.54;          // 經實測校正：縮一半再逐級放大回來的等效 σ（第 n 層 ≈ 0.54×2ⁿ 像素）
+export const setMipSigmaBaseForTest=(v:number)=>{MIP_SIGMA_BASE=v;};
+const mipPool:HTMLCanvasElement[]=[],upPool:HTMLCanvasElement[]=[];
+let mipOut:HTMLCanvasElement|undefined;
+const poolCanvas=(pool:HTMLCanvasElement[],i:number,w:number,h:number)=>{
+ while(pool.length<=i)pool.push(document.createElement('canvas'));
+ const c=pool[i];
+ if(c.width<w||c.height<h){c.width=Math.max(c.width,w);c.height=Math.max(c.height,h);}
+ return c;
+};
+function mipBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number):boolean{
+ if(typeof document==='undefined')return false;
+ let n=0;while(MIP_SIGMA(n+1)<=sigma&&n<8)n++;
+ const lo=MIP_SIGMA(n),hi=MIP_SIGMA(n+1),t=Math.max(0,Math.min(1,(sigma*sigma-lo*lo)/(hi*hi-lo*lo)));
+ const levels=n+1,S=1<<levels;
+ const mt=ctx.getTransform(),P=Math.ceil(3*Math.max(sigma,hi*.5))+S;
+ const xs:number[]=[],ys:number[]=[];
+ for(const [lx,ly] of [[cx-extent,cy-extent],[cx+extent,cy-extent],[cx-extent,cy+extent],[cx+extent,cy+extent]]){xs.push(mt.a*lx+mt.c*ly+mt.e);ys.push(mt.b*lx+mt.d*ly+mt.f);}
+ /* 原點對齊到 S 的倍數：每一層的「大格子」都落在固定的螢幕格線上，
+    換層數（padding 改變）時各層內容完全相同，模糊量不會跳。 */
+ const ix0=Math.floor((Math.min(...xs)-P)/S)*S,iy0=Math.floor((Math.min(...ys)-P)/S)*S;
+ const W=Math.ceil((Math.ceil(Math.max(...xs))+P-ix0)/S)*S,H=Math.ceil((Math.ceil(Math.max(...ys))+P-iy0)/S)*S;
+ if(W*H>4e6)return false;
+ const prep=(g:CanvasRenderingContext2D)=>{g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='source-over';g.imageSmoothingEnabled=true;g.imageSmoothingQuality='low';};
+ // ① L0：螢幕像素格子上的原始內容
+ const L0=poolCanvas(mipPool,0,W,H),g0=L0.getContext('2d')!;
+ prep(g0);g0.clearRect(0,0,W,H);
+ g0.setTransform(mt.a,mt.b,mt.c,mt.d,mt.e-ix0,mt.f-iy0);g0.imageSmoothingEnabled=ctx.imageSmoothingEnabled;g0.imageSmoothingQuality=ctx.imageSmoothingQuality;
+ g0.fillStyle=ctx.fillStyle;g0.strokeStyle=ctx.strokeStyle;g0.lineWidth=ctx.lineWidth;g0.lineJoin=ctx.lineJoin;g0.lineCap=ctx.lineCap;
+ paint(g0);
+ // ② 逐次縮一半
+ for(let i=1;i<=levels;i++){
+  const src=mipPool[i-1],c=poolCanvas(mipPool,i,W>>i,H>>i),g=c.getContext('2d')!;
+  prep(g);g.clearRect(0,0,W>>i,H>>i);g.drawImage(src,0,0,W>>(i-1),H>>(i-1),0,0,W>>i,H>>i);
+ }
+ // ③ 第 m 層一路放大回原尺寸（每次一倍）
+ const up=(m:number):HTMLCanvasElement=>{
+  if(m===0)return mipPool[0];
+  let cur=mipPool[m];
+  for(let j=m-1;j>=0;j--){
+   const c=poolCanvas(upPool,j,W>>j,H>>j),g=c.getContext('2d')!;
+   prep(g);g.clearRect(0,0,W>>j,H>>j);g.drawImage(cur,0,0,W>>(j+1),H>>(j+1),0,0,W>>j,H>>j);cur=c;
+  }
+  return cur;
+ };
+ // ④ 依變異數混合相鄰兩層
+ mipOut??=document.createElement('canvas');
+ if(mipOut.width<W||mipOut.height<H){mipOut.width=Math.max(mipOut.width,W);mipOut.height=Math.max(mipOut.height,H);}
+ const go=mipOut.getContext('2d')!;prep(go);go.clearRect(0,0,W,H);go.globalCompositeOperation='lighter';
+ if(t<1){go.globalAlpha=1-t;go.drawImage(up(n),0,0,W,H,0,0,W,H);}
+ if(t>0){go.globalAlpha=t;go.drawImage(up(n+1),0,0,W,H,0,0,W,H);}
+ go.globalAlpha=1;go.globalCompositeOperation='source-over';
+ ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(mipOut,0,0,W,H,ix0,iy0,W,H);ctx.restore();
+ return true;
 }
 function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0){
  if(typeof document==='undefined'){paint(ctx);return;}
