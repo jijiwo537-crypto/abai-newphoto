@@ -71,10 +71,15 @@ const TAPS=[[-2,1/16],[-1,4/16],[0,6/16],[1,4/16],[2,1/16]] as const;
 /** 以「螢幕像素」為單位的模糊半徑畫出 paint；extent 是內容在本地座標中距原點的最大距離。 */
 export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void){
  if(!(deviceBlur>.35)){paint(ctx);return;}
- if(canvasBlurSupported()){ctx.filter=`blur(${Math.min(64,deviceBlur)}px)`;paint(ctx);return;}
+ /* 不使用 Canvas filter：Safari／iOS 對 ctx.filter 的半徑有上限，超過就整個忽略
+    （乘上螢幕密度後很容易超過），結果就是「完全沒有模糊」。自己做的模糊各瀏覽器一致。
+    出錯時退回直接畫，絕不讓一格例外把整段動畫停掉。 */
+ try{blurOffscreen(ctx,deviceBlur,extent,paint);}catch{paint(ctx);}
+}
+function blurOffscreen(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void){
  const density=densityOf(ctx),R=extent+deviceBlur*3/density;
  const k=Math.max(1,deviceBlur/1.5);
- const N=Math.min(720,Math.ceil(2*R*density/k));
+ const N=Math.min(512,Math.ceil(2*R*density/k));
  if(N<2||typeof document==='undefined'){paint(ctx);return;}
  const scale=N/(2*R),s=deviceBlur*scale/density; // 取樣間距（緩衝區像素）＝高斯 σ
  bufA??=document.createElement('canvas');bufB??=document.createElement('canvas');
@@ -143,7 +148,7 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
    } else if(code==='T-L20'||code==='S-L20'){
     // 失焦：模糊半徑跟著物件大小與目前解析度（預覽／匯出一致），各組依 defocusGroup 錯開。
     const level=defocusOf(frame,index,count);
-    paintBlurred(ctx,level*Math.max(3,r*.3)*density,Math.hypot(w,h),paint);return;
+    paintBlurred(ctx,level*Math.max(4,r*.4)*density,Math.hypot(w,h),paint);return;
    }
    paint(ctx);
   }
@@ -167,7 +172,8 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
   // 圖案是直接畫進遮罩／圖片的路徑，沒有可以先離屏的繪圖函式；不支援 Canvas
   // filter 時以變淡代替，至少保留同樣的節奏與分組。
   const level=defocusOf(frame,frame.slot??0,frame.slots??1);
-  if(canvasBlurSupported())ctx.filter=`blur(${Math.min(64,level*Math.max(3,size*.15)*densityOf(ctx))}px)`;
+  // 半徑不乘密度並限制上限：Safari 超過濾鏡上限會整個忽略。
+  if(canvasBlurSupported())ctx.filter=`blur(${Math.min(20,level*Math.max(4,size*.2))}px)`;
   else ctx.globalAlpha*=1-.55*level;
  }
 }

@@ -39,9 +39,12 @@ try {
  assert.equal(m.selectedPatternOffset(m.selectedFrame(cfg,2),100),0,'pattern blink does not shift positions');
  m.setCanvasBlurSupportedForTest(true);
  for(const id of ['lab-T-L20','lab-S-L20']){
-  ctx.filter='none';m.paintSelectedAnimation(ctx,m.selectedFrame({...cfg,idle:id},2,.4),40,50,()=>{});
-  assert.match(ctx.filter,/blur\([1-9]/,`${id} has visible defocus`);
+  // 文字／符號的失焦自己做模糊，不能依賴 Safari 會忽略的 ctx.filter。
+  ctx.filter='none';let n=0;m.paintSelectedAnimation(ctx,m.selectedFrame({...cfg,idle:id},2,.4),40,50,()=>n++);
+  assert.equal(ctx.filter,'none',`${id} does not rely on canvas filter`);
+  assert.equal(n,1,`${id} paints once`);
  }
+ assert.ok(m.defocusLevel(2,1,0,1)>.9,'defocus is blurred at t=2');
  ctx.filter='none';
  m.applySelectedPatternAppearance(ctx,m.selectedFrame({...cfg,idle:'lab-P-L20'},2,.4),40,0,0);
  assert.match(ctx.filter,/blur\([1-9]/,'pattern defocus is visible');
