@@ -127,8 +127,10 @@ export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,exte
     改成真正的高斯模糊（預乘透明度、浮點運算，沒有殘影或色階）。
     出錯時退回直接畫，絕不讓一格例外把整段動畫停掉。 */
  try{
+  /* 有身分（同一個字／圖案／圖形）的：用「預先算好的幾檔高品質模糊」，每一格只混合兩檔（見 levelBlur） */
+  if(cacheKey&&(globalThis as any).__oldBlur===undefined&&levelBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey))return;
   const force=(globalThis as any).__cpuBlur;
-  const useMip=force===undefined?chooseMip():!force;
+  const useMip=force===undefined?true:!force;
   if(useMip&&mipBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey))return;
   gaussianOffscreen(ctx,deviceBlur,extent,paint,cx,cy,cacheKey);
  }catch{paint(ctx);}
@@ -171,6 +173,107 @@ function chooseMip(){
  return (tr.running?tr.mode:tr.pick)==='mip';
 }
 export const blurPickForTest=()=>blurTrial.pick;
+void chooseMip;
+
+/* ── 失焦：預先算好的分檔模糊 ─────────────────────────────────────────
+   失焦時字／圖案本身不變，變的只有模糊量。所以：
+     ① 每一檔模糊（σ 每檔大約乘 √2）只在第一次用到時算一次真正的高斯模糊（CPU、浮點、預乘透明度），之後留著；
+     ② 每一格只把相鄰兩檔依變異數混合貼上（兩次 drawImage，GPU 做），不讀回像素、不重算 ——
+        跟沒有失焦幾乎一樣輕。
+   畫質：每一檔存的解析度讓「存起來那張自己的模糊」至少有 4 像素，放大回螢幕時是平滑的曲面，
+   不會出現舊做法（把很小的縮圖直接放大）那種格子紋。模糊很小的檔就是螢幕原解析度。
+   時機、程度、速度完全沒動：σ 一樣由 defocusOf 算出來，這裡只負責「把那個 σ 畫好」。 */
+let blurGen=0;
+/** 場景內容變了（換顏色、換字…）時呼叫：所有失焦快取作廢 */
+export const bumpBlurGeneration=()=>{blurGen++;};
+/** 失焦快取用的身分：同一個物件在不同位置（例如一顆洞的兩個半邊）各一份 */
+const subKeys=new WeakMap<object,Map<string,object>>();
+export function blurKey(owner:object,sub:string){let m=subKeys.get(owner);if(!m){m=new Map();subKeys.set(owner,m);}let k=m.get(sub);if(!k){k={};m.set(sub,k);if(m.size>64)m.delete(m.keys().next().value!);}return k;}
+type Lv={c:HTMLCanvasElement;x:number;y:number;s:number;bytes:number};
+type Stack={key:string;e0:number;f0:number;lv:Map<number,Lv>;bytes:number;used:number};
+const LV_RATIO=Math.SQRT2,LV_BASE=.6;
+const lvSigma=(k:number)=>k<0?0:LV_BASE*Math.pow(LV_RATIO,k);
+const stacks=new Map<object,Stack>();
+let stackBytes=0,stackClock=0;
+const STACK_BUDGET=128*1024*1024;
+const freeStack=(k:object)=>{const st=stacks.get(k);if(!st)return;st.lv.forEach(l=>{l.c.width=l.c.height=0;});stackBytes-=st.bytes;stacks.delete(k);};
+const evictStacks=(keep:object)=>{while(stackBytes>STACK_BUDGET&&stacks.size>1){let old:object|null=null,u=Infinity;stacks.forEach((st,k)=>{if(k!==keep&&st.used<u){u=st.used;old=k;}});if(old)freeStack(old);else break;}};
+let lvOut:HTMLCanvasElement|undefined;
+/** 一次真正的高斯模糊（三次框模糊，預乘透明度、浮點）：直接在 ImageData 上做 */
+function gaussInPlace(d:ImageData,sigma:number){
+ if(sigma<.2)return;
+ const w=d.width,h=d.height,n=w*h,px=d.data;
+ const F=new Float32Array(n*4),T=new Float32Array(n*4);
+ for(let i=0;i<n;i++){const a=px[i*4+3]/255;F[i*4]=px[i*4]*a;F[i*4+1]=px[i*4+1]*a;F[i*4+2]=px[i*4+2]*a;F[i*4+3]=px[i*4+3];}
+ // 三次框模糊的寬度（標準做法：讓三次的總變異數等於 σ²）
+ const wIdeal=Math.sqrt(12*sigma*sigma/3+1);let wl=Math.floor(wIdeal);if(wl%2===0)wl--;const wu=wl+2;
+ const m=Math.round((12*sigma*sigma-3*wl*wl-4*3*wl-3*3)/(-4*wl-4));
+ const radii=[0,1,2].map(i=>((i<m?wl:wu)-1)/2);
+ const pass=(src:Float32Array,dst:Float32Array,r:number,horiz:boolean)=>{
+  const len=horiz?w:h,lines=horiz?h:w,step=horiz?4:w*4,ls=horiz?w*4:4,inv=1/(2*r+1);
+  for(let l=0;l<lines;l++){const base=l*ls;
+   for(let c=0;c<4;c++){let acc=0;
+    for(let j=-r;j<=r;j++){const q=Math.min(len-1,Math.max(0,j));acc+=(j<0||j>=len)?0:src[base+q*step+c];}
+    for(let i=0;i<len;i++){dst[base+i*step+c]=acc*inv;const add=i+r+1,sub=i-r;if(add<len)acc+=src[base+add*step+c];if(sub>=0)acc-=src[base+sub*step+c];}
+   }
+  }
+ };
+ let a=F,b=T;
+ for(const r of radii){if(r<1)continue;pass(a,b,r,true);pass(b,a,r,false);}
+ for(let i=0;i<n;i++){const al=a[i*4+3];px[i*4+3]=al;if(al>.5){const k=255/al;px[i*4]=a[i*4]*k;px[i*4+1]=a[i*4+1]*k;px[i*4+2]=a[i*4+2]*k;}else{px[i*4]=px[i*4+1]=px[i*4+2]=0;}}
+}
+function buildLevel(ctx:CanvasRenderingContext2D,k:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number):Lv|null{
+ const mt=ctx.getTransform(),sigma=lvSigma(k);
+ // 存的解析度：模糊越大存得越小（2 的次方），但存起來那張自己的模糊至少 4 像素 → 放大後依然平滑
+ let s=1;while(sigma*s/2>=4&&s>1/64)s/=2;
+ const pad=Math.ceil(sigma*3.2)+2;
+ const xs:number[]=[],ys:number[]=[];
+ for(const [lx,ly] of [[cx-extent,cy-extent],[cx+extent,cy-extent],[cx-extent,cy+extent],[cx+extent,cy+extent]]){xs.push(mt.a*lx+mt.c*ly+mt.e);ys.push(mt.b*lx+mt.d*ly+mt.f);}
+ const x=Math.floor(Math.min(...xs)-pad),y=Math.floor(Math.min(...ys)-pad);
+ const W=Math.max(1,Math.ceil((Math.ceil(Math.max(...xs))+pad-x)*s)),H=Math.max(1,Math.ceil((Math.ceil(Math.max(...ys))+pad-y)*s));
+ if(W*H>4e6)return null;
+ const c=document.createElement('canvas');c.width=W;c.height=H;
+ const g=c.getContext('2d',{willReadFrequently:true})!;
+ g.setTransform(mt.a*s,mt.b*s,mt.c*s,mt.d*s,(mt.e-x)*s,(mt.f-y)*s);
+ g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';
+ g.fillStyle=ctx.fillStyle;g.strokeStyle=ctx.strokeStyle;g.lineWidth=ctx.lineWidth;g.lineJoin=ctx.lineJoin;g.lineCap=ctx.lineCap;
+ paint(g);
+ if(sigma>0){g.setTransform(1,0,0,1,0,0);const d=g.getImageData(0,0,W,H);gaussInPlace(d,sigma*s);g.putImageData(d,0,0);}
+ return {c,x,y,s,bytes:W*H*4};
+}
+function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number,cacheKey:object):boolean{
+ if(typeof document==='undefined')return false;
+ const mt=ctx.getTransform();
+ const key=`${blurGen}|${mt.a.toFixed(4)},${mt.b.toFixed(4)},${mt.c.toFixed(4)},${mt.d.toFixed(4)},${extent.toFixed(2)},${cx.toFixed(2)},${cy.toFixed(2)}`;
+ let st=stacks.get(cacheKey);
+ if(!st||st.key!==key){freeStack(cacheKey);st={key,e0:mt.e,f0:mt.f,lv:new Map(),bytes:0,used:0};stacks.set(cacheKey,st);}
+ st.used=++stackClock;
+ // 落在哪兩檔之間（第 -1 檔＝完全清楚，也是原解析度、先畫好存起來）
+ let k=-1;while(lvSigma(k+1)<=sigma&&k<24)k++;
+ const lo=lvSigma(k),hi=lvSigma(k+1),t=Math.max(0,Math.min(1,(sigma*sigma-lo*lo)/(hi*hi-lo*lo)));
+ const get=(i:number)=>{let l=st!.lv.get(i);if(!l){const b=buildLevel(ctx,i,extent,paint,cx,cy);if(!b)return null;l=b;st!.lv.set(i,l);st!.bytes+=l.bytes;stackBytes+=l.bytes;}return l;};
+ const A=t<1-1e-3?get(k):null,B=t>1e-3?get(k+1):null;
+ if((t<1-1e-3&&!A)||(t>1e-3&&!B)){freeStack(cacheKey);return false;}
+ evictStacks(cacheKey);
+ const dx=mt.e-st.e0,dy=mt.f-st.f0;
+ /* 存起來的每一檔本身已經夠平滑（自己的模糊至少 4 像素），一般的雙線性放大就看不出差別；'high' 在部分瀏覽器很貴 */
+ ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='low';
+ const place=(g:CanvasRenderingContext2D,l:Lv,ox:number,oy:number)=>g.drawImage(l.c,0,0,l.c.width,l.c.height,l.x+ox,l.y+oy,l.c.width/l.s,l.c.height/l.s);
+ if(!A||!B){place(ctx,(A||B)!,dx,dy);ctx.restore();return true;}
+ // 兩檔依變異數混合：'lighter' 疊加＝精確的加權平均（預乘透明度下沒有暗邊）
+ const x0=Math.min(A.x,B.x),y0=Math.min(A.y,B.y);
+ const W=Math.ceil(Math.max(A.x+A.c.width/A.s,B.x+B.c.width/B.s)-x0),H=Math.ceil(Math.max(A.y+A.c.height/A.s,B.y+B.c.height/B.s)-y0);
+ lvOut??=document.createElement('canvas');
+ if(lvOut.width<W||lvOut.height<H){lvOut.width=Math.max(lvOut.width,W);lvOut.height=Math.max(lvOut.height,H);}
+ const go=lvOut.getContext('2d')!;
+ go.setTransform(1,0,0,1,0,0);go.globalAlpha=1;go.globalCompositeOperation='source-over';go.clearRect(0,0,W,H);
+ go.imageSmoothingEnabled=true;go.imageSmoothingQuality='low';go.globalCompositeOperation='lighter';
+ go.globalAlpha=1-t;place(go,A,-x0,-y0);go.globalAlpha=t;place(go,B,-x0,-y0);
+ go.globalAlpha=1;go.globalCompositeOperation='source-over';
+ ctx.drawImage(lvOut,0,0,W,H,x0+dx,y0+dy,W,H);
+ ctx.restore();
+ return true;
+}
 
 /* ── 全 GPU 的模糊（不讀回像素）──────────────────────────────────────
    iPhone 的畫布在 GPU 上，getImageData 每次都要等 GPU 畫完再整塊搬回 CPU；
@@ -470,10 +573,10 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
 }
 /** 畫一顆圖案：失焦時先畫進以這顆為中心的緩衝再高斯模糊貼回（跟文字／符號同一套），
     其他動畫照舊套外觀後直接畫。draw 只能畫在傳進來的 g 上。 */
-export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number,draw:(g:CanvasRenderingContext2D)=>void){
+export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number,draw:(g:CanvasRenderingContext2D)=>void,cacheKey?:object){
  if(frame?.id==='lab-P-L20'){
   const level=defocusOf(frame,frame.slot??0,frame.slots??1);
-  paintBlurred(ctx,level*Math.max(3,size*.14)*densityOf(ctx),size,draw,x,y);
+  paintBlurred(ctx,level*Math.max(3,size*.14)*densityOf(ctx),size,draw,x,y,cacheKey);
   return;
  }
  applySelectedPatternAppearance(ctx,frame,size,x,y);
