@@ -823,7 +823,7 @@ export const GLOW_SWATCHES: string[] = (() => {
 const MASK_BASE_LIGHT = '#D2E8E1';
 const CREATIVE_MASK_DEFAULT = '#A8C3E6';
 /** 遮罩光暈原本的預設色（跟著舊的遮罩色，不跟著改） */
-const CREATIVE_GLOW_DEFAULT = '#CFE6DE';
+const CREATIVE_GLOW_DEFAULT = CREATIVE_MASK_DEFAULT;
 const MASK_BASE_DEEP = '#B8E3D8';
 /** 把一個顏色拆成 HSL，只換色相繞一圈，回傳 n 顆照色相排好的顏色 */
 const hueRing = (baseHex: string, n: number): string[] => {
@@ -6443,6 +6443,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          不同節奏，畫面每次重播都一致，但相鄰圖案不會一起亮滅。交棒前
          0.72 秒由全亮平滑接入，第一幀和進場最後一幀完全相同。 */
       let patternAlpha = 1;
+      if (shapeMo.idle === 'lab-P-L02' && groupIdleT > 0) {
+        // 全體圖案共用一個時鐘；從完整顯示開始，等時長地消失、出現。
+        patternAlpha = (1 + Math.cos(groupIdleT * Math.max(.05, shapeMo.speed) * 3.2)) / 2;
+      }
       if (shapeMo.idle === 'pattern-breathe' && f.idleT !== undefined) {
         /* 每顆依自己的隨機 id 取得獨立相位與速度，不再按照相鄰順序刻意
            排列。數值固定於 id，重播時不跳；單顆仍是對稱正弦，因此它自己的
@@ -6505,7 +6509,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const glowOn = (side: 'image' | 'mask') =>
       (animRef.current && moShapeCfgRef.current.idle === 'lab-P-L04') || glowMode === 'both' || (glowMode === 'mask' && side === 'mask') || (glowMode === 'image' && side === 'image');
     // 與圖形一致，保留使用者選定的光暈色，不按背景改成白色。
-    const glowColorOf = (_side: 'image' | 'mask') => moShapeCfgRef.current.idle === 'lab-P-L04' && animRef.current ? '#e4ffd9' : holeGlowColor;
+    const glowColorOf = (_side: 'image' | 'mask', h?: any) => {
+      if (moShapeCfgRef.current.idle !== 'lab-P-L04' || !animRef.current) return holeGlowColor;
+      // 發光動畫的每顆光色與本體一致；條紋的兩色仍依圖案 ID 分配。
+      if (h && isStripeLikeTex(patternType) && !maskImageState) {
+        const seed = String(h.id).split('').reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
+        return seed % 2 ? stripeA : stripeB;
+      }
+      return maskColor;
+    };
     /* 三層疊起來的濃度不等於一層的濃度：0.2 疊三次會變成 0.49。
        把每一層開三次方根回去，疊完剛好等於本來要的那個值。 */
     const layerAlpha = (a: number) => (a >= 1 ? 1 : 1 - Math.pow(1 - Math.max(0, a), 1 / 3));
@@ -6844,7 +6856,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
          現在先算一個簽名，一樣就直接把上一次畫好的那一層貼回去（一次 drawImage）。
          圖案真的動了（大小／數量／角度）簽名才會變，那時候本來就該重算。 */
-      const sig = `${side}|${glowMode}|${holeGlow}|${glowColorOf(side)}|${linkMode}|${linkColor || ''}|${linkGlowColor}`
+      const sig = `${side}|${glowMode}|${holeGlow}|${glowColorOf(side)}|${maskColor}|${stripeA}|${stripeB}|${linkMode}|${linkColor || ''}|${linkGlowColor}`
         + `|${LINK_W.toFixed(3)}|${holeType}|${isTextHole(holeType) ? customText : ''}|${s.toFixed(4)}`
         + `|${g.canvas.width}x${g.canvas.height}|${g.getTransform().e},${g.getTransform().f}`
         + '|I' + items.map(it => `${it.x.toFixed(1)},${it.y.toFixed(1)},${it.sz.toFixed(1)},${it.ang.toFixed(1)},${(it.a * glowBeat(it.h)).toFixed(3)}`).join(';')
@@ -6884,12 +6896,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            全部走暫存層　p90 51ms、25 格掉幀
            走這條快路徑　p90 23.6ms、0 格掉幀（跟發光關掉時一樣順） */
       if (!pairs.length) {
-        items.forEach(it => glowInto(g, it.h, it.a, it.sz, it.ang, it.x, it.y, glowColorOf(side)));
+        items.forEach(it => glowInto(g, it.h, it.a, it.sz, it.ang, it.x, it.y, glowColorOf(side, it.h)));
         return;
       }
       const done = withGlowLayer(g, g.canvas.width, g.canvas.height,
         gg => {
-          items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y, glowColorOf(side)));
+          items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y, glowColorOf(side, it.h)));
           if (pairs.length) {
             /* 線也是同一個道理（見 glowInto）：先用滿透明度把三段疊好，
                再整張按透明度貼。透明度相同的線可以一起畫，
@@ -12617,7 +12629,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const isScatterTarget = !!selObj && selObj.type === 'shape' && selObj.kind === FRAME_SCATTER;
                 const legacyKinds = isScatterTarget ? SCATTER_IN_KINDS : moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
                 const labTarget = moTarget === 'shape' ? 'pattern' : isSymbolTarget ? 'symbol' : isTextTarget ? 'text' : selObj?.type === 'shape' ? 'shape' : null;
-                const kinds = [...legacyKinds, ...(labTarget ? selectedKinds(labTarget, 'entry') : [])];
+                const kinds = isTextTarget
+                  ? [{id:'none',name:'無'},{id:'rise',name:'升起'},{id:'fade',name:'淡入l'},{id:'lab-T-E03',name:'淡入ll'},
+                     {id:'drop',name:'落下'},{id:'flip',name:'翻轉'},{id:'pop',name:'果凍l'},{id:'lab-T-E07',name:'果凍ll'}]
+                  : [...(isSymbolTarget ? legacyKinds.filter(k => !['spin','flip','fade'].includes(k.id)) : legacyKinds),
+                     ...(labTarget ? selectedKinds(labTarget, 'entry') : [])];
+                const baseIdleKinds = isScatterTarget ? SCATTER_IDLE_KINDS : moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : isGlintTarget ? GLINT_IDLE_KINDS_C : IDLE_KINDS;
+                const idleKinds = isTextTarget
+                  ? [...baseIdleKinds.filter(k => k.id === 'none' || k.id === 'float'),
+                     {id:'grid-wave',name:'波浪l'},{id:'lab-T-L15',name:'波浪ll'},
+                     ...baseIdleKinds.filter(k => !['none','float','grid-wave'].includes(k.id)),
+                     ...selectedKinds('text','idle').filter(k => k.code !== 'T-L15')]
+                  : [...(isSymbolTarget ? baseIdleKinds.filter(k => ['none','float','breathe','symbol-breathe2'].includes(k.id)) : baseIdleKinds),
+                     ...(labTarget ? selectedKinds(labTarget, 'idle') : [])];
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}
@@ -12696,7 +12720,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {[...(isScatterTarget ? SCATTER_IDLE_KINDS : moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : isGlintTarget ? GLINT_IDLE_KINDS_C : IDLE_KINDS), ...(labTarget ? selectedKinds(labTarget, 'idle') : [])].map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
+                          {idleKinds.map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>
@@ -12704,14 +12728,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         </div>
                         {cur.idle !== 'none' && (
                           <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                            <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-amp`} label="幅度"
+                            {cur.idle !== 'lab-P-L02' && cur.idle !== 'lab-T-L04' && <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-amp`} label="幅度"
                               value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
                                 ? patternBreathAmpToUi(cur.amp) : cur.amp}
                               min={0} max={100} step={1}
                               onChange={(v: number) => setCur({
                                 amp: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
                                   ? patternBreathAmpFromUi(v) : v,
-                              })} />
+                              })} />}
+                            <div className={cur.idle === 'lab-P-L02' || cur.idle === 'lab-T-L04' ? 'col-span-2' : undefined}>
                             <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-speed`} label="速度"
                               value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
                                 ? patternBreathSpeedToUi(cur.speed)
@@ -12739,6 +12764,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                     : cur.idle === 'glint-blink' ? blinkSpeedFromUi(v)
                                     : idleSpeedFromUi(v),
                               })} />
+                            </div>
                           </div>
                         )}
 

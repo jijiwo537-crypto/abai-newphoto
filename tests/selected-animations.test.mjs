@@ -9,9 +9,10 @@ try {
  const out=join(dir,'motion.mjs');
  await build({entryPoints:['utils/selectedAnimations.ts'],bundle:true,platform:'node',format:'esm',outfile:out});
  const m=await import(pathToFileURL(out));
- assert.equal(m.SELECTED_ANIMATIONS.length,28);
- assert.equal(new Set(m.SELECTED_ANIMATIONS.map(x=>x.id)).size,28);
- for(const target of ['text','symbol','shape','pattern'])assert.ok(m.selectedKinds(target,'idle').length);
+ assert.equal(m.SELECTED_ANIMATIONS.length,17);
+ assert.equal(new Set(m.SELECTED_ANIMATIONS.map(x=>x.id)).size,17);
+ for(const target of ['text','symbol','pattern'])assert.ok(m.selectedKinds(target,'idle').length);
+ assert.equal(m.selectedKinds('shape','idle').length,0,'retired shape animations are absent');
  const ctx={globalAlpha:1,filter:'none',save(){this.depth=(this.depth||0)+1;},restore(){this.depth--;},getTransform(){return {a:2,b:0};}};
  for(const name of ['translate','rotate','scale','rect','fillRect'])ctx[name]=(...v)=>{assert.ok(v.every(Number.isFinite),`${name} finite`);};
  ctx.beginPath=ctx.clip=()=>{};
@@ -28,6 +29,10 @@ try {
  assert.equal(m.selectedFrame({in:'pop',idle:'breathe',delay:0,dur:1,amp:50,speed:1},.5),undefined,'legacy motions untouched');
  const cfg={in:'none',idle:'lab-P-L02',delay:0,dur:1,amp:100,speed:1};
  assert.equal(m.selectedPatternOffset(m.selectedFrame(cfg,0),100),0,'pattern starts at rest');
- assert.notEqual(m.selectedPatternOffset(m.selectedFrame(cfg,2),100),0,'pattern wave moves');
- console.log('28 selected animation timelines: context balance, finite transforms, entry boundaries and legacy bypass passed');
+ assert.equal(m.selectedPatternOffset(m.selectedFrame(cfg,2),100),0,'pattern blink does not shift positions');
+ for(const id of ['lab-T-L20','lab-S-L20']){
+  ctx.filter='none';m.paintSelectedAnimation(ctx,m.selectedFrame({...cfg,idle:id},2,.4),40,50,()=>{});
+  assert.match(ctx.filter,/blur\([1-9]/,`${id} has visible defocus`);
+ }
+ console.log('17 active animation timelines: context balance, finite transforms, entry boundaries and legacy bypass passed');
 } finally {await rm(dir,{recursive:true,force:true});}

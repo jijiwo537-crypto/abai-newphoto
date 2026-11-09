@@ -1,14 +1,12 @@
 import { paintSelectedWarp } from './selectedMotionWarp';
-/** The 28 effects selected from ABAI Effects Lab II v20. IDs persist in drafts. */
+/** ABAI Effects Lab selections. IDs persist in drafts; retired IDs are not offered. */
 export type SelectedTarget = 'text' | 'symbol' | 'shape' | 'pattern';
 const entries = [
- ['T-E01','逐字輕落'],['T-E03','墨跡顯影'],['T-E04','打字游標'],['T-E07','彈性排字'],
- ['T-L01','呼吸排字'],['T-L04','光澤流動'],['S-E03','輪廓顯影'],['S-E04','逐顆點亮'],
- ['S-E07','柔軟回彈'],['S-E10','小小旋風'],['S-L01','星點呼吸'],['S-L02','海浪接力'],
- ['S-L03','獨立搖擺'],['S-L04','微光巡遊'],['S-L07','貼紙翻轉'],['G-L04','輪廓遊光'],
- ['G-L06','張力伸縮'],['P-L02','流動波列'],['P-L04','星光接力'],['P-L07','花片翻面'],
- ['T-L15','相位折帶'],['T-L20','焦平面巡航'],['S-L11','絲帶扭流'],['S-L18','重力擺錘'],
- ['S-L20','焦平面巡航'],['G-L11','絲帶扭流'],['G-L20','焦平面巡航'],['P-L20','焦平面巡航'],
+ ['T-E03','淡入ll'],['T-E07','果凍ll'],
+ ['T-L01','呼吸'],['T-L04','閃爍'],['T-L15','波浪ll'],['T-L20','失焦'],
+ ['S-E03','淡入'],['S-E04','足跡'],['S-E10','旋轉'],
+ ['S-L01','呼吸'],['S-L03','搖擺'],['S-L07','翻面'],['S-L20','失焦'],
+ ['P-L02','閃爍'],['P-L04','發光'],['P-L07','翻面'],['P-L20','失焦'],
 ] as const;
 export const SELECTED_ANIMATIONS = entries.map(([code,name]) => ({
  code, id: `lab-${code}`, name, target: ({T:'text',S:'symbol',G:'shape',P:'pattern'} as const)[code[0] as 'T'|'S'|'G'|'P'], phase: code[2] === 'E' ? 'entry' : 'idle',
@@ -44,21 +42,27 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
    if(kind===6){const k=1-Math.exp(-p*7)*Math.cos(p*8);ctx.scale(k,k);}
    if(kind===9){ctx.rotate((1-q)*-.9);ctx.scale(q,q);}
    paint(ctx);
-   if(code==='T-E04'&&p>0&&p<1&&index===Math.min(count-1,Math.floor(frame.p*count))){ctx.fillStyle='#fff';ctx.fillRect(w/2+Math.max(1,w*.04),-h/2,Math.max(1,w*.035),h);}
   } else if(kind===10||kind===14){
    // Repaint the same vector path under local clips; avoid low-resolution tiles.
    const amplitude=r*.045*a*en;
    if(amplitude<1e-7){paint(ctx);return;}
    paintSelectedWarp(ctx,w,h,r,amplitude,v,kind===14,paint);
   } else {
+   // 閃爍是一整個字串的規律亮滅，不受「幅度」影響；所有字共用節奏。
+   if(code==='T-L04')ctx.globalAlpha*=.5+.5*Math.cos(frame.t*frame.speed*3.2);
    if(kind===0)ctx.globalAlpha*=1-a*(1-Math.cos(v))*en/2;
    if(kind===1)ctx.translate(0,wave*h*.0625*a);
    if(kind===2)ctx.rotate(wave*.15*a);
-   if(kind===3){const tf=ctx.getTransform();const blur=(1+Math.sin(v))*r*.0625*a*en*Math.hypot(tf.a,tf.b);ctx.filter=`drop-shadow(0px 0px ${blur}px #e4ffd9)`;}
+   if(kind===3&&code!=='T-L04'){const tf=ctx.getTransform();const blur=(1+Math.sin(v))*r*.0625*a*en*Math.hypot(tf.a,tf.b);ctx.filter=`drop-shadow(0px 0px ${blur}px #e4ffd9)`;}
    if(kind===5){ctx.translate(wave*w*.04*a,0);ctx.scale(1+wave*.08*a,1-wave*.04*a);}
    if(kind===6)ctx.scale(1-(1-Math.abs(Math.cos(v)))*.8*a*en,1);
    if(kind===17){const theta=Math.sin(v*.6)*.12*a*en;ctx.translate(Math.sin(theta)*r*.7,(1-Math.cos(theta))*r*.7);ctx.rotate(theta);}
-   if(kind===19)ctx.filter=`blur(${(1-Math.cos(v))*a*en*Math.min(7,r*.04)*density}px)`;
+   if(kind===19){
+    // 小字和小圖案原先只有不到 1px 的模糊，幾乎看不到。用實際畫面像素
+    // 設下限，開始播放後立即進入失焦／清晰循環，四種目標共用同一算法。
+    const blur=(1-Math.cos(v))*a*smooth(frame.t/.3)*Math.min(18,Math.max(3,r*.16))*density;
+    ctx.filter=`blur(${blur}px)`;
+   }
    paint(ctx);
   }
  } finally {ctx.restore();}
@@ -67,9 +71,8 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
 /** Pattern instances keep their existing mask/image placement and connection anchors. */
 export function selectedPatternOffset(frame:SelectedFrame|undefined, size:number) {
  if(!frame)return 0;
- if(frame.id!=='lab-P-L02')return 0;
- const en=smooth(frame.t/1.2),v=frame.t*frame.speed*1.5+frame.phase;
- return (Math.sin(v)-Math.sin(frame.phase))*en*size*.0625*frame.amount;
+ // P-L02 已改成全體同步閃爍，不再改動圖案位置。
+ return 0;
 }
 export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number) {
  if(!frame)return;
@@ -78,7 +81,7 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
   const sx=1-(1-Math.abs(Math.cos(v)))*.8*frame.amount*en;
   ctx.translate(x,y);ctx.scale(sx,1);ctx.translate(-x,-y);
  }
- if(frame.id==='lab-P-L20')ctx.filter=`blur(${(1-Math.cos(v))*frame.amount*en*Math.min(7,size*.02)*Math.hypot(ctx.getTransform().a,ctx.getTransform().b)}px)`;
+ if(frame.id==='lab-P-L20')ctx.filter=`blur(${(1-Math.cos(v))*frame.amount*smooth(frame.t/.3)*Math.min(18,Math.max(3,size*.16))*Math.hypot(ctx.getTransform().a,ctx.getTransform().b)}px)`;
 }
 export function selectedPatternGlow(frame:SelectedFrame|undefined) {
  if(frame?.id!=='lab-P-L04')return 0;

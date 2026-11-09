@@ -10401,7 +10401,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   pagesCountRef.current = pages.length;
   /** 每一帧要照頁碼找元素，用 ref 拿最新的 pages（rAF 迴圈不跟著 pages 重掛） */
   const pagesRef = useRef(pages);
-  useEffect(() => { pagesRef.current = pages; }, [pages]);
+  // 頁面與按鈕同一次 React commit 就要讀到新順序；useEffect 會晚一幀，
+  // 互換的兩頁藥丸因而短暫停在舊索引，之後才被捲動事件拉回來。
+  pagesRef.current = pages;
+  const pageOrderKey = pages.map(page => page.id).join('|');
 
   const handleMovePage = (from: number, to: number) => {
     const count = pagesCountRef.current;
@@ -11375,7 +11378,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /* 選中／取消選中與拖起／放下頁面時，立即在外層固定線和內層線之間交棒。 */
   useLayoutEffect(() => {
     positionPageCtls();
-  }, [embeddedSeams, activeGuidelines, positionPageCtls]);
+  }, [embeddedSeams, activeGuidelines, pageOrderKey, positionPageCtls]);
 
   useEffect(() => {
     let raf = 0;
@@ -18409,18 +18412,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const isGlintTarget = target?.shape === 'hole' && String(target?.holeType || '').startsWith('sb-');
               const isScatterTarget = target?.shape === FRAME_SCATTER;
               /* 散落圖形：波浪換成呼吸（每顆各自的透明度呼吸） */
-              const legacyIdleKinds = isScatterTarget ? baseIdle.map(([id, name]) => id === 'grid-wave' ? ['scatter-breathe', '呼吸'] as const : [id, name] as const) : isGlintTarget ? GLINT_IDLE_KINDS.map(([id, name]) => [id, name] as const) : target?.sym
-                ? baseIdle.filter(([id]) => id !== 'grid-wave').flatMap(([id, name]) =>
+              const legacyIdleKinds: readonly (readonly [string, string])[] = isScatterTarget ? baseIdle.map(([id, name]) => id === 'grid-wave' ? ['scatter-breathe', '呼吸'] as const : [id, name] as const) : isGlintTarget ? GLINT_IDLE_KINDS.map(([id, name]) => [id, name] as const) : target?.sym
+                ? baseIdle.filter(([id]) => id !== 'grid-wave').flatMap<readonly [string, string]>(([id, name]) =>
                     id === 'breathe' ? [[id, '縮放I'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
                 : isTextTarget
-                  ? baseIdle.filter(([id]) => id !== 'spin').flatMap(([id, name]) =>
+                  ? baseIdle.filter(([id]) => id !== 'spin').flatMap<readonly [string, string]>(([id, name]) =>
                       id === 'breathe' ? [[id, '縮放'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
                   : targetIsImage
                     ? baseIdle.map(([id, name]) => id === 'spin' ? ['image-breathe', '呼吸'] as const : [id, name] as const)
                     : baseIdle.map(([id, name]) => id === 'spin' && target?.shape === 'grid-orbits' ? ['signal', '信號'] as const : [id, name] as const);
               const labTarget = target?.sym ? 'symbol' : isTextTarget ? 'text' : target?.shape ? 'shape' : null;
-              const introKinds = [...legacyIntroKinds, ...(labTarget ? selectedKinds(labTarget, 'entry').map(x => [x.id,x.name] as const) : [])];
-              const idleKinds = [...legacyIdleKinds, ...(labTarget ? selectedKinds(labTarget, 'idle').map(x => [x.id,x.name] as const) : [])];
+              const introKinds: readonly (readonly [string, string])[] = isTextTarget
+                ? [['none','無'],['rise','升起'],['fade','淡入l'],['lab-T-E03','淡入ll'],
+                   ['drop','落下'],['flip','翻轉'],['pop','果凍l'],['lab-T-E07','果凍ll']] as const
+                : [...(target?.sym ? legacyIntroKinds.filter(([id]) => !['spin','flip','fade'].includes(id)) : legacyIntroKinds),
+                   ...(labTarget ? selectedKinds(labTarget, 'entry').map(x => [x.id,x.name] as const) : [])];
+              const idleKinds: readonly (readonly [string, string])[] = isTextTarget
+                ? [...legacyIdleKinds.filter(([id]) => id === 'none' || id === 'float'),
+                   ['grid-wave','波浪l'] as const, ['lab-T-L15','波浪ll'] as const,
+                   ...legacyIdleKinds.filter(([id]) => id !== 'none' && id !== 'float' && id !== 'grid-wave'),
+                   ...selectedKinds('text', 'idle').filter(x => x.code !== 'T-L15').map(x => [x.id,x.name] as const)]
+                : [...(target?.sym ? legacyIdleKinds.filter(([id]) => ['none','float','breathe','symbol-breathe2'].includes(id)) : legacyIdleKinds),
+                   ...(labTarget ? selectedKinds(labTarget, 'idle').map(x => [x.id,x.name] as const) : [])];
               const pickIntro = (id: string) => {
                 /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
                 patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) }
@@ -18472,10 +18485,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2 mt-4">常駐動畫</p>
                     <div className="grid grid-cols-4 gap-2">{idleKinds.map(([id,name]) => <button key={id} className={cell(cfg.idle===id)} onClick={()=>pickIdle(id)}>{name}</button>)}</div>
                     {cfg.idle !== 'none' && <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                      <CompactSlider key={`${target.id}-${cfg.idle}-amp`} label="幅度"
+                      {cfg.idle !== 'lab-T-L04' && <CompactSlider key={`${target.id}-${cfg.idle}-amp`} label="幅度"
                         value={cfg.idle === 'image-breathe' && targetIsImage ? imageBreathAmpToUi(cfg.amp) : cfg.amp}
                         min={0} max={100} step={1} onCommit={replayMotion}
-                        onChange={(v:number)=>patchMotion({amp:cfg.idle === 'image-breathe' && targetIsImage ? imageBreathAmpFromUi(v) : v})}/>
+                        onChange={(v:number)=>patchMotion({amp:cfg.idle === 'image-breathe' && targetIsImage ? imageBreathAmpFromUi(v) : v})}/>}
+                      <div className={cfg.idle === 'lab-T-L04' ? 'col-span-2' : undefined}>
                       <CompactSlider key={`${target.id}-${cfg.idle}-speed`} label="速度"
                         value={cfg.idle === 'image-breathe' && targetIsImage
                           ? imageBreathSpeedToUi(cfg.speed)
@@ -18497,6 +18511,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedFromUi(v)
                           : cfg.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
                           : cfg.idle === 'glint-blink' ? blinkSpeedFromUi(v) : idleSpeedFromUi(v)})}/>
+                      </div>
                     </div>}
                   </>}
                 </div>
