@@ -821,6 +821,17 @@ export const rasterizeSymbolAnimationLayers = (
   const key = `${plainText ? 'text' : 'symbol'}|${text}|${family}|${fontWeight}|${fontStyle}|${letterSpacing.toFixed(3)}|${px.toFixed(3)}|${mode}|${color}|${logicalStrokeWidth.toFixed(3)}|${wantedScale.toFixed(3)}`;
   const hit = rasterLayerCache.get(key);
   if (hit) return hit;
+  /* Canvas 不會等網頁字型載入：字型還沒好就畫，會用備用字型畫出來，
+     舊版又把那張貼圖快取起來，於是套了這類動畫的文字就「自己換了字體」。
+     字型未就緒時先要求載入，這一格照畫但不進快取，載入後下一格就是正確字型。 */
+  let fontReady = true;
+  try {
+    const fonts = (document as any).fonts as FontFaceSet | undefined;
+    if (fonts && !fonts.check(fontCss, renderText)) {
+      fontReady = false;
+      void fonts.load(fontCss, renderText).catch(() => {});
+    }
+  } catch { /* 字型 API 不可用時照舊 */ }
   try {
     const probe = document.createElement('canvas').getContext('2d');
     if (!probe) return null;
@@ -1093,7 +1104,7 @@ export const rasterizeSymbolAnimationLayers = (
       inkWidth: (fullR - fullL + 1) * inv,
       inkHeight: (fullB - fullT + 1) * inv,
     };
-    rasterLayerCache.set(key, out);
+    if (fontReady) rasterLayerCache.set(key, out);
     while (rasterLayerCache.size > MAX_RASTER_LAYER_CACHE) {
       const first = rasterLayerCache.keys().next().value as string | undefined;
       if (!first) break;

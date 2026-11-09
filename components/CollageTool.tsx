@@ -15,7 +15,7 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, DEFOCUS_IDS, defocusSpeedToUi, defocusSpeedFromUi } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, scatterAllNoGlow } from '../utils/frameShapes';
@@ -1130,6 +1130,83 @@ export const nonGridWaveSpeedToUi = (speed: number) =>
   Math.round(Math.max(0, Math.min(100, (speed * 100 - 100) / 1.5)));
 export const nonGridWaveSpeedFromUi = (ui: number) =>
   (100 + Math.max(0, Math.min(100, ui)) * 1.5) / 100;
+/** 動畫面板判斷預設值與刻度時需要的「目標是什麼」。
+    App 的動畫頁與「動畫預設值調整網站」都用同一份，兩邊數字才會完全一致。 */
+export type MotionTargetCtx = {
+  /** 圖案那一群（moTarget === 'shape'） */
+  pattern: boolean;
+  type?: 'text' | 'image' | 'shape';
+  sym: boolean; grid: boolean; line: boolean; glint: boolean; scatter: boolean;
+};
+export const motionTargetCtxOf = (o: any | null): MotionTargetCtx => o ? {
+  pattern: false, type: o.type, sym: !!o.sym,
+  grid: o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind),
+  line: o.type === 'shape' && SPECIAL_LINE_KINDS.has(o.kind),
+  glint: o.type === 'shape' && o.kind === 'hole' && String(o.hole || '').startsWith('sb-'),
+  scatter: o.type === 'shape' && o.kind === FRAME_SCATTER,
+} : { pattern: true, sym: false, grid: false, line: false, glint: false, scatter: false };
+/** 圖案那一群剛開啟時的動畫設定（也就是圖案的預設值） */
+export const PATTERN_MO_DEFAULT: MoCfg = {
+  ...MO_DEFAULT, dur: durFromSpeed(30), idle: 'pattern-breathe', amp: 100, speed: patternBreathSpeedFromUi(70),
+};
+/** 在動畫面板點一個進場／常駐種類時，實際寫進設定的內容（含那個種類的預設參數） */
+export const motionPickPatch = (d: Partial<MoCfg>, c: MotionTargetCtx, curIn: string): Partial<MoCfg> => {
+  const obj = !c.pattern && !!c.type;
+  if (d.idle && obj) return { ...d, ...idleDefaults(d.idle, { symbol: c.sym, text: c.type === 'text', image: c.type === 'image', shape: c.type === 'shape', grid: c.grid, line: c.line, glint: c.glint }) };
+  if (d.in === 'bubble' && obj && c.sym) return { ...d, dur: durFromSpeed(80) };
+  /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
+  if (d.in === 'pop-seq' && c.scatter) return { ...d, dur: durFromSpeed(50) };
+  if (d.in && c.scatter && curIn === 'pop-seq') return { ...d, dur: MO_DEFAULT.dur };
+  if (d.idle === 'scatter-breathe') return { ...d, amp: 100, speed: patternBreathSpeedFromUi(70) };
+  if (d.idle === 'symbol-breathe2' && obj && c.type === 'text') return { ...d, amp: 60, speed: 1.2 };
+  if (d.idle === 'breathe' && obj && c.sym) return { ...d, amp: 30 };
+  if (d.idle === 'pattern-breathe' && c.pattern) return { ...d, amp: 100, speed: patternBreathSpeedFromUi(70) };
+  if (d.idle === 'image-breathe' && obj && c.type === 'image') return { ...d, amp: 100, speed: patternBreathSpeedFromUi(70) };
+  /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
+     就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
+  if (d.idle === 'grid-wave') return { ...d, ...(c.grid ? GRID_WAVE_DEFAULT : NON_GRID_WAVE_DEFAULT), ...(obj && c.type === 'shape' ? { speed: 1.8 } : {}) };
+  if (d.idle && c.line) return { ...d, amp: 20 };
+  return d;
+};
+/** 設定 → 面板上滑桿顯示的 0～100 數字 */
+export const motionUi = (cur: MoCfg, c: MotionTargetCtx) => {
+  const breathScale = (cur.idle === 'pattern-breathe' && c.pattern) || (cur.idle === 'image-breathe' && c.type === 'image') || cur.idle === 'scatter-breathe';
+  return {
+    delay: delayToUi(cur.delay),
+    inSpeed: cur.in === 'bubble' ? Math.round((speedFromDur(cur.dur) - 50) * 2) : cur.in === 'pop-seq' && c.scatter ? seqSpeedToUi(speedFromDur(cur.dur)) : speedFromDur(cur.dur),
+    amp: breathScale ? patternBreathAmpToUi(cur.amp) : cur.amp,
+    speed: breathScale ? patternBreathSpeedToUi(cur.speed)
+      : cur.idle === 'symbol-breathe2' && (c.sym || (c.type === 'text' && !c.sym)) ? symbolBreathe2SpeedToUi(cur.speed)
+      : cur.idle === 'grid-wave' && c.type !== 'shape' && !c.grid ? nonGridWaveSpeedToUi(cur.speed)
+      : cur.idle === 'grid-wave' ? Math.round(Math.max(0, Math.min(100, (cur.speed - .2) / 1.8 * 100)))
+      : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedToUi(cur.speed)
+      : cur.idle === 'breathe' && c.glint ? glintZoomSpeedToUi(cur.speed)
+      : cur.idle === 'glint-blink' ? blinkSpeedToUi(cur.speed)
+      : DEFOCUS_IDS.has(cur.idle) ? defocusSpeedToUi(cur.speed)
+      : idleSpeedToUi(cur.speed),
+  };
+};
+/** 某個目標在動畫面板上列出的進場／常駐種類（App 與動畫預設值網站共用） */
+export const motionKindLists = (c: MotionTargetCtx) => {
+  const isText = c.type === 'text' && !c.sym;
+  const legacyKinds = c.scatter ? SCATTER_IN_KINDS : c.pattern ? IN_KINDS.filter(k => k.id !== 'flip') : c.sym ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : c.grid ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : c.line ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
+  const labTarget = c.pattern ? 'pattern' : c.sym ? 'symbol' : isText ? 'text' : c.type === 'shape' ? 'shape' : null;
+  const kinds = isText
+    ? [{id:'none',name:'無'},{id:'bounce',name:'彈跳'},{id:'fade',name:'淡入l'},{id:'lab-T-E03',name:'淡入ll'},
+       {id:'rise',name:'升起'},{id:'drop',name:'落下'},{id:'pop',name:'果凍l'},{id:'lab-T-E07',name:'果凍ll'}]
+    : [...(c.sym ? legacyKinds.filter(k => !['spin','flip','fade'].includes(k.id)) : legacyKinds),
+       ...(labTarget ? selectedKinds(labTarget, 'entry') : [])];
+  const baseIdleKinds = c.scatter ? SCATTER_IDLE_KINDS : c.pattern ? PATTERN_IDLE_KINDS : c.sym ? SYMBOL_IDLE_KINDS : isText ? TEXT_IDLE_KINDS : c.type === 'image' ? IMAGE_IDLE_KINDS : c.grid ? GRID_IDLE_KINDS : c.glint ? GLINT_IDLE_KINDS_C : IDLE_KINDS;
+  const idleKinds = isText
+    ? [...baseIdleKinds.filter(k => k.id === 'none' || k.id === 'float'),
+       {id:'grid-wave',name:'波浪l'},{id:'lab-T-L15',name:'波浪ll'},
+       ...baseIdleKinds.filter(k => !['none','float','grid-wave','breathe','symbol-breathe2'].includes(k.id)),
+       ...selectedKinds('text','idle').filter(k => k.code !== 'T-L15'),
+       {id:'breathe',name:'縮放l'},{id:'symbol-breathe2',name:'縮放ll'}]
+    : [...(c.sym ? baseIdleKinds.filter(k => ['none','float','breathe','symbol-breathe2'].includes(k.id)) : baseIdleKinds),
+       ...(labTarget ? selectedKinds(labTarget, 'idle') : [])];
+  return { kinds, idleKinds };
+};
 export const moOf = (o: any): MoCfg => {
   const cfg = { ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) };
   /* 舊草稿裡的「左右」也真正遷移到網格同款波浪，不只是改顯示名稱。 */
@@ -1374,6 +1451,8 @@ interface CollageToolProps {
   initialPattern?: string;
   /** 沒選中單一圖案時拖「大小」滑桿：告訴排序工具這個圖案現在調到多少 */
   onPatternSizeTuned?: (id: string, size: number) => void;
+  /** 動畫預設值調整網站用：物件與圖案的動畫設定有變時回報（App 本身不傳） */
+  onMotionChange?: (s: { objects: any[]; moShape: MoCfg; moTarget: string }) => void;
 }
 
 /** 「新增圖形」的整片清單。只在選中的那一顆換了才重畫（見 shapePickRef） */
@@ -1402,7 +1481,7 @@ const CreativeShapePicker = React.memo(({ selectedId, onPick }: { selectedId?: s
     ))}
   </>
 ));
-export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned }) => {
+export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned, onMotionChange }) => {
   const saveToolDraft: typeof saveToolDraftImpl = (...args) => sandbox ? Promise.resolve() as any : saveToolDraftImpl(...args);
   useKeyboardRecovery();
   const [imageState, setImageState] = useState<any>(null);
@@ -9190,6 +9269,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [moLink, setMoLink] = useState({ delay: 0, dur: durFromSpeed(80), ease: 'linear' });
   /** 動畫頁上正在調哪一個元素：'shape' | 'link' | 物件 id */
   const [moTarget, setMoTarget] = useState<string>('shape');
+  const onMotionChangeRef = useRef(onMotionChange);
+  onMotionChangeRef.current = onMotionChange;
+  useEffect(() => { onMotionChangeRef.current?.({ objects, moShape, moTarget }); }, [objects, moShape, moTarget]);
   /** 匯出成影片時的進度（0～1）；null = 沒在匯出 */
   const [videoProg, setVideoProg] = useState<number | null>(null);
   /** 按下「取消匯出」時翻成 true，錄影迴圈下一格就會收工 */
@@ -12542,25 +12624,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 };
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
                 const pickKind = (d: Partial<MoCfg>) => {
-                  if (d.idle && selObj) setCur({ ...d, ...idleDefaults(d.idle, { symbol: !!selObj.sym, text: selObj.type === 'text', image: selObj.type === 'image', shape: selObj.type === 'shape', grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget }) });
-                  else if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
-                  /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
-                  else if (d.in === 'pop-seq' && isScatterTarget) setCur({ ...d, dur: durFromSpeed(50) });
-                  else if (d.in && isScatterTarget && cur.in === 'pop-seq') setCur({ ...d, dur: MO_DEFAULT.dur });
-                  else if (d.idle === 'scatter-breathe') setCur({ ...d, amp: 100, speed: patternBreathSpeedFromUi(70) });
-                  else if (d.idle === 'symbol-breathe2' && selObj?.type === 'text') setCur({ ...d, amp: 60, speed: 1.2 });
-                  else if (d.idle === 'breathe' && selObj?.sym) setCur({ ...d, amp: 30 });
-                  /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
-                     就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
-                  else if (d.idle === 'pattern-breathe' && moTarget === 'shape') setCur({ ...d, amp: 100, speed: patternBreathSpeedFromUi(70) });
-                  else if (d.idle === 'image-breathe' && selObj?.type === 'image') setCur({ ...d, amp: 100, speed: patternBreathSpeedFromUi(70) });
-                  else if (d.idle === 'grid-wave') setCur({
-                    ...d,
-                    ...(isGridTarget ? GRID_WAVE_DEFAULT : NON_GRID_WAVE_DEFAULT),
-                    ...(selObj?.type === 'shape' ? { speed: 1.8 } : {}),
-                  });
-                  else if (d.idle && isSpecialLineTarget) setCur({ ...d, amp: 20 });
-                  else setCur(d);
+                  setCur(motionPickPatch(d, motionTargetCtxOf(selObj), cur.in));
                   replayMotion();
                 };
                 /* 發光的常駐動畫不再自成一頁 —— 直接接在「本體」那一頁的最下面：
@@ -12631,22 +12695,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const isGridTarget = !!selObj && selObj.type === 'shape' && GRID_SHAPE_KINDS.has(selObj.kind);
                 const isGlintTarget = !!selObj && selObj.type === 'shape' && selObj.kind === 'hole' && String(selObj.hole || '').startsWith('sb-');
                 const isScatterTarget = !!selObj && selObj.type === 'shape' && selObj.kind === FRAME_SCATTER;
-                const legacyKinds = isScatterTarget ? SCATTER_IN_KINDS : moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
-                const labTarget = moTarget === 'shape' ? 'pattern' : isSymbolTarget ? 'symbol' : isTextTarget ? 'text' : selObj?.type === 'shape' ? 'shape' : null;
-                const kinds = isTextTarget
-                  ? [{id:'none',name:'無'},{id:'bounce',name:'彈跳'},{id:'fade',name:'淡入l'},{id:'lab-T-E03',name:'淡入ll'},
-                     {id:'rise',name:'升起'},{id:'drop',name:'落下'},{id:'pop',name:'果凍l'},{id:'lab-T-E07',name:'果凍ll'}]
-                  : [...(isSymbolTarget ? legacyKinds.filter(k => !['spin','flip','fade'].includes(k.id)) : legacyKinds),
-                     ...(labTarget ? selectedKinds(labTarget, 'entry') : [])];
-                const baseIdleKinds = isScatterTarget ? SCATTER_IDLE_KINDS : moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : isGlintTarget ? GLINT_IDLE_KINDS_C : IDLE_KINDS;
-                const idleKinds = isTextTarget
-                  ? [...baseIdleKinds.filter(k => k.id === 'none' || k.id === 'float'),
-                     {id:'grid-wave',name:'波浪l'},{id:'lab-T-L15',name:'波浪ll'},
-                     ...baseIdleKinds.filter(k => !['none','float','grid-wave','breathe','symbol-breathe2'].includes(k.id)),
-                     ...selectedKinds('text','idle').filter(k => k.code !== 'T-L15'),
-                     {id:'breathe',name:'縮放l'},{id:'symbol-breathe2',name:'縮放ll'}]
-                  : [...(isSymbolTarget ? baseIdleKinds.filter(k => ['none','float','breathe','symbol-breathe2'].includes(k.id)) : baseIdleKinds),
-                     ...(labTarget ? selectedKinds(labTarget, 'idle') : [])];
+                const { kinds, idleKinds } = motionKindLists(motionTargetCtxOf(selObj));
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}
@@ -12717,7 +12766,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             onCommit={replayMotion}
                             onChange={(v: number) => setCur({ delay: delayFromUi(v) })} />
                           <CompactSlider label="速度"
-                            value={cur.in === 'bubble' ? Math.round((speedFromDur(cur.dur) - 50) * 2) : cur.in === 'pop-seq' && isScatterTarget ? seqSpeedToUi(speedFromDur(cur.dur)) : speedFromDur(cur.dur)}
+                            value={motionUi(cur, motionTargetCtxOf(selObj)).inSpeed}
                             min={0} max={100} step={1}
                             onCommit={replayMotion}
                             onChange={(v: number) => setCur({ dur: durFromSpeed(cur.in === 'bubble' ? 50 + v / 2 : cur.in === 'pop-seq' && isScatterTarget ? seqSpeedFromUi(v) : v) })} />
@@ -12734,8 +12783,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         {cur.idle !== 'none' && (
                           <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                             {cur.idle !== 'lab-P-L02' && cur.idle !== 'lab-T-L04' && <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-amp`} label="幅度"
-                              value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
-                                ? patternBreathAmpToUi(cur.amp) : cur.amp}
+                              value={motionUi(cur, motionTargetCtxOf(selObj)).amp}
                               min={0} max={100} step={1}
                               onChange={(v: number) => setCur({
                                 amp: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
@@ -12743,17 +12791,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               })} />}
                             <div className={cur.idle === 'lab-P-L02' || cur.idle === 'lab-T-L04' ? 'col-span-2' : undefined}>
                             <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-speed`} label="速度"
-                              value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget) || cur.idle === 'scatter-breathe'
-                                ? patternBreathSpeedToUi(cur.speed)
-                                : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
-                                ? symbolBreathe2SpeedToUi(cur.speed)
-                                : cur.idle === 'grid-wave' && selObj?.type !== 'shape' && !isGridTarget
-                                  ? nonGridWaveSpeedToUi(cur.speed)
-                                  : cur.idle === 'grid-wave' ? Math.round(Math.max(0, Math.min(100, (cur.speed - .2) / 1.8 * 100)))
-                                  : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedToUi(cur.speed)
-                                  : cur.idle === 'breathe' && isGlintTarget ? glintZoomSpeedToUi(cur.speed)
-                                  : cur.idle === 'glint-blink' ? blinkSpeedToUi(cur.speed)
-                                  : idleSpeedToUi(cur.speed)}
+                              value={motionUi(cur, motionTargetCtxOf(selObj)).speed}
                               min={0} max={100}
                               step={1}
                               onChange={(v: number) => setCur({
@@ -12767,6 +12805,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                     : cur.idle === 'glint-breathe' || cur.idle === 'glint-rays' ? glintSpeedFromUi(v)
                                     : cur.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
                                     : cur.idle === 'glint-blink' ? blinkSpeedFromUi(v)
+                                    : DEFOCUS_IDS.has(cur.idle) ? defocusSpeedFromUi(v)
                                     : idleSpeedFromUi(v),
                               })} />
                             </div>

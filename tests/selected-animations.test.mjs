@@ -75,6 +75,11 @@ try {
  m.paintSelectedAnimation(fb,m.selectedFrame({...cfg,idle:'lab-T-L20'},2,.4),40,50,()=>painted++);
  assert.equal(painted,1,'fallback still paints once when no canvas filter');
  m.setCanvasBlurSupportedForTest(undefined);
+ // 拖速度滑桿：相位必須連續，不可整段跳走；時間倒退（重播）則回到純時間。
+ {const c={in:'none',idle:'lab-T-L20',delay:0,dur:1,amp:100,speed:1};
+  const a=m.selectedFrame(c,10,9.9),b=m.selectedFrame({...c,speed:3},10.001,9.9);
+  assert.ok(Math.abs(a.clock*1-b.clock*3)<.01,'phase continuous across speed change');
+  const r=m.selectedFrame({...c,speed:3},1,9.9);assert.equal(r.clock,1,'replay resets to pure time');}
  assert.ok(m.selectedPatternGlow(m.selectedFrame({...cfg,idle:'lab-P-L04'},2,.4))>0,'pattern glow animates');
  const uiSources=(await Promise.all(['components/CollageTool.tsx','components/GridLayoutTool.tsx'].map(path=>readFile(path,'utf8')))).join('\n');
  for(const retired of ['lab-T-E01','lab-T-E04','lab-S-E07','lab-S-L02','lab-S-L04','lab-S-L11','lab-S-L18','lab-G-L04','lab-G-L06','lab-G-L11','lab-G-L20'])
