@@ -18489,7 +18489,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   : m.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
                   : m.idle === 'glint-blink' ? blinkSpeedFromUi(v) : hasSpeedRange(m.idle) ? rangedSpeedFromUi(m.idle, v) : idleSpeedFromUi(v) };
               /* 第一次選某個動畫時寫進的內容（＝那個動畫自己的預設） */
-              const et = { symbol: !!target.sym, line: isSpecialLineTarget, glint: isGlintTarget };
+              const et = { symbol: !!target.sym, line: isSpecialLineTarget, glint: isGlintTarget, image: targetIsImage, plainShape: !!target.shape && !isGridTarget && !isSpecialLineTarget && !isGlintTarget && !isScatterTarget };
               const firstIntro = (id: string, fromIn: string): Partial<typeof cfg> =>
                 id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) }
                 /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
