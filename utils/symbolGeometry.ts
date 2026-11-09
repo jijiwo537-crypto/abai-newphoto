@@ -817,7 +817,12 @@ export const rasterizeSymbolAnimationLayers = (
   /* 縮放 II 會持續改變每個小單位的目的尺寸；3× 貼圖在放大的 Retina
      預覽仍可能被往上採樣，邊緣 alpha 便會逐幀游動。短符號允許到 7×，
      實際尺寸仍會被下方 16000px 單邊限制夾住，長符號不會無限配置。 */
-  const wantedScale = Math.max(1, Math.min(7, outputScale));
+  /* 縮放符號時呼叫端給的倍率與描邊會每一格都不同；舊版直接拿來當快取鍵，
+     放大縮小的每一格都整組重新點陣化（還一路把舊的擠出快取），就是「動畫中縮放符號很卡」。
+     倍率一律往上取到 0.5 的檔位（只會更清晰、不會變糊，最多 9 檔），描邊取到 0.05，
+     縮放過程中幾乎都命中快取。 */
+  const wantedScale = Math.max(1, Math.min(7, Math.ceil(outputScale * 2 - 1e-6) / 2));
+  logicalStrokeWidth = Math.round(Math.max(0, logicalStrokeWidth) * 20) / 20;
   const key = `${plainText ? 'text' : 'symbol'}|${text}|${family}|${fontWeight}|${fontStyle}|${letterSpacing.toFixed(3)}|${px.toFixed(3)}|${mode}|${color}|${logicalStrokeWidth.toFixed(3)}|${wantedScale.toFixed(3)}`;
   const hit = rasterLayerCache.get(key);
   if (hit) return hit;
