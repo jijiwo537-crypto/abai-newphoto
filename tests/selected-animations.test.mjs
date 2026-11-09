@@ -62,10 +62,13 @@ try {
  const P=4.2;
  for(const t of [0,.3,1.1,2.2,3.9])assert.ok(Math.abs(m.defocusLevel(t,1,1,3)-m.defocusLevel(t-P/3,1,0,3))<1e-9);
  const samples=Array.from({length:4200},(_,i)=>m.defocusLevel(i/1000,1,0,1));
- const blurred=samples.filter(v=>v>.5).length;
- assert.ok(Math.abs(blurred-2100)<=10,`blurred time equals sharp time (${blurred}/4200)`);
  assert.equal(m.defocusLevel(0,1,0,1),0,'starts sharp');
  for(let i=1;i<samples.length;i++)assert.ok(Math.abs(samples[i]-samples[i-1])<.01,'no sudden jumps');
+ // 對稱：變模糊與變清楚花一樣的時間（以週期中點為鏡像）
+ for(const t of [.3,.9,1.7])assert.ok(Math.abs(m.defocusLevel(t,1,0,1)-m.defocusLevel(4.2-t,1,0,1))<1e-9,'symmetric rise and fall');
+ // 最模糊只有一瞬間：頂點前後 0.1 秒內就明顯下降（餘弦在這裡幾乎不變）
+ {const peak=m.defocusLevel(2.1,1,0,1),near=m.defocusLevel(2.2,1,0,1);
+  assert.ok(peak>.999&&peak-near>.06,`peak is momentary (${peak.toFixed(3)} → ${near.toFixed(3)})`);}
  // 交疊接棒：下一組在上一組還沒完全清楚前就開始模糊。
  for(const G of [2,3]){
   let overlap=false;for(let i=0;i<4200;i++){const t=i/1000;if(m.defocusLevel(t,1,0,G)>.05&&m.defocusLevel(t,1,1,G)>.05)overlap=true;}

@@ -37,8 +37,8 @@ export function selectedFrame(cfg:{in:string;idle:string;delay:number;dur:number
  return {id:cfg.idle,p:1,t:Math.max(0,time-end+shift),amount:clamp(cfg.amp/100),speed,phase,clock:t};
 }
 /* ───────────── 失焦（T-L20／S-L20／P-L20） ─────────────
-   每個目標：沿著一條完整的餘弦慢慢失焦、再慢慢對焦，一直在變、沒有停頓；
-   模糊的時間＝清楚的時間。多個目標分成 2 組（兩個目標）或 3 組（三個以上），
+   每個目標：從清楚緩緩失焦，到最模糊的那一瞬間立刻開始對焦回來（頂端不停留），
+   變模糊與變清楚花一樣的時間。多個目標分成 2 組（兩個目標）或 3 組（三個以上），
    曲線完全相同、只錯開 1/組數 週期，上一組在變清楚時下一組已經慢慢模糊起來。 */
 const DEFOCUS_SEQ3=[0,2,1,2,0,1,0,1,2,1,0,2]; // 每 3 個一組都是完整排列，相鄰兩個不會同組
 export function defocusGroup(index:number,count:number){
@@ -51,11 +51,13 @@ export function defocusGroup(index:number,count:number){
 export const defocusPeriod=(speed:number)=>Math.max(.5,4.2/Math.max(.05,speed));
 /** 0＝完全清楚、1＝最模糊。 */
 export function defocusLevel(clock:number,speed:number,group:number,groups:number){
- /* 一輪完整的餘弦：一直在柔和地變化，沒有「停在清楚／停在模糊」的平台，
-    所以不會像開關一樣一下清楚一下模糊。0.5 以上（偏模糊）與以下（偏清楚）各占半輪；
-    t=0 時第一組是完全清楚。各組同一條曲線、錯開 1/組數 週期，交疊接棒。 */
- const u=clock/defocusPeriod(speed)-group/Math.max(1,groups);
- return (1-Math.cos(u*Math.PI*2))/2;
+ /* 尖頂曲線：從清楚開始緩緩變模糊，到最模糊的那一刻立刻轉頭變清楚，頂端沒有停留
+    （餘弦的頂端是平的，最模糊時會「停一下」）。底部是平順的：清楚的狀態會自然多待一會兒。
+    變模糊與變清楚各占半輪、左右對稱；t=0 時第一組完全清楚；各組錯開 1/組數 週期。 */
+ let u=clock/defocusPeriod(speed)-group/Math.max(1,groups);
+ u-=Math.floor(u);
+ const v=1-Math.abs(2*u-1);           // 三角形：0 → 1（u=.5 尖頂）→ 0
+ return Math.pow(v,1.5);              // 底部變緩、頂部仍是尖的
 }
 const defocusOf=(frame:SelectedFrame,index:number,count:number)=>{
  const {group,groups}=defocusGroup(index,count);
