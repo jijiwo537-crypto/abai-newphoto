@@ -16,6 +16,8 @@ export default {
     './index.tsx',
     './order.html',
     './order.tsx',
+    './animation-tuner.html',
+    './animation-tuner.tsx',
     './App.tsx',
     './components/**/*.{ts,tsx}',
     './utils/**/*.{ts,tsx}',
