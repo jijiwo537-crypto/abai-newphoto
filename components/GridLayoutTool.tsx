@@ -12,7 +12,7 @@ import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import {exportHeic} from '../utils/heicExport';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
@@ -18487,31 +18487,45 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   : m.idle === 'glint-breathe' || m.idle === 'glint-rays' ? glintSpeedFromUi(v)
                   : m.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
                   : m.idle === 'glint-blink' ? blinkSpeedFromUi(v) : hasSpeedRange(m.idle) ? rangedSpeedFromUi(m.idle, v) : idleSpeedFromUi(v) };
-              const pickIntro = (id: string) => {
-                /* 共用滑桿：已經有進場動畫時換別的，面板上的速度數字不變 */
-                if (id !== 'none' && cfg.in !== 'none') {
-                  patchMotion({ in: id, ...ciFrom('inSpeed', ciUi(cfg).inSpeed, { ...cfg, in: id }) });
-                  replayMotion(); return;
-                }
+              /* 第一次選某個動畫時寫進的內容（＝那個動畫自己的預設） */
+              const et = { symbol: !!target.sym, line: isSpecialLineTarget, glint: isGlintTarget };
+              const firstIntro = (id: string, fromIn: string): Partial<typeof cfg> =>
+                id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) }
                 /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
-                patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) }
-                  : id === 'pop-seq' && isScatterTarget ? { in: id, dur: motionDurationFromUi(50) }
-                  : isScatterTarget && cfg.in === 'pop-seq' ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur }
-                  /* 個別進場動畫自己的速度預設（與創意拼圖同一張表）；換走時回到一般預設 */
-                  : entrySpeedDefaultUi(id, { symbol: !!target.sym, line: isSpecialLineTarget, glint: isGlintTarget }) !== undefined
-                    ? { in: id, dur: motionDurationFromUi(entrySpeedDefaultUi(id, { symbol: !!target.sym, line: isSpecialLineTarget, glint: isGlintTarget })!) }
-                  : entrySpeedDefaultUi(cfg.in, { symbol: !!target.sym, line: isSpecialLineTarget, glint: isGlintTarget }) !== undefined
-                    ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur } : { in: id });
+                : id === 'pop-seq' && isScatterTarget ? { in: id, dur: motionDurationFromUi(50) }
+                : isScatterTarget && fromIn === 'pop-seq' ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur }
+                /* 個別進場動畫自己的速度預設（與創意拼圖同一張表） */
+                : entrySpeedDefaultUi(id, et) !== undefined ? { in: id, dur: motionDurationFromUi(entrySpeedDefaultUi(id, et)!) }
+                : entrySpeedDefaultUi(fromIn, et) !== undefined ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur } : { in: id };
+              const firstIdle = (id: string): Partial<typeof cfg> => ({ idle: id, ...idleDefaults(id, { symbol: !!target.sym, text: isTextTarget, image: targetIsImage, shape: !!target.shape, grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget, scatter: isScatterTarget }) });
+              /* ── 共用滑桿（與創意拼圖同一套）：中間 50＝各動畫自己的預設，往兩端各自走到自己刻度的 0／100 */
+              const defUi = (phase: 'in' | 'idle', id: string) =>
+                ciUi({ ...CLASSIC_OBJECT_MOTION_DEFAULT, ...(phase === 'in' ? firstIntro(id, 'pop') : firstIdle(id)) } as typeof cfg);
+              const shUi = (m: typeof cfg) => {
+                const u = ciUi(m);
+                const di = m.in !== 'none' ? defUi('in', m.in) : u, dd = m.idle !== 'none' ? defUi('idle', m.idle) : u;
+                return {
+                  inSpeed: m.shIn ?? Math.round(toShared(u.inSpeed, di.inSpeed)),
+                  amp: m.shAmp ?? Math.round(toShared(u.amp, dd.amp)),
+                  speed: m.shSpeed ?? Math.round(toShared(u.speed, dd.speed)),
+                };
+              };
+              const shFrom = (f: 'inSpeed' | 'amp' | 'speed', v: number, m: typeof cfg): Partial<typeof cfg> => {
+                const def = (f === 'inSpeed' ? defUi('in', m.in) : defUi('idle', m.idle))[f];
+                return { ...ciFrom(f, fromShared(v, def), m), ...(f === 'inSpeed' ? { shIn: v } : f === 'amp' ? { shAmp: v } : { shSpeed: v }) };
+              };
+              const pickIntro = (id: string) => {
+                /* 已經有進場動畫時換別的：共用滑桿的數字不變 */
+                if (id !== 'none' && cfg.in !== 'none') patchMotion({ in: id, ...shFrom('inSpeed', shUi(cfg).inSpeed, { ...cfg, in: id }) });
+                else patchMotion({ ...firstIntro(id, cfg.in), ...(id !== 'none' ? { shIn: SHARED_MID } : {}) });
                 replayMotion();
               };
               const pickIdle = (id: string) => {
-                /* 共用滑桿：已經有常駐動畫時換別的，面板上的幅度、速度數字都不變 */
+                /* 已經有常駐動畫時換別的：共用滑桿的數字不變 */
                 if (id !== 'none' && cfg.idle !== 'none') {
-                  const u = ciUi(cfg), next = { ...cfg, idle: id };
-                  patchMotion({ idle: id, ...ciFrom('amp', u.amp, next), ...ciFrom('speed', u.speed, next) });
-                  replayMotion(); return;
-                }
-                patchMotion({ idle: id, ...idleDefaults(id, { symbol: !!target.sym, text: isTextTarget, image: targetIsImage, shape: !!target.shape, grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget, scatter: isScatterTarget }) });
+                  const sh = shUi(cfg), next = { ...cfg, idle: id };
+                  patchMotion({ idle: id, ...shFrom('amp', sh.amp, next), ...shFrom('speed', sh.speed, next) });
+                } else patchMotion({ ...firstIdle(id), ...(id !== 'none' ? { shAmp: SHARED_MID, shSpeed: SHARED_MID } : {}) });
                 replayMotion();
               };
               const chip = (on: boolean) => `px-3 h-8 shrink-0 rounded-[8px] border text-[11px] font-bold tracking-wider transition-all flex items-center gap-1.5 ${on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
@@ -18542,23 +18556,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                       <CompactSlider label="起始" value={delayToUi(cfg.delay)} min={0} max={100} step={1} onCommit={replayMotion} onChange={(v:number)=>patchMotion({delay:delayFromUi(v)})}/>
                       <CompactSlider label="速度"
-                        value={ciUi(cfg).inSpeed}
+                        value={shUi(cfg).inSpeed}
                         min={0} max={100} step={1} onCommit={replayMotion}
-                        onChange={(v:number)=>patchMotion(ciFrom('inSpeed', v, cfg))}/>
+                        onChange={(v:number)=>patchMotion(shFrom('inSpeed', v, cfg))}/>
                     </div>
                     <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2 mt-4">常駐動畫</p>
                     <div className="grid grid-cols-4 gap-2">{idleKinds.map(([id,name]) => <button key={id} className={cell(cfg.idle===id)} onClick={()=>pickIdle(id)}>{name}</button>)}</div>
                     {cfg.idle !== 'none' && <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                       {cfg.idle !== 'lab-T-L04' && <CompactSlider key={`${target.id}-${cfg.idle}-amp`} label="幅度"
-                        value={ciUi(cfg).amp}
+                        value={shUi(cfg).amp}
                         min={0} max={100} step={1} onCommit={replayMotion}
-                        onChange={(v:number)=>patchMotion(ciFrom('amp', v, cfg))}/>}
+                        onChange={(v:number)=>patchMotion(shFrom('amp', v, cfg))}/>}
                       <div className={cfg.idle === 'lab-T-L04' ? 'col-span-2' : undefined}>
                       <CompactSlider key={`${target.id}-${cfg.idle}-speed`} label="速度"
-                        value={ciUi(cfg).speed}
+                        value={shUi(cfg).speed}
                         min={0} max={100}
                         step={1} onCommit={replayMotion}
-                        onChange={(v:number)=>patchMotion(ciFrom('speed', v, cfg))}/>
+                        onChange={(v:number)=>patchMotion(shFrom('speed', v, cfg))}/>
                       </div>
                     </div>}
                   </>}

@@ -109,3 +109,21 @@ export const dashSpeedFromUi = (ui: number) => Math.round(20 + clampUi(ui) * 1.6
 /** 循環間隔：0～20 秒；預設 8 秒剛好是 40 */
 export const holdToUi = (sec: number) => Math.round(clampUi(sec / .2));
 export const holdFromUi = (ui: number) => clampUi(ui) * .2;
+
+/* ── 共用滑桿 ──────────────────────────────────────────────────────
+   幅度、速度（常駐）與速度（進場）是「共用」的：同一個物件換動畫時，面板上的數字不變。
+   每個動畫仍保留自己的預設值：共用滑桿在中間（SHARED_MID）時，每個動畫都正好是它自己的預設；
+   往 0 拉，各自從預設平順走到自己刻度的 0；往 100 拉，各自走到自己刻度的 100。
+   例如兩個動畫的速度預設分別是 70 與 30：共用滑桿在 50 時，一個照 70 播、一個照 30 播。 */
+export const SHARED_MID = 50;
+/** 某動畫自己刻度上的數字 u（0～100）→ 共用滑桿的數字；def 是這個動畫自己的預設 */
+export const toShared = (u: number, def: number) => {
+  if (Math.abs(u - def) < 1e-9) return SHARED_MID;
+  if (u < def) return def > 0 ? u / def * SHARED_MID : SHARED_MID;
+  return def < 100 ? SHARED_MID + (u - def) / (100 - def) * (100 - SHARED_MID) : SHARED_MID;
+};
+/** 共用滑桿的數字 → 這個動畫自己刻度上的數字（可以有小數） */
+export const fromShared = (s: number, def: number) => {
+  const v = Math.max(0, Math.min(100, s));
+  return v <= SHARED_MID ? def * v / SHARED_MID : def + (v - SHARED_MID) / (100 - SHARED_MID) * (100 - def);
+};
