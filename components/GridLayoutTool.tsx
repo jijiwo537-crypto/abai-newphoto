@@ -10,7 +10,7 @@ import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
-import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
+import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} from '../utils/collageVideoFormat';
 import {exportHeic} from '../utils/heicExport';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
@@ -10587,7 +10587,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [imageExportFormat,setImageExportFormat]=useState<'png'|'jpg'|'heic'>('png');
   const [videoExportFormat,setVideoExportFormat]=useState<CollageVideoFormat>('auto');
   const [videoExportFps,setVideoExportFps]=useState(0);
-  const [videoExportQuality,setVideoExportQuality]=useState(40_000_000);
+  /** 影片畫質＝短邊解析度（720／1080／1440／2160）；預設 1080p */
+  const [videoExportQuality,setVideoExportQuality]=useState(1080);
   const exportOptionsRef=useRef<HTMLDivElement>(null);
   useEffect(()=>{
     if(!exportOptionsOpen)return;
@@ -15934,8 +15935,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         /* 正式錄影仍維持長邊 1280，避免 iOS 即時編碼耗盡記憶體；IG 的 live
            預覽不經編碼，必須保留 Retina 所需的實體像素。舊版把兩者一起壓到
            1280，3:4 頁實際只剩 960px 寬，細字、符號與小圖形必然被放糊。 */
-        const longEdgeCap = opts?.live ? 2400 : 1280;
-        const k = Math.min(1, longEdgeCap / Math.max(targetW, targetH));
+        /* 正式輸出：解析度＝匯出設定選的畫質（短邊 720／1080／1440／2160，見 videoScaleFor）。
+           現在是逐格輸出（不是即時錄影），不必再為了即時編碼把長邊壓到 1280 */
+        const k = opts?.live ? Math.min(1, 2400 / Math.max(targetW, targetH)) : videoScaleFor(videoExportQuality, targetW, targetH);
         // 編碼器要求偶數邊長
         const VW = Math.max(2, Math.round(targetW * k / 2) * 2);
         const VH = Math.max(2, Math.round(targetH * k / 2) * 2);
@@ -16028,7 +16030,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const wasPlaying = vids.map(v => !v.paused);
           try {
             const blob = await encodeCanvasFrames({
-              canvas: rc, fps, frames: Math.max(1, Math.round(dur * fps)), bitrate: videoExportQuality,
+              canvas: rc, fps, frames: Math.max(1, Math.round(dur * fps)), bitrate: videoBitrateFor(rc.width, rc.height, fps),
               type: videoExportFormat === 'mov' ? 'video/quicktime' : 'video/mp4',
               // 取每一格的正中間，不會因為浮點誤差拿到前一格
               draw: async (_i, t) => { if (vids.length) await seekVideosTo(vids, t + .5 / fps); await composite(t); },
@@ -16050,7 +16052,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const mime = collageVideoMime(videoExportFormat);
         if(!mime)throw Error('此裝置不支援所選的影片格式');
         const stream = rc.captureStream(videoExportFps||preferredVideoFrameRate(vids));
-        const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoExportQuality });
+        const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoBitrateFor(rc.width, rc.height, videoExportFps || preferredVideoFrameRate(vids)) });
         const chunks: Blob[] = [];
         rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
         const done = new Promise<Blob>(res => { rec.onstop = () => res(new Blob(chunks, { type: mime || 'video/webm' })); });

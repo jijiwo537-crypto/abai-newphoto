@@ -13,7 +13,7 @@ test('MOV requires a real QuickTime encoder, never a renamed MP4',()=>{
 });
 test('both collage editors use identical shared export controls and actual encoding settings',()=>{
  const creative=read('components/CollageTool.tsx'),grid=read('components/GridLayoutTool.tsx'),panel=read('components/CollageExportOptions.tsx');
- for(const source of [creative,grid]){assert.match(source,/<CollageExportOptions/);assert.match(source,/collageVideoMime\(videoExportFormat\)/);assert.match(source,/videoBitsPerSecond: videoExportQuality/);assert.match(source,/videoExportFps\|\|preferredVideoFrameRate|videoExportFps\|\|preferredVideoFrameRate|videoExportFps \|\| preferredVideoFrameRate/);}
+ for(const source of [creative,grid]){assert.match(source,/<CollageExportOptions/);assert.match(source,/collageVideoMime\(videoExportFormat\)/);assert.match(source,/videoBitsPerSecond: videoBitrateFor\(/);assert.match(source,/videoScaleFor\(videoExportQuality/);assert.match(source,/videoExportFps\|\|preferredVideoFrameRate|videoExportFps\|\|preferredVideoFrameRate|videoExportFps \|\| preferredVideoFrameRate/);}
  for(const text of ['圖片格式','影片格式','影片幀率','影片畫質'])assert.ok(panel.includes(text));
  assert.match(panel,/\['mov','MOV'\]/);assert.doesNotMatch(panel,/WEBM/);
  assert.match(grid,/format=silent\?'png':imageExportFormat/);

@@ -1,7 +1,7 @@
 import React from 'react';
 import {PREMIUM_GLASS} from '../utils/premiumGlass';
 import {canExportHeic} from '../utils/heicExport';
-import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
+import {collageVideoMime,VIDEO_RES_CHOICES,type CollageVideoFormat} from '../utils/collageVideoFormat';
 type Props={label:string;panelRef:React.Ref<HTMLDivElement>;imageFormat:'jpg'|'png'|'heic';videoFormat:CollageVideoFormat;fps:number;quality:number;
  onImage:(v:'jpg'|'png'|'heic')=>void;onVideo:(v:CollageVideoFormat)=>void;onFps:(v:number)=>void;onQuality:(v:number)=>void};
 /* 切換按鈕時會閃一下（電腦上特別明顯）：面板如果用毛玻璃（backdrop-filter），
@@ -19,5 +19,5 @@ export function CollageExportOptions(p:Props){return <div ref={p.panelRef} role=
  <Row label="圖片格式" value={p.imageFormat} choices={[['jpg','JPG'],['png','PNG'],['heic','HEIC']]} disabled={v=>v==='heic'&&!canExportHeic()} onChange={v=>p.onImage(v as Props['imageFormat'])}/>
  <Row label="影片格式" value={p.videoFormat} choices={[['auto','自動'],['mp4','MP4'],['mov','MOV']]} disabled={v=>v!=='auto'&&!collageVideoMime(v as CollageVideoFormat)} onChange={v=>p.onVideo(v as CollageVideoFormat)}/>
  <Row label="影片幀率" value={String(p.fps)} choices={[['0','自動'],['30','30'],['50','50'],['60','60'],['120','120']]} onChange={v=>p.onFps(Number(v))}/>
- <Row label="影片畫質" value={String(p.quality)} choices={[['16000000','標準'],['28000000','高'],['40000000','最高']]} onChange={v=>p.onQuality(Number(v))}/>
+ <Row label="影片畫質" value={String(p.quality)} choices={VIDEO_RES_CHOICES} onChange={v=>p.onQuality(Number(v))}/>
  </div>;}
