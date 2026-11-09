@@ -137,6 +137,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (referenceSrc === url) { setReferenceSrc(null); cancelAiColorMatch(); setBusy(false); setAiBusy(false); }
   };
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
+  const srcImgRef = useRef(srcImg); srcImgRef.current = srcImg;
   const sg = useStudioGeo(embedded ? geo : null, srcImg ? srcImg.naturalWidth || srcImg.width : 0, srcImg ? srcImg.naturalHeight || srcImg.height : 0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
@@ -252,6 +253,22 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const g = cvs.getContext('2d');
     if (g) { g.clearRect(0, 0, cvs.width, cvs.height); g.drawImage(gl.canvas, 0, 0); }
   };
+  /** 還沒仿色（沒選參考圖）時畫布上的樣子：直接把解碼好的原圖縮進去。
+      不經過 getImageData —— iPhone 上那一步讀不到像素時（大圖、檔案來源）畫面會整個空掉，
+      要等點了參考圖才出現；drawImage 一定畫得出來 */
+  const drawPlain = (cvs: HTMLCanvasElement) => {
+    const im = srcImgRef.current;
+    if (!im) return;
+    const W0 = im.naturalWidth || im.width, H0 = im.naturalHeight || im.height;
+    const k = Math.min(1, PREVIEW_MAX / Math.max(W0, H0));
+    const w = Math.max(1, Math.round(W0 * k)), h = Math.max(1, Math.round(H0 * k));
+    if (cvs.width !== w || cvs.height !== h) { cvs.width = w; cvs.height = h; }
+    const g = cvs.getContext('2d');
+    if (!g) return;
+    g.imageSmoothingQuality = 'high';
+    g.clearRect(0, 0, w, h);
+    g.drawImage(im, 0, 0, w, h);
+  };
   /** CPU 版才需要：算好的結果先留著，前後對比才切得動 */
   const processedRef = useRef<ImageData | null>(null);
 
@@ -334,7 +351,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { gl?.dispose(); glRef.current = null; };
   }, []);
 
-  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */previewSrcRef.current=image;setPreview(toImageData(image, PREVIEW_MAX));}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
+  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */try{previewSrcRef.current=image;setPreview(toImageData(image, PREVIEW_MAX));}catch(e){previewSrcRef.current=null;console.error('preview',e);}}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
     /* 算過的參考圖：不等圖片解碼，這一下就換上它的顏色（解碼完的那一次會直接命中快取，不會再算） */
@@ -472,7 +489,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
 
   // 目前這組設定畫到畫布上
   const paint = useCallback((strengthOverride?: number) => {
-    if (!preview) return;
+    if (!preview) { if (!luts?.[picked] && canvasRef.current) drawPlain(canvasRef.current); return; }
     const st = (strengthOverride ?? strength) / 100;
     const pw = useWeight();
     const gl = glRef.current;
@@ -496,7 +513,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const ctx = cvs.getContext('2d');
     if (!ctx) return;
     const lut = luts?.[picked];
-    if (!lut) { processedRef.current = null; ctx.putImageData(preview, 0, 0); return; }
+    if (!lut) { processedRef.current = null; drawPlain(cvs); return; }
     const copy = new ImageData(new Uint8ClampedArray(preview.data), preview.width, preview.height);
     applyLut(copy.data, lut, {
       strength: st, skinProtect: 0, preserveLuminance: keepL === 1,
@@ -521,6 +538,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         if (g) { g.clearRect(0, 0, cvs.width, cvs.height); drawOriginalInto(g, im, cvs.width, cvs.height); }
         return;
       }
+      if (!luts?.[picked]) { drawPlain(cvs); return; }
       if (glRef.current && glReadyRef.current) { paint(); return; }
       if (processedRef.current) { cvs.getContext('2d')?.putImageData(processedRef.current, 0, 0); return; }
       paint(); return;
