@@ -17,7 +17,7 @@ type Phase = 'in' | 'idle';
 const FIELD_NAME: Record<Field, string> = { delay: '起始', inSpeed: '速度', amp: '幅度', speed: '速度' };
 /* 只有速度、沒有幅度滑桿的常駐動畫（跟 App 面板一致） */
 const NO_AMP = new Set(['lab-P-L02', 'lab-T-L04']);
-const STORE = 'abai-animation-tuner-v3';
+const STORE = 'abai-animation-tuner-v4';
 
 /* ── 示範物件 ───────────────────────────────────────────────────────── */
 const holesGrid = () => {
@@ -92,23 +92,52 @@ function Embed({ scene }: { scene: Scene }) {
 }
 
 /* ── 主頁 ───────────────────────────────────────────────────────────── */
-type Edits = Record<string, Partial<Record<Field, number>>>;
+type Range = [number, number];
+type Edit = Partial<Record<Field, number>> & { range?: Partial<Record<Field, Range>> };
+type Edits = Record<string, Edit>;
 const loadEdits = (): Edits => { try { const v = JSON.parse(localStorage.getItem(STORE) || '{}'); return v && typeof v === 'object' ? v as Edits : {}; } catch { return {}; } };
 const keyOf = (scene: string, phase: Phase, id: string) => `${scene}|${phase}|${id}`;
 
-/** 某目標、某進場＋某常駐、套上修改後，實際寫進 App 的設定，以及兩邊的「預設」面板數字 */
+/* ── 滑桿 0～100 與實際數值 ──────────────────────────────────────────
+   沒改範圍時一律用 App 自己的換算（motionUi／motionFromUi）；改了範圍才用這裡的對應：
+   進場速度（動畫時長）跟 App 一樣是等比刻度，其他都是線性。 */
+const UNIT: Record<Field, string> = { delay: '秒', inSpeed: '秒', amp: '', speed: '倍' };
+const actualOf = (f: Field, c: MoCfg) => f === 'delay' ? c.delay : f === 'inSpeed' ? c.dur : f === 'amp' ? c.amp : c.speed;
+const patchOf = (f: Field, v: number): Partial<MoCfg> => f === 'delay' ? { delay: v } : f === 'inSpeed' ? { dur: v } : f === 'amp' ? { amp: v } : { speed: v };
+const mapUi = (f: Field, u: number, [lo, hi]: Range) => f === 'inSpeed' && lo > 0 && hi > 0 ? lo * Math.pow(hi / lo, u / 100) : lo + (hi - lo) * u / 100;
+const invUi = (f: Field, v: number, [lo, hi]: Range) => {
+  const t = f === 'inSpeed' && lo > 0 && hi > 0 && v > 0 ? Math.log(v / lo) / Math.log(hi / lo) : (v - lo) / ((hi - lo) || 1);
+  return Math.round(Math.max(0, Math.min(1, isFinite(t) ? t : 0)) * 100);
+};
+const fmt = (v: number) => (Math.round(v * 100) / 100).toString();
+type FieldState = { ui: number; defUi: number; appDefUi: number; range: Range; appRange: Range; defActual: number; actual: number; custom: boolean };
+
+/** 某目標、某進場＋某常駐、套上修改後，實際寫進 App 的設定，以及每個滑桿的狀態 */
 function computeCfg(scene: Scene, inId: string, idleId: string, edits: Edits) {
   const c = ctxOf(scene);
   const start: MoCfg = c.pattern ? PATTERN_MO_DEFAULT : MO_DEFAULT;
+  const fields: Partial<Record<Field, FieldState>> = {};
+  const apply = (cfg: MoCfg, f: Field, e: Edit): MoCfg => {
+    const appUi = (motionUi(cfg, c) as any)[f] as number;
+    const appRange: Range = [actualOf(f, { ...cfg, ...motionFromUi(f, 0, cfg, c) } as MoCfg), actualOf(f, { ...cfg, ...motionFromUi(f, 100, cfg, c) } as MoCfg)];
+    const custom = e.range?.[f];
+    const range = custom || appRange;
+    const defActual = actualOf(f, cfg);
+    const defUi = custom ? invUi(f, defActual, range) : appUi;
+    const ui = e[f] ?? defUi;
+    // 滑桿沒動過＝保留預設的實際數值（只改範圍時，預設位置取整不能讓實際值跟著偏掉）
+    const next = e[f] === undefined ? cfg
+      : { ...cfg, ...(custom ? patchOf(f, mapUi(f, ui, range)) : motionFromUi(f, ui, cfg, c)) } as MoCfg;
+    fields[f] = { ui, defUi, appDefUi: appUi, range, appRange, defActual, actual: actualOf(f, next), custom: !!custom };
+    return next;
+  };
   let cfg: MoCfg = { ...start, ...motionPickPatch({ in: inId }, c, 'pop') } as MoCfg;
-  const defIn = motionUi(cfg, c);
   const ein = inId !== 'none' ? edits[keyOf(scene.key, 'in', inId)] || {} : {};
-  for (const f of ['delay', 'inSpeed'] as Field[]) if (ein[f] !== undefined) cfg = { ...cfg, ...motionFromUi(f, ein[f]!, cfg, c) };
+  for (const f of ['delay', 'inSpeed'] as Field[]) cfg = apply(cfg, f, ein);
   cfg = { ...cfg, ...motionPickPatch({ idle: idleId }, c, cfg.in) } as MoCfg;
-  const defIdle = motionUi(cfg, c);
   const eid = idleId !== 'none' ? edits[keyOf(scene.key, 'idle', idleId)] || {} : {};
-  for (const f of ['amp', 'speed'] as Field[]) if (eid[f] !== undefined) cfg = { ...cfg, ...motionFromUi(f, eid[f]!, cfg, c) };
-  return { cfg, defIn, defIdle, now: motionUi(cfg, c) };
+  for (const f of ['amp', 'speed'] as Field[]) cfg = apply(cfg, f, eid);
+  return { cfg, fields: fields as Record<Field, FieldState> };
 }
 
 /** 自己做的滑桿：只認手指／滑鼠的拖動與點按，數值不會因為重新繪製或切換動畫而被瀏覽器改動。
@@ -143,28 +172,73 @@ function DragSlider({ value, def, onChange, onCommit }: { value: number; def: nu
   );
 }
 
-function SliderRow({ label, value, def, onChange, onCommit }: { label: string; value: number; def: number; onChange: (v: number) => void; onCommit?: () => void }) {
-  const changed = value !== def;
+function NumberBox({ value, unit, onCommit }: { value: number; unit: string; onCommit: (v: number) => void }) {
+  const [text, setText] = useState(fmt(value));
+  useEffect(() => { setText(fmt(value)); }, [value]);
+  const done = () => { const v = Number(text); if (isFinite(v)) onCommit(v); else setText(fmt(value)); };
+  return (
+    <span className="inline-flex items-center gap-1">
+      <input inputMode="decimal" value={text} onChange={e => setText(e.target.value)} onBlur={done}
+        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        className="w-[72px] h-8 px-2 rounded-[8px] bg-white/[.08] border border-white/10 text-[13px] text-white tabular-nums outline-none focus:border-white/40" />
+      {unit && <span className="text-[11px] text-white/45">{unit}</span>}
+    </span>
+  );
+}
+
+function SliderRow({ label, field, st, onChange, onRange, onCommit }: {
+  label: string; field: Field; st: FieldState; onChange: (v: number) => void; onRange: (r: Range | null) => void; onCommit?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const changed = st.ui !== st.defUi || st.custom;
+  const unit = UNIT[field];
   return (
     <div className="py-3">
       <div className="flex items-baseline justify-between mb-1">
         <span className="text-[13px] text-white/80">{label}</span>
         <span className="flex items-baseline gap-3 tabular-nums">
-          <span className="text-[11px] text-white/35">預設 {def}</span>
-          <span className={`text-[18px] font-bold min-w-[2.5ch] text-right ${changed ? 'text-[#ff9b80]' : 'text-white'}`}>{value}</span>
+          <span className="text-[11px] text-white/35">預設 {st.defUi}</span>
+          <span className={`text-[18px] font-bold min-w-[2.5ch] text-right ${st.ui !== st.defUi ? 'text-[#ff9b80]' : 'text-white'}`}>{st.ui}</span>
         </span>
       </div>
-      <DragSlider value={value} def={def} onChange={onChange} onCommit={onCommit} />
-      <div className="flex justify-between mt-1">
+      <DragSlider value={st.ui} def={st.defUi} onChange={onChange} onCommit={onCommit} />
+      <div className="flex justify-between text-[10px] text-white/35 tabular-nums -mt-1 mb-1">
+        <span>0 = {fmt(st.range[0])}{unit}</span>
+        <span>實際 {fmt(st.actual)}{unit}</span>
+        <span>100 = {fmt(st.range[1])}{unit}</span>
+      </div>
+      <div className="flex justify-between items-center mt-1 gap-2">
         <div className="flex gap-1">
           {[-5, -1, 1, 5].map(d => (
-            <button key={d} onClick={() => { onChange(Math.max(0, Math.min(100, value + d))); onCommit?.(); }}
+            <button key={d} onClick={() => { onChange(Math.max(0, Math.min(100, st.ui + d))); onCommit?.(); }}
               className="h-8 min-w-10 px-2 rounded-[8px] bg-white/[.06] text-[12px] text-white/70 tabular-nums active:bg-white/15">{d > 0 ? `+${d}` : d}</button>
           ))}
         </div>
-        <button disabled={!changed} onClick={() => { onChange(def); onCommit?.(); }}
-          className={`h-8 px-3 rounded-[8px] text-[12px] ${changed ? 'bg-white/10 text-white' : 'text-white/20'}`}>回到預設</button>
+        <div className="flex gap-1">
+          <button onClick={() => setOpen(o => !o)}
+            className={`h-8 px-3 whitespace-nowrap rounded-[8px] text-[12px] ${open || st.custom ? 'bg-white/15 text-white' : 'bg-white/[.06] text-white/70'}`}>範圍{st.custom ? ' ●' : ''}</button>
+          <button disabled={st.ui === st.defUi} onClick={() => { onChange(st.defUi); onCommit?.(); }}
+            className={`h-8 px-3 rounded-[8px] text-[12px] ${st.ui !== st.defUi ? 'bg-white/10 text-white' : 'text-white/20'}`}>回到預設</button>
+        </div>
       </div>
+      {open && (
+        <div className="mt-2 rounded-[10px] bg-black/40 border border-white/10 p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[12px] text-white/70">滑桿 0 的值{field === 'inSpeed' ? '（最慢，動畫時長）' : '（最小）'}</span>
+            <NumberBox value={st.range[0]} unit={unit} onCommit={v => { onRange([v, st.range[1]]); onCommit?.(); }} />
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[12px] text-white/70">滑桿 100 的值{field === 'inSpeed' ? '（最快，動畫時長）' : '（最大）'}</span>
+            <NumberBox value={st.range[1]} unit={unit} onCommit={v => { onRange([st.range[0], v]); onCommit?.(); }} />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-white/35">App 目前：{fmt(st.appRange[0])}～{fmt(st.appRange[1])}{unit}</span>
+            <button disabled={!st.custom} onClick={() => { onRange(null); onCommit?.(); }}
+              className={`h-7 px-3 rounded-[7px] text-[12px] ${st.custom ? 'bg-white/10 text-white' : 'text-white/20'}`}>範圍回到 App 原本</button>
+          </div>
+          <p className="text-[11px] text-white/35 leading-relaxed">改範圍時，預設的實際數值不變（{fmt(st.defActual)}{unit}），所以預設在滑桿上的位置會跟著移動。</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -185,7 +259,7 @@ function Main() {
 
   const ctx = ctxOf(scene);
   const { kinds, idleKinds } = useMemo(() => motionKindLists(ctx), [sceneKey]);
-  const { cfg, defIn, defIdle, now } = computeCfg(scene, cur.in, cur.idle, edits);
+  const { cfg, fields } = computeCfg(scene, cur.in, cur.idle, edits);
 
   /* 把目前的設定送進中間的預覽 */
   const send = useCallback(() => {
@@ -208,28 +282,47 @@ function Main() {
     setSel(s => ({ ...s, [sceneKey]: { ...cur, [phase]: id } }));
     if (phase === 'in') setReplay(r => r + 1);
   };
-  const setField = (phase: Phase, id: string, f: Field, v: number, def: number) => setEdits(e => {
+  /* 一個動畫的修改：滑桿位置（跟預設一樣就不記）與範圍（跟 App 一樣就不記）。全部回到原樣就整筆刪掉。 */
+  const updateEdit = (phase: Phase, id: string, fn: (e: Edit) => Edit) => setEdits(all => {
     const k = keyOf(sceneKey, phase, id);
-    const next = { ...(e[k] || {}) };
-    if (v === def) delete next[f]; else next[f] = v;
-    const out = { ...e };
+    const next = fn({ ...(all[k] || {}), range: { ...(all[k]?.range || {}) } });
+    if (next.range && !Object.keys(next.range).length) delete next.range;
+    const out = { ...all };
     if (Object.keys(next).length) out[k] = next; else delete out[k];
     return out;
+  });
+  const setField = (phase: Phase, id: string, f: Field, v: number) => updateEdit(phase, id, e => {
+    const st = fields[f];
+    if (v === st.defUi) delete e[f]; else e[f] = v;
+    return e;
+  });
+  const setRange = (phase: Phase, id: string, f: Field, r: Range | null) => updateEdit(phase, id, e => {
+    const st = fields[f];
+    const same = !r || (Math.abs(r[0] - st.appRange[0]) < 1e-6 && Math.abs(r[1] - st.appRange[1]) < 1e-6);
+    if (same) delete e.range![f]; else e.range![f] = r!;
+    delete e[f];   // 範圍一改，滑桿位置重新以「預設的實際值」為準，避免數字對不上
+    return e;
   });
   const modified = (phase: Phase, id: string) => !!edits[keyOf(sceneKey, phase, id)];
 
   /* 修改清單：每一項顯示「預設 → 新值」（預設照該動畫單獨被選時的數字算） */
-  const list = useMemo(() => Object.entries(edits).map(([k, v]) => {
+  const list = useMemo(() => (Object.entries(edits) as [string, Edit][]).map(([k, v]) => {
     const [sk, phase, id] = k.split('|') as [string, Phase, string];
     const sc = SCENES.find(s => s.key === sk); if (!sc) return null;
     const c = ctxOf(sc), lists = motionKindLists(c);
     const name = (phase === 'in' ? lists.kinds : lists.idleKinds).find(x => x.id === id)?.name || id;
-    const r = computeCfg(sc, phase === 'in' ? id : 'none', phase === 'idle' ? id : 'none', {});
-    const def = phase === 'in' ? r.defIn : r.defIdle;
-    const parts = (Object.keys(v) as Field[]).map(f => `${FIELD_NAME[f]} ${(def as any)[f]} → ${v[f]}`);
-    return { k, target: sc.label, phase, id, name, text: parts.join('，') };
+    const r = computeCfg(sc, phase === 'in' ? id : 'none', phase === 'idle' ? id : 'none', { [k]: v });
+    const fs: Field[] = phase === 'in' ? ['delay', 'inSpeed'] : ['amp', 'speed'];
+    const parts = fs.filter(f => v[f] !== undefined || v.range?.[f]).map(f => {
+      const st = r.fields[f], u = UNIT[f], seg: string[] = [];
+      if (st.custom) seg.push(`範圍（滑桿 0～100）${fmt(st.appRange[0])}～${fmt(st.appRange[1])}${u} → ${fmt(st.range[0])}～${fmt(st.range[1])}${u}`);
+      if (v[f] !== undefined) seg.push(`預設 ${st.appDefUi}（${fmt(st.defActual)}${u}）→ ${st.ui}（${fmt(st.actual)}${u}）`);
+      else seg.push(`預設實際值不變（${fmt(st.defActual)}${u}），在新範圍的滑桿上約是 ${st.ui}`);
+      return `${FIELD_NAME[f]}：${seg.join('；')}`;
+    });
+    return { k, target: sc.label, phase, id, name, text: parts.join('｜') };
   }).filter(Boolean) as { k: string; target: string; phase: Phase; id: string; name: string; text: string }[], [edits]);
-  const copyText = ['請把以下動畫的預設值改成這樣（創意拼圖動畫面板上的數字，0～100）：',
+  const copyText = ['請把以下動畫的預設值與滑桿範圍改成這樣（滑桿數字為創意拼圖動畫面板上的 0～100，括號內是實際數值）：',
     ...list.map(r => `- ${r.target}｜${r.phase === 'in' ? '進場' : '常駐'}｜${r.name}（${r.id}）：${r.text}`)].join('\n');
   const copy = async () => {
     try { await navigator.clipboard.writeText(copyText); }
@@ -309,15 +402,15 @@ function Main() {
           <div className="rounded-[14px] bg-white/[.04] border border-white/10 px-4 py-2">
             <p className="text-[12px] font-bold pt-2">進場：{kinds.find(k => k.id === cur.in)?.name || '無'}</p>
             {cur.in === 'none' ? <p className="text-[12px] text-white/35 py-3">左邊選一個進場動畫。</p> : <>
-              <SliderRow label="起始" value={now.delay} def={defIn.delay} onChange={v => setField('in', cur.in, 'delay', v, defIn.delay)} onCommit={() => setReplay(r => r + 1)} />
-              <SliderRow label="速度" value={now.inSpeed} def={defIn.inSpeed} onChange={v => setField('in', cur.in, 'inSpeed', v, defIn.inSpeed)} onCommit={() => setReplay(r => r + 1)} />
+              <SliderRow label="起始" field="delay" st={fields.delay} onChange={v => setField('in', cur.in, 'delay', v)} onRange={r => setRange('in', cur.in, 'delay', r)} onCommit={() => setReplay(r => r + 1)} />
+              <SliderRow label="速度" field="inSpeed" st={fields.inSpeed} onChange={v => setField('in', cur.in, 'inSpeed', v)} onRange={r => setRange('in', cur.in, 'inSpeed', r)} onCommit={() => setReplay(r => r + 1)} />
             </>}
           </div>
           <div className="rounded-[14px] bg-white/[.04] border border-white/10 px-4 py-2">
             <p className="text-[12px] font-bold pt-2">常駐：{idleKinds.find(k => k.id === cur.idle)?.name || '無'}</p>
             {cur.idle === 'none' ? <p className="text-[12px] text-white/35 py-3">左邊選一個常駐動畫。</p> : <>
-              {!NO_AMP.has(cur.idle) && <SliderRow label="幅度" value={now.amp} def={defIdle.amp} onChange={v => setField('idle', cur.idle, 'amp', v, defIdle.amp)} />}
-              <SliderRow label="速度" value={now.speed} def={defIdle.speed} onChange={v => setField('idle', cur.idle, 'speed', v, defIdle.speed)} />
+              {!NO_AMP.has(cur.idle) && <SliderRow label="幅度" field="amp" st={fields.amp} onChange={v => setField('idle', cur.idle, 'amp', v)} onRange={r => setRange('idle', cur.idle, 'amp', r)} />}
+              <SliderRow label="速度" field="speed" st={fields.speed} onChange={v => setField('idle', cur.idle, 'speed', v)} onRange={r => setRange('idle', cur.idle, 'speed', r)} />
             </>}
           </div>
           <div className="rounded-[14px] bg-white/[.04] border border-white/10 px-4 py-3">
