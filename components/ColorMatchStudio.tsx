@@ -151,6 +151,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
   };
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
   const srcImgRef = useRef(srcImg); srcImgRef.current = srcImg;
+  /** 同一張照片用另一條路解碼出來的點陣圖（直接讀檔 → createImageBitmap，已縮到預覽大小）。
+      Safari／App（WebKit）上，把 <img> 畫進畫布有時候整片空白、不報錯也不會好；
+      這條路是 WebKit 最穩的解碼方式，沒選參考圖時的畫面優先用它 */
+  const plainBmpRef = useRef<{ img: HTMLImageElement; bmp: ImageBitmap } | null>(null);
   const sg = useStudioGeo(embedded ? geo : null, srcImg ? srcImg.naturalWidth || srcImg.width : 0, srcImg ? srcImg.naturalHeight || srcImg.height : 0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
@@ -283,13 +287,14 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (!g) return;
     g.imageSmoothingQuality = 'high';
     g.clearRect(0, 0, w, h);
-    /* 有算好的預覽像素就直接貼（一定有東西）；沒有才從照片縮進來 */
-    const pv = previewRef.current;
-    if (pv && pv.width === w && pv.height === h) g.putImageData(pv, 0, 0);
+    /* 依序：另一條路解出的點陣圖 → 算好的預覽像素 → 直接畫照片 */
+    const pb = plainBmpRef.current, pv = previewRef.current;
+    if (pb && pb.img === im) g.drawImage(pb.bmp, 0, 0, w, h);
+    else if (pv && pv.width === w && pv.height === h) g.putImageData(pv, 0, 0);
     else g.drawImage(im, 0, 0, w, h);
-    /* 自我檢查：畫完是空的（照片還在解碼）就下一格再畫，最多試約 2 秒；
+    /* 自我檢查：畫完是空的就下一格再畫（點陣圖解好之後就會改用它），最多約 8 秒；
        期間如果已經選了參考圖、換了照片，就不再補畫 */
-    if (tries < 120 && !hasPixels(cvs)) {
+    if (tries < 480 && !hasPixels(cvs)) {
       requestAnimationFrame(() => {
         if (srcImgRef.current !== im || canvasRef.current !== cvs || lutsPickedRef.current) return;
         drawPlain(cvs, tries + 1);
@@ -378,7 +383,19 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { gl?.dispose(); glRef.current = null; };
   }, []);
 
-  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */try{const d=toImageData(image, PREVIEW_MAX);/* 全透明＝照片還沒解碼好，先不要用（不然會一直貼一張空白） */if(d.data[3]||d.data[(d.data.length>>1)&~3|3]){previewSrcRef.current=image;setPreview(d);}else previewSrcRef.current=null;}catch(e){previewSrcRef.current=null;console.error('preview',e);}}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
+  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){plainBmpRef.current=null;
+      /* 另一條路解碼（見 plainBmpRef）：解好就重畫一次；這條路失敗也沒關係，照舊用 <img> */
+      if (typeof createImageBitmap === 'function') fetch(imageSrc).then(r => r.blob()).then(b => {
+        const W0 = image.naturalWidth || image.width, H0 = image.naturalHeight || image.height, k = Math.min(1, PREVIEW_MAX / Math.max(W0, H0));
+        return createImageBitmap(b, { resizeWidth: Math.max(1, Math.round(W0 * k)), resizeHeight: Math.max(1, Math.round(H0 * k)), resizeQuality: 'high' } as ImageBitmapOptions)
+          .catch(() => createImageBitmap(b));
+      }).then(bmp => {
+        if (!active || srcImgRef.current !== image) { bmp.close(); return; }
+        plainBmpRef.current?.bmp.close();
+        plainBmpRef.current = { img: image, bmp };
+        if (!lutsPickedRef.current && canvasRef.current) drawPlain(canvasRef.current);
+      }).catch(() => {});
+skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */try{const d=toImageData(image, PREVIEW_MAX);/* 全透明＝照片還沒解碼好，先不要用（不然會一直貼一張空白） */if(d.data[3]||d.data[(d.data.length>>1)&~3|3]){previewSrcRef.current=image;setPreview(d);}else previewSrcRef.current=null;}catch(e){previewSrcRef.current=null;console.error('preview',e);}}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
     /* 算過的參考圖：不等圖片解碼，這一下就換上它的顏色（解碼完的那一次會直接命中快取，不會再算） */
