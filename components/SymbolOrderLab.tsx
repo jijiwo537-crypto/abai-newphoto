@@ -13,7 +13,9 @@ const HOLD_MS = 280;
 /* 預覽框的寬度＝「這支手機的螢幕寬」（在手機上打開時）：App 的符號清單是螢幕寬減左右各 16 點，
    不同型號的 iPhone 寬度不一樣（390、393、402…），固定用 13 Pro 的 390 的話，
    一排放得下的符號就跟你手機上的 App 不同 → 換行位置錯開、出現一排只剩一顆。電腦上維持 390。 */
-const FRAME_W = typeof window !== 'undefined' && window.innerWidth <= 520 ? Math.round(window.innerWidth) : 390;
+/* 回到固定 390（iPhone 13 Pro）：使用者就是在這個寬度下排好、傳來最後那份順序的。
+   （曾經改成「這支手機的寬度」，結果換行位置變了，同一份順序看起來就亂了） */
+const FRAME_W = 390;
 const CAT_STORE = 'abai-order-tool-symbol-cats-v1';
 const CAT_COLORS = ['#ff5a5a', '#ffb02e', '#4cd964', '#3fa9ff', '#c77dff'];
 /** App 目前清單的指紋：App 的清單換了，這頁存著的舊編輯就作廢、回到 App 目前的樣子 */
@@ -219,7 +221,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-3">
-        <p className="text-[11px] text-white/45 leading-relaxed">預覽寬度＝{FRAME_W === 390 && !(typeof window !== 'undefined' && window.innerWidth <= 520) ? 'iPhone 13 Pro（390）' : `這支手機（${FRAME_W}）`}，一排可用 {FRAME_W - 32} 點，跟這支手機上的 App 一樣。請用 iPhone 打開這頁再按「自動排列」。<br /><span className="text-white/30">App 清單版本 {(SIG >>> 0).toString(16).slice(-6)}・{SYMBOLS.length} 顆</span></p>
+        <p className="text-[11px] text-white/45 leading-relaxed">預覽寬度固定＝iPhone 13 Pro（390），一排可用 {FRAME_W - 32} 點（就是你排好最後那份順序時的寬度）。<br /><span className="text-white/30">App 清單版本 {(SIG >>> 0).toString(16).slice(-6)}・{SYMBOLS.length} 顆</span></p>
         <div className="flex gap-2 shrink-0">
           <button onClick={() => { if (!changed || confirm('回到 App 目前的清單？（新增、刪除、排序都會復原）')) { setList(SYMBOLS.slice()); onToast('已回到 App 目前的清單'); } }}
             className="h-8 px-3 rounded-full border border-white/15 text-[12px] text-white/70">重設</button>
@@ -231,7 +233,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       </div>
       {/* 版本標示：看到這一行（v10）就是最新的網站 */}
       <div className="mb-3 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 text-[12px] text-emerald-200">
-        網站版本 v10（11/10）・開啟時顯示的是 App 目前的順序（{SYMBOLS.length} 顆）
+        網站版本 v11（11/10）・開啟時顯示的是 App 目前的順序（{SYMBOLS.length} 顆）
         {oldCopy && (
           <div className="mt-2 flex items-center gap-2">
             <span className="flex-1 text-white/70">這支手機裡還有一份之前在這裡排過的順序（{oldCopy.length} 顆）。</span>
