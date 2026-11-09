@@ -6,18 +6,22 @@ export function idleDefaults(kind: string, target: IdleTarget) {
   // 一般文字（不含符號）
   if (target.text && !target.symbol) {
     if (kind === 'grid-wave') return { amp: 80, speed: 1.75 };                              // 波浪l：幅度 80
+    if (kind === 'float') return { amp: 50, speed: S(50) };                                // 漂浮：速度 50（1.0）
+    if (kind === 'breathe') return { amp: 30, speed: IDLE_SPEED_DEFAULT };                 // 縮放l：幅度 30
+    if (kind === 'symbol-breathe2') return { amp: 50, speed: 1.25 };                       // 縮放ll：幅度 50
     if (kind === 'lab-T-L15') return { amp: 100, speed: S(90) };                          // 波浪ll：幅度 100、速度 90（1.64）
-    if (kind === 'lab-T-L01') return { amp: 100, speed: IDLE_SPEED_DEFAULT };             // 呼吸：幅度 100
+    if (kind === 'lab-T-L01') return { amp: 100, speed: rangedSpeedFromUi(kind, 90) };     // 呼吸：幅度 100、速度 90（2.72）
     if (kind === 'lab-T-L04') return { amp: 50, speed: S(100) };                          // 閃爍：速度 100（1.8）
-    if (kind === 'lab-T-L20') return { amp: 50, speed: rangedSpeedFromUi(kind, 50) };     // 失焦：速度 50（2.8）
+    if (kind === 'lab-T-L20') return { amp: 40, speed: rangedSpeedFromUi(kind, 50) };     // 失焦：幅度 40、速度 50（2.8）
   }
   // 符號
   if (target.symbol) {
     if (kind === 'symbol-breathe2') return { amp: 90, speed: 1.25 };                      // 縮放II：幅度 90
-    if (kind === 'lab-S-L01') return { amp: 100, speed: IDLE_SPEED_DEFAULT };             // 呼吸：幅度 100
+    if (kind === 'lab-S-L01') return { amp: 100, speed: rangedSpeedFromUi(kind, 90) };     // 呼吸：幅度 100、速度 90（2.27）
+    if (kind === 'breathe') return { amp: 30, speed: S(50) };                              // 縮放I：速度 50（1.0）
     if (kind === 'lab-S-L03') return { amp: 100, speed: S(70) };                          // 搖擺：幅度 100、速度 70（1.32）
     if (kind === 'lab-S-L07') return { amp: 50, speed: S(50) };                           // 翻面：速度 50（1.0）
-    if (kind === 'lab-S-L20') return { amp: 40, speed: rangedSpeedFromUi(kind, 50) };     // 失焦：幅度 40、速度 50（2.8）
+    if (kind === 'lab-S-L20') return { amp: 30, speed: rangedSpeedFromUi(kind, 50) };     // 失焦：幅度 30、速度 50（2.8）
   }
   // 縮放II（文字）：速度 50（＝1.25）
   if (kind === 'symbol-breathe2') return { amp: 60, speed: 1.25 };
@@ -25,7 +29,7 @@ export function idleDefaults(kind: string, target: IdleTarget) {
   if (target.glint) {
     if (kind === 'glint-breathe') return { amp: 100, speed: glintSpeedFromUi(100) };      // 呼吸：速度 100（1.8）
     if (kind === 'breathe') return { amp: 100, speed: glintZoomSpeedFromUi(40) };         // 縮放I：速度 40（1.32）
-    if (kind === 'wobble') return { amp: 70, speed: IDLE_SPEED_DEFAULT };                 // 搖擺：幅度 70
+    if (kind === 'wobble') return { amp: 80, speed: IDLE_SPEED_DEFAULT };                 // 搖擺：幅度 80
   }
   // 星芒的縮放II：幅度拉滿，速度 80
   if (kind === 'glint-breathe' || kind === 'glint-rays') return { amp: 100, speed: glintSpeedFromUi(GLINT_SPEED_UI_DEFAULT) };
@@ -41,14 +45,34 @@ export function idleDefaults(kind: string, target: IdleTarget) {
   }
   // 線條
   if (target.line) {
-    const lineAmp: Record<string, number> = { float: 70, 'grid-wave': 100, breathe: 50, spin: 100, wobble: 50, orbit: 50 };
+    const lineAmp: Record<string, number> = { float: 100, 'grid-wave': 100, breathe: 50, spin: 100, wobble: 50, orbit: 50, jitter: 40 };
+    if (kind === 'orbit') return { amp: 50, speed: S(80) };                                // 繞圈：速度 80（1.48）
     if (kind === 'grid-wave') return { amp: 100, speed: .2 + 90 * .018 };
     return { amp: lineAmp[kind] ?? 20, speed: IDLE_SPEED_DEFAULT };
+  }
+  // 網格圖形
+  if (target.grid) {
+    if (kind === 'grid-wave') return { amp: 100, speed: .2 + 90 * .018 };                // 波浪：幅度 100
+    if (kind === 'breathe') return { amp: 40, speed: IDLE_SPEED_DEFAULT };               // 縮放：幅度 40
+  }
+  // 一般圖形（不是網格、線條、星芒、散落邊框）
+  if (target.shape && !target.grid && !target.line && !target.glint && !target.scatter) {
+    if (kind === 'orbit') return { amp: 70, speed: IDLE_SPEED_DEFAULT };                 // 繞圈：幅度 70
   }
   // 波浪：圖形用 0.2～2.0 的刻度（90＝1.82），文字、圖片用 1.0～2.5 的刻度（50＝1.75）
   if (kind === 'grid-wave') return { amp: 50, speed: target.shape ? .2 + 90 * .018 : 1.75 };
   return { amp: kind === 'breathe' && target.symbol ? 30 : 50, speed: IDLE_SPEED_DEFAULT };
 }
+
+/** 圖案（一整群）各常駐動畫的預設：沒列出的欄位沿用圖案一開始的設定（幅度 100、速度 1.96）。 */
+export const PATTERN_IDLE_DEFAULTS: Record<string, { amp?: number; speed?: number }> = {
+  jitter: { amp: 60, speed: 1.48 },                           // 抖動：幅度 60、速度 80（1.48）
+  breathe: { amp: 50 },                                       // 縮放：幅度 50
+  spin: { speed: 1.32 },                                      // 旋轉：速度 70（1.32）
+  'lab-P-L04': { amp: 50 },                                   // 發光：幅度 50
+  'lab-P-L07': { amp: 55 },                                   // 翻面：幅度 55
+  'lab-P-L20': { amp: 50, speed: .2 + 5.2 * .35 },            // 失焦：幅度 50、速度 35（2.02）
+};
 
 /** 有自己速度範圍的常駐動畫：滑桿 0～100 對應 [最小, 最大] 倍（線性）。 */
 export const SPEED_RANGES: Record<string, [number, number]> = {
@@ -68,7 +92,8 @@ export const rangedSpeedFromUi = (id: string, ui: number) => {
 };
 
 /** 進場動畫的速度預設（面板 0～100）；沒列出的照一般預設 70。 */
-export function entrySpeedDefaultUi(kind: string, target: { symbol?: boolean; line?: boolean; glint?: boolean }): number | undefined {
+export function entrySpeedDefaultUi(kind: string, target: { symbol?: boolean; line?: boolean; glint?: boolean; image?: boolean; plainShape?: boolean }): number | undefined {
+  if (kind === 'spring' && (target.image || target.plainShape)) return 60;   // 圖片、一般圖形的流星
   if (target.symbol) return ({ 'lab-S-E04': 50, 'lab-S-E10': 50, 'lab-S-E03': 65 } as Record<string, number>)[kind];  // 足跡、旋轉 50；淡入 65
   if (target.line && kind === 'draw') return 30;      // 線條畫筆
   if (target.glint && kind === 'fade') return 90;     // 星芒淡入

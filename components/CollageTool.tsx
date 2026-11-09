@@ -15,7 +15,7 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, scatterAllNoGlow } from '../utils/frameShapes';
@@ -1155,8 +1155,11 @@ export const PATTERN_MO_DEFAULT: MoCfg = {
 export const motionPickPatch = (d: Partial<MoCfg>, c: MotionTargetCtx, curIn: string): Partial<MoCfg> => {
   const obj = !c.pattern && !!c.type;
   if (d.idle && obj) return { ...d, ...idleDefaults(d.idle, { symbol: c.sym, text: c.type === 'text', image: c.type === 'image', shape: c.type === 'shape', grid: c.grid, line: c.line, glint: c.glint, scatter: c.scatter }) };
-  /* 圖案的抖動：幅度 60、速度 80（1.48） */
-  if (d.idle === 'jitter' && c.pattern) return { ...d, amp: 60, speed: idleSpeedFromUi(80) };
+  /* 圖案各常駐動畫自己的預設（表在 utils/animationDefaults）；沒列的欄位沿用圖案一開始的設定 */
+  if (d.idle && c.pattern && PATTERN_IDLE_DEFAULTS[d.idle]) {
+    const t = PATTERN_IDLE_DEFAULTS[d.idle];
+    return { ...d, amp: t.amp ?? PATTERN_MO_DEFAULT.amp, speed: t.speed ?? PATTERN_MO_DEFAULT.speed };
+  }
   if (d.in === 'bubble' && obj && c.sym) return { ...d, dur: durFromSpeed(80) };
   /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
   if (d.in === 'pop-seq' && c.scatter) return { ...d, dur: durFromSpeed(50) };
@@ -1164,7 +1167,7 @@ export const motionPickPatch = (d: Partial<MoCfg>, c: MotionTargetCtx, curIn: st
   /* 個別進場動畫自己的速度預設（符號足跡／旋轉／淡入、線條畫筆、星芒淡入）；
      從這些動畫換到其他進場時回到一般預設，不把特別的速度帶過去。 */
   if (d.in && obj) {
-    const et = { symbol: c.sym, line: c.line, glint: c.glint };
+    const et = { symbol: c.sym, line: c.line, glint: c.glint, image: c.type === 'image', plainShape: c.type === 'shape' && !c.grid && !c.line && !c.glint && !c.scatter };
     const ui = entrySpeedDefaultUi(d.in, et);
     if (ui !== undefined) return { ...d, dur: durFromSpeed(ui) };
     if (entrySpeedDefaultUi(curIn, et) !== undefined && d.in !== 'bubble') return { ...d, dur: MO_DEFAULT.dur };
