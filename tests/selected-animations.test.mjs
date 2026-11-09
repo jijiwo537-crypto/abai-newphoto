@@ -76,6 +76,14 @@ try {
  m.paintSelectedAnimation(fb,m.selectedFrame({...cfg,idle:'lab-T-L20'},2,.4),40,50,()=>painted++);
  assert.equal(painted,1,'fallback still paints once when no canvas filter');
  m.setCanvasBlurSupportedForTest(undefined);
+ // 足跡：起始 0 的第一格什麼都不畫，之後依序一顆一顆出現，最後全部出現。
+ {const c={in:'lab-S-E04',idle:'none',delay:0,dur:1,amp:50,speed:1};
+  const drawn=t=>{const f=m.selectedFrame(c,t);let n=0;for(let i=0;i<5;i++)m.paintSelectedAnimation(ctx,f,40,50,()=>n++,i,5);return n;};
+  assert.equal(drawn(0),0,'footprint: nothing on the first frame');assert.equal(drawn(.001),0,'footprint: first step waits one beat');
+  assert.equal(drawn(.2),1,'footprint: first step after one beat');assert.equal(drawn(.5),3);assert.equal(drawn(.99),5,'footprint: all steps by the end');}
+ // 失焦：連續、沒有停在清楚或模糊的平台。
+ {let flat=0;for(let i=1;i<4200;i++){const a=m.defocusLevel(i/1000,1,0,1),b=m.defocusLevel((i-1)/1000,1,0,1);if(Math.abs(a-b)<1e-7)flat++;}
+  assert.ok(flat<5,'defocus never holds still');}
  // 拖速度滑桿：相位必須連續，不可整段跳走；時間倒退（重播）則回到純時間。
  {const c={in:'none',idle:'lab-T-L20',delay:0,dur:1,amp:100,speed:1};
   const a=m.selectedFrame(c,10,9.9),b=m.selectedFrame({...c,speed:3},10.001,9.9);
