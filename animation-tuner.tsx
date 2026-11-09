@@ -17,7 +17,7 @@ type Phase = 'in' | 'idle';
 const FIELD_NAME: Record<Field, string> = { delay: '起始', inSpeed: '速度', amp: '幅度', speed: '速度' };
 /* 只有速度、沒有幅度滑桿的常駐動畫（跟 App 面板一致） */
 const NO_AMP = new Set(['lab-P-L02', 'lab-T-L04']);
-const STORE = 'abai-animation-tuner-v4';
+const STORE = 'abai-animation-tuner-v5';
 
 /* ── 示範物件 ───────────────────────────────────────────────────────── */
 const holesGrid = () => {
@@ -379,6 +379,10 @@ function Main() {
             <div className="grid grid-cols-4 gap-1.5">{idleKinds.map(k => kindButton('idle', k))}</div>
           </div>
           <p className="text-[11px] text-white/35">橘點＝這個動畫已經改過。</p>
+          <div className="rounded-[12px] bg-white/[.04] border border-white/10 p-3 text-[11px] text-white/55 leading-relaxed">
+            <b className="text-white/80">App 的滑桿是共用的：</b>物件第一次選動畫（從「無／靜止」選起）時，才會帶入這裡調的預設值；
+            之後在 App 裡換成別的動畫，面板上的數字會維持不變，由新動畫用自己的刻度去讀。
+          </div>
         </section>
 
         {/* 中：預覽 */}

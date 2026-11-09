@@ -18455,7 +18455,44 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                    ['breathe','縮放l'],['symbol-breathe2','縮放ll']] as const
                 : [...(target?.sym ? legacyIdleKinds.filter(([id]) => ['none','float','breathe','symbol-breathe2'].includes(id)) : legacyIdleKinds),
                    ...(labTarget ? selectedKinds(labTarget, 'idle').map(x => [x.id,x.name] as const) : [])];
+              /* 面板滑桿：設定 ↔ 0～100 數字（JSX 與換動畫共用同一份） */
+              const ciUi = (m: typeof cfg) => ({
+                inSpeed: m.in === 'bubble' && target.sym
+                  ? Math.round((motionUiFromDuration(m.dur) - 50) * 2)
+                  : m.in === 'pop-seq' && isScatterTarget
+                    // 果凍II：滑桿 0～100 對應舊刻度約 3～70（預設 70 ＝ 舊的 50）
+                    ? Math.round(Math.max(0, Math.min(100, (motionUiFromDuration(m.dur) - 10 / 3) * 1.5)))
+                    : motionUiFromDuration(m.dur),
+                amp: m.idle === 'image-breathe' && targetIsImage ? imageBreathAmpToUi(m.amp) : m.amp,
+                speed: m.idle === 'image-breathe' && targetIsImage
+                  ? imageBreathSpeedToUi(m.speed)
+                  : m.idle === 'symbol-breathe2' && (target.sym || isTextTarget)
+                  ? Math.round(Math.max(0, Math.min(100, (m.speed * 100 - 70) / 1.1)))
+                  : m.idle === 'grid-wave' && !target.shape && !isGridTarget
+                    ? Math.round(Math.max(0, Math.min(100, (m.speed * 100 - 100) / 1.5)))
+                    : m.idle === 'grid-wave' ? Math.round(Math.max(0, Math.min(100, (m.speed - .2) / 1.8 * 100)))
+                    : m.idle === 'glint-breathe' || m.idle === 'glint-rays' ? glintSpeedToUi(m.speed)
+                    : m.idle === 'breathe' && isGlintTarget ? glintZoomSpeedToUi(m.speed)
+                    : m.idle === 'glint-blink' ? blinkSpeedToUi(m.speed)
+                    : hasSpeedRange(m.idle) ? rangedSpeedToUi(m.idle, m.speed)
+                    : idleSpeedToUi(m.speed),
+              });
+              const ciFrom = (f: 'inSpeed' | 'amp' | 'speed', v: number, m: typeof cfg): Partial<typeof cfg> =>
+                f === 'inSpeed' ? { dur: motionDurationFromUi(m.in === 'bubble' && target.sym ? 50 + v / 2 : m.in === 'pop-seq' && isScatterTarget ? 10 / 3 + v * 2 / 3 : v) }
+                : f === 'amp' ? { amp: m.idle === 'image-breathe' && targetIsImage ? imageBreathAmpFromUi(v) : v }
+                : { speed: m.idle === 'image-breathe' && targetIsImage
+                  ? imageBreathSpeedFromUi(v)
+                  : m.idle === 'symbol-breathe2' && (target.sym || isTextTarget) ? (70 + v * 1.1) / 100
+                  : m.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : m.idle === 'grid-wave' ? .2 + v * .018
+                  : m.idle === 'glint-breathe' || m.idle === 'glint-rays' ? glintSpeedFromUi(v)
+                  : m.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
+                  : m.idle === 'glint-blink' ? blinkSpeedFromUi(v) : hasSpeedRange(m.idle) ? rangedSpeedFromUi(m.idle, v) : idleSpeedFromUi(v) };
               const pickIntro = (id: string) => {
+                /* 共用滑桿：已經有進場動畫時換別的，面板上的速度數字不變 */
+                if (id !== 'none' && cfg.in !== 'none') {
+                  patchMotion({ in: id, ...ciFrom('inSpeed', ciUi(cfg).inSpeed, { ...cfg, in: id }) });
+                  replayMotion(); return;
+                }
                 /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
                 patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) }
                   : id === 'pop-seq' && isScatterTarget ? { in: id, dur: motionDurationFromUi(50) }
@@ -18468,6 +18505,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 replayMotion();
               };
               const pickIdle = (id: string) => {
+                /* 共用滑桿：已經有常駐動畫時換別的，面板上的幅度、速度數字都不變 */
+                if (id !== 'none' && cfg.idle !== 'none') {
+                  const u = ciUi(cfg), next = { ...cfg, idle: id };
+                  patchMotion({ idle: id, ...ciFrom('amp', u.amp, next), ...ciFrom('speed', u.speed, next) });
+                  replayMotion(); return;
+                }
                 patchMotion({ idle: id, ...idleDefaults(id, { symbol: !!target.sym, text: isTextTarget, image: targetIsImage, shape: !!target.shape, grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget, scatter: isScatterTarget }) });
                 replayMotion();
               };
@@ -18499,45 +18542,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                       <CompactSlider label="起始" value={delayToUi(cfg.delay)} min={0} max={100} step={1} onCommit={replayMotion} onChange={(v:number)=>patchMotion({delay:delayFromUi(v)})}/>
                       <CompactSlider label="速度"
-                        value={cfg.in === 'bubble' && target.sym
-                          ? Math.round((motionUiFromDuration(cfg.dur) - 50) * 2)
-                          : cfg.in === 'pop-seq' && isScatterTarget
-                            // 果凍II：滑桿 0～100 對應舊刻度約 3～70（預設 70 ＝ 舊的 50）
-                            ? Math.round(Math.max(0, Math.min(100, (motionUiFromDuration(cfg.dur) - 10 / 3) * 1.5)))
-                            : motionUiFromDuration(cfg.dur)}
+                        value={ciUi(cfg).inSpeed}
                         min={0} max={100} step={1} onCommit={replayMotion}
-                        onChange={(v:number)=>patchMotion({dur:motionDurationFromUi(cfg.in === 'bubble' && target.sym ? 50 + v / 2 : cfg.in === 'pop-seq' && isScatterTarget ? 10 / 3 + v * 2 / 3 : v)})}/>
+                        onChange={(v:number)=>patchMotion(ciFrom('inSpeed', v, cfg))}/>
                     </div>
                     <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2 mt-4">常駐動畫</p>
                     <div className="grid grid-cols-4 gap-2">{idleKinds.map(([id,name]) => <button key={id} className={cell(cfg.idle===id)} onClick={()=>pickIdle(id)}>{name}</button>)}</div>
                     {cfg.idle !== 'none' && <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                       {cfg.idle !== 'lab-T-L04' && <CompactSlider key={`${target.id}-${cfg.idle}-amp`} label="幅度"
-                        value={cfg.idle === 'image-breathe' && targetIsImage ? imageBreathAmpToUi(cfg.amp) : cfg.amp}
+                        value={ciUi(cfg).amp}
                         min={0} max={100} step={1} onCommit={replayMotion}
-                        onChange={(v:number)=>patchMotion({amp:cfg.idle === 'image-breathe' && targetIsImage ? imageBreathAmpFromUi(v) : v})}/>}
+                        onChange={(v:number)=>patchMotion(ciFrom('amp', v, cfg))}/>}
                       <div className={cfg.idle === 'lab-T-L04' ? 'col-span-2' : undefined}>
                       <CompactSlider key={`${target.id}-${cfg.idle}-speed`} label="速度"
-                        value={cfg.idle === 'image-breathe' && targetIsImage
-                          ? imageBreathSpeedToUi(cfg.speed)
-                          : cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget)
-                          ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 70) / 1.1)))
-                          : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget
-                            ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 100) / 1.5)))
-                            : cfg.idle === 'grid-wave' ? Math.round(Math.max(0, Math.min(100, (cfg.speed - .2) / 1.8 * 100)))
-                            : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedToUi(cfg.speed)
-                            : cfg.idle === 'breathe' && isGlintTarget ? glintZoomSpeedToUi(cfg.speed)
-                            : cfg.idle === 'glint-blink' ? blinkSpeedToUi(cfg.speed)
-                            : hasSpeedRange(cfg.idle) ? rangedSpeedToUi(cfg.idle, cfg.speed)
-                            : idleSpeedToUi(cfg.speed)}
+                        value={ciUi(cfg).speed}
                         min={0} max={100}
                         step={1} onCommit={replayMotion}
-                        onChange={(v:number)=>patchMotion({speed: cfg.idle === 'image-breathe' && targetIsImage
-                          ? imageBreathSpeedFromUi(v)
-                          : cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) ? (70 + v * 1.1) / 100
-                          : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : cfg.idle === 'grid-wave' ? .2 + v * .018
-                          : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedFromUi(v)
-                          : cfg.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
-                          : cfg.idle === 'glint-blink' ? blinkSpeedFromUi(v) : hasSpeedRange(cfg.idle) ? rangedSpeedFromUi(cfg.idle, v) : idleSpeedFromUi(v)})}/>
+                        onChange={(v:number)=>patchMotion(ciFrom('speed', v, cfg))}/>
                       </div>
                     </div>}
                   </>}
