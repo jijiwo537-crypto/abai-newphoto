@@ -130,12 +130,15 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       try {
         const els = Array.from(grid.querySelectorAll('[data-sym]')) as HTMLElement[];
         const widths = list.map((_, i) => els.find(e => Number(e.dataset.sym) === i)?.getBoundingClientRect().width ?? 0);
-        const group = list.map(sym => (cats.of[sym] === bc ? 2 : cats.of[sym] === kc ? 1 : 0));
         const cs = getComputedStyle(grid);
-        const { order, rowGaps } = packSymbols({ widths, group, cap: grid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), gap: parseFloat(cs.columnGap) || 6, tries: 600 });
+        const capW = grid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        /* 沒有「邊框」這一類：超過半排寬的（不是顏文字的）就當邊框，放最下面 —— 不然顏文字會變成最後一區、排到最底下 */
+        const group = list.map((sym, i) => (cats.of[sym] === kc && kc >= 0 ? 1
+          : (bc >= 0 ? cats.of[sym] === bc : widths[i] > capW * 0.5) ? 2 : 0));
+        const { order, rowGaps } = packSymbols({ widths, group, cap: capW, gap: parseFloat(cs.columnGap) || 6, tries: 600 });
         setList(order.map(i => list[i]));
         const big = rowGaps.slice(0, -1).filter(g => g > 60).length;
-        onToast(`已依這台手機的寬度排好（顏文字＝${cats.names[kc] || '—'}、邊框＝${bc >= 0 ? cats.names[bc] : '—'}）：${rowGaps.length} 排，最大空白 ${Math.round(Math.max(0, ...rowGaps.slice(0, -1)))} 點${big ? `（${big} 排超過 60 點，多是只放得下一顆的長邊框）` : ''}`);
+        onToast(`已依這台手機的寬度排好（顏文字＝${cats.names[kc] || '—'}、邊框＝${bc >= 0 ? cats.names[bc] : '超過半排寬的'}）：${rowGaps.length} 排，最大空白 ${Math.round(Math.max(0, ...rowGaps.slice(0, -1)))} 點${big ? `（${big} 排超過 60 點，多是只放得下一顆的長邊框）` : ''}`);
       } finally { setPacking(false); }
     }, 30);
   };
