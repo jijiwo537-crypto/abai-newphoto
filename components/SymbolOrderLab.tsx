@@ -145,7 +145,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
         <div className="pt-1" style={{ padding: '12px 16px 24px' }}>
           <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
           {/* 跟 App 同一層濾鏡：整片轉白（彩色 emoji 也一樣） */}
-          <div className="flex flex-wrap justify-center gap-1.5 pb-4 mt-3">
+          <div className="flex flex-wrap gap-1.5 pb-4 mt-3">
             {order.map(idx => (
               <button key={idx} data-sym={idx}
                 onPointerDown={e => onDown(e, idx)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
