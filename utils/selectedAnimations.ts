@@ -26,7 +26,7 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
  if(!frame){paint(ctx);return;}
  const spec=catalog.get(frame.id); if(!spec){paint(ctx);return;}
  const w=Math.max(.01,width),h=Math.max(.01,height),r=Math.max(w,h)/2;
- const code=spec.code,kind=Number(code.slice(3))-1,entry=spec.phase==='entry';
+ const code=spec.code,entry=spec.phase==='entry';
  const p=clamp(frame.p*(1+.13*Math.max(0,count-1))-.13*index),q=1-(1-p)**3;
  if(entry&&p<=0)return;
  if(entry&&p>=1){paint(ctx);return;}
@@ -36,28 +36,40 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
  ctx.save();
  try {
   if(entry){
-   if(kind===0){ctx.translate(0,(1-q)*h*.325);ctx.globalAlpha*=smooth(p);ctx.beginPath();ctx.rect(-w/2,-h/2,w,h*q);ctx.clip();}
-   if(kind===2){ctx.globalAlpha*=smooth(p);ctx.filter=`blur(${(1-q)*r*.045*density}px)`;}
-   if(kind===3){if(p<=0)return;}
-   if(kind===6){const k=1-Math.exp(-p*7)*Math.cos(p*8);ctx.scale(k,k);}
-   if(kind===9){ctx.rotate((1-q)*-.9);ctx.scale(q,q);}
+   // 每一個保留動畫都有自己的實作，不能再因為原實驗室編號相近就共用
+   // 一段泛用分支；這也讓改名後的實際效果和按鈕名稱完全一致。
+   if(code==='T-E03'||code==='S-E03'){
+    ctx.globalAlpha*=smooth(p);
+    ctx.filter=`blur(${(1-q)*Math.min(18,Math.max(2.5,r*.12))*density}px)`;
+   } else if(code==='T-E07'){
+    const k=1-Math.exp(-p*7)*Math.cos(p*8);
+    ctx.scale(Math.max(.001,k),Math.max(.001,k));
+   } else if(code==='S-E04'){
+    // 足跡：各字素依原排列逐顆亮起；不搬動整串，也不在結束幀重排。
+    ctx.globalAlpha*=smooth(p);
+    const k=.84+.16*q;
+    ctx.scale(k,k);
+   } else if(code==='S-E10'){
+    ctx.rotate((1-q)*-.9);
+    ctx.scale(Math.max(.001,q),Math.max(.001,q));
+   }
    paint(ctx);
-  } else if(kind===10||kind===14){
-   // Repaint the same vector path under local clips; avoid low-resolution tiles.
+  } else if(code==='T-L15'){
+   // 波浪 ll：重畫同一份高解析向量分層，不建立低解析動畫貼圖。
    const amplitude=r*.045*a*en;
    if(amplitude<1e-7){paint(ctx);return;}
-   paintSelectedWarp(ctx,w,h,r,amplitude,v,kind===14,paint);
+   paintSelectedWarp(ctx,w,h,r,amplitude,v,true,paint);
   } else {
-   // 閃爍是一整個字串的規律亮滅，不受「幅度」影響；所有字共用節奏。
-   if(code==='T-L04')ctx.globalAlpha*=.5+.5*Math.cos(frame.t*frame.speed*3.2);
-   if(kind===0)ctx.globalAlpha*=1-a*(1-Math.cos(v))*en/2;
-   if(kind===1)ctx.translate(0,wave*h*.0625*a);
-   if(kind===2)ctx.rotate(wave*.15*a);
-   if(kind===3&&code!=='T-L04'){const tf=ctx.getTransform();const blur=(1+Math.sin(v))*r*.0625*a*en*Math.hypot(tf.a,tf.b);ctx.filter=`drop-shadow(0px 0px ${blur}px #e4ffd9)`;}
-   if(kind===5){ctx.translate(wave*w*.04*a,0);ctx.scale(1+wave*.08*a,1-wave*.04*a);}
-   if(kind===6)ctx.scale(1-(1-Math.abs(Math.cos(v)))*.8*a*en,1);
-   if(kind===17){const theta=Math.sin(v*.6)*.12*a*en;ctx.translate(Math.sin(theta)*r*.7,(1-Math.cos(theta))*r*.7);ctx.rotate(theta);}
-   if(kind===19){
+   if(code==='T-L04'){
+    // 閃爍是一整個字串共用的規律亮滅，只保留速度參數。
+    ctx.globalAlpha*=.5+.5*Math.cos(frame.t*frame.speed*3.2);
+   } else if(code==='T-L01'||code==='S-L01'){
+    ctx.globalAlpha*=1-a*(1-Math.cos(v))*en/2;
+   } else if(code==='S-L03'){
+    ctx.rotate(wave*.15*a);
+   } else if(code==='S-L07'){
+    ctx.scale(Math.max(.02,1-(1-Math.abs(Math.cos(v)))*.8*a*en),1);
+   } else if(code==='T-L20'||code==='S-L20'){
     // 小字和小圖案原先只有不到 1px 的模糊，幾乎看不到。用實際畫面像素
     // 設下限，開始播放後立即進入失焦／清晰循環，四種目標共用同一算法。
     const blur=(1-Math.cos(v))*a*smooth(frame.t/.3)*Math.min(18,Math.max(3,r*.16))*density;

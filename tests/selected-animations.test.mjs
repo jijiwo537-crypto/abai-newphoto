@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { pathToFileURL } from 'node:url';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const dir=await mkdtemp(join(tmpdir(),'abai-selected-motion-'));
@@ -45,5 +45,10 @@ try {
  m.applySelectedPatternAppearance(ctx,m.selectedFrame({...cfg,idle:'lab-P-L20'},2,.4),40,0,0);
  assert.match(ctx.filter,/blur\([1-9]/,'pattern defocus is visible');
  assert.ok(m.selectedPatternGlow(m.selectedFrame({...cfg,idle:'lab-P-L04'},2,.4))>0,'pattern glow animates');
+ const uiSources=(await Promise.all(['components/CollageTool.tsx','components/GridLayoutTool.tsx'].map(path=>readFile(path,'utf8')))).join('\n');
+ for(const retired of ['lab-T-E01','lab-T-E04','lab-S-E07','lab-S-L02','lab-S-L04','lab-S-L11','lab-S-L18','lab-G-L04','lab-G-L06','lab-G-L11','lab-G-L20'])
+  assert.ok(!uiSources.includes(retired),`${retired} is absent from both production panels`);
+ assert.ok(uiSources.includes("['fade','淡入l'],['lab-T-E03','淡入ll']"),'text fade pair stays adjacent');
+ assert.ok(uiSources.includes("['pop','果凍l'],['lab-T-E07','果凍ll']"),'text jelly pair stays adjacent');
  console.log('17 active animation timelines: context balance, finite transforms, entry boundaries and legacy bypass passed');
 } finally {await rm(dir,{recursive:true,force:true});}
