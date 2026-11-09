@@ -4,7 +4,7 @@
    注意：電腦沒有 iPhone 的字型（PingFang），符號寬度會略有不同；用 iPhone 打開這頁最準。 */
 import React, { useEffect, useRef, useState } from 'react';
 import { SymbolGlyph } from './GridLayoutTool';
-import { SYMBOLS } from '../utils/symbols';
+import { SYMBOLS, REMOVED_SYMBOLS } from '../utils/symbols';
 import { packSymbols } from '../utils/symbolPack';
 
 const STORE = 'abai-order-tool-symbols-v2';
@@ -46,7 +46,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   const tagged = list.filter(s => cats.of[s] !== undefined).length;
   const onTap = (sym: string) => {
     if (draggedRef.current) { draggedRef.current = false; return; }
-    if (brush === -3) { setList(l => l.filter(s => s !== sym)); onToast('已刪除（按「重設」可以全部復原）'); return; }
+    if (brush === -3) { if (!SYMBOLS.includes(sym) && !REMOVED_SYMBOLS.includes(sym)) setExtraGone(g => (g.includes(sym) ? g : [...g, sym])); setList(l => l.filter(s => s !== sym)); onToast('已刪除（下面「已刪除」區點一下可以加回來）'); return; }
     if (brush === -1) return;
     setCats(c => {
       const of = { ...c.of };
@@ -54,6 +54,10 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       return { ...c, of };
     });
   };
+  /** 不在清單裡的符號：App 原本有、這裡刪掉的，加上已經從 App 拿掉的（REMOVED_SYMBOLS）、自己新增後又刪掉的 */
+  const [extraGone, setExtraGone] = useState<string[]>([]);
+  const gone = [...SYMBOLS, ...REMOVED_SYMBOLS, ...extraGone].filter((s, i, a) => a.indexOf(s) === i && !list.includes(s));
+  const restore = (sym: string) => { setList(l => (l.includes(sym) ? l : [...l, sym])); onToast('已加回清單最後面'); };
   /* 新增：貼上或打字，加在最後面（再拖到想要的位置） */
   const [draft, setDraft] = useState('');
   const addSym = () => {
@@ -112,8 +116,14 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   const autoPack = () => {
     const grid = gridRef.current;
     if (!grid) return;
-    const catOf = (word: string) => cats.names.findIndex(n => n.includes(word));
-    const kc = catOf('顏文字'), bc = catOf('邊框');
+    /* 類名繁簡都認（顏／颜、邊／边），也認「表情」 */
+    const norm = (n: string) => n.replace(/颜/g, '顏').replace(/边/g, '邊').replace(/\s/g, '');
+    const catOf = (...words: string[]) => cats.names.findIndex(n => words.some(w => norm(n).includes(w)));
+    const kc = catOf('顏文字', '表情'), bc = catOf('邊框');
+    if (kc < 0 && list.some(sym => cats.of[sym] !== undefined)) {
+      alert('找不到「顏文字」這一類：請把顏文字那一類的名字改成「顏文字」，自動排列才知道哪些要排在一起。');
+      return;
+    }
     if (bc < 0 && kc < 0 && !confirm('沒有找到名字叫「邊框」或「顏文字」的分類，要把全部當成同一區排嗎？')) return;
     setPacking(true);
     setTimeout(() => {
@@ -125,7 +135,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
         const { order, rowGaps } = packSymbols({ widths, group, cap: grid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), gap: parseFloat(cs.columnGap) || 6, tries: 600 });
         setList(order.map(i => list[i]));
         const big = rowGaps.slice(0, -1).filter(g => g > 60).length;
-        onToast(`已依這台手機的寬度排好：${rowGaps.length} 排，最大空白 ${Math.round(Math.max(0, ...rowGaps.slice(0, -1)))} 點${big ? `（${big} 排超過 60 點，多是只放得下一顆的長邊框）` : ''}`);
+        onToast(`已依這台手機的寬度排好（顏文字＝${cats.names[kc] || '—'}、邊框＝${bc >= 0 ? cats.names[bc] : '—'}）：${rowGaps.length} 排，最大空白 ${Math.round(Math.max(0, ...rowGaps.slice(0, -1)))} 點${big ? `（${big} 排超過 60 點，多是只放得下一顆的長邊框）` : ''}`);
       } finally { setPacking(false); }
     }, 30);
   };
@@ -173,6 +183,19 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
             className={`h-9 px-3 rounded-full border text-[12px] ${brush === -3 ? 'border-[#ff5a5a] text-[#ff5a5a] bg-[#ff5a5a22]' : 'border-white/15 text-white/60'}`}>{brush === -3 ? '刪除中…（再按結束）' : '刪除模式'}</button>
         </div>
       </div>
+      {gone.length > 0 && (
+        <div className="mb-3 rounded-2xl border border-white/10 p-3">
+          <p className="text-[11px] text-white/45 mb-2">已刪除（{gone.length}）：點一下加回清單最後面</p>
+          <div className="flex flex-wrap gap-1.5">
+            {gone.map(sym => (
+              <button key={sym} onClick={() => restore(sym)}
+                className="min-h-9 px-2 py-1 max-w-full rounded-[10px] bg-white/5 border border-dashed border-white/25 inline-flex items-center justify-center text-white/60">
+                <span style={{ filter: 'grayscale(1) brightness(0) invert(1)', opacity: .6 }}><SymbolGlyph text={sym} base={12} /></span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {/* 分類：先點上面一類（可以改名字），再點下面的符號 —— 點一下加入、再點一下取消。長按拖曳照常可以用 */}
       <div className="mb-3 rounded-2xl border border-white/10 p-3">
         <p className="text-[11px] text-white/45 mb-2">分類（最多 5 類）：先選一類，再點符號。已分類 {tagged} / {list.length}</p>
