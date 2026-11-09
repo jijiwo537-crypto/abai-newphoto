@@ -97,10 +97,23 @@ const STAT_MAX = 900;   // 統計用的縮圖，再大也不會更準
 const loadImage = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
   const im = new Image();
   if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
-  im.onload = () => res(im);
+  /* iPhone 上大照片 onload 時常常「還沒真的解碼」：這時候 drawImage 會畫出一片空白（不會報錯）。
+     等 decode() 完成才交出去；decode 失敗（少數舊系統）就照舊用 */
+  im.onload = () => { if (im.decode) im.decode().then(() => res(im), () => res(im)); else res(im); };
   im.onerror = rej;
   im.src = src;
 });
+/** 畫布上是不是真的有畫面（取正中間與四分之一處幾個點；讀不到像素就當作有） */
+const hasPixels = (c: HTMLCanvasElement) => {
+  try {
+    const g = c.getContext('2d', { willReadFrequently: false });
+    if (!g || !c.width || !c.height) return false;
+    for (const [fx, fy] of [[.5, .5], [.25, .25], [.75, .75], [.25, .75], [.75, .25]]) {
+      if (g.getImageData(Math.floor(c.width * fx), Math.floor(c.height * fy), 1, 1).data[3] > 0) return true;
+    }
+    return false;
+  } catch { return true; }
+};
 
 const toImageData = (img: HTMLImageElement, max: number): ImageData => {
   const s = Math.min(1, max / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
@@ -142,6 +155,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const wrapRef = useRef<HTMLDivElement>(null);
   const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
   const [preview, setPreview] = useState<ImageData | null>(null);
+  const previewRef = useRef(preview); previewRef.current = preview;
   const [luts, setLuts] = useState<Record<string, Lut3D> | null>(null);
   const [busy, setBusy] = useState(false);
   /** 正在算的是專業（AI）那一種：加載文字不一樣 */
@@ -149,6 +163,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
   /* 預設用專業（AI）；標準排在後面 */
   const [picked, setPicked] = useState<Pick>('cap');
   const pickedRef = useRef<Pick>('cap'); pickedRef.current = picked;
+  /** 目前是不是已經有仿色結果在畫（有的話「原圖補畫」就不能再蓋上去） */
+  const lutsPickedRef = useRef(false); lutsPickedRef.current = !!luts?.[picked];
   useEffect(() => { warmFor('cap'); }, []);   // 先把專業的模型下載進快取（不載進記憶體）
   /** AI 模式：亮度也跟著換 */
   const keepL = isAi(picked) ? 0 : 1;
@@ -256,7 +272,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   /** 還沒仿色（沒選參考圖）時畫布上的樣子：直接把解碼好的原圖縮進去。
       不經過 getImageData —— iPhone 上那一步讀不到像素時（大圖、檔案來源）畫面會整個空掉，
       要等點了參考圖才出現；drawImage 一定畫得出來 */
-  const drawPlain = (cvs: HTMLCanvasElement) => {
+  const drawPlain = (cvs: HTMLCanvasElement, tries = 0): void => {
     const im = srcImgRef.current;
     if (!im) return;
     const W0 = im.naturalWidth || im.width, H0 = im.naturalHeight || im.height;
@@ -267,7 +283,18 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (!g) return;
     g.imageSmoothingQuality = 'high';
     g.clearRect(0, 0, w, h);
-    g.drawImage(im, 0, 0, w, h);
+    /* 有算好的預覽像素就直接貼（一定有東西）；沒有才從照片縮進來 */
+    const pv = previewRef.current;
+    if (pv && pv.width === w && pv.height === h) g.putImageData(pv, 0, 0);
+    else g.drawImage(im, 0, 0, w, h);
+    /* 自我檢查：畫完是空的（照片還在解碼）就下一格再畫，最多試約 2 秒；
+       期間如果已經選了參考圖、換了照片，就不再補畫 */
+    if (tries < 120 && !hasPixels(cvs)) {
+      requestAnimationFrame(() => {
+        if (srcImgRef.current !== im || canvasRef.current !== cvs || lutsPickedRef.current) return;
+        drawPlain(cvs, tries + 1);
+      });
+    }
   };
   /** CPU 版才需要：算好的結果先留著，前後對比才切得動 */
   const processedRef = useRef<ImageData | null>(null);
@@ -351,7 +378,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { gl?.dispose(); glRef.current = null; };
   }, []);
 
-  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */try{previewSrcRef.current=image;setPreview(toImageData(image, PREVIEW_MAX));}catch(e){previewSrcRef.current=null;console.error('preview',e);}}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
+  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考圖也要先畫出原圖，不然切進仿色頁畫面是空的 */try{const d=toImageData(image, PREVIEW_MAX);/* 全透明＝照片還沒解碼好，先不要用（不然會一直貼一張空白） */if(d.data[3]||d.data[(d.data.length>>1)&~3|3]){previewSrcRef.current=image;setPreview(d);}else previewSrcRef.current=null;}catch(e){previewSrcRef.current=null;console.error('preview',e);}}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
     /* 算過的參考圖：不等圖片解碼，這一下就換上它的顏色（解碼完的那一次會直接命中快取，不會再算） */
