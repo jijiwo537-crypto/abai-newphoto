@@ -93,6 +93,37 @@ function halvingCanvases(size:number){
  for(const c of halvers)if(c.width<size||c.height<size){c.width=Math.max(c.width,size);c.height=Math.max(c.height,size);}
  return halvers;
 }
+/** 方框（中間權重 1、兩端各 fa）達到指定變異數時的整數半徑 r0 與端點權重 fa */
+function boxForVariance(v:number):[number,number]{
+ let r0=0;
+ // 半徑 r0 的整數方框變異數 = r0(r0+1)/3；找到最大的 r0 讓它不超過 v
+ while((r0+1)*(r0+2)/3<=v)r0++;
+ const S=r0*(r0+1)*(2*r0+1)/3,den=2*(r0+1)*(r0+1)-2*v;
+ const fa=den>1e-9?Math.max(0,Math.min(1,(v*(2*r0+1)-S)/den)):0;
+ return [r0,fa];
+}
+/** 一個方向的方框模糊：step 是同一行相鄰像素的間距、lineStep 是換行的間距（皆以 float 計）。
+    範圍外視為透明。四個通道一起做。 */
+function boxBlur(src:Float32Array,dst:Float32Array,r0:number,fa:number,step:number,lineStep:number,l0:number,l1:number,p0:number,p1:number){
+ const inv=1/(2*r0+1+2*fa);
+ for(let line=l0;line<=l1;line++){
+  const base=line*lineStep;
+  let s0=0,s1=0,s2=0,s3=0;
+  for(let j=p0;j<=p0+r0&&j<=p1;j++){const q=base+j*step;s0+=src[q];s1+=src[q+1];s2+=src[q+2];s3+=src[q+3];}
+  for(let x=p0;x<=p1;x++){
+   let e0=0,e1=0,e2=0,e3=0;
+   const lo=x-r0-1,hi=x+r0+1;
+   if(fa>0){
+    if(lo>=p0){const q=base+lo*step;e0+=src[q];e1+=src[q+1];e2+=src[q+2];e3+=src[q+3];}
+    if(hi<=p1){const q=base+hi*step;e0+=src[q];e1+=src[q+1];e2+=src[q+2];e3+=src[q+3];}
+   }
+   const o=base+x*step;
+   dst[o]=(s0+fa*e0)*inv;dst[o+1]=(s1+fa*e1)*inv;dst[o+2]=(s2+fa*e2)*inv;dst[o+3]=(s3+fa*e3)*inv;
+   if(hi<=p1){const q=base+hi*step;s0+=src[q];s1+=src[q+1];s2+=src[q+2];s3+=src[q+3];}
+   const out=x-r0;if(out>=p0){const q=base+out*step;s0-=src[q];s1-=src[q+1];s2-=src[q+2];s3-=src[q+3];}
+  }
+ }
+}
 let blurF:Float32Array=new Float32Array(0),blurT:Float32Array=new Float32Array(0);
 /** 以「螢幕像素」的高斯 σ 畫出 paint；extent 是內容在本地座標中距原點的最大距離。 */
 export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0){
@@ -151,20 +182,26 @@ function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:numb
  const img=g.getImageData(0,0,N,N),d=img.data,len=N*N*4;
  if(blurF.length<len){blurF=new Float32Array(len);blurT=new Float32Array(len);}
  const F=blurF,T=blurT;
- for(let i=0;i<len;i+=4){const al=d[i+3]/255;F[i]=d[i]*al;F[i+1]=d[i+1]*al;F[i+2]=d[i+2]*al;F[i+3]=d[i+3];}
- const rad=Math.max(1,Math.ceil(sb*3)),w=new Float32Array(rad*2+1);
- let sum=0;for(let j=-rad;j<=rad;j++){const v=Math.exp(-(j*j)/(2*sb*sb));w[j+rad]=v;sum+=v;}
- for(let j=0;j<w.length;j++)w[j]/=sum;
- // 水平：F → T
- for(let y=0;y<N;y++){const row=y*N;for(let x=0;x<N;x++){let r=0,gg=0,b=0,a=0;
-  const j0=Math.max(-rad,-x),j1=Math.min(rad,N-1-x);
-  for(let j=j0;j<=j1;j++){const q=(row+x+j)*4,wt=w[j+rad];r+=F[q]*wt;gg+=F[q+1]*wt;b+=F[q+2]*wt;a+=F[q+3]*wt;}
-  const o=(row+x)*4;T[o]=r;T[o+1]=gg;T[o+2]=b;T[o+3]=a;}}
- // 垂直：T → 輸出（反預乘）
- for(let y=0;y<N;y++){const j0=Math.max(-rad,-y),j1=Math.min(rad,N-1-y);for(let x=0;x<N;x++){let r=0,gg=0,b=0,a=0;
-  for(let j=j0;j<=j1;j++){const q=((y+j)*N+x)*4,wt=w[j+rad];r+=T[q]*wt;gg+=T[q+1]*wt;b+=T[q+2]*wt;a+=T[q+3]*wt;}
-  const o=(y*N+x)*4;
-  if(a>.02){const inv=255/a;d[o]=r*inv;d[o+1]=gg*inv;d[o+2]=b*inv;d[o+3]=a;}else{d[o]=d[o+1]=d[o+2]=d[o+3]=0;}}}
+ /* 只處理「有墨水的範圍＋模糊擴散得到的距離」：緩衝是照最壞情況（旋轉後外接框＋邊界）
+    開的，實際字形通常只佔一小塊，外面全是透明，不必跑。結果與整張計算完全相同。 */
+ let minX=N,minY=N,maxX=-1,maxY=-1;
+ for(let y=0;y<N;y++){const row=y*N*4;for(let x=0;x<N;x++){if(d[row+x*4+3]){if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;}}}
+ if(maxX<0)return;
+ const [r0,fa]=boxForVariance(sb*sb/3),m=3*(r0+1)+1;
+ const x0=Math.max(0,minX-m),x1=Math.min(N-1,maxX+m),y0=Math.max(0,minY-m),y1=Math.min(N-1,maxY+m);
+ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const i=(y*N+x)*4,al=d[i+3]/255;F[i]=d[i]*al;F[i+1]=d[i+1]*al;F[i+2]=d[i+2]*al;F[i+3]=d[i+3];}
+ /* 高斯＝三次方框模糊（瀏覽器的 CSS blur 也是這樣做）。以滑動總和實作，
+    每個像素的成本跟模糊半徑無關；舊版直接卷積每像素要乘加最多 19×2 次，
+    幾個字同時失焦就吃掉一整格的時間，拖速度滑桿時最明顯。
+    方框兩端給小數權重，模糊量隨 σ 連續變化，不會一格一格跳。 */
+ for(let pass=0;pass<3;pass++){
+  boxBlur(F,T,r0,fa,4,N*4,y0,y1,x0,x1);   // 水平：每一列
+  boxBlur(T,F,r0,fa,N*4,4,x0,x1,y0,y1);   // 垂直：每一欄
+ }
+ for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
+  const o=(y*N+x)*4,a=F[o+3];
+  if(a>.02){const inv=255/a;d[o]=F[o]*inv;d[o+1]=F[o+1]*inv;d[o+2]=F[o+2]*inv;d[o+3]=a;}else{d[o]=d[o+1]=d[o+2]=d[o+3]=0;}
+ }
  g.putImageData(img,0,0);
  ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
  ctx.drawImage(blurCanvas,cx+ox-R,cy+oy-R,2*R,2*R);
