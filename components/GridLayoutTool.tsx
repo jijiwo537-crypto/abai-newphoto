@@ -12,7 +12,7 @@ import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import {exportHeic} from '../utils/heicExport';
-import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, DEFOCUS_IDS, defocusSpeedToUi, defocusSpeedFromUi } from '../utils/animationDefaults';
+import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
@@ -18459,11 +18459,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
                 patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) }
                   : id === 'pop-seq' && isScatterTarget ? { in: id, dur: motionDurationFromUi(50) }
-                  : isScatterTarget && cfg.in === 'pop-seq' ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur } : { in: id });
+                  : isScatterTarget && cfg.in === 'pop-seq' ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur }
+                  /* 個別進場動畫自己的速度預設（與創意拼圖同一張表）；換走時回到一般預設 */
+                  : entrySpeedDefaultUi(id, { symbol: !!target.sym, line: isSpecialLineTarget, glint: isGlintTarget }) !== undefined
+                    ? { in: id, dur: motionDurationFromUi(entrySpeedDefaultUi(id, { symbol: !!target.sym, line: isSpecialLineTarget, glint: isGlintTarget })!) }
+                  : entrySpeedDefaultUi(cfg.in, { symbol: !!target.sym, line: isSpecialLineTarget, glint: isGlintTarget }) !== undefined
+                    ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur } : { in: id });
                 replayMotion();
               };
               const pickIdle = (id: string) => {
-                patchMotion({ idle: id, ...idleDefaults(id, { symbol: !!target.sym, text: isTextTarget, image: targetIsImage, shape: !!target.shape, grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget }) });
+                patchMotion({ idle: id, ...idleDefaults(id, { symbol: !!target.sym, text: isTextTarget, image: targetIsImage, shape: !!target.shape, grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget, scatter: isScatterTarget }) });
                 replayMotion();
               };
               const chip = (on: boolean) => `px-3 h-8 shrink-0 rounded-[8px] border text-[11px] font-bold tracking-wider transition-all flex items-center gap-1.5 ${on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
@@ -18522,7 +18527,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedToUi(cfg.speed)
                             : cfg.idle === 'breathe' && isGlintTarget ? glintZoomSpeedToUi(cfg.speed)
                             : cfg.idle === 'glint-blink' ? blinkSpeedToUi(cfg.speed)
-                            : DEFOCUS_IDS.has(cfg.idle) ? defocusSpeedToUi(cfg.speed)
+                            : hasSpeedRange(cfg.idle) ? rangedSpeedToUi(cfg.idle, cfg.speed)
                             : idleSpeedToUi(cfg.speed)}
                         min={0} max={100}
                         step={1} onCommit={replayMotion}
@@ -18532,7 +18537,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : cfg.idle === 'grid-wave' ? .2 + v * .018
                           : cfg.idle === 'glint-breathe' || cfg.idle === 'glint-rays' ? glintSpeedFromUi(v)
                           : cfg.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
-                          : cfg.idle === 'glint-blink' ? blinkSpeedFromUi(v) : DEFOCUS_IDS.has(cfg.idle) ? defocusSpeedFromUi(v) : idleSpeedFromUi(v)})}/>
+                          : cfg.idle === 'glint-blink' ? blinkSpeedFromUi(v) : hasSpeedRange(cfg.idle) ? rangedSpeedFromUi(cfg.idle, v) : idleSpeedFromUi(v)})}/>
                       </div>
                     </div>}
                   </>}
