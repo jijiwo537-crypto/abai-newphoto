@@ -5,6 +5,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SymbolGlyph } from './GridLayoutTool';
 import { SYMBOLS } from '../utils/symbols';
+import { packSymbols } from '../utils/symbolPack';
 
 const STORE = 'abai-order-tool-symbols-v2';
 const HOLD_MS = 280;
@@ -104,6 +105,31 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   };
   const onUp = (e: React.PointerEvent) => { cancelHold(); if (dragRef.current?.pointerId === e.pointerId) setDrag(null); };
 
+  /* 自動排列：用「這台手機」實際畫出來的按鈕寬度排（見 utils/symbolPack）。
+     分類裡名字有「邊框」的那一類放最下面、有「顏文字」的放中間，其他的放上面 */
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [packing, setPacking] = useState(false);
+  const autoPack = () => {
+    const grid = gridRef.current;
+    if (!grid) return;
+    const catOf = (word: string) => cats.names.findIndex(n => n.includes(word));
+    const kc = catOf('顏文字'), bc = catOf('邊框');
+    if (bc < 0 && kc < 0 && !confirm('沒有找到名字叫「邊框」或「顏文字」的分類，要把全部當成同一區排嗎？')) return;
+    setPacking(true);
+    setTimeout(() => {
+      try {
+        const els = Array.from(grid.querySelectorAll('[data-sym]')) as HTMLElement[];
+        const widths = list.map((_, i) => els.find(e => Number(e.dataset.sym) === i)?.getBoundingClientRect().width ?? 0);
+        const group = list.map(sym => (cats.of[sym] === bc ? 2 : cats.of[sym] === kc ? 1 : 0));
+        const cs = getComputedStyle(grid);
+        const { order, rowGaps } = packSymbols({ widths, group, cap: grid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight), gap: parseFloat(cs.columnGap) || 6, tries: 600 });
+        setList(order.map(i => list[i]));
+        const big = rowGaps.slice(0, -1).filter(g => g > 60).length;
+        onToast(`已依這台手機的寬度排好：${rowGaps.length} 排，最大空白 ${Math.round(Math.max(0, ...rowGaps.slice(0, -1)))} 點${big ? `（${big} 排超過 60 點，多是只放得下一顆的長邊框）` : ''}`);
+      } finally { setPacking(false); }
+    }, 30);
+  };
+
   const copyText = () => [
     '【ABAI 符號清單 v2】請把「新增符號」改成這份清單（照這個順序；新增、刪除都已經算進去）：',
     `共 ${list.length} 顆（新增 ${added}、刪除 ${removed}）`,
@@ -125,10 +151,12 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-3">
-        <p className="text-[11px] text-white/45 leading-relaxed">預覽＝iPhone 13 Pro 的寬度。電腦沒有 iPhone 的字型，用 iPhone 打開這頁最準。</p>
+        <p className="text-[11px] text-white/45 leading-relaxed">預覽＝iPhone 13 Pro 的寬度。請用 iPhone 打開這頁再按「自動排列」：每顆的寬度看字型，要用手機的才準。</p>
         <div className="flex gap-2 shrink-0">
           <button onClick={() => { if (!changed || confirm('回到 App 目前的清單？（新增、刪除、排序都會復原）')) { setList(SYMBOLS.slice()); onToast('已回到 App 目前的清單'); } }}
             className="h-8 px-3 rounded-full border border-white/15 text-[12px] text-white/70">重設</button>
+          <button onClick={autoPack} disabled={packing}
+            className="h-8 px-3 rounded-full border border-white/30 text-[12px] text-white">{packing ? '排列中…' : '自動排列'}</button>
           <button onClick={copy} disabled={!changed && !tagged}
             className={`h-8 px-3 rounded-full text-[12px] font-bold ${changed || tagged ? 'bg-white text-black' : 'bg-white/10 text-white/35'}`}>複製清單</button>
         </div>
@@ -171,7 +199,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       <div className="rounded-[28px] border border-white/15 bg-black overflow-hidden" style={{ width: 392, marginLeft: 'calc((100% - 392px) / 2)' }}>
         <div className="pt-1" style={{ padding: '12px 16px 24px' }}>
           <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
-          <div className="flex flex-wrap gap-1.5 pb-4 mt-3">
+          <div ref={gridRef} className="flex flex-wrap gap-1.5 pb-4 mt-3">
             {list.map((sym, i) => (
               <button key={sym} data-sym={i}
                 onPointerDown={e => onDown(e, sym)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
