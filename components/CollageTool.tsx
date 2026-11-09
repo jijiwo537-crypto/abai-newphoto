@@ -11070,7 +11070,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {/* 選中框是純介面，不再烘進畫布。SVG 疊在所有畫布內容之上，
                   overflow:visible 讓線條即使跨到旁邊的黑色遮罩或畫布外側也完整顯示；
                   vector-effect 則確保預覽放大縮小後仍維持相同粗細。 */}
-              {!!guides.length && !hideChromeRef.current && (()=>{
+              {enableSnapping && !!guides.length && !hideChromeRef.current && (()=>{
                 const off=getLayoutOffsets();if(!off)return null;
                 const half=.8*off.cw/Math.max(1,(baseCss?.w||off.cw)*displayScale);
                 const clamp=(v:number,max:number)=>Math.min(max-half,Math.max(half,v));
@@ -12631,7 +12631,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const labTarget = moTarget === 'shape' ? 'pattern' : isSymbolTarget ? 'symbol' : isTextTarget ? 'text' : selObj?.type === 'shape' ? 'shape' : null;
                 const kinds = isTextTarget
                   ? [{id:'none',name:'無'},{id:'rise',name:'升起'},{id:'fade',name:'淡入l'},{id:'lab-T-E03',name:'淡入ll'},
-                     {id:'drop',name:'落下'},{id:'flip',name:'翻轉'},{id:'pop',name:'果凍l'},{id:'lab-T-E07',name:'果凍ll'}]
+                     {id:'drop',name:'落下'},{id:'flip',name:'翻轉'},{id:'pop',name:'果凍l'},{id:'lab-T-E07',name:'果凍ll'},
+                     {id:'bounce',name:'彈跳'}]
                   : [...(isSymbolTarget ? legacyKinds.filter(k => !['spin','flip','fade'].includes(k.id)) : legacyKinds),
                      ...(labTarget ? selectedKinds(labTarget, 'entry') : [])];
                 const baseIdleKinds = isScatterTarget ? SCATTER_IDLE_KINDS : moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : isGlintTarget ? GLINT_IDLE_KINDS_C : IDLE_KINDS;

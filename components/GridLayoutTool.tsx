@@ -8727,17 +8727,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   useEffect(() => () => {
     if (interactionRafRef.current != null) cancelAnimationFrame(interactionRafRef.current);
   }, []);
+  const [enableSnapping, setEnableSnapping] = useState(true);
+  const enableSnappingRef = useRef(true);
+  enableSnappingRef.current = enableSnapping;
   const [activeGuidelines, setActiveGuidelinesRaw] = useState<AlignmentGuideline[]>([]);
   /* 拖、縮放物件時每一格都會算一次對齊線，算出來大多跟上一格一樣 —— 一樣就不要設狀態，
      不然整個跨頁拼圖每一格都要重新 render 一次。 */
   const guideKeyRef = useRef('[]');
   const setActiveGuidelines = useCallback((next: AlignmentGuideline[]) => {
-    const key = JSON.stringify(next);
+    // 關閉對齊時這裡是最後一道保險：即使上一個畫格已排進佇列，也不能
+    // 再把舊參考線、震動或吸附狀態提交回畫面。
+    const safeNext = enableSnappingRef.current ? next : [];
+    const key = JSON.stringify(safeNext);
     if (key === guideKeyRef.current) return;
     guideKeyRef.current = key;
-    setActiveGuidelinesRaw(prev => { snapHaptic(prev.length, next.length); return next; });
+    setActiveGuidelinesRaw(prev => { snapHaptic(prev.length, safeNext.length); return safeNext; });
   }, []);
-  const [enableSnapping, setEnableSnapping] = useState(true);
   /** 上方那顆三個點的選單 */
   const [moreOpen, setMoreOpen] = useState(false);
   /* 三個點的選單：點畫面上任何其他地方都要收起來。
@@ -9032,7 +9037,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     edgeOnly?: boolean,
     rot = 0
   ) => {
-    if (!enableSnapping) {
+    if (!enableSnappingRef.current) {
       return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
     }
     // 頁面共用精確的邊界（接縫只是線條）。大物件可能碰到離它中心好幾頁遠的邊界
@@ -13417,7 +13422,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        離邊緣半個身子的地方。倍率對外框是線性的，所以拿「一倍」的外框去解就好。 */
     const lRot = t.rot || 0;
     const ext1 = rotExtent(box.w, box.h, lRot);
-    if (enableSnapping) {
+    if (enableSnappingRef.current) {
       const SNAP = 4;
       let best = Infinity, bestScale = ns, bestExtent = 0;
       getAllPageRects().forEach(pr => {
@@ -13454,7 +13459,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /* 這裡一定要傳佈局自己的框（box）跟角度：
        傳整頁的寬高會讓中心點算錯（設過比例的佈局比整頁小、而且是置中的），
        少傳角度則是轉過之後線會亮錯位置。 */
-    setActiveGuidelines(dedupeGuidelines(pageGuidelinesAt(x, y, box.w, box.h, ns, true, lRot), x + box.w / 2));
+    setActiveGuidelines(enableSnappingRef.current
+      ? dedupeGuidelines(pageGuidelinesAt(x, y, box.w, box.h, ns, true, lRot), x + box.w / 2)
+      : []);
   };
 
   /**
@@ -14359,7 +14366,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             g.lastScale = ns;
           }
           let nextGuidelines: AlignmentGuideline[] | null = null;
-          if (target) {
+          if (target && enableSnappingRef.current) {
             // 同樣只畫「邊」的線：捏合時中心不動，中線會整趟亮著（見 scaleLayoutSnapped）
             const pageLines = pageGuidelinesAt(
               target.x, target.y, target.width, target.height, ns, true, rot, rasterSeamBleed,
@@ -16536,8 +16543,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           關＝跟未選中的按鈕一樣的淡白。按下去不做任何變色。 */}
                       <button
                         onClick={() => {
-                          setEnableSnapping(!enableSnapping);
-                          if (enableSnapping) setActiveGuidelines([]);
+                          const next = !enableSnappingRef.current;
+                          enableSnappingRef.current = next;
+                          setEnableSnapping(next);
+                          if (!next) {
+                            layoutScaleSnapRef.current = null;
+                            setActiveGuidelines([]);
+                          }
                         }}
                         role="switch"
                         aria-checked={enableSnapping}
@@ -17869,7 +17881,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             let bestGuidelineY: number | null = null;
                             let isPageBoundarySnapY = false;
 
-                            if (enableSnapping) {
+                            if (enableSnappingRef.current) {
                               pageRects.forEach(pageRect => {
                                 // 垂直參考線（左、右）
                               // 左緣
@@ -17932,7 +17944,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             } // 第一段 enableSnapping 結束
 
                             // 縮放時圖片之間的邊緣吸附
-                            if (enableSnapping) {
+                            if (enableSnappingRef.current) {
                               floatingImages.forEach(other => {
                                 if (other.id === fImg.id) return; // 跳過自己
 
@@ -18089,7 +18101,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           };
                           let next = rawNext as { x: number; y: number; width: number; height: number };
                           let nextGuidelines: AlignmentGuideline[] = [];
-                          if (enableSnapping) {
+                          if (enableSnappingRef.current) {
                             const bounds = (g: typeof next) => {
                               const ext = rotExtent(g.width * fImg.scale, g.height * fImg.scale, fImg.rotation || 0);
                               const cx = g.x + g.width / 2, cy = g.y + g.height / 2;
@@ -18424,7 +18436,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const labTarget = target?.sym ? 'symbol' : isTextTarget ? 'text' : target?.shape ? 'shape' : null;
               const introKinds: readonly (readonly [string, string])[] = isTextTarget
                 ? [['none','無'],['rise','升起'],['fade','淡入l'],['lab-T-E03','淡入ll'],
-                   ['drop','落下'],['flip','翻轉'],['pop','果凍l'],['lab-T-E07','果凍ll']] as const
+                   ['drop','落下'],['flip','翻轉'],['pop','果凍l'],['lab-T-E07','果凍ll'],
+                   ['bounce','彈跳']] as const
                 : [...(target?.sym ? legacyIntroKinds.filter(([id]) => !['spin','flip','fade'].includes(id)) : legacyIntroKinds),
                    ...(labTarget ? selectedKinds(labTarget, 'entry').map(x => [x.id,x.name] as const) : [])];
               const idleKinds: readonly (readonly [string, string])[] = isTextTarget

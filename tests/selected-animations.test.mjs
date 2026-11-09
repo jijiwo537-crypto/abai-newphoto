@@ -11,6 +11,13 @@ try {
  const m=await import(pathToFileURL(out));
  assert.equal(m.SELECTED_ANIMATIONS.length,17);
  assert.equal(new Set(m.SELECTED_ANIMATIONS.map(x=>x.id)).size,17);
+ assert.deepEqual(m.SELECTED_ANIMATIONS.map(({id,name})=>[id,name]),[
+  ['lab-T-E03','淡入ll'],['lab-T-E07','果凍ll'],
+  ['lab-T-L01','呼吸'],['lab-T-L04','閃爍'],['lab-T-L15','波浪ll'],['lab-T-L20','失焦'],
+  ['lab-S-E03','淡入'],['lab-S-E04','足跡'],['lab-S-E10','旋轉'],
+  ['lab-S-L01','呼吸'],['lab-S-L03','搖擺'],['lab-S-L07','翻面'],['lab-S-L20','失焦'],
+  ['lab-P-L02','閃爍'],['lab-P-L04','發光'],['lab-P-L07','翻面'],['lab-P-L20','失焦'],
+ ]);
  for(const target of ['text','symbol','pattern'])assert.ok(m.selectedKinds(target,'idle').length);
  assert.equal(m.selectedKinds('shape','idle').length,0,'retired shape animations are absent');
  const ctx={globalAlpha:1,filter:'none',save(){this.depth=(this.depth||0)+1;},restore(){this.depth--;},getTransform(){return {a:2,b:0};}};
@@ -34,5 +41,9 @@ try {
   ctx.filter='none';m.paintSelectedAnimation(ctx,m.selectedFrame({...cfg,idle:id},2,.4),40,50,()=>{});
   assert.match(ctx.filter,/blur\([1-9]/,`${id} has visible defocus`);
  }
+ ctx.filter='none';
+ m.applySelectedPatternAppearance(ctx,m.selectedFrame({...cfg,idle:'lab-P-L20'},2,.4),40,0,0);
+ assert.match(ctx.filter,/blur\([1-9]/,'pattern defocus is visible');
+ assert.ok(m.selectedPatternGlow(m.selectedFrame({...cfg,idle:'lab-P-L04'},2,.4))>0,'pattern glow animates');
  console.log('17 active animation timelines: context balance, finite transforms, entry boundaries and legacy bypass passed');
 } finally {await rm(dir,{recursive:true,force:true});}

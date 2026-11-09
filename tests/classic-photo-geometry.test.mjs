@@ -56,7 +56,7 @@ test('decoded plain photos paint from original pixels in the same scene matrix',
 test('actual drag solver snaps cross-page objects to both outer edges at all preview scales', async () => {
   const body = source.slice(source.indexOf('  const applySnapping = ('), source.indexOf('  const [draggedFloatingIndex'));
   const code = await transform(`export function solver(k, item) {
-    const enableSnapping=true,kRef={current:k},floatingImages=[item];
+    const enableSnappingRef={current:true},kRef={current:k},floatingImages=[item];
     const pages=Array.from({length:3},(_,pageIdx)=>({pageIdx,left:pageIdx*300,right:(pageIdx+1)*300,top:0,bottom:400,centerX:pageIdx*300+150,centerY:200}));
     const getAllPageRects=()=>pages;
     const pageRectsNear=(p,c)=>p.filter(r=>c>=r.left&&c<=r.right);
@@ -79,4 +79,19 @@ test('actual drag solver snaps cross-page objects to both outer edges at all pre
     assert.equal(right.snappedX,100,`${kind} right at ${k}`);
     assert.ok(right.guidelines.some(g=>g.type==='vertical'&&g.coord===900));
   }
+});
+
+test('turning alignment off bypasses snapping and returns no guidelines', async () => {
+  const body = source.slice(source.indexOf('  const applySnapping = ('), source.indexOf('  const [draggedFloatingIndex'));
+  const code = await transform(`export function solver() {
+    const enableSnappingRef={current:false},kRef={current:1},floatingImages=[];
+    const getAllPageRects=()=>[{pageIdx:0,left:0,right:300,top:0,bottom:400,centerX:150,centerY:200}];
+    const pageRectsNear=()=>[],rotExtent=(w,h)=>({bw:w,bh:h});
+    const SHAPE_FIT={},GRID_SHAPE_KINDS=new Set(),seamXs=()=>[],pageGuidelinesAt=()=>[],dedupeGuidelines=g=>g;
+    const floatingInkOffsets=(_it,w,h,s)=>({l:-w*s/2,r:w*s/2,t:-h*s/2,b:h*s/2});
+    ${body}
+    return applySnapping('target',2,3,300,400,1,false,0);
+  }`, { loader:'ts',format:'esm' });
+  const { solver }=await import(`data:text/javascript;base64,${Buffer.from(code.code).toString('base64')}`);
+  assert.deepEqual(solver(),{snappedX:2,snappedY:3,fitScale:undefined,guidelines:[]});
 });
