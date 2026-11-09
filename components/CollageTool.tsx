@@ -1,4 +1,4 @@
-import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, applySelectedPatternAppearance, selectedPatternGlow, type SelectedFrame } from '../utils/selectedAnimations';
+import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, type SelectedFrame } from '../utils/selectedAnimations';
 
 import { waveWarp, revealPathD } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
@@ -6837,6 +6837,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (angle) gg.rotate((angle * Math.PI) / 180);
       if (k !== 1) gg.scale(k, k);
       gg.drawImage(tmp, -side / 2, -side / 2);
+      /* 圖案常駐「發光」的幅度最大是 2 倍：超過 1 的部分再疊一層同一張光暈，
+         亮度與範圍真的加倍，不必每一格重做光暈貼圖。 */
+      if (a > 1.004) { gg.globalAlpha = Math.min(1, a - 1); gg.drawImage(tmp, -side / 2, -side / 2); }
       gg.restore();
     };
 
@@ -7213,24 +7216,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const mxp = dx || dy ? A.x * s : hx * rx, myp = dx || dy ? A.y * s : hy * ry;
         ctx.save();
         ctx.globalAlpha = A.a;
-        applySelectedPatternAppearance(ctx, A.lab, sz, hx, hy);
+        paintSelectedPattern(ctx, A.lab, sz, hx, hy, g => {
         // 每個圖案固定分配顏色：換縮放或重畫都不能重新亂數配色
         const stripeSeed = String(h.id).split('').reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
         const patternFill = isStripeLikeTex(patternType) && !maskImageState ? (stripeSeed % 2 ? stripeA : stripeB) : basePat;
-        ctx.fillStyle = patternFill;
+        g.fillStyle = patternFill;
         // pattern 錨在目前的原點，所以先位移，讓遮罩上的 (mxp,myp) 正好落在圖案位置
-        ctx.translate(hx - mxp, hy - myp);
+        g.translate(hx - mxp, hy - myp);
         if (isTextHole(holeType)) {
           const tText = holeGlyph(holeType, customText, h);
-          drawTextShape(ctx, holeType, tText, mxp, myp, sz, patternFill, false, currentAngle);
+          drawTextShape(g, holeType, tText, mxp, myp, sz, patternFill, false, currentAngle);
         } else {
           // 以圖案自己的中心為軸旋轉，但不動到 pattern 的錨點
-          ctx.translate(mxp, myp);
-          ctx.rotate(currentAngle * Math.PI / 180);
-          ctx.translate(-mxp, -myp);
-          fillShapePath(ctx, holeType, mxp, myp, sz);
+          g.translate(mxp, myp);
+          g.rotate(currentAngle * Math.PI / 180);
+          g.translate(-mxp, -myp);
+          fillShapePath(g, holeType, mxp, myp, sz);
         }
-        drawBurst(ctx, h, sz, mxp, myp, A.burst, patternFill);
+        drawBurst(g, h, sz, mxp, myp, A.burst, patternFill);
+        });
         ctx.restore();
         });
       });
@@ -7355,21 +7359,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const px = A.x * s + dx, py = A.y * s + dy;
       lmx.save();
       lmx.globalAlpha = A.a;
-      applySelectedPatternAppearance(lmx, A.lab, sz, px, py);
+      paintSelectedPattern(lmx, A.lab, sz, px, py, g => {
       if (isTextHole(holeType)) {
         const tText = holeGlyph(holeType, customText, h);
-        drawTextShape(lmx, holeType, tText, px, py, sz, null, true, currentAngle);
+        drawTextShape(g, holeType, tText, px, py, sz, null, true, currentAngle);
       } else {
-        lmx.translate(px, py);
-        lmx.rotate(currentAngle * Math.PI / 180);
+        g.translate(px, py);
+        g.rotate(currentAngle * Math.PI / 180);
         /* 填色挖孔的反鋸齒邊緣會殘留約半個像素的遮罩色，
            預覽倍率改變時那圈殘色就像多出邊框。用同一路徑擦掉
            極細外緣，只消除殘色，不改圖案本身的幾何大小。 */
-        lmx.lineWidth = Math.max(0.75, 0.8 * s);
-        lmx.lineJoin = 'round';
-        lmx.strokeStyle = '#000';
-        fillShapePath(lmx, holeType, 0, 0, sz, () => lmx.stroke());
+        g.lineWidth = Math.max(0.75, 0.8 * s);
+        g.lineJoin = 'round';
+        g.strokeStyle = '#000';
+        fillShapePath(g, holeType, 0, 0, sz, () => g.stroke());
       }
+      });
       lmx.restore();
       if (A.burst > 0.01) {
         lmx.save();
@@ -7437,16 +7442,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 四周包圍的洞本來就是遮罩座標，對應點就是自己
         ctx.save();
         ctx.globalAlpha = A.a;
-        applySelectedPatternAppearance(ctx, A.lab, sz, hx, hy);
+        paintSelectedPattern(ctx, A.lab, sz, hx, hy, g => {
         if (isTextHole(holeType)) {
-          drawTextShape(ctx, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, currentAngle);
+          drawTextShape(g, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, currentAngle);
         } else {
-          ctx.translate(hx, hy);
-          ctx.rotate(currentAngle * Math.PI / 180);
-          ctx.translate(-hx, -hy);
-          fillShapePath(ctx, holeType, hx, hy, sz);
+          g.translate(hx, hy);
+          g.rotate(currentAngle * Math.PI / 180);
+          g.translate(-hx, -hy);
+          fillShapePath(g, holeType, hx, hy, sz);
         }
-        drawBurst(ctx, h, sz, hx, hy, A.burst, pat);
+        drawBurst(g, h, sz, hx, hy, A.burst, pat);
+        });
         ctx.restore();
       });
       ctx.restore();

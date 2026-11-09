@@ -86,28 +86,67 @@ export function canvasBlurSupported(){
  return filterOK;
 }
 let blurCanvas:HTMLCanvasElement|undefined,blurCtx:CanvasRenderingContext2D|null=null;
+const halvers:HTMLCanvasElement[]=[];
+/** 逐次減半用的兩張畫布（只長不縮，只用左上角） */
+function halvingCanvases(size:number){
+ while(halvers.length<2)halvers.push(document.createElement('canvas'));
+ for(const c of halvers)if(c.width<size||c.height<size){c.width=Math.max(c.width,size);c.height=Math.max(c.height,size);}
+ return halvers;
+}
 let blurF:Float32Array=new Float32Array(0),blurT:Float32Array=new Float32Array(0);
 /** 以「螢幕像素」的高斯 σ 畫出 paint；extent 是內容在本地座標中距原點的最大距離。 */
-export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void){
+export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0){
  if(!(deviceBlur>.3)){paint(ctx);return;}
  /* 不使用 Canvas filter：Safari／iOS 對 ctx.filter 的半徑有上限，超過就整個忽略。
     改成真正的高斯模糊（預乘透明度、浮點運算，沒有殘影或色階）。
     出錯時退回直接畫，絕不讓一格例外把整段動畫停掉。 */
- try{gaussianOffscreen(ctx,deviceBlur,extent,paint);}catch{paint(ctx);}
+ try{gaussianOffscreen(ctx,deviceBlur,extent,paint,cx,cy);}catch{paint(ctx);}
 }
-function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void){
+function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0){
  if(typeof document==='undefined'){paint(ctx);return;}
- const density=densityOf(ctx),R=extent+sigma*3.2/density;
- // 先縮小到 σ≈1.3 個緩衝像素再做精確高斯：模糊後的影像沒有高頻，雙線性放大回去依然平滑。
- const k=Math.max(1,sigma/1.3);
- const N=Math.max(2,Math.min(150,Math.ceil(2*R*density/k)));
- const scale=N/(2*R),sb=sigma*scale/density;
+ /* 抖動的成因與做法：
+    ① 縮小倍率 k 若連續變化，取樣格子每一格都相對內容滑動；
+    ② 就算 k 取整數，一次大比例縮小時瀏覽器會用 mipmap，不同比例的 mipmap 有不同的
+       次像素偏移（實測同一顆圓在幾個 k 之間來回跳 1～3 個螢幕像素）；路徑的反鋸齒
+       在小緩衝裡也有垂直方向的取樣偏差。
+    現在：內容一律先以「螢幕原生解析度」畫在對齊螢幕像素的格子上，再只用「剛好一半」
+    的縮小一路縮到 1/k（每次都是 2×2 平均，重心完全不動），k 只取 1、2、4、8…。
+    同一個 k 底下格子與內容的對應固定不變；換檔時兩邊都是無偏的平均，看不出位移。 */
+ const density=densityOf(ctx),reach=extent*density+sigma*3.2;
+ let k=1;while(k*2<=Math.max(1,sigma/1.5))k*=2;
+ while(2*Math.ceil(reach/k)>256)k*=2;
+ const half=Math.max(1,Math.ceil(reach/k)),N=half*2,scale=density/k,R=half/scale,sb=sigma/k,M=N*k;
  if(!blurCanvas){blurCanvas=document.createElement('canvas');blurCtx=blurCanvas.getContext('2d',{willReadFrequently:true}) as CanvasRenderingContext2D|null;}
  const g=blurCtx;if(!g){paint(ctx);return;}
  if(blurCanvas.width!==N||blurCanvas.height!==N){blurCanvas.width=N;blurCanvas.height=N;}
  g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='source-over';g.clearRect(0,0,N,N);
- g.setTransform(scale,0,0,scale,N/2,N/2);g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';
- paint(g);
+ /* 沒有旋轉時，把格子對齊到整數螢幕像素：內容反向位移同樣的量，位置不變。 */
+ const mt=ctx.getTransform();let ox=0,oy=0;
+ if(Math.abs(mt.b)<1e-9&&Math.abs(mt.c)<1e-9&&mt.a>0&&mt.d>0){
+  const dx0=mt.a*(cx-R)+mt.e,dy0=mt.d*(cy-R)+mt.f;
+  ox=(Math.round(dx0)-dx0)/mt.a;oy=(Math.round(dy0)-dy0)/mt.d;
+ }
+ const prep=(q:CanvasRenderingContext2D,sc:number,size:number)=>{
+  q.setTransform(sc,0,0,sc,size/2-(cx+ox)*sc,size/2-(cy+oy)*sc);q.imageSmoothingEnabled=true;q.imageSmoothingQuality='high';q.globalAlpha=1;q.globalCompositeOperation='source-over';
+  // 圖案的填色（花紋 pattern／漸層）、描邊設定由呼叫端事先設在 ctx 上，帶進緩衝一起畫
+  q.fillStyle=ctx.fillStyle;q.strokeStyle=ctx.strokeStyle;q.lineWidth=ctx.lineWidth;q.lineJoin=ctx.lineJoin;q.lineCap=ctx.lineCap;
+ };
+ if(k===1||M>2048){prep(g,scale,N);paint(g);}
+ else{
+  const lv=halvingCanvases(M);
+  let src=lv[0],size=M;const c0=src.getContext('2d')!;
+  c0.setTransform(1,0,0,1,0,0);c0.clearRect(0,0,size,size);prep(c0,density,M);paint(c0);
+  let i=1;
+  while(size>N){
+   const dst=size/2===N?blurCanvas:lv[i%2],dc=dst===blurCanvas?g:dst.getContext('2d')!;
+   dc.setTransform(1,0,0,1,0,0);dc.globalAlpha=1;dc.globalCompositeOperation='source-over';
+   if(dst!==blurCanvas)dc.clearRect(0,0,size/2,size/2);
+   // 剛好縮一半＋雙線性＝精確的 2×2 平均（不用 mipmap，不會產生偏移）
+   dc.imageSmoothingEnabled=true;dc.imageSmoothingQuality='low';
+   dc.drawImage(src,0,0,size,size,0,0,size/2,size/2);
+   src=dst;size/=2;i++;
+  }
+ }
  g.setTransform(1,0,0,1,0,0);
  const img=g.getImageData(0,0,N,N),d=img.data,len=N*N*4;
  if(blurF.length<len){blurF=new Float32Array(len);blurT=new Float32Array(len);}
@@ -128,7 +167,7 @@ function gaussianOffscreen(ctx:CanvasRenderingContext2D,sigma:number,extent:numb
   if(a>.02){const inv=255/a;d[o]=r*inv;d[o+1]=gg*inv;d[o+2]=b*inv;d[o+3]=a;}else{d[o]=d[o+1]=d[o+2]=d[o+3]=0;}}}
  g.putImageData(img,0,0);
  ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
- ctx.drawImage(blurCanvas,-R,-R,2*R,2*R);
+ ctx.drawImage(blurCanvas,cx+ox-R,cy+oy-R,2*R,2*R);
 }
 
 /** Draw in the existing object's local coordinates. No fixed-resolution frame cache. */
@@ -199,16 +238,21 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
   const sx=1-(1-Math.abs(Math.cos(v)))*.8*frame.amount*en;
   ctx.translate(x,y);ctx.scale(sx,1);ctx.translate(-x,-y);
  }
- if(frame.id==='lab-P-L20'){
-  // 圖案是直接畫進遮罩／圖片的路徑，沒有可以先離屏的繪圖函式；不支援 Canvas
-  // filter 時以變淡代替，至少保留同樣的節奏與分組。
+ // 失焦不在這裡設 ctx.filter（iOS 不支援），改由 paintSelectedPattern 做真正的高斯模糊。
+}
+/** 畫一顆圖案：失焦時先畫進以這顆為中心的緩衝再高斯模糊貼回（跟文字／符號同一套），
+    其他動畫照舊套外觀後直接畫。draw 只能畫在傳進來的 g 上。 */
+export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number,draw:(g:CanvasRenderingContext2D)=>void){
+ if(frame?.id==='lab-P-L20'){
   const level=defocusOf(frame,frame.slot??0,frame.slots??1);
-  // 半徑不乘密度並限制上限：Safari 超過濾鏡上限會整個忽略。
-  if(canvasBlurSupported())ctx.filter=`blur(${Math.min(20,level*Math.max(4,size*.2))}px)`;
-  else ctx.globalAlpha*=1-.55*level;
+  paintBlurred(ctx,level*Math.max(3,size*.14)*densityOf(ctx),size,draw,x,y);
+  return;
  }
+ applySelectedPatternAppearance(ctx,frame,size,x,y);
+ draw(ctx);
 }
 export function selectedPatternGlow(frame:SelectedFrame|undefined) {
  if(frame?.id!=='lab-P-L04')return 0;
- return (1+Math.sin(frame.t*frame.speed*1.5+frame.phase))*.5*frame.amount*smooth(frame.t/1.2);
+ // 幅度最大值為原本的兩倍（0～2），glowInto 會把超過 1 的部分再疊一層
+ return (1+Math.sin(frame.t*frame.speed*1.5+frame.phase))*.5*frame.amount*2*smooth(frame.t/1.2);
 }

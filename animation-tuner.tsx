@@ -55,7 +55,7 @@ const sampleCanvas = (a: string, b: string, c: string) => {
 };
 const toFile = (cv: HTMLCanvasElement, name: string) => new Promise<File>(r => cv.toBlob(b => r(new File([b!], name, { type: 'image/jpeg' })), 'image/jpeg', .9));
 
-const loadRecs = (): Record<string, Rec> => { try { const v = JSON.parse(localStorage.getItem(STORE) || '{}'); return v && typeof v === 'object' ? v : {}; } catch { return {}; } };
+const loadRecs = (): Record<string, Rec> => { try { const v = JSON.parse(localStorage.getItem(STORE) || '{}'); return v && typeof v === 'object' ? v as Record<string, Rec> : {}; } catch { return {}; } };
 const saveRecs = (v: Record<string, Rec>) => { try { localStorage.setItem(STORE, JSON.stringify(v)); } catch { /* 私密模式：只是不保留 */ } };
 
 const diffText = (r: Rec) => Object.keys(r.now).filter(k => r.now[k] !== r.def[k]).map(k => `${FIELD_NAME[k]} ${r.def[k]} → ${r.now[k]}`).join('，');
@@ -66,7 +66,7 @@ function App() {
   const [scene, setScene] = useState(SCENES[1]);
   const [nonce, setNonce] = useState(0);
   const [open, setOpen] = useState(false);
-  const [recs, setRecs] = useState<Record<string, Rec>>(loadRecs);
+  const [recs, setRecs] = useState<Record<string, Rec>>(() => loadRecs());
   const [live, setLive] = useState<{ title: string; rows: { label: string; def: number; now: number }[] } | null>(null);
   const [copied, setCopied] = useState(false);
   useEffect(() => { saveRecs(recs); }, [recs]);
@@ -132,14 +132,14 @@ function App() {
         if (!Object.keys(r.now).some(k => r.now[k] !== r.def[k])) continue;
         const old = prev[r.key];
         if (old && JSON.stringify(old.now) === JSON.stringify(r.now)) continue;
-        if (next === prev) next = { ...prev };
+        if (next === prev) next = { ...prev } as Record<string, Rec>;
         next[r.key] = r;
       }
       return next;
     });
   }, []);
 
-  const list = Object.values(recs).sort((a, b) => a.key.localeCompare(b.key, 'zh-Hant'));
+  const list = (Object.values(recs) as Rec[]).sort((a, b) => a.key.localeCompare(b.key, 'zh-Hant'));
   const copyText = [
     '請把以下動畫的預設值改成這樣（創意拼圖動畫面板上的數字，0～100）：',
     ...list.map(r => `- ${r.target}｜${r.phase === 'in' ? '進場' : '常駐'}｜${r.name}（${r.id}）：${diffText(r)}`),
