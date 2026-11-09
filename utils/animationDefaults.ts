@@ -136,19 +136,23 @@ export const holdToUi = (sec: number) => Math.round(clampUi(sec / .2));
 export const holdFromUi = (ui: number) => clampUi(ui) * .2;
 
 /* ── 共用滑桿 ──────────────────────────────────────────────────────
-   幅度、速度（常駐）與速度（進場）是「共用」的：同一個物件換動畫時，面板上的數字不變。
-   每個動畫仍保留自己的預設值：共用滑桿在中間（SHARED_MID）時，每個動畫都正好是它自己的預設；
-   往 0 拉，各自從預設平順走到自己刻度的 0；往 100 拉，各自走到自己刻度的 100。
-   例如兩個動畫的速度預設分別是 70 與 30：共用滑桿在 50 時，一個照 70 播、一個照 30 播。 */
+   幅度、速度（常駐）與速度（進場）是共用滑桿：每個物件一開始都是 50，換動畫時數字不變。
+   滑桿在 50 時，每個動畫都正好是它自己的預設程度（例如舊版預設速度 80 的動畫，50 就是舊版的 80）。
+   每移動 1 格，就等於在這個動畫原本的刻度上移動 1 格（靈敏度不變），所以：
+     預設 80 的動畫：0 ＝ 原本的 30、50 ＝ 原本的 80、100 ＝ 原本的 130 —— 上限因此提高；
+     預設 20 的動畫：0 ＝ 原本的 −30（往原本刻度以外延伸，碰到最低限度就停）、100 ＝ 原本的 70。
+   超出原本 0～100 的部分沿用同一個刻度往外延伸（進場速度是等比刻度，其餘是線性）。 */
 export const SHARED_MID = 50;
-/** 某動畫自己刻度上的數字 u（0～100）→ 共用滑桿的數字；def 是這個動畫自己的預設 */
-export const toShared = (u: number, def: number) => {
-  if (Math.abs(u - def) < 1e-9) return SHARED_MID;
-  if (u < def) return def > 0 ? u / def * SHARED_MID : SHARED_MID;
-  return def < 100 ? SHARED_MID + (u - def) / (100 - def) * (100 - SHARED_MID) : SHARED_MID;
+/** 共用滑桿的數字 → 這個動畫自己刻度上的位置（可以超出 0～100） */
+export const fromShared = (s: number, def: number) => def + (Math.max(0, Math.min(100, s)) - SHARED_MID);
+/** 這個動畫自己刻度上的位置 → 共用滑桿的數字（舊作品沒存位置時用） */
+export const toShared = (u: number, def: number) => Math.max(0, Math.min(100, SHARED_MID + (u - def)));
+/** 自己刻度上任意位置的實際值：0～100 內用原本的換算，超出的部分沿用同一刻度延伸 */
+export const actualOnScale = (u: number, at: (v: number) => number, geometric: boolean) => {
+  if (u >= 0 && u <= 100) return at(u);
+  const a = at(0), b = at(100);
+  if (geometric && a > 0 && b > 0) return a * Math.pow(b / a, u / 100);
+  return a + (b - a) * u / 100;
 };
-/** 共用滑桿的數字 → 這個動畫自己刻度上的數字（可以有小數） */
-export const fromShared = (s: number, def: number) => {
-  const v = Math.max(0, Math.min(100, s));
-  return v <= SHARED_MID ? def * v / SHARED_MID : def + (v - SHARED_MID) / (100 - SHARED_MID) * (100 - def);
-};
+/** 實際值的最低限度：幅度不小於 0、速度不小於 0.05 倍、進場時長不小於 0.05 秒 */
+export const floorActual = (f: 'inSpeed' | 'amp' | 'speed', v: number) => f === 'amp' ? Math.max(0, v) : Math.max(.05, v);
