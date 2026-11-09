@@ -40,6 +40,8 @@ export default defineConfig(() => {
           input: {
             main: path.resolve(__dirname, 'index.html'),
             order: path.resolve(__dirname, 'order.html'),
+            // 第三個頁面 animation-tuner.html：調整每個動畫的預設參數（預覽就是真正的創意拼圖）
+            animationTuner: path.resolve(__dirname, 'animation-tuner.html'),
           },
         },
       },
