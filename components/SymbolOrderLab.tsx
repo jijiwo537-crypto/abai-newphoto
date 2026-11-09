@@ -88,26 +88,48 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       setDrag({ sym, pointerId, dx: sx - r.left, dy: sy - r.top, x: sx, y: sy, w: r.width, h: r.height });
     }, HOLD_MS) };
   };
+  /* 拖曳中：浮起來那顆直接改位置（不經過 React，整份清單不用每一格重畫 —— 以前每動一下就重畫 170 顆，所以卡）；
+     落點換了才重排一次清單，而且同一個落點只排一次（不然剛換完位置，手指底下變成另一顆，會來回跳） */
+  const ghostRef = useRef<HTMLDivElement>(null);
+  const lastTargetRef = useRef<string | null>(null);
+  const moveRaf = useRef(0);
   const onMove = (e: React.PointerEvent) => {
     const h = hold.current;
     if (h && h.pointerId === e.pointerId && Math.hypot(e.clientX - h.x, e.clientY - h.y) > 8) cancelHold();
     const d = dragRef.current;
     if (!d || d.pointerId !== e.pointerId) return;
     e.preventDefault();
-    setDrag({ ...d, x: e.clientX, y: e.clientY });
-    const target = document.elementsFromPoint(e.clientX, e.clientY)
-      .map(n => (n as HTMLElement).closest?.('[data-sym]') as HTMLElement | null)
-      .find(n => n && list[Number(n.dataset.sym)] !== d.sym);
-    if (!target) return;
-    const to = list[Number(target.dataset.sym)];
-    setList(o => {
-      const a = o.slice(), from = a.indexOf(d.sym), at = a.indexOf(to);
-      if (from < 0 || at < 0) return o;
-      a.splice(from, 1); a.splice(at, 0, d.sym);
-      return a;
+    const cx = e.clientX, cy = e.clientY;
+    if (ghostRef.current) ghostRef.current.style.transform = `translate3d(${cx - d.x}px, ${cy - d.y}px, 0)`;
+    if (moveRaf.current) return;
+    moveRaf.current = requestAnimationFrame(() => {
+      moveRaf.current = 0;
+      const dd = dragRef.current;
+      if (!dd) return;
+      const target = document.elementsFromPoint(cx, cy)
+        .map(n => (n as HTMLElement).closest?.('[data-sym]') as HTMLElement | null)
+        .find(n => n && n.dataset.key !== dd.sym);
+      const to = target?.dataset.key ?? null;
+      if (!to || to === lastTargetRef.current) return;
+      lastTargetRef.current = to;
+      setList(o => {
+        const a = o.slice(), from = a.indexOf(dd.sym), at = a.indexOf(to);
+        if (from < 0 || at < 0) return o;
+        a.splice(from, 1); a.splice(at, 0, dd.sym);
+        return a;
+      });
     });
   };
-  const onUp = (e: React.PointerEvent) => { cancelHold(); if (dragRef.current?.pointerId === e.pointerId) setDrag(null); };
+  const onUp = (e: React.PointerEvent) => { cancelHold(); if (dragRef.current?.pointerId === e.pointerId) { lastTargetRef.current = null; setDrag(null); } };
+
+  /* 每顆按鈕拿到的都是同一組函式（內容從 ref 讀最新的），按鈕本身用 memo：拖曳、換位置時只有變動的那幾顆重畫 */
+  const hRef = useRef({ onDown, onMove, onUp, onTap }); hRef.current = { onDown, onMove, onUp, onTap };
+  const handlers = useRef({
+    down: (e: React.PointerEvent, sym: string) => hRef.current.onDown(e, sym),
+    move: (e: React.PointerEvent) => hRef.current.onMove(e),
+    up: (e: React.PointerEvent) => hRef.current.onUp(e),
+    tap: (sym: string) => hRef.current.onTap(sym),
+  }).current;
 
   /* 自動排列：用「這台手機」實際畫出來的按鈕寬度排（見 utils/symbolPack）。
      分類裡名字有「邊框」的那一類放最下面、有「顏文字」的放中間，其他的放上面 */
@@ -227,20 +249,14 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
           <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
           <div ref={gridRef} className="flex flex-wrap gap-1.5 pb-4 mt-3">
             {list.map((sym, i) => (
-              <button key={sym} data-sym={i}
-                onPointerDown={e => onDown(e, sym)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
-                onContextMenu={e => e.preventDefault()} onClick={() => onTap(sym)}
-                style={{ boxShadow: brush === -3 ? 'inset 0 0 0 1px #ff5a5a88' : cats.of[sym] !== undefined ? `inset 0 0 0 2px ${CAT_COLORS[cats.of[sym]]}` : undefined, opacity: drag?.sym === sym ? .25 : 1, WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none', touchAction: drag ? 'none' : 'manipulation' }}
-                className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border inline-flex items-center justify-center text-white/85 ${SYMBOLS.includes(sym) ? 'border-white/10' : 'border-dashed border-white/50'}`}>
-                {/* 跟 App 同一層濾鏡：整片轉白（彩色 emoji 也一樣） */}
-                <span style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}><SymbolGlyph text={sym} /></span>
-              </button>
+              <SymItem key={sym} sym={sym} i={i} h={handlers} dragging={!!drag} faded={drag?.sym === sym} dashed={!SYMBOLS.includes(sym)}
+                ring={brush === -3 ? 'inset 0 0 0 1px #ff5a5a88' : cats.of[sym] !== undefined ? `inset 0 0 0 2px ${CAT_COLORS[cats.of[sym]]}` : undefined} />
             ))}
           </div>
         </div>
       </div>
       {drag && (
-        <div style={{ position: 'fixed', left: drag.x - drag.dx, top: drag.y - drag.dy, width: drag.w, height: drag.h, pointerEvents: 'none', zIndex: 50, filter: 'grayscale(1) brightness(0) invert(1)' }}
+        <div ref={ghostRef} style={{ position: 'fixed', left: drag.x - drag.dx, top: drag.y - drag.dy, willChange: 'transform', width: drag.w, height: drag.h, pointerEvents: 'none', zIndex: 50, filter: 'grayscale(1) brightness(0) invert(1)' }}
           className="rounded-[10px] bg-white/15 border border-white/40 inline-flex items-center justify-center text-white shadow-2xl">
           <SymbolGlyph text={drag.sym} />
         </div>
@@ -248,3 +264,17 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
     </div>
   );
 }
+
+type H = { down: (e: React.PointerEvent, sym: string) => void; move: (e: React.PointerEvent) => void; up: (e: React.PointerEvent) => void; tap: (sym: string) => void };
+const SymItem = React.memo(function SymItem({ sym, i, h, dragging, faded, dashed, ring }: { sym: string; i: number; h: H; dragging: boolean; faded: boolean; dashed: boolean; ring?: string }) {
+  return (
+    <button data-sym={i} data-key={sym}
+      onPointerDown={e => h.down(e, sym)} onPointerMove={h.move} onPointerUp={h.up} onPointerCancel={h.up}
+      onContextMenu={e => e.preventDefault()} onClick={() => h.tap(sym)}
+      style={{ boxShadow: ring, opacity: faded ? .25 : 1, WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none', touchAction: dragging ? 'none' : 'manipulation' }}
+      className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border inline-flex items-center justify-center text-white/85 ${dashed ? 'border-dashed border-white/50' : 'border-white/10'}`}>
+      {/* 跟 App 同一層濾鏡：整片轉白（彩色 emoji 也一樣） */}
+      <span style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}><SymbolGlyph text={sym} /></span>
+    </button>
+  );
+});
