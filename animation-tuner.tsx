@@ -17,7 +17,7 @@ type Phase = 'in' | 'idle';
 const FIELD_NAME: Record<Field, string> = { delay: '起始', inSpeed: '速度', amp: '幅度', speed: '速度' };
 /* 只有速度、沒有幅度滑桿的常駐動畫（跟 App 面板一致） */
 const NO_AMP = new Set(['lab-P-L02', 'lab-T-L04']);
-const STORE = 'abai-animation-tuner-v2';
+const STORE = 'abai-animation-tuner-v3';
 
 /* ── 示範物件 ───────────────────────────────────────────────────────── */
 const holesGrid = () => {
@@ -111,34 +111,59 @@ function computeCfg(scene: Scene, inId: string, idleId: string, edits: Edits) {
   return { cfg, defIn, defIdle, now: motionUi(cfg, c) };
 }
 
+/** 自己做的滑桿：只認手指／滑鼠的拖動與點按，數值不會因為重新繪製或切換動畫而被瀏覽器改動。
+    整條 44px 高都可以按，按到哪裡就跳到哪裡、接著拖；不會被頁面捲動搶走。 */
+function DragSlider({ value, def, onChange, onCommit }: { value: number; def: number; onChange: (v: number) => void; onCommit?: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const drag = useRef<number | null>(null);
+  const last = useRef(value);
+  const at = (clientX: number) => {
+    const r = ref.current!.getBoundingClientRect();
+    return Math.round(Math.max(0, Math.min(1, (clientX - r.left) / Math.max(1, r.width))) * 100);
+  };
+  const move = (clientX: number) => { const v = at(clientX); if (v !== last.current) { last.current = v; onChange(v); } };
+  useEffect(() => { last.current = value; }, [value]);
+  return (
+    <div ref={ref} role="slider" aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} tabIndex={0}
+      className="relative h-11 cursor-pointer select-none outline-none" style={{ touchAction: 'none', WebkitUserSelect: 'none' }}
+      onPointerDown={e => { e.preventDefault(); drag.current = e.pointerId; ref.current!.setPointerCapture(e.pointerId); move(e.clientX); }}
+      onPointerMove={e => { if (drag.current === e.pointerId) move(e.clientX); }}
+      onPointerUp={e => { if (drag.current === e.pointerId) { drag.current = null; onCommit?.(); } }}
+      onPointerCancel={() => { drag.current = null; }}
+      onKeyDown={e => {
+        const d = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : 0;
+        if (d) { e.preventDefault(); onChange(Math.max(0, Math.min(100, value + d * (e.shiftKey ? 5 : 1)))); onCommit?.(); }
+      }}>
+      <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-[4px] rounded-full bg-white/15" />
+      <div className="absolute left-0 top-1/2 -translate-y-1/2 h-[4px] rounded-full bg-white/70" style={{ width: `${value}%` }} />
+      {/* 預設值的位置 */}
+      <div className="absolute top-1/2 -translate-y-1/2 w-[2px] h-4 rounded bg-white/40" style={{ left: `calc(${def}% - 1px)` }} />
+      <div className="absolute top-1/2 w-6 h-6 -mt-3 -ml-3 rounded-full bg-white shadow-[0_1px_6px_rgba(0,0,0,.6)]" style={{ left: `${value}%` }} />
+    </div>
+  );
+}
+
 function SliderRow({ label, value, def, onChange, onCommit }: { label: string; value: number; def: number; onChange: (v: number) => void; onCommit?: () => void }) {
   const changed = value !== def;
   return (
     <div className="py-3">
-      <div className="flex items-baseline justify-between mb-2">
+      <div className="flex items-baseline justify-between mb-1">
         <span className="text-[13px] text-white/80">{label}</span>
         <span className="flex items-baseline gap-3 tabular-nums">
           <span className="text-[11px] text-white/35">預設 {def}</span>
           <span className={`text-[18px] font-bold min-w-[2.5ch] text-right ${changed ? 'text-[#ff9b80]' : 'text-white'}`}>{value}</span>
         </span>
       </div>
-      <div className="relative h-6 flex items-center">
-        {/* 預設值的位置：一條細刻度 */}
-        <div className="absolute top-0 bottom-0 w-[2px] bg-white/25 rounded" style={{ left: `calc(${def}% - 1px)` }} />
-        <input type="range" min={0} max={100} step={1} value={value}
-          onChange={e => onChange(Number(e.target.value))}
-          onPointerUp={onCommit} onKeyUp={onCommit} onTouchEnd={onCommit}
-          className="w-full accent-white relative" />
-      </div>
+      <DragSlider value={value} def={def} onChange={onChange} onCommit={onCommit} />
       <div className="flex justify-between mt-1">
         <div className="flex gap-1">
           {[-5, -1, 1, 5].map(d => (
             <button key={d} onClick={() => { onChange(Math.max(0, Math.min(100, value + d))); onCommit?.(); }}
-              className="h-7 min-w-9 px-2 rounded-[7px] bg-white/[.06] text-[12px] text-white/70 tabular-nums active:bg-white/15">{d > 0 ? `+${d}` : d}</button>
+              className="h-8 min-w-10 px-2 rounded-[8px] bg-white/[.06] text-[12px] text-white/70 tabular-nums active:bg-white/15">{d > 0 ? `+${d}` : d}</button>
           ))}
         </div>
         <button disabled={!changed} onClick={() => { onChange(def); onCommit?.(); }}
-          className={`h-7 px-3 rounded-[7px] text-[12px] ${changed ? 'bg-white/10 text-white' : 'text-white/20'}`}>回到預設</button>
+          className={`h-8 px-3 rounded-[8px] text-[12px] ${changed ? 'bg-white/10 text-white' : 'text-white/20'}`}>回到預設</button>
       </div>
     </div>
   );
@@ -268,13 +293,14 @@ function Main() {
           <div ref={boxRef} className="w-full h-[62dvh] lg:h-[calc(100dvh-140px)] flex items-start justify-center">
             <div style={{ width: 390 * scale, height: 844 * scale }} className="rounded-[28px] overflow-hidden border border-white/15 bg-black shrink-0">
               <iframe ref={frameRef} key={sceneKey} title="預覽" src={`./animation-tuner.html?embed=${sceneKey}`}
-                style={{ width: 390, height: 844, border: 0, transform: `scale(${scale})`, transformOrigin: '0 0' }} />
+                style={{ width: 390, height: 844, border: 0, transform: `scale(${scale})`, transformOrigin: '0 0', pointerEvents: 'none' }} />
             </div>
           </div>
-          <div className="w-full max-w-[420px] mt-3 flex items-center gap-3">
+          <p className="text-[11px] text-white/35 mt-2">預覽只能看、不能點（參數請在旁邊調）</p>
+          <div className="w-full max-w-[420px] mt-2 flex items-center gap-3">
             <button onClick={() => setReplay(r => r + 1)} className="h-9 px-4 rounded-full bg-white/10 text-[13px] font-bold">重播</button>
             <span className="text-[12px] text-white/50 shrink-0">循環間隔 {hold} 秒</span>
-            <input type="range" min={0} max={10} step={.5} value={hold} onChange={e => setHold(Number(e.target.value))} className="flex-1 accent-white" />
+            <div className="flex-1"><DragSlider value={Math.round(hold * 10)} def={10} onChange={v => setHold(Math.round(v / 5) / 2)} /></div>
           </div>
         </section>
 
