@@ -9352,7 +9352,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ? 0 : moShape.delay + (ranks.get(orderedHoles[i]?.id) ?? i) * stepH + POP * 0.2;
     const ez = linkEase(moLink.ease);
     return {
-      hole: (h: any, _i: number) => composeMo(shapeCfg(h), t, moShape.idle.startsWith('lab-') ? _i * 2.39996 : hashId(h.id) % 628 / 100),
+      hole: (h: any, _i: number) => {
+        const fr = composeMo(shapeCfg(h), t, moShape.idle.startsWith('lab-') ? _i * 2.39996 : hashId(h.id) % 628 / 100);
+        /* 失焦依由左到右的順序分成 2～3 組時機；其他動畫忽略這兩個欄位。 */
+        return fr.lab ? { ...fr, lab: { ...fr.lab, slot: ranks.get(h.id) ?? _i, slots: nHole } } : fr;
+      },
       /* 每條線各自等自己的兩端冒出來才開始畫，而且「每條線畫的時間都一樣長」。
          不讓所有線在同一個時間點收工，不然晚開始的那幾條會被壓縮成很短的時間，
          看起來就是「畫到後面突然變快」。現在速度從頭到尾一致。 */
