@@ -32,6 +32,17 @@ const escapeSym = (s: string) => JSON.stringify(s).replace(/[\u007f-￿]/g, c =>
 
 export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   const [list, setList] = useState<string[]>(loadList);
+  /** 舊版工具存在這支手機裡的工作中清單（v2）：跟 App 目前的順序不一樣、而且還是同一批符號時，提供「換成那份」 */
+  const oldCopy = React.useMemo(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('abai-order-tool-symbols-v2') || 'null');
+      const l: unknown = v?.list;
+      if (!Array.isArray(l) || !l.every(x => typeof x === 'string')) return null;
+      const arr = l as string[];
+      if (arr.length === SYMBOLS.length && arr.every((x, i) => x === SYMBOLS[i])) return null;
+      return arr.length ? arr : null;
+    } catch { return null; }
+  }, []);
   const [drag, setDrag] = useState<{ sym: string; pointerId: number; dx: number; dy: number; x: number; y: number; w: number; h: number } | null>(null);
   const dragRef = useRef(drag); dragRef.current = drag;
   const hold = useRef<{ x: number; y: number; pointerId: number; timer: number } | null>(null);
@@ -217,6 +228,17 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
           <button onClick={copy} disabled={!changed && !tagged}
             className={`h-8 px-3 rounded-full text-[12px] font-bold ${changed || tagged ? 'bg-white text-black' : 'bg-white/10 text-white/35'}`}>複製清單</button>
         </div>
+      </div>
+      {/* 版本標示：看到這一行（v10）就是最新的網站 */}
+      <div className="mb-3 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 text-[12px] text-emerald-200">
+        網站版本 v10（11/10）・開啟時顯示的是 App 目前的順序（{SYMBOLS.length} 顆）
+        {oldCopy && (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="flex-1 text-white/70">這支手機裡還有一份之前在這裡排過的順序（{oldCopy.length} 顆）。</span>
+            <button onClick={() => { if (confirm('換成這支手機之前排過的那份順序？（App 目前的順序不會被改，按「重設」可以回來）')) { setList(oldCopy.filter((x, i, a) => a.indexOf(x) === i)); onToast('已換成之前排過的那份'); } }}
+              className="shrink-0 h-8 px-3 rounded-full bg-white text-black text-[12px] font-bold">換成那份</button>
+          </div>
+        )}
       </div>
       {/* 新增／刪除 */}
       <div className="mb-3 rounded-2xl border border-white/10 p-3">
