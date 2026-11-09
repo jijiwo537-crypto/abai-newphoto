@@ -164,7 +164,7 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-3">
-        <p className="text-[11px] text-white/45 leading-relaxed">預覽＝iPhone 13 Pro 的寬度。請用 iPhone 打開這頁再按「自動排列」：每顆的寬度看字型，要用手機的才準。</p>
+        <p className="text-[11px] text-white/45 leading-relaxed">預覽＝iPhone 13 Pro 的寬度。請用 iPhone 打開這頁再按「自動排列」：每顆的寬度看字型，要用手機的才準。<br /><span className="text-white/30">App 清單版本 {(SIG >>> 0).toString(16).slice(-6)}・{SYMBOLS.length} 顆</span></p>
         <div className="flex gap-2 shrink-0">
           <button onClick={() => { if (!changed || confirm('回到 App 目前的清單？（新增、刪除、排序都會復原）')) { setList(SYMBOLS.slice()); onToast('已回到 App 目前的清單'); } }}
             className="h-8 px-3 rounded-full border border-white/15 text-[12px] text-white/70">重設</button>
