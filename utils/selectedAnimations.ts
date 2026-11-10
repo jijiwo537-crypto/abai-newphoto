@@ -654,7 +654,7 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
    每一格、每一顆失焦圖案記下：時間、模糊程度、位置、走哪一種模糊做法；
    自動找出異常（時間倒退／突跳、模糊程度突跳、位置跳動、做法切換、出錯），畫面底部顯示，可一鍵複製。 */
 let pfPath='';
-type PfRec={n:number;slot:number;clock:number;t:number;lv:number;sg:number;dx:number;dy:number;den:number;ms:number;path:string;w:number};
+type PfRec={n:number;slot:number;clock:number;t:number;lv:number;sg:number;dx:number;dy:number;den:number;ms:number;path:string;w:number;ink:number;lum:number};
 const pf={recs:[] as PfRec[],anom:[] as string[],last:new Map<string,PfRec>(),n:0,calls:0,errors:0,hidden:false,started:0};
 let pfBox:HTMLDivElement|null=null,pfText:HTMLDivElement|null=null;
 const pfR=(v:number,d=2)=>+v.toFixed(d);
@@ -675,20 +675,29 @@ function pfPanel(){
 }
 function pfSummary(){
  const secs=((performance.now()-pf.started)/1000).toFixed(0);
- return `失焦圖案偵錯 v1 ｜ ${secs}s ｜ 呼叫 ${pf.calls} ｜ 異常 ${pf.anom.length} ｜ 出錯 ${pf.errors}\n`+
+ return `失焦圖案偵錯 v2 ｜ ${secs}s ｜ 呼叫 ${pf.calls} ｜ 異常 ${pf.anom.length} ｜ 出錯 ${pf.errors}\n`+
   (pf.anom.length?pf.anom.slice(-8).join('\n'):'（目前沒有偵測到異常）')+
-  '\n— 最新 —\n'+pf.recs.slice(-4).map(r=>`#${r.slot} clk${r.clock} lv${r.lv} σ${r.sg} @${r.dx},${r.dy} ${r.ms}ms ${r.path}`).join('\n');
+  '\n— 最新 —\n'+pf.recs.slice(-4).map(r=>`#${r.slot} clk${r.clock} lv${r.lv} σ${r.sg} 墨${r.ink} 亮${r.lum} ${r.path}`).join('\n');
 }
 function pfReport(){
  const ua=typeof navigator!=='undefined'?navigator.userAgent:'';
- return JSON.stringify({v:1,ua,dpr:typeof devicePixelRatio!=='undefined'?devicePixelRatio:0,calls:pf.calls,errors:pf.errors,anom:pf.anom.slice(-120),recs:pf.recs.slice(-400)});
+ return JSON.stringify({v:2,ua,dpr:typeof devicePixelRatio!=='undefined'?devicePixelRatio:0,calls:pf.calls,errors:pf.errors,anom:pf.anom.slice(-120),recs:pf.recs.slice(-400)});
 }
-function pfRecord(ctx:CanvasRenderingContext2D,frame:SelectedFrame,level:number,sg:number,x:number,y:number,ms:number,key?:object){
+function pfRecord(ctx:CanvasRenderingContext2D,frame:SelectedFrame,level:number,sg:number,m:DOMMatrix,x:number,y:number,ms:number,pcx:number,pcy:number,pr:number){
  pfPanel();if(!pf.started)pf.started=performance.now();
  pf.calls++;
- const m=ctx.getTransform();
  const cw=(ctx.canvas as any)?.width??0;
- const r:PfRec={n:pf.calls,slot:frame.slot??0,clock:pfR(frame.clock??frame.t,3),t:pfR(frame.t,3),lv:pfR(level,3),sg:pfR(sg,2),dx:pfR(m.a*x+m.c*y+m.e,1),dy:pfR(m.b*x+m.d*y+m.f,1),den:pfR(Math.hypot(m.a,m.b),3),ms:pfR(ms,2),path:pfPath,w:cw};
+ /* 畫完之後這顆中心附近（半徑 pr 的方框，取 5×5 個點）的平均不透明度與亮度 */
+ let ink=-1,lum=-1;
+ try{
+  const ch=(ctx.canvas as any)?.height??0,x0=Math.max(0,pcx-pr),y0=Math.max(0,pcy-pr),x1=Math.min(cw,pcx+pr+1),y1=Math.min(ch,pcy+pr+1);
+  if(x1>x0&&y1>y0){
+   const d=ctx.getImageData(x0,y0,x1-x0,y1-y0).data,W=x1-x0,H=y1-y0;let a=0,l=0,n=0;
+   for(let j=0;j<5;j++)for(let i=0;i<5;i++){const px=Math.min(W-1,Math.round(i*(W-1)/4)),py=Math.min(H-1,Math.round(j*(H-1)/4)),o=(py*W+px)*4;a+=d[o+3];l+=d[o]+d[o+1]+d[o+2];n++;}
+   ink=pfR(a/n/255,3);lum=pfR(l/n/3,1);
+  }
+ }catch{}
+ const r:PfRec={n:pf.calls,slot:frame.slot??0,clock:pfR(frame.clock??frame.t,3),t:pfR(frame.t,3),lv:pfR(level,3),sg:pfR(sg,2),dx:pfR(m.a*x+m.c*y+m.e,1),dy:pfR(m.b*x+m.d*y+m.f,1),den:pfR(Math.hypot(m.a,m.b),3),ms:pfR(ms,2),path:pfPath,w:cw,ink,lum};
  if(pfPath.startsWith('ERROR'))pf.errors++;
  pf.recs.push(r);if(pf.recs.length>2000)pf.recs.splice(0,500);
  // 同一顆、同一張畫布（圖案本身／遮罩上的洞分開比）
@@ -704,6 +713,7 @@ function pfRecord(ctx:CanvasRenderingContext2D,frame:SelectedFrame,level:number,
  const kind=(s:string)=>s.replace(/k-?\d+\/-?\d+ t[\d.]+/,'lv');
  if(kind(r.path)!==kind(p.path)&&!(p.path==='sharp'||r.path==='sharp'))bad.push(`做法切換 ${p.path}→${r.path}`);
  if(r.ms>40)bad.push(`這顆畫了 ${r.ms}ms`);
+ if(r.ink>=0&&p.ink>=0&&dc>=0&&dc<.25&&Math.abs(r.lv-p.lv)<.08&&(Math.abs(r.ink-p.ink)>.18||Math.abs(r.lum-p.lum)>40))bad.push(`畫面突變 不透明${p.ink}→${r.ink} 亮度${p.lum}→${r.lum}（${p.path} → ${r.path}）`);
  if(pfPath.startsWith('ERROR'))bad.push(r.path);
  if(bad.length){pf.anom.push(`#${r.slot} 第${r.n}次 clk${r.clock}: ${bad.join('；')}`);if(pf.anom.length>300)pf.anom.splice(0,100);}
 }
@@ -711,9 +721,11 @@ export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:Selected
  if(frame?.id==='lab-P-L20'){
   const level=defocusOf(frame,frame.slot??0,frame.slots??1);
   const sg=level*Math.max(3,size*.14)*densityOf(ctx);
-  pfPath='?';const t0=performance.now();
+  pfPath='?';const t0=performance.now();const pm=ctx.getTransform();
+  /* 偵錯 v2：讀「畫之前」與「畫之後」這顆圖案中心附近的實際像素，看 iPhone 真的畫出了什麼 */
+  const pcx=Math.round(pm.a*x+pm.c*y+pm.e),pcy=Math.round(pm.b*x+pm.d*y+pm.f),pr=Math.max(2,Math.round(size*Math.hypot(pm.a,pm.b)*.35));
   paintBlurred(ctx,sg,size,draw,x,y,cacheKey);
-  try{pfRecord(ctx,frame,level,sg,x,y,performance.now()-t0,cacheKey);}catch{}
+  try{pfRecord(ctx,frame,level,sg,pm,x,y,performance.now()-t0,pcx,pcy,pr);}catch{}
   return;
  }
  applySelectedPatternAppearance(ctx,frame,size,x,y);
