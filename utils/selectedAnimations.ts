@@ -121,14 +121,14 @@ function boxBlur(src:Float32Array,dst:Float32Array,r0:number,fa:number,step:numb
 }
 let blurF:Float32Array=new Float32Array(0),blurT:Float32Array=new Float32Array(0);
 /** 以「螢幕像素」的高斯 σ 畫出 paint；extent 是內容在本地座標中距原點的最大距離。 */
-export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0,cacheKey?:object,rect?:{hw:number;hh:number}){
+export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0,cacheKey?:object,rect?:{hw:number;hh:number},strict=false){
  if(!(deviceBlur>.3)){paint(ctx);return;}
  /* 不使用 Canvas filter：Safari／iOS 對 ctx.filter 的半徑有上限，超過就整個忽略。
     改成真正的高斯模糊（預乘透明度、浮點運算，沒有殘影或色階）。
     出錯時退回直接畫，絕不讓一格例外把整段動畫停掉。 */
  try{
   /* 有身分（同一個字／圖案／圖形）的：用「預先算好的幾檔高品質模糊」，每一格只混合兩檔（見 levelBlur） */
-  if(cacheKey&&(globalThis as any).__oldBlur===undefined&&levelBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey,rect))return;
+  if(cacheKey&&(globalThis as any).__oldBlur===undefined&&levelBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey,rect,strict))return;
   const force=(globalThis as any).__cpuBlur;
   const useMip=force===undefined?true:!force;
   if(useMip&&mipBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey))return;
@@ -270,7 +270,7 @@ function pump(){
 }
 function wantOn(st:Stack,k:number,key:object){if(k<0||st.lv.has(k)||st.pending.has(k))return;st.pending.add(k);queue.push({st,k,key,up:true});if(!idleOn){idleOn=true;ric(pump);}}
 function want(st:Stack,k:number,key:object){if(k<0||st.lv.has(k)||st.pending.has(k))return;st.pending.add(k);queue.push({st,k,key});if(!idleOn){idleOn=true;ric(pump);}}
-function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number,cacheKey:object,rect?:{hw:number;hh:number}):boolean{
+function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number,cacheKey:object,rect?:{hw:number;hh:number},strict=false):boolean{
  const hw=rect?.hw??extent,hh=rect?.hh??extent;
  if(typeof document==='undefined')return false;
  const mt=ctx.getTransform(),density=Math.max(.01,Math.hypot(mt.a,mt.b),Math.hypot(mt.c,mt.d));
@@ -282,8 +282,9 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  }
  /* 預覽放大很多（存的密度不夠細）：不在這一格重做 —— 先繼續用手上這一份（放大貼上，模糊的東西放大看不出差別），
     同時在空閒時間準備一份更細的；需要的那幾檔都好了才換過去。捏合縮放時不會一直重做、不會卡 */
- if(density>st.d0*1.3){
-  if(!st.up||density>st.up.d0*1.3){st.up={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};}
+ /* strict（圖案）：圖案本身與遮罩上的洞是兩份快取，必須每一格用同一檔 —— 不在背景換成更細的版本（各自換的時間不同，那一格兩邊就對不上＝閃一下） */
+ if(!strict&&density>st.d0*1.8){
+  if(!st.up||density>st.up.d0*1.8){st.up={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};}
   const up=st.up;up.paint=paint;
   const s1=sigma*up.d0/density;let k1=-1;while(lvSigma(k1+1)<=s1&&k1<30)k1++;
   wantOn(up,k1,cacheKey);wantOn(up,k1+1,cacheKey);
@@ -291,7 +292,7 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
    const old=st;freeStack(cacheKey);up.used=old.used;stacks.set(cacheKey,up);
    stackBytes+=up.bytes;st=up;
   }
- } else if(st.up&&density<=st.d0*1.3){st.up.lv.forEach(l=>{l.c.width=l.c.height=0;});st.up=undefined;}
+ } else if(st.up&&density<=st.d0*1.8){st.up.lv.forEach(l=>{l.c.width=l.c.height=0;});st.up=undefined;}
  st.paint=paint;
  st.style={fillStyle:ctx.fillStyle,strokeStyle:ctx.strokeStyle,lineWidth:ctx.lineWidth,lineJoin:ctx.lineJoin,lineCap:ctx.lineCap};
  st.used=++stackClock;
@@ -308,7 +309,8 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
   if(has(i))continue;
   const now=performance.now();
   if(now-budget.at>12){budget.at=now;budget.left=2;}
-  if(budget.left<=0)break;
+  // strict：缺的那檔立刻做（每檔只做一次），保證兩份快取每一格用的檔完全相同
+  if(budget.left<=0&&!strict)break;
   const l=buildLevel(st,i);budget.left-=performance.now()-now;
   if(!l)break;st.lv.set(i,l);st.bytes+=l.bytes;stackBytes+=l.bytes;st.pending.delete(i);
  }
@@ -652,7 +654,7 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
 export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number,draw:(g:CanvasRenderingContext2D)=>void,cacheKey?:object){
  if(frame?.id==='lab-P-L20'){
   const level=defocusOf(frame,frame.slot??0,frame.slots??1);
-  paintBlurred(ctx,level*Math.max(3,size*.14)*densityOf(ctx),size,draw,x,y,cacheKey);
+  paintBlurred(ctx,level*Math.max(3,size*.14)*densityOf(ctx),size,draw,x,y,cacheKey,undefined,true);
   return;
  }
  applySelectedPatternAppearance(ctx,frame,size,x,y);
