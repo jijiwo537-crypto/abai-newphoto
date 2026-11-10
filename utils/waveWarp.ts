@@ -18,6 +18,10 @@ type GLState = {
 };
 
 let glState: GLState | null | undefined;
+/* 拿不到 WebGL（iPhone 同時開太多 GPU 畫布時，系統會收回舊的）不代表之後都拿不到：
+   隔一段時間再試，不要從此一直走退路。 */
+let glRetryAt = 0;
+let glMaxTex = 4096;
 
 const VS = `attribute vec2 p; varying vec2 v; void main(){ v = p * .5 + .5; gl_Position = vec4(p, 0., 1.); }`;
 const FS = `precision highp float;
@@ -72,6 +76,7 @@ const initGL = (): GLState | null => {
     for (const n of ['t', 'srcSize', 'region', 'outSize', 'padY', 'amp', 'freq', 'off', 'revealW']) u[n] = gl.getUniformLocation(prog, n);
     gl.uniform1i(u.t, 0);
     canvas.addEventListener('webglcontextlost', () => { glState = undefined; });
+    glMaxTex = Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 4096;
     return { canvas, gl, tex, u };
   } catch { return null; }
 };
@@ -92,9 +97,15 @@ export function waveWarp(
   const W = Math.max(1, Math.round(sw)), Hs = Math.max(1, Math.round(sh));
   const padY = Math.ceil(Math.abs(amp)) + 2;
   const H = Hs + padY * 2;
-  if (glState === undefined) glState = initGL();
+  if (glState === undefined || (glState === null && performance.now() > glRetryAt)) {
+    glState = initGL();
+    if (!glState) glRetryAt = performance.now() + 1500;
+  }
   const st = glState;
-  if (st && !st.gl.isContextLost()) {
+  const srcW = (src as any).width, srcH = (src as any).height;
+  // 來源或輸出超過 GPU 能處理的尺寸：上傳會失敗、畫出空白 —— 走下面的精確退路
+  const fits = Math.max(srcW, srcH, W, H) <= glMaxTex && !(globalThis as any).__waveCPU;
+  if (st && fits && !st.gl.isContextLost()) {
     const { gl, canvas, u } = st;
     if (canvas.width !== W) canvas.width = W;
     if (canvas.height !== H) canvas.height = H;
@@ -111,22 +122,52 @@ export function waveWarp(
     gl.uniform1f(u.revealW, Math.min(revealW, 1e9));
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    return { canvas, padY };
+    if (gl.getError() === gl.NO_ERROR && !gl.isContextLost()) return { canvas, padY };
+    // GPU 這一次沒畫成（記憶體不足、內容遺失…）：同一格改用下面的精確退路，不交出空白
   }
-  // 退路：每個像素一條、整數對齊、互不重疊
+  /* 退路：在 CPU 上逐像素做跟 GPU 完全一樣的取樣（每個輸出像素往上下兩個來源像素按比例混合、預乘 alpha）。
+     舊的退路是「每個像素一條直條、各自往上下挪一點點再 drawImage」——
+     iPhone 畫圖片時會把位置對齊到整數像素，零點幾像素的位移被吃掉，彎的邊就變成一階一階的鋸齒
+     （預覽走 GPU 看不到，匯出時 GPU 畫布被系統收回才會走到這裡，所以「成品才有」）。 */
   const c = fallbackCanvas || (fallbackCanvas = document.createElement('canvas'));
   if (c.width !== W) c.width = W;
   if (c.height !== H) c.height = H;
-  const g = c.getContext('2d');
+  const g = c.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
   if (!g) return null;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, W, H);
-  g.imageSmoothingEnabled = true;
+  // 來源那一塊讀成像素（不是 2D 畫布的來源先畫進暫存）
+  let sd: Uint8ClampedArray;
+  try {
+    let sg = (src as any).getContext?.('2d') as CanvasRenderingContext2D | null | undefined;
+    let ox = sx, oy = sy;
+    if (!sg) {
+      const t = document.createElement('canvas'); t.width = W; t.height = Hs;
+      sg = t.getContext('2d')!; sg.drawImage(src as any, sx, sy, W, Hs, 0, 0, W, Hs); ox = 0; oy = 0;
+    }
+    sd = sg.getImageData(ox, oy, W, Hs).data;
+  } catch { return null; }
+  const out = g.createImageData(W, H), od = out.data;
   const end = Math.min(W, Math.ceil(revealW));
   for (let x = 0; x < end; x++) {
     const dy = amp * Math.sin(Math.PI * 2 * ((x + .5) * freq + off));
-    g.drawImage(src as any, sx + x, sy, 1, Hs, x, padY + dy, 1, Hs);
+    for (let y = 0; y < H; y++) {
+      // 跟著色器一樣：取樣點 (x+.5, y+.5−padY−dy)，換成來源的「列」座標（像素中心 = k+.5）
+      const fy = y + .5 - padY - dy;
+      if (fy < 0 || fy > Hs) continue;
+      const ry = Math.min(Hs - .5, Math.max(.5, fy)) - .5;
+      const y0 = Math.floor(ry), t = ry - y0, y1 = Math.min(Hs - 1, y0 + 1);
+      const i0 = (y0 * W + x) * 4, i1 = (y1 * W + x) * 4;
+      const a0 = sd[i0 + 3] * (1 - t), a1 = sd[i1 + 3] * t, a = a0 + a1;
+      if (a <= 0) continue;
+      const o = (y * W + x) * 4;
+      od[o] = (sd[i0] * a0 + sd[i1] * a1) / a;
+      od[o + 1] = (sd[i0 + 1] * a0 + sd[i1 + 1] * a1) / a;
+      od[o + 2] = (sd[i0 + 2] * a0 + sd[i1 + 2] * a1) / a;
+      od[o + 3] = a;
+    }
   }
+  g.putImageData(out, 0, 0);
   return { canvas: c, padY };
 }
 

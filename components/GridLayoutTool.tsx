@@ -83,6 +83,7 @@ import { PatternLayer } from './PatternLayer';
 import { ComposeStudio } from './ComposeStudio';
 import { StuckEscape } from './StuckEscape';
 import { VIDEO_ACCEPT, loadVideoEl, isVideoEl } from '../utils/videoSource';
+import { nativePathOf, fileSrc } from '../utils/nativeBridge';
 import { VideoGl } from '../utils/videoGl';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
@@ -251,6 +252,13 @@ export interface ImageCell {
 
 /** 是不是影片檔（用 MIME 或副檔名判斷都可以） */
 const isVideoFile = (f: File) => f.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|ogv|3gp)$/i.test(f.name);
+/* App 從相簿選進來的影片只是一個「空殼」File（不把幾百 MB 讀進 JavaScript），真正的檔案在原生端。
+   空殼的 blob 網址播不出來、也讀不到尺寸 —— 跨頁拼圖原本直接拿它來播，影片就導入不了。
+   影片一律改用原生檔案的網址（支援分段讀取），預覽、尺寸、縮圖、匯出全部用這一條。網頁版沒有原生路徑，照舊用 blob。 */
+const playableMediaUrl = (f: File, url: string) => {
+  const path = nativePathOf(f) || nativePathOf(url);
+  return path ? fileSrc(path) : url;
+};
 
 /** 影片的原始尺寸：等 metadata 進來就有 videoWidth / videoHeight */
 /**
@@ -12733,7 +12741,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         /* 每張要先讀尺寸、做預覽用的小副本（見 utils/previewCopies：畫面上不用原圖，存檔照樣用原圖）。
            同時做兩張（記憶體尖峰只多一張原圖），而且做好一張就照順序先放上畫面 ——
            第一張馬上出現，不必等全部做完才一次冒出來。 */
-        const prepared = filesToLoad.map(f => ({ f, url: URL.createObjectURL(f), video: isVideoFile(f) }));
+        const prepared = filesToLoad.map(f => { const video = isVideoFile(f), blob = URL.createObjectURL(f); return { f, url: video ? playableMediaUrl(f, blob) : blob, video }; });
         const tasks: Promise<{ width: number; height: number; poster?: string }>[] = new Array(prepared.length);
         let next = 0;
         const worker = async () => {
@@ -13019,8 +13027,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const newFloatingImages: FloatingImage[] = [];
     for (let idx = 0; idx < files.length; idx++) {
       const f = files[idx];
-      const url = URL.createObjectURL(f);
       const video = isVideoFile(f as File);
+      const url = video ? playableMediaUrl(f as File, URL.createObjectURL(f)) : URL.createObjectURL(f);
       const dims = video ? await getVideoDimensions(url) : await getImageDimensions(url);
       if (!video) await ensurePreviewCopy(url, (f as File).type);
       
@@ -13092,6 +13100,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     setFloatingImages(prev => [...prev, ...newFloatingImages]);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    // 影片那個選擇器也要清掉，不然同一支影片選第二次不會觸發
+    if (vidInputRef.current) vidInputRef.current.value = '';
   };
 
   const handleReplaceFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -15144,6 +15154,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         if (opacity <= 0) continue;
         const off = opacity < 1 ? scratch('vector-frame', ctx.canvas.width, ctx.canvas.height) : null;
         const g = off ? get2dWide(off)! : ctx;
+        g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
         if (off) {
           g.setTransform(1, 0, 0, 1, 0, 0);
           g.globalAlpha = 1;
@@ -15195,6 +15206,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const H = Math.max(2, Math.ceil(bh + pad * 2));
         const off = scratch(`wave-object|${fImg.id}`, W, H);
         const og = get2dWide(off)!;
+        og.imageSmoothingEnabled = true; og.imageSmoothingQuality = 'high';
         og.clearRect(0, 0, W, H);
         og.save();
         og.translate(W / 2 - cx, H / 2 - cy);
@@ -15218,6 +15230,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const S = Math.min(4096, half * 2);
         const sp = scratch(`motion-sprite|${fImg.id}`, S, S);
         const sg = get2dWide(sp)!;
+        sg.imageSmoothingEnabled = true; sg.imageSmoothingQuality = 'high';
         sg.setTransform(1, 0, 0, 1, 0, 0);
         sg.clearRect(0, 0, S, S);
         sg.setTransform(S / (half * 2), 0, 0, S / (half * 2), 0, 0);
@@ -15325,11 +15338,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const strokeExtent = lw + strokeGap;
         const off = scratch('off', iw + strokeExtent * 2, ih + strokeExtent * 2);
         const oc = get2dWide(off)!;
+        oc.imageSmoothingEnabled = true; oc.imageSmoothingQuality = 'high';
         drawImgBase(oc, src, strokeExtent, strokeExtent, iw, ih, fImg);
         if (fImg.imgRadius || fImg.feather || isImgShaped(kind)) {
           // 只把「圖片那一塊」裁形狀，描邊的區域不能被裁掉
           const shapeOnly = scratch('shapeOnly', iw, ih);
           const sc = get2dWide(shapeOnly)!;
+          sc.imageSmoothingEnabled = true; sc.imageSmoothingQuality = 'high';
           drawImgBase(sc, src, 0, 0, iw, ih, fImg);
           sc.globalCompositeOperation = 'destination-in';
           if (fImg.feather) {
@@ -15551,6 +15566,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          已經套過特效的那些是 sRGB 的畫布，畫進來時瀏覽器會做色彩管理轉換，
          看起來完全一樣 —— 所以現有成品的樣子不會變。 */
       const ctx = get2dWide(canvas)!;
+      /* 成品的縮放品質跟預覽一樣用「高」：預設是「低」，大張原圖縮進成品時細線、邊緣會有鋸齒
+         （波浪彎過之後更明顯）。下面每一張暫存畫布也都一樣設。 */
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
 
       // 輸出寬度跟著頁面裡最大的原圖走，而不是永遠壓在 1800。
       // 原本 4000px 的照片存出來只剩不到一半的細節。上限 4096 是為了避免
@@ -15815,6 +15833,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 if (!waveRaster || waveRaster.width !== W || waveRaster.height !== H) {
                   waveRaster = document.createElement('canvas'); waveRaster.width = W; waveRaster.height = H;
                   const og = get2dWide(waveRaster)!;
+                  og.imageSmoothingEnabled = true; og.imageSmoothingQuality = 'high';
                   og.translate(W / 2 - cx, H / 2 - cy);
                   await drawPageLayout(og, pageIdx, lay);
                 }
