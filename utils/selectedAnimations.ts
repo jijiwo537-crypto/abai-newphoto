@@ -88,6 +88,27 @@ export function canvasBlurSupported(){
  }catch{filterOK=false;}
  return filterOK;
 }
+/* 這台裝置的畫布濾鏡實際做得到多大的模糊：Safari 對半徑有上限，超過時整個不模糊。
+   實際畫一個點，量 blur(σ) 之後在 1.5σ 處還有沒有擴散到；量得到的最大值以下才用濾鏡。 */
+let filterMax:number|undefined;
+export const setFilterBlurMaxForTest=(v:number|undefined)=>{filterMax=v;};
+export function filterBlurMax(){
+ if(filterMax!==undefined)return filterMax;
+ filterMax=0;
+ try{
+  if(!canvasBlurSupported()||typeof document==='undefined')return filterMax;
+  for(const s of [4,8,16,24,32,48,64]){
+   const N=Math.ceil(s*8)+8,c=document.createElement('canvas');c.width=N;c.height=8;
+   const g=c.getContext('2d',{willReadFrequently:true});if(!g)break;
+   g.filter=`blur(${s}px)`;g.fillStyle='#000';g.fillRect(N/2-s/2,0,s,8);g.filter='none';
+   const a=g.getImageData(Math.round(N/2+1.5*s),4,1,1).data[3],b=g.getImageData(N/2,4,1,1).data[3];
+   // 真正的高斯：中心的值很小、1.5σ 處約是中心的 1/3；沒模糊時中心是 255、外面是 0
+   if(!(b<200&&a>0&&a>=b*.15))break;
+   filterMax=s;
+  }
+ }catch{}
+ return filterMax;
+}
 let blurCanvas:HTMLCanvasElement|undefined,blurCtx:CanvasRenderingContext2D|null=null;
 const halvers:HTMLCanvasElement[]=[];
 /** 逐次減半用的兩張畫布（只長不縮，只用左上角） */
@@ -673,7 +694,19 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
 export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number,draw:(g:CanvasRenderingContext2D)=>void,cacheKey?:object){
  if(frame?.id==='lab-P-L20'){
   const level=defocusOf(frame,frame.slot??0,frame.slots??1);
-  paintBlurred(ctx,level*Math.max(3,size*.14)*densityOf(ctx),size,draw,x,y,cacheKey,undefined,true);
+  const sg=level*Math.max(3,size*.14)*densityOf(ctx);
+  /* 支援畫布濾鏡（iOS 18 起的 WebKit、各家電腦瀏覽器）就直接用 GPU 模糊畫在原位：
+     不經過快取、不縮放貼回、不混合兩檔 —— iPhone 把快取的模糊圖縮放貼回時位置會偏，
+     圖案就照各自的失焦節奏閃一下、往右跳。σ 以畫布像素計，不受目前的變換影響。 */
+  /* 用不用濾鏡看「這顆最模糊時」的半徑決定（整段動畫固定同一種做法，中途不換、不跳）。 */
+  const sgMax=frame.amount*Math.max(3,size*.14)*densityOf(ctx);
+  if(sg>.3&&sgMax<=filterBlurMax()&&(globalThis as any).__patCache===undefined){
+   /* 先把裁切範圍限制在這顆附近：濾鏡的暫存圖層照裁切範圍開，不然每顆都是整張畫布大小 */
+   const m=size+(sg*3.2+2)/densityOf(ctx);
+   ctx.save();ctx.beginPath();ctx.rect(x-m,y-m,2*m,2*m);ctx.clip();
+   ctx.filter=`blur(${sg.toFixed(3)}px)`;draw(ctx);ctx.restore();return;
+  }
+  paintBlurred(ctx,sg,size,draw,x,y,cacheKey,undefined,true);
   return;
  }
  applySelectedPatternAppearance(ctx,frame,size,x,y);
