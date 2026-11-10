@@ -21,20 +21,12 @@ const smooth=(v:number)=>{v=clamp(v);return v*v*(3-2*v);};
    畫面就一頓一頓的（失焦的週期長，最明顯）。這裡記住每個動畫上一次的速度，速度改變時
    把時間平移，讓「此刻的相位」不變，之後才用新速度往前走。時間倒退（重播、循環、匯出
    從頭開始）就清掉平移，回到純粹由時間決定的畫面，預覽與匯出仍然一致。 */
-const speedAnchors=new Map<string,{speed:number;time:number;off:number;wall:number}>();
-const wallNow=()=>typeof performance!=='undefined'?performance.now():Date.now();
+const speedAnchors=new Map<string,{speed:number;time:number;off:number}>();
 function continuousTime(key:string,time:number,speed:number){
- const a=speedAnchors.get(key),w=wallNow();
- if(a&&time<a.time-1e-6&&w-a.wall<150){
-  /* 預覽循環回到開頭（上一格還在播，這一格時間就倒回去了）：常駐動畫不跟著重來，
-     接著上一格的相位繼續 —— 不然每一輪開頭失焦會從「正模糊」一下跳回「清楚」再慢慢模糊（看起來就是閃一下），
-     呼吸、搖擺等也會在循環點跳一下。真的重播／從頭匯出（中間停過）才重新從 0 開始 */
-  a.off+=a.time-time;a.time=time;a.wall=w;
-  return time+a.off;
- }
- if(!a||time<a.time-1e-6){speedAnchors.set(key,{speed,time,off:0,wall:w});if(speedAnchors.size>256)speedAnchors.delete(speedAnchors.keys().next().value as string);return time;}
+ const a=speedAnchors.get(key);
+ if(!a||time<a.time-1e-6){speedAnchors.set(key,{speed,time,off:0});if(speedAnchors.size>256)speedAnchors.delete(speedAnchors.keys().next().value as string);return time;}
  if(Math.abs(a.speed-speed)>1e-9){a.off=(time+a.off)*a.speed/speed-time;a.speed=speed;}
- a.time=time;a.wall=w;
+ a.time=time;
  return time+a.off;
 }
 export function selectedFrame(cfg:{in:string;idle:string;delay:number;dur:number;amp:number;speed:number}, time:number, phase=0): SelectedFrame | undefined {
