@@ -338,18 +338,24 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  const X0=Math.floor(Math.min(...pts.map(p=>p[0]))),Y0=Math.floor(Math.min(...pts.map(p=>p[1])));
  const W=Math.ceil(Math.max(...pts.map(p=>p[0])))-X0,H=Math.ceil(Math.max(...pts.map(p=>p[1])))-Y0;
  if(W<=0||H<=0||W*H>8e6){ctx.restore();return false;}
+ /* 放大很多倍時：混合用的畫布不跟著放大到螢幕解析度（每個物件每一格都要清、疊兩次、貼一次，上百萬像素就卡）。
+    用存的那檔本身的解析度就夠（模糊的東西沒有更多細節），貼回時再放大到 W×H。
+    沒有放大超過存的解析度時 f=1，跟原本完全一樣。 */
+ const resOf=(i:number)=>{const l=st!.lv.get(i);return l?l.c.width/l.w:Infinity;};
+ const f=density>st.d0?Math.min(1,Math.max(resOf(kA),resOf(kB))/density):1;
+ const Wo=Math.max(1,Math.ceil(W*f)),Ho=Math.max(1,Math.ceil(H*f));
  /* 每個物件自己一張混合用的畫布（不共用）：同一格裡把共用畫布畫完、貼出去、清掉再給下一個用，
     iPhone 的 Safari 偶爾會貼成「已經清掉的那張」→ 圖案一閃就不見 */
  const out=st.out??=document.createElement('canvas');
- if(out.width<W||out.height<H){out.width=Math.max(out.width,W);out.height=Math.max(out.height,H);}
+ if(out.width<Wo||out.height<Ho){out.width=Math.max(out.width,Wo);out.height=Math.max(out.height,Ho);}
  const go=out.getContext('2d')!;
- go.setTransform(1,0,0,1,0,0);go.globalAlpha=1;go.globalCompositeOperation='source-over';go.clearRect(0,0,W,H);
- go.setTransform(mt.a,mt.b,mt.c,mt.d,mt.e-X0,mt.f-Y0);
+ go.setTransform(1,0,0,1,0,0);go.globalAlpha=1;go.globalCompositeOperation='source-over';go.clearRect(0,0,Wo,Ho);
+ go.setTransform(mt.a*f,mt.b*f,mt.c*f,mt.d*f,(mt.e-X0)*f,(mt.f-Y0)*f);
  go.imageSmoothingEnabled=true;go.imageSmoothingQuality='low';go.globalCompositeOperation='lighter';
  Object.assign(go,st.style);
  drawLv(go,kA,1-t);drawLv(go,kB,t);
  go.globalAlpha=1;go.globalCompositeOperation='source-over';
- ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=a0;ctx.drawImage(out,0,0,W,H,X0,Y0,W,H);
+ ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=a0;if(f>=1)ctx.drawImage(out,0,0,W,H,X0,Y0,W,H);else ctx.drawImage(out,0,0,Wo,Ho,X0,Y0,Wo/f,Ho/f);
  ctx.restore();
  return true;
 }
