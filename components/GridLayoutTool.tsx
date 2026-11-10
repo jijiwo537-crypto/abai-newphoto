@@ -2479,11 +2479,7 @@ export const SymbolPicker: React.FC<{
     symbolFontReady.then(() => { if (alive) setSymbolFaceReady(true); });
     return () => { alive = false; };
   }, []);
-  const symbolButtons = useMemo(() => SYMBOLS.flatMap((symbol, index) => [
-    /* 照排序網站記錄的換行位置換行（見 SYMBOL_LAYOUT）：寬度略有差異也不會整串錯開。
-       換行用一個佔滿整列、高度 0 的元素；它自己會多吃一次列間距，用負的上邊距抵掉 */
-    ...(index > 0 && SYMBOL_LAYOUT?.rows.includes(index)
-      ? [<div key={`br${index}`} aria-hidden="true" style={{ flexBasis: '100%', height: 0, marginTop: -6 }} />] : []),
+  const symbolButtons = useMemo(() => SYMBOLS.map((symbol, index) => (
     <button
       key={index}
       onPointerDown={() => onPrepareRef.current?.(symbol)}
@@ -2496,7 +2492,7 @@ export const SymbolPicker: React.FC<{
         <SymbolGlyph text={symbol} px={SYMBOL_LAYOUT?.px[symbol]} />
       </span>
     </button>
-  ]), [selected, symbolFaceReady]);
+  )), [selected, symbolFaceReady]);
 
   return (
     <div className="pt-1">
@@ -2515,9 +2511,21 @@ export const SymbolPicker: React.FC<{
           少數碼位在 iOS 沒有單色字身時仍會退回 Color Emoji；選單統一轉成白色（跟新增到畫布後一致）。
           濾鏡只套在整片清單這一層：每一顆符號各自一個濾鏡的話，幾百層濾鏡會讓 Safari 捲到哪才畫到哪。
           這一層裡面本來就全是白色（底色、外框都是半透明白），套上去不會變。 */}
-      <div className="flex flex-wrap gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}>
-        {symbolButtons}
-      </div>
+      {SYMBOL_LAYOUT ? (
+        /* 有排序網站記錄的排版：一排一個不換行的容器，每排放的就是記錄的那幾顆 ——
+           就算這台手機的字寬差了零點幾點，也不會被擠到下一排（不會再出現「一排只剩一顆」） */
+        <div className="flex flex-col gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}>
+          {SYMBOL_LAYOUT.rows.map((start, r) => (
+            <div key={start} className="flex flex-nowrap gap-1.5">
+              {symbolButtons.slice(start, SYMBOL_LAYOUT!.rows[r + 1] ?? symbolButtons.length)}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}>
+          {symbolButtons}
+        </div>
+      )}
     </div>
   );
 };
