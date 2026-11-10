@@ -215,7 +215,9 @@ const LV_RATIO=Math.SQRT2,LV_BASE=.6;
 const lvSigma=(k:number)=>k<0?0:LV_BASE*Math.pow(LV_RATIO,k);
 const stacks=new Map<object,Stack>();
 let stackBytes=0,stackClock=0;
-const STACK_BUDGET=160*1024*1024;
+/* iPhone 的 WebKit 全部畫布加起來有記憶體上限（約 200～380MB，看機型），超過時新開或放大的畫布會變成空白，
+   那一格圖案就整個不見＝閃一下。所以快取只留一小部分，混合用的畫布也不留比需要大的尺寸。 */
+const STACK_BUDGET=56*1024*1024;
 const freeStack=(k:object)=>{const st=stacks.get(k);if(!st)return;st.lv.forEach(l=>{l.c.width=l.c.height=0;});if(st.out)st.out.width=st.out.height=0;stackBytes-=st.bytes;stacks.delete(k);};
 const evictStacks=(keep:object)=>{while(stackBytes>STACK_BUDGET&&stacks.size>1){let old:object|null=null,u=Infinity;stacks.forEach((st,k)=>{if(k!==keep&&st.used<u){u=st.used;old=k;}});if(old)freeStack(old);else break;}};
 const budget={at:-1e9,left:0};
@@ -252,7 +254,8 @@ function buildLevel(st:Stack,k:number):Lv|null{
  /* 貼回去的大小要剛好等於畫布的像素格（W÷r），不能用取整前的寬度：
     不然每一檔被拉伸的比例都差一點點，換檔時物件就會抖一下、位移一下 */
  const c=document.createElement('canvas');c.width=W;c.height=H;
- const g=c.getContext('2d',{willReadFrequently:true})!;
+ const g=c.getContext('2d',{willReadFrequently:true});
+ if(!g){c.width=c.height=0;return null;}
  const r=d0*s;g.setTransform(r,0,0,r,-x*r,-y*r);
  g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';
  Object.assign(g,st.style);
@@ -349,8 +352,9 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  /* 每個物件自己一張混合用的畫布（不共用）：同一格裡把共用畫布畫完、貼出去、清掉再給下一個用，
     iPhone 的 Safari 偶爾會貼成「已經清掉的那張」→ 圖案一閃就不見 */
  const out=st.out??=document.createElement('canvas');
- if(out.width<W||out.height<H){out.width=Math.max(out.width,W);out.height=Math.max(out.height,H);}
- const go=out.getContext('2d')!;
+ if(out.width<W||out.height<H||out.width*out.height>2*W*H+65536){out.width=W;out.height=H;}
+ const goc=out.getContext('2d');if(!goc){ctx.restore();return false;}
+ const go=goc;
  go.setTransform(1,0,0,1,0,0);go.globalAlpha=1;go.globalCompositeOperation='source-over';go.clearRect(0,0,W,H);
  go.setTransform(rr,0,0,rr,-L.x*rr,-L.y*rr);
  go.imageSmoothingEnabled=true;go.imageSmoothingQuality='low';go.globalCompositeOperation='lighter';
