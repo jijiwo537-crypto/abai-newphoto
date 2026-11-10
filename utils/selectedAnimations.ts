@@ -80,27 +80,6 @@ export function canvasBlurSupported(){
  }catch{filterOK=false;}
  return filterOK;
 }
-/* 這台裝置的畫布濾鏡實際做得到多大的模糊：Safari 對半徑有上限，超過時整個不模糊。
-   實際畫一個點，量 blur(σ) 之後在 1.5σ 處還有沒有擴散到；量得到的最大值以下才用濾鏡。 */
-let filterMax:number|undefined;
-export const setFilterBlurMaxForTest=(v:number|undefined)=>{filterMax=v;};
-export function filterBlurMax(){
- if(filterMax!==undefined)return filterMax;
- filterMax=0;
- try{
-  if(!canvasBlurSupported()||typeof document==='undefined')return filterMax;
-  for(const s of [4,8,16,24,32,48,64]){
-   const N=Math.ceil(s*8)+8,c=document.createElement('canvas');c.width=N;c.height=8;
-   const g=c.getContext('2d',{willReadFrequently:true});if(!g)break;
-   g.filter=`blur(${s}px)`;g.fillStyle='#000';g.fillRect(N/2-s/2,0,s,8);g.filter='none';
-   const a=g.getImageData(Math.round(N/2+1.5*s),4,1,1).data[3],b=g.getImageData(N/2,4,1,1).data[3];
-   // 真正的高斯：中心的值很小、1.5σ 處約是中心的 1/3；沒模糊時中心是 255、外面是 0
-   if(!(b<200&&a>0&&a>=b*.15))break;
-   filterMax=s;
-  }
- }catch{}
- return filterMax;
-}
 let blurCanvas:HTMLCanvasElement|undefined,blurCtx:CanvasRenderingContext2D|null=null;
 const halvers:HTMLCanvasElement[]=[];
 /** 逐次減半用的兩張畫布（只長不縮，只用左上角） */
@@ -142,14 +121,14 @@ function boxBlur(src:Float32Array,dst:Float32Array,r0:number,fa:number,step:numb
 }
 let blurF:Float32Array=new Float32Array(0),blurT:Float32Array=new Float32Array(0);
 /** 以「螢幕像素」的高斯 σ 畫出 paint；extent 是內容在本地座標中距原點的最大距離。 */
-export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0,cacheKey?:object,rect?:{hw:number;hh:number},strict=false){
+export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0,cacheKey?:object,rect?:{hw:number;hh:number}){
  if(!(deviceBlur>.3)){paint(ctx);return;}
  /* 不使用 Canvas filter：Safari／iOS 對 ctx.filter 的半徑有上限，超過就整個忽略。
     改成真正的高斯模糊（預乘透明度、浮點運算，沒有殘影或色階）。
     出錯時退回直接畫，絕不讓一格例外把整段動畫停掉。 */
  try{
   /* 有身分（同一個字／圖案／圖形）的：用「預先算好的幾檔高品質模糊」，每一格只混合兩檔（見 levelBlur） */
-  if(cacheKey&&(globalThis as any).__oldBlur===undefined&&levelBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey,rect,strict))return;
+  if(cacheKey&&(globalThis as any).__oldBlur===undefined&&levelBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey,rect))return;
   const force=(globalThis as any).__cpuBlur;
   const useMip=force===undefined?true:!force;
   if(useMip&&mipBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey))return;
@@ -222,16 +201,13 @@ export function blurKeyOf(id:string){let k=idKeys.get(id);if(!k){k={};idKeys.set
       空閒時（requestIdleCallback）才把缺的補上，播放、拖動、拉滑桿都不會被卡住。
    畫質：每檔存的解析度讓「存起來那張自己的模糊」至少 4 像素 —— 放大回螢幕是平滑曲面，沒有格子紋。 */
 type Lv={c:HTMLCanvasElement;x:number;y:number;w:number;h:number;bytes:number};
-type Stack={key:string;d0:number;lv:Map<number,Lv>;bytes:number;used:number;paint:(g:CanvasRenderingContext2D)=>void;style:any;hw:number;hh:number;cx:number;cy:number;pending:Set<number>;up?:Stack;out?:HTMLCanvasElement;strict?:boolean};
+type Stack={key:string;d0:number;lv:Map<number,Lv>;bytes:number;used:number;paint:(g:CanvasRenderingContext2D)=>void;style:any;hw:number;hh:number;cx:number;cy:number;pending:Set<number>;up?:Stack;out?:HTMLCanvasElement};
 /* 每檔 σ ×√2，相鄰兩檔依變異數連續混合：模糊量是連續變化的，不會一檔一檔地跳；檔數少，預先算的工作也少 */
 const LV_RATIO=Math.SQRT2,LV_BASE=.6;
 const lvSigma=(k:number)=>k<0?0:LV_BASE*Math.pow(LV_RATIO,k);
 const stacks=new Map<object,Stack>();
 let stackBytes=0,stackClock=0;
-export const blurCacheBytesForTest=()=>stackBytes;
-/* iPhone 的 WebKit 全部畫布加起來有記憶體上限（約 200～380MB，看機型），超過時新開或放大的畫布會變成空白，
-   那一格圖案就整個不見＝閃一下。所以快取只留一小部分，混合用的畫布也不留比需要大的尺寸。 */
-const STACK_BUDGET=56*1024*1024;
+const STACK_BUDGET=160*1024*1024;
 const freeStack=(k:object)=>{const st=stacks.get(k);if(!st)return;st.lv.forEach(l=>{l.c.width=l.c.height=0;});if(st.out)st.out.width=st.out.height=0;stackBytes-=st.bytes;stacks.delete(k);};
 const evictStacks=(keep:object)=>{while(stackBytes>STACK_BUDGET&&stacks.size>1){let old:object|null=null,u=Infinity;stacks.forEach((st,k)=>{if(k!==keep&&st.used<u){u=st.used;old=k;}});if(old)freeStack(old);else break;}};
 const budget={at:-1e9,left:0};
@@ -261,10 +237,6 @@ function gaussInPlace(d:ImageData,sigma:number){
 function buildLevel(st:Stack,k:number):Lv|null{
  const sigma=lvSigma(k),d0=st.d0;               // σ 以「d0 密度下的螢幕像素」計
  let s=1;while(sigma*s/2>=4&&s>1/64)s/=2;        // 存的解析度（2 的次方），自己的模糊至少 4 像素
- /* 圖案（strict）每一檔都用同一個解析度：iPhone 把縮小存的檔放大貼回時，位置會偏半個存檔像素，
-    存得越小偏越多。各檔解析度不同的話，換檔那一格圖案就往右跳一下（每顆照自己的失焦節奏跳）。
-    圖案很小，全部用原解析度也不佔多少記憶體。 */
- if(st.strict)s=1;
  const padL=(sigma*3.2+2)/d0;                    // 邊界留白（物件座標）
  const x=st.cx-st.hw-padL,y=st.cy-st.hh-padL,wL=2*(st.hw+padL),hL=2*(st.hh+padL);
  const W=Math.max(1,Math.ceil(wL*d0*s)),H=Math.max(1,Math.ceil(hL*d0*s));
@@ -272,8 +244,7 @@ function buildLevel(st:Stack,k:number):Lv|null{
  /* 貼回去的大小要剛好等於畫布的像素格（W÷r），不能用取整前的寬度：
     不然每一檔被拉伸的比例都差一點點，換檔時物件就會抖一下、位移一下 */
  const c=document.createElement('canvas');c.width=W;c.height=H;
- const g=c.getContext('2d',{willReadFrequently:true});
- if(!g){c.width=c.height=0;return null;}
+ const g=c.getContext('2d',{willReadFrequently:true})!;
  const r=d0*s;g.setTransform(r,0,0,r,-x*r,-y*r);
  g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';
  Object.assign(g,st.style);
@@ -299,7 +270,7 @@ function pump(){
 }
 function wantOn(st:Stack,k:number,key:object){if(k<0||st.lv.has(k)||st.pending.has(k))return;st.pending.add(k);queue.push({st,k,key,up:true});if(!idleOn){idleOn=true;ric(pump);}}
 function want(st:Stack,k:number,key:object){if(k<0||st.lv.has(k)||st.pending.has(k))return;st.pending.add(k);queue.push({st,k,key});if(!idleOn){idleOn=true;ric(pump);}}
-function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number,cacheKey:object,rect?:{hw:number;hh:number},strict=false):boolean{
+function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx:number,cy:number,cacheKey:object,rect?:{hw:number;hh:number}):boolean{
  const hw=rect?.hw??extent,hh=rect?.hh??extent;
  if(typeof document==='undefined')return false;
  const mt=ctx.getTransform(),density=Math.max(.01,Math.hypot(mt.a,mt.b),Math.hypot(mt.c,mt.d));
@@ -307,13 +278,12 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  let st=stacks.get(cacheKey);
  if(!st||st.key!==key){
   if(st)freeStack(cacheKey);
-  st={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set(),strict};stacks.set(cacheKey,st);
+  st={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};stacks.set(cacheKey,st);
  }
  /* 預覽放大很多（存的密度不夠細）：不在這一格重做 —— 先繼續用手上這一份（放大貼上，模糊的東西放大看不出差別），
     同時在空閒時間準備一份更細的；需要的那幾檔都好了才換過去。捏合縮放時不會一直重做、不會卡 */
- /* strict（圖案）：圖案本身與遮罩上的洞是兩份快取，必須每一格用同一檔 —— 不在背景換成更細的版本（各自換的時間不同，那一格兩邊就對不上＝閃一下） */
- if(!strict&&density>st.d0*1.8){
-  if(!st.up||density>st.up.d0*1.8){st.up={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};}
+ if(density>st.d0*1.3){
+  if(!st.up||density>st.up.d0*1.3){st.up={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};}
   const up=st.up;up.paint=paint;
   const s1=sigma*up.d0/density;let k1=-1;while(lvSigma(k1+1)<=s1&&k1<30)k1++;
   wantOn(up,k1,cacheKey);wantOn(up,k1+1,cacheKey);
@@ -321,7 +291,7 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
    const old=st;freeStack(cacheKey);up.used=old.used;stacks.set(cacheKey,up);
    stackBytes+=up.bytes;st=up;
   }
- } else if(st.up&&density<=st.d0*1.8){st.up.lv.forEach(l=>{l.c.width=l.c.height=0;});st.up=undefined;}
+ } else if(st.up&&density<=st.d0*1.3){st.up.lv.forEach(l=>{l.c.width=l.c.height=0;});st.up=undefined;}
  st.paint=paint;
  st.style={fillStyle:ctx.fillStyle,strokeStyle:ctx.strokeStyle,lineWidth:ctx.lineWidth,lineJoin:ctx.lineJoin,lineCap:ctx.lineCap};
  st.used=++stackClock;
@@ -338,8 +308,7 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
   if(has(i))continue;
   const now=performance.now();
   if(now-budget.at>12){budget.at=now;budget.left=2;}
-  // strict：缺的那檔立刻做（每檔只做一次），保證兩份快取每一格用的檔完全相同
-  if(budget.left<=0&&!strict)break;
+  if(budget.left<=0)break;
   const l=buildLevel(st,i);budget.left-=performance.now()-now;
   if(!l)break;st.lv.set(i,l);st.bytes+=l.bytes;stackBytes+=l.bytes;st.pending.delete(i);
  }
@@ -361,25 +330,22 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  if(t<=1e-3||t>=1-1e-3){const i=t>=1-1e-3?kB:kA;ctx.globalAlpha=a0;if(i<0){ctx.restore();ctx.save();paint(ctx);ctx.restore();return true;}drawLv(ctx,i,a0);ctx.restore();return true;}
  /* 兩檔混合：在一張螢幕對齊的小畫布上用 'lighter' 疊（＝精確的加權平均），再貼回去 */
  const L=st.lv.get(kB)!;   // 範圍以比較大的那檔為準
- /* 混合用的畫布用「存的那檔」的解析度，不是螢幕解析度：放大很多倍時螢幕上這塊可能上百萬像素，
-    每個物件每一格都清一次、疊兩次、再貼一次，iPhone 就卡；存的檔本身沒有更多細節，用它的解析度混合畫質一樣。 */
- const resOf=(i:number)=>{const l=st!.lv.get(i);return l?l.c.width/l.w:density;};
- const rr=Math.max(.01,Math.min(density,kA<0?density:resOf(kA),Math.max(resOf(kB),resOf(kA))));
- const W=Math.ceil(L.w*rr),H=Math.ceil(L.h*rr);
+ const pts=[[L.x,L.y],[L.x+L.w,L.y],[L.x,L.y+L.h],[L.x+L.w,L.y+L.h]].map(([x,y])=>[mt.a*x+mt.c*y+mt.e,mt.b*x+mt.d*y+mt.f]);
+ const X0=Math.floor(Math.min(...pts.map(p=>p[0]))),Y0=Math.floor(Math.min(...pts.map(p=>p[1])));
+ const W=Math.ceil(Math.max(...pts.map(p=>p[0])))-X0,H=Math.ceil(Math.max(...pts.map(p=>p[1])))-Y0;
  if(W<=0||H<=0||W*H>8e6){ctx.restore();return false;}
  /* 每個物件自己一張混合用的畫布（不共用）：同一格裡把共用畫布畫完、貼出去、清掉再給下一個用，
     iPhone 的 Safari 偶爾會貼成「已經清掉的那張」→ 圖案一閃就不見 */
  const out=st.out??=document.createElement('canvas');
- if(out.width<W||out.height<H||out.width*out.height>2*W*H+65536){out.width=W;out.height=H;}
- const goc=out.getContext('2d');if(!goc){ctx.restore();return false;}
- const go=goc;
+ if(out.width<W||out.height<H){out.width=Math.max(out.width,W);out.height=Math.max(out.height,H);}
+ const go=out.getContext('2d')!;
  go.setTransform(1,0,0,1,0,0);go.globalAlpha=1;go.globalCompositeOperation='source-over';go.clearRect(0,0,W,H);
- go.setTransform(rr,0,0,rr,-L.x*rr,-L.y*rr);
+ go.setTransform(mt.a,mt.b,mt.c,mt.d,mt.e-X0,mt.f-Y0);
  go.imageSmoothingEnabled=true;go.imageSmoothingQuality='low';go.globalCompositeOperation='lighter';
  Object.assign(go,st.style);
  drawLv(go,kA,1-t);drawLv(go,kB,t);
  go.globalAlpha=1;go.globalCompositeOperation='source-over';
- ctx.globalAlpha=a0;ctx.drawImage(out,0,0,W,H,L.x,L.y,W/rr,H/rr);
+ ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=a0;ctx.drawImage(out,0,0,W,H,X0,Y0,W,H);
  ctx.restore();
  return true;
 }
@@ -686,19 +652,7 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
 export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number,draw:(g:CanvasRenderingContext2D)=>void,cacheKey?:object){
  if(frame?.id==='lab-P-L20'){
   const level=defocusOf(frame,frame.slot??0,frame.slots??1);
-  const sg=level*Math.max(3,size*.14)*densityOf(ctx);
-  /* 支援畫布濾鏡（iOS 18 起的 WebKit、各家電腦瀏覽器）就直接用 GPU 模糊畫在原位：
-     不經過快取、不縮放貼回、不混合兩檔 —— iPhone 把快取的模糊圖縮放貼回時位置會偏，
-     圖案就照各自的失焦節奏閃一下、往右跳。σ 以畫布像素計，不受目前的變換影響。 */
-  /* 用不用濾鏡看「這顆最模糊時」的半徑決定（整段動畫固定同一種做法，中途不換、不跳）。 */
-  const sgMax=frame.amount*Math.max(3,size*.14)*densityOf(ctx);
-  if(sg>.3&&sgMax<=filterBlurMax()&&(globalThis as any).__patCache===undefined){
-   /* 先把裁切範圍限制在這顆附近：濾鏡的暫存圖層照裁切範圍開，不然每顆都是整張畫布大小 */
-   const m=size+(sg*3.2+2)/densityOf(ctx);
-   ctx.save();ctx.beginPath();ctx.rect(x-m,y-m,2*m,2*m);ctx.clip();
-   ctx.filter=`blur(${sg.toFixed(3)}px)`;draw(ctx);ctx.restore();return;
-  }
-  paintBlurred(ctx,sg,size,draw,x,y,cacheKey,undefined,true);
+  paintBlurred(ctx,level*Math.max(3,size*.14)*densityOf(ctx),size,draw,x,y,cacheKey);
   return;
  }
  applySelectedPatternAppearance(ctx,frame,size,x,y);
