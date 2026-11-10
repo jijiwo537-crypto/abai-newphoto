@@ -16,11 +16,14 @@ import { saveToPhotos } from '../utils/nativePhotos';
 /** 已經自動存過的成品（同一份不重複存，例如成品頁重新顯示時） */
 const autoSaved = new Set<string>();
 /** 存相簿時蓋在成品頁上的那一層：剛剛匯出畫面（幾秒內）原樣接上；沒有就用標準的黑底轉圈 */
-function coverLayer() {
+function coverLayer(fading = false) {
   const last = (window as any).__abaiBusyLabel as { text: string; cls: string; at: number } | undefined;
   const label = last && Date.now() - last.at < 15000 ? last : null;
   return (
-    <div data-abai-save-cover="" className="fixed inset-0 z-[10000] bg-black/90 backdrop-blur-md flex items-center justify-center" aria-label="儲存中">
+    /* 全黑、不透明：存相簿的這幾秒，後面已經做好的成品頁不能透出來（轉圈還在轉、成品頁卻先看得到）。
+       存好時用 0.2 秒淡出，轉圈剛好接到成品頁。 */
+    <div data-abai-save-cover="" className="fixed inset-0 z-[10000] bg-black flex items-center justify-center" aria-label="儲存中"
+      style={{ opacity: fading ? 0 : 1, transition: 'opacity 200ms ease-out', pointerEvents: fading ? 'none' : undefined }}>
       <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
       {label && <span className={label.cls} style={{ position: 'absolute', left: 0, right: 0, top: label.cls.includes('text-lg') ? 'calc(50% + 44px)' : 'calc(50% + 40px)', textAlign: 'center' }}>{label.text}</span>}
     </div>
@@ -38,6 +41,8 @@ export const SaveButton: React.FC<{
   /* App 裡直接存進相簿：按下去顯示「儲存中…」，存好變成「已存到相簿」，失敗就說原因 */
   const [phase, setPhase] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [, setTick] = useState(0);
+  /** 存好了、蓋板正在淡出的那 0.2 秒 */
+  const [fading, setFading] = useState(false);
   const key = urls.join('|');
   useEffect(() => { setPhase('idle'); }, [key]);
   const save = async () => {
@@ -66,7 +71,12 @@ export const SaveButton: React.FC<{
   useEffect(() => {
     if (!isNative() || !files.length || autoSaved.has(key)) return;
     autoSaved.add(key);
-    const uncover = () => { autoDone.add(key); setTick(t => t + 1); };
+    let done = false;
+    const uncover = () => {
+      if (done) return; done = true;
+      setFading(true);
+      setTimeout(() => { autoDone.add(key); setFading(false); setTick(t => t + 1); }, 200);
+    };
     /* 保險：存檔 30 秒都沒回來就先掀開，不讓畫面一直蓋著 */
     const t = setTimeout(uncover, 30000);
     void save().finally(() => { clearTimeout(t); uncover(); });
@@ -93,7 +103,7 @@ export const SaveButton: React.FC<{
   }, []);
   return (
     <>
-    {covering && coverHost && createPortal(coverLayer(), coverHost)}
+    {covering && coverHost && createPortal(coverLayer(fading), coverHost)}
     <button
       ref={btnRef}
       onClick={(e) => { e.stopPropagation(); if (ready) void save(); }}

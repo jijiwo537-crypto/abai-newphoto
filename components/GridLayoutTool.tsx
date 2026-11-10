@@ -10869,7 +10869,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     document.querySelectorAll<HTMLElement>('[data-chrome-motion]').forEach(el => {
       const index = el.dataset.chromeMotion === id ? items.findIndex(f => f.id === id) : -1;
       const item = index >= 0 ? items[index] : null;
-      if (!item || !on(item)) { if (el.style.transform) el.style.transform = ''; return; }
+      if (!item || !on(item) || !motionModeRef.current) { if (el.style.transform) el.style.transform = ''; return; }
       const f = frameOf(item, index, time), w = el.offsetWidth, h = el.offsetHeight;
       const r = -((item.rotation || 0) * Math.PI) / 180, vx = f.dx * w, vy = f.dy * h;
       el.style.transform = `translate(${vx * Math.cos(r) - vy * Math.sin(r)}px, ${vx * Math.sin(r) + vy * Math.cos(r)}px) scale(${f.k * (f.fx ?? 1)}, ${f.k}) rotate(${f.rot}deg)`;
@@ -10885,7 +10885,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const el = document.querySelector<HTMLElement>(`[data-layout-motion="${CSS.escape(lay.id)}"]`);
       if (!el) return;
       const chrome = document.querySelector<HTMLElement>(`[data-layout-chrome-motion="${CSS.escape(lay.id)}"]`);
-      if (index !== active || !on(lay)) {
+      if (index !== active || !on(lay) || !motionModeRef.current) {
         if (chrome?.style.transform) chrome.style.transform = '';
         if (el.style.transform || el.style.opacity) { el.style.transform = ''; el.style.opacity = ''; }
         paintLayoutWave(el, lay, null, 0, 0, '');
@@ -10900,7 +10900,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }));
   }, [paintLayoutWave]);
   const sceneMotionFrame = useCallback((item: FloatingImage, index: number) =>
-    hasConfiguredMotion(item) ? frameForItem(item, index, motionClockRef.current) : null,
+    /* 只有在動畫頁才播放：其他頁一律畫靜止的樣子（儲存影片走自己的時間，不受影響） */
+    motionModeRef.current && hasConfiguredMotion(item) ? frameForItem(item, index, motionClockRef.current) : null,
   [hasConfiguredMotion, frameForItem]);
   const needsDomMotion = useCallback((item: FloatingImage) => {
     if (item.shape || item.text !== undefined || !hasConfiguredMotion(item)) return false;
@@ -11011,8 +11012,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       setMotionTime(0);
       setMotionRunSeq(n => n + 1);
     }
-    // 離開動畫頁後不重設時鐘；已套用的動畫從同一格繼續。
-    if (activeTab === 'motion' || anyClassicMotion) setMotionPlaying(true);
+    // 動畫只在動畫頁播放。離開時時鐘歸零，所有物件畫回靜止的樣子；下次進來從頭播。
+    if (activeTab === 'motion') setMotionPlaying(true);
+    else if (wasMotionTabRef.current) {
+      motionClockRef.current = 0;
+      setMotionTime(0);
+      vectorScene.flush();
+      paintLayoutMotion(0);
+      paintChromeMotion(0);
+    }
     wasMotionTabRef.current = activeTab === 'motion';
   }, [activeTab, anyClassicMotion]);
 
@@ -11020,7 +11028,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      每格只更新一個輕量時間值；照片／文字／符號都不改寫幾何資料，因此動畫
      不會污染草稿，也不會在停止後留下偏移。 */
   useEffect(() => {
-    if ((!anyClassicMotion && activeTab !== 'motion') || !motionPlaying) return;
+    // 動畫只在動畫頁播放；離開動畫頁就停在靜止的樣子
+    if (activeTab !== 'motion' || !motionPlaying) return;
     let raf = 0;
     let started = performance.now() - motionClockRef.current * 1000;
     let last = performance.now();
@@ -16470,7 +16479,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {/* 匯出中的畫面。整批共用這一個（不是每頁各跳一次）：
           轉圈用影片那一款；有影片才顯示百分比，純圖片就只有轉圈。 */}
       {exportState === 'processing' && (
-        <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center gap-4 animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[120] bg-black flex flex-col items-center justify-center gap-4 animate-in fade-in duration-300">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
           {/* 轉圈固定在正中央，百分比和字掛在下方（存相簿那一層的轉圈位置才會完全一樣） */}
           <div style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 40px)' }} className="flex flex-col items-center gap-4">
@@ -17764,7 +17773,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         sceneMotionFrame={sceneMotionFrame}
                         image={fImg}
                         // 向量線條在場景裡動，它看不見的點擊範圍要維持固定的物件邏輯邊界
-                        motionFrame={needsDomMotion(fImg)
+                        motionFrame={activeTab === 'motion' && needsDomMotion(fImg)
                           ? frameForItem(fImg, fIdx, motionTime)
                           : null}
                         motionPickOnly={activeTab === 'motion'}
