@@ -122,18 +122,18 @@ function boxBlur(src:Float32Array,dst:Float32Array,r0:number,fa:number,step:numb
 let blurF:Float32Array=new Float32Array(0),blurT:Float32Array=new Float32Array(0);
 /** 以「螢幕像素」的高斯 σ 畫出 paint；extent 是內容在本地座標中距原點的最大距離。 */
 export function paintBlurred(ctx:CanvasRenderingContext2D,deviceBlur:number,extent:number,paint:(g:CanvasRenderingContext2D)=>void,cx=0,cy=0,cacheKey?:object,rect?:{hw:number;hh:number}){
- if(!(deviceBlur>.3)){pfPath='sharp';paint(ctx);return;}
+ if(!(deviceBlur>.3)){paint(ctx);return;}
  /* 不使用 Canvas filter：Safari／iOS 對 ctx.filter 的半徑有上限，超過就整個忽略。
     改成真正的高斯模糊（預乘透明度、浮點運算，沒有殘影或色階）。
     出錯時退回直接畫，絕不讓一格例外把整段動畫停掉。 */
  try{
   /* 有身分（同一個字／圖案／圖形）的：用「預先算好的幾檔高品質模糊」，每一格只混合兩檔（見 levelBlur） */
-  if(cacheKey&&(globalThis as any).__oldBlur===undefined&&levelBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey,rect)){pfPath='level '+pfPath;return;}
+  if(cacheKey&&(globalThis as any).__oldBlur===undefined&&levelBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey,rect))return;
   const force=(globalThis as any).__cpuBlur;
   const useMip=force===undefined?true:!force;
-  if(useMip&&mipBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey)){pfPath='mip';return;}
-  pfPath='gauss';gaussianOffscreen(ctx,deviceBlur,extent,paint,cx,cy,cacheKey);
- }catch(e){pfPath='ERROR '+String((e as any)?.message||e).slice(0,60);paint(ctx);}
+  if(useMip&&mipBlur(ctx,deviceBlur,extent,paint,cx,cy,cacheKey))return;
+  gaussianOffscreen(ctx,deviceBlur,extent,paint,cx,cy,cacheKey);
+ }catch{paint(ctx);}
 }
 /* 兩種模糊各有適合的裝置：畫布在 GPU 上（iPhone）時，讀回像素的 CPU 版每次都要等 GPU，
    全 GPU 版快得多；畫布在 CPU 上算（沒有顯示卡的環境）時則相反。不猜裝置，直接量「整格」的時間：
@@ -331,7 +331,6 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
     iPhone 實測這一步畫出來的東西會錯（亮度、不透明度突變），就是每顆圖案照自己失焦節奏閃一下的原因。
     改成直接選一個畫：前半段清楚、後半段第一檔（σ 只有 0.6 像素，看不出切換）。 */
  if(kA<0&&has(kB)){t=t<.5?0:1;}
- pfPath=`k${kA}/${kB} t${t.toFixed(2)}`;
  if(t<=1e-3||t>=1-1e-3){const i=t>=1-1e-3?kB:kA;ctx.globalAlpha=a0;if(i<0){ctx.restore();ctx.save();paint(ctx);ctx.restore();return true;}drawLv(ctx,i,a0);ctx.restore();return true;}
  /* 兩檔混合：在一張螢幕對齊的小畫布上用 'lighter' 疊（＝精確的加權平均），再貼回去 */
  const L=st.lv.get(kB)!;   // 範圍以比較大的那檔為準
@@ -654,82 +653,10 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
 }
 /** 畫一顆圖案：失焦時先畫進以這顆為中心的緩衝再高斯模糊貼回（跟文字／符號同一套），
     其他動畫照舊套外觀後直接畫。draw 只能畫在傳進來的 g 上。 */
-/* ── 臨時偵錯（圖案失焦閃爍）：只在 iPhone 上看得到的問題，在手機上直接記錄 ──────────
-   每一格、每一顆失焦圖案記下：時間、模糊程度、位置、走哪一種模糊做法；
-   自動找出異常（時間倒退／突跳、模糊程度突跳、位置跳動、做法切換、出錯），畫面底部顯示，可一鍵複製。 */
-let pfPath='';
-type PfRec={n:number;slot:number;clock:number;t:number;lv:number;sg:number;dx:number;dy:number;den:number;ms:number;path:string;w:number;ink:number;lum:number};
-const pf={recs:[] as PfRec[],anom:[] as string[],last:new Map<string,PfRec>(),n:0,calls:0,errors:0,hidden:false,started:0};
-let pfBox:HTMLDivElement|null=null,pfText:HTMLDivElement|null=null;
-const pfR=(v:number,d=2)=>+v.toFixed(d);
-function pfPanel(){
- if(pfBox||typeof document==='undefined')return;
- pfBox=document.createElement('div');
- pfBox.style.cssText='position:fixed;left:6px;right:6px;bottom:6px;z-index:2147483647;background:rgba(0,0,0,.82);color:#9f9;font:11px/1.35 ui-monospace,Menlo,monospace;padding:6px 8px;border-radius:8px;max-height:38vh;overflow:auto;white-space:pre-wrap;pointer-events:auto';
- const bar=document.createElement('div');bar.style.cssText='display:flex;gap:6px;margin-bottom:4px';
- const mk=(label:string,fn:()=>void)=>{const b=document.createElement('button');b.textContent=label;b.style.cssText='background:#333;color:#fff;border:1px solid #666;border-radius:6px;padding:4px 10px;font-size:13px';b.onclick=e=>{e.stopPropagation();fn();};bar.appendChild(b);return b;};
- const copy=mk('複製記錄',async()=>{const txt=pfReport();try{await navigator.clipboard.writeText(txt);copy.textContent='已複製 ✓';}catch{const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');copy.textContent='已複製 ✓';}catch{copy.textContent='複製失敗';}ta.remove();}setTimeout(()=>copy.textContent='複製記錄',2000);});
- mk('清除',()=>{pf.recs=[];pf.anom=[];pf.last.clear();pf.calls=0;pf.errors=0;pf.started=performance.now();});
- mk('縮小',()=>{pf.hidden=!pf.hidden;if(pfText)pfText.style.display=pf.hidden?'none':'block';});
- pfText=document.createElement('div');
- pfBox.appendChild(bar);pfBox.appendChild(pfText);
- ['pointerdown','touchstart','mousedown'].forEach(ev=>pfBox!.addEventListener(ev,e=>e.stopPropagation()));
- document.body.appendChild(pfBox);
- setInterval(()=>{if(pfText&&!pf.hidden)pfText.textContent=pfSummary();},400);
-}
-function pfSummary(){
- const secs=((performance.now()-pf.started)/1000).toFixed(0);
- return `失焦圖案偵錯 v2 ｜ ${secs}s ｜ 呼叫 ${pf.calls} ｜ 異常 ${pf.anom.length} ｜ 出錯 ${pf.errors}\n`+
-  (pf.anom.length?pf.anom.slice(-8).join('\n'):'（目前沒有偵測到異常）')+
-  '\n— 最新 —\n'+pf.recs.slice(-4).map(r=>`#${r.slot} clk${r.clock} lv${r.lv} σ${r.sg} 墨${r.ink} 亮${r.lum} ${r.path}`).join('\n');
-}
-function pfReport(){
- const ua=typeof navigator!=='undefined'?navigator.userAgent:'';
- return JSON.stringify({v:2,ua,dpr:typeof devicePixelRatio!=='undefined'?devicePixelRatio:0,calls:pf.calls,errors:pf.errors,anom:pf.anom.slice(-120),recs:pf.recs.slice(-400)});
-}
-function pfRecord(ctx:CanvasRenderingContext2D,frame:SelectedFrame,level:number,sg:number,m:DOMMatrix,x:number,y:number,ms:number,pcx:number,pcy:number,pr:number){
- pfPanel();if(!pf.started)pf.started=performance.now();
- pf.calls++;
- const cw=(ctx.canvas as any)?.width??0;
- /* 畫完之後這顆中心附近（半徑 pr 的方框，取 5×5 個點）的平均不透明度與亮度 */
- let ink=-1,lum=-1;
- try{
-  const ch=(ctx.canvas as any)?.height??0,x0=Math.max(0,pcx-pr),y0=Math.max(0,pcy-pr),x1=Math.min(cw,pcx+pr+1),y1=Math.min(ch,pcy+pr+1);
-  if(x1>x0&&y1>y0){
-   const d=ctx.getImageData(x0,y0,x1-x0,y1-y0).data,W=x1-x0,H=y1-y0;let a=0,l=0,n=0;
-   for(let j=0;j<5;j++)for(let i=0;i<5;i++){const px=Math.min(W-1,Math.round(i*(W-1)/4)),py=Math.min(H-1,Math.round(j*(H-1)/4)),o=(py*W+px)*4;a+=d[o+3];l+=d[o]+d[o+1]+d[o+2];n++;}
-   ink=pfR(a/n/255,3);lum=pfR(l/n/3,1);
-  }
- }catch{}
- const r:PfRec={n:pf.calls,slot:frame.slot??0,clock:pfR(frame.clock??frame.t,3),t:pfR(frame.t,3),lv:pfR(level,3),sg:pfR(sg,2),dx:pfR(m.a*x+m.c*y+m.e,1),dy:pfR(m.b*x+m.d*y+m.f,1),den:pfR(Math.hypot(m.a,m.b),3),ms:pfR(ms,2),path:pfPath,w:cw,ink,lum};
- if(pfPath.startsWith('ERROR'))pf.errors++;
- pf.recs.push(r);if(pf.recs.length>2000)pf.recs.splice(0,500);
- // 同一顆、同一張畫布（圖案本身／遮罩上的洞分開比）
- const id=`${r.slot}|${cw}`;
- const p=pf.last.get(id);pf.last.set(id,r);
- if(!p)return;
- const bad:string[]=[];
- const dc=r.clock-p.clock;
- if(dc<-1e-3)bad.push(`時間倒退 ${p.clock}→${r.clock}`);
- else if(dc>.25)bad.push(`時間突跳 +${pfR(dc,2)}s`);
- if(Math.abs(r.lv-p.lv)>.12&&dc<.25)bad.push(`模糊突跳 ${p.lv}→${r.lv}`);
- if((Math.abs(r.dx-p.dx)>1.5||Math.abs(r.dy-p.dy)>1.5)&&Math.abs(r.den-p.den)<1e-3)bad.push(`位置跳 (${p.dx},${p.dy})→(${r.dx},${r.dy})`);
- const kind=(s:string)=>s.replace(/k-?\d+\/-?\d+ t[\d.]+/,'lv');
- if(kind(r.path)!==kind(p.path)&&!(p.path==='sharp'||r.path==='sharp'))bad.push(`做法切換 ${p.path}→${r.path}`);
- if(r.ms>40)bad.push(`這顆畫了 ${r.ms}ms`);
- if(r.ink>=0&&p.ink>=0&&dc>=0&&dc<.25&&Math.abs(r.lv-p.lv)<.08&&(Math.abs(r.ink-p.ink)>.18||Math.abs(r.lum-p.lum)>40))bad.push(`畫面突變 不透明${p.ink}→${r.ink} 亮度${p.lum}→${r.lum}（${p.path} → ${r.path}）`);
- if(pfPath.startsWith('ERROR'))bad.push(r.path);
- if(bad.length){pf.anom.push(`#${r.slot} 第${r.n}次 clk${r.clock}: ${bad.join('；')}`);if(pf.anom.length>300)pf.anom.splice(0,100);}
-}
 export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number,draw:(g:CanvasRenderingContext2D)=>void,cacheKey?:object){
  if(frame?.id==='lab-P-L20'){
   const level=defocusOf(frame,frame.slot??0,frame.slots??1);
-  const sg=level*Math.max(3,size*.14)*densityOf(ctx);
-  pfPath='?';const t0=performance.now();const pm=ctx.getTransform();
-  /* 偵錯 v2：讀「畫之前」與「畫之後」這顆圖案中心附近的實際像素，看 iPhone 真的畫出了什麼 */
-  const pcx=Math.round(pm.a*x+pm.c*y+pm.e),pcy=Math.round(pm.b*x+pm.d*y+pm.f),pr=Math.max(2,Math.round(size*Math.hypot(pm.a,pm.b)*.35));
-  paintBlurred(ctx,sg,size,draw,x,y,cacheKey);
-  try{pfRecord(ctx,frame,level,sg,pm,x,y,performance.now()-t0,pcx,pcy,pr);}catch{}
+  paintBlurred(ctx,level*Math.max(3,size*.14)*densityOf(ctx),size,draw,x,y,cacheKey);
   return;
  }
  applySelectedPatternAppearance(ctx,frame,size,x,y);
