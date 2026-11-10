@@ -22,7 +22,7 @@ function coverLayer(fading = false) {
   return (
     /* 全黑、不透明：存相簿的這幾秒，後面已經做好的成品頁不能透出來（轉圈還在轉、成品頁卻先看得到）。
        存好時用 0.2 秒淡出，轉圈剛好接到成品頁。 */
-    <div data-abai-save-cover="" className="fixed inset-0 z-[10000] bg-black flex items-center justify-center" aria-label="儲存中"
+    <div data-abai-save-cover="" className="fixed inset-x-0 bottom-0 top-[-12vh] z-[10000] bg-black flex items-center justify-center" aria-label="儲存中"
       style={{ opacity: fading ? 0 : 1, transition: 'opacity 200ms ease-out', pointerEvents: fading ? 'none' : undefined }}>
       <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
       {label && <span className={label.cls} style={{ position: 'absolute', left: 0, right: 0, top: label.cls.includes('text-lg') ? 'calc(50% + 44px)' : 'calc(50% + 40px)', textAlign: 'center' }}>{label.text}</span>}

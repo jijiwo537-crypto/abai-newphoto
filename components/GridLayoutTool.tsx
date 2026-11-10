@@ -16504,7 +16504,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {/* 匯出中的畫面。整批共用這一個（不是每頁各跳一次）：
           轉圈用影片那一款；有影片才顯示百分比，純圖片就只有轉圈。 */}
       {exportState === 'processing' && (
-        <div className="fixed inset-0 z-[120] bg-black flex flex-col items-center justify-center gap-4 animate-in fade-in duration-300">
+        <div className="fixed inset-x-0 bottom-0 top-[-12vh] z-[120] bg-black flex flex-col items-center justify-center gap-4 animate-in fade-in duration-300">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
           {/* 轉圈固定在正中央，百分比和字掛在下方（存相簿那一層的轉圈位置才會完全一樣） */}
           <div style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 40px)' }} className="flex flex-col items-center gap-4">
