@@ -216,13 +216,13 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
             className="h-8 px-3 rounded-full border border-white/15 text-[12px] text-white/70">重設</button>
           <button onClick={autoPack} disabled={packing}
             className="h-8 px-3 rounded-full border border-white/30 text-[12px] text-white">{packing ? '排列中…' : '自動排列'}</button>
-          <button onClick={copy} disabled={!changed && !tagged}
-            className={`h-8 px-3 rounded-full text-[12px] font-bold ${changed || tagged ? 'bg-white text-black' : 'bg-white/10 text-white/35'}`}>複製清單</button>
+          <button onClick={copy}
+            className="h-8 px-3 rounded-full text-[12px] font-bold bg-white text-black">複製清單</button>
         </div>
       </div>
       {/* 版本標示：看到這一行（v10）就是最新的網站 */}
       <div className="mb-3 rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-3 py-2 text-[12px] text-emerald-200">
-        網站版本 v12・順序＝App 目前的順序（{SYMBOLS.length} 顆）・預覽寬度＝這支手機（{FRAME_W}）
+        網站版本 v13・順序＝App 目前的順序（{SYMBOLS.length} 顆）・預覽寬度＝這支手機（{FRAME_W}）
       </div>
       {/* 新增／刪除 */}
       <div className="mb-3 rounded-2xl border border-white/10 p-3">
