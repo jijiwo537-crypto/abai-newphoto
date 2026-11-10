@@ -209,12 +209,13 @@ export function blurKeyOf(id:string){let k=idKeys.get(id);if(!k){k={};idKeys.set
       空閒時（requestIdleCallback）才把缺的補上，播放、拖動、拉滑桿都不會被卡住。
    畫質：每檔存的解析度讓「存起來那張自己的模糊」至少 4 像素 —— 放大回螢幕是平滑曲面，沒有格子紋。 */
 type Lv={c:HTMLCanvasElement;x:number;y:number;w:number;h:number;bytes:number};
-type Stack={key:string;d0:number;lv:Map<number,Lv>;bytes:number;used:number;paint:(g:CanvasRenderingContext2D)=>void;style:any;hw:number;hh:number;cx:number;cy:number;pending:Set<number>;up?:Stack;out?:HTMLCanvasElement};
+type Stack={key:string;d0:number;lv:Map<number,Lv>;bytes:number;used:number;paint:(g:CanvasRenderingContext2D)=>void;style:any;hw:number;hh:number;cx:number;cy:number;pending:Set<number>;up?:Stack;out?:HTMLCanvasElement;strict?:boolean};
 /* 每檔 σ ×√2，相鄰兩檔依變異數連續混合：模糊量是連續變化的，不會一檔一檔地跳；檔數少，預先算的工作也少 */
 const LV_RATIO=Math.SQRT2,LV_BASE=.6;
 const lvSigma=(k:number)=>k<0?0:LV_BASE*Math.pow(LV_RATIO,k);
 const stacks=new Map<object,Stack>();
 let stackBytes=0,stackClock=0;
+export const blurCacheBytesForTest=()=>stackBytes;
 /* iPhone 的 WebKit 全部畫布加起來有記憶體上限（約 200～380MB，看機型），超過時新開或放大的畫布會變成空白，
    那一格圖案就整個不見＝閃一下。所以快取只留一小部分，混合用的畫布也不留比需要大的尺寸。 */
 const STACK_BUDGET=56*1024*1024;
@@ -247,6 +248,10 @@ function gaussInPlace(d:ImageData,sigma:number){
 function buildLevel(st:Stack,k:number):Lv|null{
  const sigma=lvSigma(k),d0=st.d0;               // σ 以「d0 密度下的螢幕像素」計
  let s=1;while(sigma*s/2>=4&&s>1/64)s/=2;        // 存的解析度（2 的次方），自己的模糊至少 4 像素
+ /* 圖案（strict）每一檔都用同一個解析度：iPhone 把縮小存的檔放大貼回時，位置會偏半個存檔像素，
+    存得越小偏越多。各檔解析度不同的話，換檔那一格圖案就往右跳一下（每顆照自己的失焦節奏跳）。
+    圖案很小，全部用原解析度也不佔多少記憶體。 */
+ if(st.strict)s=1;
  const padL=(sigma*3.2+2)/d0;                    // 邊界留白（物件座標）
  const x=st.cx-st.hw-padL,y=st.cy-st.hh-padL,wL=2*(st.hw+padL),hL=2*(st.hh+padL);
  const W=Math.max(1,Math.ceil(wL*d0*s)),H=Math.max(1,Math.ceil(hL*d0*s));
@@ -289,7 +294,7 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  let st=stacks.get(cacheKey);
  if(!st||st.key!==key){
   if(st)freeStack(cacheKey);
-  st={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};stacks.set(cacheKey,st);
+  st={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set(),strict};stacks.set(cacheKey,st);
  }
  /* 預覽放大很多（存的密度不夠細）：不在這一格重做 —— 先繼續用手上這一份（放大貼上，模糊的東西放大看不出差別），
     同時在空閒時間準備一份更細的；需要的那幾檔都好了才換過去。捏合縮放時不會一直重做、不會卡 */
