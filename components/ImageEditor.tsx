@@ -10198,7 +10198,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         </>
       )}
       {saveState === 'processing' && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center animate-in fade-in duration-300">
+        <div className="fixed inset-x-0 bottom-0 top-[-12vh] z-[100] bg-black flex flex-col items-center justify-center animate-in fade-in duration-300">
           {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin"></div>
           <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>

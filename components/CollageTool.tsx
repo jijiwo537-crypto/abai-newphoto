@@ -10829,7 +10829,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
       {/* 匯出影片的進度。用同一條算圖管線一格一格畫，所以會花一點時間。 */}
       {saveState !== 'success' && videoProg !== null && (
-        <div className="fixed inset-0 z-[116] bg-black flex flex-col items-center justify-center gap-4">
+        <div className="fixed inset-x-0 bottom-0 top-[-12vh] z-[116] bg-black flex flex-col items-center justify-center gap-4">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
           {/* 轉圈固定在正中央，進度、字、取消鍵掛在下方 */}
           <div style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 40px)' }} className="flex flex-col items-center gap-4">
@@ -10982,7 +10982,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            畫面就永遠停在這裡，連退回主頁都做不到。
            現在等超過六秒還沒好就多出一顆返回鍵（見 StuckEscape）—— 正常的導出
            兩三秒就結束，根本看不到它。 */
-        <div className="fixed inset-0 z-[120] bg-black flex flex-col items-center justify-center animate-in fade-in duration-300">
+        <div className="fixed inset-x-0 bottom-0 top-[-12vh] z-[120] bg-black flex flex-col items-center justify-center animate-in fade-in duration-300">
           {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin"></div>
           <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
