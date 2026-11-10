@@ -15197,11 +15197,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const rad = ((fImg.rotation || 0) * Math.PI) / 180;
         const bw = Math.abs(fw * s * Math.cos(rad)) + Math.abs(fh * s * Math.sin(rad));
         const bh = Math.abs(fw * s * Math.sin(rad)) + Math.abs(fh * s * Math.cos(rad));
-        const amplitude = Math.max(2 * scaleFactor,
+        // 振幅＝完整振幅 × 強度，從 0 平滑長出來；邊界用完整振幅算，整段匯出暫存畫布大小不變（見佈局的波浪）
+        const fullAmp = Math.max(2 * scaleFactor,
           Math.min(Math.max(1, bw) * .055, Math.max(1, bh) * .13)
-          * Math.max(.15, (fImg.mo?.amp ?? 50) / 100) * (frame.waveMix ?? 1));
+          * Math.max(.15, (fImg.mo?.amp ?? 50) / 100));
+        const amplitude = fullAmp * Math.max(0, Math.min(1, frame.waveMix ?? 1));
         // 留給發光：最大那層模糊是長邊 × 0.135 × 強度，散到約 1.3 倍
-        const pad = Math.max(24 * scaleFactor, Math.max(bw, bh) * (.22 + .19 * glowAmount((fImg.shapeGlow ?? (fImg as any).glow) as any)), amplitude * 2 + 4);
+        const pad = Math.max(24 * scaleFactor, Math.max(bw, bh) * (.22 + .19 * glowAmount((fImg.shapeGlow ?? (fImg as any).glow) as any)), fullAmp * 2 + 4);
         const W = Math.max(2, Math.ceil(bw + pad * 2));
         const H = Math.max(2, Math.ceil(bh + pad * 2));
         const off = scratch(`wave-object|${fImg.id}`, W, H);
@@ -15825,10 +15827,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 const cy = targetH / 2 + (lay.t?.y || 0) * scaleFactor;
                 const r = ((lay.t?.rot || 0) * Math.PI) / 180, fw = lb0.w * ls, fh = lb0.h * ls;
                 const bw = Math.abs(fw * Math.cos(r)) + Math.abs(fh * Math.sin(r)), bh = Math.abs(fw * Math.sin(r)) + Math.abs(fh * Math.cos(r));
-                const amplitude = Math.max(2 * scaleFactor, Math.min(Math.max(1, bw) * .055, Math.max(1, bh) * .13)
-                  * Math.max(.15, layoutMotionCfg(lay).amp / 100) * (f.waveMix ?? 1));
+                /* 振幅＝完整振幅 × 強度（常駐剛開始的 0.72 秒強度從 0 慢慢加到 1），從 0 平滑長出來。
+                   邊界用「完整振幅」算：舊版用「振幅 ÷ 強度」，強度剛開始只有 0.0006，
+                   暫存畫布一下變成四萬多像素寬，手機畫不出來 —— 成品裡的圖片就在那一下消失、又冒回來。 */
+                const fullAmp = Math.max(2 * scaleFactor, Math.min(Math.max(1, bw) * .055, Math.max(1, bh) * .13)
+                  * Math.max(.15, layoutMotionCfg(lay).amp / 100));
+                const amplitude = fullAmp * Math.max(0, Math.min(1, f.waveMix ?? 1));
                 // 邊界用最大振幅算，佈局本身每一格都一樣 —— 整段匯出只畫一次
-                const pad = Math.max(24 * scaleFactor, Math.max(bw, bh) * .22, amplitude / Math.max(1e-5, f.waveMix ?? 1) * 2 + 4);
+                const pad = Math.max(24 * scaleFactor, Math.max(bw, bh) * .22, fullAmp * 2 + 4);
                 const W = Math.max(2, Math.ceil(bw + pad * 2)), H = Math.max(2, Math.ceil(bh + pad * 2));
                 if (!waveRaster || waveRaster.width !== W || waveRaster.height !== H) {
                   waveRaster = document.createElement('canvas'); waveRaster.width = W; waveRaster.height = H;
@@ -16281,7 +16287,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   return (
-    <div ref={gridRootRef} className="safe-top flex flex-col w-full h-screen bg-black text-white relative font-sans overflow-hidden">
+    <div ref={gridRootRef} className="safe-top flex flex-col w-full h-[100dvh] bg-black text-white relative font-sans overflow-hidden">
       <style>{`
         /* 圓球跟「佈局調整」的滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
         /* 顏色滑桿：回到原本那一版 —— 漸層畫在元件上、圓點用瀏覽器原生的
