@@ -236,7 +236,9 @@ function gaussInPlace(d:ImageData,sigma:number){
 /** 第 k 檔：在物件自己座標裡、以密度 d0（每單位幾個螢幕像素）存一張模糊好的圖 */
 function buildLevel(st:Stack,k:number):Lv|null{
  const sigma=lvSigma(k),d0=st.d0;               // σ 以「d0 密度下的螢幕像素」計
- let s=1;while(sigma*s/2>=4&&s>1/64)s/=2;        // 存的解析度（2 的次方），自己的模糊至少 4 像素
+ /* 存的解析度（2 的次方），存起來的模糊至少 8 像素（原本 4）：放大貼回的倍數少一半。
+    iPhone 放大貼圖不一定平滑，存得太小時，模糊重的那幾檔會看出一格一格（播放時「突然像素變很低」）。 */
+ let s=1;while(sigma*s/2>=8&&s>1/64)s/=2;
  const padL=(sigma*3.2+2)/d0;                    // 邊界留白（物件座標）
  const x=st.cx-st.hw-padL,y=st.cy-st.hh-padL,wL=2*(st.hw+padL),hL=2*(st.hh+padL);
  const W=Math.max(1,Math.ceil(wL*d0*s)),H=Math.max(1,Math.ceil(hL*d0*s));
