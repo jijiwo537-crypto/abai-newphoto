@@ -5206,6 +5206,8 @@ type SwapSource = { kind: 'cell'; idx: number; src: string } | { kind: 'floating
 type SwapTarget = { kind: 'cell'; idx: number; layoutId?: string } | { kind: 'floating'; id: string };
 
 interface FloatingImageComponentProps {
+  /** 動畫頁：只能點選，不能拖動、縮放、旋轉、擠壓 */
+  motionLock?: boolean;
   scene?: ClassicVectorScene;
   sceneMotionFrame?: (image: FloatingImage, index: number) => ObjectMotionFrame | null;
   image: FloatingImage;
@@ -6298,6 +6300,7 @@ export const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image:
 };
 
 const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
+  motionLock = false,
   scene,
   sceneMotionFrame,
   image: committedImage,
@@ -7086,6 +7089,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
        觸控是走畫布層級的 applyTapSelection，那條路已經自己處理過了。 */
     onShapeTap?.(e.clientX, e.clientY);
     onSelect();
+    if (motionLock) return;   // 動畫頁：點了只選取，不拖動
     
     // 不能同時移動兩張圖
     if (globalDragPointerId !== null && globalDragPointerId !== e.pointerId) {
@@ -7153,6 +7157,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   };
 
   const handleRotatePointerDown = (e: React.PointerEvent) => {
+    if (motionLock) { e.stopPropagation(); return; }   // 動畫頁：不能縮放、旋轉、擠壓
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     
@@ -7194,6 +7199,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   };
 
   const handleScalePointerDown = (e: React.PointerEvent, corner: 'tl' | 'tr' | 'bl' | 'br') => {
+    if (motionLock) { e.stopPropagation(); return; }   // 動畫頁：不能縮放、旋轉、擠壓
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     // 拉角落縮放時工具列也先收起來，不然框一長一縮它就會上下換邊
@@ -7361,6 +7367,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   };
 
   const handleStretchPointerDown = (e: React.PointerEvent, side: 't' | 'r' | 'b' | 'l') => {
+    if (motionLock) { e.stopPropagation(); return; }   // 動畫頁：不能縮放、旋轉、擠壓
     e.stopPropagation(); e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
     dragStart.current = null;
     stretchStart.current = { pointerId: e.pointerId, side, startX: e.clientX, startY: e.clientY,
@@ -14126,6 +14133,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 第二根手指剛落下時完全不改任何可見狀態。等 touchmove 真正超過
          手勢門檻後才收起工具列；否則光是 gestureRendering 的切換就會讓
          文字／符號／圖形換一張工作畫布，看起來像瞬間放大或變形。 */
+      /* 動畫頁：只能點選，不能拖動、縮放、旋轉（點選照常由 touchend／click 處理） */
+      if (activeTab === 'motion') { wsGestureRef.current = null; return; }
       setPinchFloatingId(null);
       wsGestureLayoutIdRef.current = lockedTarget?.layoutId ?? selectedLayoutId;
       wsGestureRef.current = {
@@ -17749,6 +17758,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
                      {floatingImages.map((fImg, fIdx) => (
                       <FloatingImageComponent
+                        motionLock={activeTab === 'motion'}
                         key={fImg.id}
                         scene={vectorScene}
                         sceneMotionFrame={sceneMotionFrame}
@@ -18435,7 +18445,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const target = layoutTarget
                 ? ({ id: layoutTarget.id, mo: layoutTarget.mo, x: 0, y: 0, width: 1, height: 1, scale: 1, rotation: 0 } as unknown as FloatingImage)
                 : motionItems.find(f => f.id === motionTargetId) || null;
-              const targetIsImage = !!target && target.text === undefined && !target.shape;
+              const targetIsImage = !!target && target.text === undefined && !target?.shape;
               const rawCfg = classicObjectMotionOf(target?.mo);
               const cfg = targetIsImage && rawCfg.idle === 'spin'
                 ? { ...rawCfg, idle: 'image-breathe' }
@@ -18448,16 +18458,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 }
                 setFloatingImages(v => v.map(f => f.id === target.id ? { ...f, mo: { ...cfg, ...d } } : f));
               };
-              const isGridTarget = !!target?.shape && GRID_SHAPE_KINDS.has(target.shape);
-              const isSpecialLineTarget = !!target?.shape && SPECIAL_LINE_KINDS.has(target.shape);
-              const isTextTarget = target?.text !== undefined && !target.sym;
+              const isGridTarget = !!target?.shape && GRID_SHAPE_KINDS.has(target?.shape);
+              const isSpecialLineTarget = !!target?.shape && SPECIAL_LINE_KINDS.has(target?.shape);
+              const isTextTarget = target?.text !== undefined && !target?.sym;
               const baseIntro = OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce');
               const legacyIntroKinds = target?.shape === FRAME_SCATTER
                 ? baseIntro.filter(([id]) => id !== 'flip').flatMap(([id, name]): (readonly [string, string])[] => id === 'pop' ? [['pop', '果凍I'], ['pop-seq', '果凍II']] : [[id, name]]) as unknown as typeof baseIntro
                 : target?.sym
                 ? SYMBOL_OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce')
                 : isGridTarget
-                  ? baseIntro.map(([id, name]) => id === 'spin' && target.shape === 'grid-orbits' ? ['signal', '信號'] as const : id === 'spring' ? ['grid-wave', '波浪'] as const : [id, name] as const)
+                  ? baseIntro.map(([id, name]) => id === 'spin' && target?.shape === 'grid-orbits' ? ['signal', '信號'] as const : id === 'spring' ? ['grid-wave', '波浪'] as const : [id, name] as const)
                   : isSpecialLineTarget
                     ? [...baseIntro.filter(([id]) => id !== 'spring'), ['draw', '畫筆'] as const]
                     : baseIntro;
@@ -18493,7 +18503,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                    ...(labTarget ? selectedKinds(labTarget, 'idle').map(x => [x.id,x.name] as const) : [])];
               /* 面板滑桿：設定 ↔ 0～100 數字（JSX 與換動畫共用同一份） */
               const ciUi = (m: typeof cfg) => ({
-                inSpeed: m.in === 'bubble' && target.sym
+                inSpeed: m.in === 'bubble' && target?.sym
                   ? Math.round((motionUiFromDuration(m.dur) - 50) * 2)
                   : m.in === 'pop-seq' && isScatterTarget
                     // 果凍II：滑桿 0～100 對應舊刻度約 3～70（預設 70 ＝ 舊的 50）
@@ -18502,9 +18512,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 amp: m.idle === 'image-breathe' && targetIsImage ? imageBreathAmpToUi(m.amp) : m.amp,
                 speed: m.idle === 'image-breathe' && targetIsImage
                   ? imageBreathSpeedToUi(m.speed)
-                  : m.idle === 'symbol-breathe2' && (target.sym || isTextTarget)
+                  : m.idle === 'symbol-breathe2' && (target?.sym || isTextTarget)
                   ? Math.round(Math.max(0, Math.min(100, (m.speed * 100 - 70) / 1.1)))
-                  : m.idle === 'grid-wave' && !target.shape && !isGridTarget
+                  : m.idle === 'grid-wave' && !target?.shape && !isGridTarget
                     ? Math.round(Math.max(0, Math.min(100, (m.speed * 100 - 100) / 1.5)))
                     : m.idle === 'grid-wave' ? Math.round(Math.max(0, Math.min(100, (m.speed - .2) / 1.8 * 100)))
                     : m.idle === 'glint-breathe' || m.idle === 'glint-rays' ? glintSpeedToUi(m.speed)
@@ -18514,17 +18524,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     : idleSpeedToUi(m.speed),
               });
               const ciFrom = (f: 'inSpeed' | 'amp' | 'speed', v: number, m: typeof cfg): Partial<typeof cfg> =>
-                f === 'inSpeed' ? { dur: motionDurationFromUi(m.in === 'bubble' && target.sym ? 50 + v / 2 : m.in === 'pop-seq' && isScatterTarget ? 10 / 3 + v * 2 / 3 : v) }
+                f === 'inSpeed' ? { dur: motionDurationFromUi(m.in === 'bubble' && target?.sym ? 50 + v / 2 : m.in === 'pop-seq' && isScatterTarget ? 10 / 3 + v * 2 / 3 : v) }
                 : f === 'amp' ? { amp: m.idle === 'image-breathe' && targetIsImage ? imageBreathAmpFromUi(v) : v }
                 : { speed: m.idle === 'image-breathe' && targetIsImage
                   ? imageBreathSpeedFromUi(v)
-                  : m.idle === 'symbol-breathe2' && (target.sym || isTextTarget) ? (70 + v * 1.1) / 100
-                  : m.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : m.idle === 'grid-wave' ? .2 + v * .018
+                  : m.idle === 'symbol-breathe2' && (target?.sym || isTextTarget) ? (70 + v * 1.1) / 100
+                  : m.idle === 'grid-wave' && !target?.shape && !isGridTarget ? (100 + v * 1.5) / 100 : m.idle === 'grid-wave' ? .2 + v * .018
                   : m.idle === 'glint-breathe' || m.idle === 'glint-rays' ? glintSpeedFromUi(v)
                   : m.idle === 'breathe' && isGlintTarget ? glintZoomSpeedFromUi(v)
                   : m.idle === 'glint-blink' ? blinkSpeedFromUi(v) : hasSpeedRange(m.idle) ? rangedSpeedFromUi(m.idle, v) : idleSpeedFromUi(v) };
               /* 第一次選某個動畫時寫進的內容（＝那個動畫自己的預設） */
-              const et = { symbol: !!target.sym, line: isSpecialLineTarget, glint: isGlintTarget, image: targetIsImage, plainShape: !!target.shape && !isGridTarget && !isSpecialLineTarget && !isGlintTarget && !isScatterTarget };
+              const et = { symbol: !!target?.sym, line: isSpecialLineTarget, glint: isGlintTarget, image: targetIsImage, plainShape: !!target?.shape && !isGridTarget && !isSpecialLineTarget && !isGlintTarget && !isScatterTarget };
               const firstIntro = (id: string, fromIn: string): Partial<typeof cfg> =>
                 id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) }
                 /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
@@ -18533,7 +18543,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 /* 個別進場動畫自己的速度預設（與創意拼圖同一張表） */
                 : entrySpeedDefaultUi(id, et) !== undefined ? { in: id, dur: motionDurationFromUi(entrySpeedDefaultUi(id, et)!) }
                 : entrySpeedDefaultUi(fromIn, et) !== undefined ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur } : { in: id };
-              const firstIdle = (id: string): Partial<typeof cfg> => ({ idle: id, ...idleDefaults(id, { symbol: !!target.sym, text: isTextTarget, image: targetIsImage, shape: !!target.shape, grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget, scatter: isScatterTarget }) });
+              const firstIdle = (id: string): Partial<typeof cfg> => ({ idle: id, ...idleDefaults(id, { symbol: !!target?.sym, text: isTextTarget, image: targetIsImage, shape: !!target?.shape, grid: isGridTarget, line: isSpecialLineTarget, glint: isGlintTarget, scatter: isScatterTarget }) });
               /* ── 共用滑桿（與創意拼圖同一套）：中間 50＝各動畫自己的預設，往兩端各自走到自己刻度的 0／100 */
               const defUi = (phase: 'in' | 'idle', id: string) =>
                 ciUi({ ...CLASSIC_OBJECT_MOTION_DEFAULT, ...(phase === 'in' ? firstIntro(id, 'pop') : firstIdle(id)) } as typeof cfg);

@@ -4831,7 +4831,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       shapeSelUndoRef.current = null;
       const pts2: any[] = Array.from(activePointers.current.values());
       const oo = objectsRef.current.find(z => z.id === selectedObjRef.current);
-      if (oo) {
+      /* 動畫頁：不能雙指縮放、旋轉物件 */
+      if (oo && activeTabRef.current !== 'motion') {
         objPinchRef.current = {
           id: oo.id,
           d0: Math.max(1, Math.hypot(pts2[0].clientX - pts2[1].clientX, pts2[0].clientY - pts2[1].clientY)),
@@ -4934,6 +4935,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
 
   const beginObjStretch = (e: React.PointerEvent, o: any, side: 't' | 'r' | 'b' | 'l', cssK: number) => {
+    if (activeTabRef.current === 'motion') return;   // 動畫頁：不能擠壓
     e.stopPropagation(); e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     objDragRef.current = null;
@@ -5414,6 +5416,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          · pickId 存在＝已經有選中的物件，只是手指剛好按在別的物件上；
            拖的話搬的是「已選中的那個」（d.id），沒拖才把選取換過去 */
       if (d.selectOnly && !d.pickId) return;
+      /* 動畫頁：物件只能點選，不能移動（拖了也不搬，放開沒動才算點選） */
+      if (activeTabRef.current === 'motion') return;
       /* 已經進到「選中形狀」、而且手指是**從圖案裡面**按下去的：
          拖曳是在挪動「圖片在形狀裡的位置」。從形狀外面（例如愛心旁邊那塊
          空白角落）按下去拖，還是搬動整個物件。
@@ -11358,7 +11362,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       </>
                     )}
                     {baseSelected && (
-                      <rect
+                      <rect data-base-selection-rect
                         x={off.ix} y={off.iy} width={off.iw} height={off.ih}
                         fill="none" stroke="#fff" strokeWidth={0.9}
                         strokeDasharray="4.8 4.8" vectorEffect="non-scaling-stroke"
@@ -11976,6 +11980,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         frame.style.transition='none';frame.style.width=`${cs.w*fit}px`;frame.style.height=`${cs.h*fit}px`;
                         baseCssWRef.current=cs.w*fit;previewScaleRef.current=scale;lastPatternPaintRef.current=null;
                         renderToCanvasRef.current(canvas,scale);
+                        /* 底圖的虛線選中框：拖佔比時就跟著變（這段刻意不經過 React，框也直接改） */
+                        const rect=document.querySelector('[data-base-selection-rect]') as SVGRectElement|null;
+                        if(rect){
+                          const g=layoutGeometry(layout,imageState.baseW,imageState.baseH,liveMaskScale.current,canvasRatio);
+                          rect.ownerSVGElement?.setAttribute('viewBox',`0 0 ${g.cw} ${g.ch}`);
+                          rect.setAttribute('x',String(g.ix));rect.setAttribute('y',String(g.iy));
+                          rect.setAttribute('width',String(g.iw));rect.setAttribute('height',String(g.ih));
+                        }
                       });
                     };
                     // 放開：回到單一畫布那條路（GPU 層收掉），數值沒變也要重畫這一次
