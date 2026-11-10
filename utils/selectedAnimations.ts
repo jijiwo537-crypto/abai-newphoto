@@ -340,9 +340,11 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  if(t<=1e-3||t>=1-1e-3){const i=t>=1-1e-3?kB:kA;ctx.globalAlpha=a0;if(i<0){ctx.restore();ctx.save();paint(ctx);ctx.restore();return true;}drawLv(ctx,i,a0);ctx.restore();return true;}
  /* 兩檔混合：在一張螢幕對齊的小畫布上用 'lighter' 疊（＝精確的加權平均），再貼回去 */
  const L=st.lv.get(kB)!;   // 範圍以比較大的那檔為準
- const pts=[[L.x,L.y],[L.x+L.w,L.y],[L.x,L.y+L.h],[L.x+L.w,L.y+L.h]].map(([x,y])=>[mt.a*x+mt.c*y+mt.e,mt.b*x+mt.d*y+mt.f]);
- const X0=Math.floor(Math.min(...pts.map(p=>p[0]))),Y0=Math.floor(Math.min(...pts.map(p=>p[1])));
- const W=Math.ceil(Math.max(...pts.map(p=>p[0])))-X0,H=Math.ceil(Math.max(...pts.map(p=>p[1])))-Y0;
+ /* 混合用的畫布用「存的那檔」的解析度，不是螢幕解析度：放大很多倍時螢幕上這塊可能上百萬像素，
+    每個物件每一格都清一次、疊兩次、再貼一次，iPhone 就卡；存的檔本身沒有更多細節，用它的解析度混合畫質一樣。 */
+ const resOf=(i:number)=>{const l=st!.lv.get(i);return l?l.c.width/l.w:density;};
+ const rr=Math.max(.01,Math.min(density,kA<0?density:resOf(kA),Math.max(resOf(kB),resOf(kA))));
+ const W=Math.ceil(L.w*rr),H=Math.ceil(L.h*rr);
  if(W<=0||H<=0||W*H>8e6){ctx.restore();return false;}
  /* 每個物件自己一張混合用的畫布（不共用）：同一格裡把共用畫布畫完、貼出去、清掉再給下一個用，
     iPhone 的 Safari 偶爾會貼成「已經清掉的那張」→ 圖案一閃就不見 */
@@ -350,12 +352,12 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  if(out.width<W||out.height<H){out.width=Math.max(out.width,W);out.height=Math.max(out.height,H);}
  const go=out.getContext('2d')!;
  go.setTransform(1,0,0,1,0,0);go.globalAlpha=1;go.globalCompositeOperation='source-over';go.clearRect(0,0,W,H);
- go.setTransform(mt.a,mt.b,mt.c,mt.d,mt.e-X0,mt.f-Y0);
+ go.setTransform(rr,0,0,rr,-L.x*rr,-L.y*rr);
  go.imageSmoothingEnabled=true;go.imageSmoothingQuality='low';go.globalCompositeOperation='lighter';
  Object.assign(go,st.style);
  drawLv(go,kA,1-t);drawLv(go,kB,t);
  go.globalAlpha=1;go.globalCompositeOperation='source-over';
- ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=a0;ctx.drawImage(out,0,0,W,H,X0,Y0,W,H);
+ ctx.globalAlpha=a0;ctx.drawImage(out,0,0,W,H,L.x,L.y,W/rr,H/rr);
  ctx.restore();
  return true;
 }
