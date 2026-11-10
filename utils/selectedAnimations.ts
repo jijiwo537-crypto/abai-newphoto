@@ -327,6 +327,10 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  };
  ctx.save();ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='low';
  const a0=ctx.globalAlpha;
+ /* 模糊剛離開 0 的那一小段（清楚 ↔ 第一檔）：不把「清楚的圖案」畫進混合用的畫布再貼回 ——
+    iPhone 實測這一步畫出來的東西會錯（亮度、不透明度突變），就是每顆圖案照自己失焦節奏閃一下的原因。
+    改成直接選一個畫：前半段清楚、後半段第一檔（σ 只有 0.6 像素，看不出切換）。 */
+ if(kA<0&&has(kB)){t=t<.5?0:1;}
  pfPath=`k${kA}/${kB} t${t.toFixed(2)}`;
  if(t<=1e-3||t>=1-1e-3){const i=t>=1-1e-3?kB:kA;ctx.globalAlpha=a0;if(i<0){ctx.restore();ctx.save();paint(ctx);ctx.restore();return true;}drawLv(ctx,i,a0);ctx.restore();return true;}
  /* 兩檔混合：在一張螢幕對齊的小畫布上用 'lighter' 疊（＝精確的加權平均），再貼回去 */
