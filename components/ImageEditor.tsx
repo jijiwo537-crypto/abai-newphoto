@@ -1,7 +1,7 @@
 import { haptic } from '../utils/haptics';
 import { BusyLayer } from './BusyLayer';
 import { loadPresets, storePresets, presetParamsOf, nextPresetNumber, MAX_PRESETS, type UserPreset } from '../utils/userPresets';
-import { loadCustomLuts, importCustomLut, type CustomLut } from '../utils/customLuts';
+import { loadCustomLuts, importCustomLut, removeCustomLut, type CustomLut } from '../utils/customLuts';
 import { pickCustomLutFile } from '../utils/customLutPicker';
 import { crossedZero } from '../utils/hapticDetents';
 
@@ -1267,6 +1267,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [customLuts, setCustomLuts] = useState<CustomLut[]>(loadCustomLuts);
   const lutList = useMemo(() => [...builtInLutList, ...customLuts], [builtInLutList, customLuts]);
   const customLutInputRef = useRef<HTMLInputElement>(null);
+  const filePickerOpenRef = useRef(false);
+  const filterHoldRef = useRef<{ id: string; timer: number; fired: boolean; x: number; y: number } | null>(null);
   if (import.meta.env.DEV) (window as any).__editorRenders = ((window as any).__editorRenders || 0) + 1;
   const curveClipId = React.useId();
   /* 底部分類列（EditBar：只有文字、選中的有底線、下面留空間好按）。
@@ -4644,12 +4646,30 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       addToHistory(next, idx);
     } catch (e) { alert(e instanceof Error ? e.message : '無法匯入濾鏡'); }
   };
+  const deleteUserLut = async (id: string) => {
+    if (!confirm('要刪除這個自訂濾鏡嗎？')) return;
+    const deletedAt = lutList.findIndex(l => l.id === id);
+    try {
+      const next = await removeCustomLut(id, customLuts);
+      delete lutDataRef.current[id];
+      for (const key of Object.keys(filterThumbStore.current))
+        if (key.endsWith(` ${id}`)) delete filterThumbStore.current[key];
+      if (selectedLutIdx === deletedAt) handleFilterSelect(0);
+      else if (selectedLutIdx > deletedAt) setSelectedLutIdx(selectedLutIdx - 1);
+      setCustomLuts(next);
+      setLutReadyTick(t => t + 1);
+    } catch { alert('刪除濾鏡失敗，請再試一次'); }
+  };
   const openCustomLutPicker = async () => {
+    if (filePickerOpenRef.current) return;
+    filePickerOpenRef.current = true;
+    ++thumbJobRef.current; // 檔案搜尋時不讓縮圖批次生成佔住 WebView 主執行緒
     try {
       const file = await pickCustomLutFile();
       if (file === undefined) customLutInputRef.current?.click();
       else if (file) await onCustomLutFile(file);
     } catch (e) { alert(e instanceof Error ? e.message : '無法開啟檔案'); }
+    finally { filePickerOpenRef.current = false; setLutReadyTick(t => t + 1); }
   };
   const isEffectOn = (toolId: string) =>
     (EFFECT_OWN_KEYS[toolId] || [toolId]).some(k => ((params as any)[k] || 0) !== 0);
@@ -6856,6 +6876,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
     const tick = () => {
         if (!isActive) return;
+        if (filePickerOpenRef.current) { rafId = requestAnimationFrame(tick); return; }
 
         const b = buffers.current.preview;
         const cvs = displayCanvasRef.current;
@@ -10017,13 +10038,33 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden flex flex-col items-center justify-center">
                 <div className="flex flex-col items-center justify-center gap-1 -translate-y-px">
                   <span className="text-white/75 text-[24px] font-light leading-[24px]">+</span>
-                  <span className="text-[9px] font-semibold leading-[12px] text-white/65 whitespace-nowrap">新增濾鏡</span>
+                  <span className="text-[9px] font-semibold leading-[12px] text-white/65 whitespace-nowrap -translate-y-[2px]">新增濾鏡</span>
                 </div>
               </div>
             </button>
           </>}
           {activeCategory === 'filter' && lutList.map((lut, idx) => (
-            <button key={lut.id} onClick={() => { setPresetOn(null); handleFilterSelect(idx); }} data-filter-card={lut.id} data-haptic="tick" className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
+            <button key={lut.id} data-filter-card={lut.id} data-haptic="tick" className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
+              style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+              onContextMenu={e => e.preventDefault()}
+              onPointerDown={e => {
+                if (!lut.id.startsWith('user-lut-')) return;
+                const hold = { id: lut.id, timer: 0, fired: false, x: e.clientX, y: e.clientY };
+                hold.timer = window.setTimeout(() => { hold.fired = true; void deleteUserLut(lut.id); }, 650);
+                filterHoldRef.current = hold;
+              }}
+              onPointerMove={e => {
+                const hold = filterHoldRef.current;
+                if (hold?.id === lut.id && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 10)
+                  window.clearTimeout(hold.timer);
+              }}
+              onPointerUp={() => { if (filterHoldRef.current?.id === lut.id) window.clearTimeout(filterHoldRef.current.timer); }}
+              onPointerLeave={() => { if (filterHoldRef.current?.id === lut.id) { window.clearTimeout(filterHoldRef.current.timer); if (!filterHoldRef.current.fired) filterHoldRef.current = null; } }}
+              onPointerCancel={() => { if (filterHoldRef.current?.id === lut.id) { window.clearTimeout(filterHoldRef.current.timer); filterHoldRef.current = null; } }}
+              onClick={() => {
+                if (filterHoldRef.current?.id === lut.id && filterHoldRef.current.fired) { filterHoldRef.current = null; return; }
+                filterHoldRef.current = null; setPresetOn(null); handleFilterSelect(idx);
+              }}>
               {/* 沒選中時完全不畫邊框 —— 之前用 border-2 border-transparent，
                   那 2px 露出的是後面的底色，在縮圖旁邊看起來就是一圈灰框。
                   選中改用內描邊的 ring，畫在框內，不會影響版面也不會有位移。 */}

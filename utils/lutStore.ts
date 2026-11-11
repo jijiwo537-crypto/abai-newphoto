@@ -62,3 +62,18 @@ export async function saveCachedLut(id: string, url: string, data: Uint8ClampedA
     tx.objectStore(STORE).put({ id, url, size, buf: data.slice().buffer } as Row);
   } catch { /* 空間不足之類的就跳過 */ }
 }
+
+/** 自訂濾鏡刪除後同步釋放查色表，避免只隱藏卡片、資料仍佔手機空間。 */
+export async function deleteCachedLut(id: string): Promise<void> {
+  const db = await open();
+  if (!db) return;
+  await new Promise<void>(resolve => {
+    try {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    } catch { resolve(); }
+  });
+}
