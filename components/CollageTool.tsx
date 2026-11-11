@@ -12030,7 +12030,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         }
                         /* 選中的物件：框、四個控制點、下方工具列都是畫面元素，位置要重算一次才會跟著物件走。
                            只在有選中物件時才做，每一格最多一次（這段本身就在 requestAnimationFrame 裡） */
-                        occupancyBus.current.forEach(f=>f());
+                        /* flushSync：框在「這一格」就畫好，跟上面剛畫好的畫布同一格出現。
+                           不加的話 React 會排到下一格才畫，滑桿拖得快時框就慢圖案一拍 */
+                        flushSync(()=>occupancyBus.current.forEach(f=>f()));
                       });
                     };
                     // 放開：回到單一畫布那條路（GPU 層收掉），數值沒變也要重畫這一次
