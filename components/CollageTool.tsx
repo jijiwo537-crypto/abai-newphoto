@@ -1571,6 +1571,14 @@ const CreativeShapePicker = React.memo(({ selectedId, onPick }: { selectedId?: s
     ))}
   </>
 ));
+/** 包住選中框／控制點／工具列這幾塊畫面：平常跟著工具一起重畫；
+    拖佔比的期間，工具不重新整理，只有這裡被 bus 叫醒、用最新的即時佔比重算一次位置。 */
+const LiveChrome: React.FC<{ bus: Set<() => void>; render: () => React.ReactNode }> = ({ bus, render }) => {
+  const [, tick] = useState(0);
+  useEffect(() => { const f = () => tick(n => n + 1); bus.add(f); return () => { bus.delete(f); }; }, [bus]);
+  return <>{render()}</>;
+};
+
 export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned, onMotionChange, tunerMotion = null }) => {
   const saveToolDraft: typeof saveToolDraftImpl = (...args) => sandbox ? Promise.resolve() as any : saveToolDraftImpl(...args);
   useKeyboardRecovery();
@@ -1657,6 +1665,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
   const liveMaskScale=useRef<number|null>(null);
+  /** 拖佔比時，選中物件的框／控制點／工具列要每一格跟著重算（畫布本身不經過 React）。
+      只通知那兩塊（LiveChrome）自己重畫，整個工具不重新整理 —— 不然拖滑桿會掉一半格數。 */
+  const occupancyBus=useRef(new Set<()=>void>());
   /** 只有手指正按在「無縫／佔比」滑桿上才是 true：這時 GPU 那層直接疊在畫布下顯示（見 CreativeSeamless.present）。 */
   const seamLiveRef=useRef(false);
   const maskScaleValue=useRef(maskScale);maskScaleValue.current=maskScale;
@@ -3683,9 +3694,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const getLayoutOffsets = useCallback(() => {
     if (!imageState) return null;
     let { baseW: bw, baseH: bh } = imageState;
-    return layoutGeometry(layout, bw, bh, maskScale, canvasRatio);
+    /* 拖佔比滑桿的期間用即時的佔比（畫布已經照它畫了）：選中框、工具列、命中判斷才跟畫面對得上。放開後即時值清空，回到狀態值。 */
+    return layoutGeometry(layout, bw, bh, liveMaskScale.current ?? maskScale, canvasRatio);
   }, [imageState, layout, maskScale, canvasRatio]);
   getLayoutOffsetsRef.current = getLayoutOffsets;
+  /** 拖佔比的期間，物件在畫面上的位置：跟畫布（renderToCanvas）完全同一個換算 ——
+      物件中心照新舊版面的寬高比例搬過去。選中框、控制點、工具列用它才會跟著物件走。 */
+  const liveObjectOf = <T extends { x: number; y: number; w: number; h: number }>(ob: T): T => {
+    if (liveMaskScale.current === null || !imageState) return ob;
+    const { baseW, baseH } = imageState;
+    const prev = layoutGeometry(layout, baseW, baseH, maskScale, canvasRatio);
+    const next = layoutGeometry(layout, baseW, baseH, liveMaskScale.current, canvasRatio);
+    return { ...ob,
+      x: Math.min(Math.max((ob.x + ob.w / 2) * next.cw / prev.cw, 0), next.cw) - ob.w / 2,
+      y: Math.min(Math.max((ob.y + ob.h / 2) * next.ch / prev.ch, 0), next.ch) - ob.h / 2 };
+  };
 
   /** 底圖在照片框內的實際倍率；四周排版要先把原圖鋪滿中央框。 */
   const baseFrameScale = useCallback((o: any) => {
@@ -11331,11 +11354,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </g>
                 </svg>;
               })()}
-              {activeTab !== 'motion' && !composeState && (() => {
+              <LiveChrome bus={occupancyBus.current} render={() => activeTab !== 'motion' && !composeState && (() => {
                 const off = getLayoutOffsets();
                 if (!off) return null;
-                const o = selectedObj && !objDragging && !objPinching && !objStretching && !tuningEdge
+                const o0 = selectedObj && !objDragging && !objPinching && !objStretching && !tuningEdge
                   ? objects.find(z => z.id === selectedObj) : null;
+                const o = o0 ? liveObjectOf(o0) : o0;
                 const shaped = !!(o && shapeSel === o.id && isImgShaped(o.imgShape));
                 if (!baseSelected && !maskSelected && (!o || shaped)) return null;
                 const logicalPerCssPx = off.cw / Math.max(1, (baseCss?.w || off.cw) * displayScale);
@@ -11383,7 +11407,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     )}
                   </svg>
                 );
-              })()}
+              })()} />
               </div>
             </div>
           </div>
@@ -11510,8 +11534,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
         {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
         {/* 對齊線亮著、或正在拖形狀滑桿時，這排鍵也要一起讓開 */}
-        {activeTab !== 'motion' && imageState && selectedObj && !objDragging && !composeState && !tuningEdge && !objPinching && (() => {
-          const o = objects.find(z => z.id === selectedObj);
+        <LiveChrome bus={occupancyBus.current} render={() => activeTab !== 'motion' && imageState && selectedObj && !objDragging && !composeState && !tuningEdge && !objPinching && (() => {
+          const o0 = objects.find(z => z.id === selectedObj);
+          const o = o0 ? liveObjectOf(o0) : o0;
           const cvsEl = canvasRef.current;
           if (!o || !cvsEl) return null;
           const r = (motionFrameRef.current || cvsEl).getBoundingClientRect();
@@ -11641,7 +11666,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               ))}
             </div>}
           </>);
-        })()}
+        })()} />
 
         {imageState && (
           <div
@@ -11992,6 +12017,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           rect.setAttribute('x',String(g.ix));rect.setAttribute('y',String(g.iy));
                           rect.setAttribute('width',String(g.iw));rect.setAttribute('height',String(g.ih));
                         }
+                        /* 選中的物件：框、四個控制點、下方工具列都是畫面元素，位置要重算一次才會跟著物件走。
+                           只在有選中物件時才做，每一格最多一次（這段本身就在 requestAnimationFrame 裡） */
+                        if(selectedObjRef.current)occupancyBus.current.forEach(f=>f());
                       });
                     };
                     // 放開：回到單一畫布那條路（GPU 層收掉），數值沒變也要重畫這一次

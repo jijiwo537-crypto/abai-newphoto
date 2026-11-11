@@ -15,18 +15,12 @@ import { saveToPhotos } from '../utils/nativePhotos';
  */
 /** 已經自動存過的成品（同一份不重複存，例如成品頁重新顯示時） */
 const autoSaved = new Set<string>();
-/** 存相簿時蓋在成品頁上的那一層：剛剛匯出畫面（幾秒內）原樣接上；沒有就用標準的黑底轉圈 */
+/** 成品頁準備好之前（App 還要等存相簿）蓋著的那一層：接手剛剛的「匯出中」，照原樣繼續顯示（見 BusyLayer） */
 function coverLayer() {
-  const last = (window as any).__abaiBusyLabel as { text: string; cls: string; at: number } | undefined;
-  const label = last && Date.now() - last.at < 15000 ? last : null;
   return (
-    /* 全黑、不透明：後面的成品頁不能透出來（轉圈還在轉、成品頁卻先看得到）。
-       掀開時不淡出：淡出那 0.2 秒等於轉圈和成品頁疊在一起。成品頁準備好的那一格直接換過去。 */
-    /* 跟各工具「匯出中」那一層是同一個元件、同一個位置（見 BusyLayer），換層時轉圈不會跳 */
-    <BusyLayer data-abai-save-cover="" className="z-[10000] bg-black flex items-center justify-center" aria-label="儲存中"
-      >
+    /* 全黑、不透明：後面的成品頁不能透出來。掀開時不淡出（淡出等於兩層疊在一起），成品頁準備好的那一格直接換過去。 */
+    <BusyLayer continueLast data-abai-save-cover="" className="z-[10000] bg-black flex items-center justify-center" aria-label="儲存中">
       <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
-      {label && <span className={label.cls} style={{ position: 'absolute', left: 0, right: 0, top: label.cls.includes('text-lg') ? 'calc(50% + 44px)' : 'calc(50% + 40px)', textAlign: 'center' }}>{label.text}</span>}
     </BusyLayer>
   );
 }
