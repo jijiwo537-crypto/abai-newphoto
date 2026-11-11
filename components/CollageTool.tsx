@@ -3709,6 +3709,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       x: Math.min(Math.max((ob.x + ob.w / 2) * next.cw / prev.cw, 0), next.cw) - ob.w / 2,
       y: Math.min(Math.max((ob.y + ob.h / 2) * next.ch / prev.ch, 0), next.ch) - ob.h / 2 };
   };
+  /** 拖佔比的期間，圖案在畫面上的位置：跟畫布（renderToCanvas）同一個換算 —— 照新舊照片框（四周包圍是整張）的寬高比例搬過去 */
+  const liveHoleOf = <T extends { x: number; y: number }>(h: T): T => {
+    if (liveMaskScale.current === null || !imageState) return h;
+    const { baseW, baseH } = imageState;
+    const prev = layoutGeometry(layout, baseW, baseH, maskScale, canvasRatio);
+    const next = layoutGeometry(layout, baseW, baseH, liveMaskScale.current, canvasRatio);
+    const oldW = layout === AROUND ? prev.cw : prev.iw, oldH = layout === AROUND ? prev.ch : prev.ih;
+    const newW = layout === AROUND ? next.cw : next.iw, newH = layout === AROUND ? next.ch : next.ih;
+    return { ...h, x: h.x / oldW * newW, y: h.y / oldH * newH };
+  };
 
   /** 底圖在照片框內的實際倍率；四周排版要先把原圖鋪滿中央框。 */
   const baseFrameScale = useCallback((o: any) => {
@@ -11338,9 +11348,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   })}
                 </div>;
               })()}
-              {activeTab !== 'motion' && selectedPattern && !animRef.current && !composeState && (() => {
+              <LiveChrome bus={occupancyBus.current} render={() => activeTab !== 'motion' && selectedPattern && !animRef.current && !composeState && (() => {
                 const off=getLayoutOffsets(); if(!off) return null;
-                const {box,pad,x,y,clip,angle}=patternFrame(selectedPattern,off);
+                /* 拖佔比的期間：圖案位置跟畫布用同一個換算（見 liveHoleOf），框才會跟著圖案走 */
+                const {box,pad,x,y,clip,angle}=patternFrame(liveHoleOf(selectedPattern),off);
                 return <svg aria-hidden="true" viewBox={`0 0 ${off.cw} ${off.ch}`} className="absolute inset-0 pointer-events-none"
                   style={{width:'100%',height:'100%',zIndex:6,overflow:'visible'}}>
                   <defs><mask id="creative-pattern-selection-clip" maskUnits="userSpaceOnUse" x="0" y="0" width={off.cw} height={off.ch}>
@@ -11353,7 +11364,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       strokeWidth="0.9" strokeDasharray="4.8 4.8" vectorEffect="non-scaling-stroke" />
                   </g>
                 </svg>;
-              })()}
+              })()} />
               <LiveChrome bus={occupancyBus.current} render={() => activeTab !== 'motion' && !composeState && (() => {
                 const off = getLayoutOffsets();
                 if (!off) return null;
@@ -12019,7 +12030,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         }
                         /* 選中的物件：框、四個控制點、下方工具列都是畫面元素，位置要重算一次才會跟著物件走。
                            只在有選中物件時才做，每一格最多一次（這段本身就在 requestAnimationFrame 裡） */
-                        if(selectedObjRef.current)occupancyBus.current.forEach(f=>f());
+                        occupancyBus.current.forEach(f=>f());
                       });
                     };
                     // 放開：回到單一畫布那條路（GPU 層收掉），數值沒變也要重畫這一次
