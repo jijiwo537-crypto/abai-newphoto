@@ -40,7 +40,7 @@ const toThumb = (file: File) => new Promise<string>((res, rej) => {
 type TemplatePanelProps = {
   presets: UserPreset[];
   activePresetId: string | null;
-  previewSrc: string;
+  previewSrc: Record<string, string>;
   onSavePreset: () => void;
   onApplyPreset: (preset: UserPreset) => void;
   onDeletePreset: (id: string) => void;
@@ -77,7 +77,8 @@ export const TemplatePanel: React.FC<TemplatePanelProps> = ({ presets, activePre
             onPointerLeave={() => { if (hold.current) clearTimeout(hold.current.timer); }}
             onPointerCancel={() => { if (hold.current) clearTimeout(hold.current.timer); }}
             onClick={() => { if (hold.current?.fired) { hold.current = null; return; } onApplyPreset(preset); }}>
-            {previewSrc && <img src={previewSrc} alt="" className="w-full h-full object-cover" draggable={false} />}
+            {(previewSrc[preset.id] || previewSrc.__original) &&
+              <img src={previewSrc[preset.id] || previewSrc.__original} alt="" className="w-full h-full object-cover" draggable={false} />}
             <span className="absolute inset-x-0 bottom-0 bg-black/65 py-1 text-[9px] font-semibold text-white">預設 {preset.n}</span>
             {activePresetId === preset.id && <span className="absolute inset-0 rounded-[10px] ring-2 ring-inset ring-white pointer-events-none" />}
           </button>

@@ -2,6 +2,7 @@ import { haptic } from '../utils/haptics';
 import { BusyLayer } from './BusyLayer';
 import { loadPresets, storePresets, presetParamsOf, nextPresetNumber, MAX_PRESETS, type UserPreset } from '../utils/userPresets';
 import { loadCustomLuts, importCustomLut, type CustomLut } from '../utils/customLuts';
+import { pickCustomLutFile } from '../utils/customLutPicker';
 import { crossedZero } from '../utils/hapticDetents';
 
 import { ImportSpinner } from './BusySpinner';
@@ -4538,25 +4539,65 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      再記進歷史，所以套錯了按復原就回來。 */
   const [userPresets, setUserPresets] = useState<UserPreset[]>(loadPresets);
   const [presetOn, setPresetOn] = useState<string | null>(null);
-  const [templatePreview, setTemplatePreview] = useState('');
+  const [templatePreviews, setTemplatePreviews] = useState<{ photo: number; images: Record<string, string> }>({ photo: -1, images: {} });
+  const templateThumbCacheRef = useRef<Record<string, string>>({});
+  const templateThumbPhotoRef = useRef(-1);
   useEffect(() => {
     if (activeCategory !== 'template') return;
     let cancelled = false;
-    const id = requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (cancelled) return;
-      const shown = visibleEditorCanvas();
-      if (!shown?.width || !shown.height) return;
-      const c = document.createElement('canvas'); c.width = 144; c.height = 192;
-      const g = c.getContext('2d'); if (!g) return;
-      const scale = Math.max(c.width / shown.width, c.height / shown.height);
-      g.imageSmoothingQuality = 'high';
-      g.drawImage(shown, (c.width - shown.width * scale) / 2, (c.height - shown.height * scale) / 2,
-        shown.width * scale, shown.height * scale);
-      setTemplatePreview(c.toDataURL('image/jpeg', 0.82));
-      c.width = c.height = 0;
-    }));
-    return () => { cancelled = true; cancelAnimationFrame(id); };
-  }, [activeCategory, activeSrc, selectedLutIdx, userPresets.length]);
+    const sourceKey = thumbSrcOf(activeSrc);
+    const photo = srcIdOf(sourceKey);
+    if (templateThumbPhotoRef.current !== photo) {
+      templateThumbCacheRef.current = {}; // 更換照片時釋放上一張的高解析預設縮圖
+      templateThumbPhotoRef.current = photo;
+    }
+    const b = buffers.current.preview;
+    const source = pristineOf(sourceKey) || (buffersSrcRef.current === activeSrc && b.source ? thumbBaseCanvas(b) : null);
+    if (!source?.width || !source.height) return;
+    const W = 540, H = 720; // 與模板頁手動放入的照片同解析度
+    const base = document.createElement('canvas'); base.width = W; base.height = H;
+    const baseCtx = base.getContext('2d', { willReadFrequently: true });
+    if (!baseCtx) return;
+    const cover = Math.max(W / source.width, H / source.height);
+    baseCtx.imageSmoothingQuality = 'high';
+    baseCtx.drawImage(source, (W - source.width * cover) / 2, (H - source.height * cover) / 2,
+      source.width * cover, source.height * cover);
+    const original = baseCtx.getImageData(0, 0, W, H).data;
+    const images: Record<string, string> = { __original: base.toDataURL('image/jpeg', 0.9) };
+    setTemplatePreviews({ photo, images: { ...images } });
+    let timer = 0;
+    const draw = async (index: number) => {
+      if (cancelled || index >= userPresets.length) { base.width = base.height = 0; return; }
+      const preset = userPresets[index];
+      const cacheKey = `${photo}|${preset.id}|${JSON.stringify(preset.params)}|${preset.lutId}`;
+      let image = templateThumbCacheRef.current[cacheKey];
+      if (!image) {
+        const lut = lutList.find(l => l.id === preset.lutId);
+        if (lut?.url && !lutDataRef.current[lut.id]) await ensureLutData(lut);
+        if (cancelled) return;
+        const table = lut?.url ? lutDataRef.current[lut.id] : null;
+        if (lut?.url && !table) { timer = window.setTimeout(() => void draw(index + 1), 0); return; }
+        const p = { ...DEFAULT_PARAMS, ...preset.params } as EditorParams;
+        const correction = new Uint8Array(256);
+        generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, correction);
+        const output = new Uint8ClampedArray(original.length);
+        try {
+          processPixels(original, output, W, H, p, table?.data || null, table?.size || 0,
+            correction, null, false, getCurveLuts(p.curves));
+          baseCtx.putImageData(new ImageData(output, W, H), 0, 0);
+          applyComplexEffectsRef.current(baseCtx, W, H, p, H / 1080,
+            new Uint8ClampedArray(output.length), false, true, output);
+          image = base.toDataURL('image/jpeg', 0.9);
+          templateThumbCacheRef.current[cacheKey] = image;
+        } catch { image = images.__original; }
+      }
+      images[preset.id] = image;
+      if (!cancelled) setTemplatePreviews({ photo, images: { ...images } });
+      timer = window.setTimeout(() => void draw(index + 1), 0);
+    };
+    timer = window.setTimeout(() => void draw(0), 0);
+    return () => { cancelled = true; window.clearTimeout(timer); base.width = base.height = 0; };
+  }, [activeCategory, activeSrc, userPresets, buffersTick, lutReadyTick, lutList]);
   const saveUserPreset = () => {
     if (userPresets.length >= MAX_PRESETS) { alert(`最多可以存 ${MAX_PRESETS} 個預設，請先刪除不用的`); return; }
     const preset: UserPreset = {
@@ -4602,6 +4643,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       setPresetOn(null); isDirtyRef.current = true;
       addToHistory(next, idx);
     } catch (e) { alert(e instanceof Error ? e.message : '無法匯入濾鏡'); }
+  };
+  const openCustomLutPicker = async () => {
+    try {
+      const file = await pickCustomLutFile();
+      if (file === undefined) customLutInputRef.current?.click();
+      else if (file) await onCustomLutFile(file);
+    } catch (e) { alert(e instanceof Error ? e.message : '無法開啟檔案'); }
   };
   const isEffectOn = (toolId: string) =>
     (EFFECT_OWN_KEYS[toolId] || [toolId]).some(k => ((params as any)[k] || 0) !== 0);
@@ -9963,12 +10011,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           }}
         >
           {activeCategory === 'filter' && <>
-            <input ref={customLutInputRef} type="file" accept=".cube,.png,.webp,text/plain,image/png,image/webp" className="hidden"
+            <input ref={customLutInputRef} type="file" accept=".cube,application/octet-stream" className="hidden"
               onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void onCustomLutFile(file); }} />
-            <button onClick={() => customLutInputRef.current?.click()} data-filter-import data-haptic="press" aria-label="新增濾鏡" className="flex flex-col items-center gap-2 shrink-0 w-[64px]">
-              <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden flex flex-col items-center justify-center gap-1">
-                <span className="text-white/75 text-[26px] font-light leading-none">+</span>
-                <span className="text-[9px] font-semibold leading-none text-white/65 whitespace-nowrap">新增濾鏡</span>
+            <button onClick={() => void openCustomLutPicker()} data-filter-import data-haptic="press" aria-label="新增濾鏡" className="flex flex-col items-center gap-2 shrink-0 w-[64px]">
+              <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden flex flex-col items-center justify-center">
+                <div className="flex flex-col items-center justify-center gap-1 -translate-y-px">
+                  <span className="text-white/75 text-[24px] font-light leading-[24px]">+</span>
+                  <span className="text-[9px] font-semibold leading-[12px] text-white/65 whitespace-nowrap">新增濾鏡</span>
+                </div>
               </div>
             </button>
           </>}
@@ -10212,7 +10262,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {ownPanel && !STUDIO_CATS.includes(activeCategory) && (
           <div key={activeCategory} data-edit-panel={activeCategory} className="flex-1 min-h-0 overflow-hidden bg-[#111] animate-in fade-in duration-200">
             {activeCategory === 'template' && <TemplatePanel presets={userPresets} activePresetId={presetOn}
-              previewSrc={templatePreview || activeSrc} onSavePreset={saveUserPreset}
+              previewSrc={templatePreviews.photo === srcIdOf(thumbSrcOf(activeSrc)) ? templatePreviews.images : {}}
+              onSavePreset={saveUserPreset}
               onApplyPreset={applyUserPreset} onDeletePreset={deleteUserPreset} />}
           </div>
         )}

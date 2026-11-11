@@ -20,12 +20,13 @@ import UIKit
 import StoreKit
 
 @objc(NativePhotosPlugin)
-public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewControllerDelegate {
+public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewControllerDelegate, UIDocumentPickerDelegate {
     public let identifier = "NativePhotosPlugin"
     public let jsName = "NativePhotos"
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "available", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pick", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pickLutFile", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "authorize", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "save", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "readAdjustment", returnType: CAPPluginReturnPromise),
@@ -33,6 +34,7 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
     ]
 
     private var pickCall: CAPPluginCall?
+    private var lutPickCall: CAPPluginCall?
 
     @objc func available(_ call: CAPPluginCall) { call.resolve(["available": true]) }
 
@@ -50,6 +52,39 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
     }
 
     // MARK: 選照片
+
+    /// LUT 一律用「檔案」選擇器，避免照片／拍照選單攔住 .cube 檔。
+    @objc func pickLutFile(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard self.lutPickCall == nil else { call.reject("檔案選擇器已開啟"); return }
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data], asCopy: true)
+            picker.allowsMultipleSelection = false
+            picker.delegate = self
+            self.lutPickCall = call
+            self.bridge?.viewController?.present(picker, animated: true)
+        }
+    }
+
+    public func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        guard let call = lutPickCall else { return }
+        lutPickCall = nil
+        guard let source = urls.first else { call.resolve(["cancelled": true]); return }
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        let ext = source.pathExtension.isEmpty ? "cube" : source.pathExtension
+        let dest = ABAIImageCore.newFileURL(ext: ext)
+        do {
+            try FileManager.default.copyItem(at: source, to: dest)
+            call.resolve(["path": dest.path, "name": source.lastPathComponent])
+        } catch {
+            call.reject("無法讀取濾鏡檔：\(error.localizedDescription)")
+        }
+    }
+
+    public func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        lutPickCall?.resolve(["cancelled": true])
+        lutPickCall = nil
+    }
 
     /// 參數：limit（0＝不限）、filter（images／videos／any）
     @objc func pick(_ call: CAPPluginCall) {
