@@ -16,15 +16,15 @@ import { saveToPhotos } from '../utils/nativePhotos';
 /** 已經自動存過的成品（同一份不重複存，例如成品頁重新顯示時） */
 const autoSaved = new Set<string>();
 /** 存相簿時蓋在成品頁上的那一層：剛剛匯出畫面（幾秒內）原樣接上；沒有就用標準的黑底轉圈 */
-function coverLayer(fading = false) {
+function coverLayer() {
   const last = (window as any).__abaiBusyLabel as { text: string; cls: string; at: number } | undefined;
   const label = last && Date.now() - last.at < 15000 ? last : null;
   return (
-    /* 全黑、不透明：存相簿的這幾秒，後面已經做好的成品頁不能透出來（轉圈還在轉、成品頁卻先看得到）。
-       存好時用 0.2 秒淡出，轉圈剛好接到成品頁。 */
+    /* 全黑、不透明：後面的成品頁不能透出來（轉圈還在轉、成品頁卻先看得到）。
+       掀開時不淡出：淡出那 0.2 秒等於轉圈和成品頁疊在一起。成品頁準備好的那一格直接換過去。 */
     /* 跟各工具「匯出中」那一層是同一個元件、同一個位置（見 BusyLayer），換層時轉圈不會跳 */
     <BusyLayer data-abai-save-cover="" className="z-[10000] bg-black flex items-center justify-center" aria-label="儲存中"
-      style={{ opacity: fading ? 0 : 1, transition: 'opacity 200ms ease-out', pointerEvents: fading ? 'none' : undefined }}>
+      >
       <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
       {label && <span className={label.cls} style={{ position: 'absolute', left: 0, right: 0, top: label.cls.includes('text-lg') ? 'calc(50% + 44px)' : 'calc(50% + 40px)', textAlign: 'center' }}>{label.text}</span>}
     </BusyLayer>
@@ -42,8 +42,8 @@ export const SaveButton: React.FC<{
   /* App 裡直接存進相簿：按下去顯示「儲存中…」，存好變成「已存到相簿」，失敗就說原因 */
   const [phase, setPhase] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [, setTick] = useState(0);
-  /** 存好了、蓋板正在淡出的那 0.2 秒 */
-  const [fading, setFading] = useState(false);
+  /** 成品頁上的圖片／影片都已經解好、畫得出來了（之前一直蓋著轉圈，不露出空的黑畫面） */
+  const [mediaReady, setMediaReady] = useState(false);
   const key = urls.join('|');
   useEffect(() => { setPhase('idle'); }, [key]);
   const save = async () => {
@@ -75,8 +75,7 @@ export const SaveButton: React.FC<{
     let done = false;
     const uncover = () => {
       if (done) return; done = true;
-      setFading(true);
-      setTimeout(() => { autoDone.add(key); setFading(false); setTick(t => t + 1); }, 200);
+      autoDone.add(key); setTick(t => t + 1);
     };
     /* 保險：存檔 30 秒都沒回來就先掀開，不讓畫面一直蓋著 */
     const t = setTimeout(uncover, 30000);
@@ -92,13 +91,39 @@ export const SaveButton: React.FC<{
       : (videos ? '儲存影片' : '儲存圖片')
   );
 
-  /* App：成品頁先被一層跟匯出時一樣的黑色轉圈蓋住，存進相簿完成的那一刻才掀開 ——
-     「看到成品頁」和「照片真的存好＋震動」是同一個瞬間 */
-  const covering = isNative() && !autoDone.has(key) && urls.length > 0;
   const btnRef = useRef<HTMLButtonElement>(null);
+  /* 成品頁一出現就先被一層跟匯出時一模一樣的轉圈蓋住（同一個 BusyLayer、同一個位置），
+     等到成品頁上的圖片／影片都真的解好、畫出來了才掀開 —— 不然匯出的轉圈一收，
+     看到的會是「圖還沒出來的全黑成品頁」（大圖、影片解得慢時特別明顯）。
+     App 另外還要等存進相簿完成：「看到成品頁」和「照片真的存好＋震動」是同一個瞬間。 */
+  useEffect(() => {
+    setMediaReady(false);
+    if (!urls.length) return;
+    let alive = true;
+    const root = btnRef.current?.closest('[data-export-screen]') as HTMLElement | null;
+    const media = root ? Array.from(root.querySelectorAll<HTMLImageElement | HTMLVideoElement>('img, video')) : [];
+    const ready = (el: HTMLImageElement | HTMLVideoElement) => new Promise<void>(res => {
+      if (el instanceof HTMLVideoElement) {
+        if (el.readyState >= 2 || el.error) return res();
+        el.addEventListener('loadeddata', () => res(), { once: true });
+        el.addEventListener('error', () => res(), { once: true });
+        return;
+      }
+      if (el.complete && el.naturalWidth) { el.decode().then(() => res(), () => res()); return; }
+      if (el.complete) return res();   // 壞圖：不卡住
+      el.addEventListener('load', () => { el.decode().then(() => res(), () => res()); }, { once: true });
+      el.addEventListener('error', () => res(), { once: true });
+    });
+    /* 保險：最多等 8 秒，不讓畫面一直蓋著 */
+    const all = Promise.race([Promise.all(media.map(ready)), new Promise<void>(r => setTimeout(r, 8000))]);
+    /* 解好之後再等兩格，確定成品頁那一格已經畫到螢幕上才掀開 */
+    all.then(() => requestAnimationFrame(() => requestAnimationFrame(() => { if (alive) setMediaReady(true); })));
+    return () => { alive = false; };
+  }, [key]);
+  const covering = urls.length > 0 && (!mediaReady || (isNative() && !autoDone.has(key)));
   return (
     <>
-    {covering && coverLayer(fading)}
+    {covering && coverLayer()}
     <button
       ref={btnRef}
       onClick={(e) => { e.stopPropagation(); if (ready) void save(); }}
