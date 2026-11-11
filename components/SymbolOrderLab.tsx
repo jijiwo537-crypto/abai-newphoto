@@ -275,7 +275,8 @@ export function SymbolOrderLab({ onToast }: { onToast: (s: string) => void }) {
       <div className="rounded-[28px] border border-white/15 bg-black overflow-hidden" style={{ width: FRAME_W + 2, marginLeft: `calc((100% - ${FRAME_W + 2}px) / 2)` }}>
         <div className="pt-1" style={{ padding: '12px 16px 24px' }}>
           <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
-          <div ref={gridRef} className="flex flex-wrap gap-1.5 pb-4 mt-3">
+          {/* containerType：符號太長時縮到剛好放進一排，以這一層的寬度為準（跟 App 的清單同一個設定） */}
+          <div ref={gridRef} className="flex flex-wrap gap-1.5 pb-4 mt-3" style={{ containerType: 'inline-size' }}>
             {list.map((sym, i) => (
               <SymItem key={sym} sym={sym} i={i} h={handlers} dragging={!!drag} faded={drag?.sym === sym} dashed={!SYMBOLS.includes(sym)}
                 ring={brush === -3 ? 'inset 0 0 0 1px #ff5a5a88' : cats.of[sym] !== undefined ? `inset 0 0 0 2px ${CAT_COLORS[cats.of[sym]]}` : undefined} />
