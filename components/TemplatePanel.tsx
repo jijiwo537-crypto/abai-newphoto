@@ -63,13 +63,13 @@ export const TemplatePanel: React.FC<TemplatePanelProps> = ({ presets, activePre
       }} />
       <div className="w-full h-full flex items-stretch gap-2.5 px-4 pt-1.5 overflow-x-auto no-scrollbar touch-pan-x">
         <button data-preset-save onClick={onSavePreset} data-haptic="press" aria-label="保存當前預設"
-          className="relative shrink-0 h-full aspect-[3/4] rounded-[10px] border border-dashed border-white/30 bg-white/[0.03] flex flex-col items-center justify-center gap-1.5 active:scale-95 transition-transform">
+          className="relative shrink-0 h-full aspect-[3/4] rounded-[10px] border border-dashed border-white/30 bg-white/[0.03] flex flex-col items-center justify-center gap-1.5 active:scale-[0.975] transition-transform">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.65)" strokeWidth="1.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
           <span className="text-[9px] font-medium text-white/65 whitespace-nowrap">保存當前預設</span>
         </button>
         {presets.map(preset => (
           <button key={preset.id} data-preset-card={preset.id} data-haptic="tick"
-            className="relative shrink-0 h-full aspect-[3/4] rounded-[10px] overflow-hidden bg-[#1a1a1a] active:scale-95 transition-transform"
+            className="relative shrink-0 h-full aspect-[3/4] rounded-[10px] overflow-hidden bg-[#1a1a1a] active:scale-[0.975] transition-transform"
             style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
             onContextMenu={e => e.preventDefault()}
             onPointerDown={() => { const h = { timer: 0, fired: false }; h.timer = window.setTimeout(() => { h.fired = true; onDeletePreset(preset.id); }, 600); hold.current = h; }}
@@ -113,7 +113,7 @@ export const TemplatePanel: React.FC<TemplatePanelProps> = ({ presets, activePre
                 slotHold.current = null;
                 if (src) setPicked(i); else { target.current = i; input.current?.click(); }
               }}
-              className={`relative w-full h-full rounded-[10px] overflow-hidden flex items-center justify-center transition-transform active:scale-95 ${src ? 'bg-[#1a1a1a]' : 'border border-dashed border-white/30 bg-white/[0.03]'}`}>
+              className={`relative w-full h-full rounded-[10px] overflow-hidden flex items-center justify-center transition-transform active:scale-[0.975] ${src ? 'bg-[#1a1a1a]' : 'border border-dashed border-white/30 bg-white/[0.03]'}`}>
               {src
                 ? <img src={src} alt="" className="w-full h-full object-cover" draggable={false} />
                 : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.45)" strokeWidth="1.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>}

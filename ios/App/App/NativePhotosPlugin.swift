@@ -26,7 +26,7 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "available", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pick", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "pickLutFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "pickLutFiles", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "authorize", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "save", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "readAdjustment", returnType: CAPPluginReturnPromise),
@@ -54,7 +54,7 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
     // MARK: 選照片
 
     /// LUT 一律用「檔案」選擇器，避免照片／拍照選單攔住 .cube 檔。
-    @objc func pickLutFile(_ call: CAPPluginCall) {
+    @objc func pickLutFiles(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             guard self.lutPickCall == nil else { call.reject("檔案選擇器已開啟"); return }
             // 只列出編輯器真正能讀的 LUT；.data 會讓整個檔案庫都被搜尋，
@@ -62,7 +62,7 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
             let cube = UTType(filenameExtension: "cube") ?? .data
             let webp = UTType(filenameExtension: "webp") ?? .image
             let picker = UIDocumentPickerViewController(forOpeningContentTypes: [cube, .png, webp], asCopy: true)
-            picker.allowsMultipleSelection = false
+            picker.allowsMultipleSelection = true
             picker.delegate = self
             // 鍵盤只調整檔案瀏覽器，不讓底下的 WKWebView 跟著 page sheet 改變尺寸。
             picker.modalPresentationStyle = .fullScreen
@@ -74,16 +74,31 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
     public func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
         guard let call = lutPickCall else { return }
         lutPickCall = nil
-        guard let source = urls.first else { call.resolve(["cancelled": true]); return }
-        let scoped = source.startAccessingSecurityScopedResource()
-        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
-        let ext = source.pathExtension.isEmpty ? "cube" : source.pathExtension
-        let dest = ABAIImageCore.newFileURL(ext: ext)
-        do {
-            try FileManager.default.copyItem(at: source, to: dest)
-            call.resolve(["path": dest.path, "name": source.lastPathComponent])
-        } catch {
-            call.reject("無法讀取濾鏡檔：\(error.localizedDescription)")
+        guard !urls.isEmpty else { call.resolve(["cancelled": true]); return }
+        guard urls.count <= 9 else { call.reject("一次最多可以匯入 9 個濾鏡檔"); return }
+        // iCloud 檔案複製不在主執行緒做，避免選完一批檔案後整個選擇器卡住。
+        DispatchQueue.global(qos: .userInitiated).async {
+            var items: [[String: String]] = []
+            var copied: [URL] = []
+            do {
+                for source in urls {
+                    let scoped = source.startAccessingSecurityScopedResource()
+                    defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+                    let size = (try FileManager.default.attributesOfItem(atPath: source.path)[.size] as? Int) ?? 0
+                    if size > 32 * 1024 * 1024 { throw NSError(domain: "ABAILUT", code: 1, userInfo: [NSLocalizedDescriptionKey: "濾鏡檔超過 32 MB"]) }
+                    let ext = source.pathExtension.isEmpty ? "cube" : source.pathExtension
+                    let dest = ABAIImageCore.newFileURL(ext: ext)
+                    try FileManager.default.copyItem(at: source, to: dest)
+                    copied.append(dest)
+                    items.append(["path": dest.path, "name": source.lastPathComponent])
+                }
+                let resultItems = items
+                DispatchQueue.main.async { call.resolve(["items": resultItems]) }
+            } catch {
+                for file in copied { try? FileManager.default.removeItem(at: file) }
+                let message = "無法讀取濾鏡檔：\(error.localizedDescription)"
+                DispatchQueue.main.async { call.reject(message) }
+            }
         }
     }
 

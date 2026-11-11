@@ -2,7 +2,7 @@ import { haptic } from '../utils/haptics';
 import { BusyLayer } from './BusyLayer';
 import { loadPresets, storePresets, presetParamsOf, nextPresetNumber, MAX_PRESETS, type UserPreset } from '../utils/userPresets';
 import { loadCustomLuts, importCustomLut, removeCustomLut, type CustomLut } from '../utils/customLuts';
-import { pickCustomLutFile } from '../utils/customLutPicker';
+import { pickCustomLutFiles, type LutFileSelection } from '../utils/customLutPicker';
 import { crossedZero } from '../utils/hapticDetents';
 
 import { ImportSpinner } from './BusySpinner';
@@ -4632,19 +4632,30 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setActiveToolId('filter_select'); setPresetOn(preset.id);
     addToHistory(newParams, idx, f.soft, f.blur, f.grain, f.halation, f.softMan, f.blurMan, f.grainMan, f.halationMan);
   };
-  const onCustomLutFile = async (file: File | undefined) => {
-    if (!file) return;
-    try {
-      const { entry, data, size } = await importCustomLut(file, customLuts);
-      lutDataRef.current[entry.id] = { data, size };
-      setCustomLuts(list => [...list, entry]);
+  const onCustomLutFiles = async (selection: LutFileSelection) => {
+    if (selection.count < 1) return;
+    if (selection.count > 9) { alert('一次最多可以匯入 9 個濾鏡檔'); return; }
+    let nextLuts = customLuts;
+    const errors: string[] = [];
+    for (let i = 0; i < selection.count; i++) {
+      try {
+        const file = await selection.read(i); // 原生檔案逐一讀，最多只暫存一份大檔
+        const { entry, data, size } = await importCustomLut(file, nextLuts);
+        lutDataRef.current[entry.id] = { data, size };
+        nextLuts = [...nextLuts, entry];
+      } catch (e) { errors.push(e instanceof Error ? e.message : '無法匯入濾鏡'); }
+      if (i + 1 < selection.count) await new Promise<void>(resolve => window.setTimeout(resolve, 0));
+    }
+    if (nextLuts !== customLuts) {
+      setCustomLuts(nextLuts);
       setLutReadyTick(t => t + 1);
-      const idx = builtInLutList.length + customLuts.length;
+      const idx = builtInLutList.length + nextLuts.length - 1;
       const next = { ...paramsRef.current, lutAmount: 100 };
       paramsRef.current = next; setParams(next); setSelectedLutIdx(idx); setActiveToolId('filter_select');
       setPresetOn(null); isDirtyRef.current = true;
       addToHistory(next, idx);
-    } catch (e) { alert(e instanceof Error ? e.message : '無法匯入濾鏡'); }
+    }
+    if (errors.length) alert(`有 ${errors.length} 個濾鏡檔無法匯入：\n${errors.slice(0, 3).join('\n')}`);
   };
   const deleteUserLut = async (id: string) => {
     if (!confirm('要刪除這個自訂濾鏡嗎？')) return;
@@ -4665,9 +4676,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     filePickerOpenRef.current = true;
     ++thumbJobRef.current; // 檔案搜尋時不讓縮圖批次生成佔住 WebView 主執行緒
     try {
-      const file = await pickCustomLutFile();
-      if (file === undefined) customLutInputRef.current?.click();
-      else if (file) await onCustomLutFile(file);
+      const files = await pickCustomLutFiles();
+      if (files === undefined) customLutInputRef.current?.click();
+      else if (files) await onCustomLutFiles(files);
     } catch (e) { alert(e instanceof Error ? e.message : '無法開啟檔案'); }
     finally { filePickerOpenRef.current = false; setLutReadyTick(t => t + 1); }
   };
@@ -10032,14 +10043,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           }}
         >
           {activeCategory === 'filter' && <>
-            <input ref={customLutInputRef} type="file" accept=".cube,application/octet-stream" className="hidden"
-              onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void onCustomLutFile(file); }} />
+            <input ref={customLutInputRef} type="file" accept=".cube,application/octet-stream" multiple className="hidden"
+              onChange={e => {
+                const files = Array.from(e.currentTarget.files || []) as File[]; e.currentTarget.value = '';
+                void onCustomLutFiles({ count: files.length, read: async index => files[index] });
+              }} />
             <button onClick={() => void openCustomLutPicker()} data-filter-import data-haptic="press" aria-label="新增濾鏡" className="flex flex-col items-center gap-2 shrink-0 w-[64px]">
-              <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden flex flex-col items-center justify-center">
-                <div className="flex flex-col items-center justify-center gap-1 -translate-y-px">
-                  <span className="text-white/75 text-[24px] font-light leading-[24px]">+</span>
-                  <span className="text-[9px] font-semibold leading-[12px] text-white/65 whitespace-nowrap -translate-y-[2px]">新增濾鏡</span>
-                </div>
+              <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
+                <svg className="absolute left-1/2 top-[22px] -translate-x-1/2 text-white/75" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" aria-hidden="true"><path d="M9 3.5v11M3.5 9h11" /></svg>
+                <span className="absolute inset-x-0 top-[43px] text-center text-[9px] font-medium leading-[12px] tracking-[0.01em] text-white/65 whitespace-nowrap">新增濾鏡</span>
               </div>
             </button>
           </>}
@@ -10081,9 +10093,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   </div>
                 )}
                 {/* 下半部壓一條深色帶，編號放在上面才讀得清楚 */}
-                {/* pb-[2px] 是把選中時那條 2px 白線讓出來 ——
-                    文字才會置中在「遮罩上緣」與「白線」之間，而不是整條帶子的正中間 */}
-                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
+                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center">
                   <span className={`text-[8px] font-black uppercase tracking-widest leading-none ${lutCardOn(idx) ? 'text-white' : 'text-white/60'}`}>
                     {lut.url ? lut.name : '原始'}
                   </span>
@@ -10112,7 +10122,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 <div className="absolute inset-0 bg-[#1a1a1a]" />
                 <ThumbCanvas store={fxThumbStore} id={thumbKey(activeSrc, FX_THUMB_BASE)}
                              painters={thumbPainters} attr="data-fx-thumb" name={FX_THUMB_BASE} />
-                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
+                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center">
                   <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${noEffectOn ? 'text-white' : 'text-white/60'}`}>
                     原始
                   </span>
@@ -10131,7 +10141,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 <ThumbCanvas store={fxThumbStore} id={thumbKey(activeSrc, tool.id)}
                              fallbackId={thumbKey(activeSrc, FX_THUMB_BASE)}
                              painters={thumbPainters} attr="data-fx-thumb" name={tool.id} />
-                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
+                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center">
                   <span className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap ${isParamAdjusted(tool.id) ? 'text-white' : 'text-white/60'}`} style={{textTransform:'none'}}>
                     {tool.label}
                   </span>
