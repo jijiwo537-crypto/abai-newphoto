@@ -19,14 +19,24 @@ const CAT_STORE = 'abai-order-tool-symbol-cats-v1';
 const CAT_COLORS = ['#ff5a5a', '#ffb02e', '#4cd964', '#3fa9ff', '#c77dff'];
 /** App 目前清單的指紋：App 的清單換了，這頁存著的舊編輯就作廢、回到 App 目前的樣子 */
 const SIG = (() => { let h = 0; for (const c of SYMBOLS.join('\u0001')) h = (h * 31 + c.codePointAt(0)!) | 0; return h; })();
-/** 存的是整份清單（符號本身），新增、刪除、換順序都在裡面 */
+/** 存的是整份清單（符號本身），新增、刪除、換順序都在裡面。
+ *
+ *  這台裝置上排過的順序一定保留。以前是「App 的清單一換，存著的排法就整份丟掉」——
+ *  我把排好的清單交出去、App 更新之後，再打開這一頁，自己排的成果就沒了，而且是悄悄沒的。
+ *  現在改成：排過的那份原樣留著，App 後來新增的符號補在最後面，接著排就好。 */
 const loadList = (): string[] => {
+  const base = SYMBOLS.filter((s, i, a) => a.indexOf(s) === i);
   try {
     const v = JSON.parse(localStorage.getItem(STORE) || 'null');
     /* 同一個符號只能有一顆：重複的會讓畫面分不清是哪一顆，拖曳時會一直複製出新的 */
-    if (v && Array.isArray(v.list) && v.sig === SIG && v.list.every((s: unknown) => typeof s === 'string')) return (v.list as string[]).filter((s, i, a) => a.indexOf(s) === i);
+    const mine = v && Array.isArray(v.list) && v.list.every((s: unknown) => typeof s === 'string')
+      ? (v.list as string[]).filter((s, i, a) => a.indexOf(s) === i) : null;
+    if (mine && mine.length) {
+      const have = new Set(mine);
+      return [...mine, ...base.filter(s => !have.has(s))];
+    }
   } catch { /* 私密模式 */ }
-  return SYMBOLS.filter((s, i, a) => a.indexOf(s) === i);
+  return base;
 };
 /** 複製出去的清單用 \uXXXX 寫：組合附加符號在複製貼上時才不會被改壞（同 utils/symbols.ts 的理由） */
 const escapeSym = (s: string) => JSON.stringify(s).replace(/[\u007f-￿]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
