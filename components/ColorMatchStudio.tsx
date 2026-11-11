@@ -1,4 +1,5 @@
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
+import { BusyLayer } from './BusyLayer';
 import { safeSize } from '../utils/exportLimits';
 import { fullResFromProcessed, originalAt } from '../utils/fullResExport';
 /** 讀出畫布像素（GPU 畫布先複製到一般畫布再讀） */
@@ -1160,12 +1161,12 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
       )}
 
       {saving && (
-        <div className="fixed inset-x-0 bottom-0 top-[-12vh] z-[120] bg-black flex flex-col items-center justify-center animate-in fade-in duration-300">
+        <BusyLayer className="z-[120] bg-black flex flex-col items-center justify-center animate-in fade-in duration-300">
           {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
           <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">{embedded ? '套用中' : '儲存中'}</p>
           <StuckEscape onEscape={() => setSaving(false)} />
-        </div>
+        </BusyLayer>
       )}
     </div>
   );
