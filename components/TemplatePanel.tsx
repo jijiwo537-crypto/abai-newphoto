@@ -4,8 +4,7 @@ import type { UserPreset } from '../utils/userPresets';
 /* 「模板」分頁：先有介面、還沒有實際功能。
    一排 20 格可以左右滑；空的格子是虛線框，點下去選一張圖放進去看效果。
    放進去的圖存在這台裝置上（localStorage），下次打開還在。
-   有圖的格子點一下是選中（之後套模板用）。這裡之後不是讓使用者新增／刪除的地方，
-   目前只是開發階段放圖看效果，所以格子上不放刪除鈕。 */
+   有圖的格子點一下是選中，長按可刪除。 */
 
 export const TEMPLATE_SLOTS = 20;
 const KEY = 'abai.templateSlots.v1';
@@ -52,6 +51,7 @@ export const TemplatePanel: React.FC<TemplatePanelProps> = ({ presets, activePre
   const target = useRef(0);
   const input = useRef<HTMLInputElement>(null);
   const hold = useRef<{ timer: number; fired: boolean } | null>(null);
+  const slotHold = useRef<{ index: number; timer: number; fired: boolean; x: number; y: number } | null>(null);
   const put = (i: number, v: string | null) => setSlots(prev => { const n = prev.slice(); n[i] = v; save(n); return n; });
   return (
     /* 欄位跟其他分頁一樣高（預覽大小、位置都不變）；格子撐滿這一塊，上下各留 12px，不留一大片空白 */
@@ -86,7 +86,33 @@ export const TemplatePanel: React.FC<TemplatePanelProps> = ({ presets, activePre
         {slots.map((src, i) => (
           <div key={i} className="relative shrink-0 h-full aspect-[3/4]">
             <button data-template-slot={i} aria-label={src ? `模板 ${i + 1}` : `放入模板 ${i + 1} 的圖片`}
-              onClick={() => { if (src) setPicked(i); else { target.current = i; input.current?.click(); } }}
+              style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+              onContextMenu={e => e.preventDefault()}
+              onPointerDown={e => {
+                if (!src) return;
+                const h = { index: i, timer: 0, fired: false, x: e.clientX, y: e.clientY };
+                h.timer = window.setTimeout(() => {
+                  h.fired = true;
+                  if (confirm('要刪除這張模板照片嗎？')) {
+                    put(i, null);
+                    setPicked(p => p === i ? null : p);
+                  }
+                }, 650);
+                slotHold.current = h;
+              }}
+              onPointerMove={e => {
+                const h = slotHold.current;
+                if (h?.index === i && Math.hypot(e.clientX - h.x, e.clientY - h.y) > 10)
+                  window.clearTimeout(h.timer);
+              }}
+              onPointerUp={() => { if (slotHold.current?.index === i) window.clearTimeout(slotHold.current.timer); }}
+              onPointerLeave={() => { if (slotHold.current?.index === i) { window.clearTimeout(slotHold.current.timer); if (!slotHold.current.fired) slotHold.current = null; } }}
+              onPointerCancel={() => { if (slotHold.current?.index === i) { window.clearTimeout(slotHold.current.timer); slotHold.current = null; } }}
+              onClick={() => {
+                if (slotHold.current?.index === i && slotHold.current.fired) { slotHold.current = null; return; }
+                slotHold.current = null;
+                if (src) setPicked(i); else { target.current = i; input.current?.click(); }
+              }}
               className={`relative w-full h-full rounded-[10px] overflow-hidden flex items-center justify-center transition-transform active:scale-95 ${src ? 'bg-[#1a1a1a]' : 'border border-dashed border-white/30 bg-white/[0.03]'}`}>
               {src
                 ? <img src={src} alt="" className="w-full h-full object-cover" draggable={false} />

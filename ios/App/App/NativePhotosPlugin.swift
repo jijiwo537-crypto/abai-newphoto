@@ -57,9 +57,15 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
     @objc func pickLutFile(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             guard self.lutPickCall == nil else { call.reject("檔案選擇器已開啟"); return }
-            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data], asCopy: true)
+            // 只列出編輯器真正能讀的 LUT；.data 會讓整個檔案庫都被搜尋，
+            // 在大量 iCloud 檔案的裝置上，輸入搜尋字時會卡住。
+            let cube = UTType(filenameExtension: "cube") ?? .data
+            let webp = UTType(filenameExtension: "webp") ?? .image
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [cube, .png, webp], asCopy: true)
             picker.allowsMultipleSelection = false
             picker.delegate = self
+            // 鍵盤只調整檔案瀏覽器，不讓底下的 WKWebView 跟著 page sheet 改變尺寸。
+            picker.modalPresentationStyle = .fullScreen
             self.lutPickCall = call
             self.bridge?.viewController?.present(picker, animated: true)
         }

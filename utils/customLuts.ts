@@ -1,4 +1,4 @@
-import { loadCachedLut, saveCachedLut } from './lutStore';
+import { deleteCachedLut, loadCachedLut, saveCachedLut } from './lutStore';
 
 export type CustomLut = { id: string; name: string; url: string };
 const KEY = 'abai.editor.customLuts.v1';
@@ -104,4 +104,11 @@ export const importCustomLut = async (file: File, existing: CustomLut[]) => {
   try { localStorage.setItem(KEY, JSON.stringify([...existing, entry])); }
   catch { throw new Error('無法保存濾鏡清單，請檢查手機可用空間'); }
   return { entry, ...lut };
+};
+
+export const removeCustomLut = async (id: string, existing: CustomLut[]): Promise<CustomLut[]> => {
+  const next = existing.filter(lut => lut.id !== id);
+  localStorage.setItem(KEY, JSON.stringify(next));
+  await deleteCachedLut(id);
+  return next;
 };
