@@ -10991,7 +10991,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             </div>
           </div>
           <div data-export-actions className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
-            <SaveButton urls={finalImage ? [finalImage] : []} />
+            <SaveButton urls={finalImage ? [finalImage] : []} review />
             <div className="flex items-center justify-center gap-4">
             <button 
               onClick={(e) => { e.stopPropagation(); setSaveState('idle'); }}
@@ -12098,9 +12098,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     （跟經典拼圖那一頁排法一致）。 */}
                 <div data-creative-texture hidden={!!maskImageState || layout === FULL} className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden col-span-2 order-3 w-full">
                   <div className="h-[47px] flex items-center justify-between px-3">
-                    <span className="text-[10px] font-bold text-[#888]">紋理</span>
-                    <div className="flex items-center gap-2">
-                      <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                    <span className="text-[10px] font-bold text-[#888] shrink-0 whitespace-nowrap mr-2">紋理</span>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px] min-w-0 overflow-x-auto no-scrollbar [&>button]:shrink-0 [&>button]:whitespace-nowrap">
                         {TEX_OPTIONS.map(([t, label]) => (
                           <button key={t} onClick={() => { setPatternType(t as any); if (t === 'gingham' && patternType !== 'gingham') setStripeN(GINGHAM_N_DEFAULT); }} className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
                         ))}
@@ -12569,9 +12569,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             return (
                           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3">
                             <div className="h-[47px] flex items-center justify-between px-3">
-                              <span className="text-[10px] font-bold text-[#888]">紋理</span>
-                              <div className="flex items-center gap-2">
-                                <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                              <span className="text-[10px] font-bold text-[#888] shrink-0 whitespace-nowrap mr-2">紋理</span>
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px] min-w-0 overflow-x-auto no-scrollbar [&>button]:shrink-0 [&>button]:whitespace-nowrap">
                                   {texChoices.map(([id, label]) => (
                                     <button
                                       key={id}

@@ -21,6 +21,7 @@ interface NativePhotosApi {
   authorize(o: { level: 'addOnly' | 'readWrite' }): Promise<{ status: string }>;
   save(o: { path: string; kind: 'photo' | 'video'; assetId?: string; adjustment?: string }): Promise<{ saved: boolean; mode: string; assetId?: string }>;
   readAdjustment(o: { assetId: string }): Promise<{ adjustment?: string; originalPath?: string }>;
+  requestReview?(): Promise<{ asked: boolean }>;
 }
 
 export const nativePhotos = () => nativePlugin<NativePhotosApi>('NativePhotos');
@@ -149,4 +150,23 @@ export async function saveToPhotos(files: File[]): Promise<SaveOutcome | null> {
     haptic(ok === files.length ? 'success' : 'error');
     return ok === files.length ? { status: 'saved' } : { status: 'failed', error: error || '存檔失敗' };
   });
+}
+
+/* ── 請使用者評分 ──────────────────────────────────────────────
+   「儲存成功」算一次（一次存好幾張也只算一次）。第 1 次儲存成功時請 iOS 跳評分視窗，
+   之後每多 5 次再請一次（第 6、11、16… 次）。
+   要不要真的顯示由 iOS 決定：已經評過分的人不會再看到、一年最多三次 —— App 讀不到「評過了沒」，
+   所以這裡只管「什麼時候開口」，不重複打擾是系統保證的。只有 App 有，網頁版什麼都不做。 */
+const REVIEW_KEY = 'abai.review.saves';
+/** 第 n 次儲存成功（從 1 算起）要不要開口 */
+export const shouldAskReview = (n: number) => n >= 1 && (n - 1) % 5 === 0;
+/** 記一次「儲存成功」，輪到的話就請系統跳評分視窗。回傳這是第幾次 */
+export function noteExportForReview(): number {
+  let n = 0;
+  try { n = (Number(localStorage.getItem(REVIEW_KEY)) || 0) + 1; localStorage.setItem(REVIEW_KEY, String(n)); } catch { return 0; }
+  if (isNative() && shouldAskReview(n)) {
+    /* 等成品頁完全出現、震動結束再跳，不跟「存好了」搶同一瞬間 */
+    setTimeout(() => { void nativePhotos().then(p => p?.requestReview?.()).catch(() => {}); }, 900);
+  }
+  return n;
 }

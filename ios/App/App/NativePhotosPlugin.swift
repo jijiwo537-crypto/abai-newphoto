@@ -17,6 +17,7 @@ import Photos
 import PhotosUI
 import UniformTypeIdentifiers
 import UIKit
+import StoreKit
 
 @objc(NativePhotosPlugin)
 public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewControllerDelegate {
@@ -28,11 +29,25 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
         CAPPluginMethod(name: "authorize", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "save", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "readAdjustment", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "requestReview", returnType: CAPPluginReturnPromise),
     ]
 
     private var pickCall: CAPPluginCall?
 
     @objc func available(_ call: CAPPluginCall) { call.resolve(["available": true]) }
+
+    // MARK: 請使用者評分
+
+    /// 跳出系統的評分視窗。要不要真的顯示由 iOS 決定：已經評過分的人不會再看到，
+    /// 一年最多出現三次，使用者也可以在「設定」裡整個關掉 —— App 不會知道結果。
+    @objc func requestReview(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let scene = self.bridge?.viewController?.view.window?.windowScene
+                ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first { $0.activationState == .foregroundActive }
+            if let scene = scene { SKStoreReviewController.requestReview(in: scene) }
+            call.resolve(["asked": scene != nil])
+        }
+    }
 
     // MARK: 選照片
 

@@ -1137,7 +1137,7 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
           </div>
         </div>
         <div data-export-actions className="flex flex-col gap-3 px-6 pb-8">
-          <SaveButton urls={[finalUrl]} />
+          <SaveButton urls={[finalUrl]} review />
           {/* 「繼續調整」與「接著調色」併成最下面同一排 */}
           <div className="flex gap-3">
             <button
