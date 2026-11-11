@@ -2435,9 +2435,14 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number; px?: number }>
   const nw = Math.max(1, naturalWidth);
   /* 螢幕比 13 Pro 窄（例如 SE、mini）時，用畫面寬度再限制一次，長符號不會戳出按鈕 */
   /* px：排序網站上記錄下來的實際大小（見 SYMBOL_LAYOUT）—— 有的話就照它畫，跟網站上看到的一模一樣 */
-  const fontSize = px ?? (nw > 200
-    ? `min(${base * Math.min(1, 332 / nw)}px, calc((100vw - 58px) * ${base / nw}))`
-    : base * Math.min(1, 332 / nw));
+  /* 一定塞得進按鈕：最多就是「一整排扣掉按鈕左右內距與框（約 30px）」那麼寬。
+     100cqw 是符號清單那一層的寬度（清單設了 container-type）—— App 和排序網站都一樣，
+     所以兩邊縮的大小完全相同。本來就放得下的符號照原本的大小，一點都不變；
+     只有比一整排還長的邊框類（以前會從左右凸出按鈕）才縮到剛好放進去。 */
+  const fit = `calc((100cqw - 30px) * ${base / nw})`;
+  const fontSize = px !== undefined
+    ? `min(${px}px, ${fit})`
+    : (nw > 200 ? `min(${base * Math.min(1, 332 / nw)}px, ${fit})` : base * Math.min(1, 332 / nw));
   return (
     <span
       className="inline-flex max-w-full items-center justify-center whitespace-pre text-center"
@@ -2523,7 +2528,7 @@ export const SymbolPicker: React.FC<{
       {SYMBOL_LAYOUT ? (
         /* 有排序網站記錄的排版：一排一個不換行的容器，每排放的就是記錄的那幾顆 ——
            就算這台手機的字寬差了零點幾點，也不會被擠到下一排（不會再出現「一排只剩一顆」） */
-        <div className="flex flex-col gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}>
+        <div className="flex flex-col gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)', containerType: 'inline-size' }}>
           {SYMBOL_LAYOUT.rows.map((start, r) => (
             <div key={start} className="flex flex-nowrap gap-1.5">
               {symbolButtons.slice(start, SYMBOL_LAYOUT!.rows[r + 1] ?? symbolButtons.length)}
@@ -2531,7 +2536,7 @@ export const SymbolPicker: React.FC<{
           ))}
         </div>
       ) : (
-        <div className="flex flex-wrap gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)' }}>
+        <div className="flex flex-wrap gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)', containerType: 'inline-size' }}>
           {symbolButtons}
         </div>
       )}
