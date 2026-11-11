@@ -1123,7 +1123,7 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
           GPU 的畫布是程式自己掛進 stage 的，換樹時 React 會把那個節點拿去重用，
           畫布就跟著跑到導出畫面上，看起來就是「出現兩張圖」。 */}
       {finalUrl && (
-        <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+        <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col">
         <ExportActionLift />
         <header className="h-14 flex items-center px-5 shrink-0 bg-black/40 backdrop-blur-xl">
           <button onClick={() => setFinalUrl(null)} className="p-2 -ml-2 text-[#888] hover:text-white active:scale-90 transition-colors">

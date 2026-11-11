@@ -10923,7 +10923,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       )}
 
       {saveState === 'success' && finalImage && (
-        <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+        <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col">
           <ExportActionLift />
           <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
             <button 
