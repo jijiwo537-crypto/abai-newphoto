@@ -26,8 +26,8 @@
 | 我的 | My space |
 | 編輯 | Edit |
 | 相機 | Camera |
-| 創意拼圖 | Creative collage |
-| 跨頁拼圖 | Multi-page collage |
+| 創意拼圖 | Collage |
+| 跨頁拼圖 | Spread |
 | 美顏 | Retouch |
 | 仿色 | Color match |
 | 濾鏡 | Filters |
@@ -857,3 +857,9 @@
 | 方形負片 | Square negative |
 | 圓形毛玻璃 | Circle frosted glass |
 | 羽化圓形毛玻璃 | Feathered circle glass |
+| 存成預設 | Save preset |
+| 預設 {0} | Preset {0} |
+| 把目前的調整存成預設 | Save current adjustments as a preset |
+| 要刪除這個預設嗎？ | Delete this preset? |
+| 最多可以存 {0} 個預設，請先刪除不用的 | You can save up to {0} presets. Delete one you no longer need first. |
+| 預設存不進去，請稍後再試 | Couldn't save the preset. Please try again later. |

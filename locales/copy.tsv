@@ -21,8 +21,8 @@ App 語言	App language	アプリの言語	앱 언어	App 語言
 我的	My space	マイページ	마이페이지	我的
 編輯	Edit	編集	편집	編輯
 相機	Camera	カメラ	카메라	相機
-創意拼圖	Creative collage	フリー	자유 콜라주	自由編排拼貼
-跨頁拼圖	Multi-page collage	連続コラージュ	멀티페이지 콜라주	跨頁拼貼
+創意拼圖	Collage	フリー	콜라주	自由編排拼貼
+跨頁拼圖	Spread	連続コラージュ	스프레드	跨頁拼貼
 美顏	Retouch	レタッチ	뷰티	美顏
 仿色	Color match	色合わせ	색감 매칭	仿色
 濾鏡	Filters	フィルター	필터	濾鏡
@@ -852,3 +852,9 @@ ABAI 還不能看到你的相簿	ABAI can't access your photos yet	ABAIはまだ
 方形負片	Square negative	四角ネガ	사각 네거티브	方形負片
 圓形毛玻璃	Circle frosted glass	円形すりガラス	원형 반투명 유리	圓形毛玻璃
 羽化圓形毛玻璃	Feathered circle glass	ぼかし円形ガラス	페더 원형 유리	羽化圓形毛玻璃
+存成預設	Save preset	プリセット保存	프리셋 저장	存成預設
+預設 {0}	Preset {0}	プリセット {0}	프리셋 {0}	預設 {0}
+把目前的調整存成預設	Save current adjustments as a preset	現在の調整をプリセットとして保存	현재 조정을 프리셋으로 저장	把目前的調整存成預設
+要刪除這個預設嗎？	Delete this preset?	このプリセットを削除しますか？	이 프리셋을 삭제할까요?	要刪除這個預設嗎？
+最多可以存 {0} 個預設，請先刪除不用的	You can save up to {0} presets. Delete one you no longer need first.	プリセットは最大{0}個まで保存できます。不要なものを削除してください。	프리셋은 최대 {0}개까지 저장할 수 있어요. 필요 없는 것을 먼저 삭제해 주세요.	最多可以存 {0} 個預設，請先刪除不用的
+預設存不進去，請稍後再試	Couldn't save the preset. Please try again later.	プリセットを保存できません。しばらくしてからお試しください。	프리셋을 저장할 수 없어요. 잠시 후 다시 시도해 주세요.	預設存不進去，請稍後再試

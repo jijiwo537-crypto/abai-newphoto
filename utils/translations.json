@@ -134,14 +134,14 @@
   "創意拼圖": {
     "zh-Hans": "创意拼图",
     "ja": "フリー",
-    "ko": "자유 콜라주",
-    "en": "Creative collage"
+    "ko": "콜라주",
+    "en": "Collage"
   },
   "跨頁拼圖": {
     "zh-Hans": "跨页拼图",
     "ja": "連続コラージュ",
-    "ko": "멀티페이지 콜라주",
-    "en": "Multi-page collage"
+    "ko": "스프레드",
+    "en": "Spread"
   },
   "美顏": {
     "zh-Hans": "美颜",
@@ -5116,5 +5116,41 @@
     "ja": "ぼかし円形ガラス",
     "ko": "페더 원형 유리",
     "en": "Feathered circle glass"
+  },
+  "存成預設": {
+    "zh-Hans": "存成预设",
+    "ja": "プリセット保存",
+    "ko": "프리셋 저장",
+    "en": "Save preset"
+  },
+  "預設 {0}": {
+    "zh-Hans": "预设 {0}",
+    "ja": "プリセット {0}",
+    "ko": "프리셋 {0}",
+    "en": "Preset {0}"
+  },
+  "把目前的調整存成預設": {
+    "zh-Hans": "把目前的调整存成预设",
+    "ja": "現在の調整をプリセットとして保存",
+    "ko": "현재 조정을 프리셋으로 저장",
+    "en": "Save current adjustments as a preset"
+  },
+  "要刪除這個預設嗎？": {
+    "zh-Hans": "要删除这个预设吗？",
+    "ja": "このプリセットを削除しますか？",
+    "ko": "이 프리셋을 삭제할까요?",
+    "en": "Delete this preset?"
+  },
+  "最多可以存 {0} 個預設，請先刪除不用的": {
+    "zh-Hans": "最多可以存 {0} 个预设，请先删除不用的",
+    "ja": "プリセットは最大{0}個まで保存できます。不要なものを削除してください。",
+    "ko": "프리셋은 최대 {0}개까지 저장할 수 있어요. 필요 없는 것을 먼저 삭제해 주세요.",
+    "en": "You can save up to {0} presets. Delete one you no longer need first."
+  },
+  "預設存不進去，請稍後再試": {
+    "zh-Hans": "预设存不进去，请稍后再试",
+    "ja": "プリセットを保存できません。しばらくしてからお試しください。",
+    "ko": "프리셋을 저장할 수 없어요. 잠시 후 다시 시도해 주세요.",
+    "en": "Couldn't save the preset. Please try again later."
   }
 }

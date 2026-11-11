@@ -1,5 +1,6 @@
 import { haptic } from '../utils/haptics';
 import { BusyLayer } from './BusyLayer';
+import { loadPresets, storePresets, presetParamsOf, nextPresetNumber, MAX_PRESETS, type UserPreset } from '../utils/userPresets';
 import { crossedZero } from '../utils/hapticDetents';
 
 import { ImportSpinner } from './BusySpinner';
@@ -4527,6 +4528,45 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 合併按下去的那一拍參數就已經歸零了（見 mergeEffects），
      所以這幾個照著 state 算就是「合併完」的樣子，不用另外判斷合併中。 */
   const lutCardOn = (idx: number) => selectedLutIdx === idx;
+
+  /* ── 自己存的調整組合（預設）──────────────────────────────────
+     存：目前的濾鏡＋所有整體調整（不含遮色片、構圖）。套用：跟「復原到某一步」同一套寫法，
+     再記進歷史，所以套錯了按復原就回來。 */
+  const [userPresets, setUserPresets] = useState<UserPreset[]>(loadPresets);
+  const [presetOn, setPresetOn] = useState<string | null>(null);
+  const saveUserPreset = () => {
+    if (userPresets.length >= MAX_PRESETS) { alert(`最多可以存 ${MAX_PRESETS} 個預設，請先刪除不用的`); return; }
+    const preset: UserPreset = {
+      id: Math.random().toString(36).slice(2, 10), n: nextPresetNumber(userPresets),
+      lutId: lutList[selectedLutIdx]?.id ?? lutList[0]?.id ?? '',
+      params: presetParamsOf(paramsRef.current as unknown as Record<string, unknown>),
+      flags: { soft: isSoftActive, blur: isBlurActive, grain: isGrainActive, halation: isHalationActive,
+        softMan: softManuallyAdjusted, blurMan: blurManuallyAdjusted, grainMan: grainManuallyAdjusted, halationMan: halationManuallyAdjusted },
+    };
+    const next = [preset, ...userPresets];
+    if (!storePresets(next)) { alert('預設存不進去，請稍後再試'); return; }
+    setUserPresets(next); setPresetOn(preset.id);
+  };
+  const deleteUserPreset = (id: string) => {
+    if (!confirm('要刪除這個預設嗎？')) return;
+    const next = userPresets.filter(x => x.id !== id);
+    storePresets(next); setUserPresets(next); if (presetOn === id) setPresetOn(null);
+  };
+  const applyUserPreset = (preset: UserPreset) => {
+    releaseFreeze(true);
+    if (mergingRef.current) return;
+    const idx = Math.max(0, lutList.findIndex(l => l.id === preset.lutId));
+    if (idx > 0) loadLut(idx);
+    // 遮色片、紅色範圍顯示留著目前這張照片自己的；其餘整體調整換成預設裡的
+    const newParams = { ...paramsRef.current, ...(JSON.parse(JSON.stringify(preset.params)) as Partial<EditorParams>) } as EditorParams;
+    const f = preset.flags;
+    setParams(newParams); setSelectedLutIdx(idx);
+    setIsSoftActive(f.soft); setIsBlurActive(f.blur); setIsGrainActive(f.grain); setIsHalationActive(f.halation);
+    setSoftManuallyAdjusted(f.softMan); setBlurManuallyAdjusted(f.blurMan); setGrainManuallyAdjusted(f.grainMan); setHalationManuallyAdjusted(f.halationMan);
+    setActiveToolId('filter_select'); setPresetOn(preset.id);
+    addToHistory(newParams, idx, f.soft, f.blur, f.grain, f.halation, f.softMan, f.blurMan, f.grainMan, f.halationMan);
+  };
+  const presetHold = useRef<{ timer: number; fired: boolean } | null>(null);
   const isEffectOn = (toolId: string) =>
     (EFFECT_OWN_KEYS[toolId] || [toolId]).some(k => ((params as any)[k] || 0) !== 0);
 
@@ -9886,8 +9926,36 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               borderTop: activeToolId === 'curves' || maskTypePicking ? '1px solid rgba(255, 255, 255, 0.05)' : undefined,
           }}
         >
+          {activeCategory === 'filter' && <>
+            <button onClick={saveUserPreset} data-preset-save data-haptic="press" aria-label="把目前的調整存成預設" className="flex flex-col items-center gap-2 shrink-0 w-[64px]">
+              <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden flex items-center justify-center">
+                <span className="text-white/70 text-[26px] font-light leading-none -mt-3">+</span>
+                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px] px-1">
+                  <span className="text-[8px] font-black tracking-widest leading-none text-white/60 whitespace-nowrap overflow-hidden text-ellipsis">存成預設</span>
+                </div>
+              </div>
+            </button>
+            {userPresets.map(preset => (
+              <button key={preset.id} data-preset-card={preset.id} data-haptic="tick" className="flex flex-col items-center gap-2 shrink-0 w-[64px]"
+                style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+                onContextMenu={e => e.preventDefault()}
+                onPointerDown={() => { const h = { timer: 0, fired: false }; h.timer = window.setTimeout(() => { h.fired = true; deleteUserPreset(preset.id); }, 600); presetHold.current = h; }}
+                onPointerUp={() => { if (presetHold.current) clearTimeout(presetHold.current.timer); }}
+                onPointerLeave={() => { if (presetHold.current) clearTimeout(presetHold.current.timer); }}
+                onPointerCancel={() => { if (presetHold.current) clearTimeout(presetHold.current.timer); }}
+                onClick={() => { if (presetHold.current?.fired) { presetHold.current = null; return; } applyUserPreset(preset); }}>
+                <div className="relative w-full h-[76px] rounded-lg bg-[#161616] overflow-hidden flex items-center justify-center">
+                  <span className="text-white/80 text-[20px] font-black leading-none -mt-3 tabular-nums">{preset.n}</span>
+                  <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px] px-1">
+                    <span className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap overflow-hidden text-ellipsis ${presetOn === preset.id ? 'text-white' : 'text-white/60'}`}>{`預設 ${preset.n}`}</span>
+                  </div>
+                  {presetOn === preset.id && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
+                </div>
+              </button>
+            ))}
+          </>}
           {activeCategory === 'filter' && lutList.map((lut, idx) => (
-            <button key={lut.id} onClick={() => handleFilterSelect(idx)} data-filter-card={lut.id} data-haptic="tick" className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
+            <button key={lut.id} onClick={() => { setPresetOn(null); handleFilterSelect(idx); }} data-filter-card={lut.id} data-haptic="tick" className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
               {/* 沒選中時完全不畫邊框 —— 之前用 border-2 border-transparent，
                   那 2px 露出的是後面的底色，在縮圖旁邊看起來就是一圈灰框。
                   選中改用內描邊的 ring，畫在框內，不會影響版面也不會有位移。 */}
