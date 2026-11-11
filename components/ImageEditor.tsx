@@ -1,6 +1,7 @@
 import { haptic } from '../utils/haptics';
 import { BusyLayer } from './BusyLayer';
 import { loadPresets, storePresets, presetParamsOf, nextPresetNumber, MAX_PRESETS, type UserPreset } from '../utils/userPresets';
+import { loadCustomLuts, importCustomLut, type CustomLut } from '../utils/customLuts';
 import { crossedZero } from '../utils/hapticDetents';
 
 import { ImportSpinner } from './BusySpinner';
@@ -1261,7 +1262,10 @@ function runThumbChunks<T>(
   step();
 }
 
-export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false }) => {
+export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList: builtInLutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false }) => {
+  const [customLuts, setCustomLuts] = useState<CustomLut[]>(loadCustomLuts);
+  const lutList = useMemo(() => [...builtInLutList, ...customLuts], [builtInLutList, customLuts]);
+  const customLutInputRef = useRef<HTMLInputElement>(null);
   if (import.meta.env.DEV) (window as any).__editorRenders = ((window as any).__editorRenders || 0) + 1;
   const curveClipId = React.useId();
   /* 底部分類列（EditBar：只有文字、選中的有底線、下面留空間好按）。
@@ -4534,6 +4538,25 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      再記進歷史，所以套錯了按復原就回來。 */
   const [userPresets, setUserPresets] = useState<UserPreset[]>(loadPresets);
   const [presetOn, setPresetOn] = useState<string | null>(null);
+  const [templatePreview, setTemplatePreview] = useState('');
+  useEffect(() => {
+    if (activeCategory !== 'template') return;
+    let cancelled = false;
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (cancelled) return;
+      const shown = visibleEditorCanvas();
+      if (!shown?.width || !shown.height) return;
+      const c = document.createElement('canvas'); c.width = 144; c.height = 192;
+      const g = c.getContext('2d'); if (!g) return;
+      const scale = Math.max(c.width / shown.width, c.height / shown.height);
+      g.imageSmoothingQuality = 'high';
+      g.drawImage(shown, (c.width - shown.width * scale) / 2, (c.height - shown.height * scale) / 2,
+        shown.width * scale, shown.height * scale);
+      setTemplatePreview(c.toDataURL('image/jpeg', 0.82));
+      c.width = c.height = 0;
+    }));
+    return () => { cancelled = true; cancelAnimationFrame(id); };
+  }, [activeCategory, activeSrc, selectedLutIdx, userPresets.length]);
   const saveUserPreset = () => {
     if (userPresets.length >= MAX_PRESETS) { alert(`最多可以存 ${MAX_PRESETS} 個預設，請先刪除不用的`); return; }
     const preset: UserPreset = {
@@ -4566,7 +4589,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setActiveToolId('filter_select'); setPresetOn(preset.id);
     addToHistory(newParams, idx, f.soft, f.blur, f.grain, f.halation, f.softMan, f.blurMan, f.grainMan, f.halationMan);
   };
-  const presetHold = useRef<{ timer: number; fired: boolean } | null>(null);
+  const onCustomLutFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const { entry, data, size } = await importCustomLut(file, customLuts);
+      lutDataRef.current[entry.id] = { data, size };
+      setCustomLuts(list => [...list, entry]);
+      setLutReadyTick(t => t + 1);
+      const idx = builtInLutList.length + customLuts.length;
+      const next = { ...paramsRef.current, lutAmount: 100 };
+      paramsRef.current = next; setParams(next); setSelectedLutIdx(idx); setActiveToolId('filter_select');
+      setPresetOn(null); isDirtyRef.current = true;
+      addToHistory(next, idx);
+    } catch (e) { alert(e instanceof Error ? e.message : '無法匯入濾鏡'); }
+  };
   const isEffectOn = (toolId: string) =>
     (EFFECT_OWN_KEYS[toolId] || [toolId]).some(k => ((params as any)[k] || 0) !== 0);
 
@@ -9927,32 +9963,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           }}
         >
           {activeCategory === 'filter' && <>
-            <button onClick={saveUserPreset} data-preset-save data-haptic="press" aria-label="把目前的調整存成預設" className="flex flex-col items-center gap-2 shrink-0 w-[64px]">
-              <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden flex items-center justify-center">
-                <span className="text-white/70 text-[26px] font-light leading-none -mt-3">+</span>
-                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px] px-1">
-                  <span className="text-[8px] font-black tracking-widest leading-none text-white/60 whitespace-nowrap overflow-hidden text-ellipsis">存成預設</span>
-                </div>
+            <input ref={customLutInputRef} type="file" accept=".cube,.png,.webp,text/plain,image/png,image/webp" className="hidden"
+              onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void onCustomLutFile(file); }} />
+            <button onClick={() => customLutInputRef.current?.click()} data-filter-import data-haptic="press" aria-label="新增濾鏡" className="flex flex-col items-center gap-2 shrink-0 w-[64px]">
+              <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden flex flex-col items-center justify-center gap-1">
+                <span className="text-white/75 text-[26px] font-light leading-none">+</span>
+                <span className="text-[9px] font-semibold leading-none text-white/65 whitespace-nowrap">新增濾鏡</span>
               </div>
             </button>
-            {userPresets.map(preset => (
-              <button key={preset.id} data-preset-card={preset.id} data-haptic="tick" className="flex flex-col items-center gap-2 shrink-0 w-[64px]"
-                style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
-                onContextMenu={e => e.preventDefault()}
-                onPointerDown={() => { const h = { timer: 0, fired: false }; h.timer = window.setTimeout(() => { h.fired = true; deleteUserPreset(preset.id); }, 600); presetHold.current = h; }}
-                onPointerUp={() => { if (presetHold.current) clearTimeout(presetHold.current.timer); }}
-                onPointerLeave={() => { if (presetHold.current) clearTimeout(presetHold.current.timer); }}
-                onPointerCancel={() => { if (presetHold.current) clearTimeout(presetHold.current.timer); }}
-                onClick={() => { if (presetHold.current?.fired) { presetHold.current = null; return; } applyUserPreset(preset); }}>
-                <div className="relative w-full h-[76px] rounded-lg bg-[#161616] overflow-hidden flex items-center justify-center">
-                  <span className="text-white/80 text-[20px] font-black leading-none -mt-3 tabular-nums">{preset.n}</span>
-                  <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px] px-1">
-                    <span className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap overflow-hidden text-ellipsis ${presetOn === preset.id ? 'text-white' : 'text-white/60'}`}>{`預設 ${preset.n}`}</span>
-                  </div>
-                  {presetOn === preset.id && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
-                </div>
-              </button>
-            ))}
           </>}
           {activeCategory === 'filter' && lutList.map((lut, idx) => (
             <button key={lut.id} onClick={() => { setPresetOn(null); handleFilterSelect(idx); }} data-filter-card={lut.id} data-haptic="tick" className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
@@ -10193,7 +10211,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         </div>
         {ownPanel && !STUDIO_CATS.includes(activeCategory) && (
           <div key={activeCategory} data-edit-panel={activeCategory} className="flex-1 min-h-0 overflow-hidden bg-[#111] animate-in fade-in duration-200">
-            {activeCategory === 'template' && <TemplatePanel />}
+            {activeCategory === 'template' && <TemplatePanel presets={userPresets} activePresetId={presetOn}
+              previewSrc={templatePreview || activeSrc} onSavePreset={saveUserPreset}
+              onApplyPreset={applyUserPreset} onDeletePreset={deleteUserPreset} />}
           </div>
         )}
         {/* 分類列：跟拼圖的照片編輯同一個元件（EditBar）。
