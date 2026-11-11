@@ -1,5 +1,5 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useEffect, useRef, useState } from 'react';
+import { BusyLayer } from './BusyLayer';
 import { prepareFiles, shareFiles } from '../utils/shareAll';
 import { isNative } from '../utils/native';
 import { saveToPhotos } from '../utils/nativePhotos';
@@ -22,11 +22,12 @@ function coverLayer(fading = false) {
   return (
     /* 全黑、不透明：存相簿的這幾秒，後面已經做好的成品頁不能透出來（轉圈還在轉、成品頁卻先看得到）。
        存好時用 0.2 秒淡出，轉圈剛好接到成品頁。 */
-    <div data-abai-save-cover="" className="fixed inset-x-0 bottom-0 top-[-12vh] z-[10000] bg-black flex items-center justify-center" aria-label="儲存中"
+    /* 跟各工具「匯出中」那一層是同一個元件、同一個位置（見 BusyLayer），換層時轉圈不會跳 */
+    <BusyLayer data-abai-save-cover="" className="z-[10000] bg-black flex items-center justify-center" aria-label="儲存中"
       style={{ opacity: fading ? 0 : 1, transition: 'opacity 200ms ease-out', pointerEvents: fading ? 'none' : undefined }}>
       <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
       {label && <span className={label.cls} style={{ position: 'absolute', left: 0, right: 0, top: label.cls.includes('text-lg') ? 'calc(50% + 44px)' : 'calc(50% + 40px)', textAlign: 'center' }}>{label.text}</span>}
-    </div>
+    </BusyLayer>
   );
 }
 /** 自動存檔已經結束（成功或失敗）的成品：成品頁不再蓋著 */
@@ -94,16 +95,10 @@ export const SaveButton: React.FC<{
   /* App：成品頁先被一層跟匯出時一樣的黑色轉圈蓋住，存進相簿完成的那一刻才掀開 ——
      「看到成品頁」和「照片真的存好＋震動」是同一個瞬間 */
   const covering = isNative() && !autoDone.has(key) && urls.length > 0;
-  /* 蓋在跟工具存檔畫面同一個框裡（工具頁扣掉了狀態列的高度）：
-     蓋在整個螢幕上的話，正中央會比工具的存檔畫面高半個狀態列，轉圈就往上跳 */
   const btnRef = useRef<HTMLButtonElement>(null);
-  const [coverHost, setCoverHost] = useState<HTMLElement | null>(null);
-  useLayoutEffect(() => {
-    setCoverHost((btnRef.current?.closest('.safe-top') as HTMLElement | null) ?? document.body);
-  }, []);
   return (
     <>
-    {covering && coverHost && createPortal(coverLayer(fading), coverHost)}
+    {covering && coverLayer(fading)}
     <button
       ref={btnRef}
       onClick={(e) => { e.stopPropagation(); if (ready) void save(); }}
