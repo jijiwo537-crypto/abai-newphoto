@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { BusyLayer } from './BusyLayer';
 import { prepareFiles, shareFiles } from '../utils/shareAll';
 import { isNative } from '../utils/native';
-import { saveToPhotos } from '../utils/nativePhotos';
+import { saveToPhotos, noteExportForReview } from '../utils/nativePhotos';
 
 /**
  * 存檔按鈕（成品頁）。
@@ -24,6 +24,8 @@ function coverLayer() {
     </BusyLayer>
   );
 }
+/** 已經算過「儲存成功一次」的成品 */
+const reviewCounted = new Set<string>();
 /** 自動存檔已經結束（成功或失敗）的成品：成品頁不再蓋著 */
 const autoDone = new Set<string>();
 export const SaveButton: React.FC<{
@@ -31,7 +33,9 @@ export const SaveButton: React.FC<{
   className?: string;
   /** 自己指定字樣，不給就依張數與類型自動決定 */
   label?: string;
-}> = ({ urls, className, label }) => {
+  /** 這個工具的儲存要算進「請評分」的次數（編輯、仿色、創意拼圖、跨頁拼圖） */
+  review?: boolean;
+}> = ({ urls, className, label, review = false }) => {
   const [files, setFiles] = useState<File[]>([]);
   /* App 裡直接存進相簿：按下去顯示「儲存中…」，存好變成「已存到相簿」，失敗就說原因 */
   const [phase, setPhase] = useState<'idle' | 'saving' | 'saved'>('idle');
@@ -46,7 +50,12 @@ export const SaveButton: React.FC<{
     setPhase('saving');
     const r = await saveToPhotos(files);
     if (!r) { setPhase('idle'); void shareFiles(files); return; }
-    if (r.status === 'saved') { setPhase('saved'); return; }
+    if (r.status === 'saved') {
+      setPhase('saved');
+      /* 同一份成品只算一次「儲存成功」（一次存五張也是一次；同一份再按一次儲存也不重複算） */
+      if (review && !reviewCounted.has(key)) { reviewCounted.add(key); noteExportForReview(); }
+      return;
+    }
     setPhase('idle');
     alert(/denied|權限|authoriz/i.test(r.error || '')
       ? '沒有存到相簿的權限。請到「設定 → ABAI → 照片」打開「僅限加入照片」後再試一次。'

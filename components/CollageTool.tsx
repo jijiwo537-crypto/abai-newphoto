@@ -10991,7 +10991,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             </div>
           </div>
           <div data-export-actions className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
-            <SaveButton urls={finalImage ? [finalImage] : []} />
+            <SaveButton urls={finalImage ? [finalImage] : []} review />
             <div className="flex items-center justify-center gap-4">
             <button 
               onClick={(e) => { e.stopPropagation(); setSaveState('idle'); }}

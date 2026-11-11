@@ -301,7 +301,7 @@ export const NativeGallery: React.FC<{
             </div>
           )}
           {multi && limit > 1 && ok && (
-            <div className="px-4 pb-2 text-[11.5px] text-white/40">最多可選 {limit} 張</div>
+            <div className="px-4 pb-2 text-[11.5px] text-white/40">{`最多可選 ${limit} 張`}</div>
           )}
         </div>
 

@@ -600,3 +600,260 @@
 | 下至上 | Bottom to top |
 | 高 | High |
 | 最高 | Highest |
+| 視覺追蹤 | Tracking |
+| 效果 | Effect |
+| 偵測 | Detect |
+| 照片無法讀取，請重新選擇。 | Couldn't read this photo. Please choose another. |
+| 字符 | Glyphs |
+| 外觀 | Look |
+| 節點 | Nodes |
+| 元素 | Elements |
+| 細節 | Detail |
+| 撤回 | Undo |
+| 匯出選項 | Export options |
+| 匯出格式 | Export format |
+| 字符藝術預覽 | Text art preview |
+| 視覺追蹤預覽 | Tracking preview |
+| 即時遮罩預覽 | Live mask preview |
+| 向量藝術圖層 | Vector art layer |
+| 即時字符圖層 | Live text layer |
+| 高清字符圖層 | HD text layer |
+| 點擊圖片進行放置 | Tap the photo to place |
+| 前後對比 | Before / after |
+| 藝術工具 | Art tools |
+| 自訂字符 | Custom glyphs |
+| 字符序列 | Glyph sequence |
+| 亮部 | Lights |
+| 暗部 | Darks |
+| 邊緣 | Edges |
+| 色彩 | Color |
+| 字符顏色 | Glyph color |
+| 原色 | Original |
+| 保留底圖 | Keep photo |
+| 輪廓 | Outline |
+| 綜合 | Mixed |
+| 隨機分佈 | Scatter |
+| 星芒 | Starburst |
+| 聚焦 | Focus |
+| 選中框 | Select box |
+| 交叉框 | Cross box |
+| 鄰近 | Nearby |
+| 距離 | Distance |
+| 取景框設定 | Viewfinder settings |
+| 取景框 | Viewfinder |
+| 取景框調整 | Adjust viewfinder |
+| 圓圈設定 | Circle settings |
+| 圓圈 | Circle |
+| 圓圈調整 | Adjust circle |
+| 遮罩材質 | Mask material |
+| 霧化 | Frost |
+| 框線 | Border |
+| 儲存預覽 | Save preview |
+| 匯出預覽 | Export preview |
+| 星形 | Star |
+| 磨皮 | Smooth |
+| 修補 | Heal |
+| 塗抹要修補的地方 | Brush over what you want to fix |
+| 套用中 | Applying |
+| 匯入中 | Importing |
+| 原生相機無法啟動，已換成一般相機 | Couldn't start the camera, switched to the basic one |
+| 開啟特效 | Open effects |
+| 切換鏡頭 | Switch camera |
+| 返回相機 | Back to camera |
+| 自動 | Auto |
+| 果凍I | Jelly I |
+| 果凍II | Jelly II |
+| 淡入l | Fade I |
+| 淡入ll | Fade II |
+| 果凍l | Jelly I |
+| 果凍ll | Jelly II |
+| 波浪l | Wave I |
+| 波浪ll | Wave II |
+| 縮放l | Zoom I |
+| 縮放ll | Zoom II |
+| 圖片讀取失敗，請重新選擇圖片 | Couldn't read the image. Please choose it again. |
+| 新增圖片 | Add photo |
+| 影片儲存失敗，請更換格式後重試 | Couldn't save the video. Try another format. |
+| 無排版 | No layout |
+| 所有圖片佈局 | All photo layouts |
+| 創意拼圖更多選項 | More collage options |
+| 創意拼圖匯出選項 | Collage export options |
+| 創意拼圖匯出設定 | Collage export settings |
+| 填入圖片排版 | Fill photo layout |
+| 上傳遮罩圖片 | Upload mask image |
+| 隨機圖案 | Random pattern |
+| 返回圖片排版 | Back to photo layout |
+| {0}張 {1} | {0} photos, {1} |
+| 圖案顏色 | Pattern color |
+| 壓扁 | Squash |
+| 圖案大小 | Pattern size |
+| 外框粗細 | Border width |
+| 模糊 | Blur |
+| 箭身長度 | Shaft length |
+| 進場方向 | Direction |
+| 隨機 | Random |
+| 圖案 {0} | Pattern {0} |
+| 專業 | Pro |
+| 儲存失敗，請再試一次 | Couldn't save. Please try again. |
+| AI仿色中 | AI matching |
+| 仿色中 | Matching |
+| 分析光影與色調 | Analyzing light and tone |
+| 重建色彩層次 | Rebuilding color depth |
+| 微調最終色彩 | Refining final colors |
+| 仿色方法 | Match method |
+| 新增參考圖片 | Add reference photo |
+| 新增參考圖 | Add reference |
+| 參考圖片 | Reference photo |
+| 刪除這張參考圖 | Delete this reference |
+| 明暗 | Tone |
+| 擦除 | Erase |
+| 無法處理這張照片 | Couldn't process this photo |
+| 畫面全空白，調一下明暗 | Nothing to show. Try adjusting Tone. |
+| 生成中 | Generating |
+| 正在生成點陣圖 | Generating dot art |
+| 正在偵測輪廓 | Detecting outlines |
+| 分析明暗層次 | Analyzing tones |
+| 描繪線條細節 | Drawing line details |
+| 整理點陣排列 | Arranging dots |
+| 換一張照片 | Change photo |
+| 反轉 | Invert |
+| 線稿 | Line art |
+| 黑色 | Blacks |
+| 外框 | Outline |
+| （可多選） | (multi-select) |
+| 跨頁拼圖更多選項 | More spread options |
+| 跨頁拼圖匯出選項 | Spread export options |
+| 跨頁拼圖匯出設定 | Spread export settings |
+| 佈局{0} | Layout {0} |
+| 開啟藝術效果 | Open Art effects |
+| 藝術效果 | Art effects |
+| 一鍵套用藝術風格 | One-tap art styles |
+| 開啟點陣文字 | Open Dot art |
+| 點陣文字 | Dot art |
+| 將圖片轉點陣圖案 | Turn photos into dots |
+| 聯絡資訊 | Contact |
+| 讚數 | Likes |
+| 留言數 | Comments |
+| 轉發數 | Reposts |
+| 分享數 | Shares |
+| 線性漸層 | Linear gradient |
+| 放射漸層 | Radial gradient |
+| 顏色範圍 | Color range |
+| 明度範圍 | Luminance range |
+| 柔化 | Feather |
+| 下限 | Min |
+| 上限 | Max |
+| 平滑 | Smooth |
+| 色輪 | Wheels |
+| 關閉匯出選項 | Close export options |
+| 線性 | Linear |
+| 放射 | Radial |
+| 新增遮色片 | Add mask |
+| 遮色片 {0} | Mask {0} |
+| 隱藏範圍 | Hide overlay |
+| 顯示範圍 | Show overlay |
+| 刪除遮色片 | Delete mask |
+| 收起遮色片工具 | Collapse mask tools |
+| 展開遮色片工具 | Expand mask tools |
+| 收起遮色片參數 | Collapse mask settings |
+| 遮色片參數 | Mask settings |
+| 選一種遮色片 | Choose a mask type |
+| 在照片上拖曳，拉出線性漸層 | Drag on the photo to draw a linear gradient |
+| 從中心往外拖曳，畫出放射範圍 | Drag out from the center to draw a radial area |
+| 在要調整的地方塗抹 | Brush over the area to adjust |
+| 點選要選取的顏色 | Tap a color to select it |
+| 點選照片，選取那一段亮度 | Tap the photo to select that brightness |
+| 點其他地方可以換一個顏色 | Tap elsewhere to pick another color |
+| 點照片可以重新取樣亮度 | Tap the photo to resample brightness |
+| 切換到編輯遮色片 | Switch to mask editing |
+| 切換到調節 | Switch to adjustments |
+| 人像 | Portrait |
+| 影片 {0} | Video {0} |
+| 照片 | Photo |
+| 最近項目 | Recents |
+| 選擇影片 | Select video |
+| 選擇照片 | Select photo |
+| 選擇照片或影片 | Select photo or video |
+| 照片讀不進來：{0} | Couldn't load the photo: {0} |
+| 請再試一次 | Please try again |
+| 你只開放了部分照片給 ABAI。 | ABAI can only access some of your photos. |
+| 選更多照片 | Select more photos |
+| 最多可選 {0} 張 | Select up to {0} |
+| ABAI 還不能看到你的相簿 | ABAI can't access your photos yet |
+| 這支手機的限制設定不允許讀取照片。 | Restrictions on this iPhone don't allow photo access. |
+| 到「設定 → ABAI → 照片」選「完整取用」或「受限取用」，就能在這裡直接挑照片。 | Go to Settings → ABAI → Photos and choose Full Access or Limited Access to pick photos here. |
+| 打開設定 | Open Settings |
+| 改用系統的照片選擇器 | Use the system photo picker |
+| 這裡沒有影片 | No videos here |
+| 這裡沒有照片 | No photos here |
+| 部影片 | videos |
+| 張照片 | photos |
+| 個項目 | items |
+| 飽和 | Sat |
+| 中間調 | Mids |
+| 偏移 | Offset |
+| 一級調色 | Primaries |
+| 第 {0} 頁 | Page {0} |
+| 重置目前的色輪 | Reset this wheel |
+| 全域 | Global |
+| 沒有存到相簿的權限。請到「設定 → ABAI → 照片」打開「僅限加入照片」後再試一次。 | ABAI doesn't have permission to save to Photos. Go to Settings → ABAI → Photos, turn on Add Photos Only, then try again. |
+| 存檔失敗：{0} | Couldn't save: {0} |
+| 儲存中… | Saving… |
+| 已存到相簿 | Saved to Photos |
+| 放入模板 {0} 的圖片 | Photo for template {0} |
+| 經典色 {0} | Classic {0} |
+| 像素 | Pixel |
+| 負片 | Negative |
+| 黑白負片 | B&W negative |
+| 方形黑白 | Square B&W |
+| 低保真 | Lo-fi |
+| 上層方形 | Top square |
+| 上層橫式 | Top landscape |
+| 下層橫式 | Bottom landscape |
+| 上下雙層橫式 | Two landscape |
+| 上下雙層方形 | Two square |
+| 線稿 {0} 字 | Line art: {0} chars |
+| 陰影 {0} 字 | Shading: {0} chars |
+| 霧白邊框 | Frosted frame |
+| 集中線 | Speed lines |
+| 底片 | Film |
+| 拍立得 | Instant |
+| 蕾絲花邊 | Lace |
+| 筆刷邊框 | Brush frame |
+| 散落圖形 | Scattered shapes |
+| 大小變化 | Size variety |
+| 角度變化 | Angle variety |
+| 柔光ll | Soft glow II |
+| {0} 讀檔失敗（{1}） | Couldn't read {0} ({1}) |
+| 開不了相簿：{0} | Couldn't open Photos: {0} |
+| 照片交不進來：{0} | Couldn't import the photo: {0} |
+| 存檔失敗 | Couldn't save |
+| {0} 逾時 | {0} timed out |
+| 開始編碼 | Start encoding |
+| 寫入畫面 | Writing frames |
+| 完成影片 | Finishing video |
+| 格紋 | Plaid |
+| 失焦 | Defocus |
+| 足跡 | Footsteps |
+| 翻面 | Flip |
+| 自訂 | Custom |
+| 細長十字 | Thin cross |
+| 小十字 | Small cross |
+| 光環十字 | Halo cross |
+| 光環柔光十字 | Soft halo cross |
+| 六芒 | 6-point |
+| 扁六芒 | Flat 6-point |
+| 光環六芒 | Halo 6-point |
+| 光環扁六芒 | Halo flat 6-point |
+| 八芒 | 8-point |
+| 均勻八芒 | Even 8-point |
+| 光環米字 | Halo asterisk |
+| 光環八芒 | Halo 8-point |
+| 毛玻璃 | Frosted glass |
+| 遮罩 | Masks |
+| 方形馬賽克 | Square mosaic |
+| 方形玻璃磚 | Square glass bricks |
+| 方形毛玻璃 | Square frosted glass |
+| 方形負片 | Square negative |
+| 圓形毛玻璃 | Circle frosted glass |
+| 羽化圓形毛玻璃 | Feathered circle glass |

@@ -16487,7 +16487,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             )}
           </div>
           <div data-export-actions className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
-            <SaveButton urls={finalImages} />
+            <SaveButton urls={finalImages} review />
             <div className="flex items-center justify-center gap-4">
             <button
               onClick={(e) => { e.stopPropagation(); setExportState('idle'); clearFinalImages(); }}

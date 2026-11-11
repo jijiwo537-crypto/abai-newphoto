@@ -595,3 +595,260 @@ IG 預覽	Instagram preview	IGプレビュー	Instagram 미리보기	Instagram �
 下至上	Bottom to top	下→上	아래→위	由下至上
 高	High	高画質	고화질	高畫質
 最高	Highest	最高画質	최고 화질	最高畫質
+視覺追蹤	Tracking	トラッキング	트래킹	視覺追蹤
+效果	Effect	効果	효과	效果
+偵測	Detect	検出	감지	偵測
+照片無法讀取，請重新選擇。	Couldn't read this photo. Please choose another.	写真を読み込めません。選び直してください。	사진을 읽을 수 없어요. 다시 선택해 주세요.	照片讀不進來，請重新選擇。
+字符	Glyphs	文字	문자	字符
+外觀	Look	外観	모양	外觀
+節點	Nodes	ノード	노드	節點
+元素	Elements	要素	요소	元素
+細節	Detail	詳細	세부	細節
+撤回	Undo	取り消す	실행 취소	復原
+匯出選項	Export options	書き出しオプション	내보내기 옵션	匯出選項
+匯出格式	Export format	書き出し形式	내보내기 형식	匯出格式
+字符藝術預覽	Text art preview	文字アートのプレビュー	문자 아트 미리보기	字符藝術預覽
+視覺追蹤預覽	Tracking preview	トラッキングのプレビュー	트래킹 미리보기	視覺追蹤預覽
+即時遮罩預覽	Live mask preview	マスクのライブプレビュー	실시간 마스크 미리보기	即時遮罩預覽
+向量藝術圖層	Vector art layer	ベクターアートレイヤー	벡터 아트 레이어	向量藝術圖層
+即時字符圖層	Live text layer	ライブ文字レイヤー	실시간 문자 레이어	即時字符圖層
+高清字符圖層	HD text layer	高精細文字レイヤー	고화질 문자 레이어	高清字符圖層
+點擊圖片進行放置	Tap the photo to place	写真をタップして配置	사진을 탭해 배치	點一下照片來放置
+前後對比	Before / after	比較	전후 비교	前後對比
+藝術工具	Art tools	アートツール	아트 도구	藝術工具
+自訂字符	Custom glyphs	カスタム文字	사용자 문자	自訂字符
+字符序列	Glyph sequence	文字の並び	문자 순서	字符順序
+亮部	Lights	明部	밝은 영역	亮部
+暗部	Darks	暗部	어두운 영역	暗部
+邊緣	Edges	エッジ	가장자리	邊緣
+色彩	Color	カラー	색상	色彩
+字符顏色	Glyph color	文字色	문자 색상	字符顏色
+原色	Original	元の色	원본 색	原本的顏色
+保留底圖	Keep photo	写真を残す	사진 유지	保留照片
+輪廓	Outline	輪郭	윤곽	輪廓
+綜合	Mixed	ミックス	혼합	混合
+隨機分佈	Scatter	ランダム配置	무작위 배치	隨機排列
+星芒	Starburst	光芒	빛 갈라짐	星芒
+聚焦	Focus	フォーカス	포커스	聚焦
+選中框	Select box	選択枠	선택 상자	選取框
+交叉框	Cross box	クロス枠	교차 상자	交叉框
+鄰近	Nearby	近接	근접	鄰近
+距離	Distance	距離	거리	距離
+取景框設定	Viewfinder settings	ファインダー設定	뷰파인더 설정	取景框設定
+取景框	Viewfinder	ファインダー	뷰파인더	取景框
+取景框調整	Adjust viewfinder	ファインダー調整	뷰파인더 조정	取景框調整
+圓圈設定	Circle settings	サークル設定	원 설정	圓圈設定
+圓圈	Circle	サークル	원	圓圈
+圓圈調整	Adjust circle	サークル調整	원 조정	圓圈調整
+遮罩材質	Mask material	マスク素材	마스크 재질	遮罩材質
+霧化	Frost	すりガラス	반투명	霧面玻璃
+框線	Border	枠線	테두리	框線
+儲存預覽	Save preview	保存プレビュー	저장 미리보기	儲存預覽
+匯出預覽	Export preview	書き出しプレビュー	내보내기 미리보기	匯出預覽
+星形	Star	星形	별 모양	星形
+磨皮	Smooth	美肌	피부 보정	美肌
+修補	Heal	修復	복구	修復
+塗抹要修補的地方	Brush over what you want to fix	修復したい部分をなぞる	고칠 부분을 문질러 주세요	塗抹想修復的地方
+套用中	Applying	適用中	적용 중	套用中
+匯入中	Importing	読み込み中	가져오는 중	匯入中
+原生相機無法啟動，已換成一般相機	Couldn't start the camera, switched to the basic one	カメラを起動できないため、簡易カメラに切り替えました	카메라를 시작할 수 없어 기본 카메라로 전환했어요	相機無法啟動，已切換成簡易相機
+開啟特效	Open effects	エフェクトを開く	효과 열기	開啟特效
+切換鏡頭	Switch camera	カメラ切り替え	카메라 전환	切換鏡頭
+返回相機	Back to camera	カメラに戻る	카메라로 돌아가기	返回相機
+自動	Auto	自動	자동	自動
+果凍I	Jelly I	ゼリーI	젤리 I	果凍I
+果凍II	Jelly II	ゼリーII	젤리 II	果凍II
+淡入l	Fade I	フェードI	페이드 I	淡入I
+淡入ll	Fade II	フェードII	페이드 II	淡入II
+果凍l	Jelly I	ゼリーI	젤리 I	果凍I
+果凍ll	Jelly II	ゼリーII	젤리 II	果凍II
+波浪l	Wave I	ウェーブI	웨이브 I	波浪I
+波浪ll	Wave II	ウェーブII	웨이브 II	波浪II
+縮放l	Zoom I	ズームI	줌 I	縮放I
+縮放ll	Zoom II	ズームII	줌 II	縮放II
+圖片讀取失敗，請重新選擇圖片	Couldn't read the image. Please choose it again.	画像を読み込めません。選び直してください。	이미지를 읽을 수 없어요. 다시 선택해 주세요.	圖片讀不進來，請重新選擇。
+新增圖片	Add photo	写真を追加	사진 추가	新增照片
+影片儲存失敗，請更換格式後重試	Couldn't save the video. Try another format.	動画を保存できません。別の形式でお試しください。	동영상을 저장할 수 없어요. 다른 형식으로 시도해 주세요.	影片存不了，請換一種格式再試。
+無排版	No layout	レイアウトなし	레이아웃 없음	無排版
+所有圖片佈局	All photo layouts	すべての写真レイアウト	모든 사진 레이아웃	所有照片排版
+創意拼圖更多選項	More collage options	コラージュのその他のオプション	콜라주 옵션 더 보기	創意拼圖的更多選項
+創意拼圖匯出選項	Collage export options	コラージュの書き出しオプション	콜라주 내보내기 옵션	創意拼圖的匯出選項
+創意拼圖匯出設定	Collage export settings	コラージュの書き出し設定	콜라주 내보내기 설정	創意拼圖的匯出設定
+填入圖片排版	Fill photo layout	写真レイアウトに入れる	사진 레이아웃 채우기	把照片放進排版
+上傳遮罩圖片	Upload mask image	マスク画像をアップロード	마스크 이미지 업로드	上傳遮罩圖片
+隨機圖案	Random pattern	ランダム模様	무작위 패턴	隨機圖案
+返回圖片排版	Back to photo layout	写真レイアウトに戻る	사진 레이아웃으로 돌아가기	返回照片排版
+{0}張 {1}	{0} photos, {1}	{0}枚 {1}	{0}장 {1}	{0}張 {1}
+圖案顏色	Pattern color	模様の色	패턴 색상	圖案顏色
+壓扁	Squash	つぶす	납작하게	壓扁
+圖案大小	Pattern size	模様のサイズ	패턴 크기	圖案大小
+外框粗細	Border width	枠の太さ	테두리 두께	外框粗細
+模糊	Blur	ぼかし	흐림	模糊
+箭身長度	Shaft length	矢の長さ	화살대 길이	箭身長度
+進場方向	Direction	登場方向	등장 방향	進場方向
+隨機	Random	ランダム	무작위	隨機
+圖案 {0}	Pattern {0}	模様 {0}	패턴 {0}	圖案 {0}
+專業	Pro	プロ	프로	專業
+儲存失敗，請再試一次	Couldn't save. Please try again.	保存できません。もう一度お試しください。	저장할 수 없어요. 다시 시도해 주세요.	存不了，請再試一次。
+AI仿色中	AI matching	AIで色合わせ中	AI 색 맞추는 중	AI 仿色中
+仿色中	Matching	色合わせ中	색 맞추는 중	仿色中
+分析光影與色調	Analyzing light and tone	光とトーンを解析中	빛과 톤 분석 중	分析光影與色調
+重建色彩層次	Rebuilding color depth	色の階調を再構築中	색 계조 재구성 중	重建色彩層次
+微調最終色彩	Refining final colors	仕上げの色を調整中	최종 색 다듬는 중	微調最終色彩
+仿色方法	Match method	色合わせの方法	색 맞춤 방식	仿色方法
+新增參考圖片	Add reference photo	参考写真を追加	참고 사진 추가	新增參考照片
+新增參考圖	Add reference	参考を追加	참고 추가	新增參考圖
+參考圖片	Reference photo	参考写真	참고 사진	參考照片
+刪除這張參考圖	Delete this reference	この参考写真を削除	이 참고 사진 삭제	刪除這張參考圖
+明暗	Tone	明暗	명암	明暗
+擦除	Erase	消去	지우기	擦除
+無法處理這張照片	Couldn't process this photo	この写真は処理できません	이 사진을 처리할 수 없어요	無法處理這張照片
+畫面全空白，調一下明暗	Nothing to show. Try adjusting Tone.	何も表示されません。明暗を調整してください	표시할 내용이 없어요. 명암을 조정해 보세요	畫面是空的，請調整明暗
+生成中	Generating	生成中	생성 중	生成中
+正在生成點陣圖	Generating dot art	ドットアートを生成中	도트 아트 생성 중	正在生成點陣圖
+正在偵測輪廓	Detecting outlines	輪郭を検出中	윤곽 감지 중	正在偵測輪廓
+分析明暗層次	Analyzing tones	明暗を解析中	명암 분석 중	分析明暗層次
+描繪線條細節	Drawing line details	線の細部を描画中	선 디테일 그리는 중	描繪線條細節
+整理點陣排列	Arranging dots	ドットを整列中	도트 정렬 중	整理點陣排列
+換一張照片	Change photo	写真を変更	사진 변경	換一張照片
+反轉	Invert	反転	반전	反轉
+線稿	Line art	線画	라인 아트	線稿
+黑色	Blacks	黒レベル	블랙	黑色
+外框	Outline	アウトライン	윤곽선	外框
+（可多選）	(multi-select)	（複数選択可）	(여러 개 선택 가능)	（可多選）
+跨頁拼圖更多選項	More spread options	スプレッドのその他のオプション	스프레드 옵션 더 보기	跨頁拼圖的更多選項
+跨頁拼圖匯出選項	Spread export options	スプレッドの書き出しオプション	스프레드 내보내기 옵션	跨頁拼圖的匯出選項
+跨頁拼圖匯出設定	Spread export settings	スプレッドの書き出し設定	스프레드 내보내기 설정	跨頁拼圖的匯出設定
+佈局{0}	Layout {0}	レイアウト{0}	레이아웃 {0}	佈局{0}
+開啟藝術效果	Open Art effects	アート効果を開く	아트 효과 열기	開啟藝術效果
+藝術效果	Art effects	アート効果	아트 효과	藝術效果
+一鍵套用藝術風格	One-tap art styles	ワンタップでアート風に	원탭 아트 스타일	一鍵套用藝術風格
+開啟點陣文字	Open Dot art	ドットアートを開く	도트 아트 열기	開啟點陣文字
+點陣文字	Dot art	ドットアート	도트 아트	點陣藝術
+將圖片轉點陣圖案	Turn photos into dots	写真をドット絵に	사진을 도트로	把照片變成點陣圖
+聯絡資訊	Contact	連絡先	연락처	聯絡資訊
+讚數	Likes	いいね数	좋아요 수	讚數
+留言數	Comments	コメント数	댓글 수	留言數
+轉發數	Reposts	リポスト数	리포스트 수	轉發數
+分享數	Shares	シェア数	공유 수	分享數
+線性漸層	Linear gradient	線形グラデーション	선형 그라디언트	線性漸層
+放射漸層	Radial gradient	円形グラデーション	원형 그라디언트	放射漸層
+顏色範圍	Color range	色域	색상 범위	顏色範圍
+明度範圍	Luminance range	輝度範囲	밝기 범위	明度範圍
+柔化	Feather	ぼかし	페더	柔化邊緣
+下限	Min	下限	최소	下限
+上限	Max	上限	최대	上限
+平滑	Smooth	滑らかさ	부드럽게	平滑
+色輪	Wheels	カラーホイール	컬러 휠	色輪
+關閉匯出選項	Close export options	書き出しオプションを閉じる	내보내기 옵션 닫기	關閉匯出選項
+線性	Linear	線形	선형	線性
+放射	Radial	円形	원형	放射
+新增遮色片	Add mask	マスクを追加	마스크 추가	新增遮色片
+遮色片 {0}	Mask {0}	マスク {0}	마스크 {0}	遮色片 {0}
+隱藏範圍	Hide overlay	範囲を隠す	범위 숨기기	隱藏範圍
+顯示範圍	Show overlay	範囲を表示	범위 보기	顯示範圍
+刪除遮色片	Delete mask	マスクを削除	마스크 삭제	刪除遮色片
+收起遮色片工具	Collapse mask tools	マスクツールを閉じる	마스크 도구 접기	收起遮色片工具
+展開遮色片工具	Expand mask tools	マスクツールを開く	마스크 도구 펼치기	展開遮色片工具
+收起遮色片參數	Collapse mask settings	マスク設定を閉じる	마스크 설정 접기	收起遮色片設定
+遮色片參數	Mask settings	マスク設定	마스크 설정	遮色片設定
+選一種遮色片	Choose a mask type	マスクの種類を選択	마스크 종류를 선택하세요	選一種遮色片
+在照片上拖曳，拉出線性漸層	Drag on the photo to draw a linear gradient	写真上をドラッグして線形グラデーションを作成	사진 위를 드래그해 선형 그라디언트를 만드세요	在照片上拖曳，拉出線性漸層
+從中心往外拖曳，畫出放射範圍	Drag out from the center to draw a radial area	中心から外へドラッグして円形の範囲を作成	중심에서 바깥으로 드래그해 원형 범위를 만드세요	從中心往外拖曳，畫出圓形範圍
+在要調整的地方塗抹	Brush over the area to adjust	調整したい部分をなぞる	조정할 부분을 문질러 주세요	塗抹要調整的地方
+點選要選取的顏色	Tap a color to select it	選択したい色をタップ	선택할 색을 탭하세요	點選要選取的顏色
+點選照片，選取那一段亮度	Tap the photo to select that brightness	写真をタップしてその明るさを選択	사진을 탭해 그 밝기를 선택하세요	點照片，選取那一段亮度
+點其他地方可以換一個顏色	Tap elsewhere to pick another color	別の場所をタップして色を変更	다른 곳을 탭하면 색을 바꿀 수 있어요	點其他地方可以換顏色
+點照片可以重新取樣亮度	Tap the photo to resample brightness	写真をタップして明るさを再取得	사진을 탭하면 밝기를 다시 선택해요	點照片可以重新取樣亮度
+切換到編輯遮色片	Switch to mask editing	マスク編集に切り替え	마스크 편집으로 전환	切換到編輯遮色片
+切換到調節	Switch to adjustments	調整に切り替え	조정으로 전환	切換到調整
+人像	Portrait	ポートレート	인물	人像
+影片 {0}	Video {0}	動画 {0}	동영상 {0}	影片 {0}
+照片	Photo	写真	사진	照片
+最近項目	Recents	最近の項目	최근 항목	最近項目
+選擇影片	Select video	動画を選択	동영상 선택	選擇影片
+選擇照片	Select photo	写真を選択	사진 선택	選擇照片
+選擇照片或影片	Select photo or video	写真または動画を選択	사진 또는 동영상 선택	選擇照片或影片
+照片讀不進來：{0}	Couldn't load the photo: {0}	写真を読み込めません：{0}	사진을 불러올 수 없어요: {0}	照片讀不進來：{0}
+請再試一次	Please try again	もう一度お試しください	다시 시도해 주세요	請再試一次
+你只開放了部分照片給 ABAI。	ABAI can only access some of your photos.	ABAIは一部の写真にのみアクセスできます。	ABAI는 일부 사진에만 접근할 수 있어요.	ABAI 只能取用部分照片。
+選更多照片	Select more photos	写真をさらに選択	사진 더 선택	選更多照片
+最多可選 {0} 張	Select up to {0}	最大{0}枚まで選択可	최대 {0}장 선택 가능	最多可選 {0} 張
+ABAI 還不能看到你的相簿	ABAI can't access your photos yet	ABAIはまだ写真にアクセスできません	ABAI가 아직 사진에 접근할 수 없어요	ABAI 還不能取用你的照片
+這支手機的限制設定不允許讀取照片。	Restrictions on this iPhone don't allow photo access.	このiPhoneの制限設定により、写真へのアクセスが許可されていません。	이 iPhone의 제한 설정으로 사진 접근이 허용되지 않아요.	這支 iPhone 的限制設定不允許取用照片。
+到「設定 → ABAI → 照片」選「完整取用」或「受限取用」，就能在這裡直接挑照片。	Go to Settings → ABAI → Photos and choose Full Access or Limited Access to pick photos here.	「設定」→「ABAI」→「写真」で「フルアクセス」または「制限付きアクセス」を選ぶと、ここで写真を選べます。	설정 → ABAI → 사진에서 '전체 접근' 또는 '제한된 접근'을 선택하면 여기서 사진을 고를 수 있어요.	到「設定 → ABAI → 照片」選「完整取用」或「受限取用」，就能在這裡挑照片。
+打開設定	Open Settings	設定を開く	설정 열기	打開設定
+改用系統的照片選擇器	Use the system photo picker	システムの写真ピッカーを使う	시스템 사진 선택기 사용	改用系統的照片選擇器
+這裡沒有影片	No videos here	動画がありません	동영상이 없어요	這裡沒有影片
+這裡沒有照片	No photos here	写真がありません	사진이 없어요	這裡沒有照片
+部影片	videos	本の動画	개의 동영상	部影片
+張照片	photos	枚の写真	장의 사진	張照片
+個項目	items	個の項目	개 항목	個項目
+飽和	Sat	彩度	채도	飽和度
+中間調	Mids	中間調	중간 톤	中間調
+偏移	Offset	オフセット	오프셋	偏移
+一級調色	Primaries	プライマリー	프라이머리	一級調色
+第 {0} 頁	Page {0}	{0}ページ目	{0}페이지	第 {0} 頁
+重置目前的色輪	Reset this wheel	このホイールをリセット	이 휠 재설정	重置目前的色輪
+全域	Global	全体	전체	整體
+沒有存到相簿的權限。請到「設定 → ABAI → 照片」打開「僅限加入照片」後再試一次。	ABAI doesn't have permission to save to Photos. Go to Settings → ABAI → Photos, turn on Add Photos Only, then try again.	写真に保存する権限がありません。「設定」→「ABAI」→「写真」で「写真の追加のみ」をオンにして、もう一度お試しください。	사진에 저장할 권한이 없어요. 설정 → ABAI → 사진에서 '사진 추가만'을 켠 뒤 다시 시도해 주세요.	沒有存到相簿的權限。請到「設定 → ABAI → 照片」打開「僅限加入照片」後再試一次。
+存檔失敗：{0}	Couldn't save: {0}	保存できません：{0}	저장할 수 없어요: {0}	存不了：{0}
+儲存中…	Saving…	保存中…	저장 중…	儲存中…
+已存到相簿	Saved to Photos	写真に保存済み	사진에 저장됨	已存到相簿
+放入模板 {0} 的圖片	Photo for template {0}	テンプレート{0}の写真	템플릿 {0}의 사진	模板 {0} 的照片
+經典色 {0}	Classic {0}	クラシック {0}	클래식 {0}	經典色 {0}
+像素	Pixel	ピクセル	픽셀	像素
+負片	Negative	ネガ	네거티브	負片
+黑白負片	B&W negative	白黒ネガ	흑백 네거티브	黑白負片
+方形黑白	Square B&W	スクエア白黒	정사각 흑백	方形黑白
+低保真	Lo-fi	ローファイ	로파이	低保真
+上層方形	Top square	上にスクエア	위 정사각형	上層方形
+上層橫式	Top landscape	上に横長	위 가로형	上層橫式
+下層橫式	Bottom landscape	下に横長	아래 가로형	下層橫式
+上下雙層橫式	Two landscape	上下に横長	위아래 가로형	上下雙層橫式
+上下雙層方形	Two square	上下にスクエア	위아래 정사각형	上下雙層方形
+線稿 {0} 字	Line art: {0} chars	線画 {0}文字	라인 아트 {0}자	線稿 {0} 字
+陰影 {0} 字	Shading: {0} chars	陰影 {0}文字	음영 {0}자	陰影 {0} 字
+霧白邊框	Frosted frame	フロストフレーム	프로스트 프레임	霧白邊框
+集中線	Speed lines	集中線	집중선	集中線
+底片	Film	フィルム	필름	底片
+拍立得	Instant	チェキ風	폴라로이드	拍立得風格
+蕾絲花邊	Lace	レース	레이스	蕾絲花邊
+筆刷邊框	Brush frame	ブラシフレーム	브러시 프레임	筆刷邊框
+散落圖形	Scattered shapes	散らばる図形	흩어진 도형	散落圖形
+大小變化	Size variety	サイズのばらつき	크기 변화	大小變化
+角度變化	Angle variety	角度のばらつき	각도 변화	角度變化
+柔光ll	Soft glow II	ソフトグローII	소프트 글로우 II	柔光II
+{0} 讀檔失敗（{1}）	Couldn't read {0} ({1})	{0}を読み込めません（{1}）	{0}을(를) 읽을 수 없어요({1})	{0} 讀不進來（{1}）
+開不了相簿：{0}	Couldn't open Photos: {0}	写真を開けません：{0}	사진을 열 수 없어요: {0}	開不了相簿：{0}
+照片交不進來：{0}	Couldn't import the photo: {0}	写真を読み込めません：{0}	사진을 가져올 수 없어요: {0}	照片匯不進來：{0}
+存檔失敗	Couldn't save	保存できません	저장할 수 없어요	存不了
+{0} 逾時	{0} timed out	{0}がタイムアウトしました	{0} 시간 초과	{0} 逾時
+開始編碼	Start encoding	エンコード開始	인코딩 시작	開始編碼
+寫入畫面	Writing frames	フレーム書き込み	프레임 쓰기	寫入畫面
+完成影片	Finishing video	動画の仕上げ	동영상 마무리	完成影片
+格紋	Plaid	チェック	체크	格紋
+失焦	Defocus	ピンぼけ	초점 흐림	失焦
+足跡	Footsteps	足あと	발자국	足跡
+翻面	Flip	フリップ	뒤집기	翻面
+自訂	Custom	カスタム	사용자 설정	自訂
+細長十字	Thin cross	細い十字	가는 십자	細長十字
+小十字	Small cross	小さな十字	작은 십자	小十字
+光環十字	Halo cross	ハロー十字	헤일로 십자	光環十字
+光環柔光十字	Soft halo cross	ソフトハロー十字	소프트 헤일로 십자	光環柔光十字
+六芒	6-point	6本	6갈래	六芒
+扁六芒	Flat 6-point	扁平6本	납작 6갈래	扁六芒
+光環六芒	Halo 6-point	ハロー6本	헤일로 6갈래	光環六芒
+光環扁六芒	Halo flat 6-point	ハロー扁平6本	헤일로 납작 6갈래	光環扁六芒
+八芒	8-point	8本	8갈래	八芒
+均勻八芒	Even 8-point	均等8本	균등 8갈래	均勻八芒
+光環米字	Halo asterisk	ハロー米字	헤일로 별표	光環米字
+光環八芒	Halo 8-point	ハロー8本	헤일로 8갈래	光環八芒
+毛玻璃	Frosted glass	すりガラス	반투명 유리	毛玻璃
+遮罩	Masks	マスク	마스크	遮罩
+方形馬賽克	Square mosaic	四角モザイク	사각 모자이크	方形馬賽克
+方形玻璃磚	Square glass bricks	四角ガラスブロック	사각 유리 블록	方形玻璃磚
+方形毛玻璃	Square frosted glass	四角すりガラス	사각 반투명 유리	方形毛玻璃
+方形負片	Square negative	四角ネガ	사각 네거티브	方形負片
+圓形毛玻璃	Circle frosted glass	円形すりガラス	원형 반투명 유리	圓形毛玻璃
+羽化圓形毛玻璃	Feathered circle glass	ぼかし円形ガラス	페더 원형 유리	羽化圓形毛玻璃

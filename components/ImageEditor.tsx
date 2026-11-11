@@ -8538,7 +8538,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   </div>
               </div>
               <div data-export-actions className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
-                   <SaveButton urls={encodedExports.length ? encodedExports : finalImages.length ? finalImages : (finalImage ? [finalImage] : [])} />
+                   <SaveButton review urls={encodedExports.length ? encodedExports : finalImages.length ? finalImages : (finalImage ? [finalImage] : [])} />
                    <div className="flex items-center justify-center gap-4">
                    <button 
                        onClick={() => { setSaveState('idle'); }}
