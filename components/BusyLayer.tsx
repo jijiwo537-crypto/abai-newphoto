@@ -10,13 +10,12 @@ import { createPortal } from 'react-dom';
  * 掛到 body 之後，它永遠以手機螢幕為準。所有工具共用這一個，轉圈的位置完全相同，
  * 「匯出中」換成「存相簿」時看不出換了一層。
  *
- * 位置：上緣延伸到畫面外 12vh、下緣貼齊畫面底部，整個螢幕仍然全部蓋住；
- * 裡面的東西照這一層置中，所以轉圈在畫面高度的 44% 處（比正中央高一點，看起來才是置中）。
+ * 位置：剛好蓋滿整個螢幕，轉圈在螢幕的正中央（垂直置中）；百分比、文字、取消鍵掛在它下方。
  */
 export const BusyLayer: React.FC<{ className?: string; style?: React.CSSProperties; children?: React.ReactNode } & React.HTMLAttributes<HTMLDivElement>> =
   ({ className = '', style, children, ...rest }) => {
     const node = (
-      <div {...rest} className={`fixed inset-x-0 bottom-0 top-[-12vh] ${className}`} style={style}>
+      <div {...rest} className={`fixed inset-0 ${className}`} style={style}>
         {children}
       </div>
     );
