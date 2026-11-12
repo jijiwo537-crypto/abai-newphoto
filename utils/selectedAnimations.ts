@@ -3,10 +3,10 @@ import { paintSelectedWarp } from './selectedMotionWarp';
 export type SelectedTarget = 'text' | 'symbol' | 'shape' | 'pattern';
 const entries = [
  ['T-E03','淡入ll'],['T-E07','果凍ll'],
- ['T-L01','呼吸'],['T-L04','閃爍'],['T-L15','波浪ll'],['T-L20','漂浮'],
+ ['T-L01','呼吸'],['T-L04','閃爍'],['T-L15','波浪ll'],['T-L20','搖晃'],
  ['S-E03','淡入'],['S-E04','足跡'],['S-E10','旋轉'],
- ['S-L01','呼吸'],['S-L03','搖擺'],['S-L07','翻面'],['S-L20','漂浮'],
- ['P-L02','閃爍'],['P-L04','發光'],['P-L07','翻面'],['P-L20','漂浮'],
+ ['S-L01','呼吸'],['S-L03','搖擺'],['S-L07','翻面'],['S-L20','搖晃'],
+ ['P-L02','閃爍'],['P-L04','發光'],['P-L07','翻面'],['P-L20','搖晃'],
 ] as const;
 export const SELECTED_ANIMATIONS = entries.map(([code,name]) => ({
  code, id: `lab-${code}`, name, target: ({T:'text',S:'symbol',G:'shape',P:'pattern'} as const)[code[0] as 'T'|'S'|'G'|'P'], phase: code[2] === 'E' ? 'entry' : 'idle',
@@ -61,13 +61,15 @@ const defocusOf=(frame:SelectedFrame,index:number,count:number)=>{
  // 模糊半徑直接跟曲線成正比（不再加任何次方），節奏與呼吸的明暗完全一樣
  return defocusLevel(frame.clock??frame.t,frame.speed,group,groups)*frame.amount*smooth(frame.t/.6);
 };
-/* ───────────── 漂浮（T-L20／S-L20／P-L20，取代原本的失焦） ─────────────
+/* ───────────── 搖晃（T-L20／S-L20／P-L20，取代原本的失焦） ─────────────
    每一個單位沿著一個很小的「8 字」（x＝sin u、y＝sin 2u ／ 2）慢慢漂，移動時順著方向微微傾斜，
    大小也跟著一點點呼吸 —— 像浮在水面上。各單位用黃金角錯開相位，整串看起來是一起在空氣裡飄，
    不會整齊劃一。只有位移／旋轉／縮放：不模糊、不快取、不換解析度，所以不會抖、不會糊，發光一起動。
    進場後 1.2 秒內從靜止平順地帶起來（en）。 */
 export function floatPose(frame:SelectedFrame,index:number,r:number){
- const en=smooth(frame.t/1.2),a=frame.amount*en;
+ /* 幅度：面板 50 ＝ 原本的 100、100 ＝ 原本的 150（50 以下等比例，50 以上每多 1 加 1） */
+ const amt=frame.amount<=.5?frame.amount*2:1+(frame.amount-.5);
+ const en=smooth(frame.t/1.2),a=amt*en;
  const u=frame.t*frame.speed*.9+frame.phase+index*2.39996;
  return {
   dx:Math.sin(u)*r*.18*a,
@@ -664,7 +666,7 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
 export function selectedPatternOffset(frame:SelectedFrame|undefined, size:number) {
  if(!frame)return 0;
  // P-L02 已改成全體同步閃爍，不再改動圖案位置。
- /* 漂浮：圖案的上下漂移寫進「位置」本身 —— 本體、發光、連線都用同一個位置，光跟著一起動 */
+ /* 搖晃：圖案的上下漂移寫進「位置」本身 —— 本體、發光、連線都用同一個位置，光跟著一起動 */
  if(frame.id==='lab-P-L20')return floatPose(frame,frame.slot??0,size/2).dy;
  return 0;
 }
@@ -682,7 +684,7 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
 export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number,draw:(g:CanvasRenderingContext2D)=>void,cacheKey?:object){
  void cacheKey;
  if(frame?.id==='lab-P-L20'){
-  /* 漂浮：位置已經由 selectedPatternOffset 移好（發光一起），這裡只加一點跟著漂的傾斜 */
+  /* 搖晃：位置已經由 selectedPatternOffset 移好（發光一起），這裡只加一點跟著漂的傾斜 */
   const r=selectedPatternPose(frame,size).rotDeg*Math.PI/180;
   ctx.translate(x,y);ctx.rotate(r);ctx.translate(-x,-y);
   draw(ctx);
@@ -691,7 +693,7 @@ export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:Selected
  applySelectedPatternAppearance(ctx,frame,size,x,y);
  draw(ctx);
 }
-/** 圖案本體這一格的「形狀姿態」（翻面的橫向壓扁、漂浮的傾斜）。
+/** 圖案本體這一格的「形狀姿態」（翻面的橫向壓扁、搖晃的傾斜）。
  *  發光是另外先畫的一層，也要套上同一個姿態 —— 不然本體翻面／傾斜時，光留在原地不動 */
 export function selectedPatternPose(frame:SelectedFrame|undefined,size:number):{sx:number;rotDeg:number}{
  if(!frame)return {sx:1,rotDeg:0};

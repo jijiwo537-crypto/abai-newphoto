@@ -12,7 +12,7 @@ export function idleDefaults(kind: string, target: IdleTarget) {
     if (kind === 'lab-T-L15') return { amp: 100, speed: S(90) };                          // 波浪ll：幅度 100、速度 90（1.64）
     if (kind === 'lab-T-L01') return { amp: 100, speed: rangedSpeedFromUi(kind, 90) };     // 呼吸：幅度 100、速度 90（2.72）
     if (kind === 'lab-T-L04') return { amp: 50, speed: S(100) };                          // 閃爍：速度 100（1.8）
-    if (kind === 'lab-T-L20') return { amp: 40, speed: rangedSpeedFromUi(kind, 50) };     // 漂浮：幅度 40、速度 50（2.8）
+    if (kind === 'lab-T-L20') return { amp: 40, speed: rangedSpeedFromUi(kind, 50) };     // 搖晃：幅度 40、速度 50（3.84）
   }
   // 符號
   if (target.symbol) {
@@ -21,7 +21,7 @@ export function idleDefaults(kind: string, target: IdleTarget) {
     if (kind === 'breathe') return { amp: 30, speed: S(50) };                              // 縮放I：速度 50（1.0）
     if (kind === 'lab-S-L03') return { amp: 100, speed: S(70) };                          // 搖擺：幅度 100、速度 70（1.32）
     if (kind === 'lab-S-L07') return { amp: 50, speed: S(50) };                           // 翻面：速度 50（1.0）
-    if (kind === 'lab-S-L20') return { amp: 30, speed: rangedSpeedFromUi(kind, 50) };     // 漂浮：幅度 30、速度 50（2.8）
+    if (kind === 'lab-S-L20') return { amp: 30, speed: rangedSpeedFromUi(kind, 50) };     // 搖晃：幅度 30、速度 50（3.84）
   }
   // 縮放II（文字）：速度 50（＝1.25）
   if (kind === 'symbol-breathe2') return { amp: 60, speed: 1.25 };
@@ -71,12 +71,13 @@ export const PATTERN_IDLE_DEFAULTS: Record<string, { amp?: number; speed?: numbe
   spin: { speed: 1.32 },                                      // 旋轉：速度 70（1.32）
   'lab-P-L04': { amp: 50, speed: 1.8 },                       // 發光：幅度 50、速度＝原本刻度的 100（1.8）
   'lab-P-L07': { amp: 55 },                                   // 翻面：幅度 55
-  'lab-P-L20': { amp: 50, speed: .2 + 5.2 * .35 },            // 漂浮：幅度 50、速度 35（2.02）
+  'lab-P-L20': { amp: 50, speed: 1.24 + 5.2 * .35 },          // 搖晃：幅度 50、速度 35（3.06）
 };
 
 /** 有自己速度範圍的常駐動畫：滑桿 0～100 對應 [最小, 最大] 倍（線性）。 */
 export const SPEED_RANGES: Record<string, [number, number]> = {
-  'lab-T-L20': [.2, 5.4], 'lab-S-L20': [.2, 5.4], 'lab-P-L20': [.2, 5.4],   // 漂浮
+  /* 搖晃：面板 50 ＝ 舊刻度的 70（3.84）、100 ＝ 舊刻度的 120（6.44） */
+  'lab-T-L20': [1.24, 6.44], 'lab-S-L20': [1.24, 6.44], 'lab-P-L20': [1.24, 6.44],
   'lab-P-L02': [1, 2],                                                        // 圖案閃爍
   'lab-T-L01': [.2, 3],                                                       // 文字呼吸
   'lab-S-L01': [.2, 2.5],                                                     // 符號呼吸

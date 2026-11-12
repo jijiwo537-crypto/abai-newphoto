@@ -78,8 +78,8 @@ export function photoSeamEdges(items: SeamItem[], page?: { width: number; height
  */
 export function drawSeamBleed(ctx: CanvasRenderingContext2D, src: CanvasImageSource, w: number, h: number, edges: SeamEdges, pad: number) {
   if (!(pad > 0)) return;
-  const sw = (src as HTMLImageElement).naturalWidth || (src as HTMLCanvasElement).width || 0;
-  const sh = (src as HTMLImageElement).naturalHeight || (src as HTMLCanvasElement).height || 0;
+  const sw = (src as HTMLImageElement).naturalWidth || (src as HTMLVideoElement).videoWidth || (src as HTMLCanvasElement).width || 0;
+  const sh = (src as HTMLImageElement).naturalHeight || (src as HTMLVideoElement).videoHeight || (src as HTMLCanvasElement).height || 0;
   if (!sw || !sh) return;
   const l = -w / 2, t = -h / 2;
   const padL = edges[0] ? pad : 0, padR = edges[1] ? pad : 0;

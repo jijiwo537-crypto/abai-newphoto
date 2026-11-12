@@ -25,6 +25,20 @@ import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { paintCachedClassicGlow } from './ClassicGlowCache';
 import { photoSeamEdges, drawSeamBleed, type SeamEdges } from '../utils/photoSeams';
+/** 影片貼著頁面邊緣或被上面的照片蓋住的那幾邊（見 utils/photoSeams）：影片在預覽裡是 <video>，
+ *  沒辦法像照片那樣只延伸最外面一排像素，改成整格往那幾邊多放大 1.5 個畫面像素（約 1%，看不出來）。
+ *  多出來的被頁面邊緣切掉、或藏在上面那張底下 —— 放大縮小時邊緣不管落在哪，都不會透出白縫。
+ *  選中框、吸附、匯出的座標都不動 */
+function videoSeamStyle(image: { id: string; width: number; height: number; scale: number; rotation: number }, moving: boolean): React.CSSProperties {
+  const base: React.CSSProperties = { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none' };
+  const seam = !moving && (image.rotation % 360) === 0 ? previewSeamEdges.get(image.id) : undefined;
+  if (!seam || !(image.width > 0) || !(image.height > 0)) return base;
+  const P = 1.5 / Math.max(.001, image.scale || 1);
+  const pl = seam[0] ? P : 0, pr = seam[1] ? P : 0, pt = seam[2] ? P : 0, pb = seam[3] ? P : 0;
+  return { ...base, transformOrigin: 'center center',
+    /* 這一層的像素是「縮放後」的框（寬＝width×scale），所以位移也要乘上 scale */
+    transform: `translate(${(pr - pl) / 2 * (image.scale || 1)}px, ${(pb - pt) / 2 * (image.scale || 1)}px) scale(${(image.width + pl + pr) / image.width}, ${(image.height + pt + pb) / image.height})` };
+}
 /** 預覽用：每張照片哪幾邊被上面的照片蓋住（照片貼照片），由編輯器每次畫面更新時算好 */
 let previewSeamEdges: Map<string, SeamEdges> = new Map();
 import { settledSortSeams } from '../utils/sortSeams';
@@ -8483,6 +8497,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
            沒套濾鏡時它就是原本那個 <video>（原生解析度、完全不佔主執行緒，
            這條路本來就沒問題）；套了濾鏡就多掛一張 GPU 畫布蓋在上面，
            **版面與變換兩者共用同一份**，所以套不套濾鏡都不會跑位。 */
+        <div style={videoSeamStyle(image, !!motionFrame)}>
         <VideoLayer
           image={image}
           boxW={image.width}
@@ -8493,6 +8508,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           glCanvas={videoWantsGl ? glCanvas : null}
           paused={videoPaused}
         />
+        </div>
       ) : (
         <img
           src={pvSrc}
@@ -15133,7 +15149,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 匯出時把自由圖層畫到頁面座標系上，順序就是陣列順序。 */
   /** 匯出（含 IG 預覽）用：每張照片哪幾邊要往外延伸，照現在的照片與頁面算（見 utils/photoSeams） */
   const exportSeamEdges = () => photoSeamEdges(floatingImages as any, { width: previewW, height: previewH, count: pages.length });
-  previewSeamEdges = useMemo(() => photoSeamEdges(floatingImages as any), [floatingImages]);
+  previewSeamEdges = useMemo(() => photoSeamEdges(floatingImages as any, { width: previewW, height: previewH, count: pages.length }),
+    [floatingImages, previewW, previewH, pages.length]);
   const drawFloatingLayers = async (
     ctx: CanvasRenderingContext2D,
     layers: FloatingImage[],
