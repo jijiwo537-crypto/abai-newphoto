@@ -24,34 +24,49 @@ import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMa
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { paintCachedClassicGlow } from './ClassicGlowCache';
-import { photoSeamEdges, drawSeamBleed, type SeamEdges } from '../utils/photoSeams';
+import { photoSeamEdges, drawSeamBleed, isSeamRaster, type SeamEdges } from '../utils/photoSeams';
 /** 影片貼著頁面邊緣或被上面的照片蓋住的那幾邊（見 utils/photoSeams）：影片在預覽裡是 <video>，
  *  沒辦法像照片那樣只延伸最外面一排像素，改成整格往那幾邊多放大 1.5 個畫面像素（約 1%，看不出來）。
  *  多出來的被頁面邊緣切掉、或藏在上面那張底下 —— 放大縮小時邊緣不管落在哪，都不會透出白縫。
  *  選中框、吸附、匯出的座標都不動 */
-function videoSeamStyle(image: { id: string; x: number; y: number; width: number; height: number; scale: number; rotation: number }, moving: boolean): React.CSSProperties {
+function videoSeamStyle(image: any, moving: boolean, k = 1): { outer: React.CSSProperties; inner: React.CSSProperties } {
   const base: React.CSSProperties = { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none' };
-  if (!(image.width > 0) || !(image.height > 0) || moving || (image.rotation % 360) !== 0) return base;
-  const under = previewSeamUnder.get(image.id);
-  /* 影片在預覽裡是 <video>，iPhone 會把它那一層的位置、大小各自取整到實體像素，邊緣跟頁面、分割線、
-     旁邊的照片差到最多一個像素 —— 那就是貼齊了還有細縫、而且放大縮小到某些倍率時縫又消失的原因。
-     所以每一條「貼齊的邊」都往外多補一點，補的量用「螢幕像素」算（--preview-inverse-scale＝每個螢幕像素
-     等於幾個內容單位，每一格縮放都會更新），不管放大縮小都一樣：
-     ‧ 整條頁面最外圈、被上面照片蓋住的邊：補 3 個螢幕像素（被整條頁面切掉／藏在照片底下，看不到）
-     ‧ 頁與頁中間的分割線：只補 0.5 個螢幕像素 —— 分割線本身約 1.3 個螢幕像素寬、蓋在最上面，
-       補的那一點剛好藏在線底下，不會跑進隔壁那一頁。 */
-  const pg = previewSeamPage, cx = image.x + image.width / 2, cy = image.y + image.height / 2;
+  const none = { outer: base, inner: base };
+  if (!(image.width > 0) || !(image.height > 0) || moving || !isSeamRaster(image)) return none;
+  /* 影片跟照片同一套：照片的邊是畫在頁面同一層裡的，邊落在哪裡就跟頁面、分割線同一套取整，所以貼齊就沒有縫。
+     影片是 <video>，iPhone 會把它單獨一層、位置大小各自取整，邊緣就會跟頁面差到一個像素 —— 那就是一直消不掉的細縫，
+     縮放到某些倍率又剛好消失。
+     做法：
+     ‧ 外面這層（一般的方框、overflow:hidden）才是畫面上看到的影片邊緣，它跟照片、頁面走同一套版面取整。
+       貼著整條頁面最外圈或被上面照片蓋住的邊，跟照片一樣往外多 3 個螢幕像素（被頁面切掉／藏在照片底下）；
+       貼著分割線的邊不延伸，剛好切在分割線上。
+     ‧ 裡面的 <video> 每邊再多 2 個螢幕像素，被外面那層切掉 —— 影片那一層怎麼取整都碰不到看得到的邊。
+     螢幕像素用 --preview-inverse-scale 換算（每一格縮放都會更新），放大縮小都一樣。 */
+  const pg = previewSeamPage, under = previewSeamUnder.get(image.id);
+  const cx = image.x + image.width / 2, cy = image.y + image.height / 2;
   const hw = image.width * image.scale / 2, hh = image.height * image.scale / 2, T = 1e-3;
   const L = cx - hw, R = cx + hw, Tp = cy - hh, B = cy + hh;
   const onDivider = (x: number) => { if (!pg || !(pg.width > 0)) return false; const j = Math.round(x / pg.width); return j > 0 && j < pg.count && Math.abs(x - j * pg.width) <= T; };
-  const outer = pg ? [Math.abs(L) <= T, Math.abs(R - pg.width * pg.count) <= T, Math.abs(Tp) <= T, Math.abs(B - pg.height) <= T]
-    : [false, false, false, false];
-  const px = [0, 1, 2, 3].map(i => (outer[i] || under?.[i]) ? 3 : (i === 0 && onDivider(L)) || (i === 1 && onDivider(R)) ? .5 : 0);
-  if (!px.some(Boolean)) return base;
+  const outer = pg ? [Math.abs(L) <= T, Math.abs(R - pg.width * pg.count) <= T, Math.abs(Tp) <= T, Math.abs(B - pg.height) <= T] : [false, false, false, false];
+  const aligned = [onDivider(L), onDivider(R), false, false].map((d, i) => d || outer[i] || !!under?.[i]);
+  if (!aligned.some(Boolean)) return none;
+  const px = [0, 1, 2, 3].map(i => (outer[i] || under?.[i]) ? 3 : 0);
   const u = (n: number) => `(${n} * var(--preview-inverse-scale, 1px))`;
-  return { ...base, left: `calc(-1 * ${u(px[0])})`, top: `calc(-1 * ${u(px[2])})`,
-    width: `calc(100% + ${u(px[0] + px[1])})`, height: `calc(100% + ${u(px[2] + px[3])})` };
+  return {
+    outer: { ...base, overflow: 'hidden', left: `calc(-1 * ${u(px[0])})`, top: `calc(-1 * ${u(px[2])})`,
+      width: `calc(100% + ${u(px[0] + px[1])})`, height: `calc(100% + ${u(px[2] + px[3])})` },
+    /* 裡面的影片：原本的框，再整個放大一點點（現在的倍率下每邊約 4 個螢幕像素，縮小到一半仍有 2 個），
+       多出來的被外面那層切掉 */
+    inner: (() => {
+      const sw = image.width * image.scale * Math.max(.05, k), sh = image.height * image.scale * Math.max(.05, k);
+      return { position: 'absolute', pointerEvents: 'none', left: `calc(${u(px[0])})`,
+        top: `calc(${u(px[2])})`, width: `calc(100% - ${u(px[0] + px[1])})`, height: `calc(100% - ${u(px[2] + px[3])})`,
+        transformOrigin: 'center center', transform: `scale(${1 + 8 / Math.max(1, sw)}, ${1 + 8 / Math.max(1, sh)})` } as React.CSSProperties;
+    })(),
+  };
 }
+/** 影片要不要走「跟照片一樣」的擺法（真實大小、不用 transform 縮放）：沒旋轉、沒形狀／圓角／羽化／描邊、不透明 */
+const videoPlainSeam = (image: any, moving: boolean) => !!image.isVideo && !moving && isSeamRaster(image);
 /** 預覽用：每張照片哪幾邊被上面的照片蓋住（照片貼照片），由編輯器每次畫面更新時算好 */
 let previewSeamEdges: Map<string, SeamEdges> = new Map();
 /** 影片用：只有「照片貼照片」（不含頁面），以及頁面大小（判斷整條頁面最外圈） */
@@ -7478,7 +7493,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      分別量 wrapper transform 與選中框實際尺寸，兩者便會在相鄰實體像素間
      來回取整。創意拼圖只有一份最終外框；經典拼圖現在也遵守同一契約。 */
   // 物件縮放的整個過程中，解碼器的 CSS 方塊大小固定，只改 transform，跟原生照片層的幾何一樣
-  const stableVectorTransform = !!image.isVideo;
+  /* 影片原本是「原尺寸＋transform 縮放」：整塊被當成獨立一層縮放、取整，邊緣永遠跟頁面差一點（貼齊還有細縫）。
+     沒旋轉、沒形狀的影片改成跟照片一樣直接用真實大小擺放，邊緣跟頁面走同一套版面取整。 */
+  // 正在縮放／拖動時維持原本的固定解碼框＋transform（不必每一格重新排版影片），停下來才換成真實大小
+  const videoPlain = videoPlainSeam(image, !!motionFrame) && !dragShift && !liveGeometry;
+  const stableVectorTransform = !!image.isVideo && !videoPlain;
   const wrapGeo: React.CSSProperties = {
     position: 'absolute',
     // 大小直接寫進版面而不是靠 transform: scale()。用 scale 放大時瀏覽器會沿用
@@ -8513,18 +8532,20 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
            沒套濾鏡時它就是原本那個 <video>（原生解析度、完全不佔主執行緒，
            這條路本來就沒問題）；套了濾鏡就多掛一張 GPU 畫布蓋在上面，
            **版面與變換兩者共用同一份**，所以套不套濾鏡都不會跑位。 */
-        <div style={videoSeamStyle(image, !!motionFrame)}>
+        (() => { const vs = videoPlain ? videoSeamStyle(image, false, previewZoom()) : videoSeamStyle(image, true); return (
+        <div style={vs.outer}><div style={vs.inner}>
         <VideoLayer
           image={image}
-          boxW={image.width}
-          boxH={image.height}
+          boxW={videoPlain ? image.width * image.scale : image.width}
+          boxH={videoPlain ? image.height * image.scale : image.height}
           videoRef={glVideoRef}
           onReady={() => setVidReady(true)}
           hidden={glLive}
           glCanvas={videoWantsGl ? glCanvas : null}
           paused={videoPaused}
         />
-        </div>
+        </div></div>
+        ); })()
       ) : (
         <img
           src={pvSrc}

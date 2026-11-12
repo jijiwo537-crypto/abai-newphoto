@@ -15,7 +15,7 @@ test('classic media uses a shared affine preview transform, not per-child CSS zo
 
 test('video decoder box stays fixed while its wrapper performs object scaling', () => {
   assert.match(grid, /stableVectorTransform = !!image\.isVideo/);
-  assert.match(grid, /<VideoLayer\s+image=\{image\}\s+boxW=\{image\.width\}\s+boxH=\{image\.height\}/);
+  assert.match(grid, /<VideoLayer\s+image=\{image\}\s+boxW=\{videoPlain \? image\.width \* image\.scale : image\.width\}\s+boxH=\{videoPlain \? image\.height \* image\.scale : image\.height\}/);
   assert.match(grid, /\}, \[on, fxKey, lutRevision, dpr, videoRef\]\)/);
 });
 
