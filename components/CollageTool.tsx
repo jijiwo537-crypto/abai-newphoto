@@ -1,4 +1,4 @@
-import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
+import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
 import { BusyLayer } from './BusyLayer';
 import { waveWarp, revealPathD } from '../utils/waveWarp';
@@ -6950,7 +6950,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
     const glowInto = (
       gg: CanvasRenderingContext2D, h: any, alpha: number,
-      sz: number, angle: number, gx: number, gy: number, gcol: string,
+      sz: number, angle: number, gx: number, gy: number, gcol: string, sx = 1,
     ) => {
       const amp = glowBeat(h);
       const a = alpha * amp;
@@ -6967,6 +6967,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          'high' 在手機上會走比較貴的重取樣路徑，這裡不需要。 */
       gg.imageSmoothingEnabled = true;
       gg.translate(gx, gy);
+      // 跟本體同一個姿態：翻面時一起壓扁（本體是在螢幕座標裡橫向縮放，再畫轉過角度的圖案）
+      if (sx !== 1) gg.scale(sx, 1);
       if (angle) gg.rotate((angle * Math.PI) / 180);
       if (k !== 1) gg.scale(k, k);
       gg.drawImage(tmp, -side / 2, -side / 2);
@@ -7023,7 +7025,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const glowPass = (
       g: CanvasRenderingContext2D,
       side: 'image' | 'mask',
-      items: { h: any; a: number; sz: number; ang: number; x: number; y: number }[],
+      items: { h: any; a: number; sz: number; ang: number; x: number; y: number; sx?: number }[],
       pairs: [any, any][],
     ) => {
       if (!glowOn(side) || (!items.length && !pairs.length)) return;
@@ -7074,7 +7076,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const sig = `${side}|${glowMode}|${holeGlow}|${glowColorOf(side)}|${maskColor}|${stripeA}|${stripeB}|${linkMode}|${linkColor || ''}|${linkGlowColor}`
         + `|${LINK_W.toFixed(3)}|${holeType}|${isTextHole(holeType) ? customText : ''}|${s.toFixed(4)}`
         + `|${g.canvas.width}x${g.canvas.height}|${g.getTransform().e},${g.getTransform().f}`
-        + '|I' + items.map(it => `${it.x.toFixed(1)},${it.y.toFixed(1)},${it.sz.toFixed(1)},${it.ang.toFixed(1)},${(it.a * glowBeat(it.h)).toFixed(3)}`).join(';')
+        + '|I' + items.map(it => `${it.x.toFixed(1)},${it.y.toFixed(1)},${it.sz.toFixed(1)},${it.ang.toFixed(1)},${(it.sx ?? 1).toFixed(3)},${(it.a * glowBeat(it.h)).toFixed(3)}`).join(';')
         + '|P' + pairs.map(pr => {
           const pa = hA(pr[0]), pb = hA(pr[1]);
           // local＝進場時線「長到哪裡」，播動畫時每一格都不同，一定要進簽名
@@ -7111,12 +7113,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            全部走暫存層　p90 51ms、25 格掉幀
            走這條快路徑　p90 23.6ms、0 格掉幀（跟發光關掉時一樣順） */
       if (!pairs.length) {
-        items.forEach(it => glowInto(g, it.h, it.a, it.sz, it.ang, it.x, it.y, glowColorOf(side, it.h)));
+        items.forEach(it => glowInto(g, it.h, it.a, it.sz, it.ang, it.x, it.y, glowColorOf(side, it.h), it.sx));
         return;
       }
       const done = withGlowLayer(g, g.canvas.width, g.canvas.height,
         gg => {
-          items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y, glowColorOf(side, it.h)));
+          items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y, glowColorOf(side, it.h), it.sx));
           if (pairs.length) {
             /* 線也是同一個道理（見 glowInto）：先用滿透明度把三段疊好，
                再整張按透明度貼。透明度相同的線可以一起畫，
@@ -7320,14 +7322,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          圖片自身的 1:1 座標，顏色仍沿用既有遮罩色／自訂遮罩 pattern。 */
       const rx = layout === FULL ? 1 : (iw > 0 ? maskW / iw : 1);
       const ry = layout === FULL ? 1 : (ih > 0 ? maskH / ih : 1);
-      const imgItems: { h: any; a: number; sz: number; ang: number; x: number; y: number }[] = [];
+      const imgItems: { h: any; a: number; sz: number; ang: number; x: number; y: number; sx?: number }[] = [];
       holes.forEach(h => {
         const A0 = hA(h);
         if (!A0.on) return;
         const sz0 = getHoleSize(h) * A0.k * s;
+        const pose0 = selectedPatternPose(A0.lab, sz0);
         imagePlacements(h, sz0, A0.x * s, A0.y * s).forEach(([dx, dy]) => imgItems.push({
-          h, a: A0.a, sz: sz0,
-          ang: (h.angle !== undefined ? h.angle : holeAngle) + A0.rot,
+          h, a: A0.a, sz: sz0, sx: pose0.sx,
+          ang: (h.angle !== undefined ? h.angle : holeAngle) + A0.rot + pose0.rotDeg,
           x: A0.x * s + dx, y: A0.y * s + dy,
         }));
       });
@@ -7463,14 +7466,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          這裡一定要先切回一般疊加，不然每畫一顆光就會把整張遮罩洗掉一次，
          最後只剩最後那顆光 —— 畫面上看起來就是「遮罩整個不見了」。 */
       lmx.globalCompositeOperation = 'source-over';
-      const mskItems: { h: any; a: number; sz: number; ang: number; x: number; y: number }[] = [];
+      const mskItems: { h: any; a: number; sz: number; ang: number; x: number; y: number; sx?: number }[] = [];
       holes.forEach(h => {
         const A = hA(h);
         if (!A.on) return;
         const sz0 = getHoleSize(h) * A.k * s;
+        const pose0 = selectedPatternPose(A.lab, sz0);
         maskPlacements(h, sz0, A.x * s, A.y * s).forEach(([dx, dy]) => mskItems.push({
-          h, a: A.a, sz: sz0,
-          ang: (h.angle !== undefined ? h.angle : holeAngle) + A.rot,
+          h, a: A.a, sz: sz0, sx: pose0.sx,
+          ang: (h.angle !== undefined ? h.angle : holeAngle) + A.rot + pose0.rotDeg,
           x: A.x * s + dx, y: A.y * s + dy,
         }));
       });
@@ -7544,15 +7548,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.beginPath(); ctx.rect(offs.ix, offs.iy, iw, ih); ctx.clip();
       ctx.translate(offs.mx, offs.my);      // 洞的座標是遮罩座標系
       ctx.fillStyle = pat;
-      const ovItems: { h: any; a: number; sz: number; ang: number; x: number; y: number }[] = [];
+      const ovItems: { h: any; a: number; sz: number; ang: number; x: number; y: number; sx?: number }[] = [];
       holes.forEach(h => {
         const sd0 = h.side || 'both';
         if (sd0 !== 'both' && sd0 !== 'mask') return;
         const A0 = hA(h);
         if (!A0.on) return;
+        const ovSz = getHoleSize(h) * A0.k * s, pose0 = selectedPatternPose(A0.lab, ovSz);
         ovItems.push({
-          h, a: A0.a, sz: getHoleSize(h) * A0.k * s,
-          ang: (h.angle !== undefined ? h.angle : holeAngle) + A0.rot,
+          h, a: A0.a, sz: ovSz, sx: pose0.sx,
+          ang: (h.angle !== undefined ? h.angle : holeAngle) + A0.rot + pose0.rotDeg,
           x: A0.x * s, y: A0.y * s,
         });
       });

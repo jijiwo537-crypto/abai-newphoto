@@ -672,7 +672,7 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
  if(!frame)return;
  const en=smooth(frame.t/1.2),v=frame.t*frame.speed*1.5+frame.phase;
  if(frame.id==='lab-P-L07'){
-  const sx=Math.max(.02,1-(1-Math.abs(Math.cos(v)))*.8*frame.amount*en);
+  const sx=selectedPatternPose(frame,size).sx;void en;void v;
   ctx.translate(x,y);ctx.scale(sx,1);ctx.translate(-x,-y);
  }
  // 失焦不在這裡設 ctx.filter（iOS 不支援），改由 paintSelectedPattern 做真正的高斯模糊。
@@ -683,13 +683,24 @@ export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:Selected
  void cacheKey;
  if(frame?.id==='lab-P-L20'){
   /* 漂浮：位置已經由 selectedPatternOffset 移好（發光一起），這裡只加一點跟著漂的傾斜 */
-  const f=floatPose(frame,frame.slot??0,size/2);
-  ctx.translate(x,y);ctx.rotate(f.rot);ctx.translate(-x,-y);
+  const r=selectedPatternPose(frame,size).rotDeg*Math.PI/180;
+  ctx.translate(x,y);ctx.rotate(r);ctx.translate(-x,-y);
   draw(ctx);
   return;
  }
  applySelectedPatternAppearance(ctx,frame,size,x,y);
  draw(ctx);
+}
+/** 圖案本體這一格的「形狀姿態」（翻面的橫向壓扁、漂浮的傾斜）。
+ *  發光是另外先畫的一層，也要套上同一個姿態 —— 不然本體翻面／傾斜時，光留在原地不動 */
+export function selectedPatternPose(frame:SelectedFrame|undefined,size:number):{sx:number;rotDeg:number}{
+ if(!frame)return {sx:1,rotDeg:0};
+ if(frame.id==='lab-P-L07'){
+  const en=smooth(frame.t/1.2),v=frame.t*frame.speed*1.5+frame.phase;
+  return {sx:Math.max(.02,1-(1-Math.abs(Math.cos(v)))*.8*frame.amount*en),rotDeg:0};
+ }
+ if(frame.id==='lab-P-L20')return {sx:1,rotDeg:floatPose(frame,frame.slot??0,size/2).rot*180/Math.PI};
+ return {sx:1,rotDeg:0};
 }
 export function selectedPatternGlow(frame:SelectedFrame|undefined) {
  if(frame?.id!=='lab-P-L04')return 0;

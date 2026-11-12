@@ -242,6 +242,26 @@ async function scenarioCamFx() {
   }
 }
 
+/* 選中框：進編輯 → 濾鏡選第三張 → 記下卡片位置（CI 截圖後放大看四個角）→ 特效選一張 → 模板 */
+async function scenarioRings() {
+  await provideFiles(1);
+  const btn = await waitFor(() => findButton(TOOL_ENTRY.edit), 15000, '編輯按鈕');
+  click(btn);
+  await sleep(6000);
+  const tab = (name: string) => buttons().find(b => (b.textContent || '').trim() === name);
+  const rectOf = (el: Element) => { const r = el.getBoundingClientRect(); return `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)}x${Math.round(r.height)}`; };
+  const f = tab('濾鏡'); if (f) click(f);
+  await sleep(1500);
+  const cards = Array.from(document.querySelectorAll('[data-filter-card]')) as HTMLElement[];
+  if (cards[2]) { click(cards[2]); await sleep(2500); const box = cards[2].firstElementChild || cards[2]; log(`rings filter card rect ${rectOf(box)} dpr ${devicePixelRatio}`); }
+  await sleep(4000);
+  const fx = tab('特效'); if (fx) click(fx);
+  await sleep(1500);
+  const fxCards = Array.from(document.querySelectorAll('[data-effect-card], [data-fx-card]')) as HTMLElement[];
+  log(`rings fx cards ${fxCards.length}`);
+  await sleep(4000);
+}
+
 export async function runNativeQA(forced?: string) {
   if (running) return;
   const probe = Promise.race([nativePlugin<QAApi>('ABAIQA'), new Promise<null>(r => setTimeout(() => r(null), 3000))]);
@@ -265,6 +285,7 @@ export async function runNativeQA(forced?: string) {
     else if (scenario === 'video') await scenarioVideo();
     else if (scenario === 'gallery') await scenarioGallery();
     else if (scenario === 'camfx') await scenarioCamFx();
+    else if (scenario === 'rings') await scenarioRings();
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
     else if (scenario.startsWith('tool:')) await scenarioTool(scenario.slice(5));
     log(`end ${scenario}`);

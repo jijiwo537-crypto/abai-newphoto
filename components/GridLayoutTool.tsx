@@ -24,6 +24,9 @@ import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMa
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { paintCachedClassicGlow } from './ClassicGlowCache';
+import { photoSeamEdges, drawSeamBleed, type SeamEdges } from '../utils/photoSeams';
+/** 預覽用：每張照片哪幾邊被上面的照片蓋住（照片貼照片），由編輯器每次畫面更新時算好 */
+let previewSeamEdges: Map<string, SeamEdges> = new Map();
 import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessAmountSlider } from './SeamlessLayout';
@@ -7717,8 +7720,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               pad: coverage,
               edgePads: [Math.abs(cx-hw)<=tolerance ? coverage : 0,
                 Math.abs(cx+hw-stripWidth)<=tolerance ? coverage : 0],
+              /* 貼頁面邊緣的那幾邊、以及「被上面那張照片蓋住」的那幾邊（照片貼照片，見 utils/photoSeams）
+                 都把最外面一排像素往外延伸：上面那張整片蓋住、頁面邊緣切掉，所以看不到重疊，也不會透出白縫 */
               edges: image.rotation % 360 === 0 && still
-                ? [atX(cx - hw), atX(cx + hw), Math.abs(cy - hh) <= tolerance, Math.abs(cy + hh - canvasHeight) <= tolerance]
+                ? (() => { const u = previewSeamEdges.get(image.id); return [atX(cx - hw) || !!u?.[0], atX(cx + hw) || !!u?.[1],
+                  Math.abs(cy - hh) <= tolerance || !!u?.[2], Math.abs(cy + hh - canvasHeight) <= tolerance || !!u?.[3]]; })()
                 : [false, false, false, false],
               // 一般模式下整條已經裁過一次。在同一條小數邊緣再裁每個 SVG 會讓邊緣覆蓋率相乘，
               // 排序開始、結束時反鋸齒也會切換；只有抬起的頁面需要自己的排序範圍
@@ -15125,6 +15131,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   /** 匯出時把自由圖層畫到頁面座標系上，順序就是陣列順序。 */
+  /** 匯出（含 IG 預覽）用：每張照片哪幾邊要往外延伸，照現在的照片與頁面算（見 utils/photoSeams） */
+  const exportSeamEdges = () => photoSeamEdges(floatingImages as any, { width: previewW, height: previewH, count: pages.length });
+  previewSeamEdges = useMemo(() => photoSeamEdges(floatingImages as any), [floatingImages]);
   const drawFloatingLayers = async (
     ctx: CanvasRenderingContext2D,
     layers: FloatingImage[],
@@ -15425,6 +15434,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           blurUnit * k, fImg.imgGlowColor || '#FFFFFF',
         );
         ctx.drawImage(glow, -drawW / 2 - pad, -drawH / 2 - pad, fullW, fullH);
+      }
+      /* 貼齊的邊沒有縫（見 utils/photoSeams）：在下面那張／貼頁面邊緣的那幾邊，把最外面一排像素往外延伸 1.5 個成品像素，
+         藏在上面那張底下、或被頁面邊緣切掉。IG 預覽用的就是這一條，所以兩邊一樣。動畫中不做（位置在動） */
+      if (!frame && drawW === fw && drawH === fh) {
+        const seam = exportSeamEdges().get(fImg.id);
+        if (seam) drawSeamBleed(ctx, src, fw, fh, seam, 1.5 / Math.max(.001, fImg.scale || 1));
       }
       ctx.drawImage(src, -drawW / 2, -drawH / 2, drawW, drawH);
       ctx.restore();
