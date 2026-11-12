@@ -20,7 +20,7 @@ import { SaveButton } from './SaveButton';
 import { BusySpinner } from './BusySpinner';
 import { ExportActionLift } from './ExportActionLift';
 import { canExportHeic, exportHeic } from '../utils/heicExport';
-import { PREMIUM_GLASS } from '../utils/premiumGlass';
+import { PREMIUM_GLASS, SAVE_MENU_GLASS } from '../utils/premiumGlass';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
 import { useAlignPad, ALIGN_FILL_CSS, useOriginalImage, drawOriginalInto, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
@@ -965,7 +965,7 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
             <span className="h-4 w-px bg-black/20" />
             <button aria-label="匯出選項" aria-expanded={formatOpen} onClick={() => setFormatOpen(v => !v)} className="h-8 px-2 flex items-center active:opacity-60"><Icon name="more_horiz" className="text-xl" /></button>
           </div>
-          {formatOpen && <div role="dialog" aria-label="匯出格式" className="absolute top-full left-4 right-4 mt-2 rounded-xl border border-white/15 p-3 shadow-xl" style={PREMIUM_GLASS}>
+          {formatOpen && <div role="dialog" aria-label="匯出格式" className="absolute top-full left-4 right-4 mt-2 rounded-xl p-3" style={SAVE_MENU_GLASS}>
             <p className="text-xs text-white/60 mb-3">匯出格式</p>
             <div className="flex gap-2">{(['jpg','png','heic'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} disabled={format === 'heic' && !canExportHeic()} onClick={() => setExportFormat(format)} className={`flex-1 h-9 rounded-lg border text-xs uppercase disabled:text-white/30 ${exportFormat === format ? 'bg-white text-black border-white' : 'bg-[#303034] border-white/15 text-white/90'}`}>{format.toUpperCase()}</button>)}</div>
           </div>}

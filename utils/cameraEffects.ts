@@ -8,7 +8,6 @@ const lowfi=FX_DEFS.find(d=>d.id==='fxLowfi')!;
 const param=(d:typeof spill,id:string)=>d.params.find(p=>p.id===id)!.def;
 export const CAMERA_FX_ITEMS:{id:keyof CameraFx;label:string;on:number}[]=[
  {id:'soft',label:'柔光',on:70},
- {id:'lowfi',label:'低保真',on:lowfi.onAmount!},
  {id:'blur',label:'朦朧',on:70},
 ];
 export const CAMERA_SPILL_RANGE=param(spill,'fxSpillRange')/100;

@@ -170,9 +170,10 @@ const AvatarView: React.FC<{
   return (
     <span
       className="w-full h-full flex items-center justify-center leading-none"
-      style={{ fontSize: Math.round(size * 0.5) }}
+      style={{ fontSize: Math.round(size * 0.62) }}
     >
-      <Icon name="person" />
+      {/* 圖示字型的 class 自己固定 24px，外層字級帶不進去：直接指定（比原本大一點） */}
+      <Icon name="person" className="!text-[30px]" />
     </span>
   );
 };
@@ -1837,7 +1838,10 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       <AnimatePresence>
       {settingsOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.26 }} className="fixed inset-0 z-[250] bg-black/35 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
-        <section role="dialog" aria-modal="true" aria-label={settingsPage === 'language' ? '語言' : '設定'} className="w-full max-w-sm border border-white/15 rounded-3xl p-5" style={SETTINGS_GLASS} onClick={e => e.stopPropagation()}>
+        {/* 從右上角的設定鈕「長」出來：從那個角落縮放展開、帶一點回彈；收起時縮回去 */}
+        <motion.section role="dialog" aria-modal="true" aria-label={settingsPage === 'language' ? '語言' : '設定'} className="w-full max-w-sm border border-white/15 rounded-3xl p-5" style={{ ...SETTINGS_GLASS, transformOrigin: '100% 0%' }} onClick={e => e.stopPropagation()}
+          initial={{ opacity: 0, scale: 0.6, x: 40, y: -120 }} animate={{ opacity: 1, scale: 1, x: 0, y: 0 }} exit={{ opacity: 0, scale: 0.7, x: 30, y: -90 }}
+          transition={{ type: 'spring', stiffness: 420, damping: 32, mass: 0.9, opacity: { duration: 0.18 } }}>
           <div className="flex items-center justify-between mb-4"><h2 className="pl-2 text-sm font-medium tracking-[.06em] text-white/90">{settingsPage === 'language' ? '語言' : '設定'}</h2>
             <button aria-label="關閉視窗" className="w-9 h-9 flex items-center justify-center text-white/65" onClick={() => setSettingsOpen(false)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
           </div>
@@ -1850,7 +1854,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <span>{l.name}</span>{getLocale() === l.id && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>}
           </button>)}</div>}
           </motion.div></AnimatePresence>
-        </section>
+        </motion.section>
       </motion.div>}
       </AnimatePresence>
       {/* --- 聯絡方式 --- */}

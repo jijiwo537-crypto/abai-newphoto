@@ -315,7 +315,8 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
       <div className="flex items-center h-[28px] px-[12px] gap-[6px]" data-grade-modes>
         {MODES.map(([m, l]) => (
           <button key={m} onPointerDown={e => { e.preventDefault(); setMode(m); }} data-grade-mode={m}
-            className={`px-[12px] h-[28px] rounded-[8px] text-[12px] font-medium tracking-wide whitespace-nowrap border ${mode === m ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/75 border-white/10'}`}>{l}</button>
+            /* 跟仿色的「標準／專業」同一款：膠囊、沒有邊框；選中白底黑字，其他是半透明黑底加毛玻璃 */
+            className={`px-3.5 h-[28px] rounded-full text-[11px] shrink-0 whitespace-nowrap transition-[background-color,color,transform] active:scale-95 ${mode === m ? 'bg-white text-black font-bold' : 'bg-black/40 text-white/60 backdrop-blur-md'}`}>{l}</button>
         ))}
         <div className="flex-1" />
         {mode === 'hdr' && (
