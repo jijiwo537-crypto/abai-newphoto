@@ -45,9 +45,14 @@ function videoSeamStyle(image: { id: string; x: number; y: number; width: number
   if (!ext.some(Boolean)) return base;
   const P = 1.5 / Math.max(.001, image.scale || 1);
   const pl = ext[0] ? P : 0, pr = ext[1] ? P : 0, pt = ext[2] ? P : 0, pb = ext[3] ? P : 0;
-  return { ...base, transformOrigin: 'center center',
-    /* 這一層的像素是「縮放後」的框（寬＝width×scale），所以位移也要乘上 scale */
-    transform: `translate(${(pr - pl) / 2 * (image.scale || 1)}px, ${(pb - pt) / 2 * (image.scale || 1)}px) scale(${(image.width + pl + pr) / image.width}, ${(image.height + pt + pb) / image.height})` };
+  /* 用一般的版面位置往外長（left／top 往外、寬高加大），不用 transform：
+     有 transform 時影片那一層的位置與大小是另外取整到實體像素的，另一邊（例如貼著分割線、不延伸的那邊）
+     會跟頁面差一個像素 —— 那就是「一邊是頁面最外緣、一邊是分割線」時分割線那邊的縫。
+     沒延伸的那幾邊跟頁面走同一套版面取整，跟兩邊都是分割線時一樣剛好貼齊。
+     這一層的像素是「縮放後」的框（寬＝width×scale），所以要乘上 scale。 */
+  const k = image.scale || 1;
+  return { ...base, left: `${-pl * k}px`, top: `${-pt * k}px`,
+    width: `calc(100% + ${(pl + pr) * k}px)`, height: `calc(100% + ${(pt + pb) * k}px)` };
 }
 /** 預覽用：每張照片哪幾邊被上面的照片蓋住（照片貼照片），由編輯器每次畫面更新時算好 */
 let previewSeamEdges: Map<string, SeamEdges> = new Map();
@@ -11886,10 +11891,30 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         if (!host || pages.length < 2) return;
         const k = Math.max(.0001, kRef.current || 1);
         const dpr = Math.max(1, window.devicePixelRatio || 1);
-        const width = Math.round(1.3 * dpr) / dpr / k;
+        /* 線寬用「整數個實體像素」：一般大小約 1.3pt；縮小時跟著變細（縮到最小約一半），
+           不然頁面縮小了線還是一樣粗，看起來就太粗。最細兩個實體像素（3 倍螢幕上 0.67pt），不會淡到看不見。 */
+        const devW = Math.max(Math.min(2, Math.round(dpr)), Math.round(1.3 * dpr * Math.pow(Math.min(1, k), 0.75)));
+        const width = devW / dpr / k;
         let bounds: SceneBounds = {x:0,y:0,width:0,height:0};
+        /* 每一格都把線的左右兩邊對齊到實體像素格：沒對齊時線的兩邊是半透明的，
+           放大縮小時每一格落在不同的小數位置，粗細深淺一直變 —— 看起來就是分割線在動。 */
         const seam = (x: number,y: number,h: number) => {
-          ctx.fillRect(x,y,width,h);
+          const m = ctx.getTransform();
+          if (Math.abs(m.b) < 1e-9 && Math.abs(m.c) < 1e-9 && m.a > 0) {
+            const q = m.a / k / dpr;               // 畫布像素／實體像素（場景有超取樣）
+            const off = Number(ctx.canvas.dataset.deviceLeft) || 0;  // 畫布在螢幕上的起點（實體像素）
+            const cx = off + (m.a * (x + width / 2) + m.e) / q;     // 線中心，螢幕實體像素
+            /* 場景畫布有超取樣（一個實體像素＝q 個畫布像素，通常 1.5）：線的兩邊還要剛好落在畫布的整數像素上，
+               不然畫布裡先被抗鋸齒成半透明、合成時又混一次，就變成每隔幾格一次的柔邊。
+               在最近的幾個實體像素位置裡挑兩種格子都對得上的那個（差不到一個實體像素，看不出位移）。 */
+            const r0 = Math.round(cx - devW / 2);
+            const fits = (X: number) => [X, X + devW].every(v => { const c = (v - off) * q; return Math.abs(c - Math.round(c)) < .02; });
+            const X0 = [r0, r0 + 1, r0 - 1].find(fits) ?? r0;
+            ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+            const top = m.d * y + m.f, bottom = m.d * (y + h) + m.f;
+            ctx.fillRect((X0 - off) * q, top, devW * q, bottom - top);
+            ctx.restore();
+          } else ctx.fillRect(x,y,width,h);
           bounds=unionSceneBounds(bounds,sceneRectBounds(ctx,x,y,width,h));
         };
         ctx.fillStyle = shadeHex(WORKSPACE_BG, PAGE_SEAM_INK);
