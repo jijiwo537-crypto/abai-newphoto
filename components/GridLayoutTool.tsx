@@ -2500,7 +2500,7 @@ export const SymbolPicker: React.FC<{
       onClick={() => { onPickRef.current(symbol); }}
       aria-label={symbol}
       aria-pressed={selected === symbol}
-      className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/[0.012] border ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
+      className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/[0.012] border ${index >= 43 ? 'grow' : ''} ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
     >
       <span style={{ opacity: symbolFaceReady ? 1 : 0 }}>
         <SymbolGlyph text={symbol} px={SYMBOL_LAYOUT?.px[symbol]} />
@@ -2530,7 +2530,7 @@ export const SymbolPicker: React.FC<{
            就算這台手機的字寬差了零點幾點，也不會被擠到下一排（不會再出現「一排只剩一顆」） */
         <div className="flex flex-col gap-1.5 pb-4" style={{ filter: 'grayscale(1) brightness(0) invert(1)', containerType: 'inline-size' }}>
           {SYMBOL_LAYOUT.rows.map((start, r) => (
-            <div key={start} className="flex flex-nowrap gap-1.5">
+            <div key={start} className={`flex flex-nowrap gap-1.5 ${start === 63 || start === 94 ? 'mt-2' : ''}`}>
               {symbolButtons.slice(start, SYMBOL_LAYOUT!.rows[r + 1] ?? symbolButtons.length)}
             </div>
           ))}
