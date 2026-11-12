@@ -2430,16 +2430,15 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number; px?: number }>
      有快取的純量測；第一次繪製前就已經得到最終尺寸。 */
   const displayText = symbolTextPresentation(text);
   const naturalWidth = measureSymbolAdvance(displayText, SYMBOL_FONT, base);
-  /* 最寬到一整排（iPhone 內容寬 358 − 按鈕左右內距與框 26 ＝ 332）：以前上限 252，
-     長邊框被縮小塞進 278 的格子，右邊固定空一塊；現在一整排剛好放滿，字也比較大、看得清楚 */
+  /* 長符號縮放後仍需與整排按鈕兩側保持安全距離。 */
   const nw = Math.max(1, naturalWidth);
   /* 螢幕比 13 Pro 窄（例如 SE、mini）時，用畫面寬度再限制一次，長符號不會戳出按鈕 */
   /* px：排序網站上記錄下來的實際大小（見 SYMBOL_LAYOUT）—— 有的話就照它畫，跟網站上看到的一模一樣 */
-  /* 一定塞得進按鈕：最多就是「一整排扣掉按鈕左右內距與框（約 30px）」那麼寬。
+  /* 一定塞得進按鈕：左右各保留約 22px，避免長字形貼住邊框。
      100cqw 是符號清單那一層的寬度（清單設了 container-type）—— App 和排序網站都一樣，
      所以兩邊縮的大小完全相同。本來就放得下的符號照原本的大小，一點都不變；
      只有比一整排還長的邊框類（以前會從左右凸出按鈕）才縮到剛好放進去。 */
-  const fit = `calc((100cqw - 30px) * ${base / nw})`;
+  const fit = `calc((100cqw - 44px) * ${base / nw})`;
   const fontSize = px !== undefined
     ? `min(${px}px, ${fit})`
     : (nw > 200 ? `min(${base * Math.min(1, 332 / nw)}px, ${fit})` : base * Math.min(1, 332 / nw));
@@ -2500,7 +2499,7 @@ export const SymbolPicker: React.FC<{
       onClick={() => { onPickRef.current(symbol); }}
       aria-label={symbol}
       aria-pressed={selected === symbol}
-      className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/[0.012] border ${index >= 43 ? 'grow' : ''} ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
+      className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/[0.012] border grow ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
     >
       <span style={{ opacity: symbolFaceReady ? 1 : 0 }}>
         <SymbolGlyph text={symbol} px={SYMBOL_LAYOUT?.px[symbol]} />
