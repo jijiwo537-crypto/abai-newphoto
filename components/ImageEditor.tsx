@@ -48,7 +48,7 @@ import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { canvasToUrl, revokeUrls, revokeUrlsLater } from '../utils/blobUrl';
 import { canExportHeic, exportHeic, exportHeicFromUrl } from '../utils/heicExport';
-import { PREMIUM_GLASS, SAVE_MENU_GLASS } from '../utils/premiumGlass';
+import { PREMIUM_GLASS, SAVE_MENU_GLASS, SAVE_MENU_BUTTON } from '../utils/premiumGlass';
 import { StuckEscape } from './StuckEscape';
 import { motion, AnimatePresence } from 'motion/react';
 import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
@@ -7715,7 +7715,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     <div role="dialog" aria-label="匯出選項" className={`${cls} rounded-xl p-3`} style={SAVE_MENU_GLASS}>
       <div className="text-xs text-white/50 mb-2">匯出格式</div>
       <div className="flex gap-2">
-        {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-[#303034]'}`}>{format.toUpperCase()}</button>)}
+        {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : SAVE_MENU_BUTTON}`}>{format.toUpperCase()}</button>)}
         <button disabled={!canExportHeic()} aria-pressed={exportFormat === 'heic'} onClick={() => setExportFormat('heic')} className={`flex-1 py-2 rounded-lg text-xs disabled:opacity-35 ${exportFormat === 'heic' ? 'bg-white text-black' : 'bg-[#303034]'}`}>HEIC</button>
       </div>
     </div>
