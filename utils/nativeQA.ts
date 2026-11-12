@@ -30,7 +30,7 @@ async function waitFor<T>(fn: () => T | null | undefined | false, ms: number, wh
 
 const visible = (el: Element) => { const r = (el as HTMLElement).getBoundingClientRect(); return r.width > 0 && r.height > 0; };
 const buttons = () => Array.from(document.querySelectorAll('button')).filter(visible) as HTMLButtonElement[];
-const findButton = (re: RegExp) => buttons().find(b => re.test(`${b.getAttribute('aria-label') || ''} ${(b.textContent || '').trim()}`.trim()));
+const findButton = (re: RegExp) => buttons().find(b => re.test(`${b.getAttribute('aria-label') || b.getAttribute('title') || ''} ${(b.textContent || '').trim()}`.trim()));
 const click = (el: HTMLElement) => { el.click(); };
 
 function logButtons(tag: string) {
