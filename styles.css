@@ -436,5 +436,14 @@ html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.mat
    不會被卡片的 overflow 切掉，也不受點擊縮放、重新繪製影響（outline 在 iPhone 上圓角會變形，點下去時看起來會變粗）。
    模板：卡片貼著整列上下緣，往外畫會被切，所以是一條 1px 的框疊在卡片邊上（不是內陰影：內陰影畫在圖片底下，會被圖片蓋掉一半）。 */
 [data-sel-ring="wide"] { display: none; }
-:has(> [data-sel-ring="wide"]) { box-shadow: 0 0 0 1.5px #fff; }
+/* 框畫在卡片「外面那一層」（按鈕）上、疊在卡片上方，不畫在卡片自己身上：
+   卡片的圓角裁切和框如果切在同一條弧線上，兩邊各只蓋住弧線上像素的一部分，
+   中間就透出一圈暗色的鋸齒（iPhone 截圖放大看得到，直邊沒事、四個角怪怪的）。
+   框往外 1.5px、往內多壓 0.5px，把那一圈半透明的像素整個蓋掉；圓角跟卡片同心。 */
+:has(> div > [data-sel-ring="wide"]) { position: relative; }
+:has(> div > [data-sel-ring="wide"])::after {
+  content: ''; position: absolute; pointer-events: none;
+  left: -1.5px; top: -1.5px; width: calc(100% + 3px); height: calc(76px + 3px);
+  border: 2px solid #fff; border-radius: 9.5px; box-sizing: border-box;
+}
 [data-sel-ring="thin"] { position: absolute; inset: 0; border: 1px solid #fff; border-radius: inherit; pointer-events: none; }
