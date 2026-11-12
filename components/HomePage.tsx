@@ -121,6 +121,56 @@ const toAccount = (u: AuthUser | null): Account | null =>
  */
 const LETTER_HUES = [212, 340, 24, 152, 268, 46, 190, 320];
 
+const SETTINGS_TITLE = { menu: '設定', language: '語言', terms: '使用條款', privacy: '隱私權政策' } as const;
+
+/* 使用條款／隱私權政策（範本，正式上架前請依實際營運主體與服務內容由法務確認） */
+const LEGAL: Record<'terms' | 'privacy', { updated: string; sections: [string, string][] }> = {
+  terms: {
+    updated: '2026 年 11 月',
+    sections: [
+      ['一、服務內容', '本 App 提供照片與影片的編輯、拼圖、相機、美顏、仿色、藝術效果等功能。我們可能隨時調整、新增或停止部分功能，恕不另行個別通知。'],
+      ['二、使用資格', '你應具備完全行為能力；未成年人應在法定代理人同意與陪同下使用。使用本 App 即表示你已閱讀並同意本條款。'],
+      ['三、帳號', '你可以使用 Email、Google 或 Apple 登入。請妥善保管你的帳號與密碼，透過你的帳號進行的操作視為你本人的行為。你可以隨時在 App 內刪除帳號。'],
+      ['四、你的內容', '你匯入、拍攝與製作的照片、影片及作品，權利仍屬於你或原權利人。請確認你有權使用這些素材，不得用於侵害他人著作權、肖像權、隱私或其他權利，也不得製作或散布違法內容。'],
+      ['五、App 內素材', '本 App 提供的模板、圖案、字型、濾鏡、音樂等素材，僅授權你在本 App 內製作個人作品使用；各素材如有額外授權條件，依其條件辦理。不得單獨擷取、轉售或再散布。'],
+      ['六、禁止行為', '不得反向工程、破解、干擾本 App 或其伺服器的正常運作，不得以自動化方式大量存取，也不得利用本 App 從事任何違法行為。'],
+      ['七、免責聲明', '本 App 以「現狀」提供。請自行備份重要檔案；對於因裝置、系統、網路或不可抗力造成的資料遺失或服務中斷，我們在法律允許的範圍內不負賠償責任。'],
+      ['八、條款修改', '我們可能修改本條款，修改後會在 App 內公告。修改生效後你繼續使用，即視為同意修改後的條款。'],
+      ['九、準據法', '本條款以中華民國法律為準據法，如有爭議，以臺灣臺北地方法院為第一審管轄法院。'],
+      ['十、聯絡我們', `對本條款有任何疑問，請透過「問題反饋」聯絡：${CONTACT_EMAIL}`],
+    ],
+  },
+  privacy: {
+    updated: '2026 年 11 月',
+    sections: [
+      ['一、我們處理的照片與影片', '你編輯的照片、影片與作品都在你的裝置上處理與儲存（草稿、歷史紀錄也存在這台裝置）。我們不會把你的照片或影片上傳到我們的伺服器。'],
+      ['二、權限', '相機：只在你使用拍照功能時開啟。照片圖庫：只在你選擇匯入，或儲存作品到相簿時使用。你可以隨時到系統設定關閉這些權限。'],
+      ['三、帳號資料', '你登入時，我們會取得登入所需的資料，例如 Email、顯示名稱與頭像（依你選擇的 Email、Google 或 Apple 登入方式而定），用來識別你的帳號與提供同步等功能。'],
+      ['四、資料保存與刪除', '帳號資料在你使用期間保存。你可以在 App 內刪除帳號，我們會刪除與帳號相關的資料，法律另有規定者除外。裝置上的草稿與歷史紀錄可以自行刪除，刪除 App 也會一併移除。'],
+      ['五、第三方服務', '登入時會使用 Google、Apple 等第三方服務，你提供給它們的資料依各自的隱私權政策處理。'],
+      ['六、資料安全', '我們採取合理的技術與管理措施保護你的資料，但任何網路傳輸都無法保證百分之百安全。'],
+      ['七、兒童', '本 App 不以 13 歲以下兒童為對象。若發現我們不當取得兒童的個人資料，我們會儘速刪除。'],
+      ['八、你的權利', '依個人資料保護法，你可以請求查詢、閱覽、複製、補充、更正、停止處理或刪除你的個人資料。'],
+      ['九、政策修改', '本政策如有修改，會在 App 內公告。'],
+      ['十、聯絡我們', `對隱私權有任何疑問，請透過「問題反饋」聯絡：${CONTACT_EMAIL}`],
+    ],
+  },
+};
+const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
+  const d = LEGAL[doc];
+  return (
+    <div className="max-h-[56vh] overflow-y-auto no-scrollbar pr-1 pl-2 flex flex-col gap-4 text-left">
+      <div className="text-[10px] text-white/35">最後更新：{d.updated}</div>
+      {d.sections.map(([h, body]) => (
+        <div key={h} className="flex flex-col gap-1.5">
+          <div className="text-[12px] font-bold text-white/85">{h}</div>
+          <div className="text-[11.5px] leading-[1.75] text-white/60">{body}</div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const AvatarView: React.FC<{
   local: string | null;
   account: Account | null;
@@ -194,7 +244,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [libQuery, setLibQuery] = useState('');
   const [contactOpen, setContactOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsPage, setSettingsPage] = useState<'menu' | 'language'>('menu');
+  const [settingsPage, setSettingsPage] = useState<'menu' | 'language' | 'terms' | 'privacy'>('menu');
   const [copied, setCopied] = useState(false);
 
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
@@ -1838,18 +1888,20 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       <AnimatePresence>
       {settingsOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.26 }} className="fixed inset-0 z-[250] bg-black/35 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
-        {/* 從右上角的設定鈕「長」出來：從那個角落縮放展開、帶一點回彈；收起時縮回去 */}
-        <motion.section role="dialog" aria-modal="true" aria-label={settingsPage === 'language' ? '語言' : '設定'} className="w-full max-w-sm border border-white/15 rounded-3xl p-5" style={{ ...SETTINGS_GLASS, transformOrigin: '100% 0%' }} onClick={e => e.stopPropagation()}
-          initial={{ opacity: 0, scale: 0.6, x: 40, y: -120 }} animate={{ opacity: 1, scale: 1, x: 0, y: 0 }} exit={{ opacity: 0, scale: 0.7, x: 30, y: -90 }}
-          transition={{ type: 'spring', stiffness: 420, damping: 32, mass: 0.9, opacity: { duration: 0.18 } }}>
-          <div className="flex items-center justify-between mb-4"><h2 className="pl-2 text-sm font-medium tracking-[.06em] text-white/90">{settingsPage === 'language' ? '語言' : '設定'}</h2>
+        {/* 從畫面中央由小變大彈出，收起時縮回中央 */}
+        <motion.section role="dialog" aria-modal="true" aria-label={SETTINGS_TITLE[settingsPage]} className="w-full max-w-sm border border-white/15 rounded-3xl p-5" style={{ ...SETTINGS_GLASS, transformOrigin: '50% 50%' }} onClick={e => e.stopPropagation()}
+          initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
+          transition={{ type: 'spring', stiffness: 460, damping: 30, mass: 0.85, opacity: { duration: 0.16 } }}>
+          <div className="flex items-center justify-between mb-4"><h2 className="pl-2 text-sm font-medium tracking-[.06em] text-white/90 flex items-center gap-1">{(settingsPage === 'terms' || settingsPage === 'privacy') && <button aria-label="返回" onClick={() => setSettingsPage('menu')} className="-ml-2 w-7 h-7 flex items-center justify-center text-white/60"><Icon name="chevron_left" className="text-[20px]" /></button>}{SETTINGS_TITLE[settingsPage]}</h2>
             <button aria-label="關閉視窗" className="w-9 h-9 flex items-center justify-center text-white/65" onClick={() => setSettingsOpen(false)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
           </div>
           <AnimatePresence mode="wait" initial={false}><motion.div key={settingsPage} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
           {settingsPage === 'menu' ? <div className="flex flex-col gap-2">
-            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => { setSettingsOpen(false); setContactOpen(true); }}>聯絡資訊</button>
+            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => { setSettingsOpen(false); setContactOpen(true); }}>問題反饋</button>
             <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('language')}>語言</button>
-          </div> : <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
+            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('terms')}>使用條款</button>
+            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('privacy')}>隱私權政策</button>
+          </div> : settingsPage === 'terms' || settingsPage === 'privacy' ? <LegalText doc={settingsPage} /> : <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
             className={`premium-glass-button min-h-12 px-4 py-3 rounded-xl text-[13px] font-normal flex justify-between items-center border ${getLocale() === l.id ? 'border-white' : 'border-white/10'}`}>
             <span>{l.name}</span>{getLocale() === l.id && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>}
           </button>)}</div>}
@@ -1880,7 +1932,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               style={SETTINGS_GLASS}
             >
               <div className="flex items-center justify-between px-5 pt-5 pb-3">
-                <span className="text-sm font-medium tracking-[.06em] text-white/90 ml-2">聯絡資訊</span>
+                <span className="text-sm font-medium tracking-[.06em] text-white/90 ml-2">問題反饋</span>
                 <button
                   onClick={() => setContactOpen(false)}
                   aria-label="關閉視窗"
