@@ -3,7 +3,7 @@ import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface,settlePhotoFx,getLoadedLut
 import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
 import {subscribeCellPhoto,subscribeCellPrime,isEditingCell,subscribeEditingCell} from '../utils/liveCellPhoto';
 import {resolveSeamSurface} from '../utils/seamlessSurfaceGeometry';
-import {drawSeamShared,releaseSeamShared,drawSeamPreview,seamTextureEpoch,type SeamTexture} from '../utils/seamlessPreview';
+import {drawSeamShared,releaseSeamShared,drawSeamPreview,seamTextureEpoch,seamTextureReady,warmSeamTextures,seamSharedPartial,type SeamTexture} from '../utils/seamlessPreview';
 import {previews as seamlessPreviews} from './SeamlessLayout';
 import {drawCoveredPhoto} from '../utils/coveredPhoto';
 import {get2dWide} from '../utils/colorSpace';
@@ -57,7 +57,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
   /* 預覽用「夠清楚就好」的那一份（見 utils/previewCopies）。換了（小副本做好、放大到要換原圖）就重畫 */
   const copiesVersion=usePreviewCopies();
   /** 底圖目前畫的是什麼：內容簽章、密度（每個佈局單位幾個像素）、邊緣狀態（哪幾邊往外多蓋） */
-  const baseState=useRef<{key:string;s:number;edges:string}|null>(null),baseDirty=useRef(true);
+  const baseState=useRef<{key:string;s:number;edges:string;partial?:number}|null>(null),baseDirty=useRef(true);
   const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef<(viewOnly?:boolean)=>void>(()=>{});
   /** 上一次真的畫出來的範圍（佈局座標）與當時的倍率／旋轉：純平移時拿來判斷要不要重畫 */
   const paintedView=useRef<{fwd:number[];gesture:boolean;headroom?:number;cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastPaintAt=useRef(-1e9);
@@ -122,8 +122,29 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       /* 同一張照片換另一份（小副本↔原圖）：新的那份解碼好之前舊的照畫，不會空一格 */
       if(old&&old.image.naturalWidth&&old.src0===c.url){
         old.url=src;
-        void image.decode().catch(()=>{}).then(()=>{if(resources.current.get(c.id)!==old||old.url!==src)return;releaseResource(old);
-          resources.current.set(c.id,{url:src,src0:c.url,image,input:document.createElement('canvas'),key:'',output:null});schedule();});
+        void image.decode().catch(()=>{}).then(()=>{
+          const current=()=>resources.current.get(c.id)===old&&old.url===src;
+          if(!current())return;
+          const swap=()=>{releaseResource(old);resources.current.set(c.id,{url:src,src0:c.url,image,input:document.createElement('canvas'),key:'',output:null});schedule();};
+          /* 放大縮小時換成另一份解析度：大張的原圖在 GPU 上是先放一格深色、再 1024 的小材質、最後才是完整的
+             （見 seamlessPreview 的背景上傳）。直接換過去，畫面就會先閃一下深色／糊的。
+             所以先在背景把新的那份上傳完整，這段期間畫面上照樣畫舊的那份，好了才一次換過去。
+             有特效的格子畫的是特效成品（畫布，當下就上傳完），不用等。 */
+          const fx=live.current.get(c.id)||c.fx||{};
+          if(!image.naturalWidth||hasPhotoFx(fx)){swap();return;}
+          const holder=document.createElement('canvas');
+          warmSeamTextures(holder,cells.map((_,k)=>k===i?{image,width:image.naturalWidth,height:image.naturalHeight}:null));
+          let done=false;
+          const finish=()=>{
+            if(done)return;done=true;window.removeEventListener('abai-seam-texture',check);clearTimeout(timer);
+            if(current())swap();
+            // 等換過去的那一格真的畫好、新的貼圖算「在用」了，才放掉暫存目標（不然可能被當成沒在用而淘汰）
+            requestAnimationFrame(()=>requestAnimationFrame(()=>{releaseSeamShared(holder);holder.width=holder.height=0;}));
+          };
+          const check=()=>{if(!current()||seamTextureReady(image))finish();};
+          const timer=setTimeout(finish,5000);
+          window.addEventListener('abai-seam-texture',check);check();
+        });
         return;
       }
       if(old)releaseResource(old);
@@ -316,11 +337,14 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       /* 底圖：內容（照片、特效成品、裁切、融合程度、變暗）或邊緣狀態變了才重畫。
          正在連續編輯（拖滑桿、拖照片、拖融合程度）時先不畫，只標記過期，停下來（settle）再畫一次。 */
       if(bc&&!viewOnly){
-        const key=JSON.stringify([width,height,gap,radius,rects,crops,radii,contents,dims||[],fused?fusionLive.current:-1,cells.map(c=>c.opacity??100),noVisibleGutter,seamTextureEpoch()]);
+        const key=JSON.stringify([width,height,gap,radius,rects,crops,radii,contents,dims||[],fused?fusionLive.current:-1,cells.map(c=>c.opacity??100),noVisibleGutter]);
         if(!settle)lastEditAt.current=performance.now();
         const busy=!settle||performance.now()-lastEditAt.current<350||live.current.size>0||liveDrag.current;
         const baseLater=()=>{if(baseTimer.current)clearTimeout(baseTimer.current);baseTimer.current=setTimeout(()=>{baseTimer.current=0;drawRef.current(false,true);},400);};
-        if(bs&&bs.key===key&&bs.edges===edges)baseDirty.current=false;
+        /* 底圖畫的時候有照片還只是深色底／小材質（背景上傳中）：那些貼圖好了要重畫一次。
+           其他照片（例如別的佈局、放大時換的另一份解析度）上傳好不關它的事，不能因此把它當成過期藏起來。 */
+        const partialStale=bs?.partial!==undefined&&bs.partial!==seamTextureEpoch();
+        if(bs&&bs.key===key&&bs.edges===edges&&!partialStale)baseDirty.current=false;
         else if(busy){
           /* 內容變了：舊的底圖立刻藏起來（這一格由清晰那張顯示新的內容），底圖等真的停下來才畫 ——
              不在拖滑桿、拖照片的任何一格裡多畫一張整個佈局的大圖。 */
@@ -347,7 +371,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
               :drawSeamShared(bc,cells,clips,sources,-1,{...bsurf.view,isolated:true,sealEdges:noVisibleGutter,radii,crops});
             if(ok){
               Object.assign(bc.style,style);bc.style.display='block';
-              baseState.current={key,s:d,edges};baseDirty.current=false;basePainted=true;
+              baseState.current={key,s:d,edges,partial:seamSharedPartial()?seamTextureEpoch():undefined};baseDirty.current=false;basePainted=true;
               if((import.meta as any).env?.DEV)bc.dataset.paintCount=String(Number(bc.dataset.paintCount||0)+1);
             }else{
               // 沒畫成：尺寸沒變的話原本的像素還在，照舊；尺寸變了就當作沒有底圖。等一下再試

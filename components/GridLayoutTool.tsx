@@ -29,18 +29,31 @@ import { photoSeamEdges, drawSeamBleed, type SeamEdges } from '../utils/photoSea
  *  沒辦法像照片那樣只延伸最外面一排像素，改成整格往那幾邊多放大 1.5 個畫面像素（約 1%，看不出來）。
  *  多出來的被頁面邊緣切掉、或藏在上面那張底下 —— 放大縮小時邊緣不管落在哪，都不會透出白縫。
  *  選中框、吸附、匯出的座標都不動 */
-function videoSeamStyle(image: { id: string; width: number; height: number; scale: number; rotation: number }, moving: boolean): React.CSSProperties {
+function videoSeamStyle(image: { id: string; x: number; y: number; width: number; height: number; scale: number; rotation: number }, moving: boolean): React.CSSProperties {
   const base: React.CSSProperties = { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none' };
-  const seam = !moving && (image.rotation % 360) === 0 ? previewSeamEdges.get(image.id) : undefined;
-  if (!seam || !(image.width > 0) || !(image.height > 0)) return base;
+  const under = !moving && (image.rotation % 360) === 0 ? previewSeamUnder.get(image.id) : undefined;
+  if (!(image.width > 0) || !(image.height > 0) || moving || (image.rotation % 360) !== 0) return base;
+  /* 只往「一定會被蓋住或切掉」的方向延伸：
+     ‧ 被上面那張照片蓋住的邊
+     ‧ 整條頁面最外圈（第一頁左邊、最後一頁右邊、上下兩邊）—— 外面就是畫面外，整條頁面會切掉
+     頁與頁中間的分割線不延伸：那裡沒有東西會把多出來的切掉，延伸了就會跑進隔壁那一頁 */
+  const pg = previewSeamPage, cx = image.x + image.width / 2, cy = image.y + image.height / 2;
+  const hw = image.width * image.scale / 2, hh = image.height * image.scale / 2, T = 1e-3;
+  const outer = pg ? [Math.abs(cx - hw) <= T, Math.abs(cx + hw - pg.width * pg.count) <= T, Math.abs(cy - hh) <= T, Math.abs(cy + hh - pg.height) <= T]
+    : [false, false, false, false];
+  const ext = [0, 1, 2, 3].map(i => outer[i] || !!under?.[i]);
+  if (!ext.some(Boolean)) return base;
   const P = 1.5 / Math.max(.001, image.scale || 1);
-  const pl = seam[0] ? P : 0, pr = seam[1] ? P : 0, pt = seam[2] ? P : 0, pb = seam[3] ? P : 0;
+  const pl = ext[0] ? P : 0, pr = ext[1] ? P : 0, pt = ext[2] ? P : 0, pb = ext[3] ? P : 0;
   return { ...base, transformOrigin: 'center center',
     /* 這一層的像素是「縮放後」的框（寬＝width×scale），所以位移也要乘上 scale */
     transform: `translate(${(pr - pl) / 2 * (image.scale || 1)}px, ${(pb - pt) / 2 * (image.scale || 1)}px) scale(${(image.width + pl + pr) / image.width}, ${(image.height + pt + pb) / image.height})` };
 }
 /** 預覽用：每張照片哪幾邊被上面的照片蓋住（照片貼照片），由編輯器每次畫面更新時算好 */
 let previewSeamEdges: Map<string, SeamEdges> = new Map();
+/** 影片用：只有「照片貼照片」（不含頁面），以及頁面大小（判斷整條頁面最外圈） */
+let previewSeamUnder: Map<string, SeamEdges> = new Map();
+let previewSeamPage: { width: number; height: number; count: number } | null = null;
 import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessAmountSlider } from './SeamlessLayout';
@@ -15149,8 +15162,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 匯出時把自由圖層畫到頁面座標系上，順序就是陣列順序。 */
   /** 匯出（含 IG 預覽）用：每張照片哪幾邊要往外延伸，照現在的照片與頁面算（見 utils/photoSeams） */
   const exportSeamEdges = () => photoSeamEdges(floatingImages as any, { width: previewW, height: previewH, count: pages.length });
-  previewSeamEdges = useMemo(() => photoSeamEdges(floatingImages as any, { width: previewW, height: previewH, count: pages.length }),
-    [floatingImages, previewW, previewH, pages.length]);
+  previewSeamEdges = useMemo(() => photoSeamEdges(floatingImages as any), [floatingImages]);
+  previewSeamUnder = previewSeamEdges;
+  previewSeamPage = { width: previewW, height: previewH, count: pages.length };
   const drawFloatingLayers = async (
     ctx: CanvasRenderingContext2D,
     layers: FloatingImage[],

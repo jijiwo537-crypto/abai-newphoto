@@ -74,6 +74,8 @@ class SeamGpu {
   /** 還只是一格底色的材質（背景解碼還沒好）。這一次 draw 用到了就是 incomplete：結果不能拿去蓋畫面 */
   private placeholder=new Set<CanvasImageSource>();
   incomplete=false;
+  /** 這一次 draw 用到的貼圖裡有還沒完整的（深色底或先頂著的 1024） */
+  partial=false;
   constructor(canvas:HTMLCanvasElement,private direct=false,private presentationOnly=false,readonly srgbOutput=false,readonly shared=false,noTransfer=false){
     const webkit=/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
     this.transferred=!direct&&!shared&&!noTransfer&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
@@ -91,6 +93,8 @@ class SeamGpu {
   }
   dispose(){const gl=this.gl;for(const t of this.textures.values())gl.deleteTexture(t);for(const p of this.programs.values())gl.deleteProgram(p);gl.deleteBuffer(this.buffer);this.textures.clear();this.textureBytes.clear();this.revisions.clear();this.programs.clear();this.uniforms.clear();this.lastPresentation=null;if(!gl.isContextLost())gl.getExtension('WEBGL_lose_context')?.loseContext();}
   get lost(){return this.invalid||this.gl.isContextLost();}
+  /** 這張原圖的貼圖已經是完整解析度了（不是空格子的底色，也不是先頂著的 1024 小材質） */
+  ready(image:CanvasImageSource){return this.textures.has(image)&&!this.placeholder.has(image)&&!this.pendingFull.has(image);}
   get surface(){return this.canvas as HTMLCanvasElement;}
   /** 目標沒了：它的貼圖變成沒在用（可以淘汰） */
   forget(target:HTMLCanvasElement){
@@ -189,7 +193,7 @@ class SeamGpu {
   draw(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView){
     if(this.presentationOnly)this.lastPresentation=()=>this.draw(target,cells,rects,sources,amount,view);
     const gl=this.gl,w=view.width,h=view.height,count=rects.length;
-    this.incomplete=false;
+    this.incomplete=false;this.partial=false;
     this.targetSets.set(target,new Set(sources.map(s=>s?.image||this.blank)));
     const active=new Set<CanvasImageSource>();for(const set of this.targetSets.values())for(const image of set)active.add(image);
     const incoming=sources.reduce((n,s)=>n+(s&&!this.textures.has(s.image)?s.width*s.height*4*4/3:0),0);
@@ -297,6 +301,7 @@ class SeamGpu {
         gl.generateMipmap(gl.TEXTURE_2D);
         this.uploads++;this.textures.set(image,tex);this.revisions.set(image,revision);this.textureBytes.set(image,(srgbCanvas?(source?.width||1)*(source?.height||1):uploadW*uploadH)*4*4/3);
       }else {gl.bindTexture(gl.TEXTURE_2D,tex);this.textures.delete(image);this.textures.set(image,tex);if(this.placeholder.has(image))this.incomplete=true;}
+      if(this.placeholder.has(image)||this.pendingFull.has(image))this.partial=true;
       gl.uniform1i(uniform(`photo${i}`),i);
       gl.uniform1i(uniform(`srgb${i}`),srgbCanvas&&this.color.colorSpace==='display-p3'?1:0);
       gl.uniform4f(uniform(`box${i}`),g.ex,g.ey,g.ew,g.eh);
@@ -369,6 +374,22 @@ export function drawSeamShared(target:HTMLCanvasElement,cells:SeamPhoto[],rects:
   return true;
 }
 export function releaseSeamShared(target:HTMLCanvasElement){sharedGpu?.forget(target);}
+/** 上一次共用繪製有沒有用到還沒上傳完整的貼圖（深色底或 1024 小材質） */
+export function seamSharedPartial(){return !!sharedGpu&&sharedGpu.partial;}
+/** 共用 GPU 上這張原圖的貼圖已經完整（可以拿來換掉畫面上的另一份，不會先閃一下深色或糊的） */
+export function seamTextureReady(image:CanvasImageSource){return !!sharedGpu&&!sharedGpu.lost&&sharedGpu.ready(image);}
+/**
+ * 先在背景把這幾張原圖上傳成貼圖（畫進一張 1×1 的暫存目標，不會出現在畫面上）。
+ * 同一張照片換另一份解析度時用：新的那份完整上傳好（收到 abai-seam-texture、seamTextureReady 為真）之前，
+ * 畫面上繼續畫舊的那份。用完要 releaseSeamShared(holder)。
+ */
+export function warmSeamTextures(holder:HTMLCanvasElement,sources:SeamTexture[]){
+  if(sharedGpu?.lost){sharedGpu.dispose();sharedGpu=null;}
+  try{sharedGpu??=new SeamGpu(document.createElement('canvas'),false,false,true,true);}catch{return;}
+  holder.width=holder.height=1;
+  const rects=sources.map(()=>({x:0,y:0,w:1,h:1})),cells=sources.map(()=>({url:'',zoom:1,offsetX:0,offsetY:0,rotation:0}));
+  try{sharedGpu.draw(holder,cells,rects,sources,-1,{width:1,height:1,xx:1,xy:0,x0:0,yx:0,yy:1,y0:0,isolated:true});}catch{/* 下一次真的畫時會再上傳 */}
+}
 /**
  * 2D 拼圖合成沒辦法直接顯示 WebGL 圖層。WebKit 上用帶標記的原始像素，避開它在 DOM 的第二次色彩轉換
  */

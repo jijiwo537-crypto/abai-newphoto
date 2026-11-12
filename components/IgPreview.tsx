@@ -1588,6 +1588,12 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
      每一頁都一樣、完整、不壓縮、不裁切。真的超出 IG 支援範圍時，IG 自己會怎麼處理
      是發文當下的事，預覽不該先幫他決定。 */
   const igFrame = frame;
+  /* 轉圈時的佔位圖：跟成品同比例、全透明（見下面圖片區） */
+  const igPlaceholder = (() => {
+    const k = 4000 / Math.max(1, igFrame.w, igFrame.h);
+    const w = Math.max(1, Math.round(igFrame.w * k)), h = Math.max(1, Math.round(igFrame.h * k));
+    return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"/>`)}`;
+  })();
   /* 預覽裡的帳號與頭像：兩個都能改，存在本機，下次開還在。 */
   const [igAccount, setIgAccount] = useState(() => {
     /* 預覽裡改的東西都不留檔 —— 關掉再開就回到預設。
@@ -1875,9 +1881,16 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                         : shots[idx]
                         ? <img src={shots[idx]} alt="" draggable={false} className="max-w-full max-h-full object-contain" />
                         : (
-                          /* 還在算圖：給一個轉圈，不要放空白的頁面 —— 整片白會讓人以為壞掉 */
-                          <div className="w-full h-full flex items-center justify-center">
-                            <div className="w-7 h-7 rounded-full border-2 border-white/25 border-t-white animate-spin" />
+                          /* 還在算圖：給一個轉圈，不要放空白的頁面 —— 整片白會讓人以為壞掉。
+                             轉圈的格子要跟等一下載出來的圖一樣大：放一張同比例、透明的佔位圖，
+                             跟真的圖用同一套尺寸規則（max-w-full／max-h-full／object-contain），
+                             下面那排（愛心、留言…）點進來的瞬間就在最後的位置，圖好了也不會跳。
+                             佔位圖的原始尺寸給得比畫面大（真的成品也一定比畫面寬），所以一樣是被寬度縮到剛好。 */
+                          <div className="relative flex items-center justify-center max-w-full max-h-full">
+                            <img src={igPlaceholder} alt="" aria-hidden draggable={false} className="block max-w-full max-h-full object-contain" />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <div className="w-7 h-7 rounded-full border-2 border-white/25 border-t-white animate-spin" />
+                            </div>
                           </div>
                         )}
                     </div>
