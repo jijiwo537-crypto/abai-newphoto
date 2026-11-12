@@ -10093,13 +10093,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   </div>
                 )}
                 {/* 下半部壓一條深色帶，編號放在上面才讀得清楚 */}
-                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center">
+                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
                   <span className={`text-[8px] font-black uppercase tracking-widest leading-none ${lutCardOn(idx) ? 'text-white' : 'text-white/60'}`}>
                     {lut.url ? lut.name : '原始'}
                   </span>
                 </div>
                 {lutCardOn(idx) && (
-                  <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />
+                  <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />
                 )}
               </div>
             </button>
@@ -10122,13 +10122,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 <div className="absolute inset-0 bg-[#1a1a1a]" />
                 <ThumbCanvas store={fxThumbStore} id={thumbKey(activeSrc, FX_THUMB_BASE)}
                              painters={thumbPainters} attr="data-fx-thumb" name={FX_THUMB_BASE} />
-                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center">
+                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
                   <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${noEffectOn ? 'text-white' : 'text-white/60'}`}>
                     原始
                   </span>
                 </div>
                 {noEffectOn && (
-                  <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />
+                  <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />
                 )}
               </div>
             </button>
@@ -10141,7 +10141,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 <ThumbCanvas store={fxThumbStore} id={thumbKey(activeSrc, tool.id)}
                              fallbackId={thumbKey(activeSrc, FX_THUMB_BASE)}
                              painters={thumbPainters} attr="data-fx-thumb" name={tool.id} />
-                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center">
+                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
                   <span className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap ${isParamAdjusted(tool.id) ? 'text-white' : 'text-white/60'}`} style={{textTransform:'none'}}>
                     {tool.label}
                   </span>
@@ -10150,7 +10150,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 {/* 白框＝這一顆正在生效。合併完參數就歸零，選取自然取消 ——
                      使用者才能把同一顆濾鏡／特效再套一次。 */}
                 {(isEffectOn(tool.id) || pickedFxId === tool.id) && (
-                  <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />
+                  <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />
                 )}
                 {/* 編輯鍵：選中而且真的有細項可調才出現。
                      用 span 不用 button —— 這整張卡片本身就是一顆 button，

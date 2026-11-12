@@ -1090,10 +1090,10 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
           <button onClick={() => refInputRef.current?.click()} disabled={referenceLoading} data-cm-pickref aria-label="新增參考圖片"
             className="flex flex-col items-center shrink-0 w-[64px] active:scale-95 transition-transform">
             {/* 跟底下那一排同一個深色、外框是虛線（跟模板的空格子同一款） */}
-            <div className="relative w-full h-[76px] rounded-lg border border-dashed border-white/30 bg-white/[0.03] flex flex-col items-center justify-center gap-1 text-white/50">
-              {refAdding ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                : <Icon name="add_photo_alternate" className="text-2xl" />}
-              <span className="text-[8px] font-black tracking-widest">新增參考圖</span>
+            <div className="relative w-full h-[76px] rounded-lg border border-dashed border-white/30 bg-white/[0.03] overflow-hidden">
+              {refAdding ? <div className="absolute left-1/2 top-[21px] -translate-x-1/2 w-[18px] h-[18px] border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                : <svg className="absolute left-1/2 top-[21px] -translate-x-1/2 text-white/75" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" aria-hidden="true"><path d="M9 3.5v11M3.5 9h11" /></svg>}
+              <span className="absolute inset-x-0 top-[42px] text-center text-[9px] font-medium leading-[12px] tracking-[0.01em] text-white/65 whitespace-nowrap">新增參考圖</span>
             </div>
           </button>
           {refs.map(r => {

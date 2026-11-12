@@ -80,7 +80,7 @@ export const TemplatePanel: React.FC<TemplatePanelProps> = ({ presets, activePre
             {(previewSrc[preset.id] || previewSrc.__original) &&
               <img src={previewSrc[preset.id] || previewSrc.__original} alt="" className="w-full h-full object-cover" draggable={false} />}
             <span className="absolute inset-x-0 bottom-0 bg-black/65 py-1 text-[9px] font-semibold text-white">預設 {preset.n}</span>
-            {activePresetId === preset.id && <span className="absolute inset-0 rounded-[10px] ring-2 ring-inset ring-white pointer-events-none" />}
+            {activePresetId === preset.id && <span className="absolute inset-0 rounded-[10px] ring-1 ring-inset ring-white pointer-events-none" />}
           </button>
         ))}
         {slots.map((src, i) => (
@@ -117,7 +117,7 @@ export const TemplatePanel: React.FC<TemplatePanelProps> = ({ presets, activePre
               {src
                 ? <img src={src} alt="" className="w-full h-full object-cover" draggable={false} />
                 : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.45)" strokeWidth="1.6" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>}
-              {src && picked === i && <span className="absolute inset-0 rounded-[10px] ring-2 ring-inset ring-white pointer-events-none" />}
+              {src && picked === i && <span className="absolute inset-0 rounded-[10px] ring-1 ring-inset ring-white pointer-events-none" />}
             </button>
           </div>
         ))}
