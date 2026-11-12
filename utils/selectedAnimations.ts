@@ -3,10 +3,10 @@ import { paintSelectedWarp } from './selectedMotionWarp';
 export type SelectedTarget = 'text' | 'symbol' | 'shape' | 'pattern';
 const entries = [
  ['T-E03','淡入ll'],['T-E07','果凍ll'],
- ['T-L01','呼吸'],['T-L04','閃爍'],['T-L15','波浪ll'],['T-L20','失焦'],
+ ['T-L01','呼吸'],['T-L04','閃爍'],['T-L15','波浪ll'],['T-L20','漂浮'],
  ['S-E03','淡入'],['S-E04','足跡'],['S-E10','旋轉'],
- ['S-L01','呼吸'],['S-L03','搖擺'],['S-L07','翻面'],['S-L20','失焦'],
- ['P-L02','閃爍'],['P-L04','發光'],['P-L07','翻面'],['P-L20','失焦'],
+ ['S-L01','呼吸'],['S-L03','搖擺'],['S-L07','翻面'],['S-L20','漂浮'],
+ ['P-L02','閃爍'],['P-L04','發光'],['P-L07','翻面'],['P-L20','漂浮'],
 ] as const;
 export const SELECTED_ANIMATIONS = entries.map(([code,name]) => ({
  code, id: `lab-${code}`, name, target: ({T:'text',S:'symbol',G:'shape',P:'pattern'} as const)[code[0] as 'T'|'S'|'G'|'P'], phase: code[2] === 'E' ? 'entry' : 'idle',
@@ -61,6 +61,21 @@ const defocusOf=(frame:SelectedFrame,index:number,count:number)=>{
  // 模糊半徑直接跟曲線成正比（不再加任何次方），節奏與呼吸的明暗完全一樣
  return defocusLevel(frame.clock??frame.t,frame.speed,group,groups)*frame.amount*smooth(frame.t/.6);
 };
+/* ───────────── 漂浮（T-L20／S-L20／P-L20，取代原本的失焦） ─────────────
+   每一個單位沿著一個很小的「8 字」（x＝sin u、y＝sin 2u ／ 2）慢慢漂，移動時順著方向微微傾斜，
+   大小也跟著一點點呼吸 —— 像浮在水面上。各單位用黃金角錯開相位，整串看起來是一起在空氣裡飄，
+   不會整齊劃一。只有位移／旋轉／縮放：不模糊、不快取、不換解析度，所以不會抖、不會糊，發光一起動。
+   進場後 1.2 秒內從靜止平順地帶起來（en）。 */
+export function floatPose(frame:SelectedFrame,index:number,r:number){
+ const en=smooth(frame.t/1.2),a=frame.amount*en;
+ const u=frame.t*frame.speed*.9+frame.phase+index*2.39996;
+ return {
+  dx:Math.sin(u)*r*.18*a,
+  dy:Math.sin(2*u)*.5*r*.22*a,
+  rot:Math.cos(u)*.12*a,                  // 跟著橫向速度傾斜（x 的導數是 cos u）
+  k:1+Math.sin(u+1.05)*.04*a,
+ };
+}
 const densityOf=(ctx:CanvasRenderingContext2D)=>{const m=ctx.getTransform();return Math.max(.01,Math.hypot(m.a,m.b),Math.hypot(m.c||0,m.d||0));};
 /* iOS 的 WKWebView 不一定真的會畫 Canvas filter（屬性可能不存在，或設定了卻沒效果），
    所以實際畫一個點來確認；不支援時改用縮小＋分離式高斯取樣的備援模糊。 */
@@ -637,13 +652,8 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
    } else if(code==='S-L07'){
     ctx.scale(Math.max(.02,1-(1-Math.abs(Math.cos(v)))*.8*a*en),1);
    } else if(code==='T-L20'||code==='S-L20'){
-    // 失焦：模糊半徑跟著物件大小與目前解析度（預覽／匯出一致），各組依 defocusGroup 錯開。
-    const level=defocusOf(frame,index,count);
-    const sg=level*Math.max(3,r*.28)*density;
-    // 分檔模糊存成物件自己的長方形（不是以對角線為邊的正方形），寬的文字省下大半的空白像素
-    if(box)paintBlurred(ctx,sg,Math.hypot(box.w,box.h)/2,paint,box.x+box.w/2,box.y+box.h/2,box.src,{hw:box.w/2,hh:box.h/2});
-    else paintBlurred(ctx,sg,Math.hypot(w,h)*.8,paint);
-    return;
+    const f=floatPose(frame,index,r);
+    ctx.translate(f.dx,f.dy);ctx.rotate(f.rot);ctx.scale(f.k,f.k);
    }
    paint(ctx);
   }
@@ -654,6 +664,8 @@ export function paintSelectedAnimation(ctx:CanvasRenderingContext2D, frame:Selec
 export function selectedPatternOffset(frame:SelectedFrame|undefined, size:number) {
  if(!frame)return 0;
  // P-L02 已改成全體同步閃爍，不再改動圖案位置。
+ /* 漂浮：圖案的上下漂移寫進「位置」本身 —— 本體、發光、連線都用同一個位置，光跟著一起動 */
+ if(frame.id==='lab-P-L20')return floatPose(frame,frame.slot??0,size/2).dy;
  return 0;
 }
 export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number) {
@@ -668,9 +680,12 @@ export function applySelectedPatternAppearance(ctx:CanvasRenderingContext2D,fram
 /** 畫一顆圖案：失焦時先畫進以這顆為中心的緩衝再高斯模糊貼回（跟文字／符號同一套），
     其他動畫照舊套外觀後直接畫。draw 只能畫在傳進來的 g 上。 */
 export function paintSelectedPattern(ctx:CanvasRenderingContext2D,frame:SelectedFrame|undefined,size:number,x:number,y:number,draw:(g:CanvasRenderingContext2D)=>void,cacheKey?:object){
+ void cacheKey;
  if(frame?.id==='lab-P-L20'){
-  const level=defocusOf(frame,frame.slot??0,frame.slots??1);
-  paintBlurred(ctx,level*Math.max(3,size*.14)*densityOf(ctx),size,draw,x,y,cacheKey);
+  /* 漂浮：位置已經由 selectedPatternOffset 移好（發光一起），這裡只加一點跟著漂的傾斜 */
+  const f=floatPose(frame,frame.slot??0,size/2);
+  ctx.translate(x,y);ctx.rotate(f.rot);ctx.translate(-x,-y);
+  draw(ctx);
   return;
  }
  applySelectedPatternAppearance(ctx,frame,size,x,y);

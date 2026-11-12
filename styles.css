@@ -431,10 +431,10 @@ html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.mat
 }
 @keyframes camFadeOut { 0% { opacity: 1; } 50% { opacity: 1; } 100% { opacity: 0; } }
 
-/* 卡片（模板、濾鏡、特效）的選中框：畫在卡片外緣、往外長，不畫在圖片裡面 ——
-   畫在裡面會被圖片邊緣的反鋸齒蓋掉一半，四邊看起來比較細，圓角也跟圖片對不上。
-   outline 沿著卡片自己的圓角走，所以弧度跟圖片完全一樣。
-   標記放在卡片裡（data-sel-ring），框畫在卡片本身上。 */
-[data-sel-ring] { display: none; }
-:has(> [data-sel-ring="thin"]) { outline: 1px solid #fff; outline-offset: -1px; } /* 模板卡片貼齊整列的上下緣，框畫在卡片邊上（蓋在圖片上面，不會被吃掉） */
-:has(> [data-sel-ring="wide"]) { outline: 1.5px solid #fff; outline-offset: 0; }
+/* 卡片（模板、濾鏡、特效）的選中框。
+   濾鏡、特效：卡片外面一圈 1.5px，用「向外擴的陰影」畫 —— 陰影沿著卡片自己的圓角走，弧度跟圖片完全一樣，
+   不會被卡片的 overflow 切掉，也不受點擊縮放、重新繪製影響（outline 在 iPhone 上圓角會變形，點下去時看起來會變粗）。
+   模板：卡片貼著整列上下緣，往外畫會被切，所以是一條 1px 的框疊在卡片邊上（不是內陰影：內陰影畫在圖片底下，會被圖片蓋掉一半）。 */
+[data-sel-ring="wide"] { display: none; }
+:has(> [data-sel-ring="wide"]) { box-shadow: 0 0 0 1.5px #fff; }
+[data-sel-ring="thin"] { position: absolute; inset: 0; border: 1px solid #fff; border-radius: inherit; pointer-events: none; }

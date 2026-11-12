@@ -13,10 +13,10 @@ try {
  assert.equal(new Set(m.SELECTED_ANIMATIONS.map(x=>x.id)).size,17);
  assert.deepEqual(m.SELECTED_ANIMATIONS.map(({id,name})=>[id,name]),[
   ['lab-T-E03','淡入ll'],['lab-T-E07','果凍ll'],
-  ['lab-T-L01','呼吸'],['lab-T-L04','閃爍'],['lab-T-L15','波浪ll'],['lab-T-L20','失焦'],
+  ['lab-T-L01','呼吸'],['lab-T-L04','閃爍'],['lab-T-L15','波浪ll'],['lab-T-L20','漂浮'],
   ['lab-S-E03','淡入'],['lab-S-E04','足跡'],['lab-S-E10','旋轉'],
-  ['lab-S-L01','呼吸'],['lab-S-L03','搖擺'],['lab-S-L07','翻面'],['lab-S-L20','失焦'],
-  ['lab-P-L02','閃爍'],['lab-P-L04','發光'],['lab-P-L07','翻面'],['lab-P-L20','失焦'],
+  ['lab-S-L01','呼吸'],['lab-S-L03','搖擺'],['lab-S-L07','翻面'],['lab-S-L20','漂浮'],
+  ['lab-P-L02','閃爍'],['lab-P-L04','發光'],['lab-P-L07','翻面'],['lab-P-L20','漂浮'],
  ]);
  for(const target of ['text','symbol','pattern'])assert.ok(m.selectedKinds(target,'idle').length);
  assert.equal(m.selectedKinds('shape','idle').length,0,'retired shape animations are absent');
@@ -73,6 +73,15 @@ try {
   let overlap=false;for(let i=0;i<4200;i++){const t=i/1000;if(m.defocusLevel(t,1,0,G)>.05&&m.defocusLevel(t,1,1,G)>.05)overlap=true;}
   assert.ok(overlap,`${G} groups overlap their hand-off`);
  }
+ // 漂浮（取代失焦）：只用位移／旋轉／縮放，連續、從靜止平順帶起、每個單位錯開；圖案的漂移寫在位置裡（發光跟著）
+ {const c={in:'none',idle:'lab-S-L20',delay:0,dur:1,amp:100,speed:1};
+  assert.equal(m.floatPose(m.selectedFrame(c,0),0,50).dx,0,'float starts at rest');
+  let prev=null;for(let i=0;i<4000;i++){const f=m.floatPose(m.selectedFrame(c,i/1000),0,50);
+   if(prev)assert.ok(Math.abs(f.dx-prev.dx)<.2&&Math.abs(f.dy-prev.dy)<.2&&Math.abs(f.rot-prev.rot)<.002,'float is continuous');prev=f;}
+  const a=m.floatPose(m.selectedFrame(c,3),0,50),b=m.floatPose(m.selectedFrame(c,3),1,50);
+  assert.ok(Math.abs(a.dx-b.dx)>1e-3,'units are out of phase');
+  const pf=m.selectedFrame({...c,idle:'lab-P-L20'},3);
+  assert.ok(Math.abs(m.selectedPatternOffset(pf,100))>1e-3,'pattern float moves the shared position (glow follows)');}
  m.setCanvasBlurSupportedForTest(false);
  let painted=0;const fb={...ctx,getTransform(){return {a:2,b:0};}};
  m.paintSelectedAnimation(fb,m.selectedFrame({...cfg,idle:'lab-T-L20'},2,.4),40,50,()=>painted++);
