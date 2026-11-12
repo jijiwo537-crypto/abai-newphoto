@@ -268,8 +268,24 @@ class SeamGpu {
             seamTextureEpochValue++;window.dispatchEvent(new Event('abai-seam-texture'));
           };
           const space=this.color.colorSpace;
-          void (async()=>{
+          /* 背景準備：任何一步出錯（iPhone 一次打開很多張照片時畫布記憶體不夠、圖還沒解碼完畫出全透明…）
+             都不能讓這一格永遠停在深色底 —— 那就是「打開草稿、撤回後有幾格是黑的」。
+             出錯就等一下再試；再不行就直接把原圖上傳（不做分條，畫面一定有圖）。 */
+          const blank=(d:ArrayBufferView)=>{const u=d as Uint8Array;let n=0;for(let i=3;i<u.length;i+=Math.max(4,(u.length>>8)&~3)){if(u[i])return false;n++;}return n>0;};
+          const direct=()=>{
+            if(!alive())return;
+            try{
+              gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);
+              gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image as TexImageSource);gl.generateMipmap(gl.TEXTURE_2D);
+              this.placeholder.delete(image);this.pendingFull.delete(image);
+              seamTextureEpochValue++;window.dispatchEvent(new Event('abai-seam-texture'));
+            }catch{/* 下次畫到時會重新來過 */}
+          };
+          const attempt=async(tries:number):Promise<void>=>{
             await yieldTask();if(!alive())return;
+            // 先確定解碼完：沒解碼完就畫進畫布，iPhone 上可能畫出一片全透明（看起來就是黑格）
+            if(image instanceof HTMLImageElement)await image.decode().catch(()=>{});
+            if(!alive())return;
             let bmp=await createImageBitmap(image as ImageBitmapSource,{imageOrientation:'from-image'}).catch(()=>null);
             // 尺寸跟原圖對不上（例如沒照 EXIF 轉向）就不用它，照舊直接畫原圖，方向與色彩不變
             if(bmp&&(bmp.width!==sw||bmp.height!==sh)){bmp.close();bmp=null;}
@@ -277,12 +293,22 @@ class SeamGpu {
               const src:CanvasImageSource=bmp||image;
               if(!alive())return;
               const k=1024/Math.max(uploadW,uploadH),pw=Math.max(1,Math.round(uploadW*k)),ph=Math.max(1,Math.round(uploadH*k));
-              this.placeholder.delete(image);put(pw,ph,smallPixels(src,pw,ph,space));
+              const small=smallPixels(src,pw,ph,space);
+              if(blank(small))throw new Error('blank');
+              this.placeholder.delete(image);put(pw,ph,small);
               await yieldTask();
               const full=await stripPixels(src,sw,sh,uploadW,uploadH,space,alive);
-              if(full&&alive()){this.pendingFull.delete(image);put(uploadW,uploadH,full);}
+              if(full&&alive()){
+                if(blank(full))throw new Error('blank');
+                this.pendingFull.delete(image);put(uploadW,uploadH,full);
+              }
+            }catch{
+              if(!alive())return;
+              if(tries>0){await new Promise(r=>setTimeout(r,700));return attempt(tries-1);}
+              direct();
             }finally{bmp?.close();}
-          })();
+          };
+          void attempt(2);
         }else{
           // Safari 的 DOM 貼圖匯入可能把描述檔套兩次。自己在原解析度做一次 ICC 轉換，
           // 再用輸出色域上傳原始位元組（每個手勢都不讀回）
