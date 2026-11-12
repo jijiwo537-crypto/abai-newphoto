@@ -1,5 +1,5 @@
 import { fontStack } from './fonts';
-import { SYMBOLS } from './symbols';
+import { SYMBOLS, IOS_PROBLEM_LONG_SYMBOLS } from './symbols';
 import { hasEmoji, emojiSafeInk } from './stableText';
 
 /* iOS 對部分星星、愛心、天體等碼位會優先選 Apple Color Emoji。符號在
@@ -20,11 +20,8 @@ export const symbolTextPresentation = (text: string) => {
   return out;
 };
 
-/* 清單從第 124 顆開始就是橫向長裝飾字串。Mobile Safari 對這批字串會依
-   fallback 字體與當下字級偶發截掉右半、或回報過大的 advance；若只保護
-   最後 12 顆，前面的長符號仍會出現框太短／太寬。用固定內容白名單，而
-   不是會隨裝置字體改變的寬度門檻，確保前 123 顆原本正常的短符號不變。 */
-const IOS_PROBLEM_LONG_SYMBOLS = new Set(SYMBOLS.slice(123));
+/* Mobile Safari 對部分長裝飾字串會依 fallback 字體與當下字級偶發截掉右半，
+   或回報過大的 advance。白名單按內容保存，符號清單重排也不會改變繪製路徑。 */
 export const isIOSProblemLongSymbol = (text: string) => IOS_PROBLEM_LONG_SYMBOLS.has(text);
 
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
