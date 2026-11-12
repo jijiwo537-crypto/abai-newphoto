@@ -16,3 +16,11 @@ export const SAVE_MENU_GLASS = {
 } as const;
 /** 匯出選項面板裡沒選中的按鈕：跟底板差不多深，只亮一點點分得出來 */
 export const SAVE_MENU_BUTTON = 'bg-white/[0.07] text-white/85';
+/** 「是否儲存為草稿」「要繼續上次的編輯嗎？」：真正的毛玻璃（透得出後面、模糊），比儲存選單淺一點、不浮誇 */
+export const DIALOG_GLASS = {
+  background: 'rgba(28,28,32,.42)',
+  backdropFilter: 'blur(28px) saturate(140%)',
+  WebkitBackdropFilter: 'blur(28px) saturate(140%)',
+  boxShadow: '0 12px 36px rgba(0,0,0,.35)',
+  border: 'none',
+} as const;
