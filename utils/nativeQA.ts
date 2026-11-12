@@ -49,12 +49,12 @@ function logLayout(tag: string) {
   log(`${tag} viewport ${vw}x${vh} safeTop=${getComputedStyle(document.documentElement).getPropertyValue('--sat') || '?'} blocks: ${blocks.join(' ; ')}`);
 }
 
-async function makePhoto(): Promise<File> {
+async function makePhoto(hue = -1): Promise<File> {
   const c = document.createElement('canvas');
   c.width = 1600; c.height = 1200;
   const g = c.getContext('2d')!;
   const grd = g.createLinearGradient(0, 0, 1600, 1200);
-  grd.addColorStop(0, '#ff7a59'); grd.addColorStop(1, '#3b5bff');
+  grd.addColorStop(0, hue < 0 ? '#ff7a59' : `hsl(${hue} 80% 60%)`); grd.addColorStop(1, hue < 0 ? '#3b5bff' : `hsl(${hue + 40} 80% 50%)`);
   g.fillStyle = grd; g.fillRect(0, 0, 1600, 1200);
   g.fillStyle = '#fff'; g.font = 'bold 160px sans-serif'; g.fillText('ABAI QA', 360, 650);
   const blob = await new Promise<Blob | null>(r => c.toBlob(r, 'image/jpeg', 0.9));
@@ -161,9 +161,19 @@ const TOOL_ENTRY: Record<string, RegExp> = {
 /* 模擬器的相簿權限沒辦法自動給「完整取用」（iOS 18 一定會跳系統詢問框），
    所以工具測試直接把測試用的照片／影片交給匯入那一步，不經過相簿畫面 */
 let qaVideo: File | null = null;
-async function provideFiles(n: number) {
+async function provideFiles(n: number, native = false) {
   const photos: File[] = [];
-  for (let i = 0; i < n; i++) photos.push(await makePhoto());
+  for (let i = 0; i < n; i++) {
+    const p = await makePhoto(native ? i * 110 : -1);
+    if (!native) { photos.push(p); continue; }
+    /* 跟 App 自己的相簿一樣：原圖先存成原生檔案，再讀回來變成 File，並記下原生路徑 */
+    const { blobToNativeFile } = await import('./nativeImage');
+    const { fileSrc, rememberNativeFile } = await import('./nativeBridge');
+    const path = await blobToNativeFile(p, 'jpg');
+    const f = new File([await (await fetch(fileSrc(path))).blob()], `qa${i}.jpg`, { type: 'image/jpeg', lastModified: Date.now() });
+    rememberNativeFile(f, path);
+    photos.push(f);
+  }
   (window as any).__abaiQAFiles = (filter: string) => {
     log(`import intercepted (filter=${filter}) → ${filter === 'videos' || (filter === 'any' && qaVideo) ? 'video' : `${n} photo(s)`}`);
     if (filter === 'videos' || (filter === 'any' && qaVideo)) return qaVideo ? [qaVideo] : photos;
@@ -215,6 +225,71 @@ async function scenarioLayoutVideo() {
     if (/儲存影片|已存到相簿|儲存中/.test(document.body.innerText) && !pct) { log('layoutvideo: result page reached'); break; }
   }
   logButtons('layoutvideo end');
+}
+
+/* 用觸控事件點一下（React 的格子選取是接 touch 事件的） */
+async function tapAt(x: number, y: number) {
+  const el = document.elementFromPoint(x, y) as HTMLElement | null;
+  if (!el) return;
+  const t = new Touch({ identifier: Date.now() % 100000, target: el, clientX: x, clientY: y });
+  const ev = (type: string, list: Touch[]) => el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: list, targetTouches: list, changedTouches: [t] }));
+  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: x, clientY: y, pointerType: 'touch', isPrimary: true, pointerId: 7 }));
+  ev('touchstart', [t]);
+  await sleep(70);
+  el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: y, pointerType: 'touch', isPrimary: true, pointerId: 7 }));
+  ev('touchend', []);
+  el.click();
+}
+/* 每個佈局畫布：可見與否、尺寸、左右兩半中心的顏色（18,18,18＝空格子的深色＝圖不見了） */
+function probeLayouts(tag: string) {
+  const out = Array.from(document.querySelectorAll('canvas[data-layout-base], canvas[data-layout-photo-surface]')).map(n => {
+    const c = n as HTMLCanvasElement, cs = getComputedStyle(c);
+    let px = '';
+    try {
+      const g = c.getContext('2d')!;
+      px = [0.25, 0.75].map(fx => Array.from(g.getImageData(Math.floor(c.width * fx), Math.floor(c.height / 2), 1, 1).data).join(',')).join(' / ');
+    } catch (e: any) { px = `ERR ${String(e?.message ?? e)}`; }
+    return `${c.hasAttribute('data-layout-base') ? 'base' : 'detail'} ${c.width}x${c.height} ${cs.display}/${cs.visibility} [${px}]`;
+  });
+  log(`${tag} layouts: ${out.join(' ; ') || '(none)'}`);
+}
+async function scenarioLayoutUndo() {
+  await provideFiles(3, true);
+  click(await waitFor(() => findButton(TOOL_ENTRY.layout), 15000, '跨頁拼圖按鈕'));
+  await sleep(6000);
+  const add = await waitFor(() => findButton(/^新增內容$/), 8000, '新增內容');
+  click(add); await sleep(900);
+  click(await waitFor(() => findButton(/新增佈局/), 8000, '新增佈局')); await sleep(1500);
+  const tmpl = buttons().filter(b => { const r = b.getBoundingClientRect(); return r.top > innerHeight * 0.6 && r.width < innerWidth / 3; });
+  log(`layoutundo: ${tmpl.length} template cards`);
+  if (tmpl[1]) click(tmpl[1]);
+  await sleep(2000);
+  const cells = Array.from(document.querySelectorAll('[data-cell-id]')) as HTMLElement[];
+  log(`layoutundo: ${cells.length} cells`);
+  for (const cell of cells.slice(0, 2)) {
+    const r = cell.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+    await tapAt(x, y); await sleep(600); await tapAt(x, y); await sleep(3500);
+  }
+  await tapAt(5, innerHeight * 0.4); await sleep(2500);
+  probeLayouts('layoutundo filled');
+  log('SHOT filled'); await sleep(2500);
+  const undo = findButton(/^undo$/), redo = () => findButton(/^redo$/);
+  if (undo) { click(undo); await sleep(2500); probeLayouts('layoutundo after undo'); log('SHOT undo'); await sleep(2500); }
+  const r1 = redo(); if (r1) { click(r1); await sleep(3000); probeLayouts('layoutundo after redo'); log('SHOT redo'); await sleep(2500); }
+  if (undo) { click(undo); await sleep(800); click(undo); await sleep(800); }
+  for (let i = 0; i < 2; i++) { const r = redo(); if (r) { click(r); await sleep(900); } }
+  await sleep(3000); probeLayouts('layoutundo after 2x undo/redo'); log('SHOT undo2'); await sleep(2500);
+  const back = findButton(/返回主頁/);
+  if (back) {
+    click(back); await sleep(1500);
+    const save = findButton(/^儲存$/); if (save) click(save);
+    await sleep(4000);
+    const mine = findButton(/^我的$/); if (mine) click(mine);
+    await sleep(2000);
+    const hist = Array.from(document.querySelectorAll('img')).filter(visible).map(i => i.closest('button')).find(Boolean) as HTMLButtonElement | undefined;
+    log(`layoutundo: history item ${hist ? 'found' : 'missing'}`);
+    if (hist) { click(hist); await sleep(8000); probeLayouts('layoutundo after draft resume'); log('SHOT draft'); await sleep(2500); }
+  }
 }
 
 let running = false;
@@ -287,6 +362,7 @@ export async function runNativeQA(forced?: string) {
     else if (scenario === 'camfx') await scenarioCamFx();
     else if (scenario === 'rings') await scenarioRings();
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
+    else if (scenario === 'layoutundo') await scenarioLayoutUndo();
     else if (scenario.startsWith('tool:')) await scenarioTool(scenario.slice(5));
     log(`end ${scenario}`);
   } catch (e: any) {
