@@ -430,3 +430,11 @@ html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.mat
   100% { transform: scale(1); opacity: 0; }
 }
 @keyframes camFadeOut { 0% { opacity: 1; } 50% { opacity: 1; } 100% { opacity: 0; } }
+
+/* 卡片（模板、濾鏡、特效）的選中框：畫在卡片外緣、往外長，不畫在圖片裡面 ——
+   畫在裡面會被圖片邊緣的反鋸齒蓋掉一半，四邊看起來比較細，圓角也跟圖片對不上。
+   outline 沿著卡片自己的圓角走，所以弧度跟圖片完全一樣。
+   標記放在卡片裡（data-sel-ring），框畫在卡片本身上。 */
+[data-sel-ring] { display: none; }
+:has(> [data-sel-ring="thin"]) { outline: 1px solid #fff; outline-offset: -1px; } /* 模板卡片貼齊整列的上下緣，框畫在卡片邊上（蓋在圖片上面，不會被吃掉） */
+:has(> [data-sel-ring="wide"]) { outline: 1.5px solid #fff; outline-offset: 0; }

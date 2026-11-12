@@ -1670,6 +1670,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const occupancyBus=useRef(new Set<()=>void>());
   /** 只有手指正按在「無縫／佔比」滑桿上才是 true：這時 GPU 那層直接疊在畫布下顯示（見 CreativeSeamless.present）。 */
   const seamLiveRef=useRef(false);
+  const seamPendingAmount=useRef(0),seamAmountRaf=useRef(0);
   const maskScaleValue=useRef(maskScale);maskScaleValue.current=maskScale;
   const occupancyFrame=useRef(0);
   useEffect(()=>()=>cancelAnimationFrame(occupancyFrame.current),[]);
@@ -3769,7 +3770,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
         fontFamily: SYMBOL_FONT, bold: false, italic: false,
         letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
-        glow: 0, glowColor: '#ffffff',
+        glow: 0, glowColor: '#ffffff',  /* 符號是白色，發光同色 */
         mo: startMotion({ type: 'text', sym: txt }, { in: 'bubble', idle: 'symbol-breathe2' }),
         x: cx - w / 2, y: cy - h / 2, w, h, rot: 0,
       };
@@ -6482,7 +6483,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.save();
       ctx.beginPath();
       const matrix=ctx.getTransform();
-      if(isMain&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&photoRegion&&layout!==AROUND&&img===baseImg&&matrix.b===0&&matrix.c===0&&matrix.a>0&&matrix.d>0){
+      /* 影片當底也一樣把視窗吸到實體像素格（照片那邊早就這樣做）：
+         不然放大縮小預覽時邊緣落在半個像素上，貼齊的那一邊就一下有白線、一下沒有 */
+      if(isMain&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&(photoRegion||isVideoEl(imageState?.img))&&layout!==AROUND&&img===baseImg&&matrix.b===0&&matrix.c===0&&matrix.a>0&&matrix.d>0){
         // GPU 視窗吃的是像素中心，不是反鋸齒的小數畫布裁切。主畫布上的透明視窗也用同一套整數歸屬，
         // 不改來源裁切或邏輯幾何
         const left=scenePixelEdge(ox,matrix.a,matrix.e),top=scenePixelEdge(oy,matrix.d,matrix.f);
@@ -12064,7 +12067,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
                     {/* 只有軌道左右往內收（標題、上下位置不變）：貼滿整排太長，兩端也難拖 */}
                     <div className="px-3">
-                      <RegionLiveRange value={creativeSeamlessSliderValue(photoRegion)} onStart={()=>{seamLiveRef.current=true;}} onChange={v=>commitRegion(withCreativeSeamlessAmount(photoRegionRef.current!,v),true)} onCommit={()=>{seamLiveRef.current=false;finishRegionEdit();}}/>
+                      <RegionLiveRange value={creativeSeamlessSliderValue(photoRegion)} onStart={()=>{seamLiveRef.current=true;}}
+                        /* 拖動中只換融合量：已經直接顯示的那層 GPU 畫面自己重畫就好（跟跨頁拼圖一樣），
+                           不重畫整張主畫布的所有物件、遮罩。剛從「關」拉到「開」的那一下、或那層還沒出現時才整張重畫 */
+                        onChange={v=>{const cur=photoRegionRef.current!,next=withCreativeSeamlessAmount(cur,v);
+                          if(cur.seamless&&next.seamless&&creativeSeam.current){photoRegionRef.current=next;seamPendingAmount.current=next.seamlessAmount||0;
+                            if(!seamAmountRaf.current)seamAmountRaf.current=requestAnimationFrame(()=>{seamAmountRaf.current=0;
+                              if(!creativeSeam.current?.updateLiveAmount(seamPendingAmount.current))regionPaintRef.current();});
+                            return;}
+                          commitRegion(next,true);}}
+                        onCommit={()=>{seamLiveRef.current=false;finishRegionEdit();}}/>
                     </div>
                   </div>}
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
@@ -12705,9 +12717,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           /* 第一次把發光拉起來：預設用這段文字（符號）自己的顏色，
                              一個物件只做這一次，之後手動挑過的顏色不會被蓋掉。 */
                           if (d.glow !== undefined && d.glow > 0 && !sel.glowInit) {
-                            // 文字（含符號）的發光預設就是純白
-                            d = { ...d, glowColor: '#ffffff', glowInit: true };
+                            // 文字的發光預設是純白；符號的發光預設跟符號同色
+                            d = { ...d, glowColor: sel.sym ? (sel.color || '#ffffff') : '#ffffff', glowInit: true };
                           }
+                          /* 符號換顏色：發光跟著變成同一色（之後一樣能單獨挑發光的顏色） */
+                          if (sel.sym && d.color) d = { ...d, glowColor: d.color };
                           if (d.fontSize !== undefined) {
                             if (sel.sym) {
                               symbolSizeTuningRef.current = true;

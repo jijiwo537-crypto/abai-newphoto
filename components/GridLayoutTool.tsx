@@ -3740,7 +3740,7 @@ return (
                   {l.url ? l.name : '原始'}
                 </span>
               </div>
-              {active && <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />}
+              {active && <span data-sel-ring="wide" aria-hidden="true" />}
             </div>
           </button>
         );
@@ -3788,7 +3788,7 @@ return (
               <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[4px]">
                 <span style={{textTransform:'none'}} className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap ${none ? 'text-white' : 'text-white/60'}`}>原始</span>
               </div>
-              {none && <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />}
+              {none && <span data-sel-ring="wide" aria-hidden="true" />}
             </div>
           </button>
         );
@@ -3818,7 +3818,7 @@ return (
                   {label}
                 </span>
               </div>
-              {(selected || on) && <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />}
+              {(selected || on) && <span data-sel-ring="wide" aria-hidden="true" />}
               {selected && hasDetail && (
                 // 卡片本身就是一顆 button，裡面不能再放 button，所以用 span
                 <span
@@ -13983,6 +13983,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 圖片不算在內 —— 它的發光是另一組參數（imgGlow）。
    */
   const withGlowInit = (layer: FloatingImage, patch: Partial<FloatingImage>): Partial<FloatingImage> => {
+    /* 符號：換顏色時發光跟著換成同一色（之後一樣能在發光那邊單獨挑別的顏色）；
+       第一次打開發光也用符號自己的顏色 */
+    if (layer.sym && (patch as any).color) return { ...patch, glowColor: (patch as any).color } as any;
+    if (layer.sym && !layer.glowInit && ((patch as any).glow || 0) > 0) {
+      return { ...patch, glowColor: layer.color || '#FFFFFF', glowInit: true } as any;
+    }
     if (layer.glowInit) return patch;
     if (layer.text !== undefined && (patch as any).glow !== undefined && ((patch as any).glow || 0) > 0) {
       return { ...patch, glowColor: '#FFFFFF', glowInit: true } as any;

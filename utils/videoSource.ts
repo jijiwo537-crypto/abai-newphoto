@@ -220,7 +220,11 @@ export const videoFrame = (el: any, maxPx = 0, freeze = false): CanvasImageSourc
      落格時就直接落成 308px 就好 —— 落成 1920px 再讓每一次 drawImage 去做
      高品質縮圖，等於同一件事做很多遍，而且每一遍都比這一次貴。
      不傳就是原尺寸（底圖那一路要畫得很大，不能先縮）。 */
-  const k = maxPx > 0 ? Math.min(1, maxPx / Math.max(vw, vh)) : 1;
+  /* 要的尺寸分段（每段差 25%）：放大縮小預覽時，畫面上的大小每一格都在變，
+     照著每一格的大小重新落格的話，影格的寬高每次取整都不一樣 —— 影片就在框裡一直微微抖、
+     貼齊邊緣時那一條白線也跟著出現、消失。分段之後同一段內完全不重落，跨段才換一次 */
+  const want = maxPx > 0 ? 64 * Math.pow(1.25, Math.ceil(Math.log(Math.max(64, maxPx) / 64) / Math.log(1.25))) : 0;
+  const k = want > 0 ? Math.min(1, want / Math.max(vw, vh)) : 1;
   const w = Math.max(1, Math.round(vw * k)), h = Math.max(1, Math.round(vh * k));
   let e = frameCache.get(el);
   if (!e) { e = { cv: document.createElement('canvas'), tok: -1 }; frameCache.set(el, e); }

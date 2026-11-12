@@ -163,19 +163,29 @@ async function storeStateAsset(src: string): Promise<string | null> {
   }
 }
 
+/** 這個字串是「重開 App 就會失效」的素材網址（blob:、App 暫存檔）嗎？ */
+const isVolatileAsset = (v: string) => v.startsWith('blob:') || v.includes('/_capacitor_file_/');
+const ASSET_KEYS = new Set(['src', 'url', 'origSrc', 'referenceSrc']);
+
 async function externalizeState(value: any, seen = new Map<string, string>()): Promise<any> {
   if (Array.isArray(value)) return Promise.all(value.map(v => externalizeState(v, seen)));
   if (value && typeof value === 'object') {
     const out: any = {};
     for (const [key, raw] of Object.entries(value)) {
-      if ((key === 'src' || key === 'url' || key === 'origSrc' || key === 'referenceSrc') && typeof raw === 'string' && raw) {
+      /* 固定的那幾個欄位以外，任何欄位裡的 blob:／App 暫存檔網址也一樣把檔案存起來
+         （物件、遮罩、紋理、影片封面…）—— 只存網址的話，重開 App 後那張圖就不見了 */
+      const known = ASSET_KEYS.has(key);
+      if (typeof raw === 'string' && raw && (known ? !raw.startsWith('data:') : isVolatileAsset(raw))) {
         if (raw.startsWith('idbtool:')) { out[key] = raw; continue; }
         let stored = seen.get(raw);
         if (!stored) {
           stored = await storeStateAsset(raw) || undefined;
           if (stored) seen.set(raw, stored);
         }
-        if (!stored) throw new Error('tool-draft-asset-persistence-failed');
+        if (!stored) {
+          if (known) throw new Error('tool-draft-asset-persistence-failed');
+          out[key] = raw; continue;   // 其他欄位存不了就照舊（不讓整份草稿失敗）
+        }
         out[key] = `idbtool:${stored}`;
       } else {
         out[key] = await externalizeState(raw, seen);
@@ -191,8 +201,7 @@ async function internalizeState(value: any, urls = new Map<string, string>()): P
   if (value && typeof value === 'object') {
     const out: any = {};
     for (const [key, raw] of Object.entries(value)) {
-      if ((key === 'src' || key === 'url' || key === 'origSrc' || key === 'referenceSrc')
-          && typeof raw === 'string' && raw.startsWith('idbtool:')) {
+      if (typeof raw === 'string' && raw.startsWith('idbtool:')) {
         const id = raw.slice(8);
         let url = urls.get(id);
         if (!url) {

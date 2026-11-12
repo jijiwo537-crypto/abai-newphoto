@@ -121,13 +121,19 @@ async function externalize(value: any, seen: Map<string, string>): Promise<any> 
   if (value && typeof value === 'object') {
     const out: any = {};
     for (const [k, v] of Object.entries(value)) {
-      if ((k === 'src' || k === 'url' || k === 'origSrc') && typeof v === 'string' && v && !v.startsWith('idb:')) {
+      /* 固定欄位以外的 blob:／App 暫存檔網址也存檔案本身（重開 App 後網址就失效了） */
+      const known = k === 'src' || k === 'url' || k === 'origSrc';
+      const volatile = typeof v === 'string' && (v.startsWith('blob:') || v.includes('/_capacitor_file_/'));
+      if (typeof v === 'string' && v && !v.startsWith('idb:') && (known || volatile)) {
         let id = seen.get(v);
         if (!id) {
           const stored = await putBlob(v);
           if (stored) { id = stored; seen.set(v, stored); }
         }
-        if (!id) throw new Error('draft-image-persistence-failed');
+        if (!id) {
+          if (known) throw new Error('draft-image-persistence-failed');
+          out[k] = v; continue;
+        }
         out[k] = `idb:${id}`;
       } else {
         out[k] = await externalize(v, seen);
@@ -143,7 +149,7 @@ async function internalize(value: any, urls: Map<string, string>): Promise<any> 
   if (value && typeof value === 'object') {
     const out: any = {};
     for (const [k, v] of Object.entries(value)) {
-      if ((k === 'src' || k === 'url' || k === 'origSrc') && typeof v === 'string' && v.startsWith('idb:')) {
+      if (typeof v === 'string' && v.startsWith('idb:')) {
         const id = v.slice(4);
         let url = urls.get(id);
         if (!url) {

@@ -280,12 +280,12 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  let st=stacks.get(cacheKey);
  if(!st||st.key!==key){
   if(st)freeStack(cacheKey);
-  st={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};stacks.set(cacheKey,st);
+  st={key,d0:density,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};stacks.set(cacheKey,st);
  }
  /* 預覽放大很多（存的密度不夠細）：不在這一格重做 —— 先繼續用手上這一份（放大貼上，模糊的東西放大看不出差別），
     同時在空閒時間準備一份更細的；需要的那幾檔都好了才換過去。捏合縮放時不會一直重做、不會卡 */
  if(density>st.d0*1.3){
-  if(!st.up||density>st.up.d0*1.3){st.up={key,d0:density*1.15,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};}
+  if(!st.up||density>st.up.d0*1.3){st.up={key,d0:density,lv:new Map(),bytes:0,used:0,paint,style:{},hw,hh,cx,cy,pending:new Set()};}
   const up=st.up;up.paint=paint;
   const s1=sigma*up.d0/density;let k1=-1;while(lvSigma(k1+1)<=s1&&k1<30)k1++;
   wantOn(up,k1,cacheKey);wantOn(up,k1+1,cacheKey);
@@ -309,7 +309,7 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  for(const i of [kA,kB]){
   if(has(i))continue;
   const now=performance.now();
-  if(now-budget.at>12){budget.at=now;budget.left=2;}
+  if(now-budget.at>12){budget.at=now;budget.left=4;}
   if(budget.left<=0)break;
   const l=buildLevel(st,i);budget.left-=performance.now()-now;
   if(!l)break;st.lv.set(i,l);st.bytes+=l.bytes;stackBytes+=l.bytes;st.pending.delete(i);
@@ -327,12 +327,18 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
   if(i<0){paint(g);return;}
   const l=st!.lv.get(i)!;g.drawImage(l.c,0,0,l.c.width,l.c.height,l.x,l.y,l.w,l.h);
  };
- ctx.save();ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='low';
+ ctx.save();ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
  const a0=ctx.globalAlpha;
  /* 模糊剛離開 0 的那一小段（清楚 ↔ 第一檔）：不把「清楚的圖案」畫進混合用的畫布再貼回 ——
     iPhone 實測這一步畫出來的東西會錯（亮度、不透明度突變），就是每顆圖案照自己失焦節奏閃一下的原因。
     改成直接選一個畫：前半段清楚、後半段第一檔（σ 只有 0.6 像素，看不出切換）。 */
- if(kA<0&&has(kB)){t=t<.5?0:1;}
+ /* 模糊剛離開 0 的那一小段（清楚 ↔ 第一檔）：不切換（以前是前半清楚、後半第一檔，每一輪每顆都會「跳」一下）。
+    直接在畫面上先畫清楚的、再用 t 的不透明度疊第一檔 —— 連續變化，而且不經過混合用的畫布（iPhone 在那一步會畫錯） */
+ if(kA<0&&has(kB)&&t>1e-3&&t<1-1e-3){
+  ctx.globalAlpha=a0;ctx.restore();ctx.save();paint(ctx);ctx.restore();
+  ctx.save();ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';drawLv(ctx,kB,a0*t);ctx.restore();
+  return true;
+ }
  if(t<=1e-3||t>=1-1e-3){const i=t>=1-1e-3?kB:kA;ctx.globalAlpha=a0;if(i<0){ctx.restore();ctx.save();paint(ctx);ctx.restore();return true;}drawLv(ctx,i,a0);ctx.restore();return true;}
  /* 兩檔混合：在一張螢幕對齊的小畫布上用 'lighter' 疊（＝精確的加權平均），再貼回去 */
  const L=st.lv.get(kB)!;   // 範圍以比較大的那檔為準
@@ -353,7 +359,7 @@ function levelBlur(ctx:CanvasRenderingContext2D,sigma:number,extent:number,paint
  const go=out.getContext('2d')!;
  go.setTransform(1,0,0,1,0,0);go.globalAlpha=1;go.globalCompositeOperation='source-over';go.clearRect(0,0,Wo,Ho);
  go.setTransform(mt.a*f,mt.b*f,mt.c*f,mt.d*f,(mt.e-X0)*f,(mt.f-Y0)*f);
- go.imageSmoothingEnabled=true;go.imageSmoothingQuality='low';go.globalCompositeOperation='lighter';
+ go.imageSmoothingEnabled=true;go.imageSmoothingQuality='high';go.globalCompositeOperation='lighter';
  Object.assign(go,st.style);
  drawLv(go,kA,1-t);drawLv(go,kB,t);
  go.globalAlpha=1;go.globalCompositeOperation='source-over';

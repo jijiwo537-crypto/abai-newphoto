@@ -23,5 +23,7 @@ test('match uses the shared save/cancel prompt and persists the reference photog
  assert.match(app,/draft.tool === 'match'/);
  assert.match(app,/setMatchRef\(draft.state\?\.referenceSrc \?\? null\)/);
  const drafts=fs.readFileSync('utils/toolDraft.ts','utf8');
- assert.equal((drafts.match(/key === 'referenceSrc'/g)||[]).length,2);
+ // 參考照片在存草稿與讀回時都要換成／換回 IndexedDB 裡的檔案
+ assert.match(drafts,/ASSET_KEYS = new Set\(\[[^\]]*'referenceSrc'/);
+ assert.match(drafts,/typeof raw === 'string' && raw\.startsWith\('idbtool:'\)/);
 });

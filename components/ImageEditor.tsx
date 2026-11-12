@@ -10099,7 +10099,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   </span>
                 </div>
                 {lutCardOn(idx) && (
-                  <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />
+                  <span data-sel-ring="wide" aria-hidden="true" />
                 )}
               </div>
             </button>
@@ -10128,7 +10128,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   </span>
                 </div>
                 {noEffectOn && (
-                  <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />
+                  <span data-sel-ring="wide" aria-hidden="true" />
                 )}
               </div>
             </button>
@@ -10150,7 +10150,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 {/* 白框＝這一顆正在生效。合併完參數就歸零，選取自然取消 ——
                      使用者才能把同一顆濾鏡／特效再套一次。 */}
                 {(isEffectOn(tool.id) || pickedFxId === tool.id) && (
-                  <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />
+                  <span data-sel-ring="wide" aria-hidden="true" />
                 )}
                 {/* 編輯鍵：選中而且真的有細項可調才出現。
                      用 span 不用 button —— 這整張卡片本身就是一顆 button，
