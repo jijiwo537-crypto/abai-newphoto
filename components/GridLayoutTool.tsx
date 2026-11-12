@@ -31,28 +31,26 @@ import { photoSeamEdges, drawSeamBleed, type SeamEdges } from '../utils/photoSea
  *  選中框、吸附、匯出的座標都不動 */
 function videoSeamStyle(image: { id: string; x: number; y: number; width: number; height: number; scale: number; rotation: number }, moving: boolean): React.CSSProperties {
   const base: React.CSSProperties = { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', pointerEvents: 'none' };
-  const under = !moving && (image.rotation % 360) === 0 ? previewSeamUnder.get(image.id) : undefined;
   if (!(image.width > 0) || !(image.height > 0) || moving || (image.rotation % 360) !== 0) return base;
-  /* 只往「一定會被蓋住或切掉」的方向延伸：
-     ‧ 被上面那張照片蓋住的邊
-     ‧ 整條頁面最外圈（第一頁左邊、最後一頁右邊、上下兩邊）—— 外面就是畫面外，整條頁面會切掉
-     頁與頁中間的分割線不延伸：那裡沒有東西會把多出來的切掉，延伸了就會跑進隔壁那一頁 */
+  const under = previewSeamUnder.get(image.id);
+  /* 影片在預覽裡是 <video>，iPhone 會把它那一層的位置、大小各自取整到實體像素，邊緣跟頁面、分割線、
+     旁邊的照片差到最多一個像素 —— 那就是貼齊了還有細縫、而且放大縮小到某些倍率時縫又消失的原因。
+     所以每一條「貼齊的邊」都往外多補一點，補的量用「螢幕像素」算（--preview-inverse-scale＝每個螢幕像素
+     等於幾個內容單位，每一格縮放都會更新），不管放大縮小都一樣：
+     ‧ 整條頁面最外圈、被上面照片蓋住的邊：補 3 個螢幕像素（被整條頁面切掉／藏在照片底下，看不到）
+     ‧ 頁與頁中間的分割線：只補 0.5 個螢幕像素 —— 分割線本身約 1.3 個螢幕像素寬、蓋在最上面，
+       補的那一點剛好藏在線底下，不會跑進隔壁那一頁。 */
   const pg = previewSeamPage, cx = image.x + image.width / 2, cy = image.y + image.height / 2;
   const hw = image.width * image.scale / 2, hh = image.height * image.scale / 2, T = 1e-3;
-  const outer = pg ? [Math.abs(cx - hw) <= T, Math.abs(cx + hw - pg.width * pg.count) <= T, Math.abs(cy - hh) <= T, Math.abs(cy + hh - pg.height) <= T]
+  const L = cx - hw, R = cx + hw, Tp = cy - hh, B = cy + hh;
+  const onDivider = (x: number) => { if (!pg || !(pg.width > 0)) return false; const j = Math.round(x / pg.width); return j > 0 && j < pg.count && Math.abs(x - j * pg.width) <= T; };
+  const outer = pg ? [Math.abs(L) <= T, Math.abs(R - pg.width * pg.count) <= T, Math.abs(Tp) <= T, Math.abs(B - pg.height) <= T]
     : [false, false, false, false];
-  const ext = [0, 1, 2, 3].map(i => outer[i] || !!under?.[i]);
-  if (!ext.some(Boolean)) return base;
-  const P = 1.5 / Math.max(.001, image.scale || 1);
-  const pl = ext[0] ? P : 0, pr = ext[1] ? P : 0, pt = ext[2] ? P : 0, pb = ext[3] ? P : 0;
-  /* 用一般的版面位置往外長（left／top 往外、寬高加大），不用 transform：
-     有 transform 時影片那一層的位置與大小是另外取整到實體像素的，另一邊（例如貼著分割線、不延伸的那邊）
-     會跟頁面差一個像素 —— 那就是「一邊是頁面最外緣、一邊是分割線」時分割線那邊的縫。
-     沒延伸的那幾邊跟頁面走同一套版面取整，跟兩邊都是分割線時一樣剛好貼齊。
-     這一層的像素是「縮放後」的框（寬＝width×scale），所以要乘上 scale。 */
-  const k = image.scale || 1;
-  return { ...base, left: `${-pl * k}px`, top: `${-pt * k}px`,
-    width: `calc(100% + ${(pl + pr) * k}px)`, height: `calc(100% + ${(pt + pb) * k}px)` };
+  const px = [0, 1, 2, 3].map(i => (outer[i] || under?.[i]) ? 3 : (i === 0 && onDivider(L)) || (i === 1 && onDivider(R)) ? .5 : 0);
+  if (!px.some(Boolean)) return base;
+  const u = (n: number) => `(${n} * var(--preview-inverse-scale, 1px))`;
+  return { ...base, left: `calc(-1 * ${u(px[0])})`, top: `calc(-1 * ${u(px[2])})`,
+    width: `calc(100% + ${u(px[0] + px[1])})`, height: `calc(100% + ${u(px[2] + px[3])})` };
 }
 /** 預覽用：每張照片哪幾邊被上面的照片蓋住（照片貼照片），由編輯器每次畫面更新時算好 */
 let previewSeamEdges: Map<string, SeamEdges> = new Map();
@@ -11901,9 +11899,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         if (!host || pages.length < 2) return;
         const k = Math.max(.0001, kRef.current || 1);
         const dpr = Math.max(1, window.devicePixelRatio || 1);
-        /* 線寬用「整數個實體像素」：一般大小約 1.3pt；縮小時跟著變細（縮到最小約一半），
-           不然頁面縮小了線還是一樣粗，看起來就太粗。最細兩個實體像素（3 倍螢幕上 0.67pt），不會淡到看不見。 */
-        const devW = Math.max(Math.min(2, Math.round(dpr)), Math.round(1.3 * dpr * Math.pow(Math.min(1, k), 0.75)));
+        /* 線寬固定：約 1.3pt，取整數個實體像素（不隨縮放改變，不然縮放時會一階一階地忽粗忽細） */
+        const devW = Math.max(1, Math.round(1.3 * dpr));
         const width = devW / dpr / k;
         let bounds: SceneBounds = {x:0,y:0,width:0,height:0};
         /* 每一格都把線的左右兩邊對齊到實體像素格：沒對齊時線的兩邊是半透明的，

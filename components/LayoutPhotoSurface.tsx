@@ -57,7 +57,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
   /* 預覽用「夠清楚就好」的那一份（見 utils/previewCopies）。換了（小副本做好、放大到要換原圖）就重畫 */
   const copiesVersion=usePreviewCopies();
   /** 底圖目前畫的是什麼：內容簽章、密度（每個佈局單位幾個像素）、邊緣狀態（哪幾邊往外多蓋） */
-  const baseState=useRef<{key:string;s:number;edges:string;partial?:number}|null>(null),baseDirty=useRef(true);
+  const baseState=useRef<{key:string;s:number;edges:string;partial?:number;clip?:string;inv?:number[]}|null>(null),baseDirty=useRef(true);
   const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef<(viewOnly?:boolean)=>void>(()=>{});
   /** 上一次真的畫出來的範圍（佈局座標）與當時的倍率／旋轉：純平移時拿來判斷要不要重畫 */
   const paintedView=useRef<{fwd:number[];gesture:boolean;headroom?:number;cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastPaintAt=useRef(-1e9);
@@ -195,6 +195,14 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       const bc=baseRef.current,bs=baseState.current;
       const scr=fwd?Math.hypot(fwd[0],fwd[1]):0;
       const baseEdgesOk=!!bs&&bs.edges===edges;
+      /* 底圖貼著頁面邊緣時往外多畫了一圈（讓頁面邊緣切掉）。佈局一離開邊緣（例如貼滿整頁後快速縮小），
+         新的還沒畫好之前舊底圖可能還顯示著，多畫的那圈就跑進頁面裡、看起來佈局四周被延伸了。
+         所以邊緣狀態一不同，底圖就先裁回佈局自己的範圍；邊緣狀態相同時才用原本那個裁切。 */
+      if(bc&&bs?.inv&&bs.clip){
+        const [a,b,c,d,e,f]=bs.inv;
+        const want=bs.edges===edges?bs.clip:`polygon(${[[0,0],[width,0],[width,height],[0,height]].map(([x,y])=>`${a*x+c*y+e}px ${b*x+d*y+f}px`).join(',')})`;
+        if(bc.style.clipPath!==want)bc.style.clipPath=want;
+      }
       /* 邊緣狀態變了（佈局被拖離頁面邊緣等）或內容改了還沒重畫：底圖要藏起來（不然清晰那張透明的地方 ——
          間距、圓角 —— 會透出舊的那張，看起來像兩張圖）。但一定要等清晰那張「這一格真的畫成功」才藏（見最後），
          兩張絕不能同時看不到。清晰那張已經顯示著有效的畫面時，可以馬上藏。 */
@@ -371,7 +379,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
               :drawSeamShared(bc,cells,clips,sources,-1,{...bsurf.view,isolated:true,sealEdges:noVisibleGutter,radii,crops});
             if(ok){
               Object.assign(bc.style,style);bc.style.display='block';
-              baseState.current={key,s:d,edges,partial:seamSharedPartial()?seamTextureEpoch():undefined};baseDirty.current=false;basePainted=true;
+              {const t=bsurf.transform,inv=new DOMMatrix([t[0],t[1],t[2],t[3],t[4],t[5]]).inverse();
+              baseState.current={key,s:d,edges,partial:seamSharedPartial()?seamTextureEpoch():undefined,clip:style.clipPath,inv:[inv.a,inv.b,inv.c,inv.d,inv.e,inv.f]};}baseDirty.current=false;basePainted=true;
               if((import.meta as any).env?.DEV)bc.dataset.paintCount=String(Number(bc.dataset.paintCount||0)+1);
             }else{
               // 沒畫成：尺寸沒變的話原本的像素還在，照舊；尺寸變了就當作沒有底圖。等一下再試
