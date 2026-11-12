@@ -9855,6 +9855,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   /** 第一次點佈局是選整個佈局（等同一張圖片被選取），再點一次才會選到裡面的格子 */
   const [selectedLayoutId, setSelectedLayoutId] = useState<string | null>(null);
+  /* 取消選取／換選取時，選中框、角球、白色藥丸那一層是直接被拆掉的。iPhone 的 WebKit 有時候不會重畫它
+     讓出來的那塊（底下是佈局照片那種自己一層的畫布時最常見）—— 畫面上就留著一個已經不存在的選中框。
+     選取一變就讓整個外框層重畫一次（改一下透明度、下一格改回來）：那塊一定會被重新畫過，殘影不可能留下。 */
+  useLayoutEffect(() => {
+    const el = chromeLayerRef.current;
+    if (!el) return;
+    el.style.opacity = '0.999';
+    const raf = requestAnimationFrame(() => requestAnimationFrame(() => { el.style.opacity = ''; }));
+    return () => cancelAnimationFrame(raf);
+  }, [selectedFloatingId, selectedBrushId, selectedIndex, selectedLayoutId]);
   useEffect(() => {
     setAdjustSub('filter');
     setTuneTool('brightness');
