@@ -3736,12 +3736,12 @@ return (
                   <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 </div>
               )}
-              <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
+              <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[4px]">
                 <span className={`text-[8px] font-black uppercase tracking-widest leading-none ${active ? 'text-white' : 'text-white/60'}`}>
                   {l.url ? l.name : '原始'}
                 </span>
               </div>
-              {active && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
+              {active && <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />}
             </div>
           </button>
         );
@@ -3786,10 +3786,10 @@ return (
             <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
               <div className="absolute inset-0 bg-[#1a1a1a]" />
               <CardThumbFast src={cardSrc} delay={0} cacheKey={`${cardSrc}|fx:none`} fx={{} as PhotoFx} />
-              <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
+              <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[4px]">
                 <span style={{textTransform:'none'}} className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap ${none ? 'text-white' : 'text-white/60'}`}>原始</span>
               </div>
-              {none && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
+              {none && <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />}
             </div>
           </button>
         );
@@ -3814,12 +3814,12 @@ return (
               <CardThumbFast src={cardSrc} delay={fi * 24}
                          cacheKey={`${cardSrc}|fx:${id}`}
                          fx={effectPreset(id,FX_DEFS) as PhotoFx} />
-              <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
+              <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[4px]">
                 <span style={{textTransform:'none'}} className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap ${selected || on ? 'text-white' : 'text-white/60'}`}>
                   {label}
                 </span>
               </div>
-              {(selected || on) && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
+              {(selected || on) && <div className="absolute inset-0 rounded-lg ring-1 ring-inset ring-white pointer-events-none" />}
               {selected && hasDetail && (
                 // 卡片本身就是一顆 button，裡面不能再放 button，所以用 span
                 <span
