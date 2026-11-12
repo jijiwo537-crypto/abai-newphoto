@@ -8,7 +8,7 @@ import {previews as seamlessPreviews} from './SeamlessLayout';
 import {drawCoveredPhoto} from '../utils/coveredPhoto';
 import {get2dWide} from '../utils/colorSpace';
 import {cellPhotoPlacement} from '../utils/layoutCellPhoto';
-import {previewSrc,previewZoom,usePreviewCopies} from '../utils/previewCopies';
+import {previewSrc,previewZoom,usePreviewCopies,previewGesture} from '../utils/previewCopies';
 
 /* 拖融合程度滑桿的那幾格：共用的 GPU 畫面每格都要複製進這個佈局的 2D 畫布（iOS 上是一次
    同步讀回）。拖曳中改成整個編輯器共用的一張 WebGL 畫布直接疊在原位顯示，同一組像素；
@@ -174,7 +174,10 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       const painted=paintedView.current;
       const sameScale=!!fwd&&!!painted&&fwd.every((v,i)=>Math.abs(v-painted.fwd[i])<=1e-7*Math.max(1,Math.abs(v)));
       const vw=Math.max(0,vis.right-vis.left),vh=Math.max(0,vis.bottom-vis.top);
-      const settleLater=()=>{if(settleTimer.current)clearTimeout(settleTimer.current);settleTimer.current=setTimeout(()=>{settleTimer.current=0;drawRef.current(false,true);},160);};
+      const settleLater=()=>{if(settleTimer.current)clearTimeout(settleTimer.current);const fire=()=>{settleTimer.current=0;
+        // 手勢還沒結束（手指停住不動）：先不畫，等放開
+        if(previewGesture()&&baseState.current){settleTimer.current=setTimeout(fire,160);return;}
+        drawRef.current(false,true);};settleTimer.current=setTimeout(fire,160);};
       /* 佈局貼齊（或超出）頁面邊緣的那幾邊往外多蓋（見 resolveSeamSurface 的 grow）。
          只在沒有外圈間距、沒轉角度時做：有間距時邊上本來就該露出頁面底色。
          整條頁面的最外圈（第一頁左邊、最後一頁右邊、上下）跟照片同一招：往外多蓋一大圈，
@@ -227,6 +230,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
         /* 底圖有效時，清晰那張蓋不到的地方底下一直有底圖（不會空白），縮小時清晰那張只是變小、仍然清楚：
            手勢中只有「放大到超過清晰那張的解析度」才需要重畫。 */
         const baseUnder=baseEdgesOk&&!baseDirty.current;
+        /* 雙指縮放中：底圖整個佈局都有，跟著一起縮放就好，手勢中不重畫（放開手指才照最後的倍率畫清楚）。 */
+        if(baseUnder&&previewGesture()){settleLater();return;}
         if((baseUnder||need.x0>=c.x0-1e-6&&need.y0>=c.y0-1e-6&&need.x1<=c.x1+1e-6&&need.y1<=c.y1+1e-6)&&mag<=(painted.headroom||1)*1.0005){
           // 畫好的那張還蓋得住、也夠清楚：手勢中不重畫。倍率變了停下來再照實際倍率畫一張
           if(!sameScale||painted.gesture)settleLater();

@@ -27,7 +27,7 @@ export class ClassicPhotoLayer {
   private roundRect = document.createElementNS(NS, 'rect');
   private clipped = document.createElementNS(NS, 'g');
   private content = document.createElementNS(NS, 'g');
-  private image = document.createElementNS(NS, 'image');
+  private image: SVGImageElement = document.createElementNS(NS, 'image');
   private shade = document.createElementNS(NS, 'rect');
   private strips: SVGSVGElement[] = [];
   private images: SVGImageElement[] = [];
@@ -45,12 +45,52 @@ export class ClassicPhotoLayer {
     this.root.append(defs, this.clipped); this.clipped.append(this.content);
     for (let i = 0; i < 4; i++) {
       const strip = document.createElementNS(NS, 'svg'), image = document.createElementNS(NS, 'image');
-      strip.setAttribute('preserveAspectRatio', 'none'); strip.setAttribute('overflow', 'hidden');
+      /* 邊緣那一排像素拉滿整條：viewBox 固定 0 0 1 1，跟來源是哪一份（小副本／原圖）的像素數無關，
+         換解析度時幾何一點都不變 */
+      strip.setAttribute('preserveAspectRatio', 'none'); strip.setAttribute('overflow', 'hidden'); strip.setAttribute('viewBox', '0 0 1 1');
+      image.setAttribute('preserveAspectRatio', 'none'); image.setAttribute('width', '1'); image.setAttribute('height', '1');
       strip.append(image); this.strips.push(strip); this.images.push(image); this.content.append(strip);
     }
     this.image.setAttribute('preserveAspectRatio', 'none');
     this.shade.setAttribute('fill', 'black');
     this.content.append(this.image, this.shade); host.append(this.root);
+  }
+  /* 換成另一份解析度（放大縮小時小副本↔原圖）：直接改 href 的話，新的那張載入、解碼好之前
+     這張照片是空的 —— 就是放大縮小時「閃一下」。所以新的那份先在旁邊載好（看不見），
+     好了才一次換過去，舊的那份一直顯示到那一刻。 */
+  private pending: { src: string; images: SVGImageElement[]; timer: number } | null = null;
+  private swapTo(src: string, urls: string[]) {
+    if (this.pending?.src === src) return;
+    this.dropPending();
+    const main = document.createElementNS(NS, 'image');
+    main.setAttribute('preserveAspectRatio', 'none');
+    for (const name of ['x', 'y', 'width', 'height']) { const v = this.image.getAttribute(name); if (v !== null) main.setAttribute(name, v); }
+    main.setAttribute('opacity', '0');
+    const strips = this.images.map((old, i) => {
+      const im = document.createElementNS(NS, 'image');
+      im.setAttribute('preserveAspectRatio', 'none'); im.setAttribute('width', '1'); im.setAttribute('height', '1');
+      im.setAttribute('opacity', '0'); im.setAttribute('href', urls[i] || ''); old.after(im); return im;
+    });
+    this.image.after(main);
+    const all = [main, ...strips];
+    let left = all.length;
+    const done = () => {
+      if (this.pending?.src !== src) return;
+      clearTimeout(this.pending.timer);
+      this.pending = null;
+      // 新的那份頂上去、舊的拿掉（同一格裡做完，中間不會有空的一格）
+      main.removeAttribute('opacity'); strips.forEach(im => im.removeAttribute('opacity'));
+      this.image.remove(); this.images.forEach(im => im.remove());
+      this.image = main; this.images = strips; this.src = src;
+    };
+    const one = () => { if (--left <= 0) requestAnimationFrame(done); };
+    all.forEach(im => { im.addEventListener('load', one, { once: true }); im.addEventListener('error', one, { once: true }); });
+    main.setAttribute('href', src);
+    this.pending = { src, images: all, timer: window.setTimeout(done, 4000) };
+  }
+  private dropPending() {
+    if (!this.pending) return;
+    clearTimeout(this.pending.timer); this.pending.images.forEach(im => im.remove()); this.pending = null;
   }
   update(matrix: DOMMatrix, photo: PhotoPaint) {
     const { source, width: w, height: h, radius, pad, edges, clip, dim } = photo;
@@ -69,27 +109,29 @@ export class ClassicPhotoLayer {
     if (radius) attr(this.content, { 'clip-path': `url(#${this.roundId})` });
     else if (this.content.getAttribute('clip-path') !== null) this.content.removeAttribute('clip-path');
     attr(this.image, { x: -w / 2, y: -h / 2, width: w, height: h });
+    if (this.pending) attr(this.pending.images[0], { x: -w / 2, y: -h / 2, width: w, height: h });
     attr(this.shade, { x: -w / 2, y: -h / 2, width: w, height: h, opacity: dim });
-    const sw = source.naturalWidth, sh = source.naturalHeight;
     if (this.src !== source.src) {
-      this.src = source.src;
-      attr(this.image, { href: this.src });
       const urls = originalEdgeSources(source);
-      this.images.forEach((image,i)=>attr(image,{href:urls[i]}));
-    }
+      if (!this.src) {
+        // 第一次：沒有舊的可以頂著，直接放
+        this.src = source.src;
+        attr(this.image, { href: this.src });
+        this.images.forEach((image,i)=>attr(image,{href:urls[i]}));
+      } else this.swapTo(source.src, urls);
+    } else this.dropPending();
     const leftPad=photo.edgePads?.[0] ?? pad, rightPad=photo.edgePads?.[1] ?? pad;
     const boxes = [
-      [-w / 2 - leftPad, -h / 2, leftPad * 2, h, `0 0 1 ${sh}`],
-      [w / 2 - rightPad, -h / 2, rightPad * 2, h, `0 0 1 ${sh}`],
-      [-w / 2 - leftPad, -h / 2 - pad, w + leftPad + rightPad, pad * 2, `0 0 ${sw} 1`],
-      [-w / 2 - leftPad, h / 2 - pad, w + leftPad + rightPad, pad * 2, `0 0 ${sw} 1`],
+      [-w / 2 - leftPad, -h / 2, leftPad * 2, h],
+      [w / 2 - rightPad, -h / 2, rightPad * 2, h],
+      [-w / 2 - leftPad, -h / 2 - pad, w + leftPad + rightPad, pad * 2],
+      [-w / 2 - leftPad, h / 2 - pad, w + leftPad + rightPad, pad * 2],
     ];
     this.strips.forEach((strip, i) => {
       const display = edges[i] && !radius ? '' : 'none';
       if (strip.style.display !== display) strip.style.display = display;
-      const [x,y,width,height,viewBox] = boxes[i]; attr(strip, { x,y,width,height,viewBox });
-      attr(this.images[i], { width: i < 2 ? 1 : sw, height: i < 2 ? sh : 1 });
+      const [x,y,width,height] = boxes[i]; attr(strip, { x,y,width,height });
     });
   }
-  remove() { this.root.remove(); }
+  remove() { this.dropPending(); this.root.remove(); }
 }

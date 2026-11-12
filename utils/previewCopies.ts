@@ -41,6 +41,13 @@ export function setPreviewZoom(k: number) {
 }
 export const previewZoom = () => viewZoom;
 
+/* 雙指縮放手勢進行中：每一頁的內容當成一張固定的圖，只跟著整條一起放大縮小，
+   中途不重畫、不換解析度（不然每一格各自重新對齊像素，看起來就是一直在細微地動）。
+   手指放開才照最後的倍率畫一次清楚的。 */
+let gestureActive = false;
+export const setPreviewGesture = (on: boolean) => { gestureActive = on; };
+export const previewGesture = () => gestureActive;
+
 /** 原圖縮成長邊 target 的一份，回傳網址 */
 async function shrink(im: HTMLImageElement, target: number, type: string): Promise<string> {
   const { w, h } = fitLong(im.naturalWidth, im.naturalHeight, target);

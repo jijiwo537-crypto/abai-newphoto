@@ -4,6 +4,7 @@
  */
 import { ClassicPhotoLayer, type PhotoPaint } from './ClassicPhotoLayer';
 import {disposeBackdropMasks} from '../utils/backdropMasks';
+import {previewGesture} from '../utils/previewCopies';
 
 export type SceneBounds = { x: number; y: number; width: number; height: number };
 export const sceneRectBounds = (ctx: CanvasRenderingContext2D, x: number, y: number,
@@ -175,6 +176,7 @@ export class ClassicVectorScene {
       && viewport.scrollTop === this.paintedScrollTop)) return;
     /* 單純捲動（倍率沒變）而且畫面外多畫的那圈還蓋得住：不必重畫，畫布本來就跟著內容走。
        快速滑動時捲動事件常晚一兩格才到，那一圈就是讓剛滑進來的部分不會先空白一下。 */
+    if (previewGesture() && this.covers()) return;
     const painted = this.paintedRegion, host = this.host;
     if (painted && host) {
       const k = Math.max(.0001, this.scale());
@@ -234,9 +236,21 @@ export class ClassicVectorScene {
   };
 
   flush = () => {
+    /* 雙指縮放中：已經畫好的這張跟著整條一起縮放就好，不重畫（重畫＝每一格重新對齊像素，看起來在動）。
+       只有縮小到畫好的範圍蓋不住畫面時才補畫。照片是 SVG，整條都在，手勢中完全不動它們。 */
+    if (previewGesture() && this.covers()) return;
     if (this.frame) cancelAnimationFrame(this.frame);
     this.draw();
   };
+  /** 上一次畫好的範圍是不是還蓋得住現在看得到的畫面 */
+  private covers() {
+    const r = this.paintedRegion, host = this.host, viewport = this.viewport;
+    if (!r || !host || !viewport || !this.surfaces.length) return !this.entries.size;
+    const k = Math.max(.0001, this.scale());
+    const hr = host.getBoundingClientRect(), vr = viewport.getBoundingClientRect();
+    const x0 = (vr.left - hr.left) / k, y0 = (vr.top - hr.top) / k, x1 = (vr.right - hr.left) / k, y1 = (vr.bottom - hr.top) / k;
+    return x0 >= r.x - 1e-6 && y0 >= r.y - 1e-6 && x1 <= r.x + r.w + 1e-6 && y1 <= r.y + r.h + 1e-6;
+  }
 
   /* 同一個工作裡（一次 React commit 會有好幾個 layout effect 各自要求重畫）只畫一次：
      排在 microtask 裡，仍然在瀏覽器合成這一格之前畫完，不會晚一格；但多個遮罩時，
@@ -314,8 +328,11 @@ export class ClassicVectorScene {
       .map(node => Number((node as HTMLElement).style.zIndex)).filter(Number.isFinite);
     // 原生照片是疊放順序的分界，不是 2D 畫布裡的像素
     barriers.push(...entries.filter(e => e.nativePhoto).map(e => e.z));
+    const frozen = previewGesture();
     for (const entry of entries) if (entry.nativePhoto) {
       let photo = this.photos.get(entry.nativePhoto);
+      // 縮放手勢中照片（SVG）跟著整條縮放就好，不重設任何東西
+      if (frozen && photo) continue;
       if (!photo) { photo = new ClassicPhotoLayer(host); this.photos.set(entry.nativePhoto, photo); }
       photo.root.dataset.classicPhoto = entry.nativePhoto;
       photo.root.style.zIndex = String(entry.z);

@@ -56,7 +56,7 @@ test('decoded plain photos paint from original pixels in the same scene matrix',
 test('actual drag solver snaps cross-page objects to both outer edges at all preview scales', async () => {
   const body = source.slice(source.indexOf('  const applySnapping = ('), source.indexOf('  const [draggedFloatingIndex'));
   const code = await transform(`export function solver(k, item) {
-    const enableSnappingRef={current:true},kRef={current:k},floatingImages=[item];
+    const enableSnappingRef={current:true},kRef={current:k},floatingImages=[item],snapFitBaseRef={current:null};
     const pages=Array.from({length:3},(_,pageIdx)=>({pageIdx,left:pageIdx*300,right:(pageIdx+1)*300,top:0,bottom:400,centerX:pageIdx*300+150,centerY:200}));
     const getAllPageRects=()=>pages;
     const pageRectsNear=(p,c)=>p.filter(r=>c>=r.left&&c<=r.right);
@@ -84,7 +84,7 @@ test('actual drag solver snaps cross-page objects to both outer edges at all pre
 test('turning alignment off bypasses snapping and returns no guidelines', async () => {
   const body = source.slice(source.indexOf('  const applySnapping = ('), source.indexOf('  const [draggedFloatingIndex'));
   const code = await transform(`export function solver() {
-    const enableSnappingRef={current:false},kRef={current:1},floatingImages=[];
+    const enableSnappingRef={current:false},kRef={current:1},floatingImages=[],snapFitBaseRef={current:null};
     const getAllPageRects=()=>[{pageIdx:0,left:0,right:300,top:0,bottom:400,centerX:150,centerY:200}];
     const pageRectsNear=()=>[],rotExtent=(w,h)=>({bw:w,bh:h});
     const SHAPE_FIT={},GRID_SHAPE_KINDS=new Set(),seamXs=()=>[],pageGuidelinesAt=()=>[],dedupeGuidelines=g=>g;

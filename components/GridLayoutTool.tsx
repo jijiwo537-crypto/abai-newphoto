@@ -58,7 +58,7 @@ import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface,layoutGeomPreviews} from './LayoutPhotoSurface';
-import {ensurePreviewCopy,previewSrc,usePreviewCopies,setPreviewZoom,previewZoom,forgetPreviewCopies} from '../utils/previewCopies';
+import {ensurePreviewCopy,previewSrc,usePreviewCopies,setPreviewZoom,previewZoom,forgetPreviewCopies,setPreviewGesture} from '../utils/previewCopies';
 import { previewSurfaceDpr, previewEffectLongEdge } from '../utils/previewSurfaceBudget';
 import {registerTrim} from '../utils/memoryPressure';
 import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
@@ -9087,7 +9087,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /* 貼齊是「剛好對齊、不外溢」，容差只留給次像素捨入。
        超過就代表真的有縫（或真的超出去），那就不該畫線 —— 不然會出現
        「線亮了、圖卻沒真的貼上去」的落差。 */
-    const EPS_E = 0.6;
+    /* 只在「真的」對齊時亮線（容差只留給浮點誤差）。以前給 0.6 個單位，
+       另一邊差一點點也亮，看起來兩邊都對齊、實際上有一邊有縫。 */
+    const EPS_E = 1e-3;
     getAllPageRects().forEach(pr => {
       /* 頁與頁之間有 1 個內容座標的分隔槽。照片只延伸到槽的正中央（0.5），
          也就是分割線真正所在的位置；不可再延伸整整 1px 到下一頁的邊界，
@@ -9114,6 +9116,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return out;
   };
 
+  /** 「兩邊貼齊」微調大小前的原本大小（拖離對齊線時還原、下一格從它重新算） */
+  const snapFitBaseRef = useRef<{ id: string; scale: number; fitted?: number } | null>(null);
   const applySnapping = (
     imgId: string,
     rawX: number,
@@ -9126,6 +9130,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   ) => {
     if (!enableSnappingRef.current) {
       return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
+    }
+    /* 上一格為了「兩邊貼齊」微調過大小：這一格一律從原本的大小重新算（不然拖動時微調會累積，
+       而且大小一變、邊就跑離對齊線） */
+    {
+      const base = snapFitBaseRef.current;
+      if (base && base.id === imgId && base.fitted !== undefined && Math.abs(imgScale - base.fitted) < 1e-12) imgScale = base.scale;
+      else if (base && (base.id !== imgId || Math.abs(imgScale - base.scale) > 1e-12)) snapFitBaseRef.current = null;
     }
     // 頁面共用精確的邊界（接縫只是線條）。大物件可能碰到離它中心好幾頁遠的邊界
     const pageRects = getAllPageRects();
@@ -9284,15 +9295,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /* 圖層比頁面「幾乎一樣寬」時，左緣貼齊與右緣貼齊是兩個相差零點幾 px 的位置，
        從哪一邊靠過去就吸到哪一個 —— 那就是「由外而內沒縫、由內而外有縫」。
        這種情況直接把圖擺成「兩邊都不露白」：以較寬的那一側為準置中對齊。 */
-    if (!movingItem?.shape) ownPageRectsForFit.forEach(pr => {
-      const coverLeft = pr.left - (seamBleed && pr.pageIdx > 0 ? seamBleed : 0);
-      const coverRight = pr.right + (seamBleed && pr.pageIdx < pages.length - 1 ? seamBleed : 0);
-      const w = coverRight - coverLeft;
-      if (Math.abs(scaledW - w) < 2 && Math.abs((snappedX + imgWidth / 2) - pr.centerX) < 4) {
-        snappedX = (coverLeft + coverRight) / 2 - imgWidth / 2;
-        fitScale = Math.max(fitScale || imgScale, imgScale * w / Math.max(.001, scaledW));
-      }
-    });
+    const xGuide = bestGuidelineX as number | null;
     /* 圖層已經「幾乎剛好等於整頁」時，光把位置對準還不夠 —— 只要比頁面窄零點幾
        px，置中之後兩側各留 0.25px，抗鋸齒就會把那條縫顯示出來。這裡順便回報一個
        「確實覆蓋整頁再多半個像素」的倍率，讓拖曳也能把最後那一點補起來。
@@ -9386,13 +9389,71 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const gy: number = bestGuidelineY;
       guidelines.push({ type: 'horizontal', coord: gy });
     }
-    if (!movingItem?.shape) ownPageRectsForFit.forEach(pr => {
-      const h = pr.bottom - pr.top;
-      if (Math.abs(scaledH - h) < 2 && Math.abs((snappedY + imgHeight / 2) - pr.centerY) < 4) {
-        snappedY = pr.centerY - imgHeight / 2;
-        fitScale = Math.max(fitScale || imgScale, imgScale * h / Math.max(.001, scaledH));
+    /* ── 兩邊都碰到對齊線：就真的兩邊都貼上 ───────────────────────────────
+       吸附本身只會把「一邊」對到線上（最近的那一條）。另一邊如果也落在吸附距離內，
+       以前只是把那條線也亮起來，實際上那一邊還差零點幾個單位 —— 成品、IG 預覽、預覽
+       都真的有一條縫，只是看起來「對齊了」。
+       現在照片／影片（沒旋轉的方框）會微調大小，讓另一邊也剛好落在線上：已經貼住的那一邊
+       （或兩邊都只是靠近時的兩條線）固定不動，另一軸維持原本貼住的那一邊（沒貼就維持中心）。
+       左右跟上下同時都想要兩邊貼齊時，等比例縮放不可能同時滿足，以左右為準。 */
+    const fitRaster = !!movingItem && !movingItem.shape && movingItem.text === undefined
+      && ((rot || 0) % 360) === 0 && !edgeOnly;
+    let fitted = false;
+    if (fitRaster) {
+      const vLines: number[] = [], hLines: number[] = [];
+      pageRects.forEach(pr => { vLines.push(pr.left, pr.right); hLines.push(pr.top, pr.bottom); });
+      floatingImages.forEach(other => {
+        if (other.id === imgId) return;
+        const { bw, bh } = rotExtent(other.width * other.scale, other.height * other.scale, other.rotation || 0);
+        const ocx = other.x + other.width / 2, ocy = other.y + other.height / 2;
+        vLines.push(ocx - bw / 2, ocx + bw / 2); hLines.push(ocy - bh / 2, ocy + bh / 2);
+      });
+      const near = (v: number, lines: number[], not?: number) => {
+        let best: number | null = null;
+        for (const l of lines) {
+          if (not !== undefined && Math.abs(l - not) < 1e-6) continue;
+          if (Math.abs(v - l) < SNAP_THRESHOLD && (best === null || Math.abs(v - l) < Math.abs(v - best))) best = l;
+        }
+        return best;
+      };
+      /* 一個軸：回傳 [固定的那條線, 另一邊要對到的線, 哪一邊固定] 或 null */
+      const axisFit = (lo: number, hi: number, guide: number | null, lines: number[]) => {
+        const loOn = guide !== null && Math.abs(lo - guide) < 1e-6, hiOn = guide !== null && Math.abs(hi - guide) < 1e-6;
+        if (loOn) { const t = near(hi, lines, lo); return t !== null && t > lo ? { a: lo, b: t } : null; }
+        if (hiOn) { const t = near(lo, lines, hi); return t !== null && t < hi ? { a: t, b: hi } : null; }
+        const a = near(lo, lines), b = near(hi, lines, a ?? undefined);
+        return a !== null && b !== null && b > a ? { a, b } : null;
+      };
+      const cx0 = snappedX + imgWidth / 2, cy0 = snappedY + imgHeight / 2;
+      const L = cx0 - scaledW / 2, R = cx0 + scaledW / 2, T = cy0 - scaledH / 2, B = cy0 + scaledH / 2;
+      const yGuide = bestGuidelineY as number | null;
+      const fx = axisFit(L, R, xGuide, vLines), fy = fx ? null : axisFit(T, B, yGuide, hLines);
+      const fit = fx || fy;
+      if (fit && scaledW > 0 && scaledH > 0) {
+        const s2 = imgScale * (fit.b - fit.a) / (fx ? scaledW : scaledH);
+        const w2 = imgWidth * s2, h2 = imgHeight * s2;
+        let cx = cx0, cy = cy0;
+        if (fx) {
+          cx = (fit.a + fit.b) / 2;
+          // 上下：原本貼住哪一邊就固定那一邊，沒貼就維持中心
+          if (yGuide !== null && Math.abs(T - yGuide) < 1e-6) cy = T + h2 / 2;
+          else if (yGuide !== null && Math.abs(B - yGuide) < 1e-6) cy = B - h2 / 2;
+          guidelines.push({ type: 'vertical', coord: fit.a }, { type: 'vertical', coord: fit.b });
+        } else {
+          cy = (fit.a + fit.b) / 2;
+          if (xGuide !== null && Math.abs(L - xGuide) < 1e-6) cx = L + w2 / 2;
+          else if (xGuide !== null && Math.abs(R - xGuide) < 1e-6) cx = R - w2 / 2;
+          guidelines.push({ type: 'horizontal', coord: fit.a }, { type: 'horizontal', coord: fit.b });
+        }
+        snappedX = cx - imgWidth / 2; snappedY = cy - imgHeight / 2; fitScale = s2; fitted = true;
       }
-    });
+    }
+    if (fitRaster) {
+      const base = snapFitBaseRef.current;
+      if (fitted) snapFitBaseRef.current = { id: imgId, scale: imgScale, fitted: fitScale };
+      // 拖離對齊線：這一次沒有兩邊貼齊，就把之前為了貼齊微調的大小還原
+      else if (base && base.id === imgId) { fitScale = base.scale; snapFitBaseRef.current = null; }
+    }
 
 
     /* 貼齊只會挑「最近的那一條」來吸附，但畫面上該顯示的是「現在同時對齊的每一條」：
@@ -9506,7 +9567,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const rawX = wsDragStart.current.imgX + dx;
     const rawY = wsDragStart.current.imgY + dy;
 
-    const { snappedX, snappedY, guidelines } = applySnapping(
+    const { snappedX, snappedY, fitScale, guidelines } = applySnapping(
       selectedImg.id,
       rawX,
       rawY,
@@ -9525,6 +9586,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           ...img,
           x: snappedX,
           y: snappedY,
+          ...(fitScale ? { scale: fitScale } : {}),
         };
       }
       return img;
@@ -14270,6 +14332,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
       canvasZoomRef.current = { startDist: d, baseZoom: k0, anchorC, anchorPx, lastZoom: k0 };
+      setPreviewGesture(true);
       // 手勢接手目前的姿態。還在跑的模式過渡絕不能在兩次觸控取樣之間再寫一次姿態
       kAnimRef.current = null;
       plusMotionTransitionRef.current = null;
@@ -14570,7 +14633,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             return;
           }
           if (selectedImg) {
-            const { snappedX, snappedY, guidelines } = applySnapping(
+            const { snappedX, snappedY, fitScale, guidelines } = applySnapping(
               selectedImg.id, g.baseX + dx, g.baseY + dy,
               selectedImg.width, selectedImg.height, selectedImg.scale,
               undefined, selectedImg.rotation || 0,
@@ -14581,7 +14644,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             queueInteraction(() => {
               setActiveGuidelines(guidelines);
               setFloatingImages(prev => prev.map(img =>
-                img.id === g.floatingId ? { ...img, x: snappedX, y: snappedY } : img
+                img.id === g.floatingId ? { ...img, x: snappedX, y: snappedY, ...(fitScale ? { scale: fitScale } : {}) } : img
               ));
             });
             if (firstDragFrame) flushInteractionNow();
@@ -14645,6 +14708,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (canvasZoomRef.current) {
       canvasZoomRef.current = null;
       panRef.current = null;
+      setPreviewGesture(false);
       applyStripGeometry(userZoomRef.current, false);
       setUserZoom(userZoomRef.current);
       return;
@@ -14702,6 +14766,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         panMovedRef.current = false;
         if (canvasZoomRef.current) {
           canvasZoomRef.current = null;
+          setPreviewGesture(false);
           applyStripGeometry(userZoomRef.current, false);
           setUserZoom(userZoomRef.current);
         }
@@ -15505,50 +15570,75 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [igCanvases, setIgCanvases] = useState<(HTMLCanvasElement | null)[]>([]);
   const igShotsRef = useRef<string[]>([]);
   const igLiveRef = useRef<LivePage[]>([]);
+  /* 算 IG 預覽的成品（每一頁一張圖；有影片／動畫的頁是一張一直在重畫的畫布）。
+     打開「⋯」選單時就先開始算（預熱）：選「預覽」的那一刻多半已經算好，就算還沒好也已經算了一段。
+     選單收起來卻沒選預覽，就把算好的丟掉。 */
+  type IgBuild = { urls: string[]; live: (LivePage | null)[] } | null;
+  const igWarmRef = useRef<{ p: Promise<IgBuild>; dead: boolean } | null>(null);
+  const buildIgShots = async (): Promise<IgBuild> => {
+    /* 這一疊裡有影片嗎。有的話就走「現場合成」那條路：
+       有影片的那幾頁交出一張一直在重畫的畫布，打開的當下就在動。
+       不先出靜態圖、背景再用 MediaRecorder 錄一段真正的影片換上去 ——
+       錄影是即時的，八秒的片子就要等八秒（「剛開始都不會動、要等很久」），
+       而且錄的時候編碼器跟合成搶 CPU，掉的格是直接烤進檔案裡的（「播起來很卡」）。 */
+    /* IG 預覽不只影片要持續重畫；頁面上只要有經典拼圖動畫，也必須走
+       同一張即時合成 Canvas。否則預覽拿到的只是動畫第 0 幀靜態 PNG。 */
+    const needsLivePreview = pages.some((_p, i) => igPageHasVideoRef.current(i)) || anyClassicMotion;
+    /* IG 圖片區在 iPhone Retina 上約需 3 倍實體像素。舊的 900px 成品在
+       390pt 寬螢幕只有約 2.3 倍，細小圖形會先被壓成低解析再放大。
+       1440px 足以覆蓋 3x 顯示，同時仍遠低於正式匯出的記憶體成本。 */
+    const opts = needsLivePreview
+      ? { silent: true as const, previewWidth: 1800, live: true }
+      : { silent: true as const, previewWidth: 1800, stillOnly: true };
+    let r = await handleExport(opts);
+    let urls = (r && 'urls' in r) ? r.urls : [];
+    // 偶爾第一次會算不出來（圖還沒解碼完之類），隔一下再試一次
+    if (!urls.length) {
+      if (r && 'live' in r && r.live) r.live.forEach(l => l && l.stop());
+      await new Promise(res => setTimeout(res, 400));
+      r = await handleExport(opts);
+      urls = (r && 'urls' in r) ? r.urls : [];
+    }
+    const live = (r && 'live' in r && r.live) ? r.live : [];
+    if (!urls.length) { live.forEach(l => l && l.stop()); return null; }
+    /* 先把每一張都解碼完再交給畫面。
+       不能拿到網址就立刻 setState，<img> 還在解碼的那幾百毫秒畫面上是空的，
+       看起來就是「進 IG 預覽時整片白」。等解碼完再換就沒有那段空窗。 */
+    await Promise.all(urls.map(u => new Promise<void>(res => {
+      const im = new Image();
+      im.onload = () => res();
+      im.onerror = () => res();
+      im.src = u;
+    })));
+    return { urls, live };
+  };
+  const dropIgBuild = (b: IgBuild) => { if (!b) return; b.urls.forEach(u => URL.revokeObjectURL(u)); b.live.forEach(l => l && l.stop()); };
+  useEffect(() => {
+    if (!moreOpen || igPreview || !igPreviewSupported) return;
+    const warm = { p: buildIgShots(), dead: false };
+    igWarmRef.current = warm;
+    return () => {
+      // 選單收起來了：是去開預覽就把這一份交給預覽用，不是的話丟掉
+      setTimeout(() => {
+        if (igWarmRef.current !== warm || igPreviewOpeningRef.current) return;
+        igWarmRef.current = null; warm.dead = true;
+        void warm.p.then(dropIgBuild);
+      }, 0);
+    };
+  }, [moreOpen]);
+  const igPreviewOpeningRef = useRef(false);
   useEffect(() => {
     if (!igPreview) return;
+    igPreviewOpeningRef.current = false;
     let alive = true;
     const stopLive = () => { igLiveRef.current.forEach(l => l && l.stop()); igLiveRef.current = []; };
+    const warm = igWarmRef.current;
+    igWarmRef.current = null;
     (async () => {
-      /* 這一疊裡有影片嗎。有的話就走「現場合成」那條路：
-         有影片的那幾頁交出一張一直在重畫的畫布，打開的當下就在動。
-         不先出靜態圖、背景再用 MediaRecorder 錄一段真正的影片換上去 ——
-         錄影是即時的，八秒的片子就要等八秒（「剛開始都不會動、要等很久」），
-         而且錄的時候編碼器跟合成搶 CPU，掉的格是直接烤進檔案裡的（「播起來很卡」）。 */
-      /* IG 預覽不只影片要持續重畫；頁面上只要有經典拼圖動畫，也必須走
-         同一張即時合成 Canvas。否則預覽拿到的只是動畫第 0 幀靜態 PNG。 */
-      const needsLivePreview = pages.some((_p, i) => igPageHasVideoRef.current(i)) || anyClassicMotion;
-      /* IG 圖片區在 iPhone Retina 上約需 3 倍實體像素。舊的 900px 成品在
-         390pt 寬螢幕只有約 2.3 倍，細小圖形會先被壓成低解析再放大。
-         1440px 足以覆蓋 3x 顯示，同時仍遠低於正式匯出的記憶體成本。 */
-      const opts = needsLivePreview
-        ? { silent: true as const, previewWidth: 1800, live: true }
-        : { silent: true as const, previewWidth: 1800, stillOnly: true };
-      let r = await handleExport(opts);
-      let urls = (r && 'urls' in r) ? r.urls : [];
-      // 偶爾第一次會算不出來（圖還沒解碼完之類），隔一下再試一次
-      if (!urls.length && alive) {
-        if (r && 'live' in r && r.live) r.live.forEach(l => l && l.stop());
-        await new Promise(res => setTimeout(res, 400));
-        r = await handleExport(opts);
-        urls = (r && 'urls' in r) ? r.urls : [];
-      }
-      const live = (r && 'live' in r && r.live) ? r.live : [];
-      if (!alive || !urls.length) {
-        urls.forEach(u => URL.revokeObjectURL(u));
-        live.forEach(l => l && l.stop());
-        return;   // 算不出來就留著備援，不要清成空白
-      }
-      /* 先把每一張都解碼完再交給畫面。
-         不能拿到網址就立刻 setState，<img> 還在解碼的那幾百毫秒畫面上是空的，
-         看起來就是「進 IG 預覽時整片白」。等解碼完再換就沒有那段空窗。 */
-      await Promise.all(urls.map(u => new Promise<void>(res => {
-        const im = new Image();
-        im.onload = () => res();
-        im.onerror = () => res();
-        im.src = u;
-      })));
-      if (!alive) { urls.forEach(u => URL.revokeObjectURL(u)); live.forEach(l => l && l.stop()); return; }
+      let b = warm && !warm.dead ? await warm.p : null;
+      if (!b && alive) b = await buildIgShots();
+      if (!alive || !b) { dropIgBuild(b); return; }   // 算不出來就留著備援，不要清成空白
+      const { urls, live } = b;
       igShotsRef.current.forEach(u => URL.revokeObjectURL(u));
       igShotsRef.current = urls;
       stopLive();
@@ -16671,7 +16761,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     {igPreviewSupported && (
                       <>
                         <button
-                          onClick={() => { setMoreOpen(false); setIgPreview(true); }}
+                          onClick={() => { igPreviewOpeningRef.current = true; setMoreOpen(false); setIgPreview(true); }}
                           className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90 hover:bg-white/10 transition-colors"
                         >
                           <span>預覽</span>
