@@ -35,7 +35,8 @@ test('creative export settings are connected to real encoders, track rate and bi
  assert.doesNotMatch(c,/w-px h-4 bg-white\/10 mx-1/);
 });
 test('floating panels share dark translucent glass while buttons stay opaque',()=>{
- for(const p of ['components/HomePage.tsx','components/ImageEditor.tsx','components/ColorMatchStudio.tsx','components/CollageTool.tsx'])assert.match(read(p),/PREMIUM_GLASS/);
+ for(const p of ['components/ImageEditor.tsx','components/ColorMatchStudio.tsx','components/CollageTool.tsx'])assert.match(read(p),/PREMIUM_GLASS/);
+ assert.match(read('components/HomePage.tsx'),/const SETTINGS_GLASS = \{[^}]*backdropFilter/);
  assert.match(read('utils/premiumGlass.ts'),/rgba\(10,10,12,.94\)/);assert.match(read('utils/premiumGlass.ts'),/SAVE_MENU_GLASS/);assert.match(read('components/ArtStudio.css'),/\.art-format\{[^}]*border:none[^}]*backdrop-filter:blur/);
- assert.match(read('components/HomePage.tsx'),/premium-glass-button/);
+ assert.match(read('components/HomePage.tsx'),/SETTINGS_ROW/);
 });
