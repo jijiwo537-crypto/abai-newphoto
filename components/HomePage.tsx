@@ -135,7 +135,7 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
       ['五、使用規範', '請以合法、正當的方式使用 Abai，不得利用本 App 製作、散布侵害他人著作權、肖像權、隱私權或其他權益的內容，亦不得用於任何違法用途。嚴禁對本 App 進行破解、反向工程、竄改或以任何方式干擾其正常運作；違反者，Abai 保留依法追究法律責任之權利。'],
       ['六、問題回報', 'Abai 會持續更新與改善各項功能。使用上如遇任何問題，歡迎透過「問題反饋」與我們聯繫，我們將儘速處理。'],
       ['七、條款修訂', '本條款如有修訂，將於 App 內公告，修訂後繼續使用即視為同意。本條款以中華民國法律為準據法。'],
-      ['八、聯絡我們', `如有任何疑問或建議，請透過「問題反饋」聯繫：${CONTACT_EMAIL}`],
+      ['八、聯絡我們', `如有任何疑問或建議，請透過「問題反饋」\n聯繫：${CONTACT_EMAIL}`],
     ],
   },
   privacy: {
@@ -146,7 +146,7 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
       ['三、帳號資料', '登入為選用功能。登入後，帳號資料由帳號服務 Supabase 保存，僅用於辨識您的帳號，不包含任何照片或影片。使用 Google 或 Apple 登入時，另適用其各自的隱私權政策。'],
       ['四、資料刪除', '您可於 App 內刪除帳號，帳號資料將一併刪除。裝置上的草稿與歷史紀錄可由您隨時自行刪除。'],
       ['五、政策修訂', '本政策如有修訂，將於 App 內公告。'],
-      ['六、聯絡我們', `如對隱私權有任何疑問，請透過「問題反饋」聯繫：${CONTACT_EMAIL}`],
+      ['六、聯絡我們', `如對隱私權有任何疑問，請透過「問題反饋」\n聯繫：${CONTACT_EMAIL}`],
     ],
   },
 };
@@ -195,7 +195,8 @@ const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
       {d.sections.map(([h, body]) => (
         <div key={h} className="flex flex-col gap-1.5">
           <div className="text-[12px] font-bold text-white/85">{h}</div>
-          <div className="text-[11.5px] leading-[1.75] text-white/60">{gluePunct(body)}</div>
+          {/* 「\n」是指定的換行（聯絡方式：Email 那一段固定從第二行開始） */}
+          <div className="text-[11.5px] leading-[1.75] text-white/60">{body.split('\n').map((line, k) => <React.Fragment key={k}>{k > 0 && <br />}{gluePunct(line)}</React.Fragment>)}</div>
         </div>
       ))}
     </div>
