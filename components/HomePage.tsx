@@ -133,7 +133,7 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
       ['三、展示素材', 'App 內用來展示模板效果的人物照片等素材，均已取得授權，僅作為展示用途，不提供下載或另作他用。'],
       ['四、帳號', '登入為選用功能，不登入也能使用所有編輯功能。請妥善保管你的帳號；你可以隨時在 App 內刪除帳號。'],
       ['五、禁止行為', '請勿破解、反向工程或干擾本 App 的正常運作。'],
-      ['六、免責聲明', '我會盡力維持 App 的穩定與資料安全，發現問題也會儘快修正。不過軟體難免有預料之外的狀況，建議重要的作品另外備份。若遇到問題，歡迎隨時透過「問題反饋」告訴我，我會儘力協助處理。'],
+      ['六、免責聲明', '我會持續維護 App 的穩定與資料安全，並儘速修正發現的問題。軟體仍可能發生無法預期的狀況，建議重要作品另行備份。使用上如有任何問題，歡迎透過「問題反饋」聯繫，我會協助處理。'],
       ['七、條款修改', '本條款如有修改，將於 App 內更新，修改後繼續使用即視為同意。本條款適用中華民國法律。'],
       ['八、聯絡方式', `如有任何問題，請透過「問題反饋」聯絡：${CONTACT_EMAIL}`],
     ],
@@ -150,6 +150,39 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
     ],
   },
 };
+/* 條款排版：一行不能停在標點上，也不能停在標點後一兩個字的地方（「，我」這種斷法很難讀）。
+   做法：每個標點連同它前面一個字、後面三個字綁成不能拆開的一段，換行只會落在標點後第三個字以後
+   （段落最後一段同理：最後一行至少有三個字加句點，不會只剩一兩個字）。 */
+const LEGAL_PUNCT = /[，。、；：！？「」（）]/;
+function gluePunct(text: string): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  let buf = '', i = 0;
+  const flush = () => { if (buf) { out.push(buf); buf = ''; } };
+  while (i < text.length) {
+    if (LEGAL_PUNCT.test(text[i])) {
+      // 前一個字搬進這一段（標點不會被擠到下一行開頭）
+      let j = i, n = 0;
+      // 標點後面帶三個字；三個字以內又遇到標點，就一起併進來、重新數三個字
+      for (;;) {
+        // 「」裡的詞整個不拆開
+        while (j < text.length && LEGAL_PUNCT.test(text[j])) { const k = text[j] === '「' ? text.indexOf('」', j) : -1; j = k > 0 ? k + 1 : j + 1; }
+        n = 0;
+        while (j < text.length && n < 3 && !LEGAL_PUNCT.test(text[j])) { j++; n++; }
+        if (j < text.length && LEGAL_PUNCT.test(text[j])) continue;
+        break;
+      }
+      // 前面也帶字：一般帶一個（標點不會被擠到下一行開頭）；段落結尾帶三個（最後一行不會只剩一兩個字）
+      const take = j >= text.length ? 3 : 1;
+      const prev = buf.slice(-take); buf = buf.slice(0, -take); flush();
+      out.push(<span key={out.length} style={{ whiteSpace: 'nowrap' }}>{prev + text.slice(i, j)}</span>);
+      i = j;
+      continue;
+    }
+    buf += text[i++];
+  }
+  flush();
+  return out;
+}
 const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
   const d = LEGAL[doc];
   return (
@@ -159,7 +192,7 @@ const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
       {d.sections.map(([h, body]) => (
         <div key={h} className="flex flex-col gap-1.5">
           <div className="text-[12px] font-bold text-white/85">{h}</div>
-          <div className="text-[11.5px] leading-[1.75] text-white/60" style={{ textWrap: 'pretty' } as React.CSSProperties}>{body}</div>
+          <div className="text-[11.5px] leading-[1.75] text-white/60">{gluePunct(body)}</div>
         </div>
       ))}
     </div>
