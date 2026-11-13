@@ -128,7 +128,6 @@ const SETTINGS_TITLE = { menu: '設定', language: '語言', terms: '使用條�
 const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sections: [string, string][] }> = {
   terms: {
     updated: '2026 年 11 月',
-    intro: '歡迎使用 Abai。為了讓您安心使用各項功能，請於使用前詳閱以下條款，了解您的權利、使用規範，以及 Abai 提供服務的方式與範圍。',
     sections: [
       ['一、服務說明', 'Abai 是獨立開發的影像編輯 App，提供照片與影片的編輯、拼圖、相機及特效等功能。使用 Abai 即表示您同意本條款。功能將隨版本持續更新與調整。'],
       ['二、您的內容', '您匯入、拍攝及製作的照片、影片與作品，權利均歸屬於您或原權利人，Abai 不主張任何權利。'],
