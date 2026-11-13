@@ -1498,7 +1498,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           ) : activeControl === 'effects' ? (
             /* 特效與曝光／白平衡共用同一個 56px 控制列高度，打開時觀景窗不會上移。 */
             <div data-camera-effects-row key="camera-effect-controls" className="w-full relative flex items-center justify-center animate-in h-full">
-              <div className="grid grid-cols-3 gap-2 w-[calc(100%-96px)] min-w-0">
+              {/* 剩兩個特效：每顆維持原本三等分的寬度，整組置中 */}
+              <div className="flex justify-center gap-2 w-[calc(100%-96px)] min-w-0">
                 {FX_ITEMS.map(it => {
                   const on = fx[it.id] > 0;
                   return (
@@ -1507,7 +1508,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                       aria-pressed={on}
                       data-camera-effect={it.id}
                       onClick={() => { triggerHaptic(); setFx(prev => ({ ...prev, [it.id]: on ? 0 : it.on })); }}
-                      className={`min-w-0 px-1 h-10 rounded-full text-[11px] font-bold border transition-colors active:scale-95 ${
+                      className={`min-w-0 w-[calc((100%-16px)/3)] shrink-0 px-1 h-10 rounded-full text-[11px] font-bold border transition-colors active:scale-95 ${
                         on ? 'bg-white text-black border-white' : 'bg-white/5 text-white/60 border-white/15'
                       }`}
                     >
