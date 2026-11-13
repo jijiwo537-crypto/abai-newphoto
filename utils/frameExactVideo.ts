@@ -42,6 +42,20 @@ export async function encodeCanvasFrames(o: {
   /** 只用網頁的編碼器（自動測試用） */
   webOnly?: boolean;
 }): Promise<Blob | null> {
+  /* 編碼器要求寬高都是偶數（H.264／HEVC 的色度取樣），奇數的話網頁編碼器整個拒絕、原生端也要硬縮。
+     畫布是奇數時，每一格先抄進一張偶數大小的畫布（只少最外面一排像素，不縮放）再交出去。 */
+  if (o.canvas.width % 2 || o.canvas.height % 2) {
+    const src = o.canvas, even = document.createElement('canvas');
+    even.width = Math.max(2, src.width & ~1); even.height = Math.max(2, src.height & ~1);
+    const g = even.getContext('2d')!;
+    const draw = o.draw;
+    try {
+      return await encodeCanvasFrames({ ...o, canvas: even, draw: async (i, t) => {
+        await draw(i, t);
+        g.clearRect(0, 0, even.width, even.height); g.drawImage(src, 0, 0, even.width, even.height, 0, 0, even.width, even.height);
+      } });
+    } finally { even.width = even.height = 1; }
+  }
   /* App 裡優先用原生的硬體 HEVC（檔案更小、切到背景也能編完）；做不到再走 WebCodecs */
   if (isNative() && !o.webOnly) {
     const { encodeCanvasFramesNative } = await import('./nativeVideo');
