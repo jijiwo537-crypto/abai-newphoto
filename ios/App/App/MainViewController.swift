@@ -1,4 +1,5 @@
 import UIKit
+import WebKit
 import Capacitor
 
 /// App 的主畫面。跟 Capacitor 預設的一樣，只多做一件事：
@@ -7,6 +8,19 @@ import Capacitor
 class MainViewController: CAPBridgeViewController {
     /* 原生預覽、原生相機打開時網頁會變透明，透出來的是這個畫面的底色。
        系統預設底色在淺色模式是白的，狀態列那一排就會變成白色色塊 —— 一律固定黑色。 */
+    /* 放大鏡的正解：WebKit 官方的「文字互動」開關（iOS 14.5 起）。關掉之後網頁上的選字、放大鏡、
+       點兩下／點一下半選字整套都不會啟動 —— 不靠猜手勢名稱，所以 iOS 26 改名也不受影響。
+       打字時（鍵盤升起）打開，文字框照常能選字、移游標；鍵盤收起就關回去。 */
+    override open func webViewConfiguration(for instanceConfiguration: InstanceConfiguration) -> WKWebViewConfiguration {
+        let c = super.webViewConfiguration(for: instanceConfiguration)
+        if #available(iOS 14.5, *) { c.preferences.isTextInteractionEnabled = false }
+        return c
+    }
+    private func setTextInteraction(_ on: Bool) {
+        guard #available(iOS 14.5, *), let web = bridge?.webView else { return }
+        if web.configuration.preferences.isTextInteractionEnabled != on { web.configuration.preferences.isTextInteractionEnabled = on }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
@@ -31,7 +45,7 @@ class MainViewController: CAPBridgeViewController {
     private var loupeTimer: Timer?
     private var typing = false
     private var loggedGestures = false
-    func disableWebLoupe() { setWebLoupe(enabled: typing) }
+    func disableWebLoupe() { setTextInteraction(typing); setWebLoupe(enabled: typing) }
     private static func isLoupeGesture(_ g: UIGestureRecognizer) -> Bool {
         let name = NSStringFromClass(type(of: g))
         // 一定要留的：觸控事件、點一下產生 click、捲動、縮放、拖曳
@@ -57,8 +71,8 @@ class MainViewController: CAPBridgeViewController {
         if loupeObservers.isEmpty {
             let nc = NotificationCenter.default
             loupeObservers.append(nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.disableWebLoupe() })
-            loupeObservers.append(nc.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { [weak self] _ in self?.typing = true; self?.setWebLoupe(enabled: true) })
-            loupeObservers.append(nc.addObserver(forName: UIResponder.keyboardDidHideNotification, object: nil, queue: .main) { [weak self] _ in self?.typing = false; self?.setWebLoupe(enabled: false) })
+            loupeObservers.append(nc.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { [weak self] _ in self?.typing = true; self?.setTextInteraction(true); self?.setWebLoupe(enabled: true) })
+            loupeObservers.append(nc.addObserver(forName: UIResponder.keyboardDidHideNotification, object: nil, queue: .main) { [weak self] _ in self?.typing = false; self?.setTextInteraction(false); self?.setWebLoupe(enabled: false) })
             loupeTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
                 guard let self = self, !self.typing, UIApplication.shared.applicationState == .active else { return }
                 self.setWebLoupe(enabled: false)
