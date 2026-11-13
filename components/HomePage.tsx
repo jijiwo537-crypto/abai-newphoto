@@ -128,14 +128,14 @@ const SETTINGS_TITLE = { menu: '設定', language: '語言', terms: '使用條�
 const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sections: [string, string][] }> = {
   terms: {
     updated: '2026 年 11 月',
-    intro: '歡迎使用 Abai。為了讓您安心使用各項功能，請於使用前詳閱以下條款，了解您的權利、使用規範，以及 Abai 提供服務的方式。',
+    intro: '歡迎使用 Abai。為了讓您安心使用各項功能，請於使用前詳閱以下條款，了解您的權利、使用規範，以及 Abai 提供服務的方式與範圍。',
     sections: [
       ['一、服務說明', 'Abai 是獨立開發的影像編輯 App，提供照片與影片的編輯、拼圖、相機及特效等功能。使用 Abai 即表示您同意本條款。功能將隨版本持續更新與調整。'],
       ['二、您的內容', '您匯入、拍攝及製作的照片、影片與作品，權利均歸屬於您或原權利人，Abai 不主張任何權利。'],
-      ['三、展示素材', 'App 內用於展示模板效果的人物照片等素材，均已取得權利人授權，僅供展示使用，恕不提供下載或另作他用。'],
-      ['四、帳號', '登入為選用功能，未登入亦可使用全部編輯功能。請妥善保管您的帳號資訊；您可隨時於 App 內刪除帳號。'],
-      ['五、使用規範', '1.請以合法、正當的方式使用 Abai。您透過本 App 製作或分享的內容，不得侵害他人的著作權、肖像權、隱私權或其他合法權益。\n\n2.不得將本 App 用於任何違法用途，亦不得利用本 App 製作或散布違法、不實、騷擾或其他違反公序良俗的內容。\n\n3.嚴禁對本 App 進行破解、反向工程、竄改，或以任何方式干擾其正常運作；如有違反，Abai 保留依法追究法律責任之權利。'],
-      ['六、問題回報', 'Abai 會持續更新與改善各項功能。使用上如遇任何問題，歡迎透過「問題反饋」與我們聯繫，我們將儘速處理。'],
+      ['三、展示素材', 'App 內用於展示模板效果的人物照片，均已取得權利人授權，僅供展示，恕不提供下載或另作他用。'],
+      ['四、帳號', '登入為選用功能，未登入亦可使用全部編輯功能。請妥善保管帳號資訊；可隨時於 App 內刪除帳號。'],
+      ['五、使用規範', '1.請以合法、正當的方式使用 Abai。透過本 App 製作或分享的內容，不得侵害他人著作權、肖像權、隱私權或其他權益。\n\n2.不得將本 App 用於任何違法用途，亦不得利用本 App 製作或散布違法、不實、騷擾、歧視或其他違反公序良俗的內容。\n\n3.嚴禁對本 App 進行破解、反向工程、竄改或以任何方式干擾其正常運作；如有違反，Abai 保留依法追究其責任之權利。'],
+      ['六、問題回報', 'Abai 會持續更新與改善功能。使用上如遇任何問題，歡迎透過「問題反饋」與我們聯繫，將儘速處理。'],
       ['七、條款修訂', '本條款如有修訂，將於 App 內公告，修訂後繼續使用即視為同意。本條款以中華民國法律為準據法。'],
       ['八、聯絡我們', `如有任何疑問或建議，請透過「問題反饋」聯繫：\n${CONTACT_EMAIL}`],
     ],
@@ -144,60 +144,15 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
     updated: '2026 年 11 月',
     sections: [
       ['一、照片與影片', 'Abai 的所有編輯皆於您的裝置上完成，草稿與歷史紀錄亦僅儲存於本機。Abai 未設置自有伺服器，不會上傳您的照片或影片。'],
-      ['二、裝置權限', '相機權限僅於拍攝時使用；照片圖庫權限僅於匯入照片或儲存作品時使用。您可隨時於系統設定中調整相關權限。'],
-      ['三、帳號資料', '登入為選用功能。登入後，帳號資料由 Supabase 保存，僅用於辨識您的帳號，不包含任何照片或影片。使用 Google 或 Apple 登入時，另適用其各自的隱私權政策。'],
+      ['二、裝置權限', '相機權限僅於拍攝時使用；照片權限僅於匯入照片或儲存作品時使用。您可隨時於系統設定中調整權限。'],
+      ['三、帳號資料', '登入為選用功能。登入後，帳號資料由 Supabase 保存，僅用於辨識帳號，不包含任何照片或影片。使用 Google 或 Apple 登入時，另適用其隱私權政策。'],
       ['四、資料刪除', '您可於 App 內刪除帳號，帳號資料將一併刪除。裝置上的草稿與歷史紀錄可由您隨時自行刪除。'],
       ['五、政策修訂', '本政策如有修訂，將於 App 內公告。'],
       ['六、聯絡我們', `如對隱私權有任何疑問，請透過「問題反饋」聯繫：\n${CONTACT_EMAIL}`],
     ],
   },
 };
-/* 條款排版：一行不能停在標點上，也不能停在標點後一兩個字的地方（「，我」這種斷法很難讀）。
-   做法：每個標點連同它前面一個字、後面三個字綁成不能拆開的一段，換行只會落在標點後第三個字以後
-   （段落最後一段同理：最後一行至少有三個字加句點，不會只剩一兩個字）。 */
-const LEGAL_PUNCT = /[，。、；：！？「」（）]/;
-/** 中文斷詞（iPhone Safari、Chrome 都有）；沒有的話就照字數 */
-const WORD_SEG: { segment(t: string): Iterable<{ segment: string; index: number }> } | null = (() => {
-  try { const S = (Intl as any).Segmenter; return S ? new S('zh-Hant', { granularity: 'word' }) : null; } catch { return null; }
-})();
-function gluePunct(text: string): React.ReactNode[] {
-  const out: React.ReactNode[] = [];
-  let buf = '', i = 0;
-  const flush = () => { if (buf) { out.push(buf); buf = ''; } };
-  while (i < text.length) {
-    /* 英文字、Email 整個不拆（不會被切成「…gmail.co」＋「m」） */
-    const word = /^[A-Za-z0-9@._+-]{2,}/.exec(text.slice(i));
-    if (word) { flush(); out.push(<span key={out.length} style={{ whiteSpace: 'nowrap' }}>{word[0]}</span>); i += word[0].length; continue; }
-    if (LEGAL_PUNCT.test(text[i])) {
-      // 前一個字搬進這一段（標點不會被擠到下一行開頭）
-      let j = i, n = 0;
-      // 「」裡的詞整個不拆開
-      while (j < text.length && LEGAL_PUNCT.test(text[j])) { const k = text[j] === '「' ? text.indexOf('」', j) : -1; j = k > 0 ? k + 1 : j + 1; }
-      /* 標點後面帶兩個字（行尾不會是標點、行首也不會是標點）。兩個字以內又遇到下一個標點時，不再整串併成
-         一大塊（「權、肖像權、隱私權或」十個字綁在一起，只能整塊換行，上一行就空出一個洞）：讓出最後一個字
-         給下一個標點去帶。每一塊最多四個字，行尾最多只空一兩個字寬。 */
-      while (j < text.length && n < 1 && !LEGAL_PUNCT.test(text[j])) { j++; n++; }
-      if (j < text.length && LEGAL_PUNCT.test(text[j]) && n > 1) j--;
-      // 前面也帶字：一般帶一個（標點不會被擠到下一行開頭）；段落結尾帶四個（最後一行不會只剩一兩個字，也不會把「儘速」這種詞拆開）
-      let take = j >= text.length ? 4 : 1;
-      /* 段落最後一行：帶 4 個字為主，但如果會從一個詞的中間切開（「公序良|俗」「儘|速處理」），
-         依序改帶 3、2、5 個字，挑第一個剛好落在詞與詞之間的 —— 詞不會被拆開，上一行也不會被拉空 */
-      if (j >= text.length && WORD_SEG) {
-        const bounds = new Set<number>();
-        for (const seg of WORD_SEG.segment(text)) bounds.add(seg.index);
-        const pick = [4, 3, 2, 5].find(t => t <= buf.length && bounds.has(i - t));
-        if (pick) take = pick;
-      }
-      const prev = buf.slice(-take); buf = buf.slice(0, -take); flush();
-      out.push(<span key={out.length} style={{ whiteSpace: 'nowrap' }}>{prev + text.slice(i, j)}</span>);
-      i = j;
-      continue;
-    }
-    buf += text[i++];
-  }
-  flush();
-  return out;
-}
+/* 條款排版交給瀏覽器的標準中文排版（標點不會出現在行首）；不好看的地方直接微調文字 */
 const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
   const d = LEGAL[doc];
   return (
@@ -213,7 +168,7 @@ const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
             {body.split('\n\n').map((para, pi) => {
               const num = /^(\d+)\./.exec(para);
               const text = num ? para.slice(num[0].length) : para;
-              const lines = text.split('\n').map((line, k) => <React.Fragment key={k}>{k > 0 && <br />}{gluePunct(line)}</React.Fragment>);
+              const lines = text.split('\n').map((line, k) => <React.Fragment key={k}>{k > 0 && <br />}{line}</React.Fragment>);
               return num
                 ? <div key={pi} className="flex text-[11.5px] leading-[1.75] text-white/60"><span className="shrink-0 w-[1.1em] text-white/45 tabular-nums">{num[1]}.</span><span className="min-w-0 flex-1">{lines}</span></div>
                 : <div key={pi} className="text-[11.5px] leading-[1.75] text-white/60">{lines}</div>;
