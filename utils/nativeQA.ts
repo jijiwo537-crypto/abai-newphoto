@@ -381,14 +381,27 @@ async function scenarioWideSave() {
   if (!img) { log('widesave: no NativeImage'); return; }
   let step = 'make source';
   try {
-    const c = document.createElement('canvas'); c.width = 800; c.height = 600;
-    const g = (c.getContext('2d', { colorSpace: 'display-p3' } as any) || c.getContext('2d')) as CanvasRenderingContext2D;
-    log(`widesave canvas colorSpace=${(g as any).getContextAttributes?.().colorSpace ?? '?'}`);
-    g.fillStyle = 'rgb(0,255,0)'; g.fillStyle = 'color(display-p3 0 1 0)'; g.fillRect(0, 0, 800, 600);
-    g.fillStyle = 'rgb(128,128,128)'; g.fillRect(0, 0, 200, 600);
-    step = 'encode source';
-    const src = await new Promise<Blob | null>(r => c.toBlob(r, 'image/png'));
-    if (!src) { log('widesave: toBlob null'); return; }
+    let src: Blob | null = null, kind = '';
+    try {
+      const c = document.createElement('canvas'); c.width = 800; c.height = 600;
+      const g = c.getContext('2d', { colorSpace: 'display-p3' } as any) as CanvasRenderingContext2D | null;
+      if (g) {
+        g.fillStyle = 'color(display-p3 0 1 0)'; g.fillRect(0, 0, 800, 600);
+        g.fillStyle = 'rgb(128,128,128)'; g.fillRect(0, 0, 200, 600);
+        src = await new Promise<Blob | null>(r => c.toBlob(r, 'image/png')); kind = 'p3 canvas';
+      }
+    } catch (e: any) { log(`widesave p3 canvas unavailable: ${e?.name}: ${e?.message}`); }
+    if (!src) {
+      try { const r = await fetch('https://webkit.org/blog-files/color-gamut/Webkit-logo-P3.png'); if (r.ok) { src = await r.blob(); kind = 'webkit P3 png'; } }
+      catch (e: any) { log(`widesave fetch P3 sample failed: ${e?.message}`); }
+    }
+    if (!src) {
+      const c = document.createElement('canvas'); c.width = 800; c.height = 600;
+      const g = c.getContext('2d')!; g.fillStyle = 'rgb(0,255,0)'; g.fillRect(0, 0, 800, 600); g.fillStyle = 'rgb(128,128,128)'; g.fillRect(0, 0, 200, 600);
+      src = await new Promise<Blob | null>(r => c.toBlob(r, 'image/png')); kind = 'srgb canvas';
+    }
+    if (!src) { log('widesave: no source'); return; }
+    log(`widesave source kind=${kind} bytes=${src.size}`);
     step = 'write source';
     const path = await blobToNativeFile(src, 'png');
     const N = 64, n = N ** 3;
@@ -404,7 +417,8 @@ async function scenarioWideSave() {
       const im = new Image(); im.src = fileSrc(p);
       await new Promise<void>((res, rej) => { im.onload = () => res(); im.onerror = () => rej(new Error('img load')); });
       const cv = document.createElement('canvas'); cv.width = 80; cv.height = 60;
-      const p3 = cv.getContext('2d', { colorSpace: 'display-p3' } as any) as CanvasRenderingContext2D | null;
+      let p3: CanvasRenderingContext2D | null = null;
+      try { p3 = cv.getContext('2d', { colorSpace: 'display-p3' } as any) as CanvasRenderingContext2D | null; } catch { p3 = null; }
       const x = p3 || cv.getContext('2d')!;
       x.drawImage(im, 0, 0, 80, 60);
       const at = (px: number) => { let d: Uint8ClampedArray; try { d = (x as any).getImageData(px, 30, 1, 1, { colorSpace: 'display-p3' }).data; } catch { d = x.getImageData(px, 30, 1, 1).data; } return Array.from(d.slice(0, 3)).join(','); };
@@ -424,7 +438,7 @@ async function scenarioWideSave() {
         } catch (e: any) { log(`widesave ${gray ? 'gray' : 'identity'} ${format} FAILED: ${String(e?.message ?? e)}`); }
       }
     }
-  } catch (e: any) { log(`widesave FAILED at ${step}: ${String(e?.message ?? e)}`); }
+  } catch (e: any) { log(`widesave FAILED at ${step}: ${e?.name}: ${String(e?.message ?? e)} ${String(e?.stack ?? '').slice(0, 300)}`); }
 }
 
 /* 選中框：進編輯 → 濾鏡選第三張 → 記下卡片位置（CI 截圖後放大看四個角）→ 特效選一張 → 模板 */
