@@ -316,7 +316,7 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
         {MODES.map(([m, l]) => (
           <button key={m} onPointerDown={e => { e.preventDefault(); setMode(m); }} data-grade-mode={m}
             /* 跟仿色的「標準／專業」同一款：膠囊、沒有邊框；選中白底黑字，其他是半透明黑底加毛玻璃 */
-            className={`px-3.5 h-[28px] rounded-full text-[11px] shrink-0 whitespace-nowrap transition-[background-color,color,transform] active:scale-95 ${mode === m ? 'bg-white text-black font-bold' : 'bg-black/40 text-white/60 backdrop-blur-md'}`}>{l}</button>
+            className={`px-3.5 h-[28px] rounded-full text-[11px] shrink-0 whitespace-nowrap active:scale-95 transition-transform duration-100 ${mode === m ? 'bg-white text-black font-bold' : 'bg-white/[0.08] text-white/60'}`}>{l}</button>
         ))}
         <div className="flex-1" />
         {mode === 'hdr' && (
@@ -333,15 +333,14 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
         </button>
       </div>
       <div className="mt-[10px]">
-        {mode !== 'hdr' ? (
-          <div className="flex px-[6px]">
-            {(mode === 'log' ? LOG_UNITS : PRIMARY_UNITS).map(([id, l]) => (
-              <WheelUnit key={`${mode}-${id}`} id={id} label={l} w={g[id]} D={D} onChange={w => setWheel(id, w)} {...ev} />
+        {/* 三種模式都一直掛著，切換只換顯示：不用每次拆掉、重建四個色輪（那一下的重建＋記憶體回收就是切換時的頓一下） */}
+        <div className={mode === 'hdr' ? 'hidden' : 'flex px-[6px]'}>
+            {(mode === 'log' ? LOG_UNITS : PRIMARY_UNITS).map(([id, l], i) => (
+              <WheelUnit key={i} id={id} label={l} w={g[id]} D={D} onChange={w => setWheel(id, w)} {...ev} />
             ))}
-          </div>
-        ) : (
+        </div>
           <div ref={pager} onScroll={onPagerScroll} data-hdr-pager
-            className="flex overflow-x-auto no-scrollbar snap-x snap-mandatory overscroll-x-contain">
+            className={`${mode === 'hdr' ? 'flex' : 'hidden'} overflow-x-auto no-scrollbar snap-x snap-mandatory overscroll-x-contain`}>
             {HDR_PAGES.map((ids, pi) => (
               <div key={pi} className="w-full shrink-0 snap-start flex px-[6px]">
                 {ids.map(id => {
@@ -352,7 +351,6 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
               </div>
             ))}
           </div>
-        )}
       </div>
     </div>
   );

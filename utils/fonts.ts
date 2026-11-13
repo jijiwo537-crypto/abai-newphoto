@@ -336,15 +336,43 @@ export function prepareFontSample(font: FontDef): Promise<void> {
 }
 
 let warmingSamples = false;
-/** App 掛載時就開始，不是等打開字型選單；限制同時下載的數量 */
+/** 一次把好幾個家族併成同一張 Google Fonts 樣式表。
+    每插一張 <link>、它載完時，瀏覽器都要把整頁的樣式重算一次（手機上每次幾十毫秒）。
+    原本一百多個字體各插一張，開 App 之後很長一段時間按任何按鈕都可能剛好撞上，
+    就是「按下去頓一下」。併成幾張之後只重算幾次。 */
+function ensureFontBatch(families: string[]): Promise<void> {
+  const todo = families.filter(f => !requested.has(f) && !EXTRA_FONT_URLS[f]);
+  if (!todo.length) return Promise.resolve();
+  const p = new Promise<void>(resolve => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://fonts.googleapis.com/css2?' + todo.map(f =>
+      'family=' + encodeURIComponent(f).replace(/%20/g, '+') + (SINGLE_WEIGHT_FONTS.has(f) ? ':wght@400' : ':wght@400;700')).join('&') + '&display=swap';
+    const done = () => { todo.forEach(f => cssDone.add(f)); resolve(); };
+    link.onload = done;
+    link.onerror = () => { todo.forEach(f => requested.delete(f)); resolve(); };   // 整批失敗就讓之後單獨再要
+    document.head.appendChild(link);
+  });
+  todo.forEach(f => requested.set(f, p));
+  return p;
+}
+const idle = () => new Promise<void>(r => {
+  const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => void) | undefined;
+  if (ric) ric(() => r(), { timeout: 3000 }); else setTimeout(r, 300);
+});
+/** App 掛載時就開始，不是等打開字型選單；樣式表分幾批、在空檔插，字身限制同時下載的數量 */
 export function warmFontSamples() {
   if (warmingSamples || typeof document === 'undefined') return;
   warmingSamples = true;
-  const queue = [...FONTS];
-  const worker = async () => {
-    while (queue.length) await prepareFontSample(queue.shift()!);
-  };
-  void Promise.all(Array.from({ length: 4 }, worker));
+  void (async () => {
+    const names = FONTS.map(f => f.name);
+    for (let i = 0; i < names.length; i += 40) { await idle(); await ensureFontBatch(names.slice(i, i + 40)); }
+    const queue = [...FONTS];
+    const worker = async () => {
+      while (queue.length) await prepareFontSample(queue.shift()!);
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
+  })();
 }
 
 /** 也預熱文件裡實際用到的字；中日韓字型是用 unicode-range 分段的 */
