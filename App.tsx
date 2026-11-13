@@ -1,6 +1,5 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { DIALOG_GLASS } from './utils/premiumGlass';
 import { CameraInterface } from './components/CameraInterface';
 import { HomePage } from './components/HomePage';
 import { ImageEditor } from './components/ImageEditor';
@@ -585,8 +584,8 @@ const App: React.FC = () => {
       )}
 
       {exitPromptOpen && (
-        <div className={`fixed inset-0 z-[300] flex items-center justify-center bg-black/55 px-8 animate-in fade-in ${exitPromptBusy ? 'duration-300' : 'duration-200'}`}>
-          <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl animate-in zoom-in-95 duration-200'}`} style={exitPromptBusy ? undefined : DIALOG_GLASS}>
+        <div className={`fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in ${exitPromptBusy ? 'duration-300' : 'duration-200'}`}>
+          <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl bg-[#141414] border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200'}`}>
             {exitPromptBusy ? (
               <div className="animate-in fade-in duration-300" aria-live="polite">
                 <HistoryLoadingIndicator />
@@ -596,8 +595,8 @@ const App: React.FC = () => {
                 <p id="exit-draft-title" className="text-white font-black tracking-wide">是否儲存為草稿</p>
                 <div className="mt-6 flex flex-col gap-2">
                   <button onClick={() => resolveExit('save')} className="h-12 rounded-full bg-white text-black font-black tracking-widest text-sm active:scale-[0.98] transition-transform">儲存</button>
-                  <button onClick={() => resolveExit('discard')} className={`h-12 rounded-full bg-white/[0.05] text-white/80 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform`}>放棄</button>
-                  <button onClick={() => resolveExit('cancel')} className={`h-12 rounded-full bg-white/[0.05] text-white/80 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform`}>取消</button>
+                  <button onClick={() => resolveExit('discard')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform">放棄</button>
+                  <button onClick={() => resolveExit('cancel')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform">取消</button>
                 </div>
               </div>
             )}
@@ -663,8 +662,8 @@ const App: React.FC = () => {
 
       {/* 上次還沒做完的東西：先問，不要直接跳進去（被系統關掉的那種會自動接回，見上面） */}
       {resume && currentView === 'home' && !(autoPending && !autoResumed.current) && (
-        <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/55 px-8 animate-in fade-in duration-200">
-          <div className="w-full max-w-[320px] rounded-3xl p-6 text-center animate-in zoom-in-95 duration-200" style={DIALOG_GLASS}>
+        <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">
+          <div className="w-full max-w-[320px] rounded-3xl bg-[#141414] border border-white/10 p-6 text-center shadow-2xl animate-in zoom-in-95 duration-200">
             <p className="text-white font-black tracking-wide">要繼續上次的編輯嗎？</p>
             <p className="mt-2 text-[12px] leading-relaxed text-white/45">
               上次在「{TOOL_NAMES[resume.kind]}」還有沒完成的內容
@@ -680,7 +679,7 @@ const App: React.FC = () => {
               <button
                 onClick={handleDiscardResume}
                 disabled={resuming}
-                className={`h-12 rounded-full bg-white/[0.05] text-white/80 font-bold tracking-widest text-sm active:scale-95 transition-transform disabled:opacity-60`}
+                className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-95 transition-transform disabled:opacity-60"
               >
                 重新開始
               </button>
