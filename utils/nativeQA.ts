@@ -311,6 +311,42 @@ async function scenarioOddVideo() {
   }
 }
 
+/* 創意拼圖：選 720／1080 畫質匯出影片，記錄成品頁的影片狀態（能不能播、尺寸、檔案大小、錯誤） */
+async function scenarioCreativeVideo() {
+  await provideFiles(1);
+  for (const q of ['720p', '1080p']) {
+    const home = findButton(/返回主頁/); if (home) { click(home); await sleep(2500); const d = findButton(/^放棄$/); if (d) { click(d); await sleep(2000); } }
+    click(await waitFor(() => findButton(TOOL_ENTRY.collage), 15000, '創意拼圖按鈕'));
+    await sleep(7000);
+    const opt = await waitFor(() => findButton(/匯出選項/), 10000, '匯出選項');
+    click(opt); await sleep(800);
+    const qb = buttons().find(b => (b.textContent || '').trim() === q); if (qb) click(qb); else log(`creativevideo: no ${q} button`);
+    await sleep(500); click(opt); await sleep(500);
+    const save = await waitFor(() => findButton(/^儲存/), 8000, '儲存'); click(save); await sleep(1200);
+    const sv = findButton(/儲存影片/); if (sv) click(sv);
+    log(`creativevideo ${q}: export started`);
+    const t0 = Date.now(); let last = '';
+    while (Date.now() - t0 < 150000) {
+      await sleep(2000);
+      const pct = (document.body.innerText.match(/\d{1,3}\s?%/) || [''])[0];
+      if (pct !== last) { last = pct; log(`creativevideo ${q} +${Math.round((Date.now() - t0) / 1000)}s ${pct}`); }
+      const v = document.querySelector('[data-export-media] video') as HTMLVideoElement | null;
+      if (v) {
+        await sleep(3000);
+        let size = -1; try { size = (await (await fetch(v.src)).blob()).size; } catch { /* */ }
+        let px = '';
+        try { const c = document.createElement('canvas'); c.width = 8; c.height = 8; const g = c.getContext('2d')!; g.drawImage(v, 0, 0, 8, 8); px = Array.from(g.getImageData(4, 4, 1, 1).data.slice(0, 3)).join(','); } catch (e: any) { px = 'ERR ' + e?.message; }
+        const r = v.getBoundingClientRect();
+        log(`creativevideo ${q} RESULT readyState=${v.readyState} ${v.videoWidth}x${v.videoHeight} dur=${v.duration} err=${v.error?.code ?? '-'} bytes=${size} box=${Math.round(r.width)}x${Math.round(r.height)} centerPx=${px}`);
+        break;
+      }
+      if (/失敗|錯誤/.test(document.body.innerText)) { log(`creativevideo ${q} ERROR text: ${document.body.innerText.slice(0, 160).replace(/\s+/g, ' ')}`); break; }
+    }
+    logButtons(`creativevideo ${q} end`);
+    const back = findButton(/^返回$|繼續編輯/); if (back) { click(back); await sleep(1500); }
+  }
+}
+
 let running = false;
 /** forced：原生直接叫的（外掛通不通都要跑） */
 /* 原生特效（相機用的柔光、朦朧、低保真）：模擬器沒有相機，拿一張測試照片走拍照後的同一條處理 */
@@ -383,6 +419,7 @@ export async function runNativeQA(forced?: string) {
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
     else if (scenario === 'layoutundo') await scenarioLayoutUndo();
     else if (scenario === 'oddvideo') await scenarioOddVideo();
+    else if (scenario === 'creativevideo') await scenarioCreativeVideo();
     else if (scenario.startsWith('tool:')) await scenarioTool(scenario.slice(5));
     log(`end ${scenario}`);
   } catch (e: any) {
