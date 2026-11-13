@@ -99,50 +99,6 @@
             // 最多壓 1.2 秒，網路再慢也不能一直黑畫面
             setTimeout(reveal, 1200);
 
-            /* 快點兩下會跳出選字的放大鏡（iOS 26 是液態玻璃那一顆），CSS 的 user-select:none 擋不住它。
-               App 裡原生那邊另外用 WebKit 官方的文字互動開關關掉。 */
-            (function () {
-                var editable = function (t) {
-                    var el = t && t.nodeType === 3 ? t.parentElement : t;
-                    return !!(el && el.closest && el.closest('input, textarea, [contenteditable="true"]'));
-                };
-                /* iOS 的放大鏡、點兩下選字／縮放，都是從「第二下按下去」那一刻開始的。
-                   在同一個位置快速點第二下時，按下去就取消瀏覽器的預設行為（文字框除外），放大鏡就不會出現。
-                   取消之後瀏覽器不會送出那一下的 click，所以放開時由這裡補發一次，按鈕照常反應；
-                   pointer 事件本來就照送，拖曳、滑桿不受影響。只攔「上一下是點擊、時間 350ms 內、位置 30px 內」的，
-                   連續滑動清單不會被擋。 */
-                var lastTap = null, pend = null, startT = 0, sx = 0, sy = 0;
-                document.addEventListener('touchstart', function (e) {
-                    if (e.touches.length !== 1) { pend = null; return; }
-                    var t = e.touches[0], now = Date.now();
-                    startT = now; sx = t.clientX; sy = t.clientY;
-                    if (lastTap && now - lastTap.t < 350 && Math.abs(t.clientX - lastTap.x) < 30 && Math.abs(t.clientY - lastTap.y) < 30
-                        && !editable(e.target) && e.cancelable) {
-                        e.preventDefault();
-                        pend = { x: t.clientX, y: t.clientY, target: e.target, moved: false };
-                    } else pend = null;
-                }, { capture: true, passive: false });
-                document.addEventListener('touchmove', function (e) {
-                    if (!e.touches.length) return;
-                    var t = e.touches[0];
-                    if (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10) { if (pend) pend.moved = true; lastTap = null; }
-                }, { capture: true, passive: true });
-                document.addEventListener('touchend', function (e) {
-                    var t = e.changedTouches && e.changedTouches[0];
-                    if (!t) return;
-                    var now = Date.now(), tap = Math.abs(t.clientX - sx) <= 10 && Math.abs(t.clientY - sy) <= 10 && now - startT < 400;
-                    if (pend) {
-                        var p = pend; pend = null;
-                        if (!p.moved && e.cancelable) {
-                            e.preventDefault();
-                            var el = document.elementFromPoint(t.clientX, t.clientY) || p.target;
-                            if (el && el.dispatchEvent) el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: t.clientX, clientY: t.clientY, detail: 1 }));
-                        }
-                    }
-                    lastTap = tap && e.touches.length === 0 ? { t: now, x: t.clientX, y: t.clientY } : null;
-                }, { capture: true, passive: false });
-            })();
-
             /* ── 開場畫面 ────────────────────────────────────────────────
                ① 一點開就在（它是寫死在 HTML 裡的，第一次繪製就有）。
                ② **至少停 3 秒**，保留原本完整的品牌動畫節奏。
