@@ -99,23 +99,14 @@
             // 最多壓 1.2 秒，網路再慢也不能一直黑畫面
             setTimeout(reveal, 1200);
 
-            /* ── 開場畫面 ────────────────────────────────────────────────
-               ① 一點開就在（它是寫死在 HTML 裡的，第一次繪製就有）。
-               ② **至少停 3 秒**，保留原本完整的品牌動畫節奏。
-               ③ 3 秒到了還沒就緒就繼續顯示 Logo，等到 React 真的畫出
-                  東西了才掀開（只等字型會在 App 還沒畫出來時掀開，中間閃一格空白）。
-               ④ 這 3 秒不是白等的：底下的 warmUp() 會趁機把後面才要用到的
-                  東西先弄好，之後進工具時就不會卡在那裡。 */
-            /* 快點兩下會跳出選字的放大鏡（iOS 26 是液態玻璃那一顆）。CSS 的 user-select:none 擋不住它，
-               在「開始選字」這一步就取消（文字框除外，打字時照常選字）。App 裡原生那邊也另外關了那幾個手勢。 */
+            /* 快點兩下會跳出選字的放大鏡（iOS 26 是液態玻璃那一顆），CSS 的 user-select:none 擋不住它。
+               App 裡原生那邊另外用 WebKit 官方的文字互動開關關掉。 */
             (function () {
                 var editable = function (t) {
                     var el = t && t.nodeType === 3 ? t.parentElement : t;
                     return !!(el && el.closest && el.closest('input, textarea, [contenteditable="true"]'));
                 };
-                document.addEventListener('selectstart', function (e) { if (!editable(e.target)) e.preventDefault(); }, true);
-                document.addEventListener('dblclick', function (e) { if (!editable(e.target) && e.cancelable) e.preventDefault(); }, true);
-                /* 真正擋住放大鏡的是這一段：iOS 的放大鏡、點兩下選字／縮放，都是從「第二下按下去」那一刻開始的。
+                /* iOS 的放大鏡、點兩下選字／縮放，都是從「第二下按下去」那一刻開始的。
                    在同一個位置快速點第二下時，按下去就取消瀏覽器的預設行為（文字框除外），放大鏡就不會出現。
                    取消之後瀏覽器不會送出那一下的 click，所以放開時由這裡補發一次，按鈕照常反應；
                    pointer 事件本來就照送，拖曳、滑桿不受影響。只攔「上一下是點擊、時間 350ms 內、位置 30px 內」的，
@@ -152,6 +143,13 @@
                 }, { capture: true, passive: false });
             })();
 
+            /* ── 開場畫面 ────────────────────────────────────────────────
+               ① 一點開就在（它是寫死在 HTML 裡的，第一次繪製就有）。
+               ② **至少停 3 秒**，保留原本完整的品牌動畫節奏。
+               ③ 3 秒到了還沒就緒就繼續顯示 Logo，等到 React 真的畫出
+                  東西了才掀開（只等字型會在 App 還沒畫出來時掀開，中間閃一格空白）。
+               ④ 這 3 秒不是白等的：底下的 warmUp() 會趁機把後面才要用到的
+                  東西先弄好，之後進工具時就不會卡在那裡。 */
             var BOOT_MIN_MS = 3000;
             var bootT0 = Date.now();
 
