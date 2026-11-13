@@ -129,11 +129,11 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
     updated: '2026 年 11 月',
     sections: [
       ['一、服務說明', 'Abai 是獨立開發的影像編輯 App，提供照片與影片的編輯、拼圖、相機及特效等功能。使用 Abai 即表示您同意本條款。功能將隨版本持續更新與調整。'],
-      ['二、您的內容', '您匯入、拍攝及製作的照片、影片與作品，權利均歸屬於您或原權利人，Abai 不主張任何權利。請確認您有權使用相關素材，並勿用於侵害他人權利或違反法令的用途。'],
+      ['二、您的內容', '您匯入、拍攝及製作的照片、影片與作品，權利均歸屬於您或原權利人，Abai 不主張任何權利。'],
       ['三、展示素材', 'App 內用於展示模板效果的人物照片等素材，均已取得權利人授權，僅供展示使用，恕不提供下載或另作他用。'],
       ['四、帳號', '登入為選用功能，未登入亦可使用全部編輯功能。請妥善保管您的帳號資訊；您可隨時於 App 內刪除帳號。'],
-      ['五、使用規範', '請勿對 Abai 進行破解、反向工程，或以任何方式干擾其正常運作。'],
-      ['六、服務品質與責任', 'Abai 持續致力於維護服務的穩定性與資料安全，並於發現問題時儘速修正。由於軟體運作環境多元，建議您另行備份重要作品。使用上如遇任何問題，歡迎透過「問題反饋」與我們聯繫。'],
+      ['五、使用規範', '請以合法、正當的方式使用 Abai，不得利用本 App 製作、散布侵害他人著作權、肖像權、隱私權或其他權益的內容，亦不得用於任何違法用途。嚴禁對本 App 進行破解、反向工程、竄改或以任何方式干擾其正常運作；違反者，Abai 保留依法追究法律責任之權利。'],
+      ['六、問題回報', 'Abai 會持續更新與改善各項功能。使用上如遇任何問題，歡迎透過「問題反饋」與我們聯繫，我們將儘速處理。'],
       ['七、條款修訂', '本條款如有修訂，將於 App 內公告，修訂後繼續使用即視為同意。本條款以中華民國法律為準據法。'],
       ['八、聯絡我們', `如有任何疑問或建議，請透過「問題反饋」聯繫：${CONTACT_EMAIL}`],
     ],
@@ -143,7 +143,7 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
     sections: [
       ['一、照片與影片', 'Abai 的所有編輯皆於您的裝置上完成，草稿與歷史紀錄亦僅儲存於本機。Abai 未設置自有伺服器，不會上傳您的照片或影片。'],
       ['二、裝置權限', '相機權限僅於拍攝時使用；照片圖庫權限僅於匯入照片或儲存作品時使用。您可隨時於系統設定中調整相關權限。'],
-      ['三、帳號資料', '登入為選用功能。登入後，帳號資料（如電子郵件、名稱與頭像）由帳號服務 Supabase 保存，僅用於辨識您的帳號，不包含任何照片或影片。使用 Google 或 Apple 登入時，另適用其各自的隱私權政策。'],
+      ['三、帳號資料', '登入為選用功能。登入後，帳號資料由帳號服務 Supabase 保存，僅用於辨識您的帳號，不包含任何照片或影片。使用 Google 或 Apple 登入時，另適用其各自的隱私權政策。'],
       ['四、資料刪除', '您可於 App 內刪除帳號，帳號資料將一併刪除。裝置上的草稿與歷史紀錄可由您隨時自行刪除。'],
       ['五、政策修訂', '本政策如有修訂，將於 App 內公告。'],
       ['六、聯絡我們', `如對隱私權有任何疑問，請透過「問題反饋」聯繫：${CONTACT_EMAIL}`],
@@ -159,6 +159,9 @@ function gluePunct(text: string): React.ReactNode[] {
   let buf = '', i = 0;
   const flush = () => { if (buf) { out.push(buf); buf = ''; } };
   while (i < text.length) {
+    /* 英文字、Email 整個不拆（不會被切成「…gmail.co」＋「m」） */
+    const word = /^[A-Za-z0-9@._+-]{2,}/.exec(text.slice(i));
+    if (word) { flush(); out.push(<span key={out.length} style={{ whiteSpace: 'nowrap' }}>{word[0]}</span>); i += word[0].length; continue; }
     if (LEGAL_PUNCT.test(text[i])) {
       // 前一個字搬進這一段（標點不會被擠到下一行開頭）
       let j = i, n = 0;
@@ -186,7 +189,7 @@ function gluePunct(text: string): React.ReactNode[] {
 const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
   const d = LEGAL[doc];
   return (
-    <div className="max-h-[56vh] overflow-y-auto no-scrollbar pr-1 pl-2 flex flex-col gap-4 text-left">
+    <div className="max-h-[56vh] overflow-y-auto overflow-x-hidden no-scrollbar pr-1 pl-2 flex flex-col gap-4 text-left" style={{ touchAction: 'pan-y', overflowWrap: 'anywhere' }}>
       {d.intro && <div className="text-[12px] leading-[1.75] text-white/75">{d.intro}</div>}
       <div className="text-[10px] text-white/35">最後更新：{d.updated}</div>
       {d.sections.map(([h, body]) => (
