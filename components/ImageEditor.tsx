@@ -3429,6 +3429,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
          它一律是細的 65³ 網格（每種底片做一次、快取起來），沒有任何滑桿會重做它，拖動中的預覽跟放開後完全一樣 */
       if (!film || !p.lutAmount) {
         if (!g.setFront(front, false)) return false;
+      } else if (isHslIdentity(p.hsl)) {
+        /* 沒有 HSL 時，「強度烤進表裡」跟「強度 100 的表在著色器裡按強度混合」數學上一樣（只差 8 位元的四捨五入），
+           所以共用強度 100 那張（畫面直通那條也用它、編輯器開好後趁空檔先烤好），點濾鏡、換強度都不必重烤。
+           有 HSL 時 HSL 跟濾鏡的先後會影響結果，照原本的做法烤。 */
+        if (!g.setLut(filmTex(film, filmSize, filmKey), 65)) return false;
+        if (!g.setFront(front, true, p.lutAmount / 100)) return false;
       } else {
         const key = `film|65|${p.lutAmount}|${filmKey}`;
         let tex = bakeCacheRef.current.get(key);
@@ -3612,6 +3618,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0 };
     return true;
   };
+  /** 濾鏡（強度 100）烤成的 65³ 色彩表；同一顆濾鏡只烤一次 */
+  const filmTex = (film: Uint8ClampedArray, filmSize: number, filmKey: string) => {
+    const key = `film|65|100|${filmKey}`;
+    let tex = bakeCacheRef.current.get(key);
+    if (!tex) {
+      const pFilm = { ...DEFAULT_PARAMS, lutAmount: 100, curves: DEFAULT_CURVES, hsl: DEFAULT_PARAMS.hsl } as EditorParams;
+      tex = bakedToTexture(bakeColorLut((bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, pFilm, film, filmSize, IDENTITY_BASE_LUT, null, false, IDENTITY_CURVE_LUTS), 65));
+      bakeCacheRef.current.set(key, tex);
+    }
+    return tex;
+  };
+  const filmTexRef = useRef(filmTex);
+  filmTexRef.current = filmTex;
   const gpuColourOn = (g: LutGpu, srcKeyRef: React.MutableRefObject<string>, p: EditorParams, film: Uint8ClampedArray | null, filmSize: number, filmKey: string, srcKey: string, b: { source: Uint8ClampedArray | null; w: number; h: number }): boolean => {
     if (!b.source || !g.fits(b.w, b.h)) return false;
     try {
@@ -3619,13 +3638,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const front = gpuFrontFor(p, localFor(p, b.source, b.w, b.h, srcKey));
       if (!film || !p.lutAmount) { if (!g.setFront(front, false)) return false; }
       else {
-        const key = `film|65|100|${filmKey}`;
-        let tex = bakeCacheRef.current.get(key);
-        if (!tex) {
-          const pFilm = { ...DEFAULT_PARAMS, lutAmount: 100, curves: DEFAULT_CURVES, hsl: DEFAULT_PARAMS.hsl } as EditorParams;
-          tex = bakedToTexture(bakeColorLut((bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, pFilm, film, filmSize, IDENTITY_BASE_LUT, null, false, IDENTITY_CURVE_LUTS), 65));
-          bakeCacheRef.current.set(key, tex);
-        }
+        const tex = filmTex(film, filmSize, filmKey);
         if (!g.setLut(tex, 65)) return false;
         if (!g.setFront(front, true, p.lutAmount / 100)) return false;
       }
@@ -4506,6 +4519,31 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     isDirtyRef.current = true;
     addToHistory(nextParams, selectedLutIdx, isSoftActive, isBlurActive, isGrainActive, nextActive, softManuallyAdjusted, blurManuallyAdjusted, grainManuallyAdjusted, nextHalationManual);
   };
+
+  /* 濾鏡的色彩表也是「第一次點才烤」（65³ 個格點跑一次 processPixels），量到第一次點濾鏡要多等約 300ms
+     （CPU 降速 4 倍時），之後同一顆就是 30ms。查色表下載好之後，趁空檔一顆一顆先烤起來；
+     正在拖滑桿、操作時不烤，不跟畫面搶。 */
+  useEffect(() => {
+    let stop = false, handle = 0;
+    const ric = (window as any).requestIdleCallback as ((f: (d: { timeRemaining(): number }) => void, o?: any) => number) | undefined;
+    const schedule = () => { handle = ric ? ric(step, { timeout: 4000 }) : window.setTimeout(() => step({ timeRemaining: () => 50 }), 300); };
+    const step = (d: { timeRemaining(): number }) => {
+      if (stop) return;
+      if (isInteractingRef.current || d.timeRemaining() < 10) { schedule(); return; }
+      for (const lut of lutList) {
+        const data = lut.url ? lutDataRef.current[lut.id] : null;
+        if (!data) continue;
+        const k = `${lut.id}#${data.size}`;
+        if (bakeCacheRef.current.has(`film|65|100|${k}`)) continue;
+        try { filmTexRef.current(data.data, data.size, k); } catch { return; }
+        schedule();
+        return;
+      }
+    };
+    const t = window.setTimeout(schedule, 1500);
+    return () => { stop = true; window.clearTimeout(t); if (ric) (window as any).cancelIdleCallback?.(handle); else window.clearTimeout(handle); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lutList, lutReadyTick]);
 
   /* 特效的著色器是「第一次用到才編譯」，20 幾支一起編就是進特效分頁要等一秒的主因
      （量到第一次進去 902ms，第二次進去 25ms）。編輯器開好之後趁空檔一支一支先編起來，
