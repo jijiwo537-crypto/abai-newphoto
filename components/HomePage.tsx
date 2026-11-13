@@ -1322,23 +1322,23 @@ export const HomePage: React.FC<HomePageProps> = ({
           </button>
           <button
             onClick={onOpenCamera}
-            className="flex-1 h-[75px] rounded-[13px] bg-[#121214] text-white flex items-center justify-center gap-[9px] p-3.5 hover:bg-[#1a1a1d] active:scale-[0.98] transition-[background-color,transform] duration-300"
+            className="flex-1 h-[75px] rounded-[13px] bg-white/[0.06] border border-white/10 text-white flex items-center justify-center gap-[9px] p-3.5 hover:bg-white/[0.12] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
           >
             <Icon name="photo_camera" className="text-[24px] text-white/75" />
             <span className="text-sm font-black tracking-[0.06em]">相機</span>
           </button>
         </div>
 
-        {/* 四個工具 —— 方案 B「深色實心」：接近黑的實心底、沒有框線（跟儲存選單同一系） */}
+        {/* 四個工具 —— 一樣只有尺寸照參考圖放大（64→75），圖示與文字沒換 */}
         <div className="relative z-10 mt-[11px] shrink-0 flex gap-2">
           {TOOL_TILES.map(t => (
             <button
               key={t.key}
               onClick={tileAction[t.key]}
-              className="flex-1 min-w-0 h-[75px] rounded-[13px] bg-[#121214] text-white flex flex-col items-center justify-center gap-[9px] hover:bg-[#1a1a1d] active:scale-[0.98] transition-[background-color,transform] duration-300"
+              className="flex-1 min-w-0 h-[75px] rounded-[13px] bg-white/[0.06] border border-white/10 text-white flex flex-col items-center justify-center gap-[9px] hover:bg-white/[0.12] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
             >
-              <Icon name={t.icon} className="text-[22px] text-white/75" />
-              <span className="text-[10px] font-bold tracking-[0.06em] text-white/70 whitespace-nowrap">{t.label}</span>
+              <Icon name={t.icon} className="text-[22px] text-white/70" />
+              <span className="text-[10px] font-bold tracking-[0.06em] text-white/75 whitespace-nowrap">{t.label}</span>
             </button>
           ))}
         </div>
@@ -1350,8 +1350,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           type="button"
           aria-label="開啟藝術效果"
           onClick={onOpenArt}
-          className="relative flex-1 min-w-0 rounded-[14px] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
-          style={{ background: previews.promo ? undefined : '#121214' }}
+          className="relative flex-1 min-w-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
+          style={{ background: previews.promo ? undefined : 'rgba(255,255,255,.03)' }}
         >
           {previews.promo && (
             <>
@@ -1385,8 +1385,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           type="button"
           aria-label="開啟點陣文字"
           onClick={onOpenDotArt}
-          className="relative flex-1 min-w-0 rounded-[14px] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
-          style={{ background: '#121214' }}
+          className="relative flex-1 min-w-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
+          style={{ background: 'rgba(255,255,255,.03)' }}
         >
           <div className="relative px-[14px] pt-7 pb-4">
             <span className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">點陣文字</span>
