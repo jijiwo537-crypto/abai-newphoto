@@ -56,11 +56,14 @@ export async function encodeCanvasFrames(o: {
       } });
     } finally { even.width = even.height = 1; }
   }
-  /* App 裡優先用原生的硬體 HEVC（檔案更小、切到背景也能編完）；做不到再走 WebCodecs */
+  /* App 裡優先用原生的硬體 HEVC（檔案更小、切到背景也能編完）；做不到再走 WebCodecs。
+     原生端「說成功」不代表檔案能播：先實際載入一次確認有畫面，不行就改用 WebCodecs 重編一次，
+     絕不把一個播不出來的檔案交出去（成品頁會一片空白、存進相簿的也是壞檔）。 */
   if (isNative() && !o.webOnly) {
     const { encodeCanvasFramesNative } = await import('./nativeVideo');
     const native = await encodeCanvasFramesNative(o).catch(() => null);
-    if (native) return native;
+    if (native && await isPlayableVideo(native)) return native;
+    if (o.aborted?.()) return null;
   }
   if (!canEncodeFrames()) return null;
   const { canvas, frames } = o;
@@ -104,6 +107,21 @@ export async function encodeCanvasFrames(o: {
     try { encoder.close(); } catch { /* 已關 */ }
     throw e;
   }
+}
+
+/** 實際載入這段影片，確認瀏覽器播得出來（有長寬、能解出第一格）。最多等 8 秒 */
+export function isPlayableVideo(blob: Blob): Promise<boolean> {
+  if (!blob || !blob.size) return Promise.resolve(false);
+  return new Promise(resolve => {
+    const v = document.createElement('video'), url = URL.createObjectURL(blob);
+    let done = false;
+    const end = (ok: boolean) => { if (done) return; done = true; clearTimeout(t); v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url); resolve(ok); };
+    const t = setTimeout(() => end(false), 8000);
+    v.muted = true; v.playsInline = true; v.preload = 'auto';
+    v.onloadeddata = () => end(v.videoWidth > 0 && v.videoHeight > 0);
+    v.onerror = () => end(false);
+    v.src = url;
+  });
 }
 
 /** 把每一段影片停在時間 t 的那一格（等畫面真的換好才回來） */

@@ -90,7 +90,7 @@ import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
-import { canEncodeFrames, encodeCanvasFrames, seekVideosTo } from '../utils/frameExactVideo';
+import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, settlePhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
 import { get2dWide } from '../utils/colorSpace';
@@ -16297,7 +16297,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const fps = videoExportFps || preferredVideoFrameRate(vids);
           const wasPlaying = vids.map(v => !v.paused);
           try {
-            const blob = await encodeCanvasFrames({
+            let blob = await encodeCanvasFrames({
               canvas: rc, fps, frames: Math.max(1, Math.round(dur * fps)), bitrate: videoBitrateFor(rc.width, rc.height, fps),
               type: videoExportFormat === 'mov' ? 'video/quicktime' : 'video/mp4',
               // 取每一格的正中間，不會因為浮點誤差拿到前一格
@@ -16305,6 +16305,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               onProgress: f => setVideoProg(Math.max(0, Math.min(1, (vidDone + f) / Math.max(1, vidTotal)))),
               aborted: () => videoAbortRef.current || cancelled(),
             });
+            /* 播不出來的檔案不交出去：當作這條路失敗，改走下面的即時錄影 */
+            if (blob && !videoAbortRef.current && !cancelled() && !(await isPlayableVideo(blob))) blob = null;
             if (blob || videoAbortRef.current || cancelled()) {
               vidDone++;
               return blob ? URL.createObjectURL(blob) : '';

@@ -115,7 +115,7 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhoto
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface,warmPhotoSceneColour,forgetPhotoFxSource} from '../utils/photoFx';
 import {videoPoster} from '../utils/videoPoster';
-import {canEncodeFrames,encodeCanvasFrames,seekVideosTo} from '../utils/frameExactVideo';
+import {canEncodeFrames,encodeCanvasFrames, isPlayableVideo,seekVideosTo} from '../utils/frameExactVideo';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
 import {useSmoothSlider, snapToStep} from '../utils/smoothSlider';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
@@ -10335,6 +10335,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       let scale = videoScaleFor(videoExportQuality, logicalW, logicalH);
       /* 固定到 1/1000，避免浮點尾數令 canvas 在逐幀重畫時偶爾差一個像素。 */
       scale = Math.max(0.001, Math.floor(scale * 1000) / 1000);
+      /* 影片編碼器要求寬高都是偶數：720／2K 換算出來常是 719、1439 這種奇數（1080、4K 剛好是整數倍才沒事），
+         那正是「選 720／2K 匯出成品是空的」的原因。寬度往下取到偶數，畫面比例幾乎不變 */
+      { const w = Math.floor(logicalW * scale); if (w % 2) scale = Math.max(0.001, (w - 1 + 0.5) / logicalW); }
       // 錄到的第一格就要是影片的第一格，所以先全部倒帶再開始
       if (hasVid) { await rewindVideos(vids); playVideos(vids); }
       animRef.current = buildAnim(0);
@@ -10412,6 +10415,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       // 取消：錄到一半的東西直接丟掉，什麼都不改
       if (videoAbortRef.current) return;
       if(!blob.size)throw Error('影片編碼沒有產生資料');
+      /* 交給成品頁之前先確認真的播得出來：播不出來就明確報錯，不要顯示一個空白的成功畫面 */
+      if(!(await isPlayableVideo(blob)))throw Error('影片輸出失敗，請換一個畫質或稍後再試');
       revokeUrl(finalUrlRef.current);
       const url = URL.createObjectURL(blob);
       finalUrlRef.current = url;

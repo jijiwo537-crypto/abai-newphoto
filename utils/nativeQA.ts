@@ -292,6 +292,25 @@ async function scenarioLayoutUndo() {
   }
 }
 
+/* 奇數尺寸的影片（創意拼圖選 720／2K 時就是這種尺寸）：原生編碼直接輸出 vs 新流程（補成偶數＋播放檢查） */
+async function scenarioOddVideo() {
+  const { encodeCanvasFramesNative } = await import('./nativeVideo');
+  const { encodeCanvasFrames, isPlayableVideo } = await import('./frameExactVideo');
+  for (const [w, h] of [[719, 959], [720, 960], [1439, 1919]]) {
+    const { c, draw } = testCanvas(w, h);
+    try {
+      const raw = await encodeCanvasFramesNative({ canvas: c, fps: 30, frames: 30, bitrate: 6_000_000, draw: i => draw(i) });
+      log(`oddvideo ${w}x${h} native-raw: ${raw ? `${raw.size} bytes playable=${await isPlayableVideo(raw)}` : 'null'}`);
+      if (raw) await playbackTest(raw);
+    } catch (e: any) { log(`oddvideo ${w}x${h} native-raw FAILED: ${String(e?.message ?? e)}`); }
+    try {
+      const fixed = await encodeCanvasFrames({ canvas: c, fps: 30, frames: 30, bitrate: 6_000_000, draw: i => draw(i) });
+      log(`oddvideo ${w}x${h} pipeline: ${fixed ? `${fixed.size} bytes playable=${await isPlayableVideo(fixed)}` : 'null'}`);
+      if (fixed) await playbackTest(fixed);
+    } catch (e: any) { log(`oddvideo ${w}x${h} pipeline FAILED: ${String(e?.message ?? e)}`); }
+  }
+}
+
 let running = false;
 /** forced：原生直接叫的（外掛通不通都要跑） */
 /* 原生特效（相機用的柔光、朦朧、低保真）：模擬器沒有相機，拿一張測試照片走拍照後的同一條處理 */
@@ -363,6 +382,7 @@ export async function runNativeQA(forced?: string) {
     else if (scenario === 'rings') await scenarioRings();
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
     else if (scenario === 'layoutundo') await scenarioLayoutUndo();
+    else if (scenario === 'oddvideo') await scenarioOddVideo();
     else if (scenario.startsWith('tool:')) await scenarioTool(scenario.slice(5));
     log(`end ${scenario}`);
   } catch (e: any) {
