@@ -134,7 +134,7 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
       ['二、您的內容', '您匯入、拍攝及製作的照片、影片與作品，權利均歸屬於您或原權利人，Abai 不主張任何權利。'],
       ['三、展示素材', 'App 內用於展示模板效果的人物照片等素材，均已取得權利人授權，僅供展示使用，恕不提供下載或另作他用。'],
       ['四、帳號', '登入為選用功能，未登入亦可使用全部編輯功能。請妥善保管您的帳號資訊；您可隨時於 App 內刪除帳號。'],
-      ['五、使用規範', '請以合法、正當的方式使用 Abai。您透過本 App 製作或分享的內容，不得侵害他人的著作權、肖像權、隱私權或其他合法權益。\n\n不得將本 App 用於任何違法用途，亦不得利用本 App 製作或散布違法、不實、騷擾或其他違反公序良俗的內容。\n\n嚴禁對本 App 進行破解、反向工程、竄改，或以任何方式干擾其正常運作；如有違反，Abai 保留依法追究法律責任之權利。'],
+      ['五、使用規範', '1.請以合法、正當的方式使用 Abai。您透過本 App 製作或分享的內容，不得侵害他人的著作權、肖像權、隱私權或其他合法權益。\n\n2.不得將本 App 用於任何違法用途，亦不得利用本 App 製作或散布違法、不實、騷擾或其他違反公序良俗的內容。\n\n3.嚴禁對本 App 進行破解、反向工程、竄改，或以任何方式干擾其正常運作；如有違反，Abai 保留依法追究法律責任之權利。'],
       ['六、問題回報', 'Abai 會持續更新與改善各項功能。使用上如遇任何問題，歡迎透過「問題反饋」與我們聯繫，我們將儘速處理。'],
       ['七、條款修訂', '本條款如有修訂，將於 App 內公告，修訂後繼續使用即視為同意。本條款以中華民國法律為準據法。'],
       ['八、聯絡我們', `如有任何疑問或建議，請透過「問題反饋」聯繫：\n${CONTACT_EMAIL}`],
@@ -145,7 +145,7 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
     sections: [
       ['一、照片與影片', 'Abai 的所有編輯皆於您的裝置上完成，草稿與歷史紀錄亦僅儲存於本機。Abai 未設置自有伺服器，不會上傳您的照片或影片。'],
       ['二、裝置權限', '相機權限僅於拍攝時使用；照片圖庫權限僅於匯入照片或儲存作品時使用。您可隨時於系統設定中調整相關權限。'],
-      ['三、帳號資料', '登入為選用功能。登入後，帳號資料由帳號服務 Supabase 保存，僅用於辨識您的帳號，不包含任何照片或影片。使用 Google 或 Apple 登入時，另適用其各自的隱私權政策。'],
+      ['三、帳號資料', '登入為選用功能。登入後，帳號資料由 Supabase 保存，僅用於辨識您的帳號，不包含任何照片或影片。使用 Google 或 Apple 登入時，另適用其各自的隱私權政策。'],
       ['四、資料刪除', '您可於 App 內刪除帳號，帳號資料將一併刪除。裝置上的草稿與歷史紀錄可由您隨時自行刪除。'],
       ['五、政策修訂', '本政策如有修訂，將於 App 內公告。'],
       ['六、聯絡我們', `如對隱私權有任何疑問，請透過「問題反饋」聯繫：\n${CONTACT_EMAIL}`],
@@ -156,6 +156,10 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
    做法：每個標點連同它前面一個字、後面三個字綁成不能拆開的一段，換行只會落在標點後第三個字以後
    （段落最後一段同理：最後一行至少有三個字加句點，不會只剩一兩個字）。 */
 const LEGAL_PUNCT = /[，。、；：！？「」（）]/;
+/** 中文斷詞（iPhone Safari、Chrome 都有）；沒有的話就照字數 */
+const WORD_SEG: { segment(t: string): Iterable<{ segment: string; index: number }> } | null = (() => {
+  try { const S = (Intl as any).Segmenter; return S ? new S('zh-Hant', { granularity: 'word' }) : null; } catch { return null; }
+})();
 function gluePunct(text: string): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   let buf = '', i = 0;
@@ -167,17 +171,23 @@ function gluePunct(text: string): React.ReactNode[] {
     if (LEGAL_PUNCT.test(text[i])) {
       // 前一個字搬進這一段（標點不會被擠到下一行開頭）
       let j = i, n = 0;
-      // 標點後面帶三個字；三個字以內又遇到標點，就一起併進來、重新數三個字
-      for (;;) {
-        // 「」裡的詞整個不拆開
-        while (j < text.length && LEGAL_PUNCT.test(text[j])) { const k = text[j] === '「' ? text.indexOf('」', j) : -1; j = k > 0 ? k + 1 : j + 1; }
-        n = 0;
-        while (j < text.length && n < 3 && !LEGAL_PUNCT.test(text[j])) { j++; n++; }
-        if (j < text.length && LEGAL_PUNCT.test(text[j])) continue;
-        break;
+      // 「」裡的詞整個不拆開
+      while (j < text.length && LEGAL_PUNCT.test(text[j])) { const k = text[j] === '「' ? text.indexOf('」', j) : -1; j = k > 0 ? k + 1 : j + 1; }
+      /* 標點後面帶兩個字（行尾不會是標點、行首也不會是標點）。兩個字以內又遇到下一個標點時，不再整串併成
+         一大塊（「權、肖像權、隱私權或」十個字綁在一起，只能整塊換行，上一行就空出一個洞）：讓出最後一個字
+         給下一個標點去帶。每一塊最多四個字，行尾最多只空一兩個字寬。 */
+      while (j < text.length && n < 1 && !LEGAL_PUNCT.test(text[j])) { j++; n++; }
+      if (j < text.length && LEGAL_PUNCT.test(text[j]) && n > 1) j--;
+      // 前面也帶字：一般帶一個（標點不會被擠到下一行開頭）；段落結尾帶四個（最後一行不會只剩一兩個字，也不會把「儘速」這種詞拆開）
+      let take = j >= text.length ? 4 : 1;
+      /* 段落最後一行：帶 4 個字為主，但如果會從一個詞的中間切開（「公序良|俗」「儘|速處理」），
+         依序改帶 3、2、5 個字，挑第一個剛好落在詞與詞之間的 —— 詞不會被拆開，上一行也不會被拉空 */
+      if (j >= text.length && WORD_SEG) {
+        const bounds = new Set<number>();
+        for (const seg of WORD_SEG.segment(text)) bounds.add(seg.index);
+        const pick = [4, 3, 2, 5].find(t => t <= buf.length && bounds.has(i - t));
+        if (pick) take = pick;
       }
-      // 前面也帶字：一般帶一個（標點不會被擠到下一行開頭）；段落結尾帶三個（最後一行不會只剩一兩個字）
-      const take = j >= text.length ? 3 : 1;
       const prev = buf.slice(-take); buf = buf.slice(0, -take); flush();
       out.push(<span key={out.length} style={{ whiteSpace: 'nowrap' }}>{prev + text.slice(i, j)}</span>);
       i = j;
@@ -198,9 +208,17 @@ const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
         <div key={h} className="flex flex-col gap-1.5">
           <div className="text-[12px] font-bold text-white/85">{h}</div>
           {/* 「\n\n」分段（同一條裡的幾段，段與段之間留一點距離）；「\n」是指定的換行（聯絡方式：Email 單獨一行） */}
-          {body.split('\n\n').map((para, pi) => (
-            <div key={pi} className="text-[11.5px] leading-[1.75] text-white/60">{para.split('\n').map((line, k) => <React.Fragment key={k}>{k > 0 && <br />}{gluePunct(line)}</React.Fragment>)}</div>
-          ))}
+          {/* 同一條裡分成幾點（「\n\n」隔開、開頭寫「1.」）：排成編號條列，編號吊在左邊、段距很小，看起來是一整塊 */}
+          <div className="flex flex-col gap-1">
+            {body.split('\n\n').map((para, pi) => {
+              const num = /^(\d+)\./.exec(para);
+              const text = num ? para.slice(num[0].length) : para;
+              const lines = text.split('\n').map((line, k) => <React.Fragment key={k}>{k > 0 && <br />}{gluePunct(line)}</React.Fragment>);
+              return num
+                ? <div key={pi} className="flex text-[11.5px] leading-[1.75] text-white/60"><span className="shrink-0 w-[1.1em] text-white/45 tabular-nums">{num[1]}.</span><span className="min-w-0 flex-1">{lines}</span></div>
+                : <div key={pi} className="text-[11.5px] leading-[1.75] text-white/60">{lines}</div>;
+            })}
+          </div>
         </div>
       ))}
     </div>
@@ -1934,7 +1952,8 @@ export const HomePage: React.FC<HomePageProps> = ({
               className="w-full max-w-[320px] rounded-[20px] bg-[#141414] border border-white/10 p-6"
             >
               <p className="text-[15px] font-black tracking-[0.04em] text-white">刪除這筆紀錄</p>
-              <p className="mt-2 text-[12px] leading-relaxed text-white/45">只會刪除 App 內的紀錄，已存到相簿的照片不受影響</p>
+              {/* 一行放完：字級跟著視窗內容的寬度縮（視窗最寬 320px、左右各留 24px），最大 11px，很窄的手機也不會換行 */}
+              <p className="mt-2 whitespace-nowrap leading-relaxed text-white/45" style={{ fontSize: 'min(11px, calc((min(320px, 100vw - 64px) - 48px) / 23.5))' }}>只會刪除 App 內的紀錄，已存到相簿的照片不受影響</p>
               <div className="mt-5 flex gap-3">
                 <button
                   onClick={() => setHistDel(null)}
