@@ -312,10 +312,10 @@ enum ABAIImageCore {
     /// 套色彩表，但保留原圖超出 sRGB 的廣色域顏色與 HDR 亮部（sRGB 範圍內的顏色跟 apply 完全一樣）
     static func applyKeepingGamut(cube: Cube, to image: CIImage) -> CIImage {
         guard let k = gamutKernel else { return apply(cube: cube, to: image) }
-        let clamped = image.convertingWorkingSpaceToColorSpace(linearSRGB)
-            .applyingFilter("CIColorClamp", parameters: ["inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
-                                                        "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)])
-            .convertingColorSpaceToWorkingSpace(linearSRGB)
+        guard let inSRGB = image.matchedFromWorkingSpace(to: linearSRGB) else { return apply(cube: cube, to: image) }
+        let clampedSRGB = inSRGB.applyingFilter("CIColorClamp", parameters: ["inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
+                                                                            "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)])
+        guard let clamped = clampedSRGB.matchedToWorkingSpace(from: linearSRGB) else { return apply(cube: cube, to: image) }
         let l = apply(cube: cube, to: clamped)
         return k.apply(extent: image.extent, arguments: [l, image, clamped]) ?? l
     }
