@@ -125,6 +125,13 @@ export function isPlayableVideo(blob: Blob): Promise<boolean> {
     const end = (ok: boolean) => { if (done) return; done = true; clearTimeout(t); v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url); resolve(ok); };
     const t = setTimeout(() => { exportDiag(`playable check: timeout readyState=${v.readyState} net=${v.networkState}`); end(false); }, 8000);
     v.muted = true; v.playsInline = true; v.preload = 'auto';
+    /* iPhone 的 WebKit 在還沒開始播之前只讀影片資訊（尺寸、長度），不先解出畫面（readyState 停在 1）。
+       所以讀到正確的尺寸就算能播；同時試著靜音播一下，讓它真的去解第一格（成功的話更早結束）。 */
+    v.onloadedmetadata = () => {
+      exportDiag(`playable check: metadata ${v.videoWidth}x${v.videoHeight} dur=${v.duration} after ${Math.round(performance.now() - t0)}ms`);
+      if (v.videoWidth > 0 && v.videoHeight > 0 && (v.duration > 0 || !isFinite(v.duration))) end(true);
+      else { v.play().catch(() => {}); }
+    };
     v.onloadeddata = () => { exportDiag(`playable check: loadeddata ${v.videoWidth}x${v.videoHeight} after ${Math.round(performance.now() - t0)}ms`); end(v.videoWidth > 0 && v.videoHeight > 0); };
     v.onerror = () => { exportDiag(`playable check: error code=${v.error?.code} ${v.error?.message || ''}`); end(false); };
     v.src = url;
