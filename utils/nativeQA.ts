@@ -438,6 +438,19 @@ async function scenarioWideSave() {
         } catch (e: any) { log(`widesave ${gray ? 'gray' : 'identity'} ${format} FAILED: ${String(e?.message ?? e)}`); }
       }
     }
+    // 混合路線：網頁成品（這裡用一張黑白的）＋原圖超出 sRGB 的部分
+    step = 'hybrid base';
+    const bc = document.createElement('canvas'); bc.width = 800; bc.height = 600;
+    const bg = bc.getContext('2d')!; bg.fillStyle = 'rgb(182,182,182)'; bg.fillRect(0, 0, 800, 600); bg.fillStyle = 'rgb(128,128,128)'; bg.fillRect(0, 0, 200, 600);
+    const baseBlob = await new Promise<Blob | null>(r => bc.toBlob(r, 'image/png'));
+    const basePath = await blobToNativeFile(baseBlob!, 'png');
+    for (const format of ['heic10', 'jpeg']) {
+      const t0 = performance.now();
+      try {
+        const r = await (img as any).render({ path, basePath, format, quality: 1, hdr: true, keepGamut: true });
+        log(`widesave hybrid ${format} → ${await read(r.path)} in ${Math.round(performance.now() - t0)}ms`);
+      } catch (e: any) { log(`widesave hybrid ${format} FAILED: ${String(e?.message ?? e)}`); }
+    }
   } catch (e: any) { log(`widesave FAILED at ${step}: ${e?.name}: ${String(e?.message ?? e)} ${String(e?.stack ?? '').slice(0, 300)}`); }
 }
 

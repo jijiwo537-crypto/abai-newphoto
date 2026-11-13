@@ -135,6 +135,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         // 修圖存檔：色彩表只套在 sRGB 範圍內，超出的廣色域與 HDR 亮部另外補回（見 ABAIImageCore.applyKeepingGamut）
         let keepGamut = call.getBool("keepGamut") ?? false
         let cubePath = call.getString("cubePath")
+        let basePath = call.getString("basePath")             // 網頁算好的成品（有局部、空間類的編輯時）
         if wantHDR && format == .heic10 { format = .heic }   // 帶增益圖的 HDR 照片用系統標準的 8 位元 HEIC＋增益圖
         let lutName = call.getString("lut")
         let cubeB64 = call.getString("cube"), cubeSize = call.getInt("cubeSize") ?? 0
@@ -162,7 +163,10 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                 if let cp = cubePath, cubeSize > 1, let u = ABAIImageCore.fileURL(from: cp), let d = try? Data(contentsOf: u) { cube = ABAIImageCore.cube(data: d, size: cubeSize) }
                 else if let b = cubeB64, cubeSize > 1 { cube = ABAIImageCore.cube(base64: b, size: cubeSize) }
                 else if let n = lutName, let u = ABAIImageCore.bundledLut(n) { cube = ABAIImageCore.cube(fromAtlas: u) }
-                if let c = cube { img = keepGamut ? ABAIImageCore.applyKeepingGamut(cube: c, to: img) : ABAIImageCore.apply(cube: c, to: img, amount: amount) }
+                if keepGamut, let bp = basePath, let bu = ABAIImageCore.fileURL(from: bp), let base = ABAIImageCore.ciImage(bu) {
+                    img = ABAIImageCore.keepGamut(edited: base, original: img)
+                } else if let c = cube { img = keepGamut ? ABAIImageCore.applyKeepingGamut(cube: c, to: img) : ABAIImageCore.apply(cube: c, to: img, amount: amount) }
+                if keepGamut { img = ABAIImageCore.uprightProperties(img) }
                 if fx.isOn { img = fx.apply(to: img) }
                 /* HDR：調完色的結果就是 HDR 那一張；SDR 那一張是把亮部壓回 1.0 以內的版本。
                    原圖本身沒有 HDR 資訊時，兩張一樣，就不帶增益圖。 */

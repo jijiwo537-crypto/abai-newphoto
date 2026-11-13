@@ -10,7 +10,7 @@ import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
-import { nativeImage, blobToNativeFile } from '../utils/nativeImage';
+import { nativeImage, blobToNativeFile, nativeImageSize } from '../utils/nativeImage';
 import { useNativeHdrPreview } from '../utils/nativePreview';
 import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
 import { EditBar, EditBarTab, EDIT_BAR_H } from './EditBar';
@@ -3467,6 +3467,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       return false;
     }
   };
+
   /* 在色彩階段和 GLSL 特效之間畫在 2D 畫布上的特效；只要有一個開著，就不能走 GPU 直通 */
   const uses2dEffects = (p: EditorParams) => !!(p.grain || p.colorNoise || p.colorNoise2 || p.blur || p.soft || p.leakOpacity || p.fringeIntensity || p.vignette || anyMask(p));
   /**
@@ -7319,13 +7320,40 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const NATIVE_CUBE = 64;
   const nativeColorOnly = (p: EditorParams) =>
     !uses2dEffects(p) && !hasGlow(p) && !hasActiveFx(p) && !p.sharpen && !p.colorNoise2 && !p.shadows && !p.highlights && !(Number(p.fxLowfi) > 0);
-  const nativeWideSave = async (src: string, snap: BatchSnap, fmt: 'heic10' | 'jpeg' | 'png'): Promise<string | null> => {
+  /** 有局部、空間類編輯，但還能「網頁成品＋原圖超出 sRGB 的部分」補回廣色域的：
+      不能有模糊類（柔光、光暈、漏光、模糊、發光、GLSL 特效）—— 補回的清晰細節會跟模糊的畫面錯開；
+      也不能有低保真（它本來就是要壓色）。構圖要沒動（像素位置要跟原圖對得上）。 */
+  const nativeHybridOk = (p: EditorParams) =>
+    !p.blur && !p.soft && !p.fringeIntensity && !p.leakOpacity && !hasGlow(p) && !hasActiveFx(p) && !(Number(p.fxLowfi) > 0);
+  /** 原生端一次處理整張 16 位元影像：太大的照片（4800 萬像素要 400MB 左右）不走這條，免得記憶體不夠被系統收掉 */
+  const NATIVE_MAX_PIXELS = 25_000_000;
+  const nativeWideSave = async (src: string, snap: BatchSnap, fmt: 'heic10' | 'jpeg' | 'png', baseUrl?: string): Promise<string | null> => {
     const p = snap.params;
-    if (!isGeoIdentity(snap.geo) || fullJobsRef.current[src] || !nativeColorOnly(p)) return null;
+    if (!isGeoIdentity(snap.geo) || fullJobsRef.current[src] || !(baseUrl ? nativeHybridOk(p) : nativeColorOnly(p))) return null;
     const path = nativePathOf(src);
     if (!path) return null;
     const api = await nativeImage();
     if (!api) return null;
+    const size = await nativeImageSize(path);
+    if (!size || size.width * size.height > NATIVE_MAX_PIXELS) return null;
+    if (baseUrl) {
+      let basePath = '', outPath = '';
+      try {
+        basePath = await blobToNativeFile(await (await fetch(baseUrl)).blob(), 'png');
+        const r = await api.render({ path, basePath, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true });
+        outPath = r.path;
+        const blob = await (await fetch(fileSrc(r.path))).blob();
+        if (!blob.size) return null;
+        try { (window as any).__abaiQALog?.push?.(`wide hybrid save: ${fmt} ${r.width}x${r.height} ${blob.size}B`); } catch { /* 只是記錄 */ }
+        return URL.createObjectURL(new Blob([blob], { type: fmt === 'jpeg' ? 'image/jpeg' : fmt === 'png' ? 'image/png' : 'image/heic' }));
+      } catch (e) {
+        try { (window as any).__abaiQALog?.push?.(`wide hybrid save failed: ${String((e as any)?.message ?? e)}`); } catch { /* 只是記錄 */ }
+        return null;
+      } finally {
+        if (basePath) api.remove({ path: basePath }).catch(() => {});
+        if (outPath) api.remove({ path: outPath }).catch(() => {});
+      }
+    }
     const lut = lutList[snap.selectedLutIdx];
     const activeLut = lut && lut.url ? lutDataRef.current[lut.id] : null;
     if (lut && lut.url && !activeLut) return null;
@@ -7852,11 +7880,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               const img = await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
               // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
-              const wide = await nativeWideSave(srcs[i], snap, exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png');
+              const nfmt = exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png';
+              let wide = await nativeWideSave(srcs[i], snap, nfmt);
+              /* 有局部、空間類編輯：網頁先做出無損成品，原生端補回廣色域與 HDR 亮部。
+                 補不了的時候，這張成品 PNG／HEIC 直接拿來用，不重算 */
+              let basePng = '';
+              if (!wide && nativePathOf(srcs[i]) && isGeoIdentity(snap.geo) && nativeHybridOk(snap.params) && !nativeColorOnly(snap.params)) {
+                basePng = await renderFullUrl(img, snap, 'image/png', 1);
+                if (basePng) wide = await nativeWideSave(srcs[i], snap, nfmt, basePng);
+                if (wide) { revokeUrls([basePng]); basePng = ''; }
+              }
               if (wide) {
                 out.push(wide);
                 if (exportFormat === 'heic') encoded.push(wide);
+              } else if (basePng && exportFormat !== 'jpg') {
+                out.push(basePng);
+                if (exportFormat === 'heic') encoded.push(await exportHeicFromUrl(basePng));
               } else if (exportFormat !== 'heic') {
+                if (basePng) revokeUrls([basePng]);
                 // JPG／PNG：大照片走原尺寸分段存檔（見 renderFullUrl），一般照片照一般流程
                 out.push(await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
               } else {

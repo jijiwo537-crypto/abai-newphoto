@@ -296,28 +296,59 @@ enum ABAIImageCore {
          亮度（HDR 亮部超過 1 的部分）：整份補回；
          色彩（P3 比 sRGB 更鮮豔的部分）：照色彩表保留了多少彩度等比例補 —— 黑白濾鏡就不會透出殘色，
          加飽和的濾鏡最多補回原本那一份。 */
+    /* 補回超出 sRGB 的部分。輸入都在工作色域（線性 P3）：
+         l＝編輯後的結果（色彩表的結果，或網頁算好的成品；只看得到 sRGB 範圍內），
+         s＝原圖，c＝原圖夾進 sRGB 範圍後的樣子。
+       差值 s−c 就是編輯「看不到」的那一塊，拆成兩部分補回：
+         亮度（HDR 亮部超過 1 的部分）：照編輯把那裡調亮／調暗了多少等比例補（暗角、壓暗的遮色片也會壓到亮部）；
+         色彩（P3 比 sRGB 更鮮豔的部分）：照編輯保留了多少彩度等比例補 —— 黑白濾鏡就不會透出殘色，
+         加飽和的濾鏡最多補回原本那一份。 */
     private static let gamutKernel: CIColorKernel? = CIColorKernel(source: """
         kernel vec4 abaiKeepGamut(__sample l, __sample s, __sample c) {
             vec3 w = vec3(0.2289746, 0.6917385, 0.0792869);
             vec3 r = s.rgb - c.rgb;
             float yr = dot(r, w);
             vec3 rc = r - vec3(yr);
+            float ky = clamp(dot(l.rgb, w) / max(dot(c.rgb, w), 0.0001), 0.0, 2.0);
             float chL = max(max(l.r, l.g), l.b) - min(min(l.r, l.g), l.b);
             float chC = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
             float k = clamp(chL / max(chC, 0.0001), 0.0, 1.0);
-            return vec4(l.rgb + vec3(yr) + rc * k, s.a);
+            return vec4(l.rgb + vec3(yr * ky) + rc * k, l.a);
         }
         """)
 
-    /// 套色彩表，但保留原圖超出 sRGB 的廣色域顏色與 HDR 亮部（sRGB 範圍內的顏色跟 apply 完全一樣）
-    static func applyKeepingGamut(cube: Cube, to image: CIImage) -> CIImage {
-        guard let k = gamutKernel else { return apply(cube: cube, to: image) }
-        guard let inSRGB = image.matchedFromWorkingSpace(to: linearSRGB) else { return apply(cube: cube, to: image) }
+    /// 原圖夾進 sRGB 範圍（線性、工作色域）
+    private static func clampedToSRGB(_ image: CIImage) -> CIImage? {
+        guard let inSRGB = image.matchedFromWorkingSpace(to: linearSRGB) else { return nil }
         let clampedSRGB = inSRGB.applyingFilter("CIColorClamp", parameters: ["inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
                                                                             "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)])
-        guard let clamped = clampedSRGB.matchedToWorkingSpace(from: linearSRGB) else { return apply(cube: cube, to: image) }
+        return clampedSRGB.matchedToWorkingSpace(from: linearSRGB)
+    }
+
+    /// 套色彩表，但保留原圖超出 sRGB 的廣色域顏色與 HDR 亮部（sRGB 範圍內的顏色跟 apply 完全一樣）
+    static func applyKeepingGamut(cube: Cube, to image: CIImage) -> CIImage {
+        guard let k = gamutKernel, let clamped = clampedToSRGB(image) else { return apply(cube: cube, to: image) }
         let l = apply(cube: cube, to: clamped)
         return k.apply(extent: image.extent, arguments: [l, image, clamped]) ?? l
+    }
+
+    /// 網頁算好的成品（sRGB）＋原圖超出 sRGB 的部分。兩張大小不一樣（裁切過）就只用成品
+    static func keepGamut(edited: CIImage, original: CIImage) -> CIImage {
+        guard edited.extent.size == original.extent.size, let k = gamutKernel, let clamped = clampedToSRGB(original) else { return edited }
+        let o = original.transformed(by: CGAffineTransform(translationX: edited.extent.minX - original.extent.minX, y: edited.extent.minY - original.extent.minY))
+        let c = clamped.transformed(by: CGAffineTransform(translationX: edited.extent.minX - original.extent.minX, y: edited.extent.minY - original.extent.minY))
+        return k.apply(extent: edited.extent, arguments: [edited, o, c]) ?? edited
+    }
+
+    /// 像素已經轉正了：屬性裡的方向一律改成 1，不然存出去的檔案會被看圖程式再轉一次
+    static func uprightProperties(_ image: CIImage) -> CIImage {
+        var props = image.properties
+        props[kCGImagePropertyOrientation as String] = 1
+        if var tiff = props[kCGImagePropertyTIFFDictionary as String] as? [String: Any] {
+            tiff[kCGImagePropertyTIFFOrientation as String] = 1
+            props[kCGImagePropertyTIFFDictionary as String] = tiff
+        }
+        return image.settingProperties(props)
     }
 
     /// App 內建資源（網頁打包進 App 的 public 資料夾）裡的 LUT
