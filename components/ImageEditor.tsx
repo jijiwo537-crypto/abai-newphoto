@@ -9,7 +9,8 @@ import { ImportSpinner } from './BusySpinner';
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
-import { nativeAssetIdOf } from '../utils/nativeBridge';
+import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
+import { nativeImage, blobToNativeFile } from '../utils/nativeImage';
 import { useNativeHdrPreview } from '../utils/nativePreview';
 import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
 import { EditBar, EditBarTab, EDIT_BAR_H } from './EditBar';
@@ -7270,6 +7271,50 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }, T, type);
     return url || '';
   };
+  /* ── 廣色域＋高位元存檔（App 才有）────────────────────────────────
+     只用了「顏色類」調整的照片（濾鏡、曝光、對比、色溫、HSL、色輪、曲線…）：顏色整條是一個純 RGB→RGB
+     函數，烤成 64³ 的色彩表交給原生端。原生端直接讀原檔（16 位元浮點、線性 P3），套色彩表時把
+     超出 sRGB 的廣色域顏色與 HDR 亮部補回去，存成 10 位元 HEIC／P3 JPEG，原圖帶 HDR 增益圖就一起帶。
+     濾鏡和調整在 sRGB 範圍內的顏色跟網頁算的一樣（同一支 processPixels 烤出來的表）。
+     有局部、空間類的東西（陰影／高光、遮色片、特效、顆粒、銳化、構圖…）就不走這條，照原本的方式存。
+     任何一步失敗都回 null，呼叫端照原本的方式存，所以不會比原本差。 */
+  const NATIVE_CUBE = 64;
+  const nativeColorOnly = (p: EditorParams) =>
+    !uses2dEffects(p) && !hasGlow(p) && !hasActiveFx(p) && !p.sharpen && !p.colorNoise2 && !p.shadows && !p.highlights && !(Number(p.fxLowfi) > 0);
+  const nativeWideSave = async (src: string, snap: BatchSnap, fmt: 'heic10' | 'jpeg' | 'png'): Promise<string | null> => {
+    const p = snap.params;
+    if (!isGeoIdentity(snap.geo) || fullJobsRef.current[src] || !nativeColorOnly(p)) return null;
+    const path = nativePathOf(src);
+    if (!path) return null;
+    const api = await nativeImage();
+    if (!api) return null;
+    const lut = lutList[snap.selectedLutIdx];
+    const activeLut = lut && lut.url ? lutDataRef.current[lut.id] : null;
+    if (lut && lut.url && !activeLut) return null;
+    let cubePath = '', outPath = '';
+    try {
+      generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseCorrectionLutRef.current);
+      const curves = getCurveLuts(p.curves);
+      const baked = bakeColorLut((bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, p, activeLut ? activeLut.data : null, activeLut ? activeLut.size : 0,
+        baseCorrectionLutRef.current, null, false, curves, null), NATIVE_CUBE);
+      const n = NATIVE_CUBE ** 3, f = new Float32Array(n * 4);
+      for (let i = 0; i < n; i++) { f[i * 4] = baked.data[i * 3] / 255; f[i * 4 + 1] = baked.data[i * 3 + 1] / 255; f[i * 4 + 2] = baked.data[i * 3 + 2] / 255; f[i * 4 + 3] = 1; }
+      cubePath = await blobToNativeFile(new Blob([f.buffer]), 'cube');
+      const r = await api.render({ path, cubePath, cubeSize: NATIVE_CUBE, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true });
+      outPath = r.path;
+      const blob = await (await fetch(fileSrc(r.path))).blob();
+      if (!blob.size) return null;
+      const type = fmt === 'jpeg' ? 'image/jpeg' : fmt === 'png' ? 'image/png' : 'image/heic';
+      try { (window as any).__abaiQALog?.push?.(`wide save: ${fmt} ${r.width}x${r.height} ${blob.size}B`); } catch { /* 只是記錄 */ }
+      return URL.createObjectURL(new Blob([blob], { type }));
+    } catch (e) {
+      try { (window as any).__abaiQALog?.push?.(`wide save failed: ${String((e as any)?.message ?? e)}`); } catch { /* 只是記錄 */ }
+      return null;
+    } finally {
+      if (cubePath) api.remove({ path: cubePath }).catch(() => {});
+      if (outPath) api.remove({ path: outPath }).catch(() => {});
+    }
+  };
   /** 測試用：在電腦上強制走原尺寸存檔（window.__forceFullRes = true） */
   const forceFullResRef = () => { try { return !!(window as any).__forceFullRes; } catch { return false; } };
 
@@ -7769,7 +7814,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               const img = await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
               // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
-              if (exportFormat !== 'heic') {
+              const wide = await nativeWideSave(srcs[i], snap, exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png');
+              if (wide) {
+                out.push(wide);
+                if (exportFormat === 'heic') encoded.push(wide);
+              } else if (exportFormat !== 'heic') {
                 // JPG／PNG：大照片走原尺寸分段存檔（見 renderFullUrl），一般照片照一般流程
                 out.push(await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
               } else {

@@ -282,6 +282,44 @@ enum ABAIImageCore {
         return Cube(size: size, data: d)
     }
 
+    /// 同上，但色彩表放在檔案裡（64³ 的表 base64 有 5MB 多，不適合整包塞進橋接）
+    static func cube(data d: Data, size: Int) -> Cube? {
+        guard d.count == size * size * size * 4 * MemoryLayout<Float>.size else { return nil }
+        return Cube(size: size, data: d)
+    }
+
+    static let linearSRGB = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+
+    /* 補回超出 sRGB 的部分。輸入都在工作色域（線性 P3）：
+         l＝色彩表的結果（只看得到 sRGB 範圍內），s＝原圖，c＝原圖夾進 sRGB 範圍後的樣子。
+       差值 s−c 就是被色彩表「看不到」的那一塊，拆成兩部分補回：
+         亮度（HDR 亮部超過 1 的部分）：整份補回；
+         色彩（P3 比 sRGB 更鮮豔的部分）：照色彩表保留了多少彩度等比例補 —— 黑白濾鏡就不會透出殘色，
+         加飽和的濾鏡最多補回原本那一份。 */
+    private static let gamutKernel: CIColorKernel? = CIColorKernel(source: """
+        kernel vec4 abaiKeepGamut(__sample l, __sample s, __sample c) {
+            vec3 w = vec3(0.2289746, 0.6917385, 0.0792869);
+            vec3 r = s.rgb - c.rgb;
+            float yr = dot(r, w);
+            vec3 rc = r - vec3(yr);
+            float chL = max(max(l.r, l.g), l.b) - min(min(l.r, l.g), l.b);
+            float chC = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
+            float k = clamp(chL / max(chC, 0.0001), 0.0, 1.0);
+            return vec4(l.rgb + vec3(yr) + rc * k, s.a);
+        }
+        """)
+
+    /// 套色彩表，但保留原圖超出 sRGB 的廣色域顏色與 HDR 亮部（sRGB 範圍內的顏色跟 apply 完全一樣）
+    static func applyKeepingGamut(cube: Cube, to image: CIImage) -> CIImage {
+        guard let k = gamutKernel else { return apply(cube: cube, to: image) }
+        let clamped = image.convertingWorkingSpaceToColorSpace(linearSRGB)
+            .applyingFilter("CIColorClamp", parameters: ["inputMinComponents": CIVector(x: 0, y: 0, z: 0, w: 0),
+                                                        "inputMaxComponents": CIVector(x: 1, y: 1, z: 1, w: 1)])
+            .convertingColorSpaceToWorkingSpace(linearSRGB)
+        let l = apply(cube: cube, to: clamped)
+        return k.apply(extent: image.extent, arguments: [l, image, clamped]) ?? l
+    }
+
     /// App 內建資源（網頁打包進 App 的 public 資料夾）裡的 LUT
     static func bundledLut(_ name: String) -> URL? {
         let clean = (name as NSString).lastPathComponent

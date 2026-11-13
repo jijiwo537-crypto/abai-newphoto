@@ -372,6 +372,50 @@ async function scenarioCamFx() {
   }
 }
 
+/* 廣色域存檔：一張 P3 純綠（sRGB 表示不出來的綠）走修圖存檔的原生路線，
+   色彩表分別是「不變」與「黑白」：不變→綠要留在 P3 的綠（不能被夾成 sRGB 的綠）；黑白→不能透出綠色 */
+async function scenarioWideSave() {
+  const { nativeImage, blobToNativeFile } = await import('./nativeImage');
+  const { fileSrc } = await import('./nativeBridge');
+  const img = await nativeImage();
+  if (!img) { log('widesave: no NativeImage'); return; }
+  const c = document.createElement('canvas'); c.width = 800; c.height = 600;
+  const g = c.getContext('2d', { colorSpace: 'display-p3' } as any) as CanvasRenderingContext2D;
+  g.fillStyle = 'color(display-p3 0 1 0)'; g.fillRect(0, 0, 800, 600);
+  g.fillStyle = 'color(display-p3 0.5 0.5 0.5)'; g.fillRect(0, 0, 200, 600);
+  const src = await new Promise<Blob | null>(r => c.toBlob(r, 'image/png'));
+  const path = await blobToNativeFile(src!, 'png');
+  const N = 64, n = N ** 3;
+  const mk = (gray: boolean) => {
+    const f = new Float32Array(n * 4);
+    for (let b = 0, i = 0; b < N; b++) for (let gg = 0; gg < N; gg++) for (let r = 0; r < N; r++, i++) {
+      const R = r / (N - 1), G = gg / (N - 1), B = b / (N - 1), y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+      f[i * 4] = gray ? y : R; f[i * 4 + 1] = gray ? y : G; f[i * 4 + 2] = gray ? y : B; f[i * 4 + 3] = 1;
+    }
+    return f;
+  };
+  const read = async (p: string) => {
+    const im = new Image(); im.src = fileSrc(p); await im.decode();
+    const cv = document.createElement('canvas'); cv.width = 80; cv.height = 60;
+    const x = cv.getContext('2d', { colorSpace: 'display-p3' } as any) as CanvasRenderingContext2D;
+    x.drawImage(im, 0, 0, 80, 60);
+    const at = (px: number) => Array.from((x as any).getImageData(px, 30, 1, 1, { colorSpace: 'display-p3' }).data.slice(0, 3)).join(',');
+    return `${im.naturalWidth}x${im.naturalHeight} green=${at(60)} gray=${at(5)}`;
+  };
+  log(`widesave source ${await read(path)}`);
+  for (const gray of [false, true]) {
+    const cubePath = await blobToNativeFile(new Blob([mk(gray).buffer]), 'cube');
+    for (const format of ['heic10', 'jpeg', 'png']) {
+      const t0 = performance.now();
+      try {
+        const r = await (img as any).render({ path, cubePath, cubeSize: N, format, quality: 1, hdr: true, keepGamut: true });
+        const size = (await (await fetch(fileSrc(r.path))).blob()).size;
+        log(`widesave ${gray ? 'gray' : 'identity'} ${format} → ${await read(r.path)} bytes=${size} in ${Math.round(performance.now() - t0)}ms`);
+      } catch (e: any) { log(`widesave ${gray ? 'gray' : 'identity'} ${format} FAILED: ${String(e?.message ?? e)}`); }
+    }
+  }
+}
+
 /* 選中框：進編輯 → 濾鏡選第三張 → 記下卡片位置（CI 截圖後放大看四個角）→ 特效選一張 → 模板 */
 async function scenarioRings() {
   await provideFiles(1);
@@ -415,6 +459,7 @@ export async function runNativeQA(forced?: string) {
     else if (scenario === 'video') await scenarioVideo();
     else if (scenario === 'gallery') await scenarioGallery();
     else if (scenario === 'camfx') await scenarioCamFx();
+    else if (scenario === 'widesave') await scenarioWideSave();
     else if (scenario === 'rings') await scenarioRings();
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
     else if (scenario === 'layoutundo') await scenarioLayoutUndo();

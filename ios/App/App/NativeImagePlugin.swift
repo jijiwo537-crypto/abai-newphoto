@@ -126,11 +126,16 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
     ///      lut（App 內建 LUT 檔名，例如 f3.webp）或 cube＋cubeSize（網頁算好的色彩表）、amount、hdr（帶增益圖）
     @objc func render(_ call: CAPPluginCall) {
         guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? "") else { call.reject("沒有路徑"); return }
-        let format = ABAIImageCore.Format(rawValue: call.getString("format") ?? "jpeg") ?? .jpeg
+        var format = ABAIImageCore.Format(rawValue: call.getString("format") ?? "jpeg") ?? .jpeg
         let quality = call.getDouble("quality") ?? 0.95
         let maxPixel = call.getInt("maxPixel") ?? 0
         let amount = call.getDouble("amount") ?? 1
-        let wantHDR = call.getBool("hdr") ?? false
+        // HDR 只在原圖真的帶增益圖時才做：沒有的照片寫一張一樣的增益圖只是白白變大
+        let wantHDR = (call.getBool("hdr") ?? false) && ABAIImageCore.hasGainMap(url)
+        // 修圖存檔：色彩表只套在 sRGB 範圍內，超出的廣色域與 HDR 亮部另外補回（見 ABAIImageCore.applyKeepingGamut）
+        let keepGamut = call.getBool("keepGamut") ?? false
+        let cubePath = call.getString("cubePath")
+        if wantHDR && format == .heic10 { format = .heic }   // 帶增益圖的 HDR 照片用系統標準的 8 位元 HEIC＋增益圖
         let lutName = call.getString("lut")
         let cubeB64 = call.getString("cube"), cubeSize = call.getInt("cubeSize") ?? 0
         let aspect = call.getDouble("aspect") ?? 0          // 寬÷高；有給就從中間裁成這個比例
@@ -154,9 +159,10 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                 }
                 if let k = kelvin { img = ABAIImageCore.kelvin(img, k) }
                 var cube: ABAIImageCore.Cube?
-                if let b = cubeB64, cubeSize > 1 { cube = ABAIImageCore.cube(base64: b, size: cubeSize) }
+                if let cp = cubePath, cubeSize > 1, let u = ABAIImageCore.fileURL(from: cp), let d = try? Data(contentsOf: u) { cube = ABAIImageCore.cube(data: d, size: cubeSize) }
+                else if let b = cubeB64, cubeSize > 1 { cube = ABAIImageCore.cube(base64: b, size: cubeSize) }
                 else if let n = lutName, let u = ABAIImageCore.bundledLut(n) { cube = ABAIImageCore.cube(fromAtlas: u) }
-                if let c = cube { img = ABAIImageCore.apply(cube: c, to: img, amount: amount) }
+                if let c = cube { img = keepGamut ? ABAIImageCore.applyKeepingGamut(cube: c, to: img) : ABAIImageCore.apply(cube: c, to: img, amount: amount) }
                 if fx.isOn { img = fx.apply(to: img) }
                 /* HDR：調完色的結果就是 HDR 那一張；SDR 那一張是把亮部壓回 1.0 以內的版本。
                    原圖本身沒有 HDR 資訊時，兩張一樣，就不帶增益圖。 */
