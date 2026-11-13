@@ -88,7 +88,7 @@ import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
-import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
+import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, settlePhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
@@ -6147,7 +6147,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       const textStretchX = !image.sym ? image.width / Math.max(1, image.textStretchBaseW || image.width) : 1;
       const textStretchY = !image.sym ? image.height / Math.max(1, image.textStretchBaseH || image.height) : 1;
       ctx.scale(contentScale * textStretchX, contentScale * textStretchY);
-      ctx.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
+      ctx.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(family)}`; primeCanvasFont(ctx.font);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       (ctx as any).letterSpacing = `${spacing}px`;
@@ -6622,7 +6622,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       const g = c.getContext('2d');
       if (!g) return;
       const size = image.fontSize || 40;
-      g.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(fam)}`;
+      g.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(fam)}`; primeCanvasFont(g.font);
       const spacing = image.letterSpacing || 0;
       const lines = (image.text === '' ? TEXT_PLACEHOLDER : (image.text || TEXT_PLACEHOLDER)).split('\n');
       const metrics = lines.map(line => g.measureText(line || ' '));
@@ -8811,6 +8811,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const vectorScene = useMemo(() => new ClassicVectorScene(), []);
   // 模糊圖形在手停下來之後才糊正確的那張；糊好重畫一次（擠壓中只是拉伸貼圖）
   useEffect(() => setBlurRebuildListener(() => vectorScene.flush()), [vectorScene]);
+  // 畫布要用的字體剛下載好（見 primeCanvasFont）：整個場景重畫一次，換掉系統字體頂替的那一格
+  useEffect(() => { const f = () => vectorScene.flush(); window.addEventListener('abai-font-ready', f); return () => window.removeEventListener('abai-font-ready', f); }, [vectorScene]);
   const [motionTargetId, setMotionTargetId] = useState<string | null>(null);
   const [motionFlash, setMotionFlash] = useState<{ id: string; nonce: number } | null>(null);
   const motionFlashTimerRef = useRef<number | null>(null);
@@ -14973,7 +14975,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     ctx.globalAlpha *= (fImg.opacity ?? 100) / 100;
     ctx.translate(cx, cy);
     ctx.rotate((fImg.rotation * Math.PI) / 180);
-    ctx.font = `${fImg.italic ? 'italic ' : ''}${fImg.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
+    ctx.font = `${fImg.italic ? 'italic ' : ''}${fImg.bold ? 700 : 400} ${size}px ${fontStack(family)}`; primeCanvasFont(ctx.font);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     (ctx as any).letterSpacing = `${spacing}px`;
@@ -19047,7 +19049,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80 translate-x-px" />
-                    <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增圖形</span>
+                    <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增貼圖</span>
                   </button>
                   </div>
                   </div>
@@ -19067,7 +19069,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       >
                         <Icon name="arrow_back" className="text-[20px]" />
                       </button>
-                      <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
+                      <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增貼圖</span>
                     </div>
                     {(shapePickRef.current = handleAddShapeLayer, null)}
                     <GridShapePicker onPick={onGridShapePick} />

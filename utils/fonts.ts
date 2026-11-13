@@ -367,3 +367,14 @@ export function warmTextFonts(text: string) {
 export function fontStack(family?: string) {
   return `"${family || DEFAULT_FONT}", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif`;
 }
+
+/* 畫布上的字體：文字平常是 DOM 顯示，播動畫、匯出時改畫在畫布上。畫布要的那個字重／斜體如果還沒下載，
+   瀏覽器會默默用系統字體頂替，而且「只畫在畫布上」不一定會觸發下載 —— 那就是動畫時字體偶爾自己變掉。
+   每次設定畫布字體時呼叫：還沒好的就主動下載，好了發 abai-font-ready 讓畫面重畫一次。 */
+const canvasFontAsked = new Set<string>();
+export function primeCanvasFont(font: string) {
+  if (typeof document === 'undefined' || !document.fonts || canvasFontAsked.has(font)) return;
+  try { if (document.fonts.check(font)) { canvasFontAsked.add(font); return; } } catch { return; }
+  canvasFontAsked.add(font);
+  document.fonts.load(font).then(() => { window.dispatchEvent(new Event('abai-font-ready')); }, () => { canvasFontAsked.delete(font); });
+}

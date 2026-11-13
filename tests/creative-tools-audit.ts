@@ -11,7 +11,7 @@ void(async()=>{
   check('four real export controls and same translucent material',panel.textContent?.includes('影片幀率')&&panel.textContent?.includes('影片畫質')&&getComputedStyle(panel).backgroundColor==='rgba(10, 10, 12, 0.94)');
   text('JPG');text('30');text('高');await wait();
   check('format, frame rate and quality selections persist visibly', [...panel.querySelectorAll('[aria-pressed=true]')].map(b=>b.textContent).join('|')==='JPG|自動|30|高');
-  click('[data-creative-export-options-toggle]');click('[data-creative-tab="add"]');await wait();text('新增圖形');await wait();
+  click('[data-creative-export-options-toggle]');click('[data-creative-tab="add"]');await wait();text('新增貼圖');await wait();
   const shape=document.querySelector<HTMLButtonElement>('footer button[aria-pressed][aria-label]')!;shape.click();await wait();
   click('header button[title="開啟畫筆"]');await wait();
   const canvas=stage!.querySelector('canvas')!,rect=canvas.parentElement!.getBoundingClientRect(),x=rect.left+rect.width*.4,y=rect.top+rect.height*.4;

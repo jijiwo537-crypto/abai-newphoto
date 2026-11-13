@@ -71,7 +71,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   </svg>
 );
 
-import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
+import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack, primeCanvasFont } from '../utils/fonts';
 import { drawStableText, hasEmoji } from '../utils/stableText';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG, MEDIA_ACCEPT } from '../utils/fileTypes';
@@ -468,7 +468,7 @@ const plainTextBox = (o: any, force = false): { w: number; h: number } | null =>
   const g = document.createElement('canvas').getContext('2d');
   if (!g) return null;
   const spacing = o.letterSpacing || 0;
-  g.font = font; (g as any).letterSpacing = `${spacing}px`;
+  g.font = font; primeCanvasFont(g.font); (g as any).letterSpacing = `${spacing}px`;
   g.textAlign = 'center'; g.textBaseline = 'middle';
   const m = g.measureText(o.text || ' ');
   const pad = Math.max(8, size * .12), stroke = (o.strokeWidth || 0) * size / 40;
@@ -4502,7 +4502,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (!g) return false;
     const text = o.text === TEXT_PLACEHOLDER ? '' : (o.text || '');
     const spacing = o.letterSpacing || 0;
-    g.font = `${o.italic ? 'italic ' : ''}${o.bold ? 800 : 400} ${o.size || 40}px ${fontStack(o.fontFamily || DEFAULT_FONT)}`;
+    g.font = `${o.italic ? 'italic ' : ''}${o.bold ? 800 : 400} ${o.size || 40}px ${fontStack(o.fontFamily || DEFAULT_FONT)}`; primeCanvasFont(g.font);
     (g as any).letterSpacing = `${spacing}px`;
     const total = text ? g.measureText(text).width : 0, start = spacing / 2 - total / 2;
     // 游標停在字素邊界（輸入欄用 UTF-16 位移）
@@ -8040,7 +8040,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const pinFont = !o.sym && objPinchRef.current?.id === o.id && objPinchRef.current.size0 ? objPinchRef.current.size0 : o.size;
         const fontK = !o.sym ? o.size / Math.max(1e-6, pinFont) : 1;
         if (fontK !== 1) ctx.scale(fontK, fontK);
-        ctx.font = `${style}${weight} ${(o.sym ? o.size : pinFont) * s}px ${fontStack(fam)}`;
+        ctx.font = `${style}${weight} ${(o.sym ? o.size : pinFont) * s}px ${fontStack(fam)}`; primeCanvasFont(ctx.font);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const spacingPx = (o.letterSpacing || 0) * s / fontK;
@@ -9656,6 +9656,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   // 模糊圖形在背景糊好正確的那張之後，重畫一次（擠壓時先用最接近的那張頂著）
   useEffect(() => {
     return setBlurRebuildListener(() => { if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current); });
+  }, []);
+  // 畫布要用的字體剛下載好（見 primeCanvasFont）：重畫一次，系統字體頂替的那一格換成正確的字體
+  useEffect(() => {
+    const redraw = () => { if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current); };
+    window.addEventListener('abai-font-ready', redraw);
+    return () => window.removeEventListener('abai-font-ready', redraw);
   }, []);
   regionPaintRef.current=()=>{
     if(canvasRef.current){lastPatternPaintRef.current=null;renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);}
@@ -12359,7 +12365,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         className="flex flex-col items-center justify-center py-4 px-1 bg-white/[0.012] border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
                         <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80 translate-x-px" />
-                        <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增圖形</span>
+                        <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增貼圖</span>
                       </button>
                     </div>
                     </div>
@@ -12377,7 +12383,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           >
                             <Icon name="arrow_back" className="text-[20px]" />
                           </button>
-                          <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
+                          <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增貼圖</span>
                         </div>
                         {(shapePickRef.current = (it: any) => {
                           const choice = { type: 'shape', item: it };
