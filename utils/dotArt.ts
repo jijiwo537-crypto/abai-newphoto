@@ -78,6 +78,16 @@ const call = (msg: any) => new Promise<any>((res, rej) => {
   const id = ++seq; pending.set(id, { res, rej });
   lineWorker().postMessage({ ...msg, id, modelUrl: modelUrl() }, msg.data ? [(msg.data as Float32Array).buffer] : []);
 });
+/** 離開點陣工具時呼叫：線稿模型（ONNX，載入後連同中間結果可佔數百 MB）跟線稿那條背景執行緒都關掉，
+ *  記憶體立刻還給系統。不關的話它們一直留著，接著打開藝術效果之類吃記憶體的工具，iPhone 會直接把 App 收掉重開。
+ *  下次再打開點陣工具會自動重新建立。 */
+export function releaseDotArtWorkers() {
+  if (worker) { worker.terminate(); worker = null; }
+  for (const p of pending.values()) p.rej(new Error('released')); pending.clear();
+  if (lineStage) lineStage.terminate();
+  lineStage = undefined; lsOwner = null;
+  for (const p of lsPending.values()) p.rej(new Error('released')); lsPending.clear();
+}
 /** 先把模型載好（打開工具就開始下載，按「產生」時就不用等） */
 export const warmLineArtModel = () => call({ type: 'warm' }).catch(() => {});
 

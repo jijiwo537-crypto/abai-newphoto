@@ -10,7 +10,7 @@ import { BusySpinner } from './BusySpinner';
 import { ExportActionLift } from './ExportActionLift';
 import { SLIDER_RELEASE_EVENT, sliderHeld } from '../utils/sliderTouch';
 import { useStandaloneToolViewport, standaloneToolViewportCSS } from '../utils/useStandaloneToolViewport';
-import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, prepareDotArtImage, warmLineArtModel, type DotArtFrame, type DotArtSettings, curveT, CURVE_N } from '../utils/dotArt';
+import { DOT_ART_DEFAULTS, DOT_ART_SHADE_THRESHOLD, DotArtSession, prepareDotArtImage, warmLineArtModel, releaseDotArtWorkers, type DotArtFrame, type DotArtSettings, curveT, CURVE_N } from '../utils/dotArt';
 
 type Kind = 'line' | 'shade';
 type ToolId = 'width' | 'threshold' | 'lines' | 'spacing' | 'glow' | 'draw' | 'erase';
@@ -348,6 +348,13 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
     } catch (e) { console.error('dot art', e); setStatus('error'); }
   }, []);
   useEffect(() => { warmLineArtModel(); if (initialFiles[0]) open(initialFiles[0]); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  /* 離開時把大塊記憶體馬上還回去：線稿模型的背景執行緒、光暈的暫存陣列、畫面上的畫布點陣。
+     不這樣做的話它們會一直留到系統回收，接著打開藝術效果時 iPhone 可能因為記憶體不夠直接把 App 收掉重開。 */
+  useEffect(() => () => {
+    releaseDotArtWorkers();
+    glowMem = null;
+    for (const c of [cvs.current, glowCvs.current]) if (c) { c.width = 0; c.height = 0; }
+  }, []);
 
   /* 即時重算：同一時間只算一張，拖動中來的新值等這張算完直接算最新的（中間的跳過） */
   const settings: DotArtSettings = {
