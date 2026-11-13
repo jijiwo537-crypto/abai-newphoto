@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { motion, AnimatePresence } from 'motion/react';
 import { Icon } from './Icon';
 import { LOCALES, changeLocale, getLocale } from '../utils/locale';
-import { exportsStatus, subscribeExports, type ExportMeta } from '../utils/exportHistory';
+import { exportsStatus, subscribeExports, removeExport, type ExportMeta } from '../utils/exportHistory';
+import { haptic } from '../utils/haptics';
 import {
   type AuthUser, isAuthReady, authErrText, getUser, onAuthChange,
   signUpWithPassword, signInWithPassword, sendPasswordReset,
@@ -127,15 +128,16 @@ const SETTINGS_TITLE = { menu: '設定', language: '語言', terms: '使用條�
 const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sections: [string, string][] }> = {
   terms: {
     updated: '2026 年 11 月',
+    intro: '歡迎使用 Abai。為了讓您安心使用各項功能，請於使用前詳閱以下條款，了解您的權利、使用規範，以及 Abai 提供服務的方式。',
     sections: [
       ['一、服務說明', 'Abai 是獨立開發的影像編輯 App，提供照片與影片的編輯、拼圖、相機及特效等功能。使用 Abai 即表示您同意本條款。功能將隨版本持續更新與調整。'],
       ['二、您的內容', '您匯入、拍攝及製作的照片、影片與作品，權利均歸屬於您或原權利人，Abai 不主張任何權利。'],
       ['三、展示素材', 'App 內用於展示模板效果的人物照片等素材，均已取得權利人授權，僅供展示使用，恕不提供下載或另作他用。'],
       ['四、帳號', '登入為選用功能，未登入亦可使用全部編輯功能。請妥善保管您的帳號資訊；您可隨時於 App 內刪除帳號。'],
-      ['五、使用規範', '請以合法、正當的方式使用 Abai，不得利用本 App 製作、散布侵害他人著作權、肖像權、隱私權或其他權益的內容，亦不得用於任何違法用途。嚴禁對本 App 進行破解、反向工程、竄改或以任何方式干擾其正常運作；違反者，Abai 保留依法追究法律責任之權利。'],
+      ['五、使用規範', '請以合法、正當的方式使用 Abai。您透過本 App 製作或分享的內容，不得侵害他人的著作權、肖像權、隱私權或其他合法權益。\n\n不得將本 App 用於任何違法用途，亦不得利用本 App 製作或散布違法、不實、騷擾或其他違反公序良俗的內容。\n\n嚴禁對本 App 進行破解、反向工程、竄改，或以任何方式干擾其正常運作；如有違反，Abai 保留依法追究法律責任之權利。'],
       ['六、問題回報', 'Abai 會持續更新與改善各項功能。使用上如遇任何問題，歡迎透過「問題反饋」與我們聯繫，我們將儘速處理。'],
       ['七、條款修訂', '本條款如有修訂，將於 App 內公告，修訂後繼續使用即視為同意。本條款以中華民國法律為準據法。'],
-      ['八、聯絡我們', `如有任何疑問或建議，請透過「問題反饋」\n聯繫：${CONTACT_EMAIL}`],
+      ['八、聯絡我們', `如有任何疑問或建議，請透過「問題反饋」聯繫：\n${CONTACT_EMAIL}`],
     ],
   },
   privacy: {
@@ -146,7 +148,7 @@ const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sect
       ['三、帳號資料', '登入為選用功能。登入後，帳號資料由帳號服務 Supabase 保存，僅用於辨識您的帳號，不包含任何照片或影片。使用 Google 或 Apple 登入時，另適用其各自的隱私權政策。'],
       ['四、資料刪除', '您可於 App 內刪除帳號，帳號資料將一併刪除。裝置上的草稿與歷史紀錄可由您隨時自行刪除。'],
       ['五、政策修訂', '本政策如有修訂，將於 App 內公告。'],
-      ['六、聯絡我們', `如對隱私權有任何疑問，請透過「問題反饋」\n聯繫：${CONTACT_EMAIL}`],
+      ['六、聯絡我們', `如對隱私權有任何疑問，請透過「問題反饋」聯繫：\n${CONTACT_EMAIL}`],
     ],
   },
 };
@@ -195,8 +197,10 @@ const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
       {d.sections.map(([h, body]) => (
         <div key={h} className="flex flex-col gap-1.5">
           <div className="text-[12px] font-bold text-white/85">{h}</div>
-          {/* 「\n」是指定的換行（聯絡方式：Email 那一段固定從第二行開始） */}
-          <div className="text-[11.5px] leading-[1.75] text-white/60">{body.split('\n').map((line, k) => <React.Fragment key={k}>{k > 0 && <br />}{gluePunct(line)}</React.Fragment>)}</div>
+          {/* 「\n\n」分段（同一條裡的幾段，段與段之間留一點距離）；「\n」是指定的換行（聯絡方式：Email 單獨一行） */}
+          {body.split('\n\n').map((para, pi) => (
+            <div key={pi} className="text-[11.5px] leading-[1.75] text-white/60">{para.split('\n').map((line, k) => <React.Fragment key={k}>{k > 0 && <br />}{gluePunct(line)}</React.Fragment>)}</div>
+          ))}
         </div>
       ))}
     </div>
@@ -1046,6 +1050,28 @@ export const HomePage: React.FC<HomePageProps> = ({
    * 空的位子畫虛線框加一個加號，點下去就直接去挑照片 ——
    * 本來只是灰底，看不出來可以做什麼。
    */
+  /* 長按一張歷史紀錄（0.5 秒）→ 問一次 → 刪除。長按觸發後，放開時那一下 click 不算（不會順便打開它）。
+     手指移動超過 10px 就當作在捲動，取消長按。 */
+  const [histDel, setHistDel] = useState<string | null>(null);
+  const [histDelBusy, setHistDelBusy] = useState(false);
+  const pressRef = useRef<{ id: string; x: number; y: number; timer: number; fired: boolean } | null>(null);
+  const pressStart = (id: string, e: React.PointerEvent) => {
+    if (pressRef.current) window.clearTimeout(pressRef.current.timer);
+    const p = { id, x: e.clientX, y: e.clientY, fired: false, timer: 0 };
+    p.timer = window.setTimeout(() => { p.fired = true; haptic('press'); setHistDel(id); }, 500);
+    pressRef.current = p;
+  };
+  const pressMove = (e: React.PointerEvent) => {
+    const p = pressRef.current;
+    if (p && !p.fired && (Math.abs(e.clientX - p.x) > 10 || Math.abs(e.clientY - p.y) > 10)) { window.clearTimeout(p.timer); pressRef.current = null; }
+  };
+  const pressEnd = () => { const p = pressRef.current; if (p && !p.fired) { window.clearTimeout(p.timer); pressRef.current = null; } };
+  const confirmHistDel = async () => {
+    if (!histDel || histDelBusy) return;
+    setHistDelBusy(true);
+    try { await removeExport(histDel); haptic('success'); } catch { haptic('error'); }
+    finally { setHistDelBusy(false); setHistDel(null); }
+  };
   const historyGrid = (slots: number) => (
     <div className="grid grid-cols-5 gap-2">
       {Array.from({ length: slots }, (_, i) => {
@@ -1068,7 +1094,16 @@ export const HomePage: React.FC<HomePageProps> = ({
           return (
             <button
               key={item.id}
-              onClick={() => onOpenRecent?.(item.id)}
+              onClick={() => {
+                const p = pressRef.current;
+                if (p && p.id === item.id && p.fired) { pressRef.current = null; return; }   // 剛剛是長按，不要順便打開
+                onOpenRecent?.(item.id);
+              }}
+              onPointerDown={e => pressStart(item.id, e)}
+              onPointerMove={pressMove}
+              onPointerUp={pressEnd}
+              onPointerCancel={pressEnd}
+              onContextMenu={e => e.preventDefault()}
               title={`${timeAgo(item.at)}導出`}
               className={`relative aspect-square rounded-[10px] overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300 ${src ? '' : 'bg-white/[0.07] flex items-center justify-center text-white/25'}`}
             >
@@ -1866,6 +1901,54 @@ export const HomePage: React.FC<HomePageProps> = ({
                   className="flex-1 h-[46px] rounded-[12px] bg-white text-black text-[13px] font-black active:scale-[0.98] transition-transform"
                 >
                   登出
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- 刪除一筆歷史紀錄（長按觸發）：跟刪除帳號同一款確認視窗 --- */}
+      <AnimatePresence>
+        {histDel && (
+          <motion.div
+            key="histdel"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => {
+              /* 長按到 0.5 秒時視窗就出來了，手指放開時那一下 click 會落在這層背景上 —— 那一下不算，不然視窗一出來就被關掉 */
+              const p = pressRef.current;
+              if (p && p.fired) { pressRef.current = null; return; }
+              if (!histDelBusy) setHistDel(null);
+            }}
+            className="absolute inset-0 z-[70] flex items-center justify-center px-8 bg-black/80 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.94, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.94, opacity: 0 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-[320px] rounded-[20px] bg-[#141414] border border-white/10 p-6"
+            >
+              <p className="text-[15px] font-black tracking-[0.04em] text-white">刪除這筆紀錄</p>
+              <p className="mt-2 text-[12px] leading-relaxed text-white/45">只會刪除 App 內的紀錄，已存到相簿的照片不受影響</p>
+              <div className="mt-5 flex gap-3">
+                <button
+                  onClick={() => setHistDel(null)}
+                  disabled={histDelBusy}
+                  className="flex-1 h-[46px] rounded-[12px] bg-white/[0.06] border border-white/10 text-[13px] font-bold text-white/70 active:scale-[0.98] transition-transform disabled:opacity-30"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={confirmHistDel}
+                  disabled={histDelBusy}
+                  className="flex-1 h-[46px] rounded-[12px] bg-white text-black text-[13px] font-black active:scale-[0.98] transition-transform disabled:opacity-40"
+                >
+                  刪除
                 </button>
               </div>
             </motion.div>

@@ -558,6 +558,12 @@ async function prune(): Promise<void> {
   for (const d of doomed) await tx('readwrite', s => s.delete(d.id));
 }
 
+/** 刪掉一筆（歷史紀錄長按刪除） */
+export async function removeExport(id: string): Promise<void> {
+  await tx('readwrite', s => s.delete(id));
+  emitChanged();
+}
+
 export async function clearExports(): Promise<void> {
   try { localStorage.removeItem(STAMP_KEY); } catch { /* ignore */ }
   await tx('readwrite', s => s.clear());
