@@ -10425,7 +10425,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       setSaveState('success');
     } catch (e) {
       console.error('動態影片做不出來', e);exportDiag(`creative video failed: ${String((e as any)?.message ?? e)}`);
-      setSaveState('idle');alert('影片儲存失敗，請更換格式後重試');
+      setSaveState('idle');{const w=window as any;const lines=(w.__abaiQALog||[]).filter((l:string)=>l.startsWith('export:')).slice(-6).map((l:string)=>l.slice(8));alert('影片儲存失敗，請更換格式後重試'+(lines.length?'\n\n診斷：\n'+lines.join('\n'):''));}
     } finally {
       exportStream?.getTracks().forEach(track=>track.stop());
       cv.width = 0; cv.height = 0;
