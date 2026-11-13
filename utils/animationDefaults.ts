@@ -71,6 +71,7 @@ export const PATTERN_IDLE_DEFAULTS: Record<string, { amp?: number; speed?: numbe
   spin: { speed: 1.32 },                                      // 旋轉：速度 70（1.32）
   'lab-P-L04': { amp: 50, speed: 1.8 },                       // 發光：幅度 50、速度＝原本刻度的 100（1.8）
   'lab-P-L07': { amp: 55 },                                   // 翻面：幅度 55
+  'lab-P-L02': { speed: 1.5 },                                // 閃爍：速度 33（1.5，約 1.3 秒亮滅一次，跟原本的中間值一樣）
   'lab-P-L20': { amp: 50, speed: 1.24 + 5.2 * .35 },          // 搖晃：幅度 50、速度 35（3.06）
 };
 
@@ -78,7 +79,8 @@ export const PATTERN_IDLE_DEFAULTS: Record<string, { amp?: number; speed?: numbe
 export const SPEED_RANGES: Record<string, [number, number]> = {
   /* 搖晃：面板 50 ＝ 舊刻度的 70（3.84）、100 ＝ 舊刻度的 120（6.44） */
   'lab-T-L20': [1.24, 6.44], 'lab-S-L20': [1.24, 6.44], 'lab-P-L20': [1.24, 6.44],
-  'lab-P-L02': [1, 2],                                                        // 圖案閃爍
+  /* 圖案閃爍：原本 1～2 倍，整條滑桿只差一倍，拉了也幾乎看不出差別。改成 0.5～3.5（一次亮滅約 3.9 秒～0.56 秒） */
+  'lab-P-L02': [.5, 3.5],
   'lab-T-L01': [.2, 3],                                                       // 文字呼吸
   'lab-S-L01': [.2, 2.5],                                                     // 符號呼吸
 };

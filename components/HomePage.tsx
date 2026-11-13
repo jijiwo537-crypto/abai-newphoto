@@ -15,15 +15,7 @@ import { PREMIUM_GLASS } from '../utils/premiumGlass';
 const CONTACT_EMAIL = 'chi888969930522@gmail.com';
 const CONTACT_IG = 'abai_is.perfect';
 const CONTACT_IG_URL = 'https://www.instagram.com/abai_is.perfect/';
-/* 設定與它延伸出來的視窗：沒有外框線，深色毛玻璃，靠上緣一條很淡的高光和陰影分出層次 */
-const SETTINGS_GLASS = {
-  background: 'rgba(24,24,28,.8)',
-  backdropFilter: 'blur(30px) saturate(140%)',
-  WebkitBackdropFilter: 'blur(30px) saturate(140%)',
-  boxShadow: 'inset 0 1px 0 rgba(255,255,255,.07), 0 20px 50px rgba(0,0,0,.5)',
-} as const;
-/** 視窗裡的每一列：沒有框線，比底板亮一點的實心淡底 */
-const SETTINGS_ROW = 'bg-white/[0.06] hover:bg-white/[0.09] active:bg-white/[0.1] transition-colors';
+const SETTINGS_GLASS = PREMIUM_GLASS;
 
 interface HomePageProps {
   onOpenCamera: () => void;
@@ -1892,7 +1884,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       <AnimatePresence>
       {settingsOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.26 }} className="fixed inset-0 z-[250] bg-black/35 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
         {/* 從畫面中央由小變大彈出，收起時縮回中央 */}
-        <motion.section role="dialog" aria-modal="true" aria-label={SETTINGS_TITLE[settingsPage]} className="w-full max-w-sm rounded-3xl p-5" style={{ ...SETTINGS_GLASS, transformOrigin: '50% 50%' }} onClick={e => e.stopPropagation()}
+        <motion.section role="dialog" aria-modal="true" aria-label={SETTINGS_TITLE[settingsPage]} className="w-full max-w-sm border border-white/15 rounded-3xl p-5" style={{ ...SETTINGS_GLASS, transformOrigin: '50% 50%' }} onClick={e => e.stopPropagation()}
           initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
           transition={{ type: 'spring', stiffness: 460, damping: 30, mass: 0.85, opacity: { duration: 0.16 } }}>
           <div className="flex items-center justify-between mb-4"><h2 className="pl-2 text-sm font-medium tracking-[.06em] text-white/90 flex items-center gap-1">{(settingsPage === 'terms' || settingsPage === 'privacy') && <button aria-label="返回" onClick={() => setSettingsPage('menu')} className="-ml-2 w-7 h-7 flex items-center justify-center text-white/60"><Icon name="chevron_left" className="text-[20px]" /></button>}{SETTINGS_TITLE[settingsPage]}</h2>
@@ -1900,12 +1892,12 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
           <AnimatePresence mode="wait" initial={false}><motion.div key={settingsPage} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
           {settingsPage === 'menu' ? <div className="flex flex-col gap-2">
-            <button className={`${SETTINGS_ROW} min-h-12 px-4 py-3 rounded-xl text-left text-[13px] font-normal tracking-wide`} onClick={() => setSettingsPage('language')}>語言</button>
-            <button className={`${SETTINGS_ROW} min-h-12 px-4 py-3 rounded-xl text-left text-[13px] font-normal tracking-wide`} onClick={() => { setSettingsOpen(false); setContactOpen(true); }}>問題反饋</button>
-            <button className={`${SETTINGS_ROW} min-h-12 px-4 py-3 rounded-xl text-left text-[13px] font-normal tracking-wide`} onClick={() => setSettingsPage('terms')}>使用條款</button>
-            <button className={`${SETTINGS_ROW} min-h-12 px-4 py-3 rounded-xl text-left text-[13px] font-normal tracking-wide`} onClick={() => setSettingsPage('privacy')}>隱私權政策</button>
+            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('language')}>語言</button>
+            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => { setSettingsOpen(false); setContactOpen(true); }}>問題反饋</button>
+            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('terms')}>使用條款</button>
+            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('privacy')}>隱私權政策</button>
           </div> : settingsPage === 'terms' || settingsPage === 'privacy' ? <LegalText doc={settingsPage} /> : <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
-            className={`${SETTINGS_ROW} min-h-12 px-4 py-3 rounded-xl text-[13px] font-normal flex justify-between items-center ${getLocale() === l.id ? '!bg-white/[0.14]' : ''}`}>
+            className={`premium-glass-button min-h-12 px-4 py-3 rounded-xl text-[13px] font-normal flex justify-between items-center border ${getLocale() === l.id ? 'border-white' : 'border-white/10'}`}>
             <span>{l.name}</span>{getLocale() === l.id && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>}
           </button>)}</div>}
           </motion.div></AnimatePresence>
@@ -1931,7 +1923,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               exit={{ opacity: 0, scale: 0.97, y: 4 }}
               transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
-              className="w-full rounded-[24px] overflow-hidden"
+              className="w-full rounded-[24px] border border-white/10 shadow-2xl overflow-hidden"
               style={SETTINGS_GLASS}
             >
               <div className="flex items-center justify-between px-5 pt-5 pb-3">
@@ -1954,7 +1946,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 {/* 電子郵件 —— 點下去複製。複製成功的回饋在整張卡下面，卡裡不放東西 */}
                 <button
                   onClick={copyEmail}
-                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-white/[0.06] active:bg-white/[0.1] text-left hover:bg-[#303032] active:scale-[0.98] transition-[background-color,transform] duration-300"
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl premium-glass-button border border-white/10 text-left hover:bg-[#303032] active:scale-[0.98] transition-[background-color,transform] duration-300"
                 >
                   <span className="w-9 h-9 shrink-0 rounded-full bg-white/[0.08] flex items-center justify-center text-white/90">
                     <Icon name="mail" className="text-[18px]" />
@@ -1968,7 +1960,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   href={CONTACT_IG_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-white/[0.06] active:bg-white/[0.1] hover:bg-[#303032] active:scale-[0.98] transition-[background-color,transform] duration-300"
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl premium-glass-button border border-white/10 hover:bg-[#303032] active:scale-[0.98] transition-[background-color,transform] duration-300"
                 >
                   <span className="w-9 h-9 shrink-0 rounded-full bg-white/[0.08] flex items-center justify-center text-white/90">
                     <InstagramGlyph />
