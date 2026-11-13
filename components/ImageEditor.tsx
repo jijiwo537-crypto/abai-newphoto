@@ -6,7 +6,7 @@ import { pickCustomLutFiles, type LutFileSelection } from '../utils/customLutPic
 import { crossedZero } from '../utils/hapticDetents';
 
 import { ImportSpinner } from './BusySpinner';
-import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
+import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
 import { nativeAssetIdOf } from '../utils/nativeBridge';
@@ -36,7 +36,8 @@ import {effectPreset,LEGACY_EFFECT_PRESETS} from '../utils/effectPresets';
 import {effectDetailIcon} from '../utils/effectDetailIcons';
 import {HalationLayer} from '../utils/halationLayer';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '../utils/highlightSelection';
-import { maskList, snapOf, hasMaskAdj, anyMask, maskAlpha, maskCacheId, freshMask, newMaskId, MASK_ADJ_KEYS, MASK_SNAP_KEYS, rgbToLab, type MaskSnap, type MaskType } from '../utils/masks';
+import { makeHslFast } from '../utils/maskColour';
+import { maskList, snapOf, hasMaskAdj, maskAdjSig, anyMask, maskAlpha, maskCacheId, freshMask, newMaskId, MASK_SNAP_KEYS, rgbToLab, type MaskSnap, type MaskType } from '../utils/masks';
 import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, geoAffine, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
@@ -112,6 +113,8 @@ export interface EditorParams {
   maskLumLo?: number; maskLumHi?: number; maskLumSmooth?: number;
   /** 明度範圍：點了照片、還沒讀到亮度的那一點（下一次重畫時換成上下限） */
   maskLumSample?: { x: number; y: number } | null;
+  maskHsl?: HslAdjust | null;
+  maskGrade?: any | null;
   masks?: MaskSnap[];
   maskActive?: number;
 }
@@ -250,6 +253,9 @@ const MASK_TOOLS: ToolDef[] = [
   { id: 'maskTint', label: '色調', icon: 'colorize', min: -100, max: 100 },
   { id: 'maskSat', label: '飽和度', icon: 'palette', min: -100, max: 100 },
   { id: 'maskVib', label: '自然飽和度', icon: 'color_lens', min: -100, max: 100 },
+  /* 跟全圖同一個 HSL／色輪面板，只是讀寫這個遮色片自己的 maskHsl／maskGrade（Lightroom 的局部調整也有色彩分級） */
+  { id: 'maskHsl', label: 'HSL', icon: 'invert_colors', min: 0, max: 0 },
+  { id: 'maskGrade', label: '色輪', icon: 'grade_wheels', min: 0, max: 0 },
 ];
 
 /** 五種遮色片（新增時選的那一排）與各自的參數工具（滑桿跟調整用同一根） */
@@ -284,9 +290,11 @@ function maskTonePixels(data: Uint8ClampedArray, m: MaskSnap) {
   const vibVal = (m.maskVib * 0.5 * 2.5) / 100;
   const hasVib = vibVal !== 0, satK = stage.sat;
   const c3 = new Float32Array(3);
+  /* 這個遮色片自己的 HSL → 色輪：接在九個調整之後，順序跟全圖一樣（HSL 在前、調色在後） */
+  const hslF = makeHslFast(m.maskHsl), gradeF = makeGrade(m.maskGrade);
   // 只有曝光（線性光裡乘一個倍率）時三個色版各自獨立，可以用一張 256 格的表；
   // 色調曲線與高光肩部是保色相的（photoToneMath.hueTone），要整個顏色一起算。
-  if (!stage.wb && satK === 1 && !hasVib && !stage.tone && stage.peak <= 1) {
+  if (!stage.wb && satK === 1 && !hasVib && !stage.tone && stage.peak <= 1 && !hslF && !gradeF) {
     const t8 = MASK_TONE8;
     for (let i = 0; i < 256; i++) { applyToneStage(stage, i, i, i, c3); t8[i] = c3[0]; }
     for (let i = 0; i < len; i += 4) { const d = MASK_DITHER[(i >>> 2) & 4095]; data[i] = t8[data[i]] + d; data[i + 1] = t8[data[i + 1]] + d; data[i + 2] = t8[data[i + 2]] + d; }
@@ -301,6 +309,12 @@ function maskTonePixels(data: Uint8ClampedArray, m: MaskSnap) {
       const avg = (r + gg + b) * 0.33333;
       const b1 = vibranceGain(vibVal, r, gg, b);
       r = avg + (r - avg) * b1; gg = avg + (gg - avg) * b1; b = avg + (b - avg) * b1;
+    }
+    if (hslF || gradeF) {
+      c3[0] = r < 0 ? 0 : r > 255 ? 255 : r; c3[1] = gg < 0 ? 0 : gg > 255 ? 255 : gg; c3[2] = b < 0 ? 0 : b > 255 ? 255 : b;
+      if (hslF) hslF(c3);
+      if (gradeF) applyGrade(gradeF, c3);
+      r = c3[0]; gg = c3[1]; b = c3[2];
     }
     const d = MASK_DITHER[(i >>> 2) & 4095];
     data[i] = r + d; data[i + 1] = gg + d; data[i + 2] = b + d;
@@ -350,7 +364,7 @@ const MaskGlyph: React.FC<{ k: string; size?: number }> = ({ k, size = 18 }) => 
 };
 
 /** 共用「HSL 那個面板外框」的工具：同一個外框、同一個高度，彼此切換時圖片完全不動 */
-const COLOUR_PANEL_TOOLS = ['hsl', 'grade'];
+const COLOUR_PANEL_TOOLS = ['hsl', 'grade', 'maskHsl', 'maskGrade'];
 const isColourPanelTool = (id: string) => COLOUR_PANEL_TOOLS.includes(id);
 
 const ADJUST_TOOLS: ToolDef[] = [
@@ -1996,7 +2010,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const mt = p.maskType ?? 'linear';
     if (boxPtrsRef.current.size === 1) {
       // 按在按鈕、兩邊的欄位、參考線／把手、其他遮色片的小圓點上都不算「點空白處」
-      const onUi = !!(e.target as Element).closest?.('button, input, [data-mask-stack], [data-mask-params], #ui-guides, #ui-radial, [data-mask-pin]');
+      const onUi = !!(e.target as Element).closest?.('button, input, [data-mask-stack], [data-mask-params], [data-hsl-panel], #ui-guides, #ui-radial, [data-mask-pin]');
       maskTapRef.current = !onUi && p.maskCreated && (mt === 'linear' || mt === 'radial') && !maskPicking
         ? { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() } : null;
       maskMoveRef.current = !onUi && p.maskCreated && mt === 'radial' && !maskPicking && !maskDeselectedRef.current
@@ -3165,7 +3179,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const pre = maskLivePreRef.current; if (!pre) return;
     const la = maskLiveAdjRef.current ??= document.createElement('canvas');
     if (la.width !== pre.width || la.height !== pre.height) { la.width = pre.width; la.height = pre.height; maskLiveKeyRef.current = ''; }
-    const key = `${maskLivePreKeyRef.current}|${overlay ? 1 : 0}|${MASK_ADJ_KEYS.map(k => (m as any)[k]).join(',')}`;
+    const key = `${maskLivePreKeyRef.current}|${overlay ? 1 : 0}|${maskAdjSig(m)}`;
     if (maskLiveKeyRef.current === key) return;
     maskLiveSrcRef.current = null;
     const lg = la.getContext('2d')!;
@@ -7907,6 +7921,42 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     addToHistory(paramsRef.current, selectedLutIdx);
   };
   const onGradeCommit = useCallback(() => commitGradeRef.current(), []);
+  /* ── 遮色片的 HSL／色輪：拖曳時走遮色片的即時疊層（烤一顆 33³ 查色表＋一次 GPU 查表），不重跑整條管線 ── */
+  const maskColourStartRef = useRef<() => void>(() => {});
+  maskColourStartRef.current = () => {
+    if (paramsRef.current.maskCreated) {
+      maskSliderLiveRef.current = true; maskRangeDragRef.current = false;
+      primeMaskLive(paramsRef.current, false, true);
+    }
+    setupFastPreview(activeToolIdRef.current);
+  };
+  const maskColourMove = (next: EditorParams) => {
+    paramsRef.current = next;
+    lastSliderMoveTimeRef.current = performance.now();
+    if (maskSliderLiveRef.current && maskLiveRef.current && maskLivePreRef.current && next.maskCreated) {
+      if (!maskLiveRafRef.current) maskLiveRafRef.current = requestAnimationFrame(() => {
+        maskLiveRafRef.current = 0;
+        if (maskSliderLiveRef.current && !maskLiveFrame(paramsRef.current, false)) isDirtyRef.current = true;
+      });
+      return;
+    }
+    isDirtyRef.current = true;
+  };
+  const maskColourEndRef = useRef<() => void>(() => {});
+  maskColourEndRef.current = () => {
+    if (maskLiveRafRef.current) { cancelAnimationFrame(maskLiveRafRef.current); maskLiveRafRef.current = 0; }
+    if (maskSliderLiveRef.current) { maskSliderLiveRef.current = false; maskRangeDragRef.current = false; maskLiveKeyRef.current = ''; }
+    isDirtyRef.current = true;
+    setIsInteracting(false);
+    fastPreviewCacheRef.current.active = false;
+    setParams({ ...paramsRef.current });
+    addToHistory(paramsRef.current, selectedLutIdx);
+  };
+  const maskColourMoveRef = useRef(maskColourMove);
+  maskColourMoveRef.current = maskColourMove;
+  const onMaskGradeChange = useCallback((g: ColorGrade) => maskColourMoveRef.current({ ...paramsRef.current, maskGrade: isGradeIdentity(g) ? null : g } as EditorParams), []);
+  const onMaskGradeStart = useCallback(() => maskColourStartRef.current(), []);
+  const onMaskGradeCommit = useCallback(() => maskColourEndRef.current(), []);
 
   const [hslFit, setHslFit] = useState<{ mb: number; mh: number; colour: boolean } | null>(null);
   const measureHslFit = useCallback(() => {
@@ -8015,6 +8065,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 這張照片有沒有任何遮色片（含剛新增、還沒畫出來的那一個）。沒有的話先選要新增哪一種 */
   const maskHasAny = maskListView.list.length > 0 || !!params.masks?.length;
   /* 還沒畫出遮色片時，九個調整先不能動（不知道要調哪裡）；筆刷大小這些參數照樣可以先調 */
+  const hslKey: 'hsl' | 'maskHsl' = activeToolId === 'maskHsl' ? 'maskHsl' : 'hsl';
   const maskLocked = activeCategory === 'mask' && (!params.maskCreated || maskDeselected) && MASK_TOOLS.some(t => t.id === activeToolId);
   /* ── 人像（美顏）與仿色：直接用那兩個工具本身，蓋在編輯器上 ─────────────
      它們改的是「照片本身」：做完換成新的來源圖，濾鏡、調節這些參數照樣疊在上面、還能再調。
@@ -8330,6 +8381,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (id === 'hsl') {
       return !isHslIdentity(params.hsl);
     }
+    if (id === 'maskHsl') return !isHslIdentity(params.maskHsl as any);
+    if (id === 'maskGrade') return !isGradeIdentity(params.maskGrade);
     if (id === 'grade') {
       return !isGradeToolIdentity(params.grade, 'wheels') || !isGradeToolIdentity(params.grade, 'hdr');
     }
@@ -9658,7 +9711,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              兩者一樣高，圖片在兩個工具裡縮放一樣、切換時不會動。
              不用 backdrop-blur：底色幾乎不透明，模糊看不出來，但它讓進場那 260ms
              （圖片同時在縮）每一格都要重算一次整塊模糊，手機上就是偶爾卡一下。 */}
-        {isColourPanelTool(activeToolId) && <motion.div key="hsl"
+        {isColourPanelTool(activeToolId) && !maskLocked && <motion.div key="hsl"
            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0 } }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
            data-hsl-panel
            className="absolute inset-x-0 bottom-0 z-40 bg-[#111] border-t border-white/5 overflow-hidden"
@@ -9667,6 +9720,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {activeToolId === 'grade' ? (
           <PrimariesPanel grade={params.grade} width={detailPanelHost.clientWidth || window.innerWidth}
             onStart={onGradeStart} onChange={onGradeChange} onCommit={onGradeCommit} />
+        ) : activeToolId === 'maskGrade' ? (
+          <PrimariesPanel key={`mg-${params.maskId ?? ''}`} grade={params.maskGrade ?? undefined} width={detailPanelHost.clientWidth || window.innerWidth}
+            onStart={onMaskGradeStart} onChange={onMaskGradeChange} onCommit={onMaskGradeCommit} />
         ) : (
 <div className="w-full flex flex-col px-8 pt-2 pb-2">
               {/* 這一排伸進外層的左右內距裡（w = 100%+4rem 配 -mx-8），才排得下。
@@ -9678,7 +9734,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <div className="flex items-center gap-2 w-max mx-auto py-1.5">
                 {HSL_BANDS.map((band, i) => {
                   const on = hslBandIdx === i;
-                  const touched = params.hsl && params.hsl[i] && (params.hsl[i].h !== 0 || params.hsl[i].s !== 0 || params.hsl[i].l !== 0);
+                  const hv = (params as any)[hslKey] as HslAdjust | null | undefined;
+                  const touched = hv && hv[i] && (hv[i].h !== 0 || hv[i].s !== 0 || hv[i].l !== 0);
                   return (
                     <button
                       key={band.id}
@@ -9705,8 +9762,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               </div>
               {HSL_SLIDERS.map(sl => (
                 <FastSlider
-                  key={`${hslBandIdx}-${sl.key}`}
-                  value={(params.hsl && params.hsl[hslBandIdx] ? params.hsl[hslBandIdx][sl.key] : 0)}
+                  key={`${hslKey}-${params.maskId ?? ''}-${hslBandIdx}-${sl.key}`}
+                  value={(((params as any)[hslKey] as HslAdjust | null)?.[hslBandIdx]?.[sl.key]) ?? 0}
                   min={-100} max={100} step={1}
                   toolId={`hsl.${hslBandIdx}.${sl.key}`}
                   label={sl.label}
@@ -9715,15 +9772,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   onUpdate={(id, val) => {
                     const [, bi, key] = id.split('.');
                     const cur = paramsRef.current;
-                    const next = (cur.hsl || DEFAULT_HSL).map((b, i2) =>
+                    const next = (((cur as any)[hslKey] as HslAdjust | null) || DEFAULT_HSL).map((b, i2) =>
                       i2 === Number(bi) ? { ...b, [key]: val } : b);
+                    if (hslKey === 'maskHsl') { maskColourMoveRef.current({ ...cur, maskHsl: isHslIdentity(next) ? null : next } as EditorParams); return; }
                     const p2 = { ...cur, hsl: next };
                     paramsRef.current = p2;
                     isDirtyRef.current = true;
                     lastSliderMoveTimeRef.current = performance.now();
                   }}
-                  onInteractStart={() => setupFastPreview('hsl')}
+                  onInteractStart={() => { if (hslKey === 'maskHsl') maskColourStartRef.current(); else setupFastPreview('hsl'); }}
                   onInteractEnd={() => {
+                    if (hslKey === 'maskHsl') { maskColourEndRef.current(); return; }
                     setIsInteracting(false);
                     fastPreviewCacheRef.current.active = false;
                     setParams({ ...paramsRef.current });
@@ -9731,9 +9790,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   }}
                   onReset={() => {
                     const cur = paramsRef.current;
-                    const next = (cur.hsl || DEFAULT_HSL).map((b, i2) =>
+                    const next = (((cur as any)[hslKey] as HslAdjust | null) || DEFAULT_HSL).map((b, i2) =>
                       i2 === hslBandIdx ? { ...b, [sl.key]: 0 } : b);
-                    const p2 = { ...cur, hsl: next };
+                    const p2 = { ...cur, [hslKey]: hslKey === 'maskHsl' && isHslIdentity(next) ? null : next } as EditorParams;
                     paramsRef.current = p2;
                     setParams(p2);
                     isDirtyRef.current = true;

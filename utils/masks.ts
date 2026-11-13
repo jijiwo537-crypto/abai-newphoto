@@ -1,3 +1,5 @@
+import { isMaskHslIdentity } from './maskColour';
+import { isGradeIdentity } from './colorGrade';
 /* ── 遮色片（多個、五種）─────────────────────────────────────────────────────
    照 Lightroom 的邏輯：
    · 一張照片可以有好幾個遮色片，各自有自己的一組調整（亮度、曝光、對比、高光、陰影、
@@ -39,6 +41,9 @@ export type MaskSnap = {
   maskColors: ColorSample[]; maskColorRange: number; maskColorSmooth: number;
   /* 明度範圍（0～100 的 L*） */
   maskLumLo: number; maskLumHi: number; maskLumSmooth: number;
+  /* 這個遮色片自己的 HSL（八個色帶）與色輪（跟全圖同格式）；null＝沒調 */
+  maskHsl: { h: number; s: number; l: number }[] | null;
+  maskGrade: any | null;
 };
 
 export const MASK_ADJ_KEYS = ['maskBrightness', 'maskExposure', 'maskContrast', 'maskHighlights', 'maskShadows', 'maskWhites', 'maskBlacks', 'maskTemp', 'maskTint', 'maskSat', 'maskVib'] as const;
@@ -55,6 +60,7 @@ export const freshMask = (type: MaskType = 'linear', id = 'm0'): MaskSnap => ({
   maskStrokes: [], maskBrushSize: 40, maskBrushFeather: 50, maskBrushFlow: 100, maskBrushErase: false,
   maskColors: [], maskColorRange: 50, maskColorSmooth: 50,
   maskLumLo: 60, maskLumHi: 100, maskLumSmooth: 50,
+  maskHsl: null, maskGrade: null,
 });
 export const MASK_SNAP_KEYS = Object.keys(freshMask()) as (keyof MaskSnap)[];
 
@@ -64,7 +70,9 @@ export const snapOf = (p: any): MaskSnap => {
   for (const k of MASK_SNAP_KEYS) out[k] = p[k] !== undefined ? p[k] : (f as any)[k];
   return out;
 };
-export const hasMaskAdj = (m: MaskSnap) => MASK_ADJ_KEYS.some(k => (m as any)[k] !== 0);
+export const hasMaskAdj = (m: MaskSnap) => MASK_ADJ_KEYS.some(k => (m as any)[k] !== 0) || !isMaskHslIdentity(m.maskHsl) || !isGradeIdentity(m.maskGrade);
+/** 遮色片調整的指紋（即時疊層的快取鍵用） */
+export const maskAdjSig = (m: MaskSnap) => `${MASK_ADJ_KEYS.map(k => (m as any)[k]).join(',')}|${isMaskHslIdentity(m.maskHsl) ? '' : JSON.stringify(m.maskHsl)}|${isGradeIdentity(m.maskGrade) ? '' : JSON.stringify(m.maskGrade)}`;
 
 /** 全部遮色片（選中的那一個用 params 上即時的那份）。舊專案沒有 masks：只有原本那一個線性 */
 export const maskList = (p: any): { list: MaskSnap[]; active: number } => {
