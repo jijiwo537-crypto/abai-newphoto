@@ -26,22 +26,26 @@ class MainViewController: CAPBridgeViewController {
        這些是網頁元件內建、掛在內容那一層的手勢，CSS 的 user-select:none 擋不掉 —— 直接把那幾個手勢關掉。
        一般點擊、拖曳、捲動、雙指縮放（我們自己的）都不是這幾個，不受影響。
        網頁程序被系統收掉重開時內容那一層會換新的，所以 App 回到前景時再檢查一次。 */
-    private var loupeObserver: NSObjectProtocol?
-    func disableWebLoupe() {
+    private var loupeObservers: [NSObjectProtocol] = []
+    /// 打字時（鍵盤升起）放大鏡與點兩下選字要正常；其他時候關掉
+    private var typing = false
+    func disableWebLoupe() { setWebLoupe(enabled: typing) }
+    private func setWebLoupe(enabled: Bool) {
         guard let web = bridge?.webView else { return }
         func walk(_ v: UIView) {
             for g in v.gestureRecognizers ?? [] {
                 let name = NSStringFromClass(type(of: g))
-                if name.contains("Loupe") || name.contains("TapAndAHalf") { g.isEnabled = false }
-                else if let t = g as? UITapGestureRecognizer, t.numberOfTapsRequired == 2, name.contains("UITapGestureRecognizer") { g.isEnabled = false }
+                if name.contains("Loupe") || name.contains("TapAndAHalf") { g.isEnabled = enabled }
+                else if let t = g as? UITapGestureRecognizer, t.numberOfTapsRequired == 2, name.contains("UITapGestureRecognizer") { g.isEnabled = enabled }
             }
             v.subviews.forEach(walk)
         }
         walk(web.scrollView)
-        if loupeObserver == nil {
-            loupeObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                self?.disableWebLoupe()
-            }
+        if loupeObservers.isEmpty {
+            let nc = NotificationCenter.default
+            loupeObservers.append(nc.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.disableWebLoupe() })
+            loupeObservers.append(nc.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { [weak self] _ in self?.typing = true; self?.setWebLoupe(enabled: true) })
+            loupeObservers.append(nc.addObserver(forName: UIResponder.keyboardDidHideNotification, object: nil, queue: .main) { [weak self] _ in self?.typing = false; self?.setWebLoupe(enabled: false) })
         }
     }
 

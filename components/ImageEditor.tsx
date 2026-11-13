@@ -26,7 +26,7 @@ import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glo
 import { isIdentityCurve, boundedCurvePath } from '../utils/editorCurveGeometry';
 import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
 import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from '../utils/lutAtlasRepair';
-import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
+import { bakeColorLut, bakedToTexture, type BakedLut } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
 import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from '../utils/fxSurfaceGl';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, releaseLargeFxBuffers, presentFxSource, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
@@ -37,7 +37,7 @@ import {effectPreset,LEGACY_EFFECT_PRESETS} from '../utils/effectPresets';
 import {effectDetailIcon} from '../utils/effectDetailIcons';
 import {HalationLayer} from '../utils/halationLayer';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '../utils/highlightSelection';
-import { makeHslFast } from '../utils/maskColour';
+import { makeHslFast, isMaskHslIdentity } from '../utils/maskColour';
 import { maskList, snapOf, hasMaskAdj, maskAdjSig, anyMask, maskAlpha, maskCacheId, freshMask, newMaskId, MASK_SNAP_KEYS, rgbToLab, type MaskSnap, type MaskType } from '../utils/masks';
 import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, geoAffine, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
 import { SaveButton } from './SaveButton';
@@ -319,6 +319,25 @@ function maskTonePixels(data: Uint8ClampedArray, m: MaskSnap) {
     }
     const d = MASK_DITHER[(i >>> 2) & 4095];
     data[i] = r + d; data[i + 1] = gg + d; data[i + 2] = b + d;
+  }
+}
+
+/** 在 CPU 上逐點查一張烤好的 3D 表（三線性內插，跟 GPU 的 sampler3D 同一件事），寫回前加固定抖動 */
+function applyBakedCpu(data: Uint8ClampedArray, lut: BakedLut) {
+  const N = lut.size, M = N - 1, T = lut.data, k = M / 255, N2 = N * N;
+  for (let i = 0; i < data.length; i += 4) {
+    const fr = data[i] * k, fg = data[i + 1] * k, fb = data[i + 2] * k;
+    const r0 = fr < M ? fr | 0 : M - 1, g0 = fg < M ? fg | 0 : M - 1, b0 = fb < M ? fb | 0 : M - 1;
+    const dr = fr - r0, dg = fg - g0, db = fb - b0;
+    const o000 = (b0 * N2 + g0 * N + r0) * 3, o100 = o000 + 3, o010 = o000 + N * 3, o110 = o010 + 3;
+    const o001 = o000 + N2 * 3, o101 = o001 + 3, o011 = o001 + N * 3, o111 = o011 + 3;
+    const d = MASK_DITHER[(i >>> 2) & 4095];
+    for (let c = 0; c < 3; c++) {
+      const x00 = T[o000 + c] + (T[o100 + c] - T[o000 + c]) * dr, x10 = T[o010 + c] + (T[o110 + c] - T[o010 + c]) * dr;
+      const x01 = T[o001 + c] + (T[o101 + c] - T[o001 + c]) * dr, x11 = T[o011 + c] + (T[o111 + c] - T[o011 + c]) * dr;
+      const y0 = x00 + (x10 - x00) * dg, y1 = x01 + (x11 - x01) * dg;
+      data[i + c] = y0 + (y1 - y0) * db + d;
+    }
   }
 }
 
@@ -3146,9 +3165,40 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (dst.width !== w || dst.height !== h) { dst.width = w; dst.height = h; }
     const g = dst.getContext('2d', { willReadFrequently: true })!;
     g.globalCompositeOperation = 'copy'; g.drawImage(src, 0, 0); g.globalCompositeOperation = 'source-over';
+    /* 有 HSL／色輪的遮色片：逐像素跑整套公式太重（放手後的重畫、存檔都要走這裡）。
+       改成跟拖曳中同一張 33³ 查色表：有 GPU 就一次查完；沒有就在 CPU 上逐點查表。
+       拖曳中跟放手後也因此一模一樣。只有九個調整的遮色片維持原本的逐像素算法，畫面不變。 */
+    if (!isMaskHslIdentity(m.maskHsl) || !isGradeIdentity(m.maskGrade)) {
+      const lut = maskLutFor(m);
+      const gpu = maskGpu();
+      if (gpu && !gpu.lost && gpu.fits(w, h) && dst instanceof HTMLCanvasElement) {
+        maskGpuSrcRef.current = '';   // 即時疊層那張來源被換掉了，下次要重新上傳
+        if (gpu.setSourceImage(dst, w, h) && gpu.setLut(lut.tex, 33)) {
+          const out = gpu.draw();
+          if (out) { g.globalCompositeOperation = 'copy'; g.drawImage(out, 0, 0); g.globalCompositeOperation = 'source-over'; return; }
+        }
+      }
+      const imgData = g.getImageData(0, 0, w, h);
+      applyBakedCpu(imgData.data, lut.baked);
+      g.putImageData(imgData, 0, 0);
+      return;
+    }
     const imgData = g.getImageData(0, 0, w, h);
     maskTonePixels(imgData.data, m);
     g.putImageData(imgData, 0, 0);
+  };
+  /** 這個遮色片調整烤成的 33³ 查色表（同一組調整只烤一次） */
+  const maskLutCacheRef = useRef(new Map<string, { baked: BakedLut; tex: Uint8Array }>());
+  const maskLutFor = (m: MaskSnap) => {
+    const key = maskAdjSig(m), cache = maskLutCacheRef.current;
+    let v = cache.get(key);
+    if (!v) {
+      const baked = bakeColorLut((src, dst) => { dst.set(src); maskTonePixels(dst, m); }, 33);
+      v = { baked, tex: bakedToTexture(baked) };
+      if (cache.size >= 12) { const k0 = cache.keys().next().value; if (k0 !== undefined) cache.delete(k0); }
+      cache.set(key, v);
+    }
+    return v;
   };
   /* ── 即時疊層（拖遮色片形狀、刷筆刷、拖任何一根遮色片滑桿）──────────────────
      底下的主畫布先畫好「選中這一個以外」的樣子，選中這一個的結果畫在上面那張畫布：
@@ -3191,7 +3241,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const sk = `${maskLivePreKeyRef.current}|${pre.width}x${pre.height}`;
         if (maskGpuSrcRef.current !== sk && gpu.setSourceImage(pre, pre.width, pre.height)) maskGpuSrcRef.current = sk;
         if (maskGpuSrcRef.current === sk) {
-          const tex = bakedToTexture(bakeColorLut((src, dst) => { dst.set(src); maskTonePixels(dst, m); }, 33));
+          const tex = maskLutFor(m).tex;
           const out = gpu.setLut(tex, 33) ? gpu.draw() : null;
           /* 不用紅色遮罩時直接拿 GPU 那張去挖（少一次「GPU 畫布 → 2D 畫布」的整張複製，那一次是每一格最貴的） */
           if (out && !overlay) { maskLiveSrcRef.current = out; maskLiveKeyRef.current = key; return; }

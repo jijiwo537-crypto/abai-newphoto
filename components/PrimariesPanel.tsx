@@ -266,7 +266,9 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
   onStart: () => void; onChange: (g: ColorGrade) => void; onCommit: () => void;
 }) {
   const [mode, setModeS] = useState<Mode>(((lastMode as string) === 'bars' ? 'wheels' : lastMode));
-  const setMode = (m: Mode) => { lastMode = m; setModeS(m); };
+  /* HDR 那 7 個色輪第一次切過去才建（打開色輪面板時少建一半），建好就一直留著，之後切換照樣即時 */
+  const [hdrSeen, setHdrSeen] = useState(mode === 'hdr');
+  const setMode = (m: Mode) => { lastMode = m; if (m === 'hdr') setHdrSeen(true); setModeS(m); };
   const [page, setPageS] = useState(lastHdrPage);
   const [g, setG] = useState(() => normGrade(grade));
   const gRef = useRef(g);
@@ -341,7 +343,7 @@ export const PrimariesPanel = React.memo(function PrimariesPanel({ grade, width,
         </div>
           <div ref={pager} onScroll={onPagerScroll} data-hdr-pager
             className={`${mode === 'hdr' ? 'flex' : 'hidden'} overflow-x-auto no-scrollbar snap-x snap-mandatory overscroll-x-contain`}>
-            {HDR_PAGES.map((ids, pi) => (
+            {hdrSeen && HDR_PAGES.map((ids, pi) => (
               <div key={pi} className="w-full shrink-0 snap-start flex px-[6px]">
                 {ids.map(id => {
                   const z = HDR_ZONES.find(q => q.id === id);
