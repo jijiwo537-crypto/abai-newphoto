@@ -596,8 +596,8 @@ const App: React.FC = () => {
                 <p id="exit-draft-title" className="text-white font-black tracking-wide">是否儲存為草稿</p>
                 <div className="mt-6 flex flex-col gap-2">
                   <button onClick={() => resolveExit('save')} className="h-12 rounded-full bg-white text-black font-black tracking-widest text-sm active:scale-[0.98] transition-transform">儲存</button>
-                  <button onClick={() => resolveExit('discard')} className={`h-12 rounded-full bg-white/[0.08] text-white/80 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform`}>放棄</button>
-                  <button onClick={() => resolveExit('cancel')} className={`h-12 rounded-full bg-white/[0.08] text-white/80 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform`}>取消</button>
+                  <button onClick={() => resolveExit('discard')} className={`h-12 rounded-full bg-white/[0.05] text-white/80 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform`}>放棄</button>
+                  <button onClick={() => resolveExit('cancel')} className={`h-12 rounded-full bg-white/[0.05] text-white/80 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform`}>取消</button>
                 </div>
               </div>
             )}
@@ -680,7 +680,7 @@ const App: React.FC = () => {
               <button
                 onClick={handleDiscardResume}
                 disabled={resuming}
-                className={`h-12 rounded-full bg-white/[0.08] text-white/80 font-bold tracking-widest text-sm active:scale-95 transition-transform disabled:opacity-60`}
+                className={`h-12 rounded-full bg-white/[0.05] text-white/80 font-bold tracking-widest text-sm active:scale-95 transition-transform disabled:opacity-60`}
               >
                 重新開始
               </button>
