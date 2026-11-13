@@ -61,14 +61,17 @@ export async function encodeCanvasFrames(o: {
      絕不把一個播不出來的檔案交出去（成品頁會一片空白、存進相簿的也是壞檔）。 */
   if (isNative() && !o.webOnly) {
     const { encodeCanvasFramesNative } = await import('./nativeVideo');
-    const native = await encodeCanvasFramesNative(o).catch(() => null);
-    if (native && await isPlayableVideo(native)) return native;
+    const t0 = performance.now();
+    const native = await encodeCanvasFramesNative(o).catch(e => { exportDiag(`native failed: ${String(e?.message ?? e)}`); return null; });
+    exportDiag(`native ${o.canvas.width}x${o.canvas.height} → ${native ? `${native.type} ${native.size}B` : 'null'} in ${Math.round(performance.now() - t0)}ms`);
+    if (native) { const ok = await isPlayableVideo(native); exportDiag(`native playable=${ok}`); if (ok) return native; }
     if (o.aborted?.()) return null;
   }
   if (!canEncodeFrames()) return null;
   const { canvas, frames } = o;
   const fps = Math.max(1, Math.min(120, o.fps));
   const picked = await encoderConfig(canvas.width, canvas.height, fps, Math.max(500_000, o.bitrate || 8_000_000));
+  exportDiag(`webcodecs config ${canvas.width}x${canvas.height}: ${picked ? picked.config.codec : 'none'}`);
   if (!picked) return null;
   const { config, muxCodec } = picked;
   const muxer = new Muxer({ target: new ArrayBufferTarget(), video: { codec: muxCodec, width: canvas.width, height: canvas.height, frameRate: fps }, fastStart: 'in-memory', firstTimestampBehavior: 'offset' });
@@ -109,17 +112,21 @@ export async function encodeCanvasFrames(o: {
   }
 }
 
+/** 匯出診斷：寫進自動測試紀錄（平常沒有人收，不影響任何東西） */
+export const exportDiag = (msg: string) => { try { const w = window as any; (w.__abaiQALog ||= []).push(`export: ${msg}`); console.info('[export]', msg); } catch { /* */ } };
+
 /** 實際載入這段影片，確認瀏覽器播得出來（有長寬、能解出第一格）。最多等 8 秒 */
 export function isPlayableVideo(blob: Blob): Promise<boolean> {
   if (!blob || !blob.size) return Promise.resolve(false);
   return new Promise(resolve => {
     const v = document.createElement('video'), url = URL.createObjectURL(blob);
+    const t0 = performance.now();
     let done = false;
     const end = (ok: boolean) => { if (done) return; done = true; clearTimeout(t); v.removeAttribute('src'); v.load(); URL.revokeObjectURL(url); resolve(ok); };
-    const t = setTimeout(() => end(false), 8000);
+    const t = setTimeout(() => { exportDiag(`playable check: timeout readyState=${v.readyState} net=${v.networkState}`); end(false); }, 8000);
     v.muted = true; v.playsInline = true; v.preload = 'auto';
-    v.onloadeddata = () => end(v.videoWidth > 0 && v.videoHeight > 0);
-    v.onerror = () => end(false);
+    v.onloadeddata = () => { exportDiag(`playable check: loadeddata ${v.videoWidth}x${v.videoHeight} after ${Math.round(performance.now() - t0)}ms`); end(v.videoWidth > 0 && v.videoHeight > 0); };
+    v.onerror = () => { exportDiag(`playable check: error code=${v.error?.code} ${v.error?.message || ''}`); end(false); };
     v.src = url;
   });
 }

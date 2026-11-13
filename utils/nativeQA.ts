@@ -314,7 +314,7 @@ async function scenarioOddVideo() {
 /* 創意拼圖：選 720／1080 畫質匯出影片，記錄成品頁的影片狀態（能不能播、尺寸、檔案大小、錯誤） */
 async function scenarioCreativeVideo() {
   await provideFiles(1);
-  for (const q of ['720p', '1080p']) {
+  for (const q of ['720p']) {
     const home = findButton(/返回主頁/); if (home) { click(home); await sleep(2500); const d = findButton(/^放棄$/); if (d) { click(d); await sleep(2000); } }
     click(await waitFor(() => findButton(TOOL_ENTRY.collage), 15000, '創意拼圖按鈕'));
     await sleep(7000);

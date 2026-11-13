@@ -115,7 +115,7 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhoto
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface,warmPhotoSceneColour,forgetPhotoFxSource} from '../utils/photoFx';
 import {videoPoster} from '../utils/videoPoster';
-import {canEncodeFrames,encodeCanvasFrames, isPlayableVideo,seekVideosTo} from '../utils/frameExactVideo';
+import {canEncodeFrames,encodeCanvasFrames, isPlayableVideo, exportDiag,seekVideosTo} from '../utils/frameExactVideo';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
 import {useSmoothSlider, snapToStep} from '../utils/smoothSlider';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
@@ -10424,7 +10424,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       setFinalImage(url);
       setSaveState('success');
     } catch (e) {
-      console.error('動態影片做不出來', e);
+      console.error('動態影片做不出來', e);exportDiag(`creative video failed: ${String((e as any)?.message ?? e)}`);
       setSaveState('idle');alert('影片儲存失敗，請更換格式後重試');
     } finally {
       exportStream?.getTracks().forEach(track=>track.stop());
