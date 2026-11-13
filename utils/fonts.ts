@@ -241,6 +241,7 @@ export function ensureFont(family: string): Promise<void> {
     requested.set(family, p);
     return p;
   }
+  if (registerFamily(family)) { cssDone.add(family); const ok = Promise.resolve(); requested.set(family, ok); return ok; }
   const p = new Promise<void>(resolve => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
@@ -336,37 +337,60 @@ export function prepareFontSample(font: FontDef): Promise<void> {
 }
 
 let warmingSamples = false;
-/** 一次把好幾個家族併成同一張 Google Fonts 樣式表。
-    每插一張 <link>、它載完時，瀏覽器都要把整頁的樣式重算一次（手機上每次幾十毫秒）。
-    原本一百多個字體各插一張，開 App 之後很長一段時間按任何按鈕都可能剛好撞上，
-    就是「按下去頓一下」。併成幾張之後只重算幾次。 */
-function ensureFontBatch(families: string[]): Promise<void> {
-  const todo = families.filter(f => !requested.has(f) && !EXTRA_FONT_URLS[f]);
-  if (!todo.length) return Promise.resolve();
-  const p = new Promise<void>(resolve => {
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = 'https://fonts.googleapis.com/css2?' + todo.map(f =>
-      'family=' + encodeURIComponent(f).replace(/%20/g, '+') + (SINGLE_WEIGHT_FONTS.has(f) ? ':wght@400' : ':wght@400;700')).join('&') + '&display=swap';
-    const done = () => { todo.forEach(f => cssDone.add(f)); resolve(); };
-    link.onload = done;
-    link.onerror = () => { todo.forEach(f => requested.delete(f)); resolve(); };   // 整批失敗就讓之後單獨再要
-    document.head.appendChild(link);
-  });
-  todo.forEach(f => requested.set(f, p));
-  return p;
+/* 字體宣告先抓好、拆好，用到才登記。
+   以前是每個字體插一張 Google Fonts 的 <link>：每插一張、它載完時，瀏覽器都要把整頁的樣式重算一次
+   （手機上每次幾十毫秒），一百多個字體各插一張，開 App 之後很長一段時間按任何按鈕都可能剛好撞上。
+   一次把一萬多條 @font-face 全部登記也一樣卡。所以：
+     ‧ warmFontCss：分幾批把 CSS 抓下來（純網路），拆成「家族 → 那個家族的 @font-face」，不登記；
+     ‧ ensureFont：真的要用某個字體時，才用 FontFace API 登記那一個家族（一兩百條，幾毫秒）。
+   登記不會讓整頁重算樣式，也不會讓開場等的 document.fonts.ready 等它。抓不到就照舊插 <link>。 */
+const faceRules = new Map<string, { src: string; desc: FontFaceDescriptors }[]>();
+const batchFetches: Promise<void>[] = [];
+function fetchFontBatch(families: string[]) {
+  const todo = families.filter(f => !requested.has(f) && !EXTRA_FONT_URLS[f] && !faceRules.has(f));
+  if (!todo.length || typeof FontFace === 'undefined') return;
+  const url = 'https://fonts.googleapis.com/css2?' + todo.map(f =>
+    'family=' + encodeURIComponent(f).replace(/%20/g, '+') + (SINGLE_WEIGHT_FONTS.has(f) ? ':wght@400' : ':wght@400;700')).join('&') + '&display=swap';
+  batchFetches.push((async () => {
+    try {
+      const r = await fetch(url); if (!r.ok) return;
+      const css = await r.text();
+      const pick = (body: string, k: string) => { const m = body.match(new RegExp(k + '\\s*:\\s*([^;]+);')); return m ? m[1].trim() : ''; };
+      for (const rule of css.match(/@font-face\s*\{[^}]*\}/g) || []) {
+        const fam = pick(rule, 'font-family').replace(/^['"]|['"]$/g, ''), src = pick(rule, 'src');
+        if (!fam || !src) continue;
+        const desc: FontFaceDescriptors = { style: pick(rule, 'font-style') || 'normal', weight: pick(rule, 'font-weight') || '400', display: 'swap' };
+        const ur = pick(rule, 'unicode-range'); if (ur) desc.unicodeRange = ur;
+        let list = faceRules.get(fam); if (!list) faceRules.set(fam, list = []);
+        list.push({ src, desc });
+      }
+    } catch { /* 抓不到就讓 ensureFont 照舊插 <link> */ }
+  })());
 }
-const idle = () => new Promise<void>(r => {
-  const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => void) | undefined;
-  if (ric) ric(() => r(), { timeout: 3000 }); else setTimeout(r, 300);
-});
+/** 已經拆好宣告的家族：登記進 document.fonts。成功回 true */
+function registerFamily(family: string): boolean {
+  const list = faceRules.get(family);
+  if (!list || !list.length) return false;
+  try { for (const r of list) document.fonts.add(new FontFace(family, r.src, r.desc)); } catch { return false; }
+  faceRules.delete(family);
+  return true;
+}
+/** 全部字體的樣式表併成幾張，在開場畫面那 3 秒（反正沒人能操作）就載完、重算完。
+    開場收起之後首頁就不會再因為樣式表進來而整頁重算、按下去頓一下。
+    只是樣式表（@font-face 宣告），字身檔要等用到或 warmFontSamples 才下載，不影響開機等的那一個字體。 */
+export function warmFontCss() {
+  if (typeof document === 'undefined') return;
+  // Google Fonts 的網址太長（約 4KB）會整張被拒，所以分幾張同時送出（每張 45 個家族，約 1.5KB）
+  const names = FONTS.map(f => f.name);
+  for (let i = 0; i < names.length; i += 45) fetchFontBatch(names.slice(i, i + 45));
+}
 /** App 掛載時就開始，不是等打開字型選單；樣式表分幾批、在空檔插，字身限制同時下載的數量 */
 export function warmFontSamples() {
   if (warmingSamples || typeof document === 'undefined') return;
   warmingSamples = true;
   void (async () => {
-    const names = FONTS.map(f => f.name);
-    for (let i = 0; i < names.length; i += 40) { await idle(); await ensureFontBatch(names.slice(i, i + 40)); }
+    warmFontCss();
+    await Promise.all(batchFetches);
     const queue = [...FONTS];
     const worker = async () => {
       while (queue.length) await prepareFontSample(queue.shift()!);

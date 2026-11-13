@@ -19,6 +19,30 @@ class MainViewController: CAPBridgeViewController {
         super.viewDidAppear(animated)
         view.window?.backgroundColor = .black
         view.superview?.backgroundColor = .black
+        disableWebLoupe()
+    }
+
+    /* 快點兩下會跳出一個橢圓放大鏡（WebKit 的文字選取放大鏡），點兩下也會先等一下看是不是要放大／選字。
+       這些是網頁元件內建、掛在內容那一層的手勢，CSS 的 user-select:none 擋不掉 —— 直接把那幾個手勢關掉。
+       一般點擊、拖曳、捲動、雙指縮放（我們自己的）都不是這幾個，不受影響。
+       網頁程序被系統收掉重開時內容那一層會換新的，所以 App 回到前景時再檢查一次。 */
+    private var loupeObserver: NSObjectProtocol?
+    func disableWebLoupe() {
+        guard let web = bridge?.webView else { return }
+        func walk(_ v: UIView) {
+            for g in v.gestureRecognizers ?? [] {
+                let name = NSStringFromClass(type(of: g))
+                if name.contains("Loupe") || name.contains("TapAndAHalf") { g.isEnabled = false }
+                else if let t = g as? UITapGestureRecognizer, t.numberOfTapsRequired == 2, name.contains("UITapGestureRecognizer") { g.isEnabled = false }
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(web.scrollView)
+        if loupeObserver == nil {
+            loupeObserver = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.disableWebLoupe()
+            }
+        }
     }
 
     override open func capacitorDidLoad() {
@@ -33,5 +57,7 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(VideoWriterPlugin())
         bridge?.registerPluginInstance(PhotoLibraryPlugin())
         bridge?.registerPluginInstance(QAPlugin())
+        // 網頁內容那一層載入後才有那些手勢
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.disableWebLoupe() }
     }
 }
