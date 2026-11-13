@@ -10,10 +10,22 @@ export const runOnce = async (e: Engine, data: Float32Array, w: number, h: numbe
 /** 跑 worker 的訊息迴圈；load 第一次被叫到時建好引擎（失敗會丟出 'gpu-unusable'，主執行緒改用 CPU 那支） */
 export function serve(load: (url: string) => Promise<Engine>) {
   let engine: Promise<Engine> | null = null;
-  self.onmessage = async (ev: MessageEvent) => {
+  /* 訊息一個接一個處理（不重疊）：「釋放模型」一定排在手上的運算後面，不會在算到一半時把模型拆掉 */
+  let queue: Promise<void> = Promise.resolve();
+  self.onmessage = (ev: MessageEvent) => { queue = queue.then(() => handle(ev)); };
+  const handle = async (ev: MessageEvent) => {
     const { id, type, modelUrl, data, width, height } = ev.data || {};
     try {
       const t0 = performance.now();
+      /* 要關掉之前：先讓模型自己釋放（WebAssembly 記憶體），回報後主執行緒才結束這支 worker。
+         直接在運算中途 terminate，iPhone 的 WebKit 可能整個崩潰（退出點陣時閃退） */
+      if (type === 'dispose') {
+        const e = engine ? await engine.catch(() => null) : null;
+        try { await e?.s?.release?.(); } catch { /* 已經釋放 */ }
+        engine = null;
+        (self as any).postMessage({ id, ok: true });
+        return;
+      }
       if (!engine) { engine = load(modelUrl); engine.catch(() => { engine = null; }); }
       const e = await engine;
       const t1 = performance.now();

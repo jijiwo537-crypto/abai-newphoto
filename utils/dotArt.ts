@@ -82,11 +82,28 @@ const call = (msg: any) => new Promise<any>((res, rej) => {
  *  記憶體立刻還給系統。不關的話它們一直留著，接著打開藝術效果之類吃記憶體的工具，iPhone 會直接把 App 收掉重開。
  *  下次再打開點陣工具會自動重新建立。 */
 export function releaseDotArtWorkers() {
-  if (worker) { worker.terminate(); worker = null; }
-  for (const p of pending.values()) p.rej(new Error('released')); pending.clear();
-  if (lineStage) lineStage.terminate();
-  lineStage = undefined; lsOwner = null;
-  for (const p of lsPending.values()) p.rej(new Error('released')); lsPending.clear();
+  const w = worker, ls = lineStage;
+  worker = null; lineStage = undefined; lsOwner = null;
+  /* 不在運算中途硬關：手上的工作做完、模型先自己釋放，再結束執行緒。
+     結果已經沒人要了，回來的訊息直接丟掉 */
+  // 線稿那支是一個接一個處理訊息：「釋放」排在手上的運算後面，回報了才結束它（最多等 60 秒）
+  const mineLs = new Set(lsPending.keys());
+  void (async () => {
+    if (w) {
+      await new Promise<void>(res => {
+        const t = setTimeout(res, 60000);
+        const prev = w.onmessage;
+        w.onmessage = e => { if (e.data?.id === -1) { clearTimeout(t); res(); } else prev?.call(w, e); };
+        try { w.postMessage({ type: 'dispose', id: -1 }); } catch { clearTimeout(t); res(); }
+      });
+      try { w.terminate(); } catch { /* */ }
+    }
+    if (ls) {
+      const t0 = Date.now();
+      while ([...mineLs].some(id => lsPending.has(id)) && Date.now() - t0 < 20000) await new Promise(r => setTimeout(r, 200));
+      try { ls.terminate(); } catch { /* */ }
+    }
+  })();
 }
 /** 先把模型載好（打開工具就開始下載，按「產生」時就不用等） */
 export const warmLineArtModel = () => call({ type: 'warm' }).catch(() => {});
