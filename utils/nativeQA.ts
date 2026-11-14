@@ -507,6 +507,48 @@ async function scenarioStickerPerf() {
   }
 }
 
+/* 選取框與貼圖的距離（四邊）：新增前後各讀一次主畫布，變了的像素就是貼圖本身（選取框是畫布上方的 SVG，不在畫布裡），
+   跟選取框的框線中心比，記下上、下、左、右各差幾個 CSS px。創意拼圖、跨頁拼圖各量一輪。 */
+async function scenarioSelGap() {
+  const items = ['star-f', 'circle-f', 'heart-f', 'square-o', 'triangle-f', 'hole-love', 'track-select-o'];
+  const measure = async (tool: string, addFlow: () => Promise<void>, frameOf: () => Element | null) => {
+    for (const id of items) {
+      const cv = [...document.querySelectorAll('canvas')].filter(c => visible(c)).sort((a, b) => b.width * b.height - a.width * a.height)[0] as HTMLCanvasElement | undefined;
+      const g = cv?.getContext('2d');
+      const before = g ? g.getImageData(0, 0, cv!.width, cv!.height).data.slice() : null;
+      await addFlow();
+      const it = document.querySelector(`button[aria-label="${id}"]`) as HTMLElement | null;
+      if (!it) { log(`selgap ${tool} ${id}: not found`); continue; }
+      click(it); await sleep(2500);
+      const fe = frameOf();
+      if (!fe || !cv || !g || !before) { log(`selgap ${tool} ${id}: no frame/canvas`); continue; }
+      const fr = fe.getBoundingClientRect(), sw = parseFloat(getComputedStyle(fe).strokeWidth || '0') || 0;
+      const after = g.getImageData(0, 0, cv.width, cv.height).data;
+      const cr = cv.getBoundingClientRect(), sx = cv.width / cr.width, sy = cv.height / cr.height;
+      let a = cv.width, b = cv.height, c = -1, e = -1;
+      for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+        const i = (y * cv.width + x) * 4;
+        if (Math.abs(after[i] - before[i]) + Math.abs(after[i + 1] - before[i + 1]) + Math.abs(after[i + 2] - before[i + 2]) > 60) { if (x < a) a = x; if (x > c) c = x; if (y < b) b = y; if (y > e) e = y; }
+      }
+      const L = cr.left + a / sx, T = cr.top + b / sy, R = cr.left + (c + 1) / sx, B = cr.top + (e + 1) / sy;
+      const f = (v: number) => v.toFixed(2);
+      log(`selgap ${tool} ${id}: top ${f(T - fr.top - sw / 2)} bottom ${f(fr.bottom - sw / 2 - B)} left ${f(L - fr.left - sw / 2)} right ${f(fr.right - sw / 2 - R)} (frame ${f(fr.width)}x${f(fr.height)} sw ${sw} dpr ${devicePixelRatio} canvas ${cv.width}/${f(cr.width)})`);
+      const del = findButton(/^刪除$/); if (del) { click(del); await sleep(1000); }
+    }
+  };
+  await provideFiles(1);
+  click(await waitFor(() => findButton(TOOL_ENTRY.collage), 15000, '創意拼圖按鈕'));
+  await sleep(9000);
+  await measure('creative', async () => {
+    const tab = document.querySelector('[data-creative-tab=add]') as HTMLElement | null; if (tab) click(tab); await sleep(800);
+    const add = findButton(/^新增貼圖/); if (add) { click(add); await sleep(800); }
+  }, () => {
+    const c = [...document.querySelectorAll('svg rect, svg path')].filter(el => { const r = el.getBoundingClientRect(); return r.width > 20 && r.width < 400 && getComputedStyle(el).stroke !== 'none' && getComputedStyle(el).stroke !== ''; });
+    c.sort((x, y) => { const p = x.getBoundingClientRect(), q = y.getBoundingClientRect(); return q.width * q.height - p.width * p.height; });
+    return c[0] || null;
+  });
+}
+
 /* 選中框：進編輯 → 濾鏡選第三張 → 記下卡片位置（CI 截圖後放大看四個角）→ 特效選一張 → 模板 */
 async function scenarioRings() {
   await provideFiles(1);
@@ -552,6 +594,7 @@ export async function runNativeQA(forced?: string) {
     else if (scenario === 'camfx') await scenarioCamFx();
     else if (scenario === 'widesave') await scenarioWideSave();
     else if (scenario === 'stickerperf') await scenarioStickerPerf();
+    else if (scenario === 'selgap') await scenarioSelGap();
     else if (scenario === 'rings') await scenarioRings();
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
     else if (scenario === 'layoutundo') await scenarioLayoutUndo();
