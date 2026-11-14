@@ -611,36 +611,61 @@ const CREATIVE_DUAL_INNER = '#C4D1C6';
 const creativeShapeColorFor = (kind: string) => isBackdropMask(kind) ? shapeDefaultColorFor(kind) : '#FFFFFF';
 
 /** 圖形調整面板用的滑桿，樣式跟經典拼圖那顆 ShapeEditorPanel 逐項相同 */
-/** 大半徑發光的低解析度版本（見 drawObject 的發光段）。快取以路徑物件＋參數為鍵 */
-const lowResGlowCache = new WeakMap<Path2D, Map<string, { c: HTMLCanvasElement; pad: number }>>();
+/** 大半徑發光的低解析度版本（見 drawObject 的發光段）。
+    記憶體上限：整個 App 最多留 8 張（每張最多 1024 邊長）（淘汰的立刻把畫布縮成 0 釋放）；
+    不能重用的路徑（線條「畫出來」動畫每格都是新路徑）不快取，共用一張暫存畫布。 */
+const lowResGlowCache = new Map<string, { c: HTMLCanvasElement; pad: number }>();
+const lowResGlowPathIds = new WeakMap<Path2D, number>();
+let lowResGlowSerial = 0;
+let lowResGlowScratch: HTMLCanvasElement | null = null;
 const lowResShapeGlow = (ctx: CanvasRenderingContext2D, path: Path2D, solid: boolean, bw: number, bh: number, rs: number[], color: string,
-  squares: undefined | (() => typeof fillTrackSquares), kind: string, tbw: number, tbh: number) => {
+  squares: undefined | (() => typeof fillTrackSquares), kind: string, tbw: number, tbh: number, cacheable = true) => {
   const m = ctx.getTransform(); const dev = Math.max(1e-3, Math.hypot(m.a, m.b));
   // shadowBlur 是裝置像素、不吃變形：最小那層在縮小畫布上留 ~5px，品質不變
   const q = Math.max(1 / 8, Math.min(1 / 2, 5 / rs[0]));
   const dash = ctx.getLineDash();
-  const key = [bw, bh, dev, q, rs.join(','), color, solid ? 1 : 0, ctx.lineWidth, ctx.lineJoin, ctx.lineCap, ctx.miterLimit, dash.join(','), ctx.lineDashOffset, squares ? 1 : 0, kind, tbw, tbh].join('|');
-  let per = lowResGlowCache.get(path); if (!per) { per = new Map(); lowResGlowCache.set(path, per); }
-  const hit = per.get(key); if (hit) return hit;
+  let key = '';
+  if (cacheable) {
+    let pid = lowResGlowPathIds.get(path); if (pid === undefined) { pid = ++lowResGlowSerial; lowResGlowPathIds.set(path, pid); }
+    key = [pid, bw, bh, dev, q, rs.join(','), color, solid ? 1 : 0, ctx.lineWidth, ctx.lineJoin, ctx.lineCap, ctx.miterLimit, dash.join(','), ctx.lineDashOffset, squares ? 1 : 0, kind, tbw, tbh].join('|');
+    const hit = lowResGlowCache.get(key);
+    if (hit) { lowResGlowCache.delete(key); lowResGlowCache.set(key, hit); return hit; }
+  }
   const pad = rs[rs.length - 1] / dev * 1.25 + ctx.lineWidth;          // 本地單位
   const k = dev * q;                                                     // 本地 → 小畫布像素
-  const W = Math.max(1, Math.ceil((bw + pad * 2) * k)), H = Math.max(1, Math.ceil((bh + pad * 2) * k));
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  // 上限 1024 邊長：極端放大時也不會配出超大畫布（模糊圖再放大，看不出差別）
+  const kk = Math.min(k, 1024 / Math.max(1, bw + pad * 2), 1024 / Math.max(1, bh + pad * 2));
+  const W = Math.max(1, Math.ceil((bw + pad * 2) * kk)), H = Math.max(1, Math.ceil((bh + pad * 2) * kk));
+  let c: HTMLCanvasElement;
+  if (cacheable) {
+    c = document.createElement('canvas');
+  } else {
+    c = lowResGlowScratch || (lowResGlowScratch = document.createElement('canvas'));
+  }
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
   const g = c.getContext('2d')!;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, W, H);
   // 形狀畫在畫布外面，只讓影子落進來
   const off = (bw + pad * 2) * 3;
-  g.setTransform(k, 0, 0, k, (pad - off) * k, pad * k);
-  g.shadowOffsetX = off * k; g.shadowColor = color;
+  g.setTransform(kk, 0, 0, kk, (pad - off) * kk, pad * kk);
+  g.shadowOffsetX = off * kk; g.shadowColor = color;
   g.fillStyle = g.strokeStyle = '#000';
   g.lineWidth = ctx.lineWidth; g.lineJoin = ctx.lineJoin; g.lineCap = ctx.lineCap; g.miterLimit = ctx.miterLimit;
   g.setLineDash(dash); g.lineDashOffset = ctx.lineDashOffset;
   for (const r of rs) {
-    g.shadowBlur = r * q;
+    g.shadowBlur = r * q * kk / k;
     solid ? g.fill(path) : g.stroke(path);
     if (squares) squares()(g, kind, bw, bh, tbw, tbh);
   }
+  g.shadowColor = 'transparent'; g.shadowBlur = 0; g.shadowOffsetX = 0;
   const out = { c, pad };
-  per.set(key, out); if (per.size > 3) per.delete(per.keys().next().value!);
+  if (cacheable) {
+    lowResGlowCache.set(key, out);
+    while (lowResGlowCache.size > 8) {
+      const [oldKey, old] = lowResGlowCache.entries().next().value!;
+      lowResGlowCache.delete(oldKey); old.c.width = old.c.height = 0;
+    }
+  }
   return out;
 };
 
@@ -8045,7 +8070,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                看起來一樣，但要算的像素少十幾倍（長線條、刺繡線發光時拉滑桿不再卡）。
                同一組參數畫過就直接重用（調別的滑桿、拖畫面時發光不用重算）。 */
             const glowImg = lowResShapeGlow(ctx, shapeP, solid, bw, bh, glowRs, o.glowColor || col,
-              solid ? undefined : () => fillTrackSquares, o.kind, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s);
+              solid ? undefined : () => fillTrackSquares, o.kind, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s, drawTip === undefined);
             ctx.drawImage(glowImg.c, -glowImg.pad, -glowImg.pad, bw + glowImg.pad * 2, bh + glowImg.pad * 2);
             // 原本每一層也會連同形狀本身畫一次，照樣畫（半透明的圖形外觀不變）
             for (let gi = 0; gi < glowRs.length; gi++) { paintShapePath(!!solid); if (!solid) fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s); }
