@@ -1359,23 +1359,23 @@ export const stitchWidthForGap = (kind: string, w: number, h: number, oldGap: nu
 export const PolaroidFormatPicker = ({ value, onPick }: { value?: string; onPick: (id: string) => void }) => {
   const cur = value || POLAROID_DEFAULT_FORMAT;
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-5 gap-1.5">
       {POLAROID_FORMATS.map(f => {
         const [cw, ch] = f.card, G = polaroidGeom(cw, ch, f.id);
-        const S = 34 / Math.max(cw, ch), W = cw * S, H = ch * S, on = f.id === cur;
+        const S = 26 / Math.max(cw, ch), W = cw * S, H = ch * S, on = f.id === cur;
         // 兩行：上面是牌子（Polaroid／Instax），下面是款式
         const [brand, ...rest] = f.label.split(' ');
         const lines = [brand, rest.join(' ')].filter(Boolean);
         return (
           <button key={f.id} type="button" aria-pressed={on} aria-label={f.label} onClick={() => onPick(f.id)}
-            className={`flex flex-col items-center gap-1.5 rounded-[10px] pt-2.5 pb-2 px-1 border transition-colors ${on ? 'border-white bg-white/10' : 'border-white/10'}`}>
-            <svg width="38" height="38" viewBox="0 0 38 38" aria-hidden="true">
-              <g transform={`translate(${(38 - W) / 2} ${(38 - H) / 2})`}>
+            className={`min-w-0 flex flex-col items-center gap-1 rounded-[9px] pt-2 pb-1.5 px-0.5 border transition-colors ${on ? 'border-white bg-white/10' : 'border-white/10'}`}>
+            <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+              <g transform={`translate(${(28 - W) / 2} ${(28 - H) / 2})`}>
                 <rect x="0" y="0" width={W} height={H} rx={f.cr * S} fill="currentColor" opacity={on ? .95 : .7} />
                 <rect x={G.wx * S} y={G.wy * S} width={G.ww * S} height={G.wh * S} rx={f.wr * S} fill="#111" />
               </g>
             </svg>
-            <span className={`text-[9px] font-bold leading-tight text-center ${on ? 'text-white' : 'text-white/60'}`}>{lines.map((t, i) => <span key={i} className="block whitespace-nowrap">{t}</span>)}</span>
+            <span className={`text-[8px] font-bold leading-tight text-center ${on ? 'text-white' : 'text-white/60'}`}>{lines.map((t, i) => <span key={i} className="block whitespace-nowrap">{t}</span>)}</span>
           </button>
         );
       })}
@@ -1411,7 +1411,6 @@ export const PolaroidPhotoControls = ({ opts, onChange, slider }: {
         {has && <button type="button" onClick={() => onChange({ imageSrc: undefined, imageZoom: undefined, imageX: undefined, imageY: undefined })}
           className="h-10 px-4 rounded-[10px] border border-white/15 text-white/70 text-[12px] font-bold active:scale-[0.98] transition-transform">移除</button>}
       </div>
-      {has && <p className="text-[10px] font-bold text-white/40 leading-relaxed">選中拍立得後，再點一下照片就能選中照片：一指拖動移動、兩指縮放</p>}
     </div>
   );
 };
@@ -1444,7 +1443,8 @@ const PolaPhotoLayer: React.FC<{ img: FloatingImage; onPatch: (o: FrameOpts) => 
   React.useLayoutEffect(() => { const id = requestAnimationFrame(() => tick(n => n + 1)); return () => cancelAnimationFrame(id); }, [img]);
   const g = typeof document !== 'undefined' ? polaScreenGeo(img) : null;
   const r = g ? polaroidPhotoRect(img.width, img.height, img.shapeFrameOpts || {}) : null;
-  const poly = g && r ? [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]].map(([X, Y]) => polaToScreen(g, X, Y)) : null;
+  // 虛線框框住照片窗口（不是整張照片）
+  const poly = g && r ? [[r.win.x, r.win.y], [r.win.x + r.win.w, r.win.y], [r.win.x + r.win.w, r.win.y + r.win.h], [r.win.x, r.win.y + r.win.h]].map(([X, Y]) => polaToScreen(g, X, Y)) : null;
   const opts = () => img.shapeFrameOpts || {};
   const start = () => {
     const list = [...pts.current.values()], o = opts();
@@ -3323,7 +3323,6 @@ export const ShapeEditorPanel: React.FC<{
             }} />
             <PolaroidPhotoControls opts={layer.shapeFrameOpts} onChange={d => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, ...d } })}
               slider={(l, v, mn, mx, f) => slider(l, v, mn, mx, f)} />
-            {slider('透明度', Math.round(layer.opacity ?? 100), 0, 100, v => onChange({ opacity: Math.round(v) }))}
           </div>}
           {isFrameShape(layer.shape) && !isMistFrame(layer.shape) && layer.shape !== 'frame-polaroid' && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
             {slider('範圍', Math.round(layer.shapeFrameRange ?? frameRangeDefault(layer.shape)), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
@@ -8445,6 +8444,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               x="0" y="0" width="100%" height="100%"
               fill="none" stroke="#ffffff"
               strokeWidth={r3((image.sym ? 0.5 : image.shape === 'line' ? 0.55 : image.shape ? 1.05 : 0.75) / kNow)}
+              /* 拍立得：選取框是虛線（跟圖案的選取框同款） */
+              strokeDasharray={image.shape === 'frame-polaroid' ? `${r3(4.8 / kNow)} ${r3(4.8 / kNow)}` : undefined}
             />
           </svg>
         )}

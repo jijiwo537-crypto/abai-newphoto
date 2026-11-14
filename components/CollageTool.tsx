@@ -8117,8 +8117,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const pr = polaroidPhotoRect(bw, bh, (o as any).frameOpts || {});
             if (pr) {
               // 四個角換成畫布像素再畫：框線粗細、虛線節奏跟其他選取框一樣，不受物件縮放影響
-              const m = ctx.getTransform();
-              const pts = [[pr.x, pr.y], [pr.x + pr.w, pr.y], [pr.x + pr.w, pr.y + pr.h], [pr.x, pr.y + pr.h]]
+              // 虛線框框住照片窗口（不是整張照片）
+              const m = ctx.getTransform(), wr = pr.win;
+              const pts = [[wr.x, wr.y], [wr.x + wr.w, wr.y], [wr.x + wr.w, wr.y + wr.h], [wr.x, wr.y + wr.h]]
                 .map(([X, Y]) => [m.a * X + m.c * Y + m.e, m.b * X + m.d * Y + m.f]);
               const cssK = ctx.canvas.width / Math.max(1, ctx.canvas.getBoundingClientRect().width || ctx.canvas.width);
               ctx.save();
@@ -11729,7 +11730,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     {o && ink && (
                       <rect
                         x={o.x + ink.x} y={o.y + ink.y} width={ink.w} height={ink.h}
-                        fill="none" stroke="#fff" strokeWidth={stroke}
+                        fill="none" stroke="#fff" strokeWidth={o.kind === 'frame-polaroid' ? 0.9 : stroke}
+                        /* 拍立得：選取框是虛線（跟圖案的選取框同款） */
+                        strokeDasharray={o.kind === 'frame-polaroid' ? '4.8 4.8' : undefined}
                         vectorEffect="non-scaling-stroke"
                         transform={`rotate(${o.rot || 0} ${o.x + o.w / 2} ${o.y + o.h / 2})`}
                         style={{ filter: 'drop-shadow(0 0 1.5px rgba(0,0,0,.32))' }}
@@ -12869,10 +12872,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               patch({ frameOpts: { ...(sel as any).frameOpts, fmt }, w: r.w, h: r.h,
                                 x: sel.x + (sel.w - r.w) / 2, y: sel.y + (sel.h - r.h) / 2, textureBaseW: r.w, textureBaseH: r.h } as any);
                             }} />
-                            <PolaroidPhotoControls opts={(sel as any).frameOpts} onChange={d => patch({ frameOpts: { ...(sel as any).frameOpts, ...d } } as any)}
-                              slider={(l, v, mn, mx, f) => shapeSlider(l, v, mn, mx, f, shapeLive)} />
-                            {shapeSlider('透明度', Math.round(sel.opacity ?? 100), 0, 100,
-                              (v: number) => patch({ opacity: v }), shapeLive)}
+                            <PolaroidPhotoControls opts={(sel as any).frameOpts} onChange={d => patch({ frameOpts: { ...(sel as any).frameOpts, ...d } } as any)} />
                           </div>}
                           {isFrameShape(sel.kind) && !isMistFrame(sel.kind) && !isScatterFrame(sel.kind) && sel.kind !== 'frame-polaroid' && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('範圍', Math.round((sel as any).frameRange ?? frameRangeDefault(sel.kind)), 0, 100,

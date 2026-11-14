@@ -544,7 +544,10 @@ const paintFramePhoto = (g: CanvasRenderingContext2D, win: Path2D, G: ReturnType
   const r = polaroidPhotoRect(w, h, o);
   if (!r) return;
   g.save();
-  g.clip(win);
+  /* 照片往窗口外多畫約 1.5 個裝置像素，讓相紙的窗口邊緣蓋在照片上：
+     兩邊各自抗鋸齒的話，邊上那一圈半透明像素會漏出底下的顏色，縮放時每一格位置不同，就是一直閃的黑線 */
+  const m = g.getTransform(), bleed = 1.5 / Math.max(1e-3, Math.hypot(m.a, m.b));
+  g.beginPath(); g.rect(G.wx - bleed, G.wy - bleed, G.ww + bleed * 2, G.wh + bleed * 2); g.clip();
   g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high';
   g.drawImage(r.ph, r.x, r.y, r.w, r.h);
   g.restore();
@@ -591,10 +594,15 @@ const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color:
      做法：在窗口裡畫一個「中間挖掉窗口」的大框，讓它的影子落進窗口 */
   g.save();
   g.clip(win);
-  const ring = new Path2D(); ring.rect(-w, -h, w * 3, h * 3); ring.addPath(win);
+  /* 「中間挖掉窗口」的框畫在畫面外很遠的地方，只讓它的影子位移回來落進窗口：
+     框本身的邊不會出現在窗口邊上（以前那條邊的抗鋸齒在縮放時會閃黑線） */
+  const far = (w + h) * 4;
+  const ring = new Path2D(); ring.rect(-w + far, -h, w * 3, h * 3);
+  ring.addPath(win, new DOMMatrix([1, 0, 0, 1, far, 0]));
   g.shadowColor = 'rgba(0,0,0,0.32)';
   g.shadowBlur = G.k * 1.6 * dev;
-  g.shadowOffsetX = G.k * .25 * dev; g.shadowOffsetY = G.k * .45 * dev;
+  // 影子位移是螢幕像素、不跟著旋轉：把「往回移 far」換成螢幕上的向量（貼圖轉了角度也對）
+  g.shadowOffsetX = -far * m.a + G.k * .25 * dev; g.shadowOffsetY = -far * m.b + G.k * .45 * dev;
   g.fillStyle = '#000';
   g.fill(ring, 'evenodd');
   g.restore();
