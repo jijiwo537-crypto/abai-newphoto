@@ -2281,7 +2281,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const blurUnit = (shape.g / 20) * GLOW_BLUR_UNIT * UNIT;
     // 留邊固定用「最大強度」算，拖滑桿時邊界才不會每一格都變、圖看起來在抖
     const pad = Math.ceil(
-      (shape.g ? GLOW_BLUR_UNIT * GLOW_EXTENT * UNIT : 0) + (shape.sw ? 20 * UNIT : 0) + 2,
+      (shape.g ? GLOW_BLUR_UNIT * GLOW_EXTENT * UNIT : 0) + (shape.sw ? Math.max(20, Math.ceil((shape.sw + shape.sg + 2) / 10) * 10) * UNIT : 0) + 2,
     );
     const W = iw + pad * 2, H = ih + pad * 2;
     /* 影片：這一段每 50ms 就要重跑一次，兩張大畫布不能每次都開新的
@@ -13155,6 +13155,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         畫布端會把它們畫進每個圖片物件的快取裡。 */}
                     <ImageAdjustPanel
                       key={baseVideoEditing ? 'base-video' : undefined}
+                      /* 畫面上那張已經解碼好：直接判斷是不是去背圖，面板第一格就對（不會先閃出濾鏡頁） */
+                      alphaHint={sel?.type === 'image' && sel?.img instanceof HTMLImageElement && !isVideoEl(sel.img)
+                        ? (sel.img.complete && sel.img.naturalWidth ? sourceHasAlpha(sel.img) : null) : false}
                       /* 影片物件：卡片牆（濾鏡／特效）是拿 src 去重畫縮圖的，
                          而 <img src="blob:…mp4"> 畫不出東西 —— 卡片會整面空白。
                          換成匯入時烤好的第一格，卡片就跟圖片物件長得一模一樣。

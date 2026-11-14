@@ -411,6 +411,18 @@ const floatingIsAlpha = (item: Partial<FloatingImage> | null | undefined): boole
   if (im.complete && im.naturalWidth) { const v = sourceHasAlpha(im); floatingAlpha.set(item.src, v); return v; }
   return false;
 };
+/* 描邊（加上間距）往外長多少，畫布四周就要留多少，不然粗描邊會被畫布邊切成直線（看起來變方形）。
+   至少留 20（跟以前一樣），往上以 10 為一級：拖滑桿時不會每一格都重新配置畫布。 */
+const imgStrokePad = (image: { imgStrokeWidth?: number; imgStrokeGap?: number }) =>
+  image.imgStrokeWidth ? Math.max(20, Math.ceil(((image.imgStrokeWidth || 0) + (image.imgStrokeGap || 0) + 2) / 10) * 10) : 0;
+/** 已經知道是不是去背圖就回 true／false；還沒判斷過回 null（面板會自己等） */
+const floatingAlphaKnown = (item: Partial<FloatingImage> | null | undefined): boolean | null => {
+  if (!item || item.text !== undefined || item.shape || (item as any).isVideo || !item.src) return false;
+  const known = floatingAlpha.get(item.src);
+  if (known !== undefined) return known;
+  floatingIsAlpha(item);
+  return floatingAlpha.get(item.src) ?? null;
+};
 /** 目前一頁的大小（跟浮動物件同一套座標）。父元件每次 render 更新 */
 const classicPage = { w: 0, h: 0 };
 const floatingScaleFloor = (item: Partial<FloatingImage> | null | undefined) =>
@@ -3583,23 +3595,38 @@ export type ImageAdjustPanelProps = {
   inlineSlider?: boolean;
   /** 區域編輯從 ref 畫；調整時只有這個小面板會更新 */
   isolateFxUpdates?: boolean;
+  /** 呼叫端已經知道是不是去背圖（畫面上那張已解碼）：直接用，面板第一格就對 */
+  alphaHint?: boolean | null;
   onAdjustmentStart?: () => void;
   onAdjustmentCommit?: () => void;
 };
 
 /* 這張圖是去背圖嗎（有透明像素）。圖還沒解碼就先當不是，解好後重畫一次。 */
-const useImgIsAlpha = (src: string | undefined): boolean => {
+/* 這張是不是去背圖：true／false＝確定，null＝還不知道（圖還沒解碼）。
+   先查快取、再試著同步判斷（畫面上已經在用的圖通常已經解碼好），都不行才等載入。
+   「還不知道」時面板先畫空白，不能先畫一般面板 —— 那就是「先閃出濾鏡頁」。 */
+const alphaBySrc = new Map<string, boolean>();
+const alphaNow = (src: string): boolean | null => {
+  const known = alphaBySrc.get(src);
+  if (known !== undefined) return known;
+  const im = new Image(); im.src = src;
+  if (im.complete && im.naturalWidth) { const v = sourceHasAlpha(im); alphaBySrc.set(src, v); return v; }
+  return null;
+};
+const useImgIsAlpha = (src: string | undefined, hint?: boolean | null): boolean | null => {
   const [, bump] = useState(0);
-  const [el, setEl] = useState<HTMLImageElement | null>(null);
+  if (src && typeof hint === 'boolean' && !alphaBySrc.has(src)) alphaBySrc.set(src, hint);
+  const now = !src ? false : typeof hint === 'boolean' ? hint : alphaNow(src);
   useEffect(() => {
-    if (!src) { setEl(null); return; }
-    const im = new Image();
+    if (!src || now !== null) return;
     let alive = true;
-    im.onload = () => { if (alive) { setEl(im); bump(v => v + 1); } };
+    const im = new Image();
+    im.onload = () => { alphaBySrc.set(src, sourceHasAlpha(im)); if (alive) bump(v => v + 1); };
+    im.onerror = () => { alphaBySrc.set(src, false); if (alive) bump(v => v + 1); };
     im.src = src;
     return () => { alive = false; };
-  }, [src]);
-  return !!el && sourceHasAlpha(el);
+  }, [src, now]);
+  return now;
 };
 
 export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
@@ -3607,7 +3634,7 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   adjustSub, setAdjustSub, effectCard: effectCardProp, setEffectCard: setEffectCardProp, effectDetail: effectDetailProp, setEffectDetail: setEffectDetailProp,
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
   setTuningEdge, openComposeFor, composeOpen, onLeaveCompose, hideShape, hideCompose, deferSlider, onSliderOpenChange, inlineSlider,
-  isolateFxUpdates, onAdjustmentStart, onAdjustmentCommit,
+  isolateFxUpdates, onAdjustmentStart, onAdjustmentCommit, alphaHint,
 }) => {
 /* 選中哪一顆特效、細項有沒有打開：面板自己先記一份、馬上換。
    這兩個值放在整個跨頁拼圖那一層 —— 每點一次卡片整個編輯器都要重新 render，
@@ -3798,9 +3825,13 @@ const pickEffect = (id: string) => {
 /* 佈局裡的格子沒有「形狀」——羽化／發光／描邊都會長到格子外面，
    而格子是被裁切的，畫出來會被切掉；圓角則已經有佈局那根共用滑桿。 */
 /* 去背圖：不給特效（著色器會把透明處算壞），「造型」改叫「外觀」、只留描邊與發光 */
-const isAlphaImg = useImgIsAlpha(img?.vid ? undefined : img?.src);
+const alphaState = useImgIsAlpha(img?.vid ? undefined : img?.src, img?.vid ? false : alphaHint);
+const isAlphaImg = alphaState === true;
 /** 去背圖面板：正在挑哪一個顏色（null＝兩根滑桿那一頁） */
 const [alphaColor, setAlphaColor] = useState<null | 'stroke' | 'glow'>(null);
+/* 去背圖兩根滑桿的顯示值：跨頁拼圖拖滑桿時不會重畫這個面板（isolateFxUpdates），
+   數字要自己記，不然滑桿動了、旁邊的數字還停在舊的 */
+const [alphaVals, setAlphaVals] = useState<{ id: string; s?: number; g?: number }>({ id: '' });
 const CATS = ([
   ['filter', 'palette', '濾鏡'],
   ['tune', 'tune', '調節'],
@@ -4000,44 +4031,56 @@ useEffect(() => { onSliderOpenChange?.(sliderShown); }, [sliderShown, onSliderOp
 
 /* 去背圖：只能調描邊與發光。兩根滑桿各一排，顏色鈕在滑桿右邊（跟文字的描邊／發光同一款）。
    外層的手勢處理跟一般面板一模一樣，拖滑桿的復原紀錄、先讓滑桿順的機制都照舊。 */
-if (isAlphaImg) return (
-  <div className="h-full flex flex-col justify-end" data-alpha-panel=""
-    onClickCapture={e=>{if((e.target as Element).closest('button'))deferHeavyWork();}}
-    onPointerDownCapture={isolateFxUpdates ? e=>{
-      deferHeavyWork();
-      if((e.target as Element).closest('input[type=range],.slider-wrap')){releaseBackgroundHold.current?.();releaseBackgroundHold.current=holdPhotoInteraction();sliderHeld.current=true;onAdjustmentStart?.();}
-    } : undefined}
-    onPointerUpCapture={isolateFxUpdates ? finishAdjustment : undefined}
-    onPointerCancelCapture={isolateFxUpdates ? finishAdjustment : undefined}
-    onKeyUpCapture={isolateFxUpdates ? finishAdjustment : undefined}>
-    {alphaColor ? (
-      <div className="bg-[#111]">
-        <ColorPickerEmbedded
-          color={(alphaColor === 'stroke' ? img.imgStrokeColor : img.imgGlowColor) || '#FFFFFF'}
-          colors={alphaColor === 'stroke' ? STROKE_COLORS : GLOW_COLORS}
-          onChange={c => set(alphaColor === 'stroke' ? { imgStrokeColor: c } : { imgGlowColor: c })}
-          onClose={() => setAlphaColor(null)} />
-      </div>
-    ) : (
-      <div className="bg-[#111] px-6 pt-5 pb-8 space-y-5">
-        <div className="flex items-center gap-3">
-          <div className="flex-1 min-w-0">
-            {editorSlider('描邊', img.imgStrokeWidth || 0, 0, 100, v => set({ imgStrokeWidth: v }))}
-          </div>
-          <ColorPick compact label="描邊顏色" value={img.imgStrokeColor || '#FFFFFF'} colors={STROKE_COLORS}
-            onPick={c => set({ imgStrokeColor: c })} onOpen={() => setAlphaColor('stroke')} />
+if (alphaState === null) return <div className="h-full bg-[#0A0A0A]" aria-busy="true" />;
+if (isAlphaImg) {
+  /* 描邊：滑桿看起來 0～100，實際值是 0～10（原本的 10 分之一） */
+  const mine = alphaVals.id === img.id ? alphaVals : { id: img.id } as typeof alphaVals;
+  const strokeUi = mine.s ?? Math.max(0, Math.min(100, Math.round((img.imgStrokeWidth || 0) * 10)));
+  const glowUi = mine.g ?? Math.max(0, Math.min(100, Math.round(((img.imgGlow || 0) / 20) * 100)));
+  const row = (label: string, value: number, onVal: (v: number) => void, color: string, colors: readonly string[], which: 'stroke' | 'glow') => (
+    <div className="flex items-center gap-3 px-2">
+      <div className="flex-1 min-w-0 space-y-1.5" data-adjust-slider="">
+        <div className="flex justify-between items-center">
+          <span className="text-[11px] font-bold text-white/70">{label}</span>
+          <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}</span>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex-1 min-w-0">
-            {editorSlider('發光', img.imgGlow || 0, 0, 20, v => set({ imgGlow: v }))}
-          </div>
-          <ColorPick compact label="發光顏色" value={img.imgGlowColor || '#FFFFFF'} colors={GLOW_COLORS}
-            onPick={c => set({ imgGlowColor: c })} onOpen={() => setAlphaColor('glow')} />
+        <div className="slider-wrap" style={{ height: 16 }}>
+          <SmoothRange min={0} max={100} step={1} value={value} onValue={v => onVal(Math.round(v))} className="premium-slider w-full" />
         </div>
       </div>
-    )}
-  </div>
-);
+      <ColorPick compact label={`${label}顏色`} value={color} colors={colors as string[]}
+        onPick={c => set(which === 'stroke' ? { imgStrokeColor: c } : { imgGlowColor: c })}
+        onOpen={() => setAlphaColor(which)} />
+    </div>
+  );
+  return (
+    /* 版型跟符號／文字的編輯頁同一款：從上面開始排、標題在滑桿上方、右邊數值、顏色鈕在滑桿右側 */
+    <div className="h-full overflow-y-auto bg-[#0A0A0A]" data-alpha-panel=""
+      onClickCapture={e=>{if((e.target as Element).closest('button'))deferHeavyWork();}}
+      onPointerDownCapture={isolateFxUpdates ? e=>{
+        deferHeavyWork();
+        if((e.target as Element).closest('input[type=range],.slider-wrap')){releaseBackgroundHold.current?.();releaseBackgroundHold.current=holdPhotoInteraction();sliderHeld.current=true;onAdjustmentStart?.();}
+      } : undefined}
+      onPointerUpCapture={isolateFxUpdates ? finishAdjustment : undefined}
+      onPointerCancelCapture={isolateFxUpdates ? finishAdjustment : undefined}
+      onKeyUpCapture={isolateFxUpdates ? finishAdjustment : undefined}>
+      {alphaColor ? (
+        <div className="max-w-md mx-auto px-4 pt-3 pb-12">
+          <ColorPickerEmbedded
+            color={(alphaColor === 'stroke' ? img.imgStrokeColor : img.imgGlowColor) || '#FFFFFF'}
+            colors={alphaColor === 'stroke' ? STROKE_COLORS : GLOW_COLORS}
+            onChange={c => set(alphaColor === 'stroke' ? { imgStrokeColor: c } : { imgGlowColor: c })}
+            onClose={() => setAlphaColor(null)} />
+        </div>
+      ) : (
+        <div className="max-w-md mx-auto px-4 space-y-3.5 pt-4 pb-12">
+          {row('描邊', strokeUi, v => { setAlphaVals(p => ({ ...(p.id === img.id ? p : { id: img.id }), s: v })); set({ imgStrokeWidth: v / 10 }); }, img.imgStrokeColor || '#FFFFFF', STROKE_COLORS, 'stroke')}
+          {row('發光', glowUi, v => { setAlphaVals(p => ({ ...(p.id === img.id ? p : { id: img.id }), g: v })); set({ imgGlow: (v / 100) * 20 }); }, img.imgGlowColor || '#FFFFFF', GLOW_COLORS, 'glow')}
+        </div>
+      )}
+    </div>
+  );
+}
 
 return (
   <div className="h-full flex flex-col justify-end"
@@ -5721,7 +5764,7 @@ const videoDeco = (
   const glowAmt = image.imgGlow || 0;
   if (!strokeW && !glowAmt) return empty;
   const pad = Math.round(((glowAmt ? Math.ceil(GLOW_BLUR_UNIT * GLOW_EXTENT) : 0)
-    + (image.imgStrokeWidth ? 20 : 0)) * sc);
+    + imgStrokePad(image)) * sc);
   const W = Math.max(1, Math.round((boxW + pad * 2) * dpr));
   const H = Math.max(1, Math.round((boxH + pad * 2) * dpr));
   const iw = Math.max(1, Math.round(boxW * dpr));
@@ -7078,7 +7121,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      WebKit 會停頓甚至終止頁面。超出預算時反向降低內部密度；均勻縮放到
      預算後 W/H 保持固定，拖曳白點不再每一幀重新配置越來越大的畫布。 */
   const surfacePad = ((image.imgGlow ? Math.ceil(GLOW_BLUR_UNIT * GLOW_EXTENT) : 0)
-    + (image.imgStrokeWidth ? 20 : 0)) * image.scale;
+    + imgStrokePad(image)) * image.scale;
   const surfaceW = Math.max(1, boxW + 2 * surfacePad);
   const surfaceH = Math.max(1, boxH + 2 * surfacePad);
   const shapeDpr = previewSurfaceDpr(surfaceW, surfaceH, Math.min(8, geoDpr * 3));
@@ -7101,7 +7144,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   // 切掉一個直角，跟匯出也對不起來。
   const glowPad = Math.round(
     ((image.imgGlow ? Math.ceil(GLOW_BLUR_UNIT * GLOW_EXTENT) : 0)
-      + (image.imgStrokeWidth ? 20 : 0)) * image.scale,
+      + imgStrokePad(image)) * image.scale,
   );
   /* 長按拖曳互換時「變暗的那一塊」要照圖層現在的形狀走 */
   const dimShape = useMemo(
@@ -19372,6 +19415,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               return (
                 <ImageAdjustPanel
                   img={img} set={set} lutList={lutList}
+                  alphaHint={floatingAlphaKnown(img)}
                   loadingLut={loadingLut} setLoadingLut={setLoadingLut}
                   lutRevision={lutRevision} setLutRevision={setLutRevision}
                   adjustSub={adjustSub} setAdjustSub={setAdjustSub}
