@@ -19,7 +19,7 @@ import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} 
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_PAPER_DEFAULT } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_DEFAULT_FORMAT, polaroidBox, polaroidResize, onFramePhotoReady } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
@@ -58,7 +58,7 @@ import {
   ADD_SHAPE_ITEMS, fillTrackSquares, TRACK_SQUARE_KINDS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeTexDisabled, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, ScatterKindsPicker, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
-  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, WAVE_LIKE_KINDS, STITCH_LINE_KINDS, stitchKindD, stitchGapDefault, stitchWidthForGap, GapSlider, PolaroidFormatPicker, LINE_GLOW_CAP, GRID_GLOW_CAP, lineWFromUi, lineWToUi, lineEndsOf, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
+  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, WAVE_LIKE_KINDS, STITCH_LINE_KINDS, stitchKindD, stitchGapDefault, stitchWidthForGap, GapSlider, PolaroidFormatPicker, PolaroidPhotoControls, LINE_GLOW_CAP, GRID_GLOW_CAP, lineWFromUi, lineWToUi, lineEndsOf, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -5893,6 +5893,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      兩邊疊在一起的那一下就可能超過系統上限 → 網頁被系統砍掉重開（又看到開場 logo）。
      所以這裡不等回收：畫布縮成 0、快取清掉，記憶體立刻還回去。
      縮圖 thumbRef 不動 —— 離開後才寫歷史紀錄的那一步還要用它。 */
+  /* 拍立得裡的照片是非同步載入的（重開草稿、從歷史紀錄打開時）：載好那一刻，
+     靜止畫面的圖塊、物件快取、底下那張快照都是「還沒有照片」的版本，全部作廢再重畫 */
+  useEffect(()=>onFramePhotoReady(()=>{
+    stableScene.current.dispose();
+    staticObjectTilesRef.current.forEach(v=>{v.tile.width=v.tile.height=0;});staticObjectTilesRef.current.clear();
+    if(backdropPrefix.current){backdropPrefix.current.key='';}
+    if(pinchSnapRef.current){pinchSnapRef.current.canvas.width=pinchSnapRef.current.canvas.height=1;pinchSnapRef.current=null;}
+    lastPatternPaintRef.current=null;
+    regionPaintRef.current?.();
+  }),[]);
   const mainCanvasSeen=useRef<HTMLCanvasElement|null>(null);
   useEffect(()=>{if(canvasRef.current)mainCanvasSeen.current=canvasRef.current;});
   useEffect(()=>()=>{
@@ -12442,8 +12452,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const short = Math.min(offs2.cw, offs2.ch);
                   // 邊框：一放進來就跟底圖一樣大（滿版排版時底圖就是整張畫布）
                   const frame = isFrameShape(it.kind);
-                  const w = frame ? Math.round(offs2.iw) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
-                  const h = frame ? Math.round(offs2.ih) : it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
+                  // 拍立得：不是整張的框，而是一張實物比例的卡片，放在畫面正中間（不能被拉扁）
+                  const pola = it.kind === 'frame-polaroid' ? polaroidBox(offs2.cw, offs2.ch, POLAROID_DEFAULT_FORMAT) : null;
+                  const w = pola ? pola.w : frame ? Math.round(offs2.iw) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+                  const h = pola ? pola.h : frame ? Math.round(offs2.ih) : it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
                   const id = Math.random().toString(36).slice(2, 9);
                   const initialColor = creativeShapeColorFor(it.kind);
                   setObjects(prev => [...prev, {
@@ -12458,8 +12470,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     color: initialColor,
                     glow: 0, glowColor: initialColor,
                     ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: CREATIVE_DUAL_INNER } : {}),
-                    x: frame ? offs2.ix + offs2.iw / 2 - w / 2 : offs2.cw / 2 - w / 2,
-                    y: frame ? offs2.iy + offs2.ih / 2 - h / 2 : offs2.ch / 2 - h / 2,
+                    x: frame && !pola ? offs2.ix + offs2.iw / 2 - w / 2 : offs2.cw / 2 - w / 2,
+                    y: frame && !pola ? offs2.iy + offs2.ih / 2 - h / 2 : offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
                     ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'draw' }) } : {}),
                     // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
@@ -12467,7 +12479,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       ? (() => { const idle = glintHasRing(it.hole) ? 'spin' : 'breathe';
                           return { mo: startMotion({ type: 'shape', kind: it.kind, hole: it.hole }, { in: MO_DEFAULT.in, idle }) }; })() : {}),
                     // 邊框：沒有預設動畫（不進場、不常駐）
-                    ...(frame ? { mo: { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: frameRangeDefault(it.kind), frameFeather: MIST_FEATHER_DEFAULT, frameRound: MIST_ROUND_DEFAULT, dotSize: MIST_TEX_SIZE_DEFAULT, dotGap: MIST_TEX_GAP_DEFAULT } : {}),
+                    ...(frame ? { mo: { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: frameRangeDefault(it.kind), frameFeather: MIST_FEATHER_DEFAULT, frameRound: MIST_ROUND_DEFAULT,
+                      // 拍立得的紋理預設：大小 10、間距 15（滑桿上的數字）
+                      dotSize: pola ? mistSizeFromUi(10) : MIST_TEX_SIZE_DEFAULT, dotGap: pola ? mistGapFromUi(15) : MIST_TEX_GAP_DEFAULT } : {}),
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
@@ -12725,15 +12739,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>}
                           {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
-                          {/* 拍立得：選規格（真實比例）＋紙紋強度 */}
+                          {/* 拍立得：選規格（真實比例，框跟著換成那個比例、中心不動）、導入照片與調整、透明度 */}
                           {sel.kind === 'frame-polaroid' && <div className="px-2 order-1 w-full space-y-4">
-                            <PolaroidFormatPicker value={(sel as any).frameOpts?.fmt} onPick={fmt => patch({ frameOpts: { ...(sel as any).frameOpts, fmt } } as any)} />
-                            <div className="grid grid-cols-2 gap-x-6">
-                              {shapeSlider('紙紋', Math.round((sel as any).frameOpts?.paper ?? POLAROID_PAPER_DEFAULT), 0, 100,
-                                (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, paper: Math.round(v) } } as any), shapeLive)}
-                              {shapeSlider('透明度', Math.round(sel.opacity ?? 100), 0, 100,
-                                (v: number) => patch({ opacity: v }), shapeLive)}
-                            </div>
+                            <PolaroidFormatPicker value={(sel as any).frameOpts?.fmt} onPick={fmt => {
+                              const r = polaroidResize(sel.w, sel.h, fmt);
+                              patch({ frameOpts: { ...(sel as any).frameOpts, fmt }, w: r.w, h: r.h,
+                                x: sel.x + (sel.w - r.w) / 2, y: sel.y + (sel.h - r.h) / 2, textureBaseW: r.w, textureBaseH: r.h } as any);
+                            }} />
+                            <PolaroidPhotoControls opts={(sel as any).frameOpts} onChange={d => patch({ frameOpts: { ...(sel as any).frameOpts, ...d } } as any)}
+                              slider={(l, v, mn, mx, f) => shapeSlider(l, v, mn, mx, f, shapeLive)} />
+                            {shapeSlider('透明度', Math.round(sel.opacity ?? 100), 0, 100,
+                              (v: number) => patch({ opacity: v }), shapeLive)}
                           </div>}
                           {isFrameShape(sel.kind) && !isMistFrame(sel.kind) && !isScatterFrame(sel.kind) && sel.kind !== 'frame-polaroid' && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('範圍', Math.round((sel as any).frameRange ?? frameRangeDefault(sel.kind)), 0, 100,
@@ -12772,8 +12788,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             {shapeSlider('羽化', Math.round((sel as any).frameFeather ?? MIST_FEATHER_DEFAULT), 0, 100,
                               (v: number) => patch({ frameFeather: v } as any), shapeLive)}
                           </div>}
-                          {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
-                            {/* 上下版只有上下兩條霧，沒有轉角，所以不給圓角 */}
+                          {isMistFrame(sel.kind) && <div className={`px-2 order-1 w-full grid ${sel.kind === 'mist-frame-tb' ? 'grid-cols-1' : 'grid-cols-2'} gap-x-6`}>
+                            {/* 上下版只有上下兩條霧，沒有轉角，所以不給圓角；透明度自己佔一整排 */}
                             {sel.kind !== 'mist-frame-tb' && shapeSlider('圓角', Math.round((sel as any).frameRound ?? MIST_ROUND_DEFAULT), 0, 100,
                               (v: number) => patch({ frameRound: v } as any), shapeLive)}
                             {shapeSlider('透明度', Math.round(sel.opacity ?? 100), 0, 100,

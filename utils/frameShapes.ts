@@ -10,7 +10,7 @@
 import { MIST_FRAME_KIND, MIST_FRAME_TB_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, type MistParams } from './mistFrame';
 
 /** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
-export type FrameParams = MistParams & { /** 拍立得規格（POLAROID_FORMATS 的 id）、紙紋強度 0～100 */ fmt?: string; paper?: number; /** 散落圖形（上下） */ scatterTb?: boolean; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
+export type FrameParams = MistParams & { /** 拍立得規格（POLAROID_FORMATS 的 id）、紙紋強度 0～100 */ fmt?: string; paper?: number; /** 拍立得裡的照片與它的大小、位置 */ imageSrc?: string; imageZoom?: number; imageX?: number; imageY?: number; /** 散落圖形（上下） */ scatterTb?: boolean; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
   kinds?: string[]; itemFrame?: ScatterItemFrame;
   /** 散落圖形：新增時的框（四邊擠壓不改這個）—— 版面照它排好，擠壓時整片一起被拉扁，不重新排 */
   baseW?: number; baseH?: number;
@@ -121,7 +121,7 @@ export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'si
 };
 FRAME_SLIDERS[FRAME_SCATTER_TB] = FRAME_SLIDERS['frame-scatter'];
 /** 存在物件上的那一包（滑桿值＋散落的圖形種類） */
-export type FrameOpts = { fmt?: string; paper?: number; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number; kinds?: string[] };
+export type FrameOpts = { fmt?: string; paper?: number; imageSrc?: string; imageZoom?: number; imageX?: number; imageY?: number; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number; kinds?: string[] };
 /** 散落圖形的版面：只跟比例、範圍、間距、選了哪些圖形有關 ——
    調大小、大小變化、角度、角度變化時位置都不會重排，只是每顆照自己記住的亂數改大小／角度。 */
 type ScatterSpot = { x: number; y: number; ki: number; uSize: number; uRot: number; tilt: boolean };
@@ -401,7 +401,10 @@ const paperTile = (color: string) => {
     const grain = (rnd() - .5) * .008;
     const k = Math.max(.95, Math.min(1.03, 1 + (lam - 1) * .14 + grain + hgt[i] * .006));
     const o = i * 4;
-    d[o] = Math.min(255, base[0] * k); d[o + 1] = Math.min(255, base[1] * k); d[o + 2] = Math.min(255, base[2] * k); d[o + 3] = 255;
+    /* 乘上去的明暗在深色相紙上幾乎看不出來（黑色乘多少都還是黑），
+       所以再加一點「固定亮度」的起伏：換成任何顏色，紙紋都一樣看得到 */
+    const add = (k - 1) * 90;
+    d[o] = Math.max(0, Math.min(255, base[0] * k + add)); d[o + 1] = Math.max(0, Math.min(255, base[1] * k + add)); d[o + 2] = Math.max(0, Math.min(255, base[2] * k + add)); d[o + 3] = 255;
   }
   g.putImageData(img, 0, 0);
   paperCache.set(color, cv);
@@ -417,28 +420,50 @@ const paperTile = (color: string) => {
    畫的時候卡片一律填滿整個框（跟其他邊框一樣蓋住整張底圖），窗口永遠是這個規格的真實比例；
    框的比例跟卡片不一樣時，多出來的空間分給邊框：左右平分、上下照這個規格上下緣的比例分，
    所以下緣永遠是最厚的那條。畫布比例選得接近卡片時就是一模一樣的實物比例。 */
-export type PolaroidFormat = { id: string; label: string; sub: string; card: [number, number]; win: [number, number]; top: number; cr: number; wr: number; circle?: number };
+/** side：厚邊在哪一側（預設下面；橫拍的 Instax Mini 在右邊）；even：四邊等寬（撕拉片） */
+export type PolaroidFormat = { id: string; label: string; sub: string; card: [number, number]; win: [number, number]; top: number; cr: number; wr: number; circle?: number; side?: 'bottom' | 'right'; even?: boolean };
 export const POLAROID_FORMATS: PolaroidFormat[] = [
   { id: 'polaroid', label: 'Polaroid 經典', sub: '600・i-Type・SX-70', card: [88, 107], win: [79, 79], top: 6, cr: 1.2, wr: .4 },
-  { id: 'polaroid-round', label: 'Polaroid 圓框', sub: 'Round Frame', card: [88, 107], win: [79, 79], top: 6, cr: 1.2, wr: 0, circle: 70 },
-  { id: 'polaroid-go', label: 'Polaroid Go', sub: '迷你方形', card: [54, 66.6], win: [47, 46], top: 4, cr: 1, wr: .3 },
+  { id: 'polaroid-go', label: 'Polaroid Go', sub: '迷你方形', card: [53.9, 66.6], win: [47, 46], top: 4, cr: 1, wr: .3 },
   { id: 'polaroid-spectra', label: 'Polaroid Spectra', sub: 'Image・寬幅', card: [102, 101], win: [92, 73], top: 5.5, cr: 1.2, wr: .4 },
   { id: 'instax-mini', label: 'Instax Mini', sub: '名片尺寸', card: [54, 86], win: [46, 62], top: 6.5, cr: 3, wr: .8 },
+  { id: 'instax-mini-l', label: 'Instax Mini 橫拍', sub: '橫拍・厚邊在右', card: [86, 54], win: [62, 46], top: 4, cr: 3, wr: .8, side: 'right' },
   { id: 'instax-square', label: 'Instax Square', sub: '方形', card: [72, 86], win: [62, 62], top: 6.5, cr: 3, wr: .8 },
   { id: 'instax-wide', label: 'Instax Wide', sub: '寬幅', card: [108, 86], win: [99, 62], top: 6.5, cr: 3, wr: .8 },
+  { id: 'fp100c', label: 'FP-100C', sub: '富士撕拉片', card: [108, 85], win: [95, 73], top: 6, cr: .6, wr: 0, even: true },
 ];
 export const POLAROID_DEFAULT_FORMAT = 'polaroid';
-/** 紙紋強度（0～100）的預設 */
-export const POLAROID_PAPER_DEFAULT = 60;
+/** 紙紋強度（0～100），固定 */
+export const POLAROID_PAPER_DEFAULT = 40;
 const polaroidFormat = (id?: string) => POLAROID_FORMATS.find(f => f.id === id) || POLAROID_FORMATS[0];
 /** 卡片、窗口在 (0,0)～(w,h) 裡的位置。k＝每 mm 多少單位 */
 export const polaroidGeom = (w: number, h: number, fmtId?: string) => {
   const f = polaroidFormat(fmtId);
-  const [cw, ch] = f.card, [ww, wh] = f.win, side = (cw - ww) / 2, bottom = ch - f.top - wh;
+  const [cw, ch] = f.card, [ww, wh] = f.win;
   const k = Math.min(w / cw, h / ch);
   const exX = Math.max(0, w - cw * k), exY = Math.max(0, h - ch * k);
-  const wx = side * k + exX / 2, wy = f.top * k + exY * f.top / (f.top + bottom);
+  let wx: number, wy: number;
+  if (f.side === 'right') {
+    // 橫拍：厚邊在右邊。左、上、下照實物，剩下的寬度都給右邊那條
+    const lead = f.top, rest = cw - lead - ww, vside = (ch - wh) / 2;
+    wx = lead * k + exX * lead / (lead + rest); wy = vside * k + exY / 2;
+  } else {
+    const side = (cw - ww) / 2, bottom = ch - f.top - wh;
+    wx = side * k + exX / 2; wy = f.top * k + exY * f.top / (f.top + bottom);
+  }
   return { f, k, wx, wy, ww: ww * k, wh: wh * k, cr: Math.min(w, h) * .5 > f.cr * k ? f.cr * k : 0, wr: f.wr * k, circle: f.circle ? f.circle * k : 0 };
+};
+/** 新增或換規格時，框要用卡片的實物比例：放得進 availW×availH 的 fill 倍那麼大 */
+export const polaroidBox = (availW: number, availH: number, fmtId?: string, fill = .8) => {
+  const [cw, ch] = polaroidFormat(fmtId).card;
+  const k = Math.min(availW * fill / cw, availH * fill / ch);
+  return { w: Math.max(8, Math.round(cw * k)), h: Math.max(8, Math.round(ch * k)) };
+};
+/** 換規格時：面積差不多、中心不動，比例換成新卡片的 */
+export const polaroidResize = (w: number, h: number, fmtId?: string) => {
+  const [cw, ch] = polaroidFormat(fmtId).card, a = cw / ch, area = Math.max(1, w * h);
+  const nh = Math.sqrt(area / a);
+  return { w: Math.round(nh * a), h: Math.round(nh) };
 };
 const roundRectP = (p: Path2D, x: number, y: number, w: number, h: number, r: number) => {
   if (r > 0 && (p as any).roundRect) (p as any).roundRect(x, y, w, h, r); else p.rect(x, y, w, h);
@@ -456,6 +481,61 @@ const polaroidPath = (w: number, h: number, _r: number, o: FrameParams = {}) => 
   p.addPath(polaroidWindow(G));
   return p;
 };
+/* ── 拍立得裡的照片 ─────────────────────────────────────────────────
+   照片只畫在窗口裡（cover 填滿），imageZoom＝放大倍率（1＝剛好填滿），
+   imageX／imageY＝左右／上下位置（-1～1，在能移動的範圍裡移）。
+   原圖載入後先縮成長邊最多 2048px 的一張留著用：每一格畫一張 1200 萬像素的原圖會很慢，也很吃記憶體。
+   載好時通知工具重畫（onFramePhotoReady）。 */
+const framePhotoCache = new Map<string, HTMLCanvasElement | null>();
+const framePhotoListeners = new Set<() => void>();
+export const onFramePhotoReady = (f: () => void) => { framePhotoListeners.add(f); return () => { framePhotoListeners.delete(f); }; };
+const framePhoto = (src: string): HTMLCanvasElement | null => {
+  if (framePhotoCache.has(src)) return framePhotoCache.get(src)!;
+  framePhotoCache.set(src, null);
+  const im = new Image();
+  im.decoding = 'async';
+  im.onload = () => {
+    const L = 2048, sc = Math.min(1, L / Math.max(im.naturalWidth, im.naturalHeight));
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(im.naturalWidth * sc)); cv.height = Math.max(1, Math.round(im.naturalHeight * sc));
+    const g = cv.getContext('2d')!; g.imageSmoothingQuality = 'high'; g.drawImage(im, 0, 0, cv.width, cv.height);
+    im.removeAttribute('src');
+    if (framePhotoCache.has(src)) framePhotoCache.set(src, cv);
+    framePhotoListeners.forEach(f => { try { f(); } catch { /* 重畫失敗不影響 */ } });
+  };
+  im.onerror = () => { framePhotoCache.delete(src); };
+  im.src = src;
+  // 最多留 6 張：舊的那張畫布當場縮成 0 把記憶體還回去
+  while (framePhotoCache.size > 6) {
+    const k0 = framePhotoCache.keys().next().value as string;
+    const c0 = framePhotoCache.get(k0); if (c0) c0.width = c0.height = 0;
+    framePhotoCache.delete(k0);
+  }
+  return null;
+};
+/** 導入時用：等照片縮好、可以畫了才回來（之後第一格就有照片，不會先閃一下空窗口） */
+export const loadFramePhoto = (src: string) => new Promise<void>(resolve => {
+  if (framePhoto(src)) { resolve(); return; }
+  const off = onFramePhotoReady(() => { if (framePhotoCache.get(src)) { off(); resolve(); } });
+  setTimeout(() => { off(); resolve(); }, 15000);
+});
+/** 照片能不能直接畫了（還在載入就是 false） */
+export const framePhotoReady = (src?: string) => !!src && !!framePhoto(src);
+const paintFramePhoto = (g: CanvasRenderingContext2D, win: Path2D, G: ReturnType<typeof polaroidGeom>, o: FrameParams) => {
+  if (!o.imageSrc) return;
+  const ph = framePhoto(o.imageSrc);
+  if (!ph) return;
+  const zoom = Math.max(1, o.imageZoom ?? 1);
+  const s = Math.max(G.ww / ph.width, G.wh / ph.height) * zoom;
+  const dw = ph.width * s, dh = ph.height * s;
+  const cx = G.wx + G.ww / 2 + Math.max(-1, Math.min(1, o.imageX ?? 0)) * (dw - G.ww) / 2;
+  const cy = G.wy + G.wh / 2 + Math.max(-1, Math.min(1, o.imageY ?? 0)) * (dh - G.wh) / 2;
+  g.save();
+  g.clip(win);
+  g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high';
+  g.drawImage(ph, cx - dw / 2, cy - dh / 2, dw, dh);
+  g.restore();
+};
 /** 拍立得：相紙色＋壓紋紙紋、上暖下冷的大範圍明暗、卡片邊緣一道細線、
     窗口內緣一道壓痕，窗口裡再落一圈很淺的內陰影（照片是嵌在相紙下面的那種深度） */
 const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color: string, o: FrameParams = {}) => {
@@ -463,7 +543,7 @@ const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color:
   const win = polaroidWindow(G);
   const card = new Path2D(); roundRectP(card, 0, 0, w, h, G.cr);
   const body = new Path2D(); body.addPath(card); body.addPath(win);
-  const paper = Math.max(0, Math.min(1, (o.paper ?? POLAROID_PAPER_DEFAULT) / 100));
+  const paper = POLAROID_PAPER_DEFAULT / 100;
   const m = g.getTransform(), dev = Math.max(1e-3, Math.hypot(m.a, m.b));
   g.save();
   g.clip(body, 'evenodd');
@@ -474,7 +554,8 @@ const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color:
   // 紙紋：整張壓紋相紙，一格的實際大小固定（約 24mm），換規格、放大縮小都是同一種紋理
   if (paper > 0) {
     const pat = g.createPattern(paperTile(color), 'repeat')!;
-    const sc = Math.max(1e-3, 24 * G.k / 256);
+    // 一格紋理的實際大小約 64mm（之前 24mm 太密）
+    const sc = Math.max(1e-3, 64 * G.k / 256);
     pat.setTransform(new DOMMatrix([sc, 0, 0, sc, 0, 0]));
     g.globalAlpha = paper; g.fillStyle = pat; g.fillRect(0, 0, w, h); g.globalAlpha = 1;
   }
@@ -594,6 +675,13 @@ export const paintFrameShape = (
   params: FrameParams = {}, texture?: (tc: CanvasRenderingContext2D, bodyPath: Path2D) => void,
 ) => {
   if (!(w > 0) || !(h > 0)) return;
+  /* 拍立得裡的照片：直接畫在畫布上、窗口裡面，相紙再蓋上去。
+     不放進下面那張「疊紋理」的暫存畫布 —— 不然點點／星星紋理會連照片一起蓋到 */
+  if (kind === FRAME_POLAROID && params.imageSrc) {
+    const G = polaroidGeom(w, h, params.fmt);
+    paintFramePhoto(ctx, polaroidWindow(G), G, params);
+    params = { ...params, imageSrc: undefined };
+  }
   if (isScatterFrame(kind)) { paintScatter(ctx, w, h, color, kind === FRAME_SCATTER_TB ? { ...params, scatterTb: true } : params); return; }
   if (kind === MIST_FRAME_KIND || kind === MIST_FRAME_TB_KIND || !PATHS[kind]) { paintMistFrame(ctx, w, h, color, kind === MIST_FRAME_TB_KIND ? { ...params, tb: true } : params, texture); return; }
   const path = framePath(kind, w, h, r01(params.range, kind), params);

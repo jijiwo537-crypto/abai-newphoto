@@ -123,7 +123,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, POLAROID_PAPER_DEFAULT, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, polaroidGeom, polaroidBox, polaroidResize, loadFramePhoto, onFramePhotoReady, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -1355,29 +1355,68 @@ export const stitchWidthForGap = (kind: string, w: number, h: number, oldGap: nu
 /** 把間距帶進路徑用的 kind（shapePathD 認得 'stitch-plus~30'）；其他圖形原樣 */
 /** 間距滑桿：連續值（不取整數），拉起來像文字間距一樣順 */
 /** 線條「間距」滑桿。拖動中數字由這顆自己顯示：呼叫端走即時通道時，狀態要放開才更新 */
-/** 拍立得邊框的規格選擇：每一顆畫出那個規格真實比例的小卡片（窗口、下緣厚邊），下面是名稱 */
+/** 拍立得邊框的規格選擇：每一顆畫出那個規格真實比例的小卡片（窗口、厚邊），下面是名稱 */
 export const PolaroidFormatPicker = ({ value, onPick }: { value?: string; onPick: (id: string) => void }) => {
   const cur = value || POLAROID_DEFAULT_FORMAT;
   return (
     <div className="grid grid-cols-4 gap-2">
       {POLAROID_FORMATS.map(f => {
-        const [cw, ch] = f.card, [ww, wh] = f.win, side = (cw - ww) / 2;
+        const [cw, ch] = f.card, G = polaroidGeom(cw, ch, f.id);
         const S = 34 / Math.max(cw, ch), W = cw * S, H = ch * S, on = f.id === cur;
+        const words = f.label.replace('Polaroid ', '').split(' ');
+        const lines = f.label.startsWith('Instax') ? [words.slice(0, 2).join(' '), words.slice(2).join(' ')].filter(Boolean) : [words.join(' ')];
         return (
           <button key={f.id} type="button" aria-pressed={on} aria-label={f.label} onClick={() => onPick(f.id)}
             className={`flex flex-col items-center gap-1.5 rounded-[10px] pt-2.5 pb-2 px-1 border transition-colors ${on ? 'border-white bg-white/10' : 'border-white/10'}`}>
             <svg width="38" height="38" viewBox="0 0 38 38" aria-hidden="true">
               <g transform={`translate(${(38 - W) / 2} ${(38 - H) / 2})`}>
                 <rect x="0" y="0" width={W} height={H} rx={f.cr * S} fill="currentColor" opacity={on ? .95 : .7} />
-                {f.circle
-                  ? <circle cx={(side + ww / 2) * S} cy={(f.top + wh / 2) * S} r={f.circle / 2 * S} fill="#111" />
-                  : <rect x={side * S} y={f.top * S} width={ww * S} height={wh * S} rx={f.wr * S} fill="#111" />}
+                <rect x={G.wx * S} y={G.wy * S} width={G.ww * S} height={G.wh * S} rx={f.wr * S} fill="#111" />
               </g>
             </svg>
-            <span className={`text-[9px] font-bold leading-tight text-center ${on ? 'text-white' : 'text-white/60'}`}>{f.label.replace('Polaroid ', '').replace('Instax ', 'Instax\n').split('\n').map((t, i) => <span key={i} className="block whitespace-nowrap">{t}</span>)}</span>
+            <span className={`text-[9px] font-bold leading-tight text-center ${on ? 'text-white' : 'text-white/60'}`}>{lines.map((t, i) => <span key={i} className="block whitespace-nowrap">{t}</span>)}</span>
           </button>
         );
       })}
+    </div>
+  );
+};
+/** 拍立得裡的照片：導入／換一張／移除，導入後可以調大小與位置（創意拼圖、跨頁拼圖共用）。
+    slider 由各工具傳進來（兩邊滑桿的即時通道不一樣） */
+export const PolaroidPhotoControls = ({ opts, onChange, slider }: {
+  opts?: FrameOpts; onChange: (d: Partial<FrameOpts>) => void;
+  slider: (label: string, value: number, min: number, max: number, onVal: (v: number) => void) => React.ReactNode;
+}) => {
+  const input = React.useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = React.useState(false);
+  const has = !!opts?.imageSrc;
+  const pick = async (f?: File | null) => {
+    if (!f) return;
+    setBusy(true);
+    try {
+      const url = URL.createObjectURL(f);
+      await loadFramePhoto(url);
+      onChange({ imageSrc: url, imageZoom: 1, imageX: 0, imageY: 0 });
+    } finally { setBusy(false); if (input.current) input.current.value = ''; }
+  };
+  return (
+    <div className="space-y-4">
+      <input ref={input} type="file" accept="image/*" className="hidden" onChange={e => pick(e.target.files?.[0])} />
+      <div className="flex gap-2">
+        <button type="button" disabled={busy} onClick={() => input.current?.click()}
+          className="flex-1 h-10 rounded-[10px] bg-white text-black text-[12px] font-bold active:scale-[0.98] transition-transform disabled:opacity-60">
+          {busy ? '載入中…' : has ? '更換照片' : '導入照片'}
+        </button>
+        {has && <button type="button" onClick={() => onChange({ imageSrc: undefined, imageZoom: undefined, imageX: undefined, imageY: undefined })}
+          className="h-10 px-4 rounded-[10px] border border-white/15 text-white/70 text-[12px] font-bold active:scale-[0.98] transition-transform">移除</button>}
+      </div>
+      {has && <div className="grid grid-cols-1 gap-y-4">
+        {slider('大小', Math.round((opts?.imageZoom ?? 1) * 100), 100, 300, v => onChange({ imageZoom: v / 100 }))}
+        <div className="grid grid-cols-2 gap-x-6">
+          {slider('左右', Math.round((opts?.imageX ?? 0) * 100), -100, 100, v => onChange({ imageX: v / 100 }))}
+          {slider('上下', Math.round((opts?.imageY ?? 0) * 100), -100, 100, v => onChange({ imageY: v / 100 }))}
+        </div>
+      </div>}
     </div>
   );
 };
@@ -1521,6 +1560,8 @@ const STRETCH_OUTLINE_KINDS = new Set([
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if(isBackdropMask(shape))return true;
+  // 拍立得：卡片比例是固定的實物比例，不能被拉扁（只能等比縮放）
+  if (shape === 'frame-polaroid') return false;
   if (isFrameShape(shape)) return true;
   if (!shape || shape === 'line') return false;
   if (WAVE_LIKE_KINDS.has(shape) || GRID_SHAPE_KINDS.has(shape)) return true;
@@ -3194,13 +3235,16 @@ export const ShapeEditorPanel: React.FC<{
               })} />
           </div>}
           {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
-          {/* 拍立得：選規格（真實比例）＋紙紋強度 */}
+          {/* 拍立得：選規格（真實比例，框跟著換成那個比例、中心不動）、導入照片與調整、透明度 */}
           {layer.shape === 'frame-polaroid' && <div className="px-2 order-1 w-full space-y-4">
-            <PolaroidFormatPicker value={layer.shapeFrameOpts?.fmt} onPick={fmt => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, fmt } })} />
-            <div className="grid grid-cols-2 gap-x-6">
-              {slider('紙紋', Math.round(layer.shapeFrameOpts?.paper ?? POLAROID_PAPER_DEFAULT), 0, 100, v => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, paper: Math.round(v) } }))}
-              {slider('透明度', Math.round(layer.opacity ?? 100), 0, 100, v => onChange({ opacity: Math.round(v) }))}
-            </div>
+            <PolaroidFormatPicker value={layer.shapeFrameOpts?.fmt} onPick={fmt => {
+              const r = polaroidResize(layer.width, layer.height, fmt);
+              onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, fmt }, width: r.w, height: r.h,
+                x: layer.x + (layer.width - r.w) / 2, y: layer.y + (layer.height - r.h) / 2, shapeTextureBaseW: r.w, shapeTextureBaseH: r.h });
+            }} />
+            <PolaroidPhotoControls opts={layer.shapeFrameOpts} onChange={d => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, ...d } })}
+              slider={(l, v, mn, mx, f) => slider(l, v, mn, mx, f)} />
+            {slider('透明度', Math.round(layer.opacity ?? 100), 0, 100, v => onChange({ opacity: Math.round(v) }))}
           </div>}
           {isFrameShape(layer.shape) && !isMistFrame(layer.shape) && layer.shape !== 'frame-polaroid' && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
             {slider('範圍', Math.round(layer.shapeFrameRange ?? frameRangeDefault(layer.shape)), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
@@ -3221,7 +3265,7 @@ export const ShapeEditorPanel: React.FC<{
             {slider('範圍', mistRangeToUi(layer.shapeFrameRange ?? MIST_RANGE_DEFAULT), 0, 100, v => onChange({ shapeFrameRange: mistRangeFromUi(v) }))}
             {slider('羽化', Math.round(layer.shapeFrameFeather ?? MIST_FEATHER_DEFAULT), 0, 100, v => onChange({ shapeFrameFeather: Math.round(v) }))}
           </div>}
-          {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
+          {isMistFrame(layer.shape) && <div className={`px-2 order-1 w-full grid ${layer.shape === 'mist-frame-tb' ? 'grid-cols-1' : 'grid-cols-2'} gap-x-6`}>
             {/* 上下版只有上下兩條霧，沒有轉角，所以不給圓角 */}
             {layer.shape !== 'mist-frame-tb' && slider('圓角', Math.round(layer.shapeFrameRound ?? MIST_ROUND_DEFAULT), 0, 100, v => onChange({ shapeFrameRound: Math.round(v) }))}
             {slider('透明度', Math.round(layer.opacity ?? 100), 0, 100, v => onChange({ opacity: Math.round(v) }))}
@@ -6403,8 +6447,10 @@ export const makeShapeItem = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem
     const short = Math.min(pw, ph);
     // 邊框：一放進來就是整頁的框
     const frame = isFrameShape(it.kind);
-    const w = frame ? Math.round(pw) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
-    const h = frame ? Math.round(ph) : (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
+    // 拍立得：不是整頁的框，而是一張實物比例的卡片，放在正中間
+    const pola = it.kind === 'frame-polaroid' ? polaroidBox(pw, ph, POLAROID_DEFAULT_FORMAT) : null;
+    const w = pola ? pola.w : frame ? Math.round(pw) : Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+    const h = pola ? pola.h : frame ? Math.round(ph) : (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
     const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
     // 星芒是光：預設白色（其他圖形照原本的預設色）
     const initialColor = it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-') ? '#FFFFFF' : shapeDefaultColorFor(it.kind);
@@ -6430,7 +6476,9 @@ export const makeShapeItem = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem
       shapeGlowColor: initialColor,
       color: initialColor,
       ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
-      ...(frame ? { shapeFrameRange: frameRangeDefault(it.kind), shapeFrameFeather: MIST_FEATHER_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT, shapeDotSize: MIST_TEX_SIZE_DEFAULT, shapeDotGap: MIST_TEX_GAP_DEFAULT } : {}),
+      ...(frame ? { shapeFrameRange: frameRangeDefault(it.kind), shapeFrameFeather: MIST_FEATHER_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT,
+        // 拍立得的紋理預設：大小 10、間距 15（滑桿上的數字）
+        shapeDotSize: pola ? mistSizeFromUi(10) : MIST_TEX_SIZE_DEFAULT, shapeDotGap: pola ? mistGapFromUi(15) : MIST_TEX_GAP_DEFAULT } : {}),
       // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
       ...(it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-')
         ? (() => { const idle = glintHasRing((it as any).hole) ? 'spin' : 'breathe';
@@ -8875,6 +8923,9 @@ function LayoutGeomSlider({ label, field, min, max, value, previewId, live, onSt
 
 export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onRequestExit, onImportNew, initialFiles, initialState, lutList = [] }) => {
   useKeyboardRecovery();
+  // 拍立得裡的照片是非同步載入的：載好時重畫一次（重開草稿、從歷史紀錄打開時）
+  const [, setFramePhotoTick] = useState(0);
+  useEffect(() => onFramePhotoReady(() => setFramePhotoTick(t => t + 1)), []);
   // 離開跨頁拼圖：預覽用的原圖與卡片縮圖快取當場放掉（見 releaseGridPreviewCaches）
   useEffect(() => () => releaseGridPreviewCaches(true), []);
   /* 這一次匯入的照片／影片各自開了一個 blob 網址（指向原檔）。以前沒有人回收：
