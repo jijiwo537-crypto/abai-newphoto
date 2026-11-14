@@ -3565,41 +3565,6 @@ export type ImageAdjustPanelProps = {
   onAdjustmentCommit?: () => void;
 };
 
-/* 去背（含透明像素）的圖片：套用調節／特效會讓 iPhone 閃退，所以整個圖片調整面板改成提示。
-   判斷方式：把圖縮到最多 96px 畫一次，只要有任何像素不是完全不透明就算去背。
-   JPG 不可能有透明；一般（不透明的）PNG 照常可以編輯。結果依網址快取，只量一次。 */
-const alphaCache = new Map<string, boolean>();
-const useImageHasAlpha = (src: string | undefined): boolean => {
-  const [, bump] = useState(0);
-  useEffect(() => {
-    if (!src || alphaCache.has(src) || /\.(jpe?g)(\?|$)/i.test(src) || src.startsWith('data:image/jpeg')) return;
-    let alive = true;
-    const im = new Image();
-    im.decoding = 'async';
-    im.onload = () => {
-      let has = false;
-      try {
-        const k = Math.min(1, 96 / Math.max(im.naturalWidth || 1, im.naturalHeight || 1));
-        const w = Math.max(1, Math.round(im.naturalWidth * k)), h = Math.max(1, Math.round(im.naturalHeight * k));
-        const c = document.createElement('canvas'); c.width = w; c.height = h;
-        const g = c.getContext('2d', { willReadFrequently: true });
-        if (g) {
-          g.drawImage(im, 0, 0, w, h);
-          const d = g.getImageData(0, 0, w, h).data;
-          for (let i = 3; i < d.length; i += 4) if (d[i] < 250) { has = true; break; }
-        }
-        c.width = c.height = 0;
-      } catch { /* 讀不到像素就當作不透明，照常可編輯 */ }
-      alphaCache.set(src, has);
-      if (alive) bump(v => v + 1);
-    };
-    im.onerror = () => { alphaCache.set(src, false); };
-    im.src = src;
-    return () => { alive = false; };
-  }, [src]);
-  return !!src && alphaCache.get(src) === true;
-};
-
 export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   img, set, lutList, loadingLut, setLoadingLut, lutRevision, setLutRevision,
   adjustSub, setAdjustSub, effectCard: effectCardProp, setEffectCard: setEffectCardProp, effectDetail: effectDetailProp, setEffectDetail: setEffectDetailProp,
@@ -3985,15 +3950,8 @@ const sliderArea = (() => {
   return null;
 })();
 
-const alphaBlocked = useImageHasAlpha(img?.vid ? undefined : img?.src);
-const sliderShown = !alphaBlocked && (fxDetailOpen || !!sliderArea);
+const sliderShown = fxDetailOpen || !!sliderArea;
 useEffect(() => { onSliderOpenChange?.(sliderShown); }, [sliderShown, onSliderOpenChange]);
-
-if (alphaBlocked) return (
-  <div className="h-full flex items-center justify-center bg-[#111]" data-alpha-blocked>
-    <span className="text-white/70 text-sm">此圖片不可進行</span>
-  </div>
-);
 
 return (
   <div className="h-full flex flex-col justify-end"
