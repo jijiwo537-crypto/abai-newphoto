@@ -1831,6 +1831,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const objDragRef = useRef<any>(null);
   const [objDragging, setObjDragging] = useState(false);
   const objDraggingRef = useRef(false);
+  /* 鬆手後先不畫選取框：畫布的最後一張是下一格 requestAnimationFrame 才重畫的
+     （手勢中畫的是快速版，圖片用的是小張的），框若在這之前就出來，
+     會有一兩格對不上（底下露縫）。等 renderCanvas 真的畫完，同一格再把框放出來。 */
+  const chromeHoldRef = useRef(false);
+  const chromeHoldTimer = useRef<number | null>(null);
   const [objStretching, setObjStretching] = useState(false);
   const objStretchRef = useRef<any>(null);
   /* ── 形狀的第二段選取 ────────────────────────────────────────────
@@ -5817,6 +5822,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     flushView(true);
     // 還沒送出的那一格先補上，物件才不會停在上一格的位置
     flushMoveNow();
+    if (objDragRef.current?.moved || objPinchRef.current) {
+      chromeHoldRef.current = true;
+      if (chromeHoldTimer.current != null) clearTimeout(chromeHoldTimer.current);
+      // 保險：畫布萬一這次不重畫，最多等 400ms 也要把框放出來
+      chromeHoldTimer.current = window.setTimeout(() => {
+        chromeHoldTimer.current = null;
+        if (chromeHoldRef.current) { chromeHoldRef.current = false; occupancyBus.current.forEach(f => f()); }
+      }, 400);
+    }
     // 已選中的文字／符號，點一下（沒有拖動）→ 直接在畫布上改字
     if (objDragRef.current?.editIfTap && !objDragRef.current.moved) {
       textOpenAtRef.current = performance.now();
@@ -9463,6 +9477,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       && Math.abs(syncDrawnRef.current.ps - previewScaleRef.current) < 0.01;
     syncDrawnRef.current = null;
     if (!alreadyDrawn && !animationOwnsPaintRef.current) renderToCanvas(canvasRef.current, previewScaleRef.current);
+    if (chromeHoldRef.current) {
+      chromeHoldRef.current = false;
+      if (chromeHoldTimer.current != null) { clearTimeout(chromeHoldTimer.current); chromeHoldTimer.current = null; }
+      // 跟剛畫好的畫布同一格出現
+      flushSync(() => occupancyBus.current.forEach(f => f()));
+    }
     // 記住 1 倍時的 CSS 寬度（畫布是 max-w-full 等比縮放，換算全靠它）
     const r = (motionFrameRef.current || canvasRef.current).getBoundingClientRect();
     if (r.width > 0 && imageState) {
@@ -11688,7 +11708,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               <LiveChrome bus={occupancyBus.current} render={() => activeTab !== 'motion' && !composeState && (() => {
                 const off = getLayoutOffsets();
                 if (!off) return null;
-                const o0 = selectedObj && !objDragging && !objPinching && !objStretching && !tuningEdge
+                const o0 = selectedObj && !objDragging && !objPinching && !objStretching && !tuningEdge && !chromeHoldRef.current
                   ? objects.find(z => z.id === selectedObj) : null;
                 const o = o0 ? liveObjectOf(o0) : o0;
                 const shaped = !!(o && shapeSel === o.id && isImgShaped(o.imgShape));
@@ -11867,7 +11887,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
         {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
         {/* 對齊線亮著、或正在拖形狀滑桿時，這排鍵也要一起讓開 */}
-        <LiveChrome bus={occupancyBus.current} render={() => activeTab !== 'motion' && imageState && selectedObj && !objDragging && !composeState && !tuningEdge && !objPinching && (() => {
+        <LiveChrome bus={occupancyBus.current} render={() => activeTab !== 'motion' && imageState && selectedObj && !objDragging && !composeState && !tuningEdge && !objPinching && !chromeHoldRef.current && (() => {
           const o0 = objects.find(z => z.id === selectedObj);
           const o = o0 ? liveObjectOf(o0) : o0;
           const cvsEl = canvasRef.current;
