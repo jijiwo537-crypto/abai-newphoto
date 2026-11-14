@@ -495,9 +495,12 @@ export const hugsShapeInk = (o: any) => o?.type === 'shape' && !SPECIAL_LINE_KIN
 /** 選取框中心線離墨水多遠（CSS px）。貼齊的圖形＝框線寬的一半（0.275）
     再加 0.175：墨水邊緣那一排抗鋸齒的半透明像素也不會被框線壓到，
     肉眼看起來仍是貼著。 */
-export const selectionFrameGap = (o: any) => o?.type === 'image' ? 0.375 : hugsShapeInk(o)
+/* 框線內緣要「略微壓進」墨水邊緣（約 0.1 CSS px），不能留空隙：
+   比一個螢幕像素還小的空隙，會隨著放大倍率落在像素格的不同位置，
+   有時被抗鋸齒吃掉、有時露成一整條暗線 —— 縮放時看起來縫隙一下在上、一下在下。 */
+export const selectionFrameGap = (o: any) => o?.type === 'image' ? 0.28 : hugsShapeInk(o)
   // 字形圖案的墨水是字型度量，頂端比幾何路徑多一點誤差，多留 0.2。
-  ? (o.kind === 'hole' && isTextHole(o.hole) ? 0.65 : 0.45) : 2;
+  ? (o.kind === 'hole' && isTextHole(o.hole) ? 0.38 : 0.18) : 2;
 const measuredShapeInk = (o: any) =>
   hugsShapeInk(o) && !(o.kind === 'hole' && isTextHole(o.hole)) ? measureShapeInk(o) : null;
 
