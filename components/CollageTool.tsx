@@ -611,19 +611,55 @@ const CREATIVE_DUAL_INNER = '#C4D1C6';
 const creativeShapeColorFor = (kind: string) => isBackdropMask(kind) ? shapeDefaultColorFor(kind) : '#FFFFFF';
 
 /** 圖形調整面板用的滑桿，樣式跟經典拼圖那顆 ShapeEditorPanel 逐項相同 */
+/** 大半徑發光的低解析度版本（見 drawObject 的發光段）。快取以路徑物件＋參數為鍵 */
+const lowResGlowCache = new WeakMap<Path2D, Map<string, { c: HTMLCanvasElement; pad: number }>>();
+const lowResShapeGlow = (ctx: CanvasRenderingContext2D, path: Path2D, solid: boolean, bw: number, bh: number, rs: number[], color: string,
+  squares: undefined | (() => typeof fillTrackSquares), kind: string, tbw: number, tbh: number) => {
+  const m = ctx.getTransform(); const dev = Math.max(1e-3, Math.hypot(m.a, m.b));
+  // shadowBlur 是裝置像素、不吃變形：最小那層在縮小畫布上留 ~5px，品質不變
+  const q = Math.max(1 / 8, Math.min(1 / 2, 5 / rs[0]));
+  const dash = ctx.getLineDash();
+  const key = [bw, bh, dev, q, rs.join(','), color, solid ? 1 : 0, ctx.lineWidth, ctx.lineJoin, ctx.lineCap, ctx.miterLimit, dash.join(','), ctx.lineDashOffset, squares ? 1 : 0, kind, tbw, tbh].join('|');
+  let per = lowResGlowCache.get(path); if (!per) { per = new Map(); lowResGlowCache.set(path, per); }
+  const hit = per.get(key); if (hit) return hit;
+  const pad = rs[rs.length - 1] / dev * 1.25 + ctx.lineWidth;          // 本地單位
+  const k = dev * q;                                                     // 本地 → 小畫布像素
+  const W = Math.max(1, Math.ceil((bw + pad * 2) * k)), H = Math.max(1, Math.ceil((bh + pad * 2) * k));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d')!;
+  // 形狀畫在畫布外面，只讓影子落進來
+  const off = (bw + pad * 2) * 3;
+  g.setTransform(k, 0, 0, k, (pad - off) * k, pad * k);
+  g.shadowOffsetX = off * k; g.shadowColor = color;
+  g.fillStyle = g.strokeStyle = '#000';
+  g.lineWidth = ctx.lineWidth; g.lineJoin = ctx.lineJoin; g.lineCap = ctx.lineCap; g.miterLimit = ctx.miterLimit;
+  g.setLineDash(dash); g.lineDashOffset = ctx.lineDashOffset;
+  for (const r of rs) {
+    g.shadowBlur = r * q;
+    solid ? g.fill(path) : g.stroke(path);
+    if (squares) squares()(g, kind, bw, bh, tbw, tbh);
+  }
+  const out = { c, pad };
+  per.set(key, out); if (per.size > 3) per.delete(per.keys().next().value!);
+  return out;
+};
+
 /** 一條開放路徑（SVG d）的兩個線頭：位置，以及「往路徑外面」的單位方向。
     起點的方向＝第一段往哪走的反方向；終點＝最後一段往哪走（曲線用控制點，跟繪製時的切線一致） */
 const lineEndsOf = (d: string) => {
-  const nums = (d.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || []).map(Number);
-  if (nums.length < 4) return [];
-  const pts: [number, number][] = [];
-  for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
   const out: { x: number; y: number; tx: number; ty: number }[] = [];
   const dir = (a: [number, number], b: [number, number]) => { const dx = a[0] - b[0], dy = a[1] - b[1], l = Math.hypot(dx, dy); return l > 1e-6 ? [dx / l, dy / l] : null; };
-  // 起點：找第一個跟起點不重合的點
-  for (let i = 1; i < pts.length; i++) { const t = dir(pts[0], pts[i]); if (t) { out.push({ x: pts[0][0], y: pts[0][1], tx: t[0], ty: t[1] }); break; } }
-  const last = pts[pts.length - 1];
-  for (let i = pts.length - 2; i >= 0; i--) { const t = dir(last, pts[i]); if (t) { out.push({ x: last[0], y: last[1], tx: t[0], ty: t[1] }); break; } }
+  // 每一段（每個 M 開頭的子路徑）各有自己的兩個線頭：十字、叉叉、斜線是很多短線段
+  for (const sub of d.split(/(?=[Mm])/)) {
+    if (/[Zz]/.test(sub)) continue; // 封閉的子路徑沒有線頭
+    const nums = (sub.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || []).map(Number);
+    if (nums.length < 4) continue;
+    const pts: [number, number][] = [];
+    for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
+    for (let i = 1; i < pts.length; i++) { const t = dir(pts[0], pts[i]); if (t) { out.push({ x: pts[0][0], y: pts[0][1], tx: t[0], ty: t[1] }); break; } }
+    const last = pts[pts.length - 1];
+    for (let i = pts.length - 2; i >= 0; i--) { const t = dir(last, pts[i]); if (t) { out.push({ x: last[0], y: last[1], tx: t[0], ty: t[1] }); break; } }
+  }
   return out;
 };
 
@@ -681,13 +717,13 @@ const ParamGlyph = ({ k }: { k: string }) => (
   <span aria-hidden className="block w-[19px] h-[19px] bg-current" style={{ WebkitMaskImage: PARAM_GLYPH_URL[k], maskImage: PARAM_GLYPH_URL[k], WebkitMaskSize: '100% 100%', maskSize: '100% 100%' }} />
 );
 type ParamItem = { key: string; label: string; icon: React.ReactNode; value: number; def: number; min: number; max: number; onChange: (v: number) => void; disabled?: boolean };
-const ParamStrip: React.FC<{ items: ParamItem[] }> = ({ items }) => {
+const ParamStrip: React.FC<{ items: ParamItem[]; onActive?: (a: boolean) => void }> = ({ items, onActive }) => {
   const [active, setActive] = useState(items[0]?.key);
   const cur = items.find(i => i.key === active && !i.disabled) || items.find(i => !i.disabled) || items[0];
   if (!cur) return null;
   return (
     <div data-param-strip>
-      <div className="px-2">{shapeSlider(cur.label, cur.value, cur.min, cur.max, cur.onChange)}</div>
+      <div className="px-2">{shapeSlider(cur.label, cur.value, cur.min, cur.max, cur.onChange, onActive)}</div>
       <div className="flex justify-center gap-0.5 mt-3">
         {items.map(it => {
           const on = it.key === cur.key;
@@ -1761,6 +1797,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [objects, setObjects] = useState<any[]>([]);
   const objectsRef = useRef<any[]>([]);
   const maskSliderLive=useRef<{id:string;patch:any}|null>(null);
+  /** 貼圖調整面板開著時，閒置時就先把「這個貼圖底下的畫面」快取好（見 tuningId）：
+      第一次按滑桿那一格就不用現場重畫整個場景 */
+  const tunePrewarmId=useRef<string|null>(null);
+  /** 預熱那一次重畫：不走靜止時的圖塊捷徑，跟拖滑桿時走同一條路，才會把快取建起來 */
+  const tunePrewarmPass=useRef(false);
   // 正在拖的遮罩滑桿從 ref 畫，保留它的即時值
   objectsRef.current = maskSliderLive.current ? objects.map(o => o.id === maskSliderLive.current!.id ? { ...o, ...maskSliderLive.current!.patch } : o) : objects;
   const [selectedObj, setSelectedObj] = useState<string | null>(null);
@@ -6176,7 +6217,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ctx.globalCompositeOperation = 'source-over';
     // 一般的物件選取是畫布上方的 SVG 疊層，場景像素一樣，所以選著遮罩或形狀縮放時還是用固定的圖塊；
     // 只有形狀外框的選取（描進畫布裡）才需要即時繪製
-    const sceneIsStatic=liveMaskScale.current===null&&!(selectedObj&&shapeSel)&&!selectedTarget&&!baseSelected&&selectedRegionPhotoRef.current===null&&!regionPhotoEditingRef.current&&!animRef.current&&!motionTargetFlashRef.current&&!editingTextId&&!swapSource&&!regionSliderHeld.current&&!regionHold.current?.active
+    const sceneIsStatic=!tunePrewarmPass.current&&liveMaskScale.current===null&&!(selectedObj&&shapeSel)&&!selectedTarget&&!baseSelected&&selectedRegionPhotoRef.current===null&&!regionPhotoEditingRef.current&&!animRef.current&&!motionTargetFlashRef.current&&!editingTextId&&!swapSource&&!regionSliderHeld.current&&!regionHold.current?.active
       &&!objDragRef.current&&!objPinchRef.current&&!objStretchRef.current&&!baseDragRef.current&&!basePinchRef.current&&!interactionRef.current
       &&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
     // 不點陣化來源、不上傳著色器、不逐物件取整、換縮放也不重建。每個像素都用同一份固定的上層座標對應
@@ -7996,6 +8037,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.save();
           ctx.shadowColor = o.glowColor || col;
           // 半徑乘上強度（面板那根 0～100 的滑桿）
+          const glowRs = shapeGlowBlurs(bw, bh).map(r => r * gAmt);
+          const plainGlow = !(solid && COMPOSITE_SHAPE_KINDS.has(o.kind))
+            && (!GRID_SHAPE_KINDS.has(o.kind) || f?.gridWave === undefined || (f?.waveMix !== undefined && f.waveMix <= 1e-5));
+          if (plainGlow && glowRs[0] >= 10) {
+            /* 大半徑的發光：在縮小的畫布上模糊再放大貼回來。模糊本來就沒有細節，
+               看起來一樣，但要算的像素少十幾倍（長線條、刺繡線發光時拉滑桿不再卡）。
+               同一組參數畫過就直接重用（調別的滑桿、拖畫面時發光不用重算）。 */
+            const glowImg = lowResShapeGlow(ctx, shapeP, solid, bw, bh, glowRs, o.glowColor || col,
+              solid ? undefined : () => fillTrackSquares, o.kind, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s);
+            ctx.drawImage(glowImg.c, -glowImg.pad, -glowImg.pad, bw + glowImg.pad * 2, bh + glowImg.pad * 2);
+            // 原本每一層也會連同形狀本身畫一次，照樣畫（半透明的圖形外觀不變）
+            for (let gi = 0; gi < glowRs.length; gi++) { paintShapePath(!!solid); if (!solid) fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s); }
+          } else
           for (const r of shapeGlowBlurs(bw, bh)) {
             ctx.shadowBlur = r * gAmt;
             if (solid && COMPOSITE_SHAPE_KINDS.has(o.kind)) {
@@ -8805,7 +8859,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 拖貼圖的調整滑桿（粗細、發光、紋理…）也是同一回事：只有那一個貼圖在變，它底下的整個畫面
        每一格都一樣。實測真正的 WebKit 上，不管哪種貼圖、哪根滑桿，每格都要 20～45ms ——
        那是每一格重畫整個場景的固定成本，不是貼圖本身。 */
-    const tuningId=isMain&&maskSliderLive.current&&objects.find(o=>o.id===maskSliderLive.current!.id)?.type==='shape'?maskSliderLive.current.id:null;
+    const tuneTarget=maskSliderLive.current?.id??tunePrewarmId.current;
+    const tuningId=isMain&&tuneTarget&&objects.find(o=>o.id===tuneTarget)?.type==='shape'?tuneTarget:null;
     const movingId=isMain?((objDragRef.current?.moved&&objDragRef.current.id)||(objPinchRef.current?.gestureStarted&&objPinchRef.current.id)||objStretchRef.current?.id||tuningId||null):null;
     const movingIndex=movingId?aboveObjs.findIndex(o=>o.id===movingId):-1;
     const liftPrefix=!maskPrefix&&isMain&&!previewCapture&&!directMaskPhotos&&movingIndex>=0&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
@@ -12572,6 +12627,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                      圖層上下不放這裡 —— 選中時畫面上那排工具列本來就有。 */
                   return (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
+                      <TunePrewarm id={sel.id} target={tunePrewarmId} pass={tunePrewarmPass} paint={regionPaintRef} />
                       {/* 模糊圖形的面板很短，整頁固定不捲動 */}
                       <div className={`edge-scroll ${isBlurShape(sel.kind) ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden no-scrollbar px-2`}>
                         {/* 底下留一段（跟經典拼圖的圖形編輯一樣的 pb-14）——
@@ -12601,7 +12657,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 const nw = stitchWidthForGap(sel.kind, sel.w, sel.h, g0, v);
                                 patch({ lineGap: v, w: nw, x: sel.x + (sel.w - nw) / 2,
                                   ...((sel as any).textureBaseW ? { textureBaseW: (sel as any).textureBaseW * nw / sel.w } : {}) });
-                              }} />}
+                              }} onInteraction={shapeLive} />}
                           </div>}
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
@@ -12656,7 +12712,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               { key: 'glow', label: '發光', icon: <ParamGlyph k="glow" />, def: 0, min: 0, max: 100, value: Math.round(fo.glow ?? 0),
                                 disabled: scatterAllNoGlow(fo.kinds), onChange: (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, glow: Math.round(v) } } as any) },
                             ];
-                            return <div className="order-1 w-full -mb-2"><ParamStrip key={sel.id} items={items} /></div>;
+                            return <div className="order-1 w-full -mb-2"><ParamStrip key={sel.id} items={items} onActive={shapeLive} /></div>;
                           })()}
                           {sel.kind === FRAME_SCATTER && <div className="px-2 order-1 w-full">
                             <ScatterKindsPicker value={(sel as any).frameOpts?.kinds}
@@ -13306,6 +13362,16 @@ const useRafOnChange = (onChange: (v: number) => void) => {
  * 滑桿的回饋由這個小元件自己處理。大的編輯器只在手勢結束時提交 state，它的繪製排程每格讀最新的值
  */
 /** 掛上之後（以及 k 變了之後）趁瀏覽器空檔跑一次 run；卸載就取消。visible：掛著的期間設成 true */
+/** 貼圖調整面板開著時：閒置時先畫一次「這個貼圖底下的畫面」並快取，面板關掉就放掉 */
+const TunePrewarm=({id,target,pass,paint}:{id:string;target:{current:string|null};pass:{current:boolean};paint:{current:(()=>void)|null|undefined}})=>{
+  useEffect(()=>{
+    const ric=(window as any).requestIdleCallback as ((f:()=>void,o?:any)=>number)|undefined;
+    const go=()=>{target.current=id;pass.current=true;try{paint.current?.();}finally{pass.current=false;}};
+    const h=ric?ric(go,{timeout:800}):window.setTimeout(go,250);
+    return ()=>{if(ric)(window as any).cancelIdleCallback?.(h);else window.clearTimeout(h);if(target.current===id)target.current=null;};
+  },[id,target,pass,paint]);
+  return null;
+};
 const IdleOnce=({k,run,visible}:{k:string;run:()=>void;visible?:{current:boolean}})=>{
   const runRef=useRef(run);runRef.current=run;
   useEffect(()=>{if(!visible)return;visible.current=true;return ()=>{visible.current=false;};},[visible]);

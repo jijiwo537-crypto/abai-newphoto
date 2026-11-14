@@ -1354,18 +1354,24 @@ export const stitchWidthForGap = (kind: string, w: number, h: number, oldGap: nu
 };
 /** 把間距帶進路徑用的 kind（shapePathD 認得 'stitch-plus~30'）；其他圖形原樣 */
 /** 間距滑桿：連續值（不取整數），拉起來像文字間距一樣順 */
-export const GapSlider = ({ value, onValue, onInteraction }: { value: number; onValue: (v: number) => void; onInteraction?: (b: boolean) => void }) => (
+/** 線條「間距」滑桿。拖動中數字由這顆自己顯示：呼叫端走即時通道時，狀態要放開才更新 */
+export const GapSlider = ({ value, onValue, onInteraction }: { value: number; onValue: (v: number) => void; onInteraction?: (b: boolean) => void }) => {
+  const [shown, setShown] = React.useState(value);
+  const dragging = React.useRef(false);
+  React.useEffect(() => { if (!dragging.current) setShown(value); }, [value]);
+  return (
   <div className="space-y-1.5">
     <div className="flex justify-between items-center">
       <span className="text-[11px] font-bold text-white/70">間距</span>
-      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{Math.round(value)}</span>
+      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{Math.round(shown)}</span>
     </div>
     <div className="slider-wrap" style={{ height: 16 }}>
-      <SmoothRange min={0} max={100} step={0.01} value={value} onValue={onValue}
-        onInteractionChange={onInteraction} className="premium-slider w-full" style={{ touchAction: 'none' }} />
+      <SmoothRange min={0} max={100} step={0.01} value={value} onValue={v => { setShown(v); onValue(v); }}
+        onInteractionChange={a => { dragging.current = a; onInteraction?.(a); if (!a) setShown(value); }} className="premium-slider w-full" style={{ touchAction: 'none' }} />
     </div>
   </div>
-);
+  );
+};
 export const stitchKindD = (kind: string, gap?: number) =>
   gap === undefined || !STITCH_LINE_KINDS.has(kind) ? kind : `${kind}~${Math.round(gap * 100) / 100}`;
 const stitchLineD = (kind: string, w: number, h: number, gapUi?: number) => {
