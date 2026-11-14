@@ -478,6 +478,13 @@ async function scenarioStickerPerf() {
     return `${avg.toFixed(0)}/${Math.round(s[0])}`;
   };
   const sliders = () => (Array.from(document.querySelectorAll('.slider-wrap input[type=range]')) as HTMLInputElement[]).filter(visible);
+  /* 基準：模擬器什麼都不做時一格要多久（CI 的虛擬機可能本來就跑不到 60 格），沒有這個數字上面那些沒辦法解讀 */
+  {
+    const gaps: number[] = []; let last = await raf();
+    for (let i = 0; i < 60; i++) { const now = await raf(); gaps.push(now - last); last = now; }
+    const s2 = [...gaps].sort((a, b) => a - b);
+    log(`stickerperf BASELINE idle: avg ${(gaps.reduce((a, b) => a + b, 0) / gaps.length).toFixed(1)}ms median ${s2[30].toFixed(1)} max ${s2[59].toFixed(0)}`);
+  }
   for (const id of items) {
     const tab = document.querySelector('[data-creative-tab=add]') as HTMLElement | null; if (tab) click(tab); await sleep(800);
     const add = findButton(/^新增貼圖/); if (add) { click(add); await sleep(800); }
