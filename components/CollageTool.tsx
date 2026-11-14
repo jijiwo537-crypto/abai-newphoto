@@ -495,12 +495,14 @@ export const hugsShapeInk = (o: any) => o?.type === 'shape' && !SPECIAL_LINE_KIN
 /** 選取框中心線離墨水多遠（CSS px）。貼齊的圖形＝框線寬的一半（0.275）
     再加 0.175：墨水邊緣那一排抗鋸齒的半透明像素也不會被框線壓到，
     肉眼看起來仍是貼著。 */
-/* 框線內緣要「略微壓進」墨水邊緣（約 0.1 CSS px），不能留空隙：
-   比一個螢幕像素還小的空隙，會隨著放大倍率落在像素格的不同位置，
-   有時被抗鋸齒吃掉、有時露成一整條暗線 —— 縮放時看起來縫隙一下在上、一下在下。 */
-export const selectionFrameGap = (o: any) => o?.type === 'image' ? 0.28 : hugsShapeInk(o)
+/* 框線內緣要壓進墨水邊緣「超過一個實體像素」（0.36 CSS px，3 倍螢幕約 1.1 px）：
+   框的內緣、圖的外緣各有一排半透明的抗鋸齒像素，重疊不到一個像素時，兩個半透明
+   疊起來仍不是實心，會露出一條淡縫；它落在哪一邊隨倍率、位置而變（四邊縫隙各自跳）。
+   iOS 模擬器實拍確認過。這裡的值＝框線中心離墨水的距離＝半根框線寬 − 0.36。 */
+const FRAME_BITE = 0.36;
+export const selectionFrameGap = (o: any) => o?.type === 'image' ? 0.375 - FRAME_BITE : hugsShapeInk(o)
   // 字形圖案的墨水是字型度量，頂端比幾何路徑多一點誤差，多留 0.2。
-  ? (o.kind === 'hole' && isTextHole(o.hole) ? 0.38 : 0.18) : 2;
+  ? (o.kind === 'hole' && isTextHole(o.hole) ? 0.275 - FRAME_BITE + 0.2 : 0.275 - FRAME_BITE) : 2;
 const measuredShapeInk = (o: any) =>
   hugsShapeInk(o) && !(o.kind === 'hole' && isTextHole(o.hole)) ? measureShapeInk(o) : null;
 

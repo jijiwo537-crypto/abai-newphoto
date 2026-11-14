@@ -8261,7 +8261,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
            消失。圖形多留一個螢幕像素級的淨空，框仍緊貼但絕不覆蓋本體。 */
         /* 但只要留著不到一個螢幕像素的空隙，縮放時它就會在像素格裡移動，
            一下露成上方暗縫、一下是下方。改成框線內緣略壓進墨水（框線約 1.05px，半根 0.525）。 */
-        const gap = 0.42 / kNow;
+        const gap = (0.525 - 0.36) / kNow;
         if (image.shape === 'hole') {
           /* 借來的圖案：拿畫預覽時同一支算「會超出多少」，但把發光關掉 ——
              發光是散開的光暈，框不需要連光一起框進去。 */
@@ -8321,8 +8321,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         miterLimit: image.shape === 'hole' ? 10 : undefined,
       }) : null;
       // 字形圖案的墨水依字型在不同字級的描繪略有差異，頂端多留一點。
-      // 框線 1.05px（半根 0.525）：內緣略壓進墨水，不留不到一個像素的縫（縮放時縫會上下跳）
-      const hugGap = (image.shape === 'hole' && isTextHole(image.holeType || '') ? 0.75 : 0.42) / kNow;
+      /* 框線 1.05px（半根 0.525）：內緣要壓進墨水超過一個實體像素（0.36px），
+         否則兩排抗鋸齒像素疊不滿，會露出一條隨倍率在四邊跳動的淡縫（見創意拼圖 selectionFrameGap）。 */
+      const hugGap = (image.shape === 'hole' && isTextHole(image.holeType || '') ? 0.525 - 0.36 + 0.4 : 0.525 - 0.36) / kNow;
       // 依真正有墨水的範圍畫框，四周留相同距離；星形額外距離也上下對稱。
       const frameRect = symbolFrame || (hugInk ? {
         left: boxW * hugInk.x / image.width - hugGap,
