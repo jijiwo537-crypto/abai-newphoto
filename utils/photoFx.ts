@@ -176,7 +176,7 @@ function realizeGlow(source:CanvasImageSource){
   const c=source as HTMLCanvasElement,pend=pendingGlows.get(c);if(!pend)return;
   pendingGlows.delete(c);
   glowWork ||= document.createElement('canvas');
-  const r=applyPhotoFx(pend.source,pend.w,pend.h,pickGlow(pend.fx) as PhotoFx,{cacheSource:pend.opts?.cacheSource,gpuSurface:pend.opts?.gpuSurface,out:glowWork});
+  const r=applyPhotoFxRaw(pend.source,pend.w,pend.h,pickGlow(pend.fx) as PhotoFx,{cacheSource:pend.opts?.cacheSource,gpuSurface:pend.opts?.gpuSurface,out:glowWork});
   if(c.width!==pend.w||c.height!==pend.h){c.width=pend.w;c.height=pend.h;}
   const x=c.getContext('2d');if(!x)return;
   x.globalCompositeOperation='copy';x.drawImage(r,0,0,pend.w,pend.h);x.globalCompositeOperation='source-over';
@@ -687,7 +687,7 @@ function glowedSource(source: CanvasImageSource, w: number, h: number, fx: Photo
   rec.key = '';
   const c = rec.canvas;
   glowWork ||= document.createElement('canvas');
-  const r = applyPhotoFx(source, w, h, pickGlow(fx) as PhotoFx, { cacheSource: opts?.cacheSource, gpuSurface: opts?.gpuSurface, out: glowWork });
+  const r = applyPhotoFxRaw(source, w, h, pickGlow(fx) as PhotoFx, { cacheSource: opts?.cacheSource, gpuSurface: opts?.gpuSurface, out: glowWork });
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   const x = c.getContext('2d');
   if (!x) return null;
@@ -701,7 +701,66 @@ function glowedSource(source: CanvasImageSource, w: number, h: number, fx: Photo
  * 把調整套到來源圖上，回傳一張畫好的 canvas。
  * w / h 是要輸出的像素大小（呼叫端自己決定預覽用小張、匯出用大張）。
  */
+/* 去背（有透明像素）的圖片：濾鏡、調節、特效的著色器大多把透明度寫成 1，
+   透明的地方算完會變成一整塊黑。這裡在出口統一補回來 —— 結果再用原圖的透明度裁一次
+   （destination-in）。只看「圖片」來源（<img>／ImageBitmap），畫布來源內容會變、
+   通常是呼叫端自己合成的，不在這裡判斷。沒有透明像素的照片一個步驟都不會多。 */
+const alphaOfSource = new WeakMap<object, boolean>();
+export function sourceHasAlpha(source: CanvasImageSource): boolean {
+  const isImg = typeof HTMLImageElement !== 'undefined' && source instanceof HTMLImageElement;
+  const isBmp = typeof ImageBitmap !== 'undefined' && source instanceof ImageBitmap;
+  if (!isImg && !isBmp) return false;
+  const known = alphaOfSource.get(source as object);
+  if (known !== undefined) return known;
+  const sw = isImg ? (source as HTMLImageElement).naturalWidth : (source as ImageBitmap).width;
+  const sh = isImg ? (source as HTMLImageElement).naturalHeight : (source as ImageBitmap).height;
+  if (!sw || !sh) return false;            // 還沒解碼：先不記，下次再看
+  let has = false;
+  try {
+    const k = Math.min(1, 128 / Math.max(sw, sh));
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(sw * k)); c.height = Math.max(1, Math.round(sh * k));
+    const g = c.getContext('2d', { willReadFrequently: true });
+    if (g) {
+      g.drawImage(source, 0, 0, c.width, c.height);
+      const d = g.getImageData(0, 0, c.width, c.height).data;
+      for (let i = 3; i < d.length; i += 4) if (d[i] < 255) { has = true; break; }
+    }
+    c.width = c.height = 0;
+  } catch { has = false; }
+  alphaOfSource.set(source as object, has);
+  return has;
+}
+const alphaFixOf = new WeakMap<HTMLCanvasElement, HTMLCanvasElement>();
+function restoreSourceAlpha(r: HTMLCanvasElement, source: CanvasImageSource): HTMLCanvasElement {
+  let g = r.getContext('2d');
+  let out = r;
+  if (!g) {
+    /* 結果是 GPU（WebGL）那張：不能在上面做 2D 合成，抄一張 2D 的再裁 */
+    out = alphaFixOf.get(r) || document.createElement('canvas');
+    alphaFixOf.set(r, out);
+    if (out.width !== r.width || out.height !== r.height) { out.width = r.width; out.height = r.height; }
+    g = out.getContext('2d');
+    if (!g) return r;
+    g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'copy'; g.drawImage(r, 0, 0);
+  }
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = 'destination-in';
+  g.imageSmoothingEnabled = true;
+  g.drawImage(source, 0, 0, out.width, out.height);
+  g.restore();
+  return out;
+}
+
 export function applyPhotoFx(
+  source: CanvasImageSource, w: number, h: number, fx: PhotoFx,
+  opts?: Parameters<typeof applyPhotoFxRaw>[4],
+): HTMLCanvasElement {
+  const r = applyPhotoFxRaw(source, w, h, fx, opts);
+  return sourceHasAlpha(source) ? restoreSourceAlpha(r, source) : r;
+}
+
+function applyPhotoFxRaw(
   source: CanvasImageSource,
   w: number,
   h: number,
@@ -731,7 +790,7 @@ export function applyPhotoFx(
      其他特效再套在那張上。只有發光、沒有別的時，兩種順序本來就一樣，照舊一趟。 */
   if (hasGlow(fx) && hasPhotoFx(stripGlow(fx))) {
     const glowed = glowedSource(source, oW, oH, fx, opts);
-    if (glowed) return applyPhotoFx(glowed, oW, oH, stripGlow(fx), { ...opts, afterGlow: true });
+    if (glowed) return applyPhotoFxRaw(glowed, oW, oH, stripGlow(fx), { ...opts, afterGlow: true });
   }
   /* 「原圖＋光」之後只剩顏色、又要畫進場景（拼圖編輯底圖）：顏色在效果表面自己的
      GPU context 裡算，直接合成進場景 —— 跟只有顏色的照片走的那條一樣，不經過 2D。 */
@@ -772,7 +831,7 @@ export function applyPhotoFx(
     const image=!plainColour&&optical.canvas?surfaceColourImage(optical.canvas,source,oW,oH,baseFx,false):null;
     if(image)optical.key='';
     else if(optical.key!==sourceKey){
-      applyPhotoFx(source,oW,oH,baseFx,{cacheSource:true,out:optical.source,gpuSurface:true});
+      applyPhotoFxRaw(source,oW,oH,baseFx,{cacheSource:true,out:optical.source,gpuSurface:true});
       optical.key=sourceKey;
     }
     const layer=optical.layer;

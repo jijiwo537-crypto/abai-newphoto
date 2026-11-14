@@ -2493,6 +2493,40 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if(display){display.style.visibility='visible';display.style.opacity=shown?'0':'1';}
   };
   const visibleEditorCanvas=()=>fxSurfaceShownRef.current ? fxSurfaceRef.current : displayCanvasRef.current;
+  /* 去背（有透明像素）的照片：濾鏡、調節、特效的著色器大多把透明度寫成 1，
+     透明的地方算完就變成一整塊黑。在顯示這一層統一補回來：用緩衝區（已經套過構圖）
+     的透明度做一張遮罩，蓋在所有顯示用的畫布上 —— 不管走哪一條路算出來，
+     畫面上都照原本的形狀裁切。沒有透明像素的照片完全不會建立遮罩，什麼都不變。 */
+  const alphaMaskRef=useRef<{data:Uint8ClampedArray|null;url:string}>({data:null,url:''});
+  const applyAlphaMask=(url:string)=>{
+    const v=url?`url("${url}")`:'';
+    for(const el of [displayCanvasRef.current,fxSurfaceRef.current,freezeCanvasRef.current]){
+      if(!el)continue;const st=el.style as any;
+      if(st.webkitMaskImage===v&&st.maskImage===v)continue;
+      st.webkitMaskImage=v;st.maskImage=v;
+      st.webkitMaskSize=st.maskSize=v?'100% 100%':'';
+      st.webkitMaskRepeat=st.maskRepeat=v?'no-repeat':'';
+    }
+  };
+  const syncAlphaMask=(b:{original?:Uint8ClampedArray|null;source?:Uint8ClampedArray|null;w:number;h:number})=>{
+    const data=(b.original||b.source)||null;
+    const m=alphaMaskRef.current;
+    if(m.data===data){applyAlphaMask(m.url);return;}
+    if(m.url)URL.revokeObjectURL(m.url);
+    alphaMaskRef.current={data,url:''};applyAlphaMask('');
+    if(!data||!b.w||!b.h||data.length<b.w*b.h*4)return;
+    let has=false;for(let i=3;i<data.length;i+=4)if(data[i]<255){has=true;break;}
+    if(!has)return;
+    const c=document.createElement('canvas');c.width=b.w;c.height=b.h;
+    const g=c.getContext('2d');if(!g)return;
+    g.putImageData(new ImageData(new Uint8ClampedArray(data.subarray(0,b.w*b.h*4)),b.w,b.h),0,0);
+    c.toBlob(blob=>{
+      c.width=c.height=0;
+      if(!blob||alphaMaskRef.current.data!==data)return;
+      const url=URL.createObjectURL(blob);alphaMaskRef.current={data,url};applyAlphaMask(url);
+    },'image/png');
+  };
+  useEffect(()=>()=>{const u=alphaMaskRef.current.url;if(u)URL.revokeObjectURL(u);},[]);
   const presentEditorSource=(ctx:CanvasRenderingContext2D,w:number,h:number)=>{
     const surface=fxSurfaceRef.current;
     showFxSurface(!!surface&&presentFxSource(ctx,w,h,surface));
@@ -5990,6 +6024,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     
     const ctx = cvs.getContext('2d')!;
+    syncAlphaMask(b);
     /* 發光類特效在原圖上算（見 syncGlowSource）。拖曳中而且有 GPU 表面時，
        發光參數變了交給下面的 GPU 直通路線（不讀回像素）；其他情況先在這裡對齊。 */
     const glowPending = glowSig(p) ? `${b.w}x${b.h}|${bufIdent()}|${glowSig(p)}` !== (b.glowKey || '') : !!b.glowKey;
@@ -6051,8 +6086,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           ? pristineOf(thumbSrcOf(buffersSrcRef.current)) : null;
         if (pristine) {
             ctx.save();
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, b.w, b.h);
+            /* 清空而不是塗黑：去背的照片，透明的地方要維持透明 */
+            ctx.clearRect(0, 0, b.w, b.h);
             const r = Math.min(b.w / pristine.width, b.h / pristine.height);
             const dw = pristine.width * r, dh = pristine.height * r;
             ctx.imageSmoothingQuality = 'high';
@@ -6060,6 +6095,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             ctx.restore();
         } else {
             pixelBufferCtx.putImageData(new ImageData(b.original || b.source, b.w, b.h), 0, 0);
+            /* 先清空：去背的照片透明處不會蓋掉上一格（套了效果的那張），
+               不清的話按住對比時兩張會疊在一起 */
+            ctx.clearRect(0, 0, b.w, b.h);
             ctx.drawImage(pixelBufferCanvas, 0, 0);
         }
         cvs.style.filter = 'none';
