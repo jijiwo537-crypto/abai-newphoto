@@ -690,6 +690,12 @@ const lineEndsOf = (d: string) => {
 
 /** 線條類貼圖的發光上限：原本的 40%（滑桿照樣 0～100） */
 const LINE_GLOW_CAP = 0.4;
+/** 線條類的粗細：滑桿 0～100 對到原本的 10～100（lineW 1～10） */
+const lineWFromUi = (v: number) => (10 + Math.max(0, Math.min(100, v)) * 0.9) / 10;
+const lineWToUi = (w: number) => Math.max(0, Math.min(100, Math.round((w * 10 - 10) / 0.9)));
+/** 創意拼圖新增線條時的粗細：預設停在滑桿的整數 5 的倍數上（直線 35、波浪與刺繡 15）；其他圖形不變 */
+const creativeDefaultLineW = (kind: string) =>
+  !SPECIAL_LINE_KINDS.has(kind) ? SHAPE_DEFAULT_LINEW(kind) : lineWFromUi(Math.round(lineWToUi(SHAPE_DEFAULT_LINEW(kind)) / 5) * 5);
 /** 網格類貼圖的發光上限：原本的 10%（滑桿照樣 0～100，能調得更細） */
 const GRID_GLOW_CAP = 0.1;
 /** 圖形調整面板用的滑桿。拖動中數字由這顆自己顯示（走即時通道時工具的狀態要放開才更新）；
@@ -3815,6 +3821,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 拖佔比的期間，物件在畫面上的位置：跟畫布（renderToCanvas）完全同一個換算 ——
       物件中心照新舊版面的寬高比例搬過去。選中框、控制點、工具列用它才會跟著物件走。 */
   const liveObjectOf = <T extends { x: number; y: number; w: number; h: number }>(ob: T): T => {
+    // 貼圖滑桿拖動中：選取框與工具列照「正在拖的值」畫（粗細、間距會改框的大小）
+    const lv = maskSliderLive.current;
+    if (lv && lv.id === (ob as any).id && Object.keys(lv.patch).length) ob = { ...ob, ...lv.patch };
     if (liveMaskScale.current === null || !imageState) return ob;
     const { baseW, baseH } = imageState;
     const prev = layoutGeometry(layout, baseW, baseH, maskScale, canvasRatio);
@@ -3901,7 +3910,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         lineBase: WAVE_LIKE_KINDS.has(it.kind)
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
         textureBaseW: w, textureBaseH: h,
-        lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
+        lineW: creativeDefaultLineW(it.kind), dash: 0,
         color: initialColor, glow: 0, glowColor: initialColor,
         ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: CREATIVE_DUAL_INNER } : null),
         x: cx - w / 2, y: cy - h / 2, w, h, rot: it.rot || 0,
@@ -12446,7 +12455,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     lineBase: WAVE_LIKE_KINDS.has(it.kind)
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
                     textureBaseW: w, textureBaseH: h,
-                    lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
+                    lineW: creativeDefaultLineW(it.kind), dash: 0,
                     color: initialColor,
                     glow: 0, glowColor: initialColor,
                     ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: CREATIVE_DUAL_INNER } : {}),
@@ -12591,6 +12600,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     maskSliderLive.current!.patch = { ...maskSliderLive.current!.patch, ...d };
                     objectsRef.current = objectsRef.current.map(o => o.id === sel.id ? { ...o, ...d } : o);
                     regionPaintRef.current?.();
+                    occupancyBus.current.forEach(f => f()); // 選取框跟著即時變（只重畫那兩小塊疊層）
                   } else setObjects(prev => prev.map(o => o.id === sel.id ? { ...o, ...d } : o));
                 };
                 /** 貼圖滑桿的按上／放開：按上時開即時通道，放開時一次寫回狀態（放開那一格才重新整理工具） */
@@ -12673,7 +12683,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {hasWidth && <div className={`grid ${hasDash || STITCH_LINE_KINDS.has(sel.kind) ? 'grid-cols-2' : 'grid-cols-1'} gap-5 px-2`}>
                             {isGrid ? shapeSlider(GRID_DOT_KINDS.has(sel.kind) ? '大小' : '粗細', Math.round(((sel.lineW ?? 6) - 6) / 12 * 100), 0, 100,
                               (v: number) => patch({ lineW: 6 + v * .12 }), shapeLive)
-                              : shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }), shapeLive)}
+                              : isLine
+                                /* 線條：最細只到原本的 10（太細看不見），滑桿照樣 0～100 */
+                                ? shapeSlider('粗細', lineWToUi(sel.lineW ?? 4), 0, 100, (v: number) => patch({ lineW: lineWFromUi(v) }), shapeLive)
+                                : shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }), shapeLive)}
                             {hasDash && shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }), shapeLive)}
                             {STITCH_LINE_KINDS.has(sel.kind) && <GapSlider value={(sel as any).lineGap ?? stitchGapDefault(sel.kind)}
                               onValue={(v: number) => {
