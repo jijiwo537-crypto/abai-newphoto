@@ -584,7 +584,11 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     return {x:bw/2+ink.x-edge,y:bh/2+ink.y-edge,w:ink.w+2*edge,h:ink.h+2*edge};
   }
   const ink = isImgShaped(o.imgShape) ? imgShapeInkOf(o, bw, bh) : imgShapeInk(o.imgShape, bw, bh);
-  return { x: ink.x - gap, y: ink.y - gap, w: ink.w + gap * 2, h: ink.h + gap * 2 };
+  /* 圖片的描邊往外長「粗細＋間距」（單位＝長邊的 1/160，跟 fxCanvasOf 畫描邊同一條式子），
+     選中框要把描邊一起框進去，拖描邊滑桿時框跟著即時變大變小 */
+  const sx = o.type === 'image' && (o.imgStrokeWidth || 0) > 0
+    ? ((o.imgStrokeWidth || 0) + (o.imgStrokeGap || 0)) * Math.max(bw, bh) / 160 : 0;
+  return { x: ink.x - gap - sx, y: ink.y - gap - sx, w: ink.w + (gap + sx) * 2, h: ink.h + (gap + sx) * 2 };
 };
 
 /**
@@ -13183,6 +13187,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           objectsRef.current=objectsRef.current.map(o=>o.id===sel.id?{...o,...d}:o);
                           // 一格畫面只重畫一次（一次拖動可能送好幾個 input）
                           if(!objFxPaintFrame.current)objFxPaintFrame.current=requestAnimationFrame(()=>{objFxPaintFrame.current=0;regionPaintRef.current?.();});
+                          /* 描邊粗細／間距會改選中框的大小：只叫選中框那一小塊即時重畫（liveObjectOf 會讀到正在拖的值） */
+                          if('imgStrokeWidth' in d||'imgStrokeGap' in d)occupancyBus.current.forEach(f=>f());
                           return;
                         }
                         patch(d);

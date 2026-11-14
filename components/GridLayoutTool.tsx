@@ -8402,6 +8402,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             : { x: 0, y: 0 };
           return { x: ov.x * sc + gap, y: ov.y * sc + gap };
         }
+        /* 圖片的描邊往外長「粗細＋間距」：選中框一起框進去，拖描邊滑桿時框跟著即時變大變小 */
+        if (!image.shape && image.text === undefined && (image.imgStrokeWidth || 0) > 0) {
+          const sx = ((image.imgStrokeWidth || 0) + (image.imgStrokeGap || 0)) * sc;
+          return { x: gap + sx, y: gap + sx };
+        }
         if (!image.shape || !shapeStroke) return { x: gap, y: gap };
         // shapeStroke 是 viewBox 單位，乘回 scale 才是外框那一層的 px
         // 場景用物件的縮放畫原本的路徑，舊的 DOM 描邊參數則會除以 renderScale。
@@ -8556,7 +8561,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             data-classic-selection-frame={image.id}
             className="absolute pointer-events-none z-30 border-solid border-white/95"
             style={{
-              inset: -previewInv,
+              /* 有描邊時框要把描邊一起框進去（描邊往外長「粗細＋間距」），拖描邊滑桿時跟著即時變大變小 */
+              inset: -previewInv - (image.imgStrokeWidth ? ((image.imgStrokeWidth || 0) + (image.imgStrokeGap || 0)) * (image.scale || 1) : 0),
               borderWidth: 0.75 * previewInv,
               boxShadow: `0 0 ${4 * previewInv}px rgba(0,0,0,0.3)`,
             }}
