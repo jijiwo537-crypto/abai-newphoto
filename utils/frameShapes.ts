@@ -434,13 +434,12 @@ export const POLAROID_FORMATS: PolaroidFormat[] = [
   { id: 'polaroid', label: 'Polaroid 經典', sub: '600・i-Type・SX-70', card: [88.47, 107.52], win: [76.80, 78.94], top: 5.835, cr: 1, wr: 0 },
   { id: 'polaroid-go', label: 'Polaroid Go', sub: '迷你方形', card: [53.9, 66.6], win: [47, 46], top: 4, cr: 1, wr: 0 },
   { id: 'instax-mini', label: 'Instax Mini', sub: '名片尺寸', card: [54, 86], win: [46, 62], top: 8, cr: 3, wr: .23 },
-  { id: 'instax-mini-l', label: 'Instax Mini 橫拍', sub: '橫拍・厚邊在右', card: [86, 54], win: [62, 46], top: 8, cr: 3, wr: .23, side: 'right' },
   { id: 'instax-square', label: 'Instax Square', sub: '方形', card: [72, 86], win: [62, 62], top: 8, cr: 3, wr: .31 },
   { id: 'instax-wide', label: 'Instax Wide', sub: '寬幅', card: [108, 86], win: [99, 62], top: 8, cr: 3, wr: .31 },
 ];
 export const POLAROID_DEFAULT_FORMAT = 'polaroid';
-/** 紙紋強度（0～100），固定 */
-export const POLAROID_PAPER_DEFAULT = 40;
+/** 紙紋強度（0～100），固定（40 太明顯，降到 25） */
+export const POLAROID_PAPER_DEFAULT = 25;
 const polaroidFormat = (id?: string) => POLAROID_FORMATS.find(f => f.id === id) || POLAROID_FORMATS[0];
 /** 卡片、窗口在 (0,0)～(w,h) 裡的位置。k＝每 mm 多少單位 */
 export const polaroidGeom = (w: number, h: number, fmtId?: string) => {
@@ -527,19 +526,27 @@ export const loadFramePhoto = (src: string) => new Promise<void>(resolve => {
 });
 /** 照片能不能直接畫了（還在載入就是 false） */
 export const framePhotoReady = (src?: string) => !!src && !!framePhoto(src);
-const paintFramePhoto = (g: CanvasRenderingContext2D, win: Path2D, G: ReturnType<typeof polaroidGeom>, o: FrameParams) => {
-  if (!o.imageSrc) return;
+/** 照片在 (0,0)～(w,h) 這張卡片上實際畫在哪裡（整張照片的範圍，可能超出窗口）。
+    ox／oy＝能左右／上下移動的半幅（imageX／imageY 乘上它就是位移）；照片還沒載好就是 null */
+export const polaroidPhotoRect = (w: number, h: number, o: FrameParams) => {
+  if (!o.imageSrc) return null;
   const ph = framePhoto(o.imageSrc);
-  if (!ph) return;
+  if (!ph) return null;
+  const G = polaroidGeom(w, h, o.fmt);
   const zoom = Math.max(1, o.imageZoom ?? 1);
   const s = Math.max(G.ww / ph.width, G.wh / ph.height) * zoom;
-  const dw = ph.width * s, dh = ph.height * s;
-  const cx = G.wx + G.ww / 2 + Math.max(-1, Math.min(1, o.imageX ?? 0)) * (dw - G.ww) / 2;
-  const cy = G.wy + G.wh / 2 + Math.max(-1, Math.min(1, o.imageY ?? 0)) * (dh - G.wh) / 2;
+  const dw = ph.width * s, dh = ph.height * s, ox = (dw - G.ww) / 2, oy = (dh - G.wh) / 2;
+  const cx = G.wx + G.ww / 2 + Math.max(-1, Math.min(1, o.imageX ?? 0)) * ox;
+  const cy = G.wy + G.wh / 2 + Math.max(-1, Math.min(1, o.imageY ?? 0)) * oy;
+  return { x: cx - dw / 2, y: cy - dh / 2, w: dw, h: dh, ox, oy, win: { x: G.wx, y: G.wy, w: G.ww, h: G.wh }, ph };
+};
+const paintFramePhoto = (g: CanvasRenderingContext2D, win: Path2D, G: ReturnType<typeof polaroidGeom>, o: FrameParams, w: number, h: number) => {
+  const r = polaroidPhotoRect(w, h, o);
+  if (!r) return;
   g.save();
   g.clip(win);
   g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high';
-  g.drawImage(ph, cx - dw / 2, cy - dh / 2, dw, dh);
+  g.drawImage(r.ph, r.x, r.y, r.w, r.h);
   g.restore();
 };
 /** 拍立得：相紙色＋壓紋紙紋、上暖下冷的大範圍明暗、卡片邊緣一道細線、
@@ -560,8 +567,8 @@ const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color:
   // 紙紋：整張壓紋相紙，一格的實際大小固定（約 24mm），換規格、放大縮小都是同一種紋理
   if (paper > 0) {
     const pat = g.createPattern(paperTile(color), 'repeat')!;
-    // 一格紋理的實際大小約 64mm（之前 24mm 太密）
-    const sc = Math.max(1e-3, 64 * G.k / 256);
+    // 一格紋理的實際大小約 36mm（24mm 太密、64mm 太散）
+    const sc = Math.max(1e-3, 36 * G.k / 256);
     pat.setTransform(new DOMMatrix([sc, 0, 0, sc, 0, 0]));
     g.globalAlpha = paper; g.fillStyle = pat; g.fillRect(0, 0, w, h); g.globalAlpha = 1;
   }
@@ -685,7 +692,7 @@ export const paintFrameShape = (
      不放進下面那張「疊紋理」的暫存畫布 —— 不然點點／星星紋理會連照片一起蓋到 */
   if (kind === FRAME_POLAROID && params.imageSrc) {
     const G = polaroidGeom(w, h, params.fmt);
-    paintFramePhoto(ctx, polaroidWindow(G), G, params);
+    paintFramePhoto(ctx, polaroidWindow(G), G, params, w, h);
     params = { ...params, imageSrc: undefined };
   }
   if (isScatterFrame(kind)) { paintScatter(ctx, w, h, color, kind === FRAME_SCATTER_TB ? { ...params, scatterTb: true } : params); return; }

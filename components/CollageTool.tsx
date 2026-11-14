@@ -19,7 +19,7 @@ import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} 
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_DEFAULT_FORMAT, polaroidBox, polaroidResize, onFramePhotoReady } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_DEFAULT_FORMAT, polaroidBox, polaroidResize, onFramePhotoReady, polaroidPhotoRect } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
@@ -4652,6 +4652,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const sx = (geometry?.cw || canvasRef.current.width / ps) / rect.width, sy = (geometry?.ch || canvasRef.current.height / ps) / rect.height;
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState.globalScale || 1, offs = getLayoutOffsets();
+    // 拍立得裡的照片選中時：整個畫面都是它的操作區（見 polaPhotoRef）
+    if(polaPhotoRef.current){
+      const o=objectsRef.current.find(z=>z.id===polaPhotoRef.current);
+      if(o){
+        e.stopPropagation();
+        const fo=(o as any).frameOpts||{};
+        if(activePointers.current.size>=2){
+          const pts=[...activePointers.current.values()];
+          polaGestureRef.current={mode:'pinch',id:o.id,d0:Math.max(1,Math.hypot(pts[0].clientX-pts[1].clientX,pts[0].clientY-pts[1].clientY)),z0:fo.imageZoom??1,moved:true};
+        }else polaGestureRef.current={mode:'pan',id:o.id,sx:x,sy:y,ix0:fo.imageX??0,iy0:fo.imageY??0,moved:false,tol:6*sx};
+        return;
+      }
+      setPolaPhoto(null);
+    }
     // 沒選中的多圖格子只算可能的點擊，不是裁切手勢。指標留在共用追蹤器裡，第二根手指才能縮放場景
     if(activePointers.current.size===1&&(regionTap.current?.id===e.pointerId||emptyCellTap.current?.id===e.pointerId)){e.stopPropagation();return;}
     const animatedOrder = animRef.current
@@ -4772,6 +4786,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  跟上面改字一樣要等放開才算 —— 按下去就切，會讓「再點一次順手拖走」
                  變成在調形狀裡的位置。 */
               shapeIfTap: !!o.img && isImgShaped(o.imgShape) && hitShapeOf(o, x, y),
+              /* 拍立得：選中之後再點照片窗口 → 改成選中裡面的照片 */
+              polaPhotoIfTap: o.type === 'shape' && o.kind === 'frame-polaroid' && !!(o as any).frameOpts?.imageSrc && hitPolaWindow(o, x, y),
             };
             /* pointerdown 只是按下，不代表已經拖動。真正超過移動門檻時，
                handlePointerMove 才會隱藏框；輕點同一物件不再閃一下。 */
@@ -5406,6 +5422,35 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const sx = (geometry?.cw || canvasRef.current.width / ps) / rect.width, sy = (geometry?.ch || canvasRef.current.height / ps) / rect.height;
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState?.globalScale || 1;
+    // 拍立得裡的照片：拖動＝移動、兩指＝縮放（畫面上任何地方都可以）
+    const pg=polaGestureRef.current;
+    if(pg){
+      e.stopPropagation();
+      const o=objectsRef.current.find(z=>z.id===pg.id);
+      if(!o||pg.mode==='done')return;
+      const fo={...((o as any).frameOpts||{})};
+      if(pg.mode==='pan'&&activePointers.current.size>=2){
+        const pts=[...activePointers.current.values()];
+        polaGestureRef.current={mode:'pinch',id:o.id,d0:Math.max(1,Math.hypot(pts[0].clientX-pts[1].clientX,pts[0].clientY-pts[1].clientY)),z0:fo.imageZoom??1,moved:true};
+        return;
+      }
+      if(pg.mode==='pinch'){
+        const pts=[...activePointers.current.values()];if(pts.length<2)return;
+        const d=Math.hypot(pts[0].clientX-pts[1].clientX,pts[0].clientY-pts[1].clientY);
+        fo.imageZoom=Math.max(1,Math.min(4,pg.z0*d/pg.d0));
+      }else{
+        const dx=x-pg.sx,dy=y-pg.sy;
+        if(!pg.moved&&Math.hypot(dx,dy)<pg.tol)return;
+        pg.moved=true;
+        const a=-(o.rot||0)*Math.PI/180,lx=dx*Math.cos(a)-dy*Math.sin(a),ly=dx*Math.sin(a)+dy*Math.cos(a);
+        const r=polaroidPhotoRect(o.w,o.h,{...fo,imageX:pg.ix0,imageY:pg.iy0});if(!r)return;
+        fo.imageX=r.ox>.01?Math.max(-1,Math.min(1,pg.ix0+lx/r.ox)):0;
+        fo.imageY=r.oy>.01?Math.max(-1,Math.min(1,pg.iy0+ly/r.oy)):0;
+      }
+      objectsRef.current=objectsRef.current.map(z=>z.id===o.id?{...z,frameOpts:fo}:z);
+      regionPaintRef.current?.();
+      return;
+    }
     // 雙指縮放預覽時完全不碰筆刷與拖曳
     if (basePinchRef.current && activePointers.current.size >= 2) {
       e.stopPropagation();
@@ -5736,6 +5781,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       return null;
     })() : null;
     if (motionTapTarget) queueMicrotask(() => chooseMotionTarget(motionTapTarget));
+    // 拍立得裡的照片：原地點一下＝什麼都不選；拖過／縮放過＝寫回狀態（可以復原）
+    const pg=polaGestureRef.current;
+    if(pg){
+      if(pg.mode==='pan'&&!pg.moved){setPolaPhoto(null);setSelectedObj(null);setSelectedTarget(null);}
+      else if(pg.mode!=='done'){const o=objectsRef.current.find(z=>z.id===pg.id);if(o)setObjects(prev=>prev.map(z=>z.id===o.id?{...z,frameOpts:(o as any).frameOpts}:z));}
+      // 兩指縮放放開一指時，剩下那一指不要接著變成拖動（等全部放開）
+      polaGestureRef.current=activePointers.current.size>1?{mode:'done',id:pg.id,moved:true}:null;
+    }
     flushView(true);
     // 還沒送出的那一格先補上，物件才不會停在上一格的位置
     flushMoveNow();
@@ -5743,6 +5796,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (objDragRef.current?.editIfTap && !objDragRef.current.moved) {
       textOpenAtRef.current = performance.now();
       setEditingTextId(objDragRef.current.id);
+    }
+    if (objDragRef.current?.polaPhotoIfTap && !objDragRef.current.moved) {
+      // 選中拍立得裡的照片（拍立得本身取消選中，照片用虛線框）
+      const id = objDragRef.current.id;
+      objDragRef.current.openPanelIfTap = false;
+      setSelectedObj(null); setSelectedTarget(null);
+      queueMicrotask(() => setPolaPhoto(id));
     }
     if (objDragRef.current?.openPanelIfTap && !objDragRef.current.moved) {
       setActiveTab(t => (t === 'motion' ? t : 'objedit'));
@@ -5903,6 +5963,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     lastPatternPaintRef.current=null;
     regionPaintRef.current?.();
   }),[]);
+  /* ── 拍立得裡的照片：選中後可以拖動、雙指縮放 ──────────────────────────
+     選中拍立得之後，再點一下照片窗口 → 改成選中裡面的照片（虛線框，框住整張照片）。
+     選中照片時，整個畫面都是它的操作區：一指拖動＝移動，兩指＝縮放；
+     原地點一下（沒拖）＝取消選取（什麼都不選，不是退回選中拍立得）。 */
+  const polaPhotoRef=useRef<string|null>(null);
+  const [polaPhoto,setPolaPhotoState]=useState<string|null>(null);
+  const setPolaPhoto=(id:string|null)=>{polaPhotoRef.current=id;setPolaPhotoState(id);regionPaintRef.current?.();};
+  const polaGestureRef=useRef<any>(null);
+  /** 一個點換成物件自己的座標（左上角是 0,0、沒轉之前的方向） */
+  const objLocal=(o:any,x:number,y:number)=>{const a=-(o.rot||0)*Math.PI/180,dx=x-(o.x+o.w/2),dy=y-(o.y+o.h/2);
+    return {x:dx*Math.cos(a)-dy*Math.sin(a)+o.w/2,y:dx*Math.sin(a)+dy*Math.cos(a)+o.h/2};};
+  const hitPolaWindow=(o:any,x:number,y:number)=>{const r=polaroidPhotoRect(o.w,o.h,(o as any).frameOpts||{});if(!r)return false;const p=objLocal(o,x,y);
+    return p.x>=r.win.x&&p.x<=r.win.x+r.win.w&&p.y>=r.win.y&&p.y<=r.win.y+r.win.h;};
+  // 選了別的東西、換分頁時，照片的選取自動結束
+  useEffect(()=>{if(selectedObj&&polaPhotoRef.current)setPolaPhoto(null);},[selectedObj]);
+  useEffect(()=>{if(polaPhotoRef.current)setPolaPhoto(null);},[activeTab]);
   const mainCanvasSeen=useRef<HTMLCanvasElement|null>(null);
   useEffect(()=>{if(canvasRef.current)mainCanvasSeen.current=canvasRef.current;});
   useEffect(()=>()=>{
@@ -6258,7 +6334,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ctx.globalCompositeOperation = 'source-over';
     // 一般的物件選取是畫布上方的 SVG 疊層，場景像素一樣，所以選著遮罩或形狀縮放時還是用固定的圖塊；
     // 只有形狀外框的選取（描進畫布裡）才需要即時繪製
-    const sceneIsStatic=!tunePrewarmPass.current&&liveMaskScale.current===null&&!(selectedObj&&shapeSel)&&!selectedTarget&&!baseSelected&&selectedRegionPhotoRef.current===null&&!regionPhotoEditingRef.current&&!animRef.current&&!motionTargetFlashRef.current&&!editingTextId&&!swapSource&&!regionSliderHeld.current&&!regionHold.current?.active
+    const sceneIsStatic=!polaPhotoRef.current&&!tunePrewarmPass.current&&liveMaskScale.current===null&&!(selectedObj&&shapeSel)&&!selectedTarget&&!baseSelected&&selectedRegionPhotoRef.current===null&&!regionPhotoEditingRef.current&&!animRef.current&&!motionTargetFlashRef.current&&!editingTextId&&!swapSource&&!regionSliderHeld.current&&!regionHold.current?.active
       &&!objDragRef.current&&!objPinchRef.current&&!objStretchRef.current&&!baseDragRef.current&&!basePinchRef.current&&!interactionRef.current
       &&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
     // 不點陣化來源、不上傳著色器、不逐物件取整、換縮放也不重建。每個像素都用同一份固定的上層座標對應
@@ -8008,6 +8084,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             });
             tc.restore();
           });
+          // 拍立得裡的照片選中時：虛線框住整張照片（只畫在螢幕上那張，不會存進成品）
+          if (polaPhotoRef.current === o.id && isMain && !previewCapture && !hideChromeRef.current) {
+            const pr = polaroidPhotoRect(bw, bh, (o as any).frameOpts || {});
+            if (pr) {
+              // 四個角換成畫布像素再畫：框線粗細、虛線節奏跟其他選取框一樣，不受物件縮放影響
+              const m = ctx.getTransform();
+              const pts = [[pr.x, pr.y], [pr.x + pr.w, pr.y], [pr.x + pr.w, pr.y + pr.h], [pr.x, pr.y + pr.h]]
+                .map(([X, Y]) => [m.a * X + m.c * Y + m.e, m.b * X + m.d * Y + m.f]);
+              const cssK = ctx.canvas.width / Math.max(1, ctx.canvas.getBoundingClientRect().width || ctx.canvas.width);
+              ctx.save();
+              ctx.setTransform(1, 0, 0, 1, 0, 0);
+              ctx.beginPath(); pts.forEach(([X, Y], i) => (i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y))); ctx.closePath();
+              ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 0.9 * cssK;
+              ctx.shadowColor = 'rgba(0,0,0,0.28)'; ctx.shadowBlur = 3 * cssK;
+              ctx.setLineDash([4.8 * cssK, 4.8 * cssK]);
+              ctx.stroke();
+              ctx.restore();
+            }
+          }
           ctx.restore();
         } else {
         const shapeP0 = shapePathBox(
@@ -8573,7 +8668,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!layer) {
         // 沒變、沒選中的向量和文字物件，用剛好的暫存解析度重用；正在動的物件即時畫，存檔和動畫一律用原本的繪製，
         // 沒有較低解析度的互動模式
-        const eligible = isMain && !previewCapture && !f && o.type !== 'image' && !isBackdropMask(o.kind) && o.id !== selectedObj
+        const eligible = isMain && !previewCapture && !f && o.type !== 'image' && !isBackdropMask(o.kind) && o.id !== selectedObj && o.id !== polaPhotoRef.current
           && o.id !== editingTextId && !motionTargetFlashRef.current;
         const tiles = staticObjectTilesRef.current;
         const cached = eligible ? tiles.get(o.id) : null;
