@@ -549,6 +549,57 @@ async function scenarioSelGap() {
   });
 }
 
+/* 選中框四邊縫隙 × 縮放：用兩指 pointer 事件縮放貼圖本身、再縮放整個畫面，每一步量四邊（亞像素） */
+async function scenarioZoomGap() {
+  const raf = () => new Promise<number>(r => requestAnimationFrame(r));
+  await provideFiles(1);
+  click(await waitFor(() => findButton(TOOL_ENTRY.collage), 15000, '創意拼圖按鈕'));
+  await sleep(9000);
+  const tab = document.querySelector('[data-creative-tab=add]') as HTMLElement | null; if (tab) click(tab); await sleep(800);
+  const add = findButton(/^新增貼圖/); if (add) { click(add); await sleep(800); }
+  const it = document.querySelector('button[aria-label="square-f"]') as HTMLElement | null; if (it) click(it); await sleep(2500);
+  const cv = () => [...document.querySelectorAll('canvas')].filter(c => visible(c)).sort((a, b) => b.width * b.height - a.width * a.height)[0] as HTMLCanvasElement;
+  const frameEl = () => [...document.querySelectorAll('svg rect')].find(el => el.getAttribute('stroke') === '#fff' && !el.hasAttribute('data-base-selection-rect')) as SVGRectElement | undefined;
+  const measure = (tag: string) => {
+    const e = frameEl(); if (!e) { log(`zoomgap ${tag}: no frame`); return; }
+    const r = e.getBoundingClientRect(), sw = parseFloat(getComputedStyle(e).strokeWidth) || 0;
+    const c = cv(), cr = c.getBoundingClientRect(), sx = c.width / cr.width, sy = c.height / cr.height;
+    const x0 = Math.max(0, Math.floor((r.left - 6 - cr.left) * sx)), y0 = Math.max(0, Math.floor((r.top - 6 - cr.top) * sy));
+    const W = Math.min(c.width - x0, Math.ceil((r.width + 12) * sx)), H = Math.min(c.height - y0, Math.ceil((r.height + 12) * sy));
+    if (W <= 0 || H <= 0) { log(`zoomgap ${tag}: off canvas`); return; }
+    const d = c.getContext('2d')!.getImageData(x0, y0, W, H).data;
+    const cov = (x: number, y: number) => { const i = (y * W + x) * 4; return Math.abs(d[i] - d[i + 2]) < 12 ? Math.min(d[i], d[i + 1], d[i + 2]) / 255 : 0; };
+    const cx = Math.floor(W * 0.3), ry = Math.floor(H * 0.3);
+    let fy = -1, ly = -1, fx = -1, lx = -1;
+    for (let y = 0; y < H; y++) if (cov(cx, y) > 0.03) { fy = y; break; }
+    for (let y = H - 1; y >= 0; y--) if (cov(cx, y) > 0.03) { ly = y; break; }
+    for (let x = 0; x < W; x++) if (cov(x, ry) > 0.03) { fx = x; break; }
+    for (let x = W - 1; x >= 0; x--) if (cov(x, ry) > 0.03) { lx = x; break; }
+    const T = cr.top + (y0 + fy + 1 - cov(cx, fy)) / sy, B = cr.top + (y0 + ly + cov(cx, ly)) / sy;
+    const L = cr.left + (x0 + fx + 1 - cov(fx, ry)) / sx, R = cr.left + (x0 + lx + cov(lx, ry)) / sx;
+    const g = (v: number) => v.toFixed(3);
+    log(`zoomgap ${tag}: T ${g(T - r.top - sw / 2)} B ${g(r.bottom - sw / 2 - B)} L ${g(L - r.left - sw / 2)} R ${g(r.right - sw / 2 - R)} | frame ${g(r.left)},${g(r.top)} ${g(r.width)}x${g(r.height)} canvas ${c.width}x${c.height} css ${g(cr.width)}x${g(cr.height)} @${g(cr.left)},${g(cr.top)} dpr ${devicePixelRatio}`);
+  };
+  const pinch = async (x: number, y: number, f: number) => {
+    const c = cv(); const pe = (type: string, id: number, px: number, py: number) => c.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, clientX: px, clientY: py, pointerType: 'touch', pointerId: id, isPrimary: id === 11 }));
+    const d0 = 30;
+    pe('pointerdown', 11, x - d0, y); await raf(); pe('pointerdown', 12, x + d0, y); await raf();
+    for (let i = 1; i <= 8; i++) { const d = d0 * (1 + (f - 1) * i / 8); pe('pointermove', 11, x - d, y + i * 0.37); pe('pointermove', 12, x + d, y - i * 0.37); await raf(); }
+    const d = d0 * f; pe('pointerup', 12, x + d, y); pe('pointerup', 11, x - d, y); await sleep(1500);
+  };
+  measure('start');
+  for (let i = 0; i < 6; i++) {
+    const e = frameEl(); if (!e) break; const r = e.getBoundingClientRect();
+    await pinch(r.left + r.width / 2, r.top + r.height / 2, 1.13); measure(`obj${i}`);
+    await sleep(2500);
+  }
+  for (let i = 0; i < 6; i++) {
+    const c = cv().getBoundingClientRect();
+    await pinch(c.left + 40, c.bottom - 40, 1.11); measure(`view${i}`);
+    await sleep(2500);
+  }
+}
+
 /* 選中框：進編輯 → 濾鏡選第三張 → 記下卡片位置（CI 截圖後放大看四個角）→ 特效選一張 → 模板 */
 async function scenarioRings() {
   await provideFiles(1);
@@ -595,6 +646,7 @@ export async function runNativeQA(forced?: string) {
     else if (scenario === 'widesave') await scenarioWideSave();
     else if (scenario === 'stickerperf') await scenarioStickerPerf();
     else if (scenario === 'selgap') await scenarioSelGap();
+    else if (scenario === 'zoomgap') await scenarioZoomGap();
     else if (scenario === 'rings') await scenarioRings();
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
     else if (scenario === 'layoutundo') await scenarioLayoutUndo();
