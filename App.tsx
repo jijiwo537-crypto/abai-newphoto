@@ -649,6 +649,7 @@ const App: React.FC = () => {
 
       <input 
         type="file" 
+        data-allow-alpha=""
         ref={layoutFileInputRef} 
         className="hidden" 
         accept={MEDIA_ACCEPT}

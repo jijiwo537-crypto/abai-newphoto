@@ -10,7 +10,7 @@ import { nativePlugin, fileSrc, rememberNativeFile, isVideoItem, nativeVideoFile
 export type GalleryFilter = 'images' | 'videos' | 'any';
 export type LibraryStatus = 'authorized' | 'limited' | 'denied' | 'restricted' | 'notDetermined';
 export interface LibraryAlbum { id: string; title: string; count: number; cover: string }
-export interface LibraryAsset { id: string; w: number; h: number; video: boolean; duration: number }
+export interface LibraryAsset { id: string; w: number; h: number; video: boolean; duration: number; /** 檔案類型可能帶透明（PNG／WebP…），還沒確認 */ maybeAlpha?: boolean }
 interface ExportedItem { path: string; name: string; type: string; assetId?: string; width?: number; height?: number }
 
 export interface PhotoLibraryApi {
@@ -18,6 +18,8 @@ export interface PhotoLibraryApi {
   request(): Promise<{ status: LibraryStatus }>;
   albums(o: { filter: GalleryFilter }): Promise<{ albums: LibraryAlbum[] }>;
   assets(o: { album: string; filter: GalleryFilter; offset: number; limit: number }): Promise<{ total: number; items: LibraryAsset[] }>;
+  /** 這幾張是不是去背圖（舊版 App 沒有這支） */
+  alphaFlags?(o: { ids: string[] }): Promise<{ flags: Record<string, boolean> }>;
   thumbs(o: { ids: string[]; size: number }): Promise<{ items: { id: string; path: string }[] }>;
   export(o: { ids: string[] }): Promise<{ items: ExportedItem[] }>;
   manageLimited(): Promise<void>;
@@ -117,7 +119,7 @@ export async function exportAssets(ids: string[]): Promise<File[]> {
 let opening: Promise<File[] | null> | null = null;
 
 /** 打開相簿。limit：最多選幾張（0＝不限，1＝點一下就完成） */
-export function openGallery(o: { limit: number; filter: GalleryFilter }): Promise<File[] | null> {
+export function openGallery(o: { limit: number; filter: GalleryFilter; noAlpha?: boolean }): Promise<File[] | null> {
   if (opening) return opening;              // 連點兩下不會疊兩個相簿
   opening = (async () => {
     const p = await photoLibrary();
@@ -135,7 +137,7 @@ export function openGallery(o: { limit: number; filter: GalleryFilter }): Promis
         /* 等收起來的動畫跑完再拆掉 */
         setTimeout(() => { root.unmount(); host.remove(); }, 40);
       };
-      root.render(createElement(NativeGallery, { api: p, limit: o.limit, filter: o.filter, onClose: close }));
+      root.render(createElement(NativeGallery, { api: p, limit: o.limit, filter: o.filter, noAlpha: !!o.noAlpha, onClose: close }));
     });
   })().finally(() => { opening = null; });
   return opening;

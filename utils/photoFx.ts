@@ -757,7 +757,12 @@ export function applyPhotoFx(
   opts?: Parameters<typeof applyPhotoFxRaw>[4],
 ): HTMLCanvasElement {
   const r = applyPhotoFxRaw(source, w, h, fx, opts);
-  return sourceHasAlpha(source) ? restoreSourceAlpha(r, source) : r;
+  if (!sourceHasAlpha(source)) return r;
+  /* 結果在 GPU 上、而且沒有特效（只有濾鏡／調節）：顏色著色器本來就保留原圖的透明度
+     （utils/lutGpu 寫的是 src.a），不必再抄一份 —— 抄 GPU 那張在 iPhone 上等於整張讀回，
+     就是拖調節滑桿卡的原因。2D 的結果直接在原地裁，成本很小。 */
+  if (!r.getContext('2d') && !hasActiveFx(fx)) return r;
+  return restoreSourceAlpha(r, source);
 }
 
 function applyPhotoFxRaw(

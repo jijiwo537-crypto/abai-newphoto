@@ -6,6 +6,7 @@ import App from './App';
 import { installSliderTouch } from './utils/sliderTouch';
 import { installTapOnly } from './utils/tapOnly';
 import { setupNativeShell } from './utils/native';
+import { installAlphaGuard } from './utils/alphaGuard';
 import { installCanvasShadowSpace } from './utils/canvasShadowSpace';
 
 const rootElement = document.getElementById('root');
@@ -29,6 +30,7 @@ installCanvasShadowSpace();
    網頁版在函式第一行就會回去，什麼都不會載、什麼都不會做。 */
 void setupNativeShell();
 
+installAlphaGuard();
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>

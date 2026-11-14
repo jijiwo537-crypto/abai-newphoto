@@ -14,6 +14,7 @@ import { nativeImage, withBackgroundTask, blobToNativeFile } from './nativeImage
 import { haptic } from './haptics';
 import { PHOTO_EXTS, RAW_EXTS, VIDEO_EXTS } from './fileTypes';
 import { openGallery, photoLibrary } from './nativeGallery';
+import { allowsAlpha, dropAlphaFiles, ALPHA_NOT_ALLOWED_MSG } from './alphaGuard';
 
 interface PickedItem { path: string; name: string; type: string; size: number; assetId?: string; width?: number; height?: number }
 interface NativePhotosApi {
@@ -81,13 +82,21 @@ export function installNativeFilePicker() {
     const qa = (window as any).__abaiQAFiles as ((f: typeof filter) => File[] | null) | undefined;
     if (qa) files = qa(filter);
     if (!files) try {
-      if (gallery) files = await openGallery({ limit, filter });
+      /* 去背圖只有帶 data-allow-alpha 的匯入入口能選（見 utils/alphaGuard） */
+      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input) });
       /* 自己的相簿用不了（權限被拒、使用者選了系統的）→ 系統照片選擇器 */
       if (files === null) files = await pickNativeFiles(limit, filter);
     }
     catch (e: any) { alert(`開不了相簿：${String(e?.message ?? e ?? '')}`); return; }
     if (!files) return;
     if (!files.length) return;                       // 使用者按了取消
+    /* 系統照片選擇器（或舊版 App 的相簿）沒辦法事先藏去背圖：選完再過濾 */
+    if (!allowsAlpha(input) && filter !== 'videos') {
+      const { kept, dropped } = await dropAlphaFiles(files);
+      if (dropped) alert(ALPHA_NOT_ALLOWED_MSG);
+      files = kept;
+      if (!files.length) return;
+    }
     try {
       const dt = new DataTransfer();
       files.forEach(f => dt.items.add(f));

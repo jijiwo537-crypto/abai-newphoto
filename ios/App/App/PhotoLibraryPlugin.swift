@@ -20,6 +20,7 @@ import Photos
 import PhotosUI
 import UniformTypeIdentifiers
 import AVFoundation
+import ImageIO
 import UIKit
 
 @objc(PhotoLibraryPlugin)
@@ -32,6 +33,7 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
         CAPPluginMethod(name: "request", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "albums", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "assets", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "alphaFlags", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "thumbs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "export", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "manageLimited", returnType: CAPPluginReturnPromise),
@@ -158,10 +160,162 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
                         "w": a.pixelWidth, "h": a.pixelHeight,
                         "video": a.mediaType == .video,
                         "duration": a.duration,
+                        "maybeAlpha": self.mayHaveAlpha(a),
                     ])
                 }
             }
             call.resolve(["total": r.count, "items": items])
+        }
+    }
+
+    // MARK: 去背（透明）偵測
+    //
+    // 大部分工具不收去背圖，相簿要先把它們藏起來。
+    //   ‧ 列表時只看檔案類型（UTI，不讀檔）：PNG／WebP／GIF／TIFF 標成「可能透明」，網頁先不顯示。
+    //   ‧ alphaFlags 只查這些：PNG 先讀檔頭幾 KB（顏色格式沒有透明通道、也沒有 tRNS → 不透明，
+    //     截圖大多在這一步就確認了）；有透明通道的再解一張 96px 小縮圖逐像素確認。
+    //   ‧ 結果依「照片 id＋修改時間」快取（記憶體＋Caches 檔），同一張不會再查。
+
+    private var alphaCache: [String: Bool] = [:]
+    private var alphaCacheLoaded = false
+    private lazy var alphaCacheURL: URL = thumbDir.appendingPathComponent("alpha-flags.plist")
+
+    private func alphaKey(_ a: PHAsset) -> String {
+        "\(a.localIdentifier)|\(Int(a.modificationDate?.timeIntervalSince1970 ?? 0))"
+    }
+
+    private func photoResource(_ a: PHAsset) -> PHAssetResource? {
+        let res = PHAssetResource.assetResources(for: a)
+        return res.first(where: { $0.type == .photo }) ?? res.first(where: { $0.type == .fullSizePhoto }) ?? res.first
+    }
+
+    private func alphaCapableType(_ uti: String) -> Bool {
+        let u = uti.lowercased()
+        return u.contains("png") || u.contains("webp") || u.contains("gif") || u.contains("tiff")
+    }
+
+    fileprivate func mayHaveAlpha(_ a: PHAsset) -> Bool {
+        guard a.mediaType == .image else { return false }
+        loadAlphaCache()
+        cacheLock.lock(); let known = alphaCache[alphaKey(a)]; cacheLock.unlock()
+        if let k = known { return k }
+        guard let r = photoResource(a) else { return false }
+        return alphaCapableType(r.uniformTypeIdentifier)
+    }
+
+    private func loadAlphaCache() {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        if alphaCacheLoaded { return }
+        alphaCacheLoaded = true
+        if let d = NSDictionary(contentsOf: alphaCacheURL) as? [String: Bool] { alphaCache = d }
+    }
+
+    private func saveAlphaCache() {
+        cacheLock.lock(); let snapshot = alphaCache; cacheLock.unlock()
+        (snapshot as NSDictionary).write(to: alphaCacheURL, atomically: true)
+    }
+
+    /// 讀檔頭（最多 8KB）。只在本機有檔案時讀，不從 iCloud 下載。
+    private func headBytes(_ r: PHAssetResource) -> Data {
+        let lock = NSLock()
+        var head = Data()
+        var reqId: PHAssetResourceDataRequestID = 0
+        var cancelled = false
+        let sem = DispatchSemaphore(value: 0)
+        let o = PHAssetResourceRequestOptions()
+        o.isNetworkAccessAllowed = false
+        let mgr = PHAssetResourceManager.default()
+        let id = mgr.requestData(for: r, options: o, dataReceivedHandler: { chunk in
+            lock.lock()
+            if head.count < 8192 { head.append(chunk.prefix(8192 - head.count)) }
+            let enough = head.count >= 8192 && !cancelled
+            if enough { cancelled = true }
+            let rid = reqId
+            lock.unlock()
+            if enough && rid != 0 { mgr.cancelDataRequest(rid) }
+        }, completionHandler: { _ in sem.signal() })
+        lock.lock(); reqId = id; let late = cancelled; lock.unlock()
+        if late { mgr.cancelDataRequest(id) }
+        _ = sem.wait(timeout: .now() + 3)
+        lock.lock(); defer { lock.unlock() }
+        return head
+    }
+
+    /// PNG 檔頭：顏色格式 4（灰階＋透明）、6（RGBA），或 IDAT 之前有 tRNS → 可能透明
+    private func pngHeaderMayHaveAlpha(_ d: Data) -> Bool {
+        let b = [UInt8](d)
+        guard b.count >= 26, b[0] == 0x89, b[1] == 0x50, b[2] == 0x4E, b[3] == 0x47 else { return true }
+        let colorType = b[25]
+        if colorType == 4 || colorType == 6 { return true }
+        // 走過各個區塊，看 IDAT 之前有沒有 tRNS
+        var i = 8
+        while i + 8 <= b.count {
+            let len = Int(b[i]) << 24 | Int(b[i + 1]) << 16 | Int(b[i + 2]) << 8 | Int(b[i + 3])
+            let t = String(bytes: b[(i + 4)..<(i + 8)], encoding: .ascii) ?? ""
+            if t == "tRNS" { return true }
+            if t == "IDAT" || t == "IEND" { return false }
+            i += 12 + max(0, len)
+        }
+        return false
+    }
+
+    /// 解一張小縮圖，逐像素看有沒有不是完全不透明的
+    private func thumbnailHasAlpha(_ a: PHAsset) -> Bool {
+        let o = PHImageRequestOptions()
+        o.isSynchronous = true
+        o.isNetworkAccessAllowed = false
+        o.version = .current
+        var data: Data?
+        PHImageManager.default().requestImageDataAndOrientation(for: a, options: o) { d, _, _, _ in data = d }
+        guard let d = data, let src = CGImageSourceCreateWithData(d as CFData, nil) else { return false }
+        if let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+           let has = props[kCGImagePropertyHasAlpha] as? Bool, !has { return false }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 96,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else { return false }
+        let w = cg.width, h = cg.height
+        var px = [UInt8](repeating: 255, count: w * h * 4)
+        guard let ctx = CGContext(data: &px, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+        ctx.clear(CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var i = 3
+        while i < px.count { if px[i] < 255 { return true }; i += 4 }
+        return false
+    }
+
+    private func assetHasAlpha(_ a: PHAsset) -> Bool {
+        guard a.mediaType == .image else { return false }
+        let key = alphaKey(a)
+        cacheLock.lock(); let known = alphaCache[key]; cacheLock.unlock()
+        if let k = known { return k }
+        var result = false
+        if let r = photoResource(a), alphaCapableType(r.uniformTypeIdentifier) {
+            let isPng = r.uniformTypeIdentifier.lowercased().contains("png")
+            let head = isPng ? headBytes(r) : Data()
+            let candidate = isPng ? (head.isEmpty ? true : pngHeaderMayHaveAlpha(head)) : true
+            result = candidate ? thumbnailHasAlpha(a) : false
+        }
+        cacheLock.lock(); alphaCache[key] = result; cacheLock.unlock()
+        return result
+    }
+
+    /// 網頁：這幾張是不是去背圖（只會傳「可能透明」的那些來）
+    @objc func alphaFlags(_ call: CAPPluginCall) {
+        let ids = call.getArray("ids", String.self) ?? []
+        work.async {
+            let fetched = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
+            var flags: [String: Bool] = [:]
+            fetched.enumerateObjects { a, _, _ in
+                autoreleasepool { flags[a.localIdentifier] = self.assetHasAlpha(a) }
+            }
+            for id in ids where flags[id] == nil { flags[id] = false }
+            self.saveAlphaCache()
+            call.resolve(["flags": flags])
         }
     }
 

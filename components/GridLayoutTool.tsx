@@ -91,6 +91,8 @@ import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
+import { sourceHasAlpha } from '../utils/photoFx';
+import { strokeAlphaContour } from '../utils/alphaStroke';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, settlePhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
 import { get2dWide } from '../utils/colorSpace';
@@ -396,10 +398,30 @@ const MIN_LAYOUT_SCALE = 0.4;
    的預設物件壓到約 16px，任何螢幕都只剩幾顆實體像素，不可能保留細節。 */
 const MIN_FLOATING_SCALE = 0.2;
 const MIN_FLOATING_IMAGE_SCALE = MIN_FLOATING_SCALE * 2;
+/* 去背圖（有透明像素）：可以縮得比一般照片更小，放大最多到「一整頁」那麼大。
+   判斷結果依網址快取；還沒載入的先當一般照片，載入完下一次手勢就會套用。 */
+const floatingAlpha = new Map<string, boolean>();
+const floatingIsAlpha = (item: Partial<FloatingImage> | null | undefined): boolean => {
+  if (!item || item.text !== undefined || item.shape || (item as any).isVideo || !item.src) return false;
+  const known = floatingAlpha.get(item.src);
+  if (known !== undefined) return known;
+  const im = new Image();
+  im.onload = () => floatingAlpha.set(item.src!, sourceHasAlpha(im));
+  im.src = item.src;
+  if (im.complete && im.naturalWidth) { const v = sourceHasAlpha(im); floatingAlpha.set(item.src, v); return v; }
+  return false;
+};
+/** 目前一頁的大小（跟浮動物件同一套座標）。父元件每次 render 更新 */
+const classicPage = { w: 0, h: 0 };
 const floatingScaleFloor = (item: Partial<FloatingImage> | null | undefined) =>
   item && item.text === undefined && !item.shape
-    ? MIN_FLOATING_IMAGE_SCALE
+    ? (floatingIsAlpha(item) ? MIN_FLOATING_SCALE : MIN_FLOATING_IMAGE_SCALE)
     : MIN_FLOATING_SCALE;
+/** 放大上限：一般 10 倍；去背圖最多跟一整頁一樣大 */
+const floatingScaleCeil = (item: Partial<FloatingImage> | null | undefined) => {
+  if (!floatingIsAlpha(item) || !classicPage.w || !classicPage.h || !item?.width || !item?.height) return 10;
+  return Math.max(floatingScaleFloor(item), Math.min(10, classicPage.w / item.width, classicPage.h / item.height));
+};
 
 /** 新增佈局時預設佔頁面七分滿 */
 const NEW_LAYOUT_SCALE = 0.7;
@@ -1402,7 +1424,7 @@ export const PolaroidPhotoControls = ({ opts, onChange, slider }: {
   };
   return (
     <div className="space-y-4">
-      <input ref={input} type="file" accept="image/*" className="hidden" onChange={e => pick(e.target.files?.[0])} />
+      <input ref={input} type="file" data-allow-alpha="" accept="image/*" className="hidden" onChange={e => pick(e.target.files?.[0])} />
       <div className="flex gap-2">
         <button type="button" disabled={busy} onClick={() => input.current?.click()}
           className="flex-1 h-10 rounded-[10px] bg-white text-black text-[12px] font-bold active:scale-[0.98] transition-transform disabled:opacity-60">
@@ -3565,6 +3587,21 @@ export type ImageAdjustPanelProps = {
   onAdjustmentCommit?: () => void;
 };
 
+/* 這張圖是去背圖嗎（有透明像素）。圖還沒解碼就先當不是，解好後重畫一次。 */
+const useImgIsAlpha = (src: string | undefined): boolean => {
+  const [, bump] = useState(0);
+  const [el, setEl] = useState<HTMLImageElement | null>(null);
+  useEffect(() => {
+    if (!src) { setEl(null); return; }
+    const im = new Image();
+    let alive = true;
+    im.onload = () => { if (alive) { setEl(im); bump(v => v + 1); } };
+    im.src = src;
+    return () => { alive = false; };
+  }, [src]);
+  return !!el && sourceHasAlpha(el);
+};
+
 export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   img, set, lutList, loadingLut, setLoadingLut, lutRevision, setLutRevision,
   adjustSub, setAdjustSub, effectCard: effectCardProp, setEffectCard: setEffectCardProp, effectDetail: effectDetailProp, setEffectDetail: setEffectDetailProp,
@@ -3760,6 +3797,8 @@ const pickEffect = (id: string) => {
 
 /* 佈局裡的格子沒有「形狀」——羽化／發光／描邊都會長到格子外面，
    而格子是被裁切的，畫出來會被切掉；圓角則已經有佈局那根共用滑桿。 */
+/* 去背圖：不給特效（著色器會把透明處算壞），「造型」改叫「外觀」、只留描邊與發光 */
+const isAlphaImg = useImgIsAlpha(img?.vid ? undefined : img?.src);
 const CATS = ([
   ['filter', 'palette', '濾鏡'],
   ['tune', 'tune', '調節'],
@@ -3767,7 +3806,11 @@ const CATS = ([
   ['shape', 'shapes', '造型'],
   // 構圖圖標跟「編輯」那邊用同一顆（crop）
   ['compose', 'crop', '構圖'],
-] as const).filter(c => !(hideShape && c[0] === 'shape') && !(hideCompose && c[0] === 'compose'));
+] as const).filter(c => !(hideShape && c[0] === 'shape') && !(hideCompose && c[0] === 'compose') && !(isAlphaImg && c[0] === 'effect'))
+  .map(c => (isAlphaImg && c[0] === 'shape' ? [c[0], c[1], '外觀'] : c) as readonly [string, string, string]);
+useEffect(() => { if (isAlphaImg && adjustSub === 'effect') setAdjustSub('filter' as any); }, [isAlphaImg, adjustSub]);
+const shapeTools = isAlphaImg ? SHAPE_TOOLS.filter(t => t[0] === 'stroke' || t[0] === 'glow') : SHAPE_TOOLS;
+const shapeSubTools = (menu: string) => (SHAPE_SUB_TOOLS[menu] || []).filter(t => !(isAlphaImg && t[0] === 'imgStrokeDash'));
 
 // 編輯同款的圓形工具鈕
 /* icon 傳字串＝用圖示字型那一顆；傳一個元素＝直接畫那個元素。
@@ -4122,7 +4165,7 @@ return (
       })}
 
       {adjustSub === 'shape' && (shapeMenu === 'root'
-        ? SHAPE_TOOLS.map(([id, label, icon, , , dflt]) => {
+        ? shapeTools.map(([id, label, icon, , , dflt]) => {
             // 「形狀」也是點進去一頁，只是那一頁放的是形狀不是滑桿
             const isShapePick = id === 'imgShape';
             const isSub = !!SHAPE_SUB_TOOLS[id] || isShapePick;
@@ -4186,7 +4229,7 @@ return (
                     set({ imgShape: next, imgShapeX: 0, imgShapeY: 0, imgShapeZoom: 1 });
                   });
                 })
-              : SHAPE_SUB_TOOLS[shapeMenu].map(([id, label, icon, , , dflt]) => {
+              : shapeSubTools(shapeMenu).map(([id, label, icon, , , dflt]) => {
                   const cur = (img as any)[id];
                   const adjusted = id.endsWith('Color')
                     ? !!cur && cur.toUpperCase() !== '#FFFFFF'
@@ -7314,7 +7357,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         }
         // 描邊（相框線）：整條線都長在圖片外面，內緣剛好貼著圖片的邊。
         // 圖片沒有圓角就描成直角（miter），不要自己多加一個圓角出來。
-        if (lw > 0) {
+        // 去背圖：沿著圖案外緣描（不是沿著方框）
+        if (lw > 0 && sourceHasAlpha(img)) {
+          strokeAlphaContour(oc, lw, strokeGap, image.imgStrokeColor || '#FFFFFF');
+        } else if (lw > 0) {
           const rp = image.imgRadius || 0;
           const sr = rp ? cornerR(rp, iw, ih) + strokeGap + lw / 2 : 0;
           withImgOutline(oc, lw / 2, lw / 2, iw + strokeGap * 2 + lw, ih + strokeGap * 2 + lw, kind, sr, sr, p => {
@@ -7635,7 +7681,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
 
       const L_projected = v_px * u_x + v_py * u_y;
 
-      const newScale = Math.max(floatingScaleFloor(image), Math.min(10, L_projected / L_local));
+      const newScale = Math.max(floatingScaleFloor(image), Math.min(floatingScaleCeil(image), L_projected / L_local));
 
       const oppositeOffsetRotX = oppositeLocalX * Math.cos(R) - oppositeLocalY * Math.sin(R);
       const oppositeOffsetRotY = oppositeLocalX * Math.sin(R) + oppositeLocalY * Math.cos(R);
@@ -9928,7 +9974,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (!selectedImg) return;
 
       const factor = 1 - e.deltaY * 0.01;
-      const newScale = Math.max(floatingScaleFloor(selectedImg), Math.min(10.0, selectedImg.scale * factor));
+      const newScale = Math.max(floatingScaleFloor(selectedImg), Math.min(floatingScaleCeil(selectedImg), selectedImg.scale * factor));
 
       setFloatingImages(prev => prev.map(img => {
         if (img.id === selectedFloatingId) {
@@ -12558,6 +12604,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   previewWRef.current = previewW;
   const previewHRef = useRef(previewH);
   previewHRef.current = previewH;
+  classicPage.w = previewW; classicPage.h = previewH;
   containerWRef.current = containerSize.width;
   /**
    * 沒有縮放動畫在跑的時候，整排的版面就是目標倍率該有的樣子。
@@ -14846,7 +14893,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
              中心點在捏合時不動，所以只有「四個邊界」會隨倍率移動：把倍率解成
              「這條邊剛好落在畫布邊界上」的值，最近的那一個在門檻內就吸附過去。 */
           const targetScaleFloor = floatingScaleFloor(target);
-          const rawScale = Math.max(targetScaleFloor, g.baseScale * k);
+          const rawScale = Math.max(targetScaleFloor, Math.min(floatingScaleCeil(target), g.baseScale * k));
           // 距離感測會在相鄰事件間抖動零點幾 px；創意拼圖是一幀只採最後一筆，
           // DOM 版再加輕量低通，避免這些高頻雜訊直接變成盒子尺寸。
           let ns = g.lastScale === undefined || Math.abs(rawScale - g.lastScale) < 0.0005
@@ -15860,7 +15907,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           oc.clearRect(0, 0, off.width, off.height);
           oc.drawImage(shapeOnly, strokeExtent, strokeExtent, iw, ih);
         }
-        if (lw > 0) {
+        /* 去背圖：沿著圖案外緣描（不是沿著方框） */
+        if (lw > 0 && img instanceof HTMLImageElement && sourceHasAlpha(img)) {
+          strokeAlphaContour(oc, lw, strokeGap, fImg.imgStrokeColor || '#FFFFFF');
+        } else if (lw > 0) {
           const rp = fImg.imgRadius || 0;
           const sr = rp ? cornerR(rp, iw, ih) + strokeGap + lw / 2 : 0;
           withImgOutline(oc, lw / 2, lw / 2, iw + strokeGap * 2 + lw, ih + strokeGap * 2 + lw, kind, sr, sr, p => {
@@ -17196,6 +17246,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {/* 隱藏的檔案輸入 */}
       <input
         type="file"
+        data-allow-alpha=""
         ref={fileInputRef}
         multiple
         accept={RAW_ACCEPT_IMG}
@@ -17212,6 +17263,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       />
       <input
         type="file"
+        data-allow-alpha=""
         ref={replaceInputRef}
         accept={RAW_ACCEPT_IMG}
         multiple
@@ -18671,7 +18723,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             }
 
                             // 吸附候選也不能繞過共用最小倍率。
-                            finalScale = Math.max(floatingScaleFloor(fImg), finalScale);
+                            finalScale = Math.max(floatingScaleFloor(fImg), Math.min(floatingScaleCeil(fImg), finalScale));
                             // 用 finalScale 算最後的 (newX, newY)，讓支點不動
                             const R = (fImg.rotation * Math.PI) / 180;
                             const oppositeOffsetRotX = oppositeLocalX * Math.cos(R) - oppositeLocalY * Math.sin(R);

@@ -100,7 +100,9 @@ const Spinner: React.FC = () => (
 
 export const NativeGallery: React.FC<{
   api: PhotoLibraryApi; limit: number; filter: GalleryFilter; onClose: (files: File[] | null) => void;
-}> = ({ api, limit, filter, onClose }) => {
+  /** 不顯示去背（有透明像素）的照片：大部分工具不收去背圖 */
+  noAlpha?: boolean;
+}> = ({ api, limit, filter, onClose, noAlpha = false }) => {
   const multi = limit !== 1;
   const [shown, setShown] = useState(false);              // 滑上來的動畫
   const [status, setStatus] = useState<LibraryStatus | 'checking'>('checking');
@@ -109,6 +111,14 @@ export const NativeGallery: React.FC<{
   const [albumOpen, setAlbumOpen] = useState(false);
   const [items, setItems] = useState<LibraryAsset[]>([]);
   const [total, setTotal] = useState(-1);
+  /* 去背判斷：原生先標出「檔案類型可能透明」的那些（PNG…），這些先不顯示，
+     問過原生確認不是去背圖才放出來（截圖之類的一般 PNG 會晚一點點出現）。
+     分頁照「已經拿到幾張」算，不受隱藏影響。 */
+  const [alphaFlags, setAlphaFlags] = useState<Record<string, boolean>>({});
+  const canCheckAlpha = !!api.alphaFlags;
+  const visibleItems = useMemo(() => !noAlpha ? items
+    : items.filter(a => !a.maybeAlpha || (canCheckAlpha ? alphaFlags[a.id] === false : true)),
+  [items, noAlpha, alphaFlags, canCheckAlpha]);
   const [picked, setPicked] = useState<string[]>([]);
   const [exporting, setExporting] = useState(false);
   const [shake, setShake] = useState(0);
@@ -161,12 +171,21 @@ export const NativeGallery: React.FC<{
       setTotal(r.total);
       if (reset) prefetchThumbs(r.items.slice(0, 60).map(a => a.id));
       setItems(prev => reset ? r.items : [...prev, ...r.items]);
+      if (noAlpha && api.alphaFlags) {
+        const ids = r.items.filter(a => a.maybeAlpha).map(a => a.id);
+        if (ids.length) api.alphaFlags({ ids }).then(({ flags }) => {
+          if (gen === genRef.current) setAlphaFlags(prev => ({ ...prev, ...flags }));
+        }).catch(() => {
+          // 查不到就當作不是去背圖（不能讓照片永遠不出現）
+          if (gen === genRef.current) setAlphaFlags(prev => ({ ...prev, ...Object.fromEntries(ids.map(id => [id, false])) }));
+        });
+      }
     } catch {
       if (gen === genRef.current && reset) { setItems([]); setTotal(0); }
     } finally {
       if (gen === genRef.current) loadingRef.current = false;
     }
-  }, [api, album.id, filter, items.length]);
+  }, [api, album.id, filter, items.length, noAlpha]);
 
   const ok = status === 'authorized' || status === 'limited';
 
@@ -368,7 +387,7 @@ export const NativeGallery: React.FC<{
           {ok && total !== 0 && (
             <>
               <div className="grid grid-cols-3 gap-[2px]">
-                {items.map(a => <Cell key={a.id} a={a} order={order.get(a.id) ?? 0} multi={multi} onTap={onTap} />)}
+                {visibleItems.map(a => <Cell key={a.id} a={a} order={order.get(a.id) ?? 0} multi={multi} onTap={onTap} />)}
                 {total < 0 && Array.from({ length: 24 }, (_, i) => (
                   <span key={`s${i}`} className="abg-cell"><span className="skel" style={{ animationDelay: `${(i % 6) * 60}ms` }} /></span>
                 ))}
@@ -376,7 +395,7 @@ export const NativeGallery: React.FC<{
               <div ref={sentinelRef} className="h-px" />
               {total > 0 && items.length >= total && (
                 <div className="py-6 text-center text-[13px] text-white/35">
-                  {total.toLocaleString()} {filter === 'videos' ? '部影片' : filter === 'images' ? '張照片' : '個項目'}
+                  {(noAlpha ? visibleItems.length : total).toLocaleString()} {filter === 'videos' ? '部影片' : filter === 'images' ? '張照片' : '個項目'}
                 </div>
               )}
               <div style={{ height: 'calc(env(safe-area-inset-bottom, 0px) + 12px)' }} />

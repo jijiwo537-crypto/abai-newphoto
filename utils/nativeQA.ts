@@ -596,6 +596,69 @@ async function scenarioAlphaFx(tool: string) {
   log(`alphafx ${tool}: done`);
 }
 
+/* 去背圖 × 調節滑桿：顏色（按住時 vs 放開閒置）與滑順度（每格幾毫秒）。
+   alphaidle-<tool>-<alpha|opaque>。每個階段都寫記錄，CI 每 4 秒截一張圖可以對照。 */
+async function makeTestPng(alpha: boolean): Promise<File> {
+  const c = document.createElement('canvas'); c.width = 1600; c.height = 1600;
+  const g = c.getContext('2d')!;
+  if (!alpha) { g.fillStyle = '#000'; g.fillRect(0, 0, 1600, 1600); }
+  g.fillStyle = 'rgb(200,40,40)'; g.beginPath(); g.arc(800, 800, 600, 0, Math.PI * 2); g.fill();
+  g.fillStyle = 'rgba(40,160,40,0.5)'; g.beginPath(); g.arc(800, 800, 200, 0, Math.PI * 2); g.fill();
+  const blob: Blob = await new Promise(r => c.toBlob(b => r(b!), 'image/png'));
+  c.width = c.height = 0;
+  return new File([blob], alpha ? 'cut.png' : 'opaque.png', { type: 'image/png', lastModified: Date.now() });
+}
+async function scenarioAlphaIdle(tool: string, kind: string) {
+  const base = await makePhoto(-1), img = await makeTestPng(kind !== 'opaque');
+  let calls = 0;
+  (window as any).__abaiQAFiles = () => { calls++; return calls === 1 ? [base] : [img]; };
+  click(await waitFor(() => findButton(tool === 'layout' ? /^跨頁拼圖$|跨頁拼圖/ : TOOL_ENTRY.collage), 20000, '拼圖按鈕'));
+  await sleep(9000);
+  if (tool === 'layout') { const add = findButton(/^新增內容$/); if (add) { click(add); await sleep(800); } }
+  else { const tab = document.querySelector('[data-creative-tab=add]') as HTMLElement | null; if (tab) click(tab); await sleep(800); }
+  const imp = findButton(/匯入圖片/); if (!imp) { log('alphaidle: 找不到匯入圖片'); logButtons('alphaidle'); return; }
+  click(imp); await sleep(6000);
+  if (tool === 'layout') {
+    const els = [...document.querySelectorAll('[data-floating-id]')]; const el = els[els.length - 1] as HTMLElement | undefined;
+    if (el) { const r = el.getBoundingClientRect(); await tapAt(r.left + r.width / 2, r.top + r.height / 2); await sleep(1500); }
+  }
+  log(`alphaidle ${tool} ${kind}: REST (no edit) t=${Math.round(performance.now())}`);
+  await sleep(6000);
+  const adj = findButton(/^圖片調整$/); if (!adj) { log('alphaidle: 找不到圖片調整'); logButtons('alphaidle'); return; }
+  click(adj); await sleep(2000);
+  const tabs = [...buttons()].map(b => (b.textContent || '').trim()).filter(t => ['濾鏡', '調節', '特效', '造型', '外觀', '構圖'].includes(t));
+  log(`alphaidle ${tool} ${kind}: tabs ${tabs.join(' ')}`);
+  const tune = [...buttons()].reverse().find(b => (b.textContent || '').trim() === '調節'); if (tune) click(tune); await sleep(1200);
+  const sat = buttons().find(b => /飽和度$/.test((b.textContent || '').trim()) && !/自然/.test(b.textContent || '')); if (sat) click(sat); await sleep(1200);
+  const range = document.querySelector('input[type=range]') as HTMLInputElement | null;
+  if (!range) { log('alphaidle: 沒有滑桿'); return; }
+  // 拖滑桿 3 秒：每一格改一次值，量每格間隔
+  const rr = range.getBoundingClientRect();
+  range.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 9, pointerType: 'touch', clientX: rr.left + rr.width / 2, clientY: rr.top + rr.height / 2 }));
+  const min = +range.min, max = +range.max;
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  const gaps: number[] = []; let last = performance.now(); const t0 = last;
+  while (performance.now() - t0 < 3000) {
+    const ph = (performance.now() - t0) / 3000;
+    const v = min + (max - min) * (0.5 + 0.45 * Math.sin(ph * Math.PI * 4));
+    setter.call(range, String(Math.round(v)));
+    range.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise(r => requestAnimationFrame(r));
+    const now = performance.now(); gaps.push(now - last); last = now;
+  }
+  gaps.sort((a, b) => a - b);
+  const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+  log(`alphaidle ${tool} ${kind}: slider frames ${gaps.length} avg ${avg.toFixed(1)}ms p90 ${gaps[Math.floor(gaps.length * 0.9)].toFixed(1)}ms max ${gaps[gaps.length - 1].toFixed(1)}ms`);
+  setter.call(range, String(Math.round(min + (max - min) * 0.85))); range.dispatchEvent(new Event('input', { bubbles: true }));
+  log(`alphaidle ${tool} ${kind}: HOLDING t=${Math.round(performance.now())}`);
+  await sleep(6000);
+  range.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 9, pointerType: 'touch' }));
+  range.dispatchEvent(new Event('change', { bubbles: true }));
+  log(`alphaidle ${tool} ${kind}: RELEASED t=${Math.round(performance.now())}`);
+  await sleep(9000);
+  log(`alphaidle ${tool} ${kind}: IDLE done t=${Math.round(performance.now())}`);
+}
+
 /* 選中框四邊縫隙 × 縮放：用兩指 pointer 事件縮放貼圖本身、再縮放整個畫面，每一步量四邊（亞像素） */
 async function scenarioZoomGap() {
   const raf = () => new Promise<number>(r => requestAnimationFrame(r));
@@ -695,6 +758,7 @@ export async function runNativeQA(forced?: string) {
     else if (scenario === 'selgap') await scenarioSelGap();
     else if (scenario === 'zoomgap') await scenarioZoomGap();
     else if (scenario.startsWith('alphafx')) await scenarioAlphaFx(scenario.split('-')[1] || 'collage');
+    else if (scenario.startsWith('alphaidle')) await scenarioAlphaIdle(scenario.split('-')[1] || 'collage', scenario.split('-')[2] || 'alpha');
     else if (scenario === 'rings') await scenarioRings();
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
     else if (scenario === 'layoutundo') await scenarioLayoutUndo();
