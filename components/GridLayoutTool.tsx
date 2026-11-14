@@ -1359,7 +1359,7 @@ export const stitchWidthForGap = (kind: string, w: number, h: number, oldGap: nu
 export const PolaroidFormatPicker = ({ value, onPick }: { value?: string; onPick: (id: string) => void }) => {
   const cur = value || POLAROID_DEFAULT_FORMAT;
   return (
-    <div className="grid grid-cols-4 gap-2">
+    <div className="grid grid-cols-3 gap-2">
       {POLAROID_FORMATS.map(f => {
         const [cw, ch] = f.card, G = polaroidGeom(cw, ch, f.id);
         const S = 34 / Math.max(cw, ch), W = cw * S, H = ch * S, on = f.id === cur;

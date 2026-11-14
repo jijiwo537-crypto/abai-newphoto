@@ -422,15 +422,21 @@ const paperTile = (color: string) => {
    所以下緣永遠是最厚的那條。畫布比例選得接近卡片時就是一模一樣的實物比例。 */
 /** side：厚邊在哪一側（預設下面；橫拍的 Instax Mini 在右邊）；even：四邊等寬（撕拉片） */
 export type PolaroidFormat = { id: string; label: string; sub: string; card: [number, number]; win: [number, number]; top: number; cr: number; wr: number; circle?: number; side?: 'bottom' | 'right'; even?: boolean };
+/* 尺寸來源（2026-11 查證）：
+   ・Instax 三種：卡片與畫面尺寸是富士官方規格；上下留白「上 8mm、下 16mm」兩個日文資料一致；
+     窗口圓角＝畫面短邊的 0.5%（有人用高解析掃描實測真的 Mini、Square：Mini 約 0.23mm）。
+   ・Polaroid 經典（600／i-Type／SX-70 同一種相紙）：卡片 88.47×107.52、畫面 76.80 寬×78.94 高（實測資料）；
+     上緣取跟左右同寬（約 5.8mm）。
+   ・Polaroid Go：卡片 53.9×66.6、畫面 47×46（Polaroid 官方）；下緣 16～17mm（兩份資料），取 16.6，上緣就是 4mm。
+   ・卡片外角的圓角沒有公開數據：Instax 取 3mm、Polaroid 取 1mm（目測真品的樣子）。
+   Spectra、FP-100C 的留白位置查不到可靠數據（各來源互相矛盾），所以不放，免得做出不像的樣子。 */
 export const POLAROID_FORMATS: PolaroidFormat[] = [
-  { id: 'polaroid', label: 'Polaroid 經典', sub: '600・i-Type・SX-70', card: [88, 107], win: [79, 79], top: 6, cr: 1.2, wr: .4 },
-  { id: 'polaroid-go', label: 'Polaroid Go', sub: '迷你方形', card: [53.9, 66.6], win: [47, 46], top: 4, cr: 1, wr: .3 },
-  { id: 'polaroid-spectra', label: 'Polaroid Spectra', sub: 'Image・寬幅', card: [102, 101], win: [92, 73], top: 5.5, cr: 1.2, wr: .4 },
-  { id: 'instax-mini', label: 'Instax Mini', sub: '名片尺寸', card: [54, 86], win: [46, 62], top: 6.5, cr: 3, wr: .8 },
-  { id: 'instax-mini-l', label: 'Instax Mini 橫拍', sub: '橫拍・厚邊在右', card: [86, 54], win: [62, 46], top: 4, cr: 3, wr: .8, side: 'right' },
-  { id: 'instax-square', label: 'Instax Square', sub: '方形', card: [72, 86], win: [62, 62], top: 6.5, cr: 3, wr: .8 },
-  { id: 'instax-wide', label: 'Instax Wide', sub: '寬幅', card: [108, 86], win: [99, 62], top: 6.5, cr: 3, wr: .8 },
-  { id: 'fp100c', label: 'FP-100C', sub: '富士撕拉片', card: [108, 85], win: [95, 73], top: 6, cr: .6, wr: 0, even: true },
+  { id: 'polaroid', label: 'Polaroid 經典', sub: '600・i-Type・SX-70', card: [88.47, 107.52], win: [76.80, 78.94], top: 5.835, cr: 1, wr: 0 },
+  { id: 'polaroid-go', label: 'Polaroid Go', sub: '迷你方形', card: [53.9, 66.6], win: [47, 46], top: 4, cr: 1, wr: 0 },
+  { id: 'instax-mini', label: 'Instax Mini', sub: '名片尺寸', card: [54, 86], win: [46, 62], top: 8, cr: 3, wr: .23 },
+  { id: 'instax-mini-l', label: 'Instax Mini 橫拍', sub: '橫拍・厚邊在右', card: [86, 54], win: [62, 46], top: 8, cr: 3, wr: .23, side: 'right' },
+  { id: 'instax-square', label: 'Instax Square', sub: '方形', card: [72, 86], win: [62, 62], top: 8, cr: 3, wr: .31 },
+  { id: 'instax-wide', label: 'Instax Wide', sub: '寬幅', card: [108, 86], win: [99, 62], top: 8, cr: 3, wr: .31 },
 ];
 export const POLAROID_DEFAULT_FORMAT = 'polaroid';
 /** 紙紋強度（0～100），固定 */
