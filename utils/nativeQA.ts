@@ -510,7 +510,7 @@ async function scenarioStickerPerf() {
 /* 選取框與貼圖的距離（四邊）：新增前後各讀一次主畫布，變了的像素就是貼圖本身（選取框是畫布上方的 SVG，不在畫布裡），
    跟選取框的框線中心比，記下上、下、左、右各差幾個 CSS px。創意拼圖、跨頁拼圖各量一輪。 */
 async function scenarioSelGap() {
-  const items = ['star-f', 'circle-f', 'heart-f', 'square-o', 'triangle-f', 'hole-love', 'track-select-o'];
+  const items = ['circle-f', 'star-f', 'square-o', 'hole-love'];
   const measure = async (tool: string, addFlow: () => Promise<void>, frameOf: () => Element | null) => {
     for (const id of items) {
       const cv = [...document.querySelectorAll('canvas')].filter(c => visible(c)).sort((a, b) => b.width * b.height - a.width * a.height)[0] as HTMLCanvasElement | undefined;
@@ -521,6 +521,8 @@ async function scenarioSelGap() {
       if (!it) { log(`selgap ${tool} ${id}: not found`); continue; }
       click(it); await sleep(2500);
       const fe = frameOf();
+      { const q = fe?.getBoundingClientRect(); log(`selgap shot ${id} t=${Math.round(performance.now())} frame css ${q?.left.toFixed(2)},${q?.top.toFixed(2)} ${q?.width.toFixed(2)}x${q?.height.toFixed(2)}`); }
+      await sleep(9000);
       if (!fe || !cv || !g || !before) { log(`selgap ${tool} ${id}: no frame/canvas`); continue; }
       const fr = fe.getBoundingClientRect(), sw = parseFloat(getComputedStyle(fe).strokeWidth || '0') || 0;
       const after = g.getImageData(0, 0, cv.width, cv.height).data;
@@ -543,9 +545,7 @@ async function scenarioSelGap() {
     const tab = document.querySelector('[data-creative-tab=add]') as HTMLElement | null; if (tab) click(tab); await sleep(800);
     const add = findButton(/^新增貼圖/); if (add) { click(add); await sleep(800); }
   }, () => {
-    const c = [...document.querySelectorAll('svg rect, svg path')].filter(el => { const r = el.getBoundingClientRect(); return r.width > 20 && r.width < 400 && getComputedStyle(el).stroke !== 'none' && getComputedStyle(el).stroke !== ''; });
-    c.sort((x, y) => { const p = x.getBoundingClientRect(), q = y.getBoundingClientRect(); return q.width * q.height - p.width * p.height; });
-    return c[0] || null;
+    return [...document.querySelectorAll('svg rect')].find(el => el.getAttribute('stroke') === '#fff' && !el.hasAttribute('data-base-selection-rect')) || null;
   });
 }
 
