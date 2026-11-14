@@ -92,7 +92,7 @@ import {
 const drawTextShape: typeof drawTextShapeRaw = (ctx,type,text,x,y,size,fill,out=false,angle=0) =>
   drawTextShapeRaw(ctx,type,text,x,y,size,fill,out,angle,true);
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
-import { paintPattern, paintStripesRect, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
+import { paintPattern, paintStripesRect, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, polaGingFromUi, polaGingToUi, POLA_GING_DEFAULT, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
 import { paintMaskTexture, maskTextureSizeFromUi, maskTextureSizeToUi, maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
 import { spacedTextureRadius, maskTextureGapFromUi, maskTextureGapToUi } from '../utils/textureSpacing';
@@ -3020,6 +3020,31 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   },[adjustSub,tuneTool,selectedRegionPhoto,baseSelected]);
   const [loadingLut, setLoadingLut] = useState<string | null>(null);
   const [lutRevision, setLutRevision] = useState(0);
+  /* 套了濾鏡／調節／特效之後，底圖照片的「正式成品」（CPU 套一次，要好幾百毫秒）以前要等到下一次
+     需要它的重畫才做 —— 通常就是放大的第一格，於是「編輯後一放大，開頭卡一下」。
+     改成效果停下來、閒下來時就先做好（跟重畫時同一個尺寸），放大時直接拿來用。 */
+  const regionFxWarmKey = JSON.stringify([photoRegion?.photos.map(p => [p.src, p.fx]) ?? null, lutRevision]);
+  useEffect(() => {
+    const pr = photoRegionRef.current;
+    if (!pr || !pr.photos.some(p => p.fx && hasPhotoFx(p.fx))) return;
+    const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
+    let cancelled = false, h = 0;
+    const run = () => {
+      if (cancelled) return;
+      // 手指還在畫面上（拖滑桿、縮放）就晚一點再做
+      if (activePointers.current.size || sliderHeld()) { h = window.setTimeout(run, 300); return; }
+      const t = latestImageTransform.current, s0 = drawnScaleRef.current || 1;
+      const onPx = Math.max(Math.abs(t.w), Math.abs(t.h)) * s0;
+      pr.photos.forEach((p, i) => {
+        if (cancelled || !p.fx || !hasPhotoFx(p.fx)) return;
+        const original = decodedRegionPhotos.current.get(p.src);
+        if (original) { try { fxCanvasOf({ ...p, id: `region-fx-${i}@${p.src}`, img: original }, true, onPx); } catch { /* 重畫時再做 */ } }
+      });
+    };
+    h = window.setTimeout(() => { if (ric) ric(run, { timeout: 1500 }); else run(); }, 600);
+    return () => { cancelled = true; window.clearTimeout(h); };
+  }, [regionFxWarmKey]);
+
   useEffect(()=>{regionBlend.current?.clear();regionPaintRef.current();},[lutRevision]);
   const [maskColor, setMaskColor] = useState(CREATIVE_MASK_DEFAULT);
   const [patternType, setPatternType] = useState('none'); 
@@ -6302,7 +6327,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const vp = sceneTileWindow.current || (canWindow ? previewViewport(tW,tH,uiRect,stageRef.current!.getBoundingClientRect()) : {x:0,y:0,w:tW,h:tH});
     const windowed = vp.x!==0 || vp.y!==0 || vp.w!==tW || vp.h!==tH;
     // 縮放時沿用容量，不改實體像素和 CSS 的對應。多出來的暫存像素會清掉，場景不會漏出去
-    const bucketed=isMain&&!previewCapture&&canWindow&&baseCssWRef.current>0&&(!!viewPinchRef.current||performance.now()<wheelUntilRef.current);
+    /* 放大中（只畫看得到的那一塊）手放開之後也維持手勢中的暫存大小：畫布內容完全一樣，
+       但點陣大小一變，瀏覽器把它縮到螢幕上的取整方式就不同 —— 整張圖偏約 1 個裝置像素、
+       銳利度也變一點，就是「縮放、移動後鬆手，圖片又小小變一下」。容量只在回到整頁、沒有手勢時才放掉 */
+    const bucketed=isMain&&!previewCapture&&canWindow&&baseCssWRef.current>0&&(!!viewPinchRef.current||performance.now()<wheelUntilRef.current||windowed);
     let backingW=bucketed?Math.ceil(vp.w/256)*256:vp.w,backingH=bucketed?Math.ceil(vp.h/256)*256:vp.h;
     if(targetCanvas===canvasRef.current){
       if(bucketed){
@@ -12969,7 +12997,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 <div className="px-2">
                                   {isClefTex(sel.hole)
                                     ? shapeSlider('數量', clefStripeToUi(sel.stripeN ?? CLEF_TEX_DEFAULTS.stripeN), 0, CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, (v: number) => patch({ stripeN: clefStripeFromUi(v) }), shapeLive)
-                                    : shapeSlider('數量', sel.stripeN ?? STRIPE_N_DEFAULT, 0, tex === 'gingham' ? GINGHAM_N_MAX : STRIPE_N_MAX, (v: number) => patch({ stripeN: v }), shapeLive)}
+                                    : sel.kind === 'frame-polaroid' && tex === 'gingham'
+                                      /* 拍立得格紋：最少 10 格，滑桿照樣 0～100 */
+                                      ? shapeSlider('數量', polaGingToUi(sel.stripeN ?? POLA_GING_DEFAULT), 0, 100, (v: number) => patch({ stripeN: polaGingFromUi(v) }), shapeLive)
+                                      : shapeSlider('數量', sel.stripeN ?? STRIPE_N_DEFAULT, 0, tex === 'gingham' ? GINGHAM_N_MAX : STRIPE_N_MAX, (v: number) => patch({ stripeN: v }), shapeLive)}
                                 </div>
                                 {tex === 'gingham' ? (
                                   <div className="px-2">{shapeSlider('角度', gingAngleUi(sel.stripeDir), 0, 100, (v: number) => patch({ stripeDir: gingDirOf(v) } as any), shapeLive)}</div>

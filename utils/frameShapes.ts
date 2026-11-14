@@ -428,14 +428,14 @@ export type PolaroidFormat = { id: string; label: string; sub: string; card: [nu
    ・Polaroid 經典（600／i-Type／SX-70 同一種相紙）：卡片 88.47×107.52、畫面 76.80 寬×78.94 高（實測資料）；
      上緣取跟左右同寬（約 5.8mm）。
    ・Polaroid Go：卡片 53.9×66.6、畫面 47×46（Polaroid 官方）；下緣 16～17mm（兩份資料），取 16.6，上緣就是 4mm。
-   ・卡片外角的圓角沒有公開數據：Instax 取 3mm、Polaroid 取 1mm（目測真品的樣子）。
+   ・卡片外角的圓角沒有公開數據：全部取 1mm（跟經典一樣；3mm 看起來太圓）。
    Spectra、FP-100C 的留白位置查不到可靠數據（各來源互相矛盾），所以不放，免得做出不像的樣子。 */
 export const POLAROID_FORMATS: PolaroidFormat[] = [
   { id: 'polaroid', label: 'Polaroid 經典', sub: '600・i-Type・SX-70', card: [88.47, 107.52], win: [76.80, 78.94], top: 5.835, cr: 1, wr: 0 },
   { id: 'polaroid-go', label: 'Polaroid Go', sub: '迷你方形', card: [53.9, 66.6], win: [47, 46], top: 4, cr: 1, wr: 0 },
-  { id: 'instax-mini', label: 'Instax Mini', sub: '名片尺寸', card: [54, 86], win: [46, 62], top: 8, cr: 3, wr: .23 },
-  { id: 'instax-square', label: 'Instax Square', sub: '方形', card: [72, 86], win: [62, 62], top: 8, cr: 3, wr: .31 },
-  { id: 'instax-wide', label: 'Instax Wide', sub: '寬幅', card: [108, 86], win: [99, 62], top: 8, cr: 3, wr: .31 },
+  { id: 'instax-mini', label: 'Instax Mini', sub: '名片尺寸', card: [54, 86], win: [46, 62], top: 8, cr: 1, wr: .23 },
+  { id: 'instax-square', label: 'Instax Square', sub: '方形', card: [72, 86], win: [62, 62], top: 8, cr: 1, wr: .31 },
+  { id: 'instax-wide', label: 'Instax Wide', sub: '寬幅', card: [108, 86], win: [99, 62], top: 8, cr: 1, wr: .31 },
 ];
 export const POLAROID_DEFAULT_FORMAT = 'polaroid';
 /** 紙紋強度（0～100），固定（40 太明顯，降到 25） */
@@ -567,8 +567,9 @@ const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color:
   // 紙紋：整張壓紋相紙，一格的實際大小固定（約 24mm），換規格、放大縮小都是同一種紋理
   if (paper > 0) {
     const pat = g.createPattern(paperTile(color), 'repeat')!;
-    // 一格紋理的實際大小約 36mm（24mm 太密、64mm 太散）
-    const sc = Math.max(1e-3, 36 * G.k / 256);
+    /* 紋理一格的大小跟著「卡片在畫面上的大小」走（卡片短邊的 0.41 倍），不是照實際 mm：
+       照 mm 的話 Go、Mini 這種小卡片在畫面上被放大，紋理看起來就比經典粗。現在每一種看起來一樣密 */
+    const sc = Math.max(1e-3, Math.min(w, h) * .41 / 256);
     pat.setTransform(new DOMMatrix([sc, 0, 0, sc, 0, 0]));
     g.globalAlpha = paper; g.fillStyle = pat; g.fillRect(0, 0, w, h); g.globalAlpha = 1;
   }
@@ -724,6 +725,18 @@ export const paintFrameShape = (
   g.globalCompositeOperation = 'source-atop';
   const body = new Path2D(); body.rect(0, 0, w, h);
   texture(g, body);
+  if (kind === FRAME_POLAROID) {
+    /* 拍立得疊了紋理（點點、格紋…）之後，相紙的紙紋要還在：
+       把白色相紙的紙紋用「色彩增值」再疊一次，只疊在卡片上（窗口不疊） */
+    g.save();
+    g.globalCompositeOperation = 'multiply';
+    g.clip(polaroidPath(w, h, 0, params), 'evenodd');
+    const pat = g.createPattern(paperTile('#FFFFFF'), 'repeat')!;
+    const sc = Math.max(1e-3, Math.min(w, h) * .41 / 256);
+    pat.setTransform(new DOMMatrix([sc, 0, 0, sc, 0, 0]));
+    g.globalAlpha = .6; g.fillStyle = pat; g.fillRect(0, 0, w, h);
+    g.restore();
+  }
   g.globalCompositeOperation = 'source-over';
   g.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(cv, 0, 0, W, H, 0, 0, w, h);

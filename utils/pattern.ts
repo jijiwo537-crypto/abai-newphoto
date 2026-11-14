@@ -111,7 +111,12 @@ const STRIPE_N_DRAW_MAX = 60;
 export const GINGHAM_N_MAX = 50;
 /** 換成格紋時數量的預設：霧白邊框 20，其他 10 */
 export const GINGHAM_N_DEFAULT = 10;
-export const ginghamDefaultFor = (kind?: string) => kind === 'mist-frame' || kind === 'mist-frame-tb' ? 20 : GINGHAM_N_DEFAULT;
+/** 拍立得的格紋數量：滑桿 0～100 對到原本的 10～50（最少 10 格） */
+export const polaGingFromUi = (ui: number) => 10 + Math.max(0, Math.min(100, ui)) * .4;
+export const polaGingToUi = (n: number) => Math.max(0, Math.min(100, Math.round((n - 10) / .4)));
+/** 拍立得格紋預設：原本的 15（＝滑桿 12.5）取最接近的 5 的倍數 → 滑桿 15 */
+export const POLA_GING_DEFAULT = polaGingFromUi(15);
+export const ginghamDefaultFor = (kind?: string) => kind === 'frame-polaroid' ? POLA_GING_DEFAULT : kind === 'mist-frame' || kind === 'mist-frame-tb' ? 20 : GINGHAM_N_DEFAULT;
 
 /**
  * 條紋改成直接指定「有幾條」，不是指定粗細。

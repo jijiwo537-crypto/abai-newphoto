@@ -125,7 +125,7 @@ import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
 import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, polaroidGeom, polaroidBox, polaroidResize, loadFramePhoto, onFramePhotoReady, polaroidPhotoRect, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
-import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
+import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, polaGingFromUi, polaGingToUi, POLA_GING_DEFAULT, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
 import { PatternLayer } from './PatternLayer';
@@ -1737,6 +1737,8 @@ export const shapeGlowToUi = (g: number | boolean | undefined, outline: boolean)
 export const shapeGlowFromUi = (v: number, outline: boolean) => outline ? Math.max(0, Math.min(100, v)) * 3 * OUTLINE_GLOW_SCALE : glowFromUi(v);
 /** 邊框類的紋理沒有條紋（懸空在框裡面，見 paintTextureInsideOutline） */
 export const shapeTexOptions = (kind?: string, filled?: boolean) =>
+  // 拍立得：沒有條紋（相紙上只給點點、星星、愛心、格紋）
+  kind === 'frame-polaroid' ? TEX_OPTIONS.filter(([id]) => id !== 'stripe') :
   kind === 'frame-speed' || kind === 'frame-scatter' || kind === 'frame-scatter-tb' ? [] : isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe' && id !== 'gingham') : TEX_OPTIONS;
 /** 不給調紋理的圖形（圖形選單上的 id，例如 'star-f'、'hole-love'）。排序工具的「紋理」頁可以挑，複製給 Claude 改這裡 */
 export const NO_TEXTURE_SHAPE_IDS: string[] = ['spinner-f', 'hole-seagrass', 'burst-dash-f', 'hole-burst', 'hole-snow'];
@@ -3440,7 +3442,10 @@ export const ShapeEditorPanel: React.FC<{
                 <div className="px-2">
                   {isClefTex(layer.holeType)
                     ? slider('數量', clefStripeToUi(layer.shapeStripeN ?? CLEF_TEX_DEFAULTS.stripeN), 0, CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, v => onChange({ shapeStripeN: clefStripeFromUi(v) }))
-                    : slider('數量', layer.shapeStripeN ?? STRIPE_N_DEFAULT, 0, tex === 'gingham' ? GINGHAM_N_MAX : STRIPE_N_MAX, v => onChange({ shapeStripeN: v }))}
+                    : layer.shape === 'frame-polaroid' && tex === 'gingham'
+                      /* 拍立得格紋：最少 10 格，滑桿照樣 0～100 */
+                      ? slider('數量', polaGingToUi(layer.shapeStripeN ?? POLA_GING_DEFAULT), 0, 100, v => onChange({ shapeStripeN: polaGingFromUi(v) }))
+                      : slider('數量', layer.shapeStripeN ?? STRIPE_N_DEFAULT, 0, tex === 'gingham' ? GINGHAM_N_MAX : STRIPE_N_MAX, v => onChange({ shapeStripeN: v }))}
                 </div>
                 {/* 格紋沒有方向，這一格換成角度（整格一起換） */}
                 {tex === 'gingham' ? (
