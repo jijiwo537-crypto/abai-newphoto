@@ -3579,7 +3579,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       baseVidRef.current = isVideoEl(src) ? src : null;
       if (baseVidRef.current) bornVidsRef.current.add(baseVidRef.current);
       setImageState({ img: src, baseW: bw, baseH: bh, originalW, originalH, globalScale: gs, vid: isVideoEl(src) });
-      const nextLayout = preserveLayout ? layout : (bh > bw * 1.1 ? 'mask-right' : 'mask-bottom');
+      /* 一開始就匯入不只一張：預設用排版那一排的第五個（右側遮罩）；只有一張照舊看直橫 */
+      const nextLayout = preserveLayout ? layout : grouped ? 'mask-right' : (bh > bw * 1.1 ? 'mask-right' : 'mask-bottom');
       const geo = layoutGeometry(nextLayout, bw, bh, maskScale, canvasRatio);
       const kk = nextLayout === AROUND
         ? Math.max(geo.iw / Math.max(1, bw), geo.ih / Math.max(1, bh)) : 1;
