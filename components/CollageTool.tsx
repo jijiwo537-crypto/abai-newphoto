@@ -8832,14 +8832,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        所以底圖愈大等愈久。現在畫面每畫一次就順手留一張，返回鍵那一下
        手上已經有圖了，一格都不用再算。
        0.4 秒才留一次，播影片時多出來的成本可以忽略（實測一次約 2 毫秒）。 */
-    // 留一張整張成品給「預覽縮放手勢」用（見上面 pinchSnap）。只在有遮罩這種
-    // 重的場景、而且畫的是完整一頁（沒有放大裁窗）的靜止畫面時才留。
-    if(targetCanvas===canvasRef.current&&!previewCapture&&!windowed&&sceneIsStatic&&hasBackdrop&&!viewMovingNow&&targetCanvas.width>1){
+    // 留一張整張成品給「預覽縮放手勢」用（見上面 pinchSnap）。只在重的場景、而且畫的是完整一頁
+    // （沒有放大裁窗）的靜止畫面時才留：遮罩，以及無縫拼圖 —— 無縫每畫一格都要跑一次 GPU 合成再讀回，
+    // 縮放手勢期間每一格重畫就是「開了無縫之後放大縮小很卡」。手放開後照新倍率畫清楚一次。
+    const heavyForPinch=hasBackdrop||!!(photoRegion?.seamless&&photoRegion.photos.length>1);
+    if(targetCanvas===canvasRef.current&&!previewCapture&&!windowed&&sceneIsStatic&&heavyForPinch&&!viewMovingNow&&targetCanvas.width>1){
       const snap=pinchSnapRef.current?.canvas||document.createElement('canvas');
       if(snap.width!==targetCanvas.width)snap.width=targetCanvas.width;if(snap.height!==targetCanvas.height)snap.height=targetCanvas.height;
       const sg=get2dWide(snap);
       if(sg){sg.setTransform(1,0,0,1,0,0);sg.globalCompositeOperation='copy';sg.drawImage(targetCanvas,0,0);sg.globalCompositeOperation='source-over';pinchSnapRef.current={key:liveSceneKey,canvas:snap};}
-    }else if(!hasBackdrop&&pinchSnapRef.current&&targetCanvas===canvasRef.current){pinchSnapRef.current.canvas.width=pinchSnapRef.current.canvas.height=1;pinchSnapRef.current=null;}
+    }else if(!heavyForPinch&&pinchSnapRef.current&&targetCanvas===canvasRef.current){pinchSnapRef.current.canvas.width=pinchSnapRef.current.canvas.height=1;pinchSnapRef.current=null;}
     if (isMain && !windowed) {
       const nowT = performance.now();
       // 手勢期間不額外縮製歷史縮圖；畫面仍以原解析度繪製。
