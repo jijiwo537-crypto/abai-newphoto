@@ -618,6 +618,12 @@ const lowResGlowCache = new Map<string, { c: HTMLCanvasElement; pad: number }>()
 const lowResGlowPathIds = new WeakMap<Path2D, number>();
 let lowResGlowSerial = 0;
 let lowResGlowScratch: HTMLCanvasElement | null = null;
+/** 離開工具時把發光快取整個還回去 */
+const releaseLowResGlow = () => {
+  for (const v of lowResGlowCache.values()) v.c.width = v.c.height = 0;
+  lowResGlowCache.clear();
+  if (lowResGlowScratch) { lowResGlowScratch.width = lowResGlowScratch.height = 0; lowResGlowScratch = null; }
+};
 const lowResShapeGlow = (ctx: CanvasRenderingContext2D, path: Path2D, solid: boolean, bw: number, bh: number, rs: number[], color: string,
   squares: undefined | (() => typeof fillTrackSquares), kind: string, tbw: number, tbh: number, cacheable = true) => {
   const m = ctx.getTransform(); const dev = Math.max(1e-3, Math.hypot(m.a, m.b));
@@ -5910,6 +5916,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const forceFullPreviewRef = useRef(false);
   const stableScene=useRef(new StableSceneTiles());
   const pinchSnapRef=useRef<{key:string;canvas:HTMLCanvasElement}|null>(null);
+  /* ── 離開工具那一刻，大塊的畫布記憶體當場還回去 ────────────────────────
+     iPhone 的 WebKit 要等垃圾回收才會真的放掉畫布的記憶體；離開時主頁同時在載入，
+     兩邊疊在一起的那一下就可能超過系統上限 → 網頁被系統砍掉重開（又看到開場 logo）。
+     所以這裡不等回收：畫布縮成 0、快取清掉，記憶體立刻還回去。
+     縮圖 thumbRef 不動 —— 離開後才寫歷史紀錄的那一步還要用它。 */
+  const mainCanvasSeen=useRef<HTMLCanvasElement|null>(null);
+  useEffect(()=>{if(canvasRef.current)mainCanvasSeen.current=canvasRef.current;});
+  useEffect(()=>()=>{
+    const zap=(c:HTMLCanvasElement|null|undefined)=>{if(c){c.width=0;c.height=0;}};
+    zap(mainCanvasSeen.current);mainCanvasSeen.current=null;
+    if(pinchSnapRef.current){zap(pinchSnapRef.current.canvas);pinchSnapRef.current=null;}
+    if(backdropPrefix.current){zap(backdropPrefix.current.canvas);backdropPrefix.current=null;}
+    if(aroundBdRef.current){zap(aroundBdRef.current.cv);aroundBdRef.current=null;}
+    for(const r of [baseMaskCanvasRef,fullMaskCanvasRef,lowerMaskCanvasRef,waveObjectCanvasRef,holeBackdropCanvasRef,dummyCanvasRef])zap(r.current);
+    zap(glowLayerRef.current);glowLayerRef.current=null;
+    zap(linkGlowScratchRef.current);linkGlowScratchRef.current=null;
+    zap(maskScratchRef.current);maskScratchRef.current=null;
+    releaseLowResGlow();
+  },[]);
   const sceneTileWindow=useRef<SceneWindow|null>(null);
   const stableSceneKey=JSON.stringify([backdropSceneFingerprint,objects,photoRegion,lutRevision],compactSceneValue);
   const stableSceneKeyRef=useRef(stableSceneKey);stableSceneKeyRef.current=stableSceneKey;
