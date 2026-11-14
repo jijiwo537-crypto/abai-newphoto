@@ -3799,6 +3799,8 @@ const pickEffect = (id: string) => {
    而格子是被裁切的，畫出來會被切掉；圓角則已經有佈局那根共用滑桿。 */
 /* 去背圖：不給特效（著色器會把透明處算壞），「造型」改叫「外觀」、只留描邊與發光 */
 const isAlphaImg = useImgIsAlpha(img?.vid ? undefined : img?.src);
+/** 去背圖面板：正在挑哪一個顏色（null＝兩根滑桿那一頁） */
+const [alphaColor, setAlphaColor] = useState<null | 'stroke' | 'glow'>(null);
 const CATS = ([
   ['filter', 'palette', '濾鏡'],
   ['tune', 'tune', '調節'],
@@ -3993,8 +3995,49 @@ const sliderArea = (() => {
   return null;
 })();
 
-const sliderShown = fxDetailOpen || !!sliderArea;
+const sliderShown = !isAlphaImg && (fxDetailOpen || !!sliderArea);
 useEffect(() => { onSliderOpenChange?.(sliderShown); }, [sliderShown, onSliderOpenChange]);
+
+/* 去背圖：只能調描邊與發光。兩根滑桿各一排，顏色鈕在滑桿右邊（跟文字的描邊／發光同一款）。
+   外層的手勢處理跟一般面板一模一樣，拖滑桿的復原紀錄、先讓滑桿順的機制都照舊。 */
+if (isAlphaImg) return (
+  <div className="h-full flex flex-col justify-end" data-alpha-panel=""
+    onClickCapture={e=>{if((e.target as Element).closest('button'))deferHeavyWork();}}
+    onPointerDownCapture={isolateFxUpdates ? e=>{
+      deferHeavyWork();
+      if((e.target as Element).closest('input[type=range],.slider-wrap')){releaseBackgroundHold.current?.();releaseBackgroundHold.current=holdPhotoInteraction();sliderHeld.current=true;onAdjustmentStart?.();}
+    } : undefined}
+    onPointerUpCapture={isolateFxUpdates ? finishAdjustment : undefined}
+    onPointerCancelCapture={isolateFxUpdates ? finishAdjustment : undefined}
+    onKeyUpCapture={isolateFxUpdates ? finishAdjustment : undefined}>
+    {alphaColor ? (
+      <div className="bg-[#111]">
+        <ColorPickerEmbedded
+          color={(alphaColor === 'stroke' ? img.imgStrokeColor : img.imgGlowColor) || '#FFFFFF'}
+          colors={alphaColor === 'stroke' ? STROKE_COLORS : GLOW_COLORS}
+          onChange={c => set(alphaColor === 'stroke' ? { imgStrokeColor: c } : { imgGlowColor: c })}
+          onClose={() => setAlphaColor(null)} />
+      </div>
+    ) : (
+      <div className="bg-[#111] px-6 pt-5 pb-8 space-y-5">
+        <div className="flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            {editorSlider('描邊', img.imgStrokeWidth || 0, 0, 100, v => set({ imgStrokeWidth: v }))}
+          </div>
+          <ColorPick compact label="描邊顏色" value={img.imgStrokeColor || '#FFFFFF'} colors={STROKE_COLORS}
+            onPick={c => set({ imgStrokeColor: c })} onOpen={() => setAlphaColor('stroke')} />
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            {editorSlider('發光', img.imgGlow || 0, 0, 20, v => set({ imgGlow: v }))}
+          </div>
+          <ColorPick compact label="發光顏色" value={img.imgGlowColor || '#FFFFFF'} colors={GLOW_COLORS}
+            onPick={c => set({ imgGlowColor: c })} onOpen={() => setAlphaColor('glow')} />
+        </div>
+      </div>
+    )}
+  </div>
+);
 
 return (
   <div className="h-full flex flex-col justify-end"
