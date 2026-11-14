@@ -549,6 +549,53 @@ async function scenarioSelGap() {
   });
 }
 
+/* 去背 PNG × 特效：做一張點陣風格的大張去背 PNG，匯入拼圖工具，逐一套用每個特效、濾鏡。
+   每一步都先寫記錄再動手：如果 WebContent 被系統砍掉，記錄會停在出事的那一步。 */
+async function makeAlphaPng(): Promise<File> {
+  const c = document.createElement('canvas'); c.width = 3000; c.height = 3000;
+  const g = c.getContext('2d')!;
+  for (let y = 0; y < 3000; y += 30) for (let x = 0; x < 3000; x += 30) {
+    g.fillStyle = `hsl(${(x + y) % 360},80%,55%)`; g.beginPath(); g.arc(x + 15, y + 15, 4 + ((x * 7 + y * 13) % 10), 0, Math.PI * 2); g.fill();
+  }
+  const blob: Blob = await new Promise(r => c.toBlob(b => r(b!), 'image/png'));
+  c.width = c.height = 0;
+  return new File([blob], 'dots.png', { type: 'image/png', lastModified: Date.now() });
+}
+async function scenarioAlphaFx(tool: string) {
+  const base = await makePhoto(-1), alpha = await makeAlphaPng();
+  log(`alphafx ${tool}: png ${alpha.size} bytes`);
+  let calls = 0;
+  (window as any).__abaiQAFiles = (filter: string) => { calls++; log(`import intercepted #${calls} (${filter})`); return calls === 1 ? [base] : [alpha]; };
+  click(await waitFor(() => findButton(tool === 'layout' ? TOOL_ENTRY.layout : TOOL_ENTRY.collage), 15000, '拼圖按鈕'));
+  await sleep(9000);
+  if (tool === 'layout') {
+    const add = findButton(/^新增內容$/); if (add) { click(add); await sleep(800); }
+  } else {
+    const tab = document.querySelector('[data-creative-tab=add]') as HTMLElement | null; if (tab) click(tab); await sleep(800);
+  }
+  const imp = findButton(/匯入圖片/); if (!imp) { log('alphafx: 找不到匯入圖片'); logButtons('alphafx'); return; }
+  click(imp); await sleep(7000);
+  if (tool === 'layout') {
+    const els = [...document.querySelectorAll('[data-floating-id]')]; const el = els[els.length - 1] as HTMLElement | undefined;
+    if (el) { const r = el.getBoundingClientRect(); await tapAt(r.left + r.width / 2, r.top + r.height / 2); await sleep(1500); }
+  }
+  const adj = findButton(/^圖片調整$/); if (!adj) { log('alphafx: 找不到圖片調整'); logButtons('alphafx'); return; }
+  click(adj); await sleep(2500);
+  const fxTab = [...buttons()].reverse().find(b => (b.textContent || '').trim() === '特效'); if (fxTab) click(fxTab); await sleep(2500);
+  const ids = [...document.querySelectorAll('[data-fx-card]')].map(e => e.getAttribute('data-fx-card') || '').filter(Boolean);
+  log(`alphafx ${tool}: ${ids.length} fx cards`);
+  for (const id of ids) {
+    log(`alphafx ${tool}: apply ${id}`);
+    const el = document.querySelector(`[data-fx-card="${id}"]`) as HTMLElement | null; if (el) click(el);
+    await sleep(2200);
+    log(`alphafx ${tool}: ok ${id}`);
+  }
+  const fl = [...buttons()].reverse().find(b => (b.textContent || '').trim() === '濾鏡'); if (fl) click(fl); await sleep(2000);
+  const luts = [...document.querySelectorAll('[data-lut-card]')].slice(0, 8) as HTMLElement[];
+  for (const l of luts) { log(`alphafx ${tool}: lut ${l.getAttribute('data-lut-card')}`); click(l); await sleep(2000); }
+  log(`alphafx ${tool}: done`);
+}
+
 /* 選中框四邊縫隙 × 縮放：用兩指 pointer 事件縮放貼圖本身、再縮放整個畫面，每一步量四邊（亞像素） */
 async function scenarioZoomGap() {
   const raf = () => new Promise<number>(r => requestAnimationFrame(r));
@@ -647,6 +694,7 @@ export async function runNativeQA(forced?: string) {
     else if (scenario === 'stickerperf') await scenarioStickerPerf();
     else if (scenario === 'selgap') await scenarioSelGap();
     else if (scenario === 'zoomgap') await scenarioZoomGap();
+    else if (scenario.startsWith('alphafx')) await scenarioAlphaFx(scenario.split('-')[1] || 'collage');
     else if (scenario === 'rings') await scenarioRings();
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
     else if (scenario === 'layoutundo') await scenarioLayoutUndo();
