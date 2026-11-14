@@ -1671,6 +1671,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 只有手指正按在「無縫／佔比」滑桿上才是 true：這時 GPU 那層直接疊在畫布下顯示（見 CreativeSeamless.present）。 */
   const seamLiveRef=useRef(false);
   const seamPendingAmount=useRef(0),seamAmountRaf=useRef(0);
+  /* 無縫滑桿停在 0（無縫關著）時預熱 GPU 那張畫布：把每張原圖先傳上 GPU、著色器先編好，
+     從 0 拉開的第一格才不必當場做（12MP 的原圖一張要上傳好幾百毫秒，就是「從 0 開始拖會卡」）。
+     只在滑桿出現在畫面上時做；照片換成更清楚的那一張（swapTier）之後也要重做 —— 貼圖認的是圖片物件，
+     換了一張就對不上，第一格又會重新上傳。 */
+  const seamSliderShown=useRef(false);
+  const warmSeamNow=()=>{
+    const region=photoRegionRef.current;if(!region||region.photos.length<2||region.seamless)return;
+    try{creativeSeam.current??=new CreativeSeamless();creativeSeam.current.warm(region,new Map(decodedRegionPhotos.current));}catch{/* 預熱失敗就照原本第一格再做 */}
+  };
+  const warmSeamIdle=()=>{
+    if(!seamSliderShown.current)return;
+    const ric=(window as any).requestIdleCallback as ((f:()=>void,o?:any)=>number)|undefined;
+    if(ric)ric(warmSeamNow,{timeout:1500});else window.setTimeout(warmSeamNow,300);
+  };
   const maskScaleValue=useRef(maskScale);maskScaleValue.current=maskScale;
   const occupancyFrame=useRef(0);
   useEffect(()=>()=>cancelAnimationFrame(occupancyFrame.current),[]);
@@ -10486,6 +10500,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const old = decodedRegionPhotos.current.get(src);
     if (old && old !== img) {
       decodedRegionPhotos.current.set(src, img);
+      if (photoRegionRef.current?.photos.some(p => p.src === src)) warmSeamIdle();
       const bm = regionDrawables.current.get(src); if (bm) { bm.close(); regionDrawables.current.delete(src); }
       forgetPhotoFxSource(old);
       changed = true;
@@ -12081,6 +12096,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </div>
                   {photoRegion && photoRegion.photos.length>1 && seamlessPhotoBase(photoRegion) && <div className="space-y-3" data-creative-seamless>
                     <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
+                    {/* 停在 0（無縫關著）時 GPU 那張畫布本來不會預熱：從 0 拉開的第一格要當場把每張原圖傳上 GPU、
+                        編譯著色器，就是「從 0 開始拖會卡一下」。滑桿一出現在畫面上，就趁空檔先預熱一次
+                        （只在打開這一頁時才做，不會每種版面都一直佔著 GPU）。 */}
+                    <IdleOnce k={photoRegion.photos.map(p=>p.src).join('|')} run={warmSeamNow} visible={seamSliderShown}/>
                     {/* 只有軌道左右往內收（標題、上下位置不變）：貼滿整排太長，兩端也難拖 */}
                     <div className="px-3">
                       <RegionLiveRange value={creativeSeamlessSliderValue(photoRegion)} onStart={()=>{seamLiveRef.current=true;}}
@@ -13197,6 +13216,17 @@ const useRafOnChange = (onChange: (v: number) => void) => {
 /**
  * 滑桿的回饋由這個小元件自己處理。大的編輯器只在手勢結束時提交 state，它的繪製排程每格讀最新的值
  */
+/** 掛上之後（以及 k 變了之後）趁瀏覽器空檔跑一次 run；卸載就取消。visible：掛著的期間設成 true */
+const IdleOnce=({k,run,visible}:{k:string;run:()=>void;visible?:{current:boolean}})=>{
+  const runRef=useRef(run);runRef.current=run;
+  useEffect(()=>{if(!visible)return;visible.current=true;return ()=>{visible.current=false;};},[visible]);
+  useEffect(()=>{
+    const ric=(window as any).requestIdleCallback as ((f:()=>void,o?:any)=>number)|undefined;
+    const id=ric?ric(()=>runRef.current(),{timeout:1500}):window.setTimeout(()=>runRef.current(),300);
+    return ()=>{if(ric)(window as any).cancelIdleCallback?.(id);else window.clearTimeout(id);};
+  },[k]);
+  return null;
+};
 const RegionLiveRange=({value,onChange,onCommit,onStart,min=0,max=100,step=1,label='融合程度'}:{value:number;onChange:(v:number)=>void;onCommit:()=>void;onStart?:()=>void;min?:number;max?:number;step?:number;label?:string})=>{
   const [shown,setShown]=React.useState(value);
   const release=React.useRef<(()=>void)|null>(null);
