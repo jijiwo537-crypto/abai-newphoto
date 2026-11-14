@@ -611,6 +611,22 @@ const CREATIVE_DUAL_INNER = '#C4D1C6';
 const creativeShapeColorFor = (kind: string) => isBackdropMask(kind) ? shapeDefaultColorFor(kind) : '#FFFFFF';
 
 /** 圖形調整面板用的滑桿，樣式跟經典拼圖那顆 ShapeEditorPanel 逐項相同 */
+/** 一條開放路徑（SVG d）的兩個線頭：位置，以及「往路徑外面」的單位方向。
+    起點的方向＝第一段往哪走的反方向；終點＝最後一段往哪走（曲線用控制點，跟繪製時的切線一致） */
+const lineEndsOf = (d: string) => {
+  const nums = (d.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || []).map(Number);
+  if (nums.length < 4) return [];
+  const pts: [number, number][] = [];
+  for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
+  const out: { x: number; y: number; tx: number; ty: number }[] = [];
+  const dir = (a: [number, number], b: [number, number]) => { const dx = a[0] - b[0], dy = a[1] - b[1], l = Math.hypot(dx, dy); return l > 1e-6 ? [dx / l, dy / l] : null; };
+  // 起點：找第一個跟起點不重合的點
+  for (let i = 1; i < pts.length; i++) { const t = dir(pts[0], pts[i]); if (t) { out.push({ x: pts[0][0], y: pts[0][1], tx: t[0], ty: t[1] }); break; } }
+  const last = pts[pts.length - 1];
+  for (let i = pts.length - 2; i >= 0; i--) { const t = dir(last, pts[i]); if (t) { out.push({ x: last[0], y: last[1], tx: t[0], ty: t[1] }); break; } }
+  return out;
+};
+
 /** 線條類貼圖的發光上限：原本的 40%（滑桿照樣 0～100） */
 const LINE_GLOW_CAP = 0.4;
 /** 網格類貼圖的發光上限：原本的 10%（滑桿照樣 0～100，能調得更細） */
@@ -8005,12 +8021,34 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#000000';
           ctx.lineWidth = solid ? sw * 2 : lw + sw * 2;
-          /* 線條兩端也要描到：本體是平頭。直線用方頭（兩端是乾淨的長方形外框）；
-             波浪、閃電的線頭是斜的，方頭會在端點多出一塊斜方塊，改用圓頭 */
-          if (SPECIAL_LINE_KINDS.has(o.kind)) ctx.lineCap = o.kind === 'line' ? 'square' : 'round';
+          /* 線條類（直線、波浪、閃電）：描邊是線條本身「均勻往外擴一圈」，形狀要跟線條一致 ——
+             轉角跟本體同一種接法與同一個尖角上限（閃電的折角是尖的，不能變成圓角），
+             線頭跟本體一樣是平頭，再沿著線頭的方向補一段跟描邊一樣寬的平整外框（不是圓頭、也不是斜方塊）。 */
+          const lineOutline = SPECIAL_LINE_KINDS.has(o.kind);
+          if (lineOutline) {
+            ctx.lineJoin = o.kind === 'line' ? 'round' : 'miter';
+            ctx.miterLimit = shapeMiterLimit(bw, bh);
+            ctx.lineCap = 'butt';
+          }
           // 選中框的小方塊是方的，描邊轉角也要是直角（其他圖形維持圓角）
           if (TRACK_SQUARE_KINDS.has(o.kind as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
           if (!strokeCompositeShape(ctx, o.kind, bw, bh, o.innerSize)) paintShapePath(false);
+          if (lineOutline) {
+            const d = drawTip === undefined ? shapePathD(stitchKindD(o.kind, (o as any).lineGap), bw, bh)
+              : revealPathD(shapePathD(stitchKindD(o.kind, (o as any).lineGap), bw, bh), drawTip);
+            const half = lw / 2 + sw;
+            ctx.fillStyle = o.strokeColor || '#000000';
+            for (const e of lineEndsOf(d)) {
+              // 線頭往外（tx,ty）補 sw 長、跟描邊一樣寬（線寬＋兩側描邊）的一塊
+              const nx = -e.ty, ny = e.tx;
+              ctx.beginPath();
+              ctx.moveTo(e.x + nx * half, e.y + ny * half);
+              ctx.lineTo(e.x + nx * half + e.tx * sw, e.y + ny * half + e.ty * sw);
+              ctx.lineTo(e.x - nx * half + e.tx * sw, e.y - ny * half + e.ty * sw);
+              ctx.lineTo(e.x - nx * half, e.y - ny * half);
+              ctx.closePath(); ctx.fill();
+            }
+          }
           ctx.restore();
         }
         if (solid) {
