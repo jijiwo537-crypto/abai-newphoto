@@ -8764,7 +8764,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 拖曳／兩指縮放／擠壓一個物件時，它底下的整個畫面（照片、遮罩、圖案、
        更底層的物件）每一幀都一模一樣。把那一段快取成一張，之後每一幀只貼回
        快取、再畫這個物件與它上面的東西 —— 不再每一幀重畫整個場景。 */
-    const movingId=isMain?((objDragRef.current?.moved&&objDragRef.current.id)||(objPinchRef.current?.gestureStarted&&objPinchRef.current.id)||objStretchRef.current?.id||null):null;
+    /* 拖貼圖的調整滑桿（粗細、發光、紋理…）也是同一回事：只有那一個貼圖在變，它底下的整個畫面
+       每一格都一樣。實測真正的 WebKit 上，不管哪種貼圖、哪根滑桿，每格都要 20～45ms ——
+       那是每一格重畫整個場景的固定成本，不是貼圖本身。 */
+    const tuningId=isMain&&maskSliderLive.current&&objects.find(o=>o.id===maskSliderLive.current!.id)?.type==='shape'?maskSliderLive.current.id:null;
+    const movingId=isMain?((objDragRef.current?.moved&&objDragRef.current.id)||(objPinchRef.current?.gestureStarted&&objPinchRef.current.id)||objStretchRef.current?.id||tuningId||null):null;
     const movingIndex=movingId?aboveObjs.findIndex(o=>o.id===movingId):-1;
     const liftPrefix=!maskPrefix&&isMain&&!previewCapture&&!directMaskPhotos&&movingIndex>=0&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
     const prefixCacheable=!tilePrefix&&(maskPrefix||liftPrefix);
