@@ -7,10 +7,10 @@
      筆刷邊框：像用粗筆刷隨手刷出來的邊，內緣不規則。
    共用的旋鈕只有「範圍」（框有多厚／尖刺刺多深）；顏色跟著圖形顏色，紋理只疊在框上。
    形狀用固定的亂數種子算，所以每一格、每一次打開都長得一樣。 */
-import { MIST_FRAME_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, type MistParams } from './mistFrame';
+import { MIST_FRAME_KIND, MIST_FRAME_TB_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, type MistParams } from './mistFrame';
 
 /** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
-export type FrameParams = MistParams & { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
+export type FrameParams = MistParams & { /** 拍立得規格（POLAROID_FORMATS 的 id）、紙紋強度 0～100 */ fmt?: string; paper?: number; /** 散落圖形（上下） */ scatterTb?: boolean; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
   kinds?: string[]; itemFrame?: ScatterItemFrame;
   /** 散落圖形：新增時的框（四邊擠壓不改這個）—— 版面照它排好，擠壓時整片一起被拉扁，不重新排 */
   baseW?: number; baseH?: number;
@@ -22,6 +22,10 @@ export const FRAME_POLAROID = 'frame-polaroid';
 export const FRAME_LACE = 'frame-lace';
 export const FRAME_BRUSH = 'frame-brush';
 export const FRAME_SCATTER = 'frame-scatter';
+/** 散落圖形（上下）：圖形只散在上緣、下緣兩條帶子裡 */
+export const FRAME_SCATTER_TB = 'frame-scatter-tb';
+/** 散落圖形的兩種（四周、上下）共用同一套編輯、動畫 */
+export const isScatterFrame = (kind?: string) => kind === FRAME_SCATTER || kind === FRAME_SCATTER_TB;
 
 /** 邊框分類裡的全部（圖形選單上的順序） */
 export const FRAME_ITEMS = [
@@ -32,13 +36,15 @@ export const FRAME_ITEMS = [
   { id: FRAME_LACE, kind: FRAME_LACE, filled: true, label: '蕾絲花邊' },
   { id: FRAME_BRUSH, kind: FRAME_BRUSH, filled: true, label: '筆刷邊框' },
   { id: FRAME_SCATTER, kind: FRAME_SCATTER, filled: true, label: '散落圖形' },
+  { id: MIST_FRAME_TB_KIND, kind: MIST_FRAME_TB_KIND, filled: true, label: '霧白邊框（上下）' },
+  { id: FRAME_SCATTER_TB, kind: FRAME_SCATTER_TB, filled: true, label: '散落圖形（上下）' },
 ];
 const FRAME_KIND_SET = new Set(FRAME_ITEMS.map(i => i.kind));
 /** 是不是邊框分類的圖形（霧白邊框也算） */
 export const isFrameShape = (kind?: string) => !!kind && FRAME_KIND_SET.has(kind);
 
 /** 「範圍」的預設：霧白邊框 0（全白只在框邊），其他 50 */
-export const frameRangeDefault = (kind?: string) => kind === MIST_FRAME_KIND ? MIST_RANGE_DEFAULT : kind === FRAME_SCATTER ? 60 : 50; // 集中線（漫畫）預設 50
+export const frameRangeDefault = (kind?: string) => kind === MIST_FRAME_KIND || kind === MIST_FRAME_TB_KIND ? MIST_RANGE_DEFAULT : isScatterFrame(kind) ? 60 : 50; // 集中線（漫畫）預設 50
 
 const r01 = (range: number | undefined, kind: string) =>
   Math.max(0, Math.min(1, (range ?? frameRangeDefault(kind)) / 100));
@@ -113,8 +119,9 @@ export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'si
   'frame-scatter': [{ key: 'gap', label: '間距', def: 30 }, { key: 'size', label: '大小', def: 70 },
     { key: 'sizeVar', label: '大小變化', def: 100 }, { key: 'angle', label: '角度', def: 0 }, { key: 'angleVar', label: '角度變化', def: 20 }, { key: 'glow', label: '發光', def: 0 }],
 };
+FRAME_SLIDERS[FRAME_SCATTER_TB] = FRAME_SLIDERS['frame-scatter'];
 /** 存在物件上的那一包（滑桿值＋散落的圖形種類） */
-export type FrameOpts = { gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number; kinds?: string[] };
+export type FrameOpts = { fmt?: string; paper?: number; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number; kinds?: string[] };
 /** 散落圖形的版面：只跟比例、範圍、間距、選了哪些圖形有關 ——
    調大小、大小變化、角度、角度變化時位置都不會重排，只是每顆照自己記住的亂數改大小／角度。 */
 type ScatterSpot = { x: number; y: number; ki: number; uSize: number; uRot: number; tilt: boolean };
@@ -122,7 +129,7 @@ const scatterCache = new Map<string, ScatterSpot[]>();
 const scatterLayout = (w: number, h: number, o: FrameParams): ScatterSpot[] => {
   const kinds = o.kinds?.length ? o.kinds : SCATTER_KINDS_DEFAULT;
   const ui = o.range ?? 60, gap = o.gap ?? 30;
-  const key = `${Math.round(w)}|${Math.round(h)}|${ui}|${gap}|${o.seed ?? 0}|${kinds.join(',')}`;
+  const key = `${Math.round(w)}|${Math.round(h)}|${ui}|${gap}|${o.seed ?? 0}|${kinds.join(',')}|${o.scatterTb ? 1 : 0}`;
   const hit = scatterCache.get(key);
   if (hit) return hit;
   // 「隨機分佈」按鈕換的就是這個種子
@@ -133,7 +140,8 @@ const scatterLayout = (w: number, h: number, o: FrameParams): ScatterSpot[] => {
   for (let tries = 0; tries < 6000 && spots.length < 400; tries++) {
     const x = (rand() * 1.04 - .02) * w, y = (rand() * 1.04 - .02) * h;
     const u = (x - w / 2) / (w / 2), v = (y - h / 2) / (h / 2);
-    if (Math.hypot(u, v) < inner) continue;
+    // 上下版：只看離上下框邊多近（左右不算），圖形只散在上、下兩條帶子裡
+    if ((o.scatterTb ? Math.abs(v) : Math.hypot(u, v)) < inner) continue;
     if (spots.some(p => Math.hypot(p.x - x, p.y - y) < minD)) continue;
     // 附近最少出現的那一種優先（同分再看整體數量），所以每一種都平均散開
     const near = new Array(kinds.length).fill(0);
@@ -319,14 +327,6 @@ const filmPath = (w: number, h: number, r: number) => {
 };
 
 /** 拍立得：四邊等寬，下緣三倍厚 */
-const polaroidPath = (w: number, h: number, r: number) => {
-  const p = new Path2D();
-  const t = Math.min(w, h) * (.025 + r * .09);
-  const bottom = Math.min(h * .45, t * 3.2);
-  p.rect(0, 0, w, h);
-  p.rect(t, t, Math.max(1, w - 2 * t), Math.max(1, h - t - bottom));
-  return p;
-};
 
 /* 拍立得的相紙紋理。真的拍立得框是一層微微帶暖灰的霧面相紙，不是純白：
    近看有很細的顆粒、淡淡的纖維起伏，下緣厚的那塊稍微偏冷一點，
@@ -409,30 +409,99 @@ const paperTile = (color: string) => {
   return cv;
 };
 
-/** 拍立得：相紙色＋紋理、下緣微微偏冷、窗口內緣一道淺壓痕 */
-const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color: string, r: number) => {
-  const t = Math.min(w, h) * (.025 + r * .09);
-  const bottom = Math.min(h * .45, t * 3.2);
-  const iw = Math.max(1, w - 2 * t), ih = Math.max(1, h - t - bottom);
-  const body = new Path2D(); body.rect(0, 0, w, h); body.rect(t, t, iw, ih);
+/* ── 拍立得 ──────────────────────────────────────────────────────────
+   各種常見的即可拍相紙，照實際尺寸（mm）：卡片寬高、照片窗口寬高、上緣多厚；
+   左右兩邊一樣寬（窗口水平置中），剩下的就是下緣那條厚邊。
+   cr＝卡片圓角、wr＝窗口圓角；circle＝圓形窗口的直徑（Polaroid 圓框版）。
+
+   畫的時候卡片一律填滿整個框（跟其他邊框一樣蓋住整張底圖），窗口永遠是這個規格的真實比例；
+   框的比例跟卡片不一樣時，多出來的空間分給邊框：左右平分、上下照這個規格上下緣的比例分，
+   所以下緣永遠是最厚的那條。畫布比例選得接近卡片時就是一模一樣的實物比例。 */
+export type PolaroidFormat = { id: string; label: string; sub: string; card: [number, number]; win: [number, number]; top: number; cr: number; wr: number; circle?: number };
+export const POLAROID_FORMATS: PolaroidFormat[] = [
+  { id: 'polaroid', label: 'Polaroid 經典', sub: '600・i-Type・SX-70', card: [88, 107], win: [79, 79], top: 6, cr: 1.2, wr: .4 },
+  { id: 'polaroid-round', label: 'Polaroid 圓框', sub: 'Round Frame', card: [88, 107], win: [79, 79], top: 6, cr: 1.2, wr: 0, circle: 70 },
+  { id: 'polaroid-go', label: 'Polaroid Go', sub: '迷你方形', card: [54, 66.6], win: [47, 46], top: 4, cr: 1, wr: .3 },
+  { id: 'polaroid-spectra', label: 'Polaroid Spectra', sub: 'Image・寬幅', card: [102, 101], win: [92, 73], top: 5.5, cr: 1.2, wr: .4 },
+  { id: 'instax-mini', label: 'Instax Mini', sub: '名片尺寸', card: [54, 86], win: [46, 62], top: 6.5, cr: 3, wr: .8 },
+  { id: 'instax-square', label: 'Instax Square', sub: '方形', card: [72, 86], win: [62, 62], top: 6.5, cr: 3, wr: .8 },
+  { id: 'instax-wide', label: 'Instax Wide', sub: '寬幅', card: [108, 86], win: [99, 62], top: 6.5, cr: 3, wr: .8 },
+];
+export const POLAROID_DEFAULT_FORMAT = 'polaroid';
+/** 紙紋強度（0～100）的預設 */
+export const POLAROID_PAPER_DEFAULT = 60;
+const polaroidFormat = (id?: string) => POLAROID_FORMATS.find(f => f.id === id) || POLAROID_FORMATS[0];
+/** 卡片、窗口在 (0,0)～(w,h) 裡的位置。k＝每 mm 多少單位 */
+export const polaroidGeom = (w: number, h: number, fmtId?: string) => {
+  const f = polaroidFormat(fmtId);
+  const [cw, ch] = f.card, [ww, wh] = f.win, side = (cw - ww) / 2, bottom = ch - f.top - wh;
+  const k = Math.min(w / cw, h / ch);
+  const exX = Math.max(0, w - cw * k), exY = Math.max(0, h - ch * k);
+  const wx = side * k + exX / 2, wy = f.top * k + exY * f.top / (f.top + bottom);
+  return { f, k, wx, wy, ww: ww * k, wh: wh * k, cr: Math.min(w, h) * .5 > f.cr * k ? f.cr * k : 0, wr: f.wr * k, circle: f.circle ? f.circle * k : 0 };
+};
+const roundRectP = (p: Path2D, x: number, y: number, w: number, h: number, r: number) => {
+  if (r > 0 && (p as any).roundRect) (p as any).roundRect(x, y, w, h, r); else p.rect(x, y, w, h);
+};
+const polaroidWindow = (G: ReturnType<typeof polaroidGeom>) => {
+  const p = new Path2D();
+  if (G.circle) { const cx = G.wx + G.ww / 2, cy = G.wy + G.wh / 2; p.moveTo(cx + G.circle / 2, cy); p.arc(cx, cy, G.circle / 2, 0, Math.PI * 2); }
+  else roundRectP(p, G.wx, G.wy, G.ww, G.wh, G.wr);
+  return p;
+};
+const polaroidPath = (w: number, h: number, _r: number, o: FrameParams = {}) => {
+  const G = polaroidGeom(w, h, o.fmt);
+  const p = new Path2D();
+  roundRectP(p, 0, 0, w, h, G.cr);
+  p.addPath(polaroidWindow(G));
+  return p;
+};
+/** 拍立得：相紙色＋壓紋紙紋、上暖下冷的大範圍明暗、卡片邊緣一道細線、
+    窗口內緣一道壓痕，窗口裡再落一圈很淺的內陰影（照片是嵌在相紙下面的那種深度） */
+const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color: string, o: FrameParams = {}) => {
+  const G = polaroidGeom(w, h, o.fmt);
+  const win = polaroidWindow(G);
+  const card = new Path2D(); roundRectP(card, 0, 0, w, h, G.cr);
+  const body = new Path2D(); body.addPath(card); body.addPath(win);
+  const paper = Math.max(0, Math.min(1, (o.paper ?? POLAROID_PAPER_DEFAULT) / 100));
+  const m = g.getTransform(), dev = Math.max(1e-3, Math.hypot(m.a, m.b));
   g.save();
-  g.beginPath(); g.rect(0, 0, w, h); g.clip();
   g.clip(body, 'evenodd');
-  const pat = g.createPattern(paperTile(color), 'repeat')!;
-  const sc = Math.max(1e-3, Math.min(w, h) * .32 / 256);
-  pat.setTransform(new DOMMatrix([sc, 0, 0, sc, 0, 0]));
-  g.fillStyle = pat; g.fillRect(0, 0, w, h);
-  // 大範圍的明暗：上面略暖、下緣那塊略冷略亮，跟真的相紙一樣不是一整片死白
+  // 底色：挑的顏色 × 相紙色（白色會變成微微偏暖的相紙白）
+  const [cr, cg, cb] = hexRgb(color);
+  g.fillStyle = `rgb(${Math.round(cr * PAPER_TONE[0])},${Math.round(cg * PAPER_TONE[1])},${Math.round(cb * PAPER_TONE[2])})`;
+  g.fillRect(0, 0, w, h);
+  // 紙紋：整張壓紋相紙，一格的實際大小固定（約 24mm），換規格、放大縮小都是同一種紋理
+  if (paper > 0) {
+    const pat = g.createPattern(paperTile(color), 'repeat')!;
+    const sc = Math.max(1e-3, 24 * G.k / 256);
+    pat.setTransform(new DOMMatrix([sc, 0, 0, sc, 0, 0]));
+    g.globalAlpha = paper; g.fillStyle = pat; g.fillRect(0, 0, w, h); g.globalAlpha = 1;
+  }
+  // 大範圍的明暗：上面略暖、下緣那塊略冷略亮；左右兩側極淡的收邊
   const lg = g.createLinearGradient(0, 0, 0, h);
   lg.addColorStop(0, 'rgba(120,100,70,0.035)'); lg.addColorStop(.75, 'rgba(0,0,0,0)'); lg.addColorStop(1, 'rgba(150,170,210,0.05)');
   g.fillStyle = lg; g.fillRect(0, 0, w, h);
   const vg = g.createLinearGradient(0, 0, w, 0);
   vg.addColorStop(0, 'rgba(0,0,0,0.025)'); vg.addColorStop(.5, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.02)');
   g.fillStyle = vg; g.fillRect(0, 0, w, h);
+  // 卡片外緣：很細的一道暗線（卡紙的切邊）
+  g.lineWidth = Math.max(.5 / dev, G.k * .15); g.strokeStyle = 'rgba(0,0,0,0.10)'; g.stroke(card);
   // 窗口內緣的壓痕：一道暗線＋外側一道亮線
-  const e = Math.max(.6, t * .035);
-  g.lineWidth = e; g.strokeStyle = 'rgba(0,0,0,0.10)'; g.strokeRect(t - e / 2, t - e / 2, iw + e, ih + e);
-  g.strokeStyle = 'rgba(255,255,255,0.35)'; g.strokeRect(t - e * 1.5, t - e * 1.5, iw + e * 3, ih + e * 3);
+  const e = Math.max(.6 / dev, G.k * .18);
+  g.lineWidth = e; g.strokeStyle = 'rgba(0,0,0,0.12)'; g.stroke(win);
+  g.save(); g.translate(-e * .6, -e * .6); g.lineWidth = e * .8; g.strokeStyle = 'rgba(255,255,255,0.45)'; g.stroke(win); g.restore();
+  g.restore();
+  /* 窗口裡的內陰影：照片嵌在相紙底下，靠上、靠左的邊緣有一點點陰影。
+     做法：在窗口裡畫一個「中間挖掉窗口」的大框，讓它的影子落進窗口 */
+  g.save();
+  g.clip(win);
+  const ring = new Path2D(); ring.rect(-w, -h, w * 3, h * 3); ring.addPath(win);
+  g.shadowColor = 'rgba(0,0,0,0.32)';
+  g.shadowBlur = G.k * 1.6 * dev;
+  g.shadowOffsetX = G.k * .25 * dev; g.shadowOffsetY = G.k * .45 * dev;
+  g.fillStyle = '#000';
+  g.fill(ring, 'evenodd');
   g.restore();
 };
 
@@ -505,7 +574,7 @@ const PATHS: Record<string, (w: number, h: number, r: number, o?: FrameParams) =
 /** 路徑快取：同一個比例、同一個範圍就不用再算（拖動、縮放時每一格都用得到） */
 const pathCache = new Map<string, Fill[]>();
 const framePath = (kind: string, w: number, h: number, r: number, o: FrameParams = {}) => {
-  const key = `${kind}|${Math.round(w)}|${Math.round(h)}|${r.toFixed(3)}|${o.gap}|${o.thick}|${o.vary}|${o.size}|${o.sizeVar}|${o.angleVar}|${o.range}|${(o.kinds || []).join(',')}`;
+  const key = `${kind}|${Math.round(w)}|${Math.round(h)}|${r.toFixed(3)}|${o.fmt}|${o.gap}|${o.thick}|${o.vary}|${o.size}|${o.sizeVar}|${o.angleVar}|${o.range}|${(o.kinds || []).join(',')}`;
   let path = pathCache.get(key);
   if (!path) {
     path = PATHS[kind](w, h, r, o);
@@ -525,11 +594,11 @@ export const paintFrameShape = (
   params: FrameParams = {}, texture?: (tc: CanvasRenderingContext2D, bodyPath: Path2D) => void,
 ) => {
   if (!(w > 0) || !(h > 0)) return;
-  if (kind === FRAME_SCATTER) { paintScatter(ctx, w, h, color, params); return; }
-  if (kind === MIST_FRAME_KIND || !PATHS[kind]) { paintMistFrame(ctx, w, h, color, params, texture); return; }
+  if (isScatterFrame(kind)) { paintScatter(ctx, w, h, color, kind === FRAME_SCATTER_TB ? { ...params, scatterTb: true } : params); return; }
+  if (kind === MIST_FRAME_KIND || kind === MIST_FRAME_TB_KIND || !PATHS[kind]) { paintMistFrame(ctx, w, h, color, kind === MIST_FRAME_TB_KIND ? { ...params, tb: true } : params, texture); return; }
   const path = framePath(kind, w, h, r01(params.range, kind), params);
   const draw = (g: CanvasRenderingContext2D) => {
-    if (kind === FRAME_POLAROID) { paintPolaroid(g, w, h, color, r01(params.range, kind)); return; }
+    if (kind === FRAME_POLAROID) { paintPolaroid(g, w, h, color, params); return; }
     g.save();
     g.beginPath(); g.rect(0, 0, w, h); g.clip();
     g.fillStyle = color;

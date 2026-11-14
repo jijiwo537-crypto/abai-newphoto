@@ -111,7 +111,7 @@ const STRIPE_N_DRAW_MAX = 60;
 export const GINGHAM_N_MAX = 50;
 /** 換成格紋時數量的預設：霧白邊框 20，其他 10 */
 export const GINGHAM_N_DEFAULT = 10;
-export const ginghamDefaultFor = (kind?: string) => kind === 'mist-frame' ? 20 : GINGHAM_N_DEFAULT;
+export const ginghamDefaultFor = (kind?: string) => kind === 'mist-frame' || kind === 'mist-frame-tb' ? 20 : GINGHAM_N_DEFAULT;
 
 /**
  * 條紋改成直接指定「有幾條」，不是指定粗細。

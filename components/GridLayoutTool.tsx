@@ -123,7 +123,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, scatterAllNoGlow, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, POLAROID_PAPER_DEFAULT, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -168,7 +168,7 @@ const imageBreathSpeedFromUi = (ui: number) => (70 + Math.max(0, Math.min(100, u
 /* 經典拼圖動畫頁原先直接使用了創意拼圖檔案內的區域元件；那個元件沒有
    export，桌面開發環境有時直到點進動畫才報錯，iPhone WebKit 則會直接把
    整個 React 畫面清成黑色。這裡保留同款外觀，但讓經典拼圖自己持有元件。 */
-const CompactSlider = ({ label, value, min, max, onChange, step = 'any', decimals = 0, fixedDecimals = false, onCommit, disabled = false }: any) => {
+const CompactSlider = ({ label, value, min, max, onChange, step = 'any', decimals = 0, fixedDecimals = false, onCommit, disabled = false, format }: any) => {
   const safeMin = Number.isFinite(Number(min)) ? Number(min) : 0;
   const requestedMax = Number.isFinite(Number(max)) ? Number(max) : 100;
   const safeMax = Math.max(safeMin, requestedMax);
@@ -182,7 +182,7 @@ const CompactSlider = ({ label, value, min, max, onChange, step = 'any', decimal
       <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
         <span>{label}</span>
         <span className="text-white font-sans tabular-nums">
-          {decimals > 0
+          {format ? format(label2) : decimals > 0
             ? (fixedDecimals ? label2.toFixed(decimals) : label2.toFixed(decimals).replace(/\.?0+$/, '') || '0')
             : Math.round(label2)}
         </span>
@@ -1355,6 +1355,32 @@ export const stitchWidthForGap = (kind: string, w: number, h: number, oldGap: nu
 /** 把間距帶進路徑用的 kind（shapePathD 認得 'stitch-plus~30'）；其他圖形原樣 */
 /** 間距滑桿：連續值（不取整數），拉起來像文字間距一樣順 */
 /** 線條「間距」滑桿。拖動中數字由這顆自己顯示：呼叫端走即時通道時，狀態要放開才更新 */
+/** 拍立得邊框的規格選擇：每一顆畫出那個規格真實比例的小卡片（窗口、下緣厚邊），下面是名稱 */
+export const PolaroidFormatPicker = ({ value, onPick }: { value?: string; onPick: (id: string) => void }) => {
+  const cur = value || POLAROID_DEFAULT_FORMAT;
+  return (
+    <div className="grid grid-cols-4 gap-2">
+      {POLAROID_FORMATS.map(f => {
+        const [cw, ch] = f.card, [ww, wh] = f.win, side = (cw - ww) / 2;
+        const S = 34 / Math.max(cw, ch), W = cw * S, H = ch * S, on = f.id === cur;
+        return (
+          <button key={f.id} type="button" aria-pressed={on} aria-label={f.label} onClick={() => onPick(f.id)}
+            className={`flex flex-col items-center gap-1.5 rounded-[10px] pt-2.5 pb-2 px-1 border transition-colors ${on ? 'border-white bg-white/10' : 'border-white/10'}`}>
+            <svg width="38" height="38" viewBox="0 0 38 38" aria-hidden="true">
+              <g transform={`translate(${(38 - W) / 2} ${(38 - H) / 2})`}>
+                <rect x="0" y="0" width={W} height={H} rx={f.cr * S} fill="currentColor" opacity={on ? .95 : .7} />
+                {f.circle
+                  ? <circle cx={(side + ww / 2) * S} cy={(f.top + wh / 2) * S} r={f.circle / 2 * S} fill="#111" />
+                  : <rect x={side * S} y={f.top * S} width={ww * S} height={wh * S} rx={f.wr * S} fill="#111" />}
+              </g>
+            </svg>
+            <span className={`text-[9px] font-bold leading-tight text-center ${on ? 'text-white' : 'text-white/60'}`}>{f.label.replace('Polaroid ', '').replace('Instax ', 'Instax\n').split('\n').map((t, i) => <span key={i} className="block whitespace-nowrap">{t}</span>)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 export const GapSlider = ({ value, onValue, onInteraction }: { value: number; onValue: (v: number) => void; onInteraction?: (b: boolean) => void }) => {
   const [shown, setShown] = React.useState(value);
   const dragging = React.useRef(false);
@@ -1411,8 +1437,64 @@ export const DOUBLE_CONTOUR_SHAPE_KINDS = new Set(['heart-double', 'star-double'
 export const COMPOSITE_SHAPE_KINDS = new Set([
   ...DUAL_COLOR_SHAPE_KINDS, ...CUTOUT_SHAPE_KINDS, ...DOUBLE_CONTOUR_SHAPE_KINDS,
 ]);
-export const SHAPE_DEFAULT_LINEW = (kind: string) =>
+/** 一條開放路徑（SVG d）的兩個線頭：位置，以及「往路徑外面」的單位方向。
+    起點的方向＝第一段往哪走的反方向；終點＝最後一段往哪走（曲線用控制點，跟繪製時的切線一致） */
+export const lineEndsOf = (d: string) => {
+  const out: { x: number; y: number; tx: number; ty: number }[] = [];
+  const dir = (a: [number, number], b: [number, number]) => { const dx = a[0] - b[0], dy = a[1] - b[1], l = Math.hypot(dx, dy); return l > 1e-6 ? [dx / l, dy / l] : null; };
+  // 每一段（每個 M 開頭的子路徑）各有自己的兩個線頭：十字、叉叉、斜線是很多短線段
+  for (const sub of d.split(/(?=[Mm])/)) {
+    if (/[Zz]/.test(sub)) continue; // 封閉的子路徑沒有線頭
+    const nums = (sub.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || []).map(Number);
+    if (nums.length < 4) continue;
+    const pts: [number, number][] = [];
+    for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
+    for (let i = 1; i < pts.length; i++) { const t = dir(pts[0], pts[i]); if (t) { out.push({ x: pts[0][0], y: pts[0][1], tx: t[0], ty: t[1] }); break; } }
+    const last = pts[pts.length - 1];
+    for (let i = pts.length - 2; i >= 0; i--) { const t = dir(last, pts[i]); if (t) { out.push({ x: last[0], y: last[1], tx: t[0], ty: t[1] }); break; } }
+  }
+  return out;
+};
+/** 線條類（直線、波浪、閃電、刺繡、斜線）外描邊的單邊寬度：照「線本身的粗細」算，
+    同樣的描邊數值在不同長度的線上看起來一樣粗（創意拼圖、跨頁拼圖同一條式子） */
+export const lineOutlineW = (strokeW: number | undefined, lw: number) => Math.min(8, Math.max(0, strokeW || 0)) / 6 * lw;
+/** 線條類的外描邊：形狀跟線條本身一致 —— 轉角用本體同一種接法與尖角上限（閃電的折角不會變圓），
+    線頭跟本體一樣是平頭，再沿線頭方向補一段跟描邊一樣寬的平整外框。畫在本體底下。 */
+export const strokeLineOutline = (ctx: CanvasRenderingContext2D, path: Path2D, d: string, kind: string, w: number, h: number,
+  lw: number, sw: number, color: string) => {
+  if (!(sw > 0)) return;
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.lineJoin = kind === 'line' ? 'round' : 'miter';
+  ctx.miterLimit = shapeMiterLimit(w, h);
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = color; ctx.lineWidth = lw + sw * 2;
+  ctx.stroke(path);
+  const half = lw / 2 + sw;
+  ctx.fillStyle = color;
+  for (const e of lineEndsOf(d)) {
+    const nx = -e.ty, ny = e.tx;
+    ctx.beginPath();
+    ctx.moveTo(e.x + nx * half, e.y + ny * half);
+    ctx.lineTo(e.x + nx * half + e.tx * sw, e.y + ny * half + e.ty * sw);
+    ctx.lineTo(e.x - nx * half + e.tx * sw, e.y - ny * half + e.ty * sw);
+    ctx.lineTo(e.x - nx * half, e.y - ny * half);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+};
+/** 線條類貼圖的發光上限：原本的 40%（滑桿照樣 0～100）。創意拼圖、跨頁拼圖共用 */
+export const LINE_GLOW_CAP = 0.4;
+/** 網格類貼圖的發光上限：原本的 10%（滑桿照樣 0～100，能調得更細） */
+export const GRID_GLOW_CAP = 0.1;
+/** 線條類的粗細：滑桿 0～100 對到原本的 10～100（lineW 1～10） */
+export const lineWFromUi = (v: number) => (10 + Math.max(0, Math.min(100, v)) * 0.9) / 10;
+export const lineWToUi = (w: number) => Math.max(0, Math.min(100, Math.round((w * 10 - 10) / 0.9)));
+const SHAPE_BASE_LINEW = (kind: string) =>
   WAVE_LIKE_KINDS.has(kind) ? 2.5 : (kind === 'line' ? 4 : 6);
+/** 新增圖形的粗細。線條類停在滑桿的 5 的倍數上（直線 35、波浪與刺繡 15），兩個工具一樣 */
+export const SHAPE_DEFAULT_LINEW = (kind: string) =>
+  SPECIAL_LINE_KINDS.has(kind) ? lineWFromUi(Math.round(lineWToUi(SHAPE_BASE_LINEW(kind)) / 5) * 5) : SHAPE_BASE_LINEW(kind);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
 export const SHAPE_DEFAULT_RATIO = (kind: string) =>
   WAVE_LIKE_KINDS.has(kind) ? 0.576 : (kind === 'line' ? 0.24 : 0.15);
@@ -1420,7 +1502,8 @@ export const SHAPE_DEFAULT_RATIO = (kind: string) =>
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 /** 雙色方形的外層略深，白色內圖案在新增後與小按鈕上都能一眼辨認。 */
 export const shapeDefaultColorFor = (kind: string) =>
-  DUAL_COLOR_SHAPE_KINDS.has(kind) ? '#C4D1C6' : SHAPE_DEFAULT_COLOR;
+  // 拍立得：相紙預設白色（畫出來會是微微偏暖的相紙白）
+  kind === 'frame-polaroid' ? '#FFFFFF' : DUAL_COLOR_SHAPE_KINDS.has(kind) ? '#C4D1C6' : SHAPE_DEFAULT_COLOR;
 
 /** 四邊擠壓白名單：實心前 11 顆、邊框前 16 顆。 */
 const STRETCH_SOLID_KINDS = new Set([
@@ -1536,7 +1619,7 @@ export const shapeGlowToUi = (g: number | boolean | undefined, outline: boolean)
 export const shapeGlowFromUi = (v: number, outline: boolean) => outline ? Math.max(0, Math.min(100, v)) * 3 * OUTLINE_GLOW_SCALE : glowFromUi(v);
 /** 邊框類的紋理沒有條紋（懸空在框裡面，見 paintTextureInsideOutline） */
 export const shapeTexOptions = (kind?: string, filled?: boolean) =>
-  kind === 'frame-speed' || kind === 'frame-scatter' ? [] : isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe' && id !== 'gingham') : TEX_OPTIONS;
+  kind === 'frame-speed' || kind === 'frame-scatter' || kind === 'frame-scatter-tb' ? [] : isOutlineShape(kind, filled) ? TEX_OPTIONS.filter(([id]) => id !== 'stripe' && id !== 'gingham') : TEX_OPTIONS;
 /** 不給調紋理的圖形（圖形選單上的 id，例如 'star-f'、'hole-love'）。排序工具的「紋理」頁可以挑，複製給 Claude 改這裡 */
 export const NO_TEXTURE_SHAPE_IDS: string[] = ['spinner-f', 'hole-seagrass', 'burst-dash-f', 'hole-burst', 'hole-snow'];
 const texKey = (kind?: string, filled?: boolean, hole?: string) =>
@@ -1587,7 +1670,7 @@ export const shapePickerSections = () => {
     solid: [...A.filter(i => i.filled && plain(i)), HOLE_ITEM_CROSS, ...HOLE_ITEMS_EXTRA],
     outline: [...A.filter(i => !i.filled && plain(i)), HOLE_ITEM_CROSS_O],
     // 新的五種邊框先放在排序工具的「邊框」頁試，App 裡先只有霧白邊框
-    frame: FRAME_ITEMS.filter(i => ['mist-frame', 'frame-speed', 'frame-scatter'].includes(i.kind)) as ShapeItem[],
+    frame: FRAME_ITEMS.filter(i => ['mist-frame', 'mist-frame-tb', 'frame-speed', 'frame-scatter', 'frame-scatter-tb', 'frame-polaroid'].includes(i.kind)) as ShapeItem[],
     burst: [...STAR_BURST_ITEMS],
     line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind)),
     grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
@@ -2080,7 +2163,11 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
         <clipPath id={`mistc-${maskId}`}><rect x="0" y="0" width="60" height="80" /></clipPath>
       </defs>
       <g clipPath={`url(#mistc-${maskId})`}>
-        <rect x="0" y="0" width="60" height="80" fill="none" stroke="currentColor" strokeWidth="14" opacity=".85" filter={`url(#mist-${maskId})`} />
+        {item.kind === 'mist-frame-tb'
+          /* 上下版：只有上緣、下緣兩條霧 */
+          ? <><rect x="-10" y="-7" width="80" height="14" fill="currentColor" opacity=".85" filter={`url(#mist-${maskId})`} />
+              <rect x="-10" y="73" width="80" height="14" fill="currentColor" opacity=".85" filter={`url(#mist-${maskId})`} /></>
+          : <rect x="0" y="0" width="60" height="80" fill="none" stroke="currentColor" strokeWidth="14" opacity=".85" filter={`url(#mist-${maskId})`} />}
       </g>
       <rect x=".6" y=".6" width="58.8" height="78.8" fill="none" stroke="currentColor" strokeWidth="1.2" opacity=".35" />
     </svg>
@@ -3072,7 +3159,10 @@ export const ShapeEditorPanel: React.FC<{
           {hasWidth && <div className={`grid ${hasDash || STITCH_LINE_KINDS.has(layer.shape || '') ? 'grid-cols-2' : 'grid-cols-1'} gap-5 px-2`}>
             {isGridShape ? slider(GRID_DOT_KINDS.has(layer.shape!) ? '大小' : '粗細', Math.round(((layer.shapeLineW ?? 6) - 6) / 12 * 100), 0, 100,
               v => onChange({ shapeLineW: 6 + v * .12 }))
-              : slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100, v => onChange({ shapeLineW: v / 10 }))}
+              : isLine
+                /* 線條：最細只到原本的 10，滑桿照樣 0～100（跟創意拼圖同一套） */
+                ? slider('粗細', lineWToUi(layer.shapeLineW ?? 4), 0, 100, v => onChange({ shapeLineW: lineWFromUi(v) }))
+                : slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100, v => onChange({ shapeLineW: v / 10 }))}
             {hasDash && slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
             {STITCH_LINE_KINDS.has(layer.shape || '') && <GapSlider value={layer.shapeLineGap ?? stitchGapDefault(layer.shape)} onInteraction={setTuning}
               onValue={v => {
@@ -3087,8 +3177,14 @@ export const ShapeEditorPanel: React.FC<{
           {!isBlurShape(layer.shape) && !noDecor && <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
-              {slider('發光', shapeGlowToUi(layer.shapeGlow as any, outlineShape || isLine), 0, 100,
-                v => onChange({ shapeGlow: shapeGlowFromUi(v, outlineShape || isLine) } as any))}
+              {/* 線條類：上限是原本的 40%；網格類：原本的 10%（滑桿照樣 0～100）—— 跟創意拼圖同一套 */}
+              {(() => {
+                const glowFlag = outlineShape || isLine;
+                const cap = isLine ? LINE_GLOW_CAP : isGridShape ? GRID_GLOW_CAP : 1;
+                const perUi = shapeGlowFromUi(1, glowFlag) * cap;
+                const ui = cap < 1 ? Math.min(100, Math.round(glowAmount(layer.shapeGlow as any) * 100 / perUi)) : shapeGlowToUi(layer.shapeGlow as any, glowFlag);
+                return slider('發光', ui, 0, 100, v => onChange({ shapeGlow: shapeGlowFromUi(v * cap, glowFlag) } as any));
+              })()}
             </div>
             <ColorPick compact label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
               colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })}
@@ -3098,18 +3194,26 @@ export const ShapeEditorPanel: React.FC<{
               })} />
           </div>}
           {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
-          {isFrameShape(layer.shape) && !isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
+          {/* 拍立得：選規格（真實比例）＋紙紋強度 */}
+          {layer.shape === 'frame-polaroid' && <div className="px-2 order-1 w-full space-y-4">
+            <PolaroidFormatPicker value={layer.shapeFrameOpts?.fmt} onPick={fmt => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, fmt } })} />
+            <div className="grid grid-cols-2 gap-x-6">
+              {slider('紙紋', Math.round(layer.shapeFrameOpts?.paper ?? POLAROID_PAPER_DEFAULT), 0, 100, v => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, paper: Math.round(v) } }))}
+              {slider('透明度', Math.round(layer.opacity ?? 100), 0, 100, v => onChange({ opacity: Math.round(v) }))}
+            </div>
+          </div>}
+          {isFrameShape(layer.shape) && !isMistFrame(layer.shape) && layer.shape !== 'frame-polaroid' && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
             {slider('範圍', Math.round(layer.shapeFrameRange ?? frameRangeDefault(layer.shape)), 0, 100, v => onChange({ shapeFrameRange: Math.round(v) }))}
             {(FRAME_SLIDERS[layer.shape!] || []).filter(sl => sl.key !== 'glow').map(sl => <React.Fragment key={sl.key}>
               {slider(sl.label, Math.round(layer.shapeFrameOpts?.[sl.key] ?? sl.def), 0, 100, v => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, [sl.key]: Math.round(v) } }))}
             </React.Fragment>)}
           </div>}
           {/* 發光自己一整排（長的滑桿） */}
-          {layer.shape === FRAME_SCATTER && <div className={`px-2 order-1 w-full ${scatterAllNoGlow(layer.shapeFrameOpts?.kinds) ? 'opacity-35 pointer-events-none' : ''}`}
+          {isScatterFrame(layer.shape) && <div className={`px-2 order-1 w-full ${scatterAllNoGlow(layer.shapeFrameOpts?.kinds) ? 'opacity-35 pointer-events-none' : ''}`}
             aria-disabled={scatterAllNoGlow(layer.shapeFrameOpts?.kinds) || undefined}>
             {slider('發光', Math.round(layer.shapeFrameOpts?.glow ?? 0), 0, 100, v => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, glow: Math.round(v) } }))}
           </div>}
-          {layer.shape === FRAME_SCATTER && <div className="px-2 order-1 w-full">
+          {isScatterFrame(layer.shape) && <div className="px-2 order-1 w-full">
             <ScatterKindsPicker value={layer.shapeFrameOpts?.kinds} onChange={kinds => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, kinds } })}
               onShuffle={() => onChange({ shapeFrameOpts: { ...layer.shapeFrameOpts, seed: Math.floor(Math.random() * 1e6) } })} />
           </div>}
@@ -3118,7 +3222,8 @@ export const ShapeEditorPanel: React.FC<{
             {slider('羽化', Math.round(layer.shapeFrameFeather ?? MIST_FEATHER_DEFAULT), 0, 100, v => onChange({ shapeFrameFeather: Math.round(v) }))}
           </div>}
           {isMistFrame(layer.shape) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
-            {slider('圓角', Math.round(layer.shapeFrameRound ?? MIST_ROUND_DEFAULT), 0, 100, v => onChange({ shapeFrameRound: Math.round(v) }))}
+            {/* 上下版只有上下兩條霧，沒有轉角，所以不給圓角 */}
+            {layer.shape !== 'mist-frame-tb' && slider('圓角', Math.round(layer.shapeFrameRound ?? MIST_ROUND_DEFAULT), 0, 100, v => onChange({ shapeFrameRound: Math.round(v) }))}
             {slider('透明度', Math.round(layer.opacity ?? 100), 0, 100, v => onChange({ opacity: Math.round(v) }))}
           </div>}
           {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
@@ -5000,12 +5105,18 @@ const CardThumbFast = React.memo(CardThumb, (a, b) => a.src === b.src && a.cache
 const previewImgCache = new Map<string, HTMLImageElement>();
 /* 記憶體吃緊時（見 utils/memoryPressure）：預覽用的圖片快取、卡片縮圖都可以重建。
    畫面上正在用的元素各自還拿著自己的那一份，不受影響 */
-registerTrim('grid-preview-caches', () => {
+const releaseGridPreviewCaches = (dropImages = false) => {
+  /* 離開工具時：解開的原圖（一張 1200 萬像素約 48MB）不能留到下一次 —— 下次進來是新的照片、新的網址，
+     舊的那幾張永遠用不到，卻一直佔著記憶體，進出幾次 App 就會被系統砍掉重開。
+     拿掉 src 讓瀏覽器當場放掉解碼好的像素，不必等回收 */
+  if (dropImages) for (const im of previewImgCache.values()) im.removeAttribute('src');
   previewImgCache.clear();
+  for (const c of cardThumbCache.values()) if (!c.isConnected) c.width = c.height = 1;
   cardThumbCache.clear();
   for (const c of cardSourceThumbCache.values()) c.width = c.height = 1;
   cardSourceThumbCache.clear();
-});
+};
+registerTrim('grid-preview-caches', () => releaseGridPreviewCaches(false));
 /**
  * 佈局格子的照片。沒有套濾鏡就是原本那張 <img>（完全不變）；
  * 套了就換成 canvas，用跟浮動圖片同一支 applyPhotoFx 算，
@@ -5977,14 +6088,27 @@ const GlCanvasHost: React.FC<{ canvas: HTMLCanvasElement; style: React.CSSProper
 
 
 const classicScenePaths = new Map<string, Path2D>();
+const classicScenePathDs = new Map<string, string>();
+/** 預覽用的路徑字串（線條類畫外描邊的線頭時要用） */
+const classicScenePathD = (image: FloatingImage, ringReveal = 1) => {
+  const key = [image.shape, image.width, image.height, image.shapeTextureBaseW,
+    image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, image.shapeLineGap, ringReveal].join('|');
+  let d = classicScenePathDs.get(key);
+  if (d === undefined) {
+    d = shapePathD(stitchKindD(image.shape!, image.shapeLineGap), image.width, image.height,
+      image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height,
+      ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325 * (GRID_DOT_KINDS.has(image.shape!) ? Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6)) : 1), ringReveal);
+    classicScenePathDs.set(key, d);
+    if (classicScenePathDs.size > 128) classicScenePathDs.delete(classicScenePathDs.keys().next().value!);
+  }
+  return d;
+};
 const classicScenePath = (image: FloatingImage, ringReveal = 1) => {
   const key = [image.shape, image.width, image.height, image.shapeTextureBaseW,
     image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, image.shapeLineGap, ringReveal].join('|');
   let path = classicScenePaths.get(key);
   if (!path) {
-    path = new Path2D(shapePathD(stitchKindD(image.shape!, image.shapeLineGap), image.width, image.height,
-      image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height,
-      ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325 * (GRID_DOT_KINDS.has(image.shape!) ? Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6)) : 1), ringReveal));
+    path = new Path2D(classicScenePathD(image, ringReveal));
     classicScenePaths.set(key, path);
     if (classicScenePaths.size > 128) classicScenePaths.delete(classicScenePaths.keys().next().value!);
   }
@@ -6050,7 +6174,9 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         const lw = GRID_SHAPE_KINDS.has(image.shape)
           ? 1.5 * (lineBase / 160) * Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6))
           : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
-        const outer = Math.min(8, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160);
+        const isLineKind = SPECIAL_LINE_KINDS.has(image.shape);
+        // 線條類：描邊照線本身的粗細算（跟創意拼圖同一條式子）
+        const outer = isLineKind ? lineOutlineW(image.shapeStrokeW, lw) : Math.min(8, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160);
         ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
         ctx.lineCap = 'butt';
         ctx.miterLimit = shapeMiterLimit(drawW, drawH);
@@ -6083,13 +6209,14 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           ctx.restore();
           }
         }
-        if (outer > 0) {
+        if (outer > 0 && isLineKind) {
+          // 線條類：描邊形狀跟線條本身一致（轉角、平頭線頭），見 strokeLineOutline
+          strokeLineOutline(ctx, path, classicScenePathD(image, motionFrame?.ringReveal ?? 1), image.shape, drawW, drawH, lw, outer, image.shapeStrokeColor || '#000000');
+        } else if (outer > 0) {
           ctx.save();
           ctx.setLineDash([]);
           ctx.strokeStyle = image.shapeStrokeColor || '#000000';
           ctx.lineWidth = (solid ? 0 : lw) + outer * 2;
-          // 線條兩端也要描到：本體是平頭，描邊用方頭往外多出一圈
-          if (SPECIAL_LINE_KINDS.has(image.shape)) ctx.lineCap = 'square';
           // 選中框的小方塊是方的，描邊轉角也要是直角（其他圖形維持圓角）
           if (TRACK_SQUARE_KINDS.has(image.shape as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
           if (!strokeCompositeShape(ctx, image.shape, drawW, drawH, image.shapeInnerSize)) ctx.stroke(path);
@@ -7616,7 +7743,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     return {
       lw,
       /** 外描邊的寬度（單邊）。跟框線同一個道理，也要除掉 scale */
-      outer: Math.min(8, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160) / s,
+      outer: SPECIAL_LINE_KINDS.has(image.shape) ? lineOutlineW(image.shapeStrokeW, Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160)) / s)
+        : Math.min(8, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160) / s,
       dashArray: dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined,
       // 一律平頭：線條的兩端要是切齊的，不要圓角
       cap: 'butt' as const,
@@ -8747,6 +8875,18 @@ function LayoutGeomSlider({ label, field, min, max, value, previewId, live, onSt
 
 export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onRequestExit, onImportNew, initialFiles, initialState, lutList = [] }) => {
   useKeyboardRecovery();
+  // 離開跨頁拼圖：預覽用的原圖與卡片縮圖快取當場放掉（見 releaseGridPreviewCaches）
+  useEffect(() => () => releaseGridPreviewCaches(true), []);
+  /* 這一次匯入的照片／影片各自開了一個 blob 網址（指向原檔）。以前沒有人回收：
+     每進出一次就多留一份原檔在記憶體裡，進出幾次 App 就可能被系統砍掉重開。
+     離開時統一回收。存檔、寫歷史紀錄都在離開「之前」就做完了（見 handleLeave 的 await），
+     這裡再多等 10 秒，讓任何還在收尾的非同步工作先用完 */
+  const sessionUrlsRef = useRef<Set<string>>(new Set());
+  const ownUrl = (u: string) => { sessionUrlsRef.current.add(u); return u; };
+  useEffect(() => () => {
+    const urls = [...sessionUrlsRef.current]; sessionUrlsRef.current.clear();
+    if (urls.length) window.setTimeout(() => { for (const u of urls) { try { URL.revokeObjectURL(u); } catch { /* 已經收過 */ } } }, 10000);
+  }, []);
   const openedFromDraftRef = useRef(!initialState && !(initialFiles && initialFiles.length) && hasDraft());
   /** 一頁上可以放多個佈局，每個佈局都是一個獨立物件（跟一般圖片一樣）。 */
   interface LayoutItem {
@@ -10924,7 +11064,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   }, []);
   const frameForItem = useCallback((item: FloatingImage, index: number, time: number): ObjectMotionFrame => {
     /* 散落圖形邊框：整個邊框不動，每一顆圖形各自跑（果凍I 同時、果凍II 從左上順時針一顆一顆） */
-    if (item.shape === FRAME_SCATTER && !String(item.mo?.in || '').startsWith('lab-') && !String(item.mo?.idle || '').startsWith('lab-')) {
+    if (isScatterFrame(item.shape) && !String(item.mo?.in || '').startsWith('lab-') && !String(item.mo?.idle || '').startsWith('lab-')) {
       const cfg = timedMotionConfig(item), phase = motionPhase(item, index);
       const seq = cfg.in === 'pop-seq', POP = Math.min(.5, cfg.dur * .45);
       return { k: 1, dx: 0, dy: 0, rot: 0, a: 1, fx: 1, scatterItem: (rank: number, n: number, idx: number) => {
@@ -12904,7 +13044,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         /* 每張要先讀尺寸、做預覽用的小副本（見 utils/previewCopies：畫面上不用原圖，存檔照樣用原圖）。
            同時做兩張（記憶體尖峰只多一張原圖），而且做好一張就照順序先放上畫面 ——
            第一張馬上出現，不必等全部做完才一次冒出來。 */
-        const prepared = filesToLoad.map(f => { const video = isVideoFile(f), blob = URL.createObjectURL(f); return { f, url: video ? playableMediaUrl(f, blob) : blob, video }; });
+        const prepared = filesToLoad.map(f => { const video = isVideoFile(f), blob = ownUrl(URL.createObjectURL(f)); return { f, url: video ? playableMediaUrl(f, blob) : blob, video }; });
         const tasks: Promise<{ width: number; height: number; poster?: string }>[] = new Array(prepared.length);
         let next = 0;
         const worker = async () => {
@@ -13191,7 +13331,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     for (let idx = 0; idx < files.length; idx++) {
       const f = files[idx];
       const video = isVideoFile(f as File);
-      const url = video ? playableMediaUrl(f as File, URL.createObjectURL(f)) : URL.createObjectURL(f);
+      const url = video ? playableMediaUrl(f as File, ownUrl(URL.createObjectURL(f))) : ownUrl(URL.createObjectURL(f));
       const dims = video ? await getVideoDimensions(url) : await getImageDimensions(url);
       if (!video) await ensurePreviewCopy(url, (f as File).type);
       
@@ -13276,7 +13416,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const targetIdx = slotToUpload !== null ? slotToUpload : selectedIndex;
 
     const loadPromises = files.map(async (file) => {
-      const url = URL.createObjectURL(file);
+      const url = ownUrl(URL.createObjectURL(file));
       try {
         const dims = await getImageDimensions(url);
         await ensurePreviewCopy(url, (file as File).type);
@@ -15167,14 +15307,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
       return;
     }
-    const path = new Path2D(shapePathD(
+    const pathD = shapePathD(
       stitchKindD(fImg.shape!, fImg.shapeLineGap), fw, fh,
       (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
       (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
       ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor / 160) * 2.325
         / Math.pow(Math.max(0.01, fImg.scale || 1), 0.65) * (GRID_DOT_KINDS.has(fImg.shape!) ? Math.max(1, Math.min(3, (fImg.shapeLineW ?? 6) / 6)) : 1),
       ringReveal,
-    ));
+    );
+    const path = new Path2D(pathD);
     const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
     /* 線寬要除掉 scale：上面已經 ctx.scale(fImg.scale, ...) 過了，
@@ -15215,9 +15356,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
     }
     /* 外描邊：畫在本體底下、寬度加倍，跟預覽那一條 path 同一套 */
-    const strokeW = Math.min(8, Math.max(0, fImg.shapeStrokeW || 0))
+    const isLineKind = SPECIAL_LINE_KINDS.has(fImg.shape!);
+    const strokeW = isLineKind ? lineOutlineW(fImg.shapeStrokeW, lw) : Math.min(8, Math.max(0, fImg.shapeStrokeW || 0))
       * (Math.max(fw, fh) / 160) / sScale;
-    if (strokeW > 0) {
+    if (strokeW > 0 && isLineKind) {
+      // 線條類：描邊形狀跟線條本身一致（跟預覽同一支）
+      strokeLineOutline(ctx, path, pathD, fImg.shape!, fw, fh, lw, strokeW, fImg.shapeStrokeColor || '#000000');
+    } else if (strokeW > 0) {
       ctx.save();
       ctx.setLineDash([]);
       ctx.lineJoin = 'round';
@@ -18608,6 +18753,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 decimals={pageVideoItems.length ? 1 : 0}
                 fixedDecimals={pageVideoItems.length > 0}
                 disabled={pageVideoItems.length > 0}
+                /* 顯示成秒數、一位小數加單位（例：4.0s） */
+                format={(v: number) => `${(pageVideoItems.length ? v : holdFromUi(v)).toFixed(1)}s`}
                 onChange={(v: number) => { if (!pageVideoItems.length) setMotionHold(holdFromUi(v)); }}
               />
             </div>
@@ -18706,7 +18853,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const isSpecialLineTarget = !!target?.shape && SPECIAL_LINE_KINDS.has(target?.shape);
               const isTextTarget = target?.text !== undefined && !target?.sym;
               const baseIntro = OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce');
-              const legacyIntroKinds = target?.shape === FRAME_SCATTER
+              const legacyIntroKinds = isScatterFrame(target?.shape)
                 ? baseIntro.filter(([id]) => id !== 'flip').flatMap(([id, name]): (readonly [string, string])[] => id === 'pop' ? [['pop', '果凍I'], ['pop-seq', '果凍II']] : [[id, name]]) as unknown as typeof baseIntro
                 : target?.sym
                 ? SYMBOL_OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce')
@@ -18720,7 +18867,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 .map(([id, name]) => id === 'breathe' ? [id, '縮放'] as const : [id, name] as const);
               // 星芒：沒有繞圈、抖動；多了呼吸、縮放II（芒忽長忽短）
               const isGlintTarget = target?.shape === 'hole' && String(target?.holeType || '').startsWith('sb-');
-              const isScatterTarget = target?.shape === FRAME_SCATTER;
+              const isScatterTarget = isScatterFrame(target?.shape);
               /* 散落圖形：波浪換成呼吸（每顆各自的透明度呼吸） */
               const legacyIdleKinds: readonly (readonly [string, string])[] = isScatterTarget ? baseIdle.map(([id, name]) => id === 'grid-wave' ? ['scatter-breathe', '呼吸'] as const : [id, name] as const) : isGlintTarget ? GLINT_IDLE_KINDS.map(([id, name]) => [id, name] as const) : target?.sym
                 ? baseIdle.filter(([id]) => id !== 'grid-wave').flatMap<readonly [string, string]>(([id, name]) =>

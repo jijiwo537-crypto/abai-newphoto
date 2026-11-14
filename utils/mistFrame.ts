@@ -14,7 +14,9 @@
    畫法：在一張小畫布（長邊 256px）上逐像素算，只算四分之一再鏡像，結果快取起來；
    移動、縮放只是把同一張貼上去，只有改比例或改旋鈕時才重算（約一毫秒）。 */
 export const MIST_FRAME_KIND = 'mist-frame';
-export const isMistFrame = (kind?: string) => kind === MIST_FRAME_KIND;
+/** 霧白邊框（上下）：只有上緣、下緣有霧，左右兩邊是透明的 */
+export const MIST_FRAME_TB_KIND = 'mist-frame-tb';
+export const isMistFrame = (kind?: string) => kind === MIST_FRAME_KIND || kind === MIST_FRAME_TB_KIND;
 
 /** 面板「範圍」0～100。預設 0（全白只在框邊上，跟一開始的樣子一樣） */
 export const MIST_RANGE_DEFAULT = -15; // 滑桿上顯示 30（-30 + 30 × 0.5）
@@ -43,12 +45,12 @@ const rgbOf = (hex: string) => {
 const cache = new Map<string, HTMLCanvasElement>();
 const MAX_CACHE = 12;
 /** 已經上好顏色的霧（小畫布），比例、範圍、形狀、顏色一樣就直接拿 */
-export type MistParams = { range?: number; feather?: number; round?: number };
+export type MistParams = { range?: number; feather?: number; round?: number; /** 只有上下兩邊 */ tb?: boolean };
 const mistCanvas = (w: number, h: number, color: string, p: MistParams = {}) => {
   const ar = Math.max(.05, Math.min(20, w / Math.max(1e-6, h)));
   const arQ = Math.round(ar * 100) / 100;
   const edge = edgeOf(p.range), fw = featherOf(p.feather), n = powerOf(p.round);
-  const key = `${arQ}|${edge.toFixed(3)}|${fw.toFixed(3)}|${n.toFixed(3)}|${color}`;
+  const key = `${arQ}|${edge.toFixed(3)}|${fw.toFixed(3)}|${n.toFixed(3)}|${color}|${p.tb ? 1 : 0}`;
   const hit = cache.get(key);
   if (hit) { cache.delete(key); cache.set(key, hit); return hit; }
   const L = 256;
@@ -66,7 +68,8 @@ const mistCanvas = (w: number, h: number, color: string, p: MistParams = {}) => 
     const vn = Math.pow(v, n);
     for (let px = 0; px < hw; px++) {
       const u = (hw - px - .5) / hw;
-      const sd = Math.pow(Math.pow(u, n) + vn, 1 / n);
+      // 上下版：只量離上、下框邊多遠（左右不算），所以只有上下兩條霧
+      const sd = p.tb ? v : Math.pow(Math.pow(u, n) + vn, 1 / n);
       const t = clamp01((sd - r0) / fw);
       const a = Math.round(t * t * (3 - 2 * t) * 255);
       if (!a) continue;

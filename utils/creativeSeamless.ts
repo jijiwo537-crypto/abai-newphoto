@@ -15,6 +15,9 @@ export class CreativeSeamless {
   private liveLayer:HTMLCanvasElement|null=null;
   /** 這一次畫面（同一個同步的繪製過程）裡直接顯示的 GPU 層已經被一塊照片區用掉了 */
   private liveTaken=false;
+  /** 最近一次畫面裡，除了直接顯示的那一塊，還有沒有第二塊（例如另一側遮罩底下那份照片）。
+      有的話，拖滑桿時只重畫 GPU 那一層不夠 —— 第二塊在主畫布上，要整張重畫才會跟著變 */
+  secondPiece=false;
   private interactive=new CreativeFeatherSurface();
   /* 畫好的結果留一份 2D 快照：無縫的參數、照片、位置、畫布大小都沒變時（移動別的物件、動畫、調別的東西），
      直接貼這張就好 —— 不重跑 GPU、也不再把 GPU 畫面複製回 2D 畫布（iPhone 上那一步要等 GPU 畫完，每一格都做就卡）。
@@ -48,8 +51,8 @@ export class CreativeSeamless {
        （畫進主畫布），各畫各的範圍。同步繪製結束（microtask）就放開，下一格重新來。 */
     if(!live)this.liveRepaint=null;
     if(live){
-      if(this.liveTaken)return false;
-      this.liveTaken=true;queueMicrotask(()=>{this.liveTaken=false;});
+      if(this.liveTaken){this.secondPiece=true;return false;}
+      this.liveTaken=true;this.secondPiece=false;queueMicrotask(()=>{this.liveTaken=false;});
     }
     if(this.presentation?.dataset.sourceUploads&&this.presentation.getContext('webgl2')?.isContextLost()){
       disposeSeamPreview(this.presentation);this.presentation.remove();this.presentation.width=this.presentation.height=1;this.presentation=null;

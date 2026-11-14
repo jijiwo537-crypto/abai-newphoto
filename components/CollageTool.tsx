@@ -19,7 +19,7 @@ import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} 
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, scatterAllNoGlow } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_PAPER_DEFAULT } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
@@ -58,7 +58,7 @@ import {
   ADD_SHAPE_ITEMS, fillTrackSquares, TRACK_SQUARE_KINDS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeTexDisabled, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, ScatterKindsPicker, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
-  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, WAVE_LIKE_KINDS, STITCH_LINE_KINDS, stitchKindD, stitchGapDefault, stitchWidthForGap, GapSlider, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
+  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, WAVE_LIKE_KINDS, STITCH_LINE_KINDS, stitchKindD, stitchGapDefault, stitchWidthForGap, GapSlider, PolaroidFormatPicker, LINE_GLOW_CAP, GRID_GLOW_CAP, lineWFromUi, lineWToUi, lineEndsOf, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -143,13 +143,13 @@ const AROUND = 'mask-around';
 /** 滿版：只有底圖，不繪製遮罩、遮罩圖案或連線。 */
 const FULL = 'image-full';
 /* 按鈕仍只顯示五種比例；每顆內部各有直式／橫式兩個實際方向。
-   16:9 的第一次點擊也依需求是直式 9:16，第二次才是橫式 16:9。 */
+   按鈕上寫的是直式（第一次點擊）的比例，跟其他幾顆一致：9:16 第一次是直式，第二次才是橫式 16:9。 */
 const CANVAS_RATIO_BUTTONS = [
   ['1:1', '1:1', '1:1'],
   ['3:4', '3:4', '4:3'],
   ['2:3', '2:3', '3:2'],
   ['4:5', '4:5', '5:4'],
-  ['16:9', '9:16', '16:9'],
+  ['9:16', '9:16', '16:9'],
 ] as const;
 type CanvasRatio = '1:1' | '3:4' | '4:3' | '2:3' | '3:2' | '4:5' | '5:4' | '9:16' | '16:9';
 const CANVAS_RATIO_VALUES: Record<CanvasRatio, number> = {
@@ -675,35 +675,7 @@ const lowResShapeGlow = (ctx: CanvasRenderingContext2D, path: Path2D, solid: boo
   return out;
 };
 
-/** 一條開放路徑（SVG d）的兩個線頭：位置，以及「往路徑外面」的單位方向。
-    起點的方向＝第一段往哪走的反方向；終點＝最後一段往哪走（曲線用控制點，跟繪製時的切線一致） */
-const lineEndsOf = (d: string) => {
-  const out: { x: number; y: number; tx: number; ty: number }[] = [];
-  const dir = (a: [number, number], b: [number, number]) => { const dx = a[0] - b[0], dy = a[1] - b[1], l = Math.hypot(dx, dy); return l > 1e-6 ? [dx / l, dy / l] : null; };
-  // 每一段（每個 M 開頭的子路徑）各有自己的兩個線頭：十字、叉叉、斜線是很多短線段
-  for (const sub of d.split(/(?=[Mm])/)) {
-    if (/[Zz]/.test(sub)) continue; // 封閉的子路徑沒有線頭
-    const nums = (sub.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi) || []).map(Number);
-    if (nums.length < 4) continue;
-    const pts: [number, number][] = [];
-    for (let i = 0; i + 1 < nums.length; i += 2) pts.push([nums[i], nums[i + 1]]);
-    for (let i = 1; i < pts.length; i++) { const t = dir(pts[0], pts[i]); if (t) { out.push({ x: pts[0][0], y: pts[0][1], tx: t[0], ty: t[1] }); break; } }
-    const last = pts[pts.length - 1];
-    for (let i = pts.length - 2; i >= 0; i--) { const t = dir(last, pts[i]); if (t) { out.push({ x: last[0], y: last[1], tx: t[0], ty: t[1] }); break; } }
-  }
-  return out;
-};
 
-/** 線條類貼圖的發光上限：原本的 40%（滑桿照樣 0～100） */
-const LINE_GLOW_CAP = 0.4;
-/** 線條類的粗細：滑桿 0～100 對到原本的 10～100（lineW 1～10） */
-const lineWFromUi = (v: number) => (10 + Math.max(0, Math.min(100, v)) * 0.9) / 10;
-const lineWToUi = (w: number) => Math.max(0, Math.min(100, Math.round((w * 10 - 10) / 0.9)));
-/** 創意拼圖新增線條時的粗細：預設停在滑桿的整數 5 的倍數上（直線 35、波浪與刺繡 15）；其他圖形不變 */
-const creativeDefaultLineW = (kind: string) =>
-  !SPECIAL_LINE_KINDS.has(kind) ? SHAPE_DEFAULT_LINEW(kind) : lineWFromUi(Math.round(lineWToUi(SHAPE_DEFAULT_LINEW(kind)) / 5) * 5);
-/** 網格類貼圖的發光上限：原本的 10%（滑桿照樣 0～100，能調得更細） */
-const GRID_GLOW_CAP = 0.1;
 /** 圖形調整面板用的滑桿。拖動中數字由這顆自己顯示（走即時通道時工具的狀態要放開才更新）；
     onActive：手指按上／放開（貼圖的滑桿用它走即時通道） */
 const ShapeSliderC: React.FC<{ label: string; value: number; min: number; max: number; onVal: (v: number) => void; onActive?: (a: boolean) => void }> = ({ label, value, min, max, onVal, onActive }) => {
@@ -1252,7 +1224,7 @@ export const motionTargetCtxOf = (o: any | null): MotionTargetCtx => o ? {
   grid: o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind),
   line: o.type === 'shape' && SPECIAL_LINE_KINDS.has(o.kind),
   glint: o.type === 'shape' && o.kind === 'hole' && String(o.hole || '').startsWith('sb-'),
-  scatter: o.type === 'shape' && o.kind === FRAME_SCATTER,
+  scatter: o.type === 'shape' && isScatterFrame(o.kind),
 } : { pattern: true, sym: false, grid: false, line: false, glint: false, scatter: false };
 /** 圖案那一群剛開啟時的動畫設定（也就是圖案的預設值） */
 export const PATTERN_MO_DEFAULT: MoCfg = {
@@ -3916,7 +3888,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         lineBase: WAVE_LIKE_KINDS.has(it.kind)
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
         textureBaseW: w, textureBaseH: h,
-        lineW: creativeDefaultLineW(it.kind), dash: 0,
+        lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
         color: initialColor, glow: 0, glowColor: initialColor,
         ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: CREATIVE_DUAL_INNER } : null),
         x: cx - w / 2, y: cy - h / 2, w, h, rot: it.rot || 0,
@@ -9803,7 +9775,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const phase = (hashId(o.id) % 628) / 100 + i * 0.7;
         /* 散落圖形邊框：整個邊框不動，改成每一顆圖形各自跑同一套進場／常駐。
            果凍I＝每顆同時各自果凍；果凍II＝從左上開始順時針一顆接一顆（跟圖案那組錯開的算法一樣） */
-        if (o.type === 'shape' && o.kind === FRAME_SCATTER && !cfg.in.startsWith('lab-') && !cfg.idle.startsWith('lab-')) {
+        if (o.type === 'shape' && isScatterFrame(o.kind) && !cfg.in.startsWith('lab-') && !cfg.idle.startsWith('lab-')) {
           const seq = cfg.in === 'pop-seq';
           const POP = Math.min(0.5, cfg.dur * 0.45);
           return { ...FLAT, fx: 1, burst: 0, scatterItem: (rank: number, n: number, idx: number) => {
@@ -11968,6 +11940,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             </button>
             <div className="flex-1 min-w-0">
               <CompactSlider label="循環間隔" value={holdToUi(motionHold)} min={0} max={100} step={1}
+                format={(v: number) => `${holdFromUi(v).toFixed(1)}s`}
                 onChange={(v: number) => setMotionHold(holdFromUi(v))} />
             </div>
           </div>
@@ -12288,7 +12261,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         onChange={v=>{const cur=photoRegionRef.current!,next=withCreativeSeamlessAmount(cur,v);
                           if(cur.seamless&&next.seamless&&creativeSeam.current){photoRegionRef.current=next;seamPendingAmount.current=next.seamlessAmount||0;
                             if(!seamAmountRaf.current)seamAmountRaf.current=requestAnimationFrame(()=>{seamAmountRaf.current=0;
-                              if(!creativeSeam.current?.updateLiveAmount(seamPendingAmount.current))regionPaintRef.current();});
+                              /* 另一側遮罩底下也有一份照片（畫在主畫布上）時，要整張重畫它才會跟著即時變 */
+                              if(creativeSeam.current?.secondPiece||!creativeSeam.current?.updateLiveAmount(seamPendingAmount.current))regionPaintRef.current();});
                             return;}
                           commitRegion(next,true);}}
                         onCommit={()=>{seamLiveRef.current=false;finishRegionEdit();}}/>
@@ -12480,7 +12454,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     lineBase: WAVE_LIKE_KINDS.has(it.kind)
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
                     textureBaseW: w, textureBaseH: h,
-                    lineW: creativeDefaultLineW(it.kind), dash: 0,
+                    lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
                     color: initialColor,
                     glow: 0, glowColor: initialColor,
                     ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: CREATIVE_DUAL_INNER } : {}),
@@ -12751,7 +12725,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>}
                           {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
-                          {isFrameShape(sel.kind) && !isMistFrame(sel.kind) && sel.kind !== FRAME_SCATTER && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
+                          {/* 拍立得：選規格（真實比例）＋紙紋強度 */}
+                          {sel.kind === 'frame-polaroid' && <div className="px-2 order-1 w-full space-y-4">
+                            <PolaroidFormatPicker value={(sel as any).frameOpts?.fmt} onPick={fmt => patch({ frameOpts: { ...(sel as any).frameOpts, fmt } } as any)} />
+                            <div className="grid grid-cols-2 gap-x-6">
+                              {shapeSlider('紙紋', Math.round((sel as any).frameOpts?.paper ?? POLAROID_PAPER_DEFAULT), 0, 100,
+                                (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, paper: Math.round(v) } } as any), shapeLive)}
+                              {shapeSlider('透明度', Math.round(sel.opacity ?? 100), 0, 100,
+                                (v: number) => patch({ opacity: v }), shapeLive)}
+                            </div>
+                          </div>}
+                          {isFrameShape(sel.kind) && !isMistFrame(sel.kind) && !isScatterFrame(sel.kind) && sel.kind !== 'frame-polaroid' && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('範圍', Math.round((sel as any).frameRange ?? frameRangeDefault(sel.kind)), 0, 100,
                               (v: number) => patch({ frameRange: v } as any), shapeLive)}
                             {(FRAME_SLIDERS[sel.kind!] || []).filter(sl => sl.key !== 'glow').map(sl => <React.Fragment key={sl.key}>
@@ -12760,7 +12744,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             </React.Fragment>)}
                           </div>}
                           {/* 發光自己一整排（長的滑桿） */}
-                          {sel.kind === FRAME_SCATTER && (() => {
+                          {isScatterFrame(sel.kind) && (() => {
                             const fo = (sel as any).frameOpts || {};
                             const ICONS: Record<string, React.ReactNode> = { gap: <ParamGlyph k="gap" />, size: <ParamGlyph k="size" />, sizeVar: <ParamGlyph k="sizeVar" />, angleVar: <Icon name="rotate_right" className="text-[17px]" /> };
                             const opt = (sl: { key: string; label: string; def: number }): ParamItem => ({ key: sl.key, label: sl.label, icon: ICONS[sl.key], def: sl.def,
@@ -12777,7 +12761,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             ];
                             return <div className="order-1 w-full -mb-2"><ParamStrip key={sel.id} items={items} onActive={shapeLive} /></div>;
                           })()}
-                          {sel.kind === FRAME_SCATTER && <div className="px-2 order-1 w-full">
+                          {isScatterFrame(sel.kind) && <div className="px-2 order-1 w-full">
                             <ScatterKindsPicker value={(sel as any).frameOpts?.kinds}
                               onChange={kinds => patch({ frameOpts: { ...(sel as any).frameOpts, kinds } } as any)}
                               onShuffle={() => patch({ frameOpts: { ...(sel as any).frameOpts, seed: Math.floor(Math.random() * 1e6) } } as any)} />
@@ -12789,7 +12773,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               (v: number) => patch({ frameFeather: v } as any), shapeLive)}
                           </div>}
                           {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
-                            {shapeSlider('圓角', Math.round((sel as any).frameRound ?? MIST_ROUND_DEFAULT), 0, 100,
+                            {/* 上下版只有上下兩條霧，沒有轉角，所以不給圓角 */}
+                            {sel.kind !== 'mist-frame-tb' && shapeSlider('圓角', Math.round((sel as any).frameRound ?? MIST_ROUND_DEFAULT), 0, 100,
                               (v: number) => patch({ frameRound: v } as any), shapeLive)}
                             {shapeSlider('透明度', Math.round(sel.opacity ?? 100), 0, 100,
                               (v: number) => patch({ opacity: v }), shapeLive)}
@@ -13125,7 +13110,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const isSpecialLineTarget = !!selObj && selObj.type === 'shape' && SPECIAL_LINE_KINDS.has(selObj.kind);
                 const isGridTarget = !!selObj && selObj.type === 'shape' && GRID_SHAPE_KINDS.has(selObj.kind);
                 const isGlintTarget = !!selObj && selObj.type === 'shape' && selObj.kind === 'hole' && String(selObj.hole || '').startsWith('sb-');
-                const isScatterTarget = !!selObj && selObj.type === 'shape' && selObj.kind === FRAME_SCATTER;
+                const isScatterTarget = !!selObj && selObj.type === 'shape' && isScatterFrame(selObj.kind);
                 const { kinds, idleKinds } = motionKindLists(motionTargetCtxOf(selObj));
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
@@ -13483,7 +13468,7 @@ const RafRange = ({ min, max, step, value, onChange }: any) => {
 
 /* wide＝圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆）。
    只有指定要換的那幾頁會傳，其他地方維持原樣。 */
-const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, fixedDecimals = false, onCommit, wide = false }: any) => {
+const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, fixedDecimals = false, onCommit, wide = false, format }: any) => {
   const safeMin = Number.isFinite(Number(min)) ? Number(min) : 0;
   const requestedMax = Number.isFinite(Number(max)) ? Number(max) : 100;
   const safeMax = Math.max(safeMin, requestedMax);
@@ -13498,7 +13483,7 @@ const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimal
       <span>{label}</span>
       {/* 小數位要能顯示出來，不然 1.25 跟 1.5 在畫面上都是 1，看起來就像滑桿沒作用 */}
       <span className="text-white font-sans tabular-nums">
-        {decimals > 0 ? (fixedDecimals ? label2.toFixed(decimals) : label2.toFixed(decimals).replace(/\.?0+$/, '') || '0') : Math.round(label2)}
+        {format ? format(label2) : decimals > 0 ? (fixedDecimals ? label2.toFixed(decimals) : label2.toFixed(decimals).replace(/\.?0+$/, '') || '0') : Math.round(label2)}
       </span>
     </div>
     {/* onCommit：手指／滑鼠放開時才觸發（動畫頁拿它來自動重播） */}
