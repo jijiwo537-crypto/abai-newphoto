@@ -554,7 +554,9 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     const line = GRID_SHAPE_KINDS.has(o.kind)
       ? 1.5 * unit * Math.max(1, Math.min(3, (o.lineW ?? 6) / 6))
       : Math.max(.4 * scale, (o.lineW ?? 6) * unit);
-    const edge = gap + ((o.filled && o.kind !== 'line') ? 0 : line / 2) + (o.strokeW || 0) * unit;
+    // 描邊的寬度跟繪製同一條式子（線條類照線寬算，見 shape 繪製的 sw）
+    const strokeEdge = SPECIAL_LINE_KINDS.has(o.kind) ? Math.min(8, Math.max(0, o.strokeW || 0)) / 6 * line : (o.strokeW || 0) * unit;
+    const edge = gap + ((o.filled && o.kind !== 'line') ? 0 : line / 2) + strokeEdge;
     return {
       x: bw * fit[0] - edge, y: bh * fit[1] - edge,
       w: Math.max(1, bw * fit[2]) + edge * 2,
@@ -609,22 +611,35 @@ const CREATIVE_DUAL_INNER = '#C4D1C6';
 const creativeShapeColorFor = (kind: string) => isBackdropMask(kind) ? shapeDefaultColorFor(kind) : '#FFFFFF';
 
 /** 圖形調整面板用的滑桿，樣式跟經典拼圖那顆 ShapeEditorPanel 逐項相同 */
-const shapeSlider = (label: string, value: number, min: number, max: number, onVal: (v: number) => void) => (
-  <div className="space-y-1.5" key={label}>
-    <div className="flex justify-between items-center">
-      <span className="text-[11px] font-bold text-white/70">{label}</span>
-      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}</span>
+/** 線條類貼圖的發光上限：原本的 40%（滑桿照樣 0～100） */
+const LINE_GLOW_CAP = 0.4;
+/** 圖形調整面板用的滑桿。拖動中數字由這顆自己顯示（走即時通道時工具的狀態要放開才更新）；
+    onActive：手指按上／放開（貼圖的滑桿用它走即時通道） */
+const ShapeSliderC: React.FC<{ label: string; value: number; min: number; max: number; onVal: (v: number) => void; onActive?: (a: boolean) => void }> = ({ label, value, min, max, onVal, onActive }) => {
+  const [shown, setShown] = useState(value);
+  const dragging = useRef(false);
+  useEffect(() => { if (!dragging.current) setShown(value); }, [value]);
+  return (
+    <div className="space-y-1.5">
+      <div className="flex justify-between items-center">
+        <span className="text-[11px] font-bold text-white/70">{label}</span>
+        <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{shown}</span>
+      </div>
+      {/* 全 App 的滑桿軌道統一成同一種細度（跟「編輯」的濾鏡滑桿一樣） */}
+      <div className="slider-wrap" style={{ height: 16 }}>
+        <SmoothRange
+          min={min} max={max} step={1} value={value}
+          onValue={v => { const r = Math.round(v); setShown(r); onVal(r); }}
+          onInteractionChange={a => { dragging.current = a; onActive?.(a); if (!a) setShown(value); }}
+          className="premium-slider w-full"
+          style={{ touchAction: 'none' }}
+        />
+      </div>
     </div>
-    {/* 全 App 的滑桿軌道統一成同一種細度（跟「編輯」的濾鏡滑桿一樣） */}
-    <div className="slider-wrap" style={{ height: 16 }}>
-      <SmoothRange
-        min={min} max={max} step={1} value={value}
-        onValue={v => onVal(Math.round(v))}
-        className="premium-slider w-full"
-        style={{ touchAction: 'none' }}
-      />
-    </div>
-  </div>
+  );
+};
+const shapeSlider = (label: string, value: number, min: number, max: number, onVal: (v: number) => void, onActive?: (a: boolean) => void) => (
+  <ShapeSliderC key={label} label={label} value={value} min={min} max={max} onVal={onVal} onActive={onActive} />
 );
 
 /* 一根共用的滑桿＋下面一排可以左右滑的功能鍵（跟「編輯 → 調節」同一種操作）：
@@ -7976,7 +7991,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 描邊：畫在本體「底下」、寬度加倍 —— 本體會蓋住內半邊，
            留在外面的就是乾淨的一圈外描邊（跟文字的描邊同一種做法）。
            虛線只屬於本體，描邊那一圈一律是實線。 */
-        const sw = Math.min(8, Math.max(0, o.strokeW || 0)) * unit;
+        /* 線條類（直線、波浪、閃電）：描邊照「線本身的粗細」算 —— 照長邊算的話，同樣的描邊數值，
+           線拉得越長描邊就越粗，直線跟波浪的描邊也粗細不一。最大（8）＝兩側各多出約 1.33 倍線寬。 */
+        const sw = SPECIAL_LINE_KINDS.has(o.kind)
+          ? Math.min(8, Math.max(0, o.strokeW || 0)) / 6 * lw
+          : Math.min(8, Math.max(0, o.strokeW || 0)) * unit;
         if (sw > 0) {
           ctx.save();
           ctx.setLineDash([]);
@@ -7984,8 +8003,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#000000';
           ctx.lineWidth = solid ? sw * 2 : lw + sw * 2;
-          // 線條兩端也要描到：本體是平頭，描邊用方頭往外多出一圈
-          if (SPECIAL_LINE_KINDS.has(o.kind)) ctx.lineCap = 'square';
+          /* 線條兩端也要描到：本體是平頭。直線用方頭（兩端是乾淨的長方形外框）；
+             波浪、閃電的線頭是斜的，方頭會在端點多出一塊斜方塊，改用圓頭 */
+          if (SPECIAL_LINE_KINDS.has(o.kind)) ctx.lineCap = o.kind === 'line' ? 'square' : 'round';
           // 選中框的小方塊是方的，描邊轉角也要是直角（其他圖形維持圓角）
           if (TRACK_SQUARE_KINDS.has(o.kind as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
           if (!strokeCompositeShape(ctx, o.kind, bw, bh, o.innerSize)) paintShapePath(false);
@@ -12440,7 +12460,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   if (regionEditing && photoRegionRef.current) {
                     clearPhotoDimmer();
                     commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)},!!d.fx);
+                  } else if (maskSliderLive.current?.id === sel?.id) {
+                    /* 貼圖的滑桿拖動中：只改畫布要用的那份、直接重畫，不重新整理整個工具（放開時才寫回狀態，見 shapeLive） */
+                    maskSliderLive.current!.patch = { ...maskSliderLive.current!.patch, ...d };
+                    objectsRef.current = objectsRef.current.map(o => o.id === sel.id ? { ...o, ...d } : o);
+                    regionPaintRef.current?.();
                   } else setObjects(prev => prev.map(o => o.id === sel.id ? { ...o, ...d } : o));
+                };
+                /** 貼圖滑桿的按上／放開：按上時開即時通道，放開時一次寫回狀態（放開那一格才重新整理工具） */
+                const shapeLive = (active: boolean) => {
+                  if (!sel || sel.type !== 'shape') return;
+                  if (active) { maskSliderLive.current = { id: sel.id, patch: {} }; return; }
+                  const held = maskSliderLive.current; maskSliderLive.current = null;
+                  if (held && Object.keys(held.patch).length) setObjects(prev => prev.map(o => o.id === held.id ? { ...o, ...held.patch } : o));
                 };
                 // 圖片物件（不是影片、不是底圖格子）的效果滑桿走即時通道
                 const liveObjFx = !regionEditing && sel?.type === 'image' && !isVideoEl(sel.img);
@@ -12504,7 +12536,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {(DUAL_COLOR_SHAPE_KINDS.has(sel.kind || '') || /^(square|circle)-(star|heart)-cutout$/.test(sel.kind || '')) && (
                             <div className="flex items-center gap-3 px-2">
                               <div className="flex-1 min-w-0">{shapeSlider('圖案大小', sel.innerSize ?? compositeInnerDefault(sel.kind || ''), 10, 90,
-                                (v: number) => patch({ innerSize: v }))}</div>
+                                (v: number) => patch({ innerSize: v }), shapeLive)}</div>
                               {DUAL_COLOR_SHAPE_KINDS.has(sel.kind || '') && <button
                                 title="圖案顏色" className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10"
                                 style={{backgroundColor:sel.innerColor || '#FFFFFF'}}
@@ -12513,9 +12545,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           )}
                           {hasWidth && <div className={`grid ${hasDash || STITCH_LINE_KINDS.has(sel.kind) ? 'grid-cols-2' : 'grid-cols-1'} gap-5 px-2`}>
                             {isGrid ? shapeSlider(GRID_DOT_KINDS.has(sel.kind) ? '大小' : '粗細', Math.round(((sel.lineW ?? 6) - 6) / 12 * 100), 0, 100,
-                              (v: number) => patch({ lineW: 6 + v * .12 }))
-                              : shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }))}
-                            {hasDash && shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
+                              (v: number) => patch({ lineW: 6 + v * .12 }), shapeLive)
+                              : shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }), shapeLive)}
+                            {hasDash && shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }), shapeLive)}
                             {STITCH_LINE_KINDS.has(sel.kind) && <GapSlider value={(sel as any).lineGap ?? stitchGapDefault(sel.kind)}
                               onValue={(v: number) => {
                                 // 元素數量不變，框的寬度跟著間距變，中心不動
@@ -12532,11 +12564,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             <div className="flex-1 min-w-0">
                               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
                               {/* 邊框類的上限是實心的六成（shapeGlowFromUi） */}
-                              {shapeSlider('發光', shapeGlowToUi(sel.glow, outlineShape || isLine), 0, 100,
-                                (v: number) => patch(v > 0 && !sel.glowInit
-                                  /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
-                                  ? { glow: shapeGlowFromUi(v, outlineShape || isLine), glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
-                                  : { glow: shapeGlowFromUi(v, outlineShape || isLine) }))}
+                              {/* 線條類：發光上限是原本的 40%（滑桿照樣 0～100，100 ＝ 原本的 40）。
+                                  已經放好、超過新上限的舊線條外觀不變，滑桿先停在 100 */}
+                              {shapeSlider('發光', isLine ? Math.min(100, Math.round(shapeGlowToUi(sel.glow, true) / LINE_GLOW_CAP)) : shapeGlowToUi(sel.glow, outlineShape || isLine), 0, 100,
+                                (v: number) => {
+                                  const g = isLine ? shapeGlowFromUi(v * LINE_GLOW_CAP, true) : shapeGlowFromUi(v, outlineShape || isLine);
+                                  patch(v > 0 && !sel.glowInit
+                                    /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
+                                    ? { glow: g, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                                    : { glow: g });
+                                }, shapeLive)}
                             </div>
                             <ColorPick compact label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
@@ -12545,10 +12582,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 霧白邊框：範圍（全白往內多少）與羽化（淡出那段多寬）並排，下面一排是圓角 */}
                           {isFrameShape(sel.kind) && !isMistFrame(sel.kind) && sel.kind !== FRAME_SCATTER && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('範圍', Math.round((sel as any).frameRange ?? frameRangeDefault(sel.kind)), 0, 100,
-                              (v: number) => patch({ frameRange: v } as any))}
+                              (v: number) => patch({ frameRange: v } as any), shapeLive)}
                             {(FRAME_SLIDERS[sel.kind!] || []).filter(sl => sl.key !== 'glow').map(sl => <React.Fragment key={sl.key}>
                               {shapeSlider(sl.label, Math.round((sel as any).frameOpts?.[sl.key] ?? sl.def), 0, 100,
-                                (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, [sl.key]: Math.round(v) } } as any))}
+                                (v: number) => patch({ frameOpts: { ...(sel as any).frameOpts, [sl.key]: Math.round(v) } } as any), shapeLive)}
                             </React.Fragment>)}
                           </div>}
                           {/* 發光自己一整排（長的滑桿） */}
@@ -12576,26 +12613,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </div>}
                           {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('範圍', mistRangeToUi((sel as any).frameRange ?? MIST_RANGE_DEFAULT), 0, 100,
-                              (v: number) => patch({ frameRange: mistRangeFromUi(v) } as any))}
+                              (v: number) => patch({ frameRange: mistRangeFromUi(v) } as any), shapeLive)}
                             {shapeSlider('羽化', Math.round((sel as any).frameFeather ?? MIST_FEATHER_DEFAULT), 0, 100,
-                              (v: number) => patch({ frameFeather: v } as any))}
+                              (v: number) => patch({ frameFeather: v } as any), shapeLive)}
                           </div>}
                           {isMistFrame(sel.kind) && <div className="px-2 order-1 w-full grid grid-cols-2 gap-x-6">
                             {shapeSlider('圓角', Math.round((sel as any).frameRound ?? MIST_ROUND_DEFAULT), 0, 100,
-                              (v: number) => patch({ frameRound: v } as any))}
+                              (v: number) => patch({ frameRound: v } as any), shapeLive)}
                             {shapeSlider('透明度', Math.round(sel.opacity ?? 100), 0, 100,
-                              (v: number) => patch({ opacity: v }))}
+                              (v: number) => patch({ opacity: v }), shapeLive)}
                           </div>}
                           {/* 星芒只有這一個「發光」：排序工具裡叫「柔光範圍」，同一個數（0～80）。
                               一般圖形那種陰影式的發光不給星芒用 */}
                           {isGlint && <div className="px-2 order-1 w-full">
                             {shapeSlider('發光', Math.round(sel.glintGlow ?? glintDefaultGlow(sel.hole)), 0, 80,
-                              (v: number) => patch({ glintGlow: v }))}
+                              (v: number) => patch({ glintGlow: v }), shapeLive)}
                           </div>}
                           {!isDoubleContour && !isGrid && !noDecor && !isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('描邊', Math.round(Math.min(8, sel.strokeW ?? 0) * 12.5), 0, 100,
-                                (v: number) => patch({ strokeW: v / 12.5 }))}
+                                (v: number) => patch({ strokeW: v / 12.5 }), shapeLive)}
                             </div>
                             <ColorPick compact label="顏色" value={sel.strokeColor || '#000000'}
                               onPick={(c: string) => patch({ strokeColor: c })}
@@ -12604,7 +12641,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {isDoubleContour && (
                             <div className="px-2 order-2 w-full">
                               {shapeSlider('外框粗細', sel.outlineWidth ?? 0, 0, 100,
-                                (v: number) => patch({ outlineWidth: v }))}
+                                (v: number) => patch({ outlineWidth: v }), shapeLive)}
                             </div>
                           )}
                           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
@@ -12664,11 +12701,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 {/* 左右各留 8px，畫出來的線才會收在自己那一欄裡 */}
                                 <div className="px-2">
                                   {isClefTex(sel.hole)
-                                    ? shapeSlider('數量', clefStripeToUi(sel.stripeN ?? CLEF_TEX_DEFAULTS.stripeN), 0, CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, (v: number) => patch({ stripeN: clefStripeFromUi(v) }))
-                                    : shapeSlider('數量', sel.stripeN ?? STRIPE_N_DEFAULT, 0, tex === 'gingham' ? GINGHAM_N_MAX : STRIPE_N_MAX, (v: number) => patch({ stripeN: v }))}
+                                    ? shapeSlider('數量', clefStripeToUi(sel.stripeN ?? CLEF_TEX_DEFAULTS.stripeN), 0, CLEF_STRIPE_MAX - CLEF_STRIPE_MIN, (v: number) => patch({ stripeN: clefStripeFromUi(v) }), shapeLive)
+                                    : shapeSlider('數量', sel.stripeN ?? STRIPE_N_DEFAULT, 0, tex === 'gingham' ? GINGHAM_N_MAX : STRIPE_N_MAX, (v: number) => patch({ stripeN: v }), shapeLive)}
                                 </div>
                                 {tex === 'gingham' ? (
-                                  <div className="px-2">{shapeSlider('角度', gingAngleUi(sel.stripeDir), 0, 100, (v: number) => patch({ stripeDir: gingDirOf(v) } as any))}</div>
+                                  <div className="px-2">{shapeSlider('角度', gingAngleUi(sel.stripeDir), 0, 100, (v: number) => patch({ stripeDir: gingDirOf(v) } as any), shapeLive)}</div>
                                 ) : <div className="space-y-1.5">
                                   <span className="text-[11px] font-bold text-white/70">方向</span>
                                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
@@ -12689,16 +12726,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             ) : (
                               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                                 {isClefTex(sel.hole)
-                                  ? shapeSlider('大小', clefSizeToUi(sel.dotSize ?? CLEF_TEX_DEFAULTS.size), 0, 100, (v: number) => patch({ dotSize: clefSizeFromUi(v) }))
+                                  ? shapeSlider('大小', clefSizeToUi(sel.dotSize ?? CLEF_TEX_DEFAULTS.size), 0, 100, (v: number) => patch({ dotSize: clefSizeFromUi(v) }), shapeLive)
                                   : isFrameShape(sel.kind)
-                                  ? shapeSlider('大小', mistSizeToUi(sel.dotSize ?? MIST_TEX_SIZE_DEFAULT), 0, 100, (v: number) => patch({ dotSize: mistSizeFromUi(v) }))
-                                  : shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
+                                  ? shapeSlider('大小', mistSizeToUi(sel.dotSize ?? MIST_TEX_SIZE_DEFAULT), 0, 100, (v: number) => patch({ dotSize: mistSizeFromUi(v) }), shapeLive)
+                                  : shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }), shapeLive)}
                                 {isClefTex(sel.hole)
-                                  ? shapeSlider('間距', clefGapToUi(sel.dotGap ?? CLEF_TEX_DEFAULTS.gap), 0, 100, (v: number) => patch({ dotGap: clefGapFromUi(v) }))
+                                  ? shapeSlider('間距', clefGapToUi(sel.dotGap ?? CLEF_TEX_DEFAULTS.gap), 0, 100, (v: number) => patch({ dotGap: clefGapFromUi(v) }), shapeLive)
                                   : isFrameShape(sel.kind)
-                                  ? shapeSlider('間距', mistGapToUi(sel.dotGap ?? MIST_TEX_GAP_DEFAULT), 0, 100, (v: number) => patch({ dotGap: mistGapFromUi(v) }))
-                                  : shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }))}
-                                {isGridTex(tex) && <div className="col-span-2">{shapeSlider('壓扁',maskTextureSquashToUi(sel.dotSquash??50),0,100,(v:number)=>patch({dotSquash:maskTextureSquashFromUi(v)}))}</div>}
+                                  ? shapeSlider('間距', mistGapToUi(sel.dotGap ?? MIST_TEX_GAP_DEFAULT), 0, 100, (v: number) => patch({ dotGap: mistGapFromUi(v) }), shapeLive)
+                                  : shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }), shapeLive)}
+                                {isGridTex(tex) && <div className="col-span-2">{shapeSlider('壓扁',maskTextureSquashToUi(sel.dotSquash??50),0,100,(v:number)=>patch({dotSquash:maskTextureSquashFromUi(v)}), shapeLive)}</div>}
                               </div>
                             )}
                           </div>
@@ -12707,13 +12744,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {shapeSupportsFeather(sel.kind, sel.filled, sel.hole) && (
                             <div className="px-2 order-5 w-full">
                               {shapeSlider('羽化', sel.shapeFeather || 0, 0, 100,
-                                (v: number) => patch({ shapeFeather: v }))}
+                                (v: number) => patch({ shapeFeather: v }), shapeLive)}
                             </div>
                           )}
                           {isBlurShape(sel.kind) && (
                             <div className="px-2 order-1 w-full">
                               {shapeSlider('模糊', sel.shapeFeather ?? blurShapeDefault(sel.kind), 0, 100,
-                                (v: number) => patch({ shapeFeather: v }))}
+                                (v: number) => patch({ shapeFeather: v }), shapeLive)}
                             </div>
                           )}
                           {/* 箭身長度放在發光上面（order-0 排在發光的 order-1 前面） */}
@@ -12724,7 +12761,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                   if (o.id !== sel.id) return o;
                                   const r = arrowResize(o.w, o.h, v, o.kind, o.textureBaseW || o.w, o.textureBaseH || o.h);
                                   return { ...o, w: r.w, x: o.x + (o.w - r.w) / 2, textureBaseW: r.baseW, textureBaseH: o.textureBaseH || o.h };
-                                })))}
+                                })), shapeLive)}
                             </div>
                           )}
                           {/* 粗細與虛線只有空心／線條才有，放在最後面 */}

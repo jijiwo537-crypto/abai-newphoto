@@ -12,19 +12,18 @@ index b729473..325af9a 100644
  .art-error{position:absolute;z-index:120;left:20px;right:20px;top:80px;background:#542b2b;padding:20px;border-radius:12px;font-size:13px}
  .art-export{position:absolute;inset:0;background:#000;z-index:110;display:flex;flex-direction:column}
 diff --git a/components/CollageTool.tsx b/components/CollageTool.tsx
-index 7869c61..c0d75bd 100644
 --- a/components/CollageTool.tsx
 +++ b/components/CollageTool.tsx
-@@ -617,7 +617,7 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
-         min={min} max={max} step={1} value={value}
-         onValue={v => onVal(Math.round(v))}
-         className="premium-slider w-full"
--        style={{ touchAction: 'none' }}
-+        style={{ touchAction: 'pan-y' }}
-       />
+@@ -632,7 +632,7 @@
+           onValue={v => { const r = Math.round(v); setShown(r); onVal(r); }}
+           onInteractionChange={a => { dragging.current = a; onActive?.(a); if (!a) setShown(value); }}
+           className="premium-slider w-full"
+-          style={{ touchAction: 'none' }}
++          style={{ touchAction: 'pan-y' }}
+         />
+       </div>
      </div>
-   </div>
-@@ -10463,7 +10463,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
+@@ -10822,7 +10822,7 @@
            outline: none;
            margin: 0 -32px;
            padding: 0;
@@ -33,7 +32,7 @@ index 7869c61..c0d75bd 100644
            -webkit-tap-highlight-color: rgba(0,0,0,0);
          }
          .custom-range:focus { outline: none; }
-@@ -10531,11 +10531,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
+@@ -10890,11 +10890,10 @@
             對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
             長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
             判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
