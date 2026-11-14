@@ -4065,12 +4065,13 @@ if (isAlphaImg) {
       onPointerCancelCapture={isolateFxUpdates ? finishAdjustment : undefined}
       onKeyUpCapture={isolateFxUpdates ? finishAdjustment : undefined}>
       {alphaColor ? (
-        <div className="max-w-md mx-auto px-4 pt-3 pb-12">
-          <ColorPickerEmbedded
-            color={(alphaColor === 'stroke' ? img.imgStrokeColor : img.imgGlowColor) || '#FFFFFF'}
-            colors={alphaColor === 'stroke' ? STROKE_COLORS : GLOW_COLORS}
-            onChange={c => set(alphaColor === 'stroke' ? { imgStrokeColor: c } : { imgGlowColor: c })}
-            onClose={() => setAlphaColor(null)} />
+        /* 跟其他顏色頁同一款（ColorPickerPage）：最上面一顆「返回」，下面是色票與色相／飽和度／明度 */
+        <div className="max-w-md mx-auto px-4 pt-2 pb-6 h-full">
+          <ColorPickerPage
+            value={(alphaColor === 'stroke' ? img.imgStrokeColor : img.imgGlowColor) || '#FFFFFF'}
+            colors={[...(alphaColor === 'stroke' ? STROKE_COLORS : GLOW_COLORS)]}
+            onPick={c => set(alphaColor === 'stroke' ? { imgStrokeColor: c } : { imgGlowColor: c })}
+            onBack={() => setAlphaColor(null)} />
         </div>
       ) : (
         <div className="max-w-md mx-auto px-4 space-y-3.5 pt-4 pb-12">
