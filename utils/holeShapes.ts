@@ -627,16 +627,19 @@ export const paintDots = (
   const { r, dx, dy } = dotGridOf(unitW, unitH, size, gap);
   c.fillStyle = color;
   const rx = Math.ceil(covW / dx) + 2, ry = Math.ceil(covH / dy) + 2;
+  // 全部圖案加進同一條路徑、最後只填一次（同色，結果跟一顆一顆填一樣，見 patternGlyphPath）
+  c.beginPath();
   for (let j = -ry; j <= ry; j++) {
     const shiftX = Math.abs(j) % 2 === 1 ? dx / 2 : 0;
     for (let i = -rx; i <= rx; i++) {
       // 圖案本身跟背景紋理共用同一支（點點／星星／愛心都是它畫的）
-      patternGlyph(c, kind, i * dx + shiftX, j * dy, r, squash);
+      patternGlyphPath(c, kind, i * dx + shiftX, j * dy, r, squash);
     }
   }
+  c.fill();
 };
 
-import { patternGlyph, stripeBand, paintGinghamAt, stripeDirArg, gingAngleUi, STRIPE_A as SA, STRIPE_B as SB,
+import { patternGlyph, patternGlyphPath, stripeBand, paintGinghamAt, stripeDirArg, gingAngleUi, STRIPE_A as SA, STRIPE_B as SB,
   STRIPE_N_DEFAULT as SN_DEF, type TexKind } from './pattern';
 
 /* ── 紋理 ───────────────────────────────────────────────────────────
@@ -744,6 +747,8 @@ export const paintTex = (
    比線粗兩倍多的筆把靠近線的那一圈擦掉（destination-out），最後整張貼回去。
    小圖照當下畫布的放大倍率畫，同一組參數只畫一次。 */
 const insetTexCache = new Map<string, HTMLCanvasElement>();
+/** 被擠出快取的舊畫布（最多留四張），下一次同尺寸的直接拿來重畫 */
+const insetTexSpare: HTMLCanvasElement[] = [];
 export const paintTextureInsideOutline = (
   ctx: CanvasRenderingContext2D, path: Path2D, x: number, y: number, w: number, h: number, lineWidth: number,
   key: string, paint: (tc: CanvasRenderingContext2D, w: number, h: number) => void,
@@ -755,9 +760,14 @@ export const paintTextureInsideOutline = (
   const ck = [key, Math.round(x * 10), Math.round(y * 10), Math.round(w * 10), Math.round(h * 10), Math.round(lineWidth * 100), cw, ch].join('|');
   let c = insetTexCache.get(ck);
   if (!c) {
-    c = document.createElement('canvas'); c.width = cw; c.height = ch;
+    /* 拖紋理滑桿時每一格的 key 都不一樣：每一格都 new 一張畫布會一直跟 GPU 要新記憶體。
+       先拿被擠出快取、同尺寸的舊畫布來重畫（見下面 insetTexSpare） */
+    const si = insetTexSpare.findIndex(x => x.width === cw && x.height === ch);
+    c = si >= 0 ? insetTexSpare.splice(si, 1)[0] : document.createElement('canvas');
+    if (c.width !== cw) c.width = cw; if (c.height !== ch) c.height = ch;
     const g = c.getContext('2d');
     if (!g) return;
+    g.setTransform(1, 0, 0, 1, 0, 0); g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, cw, ch);
     g.scale(cw / w, ch / h);
     g.translate(-x, -y);
     g.save(); g.translate(x + w / 2, y + h / 2); paint(g, w, h); g.restore();
@@ -766,7 +776,10 @@ export const paintTextureInsideOutline = (
     g.globalCompositeOperation = 'destination-out';
     g.lineJoin = 'round'; g.lineCap = 'round'; g.lineWidth = Math.max(0.5, lineWidth) * 2.6; g.setLineDash([]);
     g.stroke(path);
-    if (insetTexCache.size >= 32) { const first = insetTexCache.keys().next().value; if (first !== undefined) insetTexCache.delete(first); }
+    if (insetTexCache.size >= 12) {
+      const first = insetTexCache.keys().next().value;
+      if (first !== undefined) { const old = insetTexCache.get(first); insetTexCache.delete(first); if (old && insetTexSpare.length < 4) insetTexSpare.push(old); }
+    }
     insetTexCache.set(ck, c);
   }
   ctx.drawImage(c, x, y, w, h);

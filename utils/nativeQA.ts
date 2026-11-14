@@ -454,6 +454,52 @@ async function scenarioWideSave() {
   } catch (e: any) { log(`widesave FAILED at ${step}: ${e?.name}: ${String(e?.message ?? e)} ${String(e?.stack ?? '').slice(0, 300)}`); }
 }
 
+/* 貼圖滑桿在真正的 WebKit 上的手感：創意拼圖加各類貼圖，每根滑桿模擬拖 40 格量每一格的間隔；
+   再把發光打開重量一次（發光在 Safari 上最貴，實際使用最常開） */
+async function scenarioStickerPerf() {
+  await provideFiles(1);
+  click(await waitFor(() => findButton(TOOL_ENTRY.collage), 15000, '創意拼圖按鈕'));
+  await sleep(9000);
+  const items = ['star-f', 'circle-o', 'line-wave', 'grid-cross', 'grid-dots', 'blur-star-f', '霧白邊框', 'hole-sb-cross-thin', 'line-stitch-plus'];
+  const raf = () => new Promise<number>(r => requestAnimationFrame(r));
+  const labelOf = (el: Element) => { const c = el.closest('.space-y-1\\.5'); const sp = c && c.querySelector('span'); return sp ? sp.textContent || '?' : '?'; };
+  const drag = async (r: HTMLInputElement) => {
+    const min = +r.min, max = +r.max, gaps: number[] = [];
+    r.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+    let last = await raf();
+    for (let i = 1; i <= 40; i++) {
+      const v = min + (max - min) * (0.3 + 0.4 * Math.sin(i / 40 * Math.PI));
+      r.value = String(v); r.dispatchEvent(new Event('input', { bubbles: true }));
+      const now = await raf(); gaps.push(now - last); last = now;
+    }
+    r.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+    await sleep(400);
+    const s = [...gaps].sort((a, b) => b - a), avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    return `${avg.toFixed(0)}/${Math.round(s[0])}`;
+  };
+  const sliders = () => (Array.from(document.querySelectorAll('.slider-wrap input[type=range]')) as HTMLInputElement[]).filter(visible);
+  for (const id of items) {
+    const tab = document.querySelector('[data-creative-tab=add]') as HTMLElement | null; if (tab) click(tab); await sleep(800);
+    const add = findButton(/^新增貼圖/); if (add) { click(add); await sleep(800); }
+    const it = document.querySelector(`button[aria-label="${id}"]`) as HTMLElement | null;
+    if (!it) { log(`stickerperf ${id}: not found`); continue; }
+    click(it); await sleep(2500);
+    const adj = findButton(/^圖形調整/); if (adj) { click(adj); await sleep(1500); }
+    const out: string[] = [];
+    for (const r of sliders()) out.push(`${labelOf(r)}:${await drag(r)}`);
+    log(`stickerperf ${id} glow0  ${out.join('  ')}`);
+    const glow = sliders().find(r => labelOf(r) === '發光');
+    if (glow) {
+      glow.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); glow.value = String(+glow.max * 0.7); glow.dispatchEvent(new Event('input', { bubbles: true }));
+      await raf(); glow.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); await sleep(800);
+      const out2: string[] = [];
+      for (const r of sliders()) if (labelOf(r) !== '發光') out2.push(`${labelOf(r)}:${await drag(r)}`);
+      log(`stickerperf ${id} glow70 ${out2.join('  ')}`);
+    }
+    const del = findButton(/^刪除$/); if (del) { click(del); await sleep(800); }
+  }
+}
+
 /* 選中框：進編輯 → 濾鏡選第三張 → 記下卡片位置（CI 截圖後放大看四個角）→ 特效選一張 → 模板 */
 async function scenarioRings() {
   await provideFiles(1);
@@ -498,6 +544,7 @@ export async function runNativeQA(forced?: string) {
     else if (scenario === 'gallery') await scenarioGallery();
     else if (scenario === 'camfx') await scenarioCamFx();
     else if (scenario === 'widesave') await scenarioWideSave();
+    else if (scenario === 'stickerperf') await scenarioStickerPerf();
     else if (scenario === 'rings') await scenarioRings();
     else if (scenario === 'layoutvideo') await scenarioLayoutVideo();
     else if (scenario === 'layoutundo') await scenarioLayoutUndo();

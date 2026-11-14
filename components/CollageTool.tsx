@@ -613,6 +613,8 @@ const creativeShapeColorFor = (kind: string) => isBackdropMask(kind) ? shapeDefa
 /** 圖形調整面板用的滑桿，樣式跟經典拼圖那顆 ShapeEditorPanel 逐項相同 */
 /** 線條類貼圖的發光上限：原本的 40%（滑桿照樣 0～100） */
 const LINE_GLOW_CAP = 0.4;
+/** 網格類貼圖的發光上限：原本的 10%（滑桿照樣 0～100，能調得更細） */
+const GRID_GLOW_CAP = 0.1;
 /** 圖形調整面板用的滑桿。拖動中數字由這顆自己顯示（走即時通道時工具的狀態要放開才更新）；
     onActive：手指按上／放開（貼圖的滑桿用它走即時通道） */
 const ShapeSliderC: React.FC<{ label: string; value: number; min: number; max: number; onVal: (v: number) => void; onActive?: (a: boolean) => void }> = ({ label, value, min, max, onVal, onActive }) => {
@@ -12564,16 +12566,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             <div className="flex-1 min-w-0">
                               {/* 滑桿 100 ＝ 發光強度 3（glowToUi）；已放好的圖形外觀不變 */}
                               {/* 邊框類的上限是實心的六成（shapeGlowFromUi） */}
-                              {/* 線條類：發光上限是原本的 40%（滑桿照樣 0～100，100 ＝ 原本的 40）。
-                                  已經放好、超過新上限的舊線條外觀不變，滑桿先停在 100 */}
-                              {shapeSlider('發光', isLine ? Math.min(100, Math.round(shapeGlowToUi(sel.glow, true) / LINE_GLOW_CAP)) : shapeGlowToUi(sel.glow, outlineShape || isLine), 0, 100,
-                                (v: number) => {
-                                  const g = isLine ? shapeGlowFromUi(v * LINE_GLOW_CAP, true) : shapeGlowFromUi(v, outlineShape || isLine);
+                              {/* 線條類：發光上限是原本的 40%；網格類：原本的 10%（滑桿照樣 0～100，
+                                  所以網格能調得細十倍）。數字照存的值精確換算（換算是線性的），放開時不會跳一格。
+                                  已經放好、超過新上限的舊貼圖外觀不變，滑桿先停在 100 */}
+                              {(() => {
+                                const glowFlag = outlineShape || isLine;
+                                const glowCap = isLine ? LINE_GLOW_CAP : isGrid ? GRID_GLOW_CAP : 1;
+                                const perUi = shapeGlowFromUi(1, glowFlag) * glowCap;
+                                const ui = glowCap < 1 ? Math.min(100, Math.round(glowAmount(sel.glow) * 100 / perUi)) : shapeGlowToUi(sel.glow, glowFlag);
+                                return shapeSlider('發光', ui, 0, 100, (v: number) => {
+                                  const g = shapeGlowFromUi(v * glowCap, glowFlag);
                                   patch(v > 0 && !sel.glowInit
                                     /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
                                     ? { glow: g, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
                                     : { glow: g });
-                                }, shapeLive)}
+                                }, shapeLive);
+                              })()}
                             </div>
                             <ColorPick compact label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}

@@ -63,8 +63,23 @@ export const patternGlyph = (
   kind: string,
   cx: number, cy: number, r: number, squash = 50,
 ) => {
-  if(squash!==50){const v=Math.max(20,Math.min(80,squash));c.save();c.translate(cx,cy);c.scale(v>50?1-(v-50)*.018:1,v<50?.1+v*.018:1);patternGlyph(c,kind,0,0,r);c.restore();return;}
   c.beginPath();
+  patternGlyphPath(c, kind, cx, cy, r, squash);
+  c.fill();
+};
+
+/**
+ * 同一顆圖案，但只把形狀「加進目前的路徑」，不開新路徑、不填色。
+ * 鋪滿紋理時先把上百顆都加進同一條路徑，最後只 fill 一次 —— 同色、同一種填法，
+ * 畫出來跟一顆一顆填完全一樣，但繪圖指令從上百次變成一次（拖紋理滑桿時每一格都要重畫）。
+ * 每顆都從 moveTo 開始（圓也是），顆與顆之間才不會被連出細線。
+ */
+export const patternGlyphPath = (
+  c: CanvasRenderingContext2D,
+  kind: string,
+  cx: number, cy: number, r: number, squash = 50,
+) => {
+  if(squash!==50){const v=Math.max(20,Math.min(80,squash));c.save();c.translate(cx,cy);c.scale(v>50?1-(v-50)*.018:1,v<50?.1+v*.018:1);patternGlyphPath(c,kind,0,0,r);c.restore();return;}
   if (kind === 'star') {
     const R = r * 1.38;
     for (let k = 0; k < 10; k++) {
@@ -81,9 +96,9 @@ export const patternGlyph = (
     c.bezierCurveTo(cx + s * 0.55, cy - s * 1.15, cx + s * 1.5, cy - s * 0.2, cx, cy + s * 0.85);
     c.closePath();
   } else {
+    c.moveTo(cx + r, cy);
     c.arc(cx, cy, r, 0, Math.PI * 2);
   }
-  c.fill();
 };
 
 /** 條紋的「數量」滑桿：0～30 條，預設 13 條。
