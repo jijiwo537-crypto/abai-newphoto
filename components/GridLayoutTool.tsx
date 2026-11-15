@@ -91,7 +91,7 @@ import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
-import { sourceHasAlpha } from '../utils/photoFx';
+import { sourceHasAlpha, lutMaxAmount } from '../utils/photoFx';
 import { strokeAlphaContour } from '../utils/alphaStroke';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, settlePhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
@@ -3965,7 +3965,10 @@ const detailActive = detailTools.find(t=>t[0]===detailTool) || detailTools[0];
 const sliderArea = (() => {
   if (adjustSub === 'filter') {
     if (!fx.lut || fx.lut === 'none') return null;
-    return editorSlider('強度', fx.lutAmount ?? 100, 0, 100, v => setFx({ lutAmount: v }), undefined, false, 1, lutDefaultAmount(fx.lut));
+    /* 滑桿一律 0～100；存的是實際強度（0～這顆濾鏡的最大強度，見 LUT_MAX_AMOUNT） */
+    const cap = lutMaxAmount(fx.lut);
+    return editorSlider('強度', Math.min(100, Math.round((fx.lutAmount ?? cap) * 100 / cap)), 0, 100,
+      v => setFx({ lutAmount: v * cap / 100 }), undefined, false, 1, 100);
   }
   if (adjustSub === 'tune') {
     const t = TUNE_TOOLS.find(x => x[0] === tuneTool) || (deferSlider ? null : TUNE_TOOLS[0]);

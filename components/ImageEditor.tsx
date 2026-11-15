@@ -22,7 +22,8 @@ import { TemplatePanel } from './TemplatePanel';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { safeScale, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
 import { buildTransfer, exportFullRes } from '../utils/fullResExport';
-import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
+import { LUT_DEFAULT_AMOUNT, lutDefaultAmount, lutMaxAmount } from '../utils/photoFx';
+import { setLutCap } from '../utils/effectControlValues';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
 import { isIdentityCurve, boundedCurvePath } from '../utils/editorCurveGeometry';
 import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
@@ -1361,6 +1362,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const activeToolIdRef = useRef(activeToolId);
   activeToolIdRef.current = activeToolId;
   const [selectedLutIdx, setSelectedLutIdx] = useState(0);
+  /* 濾鏡強度滑桿一律 0～100：告訴換算那一層，目前這顆濾鏡的最大強度是多少（每次 render 都對齊） */
+  setLutCap(lutMaxAmount(lutList[selectedLutIdx]?.id));
   const selectedLutIdxNowRef = useRef(0);
   selectedLutIdxNowRef.current = selectedLutIdx;
   const [isSoftActive, setIsSoftActive] = useState(false);
@@ -7202,13 +7205,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const url = lutList[selectedLutIdx]?.url || '';
     const lutId = lutList[selectedLutIdx]?.id || 'none';
     if (id === 'lutAmount') {
-        if (url.includes('IMG_3371') || url.includes('Untitled_grid') || url.includes('IMG_3328') || 
-            url.includes('IMG_3373') || url.includes('IMG_3374') || 
-            url.includes('IMG_9026') || url.includes('IMG_0214') || lutId === 'f4') defaultValue = 70;
-        else if (url.includes('IMG_0285') || url.includes('IMG_0286') || url.includes('IMG_8998') || url.includes('IMG_7932')) defaultValue = 50;
-        else if (url.includes('sample_colorscale') || url.includes('IMG_7936')) defaultValue = 80;
-        else if (url.includes('IMG_30222')) defaultValue = 50;
-        else if (url.includes('IMG_7938') || url.includes('IMG_7940') || url.includes('IMG_7211')) defaultValue = 100;
+        // 預設＝滑桿 100＝這顆濾鏡的最大強度（見 utils/photoFx 的 LUT_MAX_AMOUNT）
+        void url;
+        defaultValue = lutDefaultAmount(lutId);
     } else if (id === 'blur') {
         defaultValue = isBlurActive ? (blurManuallyAdjusted ? userBlurRef.current : ((lutId === 'f22' || lutId === 'f23') ? 30 : 40)) : 0;
     } else if (id === 'colorNoise') {

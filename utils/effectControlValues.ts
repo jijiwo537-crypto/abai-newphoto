@@ -1,10 +1,16 @@
 // 存下來的光學參數維持原本的單位；顯示的擴散級數都是 0～100 的整數滑桿單位
+/* 濾鏡強度：存的是實際強度（0～這顆濾鏡的最大強度），滑桿一律顯示 0～100。
+   編輯頁換濾鏡時用 setLutCap 告訴這裡目前這顆的最大強度 */
+let lutCap=100;
+export function setLutCap(cap){lutCap=cap>0?cap:100;}
 export function effectControlValue(key,value){
+ if(key==='lutAmount')return Math.min(100,value*100/lutCap);
  if(key==='softThreshold')return 100-value;
  if(key==='fxSpillDiffusion')return Math.round((value-10)/.9);
  return value;
 }
 export function effectStoredValue(key,value){
+ if(key==='lutAmount')return value*lutCap/100;
  if(key==='softThreshold')return 100-value;
  if(key==='fxSpillDiffusion')return 10+value*.9;
  return value;

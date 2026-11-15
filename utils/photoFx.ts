@@ -1209,11 +1209,16 @@ export function getNoisePattern() {
  * 同一個名字、同一張圖，兩邊濃淡卻不一樣。抽出來共用之後，
  * 挑 F3 在哪裡都是 70。沒列在這裡的就是 100。
  */
-export const LUT_DEFAULT_AMOUNT: Record<string, number> = {
-  f12: 50, f13: 50, f14: 50, f20: 50, f22: 50,
-  f3: 70, f4: 70, f6: 70, f7: 70, f15: 70, f19: 70,
-  f17: 80, f23: 80,
+/* 每顆濾鏡的「最大強度」（實際強度）。滑桿一律看起來是 0～100：滑桿 100 就是這個值，
+   中間照比例換算（見 utils/effectControlValues 的 lutAmount）。沒列的就是 100。
+   鍵是濾鏡的內部編號（f1…f23），不是畫面上的名字（刪掉 F18 之後，f19 以後的名字都往前一號）。 */
+export const LUT_MAX_AMOUNT: Record<string, number> = {
+  f3: 70, f12: 50, f13: 60, f14: 50, f15: 90, f17: 80, f19: 70, f20: 60, f22: 70, f23: 90,
 };
+/** 濾鏡最大強度（實際強度） */
+export const lutMaxAmount = (lutId?: string) => (lutId ? LUT_MAX_AMOUNT[lutId] : undefined) ?? 100;
+/* 一挑就套的預設強度＝滑桿 100＝最大強度 */
+export const LUT_DEFAULT_AMOUNT: Record<string, number> = { ...LUT_MAX_AMOUNT };
 /** 挑這顆濾鏡時該用的強度 */
 export const lutDefaultAmount = (lutId?: string) =>
   (lutId ? LUT_DEFAULT_AMOUNT[lutId] : undefined) ?? 100;

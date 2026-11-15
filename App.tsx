@@ -36,12 +36,12 @@ const LUT_LIST = [
   { id: 'f15', name: 'F15', url: './luts/f15.webp' },
   { id: 'f16', name: 'F16', url: './luts/f16.webp' },
   { id: 'f17', name: 'F17', url: './luts/f17.webp' },
-  { id: 'f18', name: 'F18', url: './luts/f18.webp' },
-  { id: 'f19', name: 'F19', url: './luts/f19.webp' },
-  { id: 'f20', name: 'F20', url: './luts/f20.webp' },
-  { id: 'f21', name: 'F21', url: './luts/f21.webp' },
-  { id: 'f22', name: 'F22', url: './luts/f22.webp' },
-  { id: 'f23', name: 'F23', url: './luts/f23.webp' },
+  /* F18 已刪除：內部編號與檔案不動（舊作品才不會套錯），只有名字往前一號 */
+  { id: 'f19', name: 'F18', url: './luts/f19.webp' },
+  { id: 'f20', name: 'F19', url: './luts/f20.webp' },
+  { id: 'f21', name: 'F20', url: './luts/f21.webp' },
+  { id: 'f22', name: 'F21', url: './luts/f22.webp' },
+  { id: 'f23', name: 'F22', url: './luts/f23.webp' },
 ];
 
 // 支援 RAW、HEIC，其他格式交給 ImageMagick 處理
