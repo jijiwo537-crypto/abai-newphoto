@@ -34,6 +34,7 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
         CAPPluginMethod(name: "albums", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "assets", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "alphaFlags", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "warmAlpha", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "thumbs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "export", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "manageLimited", returnType: CAPPluginReturnPromise),
@@ -316,6 +317,38 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
             for id in ids where flags[id] == nil { flags[id] = false }
             self.saveAlphaCache()
             call.resolve(["flags": flags])
+        }
+    }
+
+    /// 預熱：App 打開後在背景先把「最近項目」前 N 張裡、還沒查過的 PNG 類照片查好，
+    /// 之後打開相簿時直接用快取（不透明的馬上出現、去背的直接不顯示），不用等。
+    /// 低優先度、一張一張做，不搶畫面；沒有相簿權限就什麼都不做（不會跳詢問）。
+    private var warming = false
+    @objc func warmAlpha(_ call: CAPPluginCall) {
+        let limit = max(1, min(3000, call.getInt("limit") ?? 800))
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        guard status == .authorized || status == .limited else { call.resolve(["checked": 0]); return }
+        cacheLock.lock(); let busy = warming; warming = true; cacheLock.unlock()
+        if busy { call.resolve(["checked": 0]); return }
+        call.resolve(["started": true])
+        DispatchQueue.global(qos: .utility).async {
+            self.loadAlphaCache()
+            let r = self.fetch(album: "recents", filter: "images")
+            let end = min(r.count, limit)
+            var checked = 0
+            for i in 0..<end {
+                autoreleasepool {
+                    let a = r.object(at: i)
+                    self.cacheLock.lock(); let known = self.alphaCache[self.alphaKey(a)] != nil; self.cacheLock.unlock()
+                    if !known, let res = self.photoResource(a), self.alphaCapableType(res.uniformTypeIdentifier) {
+                        _ = self.assetHasAlpha(a)
+                        checked += 1
+                        if checked % 40 == 0 { self.saveAlphaCache() }
+                    }
+                }
+            }
+            if checked > 0 { self.saveAlphaCache() }
+            self.cacheLock.lock(); self.warming = false; self.cacheLock.unlock()
         }
     }
 

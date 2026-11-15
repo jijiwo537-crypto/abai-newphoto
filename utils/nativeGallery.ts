@@ -20,6 +20,8 @@ export interface PhotoLibraryApi {
   assets(o: { album: string; filter: GalleryFilter; offset: number; limit: number }): Promise<{ total: number; items: LibraryAsset[] }>;
   /** 這幾張是不是去背圖（舊版 App 沒有這支） */
   alphaFlags?(o: { ids: string[] }): Promise<{ flags: Record<string, boolean> }>;
+  /** 背景預熱去背判斷（舊版 App 沒有這支） */
+  warmAlpha?(o: { limit: number }): Promise<{ started?: boolean; checked?: number }>;
   thumbs(o: { ids: string[]; size: number }): Promise<{ items: { id: string; path: string }[] }>;
   export(o: { ids: string[] }): Promise<{ items: ExportedItem[] }>;
   manageLimited(): Promise<void>;
@@ -141,4 +143,11 @@ export function openGallery(o: { limit: number; filter: GalleryFilter; noAlpha?:
     });
   })().finally(() => { opening = null; });
   return opening;
+}
+
+/** App 打開後在背景預熱「哪些是去背圖」，之後打開相簿就不用等（沒有相簿權限時什麼都不做） */
+export function warmGalleryAlpha() {
+  setTimeout(() => {
+    void photoLibrary().then(p => p?.warmAlpha?.({ limit: 800 })).catch(() => {});
+  }, 2500);
 }

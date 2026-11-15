@@ -56,6 +56,8 @@ export async function setupNativeShell(): Promise<void> {
       import('./nativePhotos'), import('./haptics'), import('./nativeImage'),
     ]);
     installNativeFilePicker();
+    /* 相簿的去背判斷先在背景做好（見 utils/nativeGallery 的 warmGalleryAlpha） */
+    void import('./nativeGallery').then(m => m.warmGalleryAlpha()).catch(() => {});
     prepareHaptics();
     /* iPhone 的網頁沒有 navigator.vibrate：App 裡接到原生的觸覺回饋，原本寫好的震動點就都會震 */
     const { haptic } = await import('./haptics');

@@ -1,4 +1,5 @@
 import { haptic } from '../utils/haptics';
+import { SLIDER_DOUBLE_TAP_EVENT } from '../utils/sliderTouch';
 import { BusyLayer } from './BusyLayer';
 import { loadPresets, storePresets, presetParamsOf, nextPresetNumber, MAX_PRESETS, type UserPreset } from '../utils/userPresets';
 import { loadCustomLuts, importCustomLut, removeCustomLut, type CustomLut } from '../utils/customLuts';
@@ -887,6 +888,20 @@ const FastSlider = React.memo(({
         lastHapticValue.current = displayValue;
     }, [value, toolId]);
 
+    /* 雙擊白點（utils/sliderTouch 偵測）：跟雙擊標題同一個重置，並且震一下。
+       onReset 有的是「300ms 內第二下才算」的那一支，所以連叫兩次 */
+    useEffect(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        const h = () => {
+            const fake = { type: 'doubletap', preventDefault() {}, stopPropagation() {} } as any;
+            onReset(fake, toolId); onReset(fake, toolId);
+            haptic('detentMajor');
+        };
+        el.addEventListener(SLIDER_DOUBLE_TAP_EVENT, h);
+        return () => el.removeEventListener(SLIDER_DOUBLE_TAP_EVENT, h);
+    }, [onReset, toolId]);
+
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         let val = parseFloat(e.target.value);
         if (snapZero && min < 0 && Math.abs(val) < 2) {
@@ -895,7 +910,8 @@ const FastSlider = React.memo(({
                 inputRef.current.value = "0";
             }
         }
-        if (crossedZero(lastHapticValue.current, val)) haptic('detentMajor');
+        // 0 在中間的雙向滑桿經過 0 才震；0 在最左邊的（強度 0～100）拉回 0 不震
+        if (min < 0 && max > 0 && crossedZero(lastHapticValue.current, val)) haptic('detentMajor');
         lastHapticValue.current = val;
         if (valueTextRef.current) {
             valueTextRef.current.textContent = val.toFixed(0);
@@ -8709,6 +8725,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           const currentPoints = [...params.curves[currentCurveChannel]];
           if (currentPoints.length > 2 && idx > 0 && idx < currentPoints.length - 1) {
               currentPoints.splice(idx, 1);
+              // 刪掉節點的那一瞬間震一下（跟其他「回到預設」同一種明顯的觸感）
+              haptic('detentMajor');
               const newCurves = { ...params.curves, [currentCurveChannel]: currentPoints };
               setParams(prev => ({ ...prev, curves: newCurves }));
               addToHistory({ ...params, curves: newCurves }, selectedLutIdx);

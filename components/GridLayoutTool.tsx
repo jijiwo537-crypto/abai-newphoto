@@ -3889,6 +3889,8 @@ const editorSlider = (
   hideChrome = false,
   /* 一格多大。預設 1；羽化這種「低段位差一點就差很多」的用 0.5 才調得準。 */
   step = 1,
+  /** 預設值（滑桿自己的刻度）：雙擊白點回到這裡（見 utils/sliderTouch） */
+  dflt?: number,
 ) => {
   const input = (cls: string) => (
     <input
@@ -3896,6 +3898,7 @@ const editorSlider = (
          而點卡片時剛排了寫回的計時，下面那行 ref 不會去更新白點 —— 白點要等寫回之後才跳過去。 */
       key={`${img.id}|${adjustSub}|${tuneTool}|${shapeTool}|${effectCard}|${detailTool}|${adjustSub === 'filter' ? (fx.lut || '') : ''}`}
       type="range" aria-label={label} min={min} max={max} step="any"
+      data-default={dflt === undefined ? undefined : String(dflt)}
       defaultValue={value}
       ref={el=>{if(el && !editorDrag.current && (!isolateFxUpdates || pendingCommit.current===null))el.value=String(value);}}
       onChange={e => {
@@ -3962,7 +3965,7 @@ const detailActive = detailTools.find(t=>t[0]===detailTool) || detailTools[0];
 const sliderArea = (() => {
   if (adjustSub === 'filter') {
     if (!fx.lut || fx.lut === 'none') return null;
-    return editorSlider('強度', fx.lutAmount ?? 100, 0, 100, v => setFx({ lutAmount: v }));
+    return editorSlider('強度', fx.lutAmount ?? 100, 0, 100, v => setFx({ lutAmount: v }), undefined, false, 1, lutDefaultAmount(fx.lut));
   }
   if (adjustSub === 'tune') {
     const t = TUNE_TOOLS.find(x => x[0] === tuneTool) || (deferSlider ? null : TUNE_TOOLS[0]);
@@ -3970,14 +3973,14 @@ const sliderArea = (() => {
     const isOpacity = t[0] === 'opacity';
     return editorSlider(
       '', isOpacity ? (img.opacity ?? 100) : fxVal(t[0], t[5]), t[3], t[4],
-      v => isOpacity ? set({ opacity: v }) : setFx({ [t[0]]: v }),
+      v => isOpacity ? set({ opacity: v }) : setFx({ [t[0]]: v }), undefined, false, 1, isOpacity ? 100 : t[5],
     );
   }
   if (adjustSub === 'effect') {
     if (fxDetailOpen && detailActive) {
       const [key,label,mn,mx,dflt]=detailActive;
       return editorSlider(label,effectControlValue(key,fxVal(key,dflt)),effectControlMin(key,mn),mx,
-        v=>setFx({[key]:effectStoredValue(key,v)}),undefined,false,effectControlStep(key));
+        v=>setFx({[key]:effectStoredValue(key,v)}),undefined,false,effectControlStep(key),effectControlValue(key,dflt));
     }
     if (!effectCard) return null;
     /* 有些特效的「強度」沒有意義（馬賽克調到一半只是把原圖疊回來），
@@ -3986,12 +3989,12 @@ const sliderArea = (() => {
     if (rootP) {
       return editorSlider(
         rootP.label, fxVal(rootP.id, rootP.def), rootP.min, rootP.max,
-        v => setFx({ [rootP.id]: v }),
+        v => setFx({ [rootP.id]: v }), undefined, false, 1, rootP.def,
       );
     }
     // 其餘一律只有一根「強度」，跟編輯一樣
     const amountId = fxAmountId(effectCard);
-    return editorSlider('強度', fxVal(amountId, 0), 0, 100, v => setFx({ [amountId]: v }));
+    return editorSlider('強度', fxVal(amountId, 0), 0, 100, v => setFx({ [amountId]: v }), undefined, false, 1, FX_ON_AMOUNT[effectCard] ?? 100);
   }
   if (adjustSub === 'shape') {
     const sub = SHAPE_SUB_TOOLS[shapeMenu];
@@ -4007,7 +4010,7 @@ const sliderArea = (() => {
       return editorSlider(
         subTool[1], preciseStroke ? (((img[k] as number) || 0) * 10) : ((img[k] as number) || 0),
         subTool[3], subTool[4],
-        v => set({ [k]: preciseStroke ? v / 10 : v }), undefined, true,
+        v => set({ [k]: preciseStroke ? v / 10 : v }), undefined, true, 1, preciseStroke ? subTool[5] * 10 : subTool[5],
       );
     }
     // 形狀那一頁沒有滑桿，上面那一段就留白
@@ -4018,7 +4021,7 @@ const sliderArea = (() => {
       // 數字一律整數（不顯示小數點）
       return editorSlider(
         t[1], Math.round((img[key] as number) || 0), t[3], t[4],
-        v => set({ [key]: v }), undefined, true, 1,
+        v => set({ [key]: v }), undefined, true, 1, t[5],
       );
     }
     return null;

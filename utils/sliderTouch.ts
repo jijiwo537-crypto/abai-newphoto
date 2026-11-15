@@ -31,6 +31,7 @@
  */
 
 import {fineSliderValue} from './sliderPrecision';
+import { haptic } from './haptics';
 /** 看得見的那一條有多高（單邊）。這個範圍內按下去就直接跳值，跟原生一樣。 */
 const CORE_HALF = 9;
 /** 手指橫向移動超過這麼多就算「在拖滑桿」，不算「點一下」 */
@@ -183,6 +184,21 @@ export const sliderHeld = () => held > 0;
 /* 給 utils/photoInteractionIdle 用（那支不 import 這支）：手指按在滑桿上時，背景工作要等 */
 (globalThis as any).__abaiSliderHeld = sliderHeld;
 export const SLIDER_RELEASE_EVENT = 'abai-slider-release';
+/** 在白點上連點兩下：送到那根 input 上。沒有 data-default 的滑桿（例如編輯頁）自己接這個事件去重置 */
+export const SLIDER_DOUBLE_TAP_EVENT = 'abai-slider-doubletap';
+/* 雙擊白點回到預設值。只算「按在白點上、沒有拖動」的兩下，間隔 320ms 內、同一根滑桿 */
+let lastThumbTap: { el: HTMLInputElement; t: number } | null = null;
+const resetOnDoubleTap = (el: HTMLInputElement, pointerId: number) => {
+  const d = el.dataset.default;
+  if (d !== undefined && d !== '') {
+    // 跟拖滑桿一樣：先通知「開始」、改值、再通知「放開」，復原紀錄與重畫都照拖滑桿的流程走
+    el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId }));
+    setValue(el, d);
+    el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId }));
+    haptic('detentMajor');
+  }
+  el.dispatchEvent(new CustomEvent(SLIDER_DOUBLE_TAP_EVENT, { bubbles: true }));
+};
 export const installSliderTouch = () => {
   if (installed || typeof document === 'undefined') return;
   installed = true;
@@ -311,6 +327,17 @@ export const installSliderTouch = () => {
         if (performance.now() - b.t < 100 && Math.abs(v) > 0.15) glide(scroller, v);
       }
       if (dead || (cancelled && !live)) return;
+      // 白點上點一下（沒拖動）：記下來，0.32 秒內同一根再點一下就回到預設值
+      if (onThumb && !cancelled && Math.hypot(cx - x0, cy - y0) < 8) {
+        const now = performance.now();
+        if (lastThumbTap && lastThumbTap.el === el && now - lastThumbTap.t < 320) {
+          lastThumbTap = null;
+          el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: id }));
+          resetOnDoubleTap(el, id);
+          return;
+        }
+        lastThumbTap = { el, t: now };
+      } else lastThumbTap = null;
       // 沒拖過、又是按在看得見的那一條上：跟原生一樣，值跳到手指的位置
       if (!live && inCore) { live = true; notifyStart(cx, cy); if(!fine)setValue(el, valueAt(el, cx)); }
       if (live) {

@@ -62,8 +62,10 @@ export function haptic(kind: Kind) {
  *  ‧ 拉到頭硬硬的一下 */
 export function sliderHaptic(prev: number, next: number, min: number, max: number) {
   if (!isNative() || prev === next || !(max > min)) return;
-  if (crossedZero(prev,next)) { haptic('detentMajor'); return; }
-  if ((next <= min && prev > min) || (next >= max && prev < max)) { haptic('edge'); return; }
+  /* 0 在中間的雙向滑桿，經過 0 才明顯震一下；0 在最左邊的滑桿（0～100）拉回 0 不震 */
+  const twoSided = min < 0 && max > 0;
+  if (twoSided && crossedZero(prev,next)) { haptic('detentMajor'); return; }
+  if ((next <= min && prev > min && min !== 0) || (next >= max && prev < max)) { haptic('edge'); return; }
   if (min < 0 && max > 0 && (prev < 0 ? next >= 0 : prev > 0 ? next <= 0 : false)) { haptic('detentMajor'); return; }
   const seg = (v: number) => Math.floor(((v - min) / (max - min)) * 20 + 1e-9);
   if (seg(prev) !== seg(next)) haptic('detent');
