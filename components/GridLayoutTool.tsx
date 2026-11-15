@@ -7149,10 +7149,17 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   // 不然 canvas 的位置與大小一直重算，圖看起來就是在抖。
   // 發光留的是「最大強度的光散到哪裡」，留少了預覽的光會被 canvas 邊界
   // 切掉一個直角，跟匯出也對不起來。
-  const glowPad = Math.round(
+  const rawGlowPad = Math.round(
     ((image.imgGlow ? Math.ceil(GLOW_BLUR_UNIT * GLOW_EXTENT) : 0)
       + imgStrokePad(image)) * image.scale,
   );
+  /* 選取中（正在調描邊／發光）預留空間只增不減：描邊拉回 0、發光從有到無時，
+     畫布尺寸若跟著縮，瀏覽器會先清空畫布、下一格才重畫 —— iPhone 上就看到閃一下（黑／底下透出來），
+     或舊的那張被拉伸成新的大小（看起來突然變小）。取消選取時才收回。 */
+  const padHoldRef = useRef(0);
+  if (!isSelected) padHoldRef.current = rawGlowPad;
+  else padHoldRef.current = Math.max(padHoldRef.current, rawGlowPad);
+  const glowPad = padHoldRef.current;
   /* 長按拖曳互換時「變暗的那一塊」要照圖層現在的形狀走 */
   const dimShape = useMemo(
     () => shapeParts(image, boxW, boxH),
@@ -7520,8 +7527,14 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       // 拖滑桿時一格會送好幾個 input，每一個都重算就會一頓一頓。
       // 收斂成「最多一幀畫一次、只畫最後那個值」：畫面照樣即時，工作量少很多。
       // 第一次（或換圖）同步畫，不然會空一格。
-      if (drawnSrcRef.current !== pvSrc) {
+      /* 畫布像素尺寸要變（預留空間、大小、密度變了）：這一格就同步畫完。
+         改尺寸會清空畫布，延到下一格才畫的話中間那一格會是空的或被拉伸 */
+      const wantW = Math.max(1, Math.round(snapPx(boxW + glowPad * 2) * shapeDpr));
+      const wantH = Math.max(1, Math.round(snapPx(boxH + glowPad * 2) * shapeDpr));
+      const resized = c.width !== wantW || c.height !== wantH;
+      if (drawnSrcRef.current !== pvSrc || resized) {
         drawnSrcRef.current = pvSrc;
+        if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; }
         draw();
       } else {
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -8048,9 +8061,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
 
   const isCanvasVector = !!image.shape || image.text !== undefined;
   // 一般照片跟向量共用螢幕密度的場景。巢狀 <img> 用原生縮放的話，邊緣的取整會跟頁面幾何對不上
+  /* 用過自己那張畫布（調過描邊、發光、濾鏡…）的圖片就不再回到共用場景：
+     拉回 0 時若切回場景，React 會先拿掉這張畫布、場景下一格才畫上去，中間那一格圖就不見了
+     （去背圖透明處露出底下，看起來就是閃黑），來回切換時看起來還會一下變小。 */
   const isScenePhoto = !isCanvasVector && !image.isVideo && shapeImgReady
     && !plainImageWave && !image.feather && !image.imgGlow && !image.imgStrokeWidth
-    && !isImgShaped(image.imgShape) && !hasPhotoFx(image.fx);
+    && !isImgShaped(image.imgShape) && !hasPhotoFx(image.fx) && !usedCanvasRef.current;
   const isSceneInk = isCanvasVector || isScenePhoto;
   const sceneShift = useRef({ tx: 0, ty: 0, s: 1, fromX: 0, fromY: 0, fromS: 1, at: 0 });
   useLayoutEffect(() => {
@@ -8488,6 +8504,15 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       });
       /** 一顆角球。看得見的白點比觸控範圍小 20%（14 → 11.2），
        *  外面那層維持 14×14、而且事件還是掛在它身上，所以手感一點都沒變。 */
+      /* 圖片有描邊時，選中框往外擴「粗細＋間距」，四角圓點與四邊橫條也一起往外移，跟框對齊 */
+      const strokeOut = !image.shape && image.text === undefined && (image.imgStrokeWidth || 0) > 0
+        ? ((image.imgStrokeWidth || 0) + (image.imgStrokeGap || 0)) * (image.scale || 1) : 0;
+      const outBy = (pos: string) => strokeOut ? {
+        ...(pos.includes('top-0') ? { top: -strokeOut } : null),
+        ...(pos.includes('bottom-0') ? { bottom: -strokeOut } : null),
+        ...(pos.includes('left-0') ? { left: -strokeOut } : null),
+        ...(pos.includes('right-0') ? { right: -strokeOut } : null),
+      } : null;
       const cornerDot = (
         corner: 'tl' | 'tr' | 'bl' | 'br',
         pos: string, tx: string, cur: string,
@@ -8495,7 +8520,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         <div
           key={corner}
           className={`absolute ${pos} ${cur} z-50 pointer-events-auto touch-none`}
-          style={{ width: 14 * previewInv, height: 14 * previewInv, transform: tx }}
+          style={{ width: 14 * previewInv, height: 14 * previewInv, transform: tx, ...outBy(pos) }}
           onPointerDown={(e) => handleScalePointerDown(e, corner)}
           onPointerMove={handleScalePointerMove}
           onPointerUp={handleScalePointerUp}
@@ -8569,7 +8594,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             className="absolute pointer-events-none z-30 border-solid border-white/95"
             style={{
               /* 有描邊時框要把描邊一起框進去（描邊往外長「粗細＋間距」），拖描邊滑桿時跟著即時變大變小 */
-              inset: -previewInv - (image.imgStrokeWidth ? ((image.imgStrokeWidth || 0) + (image.imgStrokeGap || 0)) * (image.scale || 1) : 0),
+              inset: -previewInv - strokeOut,
               borderWidth: 0.75 * previewInv,
               boxShadow: `0 0 ${4 * previewInv}px rgba(0,0,0,0.3)`,
             }}
@@ -8632,6 +8657,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               width: (horizontalHandle ? 24 : 8) * previewInv,
               height: (horizontalHandle ? 8 : 24) * previewInv,
               transform: handleTransform,
+              ...(preciseHandle ? null : outBy(pos)),
               ...shapeHandleStyle,
             }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
             onPointerMove={handleStretchPointerMove} onPointerUp={handleStretchPointerUp} onPointerCancel={handleStretchPointerUp}>
