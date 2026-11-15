@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import {
   type GalleryFilter, type LibraryAlbum, type LibraryAsset, type LibraryStatus, type PhotoLibraryApi,
   cachedThumb, exportAssets, prefetchThumbs, requestThumb, setThumbSource,
+  isThumbDecoded, cachedFirstPage, rememberFirstPage,
 } from '../utils/nativeGallery';
 import { haptic } from '../utils/haptics';
 import { ImportSpinner } from './BusySpinner';
@@ -46,7 +47,9 @@ const Cell = React.memo(function Cell({ a, order, multi, onTap }: {
 }) {
   const ref = useRef<HTMLButtonElement>(null);
   const [url, setUrl] = useState(() => cachedThumb(a.id));
-  const [loaded, setLoaded] = useState(false);
+  /* 已經預熱（解碼好）的縮圖：一出現就直接顯示，不淡入、不先顯示灰色 */
+  const [instant] = useState(() => !!cachedThumb(a.id) && isThumbDecoded(a.id));
+  const [loaded, setLoaded] = useState(instant);
   useEffect(() => {
     if (url) return;
     const el = ref.current;
@@ -64,7 +67,7 @@ const Cell = React.memo(function Cell({ a, order, multi, onTap }: {
     <button ref={ref} type="button" className={`abg-cell${sel ? ' sel' : ''}`} onClick={() => onTap(a)}
       aria-label={a.video ? `影片 ${fmtDuration(a.duration)}` : '照片'} aria-pressed={sel}>
       {!loaded && <span className="skel" />}
-      {url && <img src={url} alt="" draggable={false} className={loaded ? 'on' : ''} onLoad={() => setLoaded(true)} />}
+      {url && <img src={url} alt="" draggable={false} className={loaded ? 'on' : ''} style={instant ? { transition: 'none' } : undefined} onLoad={() => setLoaded(true)} />}
       {a.video && (
         <span className="absolute left-0 right-0 bottom-0 h-7 flex items-end justify-end px-1.5 pb-1 text-[11px] font-semibold text-white pointer-events-none"
           style={{ background: 'linear-gradient(to top, rgba(0,0,0,.55), transparent)' }}>
@@ -109,13 +112,16 @@ export const NativeGallery: React.FC<{
   const [albums, setAlbums] = useState<LibraryAlbum[]>([]);
   const [album, setAlbum] = useState<LibraryAlbum>({ id: 'recents', title: '最近項目', count: 0, cover: '' });
   const [albumOpen, setAlbumOpen] = useState(false);
-  const [items, setItems] = useState<LibraryAsset[]>([]);
-  const [total, setTotal] = useState(-1);
+  /* 先用預熱（或上一次打開）記下的第一頁畫出來，新的清單回來再換上 */
+  const [items, setItems] = useState<LibraryAsset[]>(() => cachedFirstPage(filter)?.items ?? []);
+  const [total, setTotal] = useState(() => cachedFirstPage(filter)?.total ?? -1);
+  const itemsRef = useRef<LibraryAsset[]>(items);
   /* 去背判斷：原生先標出「檔案類型可能透明」的那些（PNG…），這些先不顯示，
      問過原生確認不是去背圖才放出來（截圖之類的一般 PNG 會晚一點點出現）。
      分頁照「已經拿到幾張」算，不受隱藏影響。 */
   const [alphaFlags, setAlphaFlags] = useState<Record<string, boolean>>({});
   const canCheckAlpha = !!api.alphaFlags;
+  itemsRef.current = items;
   const visibleItems = useMemo(() => !noAlpha ? items
     : items.filter(a => !a.maybeAlpha || (canCheckAlpha ? alphaFlags[a.id] === false : true)),
   [items, noAlpha, alphaFlags, canCheckAlpha]);
@@ -145,7 +151,20 @@ export const NativeGallery: React.FC<{
   }, [onClose]);
 
   useLayoutEffect(() => { setThumbSource(api); }, [api]);
-  useLayoutEffect(() => { const r = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(r); }, []);
+  /* 滑上來之前先等第一屏的縮圖都準備好（預熱過的話幾乎是立刻），最多等 0.6 秒 ——
+     使用者看到的相簿一出來就是完整的，不是一片灰再一格一格出現 */
+  useLayoutEffect(() => {
+    const t0 = performance.now();
+    let r = 0;
+    const tick = () => {
+      const first = itemsRef.current.slice(0, 18);
+      const ready = first.length > 0 && first.every(a => isThumbDecoded(a.id));
+      if (ready || performance.now() - t0 > 600) { setShown(true); return; }
+      r = requestAnimationFrame(tick);
+    };
+    r = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(r);
+  }, []);
 
   /* 權限：還沒問過就問；問過就照結果走 */
   useEffect(() => {
@@ -170,6 +189,8 @@ export const NativeGallery: React.FC<{
       if (gen !== genRef.current) return;
       setTotal(r.total);
       if (reset) prefetchThumbs(r.items.slice(0, 60).map(a => a.id));
+      // 記下第一頁：下次打開相簿直接用它先畫
+      if (reset && album.id === 'recents') rememberFirstPage(filter, r);
       setItems(prev => reset ? r.items : [...prev, ...r.items]);
       if (noAlpha && api.alphaFlags) {
         const ids = r.items.filter(a => a.maybeAlpha).map(a => a.id);

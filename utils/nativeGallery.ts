@@ -43,6 +43,25 @@ export const setThumbSource = (api: PhotoLibraryApi | null) => { source = api; }
 
 export const cachedThumb = (id: string) => thumbUrl.get(id);
 
+/* 解碼好的縮圖：網址拿到之後先在背景解碼並留著，相簿格子一出現就直接有圖（不會先灰一下再淡入）。
+   最多留 240 張（每張 360px，約 0.5MB），超過就丟最舊的。 */
+const decodedThumbs = new Map<string, HTMLImageElement>();
+const decodeThumb = (id: string, url: string) => {
+  if (decodedThumbs.has(id)) return;
+  const im = new Image();
+  im.src = url;
+  void im.decode().then(() => {
+    decodedThumbs.set(id, im);
+    while (decodedThumbs.size > 240) { const k = decodedThumbs.keys().next().value; if (k === undefined) break; decodedThumbs.delete(k); }
+  }).catch(() => { /* 解不出來就照原本淡入 */ });
+};
+export const isThumbDecoded = (id: string) => decodedThumbs.has(id);
+
+/* 「最近項目」第一頁的清單（依篩選分開記）：預熱或上一次打開時拿到的，下次打開先用它畫，不用等 */
+const firstPages = new Map<string, { total: number; items: LibraryAsset[] }>();
+export const cachedFirstPage = (filter: GalleryFilter) => firstPages.get(filter);
+export const rememberFirstPage = (filter: GalleryFilter, page: { total: number; items: LibraryAsset[] }) => { firstPages.set(filter, page); };
+
 export function requestThumb(id: string, done: (url: string) => void): () => void {
   const hit = thumbUrl.get(id);
   if (hit) { done(hit); return () => {}; }
@@ -74,6 +93,7 @@ async function flush() {
       for (const it of items) {
         const url = fileSrc(it.path);
         thumbUrl.set(it.id, url);
+        decodeThumb(it.id, url);
         waiting.get(it.id)?.forEach(fn => fn(url));
         waiting.delete(it.id);
       }
@@ -145,9 +165,23 @@ export function openGallery(o: { limit: number; filter: GalleryFilter; noAlpha?:
   return opening;
 }
 
-/** App 打開後在背景預熱「哪些是去背圖」，之後打開相簿就不用等（沒有相簿權限時什麼都不做） */
+/** App 打開後在背景預熱相簿：哪些是去背圖、第一頁的清單、前幾十張縮圖（已解碼）。
+ *  之後打開相簿一出來就是完整的，不會先灰一片。沒有相簿權限時什麼都不做（不會跳詢問）。 */
 export function warmGalleryAlpha() {
   setTimeout(() => {
-    void photoLibrary().then(p => p?.warmAlpha?.({ limit: 800 })).catch(() => {});
+    void (async () => {
+      const p = await photoLibrary();
+      if (!p) return;
+      const { status } = await p.access();
+      if (status !== 'authorized' && status !== 'limited') return;
+      void p.warmAlpha?.({ limit: 800 }).catch(() => {});
+      for (const filter of ['images', 'any'] as GalleryFilter[]) {
+        try {
+          const r = await p.assets({ album: 'recents', filter, offset: 0, limit: 150 });
+          rememberFirstPage(filter, r);
+          prefetchThumbs(r.items.slice(0, 48).map(a => a.id));
+        } catch { /* 拿不到就等打開時再拿 */ }
+      }
+    })().catch(() => {});
   }, 2500);
 }
