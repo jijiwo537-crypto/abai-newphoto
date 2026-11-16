@@ -91,7 +91,7 @@ import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
-import { sourceHasAlpha, lutMaxAmount } from '../utils/photoFx';
+import { sourceHasAlpha, lutMaxAmount, warmPhotoFxSurface } from '../utils/photoFx';
 import { strokeAlphaContour } from '../utils/alphaStroke';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, settlePhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
@@ -415,6 +415,17 @@ const floatingIsAlpha = (item: Partial<FloatingImage> | null | undefined): boole
    至少留 20（跟以前一樣），往上以 10 為一級：拖滑桿時不會每一格都重新配置畫布。 */
 const imgStrokePad = (image: { imgStrokeWidth?: number; imgStrokeGap?: number }) =>
   image.imgStrokeWidth ? Math.max(20, Math.ceil(((image.imgStrokeWidth || 0) + (image.imgStrokeGap || 0) + 2) / 10) * 10) : 0;
+/* 每個浮動圖片算特效用的那張畫布（GPU context 掛在它身上）。放在依圖層編號查得到的表裡，
+   面板打開特效頁時才能在「同一張」畫布上預熱 —— iPhone 上每個 GPU context 都要各自第一次真的畫過，
+   管線才建好；在別張畫布預熱沒有用，第一次點那個特效還是會卡幾百毫秒。 */
+const classicFxInputs = new Map<string, HTMLCanvasElement>();
+/** 已經預熱過的（圖層編號｜特效）：同一張圖同一個特效只預熱一次 */
+const warmedFx = new Set<string>();
+const classicFxInput = (id: string) => {
+  let c = classicFxInputs.get(id);
+  if (!c) { c = document.createElement('canvas'); classicFxInputs.set(id, c); }
+  return c;
+};
 /** 已經知道是不是去背圖就回 true／false；還沒判斷過回 null（面板會自己等） */
 const floatingAlphaKnown = (item: Partial<FloatingImage> | null | undefined): boolean | null => {
   if (!item || item.text !== undefined || item.shape || (item as any).isVideo || !item.src) return false;
@@ -3597,6 +3608,8 @@ export type ImageAdjustPanelProps = {
   isolateFxUpdates?: boolean;
   /** 呼叫端已經知道是不是去背圖（畫面上那張已解碼）：直接用，面板第一格就對 */
   alphaHint?: boolean | null;
+  /** 在這張圖實際算特效的那張 GPU 畫布上預熱某個特效（打開特效頁時，閒置空檔一個一個做） */
+  warmFxFor?: (fxId: string) => void;
   onAdjustmentStart?: () => void;
   onAdjustmentCommit?: () => void;
 };
@@ -3634,7 +3647,7 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   adjustSub, setAdjustSub, effectCard: effectCardProp, setEffectCard: setEffectCardProp, effectDetail: effectDetailProp, setEffectDetail: setEffectDetailProp,
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
   setTuningEdge, openComposeFor, composeOpen, onLeaveCompose, hideShape, hideCompose, deferSlider, onSliderOpenChange, inlineSlider,
-  isolateFxUpdates, onAdjustmentStart, onAdjustmentCommit, alphaHint,
+  isolateFxUpdates, onAdjustmentStart, onAdjustmentCommit, alphaHint, warmFxFor,
 }) => {
 /* 選中哪一顆特效、細項有沒有打開：面板自己先記一份、馬上換。
    這兩個值放在整個跨頁拼圖那一層 —— 每點一次卡片整個編輯器都要重新 render，
@@ -3844,6 +3857,23 @@ const CATS = ([
 useEffect(() => { if (isAlphaImg && adjustSub === 'effect') setAdjustSub('filter' as any); }, [isAlphaImg, adjustSub]);
 const shapeTools = isAlphaImg ? SHAPE_TOOLS.filter(t => t[0] === 'stroke' || t[0] === 'glow') : SHAPE_TOOLS;
 const shapeSubTools = (menu: string) => (SHAPE_SUB_TOOLS[menu] || []).filter(t => !(isAlphaImg && t[0] === 'imgStrokeDash'));
+/* 打開特效頁：在這張圖實際用的 GPU 畫布上，把每個特效預先畫一次（跟編輯頁同一套）。
+   iPhone 的 GPU 要到第一次真的畫才建管線，一顆動輒幾百毫秒 —— 不預熱的話，第一次點某個特效
+   就會像「點了沒反應」。手指在動或剛操作過就先等（awaitPhotoIdle），一次只做一顆，不搶畫面。 */
+useEffect(() => {
+  if (adjustSub !== 'effect' || !warmFxFor || isAlphaImg) return;
+  let dead = false;
+  void (async () => {
+    for (const [id] of FX_ROOT_TOOLS) {
+      await awaitPhotoIdle();
+      if (dead) return;
+      try { warmFxFor(id); } catch { /* 預熱失敗不影響使用 */ }
+      await new Promise(r => setTimeout(r, 40));
+    }
+  })();
+  return () => { dead = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [adjustSub, img?.id, !!warmFxFor, isAlphaImg]);
 
 // 編輯同款的圓形工具鈕
 /* icon 傳字串＝用圖示字型那一顆；傳一個元素＝直接畫那個元素。
@@ -7272,6 +7302,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     cancelAnimationFrame(liveFxFrame.current);
     const c = fxInputRef.current;
     if (c) { releasePhotoFxSurface(c); c.width = c.height = 1; }
+    if (c && classicFxInputs.get(image.id) === c) classicFxInputs.delete(image.id);
+    for (const k of [...warmedFx]) if (k.startsWith(`${image.id}|`)) warmedFx.delete(k);
   }, []);
   const settleFx = () => {
     void awaitPhotoIdle().then(() => {
@@ -7297,7 +7329,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     const aspect = (image.width || 1) / (image.height || 1);
     const fw = aspect >= 1 ? MAX : Math.max(16, Math.round(MAX * aspect));
     const fh = aspect >= 1 ? Math.max(16, Math.round(MAX / aspect)) : MAX;
-    const input = fxInputRef.current ?? (fxInputRef.current = document.createElement('canvas'));
+    const input = fxInputRef.current ?? (fxInputRef.current = classicFxInput(image.id));
     const canvas = applyPhotoFx(img, fw, fh, fx!, { cacheSource: true, gpuSurface: true, out: input });
     delete canvas.dataset.fxSettled;
     fxCacheRef.current = { key, canvas };
@@ -10243,6 +10275,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     el.src = layer.origSrc || layer.src;
   };
 
+  /* 構圖烤好的新圖：先讀進來並解碼好再換上，換上後等兩格（React 換好、瀏覽器畫好）才關構圖畫面 ——
+     關掉時畫面上一定已經是構圖的結果，不會先看到舊圖再變。 */
+  const swapAfterDecode = (url: string, swap: () => void) => {
+    const im = new Image();
+    const go = () => { swap(); requestAnimationFrame(() => requestAnimationFrame(() => setComposeState(null))); };
+    im.onload = () => void (im.decode ? im.decode().catch(() => {}) : Promise.resolve()).then(go);
+    im.onerror = go;
+    im.src = url;
+  };
+  /* 一般照片存成 JPEG（品質 0.95）：PNG 壓一張 2400px 的大圖在 iPhone 上要半秒以上，就是「按完成要等一下」。
+     有透明的（去背圖）才用 PNG */
+  const bakeType = (img: CanvasImageSource): [string, number | undefined] =>
+    img instanceof HTMLImageElement && sourceHasAlpha(img) ? ['image/png', undefined] : ['image/jpeg', 0.95];
   const applyComposeToLayer = () => {
     const st = composeState;
     if (!st) return;
@@ -10253,10 +10298,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const sh = (st.img as any).naturalHeight || st.img.height;
       if (isGeoIdentity(st.geo)) { setComposeState(null); return; }
       const baked = composeCanvas(st.img, sw, sh, st.geo, 2400);
+      const [cellType, cellQ] = bakeType(st.img);
       baked.toBlob(blob => {
         if (!blob) { setComposeState(null); return; }
         const url = URL.createObjectURL(blob);
-        setPages(prev => prev.map(p => ({
+        swapAfterDecode(url, () => setPages(prev => prev.map(p => ({
           ...p,
           layouts: p.layouts.map(l => l.id !== st.cell!.layoutId ? l : {
             ...l,
@@ -10272,15 +10318,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               rotation: 0,
             }),
           }),
-        })));
-        setComposeState(null);
-      }, 'image/png');
+        }))));
+      }, cellType, cellQ);
       return;
     }
     const layer = floatingImages.find(f => f.id === st.id);
     if (!layer) { setComposeState(null); return; }
     const srcUrl = layer.origSrc || layer.src;
-    const finish = (newSrc: string, aspect: number) => {
+    const finish = (newSrc: string, aspect: number) => swapAfterDecode(newSrc, () => {
       setFloatingImages(prev => prev.map(f => {
         if (f.id !== st.id) return f;
         const newH = Math.max(24, Math.round(f.width / aspect));
@@ -10294,8 +10339,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           height: newH,
         };
       }));
-      setComposeState(null);
-    };
+    });
     const sw = (st.img as any).naturalWidth || (st.img as any).videoWidth || st.img.width;
     const sh = (st.img as any).naturalHeight || (st.img as any).videoHeight || st.img.height;
     /* 影片：只留 geo，不烤圖（理由見 openComposeFor）。
@@ -10322,10 +10366,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return;
     }
     const baked = composeCanvas(st.img, sw, sh, st.geo, 2400);
+    const [layerType, layerQ] = bakeType(st.img);
     baked.toBlob(blob => {
       if (!blob) { setComposeState(null); return; }
       finish(URL.createObjectURL(blob), baked.width / baked.height);
-    }, 'image/png');
+    }, layerType, layerQ);
   };
   /** 濾鏡每載好一個就 +1，讓已經套用的圖層重畫 */
   const [lutRevision, setLutRevision] = useState(0);
@@ -19455,6 +19500,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 <ImageAdjustPanel
                   img={img} set={set} lutList={lutList}
                   alphaHint={floatingAlphaKnown(img)}
+                  warmFxFor={!selCell && !img.isVideo ? (fid: string) => {
+                    const key = `${img.id}|${fid}`;
+                    if (warmedFx.has(key)) return;
+                    warmedFx.add(key);
+                    warmPhotoFxSurface(classicFxInput(img.id), fid);
+                  } : undefined}
                   loadingLut={loadingLut} setLoadingLut={setLoadingLut}
                   lutRevision={lutRevision} setLutRevision={setLutRevision}
                   adjustSub={adjustSub} setAdjustSub={setAdjustSub}

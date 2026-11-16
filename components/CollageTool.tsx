@@ -2615,6 +2615,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      套用完把裁切結果 bake 成新的一張圖塞回這個物件，寬度不變、
      高度依新的長寬比重算，並讓中心留在原地。 */
   const [composeState, setComposeState] = useState<{ id: string; img: HTMLImageElement | HTMLVideoElement; geo: GeoParams; vid?: boolean } | null>(null);
+  /* 主畫布每畫完一次就檢查一次的待辦：回傳 true 就做完拿掉。
+     構圖按完成之後，要等主畫布「真的已經用新圖畫好」的那一格才關掉構圖畫面 ——
+     不然一關掉看到的還是舊圖，要再等一下才變成構圖的結果。 */
+  const afterPaintRef = useRef<Array<() => boolean>>([]);
+  /** 已經預熱過的（物件編號｜特效）：同一個物件同一個特效只預熱一次 */
+  const warmedObjFx = useRef(new Set<string>());
 
   const openComposeFor = useCallback((id: string) => {
     if (id === 'base-video') {
@@ -2657,7 +2663,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const srcUrl = o.origSrc || o.src;
       const finish = (newSrc: string, aspect: number) => {
         const el = new Image();
-        el.onload = () => {
+        /* 關構圖畫面：等主畫布已經用這張新圖畫好的那一格（見 afterPaintRef）；最多等 1.5 秒 */
+        const closeWhenPainted = () => {
+          let closed = false;
+          const close = () => { if (closed) return true; closed = true; setComposeState(null); return true; };
+          afterPaintRef.current.push(() => {
+            const shown = regionIndex >= 0
+              ? photoRegionRef.current?.photos[regionIndex]?.src === newSrc
+              : objectsRef.current.find(f => f.id === st.id)?.img === el;
+            return shown ? close() : false;
+          });
+          window.setTimeout(close, 1500);
+        };
+        el.onload = () => void (el.decode ? el.decode().catch(() => {}) : Promise.resolve()).then(() => {
           if (regionIndex >= 0 && photoRegionRef.current) {
             decodedRegionPhotos.current.set(newSrc, el);
             const region = photoRegionRef.current;
@@ -2672,8 +2690,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }));
           objFxCache.current.delete(st.id);
           setFxTick(n => n + 1);
-          setComposeState(null);
-        };
+          closeWhenPainted();
+        });
         el.src = newSrc;
       };
       const sw = (st.img as any).naturalWidth || (st.img as any).videoWidth || st.img.width;
@@ -2701,10 +2719,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       if (isGeoIdentity(st.geo)) { finish(srcUrl, sw / sh); return st; }
       const baked = composeCanvas(st.img, sw, sh, st.geo, 2400);
+      /* 一般照片存成 JPEG（品質 0.95，看不出差別）：PNG 壓一張 2400px 的大圖在 iPhone 上要半秒以上，
+         那就是「按完成之後要等一下才退出」。有透明的（去背圖）才用 PNG，透明不能丟。 */
+      const keepAlpha = st.img instanceof HTMLImageElement && sourceHasAlpha(st.img);
       baked.toBlob(blob => {
         if (!blob) { setComposeState(null); return; }
         finish(URL.createObjectURL(blob), baked.width / baked.height);
-      }, 'image/png');
+      }, keepAlpha ? 'image/png' : 'image/jpeg', keepAlpha ? undefined : 0.95);
       return st;
     });
   }, []);
@@ -9499,6 +9520,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       && Math.abs(syncDrawnRef.current.ps - previewScaleRef.current) < 0.01;
     syncDrawnRef.current = null;
     if (!alreadyDrawn && !animationOwnsPaintRef.current) renderToCanvas(canvasRef.current, previewScaleRef.current);
+    if (afterPaintRef.current.length) afterPaintRef.current = afterPaintRef.current.filter(fn => { try { return !fn(); } catch { return false; } });
     if (chromeHoldRef.current) {
       chromeHoldRef.current = false;
       if (chromeHoldTimer.current != null) { clearTimeout(chromeHoldTimer.current); chromeHoldTimer.current = null; }
@@ -13159,6 +13181,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         畫布端會把它們畫進每個圖片物件的快取裡。 */}
                     <ImageAdjustPanel
                       key={baseVideoEditing ? 'base-video' : undefined}
+                      /* 打開特效頁：在這個物件實際算特效的那張 GPU 畫布（scratch.base，見 fxCanvasOf）上預熱 */
+                      warmFxFor={sel?.type === 'image' && sel?.img && !isVideoEl(sel.img) && !regionEditing && !baseVideoEditing ? (fid: string) => {
+                        const key = `${sel.id}|${fid}`;
+                        if (warmedObjFx.current.has(key)) return;
+                        warmedObjFx.current.add(key);
+                        let sc = vidScratchRef.current.get(sel.id) || null;
+                        if (!sc) {
+                          sc = { geo: document.createElement('canvas'), base: document.createElement('canvas'), cv: document.createElement('canvas'), off: document.createElement('canvas') };
+                          vidScratchRef.current.set(sel.id, sc);
+                        }
+                        warmPhotoFxSurface(sc.base, fid);
+                      } : undefined}
                       /* 畫面上那張已經解碼好：直接判斷是不是去背圖，面板第一格就對（不會先閃出濾鏡頁） */
                       alphaHint={sel?.type === 'image' && sel?.img instanceof HTMLImageElement && !isVideoEl(sel.img)
                         ? (sel.img.complete && sel.img.naturalWidth ? sourceHasAlpha(sel.img) : null) : false}
