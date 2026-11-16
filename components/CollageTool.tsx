@@ -6744,7 +6744,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const single = img === baseImg && regionForPaint?.photos.length === 1
           ? regionDecoded.get(regionForPaint.photos[0].src) || img : img;
         if(isMain&&allowDim&&swapHoverRef.current?.kind==='region'&&swapHoverRef.current.index===0)drawDimmedPhoto(g,single,0,0,single.naturalWidth||single.width,single.naturalHeight||single.height,x,y,w,h);
-        else drawCoveredPhoto(g,single,0,0,single.naturalWidth||single.width,single.naturalHeight||single.height,x,y,w,h);
+        else drawCoveredPhoto(g,single,0,0,single.naturalWidth||single.width,single.naturalHeight||single.height,x,y,w,h,clip);
       }
     };
     const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number, kk = 1, allowDim = false) => {

@@ -5,18 +5,31 @@ import {scenePixelEdge} from './scenePixelGrid';
  * drawImage 才不會產生透明的反鋸齒邊
  */
 export function drawCoveredPhoto(ctx:CanvasRenderingContext2D,image:CanvasImageSource,
-  sx:number,sy:number,sw:number,sh:number,x:number,y:number,w:number,h:number) {
+  sx:number,sy:number,sw:number,sh:number,x:number,y:number,w:number,h:number,
+  /** 這張照片要蓋滿的格子（同一套座標）。照片的邊比格子的邊少不到幾個像素時
+      （拖佔比的過程中，照片的構圖晚一步才重算），延伸到格子邊、用照片最邊上那排像素補滿 ——
+      不然格子最後一列沒人畫，會露出底下的深色，看起來就是圖片和遮罩之間閃一條黑線。 */
+  cover?:number[]) {
   const m=ctx.getTransform();
   if(m.b||m.c||m.a<=0||m.d<=0||w<=0||h<=0){ctx.drawImage(image,sx,sy,sw,sh,x,y,w,h);return;}
   const source=image as any,iw=source.naturalWidth||source.videoWidth||source.width,ih=source.naturalHeight||source.videoHeight||source.height;
   const dx=m.a*x+m.e,dy=m.d*y+m.f,dw=m.a*w,dh=m.d*h;
-  const left=scenePixelEdge(dx),top=scenePixelEdge(dy),right=scenePixelEdge(dx+dw),bottom=scenePixelEdge(dy+dh);
+  let left=scenePixelEdge(dx),top=scenePixelEdge(dy),right=scenePixelEdge(dx+dw),bottom=scenePixelEdge(dy+dh);
   if(right<=left||bottom<=top)return;
+  const GAP=3;
+  if(cover&&cover.length===4){
+    const cl=scenePixelEdge(m.a*cover[0]+m.e),ct=scenePixelEdge(m.d*cover[1]+m.f);
+    const cr=scenePixelEdge(m.a*(cover[0]+cover[2])+m.e),cb=scenePixelEdge(m.d*(cover[1]+cover[3])+m.f);
+    if(left>cl&&left-cl<=GAP)left=cl;
+    if(top>ct&&top-ct<=GAP)top=ct;
+    if(right<cr&&cr-right<=GAP)right=cr;
+    if(bottom<cb&&cb-bottom<=GAP)bottom=cb;
+  }
   const kx=dw/sw,ky=dh/sh,ix=dx-sx*kx,iy=dy-sy*ky;
   ctx.save();ctx.setTransform(1,0,0,1,0,0);
   ctx.beginPath();ctx.rect(left,top,right-left,bottom-top);ctx.clip();
   // 在裁切下面畫整張原圖，照片內的裁切邊緣取樣到的就是鄰近像素，不是另外反鋸齒的圖片矩形
-  const pad=2;
+  const pad=cover?GAP+1:2;
   if(Math.abs(ix-left)<pad)ctx.drawImage(image,0,0,1,ih,left-pad,iy,Math.max(0,ix-left+pad),ih*ky);
   if(Math.abs(ix+iw*kx-right)<pad)ctx.drawImage(image,iw-1,0,1,ih,ix+iw*kx,iy,Math.max(0,right+pad-ix-iw*kx),ih*ky);
   if(Math.abs(iy-top)<pad)ctx.drawImage(image,0,0,iw,1,ix,top-pad,iw*kx,Math.max(0,iy-top+pad));
