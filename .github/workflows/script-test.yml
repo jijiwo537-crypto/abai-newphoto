@@ -38,7 +38,7 @@ jobs:
       - name: 確認 devicectl 的 JSON 找手機那段在真的 Mac 上能跑
         run: |
           cd ~/Developer/abai-newphoto
-          export PATH="$HOME/.abai-node/bin:$PATH"
+          export PATH="$HOME/.abai-node/bin:$PATH" DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
           sed -n '/^find_iphone() {/,/^}/p' 更新到手機.command > /tmp/f.sh && . /tmp/f.sh
           J=$(mktemp); xcrun devicectl list devices --json-output "$J"; echo "exit=$?"; head -c 600 "$J"; echo
           echo "find_iphone 結果：[$(find_iphone)]（雲端沒有手機，應該是空的）"
