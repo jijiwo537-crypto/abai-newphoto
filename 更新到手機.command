@@ -17,6 +17,19 @@ git pull -q --rebase --autostash origin "$BRANCH"
 echo "  目前版本：$(git log -1 --format='%h %s')"
 
 say "2/5 打包網頁、同步到 iOS"
+# 點兩下開的視窗不會載入 ~/.zshrc，常見的 Node 安裝位置要自己加進來
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.abai-node/bin:$PATH"
+[ -s "$HOME/.nvm/nvm.sh" ] && . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1
+if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -lt 20 ]; then
+  echo "  這台 Mac 沒有 Node.js（打包網頁要用），自動下載一份放在 ~/.abai-node（不需要密碼）…"
+  ARCH=$([ "$(uname -m)" = arm64 ] && echo arm64 || echo x64)
+  V=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt | grep -oE "node-v[0-9.]+-darwin-$ARCH.tar.gz" | head -1)
+  [ -n "$V" ] || fail "下載 Node.js 失敗，請檢查網路"
+  rm -rf "$HOME/.abai-node" && mkdir -p "$HOME/.abai-node"
+  curl -fsSL "https://nodejs.org/dist/latest-v22.x/$V" | tar -xz -C "$HOME/.abai-node" --strip-components 1
+  hash -r
+fi
+echo "  Node.js：$(node -v)"
 ABAI_NO_OPEN=1 ./ios/prepare-device.sh
 
 say "3/5 找 iPhone"
