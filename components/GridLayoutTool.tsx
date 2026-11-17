@@ -1,3 +1,4 @@
+import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio } from '../utils/puzzleShapes';
 import { selectedKinds, paintSelectedAnimation } from '../utils/selectedAnimations';
 import { BusyLayer } from './BusyLayer';
 import { EditBar, EditBarTab } from './EditBar';
@@ -1014,6 +1015,7 @@ export const shapePathD = (
   // 霧白邊框的「形狀」就是它的框（選取、點選都照方形）
   if (isFrameShape(kind)) kind = 'square';
   if (kind.startsWith('blur-')) return blurShapeBaseD(kind, w, h, shapePathD);
+  if (isPuzzleKind(kind)) return puzzlePathD(kind, w, h);
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
      因此縮放只會把整張網格等比放大；只有變形才會增加重複單位。 */
@@ -1672,6 +1674,7 @@ const STRETCH_SOLID_KINDS = new Set([
   'pentagon', 'hexagon', 'star', 'star-rounded', 'heart', 'heart-classic', 'heart-icon', 'hexstar',
   'square-star-dual', 'square-heart-dual', 'square-star-cutout', 'square-heart-cutout',
   'circle-star-dual', 'circle-heart-dual', 'circle-star-cutout', 'circle-heart-cutout',
+  ...Object.keys(PUZZLE_PIECES),
   'heart-double', 'star-double', 'arrow', 'arrow-double', 'sparkle4', 'spinner',
   'blur-star', 'blur-star-rounded', 'blur-heart', 'blur-circle', 'blur-cross-star', 'blur-square', 'blur-sparkle4',
 ]);
@@ -1840,9 +1843,12 @@ export const shapePickerSections = () => {
     line: A.filter(i => SPECIAL_LINE_KINDS.has(i.kind)),
     grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
     mask: [...MASK_SHAPE_ITEMS],
+    puzzle: PUZZLE_ITEMS,
   };
   return SHAPE_SECTIONS.map(([key, label]) => [label, orderBy(pools[key], SHAPE_ORDER[key])] as const);
 };
+/** 「拼圖」分類（只有實心、可換顏色），形狀在 utils/puzzleShapes.ts */
+export const PUZZLE_ITEMS: ShapeItem[] = Object.keys(PUZZLE_PIECES).map(k => ({ id: `${k}-f`, kind: k, filled: true, ratio: puzzleRatio(k) }));
 export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   // 實心
   { id: 'circle-f', kind: 'circle', filled: true },
