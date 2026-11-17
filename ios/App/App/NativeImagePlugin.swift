@@ -176,6 +176,10 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                     hdr = img
                     sdr = img.applyingFilter("CIToneMapHeadroom", parameters: ["inputTargetHeadroom": 1.0])
                 }
+                /* 套了濾鏡、又要存成 8 位元（JPEG／一般 HEIC）：存檔前加約一階的抖色。
+                   色彩表在漸層（天空、皮膚）上會讓相鄰顏色擠在一起，直接截成 8 位元就是一圈一圈的色階；
+                   跟網頁編輯頁的著色器同一招（±½ 階），肉眼看不到雜訊，但色階會被打散。10 位元不需要。 */
+                if cube != nil && format != .heic10 { sdr = ABAIImageCore.dither(sdr) }
                 do {
                     let data = try ABAIImageCore.encode(sdr, format: format, quality: quality, hdr: hdr)
                     let out = ABAIImageCore.newFileURL(ext: format == .png ? "png" : (format == .jpeg ? "jpg" : "heic"))

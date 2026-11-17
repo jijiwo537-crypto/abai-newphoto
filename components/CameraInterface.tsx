@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { isNative } from '../utils/native';
 import { nativeCamera, captureNative, lutFileName } from '../utils/nativeCamera';
+import { lutMaxAmount } from '../utils/photoFx';
 import { haptic, dialHaptic } from '../utils/haptics';
 import { nativePhotos } from '../utils/nativePhotos';
 import { punchThrough } from '../utils/nativePreview';
@@ -808,8 +809,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      就立刻取下一張新幀。上限 3 是避免極端連點在手機上累積無限工作。 */
   const captureQueueRef = useRef(0);
   const capturePhotoRef = useRef<() => void>(() => {});
-  const proOptsRef = useRef({ lut: '', aspect: 2 / 3, flash: false, raw: false });
-  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw };
+  const proOptsRef = useRef({ lut: '', amount: 1, aspect: 2 / 3, flash: false, raw: false });
+  /* 濾鏡強度跟編輯頁一致：每顆濾鏡的最大強度（例如 F3 是 70%），見 utils/photoFx 的 LUT_MAX_AMOUNT */
+  const lutAmt = lutMaxAmount(lutList[selectedLutIdx]?.id) / 100;
+  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), amount: lutAmt, aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw };
   const capturePhoto = useCallback(async () => {
     /* 專業模式：原生全解析度拍照，原生端套濾鏡、裁成畫面比例；ProRAW 開著時 RAW 檔直接存進相簿 */
     if (proModeRef.current) {
@@ -817,7 +820,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       capturingRef.current = true; setIsCapturing(true); setCaptureNotice('');
       try {
         const o = proOptsRef.current;
-        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, aspect: o.aspect, zoom: frameZoomRef.current, fx: nativeFxRef.current, kelvin: nativeParamsRef.current.kelvin });
+        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, amount: o.amount, aspect: o.aspect, zoom: frameZoomRef.current, fx: nativeFxRef.current, kelvin: nativeParamsRef.current.kelvin });
         if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
         ownedUrlsRef.current.add(r.url);
         setPhotos(prev => [r.url, ...prev]);
@@ -971,7 +974,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       const frame = (el.closest('.rounded-camera') as HTMLElement | null) ?? el;
       const rect = () => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, radius: parseFloat(getComputedStyle(frame).borderTopLeftRadius) || 0 }; };
       try {
-        const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: 1, proRAW: true });
+        const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: proOptsRef.current.amount, proRAW: true });
         if (alive) setNativeFlash(!!info?.flash);
         void cam.setFx(nativeFxRef.current).catch(() => {});
         /* 開起來就把目前的曝光、白平衡套上去 */
@@ -1010,7 +1013,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (proMode) void nativeCamera().then(c => c?.setWhiteBalance({ kelvin: settings.kelvin })).catch(() => {});
   }, [proMode, settings.kelvin]);
   useEffect(() => {
-    if (proMode) void nativeCamera().then(c => c?.setLut({ lut: lutFileName(lutList[selectedLutIdx]?.url), amount: 1 }));
+    if (proMode) void nativeCamera().then(c => c?.setLut({ lut: lutFileName(lutList[selectedLutIdx]?.url), amount: lutMaxAmount(lutList[selectedLutIdx]?.id) / 100 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proMode, selectedLutIdx]);
   useEffect(() => () => { captureQueueRef.current = 0; }, []);
@@ -1264,6 +1267,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               ref={viewfinderRef}
               video={videoEl}
               lutUrl={lutList[selectedLutIdx].url}
+              lutAmount={lutMaxAmount(lutList[selectedLutIdx]?.id) / 100}
               exposure={parseFloat(settings.exposure)}
               kelvin={settings.kelvin}
               isUserFacing={visualFacingMode === 'user'}

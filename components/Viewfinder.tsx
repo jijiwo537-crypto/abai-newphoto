@@ -12,6 +12,8 @@ export const FX_ZERO = CAMERA_FX_ZERO;
 interface ViewfinderProps {
   video: HTMLVideoElement | null;
   lutUrl: string;
+  /** 濾鏡強度 0～1（預設 1） */
+  lutAmount?: number;
   exposure: number;
   kelvin: number;
   isUserFacing: boolean;
@@ -42,6 +44,8 @@ precision highp float;
 uniform sampler2D u_video;
 uniform sampler2D u_lut;
 uniform bool u_useLut;
+// 濾鏡強度 0～1（每顆濾鏡的最大強度，見 utils/photoFx 的 LUT_MAX_AMOUNT）
+uniform float u_lutAmt;
 uniform float u_exposure;
 uniform float u_kelvin;
 uniform bool u_isUserFacing;
@@ -87,6 +91,7 @@ void main() {
     rgb = toEncoded(clamp(shoulder(lin, max(gain.r, max(gain.g, gain.b))), 0.0, 1.0));
 
     if (u_useLut) {
+        vec3 preLut = rgb;
         float size = 64.0;
         float b = rgb.b * (size - 1.0);
 
@@ -113,6 +118,7 @@ void main() {
         vec3 c2 = texture(u_lut, p2).rgb;
 
         rgb = mix(c1, c2, fract(b));
+        rgb = mix(preLut, rgb, u_lutAmt);
     }
 
     // ±½ 個 8-bit 階的抖色：漸層天空不出現色帶（肉眼看不到雜訊）。
@@ -238,7 +244,9 @@ const GLOW_LONG = 176;
 const GLOW_RADIUS = 1.6;
 const GLOW_PASSES = 4;
 
-export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, displayBox, onClick, onPointerDown, onPointerUp, onPointerCancel }: ViewfinderProps, ref) => {
+export const Viewfinder = forwardRef(({ video, lutUrl, lutAmount = 1, exposure, kelvin, isUserFacing, fx, digitalZoom, displayBox, onClick, onPointerDown, onPointerUp, onPointerCancel }: ViewfinderProps, ref) => {
+  const lutAmtRef = useRef(1);
+  lutAmtRef.current = Math.max(0, Math.min(1, lutAmount));
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewSizeRef=useRef({w:0,h:0});
   const displayBoxRef=useRef(displayBox);
@@ -579,6 +587,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         gl.bindTexture(gl.TEXTURE_2D, lutTexRef.current);
         gl.uniform1i(uloc(prog, 'u_lut'), 1);
       }
+      gl.uniform1f(uloc(prog, 'u_lutAmt'), lutAmtRef.current);
 
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       if (!anyFx) return;

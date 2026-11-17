@@ -26,6 +26,8 @@ export const lutFileName = (url: string | undefined | null) => (url ? url.split(
 /** 拍一張：原生全解析度拍照 → 原生端套濾鏡、裁成畫面比例（16 位元流程）→ 回傳網頁可用的網址 */
 export async function captureNative(o: {
   flash: 'off' | 'on' | 'auto'; raw: boolean; lut: string; aspect: number; zoom: number;
+  /** 濾鏡強度 0～1（每顆濾鏡的最大強度，跟編輯頁一致） */
+  amount?: number;
   /** 相機特效（0～1），拍出來的照片跟觀景窗看到的一樣 */
   fx?: { soft: number; blur: number; lowfi: number };
   /** 色溫（跟觀景窗一樣的公式），拍出來的照片跟看到的一樣 */
@@ -34,7 +36,7 @@ export async function captureNative(o: {
   const cam = await nativeCamera(), img = await nativeImage();
   if (!cam || !img) return null;
   const shot = await cam.capture({ flash: o.flash, raw: o.raw });
-  const out = await img.render({ path: shot.path, lut: o.lut || undefined, amount: 1, aspect: o.aspect, zoom: o.zoom, fx: o.fx, kelvin: o.kelvin, format: 'jpeg', quality: 0.95 });
+  const out = await img.render({ path: shot.path, lut: o.lut || undefined, amount: o.amount ?? 1, aspect: o.aspect, zoom: o.zoom, fx: o.fx, kelvin: o.kelvin, format: 'jpeg', quality: 0.95 });
   img.remove({ path: shot.path }).catch(() => {});
   const blob = await (await fetch(fileSrc(out.path))).blob();
   img.remove({ path: out.path }).catch(() => {});

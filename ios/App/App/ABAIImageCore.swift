@@ -260,6 +260,14 @@ enum ABAIImageCore {
         ])
     }
 
+    /// 存成 8 位元前的抖色：約 1/255 的細微雜訊，把濾鏡在漸層上造成的色階打散（肉眼看不到雜訊）
+    static func dither(_ image: CIImage) -> CIImage {
+        guard let f = CIFilter(name: "CIDither") else { return image }
+        f.setValue(image, forKey: kCIInputImageKey)
+        f.setValue(1.0 / 255.0, forKey: "inputIntensity")
+        return (f.outputImage ?? image).cropped(to: image.extent)
+    }
+
     /// 套 3D 色彩表（在 sRGB 編碼值上查表，跟網頁一致），amount 0～1 跟原圖混合
     static func apply(cube: Cube, to image: CIImage, amount: Double = 1) -> CIImage {
         guard amount > 0.001, let f = CIFilter(name: "CIColorCubeWithColorSpace") else { return image }
