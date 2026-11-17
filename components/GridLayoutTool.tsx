@@ -1,4 +1,4 @@
-import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio } from '../utils/puzzleShapes';
+import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio, puzzleGlyph } from '../utils/puzzleShapes';
 import { selectedKinds, paintSelectedAnimation } from '../utils/selectedAnimations';
 import { BusyLayer } from './BusyLayer';
 import { EditBar, EditBarTab } from './EditBar';
@@ -2308,6 +2308,9 @@ export const GridShapePicker = React.memo(({ onPick }: { onPick: (it: any) => vo
 ));
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const maskId = React.useId().replace(/:/g, '');
+  // 拼圖：中間的方形每顆一樣大（不照整體外框縮放，凸比較多的才不會看起來比較小）
+  if (isPuzzleKind(item.kind)) { const g = puzzleGlyph(item.kind, 24, 15);
+    return <svg width={size} height={size} viewBox="0 0 24 24" style={{ overflow: 'visible' }} aria-hidden><path d={g.d} transform={`translate(${g.x} ${g.y})`} fill="currentColor" /></svg>; }
   if(isBackdropMask(item.kind))return <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
     <defs><clipPath id={`material-${maskId}`}>{maskGeometry(item.kind)==='circle'?<circle cx="12" cy="12" r="10"/>:<rect x="2" y="2" width="20" height="20"/>}</clipPath><linearGradient id={`heat-${maskId}`} x1="0" y1="1" x2="1" y2="0"><stop stopColor="#2d0e7c"/><stop offset=".5" stopColor="#ff5519"/><stop offset="1" stopColor="#ffde42"/></linearGradient></defs>
     <g clipPath={`url(#material-${maskId})`}>

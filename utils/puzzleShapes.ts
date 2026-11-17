@@ -44,3 +44,12 @@ export const puzzlePathD = (kind: string, w: number, h: number) => {
   }
   return d + ' Z';
 };
+
+/** 按鈕小圖用：本體方形固定大小 body、置中在 size×size 裡，凸出去的圓頭往外長。
+    這樣不管有幾個凸，每顆按鈕中間的方形都一樣大。回傳路徑與位移。 */
+export const puzzleGlyph = (kind: string, size: number, body: number) => {
+  const e = PUZZLE_PIECES[kind] || PUZZLE_PIECES['puzzle-standard'];
+  const out = (v: number) => (v > 0 ? TAB : 0);
+  const w = body * (1 + out(e[1]) + out(e[3])), h = body * (1 + out(e[0]) + out(e[2]));
+  return { d: puzzlePathD(kind, w, h), x: (size - body) / 2 - out(e[3]) * body, y: (size - body) / 2 - out(e[0]) * body };
+};
