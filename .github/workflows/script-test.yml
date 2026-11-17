@@ -35,3 +35,10 @@ jobs:
           git fetch -q origin "$B" && git checkout -q -B "$B" "origin/$B" || exit 1
           ./更新到手機.command </dev/null; rc=$?
           echo "--- 備份還在嗎"; git branch | grep 備份; git stash list; echo '--- 紀錄檔'; head -5 ~/Desktop/ABAI更新紀錄.txt; exit $rc
+      - name: 確認 devicectl 的 JSON 找手機那段在真的 Mac 上能跑
+        run: |
+          cd ~/Developer/abai-newphoto
+          export PATH="$HOME/.abai-node/bin:$PATH"
+          sed -n '/^find_iphone() {/,/^}/p' 更新到手機.command > /tmp/f.sh && . /tmp/f.sh
+          J=$(mktemp); xcrun devicectl list devices --json-output "$J"; echo "exit=$?"; head -c 600 "$J"; echo
+          echo "find_iphone 結果：[$(find_iphone)]（雲端沒有手機，應該是空的）"
