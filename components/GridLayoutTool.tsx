@@ -909,12 +909,22 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
   try {
     /* 量的解析度跟著「短邊」走（短邊 480px，長邊最多 2400px）：
        只拉長一個方向時（箭身長度），另一個方向的取樣格子不變，邊緣才不會每格亂跳。 */
-    const k = Math.min(480 / Math.min(o.w, o.h), 2400 / long), bw = o.w * k, bh = o.h * k, unit = base * k / 160;
-    const lw = Math.max(0.4 * k, (o.lineW ?? 6) * unit), sw = Math.min(8, Math.max(0, o.strokeW || 0)) * unit;
     const solid = o.filled && o.kind !== 'line';
     // 字形圖案可能比它的框寬好幾倍（`<333`）
     const glyph = o.kind === 'hole' && isTextHole(o.hole || '');
-    const pad = Math.ceil(glyph ? Math.max(bw, bh) * 1.6 : Math.min(Math.max(bw, bh), lw * shapeMiterLimit(bw, bh)) + sw * 2 + 8);
+    /* 留白：外框線的尖角（miter）才會凸出框外。miter 上限跟長寬比成正比，壓得很扁時
+       留白會變成長邊那麼大，畫布一下就幾千萬像素 —— 擠壓到很扁時每一格卡好幾百毫秒的原因。
+       實心又沒描邊的圖形不會有線凸出去，只留一點點；其他照舊，但整張畫布限制在 100 萬像素內（畫面上的圖形頂多幾百像素寬，精度仍遠小於一個螢幕像素）。 */
+    const dims = (k: number) => {
+      const bw = o.w * k, bh = o.h * k, unit = base * k / 160;
+      const lw = Math.max(0.4 * k, (o.lineW ?? 6) * unit), sw = Math.min(8, Math.max(0, o.strokeW || 0)) * unit;
+      const plainSolid = solid && !(sw > 0) && o.kind !== 'hole';
+      const pad = Math.ceil(glyph ? Math.max(bw, bh) * 1.6 : plainSolid ? 8 : Math.min(Math.max(bw, bh), lw * shapeMiterLimit(bw, bh)) + sw * 2 + 8);
+      return { k, bw, bh, unit, lw, sw, pad, area: (bw + pad * 2) * (bh + pad * 2) };
+    };
+    let dm = dims(Math.min(480 / Math.min(o.w, o.h), 2400 / long));
+    for (let i = 0; i < 3 && dm.area > 1e6; i++) dm = dims(dm.k * Math.sqrt(1e6 / dm.area) * 0.98);
+    const { k, bw, bh, unit, lw, sw, pad } = dm;
     const cv = document.createElement('canvas'); cv.width = Math.ceil(bw + pad * 2); cv.height = Math.ceil(bh + pad * 2);
     const g = cv.getContext('2d', { willReadFrequently: true });
     if (g) {
