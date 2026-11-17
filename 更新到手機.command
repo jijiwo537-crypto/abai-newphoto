@@ -25,10 +25,20 @@ DEV=$(xcrun devicectl list devices 2>/dev/null | awk '/iPhone/ && /(available|co
 echo "  裝置：$DEV"
 
 say "4/5 編譯（第一次比較久）"
+# 簽名用的 Team：自動找（不用打開 Xcode 選）。順序：之前存的 → 舊版專案檔/未存檔備份裡的 → 鑰匙圈裡的開發者憑證
+TEAM_FILE="$HOME/.abai-team-id"
+TEAM=$(cat "$TEAM_FILE" 2>/dev/null || true)
+pick() { grep -oE 'DEVELOPMENT_TEAM = [A-Z0-9]{10}' | head -1 | awk '{print $3}'; }
+[ -n "$TEAM" ] || TEAM=$(git show '舊版備份:ios/App/App.xcodeproj/project.pbxproj' 2>/dev/null | pick || true)
+[ -n "$TEAM" ] || TEAM=$(git stash list --format=%gd 2>/dev/null | while read s; do git show "$s:ios/App/App.xcodeproj/project.pbxproj" 2>/dev/null | pick; done | head -1)
+[ -n "$TEAM" ] || TEAM=$(security find-certificate -a -c "Apple Development" -p 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | grep -oE 'OU ?= ?[A-Z0-9]{10}' | head -1 | grep -oE '[A-Z0-9]{10}$' || true)
+[ -n "$TEAM" ] || fail "找不到你的開發者 Team：請先打開 Xcode → 上方選單 Xcode → Settings → Accounts，確認有登入你的 Apple ID"
+echo "$TEAM" > "$TEAM_FILE"
+echo "  Team：$TEAM"
 DD="$PWD/ios/build-device"
 xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
-  -destination "generic/platform=iOS" -derivedDataPath "$DD" -allowProvisioningUpdates \
-  -quiet build
+  -destination "generic/platform=iOS" -derivedDataPath "$DD" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+  DEVELOPMENT_TEAM="$TEAM" -quiet build
 APP=$(ls -d "$DD"/Build/Products/Debug-iphoneos/*.app | head -1)
 
 say "5/5 安裝並打開"
