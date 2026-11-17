@@ -37,10 +37,11 @@ EOF
   echo "已設定 Bundle ID：$1.abai（相簿編輯擴充：$1.abai.edit）"
 fi
 
+[ "${ABAI_NO_OPEN:-}" = 1 ] && exit 0
 echo
 echo "準備好了。接下來在 Xcode："
 echo "  1. 左上角選 App 這個 scheme，裝置選你的 iPhone（用線接上、手機上按「信任」）"
 echo "  2. 點左邊的 App 專案 → TARGETS 的 App 與 ABAIEdit → Signing & Capabilities → Team 選你的 Apple ID"
 echo "  3. 按 ▶ 執行。第一次裝好後，iPhone 的「設定 → 一般 → VPN 與裝置管理」信任這個開發者"
 echo "     （iOS 16 以上還要打開「設定 → 隱私權與安全性 → 開發者模式」，會重新開機一次）"
-open ios/App/App.xcodeproj
+[ "${ABAI_NO_OPEN:-}" = 1 ] || open ios/App/App.xcodeproj
