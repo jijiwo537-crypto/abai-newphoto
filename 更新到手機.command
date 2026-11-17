@@ -19,10 +19,10 @@ if ! xcodebuild -version >/dev/null 2>&1; then
   export DEVELOPER_DIR="$XA/Contents/Developer"
 fi
 if ! xcodebuild -version >/dev/null 2>&1; then
-  echo "$(xcodebuild -version 2>&1 | head -3)"
+  xcodebuild -version 2>&1 | awk 'NR<=3'
   fail "Xcode 還不能用：請打開 Xcode 一次，按「同意」授權條款、等它裝完元件，再點一次這個檔案"
 fi
-echo "$(xcodebuild -version | head -1)（$(xcode-select -p 2>/dev/null) → ${DEVELOPER_DIR:-預設}）"
+echo "$(xcodebuild -version 2>/dev/null | awk 'NR==1')（$(xcode-select -p 2>/dev/null) → ${DEVELOPER_DIR:-預設}）"
 
 say "1/5 抓最新程式碼"
 git fetch -q origin "$BRANCH"
@@ -38,7 +38,7 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.abai-node/bin:$PATH"
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -lt 20 ]; then
   echo "  這台 Mac 沒有 Node.js（打包網頁要用），自動下載一份放在 ~/.abai-node（不需要密碼）…"
   ARCH=$([ "$(uname -m)" = arm64 ] && echo arm64 || echo x64)
-  V=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt | grep -oE "node-v[0-9.]+-darwin-$ARCH.tar.gz" | head -1)
+  V=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt | grep -oE "node-v[0-9.]+-darwin-$ARCH.tar.gz" | awk 'NR==1')
   [ -n "$V" ] || fail "下載 Node.js 失敗，請檢查網路"
   rm -rf "$HOME/.abai-node" && mkdir -p "$HOME/.abai-node"
   curl -fsSL "https://nodejs.org/dist/latest-v22.x/$V" | tar -xz -C "$HOME/.abai-node" --strip-components 1
@@ -61,10 +61,10 @@ say "4/5 編譯（第一次比較久）"
 # 簽名用的 Team：自動找（不用打開 Xcode 選）。順序：之前存的 → 舊版專案檔/未存檔備份裡的 → 鑰匙圈裡的開發者憑證
 TEAM_FILE="$HOME/.abai-team-id"
 TEAM=$(cat "$TEAM_FILE" 2>/dev/null || true)
-pick() { grep -oE 'DEVELOPMENT_TEAM = [A-Z0-9]{10}' | head -1 | awk '{print $3}'; }
+pick() { grep -oE 'DEVELOPMENT_TEAM = [A-Z0-9]{10}' | awk 'NR==1' | awk '{print $3}'; }
 [ -n "$TEAM" ] || TEAM=$(git show '舊版備份:ios/App/App.xcodeproj/project.pbxproj' 2>/dev/null | pick || true)
-[ -n "$TEAM" ] || TEAM=$(git stash list --format=%gd 2>/dev/null | while read s; do git show "$s:ios/App/App.xcodeproj/project.pbxproj" 2>/dev/null | pick; done | head -1)
-[ -n "$TEAM" ] || TEAM=$(security find-certificate -a -c "Apple Development" -p 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | grep -oE 'OU ?= ?[A-Z0-9]{10}' | head -1 | grep -oE '[A-Z0-9]{10}$' || true)
+[ -n "$TEAM" ] || TEAM=$(git stash list --format=%gd 2>/dev/null | while read s; do git show "$s:ios/App/App.xcodeproj/project.pbxproj" 2>/dev/null | pick; done | awk 'NR==1')
+[ -n "$TEAM" ] || TEAM=$(security find-certificate -a -c "Apple Development" -p 2>/dev/null | openssl x509 -noout -subject 2>/dev/null | grep -oE 'OU ?= ?[A-Z0-9]{10}' | awk 'NR==1' | grep -oE '[A-Z0-9]{10}$' || true)
 [ -n "$TEAM" ] || fail "找不到你的開發者 Team：請先打開 Xcode → 上方選單 Xcode → Settings → Accounts，確認有登入你的 Apple ID"
 echo "$TEAM" > "$TEAM_FILE"
 echo "  Team：$TEAM"
@@ -72,7 +72,7 @@ DD="$PWD/ios/build-device"
 xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
   -destination "generic/platform=iOS" -derivedDataPath "$DD" -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
   DEVELOPMENT_TEAM="$TEAM" -quiet build
-APP=$(ls -d "$DD"/Build/Products/Debug-iphoneos/*.app | head -1)
+APP=$(ls -d "$DD"/Build/Products/Debug-iphoneos/*.app | awk 'NR==1')
 
 say "5/5 安裝並打開"
 xcrun devicectl device install app --device "$DEV" "$APP"

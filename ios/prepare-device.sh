@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 command -v xcodebuild >/dev/null || { echo "找不到 Xcode：請先從 App Store 安裝 Xcode 16 以上，並打開一次同意授權"; exit 1; }
-XV=$(xcodebuild -version | head -1 | awk '{print $2}' | cut -d. -f1)
+XV=$(xcodebuild -version 2>/dev/null | awk 'NR==1{split($2,v,"."); print v[1]}')
 [ "${XV:-0}" -ge 16 ] || { echo "Xcode 版本太舊（需要 16 以上，因為用到 iOS 18 的功能）"; exit 1; }
 command -v node >/dev/null || { echo "找不到 Node.js：請安裝 Node 22（https://nodejs.org）"; exit 1; }
 
