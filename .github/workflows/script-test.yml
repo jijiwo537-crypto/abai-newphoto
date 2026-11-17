@@ -1,0 +1,32 @@
+name: 測試更新到手機腳本
+on:
+  push:
+    branches: [claude/sleepy-mccarthy-2mabxh]
+    paths: ['.github/workflows/script-test.yml', '更新到手機.command', 'ios/prepare-device.sh']
+jobs:
+  mac:
+    runs-on: macos-15
+    steps:
+      - name: 模擬使用者的 Mac（沒有 Node、有一個本機才有的修改）
+        run: |
+          sudo rm -f /opt/homebrew/bin/node /opt/homebrew/bin/npm /opt/homebrew/bin/npx /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx
+          mkdir -p ~/Developer && cd ~/Developer
+          git clone -q --branch claude/sleepy-mccarthy-2mabxh https://github.com/${{ github.repository }} abai-newphoto
+          cd abai-newphoto && git checkout -q -b main HEAD~3
+          git config user.email t@t && git config user.name t
+          echo "// local" >> components/CollageTool.tsx && git commit -qam "本機才有的修改"
+          echo "// dirty" >> utils/selectedAnimations.ts
+      - name: 跑桌面上的那段（完全照給使用者的內容）
+        env: { ABAI_CI: '1' }
+        run: |
+          export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+          which node || echo "沒有 node（符合預期）"
+          cd ~/Developer/abai-newphoto || exit 1
+          B=claude/sleepy-mccarthy-2mabxh
+          git rebase --abort 2>/dev/null; git merge --abort 2>/dev/null
+          T=$(date +%Y%m%d-%H%M%S)
+          git branch "備份-$T" HEAD 2>/dev/null
+          git stash push -u -q -m "備份-$T" 2>/dev/null
+          git fetch -q origin "$B" && git checkout -q -B "$B" "origin/$B" || exit 1
+          ./更新到手機.command </dev/null
+          echo "--- 備份還在嗎"; git branch | grep 備份; git stash list

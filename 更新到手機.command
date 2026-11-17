@@ -33,6 +33,11 @@ echo "  Node.js：$(node -v)"
 ABAI_NO_OPEN=1 ./ios/prepare-device.sh
 
 say "3/5 找 iPhone"
+if [ "${ABAI_CI:-}" = 1 ]; then   # 雲端測試用：沒有手機，只確認能編譯出 iPhone 版
+  xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination "generic/platform=iOS" \
+    -derivedDataPath "$PWD/ios/build-device" CODE_SIGNING_ALLOWED=NO -quiet build
+  echo "✓ CI：iPhone 版編譯成功"; exit 0
+fi
 DEV=$(xcrun devicectl list devices 2>/dev/null | awk '/iPhone/ && /(available|connected)/ {for(i=1;i<=NF;i++) if($i ~ /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/) {print $i; exit}}')
 [ -n "$DEV" ] || fail "找不到 iPhone：用線接上、解鎖手機，並確認已在 Xcode 裝過一次"
 echo "  裝置：$DEV"
