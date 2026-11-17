@@ -14,7 +14,7 @@ echo "開始：$(date)　macOS $(sw_vers -productVersion 2>/dev/null)"
 
 # 只裝了「命令列工具」或 xcode-select 指錯地方時，xcodebuild 不能用：直接指到 Xcode.app（不需要密碼）
 if ! xcodebuild -version >/dev/null 2>&1; then
-  XA=$(ls -d /Applications/Xcode.app /Applications/Xcode*.app 2>/dev/null | head -1)
+  XA=$(ls -d /Applications/Xcode.app 2>/dev/null || ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
   [ -n "$XA" ] || fail "找不到 Xcode.app：請從 App Store 安裝 Xcode"
   export DEVELOPER_DIR="$XA/Contents/Developer"
 fi
