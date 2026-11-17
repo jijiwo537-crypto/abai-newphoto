@@ -53,9 +53,33 @@ if [ "${ABAI_CI:-}" = 1 ]; then   # 雲端測試用：沒有手機，只確認�
     -derivedDataPath "$PWD/ios/build-device" CODE_SIGNING_ALLOWED=NO -quiet build
   echo "✓ CI：iPhone 版編譯成功"; exit 0
 fi
-DEV=$(xcrun devicectl list devices 2>/dev/null | awk '/iPhone/ && /(available|connected)/ {for(i=1;i<=NF;i++) if($i ~ /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/) {print $i; exit}}')
-[ -n "$DEV" ] || fail "找不到 iPhone：用線接上、解鎖手機，並確認已在 Xcode 裝過一次"
-echo "  裝置：$DEV"
+# 用 devicectl 的 JSON 找 iPhone（有線或 Wi-Fi 都算）；Wi-Fi 的手機有時要幾秒才出現，最多等 60 秒
+find_iphone() {
+  local J; J=$(mktemp); xcrun devicectl list devices --json-output "$J" >/dev/null 2>&1 || true
+  node -e '
+    let d = []; try { d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).result.devices || []; } catch {}
+    const ok = d.filter(x => (x.hardwareProperties || {}).platform === "iOS" && (x.connectionProperties || {}).pairingState === "paired");
+    // 優先：已經連上的（tunnel connected）> 有線 > Wi-Fi
+    const score = x => { const c = x.connectionProperties || {}; return ((x.hardwareProperties || {}).deviceType === "iPhone" ? 8 : 0) + (c.tunnelState === "connected" ? 4 : 0) + (c.transportType === "wired" ? 2 : c.transportType === "localNetwork" ? 1 : 0); };
+    ok.sort((a, b) => score(b) - score(a));
+    const x = ok.find(x => score(x) > 0) || ok[0];
+    if (x) console.log(x.identifier + "\t" + ((x.deviceProperties || {}).name || "iPhone") + "\t" + ((x.connectionProperties || {}).transportType || "?"));
+  ' "$J"
+  rm -f "$J"
+}
+INFO=""
+for i in $(seq 1 12); do
+  INFO=$(find_iphone)
+  [ -n "$INFO" ] && break
+  [ "$i" = 1 ] && echo "  還沒看到手機，等它出現（請解鎖手機、保持螢幕亮著）…"
+  sleep 5
+done
+if [ -z "$INFO" ]; then
+  echo "  ── 這台 Mac 目前看得到的裝置 ──"; xcrun devicectl list devices 2>&1 | sed 's/^/  /'
+  fail "找不到 iPhone。請用線接上一次並解鎖手機（第一次一定要接線，手機上若跳出「要信任這部電腦嗎」請按信任），再點一次這個檔案"
+fi
+DEV=$(printf '%s' "$INFO" | cut -f1)
+echo "  手機：$(printf '%s' "$INFO" | cut -f2)（$(printf '%s' "$INFO" | cut -f3 | sed 's/wired/有線/;s/localNetwork/Wi-Fi/')）"
 
 say "4/5 編譯（第一次比較久）"
 # 簽名用的 Team：自動找（不用打開 Xcode 選）。順序：之前存的 → 舊版專案檔/未存檔備份裡的 → 鑰匙圈裡的開發者憑證
