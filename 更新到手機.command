@@ -7,7 +7,22 @@ cd "$(dirname "$0")"
 BRANCH=claude/sleepy-mccarthy-2mabxh
 say() { echo; echo "▶ $*"; }
 fail() { echo; echo "✗ $*"; read -n1 -rsp "按任意鍵關閉…"; exit 1; }
-trap 'fail "失敗了，請把上面的訊息截圖給 Claude"' ERR
+trap 'fail "失敗了，請把上面的訊息截圖給 Claude（完整紀錄在桌面的 ABAI更新紀錄.txt）"' ERR
+# 全部輸出同時存一份到桌面，失敗時可以直接把這個檔案給 Claude
+exec > >(tee "$HOME/Desktop/ABAI更新紀錄.txt") 2>&1
+echo "開始：$(date)　macOS $(sw_vers -productVersion 2>/dev/null)"
+
+# 只裝了「命令列工具」或 xcode-select 指錯地方時，xcodebuild 不能用：直接指到 Xcode.app（不需要密碼）
+if ! xcodebuild -version >/dev/null 2>&1; then
+  XA=$(ls -d /Applications/Xcode.app /Applications/Xcode*.app 2>/dev/null | head -1)
+  [ -n "$XA" ] || fail "找不到 Xcode.app：請從 App Store 安裝 Xcode"
+  export DEVELOPER_DIR="$XA/Contents/Developer"
+fi
+if ! xcodebuild -version >/dev/null 2>&1; then
+  echo "$(xcodebuild -version 2>&1 | head -3)"
+  fail "Xcode 還不能用：請打開 Xcode 一次，按「同意」授權條款、等它裝完元件，再點一次這個檔案"
+fi
+echo "$(xcodebuild -version | head -1)（$(xcode-select -p 2>/dev/null) → ${DEVELOPER_DIR:-預設}）"
 
 say "1/5 抓最新程式碼"
 git fetch -q origin "$BRANCH"

@@ -16,6 +16,10 @@ jobs:
           git config user.email t@t && git config user.name t
           echo "// local" >> components/CollageTool.tsx && git commit -qam "本機才有的修改"
           echo "// dirty" >> utils/selectedAnimations.ts
+          # 模擬 xcode-select 指到命令列工具（很常見）
+          ls -d /Library/Developer/CommandLineTools && sudo xcode-select -s /Library/Developer/CommandLineTools
+          xcodebuild -version || echo "xcodebuild 不能用（符合預期）"
+          mkdir -p ~/Desktop
       - name: 跑桌面上的那段（完全照給使用者的內容）
         env: { ABAI_CI: '1' }
         run: |
@@ -30,4 +34,4 @@ jobs:
           git stash push -u -q -m "備份-$T" 2>/dev/null
           git fetch -q origin "$B" && git checkout -q -B "$B" "origin/$B" || exit 1
           ./更新到手機.command </dev/null; rc=$?
-          echo "--- 備份還在嗎"; git branch | grep 備份; git stash list; exit $rc
+          echo "--- 備份還在嗎"; git branch | grep 備份; git stash list; echo '--- 紀錄檔'; head -5 ~/Desktop/ABAI更新紀錄.txt; exit $rc
