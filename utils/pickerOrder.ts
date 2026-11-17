@@ -48,7 +48,7 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'diamond-n-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o', 'hexstar-o', 'star8-o',
     'rounded-o', 'track-select-o', 'track-select8-o', 'track-cross-o', 'arrow-o', 'arrow-double-o',
   ],
-  puzzle: ['puzzle-standard-f', 'puzzle-3out-f', 'puzzle-2adj-f', 'puzzle-1out-f', 'puzzle-edge-f', 'puzzle-corner-f'],
+  puzzle: ['puzzle-2adj-f', 'puzzle-1out-f', 'puzzle-3out-f', 'puzzle-standard-f', 'puzzle-edge-f', 'puzzle-corner-f'],
   frame: ['frame-polaroid', 'mist-frame', 'mist-frame-tb', 'frame-scatter', 'frame-scatter-tb', 'frame-speed'],
   burst: [
     'hole-sb-tiny-cross', 'hole-sb-cross-thin', 'hole-sb-flat-six', 'hole-sb-six',

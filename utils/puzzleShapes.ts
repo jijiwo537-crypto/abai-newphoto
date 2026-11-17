@@ -1,12 +1,12 @@
 /* 「拼圖」分類：傳統拼圖片。每一邊是 凸(1)／凹(-1)／平(0)，順序上、右、下、左。
    路徑撐滿整個框（凸出去的圓頭也算在框裡），所以框拉多大，拼圖就多大。 */
 export const PUZZLE_PIECES: Record<string, [number, number, number, number]> = {
-  'puzzle-standard': [1, -1, 1, -1],   // 標準片
-  'puzzle-3out': [1, 1, 1, -1],        // 三凸一凹
+  'puzzle-standard': [-1, 1, -1, 1],   // 標準片
+  'puzzle-3out': [1, 1, -1, 1],        // 三凸一凹
   'puzzle-2adj': [1, 1, -1, -1],       // 相鄰兩凸
   'puzzle-1out': [1, -1, -1, -1],      // 一凸三凹
-  'puzzle-edge': [0, 1, -1, 1],        // 邊片
-  'puzzle-corner': [0, 0, 1, -1],      // 角片
+  'puzzle-edge': [-1, 1, 0, 1],          // 邊片
+  'puzzle-corner': [1, -1, 0, 0],      // 角片
 };
 export const isPuzzleKind = (k?: string) => !!k && k in PUZZLE_PIECES;
 /** 圓頭凸出去的深度（相對於本體邊長） */
