@@ -37,7 +37,7 @@ import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCo
 import { createPortal, flushSync } from 'react-dom';
 import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
-import { scoreRandomFeedback } from '../utils/scoreFeedback';
+import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
@@ -627,7 +627,7 @@ const creativeShapeColorFor = (kind: string) => isBackdropMask(kind) ? shapeDefa
 /** 大半徑發光的低解析度版本（見 drawObject 的發光段）。
     記憶體上限：整個 App 最多留 8 張（每張最多 1024 邊長）（淘汰的立刻把畫布縮成 0 釋放）；
     不能重用的路徑（線條「畫出來」動畫每格都是新路徑）不快取，共用一張暫存畫布。 */
-const lowResGlowCache = new Map<string, { c: HTMLCanvasElement; pad: number }>();
+const lowResGlowCache = new Map<string, { c: HTMLCanvasElement; pad: number; kk: number }>();
 const lowResGlowPathIds = new WeakMap<Path2D, number>();
 let lowResGlowSerial = 0;
 let lowResGlowScratch: HTMLCanvasElement | null = null;
@@ -677,7 +677,7 @@ const lowResShapeGlow = (ctx: CanvasRenderingContext2D, path: Path2D, solid: boo
     if (squares) squares()(g, kind, bw, bh, tbw, tbh);
   }
   g.shadowColor = 'transparent'; g.shadowBlur = 0; g.shadowOffsetX = 0;
-  const out = { c, pad };
+  const out = { c, pad, kk };
   if (cacheable) {
     lowResGlowCache.set(key, out);
     while (lowResGlowCache.size > 8) {
@@ -872,6 +872,9 @@ const SCATTER_IN_KINDS = IN_KINDS.filter(k => k.id !== 'flip' && k.id !== 'bounc
 /* 果凍II 的速度：滑桿 0～100 對應舊刻度約 3～70（預設 70 ＝ 舊的 50） */
 const seqSpeedToUi = (sp: number) => Math.round(Math.max(0, Math.min(100, (sp - 10 / 3) * 1.5)));
 const seqSpeedFromUi = (ui: number) => 10 / 3 + Math.max(0, Math.min(100, ui)) * 2 / 3;
+/* 樂譜 3～6：沒有旋轉；果凍分成 l（整張一起）和 ll（先從左到右畫出五線譜，再一顆一顆音符果凍出場） */
+const SCORE_IN_KINDS = IN_KINDS.filter(k => k.id !== 'spin' && k.id !== 'bounce')
+  .flatMap(k => k.id === 'pop' ? [{ id: 'pop', name: '果凍l' }, { id: 'score-seq', name: '果凍ll' }] : [k]);
 const LINE_IN_KINDS = [...IN_KINDS.filter(k => k.id !== 'spring'), { id: 'draw', name: '畫筆' }];
 const GRID_IN_KINDS = IN_KINDS.map(k => k.id === 'spring' ? { id: 'grid-wave', name: '波浪' } : k);
 const SYMBOL_IN_KINDS = IN_KINDS.map(k => k.id === 'fade' ? { id: 'bubble', name: '泡泡' } : k.id === 'spring' ? { id: 'fade', name: '淡入' } : k);
@@ -1231,6 +1234,8 @@ export type MotionTargetCtx = {
   pattern: boolean;
   type?: 'text' | 'image' | 'shape';
   sym: boolean; grid: boolean; line: boolean; glint: boolean; scatter: boolean;
+  /** 樂譜 3～6（可以隨機的那幾種）：進場多一個「果凍ll」 */
+  score?: boolean;
 };
 export const motionTargetCtxOf = (o: any | null): MotionTargetCtx => o ? {
   pattern: false, type: o.type, sym: !!o.sym,
@@ -1238,6 +1243,7 @@ export const motionTargetCtxOf = (o: any | null): MotionTargetCtx => o ? {
   line: o.type === 'shape' && SPECIAL_LINE_KINDS.has(o.kind),
   glint: o.type === 'shape' && o.kind === 'hole' && String(o.hole || '').startsWith('sb-'),
   scatter: o.type === 'shape' && isScatterFrame(o.kind),
+  score: o.type === 'shape' && scoreCanRandom(o.kind),
 } : { pattern: true, sym: false, grid: false, line: false, glint: false, scatter: false };
 /** 圖案那一群剛開啟時的動畫設定（也就是圖案的預設值） */
 export const PATTERN_MO_DEFAULT: MoCfg = {
@@ -1368,13 +1374,13 @@ export const motionFromUi = (field: 'delay' | 'inSpeed' | 'amp' | 'speed', v: nu
 /** 某個目標在動畫面板上列出的進場／常駐種類（App 與動畫預設值網站共用） */
 export const motionKindLists = (c: MotionTargetCtx) => {
   const isText = c.type === 'text' && !c.sym;
-  const legacyKinds = c.scatter ? SCATTER_IN_KINDS : c.pattern ? IN_KINDS.filter(k => k.id !== 'flip') : c.sym ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : c.grid ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : c.line ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
+  const legacyKinds = c.score ? SCORE_IN_KINDS : c.scatter ? SCATTER_IN_KINDS : c.pattern ? IN_KINDS.filter(k => k.id !== 'flip') : c.sym ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : c.grid ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : c.line ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
   const labTarget = c.pattern ? 'pattern' : c.sym ? 'symbol' : isText ? 'text' : c.type === 'shape' ? 'shape' : null;
   const kinds = isText
     ? [{id:'none',name:'無'},{id:'bounce',name:'彈跳'},{id:'fade',name:'淡入l'},{id:'lab-T-E03',name:'淡入ll'},
        {id:'rise',name:'升起'},{id:'drop',name:'落下'},{id:'pop',name:'果凍l'},{id:'lab-T-E07',name:'果凍ll'}]
     : [...(c.sym ? legacyKinds.filter(k => !['spin','flip','fade'].includes(k.id)) : legacyKinds),
-       ...(labTarget ? selectedKinds(labTarget, 'entry') : [])];
+       ...(labTarget ? selectedKinds(labTarget, 'entry').filter(k => !(c.score && k.name === '旋轉')) : [])];
   const baseIdleKinds = c.scatter ? SCATTER_IDLE_KINDS : c.pattern ? PATTERN_IDLE_KINDS : c.sym ? SYMBOL_IDLE_KINDS : isText ? TEXT_IDLE_KINDS : c.type === 'image' ? IMAGE_IDLE_KINDS : c.grid ? GRID_IDLE_KINDS : c.glint ? GLINT_IDLE_KINDS_C : IDLE_KINDS;
   const idleKinds = isText
     ? [...baseIdleKinds.filter(k => k.id === 'none' || k.id === 'float'),
@@ -8216,7 +8222,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else {
         const shapeP0 = shapePathBox(
-          stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed), (o as any).lineGap), bw, bh,
+          stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), (o as any).lineGap), bw, bh,
           ((o as any).textureBaseW || o.w) * s,
           ((o as any).textureBaseH || o.h) * s,
           (((o as any).lineBase || Math.max(o.w, o.h)) * s / 160) * 2.325
@@ -8229,7 +8235,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             ) * (GRID_DOT_KINDS.has(o.kind) ? Math.max(1, Math.min(3, (o.lineW ?? 6) / 6)) : 1),
           f?.ringReveal ?? 1,
         );
-        const shapeP = drawTip === undefined ? shapeP0 : new Path2D(revealPathD(shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed), (o as any).lineGap), bw, bh), drawTip));
+        const shapeP = drawTip === undefined ? shapeP0 : new Path2D(revealPathD(shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), (o as any).lineGap), bw, bh), drawTip));
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
 
@@ -8286,20 +8292,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const glowRs = shapeGlowBlurs(bw, bh).map(r => r * gAmt);
           const plainGlow = !(solid && COMPOSITE_SHAPE_KINDS.has(o.kind))
             && (!GRID_SHAPE_KINDS.has(o.kind) || f?.gridWave === undefined || (f?.waveMix !== undefined && f.waveMix <= 1e-5));
-          if (plainGlow && glowRs[0] >= 10) {
+          // 樂譜細節很多、範圍又大：小半徑也走縮小畫布，不然每拉一格都要整張重新模糊（手機上會一頓一頓）
+          if (plainGlow && (glowRs[0] >= 10 || (isScoreKind(o.kind) && glowRs[0] > 0))) {
             /* 大半徑的發光：在縮小的畫布上模糊再放大貼回來。模糊本來就沒有細節，
                看起來一樣，但要算的像素少十幾倍（長線條、刺繡線發光時拉滑桿不再卡）。
                同一組參數畫過就直接重用（調別的滑桿、拖畫面時發光不用重算）。 */
             const glowImg = lowResShapeGlow(ctx, shapeP, solid, bw, bh, glowRs, o.glowColor || col,
               solid ? undefined : () => fillTrackSquares, o.kind, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s, drawTip === undefined);
-            ctx.drawImage(glowImg.c, -glowImg.pad, -glowImg.pad, bw + glowImg.pad * 2, bh + glowImg.pad * 2);
+            /* 小畫布的寬高是無條件進位到整數像素的，照它真正的大小貼回去（＝像素÷縮放）。
+               以前硬拉成 bw＋2×pad，每調一格發光、進位差就不一樣，發光的邊緣會微微伸縮 —— 看起來在抖 */
+            ctx.drawImage(glowImg.c, -glowImg.pad, -glowImg.pad, glowImg.c.width / glowImg.kk, glowImg.c.height / glowImg.kk);
             // 原本每一層也會連同形狀本身畫一次，照樣畫（半透明的圖形外觀不變）
             for (let gi = 0; gi < glowRs.length; gi++) { paintShapePath(!!solid); if (!solid) fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s); }
           } else
           for (const r of shapeGlowBlurs(bw, bh)) {
             ctx.shadowBlur = r * gAmt;
             if (solid && COMPOSITE_SHAPE_KINDS.has(o.kind)) {
-              drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed), bw, bh, o.shapeFeather, col,
+              drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), bw, bh, o.shapeFeather, col,
                 undefined, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth,
                   baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s });
             } else { paintShapePath(!!solid); if (!solid) fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s); }
@@ -8334,8 +8343,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (TRACK_SQUARE_KINDS.has(o.kind as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
           if (!strokeCompositeShape(ctx, o.kind, bw, bh, o.innerSize)) paintShapePath(false);
           if (lineOutline) {
-            const d = drawTip === undefined ? shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed), (o as any).lineGap), bw, bh)
-              : revealPathD(shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed), (o as any).lineGap), bw, bh), drawTip);
+            const d = drawTip === undefined ? shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), (o as any).lineGap), bw, bh)
+              : revealPathD(shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), (o as any).lineGap), bw, bh), drawTip);
             const half = lw / 2 + sw;
             ctx.fillStyle = o.strokeColor || '#000000';
             for (const e of lineEndsOf(d)) {
@@ -8355,7 +8364,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (GRID_DOT_KINDS.has(o.kind)) {
             /* 直接畫已帶固定點距與點徑的 shapeP，不能再用當前框重建一次。 */
             paintShapePath(true);
-          } else drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed), bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
+          } else drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
             if (texOf(o) === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
@@ -9997,6 +10006,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const phase = (hashId(o.id) % 628) / 100 + i * 0.7;
         /* 散落圖形邊框：整個邊框不動，改成每一顆圖形各自跑同一套進場／常駐。
            果凍I＝每顆同時各自果凍；果凍II＝從左上開始順時針一顆接一顆（跟圖案那組錯開的算法一樣） */
+        /* 樂譜果凍ll：整張不動（常駐動畫照跑），進度交給樂譜自己畫 —— 前四成畫五線譜，後面音符一顆一顆彈出來。
+           總長＝速度給的時間的三倍（要畫線又要一顆一顆出場，太快看不清楚） */
+        if (o.type === 'shape' && cfg.in === 'score-seq' && scoreCanRandom(o.kind)) {
+          const total = Math.max(.6, cfg.dur * 3);
+          const fr = composeMo({ ...cfg, in: 'none' }, t, phase);
+          return { ...fr, scoreAnim: Math.max(0, Math.min(1, (t - cfg.delay) / total)) } as any;
+        }
         if (o.type === 'shape' && isScatterFrame(o.kind) && !cfg.in.startsWith('lab-') && !cfg.idle.startsWith('lab-')) {
           const seq = cfg.in === 'pop-seq';
           const POP = Math.min(0.5, cfg.dur * 0.45);
@@ -13021,8 +13037,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
                           {scoreCanRandom(sel.kind) && <div className="px-2 order-1 w-full">
                             <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); patch({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) }); }}
-                              className="w-full h-10 rounded-[8px] bg-white/[0.06] border border-white/10 text-[12px] font-bold text-white/85 active:scale-[0.98] transition-transform flex items-center justify-center gap-2">
-                              <RefreshCw size={14} /> 隨機音符
+                              className={SCORE_RANDOM_BTN}>
+                              隨機音符
                             </button>
                           </div>}
                           {/* 樂譜不給描邊 */}

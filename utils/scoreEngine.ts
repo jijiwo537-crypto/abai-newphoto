@@ -81,12 +81,18 @@ const SPECS: Record<string, Spec> = {
 };
 export const SCORE_KINDS = Object.keys(SPECS);
 /** kind 可以帶隨機種子：'score-wave@123'（見 scoreKindOf） */
-const baseOf = (kind: string) => kind.split('@')[0];
+const baseOf = (kind: string) => kind.split('#')[0].split('@')[0];
 export const isScoreKind = (k?: string) => !!k && baseOf(k) in SPECS;
 /** 畫圖時用的 kind：有隨機種子就接在後面 */
 /** 可以按「隨機音符」的樂譜（照原圖描的那兩個固定不變） */
 export const scoreCanRandom = (kind?: string) => isScoreKind(kind) && !(baseOf(kind!) in SCORE_TRACED);
-export const scoreKindOf = (kind: string, seed?: number) => (seed && scoreCanRandom(kind) ? `${baseOf(kind)}@${seed}` : kind);
+/** 畫圖時用的 kind：有隨機種子就接 '@種子'；果凍II 進場中再接 '#進度'（0～1，量化成 1/240 讓快取有用） */
+export const scoreKindOf = (kind: string, seed?: number, anim?: number) => {
+  if (!isScoreKind(kind)) return kind;
+  let k = baseOf(kind) + (seed && scoreCanRandom(kind) ? `@${seed}` : '');
+  if (anim !== undefined && anim < 1 && scoreCanRandom(kind)) k += `#${(Math.round(Math.max(0, anim) * 240) / 240).toFixed(4)}`;
+  return k;
+};
 
 /* ---------- 隨機音符（照樂理） ---------- */
 const rng = (seed: number) => () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
@@ -149,7 +155,10 @@ const cubicPts = (a: Pt, b: Pt, c: Pt, d: Pt, n = 10): Pt[] => Array.from({ leng
 
 type Frame = { o: Pt; u: Pt; v: Pt };
 function build(kind: string, w: number, h: number): Pt[][] {
-  const [base, seedS] = kind.split('@');
+  // kind：'score-line'、'score-line@種子'、後面可以再接 '#進場進度'（果凍II，0～1）
+  const [main, animS] = kind.split('#');
+  const [base, seedS] = main.split('@');
+  const anim = animS === undefined ? 1 : Math.max(0, Math.min(1, +animS));
   const spec = SPECS[base];
   const box = bboxOf(base);
   const sx = w / box.w, sy = h / box.h, k = Math.min(sx, sy);
@@ -158,21 +167,31 @@ function build(kind: string, w: number, h: number): Pt[][] {
   const frame = (t: number): Frame => { const e = 1e-3, a = C(t - e), b = C(t + e); let ux = b[0] - a[0], uy = b[1] - a[1]; const n = Math.hypot(ux, uy) || 1; ux /= n; uy /= n; return { o: C(t), u: [ux, uy], v: [uy, -ux] }; };
   const polys: Pt[][] = [];
   const holes: Pt[][] = [];
+  /* 每一塊屬於哪一個「單位」（譜號、調號、小節線、每顆音符／每組連桿）—— 果凍II 一個一個彈出來用 */
+  let cur = -1; const polyIt: number[] = [], holeIt: number[] = [];
+  const P = (q: Pt[]) => { polys.push(q); polyIt.push(cur); };
+  const Hh = (q: Pt[]) => { holes.push(q); holeIt.push(cur); };
+  const units: { t: number; at: Pt }[] = [];
+  const unit = (t: number, at: Pt) => { units.push({ t, at }); cur = units.length - 1; };
+  // 果凍II：前四成時間五線譜從左畫到右
+  const staffT = anim >= 1 ? 1 : 1 - Math.pow(1 - Math.min(1, anim / .4), 3);
   // 五線譜：每條線做成一條有寬度的帶子（線寬可以沿線慢慢變細）
   const N = 140;
   for (let li = -2; li <= 2; li++) {
     const L: Pt[] = [], R: Pt[] = [];
-    for (let i = 0; i <= N; i++) {
-      const t = i / N, f = frame(t), gg = gap(t), off = li * gg, hw = spec.lw * k * (spec.lwFn ? spec.lwFn(t) : 1) / 2;
+    if (staffT <= 0) continue;
+    const NN = Math.max(1, Math.ceil(N * staffT));
+    for (let i = 0; i <= NN; i++) {
+      const t = Math.min(staffT, i / N), f = frame(t), gg = gap(t), off = li * gg, hw = spec.lw * k * (spec.lwFn ? spec.lwFn(t) : 1) / 2;
       const cx = f.o[0] + f.v[0] * off, cy = f.o[1] + f.v[1] * off;
       L.push([cx + f.v[0] * hw, cy + f.v[1] * hw]); R.push([cx - f.v[0] * hw, cy - f.v[1] * hw]);
     }
-    polys.push(orient([...L, ...R.reverse()]));
+    P(orient([...L, ...R.reverse()]));
   }
   // 在 (t, p) 的局部座標：x 沿著線、y 往下（往五線譜下方）
   const at = (t: number, p: number) => { const f = frame(t), g = gap(t), off = (p - 4) * g / 2; return { x: f.o[0] + f.v[0] * off, y: f.o[1] + f.v[1] * off, u: f.u, v: f.v, g }; };
   const toG = (q: { x: number; y: number; u: Pt; v: Pt }, [lx, ly]: Pt): Pt => [q.x + q.u[0] * lx - q.v[0] * ly, q.y + q.u[1] * lx - q.v[1] * ly];
-  const put = (q: any, pts: Pt[], hole = false) => (hole ? holes : polys).push(orient(pts.map(p => toG(q, p)), hole));
+  const put = (q: any, pts: Pt[], hole = false) => (hole ? Hh : P)(orient(pts.map(p => toG(q, p)), hole));
   // 降記號：一根直線＋右下的小肚子
   const flat = (q: any, dx: number) => {
     const g = q.g;
@@ -182,16 +201,16 @@ function build(kind: string, w: number, h: number): Pt[][] {
   };
   // 譜號
   {
-    const q0 = at(spec.clefT, 4);
+    const q0 = at(spec.clefT, 4); unit(spec.clefT, [q0.x, q0.y]);
     const q = spec.clefUpright ? { ...q0, u: [1, 0] as Pt, v: [0, -1] as Pt } : q0;
     const g = q.g * (spec.clefK || 1), H = 7.4 * g, Wc = CLEF_W * H, bottom = 3.5 * q.g - (spec.clefDy || 0) * q.g;
     const loops = CLEF_LOOPS.map(loop => { const pts: Pt[] = []; for (let j = 0; j < loop.length; j += 2) pts.push([(loop[j] / CLEF_W - .5) * Wc, bottom - (1 - loop[j + 1]) * H]); return pts; });
     // 面積最大的那圈是外框，其他都是洞
     const big = loops.reduce((m, l, i) => (Math.abs(area(l)) > Math.abs(area(loops[m])) ? i : m), 0);
-    loops.forEach((pts, i) => (i === big ? polys : holes).push(orient(pts.map(p => toG(q, p)), i !== big)));
+    loops.forEach((pts, i) => (i === big ? P : Hh)(orient(pts.map(p => toG(q, p)), i !== big)));
   }
-  (spec.key || []).forEach(([t, p]) => flat(at(t, p), 0));
-  (spec.bars || []).forEach(t => { const q = at(t, 4); put(q, rect(-.07 * q.g, -2 * q.g, .14 * q.g, 4 * q.g)); });
+  (spec.key || []).forEach(([t, p]) => { const q = at(t, p); unit(t, [q.x, q.y]); flat(q, 0); });
+  (spec.bars || []).forEach(t => { const q = at(t, 4); unit(t, [q.x, q.y]); put(q, rect(-.07 * q.g, -2 * q.g, .14 * q.g, 4 * q.g)); });
   // 音符
   const notes: Note[] = (seedS ? randomNotes(base, +seedS) : spec.notes).map(n => [...n] as Note);
   /* 照長度把音符平均排開：每顆照種類佔一段寬度（單位是當地的間距），所以不會兩顆黏在一起 */
@@ -225,8 +244,19 @@ function build(kind: string, w: number, h: number): Pt[][] {
   });
   const up = (i: number) => { const n = notes[i]; if (n[4] && groups[n[4]]) { const ids = groups[n[4]]; return ids.reduce((s, j) => s + notes[j][1], 0) / ids.length < 4; } return n[1] < 4; };
   const stemLen = 3.3;
+  // 每顆音符屬於哪個單位：同一組連桿算一個
+  const unitOf: number[] = []; const groupUnit: Record<string, number> = {};
+  notes.forEach((n, i) => {
+    const key = n[4] && groups[n[4]] ? n[4] : undefined;
+    if (key && groupUnit[key] !== undefined) { unitOf[i] = groupUnit[key]; return; }
+    const ids = key ? groups[key] : [i];
+    const pts = ids.map(j => at(notes[j][0], notes[j][1]));
+    unit(notes[ids[0]][0], [pts.reduce((a, q) => a + q.x, 0) / pts.length, pts.reduce((a, q) => a + q.y, 0) / pts.length]);
+    unitOf[i] = cur; if (key) groupUnit[key] = cur;
+  });
   const tips: Record<number, { b: Pt; tip: Pt; g: number }> = {};
   Object.values(groups).forEach(ids => {
+    cur = unitOf[ids[0]];
     const isUp = up(ids[0]);
     const base = ids.map(i => { const q = at(notes[i][0], notes[i][1]); const sxl = isUp ? .56 : -.56; const b = toG(q, [sxl * q.g, 0]); const d: Pt = isUp ? [q.v[0], q.v[1]] : [-q.v[0], -q.v[1]]; return { q, b, d }; });
     const A = base[0], B = base[base.length - 1];
@@ -235,18 +265,18 @@ function build(kind: string, w: number, h: number): Pt[][] {
     base.forEach(x => { const s = inter(x) / x.q.g; if (s < 2.6) { const push = (2.6 - s) * x.q.g; ta = [ta[0] + A.d[0] * push, ta[1] + A.d[1] * push]; tb = [tb[0] + B.d[0] * push, tb[1] + B.d[1] * push]; } });
     base.forEach((x, j) => { const s = inter(x); tips[ids[j]] = { b: x.b, tip: [x.b[0] + x.d[0] * s, x.b[1] + x.d[1] * s], g: x.q.g }; });
     const g = (A.q.g + B.q.g) / 2, th = .5 * g;
-    const beam = (off: number) => { const a: Pt = [ta[0] - A.d[0] * off, ta[1] - A.d[1] * off], b: Pt = [tb[0] - B.d[0] * off, tb[1] - B.d[1] * off]; polys.push(orient([a, b, [b[0] - B.d[0] * th, b[1] - B.d[1] * th], [a[0] - A.d[0] * th, a[1] - A.d[1] * th]])); };
+    const beam = (off: number) => { const a: Pt = [ta[0] - A.d[0] * off, ta[1] - A.d[1] * off], b: Pt = [tb[0] - B.d[0] * off, tb[1] - B.d[1] * off]; P(orient([a, b, [b[0] - B.d[0] * th, b[1] - B.d[1] * th], [a[0] - A.d[0] * th, a[1] - A.d[1] * th]])); };
     beam(0); if (notes[ids[0]][2] === 'b16') beam(.8 * g);
   });
   notes.forEach((n, i) => {
-    const [t, p, type, acc] = n; const q = at(t, p), g = q.g, isUp = up(i);
+    const [t, p, type, acc] = n; const q = at(t, p), g = q.g, isUp = up(i); cur = unitOf[i];
     if (type === 'h') { put(q, ellipse(0, 0, .62 * g, .43 * g, -.38)); put(q, ellipse(0, 0, .42 * g, .2 * g, -.38), true); }
     else put(q, ellipse(0, 0, .62 * g, .43 * g, -.38));
     if (acc) flat(q, -1.55 * g);
     if (tips[i]) {
       // 連桿的符桿：從符頭到連桿，用整體座標畫一個細長方形
       const { b, tip } = tips[i]; const dx = tip[0] - b[0], dy = tip[1] - b[1], L = Math.hypot(dx, dy) || 1, nx = -dy / L * .065 * g, ny = dx / L * .065 * g;
-      polys.push(orient([[b[0] + nx, b[1] + ny], [tip[0] + nx, tip[1] + ny], [tip[0] - nx, tip[1] - ny], [b[0] - nx, b[1] - ny]]));
+      P(orient([[b[0] + nx, b[1] + ny], [tip[0] + nx, tip[1] + ny], [tip[0] - nx, tip[1] - ny], [b[0] - nx, b[1] - ny]]));
       return;
     }
     const x = isUp ? .56 * g : -.56 * g, tip = isUp ? -stemLen * g : stemLen * g;
@@ -254,7 +284,16 @@ function build(kind: string, w: number, h: number): Pt[][] {
     const flag = (y0: number) => { const s = isUp ? 1 : -1; put(q, [[x, y0], ...cubicPts([x, y0], [x + .15 * g, y0 + s * .9 * g], [x + 1.15 * g, y0 + s * 1.3 * g], [x + .75 * g, y0 + s * 2.6 * g]), ...cubicPts([x + .75 * g, y0 + s * 2.6 * g], [x + .85 * g, y0 + s * 1.7 * g], [x + .35 * g, y0 + s * 1.35 * g], [x, y0 + s * 1.15 * g])]); };
     if (type === '8' || type === '16') { flag(tip); if (type === '16') flag(tip + (isUp ? .85 : -.85) * g); }
   });
-  return [...polys, ...holes];
+  if (anim >= 1) return [...polys, ...holes];
+  /* 果凍II：譜號、音符照左到右的順序，一個接一個「果凍」彈出來（以自己的中心放大、彈過頭再回來） */
+  const order = units.map((u, i) => i).sort((x, y) => units[x].t - units[y].t);
+  const rank: number[] = []; order.forEach((u, r) => { rank[u] = r; });
+  const n = Math.max(1, units.length - 1), DUR = .16;
+  const scaleOf = (u: number) => { if (u < 0) return 1; const st = .3 + .54 * rank[u] / n, x = (anim - st) / DUR; if (x <= 0) return 0; if (x >= 1) return 1; return 1 - Math.exp(-5 * x) * Math.cos(9 * x); };
+  const out: Pt[][] = [];
+  const apply = (q: Pt[], u: number) => { const sc = scaleOf(u); if (sc <= .002) return; if (u < 0 || sc === 1) { out.push(q); return; } const [ax, ay] = units[u].at; out.push(q.map(([x, y]) => [ax + (x - ax) * sc, ay + (y - ay) * sc] as Pt)); };
+  polys.forEach((q, i) => apply(q, polyIt[i])); holes.forEach((q, i) => apply(q, holeIt[i]));
+  return out;
 }
 /* 預設（沒有擠壓、預設音符）的外框，當作縮放的基準 —— 隨機音符時框不會跟著跳 */
 const boxCache = new Map<string, { x: number; y: number; w: number; h: number }>();

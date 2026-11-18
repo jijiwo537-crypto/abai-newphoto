@@ -1,5 +1,5 @@
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
-import { scoreRandomFeedback } from '../utils/scoreFeedback';
+import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
 import { BUBBLE_KINDS, bubblePathD, bubbleRatio, isNewBubbleKind, NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio, puzzleGlyph } from '../utils/puzzleShapes';
 import { selectedKinds, paintSelectedAnimation } from '../utils/selectedAnimations';
@@ -3449,8 +3449,8 @@ export const ShapeEditorPanel: React.FC<{
           {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
           {scoreCanRandom(layer.shape) && <div className="px-2 order-1 w-full">
             <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); onChange({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) } as any); }}
-              className="w-full h-10 rounded-[8px] bg-white/[0.06] border border-white/10 text-[12px] font-bold text-white/85 active:scale-[0.98] transition-transform flex items-center justify-center gap-2">
-              <RefreshCw size={14} /> 隨機音符
+              className={SCORE_RANDOM_BTN}>
+              隨機音符
             </button>
           </div>}
           {/* 樂譜不給描邊 */}
@@ -6438,12 +6438,13 @@ const GlCanvasHost: React.FC<{ canvas: HTMLCanvasElement; style: React.CSSProper
 const classicScenePaths = new Map<string, Path2D>();
 const classicScenePathDs = new Map<string, string>();
 /** 預覽用的路徑字串（線條類畫外描邊的線頭時要用） */
-const classicScenePathD = (image: FloatingImage, ringReveal = 1) => {
-  const key = [image.shape, (image as any).scoreSeed, image.width, image.height, image.shapeTextureBaseW,
+const classicScenePathD = (image: FloatingImage, ringReveal = 1, scoreAnim?: number) => {
+  const kd = scoreKindOf(image.shape!, (image as any).scoreSeed, scoreAnim);
+  const key = [kd, image.width, image.height, image.shapeTextureBaseW,
     image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, image.shapeLineGap, ringReveal].join('|');
   let d = classicScenePathDs.get(key);
   if (d === undefined) {
-    d = shapePathD(stitchKindD(scoreKindOf(image.shape!, (image as any).scoreSeed), image.shapeLineGap), image.width, image.height,
+    d = shapePathD(stitchKindD(kd, image.shapeLineGap), image.width, image.height,
       image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height,
       ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325 * (GRID_DOT_KINDS.has(image.shape!) ? Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6)) : 1), ringReveal);
     classicScenePathDs.set(key, d);
@@ -6451,12 +6452,12 @@ const classicScenePathD = (image: FloatingImage, ringReveal = 1) => {
   }
   return d;
 };
-const classicScenePath = (image: FloatingImage, ringReveal = 1) => {
-  const key = [image.shape, (image as any).scoreSeed, image.width, image.height, image.shapeTextureBaseW,
+const classicScenePath = (image: FloatingImage, ringReveal = 1, scoreAnim?: number) => {
+  const key = [scoreKindOf(image.shape!, (image as any).scoreSeed, scoreAnim), image.width, image.height, image.shapeTextureBaseW,
     image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, image.shapeLineGap, ringReveal].join('|');
   let path = classicScenePaths.get(key);
   if (!path) {
-    path = new Path2D(classicScenePathD(image, ringReveal));
+    path = new Path2D(classicScenePathD(image, ringReveal, scoreAnim));
     classicScenePaths.set(key, path);
     if (classicScenePaths.size > 128) classicScenePaths.delete(classicScenePaths.keys().next().value!);
   }
@@ -6515,7 +6516,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       }
       if (image.shape) {
         ctx.translate(-drawW / 2, -drawH / 2);
-        const path = classicScenePath(image, motionFrame?.ringReveal ?? 1);
+        const path = classicScenePath(image, motionFrame?.ringReveal ?? 1, (motionFrame as any)?.scoreAnim);
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
         const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
@@ -6559,7 +6560,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         }
         if (outer > 0 && isLineKind) {
           // 線條類：描邊形狀跟線條本身一致（轉角、平頭線頭），見 strokeLineOutline
-          strokeLineOutline(ctx, path, classicScenePathD(image, motionFrame?.ringReveal ?? 1), image.shape, drawW, drawH, lw, outer, image.shapeStrokeColor || '#000000');
+          strokeLineOutline(ctx, path, classicScenePathD(image, motionFrame?.ringReveal ?? 1, (motionFrame as any)?.scoreAnim), image.shape, drawW, drawH, lw, outer, image.shapeStrokeColor || '#000000');
         } else if (outer > 0) {
           ctx.save();
           ctx.setLineDash([]);
@@ -6576,7 +6577,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             /* 點陣必須使用上面已帶入固定 base／固定半徑的 path。
                一般實心函式會用當前寬高重建路徑，會把點距重新平均並放大點徑。 */
             ctx.fill(path);
-          } else drawFeatheredShapeBody(ctx, scoreKindOf(image.shape!, (image as any).scoreSeed), drawW, drawH, image.shapeFeather, color, (tc, bodyPath) => {
+          } else drawFeatheredShapeBody(ctx, scoreKindOf(image.shape!, (image as any).scoreSeed, (motionFrame as any)?.scoreAnim), drawW, drawH, image.shapeFeather, color, (tc, bodyPath) => {
             if (tx === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
             if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
@@ -11505,6 +11506,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return (hash % 628) / 100 + index * .7;
   }, []);
   const frameForItem = useCallback((item: FloatingImage, index: number, time: number): ObjectMotionFrame => {
+    /* 樂譜果凍ll：整張不動（常駐照跑），進度交給樂譜自己畫：前四成畫五線譜，後面音符一顆一顆彈出來 */
+    if (item.mo?.in === 'score-seq' && scoreCanRandom(item.shape)) {
+      const cfg = timedMotionConfig(item), total = Math.max(.6, cfg.dur * 3);
+      const fr = objectMotionFrame({ ...cfg, in: 'none' } as any, time, motionPhase(item, index));
+      return { ...fr, scoreAnim: Math.max(0, Math.min(1, (time - cfg.delay) / total)) } as any;
+    }
     /* 散落圖形邊框：整個邊框不動，每一顆圖形各自跑（果凍I 同時、果凍II 從左上順時針一顆一顆） */
     if (isScatterFrame(item.shape) && !String(item.mo?.in || '').startsWith('lab-') && !String(item.mo?.idle || '').startsWith('lab-')) {
       const cfg = timedMotionConfig(item), phase = motionPhase(item, index);
@@ -19308,7 +19315,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const isSpecialLineTarget = !!target?.shape && SPECIAL_LINE_KINDS.has(target?.shape);
               const isTextTarget = target?.text !== undefined && !target?.sym;
               const baseIntro = OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce');
-              const legacyIntroKinds = isScatterFrame(target?.shape)
+              const legacyIntroKinds = scoreCanRandom(target?.shape)
+                /* 樂譜 3～6：沒有旋轉；果凍分成 l（整張一起）和 ll（先畫五線譜，再一顆一顆音符果凍出場） */
+                ? baseIntro.filter(([id]) => id !== 'spin').flatMap(([id, name]): (readonly [string, string])[] => id === 'pop' ? [['pop', '果凍l'], ['score-seq', '果凍ll']] : [[id, name]]) as unknown as typeof baseIntro
+                : isScatterFrame(target?.shape)
                 ? baseIntro.filter(([id]) => id !== 'flip').flatMap(([id, name]): (readonly [string, string])[] => id === 'pop' ? [['pop', '果凍I'], ['pop-seq', '果凍II']] : [[id, name]]) as unknown as typeof baseIntro
                 : target?.sym
                 ? SYMBOL_OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce')
@@ -19338,7 +19348,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 ? [['none','無'],['bounce','彈跳'],['fade','淡入l'],['lab-T-E03','淡入ll'],
                    ['rise','升起'],['drop','落下'],['pop','果凍l'],['lab-T-E07','果凍ll']] as const
                 : [...(target?.sym ? legacyIntroKinds.filter(([id]) => !['spin','flip','fade'].includes(id)) : legacyIntroKinds),
-                   ...(labTarget ? selectedKinds(labTarget, 'entry').map(x => [x.id,x.name] as const) : [])];
+                   ...(labTarget ? selectedKinds(labTarget, 'entry').filter(x => !(scoreCanRandom(target?.shape) && x.name === '旋轉')).map(x => [x.id,x.name] as const) : [])];
               const idleKinds: readonly (readonly [string, string])[] = isTextTarget
                 ? [...legacyIdleKinds.filter(([id]) => id === 'none' || id === 'float'),
                    ['grid-wave','波浪l'] as const, ['lab-T-L15','波浪ll'] as const,
