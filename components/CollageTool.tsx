@@ -36,7 +36,7 @@ import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
 import { createPortal, flushSync } from 'react-dom';
 import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
-import { isScoreKind } from '../utils/scoreShapes';
+import { isScoreKind, scoreKindOf } from '../utils/scoreShapes';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
@@ -8215,7 +8215,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else {
         const shapeP0 = shapePathBox(
-          stitchKindD(o.kind, (o as any).lineGap), bw, bh,
+          stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed), (o as any).lineGap), bw, bh,
           ((o as any).textureBaseW || o.w) * s,
           ((o as any).textureBaseH || o.h) * s,
           (((o as any).lineBase || Math.max(o.w, o.h)) * s / 160) * 2.325
@@ -8228,7 +8228,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             ) * (GRID_DOT_KINDS.has(o.kind) ? Math.max(1, Math.min(3, (o.lineW ?? 6) / 6)) : 1),
           f?.ringReveal ?? 1,
         );
-        const shapeP = drawTip === undefined ? shapeP0 : new Path2D(revealPathD(shapePathD(stitchKindD(o.kind, (o as any).lineGap), bw, bh), drawTip));
+        const shapeP = drawTip === undefined ? shapeP0 : new Path2D(revealPathD(shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed), (o as any).lineGap), bw, bh), drawTip));
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
 
@@ -8298,7 +8298,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           for (const r of shapeGlowBlurs(bw, bh)) {
             ctx.shadowBlur = r * gAmt;
             if (solid && COMPOSITE_SHAPE_KINDS.has(o.kind)) {
-              drawFeatheredShapeBody(ctx, o.kind, bw, bh, o.shapeFeather, col,
+              drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed), bw, bh, o.shapeFeather, col,
                 undefined, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth,
                   baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s });
             } else { paintShapePath(!!solid); if (!solid) fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s); }
@@ -8333,8 +8333,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (TRACK_SQUARE_KINDS.has(o.kind as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
           if (!strokeCompositeShape(ctx, o.kind, bw, bh, o.innerSize)) paintShapePath(false);
           if (lineOutline) {
-            const d = drawTip === undefined ? shapePathD(stitchKindD(o.kind, (o as any).lineGap), bw, bh)
-              : revealPathD(shapePathD(stitchKindD(o.kind, (o as any).lineGap), bw, bh), drawTip);
+            const d = drawTip === undefined ? shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed), (o as any).lineGap), bw, bh)
+              : revealPathD(shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed), (o as any).lineGap), bw, bh), drawTip);
             const half = lw / 2 + sw;
             ctx.fillStyle = o.strokeColor || '#000000';
             for (const e of lineEndsOf(d)) {
@@ -8354,7 +8354,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (GRID_DOT_KINDS.has(o.kind)) {
             /* 直接畫已帶固定點距與點徑的 shapeP，不能再用當前框重建一次。 */
             paintShapePath(true);
-          } else drawFeatheredShapeBody(ctx, o.kind, bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
+          } else drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed), bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
             if (texOf(o) === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
@@ -13016,6 +13016,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {isGlint && <div className="px-2 order-1 w-full">
                             {shapeSlider('發光', Math.round(sel.glintGlow ?? glintDefaultGlow(sel.hole)), 0, 80,
                               (v: number) => patch({ glintGlow: v }), shapeLive)}
+                          </div>}
+                          {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
+                          {isScoreKind(sel.kind) && <div className="px-2 order-1 w-full">
+                            <button onClick={() => patch({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) })}
+                              className="w-full h-10 rounded-[8px] bg-white/[0.06] border border-white/10 text-[12px] font-bold text-white/85 active:scale-[0.98] transition-transform flex items-center justify-center gap-2">
+                              <RefreshCw size={14} /> 隨機音符
+                            </button>
                           </div>}
                           {/* 樂譜不給描邊 */}
                           {!isDoubleContour && !isGrid && !noDecor && !isBlurShape(sel.kind) && !isScoreKind(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">

@@ -1,4 +1,4 @@
-import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio } from '../utils/scoreShapes';
+import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf } from '../utils/scoreShapes';
 import { BUBBLE_KINDS, bubblePathD, bubbleRatio, isNewBubbleKind, NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio, puzzleGlyph } from '../utils/puzzleShapes';
 import { selectedKinds, paintSelectedAnimation } from '../utils/selectedAnimations';
@@ -900,7 +900,7 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
   // 星芒的芒尖、柔光是淡淡散開的，量墨水會把框撐得比看到的大；選取框就用它自己的框
   if (o.kind === 'hole' && String(o.hole || '').startsWith('sb-')) return { x: 0, y: 0, w: o.w, h: o.h };
   const long = Math.max(o.w, o.h), base = (o.lineBase || long);
-  const key = JSON.stringify([o.kind, o.hole, o.text, o.hole === 'random-num' ? o.id : '', o.miterLimit, !!o.filled, Math.round(o.w / o.h * 1e4), o.lineW ?? 6, Math.round(base / long * 1e4),
+  const key = JSON.stringify([o.kind, o.scoreSeed, o.hole, o.text, o.hole === 'random-num' ? o.id : '', o.miterLimit, !!o.filled, Math.round(o.w / o.h * 1e4), o.lineW ?? 6, Math.round(base / long * 1e4),
     Math.round((o.textureBaseW || o.w) / o.w * 1e3), Math.round((o.textureBaseH || o.h) / o.h * 1e3), o.strokeW || 0, o.innerSize, o.outlineWidth]);
   /* 快取存的是「長邊＝1」的比例：key 只看長寬比，同比例、不同大小的圖形共用同一份，
      取出來再乘回這顆的長邊（直接存物件座標的話，換一顆大小不同的就套到別人的框）。 */
@@ -937,7 +937,7 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
         g.translate(bw / 2, bh / 2);
         drawHoleShape(g, { ...o, glow: 0, dots: false, tex: 'none', lineUnit: unit, textureBaseW: (o.textureBaseW || o.w) * k, textureBaseH: (o.textureBaseH || o.h) * k }, bw, bh, shapeGlowBlurs(bw, bh).map(() => 0));
       } else {
-        const path = new Path2D(shapePathD(o.kind, bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k));
+        const path = new Path2D(shapePathD(scoreKindOf(o.kind, o.scoreSeed), bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k));
         if (sw > 0) {
           g.save(); g.lineJoin = 'round'; g.miterLimit = 2; g.lineWidth = solid ? sw * 2 : lw + sw * 2;
           if (SPECIAL_LINE_KINDS.has(o.kind)) g.lineCap = 'square';
@@ -946,7 +946,7 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
           if (!strokeCompositeShape(g, o.kind, bw, bh, o.innerSize)) g.stroke(path);
           g.restore();
         }
-        if (solid) drawFeatheredShapeBody(g, o.kind, bw, bh, undefined, '#fff', undefined, '#fff', { innerSize: o.innerSize, outlineWidth: o.outlineWidth, baseW: (o.textureBaseW || o.w) * k, baseH: (o.textureBaseH || o.h) * k });
+        if (solid) drawFeatheredShapeBody(g, scoreKindOf(o.kind, o.scoreSeed), bw, bh, undefined, '#fff', undefined, '#fff', { innerSize: o.innerSize, outlineWidth: o.outlineWidth, baseW: (o.textureBaseW || o.w) * k, baseH: (o.textureBaseH || o.h) * k });
         else strokeOutlineBody(g, path, o.kind, bw, bh, (o.textureBaseW || o.w) * k, (o.textureBaseH || o.h) * k, { w: sw, color: '#fff' });
       }
       const { data } = g.getImageData(0, 0, cv.width, cv.height);
@@ -2341,6 +2341,9 @@ export const GridShapePicker = React.memo(({ onPick }: { onPick: (it: any) => vo
 ));
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const maskId = React.useId().replace(/:/g, '');
+  // 樂譜：寬寬的，照比例畫成按鈕寬度的大約八成（比其他圖示大）
+  if (isScoreKind(item.kind)) { const W = 44, H = W * scoreRatio(item.kind);
+    return <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden style={{ overflow: 'visible' }}><path d={scorePathD(item.kind, W, H)} fill="currentColor" /></svg>; }
   // 拼圖：中間的方形每顆一樣大（不照整體外框縮放，凸比較多的才不會看起來比較小）
   if (isPuzzleKind(item.kind)) { const g = puzzleGlyph(item.kind, 24, 15);
     return <svg width={size} height={size} viewBox="0 0 24 24" style={{ overflow: 'visible' }} aria-hidden><path d={g.d} transform={`translate(${g.x} ${g.y})`} fill="currentColor" /></svg>; }
@@ -3441,6 +3444,13 @@ export const ShapeEditorPanel: React.FC<{
           {isGlint && <div className="px-2 order-1 w-full">
             {slider('發光', Math.round(layer.shapeGlintGlow ?? glintDefaultGlow(layer.holeType || '')), 0, 80,
               v => onChange({ shapeGlintGlow: Math.round(v) }))}
+          </div>}
+          {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
+          {isScoreKind(layer.shape) && <div className="px-2 order-1 w-full">
+            <button onClick={() => onChange({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) } as any)}
+              className="w-full h-10 rounded-[8px] bg-white/[0.06] border border-white/10 text-[12px] font-bold text-white/85 active:scale-[0.98] transition-transform flex items-center justify-center">
+              隨機音符
+            </button>
           </div>}
           {/* 樂譜不給描邊 */}
           {!isDoubleContour && !isGridShape && !noDecor && !isBlurShape(layer.shape) && !isScoreKind(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">
@@ -6426,11 +6436,11 @@ const classicScenePaths = new Map<string, Path2D>();
 const classicScenePathDs = new Map<string, string>();
 /** 預覽用的路徑字串（線條類畫外描邊的線頭時要用） */
 const classicScenePathD = (image: FloatingImage, ringReveal = 1) => {
-  const key = [image.shape, image.width, image.height, image.shapeTextureBaseW,
+  const key = [image.shape, (image as any).scoreSeed, image.width, image.height, image.shapeTextureBaseW,
     image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, image.shapeLineGap, ringReveal].join('|');
   let d = classicScenePathDs.get(key);
   if (d === undefined) {
-    d = shapePathD(stitchKindD(image.shape!, image.shapeLineGap), image.width, image.height,
+    d = shapePathD(stitchKindD(scoreKindOf(image.shape!, (image as any).scoreSeed), image.shapeLineGap), image.width, image.height,
       image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height,
       ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325 * (GRID_DOT_KINDS.has(image.shape!) ? Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6)) : 1), ringReveal);
     classicScenePathDs.set(key, d);
@@ -6439,7 +6449,7 @@ const classicScenePathD = (image: FloatingImage, ringReveal = 1) => {
   return d;
 };
 const classicScenePath = (image: FloatingImage, ringReveal = 1) => {
-  const key = [image.shape, image.width, image.height, image.shapeTextureBaseW,
+  const key = [image.shape, (image as any).scoreSeed, image.width, image.height, image.shapeTextureBaseW,
     image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, image.shapeLineGap, ringReveal].join('|');
   let path = classicScenePaths.get(key);
   if (!path) {
@@ -6563,7 +6573,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             /* 點陣必須使用上面已帶入固定 base／固定半徑的 path。
                一般實心函式會用當前寬高重建路徑，會把點距重新平均並放大點徑。 */
             ctx.fill(path);
-          } else drawFeatheredShapeBody(ctx, image.shape, drawW, drawH, image.shapeFeather, color, (tc, bodyPath) => {
+          } else drawFeatheredShapeBody(ctx, scoreKindOf(image.shape!, (image as any).scoreSeed), drawW, drawH, image.shapeFeather, color, (tc, bodyPath) => {
             if (tx === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
             if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
@@ -8550,7 +8560,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
          中心離墨水半根線寬再加 0.175 —— 內緣剛好碰到圖形，連邊緣那排抗鋸齒的
          半透明像素也不壓到。 */
       const hugInk = image.shape && !image.sym ? measureShapeInk({
-        kind: image.shape, hole: image.holeType, id: image.id, filled: image.shapeFilled,
+        kind: image.shape, scoreSeed: (image as any).scoreSeed, hole: image.holeType, id: image.id, filled: image.shapeFilled,
         w: image.width, h: image.height, lineW: image.shapeLineW,
         lineBase: image.shape === 'hole' ? undefined : image.shapeLineBase,
         strokeW: image.shapeStrokeW, innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth,
@@ -9610,7 +9620,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     let fx0 = 0, fx1 = 1, fy0 = 0, fy1 = 1;
     if (item?.shape && !item.sym) {
       const ink = measureShapeInk({
-        kind: item.shape, hole: item.holeType, id: item.id, filled: item.shapeFilled,
+        kind: item.shape, scoreSeed: (item as any).scoreSeed, hole: item.holeType, id: item.id, filled: item.shapeFilled,
         w: item.width, h: item.height, lineW: item.shapeLineW,
         lineBase: item.shape === 'hole' ? undefined : item.shapeLineBase,
         strokeW: item.shapeStrokeW, innerSize: item.shapeInnerSize, outlineWidth: item.shapeOutlineWidth,
@@ -15738,7 +15748,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return;
     }
     const pathD = shapePathD(
-      stitchKindD(fImg.shape!, fImg.shapeLineGap), fw, fh,
+      stitchKindD(scoreKindOf(fImg.shape!, (fImg as any).scoreSeed), fImg.shapeLineGap), fw, fh,
       (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
       (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
       ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor / 160) * 2.325
@@ -15826,7 +15836,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
     };
     if (solid) {
-      drawFeatheredShapeBody(ctx, fImg.shape!, fw, fh, fImg.shapeFeather, color, paintShapeTexture,
+      drawFeatheredShapeBody(ctx, scoreKindOf(fImg.shape!, (fImg as any).scoreSeed), fw, fh, fImg.shapeFeather, color, paintShapeTexture,
         fImg.shapeInnerColor || '#FFFFFF', { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth,
           baseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, baseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor });
     } else {
