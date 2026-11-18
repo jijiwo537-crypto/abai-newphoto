@@ -1,3 +1,4 @@
+import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio } from '../utils/scoreShapes';
 import { BUBBLE_KINDS, bubblePathD, bubbleRatio, isNewBubbleKind, NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio, puzzleGlyph } from '../utils/puzzleShapes';
 import { selectedKinds, paintSelectedAnimation } from '../utils/selectedAnimations';
@@ -1028,6 +1029,7 @@ export const shapePathD = (
   if (kind.startsWith('blur-')) return blurShapeBaseD(kind, w, h, shapePathD);
   if (isPuzzleKind(kind)) return puzzlePathD(kind, w, h);
   if (isNewBubbleKind(kind)) return bubblePathD(kind, w, h, gridBaseW, gridBaseH);
+  if (isScoreKind(kind)) return scorePathD(kind, w, h);
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
      因此縮放只會把整張網格等比放大；只有變形才會增加重複單位。 */
@@ -1683,7 +1685,8 @@ export const SHAPE_DEFAULT_LINEW = (kind: string) =>
   SPECIAL_LINE_KINDS.has(kind) ? lineWFromUi(Math.round(lineWToUi(SHAPE_BASE_LINEW(kind)) / 5) * 5) : SHAPE_BASE_LINEW(kind);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
 export const SHAPE_DEFAULT_RATIO = (kind: string) =>
-  WAVE_LIKE_KINDS.has(kind) ? 0.576 : (kind === 'line' ? 0.24 : 0.15);
+  // 樂譜：細節很多，新增時要大一點才看得清楚（短邊的 60%）
+  isScoreKind(kind) ? 0.6 : WAVE_LIKE_KINDS.has(kind) ? 0.576 : (kind === 'line' ? 0.24 : 0.15);
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 /** 雙色方形的外層略深，白色內圖案在新增後與小按鈕上都能一眼辨認。 */
@@ -1697,7 +1700,7 @@ const STRETCH_SOLID_KINDS = new Set([
   'pentagon', 'hexagon', 'star', 'star-rounded', 'heart', 'heart-classic', 'heart-icon', 'hexstar',
   'square-star-dual', 'square-heart-dual', 'square-star-cutout', 'square-heart-cutout',
   'circle-star-dual', 'circle-heart-dual', 'circle-star-cutout', 'circle-heart-cutout',
-  ...Object.keys(PUZZLE_PIECES), ...BUBBLE_KINDS,
+  ...Object.keys(PUZZLE_PIECES), ...BUBBLE_KINDS, ...SCORE_KINDS,
   'heart-double', 'star-double', 'arrow', 'arrow-double', 'sparkle4', 'spinner',
   'blur-star', 'blur-star-rounded', 'blur-heart', 'blur-circle', 'blur-cross-star', 'blur-square', 'blur-sparkle4',
 ]);
@@ -1868,6 +1871,7 @@ export const shapePickerSections = () => {
     mask: [...MASK_SHAPE_ITEMS],
     puzzle: PUZZLE_ITEMS,
     bubble: BUBBLE_ITEMS,
+    score: SCORE_ITEMS,
   };
   return SHAPE_SECTIONS.map(([key, label]) => [label, orderBy(pools[key], SHAPE_ORDER[key])] as const);
 };
@@ -1875,6 +1879,8 @@ export const shapePickerSections = () => {
 export const PUZZLE_ITEMS: ShapeItem[] = Object.keys(PUZZLE_PIECES).map(k => ({ id: `${k}-f`, kind: k, filled: true, ratio: puzzleRatio(k) }));
 /** 「對話框」分類（只有實心、可換顏色），形狀在 utils/bubbleShapes.ts */
 export const BUBBLE_ITEMS: ShapeItem[] = BUBBLE_KINDS.map(k => ({ id: `${k}-f`, kind: k, filled: true, ratio: bubbleRatio(k) }));
+/** 「樂譜」分類（只有實心、可換顏色），形狀在 utils/scoreShapes.ts */
+export const SCORE_ITEMS: ShapeItem[] = SCORE_KINDS.map(k => ({ id: `${k}-f`, kind: k, filled: true, ratio: scoreRatio(k) }));
 export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   // 實心
   { id: 'circle-f', kind: 'circle', filled: true },
@@ -1995,7 +2001,7 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   cloud: [0, 0, 1, 1],
   bubble: [0, 0, 1, 1],
   'bubble-mirror': [0, 0, 1, 1],
-  ...Object.fromEntries(BUBBLE_KINDS.map(k => [k, [0, 0, 1, 1]])),
+  ...Object.fromEntries([...BUBBLE_KINDS, ...SCORE_KINDS].map(k => [k, [0, 0, 1, 1]])),
   star8: [0, 0, 1, 1],
   'cloud-oval': [0, 0, 1, 1],
   // 四個角的小方塊各凸出框外半顆（框短邊的 5%）

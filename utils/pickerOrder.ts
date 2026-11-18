@@ -29,6 +29,7 @@ export const SHAPE_SECTIONS = [
   ['frame', '邊框'],
   ['puzzle', '拼圖'],
   ['bubble', '對話框'],
+  ['score', '樂譜'],
 ] as const;
 export type ShapeSection = typeof SHAPE_SECTIONS[number][0];
 
@@ -49,6 +50,7 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'diamond-n-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o', 'hexstar-o', 'star8-o',
     'rounded-o', 'track-select-o', 'track-select8-o', 'track-cross-o', 'arrow-o', 'arrow-double-o',
   ],
+  score: ['score-glow-f', 'score-wave-f', 'score-line-f', 'score-arch-f', 'score-float-f', 'score-ribbon-f'],
   bubble: ['bubble-v-f', 'bubble-f', 'bubble-pill-f', 'bubble-rect-f', 'bubble-think-f', 'bubble-cloud-f'],
   puzzle: ['puzzle-2adj-f', 'puzzle-1out-f', 'puzzle-3out-f', 'puzzle-standard-f', 'puzzle-edge-f', 'puzzle-corner-f'],
   frame: ['frame-polaroid', 'mist-frame', 'mist-frame-tb', 'frame-scatter', 'frame-scatter-tb', 'frame-speed'],
