@@ -6784,6 +6784,8 @@ export const makeShapeItem = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem
       ...(frame ? { shapeFrameRange: frameRangeDefault(it.kind), shapeFrameFeather: MIST_FEATHER_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT,
         // 拍立得的紋理預設：大小 10、間距 15（滑桿上的數字）
         shapeDotSize: pola ? mistSizeFromUi(10) : MIST_TEX_SIZE_DEFAULT, shapeDotGap: pola ? mistGapFromUi(15) : MIST_TEX_GAP_DEFAULT } : {}),
+      // 樂譜 3～6：預設進場果凍ll、常駐波浪
+      ...(scoreCanRandom(it.kind) ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, in: 'score-seq', dur: motionDurationFromUi(50), idle: 'grid-wave', ...idleDefaults('grid-wave', { shape: true }) } } : {}),
       // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
       ...(it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-')
         ? (() => { const idle = glintHasRing((it as any).hole) ? 'spin' : 'breathe';
@@ -7451,7 +7453,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       const phase = motionFrame?.gridWave ?? 0;
       // GPU 逐像素正弦位移，沒有直條切片（utils/waveWarp）
       const warped = waveWarp(scratch, 0, 0, W, H, amp, 1 / Math.max(1, W), -phase, shownW);
-      if (warped) ctx.drawImage(warped.canvas, 0, -warped.padY);
+      if (warped) ctx.drawImage(warped.canvas, 0, 0, warped.w, warped.h, 0, -warped.padY, warped.w, warped.h);
     };
     if (img.complete && img.naturalWidth) draw();
     else img.addEventListener('load', draw, { once: true });
@@ -11599,7 +11601,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const reveal = f.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, f.gridReveal));
     const shownW = W * reveal, A = amp * dpr, phase = f.gridWave!;
     const warped = waveWarp(scratch, 0, 0, W, H, A, 1 / W, -phase, shownW);
-    if (warped) ctx.drawImage(warped.canvas, 0, -warped.padY);
+    if (warped) ctx.drawImage(warped.canvas, 0, 0, warped.w, warped.h, 0, -warped.padY, warped.w, warped.h);
     el.style.visibility = 'hidden';
   }, [layoutMotionCfg]);
   /** 選中的物件有動畫時，選取框（data-chrome-motion）跟著同一格動；工具列藥丸不在這一層，維持不動。
@@ -15993,7 +15995,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const reveal = frame.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, frame.gridReveal));
         // GPU 逐像素正弦位移，沒有直條切片（utils/waveWarp）
         const warped = waveWarp(off, 0, 0, W, H, amplitude, 1.1 / W, -frame.gridWave, W * reveal);
-        if (warped) ctx.drawImage(warped.canvas, x0, y0 - warped.padY);
+        if (warped) ctx.drawImage(warped.canvas, 0, 0, warped.w, warped.h, x0, y0 - warped.padY, warped.w, warped.h);
         continue;
       }
       /* 縮放中的文字／圖形：發光、描邊是 canvas shadow，不吃座標縮放，Safari 遇到
@@ -16657,7 +16659,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 try {
                   c.globalAlpha *= Math.max(0, Math.min(1, f.a));
                   const warped = waveWarp(off, 0, 0, W, H, amplitude, 1.1 / W, -f.gridWave, W * reveal);
-                  if (warped) c.drawImage(warped.canvas, x0, y0 - warped.padY);
+                  if (warped) c.drawImage(warped.canvas, 0, 0, warped.w, warped.h, x0, y0 - warped.padY, warped.w, warped.h);
                 } finally { c.restore(); }
                 return;
               }

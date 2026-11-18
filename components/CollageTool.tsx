@@ -1,7 +1,7 @@
 import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
 import { BusyLayer } from './BusyLayer';
-import { waveWarp, revealPathD } from '../utils/waveWarp';
+import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
@@ -628,6 +628,9 @@ const creativeShapeColorFor = (kind: string) => isBackdropMask(kind) ? shapeDefa
     記憶體上限：整個 App 最多留 8 張（每張最多 1024 邊長）（淘汰的立刻把畫布縮成 0 釋放）；
     不能重用的路徑（線條「畫出來」動畫每格都是新路徑）不快取，共用一張暫存畫布。 */
 const lowResGlowCache = new Map<string, { c: HTMLCanvasElement; pad: number; kk: number }>();
+/* 波浪物件的來源圖（只有物件那一塊）：內容沒變就不重畫、也不重新上傳到 GPU */
+const waveSrcCache = new Map<string, { model: any; sig: string; c: HTMLCanvasElement; ver: number }>();
+let waveSrcVer = 0;
 const lowResGlowPathIds = new WeakMap<Path2D, number>();
 let lowResGlowSerial = 0;
 let lowResGlowScratch: HTMLCanvasElement | null = null;
@@ -3990,6 +3993,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ...(SPECIAL_LINE_KINDS.has(it.kind)
           ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'draw' }) }
           : null),
+        // 樂譜 3～6：預設進場果凍ll、常駐波浪
+        ...(scoreCanRandom(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'score-seq', idle: 'grid-wave' }) } : null),
       };
     }
     return null;
@@ -7959,6 +7964,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       return { canvas: waveObjectCanvas, ctx: waveObjectCtx };
     };
     let maskBatch:BackdropMaskLayer[]|null=null;
+    /* 同一批連續的波浪物件：先記下來，遇到別的物件或畫完這一批時一次在 GPU 上合成、貼回畫面一次
+       （每個物件各自從 GPU 貼回來都要等 GPU 做完，好幾個一起波浪就會掉幀） */
+    let waveJobs:WaveJob[]|null=null;
+    const flushWave=()=>{ if(waveJobs&&waveJobs.length){ const jobs=waveJobs; waveJobs=[]; drawWaveBatch(ctx,jobs); } };
     const drawObject = (o:any) => {
       /* 播動態時，每個物件有自己的一格（出場 ＋ 常駐）。
          靜態時 f 是 null，這一段完全不影響畫面。 */
@@ -7971,6 +7980,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         && (f.waveMix === undefined || f.waveMix > 1e-5)
         && !(o.type === 'shape' && (GRID_SHAPE_KINDS.has(o.kind)||isBackdropMask(o.kind)));
       const objectAlpha = ((o.opacity ?? ((o.alpha ?? 1) * 100)) / 100) * (f ? f.a : 1);
+      // 不是波浪的物件要畫之前，先把排隊中的波浪物件畫掉（前後順序不變）
+      if (!internalWave) flushWave();
       const dimPhoto=isMain&&swapHoverRef.current?.kind==='object'&&swapHoverRef.current.id===o.id;
       /* 半透明圖形必須先以不透明狀態合成完整本體、紋理、描邊與三層光，
          最後整張只套一次 alpha。若直接讓每一道筆畫各自半透明，重疊處會
@@ -8828,7 +8839,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         paintObject(ctx);
         return;
       }
-      paintObject(layer.ctx, true);
+      const waving = !!f && f.gridWave !== undefined;
+      if (!waving) paintObject(layer.ctx, true);
       if (!f || f.gridWave === undefined) {
         ctx.save();
         ctx.globalAlpha = objectAlpha;
@@ -8857,20 +8869,48 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.globalAlpha = objectAlpha;
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
+      /* 波浪每一格只有「位移」在變，物件本身長得一樣：只有內容真的變了才重畫，
+         而且只把物件那一塊（不是整張畫布大小的圖層）存起來、交給 GPU。
+         沒變的時候直接用 GPU 上那一張 —— 好幾個樂譜同時波浪也不會每格重畫＋重新上傳。 */
+      const ww = x1 - x0, wh = Math.max(1, y1 - y0);
+      const sig = [s, vp.x, vp.y, fxTick, f.k, f.dx, f.dy, f.rot, f.fx, (f as any).scoreAnim, f.draw, f.seq, f.burst,
+        f.ringReveal, f.rayK, animRef.current?.glowObj ? animRef.current.glowObj(o) : 1, x0, y0, ww, wh, isMain ? 1 : 0].join('|');
+      const wkey = o.id + (isMain ? '' : '#out');
+      let wsrc = waveSrcCache.get(wkey);
+      if (!wsrc || wsrc.model !== o || wsrc.sig !== sig) {
+        paintObject(layer.ctx, true);
+        const c = wsrc?.c || document.createElement('canvas');
+        if (c.width !== ww) c.width = ww;
+        if (c.height !== wh) c.height = wh;
+        const g = c.getContext('2d')!;
+        g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, ww, wh);
+        g.drawImage(layer.canvas, x0, y0, ww, wh, 0, 0, ww, wh);
+        wsrc = { model: o, sig, c, ver: ++waveSrcVer };
+        waveSrcCache.delete(wkey); waveSrcCache.set(wkey, wsrc);
+        while (waveSrcCache.size > 24) { const [k, v] = waveSrcCache.entries().next().value!; waveSrcCache.delete(k); v.c.width = v.c.height = 0; }
+      }
       /* GPU 逐像素正弦位移（utils/waveWarp）：沒有任何直條切片，
          模糊圖形、發光這類半透明的地方也看不到接縫。 */
-      const warped = waveWarp(layer.canvas, x0, y0, x1 - x0, Math.max(1, y1 - y0),
-        amp, 1 / objectSpan, (x0 - objectLeft) / objectSpan - f.gridWave);
-      if (warped) ctx.drawImage(warped.canvas, x0, y0 - warped.padY);
+      if (waveJobs) {
+        waveJobs.push({ src: wsrc.c, key: `${wkey}:${wsrc.ver}`, amp, freq: 1 / objectSpan, off: (x0 - objectLeft) / objectSpan - f.gridWave, dx: x0, dy: y0, alpha: objectAlpha });
+        ctx.restore();
+        return;
+      }
+      const warped = waveWarp(wsrc.c, 0, 0, ww, wh,
+        amp, 1 / objectSpan, (x0 - objectLeft) / objectSpan - f.gridWave, Infinity, `${wkey}:${wsrc.ver}`);
+      if (warped) ctx.drawImage(warped.canvas, 0, 0, warped.w, warped.h, x0, y0 - warped.padY, warped.w, warped.h);
       ctx.restore();
     };
     const drawObjects=(list:any[])=>{
+      waveJobs=[];
+      try {
       for(let i=0;i<list.length;){
         let end=i;while(end<list.length&&list[end].type==='shape'&&isBackdropMask(list[end].kind)&&list[end].kind!=='mask-frost-feather')end++;
         if(isMain&&!animRef.current&&(end-i>1||end>i&&directMaskPhotos?.length)){
           maskBatch=[];try{for(let j=i;j<end;j++)drawObject(list[j]);drawBackdropMaskBatch(ctx,maskBatch,directMaskPhotos?.length?directMaskPhotos:undefined,{w:vp.w+1,h:vp.h+1});}finally{maskBatch=null;}i=end;
         }else{drawObject(list[i]);i++;}
       }
+      } finally { flushWave(); waveJobs=null; }
     };
 
     /* 標了 below 的物件插在「底圖鋪好之後、所有圖案之前」——
@@ -12713,6 +12753,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     y: frame && !pola ? offs2.iy + offs2.ih / 2 - h / 2 : offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
                     ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'draw' }) } : {}),
+                    // 樂譜 3～6：預設進場果凍ll、常駐波浪
+                    ...(scoreCanRandom(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'score-seq', idle: 'grid-wave' }) } : {}),
                     // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
                     ...(it.kind === 'hole' && String(it.hole || '').startsWith('sb-')
                       ? (() => { const idle = glintHasRing(it.hole) ? 'spin' : 'breathe';

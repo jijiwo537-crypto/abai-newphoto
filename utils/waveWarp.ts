@@ -8,7 +8,8 @@
    不存在任何切片。WebGL 用不了的時候退回「每 1 個裝置像素一條、整數對齊、互不
    重疊」的直條，一樣沒有接縫。 */
 
-export type WaveWarpResult = { canvas: HTMLCanvasElement; padY: number };
+/** 結果在 canvas 左上角那一塊 w×h（GPU 畫布只會長大不會縮，所以可能比 w×h 大）：請用 drawImage(canvas, 0, 0, w, h, …) */
+export type WaveWarpResult = { canvas: HTMLCanvasElement; padY: number; w: number; h: number };
 
 type GLState = {
   canvas: HTMLCanvasElement;
@@ -18,6 +19,9 @@ type GLState = {
 };
 
 let glState: GLState | null | undefined;
+/* 來源沒變（同一個 key）就不用再上傳一次貼圖：波浪每一格只有位移在變，
+   樂譜、圖片這類大塊來源每格重新上傳是最花時間的地方（好幾個一起波浪時會掉幀）。 */
+const texCache = new Map<string, WebGLTexture>();
 /* 拿不到 WebGL（iPhone 同時開太多 GPU 畫布時，系統會收回舊的）不代表之後都拿不到：
    隔一段時間再試，不要從此一直走退路。 */
 let glRetryAt = 0;
@@ -30,7 +34,7 @@ uniform sampler2D t;
 uniform vec2 srcSize;   // 整張來源的像素大小
 uniform vec4 region;    // 來源裡要用的區塊 x, y, w, h
 uniform vec2 outSize;   // 輸出像素大小
-uniform float padY, amp, freq, off, revealW;
+uniform float padY, amp, freq, off, revealW, alpha;
 void main(){
   float x = v.x * outSize.x;
   float y = (1. - v.y) * outSize.y;
@@ -40,7 +44,7 @@ void main(){
   if (s.y < 0. || s.y > region.w || s.x < 0. || s.x > region.z) { gl_FragColor = vec4(0.); return; }
   // 邊緣半個像素內往內夾，避免讀到區塊外的像素
   vec2 sp = clamp(s, vec2(.5), region.zw - .5) + region.xy;
-  gl_FragColor = texture2D(t, sp / srcSize);
+  gl_FragColor = texture2D(t, sp / srcSize) * alpha;
 }`;
 
 const initGL = (): GLState | null => {
@@ -73,9 +77,13 @@ const initGL = (): GLState | null => {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
     const u: GLState['u'] = {};
-    for (const n of ['t', 'srcSize', 'region', 'outSize', 'padY', 'amp', 'freq', 'off', 'revealW']) u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['t', 'srcSize', 'region', 'outSize', 'padY', 'amp', 'freq', 'off', 'revealW', 'alpha']) u[n] = gl.getUniformLocation(prog, n);
     gl.uniform1i(u.t, 0);
-    canvas.addEventListener('webglcontextlost', () => { glState = undefined; });
+    gl.uniform1f(u.alpha, 1);
+    // 預乘 alpha 的疊加（批次畫好幾個物件時，後畫的蓋在先畫的上面）
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    canvas.addEventListener('webglcontextlost', () => { glState = undefined; texCache.clear(); });
+    texCache.clear();
     glMaxTex = Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 4096;
     return { canvas, gl, tex, u };
   } catch { return null; }
@@ -92,6 +100,8 @@ export function waveWarp(
   src: HTMLCanvasElement | OffscreenCanvas | ImageBitmap,
   sx: number, sy: number, sw: number, sh: number,
   amp: number, freq: number, off: number, revealW = Infinity,
+  /** 來源內容的識別：同一個 key 代表跟上一次上傳的內容一模一樣，可以直接用已經在 GPU 上的那張 */
+  cacheKey?: string,
 ): WaveWarpResult | null {
   sx = Math.round(sx); sy = Math.round(sy);
   const W = Math.max(1, Math.round(sw)), Hs = Math.max(1, Math.round(sh));
@@ -107,11 +117,30 @@ export function waveWarp(
   const fits = Math.max(srcW, srcH, W, H) <= glMaxTex && !(globalThis as any).__waveCPU;
   if (st && fits && !st.gl.isContextLost()) {
     const { gl, canvas, u } = st;
-    if (canvas.width !== W) canvas.width = W;
-    if (canvas.height !== H) canvas.height = H;
-    gl.viewport(0, 0, W, H);
-    gl.bindTexture(gl.TEXTURE_2D, st.tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src as any);
+    /* 畫布只長大不縮小：每次大小不同就重設 width／height 會重新配置整塊 GPU 緩衝 ——
+       好幾個大小不一的物件一起波浪時，每一格都在重新配置，非常慢。
+       結果畫在左上角那一塊（WebGL 的原點在左下，所以 viewport 從底下往上算）。 */
+    if (canvas.width < W) canvas.width = Math.ceil(W / 256) * 256;
+    if (canvas.height < H) canvas.height = Math.ceil(H / 256) * 256;
+    gl.viewport(0, canvas.height - H, W, H);
+    let tex = cacheKey ? texCache.get(cacheKey) : undefined;
+    if (tex) {
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      texCache.delete(cacheKey!); texCache.set(cacheKey!, tex);   // 最近用過的排到後面
+    } else {
+      if (cacheKey) {
+        tex = gl.createTexture()!;
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        texCache.set(cacheKey, tex);
+        // 最多留 16 張，用最久沒用的先丟
+        while (texCache.size > 16) { const [k, old] = texCache.entries().next().value!; texCache.delete(k); gl.deleteTexture(old); }
+      } else gl.bindTexture(gl.TEXTURE_2D, st.tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src as any);
+    }
     gl.uniform2f(u.srcSize, (src as any).width, (src as any).height);
     gl.uniform4f(u.region, sx, sy, W, Hs);
     gl.uniform2f(u.outSize, W, H);
@@ -120,9 +149,10 @@ export function waveWarp(
     gl.uniform1f(u.freq, freq);
     gl.uniform1f(u.off, off);
     gl.uniform1f(u.revealW, Math.min(revealW, 1e9));
+    gl.uniform1f(u.alpha, 1);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    if (gl.getError() === gl.NO_ERROR && !gl.isContextLost()) return { canvas, padY };
+    if (gl.getError() === gl.NO_ERROR && !gl.isContextLost()) return { canvas, padY, w: W, h: H };
     // GPU 這一次沒畫成（記憶體不足、內容遺失…）：同一格改用下面的精確退路，不交出空白
   }
   /* 退路：在 CPU 上逐像素做跟 GPU 完全一樣的取樣（每個輸出像素往上下兩個來源像素按比例混合、預乘 alpha）。
@@ -168,7 +198,7 @@ export function waveWarp(
     }
   }
   g.putImageData(out, 0, 0);
-  return { canvas: c, padY };
+  return { canvas: c, padY, w: W, h: H };
 }
 
 /* 畫筆進場：把線條路徑本身截到 x ≤ tipX（只認 M、L、C；C 先攤平成短直線）。
@@ -205,4 +235,68 @@ export function revealPathD(d: string, tipX: number): string {
     i++;
   }
   return out.join(' ');
+}
+
+/** 一個要套波浪的物件（來源只有物件那一塊；dx, dy 是來源左上角要放到目的畫布的哪裡） */
+export type WaveJob = { src: HTMLCanvasElement; key: string; amp: number; freq: number; off: number; dx: number; dy: number; alpha: number };
+/**
+ * 一次把好幾個波浪物件畫到 ctx 上：全部在 GPU 上依序疊好，最後只貼回畫面一次。
+ * 從 GPU 畫布貼回 2D 畫布每一次都要等 GPU 做完（同步），物件一多就是掉幀的主因；合成一次就只等一次。
+ * 畫的順序跟陣列一樣（後面的蓋在前面上面）。GPU 用不了或範圍太大時，一個一個走 waveWarp。
+ */
+export function drawWaveBatch(ctx: CanvasRenderingContext2D, jobs: WaveJob[]) {
+  if (!jobs.length) return;
+  const one = (j: WaveJob) => {
+    const w = waveWarp(j.src, 0, 0, j.src.width, j.src.height, j.amp, j.freq, j.off, Infinity, j.key);
+    if (!w) return;
+    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = j.alpha;
+    ctx.drawImage(w.canvas, 0, 0, w.w, w.h, j.dx, j.dy - w.padY, w.w, w.h);
+    ctx.restore();
+  };
+  if (jobs.length === 1) { one(jobs[0]); return; }
+  // 合起來的範圍（含上下位移的餘裕）
+  const rects = jobs.map(j => { const pad = Math.ceil(Math.abs(j.amp)) + 2; return { x: Math.round(j.dx), y: Math.round(j.dy) - pad, w: j.src.width, h: j.src.height + pad * 2, pad }; });
+  const ux = Math.min(...rects.map(r => r.x)), uy = Math.min(...rects.map(r => r.y));
+  const UW = Math.max(...rects.map(r => r.x + r.w)) - ux, UH = Math.max(...rects.map(r => r.y + r.h)) - uy;
+  if (glState === undefined || (glState === null && performance.now() > glRetryAt)) { glState = initGL(); if (!glState) glRetryAt = performance.now() + 1500; }
+  const st = glState;
+  if (!st || st.gl.isContextLost() || Math.max(UW, UH) > glMaxTex || jobs.some(j => Math.max(j.src.width, j.src.height) > glMaxTex) || (globalThis as any).__waveCPU) { jobs.forEach(one); return; }
+  const { gl, canvas, u } = st;
+  if (canvas.width < UW) canvas.width = Math.ceil(UW / 256) * 256;
+  if (canvas.height < UH) canvas.height = Math.ceil(UH / 256) * 256;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+  jobs.forEach((j, i) => {
+    const r = rects[i], W = r.w, H = r.h, Hs = j.src.height;
+    let tex = texCache.get(j.key);
+    if (tex) { gl.bindTexture(gl.TEXTURE_2D, tex); texCache.delete(j.key); texCache.set(j.key, tex); }
+    else {
+      tex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, j.src);
+      texCache.set(j.key, tex);
+      while (texCache.size > 16) { const [k, old] = texCache.entries().next().value!; if (old === tex) break; texCache.delete(k); gl.deleteTexture(old); }
+    }
+    // 這一個物件在合成畫布裡的位置（WebGL 原點在左下）
+    gl.viewport(r.x - ux, canvas.height - (r.y - uy) - H, W, H);
+    gl.uniform2f(u.srcSize, j.src.width, Hs);
+    gl.uniform4f(u.region, 0, 0, W, Hs);
+    gl.uniform2f(u.outSize, W, H);
+    gl.uniform1f(u.padY, r.pad);
+    gl.uniform1f(u.amp, j.amp);
+    gl.uniform1f(u.freq, j.freq);
+    gl.uniform1f(u.off, j.off);
+    gl.uniform1f(u.revealW, 1e9);
+    gl.uniform1f(u.alpha, Math.max(0, Math.min(1, j.alpha)));
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  });
+  if (gl.getError() !== gl.NO_ERROR || gl.isContextLost()) { jobs.forEach(one); return; }
+  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(canvas, 0, 0, UW, UH, ux, uy, UW, UH);
+  ctx.restore();
 }
