@@ -1,3 +1,4 @@
+import { BUBBLE_KINDS, bubblePathD, bubbleRatio, isNewBubbleKind } from '../utils/bubbleShapes';
 import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio, puzzleGlyph } from '../utils/puzzleShapes';
 import { selectedKinds, paintSelectedAnimation } from '../utils/selectedAnimations';
 import { BusyLayer } from './BusyLayer';
@@ -1026,6 +1027,7 @@ export const shapePathD = (
   if (isFrameShape(kind)) kind = 'square';
   if (kind.startsWith('blur-')) return blurShapeBaseD(kind, w, h, shapePathD);
   if (isPuzzleKind(kind)) return puzzlePathD(kind, w, h);
+  if (isNewBubbleKind(kind)) return bubblePathD(kind, w, h);
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
      因此縮放只會把整張網格等比放大；只有變形才會增加重複單位。 */
@@ -1359,6 +1361,17 @@ export const shapePathD = (
       }
       return d;
     }
+    /* 直的對話框：跟 'bubble' 同一個形狀，沿反對角線翻過來 ——
+       本體佔右邊 80%，尾巴從左下伸出去、尖端在左邊接近底部的地方 */
+    case 'bubble-v': {
+      const bb = w * 0.80, ra = h / 2, rb = bb / 2;
+      const E = (t: number) => {
+        const rad = t * Math.PI / 180;
+        return P(w - (bb / 2 + rb * Math.sin(rad)), h - (h / 2 + ra * Math.cos(rad)));
+      };
+      const A = (t: number, large: 0 | 1) => `A ${r3(rb)} ${r3(ra)} 0 ${large} 0 ${E(t)}`;
+      return `M ${E(0)} ${A(115, 0)} L ${P(0, h * 0.96)} L ${E(137)} ${A(360, 1)} Z`;
+    }
     case 'bubble-mirror': {
       const bb = h * 0.80, bx = w / 2, by = bb / 2, ra = w / 2, rb = bb / 2;
       const E = (t: number) => {
@@ -1684,7 +1697,7 @@ const STRETCH_SOLID_KINDS = new Set([
   'pentagon', 'hexagon', 'star', 'star-rounded', 'heart', 'heart-classic', 'heart-icon', 'hexstar',
   'square-star-dual', 'square-heart-dual', 'square-star-cutout', 'square-heart-cutout',
   'circle-star-dual', 'circle-heart-dual', 'circle-star-cutout', 'circle-heart-cutout',
-  ...Object.keys(PUZZLE_PIECES),
+  ...Object.keys(PUZZLE_PIECES), ...BUBBLE_KINDS,
   'heart-double', 'star-double', 'arrow', 'arrow-double', 'sparkle4', 'spinner',
   'blur-star', 'blur-star-rounded', 'blur-heart', 'blur-circle', 'blur-cross-star', 'blur-square', 'blur-sparkle4',
 ]);
@@ -1854,11 +1867,14 @@ export const shapePickerSections = () => {
     grid: A.filter(i => GRID_SHAPE_KINDS.has(i.kind)),
     mask: [...MASK_SHAPE_ITEMS],
     puzzle: PUZZLE_ITEMS,
+    bubble: BUBBLE_ITEMS,
   };
   return SHAPE_SECTIONS.map(([key, label]) => [label, orderBy(pools[key], SHAPE_ORDER[key])] as const);
 };
 /** 「拼圖」分類（只有實心、可換顏色），形狀在 utils/puzzleShapes.ts */
 export const PUZZLE_ITEMS: ShapeItem[] = Object.keys(PUZZLE_PIECES).map(k => ({ id: `${k}-f`, kind: k, filled: true, ratio: puzzleRatio(k) }));
+/** 「對話框」分類（只有實心、可換顏色），形狀在 utils/bubbleShapes.ts */
+export const BUBBLE_ITEMS: ShapeItem[] = BUBBLE_KINDS.map(k => ({ id: `${k}-f`, kind: k, filled: true, ratio: bubbleRatio(k) }));
 export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   // 實心
   { id: 'circle-f', kind: 'circle', filled: true },
@@ -1979,6 +1995,7 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   cloud: [0, 0, 1, 1],
   bubble: [0, 0, 1, 1],
   'bubble-mirror': [0, 0, 1, 1],
+  ...Object.fromEntries(BUBBLE_KINDS.map(k => [k, [0, 0, 1, 1]])),
   star8: [0, 0, 1, 1],
   'cloud-oval': [0, 0, 1, 1],
   // 四個角的小方塊各凸出框外半顆（框短邊的 5%）
