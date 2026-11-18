@@ -86,3 +86,6 @@ export const bubblePathD = (kind: string, w: number, h: number, baseW = w, baseH
   }
   return (d + tailD).trim();
 };
+
+/** 不能擠壓到比原本（沒擠壓過的框）還小的對話框：膠囊、圓角方 */
+export const NO_SHRINK_KINDS = new Set(['bubble-pill', 'bubble-rect']);

@@ -1,4 +1,4 @@
-import { BUBBLE_KINDS, bubblePathD, bubbleRatio, isNewBubbleKind } from '../utils/bubbleShapes';
+import { BUBBLE_KINDS, bubblePathD, bubbleRatio, isNewBubbleKind, NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio, puzzleGlyph } from '../utils/puzzleShapes';
 import { selectedKinds, paintSelectedAnimation } from '../utils/selectedAnimations';
 import { BusyLayer } from './BusyLayer';
@@ -7935,8 +7935,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     const horizontal = d.side === 'l' || d.side === 'r';
     const signed = horizontal ? (d.side === 'r' ? lx : -lx) : (d.side === 'b' ? ly : -ly);
     const oldCx = d.x + d.width / 2, oldCy = d.y + d.height / 2;
+    // 膠囊、圓角方對話框：不能擠壓到比原本的寬、高還小（可以拉大）
+    const noShrink = NO_SHRINK_KINDS.has(image.shape || '');
+    const minW = noShrink ? (image.shapeTextureBaseW || d.width) : 24, minH = noShrink ? (image.shapeTextureBaseH || d.height) : 24;
     if (horizontal) {
-      const width = Math.max(24, d.width + signed);
+      const width = Math.max(minW, d.width + signed);
       /* x/y 儲存的是未縮放物件盒的左上角；pointer 位移在上面也已經除過
          image.scale。這裡若再乘一次 scale，固定的對邊便會在擠壓時被推走，
          而且倍率愈大偏得愈遠。中心只移動基礎尺寸差的一半，顯示、框與文字
@@ -7948,7 +7951,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       if (onStretchMove) onStretchMove(next, d.side, d);
       else onChange(next);
     } else {
-      const height = Math.max(24, d.height + signed);
+      const height = Math.max(minH, d.height + signed);
       const shift = (height - d.height) / 2 * (d.side === 'b' ? 1 : -1);
       const cx = oldCx - shift * Math.sin(d.rotationRad), cy = oldCy + shift * Math.cos(d.rotationRad);
       const width = image.shape === 'grid-orbits' ? height : d.width;
@@ -19000,7 +19003,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const line = lines.slice().sort((a, b) => Math.abs(a - moving.at) - Math.abs(b - moving.at))[0];
                               if (line !== undefined && Math.abs(line - moving.at) < threshold) {
                                 const snapQ = q + (line - moving.at) / moving.dv;
-                                if (snapQ >= 24) {
+                                const minQ = NO_SHRINK_KINDS.has(fImg.shape || '') ? (horizontal ? (fImg.shapeTextureBaseW || base.width) : (fImg.shapeTextureBaseH || base.height)) : 24;
+                                if (snapQ >= minQ) {
                                   next = geometryAt(snapQ);
                                   nextGuidelines = [{ type: moving.axis === 'x' ? 'vertical' : 'horizontal', coord: line }];
                                 }

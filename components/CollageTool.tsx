@@ -35,6 +35,7 @@ import { scenePixelEdge } from '../utils/scenePixelGrid';
 import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
 import { createPortal, flushSync } from 'react-dom';
+import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
@@ -3610,15 +3611,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       setImageState({ img: src, baseW: bw, baseH: bh, originalW, originalH, globalScale: gs, vid: isVideoEl(src) });
       /* 一開始就匯入不只一張：預設用排版那一排的第五個（右側遮罩）；只有一張照舊看直橫 */
       /* 預設排版：滿版（排版那一排的第一個）。滿版固定 3:4，原本的比例記起來，離開滿版時還原 */
-      const nextLayout = preserveLayout ? layout : FULL;
-      const enteringFull = !preserveLayout && layout !== FULL;
-      if (enteringFull) {
+      /* 預設排版：一開始就匯入好幾張 → 滿版；只有一張 → 右側遮罩（照舊）。
+         滿版固定 3:4，原本的比例記起來，離開滿版時還原；兩邊的圖案數量各記各的。 */
+      const nextLayout = preserveLayout ? layout : grouped ? FULL : 'mask-right';
+      if (!preserveLayout && nextLayout === FULL && layout !== FULL) {
         setCanvasRatioBeforeFull(canvasRatio);
         setCanvasRatio('3:4');
         otherCountRef.current = holeCount;
         setHoleCount(fullCountRef.current);
+      } else if (!preserveLayout && nextLayout !== FULL && layout === FULL) {
+        setCanvasRatio(canvasRatioBeforeFull || canvasRatio);
+        setCanvasRatioBeforeFull(null);
+        fullCountRef.current = holeCount;
+        setHoleCount(otherCountRef.current);
       }
-      const geo = layoutGeometry(nextLayout, bw, bh, maskScale, nextLayout === FULL ? '3:4' : canvasRatio);
+      const geo = layoutGeometry(nextLayout, bw, bh, maskScale, nextLayout === FULL ? '3:4' : layout === FULL && !preserveLayout ? (canvasRatioBeforeFull || canvasRatio) : canvasRatio);
       const kk = nextLayout === AROUND
         ? Math.max(geo.iw / Math.max(1, bw), geo.ih / Math.max(1, bh)) : 1;
       const cover = Math.max(1, geo.iw / Math.max(1, bw * kk), geo.ih / Math.max(1, bh * kk));
@@ -5171,7 +5178,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     activePointers.current.clear();
     objStretchRef.current = { pointerId: e.pointerId, id: o.id, side, startX: e.clientX, startY: e.clientY,
       completeRings: o.kind === 'grid-orbits',
-      x: o.x, y: o.y, w: o.w, h: o.h, rot: (o.rot || 0) * Math.PI / 180, k: cssK };
+      x: o.x, y: o.y, w: o.w, h: o.h, rot: (o.rot || 0) * Math.PI / 180, k: cssK,
+      // 膠囊、圓角方對話框：不能擠壓到比原本（沒擠壓過的框）的寬、高還小
+      minW: o.type === 'shape' && NO_SHRINK_KINDS.has(o.kind) ? (o.textureBaseW || o.w) : 24,
+      minH: o.type === 'shape' && NO_SHRINK_KINDS.has(o.kind) ? (o.textureBaseH || o.h) : 24 };
     setObjStretching(true);
     if (o.type === 'shape' && (!o.textureBaseW || !o.textureBaseH)) {
       setObjects(prev => prev.map(z => z.id === o.id ? { ...z, textureBaseW: o.w, textureBaseH: o.h } : z));
@@ -5192,13 +5202,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const oldCx = d.x + d.w / 2, oldCy = d.y + d.h / 2;
     const geometryAt = (size: number) => {
       if (horizontal) {
-        const w = Math.max(24, size);
+        const w = Math.max(d.minW ?? 24, size);
         const shift = (w - d.w) / 2 * (d.side === 'r' ? 1 : -1);
         const cx = oldCx + shift * Math.cos(d.rot), cy = oldCy + shift * Math.sin(d.rot);
         const h = d.completeRings ? w : d.h;
         return { w, h, x: cx - w / 2, y: cy - h / 2 };
       }
-      const h = Math.max(24, size);
+      const h = Math.max(d.minH ?? 24, size);
       const shift = (h - d.h) / 2 * (d.side === 'b' ? 1 : -1);
       const cx = oldCx - shift * Math.sin(d.rot), cy = oldCy + shift * Math.cos(d.rot);
       const w = d.completeRings ? h : d.w;
@@ -12342,7 +12352,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       <span>排版</span>
                     </div>
                     <div className="h-9 flex items-center justify-between gap-1.5 bg-[#111] border border-[#222] px-1.5 rounded-[6px] w-full">
-                      {[FULL, 'mask-bottom', 'mask-top', 'mask-left', 'mask-right', AROUND].map(t => (
+                      {[FULL, 'mask-right', 'mask-left', 'mask-bottom', 'mask-top', AROUND].map(t => (
                         <button key={t} onClick={() => {
                           if(t===FULL){
                             if(layout!==FULL||canvasRatioBeforeFull===null)setCanvasRatioBeforeFull(canvasRatio);
