@@ -1808,6 +1808,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     obj: (o: any, i: number) => MoFrame & { fx: number };
   } | null>(null);
   const [holeCount, setHoleCount] = useState(15);
+  /* 圖案數量：滿版自己記一份（預設 0），其他排版共用另一份（預設 15）。
+     切到滿版時換成滿版那份，離開滿版時換回其他排版那份；其他排版之間互切不動。 */
+  const fullCountRef = useRef(0);
+  const otherCountRef = useRef(15);
   /** 滿版本身沒有遮罩圖案，但數量欄不能被重設成 0；離開滿版時精準還原。 */
   const [holes, setHoles] = useState<any[]>([]); 
   /* 浮動物件：疊在拼圖最上層的圖片與文字。
@@ -3605,8 +3609,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (baseVidRef.current) bornVidsRef.current.add(baseVidRef.current);
       setImageState({ img: src, baseW: bw, baseH: bh, originalW, originalH, globalScale: gs, vid: isVideoEl(src) });
       /* 一開始就匯入不只一張：預設用排版那一排的第五個（右側遮罩）；只有一張照舊看直橫 */
-      const nextLayout = preserveLayout ? layout : grouped ? 'mask-right' : (bh > bw * 1.1 ? 'mask-right' : 'mask-bottom');
-      const geo = layoutGeometry(nextLayout, bw, bh, maskScale, canvasRatio);
+      /* 預設排版：滿版（排版那一排的第一個）。滿版固定 3:4，原本的比例記起來，離開滿版時還原 */
+      const nextLayout = preserveLayout ? layout : FULL;
+      const enteringFull = !preserveLayout && layout !== FULL;
+      if (enteringFull) {
+        setCanvasRatioBeforeFull(canvasRatio);
+        setCanvasRatio('3:4');
+        otherCountRef.current = holeCount;
+        setHoleCount(fullCountRef.current);
+      }
+      const geo = layoutGeometry(nextLayout, bw, bh, maskScale, nextLayout === FULL ? '3:4' : canvasRatio);
       const kk = nextLayout === AROUND
         ? Math.max(geo.iw / Math.max(1, bw), geo.ih / Math.max(1, bh)) : 1;
       const cover = Math.max(1, geo.iw / Math.max(1, bw * kk), geo.ih / Math.max(1, bh * kk));
@@ -12339,7 +12351,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           if (t === layout) return;
                           const leavingFull = layout === FULL && t !== FULL;
                           const restoredRatio = canvasRatioBeforeFull || canvasRatio;
-                          const desiredCount=creativePatternCountForLayout(holeCount,layout,t);
+                          // 滿版與其他排版各記各的數量
+                          if (layout === FULL) fullCountRef.current = holeCount;
+                          else if (t === FULL) otherCountRef.current = holeCount;
+                          const desiredCount=creativePatternCountForLayout(t === FULL ? fullCountRef.current : layout === FULL ? otherCountRef.current : holeCount,layout,t);
                           setHoleCount(desiredCount);
                           if (leavingFull) {
                             setCanvasRatio(restoredRatio);
