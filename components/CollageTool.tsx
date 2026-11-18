@@ -36,7 +36,8 @@ import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
 import { createPortal, flushSync } from 'react-dom';
 import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
-import { isScoreKind, scoreKindOf } from '../utils/scoreShapes';
+import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
+import { scoreRandomFeedback } from '../utils/scoreFeedback';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
@@ -12590,7 +12591,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       <CompactSlider wide label="大小" value={maskTextureSizeToUi(dotSize)} min={0} max={100} step={1} onChange={(v:number)=>setDotSize(maskTextureSizeFromUi(v))} />
                       <CompactSlider wide label="間距" value={maskTextureGapToUi(dotGap)} min={0} max={100} step={1} onChange={(v:number)=>setDotGap(maskTextureGapFromUi(v))} />
                       <div className="col-span-2" data-mask-texture-squash>
-                        <CompactSlider wide label="壓扁" value={maskTextureSquashToUi(dotSquash)} min={0} max={100} onChange={(v:number)=>setDotSquash(maskTextureSquashFromUi(v))} />
+                        <CompactSlider wide label="擠壓" value={maskTextureSquashToUi(dotSquash)} min={0} max={100} onChange={(v:number)=>setDotSquash(maskTextureSquashFromUi(v))} />
                       </div>
                     </div>
                   )}
@@ -12940,8 +12941,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                   已經放好、超過新上限的舊貼圖外觀不變，滑桿先停在 100 */}
                               {(() => {
                                 const glowFlag = outlineShape || isLine;
-                                // 樂譜：發光上限是原本的一半（滑桿照樣 0～100）
-                                const glowCap = isLine ? LINE_GLOW_CAP : isGrid ? GRID_GLOW_CAP : isScoreKind(sel.kind) ? 0.5 : 1;
+                                // 樂譜：發光上限是一般圖形的一成（滑桿照樣 0～100）
+                                const glowCap = isLine ? LINE_GLOW_CAP : isGrid ? GRID_GLOW_CAP : isScoreKind(sel.kind) ? 0.1 : 1;
                                 const perUi = shapeGlowFromUi(1, glowFlag) * glowCap;
                                 const ui = glowCap < 1 ? Math.min(100, Math.round(glowAmount(sel.glow) * 100 / perUi)) : shapeGlowToUi(sel.glow, glowFlag);
                                 return shapeSlider('發光', ui, 0, 100, (v: number) => {
@@ -13018,8 +13019,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               (v: number) => patch({ glintGlow: v }), shapeLive)}
                           </div>}
                           {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
-                          {isScoreKind(sel.kind) && <div className="px-2 order-1 w-full">
-                            <button onClick={() => patch({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) })}
+                          {scoreCanRandom(sel.kind) && <div className="px-2 order-1 w-full">
+                            <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); patch({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) }); }}
                               className="w-full h-10 rounded-[8px] bg-white/[0.06] border border-white/10 text-[12px] font-bold text-white/85 active:scale-[0.98] transition-transform flex items-center justify-center gap-2">
                               <RefreshCw size={14} /> 隨機音符
                             </button>
@@ -13055,7 +13056,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                   {texChoices.map(([id, label]) => (
                                     <button
                                       key={id}
-                                      onClick={() => patch({ tex: id, dots: id === 'dot', ...(id === 'gingham' && tex !== 'gingham' ? { stripeN: ginghamDefaultFor(sel.kind) } : {}) } as any)}
+                                      onClick={() => patch({ tex: id, dots: id === 'dot', ...(id === 'gingham' && tex !== 'gingham' ? { stripeN: ginghamDefaultFor(sel.kind) } : {}),
+                                        // 樂譜：格紋預設 25、條紋 30，點點／星星／愛心的間距預設 0
+                                        ...(isScoreKind(sel.kind) && tex !== id ? (id === 'gingham' ? { stripeN: 25 } : id === 'stripe' ? { stripeN: 30 } : ['dot', 'star', 'heart'].includes(id) ? { dotGap: 0 } : {}) : {}) } as any)}
                                       className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
                                         tex === id ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                                       }`}
@@ -13134,7 +13137,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                   : isFrameShape(sel.kind)
                                   ? shapeSlider('間距', mistGapToUi(sel.dotGap ?? MIST_TEX_GAP_DEFAULT), 0, 100, (v: number) => patch({ dotGap: mistGapFromUi(v) }), shapeLive)
                                   : shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }), shapeLive)}
-                                {isGridTex(tex) && <div className="col-span-2">{shapeSlider('壓扁',maskTextureSquashToUi(sel.dotSquash??50),0,100,(v:number)=>patch({dotSquash:maskTextureSquashFromUi(v)}), shapeLive)}</div>}
+                                {isGridTex(tex) && <div className="col-span-2">{shapeSlider('擠壓',maskTextureSquashToUi(sel.dotSquash??50),0,100,(v:number)=>patch({dotSquash:maskTextureSquashFromUi(v)}), shapeLive)}</div>}
                               </div>
                             )}
                           </div>

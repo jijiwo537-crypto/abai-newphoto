@@ -1,4 +1,5 @@
-import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf } from '../utils/scoreShapes';
+import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
+import { scoreRandomFeedback } from '../utils/scoreFeedback';
 import { BUBBLE_KINDS, bubblePathD, bubbleRatio, isNewBubbleKind, NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio, puzzleGlyph } from '../utils/puzzleShapes';
 import { selectedKinds, paintSelectedAnimation } from '../utils/selectedAnimations';
@@ -3390,8 +3391,8 @@ export const ShapeEditorPanel: React.FC<{
               {/* 線條類：上限是原本的 40%；網格類：原本的 10%（滑桿照樣 0～100）—— 跟創意拼圖同一套 */}
               {(() => {
                 const glowFlag = outlineShape || isLine;
-                // 樂譜：發光上限是原本的一半（滑桿照樣 0～100）
-                const cap = isLine ? LINE_GLOW_CAP : isGridShape ? GRID_GLOW_CAP : isScoreKind(layer.shape) ? 0.5 : 1;
+                // 樂譜：發光上限是一般圖形的一成（滑桿照樣 0～100）
+                const cap = isLine ? LINE_GLOW_CAP : isGridShape ? GRID_GLOW_CAP : isScoreKind(layer.shape) ? 0.1 : 1;
                 const perUi = shapeGlowFromUi(1, glowFlag) * cap;
                 const ui = cap < 1 ? Math.min(100, Math.round(glowAmount(layer.shapeGlow as any) * 100 / perUi)) : shapeGlowToUi(layer.shapeGlow as any, glowFlag);
                 return slider('發光', ui, 0, 100, v => onChange({ shapeGlow: shapeGlowFromUi(v * cap, glowFlag) } as any));
@@ -3446,10 +3447,10 @@ export const ShapeEditorPanel: React.FC<{
               v => onChange({ shapeGlintGlow: Math.round(v) }))}
           </div>}
           {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
-          {isScoreKind(layer.shape) && <div className="px-2 order-1 w-full">
-            <button onClick={() => onChange({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) } as any)}
-              className="w-full h-10 rounded-[8px] bg-white/[0.06] border border-white/10 text-[12px] font-bold text-white/85 active:scale-[0.98] transition-transform flex items-center justify-center">
-              隨機音符
+          {scoreCanRandom(layer.shape) && <div className="px-2 order-1 w-full">
+            <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); onChange({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) } as any); }}
+              className="w-full h-10 rounded-[8px] bg-white/[0.06] border border-white/10 text-[12px] font-bold text-white/85 active:scale-[0.98] transition-transform flex items-center justify-center gap-2">
+              <RefreshCw size={14} /> 隨機音符
             </button>
           </div>}
           {/* 樂譜不給描邊 */}
@@ -3487,7 +3488,9 @@ export const ShapeEditorPanel: React.FC<{
                   {texChoices.map(([id, label]) => (
                     <button
                       key={id}
-                      onClick={() => onChange({ shapeTex: id, shapeDots: id === 'dot', ...(id === 'gingham' && tex !== 'gingham' ? { shapeStripeN: ginghamDefaultFor(layer.shape) } : {}) })}
+                      onClick={() => onChange({ shapeTex: id, shapeDots: id === 'dot', ...(id === 'gingham' && tex !== 'gingham' ? { shapeStripeN: ginghamDefaultFor(layer.shape) } : {}),
+                        // 樂譜：格紋預設 25、條紋 30，點點／星星／愛心的間距預設 0
+                        ...(isScoreKind(layer.shape) && tex !== id ? (id === 'gingham' ? { shapeStripeN: 25 } : id === 'stripe' ? { shapeStripeN: 30 } : ['dot', 'star', 'heart'].includes(id) ? { shapeDotGap: 0 } : {}) : {}) } as any)}
                       className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
                         tex === id ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                       }`}
@@ -3577,7 +3580,7 @@ export const ShapeEditorPanel: React.FC<{
                   : isFrameShape(layer.shape)
                   ? slider('間距', mistGapToUi(layer.shapeDotGap ?? MIST_TEX_GAP_DEFAULT), 0, 100, v => onChange({ shapeDotGap: mistGapFromUi(v) }))
                   : slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
-                {isGridTex(tex) && <div className="col-span-2">{slider('壓扁', maskTextureSquashToUi(layer.shapeDotSquash ?? 50), 0, 100, v => onChange({ shapeDotSquash: maskTextureSquashFromUi(v) }))}</div>}
+                {isGridTex(tex) && <div className="col-span-2">{slider('擠壓', maskTextureSquashToUi(layer.shapeDotSquash ?? 50), 0, 100, v => onChange({ shapeDotSquash: maskTextureSquashFromUi(v) }))}</div>}
               </div>
             )}
           </div>
@@ -20035,7 +20038,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                         {patternSlider('大小', patternSize, setPatternSize)}
                         {patternSlider('間距', patternGap, setPatternGap)}
-                        <div className="col-span-2">{patternSlider('壓扁', maskTextureSquashToUi(patternOpts.squash ?? 50), (v: number) => patchPattern({ squash: maskTextureSquashFromUi(v) }))}</div>
+                        <div className="col-span-2">{patternSlider('擠壓', maskTextureSquashToUi(patternOpts.squash ?? 50), (v: number) => patchPattern({ squash: maskTextureSquashFromUi(v) }))}</div>
                       </div>
                     )}
                   </div>

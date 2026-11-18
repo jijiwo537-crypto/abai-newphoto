@@ -48,7 +48,7 @@ const smoothLerp = (pairs: [number, number][]) => (t: number) => {
 /* 旋律字串：'q5' 四分、'h3' 二分、'e6' 八分、'[e2 e3]' 八分連桿、'{x4 x5}' 十六分連桿 */
 let gid = 0;
 const mel = (str: string, ta: number, tb: number): Note[] => {
-  const toks = str.match(/\[[^\]]*\]|\{[^}]*\}|\S+/g) || [];
+  const toks: string[] = str.match(/\[[^\]]*\]|\{[^}]*\}|\S+/g) || [];
   const width = (s: string) => s[0] === '[' || s[0] === '{' ? s.slice(1, -1).trim().split(/\s+/).length * .8 : s[0] === 'h' ? 1.4 : 1;
   const total = toks.reduce((a, s) => a + width(s), 0); let pos = 0; const out: Note[] = [];
   const one = (s: string, t: number, grp?: string, beam?: string) => { const m = s.match(/^([qhex])(-?\d+)([b#]?)$/)!; out.push([t, +m[2], beam || ({ q: 'q', h: 'h', e: '8', x: '16' } as any)[m[1]], m[3] || undefined, grp]); };
@@ -70,21 +70,23 @@ const SPECS: Record<string, Spec> = {
     clefT: .1, clefUpright: true, clefK: 1.08, clefDy: -.2, span: [[.19, .82]], count: 10, dens: 1.35,
     notes: [[.209, 3, '8'], [.273, 0, 'q'], [.328, 4, 'q'], [.353, 0, 'b8', undefined, 'b1'], [.405, 0, 'b8', undefined, 'b1'], [.461, 1, 'q'], [.485, 3, 'b16', undefined, 'b2'], [.525, 3, 'b16', undefined, 'b2'], [.576, 3, '8'], [.675, 1, '8'], [.729, 5, 'b16', undefined, 'b3'], [.758, 1, 'b16', undefined, 'b3']] },
   'score-line': { W: 1200, H: 700, gap: 34, lw: 4, c: bez([60, 430], [420, 140], [780, 640], [1140, 300]), clefT: .045, key: [[.118, 4, 'b']], span: [[.19, .97]], count: 11,
-    notes: mel('q2 [e4 e5] q6 h5 [e3 e2] q1 q3 h4', .19, .97) },
-  'score-arch': { W: 1200, H: 700, gap: 34, lw: 4, c: line([60, 350], [1140, 350]), clefT: .045, bars: [.5, .99], span: [[.1, .97]], count: 10,
-    notes: mel('q2 q4 [e5 e6] q7 q6 [e5 e4] h3', .1, .97) },
+    notes: mel('q3 [e1 e3] q5 h4 [e2 e4] q6 e5 h3', .19, .97) },
+  'score-arch': { W: 1200, H: 700, gap: 34, lw: 4, c: line([60, 350], [1140, 350]), clefT: .045, bars: [.99], span: [[.1, .96]], count: 10,
+    notes: mel('q2 [e1 e3] q5 h6 q4 [e2 e3] e5 h3', .1, .96) },
   'score-float': { W: 1200, H: 700, gap: 34, lw: 4, clefT: .045, span: [[.1, .97]], count: 9,
     c: chain(bez([60, 360], [160, 260], [260, 260], [360, 360]), bez([360, 360], [460, 460], [560, 460], [660, 360]), bez([660, 360], [760, 260], [860, 260], [960, 360]), bez([960, 360], [1020, 420], [1090, 430], [1140, 400])),
-    notes: mel('[e2 e3] q4 [e5 e4] q3 [e2 e4] q6 h5', .1, .97) },
+    notes: mel('q3 [e1 e2] q5 h4 [e2 e3] q6 e4 h2', .1, .97) },
   'score-ribbon': { W: 1200, H: 700, gap: t => 34 * (1.25 - .7 * t), lw: 4, c: bez([60, 380], [420, 120], [760, 640], [1140, 260]), clefT: .045, span: [[.12, .95]], count: 10,
-    notes: mel('q3 [e4 e5] q6 q5 [e4 e3] q2 h4', .12, .95) },
+    notes: mel('h4 [e1 e3] q5 q6 [e2 e3] q4 e2 h3', .12, .95) },
 };
 export const SCORE_KINDS = Object.keys(SPECS);
 /** kind 可以帶隨機種子：'score-wave@123'（見 scoreKindOf） */
 const baseOf = (kind: string) => kind.split('@')[0];
 export const isScoreKind = (k?: string) => !!k && baseOf(k) in SPECS;
 /** 畫圖時用的 kind：有隨機種子就接在後面 */
-export const scoreKindOf = (kind: string, seed?: number) => (seed && isScoreKind(kind) ? `${baseOf(kind)}@${seed}` : kind);
+/** 可以按「隨機音符」的樂譜（照原圖描的那兩個固定不變） */
+export const scoreCanRandom = (kind?: string) => isScoreKind(kind) && !(baseOf(kind!) in SCORE_TRACED);
+export const scoreKindOf = (kind: string, seed?: number) => (seed && scoreCanRandom(kind) ? `${baseOf(kind)}@${seed}` : kind);
 
 /* ---------- 隨機音符（照樂理） ---------- */
 const rng = (seed: number) => () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
@@ -112,8 +114,7 @@ const randomNotes = (base: string, seed: number): Note[] => {
   let p = 2 + Math.floor(r() * 5), lastD = 0, sameDir = 0;
   const step = () => {
     for (let k = 0; k < 8; k++) {
-      let d = [-2, -1, -1, 1, 1, 2, 0][Math.floor(r() * 7)];
-      if (d === 0 && lastD === 0) continue;                       // 同一個音不連三
+      let d = [-2, -1, -1, 1, 1, 2][Math.floor(r() * 6)];        // 不停在同一個音
       if (d !== 0 && Math.sign(d) === Math.sign(lastD) && sameDir >= 3) d = -d;   // 同方向走太久就轉頭
       const np = p + d; if (np < 0 || np > 8) continue;
       sameDir = d !== 0 && Math.sign(d) === Math.sign(lastD) ? sameDir + 1 : 1; lastD = d; p = np; return p;
@@ -122,7 +123,7 @@ const randomNotes = (base: string, seed: number): Note[] => {
   };
   for (let guard = 0; guard < 60; guard++) {
     let type = pool[Math.floor(r() * pool.length)];
-    if (type === lastType && sameType >= 2) continue;             // 同一種節奏不連三
+    if (type === lastType) continue;                              // 同一種節奏不連續
     const notes: Note[] = type.startsWith('b') ? [[0, step(), type, undefined, 'r' + g], [0, step(), type, undefined, 'r' + g]] : [[0, step(), type]];
     // 連桿那組兩顆音不要一樣
     if (notes.length === 2 && notes[0][1] === notes[1][1]) notes[1][1] = Math.max(0, Math.min(8, notes[1][1] + (notes[1][1] > 4 ? -1 : 1)));
@@ -278,7 +279,7 @@ export const scorePathD = (kind: string, w: number, h: number) => {
   const hit = cache.get(key); if (hit) return hit;
   const f = (n: number) => String(Math.round(n * 100) / 100);
   // 第一、第二個的預設：描好的原圖輪廓，照框縮放
-  const tr = !kind.includes('@') ? SCORE_TRACED[kind] : undefined;
+  const tr = SCORE_TRACED[baseOf(kind)];
   if (tr) {
     const sx = w / tr.w, sy = h / tr.h;
     const d = tr.d.split('Z').map(x => x.replace('M', '').trim()).filter(Boolean).map(x => { const n = x.split(/\s+/).map(Number); let o = `M ${f(n[0] * sx)} ${f(n[1] * sy)}`; for (let i = 2; i < n.length; i += 2) o += ` L ${f(n[i] * sx)} ${f(n[i + 1] * sy)}`; return o + ' Z'; }).join(' ');
