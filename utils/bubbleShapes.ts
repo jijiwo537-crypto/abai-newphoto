@@ -4,7 +4,7 @@
    每個子路徑都同一個繞行方向，重疊的地方（尾巴接本體）才不會被挖空。 */
 type Prim = { t: 'e'; cx: number; cy: number; a: number; b: number }
   | { t: 'rr'; x: number; y: number; w: number; h: number; r: number }
-  | { t: 'p'; pts: [number, number][] };
+  | { t: 'p'; pts: [number, number][]; tail?: boolean };
 /* 設計稿座標（任意單位），畫的時候量外接框再縮放到 w×h */
 const cloudPrims = (cx: number, cy: number, a: number, b: number, n: number): Prim[] => [
   ...Array.from({ length: n }, (_, i) => { const t = i / n * Math.PI * 2; return { t: 'e' as const, cx: cx + Math.cos(t) * a * .78, cy: cy + Math.sin(t) * b * .68, a: a * .32, b: b * .38 }; }),
@@ -12,9 +12,9 @@ const cloudPrims = (cx: number, cy: number, a: number, b: number, n: number): Pr
 ];
 const DESIGNS: Record<string, Prim[]> = {
   // 圓角長方形・左下尾巴
-  'bubble-rect': [{ t: 'rr', x: 20, y: 20, w: 160, h: 80, r: 18 }, { t: 'p', pts: [[45, 95], [80, 95], [40, 128]] }],
+  'bubble-rect': [{ t: 'rr', x: 20, y: 20, w: 160, h: 80, r: 18 }, { t: 'p', tail: true, pts: [[45, 95], [80, 95], [40, 128]] }],
   // 膠囊形・尾巴
-  'bubble-pill': [{ t: 'rr', x: 15, y: 25, w: 170, h: 74, r: 37 }, { t: 'p', pts: [[50, 92], [80, 96], [36, 124]] }],
+  'bubble-pill': [{ t: 'rr', x: 15, y: 25, w: 170, h: 74, r: 37 }, { t: 'p', tail: true, pts: [[50, 92], [80, 96], [36, 124]] }],
   // 思考泡泡：大橢圓＋兩個小圓
   'bubble-think': [{ t: 'e', cx: 110, cy: 52, a: 80, b: 42 }, { t: 'e', cx: 48, cy: 104, a: 13, b: 10 }, { t: 'e', cx: 26, cy: 122, a: 7, b: 6 }],
   // 雲朵＋兩個小圓
@@ -38,13 +38,36 @@ export const bubbleRatio = (kind: string) => {
   if (kind === 'bubble-v') return 1.9;
   const d = DESIGNS[kind]; if (!d) return 1; const b = bbox(d); return b.h / b.w;
 };
-export const bubblePathD = (kind: string, w: number, h: number) => {
+/** baseW/baseH：沒被四邊擠壓過的框（等比縮放會跟著變，四邊擠壓不會）。
+    有尾巴的那兩種（圓角方、膠囊）：尾巴照這個框等比縮放、永遠不變形；只有本體被擠壓。
+    左右擠壓時，尾巴的位置照寬度等比例移動；上下擠壓時尾巴貼在本體下緣。 */
+export const bubblePathD = (kind: string, w: number, h: number, baseW = w, baseH = h) => {
   const ps = DESIGNS[kind]; if (!ps) return '';
-  const b = bbox(ps), sx = w / b.w, sy = h / b.h;
-  const X = (x: number) => (x - b.x0) * sx, Y = (y: number) => (y - b.y0) * sy;
+  const b = bbox(ps);
+  const tail = ps.find(p => p.t === 'p' && p.tail) as Extract<Prim, { t: 'p' }> | undefined;
+  const body = ps.find(p => p.t === 'rr') as Extract<Prim, { t: 'rr' }> | undefined;
+  let sx = w / b.w, sy = h / b.h, Y = (y: number) => (y - b.y0) * sy;
+  let tailD = '';
+  if (tail && body) {
+    const k = Math.min(baseW / b.w, baseH / b.h);          // 尾巴的等比縮放（照沒擠壓過的框）
+    const bodyBottom = body.y + body.h;                     // 設計稿裡本體下緣
+    const tailH = (b.y0 + b.h - bodyBottom) * k;            // 尾巴露在本體下面的高度（像素）
+    const bodyHpx = Math.max(1, h - tailH);
+    sy = bodyHpx / (bodyBottom - b.y0);
+    Y = (y: number) => (y - b.y0) * sy;
+    const ax = Math.min(...tail.pts.map(q => q[0]));        // 尾巴左邊那一點：位置照寬度比例
+    const axPx = (ax - b.x0) * sx;
+    const q = tail.pts.map(([x, y]) => [axPx + (x - ax) * k, bodyHpx + (y - bodyBottom) * k] as [number, number]);
+    let area = 0; q.forEach(([x, y], i) => { const [nx, ny] = q[(i + 1) % q.length]; area += x * ny - nx * y; });
+    if (area < 0) q.reverse();
+    const f = (n: number) => String(Math.round(n * 1000) / 1000);
+    tailD = `M ${q.map(([x, y]) => `${f(x)} ${f(y)}`).join(' L ')} Z`;
+  }
+  const X = (x: number) => (x - b.x0) * sx;
   const f = (n: number) => String(Math.round(n * 1000) / 1000);
   let d = '';
   for (const p of ps) {
+    if (tailD && p.t === 'p' && p.tail) continue;
     if (p.t === 'e') {
       // 順時針：上 → 下（右半）→ 上（左半）
       const cx = X(p.cx), cy = Y(p.cy), a = p.a * sx, bb = p.b * sy;
@@ -61,5 +84,5 @@ export const bubblePathD = (kind: string, w: number, h: number) => {
       d += `M ${q.map(([x, y]) => `${f(x)} ${f(y)}`).join(' L ')} Z `;
     }
   }
-  return d.trim();
+  return (d + tailD).trim();
 };

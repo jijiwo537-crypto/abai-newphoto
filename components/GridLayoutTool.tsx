@@ -1027,7 +1027,7 @@ export const shapePathD = (
   if (isFrameShape(kind)) kind = 'square';
   if (kind.startsWith('blur-')) return blurShapeBaseD(kind, w, h, shapePathD);
   if (isPuzzleKind(kind)) return puzzlePathD(kind, w, h);
-  if (isNewBubbleKind(kind)) return bubblePathD(kind, w, h);
+  if (isNewBubbleKind(kind)) return bubblePathD(kind, w, h, gridBaseW, gridBaseH);
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
      因此縮放只會把整張網格等比放大；只有變形才會增加重複單位。 */
@@ -1738,7 +1738,7 @@ export const drawFeatheredShapeBody = (
   // 模糊圖形不吃紋理（編輯頁也沒有紋理那一格）
   if (isBlurShape(kind)) { drawBlurredShape(target, kind, w, h, color, _feather, shapePathD); return; }
   // 箭頭要知道「沒被擠壓過」的原始框才畫得對（見 shapePathD 的 arrow）
-  if (isArrowShape(kind) && compositeStyle.baseW && compositeStyle.baseH) {
+  if ((isArrowShape(kind) || isNewBubbleKind(kind)) && compositeStyle.baseW && compositeStyle.baseH) {
     const p = new Path2D(shapePathD(kind, w, h, compositeStyle.baseW, compositeStyle.baseH));
     target.fillStyle = color; target.fill(p); paintTexture?.(target, p); return;
   }
