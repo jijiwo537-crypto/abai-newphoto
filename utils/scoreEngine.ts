@@ -10,6 +10,7 @@
  * 所以音符永遠不會被拉變形。
  * 每個子路徑都是順時針（洞是逆時針），重疊的地方用一般的填色規則就會合在一起。 */
 import { CLEF_LOOPS, CLEF_W } from './scoreClef';
+import { SCORE_TRACED } from './scoreTraced';
 
 type Pt = [number, number];
 type Curve = (t: number) => Pt;
@@ -22,6 +23,8 @@ type Spec = {
   /** 隨機音符時可以用的範圍與顆數 */
   /** 可以放音符的區段（避開轉太急的地方） */
   span: [number, number][]; count: number;
+  /** 隨機音符的密度（1＝每顆照標準寬度，越大越密；照原圖的那兩個音符本來就比較密） */
+  dens?: number;
 };
 
 /* ---------- 曲線工具 ---------- */
@@ -58,13 +61,13 @@ const SPECS: Record<string, Spec> = {
   // 照使用者第一張圖：S 形、中間轉一個彎，越往右越細
   'score-glow': { W: 870, H: 669, gap: smoothLerp([[0, 56], [.3, 31], [.45, 19], [.6, 23], [.75, 30], [1, 18]]), lw: 5.5, lwFn: t => 1 - .55 * t,
     c: spline([[118, 345], [230, 326], [300, 296], [360, 280], [425, 290], [468, 335], [478, 395], [492, 448], [522, 482], [565, 482], [610, 452], [660, 420], [720, 401], [805, 380]]),
-    clefT: .03, clefUpright: true, clefK: 1, clefDy: .6, key: [[.08, 4, 'b']], span: [[.15, .34], [.66, .97]], count: 9,
+    clefT: .03, clefUpright: true, clefK: 1, clefDy: .6, key: [[.08, 4, 'b']], span: [[.15, .34], [.62, .97]], count: 9, dens: 1.45,
     notes: [[.2, 2, 'b16', undefined, 'a1'], [.245, 5, 'b16', undefined, 'a1'], [.31, 6, 'h'], [.35, 3, 'q'],
       [.6, 1, 'b8', undefined, 'a3'], [.635, 3, 'b8', undefined, 'a3'], [.76, 5, 'h'], [.79, 1, '8'], [.83, 2, '8'], [.885, 5, 'b16', undefined, 'a4'], [.925, 7, 'b16', undefined, 'a4'], [.965, 6, 'h']] },
   // 照使用者第二張圖：往右上飛、越遠越細
   'score-wave': { W: 750, H: 540, gap: smoothLerp([[0, 58], [.2, 37], [.4, 31], [.62, 24], [.8, 13], [1, 5]]), lw: 4.5, lwFn: t => 1 - .7 * t,
     c: spline([[0, 372], [150, 369], [280, 404], [370, 398], [430, 330], [470, 250], [505, 180], [560, 104], [640, 55], [745, 22]]),
-    clefT: .1, clefUpright: true, clefK: 1.08, clefDy: -.2, span: [[.19, .8]], count: 10,
+    clefT: .1, clefUpright: true, clefK: 1.08, clefDy: -.2, span: [[.19, .82]], count: 10, dens: 1.35,
     notes: [[.209, 3, '8'], [.273, 0, 'q'], [.328, 4, 'q'], [.353, 0, 'b8', undefined, 'b1'], [.405, 0, 'b8', undefined, 'b1'], [.461, 1, 'q'], [.485, 3, 'b16', undefined, 'b2'], [.525, 3, 'b16', undefined, 'b2'], [.576, 3, '8'], [.675, 1, '8'], [.729, 5, 'b16', undefined, 'b3'], [.758, 1, 'b16', undefined, 'b3']] },
   'score-line': { W: 1200, H: 700, gap: 34, lw: 4, c: bez([60, 430], [420, 140], [780, 640], [1140, 300]), clefT: .045, key: [[.118, 4, 'b']], span: [[.19, .97]], count: 11,
     notes: mel('q2 [e4 e5] q6 h5 [e3 e2] q1 q3 h4', .19, .97) },
@@ -85,25 +88,49 @@ export const scoreKindOf = (kind: string, seed?: number) => (seed && isScoreKind
 
 /* ---------- 隨機音符（照樂理） ---------- */
 const rng = (seed: number) => () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
-const randomNotes = (spec: Spec, seed: number): Note[] => {
-  const r = rng(seed);
-  // 節奏：四分、二分、八分、八分連桿兩顆、十六分連桿兩顆，佔的寬度不同
-  const pool: [string, number][] = [['q', 1], ['q', 1], ['h', 1.4], ['8', 1], ['b8', 1.6], ['b8', 1.6], ['b16', 1.6]];
-  const toks: [string, number][] = []; let n = 0;
-  while (n < spec.count) { const k = pool[Math.floor(r() * pool.length)]; toks.push(k); n += k[0].startsWith('b') ? 2 : 1; }
-  const total = toks.reduce((a, k) => a + k[1], 0);
-  // 幾個區段接成一條：位置 0～1 換算回各區段的 t
-  const lens = spec.span.map(([a, b]) => b - a), sumL = lens.reduce((a, b) => a + b, 0);
-  const tAt = (u: number) => { let x = u * sumL; for (let i = 0; i < spec.span.length; i++) { if (x <= lens[i] || i === spec.span.length - 1) return spec.span[i][0] + Math.min(x, lens[i]); x -= lens[i]; } return spec.span[0][0]; };
-  // 音高：從第二線到第四間附近起跳，一次走一到兩步，不超出五線譜（不需要加線）
-  let p = 2 + Math.floor(r() * 5);
-  const step = () => { const d = [-2, -1, -1, 1, 1, 2, 0][Math.floor(r() * 7)]; p = Math.max(0, Math.min(8, p + d)); if (p === 0 || p === 8) p += p === 0 ? 1 : -1; return p; };
-  const out: Note[] = []; let pos = 0, g = 0;
-  toks.forEach(([type, w]) => {
-    if (type.startsWith('b')) { const grp = 'r' + g++; [0, 1].forEach(i => out.push([tAt((pos + .4 + i * .8) / total), step(), type, undefined, grp])); }
-    else out.push([tAt((pos + w / 2) / total), step(), type]);
-    pos += w;
-  });
+/* 每種音符在五線譜上要佔多寬（單位：格）。符尾、降記號要多留一點；連桿那組每顆比較窄 */
+const widthOf = (n: Note, grouped: boolean) => (grouped ? 2.2 : n[2] === '8' || n[2] === '16' ? 3.1 : n[2] === 'h' ? 2.9 : 2.7) + (n[3] ? 1.4 : 0);
+/** 可以放音符的長度（以「格」為單位：曲線長度÷當地的間距，越窄的地方能放的越多但也越小） */
+const lengthTable = (C: (t: number) => Pt, gap: (t: number) => number, a: number, b: number, n = 160) => {
+  const ts = [a], ss = [0]; let prev = C(a), acc = 0;
+  for (let i = 1; i <= n; i++) { const t = a + (b - a) * i / n, q = C(t); acc += Math.hypot(q[0] - prev[0], q[1] - prev[1]) / Math.max(1e-6, gap(t - (b - a) / n / 2)); prev = q; ts.push(t); ss.push(acc); }
+  return { ts, ss, len: acc };
+};
+const capCache = new Map<string, number>();
+const capacityOf = (base: string) => {
+  let c = capCache.get(base); if (c !== undefined) return c;
+  const spec = SPECS[base], gap = (t: number) => (typeof spec.gap === 'number' ? spec.gap : spec.gap(t));
+  c = spec.span.reduce((a, [x, y]) => a + lengthTable(spec.c, gap, x, y).len, 0);
+  capCache.set(base, c); return c;
+};
+/* 隨機音符：只決定節奏與音高，位置在 build 裡照長度平均排開（不會擠在一起） */
+const randomNotes = (base: string, seed: number): Note[] => {
+  const r = rng(seed), cap = capacityOf(base) * (SPECS[base].dens || 1) / 1.12;   // 留一點空，不要塞滿
+  const pool = ['q', 'q', 'h', '8', 'b8', 'b8', 'b16'];
+  const out: Note[] = []; let used = 0, g = 0, lastType = '', sameType = 0;
+  // 音高：一次走一到兩步，不連續停在同一個音、也不一直往同一個方向走，不超出五線譜
+  let p = 2 + Math.floor(r() * 5), lastD = 0, sameDir = 0;
+  const step = () => {
+    for (let k = 0; k < 8; k++) {
+      let d = [-2, -1, -1, 1, 1, 2, 0][Math.floor(r() * 7)];
+      if (d === 0 && lastD === 0) continue;                       // 同一個音不連三
+      if (d !== 0 && Math.sign(d) === Math.sign(lastD) && sameDir >= 3) d = -d;   // 同方向走太久就轉頭
+      const np = p + d; if (np < 0 || np > 8) continue;
+      sameDir = d !== 0 && Math.sign(d) === Math.sign(lastD) ? sameDir + 1 : 1; lastD = d; p = np; return p;
+    }
+    p = p > 4 ? p - 1 : p + 1; lastD = 0; return p;
+  };
+  for (let guard = 0; guard < 60; guard++) {
+    let type = pool[Math.floor(r() * pool.length)];
+    if (type === lastType && sameType >= 2) continue;             // 同一種節奏不連三
+    const notes: Note[] = type.startsWith('b') ? [[0, step(), type, undefined, 'r' + g], [0, step(), type, undefined, 'r' + g]] : [[0, step(), type]];
+    // 連桿那組兩顆音不要一樣
+    if (notes.length === 2 && notes[0][1] === notes[1][1]) notes[1][1] = Math.max(0, Math.min(8, notes[1][1] + (notes[1][1] > 4 ? -1 : 1)));
+    const w = notes.reduce((a, n) => a + widthOf(n, notes.length > 1), 0) + (notes.length > 1 ? .6 : 0);
+    if (used + w > cap) break;
+    used += w; out.push(...notes); if (notes.length > 1) g++;
+    sameType = type === lastType ? sameType + 1 : 1; lastType = type;
+  }
   return out;
 };
 
@@ -165,7 +192,26 @@ function build(kind: string, w: number, h: number): Pt[][] {
   (spec.key || []).forEach(([t, p]) => flat(at(t, p), 0));
   (spec.bars || []).forEach(t => { const q = at(t, 4); put(q, rect(-.07 * q.g, -2 * q.g, .14 * q.g, 4 * q.g)); });
   // 音符
-  const notes: Note[] = (seedS ? randomNotes(spec, +seedS) : spec.notes).map(n => [...n] as Note);
+  const notes: Note[] = (seedS ? randomNotes(base, +seedS) : spec.notes).map(n => [...n] as Note);
+  /* 照長度把音符平均排開：每顆照種類佔一段寬度（單位是當地的間距），所以不會兩顆黏在一起 */
+  {
+    const tables = spec.span.map(([a, b]) => lengthTable(C, gap, a, b));
+    const S = tables.reduce((a, t) => a + t.len, 0);
+    const items: { idx: number[]; w: number }[] = [];
+    for (let i = 0; i < notes.length;) {
+      const grp = notes[i][4]; const idx = [i]; i++;
+      if (grp) while (i < notes.length && notes[i][4] === grp) idx.push(i++);
+      items.push({ idx, w: idx.reduce((a, j) => a + widthOf(notes[j], idx.length > 1), 0) + (idx.length > 1 ? .6 : 0) });
+    }
+    const W = items.reduce((a, it) => a + it.w, 0) || 1, f = S / W;
+    const tOf = (s: number) => { for (const tb of tables) { if (s <= tb.len || tb === tables[tables.length - 1]) { s = Math.min(s, tb.len); let lo = 0, hi = tb.ss.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (tb.ss[m] < s) lo = m; else hi = m; } const u = (s - tb.ss[lo]) / ((tb.ss[hi] - tb.ss[lo]) || 1); return tb.ts[lo] + (tb.ts[hi] - tb.ts[lo]) * u; } s -= tb.len; } return 0; };
+    let pos = 0;
+    items.forEach(it => {
+      if (it.idx.length === 1) notes[it.idx[0]][0] = tOf((pos + it.w / 2) * f);
+      else { let x = pos + .3; it.idx.forEach(j => { const w = widthOf(notes[j], true); notes[j][0] = tOf((x + w / 2) * f); x += w; }); }
+      pos += it.w;
+    });
+  }
   const groups: Record<string, number[]> = {};
   notes.forEach((n, i) => { if (n[4]) (groups[n[4]] = groups[n[4]] || []).push(i); });
   // 曲線轉太快的地方（或兩顆隔太遠），連桿會歪 —— 那一組改成各自帶符尾
@@ -223,7 +269,7 @@ function bboxOf(base: string) {
   return b;
 }
 /** 新增時的高÷寬 */
-export const scoreRatio = (kind: string) => { const b = bboxOf(baseOf(kind)); return b.h / b.w; };
+export const scoreRatio = (kind: string) => { const t = SCORE_TRACED[baseOf(kind)]; if (t) return t.h / t.w; const b = bboxOf(baseOf(kind)); return b.h / b.w; };
 
 const cache = new Map<string, string>();
 export const scorePathD = (kind: string, w: number, h: number) => {
@@ -231,6 +277,14 @@ export const scorePathD = (kind: string, w: number, h: number) => {
   const key = `${kind}|${w.toFixed(1)}|${h.toFixed(1)}`;
   const hit = cache.get(key); if (hit) return hit;
   const f = (n: number) => String(Math.round(n * 100) / 100);
+  // 第一、第二個的預設：描好的原圖輪廓，照框縮放
+  const tr = !kind.includes('@') ? SCORE_TRACED[kind] : undefined;
+  if (tr) {
+    const sx = w / tr.w, sy = h / tr.h;
+    const d = tr.d.split('Z').map(x => x.replace('M', '').trim()).filter(Boolean).map(x => { const n = x.split(/\s+/).map(Number); let o = `M ${f(n[0] * sx)} ${f(n[1] * sy)}`; for (let i = 2; i < n.length; i += 2) o += ` L ${f(n[i] * sx)} ${f(n[i + 1] * sy)}`; return o + ' Z'; }).join(' ');
+    cache.set(key, d); if (cache.size > 48) cache.delete(cache.keys().next().value!);
+    return d;
+  }
   const d = build(kind, w, h).map(q => 'M ' + q.map(([x, y]) => `${f(x)} ${f(y)}`).join(' L ') + ' Z').join(' ');
   cache.set(key, d);
   if (cache.size > 48) cache.delete(cache.keys().next().value!);
