@@ -36,6 +36,7 @@ import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
 import { createPortal, flushSync } from 'react-dom';
 import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
+import { isScoreKind } from '../utils/scoreShapes';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
@@ -12939,7 +12940,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                   已經放好、超過新上限的舊貼圖外觀不變，滑桿先停在 100 */}
                               {(() => {
                                 const glowFlag = outlineShape || isLine;
-                                const glowCap = isLine ? LINE_GLOW_CAP : isGrid ? GRID_GLOW_CAP : 1;
+                                // 樂譜：發光上限是原本的一半（滑桿照樣 0～100）
+                                const glowCap = isLine ? LINE_GLOW_CAP : isGrid ? GRID_GLOW_CAP : isScoreKind(sel.kind) ? 0.5 : 1;
                                 const perUi = shapeGlowFromUi(1, glowFlag) * glowCap;
                                 const ui = glowCap < 1 ? Math.min(100, Math.round(glowAmount(sel.glow) * 100 / perUi)) : shapeGlowToUi(sel.glow, glowFlag);
                                 return shapeSlider('發光', ui, 0, 100, (v: number) => {
@@ -13015,7 +13017,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             {shapeSlider('發光', Math.round(sel.glintGlow ?? glintDefaultGlow(sel.hole)), 0, 80,
                               (v: number) => patch({ glintGlow: v }), shapeLive)}
                           </div>}
-                          {!isDoubleContour && !isGrid && !noDecor && !isBlurShape(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
+                          {/* 樂譜不給描邊 */}
+                          {!isDoubleContour && !isGrid && !noDecor && !isBlurShape(sel.kind) && !isScoreKind(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('描邊', Math.round(Math.min(8, sel.strokeW ?? 0) * 12.5), 0, 100,
                                 (v: number) => patch({ strokeW: v / 12.5 }), shapeLive)}

@@ -3387,7 +3387,8 @@ export const ShapeEditorPanel: React.FC<{
               {/* 線條類：上限是原本的 40%；網格類：原本的 10%（滑桿照樣 0～100）—— 跟創意拼圖同一套 */}
               {(() => {
                 const glowFlag = outlineShape || isLine;
-                const cap = isLine ? LINE_GLOW_CAP : isGridShape ? GRID_GLOW_CAP : 1;
+                // 樂譜：發光上限是原本的一半（滑桿照樣 0～100）
+                const cap = isLine ? LINE_GLOW_CAP : isGridShape ? GRID_GLOW_CAP : isScoreKind(layer.shape) ? 0.5 : 1;
                 const perUi = shapeGlowFromUi(1, glowFlag) * cap;
                 const ui = cap < 1 ? Math.min(100, Math.round(glowAmount(layer.shapeGlow as any) * 100 / perUi)) : shapeGlowToUi(layer.shapeGlow as any, glowFlag);
                 return slider('發光', ui, 0, 100, v => onChange({ shapeGlow: shapeGlowFromUi(v * cap, glowFlag) } as any));
@@ -3441,7 +3442,8 @@ export const ShapeEditorPanel: React.FC<{
             {slider('發光', Math.round(layer.shapeGlintGlow ?? glintDefaultGlow(layer.holeType || '')), 0, 80,
               v => onChange({ shapeGlintGlow: Math.round(v) }))}
           </div>}
-          {!isDoubleContour && !isGridShape && !noDecor && !isBlurShape(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">
+          {/* 樂譜不給描邊 */}
+          {!isDoubleContour && !isGridShape && !noDecor && !isBlurShape(layer.shape) && !isScoreKind(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round(Math.min(8, layer.shapeStrokeW ?? 0) * 12.5), 0, 100,
                 v => onChange({ shapeStrokeW: v / 12.5 }))}
