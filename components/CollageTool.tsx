@@ -10007,9 +10007,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 散落圖形邊框：整個邊框不動，改成每一顆圖形各自跑同一套進場／常駐。
            果凍I＝每顆同時各自果凍；果凍II＝從左上開始順時針一顆接一顆（跟圖案那組錯開的算法一樣） */
         /* 樂譜果凍ll：整張不動（常駐動畫照跑），進度交給樂譜自己畫 —— 前四成畫五線譜，後面音符一顆一顆彈出來。
-           總長＝速度給的時間的三倍（要畫線又要一顆一顆出場，太快看不清楚） */
+           總長＝速度給的時間的 4.5 倍（筆從左畫到右、畫到哪音符就彈到哪，太快看不清楚） */
         if (o.type === 'shape' && cfg.in === 'score-seq' && scoreCanRandom(o.kind)) {
-          const total = Math.max(.6, cfg.dur * 3);
+          const total = Math.max(1.2, cfg.dur * 4.5);
           const fr = composeMo({ ...cfg, in: 'none' }, t, phase);
           return { ...fr, scoreAnim: Math.max(0, Math.min(1, (t - cfg.delay) / total)) } as any;
         }

@@ -11508,7 +11508,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const frameForItem = useCallback((item: FloatingImage, index: number, time: number): ObjectMotionFrame => {
     /* 樂譜果凍ll：整張不動（常駐照跑），進度交給樂譜自己畫：前四成畫五線譜，後面音符一顆一顆彈出來 */
     if (item.mo?.in === 'score-seq' && scoreCanRandom(item.shape)) {
-      const cfg = timedMotionConfig(item), total = Math.max(.6, cfg.dur * 3);
+      const cfg = timedMotionConfig(item), total = Math.max(1.2, cfg.dur * 4.5);
       const fr = objectMotionFrame({ ...cfg, in: 'none' } as any, time, motionPhase(item, index));
       return { ...fr, scoreAnim: Math.max(0, Math.min(1, (time - cfg.delay) / total)) } as any;
     }

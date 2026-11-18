@@ -173,8 +173,10 @@ function build(kind: string, w: number, h: number): Pt[][] {
   const Hh = (q: Pt[]) => { holes.push(q); holeIt.push(cur); };
   const units: { t: number; at: Pt }[] = [];
   const unit = (t: number, at: Pt) => { units.push({ t, at }); cur = units.length - 1; };
-  // 果凍II：前四成時間五線譜從左畫到右
-  const staffT = anim >= 1 ? 1 : 1 - Math.pow(1 - Math.min(1, anim / .4), 3);
+  /* 果凍ll：像一枝筆從左畫到右（前 78% 的時間，速度固定）；筆畫到哪裡，那裡的譜號／音符就跟著果凍彈出來，
+     每顆彈的時間佔整段的 22%（跟符號「泡泡」每一顆的節奏差不多） */
+  const STAFF = .78, POP = .22;
+  const staffT = anim >= 1 ? 1 : Math.min(1, anim / STAFF);
   // 五線譜：每條線做成一條有寬度的帶子（線寬可以沿線慢慢變細）
   const N = 140;
   for (let li = -2; li <= 2; li++) {
@@ -288,8 +290,7 @@ function build(kind: string, w: number, h: number): Pt[][] {
   /* 果凍II：譜號、音符照左到右的順序，一個接一個「果凍」彈出來（以自己的中心放大、彈過頭再回來） */
   const order = units.map((u, i) => i).sort((x, y) => units[x].t - units[y].t);
   const rank: number[] = []; order.forEach((u, r) => { rank[u] = r; });
-  const n = Math.max(1, units.length - 1), DUR = .16;
-  const scaleOf = (u: number) => { if (u < 0) return 1; const st = .3 + .54 * rank[u] / n, x = (anim - st) / DUR; if (x <= 0) return 0; if (x >= 1) return 1; return 1 - Math.exp(-5 * x) * Math.cos(9 * x); };
+  const scaleOf = (u: number) => { if (u < 0) return 1; const st = STAFF * Math.max(0, Math.min(1, units[u].t)), x = (anim - st) / POP; if (x <= 0) return 0; if (x >= 1) return 1; return 1 - Math.exp(-5 * x) * Math.cos(9 * x); };
   const out: Pt[][] = [];
   const apply = (q: Pt[], u: number) => { const sc = scaleOf(u); if (sc <= .002) return; if (u < 0 || sc === 1) { out.push(q); return; } const [ax, ay] = units[u].at; out.push(q.map(([x, y]) => [ax + (x - ax) * sc, ay + (y - ay) * sc] as Pt)); };
   polys.forEach((q, i) => apply(q, polyIt[i])); holes.forEach((q, i) => apply(q, holeIt[i]));
