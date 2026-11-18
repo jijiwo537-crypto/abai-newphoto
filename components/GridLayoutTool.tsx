@@ -11508,7 +11508,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const frameForItem = useCallback((item: FloatingImage, index: number, time: number): ObjectMotionFrame => {
     /* 樂譜果凍ll：整張不動（常駐照跑），進度交給樂譜自己畫：前四成畫五線譜，後面音符一顆一顆彈出來 */
     if (item.mo?.in === 'score-seq' && scoreCanRandom(item.shape)) {
-      const cfg = timedMotionConfig(item), total = Math.max(1.2, cfg.dur * 4.5);
+      // 滑桿 50 的實際速度＝舊刻度 90（看起來仍是 50）
+      const cfg = timedMotionConfig(item), total = Math.max(.8, cfg.dur * 4.5 * motionDurationFromUi(90) / motionDurationFromUi(50));
       const fr = objectMotionFrame({ ...cfg, in: 'none' } as any, time, motionPhase(item, index));
       return { ...fr, scoreAnim: Math.max(0, Math.min(1, (time - cfg.delay) / total)) } as any;
     }
@@ -19395,6 +19396,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) }
                 /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
                 : id === 'pop-seq' && isScatterTarget ? { in: id, dur: motionDurationFromUi(50) }
+                /* 樂譜果凍ll：預設速度滑桿 50；換回其他進場時回到一般預設 */
+                : id === 'score-seq' ? { in: id, dur: motionDurationFromUi(50) }
+                : fromIn === 'score-seq' ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur }
                 : isScatterTarget && fromIn === 'pop-seq' ? { in: id, dur: CLASSIC_OBJECT_MOTION_DEFAULT.dur }
                 /* 個別進場動畫自己的速度預設（與創意拼圖同一張表） */
                 : entrySpeedDefaultUi(id, et) !== undefined ? { in: id, dur: motionDurationFromUi(entrySpeedDefaultUi(id, et)!) }

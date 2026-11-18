@@ -1261,6 +1261,9 @@ export const motionPickPatch = (d: Partial<MoCfg>, c: MotionTargetCtx, curIn: st
   if (d.in === 'bubble' && obj && c.sym) return { ...d, dur: durFromSpeed(80) };
   /* 散落圖形：果凍II 預設速度＝舊刻度 50（滑桿顯示 70）；換回其他進場時回到一般預設 */
   if (d.in === 'pop-seq' && c.scatter) return { ...d, dur: durFromSpeed(50) };
+  /* 樂譜果凍ll：預設速度滑桿 50；換回其他進場時回到一般預設 */
+  if (d.in === 'score-seq' && c.score) return { ...d, dur: durFromSpeed(50) };
+  if (d.in && c.score && curIn === 'score-seq') return { ...d, dur: MO_DEFAULT.dur };
   if (d.in && c.scatter && curIn === 'pop-seq') return { ...d, dur: MO_DEFAULT.dur };
   /* 個別進場動畫自己的速度預設（符號足跡／旋轉／淡入、線條畫筆、星芒淡入）；
      從這些動畫換到其他進場時回到一般預設，不把特別的速度帶過去。 */
@@ -10009,7 +10012,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 樂譜果凍ll：整張不動（常駐動畫照跑），進度交給樂譜自己畫 —— 前四成畫五線譜，後面音符一顆一顆彈出來。
            總長＝速度給的時間的 4.5 倍（筆從左畫到右、畫到哪音符就彈到哪，太快看不清楚） */
         if (o.type === 'shape' && cfg.in === 'score-seq' && scoreCanRandom(o.kind)) {
-          const total = Math.max(1.2, cfg.dur * 4.5);
+          // 滑桿 50 的實際速度＝舊刻度 90（看起來仍是 50）
+          const total = Math.max(.8, cfg.dur * 4.5 * durFromSpeed(90) / durFromSpeed(50));
           const fr = composeMo({ ...cfg, in: 'none' }, t, phase);
           return { ...fr, scoreAnim: Math.max(0, Math.min(1, (t - cfg.delay) / total)) } as any;
         }
