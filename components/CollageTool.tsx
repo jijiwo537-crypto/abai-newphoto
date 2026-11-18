@@ -12499,7 +12499,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     -mt-1 是為了讓它跟上面那排的間距，跟這三項彼此之間一樣。 */}
                 <div className="grid grid-cols-2 gap-3 !mt-3">
 
-                <div className="min-w-0 h-[47px] flex items-center justify-between gap-2 bg-[#111] px-2.5 border border-[#222] rounded-[6px]">
+                {/* 滿版又沒有圖案時，「圖案顏色」沒東西可調 → 藏起來，更換圖片佔整行 */}
+                <div className={`min-w-0 h-[47px] flex items-center justify-between gap-2 bg-[#111] px-2.5 border border-[#222] rounded-[6px] ${layout === FULL && holeCount === 0 ? 'col-span-2' : ''}`}>
                   <span className="text-[10px] font-bold text-[#888]">更換圖片</span>
                   <button onClick={(e) => {
                       e.stopPropagation();
@@ -12508,7 +12509,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 </div>
 
                 {/* 滿版沒有遮罩色塊，但圖案還在，而且圖案就是用這裡的顏色／自訂圖片填的，所以照樣可以調 */}
-                <div className="min-w-0 h-[47px] flex items-center justify-between gap-1.5 bg-[#111] px-2.5 border border-[#222] rounded-[6px]">
+                <div className={`min-w-0 h-[47px] ${layout === FULL && holeCount === 0 ? 'hidden' : 'flex'} items-center justify-between gap-1.5 bg-[#111] px-2.5 border border-[#222] rounded-[6px]`}>
                   <span className="text-[10px] font-bold text-[#888] shrink-0">{layout === FULL ? '圖案顏色' : '自訂遮罩'}</span>
                   <div className="flex items-center gap-1.5 min-w-0">
                     {layout !== FULL && <div className="flex items-center gap-1">
