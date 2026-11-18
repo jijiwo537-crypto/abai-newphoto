@@ -6786,6 +6786,8 @@ export const makeShapeItem = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem
         shapeDotSize: pola ? mistSizeFromUi(10) : MIST_TEX_SIZE_DEFAULT, shapeDotGap: pola ? mistGapFromUi(15) : MIST_TEX_GAP_DEFAULT } : {}),
       // 樂譜 3～6：預設進場果凍ll、常駐波浪
       ...(scoreCanRandom(it.kind) ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, in: 'score-seq', dur: motionDurationFromUi(50), idle: 'grid-wave', ...idleDefaults('grid-wave', { shape: true }) } } : {}),
+      // 樂譜 1、2（照原圖描的）：預設沒有進場動畫
+      ...(isScoreKind(it.kind) && !scoreCanRandom(it.kind) ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, in: 'none' } } : {}),
       // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
       ...(it.kind === 'hole' && String((it as any).hole || '').startsWith('sb-')
         ? (() => { const idle = glintHasRing((it as any).hole) ? 'spin' : 'breathe';

@@ -3995,6 +3995,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           : null),
         // 樂譜 3～6：預設進場果凍ll、常駐波浪
         ...(scoreCanRandom(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'score-seq', idle: 'grid-wave' }) } : null),
+        // 樂譜 1、2（照原圖描的）：預設沒有進場動畫
+        ...(isScoreKind(it.kind) && !scoreCanRandom(it.kind) ? { mo: { ...MO_DEFAULT, in: 'none' } } : null),
       };
     }
     return null;
@@ -12755,6 +12757,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'draw' }) } : {}),
                     // 樂譜 3～6：預設進場果凍ll、常駐波浪
                     ...(scoreCanRandom(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'score-seq', idle: 'grid-wave' }) } : {}),
+                    // 樂譜 1、2（照原圖描的）：預設沒有進場動畫
+                    ...(isScoreKind(it.kind) && !scoreCanRandom(it.kind) ? { mo: { ...MO_DEFAULT, in: 'none' } } : {}),
                     // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
                     ...(it.kind === 'hole' && String(it.hole || '').startsWith('sb-')
                       ? (() => { const idle = glintHasRing(it.hole) ? 'spin' : 'breathe';
