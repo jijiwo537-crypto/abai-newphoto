@@ -238,7 +238,8 @@ export function revealPathD(d: string, tipX: number): string {
 }
 
 /** 一個要套波浪的物件（來源只有物件那一塊；dx, dy 是來源左上角要放到目的畫布的哪裡） */
-export type WaveJob = { src: HTMLCanvasElement; key: string; amp: number; freq: number; off: number; dx: number; dy: number; alpha: number };
+/** scale：來源比畫面小幾倍（很大的物件預覽時用一半解析度扭，再放大貼回去） */
+export type WaveJob = { src: HTMLCanvasElement; key: string; amp: number; freq: number; off: number; dx: number; dy: number; alpha: number; scale?: number };
 /**
  * 一次把好幾個波浪物件畫到 ctx 上：全部在 GPU 上依序疊好，最後只貼回畫面一次。
  * 從 GPU 畫布貼回 2D 畫布每一次都要等 GPU 做完（同步），物件一多就是掉幀的主因；合成一次就只等一次。
@@ -250,10 +251,14 @@ export function drawWaveBatch(ctx: CanvasRenderingContext2D, jobs: WaveJob[]) {
     const w = waveWarp(j.src, 0, 0, j.src.width, j.src.height, j.amp, j.freq, j.off, Infinity, j.key);
     if (!w) return;
     ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = j.alpha;
-    ctx.drawImage(w.canvas, 0, 0, w.w, w.h, j.dx, j.dy - w.padY, w.w, w.h);
+    const sc = j.scale || 1;
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(w.canvas, 0, 0, w.w, w.h, j.dx, j.dy - w.padY * sc, w.w * sc, w.h * sc);
     ctx.restore();
   };
   if (jobs.length === 1) { one(jobs[0]); return; }
+  // 有縮小解析度的就一個一個畫（合成畫布只處理同一種解析度）
+  if (jobs.some(j => (j.scale || 1) !== 1)) { jobs.forEach(one); return; }
   // 合起來的範圍（含上下位移的餘裕）
   const rects = jobs.map(j => { const pad = Math.ceil(Math.abs(j.amp)) + 2; return { x: Math.round(j.dx), y: Math.round(j.dy) - pad, w: j.src.width, h: j.src.height + pad * 2, pad }; });
   const ux = Math.min(...rects.map(r => r.x)), uy = Math.min(...rects.map(r => r.y));

@@ -11515,7 +11515,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 滑桿 50 的實際速度＝舊刻度 90（看起來仍是 50）
       const cfg = timedMotionConfig(item), total = Math.max(.8, cfg.dur * 4.5 * motionDurationFromUi(90) / motionDurationFromUi(50));
       const fr = objectMotionFrame({ ...cfg, in: 'none' } as any, time, motionPhase(item, index));
-      return { ...fr, scoreAnim: Math.max(0, Math.min(1, (time - cfg.delay) / total)) } as any;
+      const sa = Math.max(0, Math.min(1, (time - cfg.delay) / total));
+      return (sa < 1 ? { ...fr, scoreAnim: sa } : fr) as any;
     }
     /* 散落圖形邊框：整個邊框不動，每一顆圖形各自跑（果凍I 同時、果凍II 從左上順時針一顆一顆） */
     if (isScatterFrame(item.shape) && !String(item.mo?.in || '').startsWith('lab-') && !String(item.mo?.idle || '').startsWith('lab-')) {

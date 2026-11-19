@@ -81,16 +81,18 @@ const SPECS: Record<string, Spec> = {
 };
 export const SCORE_KINDS = Object.keys(SPECS);
 /** kind 可以帶隨機種子：'score-wave@123'（見 scoreKindOf） */
-const baseOf = (kind: string) => kind.split('#')[0].split('@')[0];
+const baseOf = (kind: string) => kind.split('~')[0].split('#')[0].split('@')[0];
 export const isScoreKind = (k?: string) => !!k && baseOf(k) in SPECS;
 /** 畫圖時用的 kind：有隨機種子就接在後面 */
 /** 可以按「隨機音符」的樂譜（照原圖描的那兩個固定不變） */
 export const scoreCanRandom = (kind?: string) => isScoreKind(kind) && !(baseOf(kind!) in SCORE_TRACED);
 /** 畫圖時用的 kind：有隨機種子就接 '@種子'；果凍II 進場中再接 '#進度'（0～1，量化成 1/240 讓快取有用） */
-export const scoreKindOf = (kind: string, seed?: number, anim?: number) => {
+export const scoreKindOf = (kind: string, seed?: number, anim?: number, wave?: [number, number]) => {
   if (!isScoreKind(kind)) return kind;
   let k = baseOf(kind) + (seed && scoreCanRandom(kind) ? `@${seed}` : '');
   if (anim !== undefined && anim < 1 && scoreCanRandom(kind)) k += `#${(Math.round(Math.max(0, anim) * 240) / 240).toFixed(4)}`;
+  // 波浪：相位、振幅（振幅＝框高的幾成）
+  if (wave && wave[1] > 1e-5) k += `~${wave[0].toFixed(4)},${wave[1].toFixed(4)}`;
   return k;
 };
 
@@ -154,11 +156,12 @@ const rect = (x: number, y: number, w: number, h: number): Pt[] => [[x, y], [x +
 const cubicPts = (a: Pt, b: Pt, c: Pt, d: Pt, n = 10): Pt[] => Array.from({ length: n }, (_, i) => bez(a, b, c, d)((i + 1) / n));
 
 type Frame = { o: Pt; u: Pt; v: Pt };
-function build(kind: string, w: number, h: number): Pt[][] {
+type Model = { polys: Pt[][]; holes: Pt[][]; polyIt: number[]; holeIt: number[]; units: { t: number; at: Pt }[]; staff: { L: Pt[]; R: Pt[]; ts: number[] }[] };
+/** 整張樂譜的「零件」（五線譜每條線的兩側、每一塊屬於哪個單位）—— 同一個大小只算一次，
+    進場動畫每一格只需要拿零件組合（assemble），不用整張重算 */
+function buildModel(kind: string, w: number, h: number): Model {
   // kind：'score-line'、'score-line@種子'、後面可以再接 '#進場進度'（果凍II，0～1）
-  const [main, animS] = kind.split('#');
-  const [base, seedS] = main.split('@');
-  const anim = animS === undefined ? 1 : Math.max(0, Math.min(1, +animS));
+  const [base, seedS] = kind.split('@');
   const spec = SPECS[base];
   const box = bboxOf(base);
   const sx = w / box.w, sy = h / box.h, k = Math.min(sx, sy);
@@ -173,24 +176,17 @@ function build(kind: string, w: number, h: number): Pt[][] {
   const Hh = (q: Pt[]) => { holes.push(q); holeIt.push(cur); };
   const units: { t: number; at: Pt }[] = [];
   const unit = (t: number, at: Pt) => { units.push({ t, at }); cur = units.length - 1; };
-  /* 果凍ll：像一枝筆從左畫到右（前 78% 的時間，速度固定）；筆畫到哪裡，那裡的譜號／音符就跟著果凍彈出來，
-     每顆彈的時間佔整段的 22%（跟符號「泡泡」每一顆的節奏差不多） */
-  const STAFF = .78, POP = .22;
-  /* 線像「子彈時間」：一開始就很快、中段最快，最後一段慢慢減速收尾（ease-out） */
-  const EASE = 2.6, ease = (x: number) => 1 - Math.pow(1 - x, EASE), easeInv = (y: number) => 1 - Math.pow(1 - y, 1 / EASE);
-  const staffT = anim >= 1 ? 1 : ease(Math.min(1, anim / STAFF));
   // 五線譜：每條線做成一條有寬度的帶子（線寬可以沿線慢慢變細）
   const N = 140;
+  const staff: Model['staff'] = [];
   for (let li = -2; li <= 2; li++) {
-    const L: Pt[] = [], R: Pt[] = [];
-    if (staffT <= 0) continue;
-    const NN = Math.max(1, Math.ceil(N * staffT));
-    for (let i = 0; i <= NN; i++) {
-      const t = Math.min(staffT, i / N), f = frame(t), gg = gap(t), off = li * gg, hw = spec.lw * k * (spec.lwFn ? spec.lwFn(t) : 1) / 2;
+    const L: Pt[] = [], R: Pt[] = [], ts: number[] = [];
+    for (let i = 0; i <= N; i++) {
+      const t = i / N, f = frame(t), gg = gap(t), off = li * gg, hw = spec.lw * k * (spec.lwFn ? spec.lwFn(t) : 1) / 2;
       const cx = f.o[0] + f.v[0] * off, cy = f.o[1] + f.v[1] * off;
-      L.push([cx + f.v[0] * hw, cy + f.v[1] * hw]); R.push([cx - f.v[0] * hw, cy - f.v[1] * hw]);
+      L.push([cx + f.v[0] * hw, cy + f.v[1] * hw]); R.push([cx - f.v[0] * hw, cy - f.v[1] * hw]); ts.push(t);
     }
-    P(orient([...L, ...R.reverse()]));
+    staff.push({ L, R, ts });
   }
   // 在 (t, p) 的局部座標：x 沿著線、y 往下（往五線譜下方）
   const at = (t: number, p: number) => { const f = frame(t), g = gap(t), off = (p - 4) * g / 2; return { x: f.o[0] + f.v[0] * off, y: f.o[1] + f.v[1] * off, u: f.u, v: f.v, g }; };
@@ -288,15 +284,40 @@ function build(kind: string, w: number, h: number): Pt[][] {
     const flag = (y0: number) => { const s = isUp ? 1 : -1; put(q, [[x, y0], ...cubicPts([x, y0], [x + .15 * g, y0 + s * .9 * g], [x + 1.15 * g, y0 + s * 1.3 * g], [x + .75 * g, y0 + s * 2.6 * g]), ...cubicPts([x + .75 * g, y0 + s * 2.6 * g], [x + .85 * g, y0 + s * 1.7 * g], [x + .35 * g, y0 + s * 1.35 * g], [x, y0 + s * 1.15 * g])]); };
     if (type === '8' || type === '16') { flag(tip); if (type === '16') flag(tip + (isUp ? .85 : -.85) * g); }
   });
-  if (anim >= 1) return [...polys, ...holes];
-  /* 果凍II：譜號、音符照左到右的順序，一個接一個「果凍」彈出來（以自己的中心放大、彈過頭再回來） */
-  const order = units.map((u, i) => i).sort((x, y) => units[x].t - units[y].t);
-  const rank: number[] = []; order.forEach((u, r) => { rank[u] = r; });
-  const scaleOf = (u: number) => { if (u < 0) return 1; const st = STAFF * easeInv(Math.max(0, Math.min(1, units[u].t))), x = (anim - st) / POP; if (x <= 0) return 0; if (x >= 1) return 1; return 1 - Math.exp(-5 * x) * Math.cos(9 * x); };
+  return { polys, holes, polyIt, holeIt, units, staff };
+}
+/** 進場進度 anim（0～1）：五線譜畫到哪、哪些單位彈出來了 */
+function assemble(m: Model, anim: number): Pt[][] {
+  if (anim >= 1) return [...m.staff.map(s => orient([...s.L, ...s.R.slice().reverse()])), ...m.polys, ...m.holes];
+  /* 果凍ll：像一枝筆從左畫到右（前 78% 的時間，一開始快、最後減速收尾）；
+     筆畫到哪裡，那裡的譜號／音符就跟著果凍彈出來 */
+  const STAFF = .78, POP = .22, EASE = 2.6;
+  const ease = (x: number) => 1 - Math.pow(1 - x, EASE), easeInv = (y: number) => 1 - Math.pow(1 - y, 1 / EASE);
+  const staffT = ease(Math.min(1, anim / STAFF));
   const out: Pt[][] = [];
-  const apply = (q: Pt[], u: number) => { const sc = scaleOf(u); if (sc <= .002) return; if (u < 0 || sc === 1) { out.push(q); return; } const [ax, ay] = units[u].at; out.push(q.map(([x, y]) => [ax + (x - ax) * sc, ay + (y - ay) * sc] as Pt)); };
-  polys.forEach((q, i) => apply(q, polyIt[i])); holes.forEach((q, i) => apply(q, holeIt[i]));
+  if (staffT > 0) m.staff.forEach(({ L, R, ts }) => {
+    // 畫到 staffT 為止：最後一點用內插，線頭才不會一格一格跳
+    let n = 1; while (n < ts.length && ts[n] <= staffT) n++;
+    const Ls = L.slice(0, n), Rs = R.slice(0, n);
+    if (n < ts.length) { const u = (staffT - ts[n - 1]) / (ts[n] - ts[n - 1]), lerp = (a: Pt, b: Pt): Pt => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u]; Ls.push(lerp(L[n - 1], L[n])); Rs.push(lerp(R[n - 1], R[n])); }
+    if (Ls.length >= 2) out.push(orient([...Ls, ...Rs.reverse()]));
+  });
+  const scaleOf = (u: number) => { if (u < 0) return 1; const st = STAFF * easeInv(Math.max(0, Math.min(1, m.units[u].t))), x = (anim - st) / POP; if (x <= 0) return 0; if (x >= 1) return 1; return 1 - Math.exp(-5 * x) * Math.cos(9 * x); };
+  const apply = (q: Pt[], u: number) => { const sc = scaleOf(u); if (sc <= .002) return; if (u < 0 || sc === 1) { out.push(q); return; } const [ax, ay] = m.units[u].at; out.push(q.map(([x, y]) => [ax + (x - ax) * sc, ay + (y - ay) * sc] as Pt)); };
+  m.polys.forEach((q, i) => apply(q, m.polyIt[i])); m.holes.forEach((q, i) => apply(q, m.holeIt[i]));
   return out;
+}
+const build = (kind: string, w: number, h: number): Pt[][] => assemble(modelOf(kind, w, h), 1);
+/* 零件快取：同一張樂譜、同一個大小只算一次 */
+const modelCache = new Map<string, Model>();
+function modelOf(kind: string, w: number, h: number): Model {
+  const key = `${kind}|${w.toFixed(1)}|${h.toFixed(1)}`;
+  let m = modelCache.get(key);
+  if (m) { modelCache.delete(key); modelCache.set(key, m); return m; }
+  m = buildModel(kind, w, h);
+  modelCache.set(key, m);
+  while (modelCache.size > 32) modelCache.delete(modelCache.keys().next().value!);
+  return m;
 }
 /* 預設（沒有擠壓、預設音符）的外框，當作縮放的基準 —— 隨機音符時框不會跟著跳 */
 const boxCache = new Map<string, { x: number; y: number; w: number; h: number }>();
@@ -304,7 +325,7 @@ function bboxOf(base: string) {
   let b = boxCache.get(base);
   if (b) return b;
   boxCache.set(base, { x: 0, y: 0, w: 1, h: 1 });   // 先放一個，build 裡面才不會遞迴
-  const polys = build(base, 1, 1);
+  const polys = assemble(buildModel(base, 1, 1), 1);
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   polys.forEach(q => q.forEach(([x, y]) => { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }));
   b = { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
@@ -314,21 +335,46 @@ function bboxOf(base: string) {
 /** 新增時的高÷寬 */
 export const scoreRatio = (kind: string) => { const t = SCORE_TRACED[baseOf(kind)]; if (t) return t.h / t.w; const b = bboxOf(baseOf(kind)); return b.h / b.w; };
 
+/* 照原圖描的那兩個：輪廓拆成數字一次，之後照框縮放 */
+const tracedLoops = new Map<string, Float32Array[]>();
+const tracedPolys = (base: string, w: number, h: number): Pt[][] => {
+  const tr = SCORE_TRACED[base];
+  let loops = tracedLoops.get(base);
+  if (!loops) { loops = tr.d.split('Z').map(x => x.replace('M', '').trim()).filter(Boolean).map(x => Float32Array.from(x.split(/\s+/).map(Number))); tracedLoops.set(base, loops); }
+  const sx = w / tr.w, sy = h / tr.h;
+  return loops.map(a => { const q: Pt[] = []; for (let i = 0; i < a.length; i += 2) q.push([a[i] * sx, a[i + 1] * sy]); return q; });
+};
+const tracedCache = new Map<string, Pt[][]>();
+
 const cache = new Map<string, string>();
+/**
+ * kind：'score-line'、'score-line@種子'，後面可以再接 '#進場進度'（果凍ll）與 '~相位,振幅'（波浪）。
+ * 波浪直接套在每一個點上（往上下位移），不經過 GPU 把整張圖扭一次 —— 好幾個樂譜一起動也很輕。
+ */
 export const scorePathD = (kind: string, w: number, h: number) => {
   if (!isScoreKind(kind) || !(w > 0) || !(h > 0)) return '';
   const key = `${kind}|${w.toFixed(1)}|${h.toFixed(1)}`;
   const hit = cache.get(key); if (hit) return hit;
-  const f = (n: number) => String(Math.round(n * 100) / 100);
-  // 第一、第二個的預設：描好的原圖輪廓，照框縮放
-  const tr = SCORE_TRACED[baseOf(kind)];
-  if (tr) {
-    const sx = w / tr.w, sy = h / tr.h;
-    const d = tr.d.split('Z').map(x => x.replace('M', '').trim()).filter(Boolean).map(x => { const n = x.split(/\s+/).map(Number); let o = `M ${f(n[0] * sx)} ${f(n[1] * sy)}`; for (let i = 2; i < n.length; i += 2) o += ` L ${f(n[i] * sx)} ${f(n[i + 1] * sy)}`; return o + ' Z'; }).join(' ');
-    cache.set(key, d); if (cache.size > 48) cache.delete(cache.keys().next().value!);
-    return d;
+  const [noWave, waveS] = kind.split('~');
+  const [main, animS] = noWave.split('#');
+  const base = baseOf(main);
+  let polys: Pt[][];
+  if (SCORE_TRACED[base]) {
+    const tk = `${base}|${w.toFixed(1)}|${h.toFixed(1)}`;
+    polys = tracedCache.get(tk) || tracedPolys(base, w, h);
+    tracedCache.set(tk, polys); while (tracedCache.size > 16) tracedCache.delete(tracedCache.keys().next().value!);
+  } else {
+    const anim = animS === undefined ? 1 : Math.max(0, Math.min(1, +animS));
+    polys = assemble(modelOf(main, w, h), anim);
   }
-  const d = build(kind, w, h).map(q => 'M ' + q.map(([x, y]) => `${f(x)} ${f(y)}`).join(' L ') + ' Z').join(' ');
+  let d = '';
+  if (waveS) {
+    // 波浪：y 往上下位移 amp·h·sin(2π(x/w − 相位))
+    const [g, a] = waveS.split(',').map(Number), A = a * h, F = 2 * Math.PI / w, G = 2 * Math.PI * g;
+    for (const q of polys) { d += 'M'; for (let i = 0; i < q.length; i++) { const [x, y] = q[i]; d += (i ? 'L' : '') + (Math.round(x * 10) / 10) + ' ' + (Math.round((y + A * Math.sin(x * F - G)) * 10) / 10); } d += 'Z'; }
+    return d;   // 每一格都不一樣，不放快取
+  }
+  for (const q of polys) { d += 'M'; for (let i = 0; i < q.length; i++) { const [x, y] = q[i]; d += (i ? 'L' : '') + (Math.round(x * 100) / 100) + ' ' + (Math.round(y * 100) / 100); } d += 'Z'; }
   cache.set(key, d);
   if (cache.size > 48) cache.delete(cache.keys().next().value!);
   return d;

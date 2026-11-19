@@ -628,8 +628,16 @@ const creativeShapeColorFor = (kind: string) => isBackdropMask(kind) ? shapeDefa
     記憶體上限：整個 App 最多留 8 張（每張最多 1024 邊長）（淘汰的立刻把畫布縮成 0 釋放）；
     不能重用的路徑（線條「畫出來」動畫每格都是新路徑）不快取，共用一張暫存畫布。 */
 const lowResGlowCache = new Map<string, { c: HTMLCanvasElement; pad: number; kk: number }>();
+/* 樂譜的波浪：不走 GPU 扭整張圖，直接把相位、振幅交給樂譜自己畫（每個點往上下位移）。
+   振幅跟其他物件的波浪同一套：最多 10 個畫面單位、框高的 6.5%，乘上強度 */
+const scoreWaveOf = (o: any, f: any): [number, number] | undefined =>
+  f && f.gridWave !== undefined && o?.type === 'shape' && isScoreKind(o.kind) && (f.waveMix === undefined || f.waveMix > 1e-5)
+    ? [f.gridWave, Math.min(10 / Math.max(1, o.h || 1), .065) * Math.max(.15, (moOf(o).amp ?? 50) / 100) * (f.waveMix ?? 1)]
+    : undefined;
 /* 波浪物件的來源圖（只有物件那一塊）：內容沒變就不重畫、也不重新上傳到 GPU */
 const waveSrcCache = new Map<string, { model: any; sig: string; c: HTMLCanvasElement; ver: number }>();
+/* 只在搬動（位移／旋轉／縮放）的動畫物件：照原樣畫好的那一張（每個物件一張，總共最多約 2400 萬像素） */
+const motionSpriteCache = new Map<string, { model: any; key: string; c: HTMLCanvasElement; hw: number; hh: number }>();
 let waveSrcVer = 0;
 const lowResGlowPathIds = new WeakMap<Path2D, number>();
 let lowResGlowSerial = 0;
@@ -7980,7 +7988,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          Safari 的分段縮放仍會讓邊緣看起來閃一下。 */
       const internalWave = f?.gridWave !== undefined
         && (f.waveMix === undefined || f.waveMix > 1e-5)
-        && !(o.type === 'shape' && (GRID_SHAPE_KINDS.has(o.kind)||isBackdropMask(o.kind)));
+        && !(o.type === 'shape' && (GRID_SHAPE_KINDS.has(o.kind)||isBackdropMask(o.kind)||isScoreKind(o.kind)));
       const objectAlpha = ((o.opacity ?? ((o.alpha ?? 1) * 100)) / 100) * (f ? f.a : 1);
       // 不是波浪的物件要畫之前，先把排隊中的波浪物件畫掉（前後順序不變）
       if (!internalWave) flushWave();
@@ -8012,11 +8020,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       })() : undefined;
       if (flatBox && (flatBox.w <= 0 || flatBox.h <= 0)) return;
       const layer = (internalWave || flattenShapeAlpha) ? waveLayer(flatBox) : null;
-      const paintObject = (ctx: CanvasRenderingContext2D, flattened = false, noScale = false) => {
+      /* noMotion：畫成「沒有動畫位移／旋轉／縮放」的樣子（動畫貼圖快取用，見下面的 motionSprite） */
+      const paintObject = (ctx: CanvasRenderingContext2D, flattened = false, noScale = false, noMotion = false) => {
+      const tf = noMotion ? null : f;
       ctx.save();
-      ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
-      ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
-      if (f && !noScale && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
+      ctx.translate((o.x + o.w / 2 + (tf ? tf.dx * o.w : 0)) * s, (o.y + o.h / 2 + (tf ? tf.dy * o.h : 0)) * s);
+      ctx.rotate(((o.rot || 0) + (tf ? tf.rot : 0)) * Math.PI / 180);
+      if (tf && !noScale && (tf.k !== 1 || tf.fx !== 1)) ctx.scale(tf.k * tf.fx, tf.k);
       /* 物件本身的座標系（位移＋旋轉＋動畫縮放）：選中框之後要用這個畫，
          不能沿用文字自己加上去的字級、擠壓縮放，不然框會被放大、偏移（動畫頁的虛線框就是這樣變大） */
       const objBaseT = ctx.getTransform();
@@ -8238,7 +8248,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else {
         const shapeP0 = shapePathBox(
-          stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), (o as any).lineGap), bw, bh,
+          stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim, scoreWaveOf(o, f)), (o as any).lineGap), bw, bh,
           ((o as any).textureBaseW || o.w) * s,
           ((o as any).textureBaseH || o.h) * s,
           (((o as any).lineBase || Math.max(o.w, o.h)) * s / 160) * 2.325
@@ -8251,7 +8261,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             ) * (GRID_DOT_KINDS.has(o.kind) ? Math.max(1, Math.min(3, (o.lineW ?? 6) / 6)) : 1),
           f?.ringReveal ?? 1,
         );
-        const shapeP = drawTip === undefined ? shapeP0 : new Path2D(revealPathD(shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), (o as any).lineGap), bw, bh), drawTip));
+        const shapeP = drawTip === undefined ? shapeP0 : new Path2D(revealPathD(shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim, scoreWaveOf(o, f)), (o as any).lineGap), bw, bh), drawTip));
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
 
@@ -8324,7 +8334,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           for (const r of shapeGlowBlurs(bw, bh)) {
             ctx.shadowBlur = r * gAmt;
             if (solid && COMPOSITE_SHAPE_KINDS.has(o.kind)) {
-              drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), bw, bh, o.shapeFeather, col,
+              drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim, scoreWaveOf(o, f)), bw, bh, o.shapeFeather, col,
                 undefined, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth,
                   baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s });
             } else { paintShapePath(!!solid); if (!solid) fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s); }
@@ -8359,8 +8369,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (TRACK_SQUARE_KINDS.has(o.kind as string)) { ctx.lineJoin = 'miter'; ctx.miterLimit = 4; }
           if (!strokeCompositeShape(ctx, o.kind, bw, bh, o.innerSize)) paintShapePath(false);
           if (lineOutline) {
-            const d = drawTip === undefined ? shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), (o as any).lineGap), bw, bh)
-              : revealPathD(shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), (o as any).lineGap), bw, bh), drawTip);
+            const d = drawTip === undefined ? shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim, scoreWaveOf(o, f)), (o as any).lineGap), bw, bh)
+              : revealPathD(shapePathD(stitchKindD(scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim, scoreWaveOf(o, f)), (o as any).lineGap), bw, bh), drawTip);
             const half = lw / 2 + sw;
             ctx.fillStyle = o.strokeColor || '#000000';
             for (const e of lineEndsOf(d)) {
@@ -8380,7 +8390,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (GRID_DOT_KINDS.has(o.kind)) {
             /* 直接畫已帶固定點距與點徑的 shapeP，不能再用當前框重建一次。 */
             paintShapePath(true);
-          } else drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim), bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
+          } else drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim, scoreWaveOf(o, f)), bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
             if (texOf(o) === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
@@ -8764,6 +8774,57 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           src: blurKeyOf(`shape|${o.id}|${s}|${JSON.stringify({ ...o, x: 0, y: 0, mo: 0 })}`) });
         ctx.restore();return;
       }
+      /* 動畫只是在「搬動」物件（位移、旋轉、縮放、翻面、透明度）時，物件本身每一格都一樣：
+         先照原樣畫好一張存起來，之後每一格只把這張圖移動／旋轉／縮放貼上去。
+         霧白邊框的模糊、拍立得的相紙、樂譜的大量線條，以前每一格都整個重畫，好幾個一起動就掉幀。
+         物件本身在變的動畫（畫筆、果凍ll、星芒光芒、波浪…）不走這裡。 */
+      const pureMotion = f && !internalWave && !f.lab && f.draw === undefined && f.seq === undefined && f.rayK === undefined
+        && f.ringReveal === undefined && f.gridWave === undefined && (f as any).scoreAnim === undefined && (f as any).scatterItem === undefined
+        && !(f.burst !== undefined && f.burst > 0)
+        /* 有縮放／翻面：每一格大小都不同，重畫最貴 —— 一律用存好的圖。
+           只有移動、旋轉：只有本身就很貴的（拍立得的相紙、模糊圖形）才用；
+           一般圖形、樂譜、文字直接畫比貼一張大圖還快 */
+        && ((f.k !== 1 || f.fx !== 1) || ((f.rot !== 0 || f.dx !== 0 || f.dy !== 0) && o.type === 'shape' && (o.kind === 'frame-polaroid' || isBlurShape(o.kind))))
+        && (o.type === 'shape' || o.type === 'text') && !isBackdropMask(o.kind) && !(o.type === 'shape' && isScatterFrame(o.kind));
+      if (pureMotion) {
+        const m = ctx.getTransform(), dpr = Math.max(.01, Math.hypot(m.a, m.b));
+        const rot0 = aabbOf(o.w || 1, o.h || 1, o.rot || 0);
+        const pad = Math.max(o.w || 1, o.h || 1) * s * (.12 + .25 * glowAmount(o.glow)) + 24 * s;
+        const hw = rot0.bw * s / 2 + pad, hh = rot0.bh * s / 2 + pad;
+        const k0 = Math.min(dpr, 4096 / (hw * 2), 4096 / (hh * 2));
+        const SW = Math.max(1, Math.ceil(hw * 2 * k0)), SH = Math.max(1, Math.ceil(hh * 2 * k0));
+        const glowK = animRef.current?.glowObj ? animRef.current.glowObj(o) : 1;
+        const key = [s, k0, fxTick, glowK, isMain ? 1 : 0, o.id === selectedObj ? 1 : 0, motionTargetFlashRef.current ? 1 : 0].join('|');
+        const sprites = motionSpriteCache;
+        let ent = sprites.get(o.id);
+        if (!ent || ent.model !== o || ent.key !== key) {
+          const c = ent?.c || document.createElement('canvas');
+          if (c.width !== SW) c.width = SW;
+          if (c.height !== SH) c.height = SH;
+          const g = c.getContext('2d')!;
+          g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, SW, SH);
+          g.setTransform(k0, 0, 0, k0, 0, 0);
+          g.translate(hw - (o.x + o.w / 2) * s, hh - (o.y + o.h / 2) * s);
+          paintObject(g, true, true, true);
+          ent = { model: o, key, c, hw, hh };
+          sprites.delete(o.id); sprites.set(o.id, ent);
+          let px = 0; sprites.forEach(v => { px += v.c.width * v.c.height; });
+          while (px > 24_000_000 && sprites.size > 1) { const [k, v] = sprites.entries().next().value!; if (v === ent) break; sprites.delete(k); px -= v.c.width * v.c.height; v.c.width = v.c.height = 0; }
+        }
+        ctx.save();
+        ctx.globalAlpha = objectAlpha;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        const r0 = (o.rot || 0) * Math.PI / 180, r = ((o.rot || 0) + (f.rot || 0)) * Math.PI / 180;
+        ctx.translate((o.x + o.w / 2 + f.dx * o.w) * s, (o.y + o.h / 2 + f.dy * o.h) * s);
+        // 縮放沿著物件自己的方向（跟原本 paintObject 一樣），圖裡已經含了物件本身的旋轉
+        ctx.rotate(r);
+        ctx.scale(f.k * f.fx, f.k);
+        ctx.rotate(-r0);
+        ctx.drawImage(ent.c, 0, 0, ent.c.width, ent.c.height, -ent.hw, -ent.hh, ent.hw * 2, ent.hh * 2);
+        ctx.restore();
+        return;
+      }
       /* 進場／常駐動畫在縮放（果凍、旋轉、翻轉、流星、縮放…）時，發光、描邊、文字光暈
          都是 canvas 的 shadow。shadow 不吃座標縮放，而且 Safari 遇到非等比縮放
          （翻轉時 X 被壓扁）會直接不畫 —— 就是「翻轉時發光消失、播完才出現」。
@@ -8878,29 +8939,33 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const sig = [s, vp.x, vp.y, fxTick, f.k, f.dx, f.dy, f.rot, f.fx, (f as any).scoreAnim, f.draw, f.seq, f.burst,
         f.ringReveal, f.rayK, animRef.current?.glowObj ? animRef.current.glowObj(o) : 1, x0, y0, ww, wh, isMain ? 1 : 0].join('|');
       const wkey = o.id + (isMain ? '' : '#out');
+      /* 很大的物件（邊框類幾乎整頁大）：預覽時用一半解析度扭再放大貼回，GPU 要處理的像素少四倍；匯出照樣全解析度 */
+      const wsc = isMain && ww * wh > 1_500_000 ? 2 : 1;
+      const sw2 = Math.max(1, Math.round(ww / wsc)), sh2 = Math.max(1, Math.round(wh / wsc));
       let wsrc = waveSrcCache.get(wkey);
-      if (!wsrc || wsrc.model !== o || wsrc.sig !== sig) {
+      if (!wsrc || wsrc.model !== o || wsrc.sig !== sig + '|' + wsc) {
         paintObject(layer.ctx, true);
         const c = wsrc?.c || document.createElement('canvas');
-        if (c.width !== ww) c.width = ww;
-        if (c.height !== wh) c.height = wh;
+        if (c.width !== sw2) c.width = sw2;
+        if (c.height !== sh2) c.height = sh2;
         const g = c.getContext('2d')!;
-        g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, ww, wh);
-        g.drawImage(layer.canvas, x0, y0, ww, wh, 0, 0, ww, wh);
-        wsrc = { model: o, sig, c, ver: ++waveSrcVer };
+        g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, sw2, sh2);
+        g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+        g.drawImage(layer.canvas, x0, y0, ww, wh, 0, 0, sw2, sh2);
+        wsrc = { model: o, sig: sig + '|' + wsc, c, ver: ++waveSrcVer };
         waveSrcCache.delete(wkey); waveSrcCache.set(wkey, wsrc);
         while (waveSrcCache.size > 24) { const [k, v] = waveSrcCache.entries().next().value!; waveSrcCache.delete(k); v.c.width = v.c.height = 0; }
       }
       /* GPU 逐像素正弦位移（utils/waveWarp）：沒有任何直條切片，
          模糊圖形、發光這類半透明的地方也看不到接縫。 */
       if (waveJobs) {
-        waveJobs.push({ src: wsrc.c, key: `${wkey}:${wsrc.ver}`, amp, freq: 1 / objectSpan, off: (x0 - objectLeft) / objectSpan - f.gridWave, dx: x0, dy: y0, alpha: objectAlpha });
+        waveJobs.push({ src: wsrc.c, key: `${wkey}:${wsrc.ver}`, amp: amp / wsc, freq: wsc / objectSpan, off: (x0 - objectLeft) / objectSpan - f.gridWave, dx: x0, dy: y0, alpha: objectAlpha, scale: wsc });
         ctx.restore();
         return;
       }
-      const warped = waveWarp(wsrc.c, 0, 0, ww, wh,
-        amp, 1 / objectSpan, (x0 - objectLeft) / objectSpan - f.gridWave, Infinity, `${wkey}:${wsrc.ver}`);
-      if (warped) ctx.drawImage(warped.canvas, 0, 0, warped.w, warped.h, x0, y0 - warped.padY, warped.w, warped.h);
+      const warped = waveWarp(wsrc.c, 0, 0, sw2, sh2,
+        amp / wsc, wsc / objectSpan, (x0 - objectLeft) / objectSpan - f.gridWave, Infinity, `${wkey}:${wsrc.ver}`);
+      if (warped) ctx.drawImage(warped.canvas, 0, 0, warped.w, warped.h, x0, y0 - warped.padY * wsc, warped.w * wsc, warped.h * wsc);
       ctx.restore();
     };
     const drawObjects=(list:any[])=>{
@@ -10057,7 +10122,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           // 滑桿 50 的實際速度＝舊刻度 90（看起來仍是 50）
           const total = Math.max(.8, cfg.dur * 4.5 * durFromSpeed(90) / durFromSpeed(50));
           const fr = composeMo({ ...cfg, in: 'none' }, t, phase);
-          return { ...fr, scoreAnim: Math.max(0, Math.min(1, (t - cfg.delay) / total)) } as any;
+          // 進場跑完就不要再帶進度（帶著的話會被當成「物件本身還在變」，每格都重畫）
+          const sa = Math.max(0, Math.min(1, (t - cfg.delay) / total));
+          return (sa < 1 ? { ...fr, scoreAnim: sa } : fr) as any;
         }
         if (o.type === 'shape' && isScatterFrame(o.kind) && !cfg.in.startsWith('lab-') && !cfg.idle.startsWith('lab-')) {
           const seq = cfg.in === 'pop-seq';
