@@ -4502,7 +4502,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(region&&photos)commitRegion({...region,photos});
     if(region&&!region.multi&&region.photos.length===1&&photos&&photos[0]!==region.photos[0]){
       const p=photos[0];photoUrlRef.current=p.src;
-      setImageState(prev=>({...prev,img:decodedRegionPhotos.current.get(p.src),originalW:p.width,originalH:p.height}));
+      /* 底圖換成另一張照片：工作尺寸（baseW／baseH）和底圖框都要照新照片的比例重算，
+         只換圖不換框的話，新照片會被硬塞進舊照片的比例裡（直的塞進橫的就被壓扁）。
+         跟導入底圖同一套：工作解析度最多 1080、照新版面鋪滿置中。 */
+      let bw=p.width,bh=p.height;if(Math.max(bw,bh)>1080){const k=1080/Math.max(bw,bh);bw*=k;bh*=k;}
+      bw=Math.round(bw);bh=Math.round(bh);
+      const geo=layoutGeometry(layout,bw,bh,maskScale,layout===FULL?'3:4':canvasRatio);
+      const kk=layout===AROUND?Math.max(geo.iw/Math.max(1,bw),geo.ih/Math.max(1,bh)):1;
+      const cover=Math.max(1,geo.iw/Math.max(1,bw*kk),geo.ih/Math.max(1,bh*kk));
+      const tw=bw*cover,th=bh*cover;
+      setImageTransform({x:(geo.iw-tw*kk)/(2*kk),y:(geo.ih-th*kk)/(2*kk),w:tw,h:th});
+      setImageState(prev=>({...prev,img:decodedRegionPhotos.current.get(p.src),originalW:p.width,originalH:p.height,baseW:bw,baseH:bh,globalScale:Math.max(bw,bh)/1080}));
     }
     const next=objectsRef.current.map(o=>{
       const p=a.kind==='object'&&a.id===o.id?pb:b.kind==='object'&&b.id===o.id?pa:null;
