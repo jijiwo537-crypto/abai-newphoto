@@ -572,7 +572,8 @@ const paintPolaroid = (g: CanvasRenderingContext2D, w: number, h: number, color:
   const win = polaroidWindow(G);
   const card = new Path2D(); roundRectP(card, 0, 0, w, h, G.cr);
   const body = new Path2D(); body.addPath(card); body.addPath(win);
-  const paper = POLAROID_PAPER_DEFAULT / 100;
+  // 拍貼機是光面相紙條：沒有壓紋紙紋
+  const paper = G.f.id === 'photobooth' ? 0 : POLAROID_PAPER_DEFAULT / 100;
   const m = g.getTransform(), dev = Math.max(1e-3, Math.hypot(m.a, m.b));
   g.save();
   g.clip(body, 'evenodd');
@@ -746,7 +747,7 @@ export const paintFrameShape = (
   g.globalCompositeOperation = 'source-atop';
   const body = new Path2D(); body.rect(0, 0, w, h);
   texture(g, body);
-  if (kind === FRAME_POLAROID) {
+  if (kind === FRAME_POLAROID && params.fmt !== 'photobooth') {
     /* 拍立得疊了紋理（點點、格紋…）之後，相紙的紙紋要還在：
        把白色相紙的紙紋用「色彩增值」再疊一次，只疊在卡片上（窗口不疊） */
     g.save();
