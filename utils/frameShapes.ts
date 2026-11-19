@@ -421,7 +421,7 @@ const paperTile = (color: string) => {
    框的比例跟卡片不一樣時，多出來的空間分給邊框：左右平分、上下照這個規格上下緣的比例分，
    所以下緣永遠是最厚的那條。畫布比例選得接近卡片時就是一模一樣的實物比例。 */
 /** side：厚邊在哪一側（預設下面；橫拍的 Instax Mini 在右邊）；even：四邊等寬（撕拉片） */
-export type PolaroidFormat = { id: string; label: string; sub: string; card: [number, number]; win: [number, number]; top: number; cr: number; wr: number; circle?: number; side?: 'bottom' | 'right'; even?: boolean };
+export type PolaroidFormat = { id: string; label: string; sub: string; card: [number, number]; win: [number, number]; top: number; cr: number; wr: number; circle?: number; side?: 'bottom' | 'right'; even?: boolean; /** 拍貼機：直排幾格、格與格之間多寬（mm） */ rows?: number; gap?: number };
 /* 尺寸來源（2026-11 查證）：
    ・Instax 三種：卡片與畫面尺寸是富士官方規格；上下留白「上 8mm、下 16mm」兩個日文資料一致；
      窗口圓角＝畫面短邊的 0.5%（有人用高解析掃描實測真的 Mini、Square：Mini 約 0.23mm）。
@@ -436,6 +436,10 @@ export const POLAROID_FORMATS: PolaroidFormat[] = [
   { id: 'instax-mini', label: 'Instax Mini', sub: '名片尺寸', card: [54, 86], win: [46, 62], top: 8, cr: 1, wr: .23 },
   { id: 'instax-square', label: 'Instax Square', sub: '方形', card: [72, 86], win: [62, 62], top: 8, cr: 1, wr: .31 },
   { id: 'instax-wide', label: 'Instax Wide', sub: '寬幅', card: [108, 86], win: [99, 62], top: 8, cr: 1, wr: .31 },
+  /* 經典拍貼機相紙條：2×6 吋（50.8×152.4mm）、直排四格、直角。比例照參考圖量：
+     左右邊 3.6mm、上緣 4.1mm、格距 1.6mm、每格 43.6×30.8mm，剩下的是最下面那條厚邊（約 20mm）。
+     沒有對應的型號，名稱直接叫「拍貼機」 */
+  { id: 'photobooth', label: '拍貼機', sub: '2×6 吋四格', card: [50.8, 152.4], win: [43.6, 30.8], top: 4.1, cr: 0, wr: 0, rows: 4, gap: 1.6 },
 ];
 export const POLAROID_DEFAULT_FORMAT = 'polaroid';
 /** 紙紋強度（0～100），固定（40 太明顯，降到 25） */
@@ -444,7 +448,9 @@ const polaroidFormat = (id?: string) => POLAROID_FORMATS.find(f => f.id === id) 
 /** 卡片、窗口在 (0,0)～(w,h) 裡的位置。k＝每 mm 多少單位 */
 export const polaroidGeom = (w: number, h: number, fmtId?: string) => {
   const f = polaroidFormat(fmtId);
-  const [cw, ch] = f.card, [ww, wh] = f.win;
+  const [cw, ch] = f.card, [ww] = f.win, rows = f.rows || 1, gap = f.gap || 0;
+  // 多格（拍貼機）：整排窗口當成一塊來分配留白
+  const wh = f.win[1] * rows + gap * (rows - 1);
   const k = Math.min(w / cw, h / ch);
   const exX = Math.max(0, w - cw * k), exY = Math.max(0, h - ch * k);
   let wx: number, wy: number;
@@ -456,7 +462,8 @@ export const polaroidGeom = (w: number, h: number, fmtId?: string) => {
     const side = (cw - ww) / 2, bottom = ch - f.top - wh;
     wx = side * k + exX / 2; wy = f.top * k + exY * f.top / (f.top + bottom);
   }
-  return { f, k, wx, wy, ww: ww * k, wh: wh * k, cr: Math.min(w, h) * .5 > f.cr * k ? f.cr * k : 0, wr: f.wr * k, circle: f.circle ? f.circle * k : 0 };
+  const wins = Array.from({ length: rows }, (_, i) => ({ x: wx, y: wy + i * (f.win[1] + gap) * k, w: ww * k, h: f.win[1] * k }));
+  return { f, k, wins, wx, wy, ww: ww * k, wh: f.win[1] * k, cr: Math.min(w, h) * .5 > f.cr * k ? f.cr * k : 0, wr: f.wr * k, circle: f.circle ? f.circle * k : 0 };
 };
 /** 新增或換規格時，框要用卡片的實物比例：放得進 availW×availH 的 fill 倍那麼大 */
 export const polaroidBox = (availW: number, availH: number, fmtId?: string, fill = .8) => {
@@ -467,7 +474,8 @@ export const polaroidBox = (availW: number, availH: number, fmtId?: string, fill
 /** 換規格時：面積差不多、中心不動，比例換成新卡片的 */
 export const polaroidResize = (w: number, h: number, fmtId?: string) => {
   const [cw, ch] = polaroidFormat(fmtId).card, a = cw / ch, area = Math.max(1, w * h);
-  const nh = Math.sqrt(area / a);
+  // 長邊不超過原本的長邊：拍貼機這種細長條照面積換會長到超出頁面
+  const nh = Math.min(Math.sqrt(area / a), Math.max(w, h) / Math.max(1, a));
   return { w: Math.round(nh * a), h: Math.round(nh) };
 };
 const roundRectP = (p: Path2D, x: number, y: number, w: number, h: number, r: number) => {
@@ -476,7 +484,7 @@ const roundRectP = (p: Path2D, x: number, y: number, w: number, h: number, r: nu
 const polaroidWindow = (G: ReturnType<typeof polaroidGeom>) => {
   const p = new Path2D();
   if (G.circle) { const cx = G.wx + G.ww / 2, cy = G.wy + G.wh / 2; p.moveTo(cx + G.circle / 2, cy); p.arc(cx, cy, G.circle / 2, 0, Math.PI * 2); }
-  else roundRectP(p, G.wx, G.wy, G.ww, G.wh, G.wr);
+  else G.wins.forEach(r => roundRectP(p, r.x, r.y, r.w, r.h, G.wr));
   return p;
 };
 const polaroidPath = (w: number, h: number, _r: number, o: FrameParams = {}) => {
@@ -547,9 +555,14 @@ const paintFramePhoto = (g: CanvasRenderingContext2D, win: Path2D, G: ReturnType
   /* 照片往窗口外多畫約 1.5 個裝置像素，讓相紙的窗口邊緣蓋在照片上：
      兩邊各自抗鋸齒的話，邊上那一圈半透明像素會漏出底下的顏色，縮放時每一格位置不同，就是一直閃的黑線 */
   const m = g.getTransform(), bleed = 1.5 / Math.max(1e-3, Math.hypot(m.a, m.b));
-  g.beginPath(); g.rect(G.wx - bleed, G.wy - bleed, G.ww + bleed * 2, G.wh + bleed * 2); g.clip();
   g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high';
-  g.drawImage(r.ph, r.x, r.y, r.w, r.h);
+  // 拍貼機每一格都放同一張（同樣的大小、位置）
+  for (const wn of G.wins) {
+    g.save();
+    g.beginPath(); g.rect(wn.x - bleed, wn.y - bleed, wn.w + bleed * 2, wn.h + bleed * 2); g.clip();
+    g.drawImage(r.ph, r.x, r.y + wn.y - G.wy, r.w, r.h);
+    g.restore();
+  }
   g.restore();
 };
 /** 拍立得：相紙色＋壓紋紙紋、上暖下冷的大範圍明暗、卡片邊緣一道細線、

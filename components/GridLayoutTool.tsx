@@ -1432,7 +1432,8 @@ export const stitchWidthForGap = (kind: string, w: number, h: number, oldGap: nu
 export const PolaroidFormatPicker = ({ value, onPick }: { value?: string; onPick: (id: string) => void }) => {
   const cur = value || POLAROID_DEFAULT_FORMAT;
   return (
-    <div className="grid grid-cols-5 gap-1.5">
+    /* 六種：排成兩排、每排三顆（一排六顆太擠，字會被壓到看不清楚） */
+    <div className="grid grid-cols-3 gap-1.5">
       {POLAROID_FORMATS.map(f => {
         const [cw, ch] = f.card, G = polaroidGeom(cw, ch, f.id);
         const S = 26 / Math.max(cw, ch), W = cw * S, H = ch * S, on = f.id === cur;
@@ -1445,7 +1446,7 @@ export const PolaroidFormatPicker = ({ value, onPick }: { value?: string; onPick
             <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
               <g transform={`translate(${(28 - W) / 2} ${(28 - H) / 2})`}>
                 <rect x="0" y="0" width={W} height={H} rx={f.cr * S} fill="currentColor" opacity={on ? .95 : .7} />
-                <rect x={G.wx * S} y={G.wy * S} width={G.ww * S} height={G.wh * S} rx={f.wr * S} fill="#111" />
+                {G.wins.map((r, i) => <rect key={i} x={r.x * S} y={r.y * S} width={r.w * S} height={r.h * S} rx={f.wr * S} fill="#111" />)}
               </g>
             </svg>
             <span className={`text-[8px] font-bold leading-tight text-center ${on ? 'text-white' : 'text-white/60'}`}>{lines.map((t, i) => <span key={i} className="block whitespace-nowrap">{t}</span>)}</span>
