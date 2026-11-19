@@ -1432,8 +1432,8 @@ export const stitchWidthForGap = (kind: string, w: number, h: number, oldGap: nu
 export const PolaroidFormatPicker = ({ value, onPick }: { value?: string; onPick: (id: string) => void }) => {
   const cur = value || POLAROID_DEFAULT_FORMAT;
   return (
-    /* 六種：排成兩排、每排三顆（一排六顆太擠，字會被壓到看不清楚） */
-    <div className="grid grid-cols-3 gap-1.5">
+    /* 六種排成一排 */
+    <div className="grid grid-cols-6 gap-1">
       {POLAROID_FORMATS.map(f => {
         const [cw, ch] = f.card, G = polaroidGeom(cw, ch, f.id);
         const S = 26 / Math.max(cw, ch), W = cw * S, H = ch * S, on = f.id === cur;
