@@ -10,7 +10,7 @@
 import { MIST_FRAME_KIND, MIST_FRAME_TB_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, type MistParams } from './mistFrame';
 
 /** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
-export type FrameParams = MistParams & { /** 拍立得規格（POLAROID_FORMATS 的 id）、紙紋強度 0～100 */ fmt?: string; paper?: number; /** 拍立得裡的照片與它的大小、位置 */ imageSrc?: string; imageZoom?: number; imageX?: number; imageY?: number; /** 散落圖形（上下） */ scatterTb?: boolean; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
+export type FrameParams = MistParams & { /** 拍立得規格（POLAROID_FORMATS 的 id）、紙紋強度 0～100 */ fmt?: string; paper?: number; /** 拍貼機：目前在調的是第幾格（上面 imageSrc 等四個欄位就是這一格的）、每一格的照片 */ cell?: number; cells?: PhotoCell[]; /** 拍立得裡的照片與它的大小、位置 */ imageSrc?: string; imageZoom?: number; imageX?: number; imageY?: number; /** 散落圖形（上下） */ scatterTb?: boolean; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
   kinds?: string[]; itemFrame?: ScatterItemFrame;
   /** 散落圖形：新增時的框（四邊擠壓不改這個）—— 版面照它排好，擠壓時整片一起被拉扁，不重新排 */
   baseW?: number; baseH?: number;
@@ -121,7 +121,8 @@ export const FRAME_SLIDERS: Record<string, { key: 'gap' | 'thick' | 'vary' | 'si
 };
 FRAME_SLIDERS[FRAME_SCATTER_TB] = FRAME_SLIDERS['frame-scatter'];
 /** 存在物件上的那一包（滑桿值＋散落的圖形種類） */
-export type FrameOpts = { fmt?: string; paper?: number; imageSrc?: string; imageZoom?: number; imageX?: number; imageY?: number; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number; kinds?: string[] };
+export type PhotoCell = { imageSrc?: string; imageZoom?: number; imageX?: number; imageY?: number };
+export type FrameOpts = { fmt?: string; paper?: number; cell?: number; cells?: PhotoCell[]; imageSrc?: string; imageZoom?: number; imageX?: number; imageY?: number; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number; kinds?: string[] };
 /** 散落圖形的版面：只跟比例、範圍、間距、選了哪些圖形有關 ——
    調大小、大小變化、角度、角度變化時位置都不會重排，只是每顆照自己記住的亂數改大小／角度。 */
 type ScatterSpot = { x: number; y: number; ki: number; uSize: number; uRot: number; tilt: boolean };
@@ -536,11 +537,27 @@ export const loadFramePhoto = (src: string) => new Promise<void>(resolve => {
 export const framePhotoReady = (src?: string) => !!src && !!framePhoto(src);
 /** 照片在 (0,0)～(w,h) 這張卡片上實際畫在哪裡（整張照片的範圍，可能超出窗口）。
     ox／oy＝能左右／上下移動的半幅（imageX／imageY 乘上它就是位移）；照片還沒載好就是 null */
-export const polaroidPhotoRect = (w: number, h: number, o: FrameParams) => {
-  if (!o.imageSrc) return null;
-  const ph = framePhoto(o.imageSrc);
-  if (!ph) return null;
+/** 拍貼機第 i 格的照片：目前選中的那一格用最外層的欄位（拖動、縮放都直接改那幾個），其他格看 cells */
+export const photoCellOf = (o: FrameParams, i: number): PhotoCell =>
+  i === (o.cell ?? 0) ? { imageSrc: o.imageSrc, imageZoom: o.imageZoom, imageX: o.imageX, imageY: o.imageY } : (o.cells?.[i] || {});
+/** 換到第 i 格：目前這一格存回 cells，第 i 格搬到最外層 */
+export const switchPhotoCell = (o: FrameOpts, i: number): Partial<FrameOpts> => {
+  const cur = o.cell ?? 0;
+  const cells = [...(o.cells || [])];
+  cells[cur] = photoCellOf(o, cur);
+  const n = cells[i] || {};
+  return { cells, cell: i, imageSrc: n.imageSrc, imageZoom: n.imageZoom, imageX: n.imageX, imageY: n.imageY };
+};
+export const polaroidPhotoRect = (w: number, h: number, o: FrameParams, cellIdx?: number) => {
   const G = polaroidGeom(w, h, o.fmt);
+  const i = Math.min(G.wins.length - 1, cellIdx ?? o.cell ?? 0);
+  const c = cellIdx === undefined ? o : photoCellOf(o, i);
+  if (!c.imageSrc) return null;
+  const ph = framePhoto(c.imageSrc);
+  if (!ph) return null;
+  const W = G.wins[i];
+  o = { ...o, imageZoom: c.imageZoom, imageX: c.imageX, imageY: c.imageY };
+  G.wx = W.x; G.wy = W.y;
   const zoom = Math.max(1, o.imageZoom ?? 1);
   const s = Math.max(G.ww / ph.width, G.wh / ph.height) * zoom;
   const dw = ph.width * s, dh = ph.height * s, ox = (dw - G.ww) / 2, oy = (dh - G.wh) / 2;
@@ -548,22 +565,20 @@ export const polaroidPhotoRect = (w: number, h: number, o: FrameParams) => {
   const cy = G.wy + G.wh / 2 + Math.max(-1, Math.min(1, o.imageY ?? 0)) * oy;
   return { x: cx - dw / 2, y: cy - dh / 2, w: dw, h: dh, ox, oy, win: { x: G.wx, y: G.wy, w: G.ww, h: G.wh }, ph };
 };
-const paintFramePhoto = (g: CanvasRenderingContext2D, win: Path2D, G: ReturnType<typeof polaroidGeom>, o: FrameParams, w: number, h: number) => {
-  const r = polaroidPhotoRect(w, h, o);
-  if (!r) return;
-  g.save();
+const paintFramePhoto = (g: CanvasRenderingContext2D, _win: Path2D, G: ReturnType<typeof polaroidGeom>, o: FrameParams, w: number, h: number) => {
   /* 照片往窗口外多畫約 1.5 個裝置像素，讓相紙的窗口邊緣蓋在照片上：
      兩邊各自抗鋸齒的話，邊上那一圈半透明像素會漏出底下的顏色，縮放時每一格位置不同，就是一直閃的黑線 */
   const m = g.getTransform(), bleed = 1.5 / Math.max(1e-3, Math.hypot(m.a, m.b));
-  g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high';
-  // 拍貼機每一格都放同一張（同樣的大小、位置）
-  for (const wn of G.wins) {
+  // 每一格放自己的照片（拍貼機四格；其他規格只有一格）
+  G.wins.forEach((wn, i) => {
+    const r = polaroidPhotoRect(w, h, o, i);
+    if (!r) return;
     g.save();
+    g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high';
     g.beginPath(); g.rect(wn.x - bleed, wn.y - bleed, wn.w + bleed * 2, wn.h + bleed * 2); g.clip();
-    g.drawImage(r.ph, r.x, r.y + wn.y - G.wy, r.w, r.h);
+    g.drawImage(r.ph, r.x, r.y, r.w, r.h);
     g.restore();
-  }
-  g.restore();
+  });
 };
 /** 拍立得：相紙色＋壓紋紙紋、上暖下冷的大範圍明暗、卡片邊緣一道細線、
     窗口內緣一道壓痕，窗口裡再落一圈很淺的內陰影（照片是嵌在相紙下面的那種深度） */
@@ -713,10 +728,10 @@ export const paintFrameShape = (
   if (!(w > 0) || !(h > 0)) return;
   /* 拍立得裡的照片：直接畫在畫布上、窗口裡面，相紙再蓋上去。
      不放進下面那張「疊紋理」的暫存畫布 —— 不然點點／星星紋理會連照片一起蓋到 */
-  if (kind === FRAME_POLAROID && params.imageSrc) {
+  if (kind === FRAME_POLAROID && (params.imageSrc || params.cells?.some(c => c?.imageSrc))) {
     const G = polaroidGeom(w, h, params.fmt);
     paintFramePhoto(ctx, polaroidWindow(G), G, params, w, h);
-    params = { ...params, imageSrc: undefined };
+    params = { ...params, imageSrc: undefined, cells: undefined };
   }
   if (isScatterFrame(kind)) { paintScatter(ctx, w, h, color, kind === FRAME_SCATTER_TB ? { ...params, scatterTb: true } : params); return; }
   if (kind === MIST_FRAME_KIND || kind === MIST_FRAME_TB_KIND || !PATHS[kind]) { paintMistFrame(ctx, w, h, color, kind === MIST_FRAME_TB_KIND ? { ...params, tb: true } : params, texture); return; }

@@ -129,7 +129,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, polaroidGeom, polaroidBox, polaroidResize, loadFramePhoto, onFramePhotoReady, framePhotoReady, polaroidPhotoRect, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, polaroidGeom, polaroidBox, polaroidResize, loadFramePhoto, onFramePhotoReady, framePhotoReady, polaroidPhotoRect, photoCellOf, switchPhotoCell, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, polaGingFromUi, polaGingToUi, POLA_GING_DEFAULT, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -1449,7 +1449,7 @@ export const PolaroidFormatPicker = ({ value, onPick }: { value?: string; onPick
                 {G.wins.map((r, i) => <rect key={i} x={r.x * S} y={r.y * S} width={r.w * S} height={r.h * S} rx={f.wr * S} fill="#111" />)}
               </g>
             </svg>
-            <span className={`text-[8px] font-bold leading-tight text-center ${on ? 'text-white' : 'text-white/60'}`}>{lines.map((t, i) => <span key={i} className="block whitespace-nowrap">{t}</span>)}</span>
+            <span className={`min-h-[20px] flex flex-col justify-center text-[8px] font-bold leading-tight text-center ${on ? 'text-white' : 'text-white/60'}`}>{lines.map((t, i) => <span key={i} className="block whitespace-nowrap">{t}</span>)}</span>
           </button>
         );
       })}
@@ -1464,19 +1464,47 @@ export const PolaroidPhotoControls = ({ opts, onChange, slider }: {
 }) => {
   const input = React.useRef<HTMLInputElement>(null);
   const [busy, setBusy] = React.useState(false);
-  const has = !!opts?.imageSrc;
-  const pick = async (f?: File | null) => {
-    if (!f) return;
+  const o = opts || {};
+  const booth = o.fmt === 'photobooth';
+  const n = booth ? 4 : 1, cur = Math.min(n - 1, o.cell ?? 0);
+  const has = !!o.imageSrc;
+  /* 拍貼機：一次可以選好幾張，從目前這一格開始往下填；只有一格的規格只取第一張 */
+  const pick = async (fl?: FileList | null) => {
+    const files = [...(fl || [])].slice(0, n);
+    if (!files.length) return;
     setBusy(true);
     try {
-      const url = URL.createObjectURL(f);
-      await loadFramePhoto(url);
-      onChange({ imageSrc: url, imageZoom: 1, imageX: 0, imageY: 0 });
+      const urls = files.map(f => URL.createObjectURL(f));
+      await Promise.all(urls.map(loadFramePhoto));
+      if (!booth) { onChange({ imageSrc: urls[0], imageZoom: 1, imageX: 0, imageY: 0 }); return; }
+      const cells = [...(o.cells || [])];
+      cells[cur] = photoCellOf(o, cur);
+      urls.forEach((u, k) => { cells[(cur + k) % n] = { imageSrc: u, imageZoom: 1, imageX: 0, imageY: 0 }; });
+      const c = cells[cur];
+      onChange({ cells, cell: cur, imageSrc: c.imageSrc, imageZoom: c.imageZoom, imageX: c.imageX, imageY: c.imageY });
     } finally { setBusy(false); if (input.current) input.current.value = ''; }
   };
   return (
-    <div className="space-y-4">
-      <input ref={input} type="file" data-allow-alpha="" accept="image/*" className="hidden" onChange={e => pick(e.target.files?.[0])} />
+    <div className="space-y-3">
+      <input ref={input} type="file" data-allow-alpha="" accept="image/*" multiple={booth} className="hidden" onChange={e => pick(e.target.files)} />
+      {booth && (
+        /* 四格：點一格就是在調那一格（導入、更換、移除、在畫面上拖動縮放） */
+        <div className="grid grid-cols-4 gap-1.5">
+          {Array.from({ length: n }, (_, i) => {
+            const c = photoCellOf(o, i), on = i === cur;
+            return (
+              <button key={i} type="button" aria-label={`第 ${i + 1} 格`} aria-pressed={on}
+                onClick={() => { if (!on) onChange(switchPhotoCell(o, i)); }}
+                className={`relative h-12 rounded-[8px] overflow-hidden border transition-colors ${on ? 'border-white' : 'border-white/10'}`}>
+                {c.imageSrc
+                  ? <img src={c.imageSrc} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                  : null}
+                <span className={`absolute inset-0 flex items-center justify-center text-[12px] font-bold ${c.imageSrc ? 'text-white [text-shadow:0_1px_3px_rgba(0,0,0,.8)]' : on ? 'text-white' : 'text-white/50'}`}>{i + 1}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="flex gap-2">
         <button type="button" disabled={busy} onClick={() => input.current?.click()}
           className="flex-1 h-10 rounded-[10px] bg-white text-black text-[12px] font-bold active:scale-[0.98] transition-transform disabled:opacity-60">
