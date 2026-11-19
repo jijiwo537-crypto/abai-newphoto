@@ -9283,7 +9283,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const movingId=isMain?((objDragRef.current?.moved&&objDragRef.current.id)||(objPinchRef.current?.gestureStarted&&objPinchRef.current.id)||objStretchRef.current?.id||tuningId||null):null;
     const movingIndex=movingId?aboveObjs.findIndex(o=>o.id===movingId):-1;
     const liftPrefix=!maskPrefix&&isMain&&!previewCapture&&!directMaskPhotos&&movingIndex>=0&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
-    const prefixCacheable=!tilePrefix&&(maskPrefix||liftPrefix);
+    /* 長按換照片時，手指懸停的那張照片要變暗：底層每一格都可能不同，不能沿用快取
+       （貼圖的調整面板開著時會走這條快取，懸停在底圖上就不會變暗） */
+    const prefixCacheable=!tilePrefix&&(maskPrefix||liftPrefix)&&!regionHold.current?.active&&!swapHoverRef.current;
     debugSection('prepare');
     const prefixEnd=maskPrefix?aboveObjs.findIndex(o=>o.id===selectedObj&&isBackdropMask(o.kind)):liftPrefix?movingIndex:-1;
     const prefixAbove=prefixEnd>0?aboveObjs.slice(0,prefixEnd):[];
