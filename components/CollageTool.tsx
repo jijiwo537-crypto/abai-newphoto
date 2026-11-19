@@ -4503,7 +4503,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     const next=objectsRef.current.map(o=>{
       const p=a.kind==='object'&&a.id===o.id?pb:b.kind==='object'&&b.id===o.id?pa:null;
-      if(!p?.src)return o;
+      if(!p)return o;
+      // 搬進空的拍立得格子：這張圖片移進去，原本的圖片物件就不留了
+      if(!p.src)return null as any;
       // 區域是裁切格，加入的圖片是自由擺放的照片。沿用舊圖的寬高的話，換上不同比例的照片會被拉長；
       // 所以保留中心和面積，比例用新照片的
       const scale=Math.sqrt(Math.abs(o.w*o.h)/Math.max(1,p.width*p.height));
@@ -4512,7 +4514,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         src:p.src,origSrc:p.src,img:decodedRegionPhotos.current.get(p.src),fx:p.fx,geo:undefined,
         imgShape:undefined,imgShapeX:0,imgShapeY:0,imgShapeZoom:1};
     });
-    objectsRef.current=next;setObjects(next);
+    const kept=next.filter(Boolean);
+    objectsRef.current=kept;setObjects(kept);
+    if((a.kind==='object'&&!pb.src&&a.id===selectedObjRef.current)){selectedObjRef.current=null;setSelectedObj(null);}
   };
   const cancelRegionHold=()=>{
     if(regionHold.current)window.clearTimeout(regionHold.current.timer);
@@ -8253,7 +8257,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         } else if (isFrameShape(o.kind)) {
           // 邊框・霧白：沒有描邊、發光；紋理只疊在霧上
-          paintFrameShape(ctx, o.kind, bw, bh, col, { ...(o as any).frameOpts, itemFrame: (f as any)?.scatterItem, baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s, range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
+          paintFrameShape(ctx, o.kind, bw, bh, col, { ...(o as any).frameOpts, dimCell: isMain && swapHoverRef.current?.kind === 'pola' && swapHoverRef.current.id === o.id ? swapHoverRef.current.cell : undefined, itemFrame: (f as any)?.scatterItem, baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s, range: (o as any).frameRange, feather: (o as any).frameFeather, round: (o as any).frameRound }, texOf(o) === 'none' ? undefined : (tc, bodyPath) => {
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
               ...o,

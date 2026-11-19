@@ -10,7 +10,7 @@
 import { MIST_FRAME_KIND, MIST_FRAME_TB_KIND, paintMistFrame, MIST_RANGE_DEFAULT, mistRangeFromUi, type MistParams } from './mistFrame';
 
 /** 邊框各自的旋鈕（都是 0～100）；shapeD 是散落圖形框拿來畫圖形的函式（由外面傳進來，避免循環引用） */
-export type FrameParams = MistParams & { /** 拍立得規格（POLAROID_FORMATS 的 id）、紙紋強度 0～100 */ fmt?: string; paper?: number; /** 拍貼機：目前在調的是第幾格（上面 imageSrc 等四個欄位就是這一格的）、每一格的照片 */ cell?: number; cells?: PhotoCell[]; /** 拍立得裡的照片與它的大小、位置 */ imageSrc?: string; imageZoom?: number; imageX?: number; imageY?: number; /** 散落圖形（上下） */ scatterTb?: boolean; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
+export type FrameParams = MistParams & { /** 拍立得規格（POLAROID_FORMATS 的 id）、紙紋強度 0～100 */ fmt?: string; paper?: number; /** 拍貼機：目前在調的是第幾格（上面 imageSrc 等四個欄位就是這一格的）、每一格的照片 */ cell?: number; cells?: PhotoCell[]; /** 長按拖照片懸停在第幾格（那一格變暗） */ dimCell?: number; /** 拍立得裡的照片與它的大小、位置 */ imageSrc?: string; imageZoom?: number; imageX?: number; imageY?: number; /** 散落圖形（上下） */ scatterTb?: boolean; gap?: number; thick?: number; vary?: number; size?: number; sizeVar?: number; angle?: number; angleVar?: number; glow?: number; seed?: number;
   kinds?: string[]; itemFrame?: ScatterItemFrame;
   /** 散落圖形：新增時的框（四邊擠壓不改這個）—— 版面照它排好，擠壓時整片一起被拉扁，不重新排 */
   baseW?: number; baseH?: number;
@@ -746,10 +746,13 @@ export const paintFrameShape = (
   if (!(w > 0) || !(h > 0)) return;
   /* 拍立得裡的照片：直接畫在畫布上、窗口裡面，相紙再蓋上去。
      不放進下面那張「疊紋理」的暫存畫布 —— 不然點點／星星紋理會連照片一起蓋到 */
-  if (kind === FRAME_POLAROID && (params.imageSrc || params.cells?.some(c => c?.imageSrc))) {
+  if (kind === FRAME_POLAROID && (params.imageSrc || params.cells?.some(c => c?.imageSrc) || (params.dimCell ?? -1) >= 0)) {
     const G = polaroidGeom(w, h, params.fmt);
     paintFramePhoto(ctx, polaroidWindow(G), G, params, w, h);
-    params = { ...params, imageSrc: undefined, cells: undefined };
+    // 長按拖照片懸停在這一格：跟其他照片互換時一樣變暗（空格子也一樣）
+    const dw = G.wins[params.dimCell ?? -1];
+    if (dw) { ctx.save(); ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.fillRect(dw.x, dw.y, dw.w, dw.h); ctx.restore(); }
+    params = { ...params, imageSrc: undefined, cells: undefined, dimCell: undefined };
   }
   if (isScatterFrame(kind)) { paintScatter(ctx, w, h, color, kind === FRAME_SCATTER_TB ? { ...params, scatterTb: true } : params); return; }
   if (kind === MIST_FRAME_KIND || kind === MIST_FRAME_TB_KIND || !PATHS[kind]) { paintMistFrame(ctx, w, h, color, kind === MIST_FRAME_TB_KIND ? { ...params, tb: true } : params, texture); return; }

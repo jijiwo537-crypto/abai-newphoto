@@ -6547,7 +6547,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         ctx.translate(-drawW / 2, -drawH / 2);
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
-        paintFrameShape(ctx, image.shape, drawW, drawH, color, { ...image.shapeFrameOpts, itemFrame: motionFrame?.scatterItem, baseW: (image.shapeTextureBaseW || image.width) * drawW / Math.max(1e-6, image.width), baseH: (image.shapeTextureBaseH || image.height) * drawH / Math.max(1e-6, image.height), range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
+        paintFrameShape(ctx, image.shape, drawW, drawH, color, { ...image.shapeFrameOpts, dimCell: classicPolaDim?.id === image.id ? classicPolaDim.cell : undefined, itemFrame: motionFrame?.scatterItem, baseW: (image.shapeTextureBaseW || image.width) * drawW / Math.max(1e-6, image.width), baseH: (image.shapeTextureBaseH || image.height) * drawH / Math.max(1e-6, image.height), range: image.shapeFrameRange, feather: image.shapeFrameFeather, round: image.shapeFrameRound }, tx === 'none' ? undefined : (tc, bodyPath) => {
           tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
           if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
             tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
@@ -6868,6 +6868,8 @@ export { prepareClassicSymbolPlacement, TEXT_PLACEHOLDER };
 /* 預覽用：貼圖畫一次存成點陣，動畫每一格只貼圖（縮放／旋轉／位移／搖擺），波浪則把這張圖切條貼回去。
    原本每一格都整個重畫向量（波浪更是切 64 條、每條重畫一次），貼圖一多就卡。
    內容（物件本身、像素密度、星芒芒長、圓環揭露、照片／字型載入）沒變就不重畫。 */
+/** 長按拖照片懸停的拍立得格子（那一格畫暗） */
+let classicPolaDim: { id: string; cell: number } | null = null;
 const classicSpriteCache = new WeakMap<FloatingImage, { key: string; c: HTMLCanvasElement; pad: number }>();
 let classicSpriteEpoch = 0;
 if (typeof window !== 'undefined') {
@@ -6886,7 +6888,7 @@ const classicSprite = (image: FloatingImage, motionFrame: ObjectMotionFrame | nu
   d = Math.min(d, Math.sqrt(6e6 / Math.max(1, W0 * H0)), 4096 / Math.max(W0, H0));
   const holeImg = image.shape === 'hole' && image.holeType && isImageHole(image.holeType) ? getHoleImg(image.holeType) : null;
   const key = [d.toFixed(3), motionFrame?.ringReveal ?? 1, motionFrame?.rayK ?? '', (motionFrame as any)?.scoreAnim ?? '',
-    classicSpriteEpoch, holeImg ? +!!(holeImg.complete && holeImg.naturalWidth) : '',
+    classicSpriteEpoch, classicPolaDim?.id === image.id ? classicPolaDim.cell : '', holeImg ? +!!(holeImg.complete && holeImg.naturalWidth) : '',
     framePhotoReady(image.shapeFrameOpts?.imageSrc) ? 1 : 0].join('|');
   const hit = classicSpriteCache.get(image);
   if (hit && hit.key === key) return hit;
@@ -12578,6 +12580,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (same) return;
     swapOverRef.current = t;
     setSwapOver(t);
+    classicPolaDim = t?.kind === 'pola' ? { id: t.id, cell: t.cell } : null;
+    vectorScene.flush();
   };
   /* .safe-top 會建立 fixed containing block；Touch.clientX/Y 卻是 viewport 座標。
      直接寫入 clientY 會把 iPhone 狀態列高度再加一次，縮圖便落在手指下方。 */
@@ -18875,7 +18879,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           }
                           moveInStack('float', fImg.id, action === 'up' ? 1 : -1);
                         }}
-                        isSwapTarget={(swapOver?.kind === 'floating' || swapOver?.kind === 'pola') && swapOver.id === fImg.id}
+                        isSwapTarget={swapOver?.kind === 'floating' && swapOver.id === fImg.id}
                         isSwapSource={floatDragSrc !== null && floatSwapRef.current?.id === fImg.id}
                         onSwapTouchStart={handleFloatSwapTouchStart(fImg)}
                         onSwapTouchMove={handleFloatSwapTouchMove}
