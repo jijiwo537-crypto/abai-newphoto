@@ -19,7 +19,7 @@ import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} 
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_DEFAULT_FORMAT, polaroidBox, polaroidResize, onFramePhotoReady, polaroidPhotoRect, photoCellHit, switchPhotoCell } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_DEFAULT_FORMAT, polaroidBox, polaroidResize, onFramePhotoReady, polaroidPhotoRect, photoCellHit, switchPhotoCell, polaroidWindowAt, setPhotoCell, photoCellOf, framePhotoSize } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
@@ -4351,7 +4351,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
   }, [getHoleSize, holeType, checkHitHole, layout, maskScale, canvasRatio, imageState, isHoleFullyInsideMask]);
 
-  type PhotoSource = {kind:'region';index:number} | {kind:'object';id:string};
+  type PhotoSource = {kind:'region';index:number} | {kind:'object';id:string} | {kind:'pola';id:string;cell:number};
   const swapThumbs=useRef(new Map<string,HTMLCanvasElement>());
   const swapThumb=(src:string,img:HTMLImageElement,size:number)=>{
     let thumb=swapThumbs.current.get(src);
@@ -4437,6 +4437,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const o=objectsRef.current[i],r=-(o.rot||0)*Math.PI/180,dx=p.x-o.x-o.w/2,dy=p.y-o.y-o.h/2;
       if(Math.abs(dx*Math.cos(r)-dy*Math.sin(r))<=o.w/2&&Math.abs(dx*Math.sin(r)+dy*Math.cos(r))<=o.h/2){
         const photo=o.type==='image'&&o.img&&!o.vid&&!isVideoEl(o.img);
+        // 拍立得（含拍貼機）的照片窗口：空的也能放進去，有照片的能拿起來
+        if(o.type==='shape'&&o.kind==='frame-polaroid'){
+          // 跟點選物件同一套座標（畫布本身的位置），不用外層動畫框的
+          const cr=canvasRef.current?.getBoundingClientRect(),cx=cr?.width?(clientX-cr.left)*p.off.cw/cr.width:p.x,cy=cr?.height?(clientY-cr.top)*p.off.ch/cr.height:p.y;
+          const q=objLocal(o,cx,cy),cell=polaroidWindowAt(o.w,o.h,(o as any).frameOpts||{},q.x,q.y);
+          if(cell>=0)return {kind:'pola',id:o.id,cell};
+        }
         if(forSwap&&!photo&&o.id!==selectedObjRef.current)continue;
         return photo?{kind:'object',id:o.id}:null;
       }
@@ -4445,8 +4452,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const index=hitRegionPhoto(clientX,clientY);
     return index<0?null:{kind:'region',index};
   };
+  /** 拍立得格子裡那張照片：交換時要有一張解好的 <img>（縮圖、換進格子／圖片物件都用它） */
+  const polaImg=(src:string)=>{let im=decodedRegionPhotos.current.get(src);
+    if(!im){im=new Image();im.decoding='async';im.onload=()=>regionPaintRef.current?.();im.src=src;decodedRegionPhotos.current.set(src,im);}return im;};
   const photoContent=(source:PhotoSource)=>{
     if(source.kind==='region')return photoRegionRef.current?.photos[source.index]||null;
+    if(source.kind==='pola'){
+      const o=objectsRef.current.find(z=>z.id===source.id),src=o&&photoCellOf((o as any).frameOpts||{},source.cell).imageSrc;
+      if(!src)return null;
+      const im=polaImg(src),sz=framePhotoSize(src);
+      return {src,width:im.naturalWidth||sz?.w||1000,height:im.naturalHeight||sz?.h||1000};
+    }
     const o=objectsRef.current.find(o=>o.id===source.id);if(!o?.img)return null;
     const src=o.src||o.img.src;
     decodedRegionPhotos.current.set(src,o.img);
@@ -4454,10 +4470,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const swapPhotos=(a:PhotoSource,b:PhotoSource)=>{
     if(JSON.stringify(a)===JSON.stringify(b))return;
-    const pa=photoContent(a),pb=photoContent(b);if(!pa?.src||!pb?.src)return;
+    const pa=photoContent(a),pb0=photoContent(b);
+    // 放進「空的」拍立得格子＝搬過去；拿的是拍立得格子、放到空的版面格子也一樣
+    const moveIntoEmpty=!pb0?.src&&(b.kind==='pola'||a.kind==='pola'&&b.kind==='region');
+    if(!pa?.src||!pb0?.src&&!moveIntoEmpty)return;
+    const pb:any=pb0?.src?pb0:{src:''};
     deferHeavyWork(600);
+    // 拍立得格子：先寫好，其他照片（格子、圖片物件）照原本的方式換
+    if(a.kind==='pola'||b.kind==='pola'){
+      const put=(t:PhotoSource,p:any)=>{if(t.kind!=='pola')return;
+        objectsRef.current=objectsRef.current.map(z=>z.id===t.id?{...z,frameOpts:setPhotoCell((z as any).frameOpts||{},t.cell,p?.src||undefined)}:z);};
+      put(a,pb);put(b,pa);
+      if(pa.src)polaImg(pa.src);if(pb.src)polaImg(pb.src);
+    }
     const region=photoRegionRef.current;
-    const photos=region?.photos.map((p,i)=>a.kind==='region'&&a.index===i?pb:b.kind==='region'&&b.index===i?pa:p);
+    const regionGets=(p:any)=>p?.src?{src:p.src,width:p.width,height:p.height,fx:p.fx}:{...p,src:''};
+    const photos=region?.photos.map((p,i)=>a.kind==='region'&&a.index===i?regionGets(pb):b.kind==='region'&&b.index===i?regionGets(pa):p);
     if(region&&photos){
       // 特效像素屬於照片，不屬於格子。已經算好的照片換位置時，不能同步重算原圖解析度的特效
       for(const cache of [objFxCache.current,fxLiveRef.current,regionPreviewCaps.current,regionFxSurfaces.current,vidScratchRef.current] as Map<string,any>[]){
@@ -4475,7 +4503,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     const next=objectsRef.current.map(o=>{
       const p=a.kind==='object'&&a.id===o.id?pb:b.kind==='object'&&b.id===o.id?pa:null;
-      if(!p)return o;
+      if(!p?.src)return o;
       // 區域是裁切格，加入的圖片是自由擺放的照片。沿用舊圖的寬高的話，換上不同比例的照片會被拉長；
       // 所以保留中心和面積，比例用新照片的
       const scale=Math.sqrt(Math.abs(o.w*o.h)/Math.max(1,p.width*p.height));

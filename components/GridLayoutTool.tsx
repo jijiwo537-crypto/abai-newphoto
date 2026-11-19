@@ -129,7 +129,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, polaroidGeom, polaroidBox, polaroidResize, loadFramePhoto, onFramePhotoReady, framePhotoReady, polaroidPhotoRect, photoCellOf, switchPhotoCell, photoCellHit, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, polaroidGeom, polaroidBox, polaroidResize, loadFramePhoto, onFramePhotoReady, framePhotoReady, polaroidPhotoRect, photoCellOf, switchPhotoCell, photoCellHit, polaroidWindowAt, setPhotoCell, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, polaGingFromUi, polaGingToUi, POLA_GING_DEFAULT, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -1468,7 +1468,8 @@ export const PolaroidPhotoControls = ({ opts, onChange, slider }: {
   const booth = o.fmt === 'photobooth';
   const n = booth ? 4 : 1, cur = Math.min(n - 1, o.cell ?? 0);
   const has = !!o.imageSrc;
-  const anyPhoto = has || !!o.cells?.some(c => c?.imageSrc);
+  // 只看每一格「現在」的照片（目前這一格看最外層；cells 裡那一格可能是換格前留下的舊資料）
+  const anyPhoto = Array.from({ length: n }, (_, i) => photoCellOf(o, i).imageSrc).some(Boolean);
   /* 拍貼機：一次可以選好幾張，從目前這一格開始往下填；只有一格的規格只取第一張 */
   const pick = async (fl?: FileList | null) => {
     const files = [...(fl || [])].slice(0, n);
@@ -5768,8 +5769,9 @@ export const drawShapeDotsCanvas = (
   }
 };
 
-type SwapSource = { kind: 'cell'; idx: number; src: string } | { kind: 'floating'; id: string; src: string };
-type SwapTarget = { kind: 'cell'; idx: number; layoutId?: string } | { kind: 'floating'; id: string };
+/** pola＝拍立得（含拍貼機）裡的第 cell 格 */
+type SwapSource = { kind: 'cell'; idx: number; src: string } | { kind: 'floating'; id: string; src: string } | { kind: 'pola'; id: string; cell: number; src: string };
+type SwapTarget = { kind: 'cell'; idx: number; layoutId?: string } | { kind: 'floating'; id: string } | { kind: 'pola'; id: string; cell: number };
 
 interface FloatingImageComponentProps {
   /** 動畫頁：只能點選，不能拖動、縮放、旋轉、擠壓 */
@@ -12557,7 +12559,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   // 浮動圖片的長按換位置，以及格子拖動和這裡共用的放置目標提示
   const floatSwapRef = useRef<{
-    id: string; src: string; startX: number; startY: number;
+    id: string; src: string; cell?: number; startX: number; startY: number;
     lastX: number; lastY: number; swiping: boolean; dragging: boolean;
   } | null>(null);
   const floatSwapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -12572,7 +12574,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const same = a && t && a.kind === t.kind &&
       (a.kind === 'cell'
         ? a.idx === (t as any).idx && a.layoutId === (t as any).layoutId
-        : a.id === (t as any).id);
+        : a.id === (t as any).id && (a.kind !== 'pola' || a.cell === (t as any).cell));
     if (same) return;
     swapOverRef.current = t;
     setSwapOver(t);
@@ -13474,7 +13476,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         // 格子也可以拖到浮動圖片上，或「另一個」版面的格子上
         const swapTarget = getSwapTargetFromPoint(touch.clientX, touch.clientY);
         const otherLayoutCell = !!swapTarget && swapTarget.kind === 'cell' && !!swapTarget.layoutId && swapTarget.layoutId !== layoutId;
-        setSwapOverTarget(swapTarget && (swapTarget.kind === 'floating' || otherLayoutCell) ? swapTarget : null);
+        setSwapOverTarget(swapTarget && (swapTarget.kind === 'floating' || swapTarget.kind === 'pola' || otherLayoutCell) ? swapTarget : null);
       }
     }
   };
@@ -13501,7 +13503,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const floatTarget = swapOverRef.current;
         const fromIdx = touchDragState.current.currentIndex;
 
-        if (floatTarget && floatTarget.kind === 'floating') {
+        if (floatTarget && floatTarget.kind === 'pola') {
+          // 版面格子 ↔ 拍立得的格子（指名是哪一個佈局）
+          void applyPolaSwap({ kind: 'cell', idx: fromIdx, src: images[fromIdx]?.url || '', layoutId } as any, floatTarget);
+        } else if (floatTarget && floatTarget.kind === 'floating') {
           void applySwap({ kind: 'cell', idx: fromIdx, src: images[fromIdx]?.url || '' }, floatTarget);
         } else if (floatTarget && floatTarget.kind === 'cell' && floatTarget.layoutId && floatTarget.layoutId !== layoutId) {
           /* 拖到「另一個佈局」的格子：兩格整個對調（跟同一個佈局裡互換一樣，裁切位置歸零）。
@@ -14079,6 +14084,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const fEl = elem.closest('[data-floating-id]');
       if (fEl) {
         const id = fEl.getAttribute('data-floating-id');
+        // 拍立得／拍貼機的照片窗口（空的也可以放進去）
+        const pf = id ? floatingImages.find(f => f.id === id) : null;
+        if (pf?.shape === 'frame-polaroid') {
+          const cell = polaCellUnder(pf, clientX, clientY, false);
+          if (cell >= 0) return { kind: 'pola', id: pf.id, cell };
+        }
         /* 只有真正的自由圖片能成為交換目標。
            圖形與文字不接收拖入，也不再擋住底下的格子：跳過它們繼續往下找。 */
         if (isPhotoFloating(id)) {
@@ -14102,6 +14113,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return null;
   };
 
+  /** 手指底下是拍立得的第幾格窗口（needPhoto：只算有照片的） */
+  const polaCellUnder = (img: FloatingImage, clientX: number, clientY: number, needPhoto: boolean) => {
+    const g = polaScreenGeo(img); if (!g) return -1;
+    const p = polaToLocal(g, clientX, clientY), fo = img.shapeFrameOpts || {};
+    return needPhoto ? photoCellHit(img.width, img.height, fo, p.x, p.y) : polaroidWindowAt(img.width, img.height, fo, p.x, p.y);
+  };
   // 把照片換進浮動外框時，外框要照新照片的比例重新算，不然照片會被拉長。外框的長邊、位置和旋轉保持不變
   const reframeFloating = (box: { width: number; height: number }, url: string): Promise<{ width: number; height: number }> =>
     new Promise(resolve => {
@@ -14118,6 +14135,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     });
 
   const applySwap = async (source: SwapSource, target: SwapTarget) => {
+    if (source.kind === 'pola' || target.kind === 'pola') { await applyPolaSwap(source, target); return; }
     if (source.kind === 'cell' && target.kind === 'cell') {
       if (source.idx === target.idx) return;
       const fromIdx = source.idx, toIdx = target.idx;
@@ -14180,9 +14198,55 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     setFloatingImages(prev => prev.map(f => f.id === floatId ? { ...f, src: cell.url, ...box } : f));
   };
 
+  /* 拍立得（含拍貼機）的格子參與長按互換：格子之間、跟版面格子、跟自由圖片都可以換。
+     放到「空的」那一邊＝搬過去（原本那邊變空；自由圖片搬進去就消失，跟搬進空的版面格子一樣） */
+  const applyPolaSwap = async (source: SwapSource, target: SwapTarget) => {
+    const layouts = pages.flatMap(p => p.layouts);
+    const cellLayoutId = (t: SwapSource | SwapTarget) => (t.kind === 'cell' && (t as any).layoutId) || activeLayout?.id;
+    const srcOf = (t: SwapSource | SwapTarget): string | undefined => {
+      if (t.kind === 'pola') { const f = floatingImages.find(x => x.id === t.id); return f ? photoCellOf(f.shapeFrameOpts || {}, t.cell).imageSrc : undefined; }
+      if (t.kind === 'floating') { const f = floatingImages.find(x => x.id === t.id); return f && !f.isVideo ? f.src : undefined; }
+      const lay = layouts.find(l => l.id === cellLayoutId(t)); return (lay?.images ?? images)[t.idx]?.url || undefined;
+    };
+    if (source.kind === 'pola' && target.kind === 'pola' && source.id === target.id && source.cell === target.cell) return;
+    if (source.kind === 'floating' && floatingImages.find(x => x.id === source.id)?.isVideo) return;
+    if (target.kind === 'floating' && floatingImages.find(x => x.id === target.id)?.isVideo) return;
+    const a = srcOf(source), b = srcOf(target);
+    if (!a) return;
+    // 一邊放 b（可能是空的）、一邊放 a
+    const plan: [SwapSource | SwapTarget, string | undefined][] = [[source, b], [target, a]];
+    const polaPatch = new Map<string, FrameOpts>();
+    let floats = floatingImages;
+    for (const [t, src] of plan) {
+      if (t.kind === 'pola') {
+        const f = floats.find(x => x.id === t.id); if (!f) continue;
+        const fo = setPhotoCell(polaPatch.get(t.id) ?? f.shapeFrameOpts ?? {}, t.cell, src);
+        polaPatch.set(t.id, fo);
+      } else if (t.kind === 'floating') {
+        if (!src) { floats = floats.filter(x => x.id !== t.id); continue; }
+        const f = floats.find(x => x.id === t.id); if (!f) continue;
+        const box = await reframeFloating(f, src);
+        floats = floats.map(x => x.id === t.id ? { ...x, src, origSrc: undefined, geo: undefined, ...box } : x);
+      } else {
+        const dims = src ? await getImageDimensions(src) : null;
+        const lid = cellLayoutId(t);
+        setPages(prev => prev.map(p => ({ ...p, layouts: p.layouts.map(l => l.id !== lid ? l : {
+          ...l, images: l.images.map((c, i) => i !== t.idx ? c : src
+            ? { ...c, url: src, file: undefined, zoom: 1, offsetX: 0, offsetY: 0, naturalWidth: dims!.width, naturalHeight: dims!.height }
+            : { ...c, url: '', file: undefined, zoom: 1, offsetX: 0, offsetY: 0 }) }) })));
+      }
+    }
+    floats = floats.map(x => polaPatch.has(x.id) ? { ...x, shapeFrameOpts: polaPatch.get(x.id) } : x);
+    setFloatingImages(floats);
+    if (source.kind === 'floating' && !b && target.kind === 'pola') setSelectedFloatingId(null);
+  };
+
   const handleFloatSwapTouchStart = (fImg: FloatingImage) => (e: React.TouchEvent) => {
+    // 拍立得：按在有照片的格子上才能長按拿起那張照片
+    const polaCell = fImg.shape === 'frame-polaroid' && e.touches.length === 1
+      ? polaCellUnder(fImg, e.touches[0].clientX, e.touches[0].clientY, true) : -1;
     // 文字與圖形圖層沒有照片，不參與長按交換
-    if (fImg.text !== undefined || fImg.shape) return;
+    if (fImg.text !== undefined || (fImg.shape && polaCell < 0)) return;
     if (e.touches.length !== 1) {
       if (floatSwapTimerRef.current) { clearTimeout(floatSwapTimerRef.current); floatSwapTimerRef.current = null; }
       setFloatDragSrc(null);
@@ -14193,10 +14257,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     const t = e.touches[0];
     // 先解碼、先建立合成層；長按成立時只切可見度，不臨時建立黑色方塊。
-    const dragPoster = fImg.isVideo ? (fImg.poster || fImg.src) : fImg.src;
+    const polaSrc = polaCell >= 0 ? photoCellOf(fImg.shapeFrameOpts || {}, polaCell).imageSrc! : '';
+    const dragPoster = polaCell >= 0 ? polaSrc : fImg.isVideo ? (fImg.poster || fImg.src) : fImg.src;
     setFloatDragPreloadSrc(dragPoster);
     floatSwapRef.current = {
-      id: fImg.id, src: fImg.src,
+      id: fImg.id, src: polaCell >= 0 ? polaSrc : fImg.src, cell: polaCell,
       startX: t.clientX, startY: t.clientY, lastX: t.clientX, lastY: t.clientY,
       swiping: false, dragging: false,
     };
@@ -14235,7 +14300,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         el.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) translate(-50%, -50%) scale(1.1) rotate(4deg)`;
       }
       const target = getSwapTargetFromPoint(t.clientX, t.clientY);
-      setSwapOverTarget(target && !(target.kind === 'floating' && target.id === s.id) ? target : null);
+      setSwapOverTarget(target && !(target.kind === 'floating' && target.id === s.id)
+        && !(target.kind === 'pola' && target.id === s.id && target.cell === s.cell) ? target : null);
       return;
     }
 
@@ -14258,7 +14324,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       setSwapOverTarget(null);
       setFloatDragSrc(null);
       if (target && !(target.kind === 'floating' && target.id === s.id)) {
-        void applySwap({ kind: 'floating', id: s.id, src: s.src }, target);
+        void applySwap((s.cell ?? -1) >= 0 ? { kind: 'pola', id: s.id, cell: s.cell!, src: s.src } : { kind: 'floating', id: s.id, src: s.src }, target);
       }
     }
   };
@@ -18809,7 +18875,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           }
                           moveInStack('float', fImg.id, action === 'up' ? 1 : -1);
                         }}
-                        isSwapTarget={swapOver?.kind === 'floating' && swapOver.id === fImg.id}
+                        isSwapTarget={(swapOver?.kind === 'floating' || swapOver?.kind === 'pola') && swapOver.id === fImg.id}
                         isSwapSource={floatDragSrc !== null && floatSwapRef.current?.id === fImg.id}
                         onSwapTouchStart={handleFloatSwapTouchStart(fImg)}
                         onSwapTouchMove={handleFloatSwapTouchMove}

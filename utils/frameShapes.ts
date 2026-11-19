@@ -533,6 +533,8 @@ export const loadFramePhoto = (src: string) => new Promise<void>(resolve => {
   const off = onFramePhotoReady(() => { if (framePhotoCache.get(src)) { off(); resolve(); } });
   setTimeout(() => { off(); resolve(); }, 15000);
 });
+/** 縮好的那張照片的寬高（比例跟原圖一樣）；還沒載好是 null */
+export const framePhotoSize = (src: string) => { const c = framePhoto(src); return c ? { w: c.width, h: c.height } : null; };
 /** 照片能不能直接畫了（還在載入就是 false） */
 export const framePhotoReady = (src?: string) => !!src && !!framePhoto(src);
 /** 照片在 (0,0)～(w,h) 這張卡片上實際畫在哪裡（整張照片的範圍，可能超出窗口）。
@@ -547,6 +549,17 @@ export const switchPhotoCell = (o: FrameOpts, i: number): Partial<FrameOpts> => 
   cells[cur] = photoCellOf(o, cur);
   const n = cells[i] || {};
   return { cells, cell: i, imageSrc: n.imageSrc, imageZoom: n.imageZoom, imageX: n.imageX, imageY: n.imageY };
+};
+/** 物件座標 (x,y) 落在第幾格窗口（不管有沒有照片）；不在任何窗口裡是 -1 */
+export const polaroidWindowAt = (w: number, h: number, o: FrameParams, x: number, y: number) =>
+  polaroidGeom(w, h, o.fmt).wins.findIndex(r => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
+/** 把第 i 格換成這張照片（src 空白＝清空），大小、位置歸零。回傳新的 frameOpts */
+export const setPhotoCell = (o: FrameOpts, i: number, src?: string): FrameOpts => {
+  const c: PhotoCell = src ? { imageSrc: src, imageZoom: 1, imageX: 0, imageY: 0 } : {};
+  if (src) framePhoto(src);
+  if (i === (o.cell ?? 0)) return { ...o, imageSrc: c.imageSrc, imageZoom: c.imageZoom, imageX: c.imageX, imageY: c.imageY };
+  const cells = [...(o.cells || [])]; cells[i] = c;
+  return { ...o, cells };
 };
 /** 物件座標 (x,y) 落在哪一格「有照片」的窗口裡（拍貼機四格、其他規格一格）；都沒有就是 -1 */
 export const photoCellHit = (w: number, h: number, o: FrameParams, x: number, y: number) => {
