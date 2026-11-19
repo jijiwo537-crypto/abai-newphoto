@@ -129,7 +129,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, polaroidGeom, polaroidBox, polaroidResize, loadFramePhoto, onFramePhotoReady, framePhotoReady, polaroidPhotoRect, photoCellOf, switchPhotoCell, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, polaroidGeom, polaroidBox, polaroidResize, loadFramePhoto, onFramePhotoReady, framePhotoReady, polaroidPhotoRect, photoCellOf, switchPhotoCell, photoCellHit, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, polaGingFromUi, polaGingToUi, POLA_GING_DEFAULT, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -1468,6 +1468,7 @@ export const PolaroidPhotoControls = ({ opts, onChange, slider }: {
   const booth = o.fmt === 'photobooth';
   const n = booth ? 4 : 1, cur = Math.min(n - 1, o.cell ?? 0);
   const has = !!o.imageSrc;
+  const anyPhoto = has || !!o.cells?.some(c => c?.imageSrc);
   /* 拍貼機：一次可以選好幾張，從目前這一格開始往下填；只有一格的規格只取第一張 */
   const pick = async (fl?: FileList | null) => {
     const files = [...(fl || [])].slice(0, n);
@@ -1487,8 +1488,16 @@ export const PolaroidPhotoControls = ({ opts, onChange, slider }: {
   return (
     <div className="space-y-3">
       <input ref={input} type="file" data-allow-alpha="" accept="image/*" multiple={booth} className="hidden" onChange={e => pick(e.target.files)} />
-      {booth && (
-        /* 四格：點一格就是在調那一格（導入、更換、移除、在畫面上拖動縮放） */
+      <div className="flex gap-2">
+        <button type="button" disabled={busy} onClick={() => input.current?.click()}
+          className="flex-1 h-10 rounded-[10px] bg-white text-black text-[12px] font-bold active:scale-[0.98] transition-transform disabled:opacity-60">
+          {busy ? '載入中…' : has ? '更換照片' : '導入照片'}
+        </button>
+        {has && <button type="button" onClick={() => onChange({ imageSrc: undefined, imageZoom: undefined, imageX: undefined, imageY: undefined })}
+          className="h-10 px-4 rounded-[10px] border border-white/15 text-white/70 text-[12px] font-bold active:scale-[0.98] transition-transform">移除</button>}
+      </div>
+      {booth && anyPhoto && (
+        /* 導入過照片才出現、放在按鈕下面。四格：點一格就是在調那一格（導入、更換、移除、在畫面上拖動縮放） */
         <div className="grid grid-cols-4 gap-1.5">
           {Array.from({ length: n }, (_, i) => {
             const c = photoCellOf(o, i), on = i === cur;
@@ -1505,14 +1514,6 @@ export const PolaroidPhotoControls = ({ opts, onChange, slider }: {
           })}
         </div>
       )}
-      <div className="flex gap-2">
-        <button type="button" disabled={busy} onClick={() => input.current?.click()}
-          className="flex-1 h-10 rounded-[10px] bg-white text-black text-[12px] font-bold active:scale-[0.98] transition-transform disabled:opacity-60">
-          {busy ? '載入中…' : has ? '更換照片' : '導入照片'}
-        </button>
-        {has && <button type="button" onClick={() => onChange({ imageSrc: undefined, imageZoom: undefined, imageX: undefined, imageY: undefined })}
-          className="h-10 px-4 rounded-[10px] border border-white/15 text-white/70 text-[12px] font-bold active:scale-[0.98] transition-transform">移除</button>}
-      </div>
     </div>
   );
 };
@@ -1539,6 +1540,7 @@ const polaToScreen = (g: PolaGeo, X: number, Y: number) => {
   return { x: g.cx + (lx * c - ly * s) * g.k, y: g.cy + (lx * s + ly * c) * g.k };
 };
 const PolaPhotoLayer: React.FC<{ img: FloatingImage; onPatch: (o: FrameOpts) => void; onExit: () => void }> = ({ img, onPatch, onExit }) => {
+  const tapAt = React.useRef<{ x: number; y: number } | null>(null);
   const pts = React.useRef(new Map<number, { x: number; y: number }>());
   const gest = React.useRef<any>(null);
   const [, tick] = React.useState(0);
@@ -1556,7 +1558,7 @@ const PolaPhotoLayer: React.FC<{ img: FloatingImage; onPatch: (o: FrameOpts) => 
   return (
     <>
       <div className="absolute inset-0 z-[95]" style={{ touchAction: 'none' }}
-        onPointerDown={e => { e.stopPropagation(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); start(); }}
+        onPointerDown={e => { e.stopPropagation(); (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY }); tapAt.current = { x: e.clientX, y: e.clientY }; start(); }}
         onPointerMove={e => {
           if (!pts.current.has(e.pointerId)) return;
           e.stopPropagation();
@@ -1586,7 +1588,16 @@ const PolaPhotoLayer: React.FC<{ img: FloatingImage; onPatch: (o: FrameOpts) => 
           pts.current.delete(e.pointerId);
           const G = gest.current;
           // 原地點一下＝什麼都不選（不是退回選中拍立得）
-          if (G && G.mode === 'pan' && !G.moved && pts.current.size === 0) { gest.current = null; onExit(); return; }
+          if (G && G.mode === 'pan' && !G.moved && pts.current.size === 0) {
+            gest.current = null;
+            // 拍貼機：點到另一格有照片的窗口 → 換成選中那一格
+            const geo = polaScreenGeo(img), o = opts();
+            if (geo && tapAt.current) {
+              const p = polaToLocal(geo, tapAt.current.x, tapAt.current.y), hit = photoCellHit(img.width, img.height, o, p.x, p.y);
+              if (hit >= 0 && hit !== (o.cell ?? 0)) { onPatch({ ...o, ...switchPhotoCell(o, hit) }); return; }
+            }
+            onExit(); return;
+          }
           // 兩指放開一指：剩下那一指不要接著變成拖動
           gest.current = pts.current.size ? { mode: 'done' } : null;
         }}
@@ -11290,6 +11301,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /* 進入「選中拍立得裡的照片」：拍立得已經選中、裡面有照片，原地點一下照片窗口（手指沒移動）。
      在整頁的捕獲階段聽，不動原本選取／拖曳的那套手勢 */
   const polaSelRef = useRef<string | null>(null); polaSelRef.current = selectedFloatingId;
+  const patchTextLayerRef = useRef(patchTextLayer); patchTextLayerRef.current = patchTextLayer;
   const polaImgsRef = useRef(floatingImages); polaImgsRef.current = floatingImages;
   useEffect(() => {
     let down: { x: number; y: number; sel: string | null } | null = null;
@@ -11298,13 +11310,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const d = down; down = null;
       if (!d || !d.sel || d.sel !== polaSelRef.current || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 8) return;
       const img = polaImgsRef.current.find(f => f.id === d.sel);
-      if (!img || img.shape !== 'frame-polaroid' || !img.shapeFrameOpts?.imageSrc) return;
-      const g = polaScreenGeo(img), r = polaroidPhotoRect(img.width, img.height, img.shapeFrameOpts);
-      if (!g || !r) return;
-      const p = polaToLocal(g, e.clientX, e.clientY);
-      if (p.x < r.win.x || p.x > r.win.x + r.win.w || p.y < r.win.y || p.y > r.win.y + r.win.h) return;
+      if (!img || img.shape !== 'frame-polaroid' || !img.shapeFrameOpts) return;
+      const g = polaScreenGeo(img);
+      if (!g) return;
+      const p = polaToLocal(g, e.clientX, e.clientY), fo = img.shapeFrameOpts;
+      // 點在哪一格有照片的窗口（拍貼機四格各自一張）
+      const hit = photoCellHit(img.width, img.height, fo, p.x, p.y);
+      if (hit < 0) return;
       // 等原本這一下的點選處理完，再換成選中照片（拍立得本身取消選中）
-      setTimeout(() => { setSelectedFloatingId(null); setPolaPhotoId(img.id); }, 0);
+      setTimeout(() => {
+        if (hit !== (fo.cell ?? 0)) patchTextLayerRef.current?.(img.id, { shapeFrameOpts: { ...fo, ...switchPhotoCell(fo, hit) } });
+        setSelectedFloatingId(null); setPolaPhotoId(img.id);
+      }, 0);
     };
     document.addEventListener('pointerdown', pd, true);
     document.addEventListener('pointerup', pu, true);

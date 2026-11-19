@@ -19,7 +19,7 @@ import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} 
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
 import { glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_DEFAULT_FORMAT, polaroidBox, polaroidResize, onFramePhotoReady, polaroidPhotoRect } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_SLIDERS, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_DEFAULT_FORMAT, polaroidBox, polaroidResize, onFramePhotoReady, polaroidPhotoRect, photoCellHit, switchPhotoCell } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
@@ -4897,7 +4897,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  變成在調形狀裡的位置。 */
               shapeIfTap: !!o.img && isImgShaped(o.imgShape) && hitShapeOf(o, x, y),
               /* 拍立得：選中之後再點照片窗口 → 改成選中裡面的照片 */
-              polaPhotoIfTap: o.type === 'shape' && o.kind === 'frame-polaroid' && !!(o as any).frameOpts?.imageSrc && hitPolaWindow(o, x, y),
+              polaPhotoIfTap: o.type === 'shape' && o.kind === 'frame-polaroid' ? polaCellAt(o, x, y) + 1 : 0,
             };
             /* pointerdown 只是按下，不代表已經拖動。真正超過移動門檻時，
                handlePointerMove 才會隱藏框；輕點同一物件不再閃一下。 */
@@ -5905,7 +5905,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 拍立得裡的照片：原地點一下＝什麼都不選；拖過／縮放過＝寫回狀態（可以復原）
     const pg=polaGestureRef.current;
     if(pg){
-      if(pg.mode==='pan'&&!pg.moved){setPolaPhoto(null);setSelectedObj(null);setSelectedTarget(null);}
+      if(pg.mode==='pan'&&!pg.moved){
+        // 拍貼機：點到另一格有照片的窗口 → 換成選中那一格；其他地方＝什麼都不選
+        const o=objectsRef.current.find(z=>z.id===pg.id),hit=o?polaCellAt(o,pg.sx,pg.sy):-1;
+        if(o&&hit>=0&&hit!==((o as any).frameOpts?.cell??0)){polaSwitchCell(o.id,hit);regionPaintRef.current?.();}
+        else{setPolaPhoto(null);setSelectedObj(null);setSelectedTarget(null);}
+      }
       else if(pg.mode!=='done'){const o=objectsRef.current.find(z=>z.id===pg.id);if(o)setObjects(prev=>prev.map(z=>z.id===o.id?{...z,frameOpts:(o as any).frameOpts}:z));}
       // 兩指縮放放開一指時，剩下那一指不要接著變成拖動（等全部放開）
       polaGestureRef.current=activePointers.current.size>1?{mode:'done',id:pg.id,moved:true}:null;
@@ -5930,6 +5935,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (objDragRef.current?.polaPhotoIfTap && !objDragRef.current.moved) {
       // 選中拍立得裡的照片（拍立得本身取消選中，照片用虛線框）
       const id = objDragRef.current.id;
+      polaSwitchCell(id, objDragRef.current.polaPhotoIfTap - 1);
       objDragRef.current.openPanelIfTap = false;
       setSelectedObj(null); setSelectedTarget(null);
       queueMicrotask(() => setPolaPhoto(id));
@@ -6104,8 +6110,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 一個點換成物件自己的座標（左上角是 0,0、沒轉之前的方向） */
   const objLocal=(o:any,x:number,y:number)=>{const a=-(o.rot||0)*Math.PI/180,dx=x-(o.x+o.w/2),dy=y-(o.y+o.h/2);
     return {x:dx*Math.cos(a)-dy*Math.sin(a)+o.w/2,y:dx*Math.sin(a)+dy*Math.cos(a)+o.h/2};};
-  const hitPolaWindow=(o:any,x:number,y:number)=>{const r=polaroidPhotoRect(o.w,o.h,(o as any).frameOpts||{});if(!r)return false;const p=objLocal(o,x,y);
-    return p.x>=r.win.x&&p.x<=r.win.x+r.win.w&&p.y>=r.win.y&&p.y<=r.win.y+r.win.h;};
+  /** 點在哪一格有照片的窗口（拍貼機四格各自一張；其他規格只有一格），沒有就是 -1 */
+  const polaCellAt=(o:any,x:number,y:number)=>{const p=objLocal(o,x,y);return photoCellHit(o.w,o.h,(o as any).frameOpts||{},p.x,p.y);};
+  /** 換成選中第 i 格（目前這格存回去）：直接寫進物件 */
+  const polaSwitchCell=(id:string,i:number)=>{const upd=(z:any)=>{if(z.id!==id)return z;const fo=z.frameOpts||{};return i===(fo.cell??0)?z:{...z,frameOpts:{...fo,...switchPhotoCell(fo,i)}};};
+    objectsRef.current=objectsRef.current.map(upd);setObjects(prev=>prev.map(upd));};
   // 選了別的東西、換分頁時，照片的選取自動結束
   useEffect(()=>{if(selectedObj&&polaPhotoRef.current)setPolaPhoto(null);},[selectedObj]);
   useEffect(()=>{if(polaPhotoRef.current)setPolaPhoto(null);},[activeTab]);

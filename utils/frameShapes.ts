@@ -548,6 +548,11 @@ export const switchPhotoCell = (o: FrameOpts, i: number): Partial<FrameOpts> => 
   const n = cells[i] || {};
   return { cells, cell: i, imageSrc: n.imageSrc, imageZoom: n.imageZoom, imageX: n.imageX, imageY: n.imageY };
 };
+/** 物件座標 (x,y) 落在哪一格「有照片」的窗口裡（拍貼機四格、其他規格一格）；都沒有就是 -1 */
+export const photoCellHit = (w: number, h: number, o: FrameParams, x: number, y: number) => {
+  const G = polaroidGeom(w, h, o.fmt);
+  return G.wins.findIndex((r, i) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h && !!photoCellOf(o, i).imageSrc);
+};
 export const polaroidPhotoRect = (w: number, h: number, o: FrameParams, cellIdx?: number) => {
   const G = polaroidGeom(w, h, o.fmt);
   const i = Math.min(G.wins.length - 1, cellIdx ?? o.cell ?? 0);
