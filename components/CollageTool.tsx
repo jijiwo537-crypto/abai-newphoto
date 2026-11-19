@@ -4502,17 +4502,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(region&&photos)commitRegion({...region,photos});
     if(region&&!region.multi&&region.photos.length===1&&photos&&photos[0]!==region.photos[0]){
       const p=photos[0];photoUrlRef.current=p.src;
-      /* 底圖換成另一張照片：工作尺寸（baseW／baseH）和底圖框都要照新照片的比例重算，
-         只換圖不換框的話，新照片會被硬塞進舊照片的比例裡（直的塞進橫的就被壓扁）。
-         跟導入底圖同一套：工作解析度最多 1080、照新版面鋪滿置中。 */
-      let bw=p.width,bh=p.height;if(Math.max(bw,bh)>1080){const k=1080/Math.max(bw,bh);bw*=k;bh*=k;}
-      bw=Math.round(bw);bh=Math.round(bh);
-      const geo=layoutGeometry(layout,bw,bh,maskScale,layout===FULL?'3:4':canvasRatio);
-      const kk=layout===AROUND?Math.max(geo.iw/Math.max(1,bw),geo.ih/Math.max(1,bh)):1;
-      const cover=Math.max(1,geo.iw/Math.max(1,bw*kk),geo.ih/Math.max(1,bh*kk));
-      const tw=bw*cover,th=bh*cover;
-      setImageTransform({x:(geo.iw-tw*kk)/(2*kk),y:(geo.ih-th*kk)/(2*kk),w:tw,h:th});
-      setImageState(prev=>({...prev,img:decodedRegionPhotos.current.get(p.src),originalW:p.width,originalH:p.height,baseW:bw,baseH:bh,globalScale:Math.max(bw,bh)/1080}));
+      /* 底圖換成另一張照片：只換底圖框的比例，畫布的工作尺寸（baseW／baseH）不動。
+         工作尺寸一改，整張畫布的座標單位就跟著變，上面的貼圖（拍立得等）看起來會突然變大變小。
+         框照新照片的比例重算、剛好鋪滿目前的照片區並置中，照片才不會被硬塞進舊比例裡壓扁。 */
+      const o=getLayoutOffsets();
+      if(o&&imageState){
+        const r=p.width/Math.max(1,p.height);
+        const kk=layout===AROUND?Math.max(o.iw/Math.max(1,imageState.baseW),o.ih/Math.max(1,imageState.baseH)):1;
+        const fw=o.iw/kk,fh=o.ih/kk,tw=Math.max(fw,fh*r),th=tw/r;
+        setImageTransform({x:(fw-tw)/2,y:(fh-th)/2,w:tw,h:th});
+      }
+      setImageState(prev=>({...prev,img:decodedRegionPhotos.current.get(p.src),originalW:p.width,originalH:p.height}));
     }
     const next=objectsRef.current.map(o=>{
       const p=a.kind==='object'&&a.id===o.id?pb:b.kind==='object'&&b.id===o.id?pa:null;
