@@ -4461,7 +4461,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const o=objectsRef.current.find(z=>z.id===source.id),src=o&&photoCellOf((o as any).frameOpts||{},source.cell).imageSrc;
       if(!src)return null;
       const im=polaImg(src),sz=framePhotoSize(src);
-      return {src,width:im.naturalWidth||sz?.w||1000,height:im.naturalHeight||sz?.h||1000};
+      // 寬高一定要是照片真正的比例：縮好的那張（拍立得畫的就是它）一定已經有了；都還沒有就先不換
+      const w=sz?.w||im.naturalWidth,h=sz?.h||im.naturalHeight;
+      if(!w||!h)return null;
+      return {src,width:w,height:h};
     }
     const o=objectsRef.current.find(o=>o.id===source.id);if(!o?.img)return null;
     const src=o.src||o.img.src;

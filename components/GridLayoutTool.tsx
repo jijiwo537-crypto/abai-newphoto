@@ -9434,6 +9434,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const pagePattern = (p?: { pattern?: PatternOpts }): PatternOpts =>
     p?.pattern || { type: 'none', color: '#A8DDE6', size: 50, gap: 20 };
 
+  /* 格子裡的照片是照 naturalWidth／naturalHeight 的比例畫的：這兩個數字跟照片本身不一致時
+     （互換時量圖失敗、舊草稿沒存），照片就被擠扁拉長。每次格子內容變了都對照真正解出來的圖，
+     比例不一樣就改正（只改比例，寬不動，裁切位置照舊） */
+  const healCellRatio = useRef(0);
   const [pages, setPages] = useState<PageConfig[]>(() => [
     { id: 'page-1', bgColor: '#ffffff', layouts: [] }
   ]);
@@ -11260,6 +11264,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   pagesCountRef.current = pages.length;
   /** 每一帧要照頁碼找元素，用 ref 拿最新的 pages（rAF 迴圈不跟著 pages 重掛） */
   const pagesRef = useRef(pages);
+  useEffect(() => {
+    const run = ++healCellRatio.current;
+    const check = () => {
+      if (run !== healCellRatio.current) return;
+      const fixes = new Map<string, { w: number; h: number }>();
+      let waiting = false;
+      for (const pg of pagesRef.current) for (const l of pg.layouts) for (const c of l.images) {
+        if (!c.url) continue;
+        const im = getPreviewImg(c.url);
+        if (!im.complete || !im.naturalWidth) { waiting = true; im.addEventListener('load', check, { once: true }); continue; }
+        const r = im.naturalWidth / im.naturalHeight, w = c.naturalWidth || im.naturalWidth, h = c.naturalHeight || 0;
+        if (!h || Math.abs(w / h - r) / r > .01) fixes.set(c.id, { w, h: Math.round(w / r) });
+      }
+      if (fixes.size) setPages(prev => prev.map(pg => ({ ...pg, layouts: pg.layouts.map(l => l.images.some(c => fixes.has(c.id))
+        ? { ...l, images: l.images.map(c => fixes.has(c.id) ? { ...c, naturalWidth: fixes.get(c.id)!.w, naturalHeight: fixes.get(c.id)!.h } : c) } : l) })));
+      void waiting;
+    };
+    check();
+  }, [pages]);
   // 頁面與按鈕同一次 React commit 就要讀到新順序；useEffect 會晚一幀，
   // 互換的兩頁藥丸因而短暫停在舊索引，之後才被捲動事件拉回來。
   pagesRef.current = pages;
@@ -14156,7 +14179,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
 
     if (source.kind === 'floating' && target.kind === 'floating') {
-      setFloatingImages(prev => swapFloatingMedia(prev, source.id, target.id));
+      /* 外框比例照「照片本身」的寬高算（量真正的圖），不是拿對方外框的寬高：
+         對方外框萬一跟它的照片比例不一致（舊草稿、構圖後），換過來就被擠扁 */
+      const fa = floatingImages.find(f => f.id === source.id), fb = floatingImages.find(f => f.id === target.id);
+      if (!fa || !fb) return;
+      if (fa.isVideo || fb.isVideo) { setFloatingImages(prev => swapFloatingMedia(prev, source.id, target.id)); return; }
+      const [boxA, boxB] = await Promise.all([reframeFloating(fa, fb.src), reframeFloating(fb, fa.src)]);
+      setFloatingImages(prev => {
+        const sw = swapFloatingMedia(prev, source.id, target.id);
+        return sw.map(f => f.id === source.id ? { ...f, ...boxA } : f.id === target.id ? { ...f, ...boxB } : f);
+      });
       return;
     }
 
@@ -14196,7 +14228,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     const box = await reframeFloating(float, cell.url);
     setCells(prev => prev.map((c, i) => i === cellIdx
-      ? { ...c, url: float.src, file: undefined, zoom: 1.0, offsetX: 0, offsetY: 0,
+      // 旋轉屬於原本那張照片，換成新照片要歸零（不然新照片被轉 90° 塞進格子）
+      ? { ...c, url: float.src, file: undefined, zoom: 1.0, offsetX: 0, offsetY: 0, rotation: 0,
           naturalWidth: incoming.width, naturalHeight: incoming.height }
       : c));
     setFloatingImages(prev => prev.map(f => f.id === floatId ? { ...f, src: cell.url, ...box } : f));
@@ -14236,7 +14269,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const lid = cellLayoutId(t);
         setPages(prev => prev.map(p => ({ ...p, layouts: p.layouts.map(l => l.id !== lid ? l : {
           ...l, images: l.images.map((c, i) => i !== t.idx ? c : src
-            ? { ...c, url: src, file: undefined, zoom: 1, offsetX: 0, offsetY: 0, naturalWidth: dims!.width, naturalHeight: dims!.height }
+            ? { ...c, url: src, file: undefined, zoom: 1, offsetX: 0, offsetY: 0, rotation: 0, naturalWidth: dims!.width, naturalHeight: dims!.height }
             : { ...c, url: '', file: undefined, zoom: 1, offsetX: 0, offsetY: 0 }) }) })));
       }
     }
