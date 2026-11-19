@@ -9,6 +9,7 @@ import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
 import { waveWarp } from '../utils/waveWarp';
+import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT } from '../utils/textDeco';
 import { createPortal, flushSync } from 'react-dom';
 import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/classicTextureSize';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
@@ -3210,6 +3211,8 @@ export const TextEditorPanel: React.FC<{
                 />
               ))}
             </div>
+            {/* 捲到最底才看得到的小提示 */}
+            <p className="pt-3 text-center text-[9px] tracking-wider text-white/25">字體僅供個人非商業用途使用</p>
           </div>
         )}
 
@@ -3302,6 +3305,42 @@ export const TextEditorPanel: React.FC<{
                 onOpen={() => onPickColor ? onPickColor('glow') : setColorPage({
                   value: layer.glowColor || '#FFFFFF', colors: GLOW_COLORS,
                   onPick: c => onChange({ glowColor: c }),
+                })} />
+            </div>
+            {/* 陰影：強度拉起來才出現模糊、距離、角度（0＝沒有陰影） */}
+            <div className="flex items-center gap-3 px-2">
+              <div className="flex-1 min-w-0">
+                {slider('陰影', layer.shadowAmt || 0, 0, 100, v => onChange({ shadowAmt: v }))}
+              </div>
+              <ColorPick compact label="顏色" value={layer.shadowColor || TEXT_SHADOW_DEFAULTS.shadowColor} colors={STROKE_COLORS}
+                onPick={c => onChange({ shadowColor: c })}
+                onOpen={() => setColorPage({
+                  value: layer.shadowColor || TEXT_SHADOW_DEFAULTS.shadowColor, colors: STROKE_COLORS,
+                  onPick: c => onChange({ shadowColor: c }),
+                })} />
+            </div>
+            {(layer.shadowAmt || 0) > 0 && (
+              <div className="grid grid-cols-3 gap-3 px-2">
+                {slider('模糊', layer.shadowBlur ?? TEXT_SHADOW_DEFAULTS.shadowBlur, 0, 100, v => onChange({ shadowBlur: v }))}
+                {slider('距離', layer.shadowDist ?? TEXT_SHADOW_DEFAULTS.shadowDist, 0, 100, v => onChange({ shadowDist: v }))}
+                {slider('角度', layer.shadowAngle ?? TEXT_SHADOW_DEFAULTS.shadowAngle, 0, 360, v => onChange({ shadowAngle: v }), '°')}
+              </div>
+            )}
+            {/* 背景：開關跟顏色並排 */}
+            <div className="flex items-center gap-3 px-2">
+              <button
+                onClick={() => onChange({ bgOn: !layer.bgOn })}
+                className={`flex-1 h-9 rounded-xl border flex items-center justify-center text-[12px] font-bold tracking-widest transition-all ${
+                  layer.bgOn ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
+                }`}
+              >
+                背景
+              </button>
+              <ColorPick compact label="顏色" value={layer.bgColor || TEXT_BG_DEFAULT} colors={TEXT_COLORS}
+                onPick={c => onChange({ bgColor: c, bgOn: true })}
+                onOpen={() => setColorPage({
+                  value: layer.bgColor || TEXT_BG_DEFAULT, colors: TEXT_COLORS,
+                  onPick: c => onChange({ bgColor: c, bgOn: true }),
                 })} />
             </div>
             </>
@@ -5590,6 +5629,9 @@ export interface FloatingImage {
   /** 邊緣發光強度 0~20，0 = 關閉 */
   glow?: number;
   glowColor?: string;
+  /** 文字陰影（強度 0＝沒有）、背景（見 utils/textDeco） */
+  shadowAmt?: number; shadowColor?: string; shadowBlur?: number; shadowDist?: number; shadowAngle?: number;
+  bgOn?: boolean; bgColor?: string;
   /** 文字描邊寬度（px，未縮放），0 = 不描邊 */
   strokeWidth?: number;
   strokeColor?: string;
@@ -6770,6 +6812,12 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         });
       };
       const fill = () => drawAnimatedUnits(false);
+      // 背景色塊、陰影在最底下（發光、描邊、字都疊在上面）；符號沒有這兩項
+      if (!image.sym) {
+        paintTextBg(ctx, image, lines, size, lineH, startY, dx);
+        ctx.fillStyle = image.color || '#FFFFFF';
+        paintTextShadow(ctx, image, size, fill);
+      }
       ctx.fillStyle = image.color || '#FFFFFF';
       if (image.glow) {
         ctx.shadowColor = image.glowColor || '#FFFFFF';
@@ -15838,6 +15886,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       });
     };
     const drawLines = () => drawAnimated(false);
+    if (!fImg.sym) {
+      paintTextBg(ctx, fImg, lines, size, lineH, startY, symDx);
+      ctx.fillStyle = fImg.color || '#FFFFFF';
+      paintTextShadow(ctx, fImg, size, drawLines);
+    }
     if (fImg.glow) {
       ctx.shadowColor = fImg.glowColor || '#FFFFFF';
       ctx.fillStyle = fImg.color || '#FFFFFF';

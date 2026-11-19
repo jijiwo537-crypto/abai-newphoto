@@ -1,5 +1,6 @@
 import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
+import { paintTextBg, paintTextShadow } from '../utils/textDeco';
 import { BusyLayer } from './BusyLayer';
 import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
@@ -8752,6 +8753,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
         };
         // 文字的光是當場畫的，乘上這一格的亮度就會跟著閃
+        // 背景色塊、陰影在最底下（發光、描邊、字都疊在上面）；符號沒有這兩項
+        if (!o.sym && !f?.lab) {
+          const fpx = pinFont * s;
+          paintTextBg(ctx, o as any, [o.text || ''], fpx, fpx * 1.12, 0, spacingShift);
+          ctx.fillStyle = o.color || '#ffffff';
+          paintTextShadow(ctx, o as any, fpx, () => drawText(false));
+        }
         const tb = animRef.current?.glowObj ? animRef.current.glowObj(o) : 1;
         if (o.glow && tb > 0.004) {
           ctx.save();
@@ -13374,6 +13382,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           fontSize: sel.size, bold: sel.bold, italic: sel.italic,
                           letterSpacing: sel.letterSpacing, strokeWidth: sel.strokeWidth,
                           strokeColor: sel.strokeColor, glow: sel.glow, glowColor: sel.glowColor,
+                          shadowAmt: sel.shadowAmt, shadowColor: sel.shadowColor, shadowBlur: sel.shadowBlur, shadowDist: sel.shadowDist, shadowAngle: sel.shadowAngle,
+                          bgOn: sel.bgOn, bgColor: sel.bgColor,
                         } as any}
                         onChange={(d: any) => {
                           if (d.fontFamily) ensureFont(d.fontFamily);
