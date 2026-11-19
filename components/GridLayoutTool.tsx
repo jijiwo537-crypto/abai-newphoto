@@ -129,7 +129,7 @@ import { installCanvasShadowSpace } from '../utils/canvasShadowSpace';
 installCanvasShadowSpace();
 import { isVectorShape, VECTOR_SHAPES } from '../utils/vectorShapes';
 import { STAR_BURSTS, glintHasRing } from '../utils/starBursts';
-import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, polaroidGeom, polaroidBox, polaroidResize, loadFramePhoto, onFramePhotoReady, polaroidPhotoRect, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
+import { isFrameShape, paintFrameShape, frameRangeDefault, FRAME_ITEMS, frameIconURL, setFrameShapeD, setFrameShapeItem, setFrameSprite, FRAME_SLIDERS, SCATTER_KINDS_DEFAULT, FRAME_SCATTER, isScatterFrame, scatterAllNoGlow, POLAROID_FORMATS, POLAROID_DEFAULT_FORMAT, polaroidGeom, polaroidBox, polaroidResize, loadFramePhoto, onFramePhotoReady, framePhotoReady, polaroidPhotoRect, type FrameOpts, type FrameSprite } from '../utils/frameShapes';
 import { isMistFrame, MIST_RANGE_DEFAULT, MIST_FEATHER_DEFAULT, MIST_ROUND_DEFAULT, MIST_TEX_SIZE_DEFAULT, MIST_TEX_GAP_DEFAULT, mistGapToUi, mistGapFromUi, mistRangeToUi, mistRangeFromUi, mistSizeToUi, mistSizeFromUi } from '../utils/mistFrame';
 import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, gingDirOf, GINGHAM_N_MAX, GINGHAM_N_DEFAULT, ginghamDefaultFor, polaGingFromUi, polaGingToUi, POLA_GING_DEFAULT, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
@@ -6435,11 +6435,14 @@ const GlCanvasHost: React.FC<{ canvas: HTMLCanvasElement; style: React.CSSProper
 };
 
 
+/** 樂譜的形狀種類字串：帶上果凍ll 進度與波浪（波浪直接套在每個點上，不切片） */
+const classicScoreKd = (image: FloatingImage, scoreAnim?: number, wave?: [number, number]) =>
+  scoreKindOf(image.shape!, (image as any).scoreSeed, scoreAnim, wave);
 const classicScenePaths = new Map<string, Path2D>();
 const classicScenePathDs = new Map<string, string>();
 /** 預覽用的路徑字串（線條類畫外描邊的線頭時要用） */
-const classicScenePathD = (image: FloatingImage, ringReveal = 1, scoreAnim?: number) => {
-  const kd = scoreKindOf(image.shape!, (image as any).scoreSeed, scoreAnim);
+const classicScenePathD = (image: FloatingImage, ringReveal = 1, scoreAnim?: number, wave?: [number, number]) => {
+  const kd = classicScoreKd(image, scoreAnim, wave);
   const key = [kd, image.width, image.height, image.shapeTextureBaseW,
     image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, image.shapeLineGap, ringReveal].join('|');
   let d = classicScenePathDs.get(key);
@@ -6447,13 +6450,15 @@ const classicScenePathD = (image: FloatingImage, ringReveal = 1, scoreAnim?: num
     d = shapePathD(stitchKindD(kd, image.shapeLineGap), image.width, image.height,
       image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height,
       ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325 * (GRID_DOT_KINDS.has(image.shape!) ? Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6)) : 1), ringReveal);
-    classicScenePathDs.set(key, d);
+    if (!wave) classicScenePathDs.set(key, d);
     if (classicScenePathDs.size > 128) classicScenePathDs.delete(classicScenePathDs.keys().next().value!);
   }
   return d;
 };
-const classicScenePath = (image: FloatingImage, ringReveal = 1, scoreAnim?: number) => {
-  const key = [scoreKindOf(image.shape!, (image as any).scoreSeed, scoreAnim), image.width, image.height, image.shapeTextureBaseW,
+const classicScenePath = (image: FloatingImage, ringReveal = 1, scoreAnim?: number, wave?: [number, number]) => {
+  // 波浪每一格都不同：不進快取（免得把別的路徑擠掉）
+  if (wave) return new Path2D(classicScenePathD(image, ringReveal, scoreAnim, wave));
+  const key = [classicScoreKd(image, scoreAnim), image.width, image.height, image.shapeTextureBaseW,
     image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, image.shapeLineGap, ringReveal].join('|');
   let path = classicScenePaths.get(key);
   if (!path) {
@@ -6516,7 +6521,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       }
       if (image.shape) {
         ctx.translate(-drawW / 2, -drawH / 2);
-        const path = classicScenePath(image, motionFrame?.ringReveal ?? 1, (motionFrame as any)?.scoreAnim);
+        const path = classicScenePath(image, motionFrame?.ringReveal ?? 1, (motionFrame as any)?.scoreAnim, (motionFrame as any)?.scoreWave);
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
         const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
@@ -6560,7 +6565,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         }
         if (outer > 0 && isLineKind) {
           // 線條類：描邊形狀跟線條本身一致（轉角、平頭線頭），見 strokeLineOutline
-          strokeLineOutline(ctx, path, classicScenePathD(image, motionFrame?.ringReveal ?? 1, (motionFrame as any)?.scoreAnim), image.shape, drawW, drawH, lw, outer, image.shapeStrokeColor || '#000000');
+          strokeLineOutline(ctx, path, classicScenePathD(image, motionFrame?.ringReveal ?? 1, (motionFrame as any)?.scoreAnim, (motionFrame as any)?.scoreWave), image.shape, drawW, drawH, lw, outer, image.shapeStrokeColor || '#000000');
         } else if (outer > 0) {
           ctx.save();
           ctx.setLineDash([]);
@@ -6577,7 +6582,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             /* 點陣必須使用上面已帶入固定 base／固定半徑的 path。
                一般實心函式會用當前寬高重建路徑，會把點距重新平均並放大點徑。 */
             ctx.fill(path);
-          } else drawFeatheredShapeBody(ctx, scoreKindOf(image.shape!, (image as any).scoreSeed, (motionFrame as any)?.scoreAnim), drawW, drawH, image.shapeFeather, color, (tc, bodyPath) => {
+          } else drawFeatheredShapeBody(ctx, classicScoreKd(image, (motionFrame as any)?.scoreAnim, (motionFrame as any)?.scoreWave), drawW, drawH, image.shapeFeather, color, (tc, bodyPath) => {
             if (tx === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
             if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
@@ -6784,6 +6789,8 @@ export const makeShapeItem = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem
       ...(frame ? { shapeFrameRange: frameRangeDefault(it.kind), shapeFrameFeather: MIST_FEATHER_DEFAULT, shapeFrameRound: MIST_ROUND_DEFAULT,
         // 拍立得的紋理預設：大小 10、間距 15（滑桿上的數字）
         shapeDotSize: pola ? mistSizeFromUi(10) : MIST_TEX_SIZE_DEFAULT, shapeDotGap: pola ? mistGapFromUi(15) : MIST_TEX_GAP_DEFAULT } : {}),
+      // 拍立得：預設常駐搖擺
+      ...(pola ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, idle: 'wobble', ...idleDefaults('wobble', { shape: true }) } } : {}),
       // 樂譜 3～6：預設進場果凍ll、常駐波浪
       ...(scoreCanRandom(it.kind) ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, in: 'score-seq', dur: motionDurationFromUi(50), idle: 'grid-wave', ...idleDefaults('grid-wave', { shape: true }) } } : {}),
       // 樂譜 1、2（照原圖描的）：預設沒有進場動畫
@@ -6816,8 +6823,46 @@ export const makeSymbolItem = (txt: string, cx: number, cy: number, pw: number):
 export { prepareClassicSymbolPlacement, TEXT_PLACEHOLDER };
 
 /** 預覽和存檔的影格共用同一個區域動畫繪製 */
+/* 預覽用：貼圖畫一次存成點陣，動畫每一格只貼圖（縮放／旋轉／位移／搖擺），波浪則把這張圖切條貼回去。
+   原本每一格都整個重畫向量（波浪更是切 64 條、每條重畫一次），貼圖一多就卡。
+   內容（物件本身、像素密度、星芒芒長、圓環揭露、照片／字型載入）沒變就不重畫。 */
+const classicSpriteCache = new WeakMap<FloatingImage, { key: string; c: HTMLCanvasElement; pad: number }>();
+let classicSpriteEpoch = 0;
+if (typeof window !== 'undefined') {
+  window.addEventListener('abai-font-ready', () => { classicSpriteEpoch++; });
+  onFramePhotoReady(() => { classicSpriteEpoch++; });
+}
+const classicSprite = (image: FloatingImage, motionFrame: ObjectMotionFrame | null | undefined, density: number) => {
+  const frame = !!image.shape && isFrameShape(image.shape);
+  const glow = frame ? 0 : glowAmount(image.shapeGlow as any);
+  const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
+  // 發光、描邊會長到框外：留邊照匯出那條式子（框類沒有發光，只留一點）
+  const pad = frame ? 4 : Math.max(24, Math.max(image.width, image.height) * (.22 + .19 * glow), lineBase / 160 * (12 + 4 * Math.max(0, image.shapeStrokeW || 0)));
+  const W0 = image.width + pad * 2, H0 = image.height + pad * 2;
+  // 密度取到 0.25 一格（縮放動畫的每一格不重畫）；總像素上限約 600 萬
+  let d = Math.max(.5, Math.ceil(density * 4) / 4);
+  d = Math.min(d, Math.sqrt(6e6 / Math.max(1, W0 * H0)), 4096 / Math.max(W0, H0));
+  const holeImg = image.shape === 'hole' && image.holeType && isImageHole(image.holeType) ? getHoleImg(image.holeType) : null;
+  const key = [d.toFixed(3), motionFrame?.ringReveal ?? 1, motionFrame?.rayK ?? '', (motionFrame as any)?.scoreAnim ?? '',
+    classicSpriteEpoch, holeImg ? +!!(holeImg.complete && holeImg.naturalWidth) : '',
+    framePhotoReady(image.shapeFrameOpts?.imageSrc) ? 1 : 0].join('|');
+  const hit = classicSpriteCache.get(image);
+  if (hit && hit.key === key) return hit;
+  const c = hit?.c ?? document.createElement('canvas');
+  const pw = Math.max(1, Math.ceil(W0 * d)), ph = Math.max(1, Math.ceil(H0 * d));
+  if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
+  const g = c.getContext('2d')!;
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, pw, ph);
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  g.setTransform(pw / W0, 0, 0, ph / H0, pw / 2, ph / 2);
+  paintClassicSceneVector(g, image, motionFrame, d, true);
+  const out = { key, c, pad };
+  classicSpriteCache.set(image, out);
+  return out;
+};
+
 export const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
-  motionFrame: ObjectMotionFrame | null | undefined, density: number, cacheGlow = false) => {
+  motionFrame: ObjectMotionFrame | null | undefined, density: number, cacheGlow = false, sprite = false) => {
   if (motionFrame?.lab && image.text === undefined) {
     paintSelectedAnimation(ctx, motionFrame.lab, image.width, image.height,
       g => paintClassicSceneVector(g, image, motionFrame, density, cacheGlow), 0, 1,
@@ -6827,25 +6872,37 @@ export const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image:
   }
   const phase = motionFrame?.gridWave;
   const mix = motionFrame?.waveMix ?? 1;
-  if (phase === undefined || mix <= 1e-5) {
-    paintClassicSceneVector(ctx, image, motionFrame, density, cacheGlow);
+  const waving = phase !== undefined && mix > 1e-5;
+  const amp = waving ? Math.min(10, image.height * .065) * Math.max(.15, (image.mo?.amp ?? 50) / 100) * mix : 0;
+  // 樂譜：波浪直接套在形狀的每個點上（不切片、不重畫好幾次）
+  if (image.shape && isScoreKind(image.shape)) {
+    const wf = waving ? { ...motionFrame, scoreWave: [phase!, amp / Math.max(1, image.height)] } as any : motionFrame;
+    paintClassicSceneVector(ctx, image, wf, density, cacheGlow);
     return;
   }
-  const amp = Math.min(10, image.height * .065) * Math.max(.15, (image.mo?.amp ?? 50) / 100) * mix;
+  /* 只用在拍立得（相紙紋理每格重畫很貴）。實測霧白邊框、集中線、一般貼圖直接畫向量反而比貼整張大圖快 */
+  const useSprite = sprite && image.shape === 'frame-polaroid' && !motionFrame?.scatterItem;
+  const spr = useSprite ? classicSprite(image, motionFrame, density) : null;
+  const paintBody = (g: CanvasRenderingContext2D) => {
+    if (spr) g.drawImage(spr.c, -image.width / 2 - spr.pad, -image.height / 2 - spr.pad, image.width + spr.pad * 2, image.height + spr.pad * 2);
+    else paintClassicSceneVector(g, image, motionFrame, density, cacheGlow);
+  };
+  if (!waving) { paintBody(ctx); return; }
   // 發光會長到框外（最大那層模糊＝長邊 × 0.135 × 強度），切片的範圍要包住它，不然發光被切掉
-  const pad = Math.max(100, Math.max(image.width, image.height) * .5 * glowAmount(image.shapeGlow as any) + 40), span = image.width + pad * 2;
+  const pad = spr ? spr.pad : Math.max(100, Math.max(image.width, image.height) * .5 * glowAmount(image.shapeGlow as any) + 40);
+  const span = image.width + pad * 2;
   const reveal = Math.max(0, Math.min(1, motionFrame?.gridReveal ?? 1));
   const step = span / 64;
   for (let i = 0; i < 64; i++) {
     const x = -span / 2 + i * step;
     if (x > -image.width / 2 + image.width * reveal) break;
-    const y0 = Math.sin(((x + image.width / 2) / image.width - phase) * Math.PI * 2) * amp;
-    const y1 = Math.sin(((x + step + image.width / 2) / image.width - phase) * Math.PI * 2) * amp;
+    const y0 = Math.sin(((x + image.width / 2) / image.width - phase!) * Math.PI * 2) * amp;
+    const y1 = Math.sin(((x + step + image.width / 2) / image.width - phase!) * Math.PI * 2) * amp;
     const slope = (y1 - y0) / step;
     ctx.save();
     ctx.beginPath(); ctx.rect(x, -image.height / 2 - pad, step + .1, image.height + pad * 2); ctx.clip();
     ctx.transform(1, slope, 0, 1, 0, y0 - slope * x);
-    paintClassicSceneVector(ctx, image, motionFrame, density);
+    paintBody(ctx);
     ctx.restore();
   }
 };
@@ -8347,7 +8404,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               ctx.scale((image.width + pl + pr) / image.width, (image.height + pt + pb) / image.height);
             }
           }
-          paintClassicAnimatedVector(ctx, image, motionFrame, density * Math.abs(scale), !motionFrame);
+          /* 有動畫時：畫一次存起來、每格只貼圖。沒動畫、又不在動畫頁時照舊直接畫向量（編輯時最清楚） */
+          paintClassicAnimatedVector(ctx, image, motionFrame, density * Math.abs(scale), !motionFrame, !!motionFrame || motionLock);
           if (image.shape === 'grid-orbits' && !motionFrame) {
             const lineBase=image.shapeLineBase || Math.max(image.width,image.height);
             const localPad=lineBase / 160 * (12 + 4 * Math.max(0,image.shapeStrokeW || 0));
@@ -11553,6 +11611,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     for (let i = 0; i < lay.id.length; i++) hash = (hash * 31 + lay.id.charCodeAt(i)) >>> 0;
     return objectMotionFrame(layoutMotionCfg(lay), time, (hash % 628) / 100);
   }, [layoutMotionCfg]);
+  const sceneMotionRef = useRef(false);
+  sceneMotionRef.current = floatingImages.some(hasConfiguredMotion);
   const anyClassicMotion = useMemo(
     () => floatingImages.some(hasConfiguredMotion) || pages.some(page => page.layouts.some(layoutHasMotion)),
     [floatingImages, hasConfiguredMotion, pages, layoutHasMotion],
@@ -11794,7 +11854,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const t = ((now - started) / 1000) % motionTotal;
       motionClockRef.current = t;
       // 只用畫布的動畫跟創意拼圖一樣，時鐘直接驅動繪製。不要每次單位脈衝都重建整個編輯器
-      vectorScene.flush();
+      // 沒有任何貼圖／照片在動時不重畫（只有佈局在動的話，整頁大的邊框不用每格重畫）
+      if (sceneMotionRef.current) vectorScene.flush();
       paintLayoutMotion(t);
       paintChromeMotion(t);
       if (hasDomMotion) setMotionTime(t);

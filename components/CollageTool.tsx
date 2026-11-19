@@ -12830,8 +12830,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     ...(it.kind === 'hole' && String(it.hole || '').startsWith('sb-')
                       ? (() => { const idle = glintHasRing(it.hole) ? 'spin' : 'breathe';
                           return { mo: startMotion({ type: 'shape', kind: it.kind, hole: it.hole }, { in: MO_DEFAULT.in, idle }) }; })() : {}),
-                    // 邊框：沒有預設動畫（不進場、不常駐）
-                    ...(frame ? { mo: { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: frameRangeDefault(it.kind), frameFeather: MIST_FEATHER_DEFAULT, frameRound: MIST_ROUND_DEFAULT,
+                    // 邊框：沒有預設動畫（不進場、不常駐）；拍立得預設常駐搖擺
+                    ...(frame ? { mo: pola ? startMotion({ type: 'shape', kind: it.kind }, { idle: 'wobble' }) : { ...MO_DEFAULT, in: 'none', idle: 'none' }, frameRange: frameRangeDefault(it.kind), frameFeather: MIST_FEATHER_DEFAULT, frameRound: MIST_ROUND_DEFAULT,
                       // 拍立得的紋理預設：大小 10、間距 15（滑桿上的數字）
                       dotSize: pola ? mistSizeFromUi(10) : MIST_TEX_SIZE_DEFAULT, dotGap: pola ? mistGapFromUi(15) : MIST_TEX_GAP_DEFAULT } : {}),
                   }]);
