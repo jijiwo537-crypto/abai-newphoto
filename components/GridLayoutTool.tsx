@@ -3039,8 +3039,7 @@ export const TextEditSheet: React.FC<{ onDone: () => void; children: React.React
         transform: closing || !shown ? 'translateY(100%)' : 'translateY(0)',
         transition: `transform 220ms ${closing ? 'cubic-bezier(0.4, 0, 1, 1)' : 'cubic-bezier(0, 0, 0.2, 1)'}` }}
       onPointerDown={e => e.stopPropagation()}>
-      <div className="shrink-0 h-12 flex items-center justify-between pl-5 pr-3">
-        <span className="text-[14px] font-bold tracking-wider text-white">文字</span>
+      <div className="shrink-0 h-12 flex items-center justify-end pl-5 pr-3">
         <button aria-label="完成" onClick={close}
           className="w-9 h-9 rounded-full flex items-center justify-center text-white active:scale-90 transition-transform">
           <Check size={22} strokeWidth={2.4} />
@@ -11435,6 +11434,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [motionSub, setMotionSub] = useState<'in' | 'idle'>('in');
   /* 文字編輯頁（從下面冒出來的那一塊）只在按「編輯」時打開：點文字本身不打開 */
   const [textSheetId, setTextSheetId] = useState<string | null>(null);
+  /* 選到一般文字時：編輯頁已經開著（換編輯對象），或現在就在「編輯」分頁 → 直接打開／切到這段文字 */
+  useEffect(() => {
+    const f = floatingImages.find(x => x.id === selectedFloatingId);
+    // 選到的不是一般文字：編輯頁收起（下次要再按編輯或在編輯分頁點文字才開）
+    if (!f || f.text === undefined || f.sym) { if (textSheetId) setTextSheetId(null); return; }
+    if (textSheetId || activeTab === 'adjust') setTextSheetId(f.id);
+  }, [selectedFloatingId]);
   // 畫面上每一段文字（含打開草稿時就有的）都先把字體與用到的字載好
   useEffect(() => {
     ensureTextFonts(floatingImages.filter(f => f.text !== undefined && !f.sym).map(f => ({ family: f.fontFamily || DEFAULT_FONT, text: f.text || '', bold: f.bold, italic: f.italic })));
@@ -19877,13 +19883,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 // 一般文字：編輯頁從下面冒出來（打字中先收起來，不擋鍵盤）；符號照舊放在原本的面板
                 if (layer.sym) return panel;
                 if (inlineEditId === layer.id) return null;
-                if (textSheetId !== layer.id) return (
+                if (!textSheetId) return (
                   <div className="h-full flex items-center justify-center pb-6">
                     <button onClick={() => setTextSheetId(layer.id)}
                       className="h-10 px-6 rounded-full border border-white/20 text-[13px] font-bold tracking-wider text-white active:scale-95 transition-transform">編輯文字</button>
                   </div>
                 );
-                return <TextEditSheet key={`sheet-${layer.id}`} onDone={() => { setTextSheetId(null); setSelectedFloatingId(null); }}>{panel}</TextEditSheet>;
+                // 同一個面板（key 固定）：編輯頁開著時換選另一段文字，只是換編輯對象，不會重新滑入
+                return <TextEditSheet key="text-sheet" onDone={() => { setTextSheetId(null); setSelectedFloatingId(null); }}>{panel}</TextEditSheet>;
               }
 
               // 選到圖形：顏色／粗細／虛線

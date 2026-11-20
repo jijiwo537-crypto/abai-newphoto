@@ -3014,6 +3014,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 文字編輯頁（從下面冒出來的那一塊）只在按「編輯」時打開：點文字本身不打開。
      記的是「為哪一段文字打開」，選到別的東西就自然收起 */
   const [textSheetId, setTextSheetId] = useState<string | null>(null);
+  /* 選到一般文字時：編輯頁已經開著（換編輯對象），或現在就在「編輯」分頁 → 直接打開／切到這段文字 */
+  useEffect(() => {
+    const o = objectsRef.current.find(z => z.id === selectedObj);
+    // 選到的不是一般文字：編輯頁收起（下次要再按編輯或在編輯分頁點文字才開）
+    if (!o || o.type !== 'text' || o.sym) { if (textSheetId) setTextSheetId(null); return; }
+    if (textSheetId || activeTab === 'objedit') setTextSheetId(o.id);
+  }, [selectedObj]);
   const [settingSub, setSettingSub] = useState<'layout' | 'mask'>('layout');
   /** 正在畫布上直接編輯的那一段文字（null＝沒有在編輯）。
       跟經典拼圖同一種做法：疊一個排版一模一樣的 textarea 在字上面，
@@ -13497,13 +13504,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   // 一般文字：編輯頁從下面冒出來（打字中先收起來，不擋鍵盤）；符號照舊放在原本的面板
                   if (sel.sym) return textPanel;
                   if (editingTextId === sel.id) return null;
-                  if (textSheetId !== sel.id) return (
+                  if (!textSheetId) return (
                     <div className="h-full flex items-center justify-center pb-6">
                       <button onClick={() => setTextSheetId(sel.id)}
                         className="h-10 px-6 rounded-full border border-white/20 text-[13px] font-bold tracking-wider text-white active:scale-95 transition-transform">編輯文字</button>
                     </div>
                   );
-                  return <TextEditSheet key={`sheet-${sel.id}`} onDone={() => { setTextSheetId(null); selectedObjRef.current = null; setSelectedObj(null); setSelectedTarget(null); }}>{textPanel}</TextEditSheet>;
+                  // 同一個面板（key 固定）：編輯頁開著時換選另一段文字，只是換編輯對象，不會重新滑入
+                  return <TextEditSheet key="text-sheet" onDone={() => { setTextSheetId(null); selectedObjRef.current = null; setSelectedObj(null); setSelectedTarget(null); }}>{textPanel}</TextEditSheet>;
                   })() : (
                   <div className="h-full">
                     {/* 圖片調整直接用經典拼圖那顆元件 —— 同一份程式碼，
