@@ -3260,13 +3260,6 @@ export const TextEditorPanel: React.FC<{
             </>}
             {tab === 'stroke' && <>
               {strokeRow}
-              {/* 外描邊：在描邊外面再包一圈（字卡常用的白邊＋黑邊） */}
-              <div className="flex items-center gap-3 px-2">
-                <div className="flex-1 min-w-0">{slider('外描邊', layer.stroke2Width || 0, 0, 2, v => onChange({ stroke2Width: v }), 'px', 0.04)}</div>
-                <ColorPick compact label="顏色" value={layer.stroke2Color || '#000000'} colors={STROKE_COLORS}
-                  onPick={c => onChange({ stroke2Color: c })}
-                  onOpen={() => setColorPage({ value: layer.stroke2Color || '#000000', colors: STROKE_COLORS, onPick: c => onChange({ stroke2Color: c }) })} />
-              </div>
             </>}
             {tab === 'glow' && glowRow(15)}
             {tab === 'shadow' && <>
@@ -3286,13 +3279,6 @@ export const TextEditorPanel: React.FC<{
                 {slider('模糊', layer.shadowBlur ?? TEXT_SHADOW_DEFAULTS.shadowBlur, 0, 100, v => onChange({ shadowBlur: v }))}
                 {slider('距離', layer.shadowDist ?? TEXT_SHADOW_DEFAULTS.shadowDist, 0, 100, v => onChange({ shadowDist: v }))}
                 {slider('角度', layer.shadowAngle ?? TEXT_SHADOW_DEFAULTS.shadowAngle, 0, 360, v => onChange({ shadowAngle: v }), '°')}
-              </div>
-              {/* 立體：字往右下疊出厚度 */}
-              <div className="flex items-center gap-3 px-2">
-                <div className="flex-1 min-w-0">{slider('立體', layer.depth || 0, 0, 100, v => onChange({ depth: v }))}</div>
-                <ColorPick compact label="顏色" value={layer.depthColor || '#000000'} colors={STROKE_COLORS}
-                  onPick={c => onChange({ depthColor: c })}
-                  onOpen={() => setColorPage({ value: layer.depthColor || '#000000', colors: STROKE_COLORS, onPick: c => onChange({ depthColor: c }) })} />
               </div>
             </>}
             {tab === 'weight' && (
@@ -3356,9 +3342,6 @@ export const TextEditorPanel: React.FC<{
                 </div>
                 {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
                 {slider('行距', layer.lineHeight ?? TEXT_LINE_HEIGHT, 0.8, 2.4, v => onChange({ lineHeight: v }), '', 0.01)}
-                <button onClick={() => onChange({ deco: layer.deco === 'lines' ? 'none' : 'lines' })}
-                  className={`w-full h-10 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                    layer.deco === 'lines' ? 'border-white text-white' : 'border-[#2e2e2e] text-[#8c8c8c]'}`}>上下裝飾線</button>
               </div>
             )}
           </div>
@@ -8962,18 +8945,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               ...shapeHandleStyle,
             }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
             onPointerMove={handleStretchPointerMove} onPointerUp={handleStretchPointerUp} onPointerCancel={handleStretchPointerUp}>
-            {image.shape || (image.text !== undefined && !image.sym) ? (
-              <span className="rounded-full block bg-white" style={{
-                width: 5 * previewInv, height: 5 * previewInv,
-                boxShadow: `0 ${previewInv}px ${3 * previewInv}px rgba(0,0,0,0.5)`,
-              }} />
-            ) : (
-              <span className="block bg-white" style={{
-                width: (horizontalHandle ? 16 : 4) * previewInv,
-                height: (horizontalHandle ? 4 : 16) * previewInv,
-                boxShadow: `0 ${2 * previewInv}px ${5 * previewInv}px rgba(0,0,0,0.5)`,
-              }} />
-            )}
+            {/* 四邊擠壓的控制點：圖片也跟其他東西一樣是小圓點 */}
+            <span className="rounded-full block bg-white" style={{
+              width: 5 * previewInv, height: 5 * previewInv,
+              boxShadow: `0 ${previewInv}px ${3 * previewInv}px rgba(0,0,0,0.5)`,
+            }} />
           </div>
           );
         })}

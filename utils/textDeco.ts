@@ -182,6 +182,8 @@ export const setRunGradient = (ctx: CanvasRenderingContext2D, o: TextDeco, size:
 };
 /** 外描邊：在第一圈描邊外面再包一圈（寬度＝兩圈加起來），畫在最底下 */
 export const paintOuterStroke = (ctx: CanvasRenderingContext2D, o: TextDeco, unit: number, drawStroke: () => void) => {
+  // 這個效果已移除（舊作品裡留著的設定也不畫）
+  if (o || !o) return;
   const w2 = Math.max(0, o.stroke2Width || 0);
   if (w2 <= 0) return;
   ctx.save();
@@ -193,6 +195,8 @@ export const paintOuterStroke = (ctx: CanvasRenderingContext2D, o: TextDeco, uni
 };
 /** 立體厚度：同一個字形（含描邊外框）往右下一層一層疊，厚度跟字級等比。depth 0～100 */
 export const paintTextDepth = (ctx: CanvasRenderingContext2D, o: TextDeco, size: number, unit: number, drawFill: () => void, drawStroke: () => void) => {
+  // 這個效果已移除（舊作品裡留著的設定也不畫）
+  if (o || !o) return;
   const d = Math.max(0, Math.min(100, o.depth || 0));
   if (d <= 0) return;
   const len = d / 100 * size * .14;
@@ -212,6 +216,8 @@ export const paintTextDepth = (ctx: CanvasRenderingContext2D, o: TextDeco, size:
 };
 /** 上下裝飾線（電影片名、品牌字常見）：比字寬一點的兩條細線 */
 export const paintDecoLines = (ctx: CanvasRenderingContext2D, o: TextDeco, w: number, h: number, size: number) => {
+  // 這個效果已移除（舊作品裡留著的設定也不畫）
+  if (o || !o) return;
   if (o.deco !== 'lines') return;
   const t = Math.max(.5, size * .035), half = w / 2 + size * .3, gap = size * .32;
   ctx.save(); ctx.shadowColor = 'transparent';
@@ -222,6 +228,8 @@ export const paintDecoLines = (ctx: CanvasRenderingContext2D, o: TextDeco, w: nu
 };
 /** 字卡效果會多佔的空間（選中框要包住）：立體往右下、裝飾線往上下 */
 export const textEffectPad = (o: TextDeco, size: number) => {
+  // 立體、裝飾線已移除：不再多佔空間
+  if (o || !o) return { w: 0, h: 0 * size };
   const d = Math.max(0, Math.min(100, o.depth || 0)) / 100 * size * .14;
   return { w: d * .72, h: d + (o.deco === 'lines' ? (size * .32 + size * .035) * 2 : 0) };
 };

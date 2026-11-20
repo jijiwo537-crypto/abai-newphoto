@@ -477,7 +477,7 @@ const plainTextBox = (o: any, force = false): { w: number; h: number } | null =>
   g.font = font; primeCanvasFont(g.font); (g as any).letterSpacing = `${spacing}px`;
   g.textAlign = 'center'; g.textBaseline = 'middle';
   const m = g.measureText(o.text || ' ');
-  const pad = Math.max(8, size * .12), stroke = ((o.strokeWidth || 0) + (o.stroke2Width || 0)) * size / 40;
+  const pad = Math.max(8, size * .12), stroke = (o.strokeWidth || 0) * size / 40;
   // 多行或直排：框照段落排版的大小（跟繪製同一支 layoutText）
   const ep = textEffectPad(o, size);
   if ((o.text || '').includes('\n') || o.vertical) {
@@ -12300,11 +12300,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   <div key={side} data-stretch-handle className={`absolute ${pos} ${size} pointer-events-auto flex items-center justify-center touch-none no-pointer-events`}
                     style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
                     onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
-                    {o.type === 'shape' || (o.type === 'text' && !o.sym) ? (
-                      <span className={`w-[5px] h-[5px] rounded-full block bg-white ${objStretching ? 'invisible' : ''}`} />
-                    ) : (
-                      <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] ${objStretching ? 'invisible' : ''}`} />
-                    )}
+                    {/* 四邊擠壓的控制點：圖片也跟其他東西一樣是小圓點 */}
+                    <span className={`w-[5px] h-[5px] rounded-full block bg-white ${o.type === 'image' ? 'shadow-[0_1px_3px_rgba(0,0,0,0.5)]' : ''} ${objStretching ? 'invisible' : ''}`} />
                   </div>
                 ))}
               </div>
