@@ -3194,12 +3194,17 @@ export const TextEditorPanel: React.FC<{
       {/* 分頁在最上面一排：細細一條、可以左右滑，不佔左右的寬度，也只用掉很少的高度。
           符號沒有分頁（只有顏色與發光）。 */}
       {!symbol && !colorPage && (
-        /* 分頁在最下面（跟圖片編輯同一個元件：只有文字、選中的有短底線、下面留空間好按） */
-        <EditBar className="order-last -mx-5">
+        /* 七個分頁固定一排、平均分寬 */
+        <div className="shrink-0 mt-2.5 mb-0.5 flex select-none" data-text-tabs>
           {tabs.map(([id, label]) => (
-            <EditBarTab key={id} id={id} label={label} active={tab === id} onClick={() => setSub(id)} />
+            /* 選中的那一頁只是字變亮（不加底色） */
+            <button key={id} onClick={() => setSub(id)}
+              className={`flex-1 min-w-0 whitespace-nowrap h-7 px-0 text-[12px] font-bold tracking-wider transition-colors ${
+                tab === id ? 'text-white' : 'text-[#6b6b6b]'}`}>
+              {label}
+            </button>
           ))}
-        </EditBar>
+        </div>
       )}
 
       <div data-text-editor-scroll className={`flex-1 min-h-0 no-scrollbar ${colorPage ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden px-2`}>
@@ -4275,6 +4280,30 @@ return (
     onPointerUpCapture={isolateFxUpdates ? finishAdjustment : undefined}
     onPointerCancelCapture={isolateFxUpdates ? finishAdjustment : undefined}
     onKeyUpCapture={isolateFxUpdates ? finishAdjustment : undefined}>
+    {/* 分類列放在控制區最上面（方案 A：分頁在面板頂端，只有文字、選中的變白） */}
+    <div data-edit-bar className="shrink-0 flex px-3 h-11 select-none">
+      {CATS.map(([id, , label]) => (
+        <button
+          key={id}
+          data-edit-tab={id}
+          /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
+          className={`flex-1 h-full text-[13px] font-bold tracking-wider ${(composeOpen ? id === 'compose' : adjustSub === id) ? 'text-white' : 'text-[#666]'}`}
+          onClick={() => {
+            if (id === 'compose') { openComposeFor(img.id); return; }
+            // 先讓新的控制項畫出來，背景縮圖的著色器再佔主執行緒；預覽解析度不變
+            deferHeavyWork();
+            /* 從構圖切到別的分類：先把當下裁切的結果確認掉再切過去 ——
+               不然構圖介面會一直蓋在上面，看起來就只是「圖標亮了但沒反應」。 */
+            if (composeOpen) onLeaveCompose?.();
+            setAdjustSub(id as any);
+            // 跟編輯一樣：切分類就把該分類的第一個工具選起來
+            if (id === 'tune') setTuneTool(deferSlider ? '' : TUNE_TOOLS[0][0]);
+            if (id === 'shape') { setShapeMenu('root'); setShapeTool(''); }
+            if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
+          }}
+        >{label}</button>
+      ))}
+    </div>
 
     {/* 固定 5rem 滑桿與 6rem 細項列，不改變預覽空間。 */}
     <div
@@ -4516,31 +4545,8 @@ return (
         ))}
     </div>
 
-    {/* 3. 分類列：跟編輯同一個元件（只有文字、選中的有底線、下面留空間好按） */}
-    <EditBar>
-      {CATS.map(([id, , label]) => (
-        <EditBarTab
-          key={id}
-          id={id}
-          label={label}
-          /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
-          active={composeOpen ? id === 'compose' : adjustSub === id}
-          onClick={() => {
-            if (id === 'compose') { openComposeFor(img.id); return; }
-            // 先讓新的控制項畫出來，背景縮圖的著色器再佔主執行緒；預覽解析度不變
-            deferHeavyWork();
-            /* 從構圖切到別的分類：先把當下裁切的結果確認掉再切過去 ——
-               不然構圖介面會一直蓋在上面，看起來就只是「圖標亮了但沒反應」。 */
-            if (composeOpen) onLeaveCompose?.();
-            setAdjustSub(id as any);
-            // 跟編輯一樣：切分類就把該分類的第一個工具選起來
-            if (id === 'tune') setTuneTool(deferSlider ? '' : TUNE_TOOLS[0][0]);
-            if (id === 'shape') { setShapeMenu('root'); setShapeTool(''); }
-            if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
-          }}
-        />
-      ))}
-    </EditBar>
+    {/* 底下留一段，最下面那一排控制不用貼著 iPhone 的橫條 */}
+    <div aria-hidden className="shrink-0" style={{ height: EDIT_BAR_PAD }} />
   </div>
 );
 };
@@ -19565,7 +19571,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       >
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* 分頁列表 */}
-          <div className="flex px-4 pt-1 border-b border-[#1a1a1a] shrink-0">
+          {/* 方案 A：主工具列在螢幕最下面（order-last），下面留一段空間，手指不用貼著 iPhone 的橫條 */}
+          <div className="order-last flex px-4 border-t border-[#1a1a1a] shrink-0" style={{ paddingBottom: 18 }} data-main-tools>
             {['ratio', 'pages', 'add', 'adjust', 'color', 'motion'].map(id => {
               let iconEl = null;
               let titleText = '';
@@ -19621,7 +19628,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           </div>
 
           {/* 分頁內容 */}
-          <div style={imageEditMode || textEditMode ? undefined : { '--pt': '16px', '--pb': '16px' } as React.CSSProperties} className={`flex-1 min-h-0 no-scrollbar ${imageEditMode ? '' : textEditMode ? 'px-4 py-0' : activeTab === 'motion' ? 'p-0' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages', 'motion'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
+          <div style={imageEditMode || textEditMode ? undefined : { '--pt': '16px', '--pb': '16px' } as React.CSSProperties} className={`flex-1 min-h-0 no-scrollbar ${imageEditMode ? '' : textEditMode ? 'px-4 py-0' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
 
             {activeTab === 'motion' && (() => {
               // 佈局當成一張圖片：同一套面板，寫回去的時候導到佈局上
@@ -19774,7 +19781,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const chip = (on: boolean) => `px-3 h-8 shrink-0 rounded-[8px] border text-[11px] font-bold tracking-wider transition-all flex items-center gap-1.5 ${on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
               const cell = (on: boolean) => `h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
               return (
-                <div className="h-full overflow-y-auto no-scrollbar flex flex-col [&>*]:shrink-0 pt-4 px-4 animate-in fade-in duration-300">
+                <div className="max-w-md mx-auto pb-5 animate-in fade-in duration-300">
                   <div data-classic-motion-targets="1" className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
                       {motionLayouts.map((l, li) => (
                         <button key={l.id} onClick={() => chooseMotionTarget(l.id)} className={chip(motionTargetId === l.id)}>
@@ -19795,12 +19802,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   </div>
                   {!target ? <p data-no-motion-items="1" className="text-[11px] text-white/40 text-center pt-8">沒有可編輯項目</p> : <>
                     {/* 方案 A：進場／常駐分成兩頁，分頁在上面一行 */}
-                    <EditBar className="order-last sticky bottom-0 mt-auto -mx-4 z-10">
+                    <div className="flex gap-5 px-1 mt-3 mb-2 select-none" data-motion-tabs>
                       {([['in', '進場'], ['idle', '常駐']] as const).map(([id, t]) => (
-                        <EditBarTab key={id} id={id} label={t} active={motionSub === id} onClick={() => setMotionSub(id)} />
+                        <button key={id} onClick={() => setMotionSub(id)}
+                          className={`h-7 text-[13px] font-bold tracking-wider ${motionSub === id ? 'text-white' : 'text-[#666]'}`}>{t}</button>
                       ))}
-                    </EditBar>
-                    <div className="h-3" />
+                    </div>
                     {motionSub === 'in' && <>
                     <div className="grid grid-cols-4 gap-2">{introKinds.map(([id,name]) => <button key={id} className={cell(cfg.in===id)} onClick={()=>pickIntro(id)}>{name}</button>)}</div>
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
