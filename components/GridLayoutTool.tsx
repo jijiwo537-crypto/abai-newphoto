@@ -4280,30 +4280,6 @@ return (
     onPointerUpCapture={isolateFxUpdates ? finishAdjustment : undefined}
     onPointerCancelCapture={isolateFxUpdates ? finishAdjustment : undefined}
     onKeyUpCapture={isolateFxUpdates ? finishAdjustment : undefined}>
-    {/* 分類列放在控制區最上面（方案 A：分頁在面板頂端，只有文字、選中的變白） */}
-    <div data-edit-bar className="shrink-0 flex px-3 h-11 select-none">
-      {CATS.map(([id, , label]) => (
-        <button
-          key={id}
-          data-edit-tab={id}
-          /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
-          className={`flex-1 h-full text-[13px] font-bold tracking-wider ${(composeOpen ? id === 'compose' : adjustSub === id) ? 'text-white' : 'text-[#666]'}`}
-          onClick={() => {
-            if (id === 'compose') { openComposeFor(img.id); return; }
-            // 先讓新的控制項畫出來，背景縮圖的著色器再佔主執行緒；預覽解析度不變
-            deferHeavyWork();
-            /* 從構圖切到別的分類：先把當下裁切的結果確認掉再切過去 ——
-               不然構圖介面會一直蓋在上面，看起來就只是「圖標亮了但沒反應」。 */
-            if (composeOpen) onLeaveCompose?.();
-            setAdjustSub(id as any);
-            // 跟編輯一樣：切分類就把該分類的第一個工具選起來
-            if (id === 'tune') setTuneTool(deferSlider ? '' : TUNE_TOOLS[0][0]);
-            if (id === 'shape') { setShapeMenu('root'); setShapeTool(''); }
-            if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
-          }}
-        >{label}</button>
-      ))}
-    </div>
 
     {/* 固定 5rem 滑桿與 6rem 細項列，不改變預覽空間。 */}
     <div
@@ -4545,8 +4521,31 @@ return (
         ))}
     </div>
 
-    {/* 底下留一段，最下面那一排控制不用貼著 iPhone 的橫條 */}
-    <div aria-hidden className="shrink-0" style={{ height: EDIT_BAR_PAD }} />
+    {/* 3. 分類列：跟編輯同一個元件（只有文字、選中的有底線、下面留空間好按） */}
+    <EditBar>
+      {CATS.map(([id, , label]) => (
+        <EditBarTab
+          key={id}
+          id={id}
+          label={label}
+          /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
+          active={composeOpen ? id === 'compose' : adjustSub === id}
+          onClick={() => {
+            if (id === 'compose') { openComposeFor(img.id); return; }
+            // 先讓新的控制項畫出來，背景縮圖的著色器再佔主執行緒；預覽解析度不變
+            deferHeavyWork();
+            /* 從構圖切到別的分類：先把當下裁切的結果確認掉再切過去 ——
+               不然構圖介面會一直蓋在上面，看起來就只是「圖標亮了但沒反應」。 */
+            if (composeOpen) onLeaveCompose?.();
+            setAdjustSub(id as any);
+            // 跟編輯一樣：切分類就把該分類的第一個工具選起來
+            if (id === 'tune') setTuneTool(deferSlider ? '' : TUNE_TOOLS[0][0]);
+            if (id === 'shape') { setShapeMenu('root'); setShapeTool(''); }
+            if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
+          }}
+        />
+      ))}
+    </EditBar>
   </div>
 );
 };
