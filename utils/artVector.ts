@@ -1,4 +1,3 @@
-import { glowFromMask } from './glowSprite';
 import {paintColorGlyphs} from './artGlyphGpu.ts';
 import {artCharacters,needsCellFitting,fitArtGlyph} from './artCharacters.ts';
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
@@ -58,12 +57,6 @@ export function asciiVector(source,o){
  return `<defs>${glyphs}</defs>${glow}<g ${o.glow?'filter="url(#glyph-glow)"':''}>${o.color?`<image href="${sampled.colors}" width="${w}" height="${h}" preserveAspectRatio="none" style="image-rendering:pixelated" clip-path="url(#glyph-ink)"/>`:`<rect width="${w}" height="${h}" fill="white" clip-path="url(#glyph-ink)"/>`}</g>`;
 }
 let inkLayout;
-/* 發光：大半徑的 shadowBlur 在 Safari 會降成低解析度（放大時有像素格），半徑逐格取整也會抖。
-   改成在縮小的畫布上用固定的小半徑（8px）做模糊，再高品質放大貼回來；模糊本來就沒有細節，看起來一樣。 */
-function paintMaskGlow(ctx:CanvasRenderingContext2D,mask:HTMLCanvasElement,color:string,blur:number){
- // 共用的金字塔模糊（utils/glowSprite）：全解析度、平滑；ctx 此時是單位矩陣
- glowFromMask(ctx,mask,mask.width,mask.height,[blur/2],color);
-}
 export function paintAsciiViewport(target,mask,source,o,rect,viewport,dpr,colored){
  // 直接用目前的螢幕像素密度點陣化字型外框，絕不放大圖片大小的字形點陣。暫存是看得到的 viewport，
  // 不是巨大的離屏照片；每個縮放畫格都保持銳利
@@ -81,7 +74,7 @@ export function paintAsciiViewport(target,mask,source,o,rect,viewport,dpr,colore
  if(cellFit){if(spaced)g.letterSpacing='0px';const metrics=new Map<string,ReturnType<typeof fitArtGlyph>>(chars.map(c=>[c,fitArtGlyph(g,c,cw*1.3,cw*.82,ch*.82)]));for(let row=first;row<last;row++)for(const [col,char] of lines[row].cells.entries()){const m=metrics.get(char);if(!m||!char.trim())continue;g.font=`${m.font}px monospace`;g.fillText(char,(col+.5)*cw+m.x,(row+.5)*ch+m.y);}}
  else for(let row=first;row<last;row++){if(!lines[row].text.trim())continue;if(spaced)g.fillText(lines[row].text,cw*.11,(row+.5)*ch);else{g.textAlign='center';for(const [col,char] of lines[row].cells.entries())if(char.trim())g.fillText(char,(col+.5)*cw,(row+.5)*ch);}}
  g.restore();
- ctx.save();if(o.glow)paintMaskGlow(ctx,mask,o.color?'#ffffff99':'#fff',cw*sx*.32);ctx.drawImage(mask,0,0);ctx.restore();
+ ctx.save();if(o.glow){ctx.shadowColor=o.color?'#ffffff99':'#fff';ctx.shadowBlur=cw*sx*.32;}ctx.drawImage(mask,0,0);ctx.restore();
  if(o.color){
   if(colored)colored.style.display='none';target.style.display='block';ctx.save();ctx.globalCompositeOperation='source-in';ctx.imageSmoothingEnabled=false;ctx.drawImage(colors,x,y,rect.width*dpr,rect.height*dpr);ctx.restore();
  }else{if(colored)colored.style.display='none';target.style.display='block';}

@@ -1,4 +1,3 @@
-import { glowFromMask } from './glowSprite';
 /* 圖形分類「邊框」：全部都是「一整張照片的框」，一放進來就跟底圖一樣大。
    霧白邊框是一張平滑的遮罩（見 mistFrame.ts）；其他五種是向量畫的：
      集中線：動漫那種很有張力的框 —— 一大圈大小、長短都不一樣的尖刺，從框邊往中間刺進去；
@@ -200,7 +199,7 @@ const scatterItems = (w: number, h: number, o: FrameParams) => {
 };
 /** 畫圖形的小圖（GridLayoutTool 註冊：用跟一般新增圖形一模一樣的畫法） */
 /** w＝這張小圖代表的圖形寬（px）；ox、oy＝小圖左上角相對圖形中心的位置（px，文字類的圖形會超出框） */
-export type FrameSprite = { canvas: HTMLCanvasElement; w: number; ox: number; oy: number; /** 畫布相對於 w 的縮小倍率（光暈圖用；沒有＝1） */ r?: number };
+export type FrameSprite = { canvas: HTMLCanvasElement; w: number; ox: number; oy: number };
 let frameSprite: ((id: string, color: string, px: number, glintGlow?: number) => FrameSprite | null) | null = null;
 export const setFrameSprite = (f: (id: string, color: string, px: number, glintGlow?: number) => FrameSprite | null) => { frameSprite = f; };
 /* 發光：把同一張小圖放在大一點的畫布上、用跟圖形一樣顏色的 shadowBlur 畫兩層，
@@ -216,15 +215,15 @@ const glowPair = (sp: FrameSprite, color: string): GlowPair => {
   const hit = m.get(color);
   if (hit) return hit;
   const halo = (blur: number): FrameSprite => {
-    /* 用共用的金字塔模糊（utils/glowSprite）：全解析度、平滑，不交給瀏覽器大半徑的 shadowBlur */
     const extra = Math.ceil(blur * 2);
     const cv = document.createElement('canvas');
     cv.width = sp.canvas.width + extra * 2; cv.height = sp.canvas.height + extra * 2;
-    const m = document.createElement('canvas'); m.width = cv.width; m.height = cv.height;
-    m.getContext('2d')!.drawImage(sp.canvas, extra, extra);
-    // 原本是同一層畫兩次
-    glowFromMask(cv.getContext('2d')!, m, cv.width, cv.height, [blur / 2, blur / 2], color);
-    m.width = m.height = 0;
+    const g = cv.getContext('2d')!;
+    g.shadowColor = color;
+    // 只留光暈本身（圖形畫到畫布外面去，只有影子落進來）
+    g.shadowOffsetX = cv.width; g.shadowBlur = blur;
+    g.drawImage(sp.canvas, extra - cv.width, extra);
+    g.drawImage(sp.canvas, extra - cv.width, extra);
     return { canvas: cv, w: sp.w, ox: sp.ox - extra, oy: sp.oy - extra };
   };
   const out = { lo: halo(sp.w * .1), hi: halo(sp.w * .36) };
@@ -289,7 +288,7 @@ const paintScatter = (g: CanvasRenderingContext2D, W: number, H: number, color: 
     if (f && f.a < 1) g.globalAlpha *= f.a;
     if (sp) {
       const s = it.d / sp.w, a0 = g.globalAlpha;
-      const put = (x: FrameSprite, a: number) => { if (a <= .002) return; g.globalAlpha = a0 * a; const rr = x.r || 1; g.drawImage(x.canvas, x.ox * s, x.oy * s, x.canvas.width / rr * s, x.canvas.height / rr * s); };
+      const put = (x: FrameSprite, a: number) => { if (a <= .002) return; g.globalAlpha = a0 * a; g.drawImage(x.canvas, x.ox * s, x.oy * s, x.canvas.width * s, x.canvas.height * s); };
       if (halo) { put(halo.hi, Math.min(1, gl * 1.1)); put(halo.lo, Math.min(1, gl * 1.6)); }
       if (spHi) { put(sp, 1 - gl); put(spHi, gl); } else put(sp, 1);
       g.globalAlpha = a0;

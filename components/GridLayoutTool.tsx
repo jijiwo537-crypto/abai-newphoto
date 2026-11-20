@@ -94,8 +94,7 @@ import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
-import { paintGlow } from '../utils/glowSprite';
-import { fontEpoch, FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont, ensureTextFonts } from '../utils/fonts';
+import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont, ensureTextFonts } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
 import { sourceHasAlpha, lutMaxAmount, warmPhotoFxSurface } from '../utils/photoFx';
@@ -6665,22 +6664,15 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             for (let i=0;i<3;i++) ctx.stroke(path);
           } else {
           ctx.save();
-          const shapeBody = () => {
-            if (solid && COMPOSITE_SHAPE_KINDS.has(image.shape!)) {
-              drawCompositeShapeBody(ctx, image.shape!, drawW, drawH, color,
+          ctx.shadowColor = image.shapeGlowColor || color;
+          for (const r of shapeGlowBlurs(image.width, image.height)) {
+            // shadowBlur 不吃目前的 CTM；補上 backingScale，縮回 CSS 尺寸後才是正確強度。
+            ctx.shadowBlur = r * contentScale * gAmt * backingScale;
+            if (solid && COMPOSITE_SHAPE_KINDS.has(image.shape)) {
+              drawCompositeShapeBody(ctx, image.shape, drawW, drawH, color,
                 image.shapeInnerColor || '#FFFFFF', undefined, { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth });
-            } else if (solid) ctx.fill(path); else strokeOutlineBody(ctx, path, image.shape!, drawW, drawH, (image.shapeTextureBaseW || image.width) * contentScale, (image.shapeTextureBaseH || image.height) * contentScale);
-          };
-          /* 光另外畫成一張平滑的光暈圖再貼回來（見 utils/glowSprite）：放大不會有像素感、縮放不會抖。
-             shadowBlur 不吃目前的 CTM；補上 backingScale，縮回 CSS 尺寸後才是正確強度。 */
-          const mainCtx = ctx;
-          paintGlow(ctx, { x: -drawW * .1, y: -drawH * .1, w: drawW * 1.2, h: drawH * 1.2 },
-            shapeGlowBlurs(image.width, image.height).map(r => r * contentScale * gAmt * backingScale),
-            image.shapeGlowColor || color,
-            g => { ctx = g; try { shapeBody(); } finally { ctx = mainCtx; } },
-            motionFrame ? null : `cs|${glowKey}|${solid ? 1 : 0}|${image.shapeInnerColor}|${image.shapeInnerSize}|${image.shapeOutlineWidth}|${contentScale.toFixed(4)}`);
-          // 原本每一層也會連同形狀本身畫一次，照樣畫（半透明的圖形外觀不變）
-          for (let i = 0; i < 3; i++) shapeBody();
+            } else if (solid) ctx.fill(path); else strokeOutlineBody(ctx, path, image.shape, drawW, drawH, (image.shapeTextureBaseW || image.width) * contentScale, (image.shapeTextureBaseH || image.height) * contentScale);
+          }
           ctx.restore();
           }
         }
@@ -6870,25 +6862,21 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         // 字的墨水在框裡上下置中（換字體不會忽上忽下）
         if (!image.vertical) ctx.translate(0, textInkShift(ctx, image.text || '', lineH));
         ctx.fillStyle = image.color || '#FFFFFF';
-        { const mainCtx = ctx; paintTextShadow(ctx, image, size, g => { ctx = g; try { fill(); } finally { ctx = mainCtx; } },
-          { w: image.textStretchBaseW || image.width, h: image.textStretchBaseH || image.height },
-          motionFrame ? null : JSON.stringify([fontEpoch, image.text, mainCtx.font, spacing, image.textAlign, image.lineHeight, image.vertical, image.underline, image.shadowColor, image.shadowAmt])); }
+        paintTextShadow(ctx, image, size, fill);
         // 字卡效果：立體厚度、外描邊（在發光、描邊、字的下面）
         paintTextDepth(ctx, image, size, 1, fill, () => drawAnimatedUnits(true));
         paintOuterStroke(ctx, image, 1, () => drawAnimatedUnits(true));
       }
       ctx.fillStyle = image.color || '#FFFFFF';
       if (image.glow) {
-        /* 光另外畫成一張平滑的光暈圖再貼回來（見 utils/glowSprite）：放大不會有像素感、縮放不會抖。
-           shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。 */
-        const gbw = image.sym ? image.width : (image.textStretchBaseW || image.width);
-        const gbh = image.sym ? image.height : (image.textStretchBaseH || image.height);
-        const mainCtx = ctx;
-        paintGlow(ctx, { x: -gbw * .75, y: -gbh * .75, w: gbw * 1.5, h: gbh * 1.5 },
-          [1, 2, 3].map(k => (Math.min(15, image.glow!) / 20) * 14 * k * contentScale * backingScale),
-          image.glowColor || '#FFFFFF',
-          g => { ctx = g; try { fill(); } finally { ctx = mainCtx; } },
-          motionFrame ? null : JSON.stringify(['g', fontEpoch, image.text, image.sym, mainCtx.font, spacing, image.textAlign, image.lineHeight, image.vertical, image.underline, gbw, gbh]));
+        ctx.shadowColor = image.glowColor || '#FFFFFF';
+        for (const k of [1, 2, 3]) {
+          // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
+          ctx.shadowBlur = (Math.min(15, image.glow) / 20) * 14 * k * contentScale * backingScale;
+          fill();
+        }
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
       }
       if (image.strokeWidth) {
         // lineWidth 會跟著目前的 CTM 一起縮放，這裡維持基礎值即可。
@@ -15978,8 +15966,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       paintTextBg(ctx, fImg, fw * fImg.scale, fh * fImg.scale);
       if (!fImg.vertical) ctx.translate(0, textInkShift(ctx, fImg.text || '', lineH));
       ctx.fillStyle = fImg.color || '#FFFFFF';
-      { const mainCtx = ctx; paintTextShadow(ctx, fImg, size, g => { ctx = g; try { drawLines(); } finally { ctx = mainCtx; } },
-        { w: fw * Math.max(1, fImg.scale), h: fh * Math.max(1, fImg.scale) }); }
+      paintTextShadow(ctx, fImg, size, drawLines);
       const u = scaleFactor * fImg.scale;
       paintTextDepth(ctx, fImg, size, u, drawLines, () => drawAnimatedL(true));
       paintOuterStroke(ctx, fImg, u, () => drawAnimatedL(true));
@@ -15991,14 +15978,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          這裡如果先 strokeText，光就會從描邊的外緣散出去，等於把描邊
          算進發光裡；發光與描邊要各自獨立，所以這一段不描邊。 */
       // 疊三層，跟預覽那一層的三段 text-shadow 對齊
-      {
-        const gbw = fw * 1.5 * Math.max(1, fImg.scale), gbh = fh * 1.5 * Math.max(1, fImg.scale);
-        const mainCtx = ctx;
-        ctx.shadowColor = 'transparent';
-        paintGlow(ctx, { x: -gbw / 2, y: -gbh / 2, w: gbw, h: gbh },
-          [1, 2, 3].map(k => (Math.min(15, fImg.glow!) / 20) * 14 * k * scaleFactor * fImg.scale),
-          fImg.glowColor || '#FFFFFF',
-          g => { ctx = g; try { drawLines(); } finally { ctx = mainCtx; } });
+      for (const k of [1, 2, 3]) {
+        ctx.shadowBlur = (Math.min(15, fImg.glow) / 20) * 14 * k * scaleFactor * fImg.scale;
+        drawLines();
       }
       ctx.shadowBlur = 0;
       ctx.shadowColor = 'transparent';
@@ -16166,17 +16148,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const gAmt = glowAmount(fImg.shapeGlow as any);
     if (gAmt > 0) {
       ctx.save();
-      const shapeBody = () => {
+      ctx.shadowColor = fImg.shapeGlowColor || color;
+      for (const r of shapeGlowBlurs(fw, fh)) {
+        ctx.shadowBlur = r * gAmt;
         if (solid && COMPOSITE_SHAPE_KINDS.has(fImg.shape!)) {
           drawCompositeShapeBody(ctx, fImg.shape!, fw, fh, color, fImg.shapeInnerColor || '#FFFFFF', undefined, { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth });
         } else if (solid) ctx.fill(path); else strokeOutlineBody(ctx, path, fImg.shape, fw, fh, (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, (fImg.shapeTextureBaseH || fImg.height) * scaleFactor);
-      };
-      // 匯出也用高品質光暈圖：大尺寸輸出時 Safari 不會把大半徑的光降成低解析度
-      const mainCtx = ctx;
-      paintGlow(ctx, { x: -fw * .1, y: -fh * .1, w: fw * 1.2, h: fh * 1.2 },
-        shapeGlowBlurs(fw, fh).map(r => r * gAmt), fImg.shapeGlowColor || color,
-        g => { ctx = g; try { shapeBody(); } finally { ctx = mainCtx; } });
-      for (let i = 0; i < 3; i++) shapeBody();
+      }
       ctx.restore();
     }
     /* 外描邊：畫在本體底下、寬度加倍，跟預覽那一條 path 同一套 */

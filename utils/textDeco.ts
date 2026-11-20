@@ -1,4 +1,3 @@
-import { paintGlow } from './glowSprite';
 import { textReady } from './stableText';
 /* 文字的陰影與背景（創意拼圖、跨頁拼圖的預覽與匯出共用同一支）。
    數值都跟字級等比：字放大縮小，陰影、背景跟著一起縮放。
@@ -107,34 +106,20 @@ export const needsTextLayout = (o: TextDeco, text: string) =>
 /** 陰影：用填色的字形投一次影子（字本身之後會再正常畫在上面）。
     canvas 的陰影位移、模糊是螢幕像素，不吃變換矩陣，所以照目前矩陣的倍率換算；
     方向固定在畫面上（像同一盞燈），字旋轉時影子方向不跟著轉。 */
-export const paintTextShadow = (ctx: CanvasRenderingContext2D, o: TextDeco, size: number,
-  drawFill: (g: CanvasRenderingContext2D) => void, box: { w: number; h: number }, key: string | null = null) => {
+export const paintTextShadow = (ctx: CanvasRenderingContext2D, o: TextDeco, size: number, drawFill: () => void) => {
   const amt = Math.max(0, Math.min(100, o.shadowAmt || 0)) / 100;
   if (amt <= 0) return;
   const m = ctx.getTransform(), k = Math.hypot(m.a, m.b) || 1;
   const dist = (o.shadowDist ?? TEXT_SHADOW_DEFAULTS.shadowDist) / 100 * size * .3 * k;
   const ang = (o.shadowAngle ?? TEXT_SHADOW_DEFAULTS.shadowAngle) * Math.PI / 180;
-  const blur = (o.shadowBlur ?? TEXT_SHADOW_DEFAULTS.shadowBlur) / 100 * size * .45 * k;
-  /* 位移是螢幕方向（不跟著字旋轉，跟以前一樣）：換成目前座標系裡的向量 */
-  const dx = Math.cos(ang) * dist, dy = Math.sin(ang) * dist;
-  const det = m.a * m.d - m.b * m.c || 1;
-  const lx = (m.d * dx - m.c * dy) / det, ly = (-m.b * dx + m.a * dy) / det;
   ctx.save();
-  ctx.translate(lx, ly);
-  const bw = box.w * .75, bh = box.h * .75;
-  /* 影子跟發光一樣畫成平滑的光暈圖再貼回來（見 utils/glowSprite）：放大不會有像素感、縮放不會抖。
-     沒有模糊（0）的影子就照舊直接畫，邊緣才會是銳利的。 */
-  if (blur > .5) paintGlow(ctx, { x: -bw, y: -bh, w: bw * 2, h: bh * 2 }, [blur],
-    rgba(o.shadowColor || TEXT_SHADOW_DEFAULTS.shadowColor, amt), drawFill,
-    key === null ? null : `shadow|${key}|${o.shadowBlur ?? ''}`);
-  else {
-    ctx.shadowColor = rgba(o.shadowColor || TEXT_SHADOW_DEFAULTS.shadowColor, amt);
-    ctx.shadowBlur = blur;
-    const far = 100000;
-    ctx.shadowOffsetX = far * m.a; ctx.shadowOffsetY = far * m.b;
-    ctx.translate(-far, 0);
-    drawFill(ctx);
-  }
+  ctx.shadowColor = rgba(o.shadowColor || TEXT_SHADOW_DEFAULTS.shadowColor, amt);
+  ctx.shadowBlur = (o.shadowBlur ?? TEXT_SHADOW_DEFAULTS.shadowBlur) / 100 * size * .45 * k;
+  // 字本身畫在很遠的地方，只讓影子位移回來：影子不會被字的半透明邊緣蓋出一圈雜色
+  const far = 100000;
+  ctx.shadowOffsetX = Math.cos(ang) * dist + far * m.a; ctx.shadowOffsetY = Math.sin(ang) * dist + far * m.b;
+  ctx.translate(-far, 0);
+  drawFill();
   ctx.restore();
 };
 
