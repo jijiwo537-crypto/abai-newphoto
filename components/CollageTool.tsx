@@ -3002,6 +3002,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   },[objEditImage,selectedRegionPhoto,baseSelected,photoRegion?.photos[0]?.src,imageState]);
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
+  const [motionSub, setMotionSub] = useState<'in' | 'idle' | 'glow' | 'dash'>('in');
+  const [settingSub, setSettingSub] = useState<'layout' | 'mask'>('layout');
   /** 正在畫布上直接編輯的那一段文字（null＝沒有在編輯）。
       跟經典拼圖同一種做法：疊一個排版一模一樣的 textarea 在字上面，
       原生鍵盤與游標交給它，打的內容即時寫回物件。 */
@@ -12602,6 +12604,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {activeTab === 'setting' && <div className="max-w-md mx-auto space-y-4 pb-4 animate-in fade-in duration-300">
 
 
+                {/* 方案 A：版面分成兩頁，分頁在上面一行 */}
+                <div className="flex gap-5 px-1 select-none" data-setting-tabs>
+                  {([['layout', '排版'], ['mask', '圖片與遮罩']] as const).map(([id, t]) => (
+                    <button key={id} onClick={() => setSettingSub(id)}
+                      className={`h-7 text-[13px] font-bold tracking-wider ${settingSub === id ? 'text-white' : 'text-[#666]'}`}>{t}</button>
+                  ))}
+                </div>
+                {settingSub === 'layout' && <>
                 <div className="grid grid-cols-2 gap-3 items-start">
                   <div className="flex flex-col min-w-0">
                     <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
@@ -12750,6 +12760,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         onCommit={()=>{seamLiveRef.current=false;finishRegionEdit();}}/>
                     </div>
                   </div>}
+                </>}
+                {settingSub === 'mask' && <>
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
                     它們講的都是「這張版面長什麼樣」，本來就該在同一頁。
                     -mt-1 是為了讓它跟上面那排的間距，跟這三項彼此之間一樣。 */}
@@ -12851,6 +12863,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   )}
                 </div>
                 </div>
+              </>}
               </div>}
               {activeTab === 'add' && (() => {
                 const sel = objects.find(o => o.id === selectedObj) || null;
@@ -13637,6 +13650,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const isGlintTarget = !!selObj && selObj.type === 'shape' && selObj.kind === 'hole' && String(selObj.hole || '').startsWith('sb-');
                 const isScatterTarget = !!selObj && selObj.type === 'shape' && isScatterFrame(selObj.kind);
                 const { kinds, idleKinds } = motionKindLists(motionTargetCtxOf(selObj));
+                const moHasDash = !!selObj && selObj.type === 'image' && (selObj.imgStrokeWidth || 0) > 0 && (selObj.imgStrokeDash || 0) > 0;
+                const moSubNow = ['in', 'idle', ...(glowHere ? ['glow'] : []), ...(moHasDash ? ['dash'] : [])].includes(motionSub) ? motionSub : 'in';
+                const moSub = (_subs: unknown) => moSubNow;
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}
@@ -13691,7 +13707,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       </>
                     ) : (
                       <>
-                        {label('進場動畫')}
+                        {(() => {
+                          /* 方案 A：動畫分成幾個分頁放在上面一行（進場／常駐，有發光、虛線時才多出那一頁），每次只看一頁 */
+                          const hasDash = !!selObj && selObj.type === 'image' && (selObj.imgStrokeWidth || 0) > 0 && (selObj.imgStrokeDash || 0) > 0;
+                          const subs = ([['in', '進場'], ['idle', '常駐'], ...(glowHere ? [['glow', '發光']] : []), ...(hasDash ? [['dash', '虛線']] : [])] as [string, string][]);
+                          return (
+                            <div className="flex gap-5 px-1 mt-3 mb-2 select-none" data-motion-tabs>
+                              {subs.map(([id, t]) => (
+                                <button key={id} onClick={() => setMotionSub(id as any)}
+                                  className={`h-7 text-[13px] font-bold tracking-wider ${moSub(subs) === id ? 'text-white' : 'text-[#666]'}`}>{t}</button>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                        {moSubNow === 'in' && <>
                         <div className="grid grid-cols-4 gap-2">
                           {kinds.map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
                             <button key={k.id} onClick={() => pickKind({ in: k.id })} className={cell(cur.in === k.id)}>
@@ -13712,8 +13741,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             onCommit={replayMotion}
                             onChange={(v: number) => setCur(sharedFromUi('inSpeed', v, cur, motionTargetCtxOf(selObj)))} />
                         </div>
+                        </>}
 
-                        {label('常駐動畫')}
+                        {moSubNow === 'idle' && <>
                         <div className="grid grid-cols-4 gap-2">
                           {idleKinds.map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
@@ -13737,12 +13767,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </div>
                         )}
 
-                        {/* 這個本體正在發光的話，發光的常駐動畫就接在這一頁最下面 */}
-                        {glowHere && glowPanel(glowWhich)}
+                        </>}
+                        {/* 發光自己的常駐動畫（這個本體有發光才有這一頁） */}
+                        {moSubNow === 'glow' && glowHere && glowPanel(glowWhich)}
 
                         {/* 這張圖片有虛線描邊的話，虛線自己的常駐動畫再接在下面。
                             沒有虛線（或沒有描邊）就整段不出現，不佔版面。 */}
-                        {selObj && selObj.type === 'image'
+                        {moSubNow === 'dash' && selObj && selObj.type === 'image'
                           && (selObj.imgStrokeWidth || 0) > 0 && (selObj.imgStrokeDash || 0) > 0 && (() => {
                           const dk = selObj.dashAnim || 'none';
                           const dsp = selObj.dashSpeed ?? 100;

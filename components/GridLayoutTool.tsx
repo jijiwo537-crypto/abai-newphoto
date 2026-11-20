@@ -5,12 +5,11 @@ import { BUBBLE_KINDS, bubblePathD, bubbleRatio, isNewBubbleKind, NO_SHRINK_KIND
 import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio, puzzleGlyph } from '../utils/puzzleShapes';
 import { selectedKinds, paintSelectedAnimation } from '../utils/selectedAnimations';
 import { BusyLayer } from './BusyLayer';
-import { EditBar, EditBarTab } from './EditBar';
+import { EditBar, EditBarTab, EDIT_BAR_PAD } from './EditBar';
 import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
 import { waveWarp } from '../utils/waveWarp';
-import { TEXT_CARDS, TEXT_CARD_GROUPS, textCardPatch, paintTextCardPreview, loadTextCardFont, type TextCard } from '../utils/textCards';
 import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, drawTextRunsAnimated, textFillStyle, setRunGradient, paintOuterStroke, paintTextDepth, paintDecoLines, textEffectPad, type TextLayout } from '../utils/textDeco';
 import { createPortal, flushSync } from 'react-dom';
 import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/classicTextureSize';
@@ -3025,42 +3024,8 @@ export const ColorPick: React.FC<{
   );
 };
 
-/** 字卡選擇：上面是分類，下面是每一張字卡的實際樣子（用這段文字的前幾個字預覽） */
-const TextCardPicker: React.FC<{ text?: string; onPick: (c: TextCard) => void }> = ({ text, onPick }) => {
-  const [group, setGroup] = useState(TEXT_CARD_GROUPS[0]);
-  const sample = (() => { const t = (text || '').replace(/\n/g, ' ').trim(); return !t || t === TEXT_PLACEHOLDER ? '標題文字' : Array.from(t).slice(0, 6).join(''); })();
-  return (
-    <div className="pb-8">
-      <div className="sticky top-0 z-10 bg-[#0a0a0a] pt-2 pb-2 flex gap-4 px-1">
-        {TEXT_CARD_GROUPS.map(g => (
-          <button key={g} onClick={() => setGroup(g)}
-            className={`h-6 text-[12px] font-bold tracking-wider ${group === g ? 'text-white' : 'text-[#666]'}`}>{g}</button>
-        ))}
-      </div>
-      <div className="grid grid-cols-3 gap-2 px-1">
-        {TEXT_CARDS.filter(c => c.group === group).map(c => <TextCardThumb key={c.id} card={c} text={sample} onPick={() => onPick(c)} />)}
-      </div>
-    </div>
-  );
-};
-const TextCardThumb: React.FC<{ card: TextCard; text: string; onPick: () => void }> = ({ card, text, onPick }) => {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    let alive = true;
-    const draw = () => { if (alive && ref.current) paintTextCardPreview(ref.current, card, text); };
-    draw();
-    void loadTextCardFont(card, text).then(draw);
-    return () => { alive = false; };
-  }, [card, text]);
-  return (
-    <button onClick={onPick} className="flex flex-col items-center gap-1 active:scale-95 transition-transform">
-      <canvas ref={ref} className="w-full h-14 rounded-[8px] bg-[#161616] border border-[#232323]" />
-      <span className="text-[10px] font-bold text-[#8c8c8c]">{card.name}</span>
-    </button>
-  );
-};
 type TextTab = 'card' | 'font' | 'color' | 'stroke' | 'glow' | 'shadow' | 'weight' | 'bg' | 'layout';
-let lastTextTab: TextTab = 'card';
+let lastTextTab: TextTab = 'font';
 /** 文字的行距（字級的幾倍），沒設過的舊文字都是這個 */
 export const TEXT_LINE_HEIGHT = 1.12;
 const TEXT_ARRANGE = [
@@ -3214,8 +3179,8 @@ export const TextEditorPanel: React.FC<{
         })} />
     </div>
   );
-  const tabs: [TextTab, string][] = [['card', '字卡'], ['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['glow', '發光'], ['shadow', '陰影'], ['weight', '粗斜體'], ['layout', '排列']];
-  const tab = symbol ? 'color' : sub === 'bg' ? 'font' : sub;
+  const tabs: [TextTab, string][] = [['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['glow', '發光'], ['shadow', '陰影'], ['weight', '粗斜體'], ['layout', '排列']];
+  const tab = symbol ? 'color' : sub === 'bg' || sub === 'card' ? 'font' : sub;
 
   return (
     <div
@@ -3250,11 +3215,6 @@ export const TextEditorPanel: React.FC<{
             onPick={colorPage.onPick}
             onBack={() => setColorPage(null)}
           />
-        )}
-        {!colorPage && tab === 'card' && (
-          <TextCardPicker text={layer.text} onPick={c => {
-            void loadTextCardFont(c, layer.text || '').then(() => onChange(textCardPatch(c) as any));
-          }} />
         )}
         {!colorPage && tab === 'font' && (
           <div className="space-y-2.5 pb-6">
@@ -3294,17 +3254,7 @@ export const TextEditorPanel: React.FC<{
             {tab === 'color' && <>
               {swatchRow(layer.color, c => onChange({ color: c }))}
               {!symbol && <div className="px-2">{slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}</div>}
-              {/* 漸層：字的下半部漸變成這個顏色（字卡常用）；禁止圖標＝不要漸層 */}
-              {!symbol && <div className="flex items-center gap-3 px-2">
-                <span className="text-[11px] font-bold text-white/70 flex-1">漸層</span>
-                <button onClick={() => onChange({ color2: undefined })} aria-label="不要漸層"
-                  className="shrink-0 w-7 h-7 flex items-center justify-center text-[#9a9a9a] active:text-white active:scale-90 transition-all">
-                  <svg width="22" height="22" viewBox="0 0 26 26" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="13" cy="13" r="11" /><line x1="5.2" y1="20.8" x2="20.8" y2="5.2" /></svg>
-                </button>
-                <ColorPick compact label="" value={layer.color2 || layer.color || '#FFFFFF'} colors={TEXT_COLORS}
-                  onPick={c => onChange({ color2: c })}
-                  onOpen={() => setColorPage({ value: layer.color2 || layer.color || '#FFFFFF', colors: TEXT_COLORS, onPick: c => onChange({ color2: c }) })} />
-              </div>}
+
               {/* 符號：顏色下面就是發光（符號只有這兩樣）。符號的發光最大值是文字的一半 */}
               {symbol && glowRow(SYMBOL_GLOW_MAX)}
             </>}
@@ -4330,6 +4280,31 @@ return (
     onPointerUpCapture={isolateFxUpdates ? finishAdjustment : undefined}
     onPointerCancelCapture={isolateFxUpdates ? finishAdjustment : undefined}
     onKeyUpCapture={isolateFxUpdates ? finishAdjustment : undefined}>
+    {/* 分類列放在控制區最上面（方案 A：分頁在面板頂端，只有文字、選中的變白） */}
+    <div data-edit-bar className="shrink-0 flex px-3 h-11 select-none">
+      {CATS.map(([id, , label]) => (
+        <button
+          key={id}
+          data-edit-tab={id}
+          /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
+          className={`flex-1 h-full text-[13px] font-bold tracking-wider ${(composeOpen ? id === 'compose' : adjustSub === id) ? 'text-white' : 'text-[#666]'}`}
+          onClick={() => {
+            if (id === 'compose') { openComposeFor(img.id); return; }
+            // 先讓新的控制項畫出來，背景縮圖的著色器再佔主執行緒；預覽解析度不變
+            deferHeavyWork();
+            /* 從構圖切到別的分類：先把當下裁切的結果確認掉再切過去 ——
+               不然構圖介面會一直蓋在上面，看起來就只是「圖標亮了但沒反應」。 */
+            if (composeOpen) onLeaveCompose?.();
+            setAdjustSub(id as any);
+            // 跟編輯一樣：切分類就把該分類的第一個工具選起來
+            if (id === 'tune') setTuneTool(deferSlider ? '' : TUNE_TOOLS[0][0]);
+            if (id === 'shape') { setShapeMenu('root'); setShapeTool(''); }
+            if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
+          }}
+        >{label}</button>
+      ))}
+    </div>
+
     {/* 固定 5rem 滑桿與 6rem 細項列，不改變預覽空間。 */}
     <div
       className={`flex flex-col justify-center shrink-0 overflow-hidden bg-[#111] px-8`}
@@ -4570,31 +4545,8 @@ return (
         ))}
     </div>
 
-    {/* 3. 分類列：跟編輯同一個元件（只有文字、選中的有底線、下面留空間好按） */}
-    <EditBar>
-      {CATS.map(([id, , label]) => (
-        <EditBarTab
-          key={id}
-          id={id}
-          label={label}
-          /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
-          active={composeOpen ? id === 'compose' : adjustSub === id}
-          onClick={() => {
-            if (id === 'compose') { openComposeFor(img.id); return; }
-            // 先讓新的控制項畫出來，背景縮圖的著色器再佔主執行緒；預覽解析度不變
-            deferHeavyWork();
-            /* 從構圖切到別的分類：先把當下裁切的結果確認掉再切過去 ——
-               不然構圖介面會一直蓋在上面，看起來就只是「圖標亮了但沒反應」。 */
-            if (composeOpen) onLeaveCompose?.();
-            setAdjustSub(id as any);
-            // 跟編輯一樣：切分類就把該分類的第一個工具選起來
-            if (id === 'tune') setTuneTool(deferSlider ? '' : TUNE_TOOLS[0][0]);
-            if (id === 'shape') { setShapeMenu('root'); setShapeTool(''); }
-            if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
-          }}
-        />
-      ))}
-    </EditBar>
+    {/* 底下留一段，最下面那一排控制不用貼著 iPhone 的橫條 */}
+    <div aria-hidden className="shrink-0" style={{ height: EDIT_BAR_PAD }} />
   </div>
 );
 };
@@ -11476,6 +11428,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
   const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
+  const [motionSub, setMotionSub] = useState<'in' | 'idle'>('in');
   /* 進入「選中拍立得裡的照片」：拍立得已經選中、裡面有照片，原地點一下照片窗口（手指沒移動）。
      在整頁的捕獲階段聽，不動原本選取／拖曳的那套手勢 */
   const polaSelRef = useRef<string | null>(null); polaSelRef.current = selectedFloatingId;
@@ -19847,7 +19800,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       );})}
                   </div>
                   {!target ? <p data-no-motion-items="1" className="text-[11px] text-white/40 text-center pt-8">沒有可編輯項目</p> : <>
-                    <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-4">進場動畫</p>
+                    {/* 方案 A：進場／常駐分成兩頁，分頁在上面一行 */}
+                    <div className="flex gap-5 px-1 mt-3 mb-2 select-none" data-motion-tabs>
+                      {([['in', '進場'], ['idle', '常駐']] as const).map(([id, t]) => (
+                        <button key={id} onClick={() => setMotionSub(id)}
+                          className={`h-7 text-[13px] font-bold tracking-wider ${motionSub === id ? 'text-white' : 'text-[#666]'}`}>{t}</button>
+                      ))}
+                    </div>
+                    {motionSub === 'in' && <>
                     <div className="grid grid-cols-4 gap-2">{introKinds.map(([id,name]) => <button key={id} className={cell(cfg.in===id)} onClick={()=>pickIntro(id)}>{name}</button>)}</div>
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                       <CompactSlider label="起始" value={delayToUi(cfg.delay)} min={0} max={100} step={1} onCommit={replayMotion} onChange={(v:number)=>patchMotion({delay:delayFromUi(v)})}/>
@@ -19856,7 +19816,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         min={0} max={100} step={1} onCommit={replayMotion}
                         onChange={(v:number)=>patchMotion(shFrom('inSpeed', v, cfg))}/>
                     </div>
-                    <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2 mt-4">常駐動畫</p>
+                    </>}
+                    {motionSub === 'idle' && <>
                     <div className="grid grid-cols-4 gap-2">{idleKinds.map(([id,name]) => <button key={id} className={cell(cfg.idle===id)} onClick={()=>pickIdle(id)}>{name}</button>)}</div>
                     {cfg.idle !== 'none' && <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                       {cfg.idle !== 'lab-T-L04' && <CompactSlider key={`${target.id}-${cfg.idle}-amp`} label="幅度"
@@ -19871,6 +19832,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         onChange={(v:number)=>patchMotion(shFrom('speed', v, cfg))}/>
                       </div>
                     </div>}
+                    </>}
                   </>}
                 </div>
               );

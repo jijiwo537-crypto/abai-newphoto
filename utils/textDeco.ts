@@ -170,14 +170,15 @@ export const drawTextRunsAnimated = (ctx: CanvasRenderingContext2D, L: TextLayou
 /* ── 字卡效果 ───────────────────────────────────────────────────────────── */
 /** 填色：有 color2 就是上→下的漸層（以這一行字的高度為範圍），否則就是單色 */
 export const textFillStyle = (ctx: CanvasRenderingContext2D, o: TextDeco, size: number, y = 0): string | CanvasGradient => {
-  if (!o.color2) return o.color || '#FFFFFF';
+  // 漸層已移除：一律單色（舊作品留著的 color2 也不畫）
+  if (o || !o) return o.color || '#FFFFFF';
   const g = ctx.createLinearGradient(0, y - size * .5, 0, y + size * .5);
   g.addColorStop(0, o.color || '#FFFFFF'); g.addColorStop(1, o.color2);
   return g;
 };
 /** 多行／排過版的漸層：每一行各自從上到下（drawTextRuns 會看這個） */
 export const setRunGradient = (ctx: CanvasRenderingContext2D, o: TextDeco, size: number) => {
-  (ctx as any).__runFill = o.color2 ? (y: number) => textFillStyle(ctx, o, size, y) : null;
+  (ctx as any).__runFill = null; void o; void size;
 };
 /** 外描邊：在第一圈描邊外面再包一圈（寬度＝兩圈加起來），畫在最底下 */
 export const paintOuterStroke = (ctx: CanvasRenderingContext2D, o: TextDeco, unit: number, drawStroke: () => void) => {
