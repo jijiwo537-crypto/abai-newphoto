@@ -7318,7 +7318,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          本體最寬到 sz/2，所以半邊 0.95×sz 已經多留 6% 的餘裕。
          文字類的字符可能比 sz 還寬，維持原本的寬鬆值。 */
       const half = glowHalf(szQ);
-      const side = Math.ceil(half * 2) + 8;
+      /* 光暈圖的解析度：讓最小那段模糊固定是 8px（跟 utils/glowSprite 同一個原則）。
+         圖案很大或放很大時，不再把上百像素的模糊交給瀏覽器 —— Safari 會改用低解析度模糊，出現像素感。 */
+      const gr = Math.min(1, 8 / Math.max(1e-6, szQ * 0.045 * holeGlowAmt));
+      const side = Math.ceil(half * 2 * gr) + 8;
       const tmp = document.createElement('canvas');
       tmp.width = side; tmp.height = side;
       const tg = get2dWide(tmp);
@@ -7328,10 +7331,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const casterOffset = side * 2;
       tg.shadowColor = gcol;
       tg.shadowOffsetX = casterOffset;
+      tg.scale(gr, gr);
       for (const kk of [1, 2, 3]) {
-        tg.shadowBlur = szQ * 0.045 * kk * holeGlowAmt;   // 跟圖形的 shapeGlowBlurs × 強度 同一條式子
-        strokeHoleShape(tg, h, szQ, 0, side / 2 - casterOffset, side / 2, gcol);
+        tg.shadowBlur = szQ * 0.045 * kk * holeGlowAmt * gr;   // 跟圖形的 shapeGlowBlurs × 強度 同一條式子
+        strokeHoleShape(tg, h, szQ, 0, (side / 2 - casterOffset) / gr, side / 2 / gr, gcol);
       }
+      tg.setTransform(1, 0, 0, 1, 0, 0);
+      (tmp as any).__r = gr;
       /* 本體在這裡就先挖掉（滿透明度），剩下的才是純粹的一圈光暈。
          走暫存層時本體會再被挖一次 —— 挖已經是全透明的地方不會有任何改變。 */
       tg.shadowBlur = 0;
@@ -7397,10 +7403,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (sx !== 1) gg.scale(sx, 1);
       if (angle) gg.rotate((angle * Math.PI) / 180);
       if (k !== 1) gg.scale(k, k);
-      gg.drawImage(tmp, -side / 2, -side / 2);
+      const gr = (tmp as any).__r || 1;
+      if (gr !== 1) { gg.imageSmoothingQuality = 'high'; gg.drawImage(tmp, -side / 2 / gr, -side / 2 / gr, side / gr, side / gr); }
+      else gg.drawImage(tmp, -side / 2, -side / 2);
       /* 圖案常駐「發光」的幅度最大是 2 倍：超過 1 的部分再疊一層同一張光暈，
          亮度與範圍真的加倍，不必每一格重做光暈貼圖。 */
-      if (a > 1.004) { gg.globalAlpha = Math.min(1, a - 1); gg.drawImage(tmp, -side / 2, -side / 2); }
+      if (a > 1.004) { gg.globalAlpha = Math.min(1, a - 1); gg.drawImage(tmp, -side / 2 / gr, -side / 2 / gr, side / gr, side / gr); }
       gg.restore();
     };
 
@@ -8833,7 +8841,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           // 字的墨水在框裡上下置中（換字體不會忽上忽下）
           if (!o.vertical) ctx.translate(0, textInkShift(ctx, o.text || '', textLineH));
           ctx.fillStyle = o.color || '#ffffff';
-          paintTextShadow(ctx, o as any, fpx, () => drawText(false));
+          { const mainCtx = ctx; paintTextShadow(ctx, o as any, fpx, g => { ctx = g; try { drawText(false); } finally { ctx = mainCtx; } },
+            { w: (o.textStretchBaseW || o.w) / fontK, h: (o.textStretchBaseH || o.h) / fontK },
+            (f?.lab || textUnitBreathe) ? null : JSON.stringify([fontEpoch, o.text, mainCtx.font, spacingPx, o.textAlign, o.lineHeight, o.vertical, o.underline, o.shadowColor, o.shadowAmt]) ); }
           // 字卡效果：立體厚度、外描邊（在發光、描邊、字的下面）
           paintTextDepth(ctx, o as any, fpx, tk / fontK, () => drawText(false), () => drawText(true));
           paintOuterStroke(ctx, o as any, tk / fontK, () => drawText(true));

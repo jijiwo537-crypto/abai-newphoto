@@ -1,3 +1,4 @@
+import { paintGlow } from './glowSprite';
 import { HEART_MAIN, HEART_ICON, traceUnitShape, hexStarPoints, traceRadial, radialParts, spinnerAlpha } from './heartShapes';
 /**
  * 「圖案」的畫法：路徑、字符、去背圖，全部收在這裡。
@@ -857,13 +858,13 @@ export const drawHoleShape = (
        光就會沿著字（或去背圖）真正的輪廓散出去。 */
     /* 星芒的「發光」是星芒自己的柔光（glintGlow），不吃這種陰影式的發光 */
     if (o.glow && !glint) {
-      ctx.save();
-      ctx.shadowColor = gcol;
-      for (const r of blurs) {
-        ctx.shadowBlur = r;
-        drawTextShape(ctx, o.hole, gly, 0, 0, size, col, false, 0);
-      }
-      ctx.restore();
+      /* 光另外畫成一張平滑的光暈圖再貼回來（見 utils/glowSprite）：放大不會有像素感、縮放不會抖 */
+      const ink = glyphInk(o.hole, gly, size);
+      const bx = Math.max(size, ink.w) * .75, by = Math.max(size, ink.h) * .75;
+      paintGlow(ctx, { x: -bx, y: -by, w: bx * 2, h: by * 2 }, blurs, gcol,
+        g => drawTextShape(g, o.hole, gly, 0, 0, size, col, false, 0),
+        `hole-t|${o.hole}|${gly}|${size}|${col}`);
+      for (let i = 0; i < blurs.length; i++) drawTextShape(ctx, o.hole, gly, 0, 0, size, col, false, 0);
     }
     /* 描邊：字沒有路徑可以描，改成把同一個形狀往外八個方向各畫一次當底 ——
        疊出來就是一圈等寬的外框，本體再蓋回中間。 */
@@ -908,12 +909,14 @@ export const drawHoleShape = (
   drawShapePath(ctx, o.hole, 0, 0, size);
   if (o.glow) {
     ctx.save();
-    ctx.shadowColor = gcol;
     ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = lw;
-    for (const r of blurs) {
-      ctx.shadowBlur = r;
-      if (solid) ctx.fill(); else ctx.stroke();
-    }
+    /* 光另外畫成一張平滑的光暈圖再貼回來（見 utils/glowSprite）：放大不會有像素感、縮放不會抖 */
+    paintGlow(ctx, { x: -size * .75, y: -size * .75, w: size * 1.5, h: size * 1.5 }, blurs, gcol, g => {
+      drawShapePath(g, o.hole, 0, 0, size);
+      if (solid) g.fill(); else g.stroke();
+    }, `hole-p|${o.hole}|${size}|${solid ? 1 : 0}|${lw}`);
+    // 原本每一層也會連同形狀本身畫一次，照樣畫（半透明的圖形外觀不變）
+    for (let i = 0; i < blurs.length; i++) { if (solid) ctx.fill(); else ctx.stroke(); }
     ctx.restore();
   }
   // 描邊畫在本體底下、寬度加倍，本體蓋住內半邊就只剩外面那一圈

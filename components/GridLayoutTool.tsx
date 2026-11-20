@@ -6870,7 +6870,9 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         // 字的墨水在框裡上下置中（換字體不會忽上忽下）
         if (!image.vertical) ctx.translate(0, textInkShift(ctx, image.text || '', lineH));
         ctx.fillStyle = image.color || '#FFFFFF';
-        paintTextShadow(ctx, image, size, fill);
+        { const mainCtx = ctx; paintTextShadow(ctx, image, size, g => { ctx = g; try { fill(); } finally { ctx = mainCtx; } },
+          { w: image.textStretchBaseW || image.width, h: image.textStretchBaseH || image.height },
+          motionFrame ? null : JSON.stringify([fontEpoch, image.text, mainCtx.font, spacing, image.textAlign, image.lineHeight, image.vertical, image.underline, image.shadowColor, image.shadowAmt])); }
         // 字卡效果：立體厚度、外描邊（在發光、描邊、字的下面）
         paintTextDepth(ctx, image, size, 1, fill, () => drawAnimatedUnits(true));
         paintOuterStroke(ctx, image, 1, () => drawAnimatedUnits(true));
@@ -15976,7 +15978,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       paintTextBg(ctx, fImg, fw * fImg.scale, fh * fImg.scale);
       if (!fImg.vertical) ctx.translate(0, textInkShift(ctx, fImg.text || '', lineH));
       ctx.fillStyle = fImg.color || '#FFFFFF';
-      paintTextShadow(ctx, fImg, size, drawLines);
+      { const mainCtx = ctx; paintTextShadow(ctx, fImg, size, g => { ctx = g; try { drawLines(); } finally { ctx = mainCtx; } },
+        { w: fw * Math.max(1, fImg.scale), h: fh * Math.max(1, fImg.scale) }); }
       const u = scaleFactor * fImg.scale;
       paintTextDepth(ctx, fImg, size, u, drawLines, () => drawAnimatedL(true));
       paintOuterStroke(ctx, fImg, u, () => drawAnimatedL(true));
