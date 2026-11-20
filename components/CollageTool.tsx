@@ -2875,12 +2875,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const textFitKeys = useRef(new Map<string, string>());
   const textFontWaits = useRef(new Set<string>());
   const [textFitTick, setTextFitTick] = useState(0);
+  /* 字型下載完成的次數：文字的框、預先畫好的場景圖塊都靠它作廢重做（見 stableSceneKey） */
+  const [fontTick,setFontTick]=useState(fontEpoch);
+  useEffect(()=>{const f=()=>setFontTick(fontEpoch);window.addEventListener('abai-font-ready',f);return()=>window.removeEventListener('abai-font-ready',f);},[]);
   useLayoutEffect(() => {
     const patches = new Map<string, any>();
     for (const o of objects) {
       if (o.type !== 'text' || o.sym) continue;
       if (objPinchRef.current?.id === o.id || objStretchRef.current?.id === o.id) continue;
-      const key = JSON.stringify([o.text, o.fontFamily, o.size, o.bold, o.italic, o.letterSpacing, o.strokeWidth, o.lineHeight, o.vertical, o.depth, o.deco, o.stroke2Width]);
+      // 字型下載完成也要重量一次（之前可能是用備用字型量的）
+      const key = JSON.stringify([o.text, o.fontFamily, o.size, o.bold, o.italic, o.letterSpacing, o.strokeWidth, o.lineHeight, o.vertical, fontTick]);
       if (textFitKeys.current.get(o.id) === key) continue;
       // 每種文字狀態最多等一次字型，之後不管怎樣都量。fonts.check 對某些字型堆疊可能一直是 false，
       // 不這樣會一直重排這個 effect（React 的 maximum update depth）
@@ -2896,7 +2900,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ...(o.textStretchBaseH ? { textStretchBaseH: box.h } : null) });
     }
     if (patches.size) setObjects(prev => prev.map(o => patches.has(o.id) ? { ...o, ...patches.get(o.id) } : o));
-  }, [objects, textFitTick, objPinching, objStretching]);
+  }, [objects, textFitTick, objPinching, objStretching, fontTick]);
   /* 打開圖片編輯時，趁空檔把這張圖的「拖曳中」工作尺寸先準備好（來源縮圖、
      像素快取、顏色鏈的 GPU 貼圖），第一下拖滑桿就跟首頁編輯一樣直接算。 */
   useEffect(() => {
@@ -6188,7 +6192,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     releaseLowResGlow();
   },[]);
   const sceneTileWindow=useRef<SceneWindow|null>(null);
-  const stableSceneKey=JSON.stringify([backdropSceneFingerprint,objects,photoRegion,lutRevision],compactSceneValue);
+  /* 字型（或中文字型的某一小份）下載完成時，預先畫好的場景圖塊要作廢重做：
+     圖塊如果是在字型還沒到的時候畫的，裡面的字是備用字型（寬度、位置都不一樣），
+     放手後改用圖塊顯示時，字就會跟拖動中（即時畫、已是正確字型）對不上。 */
+  const stableSceneKey=JSON.stringify([backdropSceneFingerprint,objects,photoRegion,lutRevision,fontTick],compactSceneValue);
   const stableSceneKeyRef=useRef(stableSceneKey);stableSceneKeyRef.current=stableSceneKey;
   useEffect(()=>()=>stableScene.current.dispose(),[]);
   const pinchBackingCapacity=useRef<{w:number;h:number}|null>(null);
@@ -6535,7 +6542,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       &&!objDragRef.current&&!objPinchRef.current&&!objStretchRef.current&&!baseDragRef.current&&!basePinchRef.current&&!interactionRef.current
       &&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
     // 不點陣化來源、不上傳著色器、不逐物件取整、換縮放也不重建。每個像素都用同一份固定的上層座標對應
-    const liveSceneKey=JSON.stringify([backdropSceneFingerprint,objects,photoRegion,lutRevision],compactSceneValue);
+    const liveSceneKey=JSON.stringify([backdropSceneFingerprint,objects,photoRegion,lutRevision,fontEpoch],compactSceneValue);
     if(targetCanvas===canvasRef.current&&!previewCapture&&sceneIsStatic&&stableScene.current.paint(ctx,liveSceneKey,offs.cw,offs.ch)){
       regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
       drawnScaleRef.current=s;lastMainDrawRef.current=performance.now();
@@ -6565,7 +6572,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       for(let k=1;k<=Math.min(3,objects.length);k++){
         const tail=objects.slice(objects.length-k);
         if(tail.some(o=>o.below||isVideoEl(o.img)))break;
-        if(JSON.stringify([backdropSceneFingerprint,objects.slice(0,objects.length-k),photoRegion,lutRevision],compactSceneValue)===stableScene.current.key){tilePrefix=tail;break;}
+        if(JSON.stringify([backdropSceneFingerprint,objects.slice(0,objects.length-k),photoRegion,lutRevision,fontEpoch],compactSceneValue)===stableScene.current.key){tilePrefix=tail;break;}
       }
     }
     if(targetCanvas===canvasRef.current&&import.meta.env.DEV)targetCanvas.dataset.sceneSnapshot=tilePrefix?'tiles+objects':'live';
@@ -10316,6 +10323,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     let cancelled=false;
     const valid=()=>!cancelled&&stableSceneKeyRef.current===stableSceneKey&&!animRef.current
       &&!activePointers.current.size&&!isPhotoInteractionBusy()&&!regionSliderHeld.current&&!sliderHeld()&&!regionHold.current?.active
+      &&(document as any).fonts?.status!=='loading'
       &&!regionPhotoEditingRef.current&&selectedRegionPhotoRef.current===null
       &&!chromeSelectionRef.current.baseSelected&&!shapeSelRef.current&&!chromeSelectionRef.current.selectedTarget
       &&!editingTextId&&!swapSource&&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
