@@ -19533,7 +19533,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       >
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* 分頁列表 */}
-          <div className="flex px-4 pt-1 border-b border-[#1a1a1a] shrink-0 overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar">
+          <div className="flex px-4 pt-1 border-b border-[#1a1a1a] shrink-0">
             {['ratio', 'pages', 'add', 'adjust', 'color', 'motion'].map(id => {
               let iconEl = null;
               let titleText = '';
@@ -19576,12 +19576,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     if (id === 'add') setAddSub('root');
                     if (id === 'color') setColorPickerActive(true);
                   }} 
-                  className={`flex-1 min-w-[70px] py-4 border-b-2 transition-colors duration-150 flex flex-col items-center justify-center gap-1 ${
-                    isActive ? 'text-white border-white' : 'text-[#444] border-transparent hover:text-[#777]'
+                  /* 主工具列只有文字（跟文字編輯頁的分頁同一種樣子）：選中的字變白，其他是實色灰 */
+                  className={`flex-1 h-11 text-[14px] font-bold tracking-wider transition-colors duration-150 ${
+                    isActive ? 'text-white' : 'text-[#666]'
                   }`}
                   title={titleText}
                 >
-                  {iconEl}
+                  {({ ratio: '比例', pages: '頁面', add: '新增', adjust: '編輯', color: '背景', motion: '動畫' } as Record<string, string>)[id]}
                 </button>
               );
             })}

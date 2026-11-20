@@ -12472,11 +12472,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 }} 
                 /* 亮起來不做淡入：顏色的漸變在 iPhone 上是主執行緒在跑，切頁之後那幾格只要在重畫預覽，
                    淡入就會停在半路 —— 看起來就是「圖示慢一拍才亮」 */
-                className={`flex-1 py-3 text-[11px] font-bold border-b-2 ${
-                  activeTab === id ? 'text-white border-white' : 'text-[#555] border-transparent'
+                /* 主工具列只有文字（跟文字編輯頁的分頁同一種樣子）：選中的字變白，其他是實色灰 */
+                className={`flex-1 h-11 text-[14px] font-bold tracking-wider ${
+                  activeTab === id ? 'text-white' : 'text-[#666]'
                 }`}
               >
-                {id === 'setting' ? <Crop size={16} className="mx-auto" /> : id === 'add' ? <Plus size={16} className="mx-auto" /> : id === 'objedit' ? <SlidersHorizontal size={16} className="mx-auto" /> : id === 'motion' ? <Film size={16} className="mx-auto" /> : <Star size={16} className="mx-auto" />}
+                {({ setting: '版面', shape: '圖案', add: '新增', objedit: '編輯', motion: '動畫' } as Record<string, string>)[id]}
               </button>
             ))}
           </div>
@@ -13763,19 +13764,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </div>
                 );
               })()}
-              {activeTab === 'shape' && <div className="max-w-md mx-auto h-full min-h-0 flex flex-row animate-in fade-in duration-300">
-                <div className="flex flex-col shrink-0 w-11 -ml-5 border-r border-white/10 select-none">
-                  <button onClick={() => setShapeSub('shape')} title="圖案" aria-label="圖案"
-                    className={`w-full flex-1 flex items-center justify-center outline-none ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}>
-                    <Star size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'shape' ? 'scale-110' : 'scale-100'}`} />
-                  </button>
-                  <div className="w-full h-[1px] bg-white/10 shrink-0" />
-                  <button onClick={() => setShapeSub('style')} title="參數" aria-label="參數"
-                    className={`w-full flex-1 flex items-center justify-center outline-none ${shapeSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}>
-                    <SlidersHorizontal size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'style' ? 'scale-110' : 'scale-100'}`} />
-                  </button>
+              {activeTab === 'shape' && <div className="max-w-md mx-auto h-full min-h-0 flex flex-col animate-in fade-in duration-300">
+                {/* 分頁改到面板最上面一行（不再佔左側寬度） */}
+                <div className="shrink-0 flex gap-5 px-1 pt-2.5 select-none" data-pattern-tabs>
+                  {([['shape', '圖案'], ['style', '參數']] as const).map(([id, label]) => (
+                    <button key={id} onClick={() => setShapeSub(id)}
+                      className={`h-7 text-[13px] font-bold tracking-wider transition-colors ${shapeSub === id ? 'text-white' : 'text-[#666]'}`}>
+                      {label}
+                    </button>
+                  ))}
                 </div>
-                <div ref={patternPanelRef} data-pattern-panel className="flex-1 min-h-0 min-w-0 no-scrollbar pl-3 pr-2 h-full py-5 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                <div ref={patternPanelRef} data-pattern-panel className="flex-1 min-h-0 min-w-0 no-scrollbar px-1 pt-3 pb-5 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {PATTERN_ORDER.map(s => (
