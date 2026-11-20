@@ -3199,9 +3199,14 @@ export const TextEditorPanel: React.FC<{
           style={{ overscrollBehaviorX: 'contain' }}>
           {tabs.map(([id, label]) => (
             /* 選中的那一頁只是字變亮（不加底色） */
-            <button key={id} onClick={(e) => { setSub(id); (e.currentTarget as HTMLElement).scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' }); }}
+            <button key={id} onClick={(e) => {
+                setSub(id);
+                // 點到的分頁滑到這一排的正中間（只捲這一排，不動整頁）
+                const b = e.currentTarget as HTMLElement, row = b.parentElement!;
+                row.scrollTo({ left: b.offsetLeft - (row.clientWidth - b.offsetWidth) / 2, behavior: 'smooth' });
+              }}
               className={`shrink-0 whitespace-nowrap h-8 px-3 text-[13px] font-bold tracking-wider transition-colors ${
-                tab === id ? 'text-white' : 'text-white/40'}`}>
+                tab === id ? 'text-white' : 'text-[#6b6b6b]'}`}>
               {label}
             </button>
           ))}
@@ -3280,12 +3285,12 @@ export const TextEditorPanel: React.FC<{
               /* 三顆一直都在；這個字體沒有真斜體時斜體鈕變暗、不能按（已經是斜體的話照樣可以按掉）。
                  選中＝字和框變白，不是整顆變白 */
               <div className="flex items-center gap-2 px-2">
-                {([['bold', '粗體', <Bold size={15} strokeWidth={3.4} />, true], ['italic', '斜體', <Italic size={14} />, hasItalic || !!layer.italic],
+                {([['bold', '粗體', <Bold size={15} strokeWidth={2.7} />, true], ['italic', '斜體', <Italic size={14} />, hasItalic || !!layer.italic],
                   ['underline', '底線', <Underline size={14} />, true]] as [keyof FloatingImage, string, React.ReactNode, boolean][]).map(([k, label, icon, ok]) => (
                   <button key={k as string} disabled={!ok}
                     onClick={() => onChange({ [k]: !layer[k] } as any)}
                     className={`flex-1 h-10 rounded-xl border flex items-center justify-center gap-1.5 text-[12px] font-bold tracking-widest transition-all ${
-                      !ok ? 'border-white/10 text-white/20' : layer[k] ? 'border-white text-white' : 'border-white/15 text-white/55'
+                      !ok ? 'border-[#1f1f1f] text-[#3a3a3a]' : layer[k] ? 'border-white text-white' : 'border-[#2e2e2e] text-[#8c8c8c]'
                     }`}
                   >
                     {icon}{label}
@@ -3298,7 +3303,7 @@ export const TextEditorPanel: React.FC<{
               <div className="flex items-center gap-2">
                 {/* 「無」：禁止圖標，跟最左那顆自訂顏色一樣大；按下去只亮一下 */}
                 <button onClick={() => onChange({ bgOn: false })} aria-label="無背景"
-                  className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/60 active:text-white active:scale-90 transition-all">
+                  className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-[#9a9a9a] active:text-white active:scale-90 transition-all">
                   <svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8">
                     <circle cx="16" cy="16" r="13" /><line x1="6.8" y1="25.2" x2="25.2" y2="6.8" />
                   </svg>
@@ -3322,7 +3327,7 @@ export const TextEditorPanel: React.FC<{
                     return (
                       <button key={(a.vertical ? 'v' : 'h') + a.align} aria-label={a.label} aria-pressed={on}
                         onClick={() => onChange(a.vertical ? { vertical: true, vAlign: a.align as any } : { vertical: false, textAlign: a.align as any })}
-                        className={`h-7 flex items-center justify-center transition-colors ${on ? 'text-white' : 'text-white/35'}`}>
+                        className={`h-7 flex items-center justify-center transition-colors ${on ? 'text-white' : 'text-[#5c5c5c]'}`}>
                         <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                           {a.vertical
                             ? [[5, a.align === 'top' ? 3 : a.align === 'bottom' ? 12 : 7.5, 7], [11, 3, 16], [17, 3, 16]].map(([x, y, l], i) =>

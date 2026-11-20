@@ -51,7 +51,7 @@ export const layoutText = (ctx: CanvasRenderingContext2D, o: TextDeco, text: str
       const len = lens[i];
       const top = o.vAlign === 'top' ? -maxLen / 2 : o.vAlign === 'bottom' ? maxLen / 2 - len : -len / 2;
       chars.forEach((ch, j) => runs.push({ t: ch, x, y: top + j * pitch + size / 2, align: 'center' }));
-      if (chars.length) lines.push([x + size * .56, top, x + size * .56, top + len]);
+      if (chars.length) lines.push([x + size * .66, top, x + size * .66, top + len]);
     });
     return { runs, w: (n - 1) * lineH + size, h: maxLen, vertical: true, lines };
   }
@@ -66,7 +66,7 @@ export const layoutText = (ctx: CanvasRenderingContext2D, o: TextDeco, text: str
     runs.push({ t: r, x, y, align: al });
     if (r) {
       const x0 = al === 'left' ? -w / 2 : al === 'right' ? w / 2 - widths[i] : -widths[i] / 2;
-      lines.push([x0, y + size * .55, x0 + widths[i], y + size * .55]);
+      lines.push([x0, y + size * .68, x0 + widths[i], y + size * .68]);
     }
   });
   return { runs, w, h: (rows.length - 1) * lineH + size, vertical: false, lines };
