@@ -1,5 +1,6 @@
 import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
+import { EditBar, EditBarTab } from './EditBar';
 import { swatchEdge } from '../utils/swatch';
 import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, drawTextRunsAnimated, textFillStyle, setRunGradient, paintOuterStroke, paintTextDepth, paintDecoLines, textEffectPad } from '../utils/textDeco';
 import { BusyLayer } from './BusyLayer';
@@ -12504,11 +12505,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         {/* overscrollBehavior 用 none 而不是 contain：contain 只擋住「把捲動傳給外層」，
             自己還是會橡皮筋 —— 已經到頂了再往上拉，畫面不該有任何位移。
             動畫頁底部另外留 pb-12，最後一根滑桿才不會貼在最下緣。 */}
-        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'none', ...(activeTab === 'objedit' && !colorPickerTarget && !objEditText && !photoLayoutOpen && !objEditImage ? { '--pt': '20px', '--pb': '20px' } : {}) } as React.CSSProperties} className={`relative flex-1 min-h-0 ${objEditText ? 'overflow-hidden px-5 py-0' : photoLayoutOpen || objEditImage ? 'overflow-hidden' : `${activeTab === 'shape' && !colorPickerTarget ? 'px-5 py-0' : 'p-5'} ${activeTab === 'motion' && !colorPickerTarget ? 'pb-12' : (activeTab === 'shape' && !colorPickerTarget ? '' : colorPickerTarget || activeTab === 'objedit' ? 'pb-5' : 'pb-20')} custom-scrollbar ${
-          (activeTab === 'setting' && !colorPickerTarget) ||
+        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'none', ...(activeTab === 'objedit' && !colorPickerTarget && !objEditText && !photoLayoutOpen && !objEditImage ? { '--pt': '20px', '--pb': '20px' } : {}) } as React.CSSProperties} className={`relative flex-1 min-h-0 ${objEditText ? 'overflow-hidden px-5 py-0' : photoLayoutOpen || objEditImage ? 'overflow-hidden' : `${activeTab === 'shape' && !colorPickerTarget ? 'px-5 py-0' : ['setting', 'motion'].includes(activeTab) && !colorPickerTarget ? 'p-0' : 'p-5'} ${['shape', 'setting', 'motion'].includes(activeTab) && !colorPickerTarget ? '' : (activeTab === 'shape' && !colorPickerTarget ? '' : colorPickerTarget || activeTab === 'objedit' ? 'pb-5' : 'pb-20')} custom-scrollbar ${
           (activeTab === 'add' && !colorPickerTarget) ||
-          (activeTab === 'objedit' && !colorPickerTarget) ||
-          (activeTab === 'motion' && !colorPickerTarget)
+          (activeTab === 'objedit' && !colorPickerTarget)
             ? 'overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]' 
             : 'overflow-hidden'
         }`}`}>
@@ -12601,16 +12600,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             />
           ) : (
             <>
-              {activeTab === 'setting' && <div className="max-w-md mx-auto space-y-4 pb-4 animate-in fade-in duration-300">
+              {activeTab === 'setting' && <div className="h-full overflow-y-auto no-scrollbar flex flex-col [&>*]:shrink-0 space-y-4 pt-5 px-5 animate-in fade-in duration-300">
 
 
                 {/* 方案 A：版面分成兩頁，分頁在上面一行 */}
-                <div className="flex gap-5 px-1 select-none" data-setting-tabs>
+                <EditBar className="order-last sticky bottom-0 !mt-auto -mx-5 z-10">
                   {([['layout', '排版'], ['mask', '圖片與遮罩']] as const).map(([id, t]) => (
-                    <button key={id} onClick={() => setSettingSub(id)}
-                      className={`h-7 text-[13px] font-bold tracking-wider ${settingSub === id ? 'text-white' : 'text-[#666]'}`}>{t}</button>
+                    <EditBarTab key={id} id={id} label={t} active={settingSub === id} onClick={() => setSettingSub(id)} />
                   ))}
-                </div>
+                </EditBar>
                 {settingSub === 'layout' && <>
                 <div className="grid grid-cols-2 gap-3 items-start">
                   <div className="flex flex-col min-w-0">
@@ -13654,7 +13652,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const moSubNow = ['in', 'idle', ...(glowHere ? ['glow'] : []), ...(moHasDash ? ['dash'] : [])].includes(motionSub) ? motionSub : 'in';
                 const moSub = (_subs: unknown) => moSubNow;
                 return (
-                  <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
+                  <div className="h-full overflow-y-auto no-scrollbar flex flex-col [&>*]:shrink-0 pt-5 px-5 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}
                     <div className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
                       <button onClick={() => chooseMotionTarget('shape')} className={chip(moTarget === 'shape')}>圖案</button>
@@ -13712,12 +13710,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           const hasDash = !!selObj && selObj.type === 'image' && (selObj.imgStrokeWidth || 0) > 0 && (selObj.imgStrokeDash || 0) > 0;
                           const subs = ([['in', '進場'], ['idle', '常駐'], ...(glowHere ? [['glow', '發光']] : []), ...(hasDash ? [['dash', '虛線']] : [])] as [string, string][]);
                           return (
-                            <div className="flex gap-5 px-1 mt-3 mb-2 select-none" data-motion-tabs>
+                            <><EditBar className="order-last sticky bottom-0 mt-auto -mx-5 z-10">
                               {subs.map(([id, t]) => (
-                                <button key={id} onClick={() => setMotionSub(id as any)}
-                                  className={`h-7 text-[13px] font-bold tracking-wider ${moSub(subs) === id ? 'text-white' : 'text-[#666]'}`}>{t}</button>
+                                <EditBarTab key={id} id={id} label={t} active={moSub(subs) === id} onClick={() => setMotionSub(id as any)} />
                               ))}
-                            </div>
+                            </EditBar><div className="h-3" /></>
                           );
                         })()}
                         {moSubNow === 'in' && <>
@@ -13810,15 +13807,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               })()}
               {activeTab === 'shape' && <div className="max-w-md mx-auto h-full min-h-0 flex flex-col animate-in fade-in duration-300">
                 {/* 分頁改到面板最上面一行（不再佔左側寬度） */}
-                <div className="shrink-0 flex gap-5 px-1 pt-2.5 select-none" data-pattern-tabs>
+                <EditBar className="order-last -mx-5" >
                   {([['shape', '圖案'], ['style', '參數']] as const).map(([id, label]) => (
-                    <button key={id} onClick={() => setShapeSub(id)}
-                      className={`h-7 text-[13px] font-bold tracking-wider transition-colors ${shapeSub === id ? 'text-white' : 'text-[#666]'}`}>
-                      {label}
-                    </button>
+                    <EditBarTab key={id} id={id} label={label} active={shapeSub === id} onClick={() => setShapeSub(id)} />
                   ))}
-                </div>
-                <div ref={patternPanelRef} data-pattern-panel className="flex-1 min-h-0 min-w-0 no-scrollbar px-1 pt-3 pb-5 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                </EditBar>
+                <div ref={patternPanelRef} data-pattern-panel className="flex-1 min-h-0 min-w-0 no-scrollbar pl-0 pr-0 pt-5 pb-5 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {PATTERN_ORDER.map(s => (
