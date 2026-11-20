@@ -78,6 +78,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
 
 import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack, primeCanvasFont, fontEpoch, ensureTextFonts } from '../utils/fonts';
 import { drawStableText, hasEmoji } from '../utils/stableText';
+import { paintGlow, releaseGlowSprites } from '../utils/glowSprite';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG, MEDIA_ACCEPT } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -660,7 +661,9 @@ const lowResShapeGlow = (ctx: CanvasRenderingContext2D, path: Path2D, solid: boo
   squares: undefined | (() => typeof fillTrackSquares), kind: string, tbw: number, tbh: number, cacheable = true) => {
   const m = ctx.getTransform(); const dev = Math.max(1e-3, Math.hypot(m.a, m.b));
   // shadowBlur 是裝置像素、不吃變形：最小那層在縮小畫布上留 ~5px，品質不變
-  const q = Math.max(1 / 8, Math.min(1 / 2, 5 / rs[0]));
+  /* 最小那層在小畫布上的模糊半徑固定 6px（不再設 1/8 的下限）：物件或畫面放得再大，交給瀏覽器的
+     模糊半徑都是同一組小數字 —— Safari 不會改用低解析度模糊（像素感），半徑也不會逐格取整而抖動 */
+  const q = Math.min(1 / 2, 6 / rs[0]);
   const dash = ctx.getLineDash();
   let key = '';
   if (cacheable) {
@@ -672,7 +675,7 @@ const lowResShapeGlow = (ctx: CanvasRenderingContext2D, path: Path2D, solid: boo
   const pad = rs[rs.length - 1] / dev * 1.25 + ctx.lineWidth;          // 本地單位
   const k = dev * q;                                                     // 本地 → 小畫布像素
   // 上限 1024 邊長：極端放大時也不會配出超大畫布（模糊圖再放大，看不出差別）
-  const kk = Math.min(k, 1024 / Math.max(1, bw + pad * 2), 1024 / Math.max(1, bh + pad * 2));
+  const kk = Math.min(k, 2048 / Math.max(1, bw + pad * 2), 2048 / Math.max(1, bh + pad * 2));
   const W = Math.max(1, Math.ceil((bw + pad * 2) * kk)), H = Math.max(1, Math.ceil((bh + pad * 2) * kk));
   let c: HTMLCanvasElement;
   if (cacheable) {
@@ -6203,7 +6206,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     zap(glowLayerRef.current);glowLayerRef.current=null;
     zap(linkGlowScratchRef.current);linkGlowScratchRef.current=null;
     zap(maskScratchRef.current);maskScratchRef.current=null;
-    releaseLowResGlow();
+    releaseLowResGlow(); releaseGlowSprites();
   },[]);
   const sceneTileWindow=useRef<SceneWindow|null>(null);
   /* 字型（或中文字型的某一小份）下載完成時，預先畫好的場景圖塊要作廢重做：
@@ -6570,7 +6573,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const viewMovingNow=!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
     const pinchSnap=pinchSnapRef.current;
     if(targetCanvas===canvasRef.current&&!previewCapture&&sceneIsStatic&&viewMovingNow&&pinchSnap&&pinchSnap.key===liveSceneKey){
-      ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='low';
+      ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';
       ctx.drawImage(pinchSnap.canvas,0,0,pinchSnap.canvas.width,pinchSnap.canvas.height,0,0,offs.cw,offs.ch);
       regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
       drawnScaleRef.current=s;lastMainDrawRef.current=performance.now();
@@ -8840,11 +8843,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.save();
           ctx.globalAlpha = ctx.globalAlpha * Math.max(0, Math.min(1, tb));
           ctx.fillStyle = o.color || '#ffffff';
-          ctx.shadowColor = o.glowColor || '#ffffff';
-          for (const k2 of [1, 2, 3]) {
-            ctx.shadowBlur = (Math.min(15, o.glow) / 20) * 14 * k2 * tk * (o.sym?1:textSceneScale);
-            drawText(false);
-          }
+          /* 光另外畫成一張平滑的光暈圖再貼回來（見 utils/glowSprite）：放大不會有像素感、縮放不會抖 */
+          const gbw = o.sym ? o.w * textSceneScale : (o.textStretchBaseW || o.w) / fontK;
+          const gbh = o.sym ? o.h * textSceneScale : (o.textStretchBaseH || o.h) / fontK;
+          const animatedGlow = !!f?.lab || textUnitBreathe || seqIn !== null;
+          const mainCtx = ctx;
+          paintGlow(ctx, { x: -gbw * .75, y: -gbh * .75, w: gbw * 1.5, h: gbh * 1.5 },
+            [1, 2, 3].map(k2 => (Math.min(15, o.glow!) / 20) * 14 * k2 * tk * (o.sym ? 1 : textSceneScale)),
+            o.glowColor || '#ffffff',
+            g => { ctx = g; try { drawText(false); } finally { ctx = mainCtx; } },
+            animatedGlow ? null : JSON.stringify(['t', fontEpoch, o.text, mainCtx.font, spacingPx, o.textAlign, o.lineHeight, o.vertical, o.underline, o.sym, tdx, tdy, o.strokeWidth ? 1 : 0, gbw, gbh]));
           ctx.restore();
         }
         if (o.strokeWidth) {

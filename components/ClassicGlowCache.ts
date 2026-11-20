@@ -1,39 +1,20 @@
-type Glow = { canvas: HTMLCanvasElement; pad: number; width: number; height: number; bytes: number };
-const cache = new Map<string, Glow>();
-let bytes = 0;
-const BUDGET = 64 * 1024 * 1024;
+import { paintGlow } from '../utils/glowSprite';
 
 /**
- * 只快取柔光的光場，銳利的線條每次都在目前場景裡用向量畫。整個預覽縮放範圍用同一個密度，
- * 開始、結束手勢時不會換畫質
+ * 線條圖形的柔光：交給共用的高品質光暈圖（utils/glowSprite）。
+ * 光暈圖上的模糊半徑固定是一組小數字，放大不會出現像素感、縮放也不會抖；
+ * 銳利的線條本身每次都在目前場景裡用向量畫。blurs 是本地座標的半徑。
  */
 export function paintCachedClassicGlow(ctx: CanvasRenderingContext2D, path: Path2D,
   key: string, width: number, height: number, lineWidth: number, dash: number[],
   color: string, blurs: number[]) {
-  const density = Math.max(1, window.devicePixelRatio || 1) * 1.5 * 3;
-  const id = `${key}|${density}`;
-  let glow = cache.get(id);
-  if (!glow) {
-    const pad = Math.max(...blurs) * 3 + lineWidth * 2 + 2;
-    const w = Math.ceil((width + pad * 2) * density), h = Math.ceil((height + pad * 2) * density);
-    const size = w * h * 4;
-    if (!Number.isFinite(size) || size > BUDGET || w > 8192 || h > 8192) return false;
-    while (bytes + size > BUDGET && cache.size) {
-      const oldest = cache.keys().next().value!;
-      const old = cache.get(oldest)!;bytes -= old.bytes;
-      old.canvas.width = old.canvas.height = 1;cache.delete(oldest);
-    }
-    const canvas = document.createElement('canvas');canvas.width = w;canvas.height = h;
-    const g = canvas.getContext('2d');if (!g) return false;
-    // 陰影投到貼圖裡，原本的線條留在外面，快取的點陣線條才不會取代即時的向量邊緣
-    const offset = w + (width + pad * 2) * density;
-    g.setTransform(density,0,0,density,pad*density-offset,pad*density);
-    g.strokeStyle = color;g.lineWidth = lineWidth;g.lineCap = 'butt';g.setLineDash(dash);
-    g.shadowColor = color;g.shadowOffsetX = offset;
-    for (const blur of blurs) {g.shadowBlur = blur*density;g.stroke(path);}
-    glow = {canvas,pad,width:w/density,height:h/density,bytes:size};
-    cache.set(id,glow);bytes += size;
-  } else {cache.delete(id);cache.set(id,glow);}
-  ctx.drawImage(glow.canvas,-glow.pad,-glow.pad,glow.width,glow.height);
+  const m = ctx.getTransform();
+  const dev = Math.max(1e-4, Math.sqrt(Math.abs(m.a * m.d - m.b * m.c)));
+  ctx.save();
+  ctx.lineWidth = lineWidth; ctx.lineCap = 'butt'; ctx.setLineDash(dash);
+  paintGlow(ctx, { x: 0, y: 0, w: width, h: height }, blurs.map(b => b * dev), color, g => {
+    g.strokeStyle = color; g.stroke(path);
+  }, `cg|${key}|${lineWidth}|${dash.join(',')}`);
+  ctx.restore();
   return true;
 }
