@@ -13373,6 +13373,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   sel.type === 'text' ? (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
                       <TextEditorPanel
+                        singleLine
                         symbol={!!sel.sym}
                         /* 描邊／發光的顏色改成點進獨立的顏色頁（跟紋理顏色同一種操作） */
                         onPickColor={(which: 'stroke' | 'glow') =>

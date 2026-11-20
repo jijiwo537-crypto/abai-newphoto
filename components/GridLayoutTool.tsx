@@ -3023,6 +3023,10 @@ export const ColorPick: React.FC<{
   );
 };
 
+type TextTab = 'font' | 'color' | 'stroke' | 'shadow' | 'weight' | 'bg' | 'layout';
+let lastTextTab: TextTab = 'font';
+/** 文字的行距（字級的幾倍），沒設過的舊文字都是這個 */
+export const TEXT_LINE_HEIGHT = 1.12;
 export const TextEditorPanel: React.FC<{
   layer: FloatingImage;
   onChange: (patch: Partial<FloatingImage>) => void;
@@ -3032,7 +3036,9 @@ export const TextEditorPanel: React.FC<{
   symbol?: boolean;
   /** 滑桿正在連續拖動；經典拼圖用它暫停昂貴的最終快照編碼。 */
   onTuningChange?: (active: boolean) => void;
-}> = ({ layer: committedLayer, onChange: commitChange, onPickColor, symbol, onTuningChange }) => {
+  /** 這邊的文字只有一行（創意拼圖）：排列頁不放行距 */
+  singleLine?: boolean;
+}> = ({ layer: committedLayer, onChange: commitChange, onPickColor, symbol, onTuningChange, singleLine }) => {
   const [layer, setLayer] = useState(committedLayer);
   const tuningRef = useRef(false);
   useEffect(() => {
@@ -3046,7 +3052,10 @@ export const TextEditorPanel: React.FC<{
     tuningRef.current = active;
     onTuningChange?.(active);
   };
-  const [sub, setSub] = useState<'style' | 'font'>('style');
+  /* 文字的分頁（在最上面一排）：字體／顏色／描邊／陰影／粗斜體／背景／排列。
+     記住上一次停在哪一頁（換一段文字時不會跳回第一頁） */
+  const [sub, setSubState] = useState<TextTab>(() => lastTextTab);
+  const setSub = (t: TextTab) => { lastTextTab = t; setSubState(t); };
   useEffect(() => {
     if (!symbol) return warmTextFonts(layer.text || '');
   }, [symbol, layer.text]);
@@ -3140,42 +3149,58 @@ export const TextEditorPanel: React.FC<{
     );
   };
 
+  const strokeRow = (
+    <div className="flex items-center gap-3 px-2">
+      <div className="flex-1 min-w-0">
+        {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
+      </div>
+      <ColorPick compact label="顏色" value={layer.strokeColor || '#000000'} colors={STROKE_COLORS}
+        onPick={c => onChange({ strokeColor: c })}
+        onOpen={() => onPickColor ? onPickColor('stroke') : setColorPage({
+          value: layer.strokeColor || '#000000', colors: STROKE_COLORS, onPick: c => onChange({ strokeColor: c }),
+        })} />
+    </div>
+  );
+  const glowRow = (max: number) => (
+    <div className="flex items-center gap-3 px-2">
+      <div className="flex-1 min-w-0">
+        {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / max) * 100)), 0, 100,
+          v => onChange({ glow: (v / 100) * max }), '', 1)}
+      </div>
+      <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
+        onPick={c => onChange({ glowColor: c })}
+        onOpen={() => onPickColor ? onPickColor('glow') : setColorPage({
+          value: layer.glowColor || '#FFFFFF', colors: GLOW_COLORS, onPick: c => onChange({ glowColor: c }),
+        })} />
+    </div>
+  );
+  const tabs: [TextTab, string][] = [['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['shadow', '陰影'], ['weight', '粗斜體'], ['bg', '背景'], ['layout', '排列']];
+  const tab = symbol ? 'color' : sub;
+
   return (
     <div
-      data-text-editor="1" className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300"
+      data-text-editor="1" className="max-w-md mx-auto h-full flex flex-col animate-in fade-in duration-300"
       onPointerDownCapture={e => {
         if ((e.target as HTMLElement).matches?.('input[type="range"]')) setTuning(true);
       }}
       onPointerUpCapture={() => setTuning(false)}
       onPointerCancelCapture={() => setTuning(false)}
     >
-      {/* 左側細長分頁列，跟「新增佈局」同一種版型：只有圖示、
-          沒有中間那條分隔線，選中也不畫指示條。
-          符號沒有「換字體」這件事（字體換了那些符號也還是靠系統字型畫的），
-          所以符號模式整條分頁列都不出現，只留樣式那一頁。 */}
-      {!symbol && <div className="flex flex-col shrink-0 w-11 -mt-4 -mb-4 -ml-4 border-r border-white/10 select-none">
-        {/* 跟「新增佈局」完全同款：上面挑內容（字體）、下面調參數（樣式），
-            圖標同一組、中間同一條分隔線 */}
-        <button
-          onClick={() => setSub('font')}
-          title="字體"
-          aria-label="字體"
-          className={`w-full flex-1 flex items-center justify-center transition-all ${sub === 'font' ? 'text-white' : 'text-[#5a5a5a]'}`}
-        >
-          <Type size={18} className={`transition-transform ${sub === 'font' ? 'scale-110' : ''}`} />
-        </button>
-        <div className="w-full h-[1px] bg-white/10 shrink-0" />
-        <button
-          onClick={() => setSub('style')}
-          title="樣式"
-          aria-label="樣式"
-          className={`w-full flex-1 flex items-center justify-center transition-all ${sub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}
-        >
-          <Sliders size={18} className={`transition-transform ${sub === 'style' ? 'scale-110' : ''}`} />
-        </button>
-      </div>}
+      {/* 分頁在最上面一排：細細一條、可以左右滑，不佔左右的寬度，也只用掉很少的高度。
+          符號沒有分頁（只有顏色與發光）。 */}
+      {!symbol && !colorPage && (
+        <div className="shrink-0 mt-0.5 mb-1.5 flex gap-0.5 select-none" data-text-tabs>
+          {tabs.map(([id, label]) => (
+            <button key={id} onClick={() => setSub(id)}
+              className={`flex-1 min-w-0 whitespace-nowrap h-7 px-0 rounded-full text-[11px] font-bold tracking-wider transition-colors ${
+                tab === id ? 'bg-white text-black' : 'text-white/55'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      <div data-text-editor-scroll className={`flex-1 no-scrollbar h-full ${colorPage ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden pr-2 ${symbol ? 'pl-2' : 'pl-3'}`}>
+      <div data-text-editor-scroll className={`flex-1 min-h-0 no-scrollbar ${colorPage ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden px-2`}>
         {colorPage && (
           <ColorPickerPage
             value={colorPage.value}
@@ -3184,10 +3209,8 @@ export const TextEditorPanel: React.FC<{
             onBack={() => setColorPage(null)}
           />
         )}
-        {!colorPage && sub === 'font' && !symbol && (
-          /* 頂部留一段安全距離：內容不要貼著上面那排分頁按鈕；
-             底部也留一段，捲到底時最後一排字體不要貼著下緣（pb-6） */
-          <div className="space-y-2.5 pt-4 pb-6">
+        {!colorPage && tab === 'font' && (
+          <div className="space-y-2.5 pt-2 pb-6">
             <div className="flex items-center gap-1 bg-white/[0.06] rounded-full p-0.5">
               {FONT_CATEGORIES.map(c => (
                 <button
@@ -3215,138 +3238,80 @@ export const TextEditorPanel: React.FC<{
             <p className="pt-3 text-center text-[9px] tracking-wider text-white/25">字體僅供個人非商業用途使用</p>
           </div>
         )}
-
-        {!colorPage && (sub === 'style' || symbol) && (
-          /* 底部留一段：捲到底時最後一根滑桿不要貼著邊（原本 pb-24，減半） */
-          <div className="space-y-3.5 pt-3 pb-12">
-            {/* 文字內容一律直接在畫布上打（選中之後再點一次那段字），
-                所以這裡不放輸入框。符號也是一樣的改法。 */}
-            {/* 最上面就是這個物件自己的顏色，色票直接攤開 ——
-                上面不再放「顏色」那行標題（它就在最頂端，不用再標一次）。 */}
-            {swatchRow(layer.color, c => onChange({ color: c }))}
-
-            {symbol ? (
-              /* 符號到這裡就結束了：粗體／斜體／字距／描邊對符號沒有意義
-                 （那些是靠系統字型畫出來的，加粗、加斜、拆字距都只會歪掉），
-                 所以只留一根發光跟發光顏色。 */
-              <>
-                {/* 滑桿與顏色並排；顏色是兩段式的（點一下才攤開色票），
-                    所以不會有「拉到 1 的瞬間欄位冒出來閃一下」。 */}
-                <div className="flex items-center gap-3 px-2">
-                  <div className="flex-1 min-w-0">
-                    {/* 符號的發光最大值是文字的一半（滑桿 100 ＝ 7.5） */}
-                    {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / SYMBOL_GLOW_MAX) * 100)), 0, 100,
-                      v => onChange({ glow: (v / 100) * SYMBOL_GLOW_MAX }), '', 1)}
-                  </div>
-                  <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
-                    onPick={c => onChange({ glowColor: c })}
-                    onOpen={() => onPickColor ? onPickColor('glow') : setColorPage({
-                      value: layer.glowColor || '#FFFFFF', colors: GLOW_COLORS,
-                      onPick: c => onChange({ glowColor: c }),
-                    })} />
+        {!colorPage && tab !== 'font' && (
+          /* 每一頁只放兩三樣東西，上下空間夠用，不必捲動 */
+          <div className="space-y-3.5 pt-2 pb-8">
+            {tab === 'color' && <>
+              {swatchRow(layer.color, c => onChange({ color: c }))}
+              {/* 符號：顏色下面就是發光（符號只有這兩樣）。符號的發光最大值是文字的一半 */}
+              {symbol && glowRow(SYMBOL_GLOW_MAX)}
+            </>}
+            {tab === 'stroke' && <>
+              {strokeRow}
+              {glowRow(15)}
+            </>}
+            {tab === 'shadow' && <>
+              {/* 陰影：強度 0＝沒有陰影；拉起來才出現模糊、距離、角度 */}
+              <div className="flex items-center gap-3 px-2">
+                <div className="flex-1 min-w-0">
+                  {slider('強度', layer.shadowAmt || 0, 0, 100, v => onChange({ shadowAmt: v }))}
                 </div>
-              </>
-            ) : (
-            <>
-            {/* 粗體與斜體同一排。這個字體沒有真斜體時只留粗體，
-                粗體就自己撐滿整排 —— 跟沒有斜體鈕之前長得一樣。
-                但**現在這段字已經是斜體**的話一定要把鈕留著，
-                不然換到沒有真斜體的字體時，那個斜體就變成關不掉的了。 */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => onChange({ bold: !layer.bold })}
-                className={`flex-1 h-9 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
-                  layer.bold ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
-                }`}
-              >
-                <Bold size={14} />粗體
-              </button>
-              {(hasItalic || layer.italic) && (
-                <button
-                  onClick={() => onChange({ italic: !layer.italic })}
-                  className={`flex-1 h-9 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
-                    layer.italic ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
-                  }`}
-                >
-                  <Italic size={14} />斜體
-                </button>
-              )}
-            </div>
-            {/* 字級與字距同一排（粗體／斜體排在它們上面）。
-                符號沒有這兩根 —— 它的大小直接在畫布上捏。 */}
-            {/* 字級的滑桿拿掉了：大小直接在畫布上捏，這裡只留字距 */}
-            <div className="grid grid-cols-1 gap-3">
-              {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
-            </div>
-            {/* 描邊、發光各自跟自己的顏色並排（顏色是兩段式的，點一下才攤開色票）。
-                描邊 0～2px，一樣分 50 格（每格 0.04px）：最小那一格只有 0.04px，
-                從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。
-                顏色欄一直都在，所以不會有「從 0 拉到 1 的瞬間欄位冒出來閃一下」。 */}
-            <div className="flex items-center gap-3 px-2">
-              <div className="flex-1 min-w-0">
-                {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
+                <ColorPick compact label="顏色" value={layer.shadowColor || TEXT_SHADOW_DEFAULTS.shadowColor} colors={STROKE_COLORS}
+                  onPick={c => onChange({ shadowColor: c })}
+                  onOpen={() => setColorPage({
+                    value: layer.shadowColor || TEXT_SHADOW_DEFAULTS.shadowColor, colors: STROKE_COLORS,
+                    onPick: c => onChange({ shadowColor: c }),
+                  })} />
               </div>
-              <ColorPick compact label="顏色" value={layer.strokeColor || '#000000'}
-                colors={STROKE_COLORS}
-                onPick={c => onChange({ strokeColor: c })}
-                onOpen={() => onPickColor ? onPickColor('stroke') : setColorPage({
-                  value: layer.strokeColor || '#000000',
-                  colors: STROKE_COLORS,
-                  onPick: c => onChange({ strokeColor: c }),
-                })} />
-            </div>
-            <div className="flex items-center gap-3 px-2">
-              <div className="flex-1 min-w-0">
-                {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / 15) * 100)), 0, 100,
-                      v => onChange({ glow: (v / 100) * 15 }), '', 1)}
-              </div>
-              <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
-                onPick={c => onChange({ glowColor: c })}
-                onOpen={() => onPickColor ? onPickColor('glow') : setColorPage({
-                  value: layer.glowColor || '#FFFFFF', colors: GLOW_COLORS,
-                  onPick: c => onChange({ glowColor: c }),
-                })} />
-            </div>
-            {/* 陰影：強度拉起來才出現模糊、距離、角度（0＝沒有陰影） */}
-            <div className="flex items-center gap-3 px-2">
-              <div className="flex-1 min-w-0">
-                {slider('陰影', layer.shadowAmt || 0, 0, 100, v => onChange({ shadowAmt: v }))}
-              </div>
-              <ColorPick compact label="顏色" value={layer.shadowColor || TEXT_SHADOW_DEFAULTS.shadowColor} colors={STROKE_COLORS}
-                onPick={c => onChange({ shadowColor: c })}
-                onOpen={() => setColorPage({
-                  value: layer.shadowColor || TEXT_SHADOW_DEFAULTS.shadowColor, colors: STROKE_COLORS,
-                  onPick: c => onChange({ shadowColor: c }),
-                })} />
-            </div>
-            {(layer.shadowAmt || 0) > 0 && (
-              <div className="grid grid-cols-3 gap-3 px-2">
+              <div className={`grid grid-cols-3 gap-3 px-2 transition-opacity ${(layer.shadowAmt || 0) > 0 ? '' : 'opacity-35 pointer-events-none'}`}>
                 {slider('模糊', layer.shadowBlur ?? TEXT_SHADOW_DEFAULTS.shadowBlur, 0, 100, v => onChange({ shadowBlur: v }))}
                 {slider('距離', layer.shadowDist ?? TEXT_SHADOW_DEFAULTS.shadowDist, 0, 100, v => onChange({ shadowDist: v }))}
                 {slider('角度', layer.shadowAngle ?? TEXT_SHADOW_DEFAULTS.shadowAngle, 0, 360, v => onChange({ shadowAngle: v }), '°')}
               </div>
+            </>}
+            {tab === 'weight' && (
+              /* 這個字體沒有真斜體時只留粗體；但這段字已經是斜體的話一定留著（不然關不掉） */
+              <div className="flex items-center gap-2 px-2">
+                <button
+                  onClick={() => onChange({ bold: !layer.bold })}
+                  className={`flex-1 h-10 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
+                    layer.bold ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
+                  }`}
+                >
+                  <Bold size={14} />粗體
+                </button>
+                {(hasItalic || layer.italic) && (
+                  <button
+                    onClick={() => onChange({ italic: !layer.italic })}
+                    className={`flex-1 h-10 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
+                      layer.italic ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
+                    }`}
+                  >
+                    <Italic size={14} />斜體
+                  </button>
+                )}
+              </div>
             )}
-            {/* 背景：開關跟顏色並排 */}
-            <div className="flex items-center gap-3 px-2">
-              <button
-                onClick={() => onChange({ bgOn: !layer.bgOn })}
-                className={`flex-1 h-9 rounded-xl border flex items-center justify-center text-[12px] font-bold tracking-widest transition-all ${
-                  layer.bgOn ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
-                }`}
-              >
-                背景
-              </button>
-              <ColorPick compact label="顏色" value={layer.bgColor || TEXT_BG_DEFAULT} colors={TEXT_COLORS}
-                onPick={c => onChange({ bgColor: c, bgOn: true })}
-                onOpen={() => setColorPage({
-                  value: layer.bgColor || TEXT_BG_DEFAULT, colors: TEXT_COLORS,
-                  onPick: c => onChange({ bgColor: c, bgOn: true }),
-                })} />
-            </div>
-            </>
+            {tab === 'bg' && <>
+              <div className="flex items-center gap-2 px-2">
+                {[false, true].map(on => (
+                  <button key={String(on)} onClick={() => onChange({ bgOn: on })}
+                    className={`flex-1 h-10 rounded-xl border flex items-center justify-center text-[12px] font-bold tracking-widest transition-all ${
+                      !!layer.bgOn === on ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
+                    }`}>
+                    {on ? '開' : '關'}
+                  </button>
+                ))}
+              </div>
+              {/* 挑顏色就順便打開背景 */}
+              {swatchRow(layer.bgOn ? (layer.bgColor || TEXT_BG_DEFAULT) : undefined, c => onChange({ bgColor: c, bgOn: true }), TEXT_COLORS)}
+            </>}
+            {tab === 'layout' && (
+              <div className="space-y-3.5 px-2">
+                {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
+                {!singleLine && slider('行距', layer.lineHeight ?? TEXT_LINE_HEIGHT, 0.8, 2.4, v => onChange({ lineHeight: v }), '', 0.01)}
+              </div>
             )}
-
-
           </div>
         )}
       </div>
@@ -5632,6 +5597,8 @@ export interface FloatingImage {
   /** 文字陰影（強度 0＝沒有）、背景（見 utils/textDeco） */
   shadowAmt?: number; shadowColor?: string; shadowBlur?: number; shadowDist?: number; shadowAngle?: number;
   bgOn?: boolean; bgColor?: string;
+  /** 行距（字級的幾倍，預設 TEXT_LINE_HEIGHT） */
+  lineHeight?: number;
   /** 文字描邊寬度（px，未縮放），0 = 不描邊 */
   strokeWidth?: number;
   strokeColor?: string;
@@ -6723,7 +6690,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       ctx.textBaseline = 'middle';
       (ctx as any).letterSpacing = `${spacing}px`;
       const lines = (image.text || '').split('\n');
-      const lineH = size * 1.12;
+      const lineH = size * (image.lineHeight ?? TEXT_LINE_HEIGHT);
       const startY = -((lines.length - 1) * lineH) / 2;
       const ink = image.sym ? measureSymbolStickerInk(image.text || image.sym, family) : null;
       const dx = ink ? -ink.cx * size : 0;
@@ -7277,7 +7244,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       const descent = Math.max(size * (emoji ? .32 : .15), ...metrics.map(m => m.actualBoundingBoxDescent || 0));
       /* 行盒不再用整個 font-size × 1.12 當成字形高度。真正選中框只包住
          actualBoundingBox 的頂／底，再加對稱 4px，所以下方不會多留一截。 */
-      const h = Math.max(6, (lines.length - 1) * size * 1.12 + ascent + descent) + 8;
+      const h = Math.max(6, (lines.length - 1) * size * (image.lineHeight ?? TEXT_LINE_HEIGHT) + ascent + descent) + 8;
       const patch: Partial<FloatingImage> = {};
       /* 被四邊擠壓過的文字：量到的是未擠壓的自然尺寸。框要維持原本的擠壓
          比例，基準尺寸換成新的自然尺寸，字距／字級一改，框才會跟著等比變寬，
@@ -7322,7 +7289,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     // 真的載不到（離線、家族名打錯）就別讓框永遠停在舊尺寸
     const t = setTimeout(done, 3000);
     return () => { alive = false; clearTimeout(t); };
-  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, image.strokeWidth, maxTextWidth]);
+  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, image.strokeWidth, image.lineHeight, maxTextWidth]);
 
   /* 圓角／羽化／發光都自己畫在 canvas 上，預覽與匯出走同一套邏輯 */
   const shapeCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -9025,7 +8992,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontFamily: fontStack(image.fontFamily),
             fontSize: `${(image.fontSize || 40) * (isTextEditing ? textMetricScale : 1)}px`,
-            lineHeight: 1.12,
+            lineHeight: image.lineHeight ?? TEXT_LINE_HEIGHT,
             fontWeight: image.bold ? 700 : 400,
             fontStyle: image.italic ? 'italic' : 'normal',
             // 倍率由外層的 scale 帶，這裡一律用原值（見上面的說明）
@@ -9132,7 +9099,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               fontWeight: image.bold ? 700 : 400,
               fontStyle: image.italic ? 'italic' : 'normal',
               letterSpacing: `${image.letterSpacing || 0}px`,
-              lineHeight: 1.12,
+              lineHeight: image.lineHeight ?? TEXT_LINE_HEIGHT,
             }}
           >
             {/* 內容是空的（剛點進去打字、預設字被清掉）就拿預設那四個字來量，
@@ -15842,7 +15809,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     // 與預覽相同的斷行：只在使用者自己按的換行處斷，不再依寬度自動換行
     const lines: string[] = (fImg.text || '').split('\n');
-    const lineH = size * 1.12;
+    const lineH = size * (fImg.lineHeight ?? TEXT_LINE_HEIGHT);
     const startY = -((lines.length - 1) * lineH) / 2;
 
     const symInk = fImg.sym ? measureSymbolInk(fImg.text || fImg.sym, family) : null;
