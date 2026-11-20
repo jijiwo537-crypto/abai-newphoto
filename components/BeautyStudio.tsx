@@ -2111,7 +2111,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             <>
               <label
                 title="自選顏色"
-                className="w-7 h-7 rounded-full shrink-0 relative cursor-pointer ring-1 ring-white/40 flex items-center justify-center overflow-hidden active:scale-90 transition-transform"
+                className="w-7 h-7 rounded-full shrink-0 relative cursor-pointer flex items-center justify-center overflow-hidden active:scale-90 transition-transform"
                 style={{ background: 'conic-gradient(#f43,#fa3,#fd3,#3d6,#3cf,#63f,#f3a,#f43)' }}
               >
                 <span className="absolute inset-[5px] rounded-full bg-[#080808] flex items-center justify-center">

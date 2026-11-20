@@ -45,6 +45,15 @@ const fontReady = (font: string) => {
   return ok;
 };
 
+export const textReady = (font: string, text: string) => {
+  const key = font + '\u0002' + text;
+  if (readyFonts.has(key)) return true;
+  let ok = true;
+  try { ok = (document as any).fonts?.check?.(font, text) ?? true; } catch { ok = true; }
+  if (ok) { readyFonts.add(key); if (readyFonts.size > 4000) readyFonts.clear(); return true; }
+  (document as any).fonts?.load?.(font, text).then(() => window.dispatchEvent(new Event('abai-font-ready'))).catch(() => {});
+  return false;
+};
 const evict = () => {
   while (cache.size > MAX_ENTRIES || totalPx > MAX_TOTAL_PX) {
     const key = cache.keys().next().value;
@@ -62,6 +71,8 @@ const evict = () => {
  */
 export function drawStableText(ctx: CanvasRenderingContext2D, mode: 'fill' | 'stroke', text: string, x: number, y: number): boolean {
   if (!text) return true;
+  /* 描邊不走快取貼圖：描邊的點陣在某些倍率下會被取樣得忽粗忽細（放大後重做才正常），直接畫最穩 */
+  if ((mode as string) === 'stroke') return false;
   const style = mode === 'stroke' ? ctx.strokeStyle : ctx.fillStyle;
   if (typeof style !== 'string' || typeof document === 'undefined') return false;
   const m = ctx.getTransform();
@@ -70,7 +81,9 @@ export function drawStableText(ctx: CanvasRenderingContext2D, mode: 'fill' | 'st
   const level = Math.min(16, Math.max(1, 2 ** Math.ceil(Math.log2(k))));
   const spacing = String((ctx as any).letterSpacing || '0px');
   // 字型還沒載好時排出來的是備用字型；載好後鑰匙不同，自然重排一次。
-  const ready = fontReady(ctx.font);
+  /* 中文字體是照 unicode-range 拆成很多小份的：字型「載好了」不代表這幾個字所在的那一份也到了。
+     要用這段字本身去問；還沒到就先請瀏覽器載，載到時通知重畫（鑰匙會變，不會留著備用字型的貼圖） */
+  const ready = textReady(ctx.font, text);
   const key = [mode, text, ctx.font, spacing, ctx.textAlign, ctx.textBaseline, style,
     mode === 'stroke' ? `${ctx.lineWidth}|${ctx.lineJoin}|${ctx.miterLimit}` : '', level, ready].join('\u0001');
   let hit = cache.get(key);

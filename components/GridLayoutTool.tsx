@@ -9,7 +9,7 @@ import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
 import { waveWarp } from '../utils/waveWarp';
-import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT, layoutText, drawTextRuns, drawUnderline, needsTextLayout, type TextLayout } from '../utils/textDeco';
+import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, type TextLayout } from '../utils/textDeco';
 import { createPortal, flushSync } from 'react-dom';
 import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/classicTextureSize';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
@@ -526,7 +526,7 @@ const CustomColorButton: React.FC<{
   <label
     title="自訂顏色"
     aria-label="自訂顏色"
-    className="rounded-full shrink-0 relative cursor-pointer ring-1 ring-white/40 flex items-center justify-center overflow-hidden active:scale-90 transition-transform"
+    className="rounded-full shrink-0 relative cursor-pointer flex items-center justify-center overflow-hidden active:scale-90 transition-transform"
     style={{
       width: size, height: size,
       background: 'conic-gradient(#f43,#fa3,#fd3,#3d6,#3cf,#63f,#f3a,#f43)',
@@ -3248,6 +3248,7 @@ export const TextEditorPanel: React.FC<{
           <div className="space-y-3.5 pt-2 pb-8">
             {tab === 'color' && <>
               {swatchRow(layer.color, c => onChange({ color: c }))}
+              {!symbol && <div className="px-2">{slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}</div>}
               {/* 符號：顏色下面就是發光（符號只有這兩樣）。符號的發光最大值是文字的一半 */}
               {symbol && glowRow(SYMBOL_GLOW_MAX)}
             </>}
@@ -3273,14 +3274,15 @@ export const TextEditorPanel: React.FC<{
               </div>
             </>}
             {tab === 'weight' && (
-              /* 這個字體沒有真斜體時不給斜體鈕；但這段字已經是斜體的話一定留著（不然關不掉） */
+              /* 三顆一直都在；這個字體沒有真斜體時斜體鈕變暗、不能按（已經是斜體的話照樣可以按掉）。
+                 選中＝字和框變白，不是整顆變白 */
               <div className="flex items-center gap-2 px-2">
-                {([['bold', '粗體', <Bold size={15} strokeWidth={3.4} />], ...(hasItalic || layer.italic ? [['italic', '斜體', <Italic size={14} />]] : []),
-                  ['underline', '底線', <Underline size={14} />]] as [keyof FloatingImage, string, React.ReactNode][]).map(([k, label, icon]) => (
-                  <button key={k as string}
+                {([['bold', '粗體', <Bold size={15} strokeWidth={3.4} />, true], ['italic', '斜體', <Italic size={14} />, hasItalic || !!layer.italic],
+                  ['underline', '底線', <Underline size={14} />, true]] as [keyof FloatingImage, string, React.ReactNode, boolean][]).map(([k, label, icon, ok]) => (
+                  <button key={k as string} disabled={!ok}
                     onClick={() => onChange({ [k]: !layer[k] } as any)}
                     className={`flex-1 h-10 rounded-xl border flex items-center justify-center gap-1.5 text-[12px] font-bold tracking-widest transition-all ${
-                      layer[k] ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
+                      !ok ? 'border-white/10 text-white/20' : layer[k] ? 'border-white text-white' : 'border-white/15 text-white/55'
                     }`}
                   >
                     {icon}{label}
@@ -3291,9 +3293,13 @@ export const TextEditorPanel: React.FC<{
             {tab === 'bg' && <>
               {/* 色票在上面：點一個顏色就加上背景；最前面那顆「無」拿掉背景 */}
               <div className="flex items-center gap-2">
+                {/* 「無」：禁止圖標，跟最左那顆自訂顏色一樣大；按下去只亮一下 */}
                 <button onClick={() => onChange({ bgOn: false })} aria-label="無背景"
-                  className={`shrink-0 w-11 h-11 rounded-[10px] border flex items-center justify-center text-[11px] font-bold ${
-                    layer.bgOn ? 'border-white/15 text-white/50' : 'border-white text-white'}`}>無</button>
+                  className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-white/60 active:text-white active:scale-90 transition-all">
+                  <svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <circle cx="16" cy="16" r="13" /><line x1="6.8" y1="25.2" x2="25.2" y2="6.8" />
+                  </svg>
+                </button>
                 <div className="flex-1 min-w-0">
                   {swatchRow(layer.bgOn ? (layer.bgColor || TEXT_BG_DEFAULT) : undefined, c => onChange({ bgColor: c, bgOn: true }), TEXT_COLORS)}
                 </div>
@@ -3304,7 +3310,7 @@ export const TextEditorPanel: React.FC<{
               </div>
             </>}
             {tab === 'layout' && (
-              <div className="space-y-3.5 px-2">
+              <div className="space-y-3 px-2">
                 {/* 六種排列：橫排靠左／置中／靠右，直排靠上／置中／靠下 */}
                 <div className="grid grid-cols-6 gap-1.5">
                   {TEXT_ARRANGE.map(a => {
@@ -3313,12 +3319,13 @@ export const TextEditorPanel: React.FC<{
                     return (
                       <button key={(a.vertical ? 'v' : 'h') + a.align} aria-label={a.label} aria-pressed={on}
                         onClick={() => onChange(a.vertical ? { vertical: true, vAlign: a.align as any } : { vertical: false, textAlign: a.align as any })}
-                        className={`h-10 flex items-center justify-center transition-colors ${on ? 'text-white' : 'text-white/35'}`}>
+                        className={`h-7 flex items-center justify-center transition-colors ${on ? 'text-white' : 'text-white/35'}`}>
                         <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                           {a.vertical
                             ? [[5, a.align === 'top' ? 3 : a.align === 'bottom' ? 12 : 7.5, 7], [11, 3, 16], [17, 3, 16]].map(([x, y, l], i) =>
                               <line key={i} x1={x} y1={y} x2={x} y2={y + l} />)
-                            : [[3, 18], [3, 18], [a.align === 'left' ? 3 : a.align === 'right' ? 12 : 7.5, 7]].map(([x, l], i) =>
+                            /* 短的那條：靠左從 3、靠右貼齊 21、置中以 12 為中心（8.5～15.5） */
+                            : [[3, 18], [3, 18], [a.align === 'left' ? 3 : a.align === 'right' ? 14 : 8.5, 7]].map(([x, l], i) =>
                               <line key={i} x1={x} y1={5 + i * 6} x2={x + l} y2={5 + i * 6} />)}
                         </svg>
                       </button>
@@ -6808,6 +6815,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       if (!image.sym) {
         // 背景＝剛好填滿選中框（這裡的座標已經除掉四邊擠壓，框就是擠壓前的大小）
         paintTextBg(ctx, image, image.textStretchBaseW || image.width, image.textStretchBaseH || image.height);
+        // 字的墨水在框裡上下置中（換字體不會忽上忽下）
+        if (!image.vertical) ctx.translate(0, textInkShift(ctx, image.text || '', lineH));
         ctx.fillStyle = image.color || '#FFFFFF';
         paintTextShadow(ctx, image, size, fill);
       }
@@ -15895,6 +15904,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const drawLines = () => drawAnimatedL(false);
     if (!fImg.sym) {
       paintTextBg(ctx, fImg, fw * fImg.scale, fh * fImg.scale);
+      if (!fImg.vertical) ctx.translate(0, textInkShift(ctx, fImg.text || '', lineH));
       ctx.fillStyle = fImg.color || '#FFFFFF';
       paintTextShadow(ctx, fImg, size, drawLines);
     }

@@ -1,6 +1,6 @@
 import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
-import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout } from '../utils/textDeco';
+import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift } from '../utils/textDeco';
 import { BusyLayer } from './BusyLayer';
 import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
@@ -1604,7 +1604,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
             <label
               title="自訂顏色"
               aria-label="自訂顏色"
-              className="w-8 h-8 rounded-full shrink-0 relative cursor-pointer ring-1 ring-white/40 flex items-center justify-center overflow-hidden active:scale-90 transition-transform"
+              className="w-8 h-8 rounded-full shrink-0 relative cursor-pointer flex items-center justify-center overflow-hidden active:scale-90 transition-transform"
               style={{ background: 'conic-gradient(#f43,#fa3,#fd3,#3d6,#3cf,#63f,#f3a,#f43)' }}
             >
               <span className="absolute inset-[5px] rounded-full bg-[#080808] flex items-center justify-center">
@@ -8790,10 +8790,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         };
         // 文字的光是當場畫的，乘上這一格的亮度就會跟著閃
         // 背景色塊、陰影在最底下（發光、描邊、字都疊在上面）；符號沒有這兩項
+        if (!o.sym && f?.lab && !o.vertical) ctx.translate(0, textInkShift(ctx, o.text || '', textLineH));
         if (!o.sym && !f?.lab) {
           const fpx = pinFont * s;
           // 背景＝剛好填滿選中框（這裡的座標已經除掉四邊擠壓與捏合的字級倍率）
           paintTextBg(ctx, o as any, (o.textStretchBaseW || o.w) / fontK, (o.textStretchBaseH || o.h) / fontK);
+          // 字的墨水在框裡上下置中（換字體不會忽上忽下）
+          if (!o.vertical) ctx.translate(0, textInkShift(ctx, o.text || '', textLineH));
           ctx.fillStyle = o.color || '#ffffff';
           paintTextShadow(ctx, o as any, fpx, () => drawText(false));
         }
@@ -13422,7 +13425,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           strokeColor: sel.strokeColor, glow: sel.glow, glowColor: sel.glowColor,
                           shadowAmt: sel.shadowAmt, shadowColor: sel.shadowColor, shadowBlur: sel.shadowBlur, shadowDist: sel.shadowDist, shadowAngle: sel.shadowAngle,
                           bgOn: sel.bgOn, bgColor: sel.bgColor, bgAlpha: sel.bgAlpha, underline: sel.underline,
-                          textAlign: sel.textAlign, vertical: sel.vertical, vAlign: sel.vAlign, lineHeight: sel.lineHeight,
+                          textAlign: sel.textAlign, vertical: sel.vertical, vAlign: sel.vAlign, lineHeight: sel.lineHeight, opacity: sel.opacity,
                         } as any}
                         onChange={(d: any) => {
                           if (d.fontFamily) ensureFont(d.fontFamily);

@@ -1,3 +1,4 @@
+import { textReady } from './stableText';
 /* 文字的陰影與背景（創意拼圖、跨頁拼圖的預覽與匯出共用同一支）。
    數值都跟字級等比：字放大縮小，陰影、背景跟著一起縮放。
    陰影：強度 0～100（0＝沒有陰影）、模糊 0～100、距離 0～100、角度 0～360°（0°＝往右，順時針）。
@@ -76,6 +77,7 @@ export const drawTextRuns = (ctx: CanvasRenderingContext2D, L: TextLayout, strok
   if (L.vertical) (ctx as any).letterSpacing = '0px';
   for (const r of L.runs) {
     if (!r.t) continue;
+    textReady(ctx.font, r.t);  // 這幾個字所在的字型分包還沒到的話先去載，到了會通知重畫
     ctx.textAlign = r.align;
     if (draw && draw(r.t, r.x, r.y)) continue;
     if (stroke) ctx.strokeText(r.t, r.x, r.y); else ctx.fillText(r.t, r.x, r.y);
@@ -86,7 +88,7 @@ export const drawTextRuns = (ctx: CanvasRenderingContext2D, L: TextLayout, strok
 /** 底線：用目前的填色畫（跟字同色），粗細跟字級等比 */
 export const drawUnderline = (ctx: CanvasRenderingContext2D, o: TextDeco, L: TextLayout, size: number) => {
   if (!o.underline) return;
-  const t = Math.max(.5, size * .06);
+  const t = Math.max(.4, size * .04);
   for (const [x0, y0, x1, y1] of L.lines) {
     if (x0 === x1) ctx.fillRect(x0 - t / 2, y0, t, y1 - y0); else ctx.fillRect(x0, y0 - t / 2, x1 - x0, t);
   }
@@ -112,4 +114,16 @@ export const paintTextShadow = (ctx: CanvasRenderingContext2D, o: TextDeco, size
   ctx.translate(-far, 0);
   drawFill();
   ctx.restore();
+};
+
+/** 字的墨水（真正畫出來的部分）上下置中要往上／往下移多少。
+    textBaseline 'middle' 對齊的是字體的 em 方框中線，不是字的墨水：每一款字體的上下留白不一樣，
+    換字體時字就在框裡忽上忽下。量出第一行墨水的頂、最後一行墨水的底，回傳讓兩者對稱的位移。 */
+export const textInkShift = (ctx: CanvasRenderingContext2D, text: string, lineH: number) => {
+  const rows = text.split('\n');
+  const first = ctx.measureText(rows[0] || ' '), last = ctx.measureText(rows[rows.length - 1] || ' ');
+  const startY = -((rows.length - 1) * lineH) / 2;
+  const top = startY - (first.actualBoundingBoxAscent || 0), bottom = -startY + (last.actualBoundingBoxDescent || 0);
+  const mid = (top + bottom) / 2;
+  return Number.isFinite(mid) ? -mid : 0;
 };
