@@ -9,7 +9,7 @@ import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
 import { waveWarp } from '../utils/waveWarp';
-import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT } from '../utils/textDeco';
+import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT, layoutText, drawTextRuns, drawUnderline, needsTextLayout, type TextLayout } from '../utils/textDeco';
 import { createPortal, flushSync } from 'react-dom';
 import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/classicTextureSize';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
@@ -19,7 +19,7 @@ import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} from '../utils/collageVideoFormat';
 import {exportHeic} from '../utils/heicExport';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual } from '../utils/animationDefaults';
-import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Underline, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
 import { HEART_MAIN, HEART_ICON, unitShapeD, hexStarPoints, radialD, radialParts, radialPartD, spinnerAlpha } from '../utils/heartShapes';
@@ -3023,10 +3023,14 @@ export const ColorPick: React.FC<{
   );
 };
 
-type TextTab = 'font' | 'color' | 'stroke' | 'shadow' | 'weight' | 'bg' | 'layout';
+type TextTab = 'font' | 'color' | 'stroke' | 'glow' | 'shadow' | 'weight' | 'bg' | 'layout';
 let lastTextTab: TextTab = 'font';
 /** 文字的行距（字級的幾倍），沒設過的舊文字都是這個 */
 export const TEXT_LINE_HEIGHT = 1.12;
+const TEXT_ARRANGE = [
+  { vertical: false, align: 'left', label: '靠左' }, { vertical: false, align: 'center', label: '置中' }, { vertical: false, align: 'right', label: '靠右' },
+  { vertical: true, align: 'top', label: '直排靠上' }, { vertical: true, align: 'center', label: '直排置中' }, { vertical: true, align: 'bottom', label: '直排靠下' },
+];
 export const TextEditorPanel: React.FC<{
   layer: FloatingImage;
   onChange: (patch: Partial<FloatingImage>) => void;
@@ -3174,7 +3178,7 @@ export const TextEditorPanel: React.FC<{
         })} />
     </div>
   );
-  const tabs: [TextTab, string][] = [['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['shadow', '陰影'], ['weight', '粗斜體'], ['bg', '背景'], ['layout', '排列']];
+  const tabs: [TextTab, string][] = [['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['glow', '發光'], ['shadow', '陰影'], ['weight', '粗斜體'], ['bg', '背景'], ['layout', '排列']];
   const tab = symbol ? 'color' : sub;
 
   return (
@@ -3189,11 +3193,12 @@ export const TextEditorPanel: React.FC<{
       {/* 分頁在最上面一排：細細一條、可以左右滑，不佔左右的寬度，也只用掉很少的高度。
           符號沒有分頁（只有顏色與發光）。 */}
       {!symbol && !colorPage && (
-        <div className="shrink-0 mt-0.5 mb-1.5 flex gap-0.5 select-none" data-text-tabs>
+        <div className="shrink-0 mt-3 mb-2 flex select-none" data-text-tabs>
           {tabs.map(([id, label]) => (
+            /* 選中的那一頁只是字變亮（不加底色） */
             <button key={id} onClick={() => setSub(id)}
-              className={`flex-1 min-w-0 whitespace-nowrap h-7 px-0 rounded-full text-[11px] font-bold tracking-wider transition-colors ${
-                tab === id ? 'bg-white text-black' : 'text-white/55'}`}>
+              className={`flex-1 min-w-0 whitespace-nowrap h-7 px-0 text-[11px] font-bold tracking-wider transition-colors ${
+                tab === id ? 'text-white' : 'text-white/40'}`}>
               {label}
             </button>
           ))}
@@ -3246,10 +3251,8 @@ export const TextEditorPanel: React.FC<{
               {/* 符號：顏色下面就是發光（符號只有這兩樣）。符號的發光最大值是文字的一半 */}
               {symbol && glowRow(SYMBOL_GLOW_MAX)}
             </>}
-            {tab === 'stroke' && <>
-              {strokeRow}
-              {glowRow(15)}
-            </>}
+            {tab === 'stroke' && strokeRow}
+            {tab === 'glow' && glowRow(15)}
             {tab === 'shadow' && <>
               {/* 陰影：強度 0＝沒有陰影；拉起來才出現模糊、距離、角度 */}
               <div className="flex items-center gap-3 px-2">
@@ -3263,53 +3266,67 @@ export const TextEditorPanel: React.FC<{
                     onPick: c => onChange({ shadowColor: c }),
                   })} />
               </div>
-              <div className={`grid grid-cols-3 gap-3 px-2 transition-opacity ${(layer.shadowAmt || 0) > 0 ? '' : 'opacity-35 pointer-events-none'}`}>
+              <div className={`space-y-3.5 px-2 transition-opacity ${(layer.shadowAmt || 0) > 0 ? '' : 'opacity-35 pointer-events-none'}`}>
                 {slider('模糊', layer.shadowBlur ?? TEXT_SHADOW_DEFAULTS.shadowBlur, 0, 100, v => onChange({ shadowBlur: v }))}
                 {slider('距離', layer.shadowDist ?? TEXT_SHADOW_DEFAULTS.shadowDist, 0, 100, v => onChange({ shadowDist: v }))}
                 {slider('角度', layer.shadowAngle ?? TEXT_SHADOW_DEFAULTS.shadowAngle, 0, 360, v => onChange({ shadowAngle: v }), '°')}
               </div>
             </>}
             {tab === 'weight' && (
-              /* 這個字體沒有真斜體時只留粗體；但這段字已經是斜體的話一定留著（不然關不掉） */
+              /* 這個字體沒有真斜體時不給斜體鈕；但這段字已經是斜體的話一定留著（不然關不掉） */
               <div className="flex items-center gap-2 px-2">
-                <button
-                  onClick={() => onChange({ bold: !layer.bold })}
-                  className={`flex-1 h-10 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
-                    layer.bold ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
-                  }`}
-                >
-                  <Bold size={14} />粗體
-                </button>
-                {(hasItalic || layer.italic) && (
-                  <button
-                    onClick={() => onChange({ italic: !layer.italic })}
-                    className={`flex-1 h-10 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
-                      layer.italic ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
+                {([['bold', '粗體', <Bold size={15} strokeWidth={3.4} />], ...(hasItalic || layer.italic ? [['italic', '斜體', <Italic size={14} />]] : []),
+                  ['underline', '底線', <Underline size={14} />]] as [keyof FloatingImage, string, React.ReactNode][]).map(([k, label, icon]) => (
+                  <button key={k as string}
+                    onClick={() => onChange({ [k]: !layer[k] } as any)}
+                    className={`flex-1 h-10 rounded-xl border flex items-center justify-center gap-1.5 text-[12px] font-bold tracking-widest transition-all ${
+                      layer[k] ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
                     }`}
                   >
-                    <Italic size={14} />斜體
-                  </button>
-                )}
-              </div>
-            )}
-            {tab === 'bg' && <>
-              <div className="flex items-center gap-2 px-2">
-                {[false, true].map(on => (
-                  <button key={String(on)} onClick={() => onChange({ bgOn: on })}
-                    className={`flex-1 h-10 rounded-xl border flex items-center justify-center text-[12px] font-bold tracking-widest transition-all ${
-                      !!layer.bgOn === on ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
-                    }`}>
-                    {on ? '開' : '關'}
+                    {icon}{label}
                   </button>
                 ))}
               </div>
-              {/* 挑顏色就順便打開背景 */}
-              {swatchRow(layer.bgOn ? (layer.bgColor || TEXT_BG_DEFAULT) : undefined, c => onChange({ bgColor: c, bgOn: true }), TEXT_COLORS)}
+            )}
+            {tab === 'bg' && <>
+              {/* 色票在上面：點一個顏色就加上背景；最前面那顆「無」拿掉背景 */}
+              <div className="flex items-center gap-2">
+                <button onClick={() => onChange({ bgOn: false })} aria-label="無背景"
+                  className={`shrink-0 w-11 h-11 rounded-[10px] border flex items-center justify-center text-[11px] font-bold ${
+                    layer.bgOn ? 'border-white/15 text-white/50' : 'border-white text-white'}`}>無</button>
+                <div className="flex-1 min-w-0">
+                  {swatchRow(layer.bgOn ? (layer.bgColor || TEXT_BG_DEFAULT) : undefined, c => onChange({ bgColor: c, bgOn: true }), TEXT_COLORS)}
+                </div>
+              </div>
+              {/* 透明度：還沒選背景顏色之前是暗的、不能拉 */}
+              <div className={`px-2 transition-opacity ${layer.bgOn ? '' : 'opacity-35 pointer-events-none'}`}>
+                {slider('透明度', 100 - (layer.bgAlpha ?? 100), 0, 100, v => onChange({ bgAlpha: 100 - v }))}
+              </div>
             </>}
             {tab === 'layout' && (
               <div className="space-y-3.5 px-2">
+                {/* 六種排列：橫排靠左／置中／靠右，直排靠上／置中／靠下 */}
+                <div className="grid grid-cols-6 gap-1.5">
+                  {TEXT_ARRANGE.map(a => {
+                    const on = a.vertical ? !!layer.vertical && (layer.vAlign || 'center') === a.align
+                      : !layer.vertical && (layer.textAlign || 'center') === a.align;
+                    return (
+                      <button key={(a.vertical ? 'v' : 'h') + a.align} aria-label={a.label} aria-pressed={on}
+                        onClick={() => onChange(a.vertical ? { vertical: true, vAlign: a.align as any } : { vertical: false, textAlign: a.align as any })}
+                        className={`h-10 flex items-center justify-center transition-colors ${on ? 'text-white' : 'text-white/35'}`}>
+                        <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                          {a.vertical
+                            ? [[5, a.align === 'top' ? 3 : a.align === 'bottom' ? 12 : 7.5, 7], [11, 3, 16], [17, 3, 16]].map(([x, y, l], i) =>
+                              <line key={i} x1={x} y1={y} x2={x} y2={y + l} />)
+                            : [[3, 18], [3, 18], [a.align === 'left' ? 3 : a.align === 'right' ? 12 : 7.5, 7]].map(([x, l], i) =>
+                              <line key={i} x1={x} y1={5 + i * 6} x2={x + l} y2={5 + i * 6} />)}
+                        </svg>
+                      </button>
+                    );
+                  })}
+                </div>
                 {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
-                {!singleLine && slider('行距', layer.lineHeight ?? TEXT_LINE_HEIGHT, 0.8, 2.4, v => onChange({ lineHeight: v }), '', 0.01)}
+                {slider('行距', layer.lineHeight ?? TEXT_LINE_HEIGHT, 0.8, 2.4, v => onChange({ lineHeight: v }), '', 0.01)}
               </div>
             )}
           </div>
@@ -5596,7 +5613,8 @@ export interface FloatingImage {
   glowColor?: string;
   /** 文字陰影（強度 0＝沒有）、背景（見 utils/textDeco） */
   shadowAmt?: number; shadowColor?: string; shadowBlur?: number; shadowDist?: number; shadowAngle?: number;
-  bgOn?: boolean; bgColor?: string;
+  bgOn?: boolean; bgColor?: string; bgAlpha?: number; underline?: boolean;
+  textAlign?: 'left' | 'center' | 'right'; vertical?: boolean; vAlign?: 'top' | 'center' | 'bottom';
   /** 行距（字級的幾倍，預設 TEXT_LINE_HEIGHT） */
   lineHeight?: number;
   /** 文字描邊寬度（px，未縮放），0 = 不描邊 */
@@ -6696,7 +6714,14 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       const dx = ink ? -ink.cx * size : 0;
       const dy = ink ? -ink.cy * size : 0;
       const unitMotionFrame = usesUnitMotion && lines.length === 1 ? motionFrame : null;
+      // 排列（左右對齊、直排）、底線、多行：照段落畫（見 utils/textDeco 的 layoutText）
+      const layout: TextLayout | null = !image.sym && needsTextLayout(image, image.text || '')
+        ? layoutText(ctx, image, image.text || '', size, lineH, spacing) : null;
       const drawAnimatedUnits = (stroke = false) => {
+        if (layout && (!motionFrame?.lab || layout.vertical || (image.textAlign && image.textAlign !== 'center'))) {
+          drawTextRuns(ctx, layout, stroke, (t, x, y) => !layout.vertical && ctx.textAlign === 'center' && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x - spacing / 2, y));
+          return;
+        }
         if (motionFrame?.lab) {
           const total = lines.reduce((n,line) => n + Array.from(line).length, 0);
           let offset = 0;
@@ -6781,7 +6806,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       const fill = () => drawAnimatedUnits(false);
       // 背景色塊、陰影在最底下（發光、描邊、字都疊在上面）；符號沒有這兩項
       if (!image.sym) {
-        paintTextBg(ctx, image, lines, size, lineH, startY, dx);
+        // 背景＝剛好填滿選中框（這裡的座標已經除掉四邊擠壓，框就是擠壓前的大小）
+        paintTextBg(ctx, image, image.textStretchBaseW || image.width, image.textStretchBaseH || image.height);
         ctx.fillStyle = image.color || '#FFFFFF';
         paintTextShadow(ctx, image, size, fill);
       }
@@ -6804,6 +6830,11 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         drawAnimatedUnits(true);
       }
       fill();
+      if (!image.sym) {
+        const L = layout || layoutText(ctx, image, image.text || '', size, lineH, spacing);
+        ctx.fillStyle = image.color || '#FFFFFF';
+        drawUnderline(ctx, image, L, size);
+      }
       ctx.restore();
 
 };
@@ -7234,7 +7265,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       const metrics = lines.map(line => g.measureText(line || ' '));
       /* 跟繪製端同一個寬度：Canvas 的 letterSpacing 在每個字（含最後一個）
          後面都加一次，textAlign center 也是以這個完整前進寬度置中。 */
-      const w = Math.max(6, ...lines.map((line, index) => {
+      let w = Math.max(6, ...lines.map((line, index) => {
         const glyphs = Array.from(line);
         return metrics[index].width + glyphs.length * spacing;
       })) + 8;
@@ -7244,7 +7275,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       const descent = Math.max(size * (emoji ? .32 : .15), ...metrics.map(m => m.actualBoundingBoxDescent || 0));
       /* 行盒不再用整個 font-size × 1.12 當成字形高度。真正選中框只包住
          actualBoundingBox 的頂／底，再加對稱 4px，所以下方不會多留一截。 */
-      const h = Math.max(6, (lines.length - 1) * size * (image.lineHeight ?? TEXT_LINE_HEIGHT) + ascent + descent) + 8;
+      let h = Math.max(6, (lines.length - 1) * size * (image.lineHeight ?? TEXT_LINE_HEIGHT) + ascent + descent) + 8;
+      // 直排：寬＝行數×行距、高＝最長那一行的字數（跟繪製端 layoutText 同一條式子）
+      if (!image.sym && image.vertical) {
+        const L = layoutText(g, image, lines.join('\n'), size, size * (image.lineHeight ?? TEXT_LINE_HEIGHT), spacing);
+        w = L.w + 8; h = L.h + 8;
+      }
       const patch: Partial<FloatingImage> = {};
       /* 被四邊擠壓過的文字：量到的是未擠壓的自然尺寸。框要維持原本的擠壓
          比例，基準尺寸換成新的自然尺寸，字距／字級一改，框才會跟著等比變寬，
@@ -7289,7 +7325,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     // 真的載不到（離線、家族名打錯）就別讓框永遠停在舊尺寸
     const t = setTimeout(done, 3000);
     return () => { alive = false; clearTimeout(t); };
-  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, image.strokeWidth, image.lineHeight, maxTextWidth]);
+  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, image.strokeWidth, image.lineHeight, image.vertical, maxTextWidth]);
 
   /* 圓角／羽化／發光都自己畫在 canvas 上，預覽與匯出走同一套邏輯 */
   const shapeCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -9002,7 +9038,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             whiteSpace: 'pre',
             wordBreak: 'normal',
             overflowWrap: 'normal',
-            textAlign: 'center',
+            textAlign: image.textAlign || 'center', writingMode: image.vertical ? 'vertical-rl' : undefined,
             // 描邊：只描字的外圍輪廓。-webkit-text-stroke 是沿著輪廓中線描，
             // 一半會吃進字身，看起來像每一筆都被描了一圈。改成 paint-order
             // 把描邊畫在填色「下面」、寬度加倍 —— 字身蓋住內半邊，
@@ -9040,7 +9076,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               style={{
                 position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                pointerEvents: 'none', whiteSpace: 'pre', textAlign: 'center',
+                pointerEvents: 'none', whiteSpace: 'pre', textAlign: image.textAlign || 'center', writingMode: image.vertical ? 'vertical-rl' : undefined,
                 color: image.color || '#FFFFFF',
                 // 這一層絕對不描邊，光才不會算到描邊的部分
                 WebkitTextStrokeWidth: 0,
@@ -15852,9 +15888,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ctx.restore();
       });
     };
-    const drawLines = () => drawAnimated(false);
+    // 排列、底線、多行：跟預覽同一份段落
+    const textLayout = !fImg.sym ? layoutText(ctx, fImg, fImg.text || '', size, lineH, spacing) : null;
+    const drawAnimatedPlain = drawAnimated;
+    const drawAnimatedL = (stroke = false) => textLayout && !unitMotion ? drawTextRuns(ctx, textLayout, stroke) : drawAnimatedPlain(stroke);
+    const drawLines = () => drawAnimatedL(false);
     if (!fImg.sym) {
-      paintTextBg(ctx, fImg, lines, size, lineH, startY, symDx);
+      paintTextBg(ctx, fImg, fw * fImg.scale, fh * fImg.scale);
       ctx.fillStyle = fImg.color || '#FFFFFF';
       paintTextShadow(ctx, fImg, size, drawLines);
     }
@@ -15879,10 +15919,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.lineJoin = 'round';
       ctx.miterLimit = 2;
       ctx.strokeStyle = fImg.strokeColor || '#000000';
-      drawAnimated(true);
+      drawAnimatedL(true);
     }
     ctx.fillStyle = fImg.color || '#FFFFFF';
     drawLines();
+    if (textLayout) drawUnderline(ctx, fImg, textLayout, size);
     ctx.restore();
   };
 

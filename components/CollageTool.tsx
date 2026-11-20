@@ -1,6 +1,6 @@
 import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
-import { paintTextBg, paintTextShadow } from '../utils/textDeco';
+import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout } from '../utils/textDeco';
 import { BusyLayer } from './BusyLayer';
 import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
@@ -477,6 +477,11 @@ const plainTextBox = (o: any, force = false): { w: number; h: number } | null =>
   g.textAlign = 'center'; g.textBaseline = 'middle';
   const m = g.measureText(o.text || ' ');
   const pad = Math.max(8, size * .12), stroke = (o.strokeWidth || 0) * size / 40;
+  // 多行或直排：框照段落排版的大小（跟繪製同一支 layoutText）
+  if ((o.text || '').includes('\n') || o.vertical) {
+    const L = layoutText(g, o, o.text || ' ', size, size * (o.lineHeight ?? 1.12), spacing);
+    return { w: Math.max(12, L.w + (pad + stroke) * 2), h: Math.max(12, (L.vertical ? L.h : L.h + size * .25) + (pad + stroke) * 2) };
+  }
   // 表情符號 iPhone 量得偏小（見 utils/stableText 的 emojiSafeInk），框至少撐到它真正的高度
   const half = Math.max(m.actualBoundingBoxAscent || size * .6, m.actualBoundingBoxDescent || size * .4, hasEmoji(o.text || '') ? size * .62 : 0);
   return {
@@ -2873,7 +2878,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     for (const o of objects) {
       if (o.type !== 'text' || o.sym) continue;
       if (objPinchRef.current?.id === o.id || objStretchRef.current?.id === o.id) continue;
-      const key = JSON.stringify([o.text, o.fontFamily, o.size, o.bold, o.italic, o.letterSpacing, o.strokeWidth]);
+      const key = JSON.stringify([o.text, o.fontFamily, o.size, o.bold, o.italic, o.letterSpacing, o.strokeWidth, o.lineHeight, o.vertical]);
       if (textFitKeys.current.get(o.id) === key) continue;
       // 每種文字狀態最多等一次字型，之後不管怎樣都量。fonts.check 對某些字型堆疊可能一直是 false，
       // 不這樣會一直重排這個 effect（React 的 maximum update depth）
@@ -8512,6 +8517,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* Canvas 在每個字（含最後一個）後面都加字距，置中時整串會往左偏
            半個字距；補回去，字距才會跟選中框一樣從中心往兩邊長。 */
         const spacingShift = o.sym ? 0 : spacingPx / 2;
+        // 多行、左右對齊、直排、底線：照段落畫（跟跨頁拼圖同一支 layoutText）
+        const textFontPx = pinFont * s, textLineH = textFontPx * (o.lineHeight ?? 1.12);
+        const textLayout = !o.sym && needsTextLayout(o as any, o.text || '')
+          ? layoutText(ctx, o as any, o.text || '', textFontPx, textLineH, spacingPx) : null;
         /* 輸入中的游標：輸入框本身看不見（見下方 textarea），由畫布在目前
            插入點畫一條直線，跟字用同一個字型、字距與矩陣量位置。 */
         const drawEditCaret = () => {
@@ -8525,7 +8534,29 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           // 畫布上方用 DOM 畫游標：2 個 CSS px 寬、用 CSS 閃爍，跟跨頁拼圖一樣，閃爍時不必重畫場景
           const el = editCaretRef.current;
           if (!el) return;
-          const x = spacingShift - total / 2 + pre, top = m.transformPoint({ x, y: -fontPx * .6 }), bottom = m.transformPoint({ x, y: fontPx * .6 });
+          let x = spacingShift - total / 2 + pre, cy = 0;
+          /* 多行／左右對齊／直排：找出插入點在第幾行第幾個字，照段落排版的位置畫游標 */
+          if (needsTextLayout(o as any, text)) {
+            const before = text.slice(0, sel).split('\n'), row = before.length - 1, col = before[row];
+            const L = layoutText(ctx, o as any, text, fontPx, fontPx * (o.lineHeight ?? 1.12), spacingPx);
+            if (L.vertical) {
+              const runsBefore = text.slice(0, sel).replace(/\n/g, '').length;
+              const r = L.runs[Math.min(L.runs.length - 1, runsBefore)] || L.runs[L.runs.length - 1];
+              const rows = text.split('\n'), n = rows.length, xCol = (n - 1) / 2 * fontPx * (o.lineHeight ?? 1.12) - row * fontPx * (o.lineHeight ?? 1.12);
+              const yy = r ? (runsBefore >= L.runs.length || Array.from(col).length === Array.from(rows[row]).length ? r.y + fontPx / 2 + spacingPx : r.y - fontPx / 2) : 0;
+              const p0 = m.transformPoint({ x: xCol - fontPx * .55, y: yy }), p1 = m.transformPoint({ x: xCol + fontPx * .55, y: yy });
+              const rect = targetCanvas.getBoundingClientRect(), kx = rect.width / Math.max(1, targetCanvas.width), ky = rect.height / Math.max(1, targetCanvas.height);
+              const X0 = rect.left + p0.x * kx, Y0 = rect.top + p0.y * ky, X1 = rect.left + p1.x * kx, Y1 = rect.top + p1.y * ky;
+              el.style.display = 'block'; el.style.height = `${Math.hypot(X1 - X0, Y1 - Y0)}px`;
+              el.style.transform = `translate(${X0 - 1}px, ${Y0}px) rotate(${Math.atan2(X0 - X1, Y1 - Y0)}rad)`;
+              return;
+            }
+            const run = L.runs[row];
+            const rowW = run.t ? ctx.measureText(run.t).width - spacingPx : 0;
+            const left = run.align === 'left' ? run.x : run.align === 'right' ? run.x - spacingPx - rowW : run.x - spacingPx / 2 - rowW / 2;
+            x = left + (col ? ctx.measureText(col).width - spacingPx / 2 : 0); cy = run.y;
+          }
+          const top = m.transformPoint({ x, y: cy - fontPx * .6 }), bottom = m.transformPoint({ x, y: cy + fontPx * .6 });
           const rect = targetCanvas.getBoundingClientRect(), kx = rect.width / Math.max(1, targetCanvas.width), ky = rect.height / Math.max(1, targetCanvas.height);
           const x0 = rect.left + top.x * kx, y0 = rect.top + top.y * ky, x1 = rect.left + bottom.x * kx, y1 = rect.top + bottom.y * ky;
           el.style.display = 'block';
@@ -8586,6 +8617,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             sticker.w * stickerScale, sticker.h * stickerScale);
         };
         const drawText = (stroke = false) => {
+          if (textLayout && (!f?.lab || textLayout.vertical || (o.textAlign && o.textAlign !== 'center')) && !textUnitBreathe) {
+            drawTextRuns(ctx, textLayout, stroke, (t, x, y) => !textLayout.vertical && ctx.textAlign === 'center'
+              && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x, y));
+            return;
+          }
           if (f?.lab) {
             const rasterFontPx = o.sym ? stickerFontPx : 96, rasterScale = o.sym ? stickerScale : pinFont * s / rasterFontPx;
             const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
@@ -8756,7 +8792,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 背景色塊、陰影在最底下（發光、描邊、字都疊在上面）；符號沒有這兩項
         if (!o.sym && !f?.lab) {
           const fpx = pinFont * s;
-          paintTextBg(ctx, o as any, [o.text || ''], fpx, fpx * 1.12, 0, spacingShift);
+          // 背景＝剛好填滿選中框（這裡的座標已經除掉四邊擠壓與捏合的字級倍率）
+          paintTextBg(ctx, o as any, (o.textStretchBaseW || o.w) / fontK, (o.textStretchBaseH || o.h) / fontK);
           ctx.fillStyle = o.color || '#ffffff';
           paintTextShadow(ctx, o as any, fpx, () => drawText(false));
         }
@@ -8782,6 +8819,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.fillStyle = o.color || '#ffffff';
         drawText(false);
         ctx.shadowBlur = 0;
+        if (!o.sym && o.underline) drawUnderline(ctx, o as any, textLayout || layoutText(ctx, o as any, o.text || '', pinFont * s, pinFont * s * (o.lineHeight ?? 1.12), spacingPx), pinFont * s);
         if (isMain && !o.sym && editingTextRef.current === o.id) drawEditCaret();
         (ctx as any).letterSpacing = '0px';
         }
@@ -13373,7 +13411,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   sel.type === 'text' ? (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
                       <TextEditorPanel
-                        singleLine
                         symbol={!!sel.sym}
                         /* 描邊／發光的顏色改成點進獨立的顏色頁（跟紋理顏色同一種操作） */
                         onPickColor={(which: 'stroke' | 'glow') =>
@@ -13384,7 +13421,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           letterSpacing: sel.letterSpacing, strokeWidth: sel.strokeWidth,
                           strokeColor: sel.strokeColor, glow: sel.glow, glowColor: sel.glowColor,
                           shadowAmt: sel.shadowAmt, shadowColor: sel.shadowColor, shadowBlur: sel.shadowBlur, shadowDist: sel.shadowDist, shadowAngle: sel.shadowAngle,
-                          bgOn: sel.bgOn, bgColor: sel.bgColor,
+                          bgOn: sel.bgOn, bgColor: sel.bgColor, bgAlpha: sel.bgAlpha, underline: sel.underline,
+                          textAlign: sel.textAlign, vertical: sel.vertical, vAlign: sel.vAlign, lineHeight: sel.lineHeight,
                         } as any}
                         onChange={(d: any) => {
                           if (d.fontFamily) ensureFont(d.fontFamily);
