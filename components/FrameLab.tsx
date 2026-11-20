@@ -1,6 +1,7 @@
 /* 排序工具的「邊框」頁：新的五種邊框先在這裡看效果，挑好再加進 App。
    每一顆都用 App 裡同一支畫法（utils/frameShapes.ts）畫在示範照片上，
    「範圍」跟 App 的滑桿一樣是 0～100，顏色可以切換。 */
+import { swatchEdge } from '../utils/swatch';
 import React, { useEffect, useRef, useState } from 'react';
 import { FRAME_ITEMS, paintFrameShape, frameRangeDefault, FRAME_SPEED, FRAME_SCATTER, SCATTER_KINDS_DEFAULT, FRAME_SLIDERS, type FrameParams } from '../utils/frameShapes';
 import { shapePathD, ScatterKindsPicker } from './GridLayoutTool';
@@ -74,7 +75,7 @@ export function FrameLab({ photo, onPickPhoto, picked, onTogglePick, ranges, onR
         <span className="text-[11px] text-white/50">顏色</span>
         {COLORS.map(c => (
           <button key={c} onClick={() => setColor(c)} aria-label={c}
-            className={`w-7 h-7 rounded-full border-2 ${color === c ? 'border-white' : 'border-white/15'}`} style={{ backgroundColor: c }} />
+            className={`w-7 h-7 rounded-full border-2 ${color === c ? 'border-white' : swatchEdge(c, 'border-white/15').replace('border border-white', 'border-white')}`} style={{ backgroundColor: c }} />
         ))}
       </div>
       <div className="grid grid-cols-2 gap-3">

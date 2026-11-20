@@ -1,5 +1,6 @@
 import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
+import { swatchEdge } from '../utils/swatch';
 import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift } from '../utils/textDeco';
 import { BusyLayer } from './BusyLayer';
 import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/waveWarp';
@@ -616,7 +617,7 @@ const shapeColorRow = (label: string, value: string, onOpen: () => void) => (
     <span className="text-[10px] font-bold text-[#888]">{label}</span>
     <div className="flex items-center gap-2">
       <span className="text-[9px] font-mono text-white/40">{value}</span>
-      <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
+      <div className={`w-6 h-5 rounded-[4px] shadow-inner ${swatchEdge(value, 'border border-white/10')}`} style={{ backgroundColor: value }} />
     </div>
   </div>
 );
@@ -1622,7 +1623,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
                   onClick={() => handlePresetClick(c)}
                   title={c}
                   className={`shrink-0 w-8 h-8 rounded-[7px] transition-all active:scale-90 ${
-                    active ? 'border-2 border-white' : 'border border-white/20'
+                    active ? 'border-2 border-white' : swatchEdge(c, 'border border-white/20')
                   }`}
                   style={{ backgroundColor: c }}
                 />

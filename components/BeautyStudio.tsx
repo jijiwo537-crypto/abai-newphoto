@@ -1,4 +1,5 @@
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
+import { isDarkSwatch } from '../utils/swatch';
 import { BusyLayer } from './BusyLayer';
 import { ImportSpinner } from './BusySpinner';
 import { StuckEscape } from './StuckEscape';
@@ -1991,7 +1992,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             </label>
             {LIP_PRESETS.map(c => (
               <button key={c.hex} onClick={() => setMakeupColor(c.hex)} title={c.name} aria-label={c.name}
-                className="beauty-swatch w-7 h-7 rounded-full shrink-0 transition-transform active:scale-90" style={{ backgroundColor: c.hex }}>
+                className="beauty-swatch w-7 h-7 rounded-full shrink-0 transition-transform active:scale-90" style={{ backgroundColor: c.hex, ...(isDarkSwatch(c.hex) ? { boxShadow: 'inset 0 0 0 1px #fff' } : {}) }}>
                 {makeupColor.toLowerCase() === c.hex.toLowerCase() && <svg className="beauty-swatch-outline" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="none" stroke="white" strokeWidth="2" /></svg>}
               </button>
             ))}
@@ -2136,7 +2137,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                       ? 'beauty-swatch-selected'
                       : ''
                   }`}
-                  style={{ backgroundColor: c.hex }}
+                  style={{ backgroundColor: c.hex, ...(isDarkSwatch(c.hex) ? { boxShadow: 'inset 0 0 0 1px #fff' } : {}) }}
                 >
                   {makeupColor.toLowerCase()===c.hex.toLowerCase()&&<svg className="beauty-swatch-outline" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="none" stroke="white" strokeWidth="2"/></svg>}
                 </button>

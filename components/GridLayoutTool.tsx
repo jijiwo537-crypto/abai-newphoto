@@ -1,4 +1,5 @@
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
+import { swatchEdge } from '../utils/swatch';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
 import { BUBBLE_KINDS, bubblePathD, bubbleRatio, isNewBubbleKind, NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { PUZZLE_PIECES, isPuzzleKind, puzzlePathD, puzzleRatio, puzzleGlyph } from '../utils/puzzleShapes';
@@ -785,7 +786,7 @@ export const swatchStrip = (
         onClick={() => onPick(c)}
         title={c}
         className={`shrink-0 rounded-[7px] transition-all active:scale-90 ${big ? 'w-8 h-8' : 'w-6 h-6'} ${
-          (value || '#FFFFFF').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
+          (value || '#FFFFFF').toUpperCase() === c ? 'border-2 border-white' : swatchEdge(c, 'border border-white/20')
         }`}
         style={{ backgroundColor: c }}
       />
@@ -2998,7 +2999,7 @@ export const ColorPick: React.FC<{
         /* 垂直位置交給外層那一列的 items-center：色塊會自己對齊
            「標題那一行 ＋ 軌道」整塊的垂直中心，不必寫死任何位移，
            標題換行或滑桿高度改了也不會跑掉。 */
-        className="shrink-0 w-8 h-6 rounded-[4px] border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+        className={`shrink-0 w-8 h-6 rounded-[4px] shadow-inner hover:border-white/40 transition-colors ${swatchEdge(value, 'border border-white/10')}`}
         style={{ backgroundColor: value }}
       />
     );
@@ -3011,7 +3012,7 @@ export const ColorPick: React.FC<{
       >
         <span className="text-[10px] font-bold text-[#888] shrink-0">{label}</span>
         <div className="flex items-center gap-2 shrink-0">
-          <div className="w-5 h-4 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
+          <div className={`w-5 h-4 rounded-[4px] shadow-inner ${swatchEdge(value, 'border border-white/10')}`} style={{ backgroundColor: value }} />
         </div>
       </div>
       {open && !onOpen && (
@@ -3105,7 +3106,7 @@ export const TextEditorPanel: React.FC<{
     >
       <span className="text-[10px] font-bold text-[#888]">{label}</span>
       <div className="flex items-center gap-2">
-        <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
+        <div className={`w-6 h-5 rounded-[4px] shadow-inner ${swatchEdge(value, 'border border-white/10')}`} style={{ backgroundColor: value }} />
       </div>
     </div>
   );
@@ -3120,7 +3121,7 @@ export const TextEditorPanel: React.FC<{
           onClick={() => onPick(c)}
           title={c}
           className={`shrink-0 w-8 h-8 rounded-[7px] transition-all active:scale-90 ${
-            (value || '').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
+            (value || '').toUpperCase() === c ? 'border-2 border-white' : swatchEdge(c, 'border border-white/20')
           }`}
           style={{ backgroundColor: c }}
         />
@@ -3193,11 +3194,13 @@ export const TextEditorPanel: React.FC<{
       {/* 分頁在最上面一排：細細一條、可以左右滑，不佔左右的寬度，也只用掉很少的高度。
           符號沒有分頁（只有顏色與發光）。 */}
       {!symbol && !colorPage && (
-        <div className="shrink-0 mt-3 mb-2 flex select-none" data-text-tabs>
+        /* 一排可以左右滑：每個分頁照字的寬度排，放不下的往右滑（不硬塞成一排） */
+        <div className="shrink-0 mt-3 mb-2 -mx-1 flex gap-1 overflow-x-auto no-scrollbar select-none" data-text-tabs
+          style={{ overscrollBehaviorX: 'contain' }}>
           {tabs.map(([id, label]) => (
             /* 選中的那一頁只是字變亮（不加底色） */
-            <button key={id} onClick={() => setSub(id)}
-              className={`flex-1 min-w-0 whitespace-nowrap h-7 px-0 text-[11px] font-bold tracking-wider transition-colors ${
+            <button key={id} onClick={(e) => { setSub(id); (e.currentTarget as HTMLElement).scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' }); }}
+              className={`shrink-0 whitespace-nowrap h-8 px-3 text-[13px] font-bold tracking-wider transition-colors ${
                 tab === id ? 'text-white' : 'text-white/40'}`}>
               {label}
             </button>
@@ -4588,7 +4591,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
                 onClick={() => { setHsv(hexToHsv(c)); setHexInput(c.toUpperCase()); onChange(c); }}
                 title={c}
                 className={`shrink-0 w-8 h-8 rounded-[7px] transition-all active:scale-90 ${
-                  active ? 'border-2 border-white' : 'border border-white/20'
+                  active ? 'border-2 border-white' : swatchEdge(c, 'border border-white/20')
                 }`}
                 style={{ backgroundColor: c }}
               />
