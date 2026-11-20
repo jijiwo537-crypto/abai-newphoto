@@ -19801,14 +19801,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       );})}
                   </div>
                   {!target ? <p data-no-motion-items="1" className="text-[11px] text-white/40 text-center pt-8">沒有可編輯項目</p> : <>
-                    {/* 方案 A：進場／常駐分成兩頁，分頁在上面一行 */}
-                    <div className="flex gap-5 px-1 mt-3 mb-2 select-none" data-motion-tabs>
-                      {([['in', '進場'], ['idle', '常駐']] as const).map(([id, t]) => (
-                        <button key={id} onClick={() => setMotionSub(id)}
-                          className={`h-7 text-[13px] font-bold tracking-wider ${motionSub === id ? 'text-white' : 'text-[#666]'}`}>{t}</button>
-                      ))}
-                    </div>
-                    {motionSub === 'in' && <>
+                    <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-4">進場動畫</p>
                     <div className="grid grid-cols-4 gap-2">{introKinds.map(([id,name]) => <button key={id} className={cell(cfg.in===id)} onClick={()=>pickIntro(id)}>{name}</button>)}</div>
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                       <CompactSlider label="起始" value={delayToUi(cfg.delay)} min={0} max={100} step={1} onCommit={replayMotion} onChange={(v:number)=>patchMotion({delay:delayFromUi(v)})}/>
@@ -19817,8 +19810,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         min={0} max={100} step={1} onCommit={replayMotion}
                         onChange={(v:number)=>patchMotion(shFrom('inSpeed', v, cfg))}/>
                     </div>
-                    </>}
-                    {motionSub === 'idle' && <>
+                    <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2 mt-4">常駐動畫</p>
                     <div className="grid grid-cols-4 gap-2">{idleKinds.map(([id,name]) => <button key={id} className={cell(cfg.idle===id)} onClick={()=>pickIdle(id)}>{name}</button>)}</div>
                     {cfg.idle !== 'none' && <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                       {cfg.idle !== 'lab-T-L04' && <CompactSlider key={`${target.id}-${cfg.idle}-amp`} label="幅度"
@@ -19833,7 +19825,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         onChange={(v:number)=>patchMotion(shFrom('speed', v, cfg))}/>
                       </div>
                     </div>}
-                    </>}
                   </>}
                 </div>
               );
