@@ -19571,8 +19571,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       >
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* 分頁列表 */}
-          {/* 方案 A：主工具列在螢幕最下面（order-last），下面留一段空間，手指不用貼著 iPhone 的橫條 */}
-          <div className="order-last flex px-4 border-t border-[#1a1a1a] shrink-0" style={{ paddingBottom: 18 }} data-main-tools>
+          <div className="flex px-4 pt-1 border-b border-[#1a1a1a] shrink-0" data-main-tools>
             {['ratio', 'pages', 'add', 'adjust', 'color', 'motion'].map(id => {
               let iconEl = null;
               let titleText = '';
@@ -19615,13 +19614,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     if (id === 'add') setAddSub('root');
                     if (id === 'color') setColorPickerActive(true);
                   }} 
-                  /* 主工具列只有文字（跟文字編輯頁的分頁同一種樣子）：選中的字變白，其他是實色灰 */
-                  className={`flex-1 h-11 text-[14px] font-bold tracking-wider transition-colors duration-150 ${
-                    isActive ? 'text-white' : 'text-[#666]'
+                  /* 主工具列只有圖示：選中的變白，其他是實色灰 */
+                  className={`flex-1 h-11 flex items-center justify-center transition-colors duration-150 ${
+                    isActive ? 'text-white' : 'text-[#555]'
                   }`}
                   title={titleText}
+                  aria-label={({ ratio: '比例', pages: '頁面', add: '新增', adjust: '編輯', color: '背景', motion: '動畫' } as Record<string, string>)[id]}
                 >
-                  {({ ratio: '比例', pages: '頁面', add: '新增', adjust: '編輯', color: '背景', motion: '動畫' } as Record<string, string>)[id]}
+                  {iconEl}
                 </button>
               );
             })}

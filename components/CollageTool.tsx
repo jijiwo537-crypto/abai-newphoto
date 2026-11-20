@@ -12461,8 +12461,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           transition: footerSnapRef.current ? 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1)' : 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1), height 300ms ease-out',
         }}>
         {!colorPickerTarget && (
-          /* 方案 A：主工具列在螢幕最下面（order-last），下面留一段空間，手指不用貼著 iPhone 的橫條 */
-          <div className="order-last shrink-0 flex px-4 border-t border-[#1a1a1a]" style={{ paddingBottom: 18 }} data-main-tools>
+          <div className="flex px-4 pt-1 border-b border-[#1a1a1a]" data-main-tools>
             {['setting', 'shape', 'add', 'objedit', 'motion'].map(id => (
               <button 
                 key={id} 
@@ -12487,12 +12486,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 }} 
                 /* 亮起來不做淡入：顏色的漸變在 iPhone 上是主執行緒在跑，切頁之後那幾格只要在重畫預覽，
                    淡入就會停在半路 —— 看起來就是「圖示慢一拍才亮」 */
-                /* 主工具列只有文字（跟文字編輯頁的分頁同一種樣子）：選中的字變白，其他是實色灰 */
-                className={`flex-1 h-11 text-[14px] font-bold tracking-wider ${
-                  activeTab === id ? 'text-white' : 'text-[#666]'
+                /* 主工具列只有圖示：選中的變白，其他是實色灰 */
+                aria-label={({ setting: '版面', shape: '圖案', add: '新增', objedit: '編輯', motion: '動畫' } as Record<string, string>)[id]}
+                className={`flex-1 h-11 flex items-center justify-center ${
+                  activeTab === id ? 'text-white' : 'text-[#555]'
                 }`}
               >
-                {({ setting: '版面', shape: '圖案', add: '新增', objedit: '編輯', motion: '動畫' } as Record<string, string>)[id]}
+                {id === 'setting' ? <Crop size={18} /> : id === 'add' ? <Plus size={18} /> : id === 'objedit' ? <SlidersHorizontal size={18} /> : id === 'motion' ? <Film size={17} /> : <Star size={18} />}
               </button>
             ))}
           </div>
