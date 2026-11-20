@@ -10,7 +10,7 @@ import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
 import { waveWarp } from '../utils/waveWarp';
-import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, type TextLayout } from '../utils/textDeco';
+import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, drawTextRunsAnimated, type TextLayout } from '../utils/textDeco';
 import { createPortal, flushSync } from 'react-dom';
 import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/classicTextureSize';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
@@ -3195,7 +3195,7 @@ export const TextEditorPanel: React.FC<{
           符號沒有分頁（只有顏色與發光）。 */}
       {!symbol && !colorPage && (
         /* 七個分頁固定一排、平均分寬 */
-        <div className="shrink-0 mt-1 mb-0.5 flex select-none" data-text-tabs>
+        <div className="shrink-0 mt-2.5 mb-0.5 flex select-none" data-text-tabs>
           {tabs.map(([id, label]) => (
             /* 選中的那一頁只是字變亮（不加底色） */
             <button key={id} onClick={() => setSub(id)}
@@ -3250,7 +3250,7 @@ export const TextEditorPanel: React.FC<{
         )}
         {!colorPage && tab !== 'font' && (
           /* 每一頁只放兩三樣東西，上下空間夠用，不必捲動 */
-          <div className="space-y-3.5 pt-2 pb-8">
+          <div className={`space-y-3.5 pt-2 ${tab === 'shadow' ? 'pb-20' : 'pb-8'}`}>
             {tab === 'color' && <>
               {swatchRow(layer.color, c => onChange({ color: c }))}
               {!symbol && <div className="px-2">{slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}</div>}
@@ -6730,7 +6730,13 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       const layout: TextLayout | null = !image.sym && needsTextLayout(image, image.text || '')
         ? layoutText(ctx, image, image.text || '', size, lineH, spacing) : null;
       const drawAnimatedUnits = (stroke = false) => {
-        if (layout && (!motionFrame?.lab || layout.vertical || (image.textAlign && image.textAlign !== 'center'))) {
+        // 排過版（多行、對齊、直排、底線）的文字套逐字動畫：一個字一個字照段落位置動
+        if (layout && motionFrame?.lab) {
+          drawTextRunsAnimated(ctx, layout, stroke, size, spacing, (paint, i, n, w, h) =>
+            paintSelectedAnimation(ctx, motionFrame.lab, w, h, paint, i, n, { x: -w / 2, y: -h / 2, w, h }));
+          return;
+        }
+        if (layout) {
           drawTextRuns(ctx, layout, stroke, (t, x, y) => !layout.vertical && ctx.textAlign === 'center' && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x - spacing / 2, y));
           return;
         }

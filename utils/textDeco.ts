@@ -128,3 +128,35 @@ export const textInkShift = (ctx: CanvasRenderingContext2D, text: string, lineH:
   const mid = (top + bottom) / 2;
   return Number.isFinite(mid) ? -mid : 0;
 };
+
+/** 逐字動畫（果凍ll、淡入ll 這類一個字一個字動的）：照段落排版拆成一個一個字，
+    每個字交給 anim 在自己的中心做動畫。index／count 是第幾個字／總共幾個字（決定先後）。 */
+export const drawTextRunsAnimated = (ctx: CanvasRenderingContext2D, L: TextLayout, stroke: boolean, size: number, spacing: number,
+  anim: (paint: (g: CanvasRenderingContext2D) => void, index: number, count: number, w: number, h: number) => void) => {
+  type U = { ch: string; cx: number; y: number; w: number };
+  const units: U[] = [];
+  const prevAlign = ctx.textAlign, prevLs = (ctx as any).letterSpacing;
+  for (const r of L.runs) {
+    if (!r.t) continue;
+    if (L.vertical) { const w = ctx.measureText(r.t).width; units.push({ ch: r.t, cx: r.x, y: r.y, w: Math.max(1, w) }); continue; }
+    const chars = Array.from(r.t);
+    const rowW = Math.max(0, ctx.measureText(r.t).width - spacing);
+    let left = r.align === 'left' ? r.x : r.align === 'right' ? r.x - spacing - rowW : r.x - spacing / 2 - rowW / 2;
+    let acc = '';
+    for (const ch of chars) {
+      const x0 = left + (acc ? ctx.measureText(acc).width : 0);
+      const cw = Math.max(1, ctx.measureText(ch).width - spacing);
+      units.push({ ch, cx: x0 + cw / 2, y: r.y, w: cw });
+      acc += ch;
+    }
+  }
+  ctx.textAlign = 'center'; (ctx as any).letterSpacing = '0px';
+  units.forEach((u, i) => {
+    textReady(ctx.font, u.ch);
+    ctx.save();
+    ctx.translate(u.cx, u.y);
+    anim(g => { g.textAlign = 'center'; if (stroke) g.strokeText(u.ch, 0, 0); else g.fillText(u.ch, 0, 0); }, i, units.length, u.w, size);
+    ctx.restore();
+  });
+  ctx.textAlign = prevAlign; (ctx as any).letterSpacing = prevLs;
+};

@@ -1,7 +1,7 @@
 import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
 import { swatchEdge } from '../utils/swatch';
-import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift } from '../utils/textDeco';
+import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, drawTextRunsAnimated } from '../utils/textDeco';
 import { BusyLayer } from './BusyLayer';
 import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
@@ -8618,7 +8618,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             sticker.w * stickerScale, sticker.h * stickerScale);
         };
         const drawText = (stroke = false) => {
-          if (textLayout && (!f?.lab || textLayout.vertical || (o.textAlign && o.textAlign !== 'center')) && !textUnitBreathe) {
+          // 排過版（多行、對齊、直排、底線）的文字套逐字動畫：一個字一個字照段落位置動
+          if (textLayout && f?.lab) {
+            drawTextRunsAnimated(ctx, textLayout, stroke, textFontPx, spacingPx, (paint, i, n, w, h) =>
+              paintSelectedAnimation(ctx, f.lab, w, h, paint, i, n, { x: -w / 2, y: -h / 2, w, h }));
+            return;
+          }
+          if (textLayout && !textUnitBreathe) {
             drawTextRuns(ctx, textLayout, stroke, (t, x, y) => !textLayout.vertical && ctx.textAlign === 'center'
               && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x, y));
             return;
