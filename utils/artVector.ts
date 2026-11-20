@@ -1,3 +1,4 @@
+import { glowFromMask } from './glowSprite';
 import {paintColorGlyphs} from './artGlyphGpu.ts';
 import {artCharacters,needsCellFitting,fitArtGlyph} from './artCharacters.ts';
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
@@ -59,14 +60,9 @@ export function asciiVector(source,o){
 let inkLayout;
 /* 發光：大半徑的 shadowBlur 在 Safari 會降成低解析度（放大時有像素格），半徑逐格取整也會抖。
    改成在縮小的畫布上用固定的小半徑（8px）做模糊，再高品質放大貼回來；模糊本來就沒有細節，看起來一樣。 */
-let glowScratch:HTMLCanvasElement|null=null;
 function paintMaskGlow(ctx:CanvasRenderingContext2D,mask:HTMLCanvasElement,color:string,blur:number){
- if(blur<=8){ctx.save();ctx.shadowColor=color;ctx.shadowBlur=blur;ctx.drawImage(mask,0,0);ctx.restore();return;}
- const r=8/blur,W=Math.max(1,Math.ceil(mask.width*r)),H=Math.max(1,Math.ceil(mask.height*r));
- const c=glowScratch||(glowScratch=document.createElement('canvas'));if(c.width!==W||c.height!==H){c.width=W;c.height=H;}
- const g=c.getContext('2d')!;g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,W,H);g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';
- g.shadowColor=color;g.shadowBlur=8;g.shadowOffsetX=W;g.drawImage(mask,-W,0,mask.width*r,mask.height*r);g.shadowColor='transparent';g.shadowBlur=0;g.shadowOffsetX=0;
- ctx.save();ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality='high';ctx.drawImage(c,0,0,W/r,H/r);ctx.restore();
+ // 共用的金字塔模糊（utils/glowSprite）：全解析度、平滑；ctx 此時是單位矩陣
+ glowFromMask(ctx,mask,mask.width,mask.height,[blur/2],color);
 }
 export function paintAsciiViewport(target,mask,source,o,rect,viewport,dpr,colored){
  // 直接用目前的螢幕像素密度點陣化字型外框，絕不放大圖片大小的字形點陣。暫存是看得到的 viewport，

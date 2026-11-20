@@ -1,3 +1,4 @@
+import { glowFromMask } from './glowSprite';
 /* 圖形分類「邊框」：全部都是「一整張照片的框」，一放進來就跟底圖一樣大。
    霧白邊框是一張平滑的遮罩（見 mistFrame.ts）；其他五種是向量畫的：
      集中線：動漫那種很有張力的框 —— 一大圈大小、長短都不一樣的尖刺，從框邊往中間刺進去；
@@ -215,21 +216,16 @@ const glowPair = (sp: FrameSprite, color: string): GlowPair => {
   const hit = m.get(color);
   if (hit) return hit;
   const halo = (blur: number): FrameSprite => {
-    /* 光暈圖的解析度：模糊半徑超過 8px 就整張縮小畫（模糊沒有細節，放回原大小看起來一樣）。
-       大半徑的 shadowBlur 在 Safari 會改用低解析度模糊，放大時看得到像素格。 */
-    const r = Math.min(1, 8 / Math.max(1e-6, blur));
+    /* 用共用的金字塔模糊（utils/glowSprite）：全解析度、平滑，不交給瀏覽器大半徑的 shadowBlur */
     const extra = Math.ceil(blur * 2);
     const cv = document.createElement('canvas');
-    cv.width = Math.max(1, Math.ceil((sp.canvas.width + extra * 2) * r)); cv.height = Math.max(1, Math.ceil((sp.canvas.height + extra * 2) * r));
-    const g = cv.getContext('2d')!;
-    g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
-    g.shadowColor = color;
-    // 只留光暈本身（圖形畫到畫布外面去，只有影子落進來）
-    g.shadowOffsetX = cv.width; g.shadowBlur = blur * r;
-    const sw = sp.canvas.width * r, sh = sp.canvas.height * r;
-    g.drawImage(sp.canvas, extra * r - cv.width, extra * r, sw, sh);
-    g.drawImage(sp.canvas, extra * r - cv.width, extra * r, sw, sh);
-    return { canvas: cv, w: sp.w, ox: sp.ox - extra, oy: sp.oy - extra, r };
+    cv.width = sp.canvas.width + extra * 2; cv.height = sp.canvas.height + extra * 2;
+    const m = document.createElement('canvas'); m.width = cv.width; m.height = cv.height;
+    m.getContext('2d')!.drawImage(sp.canvas, extra, extra);
+    // 原本是同一層畫兩次
+    glowFromMask(cv.getContext('2d')!, m, cv.width, cv.height, [blur / 2, blur / 2], color);
+    m.width = m.height = 0;
+    return { canvas: cv, w: sp.w, ox: sp.ox - extra, oy: sp.oy - extra };
   };
   const out = { lo: halo(sp.w * .1), hi: halo(sp.w * .36) };
   m.set(color, out);
