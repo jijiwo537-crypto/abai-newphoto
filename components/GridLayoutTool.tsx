@@ -3028,12 +3028,16 @@ export const ColorPick: React.FC<{
     右上角的 ✓ 收起：先往下滑出去，再交給 onDone（取消選中）。兩個拼圖共用。 */
 export const TextEditSheet: React.FC<{ onDone: () => void; children: React.ReactNode }> = ({ onDone, children }) => {
   const [closing, setClosing] = useState(false);
+  /* 進場跟退場同一種動作、同樣 220ms：一開始在螢幕外（往下推 100%），下一格才滑上來 */
+  const [shown, setShown] = useState(false);
+  useEffect(() => { const r = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true))); return () => cancelAnimationFrame(r); }, []);
   const close = () => { if (closing) return; setClosing(true); window.setTimeout(onDone, 220); };
   return createPortal(
     <div data-text-sheet
-      className="fixed inset-x-0 bottom-0 z-[90] flex flex-col bg-[#0b0b0b] rounded-t-[18px] border-t border-white/10 shadow-[0_-12px_32px_rgba(0,0,0,0.55)] animate-in slide-in-from-bottom duration-300"
-      style={{ height: 'min(50dvh, 468px)',
-        transform: closing ? 'translateY(100%)' : undefined, transition: 'transform 220ms cubic-bezier(0.4, 0, 1, 1)' }}
+      className="fixed inset-x-0 bottom-0 z-[90] flex flex-col bg-[#0b0b0b] rounded-t-[18px] border-t border-white/10 shadow-[0_-12px_32px_rgba(0,0,0,0.55)]"
+      style={{ height: 'min(43dvh, 400px)',
+        transform: closing || !shown ? 'translateY(100%)' : 'translateY(0)',
+        transition: `transform 220ms ${closing ? 'cubic-bezier(0.4, 0, 1, 1)' : 'cubic-bezier(0, 0, 0.2, 1)'}` }}
       onPointerDown={e => e.stopPropagation()}>
       <div className="shrink-0 h-12 flex items-center justify-between pl-5 pr-3">
         <span className="text-[14px] font-bold tracking-wider text-white">文字</span>
