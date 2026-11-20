@@ -76,7 +76,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   </svg>
 );
 
-import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack, primeCanvasFont } from '../utils/fonts';
+import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack, primeCanvasFont, fontEpoch } from '../utils/fonts';
 import { drawStableText, hasEmoji } from '../utils/stableText';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG, MEDIA_ACCEPT } from '../utils/fileTypes';
@@ -8904,7 +8904,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const k0 = Math.min(dpr, 4096 / (hw * 2), 4096 / (hh * 2));
         const SW = Math.max(1, Math.ceil(hw * 2 * k0)), SH = Math.max(1, Math.ceil(hh * 2 * k0));
         const glowK = animRef.current?.glowObj ? animRef.current.glowObj(o) : 1;
-        const key = [s, k0, fxTick, glowK, isMain ? 1 : 0, o.id === selectedObj ? 1 : 0, motionTargetFlashRef.current ? 1 : 0].join('|');
+        const key = [s, k0, fxTick, glowK, isMain ? 1 : 0, o.id === selectedObj ? 1 : 0, motionTargetFlashRef.current ? 1 : 0, o.type === 'text' ? fontEpoch : 0].join('|');
         const sprites = motionSpriteCache;
         let ent = sprites.get(o.id);
         if (!ent || ent.model !== o || ent.key !== key) {

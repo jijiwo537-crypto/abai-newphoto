@@ -430,3 +430,13 @@ export function primeCanvasFont(font: string) {
   canvasFontAsked.add(font);
   document.fonts.load(font).then(() => { window.dispatchEvent(new Event('abai-font-ready')); }, () => { canvasFontAsked.delete(font); });
 }
+
+/* 任何字型（或中文字型的某一小份）下載完成：通知畫面重畫，並讓「畫好存起來」的文字貼圖作廢重做。
+   不這樣的話，字型還沒到之前用備用字體畫的那一張會一直被沿用（動畫中看起來就是字體自己變了）。 */
+export let fontEpoch = 0;
+if (typeof document !== 'undefined' && (document as any).fonts?.addEventListener) {
+  (document as any).fonts.addEventListener('loadingdone', () => {
+    fontEpoch++;
+    window.dispatchEvent(new Event('abai-font-ready'));
+  });
+}
