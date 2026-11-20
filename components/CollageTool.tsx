@@ -76,7 +76,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   </svg>
 );
 
-import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack, primeCanvasFont, fontEpoch } from '../utils/fonts';
+import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack, primeCanvasFont, fontEpoch, ensureTextFonts } from '../utils/fonts';
 import { drawStableText, hasEmoji } from '../utils/stableText';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG, MEDIA_ACCEPT } from '../utils/fileTypes';
@@ -2875,6 +2875,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const textFitKeys = useRef(new Map<string, string>());
   const textFontWaits = useRef(new Set<string>());
   const [textFitTick, setTextFitTick] = useState(0);
+  // 畫面上每一段文字（含打開草稿時就有的）都先把字體與用到的字載好
+  useEffect(() => {
+    ensureTextFonts(objects.filter(o => o.type === 'text' && !o.sym).map(o => ({ family: o.fontFamily || DEFAULT_FONT, text: o.text || '', bold: o.bold, italic: o.italic })));
+  }, [objects]);
   /* 字型下載完成的次數：文字的框、預先畫好的場景圖塊都靠它作廢重做（見 stableSceneKey） */
   const [fontTick,setFontTick]=useState(fontEpoch);
   useEffect(()=>{const f=()=>setFontTick(fontEpoch);window.addEventListener('abai-font-ready',f);return()=>window.removeEventListener('abai-font-ready',f);},[]);
@@ -3007,11 +3011,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   const [motionSub, setMotionSub] = useState<'in' | 'idle' | 'glow' | 'dash'>('in');
-  // 選中一般文字：直接打開文字編輯頁（從下面冒出來的那一塊，見 TextEditSheet）
-  useEffect(() => {
-    const o = objectsRef.current.find(z => z.id === selectedObj);
-    if (o && o.type === 'text' && !o.sym && activeTab !== 'objedit' && activeTab !== 'motion') setActiveTab('objedit');
-  }, [selectedObj]);
+  /* 文字編輯頁（從下面冒出來的那一塊）只在按「編輯」時打開：點文字本身不打開。
+     記的是「為哪一段文字打開」，選到別的東西就自然收起 */
+  const [textSheetId, setTextSheetId] = useState<string | null>(null);
   const [settingSub, setSettingSub] = useState<'layout' | 'mask'>('layout');
   /** 正在畫布上直接編輯的那一段文字（null＝沒有在編輯）。
       跟經典拼圖同一種做法：疊一個排版一模一樣的 textarea 在字上面，
@@ -8641,7 +8643,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
           if (textLayout && !textUnitBreathe) {
             drawTextRuns(ctx, textLayout, stroke, (t, x, y) => !textLayout.vertical && ctx.textAlign === 'center'
-              && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x, y));
+              && !o.strokeWidth && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x, y));
             return;
           }
           if (f?.lab) {
@@ -8708,7 +8710,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
           if (!unitLayout) {
             // 快取的點陣套在連續矩陣下：不會因為每個縮放倍率重新微調字形而抖動
-            if (drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx + spacingShift, tdy)) return;
+            // 有描邊時填色也直接畫：描邊是直接畫的，兩者必須走同一套排字，描邊才不會歪
+            if (!o.strokeWidth && drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx + spacingShift, tdy)) return;
             if (stroke) ctx.strokeText(o.text || '', tdx + spacingShift, tdy);
             else ctx.fillText(o.text || '', tdx + spacingShift, tdy);
             return;
@@ -12335,7 +12338,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 { t: '下移一層', on: act(() => move(-1)), el: <MoveDown size={14} />, off: objects[0]?.id === o.id && !!o.below },
                 { t: '上移一層', on: act(() => move(1)), el: <MoveUp size={14} />, off: objects[objects.length - 1]?.id === o.id && !o.below },
                 { t: '複製', on: act(dup), el: <Copy size={14} />, off: false },
-                { t: o.type === 'text' ? (o.sym ? '編輯符號' : '編輯文字') : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => { setColorPickerTarget(null); setActiveTab('objedit'); }), el: <Sliders size={14} />, off: false },
+                { t: o.type === 'text' ? (o.sym ? '編輯符號' : '編輯文字') : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => { setColorPickerTarget(null); setActiveTab('objedit'); if (o.type === 'text' && !o.sym) setTextSheetId(o.id); }), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
               ].map(b => (
                 /* 鬆手才觸發。不綁在 onPointerDown，不然手指一碰到就動作 ——
@@ -12490,6 +12493,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     setSelectedRegionPhoto(null);
                   }
                   setActiveTab(id);
+                  // 按主工具列的「編輯」：選中的是一般文字就打開文字編輯頁
+                  if (id === 'objedit') { const so = objectsRef.current.find(z => z.id === selectedObjRef.current); if (so?.type === 'text' && !so.sym) setTextSheetId(so.id); }
                   /* 已經點進「新增符號／新增圖形」的時候再點一次加號，
                      就回到新增的主頁 —— 不必特地去按左上角的返回鍵。 */
                   if (id === 'add') setAddSub('root');
@@ -13492,7 +13497,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   // 一般文字：編輯頁從下面冒出來（打字中先收起來，不擋鍵盤）；符號照舊放在原本的面板
                   if (sel.sym) return textPanel;
                   if (editingTextId === sel.id) return null;
-                  return <TextEditSheet key={`sheet-${sel.id}`} onDone={() => { selectedObjRef.current = null; setSelectedObj(null); setSelectedTarget(null); }}>{textPanel}</TextEditSheet>;
+                  if (textSheetId !== sel.id) return (
+                    <div className="h-full flex items-center justify-center pb-6">
+                      <button onClick={() => setTextSheetId(sel.id)}
+                        className="h-10 px-6 rounded-full border border-white/20 text-[13px] font-bold tracking-wider text-white active:scale-95 transition-transform">編輯文字</button>
+                    </div>
+                  );
+                  return <TextEditSheet key={`sheet-${sel.id}`} onDone={() => { setTextSheetId(null); selectedObjRef.current = null; setSelectedObj(null); setSelectedTarget(null); }}>{textPanel}</TextEditSheet>;
                   })() : (
                   <div className="h-full">
                     {/* 圖片調整直接用經典拼圖那顆元件 —— 同一份程式碼，

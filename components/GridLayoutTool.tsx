@@ -94,7 +94,7 @@ import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
-import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont } from '../utils/fonts';
+import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont, ensureTextFonts } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
 import { sourceHasAlpha, lutMaxAmount, warmPhotoFxSurface } from '../utils/photoFx';
@@ -3032,7 +3032,7 @@ export const TextEditSheet: React.FC<{ onDone: () => void; children: React.React
   return createPortal(
     <div data-text-sheet
       className="fixed inset-x-0 bottom-0 z-[90] flex flex-col bg-[#0b0b0b] rounded-t-[18px] border-t border-white/10 shadow-[0_-12px_32px_rgba(0,0,0,0.55)] animate-in slide-in-from-bottom duration-300"
-      style={{ height: 'min(56dvh, 520px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+      style={{ height: 'min(50dvh, 468px)',
         transform: closing ? 'translateY(100%)' : undefined, transition: 'transform 220ms cubic-bezier(0.4, 0, 1, 1)' }}
       onPointerDown={e => e.stopPropagation()}>
       <div className="shrink-0 h-12 flex items-center justify-between pl-5 pr-3">
@@ -3042,7 +3042,8 @@ export const TextEditSheet: React.FC<{ onDone: () => void; children: React.React
           <Check size={22} strokeWidth={2.4} />
         </button>
       </div>
-      <div className="flex-1 min-h-0 px-3">{children}</div>
+      {/* 內容一路捲到螢幕最下面（不在底部留一條黑邊）；最後一排下面再留出 iPhone 橫條的高度 */}
+      <div className="flex-1 min-h-0 px-3 [&_[data-text-editor-scroll]]:pb-[env(safe-area-inset-bottom)]">{children}</div>
     </div>,
     document.body,
   );
@@ -3218,7 +3219,7 @@ export const TextEditorPanel: React.FC<{
           符號沒有分頁（只有顏色與發光）。 */}
       {!symbol && !colorPage && (
         /* 七個分頁固定一排、平均分寬 */
-        <div className="shrink-0 mt-2.5 mb-0.5 flex select-none" data-text-tabs>
+        <div className="shrink-0 mt-1 mb-3 flex select-none" data-text-tabs>
           {tabs.map(([id, label]) => (
             /* 選中的那一頁只是字變亮（不加底色） */
             <button key={id} onClick={() => setSub(id)}
@@ -6765,7 +6766,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           return;
         }
         if (layout) {
-          drawTextRuns(ctx, layout, stroke, (t, x, y) => !layout.vertical && ctx.textAlign === 'center' && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x - spacing / 2, y));
+          drawTextRuns(ctx, layout, stroke, (t, x, y) => !image.strokeWidth && !layout.vertical && ctx.textAlign === 'center' && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x - spacing / 2, y));
           return;
         }
         if (motionFrame?.lab) {
@@ -6789,7 +6790,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           // 快取的點陣套在連續矩陣下：不會因為每個縮放倍率重新微調字形而抖動
           lines.forEach((line, i) => {
             const y = startY + i * lineH + dy;
-            if (drawStableText(ctx, stroke ? 'stroke' : 'fill', line, dx, y)) return;
+            // 有描邊時填色也直接畫：描邊是直接畫的，兩者必須走同一套排字，描邊才不會歪
+            if (!image.strokeWidth && drawStableText(ctx, stroke ? 'stroke' : 'fill', line, dx, y)) return;
             if (stroke) ctx.strokeText(line, dx, y); else ctx.fillText(line, dx, y);
           });
           return;
@@ -11427,11 +11429,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
   const [motionSub, setMotionSub] = useState<'in' | 'idle'>('in');
-  // 選中一般文字：直接打開文字編輯頁（從下面冒出來的那一塊，見 TextEditSheet）
+  /* 文字編輯頁（從下面冒出來的那一塊）只在按「編輯」時打開：點文字本身不打開 */
+  const [textSheetId, setTextSheetId] = useState<string | null>(null);
+  // 畫面上每一段文字（含打開草稿時就有的）都先把字體與用到的字載好
   useEffect(() => {
-    const f = floatingImages.find(x => x.id === selectedFloatingId);
-    if (f && f.text !== undefined && !f.sym && activeTab !== 'adjust' && activeTab !== 'motion') setActiveTab('adjust');
-  }, [selectedFloatingId]);
+    ensureTextFonts(floatingImages.filter(f => f.text !== undefined && !f.sym).map(f => ({ family: f.fontFamily || DEFAULT_FONT, text: f.text || '', bold: f.bold, italic: f.italic })));
+  }, [floatingImages]);
   /* 進入「選中拍立得裡的照片」：拍立得已經選中、裡面有照片，原地點一下照片窗口（手指沒移動）。
      在整頁的捕獲階段聽，不動原本選取／拖曳的那套手勢 */
   const polaSelRef = useRef<string | null>(null); polaSelRef.current = selectedFloatingId;
@@ -19025,6 +19028,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             if (fImg.text !== undefined) {
                               setEditingTextId(fImg.id);
                               setInlineEditId(null);
+                              if (!fImg.sym) setTextSheetId(fImg.id);
                             }
                             setObjectEditorRevision(v=>v+1); setActiveTab('adjust');
                             return;
@@ -19612,6 +19616,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       setSelectedFloatingId(null); setSelectedBrushId(null); setSelectedIndex(null); setSelectedLayoutId(null);
                     }
                     setActiveTab(id as any);
+                    // 按主工具列的「編輯」：選中的是一般文字就打開文字編輯頁
+                    if (id === 'adjust') { const sf = floatingImages.find(x => x.id === selectedFloatingId); if (sf && sf.text !== undefined && !sf.sym) setTextSheetId(sf.id); }
                     /* 已經點進「新增符號／新增圖形」的時候再點一次加號，
                        就回到新增的主頁 —— 不必特地去按左上角的返回鍵。 */
                     if (id === 'add') setAddSub('root');
@@ -19867,7 +19873,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 // 一般文字：編輯頁從下面冒出來（打字中先收起來，不擋鍵盤）；符號照舊放在原本的面板
                 if (layer.sym) return panel;
                 if (inlineEditId === layer.id) return null;
-                return <TextEditSheet key={`sheet-${layer.id}`} onDone={() => setSelectedFloatingId(null)}>{panel}</TextEditSheet>;
+                if (textSheetId !== layer.id) return (
+                  <div className="h-full flex items-center justify-center pb-6">
+                    <button onClick={() => setTextSheetId(layer.id)}
+                      className="h-10 px-6 rounded-full border border-white/20 text-[13px] font-bold tracking-wider text-white active:scale-95 transition-transform">編輯文字</button>
+                  </div>
+                );
+                return <TextEditSheet key={`sheet-${layer.id}`} onDone={() => { setTextSheetId(null); setSelectedFloatingId(null); }}>{panel}</TextEditSheet>;
               }
 
               // 選到圖形：顏色／粗細／虛線

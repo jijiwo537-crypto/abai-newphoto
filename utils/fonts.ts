@@ -440,3 +440,21 @@ if (typeof document !== 'undefined' && (document as any).fonts?.addEventListener
     window.dispatchEvent(new Event('abai-font-ready'));
   });
 }
+
+/* 確保畫面上的文字真的用它自己的字體畫：註冊字體家族、把這段字實際用到的字（中文字型是分包下載的）載好。
+   打開草稿、新增文字、改字、搬動時都會呼叫；已經好的會直接略過。全部到齊時發 abai-font-ready 讓畫面重畫。 */
+const glyphsDone = new Set<string>();
+export function ensureTextFonts(items: { family: string; text: string; bold?: boolean; italic?: boolean }[]) {
+  if (typeof document === 'undefined') return;
+  for (const it of items) {
+    if (!it.text) continue;
+    const key = `${it.family}|${it.bold ? 1 : 0}|${it.italic ? 1 : 0}|${it.text}`;
+    if (glyphsDone.has(key)) continue;
+    glyphsDone.add(key);
+    const css = `${it.italic ? 'italic ' : ''}${it.bold ? 700 : 400} 40px "${it.family}"`;
+    void ensureFont(it.family)
+      .then(() => (document as any).fonts?.load?.(css, it.text))
+      .then(() => { fontEpoch++; window.dispatchEvent(new Event('abai-font-ready')); })
+      .catch(() => { glyphsDone.delete(key); });
+  }
+}

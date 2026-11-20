@@ -84,6 +84,8 @@ export function drawStableText(ctx: CanvasRenderingContext2D, mode: 'fill' | 'st
   /* 中文字體是照 unicode-range 拆成很多小份的：字型「載好了」不代表這幾個字所在的那一份也到了。
      要用這段字本身去問；還沒到就先請瀏覽器載，載到時通知重畫（鑰匙會變，不會留著備用字型的貼圖） */
   const ready = textReady(ctx.font, text);
+  // 這幾個字還沒到：不做快取貼圖，直接畫（到齊之後會重畫，不會留下備用字型的貼圖）
+  if (!ready) return false;
   const key = [mode, text, ctx.font, spacing, ctx.textAlign, ctx.textBaseline, style,
     mode === 'stroke' ? `${ctx.lineWidth}|${ctx.lineJoin}|${ctx.miterLimit}` : '', level, ready].join('\u0001');
   let hit = cache.get(key);
