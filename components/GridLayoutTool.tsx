@@ -3304,8 +3304,8 @@ export const TextEditorPanel: React.FC<{
                 {/* 「無」：禁止圖標，跟最左那顆自訂顏色一樣大；按下去只亮一下 */}
                 <button onClick={() => onChange({ bgOn: false })} aria-label="無背景"
                   className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-[#9a9a9a] active:text-white active:scale-90 transition-all">
-                  <svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8">
-                    <circle cx="16" cy="16" r="13" /><line x1="6.8" y1="25.2" x2="25.2" y2="6.8" />
+                  <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6">
+                    <circle cx="13" cy="13" r="11" /><line x1="5.2" y1="20.8" x2="20.8" y2="5.2" />
                   </svg>
                 </button>
                 <div className="flex-1 min-w-0">
