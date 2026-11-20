@@ -10,7 +10,8 @@ import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
 import { waveWarp } from '../utils/waveWarp';
-import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, drawTextRunsAnimated, type TextLayout } from '../utils/textDeco';
+import { TEXT_CARDS, TEXT_CARD_GROUPS, textCardPatch, paintTextCardPreview, loadTextCardFont, type TextCard } from '../utils/textCards';
+import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, drawTextRunsAnimated, textFillStyle, setRunGradient, paintOuterStroke, paintTextDepth, paintDecoLines, textEffectPad, type TextLayout } from '../utils/textDeco';
 import { createPortal, flushSync } from 'react-dom';
 import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/classicTextureSize';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
@@ -3024,8 +3025,42 @@ export const ColorPick: React.FC<{
   );
 };
 
-type TextTab = 'font' | 'color' | 'stroke' | 'glow' | 'shadow' | 'weight' | 'bg' | 'layout';
-let lastTextTab: TextTab = 'font';
+/** 字卡選擇：上面是分類，下面是每一張字卡的實際樣子（用這段文字的前幾個字預覽） */
+const TextCardPicker: React.FC<{ text?: string; onPick: (c: TextCard) => void }> = ({ text, onPick }) => {
+  const [group, setGroup] = useState(TEXT_CARD_GROUPS[0]);
+  const sample = (() => { const t = (text || '').replace(/\n/g, ' ').trim(); return !t || t === TEXT_PLACEHOLDER ? '標題文字' : Array.from(t).slice(0, 6).join(''); })();
+  return (
+    <div className="pb-8">
+      <div className="sticky top-0 z-10 bg-[#0a0a0a] pt-2 pb-2 flex gap-4 px-1">
+        {TEXT_CARD_GROUPS.map(g => (
+          <button key={g} onClick={() => setGroup(g)}
+            className={`h-6 text-[12px] font-bold tracking-wider ${group === g ? 'text-white' : 'text-[#666]'}`}>{g}</button>
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-2 px-1">
+        {TEXT_CARDS.filter(c => c.group === group).map(c => <TextCardThumb key={c.id} card={c} text={sample} onPick={() => onPick(c)} />)}
+      </div>
+    </div>
+  );
+};
+const TextCardThumb: React.FC<{ card: TextCard; text: string; onPick: () => void }> = ({ card, text, onPick }) => {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    let alive = true;
+    const draw = () => { if (alive && ref.current) paintTextCardPreview(ref.current, card, text); };
+    draw();
+    void loadTextCardFont(card, text).then(draw);
+    return () => { alive = false; };
+  }, [card, text]);
+  return (
+    <button onClick={onPick} className="flex flex-col items-center gap-1 active:scale-95 transition-transform">
+      <canvas ref={ref} className="w-full h-14 rounded-[8px] bg-[#161616] border border-[#232323]" />
+      <span className="text-[10px] font-bold text-[#8c8c8c]">{card.name}</span>
+    </button>
+  );
+};
+type TextTab = 'card' | 'font' | 'color' | 'stroke' | 'glow' | 'shadow' | 'weight' | 'bg' | 'layout';
+let lastTextTab: TextTab = 'card';
 /** 文字的行距（字級的幾倍），沒設過的舊文字都是這個 */
 export const TEXT_LINE_HEIGHT = 1.12;
 const TEXT_ARRANGE = [
@@ -3179,7 +3214,7 @@ export const TextEditorPanel: React.FC<{
         })} />
     </div>
   );
-  const tabs: [TextTab, string][] = [['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['glow', '發光'], ['shadow', '陰影'], ['weight', '粗斜體'], ['layout', '排列']];
+  const tabs: [TextTab, string][] = [['card', '字卡'], ['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['glow', '發光'], ['shadow', '陰影'], ['weight', '粗斜體'], ['layout', '排列']];
   const tab = symbol ? 'color' : sub === 'bg' ? 'font' : sub;
 
   return (
@@ -3216,6 +3251,11 @@ export const TextEditorPanel: React.FC<{
             onBack={() => setColorPage(null)}
           />
         )}
+        {!colorPage && tab === 'card' && (
+          <TextCardPicker text={layer.text} onPick={c => {
+            void loadTextCardFont(c, layer.text || '').then(() => onChange(textCardPatch(c) as any));
+          }} />
+        )}
         {!colorPage && tab === 'font' && (
           <div className="space-y-2.5 pb-6">
             {/* 語言按鈕固定在上面：字體列表上下捲動時它不跟著跑 */}
@@ -3248,16 +3288,36 @@ export const TextEditorPanel: React.FC<{
             <p className="pt-3 text-center text-[9px] tracking-wider text-white/25">字體僅供個人非商業用途使用</p>
           </div>
         )}
-        {!colorPage && tab !== 'font' && (
+        {!colorPage && tab !== 'font' && tab !== 'card' && (
           /* 每一頁只放兩三樣東西，上下空間夠用，不必捲動 */
           <div className={`space-y-3.5 pt-2 ${tab === 'shadow' ? 'pb-20' : 'pb-8'}`}>
             {tab === 'color' && <>
               {swatchRow(layer.color, c => onChange({ color: c }))}
               {!symbol && <div className="px-2">{slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}</div>}
+              {/* 漸層：字的下半部漸變成這個顏色（字卡常用）；禁止圖標＝不要漸層 */}
+              {!symbol && <div className="flex items-center gap-3 px-2">
+                <span className="text-[11px] font-bold text-white/70 flex-1">漸層</span>
+                <button onClick={() => onChange({ color2: undefined })} aria-label="不要漸層"
+                  className="shrink-0 w-7 h-7 flex items-center justify-center text-[#9a9a9a] active:text-white active:scale-90 transition-all">
+                  <svg width="22" height="22" viewBox="0 0 26 26" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="13" cy="13" r="11" /><line x1="5.2" y1="20.8" x2="20.8" y2="5.2" /></svg>
+                </button>
+                <ColorPick compact label="" value={layer.color2 || layer.color || '#FFFFFF'} colors={TEXT_COLORS}
+                  onPick={c => onChange({ color2: c })}
+                  onOpen={() => setColorPage({ value: layer.color2 || layer.color || '#FFFFFF', colors: TEXT_COLORS, onPick: c => onChange({ color2: c }) })} />
+              </div>}
               {/* 符號：顏色下面就是發光（符號只有這兩樣）。符號的發光最大值是文字的一半 */}
               {symbol && glowRow(SYMBOL_GLOW_MAX)}
             </>}
-            {tab === 'stroke' && strokeRow}
+            {tab === 'stroke' && <>
+              {strokeRow}
+              {/* 外描邊：在描邊外面再包一圈（字卡常用的白邊＋黑邊） */}
+              <div className="flex items-center gap-3 px-2">
+                <div className="flex-1 min-w-0">{slider('外描邊', layer.stroke2Width || 0, 0, 2, v => onChange({ stroke2Width: v }), 'px', 0.04)}</div>
+                <ColorPick compact label="顏色" value={layer.stroke2Color || '#000000'} colors={STROKE_COLORS}
+                  onPick={c => onChange({ stroke2Color: c })}
+                  onOpen={() => setColorPage({ value: layer.stroke2Color || '#000000', colors: STROKE_COLORS, onPick: c => onChange({ stroke2Color: c }) })} />
+              </div>
+            </>}
             {tab === 'glow' && glowRow(15)}
             {tab === 'shadow' && <>
               {/* 陰影：強度 0＝沒有陰影；拉起來才出現模糊、距離、角度 */}
@@ -3276,6 +3336,13 @@ export const TextEditorPanel: React.FC<{
                 {slider('模糊', layer.shadowBlur ?? TEXT_SHADOW_DEFAULTS.shadowBlur, 0, 100, v => onChange({ shadowBlur: v }))}
                 {slider('距離', layer.shadowDist ?? TEXT_SHADOW_DEFAULTS.shadowDist, 0, 100, v => onChange({ shadowDist: v }))}
                 {slider('角度', layer.shadowAngle ?? TEXT_SHADOW_DEFAULTS.shadowAngle, 0, 360, v => onChange({ shadowAngle: v }), '°')}
+              </div>
+              {/* 立體：字往右下疊出厚度 */}
+              <div className="flex items-center gap-3 px-2">
+                <div className="flex-1 min-w-0">{slider('立體', layer.depth || 0, 0, 100, v => onChange({ depth: v }))}</div>
+                <ColorPick compact label="顏色" value={layer.depthColor || '#000000'} colors={STROKE_COLORS}
+                  onPick={c => onChange({ depthColor: c })}
+                  onOpen={() => setColorPage({ value: layer.depthColor || '#000000', colors: STROKE_COLORS, onPick: c => onChange({ depthColor: c }) })} />
               </div>
             </>}
             {tab === 'weight' && (
@@ -3339,6 +3406,9 @@ export const TextEditorPanel: React.FC<{
                 </div>
                 {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
                 {slider('行距', layer.lineHeight ?? TEXT_LINE_HEIGHT, 0.8, 2.4, v => onChange({ lineHeight: v }), '', 0.01)}
+                <button onClick={() => onChange({ deco: layer.deco === 'lines' ? 'none' : 'lines' })}
+                  className={`w-full h-10 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                    layer.deco === 'lines' ? 'border-white text-white' : 'border-[#2e2e2e] text-[#8c8c8c]'}`}>上下裝飾線</button>
               </div>
             )}
           </div>
@@ -5626,6 +5696,7 @@ export interface FloatingImage {
   /** 文字陰影（強度 0＝沒有）、背景（見 utils/textDeco） */
   shadowAmt?: number; shadowColor?: string; shadowBlur?: number; shadowDist?: number; shadowAngle?: number;
   bgOn?: boolean; bgColor?: string; bgAlpha?: number; underline?: boolean;
+  stroke2Width?: number; stroke2Color?: string; color2?: string; depth?: number; depthColor?: string; deco?: 'none' | 'lines';
   textAlign?: 'left' | 'center' | 'right'; vertical?: boolean; vAlign?: 'top' | 'center' | 'bottom';
   /** 行距（字級的幾倍，預設 TEXT_LINE_HEIGHT） */
   lineHeight?: number;
@@ -6830,6 +6901,9 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         if (!image.vertical) ctx.translate(0, textInkShift(ctx, image.text || '', lineH));
         ctx.fillStyle = image.color || '#FFFFFF';
         paintTextShadow(ctx, image, size, fill);
+        // 字卡效果：立體厚度、外描邊（在發光、描邊、字的下面）
+        paintTextDepth(ctx, image, size, 1, fill, () => drawAnimatedUnits(true));
+        paintOuterStroke(ctx, image, 1, () => drawAnimatedUnits(true));
       }
       ctx.fillStyle = image.color || '#FFFFFF';
       if (image.glow) {
@@ -6849,11 +6923,15 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         ctx.strokeStyle = image.strokeColor || '#000000';
         drawAnimatedUnits(true);
       }
+      // 填色（字卡可以是上下漸層）
+      if (!image.sym) { ctx.fillStyle = textFillStyle(ctx, image, size); setRunGradient(ctx, image, size); }
       fill();
+      setRunGradient(ctx, {}, size);
       if (!image.sym) {
         const L = layout || layoutText(ctx, image, image.text || '', size, lineH, spacing);
         ctx.fillStyle = image.color || '#FFFFFF';
         drawUnderline(ctx, image, L, size);
+        paintDecoLines(ctx, image, L.w, L.h, size);
       }
       ctx.restore();
 
@@ -7301,6 +7379,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         const L = layoutText(g, image, lines.join('\n'), size, size * (image.lineHeight ?? TEXT_LINE_HEIGHT), spacing);
         w = L.w + 8; h = L.h + 8;
       }
+      // 字卡的立體厚度、裝飾線會長出字外，框要一起包住（兩邊對稱加，字才維持置中）
+      if (!image.sym) { const ep = textEffectPad(image, size); w += ep.w * 2; h += ep.h; }
       const patch: Partial<FloatingImage> = {};
       /* 被四邊擠壓過的文字：量到的是未擠壓的自然尺寸。框要維持原本的擠壓
          比例，基準尺寸換成新的自然尺寸，字距／字級一改，框才會跟著等比變寬，
@@ -7345,7 +7425,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     // 真的載不到（離線、家族名打錯）就別讓框永遠停在舊尺寸
     const t = setTimeout(done, 3000);
     return () => { alive = false; clearTimeout(t); };
-  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, image.strokeWidth, image.lineHeight, image.vertical, maxTextWidth]);
+  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, image.strokeWidth, image.lineHeight, image.vertical, image.depth, image.deco, maxTextWidth]);
 
   /* 圓角／羽化／發光都自己畫在 canvas 上，預覽與匯出走同一套邏輯 */
   const shapeCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -15918,6 +15998,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (!fImg.vertical) ctx.translate(0, textInkShift(ctx, fImg.text || '', lineH));
       ctx.fillStyle = fImg.color || '#FFFFFF';
       paintTextShadow(ctx, fImg, size, drawLines);
+      const u = scaleFactor * fImg.scale;
+      paintTextDepth(ctx, fImg, size, u, drawLines, () => drawAnimatedL(true));
+      paintOuterStroke(ctx, fImg, u, () => drawAnimatedL(true));
     }
     if (fImg.glow) {
       ctx.shadowColor = fImg.glowColor || '#FFFFFF';
@@ -15942,9 +16025,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.strokeStyle = fImg.strokeColor || '#000000';
       drawAnimatedL(true);
     }
-    ctx.fillStyle = fImg.color || '#FFFFFF';
+    ctx.fillStyle = fImg.sym ? (fImg.color || '#FFFFFF') : textFillStyle(ctx, fImg, size);
+    if (!fImg.sym) setRunGradient(ctx, fImg, size);
     drawLines();
-    if (textLayout) drawUnderline(ctx, fImg, textLayout, size);
+    setRunGradient(ctx, {}, size);
+    if (textLayout) { ctx.fillStyle = fImg.color || '#FFFFFF'; drawUnderline(ctx, fImg, textLayout, size); paintDecoLines(ctx, fImg, textLayout.w, textLayout.h, size); }
     ctx.restore();
   };
 

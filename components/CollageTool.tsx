@@ -1,7 +1,7 @@
 import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
 import { swatchEdge } from '../utils/swatch';
-import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, drawTextRunsAnimated } from '../utils/textDeco';
+import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, drawTextRunsAnimated, textFillStyle, setRunGradient, paintOuterStroke, paintTextDepth, paintDecoLines, textEffectPad } from '../utils/textDeco';
 import { BusyLayer } from './BusyLayer';
 import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
@@ -477,17 +477,18 @@ const plainTextBox = (o: any, force = false): { w: number; h: number } | null =>
   g.font = font; primeCanvasFont(g.font); (g as any).letterSpacing = `${spacing}px`;
   g.textAlign = 'center'; g.textBaseline = 'middle';
   const m = g.measureText(o.text || ' ');
-  const pad = Math.max(8, size * .12), stroke = (o.strokeWidth || 0) * size / 40;
+  const pad = Math.max(8, size * .12), stroke = ((o.strokeWidth || 0) + (o.stroke2Width || 0)) * size / 40;
   // 多行或直排：框照段落排版的大小（跟繪製同一支 layoutText）
+  const ep = textEffectPad(o, size);
   if ((o.text || '').includes('\n') || o.vertical) {
     const L = layoutText(g, o, o.text || ' ', size, size * (o.lineHeight ?? 1.12), spacing);
-    return { w: Math.max(12, L.w + (pad + stroke) * 2), h: Math.max(12, (L.vertical ? L.h : L.h + size * .25) + (pad + stroke) * 2) };
+    return { w: Math.max(12, L.w + (pad + stroke) * 2 + ep.w * 2), h: Math.max(12, (L.vertical ? L.h : L.h + size * .25) + (pad + stroke) * 2 + ep.h) };
   }
   // 表情符號 iPhone 量得偏小（見 utils/stableText 的 emojiSafeInk），框至少撐到它真正的高度
   const half = Math.max(m.actualBoundingBoxAscent || size * .6, m.actualBoundingBoxDescent || size * .4, hasEmoji(o.text || '') ? size * .62 : 0);
   return {
-    w: Math.max(12, m.width - spacing + (pad + stroke) * 2),
-    h: Math.max(12, half * 2 + (pad + stroke) * 2),
+    w: Math.max(12, m.width - spacing + (pad + stroke) * 2 + ep.w * 2),
+    h: Math.max(12, half * 2 + (pad + stroke) * 2 + ep.h),
   };
 };
 
@@ -2879,7 +2880,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     for (const o of objects) {
       if (o.type !== 'text' || o.sym) continue;
       if (objPinchRef.current?.id === o.id || objStretchRef.current?.id === o.id) continue;
-      const key = JSON.stringify([o.text, o.fontFamily, o.size, o.bold, o.italic, o.letterSpacing, o.strokeWidth, o.lineHeight, o.vertical]);
+      const key = JSON.stringify([o.text, o.fontFamily, o.size, o.bold, o.italic, o.letterSpacing, o.strokeWidth, o.lineHeight, o.vertical, o.depth, o.deco, o.stroke2Width]);
       if (textFitKeys.current.get(o.id) === key) continue;
       // 每種文字狀態最多等一次字型，之後不管怎樣都量。fonts.check 對某些字型堆疊可能一直是 false，
       // 不這樣會一直重排這個 effect（React 的 maximum update depth）
@@ -8806,6 +8807,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (!o.vertical) ctx.translate(0, textInkShift(ctx, o.text || '', textLineH));
           ctx.fillStyle = o.color || '#ffffff';
           paintTextShadow(ctx, o as any, fpx, () => drawText(false));
+          // 字卡效果：立體厚度、外描邊（在發光、描邊、字的下面）
+          paintTextDepth(ctx, o as any, fpx, tk / fontK, () => drawText(false), () => drawText(true));
+          paintOuterStroke(ctx, o as any, tk / fontK, () => drawText(true));
         }
         const tb = animRef.current?.glowObj ? animRef.current.glowObj(o) : 1;
         if (o.glow && tb > 0.004) {
@@ -8826,10 +8830,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.lineWidth = o.strokeWidth * 2 * tk / fontK;
           drawText(true);
         }
-        ctx.fillStyle = o.color || '#ffffff';
+        // 填色（字卡可以是上下漸層）
+        ctx.fillStyle = o.sym ? (o.color || '#ffffff') : textFillStyle(ctx, o as any, pinFont * s);
+        if (!o.sym) setRunGradient(ctx, o as any, pinFont * s);
         drawText(false);
+        setRunGradient(ctx, {}, pinFont * s);
         ctx.shadowBlur = 0;
-        if (!o.sym && o.underline) drawUnderline(ctx, o as any, textLayout || layoutText(ctx, o as any, o.text || '', pinFont * s, pinFont * s * (o.lineHeight ?? 1.12), spacingPx), pinFont * s);
+        if (!o.sym && (o.underline || o.deco === 'lines')) {
+          const L = textLayout || layoutText(ctx, o as any, o.text || '', pinFont * s, pinFont * s * (o.lineHeight ?? 1.12), spacingPx);
+          ctx.fillStyle = o.color || '#ffffff';
+          drawUnderline(ctx, o as any, L, pinFont * s);
+          paintDecoLines(ctx, o as any, L.w, L.h, pinFont * s);
+        }
         if (isMain && !o.sym && editingTextRef.current === o.id) drawEditCaret();
         (ctx as any).letterSpacing = '0px';
         }
@@ -13434,6 +13446,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           shadowAmt: sel.shadowAmt, shadowColor: sel.shadowColor, shadowBlur: sel.shadowBlur, shadowDist: sel.shadowDist, shadowAngle: sel.shadowAngle,
                           bgOn: sel.bgOn, bgColor: sel.bgColor, bgAlpha: sel.bgAlpha, underline: sel.underline,
                           textAlign: sel.textAlign, vertical: sel.vertical, vAlign: sel.vAlign, lineHeight: sel.lineHeight, opacity: sel.opacity,
+                          color2: sel.color2, stroke2Width: sel.stroke2Width, stroke2Color: sel.stroke2Color, depth: sel.depth, depthColor: sel.depthColor, deco: sel.deco,
                         } as any}
                         onChange={(d: any) => {
                           if (d.fontFamily) ensureFont(d.fontFamily);

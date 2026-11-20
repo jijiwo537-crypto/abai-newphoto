@@ -7,6 +7,10 @@ export type TextDeco = {
   shadowAmt?: number; shadowColor?: string; shadowBlur?: number; shadowDist?: number; shadowAngle?: number;
   bgOn?: boolean; bgColor?: string; bgAlpha?: number;
   underline?: boolean;
+  /** 字卡用的進階效果：外描邊（第二圈）、漸層（下半部的顏色）、立體厚度、上下裝飾線 */
+  stroke2Width?: number; stroke2Color?: string; color2?: string;
+  depth?: number; depthColor?: string; deco?: 'none' | 'lines';
+  strokeWidth?: number; color?: string;
   /** 排列：橫排的左／中／右對齊；直排（由右往左一行一行、每行由上往下）的上／中／下對齊 */
   textAlign?: 'left' | 'center' | 'right'; vertical?: boolean; vAlign?: 'top' | 'center' | 'bottom';
 };
@@ -80,6 +84,8 @@ export const drawTextRuns = (ctx: CanvasRenderingContext2D, L: TextLayout, strok
     if (!r.t) continue;
     textReady(ctx.font, r.t);  // 這幾個字所在的字型分包還沒到的話先去載，到了會通知重畫
     ctx.textAlign = r.align;
+    const rf = !stroke && (ctx as any).__runFill;
+    if (rf) { ctx.fillStyle = rf(r.y); ctx.fillText(r.t, r.x, r.y); continue; }
     if (draw && draw(r.t, r.x, r.y)) continue;
     if (stroke) ctx.strokeText(r.t, r.x, r.y); else ctx.fillText(r.t, r.x, r.y);
   }
@@ -159,4 +165,62 @@ export const drawTextRunsAnimated = (ctx: CanvasRenderingContext2D, L: TextLayou
     ctx.restore();
   });
   ctx.textAlign = prevAlign; (ctx as any).letterSpacing = prevLs;
+};
+
+/* ── 字卡效果 ───────────────────────────────────────────────────────────── */
+/** 填色：有 color2 就是上→下的漸層（以這一行字的高度為範圍），否則就是單色 */
+export const textFillStyle = (ctx: CanvasRenderingContext2D, o: TextDeco, size: number, y = 0): string | CanvasGradient => {
+  if (!o.color2) return o.color || '#FFFFFF';
+  const g = ctx.createLinearGradient(0, y - size * .5, 0, y + size * .5);
+  g.addColorStop(0, o.color || '#FFFFFF'); g.addColorStop(1, o.color2);
+  return g;
+};
+/** 多行／排過版的漸層：每一行各自從上到下（drawTextRuns 會看這個） */
+export const setRunGradient = (ctx: CanvasRenderingContext2D, o: TextDeco, size: number) => {
+  (ctx as any).__runFill = o.color2 ? (y: number) => textFillStyle(ctx, o, size, y) : null;
+};
+/** 外描邊：在第一圈描邊外面再包一圈（寬度＝兩圈加起來），畫在最底下 */
+export const paintOuterStroke = (ctx: CanvasRenderingContext2D, o: TextDeco, unit: number, drawStroke: () => void) => {
+  const w2 = Math.max(0, o.stroke2Width || 0);
+  if (w2 <= 0) return;
+  ctx.save();
+  ctx.lineJoin = 'round'; ctx.miterLimit = 2;
+  ctx.strokeStyle = o.stroke2Color || '#000000';
+  ctx.lineWidth = ((o.strokeWidth || 0) + w2) * 2 * unit;
+  drawStroke();
+  ctx.restore();
+};
+/** 立體厚度：同一個字形（含描邊外框）往右下一層一層疊，厚度跟字級等比。depth 0～100 */
+export const paintTextDepth = (ctx: CanvasRenderingContext2D, o: TextDeco, size: number, unit: number, drawFill: () => void, drawStroke: () => void) => {
+  const d = Math.max(0, Math.min(100, o.depth || 0));
+  if (d <= 0) return;
+  const len = d / 100 * size * .14;
+  const m = ctx.getTransform(), k = Math.hypot(m.a, m.b) || 1;
+  const steps = Math.max(1, Math.min(48, Math.ceil(len * k / 1.2)));
+  const outline = ((o.strokeWidth || 0) + (o.stroke2Width || 0)) * 2 * unit;
+  ctx.save();
+  ctx.fillStyle = o.depthColor || '#000000'; ctx.strokeStyle = o.depthColor || '#000000';
+  ctx.lineJoin = 'round'; ctx.lineWidth = outline;
+  for (let i = steps; i >= 1; i--) {
+    const t = len * i / steps;
+    ctx.save(); ctx.translate(t * .72, t);
+    if (outline > 0) drawStroke(); drawFill();
+    ctx.restore();
+  }
+  ctx.restore();
+};
+/** 上下裝飾線（電影片名、品牌字常見）：比字寬一點的兩條細線 */
+export const paintDecoLines = (ctx: CanvasRenderingContext2D, o: TextDeco, w: number, h: number, size: number) => {
+  if (o.deco !== 'lines') return;
+  const t = Math.max(.5, size * .035), half = w / 2 + size * .3, gap = size * .32;
+  ctx.save(); ctx.shadowColor = 'transparent';
+  ctx.fillStyle = o.color2 || o.color || '#FFFFFF';
+  ctx.fillRect(-half, -h / 2 - gap - t, half * 2, t);
+  ctx.fillRect(-half, h / 2 + gap, half * 2, t);
+  ctx.restore();
+};
+/** 字卡效果會多佔的空間（選中框要包住）：立體往右下、裝飾線往上下 */
+export const textEffectPad = (o: TextDeco, size: number) => {
+  const d = Math.max(0, Math.min(100, o.depth || 0)) / 100 * size * .14;
+  return { w: d * .72, h: d + (o.deco === 'lines' ? (size * .32 + size * .035) * 2 : 0) };
 };
