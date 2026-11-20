@@ -14,8 +14,8 @@
 const GLOW_BLUR_PX = 8;
 /** 光暈圖最多多少像素（超過就整體降一點解析度，光暈仍然平滑） */
 const MAX_SIDE = 2048, MAX_PIXELS = 2048 * 1536;
-/** 快取的總像素上限（約 96MB 以內） */
-const CACHE_PIXELS = 24e6;
+/** 快取的總像素上限（約 32MB 以內；手機記憶體吃緊時 WebContent 會被系統砍掉） */
+const CACHE_PIXELS = 8e6;
 
 type Sprite = { c: HTMLCanvasElement; x: number; y: number; w: number; h: number };
 const cache = new Map<string, Sprite>();
