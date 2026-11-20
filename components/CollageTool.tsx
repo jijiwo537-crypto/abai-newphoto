@@ -52,7 +52,7 @@ import { SYMBOLS } from '../utils/symbols';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
 import {
-  TextEditorPanel, ImageAdjustPanel, FX_PARAM_DEFAULTS,
+  TextEditorPanel, TextEditSheet, ImageAdjustPanel, FX_PARAM_DEFAULTS,
   /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
@@ -3007,6 +3007,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   const [motionSub, setMotionSub] = useState<'in' | 'idle' | 'glow' | 'dash'>('in');
+  // 選中一般文字：直接打開文字編輯頁（從下面冒出來的那一塊，見 TextEditSheet）
+  useEffect(() => {
+    const o = objectsRef.current.find(z => z.id === selectedObj);
+    if (o && o.type === 'text' && !o.sym && activeTab !== 'objedit' && activeTab !== 'motion') setActiveTab('objedit');
+  }, [selectedObj]);
   const [settingSub, setSettingSub] = useState<'layout' | 'mask'>('layout');
   /** 正在畫布上直接編輯的那一段文字（null＝沒有在編輯）。
       跟經典拼圖同一種做法：疊一個排版一模一樣的 textarea 在字上面，
@@ -13440,13 +13445,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   );
                 }
                 return (
-                  sel.type === 'text' ? (
+                  sel.type === 'text' ? (() => { const textPanel = (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
                       <TextEditorPanel
                         symbol={!!sel.sym}
-                        /* 描邊／發光的顏色改成點進獨立的顏色頁（跟紋理顏色同一種操作） */
-                        onPickColor={(which: 'stroke' | 'glow') =>
-                          setColorPickerTarget(which === 'stroke' ? 'textStroke' : 'textGlow')}
+                        /* 符號：描邊／發光的顏色點進獨立的顏色頁；一般文字在冒出來的編輯頁裡用自己的顏色頁 */
+                        onPickColor={sel.sym ? (which: 'stroke' | 'glow') =>
+                          setColorPickerTarget(which === 'stroke' ? 'textStroke' : 'textGlow') : undefined}
                         layer={{
                           text: sel.text, sym: sel.sym, color: sel.color, fontFamily: sel.fontFamily,
                           fontSize: sel.size, bold: sel.bold, italic: sel.italic,
@@ -13483,7 +13488,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         }}
                       />
                     </div>
-                  ) : (
+                  );
+                  // 一般文字：編輯頁從下面冒出來（打字中先收起來，不擋鍵盤）；符號照舊放在原本的面板
+                  if (sel.sym) return textPanel;
+                  if (editingTextId === sel.id) return null;
+                  return <TextEditSheet key={`sheet-${sel.id}`} onDone={() => { selectedObjRef.current = null; setSelectedObj(null); setSelectedTarget(null); }}>{textPanel}</TextEditSheet>;
+                  })() : (
                   <div className="h-full">
                     {/* 圖片調整直接用經典拼圖那顆元件 —— 同一份程式碼，
                         所以按鈕佈局、樣式、外觀都是逐像素相同。

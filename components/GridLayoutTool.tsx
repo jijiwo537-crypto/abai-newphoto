@@ -3024,6 +3024,29 @@ export const ColorPick: React.FC<{
   );
 };
 
+/** 文字編輯頁：選中文字時從下面冒出來的一大塊（會蓋住一部分預覽，換來夠大、好操作的編輯空間）。
+    右上角的 ✓ 收起：先往下滑出去，再交給 onDone（取消選中）。兩個拼圖共用。 */
+export const TextEditSheet: React.FC<{ onDone: () => void; children: React.ReactNode }> = ({ onDone, children }) => {
+  const [closing, setClosing] = useState(false);
+  const close = () => { if (closing) return; setClosing(true); window.setTimeout(onDone, 220); };
+  return createPortal(
+    <div data-text-sheet
+      className="fixed inset-x-0 bottom-0 z-[90] flex flex-col bg-[#0b0b0b] rounded-t-[18px] border-t border-white/10 shadow-[0_-12px_32px_rgba(0,0,0,0.55)] animate-in slide-in-from-bottom duration-300"
+      style={{ height: 'min(56dvh, 520px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        transform: closing ? 'translateY(100%)' : undefined, transition: 'transform 220ms cubic-bezier(0.4, 0, 1, 1)' }}
+      onPointerDown={e => e.stopPropagation()}>
+      <div className="shrink-0 h-12 flex items-center justify-between pl-5 pr-3">
+        <span className="text-[14px] font-bold tracking-wider text-white">文字</span>
+        <button aria-label="完成" onClick={close}
+          className="w-9 h-9 rounded-full flex items-center justify-center text-white active:scale-90 transition-transform">
+          <Check size={22} strokeWidth={2.4} />
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 px-3">{children}</div>
+    </div>,
+    document.body,
+  );
+};
 type TextTab = 'card' | 'font' | 'color' | 'stroke' | 'glow' | 'shadow' | 'weight' | 'bg' | 'layout';
 let lastTextTab: TextTab = 'font';
 /** 文字的行距（字級的幾倍），沒設過的舊文字都是這個 */
@@ -11404,6 +11427,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
   const [motionSub, setMotionSub] = useState<'in' | 'idle'>('in');
+  // 選中一般文字：直接打開文字編輯頁（從下面冒出來的那一塊，見 TextEditSheet）
+  useEffect(() => {
+    const f = floatingImages.find(x => x.id === selectedFloatingId);
+    if (f && f.text !== undefined && !f.sym && activeTab !== 'adjust' && activeTab !== 'motion') setActiveTab('adjust');
+  }, [selectedFloatingId]);
   /* 進入「選中拍立得裡的照片」：拍立得已經選中、裡面有照片，原地點一下照片窗口（手指沒移動）。
      在整頁的捕獲階段聽，不動原本選取／拖曳的那套手勢 */
   const polaSelRef = useRef<string | null>(null); polaSelRef.current = selectedFloatingId;
@@ -19827,7 +19855,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               // 選到文字：走文字那一套面板（同一個分頁、不同介面）。
               // 符號走同一顆面板的精簡模式（顏色、大小、發光）。
               if (layer.text !== undefined) {
-                return (
+                const panel = (
                   <TextEditorPanel
                     key={`text-editor-${layer.id}-${objectEditorRevision}`}
                     layer={layer}
@@ -19836,6 +19864,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     onTuningChange={active => handleVectorTuning(layer.id, active)}
                   />
                 );
+                // 一般文字：編輯頁從下面冒出來（打字中先收起來，不擋鍵盤）；符號照舊放在原本的面板
+                if (layer.sym) return panel;
+                if (inlineEditId === layer.id) return null;
+                return <TextEditSheet key={`sheet-${layer.id}`} onDone={() => setSelectedFloatingId(null)}>{panel}</TextEditSheet>;
               }
 
               // 選到圖形：顏色／粗細／虛線
