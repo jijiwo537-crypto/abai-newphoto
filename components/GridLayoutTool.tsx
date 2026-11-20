@@ -3179,8 +3179,8 @@ export const TextEditorPanel: React.FC<{
         })} />
     </div>
   );
-  const tabs: [TextTab, string][] = [['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['glow', '發光'], ['shadow', '陰影'], ['weight', '粗斜體'], ['bg', '背景'], ['layout', '排列']];
-  const tab = symbol ? 'color' : sub;
+  const tabs: [TextTab, string][] = [['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['glow', '發光'], ['shadow', '陰影'], ['weight', '粗斜體'], ['layout', '排列']];
+  const tab = symbol ? 'color' : sub === 'bg' ? 'font' : sub;
 
   return (
     <div
@@ -3194,18 +3194,12 @@ export const TextEditorPanel: React.FC<{
       {/* 分頁在最上面一排：細細一條、可以左右滑，不佔左右的寬度，也只用掉很少的高度。
           符號沒有分頁（只有顏色與發光）。 */}
       {!symbol && !colorPage && (
-        /* 一排可以左右滑：每個分頁照字的寬度排，放不下的往右滑（不硬塞成一排） */
-        <div className="shrink-0 mt-3 mb-2 -mx-1 flex gap-1 overflow-x-auto no-scrollbar select-none" data-text-tabs
-          style={{ overscrollBehaviorX: 'contain' }}>
+        /* 七個分頁固定一排、平均分寬 */
+        <div className="shrink-0 mt-1 mb-0.5 flex select-none" data-text-tabs>
           {tabs.map(([id, label]) => (
             /* 選中的那一頁只是字變亮（不加底色） */
-            <button key={id} onClick={(e) => {
-                setSub(id);
-                // 點到的分頁滑到這一排的正中間（只捲這一排，不動整頁）
-                const b = e.currentTarget as HTMLElement, row = b.parentElement!;
-                row.scrollTo({ left: b.offsetLeft - (row.clientWidth - b.offsetWidth) / 2, behavior: 'smooth' });
-              }}
-              className={`shrink-0 whitespace-nowrap h-8 px-3 text-[13px] font-bold tracking-wider transition-colors ${
+            <button key={id} onClick={() => setSub(id)}
+              className={`flex-1 min-w-0 whitespace-nowrap h-7 px-0 text-[12px] font-bold tracking-wider transition-colors ${
                 tab === id ? 'text-white' : 'text-[#6b6b6b]'}`}>
               {label}
             </button>
@@ -3223,7 +3217,9 @@ export const TextEditorPanel: React.FC<{
           />
         )}
         {!colorPage && tab === 'font' && (
-          <div className="space-y-2.5 pt-2 pb-6">
+          <div className="space-y-2.5 pb-6">
+            {/* 語言按鈕固定在上面：字體列表上下捲動時它不跟著跑 */}
+            <div className="sticky top-0 z-10 bg-[#0a0a0a] pt-2 pb-1">
             <div className="flex items-center gap-1 bg-white/[0.06] rounded-full p-0.5">
               {FONT_CATEGORIES.map(c => (
                 <button
@@ -3236,6 +3232,7 @@ export const TextEditorPanel: React.FC<{
                   {c.label}
                 </button>
               ))}
+            </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
               {list.map(f => (

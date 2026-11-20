@@ -20,7 +20,8 @@ const rgba = (hex: string, a: number) => {
 /** 背景：剛好填滿選中框（直角、不超出框）。box＝目前座標下框的寬高，框心在 (0,0)。
     bgAlpha 0～100（沒設過＝100）。 */
 export const paintTextBg = (ctx: CanvasRenderingContext2D, o: TextDeco, boxW: number, boxH: number) => {
-  if (!o.bgOn) return;
+  // 文字背景功能已移除（舊作品裡留著的設定也不畫）
+  if (o || !o) return;
   const a = Math.max(0, Math.min(100, o.bgAlpha ?? 100)) / 100;
   if (a <= 0) return;
   ctx.save();
@@ -51,7 +52,7 @@ export const layoutText = (ctx: CanvasRenderingContext2D, o: TextDeco, text: str
       const len = lens[i];
       const top = o.vAlign === 'top' ? -maxLen / 2 : o.vAlign === 'bottom' ? maxLen / 2 - len : -len / 2;
       chars.forEach((ch, j) => runs.push({ t: ch, x, y: top + j * pitch + size / 2, align: 'center' }));
-      if (chars.length) lines.push([x + size * .66, top, x + size * .66, top + len]);
+      if (chars.length) lines.push([x + size * .6, top, x + size * .6, top + len]);
     });
     return { runs, w: (n - 1) * lineH + size, h: maxLen, vertical: true, lines };
   }
@@ -66,7 +67,7 @@ export const layoutText = (ctx: CanvasRenderingContext2D, o: TextDeco, text: str
     runs.push({ t: r, x, y, align: al });
     if (r) {
       const x0 = al === 'left' ? -w / 2 : al === 'right' ? w / 2 - widths[i] : -widths[i] / 2;
-      lines.push([x0, y + size * .68, x0 + widths[i], y + size * .68]);
+      lines.push([x0, y + size * .6, x0 + widths[i], y + size * .6]);
     }
   });
   return { runs, w, h: (rows.length - 1) * lineH + size, vertical: false, lines };
