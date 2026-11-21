@@ -145,8 +145,12 @@ function stableEntry(ctx: CanvasRenderingContext2D, mode: 'fill' | 'stroke', tex
    模糊量用「文字自己的座標」計算，縮放時不會變，所以縮放的每一格都直接重用同一張，
    只是跟著矩陣連續縮放 —— 不會再重新模糊、也就不會抖。內容或發光設定改了才重畫。
    合成結果跟原本逐層畫在畫面上完全相同：三層各一張，畫上去時才套目前的透明度（發光動畫改透明度時不用重做）。 */
-/** 三層光各一張（透明度在畫上去時才套，跟原本「每層用目前透明度畫一次」完全相同；動畫改透明度時不用重做） */
-type Glow = { layers: HTMLCanvasElement[]; x: number; y: number; w: number; h: number; px: number };
+/* 光暈圖只有「光」：三層 shadowBlur 疊在同一張上，再把字本身的位置挖掉。
+   字由呼叫端另外畫一次（高解析度的那張）——
+   ‧ 透明度：原本三層各含一個字、加上最後那次填色，等於同一個字疊了 4 次，字調透明後一開發光就變得很不透明。
+     現在字只畫一次，光在字底下也挖空，字的透明度就跟沒開發光時一樣。
+   ‧ 清晰度：光暈圖為了省記憶體解析度有上限，以前字也在這張裡，放大就看到鋸齒；現在字不在裡面了。 */
+type Glow = { canvas: HTMLCanvasElement; x: number; y: number; w: number; h: number; px: number };
 const glowCache = new Map<string, Glow>();
 let glowPx = 0;
 const GLOW_MAX_ENTRIES = 24, GLOW_MAX_TOTAL = 12e6, GLOW_MAX_ENTRY = 2e6, GLOW_MAX_SIDE = 4096;
@@ -155,7 +159,7 @@ const evictGlow = () => {
     const k0 = glowCache.keys().next().value;
     if (k0 === undefined) break;
     const old = glowCache.get(k0)!;
-    glowCache.delete(k0); glowPx -= old.px; for (const c of old.layers) c.width = c.height = 1;
+    glowCache.delete(k0); glowPx -= old.px; old.canvas.width = old.canvas.height = 1;
   }
 };
 function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, blurs: number[], color: string): boolean {
@@ -166,8 +170,7 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   const m = ctx.getTransform();
   const k = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c));
   if (!(k > 0) || !Number.isFinite(k)) return false;
-  const lv = hit.canvas.width / hit.w;              // 點陣像素／文字座標
-  /* 文字座標裡的模糊量（縮放時幾乎不變）。對到 2% 的級距：縮放途中零點幾 % 的計算誤差不會讓光暈圖一直重做 */
+  const lv = hit.canvas.width / hit.w;
   const STEP = Math.log(1.02);
   const local = blurs.map(b => Math.exp(Math.round(Math.log(Math.max(1e-6, b / k)) / STEP) * STEP));
   const key = [e.key, color, local.map(v => v.toPrecision(6)).join(',')].join('\u0003');
@@ -176,46 +179,65 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   else {
     const pad = Math.max(...local) * 1.7 + 2 / lv;
     const lw = hit.w + pad * 2, lh = hit.h + pad * 2;
-    /* 光暈圖的解析度：跟文字點陣一樣（放很大時點陣很細），但光是模糊的，用不到那麼細 ——
-       超過上限就整張降解析度畫（只跟著點陣級距變，縮放途中不會變） */
     const gv = Math.min(lv, GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)));
     const W = Math.ceil(lw * gv), H = Math.ceil(lh * gv);
     if (!(gv > 0) || W < 1 || H < 1) return false;
-    if (W * H * local.length > GLOW_MAX_TOTAL) return false;
-    const layers: HTMLCanvasElement[] = [];
-    const drop = () => { for (const c of layers) c.width = c.height = 1; };
-    for (const b of local) {
-      const canvas = document.createElement('canvas');
-      canvas.width = W; canvas.height = H;
-      layers.push(canvas);
-      if (canvas.width !== W || canvas.height !== H) { drop(); return false; }
-      const g = canvas.getContext('2d');
-      if (!g) { drop(); return false; }
-      /* iPhone：畫布總記憶體超過上限時，新畫布不報錯、只是畫不出東西。先畫一個點讀回來確認，畫不出來就照原本畫 */
-      g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1);
-      let okPx = 0;
-      try { okPx = g.getImageData(0, 0, 1, 1).data[3]; } catch { okPx = 0; }
-      if (okPx < 200) { drop(); return false; }
-      g.clearRect(0, 0, W, H);
-      g.shadowColor = color;
-      g.imageSmoothingEnabled = true;
-      g.shadowBlur = b * gv;
-      g.drawImage(hit.canvas, pad * gv, pad * gv, hit.w * gv, hit.h * gv);
+    const canvas = document.createElement('canvas');
+    canvas.width = W; canvas.height = H;
+    const drop = () => { canvas.width = canvas.height = 1; };
+    if (canvas.width !== W || canvas.height !== H) { drop(); return false; }
+    const g = canvas.getContext('2d');
+    if (!g) { drop(); return false; }
+    /* iPhone：畫布總記憶體超過上限時，新畫布不報錯、只是畫不出東西。先畫一個點讀回來確認，畫不出來就照原本畫 */
+    g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1);
+    let okPx = 0;
+    try { okPx = g.getImageData(0, 0, 1, 1).data[3]; } catch { okPx = 0; }
+    if (okPx < 200) { drop(); return false; }
+    g.clearRect(0, 0, W, H);
+    g.imageSmoothingEnabled = true;
+    g.shadowColor = color;
+    for (const b of local) { g.shadowBlur = b * gv; g.drawImage(hit.canvas, pad * gv, pad * gv, hit.w * gv, hit.h * gv); }
+    // 挖掉字本身（字由呼叫端用清晰的點陣另外畫一次）
+    g.shadowColor = 'transparent'; g.shadowBlur = 0;
+    /* 挖的範圍往內縮一格（光暈圖解析度比字低，挖剛好的大小時，清晰的字外面會露出一圈細細的黑縫） */
+    const km = document.createElement('canvas'); km.width = W; km.height = H;
+    const kg = km.getContext('2d');
+    if (kg) {
+      const ox = pad * gv, oy = pad * gv, dw = hit.w * gv, dh = hit.h * gv, e = 1.25;
+      kg.imageSmoothingEnabled = true;
+      kg.drawImage(hit.canvas, ox, oy, dw, dh);
+      kg.globalCompositeOperation = 'destination-in';
+      for (const [ex, ey] of [[e, 0], [-e, 0], [0, e], [0, -e]]) kg.drawImage(hit.canvas, ox + ex, oy + ey, dw, dh);
+      g.globalCompositeOperation = 'destination-out';
+      g.drawImage(km, 0, 0);
+      g.globalCompositeOperation = 'source-over';
+      km.width = km.height = 1;
     }
-    gl = { layers, x: hit.x - pad, y: hit.y - pad, w: W / gv, h: H / gv, px: W * H * layers.length };
+    gl = { canvas, x: hit.x - pad, y: hit.y - pad, w: W / gv, h: H / gv, px: W * H };
     glowCache.set(key, gl); glowPx += gl.px; evictGlow();
   }
   ctx.save();
   ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low';
-  for (const c of gl.layers) ctx.drawImage(c, x + gl.x, y + gl.y, gl.w, gl.h);
+  ctx.drawImage(gl.canvas, x + gl.x, y + gl.y, gl.w, gl.h);
   ctx.restore();
   return true;
 }
 
+/** 只畫 draw() 的「影子」（發光），不畫本體：本體畫到畫布外面很遠的地方，影子用 shadowOffset 移回原位。
+ *  shadowOffset 是螢幕像素、不受矩陣影響，所以旋轉、縮放都對得上。 */
+export function shadowOnly(ctx: CanvasRenderingContext2D, draw: () => void) {
+  const OFF = 20000;
+  const m = ctx.getTransform();
+  ctx.save();
+  ctx.setTransform(m.a, m.b, m.c, m.d, m.e - OFF, m.f);
+  ctx.shadowOffsetX = OFF; ctx.shadowOffsetY = 0;
+  try { draw(); } finally { ctx.restore(); }
+}
+
 /**
- * 畫一段字的發光（三層，含字本身，跟原本「每層 shadowBlur + 畫一次字」同樣的結果）。
- * stable：這段字能不能用快取點陣（呼叫端原本的條件）。能的話走縮放不抖的光暈圖；不行就照原本逐層畫。
+ * 畫一段字的發光（三層光，不含字本身；字由呼叫端照常畫一次）。
+ * stable：這段字能不能用快取點陣。能的話走縮放不抖的光暈圖；不行就逐層只畫影子。
  */
 export function drawGlowText(ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
   blurs: number[], color: string, stable: boolean) {
@@ -225,7 +247,7 @@ export function drawGlowText(ctx: CanvasRenderingContext2D, text: string, x: num
   ctx.shadowColor = color;
   for (const b of blurs) {
     ctx.shadowBlur = b;
-    if (!(stable && drawStableText(ctx, 'fill', text, x, y))) ctx.fillText(text, x, y);
+    shadowOnly(ctx, () => { if (!(stable && drawStableText(ctx, 'fill', text, x, y))) ctx.fillText(text, x, y); });
   }
   ctx.restore();
 }

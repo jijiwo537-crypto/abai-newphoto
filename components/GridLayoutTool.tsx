@@ -89,7 +89,7 @@ import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
 registerTrim('selected-animation-surfaces', releaseSelectedMotionSurfaces);
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import { FONT_PREVIEW_INDEX, FONT_PREVIEW_CELL } from '../utils/fontPreviewIndex';
-import {drawStableText, drawGlowText, hasEmoji} from '../utils/stableText';
+import {drawStableText, drawGlowText, hasEmoji, shadowOnly} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
 import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
@@ -6942,7 +6942,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             try { fill(); } finally { glowMode = null; }
           } else for (const b of blurs) {
             ctx.shadowBlur = b;
-            fill();
+            shadowOnly(ctx, fill);
           }
         } finally { glowPass = false; }
         ctx.shadowBlur = 0;

@@ -77,7 +77,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
 );
 
 import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack, primeCanvasFont, fontEpoch, ensureTextFonts } from '../utils/fonts';
-import { drawStableText, drawGlowText, hasEmoji } from '../utils/stableText';
+import { drawStableText, drawGlowText, hasEmoji, shadowOnly } from '../utils/stableText';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG, MEDIA_ACCEPT } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -8861,7 +8861,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               try { drawText(false); } finally { glowMode = null; }
             } else for (const b of blurs) {
               ctx.shadowBlur = b;
-              drawText(false);
+              shadowOnly(ctx, () => drawText(false));
             }
           } finally { glowPass = false; }
           ctx.restore();
