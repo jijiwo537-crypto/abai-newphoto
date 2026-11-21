@@ -58,7 +58,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
   const copiesVersion=usePreviewCopies();
   /** 底圖目前畫的是什麼：內容簽章、密度（每個佈局單位幾個像素）、邊緣狀態（哪幾邊往外多蓋） */
   const baseState=useRef<{key:string;s:number;edges:string;partial?:number;clip?:string;inv?:number[]}|null>(null),baseDirty=useRef(true);
-  const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef<(viewOnly?:boolean)=>void>(()=>{});
+  const ref=useRef<HTMLCanvasElement>(null),editSurface=useRef<HTMLCanvasElement>(null),editPresentation=useRef(false),lastView=useRef(''),plane=useRef<SVGSVGElement>(null),clipHost=useRef<HTMLDivElement>(null),resources=useRef(new Map<string,Resource>()),live=useRef(new Map<string,PhotoFx>()),frame=useRef(0),drawRef=useRef<(viewOnly?:boolean)=>void>(()=>{});
   /** 上一次真的畫出來的範圍（佈局座標）與當時的倍率／旋轉：純平移時拿來判斷要不要重畫 */
   const paintedView=useRef<{fwd:number[];gesture:boolean;headroom?:number;cover:{x0:number;y0:number;x1:number;y1:number}}|null>(null),settleTimer=useRef<ReturnType<typeof setTimeout>|0>(0),lastPaintAt=useRef(-1e9);
   /** 底圖重畫的計時：最後一次內容變動後 400ms 都沒再動才畫（拖滑桿中間停一下不會突然卡一下） */
@@ -187,6 +187,19 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       const outer=strip&&sealed&&axisScreen?{l:bounds.left<=strip.left+edgeTol,t:bounds.top<=strip.top+edgeTol,r:bounds.right>=strip.right-edgeTol,b:bounds.bottom>=strip.bottom-edgeTol}:undefined;
       const onPage=pageBox&&sealed&&axisScreen?{l:bounds.left<=pageBox.left+edgeTol,t:bounds.top<=pageBox.top+edgeTol,r:bounds.right>=pageBox.right-edgeTol,b:bounds.bottom>=pageBox.bottom-edgeTol}:undefined;
       const edges=JSON.stringify([outer,onPage]);
+      /* 佈局＝一張圖片：畫出來的東西永遠不能超出佈局自己的範圍。
+         貼齊頁面時，那幾邊會往外多畫一圈（grow，讓頁面邊緣去切、不透白線）；這幾張畫布在手勢中常常
+         「蓋得住就不重畫」，佈局一離開邊緣（例如貼滿整頁後縮小），多畫的那圈就跟著縮小露在選中框外面。
+         所以每一格（不管有沒有重畫）都先更新這層裁切：現在真的貼著頁面／整條頁面邊緣的那幾邊放開（交給頁面去切），
+         其他邊裁在佈局邊界外半個螢幕像素（剛好不跟內容自己的邊緣疊出一條淡線）。 */
+      const clipBox=clipHost.current;
+      if(clipBox){
+        const scrNow=bounds.width>0?Math.hypot(...(fwd?[fwd[0],fwd[1]]:[bounds.width/width,0])):1;
+        const half=.5/Math.max(1e-6,dpr*scrNow),OPEN=1e5;
+        const side=(k:'l'|'t'|'r'|'b')=>(outer?.[k]||onPage?.[k])?-OPEN:-half;
+        const want=`inset(${side('t')}px ${side('r')}px ${side('b')}px ${side('l')}px)`;
+        if(clipBox.style.clipPath!==want)clipBox.style.clipPath=want;
+      }
       /* 底圖：整個佈局一張，放在這個佈局自己的座標裡，跟著頁面／佈局一起被縮放移動（純合成，不重畫）。
          畫面外的部分也一直都在 —— 快速放大縮小、排頁面縮小時不會有任何一塊是空的。
          它的解析度夠用（每個佈局單位的像素 ≥ 螢幕上需要的）就只顯示它，上面那張「看得到的範圍」的
@@ -538,5 +551,5 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
     };
     drawRef.current();
   },[cells,rects,width,height,gapProp,radiusProp,revision,fusion,(dims||[]).join(','),copiesVersion]);
-  return <><svg ref={plane} data-layout-photo-plane viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" aria-hidden style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,overflow:'hidden'}}><g opacity={0}><circle data-layout-probe cx={0} cy={0} r={.005}/><circle data-layout-probe cx={width} cy={0} r={.005}/><circle data-layout-probe cx={0} cy={height} r={.005}/></g></svg><canvas ref={baseRef} data-layout-base style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/><canvas ref={ref} data-layout-photo-surface style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0}}/><canvas ref={editSurface} style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/></>;
+  return <div ref={clipHost} data-layout-photo-clip style={{position:'absolute',left:0,top:0,width:`${width}px`,height:`${height}px`,pointerEvents:'none',zIndex:0}}><svg ref={plane} data-layout-photo-plane viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" aria-hidden style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,overflow:'hidden'}}><g opacity={0}><circle data-layout-probe cx={0} cy={0} r={.005}/><circle data-layout-probe cx={width} cy={0} r={.005}/><circle data-layout-probe cx={0} cy={height} r={.005}/></g></svg><canvas ref={baseRef} data-layout-base style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/><canvas ref={ref} data-layout-photo-surface style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0}}/><canvas ref={editSurface} style={{position:'absolute',left:0,top:0,transformOrigin:'0 0',pointerEvents:'none',zIndex:0,display:'none'}}/></div>;
 }
