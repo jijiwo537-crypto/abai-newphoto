@@ -127,6 +127,16 @@ async function nativeShare(files: File[]): Promise<ShareResult> {
   }
 }
 
+/** App 裡的「分享」按鈕：直接叫出 iOS 原生的分享面板（LINE、IG、AirDrop、存到檔案…），不經過存相簿 */
+export async function shareSheet(files: File[]): Promise<ShareResult> {
+  if (!files.length) return 'failed';
+  if (isNative()) return nativeShare(files);
+  try {
+    if (navigator.canShare?.({ files })) { await navigator.share({ files }); return 'shared'; }
+  } catch (e: any) { if (e?.name === 'AbortError') return 'cancelled'; }
+  return 'failed';
+}
+
 /** 直接在點擊事件裡呼叫，files 要事先備好 */
 export async function shareFiles(files: File[]): Promise<ShareResult> {
   if (!files.length) return 'failed';
