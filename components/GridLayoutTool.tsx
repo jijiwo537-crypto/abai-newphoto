@@ -2954,6 +2954,21 @@ const emptyPromptFit = (w: number, h: number, visualK = 1) => {
   const V = Math.max(1e-4, visualK);
   return Math.max(.18, Math.min(1, w * V / 92, h * V / 60)) / V;
 };
+/** 把「虛線＋新增圖片」那一層設成某個倍率 k 的樣子（手勢中每一格、以及 React 每次重畫後都呼叫，
+    兩邊寫的是同一套值，不會留下手勢中寫進去的舊樣式） */
+const applyLayoutOverlay = (el: HTMLElement, lw: number, lh: number, k: number) => {
+  el.style.width = `${lw * k}px`; el.style.height = `${lh * k}px`;
+  el.style.transform = Math.abs(k - 1) > 1e-9 ? `scale(${1 / k})` : '';
+  el.querySelectorAll<SVGElement>('[data-grid-dash]').forEach(p => {
+    const base = +(p.getAttribute('data-grid-dash') || 3);
+    p.setAttribute('stroke-dasharray', `${base / k} ${base / k}`);
+    p.style.strokeWidth = `calc(var(--layout-grid-stroke, 1px) / ${k})`;
+  });
+  el.querySelectorAll<SVGGElement>('[data-layout-empty-prompt]').forEach(g => {
+    const cx = +(g.dataset.cx || 0), cy = +(g.dataset.cy || 0), w = +(g.dataset.w || 0), h = +(g.dataset.h || 0);
+    g.setAttribute('transform', `translate(${cx} ${cy}) scale(${emptyPromptFit(w, h, k)})`);
+  });
+};
 const LayoutEmptyPromptLayer: React.FC<{
   cells: { x: number; y: number; w: number; h: number }[];
   width:number;
@@ -14700,10 +14715,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     document.querySelectorAll<HTMLElement>(`[data-layout-pill="${layout.id}"]`).forEach(el => { el.style.transform = layoutPillTransform(lwT, lhT, t.y || 0, rot); });
     /* 空格的「＋ 新增圖片」：佈局這時是用 transform 放大縮小的，提示要每一格照當下倍率重算大小，
        才會跟放開後一樣（以前要等放開、React 重畫才變） */
-    document.querySelectorAll<SVGGElement>(`[data-layout-content-wrapper][data-layout-id="${layout.id}"] [data-layout-empty-prompt]`).forEach(g => {
-      const cx = +(g.dataset.cx || 0), cy = +(g.dataset.cy || 0), w = +(g.dataset.w || 0), h = +(g.dataset.h || 0);
-      g.setAttribute('transform', `translate(${cx} ${cy}) scale(${emptyPromptFit(w, h, k)})`);
-    });
+    // 虛線那一層：反向縮放、尺寸、線寬與虛線間隔都照當下倍率（見 render 裡 data-layout-overlay 的說明）
+    document.querySelectorAll<HTMLElement>(`[data-layout-overlay="${layout.id}"]`).forEach(el => applyLayoutOverlay(el, lw, lh, k));
     window.dispatchEvent(new Event('abai-layout-visual'));
   };
   const patchLayoutT = (patch: Partial<{ x: number; y: number; scale: number; rot: number }>, targetId?: string | null) => {
@@ -18742,11 +18755,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   .map(l=>`M${gap/2+l.x1*(lw-gap)} ${gap/2+l.y1*(lh-gap)}L${gap/2+l.x2*(lw-gap)} ${gap/2+l.y2*(lh-gap)}`).join(' ');
                                 const selectedEmpty = emptyRects.find(r =>
                                   r.idx === selectedIndex && isThisLayoutSelected);
+                                const V = Math.max(1e-4, visualK);
+                                const selDash = 4 / Math.max(0.0001, kRef.current);
+                                /* 虛線與「＋ 新增圖片」放在自己的一層：用反向縮放抵銷佈局縮放手勢的 transform，
+                                   這一層在螢幕上的倍率永遠是 1 —— 縮放途中瀏覽器每一格都直接畫向量（不會把它當成
+                                   一張點陣圖放大縮小而變糊）；大小、線寬、虛線間隔則在手勢中由 applyLiveLayoutDom
+                                   每一格照當下倍率更新（不用等放開）。仍在佈局裡面，上下層關係不變。 */
                                 return (
-                                <>
+                                <div data-layout-overlay={layout.id} className="absolute pointer-events-none z-[5]"
+                                  ref={el => { if (el) applyLayoutOverlay(el, lw, lh, V); }}
+                                  style={{ left: 0, top: 0, width: `${lw * V}px`, height: `${lh * V}px`,
+                                    transform: Math.abs(V - 1) > 1e-9 ? `scale(${1 / V})` : undefined, transformOrigin: '0 0', willChange: 'transform' }}>
                                 <svg
                                   data-layout-grid-lines={layout.id}
-                                  className="absolute inset-0 pointer-events-none z-[5]"
+                                  className="absolute inset-0 w-full h-full pointer-events-none"
                                   viewBox={`0 0 ${lw} ${lh}`}
                                   preserveAspectRatio="none"
                                   style={{ overflow: 'visible' }}
@@ -18756,21 +18778,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     d={d}
                                     fill="none"
                                     stroke="rgba(255,255,255,0.10)"
-                                    strokeDasharray="3 3"
-                                    style={{ strokeWidth: 'var(--layout-grid-stroke, 1px)' }}
+                                    data-grid-dash="3"
+                                    strokeDasharray={`${3 / V} ${3 / V}`}
+                                    style={{ strokeWidth: `calc(var(--layout-grid-stroke, 1px) / ${V})` }}
                                   />
                                   {selectedEmpty && (
                                     <rect
                                       x={selectedEmpty.x} y={selectedEmpty.y}
                                       width={selectedEmpty.w} height={selectedEmpty.h}
                                       fill="none" stroke="white"
-                                      strokeDasharray={`${4 / Math.max(0.0001, kRef.current)} ${4 / Math.max(0.0001, kRef.current)}`}
-                                      style={{ strokeWidth: 'var(--layout-grid-stroke, 1px)' }}
+                                      data-grid-dash={selDash}
+                                      strokeDasharray={`${selDash / V} ${selDash / V}`}
+                                      style={{ strokeWidth: `calc(var(--layout-grid-stroke, 1px) / ${V})` }}
                                     />
                                   )}
                                 </svg>
                                 {!insetLayout && <LayoutEmptyPromptLayer cells={emptyRects} width={lw} height={lh} hidden={pagesMode || pagesVisual} visualK={visualK} />}
-                                </>
+                                </div>
                                 );
                               })()}
 
