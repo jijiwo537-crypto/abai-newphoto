@@ -89,7 +89,6 @@ import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
 registerTrim('selected-animation-surfaces', releaseSelectedMotionSurfaces);
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import { FONT_PREVIEW_INDEX, FONT_PREVIEW_CELL } from '../utils/fontPreviewIndex';
-import { isFontDownloaded, isFontDownloading, onFontStoreChange } from '../utils/fontStore';
 import { preloadHanConvert, convertForFontSync, convertForFont } from '../utils/hanConvert';
 import {drawStableText, drawGlowText, hasEmoji, shadowOnly} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
@@ -97,7 +96,7 @@ import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
-import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont, ensureTextFonts, downloadFontFully } from '../utils/fonts';
+import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont, ensureTextFonts } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
 import { sourceHasAlpha, lutMaxAmount, warmPhotoFxSurface } from '../utils/photoFx';
@@ -2799,12 +2798,6 @@ const FontCard: React.FC<{
     return () => { alive = false; };
   }, [font.name, row]);
   const { w: PW, h: PH } = FONT_PREVIEW_CELL;
-  /* 下載狀態：還沒下載＝右下角下載圖示；下載中＝按鈕變暗＋轉圈；下載過＝什麼都不顯示（之後都從本機讀） */
-  const [, setStoreTick] = useState(0);
-  useEffect(() => onFontStoreChange(() => setStoreTick(t => t + 1)), []);
-  const builtin = font.name === DEFAULT_FONT;
-  const isDl = !builtin && isFontDownloading(font.name);
-  const needDl = !builtin && !isDl && !isFontDownloaded(font.name);
   /* 字體名稱只排一行：照按鈕實際的寬度量字寬，太長就把字級縮小（最小 6px），不換行 */
   const [labelPx, setLabelPx] = useState(9);
   useLayoutEffect(() => {
@@ -2822,21 +2815,10 @@ const FontCard: React.FC<{
       ref={ref}
       onClick={onPick}
       title={font.label}
-      className={`relative isolate flex flex-col items-center justify-center gap-1 h-[62px] px-1.5 rounded-xl border transition-all ${
+      className={`flex flex-col items-center justify-center gap-1 h-[62px] px-1.5 rounded-xl border transition-all ${
         active ? 'bg-white/10 border-white' : 'bg-white/[0.03] border-white/10 hover:border-white/25'
       }`}
-      aria-busy={isDl || undefined}
     >
-      {isDl && (
-        <span aria-hidden className="absolute inset-0 rounded-xl bg-black/45 flex items-center justify-center pointer-events-none">
-          <span className="block w-5 h-5 rounded-full border-2 border-white/25 border-t-white animate-spin" />
-        </span>
-      )}
-      {needDl && (
-        <svg aria-label="下載" viewBox="0 0 24 24" className="absolute right-1 bottom-[8px] w-[10px] h-[10px] text-white/55 pointer-events-none" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 4v11M7 10.5l5 5 5-5M5 20h14" />
-        </svg>
-      )}
       {row !== undefined ? (
         <span aria-hidden className="block shrink-0" style={{
           width: PW, height: PH, marginTop: 4,
@@ -3175,13 +3157,6 @@ export const TextEditorPanel: React.FC<{
   useEffect(() => () => { fontPickVersion.current++; }, [layer.id]);
   // 簡繁轉換的字典：打開文字面板就先在背景載好，點字體時立刻轉
   useEffect(() => { if (!symbol) void preloadHanConvert(); }, [symbol]);
-  // 預設字體也在背景存到本機一次（之後沒網路也能用）；它的按鈕不顯示下載狀態
-  useEffect(() => {
-    if (symbol || isFontDownloaded(DEFAULT_FONT)) return;
-    // 等使用者停手一陣子才在背景存（不跟剛新增文字、拖曳搶主執行緒）
-    const t = window.setTimeout(() => { void downloadFontFully(DEFAULT_FONT, { quiet: true }); }, 8000);
-    return () => clearTimeout(t);
-  }, [symbol]);
   const pickFont = async (name: string) => {
     const version = ++fontPickVersion.current;
     /* 選「（簡）」字體 → 文字整段轉簡體；選其他中文字體 → 轉繁體。點下去當下就換（不等字型下載） */
@@ -3191,9 +3166,6 @@ export const TextEditorPanel: React.FC<{
       if (version !== fontPickVersion.current) return;
       if (conv !== text) { text = conv; onChange({ text: conv }); }
     }
-    // 還沒下載過：整個字體下載到本機（按鈕會變暗轉圈），之後打開 App 都不用再等
-    if (name !== DEFAULT_FONT && !isFontDownloaded(name)) await downloadFontFully(name);
-    if (version !== fontPickVersion.current) return;
     await ensureFont(name);
     if (layer.italic) await ensureItalic(name);
     await document.fonts.load(`${layer.italic ? 'italic ' : ''}${layer.bold ? 700 : 400} 40px "${name}"`, text || ' ');

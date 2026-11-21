@@ -9,7 +9,6 @@
 
 import { t } from './locale';
 import { FONT_PREVIEW_INDEX } from './fontPreviewIndex';
-import { isFontDownloaded, loadStoredFont, downloadFont, type FontSource } from './fontStore';
 export type FontCategory = 'zh' | 'en' | 'ja' | 'ko';
 
 export const FONT_CATEGORIES: { id: FontCategory; label: string }[] = [
@@ -639,24 +638,6 @@ const EXTRA_FONT_CSS: Record<string, string> = {
 };
 const SINGLE_WEIGHT_FONTS = new Set(["Aboreto", "Alex Brush", "Allura", "Annie Use Your Telescope", "Aoboshi One", "Architects Daughter", "Bad Script", "Bagel Fat One", "Bangers", "Berkshire Swash", "Black And White Picture", "Black Ops One", "Bowlby One", "Bowlby One SC", "Bpmf Huninn", "Bpmf Iansui", "Bpmf Zihi Kai Std", "Calistoga", "Caprasimo", "Carter One", "Caveat Brush", "Cedarville Cursive", "Changa One", "Chango", "Chelsea Market", "Cherry Bomb One", "Chokokutai", "Coda", "Concert One", "Cookie", "Courgette", "Creepster", "Damion", "Darumadrop One", "Dela Gothic One", "Delius", "Diphylleia", "Forum", "Fugaz One", "Gasoek One", "Gloria Hallelujah", "Gochi Hand", "Grandiflora One", "Gravitas One", "Handlee", "Homemade Apple", "Italianno", "Just Another Hand", "Kaushan Script", "Kiwi Maru", "Knewave", "LXGW Marker Gothic", "Lilita One", "Liu Jian Mao Cao", "Londrina Solid", "Long Cang", "Luckiest Guy", "Ma Shan Zheng", "Marck Script", "Megrim", "Mochiy Pop P One", "Monomaniac One", "Mr Dafoe", "Mrs Saint Delafield", "Ms Madi", "Neucha", "Nothing You Could Do", "Oooh Baby", "Orbit", "Palette Mosaic", "Pangolin", "Parisienne", "Patrick Hand", "Patua One", "Pinyon Script", "Pirata One", "Plaster", "Playball", "Poiret One", "Racing Sans One", "Rammetto One", "Reenie Beanie", "Rock Salt", "Rubik Glitch", "Rubik Pixels", "Rye", "Sacramento", "Shippori Antique B1", "Shizuru", "Slackside One", "Sofia", "Special Elite", "Squada One", "Staatliches", "Unica One", "UnifrakturMaguntia", "UoqMunThenKhung", "WDXL Lubrifont JP N", "WDXL Lubrifont SC", "WDXL Lubrifont TC", "Yellowtail", "Yeseva One", "Yomogi", "Yuji Hentaigana Akari", "Yuji Hentaigana Akebono", "Yuji Mai", "ZCOOL KuaiLe", "ZCOOL QingKe HuangYou", "ZCOOL XiaoWei", "Zen Kurenaido", "Zeyada", "Zhi Mang Xing"]);
 
-const storeFailed = new Set<string>();
-/** 這個字體從哪裡下載（整個字體檔，給「下載到本機」用） */
-export function fontSource(family: string): FontSource {
-  if (EXTRA_FONT_URLS[family]) return { url: EXTRA_FONT_URLS[family] };
-  if (EXTRA_FONT_CSS[family]) return { css: EXTRA_FONT_CSS[family] };
-  return { google: 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(family).replace(/%20/g, '+')
-    + (SINGLE_WEIGHT_FONTS.has(family) ? ':wght@400&display=swap' : ':wght@400;700&display=swap') };
-}
-/** 把整個字體下載到本機（之後打開 App 不用再等）。下載完就能用。 */
-export async function downloadFontFully(family: string, opts: { quiet?: boolean } = {}): Promise<boolean> {
-  if (family === SYMBOL_FONT) return true;
-  /* quiet：只存到本機、不在這次重新登記（字體已經在用了；重新登記一百多份會讓畫面一直以為字型換了而重畫） */
-  const ok = await downloadFont(family, fontSource(family), { register: !opts.quiet });
-  if (ok && opts.quiet) return true;
-  if (ok) { cssDone.add(family); requested.set(family, Promise.resolve()); window.dispatchEvent(new Event('abai-font-ready')); }
-  return ok;
-}
-
 /**
  * 需要時才把某個字體的 <link> 塞進 head。重複呼叫不會重複載入。
  * 回傳的 Promise 在那份 CSS 真的下載完（或失敗）之後才 resolve ——
@@ -677,15 +658,6 @@ export function ensureFont(family: string): Promise<void> {
   }
   const hit = requested.get(family);
   if (hit) return hit;
-  /* 已經下載到本機的字體：直接從本機登記，不用網路、不用等（見 utils/fontStore） */
-  if (isFontDownloaded(family) && !storeFailed.has(family)) {
-    const p = loadStoredFont(family).then(ok => {
-      if (ok) { cssDone.add(family); window.dispatchEvent(new Event('abai-font-ready')); return; }
-      storeFailed.add(family); requested.delete(family); return ensureFont(family);
-    });
-    requested.set(family, p);
-    return p;
-  }
   if (EXTRA_FONT_URLS[family]) {
     const p = new FontFace(family, `url("${EXTRA_FONT_URLS[family]}")`).load().then(face => {
       document.fonts.add(face); cssDone.add(family);
