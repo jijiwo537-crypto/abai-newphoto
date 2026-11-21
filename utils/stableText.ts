@@ -144,17 +144,18 @@ function stableEntry(ctx: CanvasRenderingContext2D, mode: 'fill' | 'stroke', tex
    改成：用同一張文字點陣，在旁邊的小畫布上把三層光（連同字本身，跟原本一樣）先畫好；
    模糊量用「文字自己的座標」計算，縮放時不會變，所以縮放的每一格都直接重用同一張，
    只是跟著矩陣連續縮放 —— 不會再重新模糊、也就不會抖。內容或發光設定改了才重畫。
-   合成結果跟原本逐層畫在畫面上完全相同（透明度也算進去）。 */
-type Glow = { canvas: HTMLCanvasElement; x: number; y: number; w: number; h: number; px: number };
+   合成結果跟原本逐層畫在畫面上完全相同：三層各一張，畫上去時才套目前的透明度（發光動畫改透明度時不用重做）。 */
+/** 三層光各一張（透明度在畫上去時才套，跟原本「每層用目前透明度畫一次」完全相同；動畫改透明度時不用重做） */
+type Glow = { layers: HTMLCanvasElement[]; x: number; y: number; w: number; h: number; px: number };
 const glowCache = new Map<string, Glow>();
 let glowPx = 0;
-const GLOW_MAX_ENTRIES = 24, GLOW_MAX_TOTAL = 24e6, GLOW_MAX_ENTRY = 6e6, GLOW_MAX_SIDE = 4096;
+const GLOW_MAX_ENTRIES = 24, GLOW_MAX_TOTAL = 12e6, GLOW_MAX_ENTRY = 2e6, GLOW_MAX_SIDE = 4096;
 const evictGlow = () => {
   while (glowCache.size > GLOW_MAX_ENTRIES || glowPx > GLOW_MAX_TOTAL) {
     const k0 = glowCache.keys().next().value;
     if (k0 === undefined) break;
     const old = glowCache.get(k0)!;
-    glowCache.delete(k0); glowPx -= old.px; old.canvas.width = old.canvas.height = 1;
+    glowCache.delete(k0); glowPx -= old.px; for (const c of old.layers) c.width = c.height = 1;
   }
 };
 function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, blurs: number[], color: string): boolean {
@@ -169,8 +170,7 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   /* 文字座標裡的模糊量（縮放時幾乎不變）。對到 2% 的級距：縮放途中零點幾 % 的計算誤差不會讓光暈圖一直重做 */
   const STEP = Math.log(1.02);
   const local = blurs.map(b => Math.exp(Math.round(Math.log(Math.max(1e-6, b / k)) / STEP) * STEP));
-  const alpha = ctx.globalAlpha;
-  const key = [e.key, color, local.map(v => v.toPrecision(6)).join(','), alpha.toFixed(3)].join('\u0003');
+  const key = [e.key, color, local.map(v => v.toPrecision(6)).join(',')].join('\u0003');
   let gl = glowCache.get(key);
   if (gl) { glowCache.delete(key); glowCache.set(key, gl); }
   else {
@@ -181,32 +181,34 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
     const gv = Math.min(lv, GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)));
     const W = Math.ceil(lw * gv), H = Math.ceil(lh * gv);
     if (!(gv > 0) || W < 1 || H < 1) return false;
-    const canvas = document.createElement('canvas');
-    canvas.width = W; canvas.height = H;
-    if (canvas.width !== W || canvas.height !== H) return false;
-    const g = canvas.getContext('2d');
-    if (!g) return false;
-    /* iPhone：畫布總記憶體超過上限時，新畫布不報錯、只是畫不出東西。先畫一個點讀回來確認，畫不出來就照原本畫 */
-    g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1);
-    let okPx = 0;
-    try { okPx = g.getImageData(0, 0, 1, 1).data[3]; } catch { okPx = 0; }
-    if (okPx < 200) { canvas.width = canvas.height = 1; return false; }
-    g.clearRect(0, 0, W, H);
-    g.globalAlpha = alpha;
-    g.shadowColor = color;
-    g.imageSmoothingEnabled = true;
+    if (W * H * local.length > GLOW_MAX_TOTAL) return false;
+    const layers: HTMLCanvasElement[] = [];
+    const drop = () => { for (const c of layers) c.width = c.height = 1; };
     for (const b of local) {
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      layers.push(canvas);
+      if (canvas.width !== W || canvas.height !== H) { drop(); return false; }
+      const g = canvas.getContext('2d');
+      if (!g) { drop(); return false; }
+      /* iPhone：畫布總記憶體超過上限時，新畫布不報錯、只是畫不出東西。先畫一個點讀回來確認，畫不出來就照原本畫 */
+      g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1);
+      let okPx = 0;
+      try { okPx = g.getImageData(0, 0, 1, 1).data[3]; } catch { okPx = 0; }
+      if (okPx < 200) { drop(); return false; }
+      g.clearRect(0, 0, W, H);
+      g.shadowColor = color;
+      g.imageSmoothingEnabled = true;
       g.shadowBlur = b * gv;
       g.drawImage(hit.canvas, pad * gv, pad * gv, hit.w * gv, hit.h * gv);
     }
-    gl = { canvas, x: hit.x - pad, y: hit.y - pad, w: W / gv, h: H / gv, px: W * H };
+    gl = { layers, x: hit.x - pad, y: hit.y - pad, w: W / gv, h: H / gv, px: W * H * layers.length };
     glowCache.set(key, gl); glowPx += gl.px; evictGlow();
   }
   ctx.save();
-  ctx.globalAlpha = 1;
   ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low';
-  ctx.drawImage(gl.canvas, x + gl.x, y + gl.y, gl.w, gl.h);
+  for (const c of gl.layers) ctx.drawImage(c, x + gl.x, y + gl.y, gl.w, gl.h);
   ctx.restore();
   return true;
 }

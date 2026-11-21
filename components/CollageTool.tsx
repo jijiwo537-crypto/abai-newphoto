@@ -10323,8 +10323,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         glowIdle === 'glitch' ? 0.9 : 1),
       /** 這一格的時間，畫布端要拿它算虛線描邊的動畫 */
       t,
-      /** 除了圖案以外，圖片、文字、符號與普通圖形的發光都保持靜止。 */
-      glowObj: (_o: any) => 1,
+      /** 文字（含符號）與圖片的發光動畫：照動畫頁「發光動畫」選的那一款（跟圖案同一套曲線）。
+          以前這裡固定回傳 1 —— 面板選了也不會動，就是「發光無法套用動畫」。 */
+      glowObj: (o: any) => {
+        const g = o?.type === 'text' ? glowMoText : o?.imgGlow ? glowMoImg : null;
+        if (!g || !g.idle || g.idle === 'none') return 1;
+        return glowIdleAmp(g.idle, t, (hashId(o.id) % 628) / 100, g.amp ?? 100, (g.speed ?? 100) / 100,
+          g.idle === 'glitch' ? 1.5 : 1);
+      },
     };
   }, [moShape, moLink, hasLink, linkStart, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText]);
   const buildAnimRef=useRef(buildAnim);buildAnimRef.current=buildAnim;
