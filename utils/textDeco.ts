@@ -135,7 +135,14 @@ const inkXCache = new Map<string, Ink4 | null>();
 const INK_REF = 128;
 /* 字型（或中文字型的某一小份）到了、或從本機登記好了：之前用備用字型量到的墨水範圍作廢重量 ——
    不然字會一直照備用字型的範圍置中（看起來沒在選中框中間） */
-if (typeof window !== 'undefined') window.addEventListener('abai-font-ready', () => inkXCache.clear());
+/* 只作廢「量的時候字型還沒到」的那幾筆（記在 provisional），而且同一段時間的通知合併成一次 ——
+   中文字型每到一小份就通知一次，全部清掉會讓每個字一直重量、重畫（新增文字後拖曳會卡一陣子） */
+const provisional = new Set<string>();
+let inkFlush = 0;
+if (typeof window !== 'undefined') window.addEventListener('abai-font-ready', () => {
+  if (!provisional.size || inkFlush) return;
+  inkFlush = window.setTimeout(() => { inkFlush = 0; for (const k of provisional) inkXCache.delete(k); provisional.clear(); }, 300);
+});
 export const inkExtent = (ctx: CanvasRenderingContext2D, text: string): Ink4 | null => {
   if (!text || typeof document === 'undefined') return null;
   const fm = /(\d+(?:\.\d+)?)px/.exec(ctx.font);
@@ -168,6 +175,8 @@ export const inkExtent = (ctx: CanvasRenderingContext2D, text: string): Ink4 | n
   c.width = c.height = 1;
   const v: Ink4 | null = x0 < 0 ? null : [x0 - ox, x1 - ox, y0 - oy, y1 - oy];
   inkXCache.set(key, v); if (inkXCache.size > 2000) inkXCache.clear();
+  // 量的時候這個字型家族還沒有任何字身登記（document.fonts 找不到）＝量到的是備用字型，字型到了要重量
+  try { const fam = /"([^"]+)"/.exec(ctx.font)?.[1]; if (fam && ![...(document as any).fonts].some((f: FontFace) => f.family.replace(/"/g, '') === fam && f.status === 'loaded')) provisional.add(key); } catch { /* */ }
   return v && (v.map(n => n / k) as Ink4);
 };
 /** 左右置中要平移多少：讓所有行的墨水聯集置中。originX＝這段字實際畫的原點（例如補半個字距的 spacing/2）。

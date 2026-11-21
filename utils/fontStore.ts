@@ -89,7 +89,7 @@ export async function loadStoredFont(family: string): Promise<boolean> {
 export type FontSource = { url?: string; css?: string; google?: string };
 const pending = new Map<string, Promise<boolean>>();
 /** 下載整個字體並存到本機（只做一次）。成功回 true。 */
-export function downloadFont(family: string, src: FontSource): Promise<boolean> {
+export function downloadFont(family: string, src: FontSource, opts: { register?: boolean } = {}): Promise<boolean> {
   if (downloaded.has(family)) return loadStoredFont(family);
   const hit = pending.get(family); if (hit) return hit;
   downloading.add(family); emit();
@@ -104,7 +104,7 @@ export function downloadFont(family: string, src: FontSource): Promise<boolean> 
       }
       if (!list.length) return false;
       const faces = await fetchAll(list);
-      register(family, faces);
+      if (opts.register !== false) register(family, faces);
       try { await idb('readwrite', s => s.put({ faces }, family)); downloaded.add(family); saveList(); } catch { /* 存不進去：這次照樣能用，下次再下載 */ }
       return true;
     } catch { return false; }

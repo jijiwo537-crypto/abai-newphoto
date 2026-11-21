@@ -453,6 +453,12 @@ const floatingScaleFloor = (item: Partial<FloatingImage> | null | undefined) =>
     : MIN_FLOATING_SCALE;
 /** 放大上限：一般 10 倍；去背圖最多跟一整頁一樣大 */
 const floatingScaleCeil = (item: Partial<FloatingImage> | null | undefined) => {
+  /* 文字：最大到「兩頁寬、比一頁高一點」（跨頁的一整個跨頁那麼大），不能無止境放大。
+     已經比這個大的舊文字不強迫縮小，只是不能再放大 */
+  if (item && item.text !== undefined && classicPage.w && classicPage.h && item.width && item.height) {
+    const ceil = Math.min(10, classicPage.w * 2 / item.width, classicPage.h * 1.2 / item.height);
+    return Math.max(floatingScaleFloor(item), ceil, Math.min(10, item.scale ?? 0));
+  }
   if (!floatingIsAlpha(item) || !classicPage.w || !classicPage.h || !item?.width || !item?.height) return 10;
   return Math.max(floatingScaleFloor(item), Math.min(10, classicPage.w / item.width, classicPage.h / item.height));
 };
@@ -3170,7 +3176,12 @@ export const TextEditorPanel: React.FC<{
   // 簡繁轉換的字典：打開文字面板就先在背景載好，點字體時立刻轉
   useEffect(() => { if (!symbol) void preloadHanConvert(); }, [symbol]);
   // 預設字體也在背景存到本機一次（之後沒網路也能用）；它的按鈕不顯示下載狀態
-  useEffect(() => { if (!symbol && !isFontDownloaded(DEFAULT_FONT)) void downloadFontFully(DEFAULT_FONT); }, [symbol]);
+  useEffect(() => {
+    if (symbol || isFontDownloaded(DEFAULT_FONT)) return;
+    // 等使用者停手一陣子才在背景存（不跟剛新增文字、拖曳搶主執行緒）
+    const t = window.setTimeout(() => { void downloadFontFully(DEFAULT_FONT, { quiet: true }); }, 8000);
+    return () => clearTimeout(t);
+  }, [symbol]);
   const pickFont = async (name: string) => {
     const version = ++fontPickVersion.current;
     /* 選「（簡）」字體 → 文字整段轉簡體；選其他中文字體 → 轉繁體。點下去當下就換（不等字型下載） */

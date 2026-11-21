@@ -648,9 +648,11 @@ export function fontSource(family: string): FontSource {
     + (SINGLE_WEIGHT_FONTS.has(family) ? ':wght@400&display=swap' : ':wght@400;700&display=swap') };
 }
 /** 把整個字體下載到本機（之後打開 App 不用再等）。下載完就能用。 */
-export async function downloadFontFully(family: string): Promise<boolean> {
+export async function downloadFontFully(family: string, opts: { quiet?: boolean } = {}): Promise<boolean> {
   if (family === SYMBOL_FONT) return true;
-  const ok = await downloadFont(family, fontSource(family));
+  /* quiet：只存到本機、不在這次重新登記（字體已經在用了；重新登記一百多份會讓畫面一直以為字型換了而重畫） */
+  const ok = await downloadFont(family, fontSource(family), { register: !opts.quiet });
+  if (ok && opts.quiet) return true;
   if (ok) { cssDone.add(family); requested.set(family, Promise.resolve()); window.dispatchEvent(new Event('abai-font-ready')); }
   return ok;
 }

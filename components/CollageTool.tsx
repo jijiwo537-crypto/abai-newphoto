@@ -5736,9 +5736,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         && pinchedObject.img instanceof HTMLImageElement && sourceHasAlpha(pinchedObject.img);
       const alphaMinK = layoutNow ? Math.sqrt(Math.max(1, layoutNow.cw * layoutNow.ch) / 100 / Math.max(1, pin.w0 * pin.h0)) : 0.15;
       const pinchMin = pinchedObject?.type === 'image' ? (alphaObj ? alphaMinK : absoluteImageMinK) : 0.15;
+      /* 文字：最大只到比畫布大一點（框的寬、高最多是畫布的 1.2 倍），不能無止境放大；
+         已經比這個大的不強迫縮小，只是不能再放大 */
+      const textMax = pinchedObject?.type === 'text' && layoutNow
+        ? Math.max(1, Math.min(8, layoutNow.cw * 1.2 / Math.max(1, pin.w0), layoutNow.ch * 1.2 / Math.max(1, pin.h0)))
+        : 8;
       const pinchMax = alphaObj && layoutNow
         ? Math.max(pinchMin, Math.min(8, layoutNow.cw / Math.max(1, pin.w0), layoutNow.ch / Math.max(1, pin.h0)))
-        : 8;
+        : Math.max(pinchMin, textMax);
       let k = Math.max(pinchMin, Math.min(pinchMax, dist / pin.d0));
       /* 旋轉有一段「不動區」：兩指轉不到 ROT_START 度就當成純縮放。
          超過之後把門檻扣掉再開始轉，所以不會在跨過門檻那一瞬間跳一下。

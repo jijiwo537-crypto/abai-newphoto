@@ -151,11 +151,10 @@ function stableEntry(ctx: CanvasRenderingContext2D, mode: 'fill' | 'stroke', tex
      現在字只畫一次，光在字底下也挖空，字的透明度就跟沒開發光時一樣。
    ‧ 清晰度：光暈圖為了省記憶體解析度有上限，以前字也在這張裡，放大就看到鋸齒；現在字不在裡面了。 */
 type Glow = { layers: HTMLCanvasElement[]; lv: number[]; x: number; y: number; w: number; h: number; px: number };
-import { drawGlowGL } from './glowGL';
 const glowCache = new Map<string, Glow>();
 let glowBrokenUntil = 0;   // iPhone 畫布記憶體用完時，暫時改用直接畫
 let glowPx = 0;
-const GLOW_MAX_ENTRIES = 24, GLOW_MAX_TOTAL = 12e6, GLOW_MAX_ENTRY = 2e6, GLOW_MAX_SIDE = 4096;
+const GLOW_MAX_ENTRIES = 24, GLOW_MAX_TOTAL = 12e6, GLOW_MAX_ENTRY = 8e5, GLOW_MAX_SIDE = 4096;
 const evictGlow = () => {
   while (glowCache.size > GLOW_MAX_ENTRIES || glowPx > GLOW_MAX_TOTAL) {
     const k0 = glowCache.keys().next().value;
@@ -176,14 +175,7 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   const lv = hit.canvas.width / hit.w;
   const STEP = Math.log(1.004);
   const local = blurs.map(b => Math.exp(Math.round(Math.log(Math.max(1e-6, b / k)) / STEP) * STEP));
-  /* 放大看時光不能一格一格：光的圖至少要有螢幕一半的解析度。依放大倍率取 2 的次方，
-     每放大一倍才換一次（縮放中不會一直重做；換的時候光的形狀不變，只是更細） */
-  /* 先用 GPU 畫（見 utils/glowGL）：模糊在 GPU 上做、螢幕解析度雙三次合成 —— 拉滑桿不卡、放大不會一格一格。
-     GPU 不行時才用下面的 2D 做法 */
-  if (drawGlowGL({ ctx, mask: hit.canvas, maskX: hit.x, maskY: hit.y, maskW: hit.w, maskH: hit.h, x, y,
-    sigmas: local.map(v => v / 2), color, textAlpha: textAlpha ?? ctx.globalAlpha, key: e.key + '\u0004' + local.map(v => v.toPrecision(6)).join(',') })) return true;
-  const zl = 2 ** Math.ceil(Math.log2(Math.max(1e-3, k / 2)));
-  const key = [e.key, color, local.map(v => v.toPrecision(6)).join(','), zl].join('\u0003');
+  const key = [e.key, color, local.map(v => v.toPrecision(6)).join(','), Math.ceil(Math.log2(Math.max(1, k)))].join('\u0003');
   let gl = glowCache.get(key);
   if (gl) { glowCache.delete(key); glowCache.set(key, gl); }
   else {
@@ -192,7 +184,9 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
     /* 三層光各用自己的解析度：模糊越大，圖越小（每層的模糊都約 8 個像素）。
        模糊的成本跟「像素數×模糊半徑」成正比，這樣每層都很快 —— 拉發光滑桿時每一格都要重做，才不會一格一格的。
        取 2 的次方：發光大小連續改變時解析度很少換，換了也看不出來（模糊量都在 4 像素以上）。 */
-    const capV = Math.min(GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)));
+    /* 解析度上限：最多比螢幕細 2 倍（再細看不出差別）。發光很小時 12/b 會非常大，
+       不設上限的話剛開始拉滑桿那幾格每格都要做三張好幾百萬像素的圖（很卡） */
+    const capV = Math.min(GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)), Math.max(1, k));
     const layers: HTMLCanvasElement[] = [], lvs: number[] = [];
     let total = 0;
     const drop = () => { for (const c of layers) c.width = c.height = 1; };
@@ -201,7 +195,7 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
          Safari 會把模糊半徑取整、2 的次方解析度又會一段一段換，拉滑桿時光就忽大忽小地抖。
          這樣模糊量永遠一樣，光的大小只跟著圖的縮放連續改變。 */
       const BL = 12;
-      const gv = Math.min(capV, Math.max(BL / Math.max(1e-3, b), Math.min(zl, 36 / Math.max(1e-3, b))));
+      const gv = Math.min(capV, BL / Math.max(1e-3, b));
       const W = Math.ceil(lw * gv), H = Math.ceil(lh * gv);
       if (!(gv > 0) || W < 1 || H < 1) { drop(); return false; }
       const c = document.createElement('canvas'); c.width = W; c.height = H;
@@ -273,7 +267,33 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   /* 字不透明時完全不挖：字整個蓋住光，挖了反而在字邊留下一圈深色線。
      字半透明時：字的「內部」整個挖掉（光不從字後面透上來）；字的邊緣按比例挖，
      讓邊緣那一像素的「字＋光」跟不透明時一樣連續，不會出現深色線或白邊。 */
-  const ta = Math.max(0, Math.min(1, textAlpha ?? ctx.globalAlpha));
+  knockText(s2, hit, x, y, bw, bh, m, bx, by, textAlpha ?? ctx.globalAlpha);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(sc, 0, 0, bw, bh, bx, by, bw, bh);
+  ctx.restore();
+  return true;
+}
+
+/* 合成用的暫存畫布（兩張共用，只會變大；超過上限就不用） */
+const scratches: (HTMLCanvasElement | null)[] = [null, null];
+function scratchFor(w: number, h: number, slot = 0): HTMLCanvasElement | null {
+  if (w * h > 8e6) return null;
+  let sc = scratches[slot];
+  if (!sc) sc = scratches[slot] = document.createElement('canvas');
+  if (sc.width < w || sc.height < h) {
+    sc.width = Math.max(sc.width, Math.ceil(w)); sc.height = Math.max(sc.height, Math.ceil(h));
+    if (sc.width < w || sc.height < h) { scratches[slot] = null; return null; }
+    // iPhone 記憶體不夠時新畫布會「畫不出來」但不報錯：畫一點讀回來確認
+    const g = sc.getContext('2d'); let ok = 0;
+    if (g) { g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1); try { ok = g.getImageData(0, 0, 1, 1).data[3]; } catch { ok = 0; } }
+    if (ok < 200) { sc.width = sc.height = 1; scratches[slot] = null; return null; }
+  }
+  return sc;
+}
+
+/** 照字的透明度把字的位置從光裡挖掉（s2 的矩陣要已經是「字座標 → 暫存畫布」） */
+function knockText(s2: CanvasRenderingContext2D, hit: Entry, x: number, y: number, bw: number, bh: number, m: DOMMatrix, bx: number, by: number, textA: number) {
+  const ta = Math.max(0, Math.min(1, textA));
   if (ta < 0.999) {
     s2.globalCompositeOperation = 'destination-out';
     /* 邊緣挖的比例：讓「半蓋住的邊緣像素」跟字內、字外一樣亮（不亮也不暗）。
@@ -300,27 +320,40 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
     }
     s2.globalCompositeOperation = 'source-over';
   }
+}
+
+/** 螢幕解析度直接畫光（放大很多時用）：三層影子畫到暫存畫布，照字的透明度挖掉字，再貼回去 */
+function drawGlowDirect(ctx: CanvasRenderingContext2D, hit: Entry, x: number, y: number, blursDev: number[], color: string, textAlpha?: number): boolean {
+  const m = ctx.getTransform();
+  const pad = Math.max(...blursDev) * 1.7 / Math.sqrt(Math.abs(m.a * m.d - m.b * m.c));
+  const xs = [x + hit.x - pad, x + hit.x + hit.w + pad], ys = [y + hit.y - pad, y + hit.y + hit.h + pad];
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const px of xs) for (const py of ys) {
+    const dx = m.a * px + m.c * py + m.e, dy = m.b * px + m.d * py + m.f;
+    x0 = Math.min(x0, dx); x1 = Math.max(x1, dx); y0 = Math.min(y0, dy); y1 = Math.max(y1, dy);
+  }
+  const bx = Math.max(0, Math.floor(x0)), by = Math.max(0, Math.floor(y0));
+  const bw = Math.min(ctx.canvas.width, Math.ceil(x1)) - bx, bh = Math.min(ctx.canvas.height, Math.ceil(y1)) - by;
+  if (bw <= 0 || bh <= 0) return true;
+  const sc = scratchFor(bw, bh); if (!sc) return false;
+  const s2 = sc.getContext('2d')!;
+  s2.setTransform(1, 0, 0, 1, 0, 0); s2.globalCompositeOperation = 'source-over'; s2.globalAlpha = 1;
+  s2.clearRect(0, 0, bw, bh);
+  s2.imageSmoothingEnabled = true; s2.imageSmoothingQuality = 'low';
+  // 只畫影子：字畫在暫存畫布外面很遠，影子用 offset 移回來
+  const OFF = bw + 4096;
+  s2.setTransform(m.a, m.b, m.c, m.d, m.e - bx - OFF, m.f - by);
+  s2.shadowColor = color; s2.shadowOffsetX = OFF; s2.shadowOffsetY = 0;
+  for (const b of blursDev) { s2.shadowBlur = b; s2.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h); }
+  s2.shadowColor = 'transparent'; s2.shadowBlur = 0; s2.shadowOffsetX = 0;
+  s2.setTransform(m.a, m.b, m.c, m.d, m.e - bx, m.f - by);
+  knockText(s2, hit, x, y, bw, bh, m, bx, by, textAlpha ?? ctx.globalAlpha);
+  ctx.save();
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(sc, 0, 0, bw, bh, bx, by, bw, bh);
   ctx.restore();
   return true;
-}
-
-/* 合成用的暫存畫布（兩張共用，只會變大；超過上限就不用） */
-const scratches: (HTMLCanvasElement | null)[] = [null, null];
-function scratchFor(w: number, h: number, slot = 0): HTMLCanvasElement | null {
-  if (w * h > 8e6) return null;
-  let sc = scratches[slot];
-  if (!sc) sc = scratches[slot] = document.createElement('canvas');
-  if (sc.width < w || sc.height < h) {
-    sc.width = Math.max(sc.width, Math.ceil(w)); sc.height = Math.max(sc.height, Math.ceil(h));
-    if (sc.width < w || sc.height < h) { scratches[slot] = null; return null; }
-    // iPhone 記憶體不夠時新畫布會「畫不出來」但不報錯：畫一點讀回來確認
-    const g = sc.getContext('2d'); let ok = 0;
-    if (g) { g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1); try { ok = g.getImageData(0, 0, 1, 1).data[3]; } catch { ok = 0; } }
-    if (ok < 200) { sc.width = sc.height = 1; scratches[slot] = null; return null; }
-  }
-  return sc;
 }
 
 /** 只畫 draw() 的「影子」（發光），不畫本體：本體畫到畫布外面很遠的地方，影子用 shadowOffset 移回原位。
