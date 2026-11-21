@@ -192,6 +192,19 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
          「蓋得住就不重畫」，佈局一離開邊緣（例如貼滿整頁後縮小），多畫的那圈就跟著縮小露在選中框外面。
          所以每一格（不管有沒有重畫）都先更新這層裁切：現在真的貼著頁面／整條頁面邊緣的那幾邊放開（交給頁面去切），
          其他邊裁在佈局邊界外半個螢幕像素（剛好不跟內容自己的邊緣疊出一條淡線）。 */
+      /* 清晰那張（和編輯時的平面那張）：跟底圖同一個做法 —— 貼邊狀態一跟畫的時候不同（貼齊後開始縮小），
+         這一格就把「畫布自己身上」的裁切換成佈局本身的範圍，多畫的那一圈立刻切掉，不等重畫。
+         一定要裁在畫布自己身上：Safari 會把 canvas 單獨升成圖層，外層容器的 clip-path 不一定裁得到它
+         （這就是上一版在 iPhone 上沒效的原因）。重畫後會換回新的正確裁切。 */
+      for(const el of [cv,flat]){
+        if(el.dataset.edges===undefined)continue;
+        if(el.dataset.edges===edges){if(el.style.clipPath!==el.dataset.clip)el.style.clipPath=el.dataset.clip||'';continue;}
+        const mm=/matrix\(([^)]+)\)/.exec(el.style.transform||'');if(!mm)continue;
+        const [a,b,c,d,e,f]=mm[1].split(',').map(Number);
+        let inv:DOMMatrix;try{inv=new DOMMatrix([a,b,c,d,e,f]).inverse();}catch{continue;}
+        const want=`polygon(${[[0,0],[width,0],[width,height],[0,height]].map(([x,y])=>`${inv.a*x+inv.c*y+inv.e}px ${inv.b*x+inv.d*y+inv.f}px`).join(',')})`;
+        if(el.style.clipPath!==want)el.style.clipPath=want;
+      }
       const clipBox=clipHost.current;
       if(clipBox){
         const scrNow=bounds.width>0?Math.hypot(...(fwd?[fwd[0],fwd[1]]:[bounds.width/width,0])):1;
@@ -420,6 +433,8 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       if(detailResized)delete cv.dataset.seamPainted;
       cv.style.width=`${surface.width}px`;cv.style.height=`${surface.height}px`;
       cv.style.transform=`matrix(${surface.transform.join(',')})`;cv.style.clipPath=`polygon(${surface.clip})`;
+      // 記下這張是在哪一種「貼邊狀態」下畫的、當時的裁切（見下面 boxClipIfEdgesChanged）
+      cv.dataset.edges=edges;cv.dataset.clip=cv.style.clipPath;
       if(editPresentation.current&&!fused){
         // WebKit 可以直接把原圖大小的特效畫布裁進實體像素的 2D 畫布。
         // 每格滑桿都把好幾百萬像素的暫存重新上傳到第二個 GL context 會慢很多。這不是比較差的草稿：
@@ -427,6 +442,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
         const resized=flat.width!==W||flat.height!==H;
         if(flat.width!==W)flat.width=W;if(flat.height!==H)flat.height=H;
         flat.style.width=cv.style.width;flat.style.height=cv.style.height;flat.style.transform=cv.style.transform;flat.style.clipPath=cv.style.clipPath;
+        flat.dataset.edges=cv.dataset.edges;flat.dataset.clip=cv.dataset.clip;
         const v=surface.view,m=new DOMMatrix([v.xx/W,v.yx/W,v.xy/H,v.yy/H,v.x0,v.y0]).inverse();
         // 蓋住 2D 畫布半個像素的範圍、在共用邊上裁掉反鋸齒：每個裁切跟鄰居重疊約 1 個點陣像素
         const bleedX=noVisibleGutter?(Math.abs(v.xx/W)+Math.abs(v.xy/H))*1.25:0;
