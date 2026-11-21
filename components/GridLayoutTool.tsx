@@ -2795,12 +2795,13 @@ function prepareSprite(cat: string): Promise<void> {
   }
   return p;
 }
-const FontCard: React.FC<{
+/* React.memo：選字體、換分頁時只有狀態真的變了的那一兩顆重畫（不是一百多顆全部重畫） */
+const FontCard = React.memo<{
   font: { name: string; label: string; category: FontCategory };
   active: boolean;
   loading?: boolean;
-  onPick: () => void;
-}> = ({ font, active, loading, onPick }) => {
+  onPick: (name: string) => void;
+}>(({ font, active, loading, onPick }) => {
   /* 範例字用「預先畫好的預覽圖」：跟 App 一起發佈，打開選單就已經是完整的樣子，不用等字體下載；
      每個字體都照它實際畫出來的範圍（墨水）統一成一樣的視覺高度、上下左右置中 ——
      不再有的大、有的小、整排偏上。真正選用時才下載那個字體（見 ensureFont）。 */
@@ -2837,7 +2838,7 @@ const FontCard: React.FC<{
   return (
     <button
       ref={ref}
-      onClick={onPick}
+      onClick={() => onPick(font.name)}
       title={font.label}
       className={`relative isolate flex flex-col items-center justify-center gap-1 h-[62px] px-1.5 rounded-xl border transition-all ${
         active ? 'bg-white/10 border-white' : 'bg-white/[0.03] border-white/10 hover:border-white/25'
@@ -2871,7 +2872,7 @@ const FontCard: React.FC<{
       <span className="leading-[12px] h-3 block text-center font-bold text-white/40 max-w-full whitespace-nowrap overflow-hidden" style={{ fontSize: `${labelPx}px` }}>{font.label}</span>
     </button>
   );
-};
+});
 
 /* ── 新增符號 ──────────────────────────────────────────────────────────
    符號說到底就是一段文字，所以加進畫面之後就是一個文字圖層：一樣可以拖、
@@ -3204,6 +3205,8 @@ export const TextEditorPanel: React.FC<{
     const t = window.setTimeout(() => { void downloadFontFully(DEFAULT_FONT, { quiet: true }); }, 8000);
     return () => clearTimeout(t);
   }, [symbol]);
+  const pickRef = useRef<(name: string) => Promise<void>>(async () => {});
+  const onPickFont = useCallback((name: string) => { void pickRef.current(name).catch(() => {}); }, []);
   /* 正在準備的字體（按鈕變暗＋轉圈）：簡繁轉換、字型下載都好了才一次換上 */
   const [loadingFont, setLoadingFont] = useState<string | null>(null);
   const pickFont = async (name: string) => {
@@ -3229,6 +3232,7 @@ export const TextEditorPanel: React.FC<{
       if (version === fontPickVersion.current) setLoadingFont(null);
     }
   };
+  pickRef.current = pickFont;
   /* 顏色改成「點進去有一頁」：這裡存的是那一頁要調哪個顏色。 */
   const [colorPage, setColorPage] = useState<
     { value: string; colors?: string[]; onPick: (c: string) => void } | null
@@ -3338,6 +3342,8 @@ export const TextEditorPanel: React.FC<{
   );
   const tabs: [TextTab, string][] = [['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['glow', '發光'], ['shadow', '陰影'], ['weight', '粗斜體'], ['layout', '排列']];
   const tab = symbol ? 'color' : sub === 'bg' || sub === 'card' ? 'font' : sub;
+  const [fontTabSeen, setFontTabSeen] = useState(false);
+  if (!fontTabSeen && !symbol && tab === 'font' && !colorPage) setFontTabSeen(true);
   // 進到字體頁才準備四張預覽圖（解碼好才顯示）
   useEffect(() => { if (!symbol && tab === 'font') for (const c of FONT_CATEGORIES) void prepareSprite(c.id); }, [symbol, tab]);
 
@@ -3375,8 +3381,9 @@ export const TextEditorPanel: React.FC<{
             onBack={() => setColorPage(null)}
           />
         )}
-        {!colorPage && tab === 'font' && (
-          <div className="space-y-2.5 pb-6">
+        {/* 字體頁打開過一次就留著（切到別頁只是藏起來）：一百多顆字體按鈕不用每次重建，切分頁不延遲 */}
+        {fontTabSeen && (
+          <div className="space-y-2.5 pb-6" style={!colorPage && tab === 'font' ? undefined : { display: 'none' }}>
             {/* 語言按鈕固定在上面：字體列表上下捲動時它不跟著跑 */}
             <div className="sticky top-0 z-10 bg-[#0a0a0a] pt-2 pb-1">
             <div className="flex items-center gap-1 bg-white/[0.06] rounded-full p-0.5">
@@ -3406,7 +3413,7 @@ export const TextEditorPanel: React.FC<{
                   font={f}
                   active={(layer.fontFamily || DEFAULT_FONT) === f.name}
                   loading={loadingFont === f.name}
-                  onPick={() => { void pickFont(f.name).catch(() => {}); }}
+                  onPick={onPickFont}
                 />
               ))}
             </div>

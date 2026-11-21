@@ -1,10 +1,15 @@
 /* 字體「下載一次、永久可用」：
    使用者選一個字體時，把那個字體的全部字身檔（中文字體是拆成很多小份的，也全部抓）下載下來，
    存進本機資料庫（IndexedDB）。之後打開 App，用到這個字體時直接從本機登記，不用網路、不用等。
+   ‧ 每一小份存成檔案（Blob；iOS 放在儲存空間，不佔記憶體）。
+   ‧ 登記時只給瀏覽器「每一份的本機網址＋它涵蓋哪些字」，真的用到哪些字才讀那幾份 ——
+     不會把整個字體（中文字體 3～20MB，解開更大）一次塞進記憶體（以前會讓 iPhone 閃退、進專案很卡）。
    哪些字體已下載另外記在 localStorage，按鈕可以同步知道要不要顯示「下載」圖示。 */
 
-const DB = 'abai-fonts', STORE = 'faces', LIST_KEY = 'abai-fonts-downloaded-v1';
-type Face = { desc: FontFaceDescriptors; buf: ArrayBuffer };
+const DB = 'abai-fonts-v2', STORE = 'faces', LIST_KEY = 'abai-fonts-downloaded-v2';
+type Face = { desc: FontFaceDescriptors; blob?: Blob; buf?: ArrayBuffer };
+// 舊版（整份讀進記憶體的那版）的資料：丟掉，重新下載成新格式
+try { if (typeof indexedDB !== 'undefined') indexedDB.deleteDatabase('abai-fonts'); localStorage.removeItem('abai-fonts-downloaded-v1'); } catch { /* */ }
 
 let dbp: Promise<IDBDatabase> | null = null;
 function db(): Promise<IDBDatabase> {
@@ -60,7 +65,7 @@ async function fetchAll(list: { url: string; desc: FontFaceDescriptors }[]): Pro
     while (i < list.length) {
       const k = i++; const r = await fetch(list[k].url);
       if (!r.ok) throw new Error('font ' + r.status);
-      out[k] = { desc: list[k].desc, buf: await r.arrayBuffer() };
+      out[k] = { desc: list[k].desc, blob: await r.blob() };
     }
   };
   await Promise.all(Array.from({ length: Math.min(6, list.length) }, worker));
@@ -70,7 +75,12 @@ async function fetchAll(list: { url: string; desc: FontFaceDescriptors }[]): Pro
 const registered = new Set<string>();
 function register(family: string, faces: Face[]) {
   if (registered.has(family)) return;
-  for (const f of faces) { try { document.fonts.add(new FontFace(family, f.buf, f.desc)); } catch { /* 單一字身壞掉不影響其他 */ } }
+  for (const f of faces) {
+    try {
+      const blob = f.blob || new Blob([f.buf!], { type: 'font/woff2' });
+      document.fonts.add(new FontFace(family, `url("${URL.createObjectURL(blob)}")`, f.desc));
+    } catch { /* 單一字身壞掉不影響其他 */ }
+  }
   registered.add(family);
 }
 
@@ -105,7 +115,16 @@ export function downloadFont(family: string, src: FontSource, opts: { register?:
       if (!list.length) return false;
       const faces = await fetchAll(list);
       if (opts.register !== false) register(family, faces);
-      try { await idb('readwrite', s => s.put({ faces }, family)); downloaded.add(family); saveList(); } catch { /* 存不進去：這次照樣能用，下次再下載 */ }
+      /* 存檔：先存成檔案（Blob）；這台裝置的資料庫不收檔案的話，改存成資料（壓縮的原檔大小，不解開） */
+      let saved = false;
+      try { await idb('readwrite', s => s.put({ faces }, family)); saved = true; } catch { /* 改用下面的方式 */ }
+      if (!saved) {
+        try {
+          const bufs = await Promise.all(faces.map(async f => ({ desc: f.desc, buf: await f.blob!.arrayBuffer() })));
+          await idb('readwrite', s => s.put({ faces: bufs }, family)); saved = true;
+        } catch { /* 存不進去：這次照樣能用，下次再下載 */ }
+      }
+      if (saved) { downloaded.add(family); saveList(); }
       return true;
     } catch { return false; }
     finally { downloading.delete(family); pending.delete(family); emit(); }
