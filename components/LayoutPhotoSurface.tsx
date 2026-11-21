@@ -202,7 +202,11 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
         const mm=/matrix\(([^)]+)\)/.exec(el.style.transform||'');if(!mm)continue;
         const [a,b,c,d,e,f]=mm[1].split(',').map(Number);
         let inv:DOMMatrix;try{inv=new DOMMatrix([a,b,c,d,e,f]).inverse();}catch{continue;}
-        const want=`polygon(${[[0,0],[width,0],[width,height],[0,height]].map(([x,y])=>`${inv.a*x+inv.c*y+inv.e}px ${inv.b*x+inv.d*y+inv.f}px`).join(',')})`;
+        /* 往外多留半個螢幕像素：裁在剛好的邊上，會跟內容自己的邊緣疊成兩次半透明（邊緣變軟）。
+           半個螢幕像素看不出來，但不會疊兩次 */
+        const scrE=fwd?Math.hypot(fwd[0],fwd[1]):(bounds.width>0?bounds.width/width:1);
+        const ex=.5/Math.max(1e-6,dpr*scrE);
+        const want=`polygon(${[[-ex,-ex],[width+ex,-ex],[width+ex,height+ex],[-ex,height+ex]].map(([x,y])=>`${inv.a*x+inv.c*y+inv.e}px ${inv.b*x+inv.d*y+inv.f}px`).join(',')})`;
         if(el.style.clipPath!==want)el.style.clipPath=want;
       }
       const clipBox=clipHost.current;
