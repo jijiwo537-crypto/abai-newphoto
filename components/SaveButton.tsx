@@ -128,28 +128,17 @@ export const SaveButton: React.FC<{
   return (
     <>
     {covering && coverLayer()}
-    <div className="flex gap-2 items-stretch">
     <button
       ref={btnRef}
-      onClick={(e) => { e.stopPropagation(); if (ready) void save(); }}
+      /* App 裡存好之後（按鈕顯示「已存到相簿」），再按一次不是再存一份，而是叫出 iOS 原生的分享面板 */
+      onClick={(e) => { e.stopPropagation(); if (!ready) return; if (isNative() && phase === 'saved') void shareSheet(files); else void save(); }}
       disabled={!ready || phase === 'saving'}
-      className={className ?? `flex-1 h-12 rounded-full bg-white text-black font-black tracking-widest uppercase text-sm shadow-lg shadow-white/10 transition-all ${ready ? 'active:scale-95' : 'opacity-40'}`}
+      className={className ?? `h-12 rounded-full bg-white text-black font-black tracking-widest uppercase text-sm shadow-lg shadow-white/10 transition-all ${ready ? 'active:scale-95' : 'opacity-40'}`}
     >
-      {!ready ? (isNative() ? '儲存中…' : '準備中…') : phase === 'saving' ? '儲存中…' : phase === 'saved' ? '已存到相簿' : text}
+      {!ready ? (isNative() ? '儲存中…' : '準備中…') : phase === 'saving' ? '儲存中…'
+        : phase === 'saved' ? <span className="inline-flex items-center justify-center gap-2">已存到相簿 · 分享<Share size={16} strokeWidth={2.6} /></span> : text}
     </button>
-    {/* App 才有：叫出 iOS 原生的分享面板（網頁版的「儲存」本來就是分享面板，不需要第二顆） */}
-    {isNative() && (
-      <button
-        type="button"
-        aria-label="分享"
-        onClick={(e) => { e.stopPropagation(); if (ready) void shareSheet(files); }}
-        disabled={!ready}
-        className={`h-12 w-12 shrink-0 rounded-full border border-white/20 bg-white/10 text-white flex items-center justify-center transition-all ${ready ? 'active:scale-95' : 'opacity-40'}`}
-      >
-        <Share size={20} strokeWidth={2.2} />
-      </button>
-    )}
-    </div>
+
     </>
   );
 };
