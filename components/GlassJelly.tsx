@@ -202,15 +202,15 @@ export const GlassJelly: React.FC<Props> = ({ radius = 13, tint, press: pressAmt
       {/* 玻璃厚度：極淡內光（邊緣一圈微亮，中間透明） */}
       <span aria-hidden className="pointer-events-none absolute inset-0 -z-10" style={{ borderRadius: 'inherit',
         boxShadow: 'inset 0 0 14px rgba(255,255,255,.04), inset 0 0 2px rgba(255,255,255,.05)' }} />
-      {/* 按住：整顆微亮＋手指處一團光 */}
-      <span aria-hidden className="pointer-events-none absolute inset-0 -z-10" style={{ borderRadius: 'inherit', opacity: 'var(--gl, 0)' as any,
-        background: 'radial-gradient(110px 80px at var(--gx, 50%) var(--gy, 50%), rgba(255,255,255,.22), rgba(255,255,255,.06) 60%, rgba(255,255,255,.04))' }} />
-      {children}
       {/* 鏡面亮邊：左上與右下亮、兩側暗，像光打在玻璃厚邊上 */}
       <span aria-hidden className="pointer-events-none absolute inset-0" style={{ borderRadius: 'inherit', padding: 1,
         background: 'linear-gradient(135deg, rgba(255,255,255,.42) 0%, rgba(255,255,255,.10) 22%, rgba(255,255,255,.03) 45%, rgba(255,255,255,.03) 58%, rgba(255,255,255,.10) 82%, rgba(255,255,255,.26) 100%)',
         WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)', WebkitMaskComposite: 'xor',
         mask: 'linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0)' } as React.CSSProperties} />
+      {/* 按住：整顆微亮＋手指處一團光 */}
+      <span aria-hidden className="pointer-events-none absolute inset-0 -z-10" style={{ borderRadius: 'inherit', opacity: 'var(--gl, 0)' as any,
+        background: 'radial-gradient(110px 80px at var(--gx, 50%) var(--gy, 50%), rgba(255,255,255,.22), rgba(255,255,255,.06) 60%, rgba(255,255,255,.04))' }} />
+      {children}
     </button>
   );
 };

@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GlassJelly } from './GlassJelly';
 import { Icon } from './Icon';
 import { LOCALES, changeLocale, getLocale } from '../utils/locale';
 import { exportsStatus, subscribeExports, removeExport, type ExportMeta } from '../utils/exportHistory';
@@ -1354,49 +1353,47 @@ export const HomePage: React.FC<HomePageProps> = ({
         {/* 編輯 / 相機 —— 圖示與文字沒動，高度跟下面那排四個工具對齊（都是 75）。
  */}
         <div className="relative z-10 mt-[8px] shrink-0 flex gap-2">
-          <GlassJelly
+          <button
             onClick={onImportPhoto}
-            tint="#fff"
-            className="flex-1 h-[75px] text-black border-none flex items-center justify-center gap-[9px] p-3.5"
+            className="flex-1 h-[75px] rounded-[13px] bg-white text-black border-none flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-transform duration-300"
           >
             <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'opsz' 24" }}>
               add_photo_alternate
             </span>
             <span className="text-sm font-black tracking-[0.06em]">編輯</span>
-          </GlassJelly>
-          <GlassJelly
+          </button>
+          <button
             onClick={onOpenCamera}
-            className="flex-1 h-[75px] text-white flex items-center justify-center gap-[9px] p-3.5"
+            className="flex-1 h-[75px] rounded-[13px] bg-white/[0.06] border border-white/10 text-white flex items-center justify-center gap-[9px] p-3.5 hover:bg-white/[0.12] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
           >
-            <Icon name="photo_camera" className="text-[24px] text-white/90" />
+            <Icon name="photo_camera" className="text-[24px] text-white/75" />
             <span className="text-sm font-black tracking-[0.06em]">相機</span>
-          </GlassJelly>
+          </button>
         </div>
 
         {/* 四個工具 —— 一樣只有尺寸照參考圖放大（64→75），圖示與文字沒換 */}
         <div className="relative z-10 mt-[11px] shrink-0 flex gap-2">
           {TOOL_TILES.map(t => (
-            <GlassJelly
+            <button
               key={t.key}
               onClick={tileAction[t.key]}
-              className="flex-1 min-w-0 h-[75px] text-white flex flex-col items-center justify-center gap-[9px]"
+              className="flex-1 min-w-0 h-[75px] rounded-[13px] bg-white/[0.06] border border-white/10 text-white flex flex-col items-center justify-center gap-[9px] hover:bg-white/[0.12] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
             >
-              <Icon name={t.icon} className="text-[22px] text-white/90" />
-              <span className="text-[10px] font-bold tracking-[0.06em] text-white/90 whitespace-nowrap">{t.label}</span>
-            </GlassJelly>
+              <Icon name={t.icon} className="text-[22px] text-white/70" />
+              <span className="text-[10px] font-bold tracking-[0.06em] text-white/75 whitespace-nowrap">{t.label}</span>
+            </button>
           ))}
         </div>
 
         {/* 只有一個無障礙入口，標題和動作共用同一條水平基線 */}
         {/* 這一排兩個入口：藝術效果、點陣文字（各佔一半，同一個高度、同一條文字基線） */}
         <div className="relative z-10 mt-[14px] shrink-0 flex gap-2">
-        <GlassJelly
+        <button
           type="button"
           aria-label="開啟藝術效果"
           onClick={onOpenArt}
-          radius={14}
-          press={0.6}
-          className="flex-1 min-w-0 text-left"
+          className="relative flex-1 min-w-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
+          style={{ background: previews.promo ? undefined : 'rgba(255,255,255,.03)' }}
         >
           {previews.promo && (
             <>
@@ -1425,14 +1422,13 @@ export const HomePage: React.FC<HomePageProps> = ({
               {pillArrow}
             </span>
           </div>
-        </GlassJelly>
-        <GlassJelly
+        </button>
+        <button
           type="button"
           aria-label="開啟點陣文字"
           onClick={onOpenDotArt}
-          radius={14}
-          press={0.6}
-          className="flex-1 min-w-0 text-left"
+          className="relative flex-1 min-w-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
+          style={{ background: 'rgba(255,255,255,.03)' }}
         >
           <div className="relative px-[14px] pt-7 pb-4">
             <span className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">點陣文字</span>
@@ -1442,7 +1438,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               {pillArrow}
             </span>
           </div>
-        </GlassJelly>
+        </button>
         </div>
 
         {/* 首頁只顯示推薦；歷史紀錄集中在「我的」。 */}
