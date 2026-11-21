@@ -88,6 +88,8 @@ import {registerTrim} from '../utils/memoryPressure';
 import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
 registerTrim('selected-animation-surfaces', releaseSelectedMotionSurfaces);
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
+import { FONT_PREVIEW_INDEX, FONT_PREVIEW_CELL } from '../utils/fontPreviewIndex';
+import { mountLayoutDebug } from '../utils/layoutDebug';
 import {drawStableText, drawGlowText, hasEmoji} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
 import { ExportActionLift } from './ExportActionLift';
@@ -2766,18 +2768,27 @@ export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled
   </>
 );
 
+/** 字體預覽圖（public/font-previews/<分類>.png）裡每個字體在第幾格 */
+const FONT_PREVIEW_ROW: Record<string, Map<string, number>> = Object.fromEntries(
+  Object.entries(FONT_PREVIEW_INDEX).map(([cat, names]) => [cat, new Map(names.map((n, i) => [n, i]))]));
 const FontCard: React.FC<{
   font: { name: string; label: string; category: FontCategory };
   active: boolean;
   onPick: () => void;
 }> = ({ font, active, onPick }) => {
+  /* 範例字用「預先畫好的預覽圖」：跟 App 一起發佈，打開選單就已經是完整的樣子，不用等字體下載；
+     每個字體都照它實際畫出來的範圍（墨水）統一成一樣的視覺高度、上下左右置中 ——
+     不再有的大、有的小、整排偏上。真正選用時才下載那個字體（見 ensureFont）。 */
+  const row = FONT_PREVIEW_ROW[font.category]?.get(font.name);
   const ref = useRef<HTMLButtonElement>(null);
   const [ready, setReady] = useState(false);
   useEffect(() => {
+    if (row !== undefined) return;
     let alive = true;
     prepareFontSample(font).then(() => { if (alive) setReady(true); });
     return () => { alive = false; };
-  }, [font.name]);
+  }, [font.name, row]);
+  const { w: PW, h: PH } = FONT_PREVIEW_CELL;
 
   return (
     <button
@@ -2788,16 +2799,20 @@ const FontCard: React.FC<{
         active ? 'bg-white/10 border-white' : 'bg-white/[0.03] border-white/10 hover:border-white/25'
       }`}
     >
-      {/* 行高不能用 leading-none：那樣行盒只有 19px，可是不少字體（尤其是中日韓）
-          的字身高度超過 1 個 em —— truncate 帶著 overflow:hidden，超出去的部分
-          就被切掉了，看起來就是範例字上面被蓋住一截。
-          放到 1.6 em 讓任何字體都放得下；卡片是 62px 高、內容加起來 48px，還有餘裕。 */}
-      <span
-        className="text-[19px] leading-[1.6] text-white truncate max-w-full"
-        style={{ fontFamily: fontStack(font.name), visibility: ready ? 'visible' : 'hidden' }}
-      >
-        {FONT_SAMPLE[font.category]}
-      </span>
+      {row !== undefined ? (
+        <span aria-hidden className="block shrink-0" style={{
+          width: PW, height: PH,
+          backgroundImage: `url(${import.meta.env.BASE_URL}font-previews/${font.category}.png)`,
+          backgroundSize: `${PW}px auto`, backgroundPosition: `0 ${-row * PH}px`, backgroundRepeat: 'no-repeat',
+        }} />
+      ) : (
+        <span
+          className="text-[19px] leading-[1.6] text-white truncate max-w-full"
+          style={{ fontFamily: fontStack(font.name), visibility: ready ? 'visible' : 'hidden' }}
+        >
+          {FONT_SAMPLE[font.category]}
+        </span>
+      )}
       <span className="text-[9px] leading-[10px] h-5 flex items-center justify-center text-center font-bold text-white/40 max-w-full break-words">{font.label}</span>
     </button>
   );
@@ -14585,6 +14600,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      （外框、間距卻是平滑移動的）——佈局裡的照片看起來就在框裡抖。升成一層之後，畫布在這一層
      裡的位置固定不動，整組由 GPU 一起位移縮放，就像一張圖片。停下來 300ms 再拿掉，
      讓瀏覽器照實際倍率重畫清楚（平常不升層，放大預覽時框線、圓點才不會糊）。 */
+  // 暫時的佈局偵錯工具（左上角「佈局偵錯」：錄製 → 複製 → 貼給 Claude）。問題解決後拿掉
+  useEffect(() => mountLayoutDebug(), []);
   const layoutMotion = useRef(new Set<string>());
   const layoutMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [, bumpLayoutMotion] = useState(0);
