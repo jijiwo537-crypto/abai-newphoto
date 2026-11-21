@@ -2846,7 +2846,7 @@ const FontCard = React.memo<{
       aria-busy={busy || undefined}
     >
       {needDl && (
-        <svg aria-label="下載" viewBox="0 0 24 24" className="absolute right-1 bottom-[8px] w-[10px] h-[10px] text-white/55 pointer-events-none" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <svg aria-label="下載" viewBox="0 0 24 24" className="absolute right-[5px] top-[5px] w-[10px] h-[10px] text-white/55 pointer-events-none" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 4v11M7 10.5l5 5 5-5M5 20h14" />
         </svg>
       )}
@@ -15247,13 +15247,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const withGlowInit = (layer: FloatingImage, patch: Partial<FloatingImage>): Partial<FloatingImage> => {
     /* 符號：換顏色時發光跟著換成同一色（之後一樣能在發光那邊單獨挑別的顏色）；
        第一次打開發光也用符號自己的顏色 */
-    if (layer.sym && (patch as any).color) return { ...patch, glowColor: (patch as any).color } as any;
+    /* 符號和文字一樣：換顏色時發光跟著換成同一色（之後一樣能在發光那邊單獨挑別的顏色）。跟創意拼圖同一套 */
+    if ((layer.sym || layer.text !== undefined) && (patch as any).color && (patch as any).glowColor === undefined) return { ...patch, glowColor: (patch as any).color } as any;
     if (layer.sym && !layer.glowInit && ((patch as any).glow || 0) > 0) {
       return { ...patch, glowColor: layer.color || '#FFFFFF', glowInit: true } as any;
     }
     if (layer.glowInit) return patch;
     if (layer.text !== undefined && (patch as any).glow !== undefined && ((patch as any).glow || 0) > 0) {
-      return { ...patch, glowColor: '#FFFFFF', glowInit: true } as any;
+      // 第一次打開發光：用文字自己的顏色（跟創意拼圖一樣）
+      return { ...patch, glowColor: layer.color || '#FFFFFF', glowInit: true } as any;
     }
     if (layer.shape && (patch as any).shapeGlow) {
       return { ...patch, shapeGlowColor: layer.color || SHAPE_DEFAULT_COLOR, glowInit: true } as any;
