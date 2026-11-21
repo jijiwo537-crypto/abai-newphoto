@@ -253,12 +253,15 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   s2.imageSmoothingEnabled = true; s2.imageSmoothingQuality = 'low';
   for (const c of gl.layers) s2.drawImage(c, x + gl.x, y + gl.y, gl.w, gl.h);
   /* 字不透明時完全不挖：字整個蓋住光，挖了反而在字邊留下一圈深色線。
-     字半透明時：字的「內部」整個挖掉（光不從字後面透上來）；字的邊緣只挖 (1−透明度)，
+     字半透明時：字的「內部」整個挖掉（光不從字後面透上來）；字的邊緣按比例挖，
      讓邊緣那一像素的「字＋光」跟不透明時一樣連續，不會出現深色線或白邊。 */
   const ta = Math.max(0, Math.min(1, textAlpha ?? ctx.globalAlpha));
   if (ta < 0.999) {
     s2.globalCompositeOperation = 'destination-out';
-    s2.globalAlpha = 1 - ta;
+    /* 邊緣挖的比例：讓「半蓋住的邊緣像素」跟字內、字外一樣亮（不亮也不暗）。
+       邊緣像素：字 a·c，加上剩下的光 (1−a·c)·a·(1−k·c)；取 c＝½ 解出 k＝2(1−a)/(2−a)。
+       a＝1 時 k＝0（完全不挖），a 越小挖越多。 */
+    s2.globalAlpha = 2 * (1 - ta) / (2 - ta);
     s2.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h);
     s2.globalAlpha = 1;
     const inner = scratchFor(bw, bh, 1);
@@ -269,12 +272,10 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
       s3.imageSmoothingEnabled = true; s3.imageSmoothingQuality = 'low';
       s3.setTransform(m.a, m.b, m.c, m.d, m.e - bx, m.f - by);
       s3.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h);
-      // 往內縮 1 螢幕像素＝四個方向各移 1 像素取交集
+      /* 只留「完全蓋住」的像素：同一張字在同一個位置 destination-in 三次＝覆蓋率的 4 次方
+         （全蓋 1→1、半蓋 .5→.06）。不往內縮，字內側不會留下一圈沒挖乾淨的亮線 */
       s3.globalCompositeOperation = 'destination-in';
-      for (const [ex, ey] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        s3.setTransform(m.a, m.b, m.c, m.d, m.e - bx + ex, m.f - by + ey);
-        s3.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h);
-      }
+      for (let i = 0; i < 3; i++) s3.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h);
       s3.setTransform(1, 0, 0, 1, 0, 0); s3.globalCompositeOperation = 'source-over';
       s2.setTransform(1, 0, 0, 1, 0, 0);
       s2.drawImage(inner, 0, 0, bw, bh, 0, 0, bw, bh);
