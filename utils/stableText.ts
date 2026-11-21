@@ -193,6 +193,9 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   const m = ctx.getTransform();
   const k = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c));
   if (!(k > 0) || !Number.isFinite(k)) return false;
+  /* 跟圖形的發光同一種畫法：把字當成一個形狀，每一格直接在螢幕解析度上投影子。
+     放大多少倍都是螢幕解析度（不會一格一格）；也不用先做光的圖（拉滑桿不必重做什麼） */
+  if (drawGlowDirect(ctx, hit, x, y, blurs, color, textAlpha)) return true;
   const lv = hit.canvas.width / hit.w;
   const STEP = Math.log(1.004);
   const local = blurs.map(b => Math.exp(Math.round(Math.log(Math.max(1e-6, b / k)) / STEP) * STEP));
@@ -356,6 +359,71 @@ function scratchFor(w: number, h: number, slot = 0): HTMLCanvasElement | null {
     if (ok < 200) { sc.width = sc.height = 1; scratches[slot] = null; return null; }
   }
   return sc;
+}
+
+/** 照字的透明度把字的位置從光裡挖掉（s2 的矩陣要已經是「字座標 → 暫存畫布」） */
+function knockText(s2: CanvasRenderingContext2D, hit: Entry, x: number, y: number, bw: number, bh: number, m: DOMMatrix, bx: number, by: number, textA: number) {
+  const ta = Math.max(0, Math.min(1, textA));
+  if (ta < 0.999) {
+    s2.globalCompositeOperation = 'destination-out';
+    /* 邊緣挖的比例：讓「半蓋住的邊緣像素」跟字內、字外一樣亮（不亮也不暗）。
+       邊緣像素：字 a·c，加上剩下的光 (1−a·c)·a·(1−k·c)；取 c＝½ 解出 k＝2(1−a)/(2−a)。
+       a＝1 時 k＝0（完全不挖），a 越小挖越多。 */
+    s2.globalAlpha = 2 * (1 - ta) / (2 - ta);
+    s2.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h);
+    s2.globalAlpha = 1;
+    const inner = scratchFor(bw, bh, 1);
+    if (inner) {
+      const s3 = inner.getContext('2d')!;
+      s3.setTransform(1, 0, 0, 1, 0, 0); s3.globalCompositeOperation = 'source-over'; s3.globalAlpha = 1;
+      s3.clearRect(0, 0, bw, bh);
+      s3.imageSmoothingEnabled = true; s3.imageSmoothingQuality = 'low';
+      s3.setTransform(m.a, m.b, m.c, m.d, m.e - bx, m.f - by);
+      s3.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h);
+      /* 只留「完全蓋住」的像素：同一張字在同一個位置 destination-in 三次＝覆蓋率的 4 次方
+         （全蓋 1→1、半蓋 .5→.06）。不往內縮，字內側不會留下一圈沒挖乾淨的亮線 */
+      s3.globalCompositeOperation = 'destination-in';
+      for (let i = 0; i < 3; i++) s3.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h);
+      s3.setTransform(1, 0, 0, 1, 0, 0); s3.globalCompositeOperation = 'source-over';
+      s2.setTransform(1, 0, 0, 1, 0, 0);
+      s2.drawImage(inner, 0, 0, bw, bh, 0, 0, bw, bh);
+    }
+    s2.globalCompositeOperation = 'source-over';
+  }
+}
+
+/** 螢幕解析度直接畫光（放大很多時用）：三層影子畫到暫存畫布，照字的透明度挖掉字，再貼回去 */
+function drawGlowDirect(ctx: CanvasRenderingContext2D, hit: Entry, x: number, y: number, blursDev: number[], color: string, textAlpha?: number): boolean {
+  const m = ctx.getTransform();
+  const pad = Math.max(...blursDev) * 1.7 / Math.sqrt(Math.abs(m.a * m.d - m.b * m.c));
+  const xs = [x + hit.x - pad, x + hit.x + hit.w + pad], ys = [y + hit.y - pad, y + hit.y + hit.h + pad];
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const px of xs) for (const py of ys) {
+    const dx = m.a * px + m.c * py + m.e, dy = m.b * px + m.d * py + m.f;
+    x0 = Math.min(x0, dx); x1 = Math.max(x1, dx); y0 = Math.min(y0, dy); y1 = Math.max(y1, dy);
+  }
+  const bx = Math.max(0, Math.floor(x0)), by = Math.max(0, Math.floor(y0));
+  const bw = Math.min(ctx.canvas.width, Math.ceil(x1)) - bx, bh = Math.min(ctx.canvas.height, Math.ceil(y1)) - by;
+  if (bw <= 0 || bh <= 0) return true;
+  const sc = scratchFor(bw, bh); if (!sc) return false;
+  const s2 = sc.getContext('2d')!;
+  s2.setTransform(1, 0, 0, 1, 0, 0); s2.globalCompositeOperation = 'source-over'; s2.globalAlpha = 1;
+  s2.clearRect(0, 0, bw, bh);
+  s2.imageSmoothingEnabled = true; s2.imageSmoothingQuality = 'low';
+  // 只畫影子：字畫在暫存畫布外面很遠，影子用 offset 移回來
+  const OFF = bw + 4096;
+  s2.setTransform(m.a, m.b, m.c, m.d, m.e - bx - OFF, m.f - by);
+  s2.shadowColor = color; s2.shadowOffsetX = OFF; s2.shadowOffsetY = 0;
+  for (const b of blursDev) { s2.shadowBlur = b; s2.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h); }
+  s2.shadowColor = 'transparent'; s2.shadowBlur = 0; s2.shadowOffsetX = 0;
+  s2.setTransform(m.a, m.b, m.c, m.d, m.e - bx, m.f - by);
+  knockText(s2, hit, x, y, bw, bh, m, bx, by, textAlpha ?? ctx.globalAlpha);
+  ctx.save();
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(sc, 0, 0, bw, bh, bx, by, bw, bh);
+  ctx.restore();
+  return true;
 }
 
 /** 只畫 draw() 的「影子」（發光），不畫本體：本體畫到畫布外面很遠的地方，影子用 shadowOffset 移回原位。

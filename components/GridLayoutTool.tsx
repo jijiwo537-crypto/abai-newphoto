@@ -97,7 +97,7 @@ import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
-import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont, ensureTextFonts, downloadFontFully } from '../utils/fonts';
+import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, primeCanvasFont, ensureTextFonts, downloadFontFully } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
 import { sourceHasAlpha, lutMaxAmount, warmPhotoFxSurface } from '../utils/photoFx';
@@ -3174,7 +3174,9 @@ export const TextEditorPanel: React.FC<{
   useEffect(() => {
     if (!tuningRef.current) setLayer(committedLayer);
   }, [committedLayer]);
-  const onChange = useCallback((patch: Partial<FloatingImage>) => {
+  const onChange = useCallback((patch0: Partial<FloatingImage>) => {
+    /* 換文字顏色時發光顏色跟著換（之後一樣可以在發光那邊單獨挑別的顏色，挑發光顏色不會動到文字顏色） */
+    const patch = patch0.color !== undefined && patch0.glowColor === undefined ? { ...patch0, glowColor: patch0.color } : patch0;
     setLayer(prev => ({ ...prev, ...patch }));
     commitChange(patch);
   }, [commitChange]);
@@ -3186,9 +3188,9 @@ export const TextEditorPanel: React.FC<{
      記住上一次停在哪一頁（換一段文字時不會跳回第一頁） */
   const [sub, setSubState] = useState<TextTab>(() => lastTextTab);
   const setSub = (t: TextTab) => { lastTextTab = t; setSubState(t); };
-  useEffect(() => {
-    if (!symbol) return warmTextFonts(layer.text || '');
-  }, [symbol, layer.text]);
+  /* 以前這裡會把「目前這段字」在全部四百多種字體裡都先下載一遍（每改一個字又來一次）：
+     打開文字頁的 10 秒內發出近千個請求，每載到一份整個畫面就重算一次 —— 新增文字後拖動、縮放都很卡。
+     現在點字體時才下載（按鈕轉圈），這段預熱拿掉 */
   const fontPickVersion = useRef(0);
   useEffect(() => () => { fontPickVersion.current++; }, [layer.id]);
   // 簡繁轉換的字典：打開文字面板就先在背景載好，點字體時立刻轉
@@ -3197,12 +3199,6 @@ export const TextEditorPanel: React.FC<{
   useEffect(() => {
     if (symbol) return;
     const t = window.setTimeout(() => { void preloadHanConvert(); }, 1500);
-    return () => clearTimeout(t);
-  }, [symbol]);
-  useEffect(() => {
-    if (symbol || isFontDownloaded(DEFAULT_FONT)) return;
-    // 預設字體只存到本機、不重新登記；等使用者停手一陣子才做（不跟新增文字、拖曳搶時間）
-    const t = window.setTimeout(() => { void downloadFontFully(DEFAULT_FONT, { quiet: true }); }, 8000);
     return () => clearTimeout(t);
   }, [symbol]);
   const pickRef = useRef<(name: string) => Promise<void>>(async () => {});
@@ -3542,7 +3538,9 @@ export const ShapeEditorPanel: React.FC<{
   useEffect(() => {
     if (!tuningRef.current) setLayer(committedLayer);
   }, [committedLayer]);
-  const onChange = useCallback((patch: Partial<FloatingImage>) => {
+  const onChange = useCallback((patch0: Partial<FloatingImage>) => {
+    /* 換文字顏色時發光顏色跟著換（之後一樣可以在發光那邊單獨挑別的顏色，挑發光顏色不會動到文字顏色） */
+    const patch = patch0.color !== undefined && patch0.glowColor === undefined ? { ...patch0, glowColor: patch0.color } : patch0;
     setLayer(prev => ({ ...prev, ...patch }));
     commitChange(patch);
   }, [commitChange]);
