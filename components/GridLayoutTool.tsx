@@ -89,7 +89,6 @@ import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
 registerTrim('selected-animation-surfaces', releaseSelectedMotionSurfaces);
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import { FONT_PREVIEW_INDEX, FONT_PREVIEW_CELL } from '../utils/fontPreviewIndex';
-import { mountLayoutDebug } from '../utils/layoutDebug';
 import {drawStableText, drawGlowText, hasEmoji} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
 import { ExportActionLift } from './ExportActionLift';
@@ -2771,6 +2770,7 @@ export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled
 /** 字體預覽圖（public/font-previews/<分類>.png）裡每個字體在第幾格 */
 const FONT_PREVIEW_ROW: Record<string, Map<string, number>> = Object.fromEntries(
   Object.entries(FONT_PREVIEW_INDEX).map(([cat, names]) => [cat, new Map(names.map((n, i) => [n, i]))]));
+let fontLabelMeasure: CanvasRenderingContext2D | null = null;
 const FontCard: React.FC<{
   font: { name: string; label: string; category: FontCategory };
   active: boolean;
@@ -2789,6 +2789,17 @@ const FontCard: React.FC<{
     return () => { alive = false; };
   }, [font.name, row]);
   const { w: PW, h: PH } = FONT_PREVIEW_CELL;
+  /* 字體名稱只排一行：照按鈕實際的寬度量字寬，太長就把字級縮小（最小 6px），不換行 */
+  const [labelPx, setLabelPx] = useState(9);
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el) return;
+    const avail = el.clientWidth - 12;
+    const c = fontLabelMeasure || (fontLabelMeasure = document.createElement('canvas').getContext('2d'));
+    if (!c || avail <= 0) return;
+    c.font = `700 9px ${getComputedStyle(el).fontFamily}`;
+    const w = c.measureText(font.label).width;
+    setLabelPx(w > avail ? Math.max(6, Math.floor(9 * avail / w * 10) / 10) : 9);
+  }, [font.label]);
 
   return (
     <button
@@ -2801,7 +2812,7 @@ const FontCard: React.FC<{
     >
       {row !== undefined ? (
         <span aria-hidden className="block shrink-0" style={{
-          width: PW, height: PH,
+          width: PW, height: PH, marginTop: 4,
           backgroundImage: `url(${import.meta.env.BASE_URL}font-previews/${font.category}.png)`,
           backgroundSize: `${PW}px auto`, backgroundPosition: `0 ${-row * PH}px`, backgroundRepeat: 'no-repeat',
         }} />
@@ -2813,7 +2824,7 @@ const FontCard: React.FC<{
           {FONT_SAMPLE[font.category]}
         </span>
       )}
-      <span className="text-[9px] leading-[10px] h-5 flex items-center justify-center text-center font-bold text-white/40 max-w-full break-words">{font.label}</span>
+      <span className="leading-[12px] h-3 block text-center font-bold text-white/40 max-w-full whitespace-nowrap overflow-hidden" style={{ fontSize: `${labelPx}px` }}>{font.label}</span>
     </button>
   );
 };
@@ -14600,8 +14611,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      （外框、間距卻是平滑移動的）——佈局裡的照片看起來就在框裡抖。升成一層之後，畫布在這一層
      裡的位置固定不動，整組由 GPU 一起位移縮放，就像一張圖片。停下來 300ms 再拿掉，
      讓瀏覽器照實際倍率重畫清楚（平常不升層，放大預覽時框線、圓點才不會糊）。 */
-  // 暫時的佈局偵錯工具（左上角「佈局偵錯」：錄製 → 複製 → 貼給 Claude）。問題解決後拿掉
-  useEffect(() => mountLayoutDebug(), []);
   const layoutMotion = useRef(new Set<string>());
   const layoutMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [, bumpLayoutMotion] = useState(0);
@@ -18253,7 +18262,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   backfaceVisibility: stableSeamless || nativeLayout ? undefined : 'hidden',
                                   willChange: stableSeamless || nativeLayout ? undefined : 'transform',
                                   // 拖、捏、轉的期間才升成合成層（見 markLayoutMotion），平常不升
-                                  ...(layoutMotion.current.has(layout.id) && !(window as any).__dbgNoPromote ? { willChange: 'transform' } : null),
+                                  ...(layoutMotion.current.has(layout.id) ? { willChange: 'transform' } : null),
                                   pointerEvents: activeTab === 'motion' ? 'none' : undefined,
                                   /* 兩指旋轉：直接轉整個外框，裡面的格子、照片、
                                      選取框、四個角、那排按鈕全部跟著轉，
