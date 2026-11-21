@@ -126,11 +126,73 @@ export const paintTextShadow = (ctx: CanvasRenderingContext2D, o: TextDeco, size
 /** 字的墨水（真正畫出來的部分）上下置中要往上／往下移多少。
     textBaseline 'middle' 對齊的是字體的 em 方框中線，不是字的墨水：每一款字體的上下留白不一樣，
     換字體時字就在框裡忽上忽下。量出第一行墨水的頂、最後一行墨水的底，回傳讓兩者對稱的位移。 */
+/* 字的「左右」墨水範圍（相對於置中的繪製原點）。
+   很多字體左右留白不對稱（斜體、手寫、像素字更明顯），照前進寬度置中，墨水會偏一邊 3～6%；
+   Safari 的 measureText 量不出這個（actualBoundingBox 只回前進寬度），所以實際畫一次、掃像素量。
+   在 128px 量一次就快取（偏移跟字級成正比），字型還沒到時不快取。 */
+type Ink4 = [number, number, number, number];   // 左、右、上、下（相對於繪製原點）
+const inkXCache = new Map<string, Ink4 | null>();
+const INK_REF = 128;
+export const inkExtent = (ctx: CanvasRenderingContext2D, text: string): Ink4 | null => {
+  if (!text || typeof document === 'undefined') return null;
+  const fm = /(\d+(?:\.\d+)?)px/.exec(ctx.font);
+  const size = fm ? parseFloat(fm[1]) : 0;
+  if (!(size > 0)) return null;
+  const ls = parseFloat(String((ctx as any).letterSpacing || '0')) || 0;
+  const k = INK_REF / size;
+  const font = ctx.font.replace(fm![0], `${INK_REF}px`);
+  const key = font + '\u0001' + (ls * k).toFixed(3) + '\u0001' + ctx.textAlign + ctx.textBaseline + '\u0001' + text;
+  if (inkXCache.has(key)) { const v = inkXCache.get(key)!; return v && (v.map(n => n / k) as Ink4); }
+  if (!textReady(ctx.font, text)) return null;
+  const c = document.createElement('canvas');
+  const g = c.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
+  if (!g) return null;
+  g.font = font; (g as any).letterSpacing = `${ls * k}px`;
+  const adv = g.measureText(text).width;
+  const W = Math.min(16000, Math.ceil(adv + INK_REF * 3 + Math.abs(ls * k) * 2)), H = Math.ceil(INK_REF * 3);
+  c.width = W; c.height = H;
+  g.font = font; (g as any).letterSpacing = `${ls * k}px`;
+  g.textAlign = ctx.textAlign; g.textBaseline = ctx.textBaseline; g.fillStyle = '#000';
+  const al = ctx.textAlign, ox = Math.round(al === 'left' || al === 'start' ? INK_REF * 1.5 : al === 'right' || al === 'end' ? W - INK_REF * 1.5 : W / 2), oy = Math.round(H / 2);
+  g.fillText(text, ox, oy);
+  let d: Uint8ClampedArray;
+  try { d = g.getImageData(0, 0, W, H).data; } catch { return null; }
+  let x0 = -1, x1 = -1, y0 = -1, y1 = -1;
+  for (let x = 0; x < W && x0 < 0; x++) for (let y = 0; y < H; y++) if (d[(y * W + x) * 4 + 3] > 24) { x0 = x; break; }
+  for (let x = W - 1; x >= 0 && x1 < 0; x--) for (let y = 0; y < H; y++) if (d[(y * W + x) * 4 + 3] > 24) { x1 = x + 1; break; }
+  for (let y = 0; y < H && y0 < 0; y++) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > 24) { y0 = y; break; }
+  for (let y = H - 1; y >= 0 && y1 < 0; y--) for (let x = 0; x < W; x++) if (d[(y * W + x) * 4 + 3] > 24) { y1 = y + 1; break; }
+  c.width = c.height = 1;
+  const v: Ink4 | null = x0 < 0 ? null : [x0 - ox, x1 - ox, y0 - oy, y1 - oy];
+  inkXCache.set(key, v); if (inkXCache.size > 2000) inkXCache.clear();
+  return v && (v.map(n => n / k) as Ink4);
+};
+/** 左右置中要平移多少：讓所有行的墨水聯集置中。originX＝這段字實際畫的原點（例如補半個字距的 spacing/2）。
+ *  只處理置中對齊、橫排；其他情況回傳 0（照原本）。 */
+export const textInkShiftX = (ctx: CanvasRenderingContext2D, text: string, originX: number, o?: { vertical?: boolean; textAlign?: string }) => {
+  if (o?.vertical || (o?.textAlign && o.textAlign !== 'center')) return 0;
+  const prevAlign = ctx.textAlign; ctx.textAlign = 'center';
+  let l = Infinity, r = -Infinity;
+  for (const row of text.split('\n')) {
+    if (!row) continue;
+    const e = inkExtent(ctx, row);
+    if (!e) { ctx.textAlign = prevAlign; return 0; }
+    l = Math.min(l, e[0]); r = Math.max(r, e[1]);
+  }
+  ctx.textAlign = prevAlign;
+  if (!Number.isFinite(l)) return 0;
+  const sh = -((l + r) / 2 + originX);
+  return Number.isFinite(sh) ? sh : 0;
+};
+
 export const textInkShift = (ctx: CanvasRenderingContext2D, text: string, lineH: number) => {
   const rows = text.split('\n');
-  const first = ctx.measureText(rows[0] || ' '), last = ctx.measureText(rows[rows.length - 1] || ' ');
   const startY = -((rows.length - 1) * lineH) / 2;
-  const top = startY - (first.actualBoundingBoxAscent || 0), bottom = -startY + (last.actualBoundingBoxDescent || 0);
+  /* 先用實際像素量（有些字體 Safari 量到的上下緣差很多，最多偏 10%）；字型還沒到時才用 measureText */
+  const fi = rows[0] ? inkExtent(ctx, rows[0]) : null, la = rows[rows.length - 1] ? inkExtent(ctx, rows[rows.length - 1]) : null;
+  const first = ctx.measureText(rows[0] || ' '), last = ctx.measureText(rows[rows.length - 1] || ' ');
+  const top = startY + (fi ? fi[2] : -(first.actualBoundingBoxAscent || 0));
+  const bottom = -startY + (la ? la[3] : (last.actualBoundingBoxDescent || 0));
   const mid = (top + bottom) / 2;
   return Number.isFinite(mid) ? -mid : 0;
 };

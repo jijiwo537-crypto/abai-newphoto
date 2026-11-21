@@ -1,7 +1,7 @@
 import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
 import { swatchEdge } from '../utils/swatch';
-import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, drawTextRunsAnimated, textFillStyle, setRunGradient, paintOuterStroke, paintTextDepth, paintDecoLines, textEffectPad } from '../utils/textDeco';
+import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, textInkShiftX, inkExtent, drawTextRunsAnimated, textFillStyle, setRunGradient, paintOuterStroke, paintTextDepth, paintDecoLines, textEffectPad } from '../utils/textDeco';
 import { BusyLayer } from './BusyLayer';
 import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
@@ -485,9 +485,12 @@ const plainTextBox = (o: any, force = false): { w: number; h: number } | null =>
     return { w: Math.max(12, L.w + (pad + stroke) * 2 + ep.w * 2), h: Math.max(12, (L.vertical ? L.h : L.h + size * .25) + (pad + stroke) * 2 + ep.h) };
   }
   // 表情符號 iPhone 量得偏小（見 utils/stableText 的 emojiSafeInk），框至少撐到它真正的高度
-  const half = Math.max(m.actualBoundingBoxAscent || size * .6, m.actualBoundingBoxDescent || size * .4, hasEmoji(o.text || '') ? size * .62 : 0);
+  // 實際像素量到的墨水（Safari 量字有些字體差很多）：框至少包住它；繪製時墨水會置中在框裡
+  const ink = inkExtent(g, o.text || ' ');
+  const half = Math.max(m.actualBoundingBoxAscent || size * .6, m.actualBoundingBoxDescent || size * .4, hasEmoji(o.text || '') ? size * .62 : 0,
+    ink ? (ink[3] - ink[2]) / 2 : 0);
   return {
-    w: Math.max(12, m.width - spacing + (pad + stroke) * 2 + ep.w * 2),
+    w: Math.max(12, m.width - spacing + (pad + stroke) * 2 + ep.w * 2, ink ? ink[1] - ink[0] + (pad + stroke) * 2 + ep.w * 2 : 0),
     h: Math.max(12, half * 2 + (pad + stroke) * 2 + ep.h),
   };
 };
@@ -8647,7 +8650,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            發光本來就是模糊的，跟描邊差零點幾個像素看不出來；描邊也不該影響發光。 */
         let glowPass = false;
         /* 發光模式：drawText 不畫字，改成每段字交給 drawGlowText 一次畫完三層（縮放時不抖，見 utils/stableText） */
-        let glowMode: { blurs: number[]; color: string } | null = null;
+        let glowMode: { blurs: number[]; color: string; ta: number } | null = null;
         const drawText = (stroke = false) => {
           // 排過版（多行、對齊、直排、底線）的文字套逐字動畫：一個字一個字照段落位置動
           if (textLayout && f?.lab) {
@@ -8657,7 +8660,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
           if (textLayout && !textUnitBreathe) {
             drawTextRuns(ctx, textLayout, stroke, (t, x, y) => {
-              if (glowMode) { drawGlowText(ctx, t, x, y, glowMode.blurs, glowMode.color, !textLayout.vertical && ctx.textAlign === 'center'); return true; }
+              if (glowMode) { drawGlowText(ctx, t, x, y, glowMode.blurs, glowMode.color, !textLayout.vertical && ctx.textAlign === 'center', glowMode.ta); return true; }
               return !textLayout.vertical && ctx.textAlign === 'center'
                 && (!o.strokeWidth || glowPass) && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x, y);
             });
@@ -8728,7 +8731,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (!unitLayout) {
             // 快取的點陣套在連續矩陣下：不會因為每個縮放倍率重新微調字形而抖動
             // 有描邊時填色也直接畫：描邊是直接畫的，兩者必須走同一套排字，描邊才不會歪
-            if (glowMode) { drawGlowText(ctx, o.text || '', tdx + spacingShift, tdy, glowMode.blurs, glowMode.color, true); return; }
+            if (glowMode) { drawGlowText(ctx, o.text || '', tdx + spacingShift, tdy, glowMode.blurs, glowMode.color, true, glowMode.ta); return; }
             if ((!o.strokeWidth || glowPass) && drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx + spacingShift, tdy)) return;
             if (stroke) ctx.strokeText(o.text || '', tdx + spacingShift, tdy);
             else ctx.fillText(o.text || '', tdx + spacingShift, tdy);
@@ -8833,13 +8836,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         };
         // 文字的光是當場畫的，乘上這一格的亮度就會跟著閃
         // 背景色塊、陰影在最底下（發光、描邊、字都疊在上面）；符號沒有這兩項
-        if (!o.sym && f?.lab && !o.vertical) ctx.translate(0, textInkShift(ctx, o.text || '', textLineH));
+        if (!o.sym && f?.lab && !o.vertical) ctx.translate(textInkShiftX(ctx, o.text || '', spacingShift, o as any), textInkShift(ctx, o.text || '', textLineH));
         if (!o.sym && !f?.lab) {
           const fpx = pinFont * s;
           // 背景＝剛好填滿選中框（這裡的座標已經除掉四邊擠壓與捏合的字級倍率）
           paintTextBg(ctx, o as any, (o.textStretchBaseW || o.w) / fontK, (o.textStretchBaseH || o.h) / fontK);
           // 字的墨水在框裡上下置中（換字體不會忽上忽下）
-          if (!o.vertical) ctx.translate(0, textInkShift(ctx, o.text || '', textLineH));
+          // 左右也照墨水置中（很多字體左右留白不對稱，照前進寬度置中會偏一邊）
+          if (!o.vertical) ctx.translate(textInkShiftX(ctx, o.text || '', spacingShift, o as any), textInkShift(ctx, o.text || '', textLineH));
           ctx.fillStyle = o.color || '#ffffff';
           paintTextShadow(ctx, o as any, fpx, () => drawText(false));
           // 字卡效果：立體厚度、外描邊（在發光、描邊、字的下面）
@@ -8849,6 +8853,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const tb = animRef.current?.glowObj ? animRef.current.glowObj(o) : 1;
         if (o.glow && tb > 0.004) {
           ctx.save();
+          const textA = ctx.globalAlpha;   // 字本身的透明度（發光呼吸只改光，不改字）
           ctx.globalAlpha = ctx.globalAlpha * Math.max(0, Math.min(1, tb));
           ctx.fillStyle = o.color || '#ffffff';
           ctx.shadowColor = o.glowColor || '#ffffff';
@@ -8857,7 +8862,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const blurs = [1, 2, 3].map(k2 => (Math.min(15, o.glow!) / 20) * 14 * k2 * tk * (o.sym?1:textSceneScale));
             // 一般文字（沒有逐字動畫）：三層一次畫好、縮放時重用；符號與逐字動畫照原本逐層畫
             if (!o.sym && !f?.lab && !textUnitBreathe && (textLayout || !unitLayout)) {
-              glowMode = { blurs, color: o.glowColor || '#ffffff' };
+              glowMode = { blurs, color: o.glowColor || '#ffffff', ta: textA };
               try { drawText(false); } finally { glowMode = null; }
             } else for (const b of blurs) {
               ctx.shadowBlur = b;

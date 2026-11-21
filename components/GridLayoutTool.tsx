@@ -10,7 +10,7 @@ import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore, startTransition } from 'react';
 import { waveWarp } from '../utils/waveWarp';
-import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, drawTextRunsAnimated, textFillStyle, setRunGradient, paintOuterStroke, paintTextDepth, paintDecoLines, textEffectPad, type TextLayout } from '../utils/textDeco';
+import { paintTextBg, paintTextShadow, TEXT_SHADOW_DEFAULTS, TEXT_BG_DEFAULT, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, textInkShiftX, inkExtent, drawTextRunsAnimated, textFillStyle, setRunGradient, paintOuterStroke, paintTextDepth, paintDecoLines, textEffectPad, type TextLayout } from '../utils/textDeco';
 import { createPortal, flushSync } from 'react-dom';
 import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/classicTextureSize';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
@@ -244,6 +244,8 @@ const prepareClassicSymbolPlacement = (text: string, pageWidth: number): Prepare
 /* 符號頁不能在打開後才開始下載字體。模組載入時就在背景把清單會用到的
    字形預熱；使用者點進頁面時，按鈕與新增物件便直接使用最終字身。 */
 let symbolFontDidSettle = typeof document === 'undefined';
+/** 文字發光的上限（滑桿 100）：原本上限 15 的 30% */
+export const TEXT_GLOW_MAX = 4.5;
 export const symbolFontReady: Promise<void> = typeof document === 'undefined'
   ? Promise.resolve()
   : ensureFont(SYMBOL_FONT)
@@ -3246,6 +3248,7 @@ export const TextEditorPanel: React.FC<{
         })} />
     </div>
   );
+  /* 文字發光上限＝原本滑桿 30 的位置（原本滿格是 15），滑桿照樣 0～100 */
   const glowRow = (max: number) => (
     <div className="flex items-center gap-3 px-2">
       <div className="flex-1 min-w-0">
@@ -3341,7 +3344,7 @@ export const TextEditorPanel: React.FC<{
             {tab === 'stroke' && <>
               {strokeRow}
             </>}
-            {tab === 'glow' && glowRow(15)}
+            {tab === 'glow' && glowRow(TEXT_GLOW_MAX)}
             {tab === 'shadow' && <>
               {/* 陰影：強度 0＝沒有陰影；拉起來才出現模糊、距離、角度 */}
               <div className="flex items-center gap-3 px-2">
@@ -6922,7 +6925,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         // 背景＝剛好填滿選中框（這裡的座標已經除掉四邊擠壓，框就是擠壓前的大小）
         paintTextBg(ctx, image, image.textStretchBaseW || image.width, image.textStretchBaseH || image.height);
         // 字的墨水在框裡上下置中（換字體不會忽上忽下）
-        if (!image.vertical) ctx.translate(0, textInkShift(ctx, image.text || '', lineH));
+        // 左右也照墨水置中（很多字體左右留白不對稱）。單行直接畫在 0；排過版的行畫在 spacing/2
+        if (!image.vertical) ctx.translate(textInkShiftX(ctx, image.text || '', layout ? spacing / 2 : 0, image as any), textInkShift(ctx, image.text || '', lineH));
         ctx.fillStyle = image.color || '#FFFFFF';
         paintTextShadow(ctx, image, size, fill);
         // 字卡效果：立體厚度、外描邊（在發光、描邊、字的下面）
@@ -7406,6 +7410,15 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       /* 行盒不再用整個 font-size × 1.12 當成字形高度。真正選中框只包住
          actualBoundingBox 的頂／底，再加對稱 4px，所以下方不會多留一截。 */
       let h = Math.max(6, (lines.length - 1) * size * (image.lineHeight ?? TEXT_LINE_HEIGHT) + ascent + descent) + 8;
+      /* 實際像素量到的墨水（Safari 量字有些字體上下差很多）：框至少包住它；繪製時墨水會置中在框裡 */
+      if (!image.sym && !image.vertical) {
+        g.textAlign = 'center'; g.textBaseline = 'middle'; (g as any).letterSpacing = `${spacing}px`;
+        const fi = inkExtent(g, lines[0] || ' '), la = inkExtent(g, lines[lines.length - 1] || ' ');
+        let l = Infinity, r = -Infinity;
+        for (const line of lines) { const e = line ? inkExtent(g, line) : null; if (e) { l = Math.min(l, e[0]); r = Math.max(r, e[1]); } }
+        if (fi && la) h = Math.max(h, (lines.length - 1) * size * (image.lineHeight ?? TEXT_LINE_HEIGHT) + la[3] - fi[2] + 8);
+        if (Number.isFinite(l)) w = Math.max(w, r - l + 8);
+      }
       // 直排：寬＝行數×行距、高＝最長那一行的字數（跟繪製端 layoutText 同一條式子）
       if (!image.sym && image.vertical) {
         const L = layoutText(g, image, lines.join('\n'), size, size * (image.lineHeight ?? TEXT_LINE_HEIGHT), spacing);
@@ -16038,7 +16051,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const drawLines = () => drawAnimatedL(false);
     if (!fImg.sym) {
       paintTextBg(ctx, fImg, fw * fImg.scale, fh * fImg.scale);
-      if (!fImg.vertical) ctx.translate(0, textInkShift(ctx, fImg.text || '', lineH));
+      if (!fImg.vertical) ctx.translate(textInkShiftX(ctx, fImg.text || '', textLayout && !unitMotion ? spacing / 2 : 0, fImg as any), textInkShift(ctx, fImg.text || '', lineH));
       ctx.fillStyle = fImg.color || '#FFFFFF';
       paintTextShadow(ctx, fImg, size, drawLines);
       const u = scaleFactor * fImg.scale;
@@ -16054,7 +16067,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 疊三層，跟預覽那一層的三段 text-shadow 對齊
       for (const k of [1, 2, 3]) {
         ctx.shadowBlur = (Math.min(15, fImg.glow) / 20) * 14 * k * scaleFactor * fImg.scale;
-        drawLines();
+        // 只畫光、不畫字（字最後畫一次）：字調透明時才不會因為疊了好幾次變得不透明，跟預覽一致
+        shadowOnly(ctx, drawLines);
       }
       ctx.shadowBlur = 0;
       ctx.shadowColor = 'transparent';
