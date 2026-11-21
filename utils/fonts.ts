@@ -904,9 +904,16 @@ export function primeCanvasFont(font: string) {
    不這樣的話，字型還沒到之前用備用字體畫的那一張會一直被沿用（動畫中看起來就是字體自己變了）。 */
 export let fontEpoch = 0;
 if (typeof document !== 'undefined' && (document as any).fonts?.addEventListener) {
+  /* 中文字型拆成很多小份，進專案時會一份一份陸續到：每到一份就整個重畫、重量文字框，一開始拖文字就很卡。
+     0.12 秒內到的合併成一次通知 */
+  let fontNotify = 0;
   (document as any).fonts.addEventListener('loadingdone', () => {
-    fontEpoch++;
-    window.dispatchEvent(new Event('abai-font-ready'));
+    if (fontNotify) return;
+    fontNotify = window.setTimeout(() => {
+      fontNotify = 0;
+      fontEpoch++;
+      window.dispatchEvent(new Event('abai-font-ready'));
+    }, 120);
   });
 }
 

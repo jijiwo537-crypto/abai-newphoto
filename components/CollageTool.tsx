@@ -78,6 +78,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
 
 import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack, primeCanvasFont, fontEpoch, ensureTextFonts } from '../utils/fonts';
 import { drawStableText, drawGlowText, hasEmoji, shadowOnly } from '../utils/stableText';
+import { trimMemory } from '../utils/memoryPressure';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG, MEDIA_ACCEPT } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -3160,6 +3161,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const stripeA = stripeAPick || STRIPE_A;
   const setStripeA = (c: string) => setStripeAPick(c);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
+  /* 存好了（成品頁）：匯出是記憶體用最多的時候。先把可以重建的快取放掉 ——
+     不然按「繼續編輯」回去時再長一次，iPhone 可能直接把 App 重開（又播一次開場動畫） */
+  useEffect(() => { if (saveState !== 'success') return; const t = setTimeout(() => trimMemory('background'), 400); return () => clearTimeout(t); }, [saveState]);
   const [finalImage, setFinalImage] = useState<string | null>(null);
   /** 成品是影片還是圖片 —— 完成頁要換成 <video>，副檔名也不一樣 */
   const [finalIsVideo, setFinalIsVideo] = useState(false);
@@ -11229,6 +11233,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => () => forgetTiered(), []);
   const handleSave = () => {
     if (!imageState) return;
+    // 按儲存：文字編輯頁一起關掉（存完回來不會還開著）
+    setTextSheetId(null); setEditingTextId(null); selectedObjRef.current = null; setSelectedObj(null);
     setSelectedTarget(null);
     setFinalIsVideo(false);
     setSaveState('processing');

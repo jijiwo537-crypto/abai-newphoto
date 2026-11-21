@@ -1,3 +1,4 @@
+import { registerTrim } from './memoryPressure';
 /* 文字縮放時的「抖動」：fillText 在不同的縮放倍率下，瀏覽器（尤其 Safari）
    會依「實際顯示字級」重新 hint 字形、把每個字的位置各自吸到像素格上。
    倍率一路連續改變時，每個字吸附的那一格各不相同，整串字就在相鄰像素間跳。
@@ -32,7 +33,7 @@ export const emojiSafeInk = (text: string, fontPx: number, ink: { left: number; 
 type Entry = { canvas: HTMLCanvasElement; x: number; y: number; w: number; h: number; px: number };
 const cache = new Map<string, Entry>();
 const MAX_ENTRIES = 48;
-const MAX_TOTAL_PX = 48e6;
+const MAX_TOTAL_PX = 24e6;
 const MAX_ENTRY_PX = 8e6;
 const MAX_SIDE = 8192;
 let totalPx = 0;
@@ -105,6 +106,16 @@ function stableEntry(ctx: CanvasRenderingContext2D, mode: 'fill' | 'stroke', tex
   let hit = cache.get(key);
   if (hit) { cache.delete(key); cache.set(key, hit); }
   else {
+    /* 要「新做」一張點陣時一定再問一次字型是不是真的在（不信快取的答案）：iPhone 會在記憶體吃緊時把網頁字型丟掉，
+       之前問到的「好了」就不準了 —— 這時做出來的是預設字體，而且會被存起來一直用（縮放時字體突然變掉）。
+       字型不在就這一格先直接畫，並請瀏覽器重新載入，到了會通知重畫 */
+    let fresh = true;
+    try { fresh = (document as any).fonts?.check?.(ctx.font, text) ?? true; } catch { fresh = true; }
+    if (!fresh) {
+      readyFonts.delete(ctx.font + '\u0002' + text);
+      (document as any).fonts?.load?.(ctx.font, text).then(() => window.dispatchEvent(new Event('abai-font-ready'))).catch(() => {});
+      return null;
+    }
     const canvas = document.createElement('canvas');
     const g = canvas.getContext('2d');
     if (!g) return null;
@@ -154,6 +165,16 @@ type Glow = { layers: HTMLCanvasElement[]; lv: number[]; x: number; y: number; w
 const glowCache = new Map<string, Glow>();
 let glowBrokenUntil = 0;   // iPhone 畫布記憶體用完時，暫時改用直接畫
 let glowPx = 0;
+let hiTimer = 0, hiPending: (() => void) | null = null;
+/* 記憶體吃緊（系統警告）或存完圖時：文字點陣、光暈圖都是可以重做的快取，全部放掉 */
+registerTrim('stable-text', () => {
+  for (const e of cache.values()) e.canvas.width = e.canvas.height = 1;
+  cache.clear(); totalPx = 0;
+  for (const g of glowCache.values()) for (const c of g.layers) c.width = c.height = 1;
+  glowCache.clear(); glowPx = 0;
+  for (const sc of scratches) if (sc) sc.width = sc.height = 1;
+});
+const GLOW_HI_ENTRY = 3e6;
 const GLOW_MAX_ENTRIES = 24, GLOW_MAX_TOTAL = 12e6, GLOW_MAX_ENTRY = 8e5, GLOW_MAX_SIDE = 4096;
 const evictGlow = () => {
   while (glowCache.size > GLOW_MAX_ENTRIES || glowPx > GLOW_MAX_TOTAL) {
@@ -176,42 +197,33 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   const STEP = Math.log(1.004);
   const local = blurs.map(b => Math.exp(Math.round(Math.log(Math.max(1e-6, b / k)) / STEP) * STEP));
   const key = [e.key, color, local.map(v => v.toPrecision(6)).join(',')].join('\u0003');
-  let gl = glowCache.get(key);
-  if (gl) { glowCache.delete(key); glowCache.set(key, gl); }
-  else {
-    const pad = Math.max(...local) * 1.7 + 2 / lv;
-    const lw = hit.w + pad * 2, lh = hit.h + pad * 2;
-    /* 三層光各用自己的解析度：模糊越大，圖越小（每層的模糊都約 8 個像素）。
-       模糊的成本跟「像素數×模糊半徑」成正比，這樣每層都很快 —— 拉發光滑桿時每一格都要重做，才不會一格一格的。
-       取 2 的次方：發光大小連續改變時解析度很少換，換了也看不出來（模糊量都在 4 像素以上）。 */
-    /* 解析度上限：最多跟螢幕一樣細（再細看不出差別）。發光很小時 12/b 會非常大，
-       不設上限的話每拉一格滑桿都要做三張好幾百萬像素的圖（一格一格的） */
-    const capV = Math.min(GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)), Math.max(1, k));
+  const pad = Math.max(...local) * 1.7 + 2 / lv;
+  const lw = hit.w + pad * 2, lh = hit.h + pad * 2;
+  const BL = 12;
+  const fontState = { font: ctx.font, ls: String((ctx as any).letterSpacing || '0px'), align: ctx.textAlign, base: ctx.textBaseline };
+  /* 做三層光。gvOf：每層的解析度（每單位幾像素）。模糊量＝b×gv */
+  const build = (gvOf: (b: number) => number, maxBlur: number): Glow | null => {
     const layers: HTMLCanvasElement[] = [], lvs: number[] = [];
     let total = 0;
     const drop = () => { for (const c of layers) c.width = c.height = 1; };
     for (const b of local) {
-      /* 每層的模糊固定是 12 像素，靠這張圖的「解析度」連續變化來表現不同的光：
-         Safari 會把模糊半徑取整、2 的次方解析度又會一段一段換，拉滑桿時光就忽大忽小地抖。
-         這樣模糊量永遠一樣，光的大小只跟著圖的縮放連續改變。 */
-      const BL = 12;
-      const gv = Math.min(capV, BL / Math.max(1e-3, b));
+      const gv = gvOf(b);
       const W = Math.ceil(lw * gv), H = Math.ceil(lh * gv);
-      if (!(gv > 0) || W < 1 || H < 1) { drop(); return false; }
+      if (!(gv > 0) || W < 1 || H < 1) { drop(); return null; }
       const c = document.createElement('canvas'); c.width = W; c.height = H;
       layers.push(c); lvs.push(gv);
-      if (c.width !== W || c.height !== H) { drop(); return false; }
+      if (c.width !== W || c.height !== H) { drop(); return null; }
       const g = c.getContext('2d');
-      if (!g) { drop(); return false; }
+      if (!g) { drop(); return null; }
       g.clearRect(0, 0, W, H);
       g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'medium';
       g.shadowColor = color;
       // 只畫影子：字本體畫到畫布外，影子用 offset 移回來（光暈圖裡完全沒有字的銳利邊）
       const OFF = W + 64;
-      g.shadowOffsetX = OFF; g.shadowBlur = Math.min(b * gv, BL);
+      g.shadowOffsetX = OFF; g.shadowBlur = Math.min(b * gv, maxBlur);
       /* 字直接用向量畫進這張小圖（不從大點陣縮小：縮小會有雜訊，而且雜訊隨倍率改變＝抖） */
-      g.font = ctx.font; (g as any).letterSpacing = String((ctx as any).letterSpacing || '0px');
-      g.textAlign = ctx.textAlign; g.textBaseline = ctx.textBaseline; g.fillStyle = '#000';
+      g.font = fontState.font; (g as any).letterSpacing = fontState.ls;
+      g.textAlign = fontState.align; g.textBaseline = fontState.base; g.fillStyle = '#000';
       g.setTransform(gv, 0, 0, gv, (pad - hit.x) * gv - OFF, (pad - hit.y) * gv);
       g.fillText(text, 0, 0);
       g.setTransform(1, 0, 0, 1, 0, 0);
@@ -221,9 +233,10 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
       g.fillStyle = 'rgba(0,0,0,0.004)'; g.fillRect(W - 1, H - 1, 1, 1);
       total += W * H;
     }
-    gl = { layers, lv: lvs, x: hit.x - pad, y: hit.y - pad, w: lw, h: lh, px: total };
-    glowCache.set(key, gl); glowPx += gl.px; evictGlow();
-    const made = gl, mk = key;
+    return { layers, lv: lvs, x: hit.x - pad, y: hit.y - pad, w: lw, h: lh, px: total };
+  };
+  const store = (kk: string, made: Glow) => {
+    glowCache.set(kk, made); glowPx += made.px; evictGlow();
     setTimeout(() => {
       let bad = false;
       for (const c of made.layers) {
@@ -231,11 +244,39 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
         try { if (c.getContext('2d')!.getImageData(c.width - 1, c.height - 1, 1, 1).data[3] === 0) bad = true; } catch { bad = true; }
       }
       if (!bad) return;
-      if (glowCache.get(mk) === made) { glowCache.delete(mk); glowPx -= made.px; }
+      if (glowCache.get(kk) === made) { glowCache.delete(kk); glowPx -= made.px; }
       for (const c of made.layers) c.width = c.height = 1;
       glowBrokenUntil = performance.now() + 3000;
       window.dispatchEvent(new Event('abai-font-ready'));
     }, 0);
+  };
+  let gl = glowCache.get(key);
+  if (gl) { glowCache.delete(key); glowCache.set(key, gl); }
+  else {
+    /* 平常（拖滑桿、縮放中）：每層模糊固定 12 像素、解析度最多跟螢幕一樣 —— 便宜，拉滑桿不會一格一格。 */
+    const capV = Math.min(GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)), Math.max(1, k));
+    const made = build(b => Math.min(capV, BL / Math.max(1e-3, b)), BL);
+    if (!made) return false;
+    store(key, made); gl = made;
+  }
+  /* 放大看時（光圖會被放大超過 2 倍＝看得到一格一格）：停手 0.2 秒後在背景做一份「跟螢幕一樣細」的光，
+     做好就換上。拖曳、縮放、拉滑桿的當下照樣用上面那份便宜的，不會卡 */
+  const upscale = k * Math.max(...local) / BL;
+  if (upscale > 2) {
+    const zl = 2 ** Math.ceil(Math.log2(k));
+    const hiKey = key + '\u0005' + zl;
+    const hi = glowCache.get(hiKey);
+    if (hi) { glowCache.delete(hiKey); glowCache.set(hiKey, hi); gl = hi; }
+    else {
+      hiPending = () => {
+        if (glowCache.has(hiKey)) return;
+        const cap = Math.min(GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_HI_ENTRY / (lw * lh)));
+        const made = build(b => Math.min(cap, Math.max(BL / Math.max(1e-3, b), zl)), 1e9);
+        if (made) { store(hiKey, made); window.dispatchEvent(new Event('abai-font-ready')); }
+      };
+      if (hiTimer) clearTimeout(hiTimer);
+      hiTimer = window.setTimeout(() => { hiTimer = 0; const f = hiPending; hiPending = null; f?.(); }, 220);
+    }
   }
   /* 合成：在螢幕解析度的暫存畫布上放光，再用「清晰的字」把字的位置挖掉，最後才用目前透明度貼上去。
      挖的邊跟呼叫端接著畫的字是同一張點陣、同一個位置，不會有縫也不會有白邊；

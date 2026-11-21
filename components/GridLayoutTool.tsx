@@ -84,7 +84,7 @@ import { SeamlessAmountSlider } from './SeamlessLayout';
 import {LayoutPhotoSurface,layoutGeomPreviews} from './LayoutPhotoSurface';
 import {ensurePreviewCopy,previewSrc,usePreviewCopies,setPreviewZoom,previewZoom,forgetPreviewCopies,setPreviewGesture} from '../utils/previewCopies';
 import { previewSurfaceDpr, previewEffectLongEdge } from '../utils/previewSurfaceBudget';
-import {registerTrim} from '../utils/memoryPressure';
+import {registerTrim, trimMemory} from '../utils/memoryPressure';
 import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
 registerTrim('selected-animation-surfaces', releaseSelectedMotionSurfaces);
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
@@ -2784,11 +2784,10 @@ let fontLabelMeasure: CanvasRenderingContext2D | null = null;
 /* 字體預覽圖：先在背景完整解碼好才顯示（不會看到一半、還沒載好的圖）。四張圖一起準備 */
 const spriteReady = new Set<string>();
 const spriteWait = new Map<string, Promise<void>>();
-const spriteKeep: HTMLImageElement[] = [];
 function prepareSprite(cat: string): Promise<void> {
   let p = spriteWait.get(cat);
   if (!p) {
-    const im = new Image(); spriteKeep.push(im);
+    const im = new Image();
     im.src = `${import.meta.env.BASE_URL}font-previews/${cat}.png`;
     p = (im.decode ? im.decode() : new Promise<void>((res, rej) => { im.onload = () => res(); im.onerror = rej; }))
       .then(() => { spriteReady.add(cat); }, () => { spriteReady.add(cat); });
@@ -3192,7 +3191,14 @@ export const TextEditorPanel: React.FC<{
   const fontPickVersion = useRef(0);
   useEffect(() => () => { fontPickVersion.current++; }, [layer.id]);
   // 簡繁轉換的字典：打開文字面板就先在背景載好，點字體時立刻轉
-  useEffect(() => { if (!symbol) { void preloadHanConvert(); for (const c of FONT_CATEGORIES) void prepareSprite(c.id); } }, [symbol]);
+  /* 簡繁字典（約 1MB）、字體預覽圖：等打開面板的動畫和第一下操作過了才在背景準備（不跟拖文字搶時間）。
+     點字體時字典還沒好的話，會等它（按鈕轉圈） */
+  useEffect(() => {
+    if (symbol) return;
+    const t = window.setTimeout(() => { void preloadHanConvert(); }, 1500);
+    return () => clearTimeout(t);
+  }, [symbol]);
+  useEffect(() => { if (!symbol && tab === 'font') for (const c of FONT_CATEGORIES) void prepareSprite(c.id); }, [symbol, tab]);
   useEffect(() => {
     if (symbol || isFontDownloaded(DEFAULT_FONT)) return;
     // 預設字體只存到本機、不重新登記；等使用者停手一陣子才做（不跟新增文字、拖曳搶時間）
@@ -11760,6 +11766,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
   }, []);
   const [exportState, setExportState] = useState<'idle' | 'processing' | 'success'>('idle');
+  /* 存好了（成品頁）：匯出是記憶體用最多的時候，先把可以重建的快取放掉 ——
+     不然按「繼續編輯」回去時再長一次，iPhone 可能直接把 App 重開（又播一次開場動畫） */
+  useEffect(() => { if (exportState !== 'success') return; const t = setTimeout(() => trimMemory('background'), 400); return () => clearTimeout(t); }, [exportState]);
   const exportStateRef = useRef(exportState); exportStateRef.current = exportState;
   const [exportOptionsOpen,setExportOptionsOpen]=useState(false);
   const [imageExportFormat,setImageExportFormat]=useState<'png'|'jpg'|'heic'>('png');
@@ -16871,7 +16880,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (pages.length === 0) return;
     const silent = !!opts?.silent;
     const stillOnly = !!opts?.stillOnly;
-    if (!silent) setExportState('processing');
+    if (!silent) {
+      setExportState('processing');
+      // 按儲存：文字編輯頁一起關掉（存完回來不會還開著）
+      setTextSheetId(null); setSelectedFloatingId(null);
+    }
     videoAbortRef.current = false;
     /* 這一輪的號碼。使用者按「取消匯出」時號碼會被推走，cancelled() 就成立。
        silent（背景）那幾輪永遠是 false —— 它們沒有取消鍵，也不該被取消。 */
