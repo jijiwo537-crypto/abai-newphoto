@@ -120,7 +120,7 @@ export const GlassJelly: React.FC<Props> = ({ radius = 13, tint, press: pressAmt
       let gg = src[p00 + 1] * w00 + src[p10 + 1] * w10 + src[p01 + 1] * w01 + src[p11 + 1] * w11;
       let b = src[p00 + 2] * w00 + src[p10 + 2] * w10 + src[p01 + 2] * w01 + src[p11 + 2] * w11;
       // 略加飽和＋邊緣一點點提亮（玻璃把光聚起來）
-      const l = 0.299 * r + 0.587 * gg + 0.114 * b, sat = 1.3, lift = 1 + mag[i] * 0.12;
+      const l = 0.299 * r + 0.587 * gg + 0.114 * b, sat = 1.3, lift = 1 + mag[i] * 0.05;
       r = (l + (r - l) * sat) * lift; gg = (l + (gg - l) * sat) * lift; b = (l + (b - l) * sat) * lift;
       const q = i * 4; o[q] = r; o[q + 1] = gg; o[q + 2] = b; o[q + 3] = 255;
     }
@@ -201,10 +201,10 @@ export const GlassJelly: React.FC<Props> = ({ radius = 13, tint, press: pressAmt
       {tint && <span aria-hidden className="pointer-events-none absolute inset-0 -z-10" style={{ borderRadius: 'inherit', background: tint }} />}
       {/* 玻璃厚度：極淡內光（邊緣一圈微亮，中間透明） */}
       <span aria-hidden className="pointer-events-none absolute inset-0 -z-10" style={{ borderRadius: 'inherit',
-        boxShadow: 'inset 0 0 14px rgba(255,255,255,.07), inset 0 0 2px rgba(255,255,255,.10)' }} />
+        boxShadow: 'inset 0 0 14px rgba(255,255,255,.04), inset 0 0 2px rgba(255,255,255,.05)' }} />
       {/* 鏡面亮邊：左上與右下亮、兩側暗，像光打在玻璃厚邊上 */}
-      <span aria-hidden className="pointer-events-none absolute inset-0" style={{ borderRadius: 'inherit', padding: 1.25,
-        background: 'linear-gradient(135deg, rgba(255,255,255,.85) 0%, rgba(255,255,255,.22) 22%, rgba(255,255,255,.05) 45%, rgba(255,255,255,.05) 58%, rgba(255,255,255,.28) 82%, rgba(255,255,255,.6) 100%)',
+      <span aria-hidden className="pointer-events-none absolute inset-0" style={{ borderRadius: 'inherit', padding: 1,
+        background: 'linear-gradient(135deg, rgba(255,255,255,.42) 0%, rgba(255,255,255,.10) 22%, rgba(255,255,255,.03) 45%, rgba(255,255,255,.03) 58%, rgba(255,255,255,.10) 82%, rgba(255,255,255,.26) 100%)',
         WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)', WebkitMaskComposite: 'xor',
         mask: 'linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0)' } as React.CSSProperties} />
       {/* 按住：整顆微亮＋手指處一團光 */}
