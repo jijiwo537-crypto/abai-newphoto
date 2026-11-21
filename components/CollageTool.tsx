@@ -78,7 +78,6 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
 
 import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack, primeCanvasFont, fontEpoch, ensureTextFonts } from '../utils/fonts';
 import { drawStableText, hasEmoji } from '../utils/stableText';
-import { paintGlow, releaseGlowSprites } from '../utils/glowSprite';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG, MEDIA_ACCEPT } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -6204,7 +6203,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     zap(glowLayerRef.current);glowLayerRef.current=null;
     zap(linkGlowScratchRef.current);linkGlowScratchRef.current=null;
     zap(maskScratchRef.current);maskScratchRef.current=null;
-    releaseLowResGlow(); releaseGlowSprites();
+    releaseLowResGlow();
   },[]);
   const sceneTileWindow=useRef<SceneWindow|null>(null);
   /* 字型（或中文字型的某一小份）下載完成時，預先畫好的場景圖塊要作廢重做：
@@ -8405,21 +8404,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const plainGlow = !(solid && COMPOSITE_SHAPE_KINDS.has(o.kind))
             && (!GRID_SHAPE_KINDS.has(o.kind) || f?.gridWave === undefined || (f?.waveMix !== undefined && f.waveMix <= 1e-5));
           // 樂譜細節很多、範圍又大：小半徑也走縮小畫布，不然每拉一格都要整張重新模糊（手機上會一頓一頓）
-          const tbw = ((o as any).textureBaseW || o.w) * s, tbh = ((o as any).textureBaseH || o.h) * s;
-          const body = () => {
+          if (plainGlow && (glowRs[0] >= 10 || (isScoreKind(o.kind) && glowRs[0] > 0))) {
+            /* 大半徑的發光：在縮小的畫布上模糊再放大貼回來。模糊本來就沒有細節，
+               看起來一樣，但要算的像素少十幾倍（長線條、刺繡線發光時拉滑桿不再卡）。
+               同一組參數畫過就直接重用（調別的滑桿、拖畫面時發光不用重算）。 */
+            const glowImg = lowResShapeGlow(ctx, shapeP, solid, bw, bh, glowRs, o.glowColor || col,
+              solid ? undefined : () => fillTrackSquares, o.kind, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s, drawTip === undefined);
+            /* 小畫布的寬高是無條件進位到整數像素的，照它真正的大小貼回去（＝像素÷縮放）。
+               以前硬拉成 bw＋2×pad，每調一格發光、進位差就不一樣，發光的邊緣會微微伸縮 —— 看起來在抖 */
+            ctx.drawImage(glowImg.c, -glowImg.pad, -glowImg.pad, glowImg.c.width / glowImg.kk, glowImg.c.height / glowImg.kk);
+            // 原本每一層也會連同形狀本身畫一次，照樣畫（半透明的圖形外觀不變）
+            for (let gi = 0; gi < glowRs.length; gi++) { paintShapePath(!!solid); if (!solid) fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s); }
+          } else
+          for (const r of shapeGlowBlurs(bw, bh)) {
+            ctx.shadowBlur = r * gAmt;
             if (solid && COMPOSITE_SHAPE_KINDS.has(o.kind)) {
               drawFeatheredShapeBody(ctx, scoreKindOf(o.kind, (o as any).scoreSeed, (f as any)?.scoreAnim, scoreWaveOf(o, f)), bw, bh, o.shapeFeather, col,
-                undefined, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth, baseW: tbw, baseH: tbh });
-            } else { paintShapePath(!!solid); if (!solid) fillTrackSquares(ctx, o.kind, bw, bh, tbw, tbh); }
-          };
-          /* 大半徑的層走高品質畫法（utils/glowSprite：解析度跟光的大小成比例，計算量小、放大不會有像素感），
-             小半徑照原本直接畫。同一組參數、同一個畫面位置畫過就直接重用。 */
-          let pid = lowResGlowPathIds.get(shapeP); if (pid === undefined) { pid = ++lowResGlowSerial; lowResGlowPathIds.set(shapeP, pid); }
-          const mainCtx = ctx;
-          paintGlow(ctx, { x: -bw * .1, y: -bh * .1, w: bw * 1.2, h: bh * 1.2 }, glowRs, o.glowColor || col,
-            g => { ctx = g; try { body(); } finally { ctx = mainCtx; } },
-            plainGlow && drawTip === undefined ? ['shape', pid, bw, bh, solid ? 1 : 0, ctx.lineWidth, ctx.lineJoin, ctx.lineCap, ctx.miterLimit, ctx.getLineDash().join(','), ctx.lineDashOffset, o.kind, tbw, tbh, col].join('|') : null,
-            isScoreKind(o.kind));
+                undefined, o.innerColor || '#FFFFFF', { innerSize: o.innerSize, outlineWidth: o.outlineWidth,
+                  baseW: ((o as any).textureBaseW || o.w) * s, baseH: ((o as any).textureBaseH || o.h) * s });
+            } else { paintShapePath(!!solid); if (!solid) fillTrackSquares(ctx, o.kind, bw, bh, ((o as any).textureBaseW || o.w) * s, ((o as any).textureBaseH || o.h) * s); }
+          }
           ctx.restore();
         }
         /* 描邊：畫在本體「底下」、寬度加倍 —— 本體會蓋住內半邊，
@@ -8826,9 +8830,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           // 字的墨水在框裡上下置中（換字體不會忽上忽下）
           if (!o.vertical) ctx.translate(0, textInkShift(ctx, o.text || '', textLineH));
           ctx.fillStyle = o.color || '#ffffff';
-          { const mainCtx = ctx; paintTextShadow(ctx, o as any, fpx, g => { ctx = g; try { drawText(false); } finally { ctx = mainCtx; } },
-            { w: (o.textStretchBaseW || o.w) / fontK, h: (o.textStretchBaseH || o.h) / fontK },
-            (f?.lab || textUnitBreathe) ? null : JSON.stringify([fontEpoch, o.text, mainCtx.font, spacingPx, o.textAlign, o.lineHeight, o.vertical, o.underline, o.shadowColor, o.shadowAmt])); }
+          paintTextShadow(ctx, o as any, fpx, () => drawText(false));
           // 字卡效果：立體厚度、外描邊（在發光、描邊、字的下面）
           paintTextDepth(ctx, o as any, fpx, tk / fontK, () => drawText(false), () => drawText(true));
           paintOuterStroke(ctx, o as any, tk / fontK, () => drawText(true));
@@ -8838,16 +8840,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.save();
           ctx.globalAlpha = ctx.globalAlpha * Math.max(0, Math.min(1, tb));
           ctx.fillStyle = o.color || '#ffffff';
-          /* 大半徑的層走高品質畫法（utils/glowSprite），小半徑照原本 */
-          const gbw = o.sym ? o.w * textSceneScale : (o.textStretchBaseW || o.w) / fontK;
-          const gbh = o.sym ? o.h * textSceneScale : (o.textStretchBaseH || o.h) / fontK;
-          const mainCtx = ctx;
-          paintGlow(ctx, { x: -gbw * .75, y: -gbh * .75, w: gbw * 1.5, h: gbh * 1.5 },
-            [1, 2, 3].map(k2 => (Math.min(15, o.glow!) / 20) * 14 * k2 * tk * (o.sym ? 1 : textSceneScale)),
-            o.glowColor || '#ffffff',
-            g => { ctx = g; try { drawText(false); } finally { ctx = mainCtx; } },
-            (f?.lab || textUnitBreathe || seqIn !== null) ? null
-              : JSON.stringify(['t', fontEpoch, o.text, mainCtx.font, mainCtx.fillStyle, spacingPx, o.textAlign, o.lineHeight, o.vertical, o.underline, o.sym, tdx, tdy, o.strokeWidth ? 1 : 0, gbw, gbh]));
+          ctx.shadowColor = o.glowColor || '#ffffff';
+          for (const k2 of [1, 2, 3]) {
+            ctx.shadowBlur = (Math.min(15, o.glow) / 20) * 14 * k2 * tk * (o.sym?1:textSceneScale);
+            drawText(false);
+          }
           ctx.restore();
         }
         if (o.strokeWidth) {
