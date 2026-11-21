@@ -19,11 +19,9 @@ const WORK_SIGMA = 3;
 /** 金字塔最小那層的模糊 σ（像素） */
 const COARSE_SIGMA = 2.5;
 /** 遮罩最多多少像素 */
-const MAX_WORK_PIXELS = 600_000;
+const MAX_WORK_PIXELS = 300_000;
 /** 放大回去途中的暫存畫布最多多少像素 */
-const MAX_UP_PIXELS = 2_000_000;
-/** 快取的總像素上限 */
-const CACHE_PIXELS = 3_000_000;
+const MAX_UP_PIXELS = 1_000_000;
 
 type Ctx2D = CanvasRenderingContext2D;
 const pool = new Map<string, HTMLCanvasElement>();
@@ -38,15 +36,35 @@ const ctxOf = (c: HTMLCanvasElement) => {
   if (!g) throw new Error('no 2d context');
   return g;
 };
+/* iPhone：所有畫布加起來超過系統上限時，新的畫布不會報錯，而是「畫什麼都是空白」。
+   所以不能只靠例外來判斷 —— 每張暫存畫布建立或長大時，實際畫一個點再讀回來確認；
+   畫不出來就整段停用，改回原本的畫法（寧可有一點像素感，也不能沒有光）。 */
+let broken = false;
+const fail = (why: string): never => { broken = true; releaseGlowSprites(); throw new Error(why); };
+const probe = (c: HTMLCanvasElement, g: Ctx2D) => {
+  g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
+  g.clearRect(0, 0, 2, 2); g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1);
+  let a = 0;
+  try { a = g.getImageData(0, 0, 1, 1).data[3]; } catch { a = 0; }
+  if (a < 200) fail('canvas draws nothing');
+  void c;
+};
+/* 暫存畫布只長不縮：同一張一直重用，不會每一格都重新配置記憶體（也只在長大的那一次需要確認） */
 const scratch = (name: string, w: number, h: number): [HTMLCanvasElement, Ctx2D] => {
   w = Math.max(1, Math.ceil(w)); h = Math.max(1, Math.ceil(h));
   if (w * h > MAX_UP_PIXELS * 1.05) throw new Error('scratch too big');
   let c = pool.get(name);
-  if (!c) { c = document.createElement('canvas'); (c as any).__glow = 1; pool.set(name, c); }
-  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
-  if (c.width !== w || c.height !== h) throw new Error('canvas alloc failed');
+  if (!c) { c = document.createElement('canvas'); (c as any).__glow = 1; c.width = c.height = 0; pool.set(name, c); }
+  if (c.width < w || c.height < h) {
+    const nw = Math.max(c.width, w), nh = Math.max(c.height, h);
+    c.width = nw; c.height = nh;
+    if (c.width !== nw || c.height !== nh) fail('canvas alloc failed');
+    const g0 = c.getContext('2d', { willReadFrequently: false } as any) as Ctx2D | null;
+    if (!g0) fail('no 2d context');
+    probe(c, g0!);
+  }
   const g = ctxOf(c);
-  reset(g); g.clearRect(0, 0, w, h);
+  reset(g); g.clearRect(0, 0, c.width, c.height);
   return [c, g];
 };
 
@@ -94,18 +112,8 @@ const copyState = (src: Ctx2D, g: Ctx2D) => {
 };
 
 type Cached = { c: HTMLCanvasElement; ms: string; x0: number; y0: number; W: number; H: number; r: number };
-const cache = new Map<string, Cached>();
-let cachedPixels = 0;
-const dropOldest = () => {
-  while (cachedPixels > CACHE_PIXELS && cache.size) {
-    const [k, v] = cache.entries().next().value!;
-    cache.delete(k); cachedPixels -= v.c.width * v.c.height; v.c.width = v.c.height = 0;
-  }
-};
 /** 離開工具時把快取與暫存畫布整個還回去 */
 export const releaseGlowSprites = () => {
-  for (const v of cache.values()) v.c.width = v.c.height = 0;
-  cache.clear(); cachedPixels = 0;
   for (const c of pool.values()) c.width = c.height = 0;
   pool.clear();
 };
@@ -130,28 +138,15 @@ function bigLayers(ctx: Ctx2D, box: { x: number; y: number; w: number; h: number
   if (W * H * r * r > MAX_WORK_PIXELS) r = Math.sqrt(MAX_WORK_PIXELS / (W * H));
   const ms = [m.a, m.b, m.c, m.d, m.e, m.f].map(v => v.toFixed(3)).join(',');
   const fullKey = key === null ? null : `${key}|${color}|${sigmas.map(v => v.toFixed(3)).join(',')}`;
-  if (fullKey) {
-    const hit = cache.get(fullKey);
-    if (hit && hit.ms === ms && hit.x0 === x0 && hit.y0 === y0 && hit.W === W && hit.H === H) {
-      cache.delete(fullKey); cache.set(fullKey, hit); return hit;
-    }
-  }
+  void fullKey; void ms;
   const Mw = W * r, Mh = H * r;
   const [cm, gm] = scratch('mask', Mw + 2, Mh + 2);
   copyState(ctx, gm);
   gm.setTransform(m.a * r, m.b * r, m.c * r, m.d * r, (m.e - x0) * r, (m.f - y0) * r);
   gm.save(); try { draw(gm); } finally { gm.restore(); }
   reset(gm);
-  let out: HTMLCanvasElement;
-  if (fullKey) {
-    const old = cache.get(fullKey);
-    if (old) { cache.delete(fullKey); cachedPixels -= old.c.width * old.c.height; out = old.c; }
-    else { out = document.createElement('canvas'); (out as any).__glow = 1; }
-    const w = Math.ceil(Mw + 2), h = Math.ceil(Mh + 2);
-    if (out.width !== w || out.height !== h) { out.width = w; out.height = h; }
-    if (out.width !== w || out.height !== h) throw new Error('canvas alloc failed');
-  } else out = scratch('acc', Mw + 2, Mh + 2)[0];
-  const go = ctxOf(out); reset(go); go.clearRect(0, 0, out.width, out.height);
+  /* 不留快取（少佔記憶體）：遮罩解析度跟光的大小成比例，每次重畫的量本來就很小 */
+  const [out, go] = scratch('acc', Mw + 2, Mh + 2);
   for (const sg of sigmas) {
     const [cl, gl] = scratch('layer', Mw + 2, Mh + 2);
     blurAlphaInto(gl, cm, Mw, Mh, sg * r);
@@ -159,9 +154,7 @@ function bigLayers(ctx: Ctx2D, box: { x: number; y: number; w: number; h: number
     gl.fillStyle = color; gl.fillRect(0, 0, cl.width, cl.height);
     go.drawImage(cl, 0, 0);
   }
-  const res: Cached = { c: out, ms, x0, y0, W, H, r };
-  if (fullKey) { cache.set(fullKey, res); cachedPixels += out.width * out.height; dropOldest(); }
-  return res;
+  return { c: out, ms, x0, y0, W, H, r };
 }
 
 /** 把遮罩解析度的光暈圖一次放大一倍貼回畫面（最後一步不超過 2 倍） */
@@ -190,13 +183,32 @@ function putBack(ctx: Ctx2D, g: Cached, offX: number, offY: number) {
  * @param draw  把形狀畫到 g 上（g 已經對好目前的座標系；g 也可能就是 ctx 本身）
  * @param key   內容沒變時的識別字串；null＝不快取
  */
+/* 第一次用到時整條流程實際跑一次：方塊模糊後，外面一點的地方一定要有光。沒有就停用（某些裝置的畫布行為不同） */
+let tested = false;
+const selfTest = () => {
+  if (tested) return; tested = true;
+  try {
+    const m = document.createElement('canvas'); m.width = 80; m.height = 80;
+    const gm = m.getContext('2d'); if (!gm) fail('no ctx');
+    gm!.fillStyle = '#000'; gm!.fillRect(30, 30, 20, 20);
+    const [, gl] = scratch('layer', 80, 80);
+    blurAlphaInto(gl, m, 80, 80, 8);
+    const near = gl.getImageData(56, 40, 1, 1).data[3], far = gl.getImageData(2, 2, 1, 1).data[3];
+    m.width = m.height = 0;
+    // σ=8：離方塊邊 6px 的地方大約 0.2～0.25 的不透明度；角落應該幾乎是 0
+    if (!(near > 25 && near < 110 && far < 10)) fail('self test failed ' + near + ',' + far);
+  } catch { broken = true; releaseGlowSprites(); }
+};
+export const glowFallbackActive = () => broken;
+
 export function paintGlow(ctx: Ctx2D, box: { x: number; y: number; w: number; h: number },
   blurs: number[], color: string, draw: (g: Ctx2D) => void, key: string | null = null, allBig = false) {
   const isBig = (b: number) => b > 0 && (allBig || b / 2 > DIRECT_MAX_SIGMA);
   const big = blurs.filter(isBig);
   const small = blurs.filter(b => !isBig(b));
   let fallback = small;
-  if (big.length && typeof document !== 'undefined') {
+  if (big.length && typeof document !== 'undefined') selfTest();
+  if (big.length && typeof document !== 'undefined' && !broken) {
     try {
       const g = bigLayers(ctx, box, big.map(b => b / 2), color, draw, key);
       if (g) {
@@ -222,6 +234,8 @@ export function paintGlow(ctx: Ctx2D, box: { x: number; y: number; w: number; h:
 export function paintBigShadow(ctx: Ctx2D, box: { x: number; y: number; w: number; h: number },
   blur: number, color: string, offX: number, offY: number, draw: (g: Ctx2D) => void, key: string | null = null): boolean {
   if (!(blur / 2 > DIRECT_MAX_SIGMA) || typeof document === 'undefined') return false;
+  selfTest();
+  if (broken) return false;
   try {
     const g = bigLayers(ctx, box, [blur / 2], color, draw, key);
     if (!g) return false;
