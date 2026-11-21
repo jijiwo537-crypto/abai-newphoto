@@ -175,7 +175,10 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   const lv = hit.canvas.width / hit.w;
   const STEP = Math.log(1.004);
   const local = blurs.map(b => Math.exp(Math.round(Math.log(Math.max(1e-6, b / k)) / STEP) * STEP));
-  const key = [e.key, color, local.map(v => v.toPrecision(6)).join(',')].join('\u0003');
+  /* 放大看時光不能一格一格：光的圖至少要有螢幕一半的解析度。依放大倍率取 2 的次方，
+     每放大一倍才換一次（縮放中不會一直重做；換的時候光的形狀不變，只是更細） */
+  const zl = 2 ** Math.ceil(Math.log2(Math.max(1e-3, k / 2)));
+  const key = [e.key, color, local.map(v => v.toPrecision(6)).join(','), zl].join('\u0003');
   let gl = glowCache.get(key);
   if (gl) { glowCache.delete(key); glowCache.set(key, gl); }
   else {
@@ -193,7 +196,7 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
          Safari 會把模糊半徑取整、2 的次方解析度又會一段一段換，拉滑桿時光就忽大忽小地抖。
          這樣模糊量永遠一樣，光的大小只跟著圖的縮放連續改變。 */
       const BL = 12;
-      const gv = Math.min(capV, BL / Math.max(1e-3, b));
+      const gv = Math.min(capV, Math.max(BL / Math.max(1e-3, b), Math.min(zl, 36 / Math.max(1e-3, b))));
       const W = Math.ceil(lw * gv), H = Math.ceil(lh * gv);
       if (!(gv > 0) || W < 1 || H < 1) { drop(); return false; }
       const c = document.createElement('canvas'); c.width = W; c.height = H;
@@ -206,7 +209,7 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
       g.shadowColor = color;
       // 只畫影子：字本體畫到畫布外，影子用 offset 移回來（光暈圖裡完全沒有字的銳利邊）
       const OFF = W + 64;
-      g.shadowOffsetX = OFF; g.shadowBlur = Math.min(b * gv, BL);
+      g.shadowOffsetX = OFF; g.shadowBlur = b * gv;
       /* 字直接用向量畫進這張小圖（不從大點陣縮小：縮小會有雜訊，而且雜訊隨倍率改變＝抖） */
       g.font = ctx.font; (g as any).letterSpacing = String((ctx as any).letterSpacing || '0px');
       g.textAlign = ctx.textAlign; g.textBaseline = ctx.textBaseline; g.fillStyle = '#000';
