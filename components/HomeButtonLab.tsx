@@ -2,6 +2,7 @@
    的 5 種材質／樣式方案。版面、尺寸跟 App 裡完全一樣，只換外觀，挑好跟我說是哪一個。 */
 import React, { useState } from 'react';
 import { Icon } from './Icon';
+import { GlassJelly } from './GlassJelly';
 
 type Skin = { id: string; name: string; note: string; tile: React.CSSProperties; icon: string; label: string; cardExtra?: React.CSSProperties; accent?: boolean };
 
@@ -65,12 +66,64 @@ function Preview({ s }: { s: Skin }) {
   );
 }
 
+/* F：液態玻璃＋果凍（相機與四個工具；藝術效果、點陣文字兩張卡片不動）。背景用跟 App 主頁一樣的黑，
+   另外上面放一張照片示意「主視覺漸層收進黑色」那一段，看得出玻璃透光的感覺。 */
+function GlassPreview() {
+  return (
+    <div className="rounded-2xl overflow-hidden bg-black">
+      <div className="relative h-[120px]">
+        <img src="./icon-source.jpg" alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
+        <div className="absolute inset-x-0 bottom-0 h-[60%]" style={{ background: 'linear-gradient(to top,#000 0%,rgba(0,0,0,.66) 44%,rgba(0,0,0,0) 100%)' }} />
+      </div>
+      <div className="px-3 pb-3 -mt-[2px]">
+        <div className="flex gap-2">
+          <div className="flex-1 h-[75px] rounded-[13px] bg-white text-black flex items-center justify-center gap-[9px]">
+            <Icon name="add_photo_alternate" className="text-[24px]" /><span className="text-sm font-black tracking-[0.06em]">編輯</span>
+          </div>
+          <GlassJelly className="flex-1 h-[75px] text-white flex items-center justify-center gap-[9px]">
+            <Icon name="photo_camera" className="text-[24px] text-white/80" /><span className="text-sm font-black tracking-[0.06em]">相機</span>
+          </GlassJelly>
+        </div>
+        <div className="mt-[11px] flex gap-2">
+          {TOOLS.map(t => (
+            <GlassJelly key={t.k} className="flex-1 min-w-0 h-[75px] text-white flex flex-col items-center justify-center gap-[9px]">
+              <Icon name={t.icon} className="text-[22px] text-white/75" />
+              <span className="text-[10px] font-bold tracking-[0.06em] whitespace-nowrap text-white/80">{t.label}</span>
+            </GlassJelly>
+          ))}
+        </div>
+        <div className="mt-[14px] flex gap-2">
+          {[['art', '藝術效果', '一鍵套用藝術風格'], ['dot', '點陣文字', '將圖片轉點陣圖案']].map(([k, t, sub]) => (
+            <div key={k} className="relative flex-1 min-w-0 rounded-[14px] overflow-hidden text-left border border-white/[0.08]" style={{ background: 'rgba(255,255,255,.03)' }}>
+              <div className="px-[14px] pt-7 pb-4">
+                <span className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">{t}</span>
+                <span className="block text-[11px] tracking-[0.04em] text-white/65 truncate">{sub}</span>
+                <span className="mt-3 inline-flex items-center gap-1 text-[11px] font-bold text-white/80">立即使用 <Icon name="chevron_right" className="text-[14px]" /></span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function HomeButtonLab({ onToast }: { onToast: (m: string) => void }) {
   const [picked, setPicked] = useState<string>(() => { try { return localStorage.getItem('abai:homeSkinPick') || ''; } catch { return ''; } });
   const pick = (id: string) => { setPicked(id); try { localStorage.setItem('abai:homeSkinPick', id); } catch { /* 沒關係 */ } onToast(`已選 ${id}，回到對話告訴我就會套用到 App`); };
   return (
     <div className="flex flex-col gap-5 mt-2">
       <div className="text-[11px] text-white/45 leading-relaxed">修圖首頁那 7 顆灰色功能鍵的 5 種樣式。尺寸、位置跟 App 裡一樣，背景加了一點顏色，方便看出透明／模糊的效果。點「選這個」記下來，再回到對話告訴我是哪一個。</div>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[14px] font-bold">F 液態玻璃＋果凍（試做）</div>
+            <div className="text-[11px] text-white/45 mt-0.5 leading-relaxed pr-3">按下去會鼓起來；按住往旁邊拖，按鈕會被拉長變形、高光跟著手指走；放開會彈回來晃一下。只改相機和四個工具，藝術效果、點陣文字不動。</div>
+          </div>
+          <button onClick={() => pick('F')} className={`h-8 px-3 shrink-0 rounded-full text-[12px] font-bold ${picked === 'F' ? 'bg-white text-black' : 'bg-white/10 text-white/80'}`}>{picked === 'F' ? '已選' : '選這個'}</button>
+        </div>
+        <GlassPreview />
+      </div>
       {SKINS.map(s => (
         <div key={s.id} className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
