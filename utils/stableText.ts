@@ -154,7 +154,7 @@ type Glow = { layers: HTMLCanvasElement[]; lv: number[]; x: number; y: number; w
 const glowCache = new Map<string, Glow>();
 let glowBrokenUntil = 0;   // iPhone 畫布記憶體用完時，暫時改用直接畫
 let glowPx = 0;
-const GLOW_MAX_ENTRIES = 24, GLOW_MAX_TOTAL = 12e6, GLOW_MAX_ENTRY = 2e6, GLOW_MAX_SIDE = 4096;
+const GLOW_MAX_ENTRIES = 24, GLOW_MAX_TOTAL = 12e6, GLOW_MAX_ENTRY = 8e5, GLOW_MAX_SIDE = 4096;
 const evictGlow = () => {
   while (glowCache.size > GLOW_MAX_ENTRIES || glowPx > GLOW_MAX_TOTAL) {
     const k0 = glowCache.keys().next().value;
@@ -184,7 +184,9 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
     /* 三層光各用自己的解析度：模糊越大，圖越小（每層的模糊都約 8 個像素）。
        模糊的成本跟「像素數×模糊半徑」成正比，這樣每層都很快 —— 拉發光滑桿時每一格都要重做，才不會一格一格的。
        取 2 的次方：發光大小連續改變時解析度很少換，換了也看不出來（模糊量都在 4 像素以上）。 */
-    const capV = Math.min(GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)));
+    /* 解析度上限：最多跟螢幕一樣細（再細看不出差別）。發光很小時 12/b 會非常大，
+       不設上限的話每拉一格滑桿都要做三張好幾百萬像素的圖（一格一格的） */
+    const capV = Math.min(GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)), Math.max(1, k));
     const layers: HTMLCanvasElement[] = [], lvs: number[] = [];
     let total = 0;
     const drop = () => { for (const c of layers) c.width = c.height = 1; };

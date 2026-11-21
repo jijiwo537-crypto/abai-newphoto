@@ -2783,8 +2783,9 @@ let fontLabelMeasure: CanvasRenderingContext2D | null = null;
 const FontCard: React.FC<{
   font: { name: string; label: string; category: FontCategory };
   active: boolean;
+  loading?: boolean;
   onPick: () => void;
-}> = ({ font, active, onPick }) => {
+}> = ({ font, active, loading, onPick }) => {
   /* 範例字用「預先畫好的預覽圖」：跟 App 一起發佈，打開選單就已經是完整的樣子，不用等字體下載；
      每個字體都照它實際畫出來的範圍（墨水）統一成一樣的視覺高度、上下左右置中 ——
      不再有的大、有的小、整排偏上。真正選用時才下載那個字體（見 ensureFont）。 */
@@ -2815,10 +2816,16 @@ const FontCard: React.FC<{
       ref={ref}
       onClick={onPick}
       title={font.label}
-      className={`flex flex-col items-center justify-center gap-1 h-[62px] px-1.5 rounded-xl border transition-all ${
+      className={`relative isolate flex flex-col items-center justify-center gap-1 h-[62px] px-1.5 rounded-xl border transition-all ${
         active ? 'bg-white/10 border-white' : 'bg-white/[0.03] border-white/10 hover:border-white/25'
       }`}
+      aria-busy={loading || undefined}
     >
+      {loading && (
+        <span aria-hidden className="absolute inset-0 rounded-xl bg-black/45 flex items-center justify-center pointer-events-none">
+          <span className="block w-5 h-5 rounded-full border-2 border-white/25 border-t-white animate-spin" />
+        </span>
+      )}
       {row !== undefined ? (
         <span aria-hidden className="block shrink-0" style={{
           width: PW, height: PH, marginTop: 4,
@@ -3157,19 +3164,27 @@ export const TextEditorPanel: React.FC<{
   useEffect(() => () => { fontPickVersion.current++; }, [layer.id]);
   // 簡繁轉換的字典：打開文字面板就先在背景載好，點字體時立刻轉
   useEffect(() => { if (!symbol) void preloadHanConvert(); }, [symbol]);
+  /* 正在準備的字體（按鈕變暗＋轉圈）：簡繁轉換、字型下載都好了才一次換上 */
+  const [loadingFont, setLoadingFont] = useState<string | null>(null);
   const pickFont = async (name: string) => {
     const version = ++fontPickVersion.current;
-    /* 選「（簡）」字體 → 文字整段轉簡體；選其他中文字體 → 轉繁體。點下去當下就換（不等字型下載） */
-    let text = layer.text || '';
-    if (!symbol && text) {
-      const conv = convertForFontSync(name, text) ?? await convertForFont(name, text);
+    setLoadingFont(name);
+    try {
+      /* 選「（簡）」字體 → 整段轉簡體；選其他中文字體 → 轉繁體。
+         轉好的字、字體一起換（不會先換字體、字晚一點才變） */
+      let text = layer.text || '';
+      if (!symbol && text) {
+        text = convertForFontSync(name, text) ?? await convertForFont(name, text);
+        if (version !== fontPickVersion.current) return;
+      }
+      await ensureFont(name);
+      if (layer.italic) await ensureItalic(name);
+      await document.fonts.load(`${layer.italic ? 'italic ' : ''}${layer.bold ? 700 : 400} 40px "${name}"`, text || ' ');
       if (version !== fontPickVersion.current) return;
-      if (conv !== text) { text = conv; onChange({ text: conv }); }
+      onChange(text !== (layer.text || '') ? { fontFamily: name, text } : { fontFamily: name });
+    } finally {
+      if (version === fontPickVersion.current) setLoadingFont(null);
     }
-    await ensureFont(name);
-    if (layer.italic) await ensureItalic(name);
-    await document.fonts.load(`${layer.italic ? 'italic ' : ''}${layer.bold ? 700 : 400} 40px "${name}"`, text || ' ');
-    if (version === fontPickVersion.current) onChange({ fontFamily: name });
   };
   /* 顏色改成「點進去有一頁」：這裡存的是那一頁要調哪個顏色。 */
   const [colorPage, setColorPage] = useState<
@@ -3339,6 +3354,7 @@ export const TextEditorPanel: React.FC<{
                   key={f.name + f.category}
                   font={f}
                   active={(layer.fontFamily || DEFAULT_FONT) === f.name}
+                  loading={loadingFont === f.name}
                   onPick={() => { void pickFont(f.name).catch(() => {}); }}
                 />
               ))}
