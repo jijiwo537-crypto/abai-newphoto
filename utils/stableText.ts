@@ -151,6 +151,7 @@ function stableEntry(ctx: CanvasRenderingContext2D, mode: 'fill' | 'stroke', tex
      現在字只畫一次，光在字底下也挖空，字的透明度就跟沒開發光時一樣。
    ‧ 清晰度：光暈圖為了省記憶體解析度有上限，以前字也在這張裡，放大就看到鋸齒；現在字不在裡面了。 */
 type Glow = { layers: HTMLCanvasElement[]; lv: number[]; x: number; y: number; w: number; h: number; px: number };
+import { drawGlowGL } from './glowGL';
 const glowCache = new Map<string, Glow>();
 let glowBrokenUntil = 0;   // iPhone 畫布記憶體用完時，暫時改用直接畫
 let glowPx = 0;
@@ -177,6 +178,10 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   const local = blurs.map(b => Math.exp(Math.round(Math.log(Math.max(1e-6, b / k)) / STEP) * STEP));
   /* 放大看時光不能一格一格：光的圖至少要有螢幕一半的解析度。依放大倍率取 2 的次方，
      每放大一倍才換一次（縮放中不會一直重做；換的時候光的形狀不變，只是更細） */
+  /* 先用 GPU 畫（見 utils/glowGL）：模糊在 GPU 上做、螢幕解析度雙三次合成 —— 拉滑桿不卡、放大不會一格一格。
+     GPU 不行時才用下面的 2D 做法 */
+  if (drawGlowGL({ ctx, mask: hit.canvas, maskX: hit.x, maskY: hit.y, maskW: hit.w, maskH: hit.h, x, y,
+    sigmas: local.map(v => v / 2), color, textAlpha: textAlpha ?? ctx.globalAlpha, key: e.key + '\u0004' + local.map(v => v.toPrecision(6)).join(',') })) return true;
   const zl = 2 ** Math.ceil(Math.log2(Math.max(1e-3, k / 2)));
   const key = [e.key, color, local.map(v => v.toPrecision(6)).join(','), zl].join('\u0003');
   let gl = glowCache.get(key);

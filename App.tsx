@@ -564,7 +564,9 @@ const App: React.FC = () => {
   /* 記憶體快不夠（App 版由系統通知）或切到背景時，先把可以重建的快取放掉，降低被系統關掉的機會 */
   useEffect(() => watchMemoryPressure(), []);
   useEffect(() => {
-    const onHide = () => { if (document.visibilityState === 'hidden') trimMemory('background'); };
+    /* 切到背景就清快取只給網頁版（瀏覽器沒有記憶體警告可聽）。App 版有系統的記憶體警告（watchMemoryPressure），
+       真的不夠時才清；不然每次切出去再回來，文字點陣、預覽圖全部要重做 —— 回來後一動就卡、字也可能沒置中 */
+    const onHide = () => { if (document.visibilityState === 'hidden' && !isNative()) trimMemory('background'); };
     document.addEventListener('visibilitychange', onHide);
     return () => document.removeEventListener('visibilitychange', onHide);
   }, []);

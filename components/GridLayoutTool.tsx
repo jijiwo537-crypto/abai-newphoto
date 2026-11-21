@@ -2816,18 +2816,18 @@ const FontCard: React.FC<{
       ref={ref}
       onClick={onPick}
       title={font.label}
-      className={`relative flex flex-col items-center justify-center gap-1 h-[62px] px-1.5 rounded-xl border transition-all ${
+      className={`relative isolate flex flex-col items-center justify-center gap-1 h-[62px] px-1.5 rounded-xl border transition-all ${
         active ? 'bg-white/10 border-white' : 'bg-white/[0.03] border-white/10 hover:border-white/25'
       }`}
       aria-busy={isDl || undefined}
     >
       {isDl && (
-        <span aria-hidden className="absolute inset-0 z-10 rounded-xl bg-black/45 flex items-center justify-center pointer-events-none">
+        <span aria-hidden className="absolute inset-0 rounded-xl bg-black/45 flex items-center justify-center pointer-events-none">
           <span className="block w-5 h-5 rounded-full border-2 border-white/25 border-t-white animate-spin" />
         </span>
       )}
       {needDl && (
-        <svg aria-label="下載" viewBox="0 0 24 24" className="absolute right-1 bottom-1 w-[11px] h-[11px] text-white/55 pointer-events-none" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <svg aria-label="下載" viewBox="0 0 24 24" className="absolute right-1 bottom-[8px] w-[10px] h-[10px] text-white/55 pointer-events-none" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12 4v11M7 10.5l5 5 5-5M5 20h14" />
         </svg>
       )}

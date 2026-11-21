@@ -133,6 +133,9 @@ export const paintTextShadow = (ctx: CanvasRenderingContext2D, o: TextDeco, size
 type Ink4 = [number, number, number, number];   // 左、右、上、下（相對於繪製原點）
 const inkXCache = new Map<string, Ink4 | null>();
 const INK_REF = 128;
+/* 字型（或中文字型的某一小份）到了、或從本機登記好了：之前用備用字型量到的墨水範圍作廢重量 ——
+   不然字會一直照備用字型的範圍置中（看起來沒在選中框中間） */
+if (typeof window !== 'undefined') window.addEventListener('abai-font-ready', () => inkXCache.clear());
 export const inkExtent = (ctx: CanvasRenderingContext2D, text: string): Ink4 | null => {
   if (!text || typeof document === 'undefined') return null;
   const fm = /(\d+(?:\.\d+)?)px/.exec(ctx.font);
