@@ -2948,23 +2948,35 @@ export const SymbolPicker: React.FC<{
  * 提示使用同一個 SVG 世界座標，和格子一起連續縮放。字體不逐幀重排，
  * 也沒有第二個反向縮放層，避免 WebKit 的兩套取整規則互相拉扯。
  */
+/** 空格提示的大小（佈局單位）：用「畫面上真正的格子大小」（＝佈局單位 × 縮放手勢中的倍率）決定，再換回佈局單位。
+    手勢中由 applyLiveLayoutDom 每一格直接重算（那時不經過 React），所以提示是即時變的，不會等放開才跳。 */
+const emptyPromptFit = (w: number, h: number, visualK = 1) => {
+  const V = Math.max(1e-4, visualK);
+  return Math.max(.18, Math.min(1, w * V / 92, h * V / 60)) / V;
+};
 const LayoutEmptyPromptLayer: React.FC<{
   cells: { x: number; y: number; w: number; h: number }[];
   width:number;
   height:number;
   hidden?: boolean;
-}> = ({ cells, width, height, hidden = false }) => (
+  /** 縮放手勢中整組佈局用 transform 放大縮小的倍率（見 holdLayoutVisual）。提示要扣掉它，
+      才會在手勢途中就是「放開後」該有的大小，不會等放開才突然變。 */
+  visualK?: number;
+}> = ({ cells, width, height, hidden = false, visualK = 1 }) => (
   <svg data-layout-empty-prompts="1" aria-hidden
     viewBox={`0 0 ${width} ${height}`}
     className="absolute inset-0 w-full h-full pointer-events-none z-[6]"
     style={{visibility:hidden?'hidden':'visible'}}>
     {cells.map((cell,idx)=>{
-      const fit=Math.max(.18,Math.min(1,cell.w/92,cell.h/60));
+      const fit=emptyPromptFit(cell.w,cell.h,visualK);
+      /* 上下置中：加號的墨水在 y −15.5～−1.5、字的墨水約在 7.5～15.5（實測 Chromium／WebKit），
+         整組剛好以格子中心上下對稱。以前整組偏上 2.5 個單位。 */
       return <g key={idx} data-layout-empty-prompt="1"
+        data-cx={cell.x+cell.w/2} data-cy={cell.y+cell.h/2} data-w={cell.w} data-h={cell.h}
         transform={`translate(${cell.x+cell.w/2} ${cell.y+cell.h/2}) scale(${fit})`}
         fill="white" opacity=".2">
-        <path data-layout-empty-plus="1" d={SOLID_PLUS_PATH} transform="translate(-8 -19)"/>
-        <text data-layout-empty-label="1" x="0" y="12" textAnchor="middle"
+        <path data-layout-empty-plus="1" d={SOLID_PLUS_PATH} transform="translate(-8 -16.5)"/>
+        <text data-layout-empty-label="1" x="0" y="14.5" textAnchor="middle"
           fontSize="8" fontWeight="700" fontFamily={fontStack(DEFAULT_FONT)}>新增圖片</text>
       </g>;
     })}
@@ -14686,6 +14698,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       el.style.transform = rot !== 0 ? `rotate(${rot}deg)` : '';
     });
     document.querySelectorAll<HTMLElement>(`[data-layout-pill="${layout.id}"]`).forEach(el => { el.style.transform = layoutPillTransform(lwT, lhT, t.y || 0, rot); });
+    /* 空格的「＋ 新增圖片」：佈局這時是用 transform 放大縮小的，提示要每一格照當下倍率重算大小，
+       才會跟放開後一樣（以前要等放開、React 重畫才變） */
+    document.querySelectorAll<SVGGElement>(`[data-layout-content-wrapper][data-layout-id="${layout.id}"] [data-layout-empty-prompt]`).forEach(g => {
+      const cx = +(g.dataset.cx || 0), cy = +(g.dataset.cy || 0), w = +(g.dataset.w || 0), h = +(g.dataset.h || 0);
+      g.setAttribute('transform', `translate(${cx} ${cy}) scale(${emptyPromptFit(w, h, k)})`);
+    });
     window.dispatchEvent(new Event('abai-layout-visual'));
   };
   const patchLayoutT = (patch: Partial<{ x: number; y: number; scale: number; rot: number }>, targetId?: string | null) => {
@@ -18751,7 +18769,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     />
                                   )}
                                 </svg>
-                                {!insetLayout && <LayoutEmptyPromptLayer cells={emptyRects} width={lw} height={lh} hidden={pagesMode || pagesVisual} />}
+                                {!insetLayout && <LayoutEmptyPromptLayer cells={emptyRects} width={lw} height={lh} hidden={pagesMode || pagesVisual} visualK={visualK} />}
                                 </>
                                 );
                               })()}
