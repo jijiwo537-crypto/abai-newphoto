@@ -150,7 +150,7 @@ function stableEntry(ctx: CanvasRenderingContext2D, mode: 'fill' | 'stroke', tex
    ‧ 透明度：原本三層各含一個字、加上最後那次填色，等於同一個字疊了 4 次，字調透明後一開發光就變得很不透明。
      現在字只畫一次，光在字底下也挖空，字的透明度就跟沒開發光時一樣。
    ‧ 清晰度：光暈圖為了省記憶體解析度有上限，以前字也在這張裡，放大就看到鋸齒；現在字不在裡面了。 */
-type Glow = { layers: HTMLCanvasElement[]; x: number; y: number; w: number; h: number; px: number };
+type Glow = { layers: HTMLCanvasElement[]; lv: number[]; x: number; y: number; w: number; h: number; px: number };
 const glowCache = new Map<string, Glow>();
 let glowBrokenUntil = 0;   // iPhone 畫布記憶體用完時，暫時改用直接畫
 let glowPx = 0;
@@ -173,7 +173,7 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   const k = Math.sqrt(Math.abs(m.a * m.d - m.b * m.c));
   if (!(k > 0) || !Number.isFinite(k)) return false;
   const lv = hit.canvas.width / hit.w;
-  const STEP = Math.log(1.02);
+  const STEP = Math.log(1.004);
   const local = blurs.map(b => Math.exp(Math.round(Math.log(Math.max(1e-6, b / k)) / STEP) * STEP));
   const key = [e.key, color, local.map(v => v.toPrecision(6)).join(',')].join('\u0003');
   let gl = glowCache.get(key);
@@ -184,17 +184,20 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
     /* 三層光各用自己的解析度：模糊越大，圖越小（每層的模糊都約 8 個像素）。
        模糊的成本跟「像素數×模糊半徑」成正比，這樣每層都很快 —— 拉發光滑桿時每一格都要重做，才不會一格一格的。
        取 2 的次方：發光大小連續改變時解析度很少換，換了也看不出來（模糊量都在 4 像素以上）。 */
-    const capV = Math.min(lv, GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)));
-    const layers: HTMLCanvasElement[] = [];
+    const capV = Math.min(GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)));
+    const layers: HTMLCanvasElement[] = [], lvs: number[] = [];
     let total = 0;
     const drop = () => { for (const c of layers) c.width = c.height = 1; };
     for (const b of local) {
-      let gv = Math.min(capV, 8 / Math.max(1e-3, b));
-      gv = 2 ** Math.floor(Math.log2(gv));
+      /* 每層的模糊固定是 12 像素，靠這張圖的「解析度」連續變化來表現不同的光：
+         Safari 會把模糊半徑取整、2 的次方解析度又會一段一段換，拉滑桿時光就忽大忽小地抖。
+         這樣模糊量永遠一樣，光的大小只跟著圖的縮放連續改變。 */
+      const BL = 12;
+      const gv = Math.min(capV, BL / Math.max(1e-3, b));
       const W = Math.ceil(lw * gv), H = Math.ceil(lh * gv);
       if (!(gv > 0) || W < 1 || H < 1) { drop(); return false; }
       const c = document.createElement('canvas'); c.width = W; c.height = H;
-      layers.push(c);
+      layers.push(c); lvs.push(gv);
       if (c.width !== W || c.height !== H) { drop(); return false; }
       const g = c.getContext('2d');
       if (!g) { drop(); return false; }
@@ -203,15 +206,20 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
       g.shadowColor = color;
       // 只畫影子：字本體畫到畫布外，影子用 offset 移回來（光暈圖裡完全沒有字的銳利邊）
       const OFF = W + 64;
-      g.shadowOffsetX = OFF; g.shadowBlur = b * gv;
-      g.drawImage(hit.canvas, pad * gv - OFF, pad * gv, hit.w * gv, hit.h * gv);
+      g.shadowOffsetX = OFF; g.shadowBlur = Math.min(b * gv, BL);
+      /* 字直接用向量畫進這張小圖（不從大點陣縮小：縮小會有雜訊，而且雜訊隨倍率改變＝抖） */
+      g.font = ctx.font; (g as any).letterSpacing = String((ctx as any).letterSpacing || '0px');
+      g.textAlign = ctx.textAlign; g.textBaseline = ctx.textBaseline; g.fillStyle = '#000';
+      g.setTransform(gv, 0, 0, gv, (pad - hit.x) * gv - OFF, (pad - hit.y) * gv);
+      g.fillText(text, 0, 0);
+      g.setTransform(1, 0, 0, 1, 0, 0);
       /* iPhone：畫布總記憶體超過上限時，新畫布不報錯、只是畫不出東西。角落放一個看不見的點（透明度 1/255），
          晚一點（不擋這一格畫面）讀回來確認；讀不到就丟掉這組光、改用直接畫，並要求重畫 */
       g.shadowColor = 'transparent'; g.shadowOffsetX = 0; g.shadowBlur = 0;
       g.fillStyle = 'rgba(0,0,0,0.004)'; g.fillRect(W - 1, H - 1, 1, 1);
       total += W * H;
     }
-    gl = { layers, x: hit.x - pad, y: hit.y - pad, w: lw, h: lh, px: total };
+    gl = { layers, lv: lvs, x: hit.x - pad, y: hit.y - pad, w: lw, h: lh, px: total };
     glowCache.set(key, gl); glowPx += gl.px; evictGlow();
     const made = gl, mk = key;
     setTimeout(() => {
@@ -244,14 +252,16 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   ctx.save();
   ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low';
-  if (!sc) { for (const c of gl.layers) ctx.drawImage(c, x + gl.x, y + gl.y, gl.w, gl.h); ctx.restore(); return true; }
+  const G = gl;
+  const paintLayers = (t: CanvasRenderingContext2D) => G.layers.forEach((c, i) => t.drawImage(c, x + G.x, y + G.y, c.width / G.lv[i], c.height / G.lv[i]));
+  if (!sc) { paintLayers(ctx); ctx.restore(); return true; }
   const s2 = sc.getContext('2d')!;
   s2.setTransform(1, 0, 0, 1, 0, 0);
   s2.globalCompositeOperation = 'source-over'; s2.globalAlpha = 1;
   s2.clearRect(0, 0, bw, bh);
   s2.setTransform(m.a, m.b, m.c, m.d, m.e - bx, m.f - by);
   s2.imageSmoothingEnabled = true; s2.imageSmoothingQuality = 'low';
-  for (const c of gl.layers) s2.drawImage(c, x + gl.x, y + gl.y, gl.w, gl.h);
+  paintLayers(s2);
   /* 字不透明時完全不挖：字整個蓋住光，挖了反而在字邊留下一圈深色線。
      字半透明時：字的「內部」整個挖掉（光不從字後面透上來）；字的邊緣按比例挖，
      讓邊緣那一像素的「字＋光」跟不透明時一樣連續，不會出現深色線或白邊。 */

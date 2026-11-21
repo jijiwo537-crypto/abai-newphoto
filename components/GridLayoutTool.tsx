@@ -89,6 +89,7 @@ import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
 registerTrim('selected-animation-surfaces', releaseSelectedMotionSurfaces);
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import { FONT_PREVIEW_INDEX, FONT_PREVIEW_CELL } from '../utils/fontPreviewIndex';
+import { preloadHanConvert, convertForFontSync, convertForFont } from '../utils/hanConvert';
 import {drawStableText, drawGlowText, hasEmoji, shadowOnly} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
 import { ExportActionLift } from './ExportActionLift';
@@ -3148,11 +3149,20 @@ export const TextEditorPanel: React.FC<{
   }, [symbol, layer.text]);
   const fontPickVersion = useRef(0);
   useEffect(() => () => { fontPickVersion.current++; }, [layer.id]);
+  // 簡繁轉換的字典：打開文字面板就先在背景載好，點字體時立刻轉
+  useEffect(() => { if (!symbol) void preloadHanConvert(); }, [symbol]);
   const pickFont = async (name: string) => {
     const version = ++fontPickVersion.current;
+    /* 選「（簡）」字體 → 文字整段轉簡體；選其他中文字體 → 轉繁體。點下去當下就換（不等字型下載） */
+    let text = layer.text || '';
+    if (!symbol && text) {
+      const conv = convertForFontSync(name, text) ?? await convertForFont(name, text);
+      if (version !== fontPickVersion.current) return;
+      if (conv !== text) { text = conv; onChange({ text: conv }); }
+    }
     await ensureFont(name);
     if (layer.italic) await ensureItalic(name);
-    await document.fonts.load(`${layer.italic ? 'italic ' : ''}${layer.bold ? 700 : 400} 40px "${name}"`, layer.text || ' ');
+    await document.fonts.load(`${layer.italic ? 'italic ' : ''}${layer.bold ? 700 : 400} 40px "${name}"`, text || ' ');
     if (version === fontPickVersion.current) onChange({ fontFamily: name });
   };
   /* 顏色改成「點進去有一頁」：這裡存的是那一頁要調哪個顏色。 */
