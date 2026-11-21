@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { BusyLayer } from './BusyLayer';
 import { prepareFiles, shareFiles, shareSheet } from '../utils/shareAll';
-import { Share } from 'lucide-react';
 import { isNative } from '../utils/native';
 import { saveToPhotos, noteExportForReview } from '../utils/nativePhotos';
 
@@ -136,7 +135,7 @@ export const SaveButton: React.FC<{
       className={className ?? `h-12 rounded-full bg-white text-black font-black tracking-widest uppercase text-sm shadow-lg shadow-white/10 transition-all ${ready ? 'active:scale-95' : 'opacity-40'}`}
     >
       {!ready ? (isNative() ? '儲存中…' : '準備中…') : phase === 'saving' ? '儲存中…'
-        : phase === 'saved' ? <span className="inline-flex items-center justify-center gap-2">已存到相簿 · 分享<Share size={16} strokeWidth={2.6} /></span> : text}
+        : phase === 'saved' ? '已存到相簿' : text}
     </button>
 
     </>
