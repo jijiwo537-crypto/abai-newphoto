@@ -3198,7 +3198,6 @@ export const TextEditorPanel: React.FC<{
     const t = window.setTimeout(() => { void preloadHanConvert(); }, 1500);
     return () => clearTimeout(t);
   }, [symbol]);
-  useEffect(() => { if (!symbol && tab === 'font') for (const c of FONT_CATEGORIES) void prepareSprite(c.id); }, [symbol, tab]);
   useEffect(() => {
     if (symbol || isFontDownloaded(DEFAULT_FONT)) return;
     // 預設字體只存到本機、不重新登記；等使用者停手一陣子才做（不跟新增文字、拖曳搶時間）
@@ -3339,6 +3338,8 @@ export const TextEditorPanel: React.FC<{
   );
   const tabs: [TextTab, string][] = [['font', '字體'], ['color', '顏色'], ['stroke', '描邊'], ['glow', '發光'], ['shadow', '陰影'], ['weight', '粗斜體'], ['layout', '排列']];
   const tab = symbol ? 'color' : sub === 'bg' || sub === 'card' ? 'font' : sub;
+  // 進到字體頁才準備四張預覽圖（解碼好才顯示）
+  useEffect(() => { if (!symbol && tab === 'font') for (const c of FONT_CATEGORIES) void prepareSprite(c.id); }, [symbol, tab]);
 
   return (
     <div
