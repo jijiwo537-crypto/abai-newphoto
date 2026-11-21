@@ -6761,6 +6761,9 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       // 排列（左右對齊、直排）、底線、多行：照段落畫（見 utils/textDeco 的 layoutText）
       const layout: TextLayout | null = !image.sym && needsTextLayout(image, image.text || '')
         ? layoutText(ctx, image, image.text || '', size, lineH, spacing) : null;
+      /* 畫發光的那三層時為 true：發光一律從「快取的文字點陣」投出來（見創意拼圖同一段的說明）。
+         有描邊時填色、描邊改成直接畫，但發光不能跟著改 —— Safari 對直接畫的字的陰影是低解析度的、縮放時還會抖。 */
+      let glowPass = false;
       const drawAnimatedUnits = (stroke = false) => {
         // 排過版（多行、對齊、直排、底線）的文字套逐字動畫：一個字一個字照段落位置動
         if (layout && motionFrame?.lab) {
@@ -6769,7 +6772,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           return;
         }
         if (layout) {
-          drawTextRuns(ctx, layout, stroke, (t, x, y) => !image.strokeWidth && !layout.vertical && ctx.textAlign === 'center' && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x - spacing / 2, y));
+          drawTextRuns(ctx, layout, stroke, (t, x, y) => (!image.strokeWidth || glowPass) && !layout.vertical && ctx.textAlign === 'center' && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x - spacing / 2, y));
           return;
         }
         if (motionFrame?.lab) {
@@ -6794,7 +6797,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           lines.forEach((line, i) => {
             const y = startY + i * lineH + dy;
             // 有描邊時填色也直接畫：描邊是直接畫的，兩者必須走同一套排字，描邊才不會歪
-            if (!image.strokeWidth && drawStableText(ctx, stroke ? 'stroke' : 'fill', line, dx, y)) return;
+            if ((!image.strokeWidth || glowPass) && drawStableText(ctx, stroke ? 'stroke' : 'fill', line, dx, y)) return;
             if (stroke) ctx.strokeText(line, dx, y); else ctx.fillText(line, dx, y);
           });
           return;
@@ -6870,11 +6873,14 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       ctx.fillStyle = image.color || '#FFFFFF';
       if (image.glow) {
         ctx.shadowColor = image.glowColor || '#FFFFFF';
-        for (const k of [1, 2, 3]) {
-          // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
-          ctx.shadowBlur = (Math.min(15, image.glow) / 20) * 14 * k * contentScale * backingScale;
-          fill();
-        }
+        glowPass = true;
+        try {
+          for (const k of [1, 2, 3]) {
+            // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
+            ctx.shadowBlur = (Math.min(15, image.glow) / 20) * 14 * k * contentScale * backingScale;
+            fill();
+          }
+        } finally { glowPass = false; }
         ctx.shadowBlur = 0;
         ctx.shadowColor = 'transparent';
       }

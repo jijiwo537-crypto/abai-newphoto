@@ -8641,6 +8641,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             tdx + sticker.x * stickerScale, tdy + sticker.y * stickerScale,
             sticker.w * stickerScale, sticker.h * stickerScale);
         };
+        /* 畫發光的那三層時為 true：發光一律從「快取的文字點陣」投出來。
+           有描邊時填色、描邊改成直接畫（兩者排字才一致），但發光不能跟著改成直接畫 ——
+           Safari 對「直接畫的字」的陰影是低解析度的（放大有像素感），而且每個縮放倍率都重新微調字形（縮放時抖）。
+           發光本來就是模糊的，跟描邊差零點幾個像素看不出來；描邊也不該影響發光。 */
+        let glowPass = false;
         const drawText = (stroke = false) => {
           // 排過版（多行、對齊、直排、底線）的文字套逐字動畫：一個字一個字照段落位置動
           if (textLayout && f?.lab) {
@@ -8650,7 +8655,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
           if (textLayout && !textUnitBreathe) {
             drawTextRuns(ctx, textLayout, stroke, (t, x, y) => !textLayout.vertical && ctx.textAlign === 'center'
-              && !o.strokeWidth && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x, y));
+              && (!o.strokeWidth || glowPass) && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x, y));
             return;
           }
           if (f?.lab) {
@@ -8718,7 +8723,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (!unitLayout) {
             // 快取的點陣套在連續矩陣下：不會因為每個縮放倍率重新微調字形而抖動
             // 有描邊時填色也直接畫：描邊是直接畫的，兩者必須走同一套排字，描邊才不會歪
-            if (!o.strokeWidth && drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx + spacingShift, tdy)) return;
+            if ((!o.strokeWidth || glowPass) && drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx + spacingShift, tdy)) return;
             if (stroke) ctx.strokeText(o.text || '', tdx + spacingShift, tdy);
             else ctx.fillText(o.text || '', tdx + spacingShift, tdy);
             return;
@@ -8841,10 +8846,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.globalAlpha = ctx.globalAlpha * Math.max(0, Math.min(1, tb));
           ctx.fillStyle = o.color || '#ffffff';
           ctx.shadowColor = o.glowColor || '#ffffff';
-          for (const k2 of [1, 2, 3]) {
-            ctx.shadowBlur = (Math.min(15, o.glow) / 20) * 14 * k2 * tk * (o.sym?1:textSceneScale);
-            drawText(false);
-          }
+          glowPass = true;
+          try {
+            for (const k2 of [1, 2, 3]) {
+              ctx.shadowBlur = (Math.min(15, o.glow) / 20) * 14 * k2 * tk * (o.sym?1:textSceneScale);
+              drawText(false);
+            }
+          } finally { glowPass = false; }
           ctx.restore();
         }
         if (o.strokeWidth) {
