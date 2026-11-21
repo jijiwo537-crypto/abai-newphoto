@@ -77,7 +77,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
 );
 
 import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack, primeCanvasFont, fontEpoch, ensureTextFonts } from '../utils/fonts';
-import { drawStableText, hasEmoji } from '../utils/stableText';
+import { drawStableText, drawGlowText, hasEmoji } from '../utils/stableText';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG, MEDIA_ACCEPT } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -8646,6 +8646,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            Safari 對「直接畫的字」的陰影是低解析度的（放大有像素感），而且每個縮放倍率都重新微調字形（縮放時抖）。
            發光本來就是模糊的，跟描邊差零點幾個像素看不出來；描邊也不該影響發光。 */
         let glowPass = false;
+        /* 發光模式：drawText 不畫字，改成每段字交給 drawGlowText 一次畫完三層（縮放時不抖，見 utils/stableText） */
+        let glowMode: { blurs: number[]; color: string } | null = null;
         const drawText = (stroke = false) => {
           // 排過版（多行、對齊、直排、底線）的文字套逐字動畫：一個字一個字照段落位置動
           if (textLayout && f?.lab) {
@@ -8654,8 +8656,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             return;
           }
           if (textLayout && !textUnitBreathe) {
-            drawTextRuns(ctx, textLayout, stroke, (t, x, y) => !textLayout.vertical && ctx.textAlign === 'center'
-              && (!o.strokeWidth || glowPass) && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x, y));
+            drawTextRuns(ctx, textLayout, stroke, (t, x, y) => {
+              if (glowMode) { drawGlowText(ctx, t, x, y, glowMode.blurs, glowMode.color, !textLayout.vertical && ctx.textAlign === 'center'); return true; }
+              return !textLayout.vertical && ctx.textAlign === 'center'
+                && (!o.strokeWidth || glowPass) && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x, y);
+            });
             return;
           }
           if (f?.lab) {
@@ -8723,6 +8728,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (!unitLayout) {
             // 快取的點陣套在連續矩陣下：不會因為每個縮放倍率重新微調字形而抖動
             // 有描邊時填色也直接畫：描邊是直接畫的，兩者必須走同一套排字，描邊才不會歪
+            if (glowMode) { drawGlowText(ctx, o.text || '', tdx + spacingShift, tdy, glowMode.blurs, glowMode.color, true); return; }
             if ((!o.strokeWidth || glowPass) && drawStableText(ctx, stroke ? 'stroke' : 'fill', o.text || '', tdx + spacingShift, tdy)) return;
             if (stroke) ctx.strokeText(o.text || '', tdx + spacingShift, tdy);
             else ctx.fillText(o.text || '', tdx + spacingShift, tdy);
@@ -8848,8 +8854,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.shadowColor = o.glowColor || '#ffffff';
           glowPass = true;
           try {
-            for (const k2 of [1, 2, 3]) {
-              ctx.shadowBlur = (Math.min(15, o.glow) / 20) * 14 * k2 * tk * (o.sym?1:textSceneScale);
+            const blurs = [1, 2, 3].map(k2 => (Math.min(15, o.glow!) / 20) * 14 * k2 * tk * (o.sym?1:textSceneScale));
+            // 一般文字（沒有逐字動畫）：三層一次畫好、縮放時重用；符號與逐字動畫照原本逐層畫
+            if (!o.sym && !f?.lab && !textUnitBreathe && (textLayout || !unitLayout)) {
+              glowMode = { blurs, color: o.glowColor || '#ffffff' };
+              try { drawText(false); } finally { glowMode = null; }
+            } else for (const b of blurs) {
+              ctx.shadowBlur = b;
               drawText(false);
             }
           } finally { glowPass = false; }

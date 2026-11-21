@@ -88,7 +88,7 @@ import {registerTrim} from '../utils/memoryPressure';
 import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
 registerTrim('selected-animation-surfaces', releaseSelectedMotionSurfaces);
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
-import {drawStableText, hasEmoji} from '../utils/stableText';
+import {drawStableText, drawGlowText, hasEmoji} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
 import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
@@ -6764,6 +6764,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       /* 畫發光的那三層時為 true：發光一律從「快取的文字點陣」投出來（見創意拼圖同一段的說明）。
          有描邊時填色、描邊改成直接畫，但發光不能跟著改 —— Safari 對直接畫的字的陰影是低解析度的、縮放時還會抖。 */
       let glowPass = false;
+      /* 發光模式：每段字交給 drawGlowText 一次畫完三層（縮放時不抖，見 utils/stableText） */
+      let glowMode: { blurs: number[]; color: string } | null = null;
       const drawAnimatedUnits = (stroke = false) => {
         // 排過版（多行、對齊、直排、底線）的文字套逐字動畫：一個字一個字照段落位置動
         if (layout && motionFrame?.lab) {
@@ -6772,7 +6774,10 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           return;
         }
         if (layout) {
-          drawTextRuns(ctx, layout, stroke, (t, x, y) => (!image.strokeWidth || glowPass) && !layout.vertical && ctx.textAlign === 'center' && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x - spacing / 2, y));
+          drawTextRuns(ctx, layout, stroke, (t, x, y) => {
+            if (glowMode) { drawGlowText(ctx, t, x - spacing / 2, y, glowMode.blurs, glowMode.color, !layout.vertical && ctx.textAlign === 'center'); return true; }
+            return (!image.strokeWidth || glowPass) && !layout.vertical && ctx.textAlign === 'center' && drawStableText(ctx, stroke ? 'stroke' : 'fill', t, x - spacing / 2, y);
+          });
           return;
         }
         if (motionFrame?.lab) {
@@ -6797,6 +6802,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           lines.forEach((line, i) => {
             const y = startY + i * lineH + dy;
             // 有描邊時填色也直接畫：描邊是直接畫的，兩者必須走同一套排字，描邊才不會歪
+            if (glowMode) { drawGlowText(ctx, line, dx, y, glowMode.blurs, glowMode.color, true); return; }
             if ((!image.strokeWidth || glowPass) && drawStableText(ctx, stroke ? 'stroke' : 'fill', line, dx, y)) return;
             if (stroke) ctx.strokeText(line, dx, y); else ctx.fillText(line, dx, y);
           });
@@ -6875,9 +6881,14 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         ctx.shadowColor = image.glowColor || '#FFFFFF';
         glowPass = true;
         try {
-          for (const k of [1, 2, 3]) {
-            // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
-            ctx.shadowBlur = (Math.min(15, image.glow) / 20) * 14 * k * contentScale * backingScale;
+          // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
+          const blurs = [1, 2, 3].map(k => (Math.min(15, image.glow!) / 20) * 14 * k * contentScale * backingScale);
+          // 一般文字（沒有逐字動畫）：三層一次畫好、縮放時重用；符號與逐字動畫照原本逐層畫
+          if (!image.sym && !motionFrame?.lab && !unitMotionFrame) {
+            glowMode = { blurs, color: image.glowColor || '#FFFFFF' };
+            try { fill(); } finally { glowMode = null; }
+          } else for (const b of blurs) {
+            ctx.shadowBlur = b;
             fill();
           }
         } finally { glowPass = false; }
