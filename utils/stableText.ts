@@ -179,7 +179,11 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
   else {
     const pad = Math.max(...local) * 1.7 + 2 / lv;
     const lw = hit.w + pad * 2, lh = hit.h + pad * 2;
-    const gv = Math.min(lv, GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY / (lw * lh)));
+    /* 解析度只看「字的大小」，不看發光大小：拉發光滑桿時解析度不變，光就不會一格一格跳。
+       光是模糊的，用不到字那麼細；取 2 的次方，縮放途中也不會換 */
+    let gv = Math.min(lv, 2048 / Math.max(hit.w, hit.h), Math.sqrt(6e5 / (hit.w * hit.h)));
+    gv = 2 ** Math.floor(Math.log2(gv));
+    gv = Math.min(gv, GLOW_MAX_SIDE / lw, GLOW_MAX_SIDE / lh, Math.sqrt(GLOW_MAX_ENTRY * 3 / (lw * lh)));
     const W = Math.ceil(lw * gv), H = Math.ceil(lh * gv);
     if (!(gv > 0) || W < 1 || H < 1) return false;
     const canvas = document.createElement('canvas');
@@ -196,32 +200,61 @@ function drawStableGlow(ctx: CanvasRenderingContext2D, text: string, x: number, 
     g.clearRect(0, 0, W, H);
     g.imageSmoothingEnabled = true;
     g.shadowColor = color;
-    for (const b of local) { g.shadowBlur = b * gv; g.drawImage(hit.canvas, pad * gv, pad * gv, hit.w * gv, hit.h * gv); }
-    // 挖掉字本身（字由呼叫端用清晰的點陣另外畫一次）
-    g.shadowColor = 'transparent'; g.shadowBlur = 0;
-    /* 挖的範圍往內縮一格（光暈圖解析度比字低，挖剛好的大小時，清晰的字外面會露出一圈細細的黑縫） */
-    const km = document.createElement('canvas'); km.width = W; km.height = H;
-    const kg = km.getContext('2d');
-    if (kg) {
-      const ox = pad * gv, oy = pad * gv, dw = hit.w * gv, dh = hit.h * gv, e = 1.25;
-      kg.imageSmoothingEnabled = true;
-      kg.drawImage(hit.canvas, ox, oy, dw, dh);
-      kg.globalCompositeOperation = 'destination-in';
-      for (const [ex, ey] of [[e, 0], [-e, 0], [0, e], [0, -e]]) kg.drawImage(hit.canvas, ox + ex, oy + ey, dw, dh);
-      g.globalCompositeOperation = 'destination-out';
-      g.drawImage(km, 0, 0);
-      g.globalCompositeOperation = 'source-over';
-      km.width = km.height = 1;
-    }
+    // 只畫影子：字本體畫到畫布外，影子用 offset 移回來（光暈圖裡完全沒有字的銳利邊）
+    const OFF = W + 64;
+    g.shadowOffsetX = OFF;
+    for (const b of local) { g.shadowBlur = b * gv; g.drawImage(hit.canvas, pad * gv - OFF, pad * gv, hit.w * gv, hit.h * gv); }
     gl = { canvas, x: hit.x - pad, y: hit.y - pad, w: W / gv, h: H / gv, px: W * H };
     glowCache.set(key, gl); glowPx += gl.px; evictGlow();
   }
+  /* 合成：在螢幕解析度的暫存畫布上放光，再用「清晰的字」把字的位置挖掉，最後才用目前透明度貼上去。
+     挖的邊跟呼叫端接著畫的字是同一張點陣、同一個位置，不會有縫也不會有白邊；
+     字調透明時，光不會從字後面透上來。 */
+  const cw = ctx.canvas.width, ch = ctx.canvas.height;
+  const xs = [x + gl.x, x + gl.x + gl.w], ys = [y + gl.y, y + gl.y + gl.h];
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const px of xs) for (const py of ys) {
+    const dx = m.a * px + m.c * py + m.e, dy = m.b * px + m.d * py + m.f;
+    x0 = Math.min(x0, dx); x1 = Math.max(x1, dx); y0 = Math.min(y0, dy); y1 = Math.max(y1, dy);
+  }
+  const bx = Math.max(0, Math.floor(x0)), by = Math.max(0, Math.floor(y0));
+  const bw = Math.min(cw, Math.ceil(x1)) - bx, bh = Math.min(ch, Math.ceil(y1)) - by;
+  if (bw <= 0 || bh <= 0) return true;
+  const sc = scratchFor(bw, bh);
   ctx.save();
   ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low';
-  ctx.drawImage(gl.canvas, x + gl.x, y + gl.y, gl.w, gl.h);
+  if (!sc) { ctx.drawImage(gl.canvas, x + gl.x, y + gl.y, gl.w, gl.h); ctx.restore(); return true; }
+  const s2 = sc.getContext('2d')!;
+  s2.setTransform(1, 0, 0, 1, 0, 0);
+  s2.globalCompositeOperation = 'source-over'; s2.globalAlpha = 1;
+  s2.clearRect(0, 0, bw, bh);
+  s2.setTransform(m.a, m.b, m.c, m.d, m.e - bx, m.f - by);
+  s2.imageSmoothingEnabled = true; s2.imageSmoothingQuality = 'low';
+  s2.drawImage(gl.canvas, x + gl.x, y + gl.y, gl.w, gl.h);
+  s2.globalCompositeOperation = 'destination-out';
+  s2.drawImage(hit.canvas, x + hit.x, y + hit.y, hit.w, hit.h);
+  s2.globalCompositeOperation = 'source-over';
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(sc, 0, 0, bw, bh, bx, by, bw, bh);
   ctx.restore();
   return true;
+}
+
+/* 合成用的暫存畫布（全部共用一張，只會變大；超過上限就不用它） */
+let scratch: HTMLCanvasElement | null = null;
+function scratchFor(w: number, h: number): HTMLCanvasElement | null {
+  if (w * h > 8e6) return null;
+  if (!scratch) scratch = document.createElement('canvas');
+  if (scratch.width < w || scratch.height < h) {
+    scratch.width = Math.max(scratch.width, Math.ceil(w)); scratch.height = Math.max(scratch.height, Math.ceil(h));
+    if (scratch.width < w || scratch.height < h) { scratch = null; return null; }
+    // iPhone 記憶體不夠時新畫布會「畫不出來」但不報錯：畫一點讀回來確認
+    const g = scratch.getContext('2d'); let ok = 0;
+    if (g) { g.fillStyle = '#000'; g.fillRect(0, 0, 1, 1); try { ok = g.getImageData(0, 0, 1, 1).data[3]; } catch { ok = 0; } }
+    if (ok < 200) { scratch.width = scratch.height = 1; scratch = null; return null; }
+  }
+  return scratch;
 }
 
 /** 只畫 draw() 的「影子」（發光），不畫本體：本體畫到畫布外面很遠的地方，影子用 shadowOffset 移回原位。
