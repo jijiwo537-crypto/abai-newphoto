@@ -247,7 +247,7 @@ const prepareClassicSymbolPlacement = (text: string, pageWidth: number): Prepare
    字形預熱；使用者點進頁面時，按鈕與新增物件便直接使用最終字身。 */
 let symbolFontDidSettle = typeof document === 'undefined';
 /** 文字發光的上限（滑桿 100）：原本上限 15 的 30% */
-export const TEXT_GLOW_MAX = 4.5;
+export const TEXT_GLOW_MAX = 4.05;
 export const symbolFontReady: Promise<void> = typeof document === 'undefined'
   ? Promise.resolve()
   : ensureFont(SYMBOL_FONT)
