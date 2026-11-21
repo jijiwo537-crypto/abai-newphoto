@@ -18253,7 +18253,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   backfaceVisibility: stableSeamless || nativeLayout ? undefined : 'hidden',
                                   willChange: stableSeamless || nativeLayout ? undefined : 'transform',
                                   // 拖、捏、轉的期間才升成合成層（見 markLayoutMotion），平常不升
-                                  ...(layoutMotion.current.has(layout.id) ? { willChange: 'transform' } : null),
+                                  ...(layoutMotion.current.has(layout.id) && !(window as any).__dbgNoPromote ? { willChange: 'transform' } : null),
                                   pointerEvents: activeTab === 'motion' ? 'none' : undefined,
                                   /* 兩指旋轉：直接轉整個外框，裡面的格子、照片、
                                      選取框、四個角、那排按鈕全部跟著轉，

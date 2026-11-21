@@ -113,6 +113,7 @@ const report = () => {
   const env = {
     ua: navigator.userAgent, dpr: devicePixelRatio, vw: innerWidth, vh: innerHeight,
     previewScale: (document.querySelector('[style*="--preview-scale"]') as HTMLElement | null)?.style.getPropertyValue('--preview-scale') || null,
+    toggles: { noPromote: !!(window as any).__dbgNoPromote, noGrow: !!(window as any).__dbgNoGrow },
     app: (document.querySelector('meta[name="abai-build"]') as HTMLMetaElement | null)?.content || location.search,
   };
   return JSON.stringify({ tool: 'layout-debug v1', env, frames: samples.length, framesWithOverflow: withOver.length, worst, samples: keep });
@@ -154,8 +155,16 @@ export function mountLayoutDebug(): () => void {
     const ok = await copy(report());
     if (statusEl) statusEl.textContent = ok ? '已複製，貼給 Claude' : '複製失敗';
   });
+  // 二分法用的開關：分別關掉兩個可疑的機制，看問題會不會消失（開關狀態也會寫進複製的資料）
+  const tog = (label: string, key: string) => { const b = btn(`${label}：關`, () => { const w = window as any; w[key] = !w[key]; b.textContent = `${label}：${w[key] ? '開' : '關'}`; b.style.background = w[key] ? 'rgba(10,132,255,.9)' : 'rgba(0,0,0,.75)'; }); return b; };
+  const ta = tog('A 不升圖層', '__dbgNoPromote'), tb = tog('B 不多畫邊', '__dbgNoGrow');
   const hide = btn('×', () => { panel?.remove(); panel = null; recording = false; cancelAnimationFrame(raf); });
-  panel.append(statusEl, rec, cp, hide);
+  // 平常只顯示一顆小按鈕，點開才展開（不擋住畫面上的操作）
+  const body = document.createElement('div');
+  body.style.cssText = 'display:none;flex-wrap:wrap;gap:6px;align-items:center;';
+  body.append(statusEl, rec, cp, ta, tb, hide);
+  const toggle = btn('偵錯', () => { const open = body.style.display === 'none'; body.style.display = open ? 'flex' : 'none'; toggle.textContent = open ? '收起' : '偵錯'; });
+  panel.append(toggle, body);
   document.body.appendChild(panel);
   return () => { recording = false; cancelAnimationFrame(raf); panel?.remove(); panel = null; };
 }

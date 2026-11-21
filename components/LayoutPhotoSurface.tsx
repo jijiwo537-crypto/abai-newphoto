@@ -196,7 +196,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       if(clipBox){
         const scrNow=bounds.width>0?Math.hypot(...(fwd?[fwd[0],fwd[1]]:[bounds.width/width,0])):1;
         const half=.5/Math.max(1e-6,dpr*scrNow),OPEN=1e5;
-        const side=(k:'l'|'t'|'r'|'b')=>(outer?.[k]||onPage?.[k])?-OPEN:-half;
+        const side=(k:'l'|'t'|'r'|'b')=>!(window as any).__dbgNoGrow&&(outer?.[k]||onPage?.[k])?-OPEN:-half;
         const want=`inset(${side('t')}px ${side('r')}px ${side('b')}px ${side('l')}px)`;
         if(clipBox.style.clipPath!==want)clipBox.style.clipPath=want;
       }
@@ -290,7 +290,7 @@ export function LayoutPhotoSurface({cells,rects,width,height,gap:gapProp,radius:
       }
       lastPaintAt.current=performance.now();
       const G=4,g1=1.5;
-      const grow=onPage?{l:outer?.l?G:onPage.l?g1:0,t:outer?.t?G:onPage.t?g1:0,r:outer?.r?G:onPage.r?g1:0,b:outer?.b?G:onPage.b?g1:0,open:outer}:undefined;
+      const grow=onPage&&!(window as any).__dbgNoGrow?{l:outer?.l?G:onPage.l?g1:0,t:outer?.t?G:onPage.t?g1:0,r:outer?.r?G:onPage.r?g1:0,b:outer?.b?G:onPage.b?g1:0,open:outer}:undefined;
       const surface=resolveSeamSurface(points,width,height,width,height,bounds,{left:area.left-mx,top:area.top-my,right:area.right+mx,bottom:area.bottom+my},density,grow);
       if(surface&&fwd){
         const [ia,ib,ic,id,ie,iff]=surface.rasterView;const sw=surface.width,sh=surface.height;
