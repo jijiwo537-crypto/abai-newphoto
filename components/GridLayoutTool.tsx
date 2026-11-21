@@ -89,6 +89,7 @@ import {releaseSelectedMotionSurfaces} from '../utils/selectedMotionWarp';
 registerTrim('selected-animation-surfaces', releaseSelectedMotionSurfaces);
 import {subscribeCellPhoto,updateCellPhoto,primeCellPhoto,setEditingCell} from '../utils/liveCellPhoto';
 import { FONT_PREVIEW_INDEX, FONT_PREVIEW_CELL } from '../utils/fontPreviewIndex';
+import { isFontDownloaded, isFontDownloading, onFontStoreChange } from '../utils/fontStore';
 import { preloadHanConvert, convertForFontSync, convertForFont } from '../utils/hanConvert';
 import {drawStableText, drawGlowText, hasEmoji, shadowOnly} from '../utils/stableText';
 import {warmPhotoEffectsWhenIdle,warmMasksAfterPanelOpens} from '../utils/fxWarmup';
@@ -96,7 +97,7 @@ import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
-import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont, ensureTextFonts } from '../utils/fonts';
+import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts, primeCanvasFont, ensureTextFonts, downloadFontFully } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
 import { sourceHasAlpha, lutMaxAmount, warmPhotoFxSurface } from '../utils/photoFx';
@@ -2780,6 +2781,21 @@ export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled
 const FONT_PREVIEW_ROW: Record<string, Map<string, number>> = Object.fromEntries(
   Object.entries(FONT_PREVIEW_INDEX).map(([cat, names]) => [cat, new Map(names.map((n, i) => [n, i]))]));
 let fontLabelMeasure: CanvasRenderingContext2D | null = null;
+/* 字體預覽圖：先在背景完整解碼好才顯示（不會看到一半、還沒載好的圖）。四張圖一起準備 */
+const spriteReady = new Set<string>();
+const spriteWait = new Map<string, Promise<void>>();
+const spriteKeep: HTMLImageElement[] = [];
+function prepareSprite(cat: string): Promise<void> {
+  let p = spriteWait.get(cat);
+  if (!p) {
+    const im = new Image(); spriteKeep.push(im);
+    im.src = `${import.meta.env.BASE_URL}font-previews/${cat}.png`;
+    p = (im.decode ? im.decode() : new Promise<void>((res, rej) => { im.onload = () => res(); im.onerror = rej; }))
+      .then(() => { spriteReady.add(cat); }, () => { spriteReady.add(cat); });
+    spriteWait.set(cat, p);
+  }
+  return p;
+}
 const FontCard: React.FC<{
   font: { name: string; label: string; category: FontCategory };
   active: boolean;
@@ -2799,6 +2815,14 @@ const FontCard: React.FC<{
     return () => { alive = false; };
   }, [font.name, row]);
   const { w: PW, h: PH } = FONT_PREVIEW_CELL;
+  const [spriteOk, setSpriteOk] = useState(() => spriteReady.has(font.category));
+  useEffect(() => { if (row === undefined || spriteOk) return; let alive = true; void prepareSprite(font.category).then(() => { if (alive) setSpriteOk(true); }); return () => { alive = false; }; }, [font.category, row, spriteOk]);
+  /* 下載狀態：還沒下載＝下載圖示（跟字體名同一排）；下載中＝按鈕變暗＋轉圈；下載過＝之後都從本機讀 */
+  const [, setStoreTick] = useState(0);
+  useEffect(() => onFontStoreChange(() => setStoreTick(t => t + 1)), []);
+  const builtin = font.name === DEFAULT_FONT;
+  const busy = loading || (!builtin && isFontDownloading(font.name));
+  const needDl = !builtin && !busy && !isFontDownloaded(font.name);
   /* 字體名稱只排一行：照按鈕實際的寬度量字寬，太長就把字級縮小（最小 6px），不換行 */
   const [labelPx, setLabelPx] = useState(9);
   useLayoutEffect(() => {
@@ -2819,16 +2843,21 @@ const FontCard: React.FC<{
       className={`relative isolate flex flex-col items-center justify-center gap-1 h-[62px] px-1.5 rounded-xl border transition-all ${
         active ? 'bg-white/10 border-white' : 'bg-white/[0.03] border-white/10 hover:border-white/25'
       }`}
-      aria-busy={loading || undefined}
+      aria-busy={busy || undefined}
     >
-      {loading && (
+      {needDl && (
+        <svg aria-label="下載" viewBox="0 0 24 24" className="absolute right-1 bottom-[8px] w-[10px] h-[10px] text-white/55 pointer-events-none" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 4v11M7 10.5l5 5 5-5M5 20h14" />
+        </svg>
+      )}
+      {busy && (
         <span aria-hidden className="absolute inset-0 rounded-xl bg-black/45 flex items-center justify-center pointer-events-none">
           <span className="block w-5 h-5 rounded-full border-2 border-white/25 border-t-white animate-spin" />
         </span>
       )}
       {row !== undefined ? (
-        <span aria-hidden className="block shrink-0" style={{
-          width: PW, height: PH, marginTop: 4,
+        <span aria-hidden className="block shrink-0 transition-opacity duration-150" style={{
+          width: PW, height: PH, marginTop: 4, opacity: spriteOk ? 1 : 0,
           backgroundImage: `url(${import.meta.env.BASE_URL}font-previews/${font.category}.png)`,
           backgroundSize: `${PW}px auto`, backgroundPosition: `0 ${-row * PH}px`, backgroundRepeat: 'no-repeat',
         }} />
@@ -3163,7 +3192,13 @@ export const TextEditorPanel: React.FC<{
   const fontPickVersion = useRef(0);
   useEffect(() => () => { fontPickVersion.current++; }, [layer.id]);
   // 簡繁轉換的字典：打開文字面板就先在背景載好，點字體時立刻轉
-  useEffect(() => { if (!symbol) void preloadHanConvert(); }, [symbol]);
+  useEffect(() => { if (!symbol) { void preloadHanConvert(); for (const c of FONT_CATEGORIES) void prepareSprite(c.id); } }, [symbol]);
+  useEffect(() => {
+    if (symbol || isFontDownloaded(DEFAULT_FONT)) return;
+    // 預設字體只存到本機、不重新登記；等使用者停手一陣子才做（不跟新增文字、拖曳搶時間）
+    const t = window.setTimeout(() => { void downloadFontFully(DEFAULT_FONT, { quiet: true }); }, 8000);
+    return () => clearTimeout(t);
+  }, [symbol]);
   /* 正在準備的字體（按鈕變暗＋轉圈）：簡繁轉換、字型下載都好了才一次換上 */
   const [loadingFont, setLoadingFont] = useState<string | null>(null);
   const pickFont = async (name: string) => {
@@ -3177,6 +3212,9 @@ export const TextEditorPanel: React.FC<{
         text = convertForFontSync(name, text) ?? await convertForFont(name, text);
         if (version !== fontPickVersion.current) return;
       }
+      // 還沒下載過：整個字體下載到本機（之後打開 App 都不用再等）
+      if (name !== DEFAULT_FONT && !isFontDownloaded(name)) await downloadFontFully(name);
+      if (version !== fontPickVersion.current) return;
       await ensureFont(name);
       if (layer.italic) await ensureItalic(name);
       await document.fonts.load(`${layer.italic ? 'italic ' : ''}${layer.bold ? 700 : 400} 40px "${name}"`, text || ' ');
@@ -3338,7 +3376,13 @@ export const TextEditorPanel: React.FC<{
               {FONT_CATEGORIES.map(c => (
                 <button
                   key={c.id}
-                  onClick={() => setCat(c.id)}
+                  onClick={e => {
+                    setCat(c.id);
+                    // 換語言：回到這個語言列表的最上面（不是停在原本捲到的相對位置）
+                    let el: HTMLElement | null = e.currentTarget.parentElement;
+                    while (el && !(el.scrollHeight > el.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(el).overflowY))) el = el.parentElement;
+                    if (el) el.scrollTop = 0;
+                  }}
                   className={`flex-1 h-7 rounded-full text-[11px] font-bold tracking-widest transition-all ${
                     cat === c.id ? 'bg-white text-black' : 'text-white/60'
                   }`}
