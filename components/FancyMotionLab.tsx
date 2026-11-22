@@ -9,13 +9,20 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FANCY_KINDS, fancyGeometry, fancyRatio, fancyStarD, type FancyStar, type FancyLine } from '../utils/fancyShapes';
 import { objectMotionFrame } from '../utils/objectMotion';
 
-const STORE = 'abai-order-tool-fancy-motion-v1';
-type Saved = { add: string[]; del: string[]; names: Record<string, string> };
+/* 每一種花式排列各自一份：加入／刪除／預設 都分開選。名字是共用的（同一個動畫在每一種都叫同一個名字） */
+const STORE = 'abai-order-tool-fancy-motion-v2';
+type Pick = { add: string[]; del: string[]; defIn?: string; defIdle?: string };
+type Saved = { kinds: Record<string, Pick>; names: Record<string, string> };
+const EMPTY: Pick = { add: [], del: [] };
 const load = (): Saved => {
-  try { const v = JSON.parse(localStorage.getItem(STORE) || 'null'); if (v && Array.isArray(v.add) && Array.isArray(v.del)) return { add: v.add, del: v.del, names: v.names || {} }; } catch { /* */ }
-  return { add: [], del: [], names: {} };
+  try { const v = JSON.parse(localStorage.getItem(STORE) || 'null'); if (v && v.kinds) return { kinds: v.kinds, names: v.names || {} }; } catch { /* */ }
+  return { kinds: {}, names: {} };
 };
 const save = (s: Saved) => { try { localStorage.setItem(STORE, JSON.stringify(s)); } catch { /* */ } };
+try { localStorage.removeItem('abai-order-tool-fancy-motion-v1'); } catch { /* */ }
+const pickOf = (s: Saved, k: string): Pick => ({ ...EMPTY, ...(s.kinds[k] || {}) });
+/** 這個動畫在這一種花式排列裡有沒有（新設計的要勾加入、原有的沒勾刪除） */
+const included = (pk: Pick, a: Anim) => a.fresh ? pk.add.includes(a.id) : !pk.del.includes(a.id);
 
 const KIND_NAMES: Record<string, string> = {
   'fancy-halo': '光環', 'fancy-concentric': '同心圓', 'fancy-spiral': '螺旋', 'fancy-ring': '環形', 'fancy-swirl3': '三臂漩渦',
@@ -104,14 +111,22 @@ export const FANCY_MOTION_ALL: Anim[] = [...OLDS.filter(a => a.kind === 'entry')
 export const fancyMotionReport = (): string[] => {
   const s = load(), out: string[] = [];
   const nm = (a: Anim) => s.names[a.id] && s.names[a.id] !== a.name ? `${s.names[a.id]}（原名 ${a.name}，${a.id}）` : `${a.name}（${a.id}）`;
-  const addE = ENTRIES.filter(a => s.add.includes(a.id)), addI = IDLES.filter(a => s.add.includes(a.id));
-  const delE = OLDS.filter(a => a.kind === 'entry' && s.del.includes(a.id)), delI = OLDS.filter(a => a.kind === 'idle' && s.del.includes(a.id));
-  if (addE.length) out.push('花式排列：要加入的進場動畫', addE.map(nm).join(', '));
-  if (addI.length) out.push('花式排列：要加入的常駐動畫', addI.map(nm).join(', '));
-  if (delE.length) out.push('花式排列：要刪除的原有進場動畫', delE.map(nm).join(', '));
-  if (delI.length) out.push('花式排列：要刪除的原有常駐動畫', delI.map(nm).join(', '));
-  const renamed = OLDS.filter(a => !s.del.includes(a.id) && s.names[a.id] && s.names[a.id] !== a.name);
-  if (renamed.length) out.push('花式排列：原有動畫改名', renamed.map(a => `${a.name}（${a.id}）→ ${s.names[a.id]}`).join(', '));
+  const byId = new Map(FANCY_MOTION_ALL.map(a => [a.id, a]));
+  const defName = (id?: string) => !id ? '' : id === 'none' ? '無' : byId.get(id) ? nm(byId.get(id)!) : id;
+  for (const k of KIND_ORDER) {
+    const pk = pickOf(s, k), parts: string[] = [];
+    const addE = ENTRIES.filter(a => pk.add.includes(a.id)), addI = IDLES.filter(a => pk.add.includes(a.id));
+    const delE = OLDS.filter(a => a.kind === 'entry' && pk.del.includes(a.id)), delI = OLDS.filter(a => a.kind === 'idle' && pk.del.includes(a.id));
+    if (addE.length) parts.push('加入進場：' + addE.map(nm).join(', '));
+    if (addI.length) parts.push('加入常駐：' + addI.map(nm).join(', '));
+    if (delE.length) parts.push('刪除原有進場：' + delE.map(nm).join(', '));
+    if (delI.length) parts.push('刪除原有常駐：' + delI.map(nm).join(', '));
+    if (pk.defIn) parts.push('預設進場：' + defName(pk.defIn));
+    if (pk.defIdle) parts.push('預設常駐：' + defName(pk.defIdle));
+    if (parts.length) out.push(`花式排列・${KIND_NAMES[k]}（${k}）的動畫`, ...parts);
+  }
+  const renamed = FANCY_MOTION_ALL.filter(a => s.names[a.id] && s.names[a.id] !== a.name);
+  if (renamed.length) out.push('花式排列動畫改名', renamed.map(a => `${a.name}（${a.id}）→ ${s.names[a.id]}`).join(', '));
   return out;
 };
 export const fancyMotionChanged = () => fancyMotionReport().length > 0;
@@ -179,11 +194,16 @@ const Card: React.FC<{ a: Anim; kind: string; sv: Saved; setSv: (s: Saved) => vo
     const loop = () => { g.setTransform(dpr, 0, 0, dpr, 0, 0); paint(g, S, S, box.geo, box.c, a, clock.current, (S - box.w) / 2, (S - box.h) / 2); raf = requestAnimationFrame(loop); };
     raf = requestAnimationFrame(loop); return () => cancelAnimationFrame(raf);
   }, [box, a, dpr, clock]);
-  const checked = a.fresh ? sv.add.includes(a.id) : sv.del.includes(a.id);
+  const pk = pickOf(sv, kind), dk = a.kind === 'entry' ? 'defIn' : 'defIdle';
+  const checked = a.fresh ? pk.add.includes(a.id) : pk.del.includes(a.id);
+  const setPk = (q: Pick) => setSv({ ...sv, kinds: { ...sv.kinds, [kind]: q } });
   const toggle = () => {
-    const key = a.fresh ? 'add' : 'del', list = sv[key];
-    setSv({ ...sv, [key]: checked ? list.filter(x => x !== a.id) : [...list, a.id] });
+    const key = a.fresh ? 'add' : 'del', list = pk[key];
+    const next: Pick = { ...pk, [key]: checked ? list.filter(x => x !== a.id) : [...list, a.id] };
+    if (!included(next, a) && next[dk] === a.id) delete next[dk];   // 拿掉的動畫不能當預設
+    setPk(next);
   };
+  const isDef = pk[dk] === a.id, canDef = included(pk, a);
   const name = sv.names[a.id] ?? a.name;
   return (
     <div className={`rounded-[10px] border p-2 ${checked ? (a.fresh ? 'border-[#9fd3a8] bg-[#9fd3a8]/10' : 'border-[#e57a7a] bg-[#e57a7a]/10') : 'border-white/10 bg-white/[0.03]'}`}>
@@ -194,6 +214,10 @@ const Card: React.FC<{ a: Anim; kind: string; sv: Saved; setSv: (s: Saved) => vo
       <label className="mt-1 flex items-center gap-2 text-[12px] font-bold">
         <input type="checkbox" checked={checked} onChange={toggle} className="w-4 h-4" />
         <span className={a.fresh ? 'text-[#9fd3a8]' : 'text-[#e57a7a]'}>{a.fresh ? '加入' : '刪除'}</span>
+      </label>
+      <label className={`mt-1 flex items-center gap-2 text-[12px] font-bold ${canDef ? '' : 'opacity-30'}`}>
+        <input type="radio" disabled={!canDef} checked={isDef} onChange={() => setPk({ ...pk, [dk]: a.id })} className="w-4 h-4" />
+        <span className="text-[#f2c86b]">設為預設</span>
       </label>
     </div>
   );
@@ -206,6 +230,18 @@ export function FancyMotionLab({ onChange }: { onChange?: () => void }) {
   useEffect(() => { const f = () => setSv0(load()); window.addEventListener('abai-fancy-motion-reset', f); return () => window.removeEventListener('abai-fancy-motion-reset', f); }, []);
   const clock = useRef(0);
   useEffect(() => { let raf = 0; const t0 = performance.now(); const f = () => { clock.current = (performance.now() - t0) / 1000; raf = requestAnimationFrame(f); }; raf = requestAnimationFrame(f); return () => cancelAnimationFrame(raf); }, []);
+  const pk = pickOf(sv, kind);
+  const setPk = (q: Pick) => setSv({ ...sv, kinds: { ...sv.kinds, [kind]: q } });
+  const defRow = (dk: 'defIn' | 'defIdle', label: string) => {
+    const id = pk[dk], a = FANCY_MOTION_ALL.find(x => x.id === id);
+    return <div className="flex items-center justify-between text-[12px] mt-1">
+      <span className="text-white/60">{label}：<b className="text-[#f2c86b]">{!id ? '（沒選，照 App 現在的）' : id === 'none' ? (dk === 'defIn' ? '無' : '靜止') : (sv.names[id] ?? a?.name ?? id)}</b></span>
+      <span className="flex gap-1.5">
+        <button onClick={() => setPk({ ...pk, [dk]: 'none' })} className="px-2 h-7 rounded bg-white/10 text-[11px]">設成{dk === 'defIn' ? '無' : '靜止'}</button>
+        {id && <button onClick={() => { const q = { ...pk }; delete q[dk]; setPk(q); }} className="px-2 h-7 rounded bg-white/10 text-[11px]">清除</button>}
+      </span>
+    </div>;
+  };
   const sec = (title: string, list: Anim[]) => (
     <section className="mt-5">
       <div className="text-[11px] font-bold text-white/50 tracking-widest mb-2">{title}</div>
@@ -215,12 +251,17 @@ export function FancyMotionLab({ onChange }: { onChange?: () => void }) {
   return (
     <div>
       <div className="text-[12px] text-white/60 leading-relaxed">
-        綠色「加入」＝新設計、想放進 App；紅色「刪除」＝App 原本就有、花式排列不要。名字點一下就能改。上面選一種花式排列看效果。
+        先在上面選一種花式排列，下面的勾選只算這一種（每一種各自分開）。綠色「加入」＝新設計、想放進 App；紅色「刪除」＝App 原本就有、這一種不要；黃色「設為預設」＝新增這一種時預設套用。名字點一下就能改（所有種類共用同一個名字）。
       </div>
       <div className="mt-3 flex flex-wrap gap-1.5">
         {KIND_ORDER.map(k => (
-          <button key={k} onClick={() => setKind(k)} className={`px-2.5 h-8 rounded-full text-[12px] font-bold ${k === kind ? 'bg-white text-black' : 'bg-white/10 text-white/70'}`}>{KIND_NAMES[k] || k}</button>
+          <button key={k} onClick={() => setKind(k)} className={`px-2.5 h-8 rounded-full text-[12px] font-bold ${k === kind ? 'bg-white text-black' : 'bg-white/10 text-white/70'}`}>{KIND_NAMES[k] || k}{(() => { const q = pickOf(sv, k); return q.add.length || q.del.length || q.defIn || q.defIdle ? ' •' : ''; })()}</button>
         ))}
+      </div>
+      <div className="mt-4 rounded-[10px] border border-white/10 bg-white/[0.03] p-3">
+        <div className="text-[12px] font-bold">{KIND_NAMES[kind]} 的設定（每一種各自分開）</div>
+        {defRow('defIn', '預設進場')}
+        {defRow('defIdle', '預設常駐')}
       </div>
       {sec('進場・新設計（一顆一顆分開動）', ENTRIES)}
       {sec('進場・App 原本就有', OLDS.filter(a => a.kind === 'entry'))}
