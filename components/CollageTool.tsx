@@ -5739,9 +5739,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const alphaObj = pinchedObject?.type === 'image' && !isVideoEl(pinchedObject.img)
         && pinchedObject.img instanceof HTMLImageElement && sourceHasAlpha(pinchedObject.img);
       const alphaMinK = layoutNow ? Math.sqrt(Math.max(1, layoutNow.cw * layoutNow.ch) / 100 / Math.max(1, pin.w0 * pin.h0)) : 0.15;
-      /* 文字：最小只到框高＝畫布短邊的 6%（不能捏很多次一直縮下去）；已經比這個小的不強迫放大，只是不能再縮 */
-      const textMinK = pinchedObject?.type === 'text' && layoutNow
-        ? Math.min(1, Math.min(layoutNow.cw, layoutNow.ch) * 0.06 / Math.max(1e-6, pin.h0))
+      /* 文字：最小字級＝畫布短邊的 4.3%（框高約 6%）。用「字級」算、不用框高：框上下有固定的最小留白，
+         字很小時放開後框會重新量得比較高，用框高算的話下一次又能再縮一段（變成兩段式）。
+         已經比這個小的不強迫放大，只是不能再縮 */
+      const textMinK = pinchedObject?.type === 'text' && layoutNow && pin.size0
+        ? Math.min(1, Math.min(layoutNow.cw, layoutNow.ch) * 0.043 / Math.max(1e-6, pin.size0))
         : 0.15;
       const pinchMin = pinchedObject?.type === 'image' ? (alphaObj ? alphaMinK : absoluteImageMinK) : textMinK;
       /* 文字：最大只到比畫布大一點（框的寬、高最多是畫布的 1.2 倍），不能無止境放大；
