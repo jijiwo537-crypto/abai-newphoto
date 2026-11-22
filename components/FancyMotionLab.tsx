@@ -11,7 +11,7 @@ import { objectMotionFrame } from '../utils/objectMotion';
 
 /* 每一種花式排列各自一份：加入／刪除／預設 都分開選。名字是共用的（同一個動畫在每一種都叫同一個名字） */
 const STORE = 'abai-order-tool-fancy-motion-v2';
-type Pick = { add: string[]; del: string[]; defIn?: string; defIdle?: string };
+type Pick = { add: string[]; del: string[]; defIn?: string; defIdle?: string; orderIn?: string[]; orderIdle?: string[] };
 type Saved = { kinds: Record<string, Pick>; names: Record<string, string> };
 const EMPTY: Pick = { add: [], del: [] };
 const load = (): Saved => {
@@ -23,6 +23,13 @@ try { localStorage.removeItem('abai-order-tool-fancy-motion-v1'); } catch { /* *
 const pickOf = (s: Saved, k: string): Pick => ({ ...EMPTY, ...(s.kinds[k] || {}) });
 /** 這個動畫在這一種花式排列裡有沒有（新設計的要勾加入、原有的沒勾刪除） */
 const included = (pk: Pick, a: Anim) => a.fresh ? pk.add.includes(a.id) : !pk.del.includes(a.id);
+/** 這一種花式排列面板上的按鈕順序（只算有的那些）：排過的照排的，沒排過的照「原有在前、新設計在後」接在後面 */
+const buttonOrder = (pk: Pick, phase: 'entry' | 'idle'): Anim[] => {
+  const all = [...OLDS, ...ENTRIES, ...IDLES].filter(a => a.kind === phase && included(pk, a));
+  const saved = (phase === 'entry' ? pk.orderIn : pk.orderIdle) || [];
+  const rank = (a: Anim) => { const i = saved.indexOf(a.id); return i < 0 ? 1e3 + all.indexOf(a) : i; };
+  return all.sort((x, y) => rank(x) - rank(y));
+};
 
 const KIND_NAMES: Record<string, string> = {
   'fancy-halo': '光環', 'fancy-concentric': '同心圓', 'fancy-spiral': '螺旋', 'fancy-ring': '環形', 'fancy-swirl3': '三臂漩渦',
@@ -54,39 +61,39 @@ const ENTRY_DUR = 1.8, HOLD = 1.3, GAP = 0.35;
 
 /* ───────── 新設計：進場 ───────── */
 const ENTRIES: Anim[] = [
-  { id: 'fx-in-seq', name: '依序點亮', kind: 'entry', fresh: true, desc: '照排列的順序一顆接一顆彈出來，每顆帶一點回彈',
+  { id: 'fx-in-seq', name: '點亮', kind: 'entry', fresh: true, desc: '照排列的順序一顆接一顆彈出來，每顆帶一點回彈',
     unit: (i, c, p) => { const q = local(p, c.rank[i] / Math.max(1, c.stars.length) * 0.72, 0.28); return { ...ID, s: backOut(q), a: clamp(q * 3) }; } },
-  { id: 'fx-in-burst', name: '中心綻放', kind: 'entry', fresh: true, desc: '全部從中心飛出去，離中心越遠的越晚到、邊飛邊轉',
+  { id: 'fx-in-burst', name: '綻放', kind: 'entry', fresh: true, desc: '全部從中心飛出去，離中心越遠的越晚到、邊飛邊轉',
     unit: (i, c, p) => {
       const st = c.stars[i], d = Math.hypot(st.x - c.cx, st.y - c.cy) / c.maxD, q = cubic(local(p, d * 0.35, 0.65));
       return { dx: (c.cx - st.x) * (1 - q), dy: (c.cy - st.y) * (1 - q), s: 0.3 + 0.7 * q, rot: (1 - q) * 2.4, a: clamp(q * 2.5) };
     } },
-  { id: 'fx-in-gather', name: '星塵聚合', kind: 'entry', fresh: true, desc: '從四面八方散落的位置慢慢收攏、歸位',
+  { id: 'fx-in-gather', name: '聚合', kind: 'entry', fresh: true, desc: '從四面八方散落的位置慢慢收攏、歸位',
     unit: (i, c, p) => {
       const ang = hash(i) * Math.PI * 2, dist = (0.45 + hash(i + 9) * 0.5) * Math.max(c.w, c.h), q = smooth(local(p, hash(i + 3) * 0.25, 0.75));
       return { dx: Math.cos(ang) * dist * (1 - q), dy: Math.sin(ang) * dist * (1 - q), s: 1, rot: (1 - q) * (hash(i + 5) - 0.5) * 6, a: clamp(q * 1.6) };
     } },
-  { id: 'fx-in-sweep', name: '掃光顯現', kind: 'entry', fresh: true, desc: '一道光從左上掃到右下，掃到的星星先亮一下再縮回原本大小',
+  { id: 'fx-in-sweep', name: '掃光', kind: 'entry', fresh: true, desc: '一道光從左上掃到右下，掃到的星星先亮一下再縮回原本大小',
     unit: (i, c, p) => {
       const st = c.stars[i], k = (st.x / c.w + st.y / c.h) / 2, q = local(p, k * 0.75, 0.25);
       const s = q <= 0 ? 0 : q < 0.55 ? 1.45 * cubic(q / 0.55) : 1.45 - 0.45 * smooth((q - 0.55) / 0.45);
       return { ...ID, s, a: clamp(q * 4) };
     } },
-  { id: 'fx-in-rain', name: '星雨落下', kind: 'entry', fresh: true, desc: '每顆從上方落下、著地彈一下，左到右錯開',
+  { id: 'fx-in-rain', name: '星雨', kind: 'entry', fresh: true, desc: '每顆從上方落下、著地彈一下，左到右錯開',
     unit: (i, c, p) => {
       const st = c.stars[i], q = local(p, (st.x / c.w) * 0.45 + hash(i) * 0.15, 0.4);
       const fall = q < 0.7 ? 1 - Math.pow(q / 0.7, 2) : 0, b = q >= 0.7 ? Math.sin((q - 0.7) / 0.3 * Math.PI) * 0.08 : 0;
       return { dx: 0, dy: -(fall * (st.y + c.h * 0.4)) - b * c.h, s: 1, rot: 0, a: clamp(q * 5) };
     } },
-  { id: 'fx-in-twirl', name: '旋轉綻開', kind: 'entry', fresh: true, desc: '每顆在自己的位置從小轉一圈開出來，隨機錯開',
+  { id: 'fx-in-twirl', name: '旋開', kind: 'entry', fresh: true, desc: '每顆在自己的位置從小轉一圈開出來，隨機錯開',
     unit: (i, c, p) => { const q = local(p, hash(i) * 0.55, 0.45), e = backOut(q); return { ...ID, s: e, rot: (1 - cubic(q)) * Math.PI * 2, a: clamp(q * 3) }; } },
-  { id: 'fx-in-vortex', name: '漩渦歸位', kind: 'entry', fresh: true, desc: '每顆從中心沿著螺旋轉出去、一圈半後剛好落到自己的位置',
+  { id: 'fx-in-vortex', name: '漩渦', kind: 'entry', fresh: true, desc: '每顆從中心沿著螺旋轉出去、一圈半後剛好落到自己的位置',
     unit: (i, c, p) => {
       const st = c.stars[i], q = cubic(local(p, c.rank[i] / Math.max(1, c.stars.length) * 0.45, 0.55));
       const R0 = Math.hypot(st.x - c.cx, st.y - c.cy), A0 = Math.atan2(st.y - c.cy, st.x - c.cx), ang = A0 - (1 - q) * Math.PI * 3, rr = R0 * q;
       return { dx: c.cx + Math.cos(ang) * rr - st.x, dy: c.cy + Math.sin(ang) * rr - st.y, s: 0.4 + 0.6 * q, rot: (1 - q) * 3, a: clamp(q * 2.5) };
     } },
-  { id: 'fx-in-flip', name: '逐顆翻面', kind: 'entry', fresh: true, desc: '像翻牌一樣，一顆接一顆從側面翻正，由左上翻到右下',
+  { id: 'fx-in-flip', name: '翻牌', kind: 'entry', fresh: true, desc: '像翻牌一樣，一顆接一顆從側面翻正，由左上翻到右下',
     unit: (i, c, p) => {
       const st = c.stars[i], k = (st.x / c.w + st.y / c.h) / 2, q = local(p, k * 0.6, 0.4);
       return { ...ID, sx: q <= 0 ? 0 : Math.max(0.04, Math.abs(Math.cos((1 - smooth(q)) * Math.PI))), s: 0.85 + 0.15 * smooth(q), a: q <= 0 ? 0 : q < 0.5 ? 0.55 : 1 };
@@ -94,23 +101,23 @@ const ENTRIES: Anim[] = [
 ];
 /* ───────── 新設計：常駐 ───────── */
 const IDLES: Anim[] = [
-  { id: 'fx-idle-twinkle', name: '星光閃爍', kind: 'idle', fresh: true, desc: '每顆各自隨機地忽明忽暗、微微縮放，像真的星星',
+  { id: 'fx-idle-twinkle', name: '閃爍', kind: 'idle', fresh: true, desc: '每顆各自隨機地忽明忽暗、微微縮放，像真的星星',
     unit: (i, _c, _p, t) => { const w = Math.pow((Math.sin(t * (1.6 + hash(i) * 1.8) + hash(i + 7) * 6.28) + 1) / 2, 3); return { ...ID, s: 1 - w * 0.28, a: 1 - w * 0.65 }; } },
   { id: 'fx-idle-ripple', name: '漣漪', kind: 'idle', fresh: true, desc: '一圈一圈從中心往外擴散，經過的星星放大一下',
     unit: (i, c, _p, t) => { const st = c.stars[i], d = Math.hypot(st.x - c.cx, st.y - c.cy) / c.maxD; const w = Math.pow(Math.max(0, Math.cos((d * 1.6 - t * 0.9) * Math.PI * 2)), 6); return { ...ID, s: 1 + w * 0.32 }; } },
   { id: 'fx-idle-shimmer', name: '流光', kind: 'idle', fresh: true, desc: '一道斜斜的光帶反覆掃過，掃到的星星變大變亮',
     unit: (i, c, _p, t) => { const st = c.stars[i], k = (st.x / c.w + st.y / c.h) / 2, ph = ((t * 0.42) % 1.6) - 0.3; const w = Math.exp(-Math.pow((k - ph) / 0.09, 2)); return { ...ID, s: 1 + w * 0.35, rot: w * 0.5, a: 0.72 + w * 0.28 }; } },
-  { id: 'fx-idle-spin', name: '各自自轉', kind: 'idle', fresh: true, desc: '每顆在原地自轉，大小不同轉速不同、方向也不一樣',
+  { id: 'fx-idle-spin', name: '自轉', kind: 'idle', fresh: true, desc: '每顆在原地自轉，大小不同轉速不同、方向也不一樣',
     unit: (i, _c, _p, t) => ({ ...ID, rot: t * (0.6 + hash(i) * 1.1) * (hash(i + 2) > 0.5 ? 1 : -1) }) },
-  { id: 'fx-idle-drift', name: '星群漂浮', kind: 'idle', fresh: true, desc: '每顆各自輕輕繞小圈，大的動得多、小的動得少，有前後層次',
+  { id: 'fx-idle-drift', name: '浮游', kind: 'idle', fresh: true, desc: '每顆各自輕輕繞小圈，大的動得多、小的動得少，有前後層次',
     unit: (i, c, _p, t) => { const st = c.stars[i], amp = st.r * 0.55, w = t * (0.8 + hash(i) * 0.5) + hash(i + 4) * 6.28; return { ...ID, dx: Math.cos(w) * amp, dy: Math.sin(w * 1.3) * amp }; } },
-  { id: 'fx-idle-chase', name: '跑馬燈', kind: 'idle', fresh: true, desc: '一個亮點照排列順序一直往前跑，像跑馬燈',
+  { id: 'fx-idle-chase', name: '跑燈', kind: 'idle', fresh: true, desc: '一個亮點照排列順序一直往前跑，像跑馬燈',
     unit: (i, c, _p, t) => { const n = c.stars.length, pos = (t * Math.max(4, n * 0.35)) % n; let d = Math.abs(c.rank[i] - pos); d = Math.min(d, n - d); const w = Math.exp(-d * d / 3); return { ...ID, s: 1 + w * 0.3, a: 0.45 + w * 0.55 }; } },
-  { id: 'fx-idle-sway', name: '輕輕擺盪', kind: 'idle', fresh: true, desc: '每顆像掛著一樣左右擺，彼此錯開（吊飾最適合）',
+  { id: 'fx-idle-sway', name: '擺盪', kind: 'idle', fresh: true, desc: '每顆像掛著一樣左右擺，彼此錯開（吊飾最適合）',
     unit: (i, c, _p, t) => { const st = c.stars[i], len = Math.max(st.y, c.h * 0.25), ang = Math.sin(t * 1.6 + hash(i) * 6.28) * 0.12; return { ...ID, dx: Math.sin(ang) * len, dy: (Math.cos(ang) - 1) * len, rot: ang }; } },
-  { id: 'fx-idle-wave', name: '大小波浪', kind: 'idle', fresh: true, desc: '星星的大小像波浪一樣從左往右一波一波推過去，位置不動',
+  { id: 'fx-idle-wave', name: '起伏', kind: 'idle', fresh: true, desc: '星星的大小像波浪一樣從左往右一波一波推過去，位置不動',
     unit: (i, c, _p, t) => { const st = c.stars[i]; return { ...ID, s: 1 + Math.sin((st.x / c.w) * Math.PI * 2 - t * 2.4) * 0.22 }; } },
-  { id: 'fx-idle-firefly', name: '螢火', kind: 'idle', fresh: true, desc: '平常是暗暗的，每顆不定時突然亮起來一下再慢慢暗回去，像螢火蟲',
+  { id: 'fx-idle-firefly', name: '螢光', kind: 'idle', fresh: true, desc: '平常是暗暗的，每顆不定時突然亮起來一下再慢慢暗回去，像螢火蟲',
     unit: (i, _c, _p, t) => {
       const per = 2.6 + hash(i) * 2.2, q = ((t + hash(i + 11) * per) % per) / per;
       const w = q < 0.08 ? q / 0.08 : Math.exp(-(q - 0.08) * 7);
@@ -142,6 +149,8 @@ export const fancyMotionReport = (): string[] => {
     if (delI.length) parts.push('刪除原有常駐：' + delI.map(nm).join(', '));
     if (pk.defIn) parts.push('預設進場：' + defName(pk.defIn));
     if (pk.defIdle) parts.push('預設常駐：' + defName(pk.defIdle));
+    if (pk.orderIn?.length) parts.push('進場按鈕順序：' + buttonOrder(pk, 'entry').map(nm).join(', '));
+    if (pk.orderIdle?.length) parts.push('常駐按鈕順序：' + buttonOrder(pk, 'idle').map(nm).join(', '));
     if (parts.length) out.push(`花式排列・${KIND_NAMES[k]}（${k}）的動畫`, ...parts);
   }
   const renamed = FANCY_MOTION_ALL.filter(a => s.names[a.id] && s.names[a.id] !== a.name);
@@ -264,6 +273,36 @@ export function FancyMotionLab({ onChange }: { onChange?: () => void }) {
       </span>
     </div>;
   };
+  /* 按鈕順序：照 App 面板上的樣子排成一排，點一顆選中，再按 ◀ ▶ 移動 */
+  const [selBtn, setSelBtn] = useState<string | null>(null);
+  const orderRow = (phase: 'entry' | 'idle', label: string) => {
+    const list = buttonOrder(pk, phase), key = phase === 'entry' ? 'orderIn' : 'orderIdle';
+    const move = (d: number) => {
+      const ids = list.map(a => a.id), i = selBtn ? ids.indexOf(selBtn) : -1, j = i + d;
+      if (i < 0 || j < 0 || j >= ids.length) return;
+      [ids[i], ids[j]] = [ids[j], ids[i]]; setPk({ ...pk, [key]: ids });
+    };
+    const selHere = !!selBtn && list.some(a => a.id === selBtn);
+    return <div className="mt-3">
+      <div className="flex items-center justify-between text-[12px] text-white/60">
+        <span>{label}（點一顆選中，再按箭頭移動）</span>
+        <span className="flex gap-1.5">
+          <button disabled={!selHere} onClick={() => move(-1)} className="w-8 h-7 rounded bg-white/10 disabled:opacity-25">◀</button>
+          <button disabled={!selHere} onClick={() => move(1)} className="w-8 h-7 rounded bg-white/10 disabled:opacity-25">▶</button>
+          {(pk as any)[key]?.length ? <button onClick={() => { const q = { ...pk }; delete (q as any)[key]; setPk(q); }} className="px-2 h-7 rounded bg-white/10 text-[11px]">重排</button> : null}
+        </span>
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        <span className="px-2.5 h-8 leading-8 rounded-md text-[12px] bg-white/5 text-white/35">{phase === 'entry' ? '無' : '靜止'}</span>
+        {list.map(a => (
+          <button key={a.id} onClick={() => setSelBtn(selBtn === a.id ? null : a.id)}
+            className={`px-2.5 h-8 rounded-md text-[12px] font-bold border ${selBtn === a.id ? 'bg-white text-black border-white' : a.fresh ? 'border-[#9fd3a8]/50 text-[#cfe9d4]' : 'border-white/15 text-white/80'}`}>
+            {sv.names[a.id] ?? a.name}{(phase === 'entry' ? pk.defIn : pk.defIdle) === a.id ? ' ★' : ''}
+          </button>
+        ))}
+      </div>
+    </div>;
+  };
   const sec = (title: string, list: Anim[]) => (
     <section className="mt-5">
       <div className="text-[11px] font-bold text-white/50 tracking-widest mb-2">{title}</div>
@@ -284,6 +323,8 @@ export function FancyMotionLab({ onChange }: { onChange?: () => void }) {
         <div className="text-[12px] font-bold">{KIND_NAMES[kind]} 的設定（每一種各自分開）</div>
         {defRow('defIn', '預設進場')}
         {defRow('defIdle', '預設常駐')}
+        {orderRow('entry', '進場按鈕順序')}
+        {orderRow('idle', '常駐按鈕順序')}
       </div>
       {sec('進場・新設計（一顆一顆分開動）', ENTRIES)}
       {sec('進場・App 原本就有', OLDS.filter(a => a.kind === 'entry'))}
