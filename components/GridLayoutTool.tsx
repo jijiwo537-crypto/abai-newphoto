@@ -1,5 +1,5 @@
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
-import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, FANCY_PARAM } from '../utils/fancyShapes';
+import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { swatchEdge } from '../utils/swatch';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
@@ -1804,7 +1804,9 @@ export const drawFeatheredShapeBody = (
 ) => {
   if (drawCompositeShapeBody(target, kind, w, h, color, innerColor, paintTexture, compositeStyle)) return;
   // 圖形羽化已移除；保留同一個繪製入口以相容既有草稿資料。
-  const path = new Path2D(shapePathD(kind, w, h));
+  // 花式排列（方形平均、點點紋理）也要知道沒被擠壓過的原始框：擠壓時星星大小不變、顆數變
+  const path = new Path2D(isFancyKind(kind) && compositeStyle.baseW && compositeStyle.baseH
+    ? shapePathD(kind, w, h, compositeStyle.baseW, compositeStyle.baseH) : shapePathD(kind, w, h));
   // 模糊圖形不吃紋理（編輯頁也沒有紋理那一格）
   if (isBlurShape(kind)) { drawBlurredShape(target, kind, w, h, color, _feather, shapePathD); return; }
   // 箭頭要知道「沒被擠壓過」的原始框才畫得對（見 shapePathD 的 arrow）
@@ -3720,15 +3722,20 @@ export const ShapeEditorPanel: React.FC<{
           {(fancyCanRandom(layer.shape) || fancyHasParams(layer.shape)) && (() => {
                             /* 花式排列：色票（最上面）→ 隨機排列按鈕 → 數量 → 其他滑桿 */
                             const kind = layer.shape as string, P = FANCY_PARAM[kind], ob: any = layer;
+                            const box = kind === 'fancy-boxrandom';
                             const cnt = ob.fancyCount ?? P?.count[2], gp = ob.fancyGap ?? P?.gap, sd = ob.fancySeed ?? 0;
-                            const set = (seed: number, count: number, gap: number) => onChange({ fancySeed: seed, fancyCount: count, fancyGap: gap,
-                              scoreSeed: P ? fancyPack(seed, count, gap) : seed } as any);
+                            const jit = ob.fancyJit ?? FANCY_JIT_DEFAULT, sz = ob.fancySize ?? FANCY_SIZE_DEFAULT;
+                            const set = (q: { seed?: number; count?: number; jit?: number; size?: number }) => {
+                              const seed = q.seed ?? sd, count = q.count ?? cnt, j2 = q.jit ?? jit, s2 = q.size ?? sz;
+                              onChange({ fancySeed: seed, fancyCount: count, fancyGap: gp, ...(box ? { fancyJit: j2, fancySize: s2 } : {}),
+                                scoreSeed: P ? fancyPack(seed, count, gp, box ? { jit: j2, size: s2 } : undefined) : seed } as any);
+                            };
                             return <div className="px-2 w-full space-y-4" style={{ order: 0 }}>
-                              {fancyCanRandom(kind) && <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); set(1 + Math.floor(Math.random() * (P ? 999998 : 1e9)), cnt, gp); }}
+                              {fancyCanRandom(kind) && <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); set({ seed: 1 + Math.floor(Math.random() * (P ? 999998 : 1e9)) }); }}
                                 className={SCORE_RANDOM_BTN}>隨機排列</button>}
-                              {P && <>
-                                {slider('數量', cnt, P.count[0], P.count[1], (v: number) => set(sd, Math.round(v), gp))}
-                              </>}
+                              {P && slider('數量', cnt, P.count[0], P.count[1], (v: number) => set({ count: Math.round(v) }))}
+                              {box && slider('大小', sz, 0, 100, (v: number) => set({ size: Math.round(v) }))}
+                              {box && slider('隨機大小', jit, 0, 100, (v: number) => set({ jit: Math.round(v) }))}
                             </div>;
                           })()}
                           {scoreCanRandom(layer.shape) && <div className="px-2 order-1 w-full">

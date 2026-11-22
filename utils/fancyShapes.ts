@@ -29,10 +29,20 @@ export const FANCY_PARAM: Record<string, { count: [number, number, number]; gap:
   'fancy-boxrandom': { count: [5, 60, 20], gap: 35 },  // 總共幾顆
 };
 /** 數量、間距、隨機種子打包成一個數字（畫圖時接在 kind 後面，見 scoreKindOf） */
-export const fancyPack = (seed: number, count: number, gap: number) => (Math.max(0, Math.floor(seed)) % 1e6) * 1e6 + Math.round(count) * 1000 + Math.round(gap);
-const unpack = (kind: string, v: number) => {
+/* 方形隨機另外還有「隨機大小」「大小」兩個值：用第二種打包格式（加 2e15 當記號），
+   舊格式（沒有這兩個值）的作品照舊畫，不會變 */
+const V2 = 2e15;
+export const FANCY_SIZE_DEFAULT = 50, FANCY_JIT_DEFAULT = 0;
+export const fancyPack = (seed: number, count: number, gap: number, extra?: { jit: number; size: number }) => extra
+  ? V2 + (Math.max(0, Math.floor(seed)) % 1e6) * 1e9 + Math.round(extra.size) * 1e6 + Math.round(count) * 1000 + Math.round(extra.jit)
+  : (Math.max(0, Math.floor(seed)) % 1e6) * 1e6 + Math.round(count) * 1000 + Math.round(gap);
+const unpack = (kind: string, v: number): { seed: number; count: number; gap: number; v2?: boolean; jit?: number; size?: number } => {
   const def = FANCY_PARAM[kind];
-  if (!v || !def) return { seed: v, count: def?.count[2] ?? 0, gap: def?.gap ?? 0 };
+  if (def && v >= V2) {
+    const w = v - V2;
+    return { seed: Math.floor(w / 1e9), size: Math.floor(w / 1e6) % 1000, count: Math.floor(w / 1000) % 1000, jit: w % 1000, gap: def.gap, v2: true };
+  }
+  if (!v || !def) return { seed: v, count: def?.count[2] ?? 0, gap: def?.gap ?? 0, v2: !v };
   const count = Math.floor(v / 1000) % 1000, gap = v % 1000;
   // 舊版「隨機排列」存的是單純的亂數種子（沒有打包數量、間距）：照舊當種子用，數量間距用預設
   if (count < def.count[0] || count > def.count[1] || gap > 100) return { seed: v, count: def.count[2], gap: def.gap };
@@ -226,7 +236,26 @@ const designs: Record<string, (seed: number) => Design> = {
   },
   /* 方形隨機排列：方形裡隨機分布、大小不一、互不重疊（「隨機排列」換一組） */
   'fancy-boxrandom': (v) => {
-    const { seed, count, gap } = unpack('fancy-boxrandom', v);
+    const { seed, count, gap, v2, jit = FANCY_JIT_DEFAULT, size = FANCY_SIZE_DEFAULT } = unpack('fancy-boxrandom', v);
+    if (v2) {
+      /* 新版：「最佳候選」取點 —— 每顆都從幾個候選位置裡挑離其他星星、離邊最遠的，
+         分布比較平均、四個角也有星星，不會一團一團、缺角。
+         隨機大小 0＝全部一樣大；大小 50＝原本大小 */
+      const R = rng(seed || 11), units: Unit[] = [];
+      const cell = 100 / Math.sqrt(Math.max(1, count)), base = cell * 0.24, m = base * 1.2;
+      for (let i = 0; i < count; i++) {
+        let best: [number, number] = [50, 50], bestD = -1;
+        for (let c = 0; c < 30; c++) {
+          const x = m + R() * (100 - m * 2), y = m + R() * (100 - m * 2);
+          let d = Math.min(x - m, 100 - m - x, y - m, 100 - m - y) * 2 + cell * 0.5;
+          for (const u of units) d = Math.min(d, Math.hypot(u.x - x, u.y - y));
+          if (d > bestD) { bestD = d; best = [x, y]; }
+        }
+        const k = 1 + (R() * 2 - 1) * 0.65 * Math.min(100, jit) / 100;
+        units.push({ x: best[0], y: best[1], r: base * k * Math.pow(2, (size - 50) / 40) });
+      }
+      return { dw: 100, dh: 100, units };
+    }
     const R = rng(seed || 11), units: Unit[] = [], far = 1 + gap / 100;   // 間距：星星之間至少隔幾倍半徑
     const scale = Math.min(1, Math.sqrt(20 / Math.max(1, count)));          // 顆數多時星星跟著變小，才排得進去
     let guard = 0;
@@ -259,8 +288,8 @@ const designs: Record<string, (seed: number) => Design> = {
     let guard = 0;
     while (units.length < 42 && guard++ < 6000) {
       const t = Math.sqrt(R());                                   // 越往右下越多（密度跟 t 成正比）
-      const spread = 3 + t * 34;                                  // 越往右下散得越開
-      const along = 6 + t * 80 + (R() - 0.5) * 6, side = (R() - 0.5) * 2 * spread;
+      const spread = 1.5 + t * 19;                                // 越往右下散得越開（但不要太寬）
+      const along = 3 + t * 92 + (R() - 0.5) * 4, side = (R() - 0.5) * 2 * spread;   // 從左上角一路拉到右下角
       const x = along + side * 0.7071, y = along - side * 0.7071;
       const r = 0.9 + R() * (1.4 + t * 2.6);
       if (x < r || y < r || x > 100 - r || y > 100 - r) continue;
@@ -313,15 +342,26 @@ const r3 = (n: number) => Math.round(n * 1000) / 1000;
 const latticeDesign = (kind: string, w: number, h: number, gbw: number, gbh: number): Design => {
   const b = kind.split('@')[0], { count } = unpack(b, Number(kind.split('@')[1]) || 0);
   const cell = Math.min(gbw, gbh) / Math.max(1, count), r = cell * 0.5 * (1 - (b === 'fancy-polka' ? 0.52 : 0.54));
-  const cols = Math.max(1, Math.round(w / cell)), rows = Math.max(1, Math.round(h / cell));
-  const cw = w / cols, ch = h / rows, units: Unit[] = [];
+  /* 間距固定＝一格（跟網格一樣），放得下幾格就排幾格、整組置中。
+     不把間距撐開去填滿 —— 拖的時候星星不會每一格都被重新拉開，不會抖 */
+  const cols = Math.max(1, Math.floor(w / cell + 1e-6)), rows = Math.max(1, Math.floor(h / cell + 1e-6));
+  const ox = (w - cols * cell) / 2, oy = (h - rows * cell) / 2, units: Unit[] = [];
   for (let j = 0; j < rows; j++) {
     const odd = b === 'fancy-polka' && j % 2 === 1, n = odd ? cols - 1 : cols;
-    for (let i = 0; i < n; i++) units.push({ x: cw * (i + 0.5) + (odd ? cw / 2 : 0), y: ch * (j + 0.5), r });
+    for (let i = 0; i < n; i++) units.push({ x: ox + cell * (i + 0.5) + (odd ? cell / 2 : 0), y: oy + cell * (j + 0.5), r });
   }
   return { dw: w, dh: h, units };
 };
+/* 拖拉擠壓時同一個尺寸會被要好幾次（畫本體、描邊、發光…）：結果記起來，不重算 */
+const pathMemo = new Map<string, string>();
 export const fancyPathD = (kind: string, w: number, h: number, gbw = w, gbh = h) => {
+  const key = kind + '|' + w + '|' + h + '|' + gbw + '|' + gbh, hit = pathMemo.get(key);
+  if (hit !== undefined) return hit;
+  const v = fancyPathD0(kind, w, h, gbw, gbh);
+  pathMemo.set(key, v); if (pathMemo.size > 64) pathMemo.delete(pathMemo.keys().next().value!);
+  return v;
+};
+const fancyPathD0 = (kind: string, w: number, h: number, gbw: number, gbh: number) => {
   if (!isFancyKind(kind) || !(w > 0) || !(h > 0)) return '';
   const lattice = ['fancy-grid', 'fancy-polka'].includes(kind.split('@')[0]);
   const d = lattice ? latticeDesign(kind, w, h, Math.max(1, gbw), Math.max(1, gbh)) : designOf(kind), sx = w / d.dw, sy = h / d.dh, s = lattice ? 1 : Math.min(sx, sy);
