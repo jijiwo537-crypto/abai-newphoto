@@ -251,16 +251,17 @@ const designs: Record<string, (seed: number) => Design> = {
          邊上的星星只沿著邊稍微錯開一點，不會離開那條邊 */
       const per = Math.max(2, Math.round(Math.sqrt(count) * 0.8)), lo = m, hi = 100 - m, step = (hi - lo) / (per - 1);
       const edge: [number, number][] = [];
-      for (let k = 0; k < per - 1; k++) {
+      if (!seed) for (let k = 0; k < per - 1; k++) {   // 有隨機種子時不碰亂數，結果跟以前一樣
         const a = lo + step * k, jit = k === 0 ? 0 : (R() - 0.5) * step * 0.3;
         edge.push([a + jit, lo], [hi, a + jit], [100 - a - jit, hi], [lo, 100 - a - jit]);
       }
       const sizeOf = () => base * (1 + (R() * 2 - 1) * 0.65 * Math.min(100, jit) / 100) * Math.pow(2, (size - 50) / 40);
-      for (const [x, y] of edge.slice(0, count)) units.push({ x, y, r: sizeOf() });
+      // 只有預設（圖標、第一次加進來、還沒按過隨機排列）才先排四邊；按過「隨機排列」的照原本的方式
+      if (!seed) for (const [x, y] of edge.slice(0, count)) units.push({ x, y, r: sizeOf() });
       for (let i = units.length; i < count; i++) {
         let best: [number, number] = [50, 50], bestD = -1;
         for (let c = 0; c < 30; c++) {
-          const x = m + cell * 0.55 + R() * (100 - m * 2 - cell * 1.1), y = m + cell * 0.55 + R() * (100 - m * 2 - cell * 1.1);
+          const pad = seed ? 0 : cell * 0.55, x = m + pad + R() * (100 - m * 2 - pad * 2), y = m + pad + R() * (100 - m * 2 - pad * 2);
           let d = Math.min(x - m, 100 - m - x, y - m, 100 - m - y) * 2 + cell * 0.5;
           for (const u of units) d = Math.min(d, Math.hypot(u.x - x, u.y - y));
           if (d > bestD) { bestD = d; best = [x, y]; }
