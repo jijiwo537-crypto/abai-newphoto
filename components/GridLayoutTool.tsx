@@ -1,4 +1,4 @@
-import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio, fancyCanRandom } from '../utils/fancyShapes';
+import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, FANCY_PARAM } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { swatchEdge } from '../utils/swatch';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
@@ -905,7 +905,7 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
   if (!(o?.w > 0) || !(o?.h > 0) || typeof document === 'undefined' || SPECIAL_LINE_KINDS.has(o.kind) || GRID_SHAPE_KINDS.has(o.kind)) return null;
   /* 可以「隨機排列」的花式排列：選中框固定是整個貼圖框（不貼著星星量）——
      每次隨機星星位置都不同，貼著量的話框會一直變形、變大變小 */
-  if (fancyCanRandom(o.kind)) return { x: 0, y: 0, w: o.w, h: o.h };
+  if (fancyFixedFrame(o.kind)) return { x: 0, y: 0, w: o.w, h: o.h };
   if (isBackdropMask(o.kind)) {
     // 遮罩是解析式裁切：方形／圓形就是整個框，星形是那十個頂點的外接框。
     if (maskGeometry(o.kind, o) !== 'star') return { x: 0, y: 0, w: o.w, h: o.h };
@@ -3712,12 +3712,21 @@ export const ShapeEditorPanel: React.FC<{
               v => onChange({ shapeGlintGlow: Math.round(v) }))}
           </div>}
           {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
-          {fancyCanRandom(layer.shape) && <div className="px-2 order-1 w-full">
-                            <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); onChange({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) } as any); }}
-                              className={SCORE_RANDOM_BTN}>
-                              隨機排列
-                            </button>
-                          </div>}
+          {(fancyCanRandom(layer.shape) || fancyHasParams(layer.shape)) && (() => {
+                            /* 花式排列：隨機排列按鈕、數量、間距 —— 一律排在所有滑桿最上面 */
+                            const kind = layer.shape as string, P = FANCY_PARAM[kind], ob: any = layer;
+                            const cnt = ob.fancyCount ?? P?.count[2], gp = ob.fancyGap ?? P?.gap, sd = ob.fancySeed ?? 0;
+                            const set = (seed: number, count: number, gap: number) => onChange({ fancySeed: seed, fancyCount: count, fancyGap: gap,
+                              scoreSeed: P ? fancyPack(seed, count, gap) : seed } as any);
+                            return <div className="px-2 w-full space-y-4" style={{ order: -1 }}>
+                              {fancyCanRandom(kind) && <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); set(1 + Math.floor(Math.random() * (P ? 999998 : 1e9)), cnt, gp); }}
+                                className={SCORE_RANDOM_BTN}>隨機排列</button>}
+                              {P && <>
+                                {slider('數量', cnt, P.count[0], P.count[1], (v: number) => set(sd, Math.round(v), gp))}
+                                {slider('間距', gp, 0, 100, (v: number) => set(sd, cnt, Math.round(v)))}
+                              </>}
+                            </div>;
+                          })()}
                           {scoreCanRandom(layer.shape) && <div className="px-2 order-1 w-full">
             <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); onChange({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) } as any); }}
               className={SCORE_RANDOM_BTN}>

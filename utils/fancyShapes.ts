@@ -9,15 +9,35 @@ type Design = { dw: number; dh: number; units: Unit[]; lines?: Line[] };
 
 export const FANCY_KINDS = [
   'fancy-radial', 'fancy-ring', 'fancy-spiral', 'fancy-halo', 'fancy-mobile', 'fancy-swirl3',
-  'fancy-grid', 'fancy-polka', 'fancy-boxrandom', 'fancy-concentric', 'fancy-constellation', 'fancy-sparkle',
+  'fancy-grid', 'fancy-polka', 'fancy-boxrandom', 'fancy-concentric', 'fancy-constellation', 'fancy-wand',
 ] as const;
 /** 從選單拿掉的舊排列：已經放在作品裡的照樣畫得出來 */
-const FANCY_LEGACY = ['fancy-heart', 'fancy-wave', 'fancy-scatter', 'fancy-arch', 'fancy-starstar', 'fancy-crescent', 'fancy-flower', 'fancy-galaxy', 'fancy-meteor'];
+const FANCY_LEGACY = ['fancy-heart', 'fancy-wave', 'fancy-scatter', 'fancy-arch', 'fancy-starstar', 'fancy-crescent', 'fancy-flower', 'fancy-galaxy', 'fancy-meteor', 'fancy-sparkle'];
 /** kind 可以帶隨機種子：'fancy-mobile@123'（吊飾的「隨機排列」，見 scoreKindOf） */
 const baseOf = (k: string) => k.split('@')[0];
 export const isFancyKind = (k?: string) => !!k && k.startsWith('fancy-') && ((FANCY_KINDS as readonly string[]).includes(baseOf(k)) || FANCY_LEGACY.includes(baseOf(k)));
 /** 可以按「隨機排列」的花式排列 */
 export const fancyCanRandom = (k?: string) => !!k && (baseOf(k) === 'fancy-mobile' || baseOf(k) === 'fancy-boxrandom');
+/** 可以調「數量」「間距」的花式排列 */
+export const fancyHasParams = (k?: string) => !!k && ['fancy-grid', 'fancy-polka', 'fancy-boxrandom'].includes(baseOf(k));
+/** 選中框固定是整個貼圖框（不貼著星星量）：隨機或調數量間距時星星位置一直變，框不能跟著變 */
+export const fancyFixedFrame = (k?: string) => fancyCanRandom(k) || fancyHasParams(k);
+/** 數量、間距的預設值與範圍（滑桿 UI 值） */
+export const FANCY_PARAM: Record<string, { count: [number, number, number]; gap: number }> = {
+  'fancy-grid': { count: [2, 10, 5], gap: 54 },        // 每排幾顆
+  'fancy-polka': { count: [2, 10, 6], gap: 52 },       // 幾排
+  'fancy-boxrandom': { count: [5, 60, 20], gap: 35 },  // 總共幾顆
+};
+/** 數量、間距、隨機種子打包成一個數字（畫圖時接在 kind 後面，見 scoreKindOf） */
+export const fancyPack = (seed: number, count: number, gap: number) => (Math.max(0, Math.floor(seed)) % 1e6) * 1e6 + Math.round(count) * 1000 + Math.round(gap);
+const unpack = (kind: string, v: number) => {
+  const def = FANCY_PARAM[kind];
+  if (!v || !def) return { seed: v, count: def?.count[2] ?? 0, gap: def?.gap ?? 0 };
+  const count = Math.floor(v / 1000) % 1000, gap = v % 1000;
+  // 舊版「隨機排列」存的是單純的亂數種子（沒有打包數量、間距）：照舊當種子用，數量間距用預設
+  if (count < def.count[0] || count > def.count[1] || gap > 100) return { seed: v, count: def.count[2], gap: def.gap };
+  return { seed: Math.floor(v / 1e6), count, gap };
+};
 
 const rng = (seed: number) => () => {
   seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -198,27 +218,31 @@ const designs: Record<string, (seed: number) => Design> = {
     return { dw: 100, dh: 100, units };
   },
   /* 方形平均排列：5×5 整齊排，大小一樣 */
-  'fancy-grid': () => {
+  'fancy-grid': (v) => {
+    const { count: n, gap } = unpack('fancy-grid', v), cell = 100 / n, r = cell * 0.5 * (1 - gap / 100);
     const units: Unit[] = [];
-    for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) units.push({ x: 10 + i * 20, y: 10 + j * 20, r: 4.6 });
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) units.push({ x: cell * (i + 0.5), y: cell * (j + 0.5), r: Math.max(0.4, r) });
     return { dw: 100, dh: 100, units };
   },
   /* 方形隨機排列：方形裡隨機分布、大小不一、互不重疊（「隨機排列」換一組） */
-  'fancy-boxrandom': (seed) => {
-    const R = rng(seed || 11), units: Unit[] = [];
+  'fancy-boxrandom': (v) => {
+    const { seed, count, gap } = unpack('fancy-boxrandom', v);
+    const R = rng(seed || 11), units: Unit[] = [], far = 1 + gap / 100;   // 間距：星星之間至少隔幾倍半徑
+    const scale = Math.min(1, Math.sqrt(20 / Math.max(1, count)));          // 顆數多時星星跟著變小，才排得進去
     let guard = 0;
-    while (units.length < 20 && guard++ < 4000) {
-      const r = 2 + R() * 3.6, x = r + R() * (100 - r * 2), y = r + R() * (100 - r * 2);
-      if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.35)) units.push({ x, y, r });
+    while (units.length < count && guard++ < 8000) {
+      const r = (2 + R() * 3.6) * scale, x = r + R() * (100 - r * 2), y = r + R() * (100 - r * 2);
+      if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * far)) units.push({ x, y, r });
     }
     return { dw: 100, dh: 100, units };
   },
   /* 點點紋理排法：跟紋理裡的點點一樣，一排一排交錯半格（波卡圓點），大小一樣 */
-  'fancy-polka': () => {
+  'fancy-polka': (v) => {
+    const { count: rows, gap } = unpack('fancy-polka', v), cell = 100 / rows, r = cell * 0.5 * (1 - gap / 100);
     const units: Unit[] = [];
-    for (let j = 0; j < 6; j++) {
-      const odd = j % 2 === 1, n = odd ? 5 : 6;
-      for (let i = 0; i < n; i++) units.push({ x: 8 + i * 16.8 + (odd ? 8.4 : 0), y: 8 + j * 16.8, r: 4 });
+    for (let j = 0; j < rows; j++) {
+      const odd = j % 2 === 1, n = odd ? rows - 1 : rows;
+      for (let i = 0; i < n; i++) units.push({ x: cell * (i + 0.5) + (odd ? cell / 2 : 0), y: cell * (j + 0.5), r: Math.max(0.4, r) });
     }
     return { dw: 100, dh: 100, units };
   },
@@ -227,6 +251,21 @@ const designs: Record<string, (seed: number) => Design> = {
     const units: Unit[] = [{ x: 50, y: 50, r: 7 }];
     for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; [13, 22, 30, 37, 43].forEach((d, j) => units.push({ x: 50 + Math.cos(a) * d, y: 50 + Math.sin(a) * d, r: 4.6 - j * 0.8 })); }
     for (let k = 0; k < 4; k++) { const a = Math.PI / 4 + k * Math.PI / 2; [12, 19, 25].forEach((d, j) => units.push({ x: 50 + Math.cos(a) * d, y: 50 + Math.sin(a) * d, r: 3 - j * 0.7 })); }
+    return { dw: 100, dh: 100, units };
+  },
+  /* 魔法棒：在固定的方框裡，從左上到右下散落星星，左上少、越往右下越多、散開的範圍越大 */
+  'fancy-wand': () => {
+    const R = rng(97), units: Unit[] = [];
+    let guard = 0;
+    while (units.length < 42 && guard++ < 6000) {
+      const t = Math.sqrt(R());                                   // 越往右下越多（密度跟 t 成正比）
+      const spread = 3 + t * 34;                                  // 越往右下散得越開
+      const along = 6 + t * 80 + (R() - 0.5) * 6, side = (R() - 0.5) * 2 * spread;
+      const x = along + side * 0.7071, y = along - side * 0.7071;
+      const r = 0.9 + R() * (1.4 + t * 2.6);
+      if (x < r || y < r || x > 100 - r || y > 100 - r) continue;
+      if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.15)) units.push({ x, y, r });
+    }
     return { dw: 100, dh: 100, units };
   },
   /* 10 同心圓：三圈，外圈的比較大 */

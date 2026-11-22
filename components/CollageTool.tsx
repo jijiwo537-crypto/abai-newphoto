@@ -39,7 +39,7 @@ import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCo
 import { createPortal, flushSync } from 'react-dom';
 import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
-import { fancyCanRandom, isFancyKind } from '../utils/fancyShapes';
+import { fancyCanRandom, isFancyKind, fancyHasParams, fancyPack, FANCY_PARAM } from '../utils/fancyShapes';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
@@ -13366,12 +13366,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               (v: number) => patch({ glintGlow: v }), shapeLive)}
                           </div>}
                           {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
-                          {fancyCanRandom(sel.kind) && <div className="px-2 order-1 w-full">
-                            <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); patch({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) }); }}
-                              className={SCORE_RANDOM_BTN}>
-                              隨機排列
-                            </button>
-                          </div>}
+                          {(fancyCanRandom(sel.kind) || fancyHasParams(sel.kind)) && (() => {
+                            /* 花式排列：隨機排列按鈕、數量、間距 —— 一律排在所有滑桿最上面 */
+                            const kind = sel.kind as string, P = FANCY_PARAM[kind], ob: any = sel;
+                            const cnt = ob.fancyCount ?? P?.count[2], gp = ob.fancyGap ?? P?.gap, sd = ob.fancySeed ?? 0;
+                            const set = (seed: number, count: number, gap: number) => patch({ fancySeed: seed, fancyCount: count, fancyGap: gap,
+                              scoreSeed: P ? fancyPack(seed, count, gap) : seed } as any);
+                            return <div className="px-2 w-full space-y-4" style={{ order: -1 }}>
+                              {fancyCanRandom(kind) && <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); set(1 + Math.floor(Math.random() * (P ? 999998 : 1e9)), cnt, gp); }}
+                                className={SCORE_RANDOM_BTN}>隨機排列</button>}
+                              {P && <>
+                                {shapeSlider('數量', cnt, P.count[0], P.count[1], (v: number) => set(sd, Math.round(v), gp), shapeLive)}
+                                {shapeSlider('間距', gp, 0, 100, (v: number) => set(sd, cnt, Math.round(v)), shapeLive)}
+                              </>}
+                            </div>;
+                          })()}
                           {scoreCanRandom(sel.kind) && <div className="px-2 order-1 w-full">
                             <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); patch({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) }); }}
                               className={SCORE_RANDOM_BTN}>
