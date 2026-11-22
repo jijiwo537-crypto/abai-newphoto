@@ -39,7 +39,7 @@ const KIND_NAMES: Record<string, string> = {
 const KIND_ORDER = ['fancy-halo', 'fancy-concentric', 'fancy-spiral', 'fancy-ring', 'fancy-swirl3', 'fancy-radial',
   'fancy-grid', 'fancy-polka', 'fancy-boxrandom', 'fancy-wand', 'fancy-mobile', 'fancy-constellation'].filter(k => (FANCY_KINDS as readonly string[]).includes(k));
 
-import { ENTRIES, IDLES, ID, ctxOf, clamp, ENTRY_DUR, HOLD, GAP, type Anim, type Ctx, type U } from '../utils/fancyMotion';
+import { ENTRIES, IDLES, ID, ctxOf, clamp, ENTRY_DUR, HOLD, GAP, FANCY_MOTION_CFG, type Anim, type Ctx, type U } from '../utils/fancyMotion';
 /* ───────── App 原本就有的（花式排列現在吃的那一組） ───────── */
 const OLD_ENTRY: [string, string][] = [['pop', '果凍'], ['fade', '淡入'], ['rise', '升起'], ['drop', '落下'], ['spin', '旋轉'], ['flip', '翻轉'], ['spring', '流星']];
 const OLD_IDLE: [string, string][] = [['float', '漂浮'], ['grid-wave', '波浪'], ['breathe', '縮放'], ['spin', '旋轉'], ['wobble', '搖擺'], ['orbit', '繞圈'], ['jitter', '抖動']];
@@ -71,6 +71,8 @@ export const fancyMotionReport = (): string[] => {
   }
   const renamed = FANCY_MOTION_ALL.filter(a => s.names[a.id] && s.names[a.id] !== a.name);
   if (renamed.length) out.push('花式排列動畫改名', renamed.map(a => `${a.name}（${a.id}）→ ${s.names[a.id]}`).join(', '));
+  const cl = findClashes(s);
+  if (cl.length) out.push('⚠ 動畫名稱重複（同一個貼圖、同一類裡同名）', cl.map(c => `${KIND_NAMES[c.kind]}・${c.phase === 'entry' ? '進場' : '常駐'}「${c.name}」`).join(', '));
   return out;
 };
 export const fancyMotionChanged = () => fancyMotionReport().length > 0;
@@ -165,7 +167,108 @@ const Card: React.FC<{ a: Anim; kind: string; sv: Saved; setSv: (s: Saved) => vo
   );
 };
 
+/* ───────── 改名工具 ─────────
+   ‧ 進場、常駐分開兩張表；每一列是一個動畫：新名字、原名、代號、哪些貼圖有用到
+   ‧ 可以勾好幾個一起改成同一個名字；點「同名」的按鈕會把同名的全部勾起來
+   ‧ 檢查重複：同一個貼圖、同一類（進場／常駐）裡面，兩個動畫不能叫同一個名字（「無」「靜止」也算） */
+const APP_CFG_INCLUDED = (k: string, a: Anim): boolean => {
+  const c = FANCY_MOTION_CFG[k]; if (!c) return !a.fresh;
+  const raw = a.id.replace(/^in:|^idle:/, '');
+  if (a.fresh) return (a.kind === 'entry' ? c.addIn : c.addIdle).includes(a.id);
+  return !(a.kind === 'entry' ? c.delIn : c.delIdle).includes(raw);
+};
+/** 這個貼圖有沒有這個動畫：測試網站裡有勾過這個貼圖就照勾的，沒勾過就照 App 現在的 */
+const kindHas = (sv: Saved, k: string, a: Anim) => sv.kinds[k] ? included(pickOf(sv, k), a) : APP_CFG_INCLUDED(k, a);
+const nameOf = (sv: Saved, a: Anim) => (sv.names[a.id] ?? a.name).trim();
+type Clash = { kind: string; phase: 'entry' | 'idle'; name: string; ids: string[] };
+const findClashes = (sv: Saved): Clash[] => {
+  const out: Clash[] = [];
+  for (const k of KIND_ORDER) for (const phase of ['entry', 'idle'] as const) {
+    const by = new Map<string, string[]>();
+    by.set(phase === 'entry' ? '無' : '靜止', [phase === 'entry' ? 'none' : 'none']);
+    for (const a of FANCY_MOTION_ALL) if (a.kind === phase && kindHas(sv, k, a)) {
+      const n = nameOf(sv, a); by.set(n, [...(by.get(n) || []), a.id]);
+    }
+    by.forEach((ids, name) => { if (ids.length > 1) out.push({ kind: k, phase, name, ids }); });
+  }
+  return out;
+};
+export const fancyMotionClashes = () => findClashes(load());
+
+const RenameTool: React.FC<{ sv: Saved; setSv: (s: Saved) => void }> = ({ sv, setSv }) => {
+  const [sel, setSel] = useState<string[]>([]);
+  const [batch, setBatch] = useState('');
+  const [q, setQ] = useState('');
+  const clashes = findClashes(sv);
+  const clashIds = new Set(clashes.flatMap(c => c.ids));
+  const setName = (ids: string[], n: string) => {
+    const names = { ...sv.names };
+    for (const id of ids) { const a = FANCY_MOTION_ALL.find(x => x.id === id)!; if (n.trim() === '' || n === a.name) delete names[id]; else names[id] = n; }
+    setSv({ ...sv, names });
+  };
+  const table = (phase: 'entry' | 'idle', title: string) => {
+    const list = FANCY_MOTION_ALL.filter(a => a.kind === phase && (!q || nameOf(sv, a).includes(q) || a.name.includes(q) || a.id.includes(q)));
+    // 同一類裡同名的（不管哪個貼圖）：方便一次勾起來改
+    const groups = new Map<string, string[]>();
+    FANCY_MOTION_ALL.filter(a => a.kind === phase).forEach(a => { const n = nameOf(sv, a); groups.set(n, [...(groups.get(n) || []), a.id]); });
+    const same = [...groups].filter(([, ids]) => ids.length > 1);
+    return (
+      <section className="mt-5">
+        <div className="text-[11px] font-bold text-white/50 tracking-widest mb-2">{title}（{list.length}）</div>
+        {same.length > 0 && <div className="mb-2 flex flex-wrap gap-1.5 items-center text-[11px]">
+          <span className="text-white/45">同名的：</span>
+          {same.map(([n, ids]) => <button key={n} onClick={() => setSel(s0 => [...new Set([...s0, ...ids])])} className="px-2 h-7 rounded-md bg-[#f2c86b]/15 text-[#f2c86b] border border-[#f2c86b]/30">「{n}」×{ids.length} 全選</button>)}
+        </div>}
+        <div className="rounded-[10px] border border-white/10 overflow-hidden">
+          {list.map(a => {
+            const on = sel.includes(a.id), bad = clashIds.has(a.id), used = KIND_ORDER.filter(k => kindHas(sv, k, a));
+            return (
+              <div key={a.id} className={`flex items-start gap-2 px-2.5 py-2 border-b border-white/5 last:border-0 ${bad ? 'bg-[#e57a7a]/10' : on ? 'bg-white/[0.06]' : ''}`}>
+                <input type="checkbox" checked={on} onChange={() => setSel(s0 => on ? s0.filter(x => x !== a.id) : [...s0, a.id])} className="w-4 h-4 mt-2 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <input value={sv.names[a.id] ?? a.name} onChange={e => setName([a.id], e.target.value)}
+                      className={`w-28 bg-black/40 border rounded px-2 h-8 text-[13px] text-white select-text ${bad ? 'border-[#e57a7a]' : 'border-white/10'}`} style={{ WebkitUserSelect: 'text' }} />
+                    <span className="text-[11px] text-white/40 truncate">原名 {a.name}・{a.id}{a.fresh ? '・新設計' : ''}</span>
+                    {sv.names[a.id] !== undefined && <button onClick={() => setName([a.id], a.name)} className="ml-auto shrink-0 px-2 h-7 rounded bg-white/10 text-[11px]">還原</button>}
+                  </div>
+                  <div className="mt-1 text-[10px] text-white/35 leading-snug">{used.length ? '用在：' + used.map(k => KIND_NAMES[k]).join('、') : '目前沒有貼圖用到'}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    );
+  };
+  return (
+    <div>
+      {/* 重複檢查 */}
+      <div className={`mt-4 rounded-[10px] border p-3 text-[12px] ${clashes.length ? 'border-[#e57a7a]/50 bg-[#e57a7a]/10' : 'border-[#9fd3a8]/40 bg-[#9fd3a8]/10'}`}>
+        {clashes.length === 0 ? <b className="text-[#9fd3a8]">✓ 沒有重複：每一個貼圖的進場、常駐裡，名字都不一樣</b> : <>
+          <b className="text-[#e57a7a]">有 {clashes.length} 個重複（同一個貼圖、同一類裡兩個動畫同名）</b>
+          <div className="mt-1.5 space-y-1">{clashes.map((c, i) => (
+            <div key={i} className="text-white/75">{KIND_NAMES[c.kind]}・{c.phase === 'entry' ? '進場' : '常駐'}：「{c.name}」＝{c.ids.map(id => id === 'none' ? (c.phase === 'entry' ? '無' : '靜止') : `${FANCY_MOTION_ALL.find(x => x.id === id)?.name}（${id}）`).join('、')}</div>
+          ))}</div>
+        </>}
+      </div>
+      {/* 一起改 */}
+      <div className="sticky top-0 z-10 mt-3 rounded-[10px] border border-white/10 bg-[#111] p-2.5 flex flex-wrap items-center gap-2 text-[12px]">
+        <span className="text-white/60">已勾 {sel.length} 個</span>
+        <input value={batch} onChange={e => setBatch(e.target.value)} placeholder="新名字" className="w-28 bg-black/40 border border-white/10 rounded px-2 h-8 text-[13px] select-text" style={{ WebkitUserSelect: 'text' }} />
+        <button disabled={!sel.length || !batch.trim()} onClick={() => { setName(sel, batch.trim()); setSel([]); setBatch(''); }} className="px-3 h-8 rounded bg-white text-black font-bold disabled:opacity-30">全部改成這個</button>
+        <button disabled={!sel.length} onClick={() => setName(sel, '')} className="px-3 h-8 rounded bg-white/10 disabled:opacity-30">還原原名</button>
+        <button disabled={!sel.length} onClick={() => setSel([])} className="px-3 h-8 rounded bg-white/10 disabled:opacity-30">取消勾選</button>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="搜尋名字／代號" className="ml-auto w-32 bg-black/40 border border-white/10 rounded px-2 h-8 text-[13px] select-text" style={{ WebkitUserSelect: 'text' }} />
+      </div>
+      {table('entry', '進場動畫')}
+      {table('idle', '常駐動畫')}
+    </div>
+  );
+};
+
 export function FancyMotionLab({ onChange }: { onChange?: () => void }) {
+  const [mode, setMode] = useState<'pick' | 'rename'>('pick');
   const [kind, setKind] = useState(KIND_ORDER[0]);
   const [sv, setSv0] = useState<Saved>(load);
   const setSv = (s: Saved) => { setSv0(s); save(s); onChange?.(); };
@@ -220,8 +323,17 @@ export function FancyMotionLab({ onChange }: { onChange?: () => void }) {
       <div className="grid grid-cols-2 gap-2">{list.map(a => <Card key={a.id} a={a} kind={kind} sv={sv} setSv={setSv} clock={clock} />)}</div>
     </section>
   );
+  const modeBar = (
+    <div className="flex gap-1.5 mb-3">
+      {([['pick', '預覽・勾選'], ['rename', '改名工具']] as const).map(([m, t]) => (
+        <button key={m} onClick={() => setMode(m)} className={`px-3 h-8 rounded-full text-[12px] font-bold ${mode === m ? 'bg-white text-black' : 'bg-white/10 text-white/70'}`}>{t}</button>
+      ))}
+    </div>
+  );
+  if (mode === 'rename') return <div>{modeBar}<RenameTool sv={sv} setSv={setSv} /></div>;
   return (
     <div>
+      {modeBar}
       <div className="text-[12px] text-white/60 leading-relaxed">
         先在上面選一種花式排列，下面的勾選只算這一種（每一種各自分開）。綠色「加入」＝新設計、想放進 App；紅色「刪除」＝App 原本就有、這一種不要；黃色「設為預設」＝新增這一種時預設套用。名字點一下就能改（所有種類共用同一個名字）。
       </div>
