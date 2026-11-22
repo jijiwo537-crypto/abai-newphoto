@@ -40,6 +40,7 @@ import { createPortal, flushSync } from 'react-dom';
 import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
+import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
 import { fancyCanRandom, isFancyKind, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
@@ -1264,6 +1265,8 @@ export type MotionTargetCtx = {
   sym: boolean; grid: boolean; line: boolean; glint: boolean; scatter: boolean;
   /** 樂譜 3～6（可以隨機的那幾種）：進場多一個「果凍ll」 */
   score?: boolean;
+  /** 花式排列：哪一種（每一種的動畫清單不一樣，見 utils/fancyMotion） */
+  fancy?: string;
 };
 export const motionTargetCtxOf = (o: any | null): MotionTargetCtx => o ? {
   pattern: false, type: o.type, sym: !!o.sym,
@@ -1272,6 +1275,7 @@ export const motionTargetCtxOf = (o: any | null): MotionTargetCtx => o ? {
   glint: o.type === 'shape' && o.kind === 'hole' && String(o.hole || '').startsWith('sb-'),
   scatter: o.type === 'shape' && isScatterFrame(o.kind),
   score: o.type === 'shape' && scoreCanRandom(o.kind),
+  fancy: o.type === 'shape' && isFancyKind(o.kind) ? o.kind : undefined,
 } : { pattern: true, sym: false, grid: false, line: false, glint: false, scatter: false };
 /** 圖案那一群剛開啟時的動畫設定（也就是圖案的預設值） */
 export const PATTERN_MO_DEFAULT: MoCfg = {
@@ -1421,6 +1425,8 @@ export const motionKindLists = (c: MotionTargetCtx) => {
        {id:'breathe',name:'縮放l'},{id:'symbol-breathe2',name:'縮放ll'}]
     : [...(c.sym ? baseIdleKinds.filter(k => ['none','float','breathe','symbol-breathe2'].includes(k.id)) : baseIdleKinds),
        ...(labTarget ? selectedKinds(labTarget, 'idle') : [])];
+  const fl = c.fancy ? fancyMotionLists(c.fancy, kinds as { id: string; name: string }[], idleKinds as { id: string; name: string }[], (id, name) => ({ id, name })) : null;
+  if (fl) return fl as { kinds: typeof kinds; idleKinds: typeof idleKinds };
   return { kinds, idleKinds };
 };
 export const moOf = (o: any): MoCfg => {
@@ -1440,7 +1446,9 @@ export const moOf = (o: any): MoCfg => {
  * 把進場 → 常駐 → 離場疊起來。
  * 交棒處用 0.35 秒淡入接上常駐，不然從進場切到常駐會跳一下。
  */
-const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number } => {
+const composeMo = (cfg0: MoCfg, t0: number, phase: number): MoFrame & { fx: number } => {
+  // 花式排列一顆一顆分開動的動畫不是整組動畫：整組這邊當作「無／靜止」（見 utils/fancyMotion）
+  const fg = fancyGroupMotion(cfg0, t0), cfg = fg.cfg, t = fg.time;
   const lab = selectedFrame(cfg, t, phase);
   if (lab) return { ...FLAT, fx: 1, lab };
   /* 「無」不是一段看不見的進場動畫：它沒有 delay、也沒有 duration。
@@ -1489,7 +1497,7 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
 };
 
 /** 這個元素整段動畫在什麼時候結束（排時間軸用） */
-const moEnd = (cfg: MoCfg) => cfg.in === 'none' ? 0 : cfg.delay + cfg.dur;
+const moEnd = (cfg: MoCfg) => cfg.in === 'none' ? 0 : cfg.delay + (isFancyMotion(cfg.in) ? fancyEntryDur(cfg.dur) : cfg.dur);   // 花式排列新進場比較長
 
 /** 新增文字時預設放的字。跟經典拼圖同一個字串。 */
 const TEXT_PLACEHOLDER = '輸入文字';
@@ -4059,6 +4067,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           : null),
         // 樂譜 3～6：預設進場果凍ll、常駐波浪
         ...(scoreCanRandom(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'score-seq', idle: 'grid-wave' }) } : null),
+        // 花式排列：每一種自己的預設動畫（見 utils/fancyMotion）
+        ...(fancyMotionCfg(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: fancyMotionCfg(it.kind)!.defIn, idle: fancyMotionCfg(it.kind)!.defIdle }) } : null),
         // 樂譜 1、2（照原圖描的）：預設沒有進場動畫
         ...(isScoreKind(it.kind) && !scoreCanRandom(it.kind) ? { mo: { ...MO_DEFAULT, in: 'none' } } : null),
       };
@@ -10332,6 +10342,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         return ez(Math.max(0, Math.min(1, (t - st) / span)));
       },
       obj: (o: any, i: number) => {
+        /* 花式排列一顆一顆分開動的動畫：整組那一套照跑（新設計的那一半當「無／靜止」），
+           每顆星星的樣子接在 kind 後面交給 fancyPathD 畫（借用樂譜的 scoreAnim 欄位） */
+        if (o.type === 'shape' && isFancyKind(o.kind)) {
+          const c0 = moOf(o), tag = fancyMotionTag(c0, t);
+          if (isFancyMotion(c0.in) || isFancyMotion(c0.idle)) {
+            const g = fancyGroupMotion(c0, t), fr = composeMo(g.cfg, g.time, (hashId(o.id) % 628) / 100 + i * 0.7);
+            return (tag ? { ...fr, scoreAnim: tag } : fr) as any;
+          }
+        }
         const cfg = moOf(o);
         const units = o.sym && cfg.in === 'bubble' ? Math.max(1, countSymbolAnimationBeats(o.text || '')) : 1;
         const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
@@ -13061,6 +13080,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'draw' }) } : {}),
                     // 樂譜 3～6：預設進場果凍ll、常駐波浪
                     ...(scoreCanRandom(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: 'score-seq', idle: 'grid-wave' }) } : {}),
+                    // 花式排列：每一種自己的預設動畫（見 utils/fancyMotion）
+                    ...(fancyMotionCfg(it.kind) ? { mo: startMotion({ type: 'shape', kind: it.kind }, { in: fancyMotionCfg(it.kind)!.defIn, idle: fancyMotionCfg(it.kind)!.defIdle }) } : {}),
                     // 樂譜 1、2（照原圖描的）：預設沒有進場動畫
                     ...(isScoreKind(it.kind) && !scoreCanRandom(it.kind) ? { mo: { ...MO_DEFAULT, in: 'none' } } : {}),
                     // 星芒：常駐動畫預設是縮放；有光環的預設旋轉

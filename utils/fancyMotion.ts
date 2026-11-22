@@ -1,0 +1,162 @@
+/* 花式排列「一顆一顆分開動」的動畫：測試網站的動畫實驗室與兩個拼圖共用這一份。
+   App 裡的做法：動畫進度接在圖形 kind 後面（'fancy-halo!fx-in-seq:0.4200'，見 scoreKindOf），
+   畫路徑時（fancyPathD）照這個進度把每一顆星星搬、轉、縮放。一條路徑只能是一個顏色，
+   所以「透明度」在 App 裡換成「大小」（變淡＝變小一點），完全透明就不畫。 */
+import type { FancyStar } from './fancyShapes';
+
+/* ───────── 每一顆的樣子 ───────── */
+export type U = { dx: number; dy: number; s: number; rot: number; a: number; sx?: number };
+export const ID: U = { dx: 0, dy: 0, s: 1, rot: 0, a: 1 };
+export type Ctx = { stars: FancyStar[]; w: number; h: number; cx: number; cy: number; maxD: number; order: number[]; rank: number[] };
+export const clamp = (v: number) => Math.max(0, Math.min(1, v));
+const cubic = (p: number) => 1 - Math.pow(1 - clamp(p), 3);
+export const smooth = (p: number) => { p = clamp(p); return p * p * (3 - 2 * p); };
+const backOut = (p: number) => { p = clamp(p); const c = 1.9; return 1 + (c + 1) * Math.pow(p - 1, 3) + c * Math.pow(p - 1, 2); };
+const hash = (i: number) => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+/** 每顆在 0～1 的總進度裡，從 start 開始、花 span 長度跑完自己的那一段 */
+const local = (p: number, start: number, span: number) => clamp((p - start) / Math.max(1e-6, span));
+
+export type Anim = { id: string; name: string; kind: 'entry' | 'idle'; fresh: boolean; desc: string;
+  /** 新設計的：每一顆各自的樣子 */
+  unit?: (i: number, c: Ctx, p: number, t: number) => U;
+  /** App 原本就有的：整組一起動（照 App 的 objectMotionFrame） */
+  group?: string };
+
+export const ENTRY_DUR = 1.8, HOLD = 1.3, GAP = 0.35;   // 測試網站預覽用的節奏
+
+/* ───────── 新設計：進場 ───────── */
+export const ENTRIES: Anim[] = [
+  { id: 'fx-in-seq', name: '點亮', kind: 'entry', fresh: true, desc: '照排列的順序一顆接一顆彈出來，每顆帶一點回彈',
+    unit: (i, c, p) => { const q = local(p, c.rank[i] / Math.max(1, c.stars.length) * 0.72, 0.28); return { ...ID, s: backOut(q), a: clamp(q * 3) }; } },
+  { id: 'fx-in-burst', name: '綻放', kind: 'entry', fresh: true, desc: '全部從中心飛出去，離中心越遠的越晚到、邊飛邊轉',
+    unit: (i, c, p) => {
+      const st = c.stars[i], d = Math.hypot(st.x - c.cx, st.y - c.cy) / c.maxD, q = cubic(local(p, d * 0.35, 0.65));
+      return { dx: (c.cx - st.x) * (1 - q), dy: (c.cy - st.y) * (1 - q), s: 0.3 + 0.7 * q, rot: (1 - q) * 2.4, a: clamp(q * 2.5) };
+    } },
+  { id: 'fx-in-gather', name: '聚合', kind: 'entry', fresh: true, desc: '從四面八方散落的位置慢慢收攏、歸位',
+    unit: (i, c, p) => {
+      const ang = hash(i) * Math.PI * 2, dist = (0.45 + hash(i + 9) * 0.5) * Math.max(c.w, c.h), q = smooth(local(p, hash(i + 3) * 0.25, 0.75));
+      return { dx: Math.cos(ang) * dist * (1 - q), dy: Math.sin(ang) * dist * (1 - q), s: 1, rot: (1 - q) * (hash(i + 5) - 0.5) * 6, a: clamp(q * 1.6) };
+    } },
+  { id: 'fx-in-sweep', name: '掃光', kind: 'entry', fresh: true, desc: '一道光從左上掃到右下，掃到的星星先亮一下再縮回原本大小',
+    unit: (i, c, p) => {
+      const st = c.stars[i], k = (st.x / c.w + st.y / c.h) / 2, q = local(p, k * 0.75, 0.25);
+      const s = q <= 0 ? 0 : q < 0.55 ? 1.45 * cubic(q / 0.55) : 1.45 - 0.45 * smooth((q - 0.55) / 0.45);
+      return { ...ID, s, a: clamp(q * 4) };
+    } },
+  { id: 'fx-in-rain', name: '星雨', kind: 'entry', fresh: true, desc: '每顆從上方落下、著地彈一下，左到右錯開',
+    unit: (i, c, p) => {
+      const st = c.stars[i], q = local(p, (st.x / c.w) * 0.45 + hash(i) * 0.15, 0.4);
+      const fall = q < 0.7 ? 1 - Math.pow(q / 0.7, 2) : 0, b = q >= 0.7 ? Math.sin((q - 0.7) / 0.3 * Math.PI) * 0.08 : 0;
+      return { dx: 0, dy: -(fall * (st.y + c.h * 0.4)) - b * c.h, s: 1, rot: 0, a: clamp(q * 5) };
+    } },
+  { id: 'fx-in-twirl', name: '旋開', kind: 'entry', fresh: true, desc: '每顆在自己的位置從小轉一圈開出來，隨機錯開',
+    unit: (i, c, p) => { const q = local(p, hash(i) * 0.55, 0.45), e = backOut(q); return { ...ID, s: e, rot: (1 - cubic(q)) * Math.PI * 2, a: clamp(q * 3) }; } },
+  { id: 'fx-in-vortex', name: '漩渦', kind: 'entry', fresh: true, desc: '每顆從中心沿著螺旋轉出去、一圈半後剛好落到自己的位置',
+    unit: (i, c, p) => {
+      const st = c.stars[i], q = cubic(local(p, c.rank[i] / Math.max(1, c.stars.length) * 0.45, 0.55));
+      const R0 = Math.hypot(st.x - c.cx, st.y - c.cy), A0 = Math.atan2(st.y - c.cy, st.x - c.cx), ang = A0 - (1 - q) * Math.PI * 3, rr = R0 * q;
+      return { dx: c.cx + Math.cos(ang) * rr - st.x, dy: c.cy + Math.sin(ang) * rr - st.y, s: 0.4 + 0.6 * q, rot: (1 - q) * 3, a: clamp(q * 2.5) };
+    } },
+  { id: 'fx-in-flip', name: '翻牌', kind: 'entry', fresh: true, desc: '像翻牌一樣，一顆接一顆從側面翻正，由左上翻到右下',
+    unit: (i, c, p) => {
+      const st = c.stars[i], k = (st.x / c.w + st.y / c.h) / 2, q = local(p, k * 0.6, 0.4);
+      return { ...ID, sx: q <= 0 ? 0 : Math.max(0.04, Math.abs(Math.cos((1 - smooth(q)) * Math.PI))), s: 0.85 + 0.15 * smooth(q), a: q <= 0 ? 0 : q < 0.5 ? 0.55 : 1 };
+    } },
+];
+/* ───────── 新設計：常駐 ───────── */
+export const IDLES: Anim[] = [
+  { id: 'fx-idle-twinkle', name: '閃爍', kind: 'idle', fresh: true, desc: '每顆各自隨機地忽明忽暗、微微縮放，像真的星星',
+    unit: (i, _c, _p, t) => { const w = Math.pow((Math.sin(t * (1.6 + hash(i) * 1.8) + hash(i + 7) * 6.28) + 1) / 2, 3); return { ...ID, s: 1 - w * 0.28, a: 1 - w * 0.65 }; } },
+  { id: 'fx-idle-ripple', name: '漣漪', kind: 'idle', fresh: true, desc: '一圈一圈從中心往外擴散，經過的星星放大一下',
+    unit: (i, c, _p, t) => { const st = c.stars[i], d = Math.hypot(st.x - c.cx, st.y - c.cy) / c.maxD; const w = Math.pow(Math.max(0, Math.cos((d * 1.6 - t * 0.9) * Math.PI * 2)), 6); return { ...ID, s: 1 + w * 0.32 }; } },
+  { id: 'fx-idle-shimmer', name: '流光', kind: 'idle', fresh: true, desc: '一道斜斜的光帶反覆掃過，掃到的星星變大變亮',
+    unit: (i, c, _p, t) => { const st = c.stars[i], k = (st.x / c.w + st.y / c.h) / 2, ph = ((t * 0.42) % 1.6) - 0.3; const w = Math.exp(-Math.pow((k - ph) / 0.09, 2)); return { ...ID, s: 1 + w * 0.35, rot: w * 0.5, a: 0.72 + w * 0.28 }; } },
+  { id: 'fx-idle-spin', name: '自轉', kind: 'idle', fresh: true, desc: '每顆在原地自轉，大小不同轉速不同、方向也不一樣',
+    unit: (i, _c, _p, t) => ({ ...ID, rot: t * (0.6 + hash(i) * 1.1) * (hash(i + 2) > 0.5 ? 1 : -1) }) },
+  { id: 'fx-idle-drift', name: '浮游', kind: 'idle', fresh: true, desc: '每顆各自輕輕繞小圈，大的動得多、小的動得少，有前後層次',
+    unit: (i, c, _p, t) => { const st = c.stars[i], amp = st.r * 0.55, w = t * (0.8 + hash(i) * 0.5) + hash(i + 4) * 6.28; return { ...ID, dx: Math.cos(w) * amp, dy: Math.sin(w * 1.3) * amp }; } },
+  { id: 'fx-idle-chase', name: '跑燈', kind: 'idle', fresh: true, desc: '一個亮點照排列順序一直往前跑，像跑馬燈',
+    unit: (i, c, _p, t) => { const n = c.stars.length, pos = (t * Math.max(4, n * 0.35)) % n; let d = Math.abs(c.rank[i] - pos); d = Math.min(d, n - d); const w = Math.exp(-d * d / 3); return { ...ID, s: 1 + w * 0.3, a: 0.45 + w * 0.55 }; } },
+  { id: 'fx-idle-sway', name: '擺盪', kind: 'idle', fresh: true, desc: '每顆像掛著一樣左右擺，彼此錯開（吊飾最適合）',
+    unit: (i, c, _p, t) => { const st = c.stars[i], len = Math.max(st.y, c.h * 0.25), ang = Math.sin(t * 1.6 + hash(i) * 6.28) * 0.12; return { ...ID, dx: Math.sin(ang) * len, dy: (Math.cos(ang) - 1) * len, rot: ang }; } },
+  { id: 'fx-idle-wave', name: '起伏', kind: 'idle', fresh: true, desc: '星星的大小像波浪一樣從左往右一波一波推過去，位置不動',
+    unit: (i, c, _p, t) => { const st = c.stars[i]; return { ...ID, s: 1 + Math.sin((st.x / c.w) * Math.PI * 2 - t * 2.4) * 0.22 }; } },
+  { id: 'fx-idle-firefly', name: '螢光', kind: 'idle', fresh: true, desc: '平常是暗暗的，每顆不定時突然亮起來一下再慢慢暗回去，像螢火蟲',
+    unit: (i, _c, _p, t) => {
+      const per = 2.6 + hash(i) * 2.2, q = ((t + hash(i + 11) * per) % per) / per;
+      const w = q < 0.08 ? q / 0.08 : Math.exp(-(q - 0.08) * 7);
+      return { ...ID, s: 0.88 + w * 0.3, a: 0.4 + w * 0.6 };
+    } },
+];
+
+export const ctxOf = (stars: FancyStar[], w: number, h: number): Ctx => {
+  const cx = w / 2, cy = h / 2, maxD = Math.max(1, ...stars.map(s => Math.hypot(s.x - cx, s.y - cy)));
+  const order = stars.map((_, i) => i), rank = order.slice();
+  return { stars, w, h, cx, cy, maxD, order, rank };
+};
+const BY_ID = new Map([...ENTRIES, ...IDLES].map(a => [a.id, a]));
+export const isFancyMotion = (id?: string) => !!id && BY_ID.has(id);
+export const fancyMotionName = (id: string) => BY_ID.get(id)?.name ?? id;
+/** 某個動畫在某個進度（進場 0～1）／時間（常駐，秒）時，每一顆的樣子 */
+export const fancyMotionUnits = (id: string, c: Ctx, v: number): U[] | null => {
+  const a = BY_ID.get(id); if (!a?.unit) return null;
+  return c.stars.map((_, i) => a.kind === 'entry' ? a.unit!(i, c, v, 0) : a.unit!(i, c, 1, v));
+};
+
+/* ───────── 每一種花式排列在 App 裡的動畫（照測試網站選的結果） ─────────
+   del＝原有的哪些不要；add＝加入哪些新設計的；def＝新增時預設 */
+type KCfg = { delIn: string[]; delIdle: string[]; addIn: string[]; addIdle: string[]; defIn: string; defIdle: string };
+const K = (delIn: string, delIdle: string, addIn: string, addIdle: string, defIn: string, defIdle: string): KCfg => ({
+  delIn: delIn ? delIn.split(' ') : [], delIdle: delIdle ? delIdle.split(' ') : [],
+  addIn: addIn.split(' ').map(x => 'fx-in-' + x), addIdle: addIdle.split(' ').map(x => 'fx-idle-' + x), defIn: 'fx-in-' + defIn, defIdle: 'fx-idle-' + defIdle,
+});
+export const FANCY_MOTION_CFG: Record<string, KCfg> = {
+  'fancy-halo': K('fade spin flip spring', 'grid-wave spin orbit jitter', 'seq sweep twirl flip', 'twinkle shimmer spin chase', 'seq', 'twinkle'),
+  'fancy-concentric': K('spring', '', 'seq burst sweep twirl flip', 'twinkle shimmer spin wave', 'sweep', 'shimmer'),
+  'fancy-spiral': K('', '', 'seq sweep twirl flip', 'twinkle ripple shimmer chase', 'seq', 'twinkle'),
+  'fancy-ring': K('', '', 'seq sweep twirl flip', 'twinkle shimmer spin chase', 'sweep', 'twinkle'),
+  'fancy-swirl3': K('spring', '', 'seq burst sweep vortex flip', 'twinkle ripple shimmer spin', 'seq', 'twinkle'),
+  'fancy-radial': K('', 'jitter', 'seq sweep twirl flip', 'twinkle shimmer spin chase firefly', 'seq', 'twinkle'),
+  'fancy-grid': K('spring', 'spin wobble', 'seq burst sweep twirl flip', 'twinkle ripple shimmer spin chase wave', 'sweep', 'shimmer'),
+  'fancy-polka': K('spring', 'spin wobble', 'seq burst sweep twirl flip', 'twinkle ripple shimmer spin wave', 'sweep', 'shimmer'),
+  'fancy-boxrandom': K('spring', 'spin wobble', 'seq burst sweep twirl flip', 'twinkle ripple shimmer spin drift chase', 'seq', 'twinkle'),
+  'fancy-wand': K('', 'spin wobble', 'seq sweep twirl flip', 'twinkle ripple shimmer spin drift chase', 'seq', 'twinkle'),
+  'fancy-mobile': K('pop spin flip spring', 'breathe spin wobble orbit jitter', 'seq rain twirl flip', 'twinkle shimmer spin chase sway', 'rain', 'twinkle'),
+  'fancy-constellation': K('', 'spin', 'seq sweep twirl flip', 'twinkle ripple spin drift chase', 'seq', 'twinkle'),
+};
+const baseKind = (k?: string) => String(k || '').split('!')[0].split('@')[0];
+export const fancyMotionCfg = (kind?: string): KCfg | undefined => FANCY_MOTION_CFG[baseKind(kind)];
+/** 面板上的進場／常駐清單：原有的（拿掉不要的）在前、新設計的在後 */
+export const fancyMotionLists = <T extends { id: string }>(kind: string | undefined, inKinds: T[], idleKinds: T[], make: (id: string, name: string) => T) => {
+  const c = fancyMotionCfg(kind); if (!c) return null;
+  return {
+    kinds: [...inKinds.filter(k => !c.delIn.includes(k.id)), ...c.addIn.map(id => make(id, fancyMotionName(id)))],
+    idleKinds: [...idleKinds.filter(k => !c.delIdle.includes(k.id)), ...c.addIdle.map(id => make(id, fancyMotionName(id)))],
+  };
+};
+/** 動畫設定 → 這一格要接在 kind 後面的字串（沒有就 undefined） */
+export const fancyMotionTag = (cfg: { in: string; idle: string; delay: number; dur: number; speed: number }, time: number): string | undefined => {
+  const fxIn = isFancyMotion(cfg.in), fxIdle = isFancyMotion(cfg.idle);
+  if (!fxIn && !fxIdle) return undefined;
+  const introEnd = cfg.in === 'none' ? 0 : cfg.delay + Math.max(0.01, fancyEntryDur(cfg.dur));
+  if (cfg.in !== 'none' && time < introEnd) {
+    if (!fxIn) return undefined;
+    const p = Math.max(0, Math.min(1, (time - cfg.delay) / Math.max(0.01, fancyEntryDur(cfg.dur))));
+    return `${cfg.in}:${(Math.round(p * 600) / 600).toFixed(4)}`;
+  }
+  if (!fxIdle) return undefined;
+  const t = Math.max(0, time - introEnd) * Math.max(0.05, cfg.speed) / 0.84;
+  return `${cfg.idle}:${(Math.round(t * 120) / 120).toFixed(4)}`;
+};
+/** 新設計的進場是一顆一顆錯開的，需要比整組進場長一點才看得清楚（預設速度約 1.8 秒） */
+export const fancyEntryDur = (dur: number) => dur * 2.8;
+/** 整組動畫（App 原本的那套）要用的設定與時間：新設計的那一半換成「無／靜止」交給 fancyMotionTag 畫；
+    進場是新設計的話，原本的常駐要等新進場跑完才開始 */
+export const fancyGroupMotion = <C extends { in: string; idle: string; delay: number; dur: number }>(cfg: C, time: number): { cfg: C; time: number } => {
+  const fxIn = isFancyMotion(cfg.in), fxIdle = isFancyMotion(cfg.idle);
+  let c = cfg, t = time;
+  if (fxIn) { const end = cfg.delay + Math.max(0.01, fancyEntryDur(cfg.dur)); c = { ...c, in: 'none', delay: 0 }; t = Math.max(0, time - end); }
+  if (fxIdle) c = { ...c, idle: 'none' };
+  return { cfg: c, time: t };
+};

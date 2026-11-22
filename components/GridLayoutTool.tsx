@@ -1,4 +1,5 @@
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
+import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
 import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { swatchEdge } from '../utils/swatch';
@@ -6736,12 +6737,12 @@ const GlCanvasHost: React.FC<{ canvas: HTMLCanvasElement; style: React.CSSProper
 
 
 /** 樂譜的形狀種類字串：帶上果凍ll 進度與波浪（波浪直接套在每個點上，不切片） */
-const classicScoreKd = (image: FloatingImage, scoreAnim?: number, wave?: [number, number]) =>
+const classicScoreKd = (image: FloatingImage, scoreAnim?: number | string, wave?: [number, number]) =>
   scoreKindOf(image.shape!, (image as any).scoreSeed, scoreAnim, wave);
 const classicScenePaths = new Map<string, Path2D>();
 const classicScenePathDs = new Map<string, string>();
 /** 預覽用的路徑字串（線條類畫外描邊的線頭時要用） */
-const classicScenePathD = (image: FloatingImage, ringReveal = 1, scoreAnim?: number, wave?: [number, number]) => {
+const classicScenePathD = (image: FloatingImage, ringReveal = 1, scoreAnim?: number | string, wave?: [number, number]) => {
   const kd = classicScoreKd(image, scoreAnim, wave);
   const key = [kd, image.width, image.height, image.shapeTextureBaseW,
     image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, image.shapeLineGap, ringReveal].join('|');
@@ -6755,7 +6756,7 @@ const classicScenePathD = (image: FloatingImage, ringReveal = 1, scoreAnim?: num
   }
   return d;
 };
-const classicScenePath = (image: FloatingImage, ringReveal = 1, scoreAnim?: number, wave?: [number, number]) => {
+const classicScenePath = (image: FloatingImage, ringReveal = 1, scoreAnim?: number | string, wave?: [number, number]) => {
   // 波浪每一格都不同：不進快取（免得把別的路徑擠掉）
   if (wave) return new Path2D(classicScenePathD(image, ringReveal, scoreAnim, wave));
   const key = [classicScoreKd(image, scoreAnim), image.width, image.height, image.shapeTextureBaseW,
@@ -7146,6 +7147,8 @@ export const makeShapeItem = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem
       ...(pola ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, idle: 'wobble', ...idleDefaults('wobble', { shape: true }) } } : {}),
       // 樂譜 3～6：預設進場果凍ll、常駐波浪
       ...(scoreCanRandom(it.kind) ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, in: 'score-seq', dur: motionDurationFromUi(50), idle: 'grid-wave', ...idleDefaults('grid-wave', { shape: true }) } } : {}),
+      // 花式排列：每一種自己的預設動畫（見 utils/fancyMotion）
+      ...(fancyMotionCfg(it.kind) ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, in: fancyMotionCfg(it.kind)!.defIn, idle: fancyMotionCfg(it.kind)!.defIdle, ...idleDefaults(fancyMotionCfg(it.kind)!.defIdle, { shape: true }) } } : {}),
       // 樂譜 1、2（照原圖描的）：預設沒有進場動畫
       ...(isScoreKind(it.kind) && !scoreCanRandom(it.kind) ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, in: 'none' } } : {}),
       // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
@@ -11990,6 +11993,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return (hash % 628) / 100 + index * .7;
   }, []);
   const frameForItem = useCallback((item: FloatingImage, index: number, time: number): ObjectMotionFrame => {
+    /* 花式排列一顆一顆分開動的動畫（見 utils/fancyMotion）：整組那一套照跑，每顆星星的樣子接在 kind 後面 */
+    if (isFancyKind(item.shape) && (isFancyMotion(item.mo?.in) || isFancyMotion(item.mo?.idle))) {
+      const c0 = timedMotionConfig(item), tag = fancyMotionTag(c0 as any, time), g = fancyGroupMotion(c0 as any, time);
+      const fr = objectMotionFrame(g.cfg as any, g.time, motionPhase(item, index));
+      return (tag ? { ...fr, scoreAnim: tag } : fr) as any;
+    }
     /* 樂譜果凍ll：整張不動（常駐照跑），進度交給樂譜自己畫：前四成畫五線譜，後面音符一顆一顆彈出來 */
     if (item.mo?.in === 'score-seq' && scoreCanRandom(item.shape)) {
       // 滑桿 50 的實際速度＝舊刻度 90（看起來仍是 50）
@@ -12167,11 +12176,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     let end = 1.2;
     motionItems.forEach((item) => {
       const cfg = timedMotionConfig(item);
-      if (cfg.in !== 'none') end = Math.max(end, cfg.delay + Math.max(.01, cfg.dur));
+      if (cfg.in !== 'none') end = Math.max(end, cfg.delay + Math.max(.01, isFancyMotion(cfg.in) ? fancyEntryDur(cfg.dur) : cfg.dur));
     });
     motionLayouts.forEach((lay) => {
       const cfg = layoutMotionCfg(lay);
-      if (cfg.in !== 'none') end = Math.max(end, cfg.delay + Math.max(.01, cfg.dur));
+      if (cfg.in !== 'none') end = Math.max(end, cfg.delay + Math.max(.01, isFancyMotion(cfg.in) ? fancyEntryDur(cfg.dur) : cfg.dur));
     });
     return end + Math.max(0, motionHold);
   }, [motionItems, motionLayouts, layoutMotionCfg, motionHold, pageVideoItems.length, pageVideoDuration, timedMotionConfig]);
@@ -17438,7 +17447,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         })));
         const motionEnd = animated.reduce((end, job) => {
           const cfg = job.motionItem ? timedMotionConfig(job.motionItem) : layoutMotionCfg(job.layoutMotion!);
-          return cfg.in === 'none' ? end : Math.max(end, cfg.delay + Math.max(.01, cfg.dur));
+          return cfg.in === 'none' ? end : Math.max(end, cfg.delay + Math.max(.01, isFancyMotion(cfg.in) ? fancyEntryDur(cfg.dur) : cfg.dur));
         }, 1.2) + Math.max(0, pages[pageIdx]?.motionHold ?? 8);
         const dur = vids.length
           ? Math.min(15, Math.max(...vids.map(v => (isFinite(v.duration) && v.duration > 0 ? v.duration : 3))))
@@ -19967,12 +19976,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     ? baseIdle.map(([id, name]) => id === 'spin' ? ['image-breathe', '呼吸'] as const : [id, name] as const)
                     : baseIdle.map(([id, name]) => id === 'spin' && target?.shape === 'grid-orbits' ? ['signal', '信號'] as const : [id, name] as const);
               const labTarget = target?.sym ? 'symbol' : isTextTarget ? 'text' : target?.shape ? 'shape' : null;
-              const introKinds: readonly (readonly [string, string])[] = isTextTarget
+              const introKinds0: readonly (readonly [string, string])[] = isTextTarget
                 ? [['none','無'],['bounce','彈跳'],['fade','淡入l'],['lab-T-E03','淡入ll'],
                    ['rise','升起'],['drop','落下'],['pop','果凍l'],['lab-T-E07','果凍ll']] as const
                 : [...(target?.sym ? legacyIntroKinds.filter(([id]) => !['spin','flip','fade'].includes(id)) : legacyIntroKinds),
                    ...(labTarget ? selectedKinds(labTarget, 'entry').filter(x => !(scoreCanRandom(target?.shape) && x.name === '旋轉')).map(x => [x.id,x.name] as const) : [])];
-              const idleKinds: readonly (readonly [string, string])[] = isTextTarget
+              const idleKinds0: readonly (readonly [string, string])[] = isTextTarget
                 ? [...legacyIdleKinds.filter(([id]) => id === 'none' || id === 'float'),
                    ['grid-wave','波浪l'] as const, ['lab-T-L15','波浪ll'] as const,
                    ...legacyIdleKinds.filter(([id]) => !['none','float','grid-wave','breathe','symbol-breathe2'].includes(id)),
@@ -19980,6 +19989,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                    ['breathe','縮放l'],['symbol-breathe2','縮放ll']] as const
                 : [...(target?.sym ? legacyIdleKinds.filter(([id]) => ['none','float','breathe','symbol-breathe2'].includes(id)) : legacyIdleKinds),
                    ...(labTarget ? selectedKinds(labTarget, 'idle').map(x => [x.id,x.name] as const) : [])];
+              /* 花式排列：每一種自己的動畫清單（拿掉不要的原有動畫、加上一顆一顆分開動的新動畫，見 utils/fancyMotion） */
+              const fancyLists = isFancyKind(target?.shape) ? fancyMotionLists(target?.shape, introKinds0.map(([id, name]) => ({ id, name })), idleKinds0.map(([id, name]) => ({ id, name })), (id, name) => ({ id, name })) : null;
+              const introKinds: readonly (readonly [string, string])[] = fancyLists ? fancyLists.kinds.map(k => [k.id, k.name] as const) : introKinds0;
+              const idleKinds: readonly (readonly [string, string])[] = fancyLists ? fancyLists.idleKinds.map(k => [k.id, k.name] as const) : idleKinds0;
               /* 面板滑桿：設定 ↔ 0～100 數字（JSX 與換動畫共用同一份） */
               const ciUi = (m: typeof cfg) => ({
                 inSpeed: m.in === 'bubble' && target?.sym

@@ -1,3 +1,4 @@
+import { fancyMotionUnits, ctxOf as motionCtxOf } from './fancyMotion';
 /* 「花式排列」分類：很多個小單位（預設星星）排成一個整體的貼圖。
    每一種都在一個設計框（DW×DH）裡算出每一顆的位置、大小，吊飾與星座另外有細線，
    最後合成「一條路徑」——所以填色、描邊、發光、紋理、動畫、四邊拉伸都直接沿用一般圖形的那一套，
@@ -14,7 +15,7 @@ export const FANCY_KINDS = [
 /** 從選單拿掉的舊排列：已經放在作品裡的照樣畫得出來 */
 const FANCY_LEGACY = ['fancy-heart', 'fancy-wave', 'fancy-scatter', 'fancy-arch', 'fancy-starstar', 'fancy-crescent', 'fancy-flower', 'fancy-galaxy', 'fancy-meteor', 'fancy-sparkle'];
 /** kind 可以帶隨機種子：'fancy-mobile@123'（吊飾的「隨機排列」，見 scoreKindOf） */
-const baseOf = (k: string) => k.split('@')[0];
+const baseOf = (k: string) => k.split('!')[0].split('@')[0];   // '!' 後面是動畫進度（見 utils/fancyMotion）
 export const isFancyKind = (k?: string) => !!k && k.startsWith('fancy-') && ((FANCY_KINDS as readonly string[]).includes(baseOf(k)) || FANCY_LEGACY.includes(baseOf(k)));
 /** 可以按「隨機排列」的花式排列 */
 export const fancyCanRandom = (k?: string) => !!k && (baseOf(k) === 'fancy-mobile' || baseOf(k) === 'fancy-boxrandom');
@@ -427,9 +428,36 @@ export const fancyStarD = (cx: number, cy: number, R: number, rot = 0) => {
   }
   return out.join(' ') + ' Z';
 };
-const fancyPathD0 = (kind: string, w: number, h: number, gbw: number, gbh: number) => {
-  const { stars, lines } = fancyGeometry(kind, w, h, gbw, gbh);
-  const out: string[] = stars.map(u => fancyStarD(u.x, u.y, u.r, u.rot));
+const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: number) => {
+  const [kind, tag] = kind0.split('!');
+  const { stars, lines: lines0 } = fancyGeometry(kind, w, h, gbw, gbh);
+  let lines = lines0, out: string[];
+  /* 一顆一顆分開動的動畫：照進度搬每顆星星；透明度換成大小（一條路徑只有一個顏色），完全透明就不畫 */
+  const [aid, av] = (tag || '').split(':');
+  const us = tag ? fancyMotionUnits(aid, motionCtxOf(stars, w, h), Number(av) || 0) : null;
+  if (us) {
+    out = [];
+    stars.forEach((st, i) => {
+      const u = us[i]; if (!u || u.a <= 0.02 || u.s <= 0.005) return;
+      const R = st.r * u.s * (u.a < 1 ? 0.3 + 0.7 * u.a : 1), X = st.x + u.dx, Y = st.y + u.dy;
+      if (u.sx !== undefined && u.sx !== 1) {
+        const pts: string[] = [];
+        for (let k = 0; k < 10; k++) {
+          const t = -Math.PI / 2 + st.rot + u.rot + k * Math.PI / 5, m = k % 2 ? 0.42 : 1;
+          pts.push(`${k ? 'L' : 'M'} ${r3(X + Math.cos(t) * R * m * u.sx)} ${r3(Y + Math.sin(t) * R * m)}`);
+        }
+        out.push(pts.join(' ') + ' Z');
+      } else out.push(fancyStarD(X, Y, R, st.rot + u.rot));
+    });
+    // 線：兩端貼著哪顆星星就跟著那顆動；那顆還沒出現（很淡）就先不畫
+    const near = (x: number, y: number) => { let b = -1, bd = 1e9; stars.forEach((st, i) => { const d = Math.hypot(st.x - x, st.y - y) - st.r * 2.2; if (d < bd) { bd = d; b = i; } }); return bd <= 0 ? b : -1; };
+    lines = [];
+    for (const l of lines0) {
+      const ia = near(l.x1, l.y1), ib = near(l.x2, l.y2), A = ia >= 0 ? us[ia] : null, B = ib >= 0 ? us[ib] : null;
+      if ((A && A.a < 0.5) || (B && B.a < 0.5)) continue;
+      lines.push({ ...l, x1: l.x1 + (A?.dx || 0), y1: l.y1 + (A?.dy || 0), x2: l.x2 + (B?.dx || 0), y2: l.y2 + (B?.dy || 0) });
+    }
+  } else out = stars.map(u => fancyStarD(u.x, u.y, u.r, u.rot));
   for (const l of lines) {
     const { x1, y1, x2, y2 } = l;
     const len = Math.hypot(x2 - x1, y2 - y1) || 1, hw = l.w / 2;

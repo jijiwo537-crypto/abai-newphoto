@@ -1,3 +1,4 @@
+import { fancyGroupMotion } from './fancyMotion';
 import { selectedFrame, type SelectedFrame } from './selectedAnimations';
 export type ObjectMotionFrame = {
   lab?: SelectedFrame;
@@ -125,7 +126,9 @@ export const objectMotionFrame = (
   time: number,
   phase = 0,
 ): ObjectMotionFrame => {
-  const cfg = objectMotionOf(value);
+  const cfg0 = objectMotionOf(value);
+  // 花式排列一顆一顆分開動的動畫不是整組動畫：整組這邊當作「無／靜止」（見 utils/fancyMotion）
+  const fg = fancyGroupMotion(cfg0, time), cfg = fg.cfg; time = fg.time;
   const lab = selectedFrame(cfg, time, phase);
   if (lab) return { ...flat, lab };
   const hasIntro = cfg.in !== 'none';

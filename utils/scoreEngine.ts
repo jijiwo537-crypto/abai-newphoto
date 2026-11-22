@@ -87,12 +87,16 @@ export const isScoreKind = (k?: string) => !!k && baseOf(k) in SPECS;
 /** 可以按「隨機音符」的樂譜（照原圖描的那兩個固定不變） */
 export const scoreCanRandom = (kind?: string) => isScoreKind(kind) && !(baseOf(kind!) in SCORE_TRACED);
 /** 畫圖時用的 kind：有隨機種子就接 '@種子'；果凍II 進場中再接 '#進度'（0～1，量化成 1/240 讓快取有用） */
-export const scoreKindOf = (kind: string, seed?: number, anim?: number, wave?: [number, number]) => {
-  // 花式排列的吊飾也用同一個種子（「隨機排列」）
-  if (kind === 'fancy-mobile' || kind === 'fancy-boxrandom' || kind === 'fancy-grid' || kind === 'fancy-polka' || kind === 'fancy-wand') return seed ? `${kind}@${seed}` : kind;
+export const scoreKindOf = (kind: string, seed?: number, anim?: number | string, wave?: [number, number]) => {
+  // 花式排列的吊飾也用同一個種子（「隨機排列」）；一顆一顆分開動的動畫進度接在 '!' 後面（見 utils/fancyMotion）
+  if (kind.startsWith('fancy-')) {
+    const k = (kind === 'fancy-mobile' || kind === 'fancy-boxrandom' || kind === 'fancy-grid' || kind === 'fancy-polka' || kind === 'fancy-wand') && seed ? `${kind}@${seed}` : kind;
+    return typeof anim === 'string' ? `${k}!${anim}` : k;
+  }
   if (!isScoreKind(kind)) return kind;
+  const an = typeof anim === 'number' ? anim : undefined;
   let k = baseOf(kind) + (seed && scoreCanRandom(kind) ? `@${seed}` : '');
-  if (anim !== undefined && anim < 1 && scoreCanRandom(kind)) k += `#${(Math.round(Math.max(0, anim) * 240) / 240).toFixed(4)}`;
+  if (an !== undefined && an < 1 && scoreCanRandom(kind)) k += `#${(Math.round(Math.max(0, an) * 240) / 240).toFixed(4)}`;
   // 波浪：相位、振幅（振幅＝框高的幾成）
   if (wave && wave[1] > 1e-5) k += `~${wave[0].toFixed(4)},${wave[1].toFixed(4)}`;
   return k;
