@@ -1,4 +1,4 @@
-import { fancyMotionUnits, ctxOf as motionCtxOf } from './fancyMotion';
+import { fancyMotionUnitsTag, ctxOf as motionCtxOf } from './fancyMotion';
 /* 「花式排列」分類：很多個小單位（預設星星）排成一個整體的貼圖。
    每一種都在一個設計框（DW×DH）裡算出每一顆的位置、大小，吊飾與星座另外有細線，
    最後合成「一條路徑」——所以填色、描邊、發光、紋理、動畫、四邊拉伸都直接沿用一般圖形的那一套，
@@ -463,9 +463,8 @@ export const fancyAlphaMask = (kind0: string, w: number, h: number, gbw = w, gbh
   const [kind, tag] = kind0.split('!');
   let out: { c: HTMLCanvasElement; pad: number } | null = null;
   if (tag) {
-    const [aid, rest = ''] = tag.split(':');
     const { stars } = fancyGeometry(kind, w, h, gbw, gbh);
-    const us = fancyMotionUnits(aid, motionCtxOf(stars, w, h, kind), rest.split('|')[0]);
+    const us = fancyMotionUnitsTag(tag.split('|')[0], motionCtxOf(stars, w, h, kind));
     if (us && us.some(u => u.a < 0.995)) {
       const pad = fancyMaskPad(w, h), W = w + pad * 2, H = h + pad * 2;
       const N = 40, cw = W >= H ? N : Math.max(8, Math.round(N * W / H)), ch = H >= W ? N : Math.max(8, Math.round(N * H / W));
@@ -531,9 +530,8 @@ const alphaLevel = (a: number) => Math.max(1, Math.min(8, Math.round(a * 8))) / 
     kind 是帶動畫進度的那一串（'fancy-halo!fx-idle-twinkle:1.2345'） */
 export const fancyAlphaLevels = (kind0: string, w: number, h: number, gbw = w, gbh = h): number[] | null => {
   const [kind, tag] = kind0.split('!'); if (!tag || !(w > 0) || !(h > 0)) return null;
-  const [aid, rest = ''] = tag.split(':');
   const { stars } = fancyGeometry(kind, w, h, gbw, gbh);
-  const us = fancyMotionUnits(aid, motionCtxOf(stars, w, h, kind), rest.split('|')[0]);
+  const us = fancyMotionUnitsTag(tag.split('|')[0], motionCtxOf(stars, w, h, kind));
   if (!us) return null;
   const set = new Set<number>();
   for (const u of us) if (u.a > 0.02 && u.s > 0.005) set.add(alphaLevel(u.a));
@@ -546,8 +544,8 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
   const { stars, lines: lines0 } = fancyGeometry(kind, w, h, gbw, gbh);
   let lines = lines0, out: string[];
   /* 一顆一顆分開動的動畫：照進度搬每顆星星；透明度換成大小（一條路徑只有一個顏色），完全透明就不畫 */
-  const [aid, rest = ''] = (tag || '').split(':'), [av, lv] = rest.split('|');
-  const us = tag ? fancyMotionUnits(aid, motionCtxOf(stars, w, h, kind), av) : null;
+  const aid = (tag || '').split(':')[0], lv = (tag || '').split('|')[1];   // '|' 後面是畫法（m＝遮罩）
+  const us = tag ? fancyMotionUnitsTag(tag.split('|')[0], motionCtxOf(stars, w, h, kind)) : null;
   /* '|透明度層'：畫的那一端把星星照透明度分層，一層一層用自己的透明度畫（見 fancyAlphaLevels）。
      這一次只畫屬於這一層的星星，大小照原本的；沒有分層的地方（舊的畫法）才把「變淡」換成「變小」 */
   const masked = lv === 'm', layer = lv && !masked ? Number(lv) : undefined, clipBox = aid === 'fx-in-rain' || (kind.split('@')[0] === 'fancy-mobile' && aid === 'fx-in-seq');

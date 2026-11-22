@@ -126,7 +126,7 @@ const wakeOrder = (entry: string, i: number, c: Ctx) => {
     default: return hash(i + 17);   // 聚合、旋開、淡入：隨機
   }
 };
-const WAKE_SPREAD = 0.75, WAKE_EACH = 0.65;   // 秒：最後一顆比第一顆晚多少醒、每顆花多久醒完
+const WAKE_SPREAD = 0.55, WAKE_EACH = 0.6;   // 秒：最後一顆比第一顆晚多少醒、每顆花多久醒完
 /** 常駐的幅度（1＝預設）乘上去：把「跟靜止不一樣的那部分」放大縮小 */
 const scaleU = (u: U, k: number): U => k === 1 ? u : {
   dx: u.dx * k, dy: u.dy * k, rot: u.rot * k, s: Math.max(0, 1 + (u.s - 1) * k), a: Math.max(0, Math.min(1, 1 + (u.a - 1) * k)),
@@ -164,7 +164,8 @@ export const fancyMotionUnits = (id: string, c: Ctx, v: string | number): U[] | 
   if (a.kind === 'entry') { const p = Number(v) || 0; return c.stars.map((_, i) => a.unit!(i, c, p, 0)); }
   const [t = 0, amp = 1, real = 999, entry = ''] = String(v).split(',').map((x, k) => k === 3 ? x : Number(x)) as [number, number, number, string];
   return c.stars.map((_, i) => {
-    const wake = real >= 99 ? 1 : smooth((real - wakeOrder(entry, i, c) * WAKE_SPREAD) / WAKE_EACH);
+    /* 醒來用「一開始就有速度」的曲線（先快後慢），不是慢慢起步 —— 慢慢起步看起來就像停了一下 */
+    const wx = clamp((real - wakeOrder(entry, i, c) * WAKE_SPREAD) / WAKE_EACH), wake = real >= 99 ? 1 : 1 - (1 - wx) * (1 - wx);
     if (id === 'fx-idle-shimmer') {
       // 流光：光帶一開始就全力掃（第一道立刻出發）；只有「其他星星稍微變暗」慢慢淡進來，不會一下子暗掉
       const u = scaleU(a.unit!(i, c, 1, t), amp);
@@ -174,6 +175,21 @@ export const fancyMotionUnits = (id: string, c: Ctx, v: string | number): U[] | 
   });
 };
 
+/** 整串動畫字串（'id:值'，進場和常駐重疊時是 '進場:值;常駐:值'）→ 每顆的樣子（兩個疊起來） */
+export const fancyMotionUnitsTag = (tag: string, c: Ctx): U[] | null => {
+  let out: U[] | null = null;
+  for (const part of tag.split(';')) {
+    const [id, v = ''] = part.split(':'), us = fancyMotionUnits(id, c, v);
+    if (!us) continue;
+    out = !out ? us : out.map((a, i) => {
+      const b = us[i];
+      return { dx: a.dx + b.dx, dy: a.dy + b.dy, rot: a.rot + b.rot, s: a.s * b.s, a: a.a * b.a,
+        ...(a.sx !== undefined || b.sx !== undefined ? { sx: (a.sx ?? 1) * (b.sx ?? 1) } : {}),
+        ...(a.line !== undefined || b.line !== undefined ? { line: Math.min(a.line ?? 1, b.line ?? 1) } : {}) };
+    });
+  }
+  return out;
+};
 /* ───────── 每一種花式排列在 App 裡的動畫（照測試網站選的結果） ─────────
    del＝原有的哪些不要；add＝加入哪些新設計的；def＝新增時預設 */
 type KCfg = { delIn: string[]; delIdle: string[]; addIn: string[]; addIdle: string[]; defIn: string; defIdle: string };
@@ -213,16 +229,23 @@ const effSpeed = (id: string, speed: number) => id === 'fx-idle-wave' ? (20 + wa
 export const fancyMotionTag = (cfg: { in: string; idle: string; delay: number; dur: number; speed: number; amp?: number }, time: number): string | undefined => {
   const fxIn = isFancyMotion(cfg.in), fxIdle = isFancyMotion(cfg.idle);
   if (!fxIn && !fxIdle) return undefined;
-  const introEnd = cfg.in === 'none' ? 0 : cfg.delay + Math.max(0.01, fxIn ? fancyEntryDur(cfg.dur) : cfg.dur);
+  const inDur = Math.max(0.01, fxIn ? fancyEntryDur(cfg.dur) : cfg.dur);
+  const introEnd = cfg.in === 'none' ? 0 : cfg.delay + inDur;
+  /* 常駐不等進場整個結束才開始：最後一段（進場的四成、最多 0.6 秒）就先開始醒，
+     已經到位的星星直接接著動，中間不會停一下 */
+  const idleStart = cfg.in === 'none' ? 0 : introEnd - Math.min(0.6, inDur * 0.4);
+  const r = (x: number) => (Math.round(x * 120) / 120).toFixed(4);
+  const idleTag = () => {
+    const real = Math.max(0, time - idleStart), t = real * effSpeed(cfg.idle, cfg.speed);
+    return `${cfg.idle}:${r(t)},${effAmp(cfg.idle, cfg.amp ?? 50).toFixed(3)},${real >= 3 ? 999 : r(real)},${cfg.in}`;
+  };
   if (cfg.in !== 'none' && time < introEnd) {
-    if (!fxIn) return undefined;
-    const p = Math.max(0, Math.min(1, (time - cfg.delay) / Math.max(0.01, fancyEntryDur(cfg.dur))));
-    return `${cfg.in}:${(Math.round(p * 600) / 600).toFixed(4)}`;
+    const inTag = fxIn ? `${cfg.in}:${(Math.round(Math.max(0, Math.min(1, (time - cfg.delay) / inDur)) * 600) / 600).toFixed(4)}` : '';
+    const both = fxIdle && time >= idleStart ? (inTag ? `${inTag};${idleTag()}` : idleTag()) : inTag;
+    return both || undefined;
   }
   if (!fxIdle) return undefined;
-  const real = Math.max(0, time - introEnd), t = real * effSpeed(cfg.idle, cfg.speed);
-  const r = (x: number) => (Math.round(x * 120) / 120).toFixed(4);
-  return `${cfg.idle}:${r(t)},${effAmp(cfg.idle, cfg.amp ?? 50).toFixed(3)},${real >= 3 ? 999 : r(real)},${cfg.in}`;
+  return idleTag();
 };
 /** 新設計的進場是一顆一顆錯開的，需要比整組進場長一點才看得清楚（預設速度約 1.8 秒） */
 export const fancyEntryDur = (dur: number) => dur * 2.8;
