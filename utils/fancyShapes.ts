@@ -9,10 +9,10 @@ type Design = { dw: number; dh: number; units: Unit[]; lines?: Line[] };
 
 export const FANCY_KINDS = [
   'fancy-radial', 'fancy-ring', 'fancy-spiral', 'fancy-halo', 'fancy-mobile', 'fancy-swirl3',
-  'fancy-meteor', 'fancy-grid', 'fancy-boxrandom', 'fancy-concentric', 'fancy-constellation',
+  'fancy-grid', 'fancy-polka', 'fancy-boxrandom', 'fancy-concentric', 'fancy-constellation', 'fancy-sparkle',
 ] as const;
 /** 從選單拿掉的舊排列：已經放在作品裡的照樣畫得出來 */
-const FANCY_LEGACY = ['fancy-heart', 'fancy-wave', 'fancy-scatter', 'fancy-arch', 'fancy-starstar', 'fancy-crescent', 'fancy-flower', 'fancy-galaxy'];
+const FANCY_LEGACY = ['fancy-heart', 'fancy-wave', 'fancy-scatter', 'fancy-arch', 'fancy-starstar', 'fancy-crescent', 'fancy-flower', 'fancy-galaxy', 'fancy-meteor'];
 /** kind 可以帶隨機種子：'fancy-mobile@123'（吊飾的「隨機排列」，見 scoreKindOf） */
 const baseOf = (k: string) => k.split('@')[0];
 export const isFancyKind = (k?: string) => !!k && k.startsWith('fancy-') && ((FANCY_KINDS as readonly string[]).includes(baseOf(k)) || FANCY_LEGACY.includes(baseOf(k)));
@@ -211,6 +211,22 @@ const designs: Record<string, (seed: number) => Design> = {
       const r = 2 + R() * 3.6, x = r + R() * (100 - r * 2), y = r + R() * (100 - r * 2);
       if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.35)) units.push({ x, y, r });
     }
+    return { dw: 100, dh: 100, units };
+  },
+  /* 點點紋理排法：跟紋理裡的點點一樣，一排一排交錯半格（波卡圓點），大小一樣 */
+  'fancy-polka': () => {
+    const units: Unit[] = [];
+    for (let j = 0; j < 6; j++) {
+      const odd = j % 2 === 1, n = odd ? 5 : 6;
+      for (let i = 0; i < n; i++) units.push({ x: 8 + i * 16.8 + (odd ? 8.4 : 0), y: 8 + j * 16.8, r: 4 });
+    }
+    return { dw: 100, dh: 100, units };
+  },
+  /* 十字閃光：中心一顆大星，上下左右四條長光芒、斜角四條短光芒，越外越小 */
+  'fancy-sparkle': () => {
+    const units: Unit[] = [{ x: 50, y: 50, r: 7 }];
+    for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2; [13, 22, 30, 37, 43].forEach((d, j) => units.push({ x: 50 + Math.cos(a) * d, y: 50 + Math.sin(a) * d, r: 4.6 - j * 0.8 })); }
+    for (let k = 0; k < 4; k++) { const a = Math.PI / 4 + k * Math.PI / 2; [12, 19, 25].forEach((d, j) => units.push({ x: 50 + Math.cos(a) * d, y: 50 + Math.sin(a) * d, r: 3 - j * 0.7 })); }
     return { dw: 100, dh: 100, units };
   },
   /* 10 同心圓：三圈，外圈的比較大 */

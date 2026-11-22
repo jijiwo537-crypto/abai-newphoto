@@ -903,6 +903,9 @@ export const shapeMiterLimit = (w: number, h: number, base = 4) =>
 const shapeInkCache = new Map<string, { x: number; y: number; w: number; h: number } | null>();
 export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: number } | null => {
   if (!(o?.w > 0) || !(o?.h > 0) || typeof document === 'undefined' || SPECIAL_LINE_KINDS.has(o.kind) || GRID_SHAPE_KINDS.has(o.kind)) return null;
+  /* 可以「隨機排列」的花式排列：選中框固定是整個貼圖框（不貼著星星量）——
+     每次隨機星星位置都不同，貼著量的話框會一直變形、變大變小 */
+  if (fancyCanRandom(o.kind)) return { x: 0, y: 0, w: o.w, h: o.h };
   if (isBackdropMask(o.kind)) {
     // 遮罩是解析式裁切：方形／圓形就是整個框，星形是那十個頂點的外接框。
     if (maskGeometry(o.kind, o) !== 'star') return { x: 0, y: 0, w: o.w, h: o.h };
