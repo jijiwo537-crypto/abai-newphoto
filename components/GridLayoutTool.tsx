@@ -1,5 +1,5 @@
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
-import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
+import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { swatchEdge } from '../utils/swatch';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
@@ -8392,8 +8392,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     // 膠囊、圓角方對話框：不能擠壓到比原本的寬、高還小（可以拉大）
     const noShrink = NO_SHRINK_KINDS.has(image.shape || '');
     const minW = noShrink ? (image.shapeTextureBaseW || d.width) : 24, minH = noShrink ? (image.shapeTextureBaseH || d.height) : 24;
+    const fq = (v: number, hz: boolean) => isFancyKind(image.shape) ? fancyStretchSize(scoreKindOf(image.shape!, (image as any).scoreSeed), v, image.shapeTextureBaseW || d.width, image.shapeTextureBaseH || d.height, hz) : v;
     if (horizontal) {
-      const width = Math.max(minW, d.width + signed);
+      const width = Math.max(minW, fq(d.width + signed, true));
       /* x/y 儲存的是未縮放物件盒的左上角；pointer 位移在上面也已經除過
          image.scale。這裡若再乘一次 scale，固定的對邊便會在擠壓時被推走，
          而且倍率愈大偏得愈遠。中心只移動基礎尺寸差的一半，顯示、框與文字
@@ -8405,7 +8406,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       if (onStretchMove) onStretchMove(next, d.side, d);
       else onChange(next);
     } else {
-      const height = Math.max(minH, d.height + signed);
+      const height = Math.max(minH, fq(d.height + signed, false));
       const shift = (height - d.height) / 2 * (d.side === 'b' ? 1 : -1);
       const cx = oldCx - shift * Math.sin(d.rotationRad), cy = oldCy + shift * Math.cos(d.rotationRad);
       const width = image.shape === 'grid-orbits' ? height : d.width;
@@ -19606,7 +19607,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           const horizontal = side === 'l' || side === 'r';
                           const oldCx = base.x + base.width / 2;
                           const oldCy = base.y + base.height / 2;
-                          const geometryAt = (size: number) => {
+                          const geometryAt = (size0: number) => {
+                            const size = isFancyKind(fImg.shape) ? fancyStretchSize(scoreKindOf(fImg.shape!, (fImg as any).scoreSeed), size0, fImg.shapeTextureBaseW || base.width, fImg.shapeTextureBaseH || base.height, horizontal) : size0;
                             if (horizontal) {
                               const width = Math.max(24, size);
                               const shift = (width - base.width) / 2 * (side === 'r' ? 1 : -1);

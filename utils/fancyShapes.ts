@@ -26,13 +26,13 @@ export const fancyFixedFrame = (k?: string) => fancyCanRandom(k) || fancyHasPara
 export const FANCY_PARAM: Record<string, { count: [number, number, number]; gap: number }> = {
   'fancy-grid': { count: [2, 10, 5], gap: 54 },        // 每排幾顆
   'fancy-polka': { count: [2, 10, 6], gap: 52 },       // 幾排
-  'fancy-boxrandom': { count: [5, 60, 20], gap: 35 },  // 總共幾顆
+  'fancy-boxrandom': { count: [5, 60, 30], gap: 35 },  // 總共幾顆
 };
 /** 數量、間距、隨機種子打包成一個數字（畫圖時接在 kind 後面，見 scoreKindOf） */
 /* 方形隨機另外還有「隨機大小」「大小」兩個值：用第二種打包格式（加 2e15 當記號），
    舊格式（沒有這兩個值）的作品照舊畫，不會變 */
 const V2 = 2e15;
-export const FANCY_SIZE_DEFAULT = 50, FANCY_JIT_DEFAULT = 0;
+export const FANCY_SIZE_DEFAULT = 20, FANCY_JIT_DEFAULT = 0;
 export const fancyPack = (seed: number, count: number, gap: number, extra?: { jit: number; size: number }) => extra
   ? V2 + (Math.max(0, Math.floor(seed)) % 1e6) * 1e9 + Math.round(extra.size) * 1e6 + Math.round(count) * 1000 + Math.round(extra.jit)
   : (Math.max(0, Math.floor(seed)) % 1e6) * 1e6 + Math.round(count) * 1000 + Math.round(gap);
@@ -45,7 +45,7 @@ const unpack = (kind: string, v: number): { seed: number; count: number; gap: nu
   if (!v || !def) return { seed: v, count: def?.count[2] ?? 0, gap: def?.gap ?? 0, v2: !v };
   const count = Math.floor(v / 1000) % 1000, gap = v % 1000;
   // 舊版「隨機排列」存的是單純的亂數種子（沒有打包數量、間距）：照舊當種子用，數量間距用預設
-  if (count < def.count[0] || count > def.count[1] || gap > 100) return { seed: v, count: def.count[2], gap: def.gap };
+  if (count < def.count[0] || count > def.count[1] || gap > 100) return { seed: v, count: kind === 'fancy-boxrandom' ? 20 : def.count[2], gap: def.gap };   // 舊作品：方形隨機當時預設 20 顆
   return { seed: Math.floor(v / 1e6), count, gap };
 };
 
@@ -110,8 +110,11 @@ const designs: Record<string, (seed: number) => Design> = {
   'fancy-halo': () => {
     const cy = 22, rx = 44, ry = 13;
     // 沿橢圓等距離排（照角度平均取的話，左右兩端會擠在一起）；後半圈（上面）比較小
-    const units = evenOnCurve(t => [50 + Math.cos(t) * rx, cy + Math.sin(t) * ry], 16, 0.25)
-      .map(({ p, t }) => ({ x: p[0], y: p[1], r: 2.1 + ((Math.sin(t) + 1) / 2) * 3.8 }));
+    /* 沿橢圓等距離排，而且左右對稱（左右兩端各剛好一顆、上下正中間各一顆）：
+       以前起點偏了四分之一格，左右兩邊排得不一樣，看起來歪歪的。
+       前面（下）大、後面（上）小，大小照前後深度平滑過渡 —— 有透視感 */
+    const units: Unit[] = evenOnCurve(t => [50 + Math.cos(t) * rx, cy + Math.sin(t) * ry], 16, 0)
+      .map(({ p, t }) => ({ x: p[0], y: p[1], r: 1.9 + ((Math.sin(t) + 1) / 2) * 3.8 }));
     return { dw: 100, dh: 44, units };
   },
   /* 5 吊飾：隨機高度、彼此不在同一條垂直線上，每顆一條細線吊到最上面 */
@@ -284,7 +287,7 @@ const designs: Record<string, (seed: number) => Design> = {
   },
   /* 魔法棒：在固定的方框裡，從左上到右下散落星星，左上少、越往右下越多、散開的範圍越大 */
   'fancy-wand': () => {
-    const R = rng(97), units: Unit[] = [];
+    const R = rng(41), units: Unit[] = [];
     let guard = 0;
     while (units.length < 42 && guard++ < 6000) {
       const t = Math.sqrt(R());                                   // 越往右下越多（密度跟 t 成正比）
@@ -351,6 +354,16 @@ const latticeDesign = (kind: string, w: number, h: number, gbw: number, gbh: num
     for (let i = 0; i < n; i++) units.push({ x: ox + cell * (i + 0.5) + (odd ? cell / 2 : 0), y: oy + cell * (j + 0.5), r });
   }
   return { dw: w, dh: h, units };
+};
+/** 四邊擠壓時框的大小一格一格跳（一格＝一顆星的位置）：方形平均、點點紋理、吊飾（左右）。
+    框剛好是整數格，星星就不會在拖的時候一直滑來滑去（抖），只會在邊上多一顆、少一顆 */
+export const fancyStretchSize = (kind: string | undefined, size: number, bw: number, bh: number, horizontal: boolean) => {
+  const b = (kind || '').split('@')[0];
+  let cell = 0;
+  if (b === 'fancy-grid' || b === 'fancy-polka') cell = Math.min(bw, bh) / Math.max(1, unpack(b, Number((kind || '').split('@')[1]) || 0).count);
+  else if (b === 'fancy-mobile' && horizontal) cell = bw / 7;
+  if (!(cell > 0)) return size;
+  return Math.max(cell, Math.round(size / cell) * cell);
 };
 /* 拖拉擠壓時同一個尺寸會被要好幾次（畫本體、描邊、發光…）：結果記起來，不重算 */
 const pathMemo = new Map<string, string>();

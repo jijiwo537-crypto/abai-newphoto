@@ -40,7 +40,7 @@ import { createPortal, flushSync } from 'react-dom';
 import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
-import { fancyCanRandom, isFancyKind, fancyHasParams, fancyPack, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
+import { fancyCanRandom, isFancyKind, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
@@ -5305,6 +5305,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     activePointers.current.clear();
     objStretchRef.current = { pointerId: e.pointerId, id: o.id, side, startX: e.clientX, startY: e.clientY,
       completeRings: o.kind === 'grid-orbits',
+      // 花式排列：框一格一格跳（見 fancyStretchSize）
+      fancyKind: o.type === 'shape' && isFancyKind(o.kind) ? scoreKindOf(o.kind, o.scoreSeed) : undefined,
+      tbw: o.textureBaseW || o.w, tbh: o.textureBaseH || o.h,
       x: o.x, y: o.y, w: o.w, h: o.h, rot: (o.rot || 0) * Math.PI / 180, k: cssK,
       // 膠囊、圓角方對話框：不能擠壓到比原本（沒擠壓過的框）的寬、高還小
       minW: o.type === 'shape' && NO_SHRINK_KINDS.has(o.kind) ? (o.textureBaseW || o.w) : 24,
@@ -5327,7 +5330,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const horizontal = d.side === 'l' || d.side === 'r';
     const signed = horizontal ? (d.side === 'r' ? lx : -lx) : (d.side === 'b' ? ly : -ly);
     const oldCx = d.x + d.w / 2, oldCy = d.y + d.h / 2;
-    const geometryAt = (size: number) => {
+    const geometryAt = (size0: number) => {
+      const size = d.fancyKind ? fancyStretchSize(d.fancyKind, size0, d.tbw, d.tbh, horizontal) : size0;
       if (horizontal) {
         const w = Math.max(d.minW ?? 24, size);
         const shift = (w - d.w) / 2 * (d.side === 'r' ? 1 : -1);
