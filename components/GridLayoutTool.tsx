@@ -448,9 +448,9 @@ const floatingAlphaKnown = (item: Partial<FloatingImage> | null | undefined): bo
 /** 目前一頁的大小（跟浮動物件同一套座標）。父元件每次 render 更新 */
 const classicPage = { w: 0, h: 0 };
 const floatingScaleFloor = (item: Partial<FloatingImage> | null | undefined): number => {
-  /* 文字：最小只到框高＝頁面短邊的 2.5%（不能一直縮下去）；已經比這個小的不強迫放大，只是不能再縮 */
+  /* 文字：最小只到框高＝頁面短邊的 6%（不能一直縮下去）；已經比這個小的不強迫放大，只是不能再縮 */
   if (item && item.text !== undefined && classicPage.w && classicPage.h && item.height) {
-    const need = Math.min(classicPage.w, classicPage.h) * 0.025 / item.height;
+    const need = Math.min(classicPage.w, classicPage.h) * 0.06 / item.height;
     return Math.min(Math.max(MIN_FLOATING_SCALE, need), item.scale ?? need);
   }
   return item && item.text === undefined && !item.shape
