@@ -99,9 +99,39 @@ const BY_ID = new Map([...ENTRIES, ...IDLES].map(a => [a.id, a]));
 export const isFancyMotion = (id?: string) => !!id && BY_ID.has(id);
 export const fancyMotionName = (id: string) => BY_ID.get(id)?.name ?? id;
 /** 某個動畫在某個進度（進場 0～1）／時間（常駐，秒）時，每一顆的樣子 */
-export const fancyMotionUnits = (id: string, c: Ctx, v: number): U[] | null => {
+/* ───────── 進場 → 常駐的過渡 ─────────
+   常駐不是一瞬間整組開始動，而是每顆星星照「它進場時出現的順序」一顆一顆醒過來：
+   點亮、漩渦照排列順序；綻放、果凍、無從中心往外；掃光、翻牌、流星從左上往右下；星雨、翻轉由左到右；
+   升起從下往上、落下從上往下；聚合、旋開、淡入隨機。每顆醒來時常駐的幅度從 0 慢慢長到滿，不會跳。 */
+const wakeOrder = (entry: string, i: number, c: Ctx) => {
+  const st = c.stars[i], n = Math.max(1, c.stars.length - 1);
+  const diag = (st.x / c.w + st.y / c.h) / 2, dist = Math.hypot(st.x - c.cx, st.y - c.cy) / c.maxD;
+  switch (entry) {
+    case 'fx-in-seq': case 'fx-in-vortex': return c.rank[i] / n;
+    case 'fx-in-burst': case 'pop': case 'none': case '': return dist;
+    case 'fx-in-sweep': case 'fx-in-flip': case 'spring': return diag;
+    case 'fx-in-rain': case 'flip': return st.x / c.w;
+    case 'rise': return 1 - st.y / c.h;
+    case 'drop': return st.y / c.h;
+    case 'spin': return (Math.atan2(st.y - c.cy, st.x - c.cx) / (Math.PI * 2) + 1.25) % 1;
+    default: return hash(i + 17);   // 聚合、旋開、淡入：隨機
+  }
+};
+const WAKE_SPREAD = 0.75, WAKE_EACH = 0.65;   // 秒：最後一顆比第一顆晚多少醒、每顆花多久醒完
+/** 常駐的幅度（1＝預設）乘上去：把「跟靜止不一樣的那部分」放大縮小 */
+const scaleU = (u: U, k: number): U => k === 1 ? u : {
+  dx: u.dx * k, dy: u.dy * k, rot: u.rot * k, s: Math.max(0, 1 + (u.s - 1) * k), a: Math.max(0, Math.min(1, 1 + (u.a - 1) * k)),
+  ...(u.sx !== undefined ? { sx: 1 + (u.sx - 1) * k } : {}),
+};
+/** v：進場是進度（0～1）；常駐是「時間,幅度,真實秒數,進場是哪個」（見 fancyMotionTag） */
+export const fancyMotionUnits = (id: string, c: Ctx, v: string | number): U[] | null => {
   const a = BY_ID.get(id); if (!a?.unit) return null;
-  return c.stars.map((_, i) => a.kind === 'entry' ? a.unit!(i, c, v, 0) : a.unit!(i, c, 1, v));
+  if (a.kind === 'entry') { const p = Number(v) || 0; return c.stars.map((_, i) => a.unit!(i, c, p, 0)); }
+  const [t = 0, amp = 1, real = 999, entry = ''] = String(v).split(',').map((x, k) => k === 3 ? x : Number(x)) as [number, number, number, string];
+  return c.stars.map((_, i) => {
+    const wake = real >= 99 ? 1 : smooth((real - wakeOrder(entry, i, c) * WAKE_SPREAD) / WAKE_EACH);
+    return scaleU(a.unit!(i, c, 1, t), amp * wake);
+  });
 };
 
 /* ───────── 每一種花式排列在 App 裡的動畫（照測試網站選的結果） ─────────
@@ -136,18 +166,23 @@ export const fancyMotionLists = <T extends { id: string }>(kind: string | undefi
   };
 };
 /** 動畫設定 → 這一格要接在 kind 後面的字串（沒有就 undefined） */
-export const fancyMotionTag = (cfg: { in: string; idle: string; delay: number; dur: number; speed: number }, time: number): string | undefined => {
+/* 起伏：滑桿 50＝原本的 100、滑桿 100＝原本的 150（幅度、速度都是）；其他常駐照原本的刻度（幅度 50、速度 40 是預設） */
+const waveOldUi = (ui: number) => ui <= 50 ? ui * 2 : ui + 50;
+const effAmp = (id: string, amp: number) => id === 'fx-idle-wave' ? waveOldUi(amp) / 50 : amp / 50;
+const effSpeed = (id: string, speed: number) => id === 'fx-idle-wave' ? (20 + waveOldUi((speed * 100 - 20) / 1.6) * 1.6) / 100 / 0.84 : Math.max(0.05, speed) / 0.84;
+export const fancyMotionTag = (cfg: { in: string; idle: string; delay: number; dur: number; speed: number; amp?: number }, time: number): string | undefined => {
   const fxIn = isFancyMotion(cfg.in), fxIdle = isFancyMotion(cfg.idle);
   if (!fxIn && !fxIdle) return undefined;
-  const introEnd = cfg.in === 'none' ? 0 : cfg.delay + Math.max(0.01, fancyEntryDur(cfg.dur));
+  const introEnd = cfg.in === 'none' ? 0 : cfg.delay + Math.max(0.01, fxIn ? fancyEntryDur(cfg.dur) : cfg.dur);
   if (cfg.in !== 'none' && time < introEnd) {
     if (!fxIn) return undefined;
     const p = Math.max(0, Math.min(1, (time - cfg.delay) / Math.max(0.01, fancyEntryDur(cfg.dur))));
     return `${cfg.in}:${(Math.round(p * 600) / 600).toFixed(4)}`;
   }
   if (!fxIdle) return undefined;
-  const t = Math.max(0, time - introEnd) * Math.max(0.05, cfg.speed) / 0.84;
-  return `${cfg.idle}:${(Math.round(t * 120) / 120).toFixed(4)}`;
+  const real = Math.max(0, time - introEnd), t = real * effSpeed(cfg.idle, cfg.speed);
+  const r = (x: number) => (Math.round(x * 120) / 120).toFixed(4);
+  return `${cfg.idle}:${r(t)},${effAmp(cfg.idle, cfg.amp ?? 50).toFixed(3)},${real >= 3 ? 999 : r(real)},${cfg.in}`;
 };
 /** 新設計的進場是一顆一顆錯開的，需要比整組進場長一點才看得清楚（預設速度約 1.8 秒） */
 export const fancyEntryDur = (dur: number) => dur * 2.8;

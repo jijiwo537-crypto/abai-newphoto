@@ -2,6 +2,8 @@
    2026-11 依「動畫預設值調整」網站調好的數值更新。 */
 type IdleTarget = { symbol?: boolean; text?: boolean; image?: boolean; shape?: boolean; grid?: boolean; line?: boolean; glint?: boolean; scatter?: boolean };
 export function idleDefaults(kind: string, target: IdleTarget) {
+  // 花式排列的起伏：滑桿預設都顯示 50（實際是原本的 100，見 utils/fancyMotion）
+  if (kind === 'fx-idle-wave') return { amp: 50, speed: idleSpeedFromUi(50) };
   const S = idleSpeedFromUi;
   // 一般文字（不含符號）
   if (target.text && !target.symbol) {

@@ -436,7 +436,7 @@ export const fancyAlphaLevels = (kind0: string, w: number, h: number, gbw = w, g
   const [kind, tag] = kind0.split('!'); if (!tag || !(w > 0) || !(h > 0)) return null;
   const [aid, rest = ''] = tag.split(':');
   const { stars } = fancyGeometry(kind, w, h, gbw, gbh);
-  const us = fancyMotionUnits(aid, motionCtxOf(stars, w, h), Number(rest.split('|')[0]) || 0);
+  const us = fancyMotionUnits(aid, motionCtxOf(stars, w, h), rest.split('|')[0]);
   if (!us) return null;
   const set = new Set<number>();
   for (const u of us) if (u.a > 0.02 && u.s > 0.005) set.add(alphaLevel(u.a));
@@ -450,7 +450,7 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
   let lines = lines0, out: string[];
   /* 一顆一顆分開動的動畫：照進度搬每顆星星；透明度換成大小（一條路徑只有一個顏色），完全透明就不畫 */
   const [aid, rest = ''] = (tag || '').split(':'), [av, lv] = rest.split('|');
-  const us = tag ? fancyMotionUnits(aid, motionCtxOf(stars, w, h), Number(av) || 0) : null;
+  const us = tag ? fancyMotionUnits(aid, motionCtxOf(stars, w, h), av) : null;
   /* '|透明度層'：畫的那一端把星星照透明度分層，一層一層用自己的透明度畫（見 fancyAlphaLevels）。
      這一次只畫屬於這一層的星星，大小照原本的；沒有分層的地方（舊的畫法）才把「變淡」換成「變小」 */
   const layer = lv ? Number(lv) : undefined;
