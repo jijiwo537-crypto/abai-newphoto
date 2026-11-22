@@ -1702,31 +1702,6 @@ const LiveChrome: React.FC<{ bus: Set<() => void>; render: () => React.ReactNode
   return <>{render()}</>;
 };
 
-/* 文字偵錯面板：每一格讀 window.__textDbg（畫字時寫進去的數值）顯示在左上角 */
-function TextDebugPanel() {
-  const [v, setV] = React.useState<any>(null);
-  React.useEffect(() => {
-    let raf = 0, last = '';
-    const loop = () => { const d = (window as any).__textDbg; const j = d ? JSON.stringify(d) : ''; if (j !== last) { last = j; setV(d); } raf = requestAnimationFrame(loop); };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-  return (
-    <div className="fixed left-2 z-[200] pointer-events-none rounded-lg bg-black/75 px-2 py-1.5 text-[10px] leading-[14px] font-mono text-white/90 whitespace-pre"
-      style={{ top: 'calc(env(safe-area-inset-top, 0px) + 56px)' }}>
-      {v ? [
-        `捏合中 ${v.pinching ? '是' : '否'}   倍數 ${v.k}`,
-        `字級 ${v.size}  排字字級 ${v.pinFont}  fontK ${v.fontK}`,
-        `框 ${v.box}  擠壓 ${v.stretch}`,
-        `置中位移 ${v.shiftX}, ${v.shiftY}`,
-        `筆畫中心離框中心(px) ${v.offPx}`,
-        `量到筆畫 ${v.inkMeasured ? '是' : '否'}  多行/排版 ${v.layout ? '是' : '否'}`,
-        `${v.font}`,
-      ].join('\n') : '選一段文字'}
-    </div>
-  );
-}
-
 export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned, onMotionChange, tunerMotion = null }) => {
   const saveToolDraft: typeof saveToolDraftImpl = (...args) => sandbox ? Promise.resolve() as any : saveToolDraftImpl(...args);
   useKeyboardRecovery();
@@ -2815,9 +2790,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      等真的點出滑桿才長高，而且是帶過場動畫地長。 */
   const [objSliderOpen, setObjSliderOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  /* 文字偵錯（「⋯」選單）：畫出文字框、筆畫範圍與中心，左上角即時顯示數值 */
-  const [textDebug, setTextDebug] = useState(() => { try { return localStorage.getItem('abai-text-debug') === '1'; } catch { return false; } });
-  const textDebugRef = useRef(textDebug); textDebugRef.current = textDebug;
   /* 三個點的選單：點畫面上任何其他地方都要收起來。
      選單自己那塊 fixed inset-0 的遮罩不夠用 —— 它被關在頂欄裡面，而頂欄有
      backdrop-blur，帶 backdrop-filter 的祖先會變成 fixed 的「包含塊」，
@@ -5767,7 +5739,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const alphaObj = pinchedObject?.type === 'image' && !isVideoEl(pinchedObject.img)
         && pinchedObject.img instanceof HTMLImageElement && sourceHasAlpha(pinchedObject.img);
       const alphaMinK = layoutNow ? Math.sqrt(Math.max(1, layoutNow.cw * layoutNow.ch) / 100 / Math.max(1, pin.w0 * pin.h0)) : 0.15;
-      const pinchMin = pinchedObject?.type === 'image' ? (alphaObj ? alphaMinK : absoluteImageMinK) : 0.15;
+      /* 文字：最小只到框高＝畫布短邊的 2.5%（不能捏很多次一直縮下去）；已經比這個小的不強迫放大，只是不能再縮 */
+      const textMinK = pinchedObject?.type === 'text' && layoutNow
+        ? Math.min(1, Math.min(layoutNow.cw, layoutNow.ch) * 0.025 / Math.max(1e-6, pin.h0))
+        : 0.15;
+      const pinchMin = pinchedObject?.type === 'image' ? (alphaObj ? alphaMinK : absoluteImageMinK) : textMinK;
       /* 文字：最大只到比畫布大一點（框的寬、高最多是畫布的 1.2 倍），不能無止境放大；
          已經比這個大的不強迫縮小，只是不能再放大 */
       const textMax = pinchedObject?.type === 'text' && layoutNow
@@ -8572,7 +8548,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            各自吸附像素，字就會抖。手勢期間固定用起手的字級排字，倍率交給
            矩陣；字距與描邊除回同一倍率，放開時畫面完全一致。 */
         const pinFont = !o.sym && objPinchRef.current?.id === o.id && objPinchRef.current.size0 ? objPinchRef.current.size0 : o.size;
-        let dbgSX = 0, dbgSY = 0;   // 文字偵錯：這一格的置中位移
         const fontK = !o.sym ? o.size / Math.max(1e-6, pinFont) : 1;
         if (fontK !== 1) ctx.scale(fontK, fontK);
         ctx.font = `${style}${weight} ${(o.sym ? o.size : pinFont) * s}px ${fontStack(fam)}`; primeCanvasFont(ctx.font);
@@ -8881,7 +8856,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           paintTextBg(ctx, o as any, (o.textStretchBaseW || o.w) / fontK, (o.textStretchBaseH || o.h) / fontK);
           // 字的墨水在框裡上下置中（換字體不會忽上忽下）
           // 左右也照墨水置中（很多字體左右留白不對稱，照前進寬度置中會偏一邊）
-          if (!o.vertical) { dbgSX = textInkShiftX(ctx, o.text || '', spacingShift, o as any); dbgSY = textInkShift(ctx, o.text || '', textLineH); ctx.translate(dbgSX, dbgSY); }
+          if (!o.vertical) ctx.translate(textInkShiftX(ctx, o.text || '', spacingShift, o as any), textInkShift(ctx, o.text || '', textLineH));
           ctx.fillStyle = o.color || '#ffffff';
           paintTextShadow(ctx, o as any, fpx, () => drawText(false));
           // 字卡效果：立體厚度、外描邊（在發光、描邊、字的下面）
@@ -8929,37 +8904,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           paintDecoLines(ctx, o as any, L.w, L.h, pinFont * s);
         }
         if (isMain && !o.sym && editingTextRef.current === o.id) drawEditCaret();
-        /* 文字偵錯（「⋯」選單裡開）：紅框＋紅十字＝程式認定的文字框與中心；青框＝字實際的筆畫範圍；藍十字＝筆畫中心 */
-        if (isMain && textDebugRef.current && !o.sym && (selectedObjRef.current === o.id || objPinchRef.current?.id === o.id)) {
-          const m0 = ctx.getTransform(), px1 = 1 / Math.max(1e-6, Math.hypot(m0.a, m0.b));
-          const bw0 = (o.textStretchBaseW || o.w) / fontK, bh0 = (o.textStretchBaseH || o.h) / fontK;
-          const ink = inkExtent(ctx, o.text || ' ');
-          ctx.save();
-          ctx.shadowColor = 'transparent'; ctx.globalAlpha = 1; ctx.lineWidth = 2 * px1;
-          ctx.translate(-dbgSX, -dbgSY);
-          ctx.strokeStyle = '#ff3030'; ctx.strokeRect(-bw0 / 2, -bh0 / 2, bw0, bh0);
-          ctx.beginPath(); ctx.moveTo(-12 * px1, 0); ctx.lineTo(12 * px1, 0); ctx.moveTo(0, -12 * px1); ctx.lineTo(0, 12 * px1); ctx.stroke();
-          ctx.translate(dbgSX, dbgSY);
-          let inkCx = NaN, inkCy = NaN;
-          if (ink) {
-            const ox = tdx + spacingShift;
-            ctx.strokeStyle = '#00e5ff'; ctx.strokeRect(ox + ink[0], tdy + ink[2], ink[1] - ink[0], ink[3] - ink[2]);
-            inkCx = ox + (ink[0] + ink[1]) / 2; inkCy = tdy + (ink[2] + ink[3]) / 2;
-            ctx.strokeStyle = '#3070ff'; ctx.beginPath();
-            ctx.moveTo(inkCx - 9 * px1, inkCy); ctx.lineTo(inkCx + 9 * px1, inkCy); ctx.moveTo(inkCx, inkCy - 9 * px1); ctx.lineTo(inkCx, inkCy + 9 * px1); ctx.stroke();
-          }
-          ctx.restore();
-          const pin = objPinchRef.current;
-          (window as any).__textDbg = {
-            id: o.id, pinching: pin?.id === o.id, k: pin?.id === o.id && pin.size0 ? +(o.size / pin.size0).toFixed(3) : 1,
-            size: +(o.size || 0).toFixed(2), pinFont: +pinFont.toFixed(2), fontK: +fontK.toFixed(3),
-            box: `${(o.w).toFixed(1)}×${(o.h).toFixed(1)}`, stretch: `${(o.w / Math.max(1, o.textStretchBaseW || o.w)).toFixed(3)}×${(o.h / Math.max(1, o.textStretchBaseH || o.h)).toFixed(3)}`,
-            shiftX: +dbgSX.toFixed(2), shiftY: +dbgSY.toFixed(2),
-            /* 筆畫中心離框中心多遠（換成畫面像素）——縮放時這兩個數字應該一直接近 0 */
-            offPx: Number.isFinite(inkCx) ? `${((dbgSX + inkCx) / px1).toFixed(1)}, ${((dbgSY + inkCy) / px1).toFixed(1)}` : '量不到',
-            inkMeasured: !!ink, layout: !!textLayout, font: ctx.font.slice(0, 48),
-          };
-        }
         (ctx as any).letterSpacing = '0px';
         }
       }
@@ -11918,17 +11862,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       </>
                     )}
                     <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
-                      <span>文字偵錯</span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setTextDebug(v => { try { localStorage.setItem('abai-text-debug', v ? '0' : '1'); } catch { /* */ } return !v; }); }}
-                        role="switch" aria-checked={textDebug}
-                        className={`ml-auto relative shrink-0 w-[38px] h-[22px] rounded-full transition-colors duration-200 ${textDebug ? 'bg-white' : 'bg-[#454547]'}`}
-                      >
-                        <span className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full transition-transform duration-200 ease-out ${textDebug ? 'translate-x-4 bg-black' : 'translate-x-0 bg-white/45'}`} />
-                      </button>
-                    </div>
-                    <div className="h-px bg-white/10" />
-                    <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
                       <span>對齊</span>
                       <button
                         onClick={(e) => {
@@ -12227,7 +12160,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         {/* 直接在畫布上打字：疊一個排版一模一樣的 textarea 在那段字上面。
             位置與大小是用畫布的螢幕矩形換算的（跟下面那排工具列同一套算法），
             角度、字體、字級、字距、顏色全部照抄，所以打字時看到的就是成品。 */}
-        {textDebug && <TextDebugPanel />}
         {imageState && editingTextId && !composeState && (() => {
           const o = objects.find(z => z.id === editingTextId);
           const cvsEl = canvasRef.current;
