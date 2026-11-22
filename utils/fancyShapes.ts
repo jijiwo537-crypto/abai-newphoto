@@ -245,7 +245,7 @@ const designs: Record<string, (seed: number) => Design> = {
       /* 新版：「最佳候選」取點 —— 每顆都從幾個候選位置裡挑離其他星星、離邊最遠的，
          分布比較平均、四個角也有星星，不會一團一團、缺角。
          隨機大小 0＝全部一樣大；大小 50＝原本大小 */
-      const R = rng(seed || 11), units: Unit[] = [];
+      const R = rng(seed || 9001), units: Unit[] = [];   // 預設（圖標）用 9001 這一組
       const cell = 100 / Math.sqrt(Math.max(1, count)), base = cell * 0.24, m = base * 1.2;
       /* 先沿著四條邊排一圈（四個角各一顆、每條邊平均分），看得出是正方形；
          邊上的星星只沿著邊稍微錯開一點，不會離開那條邊 */
