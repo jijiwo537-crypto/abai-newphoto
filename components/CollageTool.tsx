@@ -39,6 +39,7 @@ import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCo
 import { createPortal, flushSync } from 'react-dom';
 import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
+import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
 import { fancyCanRandom, isFancyKind, fancyHasParams, fancyPack, FANCY_PARAM } from '../utils/fancyShapes';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
@@ -61,7 +62,7 @@ import {
   isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter, imgShapePathIn,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, fillTrackSquares, TRACK_SQUARE_KINDS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeTexDisabled, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, ScatterKindsPicker, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, fillTrackSquares, TRACK_SQUARE_KINDS, isOutlineShape, shapeGlowToUi, shapeGlowFromUi, shapeTexOptions, shapeTexDisabled, strokeCapOf, shapeHasNoDash, shapePickerSections, warmGlyphIconsWhenIdle, arrowShaftUi, arrowResize, isArrowShape, strokeWithTexture, stripeCountFor, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, ScatterKindsPicker, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
   shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, measureShapeInk, shapeSupportsStretch, SPECIAL_LINE_KINDS, WAVE_LIKE_KINDS, STITCH_LINE_KINDS, stitchKindD, stitchGapDefault, stitchWidthForGap, GapSlider, PolaroidFormatPicker, PolaroidPhotoControls, LINE_GLOW_CAP, GRID_GLOW_CAP, lineWFromUi, lineWToUi, lineEndsOf, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS, compositeInnerDefault,
@@ -1706,6 +1707,15 @@ const LiveChrome: React.FC<{ bus: Set<() => void>; render: () => React.ReactNode
   return <>{render()}</>;
 };
 
+/* 圖形的紋理顏色跟著圖形顏色走（見 utils/texColor）：手動挑過紋理顏色就照手動的；
+   沒挑過的話，換圖形顏色或剛開紋理時自動算好 */
+const texFollow = (o: any, d: any) => {
+  if (d.dotColor !== undefined || d.stripeA !== undefined) return { ...d, texColorManual: true };
+  if (o?.texColorManual || !(d.color !== undefined || (d.tex && d.tex !== 'none'))) return d;
+  const c = d.color ?? o?.color ?? SHAPE_DEFAULT_COLOR;
+  return { ...d, dotColor: texDotColorFor(c), stripeA: texStripeColorFor(c) };
+};
+
 export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned, onMotionChange, tunerMotion = null }) => {
   const saveToolDraft: typeof saveToolDraftImpl = (...args) => sandbox ? Promise.resolve() as any : saveToolDraftImpl(...args);
   useKeyboardRecovery();
@@ -3161,6 +3171,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 第一個顏色沒挑過的時候就跟著「遮罩當下的顏色」走（存 null 代表沒挑過），
      第二個固定從純白開始。 */
   const [stripeAPick, setStripeAPick] = useState<string | null>(null);
+
   const [stripeB, setStripeB] = useState('#FFFFFF');
   const stripeA = stripeAPick || STRIPE_A;
   const setStripeA = (c: string) => setStripeAPick(c);
@@ -12634,6 +12645,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 : colorPickerTarget === 'stripeB' ? stripeB
                 : dotColor} 
               onChange={c => { if(colorPickerTarget==='mask') {
+                  /* 遮罩的紋理顏色跟著遮罩顏色走（見 utils/texColor）：目前的紋理顏色如果還是預設、或是上一次自動算出來的，
+                     就一起換；手動挑過的不動 */
+                  if (dotColor === '#728C86' || dotColor.toUpperCase() === texDotColorFor(maskColor)) setDotColor(texDotColorFor(c));
+                  if (!stripeAPick || stripeAPick.toUpperCase() === texStripeColorFor(maskColor)) setStripeAPick(texStripeColorFor(c));
                   setMaskColor(c);
                   /* 圖案的光就是遮罩的光暈 —— 換遮罩顏色時發光一起換成同一個色。
                      反過來不成立：單獨挑發光顏色時，遮罩的顏色不會被動到。 */
@@ -12645,11 +12660,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 else if(colorPickerTarget==='linkColor') setLinkColor(c);
                 else if(colorPickerTarget==='shapeObj')
                   // 換圖形顏色時發光也跟著同色（單獨挑發光顏色則不會反向影響）
-                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, color: c, glowColor: c } : o));
+                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, ...texFollow(o, { color: c, glowColor: c }) } : o));
                 else if(colorPickerTarget==='shapeDot')
-                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, dotColor: c } : o));
+                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, dotColor: c, texColorManual: true } : o));
                 else if(colorPickerTarget==='shapeStripeA')
-                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, stripeA: c } : o));
+                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, stripeA: c, texColorManual: true } : o));
                 else if(colorPickerTarget==='shapeStripeB')
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, stripeB: c } : o));
                 else if(colorPickerTarget==='shapeStroke')
@@ -12874,7 +12889,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <div className="flex items-center gap-2 min-w-0">
                       <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px] min-w-0 overflow-x-auto no-scrollbar [&>button]:shrink-0 [&>button]:whitespace-nowrap">
                         {TEX_OPTIONS.map(([t, label]) => (
-                          <button key={t} onClick={() => { setPatternType(t as any); if (t === 'gingham' && patternType !== 'gingham') setStripeN(GINGHAM_N_DEFAULT); }} className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
+                          <button key={t} onClick={() => { setPatternType(t as any); if (t === 'gingham' && patternType !== 'gingham') setStripeN(GINGHAM_N_DEFAULT);
+                            /* 開紋理時紋理顏色還是固定的預設值：照遮罩顏色自動算（見 utils/texColor） */
+                            if (t !== 'none') { if (dotColor === '#728C86') setDotColor(texDotColorFor(maskColor)); if (!stripeAPick) setStripeAPick(texStripeColorFor(maskColor)); } }} className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
                         ))}
                       </div>
                       {/* 顏色格常駐：關閉時也看得到，切換時這一列的寬度不變、不會閃。
@@ -13161,7 +13178,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const sel = regionEditing ? {...regionPhoto,id:`region-photo-${editRegionIndex}`,type:'image',img:decodedRegionPhotos.current.get(regionPhoto.src)}
                   : baseVideoEditing ? baseVideoSel(imageState, bvEdit, baseVidPoster)
                   : objects.find(o => o.id === selectedObj) || null;
-                const patch = (d: any) => {
+                const patch = (d0: any) => {
+                  const d = sel?.type === 'shape' ? texFollow(sel, d0) : d0;
                   if (baseVideoEditing) {
                     const keep: any = {};
                     if ('fx' in d) keep.fx = d.fx;
@@ -13367,17 +13385,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </div>}
                           {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
                           {(fancyCanRandom(sel.kind) || fancyHasParams(sel.kind)) && (() => {
-                            /* 花式排列：隨機排列按鈕、數量、間距 —— 一律排在所有滑桿最上面 */
+                            /* 花式排列：色票（最上面）→ 隨機排列按鈕 → 數量 → 其他滑桿 */
                             const kind = sel.kind as string, P = FANCY_PARAM[kind], ob: any = sel;
                             const cnt = ob.fancyCount ?? P?.count[2], gp = ob.fancyGap ?? P?.gap, sd = ob.fancySeed ?? 0;
                             const set = (seed: number, count: number, gap: number) => patch({ fancySeed: seed, fancyCount: count, fancyGap: gap,
                               scoreSeed: P ? fancyPack(seed, count, gap) : seed } as any);
-                            return <div className="px-2 w-full space-y-4" style={{ order: -1 }}>
+                            return <div className="px-2 w-full space-y-4" style={{ order: 0 }}>
                               {fancyCanRandom(kind) && <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); set(1 + Math.floor(Math.random() * (P ? 999998 : 1e9)), cnt, gp); }}
                                 className={SCORE_RANDOM_BTN}>隨機排列</button>}
                               {P && <>
                                 {shapeSlider('數量', cnt, P.count[0], P.count[1], (v: number) => set(sd, Math.round(v), gp), shapeLive)}
-                                {shapeSlider('間距', gp, 0, 100, (v: number) => set(sd, cnt, Math.round(v)), shapeLive)}
                               </>}
                             </div>;
                           })()}
@@ -13390,8 +13407,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 樂譜不給描邊 */}
                           {!isDoubleContour && !isGrid && !noDecor && !isBlurShape(sel.kind) && !isScoreKind(sel.kind) && <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
-                              {shapeSlider('描邊', Math.round(Math.min(8, sel.strokeW ?? 0) * 12.5), 0, 100,
-                                (v: number) => patch({ strokeW: v / 12.5 }), shapeLive)}
+                              {shapeSlider('描邊', Math.round(Math.min(strokeCapOf(sel.kind), sel.strokeW ?? 0) / strokeCapOf(sel.kind) * 100), 0, 100,
+                                (v: number) => patch({ strokeW: v / 100 * strokeCapOf(sel.kind) }), shapeLive)}
                             </div>
                             <ColorPick compact label="顏色" value={sel.strokeColor || '#000000'}
                               onPick={(c: string) => patch({ strokeColor: c })}

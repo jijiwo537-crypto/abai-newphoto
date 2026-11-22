@@ -308,9 +308,23 @@ export const fancyRatio = (kind: string) => { const d = designOf(kind); return d
 
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 /** 整個排列的路徑（w×h 的框）。小單位維持自己的比例（不會被拉成扁的），排列位置跟著框伸縮 */
-export const fancyPathD = (kind: string, w: number, h: number) => {
+/* 方形平均、點點紋理：跟網格一樣 —— 等比例縮放時整組一起放大縮小；四邊擠壓（基準不變）時星星大小不變、顆數變多變少。
+   gbw/gbh＝「基準」大小（等比例縮放會跟著變，四邊擠壓時不變），星星大小照基準算，顆數照實際寬高排 */
+const latticeDesign = (kind: string, w: number, h: number, gbw: number, gbh: number): Design => {
+  const b = kind.split('@')[0], { count } = unpack(b, Number(kind.split('@')[1]) || 0);
+  const cell = Math.min(gbw, gbh) / Math.max(1, count), r = cell * 0.5 * (1 - (b === 'fancy-polka' ? 0.52 : 0.54));
+  const cols = Math.max(1, Math.round(w / cell)), rows = Math.max(1, Math.round(h / cell));
+  const cw = w / cols, ch = h / rows, units: Unit[] = [];
+  for (let j = 0; j < rows; j++) {
+    const odd = b === 'fancy-polka' && j % 2 === 1, n = odd ? cols - 1 : cols;
+    for (let i = 0; i < n; i++) units.push({ x: cw * (i + 0.5) + (odd ? cw / 2 : 0), y: ch * (j + 0.5), r });
+  }
+  return { dw: w, dh: h, units };
+};
+export const fancyPathD = (kind: string, w: number, h: number, gbw = w, gbh = h) => {
   if (!isFancyKind(kind) || !(w > 0) || !(h > 0)) return '';
-  const d = designOf(kind), sx = w / d.dw, sy = h / d.dh, s = Math.min(sx, sy);
+  const lattice = ['fancy-grid', 'fancy-polka'].includes(kind.split('@')[0]);
+  const d = lattice ? latticeDesign(kind, w, h, Math.max(1, gbw), Math.max(1, gbh)) : designOf(kind), sx = w / d.dw, sy = h / d.dh, s = lattice ? 1 : Math.min(sx, sy);
   const out: string[] = [];
   for (const u of d.units) {
     const cx = u.x * sx, cy = u.y * sy, R = u.r * s, inner = 0.42;

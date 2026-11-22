@@ -1,3 +1,4 @@
+import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
 import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, FANCY_PARAM } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { swatchEdge } from '../utils/swatch';
@@ -1054,7 +1055,7 @@ export const shapePathD = (
   if (isPuzzleKind(kind)) return puzzlePathD(kind, w, h);
   if (isNewBubbleKind(kind)) return bubblePathD(kind, w, h, gridBaseW, gridBaseH);
   if (isScoreKind(kind)) return scorePathD(kind, w, h);
-  if (isFancyKind(kind)) return fancyPathD(kind, w, h);
+  if (isFancyKind(kind)) return fancyPathD(kind, w, h, gridBaseW, gridBaseH);
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
      因此縮放只會把整張網格等比放大；只有變形才會增加重複單位。 */
@@ -1886,7 +1887,10 @@ const texKey = (kind?: string, filled?: boolean, hole?: string) =>
   `${kind || ''}|${filled === false ? 0 : 1}|${kind === 'hole' ? hole || '' : ''}`;
 let noTexKeys: Set<string> | null = null;
 /** 這個圖形是不是被設成「不給調紋理」 */
+/** 描邊上限：花式排列只有一般的 15%（滑桿一樣顯示 0～100） */
+export const strokeCapOf = (kind?: string) => isFancyKind(kind || '') ? 1.2 : 8;
 export const shapeTexDisabled = (kind?: string, filled?: boolean, hole?: string) => {
+  if (isFancyKind(kind || '')) return true; // 花式排列不給紋理
   if (!NO_TEXTURE_SHAPE_IDS.length) return false;
   if (!noTexKeys) noTexKeys = new Set(shapePickerSections().flatMap(([, items]) => items as any[])
     .filter(it => NO_TEXTURE_SHAPE_IDS.includes(it.id)).map(it => texKey(it.kind, it.filled, it.hole)));
@@ -1894,7 +1898,7 @@ export const shapeTexDisabled = (kind?: string, filled?: boolean, hole?: string)
 };
 /** 面板上會不會出現「紋理」那一格（不算 NO_TEXTURE_SHAPE_IDS）—— 跟兩個工具的圖形面板同一組條件 */
 export const shapeTexAvailable = (kind?: string, filled?: boolean, hole?: string) =>
-  !SPECIAL_LINE_KINDS.has(kind || '') && !GRID_SHAPE_KINDS.has(kind || '') && !isBlurShape(kind)
+  !SPECIAL_LINE_KINDS.has(kind || '') && !GRID_SHAPE_KINDS.has(kind || '') && !isBlurShape(kind) && !isFancyKind(kind)
   && !(kind === 'hole' && String(hole || '').startsWith('sb-')) && !isBackdropMask(kind || '')
   && shapeTexOptions(kind, filled === false ? false : !!filled).length > 0;
 /** 選中框（四角實心小方塊）不給虛線 */
@@ -3713,17 +3717,16 @@ export const ShapeEditorPanel: React.FC<{
           </div>}
           {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
           {(fancyCanRandom(layer.shape) || fancyHasParams(layer.shape)) && (() => {
-                            /* 花式排列：隨機排列按鈕、數量、間距 —— 一律排在所有滑桿最上面 */
+                            /* 花式排列：色票（最上面）→ 隨機排列按鈕 → 數量 → 其他滑桿 */
                             const kind = layer.shape as string, P = FANCY_PARAM[kind], ob: any = layer;
                             const cnt = ob.fancyCount ?? P?.count[2], gp = ob.fancyGap ?? P?.gap, sd = ob.fancySeed ?? 0;
                             const set = (seed: number, count: number, gap: number) => onChange({ fancySeed: seed, fancyCount: count, fancyGap: gap,
                               scoreSeed: P ? fancyPack(seed, count, gap) : seed } as any);
-                            return <div className="px-2 w-full space-y-4" style={{ order: -1 }}>
+                            return <div className="px-2 w-full space-y-4" style={{ order: 0 }}>
                               {fancyCanRandom(kind) && <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); set(1 + Math.floor(Math.random() * (P ? 999998 : 1e9)), cnt, gp); }}
                                 className={SCORE_RANDOM_BTN}>隨機排列</button>}
                               {P && <>
                                 {slider('數量', cnt, P.count[0], P.count[1], (v: number) => set(sd, Math.round(v), gp))}
-                                {slider('間距', gp, 0, 100, (v: number) => set(sd, cnt, Math.round(v)))}
                               </>}
                             </div>;
                           })()}
@@ -3736,8 +3739,8 @@ export const ShapeEditorPanel: React.FC<{
           {/* 樂譜不給描邊 */}
           {!isDoubleContour && !isGridShape && !noDecor && !isBlurShape(layer.shape) && !isScoreKind(layer.shape) && <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
-              {slider('描邊', Math.round(Math.min(8, layer.shapeStrokeW ?? 0) * 12.5), 0, 100,
-                v => onChange({ shapeStrokeW: v / 12.5 }))}
+              {slider('描邊', Math.round(Math.min(strokeCapOf(layer.shape), layer.shapeStrokeW ?? 0) / strokeCapOf(layer.shape) * 100), 0, 100,
+                v => onChange({ shapeStrokeW: v / 100 * strokeCapOf(layer.shape) }))}
             </div>
             <ColorPick compact label="顏色" value={layer.shapeStrokeColor || '#000000'}
               colors={STROKE_COLORS}
@@ -15276,7 +15279,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 一個圖層只做這一次（glowInit），之後手動挑過的顏色不會再被蓋掉。
    * 圖片不算在內 —— 它的發光是另一組參數（imgGlow）。
    */
-  const withGlowInit = (layer: FloatingImage, patch: Partial<FloatingImage>): Partial<FloatingImage> => {
+  const withGlowInit = (layer: FloatingImage, patch0: Partial<FloatingImage>): Partial<FloatingImage> => {
+    /* 圖形的紋理顏色跟著圖形顏色走（見 utils/texColor）：手動挑過紋理顏色就照手動的；
+       沒挑過的話，換圖形顏色或剛開紋理時自動算好 */
+    let patch: any = patch0;
+    if (layer.shape) {
+      const p0: any = patch0;
+      if (p0.shapeDotColor !== undefined || p0.shapeStripeA !== undefined) patch = { ...p0, shapeTexColorManual: true };
+      else if (!(layer as any).shapeTexColorManual && (p0.color !== undefined || (p0.shapeTex && p0.shapeTex !== 'none'))) {
+        const c = p0.color ?? layer.color ?? SHAPE_DEFAULT_COLOR;
+        patch = { ...p0, shapeDotColor: texDotColorFor(c), shapeStripeA: texStripeColorFor(c) };
+      }
+    }
+    return withGlowInit0(layer, patch);
+  };
+  const withGlowInit0 = (layer: FloatingImage, patch: Partial<FloatingImage>): Partial<FloatingImage> => {
     /* 符號：換顏色時發光跟著換成同一色（之後一樣能在發光那邊單獨挑別的顏色）；
        第一次打開發光也用符號自己的顏色 */
     /* 符號和文字一樣：換顏色時發光跟著換成同一色（之後一樣能在發光那邊單獨挑別的顏色）。跟創意拼圖同一套 */
