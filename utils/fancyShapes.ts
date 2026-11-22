@@ -19,14 +19,15 @@ export const isFancyKind = (k?: string) => !!k && k.startsWith('fancy-') && ((FA
 /** 可以按「隨機排列」的花式排列 */
 export const fancyCanRandom = (k?: string) => !!k && (baseOf(k) === 'fancy-mobile' || baseOf(k) === 'fancy-boxrandom');
 /** 可以調「數量」「間距」的花式排列 */
-export const fancyHasParams = (k?: string) => !!k && ['fancy-grid', 'fancy-polka', 'fancy-boxrandom'].includes(baseOf(k));
+export const fancyHasParams = (k?: string) => !!k && ['fancy-grid', 'fancy-polka', 'fancy-boxrandom', 'fancy-wand'].includes(baseOf(k));
 /** 選中框固定是整個貼圖框（不貼著星星量）：隨機或調數量間距時星星位置一直變，框不能跟著變 */
 export const fancyFixedFrame = (k?: string) => fancyCanRandom(k) || fancyHasParams(k);
 /** 數量、間距的預設值與範圍（滑桿 UI 值） */
 export const FANCY_PARAM: Record<string, { count: [number, number, number]; gap: number }> = {
   'fancy-grid': { count: [2, 10, 5], gap: 54 },        // 每排幾顆
   'fancy-polka': { count: [2, 10, 6], gap: 52 },       // 幾排
-  'fancy-boxrandom': { count: [5, 60, 30], gap: 35 },  // 總共幾顆
+  'fancy-boxrandom': { count: [5, 60, 30], gap: 35 },
+  'fancy-wand': { count: [5, 100, 80], gap: 0 },       // 100＝原本的 42 顆  // 總共幾顆
 };
 /** 數量、間距、隨機種子打包成一個數字（畫圖時接在 kind 後面，見 scoreKindOf） */
 /* 方形隨機另外還有「隨機大小」「大小」兩個值：用第二種打包格式（加 2e15 當記號），
@@ -246,16 +247,25 @@ const designs: Record<string, (seed: number) => Design> = {
          隨機大小 0＝全部一樣大；大小 50＝原本大小 */
       const R = rng(seed || 11), units: Unit[] = [];
       const cell = 100 / Math.sqrt(Math.max(1, count)), base = cell * 0.24, m = base * 1.2;
-      for (let i = 0; i < count; i++) {
+      /* 先沿著四條邊排一圈（四個角各一顆、每條邊平均分），看得出是正方形；
+         邊上的星星只沿著邊稍微錯開一點，不會離開那條邊 */
+      const per = Math.max(2, Math.round(Math.sqrt(count) * 0.8)), lo = m, hi = 100 - m, step = (hi - lo) / (per - 1);
+      const edge: [number, number][] = [];
+      for (let k = 0; k < per - 1; k++) {
+        const a = lo + step * k, jit = k === 0 ? 0 : (R() - 0.5) * step * 0.3;
+        edge.push([a + jit, lo], [hi, a + jit], [100 - a - jit, hi], [lo, 100 - a - jit]);
+      }
+      const sizeOf = () => base * (1 + (R() * 2 - 1) * 0.65 * Math.min(100, jit) / 100) * Math.pow(2, (size - 50) / 40);
+      for (const [x, y] of edge.slice(0, count)) units.push({ x, y, r: sizeOf() });
+      for (let i = units.length; i < count; i++) {
         let best: [number, number] = [50, 50], bestD = -1;
         for (let c = 0; c < 30; c++) {
-          const x = m + R() * (100 - m * 2), y = m + R() * (100 - m * 2);
+          const x = m + cell * 0.55 + R() * (100 - m * 2 - cell * 1.1), y = m + cell * 0.55 + R() * (100 - m * 2 - cell * 1.1);
           let d = Math.min(x - m, 100 - m - x, y - m, 100 - m - y) * 2 + cell * 0.5;
           for (const u of units) d = Math.min(d, Math.hypot(u.x - x, u.y - y));
           if (d > bestD) { bestD = d; best = [x, y]; }
         }
-        const k = 1 + (R() * 2 - 1) * 0.65 * Math.min(100, jit) / 100;
-        units.push({ x: best[0], y: best[1], r: base * k * Math.pow(2, (size - 50) / 40) });
+        units.push({ x: best[0], y: best[1], r: sizeOf() });
       }
       return { dw: 100, dh: 100, units };
     }
@@ -286,10 +296,10 @@ const designs: Record<string, (seed: number) => Design> = {
     return { dw: 100, dh: 100, units };
   },
   /* 魔法棒：在固定的方框裡，從左上到右下散落星星，左上少、越往右下越多、散開的範圍越大 */
-  'fancy-wand': () => {
-    const R = rng(41), units: Unit[] = [];
+  'fancy-wand': (v) => {
+    const R = rng(41), units: Unit[] = [], total = Math.max(1, Math.round(42 * unpack('fancy-wand', v).count / 100));
     let guard = 0;
-    while (units.length < 42 && guard++ < 6000) {
+    while (units.length < total && guard++ < 6000) {
       const t = Math.sqrt(R());                                   // 越往右下越多（密度跟 t 成正比）
       const spread = 1.5 + t * 19;                                // 越往右下散得越開（但不要太寬）
       const along = 3 + t * 92 + (R() - 0.5) * 4, side = (R() - 0.5) * 2 * spread;   // 從左上角一路拉到右下角

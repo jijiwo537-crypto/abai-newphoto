@@ -13314,7 +13314,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 const glowFlag = outlineShape || isLine;
                                 // 樂譜：發光上限是一般圖形的一成（滑桿照樣 0～100）
                                 // 花式排列：發光上限是一般圖形的兩成（滑桿照樣 0～100）
-                                const glowCap = isLine ? LINE_GLOW_CAP : isGrid ? GRID_GLOW_CAP : isScoreKind(sel.kind) ? 0.1 : isFancyKind(sel.kind) ? 0.2 : 1;
+                                const glowCap = isLine ? LINE_GLOW_CAP : isGrid ? GRID_GLOW_CAP : isScoreKind(sel.kind) ? 0.1 : isFancyKind(sel.kind) ? 0.1 : 1;
                                 const perUi = shapeGlowFromUi(1, glowFlag) * glowCap;
                                 const ui = glowCap < 1 ? Math.min(100, Math.round(glowAmount(sel.glow) * 100 / perUi)) : shapeGlowToUi(sel.glow, glowFlag);
                                 return shapeSlider('發光', ui, 0, 100, (v: number) => {

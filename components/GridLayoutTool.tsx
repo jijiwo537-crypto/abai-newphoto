@@ -1739,7 +1739,7 @@ export const strokeLineOutline = (ctx: CanvasRenderingContext2D, path: Path2D, d
   ctx.restore();
 };
 /** 線條類貼圖的發光上限：原本的 40%（滑桿照樣 0～100）。創意拼圖、跨頁拼圖共用 */
-export const LINE_GLOW_CAP = 0.4;
+export const LINE_GLOW_CAP = 0.2;   // 線條發光最大值（再減半）
 /** 網格類貼圖的發光上限：原本的 10%（滑桿照樣 0～100，能調得更細） */
 export const GRID_GLOW_CAP = 0.1;
 /** 線條類的粗細：滑桿 0～100 對到原本的 10～100（lineW 1～10） */
@@ -3664,7 +3664,7 @@ export const ShapeEditorPanel: React.FC<{
               {(() => {
                 const glowFlag = outlineShape || isLine;
                 // 樂譜：發光上限是一般圖形的一成（滑桿照樣 0～100）
-                const cap = isLine ? LINE_GLOW_CAP : isGridShape ? GRID_GLOW_CAP : isScoreKind(layer.shape) ? 0.1 : isFancyKind(layer.shape) ? 0.2 : 1;  // 花式排列：兩成
+                const cap = isLine ? LINE_GLOW_CAP : isGridShape ? GRID_GLOW_CAP : isScoreKind(layer.shape) ? 0.1 : isFancyKind(layer.shape) ? 0.1 : 1;  // 花式排列：一成
                 const perUi = shapeGlowFromUi(1, glowFlag) * cap;
                 const ui = cap < 1 ? Math.min(100, Math.round(glowAmount(layer.shapeGlow as any) * 100 / perUi)) : shapeGlowToUi(layer.shapeGlow as any, glowFlag);
                 return slider('發光', ui, 0, 100, v => onChange({ shapeGlow: shapeGlowFromUi(v * cap, glowFlag) } as any));
