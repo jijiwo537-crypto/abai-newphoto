@@ -1,4 +1,5 @@
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
+import { centerActiveChip } from '../utils/centerChip';
 import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
 import { FANCY_KINDS, isFancyKind, fancyPathD, fancyGeometry, fancyAlphaLevels, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
@@ -20109,9 +20110,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const cell = (on: boolean) => `h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
               return (
                 <div className="max-w-md mx-auto pb-5 animate-in fade-in duration-300">
-                  <div data-classic-motion-targets="1" className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
+                  <div ref={el => centerActiveChip(el, motionTargetId)} data-classic-motion-targets="1" className="relative flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
                       {motionLayouts.map((l, li) => (
-                        <button key={l.id} onClick={() => chooseMotionTarget(l.id)} className={chip(motionTargetId === l.id)}>
+                        <button key={l.id} data-chip={l.id} onClick={() => chooseMotionTarget(l.id)} className={chip(motionTargetId === l.id)}>
                           <span>{`佈局${motionLayouts.length > 1 ? li + 1 : ''}`}</span>
                         </button>
                       ))}
@@ -20119,10 +20120,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         const media = motionItems.filter(x => x.text === undefined && !x.shape);
                         const shapes = motionItems.filter(x => !!x.shape);
                         return (
-                        <button key={f.id} onClick={() => chooseMotionTarget(f.id)}
+                        <button key={f.id} data-chip={f.id} onClick={() => chooseMotionTarget(f.id)}
                           className={chip(motionTargetId === f.id)}>
                           <span>{f.sym ? '符號' : f.text !== undefined ? '文字' : f.shape
-                            ? `圖形${shapes.length > 1 ? shapes.findIndex(x => x.id === f.id) + 1 : ''}`
+                            ? `貼圖${shapes.length > 1 ? shapes.findIndex(x => x.id === f.id) + 1 : ''}`
                             : `圖片${media.length > 1 ? media.findIndex(x => x.id === f.id) + 1 : ''}`}</span>
                         </button>
                       );})}

@@ -42,6 +42,7 @@ import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
 import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
 import { fancyAlphaLevels } from '../utils/fancyShapes';
+import { centerActiveChip } from '../utils/centerChip';
 import { fancyCanRandom, isFancyKind, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
@@ -10195,10 +10196,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const hasLink = linkMode !== 'none' && linkableType(holeType);
   /** 切換動畫目標時只更新動畫面板與短暫虛線提示，不改正式選取狀態。 */
   const chooseMotionTarget = useCallback((requestedId: string) => {
-    const id = requestedId === 'shape'
-      || (requestedId === 'link' && hasLink)
+    const noHoles = holesRef.current.length === 0, firstObj = objectsRef.current[0]?.id;
+    let id = (requestedId === 'shape' && !noHoles)
+      || (requestedId === 'link' && hasLink && !noHoles)
       || objectsRef.current.some(o => o.id === requestedId)
       ? requestedId : 'shape';
+    // 沒有圖案：不能選「圖案」「連線」，改選第一個物件（一個都沒有才留在圖案）
+    if (noHoles && (id === 'shape' || id === 'link') && firstObj) id = firstObj;
     setMoTarget(id);
     motionTargetFlashRef.current = { id, started: performance.now(), duration: 850 };
     setMotionTargetFlashSeq(n => n + 1);
@@ -10214,11 +10218,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      讓面板顯示「物件已經不在了」。 */
   useEffect(() => {
     if (activeTab !== 'motion') return;
-    const valid = moTarget === 'shape'
-      || (moTarget === 'link' && hasLink)
+    const valid = (moTarget === 'shape' && (holes.length > 0 || objects.length === 0))
+      || (moTarget === 'link' && hasLink && holes.length > 0)
       || objects.some(o => o.id === moTarget);
     if (!valid) chooseMotionTarget('shape');
-  }, [activeTab, moTarget, hasLink, objects, chooseMotionTarget]);
+  }, [activeTab, moTarget, hasLink, objects, holes.length, chooseMotionTarget]);
 
   /** 動畫頁仍禁止拖曳，但允許直接點預覽中的可見物件切換調整目標。 */
   const handleMotionTargetPointerDown = useCallback((e: React.PointerEvent) => {
@@ -13818,21 +13822,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}
-                    <div className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
-                      <button onClick={() => chooseMotionTarget('shape')} className={chip(moTarget === 'shape')}>圖案</button>
-                      {hasLink && <button onClick={() => chooseMotionTarget('link')} className={chip(moTarget === 'link')}>
+                    <div ref={el => centerActiveChip(el, moTarget)} className="relative flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
+                      {/* 沒有圖案時不顯示「圖案」和「連線」 */}
+                      {holes.length > 0 && <button data-chip="shape" onClick={() => chooseMotionTarget('shape')} className={chip(moTarget === 'shape')}>圖案</button>}
+                      {holes.length > 0 && hasLink && <button data-chip="link" onClick={() => chooseMotionTarget('link')} className={chip(moTarget === 'link')}>
                         {linkMode === 'dash' ? '虛線' : '連線'}
                       </button>}
                       {(() => {
-                        /* 圖形有兩顆以上就編號（圖形1、圖形2…），只有一顆就單純叫「圖形」 */
+                        /* 貼圖有兩顆以上就編號（貼圖1、貼圖2…），只有一顆就單純叫「貼圖」 */
                         const shapeIds = objects.filter(z => z.type === 'shape').map(z => z.id);
                         const imageIds = objects.filter(z => z.type === 'image').map(z => z.id);
                         const shapeNo = (id: string) =>
-                          shapeIds.length > 1 ? `圖形${shapeIds.indexOf(id) + 1}` : '圖形';
+                          shapeIds.length > 1 ? `貼圖${shapeIds.indexOf(id) + 1}` : '貼圖';
                         const imageNo = (id: string) =>
                           imageIds.length > 1 ? `圖片${imageIds.indexOf(id) + 1}` : '圖片';
                         return objects.map(o => (
-                        <button key={o.id}
+                        <button key={o.id} data-chip={o.id}
                           onClick={() => chooseMotionTarget(o.id)}
                           className={chip(moTarget === o.id)}>
                           {/* 符號直接標「符號」：它的內容常常是組合附加符號或冷門字，

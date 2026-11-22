@@ -127,7 +127,7 @@ const designs: Record<string, (seed: number) => Design> = {
       const r = 3.8 + R() * 2.8, x = slot * (i + 0.5) + (R() - 0.5) * (slot - r * 2.2) * 0.6;
       const y = 30 + R() * 62;
       units.push({ x, y, r });
-      lines.push({ x1: x, y1: 0, x2: x, y2: y - r * 0.95, w: 0.5 });
+      lines.push({ x1: x, y1: 0, x2: x, y2: y, w: 0.5 });   // 線一路連到星星中心
     }
     return { dw: 100, dh: 100, units, lines };
   },
@@ -402,7 +402,7 @@ const mobileDesign = (kind: string, w: number, h: number, gbw: number, gbh: numb
     const r = (3.8 + R() * 2.8) * sc, x = ox + slot * (i + 0.5) + (R() - 0.5) * (slot - r * 2.2) * 0.6;
     const y = (30 + R() * 62) / 100 * h;
     units.push({ x, y, r });
-    lines.push({ x1: x, y1: 0, x2: x, y2: y - r * 0.95, w: 0.5 * sc });
+    lines.push({ x1: x, y1: 0, x2: x, y2: y, w: 0.5 * sc });   // 線一路連到星星中心
   }
   return { dw: w, dh: h, units, lines };
 };
@@ -427,6 +427,25 @@ export const fancyStarD = (cx: number, cy: number, R: number, rot = 0) => {
     out.push(`${i ? 'L' : 'M'} ${r3(cx + Math.cos(t) * R * k)} ${r3(cy + Math.sin(t) * R * k)}`);
   }
   return out.join(' ') + ' Z';
+};
+/** 多邊形照 0～w、0～h 的框裁切（Sutherland–Hodgman） */
+const clipRect = (pts: [number, number][], w: number, h: number): [number, number][] => {
+  const edge = (P: [number, number][], inside: (p: [number, number]) => boolean, cut: (a: [number, number], b: [number, number]) => [number, number]) => {
+    const out: [number, number][] = [];
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length], ia = inside(a), ib = inside(b);
+      if (ia) out.push(a);
+      if (ia !== ib) out.push(cut(a, b));
+    }
+    return out;
+  };
+  const lerpX = (a: [number, number], b: [number, number], x: number): [number, number] => [x, a[1] + (b[1] - a[1]) * (x - a[0]) / ((b[0] - a[0]) || 1e-9)];
+  const lerpY = (a: [number, number], b: [number, number], y: number): [number, number] => [a[0] + (b[0] - a[0]) * (y - a[1]) / ((b[1] - a[1]) || 1e-9), y];
+  let P = edge(pts, p => p[0] >= 0, (a, b) => lerpX(a, b, 0));
+  if (P.length) P = edge(P, p => p[0] <= w, (a, b) => lerpX(a, b, w));
+  if (P.length) P = edge(P, p => p[1] >= 0, (a, b) => lerpY(a, b, 0));
+  if (P.length) P = edge(P, p => p[1] <= h, (a, b) => lerpY(a, b, h));
+  return P;
 };
 /** 透明度分成 8 層（0.125、0.25 … 1） */
 const alphaLevel = (a: number) => Math.max(1, Math.min(8, Math.round(a * 8))) / 8;
@@ -453,21 +472,22 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
   const us = tag ? fancyMotionUnits(aid, motionCtxOf(stars, w, h), av) : null;
   /* '|透明度層'：畫的那一端把星星照透明度分層，一層一層用自己的透明度畫（見 fancyAlphaLevels）。
      這一次只畫屬於這一層的星星，大小照原本的；沒有分層的地方（舊的畫法）才把「變淡」換成「變小」 */
-  const layer = lv ? Number(lv) : undefined;
+  const layer = lv ? Number(lv) : undefined, clipBox = aid === 'fx-in-rain';
   if (us) {
     out = [];
     stars.forEach((st, i) => {
       const u = us[i]; if (!u || u.a <= 0.02 || u.s <= 0.005) return;
       if (layer !== undefined && alphaLevel(u.a) !== layer) return;
       const R = st.r * u.s * (layer === undefined && u.a < 1 ? 0.3 + 0.7 * u.a : 1), X = st.x + u.dx, Y = st.y + u.dy;
-      if (u.sx !== undefined && u.sx !== 1) {
-        const pts: string[] = [];
-        for (let k = 0; k < 10; k++) {
-          const t = -Math.PI / 2 + st.rot + u.rot + k * Math.PI / 5, m = k % 2 ? 0.42 : 1;
-          pts.push(`${k ? 'L' : 'M'} ${r3(X + Math.cos(t) * R * m * u.sx)} ${r3(Y + Math.sin(t) * R * m)}`);
-        }
-        out.push(pts.join(' ') + ' Z');
-      } else out.push(fancyStarD(X, Y, R, st.rot + u.rot));
+      const sx = u.sx ?? 1;
+      let pts: [number, number][] = [];
+      for (let k = 0; k < 10; k++) {
+        const t = -Math.PI / 2 + st.rot + u.rot + k * Math.PI / 5, m = k % 2 ? 0.42 : 1;
+        pts.push([X + Math.cos(t) * R * m * sx, Y + Math.sin(t) * R * m]);
+      }
+      // 星雨：還在框外（上面）的部分不畫 —— 照框把星星切掉
+      if (clipBox) { pts = clipRect(pts, w, h); if (pts.length < 3) return; }
+      out.push(pts.map(([x, y], k) => `${k ? 'L' : 'M'} ${r3(x)} ${r3(y)}`).join(' ') + ' Z');
     });
     // 線：兩端貼著哪顆星星就跟著那顆動；那顆還沒出現（很淡）就先不畫
     const near = (x: number, y: number) => { let b = -1, bd = 1e9; stars.forEach((st, i) => { const d = Math.hypot(st.x - x, st.y - y) - st.r * 2.2; if (d < bd) { bd = d; b = i; } }); return bd <= 0 ? b : -1; };
@@ -476,7 +496,12 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
       const ia = near(l.x1, l.y1), ib = near(l.x2, l.y2), A = ia >= 0 ? us[ia] : null, B = ib >= 0 ? us[ib] : null;
       if (layer !== undefined) { if (alphaLevel(Math.min(A ? A.a : 1, B ? B.a : 1)) !== layer) continue; }
       else if ((A && A.a < 0.5) || (B && B.a < 0.5)) continue;
-      lines.push({ ...l, x1: l.x1 + (A?.dx || 0), y1: l.y1 + (A?.dy || 0), x2: l.x2 + (B?.dx || 0), y2: l.y2 + (B?.dy || 0) });
+      const L = { ...l, x1: l.x1 + (A?.dx || 0), y1: l.y1 + (A?.dy || 0), x2: l.x2 + (B?.dx || 0), y2: l.y2 + (B?.dy || 0) };
+      if (clipBox) {   // 星雨：線也只畫框裡面那一段
+        if (Math.max(L.y1, L.y2) <= 0) continue;
+        L.y1 = Math.max(0, Math.min(h, L.y1)); L.y2 = Math.max(0, Math.min(h, L.y2));
+      }
+      lines.push(L);
     }
   } else out = stars.map(u => fancyStarD(u.x, u.y, u.r, u.rot));
   for (const l of lines) {
