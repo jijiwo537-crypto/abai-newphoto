@@ -40,19 +40,19 @@ export const ENTRIES: Anim[] = [
       const ang = hash(i) * Math.PI * 2, dist = (0.45 + hash(i + 9) * 0.5) * Math.max(c.w, c.h), q = smooth(local(p, hash(i + 3) * 0.25, 0.75));
       return { dx: Math.cos(ang) * dist * (1 - q), dy: Math.sin(ang) * dist * (1 - q), s: 1, rot: (1 - q) * (hash(i + 5) - 0.5) * 6, a: clamp(q * 1.6) };
     } },
-  { id: 'fx-in-sweep', name: '掃光', kind: 'entry', fresh: true, desc: '一道光從左上掃到右下，掃到的星星先亮一下再縮回原本大小',
+  { id: 'fx-in-sweep', name: '掃描', kind: 'entry', fresh: true, desc: '一道光從左上掃到右下，掃到的星星先亮一下再縮回原本大小',
     unit: (i, c, p) => {
       const st = c.stars[i], k = (st.x / c.w + st.y / c.h) / 2, q = local(p, k * 0.75, 0.25);
       const s = q <= 0 ? 0 : q < 0.55 ? 1.45 * cubic(q / 0.55) : 1.45 - 0.45 * smooth((q - 0.55) / 0.45);
       return { ...ID, s, a: clamp(q * 4) };
     } },
-  { id: 'fx-in-rain', name: '星雨', kind: 'entry', fresh: true, desc: '每顆從上方落下、著地彈一下，左到右錯開',
+  { id: 'fx-in-rain', name: '下墜', kind: 'entry', fresh: true, desc: '每顆從上方落下、著地彈一下，左到右錯開',
     unit: (i, c, p) => {
       const st = c.stars[i], q = local(p, (st.x / c.w) * 0.45 + hash(i) * 0.15, 0.4);
       const fall = q < 0.7 ? 1 - Math.pow(q / 0.7, 2) : 0, b = q >= 0.7 ? Math.sin((q - 0.7) / 0.3 * Math.PI) * 0.08 : 0;
       return { dx: 0, dy: -(fall * (st.y + c.h * 0.4)) - b * c.h, s: 1, rot: 0, a: clamp(q * 5) };
     } },
-  { id: 'fx-in-twirl', name: '旋開', kind: 'entry', fresh: true, desc: '每顆在自己的位置從小轉一圈開出來，隨機錯開',
+  { id: 'fx-in-twirl', name: '旋轉', kind: 'entry', fresh: true, desc: '每顆在自己的位置從小轉一圈開出來，隨機錯開',
     unit: (i, c, p) => { const q = local(p, hash(i) * 0.55, 0.45), e = backOut(q); return { ...ID, s: e, rot: (1 - cubic(q)) * Math.PI * 2, a: clamp(q * 3) }; } },
   { id: 'fx-in-vortex', name: '漩渦', kind: 'entry', fresh: true, desc: '每顆從中心沿著螺旋轉出去、一圈半後剛好落到自己的位置',
     unit: (i, c, p) => {
@@ -72,7 +72,7 @@ export const IDLES: Anim[] = [
     unit: (i, _c, _p, t) => { const w = Math.pow((Math.sin(t * (1.6 + hash(i) * 1.8) + hash(i + 7) * 6.28) + 1) / 2, 3); return { ...ID, s: 1 - w * 0.28, a: 1 - w * 0.65 }; } },
   { id: 'fx-idle-ripple', name: '漣漪', kind: 'idle', fresh: true, desc: '一圈一圈從中心往外擴散，經過的星星放大一下',
     unit: (i, c, _p, t) => { const st = c.stars[i], d = Math.hypot(st.x - c.cx, st.y - c.cy) / c.maxD; const w = Math.pow(Math.max(0, Math.cos((d * 1.6 - t * 0.9) * Math.PI * 2)), 6); return { ...ID, s: 1 + w * 0.32 }; } },
-  { id: 'fx-idle-shimmer', name: '流光', kind: 'idle', fresh: true, desc: '一道斜斜的光帶反覆掃過，掃到的星星變大變亮',
+  { id: 'fx-idle-shimmer', name: '掃描', kind: 'idle', fresh: true, desc: '一道斜斜的光帶反覆掃過，掃到的星星變大變亮',
     /* 常駐一開始第一道光就從左上角出發；之後每隔一半的距離（0.8）再出發一道（間隔是原本的一半），
        所以畫面上可能同時有兩道 */
     unit: (i, c, _p, t) => {
