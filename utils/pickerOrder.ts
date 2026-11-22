@@ -23,6 +23,7 @@ export const SHAPE_SECTIONS = [
   ['solid', '實心'],
   ['outline', '外框'],
   ['burst', '星芒'],
+  ['fancy', '花式排列'],
   ['line', '線條'],
   ['grid', '網格'],
   ['mask', '遮罩'],
@@ -49,6 +50,10 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'circle-o', 'square-o', 'diamond-o', 'heart-o', 'triangle-o', 'pentagon-o',
     'diamond-n-o', 'sparkle4-o', 'hole-cross-star-o', 'star-o', 'hexstar-o', 'star8-o',
     'rounded-o', 'track-select-o', 'track-select8-o', 'track-cross-o', 'arrow-o', 'arrow-double-o',
+  ],
+  fancy: [
+    'fancy-radial-f', 'fancy-ring-f', 'fancy-spiral-f', 'fancy-halo-f', 'fancy-mobile-f', 'fancy-heart-f',
+    'fancy-meteor-f', 'fancy-wave-f', 'fancy-scatter-f', 'fancy-concentric-f', 'fancy-constellation-f', 'fancy-arch-f',
   ],
   score: ['score-glow-f', 'score-wave-f', 'score-line-f', 'score-arch-f', 'score-float-f', 'score-ribbon-f'],
   bubble: ['bubble-v-f', 'bubble-f', 'bubble-pill-f', 'bubble-rect-f', 'bubble-think-f', 'bubble-cloud-f'],
