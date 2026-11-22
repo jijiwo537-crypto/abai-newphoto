@@ -1,6 +1,6 @@
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
 import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
-import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
+import { FANCY_KINDS, isFancyKind, fancyPathD, fancyGeometry, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { swatchEdge } from '../utils/swatch';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
@@ -908,6 +908,20 @@ export const measureShapeInk = (o: any): { x: number; y: number; w: number; h: n
   /* 可以「隨機排列」的花式排列：選中框固定是整個貼圖框（不貼著星星量）——
      每次隨機星星位置都不同，貼著量的話框會一直變形、變大變小 */
   if (fancyFixedFrame(o.kind)) return { x: 0, y: 0, w: o.w, h: o.h };
+  /* 其他花式排列：直接用每顆星星的位置、大小算外框（每顆都是已知的星形），不用畫出來逐像素量 ——
+     逐像素量要先畫一整張再讀回像素，新增的那一下會頓一下 */
+  if (isFancyKind(o.kind)) {
+    const { stars, lines } = fancyGeometry(scoreKindOf(o.kind, o.scoreSeed), o.w, o.h, o.textureBaseW || o.w, o.textureBaseH || o.h);
+    if (!stars.length) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const st of stars) for (let i = 0; i < 10; i += 2) {   // 五個尖角就是外框
+      const t = -Math.PI / 2 + st.rot + i * Math.PI / 5, x = st.x + Math.cos(t) * st.r, y = st.y + Math.sin(t) * st.r;
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    }
+    for (const l of lines) { x0 = Math.min(x0, l.x1, l.x2); y0 = Math.min(y0, l.y1, l.y2); x1 = Math.max(x1, l.x1, l.x2); y1 = Math.max(y1, l.y1, l.y2); }
+    const pad = (o.strokeW || 0) / 2;
+    return { x: x0 - pad, y: y0 - pad, w: x1 - x0 + pad * 2, h: y1 - y0 + pad * 2 };
+  }
   if (isBackdropMask(o.kind)) {
     // 遮罩是解析式裁切：方形／圓形就是整個框，星形是那十個頂點的外接框。
     if (maskGeometry(o.kind, o) !== 'star') return { x: 0, y: 0, w: o.w, h: o.h };
