@@ -3160,7 +3160,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>{regionBlend.current?.clear();regionPaintRef.current();},[lutRevision]);
   const [maskColor, setMaskColor] = useState(CREATIVE_MASK_DEFAULT);
   const [patternType, setPatternType] = useState('none'); 
-  const [dotColor, setDotColor] = useState('#728C86'); 
+  /* 紋理顏色：沒手動挑過（null）就一律跟著遮罩顏色算（見 utils/texColor）；挑過就用挑的。
+     讀回存檔時，存的值如果是舊預設或剛好等於自動算的，就當作沒挑過 */
+  const [dotPick, setDotPick] = useState<string | null>(null);
+  const setDotColor = (c: string) => setDotPick(c);
+  const autoTex = (v: string | undefined, mc: string, f: (c: string) => string) =>
+    !v || v.toUpperCase() === '#728C86' || v.toUpperCase() === STRIPE_A.toUpperCase() || v.toUpperCase() === f(mc).toUpperCase() ? null : v; 
   const [dotSize, setDotSize] = useState(maskTextureSizeFromUi(10));
   const [dotGap, setDotGap] = useState(maskTextureGapFromUi(20));
   const [dotSquash, setDotSquash] = useState(50);
@@ -3173,7 +3178,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [stripeAPick, setStripeAPick] = useState<string | null>(null);
 
   const [stripeB, setStripeB] = useState('#FFFFFF');
-  const stripeA = stripeAPick || STRIPE_A;
+  const stripeA = stripeAPick || texStripeColorFor(maskColor);
+  const dotColor = dotPick || texDotColorFor(maskColor);
   const setStripeA = (c: string) => setStripeAPick(c);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
   /* 存好了（成品頁）：匯出是記憶體用最多的時候。先把可以重建的快取放掉 ——
@@ -3509,13 +3515,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (loadedHoles) setHoles(loadedHoles);
     if (st.maskColor !== undefined) setMaskColor(st.maskColor);
     if (st.patternType !== undefined) setPatternType(st.patternType);
-    if (st.dotColor !== undefined) setDotColor(st.dotColor);
+    if (st.dotColor !== undefined) setDotPick(autoTex(st.dotColor, st.maskColor ?? maskColor, texDotColorFor));
     if (st.dotSize !== undefined) setDotSize(st.dotSize);
     if (st.dotGap !== undefined) setDotGap(st.dotGap);
     setDotSquash(st.dotSquash ?? 50);
     if (st.stripeN !== undefined) setStripeN(st.stripeN);
     if (st.stripeDir === 'h' || st.stripeDir === 'v') setStripeDir(st.stripeDir);
-    if (st.stripeA !== undefined) setStripeAPick(st.stripeA);
+    if (st.stripeA !== undefined) setStripeAPick(autoTex(st.stripeA, st.maskColor ?? maskColor, texStripeColorFor));
     if (st.stripeB !== undefined) setStripeB(st.stripeB);
     if (st.symmetryEnabled !== undefined) setSymmetryEnabled(st.symmetryEnabled);
     // 'mask' 是舊版才有的選項，讀到就當「開啟」
@@ -10811,10 +10817,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (isCanvasRatio(e.canvasRatio)) setCanvasRatio(e.canvasRatio);
     setCanvasRatioBeforeFull(isCanvasRatio(e.canvasRatioBeforeFull)?e.canvasRatioBeforeFull:null);
     setMaskColor(e.maskColor); setPatternType(e.patternType);
-    setDotColor(e.dotColor); setDotSize(e.dotSize); setDotGap(e.dotGap); setDotSquash(e.dotSquash ?? 50);
+    setDotPick(autoTex(e.dotColor, e.maskColor, texDotColorFor)); setDotSize(e.dotSize); setDotGap(e.dotGap); setDotSquash(e.dotSquash ?? 50);
     if (e.stripeN !== undefined) setStripeN(e.stripeN);
     if (e.stripeDir === 'h' || e.stripeDir === 'v') setStripeDir(e.stripeDir);
-    if (e.stripeA !== undefined) setStripeAPick(e.stripeA);
+    if (e.stripeA !== undefined) setStripeAPick(autoTex(e.stripeA, e.maskColor, texStripeColorFor));
     if (e.stripeB !== undefined) setStripeB(e.stripeB);
     setMaskImageState(e.maskImageState ?? null);
     setMaskTransform(e.maskTransform); setImageTransform(e.imageTransform);
@@ -12647,8 +12653,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               onChange={c => { if(colorPickerTarget==='mask') {
                   /* 遮罩的紋理顏色跟著遮罩顏色走（見 utils/texColor）：目前的紋理顏色如果還是預設、或是上一次自動算出來的，
                      就一起換；手動挑過的不動 */
-                  if (dotColor === '#728C86' || dotColor.toUpperCase() === texDotColorFor(maskColor)) setDotColor(texDotColorFor(c));
-                  if (!stripeAPick || stripeAPick.toUpperCase() === texStripeColorFor(maskColor)) setStripeAPick(texStripeColorFor(c));
                   setMaskColor(c);
                   /* 圖案的光就是遮罩的光暈 —— 換遮罩顏色時發光一起換成同一個色。
                      反過來不成立：單獨挑發光顏色時，遮罩的顏色不會被動到。 */
@@ -12890,8 +12894,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px] min-w-0 overflow-x-auto no-scrollbar [&>button]:shrink-0 [&>button]:whitespace-nowrap">
                         {TEX_OPTIONS.map(([t, label]) => (
                           <button key={t} onClick={() => { setPatternType(t as any); if (t === 'gingham' && patternType !== 'gingham') setStripeN(GINGHAM_N_DEFAULT);
-                            /* 開紋理時紋理顏色還是固定的預設值：照遮罩顏色自動算（見 utils/texColor） */
-                            if (t !== 'none') { if (dotColor === '#728C86') setDotColor(texDotColorFor(maskColor)); if (!stripeAPick) setStripeAPick(texStripeColorFor(maskColor)); } }} className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
+                            /* 開紋理時紋理顏色還是固定的預設值：照遮罩顏色自動算（見 utils/texColor） */ }} className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
                         ))}
                       </div>
                       {/* 顏色格常駐：關閉時也看得到，切換時這一列的寬度不變、不會閃。

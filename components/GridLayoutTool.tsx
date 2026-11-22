@@ -1888,6 +1888,7 @@ const texKey = (kind?: string, filled?: boolean, hole?: string) =>
 let noTexKeys: Set<string> | null = null;
 /** 這個圖形是不是被設成「不給調紋理」 */
 /** 描邊上限：花式排列只有一般的 15%（滑桿一樣顯示 0～100） */
+const PATTERN_NONE = { type: 'none', color: '#A8DDE6', size: 50, gap: 20 };
 export const strokeCapOf = (kind?: string) => isFancyKind(kind || '') ? 1.2 : 8;
 export const shapeTexDisabled = (kind?: string, filled?: boolean, hole?: string) => {
   if (isFancyKind(kind || '')) return true; // 花式排列不給紋理
@@ -9743,8 +9744,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     motionHold?: number;
   }
   /** 讀某一頁的紋理設定（沒設過就給預設值） */
-  const pagePattern = (p?: { pattern?: PatternOpts }): PatternOpts =>
-    p?.pattern || { type: 'none', color: '#A8DDE6', size: 50, gap: 20 };
+  const patternMemo = useMemo(() => new WeakMap<object, { bg: string; v: PatternOpts }>(), []);
+  /* 紋理顏色跟著這一頁的底色走（見 utils/texColor）：沒手動挑過就自動算；
+     舊作品存的顏色不是預設值的，當作挑過，不會被改 */
+  const pagePattern = (p?: { pattern?: PatternOpts; bgColor?: string }): PatternOpts => {
+    const o: any = p?.pattern || PATTERN_NONE;
+    const bg = p?.bgColor || '#ffffff';
+    const hit = patternMemo.get(o); if (hit && hit.bg === bg) return hit.v;   // 同一份設定回傳同一個物件，畫面不用重畫
+    const dotAuto = o.dotAuto ?? (!o.color || o.color.toUpperCase() === '#A8DDE6');
+    const stripeAuto = o.stripeAuto ?? !o.stripeA;
+    const v = { ...o, dotAuto, stripeAuto, color: dotAuto ? texDotColorFor(bg) : o.color, stripeA: stripeAuto ? texStripeColorFor(bg) : o.stripeA };
+    patternMemo.set(o, { bg, v }); return v;
+  };
 
   /* 格子裡的照片是照 naturalWidth／naturalHeight 的比例畫的：這兩個數字跟照片本身不一致時
      （互換時量圖失敗、舊草稿沒存），照片就被擠扁拉長。每次格子內容變了都對照真正解出來的圖，
@@ -10914,7 +10925,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      （activePageIndex 就是捲動時算出來、離中心最近的那一頁）。 */
   const patternOpts: PatternOpts = pagePattern(activePage);
   const patchPattern = (patch: Partial<PatternOpts>) => setPages(prev => prev.map((p, i) =>
-    i === activePageIndex ? { ...p, pattern: { ...pagePattern(p), ...patch } } : p));
+    i === activePageIndex ? { ...p, pattern: { ...pagePattern(p), ...patch,
+      ...('color' in patch ? { dotAuto: false } : {}), ...('stripeA' in patch ? { stripeAuto: false } : {}) } as PatternOpts } : p));
   const patternType = patternOpts.type;
   const patternColor = patternOpts.color;
   // 換成格紋時，數量給格紋自己的預設（10）
