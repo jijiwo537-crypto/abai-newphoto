@@ -23,14 +23,14 @@ export const SHAPE_SECTIONS = [
   ['solid', '實心'],
   ['outline', '外框'],
   ['burst', '星芒'],
-  ['fancy', '花式排列'],
-  ['line', '線條'],
   ['grid', '網格'],
-  ['mask', '遮罩'],
+  ['line', '線條'],
+  ['fancy', '花式排列'],
   ['frame', '邊框'],
-  ['puzzle', '拼圖'],
-  ['bubble', '對話框'],
   ['score', '樂譜'],
+  ['bubble', '對話框'],
+  ['puzzle', '拼圖'],
+  ['mask', '遮罩'],
 ] as const;
 export type ShapeSection = typeof SHAPE_SECTIONS[number][0];
 
