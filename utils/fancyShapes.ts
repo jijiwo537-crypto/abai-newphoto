@@ -405,23 +405,34 @@ const mobileDesign = (kind: string, w: number, h: number, gbw: number, gbh: numb
   }
   return { dw: w, dh: h, units, lines };
 };
-const fancyPathD0 = (kind: string, w: number, h: number, gbw: number, gbh: number) => {
-  if (!isFancyKind(kind) || !(w > 0) || !(h > 0)) return '';
+/** 每一顆星星、每一條線換算成實際像素（給「一顆一顆分開動」的動畫用；畫成路徑也是吃這一份） */
+export type FancyStar = { x: number; y: number; r: number; rot: number };
+export type FancyLine = { x1: number; y1: number; x2: number; y2: number; w: number };
+export const fancyGeometry = (kind: string, w: number, h: number, gbw = w, gbh = h): { stars: FancyStar[]; lines: FancyLine[] } => {
+  if (!isFancyKind(kind) || !(w > 0) || !(h > 0)) return { stars: [], lines: [] };
   const mobile = kind.split('@')[0] === 'fancy-mobile', lattice = mobile || ['fancy-grid', 'fancy-polka'].includes(kind.split('@')[0]);
   const d = mobile ? mobileDesign(kind, w, h, Math.max(1, gbw), Math.max(1, gbh))
     : lattice ? latticeDesign(kind, w, h, Math.max(1, gbw), Math.max(1, gbh)) : designOf(kind), sx = w / d.dw, sy = h / d.dh, s = lattice ? 1 : Math.min(sx, sy);
+  return {
+    stars: d.units.map(u => ({ x: u.x * sx, y: u.y * sy, r: u.r * s, rot: u.rot || 0 })),
+    lines: (d.lines || []).map(l => ({ x1: l.x1 * sx, y1: l.y1 * sy, x2: l.x2 * sx, y2: l.y2 * sy, w: Math.max(0.35, l.w * s) })),
+  };
+};
+/** 一顆五角星的路徑字串（內圈 0.42） */
+export const fancyStarD = (cx: number, cy: number, R: number, rot = 0) => {
   const out: string[] = [];
-  for (const u of d.units) {
-    const cx = u.x * sx, cy = u.y * sy, R = u.r * s, inner = 0.42;
-    for (let i = 0; i < 10; i++) {
-      const t = -Math.PI / 2 + (u.rot || 0) + i * Math.PI / 5, k = i % 2 ? inner : 1;
-      out.push(`${i ? 'L' : 'M'} ${r3(cx + Math.cos(t) * R * k)} ${r3(cy + Math.sin(t) * R * k)}`);
-    }
-    out.push('Z');
+  for (let i = 0; i < 10; i++) {
+    const t = -Math.PI / 2 + rot + i * Math.PI / 5, k = i % 2 ? 0.42 : 1;
+    out.push(`${i ? 'L' : 'M'} ${r3(cx + Math.cos(t) * R * k)} ${r3(cy + Math.sin(t) * R * k)}`);
   }
-  for (const l of d.lines || []) {
-    const x1 = l.x1 * sx, y1 = l.y1 * sy, x2 = l.x2 * sx, y2 = l.y2 * sy;
-    const len = Math.hypot(x2 - x1, y2 - y1) || 1, hw = Math.max(0.35, l.w * s) / 2;
+  return out.join(' ') + ' Z';
+};
+const fancyPathD0 = (kind: string, w: number, h: number, gbw: number, gbh: number) => {
+  const { stars, lines } = fancyGeometry(kind, w, h, gbw, gbh);
+  const out: string[] = stars.map(u => fancyStarD(u.x, u.y, u.r, u.rot));
+  for (const l of lines) {
+    const { x1, y1, x2, y2 } = l;
+    const len = Math.hypot(x2 - x1, y2 - y1) || 1, hw = l.w / 2;
     const nx = -(y2 - y1) / len * hw, ny = (x2 - x1) / len * hw;
     // 繞行方向要跟星星一樣（順時針），線跟星星重疊的地方才不會被挖空
     out.push(`M ${r3(x1 - nx)} ${r3(y1 - ny)} L ${r3(x2 - nx)} ${r3(y2 - ny)} L ${r3(x2 + nx)} ${r3(y2 + ny)} L ${r3(x1 + nx)} ${r3(y1 + ny)} Z`);
