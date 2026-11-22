@@ -27,7 +27,7 @@ export const FANCY_PARAM: Record<string, { count: [number, number, number]; gap:
   'fancy-grid': { count: [2, 10, 5], gap: 54 },        // 每排幾顆
   'fancy-polka': { count: [2, 10, 6], gap: 52 },       // 幾排
   'fancy-boxrandom': { count: [5, 60, 30], gap: 35 },
-  'fancy-wand': { count: [5, 100, 80], gap: 0 },       // 100＝原本的 42 顆  // 總共幾顆
+  'fancy-wand': { count: [0, 100, 80], gap: 1 },       // 0＝14 顆、100＝42 顆（gap 不用，填 1 讓打包後不會是 0）  // 總共幾顆
 };
 /** 數量、間距、隨機種子打包成一個數字（畫圖時接在 kind 後面，見 scoreKindOf） */
 /* 方形隨機另外還有「隨機大小」「大小」兩個值：用第二種打包格式（加 2e15 當記號），
@@ -298,18 +298,24 @@ const designs: Record<string, (seed: number) => Design> = {
   },
   /* 魔法棒：在固定的方框裡，從左上到右下散落星星，左上少、越往右下越多、散開的範圍越大 */
   'fancy-wand': (v) => {
-    const R = rng(41), units: Unit[] = [], total = Math.max(1, Math.round(42 * unpack('fancy-wand', v).count / 100));
+    /* 先排出完整的 42 顆，數量調少時照「從左上到右下」的順序平均挑掉 ——
+       剩下的還是從頭到尾一整條（頭尾一定留），越往右下越密的樣子也不變。
+       滑桿 0～100：0＝14 顆（再少就看不出形狀），100＝42 顆 */
+    const R = rng(41), units: (Unit & { t: number })[] = [];
+    const total = Math.round(14 + 28 * Math.max(0, Math.min(100, unpack('fancy-wand', v).count)) / 100);
     let guard = 0;
-    while (units.length < total && guard++ < 6000) {
+    while (units.length < 42 && guard++ < 6000) {
       const t = Math.sqrt(R());                                   // 越往右下越多（密度跟 t 成正比）
       const spread = 1.5 + t * 19;                                // 越往右下散得越開（但不要太寬）
       const along = 3 + t * 92 + (R() - 0.5) * 4, side = (R() - 0.5) * 2 * spread;   // 從左上角一路拉到右下角
       const x = along + side * 0.7071, y = along - side * 0.7071;
       const r = 0.9 + R() * (1.4 + t * 2.6);
       if (x < r || y < r || x > 100 - r || y > 100 - r) continue;
-      if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.15)) units.push({ x, y, r });
+      if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.15)) units.push({ x, y, r, t: x + y });
     }
-    return { dw: 100, dh: 100, units };
+    const sorted = [...units].sort((a, b) => a.t - b.t), n = sorted.length, k = Math.min(n, total);
+    const keep = k >= n ? sorted : Array.from({ length: k }, (_, i) => sorted[Math.round(i * (n - 1) / Math.max(1, k - 1))]);
+    return { dw: 100, dh: 100, units: keep.map(({ x, y, r }) => ({ x, y, r })) };
   },
   /* 10 同心圓：三圈，外圈的比較大 */
   'fancy-concentric': () => {
