@@ -71,7 +71,14 @@ export const IDLES: Anim[] = [
   { id: 'fx-idle-ripple', name: '漣漪', kind: 'idle', fresh: true, desc: '一圈一圈從中心往外擴散，經過的星星放大一下',
     unit: (i, c, _p, t) => { const st = c.stars[i], d = Math.hypot(st.x - c.cx, st.y - c.cy) / c.maxD; const w = Math.pow(Math.max(0, Math.cos((d * 1.6 - t * 0.9) * Math.PI * 2)), 6); return { ...ID, s: 1 + w * 0.32 }; } },
   { id: 'fx-idle-shimmer', name: '流光', kind: 'idle', fresh: true, desc: '一道斜斜的光帶反覆掃過，掃到的星星變大變亮',
-    unit: (i, c, _p, t) => { const st = c.stars[i], k = (st.x / c.w + st.y / c.h) / 2, ph = ((t * 0.42) % 1.6) - 0.3; const w = Math.exp(-Math.pow((k - ph) / 0.09, 2)); return { ...ID, s: 1 + w * 0.35, rot: w * 0.5, a: 0.72 + w * 0.28 }; } },
+    /* 常駐一開始第一道光就從左上角出發；之後每隔一半的距離（0.8）再出發一道（間隔是原本的一半），
+       所以畫面上可能同時有兩道 */
+    unit: (i, c, _p, t) => {
+      const st = c.stars[i], k = (st.x / c.w + st.y / c.h) / 2, q = t * 0.42, last = Math.floor(q / 0.8);
+      let w = 0;
+      for (let n = Math.max(0, last - 2); n <= last; n++) w = Math.max(w, Math.exp(-Math.pow((k - (q - n * 0.8 - 0.06)) / 0.09, 2)));
+      return { ...ID, s: 1 + w * 0.35, rot: w * 0.5, a: 0.72 + w * 0.28 };
+    } },
   { id: 'fx-idle-spin', name: '自轉', kind: 'idle', fresh: true, desc: '每顆在原地自轉，大小不同轉速不同、方向也不一樣',
     unit: (i, _c, _p, t) => ({ ...ID, rot: t * (0.6 + hash(i) * 1.1) * (hash(i + 2) > 0.5 ? 1 : -1) }) },
   { id: 'fx-idle-drift', name: '浮游', kind: 'idle', fresh: true, desc: '每顆各自輕輕繞小圈，大的動得多、小的動得少，有前後層次',
@@ -130,6 +137,11 @@ export const fancyMotionUnits = (id: string, c: Ctx, v: string | number): U[] | 
   const [t = 0, amp = 1, real = 999, entry = ''] = String(v).split(',').map((x, k) => k === 3 ? x : Number(x)) as [number, number, number, string];
   return c.stars.map((_, i) => {
     const wake = real >= 99 ? 1 : smooth((real - wakeOrder(entry, i, c) * WAKE_SPREAD) / WAKE_EACH);
+    if (id === 'fx-idle-shimmer') {
+      // 流光：光帶一開始就全力掃（第一道立刻出發）；只有「其他星星稍微變暗」慢慢淡進來，不會一下子暗掉
+      const u = scaleU(a.unit!(i, c, 1, t), amp);
+      return { ...u, a: 1 - (1 - u.a) * wake };
+    }
     return scaleU(a.unit!(i, c, 1, t), amp * wake);
   });
 };
