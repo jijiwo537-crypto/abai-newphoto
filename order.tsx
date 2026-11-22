@@ -22,7 +22,11 @@ import { FontOrderLab } from './components/FontOrderLab';
 
 /** 新做好、還沒排過位置的項目 —— 格子右上角會有一個小點 */
 const NEW_IDS = new Set<string>(['star-rounded', 'p-star-double', 'p-blur-star-rounded', 'p-blur-cross-star', 'p-blur-sparkle4', 'p-blur-heart', 'music-eighth', 'music-beamed', 'music-sixteenth', 'music-clef', 'question', 'burst-dash', 'spinner', 'hole-question', 'burst-dash-f', 'spinner-f', 'hole-music-eighth', 'hole-music-beamed', 'hole-music-sixteenth', 'hole-music-clef', 'hole-q-mark', 'hole-anger-mark', 'hole-excl-mark', 'q-mark', 'excl-mark', 'anger-mark', 'p-star-o', 'p-sparkle4-o', 'track-select-o', 'track-select8-o', 'track-cross-o']);
-const STORE = 'abai-order-tool-v1';
+const STORE = 'abai-order-tool-v2';
+/* 每一區另外記「存的時候 App 的順序」：App 的順序之後改了（例如照排序結果上線了），
+   那一區存的舊排法就丟掉，改顯示 App 現在的順序 —— 不然舊排法會一直被當成「有改」列出來 */
+const STORE_BASE = 'abai-order-tool-base-v2';
+try { localStorage.removeItem('abai-order-tool-v1'); } catch {}
 /** 「這個圖形也想當圖案用」的清單（圖形的 id）。存在這台裝置上，複製順序時一起帶出去 */
 const STORE_ADD = 'abai-order-tool-shape-as-pattern-v1';
 const ADD_PREFIX = 'shape:';
@@ -95,8 +99,11 @@ const load = (base0: Group[]): Group[] => {
   try {
     const saved = JSON.parse(localStorage.getItem(STORE) || 'null') as Record<string, string[]> | null;
     if (!saved) return base;
+    const savedBase = JSON.parse(localStorage.getItem(STORE_BASE) || '{}') as Record<string, string[]>;
     return base.map(g => {
       const order = saved[g.key]; if (!order) return g;
+      const now = base0.find(b => b.key === g.key)!.items.map(i => i.id).join(',');
+      if ((savedBase[g.key] || []).join(',') !== now) return g;
       // 存下來的「shape:圖形」如果已經正式變成圖案，就當成那個圖案的位置
       const rank = new Map(order.map((id, i) => [id.startsWith(ADD_PREFIX) && ALREADY_PATTERN(id.slice(ADD_PREFIX.length)) ? patternIdOfShape(id.slice(ADD_PREFIX.length)) : id, i]));
       return { ...g, items: [...g.items].sort((a, b) => (rank.get(a.id) ?? 1e6 + g.items.indexOf(a)) - (rank.get(b.id) ?? 1e6 + g.items.indexOf(b))) };
@@ -211,6 +218,7 @@ function OrderTool() {
 
   useEffect(() => {
     try { localStorage.setItem(STORE, JSON.stringify(Object.fromEntries(groups.map(g => [g.key, g.items.map(i => i.id)])))); } catch {}
+    try { localStorage.setItem(STORE_BASE, JSON.stringify(Object.fromEntries(base.map(g => [g.key, g.items.map(i => i.id)])))); } catch {}
     try { localStorage.setItem(STORE_ADD, JSON.stringify((groups.find(g => g.key === 'pattern')?.items || []).filter(i => i.fromShape).map(i => i.fromShape.id))); } catch {}
   }, [groups]);
 
