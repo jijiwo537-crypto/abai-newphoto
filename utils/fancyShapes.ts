@@ -576,6 +576,11 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
       else if (!masked && ((A && A.a < 0.5) || (B && B.a < 0.5))) continue;
       else if (masked && ((A && A.a <= 0.02) || (B && B.a <= 0.02))) continue;
       const L = { ...l, x1: l.x1 + (A?.dx || 0), y1: l.y1 + (A?.dy || 0), x2: l.x2 + (B?.dx || 0), y2: l.y2 + (B?.dy || 0) };
+      // 吊飾翻牌：線從上往下長出來（下端貼著的那顆星星決定長了多少）
+      if (B && B.line !== undefined && B.line < 1) {
+        if (B.line <= 0.001) continue;
+        L.x2 = L.x1 + (L.x2 - L.x1) * B.line; L.y2 = L.y1 + (L.y2 - L.y1) * B.line;
+      }
       if (clipBox) {   // 星雨：線也只畫框裡面那一段
         if (Math.max(L.y1, L.y2) <= 0) continue;
         L.y1 = Math.max(0, Math.min(h, L.y1)); L.y2 = Math.max(0, Math.min(h, L.y2));

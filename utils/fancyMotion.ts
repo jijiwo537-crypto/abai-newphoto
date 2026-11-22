@@ -5,7 +5,9 @@
 import type { FancyStar } from './fancyShapes';
 
 /* ───────── 每一顆的樣子 ───────── */
-export type U = { dx: number; dy: number; s: number; rot: number; a: number; sx?: number };
+export type U = { dx: number; dy: number; s: number; rot: number; a: number; sx?: number;
+  /** 吊飾：掛這顆星星的線長出來多少（0～1，從上往下長；沒有＝整條） */
+  line?: number };
 export const ID: U = { dx: 0, dy: 0, s: 1, rot: 0, a: 1 };
 export type Ctx = { stars: FancyStar[]; w: number; h: number; cx: number; cy: number; maxD: number; order: number[]; rank: number[]; kind?: string };
 export const clamp = (v: number) => Math.max(0, Math.min(1, v));
@@ -136,6 +138,13 @@ const scaleU = (u: U, k: number): U => k === 1 ? u : {
    ‧ 閃爍：每顆不定時「亮一下」＝放大一點、轉一下，再回來
    其他（星雨、旋開、翻牌、流光、跑燈、自轉、擺盪）照原本的動作，只是拿掉變淡 */
 const MOBILE_UNIT: Record<string, (i: number, c: Ctx, p: number, t: number) => U> = {
+  /* 翻牌：每條線照左上→右下的順序，從上往下長出來；長到底的那一刻，星星從側面翻出來 */
+  'fx-in-flip': (i, c, p) => {
+    const dg = (k: number) => c.stars[k].x / c.w + c.stars[k].y / c.h, all = c.stars.map((_, k) => dg(k));
+    const lo = Math.min(...all), hi = Math.max(...all), start = (dg(i) - lo) / Math.max(1e-6, hi - lo) * 0.5;   // 第一條馬上開始
+    const g = smooth(local(p, start, 0.3)), q = local(p, start + 0.3, 0.2);
+    return { ...ID, line: g, sx: q <= 0 ? 0 : Math.max(0.04, Math.abs(Math.cos((1 - smooth(q)) * Math.PI))), s: q <= 0 ? 0 : 0.85 + 0.15 * smooth(q) };
+  },
   'fx-in-seq': (i, c, p) => {
     const st = c.stars[i], q = local(p, c.rank[i] / Math.max(1, c.stars.length) * 0.6, 0.4), e = backOut(q);
     return { ...ID, dy: -(1 - e) * (st.y + st.r * 2.2) };
