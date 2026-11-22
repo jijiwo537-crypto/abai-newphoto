@@ -1,4 +1,4 @@
-import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio } from '../utils/fancyShapes';
+import { FANCY_KINDS, isFancyKind, fancyPathD, fancyRatio, fancyCanRandom } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { swatchEdge } from '../utils/swatch';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
@@ -3709,7 +3709,13 @@ export const ShapeEditorPanel: React.FC<{
               v => onChange({ shapeGlintGlow: Math.round(v) }))}
           </div>}
           {/* 樂譜：點一下就照樂理重新排一組音符（五線譜、譜號不變） */}
-          {scoreCanRandom(layer.shape) && <div className="px-2 order-1 w-full">
+          {fancyCanRandom(layer.shape) && <div className="px-2 order-1 w-full">
+                            <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); onChange({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) } as any); }}
+                              className={SCORE_RANDOM_BTN}>
+                              隨機排列
+                            </button>
+                          </div>}
+                          {scoreCanRandom(layer.shape) && <div className="px-2 order-1 w-full">
             <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); onChange({ scoreSeed: 1 + Math.floor(Math.random() * 1e9) } as any); }}
               className={SCORE_RANDOM_BTN}>
               隨機音符

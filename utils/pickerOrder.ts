@@ -52,8 +52,8 @@ export const SHAPE_ORDER: Record<ShapeSection, string[]> = {
     'rounded-o', 'track-select-o', 'track-select8-o', 'track-cross-o', 'arrow-o', 'arrow-double-o',
   ],
   fancy: [
-    'fancy-radial-f', 'fancy-ring-f', 'fancy-spiral-f', 'fancy-halo-f', 'fancy-mobile-f', 'fancy-heart-f',
-    'fancy-meteor-f', 'fancy-wave-f', 'fancy-scatter-f', 'fancy-concentric-f', 'fancy-constellation-f', 'fancy-arch-f',
+    'fancy-radial-f', 'fancy-ring-f', 'fancy-spiral-f', 'fancy-halo-f', 'fancy-mobile-f', 'fancy-starstar-f',
+    'fancy-meteor-f', 'fancy-crescent-f', 'fancy-flower-f', 'fancy-concentric-f', 'fancy-constellation-f', 'fancy-galaxy-f',
   ],
   score: ['score-glow-f', 'score-wave-f', 'score-line-f', 'score-arch-f', 'score-float-f', 'score-ribbon-f'],
   bubble: ['bubble-v-f', 'bubble-f', 'bubble-pill-f', 'bubble-rect-f', 'bubble-think-f', 'bubble-cloud-f'],

@@ -8,10 +8,16 @@ type Line = { x1: number; y1: number; x2: number; y2: number; w: number };
 type Design = { dw: number; dh: number; units: Unit[]; lines?: Line[] };
 
 export const FANCY_KINDS = [
-  'fancy-radial', 'fancy-ring', 'fancy-spiral', 'fancy-halo', 'fancy-mobile', 'fancy-heart',
-  'fancy-meteor', 'fancy-wave', 'fancy-scatter', 'fancy-concentric', 'fancy-constellation', 'fancy-arch',
+  'fancy-radial', 'fancy-ring', 'fancy-spiral', 'fancy-halo', 'fancy-mobile', 'fancy-starstar',
+  'fancy-meteor', 'fancy-crescent', 'fancy-flower', 'fancy-concentric', 'fancy-constellation', 'fancy-galaxy',
 ] as const;
-export const isFancyKind = (k?: string) => !!k && k.startsWith('fancy-') && (FANCY_KINDS as readonly string[]).includes(k);
+/** 從選單拿掉的舊排列：已經放在作品裡的照樣畫得出來 */
+const FANCY_LEGACY = ['fancy-heart', 'fancy-wave', 'fancy-scatter', 'fancy-arch'];
+/** kind 可以帶隨機種子：'fancy-mobile@123'（吊飾的「隨機排列」，見 scoreKindOf） */
+const baseOf = (k: string) => k.split('@')[0];
+export const isFancyKind = (k?: string) => !!k && k.startsWith('fancy-') && ((FANCY_KINDS as readonly string[]).includes(baseOf(k)) || FANCY_LEGACY.includes(baseOf(k)));
+/** 可以按「隨機排列」的花式排列 */
+export const fancyCanRandom = (k?: string) => !!k && baseOf(k) === 'fancy-mobile';
 
 const rng = (seed: number) => () => {
   seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -31,7 +37,20 @@ const evenOnCurve = (pt: (t: number) => [number, number], n: number, offset = 0)
   }
   return out;
 };
-const designs: Record<string, () => Design> = {
+/** 沿一條折線（封閉）等距離取 n 個點 */
+const evenOnPoly = (pts: [number, number][], n: number, offset = 0): [number, number][] => {
+  const segs = pts.map((p, i) => [p, pts[(i + 1) % pts.length]] as const);
+  const lens = segs.map(([a, b]) => Math.hypot(b[0] - a[0], b[1] - a[1])), L = lens.reduce((x, y) => x + y, 0);
+  const out: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    let d = ((i + offset) / n) * L, k = 0;
+    while (k < segs.length - 1 && d > lens[k]) { d -= lens[k]; k++; }
+    const [a, b] = segs[k], t = lens[k] ? d / lens[k] : 0;
+    out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+  }
+  return out;
+};
+const designs: Record<string, (seed: number) => Design> = {
   /* 1 放射：從中心往外 10 條，越外面越大 */
   'fancy-radial': () => {
     const units: Unit[] = [];
@@ -66,8 +85,8 @@ const designs: Record<string, () => Design> = {
     return { dw: 100, dh: 44, units };
   },
   /* 5 吊飾：隨機高度、彼此不在同一條垂直線上，每顆一條細線吊到最上面 */
-  'fancy-mobile': () => {
-    const R = rng(7), units: Unit[] = [], lines: Line[] = [];
+  'fancy-mobile': (seed) => {
+    const R = rng(seed || 7), units: Unit[] = [], lines: Line[] = [];
     const n = 7, slot = 100 / n;
     for (let i = 0; i < n; i++) {
       const r = 3.8 + R() * 2.8, x = slot * (i + 0.5) + (R() - 0.5) * (slot - r * 2.2) * 0.6;
@@ -85,14 +104,19 @@ const designs: Record<string, () => Design> = {
   },
   /* 7 流星雨：三串斜斜往左下，前端大、尾巴越來越小 */
   'fancy-meteor': () => {
-    const units: Unit[] = [];
-    const heads: [number, number, number][] = [[22, 50, 6.2], [48, 82, 5.2], [60, 34, 4.4]];
-    for (const [hx, hy, hr] of heads) {
+    // 一顆大彗星：頭在左下，三條尾巴往右上拖、微微往外散開；越往尾端越小、間距越大
+    const hx = 20, hy = 80, units: Unit[] = [{ x: hx, y: hy, r: 8 }];
+    const dir = -Math.PI / 4;                                    // 往右上
+    const ux = Math.cos(dir), uy = Math.sin(dir), px = -uy, py = ux;   // 前進方向、側向
+    for (const [side, len, size] of [[-1, 0.92, 0.85], [0, 1.08, 1], [1, 0.92, 0.85]] as const) {
+      let d = side ? 14 : 13;
       for (let j = 0; j < 7; j++) {
-        const d = j * (hr * 1.55 + 1.2 - j * 0.12);
-        units.push({ x: hx + d * 0.74, y: hy - d * 0.67, r: Math.max(0.8, hr * (1 - j * 0.13)) });
+        const spread = side * (2.5 + d * 0.2 + (d / 70) ** 2 * 6);   // 從頭後面就分開，越往後散得越開（微彎）
+        units.push({ x: hx + ux * d * len + px * spread, y: hy + uy * d * len + py * spread, r: Math.max(1, 4.2 * size * Math.pow(0.8, j)) });
+        d += 7.5 + j * 1.5;
       }
     }
+    units.push({ x: 9, y: 74, r: 1.5 }, { x: 27, y: 93, r: 1.3 }, { x: 8, y: 91, r: 1.1 });   // 頭旁邊的小火花
     return { dw: 100, dh: 100, units };
   },
   /* 8 波浪：沿著波浪排，波峰波谷大、中間小 */
@@ -111,6 +135,56 @@ const designs: Record<string, () => Design> = {
     while (units.length < 30 && guard++ < 3000) {
       const y = 4 + Math.pow(R(), 1.7) * 92, r = 1.3 + R() * 3.6 * (0.6 + y / 230), x = 4 + R() * 92;
       if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.25)) units.push({ x, y, r });
+    }
+    return { dw: 100, dh: 100, units };
+  },
+  /* 星中星：小星星沿著一顆大星星的輪廓排，五個尖角那顆比較大 */
+  'fancy-starstar': () => {
+    const pts: [number, number][] = [];
+    for (let i = 0; i < 10; i++) { const t = -Math.PI / 2 + i * Math.PI / 5, k = i % 2 ? 0.44 : 1; pts.push([50 + Math.cos(t) * 46 * k, 53 + Math.sin(t) * 46 * k]); }
+    const tips = pts.filter((_, i) => i % 2 === 0);
+    // 40 顆＝每條邊 4 顆，剛好有一顆落在每個尖角與內凹角（不會兩顆擠在角旁邊）
+    const units: Unit[] = evenOnPoly(pts, 40).map(([x, y]) => {
+      const nearTip = tips.some(([tx, ty]) => Math.hypot(tx - x, ty - y) < 1);
+      return { x, y, r: nearTip ? 4.6 : 2.7 };
+    });
+    return { dw: 100, dh: 100, units };
+  },
+  /* 月牙：彎月輪廓，中間粗的地方星星大、兩端尖的地方小 */
+  'fancy-crescent': () => {
+    const units: Unit[] = [];
+    const cx = 46, cy = 50, R = 44, ix = 64, iR = 36;   // 外圓、往右偏的內圓
+    // 外弧：開口朝右（兩個交點之間）
+    const meet = Math.acos((R * R - iR * iR + (ix - cx) ** 2) / (2 * R * (ix - cx)));   // 兩圓交點對外圓圓心的角度
+    const n1 = 17;
+    for (let i = 0; i < n1; i++) { const a = meet + (i + 0.5) / n1 * (Math.PI * 2 - meet * 2), th = Math.sin((i + 0.5) / n1 * Math.PI);
+      units.push({ x: cx + Math.cos(a) * R, y: cy + Math.sin(a) * R, r: 1.6 + th * 3.6 }); }
+    // 內弧（內圓在外圓裡面的那一段）
+    const meetI = Math.PI - Math.acos((iR * iR - R * R + (ix - cx) ** 2) / (2 * iR * (ix - cx)));
+    const n2 = 11;
+    for (let i = 0; i < n2; i++) { const a = Math.PI - meetI + (i + 0.5) / n2 * meetI * 2, th = Math.sin((i + 0.5) / n2 * Math.PI);
+      units.push({ x: ix + Math.cos(a) * iR, y: cy + Math.sin(a) * iR, r: 1.3 + th * 1.8 }); }
+    return { dw: 100, dh: 100, units };
+  },
+  /* 花瓣：六片花瓣的曲線，花瓣尖端大、靠中心小，正中間一顆 */
+  'fancy-flower': () => {
+    const pt = (t: number): [number, number] => { const r = 44 * Math.abs(Math.cos(3 * t)); return [50 + Math.cos(t) * r, 50 + Math.sin(t) * r]; };
+    const units: Unit[] = evenOnCurve(pt, 42, 0.5).map(({ p }) => {
+      const d = Math.hypot(p[0] - 50, p[1] - 50);
+      return d < 15 ? null : { x: p[0], y: p[1], r: 1.4 + (d / 44) * 3.4 };
+    }).filter(Boolean) as Unit[];
+    units.push({ x: 50, y: 50, r: 5.2 });
+    return { dw: 100, dh: 100, units };
+  },
+  /* 銀河：兩條旋臂從中心旋出，越外越大；周圍點綴小星星 */
+  'fancy-galaxy': () => {
+    const R = rng(41), units: Unit[] = [{ x: 50, y: 50, r: 6 }];
+    for (const arm of [0, Math.PI]) {
+      for (let i = 0; i < 12; i++) {
+        const t = (i + 1) / 12, a = arm + t * Math.PI * 1.35, d = 7 + t * 38;
+        units.push({ x: 50 + Math.cos(a) * d, y: 50 + Math.sin(a) * d * 0.82, r: 1.4 + t * 3.3 });
+        if (i % 2 === 1) { const off = (R() - 0.5) * 9, a2 = a + (R() - 0.5) * 0.35; units.push({ x: 50 + Math.cos(a2) * (d + off), y: 50 + Math.sin(a2) * (d + off) * 0.82, r: 0.9 + R() * 1.1 }); }
+      }
     }
     return { dw: 100, dh: 100, units };
   },
@@ -147,7 +221,7 @@ const designs: Record<string, () => Design> = {
 };
 
 const cache = new Map<string, Design>();
-const designOf = (kind: string) => { let d = cache.get(kind); if (!d) { d = designs[kind](); cache.set(kind, d); } return d; };
+const designOf = (kind: string) => { let d = cache.get(kind); if (!d) { const [b, sd] = kind.split('@'); d = designs[b](Number(sd) || 0); cache.set(kind, d); if (cache.size > 300) cache.clear(); } return d; };
 
 /** 高度佔寬度的比例（新增時照這個比例） */
 export const fancyRatio = (kind: string) => { const d = designOf(kind); return d.dh / d.dw; };

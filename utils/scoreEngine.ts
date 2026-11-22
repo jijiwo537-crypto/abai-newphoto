@@ -88,6 +88,8 @@ export const isScoreKind = (k?: string) => !!k && baseOf(k) in SPECS;
 export const scoreCanRandom = (kind?: string) => isScoreKind(kind) && !(baseOf(kind!) in SCORE_TRACED);
 /** 畫圖時用的 kind：有隨機種子就接 '@種子'；果凍II 進場中再接 '#進度'（0～1，量化成 1/240 讓快取有用） */
 export const scoreKindOf = (kind: string, seed?: number, anim?: number, wave?: [number, number]) => {
+  // 花式排列的吊飾也用同一個種子（「隨機排列」）
+  if (kind === 'fancy-mobile') return seed ? `${kind}@${seed}` : kind;
   if (!isScoreKind(kind)) return kind;
   let k = baseOf(kind) + (seed && scoreCanRandom(kind) ? `@${seed}` : '');
   if (anim !== undefined && anim < 1 && scoreCanRandom(kind)) k += `#${(Math.round(Math.max(0, anim) * 240) / 240).toFixed(4)}`;
