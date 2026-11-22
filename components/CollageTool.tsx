@@ -467,13 +467,16 @@ symbolFontReady.then(() => creativeSymbolPlacementCache.clear());
 
 /** 一般文字「剛好包住它」的框（未經四邊擠壓的自然尺寸）。跟繪製端同一套
     字型、粗細、字距與描邊；字型還沒載好時回傳 null（載好再量一次）。 */
+let plainTextMeasure: CanvasRenderingContext2D | null = null;
 const plainTextBox = (o: any, force = false): { w: number; h: number } | null => {
   if (typeof document === 'undefined') return null;
   const fam = o.fontFamily || DEFAULT_FONT, size = o.size || 40;
   const font = `${o.italic ? 'italic ' : ''}${o.bold ? 800 : 400} ${size}px ${fontStack(fam)}`;
   if (!force && (document as any).fonts?.check && !(document as any).fonts.check(font)) return null;
-  const g = document.createElement('canvas').getContext('2d');
+  // 量字用的畫布重複使用（捏合時每一格都會量一次）
+  const g = plainTextMeasure || (plainTextMeasure = document.createElement('canvas').getContext('2d'));
   if (!g) return null;
+  g.setTransform(1, 0, 0, 1, 0, 0);
   const spacing = o.letterSpacing || 0;
   g.font = font; primeCanvasFont(g.font); (g as any).letterSpacing = `${spacing}px`;
   g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -5774,17 +5777,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          置中放大時左右算出來的倍率一樣，所以兩條邊會同時貼上、兩條線一起亮。 */
       const pinchSnap = snapPinchScale(k, pin.w0, pin.h0, pin.cx0, pin.cy0, nrot, pin.id);
       k = Math.max(pinchMin, Math.min(pinchMax, pinchSnap.k));
-      const nw = pin.w0 * k, nh = pin.h0 * k;
-      const sx0 = pin.cx0 - nw / 2, sy0 = pin.cy0 - nh / 2;
       snapHaptic(guidesRef.current.length, pinchSnap.guides.length);
       guidesRef.current = pinchSnap.guides;
       queueMove(() => {
+        let nw = pin.w0 * k, nh = pin.h0 * k;
+        /* 文字：捏合中的框也用「放開後重新量框」的同一支 plainTextBox 量（照當下字級），
+           不用「起手的框 × 倍數」—— 框的固定留白不會跟著被放大縮小，捏合中與放開後完全一致，放開時不會跳。
+           被四邊擠壓過的文字維持原本的擠壓比例。在這裡（每一格畫面只跑一次）量，不在每個觸控事件裡量 */
+        let tBaseW = pin.textStretchBaseW0 * k, tBaseH = pin.textStretchBaseH0 * k;
+        if (pinchedObject?.type === 'text' && !pinchedObject.sym && pin.size0) {
+          const box = plainTextBox({ ...pinchedObject, size: pin.size0 * k }, true);
+          if (box) {
+            const rx = pin.w0 / Math.max(1e-6, pin.textStretchBaseW0), ry = pin.h0 / Math.max(1e-6, pin.textStretchBaseH0);
+            nw = box.w * rx; nh = box.h * ry; tBaseW = box.w; tBaseH = box.h;
+          }
+        }
+        const sx0 = pin.cx0 - nw / 2, sy0 = pin.cy0 - nh / 2;
         setGuides(pinchSnap.guides);
         setObjects(prev => prev.map(o => o.id === pin.id
           ? { ...o, w: nw, h: nh, size: pin.size0 ? pin.size0 * k : o.size,
               ...(o.type === 'text' && !o.sym ? {
-                textStretchBaseW: pin.textStretchBaseW0 * k,
-                textStretchBaseH: pin.textStretchBaseH0 * k,
+                textStretchBaseW: tBaseW,
+                textStretchBaseH: tBaseH,
               } : null),
               /* 整體縮放時紋理與圖形一起縮放，網格數量保持不變；
                  四邊擠壓走另一條路徑，不會改這兩個基準。 */
