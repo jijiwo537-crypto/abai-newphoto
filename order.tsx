@@ -119,6 +119,18 @@ type Drag = { group: string; id: string; pointerId: number; dx: number; dy: numb
 function OrderTool() {
   const base = useMemo(defaultGroups, []);
   const [groups, setGroups] = useState<Group[]>(() => load(base));
+  /* 貼圖（圖形）裡「種類」的順序：實心、外框、星芒…。存的時候順便記 App 當時的順序，App 改過就丟掉舊的 */
+  const SEC_DEFAULT = SHAPE_SECTIONS.map(([k]) => k as string);
+  const [secOrder, setSecOrder] = useState<string[]>(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('abai-order-tool-sections-v1') || 'null');
+      if (v && v.base === SEC_DEFAULT.join(',') && Array.isArray(v.order) && v.order.length === SEC_DEFAULT.length) return v.order;
+    } catch {}
+    return SEC_DEFAULT;
+  });
+  useEffect(() => { try { localStorage.setItem('abai-order-tool-sections-v1', JSON.stringify({ base: SEC_DEFAULT.join(','), order: secOrder })); } catch {} }, [secOrder]);
+  const secChanged = secOrder.join(',') !== SEC_DEFAULT.join(',');
+  const moveSec = (key: string, d: number) => setSecOrder(o => { const i = o.indexOf(key), j = i + d; if (i < 0 || j < 0 || j >= o.length) return o; const n = [...o]; [n[i], n[j]] = [n[j], n[i]]; return n; });
   const [tab, setTab] = useState<'pattern' | 'shape' | 'size' | 'burst' | 'frame' | 'icon' | 'symbol' | 'home' | 'font'>(() => (new URLSearchParams(location.search).get('tab') === 'home' ? 'home' : new URLSearchParams(location.search).get('tab') === 'font' ? 'font' : 'pattern'));
   /** 「圖標」頁挑中的高光／陰影／白色／黑色圖標方案 */
   const [toneIcon, setToneIcon] = useState(loadToneIconPick);
@@ -282,6 +294,7 @@ function OrderTool() {
     if (hi >= 0) lines.push('高光↔陰影的圖標', `${hi + 1}｜${HS_PAIRS[hi].name}（${toneIcon.hs}）`);
     if (wi >= 0) lines.push('白色↔黑色的圖標', `${wi + 1}｜${WB_PAIRS[wi].name}（${toneIcon.wb}）`);
     // 只帶有改過順序的那幾區，沒動的不用每次都整串貼過去
+    if (secChanged) lines.push('貼圖種類順序', secOrder.map(k => `${SHAPE_SECTIONS.find(([kk]) => kk === k)?.[1]}（${k}）`).join(', '));
     for (const g of groups) if (changed(g)) lines.push(g.label, g.items.map(i => i.id).join(', '));
     const items = new Map(allShapeItems().map(it => [it.id, it]));
     const texOff = texIds.filter(id => items.has(id) && TEX_IN_APP(items.get(id)));
@@ -327,11 +340,11 @@ function OrderTool() {
       ta.remove();
     }
   };
-  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小、星芒的勾選、刪除和自訂也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setStretchIds([]); setDeleteIds([]); setTexIds([]); setSizes({}); setBursts([]); setToneIcon({ hs: '', wb: '' }); try { localStorage.removeItem('abai-order-tool-starburst-deleted-v1'); localStorage.removeItem('abai-order-tool-starburst-custom-v1'); } catch {} window.dispatchEvent(new Event('abai-burst-reset')); } };
+  const reset = () => { if (confirm('回到 App 目前的順序？（加到圖案、變形、刪除的勾選、調過的圖案大小、星芒的勾選、刪除和自訂也會清掉）')) { setGroups(base.map(g => ({ ...g, items: [...g.items] }))); setSecOrder(SEC_DEFAULT); setStretchIds([]); setDeleteIds([]); setTexIds([]); setSizes({}); setBursts([]); setToneIcon({ hs: '', wb: '' }); try { localStorage.removeItem('abai-order-tool-starburst-deleted-v1'); localStorage.removeItem('abai-order-tool-starburst-custom-v1'); } catch {} window.dispatchEvent(new Event('abai-burst-reset')); } };
 
-  const shown = tab === 'size' || tab === 'burst' || tab === 'frame' || tab === 'icon' || tab === 'symbol' || tab === 'home' || tab === 'font' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern');
+  const shown = tab === 'size' || tab === 'burst' || tab === 'frame' || tab === 'icon' || tab === 'symbol' || tab === 'home' || tab === 'font' ? [] : groups.filter(g => tab === 'pattern' ? g.key === 'pattern' : g.key !== 'pattern').sort((a, b) => secOrder.indexOf(a.key) - secOrder.indexOf(b.key));
   const dragged = drag && groups.find(g => g.key === drag.group)?.items.find(i => i.id === drag.id);
-  const anyChanged = groups.some(changed) || framePicks.length > 0 || texIds.length > 0 || stretchIds.length > 0 || deleteIds.length > 0 || Object.keys(sizes).length > 0 || bursts.length > 0 || !!toneIcon.hs || !!toneIcon.wb;
+  const anyChanged = secChanged || groups.some(changed) || framePicks.length > 0 || texIds.length > 0 || stretchIds.length > 0 || deleteIds.length > 0 || Object.keys(sizes).length > 0 || bursts.length > 0 || !!toneIcon.hs || !!toneIcon.wb;
   const sizeList = (groups.find(g => g.key === 'pattern')?.items || []).filter(i => !i.fromShape);
 
   /* 預覽時整頁就是一個真正的創意拼圖（跟 App 裡一樣全螢幕，選單、彈出層都照原本的方式疊） */
@@ -490,8 +503,15 @@ function OrderTool() {
         {shown.map(g => (
           <section key={g.key} className="mt-5">
             <div className="flex items-baseline justify-between mb-2">
-              <div className="text-[11px] font-bold text-white/50 tracking-widest">{g.label}</div>
-              {changed(g) && <div className="text-[10px] text-[#9fd3a8]">已調整</div>}
+              <div className="flex items-center gap-2">
+                <div className="text-[11px] font-bold text-white/50 tracking-widest">{g.label}</div>
+                {/* 整個種類往上／往下移（調貼圖裡種類的順序） */}
+                {g.key !== 'pattern' && <>
+                  <button onClick={() => moveSec(g.key, -1)} disabled={secOrder.indexOf(g.key) === 0} className="w-7 h-6 rounded bg-white/10 text-[12px] disabled:opacity-25">↑</button>
+                  <button onClick={() => moveSec(g.key, 1)} disabled={secOrder.indexOf(g.key) === secOrder.length - 1} className="w-7 h-6 rounded bg-white/10 text-[12px] disabled:opacity-25">↓</button>
+                </>}
+              </div>
+              {(changed(g) || (g.key !== 'pattern' && secOrder.indexOf(g.key) !== SEC_DEFAULT.indexOf(g.key))) && <div className="text-[10px] text-[#9fd3a8]">已調整</div>}
             </div>
             <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${g.cols}, minmax(0, 1fr))` }}>
               {g.items.map((it, i) => {
