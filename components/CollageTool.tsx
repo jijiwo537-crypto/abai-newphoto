@@ -41,7 +41,7 @@ import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
 import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
-import { fancyAlphaLevels } from '../utils/fancyShapes';
+import { fancyAlphaMask, applyFancyMask } from '../utils/fancyShapes';
 import { centerActiveChip } from '../utils/centerChip';
 import { fancyCanRandom, isFancyKind, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
@@ -8136,8 +8136,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 花式排列一顆一顆分開動、而且有星星在變淡：照透明度分層，一層畫一次（那一層的星星＋那一層的透明度），
          描邊、發光也跟著那顆星星一起變淡 */
       const tag = f0 && typeof (f0 as any).scoreAnim === 'string' ? (f0 as any).scoreAnim as string : null;
-      const lv = tag ? fancyAlphaLevels(scoreKindOf(o.kind, o.scoreSeed, tag), o.w, o.h, o.textureBaseW || o.w, o.textureBaseH || o.h) : null;
-      if (lv && f0) { for (const a of lv) drawObject1(o, { ...f0, a: f0.a * a, scoreAnim: `${tag}|${a}` } as any); return; }
+      const fm = tag ? fancyAlphaMask(scoreKindOf(o.kind, o.scoreSeed, tag), o.w, o.h, o.textureBaseW || o.w, o.textureBaseH || o.h) : null;
+      /* 花式排列有星星在變淡：完整畫一次（'|m'＝星星照原本大小），在它自己的暫存層上蓋透明度遮罩（見 fancyAlphaMask） */
+      if (fm && f0) { drawObject1(o, { ...f0, scoreAnim: `${tag}|m`, fancyMask: fm } as any); return; }
       drawObject1(o, f0);
     };
     const drawObject1 = (o:any, f:any) => {
@@ -8160,7 +8161,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const singleStroke = o.type === 'shape' && glowAmount(o.glow) <= 0 && !((o.strokeW || 0) > 0)
         && texOf(o) === 'none' && !COMPOSITE_SHAPE_KINDS.has(o.kind) && !TRACK_SQUARE_KINDS.has(o.kind as string)
         && !GRID_SHAPE_KINDS.has(o.kind) && !(o.kind === 'hole' && f?.rayK !== undefined);
-      const flattenShapeAlpha = o.type === 'shape' && !isBackdropMask(o.kind) && objectAlpha < 0.999 && !singleStroke;
+      // 花式排列的透明度遮罩要蓋在「只有這個貼圖」的暫存層上，所以一定走暫存層
+      const flattenShapeAlpha = o.type === 'shape' && !isBackdropMask(o.kind) && ((objectAlpha < 0.999 && !singleStroke) || !!f?.fancyMask);
       /* 半透明圖形的暫存層只用到它自己那一塊：不要每一顆都清一整張畫布、再把整張畫布
          貼回來 —— 進場動畫時每一顆都在淡入，四十顆就是每一格清＋貼四十次全螢幕，
          物件一多就卡到幾乎不動。改成只算這一顆的外框（含發光、描邊的餘裕）。 */
@@ -8581,6 +8583,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
         }
         ctx.setLineDash([]);
+        /* 花式排列：星星各自的透明度（這裡是只有這個貼圖的暫存層，座標正好是路徑座標） */
+        if (flattened && f?.fancyMask) applyFancyMask(ctx, f.fancyMask, o.w, o.h, bw, bh);
         ctx.restore();
         }
       } else if (o.type === 'text') {

@@ -447,6 +447,84 @@ const clipRect = (pts: [number, number][], w: number, h: number): [number, numbe
   if (P.length) P = edge(P, p => p[1] <= h, (a, b) => lerpY(a, b, h));
   return P;
 };
+/* ───────── 透明度遮罩 ─────────
+   星星各自變淡的最好做法：貼圖照平常完整畫「一次」（本體、描邊、發光全部），
+   再蓋一張「每一點的透明度＝離它最近的那顆星星的透明度」的小遮罩（destination-in）。
+   遮罩只有 40 格寬，放大時瀏覽器會平滑內插，所以星星之間的發光也是平順過渡。
+   透明度是連續的（不分層、不會一格一格跳），而且一格只畫一次，不會因為分層重畫好幾次而卡。 */
+const maskMemo = new Map<string, { c: HTMLCanvasElement; pad: number } | null>();
+export const fancyMaskPad = (w: number, h: number) => Math.max(w, h) * 0.4 + 8;
+/** 回傳遮罩畫布（涵蓋路徑座標 -pad～w+pad、-pad～h+pad），沒有星星在變淡就回 null（照平常畫）。
+    w、h 用物件本身的大小就好（遮罩是照比例放大縮小的） */
+export const fancyAlphaMask = (kind0: string, w: number, h: number, gbw = w, gbh = h): { c: HTMLCanvasElement; pad: number } | null => {
+  if (typeof document === 'undefined' || !(w > 0) || !(h > 0)) return null;
+  const key = kind0 + '|' + Math.round(w) + '|' + Math.round(h) + '|' + Math.round(gbw) + '|' + Math.round(gbh);
+  if (maskMemo.has(key)) return maskMemo.get(key)!;
+  const [kind, tag] = kind0.split('!');
+  let out: { c: HTMLCanvasElement; pad: number } | null = null;
+  if (tag) {
+    const [aid, rest = ''] = tag.split(':');
+    const { stars } = fancyGeometry(kind, w, h, gbw, gbh);
+    const us = fancyMotionUnits(aid, motionCtxOf(stars, w, h), rest.split('|')[0]);
+    if (us && us.some(u => u.a < 0.995)) {
+      const pad = fancyMaskPad(w, h), W = w + pad * 2, H = h + pad * 2;
+      const N = 40, cw = W >= H ? N : Math.max(8, Math.round(N * W / H)), ch = H >= W ? N : Math.max(8, Math.round(N * H / W));
+      const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+      const g = c.getContext('2d');
+      if (g) {
+        const img = g.createImageData(cw, ch), px = img.data;
+        const P = stars.map((st, i) => [st.x + us[i].dx, st.y + us[i].dy, st.r * Math.max(0.2, us[i].s), Math.max(0, Math.min(1, us[i].a))]);
+        for (let j = 0; j < ch; j++) for (let i = 0; i < cw; i++) {
+          const x = -pad + (i + 0.5) / cw * W, y = -pad + (j + 0.5) / ch * H;
+          let best = 1e18, a = 1;
+          for (const q of P) {
+            const dx = q[0] - x, dy = q[1] - y, lo = best + q[2];
+            if (lo > 0 && dx * dx + dy * dy >= lo * lo) continue;   // 一定比目前最近的遠，不用開根號
+            const d = Math.sqrt(dx * dx + dy * dy) - q[2]; if (d < best) { best = d; a = q[3]; }
+          }
+          const o = (j * cw + i) * 4; px[o] = px[o + 1] = px[o + 2] = 255; px[o + 3] = Math.round(a * 255);
+        }
+        g.putImageData(img, 0, 0);
+        out = { c, pad };
+      }
+    }
+  }
+  maskMemo.set(key, out); if (maskMemo.size > 48) maskMemo.delete(maskMemo.keys().next().value!);
+  return out;
+};
+/** 在一張獨立的畫布上（裡面只有這個貼圖）蓋上遮罩：ctx 目前的座標要是路徑座標（左上角＝0,0、大小 dw×dh） */
+export const applyFancyMask = (ctx: CanvasRenderingContext2D, m: { c: HTMLCanvasElement; pad: number }, w: number, h: number, dw: number, dh: number) => {
+  const kx = dw / w, ky = dh / h;
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-in'; ctx.globalAlpha = 1;
+  // 遮罩本來就是柔和的漸層：一般的雙線性內插就夠了（'high' 在大面積放大時很花時間）
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low';
+  ctx.drawImage(m.c, -m.pad * kx, -m.pad * ky, (w + m.pad * 2) * kx, (h + m.pad * 2) * ky);
+  ctx.restore();
+};
+/** 畫在一般畫布上（底下已經有別的東西）：先畫到暫存畫布、蓋遮罩、再貼回來。
+    ox、oy＝路徑左上角在 ctx 目前座標裡的位置；dw、dh＝路徑在 ctx 座標裡的大小 */
+let maskScratch: HTMLCanvasElement | null = null;
+export const paintWithFancyMask = (ctx: CanvasRenderingContext2D, m: { c: HTMLCanvasElement; pad: number }, w: number, h: number,
+  ox: number, oy: number, dw: number, dh: number, draw: (g: CanvasRenderingContext2D) => void) => {
+  const kx = dw / w, ky = dh / h, px = m.pad * kx, py = m.pad * ky;
+  const T = ctx.getTransform(), sc = Math.max(0.01, Math.sqrt(Math.abs(T.a * T.d - T.b * T.c)));
+  const BW = dw + px * 2, BH = dh + py * 2;
+  let k = sc; const MAXPX = 2_400_000;
+  if (BW * BH * k * k > MAXPX) k = Math.sqrt(MAXPX / (BW * BH));   // 很大的時候降一點解析度，不會吃光記憶體
+  const cw = Math.max(1, Math.ceil(BW * k)), ch = Math.max(1, Math.ceil(BH * k));
+  const c = maskScratch ??= document.createElement('canvas');
+  if (c.width < cw || c.height < ch) { c.width = Math.max(c.width, cw); c.height = Math.max(c.height, ch); }
+  const g = c.getContext('2d'); if (!g) { draw(ctx); return; }
+  g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, ch);
+  g.setTransform(k, 0, 0, k, (px - ox) * k, (py - oy) * k);
+  draw(g);
+  g.setTransform(k, 0, 0, k, (px - ox) * k + ox * k, (py - oy) * k + oy * k);
+  applyFancyMask(g, m, w, h, dw, dh);
+  ctx.save(); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(c, 0, 0, cw, ch, ox - px, oy - py, BW, BH);
+  ctx.restore();
+};
 /** 透明度分成 8 層（0.125、0.25 … 1） */
 const alphaLevel = (a: number) => Math.max(1, Math.min(8, Math.round(a * 8))) / 8;
 /** 這一格有哪些透明度層（全部都是不透明就回 null，照平常畫一次就好）。
@@ -472,13 +550,13 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
   const us = tag ? fancyMotionUnits(aid, motionCtxOf(stars, w, h), av) : null;
   /* '|透明度層'：畫的那一端把星星照透明度分層，一層一層用自己的透明度畫（見 fancyAlphaLevels）。
      這一次只畫屬於這一層的星星，大小照原本的；沒有分層的地方（舊的畫法）才把「變淡」換成「變小」 */
-  const layer = lv ? Number(lv) : undefined, clipBox = aid === 'fx-in-rain';
+  const masked = lv === 'm', layer = lv && !masked ? Number(lv) : undefined, clipBox = aid === 'fx-in-rain';
   if (us) {
     out = [];
     stars.forEach((st, i) => {
       const u = us[i]; if (!u || u.a <= 0.02 || u.s <= 0.005) return;
       if (layer !== undefined && alphaLevel(u.a) !== layer) return;
-      const R = st.r * u.s * (layer === undefined && u.a < 1 ? 0.3 + 0.7 * u.a : 1), X = st.x + u.dx, Y = st.y + u.dy;
+      const R = st.r * u.s * (layer === undefined && !masked && u.a < 1 ? 0.3 + 0.7 * u.a : 1), X = st.x + u.dx, Y = st.y + u.dy;
       const sx = u.sx ?? 1;
       let pts: [number, number][] = [];
       for (let k = 0; k < 10; k++) {
@@ -495,7 +573,8 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
     for (const l of lines0) {
       const ia = near(l.x1, l.y1), ib = near(l.x2, l.y2), A = ia >= 0 ? us[ia] : null, B = ib >= 0 ? us[ib] : null;
       if (layer !== undefined) { if (alphaLevel(Math.min(A ? A.a : 1, B ? B.a : 1)) !== layer) continue; }
-      else if ((A && A.a < 0.5) || (B && B.a < 0.5)) continue;
+      else if (!masked && ((A && A.a < 0.5) || (B && B.a < 0.5))) continue;
+      else if (masked && ((A && A.a <= 0.02) || (B && B.a <= 0.02))) continue;
       const L = { ...l, x1: l.x1 + (A?.dx || 0), y1: l.y1 + (A?.dy || 0), x2: l.x2 + (B?.dx || 0), y2: l.y2 + (B?.dy || 0) };
       if (clipBox) {   // 星雨：線也只畫框裡面那一段
         if (Math.max(L.y1, L.y2) <= 0) continue;

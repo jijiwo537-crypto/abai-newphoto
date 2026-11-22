@@ -1,7 +1,7 @@
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
 import { centerActiveChip } from '../utils/centerChip';
 import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
-import { FANCY_KINDS, isFancyKind, fancyPathD, fancyGeometry, fancyAlphaLevels, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
+import { FANCY_KINDS, isFancyKind, fancyPathD, fancyGeometry, fancyAlphaMask, paintWithFancyMask, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { swatchEdge } from '../utils/swatch';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
@@ -6790,9 +6790,13 @@ const classicScenePath = (image: FloatingImage, ringReveal = 1, scoreAnim?: numb
 const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
   motionFrame: ObjectMotionFrame | null | undefined, backingScale: number, cacheGlow = false) => {
   const sa = (motionFrame as any)?.scoreAnim;
-  const lv = typeof sa === 'string' && image.shape ? fancyAlphaLevels(scoreKindOf(image.shape, (image as any).scoreSeed, sa), image.width, image.height, image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height) : null;
-  if (!lv) { paintClassicSceneVector0(ctx, image, motionFrame, backingScale, cacheGlow); return; }
-  for (const a of lv) { ctx.save(); ctx.globalAlpha *= a; paintClassicSceneVector0(ctx, image, { ...motionFrame!, scoreAnim: `${sa}|${a}` } as any, backingScale, cacheGlow); ctx.restore(); }
+  const m = typeof sa === 'string' && image.shape ? fancyAlphaMask(scoreKindOf(image.shape, (image as any).scoreSeed, sa), image.width, image.height, image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height) : null;
+  if (!m) { paintClassicSceneVector0(ctx, image, motionFrame, backingScale, cacheGlow); return; }
+  /* 完整畫一次（'|m'＝星星照原本大小）到暫存畫布、蓋上每顆星星自己的透明度遮罩、再貼回來（見 fancyAlphaMask）。
+     這裡的座標以物件中心為原點，路徑的左上角在 (-寬/2, -高/2) */
+  const W = image.width, H = image.height;
+  paintWithFancyMask(ctx, m, W, H, -W / 2, -H / 2, W, H,
+    g => paintClassicSceneVector0(g, image, { ...motionFrame!, scoreAnim: `${sa}|m` } as any, backingScale, cacheGlow));
 };
 const paintClassicSceneVector0 = (ctx: CanvasRenderingContext2D, image: FloatingImage,
   motionFrame: ObjectMotionFrame | null | undefined, backingScale: number, cacheGlow = false) => {
@@ -16287,12 +16291,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 路徑跟預覽是同一支 shapePathD、同一條 d 字串，線寬也是同一支 shapeLineWidth ——
    * 畫布上看到的跟存下來的不可能長得不一樣。
    */
-  /** 帶動畫的那一格：花式排列有星星在變淡時，照透明度分層、一層畫一次（見 fancyAlphaLevels） */
+  /** 帶動畫的那一格：花式排列有星星在變淡時，完整畫一次再蓋透明度遮罩（見 fancyAlphaMask） */
   const drawShapeLayerAnim = (ctx: CanvasRenderingContext2D, fImg: FloatingImage, scaleFactor: number, frame: ObjectMotionFrame | null | undefined) => {
     const sa = (frame as any)?.scoreAnim as number | string | undefined;
-    const lv = typeof sa === 'string' ? fancyAlphaLevels(scoreKindOf(fImg.shape!, (fImg as any).scoreSeed, sa), fImg.width, fImg.height, fImg.shapeTextureBaseW || fImg.width, fImg.shapeTextureBaseH || fImg.height) : null;
-    if (!lv) { drawShapeLayer(ctx, fImg, scaleFactor, false, frame?.ringReveal ?? 1, sa); return; }
-    for (const a of lv) { ctx.save(); ctx.globalAlpha *= a; drawShapeLayer(ctx, fImg, scaleFactor, false, frame?.ringReveal ?? 1, `${sa}|${a}`); ctx.restore(); }
+    const m = typeof sa === 'string' ? fancyAlphaMask(scoreKindOf(fImg.shape!, (fImg as any).scoreSeed, sa), fImg.width, fImg.height, fImg.shapeTextureBaseW || fImg.width, fImg.shapeTextureBaseH || fImg.height) : null;
+    if (!m) { drawShapeLayer(ctx, fImg, scaleFactor, false, frame?.ringReveal ?? 1, sa); return; }
+    // 匯出：路徑左上角在 (x, y)×倍率，大小是寬高×倍率
+    paintWithFancyMask(ctx, m, fImg.width, fImg.height, fImg.x * scaleFactor, fImg.y * scaleFactor, fImg.width * scaleFactor, fImg.height * scaleFactor,
+      g => drawShapeLayer(g, fImg, scaleFactor, false, frame?.ringReveal ?? 1, `${sa}|m`));
   };
   const drawShapeLayer = (
     ctx: CanvasRenderingContext2D,
