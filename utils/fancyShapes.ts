@@ -428,18 +428,38 @@ export const fancyStarD = (cx: number, cy: number, R: number, rot = 0) => {
   }
   return out.join(' ') + ' Z';
 };
+/** 透明度分成 8 層（0.125、0.25 … 1） */
+const alphaLevel = (a: number) => Math.max(1, Math.min(8, Math.round(a * 8))) / 8;
+/** 這一格有哪些透明度層（全部都是不透明就回 null，照平常畫一次就好）。
+    kind 是帶動畫進度的那一串（'fancy-halo!fx-idle-twinkle:1.2345'） */
+export const fancyAlphaLevels = (kind0: string, w: number, h: number, gbw = w, gbh = h): number[] | null => {
+  const [kind, tag] = kind0.split('!'); if (!tag || !(w > 0) || !(h > 0)) return null;
+  const [aid, rest = ''] = tag.split(':');
+  const { stars } = fancyGeometry(kind, w, h, gbw, gbh);
+  const us = fancyMotionUnits(aid, motionCtxOf(stars, w, h), Number(rest.split('|')[0]) || 0);
+  if (!us) return null;
+  const set = new Set<number>();
+  for (const u of us) if (u.a > 0.02 && u.s > 0.005) set.add(alphaLevel(u.a));
+  if (!set.size || (set.size === 1 && set.has(1))) return null;
+  set.add(1);   // 線（沒有貼著星星的那一端）永遠在不透明那一層
+  return [...set].sort((a, b) => a - b);
+};
 const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: number) => {
   const [kind, tag] = kind0.split('!');
   const { stars, lines: lines0 } = fancyGeometry(kind, w, h, gbw, gbh);
   let lines = lines0, out: string[];
   /* 一顆一顆分開動的動畫：照進度搬每顆星星；透明度換成大小（一條路徑只有一個顏色），完全透明就不畫 */
-  const [aid, av] = (tag || '').split(':');
+  const [aid, rest = ''] = (tag || '').split(':'), [av, lv] = rest.split('|');
   const us = tag ? fancyMotionUnits(aid, motionCtxOf(stars, w, h), Number(av) || 0) : null;
+  /* '|透明度層'：畫的那一端把星星照透明度分層，一層一層用自己的透明度畫（見 fancyAlphaLevels）。
+     這一次只畫屬於這一層的星星，大小照原本的；沒有分層的地方（舊的畫法）才把「變淡」換成「變小」 */
+  const layer = lv ? Number(lv) : undefined;
   if (us) {
     out = [];
     stars.forEach((st, i) => {
       const u = us[i]; if (!u || u.a <= 0.02 || u.s <= 0.005) return;
-      const R = st.r * u.s * (u.a < 1 ? 0.3 + 0.7 * u.a : 1), X = st.x + u.dx, Y = st.y + u.dy;
+      if (layer !== undefined && alphaLevel(u.a) !== layer) return;
+      const R = st.r * u.s * (layer === undefined && u.a < 1 ? 0.3 + 0.7 * u.a : 1), X = st.x + u.dx, Y = st.y + u.dy;
       if (u.sx !== undefined && u.sx !== 1) {
         const pts: string[] = [];
         for (let k = 0; k < 10; k++) {
@@ -454,7 +474,8 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
     lines = [];
     for (const l of lines0) {
       const ia = near(l.x1, l.y1), ib = near(l.x2, l.y2), A = ia >= 0 ? us[ia] : null, B = ib >= 0 ? us[ib] : null;
-      if ((A && A.a < 0.5) || (B && B.a < 0.5)) continue;
+      if (layer !== undefined) { if (alphaLevel(Math.min(A ? A.a : 1, B ? B.a : 1)) !== layer) continue; }
+      else if ((A && A.a < 0.5) || (B && B.a < 0.5)) continue;
       lines.push({ ...l, x1: l.x1 + (A?.dx || 0), y1: l.y1 + (A?.dy || 0), x2: l.x2 + (B?.dx || 0), y2: l.y2 + (B?.dy || 0) });
     }
   } else out = stars.map(u => fancyStarD(u.x, u.y, u.r, u.rot));

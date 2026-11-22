@@ -41,6 +41,7 @@ import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
 import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
+import { fancyAlphaLevels } from '../utils/fancyShapes';
 import { fancyCanRandom, isFancyKind, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
@@ -8130,7 +8131,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const drawObject = (o:any) => {
       /* 播動態時，每個物件有自己的一格（出場 ＋ 常駐）。
          靜態時 f 是 null，這一段完全不影響畫面。 */
-      const f = animRef.current ? animRef.current.obj(o, objIndex.get(o.id) ?? 0) : null;
+      const f0 = animRef.current ? animRef.current.obj(o, objIndex.get(o.id) ?? 0) : null;
+      /* 花式排列一顆一顆分開動、而且有星星在變淡：照透明度分層，一層畫一次（那一層的星星＋那一層的透明度），
+         描邊、發光也跟著那顆星星一起變淡 */
+      const tag = f0 && typeof (f0 as any).scoreAnim === 'string' ? (f0 as any).scoreAnim as string : null;
+      const lv = tag ? fancyAlphaLevels(scoreKindOf(o.kind, o.scoreSeed, tag), o.w, o.h, o.textureBaseW || o.w, o.textureBaseH || o.h) : null;
+      if (lv && f0) { for (const a of lv) drawObject1(o, { ...f0, a: f0.a * a, scoreAnim: `${tag}|${a}` } as any); return; }
+      drawObject1(o, f0);
+    };
+    const drawObject1 = (o:any, f:any) => {
       if (f && (f.k <= 0.002 || f.a <= 0.004)) return;
       /* 波浪交棒的第 0 幀必須和進場最後一幀逐像素相同。
          若 blend 還是 0 就不要提前切到分段重採樣的畫法，否則即便位移為 0，

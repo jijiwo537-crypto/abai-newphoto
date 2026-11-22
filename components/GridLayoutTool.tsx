@@ -1,6 +1,6 @@
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
 import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
-import { FANCY_KINDS, isFancyKind, fancyPathD, fancyGeometry, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
+import { FANCY_KINDS, isFancyKind, fancyPathD, fancyGeometry, fancyAlphaLevels, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { swatchEdge } from '../utils/swatch';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
@@ -6785,7 +6785,15 @@ const classicScenePath = (image: FloatingImage, ringReveal = 1, scoreAnim?: numb
 };
 
 /** 場景繪製：固定的區域幾何、一次場景變換、不量 DOM */
+/* 花式排列有星星在變淡時：照透明度分層、一層畫一次（那一層的星星＋那一層的透明度），描邊、發光跟著一起淡 */
 const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
+  motionFrame: ObjectMotionFrame | null | undefined, backingScale: number, cacheGlow = false) => {
+  const sa = (motionFrame as any)?.scoreAnim;
+  const lv = typeof sa === 'string' && image.shape ? fancyAlphaLevels(scoreKindOf(image.shape, (image as any).scoreSeed, sa), image.width, image.height, image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height) : null;
+  if (!lv) { paintClassicSceneVector0(ctx, image, motionFrame, backingScale, cacheGlow); return; }
+  for (const a of lv) { ctx.save(); ctx.globalAlpha *= a; paintClassicSceneVector0(ctx, image, { ...motionFrame!, scoreAnim: `${sa}|${a}` } as any, backingScale, cacheGlow); ctx.restore(); }
+};
+const paintClassicSceneVector0 = (ctx: CanvasRenderingContext2D, image: FloatingImage,
   motionFrame: ObjectMotionFrame | null | undefined, backingScale: number, cacheGlow = false) => {
   const drawW = image.width, drawH = image.height, contentScale = 1;
   const usesUnitMotion = image.text !== undefined && (motionFrame?.lab !== undefined || motionFrame?.seq !== undefined
@@ -7161,8 +7169,6 @@ export const makeShapeItem = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem
       ...(pola ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, idle: 'wobble', ...idleDefaults('wobble', { shape: true }) } } : {}),
       // 樂譜 3～6：預設進場果凍ll、常駐波浪
       ...(scoreCanRandom(it.kind) ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, in: 'score-seq', dur: motionDurationFromUi(50), idle: 'grid-wave', ...idleDefaults('grid-wave', { shape: true }) } } : {}),
-      // 花式排列：每一種自己的預設動畫（見 utils/fancyMotion）
-      ...(fancyMotionCfg(it.kind) ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, in: fancyMotionCfg(it.kind)!.defIn, idle: fancyMotionCfg(it.kind)!.defIdle, ...idleDefaults(fancyMotionCfg(it.kind)!.defIdle, { shape: true }) } } : {}),
       // 樂譜 1、2（照原圖描的）：預設沒有進場動畫
       ...(isScoreKind(it.kind) && !scoreCanRandom(it.kind) ? { mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT, in: 'none' } } : {}),
       // 星芒：常駐動畫預設是縮放；有光環的預設旋轉
@@ -16280,12 +16286,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 路徑跟預覽是同一支 shapePathD、同一條 d 字串，線寬也是同一支 shapeLineWidth ——
    * 畫布上看到的跟存下來的不可能長得不一樣。
    */
+  /** 帶動畫的那一格：花式排列有星星在變淡時，照透明度分層、一層畫一次（見 fancyAlphaLevels） */
+  const drawShapeLayerAnim = (ctx: CanvasRenderingContext2D, fImg: FloatingImage, scaleFactor: number, frame: ObjectMotionFrame | null | undefined) => {
+    const sa = (frame as any)?.scoreAnim as number | string | undefined;
+    const lv = typeof sa === 'string' ? fancyAlphaLevels(scoreKindOf(fImg.shape!, (fImg as any).scoreSeed, sa), fImg.width, fImg.height, fImg.shapeTextureBaseW || fImg.width, fImg.shapeTextureBaseH || fImg.height) : null;
+    if (!lv) { drawShapeLayer(ctx, fImg, scaleFactor, false, frame?.ringReveal ?? 1, sa); return; }
+    for (const a of lv) { ctx.save(); ctx.globalAlpha *= a; drawShapeLayer(ctx, fImg, scaleFactor, false, frame?.ringReveal ?? 1, `${sa}|${a}`); ctx.restore(); }
+  };
   const drawShapeLayer = (
     ctx: CanvasRenderingContext2D,
     fImg: FloatingImage,
     scaleFactor: number,
     alphaFlattened = false,
     ringReveal = 1,
+    /** 花式排列／樂譜的動畫進度（見 scoreKindOf）；匯出影片時跟預覽一樣動 */
+    scoreAnim?: number | string,
   ) => {
     // 扣掉預覽裡每頁之間那 1px 的間隔（跟圖片同一套）
     const adjustedX = fImg.x;
@@ -16316,7 +16331,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const tc = tmp.getContext('2d');
       if (tc) {
         tc.translate(-left, -top);
-        drawShapeLayer(tc, { ...fImg, opacity: 100 }, scaleFactor, true, ringReveal);
+        drawShapeLayer(tc, { ...fImg, opacity: 100 }, scaleFactor, true, ringReveal, scoreAnim);
         ctx.save();
         ctx.globalAlpha *= shapeAlpha;
         ctx.drawImage(tmp, left, top);
@@ -16383,7 +16398,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return;
     }
     const pathD = shapePathD(
-      stitchKindD(scoreKindOf(fImg.shape!, (fImg as any).scoreSeed), fImg.shapeLineGap), fw, fh,
+      stitchKindD(scoreKindOf(fImg.shape!, (fImg as any).scoreSeed, scoreAnim), fImg.shapeLineGap), fw, fh,
       (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
       (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
       ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor / 160) * 2.325
@@ -16471,7 +16486,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
     };
     if (solid) {
-      drawFeatheredShapeBody(ctx, scoreKindOf(fImg.shape!, (fImg as any).scoreSeed), fw, fh, fImg.shapeFeather, color, paintShapeTexture,
+      drawFeatheredShapeBody(ctx, scoreKindOf(fImg.shape!, (fImg as any).scoreSeed, scoreAnim), fw, fh, fImg.shapeFeather, color, paintShapeTexture,
         fImg.shapeInnerColor || '#FFFFFF', { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth,
           baseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor, baseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor });
     } else {
@@ -16635,7 +16650,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         sg.setTransform(S / (half * 2), 0, 0, S / (half * 2), 0, 0);
         sg.translate(half - cx, half - cy);
         if (fImg.text !== undefined) await drawTextLayer(sg, fImg, scaleFactor, frame);
-        else drawShapeLayer(sg, fImg, scaleFactor, false, frame?.ringReveal ?? 1);
+        else drawShapeLayerAnim(sg, fImg, scaleFactor, frame);
         ctx.save();
         ctx.globalAlpha *= frame.a;
         ctx.translate(cx + frame.dx * fw, cy + frame.dy * fh);
@@ -16666,7 +16681,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         continue;
       }
       if (fImg.shape) {
-        drawShapeLayer(ctx, fImg, scaleFactor, false, frame?.ringReveal ?? 1);
+        drawShapeLayerAnim(ctx, fImg, scaleFactor, frame);
         if (frame) ctx.restore();
         continue;
       }
