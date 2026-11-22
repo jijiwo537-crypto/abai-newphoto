@@ -8,16 +8,16 @@ type Line = { x1: number; y1: number; x2: number; y2: number; w: number };
 type Design = { dw: number; dh: number; units: Unit[]; lines?: Line[] };
 
 export const FANCY_KINDS = [
-  'fancy-radial', 'fancy-ring', 'fancy-spiral', 'fancy-halo', 'fancy-mobile', 'fancy-starstar',
-  'fancy-meteor', 'fancy-crescent', 'fancy-flower', 'fancy-concentric', 'fancy-constellation', 'fancy-galaxy',
+  'fancy-radial', 'fancy-ring', 'fancy-spiral', 'fancy-halo', 'fancy-mobile', 'fancy-swirl3',
+  'fancy-meteor', 'fancy-grid', 'fancy-boxrandom', 'fancy-concentric', 'fancy-constellation',
 ] as const;
 /** 從選單拿掉的舊排列：已經放在作品裡的照樣畫得出來 */
-const FANCY_LEGACY = ['fancy-heart', 'fancy-wave', 'fancy-scatter', 'fancy-arch'];
+const FANCY_LEGACY = ['fancy-heart', 'fancy-wave', 'fancy-scatter', 'fancy-arch', 'fancy-starstar', 'fancy-crescent', 'fancy-flower', 'fancy-galaxy'];
 /** kind 可以帶隨機種子：'fancy-mobile@123'（吊飾的「隨機排列」，見 scoreKindOf） */
 const baseOf = (k: string) => k.split('@')[0];
 export const isFancyKind = (k?: string) => !!k && k.startsWith('fancy-') && ((FANCY_KINDS as readonly string[]).includes(baseOf(k)) || FANCY_LEGACY.includes(baseOf(k)));
 /** 可以按「隨機排列」的花式排列 */
-export const fancyCanRandom = (k?: string) => !!k && baseOf(k) === 'fancy-mobile';
+export const fancyCanRandom = (k?: string) => !!k && (baseOf(k) === 'fancy-mobile' || baseOf(k) === 'fancy-boxrandom');
 
 const rng = (seed: number) => () => {
   seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -185,6 +185,31 @@ const designs: Record<string, (seed: number) => Design> = {
         units.push({ x: 50 + Math.cos(a) * d, y: 50 + Math.sin(a) * d * 0.82, r: 1.4 + t * 3.3 });
         if (i % 2 === 1) { const off = (R() - 0.5) * 9, a2 = a + (R() - 0.5) * 0.35; units.push({ x: 50 + Math.cos(a2) * (d + off), y: 50 + Math.sin(a2) * (d + off) * 0.82, r: 0.9 + R() * 1.1 }); }
       }
+    }
+    return { dw: 100, dh: 100, units };
+  },
+  /* 三臂漩渦：三條旋臂從中心轉出去，越外越大 */
+  'fancy-swirl3': () => {
+    const units: Unit[] = [{ x: 50, y: 50, r: 4.5 }];
+    for (let arm = 0; arm < 3; arm++) for (let i = 1; i <= 9; i++) {
+      const t = i / 9, a = arm * Math.PI * 2 / 3 + t * Math.PI * 1.15, d = 6 + t * 39;
+      units.push({ x: 50 + Math.cos(a) * d, y: 50 + Math.sin(a) * d, r: 1.6 + t * 4 });
+    }
+    return { dw: 100, dh: 100, units };
+  },
+  /* 方形平均排列：5×5 整齊排，大小一樣 */
+  'fancy-grid': () => {
+    const units: Unit[] = [];
+    for (let i = 0; i < 5; i++) for (let j = 0; j < 5; j++) units.push({ x: 10 + i * 20, y: 10 + j * 20, r: 4.6 });
+    return { dw: 100, dh: 100, units };
+  },
+  /* 方形隨機排列：方形裡隨機分布、大小不一、互不重疊（「隨機排列」換一組） */
+  'fancy-boxrandom': (seed) => {
+    const R = rng(seed || 11), units: Unit[] = [];
+    let guard = 0;
+    while (units.length < 20 && guard++ < 4000) {
+      const r = 2 + R() * 3.6, x = r + R() * (100 - r * 2), y = r + R() * (100 - r * 2);
+      if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.35)) units.push({ x, y, r });
     }
     return { dw: 100, dh: 100, units };
   },

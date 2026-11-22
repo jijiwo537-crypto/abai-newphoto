@@ -39,7 +39,7 @@ import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCo
 import { createPortal, flushSync } from 'react-dom';
 import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
-import { fancyCanRandom } from '../utils/fancyShapes';
+import { fancyCanRandom, isFancyKind } from '../utils/fancyShapes';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
 import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
@@ -13288,7 +13288,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               {(() => {
                                 const glowFlag = outlineShape || isLine;
                                 // 樂譜：發光上限是一般圖形的一成（滑桿照樣 0～100）
-                                const glowCap = isLine ? LINE_GLOW_CAP : isGrid ? GRID_GLOW_CAP : isScoreKind(sel.kind) ? 0.1 : 1;
+                                // 花式排列：發光上限是一般圖形的兩成（滑桿照樣 0～100）
+                                const glowCap = isLine ? LINE_GLOW_CAP : isGrid ? GRID_GLOW_CAP : isScoreKind(sel.kind) ? 0.1 : isFancyKind(sel.kind) ? 0.2 : 1;
                                 const perUi = shapeGlowFromUi(1, glowFlag) * glowCap;
                                 const ui = glowCap < 1 ? Math.min(100, Math.round(glowAmount(sel.glow) * 100 / perUi)) : shapeGlowToUi(sel.glow, glowFlag);
                                 return shapeSlider('發光', ui, 0, 100, (v: number) => {
