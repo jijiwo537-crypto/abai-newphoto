@@ -7,7 +7,7 @@ import type { FancyStar } from './fancyShapes';
 /* ───────── 每一顆的樣子 ───────── */
 export type U = { dx: number; dy: number; s: number; rot: number; a: number; sx?: number };
 export const ID: U = { dx: 0, dy: 0, s: 1, rot: 0, a: 1 };
-export type Ctx = { stars: FancyStar[]; w: number; h: number; cx: number; cy: number; maxD: number; order: number[]; rank: number[] };
+export type Ctx = { stars: FancyStar[]; w: number; h: number; cx: number; cy: number; maxD: number; order: number[]; rank: number[]; kind?: string };
 export const clamp = (v: number) => Math.max(0, Math.min(1, v));
 const cubic = (p: number) => 1 - Math.pow(1 - clamp(p), 3);
 export const smooth = (p: number) => { p = clamp(p); return p * p * (3 - 2 * p); };
@@ -97,10 +97,10 @@ export const IDLES: Anim[] = [
     } },
 ];
 
-export const ctxOf = (stars: FancyStar[], w: number, h: number): Ctx => {
+export const ctxOf = (stars: FancyStar[], w: number, h: number, kind?: string): Ctx => {
   const cx = w / 2, cy = h / 2, maxD = Math.max(1, ...stars.map(s => Math.hypot(s.x - cx, s.y - cy)));
   const order = stars.map((_, i) => i), rank = order.slice();
-  return { stars, w, h, cx, cy, maxD, order, rank };
+  return { stars, w, h, cx, cy, maxD, order, rank, kind: kind ? kind.split('!')[0].split('@')[0] : undefined };
 };
 const BY_ID = new Map([...ENTRIES, ...IDLES].map(a => [a.id, a]));
 export const isFancyMotion = (id?: string) => !!id && BY_ID.has(id);
@@ -130,9 +130,28 @@ const scaleU = (u: U, k: number): U => k === 1 ? u : {
   dx: u.dx * k, dy: u.dy * k, rot: u.rot * k, s: Math.max(0, 1 + (u.s - 1) * k), a: Math.max(0, Math.min(1, 1 + (u.a - 1) * k)),
   ...(u.sx !== undefined ? { sx: 1 + (u.sx - 1) * k } : {}),
 };
+/* 吊飾專用：星星是掛在線上的，變淡會看到線吊著半透明的星星，很怪 ——
+   吊飾的動畫全部不變淡，改用位置、大小、轉動表現（出現前是縮成 0、在框外被切掉、或翻成側面）：
+   ‧ 點亮：每顆照順序從上面沿著自己的線垂下來，到底再彈一下
+   ‧ 閃爍：每顆不定時「亮一下」＝放大一點、轉一下，再回來
+   其他（星雨、旋開、翻牌、流光、跑燈、自轉、擺盪）照原本的動作，只是拿掉變淡 */
+const MOBILE_UNIT: Record<string, (i: number, c: Ctx, p: number, t: number) => U> = {
+  'fx-in-seq': (i, c, p) => {
+    const st = c.stars[i], q = local(p, c.rank[i] / Math.max(1, c.stars.length) * 0.6, 0.4), e = backOut(q);
+    return { ...ID, dy: -(1 - e) * (st.y + st.r * 2.2) };
+  },
+  'fx-idle-twinkle': (i, _c, _p, t) => {
+    const w = Math.pow((Math.sin(t * (1.6 + hash(i) * 1.8) + hash(i + 7) * 6.28) + 1) / 2, 3);
+    return { ...ID, s: 1 + w * 0.3, rot: w * 0.45 };
+  },
+};
+// 還沒出現的（原本完全透明）就縮成 0 不畫，其他的一律不透明
+const noFade = (u: U): U => (u.a === 1 ? u : u.a <= 0.02 ? { ...u, a: 1, s: 0 } : { ...u, a: 1 });
 /** v：進場是進度（0～1）；常駐是「時間,幅度,真實秒數,進場是哪個」（見 fancyMotionTag） */
 export const fancyMotionUnits = (id: string, c: Ctx, v: string | number): U[] | null => {
-  const a = BY_ID.get(id); if (!a?.unit) return null;
+  const a0 = BY_ID.get(id); if (!a0?.unit) return null;
+  const mobile = c.kind === 'fancy-mobile';
+  const a: Anim = mobile ? { ...a0, unit: (i, cc, p, t) => noFade((MOBILE_UNIT[id] || a0.unit!)(i, cc, p, t)) } : a0;
   if (a.kind === 'entry') { const p = Number(v) || 0; return c.stars.map((_, i) => a.unit!(i, c, p, 0)); }
   const [t = 0, amp = 1, real = 999, entry = ''] = String(v).split(',').map((x, k) => k === 3 ? x : Number(x)) as [number, number, number, string];
   return c.stars.map((_, i) => {

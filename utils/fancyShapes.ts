@@ -465,7 +465,7 @@ export const fancyAlphaMask = (kind0: string, w: number, h: number, gbw = w, gbh
   if (tag) {
     const [aid, rest = ''] = tag.split(':');
     const { stars } = fancyGeometry(kind, w, h, gbw, gbh);
-    const us = fancyMotionUnits(aid, motionCtxOf(stars, w, h), rest.split('|')[0]);
+    const us = fancyMotionUnits(aid, motionCtxOf(stars, w, h, kind), rest.split('|')[0]);
     if (us && us.some(u => u.a < 0.995)) {
       const pad = fancyMaskPad(w, h), W = w + pad * 2, H = h + pad * 2;
       const N = 40, cw = W >= H ? N : Math.max(8, Math.round(N * W / H)), ch = H >= W ? N : Math.max(8, Math.round(N * H / W));
@@ -533,7 +533,7 @@ export const fancyAlphaLevels = (kind0: string, w: number, h: number, gbw = w, g
   const [kind, tag] = kind0.split('!'); if (!tag || !(w > 0) || !(h > 0)) return null;
   const [aid, rest = ''] = tag.split(':');
   const { stars } = fancyGeometry(kind, w, h, gbw, gbh);
-  const us = fancyMotionUnits(aid, motionCtxOf(stars, w, h), rest.split('|')[0]);
+  const us = fancyMotionUnits(aid, motionCtxOf(stars, w, h, kind), rest.split('|')[0]);
   if (!us) return null;
   const set = new Set<number>();
   for (const u of us) if (u.a > 0.02 && u.s > 0.005) set.add(alphaLevel(u.a));
@@ -547,10 +547,10 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
   let lines = lines0, out: string[];
   /* 一顆一顆分開動的動畫：照進度搬每顆星星；透明度換成大小（一條路徑只有一個顏色），完全透明就不畫 */
   const [aid, rest = ''] = (tag || '').split(':'), [av, lv] = rest.split('|');
-  const us = tag ? fancyMotionUnits(aid, motionCtxOf(stars, w, h), av) : null;
+  const us = tag ? fancyMotionUnits(aid, motionCtxOf(stars, w, h, kind), av) : null;
   /* '|透明度層'：畫的那一端把星星照透明度分層，一層一層用自己的透明度畫（見 fancyAlphaLevels）。
      這一次只畫屬於這一層的星星，大小照原本的；沒有分層的地方（舊的畫法）才把「變淡」換成「變小」 */
-  const masked = lv === 'm', layer = lv && !masked ? Number(lv) : undefined, clipBox = aid === 'fx-in-rain';
+  const masked = lv === 'm', layer = lv && !masked ? Number(lv) : undefined, clipBox = aid === 'fx-in-rain' || (kind.split('@')[0] === 'fancy-mobile' && aid === 'fx-in-seq');
   if (us) {
     out = [];
     stars.forEach((st, i) => {
