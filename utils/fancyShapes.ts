@@ -361,10 +361,25 @@ export const fancyPathD = (kind: string, w: number, h: number, gbw = w, gbh = h)
   pathMemo.set(key, v); if (pathMemo.size > 64) pathMemo.delete(pathMemo.keys().next().value!);
   return v;
 };
+/* 吊飾：左右拉寬時多掛幾串（每串的寬度、星星大小照沒擠壓過的框），不是把間距拉開。
+   沒擠壓時（寬＝基準）剛好 7 串，跟原本一模一樣 */
+const mobileDesign = (kind: string, w: number, h: number, gbw: number, gbh: number): Design => {
+  const sc = Math.min(gbw, gbh) / 100, slot = gbw / 7;
+  const n = Math.max(1, Math.floor(w / slot + 1e-6)), ox = (w - n * slot) / 2;
+  const R = rng(Number(kind.split('@')[1]) || 7), units: Unit[] = [], lines: Line[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = (3.8 + R() * 2.8) * sc, x = ox + slot * (i + 0.5) + (R() - 0.5) * (slot - r * 2.2) * 0.6;
+    const y = (30 + R() * 62) / 100 * h;
+    units.push({ x, y, r });
+    lines.push({ x1: x, y1: 0, x2: x, y2: y - r * 0.95, w: 0.5 * sc });
+  }
+  return { dw: w, dh: h, units, lines };
+};
 const fancyPathD0 = (kind: string, w: number, h: number, gbw: number, gbh: number) => {
   if (!isFancyKind(kind) || !(w > 0) || !(h > 0)) return '';
-  const lattice = ['fancy-grid', 'fancy-polka'].includes(kind.split('@')[0]);
-  const d = lattice ? latticeDesign(kind, w, h, Math.max(1, gbw), Math.max(1, gbh)) : designOf(kind), sx = w / d.dw, sy = h / d.dh, s = lattice ? 1 : Math.min(sx, sy);
+  const mobile = kind.split('@')[0] === 'fancy-mobile', lattice = mobile || ['fancy-grid', 'fancy-polka'].includes(kind.split('@')[0]);
+  const d = mobile ? mobileDesign(kind, w, h, Math.max(1, gbw), Math.max(1, gbh))
+    : lattice ? latticeDesign(kind, w, h, Math.max(1, gbw), Math.max(1, gbh)) : designOf(kind), sx = w / d.dw, sy = h / d.dh, s = lattice ? 1 : Math.min(sx, sy);
   const out: string[] = [];
   for (const u of d.units) {
     const cx = u.x * sx, cy = u.y * sy, R = u.r * s, inner = 0.42;
