@@ -11,7 +11,7 @@
 //
 //  網頁那邊的對應：utils/nativeCamera.ts
 //    start({ position, x, y, w, h, lut, amount, proRAW })   stop()
-//    capture({ flash, raw })  → { path, width, height, rawPath? }
+//    capture({ flash, raw, turns, opticalZoom })  → { path, width, height, rawPath?, location?, zoomApplied? }
 //    setZoom({ factor })  focus({ x, y })  setExposureBias({ ev })  setLut({ lut, amount })
 //    setDate({ date, zoom })   日期戳記（見 ABAIDateStamp.swift）
 //    snapshot() → { path }      觀景窗現在這一格（離開相機的過場用）
@@ -256,6 +256,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
 
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        if previewFrozen { return }   // 小框構圖拍照的那一下（見 capture）
         let img = CIImage(cvPixelBuffer: pb)
         DispatchQueue.main.async { self.view?.source = img }
     }
@@ -377,31 +378,32 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                 "time": l.timestamp.timeIntervalSince1970, "accuracy": l.horizontalAccuracy]
     }
 
-    // MARK: 設定選單（iOS 原生：iOS 26 起是液態玻璃的彈出視窗＋原生開關、分段按鈕）
+    // MARK: 設定選單（原生的玻璃面板：iOS 26 起是液態玻璃＋原生開關、分段按鈕）
 
-    /// anchor：網頁那顆按鈕的位置（CSS px）；items：[{ id, type: 'toggle'|'choice', title, symbol, value, options? }]
-    /// 改了就送事件 menu { id, value }，關掉送 menuClosed
+    private weak var settingsPanel: ABAISettingsPanel?
+
+    /// anchor：網頁那顆按鈕的位置；bounds：觀景窗的範圍（面板貼在它的右上角裡面）（CSS px）
+    /// items：[{ id, type: 'toggle'|'choice', title, symbol, value, options? }]。改了就送 menu { id, value }，關掉送 menuClosed
     @objc func showMenu(_ call: CAPPluginCall) {
         let items = (call.getArray("items") ?? []).compactMap { $0 as? [String: Any] }
-        let a = call.getObject("anchor")
-        let rect = CGRect(x: (a?["x"] as? NSNumber)?.doubleValue ?? 0, y: (a?["y"] as? NSNumber)?.doubleValue ?? 0,
-                          width: (a?["w"] as? NSNumber)?.doubleValue ?? 1, height: (a?["h"] as? NSNumber)?.doubleValue ?? 1)
+        func rect(_ o: JSObject?) -> CGRect {
+            CGRect(x: (o?["x"] as? NSNumber)?.doubleValue ?? 0, y: (o?["y"] as? NSNumber)?.doubleValue ?? 0,
+                   width: (o?["w"] as? NSNumber)?.doubleValue ?? 1, height: (o?["h"] as? NSNumber)?.doubleValue ?? 1)
+        }
+        let anchor = rect(call.getObject("anchor"))
+        let bounds = call.getObject("bounds") != nil ? rect(call.getObject("bounds")) : .infinite
         DispatchQueue.main.async {
-            guard let host = self.bridge?.viewController, let web = self.bridge?.webView else { call.reject("沒有畫面"); return }
-            if host.presentedViewController is ABAICameraMenuController { host.dismiss(animated: true); call.resolve(); return }
-            let menu = ABAICameraMenuController(items: items)
-            menu.onChange = { [weak self] id, value in self?.notifyListeners("menu", data: ["id": id, "value": value]) }
-            menu.onClose = { [weak self] in self?.notifyListeners("menuClosed", data: [:]) }
-            menu.modalPresentationStyle = .popover
-            if let pop = menu.popoverPresentationController {
-                pop.sourceView = web
-                pop.sourceRect = rect
-                pop.permittedArrowDirections = [.up, .down]
-                pop.delegate = menu
-            }
-            host.present(menu, animated: true)
+            guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有畫面"); return }
+            if let open = self.settingsPanel { open.dismiss(); call.resolve(); return }   // 再按一次＝收起來
+            let p = ABAISettingsPanel(frame: web.frame, items: items, anchor: anchor, bounds: bounds.isInfinite ? web.bounds : bounds)
+            p.onChange = { [weak self] id, value in self?.notifyListeners("menu", data: ["id": id, "value": value]) }
+            p.onClose = { [weak self] in self?.notifyListeners("menuClosed", data: [:]) }
+            parent.insertSubview(p, aboveSubview: web)
+            self.settingsPanel = p
+            p.present()
             call.resolve()
         }
+    }
     }
 
     /// 拍照的方向：橫拿拍出來就是橫的照片（照片檔本身擺正）
@@ -465,17 +467,51 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             if let l = loc { self.captured["location"] = l }
             self.pendingCapture = call
             let wantFlash = (call.getString("flash") ?? "off") == "on"
-            if wantFlash && settings.flashMode == .off && self.position == .front {
-                /* 前鏡頭沒有閃光燈：螢幕整片打白、亮度拉滿，等一下下讓測光跟上，再拍 */
-                DispatchQueue.main.async {
-                    self.beginScreenFlash()
-                    self.sessionQueue.asyncAfter(deadline: .now() + 0.28) {
-                        self.photoOutput.capturePhoto(with: settings, delegate: self)
+            let fire = {
+                if wantFlash && settings.flashMode == .off && self.position == .front {
+                    /* 前鏡頭沒有閃光燈：螢幕整片打白、亮度拉滿，等一下下讓測光跟上，再拍 */
+                    DispatchQueue.main.async {
+                        self.beginScreenFlash()
+                        self.sessionQueue.asyncAfter(deadline: .now() + 0.28) {
+                            self.photoOutput.capturePhoto(with: settings, delegate: self)
+                        }
                     }
+                } else {
+                    self.photoOutput.capturePhoto(with: settings, delegate: self)
                 }
-            } else {
-                self.photoOutput.capturePhoto(with: settings, delegate: self)
             }
+            /* 小框構圖（線框）：不是拍完再從 1x 的照片裁一小塊（那樣解析度只剩幾分之一，照片和日期都會糊），
+               而是拍的那一下讓鏡頭真的變焦到框的倍率 —— 到 3x 會自動換成長焦鏡頭，超過的部分系統用超解析變焦補。
+               變焦那一瞬間觀景窗停在上一格，不會看到畫面跳；拍完再變回來 */
+            if let want = call.getDouble("opticalZoom"), let d = self.device, (try? d.lockForConfiguration()) != nil {
+                let base = d.virtualDeviceSwitchOverVideoZoomFactors.first.map { CGFloat(truncating: $0) } ?? 1
+                let target = max(d.minAvailableVideoZoomFactor, min(d.maxAvailableVideoZoomFactor, CGFloat(want) * base))
+                if target > d.videoZoomFactor * 1.01 {
+                    self.zoomToRestore = d.videoZoomFactor
+                    self.previewFrozen = true
+                    d.videoZoomFactor = target
+                    d.unlockForConfiguration()
+                    self.captured["zoomApplied"] = Double(target / base)
+                    /* 等鏡頭切換、對焦測光跟上 */
+                    self.sessionQueue.asyncAfter(deadline: .now() + 0.4) { fire() }
+                    return
+                }
+                d.unlockForConfiguration()
+            }
+            fire()
+        }
+    }
+
+    /// 小框構圖拍照時暫時變焦：拍完要變回去的倍率；這段期間觀景窗停在上一格
+    private var zoomToRestore: CGFloat?
+    private var previewFrozen = false
+    private func restoreZoomAfterCapture() {
+        guard let z = zoomToRestore else { return }
+        zoomToRestore = nil
+        sessionQueue.async {
+            if let d = self.device, (try? d.lockForConfiguration()) != nil { d.videoZoomFactor = z; d.unlockForConfiguration() }
+            /* 等鏡頭變回來、畫面穩了再放開觀景窗 */
+            self.sessionQueue.asyncAfter(deadline: .now() + 0.35) { self.previewFrozen = false }
         }
     }
 
@@ -525,6 +561,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         let call = pendingCapture
         pendingCapture = nil
         endScreenFlash()
+        restoreZoomAfterCapture()
         if let e = error { call?.reject(e.localizedDescription); return }
         if captured["path"] == nil, let raw = captured["rawPath"] { captured["path"] = raw }
         call?.resolve(captured)
@@ -632,82 +669,4 @@ final class ControlsDelegate: NSObject, AVCaptureSessionControlsDelegate {
     func sessionControlsWillEnterFullscreenAppearance(_ session: AVCaptureSession) {}
     func sessionControlsWillExitFullscreenAppearance(_ session: AVCaptureSession) {}
     func sessionControlsDidBecomeInactive(_ session: AVCaptureSession) {}
-}
-
-
-/// 相機的設定選單：原生的彈出視窗（iOS 26 起系統自動是液態玻璃）、原生的開關與分段按鈕
-final class ABAICameraMenuController: UIViewController, UIPopoverPresentationControllerDelegate {
-    private let items: [[String: Any]]
-    var onChange: ((String, Any) -> Void)?
-    var onClose: (() -> Void)?
-
-    init(items: [[String: Any]]) {
-        self.items = items
-        super.init(nibName: nil, bundle: nil)
-        overrideUserInterfaceStyle = .dark
-        /* 高度照內容：開關一列 44、分段的一列 74 */
-        let h = items.reduce(CGFloat(24)) { $0 + (($1["type"] as? String) == "choice" ? 74 : 44) } + CGFloat(max(0, items.count - 1)) * 6
-        preferredContentSize = CGSize(width: 280, height: h)
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .clear
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 6
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-        ])
-        for item in items { stack.addArrangedSubview(row(item)) }
-    }
-
-    private func row(_ item: [String: Any]) -> UIView {
-        let id = item["id"] as? String ?? ""
-        let icon = UIImageView(image: UIImage(systemName: item["symbol"] as? String ?? "circle"))
-        icon.tintColor = .label
-        icon.contentMode = .scaleAspectFit
-        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-        icon.widthAnchor.constraint(equalToConstant: 24).isActive = true
-        let label = UILabel()
-        label.text = item["title"] as? String
-        label.font = .systemFont(ofSize: 16, weight: .regular)
-        label.textColor = .label
-        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        if (item["type"] as? String) == "choice" {
-            let options = (item["options"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
-            let seg = UISegmentedControl(items: options.map { $0["label"] as? String ?? "" })
-            let current = item["value"] as? String
-            seg.selectedSegmentIndex = options.firstIndex { ($0["value"] as? String) == current } ?? 0
-            seg.addAction(UIAction { [weak self, weak seg] _ in
-                guard let s = seg, s.selectedSegmentIndex >= 0, s.selectedSegmentIndex < options.count else { return }
-                self?.onChange?(id, options[s.selectedSegmentIndex]["value"] as? String ?? "")
-            }, for: .valueChanged)
-            let head = UIStackView(arrangedSubviews: [icon, label])
-            head.spacing = 10
-            head.alignment = .center
-            head.heightAnchor.constraint(equalToConstant: 28).isActive = true
-            let col = UIStackView(arrangedSubviews: [head, seg])
-            col.axis = .vertical
-            col.spacing = 8
-            return col
-        }
-        let sw = UISwitch()
-        sw.isOn = item["value"] as? Bool ?? false
-        sw.addAction(UIAction { [weak self, weak sw] _ in self?.onChange?(id, sw?.isOn ?? false) }, for: .valueChanged)
-        let r = UIStackView(arrangedSubviews: [icon, label, sw])
-        r.spacing = 10
-        r.alignment = .center
-        r.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        return r
-    }
-
-    /* iPhone 上也維持彈出視窗（不要變成從下面拉上來的整張表單） */
-    func adaptivePresentationStyle(for controller: UIPresentationController, traitCollection: UITraitCollection) -> UIModalPresentationStyle { .none }
-    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { onClose?() }
 }
