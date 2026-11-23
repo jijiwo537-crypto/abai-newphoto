@@ -54,11 +54,17 @@ export const ENTRIES: Anim[] = [
     } },
   { id: 'fx-in-twirl', name: '旋轉', kind: 'entry', fresh: true, desc: '每顆在自己的位置從小轉一圈開出來，隨機錯開',
     unit: (i, c, p) => { const q = local(p, hash(i) * 0.55, 0.45), e = backOut(q); return { ...ID, s: e, rot: (1 - cubic(q)) * Math.PI * 2, a: clamp(q * 3) }; } },
-  { id: 'fx-in-vortex', name: '螺旋', kind: 'entry', fresh: true, desc: '每顆從中心沿著螺旋轉出去、一圈半後剛好落到自己的位置',
+  /* 螺旋（重新設計）：漩渦從中心「長」出來 —— 離中心近的先出現、越外圈越晚，
+     每顆出現時在自己的位置附近、往回轉一小段角度再順著漩渦方向轉進定位（不再從中心繞一圈半飛出去），
+     看起來像三條手臂一邊旋轉一邊往外伸展 */
+  { id: 'fx-in-vortex', name: '螺旋', kind: 'entry', fresh: true, desc: '漩渦從中心往外一邊旋轉一邊長出來，每顆順著旋轉方向轉進定位',
     unit: (i, c, p) => {
-      const st = c.stars[i], q = cubic(local(p, c.rank[i] / Math.max(1, c.stars.length) * 0.45, 0.55));
-      const R0 = Math.hypot(st.x - c.cx, st.y - c.cy), A0 = Math.atan2(st.y - c.cy, st.x - c.cx), ang = A0 - (1 - q) * Math.PI * 3, rr = R0 * q;
-      return { dx: c.cx + Math.cos(ang) * rr - st.x, dy: c.cy + Math.sin(ang) * rr - st.y, s: 0.4 + 0.6 * q, rot: (1 - q) * 3, a: clamp(q * 2.5) };
+      const st = c.stars[i], d = Math.hypot(st.x - c.cx, st.y - c.cy) / c.maxD;
+      const q = local(p, d * 0.6, 0.4), e = cubic(q);
+      if (q <= 0) return { ...ID, s: 0, a: 0 };
+      const R0 = Math.hypot(st.x - c.cx, st.y - c.cy), A0 = Math.atan2(st.y - c.cy, st.x - c.cx);
+      const ang = A0 - (1 - e) * 0.9, rr = R0 * (0.72 + 0.28 * e);
+      return { dx: c.cx + Math.cos(ang) * rr - st.x, dy: c.cy + Math.sin(ang) * rr - st.y, s: backOut(q), rot: -(1 - e) * 1.4, a: clamp(q * 3) };
     } },
   { id: 'fx-in-flip', name: '翻轉', kind: 'entry', fresh: true, desc: '像翻牌一樣，一顆接一顆從側面翻正，由左上翻到右下',
     unit: (i, c, p) => {
@@ -234,7 +240,7 @@ export const FANCY_MOTION_CFG: Record<string, KCfg> = {
   'fancy-swirl3': K('spring', '', 'seq burst sweep vortex flip', 'twinkle ripple shimmer spin', 'seq', 'twinkle'),
   'fancy-radial': K('', 'jitter', 'seq sweep twirl flip', 'twinkle shimmer spin chase firefly', 'seq', 'twinkle'),
   'fancy-grid': K('spring', 'spin wobble', 'seq burst sweep twirl flip', 'twinkle ripple shimmer spin chase wave', 'sweep', 'shimmer'),
-  'fancy-polka': K('spring', 'spin wobble', 'seq burst sweep twirl flip', 'twinkle ripple shimmer spin wave', 'sweep', 'shimmer'),
+  'fancy-polka': K('spring', 'spin wobble', 'seq burst sweep twirl flip', 'twinkle ripple shimmer spin chase wave', 'sweep', 'shimmer'),   // 常駐跟方形平均一樣
   'fancy-boxrandom': K('spring', 'spin wobble', 'seq burst sweep twirl flip', 'twinkle ripple shimmer spin drift chase', 'seq', 'twinkle'),
   'fancy-wand': K('', 'spin wobble', 'seq sweep twirl flip', 'twinkle ripple shimmer spin drift chase', 'seq', 'twinkle'),
   'fancy-mobile': K('pop spin flip spring', 'breathe spin wobble orbit jitter', 'seq rain twirl flip', 'twinkle shimmer spin chase sway', 'rain', 'twinkle'),
@@ -252,7 +258,7 @@ const BUTTON_ORDER: Record<string, { in: string[]; idle: string[] }> = {
   'fancy-swirl3': { in: ["none", "pop", "spin", "fx-in-seq", "fx-in-sweep", "fx-in-burst", "flip", "fx-in-flip", "rise", "drop", "fx-in-vortex", "fade"], idle: ["none", "fx-idle-twinkle", "fx-idle-ripple", "fx-idle-shimmer", "float", "wobble", "spin", "fx-idle-spin", "breathe", "grid-wave", "orbit", "jitter"] },
   'fancy-radial': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "spring", "fade"], idle: ["none", "fx-idle-twinkle", "fx-idle-shimmer", "fx-idle-chase", "fx-idle-firefly", "wobble", "spin", "fx-idle-spin", "breathe", "float", "orbit", "grid-wave"] },
   'fancy-grid': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "fx-in-burst", "fade"], idle: ["none", "fx-idle-shimmer", "fx-idle-wave", "fx-idle-twinkle", "fx-idle-ripple", "fx-idle-chase", "fx-idle-spin", "float", "breathe", "orbit", "jitter", "grid-wave"] },
-  'fancy-polka': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "fx-in-burst", "fade"], idle: ["none", "fx-idle-shimmer", "fx-idle-wave", "fx-idle-twinkle", "fx-idle-ripple", "fx-idle-spin", "float", "breathe", "orbit", "jitter", "grid-wave"] },
+  'fancy-polka': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "fx-in-burst", "fade"], idle: ["none", "fx-idle-shimmer", "fx-idle-wave", "fx-idle-twinkle", "fx-idle-ripple", "fx-idle-chase", "fx-idle-spin", "float", "breathe", "orbit", "jitter", "grid-wave"] },
   'fancy-boxrandom': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "fx-in-burst", "fade"], idle: ["none", "fx-idle-shimmer", "fx-idle-twinkle", "fx-idle-chase", "fx-idle-drift", "fx-idle-ripple", "fx-idle-spin", "float", "breathe", "orbit", "jitter", "grid-wave"] },
   'fancy-wand': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "spring", "fade"], idle: ["none", "fx-idle-twinkle", "fx-idle-shimmer", "fx-idle-chase", "fx-idle-ripple", "fx-idle-drift", "fx-idle-spin", "grid-wave", "float", "breathe", "orbit", "jitter"] },
   'fancy-mobile': { in: ["none", "fx-in-seq", "fx-in-rain", "fx-in-flip", "fx-in-twirl", "fade", "rise", "drop"], idle: ["none", "fx-idle-chase", "fx-idle-twinkle", "fx-idle-spin", "float", "fx-idle-shimmer", "fx-idle-sway", "grid-wave"] },
@@ -260,7 +266,7 @@ const BUTTON_ORDER: Record<string, { in: string[]; idle: string[] }> = {
 };
 /** 某一種貼圖自己的名字（同一個動畫在這一種叫別的名字） */
 const KIND_NAMES_OVERRIDE: Record<string, Record<string, string>> = {
-  'fancy-mobile': { 'fx-idle-chase': '縮放', 'fx-idle-shimmer': '漂浮' },   // 漂浮跟原本的漂浮同名 → 自動變成漂浮l／漂浮ll
+  'fancy-mobile': { 'fx-idle-chase': '縮放', 'fx-idle-shimmer': '漂浮', 'fx-in-seq': '下墜l', 'fx-in-rain': '下墜ll' },   // 漂浮跟原本的漂浮同名 → 自動變成漂浮l／漂浮ll
 };
 export const fancyMotionLists = <T extends { id: string }>(kind: string | undefined, inKinds: T[], idleKinds: T[], make: (id: string, name: string) => T) => {
   const c = fancyMotionCfg(kind); if (!c) return null;
