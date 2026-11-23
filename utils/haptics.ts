@@ -103,21 +103,17 @@ export function installClickHaptics() {
      拖動時每走全長的 1/20 一下很輕的段落、慢慢經過 0 一下、拉到頭柔和的一下。
      掛在 window 的冒泡階段：React 的處理先跑完，有自己震動的滑桿已經標記過，這裡就跳過 */
   const prevVal = new WeakMap<HTMLInputElement, number>();
-  const grab = (e: Event) => {
+  window.addEventListener('pointerdown', e => {
     const el = e.target as HTMLInputElement | null;
     if (el && el.tagName === 'INPUT' && el.type === 'range') prevVal.set(el, parseFloat(el.value));
-  };
-  window.addEventListener('pointerdown', grab, true);
-  window.addEventListener('touchstart', grab, true);
-  window.addEventListener('focusin', grab, true);
+  }, true);
   window.addEventListener('input', e => {
     const el = e.target as HTMLInputElement | null;
     if (!el || el.tagName !== 'INPUT' || el.type !== 'range' || el.dataset.haptic === 'none') return;
     const next = parseFloat(el.value), prev = prevVal.get(el);
     prevVal.set(el, next);
     if (performance.now() - handledAt < 8) return;   // 這個滑桿自己震過了
-    /* 手機上滑桿是程式自己拖的（見 sliderTouch），起點可能沒抓到：第一下就當起點，不震 */
-    if (prev === undefined || !Number.isFinite(prev) || !Number.isFinite(next)) return;
+    if (prev === undefined || !Number.isFinite(next)) return;
     const min = parseFloat(el.min || '0'), max = parseFloat(el.max || '100');
     sliderHaptic(prev, next, min, max);
   });
