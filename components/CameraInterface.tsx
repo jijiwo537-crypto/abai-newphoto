@@ -444,6 +444,21 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   useEffect(() => () => { ownedUrlsRef.current.forEach(u => URL.revokeObjectURL(u)); ownedUrlsRef.current.clear(); }, []);
   const [showGallery, setShowGallery] = useState(false);
   const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[] } | null>(null);
+  const [editorEntered, setEditorEntered] = useState(false);
+  const [editorLeaving, setEditorLeaving] = useState(false);
+  const editorExitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!editingPhoto) { setEditorEntered(false); setEditorLeaving(false); return; }
+    let second = 0;
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => setEditorEntered(true)); });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, [editingPhoto]);
+  useEffect(() => () => { if (editorExitTimer.current) clearTimeout(editorExitTimer.current); }, []);
+  const closeGalleryEditor = () => {
+    if (editorLeaving) return;
+    setEditorLeaving(true);
+    editorExitTimer.current = setTimeout(() => { setEditingPhoto(null); setEditorLeaving(false); }, 360);
+  };
   /* 相簿：愛心、每張拍照時用的濾鏡（大圖右上的標籤） */
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
   const labelsRef = useRef<Map<string, string>>(new Map());
@@ -1334,10 +1349,17 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const developedUrlRef = useRef<string | null>(null);
   /** 正在重新沖洗哪一張（底片模式拍的 RAW）。沖好才進編輯 */
   const [developing, setDeveloping] = useState<{ src: string; idx: number; pro?: boolean } | null>(null);
+  const [rawLeaving, setRawLeaving] = useState(false);
+  const rawExitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (rawExitTimer.current) clearTimeout(rawExitTimer.current); }, []);
+  const closeRawDevelop = () => {
+    if (rawLeaving) return;
+    setRawLeaving(true);
+    rawExitTimer.current = setTimeout(() => { setDeveloping(null); setRawLeaving(false); }, 370);
+  };
   /** pro：專業編輯（全部分頁：模板、人像、仿色…）；RAW 都先沖洗 */
   const openEditor = (src: string, idx: number, pro = false) => {
     if (rawOfRef.current.has(src)) { setDeveloping({ src, idx, pro }); return; }
-    setShowGallery(false);
     setEditingPhoto({ src, index: idx, init: null, pro });
     setEditorId(prev => prev + 1);
   };
@@ -1346,7 +1368,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     const srcs = indices.map(i => photos[i]).filter(Boolean);
     if (!srcs.length) return;
     if (srcs.length === 1) { openEditor(srcs[0], indices[0]); return; }
-    setShowGallery(false);
     setEditingPhoto({ src: srcs[0], index: indices[0], init: null, batch: srcs });
     setEditorId(prev => prev + 1);
   };
@@ -1356,7 +1377,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (developedUrlRef.current) URL.revokeObjectURL(developedUrlRef.current);
     developedUrlRef.current = url;
     setDeveloping(null);
-    setShowGallery(false);
     setEditingPhoto({ src: url, index: d.idx, init: null, pro: d.pro });
     setEditorId(prev => prev + 1);
   };
@@ -1466,7 +1486,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         return next;
       });
       if (shouldClose) {
-        setEditingPhoto(null);
+        closeGalleryEditor();
       }
     }
   };
@@ -1980,12 +2000,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           thumbs={thumbs}
           onClose={() => setShowGallery(false)} 
           rawShots={rawShots}
+          suspended={!!editingPhoto || !!developing}
           onDelete={(indices) => setPhotos(prev => {
             const del = new Set(indices);
             prev.forEach((u, i) => { if (del.has(i)) { forgetRaw(u); releaseUrl(u); labelsRef.current.delete(u); } });
             return prev.filter((_, i) => !del.has(i));
           })}
-          onImport={(newPhotos) => setPhotos(prev => [...newPhotos, ...prev])}
           onEdit={(src, idx) => openEditor(src, idx)}
           onProEdit={(src, idx) => openEditor(src, idx, true)}
           onEditMany={openEditMany}
@@ -1998,15 +2018,17 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       {developing && rawOfRef.current.get(developing.src) && createPortal(
         <RawDevelopSheet
           rawPath={rawOfRef.current.get(developing.src)!.path}
+          previewSrc={developing.src}
+          leaving={rawLeaving}
           protectEV={rawOfRef.current.get(developing.src)!.protectEV}
           look={rawOfRef.current.get(developing.src)!.look}
-          onCancel={() => setDeveloping(null)}
+          onCancel={closeRawDevelop}
           onDone={finishDevelop}
         />, document.body
       )}
 
       {editingPhoto && createPortal(
-        <div className="fixed inset-0 z-[300] bg-black" data-camera-editor>
+        <div className={`fixed inset-0 z-[300] bg-black transition-transform duration-[360ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${editorLeaving ? 'translate-x-full' : editorEntered ? 'translate-x-0 translate-y-0' : 'translate-y-full'}`} data-camera-editor>
         <ImageEditor 
           compactBottomBar
           fullTabs={!!editingPhoto.pro}
@@ -2016,7 +2038,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           initialState={editingPhoto.init ?? null}
           lutList={lutList}
           onSave={handleSaveEdit}
-          onCancel={() => setEditingPhoto(null)}
+          onCancel={closeGalleryEditor}
           onHome={onHome}
           onImportNew={() => localFileInputRef.current?.click()}
         />

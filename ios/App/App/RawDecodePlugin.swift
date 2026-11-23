@@ -34,6 +34,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setEditorRect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "exportEditor", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "closeEditor", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "dismissEditor", returnType: CAPPluginReturnPromise),
     ]
 
     // MARK: 即時沖洗（見 ABAIRawDevelop.swift）
@@ -98,6 +99,19 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func closeEditor(_ call: CAPPluginCall) {
         DispatchQueue.main.async { self.tearDown(); call.resolve() }
+    }
+
+    /// 與網頁編輯頁的向右退場同步移動 Metal 預覽，避免圖片留在原位。
+    @objc func dismissEditor(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let view = self.editorView else { call.resolve(); return }
+            UIView.animate(withDuration: 0.36, delay: 0, options: [.curveEaseInOut, .allowUserInteraction]) {
+                view.transform = CGAffineTransform(translationX: view.bounds.width + UIScreen.main.bounds.width, y: 0)
+            } completion: { _ in
+                self.tearDown()
+                call.resolve()
+            }
+        }
     }
 
     private func tearDown() {

@@ -70,6 +70,25 @@ enum ABAIGlass {
 
     static func image(_ symbol: String, pointSize: CGFloat = 19, weight: UIImage.SymbolWeight = .regular) -> UIImage? {
         if symbol == "abai.level" { return levelIcon(size: pointSize + 2) }
+        if symbol == "abai.raw" {
+            let size = CGSize(width: 24, height: 24)
+            return UIGraphicsImageRenderer(size: size).image { ctx in
+                let c = ctx.cgContext
+                c.setStrokeColor(UIColor.white.cgColor)
+                c.setFillColor(UIColor(white: 0.08, alpha: 1).cgColor)
+                c.setLineWidth(1.7)
+                c.setLineCap(.round)
+                for y: CGFloat in [6, 12, 18] {
+                    c.move(to: CGPoint(x: 3.5, y: y))
+                    c.addLine(to: CGPoint(x: 20.5, y: y))
+                }
+                c.strokePath()
+                for (x, y) in [(CGFloat(8), CGFloat(6)), (15, 12), (10.5, 18)] {
+                    c.fillEllipse(in: CGRect(x: x - 2, y: y - 2, width: 4, height: 4))
+                    c.strokeEllipse(in: CGRect(x: x - 2, y: y - 2, width: 4, height: 4))
+                }
+            }.withRenderingMode(.alwaysTemplate)
+        }
         return UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight))
     }
 }
@@ -183,7 +202,8 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
     private func makeItem(_ item: [String: Any], group: String, into map: inout [String: UIButton]) -> UIView {
         func n(_ k: String) -> CGFloat { CGFloat((item[k] as? NSNumber)?.doubleValue ?? 0) }
         let frame = CGRect(x: n("x"), y: n("y"), width: max(1, n("w")), height: max(1, n("h")))
-        let glass = ABAIGlass.view(radius: frame.height / 2)
+        let glass = ABAIGlass.view(radius: (item["shape"] as? String) == "roundedSquare" ? 11 : frame.height / 2,
+                                   interactive: group != "camera-viewer")
         glass.frame = frame
         let specs: [[String: Any]] = (item["kind"] as? String) == "capsule"
             ? (item["buttons"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }

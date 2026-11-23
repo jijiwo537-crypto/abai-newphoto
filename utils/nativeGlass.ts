@@ -10,7 +10,7 @@ import { isNative } from './native';
 
 export interface GlassButtonSpec { id: string; symbol?: string; title?: string; tint?: 'white' | 'red' | 'pink' | 'yellow'; enabled?: boolean }
 export type GlassItem =
-  | (GlassButtonSpec & { kind: 'circle'; el: HTMLElement | null })
+  | (GlassButtonSpec & { kind: 'circle'; el: HTMLElement | null; shape?: 'roundedSquare' })
   | { kind: 'capsule'; el: HTMLElement | null; buttons: GlassButtonSpec[] };
 
 interface NativeGlassApi {
@@ -64,7 +64,7 @@ export function useNativeGlass(group: string, active: boolean, items: () => Glas
   useLayoutEffect(() => {
     if (!native) return;
     if (!active) {
-      if (shown.current) { shown.current = false; void nativeGlass().then(p => p?.hide({ group })); }
+      if (shown.current) { shown.current = false; void nativeGlass().then(p => p?.hide({ group, animate: !group.startsWith('camera-') })); }
       return;
     }
     const first = !shown.current;
