@@ -81,7 +81,7 @@ export const IDLES: Anim[] = [
       for (let n = Math.max(0, last - 2); n <= last; n++) w = Math.max(w, Math.exp(-Math.pow((k - (q - n * 0.8 - 0.06)) / 0.09, 2)));
       return { ...ID, s: 1 + w * 0.35, rot: w * 0.5, a: 0.72 + w * 0.28 };
     } },
-  { id: 'fx-idle-spin', name: '自轉', kind: 'idle', fresh: true, desc: '每顆在原地自轉，大小不同轉速不同、方向也不一樣',
+  { id: 'fx-idle-spin', name: '旋轉', kind: 'idle', fresh: true, desc: '每顆在原地自轉，大小不同轉速不同、方向也不一樣',
     unit: (i, _c, _p, t) => ({ ...ID, rot: t * (0.6 + hash(i) * 1.1) * (hash(i + 2) > 0.5 ? 1 : -1) }) },
   { id: 'fx-idle-drift', name: '浮游', kind: 'idle', fresh: true, desc: '每顆各自輕輕繞小圈，大的動得多、小的動得少，有前後層次',
     unit: (i, c, _p, t) => { const st = c.stars[i], amp = st.r * 0.55, w = t * (0.8 + hash(i) * 0.5) + hash(i + 4) * 6.28; return { ...ID, dx: Math.cos(w) * amp, dy: Math.sin(w * 1.3) * amp }; } },
@@ -216,9 +216,16 @@ export const fancyMotionCfg = (kind?: string): KCfg | undefined => FANCY_MOTION_
 /** 面板上的進場／常駐清單：原有的（拿掉不要的）在前、新設計的在後 */
 export const fancyMotionLists = <T extends { id: string }>(kind: string | undefined, inKinds: T[], idleKinds: T[], make: (id: string, name: string) => T) => {
   const c = fancyMotionCfg(kind); if (!c) return null;
+  /* 同一類裡原有的和新設計的同名（例如兩個「旋轉」）：原有的加「l」、新設計的加「ll」 */
+  const dedupe = (old: T[], fresh: string[]) => {
+    const oldNames = new Set(old.map(k => (k as any).name));
+    const clash = new Set(fresh.map(fancyMotionName).filter(n => oldNames.has(n)));
+    return [...old.map(k => clash.has((k as any).name) ? make(k.id, (k as any).name + 'l') : k),
+      ...fresh.map(id => make(id, fancyMotionName(id) + (clash.has(fancyMotionName(id)) ? 'll' : '')))];
+  };
   return {
-    kinds: [...inKinds.filter(k => !c.delIn.includes(k.id)), ...c.addIn.map(id => make(id, fancyMotionName(id)))],
-    idleKinds: [...idleKinds.filter(k => !c.delIdle.includes(k.id)), ...c.addIdle.map(id => make(id, fancyMotionName(id)))],
+    kinds: dedupe(inKinds.filter(k => !c.delIn.includes(k.id)), c.addIn),
+    idleKinds: dedupe(idleKinds.filter(k => !c.delIdle.includes(k.id)), c.addIdle),
   };
 };
 /** 動畫設定 → 這一格要接在 kind 後面的字串（沒有就 undefined） */
