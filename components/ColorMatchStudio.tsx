@@ -815,6 +815,12 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
       Math.max(0, 450 - (performance.now() - savingStarted)),
     );
     setSaving(true);
+    /* 先讓「儲存中」那一層畫出來，再開始算全解析度：算圖會佔住主執行緒，
+       放在同一個點擊裡的話，畫面要等它算完才有反應（按了像是沒按到、慢半拍） */
+    requestAnimationFrame(() => requestAnimationFrame(() => renderAndSave(finishSaving)));
+  };
+  const renderAndSave = (finishSaving: () => void) => {
+    if (!srcImg) { finishSaving(); return; }
     if (!luts) {
       /* 還沒仿色：原圖照樣輸出（同一個尺寸上限） */
       const { w, h } = safeSize(srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height);
@@ -1127,7 +1133,8 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
         <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col">
         <ExportActionLift />
         <header className="h-14 flex items-center px-5 shrink-0 bg-black/40 backdrop-blur-xl">
-          <button onClick={() => void slideBack(() => setFinalUrl(null))} className="p-2 -ml-2 text-[#888] hover:text-white active:scale-90 transition-colors">
+          {/* 儲存頁左上：回主頁（跟其他工具一樣）；「繼續調整」才是回到編輯 */}
+          <button aria-label="返回主頁" onClick={() => onHome()} className="p-2 -ml-2 text-[#888] hover:text-white active:scale-90 transition-colors">
             <ChevronLeft size={22} />
           </button>
         </header>

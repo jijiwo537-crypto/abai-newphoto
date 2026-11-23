@@ -5,10 +5,10 @@ import { nativeImage } from './nativeImage';
 
 export interface NativeCameraApi {
   available(): Promise<{ available: boolean; proRAW: boolean; raw?: boolean }>;
-  start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; radius?: number; lut?: string; amount?: number; proRAW?: boolean }): Promise<{ proRAW: boolean; raw?: boolean; maxWidth: number; maxHeight: number; flash?: boolean; screenFlash?: boolean }>;
+  start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; radius?: number; lut?: string; amount?: number; proRAW?: boolean }): Promise<{ proRAW: boolean; raw?: boolean; turns?: number; maxWidth: number; maxHeight: number; flash?: boolean; screenFlash?: boolean }>;
   stop(): Promise<void>;
   setRect(o: { x: number; y: number; w: number; h: number; radius?: number }): Promise<void>;
-  capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean }): Promise<{ path: string; width: number; height: number; rawPath?: string }>;
+  capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean; turns?: number }): Promise<{ path: string; width: number; height: number; rawPath?: string }>;
   /** 日期戳記（null＝不印），觀景窗右下角；zoom＝小框構圖的倍率（字印在框的右下角、照框的大小） */
   setDate(o: { date: string | null; zoom?: number }): Promise<void>;
   /** 觀景窗現在這一格（離開相機的過場用） */
@@ -19,7 +19,7 @@ export interface NativeCameraApi {
   setWhiteBalance(o: { kelvin?: number; auto?: boolean }): Promise<void>;
   setFx(o: { soft: number; blur: number; lowfi: number }): Promise<void>;
   setLut(o: { lut: string; amount?: number }): Promise<void>;
-  addListener(event: 'shutter' | 'zoom', cb: (data: any) => void): Promise<{ remove: () => void }>;
+  addListener(event: 'shutter' | 'zoom' | 'orientation', cb: (data: any) => void): Promise<{ remove: () => void }>;
 }
 
 export const nativeCamera = () => nativePlugin<NativeCameraApi>('NativeCamera');
@@ -30,6 +30,8 @@ export const lutFileName = (url: string | undefined | null) => (url ? url.split(
 /** 拍一張：原生全解析度拍照 → 原生端套濾鏡、裁成畫面比例（16 位元流程）→ 回傳網頁可用的網址 */
 export async function captureNative(o: {
   flash: 'off' | 'on' | 'auto'; raw: boolean; lut: string; aspect: number; zoom: number;
+  /** 手機怎麼拿（0 直、1 頂端朝左、3 頂端朝右）：橫拿拍出橫的照片 */
+  turns?: number;
   /** 濾鏡強度 0～1（每顆濾鏡的最大強度，跟編輯頁一致） */
   amount?: number;
   /** 相機特效（0～1），拍出來的照片跟觀景窗看到的一樣 */
@@ -43,7 +45,7 @@ export async function captureNative(o: {
 }): Promise<{ url: string; rawPath?: string; renderedPath?: string } | null> {
   const cam = await nativeCamera(), img = await nativeImage();
   if (!cam || !img) return null;
-  const shot = await cam.capture({ flash: o.flash, raw: o.raw });
+  const shot = await cam.capture({ flash: o.flash, raw: o.raw, turns: o.turns ?? 0 });
   const out = await img.render({
     path: shot.path, lut: o.lut || undefined, amount: o.amount ?? 1, aspect: o.aspect, zoom: o.zoom, fx: o.fx, kelvin: o.kelvin,
     develop: o.develop || undefined, date: o.date || undefined,

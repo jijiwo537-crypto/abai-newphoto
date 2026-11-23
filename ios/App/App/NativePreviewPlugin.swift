@@ -37,6 +37,8 @@ final class ABAIMetalView: MTKView, MTKViewDelegate {
     var dateText: String? = nil { didSet { if dateText != oldValue { setNeedsDisplay() } } }
     /// 小框構圖的倍率（1＝沒有框）：照片只會是中間 1/zoom 那一塊，日期印在那一塊的右下角
     var dateZoom: CGFloat = 1 { didSet { if dateZoom != oldValue { setNeedsDisplay() } } }
+    /// 手機現在怎麼拿（逆時針轉幾個 90° 才是拍出來那張擺正的樣子）：日期要印在那張照片的長邊上
+    var dateTurns: Int = 0 { didSet { if dateTurns != oldValue { setNeedsDisplay() } } }
     /// 最後畫上去的那一格（已經裁成看得到的範圍、套好濾鏡）：離開相機的過場要用它當定格畫面
     private(set) var lastFrame: CIImage?
 
@@ -110,7 +112,7 @@ final class ABAIMetalView: MTKView, MTKViewDelegate {
         if fx.isOn { img = fx.apply(to: img) }
         if let d = dateText, !d.isEmpty {
             let e = img.extent, z = max(1, dateZoom)
-            img = ABAIDateStamp.stampDate(d, on: img, region: e.insetBy(dx: e.width * (1 - 1 / z) / 2, dy: e.height * (1 - 1 / z) / 2))
+            img = ABAIDateStamp.stampDate(d, on: img, region: e.insetBy(dx: e.width * (1 - 1 / z) / 2, dy: e.height * (1 - 1 / z) / 2), uprightTurns: dateTurns)
         }
         lastFrame = img
         /* 照原比例縮進畫面、置中 */

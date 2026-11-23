@@ -381,7 +381,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     const z = Math.max(1, Math.min(SMALL_FRAME_MAX, p.z0 * p.d0 / d));
     frameZoomRef.current = z;
     smallFrameRef.current?.set(z, true);
+    /* 日期即時跟著框走（一格最多送一次） */
+    if (dateOnRef.current && !datePinchRaf.current) {
+      datePinchRaf.current = requestAnimationFrame(() => { datePinchRaf.current = 0; pushDateRef.current(); });
+    }
   };
+  const datePinchRaf = useRef(0);
   const onFramePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!pointersRef.current.delete(e.pointerId)) return;
     endExposureDrag(e.pointerId);
@@ -438,6 +443,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /** 這一次觸控有拖過曝光：放手時不當成點擊對焦 */
   const evDraggedRef = useRef(false);
   const [evDragging, setEvDragging] = useState(false);
+  /* 手機怎麼拿（原生相機用重力感應回報；介面本身鎖在直的）：0 直拿、1 頂端朝左、3 頂端朝右。
+     圖示跟著轉正（跟內建相機一樣滑順地轉過去），橫拿拍出來是橫的照片，日期也印在那張照片的長邊上 */
+  const [uiTurns, setUiTurns] = useState(0);
+  const uiTurnsRef = useRef(0); uiTurnsRef.current = uiTurns;
+  const uiAngle = uiTurns === 1 ? 90 : uiTurns === 3 ? -90 : 0;
   const settingsExposureRef = useRef('0.0'); settingsExposureRef.current = settings.exposure;
   const hideFocusLater = (ms: number) => {
     if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
@@ -896,8 +906,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       capturingRef.current = true; setIsCapturing(true); setCaptureNotice('');
       try {
         const o = proOptsRef.current;
-        const look: RawLook = { lut: o.lut, amount: o.amount, aspect: o.aspect, zoom: frameZoomRef.current, fx: { ...nativeFxRef.current }, date: o.date ? dateStampText() : null };
-        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: look.lut, amount: look.amount, aspect: look.aspect, zoom: look.zoom, fx: look.fx, kelvin: nativeParamsRef.current.kelvin, develop: o.raw ? RAW_PROTECT_EV : 0, date: look.date });
+        /* 橫拿：照片是橫的，比例反過來（寬÷高） */
+        const turns = uiTurnsRef.current;
+        const aspect = turns === 1 || turns === 3 ? 1 / o.aspect : o.aspect;
+        const look: RawLook = { lut: o.lut, amount: o.amount, aspect, zoom: frameZoomRef.current, fx: { ...nativeFxRef.current }, date: o.date ? dateStampText() : null };
+        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, turns, lut: look.lut, amount: look.amount, aspect: look.aspect, zoom: look.zoom, fx: look.fx, kelvin: nativeParamsRef.current.kelvin, develop: o.raw ? RAW_PROTECT_EV : 0, date: look.date });
         if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
         ownedUrlsRef.current.add(r.url);
         setPhotos(prev => [r.url, ...prev]);
@@ -1050,7 +1063,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /* 專業模式開著時：原生相機畫在網頁底下，觀景窗那一塊挖成透明；實體按鈕（音量鍵、相機控制）當快門 */
   useEffect(() => {
     if (!proMode) return;
-    let alive = true, restore: (() => void) | null = null, sub: { remove: () => void } | null = null, ro: ResizeObserver | null = null;
+    let alive = true, restore: (() => void) | null = null, sub: { remove: () => void } | null = null, orientSub: { remove: () => void } | null = null, ro: ResizeObserver | null = null;
     void (async () => {
       const cam = await nativeCamera();
       const canvas = viewfinderRef.current?.getCanvas?.() ?? null;
@@ -1061,7 +1074,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       const rect = () => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, radius: parseFloat(getComputedStyle(frame).borderTopLeftRadius) || 0 }; };
       try {
         const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: proOptsRef.current.amount, proRAW: true });
-        if (alive) setNativeFlash(!!info?.flash);
+        if (alive) { setNativeFlash(!!info?.flash); if (typeof info?.turns === 'number') setUiTurns(info.turns); }
         /* 能不能拍 RAW 要等相機真的開起來才知道：還沒接上鏡頭的 AVCapturePhotoOutput 一律回報「不支援 ProRAW」，
            所以 available() 那邊永遠是 false（RAW 開關才會一直沒出現）。以開相機後回報的為準 */
         if (alive && info) {
@@ -1084,10 +1097,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       ro = new ResizeObserver(() => { void cam.setRect(rect()).catch(() => {}); });
       ro.observe(el);
       sub = await cam.addListener('shutter', () => capturePhotoRef.current());
-      if (!alive) sub.remove();
+      orientSub = await cam.addListener('orientation', (d: any) => { if (typeof d?.turns === 'number') setUiTurns(d.turns); });
+      if (!alive) { sub.remove(); orientSub.remove(); }
     })();
     return () => {
-      alive = false; ro?.disconnect(); sub?.remove(); restore?.();
+      alive = false; ro?.disconnect(); sub?.remove(); orientSub?.remove(); restore?.(); setUiTurns(0);
       void nativeCamera().then(c => c?.stop());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1372,7 +1386,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   };
 
   return (
-    <div className="safe-top flex flex-col h-screen max-h-screen justify-end pb-6 overflow-hidden select-none bg-black font-sans text-white animate-in fade-in duration-300">
+    <div data-camera-root style={{ ['--cam-rot' as any]: `${uiAngle}deg` }} className="safe-top flex flex-col h-screen max-h-screen justify-end pb-6 overflow-hidden select-none bg-black font-sans text-white animate-in fade-in duration-300">
       {captureNotice && <div role="status" className="fixed top-20 left-1/2 -translate-x-1/2 z-[300] rounded-full bg-black/85 px-4 py-2 text-xs whitespace-nowrap pointer-events-none">{captureNotice}</div>}
       
       {isImportingLocal && (
@@ -1496,7 +1510,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     }}
                     className="w-10 h-10 rounded-full flex items-center justify-center text-white active:scale-90 transition-transform"
                 >
-                    <Icon name="more_horiz" className="text-2xl drop-shadow-md" />
+                    <Icon name="more_horiz" className="cam-rot text-2xl drop-shadow-md" />
                 </button>
                 
                 {showSettingsMenu && (
@@ -1615,11 +1629,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 }}
                 onPointerDown={(e) => e.stopPropagation()}
                 onPointerUp={(e) => e.stopPropagation()}
-                className={`absolute bottom-[15px] left-3 z-[61] h-[30px] px-2 rounded-[8px] flex items-center justify-center backdrop-blur-xl active:scale-90 transition-[transform,background-color,color] duration-200 ${proRaw ? 'bg-white text-black' : 'bg-black/30 text-white/85'}`}
+                className={`cam-rot absolute bottom-[15px] left-3 z-[61] h-[30px] px-2 rounded-[8px] flex items-center justify-center backdrop-blur-xl active:scale-90 transition-[transform,background-color,color] duration-200 ${proRaw ? 'bg-white text-black' : 'bg-black/30 text-white/70'}`}
               >
                 <span className="relative text-[11px] font-bold tracking-[0.04em] leading-none">
                   RAW
-                  {!proRaw && <span aria-hidden className="absolute left-[-3px] right-[-3px] top-1/2 h-[1.5px] bg-current -rotate-[24deg] rounded-full" />}
                 </span>
               </button>
             )}
@@ -1633,7 +1646,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     key={val}
                     disabled={unavailable}
                     onClick={() => handleZoomClick(val)}
-                    className={`w-[34px] h-[34px] rounded-full flex items-center justify-center text-[10px] font-semibold tabular-nums tracking-[-0.02em] transition-[transform,background-color,color] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] backdrop-blur-xl active:scale-90 ${settings.focalLength === val ? 'bg-white text-black scale-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)]' : unavailable ? 'bg-black/30 text-white/20 scale-[0.82]' : 'bg-black/30 text-white/80 scale-[0.82]'}`}
+                    className={`cam-rot w-[34px] h-[34px] rounded-full flex items-center justify-center text-[10px] font-semibold tabular-nums tracking-[-0.02em] transition-[transform,background-color,color] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] backdrop-blur-xl active:scale-90 ${settings.focalLength === val ? 'bg-white text-black scale-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)]' : unavailable ? 'bg-black/30 text-white/20 scale-[0.82]' : 'bg-black/30 text-white/80 scale-[0.82]'}`}
                   >
                     {settings.focalLength === val ? val.replace('.0', '').replace('x', '×') : val.replace('.0', '').replace('x', '')}
                   </button>
@@ -1779,7 +1792,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
         <div className="grid grid-cols-3 items-center w-full max-w-sm mx-auto pt-0">
           <div className="flex justify-center">
-            <button onClick={() => setShowGallery(true)} className="w-12 h-12 rounded-[14px] overflow-hidden bg-zinc-900 ring-1 ring-inset ring-white/15 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]">
+            <button onClick={() => setShowGallery(true)} className="cam-rot w-12 h-12 rounded-[14px] overflow-hidden bg-zinc-900 ring-1 ring-inset ring-white/15 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]">
               {photos.length > 0 ? (
                  thumbs[photos[0]] ? <img key={photos[0]} src={thumbs[photos[0]]} className="w-full h-full object-cover animate-in fade-in zoom-in-50 duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]" alt="Latest" /> : <div className="w-full h-full bg-white/10" />
               ) : (
@@ -1822,7 +1835,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               }} 
               className={`w-12 h-12 rounded-full flex items-center justify-center ring-1 ring-inset active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${activeControl === 'filters' ? 'bg-white/20 ring-white/40' : 'bg-white/[0.07] ring-white/15'}`}
             >
-              <Icon name="photo_camera" className={`text-white text-[22px] transition-opacity ${activeControl === 'filters' ? 'opacity-100' : 'opacity-85'}`} />
+              <Icon name="photo_camera" className={`cam-rot text-white text-[22px] transition-opacity ${activeControl === 'filters' ? 'opacity-100' : 'opacity-85'}`} />
             </button>
           </div>
         </div>

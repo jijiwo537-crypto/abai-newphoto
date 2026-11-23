@@ -125,18 +125,18 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, prote
         <button onClick={reset} className="block mx-auto mb-2 text-[22px] font-light tabular-nums tracking-[-0.01em] text-white active:opacity-60">
           {tool === 'exposure' ? evText : tempText}
         </button>
-        <div className="relative h-6 mb-6">
+        <div className="relative h-[30px] mb-6">
           {/* 中間的刻度（曝光 0 的位置／拍攝當下的色溫） */}
           {tool === 'exposure'
-            ? <span aria-hidden className="absolute top-1/2 w-px h-2.5 -translate-y-1/2 bg-white/35" style={{ left: `calc(7px + (100% - 14px) * ${(protectEV + 3) / 6})` }} />
-            : asShot.current !== null && <span aria-hidden className="absolute top-1/2 w-px h-2.5 -translate-y-1/2 bg-white/35" style={{ left: `calc(7px + (100% - 14px) * ${(asShot.current - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)})` }} />}
+            ? <span aria-hidden className="absolute top-1/2 w-[2px] h-[14px] -ml-px -translate-y-1/2 rounded-full bg-white/35" style={{ left: `calc(13px + (100% - 26px) * ${(protectEV + 3) / 6})` }} />
+            : asShot.current !== null && <span aria-hidden className="absolute top-1/2 w-[2px] h-[14px] -ml-px -translate-y-1/2 rounded-full bg-white/35" style={{ left: `calc(13px + (100% - 26px) * ${(asShot.current - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)})` }} />}
           {tool === 'exposure' ? (
-            <div key="ev"><LiveRange ariaLabel="曝光" min={-3} max={3} step={0.1} value={exposure} height={24}
+            <div key="ev"><LiveRange ariaLabel="曝光" min={-3} max={3} step={0.1} value={exposure} height={30}
               className="premium-slider develop-slider w-full"
               onValue={v => { latest.current.exposure = v; setExposure(v); }}
               onCommit={() => commit({ exposure: Math.round(latest.current.exposure * 10) / 10 })} /></div>
           ) : (
-            <div key="temp"><LiveRange ariaLabel="色溫" min={TEMP_MIN} max={TEMP_MAX} step={50} value={temp ?? 5500} height={24} disabled={temp === null}
+            <div key="temp"><LiveRange ariaLabel="色溫" min={TEMP_MIN} max={TEMP_MAX} step={50} value={temp ?? 5500} height={30} disabled={temp === null}
               className="premium-slider develop-slider develop-slider-temp w-full"
               onValue={v => { latest.current.temp = v; setTemp(v); }}
               onCommit={() => commit({ temperature: latest.current.temp ?? undefined })} /></div>
