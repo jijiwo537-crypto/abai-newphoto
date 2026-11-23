@@ -55,6 +55,7 @@ const RawEditIcon: React.FC<{ size?: number }> = ({ size = 21 }) => (
 /* 選取的樣子跟其他功能導入照片（NativeGallery）一樣：照片縮小、白框、右上角照點的順序標號碼 */
 const SEL_CSS = `
 @keyframes cg-pop { from { transform: scale(.86); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+.cg-cell, .cg-cell img { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-user-drag: none; -webkit-tap-highlight-color: transparent; }
 .cg-cell img { transition: transform .32s cubic-bezier(0.32,0.72,0,1); }
 .cg-cell.sel img { transform: scale(.9); }
 .cg-cell .ring { position: absolute; inset: 0; border: 2px solid #fff; opacity: 0; transition: opacity .2s ease; pointer-events: none; }
@@ -204,7 +205,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
               return (
                 <button key={src} data-cg-idx={idx} onClick={() => tapPhoto(idx)} aria-label={`照片 ${idx + 1}`}
                   className={`cg-cell${on ? ' sel' : ''} relative aspect-square overflow-hidden bg-white/10`}>
-                  {thumbs[src] && <img src={thumbs[src]} decoding="async" alt="" className="w-full h-full object-cover" />}
+                  {thumbs[src] && <img src={thumbs[src]} decoding="async" alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" />}
                   <span className="ring" />
                   {rawShots?.has(src) && (
                     <span className="absolute left-1 bottom-1 px-1.5 py-[2px] rounded-[5px] bg-black/55 backdrop-blur-md text-[9px] font-bold tracking-[0.06em] text-white/90 pointer-events-none">RAW</span>
