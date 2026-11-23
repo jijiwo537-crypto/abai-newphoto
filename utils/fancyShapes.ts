@@ -429,7 +429,7 @@ export const fancyStarD = (cx: number, cy: number, R: number, rot = 0) => {
   return out.join(' ') + ' Z';
 };
 /** 多邊形照 0～w、0～h 的框裁切（Sutherland–Hodgman） */
-const clipRect = (pts: [number, number][], w: number, h: number): [number, number][] => {
+const clipRect = (pts: [number, number][], w: number, h: number, keepBottom = false): [number, number][] => {
   const edge = (P: [number, number][], inside: (p: [number, number]) => boolean, cut: (a: [number, number], b: [number, number]) => [number, number]) => {
     const out: [number, number][] = [];
     for (let i = 0; i < P.length; i++) {
@@ -444,7 +444,7 @@ const clipRect = (pts: [number, number][], w: number, h: number): [number, numbe
   let P = edge(pts, p => p[0] >= 0, (a, b) => lerpX(a, b, 0));
   if (P.length) P = edge(P, p => p[0] <= w, (a, b) => lerpX(a, b, w));
   if (P.length) P = edge(P, p => p[1] >= 0, (a, b) => lerpY(a, b, 0));
-  if (P.length) P = edge(P, p => p[1] <= h, (a, b) => lerpY(a, b, h));
+  if (P.length && !keepBottom) P = edge(P, p => p[1] <= h, (a, b) => lerpY(a, b, h));
   return P;
 };
 /* ───────── 透明度遮罩 ─────────
@@ -548,7 +548,7 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
   const us = tag ? fancyMotionUnitsTag(tag.split('|')[0], motionCtxOf(stars, w, h, kind)) : null;
   /* '|透明度層'：畫的那一端把星星照透明度分層，一層一層用自己的透明度畫（見 fancyAlphaLevels）。
      這一次只畫屬於這一層的星星，大小照原本的；沒有分層的地方（舊的畫法）才把「變淡」換成「變小」 */
-  const masked = lv === 'm', layer = lv && !masked ? Number(lv) : undefined, clipBox = aid === 'fx-in-rain' || (kind.split('@')[0] === 'fancy-mobile' && aid === 'fx-in-seq');
+  const masked = lv === 'm', layer = lv && !masked ? Number(lv) : undefined, isMobile = kind.split('@')[0] === 'fancy-mobile', clipBox = aid === 'fx-in-rain' || isMobile;   // 吊飾：上面（框外）的一律不畫
   if (us) {
     out = [];
     stars.forEach((st, i) => {
@@ -562,7 +562,7 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
         pts.push([X + Math.cos(t) * R * m * sx, Y + Math.sin(t) * R * m]);
       }
       // 星雨：還在框外（上面）的部分不畫 —— 照框把星星切掉
-      if (clipBox) { pts = clipRect(pts, w, h); if (pts.length < 3) return; }
+      if (clipBox) { pts = clipRect(pts, w, h, isMobile); if (pts.length < 3) return; }
       out.push(pts.map(([x, y], k) => `${k ? 'L' : 'M'} ${r3(x)} ${r3(y)}`).join(' ') + ' Z');
     });
     // 線：兩端貼著哪顆星星就跟著那顆動；那顆還沒出現（很淡）就先不畫
@@ -581,7 +581,7 @@ const fancyPathD0 = (kind0: string, w: number, h: number, gbw: number, gbh: numb
       }
       if (clipBox) {   // 星雨：線也只畫框裡面那一段
         if (Math.max(L.y1, L.y2) <= 0) continue;
-        L.y1 = Math.max(0, Math.min(h, L.y1)); L.y2 = Math.max(0, Math.min(h, L.y2));
+        L.y1 = Math.max(0, isMobile ? L.y1 : Math.min(h, L.y1)); L.y2 = Math.max(0, isMobile ? L.y2 : Math.min(h, L.y2));   // 吊飾：下面超出去的不裁
       }
       lines.push(L);
     }

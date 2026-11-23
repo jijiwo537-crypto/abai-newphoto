@@ -107,6 +107,7 @@ export const ctxOf = (stars: FancyStar[], w: number, h: number, kind?: string): 
 const BY_ID = new Map([...ENTRIES, ...IDLES].map(a => [a.id, a]));
 export const isFancyMotion = (id?: string) => !!id && BY_ID.has(id);
 export const fancyMotionName = (id: string) => BY_ID.get(id)?.name ?? id;
+const fancyMotionNameBase = fancyMotionName;
 /** 某個動畫在某個進度（進場 0～1）／時間（常駐，秒）時，每一顆的樣子 */
 /* ───────── 進場 → 常駐的過渡 ─────────
    常駐不是一瞬間整組開始動，而是每顆星星照「它進場時出現的順序」一顆一顆醒過來：
@@ -138,6 +139,9 @@ const scaleU = (u: U, k: number): U => k === 1 ? u : {
    ‧ 閃爍：每顆不定時「亮一下」＝放大一點、轉一下，再回來
    其他（星雨、旋開、翻牌、流光、跑燈、自轉、擺盪）照原本的動作，只是拿掉變淡 */
 const MOBILE_UNIT: Record<string, (i: number, c: Ctx, p: number, t: number) => U> = {
+  /* 漂浮ll（吊飾的「掃描」那一格）：線的頂端固定，每一條各自一伸一縮、彼此錯開，
+     像一串吊飾在輕輕上下彈 —— 不是整組一起往上飄（那是漂浮l） */
+  'fx-idle-shimmer': (i, c, _p, t) => ({ ...ID, dy: Math.sin(t * 1.5 - c.rank[i] * 0.75) * c.h * 0.06 }),
   /* 翻牌：每條線照左上→右下的順序，從上往下長出來；長到底的那一刻，星星從側面翻出來 */
   'fx-in-flip': (i, c, p) => {
     const dg = (k: number) => c.stars[k].x / c.w + c.stars[k].y / c.h, all = c.stars.map((_, k) => dg(k));
@@ -214,8 +218,14 @@ export const FANCY_MOTION_CFG: Record<string, KCfg> = {
 const baseKind = (k?: string) => String(k || '').split('!')[0].split('@')[0];
 export const fancyMotionCfg = (kind?: string): KCfg | undefined => FANCY_MOTION_CFG[baseKind(kind)];
 /** 面板上的進場／常駐清單：原有的（拿掉不要的）在前、新設計的在後 */
+/** 某一種貼圖自己的名字（同一個動畫在這一種叫別的名字） */
+const KIND_NAMES_OVERRIDE: Record<string, Record<string, string>> = {
+  'fancy-mobile': { 'fx-idle-chase': '縮放', 'fx-idle-shimmer': '漂浮' },   // 漂浮跟原本的漂浮同名 → 自動變成漂浮l／漂浮ll
+};
 export const fancyMotionLists = <T extends { id: string }>(kind: string | undefined, inKinds: T[], idleKinds: T[], make: (id: string, name: string) => T) => {
   const c = fancyMotionCfg(kind); if (!c) return null;
+  const ov = KIND_NAMES_OVERRIDE[String(kind || '').split('@')[0]] || {};
+  const fancyMotionName = (id: string) => ov[id] ?? fancyMotionNameBase(id);
   /* 同一類裡原有的和新設計的同名（例如兩個「旋轉」）：原有的加「l」、新設計的加「ll」 */
   const dedupe = (old: T[], fresh: string[]) => {
     const oldNames = new Set(old.map(k => (k as any).name));
