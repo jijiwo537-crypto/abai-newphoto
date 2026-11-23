@@ -150,7 +150,12 @@ const MOBILE_UNIT: Record<string, (i: number, c: Ctx, p: number, t: number) => U
   },
   /* 漂浮ll（吊飾的「掃描」那一格）：線的頂端固定，每一條各自一伸一縮、彼此錯開，
      像一串吊飾在輕輕上下彈 —— 不是整組一起往上飄（那是漂浮l） */
-  'fx-idle-shimmer': (i, c, _p, t) => ({ ...ID, dy: Math.sin(t * 1.5 - c.rank[i] * 0.75) * c.h * 0.06 }),
+  /* 每一條從靜止開始、照順序一條接一條起步（不是一開始就各自在不同的位置），
+     起步時幅度慢慢放大 —— 位置、速度都從 0 開始，接在任何進場後面都不會跳 */
+  'fx-idle-shimmer': (i, c, _p, t) => {
+    const tau = Math.max(0, t - c.rank[i] * 0.35), ramp = smooth(tau / 1.2);
+    return { ...ID, dy: Math.sin(tau * 1.5) * ramp * c.h * 0.06 };
+  },
   /* 翻牌：每條線照左上→右下的順序，從上往下長出來；長到底的那一刻，星星從側面翻出來 */
   'fx-in-flip': (i, c, p) => {
     const dg = (k: number) => c.stars[k].x / c.w + c.stars[k].y / c.h, all = c.stars.map((_, k) => dg(k));
@@ -180,7 +185,7 @@ export const fancyMotionUnits = (id: string, c: Ctx, v: string | number): U[] | 
   const [t = 0, amp = 1, real = 999, entry = ''] = String(v).split(',').map((x, k) => k === 3 ? x : Number(x)) as [number, number, number, string];
   return c.stars.map((_, i) => {
     /* 醒來用「一開始就有速度」的曲線（先快後慢），不是慢慢起步 —— 慢慢起步看起來就像停了一下 */
-    const wx = clamp((real - wakeOrder(entry, i, c) * WAKE_SPREAD) / WAKE_EACH), wake = real >= 99 ? 1 : 1 - (1 - wx) * (1 - wx);
+    const wx = clamp((real - wakeOrder(entry, i, c) * WAKE_SPREAD) / WAKE_EACH), wake = real >= 99 || (mobile && id === 'fx-idle-shimmer') ? 1 : 1 - (1 - wx) * (1 - wx);   // 吊飾漂浮ll 自己就是從靜止起步，不用再套醒來
     if (id === 'fx-idle-shimmer') {
       // 流光：光帶一開始就全力掃（第一道立刻出發）；只有「其他星星稍微變暗」慢慢淡進來，不會一下子暗掉
       const u = scaleU(a.unit!(i, c, 1, t), amp);
