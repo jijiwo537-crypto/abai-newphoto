@@ -4,8 +4,8 @@ import { nativePlugin, fileSrc } from './nativeBridge';
 import { nativeImage } from './nativeImage';
 
 export interface NativeCameraApi {
-  available(): Promise<{ available: boolean; proRAW: boolean }>;
-  start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; radius?: number; lut?: string; amount?: number; proRAW?: boolean }): Promise<{ proRAW: boolean; maxWidth: number; maxHeight: number; flash?: boolean; screenFlash?: boolean }>;
+  available(): Promise<{ available: boolean; proRAW: boolean; raw?: boolean }>;
+  start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; radius?: number; lut?: string; amount?: number; proRAW?: boolean; rawWide?: boolean }): Promise<{ proRAW: boolean; raw?: boolean; maxWidth: number; maxHeight: number; flash?: boolean; screenFlash?: boolean }>;
   stop(): Promise<void>;
   setRect(o: { x: number; y: number; w: number; h: number; radius?: number }): Promise<void>;
   capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean }): Promise<{ path: string; width: number; height: number; rawPath?: string }>;
@@ -41,4 +41,18 @@ export async function captureNative(o: {
   const blob = await (await fetch(fileSrc(out.path))).blob();
   img.remove({ path: out.path }).catch(() => {});
   return { url: URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' })), rawPath: shot.rawPath };
+}
+
+/** 相機拍的 RAW（DNG 檔路徑）→ 沖成一張可以編輯的圖（iOS 內建的 RAW 解碼，從感光元件的原始資料算，
+ *  亮部、暗部留得比一般照片多）。沒有原生解碼或失敗回 null */
+export async function developRaw(rawPath: string): Promise<string | null> {
+  const dec = await nativePlugin<{ decodeFile(o: { path: string; exposure?: number; boost?: number }): Promise<{ path: string }> }>('RawDecode');
+  const img = await nativeImage();
+  if (!dec) return null;
+  try {
+    const r = await dec.decodeFile({ path: rawPath });
+    const blob = await (await fetch(fileSrc(r.path))).blob();
+    img?.remove({ path: r.path }).catch(() => {});
+    return URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' }));
+  } catch { return null; }
 }

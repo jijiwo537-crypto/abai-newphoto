@@ -429,6 +429,17 @@ html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.mat
   78% { transform: scale(1); opacity: 1; }
   100% { transform: scale(1); opacity: 0; }
 }
+/* 對焦框（可以上下拖調曝光的那一版）：縮進來之後停著，最後才淡掉；拖的時候整段暫停、維持全亮 */
+@keyframes camFocusIn {
+  0% { transform: scale(1.22); }
+  20% { transform: scale(1); }
+  100% { transform: scale(1); }
+}
+@keyframes camFocusHold {
+  0% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
+}
 @keyframes camFadeOut { 0% { opacity: 1; } 50% { opacity: 1; } 100% { opacity: 0; } }
 
 /* 卡片（模板、濾鏡、特效）的選中框。

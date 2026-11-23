@@ -3,6 +3,7 @@ import { canvasToUrl } from '../utils/blobUrl';
 import React from 'react';
 import { Icon } from './Icon';
 import { processImageFile } from '../utils/imageLoader';
+import { RAW_ACCEPT } from '../utils/fileTypes';
 
 interface GalleryOverlayProps {
   photos: string[];
@@ -12,11 +13,12 @@ interface GalleryOverlayProps {
   onDelete: (index: number) => void;
   onImport: (srcs: string[]) => void;
   onEdit: (src: string, index: number) => void;
+  /** 有 RAW 的那幾張（角落標一個 RAW） */
+  rawShots?: Set<string>;
 }
 
-const RAW_ACCEPT = "image/*,.heic,.heif,.dng,.cr2,.nef,.arw,.orf,.rw2,.raf,.srw";
 
-export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, thumbs = {}, onClose, onDelete, onImport, onEdit }) => {
+export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, thumbs = {}, onClose, onDelete, onImport, onEdit, rawShots }) => {
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
@@ -78,6 +80,9 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, thumbs =
                   alt={`Capture ${idx}`}
                   onClick={() => onEdit(src, idx)}
                 /> : <button aria-label={`Capture ${idx}`} onClick={() => onEdit(src, idx)} className="w-full h-full rounded-lg bg-white/10 animate-pulse" />}
+                {rawShots?.has(src) && (
+                  <span className="absolute left-1 bottom-1 px-1.5 py-[2px] rounded-[5px] bg-black/55 backdrop-blur-md text-[9px] font-bold tracking-[0.06em] text-white/90 pointer-events-none">RAW</span>
+                )}
                 {/* 刪除鍵：固定 26×26 的正圓，圖示用行高歸零 + flex 置中，
                     不然圖示字的行高會把它撐成不對稱的形狀、看起來沒對準。
                     另外不做成 hover 才浮現 —— 手機沒有 hover，等於按不到。 */}
