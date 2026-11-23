@@ -5,7 +5,7 @@ import { loadPresets, storePresets, presetParamsOf, nextPresetNumber, MAX_PRESET
 import { loadCustomLuts, importCustomLut, removeCustomLut, type CustomLut } from '../utils/customLuts';
 import { pickCustomLutFiles, type LutFileSelection } from '../utils/customLutPicker';
 import { crossedZero } from '../utils/hapticDetents';
-import { sliderSlow } from '../utils/haptics';
+import { sliderSlow, markSliderHandled } from '../utils/haptics';
 
 import { ImportSpinner } from './BusySpinner';
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
@@ -914,6 +914,7 @@ const FastSlider = React.memo(({
         }
         // 0 在中間的雙向滑桿經過 0 才震；0 在最左邊的（強度 0～100）拉回 0 不震
         // 很快掃過去的不震（只是經過，不是想停在 0）
+        markSliderHandled();   // 這個滑桿自己的震動（全域那套不要再震一次）
         const slow = sliderSlow(lastHapticValue.current, val, min, max);
         if (min < 0 && max > 0 && crossedZero(lastHapticValue.current, val) && slow) haptic('detentMajor');
         // 濾鏡、特效、調節：拉到最大或最小時，柔和有質感的一下
@@ -10664,7 +10665,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           return (
             <EditBar scroll={fullTabs} className="mt-auto">
               {tabs.map(([id, label, on, fn]) => (
-                <EditBarTab key={id} id={id} label={label} active={on} scroll={fullTabs}
+                <EditBarTab key={id} id={id} label={label} active={on} scroll={fullTabs} quiet /* 修圖最下面的功能分頁：點了不震 */
                   onClick={() => { if (on && SELF_CONTAINED_TABS.includes(id)) return; leaveCategory(fn); }} />
               ))}
             </EditBar>

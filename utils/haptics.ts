@@ -70,13 +70,18 @@ export function sliderSlow(prev: number, next: number, min: number, max: number)
   lastMove = now;
   return Math.abs(next - prev) / Math.max(1e-9, max - min) / dt < 1 / 500;
 }
+let handledAt = -1;
+/** 有自己震動邏輯的滑桿呼叫這個（同一個事件裡全域那套就不再重複震） */
+export function markSliderHandled() { handledAt = performance.now(); }
 export function sliderHaptic(prev: number, next: number, min: number, max: number) {
+  markSliderHandled();
   if (!isNative() || prev === next || !(max > min)) return;
   /* 0 在中間的雙向滑桿，經過 0 才明顯震一下；0 在最左邊的滑桿（0～100）拉回 0 不震。很快掃過去的不震 */
   const twoSided = min < 0 && max > 0;
   const slow = sliderSlow(prev, next, min, max);
   if (twoSided && crossedZero(prev,next)) { if (slow) haptic('detentMajor'); return; }
-  if ((next <= min && prev > min && min !== 0) || (next >= max && prev < max)) { haptic('edge'); return; }
+  /* 拉到頭（0 和 100 都會）：柔和有質感的一下，不是硬硬的擋塊 */
+  if ((next <= min && prev > min) || (next >= max && prev < max)) { haptic('edgeSoft'); return; }
   if (min < 0 && max > 0 && (prev < 0 ? next >= 0 : prev > 0 ? next <= 0 : false)) { if (slow) haptic('detentMajor'); return; }
   const seg = (v: number) => Math.floor(((v - min) / (max - min)) * 20 + 1e-9);
   if (seg(prev) !== seg(next)) haptic('detent');
@@ -94,6 +99,24 @@ let clickHapticsInstalled = false;
 export function installClickHaptics() {
   if (clickHapticsInstalled || !isNative()) return;
   clickHapticsInstalled = true;
+  /* 沒有自己設計震動的滑桿（各工具裡直接用 <input type=range> 的）：全部套同一套手感 ——
+     拖動時每走全長的 1/20 一下很輕的段落、慢慢經過 0 一下、拉到頭柔和的一下。
+     掛在 window 的冒泡階段：React 的處理先跑完，有自己震動的滑桿已經標記過，這裡就跳過 */
+  const prevVal = new WeakMap<HTMLInputElement, number>();
+  window.addEventListener('pointerdown', e => {
+    const el = e.target as HTMLInputElement | null;
+    if (el && el.tagName === 'INPUT' && el.type === 'range') prevVal.set(el, parseFloat(el.value));
+  }, true);
+  window.addEventListener('input', e => {
+    const el = e.target as HTMLInputElement | null;
+    if (!el || el.tagName !== 'INPUT' || el.type !== 'range' || el.dataset.haptic === 'none') return;
+    const next = parseFloat(el.value), prev = prevVal.get(el);
+    prevVal.set(el, next);
+    if (performance.now() - handledAt < 8) return;   // 這個滑桿自己震過了
+    if (prev === undefined || !Number.isFinite(next)) return;
+    const min = parseFloat(el.min || '0'), max = parseFloat(el.max || '100');
+    sliderHaptic(prev, next, min, max);
+  });
   document.addEventListener('click', e => {
     const el = (e.target as Element | null)?.closest?.('[data-haptic],[aria-pressed],[role="tab"],[role="switch"],[role="radio"],[role="menuitemradio"]');
     if (!el || (el as HTMLButtonElement).disabled) return;
