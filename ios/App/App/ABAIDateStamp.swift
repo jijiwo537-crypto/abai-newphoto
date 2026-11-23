@@ -46,10 +46,10 @@ enum ABAIDateStamp {
         "5": "afgcd", "6": "afgedc", "7": "abc", "8": "abcdefg", "9": "abcdfg", "-": "g",
     ]
 
-    /// 一個七段字的線段（單位：字高 1.75、字寬 1）。
-    /// 每一個字都要一樣高：直的那幾段，上（下）面沒有橫的那一段時，直接延伸到字的頂（底）、切平 ——
-    /// 不然「1」「4」「7」這種上下沒有橫線的字，會比其他字矮一截、看起來比較小。
-    /// 同一邊上下兩段中間沒有 g（例如 1、7、0）就連成一整根，中間不留缺口。
+    /// 一個七段字的線段（單位：字高 1.75、字寬 1）。真的七段顯示器那樣：
+    ///   ‧ 直的永遠是上、下兩段，在中間接起來（中間那個尖尖的接點），「1」也是兩段，不是一整根
+    ///   ‧ 每個字一樣高：直的那段外側那一端，旁邊有橫的就跟它接、沒有橫的（1、4、7 的頂或底）就把尖端伸到字的最頂（最底），
+    ///     不然 1、4、7 會比別的字矮一截
     static func segmentPolys(_ ch: Character) -> [[CGPoint]] {
         guard let segs = digitSegs[ch] else { return [] }
         let w: CGFloat = 1, h: CGFloat = 1.75, t: CGFloat = 0.2, g: CGFloat = 0.035
@@ -59,32 +59,22 @@ enum ABAIDateStamp {
             return [CGPoint(x: x0, y: y), CGPoint(x: x0 + t / 2, y: y - t / 2), CGPoint(x: x1 - t / 2, y: y - t / 2),
                     CGPoint(x: x1, y: y), CGPoint(x: x1 - t / 2, y: y + t / 2), CGPoint(x: x0 + t / 2, y: y + t / 2)]
         }
-        /// 直的一根：兩端各自是「尖的」（接著橫的那一段，中間留一點縫）或「平的」（到字的頂／底）
-        func vbar(_ x: CGFloat, _ y0: CGFloat, flat0: Bool, _ y1: CGFloat, flat1: Bool) -> [CGPoint] {
-            var pts: [CGPoint] = []
-            if flat0 { pts += [CGPoint(x: x - t / 2, y: y0), CGPoint(x: x + t / 2, y: y0)] }
-            else { let a = y0 + g; pts += [CGPoint(x: x, y: a), CGPoint(x: x + t / 2, y: a + t / 2)] }
-            if flat1 { pts += [CGPoint(x: x + t / 2, y: y1), CGPoint(x: x - t / 2, y: y1)] }
-            else { let b = y1 - g; pts += [CGPoint(x: x + t / 2, y: b - t / 2), CGPoint(x: x, y: b), CGPoint(x: x - t / 2, y: b - t / 2)] }
-            if !flat0 { pts.append(CGPoint(x: x - t / 2, y: y0 + g + t / 2)) }
-            return pts
+        /// 直的一段：兩端都是尖的，尖端在 a、b
+        func vseg(_ x: CGFloat, _ a: CGFloat, _ b: CGFloat) -> [CGPoint] {
+            [CGPoint(x: x, y: a), CGPoint(x: x + t / 2, y: a + t / 2), CGPoint(x: x + t / 2, y: b - t / 2),
+             CGPoint(x: x, y: b), CGPoint(x: x - t / 2, y: b - t / 2), CGPoint(x: x - t / 2, y: a + t / 2)]
         }
         let top = t / 2, mid = h / 2, bot = h - t / 2
+        /* 外側那一端：有橫的就跟它留一點縫接起來；沒有就伸到最頂／最底 */
+        let upperA = has("a") ? top + g : 0, lowerB = has("d") ? bot - g : h
         var out: [[CGPoint]] = []
         if has("a") { out.append(hseg(top)) }
         if has("g") { out.append(hseg(mid)) }
         if has("d") { out.append(hseg(bot)) }
-        /* 左邊 f／e、右邊 b／c */
-        for (x, upper, lower) in [(t / 2, has("f"), has("e")), (w - t / 2, has("b"), has("c"))] {
-            let topFlat = !has("a"), botFlat = !has("d")
-            let y0: CGFloat = topFlat ? 0 : top, y1: CGFloat = botFlat ? h : bot
-            if upper && lower && !has("g") {
-                out.append(vbar(x, y0, flat0: topFlat, y1, flat1: botFlat))
-            } else {
-                if upper { out.append(vbar(x, y0, flat0: topFlat, mid, flat1: false)) }
-                if lower { out.append(vbar(x, mid, flat0: false, y1, flat1: botFlat)) }
-            }
-        }
+        if has("f") { out.append(vseg(t / 2, upperA, mid - g)) }
+        if has("b") { out.append(vseg(w - t / 2, upperA, mid - g)) }
+        if has("e") { out.append(vseg(t / 2, mid + g, lowerB)) }
+        if has("c") { out.append(vseg(w - t / 2, mid + g, lowerB)) }
         return out
     }
 

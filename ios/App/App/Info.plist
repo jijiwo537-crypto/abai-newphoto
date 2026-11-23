@@ -81,6 +81,8 @@
 	<string>拍照時需要使用相機。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>在 ABAI 裡直接瀏覽、挑選要編輯的照片和影片，並在「照片」App 保留原圖、讓你之後能回復編輯，需要讀取相簿。</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>相機開啟「位置」時，把拍照的地點記錄在照片裡。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>把編輯好的照片存進相簿。</string>
 	<key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>

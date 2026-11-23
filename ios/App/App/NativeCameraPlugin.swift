@@ -15,6 +15,8 @@
 //    setZoom({ factor })  focus({ x, y })  setExposureBias({ ev })  setLut({ lut, amount })
 //    setDate({ date, zoom })   日期戳記（見 ABAIDateStamp.swift）
 //    snapshot() → { path }      觀景窗現在這一格（離開相機的過場用）
+//    setLevel({ on })  setLocation({ on })  showMenu({ anchor, items })   水平儀、位置、原生設定選單
+//    事件 level { roll, flat }、menu { id, value }、menuClosed
 //    事件 orientation { turns }：手機怎麼拿（0 直拿、1 頂端朝左、3 頂端朝右），介面圖示跟著轉、橫拿拍出橫的照片
 //    事件：shutter（實體按鈕按下）、zoom（相機控制按鈕改了變焦）
 //
@@ -28,13 +30,14 @@ import AVFoundation
 import AVKit
 import CoreImage
 import CoreMotion
+import CoreLocation
 import AudioToolbox
 import ImageIO
 import UIKit
 import WebKit
 
 @objc(NativeCameraPlugin)
-public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapturePhotoCaptureDelegate {
+public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoDataOutputSampleBufferDelegate, AVCapturePhotoCaptureDelegate, CLLocationManagerDelegate {
     public let identifier = "NativeCameraPlugin"
     public let jsName = "NativeCamera"
     public let pluginMethods: [CAPPluginMethod] = [
@@ -51,6 +54,9 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         CAPPluginMethod(name: "setRect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setDate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "snapshot", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setLevel", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setLocation", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "showMenu", returnType: CAPPluginReturnPromise),
     ]
 
     private let session = AVCaptureSession()
@@ -124,7 +130,12 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                         if !self.session.isRunning { self.session.startRunning() }
                         /* 後鏡頭：真的閃光燈；前鏡頭：螢幕補光（跟內建相機一樣把整個螢幕打亮） */
                         let ledFlash = self.photoOutput.supportedFlashModes.contains(.on)
+                        /* 介面倍率的範圍（1＝主鏡頭）：0.5 以下＝有超廣角；最大到多少倍 */
+                        let base = self.device?.virtualDeviceSwitchOverVideoZoomFactors.first.map { CGFloat(truncating: $0) } ?? 1
+                        let minUI = Double((self.device?.minAvailableVideoZoomFactor ?? 1) / base)
+                        let maxUI = Double((self.device?.maxAvailableVideoZoomFactor ?? 1) / base)
                         call.resolve(["proRAW": self.photoOutput.isAppleProRAWEnabled, "turns": self.turns,
+                                      "minZoom": minUI, "maxZoom": maxUI,
                                       "raw": self.rawFormat() != nil,
                                       "maxWidth": self.maxDimensions.width, "maxHeight": self.maxDimensions.height,
                                       "flash": ledFlash || self.position == .front,
@@ -267,24 +278,131 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     /// 0＝直拿、1＝頂端朝左（逆時針轉了 90°）、3＝頂端朝右。倒過來拿不算（跟內建相機一樣）
     private var turns = 0
 
+    /// 水平儀開著沒（開著才把傾斜角度送給網頁）
+    private var levelOn = false
+    private var lastLevelSent = 0.0
+
+    /* 用 CMDeviceMotion 的重力向量（比原始加速度乾淨，手晃的時候不抖）：判斷手機怎麼拿、水平儀的角度 */
     private func startMotion() {
-        guard motion.isAccelerometerAvailable, !motion.isAccelerometerActive else { return }
-        motion.accelerometerUpdateInterval = 0.1
-        motion.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
-            guard let self = self, let a = data?.acceleration else { return }
-            /* 平放在桌上時不判斷（重力幾乎都在 z）；兩軸要差夠多才換，在 45° 附近不會一直跳來跳去 */
-            if abs(a.z) > 0.85 { return }
-            var t = self.turns
-            if a.y < -0.55 && abs(a.y) > abs(a.x) + 0.2 { t = 0 }
-            else if abs(a.x) > 0.55 && abs(a.x) > abs(a.y) + 0.2 { t = a.x < 0 ? 1 : 3 }
-            guard t != self.turns else { return }
-            self.turns = t
-            self.view?.dateTurns = t
-            self.notifyListeners("orientation", data: ["turns": t])
+        guard !motion.isDeviceMotionActive, !motion.isAccelerometerActive else { return }
+        if motion.isDeviceMotionAvailable {
+            motion.deviceMotionUpdateInterval = 1.0 / 30
+            motion.startDeviceMotionUpdates(to: .main) { [weak self] data, _ in
+                guard let self = self, let g = data?.gravity else { return }
+                self.handleGravity(x: g.x, y: g.y, z: g.z)
+            }
+        } else if motion.isAccelerometerAvailable {
+            motion.accelerometerUpdateInterval = 0.1
+            motion.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
+                guard let self = self, let a = data?.acceleration else { return }
+                self.handleGravity(x: a.x, y: a.y, z: a.z)
+            }
         }
     }
 
-    private func stopMotion() { if motion.isAccelerometerActive { motion.stopAccelerometerUpdates() } }
+    private func handleGravity(x: Double, y: Double, z: Double) {
+        /* 手機方向：平放在桌上時不判斷（重力幾乎都在 z）；兩軸要差夠多才換，在 45° 附近不會一直跳來跳去 */
+        if abs(z) <= 0.85 {
+            var t = turns
+            if y < -0.55 && abs(y) > abs(x) + 0.2 { t = 0 }
+            else if abs(x) > 0.55 && abs(x) > abs(y) + 0.2 { t = x < 0 ? 1 : 3 }
+            if t != turns {
+                turns = t
+                view?.dateTurns = t
+                notifyListeners("orientation", data: ["turns": t])
+            }
+        }
+        /* 水平儀：畫面（直拿時）的傾斜角度，度。0＝跟地平線平行；平放時沒有意義 → 不送 */
+        if levelOn {
+            let now = CFAbsoluteTimeGetCurrent()
+            if now - lastLevelSent >= 1.0 / 30 {
+                lastLevelSent = now
+                let flat = abs(z) > 0.9
+                let roll = atan2(x, -y) * 180 / .pi
+                notifyListeners("level", data: ["roll": roll, "flat": flat])
+            }
+        }
+    }
+
+    private func stopMotion() {
+        if motion.isDeviceMotionActive { motion.stopDeviceMotionUpdates() }
+        if motion.isAccelerometerActive { motion.stopAccelerometerUpdates() }
+    }
+
+    /// 水平儀開關：on＝開始送傾斜角度（事件 level { roll, flat }）
+    @objc func setLevel(_ call: CAPPluginCall) {
+        let on = call.getBool("on") ?? false
+        DispatchQueue.main.async { self.levelOn = on; call.resolve() }
+    }
+
+    // MARK: 位置（拍照時把地點記在照片裡）
+
+    private lazy var locationManager: CLLocationManager = {
+        let m = CLLocationManager()
+        m.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        m.delegate = self
+        return m
+    }()
+    private var lastLocation: CLLocation?
+    private var locationOn = false
+
+    @objc func setLocation(_ call: CAPPluginCall) {
+        let on = call.getBool("on") ?? false
+        DispatchQueue.main.async {
+            self.locationOn = on
+            if on {
+                if self.locationManager.authorizationStatus == .notDetermined { self.locationManager.requestWhenInUseAuthorization() }
+                self.locationManager.startUpdatingLocation()
+            } else {
+                self.locationManager.stopUpdatingLocation()
+                self.lastLocation = nil
+            }
+            call.resolve(["authorized": self.locationManager.authorizationStatus == .authorizedWhenInUse || self.locationManager.authorizationStatus == .authorizedAlways,
+                          "denied": self.locationManager.authorizationStatus == .denied || self.locationManager.authorizationStatus == .restricted])
+        }
+    }
+
+    public func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if let l = locations.last, l.horizontalAccuracy >= 0 { lastLocation = l }
+    }
+    public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
+    public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        if locationOn, manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways { manager.startUpdatingLocation() }
+    }
+
+    /// 拍照那一刻的位置（給網頁轉交 NativeImage.render 寫進照片的 GPS）
+    private func locationPayload() -> [String: Any]? {
+        guard locationOn, let l = lastLocation, abs(l.timestamp.timeIntervalSinceNow) < 120 else { return nil }
+        return ["lat": l.coordinate.latitude, "lon": l.coordinate.longitude, "alt": l.altitude,
+                "time": l.timestamp.timeIntervalSince1970, "accuracy": l.horizontalAccuracy]
+    }
+
+    // MARK: 設定選單（iOS 原生：iOS 26 起是液態玻璃的彈出視窗＋原生開關、分段按鈕）
+
+    /// anchor：網頁那顆按鈕的位置（CSS px）；items：[{ id, type: 'toggle'|'choice', title, symbol, value, options? }]
+    /// 改了就送事件 menu { id, value }，關掉送 menuClosed
+    @objc func showMenu(_ call: CAPPluginCall) {
+        let items = (call.getArray("items") ?? []).compactMap { $0 as? [String: Any] }
+        let a = call.getObject("anchor")
+        let rect = CGRect(x: (a?["x"] as? NSNumber)?.doubleValue ?? 0, y: (a?["y"] as? NSNumber)?.doubleValue ?? 0,
+                          width: (a?["w"] as? NSNumber)?.doubleValue ?? 1, height: (a?["h"] as? NSNumber)?.doubleValue ?? 1)
+        DispatchQueue.main.async {
+            guard let host = self.bridge?.viewController, let web = self.bridge?.webView else { call.reject("沒有畫面"); return }
+            if host.presentedViewController is ABAICameraMenuController { host.dismiss(animated: true); call.resolve(); return }
+            let menu = ABAICameraMenuController(items: items)
+            menu.onChange = { [weak self] id, value in self?.notifyListeners("menu", data: ["id": id, "value": value]) }
+            menu.onClose = { [weak self] in self?.notifyListeners("menuClosed", data: [:]) }
+            menu.modalPresentationStyle = .popover
+            if let pop = menu.popoverPresentationController {
+                pop.sourceView = web
+                pop.sourceRect = rect
+                pop.permittedArrowDirections = [.up, .down]
+                pop.delegate = menu
+            }
+            host.present(menu, animated: true)
+            call.resolve()
+        }
+    }
 
     /// 拍照的方向：橫拿拍出來就是橫的照片（照片檔本身擺正）
     private func applyCaptureRotation(_ t: Int) {
@@ -342,7 +460,9 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             default: settings.flashMode = .off
             }
             self.applyCaptureRotation(call.getInt("turns") ?? self.turns)
+            let loc = self.locationPayload()   // 只讀最後一筆位置（主執行緒寫、這裡讀，讀到上一筆也沒關係）
             self.captured = [:]
+            if let l = loc { self.captured["location"] = l }
             self.pendingCapture = call
             let wantFlash = (call.getString("flash") ?? "off") == "on"
             if wantFlash && settings.flashMode == .off && self.position == .front {
@@ -512,4 +632,82 @@ final class ControlsDelegate: NSObject, AVCaptureSessionControlsDelegate {
     func sessionControlsWillEnterFullscreenAppearance(_ session: AVCaptureSession) {}
     func sessionControlsWillExitFullscreenAppearance(_ session: AVCaptureSession) {}
     func sessionControlsDidBecomeInactive(_ session: AVCaptureSession) {}
+}
+
+
+/// 相機的設定選單：原生的彈出視窗（iOS 26 起系統自動是液態玻璃）、原生的開關與分段按鈕
+final class ABAICameraMenuController: UIViewController, UIPopoverPresentationControllerDelegate {
+    private let items: [[String: Any]]
+    var onChange: ((String, Any) -> Void)?
+    var onClose: (() -> Void)?
+
+    init(items: [[String: Any]]) {
+        self.items = items
+        super.init(nibName: nil, bundle: nil)
+        overrideUserInterfaceStyle = .dark
+        /* 高度照內容：開關一列 44、分段的一列 74 */
+        let h = items.reduce(CGFloat(24)) { $0 + (($1["type"] as? String) == "choice" ? 74 : 44) } + CGFloat(max(0, items.count - 1)) * 6
+        preferredContentSize = CGSize(width: 280, height: h)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 6
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+        ])
+        for item in items { stack.addArrangedSubview(row(item)) }
+    }
+
+    private func row(_ item: [String: Any]) -> UIView {
+        let id = item["id"] as? String ?? ""
+        let icon = UIImageView(image: UIImage(systemName: item["symbol"] as? String ?? "circle"))
+        icon.tintColor = .label
+        icon.contentMode = .scaleAspectFit
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+        icon.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        let label = UILabel()
+        label.text = item["title"] as? String
+        label.font = .systemFont(ofSize: 16, weight: .regular)
+        label.textColor = .label
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        if (item["type"] as? String) == "choice" {
+            let options = (item["options"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
+            let seg = UISegmentedControl(items: options.map { $0["label"] as? String ?? "" })
+            let current = item["value"] as? String
+            seg.selectedSegmentIndex = options.firstIndex { ($0["value"] as? String) == current } ?? 0
+            seg.addAction(UIAction { [weak self, weak seg] _ in
+                guard let s = seg, s.selectedSegmentIndex >= 0, s.selectedSegmentIndex < options.count else { return }
+                self?.onChange?(id, options[s.selectedSegmentIndex]["value"] as? String ?? "")
+            }, for: .valueChanged)
+            let head = UIStackView(arrangedSubviews: [icon, label])
+            head.spacing = 10
+            head.alignment = .center
+            head.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            let col = UIStackView(arrangedSubviews: [head, seg])
+            col.axis = .vertical
+            col.spacing = 8
+            return col
+        }
+        let sw = UISwitch()
+        sw.isOn = item["value"] as? Bool ?? false
+        sw.addAction(UIAction { [weak self, weak sw] _ in self?.onChange?(id, sw?.isOn ?? false) }, for: .valueChanged)
+        let r = UIStackView(arrangedSubviews: [icon, label, sw])
+        r.spacing = 10
+        r.alignment = .center
+        r.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        return r
+    }
+
+    /* iPhone 上也維持彈出視窗（不要變成從下面拉上來的整張表單） */
+    func adaptivePresentationStyle(for controller: UIPresentationController, traitCollection: UITraitCollection) -> UIModalPresentationStyle { .none }
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { onClose?() }
 }
