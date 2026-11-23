@@ -16,6 +16,7 @@ import { createPortal } from 'react-dom';
 import { processImageFile } from '../utils/imageLoader';
 import { RAW_ACCEPT } from '../utils/fileTypes';
 import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
+import { FILM_CAMERAS, filmCamera, filmDateText, LOW_LIGHT_DELTA } from '../utils/filmCameras';
 import {preferCameraResolution} from '../utils/cameraPreview';
 
 // MediaStream 型別補上 zoom
@@ -273,6 +274,16 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   
   const [activeControl, setActiveControl] = useState<ActiveControl>('none');
   const [selectedLutIdx, setSelectedLutIdx] = useState(0);
+  /* 底片相機（只有 App 的原生相機有：要讀鏡頭的快門、ISO 才能模擬固定曝光）。選了底片相機就不套一般濾鏡 */
+  const readPref = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const writePref = (k: string, v: string | null) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* 私密模式 */ } };
+  const [filmId, setFilmIdState] = useState<string | null>(() => filmCamera(readPref('abai-camera-film'))?.id ?? null);
+  const setFilmId = (id: string | null) => { setFilmIdState(id); writePref('abai-camera-film', id); };
+  /** 日期戳記（橘紅色七段字，印在右下角） */
+  const [dateOn, setDateOnState] = useState(() => readPref('abai-camera-date') === '1');
+  const setDateOn = (on: boolean) => { setDateOnState(on); writePref('abai-camera-date', on ? '1' : null); };
+  /** 底片相機回報：沒開閃光燈的話比「剛好」差幾格（用來提示低光） */
+  const [ambientDelta, setAmbientDelta] = useState(0);
   const [fx, setFx] = useState<ViewfinderFx>(FX_ZERO);
   const fxOn = FX_ITEMS.some(item => fx[item.id] > 0);
 
@@ -285,6 +296,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      只有原生相機開不起來時才退回網頁相機。可以另外開的是 RAW。 */
   const [proPreferred, setProPreferred] = useState(true);
   const proMode = proAvailable && proPreferred;
+  const activeFilm = proMode ? filmCamera(filmId) : null;
   const [proRaw, setProRaw] = useState(false);
   /** 拍出來的照片 → 同一張的 RAW 檔（App 暫存裡的 DNG）＋拍的時候用的濾鏡。
       編輯時從 RAW 沖，再自動套上同一個濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
@@ -348,7 +360,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     evDragRef.current = pointersRef.current.size === 1
       ? { id: e.pointerId, x: e.clientX, y: e.clientY, ev0: parseFloat(settingsExposureRef.current) || 0, active: false }
       : null;
-    if (pointersRef.current.size === 2) {
+    if (pointersRef.current.size === 2 && !fixedFocalRef.current) {
       const d = pinchDist();
       if (d > 8) {
         pinchRef.current = { d0: d, z0: frameZoomRef.current };
@@ -413,12 +425,15 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const lastFocusEventRef = useRef<{ x: number; y: number; at: number } | null>(null);
   const lastCameraTickRef = useRef<string>('');
   const focusPointRef = useRef(focusPoint); focusPointRef.current = focusPoint;
+  const fixedFocalRef = useRef(false); fixedFocalRef.current = !!activeFilm?.fixedFocal;
 
   /* ── 點對焦後上下拖動調曝光（跟 iOS 內建相機一樣）──────────────────
      點一下對焦之後，對焦框旁邊出現一顆小太陽；框還在的時候，手指在畫面上
      上下拖：往上變亮、往下變暗，太陽跟著上下走。調的是跟下面「曝光」轉盤同一個值
-     （每 0.1 EV 一格，拖的時候不震），所以轉盤那邊也會同步。拖過的這一下不會再當成點擊去重新對焦。 */
-  const EV_PX = 9;           // 手指走幾 px 算 0.1 EV
+     （連續變化、不分格，拖的時候不震），所以轉盤那邊也會同步。拖過的這一下不會再當成點擊去重新對焦。
+     靈敏度刻意很低（手指走約 320px 才 1 EV），可以做很細的微調。 */
+  const EV_PX_PER_EV = 320;  // 手指走幾 px 算 1 EV
+  const EV_LINE = 64;        // 曝光線上、下各多長；太陽中心從一端走到另一端＝-1 EV 到 +1 EV
   const EV_SLOP = 8;         // 先走這麼多才算開始拖（避免點一下時手指微晃就改到曝光）
   const evDragRef = useRef<{ id: number; x: number; y: number; ev0: number; active: boolean } | null>(null);
   /** 這一次觸控有拖過曝光：放手時不當成點擊對焦 */
@@ -445,10 +460,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       setEvDragging(true);
       return true;
     }
-    const raw = d.ev0 - (e.clientY - d.y) / EV_PX * 0.1;
-    const tenth = Math.max(-10, Math.min(10, Math.round(raw * 10)));
-    const n = tenth / 10;
-    const val = `${n > 0 ? '+' : ''}${n.toFixed(1)}`;
+    /* 連續的值（存到小數第二位就夠細，不會一格一格跳） */
+    const n = Math.max(-1, Math.min(1, d.ev0 - (e.clientY - d.y) / EV_PX_PER_EV));
+    const r = Math.round(n * 100) / 100;
+    const val = `${r > 0 ? '+' : ''}${r.toFixed(2)}`;
     if (val !== settingsExposureRef.current) {
       settingsExposureRef.current = val;   // 拖對焦框旁的太陽調曝光：不震
       setSettings(prev => ({ ...prev, exposure: val }));
@@ -871,10 +886,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      就立刻取下一張新幀。上限 3 是避免極端連點在手機上累積無限工作。 */
   const captureQueueRef = useRef(0);
   const capturePhotoRef = useRef<() => void>(() => {});
-  const proOptsRef = useRef({ lut: '', amount: 1, aspect: 2 / 3, flash: false, raw: false, lutIdx: 0 });
+  const proOptsRef = useRef<{ lut: string; amount: number; aspect: number; flash: boolean; raw: boolean; lutIdx: number; film: ReturnType<typeof filmCamera>; date: boolean }>({ lut: '', amount: 1, aspect: 2 / 3, flash: false, raw: false, lutIdx: 0, film: null, date: false });
   /* 濾鏡強度跟編輯頁一致：每顆濾鏡的最大強度（例如 F3 是 70%），見 utils/photoFx 的 LUT_MAX_AMOUNT */
   const lutAmt = lutMaxAmount(lutList[selectedLutIdx]?.id) / 100;
-  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), amount: lutAmt, aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw, lutIdx: selectedLutIdx };
+  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), amount: lutAmt, aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw, lutIdx: selectedLutIdx, film: activeFilm, date: dateOn };
   const capturePhoto = useCallback(async () => {
     /* 專業模式：原生全解析度拍照，原生端套濾鏡、裁成畫面比例；ProRAW 開著時 RAW 檔直接存進相簿 */
     if (proModeRef.current) {
@@ -882,7 +897,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       capturingRef.current = true; setIsCapturing(true); setCaptureNotice('');
       try {
         const o = proOptsRef.current;
-        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, amount: o.amount, aspect: o.aspect, zoom: frameZoomRef.current, fx: nativeFxRef.current, kelvin: nativeParamsRef.current.kelvin });
+        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, amount: o.amount, aspect: o.aspect, zoom: frameZoomRef.current, fx: nativeFxRef.current, kelvin: nativeParamsRef.current.kelvin, film: o.film, date: o.date ? filmDateText() : null });
         if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
         ownedUrlsRef.current.add(r.url);
         setPhotos(prev => [r.url, ...prev]);
@@ -1030,7 +1045,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /* 專業模式開著時：原生相機畫在網頁底下，觀景窗那一塊挖成透明；實體按鈕（音量鍵、相機控制）當快門 */
   useEffect(() => {
     if (!proMode) return;
-    let alive = true, restore: (() => void) | null = null, sub: { remove: () => void } | null = null, ro: ResizeObserver | null = null;
+    let alive = true, restore: (() => void) | null = null, sub: { remove: () => void } | null = null, filmSub: { remove: () => void } | null = null, ro: ResizeObserver | null = null;
     void (async () => {
       const cam = await nativeCamera();
       const canvas = viewfinderRef.current?.getCanvas?.() ?? null;
@@ -1051,7 +1066,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         }
         void cam.setFx(nativeFxRef.current).catch(() => {});
         /* 開起來就把目前的曝光、白平衡套上去 */
-        void cam.setExposureBias({ ev: parseFloat(nativeParamsRef.current.exposure) || 0 }).catch(() => {});
+        void cam.setExposureBias({ ev: nativeParamsRef.current.film ? 0 : parseFloat(nativeParamsRef.current.exposure) || 0 }).catch(() => {});
+        pushFilmRef.current();
         void cam.setWhiteBalance({ kelvin: nativeParamsRef.current.kelvin }).catch(() => {});
       } catch (e: any) {
         /* 被後面那一次開相機取代（翻轉鏡頭、換頁）不算失敗；真的開不起來才換成網頁相機 */
@@ -1063,9 +1079,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       ro = new ResizeObserver(() => { void cam.setRect(rect()).catch(() => {}); });
       ro.observe(el);
       sub = await cam.addListener('shutter', () => capturePhotoRef.current());
+      filmSub = await cam.addListener('film', (d: any) => { if (typeof d?.ambientDelta === 'number') setAmbientDelta(d.ambientDelta); });
+      if (!alive) { sub.remove(); filmSub.remove(); }
     })();
     return () => {
-      alive = false; ro?.disconnect(); sub?.remove(); restore?.();
+      alive = false; ro?.disconnect(); sub?.remove(); filmSub?.remove(); restore?.();
       void nativeCamera().then(c => c?.stop());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1077,11 +1095,32 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (proMode) void nativeCamera().then(c => c?.setFx(nativeFxRef.current)).catch(() => {});
   }, [proMode, fx.soft, fx.blur, fx.lowfi]);
   /* 原生相機：曝光、白平衡直接調鏡頭本身（拍出來的照片就是這樣，不是事後調亮） */
-  const nativeParamsRef = useRef({ exposure: settings.exposure, kelvin: settings.kelvin });
-  nativeParamsRef.current = { exposure: settings.exposure, kelvin: settings.kelvin };
+  const nativeParamsRef = useRef({ exposure: settings.exposure, kelvin: settings.kelvin, film: activeFilm });
+  nativeParamsRef.current = { exposure: settings.exposure, kelvin: settings.kelvin, film: activeFilm };
+  /* 底片相機：鏡頭本身不加減曝光（不然手機的自動曝光會跟著改，模擬出來的亮度就被抵銷了），
+     使用者的曝光改成在底片那一步加減 —— 就像在固定曝光的相機上換一格光圈 */
   useEffect(() => {
-    if (proMode) void nativeCamera().then(c => c?.setExposureBias({ ev: parseFloat(settings.exposure) || 0 })).catch(() => {});
-  }, [proMode, settings.exposure]);
+    if (proMode) void nativeCamera().then(c => c?.setExposureBias({ ev: activeFilm ? 0 : parseFloat(settings.exposure) || 0 })).catch(() => {});
+  }, [proMode, settings.exposure, !!activeFilm]);
+  const filmFlash = flashOn && flashAvailable;
+  const pushFilm = () => {
+    if (!proModeRef.current) return;
+    const p = nativeParamsRef.current;
+    void nativeCamera().then(c => c?.setFilm({ film: p.film, userEV: p.film ? parseFloat(p.exposure) || 0 : 0, flash: filmFlash, date: dateOn ? filmDateText() : null })).catch(() => {});
+  };
+  const pushFilmRef = useRef(pushFilm); pushFilmRef.current = pushFilm;
+  useEffect(() => { pushFilm(); }, [proMode, activeFilm?.id, settings.exposure, filmFlash, dateOn]);
+  /* 底片相機沒開時不提示低光 */
+  useEffect(() => { if (!activeFilm) setAmbientDelta(0); }, [activeFilm?.id]);
+  /* 定焦的相機（一次性相機）：固定 1x、不能捏小框 */
+  useEffect(() => {
+    if (!activeFilm?.fixedFocal) return;
+    frameZoomRef.current = 1; smallFrameRef.current?.set(1, false);
+    if (settings.focalLength !== '1.0x') {
+      setSettings(prev => ({ ...prev, focalLength: '1.0x' }));
+      void nativeCamera().then(c => c?.setZoom({ uiZoom: 1 })).catch(() => {});
+    }
+  }, [activeFilm?.id, settings.focalLength]);
   useEffect(() => {
     if (proMode) void nativeCamera().then(c => c?.setWhiteBalance({ kelvin: settings.kelvin })).catch(() => {});
   }, [proMode, settings.kelvin]);
@@ -1395,6 +1434,16 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               onPointerCancel={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
             />}
 
+            {/* 底片相機：光線不足（沒開閃光燈的話會暗很多格）就提示，跟實體的一次性相機一樣要靠閃光燈 */}
+            {activeFilm && !aeafLock && ambientDelta < LOW_LIGHT_DELTA && !filmFlash && !showGallery && (
+              <div data-film-lowlight className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none animate-in fade-in duration-300">
+                <span className="flex items-center gap-1 px-2.5 py-[4px] rounded-full bg-black/45 backdrop-blur-md text-amber-200 text-[11px] font-semibold whitespace-nowrap">
+                  <Icon name="bolt" className="text-[13px]" fill />
+                  光線不足・建議開閃光燈
+                </span>
+              </div>
+            )}
+
             {/* 鎖定中的提示，位置與樣式照 iOS 相機 */}
             {aeafLock && (
               <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
@@ -1455,6 +1504,21 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                                 <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${showGrid ? 'translate-x-5' : 'translate-x-0'}`} />
                             </button>
                         </div>
+                        {proMode && (
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
+                                <Icon name="calendar_today" className="text-lg text-white/70" />
+                                <span>日期</span>
+                            </div>
+                            <button
+                                aria-label="日期戳記"
+                                onClick={(e) => { e.stopPropagation(); setDateOn(!dateOn); triggerHaptic(); }}
+                                className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] border border-white/10 ${dateOn ? 'bg-white/40' : 'bg-white/10'}`}
+                            >
+                                <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${dateOn ? 'translate-x-5' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+                        )}
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
                                 <Icon name="timer" className="text-lg text-white/70" />
@@ -1476,12 +1540,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             </div>
             
             {focusPoint && (() => {
-                /* 太陽在框的右邊；點在很右邊時改放左邊（跟內建相機一樣）。上下位置＝目前的曝光（±1 EV 走 ±34px） */
+                /* 太陽在框的右邊；點在很右邊時改放左邊（跟內建相機一樣）。上下位置＝目前的曝光（±1 EV＝太陽中心走到線的兩端） */
                 const ev = Math.max(-1, Math.min(1, parseFloat(settings.exposure) || 0));
                 const frameW = frameDims()?.w ?? 0;
                 const sunLeft = frameW > 0 && focusPoint.x > frameW - 70;
                 const sunX = sunLeft ? -39 - 13 : 39 + 13;
-                const sunY = -ev * 34;
+                const sunY = -ev * EV_LINE;
                 return (
                 <div
                     key={focusPoint.nonce}
@@ -1504,9 +1568,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     {/* 曝光的小太陽：拖的時候上下各拉出一條細線（太陽那一段空出來） */}
                     <div className="absolute left-1/2 top-1/2" style={{ transform: `translate(${sunX}px, 0)` }}>
                       <div className={`absolute left-0 w-px bg-white/80 transition-opacity duration-200 ${evDragging ? 'opacity-100' : 'opacity-0'}`}
-                           style={{ top: -34, height: Math.max(0, 34 + sunY - 11) }} />
+                           style={{ top: -EV_LINE, height: Math.max(0, EV_LINE + sunY - 11) }} />
                       <div className={`absolute left-0 w-px bg-white/80 transition-opacity duration-200 ${evDragging ? 'opacity-100' : 'opacity-0'}`}
-                           style={{ top: sunY + 11, height: Math.max(0, 34 - sunY - 11) }} />
+                           style={{ top: sunY + 11, height: Math.max(0, EV_LINE - sunY - 11) }} />
                       <svg width="20" height="20" viewBox="0 0 20 20" className="absolute" style={{ left: -10, top: sunY - 10 }} aria-hidden>
                         <circle cx="10" cy="10" r="3.6" fill="#fff" />
                         <g stroke="#fff" strokeWidth="1.4" strokeLinecap="round">
@@ -1551,7 +1615,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               </button>
             )}
 
-            {!showGallery && (
+            {!showGallery && !activeFilm?.fixedFocal && (
               <div className="absolute bottom-3 left-0 right-0 flex justify-center z-[60] gap-2">
                 {ZOOM_STEPS.map(({ label: val }) => {
                   const unavailable = val === '0.5x' && !canWide;
@@ -1616,11 +1680,36 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             /* 濾鏡列跟其他控制列同一個 56px 高度：打開時上面的觀景窗、按鈕都不會被推動 */
             <div data-camera-filter-row className="w-full flex items-center h-full overflow-hidden animate-in fade-in duration-200">
                <div className="flex overflow-x-auto overflow-y-hidden w-full no-scrollbar gap-2 px-4 scroll-smooth items-center">
+                 {/* 底片相機（App 的原生相機才有）：一整套曝光、底片、鏡頭、閃光燈。前面有一個小底片圖示，跟一般濾鏡分開 */}
+                 {proMode && FILM_CAMERAS.map(f => {
+                   const on = activeFilm?.id === f.id;
+                   return (
+                     <button
+                      key={f.id}
+                      data-film-camera={f.id}
+                      onClick={() => {
+                        haptic('tick');
+                        if (on) { setFilmId(null); return; }
+                        setFilmId(f.id); setSelectedLutIdx(0);
+                        setCaptureNotice(f.note);
+                      }}
+                      className={`shrink-0 h-8 pl-2.5 pr-3.5 rounded-full text-[12px] font-medium whitespace-nowrap ring-1 ring-inset flex items-center gap-1.5 transition-[background-color,color,transform] duration-200 active:scale-95 ${on ? 'bg-amber-200 text-black ring-amber-200' : 'bg-white/[0.07] text-white/80 ring-white/10'}`}
+                     >
+                       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden className="shrink-0">
+                         <rect x="1.5" y="3" width="13" height="10" rx="1.6" stroke="currentColor" strokeWidth="1.3" />
+                         <path d="M4 3v10M12 3v10" stroke="currentColor" strokeWidth="1.1" />
+                         <path d="M2.6 5.2h0.6M2.6 8h0.6M2.6 10.8h0.6M12.8 5.2h0.6M12.8 8h0.6M12.8 10.8h0.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                       </svg>
+                       {f.name}
+                     </button>
+                   );
+                 })}
+                 {proMode && <span aria-hidden className="shrink-0 w-px h-5 bg-white/15 mx-1" />}
                  {lutList.map((lut, idx) => (
                    <button
                     key={lut.id}
-                    onClick={() => { haptic('tick'); setSelectedLutIdx(idx); }}
-                    className={`shrink-0 h-8 px-3.5 rounded-full text-[12px] font-medium whitespace-nowrap ring-1 ring-inset transition-[background-color,color,transform] duration-200 active:scale-95 ${selectedLutIdx === idx ? 'bg-white text-black ring-white' : 'bg-white/[0.07] text-white/70 ring-white/10'}`}
+                    onClick={() => { haptic('tick'); setSelectedLutIdx(idx); setFilmId(null); }}
+                    className={`shrink-0 h-8 px-3.5 rounded-full text-[12px] font-medium whitespace-nowrap ring-1 ring-inset transition-[background-color,color,transform] duration-200 active:scale-95 ${!activeFilm && selectedLutIdx === idx ? 'bg-white text-black ring-white' : 'bg-white/[0.07] text-white/70 ring-white/10'}`}
                    >
                      {lut.url ? lut.name : '原始'}
                    </button>
@@ -1657,7 +1746,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                  <div className="mb-1 h-5 flex items-center justify-center">
                     <span className="text-[11px] font-semibold tracking-[0.16em] text-white/90 tabular-nums uppercase drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
                       {activeControl === 'kelvin' && `${settings.kelvin}K`}
-                      {activeControl === 'exposure' && `EV ${settings.exposure}`}
+                      {activeControl === 'exposure' && `EV ${(() => { const n = parseFloat(settings.exposure) || 0; return `${n > 0.049 ? '+' : ''}${n.toFixed(1)}`; })()}`}
                     </span>
                  </div>
 
