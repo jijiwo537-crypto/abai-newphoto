@@ -46,32 +46,43 @@ enum ABAIDateStamp {
         "5": "afgcd", "6": "afgedc", "7": "abc", "8": "abcdefg", "9": "abcdfg", "-": "g",
     ]
 
-    /// 一個七段字的六角形線段（單位：字高 1.75、字寬 1）
+    /// 一個七段字的線段（單位：字高 1.75、字寬 1）。
+    /// 每一個字都要一樣高：直的那幾段，上（下）面沒有橫的那一段時，直接延伸到字的頂（底）、切平 ——
+    /// 不然「1」「4」「7」這種上下沒有橫線的字，會比其他字矮一截、看起來比較小。
+    /// 同一邊上下兩段中間沒有 g（例如 1、7、0）就連成一整根，中間不留缺口。
     static func segmentPolys(_ ch: Character) -> [[CGPoint]] {
         guard let segs = digitSegs[ch] else { return [] }
         let w: CGFloat = 1, h: CGFloat = 1.75, t: CGFloat = 0.2, g: CGFloat = 0.035
+        let has = { (c: Character) in segs.contains(c) }
         func hseg(_ y: CGFloat) -> [CGPoint] {
             let x0 = t / 2 + g, x1 = w - t / 2 - g
             return [CGPoint(x: x0, y: y), CGPoint(x: x0 + t / 2, y: y - t / 2), CGPoint(x: x1 - t / 2, y: y - t / 2),
                     CGPoint(x: x1, y: y), CGPoint(x: x1 - t / 2, y: y + t / 2), CGPoint(x: x0 + t / 2, y: y + t / 2)]
         }
-        func vseg(_ x: CGFloat, _ y0: CGFloat, _ y1: CGFloat) -> [CGPoint] {
-            let a = y0 + g, b = y1 - g
-            return [CGPoint(x: x, y: a), CGPoint(x: x + t / 2, y: a + t / 2), CGPoint(x: x + t / 2, y: b - t / 2),
-                    CGPoint(x: x, y: b), CGPoint(x: x - t / 2, y: b - t / 2), CGPoint(x: x - t / 2, y: a + t / 2)]
+        /// 直的一根：兩端各自是「尖的」（接著橫的那一段，中間留一點縫）或「平的」（到字的頂／底）
+        func vbar(_ x: CGFloat, _ y0: CGFloat, flat0: Bool, _ y1: CGFloat, flat1: Bool) -> [CGPoint] {
+            var pts: [CGPoint] = []
+            if flat0 { pts += [CGPoint(x: x - t / 2, y: y0), CGPoint(x: x + t / 2, y: y0)] }
+            else { let a = y0 + g; pts += [CGPoint(x: x, y: a), CGPoint(x: x + t / 2, y: a + t / 2)] }
+            if flat1 { pts += [CGPoint(x: x + t / 2, y: y1), CGPoint(x: x - t / 2, y: y1)] }
+            else { let b = y1 - g; pts += [CGPoint(x: x + t / 2, y: b - t / 2), CGPoint(x: x, y: b), CGPoint(x: x - t / 2, y: b - t / 2)] }
+            if !flat0 { pts.append(CGPoint(x: x - t / 2, y: y0 + g + t / 2)) }
+            return pts
         }
         let top = t / 2, mid = h / 2, bot = h - t / 2
         var out: [[CGPoint]] = []
-        for s in segs {
-            switch s {
-            case "a": out.append(hseg(top))
-            case "g": out.append(hseg(mid))
-            case "d": out.append(hseg(bot))
-            case "f": out.append(vseg(t / 2, top, mid))
-            case "b": out.append(vseg(w - t / 2, top, mid))
-            case "e": out.append(vseg(t / 2, mid, bot))
-            case "c": out.append(vseg(w - t / 2, mid, bot))
-            default: break
+        if has("a") { out.append(hseg(top)) }
+        if has("g") { out.append(hseg(mid)) }
+        if has("d") { out.append(hseg(bot)) }
+        /* 左邊 f／e、右邊 b／c */
+        for (x, upper, lower) in [(t / 2, has("f"), has("e")), (w - t / 2, has("b"), has("c"))] {
+            let topFlat = !has("a"), botFlat = !has("d")
+            let y0: CGFloat = topFlat ? 0 : top, y1: CGFloat = botFlat ? h : bot
+            if upper && lower && !has("g") {
+                out.append(vbar(x, y0, flat0: topFlat, y1, flat1: botFlat))
+            } else {
+                if upper { out.append(vbar(x, y0, flat0: topFlat, mid, flat1: false)) }
+                if lower { out.append(vbar(x, mid, flat0: false, y1, flat1: botFlat)) }
             }
         }
         return out
@@ -124,11 +135,35 @@ enum ABAIDateStamp {
         return (cg, pad)
     }
 
-    /// 把日期（例如 "'25 11 23"）用橘紅色七段字印在右下角。input、output 都是線性光
-    /// region：照片實際的範圍（觀景窗有小框構圖時，只有框裡面那一塊會變成照片 —— 字要印在框的右下角、照框的大小）
-    static func stampDate(_ text: String, on input: CIImage, region: CGRect? = nil) -> CIImage {
+    /// 把日期（例如 "'25 11 23"）用橘紅色七段字印在照片上 —— 跟底片相機一樣，字一定沿著照片的「長邊」：
+    ///   橫的照片：右下角、橫著寫；直的照片：右邊靠上、字轉 90°（由下往上讀）——
+    ///   就像底片相機直拿著拍，字印在底片（橫的）右下角，照片轉正之後看到的位置。
+    /// region：照片實際的範圍（觀景窗有小框構圖時，只有框裡面那一塊會變成照片）。
+    /// uprightTurns：這張圖要逆時針轉幾個 90° 才是照片擺正的樣子（觀景窗在手機橫拿時用；照片本身已經擺正＝0）。
+    /// input、output 都是線性光。
+    static func stampDate(_ text: String, on input: CIImage, region: CGRect? = nil, uprightTurns: Int = 0) -> CIImage {
         let full = input.extent
-        let e = region.map { $0.intersection(full) }.flatMap { $0.isNull || $0.width < 8 ? nil : $0 } ?? full
+        guard full.width > 1, full.height > 1, !full.isInfinite else { return input }
+        let r0 = region.map { $0.intersection(full) }.flatMap { $0.isNull || $0.width < 8 ? nil : $0 } ?? full
+        var turns = ((uprightTurns % 4) + 4) % 4
+        let upW = turns % 2 == 0 ? r0.width : r0.height, upH = turns % 2 == 0 ? r0.height : r0.width
+        if upH > upW { turns = (turns + 3) % 4 }   // 直的：再順時針轉 90°，右邊變成底邊
+        if turns == 0 { return stampLandscape(text, on: input, region: r0) }
+        /* 整張轉成「字橫著印」的方向、印好、再轉回來（90° 的倍數，沒有重新取樣的損失） */
+        let ang = CGFloat(turns) * .pi / 2
+        let newW = turns % 2 == 0 ? full.width : full.height, newH = turns % 2 == 0 ? full.height : full.width
+        let m = CGAffineTransform(translationX: -full.midX, y: -full.midY)
+            .concatenating(CGAffineTransform(rotationAngle: ang))
+            .concatenating(CGAffineTransform(translationX: newW / 2, y: newH / 2))
+        let rotated = input.transformed(by: m)
+        let rr = r0.applying(m).integral
+        let stamped = stampLandscape(text, on: rotated, region: rr)
+        return stamped.transformed(by: m.inverted()).cropped(to: full)
+    }
+
+    private static func stampLandscape(_ text: String, on input: CIImage, region: CGRect) -> CIImage {
+        let full = input.extent
+        let e = region
         let short = min(e.width, e.height)
         let charH = (short * 0.034).rounded()
         guard charH >= 4, let made = stampImage(text, charH: charH) else { return input }

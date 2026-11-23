@@ -795,7 +795,8 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col" role="dialog" aria-modal="true" aria-label="儲存預覽">
           <ExportActionLift />
           <header className="h-14 shrink-0 px-5 flex items-center bg-black/40 backdrop-blur-xl">
-            <button aria-label="返回" onClick={() => void slideBack(() => setExportUrl(''))} className="p-2 -ml-2 text-[#888]"><ChevronLeft size={22} /></button>
+            {/* 儲存頁左上：回主頁（跟其他工具一樣）；「繼續編輯」才是回到編輯 */}
+            <button aria-label="返回主頁" onClick={onClose} className="p-2 -ml-2 text-[#888]"><ChevronLeft size={22} /></button>
           </header>
           <div data-export-media className="flex-1 min-h-0 flex items-center justify-center p-6">
             <img className="allow-callout max-w-[80vw] max-h-[60vh] object-contain rounded" style={{ boxShadow: '0 0 0 1px #ffffff1a' }} src={exportUrl} alt="匯出預覽" />

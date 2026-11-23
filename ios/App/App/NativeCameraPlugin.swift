@@ -15,6 +15,7 @@
 //    setZoom({ factor })  focus({ x, y })  setExposureBias({ ev })  setLut({ lut, amount })
 //    setDate({ date, zoom })   日期戳記（見 ABAIDateStamp.swift）
 //    snapshot() → { path }      觀景窗現在這一格（離開相機的過場用）
+//    事件 orientation { turns }：手機怎麼拿（0 直拿、1 頂端朝左、3 頂端朝右），介面圖示跟著轉、橫拿拍出橫的照片
 //    事件：shutter（實體按鈕按下）、zoom（相機控制按鈕改了變焦）
 //
 //  不用「延後處理」（deferred photo delivery）：那種照片只能直接進相簿，
@@ -26,6 +27,8 @@ import Capacitor
 import AVFoundation
 import AVKit
 import CoreImage
+import CoreMotion
+import AudioToolbox
 import ImageIO
 import UIKit
 import WebKit
@@ -110,6 +113,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                 self.view?.fx = self.fx
                 self.view?.kelvin = self.kelvin
                 self.place(call, web: web)
+                self.startMotion()
                 NativePreviewPlugin.setWebTransparent(web, true)
                 self.installHardwareShutter(on: web)
                 self.sessionQueue.async {
@@ -120,7 +124,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                         if !self.session.isRunning { self.session.startRunning() }
                         /* 後鏡頭：真的閃光燈；前鏡頭：螢幕補光（跟內建相機一樣把整個螢幕打亮） */
                         let ledFlash = self.photoOutput.supportedFlashModes.contains(.on)
-                        call.resolve(["proRAW": self.photoOutput.isAppleProRAWEnabled,
+                        call.resolve(["proRAW": self.photoOutput.isAppleProRAWEnabled, "turns": self.turns,
                                       "raw": self.rawFormat() != nil,
                                       "maxWidth": self.maxDimensions.width, "maxHeight": self.maxDimensions.height,
                                       "flash": ledFlash || self.position == .front,
@@ -139,6 +143,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             DispatchQueue.main.async {
                 guard stopGeneration == self.currentGeneration() else { call.resolve(); return }
                 self.view?.removeFromSuperview(); self.view = nil
+                self.stopMotion()
                 if let i = self.interaction, let web = self.bridge?.webView { web.removeInteraction(i) }
                 self.interaction = nil
                 if let web = self.bridge?.webView { NativePreviewPlugin.setWebTransparent(web, false) }
@@ -246,11 +251,56 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
 
     // MARK: 日期戳記
 
-    /// date：日期字（null／空字串＝不印）；zoom：小框構圖的倍率。觀景窗右下角，跟拍出來的照片同一個位置、同樣大小
+    /// date：日期字（null／空字串＝不印）；zoom：小框構圖的倍率。跟拍出來的照片同一個位置、同樣大小
     @objc func setDate(_ call: CAPPluginCall) {
         let date = call.getString("date").flatMap { $0.isEmpty ? nil : $0 }
         let zoom = CGFloat(max(1, call.getDouble("zoom") ?? 1))
-        DispatchQueue.main.async { self.view?.dateText = date; self.view?.dateZoom = zoom; call.resolve() }
+        DispatchQueue.main.async {
+            self.view?.dateText = date; self.view?.dateZoom = zoom; self.view?.dateTurns = self.turns
+            call.resolve()
+        }
+    }
+
+    // MARK: 手機方向（介面鎖在直的，用重力感應判斷手機實際怎麼拿）
+
+    private let motion = CMMotionManager()
+    /// 0＝直拿、1＝頂端朝左（逆時針轉了 90°）、3＝頂端朝右。倒過來拿不算（跟內建相機一樣）
+    private var turns = 0
+
+    private func startMotion() {
+        guard motion.isAccelerometerAvailable, !motion.isAccelerometerActive else { return }
+        motion.accelerometerUpdateInterval = 0.1
+        motion.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
+            guard let self = self, let a = data?.acceleration else { return }
+            /* 平放在桌上時不判斷（重力幾乎都在 z）；兩軸要差夠多才換，在 45° 附近不會一直跳來跳去 */
+            if abs(a.z) > 0.85 { return }
+            var t = self.turns
+            if a.y < -0.55 && abs(a.y) > abs(a.x) + 0.2 { t = 0 }
+            else if abs(a.x) > 0.55 && abs(a.x) > abs(a.y) + 0.2 { t = a.x < 0 ? 1 : 3 }
+            guard t != self.turns else { return }
+            self.turns = t
+            self.view?.dateTurns = t
+            self.notifyListeners("orientation", data: ["turns": t])
+        }
+    }
+
+    private func stopMotion() { if motion.isAccelerometerActive { motion.stopAccelerometerUpdates() } }
+
+    /// 拍照的方向：橫拿拍出來就是橫的照片（照片檔本身擺正）
+    private func applyCaptureRotation(_ t: Int) {
+        guard let c = photoOutput.connection(with: .video) else { return }
+        if #available(iOS 17.0, *) {
+            let angle: CGFloat = t == 1 ? 0 : t == 3 ? 180 : 90
+            if c.isVideoRotationAngleSupported(angle) { c.videoRotationAngle = angle }
+        } else if c.isVideoOrientationSupported {
+            c.videoOrientation = t == 1 ? .landscapeRight : t == 3 ? .landscapeLeft : .portrait
+        }
+    }
+
+    /// 不要快門聲：系統要播快門音效之前把它丟掉。
+    /// （日本、韓國等地區法規強制快門聲的機型，系統還是會播，這是硬體層級的，沒辦法關）
+    public func photoOutput(_ output: AVCapturePhotoOutput, willCapturePhotoFor resolvedSettings: AVCaptureResolvedPhotoSettings) {
+        AudioServicesDisposeSystemSoundID(1108)
     }
 
     /// 觀景窗現在這一格（離開相機的過場用：網頁那邊拿它蓋住觀景窗，再整頁滑走）→ { path }
@@ -291,6 +341,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             case "auto": if self.photoOutput.supportedFlashModes.contains(.auto) { settings.flashMode = .auto }
             default: settings.flashMode = .off
             }
+            self.applyCaptureRotation(call.getInt("turns") ?? self.turns)
             self.captured = [:]
             self.pendingCapture = call
             let wantFlash = (call.getString("flash") ?? "off") == "on"
