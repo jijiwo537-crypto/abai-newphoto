@@ -457,6 +457,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, []);
   useEffect(() => () => { ownedUrlsRef.current.forEach(u => URL.revokeObjectURL(u)); ownedUrlsRef.current.clear(); }, []);
   const [showGallery, setShowGallery] = useState(false);
+  /** 相簿開始往下滑走（還沒滑完）：相機的按鈕這一刻就要放回來，滑完才出現會慢半拍 */
+  const [galleryLeaving, setGalleryLeaving] = useState(false);
+  useEffect(() => { if (!showGallery) setGalleryLeaving(false); }, [showGallery]);
+  const galleryCover = showGallery && !galleryLeaving;
   const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[]; /** 存檔時要重新印上的日期 */ date?: string; /** 從 RAW 沖洗接過來：直接出現在原位，不再從下面滑上來 */ instant?: boolean } | null>(null);
   const [editorEntered, setEditorEntered] = useState(false);
   const [editorLeaving, setEditorLeaving] = useState(false);
@@ -511,6 +515,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /** 這一次觸控有拖過曝光：放手時不當成點擊對焦 */
   const evDraggedRef = useRef(false);
   const [evDragging, setEvDragging] = useState(false);
+  /** 這次對焦有拖過曝光：曝光線＋太陽留著，放手 1 秒後跟對焦框一起淡掉（單純點對焦不出現太陽） */
+  const [evShown, setEvShown] = useState(false);
   /* 手機怎麼拿（原生相機用重力感應回報；介面本身鎖在直的）：0 直拿、1 頂端朝左、3 頂端朝右。
      圖示跟著轉正（跟內建相機一樣滑順地轉過去），橫拿拍出來是橫的照片，日期也印在那張照片的長邊上 */
   const [uiTurns, setUiTurns] = useState(0);
@@ -534,7 +540,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       evDraggedRef.current = true;
       if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; }
       if (focusTimerRef.current) { clearTimeout(focusTimerRef.current); focusTimerRef.current = null; }
-      setEvDragging(true);
+      setEvDragging(true); setEvShown(true);
       return true;
     }
     /* 連續的值（存到小數第二位就夠細，不會一格一格跳） */
@@ -551,7 +557,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     const d = evDragRef.current;
     if (!d || d.id !== id) return;
     evDragRef.current = null;
-    if (d.active) { setEvDragging(false); hideFocusLater(1300); }
+    if (d.active) { setEvDragging(false); hideFocusLater(1400); }
   };
   
   const localFileInputRef = useRef<HTMLInputElement>(null);
@@ -879,7 +885,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (prevFocus && now - prevFocus.at < 180 && Math.hypot(x - prevFocus.x, y - prevFocus.y) < 3) return;
     lastFocusEventRef.current = { x, y, at: now };
     /* nonce 強制每次點擊都換一個節點，連續點同一位置時 CSS 動畫才會重播。 */
-    setFocusPoint({ x, y, nonce: Date.now() });
+    setFocusPoint({ x, y, nonce: Date.now() }); setEvShown(false);
     /* 框多留一下：這段時間內上下拖可以調曝光 */
     hideFocusLater(1300);
 
@@ -1595,7 +1601,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           >
             {/* 返回鍵屬於相機畫面本身，和右上角的更多按鈕平行對稱。 */}
             {/* 濾鏡列打開時也留著：選濾鏡時一樣要能直接回主頁 */}
-            {!showGallery && !editingPhoto && activeControl !== 'effects' && (
+            {!galleryCover && !editingPhoto && activeControl !== 'effects' && (
               <div className="absolute top-1 left-2 z-50">
                 <button
                   aria-label="返回主頁"
@@ -1636,7 +1642,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               onPointerCancel={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
             />}
 
-            {levelOn && proMode && !showGallery && <LevelOverlay turns={uiTurns} />}
+            {levelOn && proMode && !galleryCover && <LevelOverlay turns={uiTurns} />}
 
             {/* 離開相機的定格畫面（見 exitCamera） */}
             {exitShot && <img src={exitShot} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover z-[35] pointer-events-none" />}
@@ -1739,7 +1745,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             </div>
             
             {focusPoint && (() => {
-                /* 沒有太陽：上下拖的時候，框的右邊（點在很右邊時改左邊）出現一條曝光線，線上的空隙＝目前的曝光 */
+                /* 單純點對焦只有框；上下拖過之後框的右邊（點在很右邊時改左邊）出現曝光線＋太陽，太陽的位置＝目前的曝光 */
                 const ev = Math.max(-1, Math.min(1, parseFloat(settings.exposure) || 0));
                 const frameW = frameDims()?.w ?? 0;
                 const lineLeft = frameW > 0 && focusPoint.x > frameW - 70;
@@ -1749,7 +1755,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 <div
                     key={focusPoint.nonce}
                     className="absolute z-40 pointer-events-none animate-[camFocusHold_1.3s_linear_forwards]"
-                    style={{ left: focusPoint.x, top: focusPoint.y, transform: 'translate(-50%, -50%)', ...(evDragging ? { animationName: 'none', opacity: 1 } : {}) }}
+                    style={{ left: focusPoint.x, top: focusPoint.y, transform: 'translate(-50%, -50%)', ...(evDragging ? { animationName: 'none', opacity: 1 } : evShown ? { animation: 'camFocusEvEnd 1.35s linear forwards' } : {}) }}
                 >
                     {/* 陰影改成畫在 SVG 裡的一條淡黑線：CSS 的 drop-shadow 濾鏡疊在每格都在重畫的
                         觀景窗上，縮放動畫的每一格都要重算一次模糊，對焦那一下就會頓。 */}
@@ -1764,11 +1770,16 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                              <path d="M39 4.5V13M39 73.5V65M4.5 39H13M73.5 39H65" stroke="#fff" strokeWidth="1" strokeLinecap="square"/>
                          </svg>
                     </div>
-                    {evDragging && (
+                    {evShown && (
                       <div className="absolute left-1/2 top-1/2" style={{ transform: `translate(${lineX}px, 0)` }}>
-                        <div className="absolute left-0 w-px bg-white/85" style={{ top: -EV_LINE, height: Math.max(0, EV_LINE + gapY - 5) }} />
-                        <div className="absolute left-0 w-px bg-white/85" style={{ top: gapY + 5, height: Math.max(0, EV_LINE - gapY - 5) }} />
-                        <div className="absolute w-[9px] h-px bg-white" style={{ left: -4, top: gapY }} />
+                        <div className="absolute left-0 w-px bg-white/85" style={{ top: -EV_LINE, height: Math.max(0, EV_LINE + gapY - 11) }} />
+                        <div className="absolute left-0 w-px bg-white/85" style={{ top: gapY + 11, height: Math.max(0, EV_LINE - gapY - 11) }} />
+                        <svg width="20" height="20" viewBox="0 0 20 20" className="absolute" style={{ left: -10, top: gapY - 10 }} aria-hidden>
+                          <circle cx="10" cy="10" r="3.6" fill="#fff" />
+                          <g stroke="#fff" strokeWidth="1.4" strokeLinecap="round">
+                            <path d="M10 1.6v2.2M10 16.2v2.2M1.6 10h2.2M16.2 10h2.2M4.06 4.06l1.56 1.56M14.38 14.38l1.56 1.56M4.06 15.94l1.56-1.56M14.38 5.62l1.56-1.56" />
+                          </g>
+                        </svg>
                       </div>
                     )}
                 </div>
@@ -1789,7 +1800,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             )}
 
             {/* RAW 開關：觀景窗左下角（跟內建相機一樣，關著的時候 RAW 上面有一條斜線） */}
-            {!showGallery && proMode && proRawSupported && (
+            {!galleryCover && proMode && proRawSupported && (
               <button
                 aria-label={proRaw ? '關閉 RAW' : '開啟 RAW'}
                 aria-pressed={proRaw}
@@ -1807,7 +1818,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               </button>
             )}
 
-            {!showGallery && (
+            {!galleryCover && (
               <div className="absolute bottom-3 left-0 right-0 flex justify-center z-[60] gap-2">
                 {ZOOM_STEPS.map(({ label: val, factor }) => {
                   const unavailable = val === '0.5x' && !canWide;
@@ -2021,7 +2032,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           photos={photos} 
           thumbs={thumbs}
           onClose={() => setShowGallery(false)}
-          onCloseStart={() => { if (proModeRef.current) void nativeCamera().then(c => c?.setPreviewHidden?.({ hidden: false })).catch(() => {}); }} 
+          onCloseStart={() => { setGalleryLeaving(true); if (proModeRef.current) void nativeCamera().then(c => c?.setPreviewHidden?.({ hidden: false })).catch(() => {}); }} 
           rawShots={rawShots}
           suspended={!!editingPhoto || !!developing}
           onDelete={(indices) => setPhotos(prev => {

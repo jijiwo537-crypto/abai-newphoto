@@ -300,6 +300,47 @@ const PhotoViewer: React.FC<{
   const drag = useRef<{ x: number; y: number; active: boolean; id: number; img?: HTMLImageElement | null; base?: DOMRect; dx: number; dy: number; s: number; t0: number; vy: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [flying, setFlying] = useState(false);
+  /* 打開：相簿裡的小圖放大到大圖的位置（除了圖都是黑的），就定位後才出現按鈕、換成原圖 */
+  const [opening, setOpening] = useState(true);
+  const ghost = useRef<HTMLImageElement>(null);
+  useLayoutEffect(() => {
+    const cell = cellOf(index), g = ghost.current, src = photos[index];
+    const tsrc = thumbs[src] || src;
+    if (!cell || !g) { setOpening(false); return; }
+    let alive = true;
+    const cellImg = cell.querySelector('img') as HTMLImageElement | null;
+    const im = new Image(); im.src = tsrc;
+    const go = () => {
+      if (!alive) return;
+      const W = window.innerWidth, H = window.innerHeight;
+      const ar = (im.naturalWidth && im.naturalHeight) ? im.naturalWidth / im.naturalHeight : 1;
+      let w = W, h = W / ar; if (h > H) { h = H; w = H * ar; }
+      const B = { left: (W - w) / 2, top: (H - h) / 2, width: w, height: h };
+      Object.assign(g.style, { left: `${B.left}px`, top: `${B.top}px`, width: `${w}px`, height: `${h}px`, visibility: 'visible' });
+      g.src = tsrc;
+      const C = cell.getBoundingClientRect();
+      const k = Math.max(C.width / w, C.height / h);
+      const ix = Math.max(0, (w - C.width / k) / 2), iy = Math.max(0, (h - C.height / k) / 2);
+      const tx = C.left + C.width / 2 - (B.left + w / 2), ty = C.top + C.height / 2 - (B.top + h / 2);
+      if (cellImg) cellImg.style.visibility = 'hidden';
+      const dur = 400;
+      bg.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dur * 0.7, easing: 'ease-out' });
+      g.animate([{ transform: `translate3d(${tx}px,${ty}px,0) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` }, { transform: 'none', clipPath: 'inset(0px)' }],
+        { duration: dur, easing: EASE }).finished.catch(() => {}).finally(async () => {
+        if (cellImg) cellImg.style.visibility = '';
+        if (!alive) return;
+        setOpening(false);
+        /* 原圖解碼好了才把小圖收掉，不會閃一下空白 */
+        await new Promise(r => requestAnimationFrame(r));
+        const full = curImg();
+        await full?.decode?.().catch(() => {});
+        if (alive && ghost.current) ghost.current.style.visibility = 'hidden';
+      });
+    };
+    im.decode().then(go, go);
+    return () => { alive = false; if (cellImg) cellImg.style.visibility = ''; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const EASE = 'cubic-bezier(0.32,0.72,0,1)';
   const curImg = () => pager.current?.children[index]?.querySelector('img') as HTMLImageElement | null;
   const dragScale = (dy: number) => 1 - 0.38 * Math.min(1, Math.max(0, dy) / (window.innerHeight * 0.55));
@@ -373,7 +414,7 @@ const PhotoViewer: React.FC<{
   const barHidden = !closing && !suspended;
   useEffect(() => { void setStatusBarHidden(barHidden); }, [barHidden]);
   useEffect(() => () => { void setStatusBarHidden(false); }, []);
-  const glass = useNativeGlass('camera-viewer', !closing && !suspended && !dragging, () => [
+  const glass = useNativeGlass('camera-viewer', !closing && !suspended && !dragging && !opening, () => [
     { kind: 'circle', id: 'share', symbol: 'square.and.arrow.up', pointSize: 21, el: shareRef.current },
     { kind: 'capsule', el: midRef.current, pad: 0, buttons: [
       ...(isRaw ? [{ id: 'pro', symbol: 'abai.film', pointSize: 21 }] : []),
@@ -392,10 +433,11 @@ const PhotoViewer: React.FC<{
   const webCircle = 'rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-center active:scale-90 transition-transform';
 
   return createPortal(
-    <div ref={root} data-camera-viewer className={`fixed inset-0 z-[60] text-white select-none transition-opacity duration-[300ms] ${closing ? 'opacity-0' : 'animate-in fade-in duration-300'}`}>
+    <div ref={root} data-camera-viewer className={`fixed inset-0 z-[60] text-white select-none transition-opacity duration-[300ms] ${closing ? 'opacity-0' : ''}`}>
       <div ref={bg} className="absolute inset-0 bg-black pointer-events-none" />
+      <img ref={ghost} alt="" aria-hidden className="fixed z-[5] pointer-events-none object-contain" style={{ visibility: 'hidden', transformOrigin: 'center', willChange: 'transform' }} />
       <div ref={pager} onScroll={onScroll} className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
-        style={{ touchAction: 'pan-x' }}
+        style={{ touchAction: 'pan-x', opacity: opening ? 0 : 1 }}
         onPointerDown={e => {
           if (e.pointerType !== 'touch' || drag.current || flying) return;
           drag.current = { x: e.clientX, y: e.clientY, active: false, id: e.pointerId, dx: 0, dy: 0, s: 1, t0: performance.now(), vy: 0 };
@@ -431,11 +473,11 @@ const PhotoViewer: React.FC<{
         ))}
       </div>
       {/* 拖的時候畫面上只有圖：標籤、按鈕都收起來 */}
-      {label && !dragging && (
+      {label && !dragging && !opening && (
         <span className="absolute right-6 h-[26px] px-[9px] rounded-full bg-white/[0.14] backdrop-blur-xl flex items-center text-white text-[13px] font-bold tracking-[0.03em] leading-none pointer-events-none"
           style={{ top: 'max(calc(env(safe-area-inset-top) - 22px), 10px)' }}>#{label}</span>
       )}
-      <div className={`absolute left-0 right-0 flex items-center justify-between px-[34px] transition-opacity duration-150 ${dragging ? 'opacity-0 pointer-events-none' : ''}`} style={{ bottom: 'max(calc(env(safe-area-inset-bottom) - 5px), 14px)', height: CIRCLE }}>
+      <div className={`absolute left-0 right-0 flex items-center justify-between px-[34px] transition-opacity duration-200 ${dragging || opening ? 'opacity-0 pointer-events-none' : ''}`} style={{ bottom: 'max(calc(env(safe-area-inset-bottom) - 5px), 14px)', height: CIRCLE }}>
         <button ref={shareRef} aria-label="分享" onClick={() => onShare(index)} className={`${webCircle} ${hideWeb}`} style={{ width: CIRCLE, height: CIRCLE }}>
           <Icon name="ios_share" className="text-[23px] text-white" />
         </button>

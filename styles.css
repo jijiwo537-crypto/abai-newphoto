@@ -455,6 +455,8 @@ html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.mat
   85% { opacity: 1; }
   100% { opacity: 0; }
 }
+/* 拖完曝光：再停 1 秒，對焦框、曝光線、太陽一起淡掉 */
+@keyframes camFocusEvEnd { 0% { opacity: 1; } 74% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes camFadeOut { 0% { opacity: 1; } 50% { opacity: 1; } 100% { opacity: 0; } }
 
 /* 卡片（模板、濾鏡、特效）的選中框。
