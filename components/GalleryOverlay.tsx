@@ -42,15 +42,22 @@ const BACK_CIRCLE = 54;
 /** 大圖下面的圓鈕、膠囊高度 */
 const CIRCLE = 46;
 
-/** 沖洗圖示：三條對稱調節線，沒有角落裝飾線。 */
+/** RAW 沖洗圖示：一格底片（上下兩排齒孔）。App 裡用的是同造型的 SF Symbol「film」 */
 const RawEditIcon: React.FC<{ size?: number }> = ({ size = 21 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M4.5 7.5h15M4.5 12h15M4.5 16.5h15" />
-    <circle cx="9" cy="7.5" r="2" fill="#151515" />
-    <circle cx="15" cy="12" r="2" fill="#151515" />
-    <circle cx="10.5" cy="16.5" r="2" fill="#151515" />
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="4.5" width="18" height="15" rx="2.2" />
+    <path d="M3 8.5h18M3 15.5h18M7.5 4.5v4M12 4.5v4M16.5 4.5v4M7.5 15.5v4M12 15.5v4M16.5 15.5v4" />
   </svg>
 );
+
+/* 選取的樣子跟其他功能導入照片（NativeGallery）一樣：照片縮小、白框、右上角照點的順序標號碼 */
+const SEL_CSS = `
+@keyframes cg-pop { from { transform: scale(.86); opacity: 0 } to { transform: scale(1); opacity: 1 } }
+.cg-cell img { transition: transform .32s cubic-bezier(0.32,0.72,0,1); }
+.cg-cell.sel img { transform: scale(.9); }
+.cg-cell .ring { position: absolute; inset: 0; border: 2px solid #fff; opacity: 0; transition: opacity .2s ease; pointer-events: none; }
+.cg-cell.sel .ring { opacity: 1 }
+`;
 
 export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   photos, thumbs = {}, onClose, onDelete, onEdit, onProEdit, onEditMany, rawShots, suspended = false, favorites, onFavorite, labelOf,
@@ -178,6 +185,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
         </button>
       </header>
 
+      <style>{SEL_CSS}</style>
       <div ref={scrollRef} className="flex-1 overflow-y-auto no-scrollbar" style={{ paddingBottom: `calc(max(env(safe-area-inset-bottom), 16px) + ${BACK_CIRCLE + 56}px)` }}>
         {photos.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center opacity-40">
@@ -187,11 +195,13 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
         ) : (
           <div className="grid grid-cols-3 gap-[2px]">
             {shown.map((src, idx) => {
-              const on = selected.has(idx);
+              const order = selecting ? [...selected].indexOf(idx) + 1 : 0;
+              const on = order > 0;
               return (
                 <button key={src} onClick={() => tapPhoto(idx)} aria-label={`照片 ${idx + 1}`}
-                  className="relative aspect-square overflow-hidden bg-white/10 active:opacity-80">
-                  {thumbs[src] && <img src={thumbs[src]} decoding="async" alt="" className={`w-full h-full object-cover transition-transform duration-200 ${on ? 'scale-[0.92] rounded-[6px]' : ''}`} />}
+                  className={`cg-cell${on ? ' sel' : ''} relative aspect-square overflow-hidden bg-white/10 active:opacity-80`}>
+                  {thumbs[src] && <img src={thumbs[src]} decoding="async" alt="" className="w-full h-full object-cover" />}
+                  <span className="ring" />
                   {rawShots?.has(src) && (
                     <span className="absolute left-1 bottom-1 px-1.5 py-[2px] rounded-[5px] bg-black/55 backdrop-blur-md text-[9px] font-bold tracking-[0.06em] text-white/90 pointer-events-none">RAW</span>
                   )}
@@ -199,8 +209,11 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
                     <span className="absolute left-2 top-2 pointer-events-none drop-shadow-[0_1px_3px_rgba(0,0,0,.6)]"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 21.1 10.6 20C5.1 15.5 2 12.8 2 9.3 2 6.4 4.3 4 7.2 4c1.8 0 3.6.9 4.8 2.3C13.2 4.9 15 4 16.8 4 19.7 4 22 6.4 22 9.3c0 3.5-3.1 6.2-8.6 10.7L12 21.1Z" /></svg></span>
                   )}
                   {selecting && (
-                    <span className={`absolute right-1.5 bottom-1.5 w-[22px] h-[22px] rounded-full border-[1.5px] flex items-center justify-center pointer-events-none ${on ? 'bg-[#0a84ff] border-white' : 'border-white/90 bg-black/20'}`}>
-                      {on && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
+                    <span className="absolute top-1.5 right-1.5 w-[22px] h-[22px] rounded-full flex items-center justify-center pointer-events-none"
+                      style={on
+                        ? { background: '#fff', color: '#000', animation: 'cg-pop .18s ease-out', boxShadow: '0 1px 4px rgba(0,0,0,.35)' }
+                        : { border: '1.5px solid rgba(255,255,255,.9)', background: 'rgba(0,0,0,.18)', boxShadow: '0 0 2px rgba(0,0,0,.4)' }}>
+                      {on && <span className="text-[12px] font-black leading-none">{order}</span>}
                     </span>
                   )}
                 </button>
@@ -290,7 +303,7 @@ const PhotoViewer: React.FC<{
   const glass = useNativeGlass('camera-viewer', !closing && !suspended && !dragging, () => [
     { kind: 'circle', id: 'share', symbol: 'square.and.arrow.up', pointSize: 17, el: shareRef.current },
     { kind: 'capsule', el: midRef.current, pad: 0, buttons: [
-      ...(isRaw ? [{ id: 'pro', symbol: 'abai.raw', pointSize: 17 }] : []),
+      ...(isRaw ? [{ id: 'pro', symbol: 'film', pointSize: 17 }] : []),
       { id: 'edit', symbol: 'slider.horizontal.3', pointSize: 17 },
       { id: 'fav', symbol: fav ? 'heart.fill' : 'heart', tint: 'white', pointSize: 17 },
     ] },
