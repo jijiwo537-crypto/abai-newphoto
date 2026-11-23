@@ -39,7 +39,7 @@ const KIND_NAMES: Record<string, string> = {
 const KIND_ORDER = ['fancy-halo', 'fancy-concentric', 'fancy-spiral', 'fancy-ring', 'fancy-swirl3', 'fancy-radial',
   'fancy-grid', 'fancy-polka', 'fancy-boxrandom', 'fancy-wand', 'fancy-mobile', 'fancy-constellation'].filter(k => (FANCY_KINDS as readonly string[]).includes(k));
 
-import { ENTRIES, IDLES, ID, ctxOf, clamp, ENTRY_DUR, HOLD, GAP, FANCY_MOTION_CFG, type Anim, type Ctx, type U } from '../utils/fancyMotion';
+import { ENTRIES, IDLES, ID, ctxOf, clamp, ENTRY_DUR, HOLD, GAP, FANCY_MOTION_CFG, fancyMotionLists, type Anim, type Ctx, type U } from '../utils/fancyMotion';
 /* ───────── App 原本就有的（花式排列現在吃的那一組） ───────── */
 const OLD_ENTRY: [string, string][] = [['pop', '果凍'], ['fade', '淡入'], ['rise', '升起'], ['drop', '落下'], ['spin', '旋轉'], ['flip', '翻轉'], ['spring', '流星']];
 const OLD_IDLE: [string, string][] = [['float', '漂浮'], ['grid-wave', '波浪'], ['breathe', '縮放'], ['spin', '旋轉'], ['wobble', '搖擺'], ['orbit', '繞圈'], ['jitter', '抖動']];
@@ -50,8 +50,26 @@ const OLDS: Anim[] = [
 export const FANCY_MOTION_ALL: Anim[] = [...OLDS.filter(a => a.kind === 'entry'), ...ENTRIES, ...OLDS.filter(a => a.kind === 'idle'), ...IDLES];
 
 /** 「複製順序」要帶出去的那幾行 */
+/* ───────── 按鈕順序（照正式版的樣子：一排四個，長按拖曳） ───────── */
+const ORDER_STORE = 'abai-order-tool-fancy-btn-order-v1';
+type BtnOrder = Record<string, { in?: string[]; idle?: string[] }>;
+const loadOrder = (): BtnOrder => { try { return JSON.parse(localStorage.getItem(ORDER_STORE) || '{}') || {}; } catch { return {}; } };
+const saveOrder = (o: BtnOrder) => { try { localStorage.setItem(ORDER_STORE, JSON.stringify(o)); } catch { /* */ } };
+const APP_IN = [['none', '無'], ['pop', '果凍'], ['fade', '淡入'], ['rise', '升起'], ['drop', '落下'], ['spin', '旋轉'], ['flip', '翻轉'], ['spring', '流星']].map(([id, name]) => ({ id, name }));
+const APP_IDLE = [['none', '靜止'], ['float', '漂浮'], ['grid-wave', '波浪'], ['breathe', '縮放'], ['spin', '旋轉'], ['wobble', '搖擺'], ['orbit', '繞圈'], ['jitter', '抖動']].map(([id, name]) => ({ id, name }));
+/** 正式版這一種貼圖的按鈕（名字、l／ll 都跟 App 一樣），套上排過的順序 */
+const appButtons = (k: string, phase: 'in' | 'idle', ord: BtnOrder) => {
+  const l = fancyMotionLists(k, APP_IN, APP_IDLE, (id, name) => ({ id, name }))!;
+  const list = phase === 'in' ? l.kinds : l.idleKinds, saved = ord[k]?.[phase] || [];
+  const rank = (id: string) => { const i = saved.indexOf(id); return i < 0 ? 1e3 + list.findIndex(x => x.id === id) : i; };
+  return [...list].sort((a, b) => rank(a.id) - rank(b.id));
+};
 export const fancyMotionReport = (): string[] => {
   const s = load(), out: string[] = [];
+  const ord = loadOrder();
+  for (const k of KIND_ORDER) for (const ph of ['in', 'idle'] as const) if (ord[k]?.[ph]?.length) {
+    out.push(`花式排列・${KIND_NAMES[k]}（${k}）${ph === 'in' ? '進場' : '常駐'}按鈕順序`, appButtons(k, ph, ord).map(b => `${b.name}（${b.id}）`).join(', '));
+  }
   const nm = (a: Anim) => s.names[a.id] && s.names[a.id] !== a.name ? `${s.names[a.id]}（原名 ${a.name}，${a.id}）` : `${a.name}（${a.id}）`;
   const byId = new Map(FANCY_MOTION_ALL.map(a => [a.id, a]));
   const defName = (id?: string) => !id ? '' : id === 'none' ? '無' : byId.get(id) ? nm(byId.get(id)!) : id;
@@ -76,7 +94,7 @@ export const fancyMotionReport = (): string[] => {
   return out;
 };
 export const fancyMotionChanged = () => fancyMotionReport().length > 0;
-export const fancyMotionReset = () => { try { localStorage.removeItem(STORE); } catch { /* */ } };
+export const fancyMotionReset = () => { try { localStorage.removeItem(STORE); localStorage.removeItem(ORDER_STORE); } catch { /* */ } };
 
 /* ───────── 畫一格 ───────── */
 function paint(ctx: CanvasRenderingContext2D, W: number, H: number, geo: { stars: FancyStar[]; lines: FancyLine[] }, c: Ctx, a: Anim, time: number, ox: number, oy: number) {
@@ -267,8 +285,72 @@ const RenameTool: React.FC<{ sv: Saved; setSv: (s: Saved) => void }> = ({ sv, se
   );
 };
 
+const OrderTool: React.FC<{ onChange?: () => void }> = ({ onChange }) => {
+  const [kind, setKind] = useState(KIND_ORDER[0]);
+  const [ord, setOrd0] = useState<BtnOrder>(loadOrder);
+  const setOrd = (o: BtnOrder) => { setOrd0(o); saveOrder(o); onChange?.(); };
+  useEffect(() => { const f = () => setOrd0(loadOrder()); window.addEventListener('abai-fancy-motion-reset', f); return () => window.removeEventListener('abai-fancy-motion-reset', f); }, []);
+  /* 長按 0.3 秒浮起來，拖到哪一格就插到哪一格（跟其他排序頁同一種操作） */
+  const [drag, setDrag] = useState<{ ph: 'in' | 'idle'; id: string; x: number; y: number } | null>(null);
+  const hold = useRef<{ t: number; ph: 'in' | 'idle'; id: string; pid: number } | null>(null);
+  const down = (e: React.PointerEvent, ph: 'in' | 'idle', id: string) => {
+    const x = e.clientX, y = e.clientY, pid = e.pointerId, el = e.currentTarget as HTMLElement;
+    const t = window.setTimeout(() => { try { el.setPointerCapture(pid); } catch { /* */ } setDrag({ ph, id, x, y }); try { navigator.vibrate?.(10); } catch { /* */ } }, 300);
+    hold.current = { t, ph, id, pid };
+  };
+  const cancel = () => { if (hold.current) clearTimeout(hold.current.t); hold.current = null; };
+  const move = (e: React.PointerEvent) => {
+    if (!drag) { if (hold.current) cancel(); return; }
+    setDrag({ ...drag, x: e.clientX, y: e.clientY });
+    const over = (document.elementsFromPoint(e.clientX, e.clientY).find(n => (n as HTMLElement).dataset?.btn && (n as HTMLElement).dataset?.ph === drag.ph) as HTMLElement | undefined)?.dataset.btn;
+    if (!over || over === drag.id) return;
+    const ids = appButtons(kind, drag.ph, ord).map(b => b.id), from = ids.indexOf(drag.id), to = ids.indexOf(over);
+    ids.splice(from, 1); ids.splice(to, 0, drag.id);
+    setOrd({ ...ord, [kind]: { ...(ord[kind] || {}), [drag.ph]: ids } });
+  };
+  const up = () => { cancel(); setDrag(null); };
+  const grid = (ph: 'in' | 'idle', title: string) => {
+    const list = appButtons(kind, ph, ord);
+    return (
+      <section className="mt-5">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[10px] font-bold text-[#666] tracking-widest">{title}</p>
+          {ord[kind]?.[ph] && <button onClick={() => { const q = { ...(ord[kind] || {}) }; delete q[ph]; setOrd({ ...ord, [kind]: q }); }} className="px-2 h-7 rounded bg-white/10 text-[11px]">回到預設順序</button>}
+        </div>
+        {/* 跟正式版的動畫頁同一個樣子：一排四個 */}
+        <div className="grid grid-cols-4 gap-2">
+          {list.map(b => {
+            const lifted = drag?.ph === ph && drag.id === b.id;
+            return <button key={b.id} data-btn={b.id} data-ph={ph}
+              onPointerDown={e => down(e, ph, b.id)} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
+              onContextMenu={e => e.preventDefault()}
+              className={`h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all touch-none ${lifted ? 'opacity-30 border-white' : 'border-[#1a1a1a] text-[#aaa] bg-[#0b0b0b]'}`}>{b.name}</button>;
+          })}
+        </div>
+      </section>
+    );
+  };
+  const draggedName = drag ? appButtons(kind, drag.ph, ord).find(b => b.id === drag.id)?.name : '';
+  return (
+    <div>
+      <div className="text-[12px] text-white/60 leading-relaxed">按鈕的名字和多少個，都跟正式版這一種貼圖的動畫頁一模一樣。長按一顆浮起來，拖到想要的位置放開。每一種貼圖各自排。</div>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {KIND_ORDER.map(k => (
+          <button key={k} onClick={() => setKind(k)} className={`px-2.5 h-8 rounded-full text-[12px] font-bold ${k === kind ? 'bg-white text-black' : 'bg-white/10 text-white/70'}`}>{KIND_NAMES[k]}{ord[k]?.in || ord[k]?.idle ? ' •' : ''}</button>
+        ))}
+      </div>
+      <div className="mt-2 max-w-md mx-auto rounded-[12px] border border-white/10 bg-black p-3">
+        {grid('in', '進場動畫')}
+        {grid('idle', '常駐動畫')}
+      </div>
+      {drag && <div className="fixed z-50 pointer-events-none h-9 px-4 rounded-[8px] border border-white bg-[#222] text-white text-[11px] font-bold flex items-center shadow-[0_8px_24px_rgba(0,0,0,.6)]"
+        style={{ left: drag.x, top: drag.y, transform: 'translate(-50%,-60%) scale(1.08)' }}>{draggedName}</div>}
+    </div>
+  );
+};
+
 export function FancyMotionLab({ onChange }: { onChange?: () => void }) {
-  const [mode, setMode] = useState<'pick' | 'rename'>('pick');
+  const [mode, setMode] = useState<'pick' | 'rename' | 'order'>('pick');
   const [kind, setKind] = useState(KIND_ORDER[0]);
   const [sv, setSv0] = useState<Saved>(load);
   const setSv = (s: Saved) => { setSv0(s); save(s); onChange?.(); };
@@ -325,12 +407,13 @@ export function FancyMotionLab({ onChange }: { onChange?: () => void }) {
   );
   const modeBar = (
     <div className="flex gap-1.5 mb-3">
-      {([['pick', '預覽・勾選'], ['rename', '改名工具']] as const).map(([m, t]) => (
+      {([['pick', '預覽・勾選'], ['rename', '改名工具'], ['order', '按鈕順序']] as const).map(([m, t]) => (
         <button key={m} onClick={() => setMode(m)} className={`px-3 h-8 rounded-full text-[12px] font-bold ${mode === m ? 'bg-white text-black' : 'bg-white/10 text-white/70'}`}>{t}</button>
       ))}
     </div>
   );
   if (mode === 'rename') return <div>{modeBar}<RenameTool sv={sv} setSv={setSv} /></div>;
+  if (mode === 'order') return <div>{modeBar}<OrderTool onChange={onChange} /></div>;
   return (
     <div>
       {modeBar}
