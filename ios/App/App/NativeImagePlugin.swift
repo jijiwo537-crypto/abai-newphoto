@@ -143,8 +143,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         let zoom = max(1, call.getDouble("zoom") ?? 1)      // 再從中間放大裁切（相機的小框構圖）
         let fx = ABAICameraFx(call.getObject("fx"))          // 相機特效（跟觀景窗同一套）
         let kelvin = call.getDouble("kelvin")                // 相機色溫（跟觀景窗同一條公式）
-        let film = ABAIFilm(call.getObject("film"))          // 底片相機（跟觀景窗同一套，見 ABAIFilm.swift）
-        let filmDelta = call.getDouble("filmDelta") ?? 0     // 拍照那一刻多了幾格光
+        let develop = call.getDouble("develop") ?? 0         // 底片模式：少曝光拍的照片沖回幾格（見 ABAIDateStamp.swift）
         let dateText = call.getString("date").flatMap { $0.isEmpty ? nil : $0 }   // 日期戳記
         queue.async {
             autoreleasepool {
@@ -162,7 +161,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                     img = img.cropped(to: e.integral).transformed(by: CGAffineTransform(translationX: -e.integral.minX, y: -e.integral.minY))
                 }
                 if let k = kelvin { img = ABAIImageCore.kelvin(img, k) }
-                if film.isOn { img = film.apply(to: img, delta: filmDelta, seed: CGPoint(x: Double.random(in: 0..<997), y: Double.random(in: 0..<997))) }
+                if abs(develop) > 0.001 { img = ABAIDateStamp.develop(img, ev: develop) }
                 var cube: ABAIImageCore.Cube?
                 if let cp = cubePath, cubeSize > 1, let u = ABAIImageCore.fileURL(from: cp), let d = try? Data(contentsOf: u) { cube = ABAIImageCore.cube(data: d, size: cubeSize) }
                 else if let b = cubeB64, cubeSize > 1 { cube = ABAIImageCore.cube(base64: b, size: cubeSize) }
@@ -172,7 +171,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                 } else if let c = cube { img = keepGamut ? ABAIImageCore.applyKeepingGamut(cube: c, to: img) : ABAIImageCore.apply(cube: c, to: img, amount: amount) }
                 if keepGamut { img = ABAIImageCore.uprightProperties(img) }
                 if fx.isOn { img = fx.apply(to: img) }
-                if let d = dateText { img = ABAIFilm.stampDate(d, on: img) }
+                if let d = dateText { img = ABAIDateStamp.stampDate(d, on: img) }
                 /* HDR：調完色的結果就是 HDR 那一張；SDR 那一張是把亮部壓回 1.0 以內的版本。
                    原圖本身沒有 HDR 資訊時，兩張一樣，就不帶增益圖。 */
                 var hdr: CIImage? = nil
@@ -184,7 +183,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                 /* 套了濾鏡、又要存成 8 位元（JPEG／一般 HEIC）：存檔前加約一階的抖色。
                    色彩表在漸層（天空、皮膚）上會讓相鄰顏色擠在一起，直接截成 8 位元就是一圈一圈的色階；
                    跟網頁編輯頁的著色器同一招（±½ 階），肉眼看不到雜訊，但色階會被打散。10 位元不需要。 */
-                if (cube != nil || film.isOn) && format != .heic10 { sdr = ABAIImageCore.dither(sdr) }
+                if cube != nil && format != .heic10 { sdr = ABAIImageCore.dither(sdr) }
                 do {
                     let data = try ABAIImageCore.encode(sdr, format: format, quality: quality, hdr: hdr)
                     let out = ABAIImageCore.newFileURL(ext: format == .png ? "png" : (format == .jpeg ? "jpg" : "heic"))

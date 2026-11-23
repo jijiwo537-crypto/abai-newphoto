@@ -63,24 +63,39 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// 讀檔案路徑、寫檔案路徑（不經過 base64）。照片從系統選擇器來的時候走這條。
-    /// 參數：path、exposure（EV，預設 0）、boost（0＝線性、1＝相機階調）
+    /// 讀檔案路徑、寫檔案路徑（不經過 base64）。照片從系統選擇器來的時候走這條；相機「底片模式」的重新沖洗也是這條。
+    /// 參數：path、exposure（EV，預設 0）、boost（0＝線性、1＝相機階調）、
+    ///      temperature（色溫 K，不給＝拍攝當下的白平衡）、tint（色調，不給＝拍攝當下）、
+    ///      maxPixel（長邊最多幾 px，沖洗時的即時預覽用；0＝原尺寸）、draft（快速預覽品質）
+    /// 回傳：path、width、height、asShotTemperature、asShotTint（拍攝當下的白平衡，給滑桿當預設值）
     @objc func decodeFile(_ call: CAPPluginCall) {
         guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? "") else { call.reject("沒有路徑"); return }
         let ev = Float(call.getDouble("exposure") ?? 0), boost = Float(call.getDouble("boost") ?? 1)
+        let temperature = call.getDouble("temperature"), tint = call.getDouble("tint")
+        let maxPixel = call.getDouble("maxPixel") ?? 0
+        let draft = call.getBool("draft") ?? false
         DispatchQueue.global(qos: .userInitiated).async {
             autoreleasepool {
                 guard let filter = CIRAWFilter(imageURL: url) else { call.reject(RawError.notRaw.localizedDescription); return }
-                filter.isDraftModeEnabled = false
+                let asShotTemp = filter.neutralTemperature, asShotTint = filter.neutralTint
+                filter.isDraftModeEnabled = draft
                 filter.boostAmount = boost
                 filter.exposure = ev
+                if let t = temperature { filter.neutralTemperature = Float(t) }
+                if let t = tint { filter.neutralTint = Float(t) }
                 filter.isGamutMappingEnabled = true
+                /* 預覽：在解碼時就縮小（比解完整張再縮快很多） */
+                let native = filter.nativeSize
+                if maxPixel > 0, native.width > 0, native.height > 0 {
+                    filter.scaleFactor = Float(min(1, maxPixel / Double(max(native.width, native.height))))
+                }
                 guard let output = filter.outputImage, output.extent.width > 0 else { call.reject(RawError.renderFailed.localizedDescription); return }
                 do {
-                    let data = try ABAIImageCore.encode(output, format: .jpeg, quality: 0.97)
+                    let data = try ABAIImageCore.encode(output, format: .jpeg, quality: draft ? 0.85 : 0.97)
                     let out = ABAIImageCore.newFileURL(ext: "jpg")
                     try data.write(to: out)
-                    call.resolve(["path": out.path, "width": Int(output.extent.width), "height": Int(output.extent.height)])
+                    call.resolve(["path": out.path, "width": Int(output.extent.width), "height": Int(output.extent.height),
+                                  "asShotTemperature": Double(asShotTemp), "asShotTint": Double(asShotTint)])
                 } catch { call.reject(error.localizedDescription) }
             }
         }

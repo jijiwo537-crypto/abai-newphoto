@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { isNative } from '../utils/native';
-import { nativeCamera, captureNative, lutFileName, developRaw } from '../utils/nativeCamera';
+import { nativeCamera, captureNative, lutFileName, RAW_PROTECT_EV } from '../utils/nativeCamera';
 import { lutMaxAmount, lutDefaultAmount } from '../utils/photoFx';
 import { haptic, dialHaptic } from '../utils/haptics';
 import { nativePhotos } from '../utils/nativePhotos';
@@ -12,11 +12,12 @@ import { GalleryOverlay } from './GalleryOverlay';
 import { usePhotoThumbs, thumbFromCanvas } from '../utils/photoThumbs';
 import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
 import { ImageEditor, DEFAULT_PARAMS } from './ImageEditor';
+import { RawDevelopSheet } from './RawDevelopSheet';
 import { createPortal } from 'react-dom';
 import { processImageFile } from '../utils/imageLoader';
 import { RAW_ACCEPT } from '../utils/fileTypes';
 import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
-import { FILM_CAMERAS, filmCamera, filmDateText, LOW_LIGHT_DELTA } from '../utils/filmCameras';
+import { dateStampText } from '../utils/dateStamp';
 import {preferCameraResolution} from '../utils/cameraPreview';
 
 // MediaStream 型別補上 zoom
@@ -274,16 +275,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   
   const [activeControl, setActiveControl] = useState<ActiveControl>('none');
   const [selectedLutIdx, setSelectedLutIdx] = useState(0);
-  /* 底片相機（只有 App 的原生相機有：要讀鏡頭的快門、ISO 才能模擬固定曝光）。選了底片相機就不套一般濾鏡 */
   const readPref = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
   const writePref = (k: string, v: string | null) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* 私密模式 */ } };
-  const [filmId, setFilmIdState] = useState<string | null>(() => filmCamera(readPref('abai-camera-film'))?.id ?? null);
-  const setFilmId = (id: string | null) => { setFilmIdState(id); writePref('abai-camera-film', id); };
   /** 日期戳記（橘紅色七段字，印在右下角） */
   const [dateOn, setDateOnState] = useState(() => readPref('abai-camera-date') === '1');
   const setDateOn = (on: boolean) => { setDateOnState(on); writePref('abai-camera-date', on ? '1' : null); };
-  /** 底片相機回報：沒開閃光燈的話比「剛好」差幾格（用來提示低光） */
-  const [ambientDelta, setAmbientDelta] = useState(0);
   const [fx, setFx] = useState<ViewfinderFx>(FX_ZERO);
   const fxOn = FX_ITEMS.some(item => fx[item.id] > 0);
 
@@ -296,11 +292,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      只有原生相機開不起來時才退回網頁相機。可以另外開的是 RAW。 */
   const [proPreferred, setProPreferred] = useState(true);
   const proMode = proAvailable && proPreferred;
-  const activeFilm = proMode ? filmCamera(filmId) : null;
   const [proRaw, setProRaw] = useState(false);
   /** 拍出來的照片 → 同一張的 RAW 檔（App 暫存裡的 DNG）＋拍的時候用的濾鏡。
       編輯時從 RAW 沖，再自動套上同一個濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
-  const rawOfRef = useRef<Map<string, { path: string; lutIdx: number }>>(new Map());
+  const rawOfRef = useRef<Map<string, { path: string; lutIdx: number; protectEV: number }>>(new Map());
   const [rawShots, setRawShots] = useState<Set<string>>(() => new Set());
   const forgetRaw = (url: string) => {
     if (!rawOfRef.current.delete(url)) return;
@@ -360,7 +355,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     evDragRef.current = pointersRef.current.size === 1
       ? { id: e.pointerId, x: e.clientX, y: e.clientY, ev0: parseFloat(settingsExposureRef.current) || 0, active: false }
       : null;
-    if (pointersRef.current.size === 2 && !fixedFocalRef.current) {
+    if (pointersRef.current.size === 2) {
       const d = pinchDist();
       if (d > 8) {
         pinchRef.current = { d0: d, z0: frameZoomRef.current };
@@ -425,7 +420,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const lastFocusEventRef = useRef<{ x: number; y: number; at: number } | null>(null);
   const lastCameraTickRef = useRef<string>('');
   const focusPointRef = useRef(focusPoint); focusPointRef.current = focusPoint;
-  const fixedFocalRef = useRef(false); fixedFocalRef.current = !!activeFilm?.fixedFocal;
 
   /* ── 點對焦後上下拖動調曝光（跟 iOS 內建相機一樣）──────────────────
      點一下對焦之後，對焦框旁邊出現一顆小太陽；框還在的時候，手指在畫面上
@@ -886,10 +880,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      就立刻取下一張新幀。上限 3 是避免極端連點在手機上累積無限工作。 */
   const captureQueueRef = useRef(0);
   const capturePhotoRef = useRef<() => void>(() => {});
-  const proOptsRef = useRef<{ lut: string; amount: number; aspect: number; flash: boolean; raw: boolean; lutIdx: number; film: ReturnType<typeof filmCamera>; date: boolean }>({ lut: '', amount: 1, aspect: 2 / 3, flash: false, raw: false, lutIdx: 0, film: null, date: false });
+  const proOptsRef = useRef({ lut: '', amount: 1, aspect: 2 / 3, flash: false, raw: false, lutIdx: 0, date: false });
   /* 濾鏡強度跟編輯頁一致：每顆濾鏡的最大強度（例如 F3 是 70%），見 utils/photoFx 的 LUT_MAX_AMOUNT */
   const lutAmt = lutMaxAmount(lutList[selectedLutIdx]?.id) / 100;
-  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), amount: lutAmt, aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw, lutIdx: selectedLutIdx, film: activeFilm, date: dateOn };
+  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), amount: lutAmt, aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw, lutIdx: selectedLutIdx, date: dateOn };
   const capturePhoto = useCallback(async () => {
     /* 專業模式：原生全解析度拍照，原生端套濾鏡、裁成畫面比例；ProRAW 開著時 RAW 檔直接存進相簿 */
     if (proModeRef.current) {
@@ -897,12 +891,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       capturingRef.current = true; setIsCapturing(true); setCaptureNotice('');
       try {
         const o = proOptsRef.current;
-        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, amount: o.amount, aspect: o.aspect, zoom: frameZoomRef.current, fx: nativeFxRef.current, kelvin: nativeParamsRef.current.kelvin, film: o.film, date: o.date ? filmDateText() : null });
+        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, amount: o.amount, aspect: o.aspect, zoom: frameZoomRef.current, fx: nativeFxRef.current, kelvin: nativeParamsRef.current.kelvin, develop: o.raw ? RAW_PROTECT_EV : 0, date: o.date ? dateStampText() : null });
         if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
         ownedUrlsRef.current.add(r.url);
         setPhotos(prev => [r.url, ...prev]);
         if (r.rawPath) {
-          rawOfRef.current.set(r.url, { path: r.rawPath, lutIdx: o.lutIdx });
+          rawOfRef.current.set(r.url, { path: r.rawPath, lutIdx: o.lutIdx, protectEV: o.raw ? RAW_PROTECT_EV : 0 });
           setRawShots(prev => new Set(prev).add(r.url));
           void nativePhotos().then(p => p?.save({ path: r.rawPath!, kind: 'photo' })).catch(() => {});
         }
@@ -1045,7 +1039,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /* 專業模式開著時：原生相機畫在網頁底下，觀景窗那一塊挖成透明；實體按鈕（音量鍵、相機控制）當快門 */
   useEffect(() => {
     if (!proMode) return;
-    let alive = true, restore: (() => void) | null = null, sub: { remove: () => void } | null = null, filmSub: { remove: () => void } | null = null, ro: ResizeObserver | null = null;
+    let alive = true, restore: (() => void) | null = null, sub: { remove: () => void } | null = null, ro: ResizeObserver | null = null;
     void (async () => {
       const cam = await nativeCamera();
       const canvas = viewfinderRef.current?.getCanvas?.() ?? null;
@@ -1066,8 +1060,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         }
         void cam.setFx(nativeFxRef.current).catch(() => {});
         /* 開起來就把目前的曝光、白平衡套上去 */
-        void cam.setExposureBias({ ev: nativeParamsRef.current.film ? 0 : parseFloat(nativeParamsRef.current.exposure) || 0 }).catch(() => {});
-        pushFilmRef.current();
+        void cam.setExposureBias({ ev: deviceBias(nativeParamsRef.current) }).catch(() => {});
+        void cam.setDate({ date: dateOnRef.current ? dateStampText() : null }).catch(() => {});
         void cam.setWhiteBalance({ kelvin: nativeParamsRef.current.kelvin }).catch(() => {});
       } catch (e: any) {
         /* 被後面那一次開相機取代（翻轉鏡頭、換頁）不算失敗；真的開不起來才換成網頁相機 */
@@ -1079,11 +1073,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       ro = new ResizeObserver(() => { void cam.setRect(rect()).catch(() => {}); });
       ro.observe(el);
       sub = await cam.addListener('shutter', () => capturePhotoRef.current());
-      filmSub = await cam.addListener('film', (d: any) => { if (typeof d?.ambientDelta === 'number') setAmbientDelta(d.ambientDelta); });
-      if (!alive) { sub.remove(); filmSub.remove(); }
+      if (!alive) sub.remove();
     })();
     return () => {
-      alive = false; ro?.disconnect(); sub?.remove(); filmSub?.remove(); restore?.();
+      alive = false; ro?.disconnect(); sub?.remove(); restore?.();
       void nativeCamera().then(c => c?.stop());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1095,32 +1088,19 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (proMode) void nativeCamera().then(c => c?.setFx(nativeFxRef.current)).catch(() => {});
   }, [proMode, fx.soft, fx.blur, fx.lowfi]);
   /* 原生相機：曝光、白平衡直接調鏡頭本身（拍出來的照片就是這樣，不是事後調亮） */
-  const nativeParamsRef = useRef({ exposure: settings.exposure, kelvin: settings.kelvin, film: activeFilm });
-  nativeParamsRef.current = { exposure: settings.exposure, kelvin: settings.kelvin, film: activeFilm };
-  /* 底片相機：鏡頭本身不加減曝光（不然手機的自動曝光會跟著改，模擬出來的亮度就被抵銷了），
-     使用者的曝光改成在底片那一步加減 —— 就像在固定曝光的相機上換一格光圈 */
+  const nativeParamsRef = useRef({ exposure: settings.exposure, kelvin: settings.kelvin, raw: proRaw });
+  nativeParamsRef.current = { exposure: settings.exposure, kelvin: settings.kelvin, raw: proRaw };
+  /* 底片模式（RAW 開著）：鏡頭少曝光 RAW_PROTECT_EV 格保護亮部 —— 跟 Dazz 一樣，觀景窗會暗暗的；
+     拍出來的成品照片在原生端沖回來，RAW 之後也可以重新沖洗 */
+  const deviceBias = (p: { exposure: string; raw: boolean }) => (parseFloat(p.exposure) || 0) - (p.raw ? RAW_PROTECT_EV : 0);
   useEffect(() => {
-    if (proMode) void nativeCamera().then(c => c?.setExposureBias({ ev: activeFilm ? 0 : parseFloat(settings.exposure) || 0 })).catch(() => {});
-  }, [proMode, settings.exposure, !!activeFilm]);
-  const filmFlash = flashOn && flashAvailable;
-  const pushFilm = () => {
-    if (!proModeRef.current) return;
-    const p = nativeParamsRef.current;
-    void nativeCamera().then(c => c?.setFilm({ film: p.film, userEV: p.film ? parseFloat(p.exposure) || 0 : 0, flash: filmFlash, date: dateOn ? filmDateText() : null })).catch(() => {});
-  };
-  const pushFilmRef = useRef(pushFilm); pushFilmRef.current = pushFilm;
-  useEffect(() => { pushFilm(); }, [proMode, activeFilm?.id, settings.exposure, filmFlash, dateOn]);
-  /* 底片相機沒開時不提示低光 */
-  useEffect(() => { if (!activeFilm) setAmbientDelta(0); }, [activeFilm?.id]);
-  /* 定焦的相機（一次性相機）：固定 1x、不能捏小框 */
+    if (proMode) void nativeCamera().then(c => c?.setExposureBias({ ev: deviceBias({ exposure: settings.exposure, raw: proRaw }) })).catch(() => {});
+  }, [proMode, settings.exposure, proRaw]);
+  /* 日期戳記：觀景窗右下角（原生端畫，跟照片同一個位置） */
+  const dateOnRef = useRef(dateOn); dateOnRef.current = dateOn;
   useEffect(() => {
-    if (!activeFilm?.fixedFocal) return;
-    frameZoomRef.current = 1; smallFrameRef.current?.set(1, false);
-    if (settings.focalLength !== '1.0x') {
-      setSettings(prev => ({ ...prev, focalLength: '1.0x' }));
-      void nativeCamera().then(c => c?.setZoom({ uiZoom: 1 })).catch(() => {});
-    }
-  }, [activeFilm?.id, settings.focalLength]);
+    if (proMode) void nativeCamera().then(c => c?.setDate({ date: dateOn ? dateStampText() : null })).catch(() => {});
+  }, [proMode, dateOn]);
   useEffect(() => {
     if (proMode) void nativeCamera().then(c => c?.setWhiteBalance({ kelvin: settings.kelvin })).catch(() => {});
   }, [proMode, settings.kelvin]);
@@ -1276,24 +1256,25 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /* 開編輯：有 RAW 的那幾張從 RAW 沖一張出來編（不是用已經套好濾鏡、壓成 JPEG 的成品）。
      沖不出來（沒有原生解碼）就照舊編成品 */
   const developedUrlRef = useRef<string | null>(null);
-  const openEditor = async (src: string, idx: number) => {
-    let editSrc = src;
-    let init: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null = null;
-    const raw = rawOfRef.current.get(src);
-    if (raw) {
-      setIsImportingLocal(true);
-      const dev = await developRaw(raw.path);
-      setIsImportingLocal(false);
-      if (dev) {
-        if (developedUrlRef.current) URL.revokeObjectURL(developedUrlRef.current);
-        developedUrlRef.current = dev;
-        editSrc = dev;
-        /* 拍的時候套的濾鏡（強度跟拍照時一樣是最大強度），進編輯就已經套好，可以再換或調 */
-        if (raw.lutIdx > 0 && lutList[raw.lutIdx]) init = { params: { ...DEFAULT_PARAMS, lutAmount: lutDefaultAmount(lutList[raw.lutIdx].id) }, selectedLutIdx: raw.lutIdx };
-      }
-    }
+  /** 正在重新沖洗哪一張（底片模式拍的 RAW）。沖好才進編輯 */
+  const [developing, setDeveloping] = useState<{ src: string; idx: number } | null>(null);
+  const openEditor = (src: string, idx: number) => {
+    if (rawOfRef.current.has(src)) { setDeveloping({ src, idx }); return; }
     setShowGallery(false);
-    setEditingPhoto({ src: editSrc, index: idx, init });
+    setEditingPhoto({ src, index: idx, init: null });
+    setEditorId(prev => prev + 1);
+  };
+  /* 沖好了：拿沖出來的那張進編輯，並自動套上拍照時用的濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
+  const finishDevelop = (url: string) => {
+    const d = developing; if (!d) { URL.revokeObjectURL(url); return; }
+    const raw = rawOfRef.current.get(d.src);
+    if (developedUrlRef.current) URL.revokeObjectURL(developedUrlRef.current);
+    developedUrlRef.current = url;
+    const init = raw && raw.lutIdx > 0 && lutList[raw.lutIdx]
+      ? { params: { ...DEFAULT_PARAMS, lutAmount: lutDefaultAmount(lutList[raw.lutIdx].id) }, selectedLutIdx: raw.lutIdx } : null;
+    setDeveloping(null);
+    setShowGallery(false);
+    setEditingPhoto({ src: url, index: d.idx, init });
     setEditorId(prev => prev + 1);
   };
   useEffect(() => {
@@ -1433,16 +1414,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               }}
               onPointerCancel={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
             />}
-
-            {/* 底片相機：光線不足（沒開閃光燈的話會暗很多格）就提示，跟實體的一次性相機一樣要靠閃光燈 */}
-            {activeFilm && !aeafLock && ambientDelta < LOW_LIGHT_DELTA && !filmFlash && !showGallery && (
-              <div data-film-lowlight className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none animate-in fade-in duration-300">
-                <span className="flex items-center gap-1 px-2.5 py-[4px] rounded-full bg-black/45 backdrop-blur-md text-amber-200 text-[11px] font-semibold whitespace-nowrap">
-                  <Icon name="bolt" className="text-[13px]" fill />
-                  光線不足・建議開閃光燈
-                </span>
-              </div>
-            )}
 
             {/* 鎖定中的提示，位置與樣式照 iOS 相機 */}
             {aeafLock && (
@@ -1615,7 +1586,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               </button>
             )}
 
-            {!showGallery && !activeFilm?.fixedFocal && (
+            {!showGallery && (
               <div className="absolute bottom-3 left-0 right-0 flex justify-center z-[60] gap-2">
                 {ZOOM_STEPS.map(({ label: val }) => {
                   const unavailable = val === '0.5x' && !canWide;
@@ -1680,36 +1651,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             /* 濾鏡列跟其他控制列同一個 56px 高度：打開時上面的觀景窗、按鈕都不會被推動 */
             <div data-camera-filter-row className="w-full flex items-center h-full overflow-hidden animate-in fade-in duration-200">
                <div className="flex overflow-x-auto overflow-y-hidden w-full no-scrollbar gap-2 px-4 scroll-smooth items-center">
-                 {/* 底片相機（App 的原生相機才有）：一整套曝光、底片、鏡頭、閃光燈。前面有一個小底片圖示，跟一般濾鏡分開 */}
-                 {proMode && FILM_CAMERAS.map(f => {
-                   const on = activeFilm?.id === f.id;
-                   return (
-                     <button
-                      key={f.id}
-                      data-film-camera={f.id}
-                      onClick={() => {
-                        haptic('tick');
-                        if (on) { setFilmId(null); return; }
-                        setFilmId(f.id); setSelectedLutIdx(0);
-                        setCaptureNotice(f.note);
-                      }}
-                      className={`shrink-0 h-8 pl-2.5 pr-3.5 rounded-full text-[12px] font-medium whitespace-nowrap ring-1 ring-inset flex items-center gap-1.5 transition-[background-color,color,transform] duration-200 active:scale-95 ${on ? 'bg-amber-200 text-black ring-amber-200' : 'bg-white/[0.07] text-white/80 ring-white/10'}`}
-                     >
-                       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden className="shrink-0">
-                         <rect x="1.5" y="3" width="13" height="10" rx="1.6" stroke="currentColor" strokeWidth="1.3" />
-                         <path d="M4 3v10M12 3v10" stroke="currentColor" strokeWidth="1.1" />
-                         <path d="M2.6 5.2h0.6M2.6 8h0.6M2.6 10.8h0.6M12.8 5.2h0.6M12.8 8h0.6M12.8 10.8h0.6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                       </svg>
-                       {f.name}
-                     </button>
-                   );
-                 })}
-                 {proMode && <span aria-hidden className="shrink-0 w-px h-5 bg-white/15 mx-1" />}
                  {lutList.map((lut, idx) => (
                    <button
                     key={lut.id}
-                    onClick={() => { haptic('tick'); setSelectedLutIdx(idx); setFilmId(null); }}
-                    className={`shrink-0 h-8 px-3.5 rounded-full text-[12px] font-medium whitespace-nowrap ring-1 ring-inset transition-[background-color,color,transform] duration-200 active:scale-95 ${!activeFilm && selectedLutIdx === idx ? 'bg-white text-black ring-white' : 'bg-white/[0.07] text-white/70 ring-white/10'}`}
+                    onClick={() => { haptic('tick'); setSelectedLutIdx(idx); }}
+                    className={`shrink-0 h-8 px-3.5 rounded-full text-[12px] font-medium whitespace-nowrap ring-1 ring-inset transition-[background-color,color,transform] duration-200 active:scale-95 ${selectedLutIdx === idx ? 'bg-white text-black ring-white' : 'bg-white/[0.07] text-white/70 ring-white/10'}`}
                    >
                      {lut.url ? lut.name : '原始'}
                    </button>
@@ -1852,8 +1798,17 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           rawShots={rawShots}
           onDelete={(idx) => setPhotos(prev => { forgetRaw(prev[idx]); releaseUrl(prev[idx]); return prev.filter((_, i) => i !== idx); })}
           onImport={(newPhotos) => setPhotos(prev => [...newPhotos, ...prev])}
-          onEdit={(src, idx) => { void openEditor(src, idx); }}
+          onEdit={(src, idx) => openEditor(src, idx)}
         />
+      )}
+
+      {developing && rawOfRef.current.get(developing.src) && createPortal(
+        <RawDevelopSheet
+          rawPath={rawOfRef.current.get(developing.src)!.path}
+          protectEV={rawOfRef.current.get(developing.src)!.protectEV}
+          onCancel={() => setDeveloping(null)}
+          onDone={finishDevelop}
+        />, document.body
       )}
 
       {editingPhoto && createPortal(
