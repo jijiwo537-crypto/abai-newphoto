@@ -29,7 +29,82 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "available", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "decode", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "decodeFile", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "openEditor", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "updateEditor", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setEditorRect", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "exportEditor", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "closeEditor", returnType: CAPPluginReturnPromise),
     ]
+
+    // MARK: 即時沖洗（見 ABAIRawDevelop.swift）
+    //   openEditor({ path, x, y, w, h, look }) → { asShotTemperature, asShotTint }  原生預覽疊在網頁那一塊透明的位置底下
+    //   updateEditor({ params, final })   拖滑桿時每一格送；放手送 final（完整品質）
+    //   setEditorRect({ x, y, w, h })  exportEditor({ params }) → { path }  closeEditor()
+
+    private var session: ABAIRawSession?
+    private var editorView: ABAIMetalView?
+    /// 開沖洗之前網頁是不是本來就透明（相機開著時是）：關掉時還原成原本的樣子，不要把相機的觀景窗蓋掉
+    private var webWasTransparent = false
+
+    @objc func openEditor(_ call: CAPPluginCall) {
+        guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? "") else { call.reject("沒有路徑"); return }
+        let look = call.getObject("look") as [String: Any]?
+        let frame = CGRect(x: call.getDouble("x") ?? 0, y: call.getDouble("y") ?? 0, width: call.getDouble("w") ?? 1, height: call.getDouble("h") ?? 1)
+        DispatchQueue.main.async {
+            guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有畫面"); return }
+            self.editorView?.removeFromSuperview()
+            guard let v = ABAIMetalView.make(frame: frame.offsetBy(dx: web.frame.minX, dy: web.frame.minY)) else { call.reject("這台裝置沒有 Metal"); return }
+            v.fill = false
+            parent.insertSubview(v, belowSubview: web)
+            self.editorView = v
+            self.webWasTransparent = !web.isOpaque
+            NativePreviewPlugin.setWebTransparent(web, true)
+            let side = max(frame.width, frame.height) * UIScreen.main.scale
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let s = ABAIRawSession(url: url, look: look, view: v, longSide: max(600, side)) else {
+                    DispatchQueue.main.async { self.tearDown() }
+                    call.reject("系統不認得這個 RAW 格式"); return
+                }
+                self.session = s
+                call.resolve(["asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint])
+            }
+        }
+    }
+
+    @objc func updateEditor(_ call: CAPPluginCall) {
+        session?.update(ABAIRawParams(call.getObject("params") as [String: Any]?), final: call.getBool("final") ?? false)
+        call.resolve()
+    }
+
+    @objc func setEditorRect(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            if let v = self.editorView, let web = self.bridge?.webView {
+                v.frame = CGRect(x: web.frame.minX + (call.getDouble("x") ?? 0), y: web.frame.minY + (call.getDouble("y") ?? 0),
+                                 width: call.getDouble("w") ?? 1, height: call.getDouble("h") ?? 1)
+            }
+            call.resolve()
+        }
+    }
+
+    @objc func exportEditor(_ call: CAPPluginCall) {
+        guard let s = session else { call.reject("沒有開沖洗"); return }
+        let p = ABAIRawParams(call.getObject("params") as [String: Any]?)
+        DispatchQueue.global(qos: .userInitiated).async {
+            autoreleasepool {
+                do { call.resolve(["path": try s.export(p).path]) } catch { call.reject(error.localizedDescription) }
+            }
+        }
+    }
+
+    @objc func closeEditor(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { self.tearDown(); call.resolve() }
+    }
+
+    private func tearDown() {
+        session = nil
+        editorView?.removeFromSuperview(); editorView = nil
+        if let web = bridge?.webView { NativePreviewPlugin.setWebTransparent(web, webWasTransparent) }
+    }
 
     /// 共用原生影像核心的 context（線性 P3、16 位元浮點）：RAW 的寬色域不會在中間被切掉
     private var ciContext: CIContext { ABAIImageCore.context }

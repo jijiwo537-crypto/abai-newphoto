@@ -119,3 +119,36 @@ export async function developRaw(rawPath: string, dev: RawDevelop = { exposure: 
     for (const p of [decoded, rendered]) if (p) img.remove({ path: p }).catch(() => {});
   }
 }
+
+
+/* ── 即時 RAW 沖洗（ios/App/App/ABAIRawDevelop.swift）────────────────────
+ * 原生預覽疊在網頁一塊透明的位置底下（punchThrough），拖滑桿時每一格送參數，原生端在 GPU 上即時重畫。 */
+export interface RawEditParams {
+  exposure: number; temperature?: number; tint?: number;
+  contrast: number; highlights: number; shadows: number; whites: number; blacks: number;
+  vibrance: number; saturation: number;
+  /** 八個色相 × [色相, 飽和度, 明度]，各 -1～1 */
+  hsl: number[];
+  /** 256 格 × RGB，null＝直線 */
+  curve: number[] | null;
+}
+interface RawEditorApi {
+  openEditor(o: { path: string; x: number; y: number; w: number; h: number; look: RawLook | null }): Promise<{ asShotTemperature: number; asShotTint: number }>;
+  updateEditor(o: { params: RawEditParams; final: boolean }): Promise<void>;
+  setEditorRect(o: { x: number; y: number; w: number; h: number }): Promise<void>;
+  exportEditor(o: { params: RawEditParams }): Promise<{ path: string }>;
+  closeEditor(): Promise<void>;
+}
+export const rawEditor = () => nativePlugin<RawEditorApi & { openEditor?: unknown }>('RawDecode')
+  .then(p => (p && typeof (p as any).openEditor === 'function' ? p as RawEditorApi : null));
+/** 輸出的檔案 → 網頁用的網址（讀完就把暫存檔刪掉） */
+export async function rawEditorExport(params: RawEditParams): Promise<string | null> {
+  const p = await rawEditor(); const img = await nativeImage();
+  if (!p) return null;
+  try {
+    const r = await p.exportEditor({ params });
+    const blob = await (await fetch(fileSrc(r.path))).blob();
+    img?.remove({ path: r.path }).catch(() => {});
+    return URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' }));
+  } catch { return null; }
+}
