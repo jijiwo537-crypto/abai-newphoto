@@ -138,6 +138,7 @@ interface RawEditorApi {
   setEditorRect(o: { x: number; y: number; w: number; h: number }): Promise<void>;
   exportEditor(o: { params: RawEditParams }): Promise<{ path: string }>;
   closeEditor(): Promise<void>;
+  dismissEditor(): Promise<void>;
 }
 export const rawEditor = () => nativePlugin<RawEditorApi & { openEditor?: unknown }>('RawDecode')
   .then(p => (p && typeof (p as any).openEditor === 'function' ? p as RawEditorApi : null));

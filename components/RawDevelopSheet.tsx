@@ -13,6 +13,8 @@ import { developRaw, rawEditor, rawEditorExport, type RawEditParams, type RawLoo
 
 export interface RawDevelopSheetProps {
   rawPath: string;
+  previewSrc?: string;
+  leaving?: boolean;
   /** 拍的時候少曝光了幾格（曝光的預設值就是把它沖回來） */
   protectEV: number;
   /** 拍照當下的樣子（濾鏡、特效、裁切、日期） */
@@ -71,7 +73,7 @@ function curveTable(pts: Pt[]): Float32Array {
 }
 const isLine = (pts: Pt[]) => pts.length === 2 && pts[0][0] === 0 && pts[0][1] === 0 && pts[1][0] === 1 && pts[1][1] === 1;
 
-export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, protectEV, look, onCancel, onDone, developer = developRaw }) => {
+export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previewSrc, leaving = false, protectEV, look, onCancel, onDone, developer = developRaw }) => {
   const [tool, setTool] = useState<Tool>('light');
   const [band, setBand] = useState(0);
   const [channel, setChannel] = useState<Channel>('rgb');
@@ -86,8 +88,16 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, prote
   const [entered, setEntered] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
   const comparing = useRef(false);
+  const leavingRef = useRef(leaving); leavingRef.current = leaving;
 
-  useEffect(() => { const t = requestAnimationFrame(() => setEntered(true)); return () => cancelAnimationFrame(t); }, []);
+  useEffect(() => {
+    let second = 0;
+    const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => setEntered(true)); });
+    return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
+  }, []);
+  useEffect(() => {
+    if (leaving && mode === 'native') void rawEditor().then(p => p?.dismissEditor()).catch(() => {});
+  }, [leaving, mode]);
 
   /* ── 參數 → 原生 ── */
   const toParams = (s: State): RawEditParams => {
@@ -128,6 +138,9 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, prote
     let alive = true, restore: (() => void) | null = null, ro: ResizeObserver | null = null;
     const el = stage.current;
     void (async () => {
+      /* 先讓整頁完成入場；原生 Metal 預覽依最後位置建立，入場時以原照片銜接。 */
+      await new Promise(resolve => window.setTimeout(resolve, 375));
+      if (!alive || leavingRef.current) return;
       const p = await rawEditor();
       if (!alive || !el) return;
       if (!p) { setMode('web'); return; }
@@ -238,13 +251,13 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, prote
 
   return (
     <div data-raw-develop
-      className={`fixed inset-0 z-[300] flex flex-col text-white select-none transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${mode === 'native' ? '' : 'bg-black'} ${entered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}
+      className={`fixed inset-0 z-[300] flex flex-col text-white select-none transition-transform duration-[360ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${mode === 'native' ? '' : 'bg-black'} ${leaving ? 'translate-x-full' : entered ? 'translate-y-0' : 'translate-y-full'}`}
       style={mode === 'native' ? undefined : undefined}>
       {/* 原生預覽時，只有中間那塊是透明的（其他地方照樣黑底） */}
       <div className="shrink-0 bg-black" style={{ height: 'max(env(safe-area-inset-top), 12px)' }} />
       <div ref={stage} className="flex-1 min-h-0 relative bg-black"
         onPointerDown={() => compare(true)} onPointerUp={() => compare(false)} onPointerCancel={() => compare(false)} onPointerLeave={() => comparing.current && compare(false)}>
-        {mode === 'web' && webUrl && <img src={webUrl} alt="" draggable={false} className="absolute inset-0 w-full h-full object-contain" />}
+        {mode !== 'native' && (webUrl || previewSrc) && <img src={webUrl || previewSrc} alt="" draggable={false} className="absolute inset-0 w-full h-full object-contain" />}
       </div>
 
       <div className={`shrink-0 bg-black pt-4 transition-opacity ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
