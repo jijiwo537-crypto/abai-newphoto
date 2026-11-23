@@ -246,8 +246,16 @@ enum ABAIRawDevelop {
         }
         let hslOn = p.hsl.contains(where: { abs($0) > 0.001 })
         if hslOn || abs(p.vibrance) > 0.001 || abs(p.saturation) > 0.001, let k = colorKernel {
-            let bands = (0..<8).map { i in CIVector(x: CGFloat(p.hsl[i * 3]), y: CGFloat(p.hsl[i * 3 + 1]), z: CGFloat(p.hsl[i * 3 + 2]), w: bandHues[i]) }
-            img = k.apply(extent: e, arguments: ([img, p.vibrance, p.saturation] as [Any]) + bands.map { $0 as Any }) ?? img
+            var arguments: [Any] = [img, p.vibrance, p.saturation]
+            for i in 0..<8 {
+                let offset = i * 3
+                let hue = CGFloat(p.hsl[offset])
+                let saturation = CGFloat(p.hsl[offset + 1])
+                let lightness = CGFloat(p.hsl[offset + 2])
+                let band = CIVector(x: hue, y: saturation, z: lightness, w: bandHues[i])
+                arguments.append(band)
+            }
+            img = k.apply(extent: e, arguments: arguments) ?? img
         }
         if let k = viewKernel { img = k.apply(extent: e, arguments: [img]) ?? img }
         if let curve = p.curve, let f = CIFilter(name: "CIColorCurves") {

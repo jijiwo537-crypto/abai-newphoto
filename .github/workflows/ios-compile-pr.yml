@@ -1,0 +1,40 @@
+name: iOS compile check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'capacitor.config.ts'
+      - '.github/workflows/ios-compile-pr.yml'
+  workflow_dispatch:
+
+jobs:
+  compile:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply existing deployment layout
+        run: git apply .github/deploy-layout.patch
+      - name: Install dependencies
+        run: |
+          rm -f package-lock.json
+          npm install --no-audit --no-fund
+      - name: Build web assets
+        run: npm run build
+      - name: Sync iOS project
+        run: npx cap sync ios
+      - name: Compile iOS without signing
+        run: |
+          if ! xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build > xcodebuild.log 2>&1; then
+            grep -E 'error:|BUILD FAILED' xcodebuild.log | head -60 || true
+            tail -80 xcodebuild.log
+            exit 1
+          fi
+          grep -F '** BUILD SUCCEEDED **' xcodebuild.log
