@@ -57,7 +57,9 @@ enum ABAIRawDevelop {
         guard let f = CIRAWFilter(imageURL: url) else { return nil }
         f.isDraftModeEnabled = draft
         f.isGamutMappingEnabled = false          // 色域交給最後一步（保住色相的那一套）
-        f.extendedDynamicRangeAmount = 1         // 超過白的亮部留著，曝光拉低時救得回來
+        /* 超過白的亮部全部留著（EDR 開到最大 2），曝光、高光往回拉時救得回來；
+           之後整條都在線性 16 位元浮點上做，最後一步才用肩部柔收印出來 */
+        f.extendedDynamicRangeAmount = 2
         if let ls = longSide, f.nativeSize.width > 0 {
             f.scaleFactor = Float(min(1, ls / max(f.nativeSize.width, f.nativeSize.height)))
         }
@@ -80,10 +82,10 @@ enum ABAIRawDevelop {
         float Y = max(dot(c, W), 1e-6);
         float e = log2(Y / 0.18);
         float e2 = e * (1.0 + contrast * 0.55);
-        e2 += highlights * 1.6 * smoothstep(-0.5, 2.5, e);
-        e2 += shadows * 1.6 * (1.0 - smoothstep(-4.5, 0.0, e));
-        e2 += whites * 1.0 * smoothstep(1.0, 3.2, e);
-        e2 += blacks * 1.4 * (1.0 - smoothstep(-7.0, -2.5, e));
+        e2 += highlights * 2.6 * smoothstep(-0.5, 3.5, e);
+        e2 += shadows * 2.6 * (1.0 - smoothstep(-5.5, 0.0, e));
+        e2 += whites * 1.5 * smoothstep(1.0, 4.0, e);
+        e2 += blacks * 1.6 * (1.0 - smoothstep(-8.0, -2.5, e));
         float Y2 = 0.18 * exp2(e2);
         vec3 o = c * (Y2 / Y);
         float Y3 = dot(o, W);
@@ -225,6 +227,21 @@ final class ABAIRawSession {
         filter = f
         asShotTemperature = Double(f.neutralTemperature)
         asShotTint = Double(f.neutralTint)
+    }
+
+    /// 打開時的第一格：同步算好（在沖洗自己的佇列上），讓畫面先有圖，網頁才把那一塊挖空 ——
+    /// 不然挖空的瞬間底下什麼都還沒畫，會透出後面的相機畫面。
+    func renderFirst(_ p: ABAIRawParams) -> CIImage? {
+        queue.sync {
+            autoreleasepool { () -> CIImage? in
+                guard let f = filter, let out = ABAIRawDevelop.applyRaw(f, p) else { return nil }
+                guard let cg = ABAIImageCore.context.createCGImage(out, from: out.extent, format: .RGBAh, colorSpace: ABAIImageCore.linearP3) else { return nil }
+                let base = CIImage(cgImage: cg)
+                proxy = base
+                proxyKey = p.rawKey
+                return ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(base, p), look: look, withDate: false)
+            }
+        }
     }
 
     /// final：手指放開了 —— 用完整品質（非 draft）重算 RAW 那一步

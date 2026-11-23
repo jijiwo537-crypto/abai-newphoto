@@ -133,15 +133,30 @@ export interface RawEditParams {
   curve: number[] | null;
 }
 interface RawEditorApi {
-  openEditor(o: { path: string; x: number; y: number; w: number; h: number; look: RawLook | null }): Promise<{ asShotTemperature: number; asShotTint: number }>;
+  /** params：第一格用的參數（原生先畫好第一格才回來，網頁收到再挖空） */
+  openEditor(o: { path: string; x: number; y: number; w: number; h: number; look: RawLook | null; params?: Partial<RawEditParams> }): Promise<{ asShotTemperature: number; asShotTint: number }>;
   updateEditor(o: { params: RawEditParams; final: boolean }): Promise<void>;
   setEditorRect(o: { x: number; y: number; w: number; h: number }): Promise<void>;
   exportEditor(o: { params: RawEditParams }): Promise<{ path: string }>;
   closeEditor(): Promise<void>;
   dismissEditor(): Promise<void>;
+  /** 畫面上那一格存成 JPEG（舊版原生沒有這支） */
+  snapshotEditor?(): Promise<{ path?: string }>;
 }
 export const rawEditor = () => nativePlugin<RawEditorApi & { openEditor?: unknown }>('RawDecode')
   .then(p => (p && typeof (p as any).openEditor === 'function' ? p as RawEditorApi : null));
+/** 沖洗畫面目前那一格 → 網頁用的網址（退場時當定格圖）；拿不到回 null */
+export async function rawEditorSnapshot(): Promise<string | null> {
+  const p = await rawEditor(); const img = await nativeImage();
+  if (!p?.snapshotEditor) return null;
+  try {
+    const r = await p.snapshotEditor();
+    if (!r?.path) return null;
+    const blob = await (await fetch(fileSrc(r.path))).blob();
+    img?.remove({ path: r.path }).catch(() => {});
+    return URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' }));
+  } catch { return null; }
+}
 /** 輸出的檔案 → 網頁用的網址（讀完就把暫存檔刪掉） */
 export async function rawEditorExport(params: RawEditParams): Promise<string | null> {
   const p = await rawEditor(); const img = await nativeImage();

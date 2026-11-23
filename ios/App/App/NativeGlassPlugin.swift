@@ -71,9 +71,12 @@ enum ABAIGlass {
     static func image(_ symbol: String, pointSize: CGFloat = 19, weight: UIImage.SymbolWeight = .regular) -> UIImage? {
         if symbol == "abai.level" { return levelIcon(size: pointSize + 2) }
         if symbol == "abai.raw" {
-            let size = CGSize(width: 24, height: 24)
+            /* 24×24 的設計稿，跟著 pointSize 等比例縮放（19pt 時剛好跟其他 SF Symbol 一樣大） */
+            let k = (pointSize + 3) / 24
+            let size = CGSize(width: 24 * k, height: 24 * k)
             return UIGraphicsImageRenderer(size: size).image { ctx in
                 let c = ctx.cgContext
+                c.scaleBy(x: k, y: k)
                 c.setStrokeColor(UIColor.white.cgColor)
                 c.setFillColor(UIColor(white: 0.08, alpha: 1).cgColor)
                 c.setLineWidth(1.7)
@@ -90,6 +93,16 @@ enum ABAIGlass {
             }.withRenderingMode(.alwaysTemplate)
         }
         return UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight))
+    }
+
+    /// SF Symbol 的圖片框含有文字基線的留白（分享、垃圾桶這類圖示放進按鈕會看起來偏上／偏下）。
+    /// 照圖形本身的範圍（alignment rect）重新畫成一張置中的圖，放進按鈕就是視覺上的正中間。
+    static func opticallyCentered(_ img: UIImage) -> UIImage {
+        let ins = img.alignmentRectInsets
+        let w = img.size.width - ins.left - ins.right, h = img.size.height - ins.top - ins.bottom
+        guard w > 0, h > 0, ins != .zero else { return img }
+        let r = UIGraphicsImageRenderer(size: CGSize(width: w, height: h))
+        return r.image { _ in img.draw(at: CGPoint(x: -ins.left, y: -ins.top)) }.withRenderingMode(.alwaysTemplate)
     }
 }
 
@@ -184,7 +197,12 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         let id = spec["id"] as? String ?? ""
         let b = UIButton(type: .system)
         b.tintColor = Self.color(spec["tint"] as? String ?? "white")
-        if let s = spec["symbol"] as? String { b.setImage(ABAIGlass.image(s), for: .normal) }
+        /* pointSize：這顆圖示多大（不給＝19）。有指定的就照圖形本身置中（見 opticallyCentered） */
+        let ps = (spec["pointSize"] as? NSNumber).map { CGFloat($0.doubleValue) }
+        if let s = spec["symbol"] as? String, let img = ABAIGlass.image(s, pointSize: ps ?? 19) {
+            b.setImage(ps != nil ? ABAIGlass.opticallyCentered(img) : img, for: .normal)
+        }
+        b.imageView?.contentMode = .center
         if let t = spec["title"] as? String {
             b.setTitle(t, for: .normal)
             b.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -210,7 +228,8 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
             : [item]
         let content = glass.contentView
         let count = max(1, specs.count)
-        let pad: CGFloat = specs.count > 1 ? 8 : 0
+        /* 膠囊左右內距：不給＝8（給 pad 的話照給的，例如相簿大圖把三顆平均分滿整條膠囊） */
+        let pad: CGFloat = specs.count > 1 ? ((item["pad"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 8) : 0
         let w = (frame.width - pad * 2) / CGFloat(count)
         for (i, s) in specs.enumerated() {
             let b = makeButton(s, group: group, into: &map)

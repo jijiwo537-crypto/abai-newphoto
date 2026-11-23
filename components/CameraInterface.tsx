@@ -339,8 +339,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [locationOn, setLocationOnState] = useState(() => prefGet('abai-camera-location') === '1');
   const setLocationOn = (v: boolean) => { setLocationOnState(v); prefSet('abai-camera-location', v ? '1' : null); };
   /** 縮放模式：全螢幕＝雙指直接放大縮小（跟內建相機一樣）；線框＝雙指捏出小框構圖 */
-  const [zoomMode, setZoomModeState] = useState<'full' | 'frame'>(() => prefGet('abai-camera-zoom-mode') === 'full' ? 'full' : 'frame');
-  const setZoomMode = (v: 'full' | 'frame') => { setZoomModeState(v); prefSet('abai-camera-zoom-mode', v); };
+  /* 預設是全螢幕；只有自己在選單裡改成線框才記住線框（換了新的 key，舊版預設存下來的「線框」不算數） */
+  const [zoomMode, setZoomModeState] = useState<'full' | 'frame'>(() => prefGet('abai-camera-zoom-mode-v2') === 'frame' ? 'frame' : 'full');
+  const setZoomMode = (v: 'full' | 'frame') => { setZoomModeState(v); prefSet('abai-camera-zoom-mode-v2', v === 'frame' ? 'frame' : null); };
+  useEffect(() => { prefSet('abai-camera-zoom-mode', null); }, []);
   const zoomModeRef = useRef(zoomMode); zoomModeRef.current = zoomMode;
   /** 全螢幕縮放：雙指捏到的倍率（介面倍率，1＝主鏡頭）。null＝停在按鈕的倍率上 */
   const [liveZoom, setLiveZoom] = useState<number | null>(null);
@@ -369,12 +371,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   };
   const onFramePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse') return;
+    /* 第一根手指（isPrimary）＝新的一次觸控：清掉上一次沒收到放開事件的殘留手指。
+       不清的話，殘留的那一筆會讓「一根手指」被當成兩指，單手就能拉動線框。 */
+    if (e.isPrimary) { pointersRef.current.clear(); pinchRef.current = null; }
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    /* 點過對焦之後上下拖：調曝光（跟內建相機一樣）。這一下先記起點，移動夠多才算數 */
-    evDraggedRef.current = false;
-    evDragRef.current = pointersRef.current.size === 1
-      ? { id: e.pointerId, x: e.clientX, y: e.clientY, ev0: parseFloat(settingsExposureRef.current) || 0, active: false }
-      : null;
     if (pointersRef.current.size === 2) {
       const d = pinchDist();
       if (d > 8 && zoomModeRef.current === 'full' && proModeRef.current) {
@@ -395,9 +395,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const onFramePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!pointersRef.current.has(e.pointerId)) return;
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (moveExposureDrag(e)) return;
     const p = pinchRef.current;
-    if (!p || pointersRef.current.size < 2) return;
+    // 只有兩根手指同時在畫面上才縮放（線框、全螢幕都一樣），單指拖動不做任何事
+    if (!p || pointersRef.current.size !== 2) return;
     const d = pinchDist();
     if (!d) return;
     if (p.full) {
@@ -420,7 +420,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   };
   const onFramePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!pointersRef.current.delete(e.pointerId)) return;
-    endExposureDrag(e.pointerId);
     if (pinchRef.current?.full && pointersRef.current.size < 2) {
       pinchRef.current = null;
       focusGuardUntilRef.current = performance.now() + 400;
@@ -443,7 +442,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, []);
   useEffect(() => () => { ownedUrlsRef.current.forEach(u => URL.revokeObjectURL(u)); ownedUrlsRef.current.clear(); }, []);
   const [showGallery, setShowGallery] = useState(false);
-  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[] } | null>(null);
+  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[]; /** 從 RAW 沖洗接過來：直接出現在原位，不再從下面滑上來 */ instant?: boolean } | null>(null);
   const [editorEntered, setEditorEntered] = useState(false);
   const [editorLeaving, setEditorLeaving] = useState(false);
   const editorExitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -482,59 +481,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const lastCameraTickRef = useRef<string>('');
   const focusPointRef = useRef(focusPoint); focusPointRef.current = focusPoint;
 
-  /* ── 點對焦後上下拖動調曝光（跟 iOS 內建相機一樣）──────────────────
-     點一下對焦之後，對焦框旁邊出現一顆小太陽；框還在的時候，手指在畫面上
-     上下拖：往上變亮、往下變暗，太陽跟著上下走。調的是跟下面「曝光」轉盤同一個值
-     （連續變化、不分格，拖的時候不震），所以轉盤那邊也會同步。拖過的這一下不會再當成點擊去重新對焦。
-     靈敏度刻意很低（手指走約 320px 才 1 EV），可以做很細的微調。 */
-  const EV_PX_PER_EV = 320;  // 手指走幾 px 算 1 EV
-  const EV_LINE = 64;        // 曝光線上、下各多長；太陽中心從一端走到另一端＝-1 EV 到 +1 EV
-  const EV_SLOP = 8;         // 先走這麼多才算開始拖（避免點一下時手指微晃就改到曝光）
-  const evDragRef = useRef<{ id: number; x: number; y: number; ev0: number; active: boolean } | null>(null);
-  /** 這一次觸控有拖過曝光：放手時不當成點擊對焦 */
-  const evDraggedRef = useRef(false);
-  const [evDragging, setEvDragging] = useState(false);
   /* 手機怎麼拿（原生相機用重力感應回報；介面本身鎖在直的）：0 直拿、1 頂端朝左、3 頂端朝右。
      圖示跟著轉正（跟內建相機一樣滑順地轉過去），橫拿拍出來是橫的照片，日期也印在那張照片的長邊上 */
   const [uiTurns, setUiTurns] = useState(0);
   const uiTurnsRef = useRef(0); uiTurnsRef.current = uiTurns;
   const uiAngle = uiTurns === 1 ? 90 : uiTurns === 3 ? -90 : 0;
-  const settingsExposureRef = useRef('0.0'); settingsExposureRef.current = settings.exposure;
   const hideFocusLater = (ms: number) => {
     if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
     focusTimerRef.current = setTimeout(() => { setFocusPoint(null); focusTimerRef.current = null; }, ms);
-  };
-  const moveExposureDrag = (e: React.PointerEvent<HTMLDivElement>): boolean => {
-    const d = evDragRef.current;
-    if (!d || d.id !== e.pointerId || pointersRef.current.size !== 1 || pinchRef.current) return false;
-    const dx = e.clientX - d.x, dy = e.clientY - d.y;
-    if (!d.active) {
-      // 要先有對焦框（點過對焦）才能拖；直向明顯大於橫向才算
-      if (!focusPointRef.current || Math.abs(dy) < EV_SLOP || Math.abs(dy) < Math.abs(dx) * 1.2) return false;
-      d.active = true;
-      // 從越過門檻的那一點開始算，不會一開始就跳一格
-      d.y = e.clientY;
-      evDraggedRef.current = true;
-      if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; }
-      if (focusTimerRef.current) { clearTimeout(focusTimerRef.current); focusTimerRef.current = null; }
-      setEvDragging(true);
-      return true;
-    }
-    /* 連續的值（存到小數第二位就夠細，不會一格一格跳） */
-    const n = Math.max(-1, Math.min(1, d.ev0 - (e.clientY - d.y) / EV_PX_PER_EV));
-    const r = Math.round(n * 100) / 100;
-    const val = `${r > 0 ? '+' : ''}${r.toFixed(2)}`;
-    if (val !== settingsExposureRef.current) {
-      settingsExposureRef.current = val;   // 拖對焦框旁的太陽調曝光：不震
-      setSettings(prev => ({ ...prev, exposure: val }));
-    }
-    return true;
-  };
-  const endExposureDrag = (id: number) => {
-    const d = evDragRef.current;
-    if (!d || d.id !== id) return;
-    evDragRef.current = null;
-    if (d.active) { setEvDragging(false); hideFocusLater(2200); }
   };
   
   const localFileInputRef = useRef<HTMLInputElement>(null);
@@ -836,7 +790,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
   const handleFocus = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement> | React.PointerEvent<HTMLDivElement>) => {
     // 剛剛是雙指縮放小框，或是上下拖在調曝光，不是點一下對焦
-    if (evDraggedRef.current || gesturePinchedRef.current || performance.now() < focusGuardUntilRef.current) return;
+    if (gesturePinchedRef.current || performance.now() < focusGuardUntilRef.current) return;
     if (showSettingsMenu) {
       /* 收起選單不能吃掉這次點擊；同一次點擊仍然要顯示並執行對焦。 */
       setShowSettingsMenu(false);
@@ -1355,11 +1309,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const closeRawDevelop = () => {
     if (rawLeaving) return;
     setRawLeaving(true);
-    rawExitTimer.current = setTimeout(() => { setDeveloping(null); setRawLeaving(false); }, 370);
+    rawExitTimer.current = setTimeout(() => { setDeveloping(null); setRawLeaving(false); }, 400);
   };
   /** pro：專業編輯（全部分頁：模板、人像、仿色…）；RAW 都先沖洗 */
   const openEditor = (src: string, idx: number, pro = false) => {
-    if (rawOfRef.current.has(src)) { setDeveloping({ src, idx, pro }); return; }
+    /* 只有 RAW 鈕（pro）才進 RAW 沖洗；中間的編輯鈕一律直接進編輯（用拍好的那張 JPEG） */
+    if (pro && rawOfRef.current.has(src)) { setDeveloping({ src, idx, pro }); return; }
     setEditingPhoto({ src, index: idx, init: null, pro });
     setEditorId(prev => prev + 1);
   };
@@ -1377,7 +1332,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (developedUrlRef.current) URL.revokeObjectURL(developedUrlRef.current);
     developedUrlRef.current = url;
     setDeveloping(null);
-    setEditingPhoto({ src: url, index: d.idx, init: null, pro: d.pro });
+    setEditingPhoto({ src: url, index: d.idx, init: null, pro: d.pro, instant: true });
     setEditorId(prev => prev + 1);
   };
   useEffect(() => {
@@ -1711,17 +1666,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             </div>
             
             {focusPoint && (() => {
-                /* 太陽在框的右邊；點在很右邊時改放左邊（跟內建相機一樣）。上下位置＝目前的曝光（±1 EV＝太陽中心走到線的兩端） */
-                const ev = Math.max(-1, Math.min(1, parseFloat(settings.exposure) || 0));
-                const frameW = frameDims()?.w ?? 0;
-                const sunLeft = frameW > 0 && focusPoint.x > frameW - 70;
-                const sunX = sunLeft ? -39 - 13 : 39 + 13;
-                const sunY = -ev * EV_LINE;
+                /* 只有對焦框：旁邊不出現曝光小太陽（曝光用下面的轉盤調） */
                 return (
                 <div
                     key={focusPoint.nonce}
                     className="absolute z-40 pointer-events-none animate-[camFocusHold_2.2s_linear_forwards]"
-                    style={{ left: focusPoint.x, top: focusPoint.y, transform: 'translate(-50%, -50%)', animationPlayState: evDragging ? 'paused' : 'running', ...(evDragging ? { animationName: 'none', opacity: 1 } : {}) }}
+                    style={{ left: focusPoint.x, top: focusPoint.y, transform: 'translate(-50%, -50%)' }}
                 >
                     {/* 陰影改成畫在 SVG 裡的一條淡黑線：CSS 的 drop-shadow 濾鏡疊在每格都在重畫的
                         觀景窗上，縮放動畫的每一格都要重算一次模糊，對焦那一下就會頓。 */}
@@ -1735,19 +1685,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                              {/* 四條刻度全部向框內延伸，不再凸出框外。 */}
                              <path d="M39 4.5V13M39 73.5V65M4.5 39H13M73.5 39H65" stroke="#fff" strokeWidth="1" strokeLinecap="square"/>
                          </svg>
-                    </div>
-                    {/* 曝光的小太陽：拖的時候上下各拉出一條細線（太陽那一段空出來） */}
-                    <div className="absolute left-1/2 top-1/2" style={{ transform: `translate(${sunX}px, 0)` }}>
-                      <div className={`absolute left-0 w-px bg-white/80 transition-opacity duration-200 ${evDragging ? 'opacity-100' : 'opacity-0'}`}
-                           style={{ top: -EV_LINE, height: Math.max(0, EV_LINE + sunY - 11) }} />
-                      <div className={`absolute left-0 w-px bg-white/80 transition-opacity duration-200 ${evDragging ? 'opacity-100' : 'opacity-0'}`}
-                           style={{ top: sunY + 11, height: Math.max(0, EV_LINE - sunY - 11) }} />
-                      <svg width="20" height="20" viewBox="0 0 20 20" className="absolute" style={{ left: -10, top: sunY - 10 }} aria-hidden>
-                        <circle cx="10" cy="10" r="3.6" fill="#fff" />
-                        <g stroke="#fff" strokeWidth="1.4" strokeLinecap="round">
-                          <path d="M10 1.6v2.2M10 16.2v2.2M1.6 10h2.2M16.2 10h2.2M4.06 4.06l1.56 1.56M14.38 14.38l1.56 1.56M4.06 15.94l1.56-1.56M14.38 5.62l1.56-1.56" />
-                        </g>
-                      </svg>
                     </div>
                 </div>
                 );
@@ -2028,7 +1965,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       )}
 
       {editingPhoto && createPortal(
-        <div className={`fixed inset-0 z-[300] bg-black transition-transform duration-[360ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${editorLeaving ? 'translate-x-full' : editorEntered ? 'translate-x-0 translate-y-0' : 'translate-y-full'}`} data-camera-editor>
+        <div className={`fixed inset-0 z-[300] bg-black transition-transform duration-[360ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${editorLeaving ? 'translate-y-full' : editorEntered || editingPhoto.instant ? 'translate-x-0 translate-y-0' : 'translate-y-full'}`} style={editingPhoto.instant && !editorEntered ? { transition: 'none' } : undefined} data-camera-editor>
         <ImageEditor 
           compactBottomBar
           fullTabs={!!editingPhoto.pro}

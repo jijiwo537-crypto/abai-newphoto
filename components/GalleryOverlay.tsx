@@ -1,11 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
 import { prepareFiles, shareSheet } from '../utils/shareAll';
 import { useNativeGlass } from '../utils/nativeGlass';
 import { haptic } from '../utils/haptics';
+import { setStatusBarHidden } from '../utils/native';
 
 /* ── 相機的相簿 ───────────────────────────────────────────────────────
- * 格狀列表：右上勾選鈕 → 點照片勾選 → 下面一條按鈕：愛心、分享、編輯、刪除。
+ * 格狀列表：越新的越下面（打開時停在最底），右上圓形勾選鈕 → 點照片勾選 → 下面一條按鈕：愛心、分享、編輯、刪除。
+ * 元件內的 index 一律是「畫面上的順序」（舊→新）；交給外面之前才換回 photos 的 index（新→舊）。
  * 左下圓鈕＝回相機（整頁往下滑走）。
  * 點一張照片：全螢幕看大圖（左右滑換張、向下滑關閉）；RAW 照片才顯示 RAW 沖洗入口。
  * App 裡這些按鈕都是原生的液態玻璃按鈕（見 utils/nativeGlass）；網頁版用長得一樣的網頁按鈕。 */
@@ -34,7 +37,10 @@ interface GalleryOverlayProps {
   labelOf?: (src: string) => string | null;
 }
 
-const CIRCLE = 48;
+/** 相簿左下回相機的圓鈕 */
+const BACK_CIRCLE = 54;
+/** 大圖下面的圓鈕、膠囊高度 */
+const CIRCLE = 46;
 
 /** 沖洗圖示：三條對稱調節線，沒有角落裝飾線。 */
 const RawEditIcon: React.FC<{ size?: number }> = ({ size = 21 }) => (
@@ -49,6 +55,9 @@ const RawEditIcon: React.FC<{ size?: number }> = ({ size = 21 }) => (
 export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   photos, thumbs = {}, onClose, onDelete, onEdit, onProEdit, onEditMany, rawShots, suspended = false, favorites, onFavorite, labelOf,
 }) => {
+  /* 畫面上的順序：舊的在上、新的在下（photos 本身是新→舊） */
+  const shown = useMemo(() => [...photos].reverse(), [photos]);
+  const orig = (d: number) => photos.length - 1 - d;
   const [closing, setClosing] = useState(false);
   const [entered, setEntered] = useState(false);
   const [selecting, setSelecting] = useState(false);
@@ -74,7 +83,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   };
 
   const share = async (idx: number[]) => {
-    const urls = idx.map(i => photos[i]).filter(Boolean);
+    const urls = idx.map(i => shown[i]).filter(Boolean);
     if (!urls.length) return;
     const files = await prepareFiles(urls, 'abai');
     await shareSheet(files);
@@ -83,12 +92,12 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
     if (!idx.length) return;
     if (!window.confirm(idx.length > 1 ? `刪除這 ${idx.length} 張照片？` : '刪除這張照片？')) return;
     haptic('press');
-    onDelete(idx);
+    onDelete(idx.map(orig));
     setSelected(new Set());
     if (idx.length > 1 || photos.length <= 1) setSelecting(false);
   };
   const toggleFav = (idx: number[]) => {
-    const srcs = idx.map(i => photos[i]).filter(Boolean);
+    const srcs = idx.map(i => shown[i]).filter(Boolean);
     if (!srcs.length || !onFavorite) return;
     const allOn = srcs.every(s => favorites?.has(s));
     haptic('tick');
@@ -100,9 +109,15 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   const backRef = useRef<HTMLButtonElement>(null);
   const selectRef = useRef<HTMLButtonElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
-  const favAll = selectedIdx.length > 0 && selectedIdx.every(i => favorites?.has(photos[i]));
+  const favAll = selectedIdx.length > 0 && selectedIdx.every(i => favorites?.has(shown[i]));
+  /** 多選編輯：照拍的先後（舊→新）交出去 */
+  const editSelected = () => {
+    if (!selectedIdx.length) return;
+    if (onEditMany) onEditMany(selectedIdx.map(orig));
+    else onEdit(shown[selectedIdx[0]], orig(selectedIdx[0]));
+  };
   const grid = useNativeGlass('camera-gallery', !closing && !suspended && viewer === null, () => [
-    { kind: 'circle', shape: 'roundedSquare', id: 'select', el: selectRef.current, symbol: selecting ? 'xmark' : 'checkmark', enabled: photos.length > 0 },
+    { kind: 'circle', id: 'select', el: selectRef.current, symbol: selecting ? 'xmark' : 'checkmark.square', pointSize: selecting ? 17 : 20, enabled: photos.length > 0 },
     ...(selecting ? [
       { kind: 'capsule' as const, el: actionsRef.current, buttons: [
         { id: 'fav', symbol: favAll ? 'heart.fill' : 'heart', tint: 'white' as const, enabled: selectedIdx.length > 0 },
@@ -111,17 +126,31 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
         { id: 'delete', symbol: 'trash', enabled: selectedIdx.length > 0 },
       ] },
     ] : [
-      { kind: 'circle' as const, id: 'back', symbol: 'camera', el: backRef.current },
+      { kind: 'circle' as const, id: 'back', symbol: 'camera', pointSize: 22, el: backRef.current },
     ]),
   ], id => {
     if (id === 'select') { setSelecting(v => !v); setSelected(new Set()); }
     else if (id === 'back') close();
     else if (id === 'fav') toggleFav(selectedIdx);
     else if (id === 'share') void share(selectedIdx);
-    else if (id === 'edit') { if (selectedIdx.length) onEditMany ? onEditMany(selectedIdx) : onEdit(photos[selectedIdx[0]], selectedIdx[0]); }
+    else if (id === 'edit') editSelected();
     else if (id === 'delete') remove(selectedIdx);
   }, [selecting, selectedIdx.join(','), favAll, photos.length], 420);
   const hideWeb = grid.native ? 'invisible' : '';
+
+  /* 打開時停在最底（最新的那幾張），跟系統相簿一樣 */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
+  /* 新拍的照片加進來（在最下面）：本來就在底部的話跟著停在底部 */
+  const prevCount = useRef(photos.length);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && photos.length > prevCount.current && el.scrollHeight - el.scrollTop - el.clientHeight < 240) el.scrollTop = el.scrollHeight;
+    prevCount.current = photos.length;
+  }, [photos.length]);
 
   const tapPhoto = (i: number) => {
     if (selecting) {
@@ -137,17 +166,19 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   return (
     <div data-camera-gallery
       className={`fixed inset-0 bg-black z-50 flex flex-col transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing || !entered ? 'translate-y-full' : 'translate-y-0'}`}>
-      <header className="px-3 pt-[max(env(safe-area-inset-top),12px)] pb-2 h-[calc(max(env(safe-area-inset-top),12px)+48px)] flex justify-end items-center">
+      {/* 相機頁（.safe-top）已經從狀態列下面開始，這裡不再多留一次安全區域：
+          44pt 的圓鈕貼著狀態列下緣、靠右 20pt，下面留 10pt 就是照片 */}
+      <header className="shrink-0 pr-5 pl-5 pb-[10px] flex justify-end items-start">
         <button ref={selectRef} onClick={() => { setSelecting(v => !v); setSelected(new Set()); }} disabled={!photos.length}
           aria-label={selecting ? '取消選取' : '選取照片'}
-          className={`w-9 h-9 rounded-[11px] bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-center disabled:opacity-30 ${hideWeb}`}>
-          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            {selecting ? <path d="M5.5 5.5l13 13m0-13-13 13" /> : <path d="m4.5 12.5 5 5 10-11" />}
+          className={`w-11 h-11 rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-center disabled:opacity-30 ${hideWeb}`}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {selecting ? <path d="M6.5 6.5l11 11m0-11-11 11" /> : <><rect x="3.5" y="3.5" width="17" height="17" rx="4" /><path d="m8 12.3 2.8 2.8L16.2 9" /></>}
           </svg>
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto pb-28">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto no-scrollbar" style={{ paddingBottom: `calc(max(env(safe-area-inset-bottom), 16px) + ${BACK_CIRCLE + 56}px)` }}>
         {photos.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center opacity-40">
             <Icon name="no_photography" className="text-6xl mb-4" />
@@ -155,7 +186,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-[2px]">
-            {photos.map((src, idx) => {
+            {shown.map((src, idx) => {
               const on = selected.has(idx);
               return (
                 <button key={src} onClick={() => tapPhoto(idx)} aria-label={`照片 ${idx + 1}`}
@@ -180,18 +211,18 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
       </div>
 
       {/* 下面回相機；選取時換成整批操作按鈕。 */}
-      <div className="absolute left-0 right-0 flex items-center justify-between px-6 pointer-events-none" style={{ bottom: 'calc(max(env(safe-area-inset-bottom), 16px) + 30px)', height: CIRCLE }}>
+      <div className="absolute left-0 right-0 flex items-center justify-between px-6 pointer-events-none" style={{ bottom: 'calc(max(env(safe-area-inset-bottom), 16px) + 36px)', height: BACK_CIRCLE }}>
         {!selecting ? (
           <>
-            <button ref={backRef} aria-label="回相機" onClick={close} className={`pointer-events-auto ${webCircle} ${hideWeb}`} style={{ width: CIRCLE, height: CIRCLE }}>
-              <Icon name="photo_camera" className="text-[22px] text-white" />
+            <button ref={backRef} aria-label="回相機" onClick={close} className={`pointer-events-auto ${webCircle} ${hideWeb}`} style={{ width: BACK_CIRCLE, height: BACK_CIRCLE }}>
+              <Icon name="photo_camera" className="text-[25px] text-white" />
             </button>
           </>
         ) : (
-          <div ref={actionsRef} className={`pointer-events-auto mx-auto h-full w-[248px] rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-around px-2 ${hideWeb}`}>
+          <div ref={actionsRef} className={`pointer-events-auto mx-auto h-[48px] w-[248px] rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-around px-2 ${hideWeb}`}>
             {([['fav', favAll ? 'favorite' : 'favorite_border', () => toggleFav(selectedIdx)],
                ['share', 'ios_share', () => void share(selectedIdx)],
-               ['edit', 'tune', () => { if (selectedIdx.length) onEditMany ? onEditMany(selectedIdx) : onEdit(photos[selectedIdx[0]], selectedIdx[0]); }],
+               ['edit', 'tune', editSelected],
                ['delete', 'delete', () => remove(selectedIdx)]] as const).map(([id, icon, fn]) => (
               <button key={id} onClick={fn} disabled={!selectedIdx.length} className="w-12 h-12 flex items-center justify-center disabled:opacity-30 active:scale-90 transition-transform">
                 <Icon name={icon} className="text-[22px] text-white" />
@@ -201,16 +232,16 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
         )}
       </div>
 
-      {viewer !== null && photos[viewer] && (
+      {viewer !== null && shown[viewer] && (
         <PhotoViewer
-          photos={photos} thumbs={thumbs} index={viewer} closing={closingViewer} suspended={suspended} rawShots={rawShots}
+          photos={shown} thumbs={thumbs} index={viewer} closing={closingViewer} suspended={suspended} rawShots={rawShots}
           onIndex={setViewer}
           onClose={() => { setClosingViewer(true); window.setTimeout(() => { setViewer(null); setClosingViewer(false); }, 310); }}
           favorites={favorites}
           labelOf={labelOf}
           onShare={i => void share([i])}
-          onProEdit={i => (onProEdit ?? onEdit)(photos[i], i)}
-          onEdit={i => onEdit(photos[i], i)}
+          onProEdit={i => (onProEdit ?? onEdit)(shown[i], orig(i))}
+          onEdit={i => onEdit(shown[i], orig(i))}
           onFavorite={i => toggleFav([i])}
           onDelete={i => remove([i])}
         />
@@ -220,7 +251,9 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
 };
 
 /* ── 大圖 ───────────────────────────────────────────────────────────
- * 黑底、照片置中，左右滑換張。下面：分享（圓）｜專業編輯、編輯、愛心（膠囊）｜刪除（圓）。右上：濾鏡標籤 */
+ * 整個螢幕黑底（狀態列收起來）、照片置中，左右滑換張、往下滑關閉。
+ * 下面：分享（圓）｜RAW 沖洗、編輯、愛心（膠囊）｜刪除（圓），貼近螢幕底部、左右對稱。右上：濾鏡標籤。
+ * 掛在 body 上：相機頁（.safe-top）從狀態列下面才開始，放在裡面的話蓋不到最上面那一條。 */
 const PhotoViewer: React.FC<{
   photos: string[]; thumbs: Record<string, string>; index: number; closing: boolean; suspended?: boolean; rawShots?: Set<string>;
   onIndex: (i: number) => void; onClose: () => void;
@@ -250,14 +283,18 @@ const PhotoViewer: React.FC<{
   const isRaw = !!rawShots?.has(src);
   const fav = !!favorites?.has(src);
   const label = labelOf?.(src) ?? null;
+  /* 看大圖時收起狀態列；進編輯（suspended）、關掉時放回來 */
+  const barHidden = !closing && !suspended;
+  useEffect(() => { void setStatusBarHidden(barHidden); }, [barHidden]);
+  useEffect(() => () => { void setStatusBarHidden(false); }, []);
   const glass = useNativeGlass('camera-viewer', !closing && !suspended && !dragging, () => [
-    { kind: 'circle', id: 'share', symbol: 'square.and.arrow.up', el: shareRef.current },
-    { kind: 'capsule', el: midRef.current, buttons: [
-      ...(isRaw ? [{ id: 'pro', symbol: 'abai.raw' }] : []),
-      { id: 'edit', symbol: 'slider.horizontal.3' },
-      { id: 'fav', symbol: fav ? 'heart.fill' : 'heart', tint: 'white' },
+    { kind: 'circle', id: 'share', symbol: 'square.and.arrow.up', pointSize: 17, el: shareRef.current },
+    { kind: 'capsule', el: midRef.current, pad: 0, buttons: [
+      ...(isRaw ? [{ id: 'pro', symbol: 'abai.raw', pointSize: 17 }] : []),
+      { id: 'edit', symbol: 'slider.horizontal.3', pointSize: 17 },
+      { id: 'fav', symbol: fav ? 'heart.fill' : 'heart', tint: 'white', pointSize: 17 },
     ] },
-    { kind: 'circle', id: 'delete', symbol: 'trash', el: delRef.current },
+    { kind: 'circle', id: 'delete', symbol: 'trash', pointSize: 17, el: delRef.current },
   ], id => {
     if (id === 'share') onShare(index);
     else if (id === 'pro') onProEdit(index);
@@ -268,8 +305,8 @@ const PhotoViewer: React.FC<{
   const hideWeb = glass.native ? 'invisible' : '';
   const webCircle = 'rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-center active:scale-90 transition-transform';
 
-  return (
-    <div ref={root} data-camera-viewer className={`fixed inset-0 z-[60] bg-black transition-[transform,opacity] duration-[300ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing ? 'translate-y-full opacity-0' : 'animate-in fade-in duration-300'}`}>
+  return createPortal(
+    <div ref={root} data-camera-viewer className={`fixed inset-0 z-[60] bg-black text-white select-none transition-[transform,opacity] duration-[300ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing ? 'translate-y-full opacity-0' : 'animate-in fade-in duration-300'}`}>
       <div ref={pager} onScroll={onScroll} className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
         style={{ touchAction: 'pan-x' }}
         onPointerDown={e => { if (e.pointerType === 'touch') drag.current = { x: e.clientX, y: e.clientY, active: false }; }}
@@ -295,28 +332,24 @@ const PhotoViewer: React.FC<{
           </div>
         ))}
       </div>
-      <button aria-label="關閉" onClick={onClose}
-        className="absolute left-4 w-10 h-10 rounded-full bg-white/10 backdrop-blur-xl flex items-center justify-center active:scale-90 transition-transform"
-        style={{ top: 'calc(max(env(safe-area-inset-top), 12px) - 2px)' }}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-      </button>
       {label && (
-        <span className="absolute right-4 h-10 px-4 rounded-full bg-white/10 backdrop-blur-xl flex items-center text-[15px] font-bold tracking-[0.04em] pointer-events-none"
-          style={{ top: 'calc(max(env(safe-area-inset-top), 12px) - 2px)' }}>#{label}</span>
+        <span className="absolute right-6 h-[26px] px-[9px] rounded-full bg-white/[0.14] backdrop-blur-xl flex items-center text-white text-[13px] font-bold tracking-[0.03em] leading-none pointer-events-none"
+          style={{ top: 'max(calc(env(safe-area-inset-top) - 22px), 10px)' }}>#{label}</span>
       )}
-      <div className="absolute left-0 right-0 flex items-center justify-between px-6" style={{ bottom: 'calc(max(env(safe-area-inset-bottom), 16px) + 18px)', height: CIRCLE }}>
+      <div className="absolute left-0 right-0 flex items-center justify-between px-[34px]" style={{ bottom: 'max(calc(env(safe-area-inset-bottom) - 5px), 14px)', height: CIRCLE }}>
         <button ref={shareRef} aria-label="分享" onClick={() => onShare(index)} className={`${webCircle} ${hideWeb}`} style={{ width: CIRCLE, height: CIRCLE }}>
-          <Icon name="ios_share" className="text-[21px] text-white" />
+          <Icon name="ios_share" className="text-[19px] text-white" />
         </button>
-        <div ref={midRef} className={`h-full ${isRaw ? 'w-[150px]' : 'w-[106px]'} rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-around px-1 ${hideWeb}`}>
-          {isRaw && <button aria-label="RAW 編輯" onClick={() => onProEdit(index)} className="w-11 h-11 flex items-center justify-center text-white active:opacity-65"><RawEditIcon /></button>}
-          <button aria-label="編輯" onClick={() => onEdit(index)} className="w-11 h-11 flex items-center justify-center active:opacity-65"><Icon name="tune" className="text-[21px] text-white" /></button>
-          <button aria-label="愛心" onClick={() => onFavorite(index)} className="w-11 h-11 flex items-center justify-center active:opacity-65"><Icon name={fav ? 'favorite' : 'favorite_border'} className="text-[21px] text-white" /></button>
+        <div ref={midRef} className={`h-full ${isRaw ? 'w-[157px]' : 'w-[112px]'} rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-around px-0 ${hideWeb}`}>
+          {isRaw && <button aria-label="RAW 沖洗" onClick={() => onProEdit(index)} className="w-10 h-10 flex items-center justify-center text-white active:opacity-65"><RawEditIcon size={19} /></button>}
+          <button aria-label="編輯" onClick={() => onEdit(index)} className="w-10 h-10 flex items-center justify-center active:opacity-65"><Icon name="tune" className="text-[19px] text-white" /></button>
+          <button aria-label="愛心" onClick={() => onFavorite(index)} className="w-10 h-10 flex items-center justify-center active:opacity-65"><Icon name={fav ? 'favorite' : 'favorite_border'} className="text-[19px] text-white" /></button>
         </div>
         <button ref={delRef} aria-label="刪除" onClick={() => onDelete(index)} className={`${webCircle} ${hideWeb}`} style={{ width: CIRCLE, height: CIRCLE }}>
-          <Icon name="delete" className="text-[21px] text-white" />
+          <Icon name="delete" className="text-[19px] text-white" />
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };

@@ -20,6 +20,7 @@ import Foundation
 import Capacitor
 import CoreImage
 import UIKit
+import MetalKit
 
 @objc(RawDecodePlugin)
 public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
@@ -35,6 +36,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "exportEditor", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "closeEditor", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "dismissEditor", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "snapshotEditor", returnType: CAPPluginReturnPromise),
     ]
 
     // MARK: 即時沖洗（見 ABAIRawDevelop.swift）
@@ -56,6 +58,9 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
             self.editorView?.removeFromSuperview()
             guard let v = ABAIMetalView.make(frame: frame.offsetBy(dx: web.frame.minX, dy: web.frame.minY)) else { call.reject("這台裝置沒有 Metal"); return }
             v.fill = false
+            /* 黑底：第一格還沒畫好之前、照片上下留白的地方都是黑的，不會透出後面還開著的相機畫面 */
+            v.backgroundColor = .black
+            v.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
             parent.insertSubview(v, belowSubview: web)
             self.editorView = v
             self.webWasTransparent = !web.isOpaque
@@ -67,7 +72,12 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
                     call.reject("系統不認得這個 RAW 格式"); return
                 }
                 self.session = s
-                call.resolve(["asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint])
+                /* 第一格先畫好才回網頁（網頁收到才挖空），切過去的那一下畫面是連續的 */
+                let first = s.renderFirst(ABAIRawParams(call.getObject("params")))
+                DispatchQueue.main.async {
+                    if let img = first, self.editorView === v { v.source = img; v.draw() }
+                    call.resolve(["asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint])
+                }
             }
         }
     }
@@ -110,6 +120,18 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
             } completion: { _ in
                 self.tearDown()
                 call.resolve()
+            }
+        }
+    }
+
+    /// 目前畫面上那一格存成 JPEG：退場時網頁用它當定格圖，原生預覽可以先關掉，
+    /// 網頁整頁滑走時後面露出來的是相簿，而不是相機畫面。
+    @objc func snapshotEditor(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let v = self.editorView else { call.resolve([:]); return }
+            let side = max(v.bounds.width, v.bounds.height) * UIScreen.main.scale
+            DispatchQueue.global(qos: .userInteractive).async {
+                if let url = v.snapshotFile(maxSide: side) { call.resolve(["path": url.path]) } else { call.resolve([:]) }
             }
         }
     }

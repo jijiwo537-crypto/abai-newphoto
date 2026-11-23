@@ -8,10 +8,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { nativePlugin } from './nativeBridge';
 import { isNative } from './native';
 
-export interface GlassButtonSpec { id: string; symbol?: string; title?: string; tint?: 'white' | 'red' | 'pink' | 'yellow'; enabled?: boolean }
+export interface GlassButtonSpec { id: string; symbol?: string; title?: string; tint?: 'white' | 'red' | 'pink' | 'yellow'; enabled?: boolean; /** 圖示大小（pt，不給＝19）；有給的會照圖形本身視覺置中 */ pointSize?: number }
 export type GlassItem =
   | (GlassButtonSpec & { kind: 'circle'; el: HTMLElement | null; shape?: 'roundedSquare' })
-  | { kind: 'capsule'; el: HTMLElement | null; buttons: GlassButtonSpec[] };
+  | { kind: 'capsule'; el: HTMLElement | null; buttons: GlassButtonSpec[]; /** 左右內距（pt，不給＝8） */ pad?: number };
 
 interface NativeGlassApi {
   show(o: { group: string; items: unknown[]; animate?: boolean }): Promise<void>;
@@ -55,7 +55,7 @@ export function useNativeGlass(group: string, active: boolean, items: () => Glas
       const r = it.el?.getBoundingClientRect();
       if (!r || !r.width) return null;
       const box = { x: r.left, y: r.top, w: r.width, h: r.height };
-      return it.kind === 'capsule' ? { kind: 'capsule', ...box, buttons: it.buttons } : { ...it, el: undefined, ...box };
+      return it.kind === 'capsule' ? { kind: 'capsule', ...box, buttons: it.buttons, pad: it.pad } : { ...it, el: undefined, ...box };
     }).filter(Boolean);
     void nativeGlass().then(p => p?.show({ group, items: list, animate }));
     shown.current = true;

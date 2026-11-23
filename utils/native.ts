@@ -112,3 +112,13 @@ function rememberBusyLabel() {
   const el = document.querySelector('[data-busy-label]') as HTMLElement | null;
   if (el && !el.closest('[data-abai-save-cover]')) (window as any).__abaiBusyLabel = { text: el.textContent || '', cls: el.className, at: Date.now() };
 }
+
+/** 看大圖時把狀態列收起來（跟系統相簿一樣），離開再放回來。網頁版、外掛不在就什麼都不做 */
+export async function setStatusBarHidden(hidden: boolean): Promise<void> {
+  if (!isNative()) return;
+  try {
+    const { StatusBar, Animation } = await import('@capacitor/status-bar');
+    if (hidden) await StatusBar.hide({ animation: Animation.Fade });
+    else await StatusBar.show({ animation: Animation.Fade });
+  } catch { /* 不支援就算了 */ }
+}

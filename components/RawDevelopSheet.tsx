@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { LiveRange } from './LiveRange';
 import { haptic } from '../utils/haptics';
 import { punchThrough } from '../utils/nativePreview';
-import { developRaw, rawEditor, rawEditorExport, type RawEditParams, type RawLook } from '../utils/nativeCamera';
+import { developRaw, rawEditor, rawEditorExport, rawEditorSnapshot, type RawEditParams, type RawLook } from '../utils/nativeCamera';
 
 /* ── RAW 沖洗（底片模式拍的 RAW）────────────────────────────────────────
  * 版面照專業沖洗 App：上面大圖；一排工具圖示（光線、色彩、曲線、HSL）；兩欄粗滑桿；最下面 ✕、復原、名稱、⋯、✓。
@@ -81,7 +81,8 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
   const stRef = useRef(st); stRef.current = st;
   const history = useRef<State[]>([]);
   const [canUndo, setCanUndo] = useState(false);
-  const [mode, setMode] = useState<'native' | 'web' | 'pending'>('pending');
+  /** closed：原生預覽已經換成定格圖、關掉了（退場中） */
+  const [mode, setMode] = useState<'native' | 'web' | 'pending' | 'closed'>('pending');
   const asShot = useRef({ temp: 5500, tint: 0 });
   const [busy, setBusy] = useState(false);
   const [webUrl, setWebUrl] = useState<string | null>(null);
@@ -89,15 +90,33 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
   const stage = useRef<HTMLDivElement>(null);
   const comparing = useRef(false);
   const leavingRef = useRef(leaving); leavingRef.current = leaving;
+  const exitingRef = useRef(false);
+  const restoreRef = useRef<(() => void) | null>(null);
+  /** 退場時蓋在大圖位置的定格圖（原生預覽最後一格） */
+  const [still, setStill] = useState<string | null>(null);
+  useEffect(() => () => { if (still) URL.revokeObjectURL(still); }, [still]);
 
   useEffect(() => {
     let second = 0;
     const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => setEntered(true)); });
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
   }, []);
-  useEffect(() => {
-    if (leaving && mode === 'native') void rawEditor().then(p => p?.dismissEditor()).catch(() => {});
-  }, [leaving, mode]);
+  /* 退場：原生預覽先換成網頁上的定格圖、把後面的相簿放回來，再整頁往下滑走。
+     不這樣做的話，滑走時後面露出的是還開著的相機畫面，原生預覽也不會跟著網頁一起動。 */
+  const exit = async () => {
+    if (exitingRef.current) return;
+    exitingRef.current = true;
+    haptic('tick');
+    if (mode === 'native') {
+      const url = await rawEditorSnapshot();
+      if (url) { const im = new Image(); im.src = url; await im.decode().catch(() => {}); setStill(url); }
+      setMode('closed');
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      restoreRef.current?.(); restoreRef.current = null;
+      void rawEditor().then(p => p?.closeEditor()).catch(() => {});
+    }
+    onCancel();
+  };
 
   /* ── 參數 → 原生 ── */
   const toParams = (s: State): RawEditParams => {
@@ -146,12 +165,20 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
       if (!p) { setMode('web'); return; }
       const r = el.getBoundingClientRect();
       try {
-        const info = await p.openEditor({ path: rawPath, x: r.left, y: r.top, w: r.width, h: r.height, look });
-        if (!alive) { void p.closeEditor(); return; }
+        /* 第一格的參數：色溫、色調不給＝照拍攝當下。原生畫好第一格才回來 */
+        const first = { ...toParams(stRef.current) } as Partial<RawEditParams>;
+        delete first.temperature; delete first.tint;
+        const info = await p.openEditor({ path: rawPath, x: r.left, y: r.top, w: r.width, h: r.height, look, params: first });
+        if (!alive || leavingRef.current || exitingRef.current) { void p.closeEditor(); return; }
         asShot.current = { temp: info.asShotTemperature || 5500, tint: info.asShotTint || 0 };
-        /* 底下整個 App（相機、相簿）先藏起來：不然它們的黑底會蓋住原生的預覽 */
-        const appRoot = document.getElementById('root');
-        restore = punchThrough(el, appRoot ? [appRoot] : []);
+        /* 等第一格真的上到螢幕再挖空，切換那一下不會閃 */
+        await new Promise(res => window.setTimeout(res, 34));
+        if (!alive || leavingRef.current || exitingRef.current) { void p.closeEditor(); return; }
+        /* 底下整個 App（相機、相簿、掛在 body 上的大圖）先藏起來：不然它們的黑底會蓋住原生的預覽 */
+        const under = Array.from(document.body.children).filter((n): n is HTMLElement =>
+          n instanceof HTMLElement && !n.contains(el) && n.tagName !== 'SCRIPT' && n.tagName !== 'STYLE');
+        restore = punchThrough(el, under);
+        restoreRef.current = restore;
         ro = new ResizeObserver(() => { const b = el.getBoundingClientRect(); void p.setEditorRect({ x: b.left, y: b.top, w: b.width, h: b.height }); });
         ro.observe(el);
         setMode('native');
@@ -200,7 +227,7 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
     const url = mode === 'native'
       ? await rawEditorExport(toParams(stRef.current))
       : (await developer(rawPath, { exposure: stRef.current.exposure, temperature: 1e6 / Math.max(20, 1e6 / Math.max(1500, asShot.current.temp) - stRef.current.temp * 1.5), tint: asShot.current.tint + stRef.current.tint }, look, false))?.url ?? null;
-    if (url) onDone(url); else setBusy(false);
+    if (url) { exitingRef.current = true; onDone(url); } else setBusy(false);
   };
 
   /* ── 滑桿（兩欄、粗的）── */
@@ -251,13 +278,13 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
 
   return (
     <div data-raw-develop
-      className={`fixed inset-0 z-[300] flex flex-col text-white select-none transition-transform duration-[360ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${mode === 'native' ? '' : 'bg-black'} ${leaving ? 'translate-x-full' : entered ? 'translate-y-0' : 'translate-y-full'}`}
-      style={mode === 'native' ? undefined : undefined}>
+      className={`fixed inset-0 z-[300] flex flex-col text-white select-none transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${mode === 'native' ? '' : 'bg-black'} ${leaving || !entered ? 'translate-y-full' : 'translate-y-0'}`}
+      style={{ willChange: 'transform' }}>
       {/* 原生預覽時，只有中間那塊是透明的（其他地方照樣黑底） */}
       <div className="shrink-0 bg-black" style={{ height: 'max(env(safe-area-inset-top), 12px)' }} />
       <div ref={stage} className="flex-1 min-h-0 relative bg-black"
         onPointerDown={() => compare(true)} onPointerUp={() => compare(false)} onPointerCancel={() => compare(false)} onPointerLeave={() => comparing.current && compare(false)}>
-        {mode !== 'native' && (webUrl || previewSrc) && <img src={webUrl || previewSrc} alt="" draggable={false} className="absolute inset-0 w-full h-full object-contain" />}
+        {mode !== 'native' && (still || webUrl || previewSrc) && <img src={still || webUrl || previewSrc} alt="" draggable={false} className="absolute inset-0 w-full h-full object-contain" />}
       </div>
 
       <div className={`shrink-0 bg-black pt-4 transition-opacity ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
@@ -319,7 +346,7 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
 
         {/* 最下面：✕、復原、名稱、⋯（全部重設）、✓ */}
         <div className="flex items-center justify-between px-6 h-[64px] mt-1" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 10px)', boxSizing: 'content-box' }}>
-          <button aria-label="取消" onClick={onCancel} className="w-11 h-11 flex items-center justify-center active:opacity-50">
+          <button aria-label="取消" onClick={() => void exit()} className="w-11 h-11 flex items-center justify-center active:opacity-50">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"><path d="M5.5 5.5l13 13M18.5 5.5l-13 13" /></svg>
           </button>
           <button aria-label="復原" onClick={undo} disabled={!canUndo} className="w-11 h-11 flex items-center justify-center disabled:opacity-30 active:opacity-50">
