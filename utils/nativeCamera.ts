@@ -2,20 +2,23 @@
  * 4800 萬像素、ProRAW、零快門延遲、相機控制按鈕。網頁版每一支都回 null。 */
 import { nativePlugin, fileSrc } from './nativeBridge';
 import { nativeImage } from './nativeImage';
+import type { FilmCamera } from './filmCameras';
 
 export interface NativeCameraApi {
   available(): Promise<{ available: boolean; proRAW: boolean; raw?: boolean }>;
   start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; radius?: number; lut?: string; amount?: number; proRAW?: boolean }): Promise<{ proRAW: boolean; raw?: boolean; maxWidth: number; maxHeight: number; flash?: boolean; screenFlash?: boolean }>;
   stop(): Promise<void>;
   setRect(o: { x: number; y: number; w: number; h: number; radius?: number }): Promise<void>;
-  capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean }): Promise<{ path: string; width: number; height: number; rawPath?: string }>;
+  capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean }): Promise<{ path: string; width: number; height: number; rawPath?: string; filmDelta?: number }>;
+  /** 底片相機（null＝關）、使用者加減的曝光、閃光燈、日期戳記（null＝不印） */
+  setFilm(o: { film: FilmCamera | null; userEV: number; flash: boolean; date: string | null }): Promise<void>;
   setZoom(o: { uiZoom?: number; factor?: number }): Promise<{ factor: number }>;
   focus(o: { x: number; y: number }): Promise<void>;
   setExposureBias(o: { ev: number }): Promise<void>;
   setWhiteBalance(o: { kelvin?: number; auto?: boolean }): Promise<void>;
   setFx(o: { soft: number; blur: number; lowfi: number }): Promise<void>;
   setLut(o: { lut: string; amount?: number }): Promise<void>;
-  addListener(event: 'shutter' | 'zoom', cb: (data: any) => void): Promise<{ remove: () => void }>;
+  addListener(event: 'shutter' | 'zoom' | 'film', cb: (data: any) => void): Promise<{ remove: () => void }>;
 }
 
 export const nativeCamera = () => nativePlugin<NativeCameraApi>('NativeCamera');
@@ -32,11 +35,19 @@ export async function captureNative(o: {
   fx?: { soft: number; blur: number; lowfi: number };
   /** 色溫（跟觀景窗一樣的公式），拍出來的照片跟看到的一樣 */
   kelvin?: number;
+  /** 底片相機（跟觀景窗同一套；這一張多了幾格光由原生端在按快門那一刻量） */
+  film?: FilmCamera | null;
+  /** 日期戳記的字 */
+  date?: string | null;
 }): Promise<{ url: string; rawPath?: string } | null> {
   const cam = await nativeCamera(), img = await nativeImage();
   if (!cam || !img) return null;
   const shot = await cam.capture({ flash: o.flash, raw: o.raw });
-  const out = await img.render({ path: shot.path, lut: o.lut || undefined, amount: o.amount ?? 1, aspect: o.aspect, zoom: o.zoom, fx: o.fx, kelvin: o.kelvin, format: 'jpeg', quality: 0.95 });
+  const out = await img.render({
+    path: shot.path, lut: o.lut || undefined, amount: o.amount ?? 1, aspect: o.aspect, zoom: o.zoom, fx: o.fx, kelvin: o.kelvin,
+    film: o.film || undefined, filmDelta: shot.filmDelta ?? 0, date: o.date || undefined,
+    format: 'jpeg', quality: 0.95,
+  });
   img.remove({ path: shot.path }).catch(() => {});
   const blob = await (await fetch(fileSrc(out.path))).blob();
   img.remove({ path: out.path }).catch(() => {});

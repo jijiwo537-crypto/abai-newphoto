@@ -33,6 +33,11 @@ final class ABAIMetalView: MTKView, MTKViewDelegate {
     var fx = ABAICameraFx() { didSet { if fx != oldValue { setNeedsDisplay() } } }
     /// true＝填滿畫面（相機觀景窗），false＝照原比例完整放進來（編輯預覽）
     var fill = false
+    /// 底片相機（相機觀景窗用）：模擬哪一台、這一格多了幾格光
+    var film = ABAIFilm() { didSet { if film != oldValue { setNeedsDisplay() } } }
+    var filmDelta: Double = 0
+    /// 日期戳記（nil＝不印）。印在看得到的那一塊的右下角，跟拍出來的照片同一個位置
+    var dateText: String? = nil { didSet { if dateText != oldValue { setNeedsDisplay() } } }
 
     /// 沒有 Metal 的裝置回 nil
     static func make(frame: CGRect) -> ABAIMetalView? {
@@ -72,13 +77,30 @@ final class ABAIMetalView: MTKView, MTKViewDelegate {
         guard let src = source, let drawable = currentDrawable,
               let buffer = commandQueue.makeCommandBuffer() else { return }
         var img = src
+        let ds = drawableSize
+        guard ds.width > 0, ds.height > 0 else { return }
+        /* 填滿畫面時，先裁成看得到的那一塊再處理：底片的顆粒、暗角、日期都以「照片的範圍」為準，
+           跟拍出來的那張（也是從中間裁成同一個比例）一樣大、一樣的位置；也少算看不到的部分 */
+        if fill {
+            let e0 = img.extent
+            let want = ds.width / ds.height
+            var r = e0
+            if e0.width / e0.height > want { let w = e0.height * want; r = CGRect(x: e0.midX - w / 2, y: e0.minY, width: w, height: e0.height) }
+            else { let h = e0.width / want; r = CGRect(x: e0.minX, y: e0.midY - h / 2, width: e0.width, height: h) }
+            r = r.integral
+            img = img.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
+        }
         if let k = kelvin { img = ABAIImageCore.kelvin(img, k) }
+        if film.isOn {
+            // 顆粒每一格換一次位置（真的底片看起來也是「活的」）
+            img = film.apply(to: img, delta: filmDelta, seed: CGPoint(x: Double.random(in: 0..<997), y: Double.random(in: 0..<997)))
+        }
         if let c = cube { img = ABAIImageCore.apply(cube: c, to: img, amount: amount) }
         if fx.isOn { img = fx.apply(to: img) }
+        if let d = dateText, !d.isEmpty { img = ABAIFilm.stampDate(d, on: img) }
         /* 照原比例縮進畫面、置中 */
-        let ds = drawableSize
         let e = img.extent
-        guard e.width > 0, e.height > 0, ds.width > 0, ds.height > 0 else { return }
+        guard e.width > 0, e.height > 0 else { return }
         let k = fill ? max(ds.width / e.width, ds.height / e.height) : min(ds.width / e.width, ds.height / e.height)
         img = img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
             .transformed(by: CGAffineTransform(scaleX: k, y: k))

@@ -13,7 +13,8 @@
 //    start({ position, x, y, w, h, lut, amount, proRAW })   stop()
 //    capture({ flash, raw })  → { path, width, height, rawPath? }
 //    setZoom({ factor })  focus({ x, y })  setExposureBias({ ev })  setLut({ lut, amount })
-//    事件：shutter（實體按鈕按下）、zoom（相機控制按鈕改了變焦）
+//    setFilm({ film, userEV, flash, date })   底片相機模擬（見 ABAIFilm.swift）
+//    事件：shutter（實體按鈕按下）、zoom（相機控制按鈕改了變焦）、film（場景亮度、多了幾格光，每秒 4 次）
 //
 //  不用「延後處理」（deferred photo delivery）：那種照片只能直接進相簿，
 //  拿不到像素就沒辦法再套 ABAI 的濾鏡。改用零快門延遲＋反應式拍攝，按下去的速度差不多。
@@ -24,6 +25,7 @@ import Capacitor
 import AVFoundation
 import AVKit
 import CoreImage
+import ImageIO
 import UIKit
 import WebKit
 
@@ -43,6 +45,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         CAPPluginMethod(name: "setFx", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setLut", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setRect", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setFilm", returnType: CAPPluginReturnPromise),
     ]
 
     private let session = AVCaptureSession()
@@ -111,6 +114,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                     guard gen == self.currentGeneration() else { call.reject("superseded"); return }
                     do {
                         ABAICameraFx.prewarm()
+                        self.filmLock.lock(); self.sceneEV = nil; self.filmLock.unlock()
                         try self.configure()
                         if !self.session.isRunning { self.session.startRunning() }
                         /* 後鏡頭：真的閃光燈；前鏡頭：螢幕補光（跟內建相機一樣把整個螢幕打亮） */
@@ -236,7 +240,74 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let img = CIImage(cvPixelBuffer: pb)
-        DispatchQueue.main.async { self.view?.source = img }
+        let delta = meter(sampleBuffer)
+        DispatchQueue.main.async {
+            if let d = delta { self.view?.filmDelta = d }
+            self.view?.source = img
+        }
+    }
+
+    // MARK: 底片相機：測光
+
+    private let filmLock = NSLock()
+    private var film = ABAIFilm()
+    private var filmUserEV = 0.0, filmFlash = false
+    private var dateText: String?
+    /// 平滑過的場景曝光值（ISO 100 的 EV）。nil＝還沒量到
+    private var sceneEV: Double?
+    private var lastMeterAt = CFAbsoluteTimeGetCurrent(), lastNotifyAt = 0.0
+
+    /// 這一格的快門／ISO／光圈 → 場景亮度（平滑）→ 這一格多了幾格光。沒開底片相機回 nil
+    private func meter(_ sb: CMSampleBuffer) -> Double? {
+        var t = 0.0, iso = 0.0, n = 0.0
+        if let exif = CMGetAttachment(sb, key: kCGImagePropertyExifDictionary, attachmentModeOut: nil) as? [String: Any] {
+            t = (exif[kCGImagePropertyExifExposureTime as String] as? NSNumber)?.doubleValue ?? 0
+            iso = ((exif[kCGImagePropertyExifISOSpeedRatings as String] as? [NSNumber])?.first)?.doubleValue ?? 0
+            n = (exif[kCGImagePropertyExifFNumber as String] as? NSNumber)?.doubleValue ?? 0
+        }
+        if (t <= 0 || iso <= 0 || n <= 0), let d = device {
+            t = d.exposureDuration.seconds; iso = Double(d.iso); n = Double(d.lensAperture)
+        }
+        let now = CFAbsoluteTimeGetCurrent()
+        filmLock.lock(); defer { filmLock.unlock() }
+        if let s = ABAIFilm.ev100(duration: t, iso: iso, aperture: n) {
+            /* 在 EV（對數）上做時間常數約 0.25 秒的平滑：手機自動曝光一跳一跳時畫面不會跟著閃 */
+            let dt = max(0, min(0.5, now - lastMeterAt))
+            sceneEV = sceneEV.map { $0 + (s - $0) * (1 - exp(-dt / 0.25)) } ?? s
+        }
+        lastMeterAt = now
+        guard film.isOn, let s = sceneEV else { return nil }
+        let d = film.exposureDelta(sceneEV: s, userEV: filmUserEV, flash: filmFlash)
+        if now - lastNotifyAt > 0.25 {
+            lastNotifyAt = now
+            /* 網頁要知道「沒開閃光燈的話會暗幾格」才能提示低光 */
+            let dark = film.exposureDelta(sceneEV: s, userEV: 0, flash: false)
+            notifyListeners("film", data: ["ev": s, "delta": d, "ambientDelta": dark])
+        }
+        return d
+    }
+
+    /// film：底片相機參數（null＝關閉）；userEV：使用者自己加減的曝光；flash：閃光燈開著沒；date：日期字（null＝不印）
+    @objc func setFilm(_ call: CAPPluginCall) {
+        let f = ABAIFilm(call.getObject("film"))
+        let ev = call.getDouble("userEV") ?? 0
+        let flash = call.getBool("flash") ?? false
+        let date = call.getString("date").flatMap { $0.isEmpty ? nil : $0 }
+        if f.isOn { ABAIFilm.prewarm() }
+        filmLock.lock(); film = f; filmUserEV = ev; filmFlash = flash; dateText = date
+        let d = sceneEV.map { f.exposureDelta(sceneEV: $0, userEV: ev, flash: flash) } ?? 0
+        filmLock.unlock()
+        DispatchQueue.main.async {
+            self.view?.film = f; self.view?.filmDelta = d; self.view?.dateText = date
+            call.resolve()
+        }
+    }
+
+    /// 拍照那一刻：照觀景窗同一個測光算這一張多了幾格光（看到什麼就拍到什麼）
+    private func captureFilmDelta(flashFires: Bool) -> Double? {
+        filmLock.lock(); defer { filmLock.unlock() }
+        guard film.isOn, let s = sceneEV else { return nil }
+        return film.exposureDelta(sceneEV: s, userEV: filmUserEV, flash: flashFires)
     }
 
     // MARK: 拍照
@@ -266,6 +337,9 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             default: settings.flashMode = .off
             }
             self.captured = [:]
+            if let d = self.captureFilmDelta(flashFires: settings.flashMode != .off || (call.getString("flash") ?? "off") == "on") {
+                self.captured["filmDelta"] = d
+            }
             self.pendingCapture = call
             let wantFlash = (call.getString("flash") ?? "off") == "on"
             if wantFlash && settings.flashMode == .off && self.position == .front {
