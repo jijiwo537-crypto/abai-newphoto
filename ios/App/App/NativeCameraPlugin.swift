@@ -4,13 +4,13 @@
 //
 //  網頁版相機（getUserMedia）拿不到的東西，這裡都有：
 //    ‧ 4800 萬像素（iOS 16 起的 maxPhotoDimensions）
-//    ‧ Apple ProRAW（支援的機型）；不支援 ProRAW 的機型拍一般 RAW（Bayer DNG，改用單一主鏡頭）
+//    ‧ Apple ProRAW（支援的機型：iPhone 12 Pro 以後的 Pro 機型）；其他機型不開放 RAW
 //    ‧ 零快門延遲、快速連拍優先、反應式拍攝（iOS 17 起）
 //    ‧ 相機控制按鈕（iPhone 16 起）：滑動調變焦、曝光；音量鍵與相機控制按鈕都能當快門
 //  觀景窗用原生 Metal 畫，濾鏡（同一批 LUT）直接在觀景窗上即時套用。
 //
 //  網頁那邊的對應：utils/nativeCamera.ts
-//    start({ position, x, y, w, h, lut, amount, proRAW, rawWide })   stop()
+//    start({ position, x, y, w, h, lut, amount, proRAW })   stop()
 //    capture({ flash, raw })  → { path, width, height, rawPath? }
 //    setZoom({ factor })  focus({ x, y })  setExposureBias({ ev })  setLut({ lut, amount })
 //    事件：shutter（實體按鈕按下）、zoom（相機控制按鈕改了變焦）
@@ -57,8 +57,6 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     private var amount: Double = 1
     private var configured = false
     private var proRAW = false
-    /// 要拍一般 RAW（Bayer）：組合鏡頭（雙鏡頭、三鏡頭）拍不了，改開單一主鏡頭
-    private var rawWide = false
     private var pendingCapture: CAPPluginCall?
     private var captured: [String: Any] = [:]
     private var interaction: UIInteraction?
@@ -71,9 +69,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             let probe = AVCapturePhotoOutput()
             proRAWSupported = probe.isAppleProRAWSupported
         }
-        /* 一般 RAW：單一主鏡頭幾乎每台都能拍（實際能不能，開相機後 start 會回報 raw） */
-        let wide = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) != nil
-        call.resolve(["available": ok, "proRAW": proRAWSupported, "raw": proRAWSupported || wide])
+        call.resolve(["available": ok, "proRAW": proRAWSupported, "raw": proRAWSupported])
     }
 
     // MARK: 開啟、關閉
@@ -91,7 +87,6 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         let gen = nextGeneration()
         position = call.getString("position") == "front" ? .front : .back
         proRAW = call.getBool("proRAW") ?? false
-        rawWide = call.getBool("rawWide") ?? false
         amount = call.getDouble("amount") ?? 1
         if let name = call.getString("lut"), !name.isEmpty, let u = ABAIImageCore.bundledLut(name) { cube = ABAIImageCore.cube(fromAtlas: u) } else { cube = nil }
         AVCaptureDevice.requestAccess(for: .video) { granted in
@@ -171,7 +166,6 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     }
 
     private func bestDevice(_ pos: AVCaptureDevice.Position) -> AVCaptureDevice? {
-        if rawWide, let d = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: pos) { return d }
         let types: [AVCaptureDevice.DeviceType] = pos == .back
             ? [.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
             : [.builtInTrueDepthCamera, .builtInWideAngleCamera]
@@ -254,23 +248,18 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             guard self.session.isRunning, let conn = self.photoOutput.connection(with: .video), conn.isEnabled, conn.isActive else {
                 call.reject("相機還沒準備好"); return
             }
-            /* 開閃光燈時不拍 RAW：RAW 不一定支援閃光燈，混在一起設定會讓系統丟例外 */
-            let flashWanted = (call.getString("flash") ?? "off") != "off"
-            let wantRaw = (call.getBool("raw") ?? false) && !flashWanted
+            /* 開閃光燈也照樣拍 RAW（ProRAW 支援閃光燈；閃光燈模式下面會先確認這個設定支援才開） */
+            let wantRaw = call.getBool("raw") ?? false
             let hevc = self.photoOutput.availablePhotoCodecTypes.contains(.hevc)
             let processed: [String: Any] = [AVVideoCodecKey: hevc ? AVVideoCodecType.hevc : AVVideoCodecType.jpeg]
             let settings: AVCapturePhotoSettings
-            let rawFmt = wantRaw ? self.rawFormat() : nil
-            let bayer = rawFmt.map { !AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) } ?? false
-            if let raw = rawFmt {
+            if wantRaw, let raw = self.rawFormat() {
                 settings = AVCapturePhotoSettings(rawPixelFormatType: raw, processedFormat: processed)
             } else {
                 settings = AVCapturePhotoSettings(format: processed)
             }
-            /* 一般 RAW（Bayer）就是感光元件原本的尺寸，不能另外指定最大解析度；品質優先也只能選「速度」，
-               設了別的系統會直接丟例外 */
-            if #available(iOS 16.0, *), !bayer { settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions }
-            settings.photoQualityPrioritization = bayer ? .speed : .balanced
+            if #available(iOS 16.0, *) { settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions }
+            settings.photoQualityPrioritization = .balanced
             switch call.getString("flash") ?? "off" {
             case "on": if self.photoOutput.supportedFlashModes.contains(.on) { settings.flashMode = .on }
             case "auto": if self.photoOutput.supportedFlashModes.contains(.auto) { settings.flashMode = .auto }
@@ -293,11 +282,10 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         }
     }
 
-    /// 現在這顆鏡頭能拍的 RAW 格式：ProRAW 開著用 ProRAW，不然用一般 RAW（Bayer）；都沒有回 nil
+    /// 現在這顆鏡頭能拍的 ProRAW 格式（沒開 ProRAW、或這顆鏡頭不支援就回 nil）
     private func rawFormat() -> OSType? {
-        let all = photoOutput.availableRawPhotoPixelFormatTypes
-        if photoOutput.isAppleProRAWEnabled, let f = all.first(where: { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) }) { return f }
-        return all.first(where: { !AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) })
+        guard photoOutput.isAppleProRAWEnabled else { return nil }
+        return photoOutput.availableRawPhotoPixelFormatTypes.first(where: { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) })
     }
 
     private var flashView: UIView?

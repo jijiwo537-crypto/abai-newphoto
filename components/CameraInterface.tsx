@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { isNative } from '../utils/native';
 import { nativeCamera, captureNative, lutFileName, developRaw } from '../utils/nativeCamera';
-import { lutMaxAmount } from '../utils/photoFx';
+import { lutMaxAmount, lutDefaultAmount } from '../utils/photoFx';
 import { haptic, dialHaptic } from '../utils/haptics';
 import { nativePhotos } from '../utils/nativePhotos';
 import { punchThrough } from '../utils/nativePreview';
@@ -11,7 +11,7 @@ import { CameraSettings } from '../types';
 import { GalleryOverlay } from './GalleryOverlay';
 import { usePhotoThumbs, thumbFromCanvas } from '../utils/photoThumbs';
 import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
-import { ImageEditor } from './ImageEditor';
+import { ImageEditor, DEFAULT_PARAMS } from './ImageEditor';
 import { createPortal } from 'react-dom';
 import { processImageFile } from '../utils/imageLoader';
 import { RAW_ACCEPT } from '../utils/fileTypes';
@@ -286,11 +286,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [proPreferred, setProPreferred] = useState(true);
   const proMode = proAvailable && proPreferred;
   const [proRaw, setProRaw] = useState(false);
-  /** 這台有沒有 Apple ProRAW。沒有的話拍一般 RAW（Bayer），要換成單一主鏡頭（組合鏡頭拍不了 RAW） */
-  const [proRawPro, setProRawPro] = useState(false);
-  const rawWide = proRaw && !proRawPro;
-  /** 拍出來的照片 → 同一張的 RAW 檔（App 暫存裡的 DNG）。編輯時從 RAW 沖，不是用套好濾鏡的成品 */
-  const rawOfRef = useRef<Map<string, string>>(new Map());
+  /** 拍出來的照片 → 同一張的 RAW 檔（App 暫存裡的 DNG）＋拍的時候用的濾鏡。
+      編輯時從 RAW 沖，再自動套上同一個濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
+  const rawOfRef = useRef<Map<string, { path: string; lutIdx: number }>>(new Map());
   const [rawShots, setRawShots] = useState<Set<string>>(() => new Set());
   const forgetRaw = (url: string) => {
     if (!rawOfRef.current.delete(url)) return;
@@ -309,7 +307,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     const finish = () => { if (!done) { done = true; setProProbed(true); } };
     const t = setTimeout(finish, 2500);
     void nativeCamera()
-      .then(c => c ? c.available().then(r => { setProAvailable(!!r.available); setProRawPro(!!r.proRAW); setProRawSupported(!!(r.raw ?? r.proRAW)); }) : undefined)
+      .then(c => c ? c.available().then(r => { setProAvailable(!!r.available); setProRawSupported(!!r.proRAW); }) : undefined)
       .catch(() => {})
       .finally(() => { clearTimeout(t); finish(); });
   }, []);
@@ -396,7 +394,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, []);
   useEffect(() => () => { ownedUrlsRef.current.forEach(u => URL.revokeObjectURL(u)); ownedUrlsRef.current.clear(); }, []);
   const [showGallery, setShowGallery] = useState(false);
-  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number } | null>(null);
+  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null } | null>(null);
   /* 進相簿（或從相簿進編輯）就把小框收掉：回到相機時應該是重新開始的滿版畫面，
      不是停在上一次捏的位置。frameZoomRef 也一起歸 1，免得畫面上沒有框、拍下去卻還是裁過的。 */
   useEffect(() => {
@@ -419,7 +417,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /* ── 點對焦後上下拖動調曝光（跟 iOS 內建相機一樣）──────────────────
      點一下對焦之後，對焦框旁邊出現一顆小太陽；框還在的時候，手指在畫面上
      上下拖：往上變亮、往下變暗，太陽跟著上下走。調的是跟下面「曝光」轉盤同一個值
-     （每 0.1 EV 一格、震一下），所以轉盤那邊也會同步。拖過的這一下不會再當成點擊去重新對焦。 */
+     （每 0.1 EV 一格，拖的時候不震），所以轉盤那邊也會同步。拖過的這一下不會再當成點擊去重新對焦。 */
   const EV_PX = 9;           // 手指走幾 px 算 0.1 EV
   const EV_SLOP = 8;         // 先走這麼多才算開始拖（避免點一下時手指微晃就改到曝光）
   const evDragRef = useRef<{ id: number; x: number; y: number; ev0: number; active: boolean } | null>(null);
@@ -452,8 +450,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     const n = tenth / 10;
     const val = `${n > 0 ? '+' : ''}${n.toFixed(1)}`;
     if (val !== settingsExposureRef.current) {
-      settingsExposureRef.current = val;
-      triggerCameraTick('exposure', tenth + 10);
+      settingsExposureRef.current = val;   // 拖對焦框旁的太陽調曝光：不震
       setSettings(prev => ({ ...prev, exposure: val }));
     }
     return true;
@@ -874,10 +871,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      就立刻取下一張新幀。上限 3 是避免極端連點在手機上累積無限工作。 */
   const captureQueueRef = useRef(0);
   const capturePhotoRef = useRef<() => void>(() => {});
-  const proOptsRef = useRef({ lut: '', amount: 1, aspect: 2 / 3, flash: false, raw: false });
+  const proOptsRef = useRef({ lut: '', amount: 1, aspect: 2 / 3, flash: false, raw: false, lutIdx: 0 });
   /* 濾鏡強度跟編輯頁一致：每顆濾鏡的最大強度（例如 F3 是 70%），見 utils/photoFx 的 LUT_MAX_AMOUNT */
   const lutAmt = lutMaxAmount(lutList[selectedLutIdx]?.id) / 100;
-  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), amount: lutAmt, aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw };
+  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), amount: lutAmt, aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw, lutIdx: selectedLutIdx };
   const capturePhoto = useCallback(async () => {
     /* 專業模式：原生全解析度拍照，原生端套濾鏡、裁成畫面比例；ProRAW 開著時 RAW 檔直接存進相簿 */
     if (proModeRef.current) {
@@ -890,7 +887,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         ownedUrlsRef.current.add(r.url);
         setPhotos(prev => [r.url, ...prev]);
         if (r.rawPath) {
-          rawOfRef.current.set(r.url, r.rawPath);
+          rawOfRef.current.set(r.url, { path: r.rawPath, lutIdx: o.lutIdx });
           setRawShots(prev => new Set(prev).add(r.url));
           void nativePhotos().then(p => p?.save({ path: r.rawPath!, kind: 'photo' })).catch(() => {});
         }
@@ -1043,7 +1040,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       const frame = (el.closest('.rounded-camera') as HTMLElement | null) ?? el;
       const rect = () => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, radius: parseFloat(getComputedStyle(frame).borderTopLeftRadius) || 0 }; };
       try {
-        const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: proOptsRef.current.amount, proRAW: true, rawWide });
+        const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: proOptsRef.current.amount, proRAW: true });
         if (alive) setNativeFlash(!!info?.flash);
         /* 這顆鏡頭拍不了 RAW（例如前鏡頭）：RAW 先關掉，說一聲 */
         if (alive && proRaw && info && info.raw === false) { setProRaw(false); setCaptureNotice('這顆鏡頭不支援 RAW'); }
@@ -1067,7 +1064,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       void nativeCamera().then(c => c?.stop());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proMode, facingMode, editingPhoto, rawWide]);
+  }, [proMode, facingMode, editingPhoto]);
   /* 原生相機的即時特效：直接畫在原生觀景窗上 */
   const nativeFx = { soft: (fx.soft || 0) / 100, blur: (fx.blur || 0) / 100, lowfi: (fx.lowfi || 0) / 100 };
   const nativeFxRef = useRef(nativeFx); nativeFxRef.current = nativeFx;
@@ -1237,19 +1234,22 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const developedUrlRef = useRef<string | null>(null);
   const openEditor = async (src: string, idx: number) => {
     let editSrc = src;
-    const rawPath = rawOfRef.current.get(src);
-    if (rawPath) {
+    let init: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null = null;
+    const raw = rawOfRef.current.get(src);
+    if (raw) {
       setIsImportingLocal(true);
-      const dev = await developRaw(rawPath);
+      const dev = await developRaw(raw.path);
       setIsImportingLocal(false);
       if (dev) {
         if (developedUrlRef.current) URL.revokeObjectURL(developedUrlRef.current);
         developedUrlRef.current = dev;
         editSrc = dev;
+        /* 拍的時候套的濾鏡（強度跟拍照時一樣是最大強度），進編輯就已經套好，可以再換或調 */
+        if (raw.lutIdx > 0 && lutList[raw.lutIdx]) init = { params: { ...DEFAULT_PARAMS, lutAmount: lutDefaultAmount(lutList[raw.lutIdx].id) }, selectedLutIdx: raw.lutIdx };
       }
     }
     setShowGallery(false);
-    setEditingPhoto({ src: editSrc, index: idx });
+    setEditingPhoto({ src: editSrc, index: idx, init });
     setEditorId(prev => prev + 1);
   };
   useEffect(() => {
@@ -1536,7 +1536,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 aria-pressed={proRaw}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (!proRaw && flashOn) setCaptureNotice('開著閃光燈時只會存一般照片，不會存 RAW');
                   setProRaw(v => !v);
                 }}
                 onPointerDown={(e) => e.stopPropagation()}
@@ -1772,6 +1771,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           compactBottomBar
           key={editorId}
           imageSrc={editingPhoto.src}
+          initialState={editingPhoto.init ?? null}
           lutList={lutList}
           onSave={handleSaveEdit}
           onCancel={() => setEditingPhoto(null)}
