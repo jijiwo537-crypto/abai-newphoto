@@ -14,7 +14,7 @@ import { crossedZero } from './hapticDetents';
 import { isNative } from './native';
 import { nativePlugin } from './nativeBridge';
 
-type Kind = 'tick' | 'detent' | 'detentMajor' | 'press' | 'shutter' | 'snap' | 'edge' | 'success' | 'error';
+type Kind = 'tick' | 'detent' | 'detentMajor' | 'press' | 'shutter' | 'snap' | 'edge' | 'edgeSoft' | 'success' | 'error';
 let api: any = null;
 let loading = false;
 
@@ -51,6 +51,8 @@ export function haptic(kind: Kind) {
       case 'shutter': api.shutter(); break;
       case 'snap': api.impact({ style: 'light', intensity: 0.7 }); break;
       case 'edge': api.impact({ style: 'rigid', intensity: 0.85 }); break;
+      // 濾鏡、特效、調節拉到頭：柔和、有質感的一下（不是硬硬的擋塊）
+      case 'edgeSoft': api.impact({ style: 'soft', intensity: 0.62 }); break;
       default: api.notify({ type: kind === 'success' ? 'success' : 'error' });
     }
   } catch { /* 沒有就算了 */ }
@@ -60,13 +62,22 @@ export function haptic(kind: Kind) {
  *  ‧ 每走過全長的 1/20 有一下很輕的段落感（手指能「數」出走了多少）
  *  ‧ 經過 0（雙向滑桿的中點）明顯一下
  *  ‧ 拉到頭硬硬的一下 */
+/* 滑得很快時「經過 0」不震：手指只是快速掃過，不是想停在 0。
+   速度＝這一次移動了全長的幾成 ÷ 經過的時間；超過「0.5 秒掃完全長」就算快 */
+let lastMove = 0;
+export function sliderSlow(prev: number, next: number, min: number, max: number) {
+  const now = performance.now(), dt = Math.max(1, Math.min(200, now - lastMove));
+  lastMove = now;
+  return Math.abs(next - prev) / Math.max(1e-9, max - min) / dt < 1 / 500;
+}
 export function sliderHaptic(prev: number, next: number, min: number, max: number) {
   if (!isNative() || prev === next || !(max > min)) return;
-  /* 0 在中間的雙向滑桿，經過 0 才明顯震一下；0 在最左邊的滑桿（0～100）拉回 0 不震 */
+  /* 0 在中間的雙向滑桿，經過 0 才明顯震一下；0 在最左邊的滑桿（0～100）拉回 0 不震。很快掃過去的不震 */
   const twoSided = min < 0 && max > 0;
-  if (twoSided && crossedZero(prev,next)) { haptic('detentMajor'); return; }
+  const slow = sliderSlow(prev, next, min, max);
+  if (twoSided && crossedZero(prev,next)) { if (slow) haptic('detentMajor'); return; }
   if ((next <= min && prev > min && min !== 0) || (next >= max && prev < max)) { haptic('edge'); return; }
-  if (min < 0 && max > 0 && (prev < 0 ? next >= 0 : prev > 0 ? next <= 0 : false)) { haptic('detentMajor'); return; }
+  if (min < 0 && max > 0 && (prev < 0 ? next >= 0 : prev > 0 ? next <= 0 : false)) { if (slow) haptic('detentMajor'); return; }
   const seg = (v: number) => Math.floor(((v - min) / (max - min)) * 20 + 1e-9);
   if (seg(prev) !== seg(next)) haptic('detent');
 }

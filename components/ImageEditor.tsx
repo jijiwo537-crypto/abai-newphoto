@@ -5,6 +5,7 @@ import { loadPresets, storePresets, presetParamsOf, nextPresetNumber, MAX_PRESET
 import { loadCustomLuts, importCustomLut, removeCustomLut, type CustomLut } from '../utils/customLuts';
 import { pickCustomLutFiles, type LutFileSelection } from '../utils/customLutPicker';
 import { crossedZero } from '../utils/hapticDetents';
+import { sliderSlow } from '../utils/haptics';
 
 import { ImportSpinner } from './BusySpinner';
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
@@ -912,7 +913,12 @@ const FastSlider = React.memo(({
             }
         }
         // 0 在中間的雙向滑桿經過 0 才震；0 在最左邊的（強度 0～100）拉回 0 不震
-        if (min < 0 && max > 0 && crossedZero(lastHapticValue.current, val)) haptic('detentMajor');
+        // 很快掃過去的不震（只是經過，不是想停在 0）
+        const slow = sliderSlow(lastHapticValue.current, val, min, max);
+        if (min < 0 && max > 0 && crossedZero(lastHapticValue.current, val) && slow) haptic('detentMajor');
+        // 濾鏡、特效、調節：拉到最大或最小時，柔和有質感的一下
+        const prevV = lastHapticValue.current;
+        if (Number.isFinite(prevV) && ((val >= max && prevV < max) || (val <= min && prevV > min))) haptic('edgeSoft');
         lastHapticValue.current = val;
         if (valueTextRef.current) {
             valueTextRef.current.textContent = val.toFixed(0);
