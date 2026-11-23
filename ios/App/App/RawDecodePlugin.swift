@@ -48,7 +48,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func openEditor(_ call: CAPPluginCall) {
         guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? "") else { call.reject("沒有路徑"); return }
-        let look = call.getObject("look") as [String: Any]?
+        let look: [String: Any]? = call.getObject("look")
         let frame = CGRect(x: call.getDouble("x") ?? 0, y: call.getDouble("y") ?? 0, width: call.getDouble("w") ?? 1, height: call.getDouble("h") ?? 1)
         DispatchQueue.main.async {
             guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有畫面"); return }
@@ -72,7 +72,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     @objc func updateEditor(_ call: CAPPluginCall) {
-        session?.update(ABAIRawParams(call.getObject("params") as [String: Any]?), final: call.getBool("final") ?? false)
+        session?.update(ABAIRawParams(call.getObject("params")), final: call.getBool("final") ?? false)
         call.resolve()
     }
 
@@ -88,7 +88,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func exportEditor(_ call: CAPPluginCall) {
         guard let s = session else { call.reject("沒有開沖洗"); return }
-        let p = ABAIRawParams(call.getObject("params") as [String: Any]?)
+        let p = ABAIRawParams(call.getObject("params"))
         DispatchQueue.global(qos: .userInitiated).async {
             autoreleasepool {
                 do { call.resolve(["path": try s.export(p).path]) } catch { call.reject(error.localizedDescription) }
