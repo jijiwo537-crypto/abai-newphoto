@@ -54,7 +54,7 @@ export const ENTRIES: Anim[] = [
     } },
   { id: 'fx-in-twirl', name: '旋轉', kind: 'entry', fresh: true, desc: '每顆在自己的位置從小轉一圈開出來，隨機錯開',
     unit: (i, c, p) => { const q = local(p, hash(i) * 0.55, 0.45), e = backOut(q); return { ...ID, s: e, rot: (1 - cubic(q)) * Math.PI * 2, a: clamp(q * 3) }; } },
-  { id: 'fx-in-vortex', name: '漩渦', kind: 'entry', fresh: true, desc: '每顆從中心沿著螺旋轉出去、一圈半後剛好落到自己的位置',
+  { id: 'fx-in-vortex', name: '螺旋', kind: 'entry', fresh: true, desc: '每顆從中心沿著螺旋轉出去、一圈半後剛好落到自己的位置',
     unit: (i, c, p) => {
       const st = c.stars[i], q = cubic(local(p, c.rank[i] / Math.max(1, c.stars.length) * 0.45, 0.55));
       const R0 = Math.hypot(st.x - c.cx, st.y - c.cy), A0 = Math.atan2(st.y - c.cy, st.x - c.cx), ang = A0 - (1 - q) * Math.PI * 3, rr = R0 * q;
@@ -89,9 +89,9 @@ export const IDLES: Anim[] = [
     unit: (i, c, _p, t) => { const n = c.stars.length, pos = (t * Math.max(4, n * 0.35)) % n; let d = Math.abs(c.rank[i] - pos); d = Math.min(d, n - d); const w = Math.exp(-d * d / 3); return { ...ID, s: 1 + w * 0.3, a: 0.45 + w * 0.55 }; } },
   { id: 'fx-idle-sway', name: '擺盪', kind: 'idle', fresh: true, desc: '每顆像掛著一樣左右擺，彼此錯開（吊飾最適合）',
     unit: (i, c, _p, t) => { const st = c.stars[i], len = Math.max(st.y, c.h * 0.25), ang = Math.sin(t * 1.6 + hash(i) * 6.28) * 0.12; return { ...ID, dx: Math.sin(ang) * len, dy: (Math.cos(ang) - 1) * len, rot: ang }; } },
-  { id: 'fx-idle-wave', name: '起伏', kind: 'idle', fresh: true, desc: '星星的大小像波浪一樣從左往右一波一波推過去，位置不動',
+  { id: 'fx-idle-wave', name: '律動', kind: 'idle', fresh: true, desc: '星星的大小像波浪一樣從左往右一波一波推過去，位置不動',
     unit: (i, c, _p, t) => { const st = c.stars[i]; return { ...ID, s: 1 + Math.sin((st.x / c.w) * Math.PI * 2 - t * 2.4) * 0.22 }; } },
-  { id: 'fx-idle-firefly', name: '螢光', kind: 'idle', fresh: true, desc: '平常是暗暗的，每顆不定時突然亮起來一下再慢慢暗回去，像螢火蟲',
+  { id: 'fx-idle-firefly', name: '螢火', kind: 'idle', fresh: true, desc: '平常是暗暗的，每顆不定時突然亮起來一下再慢慢暗回去，像螢火蟲',
     unit: (i, _c, _p, t) => {
       const per = 2.6 + hash(i) * 2.2, q = ((t + hash(i + 11) * per) % per) / per;
       const w = q < 0.08 ? q / 0.08 : Math.exp(-(q - 0.08) * 7);
