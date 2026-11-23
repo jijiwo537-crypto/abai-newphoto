@@ -1,4 +1,4 @@
-import { fancyGroupMotion } from './fancyMotion';
+import { fancyGroupMotion, idleClock } from './fancyMotion';
 import { selectedFrame, type SelectedFrame } from './selectedAnimations';
 export type ObjectMotionFrame = {
   lab?: SelectedFrame;
@@ -168,8 +168,8 @@ export const objectMotionFrame = (
   }
   if (p < 1) return intro;
 
-  const t = Math.max(0, time - introEnd);
-  const blend = smooth(clamp(t / .72));
+  const t0i = Math.max(0, time - introEnd), t = idleClock(t0i);   // 常駐時鐘慢慢加速（見 idleClock）
+  const blend = smooth(clamp(t0i / 1.0));
   const A = Math.max(0, cfg.amp) / 100;
   const w = t * Math.max(.05, cfg.speed) + phase;
   let idle = flat;

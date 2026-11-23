@@ -127,7 +127,16 @@ const wakeOrder = (entry: string, i: number, c: Ctx) => {
     default: return hash(i + 17);   // 聚合、旋開、淡入：隨機
   }
 };
-const WAKE_SPREAD = 0.55, WAKE_EACH = 0.6;   // 秒：最後一顆比第一顆晚多少醒、每顆花多久醒完
+const WAKE_SPREAD = 0.55, WAKE_EACH = 1.0;
+/* 常駐剛開始時的「時鐘」：速度從 35% 平順加到 100%（1 秒內），之後照正常速度走。
+   幅度從 0 長出來的同時，如果時鐘一開始就全速，星星會被快速「拉」到擺動中途的位置，
+   看起來比正常快兩三倍 —— 這是「剛開始太快」的原因。整組動畫（漂浮、搖擺…）也用這一條 */
+export const IDLE_EASE = 1.0;
+export const idleClock = (r: number) => {
+  if (r <= 0) return 0;
+  const W = IDLE_EASE, ease = r < W ? r * r * r / (W * W) - r * r * r * r / (2 * W * W * W) : r - W / 2;
+  return 0.35 * r + 0.65 * ease;
+};   // 秒：最後一顆比第一顆晚多少醒、每顆花多久醒完
 /** 常駐的幅度（1＝預設）乘上去：把「跟靜止不一樣的那部分」放大縮小 */
 const scaleU = (u: U, k: number): U => k === 1 ? u : {
   dx: u.dx * k, dy: u.dy * k, rot: u.rot * k, s: Math.max(0, 1 + (u.s - 1) * k), a: Math.max(0, Math.min(1, 1 + (u.a - 1) * k)),
@@ -185,7 +194,7 @@ export const fancyMotionUnits = (id: string, c: Ctx, v: string | number): U[] | 
   const [t = 0, amp = 1, real = 999, entry = ''] = String(v).split(',').map((x, k) => k === 3 ? x : Number(x)) as [number, number, number, string];
   return c.stars.map((_, i) => {
     /* 醒來用「一開始就有速度」的曲線（先快後慢），不是慢慢起步 —— 慢慢起步看起來就像停了一下 */
-    const wx = clamp((real - wakeOrder(entry, i, c) * WAKE_SPREAD) / WAKE_EACH), wake = real >= 99 || (mobile && id === 'fx-idle-shimmer') ? 1 : 1 - (1 - wx) * (1 - wx);   // 吊飾漂浮ll 自己就是從靜止起步，不用再套醒來
+    const wx = clamp((real - wakeOrder(entry, i, c) * WAKE_SPREAD) / WAKE_EACH), wake = real >= 99 || (mobile && id === 'fx-idle-shimmer') ? 1 : wx * wx * (3 - 2 * wx);   // 起步沒有猛衝（搭配 idleClock）   // 吊飾漂浮ll 自己就是從靜止起步，不用再套醒來
     if (id === 'fx-idle-shimmer') {
       // 流光：光帶一開始就全力掃（第一道立刻出發）；只有「其他星星稍微變暗」慢慢淡進來，不會一下子暗掉
       const u = scaleU(a.unit!(i, c, 1, t), amp);
@@ -269,7 +278,7 @@ export const fancyMotionTag = (cfg: { in: string; idle: string; delay: number; d
   const idleStart = cfg.in === 'none' ? 0 : introEnd - Math.min(0.6, inDur * 0.4);
   const r = (x: number) => (Math.round(x * 120) / 120).toFixed(4);
   const idleTag = () => {
-    const real = Math.max(0, time - idleStart), t = real * effSpeed(cfg.idle, cfg.speed);
+    const real = Math.max(0, time - idleStart), t = idleClock(real) * effSpeed(cfg.idle, cfg.speed);
     return `${cfg.idle}:${r(t)},${effAmp(cfg.idle, cfg.amp ?? 50).toFixed(3)},${real >= 3 ? 999 : r(real)},${cfg.in}`;
   };
   if (cfg.in !== 'none' && time < introEnd) {

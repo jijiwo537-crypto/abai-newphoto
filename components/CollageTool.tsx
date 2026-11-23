@@ -40,7 +40,7 @@ import { createPortal, flushSync } from 'react-dom';
 import { NO_SHRINK_KINDS } from '../utils/bubbleShapes';
 import { isScoreKind, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
-import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
+import { idleClock, isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
 import { fancyAlphaMask, applyFancyMask } from '../utils/fancyShapes';
 import { centerActiveChip } from '../utils/centerChip';
 import { fancyCanRandom, isFancyKind, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
@@ -1481,9 +1481,11 @@ const composeMo = (cfg0: MoCfg, t0: number, phase: number): MoFrame & { fx: numb
      就是前 0.x 秒突然加速）。改成 720ms smoothstep：第一格位置與速度都是 0，
      中段不會暴衝，結束時速度也能平順接上完整的常駐曲線。沒有進場時同樣
      從第 0 秒開始漸進，並沒有額外等待。 */
-  const attackP = Math.max(0, Math.min(1, after / 0.72));
+  /* 常駐剛開始：幅度慢慢長出來的同時，時鐘也從慢速平順加速（見 idleClock）——
+     不然擺到一半的物件會被快速拉過去，看起來一開始特別快 */
+  const attackP = Math.max(0, Math.min(1, after / 1.0));
   const blend = attackP * attackP * (3 - 2 * attackP);
-  const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
+  const g = idleFrame(cfg.idle, idleClock(after), cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
