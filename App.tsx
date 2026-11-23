@@ -623,6 +623,7 @@ const App: React.FC = () => {
       <input
         type="file"
         ref={fileInputRef}
+        data-import-hero=""
         className="hidden"
         multiple
         accept={RAW_ACCEPT}
@@ -645,12 +646,13 @@ const App: React.FC = () => {
       <input
         type="file"
         ref={beautyFileInputRef}
+        data-import-hero=""
         className="hidden"
         accept={RAW_ACCEPT}
         onChange={handleBeautyFileChange}
       />
 
-      <input type="file" ref={matchFileInputRef} className="hidden" accept={RAW_ACCEPT} onChange={handleMatchFileChange} />
+      <input type="file" ref={matchFileInputRef} data-import-hero="" className="hidden" accept={RAW_ACCEPT} onChange={handleMatchFileChange} />
       <input type="file" ref={matchRefInputRef} className="hidden" accept={RAW_ACCEPT} onChange={e => { resetPageScroll(); handleMatchRefChange(e); }} />
 
       <input 

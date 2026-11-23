@@ -6,7 +6,7 @@
  *    等它位置穩定了，替身從中央飛過去、剛好疊在它上面，再把替身拿掉。
  *    找不到（例如工具把照片裁成別的比例）就讓替身淡掉，不會卡在畫面上。
  *
- * 只在主頁（畫面上沒有任何工具頁 .safe-top）、只選一張的時候啟用。 */
+ * 只在主頁（畫面上沒有任何工具頁 .safe-top）、只選一張、而且是編輯、美顏、仿色的導入入口（input 帶 data-import-hero）時啟用。 */
 
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 let ghost: HTMLImageElement | null = null;

@@ -141,7 +141,7 @@ export async function exportAssets(ids: string[]): Promise<File[]> {
 let opening: Promise<File[] | null> | null = null;
 
 /** 打開相簿。limit：最多選幾張（0＝不限，1＝點一下就完成） */
-export function openGallery(o: { limit: number; filter: GalleryFilter; noAlpha?: boolean }): Promise<File[] | null> {
+export function openGallery(o: { limit: number; filter: GalleryFilter; noAlpha?: boolean; /** 導入單張時播放大過場（只有編輯、美顏、仿色） */ hero?: boolean }): Promise<File[] | null> {
   if (opening) return opening;              // 連點兩下不會疊兩個相簿
   opening = (async () => {
     const p = await photoLibrary();
@@ -159,7 +159,7 @@ export function openGallery(o: { limit: number; filter: GalleryFilter; noAlpha?:
         /* 等收起來的動畫跑完再拆掉 */
         setTimeout(() => { root.unmount(); host.remove(); }, 40);
       };
-      root.render(createElement(NativeGallery, { api: p, limit: o.limit, filter: o.filter, noAlpha: !!o.noAlpha, onClose: close }));
+      root.render(createElement(NativeGallery, { api: p, limit: o.limit, filter: o.filter, noAlpha: !!o.noAlpha, hero: !!o.hero, onClose: close }));
     });
   })().finally(() => { opening = null; });
   return opening;
