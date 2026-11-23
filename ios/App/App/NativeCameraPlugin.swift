@@ -404,7 +404,6 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             call.resolve()
         }
     }
-    }
 
     /// 拍照的方向：橫拿拍出來就是橫的照片（照片檔本身擺正）
     private func applyCaptureRotation(_ t: Int) {
