@@ -304,33 +304,41 @@ const PhotoViewer: React.FC<{
     if (!cell || !g) { setOpening(false); return; }
     let alive = true;
     const cellImg = cell.querySelector('img') as HTMLImageElement | null;
+    /* 畫質：原圖很快就能解好（相機剛拍的、已經快取的）就直接用原圖飛；來不及才先用小縮圖，落地後再柔和地換成原圖 */
     const im = new Image(); im.src = tsrc;
-    const go = () => {
+    const full = new Image(); full.src = src;
+    const fullReady = full.decode().then(() => true, () => false);
+    const go = async () => {
+      const useFull = await Promise.race([fullReady, new Promise<boolean>(r => setTimeout(() => r(false), 220))]);
       if (!alive) return;
+      const pic = useFull ? full : im;
       const W = window.innerWidth, H = window.innerHeight;
-      const ar = (im.naturalWidth && im.naturalHeight) ? im.naturalWidth / im.naturalHeight : 1;
+      const ar = (pic.naturalWidth && pic.naturalHeight) ? pic.naturalWidth / pic.naturalHeight : (im.naturalWidth / Math.max(1, im.naturalHeight)) || 1;
       let w = W, h = W / ar; if (h > H) { h = H; w = H * ar; }
       const B = { left: (W - w) / 2, top: (H - h) / 2, width: w, height: h };
-      Object.assign(g.style, { left: `${B.left}px`, top: `${B.top}px`, width: `${w}px`, height: `${h}px`, visibility: 'visible' });
-      g.src = tsrc;
+      g.src = useFull ? src : tsrc;
+      Object.assign(g.style, { left: `${B.left}px`, top: `${B.top}px`, width: `${w}px`, height: `${h}px`, visibility: 'visible', opacity: '1' });
       const C = cell.getBoundingClientRect();
       const k = Math.max(C.width / w, C.height / h);
       const ix = Math.max(0, (w - C.width / k) / 2), iy = Math.max(0, (h - C.height / k) / 2);
       const tx = C.left + C.width / 2 - (B.left + w / 2), ty = C.top + C.height / 2 - (B.top + h / 2);
       if (cellImg) cellImg.style.visibility = 'hidden';
-      const dur = 400;
+      const dur = 420;
       bg.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dur * 0.7, easing: 'ease-out' });
-      g.animate([{ transform: `translate3d(${tx}px,${ty}px,0) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` }, { transform: 'none', clipPath: 'inset(0px)' }],
-        { duration: dur, easing: EASE }).finished.catch(() => {}).finally(async () => {
-        if (cellImg) cellImg.style.visibility = '';
-        if (!alive) return;
-        setOpening(false);
-        /* 原圖解碼好了才把小圖收掉，不會閃一下空白 */
-        await new Promise(r => requestAnimationFrame(r));
-        const full = curImg();
-        await full?.decode?.().catch(() => {});
-        if (alive && ghost.current) ghost.current.style.visibility = 'hidden';
-      });
+      await g.animate([{ transform: `translate3d(${tx}px,${ty}px,0) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` }, { transform: 'none', clipPath: 'inset(0px)' }],
+        { duration: dur, easing: EASE }).finished.catch(() => {});
+      if (cellImg) cellImg.style.visibility = '';
+      if (!alive) return;
+      /* 落地：底下的大圖（原圖）解好才露出來，替身再用 0.22 秒淡掉 —— 沒有閃一下，畫質是慢慢變清楚 */
+      await fullReady;
+      const pageImg = curImg();
+      await pageImg?.decode?.().catch(() => {});
+      if (!alive) return;
+      setOpening(false);
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      if (!alive || !ghost.current) return;
+      await ghost.current.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {});
+      if (alive && ghost.current) ghost.current.style.visibility = 'hidden';
     };
     im.decode().then(go, go);
     return () => { alive = false; if (cellImg) cellImg.style.visibility = ''; };
@@ -461,9 +469,10 @@ const PhotoViewer: React.FC<{
         }}>
         {photos.map((p, i) => (
           <div key={p} className="w-full h-full shrink-0 snap-center flex items-center justify-center" style={{ scrollSnapStop: 'always' }}>
+            {/* 一律撐滿整塊、照比例縮放：小縮圖也是一樣大（之前縮圖照原尺寸顯示，從編輯回來時會突然變很小） */}
             {!suspended && Math.abs(i - index) <= 1
-              ? <img src={p} alt="" className="max-w-full max-h-full object-contain allow-callout" draggable={false} />
-              : thumbs[p] ? <img src={thumbs[p]} alt="" className="max-w-full max-h-full object-contain" /> : null}
+              ? <img src={p} alt="" className="w-full h-full object-contain allow-callout" draggable={false} />
+              : thumbs[p] ? <img src={thumbs[p]} alt="" className="w-full h-full object-contain" draggable={false} /> : null}
           </div>
         ))}
       </div>

@@ -6,8 +6,8 @@
 //  全部在延伸範圍的線性 Display P3、16 位元浮點上做，中間不會有任何一步把亮部切掉或量化成 8 位元。
 //
 //   ① RAW 解碼（CIRAWFilter，系統的 RAW 引擎）
-//      ‧ 輸出「純線性」的場景光（boostAmount = 0、不做系統的局部階調）：階調全部由我們自己的 ③ 和 ⑤ 決定，
-//        亮部保留到 EDR 上限（extendedDynamicRangeAmount = 2），所以曝光、高光往回拉時救得回來。
+//      ‧ 起點是系統 RAW 引擎本身的成像（跟相簿裡那張一樣自然），亮部保留到 EDR 上限（extendedDynamicRangeAmount = 2），
+//        所以曝光、高光往回拉時救得回來。
 //      ‧ 曝光：在感光元件的線性資料上乘（等同拍的當下多開／少開光圈）。
 //      ‧ 白平衡（色溫 K、色調）：照 DNG 規格在「相機原生色彩空間」裡做 ——
 //        用相機兩組校正光源（例如 2850K、6500K）的色彩矩陣依色溫內插，再把中性點對到指定的色溫／色調。
@@ -22,8 +22,7 @@
 //   ④ 色彩：在 Oklab（感知均勻的色彩空間）上做。
 //      飽和度：整體色度；自然飽和度：越不飽和加越多、膚色色相附近自動減量；
 //      HSL：八個色相，相鄰色相之間平滑過渡，只動有顏色的地方（灰色不受影響），調明度時色相不會跑。
-//   ⑤ 顯示轉換（「印」出來）：保住色相的電影感曲線（以 max(R,G,B) 為準等比例壓縮），
-//      中灰 0.18 → 約 0.20，超過白的亮部柔柔收到白、越亮越淡（跟底片一樣），超出色域的往同亮度的灰拉。
+//   ⑤ 印出來：0.8 以下完全不動；超過白的亮部以最亮的通道為準等比例柔收（色相不變），超出色域的往同亮度的灰拉。
 //   ⑥ 曲線（RGB 總曲線＋紅綠藍）在顯示值上做；⑦ 拍照當下的樣子（濾鏡、特效、裁切、日期）。
 //
 //  即時預覽：① 只有曝光、白平衡、細節改了才重算，結果存成螢幕大小的線性浮點小圖（連同 ② 的底圖），
@@ -82,11 +81,9 @@ enum ABAIRawDevelop {
     static func rawFilter(_ url: URL, longSide: CGFloat?, draft: Bool) -> CIRAWFilter? {
         guard let f = CIRAWFilter(imageURL: url) else { return nil }
         f.isDraftModeEnabled = draft
-        f.isGamutMappingEnabled = false          // 色域交給 ⑤（保住色相的那一套）
-        f.extendedDynamicRangeAmount = 2         // 超過白的亮部全部留著
-        f.boostAmount = 0                        // 純線性的場景光：階調由我們自己決定
-        f.boostShadowAmount = 0
-        if f.isLocalToneMapSupported { f.localToneMapAmount = 0 }   // 局部階調由 ② ③ 做（可調、不會有系統的 HDR 感）
+        /* 起點用系統 RAW 引擎本身的成像（相機的階調、Apple 的色彩科學），打開時就跟相簿裡那張一樣自然；
+           只把亮部保留到 EDR 上限（extendedDynamicRangeAmount = 2），我們的調整都疊在這上面 */
+        f.extendedDynamicRangeAmount = 2
         if f.isLensCorrectionSupported { f.isLensCorrectionEnabled = true }
         if let ls = longSide, f.nativeSize.width > 0 {
             f.scaleFactor = Float(min(1, ls / max(f.nativeSize.width, f.nativeSize.height)))
@@ -218,10 +215,6 @@ enum ABAIRawDevelop {
     // MARK: ⑤ 顯示轉換
 
     private static let viewKernel = CIColorKernel(source: """
-    float abaiFilmic(float x) {
-        x *= 0.8;
-        return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
-    }
     kernel vec4 abaiRawView(__sample s) {
         vec3 c = s.rgb;
         vec3 W = vec3(0.2289746, 0.6917385, 0.0792869);
@@ -229,15 +222,16 @@ enum ABAIRawDevelop {
         /* 超出色域（有負值）：往同亮度的灰拉，拉到剛好進色域 —— 色相不變 */
         float mn = min(min(c.r, c.g), c.b);
         if (mn < 0.0) { float k = l / max(l - mn, 1.0e-6); c = vec3(l) + (c - vec3(l)) * k; }
-        /* 保住色相的電影感曲線：以最亮的通道為準，三個通道等比例壓縮 */
+        /* 超過白的亮部：以最亮的通道為準、三個通道等比例柔收（色相不變），0.8 以下完全不動 */
         float n = max(max(c.r, c.g), c.b);
-        if (n < 1.0e-6) return vec4(0.0, 0.0, 0.0, s.a);
-        float f = abaiFilmic(n);
-        vec3 o = c * (f / n);
-        /* 越接近白越淡（底片的感覺）：非常亮的顏色不會停在很飽和的一塊 */
-        float t = smoothstep(0.82, 1.0, f);
-        o = mix(o, vec3(f), t * t);
-        return vec4(clamp(o, 0.0, 1.0), s.a);
+        float knee = 0.8;
+        if (n > knee) {
+            float f = knee + (1.0 - knee) * (1.0 - exp(-(n - knee) / (1.0 - knee)));
+            c *= f / n;
+            float t = smoothstep(0.9, 1.0, f);
+            c = mix(c, vec3(f), t * t * 0.6);
+        }
+        return vec4(clamp(c, 0.0, 1.0), s.a);
     }
     """)
 

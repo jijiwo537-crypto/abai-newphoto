@@ -475,7 +475,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const closeGalleryEditor = () => {
     if (editorLeaving) return;
     setEditorLeaving(true);
-    editorExitTimer.current = setTimeout(() => { setEditingPhoto(null); setEditorLeaving(false); }, 360);
+    editorExitTimer.current = setTimeout(() => { setEditingPhoto(null); setEditorLeaving(false); }, 460);
   };
   /* 相簿打開時（含大圖、RAW 沖洗）把原生觀景窗藏起來：後面任何透明的地方都不會透出相機畫面。
      相簿是從下面滑上來的，等它蓋滿再藏；關的時候先放回來再滑走 */
@@ -1003,8 +1003,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
              成品檔存完就刪；RAW 留在 App 裡給「重新沖洗」用 */
           const rendered = r.renderedPath;
           void nativePhotos().then(p => p?.save(rendered ? { path: rendered, rawPath: r.rawPath!, kind: 'photo' } : { path: r.rawPath!, kind: 'photo' }))
-            .catch(() => {})
-            .finally(() => { if (rendered) void nativeImage().then(i => i?.remove({ path: rendered })).catch(() => {}); });
+            .catch(() => {});   // 成品檔留著（相簿裡那張的原生路徑，編輯存檔用）
         }
       } catch { setCaptureNotice('未能儲存照片，請再拍一次'); }
       finally { capturingRef.current = false; setIsCapturing(false); }
@@ -2062,7 +2061,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       )}
 
       {editingPhoto && createPortal(
-        <div className={`fixed inset-0 z-[300] bg-black transition-transform duration-[360ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${editorLeaving ? 'translate-y-full' : editorEntered || editingPhoto.instant ? 'translate-x-0 translate-y-0' : 'translate-y-full'}`} style={editingPhoto.instant && !editorEntered ? { transition: 'none' } : undefined} data-camera-editor>
+        <div className={`fixed inset-0 z-[300] bg-black transition-transform duration-[440ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${editorLeaving ? 'translate-y-full' : editorEntered || editingPhoto.instant ? 'translate-x-0 translate-y-0' : 'translate-y-full'}`} style={editingPhoto.instant && !editorEntered ? { transition: 'none' } : undefined} data-camera-editor>
         <ImageEditor 
           compactBottomBar
           fullTabs={!!editingPhoto.pro}

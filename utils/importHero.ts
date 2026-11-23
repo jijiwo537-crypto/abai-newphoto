@@ -1,57 +1,62 @@
-/* 從主頁導入單張照片時的過場：相簿裡那張小縮圖，流暢地放大、飛到導入後照片在工具裡的位置。
+/* 從主頁導入單張照片（編輯、美顏、仿色）時的過場：相簿裡那張小縮圖，一路流暢地放大、飛到工具裡照片的位置。
  *
- * 1. 在相簿點下去的那一刻（begin）：在小縮圖的位置放一張一模一樣的「替身」（裁成正方形），
- *    馬上放大到畫面中央（完整比例）—— 讀原檔、開工具的那段時間它就停在那裡。
- * 2. 工具畫出來之後（land）：在畫面上找「照片本人」—— 看得到、夠大、長寬比跟這張照片一樣的那一個 <img>／<canvas>，
- *    等它位置穩定了，替身從中央飛過去、剛好疊在它上面，再把替身拿掉。
- *    找不到（例如工具把照片裁成別的比例）就讓替身淡掉，不會卡在畫面上。
+ * 1. 點下去的那一刻（beginImportHero）：在那一格「原地」放一張一模一樣的替身（同位置、同大小、同樣裁成正方形）。
+ *    讀原檔、開工具的那段時間它就停在原地，不先移到別的地方（不會有兩段式的移動）。
+ * 2. 原檔讀好了（setImportHeroFile）：替身裡面疊上原檔解出來的高畫質版本（淡入），飛的時候就是清楚的。
+ * 3. 工具畫出來之後（landImportHero）：找到照片本人（看得到、夠大、長寬比一樣的 <img>／<canvas>），
+ *    等它位置穩定，替身從那一格一次飛過去、同時從正方形展開成完整比例，剛好疊在它上面。
+ * 4. 落地：照片本人先在底下出現，替身再用 0.28 秒淡掉 —— 替身和正式預覽之間是柔和地交接，不會一下跳過去。
+ *    找不到照片（例如被裁成別的比例）就讓替身淡掉，不會卡在畫面上。
  *
- * 只在主頁（畫面上沒有任何工具頁 .safe-top）、只選一張、而且是編輯、美顏、仿色的導入入口（input 帶 data-import-hero）時啟用。 */
+ * 只在主頁（畫面上沒有任何工具頁 .safe-top）、只選一張、而且是帶 data-import-hero 的導入入口時啟用。 */
 
-const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
-let ghost: HTMLImageElement | null = null;
+const EASE = 'cubic-bezier(0.25, 0.8, 0.25, 1)';
+let ghost: HTMLDivElement | null = null;
 let ar = 1;
-let staged: Promise<void> = Promise.resolve();
+let fullUrl: string | null = null;
 let token = 0;
-
-const fitRect = (W: number, H: number, aspect: number, scale: number) => {
-  let w = W * scale, h = w / aspect;
-  if (h > H * 0.78) { h = H * 0.78; w = h * aspect; }
-  return { left: (W - w) / 2, top: (H - h) / 2, width: w, height: h };
-};
 
 /** 這次導入要不要播：在主頁（沒有工具頁）才播 */
 export const heroAllowed = () => !document.querySelector('.safe-top');
 
-/** 相簿裡點下去的那一刻。rect：那一格的位置；src：那一格的縮圖 */
+const layer = (src: string) => {
+  const im = document.createElement('img');
+  im.alt = ''; im.draggable = false; im.decoding = 'async'; im.src = src;
+  Object.assign(im.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', objectFit: 'cover', display: 'block' } as CSSStyleDeclaration);
+  return im;
+};
+
+/** 相簿裡點下去的那一刻。rect：那一格的位置；src：那一格的縮圖；aspect：照片的寬÷高 */
 export function beginImportHero(rect: DOMRect, src: string, aspect?: number) {
   cancelImportHero();
-  const my = ++token;
-  const g = document.createElement('img');
+  ++token;
+  ar = aspect && isFinite(aspect) && aspect > 0 ? aspect : 1;
+  const g = document.createElement('div');
   g.setAttribute('data-import-hero', '');
-  g.alt = '';
-  g.draggable = false;
   Object.assign(g.style, {
-    position: 'fixed', zIndex: '2147483000', pointerEvents: 'none', objectFit: 'cover', margin: '0',
-    left: '0px', top: '0px', width: '0px', height: '0px', transformOrigin: '0 0', willChange: 'transform, clip-path',
+    position: 'fixed', zIndex: '2147483000', pointerEvents: 'none', overflow: 'hidden', margin: '0', background: '#000',
+    left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px`,
+    transformOrigin: '0 0',
   } as CSSStyleDeclaration);
+  g.appendChild(layer(src));
   document.body.appendChild(g);
   ghost = g;
-  staged = (async () => {
-    g.src = src;
-    await g.decode().catch(() => {});
-    if (my !== token) return;
-    ar = aspect && isFinite(aspect) && aspect > 0 ? aspect : g.naturalWidth && g.naturalHeight ? g.naturalWidth / g.naturalHeight : 1;
-    const W = window.innerWidth, H = window.innerHeight;
-    const B = fitRect(W, H, ar, 0.88);
-    /* 替身本身放在「中央」的位置與大小，用 transform 把它縮回那一格（再裁成正方形） */
-    Object.assign(g.style, { left: `${B.left}px`, top: `${B.top}px`, width: `${B.width}px`, height: `${B.height}px`, objectFit: 'fill' });
-    const k = Math.max(rect.width / B.width, rect.height / B.height);
-    const ix = Math.max(0, (B.width - rect.width / k) / 2), iy = Math.max(0, (B.height - rect.height / k) / 2);
-    const from = { transform: `translate(${rect.left - B.left - ix * k}px, ${rect.top - B.top - iy * k}px) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` };
-    const to = { transform: 'translate(0px, 0px) scale(1)', clipPath: 'inset(0px 0px)' };
-    await g.animate([from, to], { duration: 440, easing: EASE, fill: 'forwards' }).finished.catch(() => {});
-  })();
+}
+
+/** 原檔讀好了：疊上高畫質版本（淡入）。RAW 之類瀏覽器解不了的，就維持縮圖 */
+export function setImportHeroFile(file: File) {
+  const g = ghost, my = token;
+  if (!g) return;
+  const url = URL.createObjectURL(file);
+  const im = layer(url);
+  im.style.opacity = '0';
+  void im.decode().then(() => {
+    if (my !== token || !g.isConnected) { URL.revokeObjectURL(url); return; }
+    if (im.naturalWidth && im.naturalHeight) ar = im.naturalWidth / im.naturalHeight;
+    g.appendChild(im);
+    fullUrl = url;
+    im.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: 'ease-out', fill: 'forwards' });
+  }, () => URL.revokeObjectURL(url));
 }
 
 /** 這張圖在畫面上真正顯示的範圍（img 是 object-fit: contain 時，元素比圖大） */
@@ -70,17 +75,17 @@ function findTarget(): HTMLElement | null {
   const W = window.innerWidth, H = window.innerHeight;
   let best: HTMLElement | null = null, bestArea = 0;
   document.querySelectorAll<HTMLElement>('img, canvas').forEach(el => {
-    if (el === ghost || el.closest('[data-abai-gallery]')) return;
+    if (ghost?.contains(el) || el.closest('[data-abai-gallery]')) return;
     if (el instanceof HTMLImageElement && (!el.complete || !el.naturalWidth)) return;
     const r = contentRect(el);
     if (r.width < 40 || r.height < 40) return;
     const area = r.width * r.height;
     if (area < W * H * 0.12) return;
-    if (r.right < 0 || r.bottom < 0 || r.left > W || r.top > H) return;
-    if (Math.abs(r.width / r.height - ar) / ar > 0.06) return;
+    if (r.left < -2 || r.top < -2 || r.right > W + 2 || r.bottom > H + 2) return;   // 整張都在畫面裡（還在滑進來的不算）
+    if (Math.abs(r.width / r.height - ar) / ar > 0.05) return;
     const st = getComputedStyle(el);
-    if (st.visibility === 'hidden' || st.display === 'none' || Number(st.opacity) === 0) return;
-    /* 看得到：中心點最上面那一層是它（或跟它同一塊） */
+    if (st.visibility === 'hidden' || st.display === 'none') return;
+    /* 看得到：中心點最上面那一層是它（或跟它同一塊）。替身本身不接受點擊，不會擋到 */
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     if (!hit || !(hit === el || el.contains(hit) || (el.parentElement && el.parentElement.contains(hit)))) return;
     if (area > bestArea) { bestArea = area; best = el; }
@@ -88,46 +93,78 @@ function findTarget(): HTMLElement | null {
   return best;
 }
 
-/** 工具畫出來了（或正在畫）：找到照片本人就飛過去 */
+/** 工具畫出來了（或正在畫）：找到照片本人、位置穩定了，就一次飛過去 */
 export async function landImportHero() {
   const g = ghost, my = token;
   if (!g) return;
-  await staged;
-  if (my !== token) return;
   const t0 = performance.now();
   let last: DOMRect | null = null, stable = 0, target: HTMLElement | null = null;
-  while (performance.now() - t0 < 6000) {
+  /* 一找到照片本人就先把它藏起來（等位置穩定的這段時間，畫面上不會同時有兩張） */
+  let hidden: HTMLElement | null = null, hiddenPrev = '';
+  /* 藏的是「跟照片一樣大」的最外層那一塊：工具常常是好幾張 canvas 疊在一起，只藏一張還看得到另一張 */
+  const outer = (el: HTMLElement | null) => {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    let top = el;
+    for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+      const q = n.getBoundingClientRect();
+      if (Math.abs(q.left - r.left) > 1.5 || Math.abs(q.top - r.top) > 1.5 || Math.abs(q.width - r.width) > 1.5 || Math.abs(q.height - r.height) > 1.5) break;
+      top = n;
+    }
+    return top;
+  };
+  const hide = (el0: HTMLElement | null) => {
+    const el = outer(el0);
+    if (hidden === el) return;
+    if (hidden) hidden.style.opacity = hiddenPrev;
+    hidden = el;
+    if (el) { hiddenPrev = el.style.opacity; el.style.opacity = '0'; }
+  };
+  while (performance.now() - t0 < 8000) {
     await new Promise(r => requestAnimationFrame(r));
-    if (my !== token) return;
+    if (my !== token) { hide(null); return; }
+    /* 找的時候先放回來（藏起來的那張也要能被找到），找完再藏 */
+    const prevHidden = hidden; if (prevHidden) prevHidden.style.opacity = hiddenPrev;
     const el = findTarget();
+    if (prevHidden) prevHidden.style.opacity = '0';
+    hide(el);
     if (!el) { stable = 0; last = null; continue; }
     const r = contentRect(el);
-    if (last && Math.abs(r.left - last.left) < 1 && Math.abs(r.top - last.top) < 1 && Math.abs(r.width - last.width) < 1) stable++;
+    if (last && Math.abs(r.left - last.left) < 0.5 && Math.abs(r.top - last.top) < 0.5 && Math.abs(r.width - last.width) < 0.5 && Math.abs(r.height - last.height) < 0.5) stable++;
     else stable = 0;
     last = r;
-    if (stable >= 4) { target = el; break; }
+    /* 連續 10 格（約 0.17 秒）都沒動才算到位：工具的版面、進場動畫都走完了 */
+    if (stable >= 10) { target = el; break; }
   }
-  if (!target || !last) { fadeOut(g); return; }
-  const B = g.getBoundingClientRect();
-  const k = last.width / B.width;
-  const prevOpacity = target.style.opacity;
-  target.style.opacity = '0';
-  await g.animate([{ transform: 'translate(0px, 0px) scale(1)' }, { transform: `translate(${last.left - B.left}px, ${last.top - B.top}px) scale(${k})` }],
-    { duration: 460, easing: EASE, fill: 'forwards', composite: 'replace' }).finished.catch(() => {});
-  target.style.opacity = prevOpacity;
+  if (!target || !last) { hide(null); finish(g, 240); return; }
+  const T = last;
+  const C = g.getBoundingClientRect();
+  /* 替身換成「目的地」的大小與比例，用 transform 把它縮回那一格、再裁成那一格的正方形 —— 這一格看起來完全沒變 */
+  const k = Math.max(C.width / T.width, C.height / T.height);
+  const ix = Math.max(0, (T.width - C.width / k) / 2), iy = Math.max(0, (T.height - C.height / k) / 2);
+  Object.assign(g.style, { left: `${T.left}px`, top: `${T.top}px`, width: `${T.width}px`, height: `${T.height}px`, background: 'transparent' });
+  const from = { transform: `translate(${C.left - T.left - ix * k}px, ${C.top - T.top - iy * k}px) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` };
+  const to = { transform: 'translate(0px, 0px) scale(1)', clipPath: 'inset(0px 0px)' };
+  await g.animate([from, to], { duration: 520, easing: EASE, fill: 'forwards' }).finished.catch(() => {});
+  /* 落地：照片本人先在底下出現，替身再慢慢淡掉 */
+  hide(null);
   if (my !== token) return;
-  fadeOut(g, 140);
+  finish(g, 280);
 }
 
-function fadeOut(g: HTMLImageElement, ms = 220) {
+function finish(g: HTMLDivElement, ms: number) {
   if (ghost === g) ghost = null;
-  g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {}).finally(() => g.remove());
+  const url = fullUrl; fullUrl = null;
+  g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {}).finally(() => {
+    g.remove();
+    if (url) URL.revokeObjectURL(url);
+  });
 }
 
 /** 取消（使用者按了取消、選了很多張、出錯） */
 export function cancelImportHero() {
   token++;
-  if (ghost) { const g = ghost; ghost = null; fadeOut(g, 160); }
+  if (ghost) finish(ghost, 160);
 }
 
 export const importHeroActive = () => !!ghost;

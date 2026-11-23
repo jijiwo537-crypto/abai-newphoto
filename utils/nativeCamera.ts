@@ -1,6 +1,6 @@
 /* 原生相機（專業模式，對應 ios/App/App/NativeCameraPlugin.swift）。
  * 4800 萬像素、ProRAW、零快門延遲、相機控制按鈕。網頁版每一支都回 null。 */
-import { nativePlugin, fileSrc } from './nativeBridge';
+import { nativePlugin, fileSrc, rememberNativeFile } from './nativeBridge';
 import { nativeImage } from './nativeImage';
 
 export type CameraMenuItem =
@@ -74,15 +74,17 @@ export async function captureNative(o: {
   if (o.date) {
     const clean = out.path;
     const stamped = await img.render({ path: clean, date: o.date, gps: shot.location || undefined, format: 'jpeg', quality: 0.95 });
-    const cb = await (await fetch(fileSrc(clean))).blob();
-    cleanUrl = URL.createObjectURL(new Blob([cb], { type: 'image/jpeg' }));
-    img.remove({ path: clean }).catch(() => {});
+    const cb = new Blob([await (await fetch(fileSrc(clean))).blob()], { type: 'image/jpeg' });
+    rememberNativeFile(cb, clean);   // 檔案留著：編輯存檔可以走原生（快、而且是全解析度的 16 位元流程）
+    cleanUrl = URL.createObjectURL(cb);
     out.path = stamped.path;
   }
-  const blob = await (await fetch(fileSrc(out.path))).blob();
+  const blob = new Blob([await (await fetch(fileSrc(out.path))).blob()], { type: 'image/jpeg' });
+  /* 成品檔留在 App 的暫存裡、記住它的路徑：相簿裡這張進編輯後按儲存，可以直接走原生存檔
+     （不然網頁要把整張全解析度重算一次，要等很久才有反應） */
+  rememberNativeFile(blob, out.path);
   /* 有 RAW 時成品檔先留著：要跟 RAW 配成同一張存進相簿（存完再刪，見 saveRawPair） */
-  if (!shot.rawPath) img.remove({ path: out.path }).catch(() => {});
-  return { url: URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' })), rawPath: shot.rawPath, renderedPath: shot.rawPath ? out.path : undefined, cropZoom, cleanUrl };
+  return { url: URL.createObjectURL(blob), rawPath: shot.rawPath, renderedPath: shot.rawPath ? out.path : undefined, cropZoom, cleanUrl };
 }
 
 /** 編輯完的圖重新印上日期（日期是「光加上去」的：畫面變暗，字自然更清楚）。沒有原生或失敗回 null */

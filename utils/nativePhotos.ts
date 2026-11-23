@@ -89,8 +89,11 @@ export function installNativeFilePicker() {
     }
     catch (e: any) { alert(`開不了相簿：${String(e?.message ?? e ?? '')}`); return; }
     /* 從主頁導入單張的過場：工具畫出來後，替身飛到照片的位置；其他情況收掉 */
-    const { landImportHero, cancelImportHero, importHeroActive } = await import('./importHero');
-    if (importHeroActive()) { if (files && files.length === 1) void landImportHero(); else cancelImportHero(); }
+    const { landImportHero, cancelImportHero, importHeroActive, setImportHeroFile } = await import('./importHero');
+    if (importHeroActive()) {
+      if (files && files.length === 1) { setImportHeroFile(files[0]); void landImportHero(); }
+      else cancelImportHero();
+    }
     if (!files) return;
     if (!files.length) return;                       // 使用者按了取消
     /* 系統照片選擇器（或舊版 App 的相簿）沒辦法事先藏去背圖：選完再過濾 */
