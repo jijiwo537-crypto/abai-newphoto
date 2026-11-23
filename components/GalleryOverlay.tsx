@@ -173,23 +173,31 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
 
   const webCircle = 'rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-center active:scale-90 transition-transform shadow-2xl';
 
-  return (
+  /* 掛在 body 上：相機頁（.safe-top）從狀態列下面才開始，放在裡面的話照片捲不到螢幕最上面 */
+  return createPortal(
     <div data-camera-gallery
-      className={`fixed inset-0 bg-black z-50 flex flex-col transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing || !entered ? 'translate-y-full' : 'translate-y-0'}`}>
-      {/* 相機頁（.safe-top）已經從狀態列下面開始，這裡不再多留一次安全區域：
-          44pt 的圓鈕貼著狀態列下緣、靠右 20pt，下面留 10pt 就是照片 */}
-      <header className="shrink-0 pr-5 pl-5 pb-[10px] flex justify-end items-start">
+      className={`fixed inset-0 bg-black text-white z-50 transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing || !entered ? 'translate-y-full' : 'translate-y-0'}`}>
+
+      <style>{SEL_CSS}</style>
+      {/* 上方沒有黑色遮罩：照片捲上去會一路滑到螢幕最上面，只在最上面一小段（狀態列）有從上往下淡掉的模糊。
+          44pt 的圓鈕浮在照片上面，貼著狀態列下緣、靠右 20pt */}
+      <div aria-hidden className="absolute left-0 right-0 top-0 z-10 pointer-events-none"
+        style={{
+          height: 'calc(env(safe-area-inset-top, 0px) + 26px)',
+          backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+          background: 'linear-gradient(to bottom, rgba(0,0,0,.55), rgba(0,0,0,0))',
+          maskImage: 'linear-gradient(to bottom, #000 45%, transparent)', WebkitMaskImage: 'linear-gradient(to bottom, #000 45%, transparent)',
+        }} />
+      <header className="absolute left-0 right-0 top-0 z-20 pr-5 pl-5 flex justify-end items-start pointer-events-none" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
         <button ref={selectRef} onClick={() => { setSelecting(v => !v); setSelected(new Set()); }} disabled={!photos.length}
           aria-label={selecting ? '取消選取' : '選取照片'}
-          className={`w-11 h-11 rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-center disabled:opacity-30 ${hideWeb}`}>
+          className={`pointer-events-auto w-11 h-11 rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-center disabled:opacity-30 ${hideWeb}`}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             {selecting ? <path d="M6.5 6.5l11 11m0-11-11 11" /> : <><rect x="3.5" y="3.5" width="17" height="17" rx="4" /><path d="m8 12.3 2.8 2.8L16.2 9" /></>}
           </svg>
         </button>
       </header>
-
-      <style>{SEL_CSS}</style>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto no-scrollbar" style={{ paddingBottom: `calc(max(env(safe-area-inset-bottom), 16px) + ${BACK_CIRCLE + 56}px)` }}>
+      <div ref={scrollRef} className="absolute inset-0 overflow-y-auto no-scrollbar" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 54px)', paddingBottom: `calc(max(env(safe-area-inset-bottom), 16px) + ${BACK_CIRCLE + 56}px)` }}>
         {photos.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center opacity-40">
             <Icon name="no_photography" className="text-6xl mb-4" />
@@ -265,7 +273,8 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
           onDelete={i => remove([i])}
         />
       )}
-    </div>
+    </div>,
+    document.body,
   );
 };
 
