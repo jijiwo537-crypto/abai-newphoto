@@ -429,7 +429,7 @@ export const fancyStarD = (cx: number, cy: number, R: number, rot = 0) => {
   return out.join(' ') + ' Z';
 };
 /** 多邊形照 0～w、0～h 的框裁切（Sutherland–Hodgman） */
-const clipRect = (pts: [number, number][], w: number, h: number, keepBottom = false): [number, number][] => {
+const clipRect = (pts: [number, number][], w: number, h: number, topOnly = false): [number, number][] => {
   const edge = (P: [number, number][], inside: (p: [number, number]) => boolean, cut: (a: [number, number], b: [number, number]) => [number, number]) => {
     const out: [number, number][] = [];
     for (let i = 0; i < P.length; i++) {
@@ -441,10 +441,12 @@ const clipRect = (pts: [number, number][], w: number, h: number, keepBottom = fa
   };
   const lerpX = (a: [number, number], b: [number, number], x: number): [number, number] => [x, a[1] + (b[1] - a[1]) * (x - a[0]) / ((b[0] - a[0]) || 1e-9)];
   const lerpY = (a: [number, number], b: [number, number], y: number): [number, number] => [a[0] + (b[0] - a[0]) * (y - a[1]) / ((b[1] - a[1]) || 1e-9), y];
-  let P = edge(pts, p => p[0] >= 0, (a, b) => lerpX(a, b, 0));
+  // 吊飾（topOnly）：只切掉框上面（還沒掉下來的）；左右、下面超出去的照畫
+  let P = edge(pts, p => p[1] >= 0, (a, b) => lerpY(a, b, 0));
+  if (topOnly) return P;
+  if (P.length) P = edge(P, p => p[0] >= 0, (a, b) => lerpX(a, b, 0));
   if (P.length) P = edge(P, p => p[0] <= w, (a, b) => lerpX(a, b, w));
-  if (P.length) P = edge(P, p => p[1] >= 0, (a, b) => lerpY(a, b, 0));
-  if (P.length && !keepBottom) P = edge(P, p => p[1] <= h, (a, b) => lerpY(a, b, h));
+  if (P.length) P = edge(P, p => p[1] <= h, (a, b) => lerpY(a, b, h));
   return P;
 };
 /* ───────── 透明度遮罩 ─────────

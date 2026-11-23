@@ -139,6 +139,15 @@ const scaleU = (u: U, k: number): U => k === 1 ? u : {
    ‧ 閃爍：每顆不定時「亮一下」＝放大一點、轉一下，再回來
    其他（星雨、旋開、翻牌、流光、跑燈、自轉、擺盪）照原本的動作，只是拿掉變淡 */
 const MOBILE_UNIT: Record<string, (i: number, c: Ctx, p: number, t: number) => U> = {
+  /* 下墜：星星掛在線上往下掉 —— 越掉越快，到底時被線拉住，只在原地小小地上下晃兩下就停（不是像球一樣大彈跳） */
+  'fx-in-rain': (i, c, p) => {
+    const st = c.stars[i], q = local(p, (st.x / c.w) * 0.45 + hash(i) * 0.12, 0.43);
+    if (q <= 0) return { ...ID, s: 0, line: 0 };
+    const FALL = 0.62, from = st.y + st.r * 2.2;
+    if (q < FALL) { const e = q / FALL; return { ...ID, dy: -from * (1 - e * e) }; }
+    const z = (q - FALL) / (1 - FALL);
+    return { ...ID, dy: Math.sin(z * Math.PI * 2.5) * Math.exp(-z * 4.5) * st.r * 0.9 };
+  },
   /* 漂浮ll（吊飾的「掃描」那一格）：線的頂端固定，每一條各自一伸一縮、彼此錯開，
      像一串吊飾在輕輕上下彈 —— 不是整組一起往上飄（那是漂浮l） */
   'fx-idle-shimmer': (i, c, _p, t) => ({ ...ID, dy: Math.sin(t * 1.5 - c.rank[i] * 0.75) * c.h * 0.06 }),
@@ -160,11 +169,13 @@ const MOBILE_UNIT: Record<string, (i: number, c: Ctx, p: number, t: number) => U
 };
 // 還沒出現的（原本完全透明）就縮成 0 不畫，其他的一律不透明
 const noFade = (u: U): U => (u.a === 1 ? u : u.a <= 0.02 ? { ...u, a: 1, s: 0 } : { ...u, a: 1 });
+/** 吊飾進場：星星還沒出現（縮成 0）時，線也還沒有；星星長大時線跟著從上往下長出來 */
+const lineFollows = (u: U): U => (u.line !== undefined ? u : { ...u, line: Math.max(0, Math.min(1, u.s * (u.sx ?? 1) * 1.6)) });
 /** v：進場是進度（0～1）；常駐是「時間,幅度,真實秒數,進場是哪個」（見 fancyMotionTag） */
 export const fancyMotionUnits = (id: string, c: Ctx, v: string | number): U[] | null => {
   const a0 = BY_ID.get(id); if (!a0?.unit) return null;
   const mobile = c.kind === 'fancy-mobile';
-  const a: Anim = mobile ? { ...a0, unit: (i, cc, p, t) => noFade((MOBILE_UNIT[id] || a0.unit!)(i, cc, p, t)) } : a0;
+  const a: Anim = mobile ? { ...a0, unit: (i, cc, p, t) => { const u = noFade((MOBILE_UNIT[id] || a0.unit!)(i, cc, p, t)); return a0.kind === 'entry' ? lineFollows(u) : u; } } : a0;
   if (a.kind === 'entry') { const p = Number(v) || 0; return c.stars.map((_, i) => a.unit!(i, c, p, 0)); }
   const [t = 0, amp = 1, real = 999, entry = ''] = String(v).split(',').map((x, k) => k === 3 ? x : Number(x)) as [number, number, number, string];
   return c.stars.map((_, i) => {
