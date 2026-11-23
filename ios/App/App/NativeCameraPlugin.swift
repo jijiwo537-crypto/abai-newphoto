@@ -57,6 +57,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         CAPPluginMethod(name: "setLevel", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setLocation", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "showMenu", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setPreviewHidden", returnType: CAPPluginReturnPromise),
     ]
 
     private let session = AVCaptureSession()
@@ -111,6 +112,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                 if self.view == nil {
                     guard let v = ABAIMetalView.make(frame: .zero) else { call.reject("這台裝置沒有 Metal"); return }
                     v.fill = true
+                    v.isHidden = self.previewHidden   // 相簿還開著時重開相機：照樣藏著
                     parent.insertSubview(v, belowSubview: web)
                     self.view = v
                 }
@@ -143,6 +145,18 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                     } catch { call.reject(error.localizedDescription) }
                 }
             }
+        }
+    }
+
+    /// 相簿、RAW 沖洗蓋在相機上面時，把觀景窗整個藏起來：網頁哪裡挖空都不會透出相機畫面。
+    /// 相機本身繼續開著（回到相機時不用重新啟動）
+    private var previewHidden = false
+    @objc func setPreviewHidden(_ call: CAPPluginCall) {
+        let hidden = call.getBool("hidden") ?? false
+        DispatchQueue.main.async {
+            self.previewHidden = hidden
+            self.view?.isHidden = hidden
+            call.resolve()
         }
     }
 

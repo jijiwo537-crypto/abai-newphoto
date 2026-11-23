@@ -15,6 +15,8 @@ export interface NativeCameraApi {
   capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean; turns?: number; opticalZoom?: number }): Promise<{ path: string; width: number; height: number; rawPath?: string; zoomApplied?: number; location?: { lat: number; lon: number; alt?: number; time?: number } }>;
   /** 日期戳記（null＝不印），觀景窗右下角；zoom＝小框構圖的倍率（字印在框的右下角、照框的大小） */
   setDate(o: { date: string | null; zoom?: number }): Promise<void>;
+  /** 觀景窗整個藏起來（相簿、RAW 沖洗蓋在上面時） */
+  setPreviewHidden?(o: { hidden: boolean }): Promise<void>;
   /** 觀景窗現在這一格（離開相機的過場用） */
   snapshot(): Promise<{ path: string }>;
   /** 水平儀：開著時送 level 事件 { roll（度）, flat } */
@@ -54,7 +56,7 @@ export async function captureNative(o: {
   develop?: number;
   /** 日期戳記的字 */
   date?: string | null;
-}): Promise<{ url: string; rawPath?: string; renderedPath?: string; cropZoom: number } | null> {
+}): Promise<{ url: string; rawPath?: string; renderedPath?: string; cropZoom: number; /** 有日期時：沒印日期的同一張（編輯用這張，存檔時再印） */ cleanUrl?: string } | null> {
   const cam = await nativeCamera(), img = await nativeImage();
   if (!cam || !img) return null;
   /* 小框：鏡頭真的變焦過去拍（清楚）；變不到的部分才用裁切補 */
@@ -63,14 +65,40 @@ export async function captureNative(o: {
   const cropZoom = wantOptical && shot.zoomApplied ? Math.max(1, wantOptical / shot.zoomApplied) : o.zoom;
   const out = await img.render({
     path: shot.path, lut: o.lut || undefined, amount: o.amount ?? 1, aspect: o.aspect, zoom: cropZoom, fx: o.fx, kelvin: o.kelvin,
-    develop: o.develop || undefined, date: o.date || undefined, gps: shot.location || undefined,
+    develop: o.develop || undefined, gps: shot.location || undefined,
     format: 'jpeg', quality: 0.95,
   });
   img.remove({ path: shot.path }).catch(() => {});
+  /* 日期：先留一張沒印的（之後編輯都改這張，日期不會被調色、濾鏡影響），再從它印出成品 */
+  let cleanUrl: string | undefined;
+  if (o.date) {
+    const clean = out.path;
+    const stamped = await img.render({ path: clean, date: o.date, gps: shot.location || undefined, format: 'jpeg', quality: 0.95 });
+    const cb = await (await fetch(fileSrc(clean))).blob();
+    cleanUrl = URL.createObjectURL(new Blob([cb], { type: 'image/jpeg' }));
+    img.remove({ path: clean }).catch(() => {});
+    out.path = stamped.path;
+  }
   const blob = await (await fetch(fileSrc(out.path))).blob();
   /* 有 RAW 時成品檔先留著：要跟 RAW 配成同一張存進相簿（存完再刪，見 saveRawPair） */
   if (!shot.rawPath) img.remove({ path: out.path }).catch(() => {});
-  return { url: URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' })), rawPath: shot.rawPath, renderedPath: shot.rawPath ? out.path : undefined, cropZoom };
+  return { url: URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' })), rawPath: shot.rawPath, renderedPath: shot.rawPath ? out.path : undefined, cropZoom, cleanUrl };
+}
+
+/** 編輯完的圖重新印上日期（日期是「光加上去」的：畫面變暗，字自然更清楚）。沒有原生或失敗回 null */
+export async function stampDateOnto(url: string, date: string): Promise<string | null> {
+  const img = await nativeImage();
+  if (!img) return null;
+  let tmp = '', out = '';
+  try {
+    const blob = await (await fetch(url)).blob();
+    const b64 = await new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] ?? ''); r.onerror = rej; r.readAsDataURL(blob); });
+    tmp = (await img.writeTemp({ data: b64, ext: blob.type.includes('png') ? 'png' : 'jpg' })).path;
+    out = (await img.render({ path: tmp, date, format: 'jpeg', quality: 0.95 })).path;
+    const b = await (await fetch(fileSrc(out))).blob();
+    return URL.createObjectURL(new Blob([b], { type: 'image/jpeg' }));
+  } catch { return null; }
+  finally { for (const p of [tmp, out]) if (p) img.remove({ path: p }).catch(() => {}); }
 }
 
 /** 底片模式（RAW）拍的時候少曝光幾格：保護亮部（RAW 的暗部之後拉得回來，爆掉的亮部救不回來）。

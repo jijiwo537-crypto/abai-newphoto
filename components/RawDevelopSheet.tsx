@@ -231,38 +231,34 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
   };
 
   /* ── 滑桿（兩欄、粗的）── */
-  const slider = (label: string, key: keyof State, min: number, max: number, fmt: (v: number) => string, dflt: number, step = 1) => {
-    const v = st[key] as number;
+  /* ── 一列滑桿：名稱｜細軌道（從預設值往兩邊填色）｜數值。雙擊名稱回預設 ── */
+  const row = (key: string, label: string, v: number, min: number, max: number, fmt: (v: number) => string, dflt: number, step: number,
+    onValue: (x: number) => void) => {
+    const z = (dflt - min) / (max - min), p = (v - min) / (max - min);
+    const on = Math.abs(v - dflt) > step / 2;
     return (
-      <div key={key} className="min-w-0">
-        <div className="flex items-baseline gap-2 mb-2 pl-1" onDoubleClick={() => { touch(); set({ [key]: dflt } as Partial<State>); commit(); }}>
-          <span className="text-[15px] text-white/90">{label}</span>
-          <span className={`text-[15px] font-semibold tabular-nums ${Math.abs(v - dflt) > step / 2 ? 'text-[#4a9eff]' : 'text-[#4a9eff]/80'}`}>{fmt(v)}</span>
+      <div key={key} className="flex items-center gap-3 h-[40px]">
+        <button type="button" className={`w-[74px] shrink-0 text-left text-[14px] transition-colors ${on ? 'text-white' : 'text-white/60'}`}
+          onDoubleClick={() => { touch(); onValue(dflt); commit(); }}>{label}</button>
+        <div className="relative flex-1 h-[30px]">
+          <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-[3px] rounded-full bg-white/[0.14] pointer-events-none" />
+          <div className="absolute top-1/2 -translate-y-1/2 h-[3px] rounded-full bg-white pointer-events-none"
+            style={{ left: `${Math.min(z, p) * 100}%`, width: `${Math.abs(p - z) * 100}%` }} />
+          <div className="absolute top-1/2 -translate-y-1/2 w-[2px] h-[9px] -ml-px rounded-full bg-white/35 pointer-events-none" style={{ left: `${z * 100}%` }} />
+          <LiveRange ariaLabel={label} min={min} max={max} step={step} value={v} height={30} wrapClassName="!absolute inset-0 !overflow-visible"
+            className="raw2-slider w-full" onPointerDown={touch} onValue={x => { touch(); onValue(x); }} onCommit={commit} />
         </div>
-        <LiveRange ariaLabel={label} min={min} max={max} step={step} value={v} height={34} wrapClassName="!overflow-visible"
-          className="raw-slider w-full"
-          onPointerDown={touch}
-          onValue={x => { touch(); set({ [key]: x } as Partial<State>); }}
-          onCommit={commit} />
+        <span className={`w-[42px] shrink-0 text-right text-[13px] tabular-nums transition-colors ${on ? 'text-white' : 'text-white/40'}`}>{fmt(v)}</span>
       </div>
     );
   };
+  const slider = (label: string, key: keyof State, min: number, max: number, fmt: (v: number) => string, dflt: number, step = 1) =>
+    row(String(key), label, st[key] as number, min, max, fmt, dflt, step, x => set({ [key]: x } as Partial<State>));
   const signed = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)}`;
-  const ev = (v: number) => `${v > 0.049 ? '+' : v < -0.049 ? '−' : ''}${Math.abs(v).toFixed(1)}`;
+  const ev = (v: number) => `${v > 0.049 ? '+' : v < -0.049 ? '−' : ''}${Math.abs(v).toFixed(2)}`;
   const hslSlider = (label: string, i: number) => {
-    const idx = band * 3 + i, v = st.hsl[idx];
-    return (
-      <div key={label} className="min-w-0">
-        <div className="flex items-baseline gap-2 mb-2 pl-1">
-          <span className="text-[15px] text-white/90">{label}</span>
-          <span className="text-[15px] font-semibold tabular-nums text-[#4a9eff]">{signed(v)}</span>
-        </div>
-        <LiveRange ariaLabel={label} min={-100} max={100} step={1} value={v} height={34} className="raw-slider w-full"
-          onPointerDown={touch}
-          onValue={x => { touch(); const hsl = [...stRef.current.hsl]; hsl[idx] = x; set({ hsl }); }}
-          onCommit={commit} />
-      </div>
-    );
+    const idx = band * 3 + i;
+    return row(`hsl${i}`, label, st.hsl[idx], -100, 100, signed, 0, 1, x => { const hsl = [...stRef.current.hsl]; hsl[idx] = x; set({ hsl }); });
   };
 
   const changed = useMemo(() => ({
@@ -276,90 +272,99 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
   /* 按住大圖：看原本的樣子（放開回來） */
   const compare = (on: boolean) => { comparing.current = on; push(true); };
 
+  const iconBtn = 'w-10 h-10 rounded-full flex items-center justify-center active:scale-90 transition-transform disabled:opacity-30';
   return (
     <div data-raw-develop
       className={`fixed inset-0 z-[300] flex flex-col text-white select-none transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${mode === 'native' ? '' : 'bg-black'} ${leaving || !entered ? 'translate-y-full' : 'translate-y-0'}`}
       style={{ willChange: 'transform' }}>
-      {/* 原生預覽時，只有中間那塊是透明的（其他地方照樣黑底） */}
-      <div className="shrink-0 bg-black" style={{ height: 'max(env(safe-area-inset-top), 12px)' }} />
+      {/* 上方：✕｜復原、全部重設｜✓ */}
+      <div className="shrink-0 bg-black" style={{ paddingTop: 'max(env(safe-area-inset-top), 12px)' }}>
+        <div className="h-[52px] px-4 flex items-center justify-between">
+          <button aria-label="取消" onClick={() => void exit()} className={`${iconBtn} bg-white/[0.12]`}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+          <div className="flex items-center gap-1">
+            <button aria-label="復原" onClick={undo} disabled={!canUndo} className={iconBtn}>
+              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14L4.5 9.5 9 5" /><path d="M4.5 9.5h9.5a5.5 5.5 0 0 1 0 11H11" /></svg>
+            </button>
+            <span className="px-2 text-[12px] font-bold tracking-[0.18em] text-white/55">RAW</span>
+            <button aria-label="全部重設" onClick={resetAll} disabled={!history.current.length && !Object.values(changed).some(Boolean)} className={iconBtn}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" /><path d="M4.5 4.5v3.7h3.7" /></svg>
+            </button>
+          </div>
+          <button aria-label="完成" onClick={() => void finish()} disabled={mode === 'pending' || busy} className={`${iconBtn} bg-white`}>
+            {busy
+              ? <span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
+          </button>
+        </div>
+      </div>
+
+      {/* 大圖（App 裡這一塊是透明的，底下是原生即時預覽）。按住看原本的樣子 */}
       <div ref={stage} className="flex-1 min-h-0 relative bg-black"
         onPointerDown={() => compare(true)} onPointerUp={() => compare(false)} onPointerCancel={() => compare(false)} onPointerLeave={() => comparing.current && compare(false)}>
         {mode !== 'native' && (still || webUrl || previewSrc) && <img src={still || webUrl || previewSrc} alt="" draggable={false} className="absolute inset-0 w-full h-full object-contain" />}
       </div>
 
-      <div className={`shrink-0 bg-black pt-4 transition-opacity ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
-        {/* 工具 */}
-        <div className="flex items-center justify-center gap-5 mb-5">
+      <div className={`shrink-0 bg-black transition-opacity ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
+        {/* 分頁：圖示＋字，選中的是白色 */}
+        <div className="flex items-stretch justify-around px-4 pt-3 pb-1">
           {(['light', 'color', 'curve', 'hsl'] as const).map(t => (
             <button key={t} aria-label={TITLES[t]} onClick={() => { if (tool !== t) { haptic('tick'); setTool(t); } }}
-              className={`relative w-[52px] h-[52px] rounded-full flex items-center justify-center transition-colors duration-200 ${tool === t ? 'bg-white/[0.14]' : ''}`}>
+              className={`relative flex flex-col items-center gap-1 w-16 py-1 transition-opacity duration-200 ${tool === t ? 'opacity-100' : 'opacity-40'}`}>
               <ToolIcon tool={t} />
-              <span aria-hidden className={`absolute bottom-0.5 w-1 h-1 rounded-full bg-white transition-opacity ${changed[t] ? 'opacity-90' : 'opacity-0'}`} />
+              <span className="text-[11px] font-medium tracking-[0.06em]">{TITLES[t]}</span>
+              <span aria-hidden className={`absolute top-0 right-3 w-[5px] h-[5px] rounded-full bg-[#ffb340] transition-opacity ${changed[t] ? 'opacity-100' : 'opacity-0'}`} />
             </button>
           ))}
         </div>
+        <div className="mx-5 h-px bg-white/[0.08]" />
 
-        <div className="px-6 min-h-[196px]">
+        <div className="px-5 pt-2 h-[262px] overflow-y-auto no-scrollbar">
           {tool === 'light' && (
-            <div className="grid grid-cols-2 gap-x-5 gap-y-4">
+            <>
               {slider('曝光', 'exposure', -5, 5, ev, protectEV, 0.05)}
               {slider('對比', 'contrast', -100, 100, signed, 0)}
               {slider('高光', 'highlights', -100, 100, signed, 0)}
               {slider('陰影', 'shadows', -100, 100, signed, 0)}
               {slider('白色', 'whites', -100, 100, signed, 0)}
               {slider('黑色', 'blacks', -100, 100, signed, 0)}
-            </div>
+            </>
           )}
           {tool === 'color' && (
-            <div className="grid grid-cols-2 gap-x-5 gap-y-4">
+            <>
               {slider('色溫', 'temp', -100, 100, signed, 0)}
               {slider('色調', 'tint', -100, 100, signed, 0)}
-              {slider('自然飽和度', 'vibrance', -100, 100, signed, 0)}
+              {slider('自然飽和', 'vibrance', -100, 100, signed, 0)}
               {slider('飽和度', 'saturation', -100, 100, signed, 0)}
-            </div>
+            </>
           )}
           {tool === 'hsl' && (
             <>
-              <div className="flex items-center justify-between mb-5 px-1">
+              <div className="flex items-center justify-between py-3">
                 {BANDS.map(([name, color], i) => (
                   <button key={name} aria-label={name} onClick={() => { haptic('tick'); setBand(i); }}
-                    className="w-[34px] h-[34px] rounded-full flex items-center justify-center transition-transform active:scale-90"
-                    style={band === i ? { background: color } : { boxShadow: `inset 0 0 0 3px ${color}` }}>
-                    {st.hsl.slice(i * 3, i * 3 + 3).some(Boolean) && band !== i && <span className="w-1.5 h-1.5 rounded-full" style={{ background: color }} />}
+                    className="w-[30px] h-[30px] rounded-full flex items-center justify-center transition-transform duration-200 active:scale-90"
+                    style={{ background: color, transform: band === i ? 'scale(1)' : 'scale(.72)', boxShadow: band === i ? '0 0 0 2px #000, 0 0 0 3.5px #fff' : 'none' }}>
+                    {st.hsl.slice(i * 3, i * 3 + 3).some(Boolean) && band !== i && <span className="w-1.5 h-1.5 rounded-full bg-black/60" />}
                   </button>
                 ))}
               </div>
-              <div className="grid grid-cols-2 gap-x-5 gap-y-4">
-                {hslSlider('色相', 0)}
-                {hslSlider('飽和度', 1)}
-                {hslSlider('明度', 2)}
-              </div>
+              {hslSlider('色相', 0)}
+              {hslSlider('飽和度', 1)}
+              {hslSlider('明度', 2)}
             </>
           )}
           {tool === 'curve' && (
-            <CurveEditor channel={channel} onChannel={setChannel} pts={st.curves[channel]}
-              onBegin={touch}
-              onChange={pts => set({ curves: { ...stRef.current.curves, [channel]: pts } })}
-              onCommit={commit} />
+            <div className="pt-2">
+              <CurveEditor channel={channel} onChannel={setChannel} pts={st.curves[channel]}
+                onBegin={touch}
+                onChange={pts => set({ curves: { ...stRef.current.curves, [channel]: pts } })}
+                onCommit={commit} />
+            </div>
           )}
         </div>
-
-        {/* 最下面：✕、復原、名稱、⋯（全部重設）、✓ */}
-        <div className="flex items-center justify-between px-6 h-[64px] mt-1" style={{ paddingBottom: 'max(env(safe-area-inset-bottom), 10px)', boxSizing: 'content-box' }}>
-          <button aria-label="取消" onClick={() => void exit()} className="w-11 h-11 flex items-center justify-center active:opacity-50">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round"><path d="M5.5 5.5l13 13M18.5 5.5l-13 13" /></svg>
-          </button>
-          <button aria-label="復原" onClick={undo} disabled={!canUndo} className="w-11 h-11 flex items-center justify-center disabled:opacity-30 active:opacity-50">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14L4.5 9.5 9 5" /><path d="M4.5 9.5h9.5a5.5 5.5 0 0 1 0 11H11" /></svg>
-          </button>
-          <span className="text-[16px] font-medium tracking-[0.06em] w-24 text-center">{TITLES[tool]}</span>
-          <button aria-label="全部重設" onClick={resetAll} className="w-11 h-11 flex items-center justify-center active:opacity-50">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><circle cx="5.5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="18.5" cy="12" r="1.7" /></svg>
-          </button>
-          <button aria-label="完成" onClick={() => void finish()} disabled={mode === 'pending'} className="w-11 h-11 flex items-center justify-center disabled:opacity-30 active:opacity-50">
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 12.5l5 5L19.5 6.5" /></svg>
-          </button>
-        </div>
+        <div style={{ height: 'max(env(safe-area-inset-bottom), 12px)' }} />
       </div>
     </div>
   );
@@ -368,14 +373,14 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
 const ToolIcon: React.FC<{ tool: Tool }> = ({ tool }) => {
   const c = { fill: 'none', stroke: '#fff', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
   if (tool === 'light') return (
-    <svg width="26" height="26" viewBox="0 0 24 24" {...c}><circle cx="12" cy="12" r="3.6" fill="#fff" stroke="none" />
+    <svg width="22" height="22" viewBox="0 0 24 24" {...c}><circle cx="12" cy="12" r="3.6" fill="#fff" stroke="none" />
       <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4" /></svg>);
   if (tool === 'color') return (
-    <svg width="26" height="26" viewBox="0 0 24 24" {...c}><path d="M10 14.5V5a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0z" /><circle cx="12" cy="17.5" r="1.6" fill="#fff" stroke="none" /><path d="M12 9v7" /></svg>);
+    <svg width="22" height="22" viewBox="0 0 24 24" {...c}><path d="M10 14.5V5a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0z" /><circle cx="12" cy="17.5" r="1.6" fill="#fff" stroke="none" /><path d="M12 9v7" /></svg>);
   if (tool === 'curve') return (
-    <svg width="26" height="26" viewBox="0 0 24 24" {...c}><path d="M4 4v16h16" /><path d="M6.5 18c3-0.5 4.5-3 6-6.5S16 6 19.5 5.5" /></svg>);
+    <svg width="22" height="22" viewBox="0 0 24 24" {...c}><path d="M4 4v16h16" /><path d="M6.5 18c3-0.5 4.5-3 6-6.5S16 6 19.5 5.5" /></svg>);
   return (
-    <svg width="26" height="26" viewBox="0 0 24 24" {...c}><path d="M4 7h16M7 12h10M10 17h4" /></svg>);
+    <svg width="22" height="22" viewBox="0 0 24 24" {...c}><path d="M4 7h16M7 12h10M10 17h4" /></svg>);
 };
 
 /* ── 曲線 ──────────────────────────────────────────────────────────────

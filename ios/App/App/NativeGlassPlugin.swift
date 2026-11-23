@@ -70,6 +70,25 @@ enum ABAIGlass {
 
     static func image(_ symbol: String, pointSize: CGFloat = 19, weight: UIImage.SymbolWeight = .regular) -> UIImage? {
         if symbol == "abai.level" { return levelIcon(size: pointSize + 2) }
+        if symbol == "abai.film" {
+            /* 一格底片：比 SF 的 film 窄（寬約高的 0.93），上下兩排齒孔 */
+            let side = pointSize + 3
+            let size = CGSize(width: side, height: side)
+            return UIGraphicsImageRenderer(size: size).image { ctx in
+                let c = ctx.cgContext
+                let u = side / 24
+                c.setStrokeColor(UIColor.white.cgColor)
+                c.setLineWidth(1.6 * u)
+                c.setLineCap(.round)
+                c.addPath(UIBezierPath(roundedRect: CGRect(x: 5 * u, y: 4.5 * u, width: 14 * u, height: 15 * u), cornerRadius: 2.2 * u).cgPath)
+                for y: CGFloat in [8.5, 15.5] { c.move(to: CGPoint(x: 5 * u, y: y * u)); c.addLine(to: CGPoint(x: 19 * u, y: y * u)) }
+                for x: CGFloat in [9, 12, 15] {
+                    c.move(to: CGPoint(x: x * u, y: 4.5 * u)); c.addLine(to: CGPoint(x: x * u, y: 8.5 * u))
+                    c.move(to: CGPoint(x: x * u, y: 15.5 * u)); c.addLine(to: CGPoint(x: x * u, y: 19.5 * u))
+                }
+                c.strokePath()
+            }.withRenderingMode(.alwaysTemplate)
+        }
         if symbol == "abai.raw" {
             /* 24×24 的設計稿，跟著 pointSize 等比例縮放（19pt 時剛好跟其他 SF Symbol 一樣大） */
             let k = (pointSize + 3) / 24
