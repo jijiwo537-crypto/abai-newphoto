@@ -179,15 +179,8 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
       className={`fixed inset-0 bg-black text-white z-50 transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing || !entered ? 'translate-y-full' : 'translate-y-0'}`}>
 
       <style>{SEL_CSS}</style>
-      {/* 上方沒有黑色遮罩：照片捲上去會一路滑到螢幕最上面，只在最上面一小段（狀態列）有從上往下淡掉的模糊。
+      {/* 上方沒有黑色遮罩：照片捲上去會一路滑到螢幕最上面，沒有模糊漸層。
           44pt 的圓鈕浮在照片上面，貼著狀態列下緣、靠右 20pt */}
-      <div aria-hidden className="absolute left-0 right-0 top-0 z-10 pointer-events-none"
-        style={{
-          height: 'calc(env(safe-area-inset-top, 0px) + 26px)',
-          backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-          background: 'linear-gradient(to bottom, rgba(0,0,0,.55), rgba(0,0,0,0))',
-          maskImage: 'linear-gradient(to bottom, #000 45%, transparent)', WebkitMaskImage: 'linear-gradient(to bottom, #000 45%, transparent)',
-        }} />
       <header className="absolute left-0 right-0 top-0 z-20 pr-5 pl-5 flex justify-end items-start pointer-events-none" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
         <button ref={selectRef} onClick={() => { setSelecting(v => !v); setSelected(new Set()); }} disabled={!photos.length}
           aria-label={selecting ? '取消選取' : '選取照片'}
