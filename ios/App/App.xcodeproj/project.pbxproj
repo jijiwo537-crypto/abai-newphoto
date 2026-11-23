@@ -27,6 +27,7 @@
 		AB0000000000000000000109 /* NativeCameraPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000009 /* NativeCameraPlugin.swift */; };
 		AB000000000000000000010A /* HapticsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000000A /* HapticsPlugin.swift */; };
 		AB0000000000000000000A04 /* NativeGlassPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000A03 /* NativeGlassPlugin.swift */; };
+		AB0000000000000000000A06 /* ABAIRawDevelop.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000000000000000000A05 /* ABAIRawDevelop.swift */; };
 		AB000000000000000000010B /* VideoWriterPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000000B /* VideoWriterPlugin.swift */; };
 		AB000000000000000000010C /* PhotoLibraryPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000000C /* PhotoLibraryPlugin.swift */; };
 		AB000000000000000000010D /* QAPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000000000000000000000D /* QAPlugin.swift */; };
@@ -61,6 +62,7 @@
 		AB0000000000000000000009 /* NativeCameraPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCameraPlugin.swift; sourceTree = "<group>"; };
 		AB000000000000000000000A /* HapticsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticsPlugin.swift; sourceTree = "<group>"; };
 		AB0000000000000000000A03 /* NativeGlassPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGlassPlugin.swift; sourceTree = "<group>"; };
+		AB0000000000000000000A05 /* ABAIRawDevelop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ABAIRawDevelop.swift; sourceTree = "<group>"; };
 		AB000000000000000000000B /* VideoWriterPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoWriterPlugin.swift; sourceTree = "<group>"; };
 		AB000000000000000000000C /* PhotoLibraryPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryPlugin.swift; sourceTree = "<group>"; };
 		AB000000000000000000000D /* QAPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QAPlugin.swift; sourceTree = "<group>"; };
@@ -151,6 +153,7 @@
 				AB0000000000000000000009 /* NativeCameraPlugin.swift */,
 				AB000000000000000000000A /* HapticsPlugin.swift */,
 				AB0000000000000000000A03 /* NativeGlassPlugin.swift */,
+				AB0000000000000000000A05 /* ABAIRawDevelop.swift */,
 				AB000000000000000000000B /* VideoWriterPlugin.swift */,
 				AB000000000000000000000C /* PhotoLibraryPlugin.swift */,
 				AB000000000000000000000D /* QAPlugin.swift */,
@@ -324,6 +327,7 @@
 				AB0000000000000000000109 /* NativeCameraPlugin.swift in Sources */,
 				AB000000000000000000010A /* HapticsPlugin.swift in Sources */,
 				AB0000000000000000000A04 /* NativeGlassPlugin.swift in Sources */,
+				AB0000000000000000000A06 /* ABAIRawDevelop.swift in Sources */,
 				AB000000000000000000010B /* VideoWriterPlugin.swift in Sources */,
 				AB000000000000000000010C /* PhotoLibraryPlugin.swift in Sources */,
 				AB000000000000000000010D /* QAPlugin.swift in Sources */,

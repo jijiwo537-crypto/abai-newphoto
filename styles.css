@@ -493,3 +493,15 @@ html[data-vt="back"]::view-transition-new(root) { z-index: 1; animation-name: vt
   transition: rotate 460ms cubic-bezier(0.25, 0.9, 0.3, 1), transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1),
     opacity 200ms, color 200ms, background-color 200ms !important;
 }
+
+/* RAW 沖洗的滑桿（components/RawDevelopSheet）：粗的深灰圓角軌道、白色直立膠囊的白點 —— 照專業沖洗 App 的樣子。
+   --thumb-w 要跟白點一樣寬（拖到哪裡＝哪個值是用它算的） */
+.raw-slider { --thumb-w: 14px; -webkit-appearance: none; appearance: none; width: 100%; height: 34px; background: transparent; outline: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+.raw-slider::-webkit-slider-runnable-track { height: 34px; border-radius: 12px; background: #2a2a2c; }
+.raw-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 30px; margin-top: 2px; border: none; border-radius: 7px; background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.45); transition: transform 140ms cubic-bezier(0.2,0.8,0.2,1); }
+.raw-slider:active::-webkit-slider-thumb { transform: scaleY(1.06); }
+.raw-slider::-moz-range-track { height: 34px; border-radius: 12px; background: #2a2a2c; }
+.raw-slider::-moz-range-thumb { width: 14px; height: 30px; border: 0; border-radius: 7px; background: #fff; }
+/* 粗軌道就是看得見的那一條：不往外多伸 7px（軌道要剛好對齊欄寬），垂直置中 */
+.slider-wrap > input.raw-slider { height: 34px; margin: -17px 0 0 0; left: 0; width: 100%; }
