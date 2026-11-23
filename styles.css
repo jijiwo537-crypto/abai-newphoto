@@ -517,3 +517,7 @@ html[data-vt="back"]::view-transition-new(root) { z-index: 1; animation-name: vt
 .raw2-slider::-moz-range-track { height: 30px; background: transparent; }
 .raw2-slider::-moz-range-thumb { width: 20px; height: 20px; border: 0; border-radius: 50%; background: #fff; }
 .slider-wrap > input.raw2-slider { height: 30px; margin: -15px 0 0 0; left: -10px; width: calc(100% + 20px); } /* 把手中心剛好走滿軌道 */
+
+/* RAW 沖洗：白平衡、HSL 的滑桿軌道換成色彩漸層（外層畫），原本那條灰線藏起來 */
+.custom-range.raw-track-colored::-webkit-slider-runnable-track { background: transparent; }
+.custom-range.raw-track-colored::-moz-range-track { background: transparent; }

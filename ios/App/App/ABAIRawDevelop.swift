@@ -1,24 +1,33 @@
 //
 //  ABAIRawDevelop.swift
-//  ABAI — 專業的 RAW 沖洗（底片模式拍的 ProRAW、匯入的 RAW）
+//  ABAI — 專業 RAW 沖洗（底片模式拍的 ProRAW、匯入的 RAW）
 //
-//  為什麼之前不專業：每改一次就把 RAW 解成 8 位元 JPEG，再在 JPEG 上調 —— 寬容度在第一步就丟光了。
-//  現在整條都在「場景線性、延伸範圍的 Display P3、16 位元浮點」上做，最後一步才印成看得到的範圍：
+//  整條流程跟專業沖洗軟體（Lightroom／Capture One）同一個架構：場景線性 → 調整 → 最後才「印」成顯示的範圍。
+//  全部在延伸範圍的線性 Display P3、16 位元浮點上做，中間不會有任何一步把亮部切掉或量化成 8 位元。
 //
-//   ① RAW 解碼（CIRAWFilter）：
-//      曝光：在感光元件的線性資料上乘（跟當下真的多開／少開光圈一樣），亮部從 RAW 的餘裕裡救回來，
-//            extendedDynamicRangeAmount 讓超過白的亮部保留下來，不在這一步被切掉。
-//      色溫、色調：在相機原生的色彩空間裡做白平衡（相機的色彩矩陣之前），不是在成品上加黃加藍 ——
-//            所以拉很極端也不會「死黃」「死藍」。
-//   ② 光線（在亮度的「格數」上調，三個通道等比例縮放 → 色相不變）：
-//      對比（以中灰為支點）、高光、陰影、白色（白點）、黑色（黑點）
-//   ③ 色彩：自然飽和度（越不飽和的顏色加越多、膚色附近少一點）、飽和度
-//   ④ 印出來：超過白的部分用肩部柔柔地收、超出色域的往同亮度的灰拉 —— 色相永遠保住
-//   ⑤ 曲線（RGB 總曲線＋紅綠藍各自）、HSL（八個色相各自的色相、飽和度、明度）
-//   ⑥ 拍照當下的樣子：濾鏡、特效、比例裁切、小框、日期（只在輸出時）
+//   ① RAW 解碼（CIRAWFilter，系統的 RAW 引擎）
+//      ‧ 輸出「純線性」的場景光（boostAmount = 0、不做系統的局部階調）：階調全部由我們自己的 ③ 和 ⑤ 決定，
+//        亮部保留到 EDR 上限（extendedDynamicRangeAmount = 2），所以曝光、高光往回拉時救得回來。
+//      ‧ 曝光：在感光元件的線性資料上乘（等同拍的當下多開／少開光圈）。
+//      ‧ 白平衡（色溫 K、色調）：照 DNG 規格在「相機原生色彩空間」裡做 ——
+//        用相機兩組校正光源（例如 2850K、6500K）的色彩矩陣依色溫內插，再把中性點對到指定的色溫／色調。
+//        這是固有色（物體本來的顏色）保得住的關鍵：調的是「光源」，不是在成品上整片加黃加藍。
+//        膚色、綠葉、天空在不同色溫下還是對的顏色，灰色才會真的變中性；拉很極端也不會「死黃」「死藍」。
+//      ‧ 細節：銳利化、明度降噪、色彩降噪交給 RAW 引擎在去馬賽克時做（品質遠比事後處理好）。
+//   ② 局部亮度底圖：亮度取 log 之後做大範圍模糊（並限制跟原像素的差距，避免邊緣光暈）。
+//      高光、陰影、清晰度都看這張底圖決定作用多少 —— 跟 Lightroom 一樣是「局部」的：
+//      亮部壓下來時，亮部裡的細節、紋理還在，不會變成一片平平的灰。
+//   ③ 光線：在亮度的「格數」（EV）上調，三個通道等比例縮放 → 色相、飽和度都不變。
+//      對比（以中灰為支點）、高光、陰影、白色、黑色、清晰度（中間調的局部對比）。
+//   ④ 色彩：在 Oklab（感知均勻的色彩空間）上做。
+//      飽和度：整體色度；自然飽和度：越不飽和加越多、膚色色相附近自動減量；
+//      HSL：八個色相，相鄰色相之間平滑過渡，只動有顏色的地方（灰色不受影響），調明度時色相不會跑。
+//   ⑤ 顯示轉換（「印」出來）：保住色相的電影感曲線（以 max(R,G,B) 為準等比例壓縮），
+//      中灰 0.18 → 約 0.20，超過白的亮部柔柔收到白、越亮越淡（跟底片一樣），超出色域的往同亮度的灰拉。
+//   ⑥ 曲線（RGB 總曲線＋紅綠藍）在顯示值上做；⑦ 拍照當下的樣子（濾鏡、特效、裁切、日期）。
 //
-//  即時預覽：RAW 那一步（①）只有曝光、色溫、色調改了才重算，結果存成一張螢幕大小的線性浮點小圖；
-//  其他的調整都是在這張小圖上的 GPU 運算，拖滑桿時每一格都能重畫。
+//  即時預覽：① 只有曝光、白平衡、細節改了才重算，結果存成螢幕大小的線性浮點小圖（連同 ② 的底圖），
+//  其他調整都是在小圖上的 GPU 運算，拖滑桿時每一格都能重畫。
 //
 
 import Foundation
@@ -26,13 +35,17 @@ import CoreImage
 import UIKit
 
 struct ABAIRawParams: Equatable {
-    var exposure = 0.0, temperature: Double? = nil, tint: Double? = nil
-    var contrast = 0.0, highlights = 0.0, shadows = 0.0, whites = 0.0, blacks = 0.0
+    var exposure = 0.0
+    /// 白平衡：色溫（K）、色調（DNG 的 tint，綠 − ↔ ＋ 洋紅）。nil＝拍攝當下
+    var temperature: Double? = nil, tint: Double? = nil
+    var contrast = 0.0, highlights = 0.0, shadows = 0.0, whites = 0.0, blacks = 0.0, clarity = 0.0
     var vibrance = 0.0, saturation = 0.0
     /// 八個色相（紅橙黃綠青藍紫洋紅）× [色相, 飽和度, 明度]，各 -1～1
     var hsl: [Double] = Array(repeating: 0, count: 24)
     /// 曲線：256 格 × RGB（已經把總曲線和各通道合在一起），nil＝直線
     var curve: [Float]? = nil
+    /// 細節（-1～1，0＝RAW 引擎針對這台相機的預設）
+    var sharpen = 0.0, lumaNR = 0.0, colorNR = 0.0
 
     init() {}
     init(_ d: [String: Any]?) {
@@ -42,126 +55,207 @@ struct ABAIRawParams: Equatable {
         temperature = (d["temperature"] as? NSNumber)?.doubleValue
         tint = (d["tint"] as? NSNumber)?.doubleValue
         contrast = n("contrast"); highlights = n("highlights"); shadows = n("shadows"); whites = n("whites"); blacks = n("blacks")
+        clarity = n("clarity")
         vibrance = n("vibrance"); saturation = n("saturation")
+        sharpen = n("sharpen"); lumaNR = n("lumaNR"); colorNR = n("colorNR")
         if let h = d["hsl"] as? [Any], h.count == 24 { hsl = h.map { ($0 as? NSNumber)?.doubleValue ?? 0 } }
         if let c = d["curve"] as? [Any], c.count == 768 { curve = c.map { Float(($0 as? NSNumber)?.doubleValue ?? 0) } }
     }
-    var rawKey: String { "\(exposure)|\(temperature ?? -1)|\(tint ?? -999)" }
+    /// RAW 那一步（①）用到的參數；變了才要重新解 RAW
+    var rawKey: String { "\(exposure)|\(temperature ?? -1)|\(tint ?? -999)|\(sharpen)|\(lumaNR)|\(colorNR)" }
+}
+
+/// RAW 引擎針對這台相機的細節預設值（滑桿的 0）
+struct ABAIRawDefaults {
+    var sharp: Float = 0, luma: Float = 0, color: Float = 0
+    init(_ f: CIRAWFilter) {
+        if f.isSharpnessSupported { sharp = f.sharpnessAmount }
+        if f.isLuminanceNoiseReductionSupported { luma = f.luminanceNoiseReductionAmount }
+        if f.isColorNoiseReductionSupported { color = f.colorNoiseReductionAmount }
+    }
 }
 
 enum ABAIRawDevelop {
 
-    // MARK: RAW 解碼
+    // MARK: ① RAW 解碼
 
     static func rawFilter(_ url: URL, longSide: CGFloat?, draft: Bool) -> CIRAWFilter? {
         guard let f = CIRAWFilter(imageURL: url) else { return nil }
         f.isDraftModeEnabled = draft
-        f.isGamutMappingEnabled = false          // 色域交給最後一步（保住色相的那一套）
-        /* 超過白的亮部全部留著（EDR 開到最大 2），曝光、高光往回拉時救得回來；
-           之後整條都在線性 16 位元浮點上做，最後一步才用肩部柔收印出來 */
-        f.extendedDynamicRangeAmount = 2
+        f.isGamutMappingEnabled = false          // 色域交給 ⑤（保住色相的那一套）
+        f.extendedDynamicRangeAmount = 2         // 超過白的亮部全部留著
+        f.boostAmount = 0                        // 純線性的場景光：階調由我們自己決定
+        f.boostShadowAmount = 0
+        if f.isLocalToneMapSupported { f.localToneMapAmount = 0 }   // 局部階調由 ② ③ 做（可調、不會有系統的 HDR 感）
+        if f.isLensCorrectionSupported { f.isLensCorrectionEnabled = true }
         if let ls = longSide, f.nativeSize.width > 0 {
             f.scaleFactor = Float(min(1, ls / max(f.nativeSize.width, f.nativeSize.height)))
         }
         return f
     }
 
-    static func applyRaw(_ f: CIRAWFilter, _ p: ABAIRawParams) -> CIImage? {
+    /// 0 ＝ 預設值；往 +1 走到 1、往 -1 走到 0
+    private static func around(_ def: Float, _ v: Double) -> Float {
+        let x = Float(max(-1, min(1, v)))
+        return x >= 0 ? def + (1 - def) * x : def * (1 + x)
+    }
+
+    static func applyRaw(_ f: CIRAWFilter, _ p: ABAIRawParams, defaults d: ABAIRawDefaults) -> CIImage? {
         f.exposure = Float(p.exposure)
-        if let t = p.temperature { f.neutralTemperature = Float(max(1800, min(50000, t))) }
+        if let t = p.temperature { f.neutralTemperature = Float(max(2000, min(50000, t))) }
         if let t = p.tint { f.neutralTint = Float(max(-150, min(150, t))) }
+        if f.isSharpnessSupported { f.sharpnessAmount = around(d.sharp, p.sharpen) }
+        if f.isLuminanceNoiseReductionSupported { f.luminanceNoiseReductionAmount = around(d.luma, p.lumaNR) }
+        if f.isColorNoiseReductionSupported { f.colorNoiseReductionAmount = around(d.color, p.colorNR) }
         return f.outputImage
     }
 
-    // MARK: 光線、色彩
+    // MARK: ② 局部亮度底圖
+
+    private static let logLumaKernel = CIColorKernel(source: """
+    kernel vec4 abaiLogLuma(__sample s) {
+        float Y = max(dot(max(s.rgb, vec3(0.0)), vec3(0.2289746, 0.6917385, 0.0792869)), 1.0e-5);
+        float e = log2(Y / 0.18);
+        return vec4(e, e, e, 1.0);
+    }
+    """)
+
+    /// 亮度（EV，以中灰為 0）的大範圍模糊。sigma 跟著圖的大小走（預覽、原尺寸看起來一樣）
+    static func localBase(_ linear: CIImage) -> CIImage {
+        let e = linear.extent
+        guard let k = logLumaKernel, let lum = k.apply(extent: e, arguments: [linear]) else { return linear }
+        let sigma = Double(max(e.width, e.height)) * 0.012
+        /* 兩個尺度混合：大的負責「這一區整體多亮」，小的讓邊緣附近不會整圈發亮（光暈） */
+        let big = lum.clampedToExtent().applyingGaussianBlur(sigma: sigma).cropped(to: e)
+        let small = lum.clampedToExtent().applyingGaussianBlur(sigma: sigma * 0.25).cropped(to: e)
+        return big.applyingFilter("CIDissolveTransition", parameters: ["inputTargetImage": small, "inputTime": 0.35]).cropped(to: e)
+    }
+
+    // MARK: ③ 光線
 
     private static let toneKernel = CIColorKernel(source: """
-    kernel vec4 abaiRawTone(__sample s, float contrast, float highlights, float shadows, float whites, float blacks, float vibrance, float saturation) {
+    kernel vec4 abaiRawTone(__sample s, __sample b, float contrast, float highlights, float shadows, float whites, float blacks, float clarity) {
         vec3 c = max(s.rgb, vec3(0.0));
-        vec3 W = vec3(0.2290, 0.6917, 0.0793);
-        float Y = max(dot(c, W), 1e-6);
+        float Y = max(dot(c, vec3(0.2289746, 0.6917385, 0.0792869)), 1.0e-5);
         float e = log2(Y / 0.18);
-        float e2 = e * (1.0 + contrast * 0.55);
-        e2 += highlights * 2.6 * smoothstep(-0.5, 3.5, e);
-        e2 += shadows * 2.6 * (1.0 - smoothstep(-5.5, 0.0, e));
-        e2 += whites * 1.5 * smoothstep(1.0, 4.0, e);
-        e2 += blacks * 1.6 * (1.0 - smoothstep(-8.0, -2.5, e));
+        /* 底圖跟像素的差距限制在 ±1.5 EV：亮暗交界處不會被對面那一側拖著走（光暈） */
+        float base = e + clamp(b.r - e, -1.5, 1.5);
+        float detail = e - base;
+        float e2 = e * (1.0 + contrast * 0.6);
+        float hw = smoothstep(-1.0, 2.5, base);
+        float sw = 1.0 - smoothstep(-5.5, -0.5, base);
+        e2 += highlights * 2.5 * hw;
+        e2 += shadows * 2.5 * sw;
+        e2 += whites * 1.5 * smoothstep(0.5, 3.5, e);
+        e2 += blacks * 1.6 * (1.0 - smoothstep(-8.0, -3.0, e));
+        float mid = exp(-(base * base) / 9.0);
+        e2 += clarity * 0.9 * detail * mid;
         float Y2 = 0.18 * exp2(e2);
-        vec3 o = c * (Y2 / Y);
-        float Y3 = dot(o, W);
-        float mx = max(max(o.r, o.g), o.b), mn = min(min(o.r, o.g), o.b);
-        float sat = (mx - mn) / max(mx, 1e-6);
-        float vib = vibrance * (1.0 - sat) * (vibrance > 0.0 ? 1.0 : 0.7);
-        o = vec3(Y3) + (o - vec3(Y3)) * max(0.0, (1.0 + saturation)) * max(0.0, (1.0 + vib));
-        return vec4(o, s.a);
+        return vec4(c * (Y2 / Y), s.a);
     }
     """)
 
-    /// 印出來：超出色域的往同亮度的灰拉（剛好進色域為止），超過白的整個顏色等比例柔收 —— 色相永遠保住
-    private static let printKernel = CIColorKernel(source: """
-    kernel vec4 abaiRawPrint(__sample s) {
+    // MARK: ④ 色彩（Oklab）
+
+    private static let colorKernel = CIColorKernel(source: """
+    vec3 abaiToLab(vec3 c) {
+        vec3 l = vec3(dot(c, vec3(0.48132726, 0.46206791, 0.05649561)),
+                      dot(c, vec3(0.22883813, 0.65323438, 0.11795440)),
+                      dot(c, vec3(0.08398602, 0.22427280, 0.69222086)));
+        l = sign(l) * pow(abs(l), vec3(1.0 / 3.0));
+        return vec3(dot(l, vec3(0.2104542553, 0.7936177850, -0.0040720468)),
+                    dot(l, vec3(1.9779984951, -2.4285922050, 0.4505937099)),
+                    dot(l, vec3(0.0259040371, 0.7827717662, -0.8086757660)));
+    }
+    vec3 abaiFromLab(vec3 o) {
+        vec3 l = vec3(o.x + 0.39633779 * o.y + 0.21580376 * o.z,
+                      o.x - 0.10556134 * o.y - 0.06385417 * o.z,
+                      o.x - 0.08948418 * o.y - 1.29148554 * o.z);
+        l = l * l * l;
+        return vec3(dot(l, vec3(3.12811105, -2.25707542, 0.12930476)),
+                    dot(l, vec3(-1.09112853, 2.41326708, -0.32216814)),
+                    dot(l, vec3(-0.02601361, -0.50802769, 1.53331664)));
+    }
+    float abaiHueDist(float a, float b) { float d = abs(a - b); return min(d, 360.0 - d); }
+    /* 一個色相的權重：中心 c，往前到上一個中心的距離 lo、往後到下一個中心的距離 hi（升餘弦，到隔壁中心剛好歸零） */
+    float abaiBandW(float h, float c, float lo, float hi) {
+        float d = h - c;
+        if (d > 180.0) d -= 360.0;
+        if (d < -180.0) d += 360.0;
+        float span = d >= 0.0 ? hi : lo;
+        float a = abs(d);
+        return a < span ? 0.5 + 0.5 * cos(3.14159265 * a / span) : 0.0;
+    }
+    kernel vec4 abaiRawColor(__sample s, float vibrance, float saturation, vec4 h0, vec4 h1, vec4 h2, vec4 h3, vec4 h4, vec4 h5, vec4 h6, vec4 h7) {
         vec3 c = s.rgb;
-        float l = max(dot(c, vec3(0.2290, 0.6917, 0.0793)), 0.0);
+        vec3 lab = abaiToLab(max(c, vec3(0.0)));
+        float C = length(lab.yz);
+        if (C < 1.0e-6) return s;
+        float h = degrees(atan(lab.z, lab.y));
+        if (h < 0.0) h += 360.0;
+        /* 八個色相（中心在 h?.w）：相鄰兩個之間平滑交接，兩個權重加起來是 1 */
+        float w0 = abaiBandW(h, h0.w, 40.0, 30.0), w1 = abaiBandW(h, h1.w, 30.0, 45.0), w2 = abaiBandW(h, h2.w, 45.0, 45.0), w3 = abaiBandW(h, h3.w, 45.0, 55.0);
+        float w4 = abaiBandW(h, h4.w, 55.0, 60.0), w5 = abaiBandW(h, h5.w, 60.0, 45.0), w6 = abaiBandW(h, h6.w, 45.0, 40.0), w7 = abaiBandW(h, h7.w, 40.0, 40.0);
+        vec3 adj = h0.xyz * w0 + h1.xyz * w1 + h2.xyz * w2 + h3.xyz * w3 + h4.xyz * w4 + h5.xyz * w5 + h6.xyz * w6 + h7.xyz * w7;
+        float wsum = w0 + w1 + w2 + w3 + w4 + w5 + w6 + w7;
+        adj /= max(wsum, 1.0e-4);
+        /* 越接近灰色越不受 HSL 影響 */
+        float cw = smoothstep(0.0, 0.06, C);
+        h += adj.x * 30.0 * cw;
+        C *= max(0.0, 1.0 + adj.y * cw);
+        lab.x *= exp2(adj.z * 0.75 * cw);
+        /* 飽和度：整體色度。自然飽和度：越不飽和加越多，膚色色相（約 40°～75°）附近自動減量 */
+        float skin = exp(-pow(abaiHueDist(h, 58.0) / 22.0, 2.0));
+        float vib = vibrance > 0.0 ? vibrance * (1.0 - smoothstep(0.0, 0.22, C)) * (1.0 - 0.65 * skin) : vibrance * 0.8;
+        C *= max(0.0, 1.0 + saturation) * max(0.0, 1.0 + vib);
+        float hr = radians(h);
+        return vec4(abaiFromLab(vec3(lab.x, C * cos(hr), C * sin(hr))), s.a);
+    }
+    """)
+    /// 八個色相的中心（Oklab 的色相角）：紅、橙、黃、綠、青、藍、紫、洋紅
+    private static let bandHues: [CGFloat] = [25, 55, 100, 145, 200, 260, 305, 345]
+
+    // MARK: ⑤ 顯示轉換
+
+    private static let viewKernel = CIColorKernel(source: """
+    float abaiFilmic(float x) {
+        x *= 0.8;
+        return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+    }
+    kernel vec4 abaiRawView(__sample s) {
+        vec3 c = s.rgb;
+        vec3 W = vec3(0.2289746, 0.6917385, 0.0792869);
+        float l = max(dot(c, W), 0.0);
+        /* 超出色域（有負值）：往同亮度的灰拉，拉到剛好進色域 —— 色相不變 */
         float mn = min(min(c.r, c.g), c.b);
-        if (mn < 0.0) { float k = l / max(l - mn, 1e-6); c = vec3(l) + (c - vec3(l)) * k; }
-        float mx = max(max(c.r, c.g), c.b);
-        float knee = 0.8;
-        if (mx > knee) { float nm = knee + (1.0 - knee) * (1.0 - exp(-(mx - knee) / (1.0 - knee))); c *= nm / mx; }
-        return vec4(max(c, vec3(0.0)), s.a);
+        if (mn < 0.0) { float k = l / max(l - mn, 1.0e-6); c = vec3(l) + (c - vec3(l)) * k; }
+        /* 保住色相的電影感曲線：以最亮的通道為準，三個通道等比例壓縮 */
+        float n = max(max(c.r, c.g), c.b);
+        if (n < 1.0e-6) return vec4(0.0, 0.0, 0.0, s.a);
+        float f = abaiFilmic(n);
+        vec3 o = c * (f / n);
+        /* 越接近白越淡（底片的感覺）：非常亮的顏色不會停在很飽和的一塊 */
+        float t = smoothstep(0.82, 1.0, f);
+        o = mix(o, vec3(f), t * t);
+        return vec4(clamp(o, 0.0, 1.0), s.a);
     }
     """)
 
-    // MARK: HSL（在 sRGB 編碼值的 HSV 上，八個色相之間平順地過渡）
+    // MARK: ③～⑥ 整條
 
-    private static let hslKernel = CIColorKernel(source: """
-    vec3 abaiRgb2Hsv(vec3 c) {
-        vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
-        vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
-        vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
-        float d = q.x - min(q.w, q.y);
-        float e = 1.0e-10;
-        return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
-    }
-    vec3 abaiHsv2Rgb(vec3 c) {
-        vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-        vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-        return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
-    }
-    vec3 abaiBand(float h, vec3 a, vec3 b, float h0, float h1) {
-        float t = clamp((h - h0) / (h1 - h0), 0.0, 1.0);
-        t = t * t * (3.0 - 2.0 * t);
-        return mix(a, b, t);
-    }
-    kernel vec4 abaiRawHsl(__sample s, vec3 b0, vec3 b1, vec3 b2, vec3 b3, vec3 b4, vec3 b5, vec3 b6, vec3 b7) {
-        vec3 hsv = abaiRgb2Hsv(clamp(s.rgb, 0.0, 1.0));
-        float h = hsv.x * 360.0;
-        vec3 a;
-        if (h < 30.0) a = abaiBand(h, b0, b1, 0.0, 30.0);
-        else if (h < 60.0) a = abaiBand(h, b1, b2, 30.0, 60.0);
-        else if (h < 120.0) a = abaiBand(h, b2, b3, 60.0, 120.0);
-        else if (h < 180.0) a = abaiBand(h, b3, b4, 120.0, 180.0);
-        else if (h < 240.0) a = abaiBand(h, b4, b5, 180.0, 240.0);
-        else if (h < 270.0) a = abaiBand(h, b5, b6, 240.0, 270.0);
-        else if (h < 300.0) a = abaiBand(h, b6, b7, 270.0, 300.0);
-        else a = abaiBand(h, b7, b0, 300.0, 360.0);
-        float w = smoothstep(0.02, 0.25, hsv.y);
-        hsv.x = fract(hsv.x + a.x * w * 30.0 / 360.0 + 1.0);
-        hsv.y = clamp(hsv.y * (1.0 + a.y * w), 0.0, 1.0);
-        hsv.z = clamp(hsv.z * (1.0 + a.z * w * 0.45), 0.0, 1.0);
-        return vec4(abaiHsv2Rgb(hsv), s.a);
-    }
-    """)
-
-    // MARK: 整條
-
-    /// 從 RAW 解出來的線性圖（①之後）往下做 ②～⑤
-    static func finish(_ linear: CIImage, _ p: ABAIRawParams) -> CIImage {
+    /// 從 RAW 解出來的線性圖（①之後）＋底圖（②）往下做 ③～⑥
+    static func finish(_ linear: CIImage, base: CIImage, _ p: ABAIRawParams) -> CIImage {
         let e = linear.extent
         var img = linear
         if let k = toneKernel {
-            img = k.apply(extent: e, arguments: [img, p.contrast, p.highlights, p.shadows, p.whites, p.blacks, p.vibrance, p.saturation]) ?? img
+            img = k.apply(extent: e, arguments: [img, base, p.contrast, p.highlights, p.shadows, p.whites, p.blacks, p.clarity]) ?? img
         }
-        if let k = printKernel { img = k.apply(extent: e, arguments: [img]) ?? img }
+        let hslOn = p.hsl.contains(where: { abs($0) > 0.001 })
+        if hslOn || abs(p.vibrance) > 0.001 || abs(p.saturation) > 0.001, let k = colorKernel {
+            let bands = (0..<8).map { i in CIVector(x: CGFloat(p.hsl[i * 3]), y: CGFloat(p.hsl[i * 3 + 1]), z: CGFloat(p.hsl[i * 3 + 2]), w: bandHues[i]) }
+            img = k.apply(extent: e, arguments: ([img, p.vibrance, p.saturation] as [Any]) + bands.map { $0 as Any }) ?? img
+        }
+        if let k = viewKernel { img = k.apply(extent: e, arguments: [img]) ?? img }
         if let curve = p.curve, let f = CIFilter(name: "CIColorCurves") {
             let data = curve.withUnsafeBufferPointer { Data(buffer: $0) }
             f.setValue(img, forKey: kCIInputImageKey)
@@ -170,15 +264,10 @@ enum ABAIRawDevelop {
             f.setValue(ABAIImageCore.sRGB, forKey: "inputColorSpace")
             img = f.outputImage?.cropped(to: e) ?? img
         }
-        if p.hsl.contains(where: { abs($0) > 0.001 }), let k = hslKernel {
-            let b = (0..<8).map { i in CIVector(x: CGFloat(p.hsl[i * 3]), y: CGFloat(p.hsl[i * 3 + 1]), z: CGFloat(p.hsl[i * 3 + 2])) }
-            let enc = img.applyingFilter("CILinearToSRGBToneCurve")
-            if let out = k.apply(extent: e, arguments: ([enc] as [Any]) + b.map { $0 as Any }) { img = out.applyingFilter("CISRGBToneCurveToLinear") }
-        }
         return img.cropped(to: e)
     }
 
-    /// 拍照當下的樣子（⑥）：比例裁切、小框、色溫外的濾鏡、特效、日期
+    /// 拍照當下的樣子（⑦）：比例裁切、小框、濾鏡、特效、日期
     static func applyLook(_ input: CIImage, look: [String: Any]?, withDate: Bool) -> CIImage {
         guard let look = look else { return input }
         var img = input
@@ -202,22 +291,30 @@ enum ABAIRawDevelop {
         if withDate, let d = look["date"] as? String, !d.isEmpty { img = ABAIDateStamp.stampDate(d, on: img) }
         return img
     }
+
+    /// 線性圖 → 存成浮點小圖（快取用，超過白的亮部也留著）
+    static func bake(_ img: CIImage) -> CIImage? {
+        guard let cg = ABAIImageCore.context.createCGImage(img, from: img.extent, format: .RGBAh, colorSpace: ABAIImageCore.linearP3) else { return nil }
+        return CIImage(cgImage: cg)
+    }
 }
 
-/// 一次沖洗（即時預覽）：RAW 那一步的結果快取成螢幕大小的線性浮點小圖，其他調整都在小圖上即時算
+/// 一次沖洗（即時預覽）：RAW 那一步的結果（和它的亮度底圖）快取成螢幕大小的線性浮點小圖，其他調整都在小圖上即時算
 final class ABAIRawSession {
     let url: URL
     let look: [String: Any]?
     let view: ABAIMetalView
     private let queue = DispatchQueue(label: "abai.raw.session", qos: .userInteractive)
     private var filter: CIRAWFilter?
+    private let defaults: ABAIRawDefaults
     private var proxy: CIImage?
+    private var proxyBase: CIImage?
     private var proxyKey = ""
     private var proxyDraft = true
     private var pending: (ABAIRawParams, Bool)?
     private var busy = false
     private let longSide: CGFloat
-    /// 拍攝當下的白平衡（滑桿的中點）
+    /// 拍攝當下的白平衡（滑桿的預設值）
     private(set) var asShotTemperature: Double = 5500
     private(set) var asShotTint: Double = 0
 
@@ -225,23 +322,27 @@ final class ABAIRawSession {
         self.url = url; self.look = look; self.view = view; self.longSide = longSide
         guard let f = ABAIRawDevelop.rawFilter(url, longSide: longSide, draft: true) else { return nil }
         filter = f
+        defaults = ABAIRawDefaults(f)
         asShotTemperature = Double(f.neutralTemperature)
         asShotTint = Double(f.neutralTint)
     }
 
+    private func rebuild(_ p: ABAIRawParams) {
+        guard let f = filter, let out = ABAIRawDevelop.applyRaw(f, p, defaults: defaults), let baked = ABAIRawDevelop.bake(out) else { return }
+        proxy = baked
+        proxyBase = ABAIRawDevelop.bake(ABAIRawDevelop.localBase(baked)) ?? ABAIRawDevelop.localBase(baked)
+        proxyKey = p.rawKey
+    }
+
+    private func render(_ p: ABAIRawParams) -> CIImage? {
+        guard let lin = proxy, let base = proxyBase else { return nil }
+        return ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(lin, base: base, p), look: look, withDate: false)
+    }
+
     /// 打開時的第一格：同步算好（在沖洗自己的佇列上），讓畫面先有圖，網頁才把那一塊挖空 ——
-    /// 不然挖空的瞬間底下什麼都還沒畫，會透出後面的相機畫面。
+    /// 不然挖空的瞬間底下什麼都還沒畫，會透出後面的畫面。
     func renderFirst(_ p: ABAIRawParams) -> CIImage? {
-        queue.sync {
-            autoreleasepool { () -> CIImage? in
-                guard let f = filter, let out = ABAIRawDevelop.applyRaw(f, p) else { return nil }
-                guard let cg = ABAIImageCore.context.createCGImage(out, from: out.extent, format: .RGBAh, colorSpace: ABAIImageCore.linearP3) else { return nil }
-                let base = CIImage(cgImage: cg)
-                proxy = base
-                proxyKey = p.rawKey
-                return ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(base, p), look: look, withDate: false)
-            }
-        }
+        queue.sync { autoreleasepool { () -> CIImage? in rebuild(p); return render(p) } }
     }
 
     /// final：手指放開了 —— 用完整品質（非 draft）重算 RAW 那一步
@@ -262,29 +363,22 @@ final class ABAIRawSession {
             if proxy == nil || p.rawKey != proxyKey || (final && proxyDraft) {
                 if final && proxyDraft { filter = ABAIRawDevelop.rawFilter(url, longSide: longSide, draft: false) ?? filter; proxyDraft = false }
                 else if !final && !proxyDraft && p.rawKey != proxyKey { filter = ABAIRawDevelop.rawFilter(url, longSide: longSide, draft: true) ?? filter; proxyDraft = true }
-                if let f = filter, let out = ABAIRawDevelop.applyRaw(f, p) {
-                    /* 存成線性、延伸範圍的 16 位元浮點：超過白的亮部也留著 */
-                    let ext = out.extent
-                    if let cg = ABAIImageCore.context.createCGImage(out, from: ext, format: .RGBAh, colorSpace: ABAIImageCore.linearP3) {
-                        proxy = CIImage(cgImage: cg)
-                        proxyKey = p.rawKey
-                    }
-                }
+                rebuild(p)
             }
-            if let base = proxy {
-                let img = ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(base, p), look: look, withDate: false)
-                DispatchQueue.main.async { self.view.source = img }
-            }
+            if let img = render(p) { DispatchQueue.main.async { self.view.source = img } }
         }
         queue.async { self.drain() }
     }
 
     /// 原尺寸、完整品質輸出成 JPEG（含拍照當下的濾鏡、特效、裁切、日期）
     func export(_ p: ABAIRawParams) throws -> URL {
-        guard let f = ABAIRawDevelop.rawFilter(url, longSide: nil, draft: false), let raw = ABAIRawDevelop.applyRaw(f, p) else {
+        guard let f = ABAIRawDevelop.rawFilter(url, longSide: nil, draft: false),
+              let raw = ABAIRawDevelop.applyRaw(f, p, defaults: ABAIRawDefaults(f)),
+              let lin = ABAIRawDevelop.bake(raw) else {
             throw ABAIImageCore.CoreError.decode
         }
-        let img = ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(raw, p), look: look, withDate: true)
+        let base = ABAIRawDevelop.localBase(lin)
+        let img = ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(lin, base: base, p), look: look, withDate: true)
         let data = try ABAIImageCore.encode(ABAIImageCore.dither(img), format: .jpeg, quality: 0.95)
         let out = ABAIImageCore.newFileURL(ext: "jpg")
         try data.write(to: out)

@@ -154,7 +154,11 @@ export async function developRaw(rawPath: string, dev: RawDevelop = { exposure: 
 export interface RawEditParams {
   exposure: number; temperature?: number; tint?: number;
   contrast: number; highlights: number; shadows: number; whites: number; blacks: number;
+  /** 清晰度（中間調的局部對比）-1～1 */
+  clarity: number;
   vibrance: number; saturation: number;
+  /** 細節（-1～1，0＝RAW 引擎對這台相機的預設）：銳化、明度降噪、色彩降噪 */
+  sharpen: number; lumaNR: number; colorNR: number;
   /** 八個色相 × [色相, 飽和度, 明度]，各 -1～1 */
   hsl: number[];
   /** 256 格 × RGB，null＝直線 */

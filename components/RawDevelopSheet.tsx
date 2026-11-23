@@ -1,15 +1,18 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft } from 'lucide-react';
 import { LiveRange } from './LiveRange';
+import { Icon } from './Icon';
 import { haptic } from '../utils/haptics';
 import { punchThrough } from '../utils/nativePreview';
 import { developRaw, rawEditor, rawEditorExport, rawEditorSnapshot, type RawEditParams, type RawLook } from '../utils/nativeCamera';
 
 /* ── RAW 沖洗（底片模式拍的 RAW）────────────────────────────────────────
- * 版面照專業沖洗 App：上面大圖；一排工具圖示（光線、色彩、曲線、HSL）；兩欄粗滑桿；最下面 ✕、復原、名稱、⋯、✓。
- * 沖洗本身在原生端（ios/App/App/ABAIRawDevelop.swift）：整條都在場景線性、16 位元浮點上做，
- * 曝光是在 RAW 的線性資料上重新曝光、白平衡在相機原生色彩空間裡做 —— 寬容度、色彩都保得住。
+ * 版面跟編輯頁一樣：上面 ‹｜復原、重做｜「完成 ⋯」；大圖；一條滑桿（名稱、數值）；一排圓形工具；最下面分頁。
+ * 分頁：光線、白平衡、色彩、細節、曲線。
+ * 沖洗本身在原生端（ios/App/App/ABAIRawDevelop.swift）：場景線性 16 位元浮點、局部階調、Oklab 色彩、
+ * 白平衡照 DNG 規格在相機原生色彩空間裡做（色溫 K、色調），最後才用保住色相的曲線印出來。
  * 原生預覽疊在網頁中間那塊透明的位置底下，拖滑桿每一格都即時重畫。
- * 網頁版（沒有原生沖洗）：只有曝光、色溫，放手才沖。 */
+ * 網頁版（沒有原生沖洗）：只有曝光、白平衡，放手才沖。 */
 
 export interface RawDevelopSheetProps {
   rawPath: string;
@@ -26,28 +29,57 @@ export interface RawDevelopSheetProps {
   developer?: typeof developRaw;
 }
 
-type Tool = 'light' | 'color' | 'curve' | 'hsl';
+type Tab = 'light' | 'wb' | 'color' | 'detail' | 'curve';
 type Channel = 'rgb' | 'r' | 'g' | 'b';
 type Pt = [number, number];
 interface State {
   exposure: number;
-  /** 滑桿值 -100～100（色溫在 mired 上對稱：往冷、往暖一樣多） */
-  temp: number; tint: number;
-  contrast: number; highlights: number; shadows: number; whites: number; blacks: number;
+  /** 白平衡：色溫（K）、色調（綠 − ↔ ＋ 洋紅）。0 K＝還不知道拍攝當下的值（等原生回報） */
+  kelvin: number; tint: number;
+  contrast: number; highlights: number; shadows: number; whites: number; blacks: number; clarity: number;
   vibrance: number; saturation: number;
   hsl: number[];   // 8 × [h, s, l]，-100～100
+  sharpen: number; lumaNR: number; colorNR: number;
   curves: Record<Channel, Pt[]>;
 }
 const LINE: Pt[] = [[0, 0], [1, 1]];
-const fresh = (ev: number): State => ({
-  exposure: ev, temp: 0, tint: 0, contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, vibrance: 0, saturation: 0,
-  hsl: Array(24).fill(0), curves: { rgb: LINE, r: LINE, g: LINE, b: LINE },
+const fresh = (ev: number, wb: { temp: number; tint: number } | null): State => ({
+  exposure: ev, kelvin: wb?.temp ?? 0, tint: wb?.tint ?? 0,
+  contrast: 0, highlights: 0, shadows: 0, whites: 0, blacks: 0, clarity: 0, vibrance: 0, saturation: 0,
+  hsl: Array(24).fill(0), sharpen: 0, lumaNR: 0, colorNR: 0, curves: { rgb: LINE, r: LINE, g: LINE, b: LINE },
 });
 
 const BANDS = [
   ['紅', '#ff3b30'], ['橙', '#ff9500'], ['黃', '#ffd60a'], ['綠', '#34c759'],
   ['青', '#5ac8fa'], ['藍', '#0a5cff'], ['紫', '#af52de'], ['洋紅', '#ff2d92'],
 ] as const;
+
+/* 色溫滑桿在 mired（1,000,000 ÷ K）上等距：人眼對色溫的感覺是均勻的（2000K→3000K 跟 6000K→9000K 差不多大）。
+   往右＝K 變大＝畫面變暖（跟 Lightroom 一樣：設定的是「光源」，光源越冷，補償後畫面越暖） */
+const K_MIN = 2000, K_MAX = 50000;
+const kToPos = (k: number) => -1e6 / Math.max(K_MIN, Math.min(K_MAX, k));
+const posToK = (p: number) => Math.round(-1e6 / p / 10) * 10;
+
+type ToolDef = { id: string; label: string; icon: string };
+const TOOLS: Record<Exclude<Tab, 'curve'>, ToolDef[]> = {
+  light: [
+    { id: 'exposure', label: '曝光', icon: 'brightness_6' }, { id: 'contrast', label: '對比', icon: 'contrast' },
+    { id: 'highlights', label: '高光', icon: 'tone_highlights' }, { id: 'shadows', label: '陰影', icon: 'tone_shadows' },
+    { id: 'whites', label: '白色', icon: 'tone_whites' }, { id: 'blacks', label: '黑色', icon: 'tone_blacks' },
+    { id: 'clarity', label: '清晰度', icon: 'tonality' },
+  ],
+  wb: [{ id: 'kelvin', label: '色溫', icon: 'device_thermostat' }, { id: 'tint', label: '色調', icon: 'colorize' }],
+  color: [
+    { id: 'vibrance', label: '自然飽和度', icon: 'color_lens' }, { id: 'saturation', label: '飽和度', icon: 'palette' },
+    ...BANDS.map(([name], i) => ({ id: `band${i}`, label: name, icon: '' })),
+  ],
+  detail: [
+    { id: 'sharpen', label: '銳化', icon: 'change_history' }, { id: 'lumaNR', label: '明度降噪', icon: 'blur_on' },
+    { id: 'colorNR', label: '色彩降噪', icon: 'invert_colors' },
+  ],
+};
+const TAB_TITLES: Record<Tab, string> = { light: '光線', wb: '白平衡', color: '色彩', detail: '細節', curve: '曲線' };
+const DEFAULT_TOOL: Record<Tab, string> = { light: 'exposure', wb: 'kelvin', color: 'vibrance', detail: 'sharpen', curve: '' };
 
 /* 單調三次插值（Fritsch–Carlson）：曲線不會過衝、不會有奇怪的波浪 */
 function curveTable(pts: Pt[]): Float32Array {
@@ -73,22 +105,26 @@ function curveTable(pts: Pt[]): Float32Array {
 }
 const isLine = (pts: Pt[]) => pts.length === 2 && pts[0][0] === 0 && pts[0][1] === 0 && pts[1][0] === 1 && pts[1][1] === 1;
 
+
 export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previewSrc, leaving = false, protectEV, look, onCancel, onDone, developer = developRaw }) => {
-  const [tool, setTool] = useState<Tool>('light');
-  const [band, setBand] = useState(0);
+  const [tab, setTab] = useState<Tab>('light');
+  const [tool, setTool] = useState('exposure');
   const [channel, setChannel] = useState<Channel>('rgb');
-  const [st, setSt] = useState<State>(() => fresh(protectEV));
+  const asShot = useRef<{ temp: number; tint: number } | null>(null);
+  const [st, setSt] = useState<State>(() => fresh(protectEV, null));
   const stRef = useRef(st); stRef.current = st;
   const history = useRef<State[]>([]);
-  const [canUndo, setCanUndo] = useState(false);
+  const future = useRef<State[]>([]);
+  const [, bumpHist] = useState(0);
   /** closed：原生預覽已經換成定格圖、關掉了（退場中） */
   const [mode, setMode] = useState<'native' | 'web' | 'pending' | 'closed'>('pending');
-  const asShot = useRef({ temp: 5500, tint: 0 });
   const [busy, setBusy] = useState(false);
   const [webUrl, setWebUrl] = useState<string | null>(null);
   const [entered, setEntered] = useState(false);
+  const [menu, setMenu] = useState(false);
   const stage = useRef<HTMLDivElement>(null);
   const comparing = useRef(false);
+  const [comparingOn, setComparingOn] = useState(false);
   const leavingRef = useRef(leaving); leavingRef.current = leaving;
   const exitingRef = useRef(false);
   const restoreRef = useRef<(() => void) | null>(null);
@@ -101,8 +137,17 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
     const first = requestAnimationFrame(() => { second = requestAnimationFrame(() => setEntered(true)); });
     return () => { cancelAnimationFrame(first); cancelAnimationFrame(second); };
   }, []);
-  /* 退場：原生預覽先換成網頁上的定格圖、把後面的相簿放回來，再整頁往下滑走。
-     不這樣做的話，滑走時後面露出的是還開著的相機畫面，原生預覽也不會跟著網頁一起動。 */
+
+  /* 拍攝當下的白平衡回來了：還沒動過的話，色溫、色調就停在它上面（歷史紀錄裡的也補上） */
+  const gotAsShot = (temp: number, tint: number) => {
+    if (asShot.current) return;
+    asShot.current = { temp: temp || 5500, tint: tint || 0 };
+    const fix = (s: State) => (s.kelvin ? s : { ...s, kelvin: asShot.current!.temp, tint: asShot.current!.tint });
+    history.current = history.current.map(fix);
+    const n = fix(stRef.current); stRef.current = n; setSt(n);
+  };
+
+  /* 退場：原生預覽先換成網頁上的定格圖、把後面的相簿放回來，再整頁往下滑走 */
   const exit = async () => {
     if (exitingRef.current) return;
     exitingRef.current = true;
@@ -120,9 +165,6 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
 
   /* ── 參數 → 原生 ── */
   const toParams = (s: State): RawEditParams => {
-    /* 色溫：在 mired（1,000,000 ÷ K）上對稱，±100 ＝ ±150 mired —— 往冷、往暖一樣多，跟專業沖洗軟體一樣 */
-    const m0 = 1e6 / Math.max(1500, asShot.current.temp);
-    const k = 1e6 / Math.max(20, m0 - s.temp * 1.5);
     const tables = (['r', 'g', 'b'] as const).map(c => curveTable(s.curves[c]));
     const master = curveTable(s.curves.rgb);
     const flat = (['rgb', 'r', 'g', 'b'] as const).every(c => isLine(s.curves[c]));
@@ -138,16 +180,19 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
       }
     }
     return {
-      exposure: s.exposure, temperature: k, tint: asShot.current.tint + s.tint,
+      exposure: s.exposure,
+      temperature: s.kelvin || undefined, tint: s.kelvin ? s.tint : undefined,
       contrast: s.contrast / 100, highlights: s.highlights / 100, shadows: s.shadows / 100, whites: s.whites / 100, blacks: s.blacks / 100,
-      vibrance: s.vibrance / 100, saturation: s.saturation / 100,
+      clarity: s.clarity / 100, vibrance: s.vibrance / 100, saturation: s.saturation / 100,
+      sharpen: s.sharpen / 100, lumaNR: s.lumaNR / 100, colorNR: s.colorNR / 100,
       hsl: s.hsl.map(v => v / 100), curve,
     };
   };
+  const original = () => fresh(protectEV, asShot.current);
   const sendRaf = useRef(0);
   const push = (final: boolean) => {
     if (mode !== 'native') return;
-    const go = () => { sendRaf.current = 0; void rawEditor().then(p => p?.updateEditor({ params: toParams(comparing.current ? fresh(protectEV) : stRef.current), final })); };
+    const go = () => { sendRaf.current = 0; void rawEditor().then(p => p?.updateEditor({ params: toParams(comparing.current ? original() : stRef.current), final })); };
     if (final) { if (sendRaf.current) cancelAnimationFrame(sendRaf.current); go(); }
     else if (!sendRaf.current) sendRaf.current = requestAnimationFrame(go);
   };
@@ -158,7 +203,7 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
     const el = stage.current;
     void (async () => {
       /* 先讓整頁完成入場；原生 Metal 預覽依最後位置建立，入場時以原照片銜接。 */
-      await new Promise(resolve => window.setTimeout(resolve, 375));
+      await new Promise(resolve => window.setTimeout(resolve, 400));
       if (!alive || leavingRef.current) return;
       const p = await rawEditor();
       if (!alive || !el) return;
@@ -170,7 +215,7 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
         delete first.temperature; delete first.tint;
         const info = await p.openEditor({ path: rawPath, x: r.left, y: r.top, w: r.width, h: r.height, look, params: first });
         if (!alive || leavingRef.current || exitingRef.current) { void p.closeEditor(); return; }
-        asShot.current = { temp: info.asShotTemperature || 5500, tint: info.asShotTint || 0 };
+        gotAsShot(info.asShotTemperature, info.asShotTint);
         /* 等第一格真的上到螢幕再挖空，切換那一下不會閃 */
         await new Promise(res => window.setTimeout(res, 34));
         if (!alive || leavingRef.current || exitingRef.current) { void p.closeEditor(); return; }
@@ -189,198 +234,221 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
   }, []);
   useEffect(() => { if (mode === 'native') push(true); /* 第一張 */ }, [mode]);
 
-  /* ── 網頁版：只有曝光、色溫，放手才沖 ── */
+  /* ── 網頁版：只有曝光、白平衡，放手才沖 ── */
   const webRun = useRef(0);
   const webDevelop = async (s: State) => {
     const id = ++webRun.current;
-    const m0 = 1e6 / Math.max(1500, asShot.current.temp);
-    const r = await developer(rawPath, { exposure: s.exposure, temperature: 1e6 / Math.max(20, m0 - s.temp * 1.5), tint: asShot.current.tint + s.tint }, look, true);
+    const r = await developer(rawPath, { exposure: s.exposure, temperature: s.kelvin || undefined, tint: s.kelvin ? s.tint : undefined }, look, true);
     if (id !== webRun.current || !r) return;
-    if (r.asShotTemperature && asShot.current.temp === 5500) asShot.current = { temp: r.asShotTemperature, tint: r.asShotTint ?? 0 };
+    if (r.asShotTemperature) gotAsShot(r.asShotTemperature, r.asShotTint ?? 0);
     setWebUrl(old => { if (old) URL.revokeObjectURL(old); return r.url; });
   };
   useEffect(() => { if (mode === 'web') void webDevelop(st); /* 第一張 */ }, [mode]);
 
-  /* ── 改值 ── */
+  /* ── 改值、復原、重做 ── */
   const set = (patch: Partial<State>) => { setSt(s => { const n = { ...s, ...patch }; stRef.current = n; return n; }); push(false); };
   const begin = useRef<State | null>(null);
   const commit = () => {
-    if (begin.current) { history.current.push(begin.current); begin.current = null; setCanUndo(true); }
+    if (begin.current) { history.current.push(begin.current); future.current = []; begin.current = null; bumpHist(n => n + 1); }
     push(true);
     if (mode === 'web') void webDevelop(stRef.current);
   };
   const touch = () => { if (!begin.current) begin.current = stRef.current; };
-  const undo = () => {
-    const prev = history.current.pop(); if (!prev) return;
-    haptic('tick'); stRef.current = prev; setSt(prev); setCanUndo(history.current.length > 0);
-    requestAnimationFrame(() => { push(true); if (mode === 'web') void webDevelop(prev); });
-  };
+  const jump = (to: State) => { stRef.current = to; setSt(to); bumpHist(n => n + 1); requestAnimationFrame(() => { push(true); if (mode === 'web') void webDevelop(to); }); };
+  const undo = () => { const prev = history.current.pop(); if (!prev) return; haptic('tick'); future.current.push(stRef.current); jump(prev); };
+  const redo = () => { const next = future.current.pop(); if (!next) return; haptic('tick'); history.current.push(stRef.current); jump(next); };
   const resetAll = () => {
-    if (!window.confirm('把所有調整回到預設？')) return;
-    history.current.push(stRef.current); setCanUndo(true);
-    const f = fresh(protectEV); stRef.current = f; setSt(f);
-    requestAnimationFrame(() => { push(true); if (mode === 'web') void webDevelop(f); });
+    setMenu(false);
+    if (!window.confirm('把所有調整回到拍攝當下？')) return;
+    history.current.push(stRef.current); future.current = [];
+    jump(original());
   };
   const finish = async () => {
     if (busy) return;
     setBusy(true); haptic('press');
+    const s = stRef.current;
     const url = mode === 'native'
-      ? await rawEditorExport(toParams(stRef.current))
-      : (await developer(rawPath, { exposure: stRef.current.exposure, temperature: 1e6 / Math.max(20, 1e6 / Math.max(1500, asShot.current.temp) - stRef.current.temp * 1.5), tint: asShot.current.tint + stRef.current.tint }, look, false))?.url ?? null;
+      ? await rawEditorExport(toParams(s))
+      : (await developer(rawPath, { exposure: s.exposure, temperature: s.kelvin || undefined, tint: s.kelvin ? s.tint : undefined }, look, false))?.url ?? null;
     if (url) { exitingRef.current = true; onDone(url); } else setBusy(false);
   };
 
-  /* ── 滑桿（兩欄、粗的）── */
-  /* ── 一列滑桿：名稱｜細軌道（從預設值往兩邊填色）｜數值。雙擊名稱回預設 ── */
-  const row = (key: string, label: string, v: number, min: number, max: number, fmt: (v: number) => string, dflt: number, step: number,
-    onValue: (x: number) => void) => {
-    const z = (dflt - min) / (max - min), p = (v - min) / (max - min);
-    const on = Math.abs(v - dflt) > step / 2;
-    return (
-      <div key={key} className="flex items-center gap-3 h-[40px]">
-        <button type="button" className={`w-[74px] shrink-0 text-left text-[14px] transition-colors ${on ? 'text-white' : 'text-white/60'}`}
-          onDoubleClick={() => { touch(); onValue(dflt); commit(); }}>{label}</button>
-        <div className="relative flex-1 h-[30px]">
-          <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-[3px] rounded-full bg-white/[0.14] pointer-events-none" />
-          <div className="absolute top-1/2 -translate-y-1/2 h-[3px] rounded-full bg-white pointer-events-none"
-            style={{ left: `${Math.min(z, p) * 100}%`, width: `${Math.abs(p - z) * 100}%` }} />
-          <div className="absolute top-1/2 -translate-y-1/2 w-[2px] h-[9px] -ml-px rounded-full bg-white/35 pointer-events-none" style={{ left: `${z * 100}%` }} />
-          <LiveRange ariaLabel={label} min={min} max={max} step={step} value={v} height={30} wrapClassName="!absolute inset-0 !overflow-visible"
-            className="raw2-slider w-full" onPointerDown={touch} onValue={x => { touch(); onValue(x); }} onCommit={commit} />
-        </div>
-        <span className={`w-[42px] shrink-0 text-right text-[13px] tabular-nums transition-colors ${on ? 'text-white' : 'text-white/40'}`}>{fmt(v)}</span>
-      </div>
-    );
-  };
-  const slider = (label: string, key: keyof State, min: number, max: number, fmt: (v: number) => string, dflt: number, step = 1) =>
-    row(String(key), label, st[key] as number, min, max, fmt, dflt, step, x => set({ [key]: x } as Partial<State>));
+  /* ── 目前這顆工具的滑桿定義 ── */
+  type Slider = { label: string; value: number; min: number; max: number; step: number; dflt: number; fmt: (v: number) => string; set: (v: number) => void;
+    /** 軌道顏色（白平衡：藍→黃、綠→洋紅） */ track?: string };
   const signed = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)}`;
-  const ev = (v: number) => `${v > 0.049 ? '+' : v < -0.049 ? '−' : ''}${Math.abs(v).toFixed(2)}`;
-  const hslSlider = (label: string, i: number) => {
-    const idx = band * 3 + i;
-    return row(`hsl${i}`, label, st.hsl[idx], -100, 100, signed, 0, 1, x => { const hsl = [...stRef.current.hsl]; hsl[idx] = x; set({ hsl }); });
+  const band = tool.startsWith('band') ? Number(tool.slice(4)) : -1;
+  const [hslPart, setHslPart] = useState<0 | 1 | 2>(1);
+  const sliderOf = (id: string): Slider | null => {
+    const num = (k: keyof State, label: string, dflt = 0): Slider => ({ label, value: st[k] as number, min: -100, max: 100, step: 1, dflt, fmt: signed, set: v => set({ [k]: v } as Partial<State>) });
+    switch (id) {
+      case 'exposure': return { label: '曝光', value: st.exposure, min: -5, max: 5, step: 0.01, dflt: protectEV,
+        fmt: v => `${v > 0.004 ? '+' : v < -0.004 ? '−' : ''}${Math.abs(v).toFixed(2)} EV`, set: v => set({ exposure: v }) };
+      case 'kelvin': {
+        const k = st.kelvin || asShot.current?.temp || 5500;
+        return { label: '色溫', value: kToPos(k), min: kToPos(K_MIN), max: kToPos(K_MAX), step: 0.1, dflt: kToPos(asShot.current?.temp ?? 5500),
+          fmt: v => `${posToK(v).toLocaleString()} K`, set: v => set({ kelvin: posToK(v) }),
+          track: 'linear-gradient(90deg, #3b7bff, #cfd8e6 45%, #ffd25a)' };
+      }
+      case 'tint': return { label: '色調', value: st.tint, min: -150, max: 150, step: 1, dflt: asShot.current?.tint ?? 0, fmt: signed,
+        set: v => set({ tint: v }), track: 'linear-gradient(90deg, #36c25a, #d6d6d6 50%, #e04ad8)' };
+      case 'contrast': return num('contrast', '對比');
+      case 'highlights': return num('highlights', '高光');
+      case 'shadows': return num('shadows', '陰影');
+      case 'whites': return num('whites', '白色');
+      case 'blacks': return num('blacks', '黑色');
+      case 'clarity': return num('clarity', '清晰度');
+      case 'vibrance': return num('vibrance', '自然飽和度');
+      case 'saturation': return num('saturation', '飽和度');
+      case 'sharpen': return num('sharpen', '銳化');
+      case 'lumaNR': return num('lumaNR', '明度降噪');
+      case 'colorNR': return num('colorNR', '色彩降噪');
+    }
+    if (band >= 0) {
+      const idx = band * 3 + hslPart;
+      const [name, color] = BANDS[band];
+      const label = `${name}・${['色相', '飽和度', '明度'][hslPart]}`;
+      const track = hslPart === 0 ? `linear-gradient(90deg, ${BANDS[(band + 7) % 8][1]}, ${color} 50%, ${BANDS[(band + 1) % 8][1]})`
+        : hslPart === 1 ? `linear-gradient(90deg, #777, ${color})` : `linear-gradient(90deg, #111, ${color} 50%, #fff)`;
+      return { label, value: st.hsl[idx], min: -100, max: 100, step: 1, dflt: 0, fmt: signed, track,
+        set: v => { const hsl = [...stRef.current.hsl]; hsl[idx] = v; set({ hsl }); } };
+    }
+    return null;
   };
-
-  const changed = useMemo(() => ({
-    light: st.exposure !== protectEV || !!(st.contrast || st.highlights || st.shadows || st.whites || st.blacks),
-    color: !!(st.temp || st.tint || st.vibrance || st.saturation),
+  const cur = sliderOf(tool);
+  const isChanged = (id: string) => {
+    const s = sliderOf(id);
+    if (id.startsWith('band')) { const b = Number(id.slice(4)); return st.hsl.slice(b * 3, b * 3 + 3).some(Boolean); }
+    return !!s && Math.abs(s.value - s.dflt) > s.step / 2 + (id === 'kelvin' ? 0.5 : 0);
+  };
+  const tabChanged = useMemo(() => ({
+    light: TOOLS.light.some(t => isChanged(t.id)),
+    wb: !!asShot.current && (st.kelvin !== asShot.current.temp || st.tint !== asShot.current.tint),
+    color: TOOLS.color.some(t => isChanged(t.id)),
+    detail: TOOLS.detail.some(t => isChanged(t.id)),
     curve: !(['rgb', 'r', 'g', 'b'] as const).every(c => isLine(st.curves[c])),
-    hsl: st.hsl.some(Boolean),
-  }), [st, protectEV]);
-  const TITLES: Record<Tool, string> = { light: '光線', color: '色彩', curve: '曲線', hsl: 'HSL' };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [st]);
 
   /* 按住大圖：看原本的樣子（放開回來） */
-  const compare = (on: boolean) => { comparing.current = on; push(true); };
+  const compare = (on: boolean) => { comparing.current = on; setComparingOn(on); push(true); };
 
-  const iconBtn = 'w-10 h-10 rounded-full flex items-center justify-center active:scale-90 transition-transform disabled:opacity-30';
+  const pickTab = (t: Tab) => { if (t === tab) return; haptic('tick'); setTab(t); setTool(DEFAULT_TOOL[t]); };
+
   return (
     <div data-raw-develop
-      className={`fixed inset-0 z-[300] flex flex-col text-white select-none transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${mode === 'native' ? '' : 'bg-black'} ${leaving || !entered ? 'translate-y-full' : 'translate-y-0'}`}
+      className={`fixed inset-0 z-[300] flex flex-col text-white select-none font-sans transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${mode === 'native' ? '' : 'bg-[#080808]'} ${leaving || !entered ? 'translate-y-full' : 'translate-y-0'}`}
       style={{ willChange: 'transform' }}>
-      {/* 上方：✕｜復原、全部重設｜✓ */}
-      <div className="shrink-0 bg-black" style={{ paddingTop: 'max(env(safe-area-inset-top), 12px)' }}>
-        <div className="h-[52px] px-4 flex items-center justify-between">
-          <button aria-label="取消" onClick={() => void exit()} className={`${iconBtn} bg-white/[0.12]`}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+      {/* 上方（跟編輯頁一樣）：‹｜復原、重做｜白色「完成 ⋯」 */}
+      <div className="shrink-0 bg-[#080808]" style={{ paddingTop: 'max(env(safe-area-inset-top), 12px)' }}>
+        <div className="relative h-12 px-4 flex items-center justify-between">
+          <button aria-label="返回" onClick={() => void exit()} className="p-2 -ml-2 text-[#aaa] active:scale-90 transition-transform">
+            <ChevronLeft size={22} />
           </button>
-          <div className="flex items-center gap-1">
-            <button aria-label="復原" onClick={undo} disabled={!canUndo} className={iconBtn}>
-              <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14L4.5 9.5 9 5" /><path d="M4.5 9.5h9.5a5.5 5.5 0 0 1 0 11H11" /></svg>
+          <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-6">
+            <button aria-label="復原" onClick={undo} disabled={!history.current.length} className="p-1 text-white disabled:text-white/25 active:scale-90 transition-transform">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
             </button>
-            <span className="px-2 text-[12px] font-bold tracking-[0.18em] text-white/55">RAW</span>
-            <button aria-label="全部重設" onClick={resetAll} disabled={!history.current.length && !Object.values(changed).some(Boolean)} className={iconBtn}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" /><path d="M4.5 4.5v3.7h3.7" /></svg>
+            <button aria-label="重做" onClick={redo} disabled={!future.current.length} className="p-1 text-white disabled:text-white/25 active:scale-90 transition-transform">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m15 14 5-5-5-5" /><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" /></svg>
             </button>
           </div>
-          <button aria-label="完成" onClick={() => void finish()} disabled={mode === 'pending' || busy} className={`${iconBtn} bg-white`}>
-            {busy
-              ? <span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />
-              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
-          </button>
+          <div className="relative h-8 flex items-center bg-white text-black rounded-full overflow-visible">
+            <button onClick={() => void finish()} disabled={mode === 'pending' || busy} className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap disabled:opacity-40">
+              {busy ? '沖洗中…' : '完成'}
+            </button>
+            <span aria-hidden className="w-px h-4 bg-black/20" />
+            <button aria-label="更多" onClick={() => setMenu(v => !v)} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
+            {menu && (
+              <div className="absolute right-0 top-10 z-10 w-44 rounded-2xl bg-[#1c1c1e] border border-white/10 shadow-2xl overflow-hidden text-white animate-in fade-in zoom-in-95 duration-150">
+                <button onClick={resetAll} className="w-full px-4 py-3 text-left text-[13px] active:bg-white/10">全部回到拍攝當下</button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* 大圖（App 裡這一塊是透明的，底下是原生即時預覽）。按住看原本的樣子 */}
-      <div ref={stage} className="flex-1 min-h-0 relative bg-black"
-        onPointerDown={() => compare(true)} onPointerUp={() => compare(false)} onPointerCancel={() => compare(false)} onPointerLeave={() => comparing.current && compare(false)}>
+      <div ref={stage} className="flex-1 min-h-0 relative bg-[#080808]"
+        onPointerDown={() => { setMenu(false); compare(true); }} onPointerUp={() => compare(false)} onPointerCancel={() => compare(false)} onPointerLeave={() => comparing.current && compare(false)}>
         {mode !== 'native' && (still || webUrl || previewSrc) && <img src={still || webUrl || previewSrc} alt="" draggable={false} className="absolute inset-0 w-full h-full object-contain" />}
+        {comparingOn && <span className="absolute left-1/2 top-3 -translate-x-1/2 px-2.5 py-1 rounded-full bg-black/55 text-[10px] font-black tracking-[0.2em] text-white/90 pointer-events-none">原始</span>}
       </div>
 
-      <div className={`shrink-0 bg-black transition-opacity ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
-        {/* 分頁：圖示＋字，選中的是白色 */}
-        <div className="flex items-stretch justify-around px-4 pt-3 pb-1">
-          {(['light', 'color', 'curve', 'hsl'] as const).map(t => (
-            <button key={t} aria-label={TITLES[t]} onClick={() => { if (tool !== t) { haptic('tick'); setTool(t); } }}
-              className={`relative flex flex-col items-center gap-1 w-16 py-1 transition-opacity duration-200 ${tool === t ? 'opacity-100' : 'opacity-40'}`}>
-              <ToolIcon tool={t} />
-              <span className="text-[11px] font-medium tracking-[0.06em]">{TITLES[t]}</span>
-              <span aria-hidden className={`absolute top-0 right-3 w-[5px] h-[5px] rounded-full bg-[#ffb340] transition-opacity ${changed[t] ? 'opacity-100' : 'opacity-0'}`} />
+      <div className={`shrink-0 transition-opacity ${busy ? 'opacity-40 pointer-events-none' : ''}`}>
+        {tab === 'curve' ? (
+          <div className="bg-[#111] px-6 pt-4 pb-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+            <CurveEditor channel={channel} onChannel={setChannel} pts={st.curves[channel]}
+              onBegin={touch}
+              onChange={pts => set({ curves: { ...stRef.current.curves, [channel]: pts } })}
+              onCommit={commit} />
+          </div>
+        ) : (
+          <>
+            {/* 滑桿（跟編輯頁一樣）：名稱｜數值，下面一條。雙擊名稱回預設 */}
+            <div className="bg-[#111] px-8 h-20 flex flex-col justify-center" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+              {cur && (
+                <div className="w-full">
+                  <div className="flex justify-between items-center cursor-pointer select-none mb-1 translate-y-2" title="雙擊重置"
+                    onDoubleClick={() => { touch(); cur.set(cur.dflt); commit(); haptic('tick'); }}>
+                    <span className="font-black text-white/40 uppercase text-[10px] tracking-[0.2em]">{cur.label}</span>
+                    <span className="flex items-center gap-2">
+                      {band >= 0 && (
+                        <span className="flex rounded bg-white/5 p-0.5">
+                          {(['色相', '飽和', '明度'] as const).map((n, i) => (
+                            <button key={n} onClick={() => { haptic('tick'); setHslPart(i as 0 | 1 | 2); }}
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${hslPart === i ? 'bg-white/15 text-white' : 'text-white/40'}`}>{n}</button>
+                          ))}
+                        </span>
+                      )}
+                      <span className="font-sans tabular-nums font-bold bg-white/10 rounded text-xs px-2 py-0.5">{cur.fmt(cur.value)}</span>
+                    </span>
+                  </div>
+                  <div className="relative">
+                    {cur.track && <div aria-hidden className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-[3px] rounded-full opacity-80 pointer-events-none" style={{ background: cur.track }} />}
+                    <LiveRange ariaLabel={cur.label} min={cur.min} max={cur.max} step={cur.step} value={cur.value} height={40}
+                      className={`custom-range ${cur.track ? 'raw-track-colored' : ''}`}
+                      onPointerDown={touch} onValue={x => { touch(); cur.set(x); }} onCommit={commit} />
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* 工具：一排圓形按鈕（跟編輯頁一樣），選中的是白底黑字；調過的下面亮一個點 */}
+            <div className="flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808] h-24">
+              {TOOLS[tab].map(t => {
+                const on = tool === t.id, changed = isChanged(t.id);
+                const bi = t.id.startsWith('band') ? Number(t.id.slice(4)) : -1;
+                return (
+                  <button key={t.id} onClick={() => { if (!on) { haptic('tick'); setTool(t.id); } }} className="flex flex-col items-center gap-1 shrink-0 w-16">
+                    {bi >= 0 ? (
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${on ? 'scale-110' : ''}`}
+                        style={{ background: on ? BANDS[bi][1] : 'rgba(255,255,255,0.05)', boxShadow: on ? 'none' : `inset 0 0 0 2.5px ${BANDS[bi][1]}` }} />
+                    ) : (
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${on ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40'}`}>
+                        <Icon name={t.icon} className="text-lg" fill={on} />
+                      </div>
+                    )}
+                    <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${on ? 'text-white' : 'text-white/20'}`}>{t.label}</span>
+                    <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${changed ? 'bg-white/70' : 'bg-transparent'}`} />
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+        {/* 分頁（跟編輯頁的下方分頁列一樣） */}
+        <div className="flex border-t border-white/10 bg-black px-3" style={{ height: 44, paddingBottom: 'max(env(safe-area-inset-bottom), 12px)', boxSizing: 'content-box' }}>
+          {(['light', 'wb', 'color', 'detail', 'curve'] as const).map(t => (
+            <button key={t} onClick={() => pickTab(t)} className={`relative h-full flex items-center justify-center flex-1 ${tab === t ? 'text-white' : 'text-white/50'}`}>
+              <span className="text-[12.5px] font-normal tracking-[0.04em] whitespace-nowrap">{TAB_TITLES[t]}</span>
+              {tabChanged[t] && tab !== t && <span aria-hidden className="absolute top-2.5 right-[calc(50%-22px)] w-1 h-1 rounded-full bg-white/60" />}
+              <span aria-hidden className={`absolute left-1/2 bottom-[4px] -ml-[9px] w-[18px] h-[2px] rounded-full bg-white transition-[opacity,transform] duration-200 ${tab === t ? 'opacity-100 scale-x-100' : 'opacity-0 scale-x-50'}`} />
             </button>
           ))}
         </div>
-        <div className="mx-5 h-px bg-white/[0.08]" />
-
-        <div className="px-5 pt-2 h-[262px] overflow-y-auto no-scrollbar">
-          {tool === 'light' && (
-            <>
-              {slider('曝光', 'exposure', -5, 5, ev, protectEV, 0.05)}
-              {slider('對比', 'contrast', -100, 100, signed, 0)}
-              {slider('高光', 'highlights', -100, 100, signed, 0)}
-              {slider('陰影', 'shadows', -100, 100, signed, 0)}
-              {slider('白色', 'whites', -100, 100, signed, 0)}
-              {slider('黑色', 'blacks', -100, 100, signed, 0)}
-            </>
-          )}
-          {tool === 'color' && (
-            <>
-              {slider('色溫', 'temp', -100, 100, signed, 0)}
-              {slider('色調', 'tint', -100, 100, signed, 0)}
-              {slider('自然飽和', 'vibrance', -100, 100, signed, 0)}
-              {slider('飽和度', 'saturation', -100, 100, signed, 0)}
-            </>
-          )}
-          {tool === 'hsl' && (
-            <>
-              <div className="flex items-center justify-between py-3">
-                {BANDS.map(([name, color], i) => (
-                  <button key={name} aria-label={name} onClick={() => { haptic('tick'); setBand(i); }}
-                    className="w-[30px] h-[30px] rounded-full flex items-center justify-center transition-transform duration-200 active:scale-90"
-                    style={{ background: color, transform: band === i ? 'scale(1)' : 'scale(.72)', boxShadow: band === i ? '0 0 0 2px #000, 0 0 0 3.5px #fff' : 'none' }}>
-                    {st.hsl.slice(i * 3, i * 3 + 3).some(Boolean) && band !== i && <span className="w-1.5 h-1.5 rounded-full bg-black/60" />}
-                  </button>
-                ))}
-              </div>
-              {hslSlider('色相', 0)}
-              {hslSlider('飽和度', 1)}
-              {hslSlider('明度', 2)}
-            </>
-          )}
-          {tool === 'curve' && (
-            <div className="pt-2">
-              <CurveEditor channel={channel} onChannel={setChannel} pts={st.curves[channel]}
-                onBegin={touch}
-                onChange={pts => set({ curves: { ...stRef.current.curves, [channel]: pts } })}
-                onCommit={commit} />
-            </div>
-          )}
-        </div>
-        <div style={{ height: 'max(env(safe-area-inset-bottom), 12px)' }} />
       </div>
     </div>
   );
-};
-
-const ToolIcon: React.FC<{ tool: Tool }> = ({ tool }) => {
-  const c = { fill: 'none', stroke: '#fff', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
-  if (tool === 'light') return (
-    <svg width="22" height="22" viewBox="0 0 24 24" {...c}><circle cx="12" cy="12" r="3.6" fill="#fff" stroke="none" />
-      <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6L7 7M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4" /></svg>);
-  if (tool === 'color') return (
-    <svg width="22" height="22" viewBox="0 0 24 24" {...c}><path d="M10 14.5V5a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0z" /><circle cx="12" cy="17.5" r="1.6" fill="#fff" stroke="none" /><path d="M12 9v7" /></svg>);
-  if (tool === 'curve') return (
-    <svg width="22" height="22" viewBox="0 0 24 24" {...c}><path d="M4 4v16h16" /><path d="M6.5 18c3-0.5 4.5-3 6-6.5S16 6 19.5 5.5" /></svg>);
-  return (
-    <svg width="22" height="22" viewBox="0 0 24 24" {...c}><path d="M4 7h16M7 12h10M10 17h4" /></svg>);
 };
 
 /* ── 曲線 ──────────────────────────────────────────────────────────────
