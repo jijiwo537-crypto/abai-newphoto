@@ -9,8 +9,10 @@ export interface NativeCameraApi {
   stop(): Promise<void>;
   setRect(o: { x: number; y: number; w: number; h: number; radius?: number }): Promise<void>;
   capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean }): Promise<{ path: string; width: number; height: number; rawPath?: string }>;
-  /** 日期戳記（null＝不印），觀景窗右下角 */
-  setDate(o: { date: string | null }): Promise<void>;
+  /** 日期戳記（null＝不印），觀景窗右下角；zoom＝小框構圖的倍率（字印在框的右下角、照框的大小） */
+  setDate(o: { date: string | null; zoom?: number }): Promise<void>;
+  /** 觀景窗現在這一格（離開相機的過場用） */
+  snapshot(): Promise<{ path: string }>;
   setZoom(o: { uiZoom?: number; factor?: number }): Promise<{ factor: number }>;
   focus(o: { x: number; y: number }): Promise<void>;
   setExposureBias(o: { ev: number }): Promise<void>;
@@ -38,7 +40,7 @@ export async function captureNative(o: {
   develop?: number;
   /** 日期戳記的字 */
   date?: string | null;
-}): Promise<{ url: string; rawPath?: string } | null> {
+}): Promise<{ url: string; rawPath?: string; renderedPath?: string } | null> {
   const cam = await nativeCamera(), img = await nativeImage();
   if (!cam || !img) return null;
   const shot = await cam.capture({ flash: o.flash, raw: o.raw });
@@ -49,8 +51,9 @@ export async function captureNative(o: {
   });
   img.remove({ path: shot.path }).catch(() => {});
   const blob = await (await fetch(fileSrc(out.path))).blob();
-  img.remove({ path: out.path }).catch(() => {});
-  return { url: URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' })), rawPath: shot.rawPath };
+  /* 有 RAW 時成品檔先留著：要跟 RAW 配成同一張存進相簿（存完再刪，見 saveRawPair） */
+  if (!shot.rawPath) img.remove({ path: out.path }).catch(() => {});
+  return { url: URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' })), rawPath: shot.rawPath, renderedPath: shot.rawPath ? out.path : undefined };
 }
 
 /** 底片模式（RAW）拍的時候少曝光幾格：保護亮部（RAW 的暗部之後拉得回來，爆掉的亮部救不回來）。
@@ -62,21 +65,40 @@ export interface RawDevelop {
   exposure: number; temperature?: number; tint?: number;
 }
 
-/** 相機拍的 RAW（DNG 檔路徑）→ 沖成一張圖（iOS 內建的 RAW 解碼，從感光元件的原始資料算，
- *  亮部、暗部留得比一般照片多）。preview：沖洗時的即時預覽（長邊 1400、快速模式）。
- *  回傳網址與拍攝當下的白平衡；沒有原生解碼或失敗回 null */
-export async function developRaw(rawPath: string, dev: RawDevelop = { exposure: 0 }, preview = false):
+/** 拍照當下的「樣子」：重新沖洗時照樣套上（濾鏡、特效、裁切、日期），沖出來跟相機拍的一致 */
+export interface RawLook {
+  lut: string; amount: number; aspect: number; zoom: number;
+  fx?: { soft: number; blur: number; lowfi: number };
+  date?: string | null;
+}
+
+/** 相機拍的 RAW（DNG 檔路徑）→ 沖成一張圖：iOS 內建的 RAW 解碼（從感光元件的原始資料算，亮部、暗部留得比一般照片多），
+ *  再套上拍照當下的濾鏡、特效、裁切、日期（跟拍照同一支原生程式）。
+ *  preview：沖洗時的即時預覽（長邊 1400、快速模式）。回傳網址與拍攝當下的白平衡；沒有原生解碼或失敗回 null */
+export async function developRaw(rawPath: string, dev: RawDevelop = { exposure: 0 }, look: RawLook | null = null, preview = false):
   Promise<{ url: string; asShotTemperature?: number; asShotTint?: number } | null> {
   const dec = await nativePlugin<{ decodeFile(o: Record<string, unknown>): Promise<{ path: string; asShotTemperature?: number; asShotTint?: number }> }>('RawDecode');
   const img = await nativeImage();
-  if (!dec) return null;
+  if (!dec || !img) return null;
+  let decoded = '', rendered = '';
   try {
     const r = await dec.decodeFile({
       path: rawPath, exposure: dev.exposure, temperature: dev.temperature, tint: dev.tint,
       maxPixel: preview ? 1400 : 0, draft: preview,
     });
-    const blob = await (await fetch(fileSrc(r.path))).blob();
-    img?.remove({ path: r.path }).catch(() => {});
+    decoded = r.path;
+    let out = r.path;
+    if (look) {
+      const o = await img.render({
+        path: r.path, lut: look.lut || undefined, amount: look.amount, aspect: look.aspect, zoom: look.zoom,
+        fx: look.fx, date: look.date || undefined, format: 'jpeg', quality: preview ? 0.85 : 0.95,
+      });
+      rendered = o.path; out = o.path;
+    }
+    const blob = await (await fetch(fileSrc(out))).blob();
     return { url: URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' })), asShotTemperature: r.asShotTemperature, asShotTint: r.asShotTint };
   } catch { return null; }
+  finally {
+    for (const p of [decoded, rendered]) if (p) img.remove({ path: p }).catch(() => {});
+  }
 }

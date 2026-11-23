@@ -243,7 +243,7 @@ export const FANCY_MOTION_CFG: Record<string, KCfg> = {
   'fancy-polka': K('spring', 'spin wobble', 'seq burst sweep twirl flip', 'twinkle ripple shimmer spin chase wave', 'sweep', 'shimmer'),   // 常駐跟方形平均一樣
   'fancy-boxrandom': K('spring', 'spin wobble', 'seq burst sweep twirl flip', 'twinkle ripple shimmer spin drift chase', 'seq', 'twinkle'),
   'fancy-wand': K('', 'spin wobble', 'seq sweep twirl flip', 'twinkle ripple shimmer spin drift chase', 'seq', 'twinkle'),
-  'fancy-mobile': K('pop spin flip spring', 'breathe spin wobble orbit jitter', 'seq rain twirl flip', 'twinkle shimmer spin chase sway', 'rain', 'twinkle'),
+  'fancy-mobile': K('pop spin flip spring', 'breathe spin wobble orbit jitter', 'seq rain twirl flip', 'twinkle shimmer spin chase sway', 'seq', 'shimmer'),   // 預設：進場下墜l、常駐漂浮ll
   'fancy-constellation': K('', 'spin', 'seq sweep twirl flip', 'twinkle ripple spin drift chase', 'seq', 'twinkle'),
 };
 const baseKind = (k?: string) => String(k || '').split('!')[0].split('@')[0];

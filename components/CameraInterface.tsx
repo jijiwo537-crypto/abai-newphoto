@@ -1,10 +1,11 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { isNative } from '../utils/native';
-import { nativeCamera, captureNative, lutFileName, RAW_PROTECT_EV } from '../utils/nativeCamera';
+import { nativeCamera, captureNative, lutFileName, RAW_PROTECT_EV, type RawLook } from '../utils/nativeCamera';
 import { lutMaxAmount, lutDefaultAmount } from '../utils/photoFx';
 import { haptic, dialHaptic } from '../utils/haptics';
 import { nativePhotos } from '../utils/nativePhotos';
+import { nativeImage } from '../utils/nativeImage';
 import { punchThrough } from '../utils/nativePreview';
 import { Icon } from './Icon';
 import { CameraSettings } from '../types';
@@ -14,6 +15,8 @@ import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
 import { ImageEditor, DEFAULT_PARAMS } from './ImageEditor';
 import { RawDevelopSheet } from './RawDevelopSheet';
 import { createPortal } from 'react-dom';
+import { slideBack } from '../utils/pageTransition';
+import { fileSrc } from '../utils/nativeBridge';
 import { processImageFile } from '../utils/imageLoader';
 import { RAW_ACCEPT } from '../utils/fileTypes';
 import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
@@ -295,7 +298,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [proRaw, setProRaw] = useState(false);
   /** 拍出來的照片 → 同一張的 RAW 檔（App 暫存裡的 DNG）＋拍的時候用的濾鏡。
       編輯時從 RAW 沖，再自動套上同一個濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
-  const rawOfRef = useRef<Map<string, { path: string; lutIdx: number; protectEV: number }>>(new Map());
+  const rawOfRef = useRef<Map<string, { path: string; protectEV: number; look: RawLook }>>(new Map());
   const [rawShots, setRawShots] = useState<Set<string>>(() => new Set());
   const forgetRaw = (url: string) => {
     if (!rawOfRef.current.delete(url)) return;
@@ -387,6 +390,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       // 很接近 1 倍就直接收掉框，不留一條貼著邊的白線
       if (frameZoomRef.current < 1.04) frameZoomRef.current = 1;
       smallFrameRef.current?.set(frameZoomRef.current, false);
+      if (dateOnRef.current) pushDateRef.current();   // 日期跟著框走
       focusGuardUntilRef.current = performance.now() + 400;
     }
     if (pointersRef.current.size === 0) setTimeout(() => { gesturePinchedRef.current = false; }, 0);
@@ -409,6 +413,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     frameZoomRef.current = 1;
     pinchRef.current = null;
     smallFrameRef.current?.set(1, false);
+    pushDateRef.current();
   }, [showGallery, editingPhoto]);
   const [editorId, setEditorId] = useState(0);
   const [isCapturing, setIsCapturing] = useState(false);
@@ -891,14 +896,20 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       capturingRef.current = true; setIsCapturing(true); setCaptureNotice('');
       try {
         const o = proOptsRef.current;
-        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: o.lut, amount: o.amount, aspect: o.aspect, zoom: frameZoomRef.current, fx: nativeFxRef.current, kelvin: nativeParamsRef.current.kelvin, develop: o.raw ? RAW_PROTECT_EV : 0, date: o.date ? dateStampText() : null });
+        const look: RawLook = { lut: o.lut, amount: o.amount, aspect: o.aspect, zoom: frameZoomRef.current, fx: { ...nativeFxRef.current }, date: o.date ? dateStampText() : null };
+        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, lut: look.lut, amount: look.amount, aspect: look.aspect, zoom: look.zoom, fx: look.fx, kelvin: nativeParamsRef.current.kelvin, develop: o.raw ? RAW_PROTECT_EV : 0, date: look.date });
         if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
         ownedUrlsRef.current.add(r.url);
         setPhotos(prev => [r.url, ...prev]);
         if (r.rawPath) {
-          rawOfRef.current.set(r.url, { path: r.rawPath, lutIdx: o.lutIdx, protectEV: o.raw ? RAW_PROTECT_EV : 0 });
+          rawOfRef.current.set(r.url, { path: r.rawPath, protectEV: o.raw ? RAW_PROTECT_EV : 0, look });
           setRawShots(prev => new Set(prev).add(r.url));
-          void nativePhotos().then(p => p?.save({ path: r.rawPath!, kind: 'photo' })).catch(() => {});
+          /* 存進相簿：套好濾鏡、日期的成品是主要的那張，RAW 配在同一張裡（相簿看到的是成品）。
+             成品檔存完就刪；RAW 留在 App 裡給「重新沖洗」用 */
+          const rendered = r.renderedPath;
+          void nativePhotos().then(p => p?.save(rendered ? { path: rendered, rawPath: r.rawPath!, kind: 'photo' } : { path: r.rawPath!, kind: 'photo' }))
+            .catch(() => {})
+            .finally(() => { if (rendered) void nativeImage().then(i => i?.remove({ path: rendered })).catch(() => {}); });
         }
       } catch { setCaptureNotice('未能儲存照片，請再拍一次'); }
       finally { capturingRef.current = false; setIsCapturing(false); }
@@ -1061,7 +1072,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         void cam.setFx(nativeFxRef.current).catch(() => {});
         /* 開起來就把目前的曝光、白平衡套上去 */
         void cam.setExposureBias({ ev: deviceBias(nativeParamsRef.current) }).catch(() => {});
-        void cam.setDate({ date: dateOnRef.current ? dateStampText() : null }).catch(() => {});
+        pushDateRef.current();
         void cam.setWhiteBalance({ kelvin: nativeParamsRef.current.kelvin }).catch(() => {});
       } catch (e: any) {
         /* 被後面那一次開相機取代（翻轉鏡頭、換頁）不算失敗；真的開不起來才換成網頁相機 */
@@ -1098,9 +1109,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, [proMode, settings.exposure, proRaw]);
   /* 日期戳記：觀景窗右下角（原生端畫，跟照片同一個位置） */
   const dateOnRef = useRef(dateOn); dateOnRef.current = dateOn;
-  useEffect(() => {
-    if (proMode) void nativeCamera().then(c => c?.setDate({ date: dateOn ? dateStampText() : null })).catch(() => {});
-  }, [proMode, dateOn]);
+  const pushDate = () => {
+    if (!proModeRef.current) return;
+    void nativeCamera().then(c => c?.setDate({ date: dateOnRef.current ? dateStampText() : null, zoom: frameZoomRef.current })).catch(() => {});
+  };
+  const pushDateRef = useRef(pushDate); pushDateRef.current = pushDate;
+  useEffect(() => { pushDate(); }, [proMode, dateOn]);
   useEffect(() => {
     if (proMode) void nativeCamera().then(c => c?.setWhiteBalance({ kelvin: settings.kelvin })).catch(() => {});
   }, [proMode, settings.kelvin]);
@@ -1264,17 +1278,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     setEditingPhoto({ src, index: idx, init: null });
     setEditorId(prev => prev + 1);
   };
-  /* 沖好了：拿沖出來的那張進編輯，並自動套上拍照時用的濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
+  /* 沖好了：沖出來的那張已經套好拍照時的濾鏡、特效、裁切、日期，直接進編輯 */
   const finishDevelop = (url: string) => {
     const d = developing; if (!d) { URL.revokeObjectURL(url); return; }
-    const raw = rawOfRef.current.get(d.src);
     if (developedUrlRef.current) URL.revokeObjectURL(developedUrlRef.current);
     developedUrlRef.current = url;
-    const init = raw && raw.lutIdx > 0 && lutList[raw.lutIdx]
-      ? { params: { ...DEFAULT_PARAMS, lutAmount: lutDefaultAmount(lutList[raw.lutIdx].id) }, selectedLutIdx: raw.lutIdx } : null;
     setDeveloping(null);
     setShowGallery(false);
-    setEditingPhoto({ src: url, index: d.idx, init });
+    setEditingPhoto({ src: url, index: d.idx, init: null });
     setEditorId(prev => prev + 1);
   };
   useEffect(() => {
@@ -1282,6 +1293,30 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     URL.revokeObjectURL(developedUrlRef.current);
     developedUrlRef.current = null;
   }, [editingPhoto]);
+
+  /* 離開相機回主頁：整頁往右滑走（見 utils/pageTransition）。
+     原生相機的畫面在網頁底下、是挖空透出來的，整頁拍快照時那一塊會是空的 ——
+     先跟原生拿觀景窗現在這一格，用一張圖蓋住觀景窗，再滑走：看起來就是相機畫面定格、跟著整頁一起滑出去 */
+  const [exitShot, setExitShot] = useState<string | null>(null);
+  const exitingRef = useRef(false);
+  const exitCamera = async () => {
+    if (exitingRef.current) return;
+    exitingRef.current = true;
+    if (proModeRef.current) {
+      try {
+        const cam = await nativeCamera();
+        const shot = cam ? await cam.snapshot() : null;
+        if (shot?.path) {
+          const src = fileSrc(shot.path);
+          const im = new Image(); im.src = src;
+          await im.decode().catch(() => {});
+          setExitShot(src);
+          await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        }
+      } catch { /* 拿不到就直接滑 */ }
+    }
+    await slideBack(() => onHome());
+  };
 
   const handleSaveEdit = (newSrc: string, shouldClose: boolean = true) => {
     if (editingPhoto) {
@@ -1378,7 +1413,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               <div className="absolute top-1 left-2 z-50">
                 <button
                   aria-label="返回主頁"
-                  onClick={(e) => { e.stopPropagation(); onHome(); }}
+                  onClick={(e) => { e.stopPropagation(); void exitCamera(); }}
                   className="w-10 h-10 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-colors"
                 >
                   <Icon name="chevron_left" className="text-[28px] drop-shadow-md" />
@@ -1414,6 +1449,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               }}
               onPointerCancel={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
             />}
+
+            {/* 離開相機的定格畫面（見 exitCamera） */}
+            {exitShot && <img src={exitShot} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover z-[35] pointer-events-none" />}
 
             {/* 鎖定中的提示，位置與樣式照 iOS 相機 */}
             {aeafLock && (
@@ -1806,6 +1844,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         <RawDevelopSheet
           rawPath={rawOfRef.current.get(developing.src)!.path}
           protectEV={rawOfRef.current.get(developing.src)!.protectEV}
+          look={rawOfRef.current.get(developing.src)!.look}
           onCancel={() => setDeveloping(null)}
           onDone={finishDevelop}
         />, document.body

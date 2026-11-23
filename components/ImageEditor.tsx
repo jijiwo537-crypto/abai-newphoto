@@ -1,3 +1,4 @@
+import { slideBack } from '../utils/pageTransition';
 import { haptic } from '../utils/haptics';
 import { SLIDER_DOUBLE_TAP_EVENT } from '../utils/sliderTouch';
 import { BusyLayer } from './BusyLayer';
@@ -8089,6 +8090,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const previewBoxRef = useRef<HTMLDivElement>(null);
   const [previewBoxSize, setPreviewBoxSize] = useState({ width: 0, height: 0 });
   const [previewLayoutReady, setPreviewLayoutReady] = useState(false);
+  /* 第一次準備好之後就不再蓋黑底轉圈：從儲存頁按「繼續編輯」回來時預覽區會重新量一次尺寸，
+     那一下（80ms）不能又閃一個轉圈 —— 那時圖早就在了，只是在確認大小 */
+  const [firstReady, setFirstReady] = useState(false);
+  useEffect(() => { if (!firstReady && !isEditorLoading && previewLayoutReady) setFirstReady(true); }, [firstReady, isEditorLoading, previewLayoutReady]);
   /* 預覽區在螢幕上的實際位置（不四捨五入）：構圖、人像、仿色要把圖放在跟編輯器一模一樣的像素上 */
   const [previewBoxClient, setPreviewBoxClient] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
@@ -8929,7 +8934,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         .channel-dot.active { transform: scale(1.1); }
       `}</style>
       
-      {saveState === 'idle' && (isEditorLoading || !previewLayoutReady) && (
+      {saveState === 'idle' && !firstReady && (isEditorLoading || !previewLayoutReady) && (
         /* 首次解碼期間必須完全遮住預覽；半透明遮罩會把底下 canvas 從初始尺寸
            切換到正確比例的那一幀透出來，看起來就像圖片上下抖了一下。 */
         <div data-editor-initial-loading className="fixed inset-0 z-[120] flex items-center justify-center bg-[#080808]">
@@ -8983,7 +8988,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    <SaveButton review urls={encodedExports.length ? encodedExports : finalImages.length ? finalImages : (finalImage ? [finalImage] : [])} />
                    <div className="flex items-center justify-center gap-4">
                    <button 
-                       onClick={() => { setSaveState('idle'); }}
+                       onClick={() => { void slideBack(() => setSaveState('idle')); }}
                        className="flex-1 h-14 rounded-full border border-white/20 bg-white/5 text-white font-bold tracking-widest uppercase hover:bg-white/10 active:scale-95 transition-all text-sm"
                    >
                        繼續編輯

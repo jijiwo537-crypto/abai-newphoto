@@ -13,7 +13,8 @@
 //    start({ position, x, y, w, h, lut, amount, proRAW })   stop()
 //    capture({ flash, raw })  → { path, width, height, rawPath? }
 //    setZoom({ factor })  focus({ x, y })  setExposureBias({ ev })  setLut({ lut, amount })
-//    setDate({ date })   日期戳記（見 ABAIDateStamp.swift）
+//    setDate({ date, zoom })   日期戳記（見 ABAIDateStamp.swift）
+//    snapshot() → { path }      觀景窗現在這一格（離開相機的過場用）
 //    事件：shutter（實體按鈕按下）、zoom（相機控制按鈕改了變焦）
 //
 //  不用「延後處理」（deferred photo delivery）：那種照片只能直接進相簿，
@@ -46,6 +47,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         CAPPluginMethod(name: "setLut", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setRect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setDate", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "snapshot", returnType: CAPPluginReturnPromise),
     ]
 
     private let session = AVCaptureSession()
@@ -244,10 +246,23 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
 
     // MARK: 日期戳記
 
-    /// date：日期字（null／空字串＝不印）。觀景窗右下角，跟拍出來的照片同一個位置
+    /// date：日期字（null／空字串＝不印）；zoom：小框構圖的倍率。觀景窗右下角，跟拍出來的照片同一個位置、同樣大小
     @objc func setDate(_ call: CAPPluginCall) {
         let date = call.getString("date").flatMap { $0.isEmpty ? nil : $0 }
-        DispatchQueue.main.async { self.view?.dateText = date; call.resolve() }
+        let zoom = CGFloat(max(1, call.getDouble("zoom") ?? 1))
+        DispatchQueue.main.async { self.view?.dateText = date; self.view?.dateZoom = zoom; call.resolve() }
+    }
+
+    /// 觀景窗現在這一格（離開相機的過場用：網頁那邊拿它蓋住觀景窗，再整頁滑走）→ { path }
+    @objc func snapshot(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let v = self.view else { call.reject("相機沒開"); return }
+            let side = max(v.bounds.width, v.bounds.height) * v.contentScaleFactor
+            DispatchQueue.global(qos: .userInteractive).async {
+                if let url = v.snapshotFile(maxSide: max(64, side)) { call.resolve(["path": url.path]) }
+                else { call.reject("沒有畫面") }
+            }
+        }
     }
 
     // MARK: 拍照

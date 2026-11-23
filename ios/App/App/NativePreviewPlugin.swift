@@ -35,6 +35,24 @@ final class ABAIMetalView: MTKView, MTKViewDelegate {
     var fill = false
     /// 日期戳記（nil＝不印）。印在看得到的那一塊的右下角，跟拍出來的照片同一個位置
     var dateText: String? = nil { didSet { if dateText != oldValue { setNeedsDisplay() } } }
+    /// 小框構圖的倍率（1＝沒有框）：照片只會是中間 1/zoom 那一塊，日期印在那一塊的右下角
+    var dateZoom: CGFloat = 1 { didSet { if dateZoom != oldValue { setNeedsDisplay() } } }
+    /// 最後畫上去的那一格（已經裁成看得到的範圍、套好濾鏡）：離開相機的過場要用它當定格畫面
+    private(set) var lastFrame: CIImage?
+
+    /// 把最後一格存成 JPEG（長邊 maxSide），回傳檔案位置
+    func snapshotFile(maxSide: CGFloat) -> URL? {
+        guard let img = lastFrame else { return nil }
+        let e = img.extent
+        guard e.width > 0, e.height > 0 else { return nil }
+        let k = min(1, maxSide / max(e.width, e.height))
+        let scaled = img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY)).transformed(by: CGAffineTransform(scaleX: k, y: k))
+        guard let cg = ciContext.createCGImage(scaled, from: scaled.extent, format: .RGBA8, colorSpace: ABAIImageCore.sRGB),
+              let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.88) else { return nil }
+        let url = ABAIImageCore.newFileURL(ext: "jpg")
+        do { try data.write(to: url) } catch { return nil }
+        return url
+    }
 
     /// 沒有 Metal 的裝置回 nil
     static func make(frame: CGRect) -> ABAIMetalView? {
@@ -90,7 +108,11 @@ final class ABAIMetalView: MTKView, MTKViewDelegate {
         if let k = kelvin { img = ABAIImageCore.kelvin(img, k) }
         if let c = cube { img = ABAIImageCore.apply(cube: c, to: img, amount: amount) }
         if fx.isOn { img = fx.apply(to: img) }
-        if let d = dateText, !d.isEmpty { img = ABAIDateStamp.stampDate(d, on: img) }
+        if let d = dateText, !d.isEmpty {
+            let e = img.extent, z = max(1, dateZoom)
+            img = ABAIDateStamp.stampDate(d, on: img, region: e.insetBy(dx: e.width * (1 - 1 / z) / 2, dy: e.height * (1 - 1 / z) / 2))
+        }
+        lastFrame = img
         /* 照原比例縮進畫面、置中 */
         let e = img.extent
         guard e.width > 0, e.height > 0 else { return }
