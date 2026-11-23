@@ -31,7 +31,7 @@
  */
 
 import {fineSliderValue} from './sliderPrecision';
-import { haptic } from './haptics';
+import { haptic, noteRangeValue } from './haptics';
 /** 看得見的那一條有多高（單邊）。這個範圍內按下去就直接跳值，跟原生一樣。 */
 const CORE_HALF = 9;
 /** 手指橫向移動超過這麼多就算「在拖滑桿」，不算「點一下」 */
@@ -97,6 +97,7 @@ const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 
 /** 改值並通知 React（直接寫 .value 的話 React 收不到 onChange／onInput） */
 const setValue = (el: HTMLInputElement, v: string) => {
   if (el.value === v || !valueSetter) return;
+  noteRangeValue(el);   // 震動要知道改之前是多少（見 utils/haptics）
   valueSetter.call(el, v);
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));

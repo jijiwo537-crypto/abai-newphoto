@@ -1,8 +1,8 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { isNative } from '../utils/native';
-import { nativeCamera, captureNative, lutFileName } from '../utils/nativeCamera';
-import { lutMaxAmount } from '../utils/photoFx';
+import { nativeCamera, captureNative, lutFileName, developRaw } from '../utils/nativeCamera';
+import { lutMaxAmount, lutDefaultAmount } from '../utils/photoFx';
 import { haptic, dialHaptic } from '../utils/haptics';
 import { nativePhotos } from '../utils/nativePhotos';
 import { punchThrough } from '../utils/nativePreview';
@@ -11,9 +11,10 @@ import { CameraSettings } from '../types';
 import { GalleryOverlay } from './GalleryOverlay';
 import { usePhotoThumbs, thumbFromCanvas } from '../utils/photoThumbs';
 import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
-import { ImageEditor } from './ImageEditor';
+import { ImageEditor, DEFAULT_PARAMS } from './ImageEditor';
 import { createPortal } from 'react-dom';
 import { processImageFile } from '../utils/imageLoader';
+import { RAW_ACCEPT } from '../utils/fileTypes';
 import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
 import {preferCameraResolution} from '../utils/cameraPreview';
 
@@ -81,7 +82,7 @@ interface CameraInterfaceProps {
   onImportNew?: () => void;
 }
 
-const RAW_ACCEPT = "image/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.orf,.rw2,.raf,.srw,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif";
+// 收哪些檔案：全 App 同一份清單（utils/fileTypes）
 
 type CameraTickScaleProps = {
   label: string;
@@ -285,6 +286,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [proPreferred, setProPreferred] = useState(true);
   const proMode = proAvailable && proPreferred;
   const [proRaw, setProRaw] = useState(false);
+  /** 拍出來的照片 → 同一張的 RAW 檔（App 暫存裡的 DNG）＋拍的時候用的濾鏡。
+      編輯時從 RAW 沖，再自動套上同一個濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
+  const rawOfRef = useRef<Map<string, { path: string; lutIdx: number }>>(new Map());
+  const [rawShots, setRawShots] = useState<Set<string>>(() => new Set());
+  const forgetRaw = (url: string) => {
+    if (!rawOfRef.current.delete(url)) return;
+    setRawShots(prev => { const n = new Set(prev); n.delete(url); return n; });
+  };
   const proModeRef = useRef(false); proModeRef.current = proMode;
   /* App 裡先確定有沒有原生相機，再決定要不要開網頁相機：不然一進來會先開網頁相機、馬上又換掉，畫面閃一下 */
   const [proProbed, setProProbed] = useState(() => !isNative());
@@ -334,6 +343,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const onFramePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse') return;
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    /* 點過對焦之後上下拖：調曝光（跟內建相機一樣）。這一下先記起點，移動夠多才算數 */
+    evDraggedRef.current = false;
+    evDragRef.current = pointersRef.current.size === 1
+      ? { id: e.pointerId, x: e.clientX, y: e.clientY, ev0: parseFloat(settingsExposureRef.current) || 0, active: false }
+      : null;
     if (pointersRef.current.size === 2) {
       const d = pinchDist();
       if (d > 8) {
@@ -348,6 +362,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const onFramePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!pointersRef.current.has(e.pointerId)) return;
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (moveExposureDrag(e)) return;
     const p = pinchRef.current;
     if (!p || pointersRef.current.size < 2) return;
     const d = pinchDist();
@@ -359,6 +374,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   };
   const onFramePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!pointersRef.current.delete(e.pointerId)) return;
+    endExposureDrag(e.pointerId);
     if (pinchRef.current && pointersRef.current.size < 2) {
       pinchRef.current = null;
       // 很接近 1 倍就直接收掉框，不留一條貼著邊的白線
@@ -378,7 +394,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, []);
   useEffect(() => () => { ownedUrlsRef.current.forEach(u => URL.revokeObjectURL(u)); ownedUrlsRef.current.clear(); }, []);
   const [showGallery, setShowGallery] = useState(false);
-  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number } | null>(null);
+  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null } | null>(null);
   /* 進相簿（或從相簿進編輯）就把小框收掉：回到相機時應該是重新開始的滿版畫面，
      不是停在上一次捏的位置。frameZoomRef 也一起歸 1，免得畫面上沒有框、拍下去卻還是裁過的。 */
   useEffect(() => {
@@ -396,6 +412,55 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFocusEventRef = useRef<{ x: number; y: number; at: number } | null>(null);
   const lastCameraTickRef = useRef<string>('');
+  const focusPointRef = useRef(focusPoint); focusPointRef.current = focusPoint;
+
+  /* ── 點對焦後上下拖動調曝光（跟 iOS 內建相機一樣）──────────────────
+     點一下對焦之後，對焦框旁邊出現一顆小太陽；框還在的時候，手指在畫面上
+     上下拖：往上變亮、往下變暗，太陽跟著上下走。調的是跟下面「曝光」轉盤同一個值
+     （每 0.1 EV 一格，拖的時候不震），所以轉盤那邊也會同步。拖過的這一下不會再當成點擊去重新對焦。 */
+  const EV_PX = 9;           // 手指走幾 px 算 0.1 EV
+  const EV_SLOP = 8;         // 先走這麼多才算開始拖（避免點一下時手指微晃就改到曝光）
+  const evDragRef = useRef<{ id: number; x: number; y: number; ev0: number; active: boolean } | null>(null);
+  /** 這一次觸控有拖過曝光：放手時不當成點擊對焦 */
+  const evDraggedRef = useRef(false);
+  const [evDragging, setEvDragging] = useState(false);
+  const settingsExposureRef = useRef('0.0'); settingsExposureRef.current = settings.exposure;
+  const hideFocusLater = (ms: number) => {
+    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
+    focusTimerRef.current = setTimeout(() => { setFocusPoint(null); focusTimerRef.current = null; }, ms);
+  };
+  const moveExposureDrag = (e: React.PointerEvent<HTMLDivElement>): boolean => {
+    const d = evDragRef.current;
+    if (!d || d.id !== e.pointerId || pointersRef.current.size !== 1 || pinchRef.current) return false;
+    const dx = e.clientX - d.x, dy = e.clientY - d.y;
+    if (!d.active) {
+      // 要先有對焦框（點過對焦）才能拖；直向明顯大於橫向才算
+      if (!focusPointRef.current || Math.abs(dy) < EV_SLOP || Math.abs(dy) < Math.abs(dx) * 1.2) return false;
+      d.active = true;
+      // 從越過門檻的那一點開始算，不會一開始就跳一格
+      d.y = e.clientY;
+      evDraggedRef.current = true;
+      if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; }
+      if (focusTimerRef.current) { clearTimeout(focusTimerRef.current); focusTimerRef.current = null; }
+      setEvDragging(true);
+      return true;
+    }
+    const raw = d.ev0 - (e.clientY - d.y) / EV_PX * 0.1;
+    const tenth = Math.max(-10, Math.min(10, Math.round(raw * 10)));
+    const n = tenth / 10;
+    const val = `${n > 0 ? '+' : ''}${n.toFixed(1)}`;
+    if (val !== settingsExposureRef.current) {
+      settingsExposureRef.current = val;   // 拖對焦框旁的太陽調曝光：不震
+      setSettings(prev => ({ ...prev, exposure: val }));
+    }
+    return true;
+  };
+  const endExposureDrag = (id: number) => {
+    const d = evDragRef.current;
+    if (!d || d.id !== id) return;
+    evDragRef.current = null;
+    if (d.active) { setEvDragging(false); hideFocusLater(2200); }
+  };
   
   const localFileInputRef = useRef<HTMLInputElement>(null);
 
@@ -690,8 +755,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   useEffect(() => { setAeafLock(false); }, [facingMode]);
 
   const handleFocus = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement> | React.PointerEvent<HTMLDivElement>) => {
-    // 剛剛是雙指縮放小框，不是點一下對焦
-    if (gesturePinchedRef.current || performance.now() < focusGuardUntilRef.current) return;
+    // 剛剛是雙指縮放小框，或是上下拖在調曝光，不是點一下對焦
+    if (evDraggedRef.current || gesturePinchedRef.current || performance.now() < focusGuardUntilRef.current) return;
     if (showSettingsMenu) {
       /* 收起選單不能吃掉這次點擊；同一次點擊仍然要顯示並執行對焦。 */
       setShowSettingsMenu(false);
@@ -718,11 +783,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     lastFocusEventRef.current = { x, y, at: now };
     /* nonce 強制每次點擊都換一個節點，連續點同一位置時 CSS 動畫才會重播。 */
     setFocusPoint({ x, y, nonce: Date.now() });
-    if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
-    focusTimerRef.current = setTimeout(() => {
-      setFocusPoint(null);
-      focusTimerRef.current = null;
-    }, 880);
+    /* 框多留一下：這段時間內上下拖可以調曝光 */
+    hideFocusLater(2200);
 
     /* 把點到的位置換算成 0–1 的座標送給相機，才是真的「點哪裡對哪裡」。
        同時把測光點也指過去（專業相機 app 都是這樣一起做的）。
@@ -809,10 +871,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      就立刻取下一張新幀。上限 3 是避免極端連點在手機上累積無限工作。 */
   const captureQueueRef = useRef(0);
   const capturePhotoRef = useRef<() => void>(() => {});
-  const proOptsRef = useRef({ lut: '', amount: 1, aspect: 2 / 3, flash: false, raw: false });
+  const proOptsRef = useRef({ lut: '', amount: 1, aspect: 2 / 3, flash: false, raw: false, lutIdx: 0 });
   /* 濾鏡強度跟編輯頁一致：每顆濾鏡的最大強度（例如 F3 是 70%），見 utils/photoFx 的 LUT_MAX_AMOUNT */
   const lutAmt = lutMaxAmount(lutList[selectedLutIdx]?.id) / 100;
-  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), amount: lutAmt, aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw };
+  proOptsRef.current = { lut: lutFileName(lutList[selectedLutIdx]?.url), amount: lutAmt, aspect: PORTRAIT_RATIO[aspectRatio] ?? 2 / 3, flash: flashOn, raw: proRaw, lutIdx: selectedLutIdx };
   const capturePhoto = useCallback(async () => {
     /* 專業模式：原生全解析度拍照，原生端套濾鏡、裁成畫面比例；ProRAW 開著時 RAW 檔直接存進相簿 */
     if (proModeRef.current) {
@@ -824,7 +886,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
         ownedUrlsRef.current.add(r.url);
         setPhotos(prev => [r.url, ...prev]);
-        if (r.rawPath) void nativePhotos().then(p => p?.save({ path: r.rawPath!, kind: 'photo' })).catch(() => {});
+        if (r.rawPath) {
+          rawOfRef.current.set(r.url, { path: r.rawPath, lutIdx: o.lutIdx });
+          setRawShots(prev => new Set(prev).add(r.url));
+          void nativePhotos().then(p => p?.save({ path: r.rawPath!, kind: 'photo' })).catch(() => {});
+        }
       } catch { setCaptureNotice('未能儲存照片，請再拍一次'); }
       finally { capturingRef.current = false; setIsCapturing(false); }
       return;
@@ -976,6 +1042,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       try {
         const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: proOptsRef.current.amount, proRAW: true });
         if (alive) setNativeFlash(!!info?.flash);
+        /* 這顆鏡頭拍不了 RAW（例如前鏡頭）：RAW 先關掉，說一聲 */
+        if (alive && proRaw && info && info.raw === false) { setProRaw(false); setCaptureNotice('這顆鏡頭不支援 RAW'); }
         void cam.setFx(nativeFxRef.current).catch(() => {});
         /* 開起來就把目前的曝光、白平衡套上去 */
         void cam.setExposureBias({ ev: parseFloat(nativeParamsRef.current.exposure) || 0 }).catch(() => {});
@@ -1161,10 +1229,40 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     return { w: targetW, h: targetH, mb: Math.max(0, (h32 - targetH) / 2) };
   };
 
+  /* 開編輯：有 RAW 的那幾張從 RAW 沖一張出來編（不是用已經套好濾鏡、壓成 JPEG 的成品）。
+     沖不出來（沒有原生解碼）就照舊編成品 */
+  const developedUrlRef = useRef<string | null>(null);
+  const openEditor = async (src: string, idx: number) => {
+    let editSrc = src;
+    let init: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null = null;
+    const raw = rawOfRef.current.get(src);
+    if (raw) {
+      setIsImportingLocal(true);
+      const dev = await developRaw(raw.path);
+      setIsImportingLocal(false);
+      if (dev) {
+        if (developedUrlRef.current) URL.revokeObjectURL(developedUrlRef.current);
+        developedUrlRef.current = dev;
+        editSrc = dev;
+        /* 拍的時候套的濾鏡（強度跟拍照時一樣是最大強度），進編輯就已經套好，可以再換或調 */
+        if (raw.lutIdx > 0 && lutList[raw.lutIdx]) init = { params: { ...DEFAULT_PARAMS, lutAmount: lutDefaultAmount(lutList[raw.lutIdx].id) }, selectedLutIdx: raw.lutIdx };
+      }
+    }
+    setShowGallery(false);
+    setEditingPhoto({ src: editSrc, index: idx, init });
+    setEditorId(prev => prev + 1);
+  };
+  useEffect(() => {
+    if (editingPhoto || !developedUrlRef.current) return;
+    URL.revokeObjectURL(developedUrlRef.current);
+    developedUrlRef.current = null;
+  }, [editingPhoto]);
+
   const handleSaveEdit = (newSrc: string, shouldClose: boolean = true) => {
     if (editingPhoto) {
       setPhotos(prev => {
         const next = [...prev];
+        forgetRaw(next[editingPhoto.index]);   // 存回來的是編輯完的成品，不再是 RAW
         releaseUrl(next[editingPhoto.index]);
         next[editingPhoto.index] = newSrc;
         return next;
@@ -1352,22 +1450,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                                 <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${showGrid ? 'translate-x-5' : 'translate-x-0'}`} />
                             </button>
                         </div>
-                        {proAvailable && (<>
-                        {proMode && proRawSupported && (
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
-                                <Icon name="raw_file" className="text-lg text-white/70" />
-                                <span>ProRAW</span>
-                            </div>
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setProRaw(v => !v); triggerHaptic(); }}
-                                className={`w-11 h-6 rounded-full p-1 transition-colors duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] border border-white/10 ${proRaw ? 'bg-white/40' : 'bg-white/10'}`}
-                            >
-                                <div className={`w-4 h-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-transform duration-300 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${proRaw ? 'translate-x-5' : 'translate-x-0'}`} />
-                            </button>
-                        </div>
-                        )}
-                        </>)}
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2.5 text-[13px] font-medium text-white/90">
                                 <Icon name="timer" className="text-lg text-white/70" />
@@ -1388,15 +1470,22 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 )}
             </div>
             
-            {focusPoint && (
+            {focusPoint && (() => {
+                /* 太陽在框的右邊；點在很右邊時改放左邊（跟內建相機一樣）。上下位置＝目前的曝光（±1 EV 走 ±34px） */
+                const ev = Math.max(-1, Math.min(1, parseFloat(settings.exposure) || 0));
+                const frameW = frameDims()?.w ?? 0;
+                const sunLeft = frameW > 0 && focusPoint.x > frameW - 70;
+                const sunX = sunLeft ? -39 - 13 : 39 + 13;
+                const sunY = -ev * 34;
+                return (
                 <div
                     key={focusPoint.nonce}
-                    className="absolute z-40 pointer-events-none"
-                    style={{ left: focusPoint.x, top: focusPoint.y, transform: 'translate(-50%, -50%)' }}
+                    className="absolute z-40 pointer-events-none animate-[camFocusHold_2.2s_linear_forwards]"
+                    style={{ left: focusPoint.x, top: focusPoint.y, transform: 'translate(-50%, -50%)', animationPlayState: evDragging ? 'paused' : 'running', ...(evDragging ? { animationName: 'none', opacity: 1 } : {}) }}
                 >
                     {/* 陰影改成畫在 SVG 裡的一條淡黑線：CSS 的 drop-shadow 濾鏡疊在每格都在重畫的
                         觀景窗上，縮放動畫的每一格都要重算一次模糊，對焦那一下就會頓。 */}
-                    <div className="w-[78px] h-[78px] animate-[camFocusTap_0.92s_cubic-bezier(0.2,0.72,0.2,1)_forwards]" style={{ willChange: 'transform, opacity' }}>
+                    <div className="w-[78px] h-[78px] animate-[camFocusIn_0.92s_cubic-bezier(0.2,0.72,0.2,1)_forwards]" style={{ willChange: 'transform' }}>
                          <svg width="100%" height="100%" viewBox="0 0 78 78" fill="none" xmlns="http://www.w3.org/2000/svg">
                              <g transform="translate(0 1)" stroke="rgba(0,0,0,0.28)" strokeWidth="1">
                                <rect x="4.5" y="4.5" width="69" height="69"/>
@@ -1407,8 +1496,25 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                              <path d="M39 4.5V13M39 73.5V65M4.5 39H13M73.5 39H65" stroke="#fff" strokeWidth="1" strokeLinecap="square"/>
                          </svg>
                     </div>
+                    {/* 曝光的小太陽：拖的時候上下各拉出一條細線（太陽那一段空出來） */}
+                    <div className="absolute left-1/2 top-1/2" style={{ transform: `translate(${sunX}px, 0)` }}>
+                      <div className={`absolute left-0 w-px bg-white/80 transition-opacity duration-200 ${evDragging ? 'opacity-100' : 'opacity-0'}`}
+                           style={{ top: -45, height: Math.max(0, 45 + sunY - 11) }} />
+                      <div className={`absolute left-0 w-px bg-white/80 transition-opacity duration-200 ${evDragging ? 'opacity-100' : 'opacity-0'}`}
+                           style={{ top: sunY + 11, height: Math.max(0, 45 - sunY - 11) }} />
+                      <svg width="20" height="20" viewBox="0 0 20 20" className="absolute" style={{ left: -10, top: sunY - 10 }} aria-hidden>
+                        <g stroke="rgba(0,0,0,0.28)" strokeWidth="1" transform="translate(0 0.8)" fill="none" strokeLinecap="round">
+                          <circle cx="10" cy="10" r="3.6" />
+                        </g>
+                        <circle cx="10" cy="10" r="3.6" fill="#fff" />
+                        <g stroke="#fff" strokeWidth="1.4" strokeLinecap="round">
+                          <path d="M10 1.6v2.2M10 16.2v2.2M1.6 10h2.2M16.2 10h2.2M4.06 4.06l1.56 1.56M14.38 14.38l1.56 1.56M4.06 15.94l1.56-1.56M14.38 5.62l1.56-1.56" />
+                        </g>
+                      </svg>
+                    </div>
                 </div>
-            )}
+                );
+            })()}
 
             <video ref={setVideoEl} autoPlay playsInline muted className="hidden" />
             <canvas ref={canvasRef} className="hidden" />
@@ -1421,6 +1527,26 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm">
                 <span className="text-7xl font-black drop-shadow-2xl">{countdown}</span>
               </div>
+            )}
+
+            {/* RAW 開關：觀景窗左下角（跟內建相機一樣，關著的時候 RAW 上面有一條斜線） */}
+            {!showGallery && proMode && proRawSupported && (
+              <button
+                aria-label={proRaw ? '關閉 RAW' : '開啟 RAW'}
+                aria-pressed={proRaw}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setProRaw(v => !v);
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onPointerUp={(e) => e.stopPropagation()}
+                className={`absolute bottom-[15px] left-3 z-[61] h-[30px] px-2 rounded-[8px] flex items-center justify-center backdrop-blur-xl active:scale-90 transition-[transform,background-color,color] duration-200 ${proRaw ? 'bg-white text-black' : 'bg-black/30 text-white/85'}`}
+              >
+                <span className="relative text-[11px] font-bold tracking-[0.04em] leading-none">
+                  RAW
+                  {!proRaw && <span aria-hidden className="absolute left-[-3px] right-[-3px] top-1/2 h-[1.5px] bg-current -rotate-[24deg] rounded-full" />}
+                </span>
+              </button>
             )}
 
             {!showGallery && (
@@ -1632,9 +1758,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           photos={photos} 
           thumbs={thumbs}
           onClose={() => setShowGallery(false)} 
-          onDelete={(idx) => setPhotos(prev => { releaseUrl(prev[idx]); return prev.filter((_, i) => i !== idx); })}
+          rawShots={rawShots}
+          onDelete={(idx) => setPhotos(prev => { forgetRaw(prev[idx]); releaseUrl(prev[idx]); return prev.filter((_, i) => i !== idx); })}
           onImport={(newPhotos) => setPhotos(prev => [...newPhotos, ...prev])}
-          onEdit={(src, idx) => { setShowGallery(false); setEditingPhoto({ src, index: idx }); setEditorId(prev => prev + 1); }}
+          onEdit={(src, idx) => { void openEditor(src, idx); }}
         />
       )}
 
@@ -1644,6 +1771,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           compactBottomBar
           key={editorId}
           imageSrc={editingPhoto.src}
+          initialState={editingPhoto.init ?? null}
           lutList={lutList}
           onSave={handleSaveEdit}
           onCancel={() => setEditingPhoto(null)}

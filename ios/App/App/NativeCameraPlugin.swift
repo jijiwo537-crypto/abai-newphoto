@@ -4,7 +4,7 @@
 //
 //  網頁版相機（getUserMedia）拿不到的東西，這裡都有：
 //    ‧ 4800 萬像素（iOS 16 起的 maxPhotoDimensions）
-//    ‧ Apple ProRAW（支援的機型）
+//    ‧ Apple ProRAW（支援的機型：iPhone 12 Pro 以後的 Pro 機型）；其他機型不開放 RAW
 //    ‧ 零快門延遲、快速連拍優先、反應式拍攝（iOS 17 起）
 //    ‧ 相機控制按鈕（iPhone 16 起）：滑動調變焦、曝光；音量鍵與相機控制按鈕都能當快門
 //  觀景窗用原生 Metal 畫，濾鏡（同一批 LUT）直接在觀景窗上即時套用。
@@ -69,7 +69,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             let probe = AVCapturePhotoOutput()
             proRAWSupported = probe.isAppleProRAWSupported
         }
-        call.resolve(["available": ok, "proRAW": proRAWSupported])
+        call.resolve(["available": ok, "proRAW": proRAWSupported, "raw": proRAWSupported])
     }
 
     // MARK: 開啟、關閉
@@ -116,6 +116,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                         /* 後鏡頭：真的閃光燈；前鏡頭：螢幕補光（跟內建相機一樣把整個螢幕打亮） */
                         let ledFlash = self.photoOutput.supportedFlashModes.contains(.on)
                         call.resolve(["proRAW": self.photoOutput.isAppleProRAWEnabled,
+                                      "raw": self.rawFormat() != nil,
                                       "maxWidth": self.maxDimensions.width, "maxHeight": self.maxDimensions.height,
                                       "flash": ledFlash || self.position == .front,
                                       "screenFlash": !ledFlash && self.position == .front])
@@ -247,13 +248,12 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             guard self.session.isRunning, let conn = self.photoOutput.connection(with: .video), conn.isEnabled, conn.isActive else {
                 call.reject("相機還沒準備好"); return
             }
-            /* 開閃光燈時不拍 RAW：RAW 不一定支援閃光燈，混在一起設定會讓系統丟例外 */
-            let flashWanted = (call.getString("flash") ?? "off") != "off"
-            let wantRaw = (call.getBool("raw") ?? false) && self.photoOutput.isAppleProRAWEnabled && !flashWanted
+            /* 開閃光燈也照樣拍 RAW（ProRAW 支援閃光燈；閃光燈模式下面會先確認這個設定支援才開） */
+            let wantRaw = call.getBool("raw") ?? false
             let hevc = self.photoOutput.availablePhotoCodecTypes.contains(.hevc)
             let processed: [String: Any] = [AVVideoCodecKey: hevc ? AVVideoCodecType.hevc : AVVideoCodecType.jpeg]
             let settings: AVCapturePhotoSettings
-            if wantRaw, let raw = self.photoOutput.availableRawPhotoPixelFormatTypes.first(where: { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) }) {
+            if wantRaw, let raw = self.rawFormat() {
                 settings = AVCapturePhotoSettings(rawPixelFormatType: raw, processedFormat: processed)
             } else {
                 settings = AVCapturePhotoSettings(format: processed)
@@ -280,6 +280,12 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                 self.photoOutput.capturePhoto(with: settings, delegate: self)
             }
         }
+    }
+
+    /// 現在這顆鏡頭能拍的 ProRAW 格式（沒開 ProRAW、或這顆鏡頭不支援就回 nil）
+    private func rawFormat() -> OSType? {
+        guard photoOutput.isAppleProRAWEnabled else { return nil }
+        return photoOutput.availableRawPhotoPixelFormatTypes.first(where: { AVCapturePhotoOutput.isAppleProRAWPixelFormat($0) })
     }
 
     private var flashView: UIView?
