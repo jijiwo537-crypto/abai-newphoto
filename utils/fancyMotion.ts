@@ -60,7 +60,7 @@ export const ENTRIES: Anim[] = [
       const R0 = Math.hypot(st.x - c.cx, st.y - c.cy), A0 = Math.atan2(st.y - c.cy, st.x - c.cx), ang = A0 - (1 - q) * Math.PI * 3, rr = R0 * q;
       return { dx: c.cx + Math.cos(ang) * rr - st.x, dy: c.cy + Math.sin(ang) * rr - st.y, s: 0.4 + 0.6 * q, rot: (1 - q) * 3, a: clamp(q * 2.5) };
     } },
-  { id: 'fx-in-flip', name: '翻牌', kind: 'entry', fresh: true, desc: '像翻牌一樣，一顆接一顆從側面翻正，由左上翻到右下',
+  { id: 'fx-in-flip', name: '翻轉', kind: 'entry', fresh: true, desc: '像翻牌一樣，一顆接一顆從側面翻正，由左上翻到右下',
     unit: (i, c, p) => {
       const st = c.stars[i], k = (st.x / c.w + st.y / c.h) / 2, q = local(p, k * 0.6, 0.4);
       return { ...ID, sx: q <= 0 ? 0 : Math.max(0.04, Math.abs(Math.cos((1 - smooth(q)) * Math.PI))), s: 0.85 + 0.15 * smooth(q), a: q <= 0 ? 0 : q < 0.5 ? 0.55 : 1 };
@@ -85,7 +85,7 @@ export const IDLES: Anim[] = [
     unit: (i, _c, _p, t) => ({ ...ID, rot: t * (0.6 + hash(i) * 1.1) * (hash(i + 2) > 0.5 ? 1 : -1) }) },
   { id: 'fx-idle-drift', name: '浮游', kind: 'idle', fresh: true, desc: '每顆各自輕輕繞小圈，大的動得多、小的動得少，有前後層次',
     unit: (i, c, _p, t) => { const st = c.stars[i], amp = st.r * 0.55, w = t * (0.8 + hash(i) * 0.5) + hash(i + 4) * 6.28; return { ...ID, dx: Math.cos(w) * amp, dy: Math.sin(w * 1.3) * amp }; } },
-  { id: 'fx-idle-chase', name: '跑燈', kind: 'idle', fresh: true, desc: '一個亮點照排列順序一直往前跑，像跑馬燈',
+  { id: 'fx-idle-chase', name: '接力', kind: 'idle', fresh: true, desc: '一個亮點照排列順序一直往前跑，像跑馬燈',
     unit: (i, c, _p, t) => { const n = c.stars.length, pos = (t * Math.max(4, n * 0.35)) % n; let d = Math.abs(c.rank[i] - pos); d = Math.min(d, n - d); const w = Math.exp(-d * d / 3); return { ...ID, s: 1 + w * 0.3, a: 0.45 + w * 0.55 }; } },
   { id: 'fx-idle-sway', name: '擺盪', kind: 'idle', fresh: true, desc: '每顆像掛著一樣左右擺，彼此錯開（吊飾最適合）',
     unit: (i, c, _p, t) => { const st = c.stars[i], len = Math.max(st.y, c.h * 0.25), ang = Math.sin(t * 1.6 + hash(i) * 6.28) * 0.12; return { ...ID, dx: Math.sin(ang) * len, dy: (Math.cos(ang) - 1) * len, rot: ang }; } },
