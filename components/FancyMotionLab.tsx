@@ -208,7 +208,11 @@ const findClashes = (sv: Saved): Clash[] => {
     for (const a of FANCY_MOTION_ALL) if (a.kind === phase && kindHas(sv, k, a)) {
       const n = nameOf(sv, a); by.set(n, [...(by.get(n) || []), a.id]);
     }
-    by.forEach((ids, name) => { if (ids.length > 1) out.push({ kind: k, phase, name, ids }); });
+    /* App 會自動把「一個原有＋一個新設計」的同名加上 l／ll，那種不算重複 */
+    by.forEach((ids, name) => {
+      const fresh = ids.filter(id => FANCY_MOTION_ALL.find(a => a.id === id)?.fresh), old = ids.length - fresh.length;
+      if (ids.length > 1 && !(fresh.length === 1 && old === 1 && !ids.includes('none'))) out.push({ kind: k, phase, name, ids });
+    });
   }
   return out;
 };

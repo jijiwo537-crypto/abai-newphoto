@@ -243,6 +243,21 @@ export const FANCY_MOTION_CFG: Record<string, KCfg> = {
 const baseKind = (k?: string) => String(k || '').split('!')[0].split('@')[0];
 export const fancyMotionCfg = (kind?: string): KCfg | undefined => FANCY_MOTION_CFG[baseKind(kind)];
 /** 面板上的進場／常駐清單：原有的（拿掉不要的）在前、新設計的在後 */
+/** 每一種貼圖動畫頁的按鈕順序（照測試網站排的；清單裡沒有的接在最後面） */
+const BUTTON_ORDER: Record<string, { in: string[]; idle: string[] }> = {
+  'fancy-halo': { in: ["none", "pop", "rise", "drop", "fx-in-seq", "fx-in-sweep", "fx-in-flip", "fx-in-twirl"], idle: ["none", "float", "breathe", "wobble", "fx-idle-twinkle", "fx-idle-shimmer", "fx-idle-chase", "fx-idle-spin"] },
+  'fancy-concentric': { in: ["none", "pop", "fx-in-sweep", "fx-in-seq", "flip", "fx-in-flip", "spin", "fx-in-twirl", "fx-in-burst", "fade", "rise", "drop"], idle: ["none", "float", "breathe", "grid-wave", "fx-idle-twinkle", "fx-idle-shimmer", "fx-idle-wave", "jitter", "orbit", "wobble", "spin", "fx-idle-spin"] },
+  'fancy-spiral': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "flip", "fx-in-flip", "spin", "fx-in-twirl", "rise", "drop", "spring", "fade"], idle: ["none", "float", "spin", "breathe", "fx-idle-twinkle", "fx-idle-ripple", "fx-idle-shimmer", "fx-idle-chase", "grid-wave", "wobble", "orbit", "jitter"] },
+  'fancy-ring': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "spring", "fade"], idle: ["none", "fx-idle-twinkle", "fx-idle-shimmer", "fx-idle-chase", "float", "wobble", "spin", "fx-idle-spin", "breathe", "orbit", "jitter", "grid-wave"] },
+  'fancy-swirl3': { in: ["none", "pop", "spin", "fx-in-seq", "fx-in-sweep", "fx-in-burst", "flip", "fx-in-flip", "rise", "drop", "fx-in-vortex", "fade"], idle: ["none", "fx-idle-twinkle", "fx-idle-ripple", "fx-idle-shimmer", "float", "wobble", "spin", "fx-idle-spin", "breathe", "grid-wave", "orbit", "jitter"] },
+  'fancy-radial': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "spring", "fade"], idle: ["none", "fx-idle-twinkle", "fx-idle-shimmer", "fx-idle-chase", "fx-idle-firefly", "wobble", "spin", "fx-idle-spin", "breathe", "float", "orbit", "grid-wave"] },
+  'fancy-grid': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "fx-in-burst", "fade"], idle: ["none", "fx-idle-shimmer", "fx-idle-wave", "fx-idle-twinkle", "fx-idle-ripple", "fx-idle-chase", "fx-idle-spin", "float", "breathe", "orbit", "jitter", "grid-wave"] },
+  'fancy-polka': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "fx-in-burst", "fade"], idle: ["none", "fx-idle-shimmer", "fx-idle-wave", "fx-idle-twinkle", "fx-idle-ripple", "fx-idle-spin", "float", "breathe", "orbit", "jitter", "grid-wave"] },
+  'fancy-boxrandom': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "fx-in-burst", "fade"], idle: ["none", "fx-idle-shimmer", "fx-idle-twinkle", "fx-idle-chase", "fx-idle-drift", "fx-idle-ripple", "fx-idle-spin", "float", "breathe", "orbit", "jitter", "grid-wave"] },
+  'fancy-wand': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "spring", "fade"], idle: ["none", "fx-idle-twinkle", "fx-idle-shimmer", "fx-idle-chase", "fx-idle-ripple", "fx-idle-drift", "fx-idle-spin", "grid-wave", "float", "breathe", "orbit", "jitter"] },
+  'fancy-mobile': { in: ["none", "fx-in-seq", "fx-in-rain", "fx-in-flip", "fx-in-twirl", "fade", "rise", "drop"], idle: ["none", "fx-idle-chase", "fx-idle-twinkle", "fx-idle-spin", "float", "fx-idle-shimmer", "fx-idle-sway", "grid-wave"] },
+  'fancy-constellation': { in: ["none", "pop", "fx-in-seq", "fx-in-sweep", "spin", "fx-in-twirl", "flip", "fx-in-flip", "rise", "drop", "spring", "fade"], idle: ["none", "fx-idle-twinkle", "fx-idle-chase", "fx-idle-ripple", "fx-idle-spin", "fx-idle-drift", "float", "breathe", "wobble", "orbit", "jitter", "grid-wave"] },
+};
 /** 某一種貼圖自己的名字（同一個動畫在這一種叫別的名字） */
 const KIND_NAMES_OVERRIDE: Record<string, Record<string, string>> = {
   'fancy-mobile': { 'fx-idle-chase': '縮放', 'fx-idle-shimmer': '漂浮' },   // 漂浮跟原本的漂浮同名 → 自動變成漂浮l／漂浮ll
@@ -258,9 +273,14 @@ export const fancyMotionLists = <T extends { id: string }>(kind: string | undefi
     return [...old.map(k => clash.has((k as any).name) ? make(k.id, (k as any).name + 'l') : k),
       ...fresh.map(id => make(id, fancyMotionName(id) + (clash.has(fancyMotionName(id)) ? 'll' : '')))];
   };
+  const ord = BUTTON_ORDER[String(kind || '').split('@')[0]];
+  const sortBy = (list: T[], o?: string[]) => !o ? list : [...list].sort((a, b) => {
+    const ra = o.indexOf(a.id), rb = o.indexOf(b.id);
+    return (ra < 0 ? 1e3 + list.indexOf(a) : ra) - (rb < 0 ? 1e3 + list.indexOf(b) : rb);
+  });
   return {
-    kinds: dedupe(inKinds.filter(k => !c.delIn.includes(k.id)), c.addIn),
-    idleKinds: dedupe(idleKinds.filter(k => !c.delIdle.includes(k.id)), c.addIdle),
+    kinds: sortBy(dedupe(inKinds.filter(k => !c.delIn.includes(k.id)), c.addIn), ord?.in),
+    idleKinds: sortBy(dedupe(idleKinds.filter(k => !c.delIdle.includes(k.id)), c.addIdle), ord?.idle),
   };
 };
 /** 動畫設定 → 這一格要接在 kind 後面的字串（沒有就 undefined） */
