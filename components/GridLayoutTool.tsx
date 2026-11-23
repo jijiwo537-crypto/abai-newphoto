@@ -1,3 +1,4 @@
+import { slideBack } from '../utils/pageTransition';
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
 import { centerActiveChip } from '../utils/centerChip';
 import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
@@ -17943,7 +17944,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             <SaveButton urls={finalImages} review />
             <div className="flex items-center justify-center gap-4">
             <button
-              onClick={(e) => { e.stopPropagation(); setExportState('idle'); clearFinalImages(); }}
+              onClick={(e) => { e.stopPropagation(); void slideBack(() => { setExportState('idle'); clearFinalImages(); }); }}
               className="flex-1 h-14 rounded-full border border-white/20 bg-white/5 text-white font-bold tracking-widest uppercase hover:bg-white/10 active:scale-95 transition-all text-sm"
             >
               繼續編輯

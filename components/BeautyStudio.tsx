@@ -1,3 +1,4 @@
+import { slideBack } from '../utils/pageTransition';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { isDarkSwatch } from '../utils/swatch';
 import { BusyLayer } from './BusyLayer';
@@ -1801,7 +1802,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             </button>
             <div className="flex gap-3">
             <button
-              onClick={() => setSaveState('idle')}
+              onClick={() => void slideBack(() => setSaveState('idle'))}
               className="flex-1 h-12 rounded-full border border-white/20 bg-white/5 text-white font-bold tracking-widest uppercase hover:bg-white/10 active:scale-95 transition-all text-xs"
             >
               繼續編輯

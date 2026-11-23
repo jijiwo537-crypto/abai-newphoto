@@ -192,6 +192,8 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
         let isVideo = call.getString("kind") == "video"
         let assetId = call.getString("assetId")
         let adjustment = call.getString("adjustment")
+        /* 相機底片模式：成品（套好濾鏡、日期）是主要的那張，RAW 跟它配成同一張（相簿看到的是成品，RAW 也留著） */
+        let rawURL = call.getString("rawPath").flatMap { ABAIImageCore.fileURL(from: $0) }
 
         /* 存檔途中切到背景也要做完 */
         var task: UIBackgroundTaskIdentifier = .invalid
@@ -210,10 +212,10 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
             editOriginal(asset: asset, rendered: url, adjustment: adj, finish: finish)
             return
         }
-        createNew(url: url, isVideo: isVideo, finish: finish)
+        createNew(url: url, isVideo: isVideo, raw: rawURL, finish: finish)
     }
 
-    private func createNew(url: URL, isVideo: Bool, finish: @escaping (Result<[String: Any], Error>) -> Void) {
+    private func createNew(url: URL, isVideo: Bool, raw: URL? = nil, finish: @escaping (Result<[String: Any], Error>) -> Void) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
                 finish(.failure(NSError(domain: "abai", code: 1, userInfo: [NSLocalizedDescriptionKey: "沒有存到相簿的權限"]))); return
@@ -223,6 +225,9 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
                 let req = PHAssetCreationRequest.forAsset()
                 let opts = PHAssetResourceCreationOptions()
                 req.addResource(with: isVideo ? .video : .photo, fileURL: url, options: opts)
+                if !isVideo, let r = raw, FileManager.default.fileExists(atPath: r.path) {
+                    req.addResource(with: .alternatePhoto, fileURL: r, options: PHAssetResourceCreationOptions())
+                }
                 placeholder = req.placeholderForCreatedAsset?.localIdentifier
             }) { ok, err in
                 if ok { finish(.success(["saved": true, "mode": "created", "assetId": placeholder ?? ""])) }

@@ -1,4 +1,5 @@
 
+import { slideBack } from './utils/pageTransition';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { CameraInterface } from './components/CameraInterface';
 import { HomePage } from './components/HomePage';
@@ -194,11 +195,14 @@ const App: React.FC = () => {
   }, []);
 
   const finishExit = useCallback((complete?: () => void) => {
+    /* 離開工具回主頁：目前的畫面往右滑走（見 utils/pageTransition） */
     const close = () => {
       exitCloseTimer.current = null;
-      complete?.();
-      setExitPromptOpen(false);
-      setExitPromptBusy(false);
+      void slideBack(() => {
+        complete?.();
+        setExitPromptOpen(false);
+        setExitPromptBusy(false);
+      });
     };
     const elapsed = exitSaveStartedAt.current ? performance.now() - exitSaveStartedAt.current : 500;
     const remaining = Math.max(0, 500 - elapsed);
@@ -723,12 +727,12 @@ const App: React.FC = () => {
         } catch { alert('無法處理此圖片格式'); }
         finally { setIsImporting(false);setImportPreviewUrl(null); }
       }}/>
-      {currentView === 'art' && artImage && <ArtStudio initialSrc={artImage} onClose={() => setCurrentView('home')} />}
+      {currentView === 'art' && artImage && <ArtStudio initialSrc={artImage} onClose={() => void slideBack(() => setCurrentView('home'))} />}
       <input ref={dotArtInputRef} hidden type="file" accept="image/*" multiple onChange={e => {
         const files = [...(e.target.files || [])]; e.target.value = ''; if (!files.length) return;
         setDotArtFiles(files); setCurrentView('dotart');
       }}/>
-      {currentView === 'dotart' && dotArtFiles.length > 0 && <DotArtStudio initialFiles={dotArtFiles} onClose={() => setCurrentView('home')} />}
+      {currentView === 'dotart' && dotArtFiles.length > 0 && <DotArtStudio initialFiles={dotArtFiles} onClose={() => void slideBack(() => setCurrentView('home'))} />}
       {currentView === 'match' && matchImage && (
         <ColorMatchStudio
           imageSrc={matchImage}
@@ -740,7 +744,7 @@ const App: React.FC = () => {
             if (!keepDraft) clearToolDraft();
             finishExit(() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); setToolDraftState(null); });
           }}
-          onHome={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); }}
+          onHome={() => void slideBack(() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); })}
           onImportNew={handleMatchImportClick}
           onSendToEditor={handleBeautyToEditor}
         />

@@ -125,8 +125,10 @@ enum ABAIDateStamp {
     }
 
     /// 把日期（例如 "'25 11 23"）用橘紅色七段字印在右下角。input、output 都是線性光
-    static func stampDate(_ text: String, on input: CIImage) -> CIImage {
-        let e = input.extent
+    /// region：照片實際的範圍（觀景窗有小框構圖時，只有框裡面那一塊會變成照片 —— 字要印在框的右下角、照框的大小）
+    static func stampDate(_ text: String, on input: CIImage, region: CGRect? = nil) -> CIImage {
+        let full = input.extent
+        let e = region.map { $0.intersection(full) }.flatMap { $0.isNull || $0.width < 8 ? nil : $0 } ?? full
         let short = min(e.width, e.height)
         let charH = (short * 0.034).rounded()
         guard charH >= 4, let made = stampImage(text, charH: charH) else { return input }
@@ -144,6 +146,6 @@ enum ABAIDateStamp {
                                                          "inputBVector": CIVector(x: 0, y: 0, z: 0.5, w: 0),
                                                          "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 0)])
         let light = soft.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: glow])
-        return light.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: input]).cropped(to: e)
+        return light.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: input]).cropped(to: full)
     }
 }

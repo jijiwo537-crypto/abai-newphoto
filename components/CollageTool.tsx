@@ -1,3 +1,4 @@
+import { slideBack } from '../utils/pageTransition';
 import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOffset, selectedPatternPose, applySelectedPatternAppearance, paintSelectedPattern, selectedPatternGlow, blurKey, blurKeyOf, type SelectedFrame } from '../utils/selectedAnimations';
 
 import { swatchEdge } from '../utils/swatch';
@@ -11801,7 +11802,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             <SaveButton urls={finalImage ? [finalImage] : []} review />
             <div className="flex items-center justify-center gap-4">
             <button 
-              onClick={(e) => { e.stopPropagation(); setSaveState('idle'); }}
+              onClick={(e) => { e.stopPropagation(); void slideBack(() => setSaveState('idle')); }}
               className="flex-1 h-14 rounded-full border border-white/20 bg-white/5 text-white font-bold tracking-widest uppercase hover:bg-white/10 active:scale-95 transition-all text-sm"
             >
               繼續編輯

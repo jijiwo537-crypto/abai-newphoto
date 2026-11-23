@@ -20,7 +20,7 @@ interface PickedItem { path: string; name: string; type: string; size: number; a
 interface NativePhotosApi {
   pick(o: { limit: number; filter: 'images' | 'videos' | 'any' }): Promise<{ items: PickedItem[] }>;
   authorize(o: { level: 'addOnly' | 'readWrite' }): Promise<{ status: string }>;
-  save(o: { path: string; kind: 'photo' | 'video'; assetId?: string; adjustment?: string }): Promise<{ saved: boolean; mode: string; assetId?: string }>;
+  save(o: { path: string; kind: 'photo' | 'video'; assetId?: string; adjustment?: string; rawPath?: string }): Promise<{ saved: boolean; mode: string; assetId?: string }>;
   readAdjustment(o: { assetId: string }): Promise<{ adjustment?: string; originalPath?: string }>;
   requestReview?(): Promise<{ asked: boolean }>;
 }

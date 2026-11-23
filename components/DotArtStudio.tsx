@@ -1,6 +1,7 @@
 /* 點陣文字：照片轉成可以複製貼上的點字圖案（演算法見 utils/dotArt）
    版面跟美顏同一套：上面成品（黑底白點、即時更新、可以用手指畫點／擦點），
    預覽下緣懸空放換照片、線稿／陰影、反轉；下面一塊滑桿和一排工具；右上角複製、儲存成圖片。 */
+import { slideBack } from '../utils/pageTransition';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, Copy, Check, Plus } from 'lucide-react';
 import { Icon } from './Icon';
@@ -794,7 +795,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col" role="dialog" aria-modal="true" aria-label="儲存預覽">
           <ExportActionLift />
           <header className="h-14 shrink-0 px-5 flex items-center bg-black/40 backdrop-blur-xl">
-            <button aria-label="返回" onClick={() => setExportUrl('')} className="p-2 -ml-2 text-[#888]"><ChevronLeft size={22} /></button>
+            <button aria-label="返回" onClick={() => void slideBack(() => setExportUrl(''))} className="p-2 -ml-2 text-[#888]"><ChevronLeft size={22} /></button>
           </header>
           <div data-export-media className="flex-1 min-h-0 flex items-center justify-center p-6">
             <img className="allow-callout max-w-[80vw] max-h-[60vh] object-contain rounded" style={{ boxShadow: '0 0 0 1px #ffffff1a' }} src={exportUrl} alt="匯出預覽" />
@@ -802,7 +803,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
           <footer data-export-actions className="flex flex-col gap-3 px-6 pt-2 pb-6">
             <SaveButton urls={[exportUrl]} />
             <div className="flex gap-4">
-              <button onClick={() => setExportUrl('')} className="flex-1 h-14 rounded-full border border-white/20 bg-white/5 text-sm font-bold">繼續編輯</button>
+              <button onClick={() => void slideBack(() => setExportUrl(''))} className="flex-1 h-14 rounded-full border border-white/20 bg-white/5 text-sm font-bold">繼續編輯</button>
               <button onClick={() => { setExportUrl(''); input.current?.click(); }} className="flex-1 h-14 rounded-full border border-white/20 bg-white/5 text-sm font-bold">換一張照片</button>
             </div>
           </footer>

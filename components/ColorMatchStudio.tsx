@@ -1,3 +1,4 @@
+import { slideBack } from '../utils/pageTransition';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { BusyLayer } from './BusyLayer';
 import { safeSize } from '../utils/exportLimits';
@@ -1126,7 +1127,7 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
         <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col">
         <ExportActionLift />
         <header className="h-14 flex items-center px-5 shrink-0 bg-black/40 backdrop-blur-xl">
-          <button onClick={() => setFinalUrl(null)} className="p-2 -ml-2 text-[#888] hover:text-white active:scale-90 transition-colors">
+          <button onClick={() => void slideBack(() => setFinalUrl(null))} className="p-2 -ml-2 text-[#888] hover:text-white active:scale-90 transition-colors">
             <ChevronLeft size={22} />
           </button>
         </header>
@@ -1141,7 +1142,7 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
           {/* 「繼續調整」與「接著調色」併成最下面同一排 */}
           <div className="flex gap-3">
             <button
-              onClick={() => setFinalUrl(null)}
+              onClick={() => void slideBack(() => setFinalUrl(null))}
               className="flex-1 h-12 rounded-full border border-white/20 bg-white/5 text-white font-bold tracking-widest uppercase active:scale-95 transition-all text-xs"
             >
               繼續調整
