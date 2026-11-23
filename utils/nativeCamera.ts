@@ -3,23 +3,33 @@
 import { nativePlugin, fileSrc } from './nativeBridge';
 import { nativeImage } from './nativeImage';
 
+export type CameraMenuItem =
+  | { id: string; type: 'toggle'; title: string; symbol: string; value: boolean }
+  | { id: string; type: 'choice'; title: string; symbol: string; value: string; options: { label: string; value: string }[] };
+
 export interface NativeCameraApi {
   available(): Promise<{ available: boolean; proRAW: boolean; raw?: boolean }>;
-  start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; radius?: number; lut?: string; amount?: number; proRAW?: boolean }): Promise<{ proRAW: boolean; raw?: boolean; turns?: number; maxWidth: number; maxHeight: number; flash?: boolean; screenFlash?: boolean }>;
+  start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; radius?: number; lut?: string; amount?: number; proRAW?: boolean }): Promise<{ proRAW: boolean; raw?: boolean; turns?: number; minZoom?: number; maxZoom?: number; maxWidth: number; maxHeight: number; flash?: boolean; screenFlash?: boolean }>;
   stop(): Promise<void>;
   setRect(o: { x: number; y: number; w: number; h: number; radius?: number }): Promise<void>;
-  capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean; turns?: number }): Promise<{ path: string; width: number; height: number; rawPath?: string }>;
+  capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean; turns?: number }): Promise<{ path: string; width: number; height: number; rawPath?: string; location?: { lat: number; lon: number; alt?: number; time?: number } }>;
   /** 日期戳記（null＝不印），觀景窗右下角；zoom＝小框構圖的倍率（字印在框的右下角、照框的大小） */
   setDate(o: { date: string | null; zoom?: number }): Promise<void>;
   /** 觀景窗現在這一格（離開相機的過場用） */
   snapshot(): Promise<{ path: string }>;
+  /** 水平儀：開著時送 level 事件 { roll（度）, flat } */
+  setLevel(o: { on: boolean }): Promise<void>;
+  /** 位置：開著時拍照會帶 location，寫進照片的 GPS */
+  setLocation(o: { on: boolean }): Promise<{ authorized?: boolean; denied?: boolean }>;
+  /** 原生設定選單（iOS 26 起是液態玻璃）。改了送 menu { id, value }，關掉送 menuClosed */
+  showMenu(o: { anchor: { x: number; y: number; w: number; h: number }; items: CameraMenuItem[] }): Promise<void>;
   setZoom(o: { uiZoom?: number; factor?: number }): Promise<{ factor: number }>;
   focus(o: { x: number; y: number }): Promise<void>;
   setExposureBias(o: { ev: number }): Promise<void>;
   setWhiteBalance(o: { kelvin?: number; auto?: boolean }): Promise<void>;
   setFx(o: { soft: number; blur: number; lowfi: number }): Promise<void>;
   setLut(o: { lut: string; amount?: number }): Promise<void>;
-  addListener(event: 'shutter' | 'zoom' | 'orientation', cb: (data: any) => void): Promise<{ remove: () => void }>;
+  addListener(event: 'shutter' | 'zoom' | 'orientation' | 'level' | 'menu' | 'menuClosed', cb: (data: any) => void): Promise<{ remove: () => void }>;
 }
 
 export const nativeCamera = () => nativePlugin<NativeCameraApi>('NativeCamera');
@@ -48,7 +58,7 @@ export async function captureNative(o: {
   const shot = await cam.capture({ flash: o.flash, raw: o.raw, turns: o.turns ?? 0 });
   const out = await img.render({
     path: shot.path, lut: o.lut || undefined, amount: o.amount ?? 1, aspect: o.aspect, zoom: o.zoom, fx: o.fx, kelvin: o.kelvin,
-    develop: o.develop || undefined, date: o.date || undefined,
+    develop: o.develop || undefined, date: o.date || undefined, gps: shot.location || undefined,
     format: 'jpeg', quality: 0.95,
   });
   img.remove({ path: shot.path }).catch(() => {});

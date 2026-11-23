@@ -164,6 +164,27 @@ enum ABAIImageCore {
         return out
     }
 
+    /// 把拍照地點寫進照片的 GPS 資訊（只動檔頭的中繼資料，不重新壓縮影像）
+    static func addGPS(_ data: Data, lat: Double, lon: Double, alt: Double?, time: Date) -> Data {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil), let type = CGImageSourceGetType(src) else { return data }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out as CFMutableData, type, 1, nil) else { return data }
+        let meta = CGImageMetadataCreateMutable()
+        let utc = TimeZone(identifier: "UTC") ?? .current
+        let df = DateFormatter(); df.timeZone = utc; df.locale = Locale(identifier: "en_US_POSIX"); df.dateFormat = "yyyy:MM:dd"
+        let tf = DateFormatter(); tf.timeZone = utc; tf.locale = Locale(identifier: "en_US_POSIX"); tf.dateFormat = "HH:mm:ss.SS"
+        var gps: [(CFString, CFTypeRef)] = [
+            (kCGImagePropertyGPSLatitude, NSNumber(value: abs(lat))), (kCGImagePropertyGPSLatitudeRef, (lat >= 0 ? "N" : "S") as NSString),
+            (kCGImagePropertyGPSLongitude, NSNumber(value: abs(lon))), (kCGImagePropertyGPSLongitudeRef, (lon >= 0 ? "E" : "W") as NSString),
+            (kCGImagePropertyGPSDateStamp, df.string(from: time) as NSString), (kCGImagePropertyGPSTimeStamp, tf.string(from: time) as NSString),
+        ]
+        if let a = alt { gps += [(kCGImagePropertyGPSAltitude, NSNumber(value: abs(a))), (kCGImagePropertyGPSAltitudeRef, NSNumber(value: a < 0 ? 1 : 0))] }
+        for (k, v) in gps { CGImageMetadataSetValueMatchingImageProperty(meta, kCGImagePropertyGPSDictionary, k, v) }
+        let opts: [CFString: Any] = [kCGImageDestinationMetadata: meta, kCGImageDestinationMergeMetadata: true]
+        guard CGImageDestinationCopyImageSource(dest, src, opts as CFDictionary, nil) else { return data }
+        return out as Data
+    }
+
     // MARK: 濾鏡 LUT
 
     struct Cube {

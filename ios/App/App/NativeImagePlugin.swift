@@ -145,6 +145,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         let kelvin = call.getDouble("kelvin")                // 相機色溫（跟觀景窗同一條公式）
         let develop = call.getDouble("develop") ?? 0         // 底片模式：少曝光拍的照片沖回幾格（見 ABAIDateStamp.swift）
         let dateText = call.getString("date").flatMap { $0.isEmpty ? nil : $0 }   // 日期戳記
+        let gps = call.getObject("gps")                      // 拍照地點（相機開了「位置」時）
         queue.async {
             autoreleasepool {
                 var image: CIImage?
@@ -185,7 +186,11 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                    跟網頁編輯頁的著色器同一招（±½ 階），肉眼看不到雜訊，但色階會被打散。10 位元不需要。 */
                 if cube != nil && format != .heic10 { sdr = ABAIImageCore.dither(sdr) }
                 do {
-                    let data = try ABAIImageCore.encode(sdr, format: format, quality: quality, hdr: hdr)
+                    var data = try ABAIImageCore.encode(sdr, format: format, quality: quality, hdr: hdr)
+                    if let g = gps, let lat = (g["lat"] as? NSNumber)?.doubleValue, let lon = (g["lon"] as? NSNumber)?.doubleValue {
+                        let t = (g["time"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) } ?? Date()
+                        data = ABAIImageCore.addGPS(data, lat: lat, lon: lon, alt: (g["alt"] as? NSNumber)?.doubleValue, time: t)
+                    }
                     let out = ABAIImageCore.newFileURL(ext: format == .png ? "png" : (format == .jpeg ? "jpg" : "heic"))
                     try data.write(to: out)
                     call.resolve(["path": out.path, "width": Int(img.extent.width), "height": Int(img.extent.height)])

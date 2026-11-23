@@ -329,6 +329,23 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [countdown, setCountdown] = useState<number | null>(null);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
+  /* 右上角「⋯」選單裡的設定（記住，下次開相機照舊） */
+  const prefGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
+  const prefSet = (k: string, v: string | null) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* 私密模式 */ } };
+  /** 水平儀：畫面中間一條線，手機擺平時變黃 */
+  const [levelOn, setLevelOnState] = useState(() => prefGet('abai-camera-level') === '1');
+  const setLevelOn = (v: boolean) => { setLevelOnState(v); prefSet('abai-camera-level', v ? '1' : null); };
+  /** 位置：拍照時把地點寫進照片 */
+  const [locationOn, setLocationOnState] = useState(() => prefGet('abai-camera-location') === '1');
+  const setLocationOn = (v: boolean) => { setLocationOnState(v); prefSet('abai-camera-location', v ? '1' : null); };
+  /** 縮放模式：全螢幕＝雙指直接放大縮小（跟內建相機一樣）；線框＝雙指捏出小框構圖 */
+  const [zoomMode, setZoomModeState] = useState<'full' | 'frame'>(() => prefGet('abai-camera-zoom-mode') === 'full' ? 'full' : 'frame');
+  const setZoomMode = (v: 'full' | 'frame') => { setZoomModeState(v); prefSet('abai-camera-zoom-mode', v); };
+  const zoomModeRef = useRef(zoomMode); zoomModeRef.current = zoomMode;
+  /** 全螢幕縮放：雙指捏到的倍率（介面倍率，1＝主鏡頭）。null＝停在按鈕的倍率上 */
+  const [liveZoom, setLiveZoom] = useState<number | null>(null);
+  const liveZoomRef = useRef<number | null>(null); liveZoomRef.current = liveZoom;
+  const zoomSendRaf = useRef(0);
   // 磨皮已移除：清掉舊版記住的開關
   useEffect(() => { try { localStorage.removeItem('abai-camera-skin-v3'); } catch { /* 私密模式 */ } }, []);
   
@@ -341,7 +358,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const frameZoomRef = useRef(1);
   const smallFrameRef = useRef<SmallFrameApi>(null);
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const pinchRef = useRef<{ d0: number; z0: number } | null>(null);
+  const pinchRef = useRef<{ d0: number; z0: number; full?: boolean } | null>(null);
   /** 這一次觸控裡有沒有捏過 —— 有的話放手時不能當成「點一下對焦」 */
   const gesturePinchedRef = useRef(false);
   /** 捏完之後很短的時間內，瀏覽器補送的 click 也不能觸發對焦 */
@@ -360,7 +377,13 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       : null;
     if (pointersRef.current.size === 2) {
       const d = pinchDist();
-      if (d > 8) {
+      if (d > 8 && zoomModeRef.current === 'full' && proModeRef.current) {
+        /* 全螢幕縮放：從目前的倍率開始捏 */
+        const cur = liveZoomRef.current ?? (ZOOM_STEPS.find(z => z.label === focalRef.current)?.factor ?? 1);
+        pinchRef.current = { d0: d, z0: cur, full: true };
+        gesturePinchedRef.current = true;
+        if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; }
+      } else if (d > 8) {
         pinchRef.current = { d0: d, z0: frameZoomRef.current };
         gesturePinchedRef.current = true;
         // 第二根手指下來就不是長按鎖定了
@@ -377,25 +400,35 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (!p || pointersRef.current.size < 2) return;
     const d = pinchDist();
     if (!d) return;
+    if (p.full) {
+      /* 全螢幕縮放：兩指拉開＝放大（跟內建相機一樣），鏡頭真的變焦；一格最多送一次 */
+      const r = nativeZoomRangeRef.current;
+      const z = Math.max(r?.min ?? 1, Math.min(Math.min(r?.max ?? 10, 15), p.z0 * d / p.d0));
+      liveZoomRef.current = z;
+      setLiveZoom(z);
+      if (!zoomSendRaf.current) zoomSendRaf.current = requestAnimationFrame(() => {
+        zoomSendRaf.current = 0;
+        const v = liveZoomRef.current; if (v == null) return;
+        void nativeCamera().then(c => c?.setZoom({ uiZoom: v })).catch(() => {});
+      });
+      return;
+    }
     // 框跟著手指走：兩指往內捏＝框往內縮，往外拉開＝框變大；拉回滿版框就消失
     const z = Math.max(1, Math.min(SMALL_FRAME_MAX, p.z0 * p.d0 / d));
     frameZoomRef.current = z;
     smallFrameRef.current?.set(z, true);
-    /* 日期即時跟著框走（一格最多送一次） */
-    if (dateOnRef.current && !datePinchRaf.current) {
-      datePinchRaf.current = requestAnimationFrame(() => { datePinchRaf.current = 0; pushDateRef.current(); });
-    }
   };
-  const datePinchRaf = useRef(0);
   const onFramePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!pointersRef.current.delete(e.pointerId)) return;
     endExposureDrag(e.pointerId);
-    if (pinchRef.current && pointersRef.current.size < 2) {
+    if (pinchRef.current?.full && pointersRef.current.size < 2) {
+      pinchRef.current = null;
+      focusGuardUntilRef.current = performance.now() + 400;
+    } else if (pinchRef.current && pointersRef.current.size < 2) {
       pinchRef.current = null;
       // 很接近 1 倍就直接收掉框，不留一條貼著邊的白線
       if (frameZoomRef.current < 1.04) frameZoomRef.current = 1;
       smallFrameRef.current?.set(frameZoomRef.current, false);
-      if (dateOnRef.current) pushDateRef.current();   // 日期跟著框走
       focusGuardUntilRef.current = performance.now() + 400;
     }
     if (pointersRef.current.size === 0) setTimeout(() => { gesturePinchedRef.current = false; }, 0);
@@ -656,7 +689,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [digitalZoom, setDigitalZoom] = useState(1);
   const hwZoom = capabilities?.zoom;
   /** 沒有超廣角鏡頭時 0.5x 是做不到的（數位變焦只能放大不能變廣） */
-  const canWide = !!hwZoom && (hwZoom.min ?? 1) < 1;
+  /* 原生相機：開相機時回報這顆鏡頭的倍率範圍（介面倍率，1＝主鏡頭）。網頁相機才看串流的 zoom 能力 */
+  const [nativeZoomRange, setNativeZoomRange] = useState<{ min: number; max: number } | null>(null);
+  const nativeZoomRangeRef = useRef(nativeZoomRange); nativeZoomRangeRef.current = nativeZoomRange;
+  const canWide = proMode ? !!nativeZoomRange && nativeZoomRange.min < 0.99 : !!hwZoom && (hwZoom.min ?? 1) < 1;
 
   /* 變焦平滑過渡：從目前倍率用 ease-out 在約 0.32 秒內推到目標（像原生相機的變焦轉盤），不是直接跳過去。
      每一格把總倍率拆成「硬體能做的」＋「剩下的數位變焦」；硬體約束上一個還沒套用完就先不送下一個，不會塞車 */
@@ -738,8 +774,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
   /** 目前鏡頭的等效焦段（小框構圖的焦段＝這個 × 框的倍率） */
   const lensMm = parseInt(ZOOM_STEPS.find(z => z.label === settings.focalLength)?.mm || '24', 10) || 24;
+  const focalRef = useRef(settings.focalLength); focalRef.current = settings.focalLength;
   const handleZoomClick = (val: string) => {
     haptic('detentMajor');
+    setLiveZoom(null);
     if (proModeRef.current) void nativeCamera().then(c => c?.setZoom({ uiZoom: parseFloat(val) || 1 }));
     setSettings(prev => ({ ...prev, focalLength: val }));
     const mm = parseInt(ZOOM_STEPS.find(z => z.label === val)?.mm || '', 10);
@@ -1074,7 +1112,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       const rect = () => { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height, radius: parseFloat(getComputedStyle(frame).borderTopLeftRadius) || 0 }; };
       try {
         const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: proOptsRef.current.amount, proRAW: true });
-        if (alive) { setNativeFlash(!!info?.flash); if (typeof info?.turns === 'number') setUiTurns(info.turns); }
+        if (alive) {
+          setNativeFlash(!!info?.flash);
+          if (typeof info?.turns === 'number') setUiTurns(info.turns);
+          if (typeof info?.minZoom === 'number' && typeof info?.maxZoom === 'number') setNativeZoomRange({ min: info.minZoom, max: info.maxZoom });
+        }
         /* 能不能拍 RAW 要等相機真的開起來才知道：還沒接上鏡頭的 AVCapturePhotoOutput 一律回報「不支援 ProRAW」，
            所以 available() 那邊永遠是 false（RAW 開關才會一直沒出現）。以開相機後回報的為準 */
         if (alive && info) {
@@ -1123,9 +1165,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, [proMode, settings.exposure, proRaw]);
   /* 日期戳記：觀景窗右下角（原生端畫，跟照片同一個位置） */
   const dateOnRef = useRef(dateOn); dateOnRef.current = dateOn;
+  /* 日期只印在拍出來的照片上，觀景窗不顯示（跟底片相機一樣，沖出來才看得到） */
   const pushDate = () => {
     if (!proModeRef.current) return;
-    void nativeCamera().then(c => c?.setDate({ date: dateOnRef.current ? dateStampText() : null, zoom: frameZoomRef.current })).catch(() => {});
+    void nativeCamera().then(c => c?.setDate({ date: null })).catch(() => {});
   };
   const pushDateRef = useRef(pushDate); pushDateRef.current = pushDate;
   useEffect(() => { pushDate(); }, [proMode, dateOn]);
@@ -1332,6 +1375,58 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     await slideBack(() => onHome());
   };
 
+  /* ── 原生設定選單 ─────────────────────────────────────────── */
+  const openNativeMenu = (btn: HTMLElement) => {
+    const r = btn.getBoundingClientRect();
+    void nativeCamera().then(c => c?.showMenu({
+      anchor: { x: r.left, y: r.top, w: r.width, h: r.height },
+      items: [
+        { id: 'grid', type: 'toggle', title: '構圖線', symbol: 'grid', value: showGrid },
+        { id: 'level', type: 'toggle', title: '水平線', symbol: 'level', value: levelOn },
+        { id: 'location', type: 'toggle', title: '位置', symbol: 'location', value: locationOn },
+        { id: 'date', type: 'toggle', title: '日期', symbol: 'calendar', value: dateOn },
+        { id: 'timer', type: 'choice', title: '定時', symbol: 'timer', value: String(timer), options: [{ label: '關閉', value: '0' }, { label: '3 秒', value: '3' }, { label: '10 秒', value: '10' }] },
+        { id: 'zoomMode', type: 'choice', title: '縮放模式', symbol: 'plus.magnifyingglass', value: zoomMode, options: [{ label: '全螢幕', value: 'full' }, { label: '線框', value: 'frame' }] },
+      ],
+    })).catch(() => {});
+  };
+  const menuHandlerRef = useRef<(id: string, v: any) => void>(() => {});
+  menuHandlerRef.current = (id, v) => {
+    if (id === 'grid') setShowGrid(!!v);
+    else if (id === 'level') setLevelOn(!!v);
+    else if (id === 'location') setLocationOn(!!v);
+    else if (id === 'date') setDateOn(!!v);
+    else if (id === 'timer') setTimer((Number(v) || 0) as TimerMode);
+    else if (id === 'zoomMode') {
+      const m = v === 'full' ? 'full' : 'frame';
+      setZoomMode(m);
+      /* 換模式：小框收掉、倍率回到按鈕上的那一格 */
+      frameZoomRef.current = 1; pinchRef.current = null; smallFrameRef.current?.set(1, false);
+      if (liveZoomRef.current != null) { setLiveZoom(null); handleZoomClick(settings.focalLength); }
+    }
+  };
+  useEffect(() => {
+    if (!proMode) return;
+    let alive = true; const subs: { remove: () => void }[] = [];
+    void nativeCamera().then(async c => {
+      if (!c || !alive) return;
+      subs.push(await c.addListener('menu', (d: any) => menuHandlerRef.current(String(d?.id), d?.value)));
+      subs.push(await c.addListener('level', (d: any) => levelBus.emit(Number(d?.roll) || 0, !!d?.flat)));
+      if (!alive) subs.forEach(x => x.remove());
+    });
+    return () => { alive = false; subs.forEach(x => x.remove()); };
+  }, [proMode]);
+  /* 水平儀、位置：開關交給原生（相機重開時也要再設一次） */
+  useEffect(() => {
+    if (proMode) void nativeCamera().then(c => c?.setLevel({ on: levelOn })).catch(() => {});
+  }, [proMode, levelOn, facingMode]);
+  useEffect(() => {
+    if (!proMode) return;
+    void nativeCamera().then(c => c?.setLocation({ on: locationOn })).then(r => {
+      if (locationOn && r?.denied) setCaptureNotice('請到「設定」開啟 Abai 的定位權限');
+    }).catch(() => {});
+  }, [proMode, locationOn, facingMode]);
+
   const handleSaveEdit = (newSrc: string, shouldClose: boolean = true) => {
     if (editingPhoto) {
       setPhotos(prev => {
@@ -1464,6 +1559,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               onPointerCancel={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
             />}
 
+            {levelOn && proMode && !showGallery && <LevelOverlay turns={uiTurns} />}
+
             {/* 離開相機的定格畫面（見 exitCamera） */}
             {exitShot && <img src={exitShot} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover z-[35] pointer-events-none" />}
 
@@ -1505,8 +1602,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 <button 
                     onClick={(e) => { 
                         e.stopPropagation(); 
-                        setShowSettingsMenu(!showSettingsMenu); 
                         triggerHaptic();
+                        /* App 裡：iOS 原生的選單（iOS 26 起是液態玻璃＋原生開關）；網頁版才用自己畫的 */
+                        if (proModeRef.current) { openNativeMenu(e.currentTarget); return; }
+                        setShowSettingsMenu(!showSettingsMenu); 
                     }}
                     className="w-10 h-10 rounded-full flex items-center justify-center text-white active:scale-90 transition-transform"
                 >
@@ -1639,16 +1738,21 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
             {!showGallery && (
               <div className="absolute bottom-3 left-0 right-0 flex justify-center z-[60] gap-2">
-                {ZOOM_STEPS.map(({ label: val }) => {
+                {ZOOM_STEPS.map(({ label: val, factor }) => {
                   const unavailable = val === '0.5x' && !canWide;
+                  /* 全螢幕縮放捏到的倍率：亮在不超過它的最大那一顆上，字改成實際倍率（跟內建相機一樣） */
+                  const liveStep = liveZoom == null ? null : [...ZOOM_STEPS].reverse().find(z => z.factor <= liveZoom + 0.01)?.label ?? ZOOM_STEPS[0].label;
+                  const on = liveStep ? liveStep === val : settings.focalLength === val;
+                  const shown = on && liveZoom != null ? `${(Math.round(liveZoom * 10) / 10).toString()}×` : on ? val.replace('.0', '').replace('x', '×') : val.replace('.0', '').replace('x', '');
                   return (
                   <button 
                     key={val}
                     disabled={unavailable}
                     onClick={() => handleZoomClick(val)}
-                    className={`cam-rot w-[34px] h-[34px] rounded-full flex items-center justify-center text-[10px] font-semibold tabular-nums tracking-[-0.02em] transition-[transform,background-color,color] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] backdrop-blur-xl active:scale-90 ${settings.focalLength === val ? 'bg-white text-black scale-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)]' : unavailable ? 'bg-black/30 text-white/20 scale-[0.82]' : 'bg-black/30 text-white/80 scale-[0.82]'}`}
+                    className={`cam-rot w-[34px] h-[34px] rounded-full flex items-center justify-center text-[10px] font-semibold tabular-nums tracking-[-0.02em] transition-[transform,background-color,color] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] backdrop-blur-xl active:scale-90 ${on ? 'bg-white text-black scale-100 shadow-[0_2px_10px_rgba(0,0,0,0.35)]' : unavailable ? 'bg-black/30 text-white/20 scale-[0.82]' : 'bg-black/30 text-white/80 scale-[0.82]'}`}
+                    data-zoom-factor={factor}
                   >
-                    {settings.focalLength === val ? val.replace('.0', '').replace('x', '×') : val.replace('.0', '').replace('x', '')}
+                    {shown}
                   </button>
                   );
                 })}
@@ -1792,7 +1896,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
         <div className="grid grid-cols-3 items-center w-full max-w-sm mx-auto pt-0">
           <div className="flex justify-center">
-            <button onClick={() => setShowGallery(true)} className="cam-rot w-12 h-12 rounded-[14px] overflow-hidden bg-zinc-900 ring-1 ring-inset ring-white/15 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]">
+            <button onClick={() => setShowGallery(true)} className="cam-rot w-[58px] h-[58px] rounded-[16px] overflow-hidden bg-zinc-900 ring-1 ring-inset ring-white/15 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]">
               {photos.length > 0 ? (
                  thumbs[photos[0]] ? <img key={photos[0]} src={thumbs[photos[0]]} className="w-full h-full object-cover animate-in fade-in zoom-in-50 duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]" alt="Latest" /> : <div className="w-full h-full bg-white/10" />
               ) : (
@@ -1878,6 +1982,41 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         />
         </div>, document.body
       )}
+    </div>
+  );
+};
+
+
+/* ── 水平儀 ─────────────────────────────────────────────────────────
+ * 原生端每秒 30 次送傾斜角度；只讓這個小元件自己重畫（整個相機頁跟著重畫太重）。
+ * 跟內建相機一樣：兩邊兩小段固定，中間那段跟著地平線轉；擺平（±1°）時三段接成一條、變黃，震一下。
+ * 差太多（超過 12°）或手機平放時不顯示。 */
+const levelBus = (() => {
+  const subs = new Set<(roll: number, flat: boolean) => void>();
+  return {
+    emit: (r: number, f: boolean) => subs.forEach(fn => fn(r, f)),
+    on: (fn: (roll: number, flat: boolean) => void) => { subs.add(fn); return () => { subs.delete(fn); }; },
+  };
+})();
+
+const LevelOverlay: React.FC<{ turns: number }> = ({ turns }) => {
+  const [roll, setRoll] = useState<number | null>(null);
+  useEffect(() => levelBus.on((r, flat) => setRoll(flat ? null : r)), []);
+  /* 橫拿時「水平」的參考角度是 ±90° */
+  const ref = turns === 1 ? -90 : turns === 3 ? 90 : 0;
+  let dev = (roll ?? 999) - ref;
+  while (dev > 180) dev -= 360;
+  while (dev < -180) dev += 360;
+  const visible = roll != null && Math.abs(dev) <= 12;
+  const level = visible && Math.abs(dev) < 1;
+  useEffect(() => { if (level) haptic('tick'); }, [level]);
+  if (!visible) return null;
+  const color = level ? '#ffd60a' : 'rgba(255,255,255,0.9)';
+  return (
+    <div aria-hidden className="absolute left-1/2 top-1/2 z-[30] pointer-events-none" style={{ rotate: 'var(--cam-rot, 0deg)', transition: 'rotate 460ms cubic-bezier(0.25,0.9,0.3,1)' }}>
+      <div className="absolute -translate-y-1/2 h-px" style={{ left: -88, width: 34, background: color, boxShadow: '0 0 2px rgba(0,0,0,0.35)' }} />
+      <div className="absolute -translate-y-1/2 h-px" style={{ left: 54, width: 34, background: color, boxShadow: '0 0 2px rgba(0,0,0,0.35)' }} />
+      <div className="absolute -translate-y-1/2 h-px" style={{ left: level ? -54 : -44, width: level ? 108 : 88, background: color, rotate: `${level ? 0 : -dev}deg`, boxShadow: '0 0 2px rgba(0,0,0,0.35)', transition: 'left 160ms, width 160ms' }} />
     </div>
   );
 };

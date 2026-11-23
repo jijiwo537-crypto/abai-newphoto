@@ -63,6 +63,28 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    /* 色溫拉到很極端時，RAW 解出來的顏色有些會超出 Display P3（負值），亮的地方有些通道會超過 1。
+       直接存成 8 位元的話，每個通道各自被切掉 —— 色相就跑掉了（黃變綠、紅變洋紅、亮部一塊死白）。
+       專業的 RAW 軟體是「保住色相、讓飽和度和亮度讓步」：
+         ① 超出色域（有負值）的顏色往同亮度的灰拉，拉到剛好進色域為止 —— 色相不變，只少一點飽和度
+         ② 太亮的：整個顏色一起等比例往下壓（最亮的那個通道走一條柔和的肩部曲線），三個通道的比例不變 = 色相、飽和度都保住
+       在線性 P3（工作色域）上算。 */
+    private static let gamutKernel = CIColorKernel(source: """
+    kernel vec4 abaiRawGamut(__sample s) {
+        vec3 c = s.rgb;
+        float l = max(dot(c, vec3(0.2290, 0.6917, 0.0793)), 0.0);
+        float mn = min(min(c.r, c.g), c.b);
+        if (mn < 0.0) { float k = l / max(l - mn, 1e-6); c = vec3(l) + (c - vec3(l)) * k; }
+        float mx = max(max(c.r, c.g), c.b);
+        float knee = 0.85;
+        if (mx > knee) {
+            float nm = knee + (1.0 - knee) * (1.0 - exp(-(mx - knee) / (1.0 - knee)));
+            c *= nm / mx;
+        }
+        return vec4(max(c, vec3(0.0)), s.a);
+    }
+    """)
+
     /// 讀檔案路徑、寫檔案路徑（不經過 base64）。照片從系統選擇器來的時候走這條；相機「底片模式」的重新沖洗也是這條。
     /// 參數：path、exposure（EV，預設 0）、boost（0＝線性、1＝相機階調）、
     ///      temperature（色溫 K，不給＝拍攝當下的白平衡）、tint（色調，不給＝拍攝當下）、
@@ -89,7 +111,8 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
                 if maxPixel > 0, native.width > 0, native.height > 0 {
                     filter.scaleFactor = Float(min(1, maxPixel / Double(max(native.width, native.height))))
                 }
-                guard let output = filter.outputImage, output.extent.width > 0 else { call.reject(RawError.renderFailed.localizedDescription); return }
+                guard let raw = filter.outputImage, raw.extent.width > 0 else { call.reject(RawError.renderFailed.localizedDescription); return }
+                let output = RawDecodePlugin.gamutKernel?.apply(extent: raw.extent, arguments: [raw]) ?? raw
                 do {
                     let data = try ABAIImageCore.encode(output, format: .jpeg, quality: draft ? 0.85 : 0.97)
                     let out = ABAIImageCore.newFileURL(ext: "jpg")
