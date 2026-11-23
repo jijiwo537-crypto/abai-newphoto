@@ -4,7 +4,7 @@
 # 第一次用之前，要先照 ios/prepare-device.sh 的說明在 Xcode 選好 Team、成功按 ▶ 裝過一次。
 set -euo pipefail
 cd "$(dirname "$0")"
-BRANCH=claude/sleepy-mccarthy-2mabxh
+BRANCH=main
 say() { echo; echo "▶ $*"; }
 fail() { echo; echo "✗ $*"; read -n1 -rsp "按任意鍵關閉…"; exit 1; }
 trap 'fail "失敗了，請把上面的訊息截圖給 Claude（完整紀錄在桌面的 ABAI更新紀錄.txt）"' ERR
@@ -26,9 +26,13 @@ echo "$(xcodebuild -version 2>/dev/null | awk 'NR==1')（$(xcode-select -p 2>/de
 
 say "1/5 抓最新程式碼"
 git fetch -q origin "$BRANCH"
+if [ -n "$(git status --porcelain)" ]; then
+  BACKUP="更新前自動備份 $(date +%Y%m%d-%H%M%S)"
+  git stash push -u -m "$BACKUP" >/dev/null
+  echo "  本機未提交的修改已保存在 git stash：$BACKUP"
+fi
 git checkout -q "$BRANCH" 2>/dev/null || git checkout -q -b "$BRANCH" "origin/$BRANCH"
-# Xcode 選 Team 會改到專案檔：先收起來、更新完再放回去
-git pull -q --rebase --autostash origin "$BRANCH"
+git pull -q --ff-only origin "$BRANCH"
 echo "  目前版本：$(git log -1 --format='%h %s')"
 
 say "2/5 打包網頁、同步到 iOS"

@@ -210,7 +210,7 @@ final class ABAISettingsPanel: UIView {
     var onChange: ((String, Any) -> Void)?
     var onClose: (() -> Void)?
     private let panel: UIVisualEffectView
-    private let anchorPoint: CGPoint
+    private let menuAnchorPoint: CGPoint
 
     /// items 跟 NativeCameraPlugin.showMenu 一樣；anchor＝那顆按鈕、bounds＝觀景窗（面板不會超出它）
     init(frame: CGRect, items: [[String: Any]], anchor: CGRect, bounds: CGRect) {
@@ -222,7 +222,7 @@ final class ABAISettingsPanel: UIView {
         let y = min(anchor.maxY + 6, max(bounds.minY + 8, frame.height - height - 8))
         panel = ABAIGlass.view(radius: 24, interactive: false)
         panel.frame = CGRect(x: x, y: y, width: width, height: height)
-        anchorPoint = CGPoint(x: anchor.midX, y: anchor.midY)
+        menuAnchorPoint = CGPoint(x: anchor.midX, y: anchor.midY)
         super.init(frame: frame)
         backgroundColor = .clear
         autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -245,7 +245,7 @@ final class ABAISettingsPanel: UIView {
     func present() {
         /* 從那顆按鈕的位置長出來 */
         let p = panel.frame
-        panel.layer.anchorPoint = CGPoint(x: min(1, max(0, (anchorPoint.x - p.minX) / p.width)), y: min(1, max(0, (anchorPoint.y - p.minY) / p.height)))
+        panel.layer.anchorPoint = CGPoint(x: min(1, max(0, (menuAnchorPoint.x - p.minX) / p.width)), y: min(1, max(0, (menuAnchorPoint.y - p.minY) / p.height)))
         panel.frame = p
         panel.alpha = 0
         panel.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
