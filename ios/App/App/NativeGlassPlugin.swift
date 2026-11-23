@@ -71,22 +71,28 @@ enum ABAIGlass {
     static func image(_ symbol: String, pointSize: CGFloat = 19, weight: UIImage.SymbolWeight = .regular) -> UIImage? {
         if symbol == "abai.level" { return levelIcon(size: pointSize + 2) }
         if symbol == "abai.film" {
-            /* 一格底片：比 SF 的 film 窄（寬約高的 0.93），上下兩排齒孔 */
-            let side = pointSize + 3
+            /* 一格底片（直的）：左右兩條齒孔帶、每邊三個齒孔，中間是畫面。
+               比 SF Symbol 大一點、線條留空隙，跟旁邊的編輯、愛心看起來一樣重 */
+            let side = pointSize + 5
             let size = CGSize(width: side, height: side)
             return UIGraphicsImageRenderer(size: size).image { ctx in
                 let c = ctx.cgContext
                 let u = side / 24
                 c.setStrokeColor(UIColor.white.cgColor)
+                c.setFillColor(UIColor.white.cgColor)
                 c.setLineWidth(1.6 * u)
                 c.setLineCap(.round)
-                c.addPath(UIBezierPath(roundedRect: CGRect(x: 5 * u, y: 4.5 * u, width: 14 * u, height: 15 * u), cornerRadius: 2.2 * u).cgPath)
-                for y: CGFloat in [8.5, 15.5] { c.move(to: CGPoint(x: 5 * u, y: y * u)); c.addLine(to: CGPoint(x: 19 * u, y: y * u)) }
-                for x: CGFloat in [9, 12, 15] {
-                    c.move(to: CGPoint(x: x * u, y: 4.5 * u)); c.addLine(to: CGPoint(x: x * u, y: 8.5 * u))
-                    c.move(to: CGPoint(x: x * u, y: 15.5 * u)); c.addLine(to: CGPoint(x: x * u, y: 19.5 * u))
-                }
+                c.setLineJoin(.round)
+                c.addPath(UIBezierPath(roundedRect: CGRect(x: 4.5 * u, y: 3 * u, width: 15 * u, height: 18 * u), cornerRadius: 2.4 * u).cgPath)
+                c.move(to: CGPoint(x: 8.5 * u, y: 3 * u)); c.addLine(to: CGPoint(x: 8.5 * u, y: 21 * u))
+                c.move(to: CGPoint(x: 15.5 * u, y: 3 * u)); c.addLine(to: CGPoint(x: 15.5 * u, y: 21 * u))
                 c.strokePath()
+                for y: CGFloat in [7, 12, 17] {
+                    for x: CGFloat in [6.5, 17.5] {
+                        c.addPath(UIBezierPath(roundedRect: CGRect(x: (x - 0.9) * u, y: (y - 1.1) * u, width: 1.8 * u, height: 2.2 * u), cornerRadius: 0.5 * u).cgPath)
+                    }
+                }
+                c.fillPath()
             }.withRenderingMode(.alwaysTemplate)
         }
         if symbol == "abai.raw" {

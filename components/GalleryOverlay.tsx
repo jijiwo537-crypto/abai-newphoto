@@ -47,8 +47,9 @@ const CIRCLE = 49;
 /** RAW 沖洗圖示：一格底片（上下兩排齒孔）。App 裡用的是同造型的 SF Symbol「film」 */
 const RawEditIcon: React.FC<{ size?: number }> = ({ size = 21 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="5" y="4.5" width="14" height="15" rx="2.2" />
-    <path d="M5 8.5h14M5 15.5h14M9 4.5v4M12 4.5v4M15 4.5v4M9 15.5v4M12 15.5v4M15 15.5v4" />
+    <rect x="4.5" y="3" width="15" height="18" rx="2.4" />
+    <path d="M8.5 3v18M15.5 3v18" />
+    <g fill="currentColor" stroke="none"><rect x="5.6" y="5.9" width="1.8" height="2.2" rx=".5" /><rect x="5.6" y="10.9" width="1.8" height="2.2" rx=".5" /><rect x="5.6" y="15.9" width="1.8" height="2.2" rx=".5" /><rect x="16.6" y="5.9" width="1.8" height="2.2" rx=".5" /><rect x="16.6" y="10.9" width="1.8" height="2.2" rx=".5" /><rect x="16.6" y="15.9" width="1.8" height="2.2" rx=".5" /></g>
   </svg>
 );
 
@@ -476,7 +477,7 @@ const PhotoViewer: React.FC<{
           <Icon name="ios_share" className="text-[23px] text-white" />
         </button>
         <div ref={midRef} className={`h-full ${isRaw ? 'w-[166px]' : 'w-[118px]'} rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-around px-0 ${hideWeb}`}>
-          {isRaw && <button aria-label="RAW 沖洗" onClick={() => onProEdit(index)} className="w-10 h-10 flex items-center justify-center text-white active:opacity-65"><RawEditIcon size={23} /></button>}
+          {isRaw && <button aria-label="RAW 沖洗" onClick={() => onProEdit(index)} className="w-10 h-10 flex items-center justify-center text-white active:opacity-65"><RawEditIcon size={25} /></button>}
           <button aria-label="編輯" onClick={() => onEdit(index)} className="w-10 h-10 flex items-center justify-center active:opacity-65"><Icon name="tune" className="text-[23px] text-white" /></button>
           <button aria-label="愛心" onClick={() => onFavorite(index)} className="w-10 h-10 flex items-center justify-center active:opacity-65"><Icon name={fav ? 'favorite' : 'favorite_border'} className="text-[23px] text-white" /></button>
         </div>

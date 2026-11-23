@@ -14,6 +14,7 @@ import {
 } from '../utils/nativeGallery';
 import { haptic } from '../utils/haptics';
 import { ImportSpinner } from './BusySpinner';
+import { beginImportHero, cancelImportHero, heroAllowed } from '../utils/importHero';
 
 const PAGE = 150;
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
@@ -64,7 +65,7 @@ const Cell = React.memo(function Cell({ a, order, multi, onTap }: {
   }, [a.id, url]);
   const sel = order > 0;
   return (
-    <button ref={ref} type="button" className={`abg-cell${sel ? ' sel' : ''}`} onClick={() => onTap(a)}
+    <button ref={ref} type="button" data-asset={a.id} className={`abg-cell${sel ? ' sel' : ''}`} onClick={() => onTap(a)}
       aria-label={a.video ? `影片 ${fmtDuration(a.duration)}` : '照片'} aria-pressed={sel}>
       {!loaded && <span className="skel" />}
       {url && <img src={url} alt="" draggable={false} className={loaded ? 'on' : ''} style={instant ? { transition: 'none' } : undefined} onLoad={() => setLoaded(true)} />}
@@ -246,12 +247,20 @@ export const NativeGallery: React.FC<{
   const finish = useCallback(async (ids: string[]) => {
     if (!ids.length || exportingRef.current) return;
     exportingRef.current = true;
+    /* 從主頁導入單張：小縮圖放大、之後飛到工具裡照片的位置（見 utils/importHero） */
+    if (ids.length === 1 && heroAllowed()) {
+      const cell = scrollRef.current?.querySelector<HTMLElement>(`[data-asset="${window.CSS.escape(ids[0])}"]`);
+      const a = itemsRef.current.find(x => x.id === ids[0]);
+      const thumb = cachedThumb(ids[0]);
+      if (cell && thumb && a && !a.video) beginImportHero(cell.getBoundingClientRect(), thumb, a.w && a.h ? a.w / a.h : undefined);
+    }
     setExporting(true);
     try {
       const files = await exportAssets(ids);
       haptic('success');
       close(files);
     } catch (e: any) {
+      cancelImportHero();
       exportingRef.current = false;
       setExporting(false);
       haptic('error');

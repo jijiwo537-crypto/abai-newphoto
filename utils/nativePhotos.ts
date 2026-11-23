@@ -88,12 +88,15 @@ export function installNativeFilePicker() {
       if (files === null) files = await pickNativeFiles(limit, filter);
     }
     catch (e: any) { alert(`開不了相簿：${String(e?.message ?? e ?? '')}`); return; }
+    /* 從主頁導入單張的過場：工具畫出來後，替身飛到照片的位置；其他情況收掉 */
+    const { landImportHero, cancelImportHero, importHeroActive } = await import('./importHero');
+    if (importHeroActive()) { if (files && files.length === 1) void landImportHero(); else cancelImportHero(); }
     if (!files) return;
     if (!files.length) return;                       // 使用者按了取消
     /* 系統照片選擇器（或舊版 App 的相簿）沒辦法事先藏去背圖：選完再過濾 */
     if (!allowsAlpha(input) && filter !== 'videos') {
       const { kept, dropped } = await dropAlphaFiles(files);
-      if (dropped) alert(ALPHA_NOT_ALLOWED_MSG);
+      if (dropped) { cancelImportHero(); alert(ALPHA_NOT_ALLOWED_MSG); }
       files = kept;
       if (!files.length) return;
     }
