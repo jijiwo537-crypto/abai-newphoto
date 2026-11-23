@@ -1042,8 +1042,13 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       try {
         const info = await cam.start({ position: facingMode === 'user' ? 'front' : 'back', ...rect(), lut: proOptsRef.current.lut, amount: proOptsRef.current.amount, proRAW: true });
         if (alive) setNativeFlash(!!info?.flash);
-        /* 這顆鏡頭拍不了 RAW（例如前鏡頭）：RAW 先關掉，說一聲 */
-        if (alive && proRaw && info && info.raw === false) { setProRaw(false); setCaptureNotice('這顆鏡頭不支援 RAW'); }
+        /* 能不能拍 RAW 要等相機真的開起來才知道：還沒接上鏡頭的 AVCapturePhotoOutput 一律回報「不支援 ProRAW」，
+           所以 available() 那邊永遠是 false（RAW 開關才會一直沒出現）。以開相機後回報的為準 */
+        if (alive && info) {
+          const rawOk = !!(info.raw ?? info.proRAW);
+          setProRawSupported(rawOk);
+          if (!rawOk && proRaw) { setProRaw(false); setCaptureNotice('這顆鏡頭不支援 RAW'); }
+        }
         void cam.setFx(nativeFxRef.current).catch(() => {});
         /* 開起來就把目前的曝光、白平衡套上去 */
         void cam.setExposureBias({ ev: parseFloat(nativeParamsRef.current.exposure) || 0 }).catch(() => {});
@@ -1499,13 +1504,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     {/* 曝光的小太陽：拖的時候上下各拉出一條細線（太陽那一段空出來） */}
                     <div className="absolute left-1/2 top-1/2" style={{ transform: `translate(${sunX}px, 0)` }}>
                       <div className={`absolute left-0 w-px bg-white/80 transition-opacity duration-200 ${evDragging ? 'opacity-100' : 'opacity-0'}`}
-                           style={{ top: -45, height: Math.max(0, 45 + sunY - 11) }} />
+                           style={{ top: -34, height: Math.max(0, 34 + sunY - 11) }} />
                       <div className={`absolute left-0 w-px bg-white/80 transition-opacity duration-200 ${evDragging ? 'opacity-100' : 'opacity-0'}`}
-                           style={{ top: sunY + 11, height: Math.max(0, 45 - sunY - 11) }} />
+                           style={{ top: sunY + 11, height: Math.max(0, 34 - sunY - 11) }} />
                       <svg width="20" height="20" viewBox="0 0 20 20" className="absolute" style={{ left: -10, top: sunY - 10 }} aria-hidden>
-                        <g stroke="rgba(0,0,0,0.28)" strokeWidth="1" transform="translate(0 0.8)" fill="none" strokeLinecap="round">
-                          <circle cx="10" cy="10" r="3.6" />
-                        </g>
                         <circle cx="10" cy="10" r="3.6" fill="#fff" />
                         <g stroke="#fff" strokeWidth="1.4" strokeLinecap="round">
                           <path d="M10 1.6v2.2M10 16.2v2.2M1.6 10h2.2M16.2 10h2.2M4.06 4.06l1.56 1.56M14.38 14.38l1.56 1.56M4.06 15.94l1.56-1.56M14.38 5.62l1.56-1.56" />
