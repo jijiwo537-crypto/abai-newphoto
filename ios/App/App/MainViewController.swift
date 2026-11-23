@@ -54,6 +54,7 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(NativePreviewPlugin())
         bridge?.registerPluginInstance(NativeCameraPlugin())
         bridge?.registerPluginInstance(HapticsPlugin())
+        bridge?.registerPluginInstance(NativeGlassPlugin())
         bridge?.registerPluginInstance(VideoWriterPlugin())
         bridge?.registerPluginInstance(PhotoLibraryPlugin())
         bridge?.registerPluginInstance(QAPlugin())

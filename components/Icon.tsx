@@ -23,6 +23,13 @@ interface IconProps {
 const INLINE: Record<string, string> = {
   /* 專業相機：機身外框加鏡頭（相機設定選單的「專業」） */
   pro_camera: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><path d="M3.5 8.2a1.7 1.7 0 0 1 1.7-1.7h2.6l1.5-2h5.4l1.5 2h2.6a1.7 1.7 0 0 1 1.7 1.7v9.6a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z"/><circle cx="12" cy="12.8" r="3.6"/></g>',
+  /* 愛心（相機相簿）：實心、空心 */
+  favorite: '<path fill="#fff" d="M12 20.6s-7.6-4.6-9.7-9.3C.7 7.8 2.9 4 6.7 4c2.2 0 3.7 1.2 4.4 2.5.2.3.6.3.8 0C12.6 5.2 14.1 4 16.3 4c3.8 0 6 3.8 4.4 7.3-2.1 4.7-8.7 9.3-8.7 9.3z"/>',
+  favorite_border: '<path fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round" d="M12 20.1s-7.2-4.4-9.1-8.8C1.4 8 3.4 4.6 6.8 4.6c2 0 3.5 1.1 4.2 2.4.4.6 1.6.6 2 0 .7-1.3 2.2-2.4 4.2-2.4 3.4 0 5.4 3.4 3.9 6.7-1.9 4.4-9.1 8.8-9.1 8.8z"/>',
+  /* 分享（iOS 那種：方框＋往上的箭頭） */
+  ios_share: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v11.5M8 7.3l4-3.8 4 3.8"/><path d="M8.5 10H6.5a1.5 1.5 0 0 0-1.5 1.5v8A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 17.5 10h-2"/></g>',
+  /* 專業編輯：魔法棒＋兩顆小星 */
+  auto_fix_high: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l10.5-10.5M13 8l3 3"/></g><path fill="#fff" d="M18 2.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8zM7.5 4l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4L5.5 6l1.4-.6zM19.5 12.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z"/>',
   /* 日曆（相機的日期戳記）：外框、上面兩個掛環、一條分隔線 */
   calendar_today: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><rect x="4" y="5.5" width="16" height="14.5" rx="2"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/></g>',
   /* RAW 檔：摺角的檔案外框，裡面三條長短不同的線 */

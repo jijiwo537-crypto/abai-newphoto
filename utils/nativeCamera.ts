@@ -12,7 +12,7 @@ export interface NativeCameraApi {
   start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; radius?: number; lut?: string; amount?: number; proRAW?: boolean }): Promise<{ proRAW: boolean; raw?: boolean; turns?: number; minZoom?: number; maxZoom?: number; maxWidth: number; maxHeight: number; flash?: boolean; screenFlash?: boolean }>;
   stop(): Promise<void>;
   setRect(o: { x: number; y: number; w: number; h: number; radius?: number }): Promise<void>;
-  capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean; turns?: number }): Promise<{ path: string; width: number; height: number; rawPath?: string; location?: { lat: number; lon: number; alt?: number; time?: number } }>;
+  capture(o: { flash: 'off' | 'on' | 'auto'; raw?: boolean; turns?: number; opticalZoom?: number }): Promise<{ path: string; width: number; height: number; rawPath?: string; zoomApplied?: number; location?: { lat: number; lon: number; alt?: number; time?: number } }>;
   /** 日期戳記（null＝不印），觀景窗右下角；zoom＝小框構圖的倍率（字印在框的右下角、照框的大小） */
   setDate(o: { date: string | null; zoom?: number }): Promise<void>;
   /** 觀景窗現在這一格（離開相機的過場用） */
@@ -22,7 +22,7 @@ export interface NativeCameraApi {
   /** 位置：開著時拍照會帶 location，寫進照片的 GPS */
   setLocation(o: { on: boolean }): Promise<{ authorized?: boolean; denied?: boolean }>;
   /** 原生設定選單（iOS 26 起是液態玻璃）。改了送 menu { id, value }，關掉送 menuClosed */
-  showMenu(o: { anchor: { x: number; y: number; w: number; h: number }; items: CameraMenuItem[] }): Promise<void>;
+  showMenu(o: { anchor: { x: number; y: number; w: number; h: number }; bounds?: { x: number; y: number; w: number; h: number }; items: CameraMenuItem[] }): Promise<void>;
   setZoom(o: { uiZoom?: number; factor?: number }): Promise<{ factor: number }>;
   focus(o: { x: number; y: number }): Promise<void>;
   setExposureBias(o: { ev: number }): Promise<void>;
@@ -42,6 +42,8 @@ export async function captureNative(o: {
   flash: 'off' | 'on' | 'auto'; raw: boolean; lut: string; aspect: number; zoom: number;
   /** 手機怎麼拿（0 直、1 頂端朝左、3 頂端朝右）：橫拿拍出橫的照片 */
   turns?: number;
+  /** 目前鏡頭的介面倍率（1＝主鏡頭）。有小框（zoom > 1）時拍照那一下鏡頭直接變焦到「倍率 × 框」，不是事後裁切 */
+  baseZoom?: number;
   /** 濾鏡強度 0～1（每顆濾鏡的最大強度，跟編輯頁一致） */
   amount?: number;
   /** 相機特效（0～1），拍出來的照片跟觀景窗看到的一樣 */
@@ -52,12 +54,15 @@ export async function captureNative(o: {
   develop?: number;
   /** 日期戳記的字 */
   date?: string | null;
-}): Promise<{ url: string; rawPath?: string; renderedPath?: string } | null> {
+}): Promise<{ url: string; rawPath?: string; renderedPath?: string; cropZoom: number } | null> {
   const cam = await nativeCamera(), img = await nativeImage();
   if (!cam || !img) return null;
-  const shot = await cam.capture({ flash: o.flash, raw: o.raw, turns: o.turns ?? 0 });
+  /* 小框：鏡頭真的變焦過去拍（清楚）；變不到的部分才用裁切補 */
+  const wantOptical = o.zoom > 1.001 && o.baseZoom ? o.baseZoom * o.zoom : undefined;
+  const shot = await cam.capture({ flash: o.flash, raw: o.raw, turns: o.turns ?? 0, opticalZoom: wantOptical });
+  const cropZoom = wantOptical && shot.zoomApplied ? Math.max(1, wantOptical / shot.zoomApplied) : o.zoom;
   const out = await img.render({
-    path: shot.path, lut: o.lut || undefined, amount: o.amount ?? 1, aspect: o.aspect, zoom: o.zoom, fx: o.fx, kelvin: o.kelvin,
+    path: shot.path, lut: o.lut || undefined, amount: o.amount ?? 1, aspect: o.aspect, zoom: cropZoom, fx: o.fx, kelvin: o.kelvin,
     develop: o.develop || undefined, date: o.date || undefined, gps: shot.location || undefined,
     format: 'jpeg', quality: 0.95,
   });
@@ -65,7 +70,7 @@ export async function captureNative(o: {
   const blob = await (await fetch(fileSrc(out.path))).blob();
   /* 有 RAW 時成品檔先留著：要跟 RAW 配成同一張存進相簿（存完再刪，見 saveRawPair） */
   if (!shot.rawPath) img.remove({ path: out.path }).catch(() => {});
-  return { url: URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' })), rawPath: shot.rawPath, renderedPath: shot.rawPath ? out.path : undefined };
+  return { url: URL.createObjectURL(new Blob([blob], { type: 'image/jpeg' })), rawPath: shot.rawPath, renderedPath: shot.rawPath ? out.path : undefined, cropZoom };
 }
 
 /** 底片模式（RAW）拍的時候少曝光幾格：保護亮部（RAW 的暗部之後拉得回來，爆掉的亮部救不回來）。

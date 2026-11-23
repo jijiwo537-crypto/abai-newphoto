@@ -443,7 +443,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, []);
   useEffect(() => () => { ownedUrlsRef.current.forEach(u => URL.revokeObjectURL(u)); ownedUrlsRef.current.clear(); }, []);
   const [showGallery, setShowGallery] = useState(false);
-  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null } | null>(null);
+  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[] } | null>(null);
+  /* 相簿：愛心、每張拍照時用的濾鏡（大圖右上的標籤） */
+  const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
+  const labelsRef = useRef<Map<string, string>>(new Map());
   /* 進相簿（或從相簿進編輯）就把小框收掉：回到相機時應該是重新開始的滿版畫面，
      不是停在上一次捏的位置。frameZoomRef 也一起歸 1，免得畫面上沒有框、拍下去卻還是裁過的。 */
   useEffect(() => {
@@ -948,12 +951,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         const turns = uiTurnsRef.current;
         const aspect = turns === 1 || turns === 3 ? 1 / o.aspect : o.aspect;
         const look: RawLook = { lut: o.lut, amount: o.amount, aspect, zoom: frameZoomRef.current, fx: { ...nativeFxRef.current }, date: o.date ? dateStampText() : null };
-        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, turns, lut: look.lut, amount: look.amount, aspect: look.aspect, zoom: look.zoom, fx: look.fx, kelvin: nativeParamsRef.current.kelvin, develop: o.raw ? RAW_PROTECT_EV : 0, date: look.date });
+        const baseZoom = liveZoomRef.current ?? (ZOOM_STEPS.find(z => z.label === focalRef.current)?.factor ?? 1);
+        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, turns, baseZoom, lut: look.lut, amount: look.amount, aspect: look.aspect, zoom: look.zoom, fx: look.fx, kelvin: nativeParamsRef.current.kelvin, develop: o.raw ? RAW_PROTECT_EV : 0, date: look.date });
         if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
         ownedUrlsRef.current.add(r.url);
+        if (o.lutIdx > 0 && lutList[o.lutIdx]?.url) labelsRef.current.set(r.url, lutList[o.lutIdx].name);
         setPhotos(prev => [r.url, ...prev]);
         if (r.rawPath) {
-          rawOfRef.current.set(r.url, { path: r.rawPath, protectEV: o.raw ? RAW_PROTECT_EV : 0, look });
+          rawOfRef.current.set(r.url, { path: r.rawPath, protectEV: o.raw ? RAW_PROTECT_EV : 0, look: { ...look, zoom: r.cropZoom } });   // 小框拍照時鏡頭已經變焦過，RAW 只要補剩下的裁切
           setRawShots(prev => new Set(prev).add(r.url));
           /* 存進相簿：套好濾鏡、日期的成品是主要的那張，RAW 配在同一張裡（相簿看到的是成品）。
              成品檔存完就刪；RAW 留在 App 裡給「重新沖洗」用 */
@@ -1328,11 +1333,21 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      沖不出來（沒有原生解碼）就照舊編成品 */
   const developedUrlRef = useRef<string | null>(null);
   /** 正在重新沖洗哪一張（底片模式拍的 RAW）。沖好才進編輯 */
-  const [developing, setDeveloping] = useState<{ src: string; idx: number } | null>(null);
-  const openEditor = (src: string, idx: number) => {
-    if (rawOfRef.current.has(src)) { setDeveloping({ src, idx }); return; }
+  const [developing, setDeveloping] = useState<{ src: string; idx: number; pro?: boolean } | null>(null);
+  /** pro：專業編輯（全部分頁：模板、人像、仿色…）；RAW 都先沖洗 */
+  const openEditor = (src: string, idx: number, pro = false) => {
+    if (rawOfRef.current.has(src)) { setDeveloping({ src, idx, pro }); return; }
     setShowGallery(false);
-    setEditingPhoto({ src, index: idx, init: null });
+    setEditingPhoto({ src, index: idx, init: null, pro });
+    setEditorId(prev => prev + 1);
+  };
+  /** 相簿多選「編輯」：好幾張一起進編輯（編輯頁上面一排可以切換、同步套用） */
+  const openEditMany = (indices: number[]) => {
+    const srcs = indices.map(i => photos[i]).filter(Boolean);
+    if (!srcs.length) return;
+    if (srcs.length === 1) { openEditor(srcs[0], indices[0]); return; }
+    setShowGallery(false);
+    setEditingPhoto({ src: srcs[0], index: indices[0], init: null, batch: srcs });
     setEditorId(prev => prev + 1);
   };
   /* 沖好了：沖出來的那張已經套好拍照時的濾鏡、特效、裁切、日期，直接進編輯 */
@@ -1342,7 +1357,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     developedUrlRef.current = url;
     setDeveloping(null);
     setShowGallery(false);
-    setEditingPhoto({ src: url, index: d.idx, init: null });
+    setEditingPhoto({ src: url, index: d.idx, init: null, pro: d.pro });
     setEditorId(prev => prev + 1);
   };
   useEffect(() => {
@@ -1378,11 +1393,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /* ── 原生設定選單 ─────────────────────────────────────────── */
   const openNativeMenu = (btn: HTMLElement) => {
     const r = btn.getBoundingClientRect();
+    /* 面板貼在觀景窗右上角裡面（不超出相機畫面） */
+    const f = (btn.closest('.rounded-camera') as HTMLElement | null)?.getBoundingClientRect();
     void nativeCamera().then(c => c?.showMenu({
       anchor: { x: r.left, y: r.top, w: r.width, h: r.height },
+      bounds: f ? { x: f.left, y: f.top, w: f.width, h: f.height } : undefined,
       items: [
         { id: 'grid', type: 'toggle', title: '構圖線', symbol: 'grid', value: showGrid },
-        { id: 'level', type: 'toggle', title: '水平線', symbol: 'level', value: levelOn },
+        { id: 'level', type: 'toggle', title: '水平線', symbol: 'abai.level', value: levelOn },
         { id: 'location', type: 'toggle', title: '位置', symbol: 'location', value: locationOn },
         { id: 'date', type: 'toggle', title: '日期', symbol: 'calendar', value: dateOn },
         { id: 'timer', type: 'choice', title: '定時', symbol: 'timer', value: String(timer), options: [{ label: '關閉', value: '0' }, { label: '3 秒', value: '3' }, { label: '10 秒', value: '10' }] },
@@ -1399,10 +1417,21 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     else if (id === 'timer') setTimer((Number(v) || 0) as TimerMode);
     else if (id === 'zoomMode') {
       const m = v === 'full' ? 'full' : 'frame';
+      if (m === zoomModeRef.current) return;
       setZoomMode(m);
-      /* 換模式：小框收掉、倍率回到按鈕上的那一格 */
-      frameZoomRef.current = 1; pinchRef.current = null; smallFrameRef.current?.set(1, false);
-      if (liveZoomRef.current != null) { setLiveZoom(null); handleZoomClick(settings.focalLength); }
+      /* 換模式時看到的畫面不變：
+         線框 → 全螢幕：小框的倍率變成鏡頭真的變焦（2x 的框＝鏡頭直接 2x），框收掉；
+         全螢幕 → 線框：鏡頭停在原本的倍率，不跳回按鈕那一格 */
+      const fz = frameZoomRef.current;
+      pinchRef.current = null;
+      if (m === 'full' && fz > 1.001) {
+        const cur = liveZoomRef.current ?? (ZOOM_STEPS.find(z => z.label === focalRef.current)?.factor ?? 1);
+        const r = nativeZoomRangeRef.current;
+        const z = Math.max(r?.min ?? 1, Math.min(Math.min(r?.max ?? 10, 15), cur * fz));
+        frameZoomRef.current = 1; smallFrameRef.current?.set(1, false);
+        liveZoomRef.current = z; setLiveZoom(z);
+        void nativeCamera().then(c => c?.setZoom({ uiZoom: z })).catch(() => {});
+      }
     }
   };
   useEffect(() => {
@@ -1951,9 +1980,18 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           thumbs={thumbs}
           onClose={() => setShowGallery(false)} 
           rawShots={rawShots}
-          onDelete={(idx) => setPhotos(prev => { forgetRaw(prev[idx]); releaseUrl(prev[idx]); return prev.filter((_, i) => i !== idx); })}
+          onDelete={(indices) => setPhotos(prev => {
+            const del = new Set(indices);
+            prev.forEach((u, i) => { if (del.has(i)) { forgetRaw(u); releaseUrl(u); labelsRef.current.delete(u); } });
+            return prev.filter((_, i) => !del.has(i));
+          })}
           onImport={(newPhotos) => setPhotos(prev => [...newPhotos, ...prev])}
           onEdit={(src, idx) => openEditor(src, idx)}
+          onProEdit={(src, idx) => openEditor(src, idx, true)}
+          onEditMany={openEditMany}
+          favorites={favorites}
+          onFavorite={(srcs, on) => setFavorites(prev => { const n = new Set(prev); srcs.forEach(s => on ? n.add(s) : n.delete(s)); return n; })}
+          labelOf={src => labelsRef.current.get(src) ?? null}
         />
       )}
 
@@ -1971,6 +2009,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         <div className="fixed inset-0 z-[300] bg-black" data-camera-editor>
         <ImageEditor 
           compactBottomBar
+          fullTabs={!!editingPhoto.pro}
+          batchSrcs={editingPhoto.batch}
           key={editorId}
           imageSrc={editingPhoto.src}
           initialState={editingPhoto.init ?? null}
