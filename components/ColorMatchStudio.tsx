@@ -1036,10 +1036,9 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
         {/* 還沒選參考圖也可以先選做法（選好參考圖就照這個做法算）；圖庫裡一張參考圖都沒有時才不出現 */}
         {/* 算的時候也一樣清楚、一樣能按（蓋在壓暗那一層上面，不跟著變暗）；按另一個就改用那個做法算 */}
         {refs.length > 0 && <div role="group" aria-label="仿色方法" data-cm-float className={`absolute bottom-3 ${embedded ? 'left-3' : 'left-[68px]'} h-11 flex items-center gap-2 z-[6]`}>
-          {/* 沒選到的那顆：深色半透明＋細亮邊（不用毛玻璃 —— iOS 上毛玻璃做淡入動畫時材質會在播完那一刻跳一下） */}
-          {(['cap', 'mkl'] as Pick[]).map(m => (   // 從主頁進來的跟編輯器裡的一樣：只有標準、專業兩種
+                    {(['cap', 'mkl'] as Pick[]).map(m => (   // 從主頁進來的跟編輯器裡的一樣：只有標準、專業兩種
             <button key={m} onClick={() => { warmFor(m); setPicked(m); }} data-cm-method={m} aria-pressed={picked === m}
-              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap transition-[background-color,color,transform] active:scale-95 ${picked === m ? 'bg-white text-black font-bold' : 'bg-[rgba(22,22,24,0.66)] text-white/60 shadow-[inset_0_0_0_0.5px_rgba(255,255,255,0.14)]'}`}>
+              className={`px-3.5 py-1 rounded-full text-[11px] shrink-0 whitespace-nowrap transition-[background-color,color,transform] active:scale-95 ${picked === m ? 'bg-white text-black font-bold' : 'bg-black/40 text-white/60 backdrop-blur-md'}`}>
               {PICK_LABEL(m)}
             </button>
           ))}

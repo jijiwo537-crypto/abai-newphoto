@@ -253,6 +253,27 @@ function runEnter(root: HTMLElement, E: R) {
     entered.add(el);
     const t = baseTransform(el);
     const from = `translate3d(0, ${dy}px, 0)${t ? ' ' + t : ''}`, to = t || 'translate3d(0, 0, 0)';
+    if (hasBackdrop(el)) {
+      /* 毛玻璃：不能對它（或它的上層）做透明度動畫 —— 透明度小於 1 的期間，瀏覽器規定毛玻璃只能取「這一層裡面」的畫面，
+         取不到後面的照片，材質就跟停好後不同，動畫結束那一刻才跳回來。
+         改成直接讓「材質本身」淡入：模糊從 0 長到原本的強度、底色與文字從透明到原本的顏色，加上同樣的位移。
+         每一格算的都是真正後面的畫面，播完的那一格就是原本的樣子，不會跳 */
+      const st = getComputedStyle(el) as CSSStyleDeclaration & { webkitBackdropFilter?: string };
+      const bf = st.backdropFilter && st.backdropFilter !== 'none' ? st.backdropFilter : (st.webkitBackdropFilter || 'none');
+      const zero = bf.replace(/blur\([^)]*\)/g, 'blur(0px)').replace(/saturate\([^)]*\)/g, 'saturate(1)');
+      const clear = (c: string) => c.replace(/rgba?\(([^,]+),([^,]+),([^,)]+)(,[^)]*)?\)/, 'rgba($1,$2,$3,0)');
+      anim(el, [
+        { transform: from, backdropFilter: zero, webkitBackdropFilter: zero, backgroundColor: clear(st.backgroundColor), color: clear(st.color), borderColor: clear(st.borderColor) } as Keyframe,
+        { transform: to, backdropFilter: bf, webkitBackdropFilter: bf, backgroundColor: st.backgroundColor, color: st.color, borderColor: st.borderColor } as Keyframe,
+      ], delay, dur, after);
+      /* 裡面的圖示、文字（自己有顏色的）跟著淡入：子層的透明度不影響外層毛玻璃取背景 */
+      for (const k of Array.from(el.children) as HTMLElement[]) {
+        if (hasBackdrop(k)) continue;
+        const ko = shownOpacity(k);
+        if (ko > 0) anim(k, [{ opacity: 0 }, { opacity: ko }], delay, dur, after);
+      }
+      return;
+    }
     const o = shownOpacity(el);
     anim(el, [{ opacity: 0, transform: from }, { opacity: o, transform: to }], delay, dur, after);
   };
