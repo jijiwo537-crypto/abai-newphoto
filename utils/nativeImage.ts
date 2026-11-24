@@ -12,6 +12,8 @@ interface NativeImageApi {
   render(o: Record<string, unknown>): Promise<{ path: string; width: number; height: number }>;
   encode(o: { path?: string; data?: string; format: string; quality?: number }): Promise<{ path: string }>;
   remove(o: { path: string }): Promise<void>;
+  /** 搬進相機相簿資料夾（永久保存）；舊版 App 沒有這支 */
+  persist?(o: { path: string }): Promise<{ path: string }>;
   beginBackgroundTask(o: { name: string }): Promise<{ id: number }>;
   endBackgroundTask(o: { id: number }): Promise<void>;
   capabilities(): Promise<{ hdrGainMap: boolean; heic10: boolean; edrHeadroom: number }>;

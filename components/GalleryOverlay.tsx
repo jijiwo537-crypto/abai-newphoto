@@ -154,6 +154,18 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   }, [selecting, selectedIdx.join(','), favAll, photos.length], 420);
   const hideWeb = grid.native ? 'invisible' : '';
 
+  /* 先把最新那幾張的螢幕版準備好（原生縮圖，很快）：第一次點開就是清楚的在飛 */
+  useEffect(() => {
+    let n = 0;
+    for (const p of [...shown].reverse()) {
+      if (n++ >= 9) break;
+      const path = nativePathOf(p);
+      if (!path || screenCache[p]) continue;
+      void nativeDownsample(path, 1600).then(r => { if (r?.url) screenCache[p] = r.url; });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown.length]);
+
   /* 打開時停在最底（最新的那幾張），跟系統相簿一樣 */
   const scrollRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -198,16 +210,10 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
       </header>
       <div ref={scrollRef} className="absolute inset-0 overflow-y-auto no-scrollbar" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 54px)', paddingBottom: `calc(max(env(safe-area-inset-bottom), 16px) + ${BACK_CIRCLE + 56}px)` }}>
         {photos.length === 0 ? (
-          /* 沒有照片：整個螢幕正中央（不跟著上下的內距偏）。細線條的相片圖示＋兩行字 */
-          <div className="fixed inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
-            <svg width="46" height="46" viewBox="0 0 48 48" fill="none" stroke="rgba(255,255,255,0.34)" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="8" y="12" width="32" height="26" rx="5" />
-              <path d="M12 9h24" opacity=".6" />
-              <circle cx="18.5" cy="21" r="2.6" />
-              <path d="m8.8 33.5 9-8.2 6.4 5.6 5.2-4.4 9.8 8.3" />
-            </svg>
-            <p className="mt-4 text-[15px] font-medium tracking-[0.02em] text-white/60">還沒有照片</p>
-            <p className="mt-1.5 text-[12.5px] tracking-[0.02em] text-white/30">拍下的照片會出現在這裡</p>
+          /* 沒有照片：原本的圖示和文字，放在整個螢幕的正中央（不跟著上下的內距偏） */
+          <div className="fixed inset-0 flex flex-col items-center justify-center opacity-40 pointer-events-none select-none">
+            <Icon name="no_photography" className="text-6xl mb-4" />
+            <p>尚未拍攝或導入任何照片</p>
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-[2px]">
@@ -311,7 +317,8 @@ const PhotoViewer: React.FC<{
   const ghost = useRef<HTMLImageElement>(null);
   useLayoutEffect(() => {
     const cell = cellOf(index), g = ghost.current, src = photos[index];
-    const tsrc = thumbs[src] || src;
+    /* 飛的那張：有螢幕版就用螢幕版（清楚），沒有就用縮圖；飛的途中不換來源（換 src 的那一下可能是空白的） */
+    const tsrc = screenCache[src] || thumbs[src] || src;
     if (!cell || !g) { setOpening(false); return; }
     let alive = true;
     const cellImg = cell.querySelector('img') as HTMLImageElement | null;
@@ -322,7 +329,6 @@ const PhotoViewer: React.FC<{
     const go = async () => {
       /* 不等原圖：手指一放就開始飛（原圖已經解好就直接用原圖，不然先用縮圖、解好再換上去） */
       const useFull = full.complete && full.naturalWidth > 0;
-      if (!useFull) void fullReady.then(ok => { if (ok && alive && g) g.src = src; });
       if (!alive) return;
       const pic = useFull ? full : im;
       const W = window.innerWidth, H = window.innerHeight;
@@ -509,10 +515,11 @@ const PhotoViewer: React.FC<{
           const near = Math.abs(i - index) <= 1;
           /* 底下一層：螢幕大小的版本（沒有就用縮圖）；上面一層：原圖（解好之前是透明的，底下那層頂著，不會先變糊再變清楚）。
              進編輯時（suspended）只留底下那層：原圖的記憶體讓給編輯頁，回來時看到的還是清楚的 */
-          const base = screens[p] || thumbs[p];
+          /* 每一層都只會「加上去」、不會換掉（換 src 的那一下可能是空白的，看起來就是閃黑） */
           return (
             <div key={p} className="relative w-full h-full shrink-0 snap-center flex items-center justify-center" style={{ scrollSnapStop: 'always' }}>
-              {base && <img src={base} alt="" className="absolute inset-0 w-full h-full object-contain" draggable={false} />}
+              {thumbs[p] && <img src={thumbs[p]} alt="" className="absolute inset-0 w-full h-full object-contain" draggable={false} />}
+              {screens[p] && <img src={screens[p]} alt="" decoding="async" className="absolute inset-0 w-full h-full object-contain" draggable={false} />}
               {!suspended && near && <img src={p} alt="" decoding="async" className="absolute inset-0 w-full h-full object-contain allow-callout" draggable={false} />}
             </div>
           );

@@ -161,6 +161,10 @@ enum ABAIRawDevelop {
         vec3 o = vec3(dot(r0, c), dot(r1, c), dot(r2, c));
         float y1 = dot(max(o, vec3(0.0)), W);
         o *= y1 > 1.0e-6 ? clamp(y0 / y1, 0.0, 8.0) : 1.0;
+        /* 高光保護：已經接近爆白的地方（感光元件本來就沒資料了），白平衡平順地淡出、維持乾淨的白 ——
+           不然爆掉的那一塊會被染色、再被顯示上限切平，跟旁邊沒爆的地方之間就是一圈斷層 */
+        float hi = smoothstep(0.62, 0.98, max(max(c.r, c.g), c.b));
+        o = mix(o, c, hi * hi);
         return vec4(o, s.a);
     }
     """)

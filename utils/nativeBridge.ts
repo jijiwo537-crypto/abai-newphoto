@@ -66,6 +66,9 @@ export function rememberNativeFile(file: Blob, path: string, assetId?: string) {
 }
 
 /** 這個網址（blob: 或 File）在原生端的路徑；沒有就 undefined */
+/** 直接用原生檔案網址（fileSrc）顯示的照片：記住網址 ↔ 路徑，nativePathOf 才查得到 */
+export function rememberNativePath(url: string, path: string) { urlPath.set(url, { path }); }
+
 export const nativePathOf = (src: string | Blob | null | undefined): string | undefined => {
   if (!src) return undefined;
   if (typeof src === 'string') return urlPath.get(src)?.path;

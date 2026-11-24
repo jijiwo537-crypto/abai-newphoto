@@ -1,6 +1,6 @@
 /* 從主頁導入單張照片（編輯、美顏、仿色）時的過場：相簿裡那張小縮圖，一步到位地放大、飛到工具裡照片的位置。
  *
- * 只有兩個關鍵幀：起點＝相簿那一格（裁成正方形），終點＝照片在工具裡會停的位置（完整比例）。
+ * 只有兩個關鍵幀：起點＝整張照片完整地縮在相簿那一格裡（不裁切），終點＝照片在工具裡會停的位置。
  * 終點在點下去的那一刻就算得出來 —— 三個工具的照片框都是固定的版面（見 FRAME）：
  *   上緣＝狀態列下面 72、左右各 16、下面保留一段固定高度給工具列；照片照比例放進這個框、置中。
  * 所以一點下去就整段播完，中間不找、不修正。飛完就停在終點等工具畫好，
@@ -53,7 +53,8 @@ function predict(kind: string, aspect: number): R {
 const layer = (src: string) => {
   const im = document.createElement('img');
   im.alt = ''; im.draggable = false; im.decoding = 'async'; im.src = src;
-  Object.assign(im.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', objectFit: 'cover', display: 'block' } as CSSStyleDeclaration);
+  /* contain：整張一定看得到，不會被裁（縮圖的比例跟照片記錄的比例萬一差一點點，也只是邊上多一點空白） */
+  Object.assign(im.style, { position: 'absolute', inset: '0', width: '100%', height: '100%', objectFit: 'contain', display: 'block' } as CSSStyleDeclaration);
   return im;
 };
 /** 換上更清楚的一層（解好才放上去、很快地淡入） */
@@ -89,7 +90,8 @@ function findTarget(): HTMLElement | null {
     const r = contentRect(el);
     if (r.width < 40 || r.height < 40) return;
     const area = r.width * r.height;
-    if (area < W * H * 0.12) return;
+    /* 夠大：跟預期的照片框差不多大（極寬的全景、極長的照片面積本來就小，不能用整個螢幕的比例來判斷） */
+    if (end && area < end.w * end.h * 0.5) return;
     if (r.left < -2 || r.top < -2 || r.right > W + 2 || r.bottom > H + 2) return;
     if (Math.abs(r.width / r.height - ar) / ar > 0.05) return;
     const st = getComputedStyle(el);
@@ -134,7 +136,7 @@ export function beginImportHero(kind: string | undefined, rect: DOMRect, src: st
   /* 替身本身就是終點的大小與位置；起點用 transform 把它縮回那一格、再裁成那一格的正方形 */
   Object.assign(g.style, {
     position: 'fixed', zIndex: '2147483000', pointerEvents: 'none', overflow: 'hidden', margin: '0',
-    left: `${E.x}px`, top: `${E.y}px`, width: `${E.w}px`, height: `${E.h}px`, transformOrigin: '0 0', willChange: 'transform, clip-path',
+    left: `${E.x}px`, top: `${E.y}px`, width: `${E.w}px`, height: `${E.h}px`, transformOrigin: '0 0', willChange: 'transform',
   } as CSSStyleDeclaration);
   g.appendChild(layer(src));
   document.body.appendChild(g);
@@ -143,13 +145,13 @@ export function beginImportHero(kind: string | undefined, rect: DOMRect, src: st
   window.clearTimeout(failsafe);
   failsafe = window.setTimeout(() => cancelImportHero(), 12000);
   if (big) void big().then(u => { if (u && my === token) upgrade(u, my); });
+  /* 起點：整張照片完整地縮在那一格裡（不裁切），終點：照片在工具裡的位置。兩個關鍵幀，一段播完 */
   const C = rect;
-  const k = Math.max(C.width / E.w, C.height / E.h);
-  const ix = Math.max(0, (E.w - C.width / k) / 2), iy = Math.max(0, (E.h - C.height / k) / 2);
-  /* 兩個關鍵幀，一段播完 */
+  const k = Math.min(C.width / E.w, C.height / E.h);
+  const sx = C.left + (C.width - E.w * k) / 2, sy = C.top + (C.height - E.h * k) / 2;
   g.animate([
-    { transform: `translate(${C.left - E.x - ix * k}px, ${C.top - E.y - iy * k}px) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` },
-    { transform: 'translate(0px, 0px) scale(1)', clipPath: 'inset(0px 0px)' },
+    { transform: `translate(${sx - E.x}px, ${sy - E.y}px) scale(${k})` },
+    { transform: 'translate(0px, 0px) scale(1)' },
   ], { duration: 460, easing: 'cubic-bezier(0.32, 0.72, 0, 1)', fill: 'forwards' });
   watch(my);
 }

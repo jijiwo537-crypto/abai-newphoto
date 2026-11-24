@@ -46,6 +46,14 @@ enum ABAIImageCore {
         return dir
     }()
 
+    /// 相機的相簿（App 裡那一個）的照片：放在 Application Support，不會被系統清暫存清掉、App 更新也還在
+    static let keepDir: URL = {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+        let dir = base.appendingPathComponent("abai-camera-roll", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
     static func newFileURL(ext: String) -> URL {
         tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
     }

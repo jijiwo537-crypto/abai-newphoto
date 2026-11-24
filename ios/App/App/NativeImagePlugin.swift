@@ -33,6 +33,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "render", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "encode", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "remove", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "persist", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "beginBackgroundTask", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "endBackgroundTask", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "capabilities", returnType: CAPPluginReturnPromise),
@@ -223,12 +224,29 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// 只刪 App 自己暫存資料夾裡的檔案
+    /// 只刪 App 自己的檔案（暫存資料夾、相機相簿資料夾）
     @objc func remove(_ call: CAPPluginCall) {
-        guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? ""),
-              url.standardizedFileURL.path.hasPrefix(ABAIImageCore.tempDir.standardizedFileURL.path) else { call.resolve(); return }
+        guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? "") else { call.resolve(); return }
+        let p = url.standardizedFileURL.path
+        guard p.hasPrefix(ABAIImageCore.tempDir.standardizedFileURL.path) || p.hasPrefix(ABAIImageCore.keepDir.standardizedFileURL.path) else { call.resolve(); return }
         try? FileManager.default.removeItem(at: url)
         call.resolve()
+    }
+
+    /// 暫存資料夾裡的檔案搬進相機相簿資料夾（永久保存），回傳新路徑。已經在裡面就原樣回傳
+    @objc func persist(_ call: CAPPluginCall) {
+        guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? "") else { call.reject("沒有路徑"); return }
+        queue.async {
+            let keep = ABAIImageCore.keepDir.standardizedFileURL.path
+            if url.standardizedFileURL.path.hasPrefix(keep) { call.resolve(["path": url.path]); return }
+            let ext = url.pathExtension.isEmpty ? "jpg" : url.pathExtension
+            let dest = ABAIImageCore.keepDir.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
+            do {
+                if url.standardizedFileURL.path.hasPrefix(ABAIImageCore.tempDir.standardizedFileURL.path) { try FileManager.default.moveItem(at: url, to: dest) }
+                else { try FileManager.default.copyItem(at: url, to: dest) }
+                call.resolve(["path": dest.path])
+            } catch { call.reject(error.localizedDescription) }
+        }
     }
 
     /// 存檔開始時呼叫：切到背景後系統會再多給幾十秒把事情做完

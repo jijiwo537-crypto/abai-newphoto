@@ -1,6 +1,6 @@
 /* 原生相機（專業模式，對應 ios/App/App/NativeCameraPlugin.swift）。
  * 4800 萬像素、ProRAW、零快門延遲、相機控制按鈕。網頁版每一支都回 null。 */
-import { nativePlugin, fileSrc, rememberNativeFile } from './nativeBridge';
+import { nativePlugin, fileSrc, rememberNativeFile, rememberNativePath } from './nativeBridge';
 import { nativeImage } from './nativeImage';
 
 export type CameraMenuItem =
@@ -56,7 +56,7 @@ export async function captureNative(o: {
   develop?: number;
   /** 日期戳記的字 */
   date?: string | null;
-}): Promise<{ url: string; rawPath?: string; renderedPath?: string; cropZoom: number; /** 有日期時：沒印日期的同一張（編輯用這張，存檔時再印） */ cleanUrl?: string } | null> {
+}): Promise<{ url: string; path: string; cleanPath?: string; rawPath?: string; renderedPath?: string; cropZoom: number; /** 有日期時：沒印日期的同一張（編輯用這張，存檔時再印） */ cleanUrl?: string } | null> {
   const cam = await nativeCamera(), img = await nativeImage();
   if (!cam || !img) return null;
   /* 小框：鏡頭真的變焦過去拍（清楚）；變不到的部分才用裁切補 */
@@ -70,21 +70,25 @@ export async function captureNative(o: {
   });
   img.remove({ path: shot.path }).catch(() => {});
   /* 日期：先留一張沒印的（之後編輯都改這張，日期不會被調色、濾鏡影響），再從它印出成品 */
-  let cleanUrl: string | undefined;
+  let cleanPath: string | undefined;
   if (o.date) {
-    const clean = out.path;
-    const stamped = await img.render({ path: clean, date: o.date, gps: shot.location || undefined, format: 'jpeg', quality: 0.95 });
-    const cb = new Blob([await (await fetch(fileSrc(clean))).blob()], { type: 'image/jpeg' });
-    rememberNativeFile(cb, clean);   // 檔案留著：編輯存檔可以走原生（快、而且是全解析度的 16 位元流程）
-    cleanUrl = URL.createObjectURL(cb);
+    const stamped = await img.render({ path: out.path, date: o.date, gps: shot.location || undefined, format: 'jpeg', quality: 0.95 });
+    cleanPath = out.path;
     out.path = stamped.path;
   }
-  const blob = new Blob([await (await fetch(fileSrc(out.path))).blob()], { type: 'image/jpeg' });
-  /* 成品檔留在 App 的暫存裡、記住它的路徑：相簿裡這張進編輯後按儲存，可以直接走原生存檔
-     （不然網頁要把整張全解析度重算一次，要等很久才有反應） */
-  rememberNativeFile(blob, out.path);
-  /* 有 RAW 時成品檔先留著：要跟 RAW 配成同一張存進相簿（存完再刪，見 saveRawPair） */
-  return { url: URL.createObjectURL(blob), rawPath: shot.rawPath, renderedPath: shot.rawPath ? out.path : undefined, cropZoom, cleanUrl };
+  /* 收進相機相簿資料夾（不會被系統清暫存清掉、App 更新也還在），直接用檔案網址顯示：
+     網頁不用把整張照片讀進記憶體，編輯存檔也能走原生 */
+  const keep = async (p?: string) => {
+    if (!p) return undefined;
+    try { return img.persist ? (await img.persist({ path: p })).path : p; } catch { return p; }
+  };
+  const mainPath = (await keep(out.path))!;
+  const keptClean = await keep(cleanPath);
+  const keptRaw = await keep(shot.rawPath);
+  const url = fileSrc(mainPath); rememberNativePath(url, mainPath);
+  let cleanUrl: string | undefined;
+  if (keptClean) { cleanUrl = fileSrc(keptClean); rememberNativePath(cleanUrl, keptClean); }
+  return { url, path: mainPath, cleanPath: keptClean, rawPath: keptRaw, renderedPath: keptRaw ? mainPath : undefined, cropZoom, cleanUrl };
 }
 
 /** 編輯完的圖重新印上日期（日期是「光加上去」的：畫面變暗，字自然更清楚）。沒有原生或失敗回 null */

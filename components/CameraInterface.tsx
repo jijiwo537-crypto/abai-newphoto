@@ -16,7 +16,7 @@ import { ImageEditor, DEFAULT_PARAMS } from './ImageEditor';
 import { RawDevelopSheet } from './RawDevelopSheet';
 import { createPortal } from 'react-dom';
 import { slideBack } from '../utils/pageTransition';
-import { fileSrc } from '../utils/nativeBridge';
+import { fileSrc, nativePathOf, rememberNativePath } from '../utils/nativeBridge';
 import { processImageFile } from '../utils/imageLoader';
 import { RAW_ACCEPT } from '../utils/fileTypes';
 import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
@@ -252,7 +252,42 @@ const camRoll = {
   labels: new Map<string, string>(),
   owned: new Set<string>(),
   thumbs: {} as Record<string, string>,
+  loaded: false,
 };
+
+/* 相機的相簿存到手機上（只記檔案路徑，照片本身在原生的相機相簿資料夾）：關掉 App、更新 App 之後還在 */
+const ROLL_KEY = 'abai-camera-roll-v1';
+type RollEntry = { path: string; raw?: { path: string; protectEV: number; look: RawLook }; clean?: { path: string; date: string }; fav?: boolean; label?: string };
+function loadCamRoll() {
+  if (camRoll.loaded) return;
+  camRoll.loaded = true;
+  try {
+    const list = JSON.parse(localStorage.getItem(ROLL_KEY) || '[]') as RollEntry[];
+    if (!Array.isArray(list)) return;
+    for (const e of list) {
+      if (!e?.path) continue;
+      const url = fileSrc(e.path); rememberNativePath(url, e.path);
+      camRoll.photos.push(url);
+      if (e.raw?.path) { camRoll.rawOf.set(url, e.raw); camRoll.rawShots.add(url); }
+      if (e.clean?.path) { const cu = fileSrc(e.clean.path); rememberNativePath(cu, e.clean.path); camRoll.dateOf.set(url, { clean: cu, date: e.clean.date }); }
+      if (e.fav) camRoll.favorites.add(url);
+      if (e.label) camRoll.labels.set(url, e.label);
+    }
+  } catch { /* 讀不到就從空的開始 */ }
+}
+function saveCamRoll() {
+  try {
+    const list: RollEntry[] = [];
+    for (const url of camRoll.photos) {
+      const path = nativePathOf(url);
+      if (!path) continue;   // 不是原生檔案的（網頁相機拍的）存不住，只留在這一次
+      const d = camRoll.dateOf.get(url), cleanPath = d ? nativePathOf(d.clean) : undefined;
+      list.push({ path, raw: camRoll.rawOf.get(url), clean: d && cleanPath ? { path: cleanPath, date: d.date } : undefined,
+        fav: camRoll.favorites.has(url) || undefined, label: camRoll.labels.get(url) });
+    }
+    localStorage.setItem(ROLL_KEY, JSON.stringify(list));
+  } catch { /* 存不了就算了 */ }
+}
 
 export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutList, onImportNew }) => {
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
@@ -313,7 +348,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       編輯時從 RAW 沖，再自動套上同一個濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
   const rawOfRef = useRef(camRoll.rawOf);
   const [rawShots, setRawShots] = useState<Set<string>>(() => new Set(camRoll.rawShots));
-  useEffect(() => { camRoll.rawShots = rawShots; }, [rawShots]);
+  useEffect(() => { camRoll.rawShots = rawShots; saveCamRoll(); }, [rawShots]);
   /** 有日期戳記的照片 → 沒印日期的同一張＋日期字。編輯一律改沒印的那張，存檔時才重新印上日期：
       調色、濾鏡不會改到日期；日期是光加上去的，畫面調暗了字自然更清楚 */
   const dateOfRef = useRef(camRoll.dateOf);
@@ -462,8 +497,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (pointersRef.current.size === 0) setTimeout(() => { gesturePinchedRef.current = false; }, 0);
   };
   
-  const [photos, setPhotos] = useState<string[]>(() => camRoll.photos);
-  useEffect(() => { camRoll.photos = photos; }, [photos]);
+  const [photos, setPhotos] = useState<string[]>(() => { loadCamRoll(); return camRoll.photos; });
+  useEffect(() => { camRoll.photos = photos; saveCamRoll(); }, [photos]);
   const { thumbs, seed: seedThumb } = usePhotoThumbs(photos, camRoll.thumbs);
   /* 只回收自己建立的 blob 網址；匯入的、編輯回存的字串不要亂動 */
   const ownedUrlsRef = useRef(camRoll.owned);
@@ -502,7 +537,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, [showGallery, proMode]);
   /* 相簿：愛心、每張拍照時用的濾鏡（大圖右上的標籤） */
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set(camRoll.favorites));
-  useEffect(() => { camRoll.favorites = favorites; }, [favorites]);
+  useEffect(() => { camRoll.favorites = favorites; saveCamRoll(); }, [favorites]);
   const labelsRef = useRef(camRoll.labels);
   /* 進相簿（或從相簿進編輯）就把小框收掉：回到相機時應該是重新開始的滿版畫面，
      不是停在上一次捏的位置。frameZoomRef 也一起歸 1，免得畫面上沒有框、拍下去卻還是裁過的。 */
@@ -2052,7 +2087,13 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           suspended={!!editingPhoto || !!developing}
           onDelete={(indices) => setPhotos(prev => {
             const del = new Set(indices);
-            prev.forEach((u, i) => { if (del.has(i)) { forgetRaw(u); forgetDate(u); releaseUrl(u); labelsRef.current.delete(u); } });
+            prev.forEach((u, i) => {
+              if (!del.has(i)) return;
+              /* 相機相簿資料夾裡的檔案一起刪掉（成品、沒印日期的、RAW） */
+              const files = [nativePathOf(u), rawOfRef.current.get(u)?.path, (() => { const d = dateOfRef.current.get(u); return d ? nativePathOf(d.clean) : undefined; })()];
+              void nativeImage().then(n => files.forEach(f => { if (f) void n?.remove({ path: f }).catch(() => {}); }));
+              forgetRaw(u); forgetDate(u); releaseUrl(u); labelsRef.current.delete(u);
+            });
             return prev.filter((_, i) => !del.has(i));
           })}
           onEdit={(src, idx) => openEditor(src, idx)}
