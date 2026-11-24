@@ -134,8 +134,29 @@ const ENTER_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
  * 等照片真正就定位（替身交接、或 RAW 沖好顯示出來）的那一刻才一起開播 —— 使用者看得到的時候動畫才開始。
  * 任何情況（取消、出錯、逾時）都一定開播（介面一定會出現），播完沒有殘留。 */
 let enterObs: MutationObserver | null = null, enterRoot: HTMLElement | null = null, enterE: R | null = null;
-let landed = true, afterLand: Animation[] = [];
-let revealT = 0, revealed = true, pending: Animation[] = [], enterFailsafe = 0, enterStopT = 0, rawRaf = 0;
+/* ── 進場的效能 ──
+ * 等開播的期間：元素用一段「停在第一格」的動畫藏著，同時先標 will-change，讓系統趁照片還在飛的時候
+ * 就把這些介面各自畫成 GPU 圖層（最花時間的一步提前做完）。
+ * 開播：停著的那段丟掉、同一格立刻建一段全新的動畫 —— 全新、從頭跑的 transform／opacity 動畫一定整段交給 GPU，
+ * 主執行緒再忙（工具正在初始化、解碼大圖）也不掉格。播完把 will-change 還原，不留任何樣式。 */
+type Job = { el: HTMLElement; k: Keyframe[]; opts: KeyframeAnimationOptions; held?: Animation; wc?: string };
+function hold(j: Job) {
+  j.held = j.el.animate(j.k, { ...j.opts, delay: 0, duration: 1 });
+  j.held.pause();   // 停在第一格（fill backwards → 看不見）
+  j.wc = j.el.style.willChange;
+  j.el.style.willChange = 'transform, opacity';
+}
+function startJob(j: Job) {
+  try {
+    j.held?.cancel();
+    if (j.wc === undefined) { j.wc = j.el.style.willChange; j.el.style.willChange = 'transform, opacity'; }
+    const a = j.el.animate(j.k, j.opts);
+    const restore = () => { if (j.el.style.willChange === 'transform, opacity') j.el.style.willChange = j.wc ?? ''; };
+    a.finished.then(restore, restore);
+  } catch { /* 元素已經不在 */ }
+}
+let landed = true, afterLand: Job[] = [];
+let revealT = 0, revealed = true, pending: Job[] = [], enterFailsafe = 0, enterStopT = 0, rawRaf = 0;
 const entered = new WeakSet<Element>();
 /** 這一塊裡有沒有照片（夠大的 img／canvas）：有的話不能整塊動，要往裡面拆 */
 function hasPhoto(el: HTMLElement, E: R): boolean {
@@ -221,9 +242,10 @@ function runEnter(root: HTMLElement, E: R) {
   /* after：疊在照片上的按鈕要等飛進來的替身完全交接掉才開播 ——
      替身永遠在最上層，先播的話按鈕看起來會在照片底下 */
   const anim = (el: HTMLElement, k: Keyframe[], delay: number, dur: number, after = false) => {
-    const a = el.animate(k, { duration: dur, delay, easing: ENTER_EASE, fill: 'backwards' });
-    if (after && !landed) { a.pause(); afterLand.push(a); }
-    else if (!revealed) { a.pause(); pending.push(a); }   // 暫停在第一格（fill backwards → 看不見），等開播
+    const job: Job = { el, k, opts: { duration: dur, delay, easing: ENTER_EASE, fill: 'backwards' } };
+    if (after && !landed) { hold(job); afterLand.push(job); }
+    else if (!revealed) { hold(job); pending.push(job); }
+    else startJob(job);
   };
   const play = (b: Block | HTMLElement, dy: number, delay: number, dur: number, after = false) => {
     const el = b instanceof HTMLElement ? b : b.el;
@@ -252,7 +274,7 @@ function runEnter(root: HTMLElement, E: R) {
 function landNow() {
   landed = true;
   const list = afterLand; afterLand = [];
-  for (const a of list) { try { a.play(); } catch { /* 元素已經不在 */ } }
+  for (const j of list) startJob(j);
 }
 /** 開播：暫停在第一格的介面一起開始進場 */
 function revealEnter() {
@@ -261,7 +283,7 @@ function revealEnter() {
   window.clearTimeout(enterFailsafe);
   cancelAnimationFrame(rawRaf);
   const list = pending; pending = [];
-  for (const a of list) { try { a.play(); } catch { /* 元素已經不在 */ } }
+  for (const j of list) startJob(j);
   if (!ghost) landNow();   // RAW（沒有替身）：照片上的按鈕跟著一起開播
   /* 開播後 0.8 秒內新長出來的介面也接著進場，之後就不再管 */
   window.clearTimeout(enterStopT);
@@ -279,6 +301,7 @@ function startEnter(E: R, failsafeMs: number) {
   };
   /* MutationObserver 在 React 寫進畫面之後、瀏覽器畫出來之前就會跑：介面第一次出現時就已經停在第一格，不會先閃一下 */
   /* 同一格裡的多次變動合併成一次檢查（在這一格畫出來之前跑），不會在 React 掛介面時反覆量版面拖慢主執行緒 */
+  /* 同一格裡的多次變動合併成一次檢查（在這一格畫出來之前跑：新長出來的介面第一次出現就已經藏好） */
   let queued = false;
   enterObs = new MutationObserver(() => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; check(); }); });
   enterObs.observe(document.body, { childList: true, subtree: true });
@@ -365,10 +388,13 @@ export function beginImportHero(kind: string | undefined, rect: DOMRect, src: st
 /** 飛完就停在終點：等工具把照片畫好、位置穩定，放回照片本人、替身淡掉。替身這段完全不動 */
 function watch(my: number) {
   const g = ghost!;
-  let target: HTMLElement | null = null, tr: R | null = null, stable = 0;
+  let target: HTMLElement | null = null, tr: R | null = null, stableSince = 0, lastFind = 0;
   const t0 = performance.now();
   const step = (now: number) => {
     if (my !== token || !g.isConnected) return;
+    /* 找照片本人要量版面、暫時改透明度：每 80ms 做一次就夠，不要每一格都做（會跟進場動畫搶主執行緒） */
+    if (landing && now - lastFind < 80) { raf = requestAnimationFrame(step); return; }
+    if (landing) lastFind = now;
     /* 介面不用等照片完全就定位：替身飛到七成、工具頁已經掛上來，就開始進場（跟照片落地重疊，更連貫） */
     if (!revealed && now - t0 > motionMs('importFly') * 0.7 && document.querySelector('.safe-top')) revealEnter();
     if (landing) {
@@ -378,15 +404,15 @@ function watch(my: number) {
       try { el = findTarget(); } catch { el = null; }
       if (prev) prev.style.opacity = '0';
       if (el) {
-        if (el !== target) { target = el; stable = 0; }
+        if (el !== target) { target = el; stableSince = 0; }
         hide(el);
         const r = contentRect(el);
         const n = { x: r.left, y: r.top, w: r.width, h: r.height };
-        if (tr && Math.abs(n.x - tr.x) < 0.5 && Math.abs(n.y - tr.y) < 0.5 && Math.abs(n.w - tr.w) < 0.5 && Math.abs(n.h - tr.h) < 0.5) stable++;
-        else stable = 0;
+        if (tr && Math.abs(n.x - tr.x) < 0.5 && Math.abs(n.y - tr.y) < 0.5 && Math.abs(n.w - tr.w) < 0.5 && Math.abs(n.h - tr.h) < 0.5) { if (!stableSince) stableSince = now; }
+        else stableSince = 0;
         tr = n;
         /* 照片本人的位置連續約 0.3 秒都沒動：交接（兩張重疊，替身淡掉） */
-        if (stable >= 18 && now - t0 > motionMs('importFly')) { unhide(); revealEnter(); finish(g, motionMs('importLand')); return; }
+        if (stableSince && now - stableSince >= 300 && now - t0 > motionMs('importFly')) { unhide(); revealEnter(); finish(g, motionMs('importLand')); return; }
       }
     }
     if (now - t0 > 11000) { cancelImportHero(); return; }
