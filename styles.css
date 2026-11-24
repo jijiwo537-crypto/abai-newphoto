@@ -479,10 +479,10 @@ html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.mat
 /* ── 返回的過場（utils/pageTransition 的 slideBack）──────────────────────
    舊畫面的快照往右滑出去；新畫面從左邊 28% 的地方、稍暗，跟著滑回原位。
    曲線是 iOS 返回那一種（一開始快、尾巴很長很柔），左緣有一道淡淡的陰影讓兩層分得開。 */
-html[data-vt="back"]::view-transition-group(root) { animation-duration: var(--vt-back-ms, 460ms); }
+html[data-vt="back"]::view-transition-group(root) { animation-duration: var(--vt-back-ms, 560ms); }
 html[data-vt="back"]::view-transition-image-pair(root) { isolation: auto; }
 html[data-vt="back"]::view-transition-old(root),
-html[data-vt="back"]::view-transition-new(root) { mix-blend-mode: normal; animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1); animation-duration: var(--vt-back-ms, 460ms); animation-fill-mode: both; }
+html[data-vt="back"]::view-transition-new(root) { mix-blend-mode: normal; animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1); animation-duration: var(--vt-back-ms, 560ms); animation-fill-mode: both; }
 html[data-vt="back"]::view-transition-old(root) { z-index: 2; animation-name: vtBackOld; box-shadow: -18px 0 40px rgba(0, 0, 0, 0.45); }
 html[data-vt="back"]::view-transition-new(root) { z-index: 1; animation-name: vtBackNew; }
 @keyframes vtBackOld { from { transform: translateX(0); } to { transform: translateX(100%); } }

@@ -28,9 +28,9 @@ export const MOTION_ITEMS: MotionItem[] = [
   { id: 'importUpgrade', group: '導入照片', label: '飛行中換成清楚的圖', where: '同上，飛的途中小縮圖換成大圖的淡入', def: 120, kind: 'fade', easing: 'ease-out' },
   { id: 'importLand', group: '導入照片', label: '落地後替身淡出', where: '同上，照片停在工具裡之後替身消失', def: 200, kind: 'fade', easing: 'ease-out' },
 
-  { id: 'pageBack', group: '換頁', label: '返回上一頁（往右滑走）', where: '任何工具按左上角返回、儲存畫面按「繼續編輯」（iOS 18 以後）', def: 460, kind: 'move', easing: IOS },
+  { id: 'pageBack', group: '換頁', label: '返回上一頁（往右滑走）', where: '任何工具按左上角返回、儲存畫面按「繼續編輯」（iOS 18 以後）', def: 560, kind: 'move', easing: IOS },
 
-  { id: 'camGalleryOpen', group: '相機相簿', label: '點開大圖', where: '相機 → 左下角相簿 → 點一張照片', def: 420, kind: 'scale', easing: IOS },
+  { id: 'camGalleryOpen', group: '相機相簿', label: '點開大圖', where: '相機 → 左下角相簿 → 點一張照片', def: 440, kind: 'scale', easing: IOS },
   { id: 'camGalleryOpenFade', group: '相機相簿', label: '大圖打開後替身淡出', where: '同上，照片放大到定位後', def: 220, kind: 'fade', easing: 'ease-out' },
   { id: 'camGalleryClose', group: '相機相簿', label: '下拉關閉（縮回格子）', where: '大圖往下拉超過一段距離後放開', def: 420, kind: 'scale', easing: IOS },
   { id: 'camGalleryBounce', group: '相機相簿', label: '下拉沒關閉時回彈', where: '大圖往下拉一點點就放開', def: 320, kind: 'move', easing: IOS },
