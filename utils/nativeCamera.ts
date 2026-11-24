@@ -67,24 +67,14 @@ export async function captureNative(o: {
   const wantOptical = o.zoom > 1.001 && o.baseZoom ? o.baseZoom * o.zoom : undefined;
   const shot = await cam.capture({ flash: o.flash, raw: o.raw, turns: o.turns ?? 0, opticalZoom: wantOptical });
   const cropZoom = wantOptical && shot.zoomApplied ? Math.max(1, wantOptical / shot.zoomApplied) : o.zoom;
-  /* 開 RAW：成品從 RAW 沖（我們的 RAW 引擎、原尺寸完整品質，先照畫面比例、小框裁好），存成 16 位元無損的中間檔，
-     再套濾鏡、特效 —— 不是從系統壓好的 HEIC 套。沖不出來才退回 HEIC */
-  let src = shot.path, fromRaw = '';
-  if (o.raw && shot.rawPath) {
-    const rd = await rawDev();
-    const cropLook: RawLook = { lut: '', amount: 0, aspect: o.aspect, zoom: cropZoom, fx: { soft: 0, blur: 0, lowfi: 0 }, date: null };
-    try { if (rd?.developFull) fromRaw = (await rd.developFull({ path: shot.rawPath, params: rawParams({ exposure: o.develop || 0, highlights: 0, shadows: 0 }), look: cropLook, format: 'tiff16' })).path; }
-    catch { fromRaw = ''; }
-    if (fromRaw) src = fromRaw;
-  }
+  /* 成品用 Apple 處理好的那張（同一次拍攝一起產生的，跟 iPhone 原相機的成品同一套成像：多張合成、Smart HDR、高光處理），
+     再用原生的浮點流程套濾鏡、特效 —— 跟觀景窗看到的一樣（觀景窗也是 Apple 的成像）。
+     不用我們自己的 RAW 引擎沖成品：成像跟 Apple 不同，自拍的亮部會跟預覽不一樣。RAW 檔照樣留著給編輯用 */
   const out = await img.render({
-    path: src, lut: o.lut || undefined, amount: o.amount ?? 1,
-    /* 從 RAW 沖的已經裁好了 */
-    aspect: fromRaw ? 0 : o.aspect, zoom: fromRaw ? 1 : cropZoom, fx: o.fx, kelvin: o.kelvin,
-    develop: fromRaw ? undefined : (o.develop || undefined), gps: shot.location || undefined,
+    path: shot.path, lut: o.lut || undefined, amount: o.amount ?? 1, aspect: o.aspect, zoom: cropZoom, fx: o.fx, kelvin: o.kelvin,
+    develop: o.develop || undefined, gps: shot.location || undefined,
     format: 'jpeg', quality: 0.95,
   });
-  if (fromRaw) img.remove({ path: fromRaw }).catch(() => {});
   /* 保留原始圖片（沒開 RAW）：系統拍的那張原圖留給呼叫端存相簿；不然就刪 */
   const originalPath = o.keepOriginal && !shot.rawPath ? shot.path : undefined;
   if (!originalPath) img.remove({ path: shot.path }).catch(() => {});
