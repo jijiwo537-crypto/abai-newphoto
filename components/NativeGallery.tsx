@@ -15,7 +15,7 @@ import {
 import { haptic } from '../utils/haptics';
 import { ImportSpinner } from './BusySpinner';
 import { setRawImportHint } from '../utils/importHint';
-import { beginImportHero, cancelImportHero, heroAllowed } from '../utils/importHero';
+import { beginImportHero, cancelImportHero, heroAllowed, beginToolEntrance, cancelToolEntrance } from '../utils/importHero';
 
 const PAGE = 150;
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
@@ -261,6 +261,10 @@ export const NativeGallery: React.FC<{
       const a = itemsRef.current.find(x => x.id === ids[0]);
       const thumb = cachedThumb(ids[0]);
       if (cell && thumb && a && !a.video) beginImportHero(hero, cell.getBoundingClientRect(), thumb, a.w && a.h ? a.w / a.h : undefined, async () => (await bigThumb(ids[0])) ?? await rawHeroThumb(ids[0]));
+    } else if (hero && ids.length === 1 && isRaw && heroAllowed()) {
+      /* 單張 RAW：沒有飛行過場，但工具介面一樣分層進場（照片沖好出現的那一刻開播） */
+      const a = itemsRef.current.find(x => x.id === ids[0]);
+      beginToolEntrance(hero, a && a.w && a.h ? a.w / a.h : undefined);
     }
     setExporting(true);
     try {
@@ -269,6 +273,7 @@ export const NativeGallery: React.FC<{
       close(files);
     } catch (e: any) {
       cancelImportHero();
+      cancelToolEntrance();
       setRawImportHint(false);
       exportingRef.current = false;
       setExporting(false);

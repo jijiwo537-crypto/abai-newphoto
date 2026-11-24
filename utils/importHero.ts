@@ -126,11 +126,15 @@ function hide(el: HTMLElement | null) {
 /* ── 工具介面的進場 ──
  * 照片由替身飛進來；工具的其他介面（上方標題列、下方工具列、分頁）不再一口氣冒出來，而是分層進場：
  *   上方的列：從上方 10px 輕輕落下＋淡入；下方的各列：由上而下依序從下方 26px 升起＋淡入，每列錯開 45ms。
- * 只用 transform／opacity（GPU 合成），動畫用 fill: backwards（開始前就套第一格、結束後完全移除），
+ * 只用獨立的 translate 屬性和 opacity（GPU 合成；不碰元素原本的 transform，例如置中用的 -50%），動畫用 fill: backwards（開始前就套第一格、結束後完全移除），
  * 播完之後元素身上沒有任何殘留的樣式，跟沒有動畫的版本 100% 一樣。
  * 照片本身（以及包著照片的那幾層）不動：用預期的照片框判斷哪一塊是照片，只動照片以外的介面。 */
 const ENTER_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
-let enterObs: MutationObserver | null = null, enterRoot: HTMLElement | null = null, enterT0 = 0;
+/* 進場的時機：工具頁一掛上來，介面就先停在動畫的第一格（看不見、暫停），
+ * 等照片真正就定位（替身交接、或 RAW 沖好顯示出來）的那一刻才一起開播 —— 使用者看得到的時候動畫才開始。
+ * 任何情況（取消、出錯、逾時）都一定開播（介面一定會出現），播完沒有殘留。 */
+let enterObs: MutationObserver | null = null, enterRoot: HTMLElement | null = null, enterE: R | null = null;
+let revealT = 0, revealed = true, pending: Animation[] = [], enterFailsafe = 0, enterStopT = 0, rawRaf = 0;
 const entered = new WeakSet<Element>();
 function chromeBlocks(root: HTMLElement, E: R): HTMLElement[] {
   const out: HTMLElement[] = [];
@@ -146,40 +150,99 @@ function chromeBlocks(root: HTMLElement, E: R): HTMLElement[] {
     }
   };
   walk(root, 0);
-  return out;
+  /* 下方的大面板（工具列＋分頁疊在一起）拆成裡面的每一列，各自錯開進場，層次才出得來 */
+  const res: HTMLElement[] = [];
+  for (const el of out) {
+    const r = el.getBoundingClientRect();
+    const kids = (Array.from(el.children) as HTMLElement[]).filter(k => { const q = k.getBoundingClientRect(); return q.width > 1 && q.height > 1; });
+    if (r.top > cy && r.height > 90 && kids.length >= 2 && kids.length <= 8) res.push(...kids); else res.push(el);
+  }
+  return res;
 }
-function runEnter(root: HTMLElement, E: R, late: boolean) {
+function runEnter(root: HTMLElement, E: R) {
   const blocks = chromeBlocks(root, E).filter(b => !entered.has(b));
   if (!blocks.length) return;
+  /* 開播之後過一陣子才長出來的：短短進場、不錯開；開播當下（0.35 秒內）工具換版面重新長出來的，照樣完整分層進場 */
+  const late = revealed && performance.now() - revealT > 350;
   const rects = blocks.map(b => b.getBoundingClientRect());
   const top: number[] = [], bottom: number[] = [];
   rects.forEach((r, i) => ((r.top + r.height / 2) < E.y ? top : bottom).push(i));
   bottom.sort((a, b) => rects[a].top - rects[b].top);
   const play = (el: HTMLElement, dy: number, delay: number, dur: number) => {
     entered.add(el);
-    el.animate([{ opacity: 0, transform: `translate3d(0, ${dy}px, 0)` }, { opacity: 1, transform: 'translate3d(0, 0, 0)' }],
+    const a = el.animate([{ opacity: 0, translate: `0 ${dy}px` }, { opacity: 1, translate: '0 0' }],
       { duration: dur, delay, easing: ENTER_EASE, fill: 'backwards' });
+    if (!revealed) { a.pause(); pending.push(a); }   // 暫停在第一格（fill backwards → 看不見），等開播
   };
-  /* 晚一點才出現的介面（工具載入中途才長出來的列）：直接短短淡入升起，不再錯開 */
-  top.forEach(i => play(blocks[i], -10, late ? 0 : 40, late ? 320 : 420));
-  bottom.forEach((i, n) => play(blocks[i], 26, late ? 0 : 90 + Math.min(n, 6) * 45, late ? 360 : 520));
+  /* 上方的列：從上方 14px 落下；下方各列：由上而下依序從下方 34px 升起，每列錯開 55ms */
+  top.forEach(i => play(blocks[i], late ? -8 : -14, late ? 0 : 0, late ? 320 : 480));
+  bottom.forEach((i, n) => play(blocks[i], late ? 20 : 34, late ? 0 : 70 + Math.min(n, 6) * 55, late ? 360 : 600));
 }
-function startEnter(E: R) {
+/** 開播：暫停在第一格的介面一起開始進場 */
+function revealEnter() {
+  if (revealed) return;
+  revealed = true; revealT = performance.now();
+  window.clearTimeout(enterFailsafe);
+  cancelAnimationFrame(rawRaf);
+  const list = pending; pending = [];
+  for (const a of list) { try { a.play(); } catch { /* 元素已經不在 */ } }
+  /* 開播後 0.8 秒內新長出來的介面也接著進場，之後就不再管 */
+  window.clearTimeout(enterStopT);
+  enterStopT = window.setTimeout(() => { enterObs?.disconnect(); enterObs = null; }, 800);
+}
+function startEnter(E: R, failsafeMs: number) {
   stopEnter();
+  revealed = false; enterE = E; enterRoot = null;
+  enterFailsafe = window.setTimeout(revealEnter, failsafeMs);
   const check = () => {
     const root = document.querySelector<HTMLElement>('.safe-top');
-    if (!root) return;
-    const now = performance.now();
-    if (root !== enterRoot) { enterRoot = root; enterT0 = now; runEnter(root, E, false); return; }
-    /* 進場開始後 1.2 秒內新長出來的介面也接著進場；之後就不再管，維持原樣 */
-    if (now - enterT0 < 1200) runEnter(root, E, true); else stopEnter();
+    if (!root || !enterE) return;
+    if (root !== enterRoot) enterRoot = root;
+    runEnter(root, enterE);
   };
-  /* MutationObserver 在 React 寫進畫面之後、瀏覽器畫出來之前就會跑：第一格就是動畫的起點，不會先閃一下完整介面 */
+  /* MutationObserver 在 React 寫進畫面之後、瀏覽器畫出來之前就會跑：介面第一次出現時就已經停在第一格，不會先閃一下 */
   enterObs = new MutationObserver(check);
   enterObs.observe(document.body, { childList: true, subtree: true });
   check();
 }
-function stopEnter() { enterObs?.disconnect(); enterObs = null; enterRoot = null; }
+function stopEnter() {
+  revealEnter();
+  window.clearTimeout(enterStopT);
+  enterObs?.disconnect(); enterObs = null; enterRoot = null; enterE = null;
+}
+
+/** 單張 RAW 導入（不播飛行過場）：介面一樣分層進場，時機是 RAW 沖好、照片出現在工具裡的那一刻 */
+export function beginToolEntrance(kind: string | undefined, aspect?: number) {
+  if (!heroAllowed() || ghost) return;
+  const a = aspect && isFinite(aspect) && aspect > 0 ? aspect : 1;
+  const E = predict(kind ?? 'edit', a);
+  startEnter(E, 15000);
+  let last: R | null = null, stable = 0;
+  const t0 = performance.now();
+  const step = () => {
+    if (revealed) return;
+    const root = document.querySelector<HTMLElement>('.safe-top');
+    let best: R | null = null, area = 0;
+    root?.querySelectorAll<HTMLElement>('img, canvas').forEach(el => {
+      if (el instanceof HTMLImageElement && (!el.complete || !el.naturalWidth)) return;
+      const r = contentRect(el);
+      const ar2 = r.width * r.height;
+      if (ar2 < E.w * E.h * 0.3 || ar2 <= area) return;
+      const st = getComputedStyle(el);
+      if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') return;
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!hit || !(hit === el || el.contains(hit) || (el.parentElement && el.parentElement.contains(hit)))) return;
+      area = ar2; best = { x: r.left, y: r.top, w: r.width, h: r.height };
+    });
+    const b = best as R | null;
+    if (b && last && Math.abs(b.x - last.x) < 0.5 && Math.abs(b.y - last.y) < 0.5 && Math.abs(b.w - last.w) < 0.5) stable++; else stable = 0;
+    last = b;
+    if (b && stable >= 6 && performance.now() - t0 > 200) { revealEnter(); return; }
+    rawRaf = requestAnimationFrame(step);
+  };
+  rawRaf = requestAnimationFrame(step);
+}
+export function cancelToolEntrance() { stopEnter(); }
 
 /** 終點（替身停在這裡等工具畫好） */
 let end: R | null = null;
@@ -193,7 +256,7 @@ export function beginImportHero(kind: string | undefined, rect: DOMRect, src: st
   const E = predict(kind ?? 'edit', ar);
   end = E;
   /* 現在已經有工具頁（不在主頁）不播：heroAllowed 已經擋掉，這裡只在主頁開始 */
-  startEnter(E);
+  startEnter(E, 13000);
   const g = document.createElement('div');
   g.setAttribute('data-import-hero', '');
   /* 替身本身就是終點的大小與位置；起點用 transform 把它縮回那一格、再裁成那一格的正方形 */
@@ -241,7 +304,7 @@ function watch(my: number) {
         else stable = 0;
         tr = n;
         /* 照片本人的位置連續約 0.3 秒都沒動：交接（兩張重疊，替身淡掉） */
-        if (stable >= 18 && now - t0 > motionMs('importFly')) { unhide(); finish(g, motionMs('importLand')); return; }
+        if (stable >= 18 && now - t0 > motionMs('importFly')) { unhide(); revealEnter(); finish(g, motionMs('importLand')); return; }
       }
     }
     if (now - t0 > 11000) { cancelImportHero(); return; }
