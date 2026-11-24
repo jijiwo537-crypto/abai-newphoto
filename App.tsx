@@ -637,6 +637,32 @@ const App: React.FC = () => {
   /* 回到主頁：導入過場的替身（掛在整個頁面上的那張照片）一定收掉。它只用在「從主頁飛進工具」，
      回到主頁代表這趟已經結束了 —— 不然還沒落地就返回時，它會蓋在主頁上最久 12 秒 */
   useEffect(() => { if (currentView === 'home') cancelImportHero(); }, [currentView]);
+  /* 開機預熱編輯器（見下面 data-prewarm）：只做一次 */
+  const [editorPrewarm, setEditorPrewarm] = useState<string | null>(null);
+  const prewarmDone = useRef(false);
+  const prewarmNoop = useCallback((..._a: unknown[]) => {}, []);
+  useEffect(() => {
+    if (prewarmDone.current || currentView !== 'home') { if (currentView !== 'home') setEditorPrewarm(null); return; }
+    let t2 = 0;
+    const t = window.setTimeout(() => {
+      const go = () => {
+        if (prewarmDone.current || currentViewRef.current !== 'home') return;
+        prewarmDone.current = true;
+        /* 一張 120×160 的漸層小圖（夠走完整條流程，記憶體可忽略） */
+        const c = document.createElement('canvas'); c.width = 120; c.height = 160;
+        const g = c.getContext('2d')!; const gr = g.createLinearGradient(0, 0, 120, 160);
+        gr.addColorStop(0, '#6b8fb5'); gr.addColorStop(0.5, '#d9b38c'); gr.addColorStop(1, '#3a4a3f');
+        g.fillStyle = gr; g.fillRect(0, 0, 120, 160);
+        setEditorPrewarm(c.toDataURL('image/jpeg', 0.9));
+        t2 = window.setTimeout(() => setEditorPrewarm(null), 2600);
+      };
+      const ric = (window as any).requestIdleCallback as undefined | ((cb: () => void, o?: { timeout: number }) => void);
+      if (ric) ric(go, { timeout: 2500 }); else go();
+    }, 3500);
+    return () => { window.clearTimeout(t); };
+    // t2 不在離開時清：預熱一旦開始就讓它自己在 2.6 秒後收掉；離開主頁時上面會立刻收
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentView]);
   /* 記憶體快不夠（App 版由系統通知）或切到背景時，先把可以重建的快取放掉，降低被系統關掉的機會 */
   useEffect(() => watchMemoryPressure(), []);
   useEffect(() => {
@@ -891,6 +917,16 @@ const App: React.FC = () => {
         />
       )}
 
+      {/* 開機預熱：主頁閒下來後，在看不見的地方用一張小圖把編輯器完整打開一次（約 2.5 秒）再關掉。
+          第一次打開編輯器要做的準備（程式第一次執行的編譯、GPU 繪圖程式、濾鏡表格、背景的人像／仿色）
+          都在這時候先做完 —— 使用者第一次真正導入時就跟第二次一樣快，不會「剛開始卡、之後不卡」。
+          離開主頁（點任何工具）的那一刻立刻收掉，不會跟真正的編輯器同時存在 */}
+      {editorPrewarm && currentView === 'home' && (
+        <div data-prewarm aria-hidden style={{ position: 'fixed', left: 0, top: 0, width: '100vw', height: '100dvh', transform: 'translate3d(-300vw,0,0)', opacity: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: -1, contain: 'strict' }}>
+          <ImageEditor compactBottomBar fullTabs imageSrc={editorPrewarm} lutList={LUT_LIST}
+            onSave={prewarmNoop} onCancel={prewarmNoop} onHome={prewarmNoop} onRequestExit={prewarmNoop} onImportNew={prewarmNoop} />
+        </div>
+      )}
       {currentView === 'editor' && editorImage && (
         <ImageEditor 
           key={editorKey}

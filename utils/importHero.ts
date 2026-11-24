@@ -30,7 +30,9 @@ let failsafe = 0;
 let landing = false;
 
 /** 這次導入要不要播：在主頁（沒有工具頁）才播 */
-export const heroAllowed = () => !document.querySelector('.safe-top');
+/** 畫面上真正的工具頁（不算開機時在看不見的地方預熱用的那一份，見 App 的 data-prewarm） */
+const toolRoot = (): HTMLElement | null => Array.from(document.querySelectorAll<HTMLElement>('.safe-top')).find(e => !e.closest('[data-prewarm]')) ?? null;
+export const heroAllowed = () => !toolRoot();
 
 function safeInsets() {
   const d = document.createElement('div');
@@ -305,10 +307,19 @@ function runEnter(root: HTMLElement, E: R) {
     const b = blocks[i], d = late ? 0 : 60 + Math.min(n, 6) * 55;
     play(b, late ? 20 : 30, d, late ? 360 : 600);
     n++;
+    /* 面板裡的每一列：列本身（連底色）跟面板一起整塊升上來，不再各自多位移 ——
+       之前各列晚一步到位，列與列之間會露出面板自己的底色（例如滑桿列的灰色）。
+       層次改由「列裡面的內容」錯開淡入：按鈕、文字一列一列由上而下浮出來，列的底色始終完整 */
     if (b.kids && !late) b.kids.forEach((k, m) => {
       entered.add(k);
-      const t = baseTransform(k);
-      anim(k, [{ transform: `translate3d(0, 18px, 0)${t ? ' ' + t : ''}` }, { transform: t || 'translate3d(0, 0, 0)' }], d + 50 + Math.min(m, 6) * 55, 560);
+      for (const c of Array.from(k.children) as HTMLElement[]) {
+        if (hasBackdrop(c) || c.querySelector('[class*="backdrop-"],[style*="backdrop"]')) continue;
+        const co = shownOpacity(c);
+        if (co <= 0) continue;
+        entered.add(c);
+        const t = baseTransform(c);
+        anim(c, [{ opacity: 0, transform: `translate3d(0, 10px, 0)${t ? ' ' + t : ''}` }, { opacity: co, transform: t || 'translate3d(0, 0, 0)' }], d + 60 + Math.min(m, 6) * 55, 480);
+      }
     });
   }
   /* 照片上的按鈕：照片落定後，由上而下、由左而右依序浮上來 */
@@ -341,7 +352,7 @@ function startEnter(E: R, failsafeMs: number) {
   revealed = false; landed = false; enterE = E; enterRoot = null; leadReveal = null; leadLand = null;
   enterFailsafe = window.setTimeout(revealEnter, failsafeMs);
   const check = () => {
-    const root = document.querySelector<HTMLElement>('.safe-top');
+    const root = toolRoot();
     if (!root || !enterE) return;
     if (root !== enterRoot) enterRoot = root;
     runEnter(root, enterE);
@@ -371,7 +382,7 @@ export function beginToolEntrance(kind: string | undefined, aspect?: number) {
   const t0 = performance.now();
   const step = () => {
     if (revealed) return;
-    const root = document.querySelector<HTMLElement>('.safe-top');
+    const root = toolRoot();
     let best: R | null = null, area = 0;
     root?.querySelectorAll<HTMLElement>('img, canvas').forEach(el => {
       if (el instanceof HTMLImageElement && (!el.complete || !el.naturalWidth)) return;
@@ -443,7 +454,7 @@ function watch(my: number) {
     /* 開播的時機挑「主執行緒剛好有空」的那一刻：連續 3 格的間隔都正常（沒有被工具初始化卡住），
        動畫才在順暢的時候交給 GPU 起跑；工具還在忙（整格整格掉）就再等一下，最晚到照片交接那一刻一定開播 */
     calm = lastNow && now - lastNow < 22 ? calm + 1 : 0; lastNow = now;
-    if (!revealed && calm >= 3 && now - t0 > motionMs('importFly') * 0.7 && document.querySelector('.safe-top')) revealEnter();
+    if (!revealed && calm >= 3 && now - t0 > motionMs('importFly') * 0.7 && toolRoot()) revealEnter();
     if (landing) {
       if (target && !target.isConnected) { target = null; hide(null); }
       /* 每一格都找（新的照片元素一出現當格就藏起來，不會在替身底下閃一下）；
