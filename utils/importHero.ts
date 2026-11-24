@@ -269,7 +269,11 @@ function runEnter(root: HTMLElement, E: R) {
     entered.add(el);
     const t = baseTransform(el);
     const from = `translate3d(0, ${dy}px, 0)${t ? ' ' + t : ''}`, to = t || 'translate3d(0, 0, 0)';
-    if (hasBackdrop(el)) {
+    /* 只有「疊在照片上」的毛玻璃需要材質淡入（後面是照片，透明度動畫期間取不到照片、材質會跳）。
+       其他毛玻璃（例如編輯頁的標題列，後面是黑底）用一般的透明度＋位移：看起來一樣，而且整段交給 GPU。
+       材質淡入的模糊、底色、文字顏色沒辦法交給 GPU、每一格都要主執行緒重畫 ——
+       之前整條全寬的標題列也走這條，編輯器初始化最忙的時候每一格重畫一次，就是編輯頁最卡的原因 */
+    if (hasBackdrop(el) && after) {
       /* 毛玻璃：不能對它（或它的上層）做透明度動畫 —— 透明度小於 1 的期間，瀏覽器規定毛玻璃只能取「這一層裡面」的畫面，
          取不到後面的照片，材質就跟停好後不同，動畫結束那一刻才跳回來。
          改成直接讓「材質本身」淡入：模糊從 0 長到原本的強度、底色與文字從透明到原本的顏色，加上同樣的位移。
@@ -278,9 +282,11 @@ function runEnter(root: HTMLElement, E: R) {
       const bf = st.backdropFilter && st.backdropFilter !== 'none' ? st.backdropFilter : (st.webkitBackdropFilter || 'none');
       const zero = bf.replace(/blur\([^)]*\)/g, 'blur(0px)').replace(/saturate\([^)]*\)/g, 'saturate(1)');
       const clear = (c: string) => c.replace(/rgba?\(([^,]+),([^,]+),([^,)]+)(,[^)]*)?\)/, 'rgba($1,$2,$3,0)');
+      /* 位移與材質分成兩段：位移那段整段交給 GPU，材質那段（只有小按鈕）才由主執行緒畫 */
+      anim(el, [{ transform: from }, { transform: to }], delay, dur, after);
       anim(el, [
-        { transform: from, backdropFilter: zero, webkitBackdropFilter: zero, backgroundColor: clear(st.backgroundColor), color: clear(st.color), borderColor: clear(st.borderColor) } as Keyframe,
-        { transform: to, backdropFilter: bf, webkitBackdropFilter: bf, backgroundColor: st.backgroundColor, color: st.color, borderColor: st.borderColor } as Keyframe,
+        { backdropFilter: zero, webkitBackdropFilter: zero, backgroundColor: clear(st.backgroundColor), color: clear(st.color), borderColor: clear(st.borderColor) } as Keyframe,
+        { backdropFilter: bf, webkitBackdropFilter: bf, backgroundColor: st.backgroundColor, color: st.color, borderColor: st.borderColor } as Keyframe,
       ], delay, dur, after);
       /* 裡面的圖示、文字（自己有顏色的）跟著淡入：子層的透明度不影響外層毛玻璃取背景 */
       for (const k of Array.from(el.children) as HTMLElement[]) {
