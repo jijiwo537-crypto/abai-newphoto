@@ -63,7 +63,8 @@ struct ABAIRawParams: Equatable {
     }
     /// RAW 那一步（①）用到的參數；變了才要重新解 RAW
     /// 白平衡不在 RAW 那一步做（見 ④' 白平衡），改色溫、色調不用重新解 RAW
-    var rawKey: String { "\(exposure)|\(sharpen)|\(lumaNR)|\(colorNR)" }
+    /// 曝光也不在 RAW 那一步做（在線性、保留亮部的資料上直接乘，見 finish）：改曝光、白平衡都不用重新解 RAW，拖起來即時
+    var rawKey: String { "\(sharpen)|\(lumaNR)|\(colorNR)" }
 }
 
 /// RAW 引擎針對這台相機的細節預設值（滑桿的 0）
@@ -100,7 +101,7 @@ enum ABAIRawDevelop {
     }
 
     static func applyRaw(_ f: CIRAWFilter, _ p: ABAIRawParams, defaults d: ABAIRawDefaults) -> CIImage? {
-        f.exposure = Float(p.exposure)
+        f.exposure = 0   // 曝光在 finish 裡乘（資料保留到 EDR 上限，往回拉一樣救得回亮部）
         /* 白平衡一律照拍攝當下解（RAW 引擎改色溫會連亮度一起動）；使用者調的色溫、色調在 whiteBalance() 做，只改顏色 */
         if f.isSharpnessSupported { f.sharpnessAmount = around(d.sharp, p.sharpen) }
         if f.isLuminanceNoiseReductionSupported { f.luminanceNoiseReductionAmount = around(d.luma, p.lumaNR) }
@@ -168,6 +169,16 @@ enum ABAIRawDevelop {
         return vec4(o, s.a);
     }
     """)
+    /// 三個通道一起乘（曝光：線性光乘 2 的 EV 次方）
+    static func gain(_ img: CIImage, _ g: Double) -> CIImage {
+        guard abs(g - 1) > 0.0005, g.isFinite else { return img }
+        let v = CGFloat(g)
+        return img.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: v, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: v, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: v, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+        ])
+    }
+
     static func whiteBalance(_ img: CIImage, _ m: simd_double3x3?) -> CIImage {
         guard let m = m, let k = wbKernel else { return img }
         func row(_ i: Int) -> CIVector { CIVector(x: CGFloat(m[0][i]), y: CGFloat(m[1][i]), z: CGFloat(m[2][i])) }
@@ -198,12 +209,13 @@ enum ABAIRawDevelop {
     // MARK: ③ 光線
 
     private static let toneKernel = CIColorKernel(source: """
-    kernel vec4 abaiRawTone(__sample s, __sample b, float contrast, float highlights, float shadows, float whites, float blacks, float clarity) {
+    kernel vec4 abaiRawTone(__sample s, __sample b, float expo, float contrast, float highlights, float shadows, float whites, float blacks, float clarity) {
         vec3 c = max(s.rgb, vec3(0.0));
         float Y = max(dot(c, vec3(0.2289746, 0.6917385, 0.0792869)), 1.0e-5);
         float e = log2(Y / 0.18);
         /* 底圖跟像素的差距限制在 ±1.5 EV：亮暗交界處不會被對面那一側拖著走（光暈） */
-        float base = e + clamp(b.r - e, -1.5, 1.5);
+        /* 底圖是曝光前算的：加上曝光才跟這個像素同一個基準 */
+        float base = e + clamp((b.r + expo) - e, -1.5, 1.5);
         float detail = e - base;
         float e2 = e * (1.0 + contrast * 0.6);
         float hw = smoothstep(-1.0, 2.5, base);
@@ -307,9 +319,9 @@ enum ABAIRawDevelop {
     /// 從 RAW 解出來的線性圖（①之後）＋底圖（②）往下做 ③～⑥
     static func finish(_ linear: CIImage, base: CIImage, _ p: ABAIRawParams, asShot: (Double, Double)) -> CIImage {
         let e = linear.extent
-        var img = whiteBalance(linear, wbMatrix(p, asShot: asShot))
+        var img = whiteBalance(gain(linear, pow(2, p.exposure)), wbMatrix(p, asShot: asShot))
         if let k = toneKernel {
-            img = k.apply(extent: e, arguments: [img, base, p.contrast, p.highlights, p.shadows, p.whites, p.blacks, p.clarity]) ?? img
+            img = k.apply(extent: e, arguments: [img, base, p.exposure, p.contrast, p.highlights, p.shadows, p.whites, p.blacks, p.clarity]) ?? img
         }
         let hslOn = p.hsl.contains(where: { abs($0) > 0.001 })
         if hslOn || abs(p.vibrance) > 0.001 || abs(p.saturation) > 0.001, let k = colorKernel {
@@ -372,7 +384,8 @@ enum ABAIRawDevelop {
 final class ABAIRawSession {
     let url: URL
     let look: [String: Any]?
-    let view: ABAIMetalView
+    /// 即時預覽的畫面；一般編輯用的（只要出圖，不顯示）是 nil
+    let view: ABAIMetalView?
     private let queue = DispatchQueue(label: "abai.raw.session", qos: .userInteractive)
     private var filter: CIRAWFilter?
     private let defaults: ABAIRawDefaults
@@ -387,7 +400,7 @@ final class ABAIRawSession {
     private(set) var asShotTemperature: Double = 5500
     private(set) var asShotTint: Double = 0
 
-    init?(url: URL, look: [String: Any]?, view: ABAIMetalView, longSide: CGFloat) {
+    init?(url: URL, look: [String: Any]?, view: ABAIMetalView?, longSide: CGFloat) {
         self.url = url; self.look = look; self.view = view; self.longSide = longSide
         guard let f = ABAIRawDevelop.rawFilter(url, longSide: longSide, draft: true) else { return nil }
         filter = f
@@ -435,9 +448,30 @@ final class ABAIRawSession {
                 else if !final && !proxyDraft && p.rawKey != proxyKey { filter = ABAIRawDevelop.rawFilter(url, longSide: longSide, draft: true) ?? filter; proxyDraft = true }
                 rebuild(p)
             }
-            if let img = render(p) { DispatchQueue.main.async { self.view.source = img } }
+            if let img = render(p), let v = view { DispatchQueue.main.async { v.source = img } }
         }
         queue.async { self.drain() }
+    }
+
+    /// 一般編輯用：沖一張預覽大小（建立時的 longSide）的 JPEG。final＝完整品質（放手時），不然用快速模式（拖的時候）
+    func previewJPEG(_ p: ABAIRawParams, final: Bool, maxSide: CGFloat = 0) throws -> URL {
+        try queue.sync {
+            try autoreleasepool {
+                if final && proxyDraft { filter = ABAIRawDevelop.rawFilter(url, longSide: longSide, draft: false) ?? filter; proxyDraft = false; proxy = nil }
+                if proxy == nil || p.rawKey != proxyKey { rebuild(p) }
+                guard var img = render(p) else { throw ABAIImageCore.CoreError.decode }
+                /* 拖的時候出小一點的（算得快、傳得快），放手再出完整大小的 */
+                let e = img.extent, long = max(e.width, e.height)
+                if maxSide > 0, long > maxSide {
+                    let k = maxSide / long
+                    img = img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY)).transformed(by: CGAffineTransform(scaleX: k, y: k))
+                }
+                let data = try ABAIImageCore.encode(ABAIImageCore.dither(img), format: .jpeg, quality: final ? 0.95 : 0.88)
+                let out = ABAIImageCore.newFileURL(ext: "jpg")
+                try data.write(to: out)
+                return out
+            }
+        }
     }
 
     /// 原尺寸、完整品質輸出成 JPEG（含拍照當下的濾鏡、特效、裁切、日期）

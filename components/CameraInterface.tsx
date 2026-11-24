@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { isNative } from '../utils/native';
-import { nativeCamera, captureNative, lutFileName, RAW_PROTECT_EV, stampDateOnto, type RawLook } from '../utils/nativeCamera';
+import { nativeCamera, captureNative, lutFileName, RAW_PROTECT_EV, stampDateOnto, rawDevelopPreview, type RawLook } from '../utils/nativeCamera';
 import { lutMaxAmount, lutDefaultAmount } from '../utils/photoFx';
 import { haptic, dialHaptic } from '../utils/haptics';
 import { nativePhotos } from '../utils/nativePhotos';
@@ -13,7 +13,6 @@ import { GalleryOverlay } from './GalleryOverlay';
 import { usePhotoThumbs, thumbFromCanvas } from '../utils/photoThumbs';
 import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
 import { ImageEditor, DEFAULT_PARAMS } from './ImageEditor';
-import { RawDevelopSheet } from './RawDevelopSheet';
 import { createPortal } from 'react-dom';
 import { slideBack } from '../utils/pageTransition';
 import { fileSrc, nativePathOf, rememberNativePath } from '../utils/nativeBridge';
@@ -511,7 +510,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [galleryLeaving, setGalleryLeaving] = useState(false);
   useEffect(() => { if (!showGallery) setGalleryLeaving(false); }, [showGallery]);
   const galleryCover = showGallery && !galleryLeaving;
-  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[]; /** 存檔時要重新印上的日期 */ date?: string; /** 從 RAW 沖洗接過來：直接出現在原位，不再從下面滑上來 */ instant?: boolean } | null>(null);
+  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[]; /** 存檔時要重新印上的日期 */ date?: string; /** 從 RAW 沖洗接過來：直接出現在原位，不再從下面滑上來 */ instant?: boolean; /** 這張有 RAW：一般編輯直接在 RAW 上調 */ raw?: { path: string; protectEV: number; look: RawLook | null } } | null>(null);
   const [editorEntered, setEditorEntered] = useState(false);
   const [editorLeaving, setEditorLeaving] = useState(false);
   const editorExitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1418,24 +1417,42 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     return { w: targetW, h: targetH, mb: Math.max(0, (h32 - targetH) / 2) };
   };
 
-  /* 開編輯：有 RAW 的那幾張從 RAW 沖一張出來編（不是用已經套好濾鏡、壓成 JPEG 的成品）。
-     沖不出來（沒有原生解碼）就照舊編成品 */
-  const developedUrlRef = useRef<string | null>(null);
-  /** 正在重新沖洗哪一張（底片模式拍的 RAW）。沖好才進編輯 */
-  const [developing, setDeveloping] = useState<{ src: string; idx: number; pro?: boolean } | null>(null);
-  const [rawLeaving, setRawLeaving] = useState(false);
-  const rawExitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (rawExitTimer.current) clearTimeout(rawExitTimer.current); }, []);
-  const closeRawDevelop = () => {
-    if (rawLeaving) return;
-    setRawLeaving(true);
-    rawExitTimer.current = setTimeout(() => { setDeveloping(null); setRawLeaving(false); }, 400);
+  /* 開編輯：有 RAW 的那幾張，底圖是從 RAW 沖出來的（不是已經壓成 JPEG 的成品），曝光、白平衡、高光、陰影都在 RAW 上調。
+     沖底圖要一點時間：在大圖頁看到 RAW 照片時就先在背景沖好（prepRaw），點「編輯」時通常已經好了 */
+  const rawPrepRef = useRef(new Map<string, Promise<string | null>>());
+  const rawInfoOf = (src: string) => {
+    const r = rawOfRef.current.get(src);
+    /* 日期不在 RAW 這裡印：存檔時才印（stampDate） */
+    return r ? { path: r.path, protectEV: r.protectEV, look: { ...r.look, date: null } as RawLook } : null;
   };
-  /** pro：專業編輯（全部分頁：模板、人像、仿色…）；RAW 都先沖洗 */
-  const openEditor = (src: string, idx: number, pro = false) => {
-    /* 只有 RAW 鈕（pro）才進 RAW 沖洗；中間的編輯鈕一律直接進編輯（用拍好的那張 JPEG） */
-    if (pro && rawOfRef.current.has(src)) { setDeveloping({ src, idx, pro }); return; }
+  const prepRaw = (src: string) => {
+    const r = rawInfoOf(src);
+    if (!r) return null;
+    let p = rawPrepRef.current.get(src);
+    if (!p) {
+      p = rawDevelopPreview(r.path, { exposure: r.protectEV, highlights: 0, shadows: 0 }, r.look, 2048, true).then(x => x?.url ?? null);
+      rawPrepRef.current.set(src, p);
+      void p.then(u => { if (!u) rawPrepRef.current.delete(src); });   // 沒沖出來：下次再試
+    }
+    return p;
+  };
+  const openingRef = useRef(false);
+  const openEditor = async (src: string, idx: number, pro = false) => {
+    if (openingRef.current) return;
     const d = dateOfRef.current.get(src);
+    const r = rawInfoOf(src);
+    if (r) {
+      openingRef.current = true;
+      try {
+        const url = await prepRaw(src);
+        if (url) {
+          setEditingPhoto({ src: url, index: idx, init: null, pro, date: d?.date, raw: r });
+          setEditorId(prev => prev + 1);
+          return;
+        }
+      } finally { openingRef.current = false; }
+    }
+    /* 一般照片（或 RAW 沖不出來）：編拍好的那張；有日期的編沒印日期的那張 */
     setEditingPhoto({ src: d?.clean ?? src, index: idx, init: null, pro, date: d?.date });
     setEditorId(prev => prev + 1);
   };
@@ -1447,22 +1464,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     setEditingPhoto({ src: srcs[0], index: indices[0], init: null, batch: srcs });
     setEditorId(prev => prev + 1);
   };
-  /* 沖好了：沖出來的那張已經套好拍照時的濾鏡、特效、裁切、日期，直接進編輯 */
-  const finishDevelop = (url: string) => {
-    const d = developing; if (!d) { URL.revokeObjectURL(url); return; }
-    if (developedUrlRef.current) URL.revokeObjectURL(developedUrlRef.current);
-    developedUrlRef.current = url;
-    setDeveloping(null);
-    const date = rawOfRef.current.get(d.src)?.look.date || dateOfRef.current.get(d.src)?.date || undefined;
-    setEditingPhoto({ src: url, index: d.idx, init: null, pro: d.pro, instant: true, date });
-    setEditorId(prev => prev + 1);
-  };
-  useEffect(() => {
-    if (editingPhoto || !developedUrlRef.current) return;
-    URL.revokeObjectURL(developedUrlRef.current);
-    developedUrlRef.current = null;
-  }, [editingPhoto]);
-
   /* 離開相機回主頁：整頁往右滑走（見 utils/pageTransition）。
      原生相機的畫面在網頁底下、是挖空透出來的，整頁拍快照時那一塊會是空的 ——
      先跟原生拿觀景窗現在這一格，用一張圖蓋住觀景窗，再滑走：看起來就是相機畫面定格、跟著整頁一起滑出去 */
@@ -2084,7 +2085,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           onClose={() => setShowGallery(false)}
           onCloseStart={() => { setGalleryLeaving(true); if (proModeRef.current) void nativeCamera().then(c => c?.setPreviewHidden?.({ hidden: false })).catch(() => {}); }} 
           rawShots={rawShots}
-          suspended={!!editingPhoto || !!developing}
+          suspended={!!editingPhoto}
           onDelete={(indices) => setPhotos(prev => {
             const del = new Set(indices);
             prev.forEach((u, i) => {
@@ -2097,24 +2098,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             return prev.filter((_, i) => !del.has(i));
           })}
           onEdit={(src, idx) => openEditor(src, idx)}
-          onProEdit={(src, idx) => openEditor(src, idx, true)}
+          onViewing={src => { void prepRaw(src); }}
           onEditMany={openEditMany}
           favorites={favorites}
           onFavorite={(srcs, on) => setFavorites(prev => { const n = new Set(prev); srcs.forEach(s => on ? n.add(s) : n.delete(s)); return n; })}
           labelOf={src => labelsRef.current.get(src) ?? null}
         />
-      )}
-
-      {developing && rawOfRef.current.get(developing.src) && createPortal(
-        <RawDevelopSheet
-          rawPath={rawOfRef.current.get(developing.src)!.path}
-          previewSrc={developing.src}
-          leaving={rawLeaving}
-          protectEV={rawOfRef.current.get(developing.src)!.protectEV}
-          look={{ ...rawOfRef.current.get(developing.src)!.look, date: null }}
-          onCancel={closeRawDevelop}
-          onDone={finishDevelop}
-        />, document.body
       )}
 
       {editingPhoto && createPortal(
@@ -2125,6 +2114,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           batchSrcs={editingPhoto.batch}
           key={editorId}
           imageSrc={editingPhoto.src}
+          raw={editingPhoto.raw ?? null}
+          stampDate={editingPhoto.date}
           initialState={editingPhoto.init ?? null}
           lutList={lutList}
           onSave={handleSaveEdit}

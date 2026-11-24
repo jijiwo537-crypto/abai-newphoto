@@ -30,7 +30,6 @@ interface GalleryOverlayProps {
   /** 編輯（相機的編輯；RAW 會先沖洗） */
   onEdit: (src: string, index: number) => void;
   /** 專業編輯（全部分頁：模板、人像、仿色…） */
-  onProEdit?: (src: string, index: number) => void;
   /** 一次編輯好幾張 */
   onEditMany?: (indices: number[]) => void;
   /** 有 RAW 的那幾張（角落標一個 RAW） */
@@ -40,6 +39,8 @@ interface GalleryOverlayProps {
   favorites?: Set<string>;
   /** 把這幾張設成（取消）愛心 */
   onFavorite?: (srcs: string[], on: boolean) => void;
+  /** 大圖正在看哪一張（RAW 照片：相機先在背景沖好編輯用的底圖） */
+  onViewing?: (src: string) => void;
   /** 大圖右上的標籤（例如拍照時用的濾鏡「F3」） */
   labelOf?: (src: string) => string | null;
 }
@@ -48,14 +49,6 @@ interface GalleryOverlayProps {
 const BACK_CIRCLE = 54;
 /** 大圖下面的圓鈕、膠囊高度 */
 const CIRCLE = 49;
-
-/** RAW 沖洗圖示：光圈（App 裡用同造型的 SF Symbol「camera.aperture」，跟旁邊的調整、愛心同一套線條粗細與大小） */
-const RawEditIcon: React.FC<{ size?: number }> = ({ size = 21 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <circle cx="12" cy="12" r="9" />
-    <path d="M14.3 3.3 9.6 11.4M20.6 9.6l-9.4.1M18.4 18.1l-4.7-8.1M9.7 20.7l4.7-8.1M3.4 14.4l9.4-.1M5.6 5.9l4.7 8.1" />
-  </svg>
-);
 
 /* 選取的樣子跟其他功能導入照片（NativeGallery）一樣：照片縮小、白框、右上角照點的順序標號碼 */
 const SEL_CSS = `
@@ -68,7 +61,7 @@ const SEL_CSS = `
 `;
 
 export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
-  photos, thumbs = {}, onClose, onCloseStart, onDelete, onEdit, onProEdit, onEditMany, rawShots, suspended = false, favorites, onFavorite, labelOf,
+  photos, thumbs = {}, onClose, onCloseStart, onDelete, onEdit, onEditMany, rawShots, suspended = false, favorites, onFavorite, labelOf, onViewing,
 }) => {
   /* 畫面上的順序：舊的在上、新的在下（photos 本身是新→舊） */
   const shown = useMemo(() => [...photos].reverse(), [photos]);
@@ -279,7 +272,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
           favorites={favorites}
           labelOf={labelOf}
           onShare={i => void share([i])}
-          onProEdit={i => (onProEdit ?? onEdit)(shown[i], orig(i))}
+          onViewing={i => onViewing?.(shown[i])}
           onEdit={i => onEdit(shown[i], orig(i))}
           onFavorite={i => toggleFav([i])}
           onDelete={i => remove([i])}
@@ -302,9 +295,9 @@ const PhotoViewer: React.FC<{
   /** 相簿裡這一張的格子（飛回去的目標） */
   cellOf: (i: number) => HTMLElement | null;
   favorites?: Set<string>; labelOf?: (src: string) => string | null;
-  onShare: (i: number) => void; onProEdit: (i: number) => void; onEdit: (i: number) => void;
+  onShare: (i: number) => void; onViewing: (i: number) => void; onEdit: (i: number) => void;
   onFavorite: (i: number) => void; onDelete: (i: number) => void;
-}> = ({ photos, thumbs, index, closing, suspended = false, rawShots, onIndex, onClose, onDismissed, cellOf, favorites, labelOf, onShare, onProEdit, onEdit, onFavorite, onDelete }) => {
+}> = ({ photos, thumbs, index, closing, suspended = false, rawShots, onIndex, onClose, onDismissed, cellOf, favorites, labelOf, onShare, onViewing, onEdit, onFavorite, onDelete }) => {
   const pager = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const bg = useRef<HTMLDivElement>(null);
@@ -453,7 +446,9 @@ const PhotoViewer: React.FC<{
     if (i !== index && i >= 0 && i < photos.length) onIndex(i);
   };
   const src = photos[index];
-  const isRaw = !!rawShots?.has(src);
+  /* RAW 照片不再有另外一顆 RAW 鈕：一般編輯就直接在 RAW 上調。看到這一張時請相機先在背景沖好底圖 */
+  const isRaw = false;
+  useEffect(() => { if (rawShots?.has(src)) onViewing(index); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [src]);
   const fav = !!favorites?.has(src);
   const label = labelOf?.(src) ?? null;
   /* 看大圖時收起狀態列；進編輯（suspended）、關掉時放回來 */
@@ -463,14 +458,12 @@ const PhotoViewer: React.FC<{
   const glass = useNativeGlass('camera-viewer', !closing && !suspended && !dragging && !opening, () => [
     { kind: 'circle', id: 'share', symbol: 'square.and.arrow.up', pointSize: 21, el: shareRef.current },
     { kind: 'capsule', el: midRef.current, pad: 0, buttons: [
-      ...(isRaw ? [{ id: 'pro', symbol: 'camera.aperture', pointSize: 21 }] : []),
       { id: 'edit', symbol: 'slider.horizontal.3', pointSize: 21 },
       { id: 'fav', symbol: fav ? 'heart.fill' : 'heart', tint: 'white', pointSize: 21 },
     ] },
     { kind: 'circle', id: 'delete', symbol: 'trash', pointSize: 21, el: delRef.current },
   ], id => {
     if (id === 'share') onShare(index);
-    else if (id === 'pro') onProEdit(index);
     else if (id === 'edit') onEdit(index);
     else if (id === 'fav') onFavorite(index);
     else if (id === 'delete') onDelete(index);
@@ -535,7 +528,6 @@ const PhotoViewer: React.FC<{
           <Icon name="ios_share" className="text-[23px] text-white" />
         </button>
         <div ref={midRef} className={`h-full ${isRaw ? 'w-[166px]' : 'w-[118px]'} rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-around px-0 ${hideWeb}`}>
-          {isRaw && <button aria-label="RAW 沖洗" onClick={() => onProEdit(index)} className="w-10 h-10 flex items-center justify-center text-white active:opacity-65"><RawEditIcon size={25} /></button>}
           <button aria-label="編輯" onClick={() => onEdit(index)} className="w-10 h-10 flex items-center justify-center active:opacity-65"><Icon name="tune" className="text-[23px] text-white" /></button>
           <button aria-label="愛心" onClick={() => onFavorite(index)} className="w-10 h-10 flex items-center justify-center active:opacity-65"><Icon name={fav ? 'favorite' : 'favorite_border'} className="text-[23px] text-white" /></button>
         </div>

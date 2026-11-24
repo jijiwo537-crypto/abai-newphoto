@@ -508,19 +508,5 @@ html[data-vt="back"]::view-transition-new(root) { z-index: 1; animation-name: vt
 /* 粗軌道就是看得見的那一條：不往外多伸 7px（軌道要剛好對齊欄寬），垂直置中 */
 .slider-wrap > input.raw-slider { height: 34px; margin: -17px 0 0 0; left: 0; width: 100%; }
 
-/* RAW 沖洗（新版）：細軌道由外層畫，輸入本身只留一顆白色圓形把手 */
-.raw2-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 30px; background: transparent; outline: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
-.raw2-slider::-webkit-slider-runnable-track { height: 30px; background: transparent; }
-.raw2-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: 5px; border: none; border-radius: 50%; background: #fff;
-  box-shadow: 0 1px 5px rgba(0,0,0,0.5); transition: transform 140ms cubic-bezier(0.2,0.8,0.2,1); }
-.raw2-slider:active::-webkit-slider-thumb { transform: scale(1.15); }
-.raw2-slider::-moz-range-track { height: 30px; background: transparent; }
-.raw2-slider::-moz-range-thumb { width: 20px; height: 20px; border: 0; border-radius: 50%; background: #fff; }
-.slider-wrap > input.raw2-slider { height: 30px; margin: -15px 0 0 0; left: -10px; width: calc(100% + 20px); } /* 把手中心剛好走滿軌道 */
-
-/* RAW 沖洗：白平衡、HSL 的滑桿軌道換成色彩漸層（外層畫），原本那條灰線藏起來 */
-.custom-range.raw-track-colored::-webkit-slider-runnable-track { background: transparent; }
-.custom-range.raw-track-colored::-moz-range-track { background: transparent; }
-
 /* 導入的放大過場播放中（utils/importHero）：不顯示「匯入中」的轉圈和文字，畫面上只有那張照片在動 */
 html[data-import-hero] [data-import-spinner] { visibility: hidden !important; }

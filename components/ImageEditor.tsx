@@ -12,6 +12,14 @@ import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
+import { rawDevelopPreview, rawDevelopFull, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
+import { exposureEv } from '../utils/photoToneMath';
+
+/** RAW 照片：這幾個工具改調 raw* 欄位（由原生在 RAW 上做），網頁的那一份維持 0 */
+const RAW_TOOL: Record<string, keyof EditorParams> = { exposure: 'rawExposure', temp: 'rawTemp', tint: 'rawTint', highlights: 'rawHighlights', shadows: 'rawShadows' };
+/** raw* 欄位 → 網頁那一份同名工具（拖的時候先用網頁的效果即時顯示「跟上次 RAW 結果的差距」） */
+const RAW_WEB: Record<string, keyof EditorParams> = { rawExposure: 'exposure', rawTemp: 'temp', rawTint: 'tint', rawHighlights: 'highlights', rawShadows: 'shadows' };
+const rawKeyOf = (p: EditorParams) => [p.rawExposure || 0, p.rawTemp || 0, p.rawTint || 0, p.rawHighlights || 0, p.rawShadows || 0].join(',');
 import { nativeImage, blobToNativeFile, nativeImageSize } from '../utils/nativeImage';
 import { useNativeHdrPreview } from '../utils/nativePreview';
 import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
@@ -73,6 +81,8 @@ interface Curves {
 }
 
 export interface EditorParams {
+  /** RAW 照片：曝光、色溫、色調、高光、陰影由原生在 RAW 上做（見 raw prop）。一般照片永遠是 0 */
+  rawExposure?: number; rawTemp?: number; rawTint?: number; rawHighlights?: number; rawShadows?: number;
   brightness: number;
   exposure: number; contrast: number; highlights: number; shadows: number;
   /** Lightroom 白色／黑色 */
@@ -182,6 +192,7 @@ export const toneSig = (p: EditorParams): string =>
   `${p.whites || 0},${p.blacks || 0}#` + JSON.stringify(p.curves) + '#' + JSON.stringify(p.hsl ?? DEFAULT_HSL) + '#' + (isGradeIdentity(p.grade) ? '' : JSON.stringify(p.grade));
 
 export const DEFAULT_PARAMS: EditorParams = {
+  rawExposure: 0, rawTemp: 0, rawTint: 0, rawHighlights: 0, rawShadows: 0,
   brightness: 0,
   exposure: 0, contrast: 0, highlights: 0, shadows: 0,
   whites: 0, blacks: 0,
@@ -795,6 +806,11 @@ interface ImageEditorProps {
   compactBottomBar?: boolean;
   /** 主頁進來的編輯：分類列可以左右滑，多了模板、人像、仿色、文字、圖形、符號、圖片 */
   fullTabs?: boolean;
+  /** 這張有 RAW（相機底片模式拍的）：曝光、色溫、色調、高光、陰影改由原生在 RAW 的資料上做（16 位元、保留亮部），
+      沖出來的圖當底圖，其他調整照舊疊在上面；存檔時由原生從 RAW 原尺寸重新沖 */
+  raw?: { path: string; protectEV: number; look: RawLook | null } | null;
+  /** 存檔時印上的日期戳記（相機拍的有日期的照片：編輯的是沒印日期的那張） */
+  stampDate?: string;
 }
 
 interface HistoryItem {
@@ -1315,7 +1331,11 @@ function runThumbChunks<T>(
   step();
 }
 
-export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList: builtInLutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false }) => {
+export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList: builtInLutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false, raw = null, stampDate }) => {
+  /** 這張是 RAW（只有單張時；批量編輯不走 RAW） */
+  const rawOn = !!raw && !(batchSrcs && batchSrcs.length > 1);
+  /** 滑桿實際調的參數：RAW 照片的曝光、色溫、色調、高光、陰影調 raw* 欄位 */
+  const sliderPid = (id: string) => (rawOn && RAW_TOOL[id] ? RAW_TOOL[id] : id);
   const [customLuts, setCustomLuts] = useState<CustomLut[]>(loadCustomLuts);
   const lutList = useMemo(() => [...builtInLutList, ...customLuts], [builtInLutList, customLuts]);
   const customLutInputRef = useRef<HTMLInputElement>(null);
@@ -4001,6 +4021,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const gMan = manGrain !== undefined ? manGrain : grainManuallyAdjusted;
     const hMan = manHalation !== undefined ? manHalation : halationManuallyAdjusted;
     
+    /* RAW：網頁那幾個工具只是拖的時候的即時預覽，不記進復原紀錄（真正的值在 raw* 欄位） */
+    if (rawOn) p = { ...p, exposure: 0, temp: 0, tint: 0, highlights: 0, shadows: 0 };
     const currentItem = historyRef.current[historyIdxRef.current];
     if (currentItem && 
         currentItem.selectedLutIdx === idx && 
@@ -7957,6 +7979,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setSaveState('processing');
     setTimeout(async () => {
         try {
+            /* RAW：手放開後的精算還沒換上的話，先等它（存的一定是從 RAW 精算的結果） */
+            if (rawOn) await rawPendingRef.current;
             // 人像／仿色剛交回來的那張還在背景編碼：先等它換進來源清單
             await studioInstallRef.current;
             // 其他照片還在背景合併時先等它做完（最多 20 秒），存的才會是合併後的
@@ -8014,6 +8038,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   out.push(await canvasToUrl(canvas, 'image/png', 1));
                   encoded.push(await exportHeic(canvas));
                 }
+              }
+            }
+            /* 相機拍的有日期的照片：編輯的是沒印日期的那張，存檔時才印上去（日期是光加上去的，畫面調暗了字自然更清楚） */
+            if (stampDate) {
+              for (let k = 0; k < out.length; k++) {
+                const stamped = await stampDateOnto(out[k], stampDate);
+                if (!stamped) continue;
+                revokeUrls([out[k]]);
+                out[k] = stamped;
+                if (exportFormat === 'heic' && encoded[k]) { revokeUrls([encoded[k]]); encoded[k] = await exportHeicFromUrl(stamped); }
               }
             }
             if (request !== saveRequestRef.current) { revokeUrls([...out, ...encoded]); return; }
@@ -8385,6 +8419,110 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       addToHistory(paramsRef.current, selectedLutIdxNowRef.current);
     })().catch(() => {}).finally(() => setStudioInstalling(n => Math.max(0, n - 1)));
   };
+  /* ── RAW：曝光、色溫、色調、高光、陰影在原生的 RAW 沖洗上做 ─────────────────────────
+     參數（raw*）一變，原生就從 RAW 沖一張出來換成底圖（拖的時候小一點、放手後完整大小），其他調整照舊疊在上面。
+     換底圖用的是跟人像／仿色交回來時同一套（installStudioResult 那套）：不重設參數、不閃。
+     存檔時由原生從 RAW 原尺寸、完整品質重新沖（fullJobs 的 bake）。 */
+  const rawAsShotRef = useRef<{ temp: number; tint: number } | null>(null);
+  const rawInputRef = useRef<string | null>(null);
+  const rawBase = (p: EditorParams): RawBaseParams => {
+    const a = rawAsShotRef.current;
+    const m0 = a ? 1e6 / Math.max(1500, a.temp) : 0;
+    return {
+      exposure: (raw?.protectEV || 0) + exposureEv(p.rawExposure || 0),
+      // 跟網頁版色溫同一個手感：±100 ＝ ±45 mired；往右＝畫面變暖
+      temperature: a ? 1e6 / Math.max(20, m0 - ((p.rawTemp || 0) / 100) * 45) : undefined,
+      tint: a ? a.tint + (p.rawTint || 0) : undefined,
+      highlights: (p.rawHighlights || 0) / 100, shadows: (p.rawShadows || 0) / 100,
+    };
+  };
+  const rawBake = (_full: string) => (raw ? rawDevelopFull(raw.path, rawBase(paramsRef.current), raw.look) : Promise.resolve(null));
+  const installRaw = async (url: string, final: boolean, decoded?: HTMLImageElement) => {
+    const im = decoded ?? await loadImg(url);
+    if (!decoded) await im.decode?.().catch(() => {});
+    const i = safeIdxRef.current;
+    const was = srcListRef.current[i];
+    if (!rawInputRef.current) rawInputRef.current = was;
+    const pend = `${was}#raw${++pendingKeySeqRef.current}`;
+    const g = geoRef.current;
+    const sw = im.naturalWidth, sh = im.naturalHeight;
+    const src: CanvasImageSource = isGeoIdentity(g) ? im : composeCanvas(im, sw, sh, g, 2400);
+    const w = isGeoIdentity(g) ? sw : (src as HTMLCanvasElement).width;
+    const h = isGeoIdentity(g) ? sh : (src as HTMLCanvasElement).height;
+    lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, selectedLutIdx: -1 } as any;
+    lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
+    bufferAliasRef.current = { key: pend, for: was };
+    noteBufferGeo(g);
+    buildBuffersFromRef.current(src, w, h, false, pend);
+    tapFastRef.current = true; isDirtyRef.current = true;
+    if (!final) return;
+    /* 放手後的完整那張：正式換成來源（存檔時從 RAW 原尺寸重沖） */
+    fullJobsRef.current[url] = { input: rawRoot, bake: rawBake, session: 'raw' };
+    thumbOriginRef.current[url] = thumbSrcOf(rawInputRef.current!);
+    const cur = srcListRef.current;
+    const next = [...cur]; next[i] = url;
+    srcListRef.current = next;
+    rememberDecoded(url, im);
+    if (buffersSrcRef.current === pend) {
+      SRC_IDS.set(url, srcIdOf(pend));
+      buffersSrcRef.current = url;
+      bufferAliasRef.current = null;
+      preinstalledSrcRef.current = url;
+      swapToSrc(next);
+    } else setSrcList(next);
+    originalImgRef.current = im;
+  };
+  /* 打開時的那張（相機已經從 RAW 沖好的）：存檔也要從 RAW 原尺寸重沖 */
+  /* 來源標成 RAW 檔本身（不是任何一張圖的網址）：往回找原圖時不會繞回自己 */
+  const rawRoot = raw ? `raw:${raw.path}` : '';
+  if (rawOn && !fullJobsRef.current[imageSrc]) fullJobsRef.current[imageSrc] = { input: rawRoot, bake: rawBake, session: 'raw' };
+  /** 目前底圖是用哪一組 raw* 沖的（拖的時候網頁預覽的差距從這裡算） */
+  const rawDevelopedRef = useRef<Record<string, number>>({ rawExposure: 0, rawTemp: 0, rawTint: 0, rawHighlights: 0, rawShadows: 0 });
+  /** 正在沖、還沒換上：存檔前要等它 */
+  const rawPendingRef = useRef<Promise<void> | null>(null);
+  useEffect(() => {
+    if (!rawOn || !raw) return;
+    let alive = true, rafId = 0;
+    let busy = false;
+    const tick = () => {
+      if (!alive) return;
+      rafId = requestAnimationFrame(tick);
+      if (busy) return;
+      const p0 = paramsRef.current;
+      const key = rawKeyOf(p0);
+      const dev = rawDevelopedRef.current;
+      if (key === rawKeyOf(dev as any)) return;
+      /* 拖的時候不沖（網頁的即時預覽頂著），手放開才沖 */
+      if (performance.now() - lastSliderMoveTimeRef.current < 160) return;
+      busy = true;
+      const want = { rawExposure: p0.rawExposure || 0, rawTemp: p0.rawTemp || 0, rawTint: p0.rawTint || 0, rawHighlights: p0.rawHighlights || 0, rawShadows: p0.rawShadows || 0 };
+      rawPendingRef.current = (async () => {
+        try {
+          if (!rawAsShotRef.current) {
+            /* 第一次：先問拍攝當下的白平衡（色溫、色調滑桿的中點） */
+            const first = await rawDevelopPreview(raw.path, rawBase(DEFAULT_PARAMS), raw.look, 64, false);
+            if (first) rawAsShotRef.current = { temp: first.asShotTemperature, tint: first.asShotTint };
+          }
+          const r = await rawDevelopPreview(raw.path, rawBase({ ...DEFAULT_PARAMS, ...want }), raw.look, 2048, true);
+          if (!r || !alive) return;
+          const im = await loadImg(r.url);
+          await im.decode?.().catch(() => {});
+          if (!alive) return;
+          /* 換底圖的同一格：網頁的即時預覽改成「現在的值 − 這次沖的值」（通常是 0） */
+          rawDevelopedRef.current = want;
+          const cur = { ...paramsRef.current } as any;
+          for (const k of Object.keys(RAW_WEB)) cur[RAW_WEB[k]] = (cur[k] || 0) - ((want as any)[k] || 0);
+          paramsRef.current = cur;
+          await installRaw(r.url, true, im);
+          setParams({ ...paramsRef.current });
+        } catch { /* 沖不出來：網頁的預覽頂著（下一次手放開再試） */ }
+        finally { busy = false; rawPendingRef.current = null; }
+      })();
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => { alive = false; cancelAnimationFrame(rafId); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawOn]);
   const studioPrevRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
   /* 取消＝丟掉這次在工具裡畫的東西：工具一直掛著（進出才會是立刻的），所以換一個新的 */
   const [studioGen, setStudioGen] = useState({ beauty: 0, match: 0 });
@@ -8596,7 +8734,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setActiveToolId(previous.tool);
   }, []);
 
-  const isParamAdjusted = useCallback((id: string): boolean => {
+  const isParamAdjusted = useCallback((id0: string): boolean => {
+    /* RAW 照片的曝光、色溫、色調、高光、陰影存在 raw* 那幾個欄位 */
+    const id = rawOn && RAW_TOOL[id0] ? RAW_TOOL[id0] : id0;
     /* GLSL 特效：跟柔光／光暈同一套規則 —— 強度是 0 就整組都不亮白點，
        不管細項被動過沒有。細項本身則是「跟預設不同才算」，而且最小值不是 0 的
        那幾個（格數之類，0 會變成除以零）停在最小值時也不算調整過。 */
@@ -10219,16 +10359,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <div className="w-full">
                   <FastSlider 
                       value={(() => {
-                        const v = activeCategory === 'mask' ? (snapOf(params) as any)[activeTool.id] : params[activeTool.id as keyof EditorParams];
+                        const v = activeCategory === 'mask' ? (snapOf(params) as any)[activeTool.id] : params[sliderPid(activeTool.id) as keyof EditorParams];
                         return typeof v === 'number' ? v : 0;
                       })()}
                       min={activeTool.min} max={activeTool.max} step={activeTool.step ?? 1}
-                      toolId={activeTool.id} label={activeToolId === 'filter_select' ? '強度' : activeTool.label}
+                      toolId={activeCategory === 'mask' ? activeTool.id : sliderPid(activeTool.id)} label={activeToolId === 'filter_select' ? '強度' : activeTool.label}
                       snapZero={activeTool.min < 0}
                       disabled={!!loadingLutId || maskLocked}
                       onUpdate={(id, val) => { 
                           if (id === 'blur') userManualBlurRef.current = val;
                           const nextParams = { ...paramsRef.current, [id]: val };
+                          /* RAW：拖的時候用網頁的同名效果即時顯示跟上次 RAW 結果的差距（60 格順暢），放手後原生從 RAW 精算再換上 */
+                          if (rawOn && RAW_WEB[id]) (nextParams as any)[RAW_WEB[id]] = val - ((rawDevelopedRef.current as any)[id] || 0);
                           paramsRef.current = nextParams; 
                           lastSliderMoveTimeRef.current = performance.now();
                           if (id === 'maskBrushSize') showSizeRing(nextParams);

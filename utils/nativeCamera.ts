@@ -183,6 +183,34 @@ interface RawEditorApi {
 }
 export const rawEditor = () => nativePlugin<RawEditorApi & { openEditor?: unknown }>('RawDecode')
   .then(p => (p && typeof (p as any).openEditor === 'function' ? p as RawEditorApi : null));
+/* ── 一般編輯直接編 RAW（ios/App/App/RawDecodePlugin.swift 的 developPreview／developFull）──
+ * 原生從 RAW 沖出一張圖（曝光、白平衡、高光、陰影都在 RAW 的資料上做），給編輯頁當底圖；其他調整照舊疊在上面。 */
+export interface RawBaseParams { exposure: number; temperature?: number; tint?: number; highlights: number; shadows: number }
+type RawDevApi = {
+  developPreview?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; maxPixel: number; final: boolean }): Promise<{ path: string; asShotTemperature: number; asShotTint: number }>;
+  developFull?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null }): Promise<{ path: string }>;
+};
+const rawDev = () => nativePlugin<RawDevApi>('RawDecode');
+const rawParams = (b: RawBaseParams): Partial<RawEditParams> => ({
+  exposure: b.exposure, temperature: b.temperature, tint: b.tint, highlights: b.highlights, shadows: b.shadows,
+  contrast: 0, whites: 0, blacks: 0, clarity: 0, vibrance: 0, saturation: 0, sharpen: 0, lumaNR: 0, colorNR: 0, hsl: Array(24).fill(0), curve: null,
+});
+/** 預覽大小（長邊 maxPixel）的沖洗結果：檔案網址＋拍攝當下的白平衡。沒有原生或失敗回 null */
+export async function rawDevelopPreview(path: string, b: RawBaseParams, look: RawLook | null, maxPixel: number, final: boolean):
+  Promise<{ url: string; path: string; asShotTemperature: number; asShotTint: number } | null> {
+  const p = await rawDev();
+  if (!p?.developPreview) return null;
+  try { const r = await p.developPreview({ path, params: rawParams(b), look, maxPixel, final }); return { ...r, url: fileSrc(r.path) }; }
+  catch { return null; }
+}
+/** 原尺寸、完整品質（存檔用）：檔案網址。失敗回 null */
+export async function rawDevelopFull(path: string, b: RawBaseParams, look: RawLook | null): Promise<string | null> {
+  const p = await rawDev();
+  if (!p?.developFull) return null;
+  try { const r = await p.developFull({ path, params: rawParams(b), look }); return fileSrc(r.path); }
+  catch { return null; }
+}
+
 /** 沖洗畫面目前那一格 → 網頁用的網址（退場時當定格圖）；拿不到回 null */
 export async function rawEditorSnapshot(): Promise<string | null> {
   const p = await rawEditor(); const img = await nativeImage();

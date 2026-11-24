@@ -37,6 +37,8 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "closeEditor", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "dismissEditor", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "snapshotEditor", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "developPreview", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "developFull", returnType: CAPPluginReturnPromise),
     ]
 
     // MARK: 即時沖洗（見 ABAIRawDevelop.swift）
@@ -126,6 +128,49 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// 目前畫面上那一格存成 JPEG：退場時網頁用它當定格圖，原生預覽可以先關掉，
     /// 網頁整頁滑走時後面露出來的是相簿，而不是相機畫面。
+    // MARK: 一般編輯直接編 RAW（不顯示原生畫面，只出圖給網頁的編輯頁當底圖）
+
+    /// 一般編輯用的沖洗：同一張 RAW 一直用同一個（RAW 那一步的結果有快取，只改光線、白平衡時很快）
+    private var headless: (path: String, look: String, session: ABAIRawSession)?
+    private let headlessQueue = DispatchQueue(label: "abai.raw.headless", qos: .userInitiated)
+    private func headlessSession(_ path: String, look: [String: Any]?, longSide: CGFloat) -> ABAIRawSession? {
+        let key = (try? JSONSerialization.data(withJSONObject: look ?? [:], options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        if let h = headless, h.path == path, h.look == key { return h.session }
+        guard let url = ABAIImageCore.fileURL(from: path), let s = ABAIRawSession(url: url, look: look, view: nil, longSide: longSide) else { return nil }
+        headless = (path, key, s)
+        return s
+    }
+
+    /// developPreview({ path, params, look, maxPixel, final }) → { path, asShotTemperature, asShotTint }
+    @objc func developPreview(_ call: CAPPluginCall) {
+        let path = call.getString("path") ?? ""
+        let look: [String: Any]? = call.getObject("look")
+        let p = ABAIRawParams(call.getObject("params"))
+        let side = CGFloat(call.getDouble("maxPixel") ?? 2048)
+        let final = call.getBool("final") ?? true
+        headlessQueue.async {
+            /* 沖洗的工作尺寸固定長邊 2048（快取住），拖的時候輸出縮小成 maxPixel */
+            guard let s = self.headlessSession(path, look: look, longSide: 2048) else { call.reject("系統不認得這個 RAW 格式"); return }
+            do {
+                let out = try s.previewJPEG(p, final: final, maxSide: side)
+                call.resolve(["path": out.path, "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint])
+            } catch { call.reject(error.localizedDescription) }
+        }
+    }
+
+    /// developFull({ path, params, look }) → { path }：原尺寸、完整品質（存檔用）
+    @objc func developFull(_ call: CAPPluginCall) {
+        let path = call.getString("path") ?? ""
+        let look: [String: Any]? = call.getObject("look")
+        let p = ABAIRawParams(call.getObject("params"))
+        headlessQueue.async {
+            autoreleasepool {
+                guard let s = self.headlessSession(path, look: look, longSide: 2048) else { call.reject("系統不認得這個 RAW 格式"); return }
+                do { call.resolve(["path": try s.export(p).path]) } catch { call.reject(error.localizedDescription) }
+            }
+        }
+    }
+
     @objc func snapshotEditor(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             guard let v = self.editorView else { call.resolve([:]); return }
