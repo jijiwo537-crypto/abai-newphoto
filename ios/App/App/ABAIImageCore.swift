@@ -320,10 +320,42 @@ enum ABAIImageCore {
         return (f.outputImage ?? image).cropped(to: image.extent)
     }
 
+    /// 超出 sRGB 的顏色（廣色域照片裡很亮、很飽和的地方，例如打光的膚色）保持色相收進 sRGB：太飽和的往同亮度的灰收，
+    /// 太亮的用一段平滑的肩部收到 1。
+    /// 色彩表是在 sRGB 上查的：不先收的話，查表時每個通道各自被截在 0～1，亮部會在某個亮度突然「撞牆」，
+    /// 變成一圈生硬的斷層（觀景窗的畫面本來就在 sRGB 裡，所以預覽看不到、成品才有）。工作色域是線性 Display P3
+    private static let srgbGamutKernel = CIColorKernel(source: """
+    kernel vec4 abaiSrgbGamut(__sample s) {
+        vec3 p = s.rgb;
+        vec3 c = vec3(dot(vec3(1.22474527, -0.22490439, 0.0), p),
+                      dot(vec3(-0.04205797, 1.04208095, 0.0), p),
+                      dot(vec3(-0.01964227, -0.07865486, 1.0985372), p));
+        /* 負的（比 sRGB 更飽和）：往同亮度的灰收 */
+        float l = clamp(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
+        float mn = min(min(c.r, c.g), c.b);
+        if (mn < 0.0) c = vec3(l) + (c - vec3(l)) * (l / max(l - mn, 1.0e-6));
+        /* 超過 1 的（比 sRGB 更亮的飽和色）：最亮的通道從 0.95 開始平滑地收到 1（三個通道等比例，色相不變）。
+           斜率在 0.95 連續、到 P3 最亮的紅（1.2247）剛好收到 1 —— 不會突然撞牆變成一圈斷層 */
+        float n = max(max(c.r, c.g), c.b);
+        if (n > 0.95) {
+            float x = min(1.0, (n - 0.95) / (1.2247 - 0.95));
+            float f = 0.95 + 0.05 * (1.0 - pow(1.0 - x, (1.2247 - 0.95) / 0.05));
+            c *= f / n;
+        }
+        return vec4(dot(vec3(0.82259286, 0.17753395, 0.0), c),
+                    dot(vec3(0.03319952, 0.96678355, 0.0), c),
+                    dot(vec3(0.01708535, 0.07239572, 0.91030145), c), s.a);
+    }
+    """)
+    static func intoSrgbGamut(_ image: CIImage) -> CIImage {
+        guard let k = srgbGamutKernel else { return image }
+        return k.apply(extent: image.extent, arguments: [image]) ?? image
+    }
+
     /// 套 3D 色彩表（在 sRGB 編碼值上查表，跟網頁一致），amount 0～1 跟原圖混合
     static func apply(cube: Cube, to image: CIImage, amount: Double = 1) -> CIImage {
         guard amount > 0.001, let f = CIFilter(name: "CIColorCubeWithColorSpace") else { return image }
-        f.setValue(image, forKey: kCIInputImageKey)
+        f.setValue(intoSrgbGamut(image), forKey: kCIInputImageKey)
         f.setValue(cube.size, forKey: "inputCubeDimension")
         f.setValue(cube.data, forKey: "inputCubeData")
         f.setValue(sRGB, forKey: "inputColorSpace")

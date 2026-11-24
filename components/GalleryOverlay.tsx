@@ -188,7 +188,9 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   /* 掛在 body 上：相機頁（.safe-top）從狀態列下面才開始，放在裡面的話照片捲不到螢幕最上面 */
   return createPortal(
     <div data-camera-gallery
-      style={{ transitionDuration: `${motionMs('camGallerySheet')}ms` }}
+      style={{ transitionDuration: `${motionMs('camGallerySheet')}ms`,
+        /* 上升：前後對稱的緩入緩出（後段不拖慢）；下降：一路加速到底（到底就結束，不會留一小塊慢慢收） */
+        transitionTimingFunction: closing || !entered ? 'cubic-bezier(0.4, 0, 1, 1)' : 'cubic-bezier(0.45, 0, 0.55, 1)' }}
       className={`fixed inset-0 bg-black text-white z-50 transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing || !entered ? 'translate-y-full' : 'translate-y-0'}`}>
 
       <style>{SEL_CSS}</style>

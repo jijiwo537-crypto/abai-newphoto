@@ -155,7 +155,8 @@ export const MotionStage = forwardRef<MotionStageApi, { slow: number }>(({ slow 
         const sh = q('[data-sheetlayer]')!, o = { duration: d(id), easing: ease(id), fill: 'forwards' as FillMode };
         await sh.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], o).finished.catch(() => {});
         await wait(700 * slow); if (!alive()) return;
-        await sh.animate([{ transform: 'none' }, { transform: 'translateY(100%)' }], o).finished.catch(() => {});
+        /* 下降：一路加速到底（跟 App 一樣） */
+        await sh.animate([{ transform: 'none' }, { transform: 'translateY(100%)' }], { ...o, easing: 'cubic-bezier(0.4, 0, 1, 1)' }).finished.catch(() => {});
         return;
       }
       if (id === 'camEditorSlide') {

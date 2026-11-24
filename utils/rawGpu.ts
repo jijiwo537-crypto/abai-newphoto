@@ -97,6 +97,19 @@ uniform mat3 uWb, uToSrgb, uFromSrgb;
 const vec3 W = vec3(0.2289746, 0.6917385, 0.0792869);
 float srgbOetf(float v) { return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055; }
 float srgbEotf(float v) { return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4); }
+/* 超出 sRGB 的顏色保持色相、往同亮度的灰收進 sRGB（跟原生 ABAIImageCore.intoSrgbGamut 一樣），再查色彩表 */
+vec3 gamutSrgb(vec3 c) {
+  float l = clamp(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
+  float mn = min(min(c.r, c.g), c.b);
+  if (mn < 0.0) c = vec3(l) + (c - vec3(l)) * (l / max(l - mn, 1.0e-6));
+  float n = max(max(c.r, c.g), c.b);
+  if (n > 0.95) {
+    float x = min(1.0, (n - 0.95) / (1.2247 - 0.95));
+    float f = 0.95 + 0.05 * (1.0 - pow(1.0 - x, (1.2247 - 0.95) / 0.05));
+    c *= f / n;
+  }
+  return clamp(c, 0.0, 1.0);
+}
 vec3 oetf3(vec3 c) { return vec3(srgbOetf(c.r), srgbOetf(c.g), srgbOetf(c.b)); }
 vec3 eotf3(vec3 c) { return vec3(srgbEotf(c.r), srgbEotf(c.g), srgbEotf(c.b)); }
 /* 截成 8 位元前加三角分佈抖色（±1 階，跟編輯器 lutGpu 同一招）：之後再拉對比、曲線也不會出現一圈一圈的色階，
@@ -136,7 +149,7 @@ void main() {
   }
   c = clamp(c, 0.0, 1.0);
   if (uLutOn) {                                                  // ⑥ 拍照時套的濾鏡（原生 applyLook：CIColorCubeWithColorSpace，sRGB 編碼值上查表，再依強度混合）
-    vec3 e = oetf3(clamp(uToSrgb * c, 0.0, 1.0));
+    vec3 e = oetf3(gamutSrgb(uToSrgb * c));
     vec3 uvw = (e * (uCubeSize - 1.0) + 0.5) / uCubeSize;
     vec3 o = uFromSrgb * eotf3(texture(uCube, uvw).rgb);
     c = mix(c, o, uLutAmt);
@@ -183,6 +196,19 @@ uniform float uBlur, uSoft, uLowfi, uCell, uLowCubeSize, uGrain;
 uniform mat3 uToSrgb, uFromSrgb;
 float srgbOetf(float v) { return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055; }
 float srgbEotf(float v) { return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4); }
+/* 超出 sRGB 的顏色保持色相、往同亮度的灰收進 sRGB（跟原生 ABAIImageCore.intoSrgbGamut 一樣），再查色彩表 */
+vec3 gamutSrgb(vec3 c) {
+  float l = clamp(dot(c, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
+  float mn = min(min(c.r, c.g), c.b);
+  if (mn < 0.0) c = vec3(l) + (c - vec3(l)) * (l / max(l - mn, 1.0e-6));
+  float n = max(max(c.r, c.g), c.b);
+  if (n > 0.95) {
+    float x = min(1.0, (n - 0.95) / (1.2247 - 0.95));
+    float f = 0.95 + 0.05 * (1.0 - pow(1.0 - x, (1.2247 - 0.95) / 0.05));
+    c *= f / n;
+  }
+  return clamp(c, 0.0, 1.0);
+}
 vec3 oetf3(vec3 c) { return vec3(srgbOetf(c.r), srgbOetf(c.g), srgbOetf(c.b)); }
 vec3 eotf3(vec3 c) { return vec3(srgbEotf(c.r), srgbEotf(c.g), srgbEotf(c.b)); }
 /* 截成 8 位元前加三角分佈抖色（±1 階，跟編輯器 lutGpu 同一招）：之後再拉對比、曲線也不會出現一圈一圈的色階，
@@ -210,7 +236,7 @@ void main() {
     c = 1.0 - (1.0 - c) * (1.0 - g);
   }
   if (uLowfi > 0.001) {                                                                    // 低保真：色彩表、對比、曝光、顆粒
-    vec3 e = oetf3(clamp(uToSrgb * eotf3(c), 0.0, 1.0));
+    vec3 e = oetf3(gamutSrgb(uToSrgb * eotf3(c)));
     vec3 lutc = oetf3(uFromSrgb * eotf3(texture(uLowCube, (e * (uLowCubeSize - 1.0) + 0.5) / uLowCubeSize).rgb));
     vec3 c2 = mix(c, lutc, 0.80);
     c2 = ((c2 - 0.5) * (1.0 + 10.0 * 0.004) + 0.5) * exp2(10.0 * 0.008);
