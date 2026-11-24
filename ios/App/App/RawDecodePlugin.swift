@@ -204,6 +204,11 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
                 self.rawLog.notice("RawDecode developLinear \(w, privacy: .public)x\(h, privacy: .public) \(ms, privacy: .public)ms")
                 var out: [String: Any] = ["gpu": true, "path": a.path, "basePath": b.path, "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint]
                 if let (u, size, amount) = cube { out["cubePath"] = u.path; out["cubeSize"] = size; out["lutAmount"] = amount }
+                let fx = try s.lookFx()
+                if fx.soft > 0.001 || fx.blur > 0.001 || fx.lowfi > 0.001 {
+                    out["fx"] = ["soft": fx.soft, "blur": fx.blur, "lowfi": fx.lowfi]
+                    if let u = fx.lowfiCube { out["lowfiCubePath"] = u.path; out["lowfiCubeSize"] = fx.lowfiSize }
+                }
                 call.resolve(out)
             } catch { call.reject(error.localizedDescription) }
         }

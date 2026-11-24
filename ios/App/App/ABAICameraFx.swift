@@ -75,7 +75,7 @@ struct ABAICameraFx: Equatable {
     }
     """)
 
-    private static let lowfiCube: ABAIImageCore.Cube? = ABAIImageCore.bundledLut("abai-lowfi.jpg").flatMap { ABAIImageCore.cube(fromAtlas: $0) }
+    static let lowfiCube: ABAIImageCore.Cube? = ABAIImageCore.bundledLut("abai-lowfi.jpg").flatMap { ABAIImageCore.cube(fromAtlas: $0) }
 
     /// 縮小 → 模糊 → 放大回原尺寸（模糊範圍以「縮小後的像素」計）
     private static func blurred(_ img: CIImage, scale s: CGFloat, sigma: CGFloat, pre: ((CIImage) -> CIImage)? = nil) -> CIImage {

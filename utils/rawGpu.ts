@@ -92,7 +92,7 @@ in vec2 vUv; out vec4 outColor;
 uniform sampler2D uLin, uBase;
 uniform highp sampler3D uCube;
 uniform float uGain, uExpo, uHi, uSh, uLutAmt, uCubeSize;
-uniform bool uWbOn, uLutOn;
+uniform bool uWbOn, uLutOn, uFxOn;
 uniform mat3 uWb, uToSrgb, uFromSrgb;
 const vec3 W = vec3(0.2289746, 0.6917385, 0.0792869);
 float srgbOetf(float v) { return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055; }
@@ -137,12 +137,92 @@ void main() {
     vec3 o = uFromSrgb * eotf3(texture(uCube, uvw).rgb);
     c = mix(c, o, uLutAmt);
   }
+  /* 有相機特效：先交出特效要的底（線性 P3 套 sRGB 曲線＝原生 CILinearToSRGBToneCurve），後面 FX_FS 接著做 */
+  if (uFxOn) { outColor = vec4(oetf3(c), 1.0); return; }
   vec3 sr = clamp(uToSrgb * c, 0.0, 1.0);                        // ⑤ 線性 P3 → sRGB
   outColor = vec4(srgbOetf(sr.r), srgbOetf(sr.g), srgbOetf(sr.b), 1.0);
 }`;
 
+/* ── 相機特效（照原生 ios/App/App/ABAICameraFx.swift 的 apply，同一個順序、同一組常數） ── */
+/** 縮小取樣（原生是仿射縮放＝雙線性取樣），柔光再加亮部擷取（brightPass） */
+const DOWN_FS = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 outColor;
+uniform sampler2D uSrc; uniform bool uBright;
+void main() {
+  vec3 c = texture(uSrc, vUv).rgb;
+  if (uBright) { float l = dot(c, vec3(0.299, 0.587, 0.114)); c *= clamp((l - 0.70) * 5.0, 0.0, 1.0); }
+  outColor = vec4(c, 1.0);
+}`;
+/** 分離式高斯模糊（邊緣延伸＝原生 clampedToExtent） */
+const BLUR_FS = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 outColor;
+uniform sampler2D uSrc; uniform vec2 uStep; uniform float uSigma;
+void main() {
+  int R = int(min(64.0, ceil(uSigma * 3.0)));
+  vec3 acc = vec3(0.0); float ws = 0.0;
+  for (int i = -64; i <= 64; i++) {
+    if (i < -R || i > R) continue;
+    float w = exp(-float(i * i) / (2.0 * uSigma * uSigma));
+    acc += texture(uSrc, vUv + uStep * float(i)).rgb * w; ws += w;
+  }
+  outColor = vec4(acc / ws, 1.0);
+}`;
+const FX_FS = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 outColor;
+uniform sampler2D uBaseTex, uBlurTex, uGlowTex;
+uniform highp sampler3D uLowCube;
+uniform vec2 uSize;
+uniform float uBlur, uSoft, uLowfi, uCell, uLowCubeSize, uGrain;
+uniform mat3 uToSrgb, uFromSrgb;
+float srgbOetf(float v) { return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055; }
+float srgbEotf(float v) { return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4); }
+vec3 oetf3(vec3 c) { return vec3(srgbOetf(c.r), srgbOetf(c.g), srgbOetf(c.b)); }
+vec3 eotf3(vec3 c) { return vec3(srgbEotf(c.r), srgbEotf(c.g), srgbEotf(c.b)); }
+float abaiHash(vec2 p) {
+  vec3 p3 = fract(vec3(p.x, p.y, p.x) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+void main() {
+  vec3 base = texture(uBaseTex, vUv).rgb;
+  vec3 c = base;
+  if (uBlur > 0.001) c = mix(c, texture(uBlurTex, vUv).rgb, uBlur * 0.625);                 // 模糊
+  if (uLowfi > 0.001) {                                                                    // 低保真：色差（以畫面中心對稱，跟座標朝向無關）
+    vec2 p = vUv * uSize, d = vUv - 0.5;
+    vec2 sh = d * 0.004 * (0.15 + dot(d, d) * 3.0) * uSize;
+    float r = texture(uBaseTex, (p + sh) / uSize).r, bl = texture(uBaseTex, (p - sh) / uSize).b;
+    c += (vec3(r, base.g, bl) - base) * uLowfi;
+  }
+  if (uSoft > 0.001) {                                                                     // 柔光：亮部的光暈以濾色疊上
+    vec3 g = clamp(texture(uGlowTex, vUv).rgb * min(1.0, uSoft * 1.5), 0.0, 1.0);
+    c = 1.0 - (1.0 - c) * (1.0 - g);
+  }
+  if (uLowfi > 0.001) {                                                                    // 低保真：色彩表、對比、曝光、顆粒
+    vec3 e = oetf3(clamp(uToSrgb * eotf3(c), 0.0, 1.0));
+    vec3 lutc = oetf3(uFromSrgb * eotf3(texture(uLowCube, (e * (uLowCubeSize - 1.0) + 0.5) / uLowCubeSize).rgb));
+    vec3 c2 = mix(c, lutc, 0.80);
+    c2 = ((c2 - 0.5) * (1.0 + 10.0 * 0.004) + 0.5) * exp2(10.0 * 0.008);
+    float lum = dot(base, vec3(0.2126, 0.7152, 0.0722));
+    /* 顆粒的格子用原生的座標（Core Image 的 y 往上）：同一個位置是同一顆 */
+    vec2 dc = vec2(gl_FragCoord.x, uSize.y - gl_FragCoord.y);
+    vec2 cl = floor(dc / uCell);
+    float mono = abaiHash(cl + 731.0) - 0.5;
+    vec3 n = vec3(abaiHash(cl + 1949.0), abaiHash(cl + 2896.0), abaiHash(cl + 3843.0)) - 0.5;
+    c2 += uGrain * 1.6 * (0.55 + 0.45 * (1.0 - lum)) * (mono * 0.55 + n * 0.85) / 255.0;
+    c = mix(c, clamp(c2, 0.0, 1.0), uLowfi);
+  }
+  vec3 sr = clamp(uToSrgb * eotf3(c), 0.0, 1.0);                                          // 回線性 P3 → sRGB 8 位元
+  outColor = vec4(oetf3(sr), 1.0);
+}`;
+export interface RawGpuFx { soft: number; blur: number; lowfi: number; lowfiCube?: { data: Float32Array; size: number } | null }
+
 /** 一張 RAW 的 GPU 沖洗器：建立時把線性資料傳上 GPU，之後每一格 render() 直接出 sRGB 8 位元像素 */
 export class RawGpu {
+  /** 低保真的顆粒強度（原生 lowfiGrain）；只有測試會改 */
+  static grain = 50;
   readonly w: number; readonly h: number;
   private gl: WebGL2RenderingContext;
   private prog: WebGLProgram;
@@ -150,12 +230,18 @@ export class RawGpu {
   private cube: WebGLTexture | null = null; private cubeSize = 0; private lutAmt = 0;
   private fbs = new Map<string, { fb: WebGLFramebuffer; tex: WebGLTexture }>();
   private u: Record<string, WebGLUniformLocation | null> = {};
+  /* 相機特效 */
+  private fx: RawGpuFx | null = null;
+  private fxProg: { down: WebGLProgram; blur: WebGLProgram; fx: WebGLProgram } | null = null;
+  private lowCube: WebGLTexture | null = null; private lowCubeSize = 0;
+  /** 中間的貼圖能不能用半精度浮點（不能就用 8 位元） */
+  private floatTargets = false;
   private asShot: [number, number];
   private lost = false;
 
   /** 建不起來（沒有 WebGL2、資料不對）丟例外，呼叫端改走原生出像素那條 */
   constructor(lin: Uint16Array, w: number, h: number, base: Uint16Array, bw: number, bh: number, asShot: [number, number],
-    lut?: { data: Float32Array; size: number; amount: number } | null) {
+    lut?: { data: Float32Array; size: number; amount: number } | null, fx?: RawGpuFx | null) {
     if (lin.length !== w * h * 4 || base.length !== bw * bh * 4) throw new Error('raw-gpu: size');
     const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1;
     const gl = cv.getContext('webgl2', { premultipliedAlpha: false, preserveDrawingBuffer: false, antialias: false });
@@ -167,13 +253,23 @@ export class RawGpu {
       if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('raw-gpu: ' + gl.getShaderInfoLog(s));
       return s;
     };
-    const prog = gl.createProgram()!;
-    gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
-    gl.bindAttribLocation(prog, 0, 'aPos');
-    gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error('raw-gpu: link');
+    const link = (fs: string) => {
+      const pr = gl.createProgram()!;
+      gl.attachShader(pr, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs));
+      gl.bindAttribLocation(pr, 0, 'aPos');
+      gl.linkProgram(pr);
+      if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error('raw-gpu: link');
+      return pr;
+    };
+    const prog = link(FS);
     this.prog = prog;
-    for (const n of ['uLin', 'uBase', 'uCube', 'uGain', 'uExpo', 'uHi', 'uSh', 'uLutAmt', 'uCubeSize', 'uWbOn', 'uLutOn', 'uWb', 'uToSrgb', 'uFromSrgb']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uLin', 'uBase', 'uCube', 'uGain', 'uExpo', 'uHi', 'uSh', 'uLutAmt', 'uCubeSize', 'uWbOn', 'uLutOn', 'uFxOn', 'uWb', 'uToSrgb', 'uFromSrgb']) this.u[n] = gl.getUniformLocation(prog, n);
+    if (fx && (fx.soft > 0.001 || fx.blur > 0.001 || fx.lowfi > 0.001)) {
+      if (fx.lowfi > 0.001 && !(fx.lowfiCube && fx.lowfiCube.size >= 2)) throw new Error('raw-gpu: lowfi cube');
+      this.fx = fx;
+      this.fxProg = { down: link(DOWN_FS), blur: link(BLUR_FS), fx: link(FX_FS) };
+      this.floatTargets = !!gl.getExtension('EXT_color_buffer_float');
+    }
     const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -201,30 +297,74 @@ export class RawGpu {
       for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_3D, k, v);
       this.cube = t; this.cubeSize = lut.size; this.lutAmt = Math.max(0, Math.min(1, lut.amount));
     }
+    if (this.fx?.lowfiCube) this.lowCube = this.cube3d(this.fx.lowfiCube.data, this.fx.lowfiCube.size), this.lowCubeSize = this.fx.lowfiCube.size;
     if (gl.getError() !== gl.NO_ERROR) throw new Error('raw-gpu: upload');
   }
 
   get ok() { return !this.lost && !this.gl.isContextLost(); }
 
-  /** 照這組參數沖一張 W×H 的 sRGB 8 位元像素（RGBA，由上往下）。失敗回 null */
-  render(p: RawGpuParams, W = this.w, H = this.h): Uint8ClampedArray | null {
-    if (!this.ok) return null;
+  private cube3d(data: Float32Array, size: number) {
     const gl = this.gl;
-    const key = `${W}x${H}`;
+    const hd = new Uint16Array(data.length);
+    for (let i = 0; i < hd.length; i++) hd[i] = f2h(data[i]);
+    const t = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_3D, t);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, size, size, size, 0, gl.RGBA, gl.HALF_FLOAT, hd);
+    for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_3D, k, v);
+    return t;
+  }
+  /** 畫圖的目標（貼圖＋framebuffer），同一個名字、尺寸重複用 */
+  private target(name: string, W: number, H: number, float: boolean) {
+    const gl = this.gl;
+    const key = `${name}:${W}x${H}:${float ? 'f' : 'b'}`;
     let t = this.fbs.get(key);
     if (!t) {
       const tex = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, tex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      if (float) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, W, H, 0, gl.RGBA, gl.HALF_FLOAT, null);
+      else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
       const fb = gl.createFramebuffer()!;
       gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
       if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) return null;
       t = { fb, tex }; this.fbs.set(key, t);
     }
+    return t;
+  }
+  /** 用某個程式畫滿某個目標 */
+  private pass(prog: WebGLProgram, t: { fb: WebGLFramebuffer }, W: number, H: number, set: (loc: (n: string) => WebGLUniformLocation | null) => void) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
+    gl.viewport(0, 0, W, H);
+    gl.useProgram(prog);
+    set(n => gl.getUniformLocation(prog, n));
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+  /** 縮小（可選亮部擷取）→ 高斯模糊（橫、直各一次）：回傳模糊好的小圖 */
+  private blurSmall(src: WebGLTexture, sw: number, sh: number, sigma: number, bright: boolean, tag: string) {
+    const gl = this.gl, P = this.fxProg!, f = this.floatTargets;
+    const a = this.target(`${tag}a`, sw, sh, f), b = this.target(`${tag}b`, sw, sh, f);
+    if (!a || !b) return null;
+    this.pass(P.down, a, sw, sh, loc => { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, src); gl.uniform1i(loc('uSrc'), 0); gl.uniform1i(loc('uBright'), bright ? 1 : 0); });
+    this.pass(P.blur, b, sw, sh, loc => { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, a.tex); gl.uniform1i(loc('uSrc'), 0); gl.uniform2f(loc('uStep'), 1 / sw, 0); gl.uniform1f(loc('uSigma'), Math.max(0.01, sigma)); });
+    this.pass(P.blur, a, sw, sh, loc => { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, b.tex); gl.uniform1i(loc('uSrc'), 0); gl.uniform2f(loc('uStep'), 0, 1 / sh); gl.uniform1f(loc('uSigma'), Math.max(0.01, sigma)); });
+    return a.tex;
+  }
+
+  /** 照這組參數沖一張 W×H 的 sRGB 8 位元像素（RGBA，由上往下）。失敗回 null */
+  render(p: RawGpuParams, W = this.w, H = this.h): Uint8ClampedArray | null {
+    if (!this.ok) return null;
+    const gl = this.gl;
+    const fx = this.fx;
+    /* 沒有特效：主流程直接畫成品。有特效：主流程先畫「特效要的底」，再接特效 */
+    const t = fx ? this.target('base', W, H, this.floatTargets) : this.target('out', W, H, false);
+    if (!t) return null;
     gl.bindFramebuffer(gl.FRAMEBUFFER, t.fb);
     gl.viewport(0, 0, W, H);
     gl.useProgram(this.prog);
+    gl.uniform1i(this.u.uFxOn, fx ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.lin); gl.uniform1i(this.u.uLin, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.base); gl.uniform1i(this.u.uBase, 1);
     gl.uniform1f(this.u.uGain, Math.pow(2, p.exposure));
@@ -242,6 +382,39 @@ export class RawGpu {
     gl.uniformMatrix3fv(this.u.uWb, true, new Float32Array(wb ?? [1, 0, 0, 0, 1, 0, 0, 0, 1]));
     gl.uniformMatrix3fv(this.u.uToSrgb, true, new Float32Array(P3_TO_SRGB));
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    if (fx) {
+      /* 模糊：縮到寬 360 上模糊（原生同一組換算：半徑 0.6＋強度×3.2，強度高時兩輪），柔光：長邊 176 的亮部光暈 */
+      let blurTex: WebGLTexture | null = null, glowTex: WebGLTexture | null = null;
+      if (fx.blur > 0.001) {
+        const r = 0.6 + fx.blur * 3.2, passes = fx.blur > 0.55 ? 2 : 1, s = Math.min(1, 360 / W);
+        const sigma = r * 1.4 * Math.sqrt(passes) / 270 * W * s;
+        blurTex = this.blurSmall(t.tex, Math.max(1, Math.round(W * s)), Math.max(1, Math.round(H * s)), sigma, false, 'bl');
+        if (!blurTex) return null;
+      }
+      if (fx.soft > 0.001) {
+        const s = 176 / Math.max(W, H);
+        glowTex = this.blurSmall(t.tex, Math.max(1, Math.round(W * s)), Math.max(1, Math.round(H * s)), 4.5, true, 'gl');
+        if (!glowTex) return null;
+      }
+      const o = this.target('out', W, H, false);
+      if (!o) return null;
+      const P = this.fxProg!;
+      this.pass(P.fx, o, W, H, loc => {
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, t.tex); gl.uniform1i(loc('uBaseTex'), 0);
+        gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, blurTex ?? t.tex); gl.uniform1i(loc('uBlurTex'), 1);
+        gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, glowTex ?? t.tex); gl.uniform1i(loc('uGlowTex'), 2);
+        gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_3D, this.lowCube); gl.uniform1i(loc('uLowCube'), 3);
+        gl.uniform2f(loc('uSize'), W, H);
+        gl.uniform1f(loc('uBlur'), fx.blur); gl.uniform1f(loc('uSoft'), fx.soft); gl.uniform1f(loc('uLowfi'), fx.lowfi);
+        /* 顆粒格子的大小：原生 e.width / 1200 × (0.5 + 50 × 0.025) */
+        gl.uniform1f(loc('uCell'), W / 1200 * 1.75);
+        gl.uniform1f(loc('uLowCubeSize'), Math.max(2, this.lowCubeSize));
+        /* 顆粒強度：原生的固定值 50（測試時可以關掉，單獨比對其他步驟） */
+        gl.uniform1f(loc('uGrain'), RawGpu.grain);
+        gl.uniformMatrix3fv(loc('uToSrgb'), true, new Float32Array(P3_TO_SRGB));
+        gl.uniformMatrix3fv(loc('uFromSrgb'), true, new Float32Array(SRGB_TO_P3));
+      });
+    }
     /* 讀回來：framebuffer 的第 0 列對應貼圖的第 0 列（＝資料的第一列，最上面），所以讀出來就是由上往下 */
     const out = new Uint8Array(W * H * 4);
     gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, out);
@@ -252,7 +425,8 @@ export class RawGpu {
     const gl = this.gl;
     for (const { fb, tex } of this.fbs.values()) { gl.deleteFramebuffer(fb); gl.deleteTexture(tex); }
     this.fbs.clear();
-    gl.deleteTexture(this.lin); gl.deleteTexture(this.base); if (this.cube) gl.deleteTexture(this.cube); gl.deleteProgram(this.prog);
+    gl.deleteTexture(this.lin); gl.deleteTexture(this.base); if (this.cube) gl.deleteTexture(this.cube); if (this.lowCube) gl.deleteTexture(this.lowCube);
+    gl.deleteProgram(this.prog); if (this.fxProg) { gl.deleteProgram(this.fxProg.down); gl.deleteProgram(this.fxProg.blur); gl.deleteProgram(this.fxProg.fx); }
     gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }

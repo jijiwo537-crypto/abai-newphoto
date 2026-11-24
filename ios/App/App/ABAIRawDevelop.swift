@@ -358,10 +358,12 @@ enum ABAIRawDevelop {
         return img
     }
 
-    /// look 沒有特效（柔光、模糊、低保真）：網頁 GPU 可以照同一套公式即時沖（裁切、濾鏡色彩表都做得到，見 ABAIRawSession.linear）
+    /// 網頁 GPU 能不能照同一套公式即時沖這個 look：裁切、濾鏡色彩表、相機特效（柔光、模糊、低保真）都做得到；
+    /// 只有低保真需要的色彩表讀不到時不行
     static func lookGpuOk(_ look: [String: Any]?) -> Bool {
         guard let look = look else { return true }
-        return !ABAICameraFx(look["fx"] as? [String: Any]).isOn
+        let fx = ABAICameraFx(look["fx"] as? [String: Any])
+        return fx.lowfi <= 0.001 || ABAICameraFx.lowfiCube != nil
     }
     /// look 的濾鏡色彩表（沒有濾鏡、強度 0 回 nil）
     static func lookCube(_ look: [String: Any]?) -> (ABAIImageCore.Cube, Double)? {
@@ -554,6 +556,16 @@ final class ABAIRawSession {
     }
 
     var gpuLookOk: Bool { ABAIRawDevelop.lookGpuOk(look) }
+    /// 相機特效的強度，和低保真用的色彩表（寫成檔案給網頁 GPU 用）
+    func lookFx() throws -> (soft: Double, blur: Double, lowfi: Double, lowfiCube: URL?, lowfiSize: Int) {
+        let fx = ABAICameraFx(look?["fx"] as? [String: Any])
+        var u: URL? = nil, n = 0
+        if fx.lowfi > 0.001, let c = ABAICameraFx.lowfiCube {
+            let f = ABAIImageCore.newFileURL(ext: "cube"); try c.data.write(to: f); u = f; n = c.size
+        }
+        return (fx.soft, fx.blur, fx.lowfi, u, n)
+    }
+
     /// 濾鏡色彩表寫成檔案（size³ 個 RGBA Float32，紅色變化最快）給網頁 GPU 用；沒有濾鏡回 nil
     func lookCubeFile() throws -> (URL, Int, Double)? {
         guard let (cube, amount) = ABAIRawDevelop.lookCube(look) else { return nil }

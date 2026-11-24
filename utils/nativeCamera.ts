@@ -207,7 +207,7 @@ export interface RawBaseParams { exposure: number; temperature?: number; tint?: 
 type RawDevApi = {
   developPreview?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; maxPixel: number; final: boolean }): Promise<{ path: string; asShotTemperature: number; asShotTint: number }>;
   developFull?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; format?: 'jpeg' | 'tiff16' }): Promise<{ path: string }>;
-  developLinear?(o: { path: string; look: RawLook | null; w: number; h: number; bw: number; bh: number }): Promise<{ gpu: boolean; path?: string; basePath?: string; cubePath?: string; cubeSize?: number; lutAmount?: number; asShotTemperature: number; asShotTint: number }>;
+  developLinear?(o: { path: string; look: RawLook | null; w: number; h: number; bw: number; bh: number }): Promise<{ gpu: boolean; path?: string; basePath?: string; cubePath?: string; cubeSize?: number; lutAmount?: number; fx?: { soft: number; blur: number; lowfi: number }; lowfiCubePath?: string; lowfiCubeSize?: number; asShotTemperature: number; asShotTint: number }>;
   developPixels?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; w: number; h: number; fw: number; fh: number }):
     Promise<{ path: string; fastPath: string; asShotTemperature: number; asShotTint: number }>;
 };
@@ -241,15 +241,15 @@ export async function rawDevelopPixels(path: string, b: RawBaseParams, look: Raw
 }
 /** 網頁 GPU 即時沖洗用的線性資料（線性 Display P3 半精度浮點）。gpu＝false：拍照時套了濾鏡、特效，網頁算不了。失敗回 null */
 export async function rawDevelopLinear(path: string, look: RawLook | null, w: number, h: number, bw: number, bh: number):
-  Promise<{ gpu: false; asShotTemperature: number; asShotTint: number } | { gpu: true; lin: Uint16Array; base: Uint16Array; cube: { data: Float32Array; size: number; amount: number } | null; asShotTemperature: number; asShotTint: number } | null> {
+  Promise<{ gpu: false; asShotTemperature: number; asShotTint: number } | { gpu: true; lin: Uint16Array; base: Uint16Array; cube: { data: Float32Array; size: number; amount: number } | null; fx: { soft: number; blur: number; lowfi: number; lowfiCube: { data: Float32Array; size: number } | null } | null; asShotTemperature: number; asShotTint: number } | null> {
   const p = await rawDev(), img = await nativeImage();
   if (!p?.developLinear) return null;
-  let r: { gpu: boolean; path?: string; basePath?: string; cubePath?: string; cubeSize?: number; lutAmount?: number; asShotTemperature: number; asShotTint: number } | null = null;
+  let r: { gpu: boolean; path?: string; basePath?: string; cubePath?: string; cubeSize?: number; lutAmount?: number; fx?: { soft: number; blur: number; lowfi: number }; lowfiCubePath?: string; lowfiCubeSize?: number; asShotTemperature: number; asShotTint: number } | null = null;
   try {
     r = await p.developLinear({ path, look, w, h, bw, bh });
     if (!r.gpu || !r.path || !r.basePath) return { gpu: false, asShotTemperature: r.asShotTemperature, asShotTint: r.asShotTint };
     const buf = async (f: string) => (await fetch(fileSrc(f))).arrayBuffer();
-    const [lb, bb, cb] = await Promise.all([buf(r.path), buf(r.basePath), r.cubePath ? buf(r.cubePath) : Promise.resolve(null)]);
+    const [lb, bb, cb, fb] = await Promise.all([buf(r.path), buf(r.basePath), r.cubePath ? buf(r.cubePath) : Promise.resolve(null), r.lowfiCubePath ? buf(r.lowfiCubePath) : Promise.resolve(null)]);
     const lin = new Uint16Array(lb), base = new Uint16Array(bb);
     if (lin.length !== w * h * 4 || base.length !== bw * bh * 4) return null;
     /* 拍照時套的濾鏡色彩表（size³ 個 RGBA Float32）：GPU 照原生同一份表查 */
@@ -259,9 +259,16 @@ export async function rawDevelopLinear(path: string, look: RawLook | null, w: nu
       if (data.length !== r.cubeSize ** 3 * 4) return null;
       cube = { data, size: r.cubeSize, amount: r.lutAmount ?? 1 };
     }
-    return { gpu: true, lin, base, cube, asShotTemperature: r.asShotTemperature, asShotTint: r.asShotTint };
+    /* 拍照時開的相機特效（柔光、模糊、低保真），低保真另外帶它的色彩表 */
+    let fx: { soft: number; blur: number; lowfi: number; lowfiCube: { data: Float32Array; size: number } | null } | null = null;
+    if (r.fx) {
+      let lowfiCube: { data: Float32Array; size: number } | null = null;
+      if (fb && r.lowfiCubeSize) { const d = new Float32Array(fb); if (d.length !== r.lowfiCubeSize ** 3 * 4) return null; lowfiCube = { data: d, size: r.lowfiCubeSize }; }
+      fx = { ...r.fx, lowfiCube };
+    }
+    return { gpu: true, lin, base, cube, fx, asShotTemperature: r.asShotTemperature, asShotTint: r.asShotTint };
   } catch { return null; }
-  finally { if (r) for (const f of [r.path, r.basePath, r.cubePath]) if (f) img?.remove({ path: f }).catch(() => {}); }
+  finally { if (r) for (const f of [r.path, r.basePath, r.cubePath, r.lowfiCubePath]) if (f) img?.remove({ path: f }).catch(() => {}); }
 }
 /** 原尺寸、完整品質（存檔用）：檔案網址。失敗回 null */
 export async function rawDevelopFull(path: string, b: RawBaseParams, look: RawLook | null, format: 'jpeg' | 'tiff16' = 'jpeg'): Promise<string | null> {
