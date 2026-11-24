@@ -491,7 +491,29 @@ const PhotoViewer: React.FC<{
       const k = Math.max(C.width / Pw, C.height / Ph);
       const ix = Math.max(0, (B.width - C.width / k) / 2), iy = Math.max(0, (B.height - C.height / k) / 2);
       const tx = C.left + C.width / 2 - (B.left + B.width / 2), ty = C.top + C.height / 2 - (B.top + B.height / 2);
-      /* 只用 transform（外框裁切＋裡面每一層反向縮放），整段在 GPU 上跑 */
+      /* 飛回格子用獨立的替身（掛在最外層、固定位置的那一張），不去縮放相簿裡這一頁本身：
+         這一頁在左右翻頁的捲動容器裡，直接縮它在 iOS 上會留下條狀殘影、旁邊那一頁露出半張。
+         替身用畫面上已經解好的那一層圖（同一個網址，快取裡現成的），解好才換上，換的那一格看不出來 */
+      const box = ghostBox.current, g = ghost.current;
+      const layers = Array.from(img.querySelectorAll('img')) as HTMLImageElement[];
+      const shown = [...layers].reverse().find(el => el.complete && el.naturalWidth > 0) ?? null;
+      if (box && g && shown) {
+        g.getAnimations().forEach(a => a.cancel());
+        g.style.opacity = '1';
+        g.src = shown.currentSrc || shown.src;
+        const P = { left: B.left + (B.width - Pw) / 2, top: B.top + (B.height - Ph) / 2 };
+        const k2 = Math.max(C.width / Pw, C.height / Ph);
+        const jx = Math.max(0, (Pw - C.width / k2) / 2), jy = Math.max(0, (Ph - C.height / k2) / 2);
+        const tx2 = C.left + C.width / 2 - (P.left + Pw / 2), ty2 = C.top + C.height / 2 - (P.top + Ph / 2);
+        void g.decode().catch(() => {}).then(() => {
+          Object.assign(box.style, { left: `${P.left}px`, top: `${P.top}px`, width: `${Pw}px`, height: `${Ph}px`, visibility: 'visible' });
+          const run = flipCrop(box, [g], Pw, Ph, { tx: d.dx, ty: d.dy, s: d.s, ix: 0, iy: 0 }, { tx: tx2, ty: ty2, s: k2, ix: jx, iy: jy }, dur, 'forwards');
+          /* 替身第一格已經擺好（flipCrop 同步寫入起點），同一格把整個翻頁容器藏起來 */
+          if (pager.current) pager.current.style.visibility = 'hidden';
+          void run.finally(done);
+        });
+        return;
+      }
       img.style.overflow = 'hidden';
       flipCrop(img, Array.from(img.children) as HTMLElement[], B.width, B.height,
         { tx: d.dx, ty: d.dy, s: d.s, ix: 0, iy: 0 }, { tx, ty, s: k, ix, iy }, dur, 'forwards').finally(done);
