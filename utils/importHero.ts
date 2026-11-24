@@ -161,10 +161,18 @@ function hasRaisedZ(el: HTMLElement, E: R): boolean {
   }
   return false;
 }
+function hasBackdrop(el: HTMLElement): boolean {
+  const st = getComputedStyle(el) as CSSStyleDeclaration & { webkitBackdropFilter?: string };
+  return (!!st.backdropFilter && st.backdropFilter !== 'none') || (!!st.webkitBackdropFilter && st.webkitBackdropFilter !== 'none');
+}
 type Block = { el: HTMLElement; kids?: HTMLElement[] };
 function chromeBlocks(root: HTMLElement, E: R): Block[] {
   const out: HTMLElement[] = [];
   const cx = E.x + E.w / 2, cy = E.y + E.h / 2;
+  /* 照片的範圍：預期的照片框，加上工具裡實際的大圖（美顏等工具的照片不一定剛好在預期位置） */
+  const zones: R[] = [E];
+  root.querySelectorAll('img, canvas').forEach(m => { const q = m.getBoundingClientRect(); if (q.width * q.height >= E.w * E.h * 0.2) zones.push({ x: q.left, y: q.top, w: q.width, h: q.height }); });
+  const onPhoto = (q: DOMRect) => zones.some(z => Math.min(q.right, z.x + z.w) - Math.max(q.left, z.x) > 2 && Math.min(q.bottom, z.y + z.h) - Math.max(q.top, z.y) > 2);
   const walk = (el: HTMLElement, depth: number) => {
     for (const c of Array.from(el.children) as HTMLElement[]) {
       if (c.hasAttribute('data-import-hero') || c.hasAttribute('data-import-spinner')) continue;
@@ -173,6 +181,13 @@ function chromeBlocks(root: HTMLElement, E: R): Block[] {
       if (r.width < 1 || r.height < 1) { if (depth < 8 && c.children.length) walk(c, depth + 1); continue; }
       const coversPhoto = r.left <= cx && r.right >= cx && r.top <= cy && r.bottom >= cy && r.width * r.height >= E.w * E.h * 0.5;
       if (coversPhoto || hasPhoto(c, E) || (c.children.length && hasRaisedZ(c, E))) { if (depth < 8) walk(c, depth + 1); continue; }
+      /* 疊在照片上的浮動按鈕（前後對比、標準／專業、換圖…）：不參與進場 ——
+         它們本來就被飛進來的替身蓋著，跟照片一起出現；做透明度動畫會讓 iOS 暫時改變它的圖層與毛玻璃材質 */
+      if (onPhoto(r)) continue;
+      /* 毛玻璃（backdrop-filter）的元素：做透明度動畫時 iOS 會暫時拿不到後面的畫面，材質跟就定位後不一樣 ——
+         它自己不動；包著它的那一塊往裡面拆，其他部分照樣進場 */
+      if (hasBackdrop(c)) continue;
+      if (c.querySelector('[class*="backdrop-"],[style*="backdrop"]')) { if (depth < 8) walk(c, depth + 1); continue; }
       out.push(c);
     }
   };

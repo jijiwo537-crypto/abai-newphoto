@@ -120,6 +120,8 @@ export function installClickHaptics() {
   document.addEventListener('click', e => {
     const el = (e.target as Element | null)?.closest?.('[data-haptic],[aria-pressed],[role="tab"],[role="switch"],[role="radio"],[role="menuitemradio"]');
     if (!el || (el as HTMLButtonElement).disabled) return;
+    /* 導入相簿裡點照片、多選、選相簿都不震（相簿自己只在出錯時震） */
+    if (el.closest('[data-abai-gallery]')) return;
     const k = el.getAttribute('data-haptic');
     if (k === 'none') return;
     haptic(k === 'press' || k === 'detentMajor' || k === 'shutter' ? k : 'tick');
