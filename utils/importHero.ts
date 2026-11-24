@@ -1,3 +1,5 @@
+import { nativePathOf } from './nativeBridge';
+import { nativeDownsample, nativeImage } from './nativeImage';
 /* 從主頁導入單張照片（編輯、美顏、仿色）時的過場：相簿裡那張小縮圖，一路流暢地放大、飛到工具裡照片的位置。
  *
  * 1. 點下去的那一刻（beginImportHero）：在那一格「原地」放一張一模一樣的替身（同位置、同大小、同樣裁成正方形）。
@@ -13,10 +15,19 @@
 const EASE = 'cubic-bezier(0.25, 0.8, 0.25, 1)';
 let ghost: HTMLDivElement | null = null;
 let ar = 1;
-let fullUrl: string | null = null;
+let tempPath: string | null = null;
 let token = 0;
 /** 一點下去就開始的那一段飛行（飛到預估的位置）；落地時等它飛完再做最後一點點修正 */
 let flight: Promise<void> = Promise.resolve();
+/* 藏起來的「照片本人」：任何情況（成功、找不到、取消、出錯、逾時）都一定要放回來，不然工具裡的預覽會看不到 */
+let hiddenEl: HTMLElement | null = null, hiddenPrev = '';
+function unhide() { if (hiddenEl) { hiddenEl.style.opacity = hiddenPrev; hiddenEl = null; } }
+/** 保險：不管發生什麼事，最多 12 秒一定收掉替身、放回照片、恢復「匯入中」的轉圈 */
+let failsafe = 0;
+function armFailsafe() {
+  window.clearTimeout(failsafe);
+  failsafe = window.setTimeout(() => { unhide(); if (ghost) finish(ghost, 160); document.documentElement.removeAttribute('data-import-hero'); }, 12000);
+}
 
 /** 安全區域（瀏海、底部橫條）的大小 */
 function safeInsets() {
@@ -64,6 +75,7 @@ export function beginImportHero(rect: DOMRect, src: string, aspect?: number) {
   document.body.appendChild(g);
   ghost = g;
   document.documentElement.setAttribute('data-import-hero', '');
+  armFailsafe();
   /* 手指一放就開始飛：從那一格放大、展開成完整比例，飛向照片在工具裡預估會停的位置（一路不停） */
   const P = predictRect(ar);
   const C = rect;
@@ -76,20 +88,27 @@ export function beginImportHero(rect: DOMRect, src: string, aspect?: number) {
   ], { duration: 520, easing: EASE, fill: 'forwards' }).finished.then(() => {}, () => {});
 }
 
-/** 原檔讀好了：疊上高畫質版本（淡入）。RAW 之類瀏覽器解不了的，就維持縮圖 */
+/** 原檔讀好了：疊上螢幕大小的高畫質版本（淡入）。
+ *  不直接解原檔：原檔可能是 4800 萬畫素／HEIC，工具本身也在解同一張，兩份全尺寸同時在記憶體裡會有被系統關掉的風險。
+ *  請原生縮成長邊 1600 再用；沒有原生（網頁版）或縮不出來，就維持相簿的縮圖 */
 export function setImportHeroFile(file: File) {
   const g = ghost, my = token;
   if (!g) return;
-  const url = URL.createObjectURL(file);
-  const im = layer(url);
-  im.style.opacity = '0';
-  void im.decode().then(() => {
-    if (my !== token || !g.isConnected) { URL.revokeObjectURL(url); return; }
-    if (im.naturalWidth && im.naturalHeight) ar = im.naturalWidth / im.naturalHeight;
-    g.appendChild(im);
-    fullUrl = url;
-    im.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: 'ease-out', fill: 'forwards' });
-  }, () => URL.revokeObjectURL(url));
+  void (async () => {
+    try {
+      const path = nativePathOf(file);
+      if (!path) return;
+      const small = await nativeDownsample(path, 1600);
+      if (!small || my !== token || !g.isConnected) return;
+      const im = layer(small.url);
+      im.style.opacity = '0';
+      await im.decode();
+      if (my !== token || !g.isConnected) return;
+      g.appendChild(im);
+      tempPath = small.path;
+      im.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 160, easing: 'ease-out', fill: 'forwards' });
+    } catch { /* 換不了就維持縮圖 */ }
+  })();
 }
 
 /** 這張圖在畫面上真正顯示的範圍（img 是 object-fit: contain 時，元素比圖大） */
@@ -128,12 +147,16 @@ function findTarget(): HTMLElement | null {
 
 /** 工具畫出來了（或正在畫）：找到照片本人、位置穩定了，就一次飛過去 */
 export async function landImportHero() {
+  /* 任何意外都不能讓畫面卡住：出錯就收掉替身、放回照片 */
+  try { await landInner(); }
+  catch { unhide(); if (ghost) finish(ghost, 160); }
+}
+async function landInner() {
   const g = ghost, my = token;
   if (!g) return;
   const t0 = performance.now();
   let last: DOMRect | null = null, stable = 0, target: HTMLElement | null = null;
   /* 一找到照片本人就先把它藏起來（等位置穩定的這段時間，畫面上不會同時有兩張） */
-  let hidden: HTMLElement | null = null, hiddenPrev = '';
   /* 藏的是「跟照片一樣大」的最外層那一塊：工具常常是好幾張 canvas 疊在一起，只藏一張還看得到另一張 */
   const outer = (el: HTMLElement | null) => {
     if (!el) return null;
@@ -148,17 +171,18 @@ export async function landImportHero() {
   };
   const hide = (el0: HTMLElement | null) => {
     const el = outer(el0);
-    if (hidden === el) return;
-    if (hidden) hidden.style.opacity = hiddenPrev;
-    hidden = el;
+    if (hiddenEl === el) return;
+    unhide();
+    hiddenEl = el;
     if (el) { hiddenPrev = el.style.opacity; el.style.opacity = '0'; }
   };
   while (performance.now() - t0 < 8000) {
     await new Promise(r => requestAnimationFrame(r));
     if (my !== token) { hide(null); return; }
     /* 找的時候先放回來（藏起來的那張也要能被找到），找完再藏 */
-    const prevHidden = hidden; if (prevHidden) prevHidden.style.opacity = hiddenPrev;
-    const el = findTarget();
+    const prevHidden = hiddenEl; if (prevHidden) prevHidden.style.opacity = hiddenPrev;
+    let el: HTMLElement | null = null;
+    try { el = findTarget(); } catch { el = null; }
     if (prevHidden) prevHidden.style.opacity = '0';
     hide(el);
     if (!el) { stable = 0; last = null; continue; }
@@ -189,11 +213,12 @@ export async function landImportHero() {
 
 function finish(g: HTMLDivElement, ms: number) {
   if (ghost === g) ghost = null;
-  if (!ghost) document.documentElement.removeAttribute('data-import-hero');
-  const url = fullUrl; fullUrl = null;
+  unhide();
+  if (!ghost) { window.clearTimeout(failsafe); document.documentElement.removeAttribute('data-import-hero'); }
+  const tmp = tempPath; tempPath = null;
   g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {}).finally(() => {
     g.remove();
-    if (url) URL.revokeObjectURL(url);
+    if (tmp) void nativeImage().then(p => p?.remove({ path: tmp })).catch(() => {});
   });
 }
 

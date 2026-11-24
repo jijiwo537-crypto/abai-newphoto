@@ -122,8 +122,13 @@ enum ABAIRawDevelop {
     /// 系統 RAW 引擎改色溫、色調時，整體亮度會跟著變（白平衡的增益沒有保持亮度）——
     /// 看起來就像同時動到了曝光。專業沖洗軟體的白平衡只改顏色，所以這裡補回來：
     /// 用一張很小的 RAW 在同樣曝光下各解一次（拍攝當下的白平衡、現在的白平衡），比較感覺亮度，差多少補多少。
-    static func wbGain(_ url: URL, _ p: ABAIRawParams) -> Double {
-        guard p.temperature != nil || p.tint != nil, let f = rawFilter(url, longSide: 320, draft: true) else { return 1 }
+    /// small：共用的小解碼器和它拍攝當下的白平衡（量之前先放回去）；不給就自己開一個
+    static func wbGain(_ url: URL, _ p: ABAIRawParams, small: (CIRAWFilter, Float, Float)? = nil) -> Double {
+        guard p.temperature != nil || p.tint != nil else { return 1 }
+        let f: CIRAWFilter
+        if let sm = small { f = sm.0; f.neutralTemperature = sm.1; f.neutralTint = sm.2 }
+        else if let made = rawFilter(url, longSide: 320, draft: true) { f = made }
+        else { return 1 }
         f.exposure = Float(p.exposure)
         guard let a = f.outputImage, let la = logMean(a) else { return 1 }
         if let t = p.temperature { f.neutralTemperature = Float(max(2000, min(50000, t))) }
@@ -364,10 +369,13 @@ final class ABAIRawSession {
     }
 
     private var gainCache: [String: Double] = [:]
+    /// 量白平衡亮度用的小解碼器（整段沖洗共用一個，不用每次重新開 RAW 檔）
+    private var smallFilter: (CIRAWFilter, Float, Float)?
     private func wbGain(_ p: ABAIRawParams) -> Double {
         let key = "\(p.exposure)|\(p.temperature ?? -1)|\(p.tint ?? -999)"
         if let g = gainCache[key] { return g }
-        let g = ABAIRawDevelop.wbGain(url, p)
+        if smallFilter == nil, let f = ABAIRawDevelop.rawFilter(url, longSide: 320, draft: true) { smallFilter = (f, f.neutralTemperature, f.neutralTint) }
+        let g = ABAIRawDevelop.wbGain(url, p, small: smallFilter)
         if gainCache.count > 64 { gainCache.removeAll() }
         gainCache[key] = g
         return g
