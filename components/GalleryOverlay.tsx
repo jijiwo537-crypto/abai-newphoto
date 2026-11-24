@@ -376,16 +376,24 @@ const PhotoViewer: React.FC<{
     }
     return () => { alive = false; };
   }, [index, photos]);
-  /* 下拉時鎖住左右翻頁。iOS 把捲動容器改成 overflow: hidden 的那一下會把捲動位置歸零（變成第一張），
-     所以鎖住、解鎖時都把位置放回目前這一張，鎖住期間的捲動事件也不算換頁 */
+  /* 下拉時鎖住左右翻頁。不能把捲動容器改成 overflow: hidden —— 這個容器開著強制對齊（snap-mandatory），
+     iOS 在改回來時會用歸零的位置重新對齊，就跳到第一張。改成攔下觸控的移動（不讓瀏覽器拿去捲），
+     鎖住期間的捲動事件也不算換頁；放開時位置若被動過就放回目前這一張 */
   const pagerLocked = useRef(false);
   const lockPager = (on: boolean) => {
     const el = pager.current; if (!el) return;
-    const left = indexRef.current * el.clientWidth;
     pagerLocked.current = on;
-    el.style.overflowX = on ? 'hidden' : '';
-    el.scrollLeft = left;
+    if (!on) {
+      const left = indexRef.current * el.clientWidth;
+      if (Math.abs(el.scrollLeft - left) > 1) el.scrollLeft = left;
+    }
   };
+  useEffect(() => {
+    const el = pager.current; if (!el) return;
+    const stop = (e: TouchEvent) => { if (pagerLocked.current && e.cancelable) e.preventDefault(); };
+    el.addEventListener('touchmove', stop, { passive: false });
+    return () => el.removeEventListener('touchmove', stop);
+  }, []);
   const indexRef = useRef(index);
   indexRef.current = index;
   const dragScale = (dy: number) => 1 - 0.38 * Math.min(1, Math.max(0, dy) / (window.innerHeight * 0.55));
@@ -452,9 +460,19 @@ const PhotoViewer: React.FC<{
     el.scrollLeft = index * el.clientWidth;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  /* 打開的動畫結束（照片出現）時再確認一次位置真的在點到的那一張 */
+  useEffect(() => {
+    if (opening) return;
+    const el = pager.current; if (!el) return;
+    const left = indexRef.current * el.clientWidth;
+    if (Math.abs(el.scrollLeft - left) > 1) el.scrollLeft = left;
+  }, [opening]);
   const onScroll = () => {
     const el = pager.current; if (!el || pagerLocked.current) return;
     const i = Math.round(el.scrollLeft / Math.max(1, el.clientWidth));
+    /* 手指翻頁一次最多一張（scrollSnapStop: always）。一下差兩張以上一定不是使用者滑的（例如 iOS 重新排版時把位置歸零）：
+       放回目前這一張，不換頁 */
+    if (Math.abs(i - index) > 1) { el.scrollLeft = index * el.clientWidth; return; }
     if (i !== index && i >= 0 && i < photos.length) onIndex(i);
   };
   const src = photos[index];

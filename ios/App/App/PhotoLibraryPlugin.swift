@@ -36,6 +36,7 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
         CAPPluginMethod(name: "alphaFlags", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "warmAlpha", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "thumbs", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "rawHero", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "export", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "manageLimited", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
@@ -357,6 +358,26 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
     private func thumbURL(_ id: String, _ size: Int) -> URL {
         let safe = id.replacingOccurrences(of: "/", with: "_")
         return thumbDir.appendingPathComponent("\(safe)_\(size).jpg")
+    }
+
+    /// rawHero({ id, size }) → { path }：RAW 照片導入過場用的預覽，用編輯器同一套 RAW 引擎沖（無銳化、同樣的明暗），
+    /// 飛的時候看到的就是進編輯後的樣子。不用等整張匯出：直接從相簿讀 RAW 檔到暫存、沖長邊 size 的一張。不是 RAW 回 {}
+    @objc func rawHero(_ call: CAPPluginCall) {
+        let id = call.getString("id") ?? ""
+        let size = CGFloat(max(256, min(2048, call.getInt("size") ?? 1024)))
+        work.async {
+            guard let a = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject,
+                  let r = self.photoResource(a), let t = UTType(r.uniformTypeIdentifier), t.conforms(to: .rawImage) else { call.resolve([:]); return }
+            let ext = t.preferredFilenameExtension ?? "dng"
+            let tmp = ABAIImageCore.newFileURL(ext: ext)
+            let o = PHAssetResourceRequestOptions(); o.isNetworkAccessAllowed = true
+            PHAssetResourceManager.default().writeData(for: r, toFile: tmp, options: o) { err in
+                defer { try? FileManager.default.removeItem(at: tmp) }
+                guard err == nil, let s = ABAIRawSession(url: tmp, look: nil, view: nil, longSide: 2048),
+                      let out = try? s.previewJPEG(ABAIRawParams(nil), final: true, maxSide: size) else { call.resolve([:]); return }
+                call.resolve(["path": out.path])
+            }
+        }
     }
 
     @objc func thumbs(_ call: CAPPluginCall) {

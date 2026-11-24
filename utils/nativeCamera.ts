@@ -107,9 +107,8 @@ export async function stampDateOnto(url: string, date: string): Promise<string |
   finally { for (const p of [tmp, out]) if (p) img.remove({ path: p }).catch(() => {}); }
 }
 
-/** 底片模式（RAW）拍的時候少曝光幾格：保護亮部（RAW 的暗部之後拉得回來，爆掉的亮部救不回來）。
- *  所以觀景窗看起來暗暗的 —— 存下來的成品照片、重新沖洗的預設值都會沖回這麼多格 */
-export const RAW_PROTECT_EV = 1;
+/** RAW 拍攝時刻意少曝光幾格保護亮部。ProRAW 用品質優先時多張合成本身就保護了亮部，再少曝光只會讓暗部多雜訊：跟原相機一樣正常曝光 */
+export const RAW_PROTECT_EV = 0;
 
 export interface RawDevelop {
   /** 曝光（EV）；色溫（K）、色調：不給＝拍攝當下的白平衡 */

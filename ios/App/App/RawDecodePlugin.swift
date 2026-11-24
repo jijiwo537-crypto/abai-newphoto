@@ -174,7 +174,10 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         headlessQueue.async {
             guard let s = self.headlessSession(path, look: look, longSide: 2048) else { call.reject("系統不認得這個 RAW 格式"); return }
             do {
+                let t0 = CFAbsoluteTimeGetCurrent()
                 let urls = try s.pixels(p, sizes: [(w, h), (fw, fh)])
+                let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+                self.rawLog.notice("RawDecode developPixels done \(w, privacy: .public)x\(h, privacy: .public) fast=\(fw, privacy: .public) \(ms, privacy: .public)ms")
                 call.resolve(["path": urls.first?.path ?? "", "fastPath": urls.count > 1 ? urls[1].path : "",
                               "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint])
             } catch { call.reject(error.localizedDescription) }

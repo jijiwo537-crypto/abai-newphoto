@@ -2861,8 +2861,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      這裡先把每一張縮成 72×72 再給那條列用，原圖用完就可以被回收。 */
   const STRIP_THUMB = 72;
   const [stripThumbs, setStripThumbs] = useState<Record<string, string>>({});
+  /* 以「這張照片最初的網址」為準：RAW 調整後換上新沖好的底圖（網址會換），縮圖仍然是原本那張，跟一般照片一樣從頭到尾不變 */
   useEffect(() => {
-    const missing = srcList.filter(s => s && !stripThumbs[s]);
+    const missing = Array.from(new Set<string>(srcList.filter(Boolean).map(s => thumbSrcOfRef.current(s)))).filter(s => !stripThumbs[s]);
     if (!missing.length) return;
     let alive = true;
     const make = (s: string) => new Promise<void>(resolve => {
@@ -8614,7 +8615,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           }
           const cur = buffers.current;
           const pw = cur.preview.w, ph = cur.preview.h;
-          const fw = cur.fast.source ? cur.fast.w : 0, fh = cur.fast.source ? cur.fast.h : 0;
+          /* 拖曳代理（fast）拖的時候不會畫到畫面上（拖曳中一律畫全解析度）：拖的時候不沖，每格少傳一份；放手才補上 */
+          const fw = final && cur.fast.source ? cur.fast.w : 0, fh = final && cur.fast.source ? cur.fast.h : 0;
           if (pw && ph && isGeoIdentity(geoRef.current)) {
             /* 快速通道：原生照編輯頁預覽、拖曳代理的確切尺寸直接給像素 —— 拖曳中跟放手後是同一條路、同樣的像素
                （一樣的顏色、一樣的清晰度），也不用壓 JPEG、解 JPEG、重畫、讀回 */
@@ -10071,9 +10073,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       {/* 沒選中的不用半透明 —— 實心、壓暗就好，才不會透出後面的畫面。
                           src 一定要用縮好的小圖，不能掛原圖（見上面 stripThumbs 的說明）。
                           還沒縮好之前就留底色，這一格本來就只有 36px。 */}
-                      {stripThumbs[src] && (
+                      {stripThumbs[thumbSrcOf(src)] && (
                         <img
-                          src={stripThumbs[src]}
+                          src={stripThumbs[thumbSrcOf(src)]}
                           alt=""
                           draggable={false}
                           className={`w-full h-full object-cover pointer-events-none transition-all ${active ? '' : 'filter brightness-[0.5]'}`}

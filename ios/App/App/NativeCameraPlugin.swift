@@ -468,7 +468,9 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
                 settings = AVCapturePhotoSettings(format: processed)
             }
             if #available(iOS 16.0, *) { settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions }
-            settings.photoQualityPrioritization = .balanced
+            /* RAW 跟原相機一樣用「品質優先」：ProRAW 會多張合成（Smart HDR／Deep Fusion），雜訊低、寬容度大很多。
+               「平衡」合成得少，拉亮暗部、救亮部時就差很多（看起來像假的 RAW） */
+            settings.photoQualityPrioritization = (wantRaw && self.rawFormat() != nil) ? .quality : .balanced
             switch call.getString("flash") ?? "off" {
             case "on": if self.photoOutput.supportedFlashModes.contains(.on) { settings.flashMode = .on }
             case "auto": if self.photoOutput.supportedFlashModes.contains(.auto) { settings.flashMode = .auto }
