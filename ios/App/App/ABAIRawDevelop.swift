@@ -550,7 +550,8 @@ final class ABAIRawSession {
     var cropOnlyLook: Bool { ABAIRawDevelop.lookIsCropOnly(look) }
 
     /// 原尺寸、完整品質輸出成 JPEG（含拍照當下的濾鏡、特效、裁切、日期）
-    func export(_ p: ABAIRawParams) throws -> URL {
+    /// format："jpeg"（預設，存檔用）或 "tiff16"（16 位元無損：拍照時從 RAW 沖成品的中間檔，後面還要套濾鏡、特效，不能先壓縮掉）
+    func export(_ p: ABAIRawParams, format: String = "jpeg") throws -> URL {
         guard let f = ABAIRawDevelop.rawFilter(url, longSide: nil, draft: false),
               let raw = ABAIRawDevelop.applyRaw(f, p, defaults: ABAIRawDefaults(f)),
               let lin = ABAIRawDevelop.bake(raw) else {
@@ -558,6 +559,12 @@ final class ABAIRawSession {
         }
         let base = ABAIRawDevelop.localBase(lin)
         let img = ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(lin, base: base, p, asShot: (asShotTemperature, asShotTint)), look: look, withDate: true)
+        if format == "tiff16" {
+            guard let data = ABAIImageCore.context.tiffRepresentation(of: img, format: .RGBA16, colorSpace: ABAIImageCore.displayP3, options: [:]) else { throw ABAIImageCore.CoreError.encode }
+            let out = ABAIImageCore.newFileURL(ext: "tif")
+            try data.write(to: out)
+            return out
+        }
         let data = try ABAIImageCore.encode(ABAIImageCore.dither(img), format: .jpeg, quality: 0.95)
         let out = ABAIImageCore.newFileURL(ext: "jpg")
         try data.write(to: out)

@@ -58,19 +58,36 @@ export async function captureNative(o: {
   develop?: number;
   /** 日期戳記的字 */
   date?: string | null;
-}): Promise<{ url: string; path: string; cleanPath?: string; rawPath?: string; renderedPath?: string; cropZoom: number; /** 有日期時：沒印日期的同一張（編輯用這張，存檔時再印） */ cleanUrl?: string } | null> {
+  /** 保留原始圖片：沒開 RAW 時，沒套濾鏡的原圖也留下來（originalPath，呼叫端存完要刪） */
+  keepOriginal?: boolean;
+}): Promise<{ url: string; path: string; cleanPath?: string; rawPath?: string; renderedPath?: string; originalPath?: string; cropZoom: number; /** 有日期時：沒印日期的同一張（編輯用這張，存檔時再印） */ cleanUrl?: string } | null> {
   const cam = await nativeCamera(), img = await nativeImage();
   if (!cam || !img) return null;
   /* 小框：鏡頭真的變焦過去拍（清楚）；變不到的部分才用裁切補 */
   const wantOptical = o.zoom > 1.001 && o.baseZoom ? o.baseZoom * o.zoom : undefined;
   const shot = await cam.capture({ flash: o.flash, raw: o.raw, turns: o.turns ?? 0, opticalZoom: wantOptical });
   const cropZoom = wantOptical && shot.zoomApplied ? Math.max(1, wantOptical / shot.zoomApplied) : o.zoom;
+  /* 開 RAW：成品從 RAW 沖（我們的 RAW 引擎、原尺寸完整品質，先照畫面比例、小框裁好），存成 16 位元無損的中間檔，
+     再套濾鏡、特效 —— 不是從系統壓好的 HEIC 套。沖不出來才退回 HEIC */
+  let src = shot.path, fromRaw = '';
+  if (o.raw && shot.rawPath) {
+    const rd = await rawDev();
+    const cropLook: RawLook = { lut: '', amount: 0, aspect: o.aspect, zoom: cropZoom, fx: { soft: 0, blur: 0, lowfi: 0 }, date: null };
+    try { if (rd?.developFull) fromRaw = (await rd.developFull({ path: shot.rawPath, params: rawParams({ exposure: o.develop || 0, highlights: 0, shadows: 0 }), look: cropLook, format: 'tiff16' })).path; }
+    catch { fromRaw = ''; }
+    if (fromRaw) src = fromRaw;
+  }
   const out = await img.render({
-    path: shot.path, lut: o.lut || undefined, amount: o.amount ?? 1, aspect: o.aspect, zoom: cropZoom, fx: o.fx, kelvin: o.kelvin,
-    develop: o.develop || undefined, gps: shot.location || undefined,
+    path: src, lut: o.lut || undefined, amount: o.amount ?? 1,
+    /* 從 RAW 沖的已經裁好了 */
+    aspect: fromRaw ? 0 : o.aspect, zoom: fromRaw ? 1 : cropZoom, fx: o.fx, kelvin: o.kelvin,
+    develop: fromRaw ? undefined : (o.develop || undefined), gps: shot.location || undefined,
     format: 'jpeg', quality: 0.95,
   });
-  img.remove({ path: shot.path }).catch(() => {});
+  if (fromRaw) img.remove({ path: fromRaw }).catch(() => {});
+  /* 保留原始圖片（沒開 RAW）：系統拍的那張原圖留給呼叫端存相簿；不然就刪 */
+  const originalPath = o.keepOriginal && !shot.rawPath ? shot.path : undefined;
+  if (!originalPath) img.remove({ path: shot.path }).catch(() => {});
   /* 日期：先留一張沒印的（之後編輯都改這張，日期不會被調色、濾鏡影響），再從它印出成品 */
   let cleanPath: string | undefined;
   if (o.date) {
@@ -90,7 +107,7 @@ export async function captureNative(o: {
   const url = fileSrc(mainPath); rememberNativePath(url, mainPath);
   let cleanUrl: string | undefined;
   if (keptClean) { cleanUrl = fileSrc(keptClean); rememberNativePath(cleanUrl, keptClean); }
-  return { url, path: mainPath, cleanPath: keptClean, rawPath: keptRaw, renderedPath: keptRaw ? mainPath : undefined, cropZoom, cleanUrl };
+  return { url, path: mainPath, cleanPath: keptClean, rawPath: keptRaw, renderedPath: keptRaw ? mainPath : undefined, originalPath, cropZoom, cleanUrl };
 }
 
 /** 編輯完的圖重新印上日期（日期是「光加上去」的：畫面變暗，字自然更清楚）。沒有原生或失敗回 null */
@@ -189,7 +206,7 @@ export const rawEditor = () => nativePlugin<RawEditorApi & { openEditor?: unknow
 export interface RawBaseParams { exposure: number; temperature?: number; tint?: number; highlights: number; shadows: number }
 type RawDevApi = {
   developPreview?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; maxPixel: number; final: boolean }): Promise<{ path: string; asShotTemperature: number; asShotTint: number }>;
-  developFull?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null }): Promise<{ path: string }>;
+  developFull?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; format?: 'jpeg' | 'tiff16' }): Promise<{ path: string }>;
   developLinear?(o: { path: string; look: RawLook | null; w: number; h: number; bw: number; bh: number }): Promise<{ gpu: boolean; path?: string; basePath?: string; asShotTemperature: number; asShotTint: number }>;
   developPixels?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; w: number; h: number; fw: number; fh: number }):
     Promise<{ path: string; fastPath: string; asShotTemperature: number; asShotTint: number }>;

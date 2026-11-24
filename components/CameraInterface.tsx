@@ -374,6 +374,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /** 日期戳記（橘紅色七段字，印在右下角） */
   const [dateOn, setDateOnState] = useState(() => readPref('abai-camera-date') === '1');
   const setDateOn = (on: boolean) => { setDateOnState(on); writePref('abai-camera-date', on ? '1' : null); };
+  /** 保留原始圖片：成品之外，原始的那張也存進手機相簿（開 RAW：真正的 RAW 檔；沒開 RAW：沒套濾鏡的原圖） */
+  const [keepOriginal, setKeepOriginalState] = useState(() => readPref('abai-camera-keep-original') === '1');
+  const setKeepOriginal = (on: boolean) => { setKeepOriginalState(on); writePref('abai-camera-keep-original', on ? '1' : null); };
+  const keepOriginalRef = useRef(keepOriginal); keepOriginalRef.current = keepOriginal;
   const [fx, setFx] = useState<ViewfinderFx>(FX_ZERO);
   const fxOn = FX_ITEMS.some(item => fx[item.id] > 0);
 
@@ -1096,7 +1100,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         const aspect = turns === 1 || turns === 3 ? 1 / o.aspect : o.aspect;
         const look: RawLook = { lut: o.lut, amount: o.amount, aspect, zoom: frameZoomRef.current, fx: { ...nativeFxRef.current }, date: o.date ? dateStampText() : null };
         const baseZoom = liveZoomRef.current ?? (ZOOM_STEPS.find(z => z.label === focalRef.current)?.factor ?? 1);
-        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, turns, baseZoom, lut: look.lut, amount: look.amount, aspect: look.aspect, zoom: look.zoom, fx: look.fx, kelvin: nativeParamsRef.current.kelvin, develop: o.raw ? RAW_PROTECT_EV : 0, date: look.date });
+        const r = await captureNative({ flash: o.flash ? 'on' : 'off', raw: o.raw, turns, baseZoom, lut: look.lut, amount: look.amount, aspect: look.aspect, zoom: look.zoom, fx: look.fx, kelvin: nativeParamsRef.current.kelvin, develop: o.raw ? RAW_PROTECT_EV : 0, date: look.date, keepOriginal: keepOriginalRef.current });
         if (!r) { setCaptureNotice('未能儲存照片，請再拍一次'); return; }
         ownedUrlsRef.current.add(r.url);
         if (r.cleanUrl && look.date) { ownedUrlsRef.current.add(r.cleanUrl); dateOfRef.current.set(r.url, { clean: r.cleanUrl, date: look.date }); }
@@ -1105,12 +1109,20 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         if (r.rawPath) {
           rawOfRef.current.set(r.url, { path: r.rawPath, protectEV: o.raw ? RAW_PROTECT_EV : 0, look: { ...look, zoom: r.cropZoom } });   // 小框拍照時鏡頭已經變焦過，RAW 只要補剩下的裁切
           setRawShots(prev => new Set(prev).add(r.url));
-          /* 存進相簿：套好濾鏡、日期的成品是主要的那張，RAW 配在同一張裡（相簿看到的是成品）。
-             成品檔存完就刪；RAW 留在 App 裡給「重新沖洗」用 */
-          const rendered = r.renderedPath;
-          void nativePhotos().then(p => p?.save(rendered ? { path: rendered, rawPath: r.rawPath!, kind: 'photo' } : { path: r.rawPath!, kind: 'photo' }))
-            .catch(() => {});   // 成品檔留著（相簿裡那張的原生路徑，編輯存檔用）
         }
+        /* 存進手機相簿（跟 Dazz 一樣）：每一張都存套好濾鏡、特效、日期的成品。真正的 RAW 留在 App 的相機相簿裡（重新編輯用）。
+           保留原始圖片開著：原始的那張也另外存一張 —— 開 RAW 存 RAW 檔本身（相簿裡就是真正的 RAW），沒開 RAW 存沒套濾鏡的原圖 */
+        const keepRaw = keepOriginalRef.current ? r.rawPath : undefined, orig = r.originalPath;
+        void (async () => {
+          const ph = await nativePhotos();
+          if (!ph) return;
+          try {
+            if (keepRaw) await ph.save({ path: keepRaw, kind: 'photo' });
+            else if (orig) await ph.save({ path: orig, kind: 'photo' });
+          } catch { /* 原始那張存不了：成品照樣存 */ }
+          finally { if (orig) void nativeImage().then(i => i?.remove({ path: orig })).catch(() => {}); }
+          await ph.save({ path: r.path, kind: 'photo' }).catch(() => {});   // 成品檔留著（相機相簿裡那張的原生路徑，編輯存檔用）
+        })();
       } catch { setCaptureNotice('未能儲存照片，請再拍一次'); }
       finally { capturingRef.current = false; setIsCapturing(false); }
       return;
@@ -1562,6 +1574,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         { id: 'level', type: 'toggle', title: '水平線', symbol: 'abai.level', value: levelOn },
         { id: 'location', type: 'toggle', title: '位置', symbol: 'location', value: locationOn },
         { id: 'date', type: 'toggle', title: '日期', symbol: 'calendar', value: dateOn },
+        { id: 'keepOriginal', type: 'toggle', title: '保留原始圖片', symbol: 'photo.on.rectangle', value: keepOriginal },
         { id: 'timer', type: 'choice', title: '定時', symbol: 'timer', value: String(timer), options: [{ label: '關閉', value: '0' }, { label: '3 秒', value: '3' }, { label: '10 秒', value: '10' }] },
         { id: 'zoomMode', type: 'choice', title: '縮放模式', symbol: 'plus.magnifyingglass', value: zoomMode, options: [{ label: '全螢幕', value: 'full' }, { label: '線框', value: 'frame' }] },
       ],
@@ -1573,6 +1586,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     else if (id === 'level') setLevelOn(!!v);
     else if (id === 'location') setLocationOn(!!v);
     else if (id === 'date') setDateOn(!!v);
+    else if (id === 'keepOriginal') setKeepOriginal(!!v);
     else if (id === 'timer') setTimer((Number(v) || 0) as TimerMode);
     else if (id === 'zoomMode') {
       const m = v === 'full' ? 'full' : 'frame';

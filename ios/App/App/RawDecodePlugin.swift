@@ -109,7 +109,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         let p = ABAIRawParams(call.getObject("params"))
         DispatchQueue.global(qos: .userInitiated).async {
             autoreleasepool {
-                do { call.resolve(["path": try s.export(p).path]) } catch { call.reject(error.localizedDescription) }
+                do { call.resolve(["path": try s.export(p, format: call.getString("format") ?? "jpeg").path]) } catch { call.reject(error.localizedDescription) }
             }
         }
     }
