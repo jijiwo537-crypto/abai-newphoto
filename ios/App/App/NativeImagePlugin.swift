@@ -111,6 +111,13 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                         }
                     }
                     guard let m = mask, m.extent.width > 0 else { call.reject("沒有找到"); return }
+                    /* 人物分割在沒有人的照片上也會回一張全黑的遮罩：最亮的地方都很暗＝沒有找到 */
+                    let maxF = CIFilter(name: "CIAreaMaximum", parameters: [kCIInputImageKey: m, kCIInputExtentKey: CIVector(cgRect: m.extent)])
+                    if let mx = maxF?.outputImage {
+                        var px = [UInt8](repeating: 0, count: 4)
+                        ABAIImageCore.context.render(mx, toBitmap: &px, rowBytes: 4, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBA8, colorSpace: nil)
+                        if px[0] < 40 { call.reject("沒有找到"); return }
+                    }
                     /* 遮罩跟縮小後的照片對齊（人物分割輸出的尺寸可能不同）：拉到 sw×sh */
                     let fitted = m.transformed(by: CGAffineTransform(scaleX: CGFloat(sw) / m.extent.width, y: CGFloat(sh) / m.extent.height))
                     let out = ABAIImageCore.newFileURL(ext: "png")

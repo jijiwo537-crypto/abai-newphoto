@@ -1801,7 +1801,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             {proMode && (
               <div aria-hidden className="absolute inset-0 z-[1] bg-black flex items-center justify-center pointer-events-none"
                 style={{ opacity: camSleep ? 1 : 0, transition: camSleep ? 'none' : 'opacity 260ms ease-out' }}>
-                <AbaiLogo className="w-[28%] max-w-[110px] text-white/20" />
+                <AbaiLogo className="w-[28%] max-w-[110px] text-white" />
               </div>
             )}
 

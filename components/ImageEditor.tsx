@@ -2465,8 +2465,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         let sw: number, sh: number, draw: (g: CanvasRenderingContext2D, w: number, h: number) => void;
         if (img) { sw = img.width; sh = img.height; draw = (g, w, h) => g.drawImage(img, 0, 0, w, h); }
         else {
+          /* 剛打開、照片還在解碼：等它好（最多 8 秒），不要直接放棄（放棄的話遮色片留著卻沒有效果） */
+          for (let w = 0; w < 160 && !(buffers.current.preview?.w && (buffers.current.preview.original || buffers.current.preview.source)); w++) await new Promise(res => setTimeout(res, 50));
           const b = buffers.current.preview, px = b?.original || b?.source;
-          if (!b || !px || !b.w || !b.h) return false;
+          if (!b || !px || !b.w || !b.h) throw new Error('照片還沒準備好');
           sw = b.w; sh = b.h;
           const full = document.createElement('canvas'); full.width = b.w; full.height = b.h;
           full.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(px), b.w, b.h), 0, 0);
@@ -2499,6 +2501,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         return true;
       } catch (e: any) {
         autoMaskFailed.current.add(maskId);
+        /* 沒選到：把這個遮色片拿掉（右邊清單不會多一顆沒作用的按鈕），再告訴使用者 */
+        if (!img && notify) removeMaskById(maskId);
         if (!img && notify) window.alert(kind === 'person' ? '這張照片裡沒有找到人物' : /17/.test(String(e?.message ?? e)) ? '自動選取主體需要 iOS 17 以上' : '這張照片裡沒有找到明顯的主體');
         return false;
       } finally { autoMaskJobs.current.delete(maskId); }
@@ -2541,6 +2545,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         ov.style.display = 'block';
       } else ov.style.display = 'none';
     }
+  };
+  /** 拿掉指定編號的遮色片（自動選取失敗時用）：是選中的那一個就走一般的刪除，否則從清單裡移掉 */
+  const removeMaskById = (id: string) => {
+    const p = paramsRef.current;
+    if (p.maskId === id) { deleteMask(); return; }
+    const masks = withActiveStored(p);
+    const idx = masks.findIndex(m => m.maskId === id);
+    if (idx < 0) return;
+    const { active } = maskList(p);
+    const rest = masks.filter((_, i) => i !== idx);
+    const na = Math.max(0, Math.min(active > idx ? active - 1 : active, rest.length - 1));
+    commitMaskParams(loadMask(p, rest[na], rest, na));
   };
   const deleteMask = () => {
     uiFirstRef.current = true;
@@ -10035,7 +10051,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           const list = maskListView.list;
           /* 清單只放真的畫出來的遮色片（剛選了種類、還沒在照片上拉出來的那一個不算） */
           const made = list.filter(m => m.maskCreated);
-          const NAMES: Record<string, string> = { linear: '線性', radial: '放射', brush: '筆刷', color: '顏色', luma: '明度' };
+          const NAMES: Record<string, string> = { linear: '線性', radial: '放射', brush: '筆刷', color: '顏色', luma: '明度', subject: '主體', person: '人物' };
           const seen: Record<string, number> = {};
           const total: Record<string, number> = {};
           made.forEach(m => { total[m.maskType] = (total[m.maskType] || 0) + 1; });

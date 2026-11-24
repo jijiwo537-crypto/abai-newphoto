@@ -429,12 +429,15 @@ export function beginImportHero(kind: string | undefined, rect: DOMRect, src: st
 /** 飛完就停在終點：等工具把照片畫好、位置穩定，放回照片本人、替身淡掉。替身這段完全不動 */
 function watch(my: number) {
   const g = ghost!;
-  let target: HTMLElement | null = null, tr: R | null = null, stableSince = 0;
+  let target: HTMLElement | null = null, tr: R | null = null, stableSince = 0, calm = 0, lastNow = 0;
   const t0 = performance.now();
   const step = (now: number) => {
     if (my !== token || !g.isConnected) return;
     /* 介面不用等照片完全就定位：替身飛到七成、工具頁已經掛上來，就開始進場（跟照片落地重疊，更連貫） */
-    if (!revealed && now - t0 > motionMs('importFly') * 0.7 && document.querySelector('.safe-top')) revealEnter();
+    /* 開播的時機挑「主執行緒剛好有空」的那一刻：連續 3 格的間隔都正常（沒有被工具初始化卡住），
+       動畫才在順暢的時候交給 GPU 起跑；工具還在忙（整格整格掉）就再等一下，最晚到照片交接那一刻一定開播 */
+    calm = lastNow && now - lastNow < 22 ? calm + 1 : 0; lastNow = now;
+    if (!revealed && calm >= 3 && now - t0 > motionMs('importFly') * 0.7 && document.querySelector('.safe-top')) revealEnter();
     if (landing) {
       if (target && !target.isConnected) { target = null; hide(null); }
       /* 每一格都找（新的照片元素一出現當格就藏起來，不會在替身底下閃一下）；
@@ -508,3 +511,30 @@ export function cancelImportHero() {
 }
 
 export const importHeroActive = () => !!ghost;
+
+/* ── 開機預熱：進場動畫的第一次不卡 ──
+ * 第一次播這種「很多塊一起淡入、位移、毛玻璃材質淡入」的動畫時，系統要先建立對應的 GPU 圖層與繪製程式，
+ * 那一次會比之後慢。App 打開、閒下來之後，在畫面角落用幾塊看不見的小方塊（幾乎全透明）把同樣的動畫跑一次，
+ * 真正導入照片時就是「第二次」了。只跑一次、播完就移除，不影響任何畫面 */
+function prewarmEntrance() {
+  try {
+    const host = document.createElement('div');
+    Object.assign(host.style, { position: 'fixed', left: '0', bottom: '0', width: '24px', height: '24px', pointerEvents: 'none', opacity: '0.01', zIndex: '-1' } as CSSStyleDeclaration);
+    const kids: HTMLElement[] = [];
+    for (let i = 0; i < 4; i++) {
+      const k = document.createElement('div');
+      Object.assign(k.style, { position: 'absolute', inset: '0', background: 'rgba(0,0,0,.4)', borderRadius: '12px' } as CSSStyleDeclaration);
+      if (i === 3) { k.style.setProperty('backdrop-filter', 'blur(12px)'); k.style.setProperty('-webkit-backdrop-filter', 'blur(12px)'); }
+      host.appendChild(k); kids.push(k);
+    }
+    document.body.appendChild(host);
+    const anims = kids.map((k, i) => i === 3
+      ? k.animate([{ transform: 'translate3d(0,30px,0)', backdropFilter: 'blur(0px)', webkitBackdropFilter: 'blur(0px)' } as Keyframe, { transform: 'translate3d(0,0,0)', backdropFilter: 'blur(12px)', webkitBackdropFilter: 'blur(12px)' } as Keyframe], { duration: 400, easing: ENTER_EASE, fill: 'backwards' })
+      : k.animate([{ opacity: 0, transform: 'translate3d(0,30px,0)' }, { opacity: 1, transform: 'translate3d(0,0,0)' }], { duration: 400, delay: i * 55, easing: ENTER_EASE, fill: 'backwards' }));
+    void Promise.all(anims.map(a => a.finished.catch(() => {}))).then(() => host.remove());
+  } catch { /* 預熱失敗沒關係 */ }
+}
+if (typeof window !== 'undefined') window.setTimeout(() => {
+  const ric = (window as any).requestIdleCallback as undefined | ((cb: () => void, o?: { timeout: number }) => void);
+  if (ric) ric(prewarmEntrance, { timeout: 3000 }); else prewarmEntrance();
+}, 2500);
