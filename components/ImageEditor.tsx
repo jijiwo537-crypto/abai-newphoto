@@ -648,7 +648,7 @@ export function generateCurveLut(channelPoints: Point[]): Uint8Array {
 // 曝光、對比、亮度預先合成一張 1D LUT，重用輸出暫存避免垃圾回收造成卡頓。
 // 共用、逐位元組相同的色彩計算也能在 worker 裡跑
 export { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
-import { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
+import { generateBaseCorrectionLut, processPixels, copyPixelDither } from '../utils/photoPixelCore';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceGain } from '../utils/photoToneMath';
 import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
 /* 快取鍵用短 id 代表照片，不用來源字串：data: 網址有好幾 MB，每格滑桿都把它串進鍵裡，一格就要多花約 15ms */
@@ -1209,6 +1209,30 @@ function putThumb(store: ThumbStore, id: string, src: HTMLCanvasElement, sig = '
   /* 像素與備援畫布都完整寫完後才發布版本。 */
   e.sig = sig;
   e.v++;
+}
+
+/** 背景執行緒算好的像素直接寫進倉庫的畫布（不經過暫存畫布、不回讀） */
+function putThumbPixels(store: ThumbStore, id: string, px: Uint8ClampedArray, W: number, H: number, sig: string): void {
+  let e = store.current[id];
+  if (!e) e = store.current[id] = { cvs: document.createElement('canvas'), v: 0, sig: '' };
+  const c = e.cvs;
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  c.getContext('2d')!.putImageData(new ImageData(px, W, H), 0, 0);
+  e.pending = (e.pending || 0) + 1;
+  e.sig = sig;
+  e.v++;
+}
+/* 濾鏡縮圖的背景執行緒（整個 App 共用一個）。開不起來就回到主執行緒算 */
+let thumbWorker: Worker | null | undefined;
+const thumbWorkerLuts = new Set<string>();
+let thumbJobSeq = 0;
+function getThumbWorker(): Worker | null {
+  if (thumbWorker !== undefined) return thumbWorker;
+  try {
+    thumbWorker = new Worker(new URL('../utils/filterThumbs.worker.ts', import.meta.url), { type: 'module' });
+    thumbWorker.postMessage({ dither: copyPixelDither() });
+  } catch { thumbWorker = null; }
+  return thumbWorker;
 }
 
 /**
@@ -4359,6 +4383,34 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const buildFilterThumbs = (forSrc: string, thumbSrc: Uint8ClampedArray, cancelled: () => boolean, done: () => void) => {
     const W = THUMB_W, H = THUMB_H;
     const { flat, baseLut, curveLuts } = flatThumbTables();
+    /* 優先在背景執行緒算：主畫面（進場動畫、拖滑桿、捲動）完全不受影響，縮圖一樣馬上一張一張出現 */
+    const wk = getThumbWorker();
+    if (wk) {
+      const jobs: { key: string; lutId: string | null; amount: number; sig: string }[] = [];
+      for (const lut of lutList) {
+        const data = lut.url ? lutDataRef.current[lut.id] : null;
+        if (lut.url && !data) continue;    // 濾鏡檔還沒下載完，等下一輪
+        const key = thumbKey(forSrc, lut.id), sig = forSrc + '|' + lut.id;
+        if (filterThumbStore.current[key]?.sig === sig) continue;
+        if (data && !thumbWorkerLuts.has(lut.id)) { wk.postMessage({ lut: { id: lut.id, data: data.data, size: data.size } }); thumbWorkerLuts.add(lut.id); }
+        jobs.push({ key, lutId: data ? lut.id : null, amount: lut.url ? (LUT_DEFAULT_AMOUNT[lut.id] ?? 100) : 100, sig });
+      }
+      if (!jobs.length) { done(); return; }
+      const id = ++thumbJobSeq;
+      let raf = 0;
+      const onMsg = (ev: MessageEvent) => {
+        const m = ev.data;
+        if (m.id !== id) return;
+        if (cancelled()) { wk.removeEventListener('message', onMsg); wk.postMessage({ cancel: id }); cancelAnimationFrame(raf); return; }
+        if (m.done) { wk.removeEventListener('message', onMsg); cancelAnimationFrame(raf); repaintThumbs(); done(); return; }
+        putThumbPixels(filterThumbStore, m.key, m.px, W, H, m.sig);
+        /* 同一格送回來好幾張：合併成一次重畫 */
+        if (!raf) raf = requestAnimationFrame(() => { raf = 0; repaintThumbs(); });
+      };
+      wk.addEventListener('message', onMsg);
+      wk.postMessage({ id, src: thumbSrc, W, H, flat, baseLut, curveLuts, jobs });
+      return;
+    }
     const cvs = document.createElement('canvas');
     cvs.width = W; cvs.height = H;
     const cctx = cvs.getContext('2d')!;
