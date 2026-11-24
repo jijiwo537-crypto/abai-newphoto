@@ -7169,6 +7169,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           const wSrc = pData.slice(0, pw * rows * 4), wDst = new Uint8ClampedArray(wSrc.length);
           const wBase = new Uint8Array(256); generateBaseCorrectionLut(0, 0, 0, wBase);
           void awaitPhotoIdle(2500).then(() => {
+          if (editorGoneRef.current) return;   // 已經離開編輯器：不必再跑（不在主頁白白佔主執行緒）
           processPixels(wSrc, wDst, pw, rows, WARMUP_PARAMS, null, 0, wBase, null, false, getCurveLuts(WARMUP_PARAMS.curves));
           processPixels(wSrc, wDst, pw, rows, DEFAULT_PARAMS, null, 0, wBase, null, false, getCurveLuts(DEFAULT_PARAMS.curves));
           // HSL 分支如果沒有被上面兩次身分參數覆蓋，要到首次拖動時才觸發 JIT，
