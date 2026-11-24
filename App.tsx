@@ -53,7 +53,7 @@ import { processImageFile, normalizeImageFiles } from './utils/imageLoader';
 import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT, isRawFile } from './utils/fileTypes';
 import { nativePathOf } from './utils/nativeBridge';
 import { rawDevelopPreview, type RawLook } from './utils/nativeCamera';
-import { upgradeImportHero } from './utils/importHero';
+import { upgradeImportHero, cancelImportHero } from './utils/importHero';
 import { setRawImportHint } from './utils/importHint';
 import { MotionTuner, motionTunerEnabled } from './components/MotionTuner';
 import { applyCssMotion } from './utils/motionTimings';
@@ -292,6 +292,8 @@ const App: React.FC = () => {
   const rawHintToEditorRef = useRef(false);
   useEffect(() => {
     if (isImporting) return;
+    /* 導入結束了卻還在主頁（讀檔失敗、取消、格式不支援）：過場的替身沒有地方落地，馬上收掉 */
+    if (currentViewRef.current === 'home') cancelImportHero();
     if (rawHintToEditorRef.current) { rawHintToEditorRef.current = false; return; }
     setRawImportHint(false);
   }, [isImporting]);
@@ -632,6 +634,9 @@ const App: React.FC = () => {
   }, [crashed, resume]);
   /* 在工具裡就打心跳；回到首頁＝正常離開 */
   useEffect(() => { if (currentView === 'home') markToolInactive(); else markToolActive(currentView); }, [currentView]);
+  /* 回到主頁：導入過場的替身（掛在整個頁面上的那張照片）一定收掉。它只用在「從主頁飛進工具」，
+     回到主頁代表這趟已經結束了 —— 不然還沒落地就返回時，它會蓋在主頁上最久 12 秒 */
+  useEffect(() => { if (currentView === 'home') cancelImportHero(); }, [currentView]);
   /* 記憶體快不夠（App 版由系統通知）或切到背景時，先把可以重建的快取放掉，降低被系統關掉的機會 */
   useEffect(() => watchMemoryPressure(), []);
   useEffect(() => {
