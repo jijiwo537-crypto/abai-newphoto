@@ -134,6 +134,7 @@ const ENTER_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
  * 等照片真正就定位（替身交接、或 RAW 沖好顯示出來）的那一刻才一起開播 —— 使用者看得到的時候動畫才開始。
  * 任何情況（取消、出錯、逾時）都一定開播（介面一定會出現），播完沒有殘留。 */
 let enterObs: MutationObserver | null = null, enterRoot: HTMLElement | null = null, enterE: R | null = null;
+let landed = true, afterLand: Animation[] = [];
 let revealT = 0, revealed = true, pending: Animation[] = [], enterFailsafe = 0, enterStopT = 0, rawRaf = 0;
 const entered = new WeakSet<Element>();
 /** 這一塊裡有沒有照片（夠大的 img／canvas）：有的話不能整塊動，要往裡面拆 */
@@ -165,9 +166,10 @@ function hasBackdrop(el: HTMLElement): boolean {
   const st = getComputedStyle(el) as CSSStyleDeclaration & { webkitBackdropFilter?: string };
   return (!!st.backdropFilter && st.backdropFilter !== 'none') || (!!st.webkitBackdropFilter && st.webkitBackdropFilter !== 'none');
 }
-type Block = { el: HTMLElement; kids?: HTMLElement[] };
+type Block = { el: HTMLElement; kids?: HTMLElement[]; onPhoto?: boolean; glass?: boolean };
 function chromeBlocks(root: HTMLElement, E: R): Block[] {
   const out: HTMLElement[] = [];
+  const tags = new Map<HTMLElement, { onPhoto?: boolean; glass?: boolean }>();
   const cx = E.x + E.w / 2, cy = E.y + E.h / 2;
   /* 照片的範圍：預期的照片框，加上工具裡實際的大圖（美顏等工具的照片不一定剛好在預期位置） */
   const zones: R[] = [E];
@@ -183,10 +185,10 @@ function chromeBlocks(root: HTMLElement, E: R): Block[] {
       if (coversPhoto || hasPhoto(c, E) || (c.children.length && hasRaisedZ(c, E))) { if (depth < 8) walk(c, depth + 1); continue; }
       /* 疊在照片上的浮動按鈕（前後對比、標準／專業、換圖…）：不參與進場 ——
          它們本來就被飛進來的替身蓋著，跟照片一起出現；做透明度動畫會讓 iOS 暫時改變它的圖層與毛玻璃材質 */
-      if (onPhoto(r)) continue;
+      if (onPhoto(r)) { out.push(c); tags.set(c, { onPhoto: true, glass: hasBackdrop(c) }); continue; }
       /* 毛玻璃（backdrop-filter）的元素：做透明度動畫時 iOS 會暫時拿不到後面的畫面，材質跟就定位後不一樣 ——
          它自己不動；包著它的那一塊往裡面拆，其他部分照樣進場 */
-      if (hasBackdrop(c)) continue;
+      if (hasBackdrop(c)) { out.push(c); tags.set(c, { glass: true }); continue; }
       if (c.querySelector('[class*="backdrop-"],[style*="backdrop"]')) { if (depth < 8) walk(c, depth + 1); continue; }
       out.push(c);
     }
@@ -194,6 +196,8 @@ function chromeBlocks(root: HTMLElement, E: R): Block[] {
   walk(root, 0);
   /* 下方的大面板（工具列＋分頁疊在一起）：整塊（連底色）一起升起淡入，裡面的每一列再各自多升一段、錯開 —— 層次出得來，底色也跟著動 */
   return out.map(el => {
+    const tg = tags.get(el);
+    if (tg) return { el, ...tg };
     const r = el.getBoundingClientRect();
     const kids = (Array.from(el.children) as HTMLElement[]).filter(k => { const q = k.getBoundingClientRect(); return q.width > 1 && q.height > 1; });
     return r.top > cy && r.height > 90 && kids.length >= 2 && kids.length <= 8 ? { el, kids } : { el };
@@ -207,25 +211,41 @@ function runEnter(root: HTMLElement, E: R) {
   /* 開播之後過一陣子才長出來的：短短進場、不錯開；開播當下（0.35 秒內）工具換版面重新長出來的，照樣完整分層進場 */
   const late = revealed && performance.now() - revealT > 350;
   const rects = blocks.map(b => b.el.getBoundingClientRect());
-  const top: number[] = [], bottom: number[] = [];
-  rects.forEach((r, i) => ((r.top + r.height / 2) < E.y ? top : bottom).push(i));
+  const top: number[] = [], bottom: number[] = [], over: number[] = [];
+  rects.forEach((r, i) => (blocks[i].onPhoto ? over : (r.top + r.height / 2) < E.y ? top : bottom).push(i));
   bottom.sort((a, b) => rects[a].top - rects[b].top);
-  const anim = (el: HTMLElement, k: Keyframe[], delay: number, dur: number) => {
+  over.sort((a, b) => rects[a].top - rects[b].top || rects[a].left - rects[b].left);
+  /* after：疊在照片上的按鈕要等飛進來的替身完全交接掉才開播 ——
+     替身永遠在最上層，先播的話按鈕看起來會在照片底下 */
+  const anim = (el: HTMLElement, k: Keyframe[], delay: number, dur: number, after = false) => {
     const a = el.animate(k, { duration: dur, delay, easing: ENTER_EASE, fill: 'backwards' });
-    if (!revealed) { a.pause(); pending.push(a); }   // 暫停在第一格（fill backwards → 看不見），等開播
+    if (after && !landed) { a.pause(); afterLand.push(a); }
+    else if (!revealed) { a.pause(); pending.push(a); }   // 暫停在第一格（fill backwards → 看不見），等開播
   };
-  /* 透明度只從 0 回到它「本來的」透明度（半透明的就回到半透明），只用獨立的 translate 屬性 */
-  const play = (el: HTMLElement, dy: number, delay: number, dur: number) => {
+  const play = (b: Block | HTMLElement, dy: number, delay: number, dur: number, after = false) => {
+    const el = b instanceof HTMLElement ? b : b.el;
+    const glass = !(b instanceof HTMLElement) && b.glass;
     entered.add(el);
-    const o = shownOpacity(el);
     const t = baseTransform(el);
-    anim(el, [{ opacity: 0, transform: `translate3d(0, ${dy}px, 0)${t ? ' ' + t : ''}` }, { opacity: o, transform: t || 'translate3d(0, 0, 0)' }], delay, dur);
+    const from = `translate3d(0, ${dy}px, 0)${t ? ' ' + t : ''}`, to = t || 'translate3d(0, 0, 0)';
+    if (glass) {
+      /* 毛玻璃：做透明度動畫時 iOS 暫時拿不到後面的畫面、材質會變，所以不用透明度 ——
+         改成從中間往兩側展開（裁切）＋位移，材質從第一格就是最後的樣子 */
+      const br = getComputedStyle(el).borderRadius || '0px';
+      /* 寬的（整條標題列、面板）：順著進場方向從邊緣展開；小的（按鈕、膠囊）：從中間往兩側展開 */
+      const w = el.getBoundingClientRect().width;
+      const start = w > window.innerWidth * 0.6 ? (dy < 0 ? 'inset(0 0 100% 0' : 'inset(100% 0 0 0') : 'inset(0 50%';
+      anim(el, [{ clipPath: `${start} round ${br})`, transform: from }, { clipPath: `inset(0 0 0 0 round ${br})`, transform: to }], delay, dur, after);
+      return;
+    }
+    const o = shownOpacity(el);
+    anim(el, [{ opacity: 0, transform: from }, { opacity: o, transform: to }], delay, dur, after);
   };
   let n = 0;
-  top.forEach(i => play(blocks[i].el, late ? -8 : -14, 0, late ? 320 : 480));
+  top.forEach(i => play(blocks[i], late ? -8 : -14, 0, late ? 320 : 480));
   for (const i of bottom) {
     const b = blocks[i], d = late ? 0 : 60 + Math.min(n, 6) * 55;
-    play(b.el, late ? 20 : 30, d, late ? 360 : 600);
+    play(b, late ? 20 : 30, d, late ? 360 : 600);
     n++;
     if (b.kids && !late) b.kids.forEach((k, m) => {
       entered.add(k);
@@ -233,6 +253,14 @@ function runEnter(root: HTMLElement, E: R) {
       anim(k, [{ transform: `translate3d(0, 18px, 0)${t ? ' ' + t : ''}` }, { transform: t || 'translate3d(0, 0, 0)' }], d + 50 + Math.min(m, 6) * 55, 560);
     });
   }
+  /* 照片上的按鈕：照片落定後，由上而下、由左而右依序浮上來 */
+  over.forEach((i, m) => play(blocks[i], 10, Math.min(m, 5) * 50, 420, true));
+}
+/** 替身交接完了（或根本沒有替身）：照片上的按鈕開播 */
+function landNow() {
+  landed = true;
+  const list = afterLand; afterLand = [];
+  for (const a of list) { try { a.play(); } catch { /* 元素已經不在 */ } }
 }
 /** 開播：暫停在第一格的介面一起開始進場 */
 function revealEnter() {
@@ -242,13 +270,14 @@ function revealEnter() {
   cancelAnimationFrame(rawRaf);
   const list = pending; pending = [];
   for (const a of list) { try { a.play(); } catch { /* 元素已經不在 */ } }
+  if (!ghost) landNow();   // RAW（沒有替身）：照片上的按鈕跟著一起開播
   /* 開播後 0.8 秒內新長出來的介面也接著進場，之後就不再管 */
   window.clearTimeout(enterStopT);
   enterStopT = window.setTimeout(() => { enterObs?.disconnect(); enterObs = null; }, 800);
 }
 function startEnter(E: R, failsafeMs: number) {
   stopEnter();
-  revealed = false; enterE = E; enterRoot = null;
+  revealed = false; landed = false; enterE = E; enterRoot = null;
   enterFailsafe = window.setTimeout(revealEnter, failsafeMs);
   const check = () => {
     const root = document.querySelector<HTMLElement>('.safe-top');
@@ -265,6 +294,7 @@ function startEnter(E: R, failsafeMs: number) {
 }
 function stopEnter() {
   revealEnter();
+  landNow();
   window.clearTimeout(enterStopT);
   enterObs?.disconnect(); enterObs = null; enterRoot = null; enterE = null;
 }
@@ -404,6 +434,7 @@ function finish(g: HTMLDivElement, ms: number) {
   const tmp = tempPath; tempPath = null;
   g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {}).finally(() => {
     g.remove();
+    landNow();
     if (tmp) void nativeImage().then(p => p?.remove({ path: tmp })).catch(() => {});
   });
 }
