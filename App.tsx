@@ -50,7 +50,9 @@ const LUT_LIST = [
 const RAW_ACCEPT = SHARED_RAW_ACCEPT;
 
 import { processImageFile, normalizeImageFiles } from './utils/imageLoader';
-import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT } from './utils/fileTypes';
+import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT, isRawFile } from './utils/fileTypes';
+import { nativePathOf } from './utils/nativeBridge';
+import { rawDevelopPreview, type RawLook } from './utils/nativeCamera';
 import {
   draftTime as collageDraftTime,
   clearDraft as clearCollageDraft,
@@ -149,6 +151,8 @@ const App: React.FC = () => {
   }, []);
   useEffect(() => { if (currentView === 'home') appUpdates.current?.retry(); }, [currentView]);
   const [editorImage, setEditorImage] = useState<string | null>(null);
+  /** 導入的是 RAW（有原生檔案）：一般編輯直接編 RAW。只有在編的正是這一張（src 一樣）時才算數 */
+  const [editorRaw, setEditorRaw] = useState<{ src: string; path: string; protectEV: number; look: RawLook | null } | null>(null);
   /** 批量編輯：這次匯入的所有照片（只有一張時就是一般的單張編輯） */
   const [editorImages, setEditorImages] = useState<string[]>([]);
   const [collageInitialFile, setCollageInitialFile] = useState<File | null>(null);
@@ -396,6 +400,22 @@ const App: React.FC = () => {
       setImportPreviewUrl(null);
       setEditorFile(files[0]);
       try {
+        /* 單張 RAW、手機上有原生檔案：一般編輯直接編 RAW（底圖由原生從 RAW 沖，曝光、白平衡、高光、陰影都在 RAW 上做）。
+           沖不出來（格式不支援、網頁版）就照舊解成一般照片 */
+        if (files.length === 1 && isRawFile(files[0])) {
+          const path = nativePathOf(files[0]);
+          const r = path ? await rawDevelopPreview(path, { exposure: 0, highlights: 0, shadows: 0 }, null, 2048, true) : null;
+          if (path && r) {
+            setEditorRaw({ src: r.url, path, protectEV: 0, look: null });
+            setToolDraftState(null);
+            setEditorImages([r.url]);
+            setEditorImage(r.url);
+            setEditorKey(prev => prev + 1);
+            setCurrentView('editor');
+            if (fileInputRef.current) fileInputRef.current.value = '';   // 才能再選同一個檔案
+            return;
+          }
+        }
         // 一次選多張就全部解碼進來，編輯器裡再切換要看哪一張
         const urls: string[] = [];
         for (const f of files) {
@@ -823,6 +843,7 @@ const App: React.FC = () => {
           compactBottomBar
           fullTabs
           imageSrc={editorImage}
+          raw={editorRaw && editorRaw.src === editorImage ? editorRaw : null}
           batchSrcs={editorImages}
           onAddPhotos={handleAddPhotosClick}
           initialState={toolDraftState}

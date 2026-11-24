@@ -17,8 +17,6 @@ import { exposureEv } from '../utils/photoToneMath';
 
 /** RAW 照片：這幾個工具改調 raw* 欄位（由原生在 RAW 上做），網頁的那一份維持 0 */
 const RAW_TOOL: Record<string, keyof EditorParams> = { exposure: 'rawExposure', temp: 'rawTemp', tint: 'rawTint', highlights: 'rawHighlights', shadows: 'rawShadows' };
-/** raw* 欄位 → 網頁那一份同名工具（拖的時候先用網頁的效果即時顯示「跟上次 RAW 結果的差距」） */
-const RAW_WEB: Record<string, keyof EditorParams> = { rawExposure: 'exposure', rawTemp: 'temp', rawTint: 'tint', rawHighlights: 'highlights', rawShadows: 'shadows' };
 const rawKeyOf = (p: EditorParams) => [p.rawExposure || 0, p.rawTemp || 0, p.rawTint || 0, p.rawHighlights || 0, p.rawShadows || 0].join(',');
 import { nativeImage, blobToNativeFile, nativeImageSize } from '../utils/nativeImage';
 import { useNativeHdrPreview } from '../utils/nativePreview';
@@ -8484,18 +8482,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!rawOn || !raw) return;
     let alive = true, rafId = 0;
     let busy = false;
+    /** 上一次換上的是不是完整大小的那張 */
+    let sharp = true;
+    /* 拖的時候跟放手後用的是同一套運算（原生 RAW 沖洗）——看起來完全一樣，差別只在清晰度：
+       拖的時候沖長邊 720 的（快，一直換上最新的），手放開再沖 2048 的完整那張。
+       一次只沖一張，沖好就換上、馬上沖最新的值（不排隊、不會越拖越慢）。 */
     const tick = () => {
       if (!alive) return;
       rafId = requestAnimationFrame(tick);
       if (busy) return;
       const p0 = paramsRef.current;
       const key = rawKeyOf(p0);
-      const dev = rawDevelopedRef.current;
-      if (key === rawKeyOf(dev as any)) return;
-      /* 拖的時候不沖（網頁的即時預覽頂著），手放開才沖 */
-      if (performance.now() - lastSliderMoveTimeRef.current < 160) return;
+      const dragging = performance.now() - lastSliderMoveTimeRef.current < 160;
+      if (key === rawKeyOf(rawDevelopedRef.current as any) && (sharp || dragging)) return;
       busy = true;
       const want = { rawExposure: p0.rawExposure || 0, rawTemp: p0.rawTemp || 0, rawTint: p0.rawTint || 0, rawHighlights: p0.rawHighlights || 0, rawShadows: p0.rawShadows || 0 };
+      const final = !dragging;
       rawPendingRef.current = (async () => {
         try {
           if (!rawAsShotRef.current) {
@@ -8503,19 +8505,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             const first = await rawDevelopPreview(raw.path, rawBase(DEFAULT_PARAMS), raw.look, 64, false);
             if (first) rawAsShotRef.current = { temp: first.asShotTemperature, tint: first.asShotTint };
           }
-          const r = await rawDevelopPreview(raw.path, rawBase({ ...DEFAULT_PARAMS, ...want }), raw.look, 2048, true);
+          /* 拖的時候沖「螢幕上實際顯示的大小」：照片框的長邊 × 螢幕像素密度（iPhone 約 1500）。
+             放手後的 2048 顯示時也是縮到這個大小，所以兩張在螢幕上一樣清晰（放大檢視時一律用 2048） */
+          const screenSide = Math.ceil(Math.max(window.innerWidth - 32, window.innerHeight - 334) * (window.devicePixelRatio || 1));
+          const zs = (zoomRef.current as any)?.instance?.transformState?.scale ?? (zoomRef.current as any)?.state?.scale ?? 1;
+          const zoomed = zs > 1.01;
+          const side = final || zoomed ? 2048 : Math.min(2048, Math.max(720, screenSide));
+          const r = await rawDevelopPreview(raw.path, rawBase({ ...DEFAULT_PARAMS, ...want }), raw.look, side, final);
           if (!r || !alive) return;
           const im = await loadImg(r.url);
           await im.decode?.().catch(() => {});
           if (!alive) return;
-          /* 換底圖的同一格：網頁的即時預覽改成「現在的值 − 這次沖的值」（通常是 0） */
           rawDevelopedRef.current = want;
-          const cur = { ...paramsRef.current } as any;
-          for (const k of Object.keys(RAW_WEB)) cur[RAW_WEB[k]] = (cur[k] || 0) - ((want as any)[k] || 0);
-          paramsRef.current = cur;
-          await installRaw(r.url, true, im);
-          setParams({ ...paramsRef.current });
-        } catch { /* 沖不出來：網頁的預覽頂著（下一次手放開再試） */ }
+          sharp = final;
+          await installRaw(r.url, final, im);
+        } catch { /* 沖不出來：維持上一張（下一格再試） */ }
         finally { busy = false; rawPendingRef.current = null; }
       })();
     };
@@ -10369,8 +10373,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       onUpdate={(id, val) => { 
                           if (id === 'blur') userManualBlurRef.current = val;
                           const nextParams = { ...paramsRef.current, [id]: val };
-                          /* RAW：拖的時候用網頁的同名效果即時顯示跟上次 RAW 結果的差距（60 格順暢），放手後原生從 RAW 精算再換上 */
-                          if (rawOn && RAW_WEB[id]) (nextParams as any)[RAW_WEB[id]] = val - ((rawDevelopedRef.current as any)[id] || 0);
                           paramsRef.current = nextParams; 
                           lastSliderMoveTimeRef.current = performance.now();
                           if (id === 'maskBrushSize') showSizeRing(nextParams);
