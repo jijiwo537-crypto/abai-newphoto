@@ -8,6 +8,7 @@ import { pickCustomLutFiles, type LutFileSelection } from '../utils/customLutPic
 import { sliderHaptic } from '../utils/haptics';
 
 import { ImportSpinner } from './BusySpinner';
+import { setRawImportHint } from '../utils/importHint';
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
@@ -19,7 +20,7 @@ import { exposureEv } from '../utils/photoToneMath';
 /** RAW 照片：這幾個工具改調 raw* 欄位（由原生在 RAW 上做），網頁的那一份維持 0 */
 const RAW_TOOL: Record<string, keyof EditorParams> = { exposure: 'rawExposure', temp: 'rawTemp', tint: 'rawTint', highlights: 'rawHighlights', shadows: 'rawShadows' };
 const rawKeyOf = (p: EditorParams) => [p.rawExposure || 0, p.rawTemp || 0, p.rawTint || 0, p.rawHighlights || 0, p.rawShadows || 0].join(',');
-import { nativeImage, blobToNativeFile, nativeImageSize } from '../utils/nativeImage';
+import { nativeImage, blobToNativeFile, nativeImageSize, nativeDownsample } from '../utils/nativeImage';
 import { useNativeHdrPreview } from '../utils/nativePreview';
 import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
 import { EditBar, EditBarTab, EDIT_BAR_H } from './EditBar';
@@ -2897,11 +2898,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       };
       const had = viewedImgRef.current.get(s) || warmImgRef.current.get(s);
       if (had && had.complete && had.naturalWidth) return finish(had);
-      const im = new Image();
-      if (!s.startsWith('blob:') && !s.startsWith('data:')) im.crossOrigin = 'anonymous';
-      im.onload = () => finish(im);
-      im.onerror = () => resolve();
-      im.src = s;
+      /* 手機上的檔案（相簿匯出的、RAW 沖好的）：請原生直接縮成小圖，不在網頁解整張大圖
+         （照片一多、圖一大，iOS 偶爾會解碼失敗，那一格就一直是灰的） */
+      const filePath = nativePathOf(s) || (s.includes('/_capacitor_file_') ? decodeURIComponent(s.slice(s.indexOf('/_capacitor_file_') + '/_capacitor_file_'.length)) : '');
+      const load = (url: string, attempt: number) => {
+        const im = new Image();
+        if (!url.startsWith('blob:') && !url.startsWith('data:') && !url.includes('/_capacitor_file_')) im.crossOrigin = 'anonymous';
+        im.onload = () => finish(im);
+        /* 讀失敗：等一下再試（最多三次），不要就這樣留一格灰的 */
+        im.onerror = () => { if (alive && attempt < 3) setTimeout(() => load(url, attempt + 1), 300 * (attempt + 1)); else resolve(); };
+        im.src = url;
+      };
+      if (filePath) {
+        void nativeDownsample(filePath, STRIP_THUMB * 2).then(r => load(r?.url || s, 0)).catch(() => load(s, 0));
+      } else load(s, 0);
     });
     (async () => { for (const s of missing) { if (!alive) return; await make(s); } })();
     return () => { alive = false; };
@@ -8154,7 +8164,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 第一次準備好之後就不再蓋黑底轉圈：從儲存頁按「繼續編輯」回來時預覽區會重新量一次尺寸，
      那一下（80ms）不能又閃一個轉圈 —— 那時圖早就在了，只是在確認大小 */
   const [firstReady, setFirstReady] = useState(false);
-  useEffect(() => { if (!firstReady && !isEditorLoading && previewLayoutReady) setFirstReady(true); }, [firstReady, isEditorLoading, previewLayoutReady]);
+  /* 打開的是 RAW：第一張 RAW 畫面（GPU／原生沖好、換上去）出來才算好 —— 換底圖的那一下發生在載入畫面底下，看不到
+     （不然剛打開就去點濾鏡，剛好撞上換底圖，看起來就是閃一下）。最多等 8 秒 */
+  const [rawFirstDone, setRawFirstDone] = useState(!rawOn);
+  useEffect(() => { if (rawFirstDone) return; const t = window.setTimeout(() => setRawFirstDone(true), 8000); return () => window.clearTimeout(t); }, [rawFirstDone]);
+  useEffect(() => { if (!firstReady && !isEditorLoading && previewLayoutReady && rawFirstDone) setFirstReady(true); }, [firstReady, isEditorLoading, previewLayoutReady, rawFirstDone]);
+  /* 載入畫面收掉：「正在解析RAW」的提示也收掉 */
+  useEffect(() => { if (firstReady) setRawImportHint(false); }, [firstReady]);
   /* 預覽區在螢幕上的實際位置（不四捨五入）：構圖、人像、仿色要把圖放在跟編輯器一模一樣的像素上 */
   const [previewBoxClient, setPreviewBoxClient] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
@@ -8587,6 +8603,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     rawInputRef.current = null;
     let alive = true, rafId = 0;
     let busy = false;
+    let rawFresh = true;
     /** 上一次換上的是不是完整大小的那張 */
     let sharp = true;
     /* GPU 即時沖洗（utils/rawGpu）：原生只交一次線性資料，之後每一格在網頁 GPU 上照同一套公式算。
@@ -8614,12 +8631,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const p0 = paramsRef.current;
       const key = rawKeyOf(p0);
       const dragging = performance.now() - lastSliderMoveTimeRef.current < 160;
-      if (key === rawKeyOf(rawDevelopedRef.current as any) && (sharp || dragging)) return;
+      /* 打開後還沒照目前參數沖過（rawFresh）：一定要先沖一次 —— 打開時的底圖是匯入時沖的 JPEG，換成這條路的像素之後，
+         拖曳、放手才都是同一條路（之前用 NaN 當「沒沖過」，比對前被 || 0 吃掉，第一張要等動了滑桿才出來） */
+      if (!rawFresh && key === rawKeyOf(rawDevelopedRef.current as any) && (sharp || dragging)) return;
       /* 編輯頁的緩衝區還沒好（剛打開、正在解碼），或還是上一張照片的（批量剛切換）：等它 */
       if (!buffers.current.preview.source) return;
       const bufSrc = buffersSrcRef.current, alias = bufferAliasRef.current;
       if (bufSrc !== activeSrcRef.current && !(alias && alias.key === bufSrc && alias.for === activeSrcRef.current)) return;
       if (rawOf(activeSrcRef.current)?.path !== raw.path) return;
+      /* 批量剛切換到這張：這張的參數還沒套上去（畫面上還是預設值）就先不沖，不然會先閃一張沒調整過的 */
+      if (rawFresh && pendingSnapRef.current && pendingSnapSrcRef.current === activeSrcRef.current) {
+        const exp = fromCanon(pendingSnapRef.current.params, true);
+        if (Object.values(RAW_TOOL).some(k => ((exp as any)[k] || 0) !== ((p0 as any)[k] || 0))) return;
+      }
       busy = true;
       const want = { rawExposure: p0.rawExposure || 0, rawTemp: p0.rawTemp || 0, rawTint: p0.rawTint || 0, rawHighlights: p0.rawHighlights || 0, rawShadows: p0.rawShadows || 0 };
       const final = !dragging;
@@ -8652,6 +8676,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 if (!swapSourcePixels(pre, pw, ph, fast, fw, fh, `${srcListRef.current[safeIdxRef.current]}#rawpx${++pendingKeySeqRef.current}`)) return;
                 rawDevelopedRef.current = want;
                 sharp = final;
+                setRawFirstDone(true); rawFresh = false;
                 if (final) adoptLater(want);
                 return;
               }
@@ -8663,6 +8688,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             if (!swapSourcePixels(px.pixels, pw, ph, px.fast, fw, fh, `${srcListRef.current[safeIdxRef.current]}#rawpx${++pendingKeySeqRef.current}`)) return;
             rawDevelopedRef.current = want;
             sharp = final;
+            setRawFirstDone(true); rawFresh = false;
             if (final) adoptLater(want);
             return;
           }
@@ -8677,6 +8703,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           rawDevelopedRef.current = want;
           sharp = final;
           await installRaw(r.url, final, im);
+          setRawFirstDone(true); rawFresh = false;
         } catch { /* 沖不出來：維持上一張（下一格再試） */ }
         finally { busy = false; rawPendingRef.current = null; }
       })();
@@ -9236,7 +9263,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         .channel-dot.active { transform: scale(1.1); }
       `}</style>
       
-      {saveState === 'idle' && !firstReady && (isEditorLoading || !previewLayoutReady) && (
+      {saveState === 'idle' && !firstReady && (isEditorLoading || !previewLayoutReady || !rawFirstDone) && (
         /* 首次解碼期間必須完全遮住預覽；半透明遮罩會把底下 canvas 從初始尺寸
            切換到正確比例的那一幀透出來，看起來就像圖片上下抖了一下。 */
         <div data-editor-initial-loading className="fixed inset-0 z-[120] flex items-center justify-center bg-[#080808]">

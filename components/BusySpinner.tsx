@@ -38,7 +38,7 @@ export function ImportSpinner({ belowStatusBar = false }: { belowStatusBar?: boo
     <div data-import-spinner="" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: belowStatusBar ? 'env(safe-area-inset-top, 0px)' : 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
       <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" role="status" aria-label="匯入中" />
       <div style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 36px)', display: 'flex', justifyContent: 'center' }}>
-        <LoadingText text={raw ? '正在解析 RAW' : '匯入中'} />
+        <LoadingText text={raw ? '正在解析RAW' : '匯入中'} />
       </div>
     </div>
   );

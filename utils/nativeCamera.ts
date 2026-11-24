@@ -9,6 +9,8 @@ export type CameraMenuItem =
 
 export interface NativeCameraApi {
   available(): Promise<{ available: boolean; proRAW: boolean; raw?: boolean }>;
+  /** 開著 RAW：每一張都完整多張合成（關掉為了速度降品質的選項） */
+  setRawMode?(o: { on: boolean }): Promise<void>;
   start(o: { position: 'back' | 'front'; x: number; y: number; w: number; h: number; radius?: number; lut?: string; amount?: number; proRAW?: boolean }): Promise<{ proRAW: boolean; raw?: boolean; turns?: number; minZoom?: number; maxZoom?: number; maxWidth: number; maxHeight: number; flash?: boolean; screenFlash?: boolean }>;
   stop(): Promise<void>;
   setRect(o: { x: number; y: number; w: number; h: number; radius?: number }): Promise<void>;

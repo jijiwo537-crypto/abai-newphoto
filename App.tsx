@@ -281,8 +281,14 @@ const App: React.FC = () => {
   };
   const [editorFile, setEditorFile] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
-  /* 導入一結束（不管哪個工具、成功或失敗），「正在解析 RAW」的提示都收掉 */
-  useEffect(() => { if (!isImporting) setRawImportHint(false); }, [isImporting]);
+  /* 導入一結束（不管哪個工具、成功或失敗），「正在解析RAW」的提示都收掉 ——
+     除了 RAW 剛進編輯器：編輯器自己的載入畫面接著顯示，等第一張 RAW 畫面出來才收（見 ImageEditor 的 rawFirstDone） */
+  const rawHintToEditorRef = useRef(false);
+  useEffect(() => {
+    if (isImporting) return;
+    if (rawHintToEditorRef.current) { rawHintToEditorRef.current = false; return; }
+    setRawImportHint(false);
+  }, [isImporting]);
   const [importPreviewUrl, setImportPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -429,6 +435,7 @@ const App: React.FC = () => {
           const path = nativePathOf(files[0]);
           const r = path ? await rawDevelopPreview(path, { exposure: 0, highlights: 0, shadows: 0 }, null, 2048, true) : null;
           if (path && r) {
+            rawHintToEditorRef.current = true;
             upgradeImportHero(r.url);
             setEditorRaw({ src: r.url, path, protectEV: 0, look: null });
             setToolDraftState(null);
@@ -442,6 +449,8 @@ const App: React.FC = () => {
         }
         // 一次選多張就全部解碼進來，編輯器裡再切換要看哪一張
         const urls: string[] = [];
+        /* 裡面有 RAW：一樣顯示「正在解析RAW」，進編輯器後等第一張畫面出來才收 */
+        if (files.some(isRawFile)) setRawImportHint(true);
         const rawMap: Record<string, { path: string; protectEV: number; look: RawLook | null }> = {};
         for (const f of files) {
           /* 批量裡的 RAW：一樣交給我們的 RAW 引擎（無銳化、亮部保護，跟單張 RAW 同一套），編輯時也在 RAW 上調。
@@ -453,6 +462,7 @@ const App: React.FC = () => {
           }));
         }
         setToolDraftState(null);
+        if (Object.keys(rawMap).length) rawHintToEditorRef.current = true;
         setEditorRawMap(rawMap);
         setEditorImages(urls);
         setEditorImage(urls[0]);

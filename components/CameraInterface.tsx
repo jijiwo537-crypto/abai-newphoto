@@ -1276,6 +1276,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         void cam.setFx(nativeFxRef.current).catch(() => {});
         /* 開起來就把目前的曝光、白平衡套上去 */
         void cam.setExposureBias({ ev: deviceBias(nativeParamsRef.current) }).catch(() => {});
+        void cam.setRawMode?.({ on: nativeParamsRef.current.raw })?.catch(() => {});
         pushDateRef.current();
         void cam.setWhiteBalance({ kelvin: nativeParamsRef.current.kelvin }).catch(() => {});
       } catch (e: any) {
@@ -1312,6 +1313,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   useEffect(() => {
     if (proMode) void nativeCamera().then(c => c?.setExposureBias({ ev: deviceBias({ exposure: settings.exposure, raw: proRaw }) })).catch(() => {});
   }, [proMode, settings.exposure, proRaw]);
+  /* RAW 開著：原生關掉「為了速度降低合成品質」的選項，每一張 RAW 都跟原相機一樣完整多張合成 */
+  useEffect(() => {
+    if (proMode) void nativeCamera().then(c => c?.setRawMode?.({ on: proRaw })).catch(() => {});
+  }, [proMode, proRaw]);
   /* 日期戳記：觀景窗右下角（原生端畫，跟照片同一個位置） */
   const dateOnRef = useRef(dateOn); dateOnRef.current = dateOn;
   /* 日期只印在拍出來的照片上，觀景窗不顯示（跟底片相機一樣，沖出來才看得到） */
@@ -2050,6 +2055,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                           <CameraTickScale
                             label="曝光"
                             value={Math.round(parseFloat(settings.exposure) * 10)} min={-EV_MAX * 10} max={EV_MAX * 10} step={1}
+                            /* 範圍改成 ±2 EV 後，手指走同樣距離的變化量要跟以前 ±1 EV 時一樣 */
+                            sensitivity={2.16 / EV_MAX}
                             onStep={(raw, index) => {
                               const n = raw / 10;
                               const val = `${n > 0 ? '+' : ''}${n.toFixed(1)}`;

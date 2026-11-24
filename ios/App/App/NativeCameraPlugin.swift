@@ -48,6 +48,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         CAPPluginMethod(name: "setZoom", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "focus", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setExposureBias", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setRawMode", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setWhiteBalance", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setFx", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setLut", returnType: CAPPluginReturnPromise),
@@ -207,6 +208,36 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         return AVCaptureDevice.DiscoverySession(deviceTypes: types, mediaType: .video, position: pos).devices.first
     }
 
+    /// 使用者開著 RAW 開關：見 applyRawMode
+    private var rawMode = false
+    /* RAW：跟原相機一樣每一張都完整多張合成。「回應式拍攝」「快速拍攝優先」會在連按、前一張還在處理時
+       自動降低合成品質換速度 —— ProRAW 的寬容度就是從多張合成來的，開 RAW 時兩個都關掉；沒開 RAW 時照舊開著（拍得快） */
+    private func applyRawMode() {
+        if #available(iOS 17.0, *) {
+            /* 「快速拍攝優先」要在「回應式拍攝」開著時才能開：關的時候先關它、開的時候後開它（順序錯了系統會丟例外） */
+            if rawMode {
+                if photoOutput.isFastCapturePrioritizationSupported { photoOutput.isFastCapturePrioritizationEnabled = false }
+                if photoOutput.isResponsiveCaptureSupported { photoOutput.isResponsiveCaptureEnabled = false }
+            } else {
+                if photoOutput.isResponsiveCaptureSupported { photoOutput.isResponsiveCaptureEnabled = true }
+                if photoOutput.isResponsiveCaptureEnabled && photoOutput.isFastCapturePrioritizationSupported { photoOutput.isFastCapturePrioritizationEnabled = true }
+            }
+        }
+    }
+    /// setRawMode({ on })：RAW 開關切換時呼叫
+    @objc func setRawMode(_ call: CAPPluginCall) {
+        let on = call.getBool("on") ?? false
+        sessionQueue.async {
+            self.rawMode = on
+            if self.configured {
+                self.session.beginConfiguration()
+                self.applyRawMode()
+                self.session.commitConfiguration()
+            }
+            call.resolve()
+        }
+    }
+
     private func configure() throws {
         session.beginConfiguration()
         defer { session.commitConfiguration() }
@@ -248,8 +279,9 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         photoOutput.isAppleProRAWEnabled = proRAW && photoOutput.isAppleProRAWSupported
         if #available(iOS 17.0, *) {
             if photoOutput.isZeroShutterLagSupported { photoOutput.isZeroShutterLagEnabled = true }
-            if photoOutput.isResponsiveCaptureSupported { photoOutput.isResponsiveCaptureEnabled = true }
-            if photoOutput.isFastCapturePrioritizationSupported { photoOutput.isFastCapturePrioritizationEnabled = true }
+            /* RAW：跟原相機一樣每一張都完整多張合成。「回應式拍攝」「快速拍攝優先」會在連按、前一張還在處理時
+               自動降低合成品質換速度 —— ProRAW 的寬容度就是從多張合成來的，開 RAW 時兩個都關掉 */
+            applyRawMode()
         }
 
         for conn in [videoOutput.connection(with: .video), photoOutput.connection(with: .video)].compactMap({ $0 }) {

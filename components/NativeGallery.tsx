@@ -252,8 +252,10 @@ export const NativeGallery: React.FC<{
     exportingRef.current = true;
     /* 從主頁導入單張：小縮圖放大、之後飛到工具裡照片的位置（見 utils/importHero） */
     /* 單張 RAW：不播過場（RAW 要先解析一段時間，飛完會停在那裡等），改成直接顯示「解析 RAW」的載入畫面 */
-    const isRaw = ids.length === 1 && (await rawAssetIds(ids)).has(ids[0]);
-    if (isRaw) setRawImportHint(true);
+    /* 選到的照片裡有 RAW（單張或批量）：轉圈的字改成「正在解析RAW」 */
+    const raws = await rawAssetIds(ids);
+    const isRaw = ids.length === 1 && raws.has(ids[0]);
+    if (raws.size) setRawImportHint(true);
     if (hero && ids.length === 1 && !isRaw && heroAllowed()) {
       const cell = scrollRef.current?.querySelector<HTMLElement>(`[data-asset="${window.CSS.escape(ids[0])}"]`);
       const a = itemsRef.current.find(x => x.id === ids[0]);
