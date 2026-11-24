@@ -1323,7 +1323,9 @@ function runThumbChunks<T>(
   const flush = () => { if (dirty) { emit(); dirty = false; } };
   const step = () => {
     if (cancelled()) return;
-    const deadline = performance.now() + 14;
+    /* 介面進場動畫中：縮圖照樣馬上開始算（不會晚出現），但每一段只算 4ms 就讓出來，
+       不會有一段長時間佔住主執行緒、讓動畫掉格；平常一段 14ms */
+    const deadline = performance.now() + (isPhotoInteractionBusy() ? 4 : 14);
     while (i < items.length) {
       if (make(items[i])) dirty = true;
       i++;
@@ -4433,8 +4435,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const others = srcList.map(thumbSrcOf).filter((u, i, a) => u !== cur && a.indexOf(u) === i);
     const run = () => {
       if (cancelled()) return;
-      /* 剛打開（介面進場動畫中）先不算縮圖：主執行緒留給動畫，播完立刻接著算 */
-      if (isPhotoInteractionBusy()) { window.setTimeout(run, 60); return; }
       noteThumbSrc(cur);
       let pixels: Uint8ClampedArray | null = null;
       const curPixels = () => {
@@ -4442,7 +4442,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         return pixels;
       };
       const steps: (() => void)[] = [];
-      const next = () => { if (cancelled()) return; if (isPhotoInteractionBusy()) { window.setTimeout(next, 60); return; } const f = steps.shift(); if (f) window.setTimeout(f, 0); };
+      const next = () => { if (cancelled()) return; const f = steps.shift(); if (f) window.setTimeout(f, 0); };
       for (const k of order) steps.push(() => {
         if (thumbSrcOf(buffersSrcRef.current) !== cur) return next();
         if (k === 'filter') { if (filterThumbsMissing(cur)) buildFilterThumbs(cur, curPixels(), cancelled, next); else next(); }
