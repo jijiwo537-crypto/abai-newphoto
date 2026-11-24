@@ -145,7 +145,9 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
     else if (id === 'share') void share(selectedIdx);
     else if (id === 'edit') editSelected();
     else if (id === 'delete') remove(selectedIdx);
-  }, [selecting, selectedIdx.join(','), favAll, photos.length], 420);
+    /* 原生按鈕照網頁元素「當下」的位置擺：一定要等相簿滑到定位才量（以前寫死 420ms，配的是 380ms 的動畫；
+       動畫時長一改，量的時候相簿還在半路，多選鈕就偏下、返回鈕量到螢幕外而不見） */
+  }, [selecting, selectedIdx.join(','), favAll, photos.length], motionMs('camGallerySheet') + 40);
   const hideWeb = grid.native ? 'invisible' : '';
 
   /* 先把最新那幾張的螢幕版準備好（原生縮圖，很快）：第一次點開就是清楚的在飛 */
@@ -189,8 +191,9 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   return createPortal(
     <div data-camera-gallery
       style={{ transitionDuration: `${motionMs('camGallerySheet')}ms`,
-        /* 上升：前後對稱的緩入緩出（後段不拖慢）；下降：一路加速到底（到底就結束，不會留一小塊慢慢收） */
-        transitionTimingFunction: closing || !entered ? 'cubic-bezier(0.4, 0, 1, 1)' : 'cubic-bezier(0.45, 0, 0.55, 1)' }}
+        /* 上升、下降同一條：起步快（前 20% 時間走 46%），收尾短（原本的 iOS 減速曲線一半時間就走完 95%，
+           剩下 5% 再慢慢爬另一半時間 —— 最後看起來明顯放慢、底下留一小塊） */
+        transitionTimingFunction: 'cubic-bezier(0.25, 0.6, 0.4, 1)' }}
       className={`fixed inset-0 bg-black text-white z-50 transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing || !entered ? 'translate-y-full' : 'translate-y-0'}`}>
 
       <style>{SEL_CSS}</style>

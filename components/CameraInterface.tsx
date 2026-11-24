@@ -581,7 +581,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   useEffect(() => {
     if (!proMode) return;
     const hide = showGallery;
-    const t = window.setTimeout(() => { void nativeCamera().then(c => c?.setPreviewHidden?.({ hidden: hide })).catch(() => {}); }, hide ? 420 : 0);
+    const t = window.setTimeout(() => { void nativeCamera().then(c => c?.setPreviewHidden?.({ hidden: hide })).catch(() => {}); }, hide ? motionMs('camGallerySheet') + 40 : 0);   // 等相簿真的滑到蓋滿（跟著動畫時長，不寫死）
     return () => window.clearTimeout(t);
   }, [showGallery, proMode]);
   /* 相簿：愛心、每張拍照時用的濾鏡（大圖右上的標籤） */
