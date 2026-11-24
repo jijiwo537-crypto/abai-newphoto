@@ -11,6 +11,7 @@
  * 安全：任何情況（找不到、取消、出錯）一定放回照片本人、恢復「匯入中」的轉圈；最多 12 秒一定收掉。
  * 只在主頁（畫面上沒有任何工具頁 .safe-top）、只選一張、而且是帶 data-import-hero 的導入入口時啟用。 */
 import { nativePathOf } from './nativeBridge';
+import { ms as motionMs } from './motionTimings';
 import { nativeDownsample, nativeImage } from './nativeImage';
 
 type R = { x: number; y: number; w: number; h: number };
@@ -68,7 +69,7 @@ function upgrade(src: string, my: number) {
   void im.decode().then(() => {
     if (my !== token || !g.isConnected) return;
     g.appendChild(im);
-    im.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 120, easing: 'ease-out', fill: 'forwards' });
+    im.animate([{ opacity: 0 }, { opacity: 1 }], { duration: motionMs('importUpgrade'), easing: 'ease-out', fill: 'forwards' });
   }, () => {});
 }
 
@@ -154,7 +155,7 @@ export function beginImportHero(kind: string | undefined, rect: DOMRect, src: st
   g.animate([
     { transform: `translate(${sx - E.x}px, ${sy - E.y}px) scale(${k})` },
     { transform: 'translate(0px, 0px) scale(1)' },
-  ], { duration: 460, easing: 'cubic-bezier(0.32, 0.72, 0, 1)', fill: 'forwards' });
+  ], { duration: motionMs('importFly'), easing: 'cubic-bezier(0.32, 0.72, 0, 1)', fill: 'forwards' });
   watch(my);
 }
 
@@ -180,7 +181,7 @@ function watch(my: number) {
         else stable = 0;
         tr = n;
         /* 照片本人的位置連續約 0.3 秒都沒動：交接（兩張重疊，替身淡掉） */
-        if (stable >= 18 && now - t0 > 460) { unhide(); finish(g, 200); return; }
+        if (stable >= 18 && now - t0 > motionMs('importFly')) { unhide(); finish(g, motionMs('importLand')); return; }
       }
     }
     if (now - t0 > 11000) { cancelImportHero(); return; }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { sec as motionSec } from '../utils/motionTimings';
 import { Icon } from './Icon';
 import { LOCALES, changeLocale, getLocale } from '../utils/locale';
 import { exportsStatus, subscribeExports, removeExport, type ExportMeta } from '../utils/exportHistory';
@@ -1579,7 +1580,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: motionSec('homeBackdrop') }}
             /* 背景一律可以點掉。原本 busy 時連這裡也不給關，請求一卡住就真的
                出不去了；離開本來就代表「這次不登了」，順手把等待狀態一起收掉。 */
             onClick={() => { endBusy(); setStep('id'); setLoginOpen(false); }}
@@ -1589,7 +1590,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: motionSec('homeLoginSheet'), ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
               className="w-full max-w-[430px] rounded-t-[24px] bg-[#141414] border-t border-x border-white/10 px-6 pt-5 pb-[calc(var(--abai-home-safe-bottom,env(safe-area-inset-bottom,0px))+44px)]"
             >
@@ -1767,7 +1768,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             initial={{ x: '100%' }}
             animate={{ x: 0 }}
             exit={{ x: '100%' }}
-            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: motionSec('homeAccountPage'), ease: [0.16, 1, 0.3, 1] }}
             className="absolute inset-0 z-[65] bg-black flex flex-col"
           >
             {/* 標題列：返回鍵跟「我的」那一頁的內距對齊 */}
@@ -1848,7 +1849,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: motionSec('homeBackdrop') }}
             onClick={() => setOutOpen(false)}
             className="absolute inset-0 z-[70] flex items-center justify-center px-8 bg-black/80 backdrop-blur-sm"
           >
@@ -1856,7 +1857,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               initial={{ scale: 0.94, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.94, opacity: 0 }}
-              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: motionSec('homeDialog'), ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
               className="w-full max-w-[320px] rounded-[20px] bg-[#141414] border border-white/10 p-6"
             >
@@ -1888,7 +1889,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: motionSec('homeBackdrop') }}
             onClick={() => {
               /* 長按到 0.5 秒時視窗就出來了，手指放開時那一下 click 會落在這層背景上 —— 那一下不算，不然視窗一出來就被關掉 */
               const p = pressRef.current;
@@ -1901,7 +1902,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               initial={{ scale: 0.94, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.94, opacity: 0 }}
-              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: motionSec('homeDialog'), ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
               className="w-full max-w-[320px] rounded-[20px] bg-[#141414] border border-white/10 p-6"
             >
@@ -1937,7 +1938,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: motionSec('homeBackdrop') }}
             onClick={() => !delBusy && setDelOpen(false)}
             className="absolute inset-0 z-[70] flex items-center justify-center px-8 bg-black/80 backdrop-blur-sm"
           >
@@ -1945,7 +1946,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               initial={{ scale: 0.94, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.94, opacity: 0 }}
-              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: motionSec('homeDialog'), ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
               className="w-full max-w-[320px] rounded-[20px] bg-[#141414] border border-white/10 p-6"
             >
@@ -1975,7 +1976,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       </AnimatePresence>
 
       <AnimatePresence>
-      {settingsOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.26 }} className="fixed inset-0 z-[250] bg-black/35 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
+      {settingsOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: motionSec('homeSettingsBackdrop') }} className="fixed inset-0 z-[250] bg-black/35 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
         {/* 從畫面中央由小變大彈出，收起時縮回中央 */}
         <motion.section role="dialog" aria-modal="true" aria-label={SETTINGS_TITLE[settingsPage]} className="w-full max-w-sm border border-white/15 rounded-3xl p-5" style={{ ...SETTINGS_GLASS, transformOrigin: '50% 50%' }} onClick={e => e.stopPropagation()}
           initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
@@ -2005,7 +2006,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: motionSec('homeBackdrop') }}
             onClick={() => setContactOpen(false)}
             className="absolute inset-0 z-[60] flex items-center justify-center px-8 bg-black/35"
           >
@@ -2014,7 +2015,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               initial={{ opacity: 0, scale: 0.96, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.97, y: 4 }}
-              transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: motionSec('homeContact'), ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
               className="w-full rounded-[24px] border border-white/10 shadow-2xl overflow-hidden"
               style={SETTINGS_GLASS}
@@ -2072,7 +2073,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -3 }}
-                  transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                  transition={{ duration: motionSec('homeToast'), ease: [0.16, 1, 0.3, 1] }}
                   className="absolute top-full left-0 right-0 mt-3 text-center text-[11px] tracking-[0.14em] text-white/45 pointer-events-none"
                 >
                   已複製

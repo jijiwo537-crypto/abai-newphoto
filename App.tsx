@@ -55,6 +55,11 @@ import { nativePathOf } from './utils/nativeBridge';
 import { rawDevelopPreview, type RawLook } from './utils/nativeCamera';
 import { upgradeImportHero } from './utils/importHero';
 import { setRawImportHint } from './utils/importHint';
+import { MotionTuner, motionTunerEnabled } from './components/MotionTuner';
+import { applyCssMotion } from './utils/motionTimings';
+
+/* 調整過的「返回滑走」時長寫進 CSS 變數 */
+applyCssMotion();
 import {
   draftTime as collageDraftTime,
   clearDraft as clearCollageDraft,
@@ -280,6 +285,7 @@ const App: React.FC = () => {
     setCurrentView('layout');
   };
   const [editorFile, setEditorFile] = useState<File | null>(null);
+  const [motionTunerOn] = useState(motionTunerEnabled);
   const [isImporting, setIsImporting] = useState(false);
   /* 導入一結束（不管哪個工具、成功或失敗），「正在解析RAW」的提示都收掉 ——
      除了 RAW 剛進編輯器：編輯器自己的載入畫面接著顯示，等第一張 RAW 畫面出來才收（見 ImageEditor 的 rawFirstDone） */
@@ -644,6 +650,8 @@ const App: React.FC = () => {
   return (
     <div className="abai-shell">
      <div className="abai-frame">
+      {/* 測試網站網址加上 ?motion：動畫時長面板 */}
+      {motionTunerOn && <MotionTuner />}
       {isImporting && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black">
           <ImportSpinner belowStatusBar />

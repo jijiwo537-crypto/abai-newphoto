@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { ms as motionMs } from '../utils/motionTimings';
 import { isNative } from '../utils/native';
 import { nativeCamera, captureNative, lutFileName, RAW_PROTECT_EV, stampDateOnto, rawDevelopPreview, type RawLook } from '../utils/nativeCamera';
 import { lutMaxAmount, lutDefaultAmount } from '../utils/photoFx';
@@ -1378,7 +1379,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     }
     shutterDownRef.current = down;
     shutterAnimRef.current = el.animate([{ transform: from }, { transform: down ? 'scale(0.86)' : 'scale(1)' }],
-      { duration: down ? 120 : 260, easing: 'cubic-bezier(0.2,0.8,0.2,1)', fill: 'forwards' });
+      { duration: down ? motionMs('shutterDown') : motionMs('shutterUp'), easing: 'cubic-bezier(0.2,0.8,0.2,1)', fill: 'forwards' });
     if (!down) shutterAnimRef.current.onfinish = () => { shutterAnimRef.current = null; };
   };
   const handleShutterClick = () => {

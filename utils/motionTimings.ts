@@ -1,0 +1,83 @@
+/**
+ * 介面過場動畫的時長（毫秒），集中在這裡。
+ *
+ * 測試網站網址加上 ?motion 會出現「動畫時長」面板（components/MotionTuner.tsx）：
+ * 每一項可以拖滑桿調整、預覽，調整的值存在這台裝置（localStorage），App 立刻照新的值播；
+ * 「複製設定」把調整過的值複製成一段文字，貼給開發者改成新的預設值。
+ */
+
+export interface MotionItem {
+  id: string;
+  /** 分組（面板上的標題） */
+  group: string;
+  label: string;
+  /** 在哪裡、怎麼操作看得到 */
+  where: string;
+  /** 預設時長（毫秒） */
+  def: number;
+  /** 預覽用的動作：move＝位移、scale＝縮放、fade＝淡入淡出、press＝按下 */
+  kind: 'move' | 'scale' | 'fade' | 'press';
+  easing: string;
+}
+
+const IOS = 'cubic-bezier(0.32, 0.72, 0, 1)';
+const OUT = 'cubic-bezier(0.16, 1, 0.3, 1)';
+
+export const MOTION_ITEMS: MotionItem[] = [
+  { id: 'importFly', group: '導入照片', label: '照片飛進工具', where: '首頁 → 點「編輯／人像／仿色」→ 從相簿選一張一般照片（RAW 不播）', def: 460, kind: 'move', easing: IOS },
+  { id: 'importUpgrade', group: '導入照片', label: '飛行中換成清楚的圖', where: '同上，飛的途中小縮圖換成大圖的淡入', def: 120, kind: 'fade', easing: 'ease-out' },
+  { id: 'importLand', group: '導入照片', label: '落地後替身淡出', where: '同上，照片停在工具裡之後替身消失', def: 200, kind: 'fade', easing: 'ease-out' },
+
+  { id: 'pageBack', group: '換頁', label: '返回上一頁（往右滑走）', where: '任何工具按左上角返回、儲存畫面按「繼續編輯」（iOS 18 以後）', def: 460, kind: 'move', easing: IOS },
+
+  { id: 'camGalleryOpen', group: '相機相簿', label: '點開大圖', where: '相機 → 左下角相簿 → 點一張照片', def: 420, kind: 'scale', easing: IOS },
+  { id: 'camGalleryOpenFade', group: '相機相簿', label: '大圖打開後替身淡出', where: '同上，照片放大到定位後', def: 220, kind: 'fade', easing: 'ease-out' },
+  { id: 'camGalleryClose', group: '相機相簿', label: '下拉關閉（縮回格子）', where: '大圖往下拉超過一段距離後放開', def: 420, kind: 'scale', easing: IOS },
+  { id: 'camGalleryBounce', group: '相機相簿', label: '下拉沒關閉時回彈', where: '大圖往下拉一點點就放開', def: 320, kind: 'move', easing: IOS },
+
+  { id: 'shutterDown', group: '相機', label: '快門按下', where: '相機 → 按住快門', def: 120, kind: 'press', easing: 'cubic-bezier(0.2,0.8,0.2,1)' },
+  { id: 'shutterUp', group: '相機', label: '快門放開', where: '相機 → 放開快門', def: 260, kind: 'press', easing: 'cubic-bezier(0.2,0.8,0.2,1)' },
+
+  { id: 'homeBackdrop', group: '首頁', label: '彈出視窗的背景淡入', where: '首頁 → 登入、登出、刪除紀錄等視窗後面變暗的那層', def: 200, kind: 'fade', easing: 'ease-out' },
+  { id: 'homeLoginSheet', group: '首頁', label: '登入面板從下方滑上來', where: '首頁 → 登入', def: 320, kind: 'move', easing: OUT },
+  { id: 'homeAccountPage', group: '首頁', label: '帳號頁從右邊滑進來', where: '首頁 → 帳號', def: 320, kind: 'move', easing: OUT },
+  { id: 'homeDialog', group: '首頁', label: '確認視窗彈出', where: '首頁 → 登出、刪除紀錄的確認視窗', def: 220, kind: 'scale', easing: OUT },
+  { id: 'homeSettingsBackdrop', group: '首頁', label: '設定的背景淡入', where: '首頁 → 設定', def: 260, kind: 'fade', easing: 'ease-out' },
+  { id: 'homeContact', group: '首頁', label: '聯絡我們視窗彈出', where: '首頁 → 設定 → 聯絡我們', def: 260, kind: 'scale', easing: OUT },
+  { id: 'homeToast', group: '首頁', label: '「已複製」提示', where: '首頁 → 設定 → 聯絡我們 → 複製', def: 220, kind: 'move', easing: OUT },
+
+  { id: 'editorPanel', group: '編輯器', label: 'HSL／曲線面板出現', where: '編輯 → 調整 → HSL 或 曲線', def: 260, kind: 'move', easing: 'cubic-bezier(.22,1,.36,1)' },
+  { id: 'editorMerge', group: '編輯器', label: '合併按鈕的動畫', where: '編輯 → 套一個濾鏡或特效 → 右下角「合併」', def: 680, kind: 'press', easing: 'cubic-bezier(.22,1,.36,1)' },
+];
+
+const KEY = 'abai-motion-v1';
+let cache: Record<string, number> | null = null;
+const read = (): Record<string, number> => {
+  if (cache) return cache;
+  try { cache = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { cache = {}; }
+  return cache!;
+};
+const DEF = Object.fromEntries(MOTION_ITEMS.map(m => [m.id, m.def]));
+
+/** 這一項現在的時長（毫秒）：有調整過用調整的，沒有就是預設 */
+export function ms(id: string): number {
+  const v = read()[id];
+  return typeof v === 'number' && isFinite(v) && v >= 0 ? v : (DEF[id] ?? 300);
+}
+/** 秒（framer-motion 用） */
+export const sec = (id: string) => ms(id) / 1000;
+
+export function setMotion(id: string, v: number | null) {
+  const o = { ...read() };
+  if (v == null || v === DEF[id]) delete o[id]; else o[id] = Math.round(v);
+  cache = o;
+  try { localStorage.setItem(KEY, JSON.stringify(o)); } catch { /* 存不了就只在這一次有效 */ }
+  applyCssMotion();
+}
+export function resetMotion() { cache = {}; try { localStorage.removeItem(KEY); } catch { /* 沒關係 */ } applyCssMotion(); }
+export const motionOverrides = () => ({ ...read() });
+
+/** 寫在 CSS 裡的那幾個（返回的滑走）用 CSS 變數 */
+export function applyCssMotion() {
+  try { document.documentElement.style.setProperty('--vt-back-ms', `${ms('pageBack')}ms`); } catch { /* 沒有 DOM */ }
+}

@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ms as motionMs } from '../utils/motionTimings';
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
 import { prepareFiles, shareSheet } from '../utils/shareAll';
@@ -218,9 +219,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
                   className={`cg-cell${on ? ' sel' : ''} relative aspect-square overflow-hidden bg-white/10`}>
                   {thumbs[src] && <img src={thumbs[src]} decoding="async" alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" />}
                   <span className="ring" />
-                  {rawShots?.has(src) && (
-                    <span className="absolute left-1 bottom-1 px-1.5 py-[2px] rounded-[5px] bg-black/55 backdrop-blur-md text-[9px] font-bold tracking-[0.06em] text-white/90 pointer-events-none">RAW</span>
-                  )}
+                  {/* 相機一律用 RAW 拍：格子上不再標 RAW */}
                   {favorites?.has(src) && (
                     <span className="absolute left-2 top-2 pointer-events-none drop-shadow-[0_1px_3px_rgba(0,0,0,.6)]"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 21.1 10.6 20C5.1 15.5 2 12.8 2 9.3 2 6.4 4.3 4 7.2 4c1.8 0 3.6.9 4.8 2.3C13.2 4.9 15 4 16.8 4 19.7 4 22 6.4 22 9.3c0 3.5-3.1 6.2-8.6 10.7L12 21.1Z" /></svg></span>
                   )}
@@ -335,7 +334,7 @@ const PhotoViewer: React.FC<{
       const ix = Math.max(0, (w - C.width / k) / 2), iy = Math.max(0, (h - C.height / k) / 2);
       const tx = C.left + C.width / 2 - (B.left + w / 2), ty = C.top + C.height / 2 - (B.top + h / 2);
       if (cellImg) cellImg.style.visibility = 'hidden';
-      const dur = 420;
+      const dur = motionMs('camGalleryOpen');
       bg.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dur * 0.7, easing: 'ease-out', fill: 'forwards' });
       await g.animate([{ transform: `translate3d(${tx}px,${ty}px,0) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` }, { transform: 'none', clipPath: 'inset(0px)' }],
         { duration: dur, easing: EASE }).finished.catch(() => {});
@@ -349,7 +348,7 @@ const PhotoViewer: React.FC<{
       setOpening(false);
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       if (!alive || !ghost.current) return;
-      await ghost.current.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {});
+      await ghost.current.animate([{ opacity: 1 }, { opacity: 0 }], { duration: motionMs('camGalleryOpenFade'), easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {});
       if (alive && ghost.current) ghost.current.style.visibility = 'hidden';
     };
     im.decode().then(go, go);
@@ -420,7 +419,7 @@ const PhotoViewer: React.FC<{
     if (!img || !d.base) { if (dismiss) onClose(); else { setDragging(false); lockPager(false); } return; }
     const from = { transform: img.style.transform || 'none', clipPath: 'inset(0px)' };
     if (!dismiss) {
-      img.animate([from, { transform: 'translate3d(0,0,0) scale(1)', clipPath: 'inset(0px)' }], { duration: 320, easing: EASE }).finished.then(() => {
+      img.animate([from, { transform: 'translate3d(0,0,0) scale(1)', clipPath: 'inset(0px)' }], { duration: motionMs('camGalleryBounce'), easing: EASE }).finished.then(() => {
         img.style.transform = ''; img.style.willChange = '';
         lockPager(false);
         setDragging(false);
@@ -444,7 +443,7 @@ const PhotoViewer: React.FC<{
       const tx = C.left + C.width / 2 - (B.left + B.width / 2), ty = C.top + C.height / 2 - (B.top + B.height / 2);
       to = { transform: `translate3d(${tx}px,${ty}px,0) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` };
     } else to = { transform: `translate3d(${d.dx}px,${window.innerHeight}px,0) scale(${d.s * 0.8})`, clipPath: 'inset(0px)', opacity: 0 };
-    const dur = 420;
+    const dur = motionMs('camGalleryClose');
     bg.current?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: dur * 0.85, easing: 'ease-out', fill: 'forwards' });
     img.animate([from, to], { duration: dur, easing: EASE, fill: 'forwards' }).finished.catch(() => {}).finally(() => {
       if (cellImg) cellImg.style.visibility = '';

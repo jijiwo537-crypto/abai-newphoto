@@ -15,6 +15,7 @@ import { isNative } from '../utils/native';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
 import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, rawDevelopLinear, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
 import { RawGpu } from '../utils/rawGpu';
+import { ms as motionMs, sec as motionSec } from '../utils/motionTimings';
 import { exposureEv } from '../utils/photoToneMath';
 
 /** RAW 照片：這幾個工具改調 raw* 欄位（由原生在 RAW 上做），網頁的那一份維持 0 */
@@ -10184,7 +10185,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     { transform: 'translateY(0)' },
                     { transform: 'translateY(2.9px)', offset: .4 },
                     { transform: 'translateY(0)' },
-                  ], { duration: 680, easing: 'cubic-bezier(.22,1,.36,1)' });
+                  ], { duration: motionMs('editorMerge'), easing: 'cubic-bezier(.22,1,.36,1)' });
                   done = a.finished.catch(() => {});
                 }
               }
@@ -10280,7 +10281,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              不用 backdrop-blur：底色幾乎不透明，模糊看不出來，但它讓進場那 260ms
              （圖片同時在縮）每一格都要重算一次整塊模糊，手機上就是偶爾卡一下。 */}
         {isColourPanelTool(activeToolId) && !maskLocked && <motion.div key="hsl"
-           initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0 } }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
+           initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0 } }} transition={{ duration: motionSec('editorPanel'), ease: [.22, 1, .36, 1] }}
            data-hsl-panel
            className="absolute inset-x-0 bottom-0 z-40 bg-[#111] border-t border-white/5 overflow-hidden"
            style={{ height: COLOUR_PANEL_H }}
@@ -10377,7 +10378,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {detailPanelHost && createPortal(<AnimatePresence>
         {activeToolId === 'curves' && <motion.div key="curves" data-curves-panel
            /* 離開時直接收掉：留著淡出的話，下一個工具出現的那一下會看到這一層的殘影 */
-           initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0 } }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
+           initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0 } }} transition={{ duration: motionSec('editorPanel'), ease: [.22, 1, .36, 1] }}
            className="absolute left-0 right-0 z-40 flex flex-col items-center justify-end pb-2"
            style={{ height: '250px', bottom: 12, background: 'transparent', pointerEvents: 'none' }}
         >
