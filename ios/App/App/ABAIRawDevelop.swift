@@ -122,19 +122,16 @@ enum ABAIRawDevelop {
                           : 3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483
         return (x, y)
     }
-    /// 色溫＋色調 → 光源的 xy。色調是垂直於黑體軌跡的偏移（CIE 1960 uv），±150 約 ±0.05 Duv
+    /// 色溫＋色調 → 光源的 xy。色調是在 xy 上垂直於黑體軌跡的偏移（往綠那一側為正），±100 ＝ ±0.015，
+    /// 跟一般照片的色調（utils/photoToneMath.ts whiteBalanceMatrix）同一套：兩邊滑起來顏色一樣。
+    /// 設定的是「光源」：光源偏綠，補償後畫面偏洋紅 —— 色調往右＝畫面偏洋紅、往左＝偏綠（跟 Lightroom 一樣）
     static func illuminantXY(_ k: Double, _ tint: Double) -> (Double, Double) {
-        func uv(_ p: (Double, Double)) -> (Double, Double) { let d = -2 * p.0 + 12 * p.1 + 3; return (4 * p.0 / d, 6 * p.1 / d) }
-        let a = uv(planckXY(k)), b = uv(planckXY(k * 1.01))
-        var tx = b.0 - a.0, ty = b.1 - a.1
-        let len = max(1e-9, (tx * tx + ty * ty).squareRoot()); tx /= len; ty /= len
-        var nx = -ty, ny = tx
-        /* 設定的是「光源」：光源偏綠，補償後畫面偏洋紅。所以色調＋＝光源往綠（v 變大）＝畫面偏洋紅（跟 Lightroom 一樣） */
+        let a = planckXY(k), b = planckXY(k * 1.01)
+        var nx = -(b.1 - a.1), ny = b.0 - a.0
+        let len = max(1e-12, (nx * nx + ny * ny).squareRoot()); nx /= len; ny /= len
         if ny < 0 { nx = -nx; ny = -ny }
-        let d = max(-150, min(150, tint)) / 150 * 0.03
-        let u = a.0 + nx * d, v = a.1 + ny * d
-        let den = 2 * u - 8 * v + 4
-        return (3 * u / den, 2 * v / den)
+        let d = max(-150, min(150, tint)) / 100 * 0.015
+        return (a.0 + nx * d, a.1 + ny * d)
     }
     private static let p3ToXYZ = simd_double3x3(rows: [
         SIMD3(0.4865709, 0.2656677, 0.1982173), SIMD3(0.2289746, 0.6917385, 0.0792869), SIMD3(0.0, 0.0451134, 1.0439444)])

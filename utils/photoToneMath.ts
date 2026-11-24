@@ -95,7 +95,7 @@ const planckXy = (t: number) => {
 };
 const D65_MIRED = 1e6 / 6504;
 /**
- * 把假設的場景白點調到 D65 的線性 sRGB 3×3 矩陣。色溫 + 變暖、色調 + 偏綠（保留原本的方向），
+ * 把假設的場景白點調到 D65 的線性 sRGB 3×3 矩陣。色溫 + 變暖、色調 + 偏洋紅（左綠右洋紅，跟 Lightroom 和 RAW 一樣），
  * 兩者都是 ±100；白色的亮度不變
  */
 export const whiteBalanceMatrix = (temp: number, tint: number): number[] | null => {
@@ -106,8 +106,8 @@ export const whiteBalanceMatrix = (temp: number, tint: number): number[] | null 
   const [x0, y0] = planckXy(k), [x1, y1] = planckXy(k * 1.01);
   // 軌跡在 xy 上的單位法向量，指向綠色（+y 那一側）
   let nx = -(y1 - y0), ny = x1 - x0; const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl; if (ny < 0) { nx = -nx; ny = -ny; }
-  // 假設的光源偏洋紅，修正就偏綠
-  const off = -(tint / 100) * 0.015;
+  // 假設的光源偏綠，修正後畫面就偏洋紅
+  const off = (tint / 100) * 0.015;
   const sx = x0 + nx * off, sy = y0 + ny * off;
   const srcXYZ = [sx / sy, 1, (1 - sx - sy) / sy];
   const dstXYZ = [0.95047, 1, 1.08883];
