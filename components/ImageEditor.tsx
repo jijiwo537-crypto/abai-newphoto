@@ -1211,6 +1211,20 @@ function putThumb(store: ThumbStore, id: string, src: HTMLCanvasElement, sig = '
   e.v++;
 }
 
+/* 前後對比用的原圖（以像素陣列為鑰匙：換照片、合併後陣列換成新的，自然對不上、重做；舊的跟著陣列一起被回收） */
+const compareBitmaps = new WeakMap<Uint8ClampedArray, ImageBitmap>();
+const comparePending = new WeakSet<Uint8ClampedArray>();
+function prepareCompareBitmap(px: Uint8ClampedArray | null | undefined, w: number, h: number): void {
+  if (!px || !w || !h || px.length !== w * h * 4 || compareBitmaps.has(px) || comparePending.has(px) || typeof createImageBitmap !== 'function') return;
+  comparePending.add(px);
+  let data: ImageData;
+  try { data = new ImageData(px, w, h); } catch { comparePending.delete(px); return; }
+  /* 不預乘透明度、不做色彩轉換：貼出來的每個像素跟 putImageData 那條一模一樣 */
+  createImageBitmap(data, { premultiplyAlpha: 'none', colorSpaceConversion: 'none' })
+    .then(bmp => { compareBitmaps.set(px, bmp); }, () => { /* 做不出來就照舊當場貼 */ })
+    .finally(() => comparePending.delete(px));
+}
+
 /** 背景執行緒算好的像素直接寫進倉庫的畫布（不經過暫存畫布、不回讀） */
 function putThumbPixels(store: ThumbStore, id: string, px: Uint8ClampedArray, W: number, H: number, sig: string): void {
   let e = store.current[id];
@@ -6229,11 +6243,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             ctx.drawImage(pristine, (b.w - dw) / 2, (b.h - dh) / 2, dw, dh);
             ctx.restore();
         } else {
-            pixelBufferCtx.putImageData(new ImageData(b.original || b.source, b.w, b.h), 0, 0);
+            /* 原圖在空檔時已經先做成 GPU 上的一張圖（compareBitmaps，像素跟緩衝區一模一樣、不預乘透明度）：
+               按下去直接貼，不用當場把整張像素搬進畫布再上傳 —— 大照片按住對比也是瞬間出來，畫面完全一樣 */
+            const px = b.original || b.source;
+            const ready = compareBitmaps.get(px);
             /* 先清空：去背的照片透明處不會蓋掉上一格（套了效果的那張），
                不清的話按住對比時兩張會疊在一起 */
-            ctx.clearRect(0, 0, b.w, b.h);
-            ctx.drawImage(pixelBufferCanvas, 0, 0);
+            if (ready && ready.width === b.w && ready.height === b.h) {
+                ctx.clearRect(0, 0, b.w, b.h);
+                ctx.drawImage(ready, 0, 0);
+            } else {
+                pixelBufferCtx.putImageData(new ImageData(px, b.w, b.h), 0, 0);
+                ctx.clearRect(0, 0, b.w, b.h);
+                ctx.drawImage(pixelBufferCanvas, 0, 0);
+            }
         }
         cvs.style.filter = 'none';
         presentEditorSource(ctx,b.w,b.h);
@@ -7195,6 +7218,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             const currentShowOriginal = showOriginalRef.current;
             const interacting = isInteractingRef.current;
             const now = performance.now();
+            /* 空檔時把這張原圖先做成 GPU 上的圖（給前後對比用，見上面 compareBitmaps）：每張只做一次 */
+            if (!interacting && !currentShowOriginal) prepareCompareBitmap(b.original || b.source, b.w, b.h);
             
             const flipped = currentShowOriginal !== lastRenderedShowOriginalRef.current;
             /* ── 前後對比：按下／放開都不要再跑一次整條管線 ─────────────
