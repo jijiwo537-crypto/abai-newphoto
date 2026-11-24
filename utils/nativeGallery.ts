@@ -40,6 +40,15 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 /* 縮圖跟誰要：相簿畫面打開時交給這裡 */
 let source: PhotoLibraryApi | null = null;
 export const setThumbSource = (api: PhotoLibraryApi | null) => { source = api; };
+/** 大一點的縮圖（短邊約 1024，相簿縮圖檔案快取）：導入過場用，飛的時候要夠清楚。拿不到回 null */
+export async function bigThumb(id: string, size = 1024): Promise<string | null> {
+  try {
+    const p = source ?? await photoLibrary();
+    if (!p) return null;
+    const { items } = await p.thumbs({ ids: [id], size });
+    return items[0]?.path ? fileSrc(items[0].path) : null;
+  } catch { return null; }
+}
 
 export const cachedThumb = (id: string) => thumbUrl.get(id);
 

@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { nativePathOf } from './nativeBridge';
+import { nativeDownsample } from './nativeImage';
 
 /* 相機膠卷用的小 JPEG 縮圖。快門預覽和相簿格子如果直接用 <img src={原圖}> 顯示每張 1200 萬像素的照片，
    每張都會以全尺寸解碼（iPhone 上約 50MB 像素），只為了填一個 56px 的方塊；拍幾張加上拍照暫存，
    iOS 就會關掉網頁（白畫面後重新載入）。縮圖一張一張做一次，原圖只有在編輯器打開時才解碼 */
-export const THUMB_EDGE = 360;
+/* 長邊 720：相簿一格在手機上約 390 個實際像素寬、又要裁成正方形（用的是短邊），360 會糊 */
+export const THUMB_EDGE = 720;
 
 const encode = (canvas: HTMLCanvasElement) => new Promise<string | null>(resolve => {
   try { canvas.toBlob(b => resolve(b ? URL.createObjectURL(b) : null), 'image/jpeg', 0.82); }
@@ -25,7 +28,16 @@ export const thumbFromCanvas = async (source: CanvasImageSource, w: number, h: n
   return url;
 };
 
-const thumbFromUrl = (src: string) => new Promise<string | null>(resolve => {
+/* 有原生檔案的照片（相機拍的）：請原生縮，網頁完全不用解全尺寸（省記憶體、也比較快） */
+const thumbFromUrl = async (src: string): Promise<string | null> => {
+  const path = nativePathOf(src);
+  if (path) {
+    const r = await nativeDownsample(path, THUMB_EDGE);
+    if (r?.url) return r.url;
+  }
+  return thumbFromUrlWeb(src);
+};
+const thumbFromUrlWeb = (src: string) => new Promise<string | null>(resolve => {
   const img = new Image();
   img.decoding = 'async';
   img.onload = async () => {

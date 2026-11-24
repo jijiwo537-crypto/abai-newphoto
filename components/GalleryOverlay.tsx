@@ -5,6 +5,11 @@ import { prepareFiles, shareSheet } from '../utils/shareAll';
 import { useNativeGlass } from '../utils/nativeGlass';
 import { haptic } from '../utils/haptics';
 import { setStatusBarHidden } from '../utils/native';
+import { nativePathOf } from '../utils/nativeBridge';
+import { nativeDownsample } from '../utils/nativeImage';
+
+/** 大圖用的螢幕版（原生縮到長邊 1600）：照片網址 → 縮好的檔案網址。存在元件外，關掉大圖再打開不用重做 */
+const screenCache: Record<string, string> = {};
 
 /* ── 相機的相簿 ───────────────────────────────────────────────────────
  * 格狀列表：越新的越下面（打開時停在最底），右上圓形勾選鈕 → 點照片勾選 → 下面一條按鈕：愛心、分享、編輯、刪除。
@@ -299,7 +304,7 @@ const PhotoViewer: React.FC<{
   const root = useRef<HTMLDivElement>(null);
   const bg = useRef<HTMLDivElement>(null);
   /* 下滑關閉：只動那一張圖（不動整頁，所以不會抖）。base＝圖沒變形時的位置 */
-  const drag = useRef<{ x: number; y: number; active: boolean; id: number; img?: HTMLImageElement | null; base?: DOMRect; dx: number; dy: number; s: number; t0: number; vy: number } | null>(null);
+  const drag = useRef<{ x: number; y: number; active: boolean; id: number; img?: HTMLElement | null; pic?: HTMLImageElement | null; base?: DOMRect; dx: number; dy: number; s: number; t0: number; vy: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [flying, setFlying] = useState(false);
   /* 打開：相簿裡的小圖放大到大圖的位置（除了圖都是黑的），就定位後才出現按鈕、換成原圖 */
@@ -354,11 +359,31 @@ const PhotoViewer: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const EASE = 'cubic-bezier(0.32,0.72,0,1)';
-  const curImg = () => pager.current?.children[index]?.querySelector('img') as HTMLImageElement | null;
+  /** 這一張最上面那層（原圖；進編輯時是螢幕版） */
+  const curImg = () => { const list = pager.current?.children[index]?.querySelectorAll('img'); return (list && list.length ? list[list.length - 1] : null) as HTMLImageElement | null; };
+  /* 螢幕大小的版本（原生縮到長邊 1600）：看大圖、進編輯時墊在底下 */
+  const [screens, setScreens] = useState<Record<string, string>>(() => ({ ...screenCache }));
+  useEffect(() => {
+    let alive = true;
+    for (const i of [index, index - 1, index + 1]) {
+      const p = photos[i];
+      if (!p || screenCache[p]) continue;
+      const path = nativePathOf(p);
+      if (!path) continue;
+      void nativeDownsample(path, 1600).then(r => {
+        if (!r?.url) return;
+        screenCache[p] = r.url;
+        if (alive) setScreens(prev => ({ ...prev, [p]: r.url }));
+      });
+    }
+    return () => { alive = false; };
+  }, [index, photos]);
   const dragScale = (dy: number) => 1 - 0.38 * Math.min(1, Math.max(0, dy) / (window.innerHeight * 0.55));
   const startDrag = (d: NonNullable<typeof drag.current>) => {
     d.active = true;
-    d.img = curImg();
+    /* 動的是這一張整格（底下的螢幕版和上面的原圖一起），比例照上面那層圖算 */
+    d.pic = curImg();
+    d.img = (pager.current?.children[index] as HTMLElement | undefined) ?? null;
     if (d.img) { d.img.style.transform = ''; d.base = d.img.getBoundingClientRect(); d.img.style.willChange = 'transform'; }
     if (pager.current) pager.current.style.overflowX = 'hidden';
     setDragging(true);
@@ -389,7 +414,7 @@ const PhotoViewer: React.FC<{
     cell?.scrollIntoView({ block: 'nearest' });
     /* 大圖的元素是撐滿整塊（object-fit: contain），真正的圖是中間那一塊：縮放比例照「圖」算，裁切照「元素」算 */
     const B = d.base, C = cell?.getBoundingClientRect();
-    const nw = img.naturalWidth || B.width, nh = img.naturalHeight || B.height;
+    const nw = d.pic?.naturalWidth || B.width, nh = d.pic?.naturalHeight || B.height;
     const fit = Math.min(B.width / nw, B.height / nh);
     const Pw = nw * fit, Ph = nh * fit;
     const cellImg = cell?.querySelector('img') as HTMLImageElement | null;
@@ -481,14 +506,18 @@ const PhotoViewer: React.FC<{
           drag.current = null;
           if (d.active) endDrag(d, true);
         }}>
-        {photos.map((p, i) => (
-          <div key={p} className="w-full h-full shrink-0 snap-center flex items-center justify-center" style={{ scrollSnapStop: 'always' }}>
-            {/* 一律撐滿整塊、照比例縮放：小縮圖也是一樣大（之前縮圖照原尺寸顯示，從編輯回來時會突然變很小） */}
-            {!suspended && Math.abs(i - index) <= 1
-              ? <img src={p} alt="" className="w-full h-full object-contain allow-callout" draggable={false} />
-              : thumbs[p] ? <img src={thumbs[p]} alt="" className="w-full h-full object-contain" draggable={false} /> : null}
-          </div>
-        ))}
+        {photos.map((p, i) => {
+          const near = Math.abs(i - index) <= 1;
+          /* 底下一層：螢幕大小的版本（沒有就用縮圖）；上面一層：原圖（解好之前是透明的，底下那層頂著，不會先變糊再變清楚）。
+             進編輯時（suspended）只留底下那層：原圖的記憶體讓給編輯頁，回來時看到的還是清楚的 */
+          const base = screens[p] || thumbs[p];
+          return (
+            <div key={p} className="relative w-full h-full shrink-0 snap-center flex items-center justify-center" style={{ scrollSnapStop: 'always' }}>
+              {base && <img src={base} alt="" className="absolute inset-0 w-full h-full object-contain" draggable={false} />}
+              {!suspended && near && <img src={p} alt="" decoding="async" className="absolute inset-0 w-full h-full object-contain allow-callout" draggable={false} />}
+            </div>
+          );
+        })}
       </div>
       {/* 拖的時候畫面上只有圖：標籤、按鈕都收起來 */}
       {label && !dragging && !opening && (

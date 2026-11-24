@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import {
   type GalleryFilter, type LibraryAlbum, type LibraryAsset, type LibraryStatus, type PhotoLibraryApi,
   cachedThumb, exportAssets, prefetchThumbs, requestThumb, setThumbSource,
-  isThumbDecoded, cachedFirstPage, rememberFirstPage,
+  isThumbDecoded, cachedFirstPage, rememberFirstPage, bigThumb,
 } from '../utils/nativeGallery';
 import { haptic } from '../utils/haptics';
 import { ImportSpinner } from './BusySpinner';
@@ -254,7 +254,7 @@ export const NativeGallery: React.FC<{
       const cell = scrollRef.current?.querySelector<HTMLElement>(`[data-asset="${window.CSS.escape(ids[0])}"]`);
       const a = itemsRef.current.find(x => x.id === ids[0]);
       const thumb = cachedThumb(ids[0]);
-      if (cell && thumb && a && !a.video) beginImportHero(cell.getBoundingClientRect(), thumb, a.w && a.h ? a.w / a.h : undefined);
+      if (cell && thumb && a && !a.video) beginImportHero(cell.getBoundingClientRect(), thumb, a.w && a.h ? a.w / a.h : undefined, () => bigThumb(ids[0]));
     }
     setExporting(true);
     try {
