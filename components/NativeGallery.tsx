@@ -151,7 +151,7 @@ export const NativeGallery: React.FC<{
        接手的匯入畫面是同一個位置、同一款的黑底轉圈 */
     if (files && files.length) { onClose(files); return; }
     setShown(false);
-    setTimeout(() => onClose(files), 360);
+    setTimeout(() => onClose(files), 480);
   }, [onClose]);
 
   useLayoutEffect(() => { setThumbSource(api); }, [api]);
@@ -269,7 +269,6 @@ export const NativeGallery: React.FC<{
     setExporting(true);
     try {
       const files = await exportAssets(ids);
-      haptic('success');
       close(files);
     } catch (e: any) {
       cancelImportHero();
@@ -286,13 +285,12 @@ export const NativeGallery: React.FC<{
   const pickedRef = useRef<string[]>([]);
   const onTap = useCallback((a: LibraryAsset) => {
     if (exportingRef.current) return;
-    if (!multi) { haptic('tick'); void finish([a.id]); return; }
+    if (!multi) { void finish([a.id]); return; }
     const prev = pickedRef.current;
     let next: string[];
     if (prev.includes(a.id)) next = prev.filter(x => x !== a.id);
     else if (limit > 0 && prev.length >= limit) { haptic('error'); setShake(n => n + 1); return; }
     else next = [...prev, a.id];
-    haptic('tick');
     pickedRef.current = next;
     setPicked(next);
   }, [multi, limit, finish]);
@@ -300,7 +298,6 @@ export const NativeGallery: React.FC<{
   const order = useMemo(() => { const m = new Map<string, number>(); picked.forEach((id, i) => m.set(id, i + 1)); return m; }, [picked]);
 
   const chooseAlbum = (a: LibraryAlbum) => {
-    haptic('tick');
     setAlbumOpen(false);
     if (a.id === album.id) return;
     setItems([]); setTotal(-1);
@@ -318,20 +315,21 @@ export const NativeGallery: React.FC<{
 
   const sheet: React.CSSProperties = {
     transform: shown ? 'translateY(0)' : 'translateY(100%)',
-    transition: `transform .42s ${EASE}`,
+    /* 上來 0.56 秒、下去 0.46 秒（原本 0.42 秒太快） */
+    transition: `transform ${shown ? '.56s' : '.46s'} ${EASE}`,
   };
 
   return (
     <div className="fixed inset-0 z-[10000] select-none" style={{ WebkitUserSelect: 'none' }}>
       <style>{CSS}</style>
-      <div className="absolute inset-0 bg-black" style={{ opacity: shown ? 0.6 : 0, transition: 'opacity .36s ease' }} />
+      <div className="absolute inset-0 bg-black" style={{ opacity: shown ? 0.6 : 0, transition: `opacity ${shown ? '.48s' : '.4s'} ease` }} />
       <div className="absolute inset-0 flex flex-col bg-black text-white" style={sheet}>
         {/* 上方：取消／相簿名稱／完成 */}
         <div ref={headerRef} className="relative z-20 shrink-0 bg-black/85 backdrop-blur-xl" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
           <div className="h-12 px-2 grid grid-cols-[1fr_auto_1fr] items-center">
             <button type="button" className="justify-self-start h-10 px-3 text-[16px] text-white/90 active:opacity-50"
-              onClick={() => { haptic('tick'); close([]); }}>取消</button>
-            <button type="button" disabled={!ok} onClick={() => { haptic('tick'); setAlbumOpen(v => !v); }}
+              onClick={() => close([])}>取消</button>
+            <button type="button" disabled={!ok} onClick={() => setAlbumOpen(v => !v)}
               className="h-10 px-3 flex items-center gap-1.5 active:opacity-60 max-w-[52vw]">
               <span className="text-[16px] font-semibold truncate">{ok ? album.title : title}</span>
               {ok && (

@@ -126,7 +126,7 @@ function hide(el: HTMLElement | null) {
 /* ── 工具介面的進場 ──
  * 照片由替身飛進來；工具的其他介面（上方標題列、下方工具列、分頁）不再一口氣冒出來，而是分層進場：
  *   上方的列：從上方 10px 輕輕落下＋淡入；下方的各列：由上而下依序從下方 26px 升起＋淡入，每列錯開 45ms。
- * 只用獨立的 translate 屬性和 opacity（GPU 合成；不碰元素原本的 transform，例如置中用的 -50%），動畫用 fill: backwards（開始前就套第一格、結束後完全移除），
+ * 只用 transform 和 opacity（GPU 合成；元素原本的 transform，例如置中用的 -50%，接在後面保留），動畫用 fill: backwards（開始前就套第一格、結束後完全移除），
  * 播完之後元素身上沒有任何殘留的樣式，跟沒有動畫的版本 100% 一樣。
  * 照片本身（以及包著照片的那幾層）不動：用預期的照片框判斷哪一塊是照片，只動照片以外的介面。 */
 const ENTER_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
@@ -148,6 +148,19 @@ function shownOpacity(el: HTMLElement): number {
   if (st.visibility === 'hidden' || st.display === 'none') return 0;
   return parseFloat(st.opacity) || 0;
 }
+/** 裡面有沒有自己設了圖層高度（z-index）的東西：
+ *  整塊做透明度／位移動畫時，這一塊會暫時變成獨立圖層，裡面的 z-index 只在這一塊裡面比，
+ *  原本應該蓋在照片上面的按鈕就會掉到照片底下。這種塊不整塊動，往裡面拆（有 z-index 的那個元素自己動，層級不變） */
+function hasRaisedZ(el: HTMLElement, E: R): boolean {
+  for (const d of Array.from(el.querySelectorAll<HTMLElement>('[class*="z-"],[style*="z-index"]'))) {
+    const st = getComputedStyle(d);
+    if (st.zIndex === 'auto' || st.position === 'static') continue;
+    /* 只有疊在照片上的才有圖層問題（照片下方面板裡的 z-index 不影響跟照片的上下關係） */
+    const q = d.getBoundingClientRect();
+    if (q.right > E.x && q.left < E.x + E.w && q.bottom > E.y && q.top < E.y + E.h) return true;
+  }
+  return false;
+}
 type Block = { el: HTMLElement; kids?: HTMLElement[] };
 function chromeBlocks(root: HTMLElement, E: R): Block[] {
   const out: HTMLElement[] = [];
@@ -159,7 +172,7 @@ function chromeBlocks(root: HTMLElement, E: R): Block[] {
       const r = c.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) { if (depth < 8 && c.children.length) walk(c, depth + 1); continue; }
       const coversPhoto = r.left <= cx && r.right >= cx && r.top <= cy && r.bottom >= cy && r.width * r.height >= E.w * E.h * 0.5;
-      if (coversPhoto || hasPhoto(c, E)) { if (depth < 8) walk(c, depth + 1); continue; }
+      if (coversPhoto || hasPhoto(c, E) || (c.children.length && hasRaisedZ(c, E))) { if (depth < 8) walk(c, depth + 1); continue; }
       out.push(c);
     }
   };
@@ -171,6 +184,8 @@ function chromeBlocks(root: HTMLElement, E: R): Block[] {
     return r.top > cy && r.height > 90 && kids.length >= 2 && kids.length <= 8 ? { el, kids } : { el };
   });
 }
+/** 元素原本的 transform（例如置中用的 -50%）：動畫用 transform 才會整段在 GPU 上跑，原本的 transform 接在後面保留 */
+function baseTransform(el: HTMLElement): string { const t = getComputedStyle(el).transform; return t && t !== 'none' ? t : ''; }
 function runEnter(root: HTMLElement, E: R) {
   const blocks = chromeBlocks(root, E).filter(b => !entered.has(b.el));
   if (!blocks.length) return;
@@ -188,7 +203,8 @@ function runEnter(root: HTMLElement, E: R) {
   const play = (el: HTMLElement, dy: number, delay: number, dur: number) => {
     entered.add(el);
     const o = shownOpacity(el);
-    anim(el, [{ opacity: 0, translate: `0 ${dy}px` }, { opacity: o, translate: '0 0' }], delay, dur);
+    const t = baseTransform(el);
+    anim(el, [{ opacity: 0, transform: `translate3d(0, ${dy}px, 0)${t ? ' ' + t : ''}` }, { opacity: o, transform: t || 'translate3d(0, 0, 0)' }], delay, dur);
   };
   let n = 0;
   top.forEach(i => play(blocks[i].el, late ? -8 : -14, 0, late ? 320 : 480));
@@ -198,7 +214,8 @@ function runEnter(root: HTMLElement, E: R) {
     n++;
     if (b.kids && !late) b.kids.forEach((k, m) => {
       entered.add(k);
-      anim(k, [{ translate: '0 18px' }, { translate: '0 0' }], d + 50 + Math.min(m, 6) * 55, 560);
+      const t = baseTransform(k);
+      anim(k, [{ transform: `translate3d(0, 18px, 0)${t ? ' ' + t : ''}` }, { transform: t || 'translate3d(0, 0, 0)' }], d + 50 + Math.min(m, 6) * 55, 560);
     });
   }
 }
@@ -225,7 +242,9 @@ function startEnter(E: R, failsafeMs: number) {
     runEnter(root, enterE);
   };
   /* MutationObserver 在 React 寫進畫面之後、瀏覽器畫出來之前就會跑：介面第一次出現時就已經停在第一格，不會先閃一下 */
-  enterObs = new MutationObserver(check);
+  /* 同一格裡的多次變動合併成一次檢查（在這一格畫出來之前跑），不會在 React 掛介面時反覆量版面拖慢主執行緒 */
+  let queued = false;
+  enterObs = new MutationObserver(() => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; check(); }); });
   enterObs.observe(document.body, { childList: true, subtree: true });
   check();
 }

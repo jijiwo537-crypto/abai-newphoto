@@ -180,7 +180,38 @@ const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
   );
 };
 
+/** 首頁的預覽圖（主視覺、橫幅、推薦格）：整個 App 只從 localStorage 讀一次，之後回到主頁直接用 */
+let previewCache: Record<string, string> | null = null;
+function readPreviews(): Record<string, string> {
+  const next: Record<string, string> = {};
+  try {
+    const keys = [
+      'hero', 'promo',
+      ...HOME_RECOMMENDATIONS.map(item => item.key),
+      ...Array.from({ length: LIB_TEMPLATES.length }, (_, i) => `lib${i}`),
+    ];
+    for (const k of keys) {
+      const v = localStorage.getItem(PREVIEW_KEY(k));
+      if (v) next[k] = v;
+    }
+    // 橫幅舊版存在自己那一格，搬過來（只搬一次，新的那格沒東西才搬）
+    if (!next.promo) {
+      const old = localStorage.getItem(PROMO_BG_KEY);
+      if (old) { next.promo = old; try { localStorage.setItem(PREVIEW_KEY('promo'), old); } catch { /* 存不了沒關係 */ } }
+    }
+  } catch { /* 私密瀏覽會擋 */ }
+  return next;
+}
+/* 主視覺的圖一直留一份已解碼的在記憶體：回到主頁時新的 <img> 第一格就畫得出來，不會先黑一下 */
+const heroKeep = typeof Image !== 'undefined' ? new Image() : null;
+function keepDecoded(src: string | null) {
+  if (!heroKeep || !src || heroKeep.src === src) return;
+  heroKeep.src = src; heroKeep.decode?.().catch(() => {});
+}
+
 const WORDMARK = './home-wordmark.png?v=20260912a';
+/* 字標也一直留一份已解碼的在記憶體（回主頁時不用重新解） */
+if (typeof Image !== 'undefined') { const k = new Image(); k.src = WORDMARK; k.decode?.().catch(() => {}); (globalThis as any).__abaiWordmarkKeep = k; }
 /** 這次開 App 字標已經完整解碼過（回到主頁時不用再等） */
 let wordmarkDecoded = false;
 
@@ -869,28 +900,10 @@ export const HomePage: React.FC<HomePageProps> = ({
   /* ── 暫時的：示意圖（主視覺／橫幅／模板格子共用一套）──────────── */
   const previewInputRef = useRef<HTMLInputElement>(null);
   const previewKeyRef = useRef<string>('');
-  const [previews, setPreviews] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    try {
-      const next: Record<string, string> = {};
-      const keys = [
-        'hero', 'promo',
-        ...HOME_RECOMMENDATIONS.map(item => item.key),
-        ...Array.from({ length: LIB_TEMPLATES.length }, (_, i) => `lib${i}`),
-      ];
-      for (const k of keys) {
-        const v = localStorage.getItem(PREVIEW_KEY(k));
-        if (v) next[k] = v;
-      }
-      // 橫幅舊版存在自己那一格，搬過來（只搬一次，新的那格沒東西才搬）
-      if (!next.promo) {
-        const old = localStorage.getItem(PROMO_BG_KEY);
-        if (old) { next.promo = old; try { localStorage.setItem(PREVIEW_KEY('promo'), old); } catch {} }
-      }
-      setPreviews(next);
-    } catch { /* 私密瀏覽會擋 */ }
-  }, []);
+  /* 預覽圖在第一次畫面就讀好（同步、從記憶體快取）：之前放在 useEffect 裡，
+     每次回到主頁的第一格都是空的，上方主視覺會先黑一格才出現 */
+  const [previews, setPreviews] = useState<Record<string, string>>(() => previewCache ?? (previewCache = readPreviews()));
+  useEffect(() => { previewCache = previews; }, [previews]);
 
   /** 點某一格 → 記住是哪一格，再叫出檔案選擇器（整頁共用同一顆 input） */
   const pickPreview = (key: string) => {
@@ -940,6 +953,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       首頁最上面那張大圖就自己換掉了，人沒挑過卻一直在變。
       現在沒匯入就是空的（點下去挑一張），存檔再也不會動到它。 */
   const heroSrc = previews.hero || null;
+  keepDecoded(heroSrc);
   /* 首頁字標：整張圖解碼完成才開始進場動畫。
      之前圖片還在解碼（從主頁回來時元素是重新建的）動畫就先跑了，偶爾會看到只畫了一部分的字標。
      解碼過一次之後瀏覽器有快取，再回到主頁時 decode() 幾乎立刻完成，進場時機跟以前一樣 */
@@ -1329,7 +1343,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                    整體只走 30%，同時輕輕推近 —— 兩層速度差就是深度的來源。
                    上下各多留 10% 的餘裕，位移與推近時邊緣才不會露出空白。 */}
               <div ref={artRef} className="home-hero-art absolute -inset-y-[10%] inset-x-0 will-change-transform">
-                <img src={heroSrc} alt="" className="w-full h-full object-cover" draggable={false} />
+                <img src={heroSrc} alt="" decoding="sync" className="w-full h-full object-cover" draggable={false} />
               </div>
               {/* 下緣多長 1px、左右也各多 1px：這道漸層的邊本來剛好壓在
                    overflow-hidden 的裁切線上，父層捲動時是連續（帶小數）的位移，
