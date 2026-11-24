@@ -612,8 +612,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const lastCameraTickRef = useRef<string>('');
   const focusPointRef = useRef(focusPoint); focusPointRef.current = focusPoint;
 
-  const EV_PX_PER_EV = 320;  // 手指走幾 px 算 1 EV
-  const EV_LINE = 64;        // 曝光線上、下各多長；線上的空隙從一端走到另一端＝-1 EV 到 +1 EV
+  const EV_PX_PER_EV = 160;  // 手指走幾 px 算 1 EV（±2 EV 全程跟以前 ±1 EV 一樣長）
+  /** 曝光範圍：跟原相機一樣 ±2 EV */
+  const EV_MAX = 2;
+  const EV_LINE = 64;        // 曝光線上、下各多長；線上的空隙從一端走到另一端＝-EV_MAX 到 +EV_MAX
   const EV_SLOP = 8;         // 先走這麼多才算開始拖（避免點一下時手指微晃就改到曝光）
   const evDragRef = useRef<{ id: number; x: number; y: number; ev0: number; active: boolean } | null>(null);
   /** 這一次觸控有拖過曝光：放手時不當成點擊對焦 */
@@ -648,7 +650,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       return true;
     }
     /* 連續的值（存到小數第二位就夠細，不會一格一格跳） */
-    const n = Math.max(-1, Math.min(1, d.ev0 - (e.clientY - d.y) / EV_PX_PER_EV));
+    const n = Math.max(-EV_MAX, Math.min(EV_MAX, d.ev0 - (e.clientY - d.y) / EV_PX_PER_EV));
     const r = Math.round(n * 100) / 100;
     const val = `${r > 0 ? '+' : ''}${r.toFixed(2)}`;
     if (val !== settingsExposureRef.current) {
@@ -1851,7 +1853,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             
             {focusPoint && (() => {
                 /* 單純點對焦只有框；上下拖過之後框的右邊（點在很右邊時改左邊）出現曝光線＋太陽，太陽的位置＝目前的曝光 */
-                const ev = Math.max(-1, Math.min(1, parseFloat(settings.exposure) || 0));
+                const ev = Math.max(-EV_MAX, Math.min(EV_MAX, parseFloat(settings.exposure) || 0)) / EV_MAX;
                 const frameW = frameDims()?.w ?? 0;
                 const lineLeft = frameW > 0 && focusPoint.x > frameW - 70;
                 const lineX = lineLeft ? -39 - 13 : 39 + 13;
@@ -2047,7 +2049,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                         {activeControl === 'exposure' && (
                           <CameraTickScale
                             label="曝光"
-                            value={Math.round(parseFloat(settings.exposure) * 10)} min={-10} max={10} step={1}
+                            value={Math.round(parseFloat(settings.exposure) * 10)} min={-EV_MAX * 10} max={EV_MAX * 10} step={1}
                             onStep={(raw, index) => {
                               const n = raw / 10;
                               const val = `${n > 0 ? '+' : ''}${n.toFixed(1)}`;

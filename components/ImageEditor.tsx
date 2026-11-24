@@ -2858,8 +2858,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      瀏覽器會把每一張都完整解碼、而且只要那個 <img> 還在畫面上就一直留著。
      十張 1200 萬像素的照片就是好幾百 MB 的點陣圖釘在記憶體裡，
      拖滑桿時的卡頓、以及照片一多就變慢，都是從這裡來的。
-     這裡先把每一張縮成 72×72 再給那條列用，原圖用完就可以被回收。 */
-  const STRIP_THUMB = 72;
+     這裡先把每一張縮成 144×144 再給那條列用，原圖用完就可以被回收。 */
+  /** 格子 36pt、手機最高 3 倍螢幕＝108px；留一點餘裕給 4 倍縮放的情況 */
+  const STRIP_THUMB = 144;
   const [stripThumbs, setStripThumbs] = useState<Record<string, string>>({});
   /* 以「這張照片最初的網址」為準：RAW 調整後換上新沖好的底圖（網址會換），縮圖仍然是原本那張，跟一般照片一樣從頭到尾不變 */
   useEffect(() => {

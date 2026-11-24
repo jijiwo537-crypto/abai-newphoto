@@ -54,6 +54,7 @@ import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT, isRawFile } from './util
 import { nativePathOf } from './utils/nativeBridge';
 import { rawDevelopPreview, type RawLook } from './utils/nativeCamera';
 import { upgradeImportHero } from './utils/importHero';
+import { setRawImportHint } from './utils/importHint';
 import {
   draftTime as collageDraftTime,
   clearDraft as clearCollageDraft,
@@ -280,6 +281,8 @@ const App: React.FC = () => {
   };
   const [editorFile, setEditorFile] = useState<File | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  /* 導入一結束（不管哪個工具、成功或失敗），「正在解析 RAW」的提示都收掉 */
+  useEffect(() => { if (!isImporting) setRawImportHint(false); }, [isImporting]);
   const [importPreviewUrl, setImportPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -320,6 +323,7 @@ const App: React.FC = () => {
       } finally {
         setIsImporting(false);
         setImportPreviewUrl(null);
+        setRawImportHint(false);
       }
     }
     if (addPhotosInputRef.current) addPhotosInputRef.current.value = '';
@@ -357,6 +361,7 @@ const App: React.FC = () => {
       } finally {
         setIsImporting(false);
         setImportPreviewUrl(null);
+        setRawImportHint(false);
       }
     }
     if (beautyFileInputRef.current) {
@@ -420,6 +425,7 @@ const App: React.FC = () => {
         /* 單張 RAW、手機上有原生檔案：一般編輯直接編 RAW（底圖由原生從 RAW 沖，曝光、白平衡、高光、陰影都在 RAW 上做）。
            沖不出來（格式不支援、網頁版）就照舊解成一般照片 */
         if (files.length === 1 && isRawFile(files[0])) {
+          setRawImportHint(true);
           const path = nativePathOf(files[0]);
           const r = path ? await rawDevelopPreview(path, { exposure: 0, highlights: 0, shadows: 0 }, null, 2048, true) : null;
           if (path && r) {
@@ -458,6 +464,7 @@ const App: React.FC = () => {
       } finally {
         setIsImporting(false);
         setImportPreviewUrl(null);
+        setRawImportHint(false);
       }
     }
     // 清掉值，才能再選同一個檔案

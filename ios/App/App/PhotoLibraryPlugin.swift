@@ -37,6 +37,7 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
         CAPPluginMethod(name: "warmAlpha", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "thumbs", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "rawHero", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "rawIds", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "export", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "manageLimited", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "openSettings", returnType: CAPPluginReturnPromise),
@@ -358,6 +359,18 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
     private func thumbURL(_ id: String, _ size: Int) -> URL {
         let safe = id.replacingOccurrences(of: "/", with: "_")
         return thumbDir.appendingPathComponent("\(safe)_\(size).jpg")
+    }
+
+    /// rawIds({ ids }) → { raw: [id] }：其中哪幾張是 RAW（只看檔案類型，很快）
+    @objc func rawIds(_ call: CAPPluginCall) {
+        let ids = (call.getArray("ids") as? [String]) ?? []
+        work.async {
+            var out: [String] = []
+            PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil).enumerateObjects { a, _, _ in
+                if let r = self.photoResource(a), let t = UTType(r.uniformTypeIdentifier), t.conforms(to: .rawImage) { out.append(a.localIdentifier) }
+            }
+            call.resolve(["raw": out])
+        }
     }
 
     /// rawHero({ id, size }) → { path }：RAW 照片導入過場用的預覽，用編輯器同一套 RAW 引擎沖（無銳化、同樣的明暗），

@@ -23,6 +23,7 @@ export interface PhotoLibraryApi {
   /** 背景預熱去背判斷（舊版 App 沒有這支） */
   warmAlpha?(o: { limit: number }): Promise<{ started?: boolean; checked?: number }>;
   rawHero?(o: { id: string; size: number }): Promise<{ path?: string }>;
+  rawIds?(o: { ids: string[] }): Promise<{ raw: string[] }>;
   thumbs(o: { ids: string[]; size: number; skipRaw?: boolean }): Promise<{ items: { id: string; path: string }[] }>;
   export(o: { ids: string[] }): Promise<{ items: ExportedItem[] }>;
   manageLimited(): Promise<void>;
@@ -49,6 +50,15 @@ export async function bigThumb(id: string, size = 1024): Promise<string | null> 
     const { items } = await p.thumbs({ ids: [id], size, skipRaw: true });
     return items[0]?.path ? fileSrc(items[0].path) : null;
   } catch { return null; }
+}
+
+/** 這幾張裡哪些是 RAW（問不到就當作都不是） */
+export async function rawAssetIds(ids: string[]): Promise<Set<string>> {
+  try {
+    const p = source ?? await photoLibrary();
+    if (!p?.rawIds) return new Set();
+    return new Set((await p.rawIds({ ids })).raw || []);
+  } catch { return new Set(); }
 }
 
 /** RAW 照片導入過場用的預覽：跟編輯器同一套 RAW 引擎沖的（無銳化、同樣明暗）。不是 RAW、拿不到回 null */

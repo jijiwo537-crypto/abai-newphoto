@@ -1,3 +1,4 @@
+import { useRawImportHint } from '../utils/importHint';
 /* 等待中的轉圈＋小字（點陣、仿色共用同一款）：
    小圈在正中間，下面一行小字（帶一點陰影，蓋在亮的照片上也看得到），字後面的點 1→2→3→1→2→3 循環（點的位置先留好，字不會左右晃）。 */
 import React, { useEffect, useState } from 'react';
@@ -32,11 +33,12 @@ export function BusySpinner({ text, texts, hold }: { text: string; texts?: strin
  *  belowStatusBar：蓋在整個螢幕上的那幾層（不在工具頁的框裡）要扣掉狀態列再置中 ——
  *  工具頁本身就是扣掉狀態列的框，這樣兩邊的正中央才是同一點，換手時不會跳 */
 export function ImportSpinner({ belowStatusBar = false }: { belowStatusBar?: boolean }) {
+  const raw = useRawImportHint();
   return (
     <div data-import-spinner="" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, top: belowStatusBar ? 'env(safe-area-inset-top, 0px)' : 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
       <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" role="status" aria-label="匯入中" />
       <div style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 36px)', display: 'flex', justifyContent: 'center' }}>
-        <LoadingText text="匯入中" />
+        <LoadingText text={raw ? '正在解析 RAW' : '匯入中'} />
       </div>
     </div>
   );

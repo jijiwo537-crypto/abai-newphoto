@@ -10,10 +10,11 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import {
   type GalleryFilter, type LibraryAlbum, type LibraryAsset, type LibraryStatus, type PhotoLibraryApi,
   cachedThumb, exportAssets, prefetchThumbs, requestThumb, setThumbSource,
-  isThumbDecoded, cachedFirstPage, rememberFirstPage, bigThumb, rawHeroThumb,
+  isThumbDecoded, cachedFirstPage, rememberFirstPage, bigThumb, rawHeroThumb, rawAssetIds,
 } from '../utils/nativeGallery';
 import { haptic } from '../utils/haptics';
 import { ImportSpinner } from './BusySpinner';
+import { setRawImportHint } from '../utils/importHint';
 import { beginImportHero, cancelImportHero, heroAllowed } from '../utils/importHero';
 
 const PAGE = 150;
@@ -250,7 +251,10 @@ export const NativeGallery: React.FC<{
     if (!ids.length || exportingRef.current) return;
     exportingRef.current = true;
     /* 從主頁導入單張：小縮圖放大、之後飛到工具裡照片的位置（見 utils/importHero） */
-    if (hero && ids.length === 1 && heroAllowed()) {
+    /* 單張 RAW：不播過場（RAW 要先解析一段時間，飛完會停在那裡等），改成直接顯示「解析 RAW」的載入畫面 */
+    const isRaw = ids.length === 1 && (await rawAssetIds(ids)).has(ids[0]);
+    if (isRaw) setRawImportHint(true);
+    if (hero && ids.length === 1 && !isRaw && heroAllowed()) {
       const cell = scrollRef.current?.querySelector<HTMLElement>(`[data-asset="${window.CSS.escape(ids[0])}"]`);
       const a = itemsRef.current.find(x => x.id === ids[0]);
       const thumb = cachedThumb(ids[0]);
@@ -263,6 +267,7 @@ export const NativeGallery: React.FC<{
       close(files);
     } catch (e: any) {
       cancelImportHero();
+      setRawImportHint(false);
       exportingRef.current = false;
       setExporting(false);
       haptic('error');
