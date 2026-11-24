@@ -135,9 +135,8 @@ enum ABAIDateStamp {
         let full = input.extent
         guard full.width > 1, full.height > 1, !full.isInfinite else { return input }
         let r0 = region.map { $0.intersection(full) }.flatMap { $0.isNull || $0.width < 8 ? nil : $0 } ?? full
-        var turns = ((uprightTurns % 4) + 4) % 4
-        let upW = turns % 2 == 0 ? r0.width : r0.height, upH = turns % 2 == 0 ? r0.height : r0.width
-        if upH > upW { turns = (turns + 3) % 4 }   // 直的：再順時針轉 90°，右邊變成底邊
+        /* 直的、橫的都一樣：字正著印在照片的右下角（以前直的會把字轉 90° 沿著右邊印） */
+        let turns = ((uprightTurns % 4) + 4) % 4
         if turns == 0 { return stampLandscape(text, on: input, region: r0) }
         /* 整張轉成「字橫著印」的方向、印好、再轉回來（90° 的倍數，沒有重新取樣的損失） */
         let ang = CGFloat(turns) * .pi / 2

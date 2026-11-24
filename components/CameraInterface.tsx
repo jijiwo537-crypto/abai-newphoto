@@ -390,7 +390,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
      只有原生相機開不起來時才退回網頁相機。可以另外開的是 RAW。 */
   const [proPreferred, setProPreferred] = useState(true);
   const proMode = proAvailable && proPreferred;
-  const [proRaw, setProRaw] = useState(false);
+  /** 一律用 RAW 拍：這顆鏡頭支援 RAW 就拍 RAW（成品從 RAW 沖），不支援（前鏡頭、舊機型）才拍一般照片。沒有開關 */
+  const proRaw = proRawSupported;
   /** 拍出來的照片 → 同一張的 RAW 檔（App 暫存裡的 DNG）＋拍的時候用的濾鏡。
       編輯時從 RAW 沖，再自動套上同一個濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
   const rawOfRef = useRef(camRoll.rawOf);
@@ -1283,7 +1284,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         if (alive && info) {
           const rawOk = !!(info.raw ?? info.proRAW);
           setProRawSupported(rawOk);
-          if (!rawOk && proRaw) { setProRaw(false); setCaptureNotice('這顆鏡頭不支援 RAW'); }
         }
         void cam.setFx(nativeFxRef.current).catch(() => {});
         /* 開起來就把目前的曝光、白平衡套上去 */
@@ -1925,24 +1925,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               </div>
             )}
 
-            {/* RAW 開關：觀景窗左下角（跟內建相機一樣，關著的時候 RAW 上面有一條斜線） */}
-            {!galleryCover && proMode && proRawSupported && (
-              <button
-                aria-label={proRaw ? '關閉 RAW' : '開啟 RAW'}
-                aria-pressed={proRaw}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setProRaw(v => !v);
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
-                onPointerUp={(e) => e.stopPropagation()}
-                className={`cam-rot absolute bottom-[15px] left-3 z-[61] h-[30px] px-2 rounded-[8px] flex items-center justify-center backdrop-blur-xl active:scale-90 transition-[transform,background-color,color] duration-200 ${proRaw ? 'bg-white text-black' : 'bg-black/30 text-white/70'}`}
-              >
-                <span className="relative text-[11px] font-bold tracking-[0.04em] leading-none">
-                  RAW
-                </span>
-              </button>
-            )}
 
             {!galleryCover && (
               <div className="absolute bottom-3 left-0 right-0 flex justify-center z-[60] gap-2">
