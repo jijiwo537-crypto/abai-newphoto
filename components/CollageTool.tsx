@@ -3,7 +3,7 @@ import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOf
 
 import { swatchEdge } from '../utils/swatch';
 import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, textInkShiftX, inkExtent, drawTextRunsAnimated, textFillStyle, setRunGradient, paintOuterStroke, paintTextDepth, paintDecoLines, textEffectPad } from '../utils/textDeco';
-import { BusyLayer } from './BusyLayer';
+import { BusyLayer, afterBusyPainted } from './BusyLayer';
 import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
@@ -11322,6 +11322,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     
     setTimeout(async () => {
       try {
+        /* 「儲存中」那一層確定畫到螢幕上才開始算 */
+        await afterBusyPainted();
         // 照片的細節先補到成品需要的程度（見 utils/photoTiers），存出來才跟原圖一樣清楚
         /* 有換上新的那張的話等兩格：物件身上的照片是 React 的狀態，要等它真的換好，下面才畫得到新的 */
         /* 存檔多要 25%：照片要再縮一次才畫進成品，來源只比成品大一點點的話，兩次縮小會讓細節略軟

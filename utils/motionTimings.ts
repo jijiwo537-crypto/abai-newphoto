@@ -5,6 +5,7 @@
  * 每一項可以拖滑桿調整、預覽，調整的值存在這台裝置（localStorage），App 立刻照新的值播；
  * 「複製設定」把調整過的值複製成一段文字，貼給開發者改成新的預設值。
  */
+import { isNative } from './native';
 
 export interface MotionItem {
   id: string;
@@ -62,6 +63,8 @@ const KEY = 'abai-motion-v1';
 let cache: Record<string, number> | null = null;
 const read = (): Record<string, number> => {
   if (cache) return cache;
+  /* App（正式版）一律用預設值：調整只在測試網站上做 */
+  if (isNative()) { cache = {}; return cache; }
   try { cache = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { cache = {}; }
   return cache!;
 };

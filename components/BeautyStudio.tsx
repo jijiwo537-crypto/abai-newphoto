@@ -1,7 +1,7 @@
 import { slideBack } from '../utils/pageTransition';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { isDarkSwatch } from '../utils/swatch';
-import { BusyLayer } from './BusyLayer';
+import { BusyLayer, afterBusyPainted } from './BusyLayer';
 import { ImportSpinner } from './BusySpinner';
 import { StuckEscape } from './StuckEscape';
 import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
@@ -1659,6 +1659,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     setShowOriginal(false);
     setSaveState('processing');
     setTimeout(async () => {
+      /* 「儲存中」那一層確定畫到螢幕上才開始算 */
+      await afterBusyPainted();
       const url = await exportFullRes();
       if (url) {
         revokeUrl(finalUrlRef.current);

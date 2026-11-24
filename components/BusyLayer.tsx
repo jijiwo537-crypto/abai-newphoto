@@ -39,10 +39,10 @@ export const BusyLayer: React.FC<{
     if (!continueLast) last = { html: el.innerHTML, className, at: Date.now() };
   });
   const node = snapshot ? (
-    <div ref={ref} {...rest} className={`fixed inset-0 ${snapshot.className} [&_button]:pointer-events-none`} style={style}
+    <div ref={ref} data-busy-layer {...rest} className={`fixed inset-0 ${snapshot.className} [&_button]:pointer-events-none`} style={style}
       dangerouslySetInnerHTML={{ __html: snapshot.html }} />
   ) : (
-    <div ref={ref} {...rest} className={`fixed inset-0 ${className}`} style={style}>
+    <div ref={ref} data-busy-layer {...rest} className={`fixed inset-0 ${className}`} style={style}>
       {children}
     </div>
   );
@@ -52,3 +52,25 @@ export const BusyLayer: React.FC<{
   const host = (document.querySelector('.abai-frame') as HTMLElement | null) ?? document.body;
   return createPortal(node, host);
 };
+
+/** 等「處理中」那一層真的畫到螢幕上再開始做事。
+ *  不能只靠 setTimeout 等一下：剛打開 App 時主執行緒還在暖機（建 GPU 貼圖、烘濾鏡），固定等 100ms 時那一層常常還沒畫出來，
+ *  接著存檔的大量運算一開始就卡住畫面，使用者等於完全沒看到處理中的動畫。
+ *  做法：等到畫面上有處理中那一層（最多等 1.5 秒），再多等兩個畫面更新（確定已經畫出去）才回來。 */
+export function afterBusyPainted(): Promise<void> {
+  return new Promise(resolve => {
+    const t0 = performance.now();
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    /* 保險：分頁在背景時 requestAnimationFrame 不會跑，不能卡住 */
+    const guard = window.setTimeout(finish, 2000);
+    const look = () => {
+      if (document.querySelector('[data-busy-layer]') || performance.now() - t0 > 1500) {
+        requestAnimationFrame(() => requestAnimationFrame(() => { window.clearTimeout(guard); finish(); }));
+        return;
+      }
+      requestAnimationFrame(look);
+    };
+    requestAnimationFrame(look);
+  });
+}

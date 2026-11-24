@@ -15,6 +15,7 @@ import { isNative } from '../utils/native';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
 import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, rawDevelopLinear, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
 import { RawGpu } from '../utils/rawGpu';
+import { afterBusyPainted } from './BusyLayer';
 import { ms as motionMs, sec as motionSec } from '../utils/motionTimings';
 import { exposureEv } from '../utils/photoToneMath';
 
@@ -8016,6 +8017,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setSaveState('processing');
     setTimeout(async () => {
         try {
+            /* 「儲存中」那一層確定畫到螢幕上才開始（剛打開 App 時主執行緒還在暖機，固定等一下不保證畫得出來） */
+            await afterBusyPainted();
             /* RAW：手放開後的精算還沒換上的話，先等它（存的一定是從 RAW 精算的結果） */
             await rawPendingRef.current;
             // 人像／仿色剛交回來的那張還在背景編碼：先等它換進來源清單

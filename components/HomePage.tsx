@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { sec as motionSec } from '../utils/motionTimings';
-import { tapForMotionTuner } from './MotionTuner';
 import { Icon } from './Icon';
 import { LOCALES, changeLocale, getLocale } from '../utils/locale';
 import { exportsStatus, subscribeExports, removeExport, type ExportMeta } from '../utils/exportHistory';
@@ -1341,12 +1340,10 @@ export const HomePage: React.FC<HomePageProps> = ({
               src="./home-wordmark.png?v=20260912a"
               alt="Abai"
               data-home-wordmark
-              /* 連點 5 下：打開「動畫時長」面板（調整過場速度用） */
-              onClick={tapForMotionTuner}
               fetchPriority="high"
               decoding="sync"
               draggable={false}
-              className="abai-wordmark-enter block h-auto select-none"
+              className="abai-wordmark-enter block h-auto select-none pointer-events-none"
               /* 裁掉原檔透明留白後，以原本 ABAI 字樣的可視高度與左基準對齊；
                  圖片不參與父層尺寸計算，所以主視覺和下方工具位置完全不動。 */
               style={{ width: 'clamp(100px, 27vw, 116px)' }}

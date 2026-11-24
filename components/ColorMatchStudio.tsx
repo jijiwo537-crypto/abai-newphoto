@@ -1,6 +1,6 @@
 import { slideBack } from '../utils/pageTransition';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
-import { BusyLayer } from './BusyLayer';
+import { BusyLayer, afterBusyPainted } from './BusyLayer';
 import { safeSize } from '../utils/exportLimits';
 import { fullResFromProcessed, originalAt } from '../utils/fullResExport';
 /** 讀出畫布像素（GPU 畫布先複製到一般畫布再讀） */
@@ -817,7 +817,7 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
     setSaving(true);
     /* 先讓「儲存中」那一層畫出來，再開始算全解析度：算圖會佔住主執行緒，
        放在同一個點擊裡的話，畫面要等它算完才有反應（按了像是沒按到、慢半拍） */
-    requestAnimationFrame(() => requestAnimationFrame(() => renderAndSave(finishSaving)));
+    void afterBusyPainted().then(() => renderAndSave(finishSaving));
   };
   const renderAndSave = (finishSaving: () => void) => {
     if (!srcImg) { finishSaving(); return; }

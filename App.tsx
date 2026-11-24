@@ -285,12 +285,7 @@ const App: React.FC = () => {
     setCurrentView('layout');
   };
   const [editorFile, setEditorFile] = useState<File | null>(null);
-  const [motionTunerOn, setMotionTunerOn] = useState(motionTunerEnabled);
-  useEffect(() => {
-    const f = () => setMotionTunerOn(motionTunerEnabled());
-    window.addEventListener('abai-motion-tuner', f);
-    return () => window.removeEventListener('abai-motion-tuner', f);
-  }, []);
+  const [motionTunerOn] = useState(motionTunerEnabled);
   const [isImporting, setIsImporting] = useState(false);
   /* 導入一結束（不管哪個工具、成功或失敗），「正在解析RAW」的提示都收掉 ——
      除了 RAW 剛進編輯器：編輯器自己的載入畫面接著顯示，等第一張 RAW 畫面出來才收（見 ImageEditor 的 rawFirstDone） */

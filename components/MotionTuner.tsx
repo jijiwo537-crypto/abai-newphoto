@@ -3,26 +3,17 @@
    「複製設定」把調整過的值複製成一段文字，貼給開發者改成新的預設值。 */
 import React, { useMemo, useRef, useState } from 'react';
 import { MotionStage, type MotionStageApi } from './MotionStage';
+import { isNative } from '../utils/native';
 import { MOTION_ITEMS, ms, setMotion, resetMotion, motionOverrides, type MotionItem } from '../utils/motionTimings';
 
 const FLAG = 'abai-motion-tuner';
+/** 只在測試網站（網頁版）網址加上 ?motion 時出現；App（正式版）裡永遠沒有 */
 export function motionTunerEnabled() {
+  if (isNative()) return false;
   try {
     if (/[?&]motion\b/.test(location.search)) { localStorage.setItem(FLAG, '1'); return true; }
     return localStorage.getItem(FLAG) === '1';
   } catch { return false; }
-}
-/** App 裡打開面板（首頁連點標誌 5 下）：記住，下次開 App 還在 */
-export function armMotionTuner() {
-  try { localStorage.setItem(FLAG, '1'); } catch { /* 只在這一次 */ }
-  window.dispatchEvent(new Event('abai-motion-tuner'));
-}
-let taps: number[] = [];
-/** 首頁標誌被點了一下：2 秒內點滿 5 下就打開 */
-export function tapForMotionTuner() {
-  const now = Date.now();
-  taps = [...taps.filter(t => now - t < 2000), now];
-  if (taps.length >= 5) { taps = []; armMotionTuner(); }
 }
 
 export function MotionTuner() {
@@ -97,7 +88,6 @@ export function MotionTuner() {
             </div>
             <div className="flex gap-2 px-4 pt-2 pb-[max(16px,env(safe-area-inset-bottom))] border-t border-white/10">
               <button onClick={() => { resetMotion(); force(n => n + 1); }} className="h-11 px-4 rounded-full bg-white/10 text-white text-[13px]">全部重設</button>
-              <button onClick={() => { try { localStorage.removeItem(FLAG); } catch { /* 沒關係 */ } window.dispatchEvent(new Event('abai-motion-tuner')); }} className="h-11 px-4 rounded-full bg-white/10 text-white text-[13px]">隱藏按鈕</button>
               <button onClick={copy} className="flex-1 h-11 rounded-full bg-[#ff9f0a] text-black font-bold text-[14px]">{copied ? '已複製，貼給我即可' : '複製設定'}</button>
             </div>
           </div>
