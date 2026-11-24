@@ -1,5 +1,5 @@
 
-import { slideBack } from './utils/pageTransition';
+import { slideBack, slideUp } from './utils/pageTransition';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { CameraInterface } from './components/CameraInterface';
 import { HomePage } from './components/HomePage';
@@ -773,7 +773,7 @@ const App: React.FC = () => {
 
       {currentView === 'home' && (
         <HomePage 
-          onOpenCamera={() => setCurrentView('camera')} 
+          onOpenCamera={() => { void slideUp(() => setCurrentView('camera')); }} 
           onImportPhoto={handleGlobalImportClick} 
           onImportToCollage={handleCollageImportClick}
           onOpenLayout={() => {

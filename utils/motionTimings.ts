@@ -36,6 +36,7 @@ export const MOTION_ITEMS: MotionItem[] = [
   { id: 'camGalleryClose', group: '相機相簿', label: '下拉關閉（縮回格子）', where: '大圖往下拉超過一段距離後放開', def: 420, kind: 'scale', easing: IOS },
   { id: 'camGalleryBounce', group: '相機相簿', label: '下拉沒關閉時回彈', where: '大圖往下拉一點點就放開', def: 320, kind: 'move', easing: IOS },
 
+  { id: 'camOpen', group: '相機', label: '從主頁進相機（整頁升上來）', where: '首頁 → 相機', def: 560, kind: 'move', easing: IOS },
   { id: 'camGallerySheet', group: '相機', label: '相簿從下方滑上來', where: '相機 → 左下角最新照片', def: 560, kind: 'move', easing: 'cubic-bezier(0.15, 0.9, 0.25, 1)' },
   { id: 'camGallerySheetClose', group: '相機', label: '相簿滑下去（回到相機）', where: '相簿左上角關閉', def: 400, kind: 'move', easing: 'cubic-bezier(0.3, 0.55, 0.3, 1)' },
   { id: 'camEditorSlide', group: '相機', label: '從相簿進編輯（整頁滑上來／滑下去）', where: '相機相簿 → 大圖 → 編輯；編輯頁返回', def: 440, kind: 'move', easing: 'cubic-bezier(0.4,0,0.2,1)' },
@@ -94,6 +95,7 @@ export function applyCssMotion() {
   try {
     const r = document.documentElement.style;
     r.setProperty('--vt-back-ms', `${ms('pageBack')}ms`);
+    r.setProperty('--vt-up-ms', `${ms('camOpen')}ms`);
     r.setProperty('--cam-rot-ms', `${ms('camRotate')}ms`);
   } catch { /* 沒有 DOM */ }
 }

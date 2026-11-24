@@ -488,6 +488,16 @@ html[data-vt="back"]::view-transition-new(root) { z-index: 1; animation-name: vt
 @keyframes vtBackOld { from { transform: translateX(0); } to { transform: translateX(100%); } }
 @keyframes vtBackNew { from { transform: translateX(-28%); filter: brightness(0.72); } to { transform: translateX(0); filter: brightness(1); } }
 
+/* 進相機：相機整頁從下方升上來（新畫面在上層），主頁留在原地、跟著稍微變暗 */
+html[data-vt="up"]::view-transition-group(root) { animation-duration: var(--vt-up-ms, 560ms); }
+html[data-vt="up"]::view-transition-image-pair(root) { isolation: auto; }
+html[data-vt="up"]::view-transition-old(root),
+html[data-vt="up"]::view-transition-new(root) { mix-blend-mode: normal; animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1); animation-duration: var(--vt-up-ms, 560ms); animation-fill-mode: both; }
+html[data-vt="up"]::view-transition-old(root) { z-index: 1; animation-name: vtUpOld; }
+html[data-vt="up"]::view-transition-new(root) { z-index: 2; animation-name: vtUpNew; }
+@keyframes vtUpOld { from { filter: brightness(1); } to { filter: brightness(0.6); } }
+@keyframes vtUpNew { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
 /* 相機：手機橫拿時圖示跟著轉正（角度寫在 [data-camera-root] 的 --cam-rot）。
    用獨立的 rotate 屬性，不會跟按鈕按下去的縮放（transform）打架；轉的曲線跟內建相機一樣柔 */
 .cam-rot, [data-camera-main-row] > button > * {

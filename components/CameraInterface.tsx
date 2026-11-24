@@ -15,7 +15,7 @@ import { usePhotoThumbs, thumbFromCanvas } from '../utils/photoThumbs';
 import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
 import { ImageEditor, DEFAULT_PARAMS } from './ImageEditor';
 import { createPortal } from 'react-dom';
-import { slideBack } from '../utils/pageTransition';
+import { slideBack, transitionDone, viewTransitionsSupported } from '../utils/pageTransition';
 import { fileSrc, nativePathOf, rememberNativePath } from '../utils/nativeBridge';
 import { processImageFile } from '../utils/imageLoader';
 import { RAW_ACCEPT } from '../utils/fileTypes';
@@ -353,6 +353,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   
   // 邏輯上的鏡頭方向跟畫面上的分開記，切換時才不會閃一下翻轉
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
+  /* 從主頁升上來（換頁過場）時不再另外淡入；不支援過場的系統維持原本的淡入 */
+  const [enterFade] = useState(() => !viewTransitionsSupported());
   const [visualFacingMode, setVisualFacingMode] = useState<'user' | 'environment'>('environment');
   
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -1298,6 +1300,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         return;
       }
       if (!alive) return;
+      /* 從主頁升上來的過場還在播：等升到定位才挖空露出鏡頭畫面（過場中觀景窗維持黑的，不會露出底下的主頁快照） */
+      await transitionDone();
+      if (!alive) return;
       restore = punchThrough(el, canvas ? [canvas] : []);
       ro = new ResizeObserver(() => { void cam.setRect(rect()).catch(() => {}); });
       ro.observe(el);
@@ -1691,7 +1696,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   };
 
   return (
-    <div data-camera-root style={{ ['--cam-rot' as any]: `${uiAngle}deg` }} className="safe-top flex flex-col h-screen max-h-screen justify-end pb-6 overflow-hidden select-none bg-black font-sans text-white animate-in fade-in duration-300">
+    <div data-camera-root style={{ ['--cam-rot' as any]: `${uiAngle}deg` }} className={`safe-top flex flex-col h-screen max-h-screen justify-end pb-6 overflow-hidden select-none bg-black font-sans text-white ${enterFade ? 'animate-in fade-in duration-300' : ''}`}>
       {captureNotice && <div role="status" className="fixed top-20 left-1/2 -translate-x-1/2 z-[300] rounded-full bg-black/85 px-4 py-2 text-xs whitespace-nowrap pointer-events-none">{captureNotice}</div>}
       
       {isImportingLocal && (

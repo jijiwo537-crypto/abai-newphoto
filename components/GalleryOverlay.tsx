@@ -218,8 +218,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   }, [photos.length]);
 
   const tapPhoto = (i: number) => {
-    if (selecting) {
-      haptic('tick');
+    if (selecting) {   // 多選時點照片不震
       setSelected(prev => { const n = new Set(prev); if (n.has(i)) n.delete(i); else n.add(i); return n; });
       return;
     }

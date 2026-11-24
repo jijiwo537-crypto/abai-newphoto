@@ -32,3 +32,27 @@ export function slideBack(update: () => void): Promise<void> {
   running = done;
   return done;
 }
+
+/* ── 進相機：相機整頁從下方升上來，主頁留在原地、稍微變暗 ──
+ * 一樣用 View Transitions（動的是快照）。升起的過程中相機的原生畫面還沒挖空露出來（見 transitionDone），
+ * 觀景窗是黑的；升到定位、過場結束才露出鏡頭畫面 —— 停好之後跟直接打開相機完全一樣。 */
+export const viewTransitionsSupported = () => {
+  const doc = document as Document & { startViewTransition?: unknown };
+  return !!doc.startViewTransition && !reduceMotion();
+};
+export function slideUp(update: () => void): Promise<void> {
+  const doc = document as Document & { startViewTransition?: (cb: () => void) => { finished: Promise<void>; ready: Promise<void> } };
+  if (!doc.startViewTransition || reduceMotion()) { update(); return Promise.resolve(); }
+  const root = document.documentElement;
+  root.dataset.vt = 'up';
+  let ran = false;
+  const t = doc.startViewTransition(() => { ran = true; flushSync(update); });
+  const done = t.finished.catch(() => {}).finally(() => {
+    if (!ran) update();
+    if (running === done) { delete root.dataset.vt; running = null; }
+  });
+  running = done;
+  return done;
+}
+/** 現在的換頁過場播完（沒有過場就立刻） */
+export const transitionDone = (): Promise<void> => running ?? Promise.resolve();
