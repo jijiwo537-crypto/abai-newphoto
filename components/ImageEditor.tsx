@@ -12,7 +12,7 @@ import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
-import { rawDevelopPreview, rawDevelopFull, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
+import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
 import { exposureEv } from '../utils/photoToneMath';
 
 /** RAW 照片：這幾個工具改調 raw* 欄位（由原生在 RAW 上做），網頁的那一份維持 0 */
@@ -8474,8 +8474,55 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 來源標成 RAW 檔本身（不是任何一張圖的網址）：往回找原圖時不會繞回自己 */
   const rawRoot = raw ? `raw:${raw.path}` : '';
   if (rawOn && !fullJobsRef.current[imageSrc]) fullJobsRef.current[imageSrc] = { input: rawRoot, bake: rawBake, session: 'raw' };
+  /* ── RAW 快速通道：原生直接給像素，直接換掉預覽緩衝區的像素（不重建整套緩衝區、不重產濾鏡縮圖） ── */
+  const swapSourcePixels = (pre: Uint8ClampedArray, pw: number, ph: number, fast: Uint8ClampedArray | null, fw: number, fh: number, key: string) => {
+    const cur = buffers.current;
+    if (cur.preview.w !== pw || cur.preview.h !== ph || !cur.preview.source) return false;
+    cur.preview.source = pre; cur.preview.sharpenDetail = null;
+    if (fast && cur.fast.source && cur.fast.w === fw && cur.fast.h === fh) { cur.fast.source = fast; cur.fast.sharpenDetail = null; }
+    /* 跟換來源時一樣：所有跟「上一份像素」綁在一起的快取作廢 */
+    filterPixelCacheRef.current = {}; cacheOrderRef.current = [];
+    lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, curvesRef: null, hslRef: null, selectedLutIdx: -1 } as any;
+    extremeBuffersRef.current = { activeToolId: '', base: null, min: null, max: null };
+    fastPreviewCacheRef.current.active = false;
+    lut0StateRef.current = {} as any; lut0CanvasRef.current = null; lut100CanvasRef.current = null;
+    pixelBufferCanvasRef.current = null;
+    cachedBlurCanvasRef.current = null; cachedSoftCanvasRef.current = null; cachedNoise2CanvasRef.current = null;
+    cachedHalationCanvasRef.current = null; cachedVignetteCanvasRef.current = null;
+    blurCacheStateRef.current = null; softCacheStateRef.current = null; noise2CacheStateRef.current = null; halationCacheStateRef.current = null;
+    buffersSrcRef.current = key;
+    bufferAliasRef.current = null;
+    tapFastRef.current = true; isDirtyRef.current = true; lastRenderTimeRef.current = 0;
+    if (paramsRef.current.sharpen > 0) {
+      const owned = cur;
+      setTimeout(() => {
+        if (buffers.current !== owned || owned.preview.source !== pre) return;
+        owned.preview.sharpenDetail = precomputeSharpenDetail(pre, pw, ph);
+        if (owned.fast.source) owned.fast.sharpenDetail = precomputeSharpenDetail(owned.fast.source, owned.fast.w, owned.fast.h);
+        isDirtyRef.current = true;
+      }, 0);
+    }
+    return true;
+  };
+  /** 放手後：完整的那張圖（JPEG）正式變成來源（裁切、前後對比、存檔用）。像素已經換好了，這裡不重建緩衝區 */
+  const adoptRawUrl = (url: string, im: HTMLImageElement) => {
+    const i = safeIdxRef.current;
+    fullJobsRef.current[url] = { input: rawRoot, bake: rawBake, session: 'raw' };
+    thumbOriginRef.current[url] = thumbSrcOf(rawInputRef.current || srcListRef.current[i]);
+    if (!rawInputRef.current) rawInputRef.current = srcListRef.current[i];
+    const next = [...srcListRef.current]; next[i] = url;
+    srcListRef.current = next;
+    rememberDecoded(url, im);
+    SRC_IDS.set(url, srcIdOf(buffersSrcRef.current || url));
+    buffersSrcRef.current = url;
+    preinstalledSrcRef.current = url;
+    swapToSrc(next);
+    originalImgRef.current = im;
+    setBuffersTick(t => t + 1);
+  };
   /** 目前底圖是用哪一組 raw* 沖的（拖的時候網頁預覽的差距從這裡算） */
-  const rawDevelopedRef = useRef<Record<string, number>>({ rawExposure: 0, rawTemp: 0, rawTint: 0, rawHighlights: 0, rawShadows: 0 });
+  /* 一開始設成一個不可能的值：打開後（緩衝區好了）先用快速通道沖一次，之後拖曳跟放手都是同一條路的像素 */
+  const rawDevelopedRef = useRef<Record<string, number>>({ rawExposure: NaN, rawTemp: 0, rawTint: 0, rawHighlights: 0, rawShadows: 0 });
   /** 正在沖、還沒換上：存檔前要等它 */
   const rawPendingRef = useRef<Promise<void> | null>(null);
   useEffect(() => {
@@ -8495,6 +8542,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const key = rawKeyOf(p0);
       const dragging = performance.now() - lastSliderMoveTimeRef.current < 160;
       if (key === rawKeyOf(rawDevelopedRef.current as any) && (sharp || dragging)) return;
+      /* 編輯頁的緩衝區還沒好（剛打開、正在解碼）：等它 */
+      if (!buffers.current.preview.source) return;
       busy = true;
       const want = { rawExposure: p0.rawExposure || 0, rawTemp: p0.rawTemp || 0, rawTint: p0.rawTint || 0, rawHighlights: p0.rawHighlights || 0, rawShadows: p0.rawShadows || 0 };
       const final = !dragging;
@@ -8505,12 +8554,33 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             const first = await rawDevelopPreview(raw.path, rawBase(DEFAULT_PARAMS), raw.look, 64, false);
             if (first) rawAsShotRef.current = { temp: first.asShotTemperature, tint: first.asShotTint };
           }
-          /* 拖的時候沖「螢幕上實際顯示的大小」：照片框的長邊 × 螢幕像素密度（iPhone 約 1500）。
-             放手後的 2048 顯示時也是縮到這個大小，所以兩張在螢幕上一樣清晰（放大檢視時一律用 2048） */
-          const screenSide = Math.ceil(Math.max(window.innerWidth - 32, window.innerHeight - 334) * (window.devicePixelRatio || 1));
+          const cur = buffers.current;
+          const pw = cur.preview.w, ph = cur.preview.h;
+          const fw = cur.fast.source ? cur.fast.w : 0, fh = cur.fast.source ? cur.fast.h : 0;
+          if (pw && ph && isGeoIdentity(geoRef.current)) {
+            /* 快速通道：原生照編輯頁預覽、拖曳代理的確切尺寸直接給像素 —— 拖曳中跟放手後是同一條路、同樣的像素
+               （一樣的顏色、一樣的清晰度），也不用壓 JPEG、解 JPEG、重畫、讀回 */
+            const px = await rawDevelopPixels(raw.path, rawBase({ ...DEFAULT_PARAMS, ...want }), raw.look, pw, ph, fw, fh);
+            if (!px || !alive) return;
+            if (!swapSourcePixels(px.pixels, pw, ph, px.fast, fw, fh, `${srcListRef.current[safeIdxRef.current]}#rawpx${++pendingKeySeqRef.current}`)) return;
+            rawDevelopedRef.current = want;
+            sharp = final;
+            if (final) {
+              /* 背景補一張完整的 JPEG 當正式來源（裁切、前後對比用）：不擋住下一次拖曳；這段時間又調了就不用了 */
+              const wantKey = rawKeyOf(want as any);
+              void (async () => {
+                const j = await rawDevelopPreview(raw.path, rawBase({ ...DEFAULT_PARAMS, ...want }), raw.look, 2048, true);
+                if (!j || !alive || rawKeyOf(rawDevelopedRef.current as any) !== wantKey) return;
+                const im = await loadImg(j.url);
+                await im.decode?.().catch(() => {});
+                if (alive && rawKeyOf(rawDevelopedRef.current as any) === wantKey) adoptRawUrl(j.url, im);
+              })().catch(() => {});
+            }
+            return;
+          }
+          /* 有裁切（構圖）時照舊：沖一張圖、照幾何重建緩衝區 */
           const zs = (zoomRef.current as any)?.instance?.transformState?.scale ?? (zoomRef.current as any)?.state?.scale ?? 1;
-          const zoomed = zs > 1.01;
-          const side = final || zoomed ? 2048 : Math.min(2048, Math.max(720, screenSide));
+          const side = final || zs > 1.01 ? 2048 : Math.min(2048, Math.max(720, Math.ceil(Math.max(window.innerWidth - 32, window.innerHeight - 334) * (window.devicePixelRatio || 1))));
           const r = await rawDevelopPreview(raw.path, rawBase({ ...DEFAULT_PARAMS, ...want }), raw.look, side, final);
           if (!r || !alive) return;
           const im = await loadImg(r.url);

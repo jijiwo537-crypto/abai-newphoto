@@ -58,6 +58,8 @@ const layer = (src: string) => {
   return im;
 };
 /** 換上更清楚的一層（解好才放上去、很快地淡入） */
+/** 換成更準的畫面（例如 RAW：我們自己沖的無銳化版本），跟最後編輯器裡的一模一樣 */
+export function upgradeImportHero(src: string) { if (ghost) upgrade(src, token); }
 function upgrade(src: string, my: number) {
   const g = ghost;
   if (!g) return;

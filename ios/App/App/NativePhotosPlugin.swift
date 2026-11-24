@@ -212,6 +212,24 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
             editOriginal(asset: asset, rendered: url, adjustment: adj, finish: finish)
             return
         }
+        /* 相機 RAW：DNG 當原始檔（相簿顯示 RAW 標記、之後可在任何 App 重新沖洗），成品 JPEG 當成「編輯過的版本」疊上去 ——
+           跟 Apple／Lightroom 存 RAW 的方式一樣。沒有完整相簿權限或失敗時，退回 成品＋RAW 配對 */
+        if !isVideo, let r = rawURL, FileManager.default.fileExists(atPath: r.path),
+           PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized {
+            var placeholder: String?
+            PHPhotoLibrary.shared().performChanges({
+                let req = PHAssetCreationRequest.forAsset()
+                req.addResource(with: .photo, fileURL: r, options: PHAssetResourceCreationOptions())
+                placeholder = req.placeholderForCreatedAsset?.localIdentifier
+            }) { ok, _ in
+                guard ok, let id = placeholder,
+                      let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else {
+                    self.createNew(url: url, isVideo: false, raw: rawURL, finish: finish); return
+                }
+                self.editOriginal(asset: asset, rendered: url, adjustment: "{\"source\":\"abai-camera\"}", finish: finish)
+            }
+            return
+        }
         createNew(url: url, isVideo: isVideo, raw: rawURL, finish: finish)
     }
 

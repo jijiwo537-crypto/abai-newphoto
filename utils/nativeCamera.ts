@@ -189,6 +189,8 @@ export interface RawBaseParams { exposure: number; temperature?: number; tint?: 
 type RawDevApi = {
   developPreview?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; maxPixel: number; final: boolean }): Promise<{ path: string; asShotTemperature: number; asShotTint: number }>;
   developFull?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null }): Promise<{ path: string }>;
+  developPixels?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; w: number; h: number; fw: number; fh: number }):
+    Promise<{ path: string; fastPath: string; asShotTemperature: number; asShotTint: number }>;
 };
 const rawDev = () => nativePlugin<RawDevApi>('RawDecode');
 const rawParams = (b: RawBaseParams): Partial<RawEditParams> => ({
@@ -202,6 +204,21 @@ export async function rawDevelopPreview(path: string, b: RawBaseParams, look: Ra
   if (!p?.developPreview) return null;
   try { const r = await p.developPreview({ path, params: rawParams(b), look, maxPixel, final }); return { ...r, url: fileSrc(r.path) }; }
   catch { return null; }
+}
+/** 編輯頁的預覽（w×h）和拖曳代理（fw×fh）兩份未壓縮像素（RGBA8 sRGB，由上往下）。讀完就把暫存檔刪掉。失敗回 null */
+export async function rawDevelopPixels(path: string, b: RawBaseParams, look: RawLook | null, w: number, h: number, fw: number, fh: number):
+  Promise<{ pixels: Uint8ClampedArray; fast: Uint8ClampedArray | null; asShotTemperature: number; asShotTint: number } | null> {
+  const p = await rawDev(), img = await nativeImage();
+  if (!p?.developPixels) return null;
+  let r: { path: string; fastPath: string; asShotTemperature: number; asShotTint: number } | null = null;
+  try {
+    r = await p.developPixels({ path, params: rawParams(b), look, w, h, fw, fh });
+    const read = async (f: string) => new Uint8ClampedArray(await (await fetch(fileSrc(f))).arrayBuffer());
+    const [pixels, fast] = await Promise.all([read(r.path), r.fastPath ? read(r.fastPath) : Promise.resolve(null)]);
+    if (pixels.length !== w * h * 4 || (fast && fast.length !== fw * fh * 4)) return null;
+    return { pixels, fast, asShotTemperature: r.asShotTemperature, asShotTint: r.asShotTint };
+  } catch { return null; }
+  finally { if (r) for (const f of [r.path, r.fastPath]) if (f) img?.remove({ path: f }).catch(() => {}); }
 }
 /** 原尺寸、完整品質（存檔用）：檔案網址。失敗回 null */
 export async function rawDevelopFull(path: string, b: RawBaseParams, look: RawLook | null): Promise<string | null> {

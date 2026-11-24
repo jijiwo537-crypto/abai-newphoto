@@ -22,7 +22,7 @@ export interface PhotoLibraryApi {
   alphaFlags?(o: { ids: string[] }): Promise<{ flags: Record<string, boolean> }>;
   /** 背景預熱去背判斷（舊版 App 沒有這支） */
   warmAlpha?(o: { limit: number }): Promise<{ started?: boolean; checked?: number }>;
-  thumbs(o: { ids: string[]; size: number }): Promise<{ items: { id: string; path: string }[] }>;
+  thumbs(o: { ids: string[]; size: number; skipRaw?: boolean }): Promise<{ items: { id: string; path: string }[] }>;
   export(o: { ids: string[] }): Promise<{ items: ExportedItem[] }>;
   manageLimited(): Promise<void>;
   openSettings(): Promise<void>;
@@ -45,7 +45,7 @@ export async function bigThumb(id: string, size = 1024): Promise<string | null> 
   try {
     const p = source ?? await photoLibrary();
     if (!p) return null;
-    const { items } = await p.thumbs({ ids: [id], size });
+    const { items } = await p.thumbs({ ids: [id], size, skipRaw: true });
     return items[0]?.path ? fileSrc(items[0].path) : null;
   } catch { return null; }
 }

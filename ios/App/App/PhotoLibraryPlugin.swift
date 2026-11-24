@@ -362,6 +362,8 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
     @objc func thumbs(_ call: CAPPluginCall) {
         let ids = (call.getArray("ids") as? [String]) ?? []
         let size = max(64, min(1024, call.getInt("size") ?? 360))
+        /* 導入過場用的大縮圖：RAW 照片不給（Apple 沖的預覽有銳化，跟編輯器裡我們沖的無銳化版本不一樣，換過去會跳一下） */
+        let skipRaw = call.getBool("skipRaw") ?? false
         work.async {
             let assets = PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil)
             var byId: [String: PHAsset] = [:]
@@ -380,6 +382,8 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
                 self.imageManager.requestImage(for: a, targetSize: CGSize(width: size, height: size), contentMode: .aspectFill, options: o) { img, _ in done(img) }
             }
             for id in ids {
+                if skipRaw, let a = byId[id], let r = self.photoResource(a),
+                   let t = UTType(r.uniformTypeIdentifier), t.conforms(to: .rawImage) { continue }
                 let url = self.thumbURL(id, size)
                 if FileManager.default.fileExists(atPath: url.path) {
                     lock.lock(); out.append(["id": id, "path": url.path]); lock.unlock(); continue

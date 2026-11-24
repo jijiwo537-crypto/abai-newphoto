@@ -39,6 +39,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "snapshotEditor", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "developPreview", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "developFull", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "developPixels", returnType: CAPPluginReturnPromise),
     ]
 
     // MARK: 即時沖洗（見 ABAIRawDevelop.swift）
@@ -154,6 +155,23 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
             do {
                 let out = try s.previewJPEG(p, final: final, maxSide: side)
                 call.resolve(["path": out.path, "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint])
+            } catch { call.reject(error.localizedDescription) }
+        }
+    }
+
+    /// developPixels({ path, params, look, w, h, fw, fh }) → { path, fastPath, asShotTemperature, asShotTint }
+    /// 編輯頁的預覽（w×h）和拖曳代理（fw×fh）兩份未壓縮像素（RGBA8 sRGB，由上往下）
+    @objc func developPixels(_ call: CAPPluginCall) {
+        let path = call.getString("path") ?? ""
+        let look: [String: Any]? = call.getObject("look")
+        let p = ABAIRawParams(call.getObject("params"))
+        let w = call.getInt("w") ?? 0, h = call.getInt("h") ?? 0, fw = call.getInt("fw") ?? 0, fh = call.getInt("fh") ?? 0
+        headlessQueue.async {
+            guard let s = self.headlessSession(path, look: look, longSide: 2048) else { call.reject("系統不認得這個 RAW 格式"); return }
+            do {
+                let urls = try s.pixels(p, sizes: [(w, h), (fw, fh)])
+                call.resolve(["path": urls.first?.path ?? "", "fastPath": urls.count > 1 ? urls[1].path : "",
+                              "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint])
             } catch { call.reject(error.localizedDescription) }
         }
     }

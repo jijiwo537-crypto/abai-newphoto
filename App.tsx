@@ -52,7 +52,8 @@ const RAW_ACCEPT = SHARED_RAW_ACCEPT;
 import { processImageFile, normalizeImageFiles } from './utils/imageLoader';
 import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT, isRawFile } from './utils/fileTypes';
 import { nativePathOf } from './utils/nativeBridge';
-import { rawDevelopPreview, type RawLook } from './utils/nativeCamera';
+import { rawDevelopPreview, rawDevelopFull, type RawLook } from './utils/nativeCamera';
+import { upgradeImportHero } from './utils/importHero';
 import {
   draftTime as collageDraftTime,
   clearDraft as clearCollageDraft,
@@ -284,6 +285,11 @@ const App: React.FC = () => {
     fileInputRef.current?.click();
   }, []);
 
+  /** 批量裡的 RAW 由我們的 RAW 引擎從原檔原尺寸沖；不是 RAW、或沖不出來（網頁版）回 null，照一般圖片處理 */
+  const developRawForBatch = async (f: File): Promise<string | null> => {
+    const rp = isRawFile(f) ? nativePathOf(f) : null;
+    return rp ? rawDevelopFull(rp, { exposure: 0, highlights: 0, shadows: 0 }, null).catch(() => null) : null;
+  };
   /** 批量編輯裡的「新增」：把選到的照片接在現有清單後面，不重開編輯器 */
   const addPhotosInputRef = useRef<HTMLInputElement>(null);
   const handleAddPhotosClick = useCallback(() => {
@@ -295,7 +301,7 @@ const App: React.FC = () => {
       setIsImporting(true);
       try {
         const urls: string[] = [];
-        for (const f of files) urls.push(await processImageFile(f, (u) => setImportPreviewUrl(u)));
+        for (const f of files) urls.push((await developRawForBatch(f)) ?? await processImageFile(f, (u) => setImportPreviewUrl(u)));
         setEditorImages(prev => [...prev, ...urls]);
       } catch (err) {
         console.error('Failed to process image:', err);
@@ -406,6 +412,7 @@ const App: React.FC = () => {
           const path = nativePathOf(files[0]);
           const r = path ? await rawDevelopPreview(path, { exposure: 0, highlights: 0, shadows: 0 }, null, 2048, true) : null;
           if (path && r) {
+            upgradeImportHero(r.url);
             setEditorRaw({ src: r.url, path, protectEV: 0, look: null });
             setToolDraftState(null);
             setEditorImages([r.url]);
@@ -419,6 +426,10 @@ const App: React.FC = () => {
         // 一次選多張就全部解碼進來，編輯器裡再切換要看哪一張
         const urls: string[] = [];
         for (const f of files) {
+          /* 批量裡的 RAW：一樣交給我們的 RAW 引擎、從原檔原尺寸沖（無銳化、亮部保護，跟單張 RAW 同一套），
+             不讓網頁層把它當一般圖片解（iOS 的網頁層看得懂 DNG，但那是 Apple 沖好、有銳化的版本） */
+          const ru = await developRawForBatch(f);
+          if (ru) { urls.push(ru); continue; }
           urls.push(await processImageFile(f, (previewUrl) => {
             setImportPreviewUrl(previewUrl);
           }));

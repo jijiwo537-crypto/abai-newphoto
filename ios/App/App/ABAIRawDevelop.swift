@@ -131,7 +131,7 @@ enum ABAIRawDevelop {
         var nx = -ty, ny = tx
         /* 設定的是「光源」：光源偏綠，補償後畫面偏洋紅。所以色調＋＝光源往綠（v 變大）＝畫面偏洋紅（跟 Lightroom 一樣） */
         if ny < 0 { nx = -nx; ny = -ny }
-        let d = max(-150, min(150, tint)) / 150 * 0.05
+        let d = max(-150, min(150, tint)) / 150 * 0.03
         let u = a.0 + nx * d, v = a.1 + ny * d
         let den = 2 * u - 8 * v + 4
         return (3 * u / den, 2 * v / den)
@@ -161,10 +161,10 @@ enum ABAIRawDevelop {
         float y0 = dot(c, W);
         vec3 o = vec3(dot(r0, c), dot(r1, c), dot(r2, c));
         float y1 = dot(max(o, vec3(0.0)), W);
-        o *= y1 > 1.0e-6 ? clamp(y0 / y1, 0.0, 8.0) : 1.0;
+        o *= y1 > 1.0e-6 ? clamp(y0 / y1, 0.25, 4.0) : 1.0;
         /* 高光保護：已經接近爆白的地方（感光元件本來就沒資料了），白平衡平順地淡出、維持乾淨的白 ——
            不然爆掉的那一塊會被染色、再被顯示上限切平，跟旁邊沒爆的地方之間就是一圈斷層 */
-        float hi = smoothstep(0.62, 0.98, max(max(c.r, c.g), c.b));
+        float hi = smoothstep(0.9, 1.0, max(max(s.rgb.r, s.rgb.g), s.rgb.b));
         o = mix(o, c, hi * hi);
         return vec4(o, s.a);
     }
@@ -469,6 +469,38 @@ final class ABAIRawSession {
                 let data = try ABAIImageCore.encode(ABAIImageCore.dither(img), format: .jpeg, quality: final ? 0.95 : 0.88)
                 let out = ABAIImageCore.newFileURL(ext: "jpg")
                 try data.write(to: out)
+                return out
+            }
+        }
+    }
+
+    /// 一般編輯用（拖曳中、放手後都走這條）：直接輸出未壓縮的 sRGB 8 位元像素（RGBA，由上往下），
+    /// 尺寸由編輯頁指定（它的預覽、拖曳代理的大小），網頁拿到就直接放進像素緩衝區 ——
+    /// 不壓 JPEG、不用再解、不用再畫一次讀回來。拖曳中跟放手後是同一條路，像素完全一樣。
+    func pixels(_ p: ABAIRawParams, sizes: [(Int, Int)]) throws -> [URL] {
+        try queue.sync {
+            try autoreleasepool {
+                if proxyDraft { filter = ABAIRawDevelop.rawFilter(url, longSide: longSide, draft: false) ?? filter; proxyDraft = false; proxy = nil }
+                if proxy == nil || p.rawKey != proxyKey { rebuild(p) }
+                guard let img = render(p) else { throw ABAIImageCore.CoreError.decode }
+                let e = img.extent
+                var out: [URL] = []
+                for (w, h) in sizes where w > 0 && h > 0 {
+                    let scaled = img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+                        .transformed(by: CGAffineTransform(scaleX: CGFloat(w) / e.width, y: CGFloat(h) / e.height))
+                    /* 經過 CGImage 再拷出來：列的順序一定是由上往下（跟網頁的像素陣列一樣） */
+                    guard let cg = ABAIImageCore.context.createCGImage(scaled, from: CGRect(x: 0, y: 0, width: w, height: h), format: .RGBA8, colorSpace: ABAIImageCore.sRGB),
+                          let raw = cg.dataProvider?.data, let base = CFDataGetBytePtr(raw) else { throw ABAIImageCore.CoreError.decode }
+                    let stride = cg.bytesPerRow, row = w * 4
+                    var packed = Data(count: row * h)
+                    packed.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) in
+                        guard let d = dst.baseAddress else { return }
+                        for y in 0..<h { memcpy(d + y * row, base + y * stride, row) }
+                    }
+                    let u = ABAIImageCore.newFileURL(ext: "rgba")
+                    try packed.write(to: u)
+                    out.append(u)
+                }
                 return out
             }
         }
