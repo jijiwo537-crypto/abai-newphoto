@@ -2167,7 +2167,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       )}
 
       {editingPhoto && createPortal(
-        <div className={`fixed inset-0 z-[300] bg-black transition-transform duration-[440ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${editorLeaving ? 'translate-y-full' : editorEntered || editingPhoto.instant ? 'translate-x-0 translate-y-0' : 'translate-y-full'}`} style={editingPhoto.instant && !editorEntered ? { transition: 'none' } : { transitionDuration: `${motionMs('camEditorSlide')}ms` }} data-camera-editor>
+        <div className={`fixed inset-0 z-[300] bg-black transition-transform duration-[440ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${editorLeaving ? 'translate-y-full' : editorEntered || editingPhoto.instant ? 'translate-x-0 translate-y-0' : 'translate-y-full'}`} style={editingPhoto.instant && !editorEntered ? { transition: 'none', willChange: 'transform' } : { transitionDuration: `${motionMs('camEditorSlide')}ms`, willChange: 'transform', backfaceVisibility: 'hidden' }} data-camera-editor>
         <ImageEditor 
           compactBottomBar
           fullTabs={!!editingPhoto.pro}

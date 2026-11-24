@@ -1,5 +1,34 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ms as motionMs, sheetOpenEase, sheetCloseEase } from '../utils/motionTimings';
+
+/* ── 只用 transform 的「放大＋裁切」動畫（FLIP）──
+ * 原本用 clip-path 的 inset 做裁切：iOS 的瀏覽器引擎沒辦法把 clip-path 交給 GPU，每一格都要主執行緒重畫整張大圖，容易掉格。
+ * 改成：外框負責「裁切窗＋縮放位移」（overflow: hidden），裡面的內容反向縮放回原本的比例 —— 兩個都只是 transform，
+ * 整段交給 GPU 合成，主執行緒再忙也不掉格。中間的比例要逐格算（只給頭尾兩格，中途會被拉扁），所以照速度曲線預先算 40 格。
+ * 狀態：tx／ty 位移、s 縮放、ix／iy 元素自己座標上左右／上下各裁掉多少（w×h 是元素沒變形時的大小） */
+type CropState = { tx: number; ty: number; s: number; ix: number; iy: number; o?: number };
+const bezierEase = (x1: number, y1: number, x2: number, y2: number) => (t: number) => {
+  let lo = 0, hi = 1, u = t;
+  for (let i = 0; i < 30; i++) { u = (lo + hi) / 2; const x = 3 * (1 - u) * (1 - u) * u * x1 + 3 * (1 - u) * u * u * x2 + u * u * u; if (x < t) lo = u; else hi = u; }
+  return 3 * (1 - u) * (1 - u) * u * y1 + 3 * (1 - u) * u * u * y2 + u * u * u;
+};
+const IOS_EASE = bezierEase(0.32, 0.72, 0, 1);
+function flipCrop(outer: HTMLElement, inners: HTMLElement[], w: number, h: number, a: CropState, b: CropState,
+  duration: number, fill: FillMode = 'none', ease: (t: number) => number = IOS_EASE): Promise<void> {
+  const N = 40, of: Keyframe[] = [], inf: Keyframe[] = [];
+  for (let i = 0; i <= N; i++) {
+    const p = ease(i / N), L = (x: number, y: number) => x + (y - x) * p;
+    const s = L(a.s, b.s), ix = L(a.ix, b.ix), iy = L(a.iy, b.iy);
+    const sx = Math.max(1e-4, (w - 2 * ix) / w), sy = Math.max(1e-4, (h - 2 * iy) / h);
+    const k: Keyframe = { offset: i / N, transform: `translate3d(${L(a.tx, b.tx)}px,${L(a.ty, b.ty)}px,0) scale(${s * sx},${s * sy})` };
+    if (a.o != null || b.o != null) k.opacity = L(a.o ?? 1, b.o ?? 1);
+    of.push(k);
+    inf.push({ offset: i / N, transform: `scale(${1 / sx},${1 / sy})` });
+  }
+  const opts: KeyframeAnimationOptions = { duration, easing: 'linear', fill };
+  const anims = [outer.animate(of, opts), ...inners.map(el => el.animate(inf, opts))];
+  return Promise.all(anims.map(x => x.finished.catch(() => {}))).then(() => {});
+}
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
 import { prepareFiles, shareSheet } from '../utils/shareAll';
@@ -192,8 +221,8 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
     <div data-camera-gallery
       /* 上升、下降各自的時長和曲線（照參考影片逐格量出來的，見 utils/motionTimings 的 sheetOpenEase／sheetCloseEase） */
       style={closing || !entered
-        ? { transitionDuration: `${motionMs('camGallerySheetClose')}ms`, transitionTimingFunction: sheetCloseEase() }
-        : { transitionDuration: `${motionMs('camGallerySheet')}ms`, transitionTimingFunction: sheetOpenEase() }}
+        ? { transitionDuration: `${motionMs('camGallerySheetClose')}ms`, transitionTimingFunction: sheetCloseEase(), willChange: 'transform', backfaceVisibility: 'hidden' }
+        : { transitionDuration: `${motionMs('camGallerySheet')}ms`, transitionTimingFunction: sheetOpenEase(), willChange: 'transform', backfaceVisibility: 'hidden' }}
       className={`fixed inset-0 bg-black text-white z-50 transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing || !entered ? 'translate-y-full' : 'translate-y-0'}`}>
 
       <style>{SEL_CSS}</style>
@@ -313,11 +342,12 @@ const PhotoViewer: React.FC<{
   /* 打開：相簿裡的小圖放大到大圖的位置（除了圖都是黑的），就定位後才出現按鈕、換成原圖 */
   const [opening, setOpening] = useState(true);
   const ghost = useRef<HTMLImageElement>(null);
+  const ghostBox = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    const cell = cellOf(index), g = ghost.current, src = photos[index];
+    const cell = cellOf(index), g = ghost.current, box = ghostBox.current, src = photos[index];
     /* 飛的那張：有螢幕版就用螢幕版（清楚），沒有就用縮圖；飛的途中不換來源（換 src 的那一下可能是空白的） */
     const tsrc = screenCache[src] || thumbs[src] || src;
-    if (!cell || !g) { setOpening(false); return; }
+    if (!cell || !g || !box) { setOpening(false); return; }
     let alive = true;
     const cellImg = cell.querySelector('img') as HTMLImageElement | null;
     /* 畫質：原圖很快就能解好（相機剛拍的、已經快取的）就直接用原圖飛；來不及才先用小縮圖，落地後再柔和地換成原圖 */
@@ -334,7 +364,8 @@ const PhotoViewer: React.FC<{
       let w = W, h = W / ar; if (h > H) { h = H; w = H * ar; }
       const B = { left: (W - w) / 2, top: (H - h) / 2, width: w, height: h };
       g.src = useFull ? src : tsrc;
-      Object.assign(g.style, { left: `${B.left}px`, top: `${B.top}px`, width: `${w}px`, height: `${h}px`, visibility: 'visible', opacity: '1' });
+      g.style.opacity = '1';
+      Object.assign(box.style, { left: `${B.left}px`, top: `${B.top}px`, width: `${w}px`, height: `${h}px`, visibility: 'visible' });
       const C = cell.getBoundingClientRect();
       const k = Math.max(C.width / w, C.height / h);
       const ix = Math.max(0, (w - C.width / k) / 2), iy = Math.max(0, (h - C.height / k) / 2);
@@ -342,8 +373,7 @@ const PhotoViewer: React.FC<{
       if (cellImg) cellImg.style.visibility = 'hidden';
       const dur = motionMs('camGalleryOpen');
       bg.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dur * 0.7, easing: 'ease-out', fill: 'forwards' });
-      await g.animate([{ transform: `translate3d(${tx}px,${ty}px,0) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` }, { transform: 'none', clipPath: 'inset(0px)' }],
-        { duration: dur, easing: EASE }).finished.catch(() => {});
+      await flipCrop(box, [g], w, h, { tx, ty, s: k, ix, iy }, { tx: 0, ty: 0, s: 1, ix: 0, iy: 0 }, dur);
       if (cellImg) cellImg.style.visibility = '';
       if (!alive) return;
       /* 落地：底下的大圖（原圖）解好才露出來，替身再用 0.22 秒淡掉 —— 沒有閃一下，畫質是慢慢變清楚 */
@@ -355,7 +385,7 @@ const PhotoViewer: React.FC<{
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       if (!alive || !ghost.current) return;
       await ghost.current.animate([{ opacity: 1 }, { opacity: 0 }], { duration: motionMs('camGalleryOpenFade'), easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {});
-      if (alive && ghost.current) ghost.current.style.visibility = 'hidden';
+      if (alive && ghostBox.current) ghostBox.current.style.visibility = 'hidden';
     };
     im.decode().then(go, go);
     return () => { alive = false; if (cellImg) cellImg.style.visibility = ''; };
@@ -423,9 +453,9 @@ const PhotoViewer: React.FC<{
     const dismiss = !cancel && (d.dy > 110 || (d.dy > 40 && v > 0.5));
     const cell = dismiss ? cellOf(index) : null;
     if (!img || !d.base) { if (dismiss) onClose(); else { setDragging(false); lockPager(false); } return; }
-    const from = { transform: img.style.transform || 'none', clipPath: 'inset(0px)' };
+    const from = { transform: img.style.transform || 'none' };
     if (!dismiss) {
-      img.animate([from, { transform: 'translate3d(0,0,0) scale(1)', clipPath: 'inset(0px)' }], { duration: motionMs('camGalleryBounce'), easing: EASE }).finished.then(() => {
+      img.animate([from, { transform: 'translate3d(0,0,0) scale(1)' }], { duration: motionMs('camGalleryBounce'), easing: EASE }).finished.then(() => {
         img.style.transform = ''; img.style.willChange = '';
         lockPager(false);
         setDragging(false);
@@ -442,19 +472,20 @@ const PhotoViewer: React.FC<{
     const Pw = nw * fit, Ph = nh * fit;
     const cellImg = cell?.querySelector('img') as HTMLImageElement | null;
     if (cellImg) cellImg.style.visibility = 'hidden';
-    let to: Keyframe;
+    const dur = motionMs('camGalleryClose');
+    bg.current?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: dur * 0.85, easing: 'ease-out', fill: 'forwards' });
+    const done = () => { if (cellImg) cellImg.style.visibility = ''; onDismissed(); };
     if (C && C.width > 0) {
       const k = Math.max(C.width / Pw, C.height / Ph);
       const ix = Math.max(0, (B.width - C.width / k) / 2), iy = Math.max(0, (B.height - C.height / k) / 2);
       const tx = C.left + C.width / 2 - (B.left + B.width / 2), ty = C.top + C.height / 2 - (B.top + B.height / 2);
-      to = { transform: `translate3d(${tx}px,${ty}px,0) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` };
-    } else to = { transform: `translate3d(${d.dx}px,${window.innerHeight}px,0) scale(${d.s * 0.8})`, clipPath: 'inset(0px)', opacity: 0 };
-    const dur = motionMs('camGalleryClose');
-    bg.current?.animate([{ opacity: 1 }, { opacity: 0 }], { duration: dur * 0.85, easing: 'ease-out', fill: 'forwards' });
-    img.animate([from, to], { duration: dur, easing: EASE, fill: 'forwards' }).finished.catch(() => {}).finally(() => {
-      if (cellImg) cellImg.style.visibility = '';
-      onDismissed();
-    });
+      /* 只用 transform（外框裁切＋裡面每一層反向縮放），整段在 GPU 上跑 */
+      img.style.overflow = 'hidden';
+      flipCrop(img, Array.from(img.children) as HTMLElement[], B.width, B.height,
+        { tx: d.dx, ty: d.dy, s: d.s, ix: 0, iy: 0 }, { tx, ty, s: k, ix, iy }, dur, 'forwards').finally(done);
+      return;
+    }
+    img.animate([from, { transform: `translate3d(${d.dx}px,${window.innerHeight}px,0) scale(${d.s * 0.8})`, opacity: 0 }], { duration: dur, easing: EASE, fill: 'forwards' }).finished.catch(() => {}).finally(done);
   };
   const shareRef = useRef<HTMLButtonElement>(null);
   const midRef = useRef<HTMLDivElement>(null);
@@ -510,7 +541,9 @@ const PhotoViewer: React.FC<{
     <div ref={root} data-camera-viewer style={{ transitionDuration: `${motionMs('camViewerFade')}ms` }} className={`fixed inset-0 z-[60] text-white select-none transition-opacity duration-[300ms] ${closing ? 'opacity-0' : ''}`}>
       {/* 黑底：打開的動畫開始前是透明的（之前一掛上就是全黑，等動畫開始又從透明淡入 —— 就是那一下閃） */}
       <div ref={bg} className="absolute inset-0 bg-black pointer-events-none" style={{ opacity: opening ? 0 : 1 }} />
-      <img ref={ghost} alt="" aria-hidden className="fixed z-[5] pointer-events-none object-contain" style={{ visibility: 'hidden', transformOrigin: 'center', willChange: 'transform' }} />
+      <div ref={ghostBox} aria-hidden className="fixed z-[5] pointer-events-none overflow-hidden" style={{ visibility: 'hidden', transformOrigin: 'center', willChange: 'transform' }}>
+        <img ref={ghost} alt="" className="absolute inset-0 w-full h-full object-contain" style={{ transformOrigin: 'center', willChange: 'transform' }} />
+      </div>
       <div ref={pager} onScroll={onScroll} className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
         style={{ touchAction: 'pan-x', opacity: opening ? 0 : 1 }}
         onPointerDown={e => {
