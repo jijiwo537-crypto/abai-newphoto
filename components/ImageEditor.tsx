@@ -7489,10 +7489,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     !p.blur && !p.soft && !p.fringeIntensity && !p.leakOpacity && !hasGlow(p) && !hasActiveFx(p) && !(Number(p.fxLowfi) > 0);
   /** 原生端一次處理整張 16 位元影像：太大的照片（4800 萬像素要 400MB 左右）不走這條，免得記憶體不夠被系統收掉 */
   const NATIVE_MAX_PIXELS = 25_000_000;
-  const nativeWideSave = async (src: string, snap: BatchSnap, fmt: 'heic10' | 'jpeg' | 'png', baseUrl?: string): Promise<string | null> => {
+  /** fromPath：直接拿這個原生檔當原圖（RAW 從原檔沖好的 16 位元 TIFF） */
+  const nativeWideSave = async (src: string, snap: BatchSnap, fmt: 'heic10' | 'jpeg' | 'png', baseUrl?: string, fromPath?: string): Promise<string | null> => {
     const p = snap.params;
-    if (!isGeoIdentity(snap.geo) || fullJobsRef.current[src] || !(baseUrl ? nativeHybridOk(p) : nativeColorOnly(p))) return null;
-    const path = nativePathOf(src);
+    if (!isGeoIdentity(snap.geo) || (!fromPath && fullJobsRef.current[src]) || !(baseUrl ? nativeHybridOk(p) : nativeColorOnly(p))) return null;
+    const path = fromPath || nativePathOf(src);
     if (!path) return null;
     const api = await nativeImage();
     if (!api) return null;
@@ -8041,20 +8042,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
                   : (i === safeIdx ? cloneSnap(base).geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
               };
-              /* RAW：用這一張自己的參數，由原生從 RAW 原尺寸重沖（批量裡每張 RAW 各自的曝光、白平衡） */
+              /* RAW：用這一張自己的參數，由原生從 RAW 原尺寸重沖（批量裡每張 RAW 各自的曝光、白平衡）。
+                 先沖成 16 位元 TIFF，編輯器其他的調色由原生用浮點套上去、直接輸出（全程不經過 8 位元）；
+                 原生做不了（局部、空間類編輯）才另外沖 JPEG 給網頁畫 */
               const ri = rawOf(srcs[i]);
-              const rawFull = ri ? await rawFullFor(ri, snap.params) : null;
-              const img = rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
+              const nfmt = exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png';
+              const rawTiff = ri && isGeoIdentity(snap.geo) && (nativeColorOnly(snap.params) || nativeHybridOk(snap.params)) ? await rawFullFor(ri, snap.params, 'tiff16') : null;
+              const rawTiffPath = rawTiff ? nativePathOf(rawTiff) : undefined;
+              let wide = ri ? (rawTiffPath && nativeColorOnly(snap.params) ? await nativeWideSave(srcs[i], snap, nfmt, undefined, rawTiffPath) : null) : await nativeWideSave(srcs[i], snap, nfmt);
+              const rawFull = ri && !wide ? await rawFullFor(ri, snap.params) : null;
+              const img = ri && wide ? (originalImgRef.current as HTMLImageElement) : rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
               // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
-              const nfmt = exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png';
-              let wide = ri ? null : await nativeWideSave(srcs[i], snap, nfmt);
               /* 有局部、空間類編輯：網頁先做出無損成品，原生端補回廣色域與 HDR 亮部。
                  補不了的時候，這張成品 PNG／HEIC 直接拿來用，不重算 */
               let basePng = '';
-              if (!wide && !ri && nativePathOf(srcs[i]) && isGeoIdentity(snap.geo) && nativeHybridOk(snap.params) && !nativeColorOnly(snap.params)) {
+              if (!wide && (ri ? !!rawTiffPath : !!nativePathOf(srcs[i])) && isGeoIdentity(snap.geo) && nativeHybridOk(snap.params) && !nativeColorOnly(snap.params)) {
                 basePng = await renderFullUrl(img, snap, 'image/png', 1);
-                if (basePng) wide = await nativeWideSave(srcs[i], snap, nfmt, basePng);
+                if (basePng) wide = await nativeWideSave(srcs[i], snap, nfmt, basePng, ri ? rawTiffPath : undefined);
                 if (wide) { revokeUrls([basePng]); basePng = ''; }
               }
               if (wide) {
@@ -8078,6 +8083,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   encoded.push(await exportHeic(canvas));
                 }
               }
+              /* RAW 沖的 16 位元中間檔很大：用完就刪 */
+              if (rawTiffPath) void nativeImage().then(n => n?.remove({ path: rawTiffPath })).catch(() => {});
             }
             /* 相機拍的有日期的照片：編輯的是沒印日期的那張，存檔時才印上去（日期是光加上去的，畫面調暗了字自然更清楚） */
             if (stampDate) {
@@ -8495,9 +8502,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return a;
   };
   /** 存檔用：這個 RAW 用這組參數、原尺寸完整品質沖一張。沖不出來回 null（照一般照片存） */
-  const rawFullFor = async (info: RawInfo, p: EditorParams) => {
+  const rawFullFor = async (info: RawInfo, p: EditorParams, format: 'jpeg' | 'tiff16' = 'jpeg') => {
     const a = await rawAsShotOf(info);
-    return rawDevelopFull(info.path, rawBaseOf(info, a, p), info.look);
+    return rawDevelopFull(info.path, rawBaseOf(info, a, p), info.look, format);
   };
   const rawBake = (_full: string) => (raw ? rawDevelopFull(raw.path, rawBase(paramsRef.current), raw.look) : Promise.resolve(null));
   const installRaw = async (url: string, final: boolean, decoded?: HTMLImageElement) => {

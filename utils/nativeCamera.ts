@@ -256,10 +256,10 @@ export async function rawDevelopLinear(path: string, look: RawLook | null, w: nu
   finally { if (r) for (const f of [r.path, r.basePath]) if (f) img?.remove({ path: f }).catch(() => {}); }
 }
 /** 原尺寸、完整品質（存檔用）：檔案網址。失敗回 null */
-export async function rawDevelopFull(path: string, b: RawBaseParams, look: RawLook | null): Promise<string | null> {
+export async function rawDevelopFull(path: string, b: RawBaseParams, look: RawLook | null, format: 'jpeg' | 'tiff16' = 'jpeg'): Promise<string | null> {
   const p = await rawDev();
   if (!p?.developFull) return null;
-  try { const r = await p.developFull({ path, params: rawParams(b), look }); return fileSrc(r.path); }
+  try { const r = await p.developFull({ path, params: rawParams(b), look, format }); const u = fileSrc(r.path); rememberNativePath(u, r.path); return u; }
   catch { return null; }
 }
 
