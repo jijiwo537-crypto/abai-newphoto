@@ -511,5 +511,9 @@ export class LutRenderer {
     this.ctxTex = null;
     gl.deleteTexture(this.imgTex);
     gl.deleteProgram(this.prog);
+    /* GPU 環境本身也交還給系統（不等不確定什麼時候才跑的回收）：
+       每個畫布各自一個環境，不交還的話每次打開工具就多佔一個，iOS 上限約 16 個 */
+    try { gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* 收不掉算了 */ }
+    this.canvas.width = this.canvas.height = 1;
   }
 }

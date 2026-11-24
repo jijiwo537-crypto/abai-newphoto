@@ -3631,7 +3631,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       gpuWarmKeyRef.current = key;
     } catch { /* 暖機失敗不影響任何功能，照常走原本的路 */ }
   }, []);
+  const editorGoneRef = useRef(false);
   const getGpu = (): LutGpu | null => {
+    if (editorGoneRef.current) return null;
     if (gpuRef.current === undefined) {
       try { gpuRef.current = LutGpu.create(); } catch { gpuRef.current = null; }
     }
@@ -3648,7 +3650,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     return g || null;
   };
-  useEffect(() => () => { gpuRef.current?.dispose(); }, []);
+  /* 離開編輯器：放掉 GPU，並且標成「不准再建」。
+     之前只放掉：還排在後面的重畫一跑，看到 GPU 已失效就自動重建一個新的，而那一個再也沒人收 ——
+     每進出編輯器一次就多留一個，反覆進出幾次就碰到 iOS 的 GPU 環境數量上限（約 16 個），越用越卡 */
+  useEffect(() => () => { editorGoneRef.current = true; gpuRef.current?.dispose(); gpuRef.current = null; }, []);
 
   /**
    * 烤表 → GPU 畫 → 複製進 target 畫布。need 有給就順便把像素讀回來。

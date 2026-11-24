@@ -276,7 +276,12 @@ export class LutGpu {
       antialias: false, depth: false, stencil: false,
     }) as WebGL2RenderingContext | null;
     if (!gl) return null;
-    return LutGpu.build(canvas, gl, false);
+    /* 建不起來（著色器編不過等）：把剛拿到的 GPU 環境交還給系統，不然它會一直佔著一個名額 */
+    let g: LutGpu | null = null;
+    try { g = LutGpu.build(canvas, gl, false); } finally {
+      if (!g) { try { gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* 收不掉算了 */ } canvas.width = canvas.height = 1; }
+    }
+    return g;
   }
 
   /**
