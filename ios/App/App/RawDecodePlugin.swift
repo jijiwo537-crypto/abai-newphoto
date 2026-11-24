@@ -18,6 +18,7 @@
 
 import Foundation
 import Capacitor
+import os
 import CoreImage
 import UIKit
 import MetalKit
@@ -47,6 +48,8 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
     //   updateEditor({ params, final })   拖滑桿時每一格送；放手送 final（完整品質）
     //   setEditorRect({ x, y, w, h })  exportEditor({ params }) → { path }  closeEditor()
 
+    /// 系統日誌（Mac 的「系統監視程式」以子系統 com.abai.raw 過濾）：實機驗證 RAW 原生沖洗確實有被呼叫
+    private let rawLog = Logger(subsystem: "com.abai.raw", category: "develop")
     private var session: ABAIRawSession?
     private var editorView: ABAIMetalView?
     /// 開沖洗之前網頁是不是本來就透明（相機開著時是）：關掉時還原成原本的樣子，不要把相機的觀景窗蓋掉
@@ -144,6 +147,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// developPreview({ path, params, look, maxPixel, final }) → { path, asShotTemperature, asShotTint }
     @objc func developPreview(_ call: CAPPluginCall) {
+        do { let q = call.getObject("params") ?? [:]; let d = { (k: String) in String(describing: q[k] ?? "-") }; let msg = "RawDecode developPreview exposure=\(d("exposure")) temp=\(d("temperature")) tint=\(d("tint"))"; rawLog.notice("\(msg, privacy: .public)") }
         let path = call.getString("path") ?? ""
         let look: [String: Any]? = call.getObject("look")
         let p = ABAIRawParams(call.getObject("params"))
@@ -162,6 +166,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
     /// developPixels({ path, params, look, w, h, fw, fh }) → { path, fastPath, asShotTemperature, asShotTint }
     /// 編輯頁的預覽（w×h）和拖曳代理（fw×fh）兩份未壓縮像素（RGBA8 sRGB，由上往下）
     @objc func developPixels(_ call: CAPPluginCall) {
+        do { let q = call.getObject("params") ?? [:]; let d = { (k: String) in String(describing: q[k] ?? "-") }; let msg = "RawDecode developPixels exposure=\(d("exposure")) temp=\(d("temperature")) tint=\(d("tint"))"; rawLog.notice("\(msg, privacy: .public)") }
         let path = call.getString("path") ?? ""
         let look: [String: Any]? = call.getObject("look")
         let p = ABAIRawParams(call.getObject("params"))
@@ -178,6 +183,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// developFull({ path, params, look }) → { path }：原尺寸、完整品質（存檔用）
     @objc func developFull(_ call: CAPPluginCall) {
+        do { let q = call.getObject("params") ?? [:]; let d = { (k: String) in String(describing: q[k] ?? "-") }; let msg = "RawDecode developFull exposure=\(d("exposure")) temp=\(d("temperature")) tint=\(d("tint"))"; rawLog.notice("\(msg, privacy: .public)") }
         let path = call.getString("path") ?? ""
         let look: [String: Any]? = call.getObject("look")
         let p = ABAIRawParams(call.getObject("params"))
