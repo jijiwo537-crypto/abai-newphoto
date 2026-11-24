@@ -416,6 +416,7 @@ export function beginImportHero(kind: string | undefined, rect: DOMRect, src: st
   landing = false;
   const E = predict(kind ?? 'edit', ar);
   end = E;
+  perfStart(`import ${kind ?? 'edit'}`);
   /* 現在已經有工具頁（不在主頁）不播：heroAllowed 已經擋掉，這裡只在主頁開始 */
   startEnter(E, 13000);
   const g = document.createElement('div');
@@ -555,3 +556,22 @@ if (typeof window !== 'undefined') window.setTimeout(() => {
   const ric = (window as any).requestIdleCallback as undefined | ((cb: () => void, o?: { timeout: number }) => void);
   if (ric) ric(prewarmEntrance, { timeout: 3000 }); else prewarmEntrance();
 }, 2500);
+
+
+/* ── 實機量測（給 Codex 用 Safari 網頁檢閱器看）──
+ * 每一次導入過場都記下主執行緒每一格的間隔，分成「照片飛行中」「介面進場中」兩段，
+ * 結束時在主控台印出一行 [abai-perf]：每段幾格、超過 20ms／50ms 的有幾格、最長一格多久、最長的那幾格發生在第幾毫秒。
+ * 只記錄、不改變任何行為；也存在 window.__abaiPerf（最近 10 次） */
+export function perfStart(label: string) {
+  const t0 = performance.now(), gaps: [number, number][] = [];
+  let last = t0, stop = false;
+  const f = (now: number) => { if (stop) return; gaps.push([Math.round(now - t0), now - last]); last = now; if (now - t0 < 4000) requestAnimationFrame(f); else done(); };
+  const done = () => {
+    if (stop) return; stop = true;
+    const phase = (a: number, b: number) => { const g = gaps.filter(([t]) => t >= a && t < b).map(x => x[1]); return `${g.length}格 >20ms:${g.filter(x => x > 20).length} >50ms:${g.filter(x => x > 50).length} 最長:${Math.round(Math.max(0, ...g))}ms`; };
+    const worst = [...gaps].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, d]) => `${t}ms(${Math.round(d)})`).join(' ');
+    const line = `[abai-perf] ${label} | 0-0.5s ${phase(0, 500)} | 0.5-1.5s ${phase(500, 1500)} | 1.5-4s ${phase(1500, 4000)} | 最長幾格@ ${worst}`;
+    try { console.log(line); const w = window as any; (w.__abaiPerf ||= []).push(line); if (w.__abaiPerf.length > 10) w.__abaiPerf.shift(); } catch { /* 只是記錄 */ }
+  };
+  requestAnimationFrame(f);
+}
