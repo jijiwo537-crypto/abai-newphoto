@@ -92,13 +92,17 @@ in vec2 vUv; out vec4 outColor;
 uniform sampler2D uLin, uBase;
 uniform highp sampler3D uCube;
 uniform float uGain, uExpo, uHi, uSh, uLutAmt, uCubeSize;
-uniform bool uWbOn, uLutOn, uFxOn;
+uniform bool uWbOn, uLutOn, uFxOn, uDither;
 uniform mat3 uWb, uToSrgb, uFromSrgb;
 const vec3 W = vec3(0.2289746, 0.6917385, 0.0792869);
 float srgbOetf(float v) { return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055; }
 float srgbEotf(float v) { return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4); }
 vec3 oetf3(vec3 c) { return vec3(srgbOetf(c.r), srgbOetf(c.g), srgbOetf(c.b)); }
 vec3 eotf3(vec3 c) { return vec3(srgbEotf(c.r), srgbEotf(c.g), srgbEotf(c.b)); }
+/* 截成 8 位元前加三角分佈抖色（±1 階，跟編輯器 lutGpu 同一招）：之後再拉對比、曲線也不會出現一圈一圈的色階，
+   每個位置的值固定（同一組參數每一格都一樣，拖曳中跟放手後完全相同） */
+float dHash(uvec2 q){q=q*uvec2(1597334673u,3812015801u);uint n=(q.x^q.y)*1597334673u;return float(n)*(1./4294967296.);}
+vec3 dith(vec3 c){uvec2 q=uvec2(gl_FragCoord.xy);float d=dHash(q)+dHash(q+uvec2(7919u,104729u))-1.;return clamp(c+d/255.,0.,1.);}
 void main() {
   vec3 s = texture(uLin, vUv).rgb * uGain;                       // ① 曝光
   if (uWbOn) {                                                   // ② 白平衡（wbKernel）
@@ -140,7 +144,7 @@ void main() {
   /* 有相機特效：先交出特效要的底（線性 P3 套 sRGB 曲線＝原生 CILinearToSRGBToneCurve），後面 FX_FS 接著做 */
   if (uFxOn) { outColor = vec4(oetf3(c), 1.0); return; }
   vec3 sr = clamp(uToSrgb * c, 0.0, 1.0);                        // ⑤ 線性 P3 → sRGB
-  outColor = vec4(srgbOetf(sr.r), srgbOetf(sr.g), srgbOetf(sr.b), 1.0);
+  outColor = vec4(uDither ? dith(oetf3(sr)) : oetf3(sr), 1.0);
 }`;
 
 /* ── 相機特效（照原生 ios/App/App/ABAICameraFx.swift 的 apply，同一個順序、同一組常數） ── */
@@ -181,6 +185,11 @@ float srgbOetf(float v) { return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0
 float srgbEotf(float v) { return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4); }
 vec3 oetf3(vec3 c) { return vec3(srgbOetf(c.r), srgbOetf(c.g), srgbOetf(c.b)); }
 vec3 eotf3(vec3 c) { return vec3(srgbEotf(c.r), srgbEotf(c.g), srgbEotf(c.b)); }
+/* 截成 8 位元前加三角分佈抖色（±1 階，跟編輯器 lutGpu 同一招）：之後再拉對比、曲線也不會出現一圈一圈的色階，
+   每個位置的值固定（同一組參數每一格都一樣，拖曳中跟放手後完全相同） */
+float dHash(uvec2 q){q=q*uvec2(1597334673u,3812015801u);uint n=(q.x^q.y)*1597334673u;return float(n)*(1./4294967296.);}
+vec3 dith(vec3 c){uvec2 q=uvec2(gl_FragCoord.xy);float d=dHash(q)+dHash(q+uvec2(7919u,104729u))-1.;return clamp(c+d/255.,0.,1.);}
+uniform bool uDither;
 float abaiHash(vec2 p) {
   vec3 p3 = fract(vec3(p.x, p.y, p.x) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
@@ -215,7 +224,7 @@ void main() {
     c = mix(c, clamp(c2, 0.0, 1.0), uLowfi);
   }
   vec3 sr = clamp(uToSrgb * eotf3(c), 0.0, 1.0);                                          // 回線性 P3 → sRGB 8 位元
-  outColor = vec4(oetf3(sr), 1.0);
+  outColor = vec4(uDither ? dith(oetf3(sr)) : oetf3(sr), 1.0);
 }`;
 export interface RawGpuFx { soft: number; blur: number; lowfi: number; lowfiCube?: { data: Float32Array; size: number } | null }
 
@@ -223,6 +232,8 @@ export interface RawGpuFx { soft: number; blur: number; lowfi: number; lowfiCube
 export class RawGpu {
   /** 低保真的顆粒強度（原生 lowfiGrain）；只有測試會改 */
   static grain = 50;
+  /** 輸出前的抖色（正式使用一律開；只有逐像素比對的測試會關掉） */
+  static dither = true;
   readonly w: number; readonly h: number;
   private gl: WebGL2RenderingContext;
   private prog: WebGLProgram;
@@ -263,7 +274,7 @@ export class RawGpu {
     };
     const prog = link(FS);
     this.prog = prog;
-    for (const n of ['uLin', 'uBase', 'uCube', 'uGain', 'uExpo', 'uHi', 'uSh', 'uLutAmt', 'uCubeSize', 'uWbOn', 'uLutOn', 'uFxOn', 'uWb', 'uToSrgb', 'uFromSrgb']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uLin', 'uBase', 'uCube', 'uGain', 'uExpo', 'uHi', 'uSh', 'uLutAmt', 'uCubeSize', 'uWbOn', 'uLutOn', 'uFxOn', 'uDither', 'uWb', 'uToSrgb', 'uFromSrgb']) this.u[n] = gl.getUniformLocation(prog, n);
     if (fx && (fx.soft > 0.001 || fx.blur > 0.001 || fx.lowfi > 0.001)) {
       if (fx.lowfi > 0.001 && !(fx.lowfiCube && fx.lowfiCube.size >= 2)) throw new Error('raw-gpu: lowfi cube');
       this.fx = fx;
@@ -365,6 +376,7 @@ export class RawGpu {
     gl.viewport(0, 0, W, H);
     gl.useProgram(this.prog);
     gl.uniform1i(this.u.uFxOn, fx ? 1 : 0);
+    gl.uniform1i(this.u.uDither, RawGpu.dither ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.lin); gl.uniform1i(this.u.uLin, 0);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.base); gl.uniform1i(this.u.uBase, 1);
     gl.uniform1f(this.u.uGain, Math.pow(2, p.exposure));
@@ -411,6 +423,7 @@ export class RawGpu {
         gl.uniform1f(loc('uLowCubeSize'), Math.max(2, this.lowCubeSize));
         /* 顆粒強度：原生的固定值 50（測試時可以關掉，單獨比對其他步驟） */
         gl.uniform1f(loc('uGrain'), RawGpu.grain);
+        gl.uniform1i(loc('uDither'), RawGpu.dither ? 1 : 0);
         gl.uniformMatrix3fv(loc('uToSrgb'), true, new Float32Array(P3_TO_SRGB));
         gl.uniformMatrix3fv(loc('uFromSrgb'), true, new Float32Array(SRGB_TO_P3));
       });
