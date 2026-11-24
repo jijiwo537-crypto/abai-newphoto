@@ -358,11 +358,17 @@ enum ABAIRawDevelop {
         return img
     }
 
-    /// look 裡只有裁切（比例、小框），沒有濾鏡、特效：網頁 GPU 可以照同一套公式即時沖（見 ABAIRawSession.linear）
-    static func lookIsCropOnly(_ look: [String: Any]?) -> Bool {
+    /// look 沒有特效（柔光、模糊、低保真）：網頁 GPU 可以照同一套公式即時沖（裁切、濾鏡色彩表都做得到，見 ABAIRawSession.linear）
+    static func lookGpuOk(_ look: [String: Any]?) -> Bool {
         guard let look = look else { return true }
-        if let name = look["lut"] as? String, !name.isEmpty, ((look["amount"] as? NSNumber)?.doubleValue ?? 1) > 0 { return false }
         return !ABAICameraFx(look["fx"] as? [String: Any]).isOn
+    }
+    /// look 的濾鏡色彩表（沒有濾鏡、強度 0 回 nil）
+    static func lookCube(_ look: [String: Any]?) -> (ABAIImageCore.Cube, Double)? {
+        guard let look = look, let name = look["lut"] as? String, !name.isEmpty else { return nil }
+        let amount = (look["amount"] as? NSNumber)?.doubleValue ?? 1
+        guard amount > 0.001, let u = ABAIImageCore.bundledLut(name), let cube = ABAIImageCore.cube(fromAtlas: u) else { return nil }
+        return (cube, amount)
     }
 
     /// 拍照當下的比例裁切、小框（⑦ 的幾何那一段）
@@ -547,7 +553,14 @@ final class ABAIRawSession {
         }
     }
 
-    var cropOnlyLook: Bool { ABAIRawDevelop.lookIsCropOnly(look) }
+    var gpuLookOk: Bool { ABAIRawDevelop.lookGpuOk(look) }
+    /// 濾鏡色彩表寫成檔案（size³ 個 RGBA Float32，紅色變化最快）給網頁 GPU 用；沒有濾鏡回 nil
+    func lookCubeFile() throws -> (URL, Int, Double)? {
+        guard let (cube, amount) = ABAIRawDevelop.lookCube(look) else { return nil }
+        let u = ABAIImageCore.newFileURL(ext: "cube")
+        try cube.data.write(to: u)
+        return (u, cube.size, amount)
+    }
 
     /// 原尺寸、完整品質輸出成 JPEG（含拍照當下的濾鏡、特效、裁切、日期）
     /// format："jpeg"（預設，存檔用）或 "tiff16"（16 位元無損：拍照時從 RAW 沖成品的中間檔，後面還要套濾鏡、特效，不能先壓縮掉）

@@ -193,15 +193,18 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         let w = call.getInt("w") ?? 0, h = call.getInt("h") ?? 0, bw = call.getInt("bw") ?? 0, bh = call.getInt("bh") ?? 0
         headlessQueue.async {
             guard let s = self.headlessSession(path, look: look, longSide: 2048) else { call.reject("系統不認得這個 RAW 格式"); return }
-            guard s.cropOnlyLook, w > 0, h > 0, bw > 0, bh > 0 else {
+            guard s.gpuLookOk, w > 0, h > 0, bw > 0, bh > 0 else {
                 call.resolve(["gpu": false, "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint]); return
             }
             do {
                 let t0 = CFAbsoluteTimeGetCurrent()
                 let (a, b) = try s.linear(w: w, h: h, bw: bw, bh: bh)
+                let cube = try s.lookCubeFile()
                 let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
                 self.rawLog.notice("RawDecode developLinear \(w, privacy: .public)x\(h, privacy: .public) \(ms, privacy: .public)ms")
-                call.resolve(["gpu": true, "path": a.path, "basePath": b.path, "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint])
+                var out: [String: Any] = ["gpu": true, "path": a.path, "basePath": b.path, "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint]
+                if let (u, size, amount) = cube { out["cubePath"] = u.path; out["cubeSize"] = size; out["lutAmount"] = amount }
+                call.resolve(out)
             } catch { call.reject(error.localizedDescription) }
         }
     }

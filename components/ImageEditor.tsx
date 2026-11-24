@@ -8678,7 +8678,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               const bw = Math.max(1, Math.round(pw / 2)), bh = Math.max(1, Math.round(ph / 2));
               const L = await rawDevelopLinear(raw.path, raw.look, pw, ph, bw, bh);
               if (!alive) return;
-              if (L && L.gpu) { try { gpu = new RawGpu(L.lin, pw, ph, L.base, bw, bh, [L.asShotTemperature, L.asShotTint]); } catch { gpu = null; } }
+              if (L && L.gpu) { try { gpu = new RawGpu(L.lin, pw, ph, L.base, bw, bh, [L.asShotTemperature, L.asShotTint], L.cube); } catch { gpu = null; } }
             }
             if (gpu && gpu.ok) {
               const b = rawBase({ ...DEFAULT_PARAMS, ...want });

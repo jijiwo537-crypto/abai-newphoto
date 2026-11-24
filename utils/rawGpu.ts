@@ -38,6 +38,15 @@ const BRADFORD: M3 = [0.8951, 0.2664, -0.1614, -0.7502, 1.7135, 0.0367, 0.0389, 
 const SRGB_TO_XYZ: M3 = [0.4124564, 0.3575761, 0.1804375, 0.2126729, 0.7151522, 0.0721750, 0.0193339, 0.1191920, 0.9503041];
 /** 線性 Display P3 → 線性 sRGB */
 const P3_TO_SRGB = mul(inv(SRGB_TO_XYZ), P3_TO_XYZ);
+const SRGB_TO_P3 = mul(inv(P3_TO_XYZ), SRGB_TO_XYZ);
+/** Float32 → 半精度（四捨五入） */
+export function f2h(v: number): number {
+  const f = new Float32Array(1), i = new Uint32Array(f.buffer); f[0] = v; const x = i[0];
+  const sgn = (x >>> 16) & 0x8000; let e = ((x >>> 23) & 0xff) - 127 + 15; let m = x & 0x7fffff;
+  if (e <= 0) { if (e < -10) return sgn; m = (m | 0x800000) >> (1 - e); return sgn | ((m + 0x1000) >> 13); }
+  if (e >= 31) return sgn | 0x7c00;
+  const r = sgn | (e << 10) | (m >> 13); return (m & 0x1000) ? r + 1 : r;
+}
 
 /** 黑體光源在色溫 K 的色度座標 xy（Kim 等人的三次近似）—— 跟原生 planckXY 一樣 */
 function planckXY(k: number): [number, number] {
@@ -81,11 +90,15 @@ const FS = `#version 300 es
 precision highp float;
 in vec2 vUv; out vec4 outColor;
 uniform sampler2D uLin, uBase;
-uniform float uGain, uExpo, uHi, uSh;
-uniform bool uWbOn;
-uniform mat3 uWb, uToSrgb;
+uniform highp sampler3D uCube;
+uniform float uGain, uExpo, uHi, uSh, uLutAmt, uCubeSize;
+uniform bool uWbOn, uLutOn;
+uniform mat3 uWb, uToSrgb, uFromSrgb;
 const vec3 W = vec3(0.2289746, 0.6917385, 0.0792869);
 float srgbOetf(float v) { return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055; }
+float srgbEotf(float v) { return v <= 0.04045 ? v / 12.92 : pow((v + 0.055) / 1.055, 2.4); }
+vec3 oetf3(vec3 c) { return vec3(srgbOetf(c.r), srgbOetf(c.g), srgbOetf(c.b)); }
+vec3 eotf3(vec3 c) { return vec3(srgbEotf(c.r), srgbEotf(c.g), srgbEotf(c.b)); }
 void main() {
   vec3 s = texture(uLin, vUv).rgb * uGain;                       // ① 曝光
   if (uWbOn) {                                                   // ② 白平衡（wbKernel）
@@ -118,6 +131,12 @@ void main() {
     c = mix(c, vec3(f), t * t * 0.6);
   }
   c = clamp(c, 0.0, 1.0);
+  if (uLutOn) {                                                  // ⑥ 拍照時套的濾鏡（原生 applyLook：CIColorCubeWithColorSpace，sRGB 編碼值上查表，再依強度混合）
+    vec3 e = oetf3(clamp(uToSrgb * c, 0.0, 1.0));
+    vec3 uvw = (e * (uCubeSize - 1.0) + 0.5) / uCubeSize;
+    vec3 o = uFromSrgb * eotf3(texture(uCube, uvw).rgb);
+    c = mix(c, o, uLutAmt);
+  }
   vec3 sr = clamp(uToSrgb * c, 0.0, 1.0);                        // ⑤ 線性 P3 → sRGB
   outColor = vec4(srgbOetf(sr.r), srgbOetf(sr.g), srgbOetf(sr.b), 1.0);
 }`;
@@ -128,13 +147,15 @@ export class RawGpu {
   private gl: WebGL2RenderingContext;
   private prog: WebGLProgram;
   private lin: WebGLTexture; private base: WebGLTexture;
+  private cube: WebGLTexture | null = null; private cubeSize = 0; private lutAmt = 0;
   private fbs = new Map<string, { fb: WebGLFramebuffer; tex: WebGLTexture }>();
   private u: Record<string, WebGLUniformLocation | null> = {};
   private asShot: [number, number];
   private lost = false;
 
   /** 建不起來（沒有 WebGL2、資料不對）丟例外，呼叫端改走原生出像素那條 */
-  constructor(lin: Uint16Array, w: number, h: number, base: Uint16Array, bw: number, bh: number, asShot: [number, number]) {
+  constructor(lin: Uint16Array, w: number, h: number, base: Uint16Array, bw: number, bh: number, asShot: [number, number],
+    lut?: { data: Float32Array; size: number; amount: number } | null) {
     if (lin.length !== w * h * 4 || base.length !== bw * bh * 4) throw new Error('raw-gpu: size');
     const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1;
     const gl = cv.getContext('webgl2', { premultipliedAlpha: false, preserveDrawingBuffer: false, antialias: false });
@@ -152,7 +173,7 @@ export class RawGpu {
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error('raw-gpu: link');
     this.prog = prog;
-    for (const n of ['uLin', 'uBase', 'uGain', 'uExpo', 'uHi', 'uSh', 'uWbOn', 'uWb', 'uToSrgb']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uLin', 'uBase', 'uCube', 'uGain', 'uExpo', 'uHi', 'uSh', 'uLutAmt', 'uCubeSize', 'uWbOn', 'uLutOn', 'uWb', 'uToSrgb', 'uFromSrgb']) this.u[n] = gl.getUniformLocation(prog, n);
     const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -169,6 +190,17 @@ export class RawGpu {
     };
     this.lin = tex(lin, w, h);
     this.base = tex(base, bw, bh);
+    if (lut && lut.size >= 2) {
+      /* 3D 貼圖：寬＝紅、高＝綠、深＝藍（跟原生的表一樣紅色變化最快）。半精度浮點才能平滑內插 */
+      const hd = new Uint16Array(lut.data.length);
+      for (let i = 0; i < hd.length; i++) hd[i] = f2h(lut.data[i]);
+      const t = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_3D, t);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, lut.size, lut.size, lut.size, 0, gl.RGBA, gl.HALF_FLOAT, hd);
+      for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_3D, k, v);
+      this.cube = t; this.cubeSize = lut.size; this.lutAmt = Math.max(0, Math.min(1, lut.amount));
+    }
     if (gl.getError() !== gl.NO_ERROR) throw new Error('raw-gpu: upload');
   }
 
@@ -199,6 +231,11 @@ export class RawGpu {
     gl.uniform1f(this.u.uExpo, p.exposure);
     gl.uniform1f(this.u.uHi, p.highlights);
     gl.uniform1f(this.u.uSh, p.shadows);
+    gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_3D, this.cube); gl.uniform1i(this.u.uCube, 2);
+    gl.uniform1i(this.u.uLutOn, this.cube && this.lutAmt > 0 ? 1 : 0);
+    gl.uniform1f(this.u.uLutAmt, this.lutAmt);
+    gl.uniform1f(this.u.uCubeSize, Math.max(2, this.cubeSize));
+    gl.uniformMatrix3fv(this.u.uFromSrgb, true, new Float32Array(SRGB_TO_P3));
     const wb = rawWbMatrix(p, this.asShot);
     gl.uniform1i(this.u.uWbOn, wb ? 1 : 0);
     /* GLSL 的 mat3 是行優先：傳列優先的資料要轉置 */
@@ -215,7 +252,7 @@ export class RawGpu {
     const gl = this.gl;
     for (const { fb, tex } of this.fbs.values()) { gl.deleteFramebuffer(fb); gl.deleteTexture(tex); }
     this.fbs.clear();
-    gl.deleteTexture(this.lin); gl.deleteTexture(this.base); gl.deleteProgram(this.prog);
+    gl.deleteTexture(this.lin); gl.deleteTexture(this.base); if (this.cube) gl.deleteTexture(this.cube); gl.deleteProgram(this.prog);
     gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }
