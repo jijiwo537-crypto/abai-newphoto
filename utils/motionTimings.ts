@@ -36,7 +36,8 @@ export const MOTION_ITEMS: MotionItem[] = [
   { id: 'camGalleryClose', group: '相機相簿', label: '下拉關閉（縮回格子）', where: '大圖往下拉超過一段距離後放開', def: 420, kind: 'scale', easing: IOS },
   { id: 'camGalleryBounce', group: '相機相簿', label: '下拉沒關閉時回彈', where: '大圖往下拉一點點就放開', def: 320, kind: 'move', easing: IOS },
 
-  { id: 'camGallerySheet', group: '相機', label: '相簿從下方滑上來／滑下去', where: '相機 → 左下角最新照片（打開）、相簿左上角關閉', def: 420, kind: 'move', easing: 'cubic-bezier(0.25, 0.6, 0.4, 1)' },
+  { id: 'camGallerySheet', group: '相機', label: '相簿從下方滑上來', where: '相機 → 左下角最新照片', def: 560, kind: 'move', easing: 'cubic-bezier(0.15, 0.9, 0.25, 1)' },
+  { id: 'camGallerySheetClose', group: '相機', label: '相簿滑下去（回到相機）', where: '相簿左上角關閉', def: 400, kind: 'move', easing: 'cubic-bezier(0.3, 0.55, 0.3, 1)' },
   { id: 'camEditorSlide', group: '相機', label: '從相簿進編輯（整頁滑上來／滑下去）', where: '相機相簿 → 大圖 → 編輯；編輯頁返回', def: 440, kind: 'move', easing: 'cubic-bezier(0.4,0,0.2,1)' },
   { id: 'camViewerFade', group: '相機', label: '大圖用按鈕關閉時淡出', where: '相機相簿 → 大圖 → 左上角返回', def: 300, kind: 'fade', easing: 'ease' },
   { id: 'camViewerButtons', group: '相機', label: '大圖上的按鈕淡入淡出', where: '相機相簿 → 大圖：打開後按鈕出現、往下拉時按鈕消失', def: 200, kind: 'fade', easing: 'ease' },
@@ -95,4 +96,31 @@ export function applyCssMotion() {
     r.setProperty('--vt-back-ms', `${ms('pageBack')}ms`);
     r.setProperty('--cam-rot-ms', `${ms('camRotate')}ms`);
   } catch { /* 沒有 DOM */ }
+}
+
+/* ── 相機相簿的升降曲線：照使用者給的參考影片逐格量出來的 ──
+ * 上升：指數減速 p = 1 − e^(−12.5·t)（第一格就走 20%，0.18 秒到 90%，0.37 秒到 99%）
+ * 下降：從靜止出發的臨界阻尼彈簧 p = 1 − (1 + 16.5·t)·e^(−16.5·t)（先加速、0.1 秒走一半、0.29 秒到 95%）
+ * 這兩種曲線 cubic-bezier 畫不準，用 CSS linear() 逐點描（iOS 17.2 起支援）；更舊的系統用最接近的 cubic-bezier */
+const linearSupported = (() => { try { return CSS.supports('transition-timing-function', 'linear(0, 1)'); } catch { return false; } })();
+function linearEase(f: (t: number) => number, durS: number, n = 40) {
+  const end = f(durS);
+  const pts: string[] = [];
+  for (let i = 0; i <= n; i++) { const t = (i / n) * durS; pts.push((Math.min(1, f(t) / end)).toFixed(4)); }
+  pts[n] = '1';
+  return `linear(${pts.join(', ')})`;
+}
+/** 相簿上升的曲線（時長變了曲線形狀跟著縮放，起步一樣俐落） */
+export function sheetOpenEase(): string {
+  const d = ms('camGallerySheet') / 1000;
+  if (!linearSupported) return 'cubic-bezier(0.15, 0.9, 0.25, 1)';
+  const k = 12.5 * (0.56 / Math.max(0.05, d));
+  return linearEase(t => 1 - Math.exp(-k * t), d);
+}
+/** 相簿下降的曲線 */
+export function sheetCloseEase(): string {
+  const d = ms('camGallerySheetClose') / 1000;
+  if (!linearSupported) return 'cubic-bezier(0.3, 0.55, 0.3, 1)';
+  const w = 16.5 * (0.4 / Math.max(0.05, d));
+  return linearEase(t => 1 - (1 + w * t) * Math.exp(-w * t), d);
 }

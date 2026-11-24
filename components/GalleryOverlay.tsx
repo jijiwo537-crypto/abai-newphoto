@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ms as motionMs } from '../utils/motionTimings';
+import { ms as motionMs, sheetOpenEase, sheetCloseEase } from '../utils/motionTimings';
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
 import { prepareFiles, shareSheet } from '../utils/shareAll';
@@ -89,7 +89,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
     if (closing) return;
     setClosing(true);
     onCloseStart?.();
-    window.setTimeout(onClose, motionMs('camGallerySheet'));
+    window.setTimeout(onClose, motionMs('camGallerySheetClose'));
   };
 
   const share = async (idx: number[]) => {
@@ -190,10 +190,10 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   /* 掛在 body 上：相機頁（.safe-top）從狀態列下面才開始，放在裡面的話照片捲不到螢幕最上面 */
   return createPortal(
     <div data-camera-gallery
-      style={{ transitionDuration: `${motionMs('camGallerySheet')}ms`,
-        /* 上升、下降同一條：起步快（前 20% 時間走 46%），收尾短（原本的 iOS 減速曲線一半時間就走完 95%，
-           剩下 5% 再慢慢爬另一半時間 —— 最後看起來明顯放慢、底下留一小塊） */
-        transitionTimingFunction: 'cubic-bezier(0.25, 0.6, 0.4, 1)' }}
+      /* 上升、下降各自的時長和曲線（照參考影片逐格量出來的，見 utils/motionTimings 的 sheetOpenEase／sheetCloseEase） */
+      style={closing || !entered
+        ? { transitionDuration: `${motionMs('camGallerySheetClose')}ms`, transitionTimingFunction: sheetCloseEase() }
+        : { transitionDuration: `${motionMs('camGallerySheet')}ms`, transitionTimingFunction: sheetOpenEase() }}
       className={`fixed inset-0 bg-black text-white z-50 transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing || !entered ? 'translate-y-full' : 'translate-y-0'}`}>
 
       <style>{SEL_CSS}</style>

@@ -1,7 +1,7 @@
 /* 「動畫時長」面板上方的情境預覽：手機大小的畫面裡，照 App 的版面重現每個過場（照片從格子飛進編輯器、
    相機相簿開關、返回滑走、首頁的彈出視窗…），用的就是面板上目前的時長與曲線，看到的節奏跟 App 裡一樣。 */
 import React, { forwardRef, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { MOTION_ITEMS, ms } from '../utils/motionTimings';
+import { MOTION_ITEMS, ms, sheetOpenEase, sheetCloseEase } from '../utils/motionTimings';
 
 export const STAGE_W = 216, STAGE_H = 468;
 const W = STAGE_W, H = STAGE_H;
@@ -150,12 +150,12 @@ export const MotionStage = forwardRef<MotionStageApi, { slow: number }>(({ slow 
         g.remove(); cover.remove(); void r0;
         return;
       }
-      if (id === 'camGallerySheet') {
+      if (id === 'camGallerySheet' || id === 'camGallerySheetClose') {
         setScene('cameraSheet'); await tick();
-        const sh = q('[data-sheetlayer]')!, o = { duration: d(id), easing: ease(id), fill: 'forwards' as FillMode };
-        await sh.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], o).finished.catch(() => {});
+        const sh = q('[data-sheetlayer]')!;
+        await sh.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], { duration: d('camGallerySheet'), easing: sheetOpenEase(), fill: 'forwards' }).finished.catch(() => {});
         await wait(700 * slow); if (!alive()) return;
-        await sh.animate([{ transform: 'none' }, { transform: 'translateY(100%)' }], o).finished.catch(() => {});
+        await sh.animate([{ transform: 'none' }, { transform: 'translateY(100%)' }], { duration: d('camGallerySheetClose'), easing: sheetCloseEase(), fill: 'forwards' }).finished.catch(() => {});
         return;
       }
       if (id === 'camEditorSlide') {
