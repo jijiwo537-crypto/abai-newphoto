@@ -52,7 +52,7 @@ import {HalationLayer} from '../utils/halationLayer';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '../utils/highlightSelection';
 import { makeHslFast, isMaskHslIdentity } from '../utils/maskColour';
 import { maskList, snapOf, hasMaskAdj, maskAdjSig, anyMask, maskAlpha, maskCacheId, freshMask, newMaskId, MASK_SNAP_KEYS, rgbToLab, type MaskSnap, type MaskType } from '../utils/masks';
-import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, geoAffine, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
+import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, geoAffine, geoHomography, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
 /* IG 貼文預覽跟拼圖那兩個工具共用同一顆元件 */
@@ -7493,18 +7493,26 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** fromPath：直接拿這個原生檔當原圖（RAW 從原檔沖好的 16 位元 TIFF） */
   const nativeWideSave = async (src: string, snap: BatchSnap, fmt: 'heic10' | 'jpeg' | 'png', baseUrl?: string, fromPath?: string): Promise<string | null> => {
     const p = snap.params;
-    if (!isGeoIdentity(snap.geo) || (!fromPath && fullJobsRef.current[src]) || !(baseUrl ? nativeHybridOk(p) : nativeColorOnly(p))) return null;
+    if ((!fromPath && fullJobsRef.current[src]) || !(baseUrl ? nativeHybridOk(p) : nativeColorOnly(p))) return null;
     const path = fromPath || nativePathOf(src);
     if (!path) return null;
     const api = await nativeImage();
     if (!api) return null;
     const size = await nativeImageSize(path);
     if (!size || size.width * size.height > NATIVE_MAX_PIXELS) return null;
+    /* 有構圖（裁切、旋轉、梯形…）：網頁算好投影矩陣交給原生，在浮點流程裡做（不用先降成 8 位元）。
+       矩陣跟網頁 composeCanvas 是同一份幾何（geoHomography），輸出尺寸也一樣 */
+    let geoArgs: { homography: number[]; outW: number; outH: number } | {} = {};
+    if (!isGeoIdentity(snap.geo)) {
+      const hm = geoHomography(size.width, size.height, snap.geo);
+      if (!hm) return null;
+      geoArgs = { homography: [...hm.H], outW: hm.outW, outH: hm.outH };
+    }
     if (baseUrl) {
       let basePath = '', outPath = '';
       try {
         basePath = await blobToNativeFile(await (await fetch(baseUrl)).blob(), 'png');
-        const r = await api.render({ path, basePath, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true });
+        const r = await api.render({ path, basePath, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true, ...geoArgs });
         outPath = r.path;
         const blob = await (await fetch(fileSrc(r.path))).blob();
         if (!blob.size) return null;
@@ -7530,7 +7538,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const n = NATIVE_CUBE ** 3, f = new Float32Array(n * 4);
       for (let i = 0; i < n; i++) { f[i * 4] = baked.data[i * 3] / 255; f[i * 4 + 1] = baked.data[i * 3 + 1] / 255; f[i * 4 + 2] = baked.data[i * 3 + 2] / 255; f[i * 4 + 3] = 1; }
       cubePath = await blobToNativeFile(new Blob([f.buffer]), 'cube');
-      const r = await api.render({ path, cubePath, cubeSize: NATIVE_CUBE, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true });
+      const r = await api.render({ path, cubePath, cubeSize: NATIVE_CUBE, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true, ...geoArgs });
       outPath = r.path;
       const blob = await (await fetch(fileSrc(r.path))).blob();
       if (!blob.size) return null;
@@ -8050,7 +8058,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                  原生做不了（局部、空間類編輯）才另外沖 JPEG 給網頁畫 */
               const ri = rawOf(srcs[i]);
               const nfmt = exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png';
-              const rawTiff = ri && isGeoIdentity(snap.geo) && (nativeColorOnly(snap.params) || nativeHybridOk(snap.params)) ? await rawFullFor(ri, snap.params, 'tiff16') : null;
+              const rawTiff = ri && (nativeColorOnly(snap.params) || nativeHybridOk(snap.params)) ? await rawFullFor(ri, snap.params, 'tiff16') : null;
               const rawTiffPath = rawTiff ? nativePathOf(rawTiff) : undefined;
               let wide = ri ? (rawTiffPath && nativeColorOnly(snap.params) ? await nativeWideSave(srcs[i], snap, nfmt, undefined, rawTiffPath) : null) : await nativeWideSave(srcs[i], snap, nfmt);
               const rawFull = ri && !wide ? await rawFullFor(ri, snap.params) : null;
@@ -8060,7 +8068,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               /* 有局部、空間類編輯：網頁先做出無損成品，原生端補回廣色域與 HDR 亮部。
                  補不了的時候，這張成品 PNG／HEIC 直接拿來用，不重算 */
               let basePng = '';
-              if (!wide && (ri ? !!rawTiffPath : !!nativePathOf(srcs[i])) && isGeoIdentity(snap.geo) && nativeHybridOk(snap.params) && !nativeColorOnly(snap.params)) {
+              if (!wide && (ri ? !!rawTiffPath : !!nativePathOf(srcs[i])) && nativeHybridOk(snap.params) && !nativeColorOnly(snap.params)) {
                 basePng = await renderFullUrl(img, snap, 'image/png', 1);
                 if (basePng) wide = await nativeWideSave(srcs[i], snap, nfmt, basePng, ri ? rawTiffPath : undefined);
                 if (wide) { revokeUrls([basePng]); basePng = ''; }

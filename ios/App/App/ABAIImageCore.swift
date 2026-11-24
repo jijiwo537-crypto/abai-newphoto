@@ -94,6 +94,29 @@ enum ABAIImageCore {
     }
 
     /// 讀成 Core Image 影像（轉正方向）。expandHDR：照片帶 HDR 增益圖時，展開成真正的高動態範圍（iOS 18 起）。
+    /// 編輯器的構圖（裁切、旋轉、翻轉、微調角度、梯形、縮放平移）：網頁算好的 3×3 投影矩陣（列優先，
+    /// 「輸出像素 ← 原圖像素」，座標原點在左上、y 往下，見 utils/compose.ts 的 geoHomography），輸出 outW×outH。
+    /// 在原生的浮點流程裡做，構圖過的照片存檔也不會先降成 8 位元
+    static func warp(_ input: CIImage, homography m: [Double], outW: Int, outH: Int) -> CIImage? {
+        guard m.count == 9, outW > 0, outH > 0 else { return nil }
+        let e = input.extent
+        guard e.width > 0, e.height > 0, !e.isInfinite else { return nil }
+        let img = input.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+        let W = Double(e.width), H = Double(e.height), oh = Double(outH)
+        /* 原圖的一個角（網頁座標）→ 輸出的位置（Core Image 座標，y 往上） */
+        func corner(_ x: Double, _ y: Double) -> CIVector? {
+            let w = m[6] * x + m[7] * y + m[8]
+            guard abs(w) > 1e-12 else { return nil }
+            return CIVector(x: (m[0] * x + m[1] * y + m[2]) / w, y: oh - (m[3] * x + m[4] * y + m[5]) / w)
+        }
+        guard let tl = corner(0, 0), let tr = corner(W, 0), let br = corner(W, H), let bl = corner(0, H),
+              let f = CIFilter(name: "CIPerspectiveTransform") else { return nil }
+        f.setValue(img, forKey: kCIInputImageKey)
+        f.setValue(tl, forKey: "inputTopLeft"); f.setValue(tr, forKey: "inputTopRight")
+        f.setValue(br, forKey: "inputBottomRight"); f.setValue(bl, forKey: "inputBottomLeft")
+        return f.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: outW, height: outH))
+    }
+
     static func ciImage(_ url: URL, expandHDR: Bool = false) -> CIImage? {
         var opts: [CIImageOption: Any] = [.applyOrientationProperty: true]
         if expandHDR, #available(iOS 18.0, *) { opts[.expandToHDR] = true }

@@ -148,12 +148,19 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         let develop = call.getDouble("develop") ?? 0         // 底片模式：少曝光拍的照片沖回幾格（見 ABAIDateStamp.swift）
         let dateText = call.getString("date").flatMap { $0.isEmpty ? nil : $0 }   // 日期戳記
         let gps = call.getObject("gps")                      // 拍照地點（相機開了「位置」時）
+        /* 編輯器的構圖：3×3 投影矩陣＋輸出尺寸（見 ABAIImageCore.warp） */
+        let homography = (call.getArray("homography") as? [NSNumber])?.map { $0.doubleValue }
+        let outW = call.getInt("outW") ?? 0, outH = call.getInt("outH") ?? 0
         queue.async {
             autoreleasepool {
                 var image: CIImage?
                 if maxPixel > 0, let cg = ABAIImageCore.downsample(url, maxPixel: maxPixel) { image = CIImage(cgImage: cg) }
                 else { image = ABAIImageCore.ciImage(url, expandHDR: wantHDR) }
                 guard var img = image else { call.reject("讀不出影像"); return }
+                if let hm = homography {
+                    guard let w = ABAIImageCore.warp(img, homography: hm, outW: outW, outH: outH) else { call.reject("構圖失敗"); return }
+                    img = w
+                }
                 if aspect > 0 || zoom > 1.001 {
                     var e = img.extent
                     if aspect > 0 {
