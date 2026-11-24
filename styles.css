@@ -483,7 +483,7 @@ html[data-vt="back"]::view-transition-group(root) { animation-duration: var(--vt
 html[data-vt="back"]::view-transition-image-pair(root) { isolation: auto; }
 html[data-vt="back"]::view-transition-old(root),
 html[data-vt="back"]::view-transition-new(root) { mix-blend-mode: normal; animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1); animation-duration: var(--vt-back-ms, 560ms); animation-fill-mode: both; }
-html[data-vt="back"]::view-transition-old(root) { z-index: 2; animation-name: vtBackOld; box-shadow: -18px 0 40px rgba(0, 0, 0, 0.45); }
+html[data-vt="back"]::view-transition-old(root) { z-index: 2; animation-name: vtBackOld; }
 html[data-vt="back"]::view-transition-new(root) { z-index: 1; animation-name: vtBackNew; }
 @keyframes vtBackOld { from { transform: translateX(0); } to { transform: translateX(100%); } }
 @keyframes vtBackNew { from { transform: translateX(-28%); filter: brightness(0.72); } to { transform: translateX(0); filter: brightness(1); } }

@@ -35,7 +35,7 @@ export const MOTION_ITEMS: MotionItem[] = [
   { id: 'camGalleryClose', group: '相機相簿', label: '下拉關閉（縮回格子）', where: '大圖往下拉超過一段距離後放開', def: 420, kind: 'scale', easing: IOS },
   { id: 'camGalleryBounce', group: '相機相簿', label: '下拉沒關閉時回彈', where: '大圖往下拉一點點就放開', def: 320, kind: 'move', easing: IOS },
 
-  { id: 'camGallerySheet', group: '相機', label: '相簿從下方滑上來／滑下去', where: '相機 → 左下角最新照片（打開）、相簿左上角關閉', def: 380, kind: 'move', easing: IOS },
+  { id: 'camGallerySheet', group: '相機', label: '相簿從下方滑上來／滑下去', where: '相機 → 左下角最新照片（打開）、相簿左上角關閉', def: 680, kind: 'move', easing: IOS },
   { id: 'camEditorSlide', group: '相機', label: '從相簿進編輯（整頁滑上來／滑下去）', where: '相機相簿 → 大圖 → 編輯；編輯頁返回', def: 440, kind: 'move', easing: 'cubic-bezier(0.4,0,0.2,1)' },
   { id: 'camViewerFade', group: '相機', label: '大圖用按鈕關閉時淡出', where: '相機相簿 → 大圖 → 左上角返回', def: 300, kind: 'fade', easing: 'ease' },
   { id: 'camViewerButtons', group: '相機', label: '大圖上的按鈕淡入淡出', where: '相機相簿 → 大圖：打開後按鈕出現、往下拉時按鈕消失', def: 200, kind: 'fade', easing: 'ease' },
