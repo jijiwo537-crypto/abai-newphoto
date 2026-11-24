@@ -175,21 +175,24 @@ function chromeBlocks(root: HTMLElement, E: R): Block[] {
   const zones: R[] = [E];
   root.querySelectorAll('img, canvas').forEach(m => { const q = m.getBoundingClientRect(); if (q.width * q.height >= E.w * E.h * 0.2) zones.push({ x: q.left, y: q.top, w: q.width, h: q.height }); });
   const onPhoto = (q: DOMRect) => zones.some(z => Math.min(q.right, z.x + z.w) - Math.max(q.left, z.x) > 2 && Math.min(q.bottom, z.y + z.h) - Math.max(q.top, z.y) > 2);
-  const walk = (el: HTMLElement, depth: number) => {
+  /* inBox：在包著照片的那一塊裡面（照片周圍的空間） */
+  const walk = (el: HTMLElement, depth: number, inBox = false) => {
     for (const c of Array.from(el.children) as HTMLElement[]) {
       if (c.hasAttribute('data-import-hero') || c.hasAttribute('data-import-spinner')) continue;
       if (shownOpacity(c) < 0.01) continue;
       const r = c.getBoundingClientRect();
-      if (r.width < 1 || r.height < 1) { if (depth < 8 && c.children.length) walk(c, depth + 1); continue; }
+      if (r.width < 1 || r.height < 1) { if (depth < 8 && c.children.length) walk(c, depth + 1, inBox); continue; }
       const coversPhoto = r.left <= cx && r.right >= cx && r.top <= cy && r.bottom >= cy && r.width * r.height >= E.w * E.h * 0.5;
-      if (coversPhoto || hasPhoto(c, E) || (c.children.length && hasRaisedZ(c, E))) { if (depth < 8) walk(c, depth + 1); continue; }
+      if (coversPhoto || hasPhoto(c, E) || (c.children.length && hasRaisedZ(c, E))) { if (depth < 8) walk(c, depth + 1, inBox || coversPhoto || hasPhoto(c, E)); continue; }
       /* 疊在照片上的浮動按鈕（前後對比、標準／專業、換圖…）：不參與進場 ——
          它們本來就被飛進來的替身蓋著，跟照片一起出現；做透明度動畫會讓 iOS 暫時改變它的圖層與毛玻璃材質 */
-      if (onPhoto(r)) { out.push(c); tags.set(c, { onPhoto: true, glass: hasBackdrop(c) }); continue; }
+      if (onPhoto(r)) { out.push(c); tags.set(c, { onPhoto: true }); continue; }
       /* 毛玻璃（backdrop-filter）的元素：做透明度動畫時 iOS 會暫時拿不到後面的畫面，材質跟就定位後不一樣 ——
          它自己不動；包著它的那一塊往裡面拆，其他部分照樣進場 */
-      if (hasBackdrop(c)) { out.push(c); tags.set(c, { glass: true }); continue; }
-      if (c.querySelector('[class*="backdrop-"],[style*="backdrop"]')) { if (depth < 8) walk(c, depth + 1); continue; }
+      /* 照片區裡的毛玻璃：毛玻璃算的是「它後面的畫面」，替身還沒交接前，後面的照片本人是藏起來的（透明），
+         這時候算出來的材質是一片黑、跟就定位後不同。所以它跟照片上的按鈕一樣，等照片本人出現後才開播 —— 動畫不變，材質從第一格就對 */
+      if (hasBackdrop(c)) { out.push(c); if (inBox) tags.set(c, { onPhoto: true }); continue; }
+      if (inBox && c.querySelector('[class*="backdrop-"],[style*="backdrop"]')) { if (depth < 8) walk(c, depth + 1, inBox); continue; }
       out.push(c);
     }
   };
@@ -224,20 +227,9 @@ function runEnter(root: HTMLElement, E: R) {
   };
   const play = (b: Block | HTMLElement, dy: number, delay: number, dur: number, after = false) => {
     const el = b instanceof HTMLElement ? b : b.el;
-    const glass = !(b instanceof HTMLElement) && b.glass;
     entered.add(el);
     const t = baseTransform(el);
     const from = `translate3d(0, ${dy}px, 0)${t ? ' ' + t : ''}`, to = t || 'translate3d(0, 0, 0)';
-    if (glass) {
-      /* 毛玻璃：做透明度動畫時 iOS 暫時拿不到後面的畫面、材質會變，所以不用透明度 ——
-         改成從中間往兩側展開（裁切）＋位移，材質從第一格就是最後的樣子 */
-      const br = getComputedStyle(el).borderRadius || '0px';
-      /* 寬的（整條標題列、面板）：順著進場方向從邊緣展開；小的（按鈕、膠囊）：從中間往兩側展開 */
-      const w = el.getBoundingClientRect().width;
-      const start = w > window.innerWidth * 0.6 ? (dy < 0 ? 'inset(0 0 100% 0' : 'inset(100% 0 0 0') : 'inset(0 50%';
-      anim(el, [{ clipPath: `${start} round ${br})`, transform: from }, { clipPath: `inset(0 0 0 0 round ${br})`, transform: to }], delay, dur, after);
-      return;
-    }
     const o = shownOpacity(el);
     anim(el, [{ opacity: 0, transform: from }, { opacity: o, transform: to }], delay, dur, after);
   };

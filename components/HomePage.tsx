@@ -1343,7 +1343,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                    整體只走 30%，同時輕輕推近 —— 兩層速度差就是深度的來源。
                    上下各多留 10% 的餘裕，位移與推近時邊緣才不會露出空白。 */}
               <div ref={artRef} className="home-hero-art absolute -inset-y-[10%] inset-x-0 will-change-transform">
-                <img src={heroSrc} alt="" decoding="sync" className="w-full h-full object-cover" draggable={false} />
+                <img src={heroSrc} alt="" className="w-full h-full object-cover" draggable={false} />
               </div>
               {/* 下緣多長 1px、左右也各多 1px：這道漸層的邊本來剛好壓在
                    overflow-hidden 的裁切線上，父層捲動時是連續（帶小數）的位移，
