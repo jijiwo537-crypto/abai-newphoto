@@ -19,6 +19,8 @@ export interface NativeCameraApi {
   setDate(o: { date: string | null; zoom?: number }): Promise<void>;
   /** 觀景窗整個藏起來（相簿、RAW 沖洗蓋在上面時） */
   setPreviewHidden?(o: { hidden: boolean }): Promise<void>;
+  /** 暫停／恢復鏡頭（觀景窗、設定都留著） */
+  setSessionPaused?(o: { paused: boolean }): Promise<{ running: boolean }>;
   /** 觀景窗現在這一格（離開相機的過場用） */
   snapshot(): Promise<{ path: string }>;
   /** 水平儀：開著時送 level 事件 { roll（度）, flat } */

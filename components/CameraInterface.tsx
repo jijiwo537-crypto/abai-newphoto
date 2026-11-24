@@ -16,6 +16,7 @@ import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
 import { ImageEditor, DEFAULT_PARAMS } from './ImageEditor';
 import { createPortal } from 'react-dom';
 import { slideBack, transitionDone, viewTransitionsSupported } from '../utils/pageTransition';
+import { AbaiLogo } from './AbaiLogo';
 import { fileSrc, nativePathOf, rememberNativePath } from '../utils/nativeBridge';
 import { processImageFile } from '../utils/imageLoader';
 import { RAW_ACCEPT } from '../utils/fileTypes';
@@ -580,11 +581,33 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   };
   /* 相簿打開時（含大圖、RAW 沖洗）把原生觀景窗藏起來：後面任何透明的地方都不會透出相機畫面。
      相簿是從下面滑上來的，等它蓋滿再藏；關的時候先放回來再滑走 */
+  /* 相簿完全展開後：鏡頭暫停（省電、不發熱、綠燈熄掉），觀景窗換成黑底＋Abai 字標。
+     相簿完全降下、回到相機後：恢復鏡頭，等新的畫面進來再把黑底快速淡掉 */
+  const [camSleep, setCamSleep] = useState(false);
+  const camSleepRef = useRef(false);
   useEffect(() => {
     if (!proMode) return;
     const hide = showGallery;
-    const t = window.setTimeout(() => { void nativeCamera().then(c => c?.setPreviewHidden?.({ hidden: hide })).catch(() => {}); }, hide ? motionMs('camGallerySheet') + 40 : 0);   // 等相簿真的滑到蓋滿（跟著動畫時長，不寫死）
-    return () => window.clearTimeout(t);
+    let alive = true;
+    const t = window.setTimeout(() => {
+      void nativeCamera().then(async c => {
+        if (!c || !alive) return;
+        if (hide) {
+          camSleepRef.current = true; setCamSleep(true);
+          await c.setPreviewHidden?.({ hidden: true });
+          await c.setSessionPaused?.({ paused: true });
+          return;
+        }
+        await c.setPreviewHidden?.({ hidden: false });
+        if (!camSleepRef.current) return;
+        await c.setSessionPaused?.({ paused: false });
+        /* 鏡頭重新開始送畫面要幾格：等一下再淡掉，淡開時下面已經是新的畫面（不會先看到停住的上一格） */
+        await new Promise(r => window.setTimeout(r, 140));
+        if (!alive) return;
+        camSleepRef.current = false; setCamSleep(false);
+      }).catch(() => { camSleepRef.current = false; setCamSleep(false); });
+    }, hide ? motionMs('camGallerySheet') + 40 : 0);   // 等相簿真的滑到蓋滿（跟著動畫時長，不寫死）
+    return () => { alive = false; window.clearTimeout(t); };
   }, [showGallery, proMode]);
   /* 相簿：愛心、每張拍照時用的濾鏡（大圖右上的標籤） */
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set(camRoll.favorites));
@@ -1773,6 +1796,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               }}
               onPointerCancel={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
             />}
+
+            {/* 鏡頭暫停時的觀景窗：黑底＋Abai 字標（相簿蓋著時換上；回到相機、新畫面進來後 0.26 秒淡掉） */}
+            {proMode && (
+              <div aria-hidden className="absolute inset-0 z-[1] bg-black flex items-center justify-center pointer-events-none"
+                style={{ opacity: camSleep ? 1 : 0, transition: camSleep ? 'none' : 'opacity 260ms ease-out' }}>
+                <AbaiLogo className="w-[28%] max-w-[110px] text-white/20" />
+              </div>
+            )}
 
             {levelOn && proMode && !galleryCover && <LevelOverlay turns={uiTurns} />}
 

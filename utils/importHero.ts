@@ -140,7 +140,13 @@ let enterObs: MutationObserver | null = null, enterRoot: HTMLElement | null = nu
  * 就把這些介面各自畫成 GPU 圖層（最花時間的一步提前做完）。
  * 開播：停著的那段丟掉、同一格立刻建一段全新的動畫 —— 全新、從頭跑的 transform／opacity 動畫一定整段交給 GPU，
  * 主執行緒再忙（工具正在初始化、解碼大圖）也不掉格。播完把 will-change 還原，不留任何樣式。 */
-type Job = { el: HTMLElement; k: Keyframe[]; opts: KeyframeAnimationOptions; held?: Animation; wc?: string };
+type Job = { el: HTMLElement; k: Keyframe[]; opts: KeyframeAnimationOptions; held?: Animation; wc?: string; after?: boolean };
+/* ── 同一條時間軸 ──
+ * 工具載入的途中常常會把整塊介面換成新的元素（載入中的版面 → 正式版面）。新元素如果自己從頭播，
+ * 畫面上就是「已經升到一半的列突然掉回去重播」，看起來就是卡一下。
+ * 所以每一批（開播那一批、照片上的按鈕那一批）都記住第一段動畫實際的起跑時間，
+ * 之後長出來的元素直接對齊到那個時間：接在跟原本那一個完全相同的進度上，看不出換過元素。 */
+let leadReveal: Animation | null = null, leadLand: Animation | null = null;
 function hold(j: Job) {
   j.held = j.el.animate(j.k, { ...j.opts, delay: 0, duration: 1 });
   j.held.pause();   // 停在第一格（fill backwards → 看不見）
@@ -151,7 +157,13 @@ const glassy = (el: HTMLElement) => hasBackdrop(el) || !!el.querySelector('[clas
 function startJob(j: Job) {
   try {
     j.held?.cancel();
+    const lead = j.after ? leadLand : leadReveal;
     const a = j.el.animate(j.k, j.opts);
+    if (lead) {
+      /* 對齊到這一批的起跑時間（起跑時間還沒定的話，等它定了再對齊；這之間停在第一格、看不見） */
+      if (lead.startTime != null) a.startTime = lead.startTime;
+      else { a.pause(); void lead.ready.then(() => { try { a.startTime = lead.startTime; } catch { a.play(); } }, () => a.play()); }
+    } else if (j.after) leadLand = a; else leadReveal = a;
     const restore = () => { if (j.el.style.willChange === 'transform, opacity') j.el.style.willChange = j.wc ?? ''; };
     a.finished.then(restore, restore);
   } catch { /* 元素已經不在 */ }
@@ -237,7 +249,8 @@ function runEnter(root: HTMLElement, E: R) {
   const blocks = chromeBlocks(root, E).filter(b => !entered.has(b.el));
   if (!blocks.length) return;
   /* 開播之後過一陣子才長出來的：短短進場、不錯開；開播當下（0.35 秒內）工具換版面重新長出來的，照樣完整分層進場 */
-  const late = revealed && performance.now() - revealT > 350;
+  /* 晚長出來的元素也用完整的分層時間（對齊同一條時間軸，見 Job），不再另外縮短 */
+  const late = false;
   const rects = blocks.map(b => b.el.getBoundingClientRect());
   const top: number[] = [], bottom: number[] = [], over: number[] = [];
   rects.forEach((r, i) => (blocks[i].onPhoto ? over : (r.top + r.height / 2) < E.y ? top : bottom).push(i));
@@ -246,7 +259,7 @@ function runEnter(root: HTMLElement, E: R) {
   /* after：疊在照片上的按鈕要等飛進來的替身完全交接掉才開播 ——
      替身永遠在最上層，先播的話按鈕看起來會在照片底下 */
   const anim = (el: HTMLElement, k: Keyframe[], delay: number, dur: number, after = false) => {
-    const job: Job = { el, k, opts: { duration: dur, delay, easing: ENTER_EASE, fill: 'backwards' } };
+    const job: Job = { el, k, opts: { duration: dur, delay, easing: ENTER_EASE, fill: 'backwards' }, after };
     if (after && !landed) { hold(job); afterLand.push(job); }
     else if (!revealed) { hold(job); pending.push(job); }
     else startJob(job);
@@ -319,7 +332,7 @@ function revealEnter() {
 function startEnter(E: R, failsafeMs: number) {
   stopEnter();
   deferHeavyWork(motionMs('importFly') + 1200);
-  revealed = false; landed = false; enterE = E; enterRoot = null;
+  revealed = false; landed = false; enterE = E; enterRoot = null; leadReveal = null; leadLand = null;
   enterFailsafe = window.setTimeout(revealEnter, failsafeMs);
   const check = () => {
     const root = document.querySelector<HTMLElement>('.safe-top');

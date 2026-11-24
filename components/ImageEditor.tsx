@@ -45,7 +45,7 @@ import { LutGpu } from '../utils/lutGpu';
 import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from '../utils/fxSurfaceGl';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, releaseLargeFxBuffers, presentFxSource, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import {warmLowfiLut} from '../utils/lowfiLut';
-import { isPhotoInteractionBusy } from '../utils/photoInteractionIdle';
+import { isPhotoInteractionBusy, awaitPhotoIdle } from '../utils/photoInteractionIdle';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
 import {effectControlValue,effectStoredValue,effectControlMin,effectControlStep,isContinuousEffectControl} from '../utils/effectControlValues';
 import {effectPreset,LEGACY_EFFECT_PRESETS} from '../utils/effectPresets';
@@ -7128,19 +7128,28 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         // 這兩趟空跑是為了讓 JIT 先把像素迴圈編譯起來，整個編輯器開著只需要做一次。
         // 批量編輯換照片時再做一次是白花時間（換一張要多等 0.15～0.27 秒）。
         if (!pipelineWarmedRef.current) {
-          processPixels(pData, buffers.current.preview.dest!, pw, ph, WARMUP_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, getCurveLuts(WARMUP_PARAMS.curves));
-          processPixels(pData, buffers.current.preview.dest!, pw, ph, DEFAULT_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, getCurveLuts(DEFAULT_PARAMS.curves));
+          pipelineWarmedRef.current = true;
+          /* 預熱不再在打開的這一瞬間同步跑整張（1800px 跑兩趟＝主執行緒卡住好幾百毫秒，正好撞上介面進場動畫）：
+             改成進場動畫播完、主執行緒有空時（awaitPhotoIdle）才跑，而且只用照片的前 40 萬個像素、
+             寫進自己的暫存陣列 —— 迴圈跑的次數足夠讓 JIT 升到最快那一層，跟整張跑的效果一樣，
+             也不會碰到畫面正在用的緩衝區。使用者第一次拖滑桿前早就跑完了 */
+          const rows = Math.max(1, Math.min(ph, Math.ceil(400000 / pw)));
+          const wSrc = pData.slice(0, pw * rows * 4), wDst = new Uint8ClampedArray(wSrc.length);
+          const wBase = new Uint8Array(256); generateBaseCorrectionLut(0, 0, 0, wBase);
+          void awaitPhotoIdle(2500).then(() => {
+          processPixels(wSrc, wDst, pw, rows, WARMUP_PARAMS, null, 0, wBase, null, false, getCurveLuts(WARMUP_PARAMS.curves));
+          processPixels(wSrc, wDst, pw, rows, DEFAULT_PARAMS, null, 0, wBase, null, false, getCurveLuts(DEFAULT_PARAMS.curves));
           // HSL 分支如果沒有被上面兩次身分參數覆蓋，要到首次拖動時才觸發 JIT，
           // 因而只在前幾次手勢卡頓。用最多 192×192 的工作區先跑兩次，足以
           // 最佳化熱點，又不會拿整張 1800px 預覽做無意義的重運算。
           const hw = Math.min(pw, 192), hh = Math.min(ph, 192);
           const hLen = hw * hh * 4;
-          const hSrc = pData.subarray(0, hLen);
+          const hSrc = wSrc.subarray(0, Math.min(hLen, wSrc.length));
           const hDst = new Uint8ClampedArray(hLen);
           const hCurves = getCurveLuts(WARMUP_HSL_PARAMS.curves);
-          processPixels(hSrc, hDst, hw, hh, WARMUP_HSL_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, hCurves);
-          processPixels(hSrc, hDst, hw, hh, WARMUP_HSL_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, hCurves);
-          pipelineWarmedRef.current = true;
+          processPixels(hSrc, hDst, hw, hh, WARMUP_HSL_PARAMS, null, 0, wBase, null, false, hCurves);
+          processPixels(hSrc, hDst, hw, hh, WARMUP_HSL_PARAMS, null, 0, wBase, null, false, hCurves);
+          });
         }
         // 已經用預熱的畫面補上調整後的樣子了，就別再畫一次原圖 —— 那會閃一下。
         if (warmPaintedSrcRef.current !== warmKey) render(DEFAULT_PARAMS, 0);

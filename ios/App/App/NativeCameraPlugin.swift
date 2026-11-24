@@ -55,6 +55,7 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         CAPPluginMethod(name: "setRect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setDate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "snapshot", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setSessionPaused", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setLevel", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setLocation", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "showMenu", returnType: CAPPluginReturnPromise),
@@ -158,6 +159,24 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             self.previewHidden = hidden
             self.view?.isHidden = hidden
             call.resolve()
+        }
+    }
+
+    /// 相簿完全蓋住相機時暫停鏡頭（省電、不發熱、隱私指示燈熄掉）；回到相機時恢復。
+    /// 只停「拍攝工作階段」：觀景窗、設定、濾鏡都留著，恢復時不用重新設定，幾格內就有畫面。
+    /// 這段期間相機被關掉（stop）或重開（start）都以那邊為準：恢復只在同一次開啟的相機上做
+    private var pausedGeneration: Int? = nil
+    @objc func setSessionPaused(_ call: CAPPluginCall) {
+        let paused = call.getBool("paused") ?? false
+        let gen = currentGeneration()
+        sessionQueue.async {
+            if paused {
+                if self.session.isRunning { self.session.stopRunning(); self.pausedGeneration = gen }
+            } else if self.pausedGeneration == gen, gen == self.currentGeneration() {
+                self.pausedGeneration = nil
+                if !self.session.isRunning { self.session.startRunning() }
+            }
+            call.resolve(["running": self.session.isRunning])
         }
     }
 
