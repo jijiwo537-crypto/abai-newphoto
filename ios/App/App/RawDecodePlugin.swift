@@ -18,6 +18,7 @@
 
 import Foundation
 import Capacitor
+import CryptoKit
 import os
 import CoreImage
 import UIKit
@@ -192,6 +193,12 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         let look: [String: Any]? = call.getObject("look")
         let w = call.getInt("w") ?? 0, h = call.getInt("h") ?? 0, bw = call.getInt("bw") ?? 0, bh = call.getInt("bh") ?? 0
         headlessQueue.async {
+            /* 同一張 RAW、同一組設定之前沖過：直接用存下來的結果（不用重新解 RAW），見 RawLinearCache */
+            let ckey = RawLinearCache.key(path: path, look: look, w: w, h: h, bw: bw, bh: bh)
+            if let k = ckey, let hit = RawLinearCache.load(k) {
+                self.rawLog.notice("RawDecode developLinear cache hit")
+                call.resolve(hit); return
+            }
             guard let s = self.headlessSession(path, look: look, longSide: 2048) else { call.reject("系統不認得這個 RAW 格式"); return }
             guard s.gpuLookOk, w > 0, h > 0, bw > 0, bh > 0 else {
                 call.resolve(["gpu": false, "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint]); return
@@ -210,6 +217,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
                     out["fx"] = ["soft": fx.soft, "blur": fx.blur, "lowfi": fx.lowfi]
                     if let u = fx.lowfiCube { out["lowfiCubePath"] = u.path; out["lowfiCubeSize"] = fx.lowfiSize }
                 }
+                if let k = ckey { RawLinearCache.store(k, out) }
                 call.resolve(out)
             } catch { call.reject(error.localizedDescription) }
         }
@@ -376,5 +384,112 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
             throw RawError.encodeFailed
         }
         return (jpeg, Int(extent.width), Int(extent.height))
+    }
+}
+
+
+/// RAW 沖洗結果的磁碟快取（網頁 GPU 沖洗用的線性資料、色彩表）。
+/// 同一張 RAW 再打開（同一個檔案、沒被改過、同一組拍照樣子與尺寸）直接拿存下來的，不用重新解 RAW。
+/// ‧ 放在系統的 Caches（空間不夠時系統可以自己清，不會算進使用者的備份）
+/// ‧ 總量上限 300MB，超過就從最久沒用的開始刪
+/// ‧ 鑰匙包含檔案的修改時間與大小：原檔被改過就自然對不上、重新沖
+/// ‧ 回傳的是快取檔的複本（APFS 上複製是瞬間的，不多佔空間）：網頁讀完會刪掉回傳的檔案，快取本身不受影響
+enum RawLinearCache {
+    static let limit: Int64 = 300 * 1024 * 1024
+    static let version = "v1"
+    static let dir: URL = {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("abai-raw-linear", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base
+    }()
+    /// 會被存成檔案的欄位（路徑）
+    static let fileKeys = ["path", "basePath", "cubePath", "lowfiCubePath", "matchCubePath"]
+
+    static func key(path: String, look: [String: Any]?, w: Int, h: Int, bw: Int, bh: Int) -> String? {
+        guard let url = ABAIImageCore.fileURL(from: path),
+              let attr = try? FileManager.default.attributesOfItem(atPath: url.path) else { return nil }
+        let size = (attr[.size] as? NSNumber)?.int64Value ?? 0
+        /* 用檔案內容認（大小＋開頭與結尾各 256KB）：從照片 App 導入的 RAW 每次都是新的暫存檔名，
+           相機相簿的 RAW 路徑也可能因 App 更新改變 —— 內容一樣就是同一張；原檔被改過內容就不同、自然重沖 */
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? fh.close() }
+        let chunk = 256 * 1024
+        var hasher = SHA256()
+        hasher.update(data: fh.readData(ofLength: chunk))
+        if size > Int64(chunk * 2) { fh.seek(toFileOffset: UInt64(size - Int64(chunk))); hasher.update(data: fh.readData(ofLength: chunk)) }
+        let lookStr = (try? JSONSerialization.data(withJSONObject: look ?? [:], options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        hasher.update(data: Data("\(version)|\(size)|\(lookStr)|\(w)x\(h)|\(bw)x\(bh)".utf8))
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func load(_ k: String) -> [String: Any]? {
+        let d = dir.appendingPathComponent(k, isDirectory: true)
+        let fm = FileManager.default
+        guard let data = try? Data(contentsOf: d.appendingPathComponent("meta.json")),
+              var out = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        var copies: [URL] = []
+        for fk in fileKeys {
+            guard let name = out[fk] as? String else { continue }
+            let src = d.appendingPathComponent(name)
+            let ext = src.pathExtension.isEmpty ? "bin" : src.pathExtension
+            let dst = ABAIImageCore.newFileURL(ext: ext)
+            do { try fm.copyItem(at: src, to: dst) } catch {
+                for c in copies { try? fm.removeItem(at: c) }
+                try? fm.removeItem(at: d)   // 不完整的快取：丟掉，下次重沖
+                return nil
+            }
+            copies.append(dst)
+            out[fk] = dst.path
+        }
+        /* 用過：更新時間（清理時最久沒用的先刪） */
+        try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: d.path)
+        return out
+    }
+
+    static func store(_ k: String, _ result: [String: Any]) {
+        let fm = FileManager.default
+        let d = dir.appendingPathComponent(k, isDirectory: true)
+        let tmp = dir.appendingPathComponent(k + ".tmp-" + UUID().uuidString, isDirectory: true)
+        do {
+            try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
+            var meta = result
+            for fk in fileKeys {
+                guard let p = result[fk] as? String else { continue }
+                let src = URL(fileURLWithPath: p)
+                let name = fk + "." + (src.pathExtension.isEmpty ? "bin" : src.pathExtension)
+                try fm.copyItem(at: src, to: tmp.appendingPathComponent(name))
+                meta[fk] = name
+            }
+            let json = try JSONSerialization.data(withJSONObject: meta)
+            try json.write(to: tmp.appendingPathComponent("meta.json"))
+            try? fm.removeItem(at: d)
+            try fm.moveItem(at: tmp, to: d)   // 整份寫完才換上：讀的人不會讀到寫一半的
+        } catch {
+            try? fm.removeItem(at: tmp)
+            return
+        }
+        trim()
+    }
+
+    /// 超過上限：從最久沒用的開始刪
+    static func trim() {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) else { return }
+        var items: [(url: URL, date: Date, size: Int64)] = []
+        var total: Int64 = 0
+        for e in entries {
+            let date = (try? e.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            var size: Int64 = 0
+            if let files = try? fm.contentsOfDirectory(at: e, includingPropertiesForKeys: [.fileSizeKey]) {
+                for f in files { size += Int64((try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+            }
+            items.append((e, date, size)); total += size
+        }
+        guard total > limit else { return }
+        for it in items.sorted(by: { $0.date < $1.date }) {
+            if total <= limit { break }
+            try? fm.removeItem(at: it.url)
+            total -= it.size
+        }
     }
 }
