@@ -7114,7 +7114,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const cvs = displayCanvasRef.current;
         /* 閒著的時候先把 GPU 暖起來（上傳貼圖、建表、跑一次空 draw）。
            不先做的話這些一次性成本會落在手指按下滑桿的第一幀，就是「抖一下」。 */
-        if (!isDirtyRef.current && !isInteractingRef.current && performance.now() - lastUiInputRef.current > 800 && b?.source && b.w && b.h) {
+        /* 背景暖機（GPU 貼圖、濾鏡色彩表、拖曳用的預備畫面）：儲存中不做，主執行緒讓給儲存中的畫面和儲存本身 */
+        if (!saveBusyRef.current && !isDirtyRef.current && !isInteractingRef.current && performance.now() - lastUiInputRef.current > 800 && b?.source && b.w && b.h) {
             warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${srcIdent()}`);
             /* 貼圖暖好之後，接著一顆一顆把濾鏡的查色表也烤起來。
                每次閒置只烤一顆，主執行緒馬上還回去。 */
@@ -8018,15 +8019,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     </div>
   );
   const handleSave = () => {
-    if (!originalImgRef.current || saveBusyRef.current || saveState !== 'idle') return;
+    if (saveBusyRef.current || saveState !== 'idle') return;
     saveBusyRef.current = true;
     const request = ++saveRequestRef.current;
     if (isInteracting) setIsInteracting(false);
-    setSaveState('processing');
+    /* 按下去的這一刻就同步畫出「儲存中」：不排隊等下一輪更新（剛打開 App 時背景暖機會把下一輪拖得很久） */
+    flushSync(() => setSaveState('processing'));
     setTimeout(async () => {
         try {
             /* 「儲存中」那一層確定畫到螢幕上才開始（剛打開 App 時主執行緒還在暖機，固定等一下不保證畫得出來） */
             await afterBusyPainted();
+            /* 剛打開就按儲存、原圖還在解碼：先顯示儲存中、等它好（以前是直接不理，按了沒反應） */
+            for (let w = 0; w < 300 && !originalImgRef.current; w++) await new Promise(r => setTimeout(r, 50));
+            if (!originalImgRef.current) throw new Error('原圖還沒準備好');
             /* RAW：手放開後的精算還沒換上的話，先等它（存的一定是從 RAW 精算的結果） */
             await rawPendingRef.current;
             // 人像／仿色剛交回來的那張還在背景編碼：先等它換進來源清單
@@ -9286,7 +9291,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       {saveState === 'idle' && !firstReady && (isEditorLoading || !previewLayoutReady || !rawFirstDone) && (
         /* 首次解碼期間必須完全遮住預覽；半透明遮罩會把底下 canvas 從初始尺寸
            切換到正確比例的那一幀透出來，看起來就像圖片上下抖了一下。 */
-        <div data-editor-initial-loading className="fixed inset-0 z-[120] flex items-center justify-center bg-[#080808]">
+        <div data-editor-initial-loading className="fixed inset-0 z-[120] flex items-center justify-center bg-black">
+          {/* 純黑：跟前面相簿「匯出中」、App「匯入中」那兩層同一個顏色，整段載入過程背景不會變色 */}
           {/* 跟匯入時同一款、同一個位置（蓋滿工具頁的框、正中央），從匯入接過來不會跳、不會換字 */}
           <ImportSpinner />
         </div>

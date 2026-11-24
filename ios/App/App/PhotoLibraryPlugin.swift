@@ -361,13 +361,23 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
         return thumbDir.appendingPathComponent("\(safe)_\(size).jpg")
     }
 
-    /// rawIds({ ids }) → { raw: [id] }：其中哪幾張是 RAW（只看檔案類型，很快）
+    /// 導入時會不會拿到 RAW 檔：原始檔是 RAW，而且沒有被編輯過。
+    /// 匯出用的是「目前版本」（exportPhoto 的 version = .current）：在「照片」App 編輯過的 RAW，匯出的是編輯後的 JPEG ——
+    /// 判斷要跟實際拿到的一致，不然會先顯示「正在解析RAW」、拿到的卻是一般照片
+    fileprivate func importsAsRaw(_ a: PHAsset) -> Bool {
+        let res = PHAssetResource.assetResources(for: a)
+        if res.contains(where: { $0.type == .fullSizePhoto || $0.type == .adjustmentData }) { return false }
+        guard let r = res.first(where: { $0.type == .photo }) ?? res.first, let t = UTType(r.uniformTypeIdentifier) else { return false }
+        return t.conforms(to: .rawImage)
+    }
+
+    /// rawIds({ ids }) → { raw: [id] }：其中哪幾張導入時是 RAW（只看檔案類型與有沒有編輯過，很快）
     @objc func rawIds(_ call: CAPPluginCall) {
         let ids = (call.getArray("ids") as? [String]) ?? []
         work.async {
             var out: [String] = []
             PHAsset.fetchAssets(withLocalIdentifiers: ids, options: nil).enumerateObjects { a, _, _ in
-                if let r = self.photoResource(a), let t = UTType(r.uniformTypeIdentifier), t.conforms(to: .rawImage) { out.append(a.localIdentifier) }
+                if self.importsAsRaw(a) { out.append(a.localIdentifier) }
             }
             call.resolve(["raw": out])
         }
@@ -416,8 +426,7 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
                 self.imageManager.requestImage(for: a, targetSize: CGSize(width: size, height: size), contentMode: .aspectFill, options: o) { img, _ in done(img) }
             }
             for id in ids {
-                if skipRaw, let a = byId[id], let r = self.photoResource(a),
-                   let t = UTType(r.uniformTypeIdentifier), t.conforms(to: .rawImage) { continue }
+                if skipRaw, let a = byId[id], self.importsAsRaw(a) { continue }
                 let url = self.thumbURL(id, size)
                 if FileManager.default.fileExists(atPath: url.path) {
                     lock.lock(); out.append(["id": id, "path": url.path]); lock.unlock(); continue
