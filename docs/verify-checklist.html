@@ -1,0 +1,80 @@
+<title>ABAI 驗收清單</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* 單欄清單：分組標題 + 可勾選項目，底部固定列顯示進度與複製按鈕 */
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1b1f27;--mute:#667085;--line:#e3e6ec;--accent:#2f6fde;--ok:#1f9d61;
+--f:"Inter",-apple-system,"PingFang TC","Noto Sans TC",sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1218;--card:#171b23;--fg:#e8ebf1;--mute:#97a0b3;--line:#262c38;--accent:#6c9cff;--ok:#3ccf8a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1218;--card:#171b23;--fg:#e8ebf1;--mute:#97a0b3;--line:#262c38;--accent:#6c9cff;--ok:#3ccf8a;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--f);font-size:15px;line-height:1.55}
+main{max-width:760px;margin:0 auto;padding-block:20px 120px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1{font-size:22px;margin:0 0 4px}.sub{color:var(--mute);margin:0 0 20px;font-size:13.5px}
+section{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:14px;overflow:hidden}
+h2{font-size:14px;letter-spacing:.04em;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between}
+h2 span{color:var(--mute);font-weight:500;font-variant-numeric:tabular-nums}
+label{display:flex;gap:12px;padding:11px 14px;border-top:1px solid var(--line);cursor:pointer}
+label:first-of-type{border-top:0}
+input{width:20px;height:20px;flex:none;margin-top:2px;accent-color:var(--ok)}
+.t{font-weight:600}.e{color:var(--mute);font-size:13.5px}
+label:has(input:checked) .t{color:var(--mute);text-decoration:line-through}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--line);padding:10px max(16px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;gap:10px;align-items:center}
+.bar b{font-variant-numeric:tabular-nums}.bar .sp{flex:1}
+button{font:inherit;font-weight:600;border:0;border-radius:9px;padding:9px 14px;background:var(--accent);color:#fff;cursor:pointer}
+button.g{background:transparent;color:var(--mute);border:1px solid var(--line)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+textarea{width:100%;box-sizing:border-box;min-height:160px;margin-top:10px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:10px;font:13px ui-monospace,monospace}
+</style>
+<main>
+<h1>ABAI 驗收清單</h1>
+<p class="sub">這幾天所有改動。勾掉你在 iPhone 上確認過的；按「複製未驗證項目」把剩下的貼給 Codex。勾選只存在這台裝置。對應 commit：d0b268c（main）。</p>
+<div id="list"></div>
+<textarea id="out" hidden readonly></textarea>
+</main>
+<div class="bar"><span>已驗證 <b id="cnt">0</b></span><span class="sp"></span><button class="g" id="reset">清除勾選</button><button id="copy">複製未驗證項目</button></div>
+<script>
+const G=[
+["相機拍照",[
+["自拍所見即所得","前鏡頭拍一張，與 iPhone 原生相機同場景對比：亮度、膚色、亮部不過曝，與觀景窗一致"],
+["後鏡頭亮部沒有色階斷層","拍天空／燈光，亮部平滑漸層，無色塊、無偏色"],
+["成品來自 Apple 處理圖＋濾鏡","套濾鏡拍照，相簿成品畫質＝原生相機等級，濾鏡效果與預覽一致"],
+["RAW 檔在照片 App 不再先灰","開 RAW 拍攝，照片 App 打開時縮圖立即正常色，不會先灰再變"],
+["拍完左下縮圖彈出正常","連拍數張，縮圖每次更新、無閃爍"]]],
+["相機相簿與動畫",[
+["相簿上滑速度與曲線","點左下縮圖，相簿起步俐落、尾段不拖；關閉下滑先加速後收"],
+["相簿按鈕位置正確","打開後「多選」「返回」玻璃按鈕在正確位置，沒有往下偏或消失"],
+["點開大圖流暢（新）","點格子放大到全螢幕，120Hz 順暢不掉格，裁切從方形自然展開、無變形"],
+["下拉關閉縮回格子（新）","大圖往下拉放開，縮回原格子位置且裁成方形，順暢、無拉扁；落地後格子圖正常"],
+["下拉沒關閉時回彈","輕拉一點放開，回彈順暢"],
+["從相簿進編輯整頁滑動","大圖 → 編輯 → 返回，上滑／下滑順暢不掉格"],
+["全 App 高更新率（新）","任一換頁／返回滑動，肉眼感覺 120Hz（Pro 機型）"]]],
+["RAW 編輯",[
+["RAW 編輯器預設色＝Apple 成品","匯入 RAW，未調整時顏色與照片 App 的同一張幾乎一致"],
+["GPU 調整即時順暢","拖曝光、白平衡、曲線等滑桿，預覽即時無卡頓"],
+["暗部漸層無斷層","把對比／陰影拉大，天空暗部平滑"],
+["特效在 RAW 上正確","RAW 套特效，預覽與輸出一致"],
+["編輯器載入遮罩純黑","打開編輯時沒有灰／彩色閃一下"]]],
+["儲存與輸出",[
+["冷啟動後第一次儲存有動畫","殺掉 App 重開，編輯後第一次儲存立刻出現轉圈並正常完成"],
+["RAW 16 位元輸出","RAW 編輯後儲存，成品與預覽一致，無斷層"],
+["裁切／透視校正輸出正確","套透視、旋轉後儲存，成品幾何與預覽一致、邊緣乾淨"],
+["批次儲存","多張同時套用並儲存，全部成功、順序正確"],
+["點陣文字、藝術效果、美顏不變","各快速套一次，結果與先前一樣"]]],
+["匯入",[
+["匯入提示與實際一致","已在照片 App 編輯過的 RAW 不顯示「以 RAW 匯入」；未編輯的才顯示"],
+["匯入時不跳「匯入中」與背景變色","匯入 RAW，畫面無異常提示、背景不變色"],
+["返回首頁無殘影","匯入中途或失敗後回首頁，沒有照片替身停在首頁"],
+["照片飛入工具順暢","一般照片匯入時飛入動畫順暢"]]]
+];
+const K='abai-verify-v1';let st={};try{st=JSON.parse(localStorage.getItem(K)||'{}')}catch(e){}
+const L=document.getElementById('list');let n=0;
+G.forEach(([g,items],gi)=>{const s=document.createElement('section');s.innerHTML=`<h2>${g}<span></span></h2>`;
+items.forEach(([t,e],ii)=>{const id=`c${gi}_${ii}`;const l=document.createElement('label');l.innerHTML=`<input type="checkbox" id="${id}"><div><div class="t">${t}</div><div class="e">${e}</div></div>`;
+const c=l.querySelector('input');c.checked=!!st[id];c.onchange=()=>{st[id]=c.checked;try{localStorage.setItem(K,JSON.stringify(st))}catch(e){}upd()};s.appendChild(l);n++});L.appendChild(s)});
+function upd(){let d=0;document.querySelectorAll('section').forEach(s=>{const a=s.querySelectorAll('input'),k=[...a].filter(x=>x.checked).length;d+=k;s.querySelector('h2 span').textContent=`${k}/${a.length}`});document.getElementById('cnt').textContent=`${d}/${n}`}
+upd();
+document.getElementById('reset').onclick=()=>{st={};try{localStorage.removeItem(K)}catch(e){}document.querySelectorAll('input').forEach(x=>x.checked=false);upd()};
+document.getElementById('copy').onclick=()=>{let o='請在 iPhone 上驗證以下項目（commit d0b268c，main）。逐項回報通過／失敗與觀察到的現象，未實測的不要標通過：\n';
+G.forEach(([g,items],gi)=>{const r=items.filter((_,ii)=>!st[`c${gi}_${ii}`]);if(r.length){o+=`\n【${g}】\n`;r.forEach(([t,e])=>o+=`- ${t}：${e}\n`)}});
+const ta=document.getElementById('out');ta.value=o;const b=document.getElementById('copy');
+(navigator.clipboard?navigator.clipboard.writeText(o):Promise.reject()).then(()=>{b.textContent='已複製'},()=>{ta.hidden=false;ta.select();b.textContent='請手動複製下方文字'});setTimeout(()=>b.textContent='複製未驗證項目',2000)};
+</script>
