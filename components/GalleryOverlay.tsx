@@ -14,20 +14,32 @@ const bezierEase = (x1: number, y1: number, x2: number, y2: number) => (t: numbe
 };
 const IOS_EASE = bezierEase(0.32, 0.72, 0, 1);
 function flipCrop(outer: HTMLElement, inners: HTMLElement[], w: number, h: number, a: CropState, b: CropState,
-  duration: number, fill: FillMode = 'none', ease: (t: number) => number = IOS_EASE): Promise<void> {
-  const N = 40, of: Keyframe[] = [], inf: Keyframe[] = [];
-  for (let i = 0; i <= N; i++) {
-    const p = ease(i / N), L = (x: number, y: number) => x + (y - x) * p;
+  duration: number, fill: 'none' | 'forwards' = 'none', ease: (t: number) => number = IOS_EASE): Promise<void> {
+  /* 每一格在同一個 requestAnimationFrame 裡同時寫外框和內層的 transform：
+     兩個分開的 GPU 動畫在 iOS 上起跑時間可能差一格，裁切和位置會對不上（看起來跑位、或直接跳到終點）；
+     同一格一起寫就絕對同步，而且只改 transform（不重畫圖），120Hz 照樣跑得動 */
+  const op = a.o != null || b.o != null;
+  const set = (p: number) => {
+    const L = (x: number, y: number) => x + (y - x) * p;
     const s = L(a.s, b.s), ix = L(a.ix, b.ix), iy = L(a.iy, b.iy);
     const sx = Math.max(1e-4, (w - 2 * ix) / w), sy = Math.max(1e-4, (h - 2 * iy) / h);
-    const k: Keyframe = { offset: i / N, transform: `translate3d(${L(a.tx, b.tx)}px,${L(a.ty, b.ty)}px,0) scale(${s * sx},${s * sy})` };
-    if (a.o != null || b.o != null) k.opacity = L(a.o ?? 1, b.o ?? 1);
-    of.push(k);
-    inf.push({ offset: i / N, transform: `scale(${1 / sx},${1 / sy})` });
-  }
-  const opts: KeyframeAnimationOptions = { duration, easing: 'linear', fill };
-  const anims = [outer.animate(of, opts), ...inners.map(el => el.animate(inf, opts))];
-  return Promise.all(anims.map(x => x.finished.catch(() => {}))).then(() => {});
+    outer.style.transform = `translate3d(${L(a.tx, b.tx)}px,${L(a.ty, b.ty)}px,0) scale(${s * sx},${s * sy})`;
+    if (op) outer.style.opacity = String(L(a.o ?? 1, b.o ?? 1));
+    for (const el of inners) el.style.transform = `scale(${1 / sx},${1 / sy})`;
+  };
+  set(0);
+  return new Promise(resolve => {
+    let t0 = -1;
+    const step = (now: number) => {
+      if (t0 < 0) t0 = now;   // 從第一個真正畫出來的格子起算，不會一開始就跳一段
+      const t = duration > 0 ? Math.min(1, (now - t0) / duration) : 1;
+      set(ease(t));
+      if (t < 1) { requestAnimationFrame(step); return; }
+      if (fill === 'none') { outer.style.transform = ''; if (op) outer.style.opacity = ''; for (const el of inners) el.style.transform = ''; }
+      resolve();
+    };
+    requestAnimationFrame(step);
+  });
 }
 import { createPortal } from 'react-dom';
 import { Icon } from './Icon';

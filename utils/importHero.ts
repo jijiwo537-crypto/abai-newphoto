@@ -123,6 +123,64 @@ function hide(el: HTMLElement | null) {
   if (o) { hiddenEl = o; hiddenPrev = o.style.opacity; o.style.opacity = '0'; }
 }
 
+/* ── 工具介面的進場 ──
+ * 照片由替身飛進來；工具的其他介面（上方標題列、下方工具列、分頁）不再一口氣冒出來，而是分層進場：
+ *   上方的列：從上方 10px 輕輕落下＋淡入；下方的各列：由上而下依序從下方 26px 升起＋淡入，每列錯開 45ms。
+ * 只用 transform／opacity（GPU 合成），動畫用 fill: backwards（開始前就套第一格、結束後完全移除），
+ * 播完之後元素身上沒有任何殘留的樣式，跟沒有動畫的版本 100% 一樣。
+ * 照片本身（以及包著照片的那幾層）不動：用預期的照片框判斷哪一塊是照片，只動照片以外的介面。 */
+const ENTER_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
+let enterObs: MutationObserver | null = null, enterRoot: HTMLElement | null = null, enterT0 = 0;
+const entered = new WeakSet<Element>();
+function chromeBlocks(root: HTMLElement, E: R): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  const cx = E.x + E.w / 2, cy = E.y + E.h / 2;
+  const walk = (el: HTMLElement, depth: number) => {
+    for (const c of Array.from(el.children) as HTMLElement[]) {
+      if (c.hasAttribute('data-import-hero') || c.hasAttribute('data-import-spinner')) continue;
+      const r = c.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) { if (depth < 8 && c.children.length) walk(c, depth + 1); continue; }
+      const coversPhoto = r.left <= cx && r.right >= cx && r.top <= cy && r.bottom >= cy && r.width * r.height >= E.w * E.h * 0.5;
+      if (coversPhoto) { if (depth < 8) walk(c, depth + 1); continue; }
+      out.push(c);
+    }
+  };
+  walk(root, 0);
+  return out;
+}
+function runEnter(root: HTMLElement, E: R, late: boolean) {
+  const blocks = chromeBlocks(root, E).filter(b => !entered.has(b));
+  if (!blocks.length) return;
+  const rects = blocks.map(b => b.getBoundingClientRect());
+  const top: number[] = [], bottom: number[] = [];
+  rects.forEach((r, i) => ((r.top + r.height / 2) < E.y ? top : bottom).push(i));
+  bottom.sort((a, b) => rects[a].top - rects[b].top);
+  const play = (el: HTMLElement, dy: number, delay: number, dur: number) => {
+    entered.add(el);
+    el.animate([{ opacity: 0, transform: `translate3d(0, ${dy}px, 0)` }, { opacity: 1, transform: 'translate3d(0, 0, 0)' }],
+      { duration: dur, delay, easing: ENTER_EASE, fill: 'backwards' });
+  };
+  /* 晚一點才出現的介面（工具載入中途才長出來的列）：直接短短淡入升起，不再錯開 */
+  top.forEach(i => play(blocks[i], -10, late ? 0 : 40, late ? 320 : 420));
+  bottom.forEach((i, n) => play(blocks[i], 26, late ? 0 : 90 + Math.min(n, 6) * 45, late ? 360 : 520));
+}
+function startEnter(E: R) {
+  stopEnter();
+  const check = () => {
+    const root = document.querySelector<HTMLElement>('.safe-top');
+    if (!root) return;
+    const now = performance.now();
+    if (root !== enterRoot) { enterRoot = root; enterT0 = now; runEnter(root, E, false); return; }
+    /* 進場開始後 1.2 秒內新長出來的介面也接著進場；之後就不再管，維持原樣 */
+    if (now - enterT0 < 1200) runEnter(root, E, true); else stopEnter();
+  };
+  /* MutationObserver 在 React 寫進畫面之後、瀏覽器畫出來之前就會跑：第一格就是動畫的起點，不會先閃一下完整介面 */
+  enterObs = new MutationObserver(check);
+  enterObs.observe(document.body, { childList: true, subtree: true });
+  check();
+}
+function stopEnter() { enterObs?.disconnect(); enterObs = null; enterRoot = null; }
+
 /** 終點（替身停在這裡等工具畫好） */
 let end: R | null = null;
 
@@ -134,6 +192,8 @@ export function beginImportHero(kind: string | undefined, rect: DOMRect, src: st
   landing = false;
   const E = predict(kind ?? 'edit', ar);
   end = E;
+  /* 現在已經有工具頁（不在主頁）不播：heroAllowed 已經擋掉，這裡只在主頁開始 */
+  startEnter(E);
   const g = document.createElement('div');
   g.setAttribute('data-import-hero', '');
   /* 替身本身就是終點的大小與位置；起點用 transform 把它縮回那一格、再裁成那一格的正方形 */
@@ -228,6 +288,7 @@ function finish(g: HTMLDivElement, ms: number) {
 /** 取消（使用者按了取消、選了很多張、出錯、逾時） */
 export function cancelImportHero() {
   token++;
+  stopEnter();
   landing = false;
   cancelAnimationFrame(raf);
   unhide();

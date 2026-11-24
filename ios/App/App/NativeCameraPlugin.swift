@@ -295,6 +295,12 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             c.automaticallyAdjustsVideoMirroring = false
             c.isVideoMirrored = position == .front
         }
+        /* 拍出來的照片不鏡像（跟 iPhone 原相機預設「前置鏡頭鏡像」關閉一樣：觀景窗像照鏡子，成品是別人看到的樣子）。
+           照片輸出的連線預設會自動跟著前鏡頭鏡像，要明確關掉；RAW 本來就不鏡像，兩者一致 */
+        if let c = photoOutput.connection(with: .video), c.isVideoMirroringSupported {
+            c.automaticallyAdjustsVideoMirroring = false
+            c.isVideoMirrored = false
+        }
         installSystemControls(dev)
     }
 
