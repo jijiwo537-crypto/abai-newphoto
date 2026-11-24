@@ -2,6 +2,7 @@
    列出所有介面過場動畫：在哪裡看得到、預覽、拖滑桿調整時長。調整的值存在這台裝置，App 立刻照新的值播；
    「複製設定」把調整過的值複製成一段文字，貼給開發者改成新的預設值。 */
 import React, { useMemo, useRef, useState } from 'react';
+import { MotionStage, type MotionStageApi } from './MotionStage';
 import { MOTION_ITEMS, ms, setMotion, resetMotion, motionOverrides, type MotionItem } from '../utils/motionTimings';
 
 const FLAG = 'abai-motion-tuner';
@@ -24,32 +25,12 @@ export function tapForMotionTuner() {
   if (taps.length >= 5) { taps = []; armMotionTuner(); }
 }
 
-function Preview({ item, value }: { item: MotionItem; value: number }) {
-  const box = useRef<HTMLDivElement>(null);
-  const play = () => {
-    const el = box.current; if (!el) return;
-    const frames: Keyframe[] =
-      item.kind === 'move' ? [{ transform: 'translateX(-70px)', opacity: 0.4 }, { transform: 'translateX(0)', opacity: 1 }]
-      : item.kind === 'scale' ? [{ transform: 'scale(0.3)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }]
-      : item.kind === 'fade' ? [{ opacity: 0 }, { opacity: 1 }]
-      : [{ transform: 'scale(1)' }, { transform: 'scale(0.82)', offset: 0.4 }, { transform: 'scale(1)' }];
-    el.getAnimations().forEach(a => a.cancel());
-    el.animate(frames, { duration: value, easing: item.easing, fill: 'both' });
-  };
-  return (
-    <div className="flex items-center gap-2">
-      <div className="relative w-16 shrink-0 h-9 rounded-lg bg-white/5 overflow-hidden flex items-center justify-center">
-        <div ref={box} className="w-6 h-6 rounded-md bg-white" />
-      </div>
-      <button onClick={play} className="h-8 px-3 shrink-0 whitespace-nowrap rounded-full bg-white/15 text-white text-[12px] active:scale-95">預覽</button>
-    </div>
-  );
-}
-
 export function MotionTuner() {
   const [open, setOpen] = useState(false);
   const [, force] = useState(0);
   const [copied, setCopied] = useState(false);
+  const stage = useRef<MotionStageApi>(null);
+  const [slow, setSlow] = useState(1);
   const groups = useMemo(() => {
     const m = new Map<string, MotionItem[]>();
     for (const it of MOTION_ITEMS) { if (!m.has(it.group)) m.set(it.group, []); m.get(it.group)!.push(it); }
@@ -74,13 +55,17 @@ export function MotionTuner() {
       </button>
       {open && (
         <div className="fixed inset-0 z-[2147483601] bg-black/70 flex flex-col" onClick={() => setOpen(false)}>
-          <div className="mt-auto max-h-[88vh] bg-[#151515] rounded-t-3xl flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 pt-4 pb-2">
-              <div>
-                <h2 className="text-white font-bold text-[15px]">動畫時長</h2>
-                <p className="text-white/50 text-[11px] mt-0.5">拖滑桿調整，關掉面板後照「位置」去操作就能看到實際效果。調好按「複製設定」貼給我。</p>
+          <div className="h-[100dvh] bg-[#151515] rounded-t-3xl flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 pt-3 pb-1">
+              <h2 className="text-white font-bold text-[15px]">動畫時長</h2>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setSlow(v => (v === 1 ? 3 : 1))} className={`shrink-0 whitespace-nowrap h-8 px-3 rounded-full text-[12px] ${slow > 1 ? 'bg-[#ff9f0a] text-black font-bold' : 'bg-white/10 text-white/80'}`}>慢動作 ×3</button>
+                <button onClick={() => setOpen(false)} className="shrink-0 whitespace-nowrap text-white/70 text-[13px] px-2">關閉</button>
               </div>
-              <button onClick={() => setOpen(false)} className="shrink-0 whitespace-nowrap text-white/70 text-[13px] px-2">關閉</button>
+            </div>
+            {/* 情境預覽：照 App 的版面重現每個過場，用的就是下面目前的時長 */}
+            <div className="px-4 pb-2 pt-1 border-b border-white/10">
+              <MotionStage ref={stage} slow={slow} />
             </div>
             <div className="overflow-y-auto px-4 pb-4">
               {groups.map(([g, items]) => (
@@ -95,7 +80,7 @@ export function MotionTuner() {
                             <div className="text-white text-[13px] font-medium">{it.label}</div>
                             <div className="text-white/45 text-[11px] mt-0.5">位置：{it.where}</div>
                           </div>
-                          <Preview item={it} value={v} />
+                          <button onClick={() => stage.current?.play(it.id)} className="h-8 px-3 shrink-0 whitespace-nowrap rounded-full bg-white/15 text-white text-[12px] active:scale-95">預覽</button>
                         </div>
                         <div className="flex items-center gap-2 mt-2">
                           <input type="range" min={0} max={1500} step={10} value={v} onChange={e => set(it.id, Number(e.target.value))} className="flex-1 accent-[#ff9f0a]" aria-label={it.label} />
