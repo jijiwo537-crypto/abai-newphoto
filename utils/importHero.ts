@@ -13,6 +13,7 @@
 import { nativePathOf } from './nativeBridge';
 import { ms as motionMs } from './motionTimings';
 import { nativeDownsample, nativeImage } from './nativeImage';
+import { deferHeavyWork } from './photoInteractionIdle';
 
 type R = { x: number; y: number; w: number; h: number };
 
@@ -143,13 +144,13 @@ type Job = { el: HTMLElement; k: Keyframe[]; opts: KeyframeAnimationOptions; hel
 function hold(j: Job) {
   j.held = j.el.animate(j.k, { ...j.opts, delay: 0, duration: 1 });
   j.held.pause();   // 停在第一格（fill backwards → 看不見）
-  j.wc = j.el.style.willChange;
-  j.el.style.willChange = 'transform, opacity';
+  /* 毛玻璃（或裡面有毛玻璃）的元素不提前標 will-change：獨立成 GPU 圖層後，毛玻璃取到的背景會不一樣 */
+  if (!glassy(j.el)) { j.wc = j.el.style.willChange; j.el.style.willChange = 'transform, opacity'; }
 }
+const glassy = (el: HTMLElement) => hasBackdrop(el) || !!el.querySelector('[class*="backdrop-"],[style*="backdrop"]');
 function startJob(j: Job) {
   try {
     j.held?.cancel();
-    if (j.wc === undefined) { j.wc = j.el.style.willChange; j.el.style.willChange = 'transform, opacity'; }
     const a = j.el.animate(j.k, j.opts);
     const restore = () => { if (j.el.style.willChange === 'transform, opacity') j.el.style.willChange = j.wc ?? ''; };
     a.finished.then(restore, restore);
@@ -272,6 +273,7 @@ function runEnter(root: HTMLElement, E: R) {
 }
 /** 替身交接完了（或根本沒有替身）：照片上的按鈕開播 */
 function landNow() {
+  if (!landed) deferHeavyWork(700);
   landed = true;
   const list = afterLand; afterLand = [];
   for (const j of list) startJob(j);
@@ -280,6 +282,7 @@ function landNow() {
 function revealEnter() {
   if (revealed) return;
   revealed = true; revealT = performance.now();
+  deferHeavyWork(1000);   // 進場這一秒：工具的背景工作（濾鏡縮圖、著色器預編）先等，主執行緒留給動畫
   window.clearTimeout(enterFailsafe);
   cancelAnimationFrame(rawRaf);
   const list = pending; pending = [];
@@ -291,6 +294,7 @@ function revealEnter() {
 }
 function startEnter(E: R, failsafeMs: number) {
   stopEnter();
+  deferHeavyWork(motionMs('importFly') + 1200);
   revealed = false; landed = false; enterE = E; enterRoot = null;
   enterFailsafe = window.setTimeout(revealEnter, failsafeMs);
   const check = () => {
@@ -388,21 +392,18 @@ export function beginImportHero(kind: string | undefined, rect: DOMRect, src: st
 /** 飛完就停在終點：等工具把照片畫好、位置穩定，放回照片本人、替身淡掉。替身這段完全不動 */
 function watch(my: number) {
   const g = ghost!;
-  let target: HTMLElement | null = null, tr: R | null = null, stableSince = 0, lastFind = 0;
+  let target: HTMLElement | null = null, tr: R | null = null, stableSince = 0;
   const t0 = performance.now();
   const step = (now: number) => {
     if (my !== token || !g.isConnected) return;
-    /* 找照片本人要量版面、暫時改透明度：每 80ms 做一次就夠，不要每一格都做（會跟進場動畫搶主執行緒） */
-    if (landing && now - lastFind < 80) { raf = requestAnimationFrame(step); return; }
-    if (landing) lastFind = now;
     /* 介面不用等照片完全就定位：替身飛到七成、工具頁已經掛上來，就開始進場（跟照片落地重疊，更連貫） */
     if (!revealed && now - t0 > motionMs('importFly') * 0.7 && document.querySelector('.safe-top')) revealEnter();
     if (landing) {
       if (target && !target.isConnected) { target = null; hide(null); }
-      const prev = hiddenEl; if (prev) prev.style.opacity = hiddenPrev;
+      /* 每一格都找（新的照片元素一出現當格就藏起來，不會在替身底下閃一下）；
+         不再為了找它把藏起來的照片暫時切回不透明（透明的元素一樣點得到、量得到），省掉每格的重畫 */
       let el: HTMLElement | null = null;
       try { el = findTarget(); } catch { el = null; }
-      if (prev) prev.style.opacity = '0';
       if (el) {
         if (el !== target) { target = el; stableSince = 0; }
         hide(el);
@@ -450,9 +451,10 @@ function finish(g: HTMLDivElement, ms: number) {
   window.clearTimeout(failsafe);
   document.documentElement.removeAttribute('data-import-hero');
   const tmp = tempPath; tempPath = null;
+  /* 照片本人已經放回來了：照片上的按鈕跟替身淡出同時開始浮上來（不用等替身完全消失，才不會慢半拍） */
+  window.setTimeout(landNow, ms * 0.4);   // 替身淡到一半多一點（照片本人已經看得到）就開始
   g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {}).finally(() => {
     g.remove();
-    landNow();
     if (tmp) void nativeImage().then(p => p?.remove({ path: tmp })).catch(() => {});
   });
 }

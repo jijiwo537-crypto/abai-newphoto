@@ -44,6 +44,7 @@ import { LutGpu } from '../utils/lutGpu';
 import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from '../utils/fxSurfaceGl';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, releaseLargeFxBuffers, presentFxSource, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import {warmLowfiLut} from '../utils/lowfiLut';
+import { isPhotoInteractionBusy } from '../utils/photoInteractionIdle';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
 import {effectControlValue,effectStoredValue,effectControlMin,effectControlStep,isContinuousEffectControl} from '../utils/effectControlValues';
 import {effectPreset,LEGACY_EFFECT_PRESETS} from '../utils/effectPresets';
@@ -4432,6 +4433,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const others = srcList.map(thumbSrcOf).filter((u, i, a) => u !== cur && a.indexOf(u) === i);
     const run = () => {
       if (cancelled()) return;
+      /* 剛打開（介面進場動畫中）先不算縮圖：主執行緒留給動畫，播完立刻接著算 */
+      if (isPhotoInteractionBusy()) { window.setTimeout(run, 60); return; }
       noteThumbSrc(cur);
       let pixels: Uint8ClampedArray | null = null;
       const curPixels = () => {
@@ -4439,7 +4442,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         return pixels;
       };
       const steps: (() => void)[] = [];
-      const next = () => { if (cancelled()) return; const f = steps.shift(); if (f) window.setTimeout(f, 0); };
+      const next = () => { if (cancelled()) return; if (isPhotoInteractionBusy()) { window.setTimeout(next, 60); return; } const f = steps.shift(); if (f) window.setTimeout(f, 0); };
       for (const k of order) steps.push(() => {
         if (thumbSrcOf(buffersSrcRef.current) !== cur) return next();
         if (k === 'filter') { if (filterThumbsMissing(cur)) buildFilterThumbs(cur, curPixels(), cancelled, next); else next(); }
@@ -4721,6 +4724,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         : (cb) => { window.setTimeout(cb, 120); };
     const step = () => {
       if (stop || i >= FX_DEFS.length) return;
+      if (isPhotoInteractionBusy()) { window.setTimeout(() => idle(step), 80); return; }
       warmFx(FX_DEFS[i++].id);
       idle(step);
     };
