@@ -90,9 +90,9 @@ const FS = `#version 300 es
 precision highp float;
 in vec2 vUv; out vec4 outColor;
 uniform sampler2D uLin, uBase;
-uniform highp sampler3D uCube;
-uniform float uGain, uExpo, uHi, uSh, uLutAmt, uCubeSize;
-uniform bool uWbOn, uLutOn, uFxOn, uDither;
+uniform highp sampler3D uCube, uMatch;
+uniform float uGain, uExpo, uHi, uSh, uLutAmt, uCubeSize, uMatchSize;
+uniform bool uWbOn, uLutOn, uFxOn, uDither, uMatchOn;
 uniform mat3 uWb, uToSrgb, uFromSrgb;
 const vec3 W = vec3(0.2289746, 0.6917385, 0.0792869);
 float srgbOetf(float v) { return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055; }
@@ -148,6 +148,10 @@ void main() {
     c = mix(c, vec3(f), t * t * 0.6);
   }
   c = clamp(c, 0.0, 1.0);
+  if (uMatchOn) {                                                // ⑥' 跟 Apple 的成像對齊（原生 applyMatch：Display P3 編碼值上查表）
+    vec3 e = oetf3(c);
+    c = eotf3(texture(uMatch, (e * (uMatchSize - 1.0) + 0.5) / uMatchSize).rgb);
+  }
   if (uLutOn) {                                                  // ⑥ 拍照時套的濾鏡（原生 applyLook：CIColorCubeWithColorSpace，sRGB 編碼值上查表，再依強度混合）
     vec3 e = oetf3(gamutSrgb(uToSrgb * c));
     vec3 uvw = (e * (uCubeSize - 1.0) + 0.5) / uCubeSize;
@@ -269,6 +273,7 @@ export class RawGpu {
   private u: Record<string, WebGLUniformLocation | null> = {};
   /* 相機特效 */
   private fx: RawGpuFx | null = null;
+  private match: WebGLTexture | null = null; private matchSize = 0;
   private fxProg: { down: WebGLProgram; blur: WebGLProgram; fx: WebGLProgram } | null = null;
   private lowCube: WebGLTexture | null = null; private lowCubeSize = 0;
   /** 中間的貼圖能不能用半精度浮點（不能就用 8 位元） */
@@ -278,7 +283,8 @@ export class RawGpu {
 
   /** 建不起來（沒有 WebGL2、資料不對）丟例外，呼叫端改走原生出像素那條 */
   constructor(lin: Uint16Array, w: number, h: number, base: Uint16Array, bw: number, bh: number, asShot: [number, number],
-    lut?: { data: Float32Array; size: number; amount: number } | null, fx?: RawGpuFx | null) {
+    lut?: { data: Float32Array; size: number; amount: number } | null, fx?: RawGpuFx | null,
+    match?: { data: Float32Array; size: number } | null) {
     if (lin.length !== w * h * 4 || base.length !== bw * bh * 4) throw new Error('raw-gpu: size');
     const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1;
     const gl = cv.getContext('webgl2', { premultipliedAlpha: false, preserveDrawingBuffer: false, antialias: false });
@@ -300,7 +306,7 @@ export class RawGpu {
     };
     const prog = link(FS);
     this.prog = prog;
-    for (const n of ['uLin', 'uBase', 'uCube', 'uGain', 'uExpo', 'uHi', 'uSh', 'uLutAmt', 'uCubeSize', 'uWbOn', 'uLutOn', 'uFxOn', 'uDither', 'uWb', 'uToSrgb', 'uFromSrgb']) this.u[n] = gl.getUniformLocation(prog, n);
+    for (const n of ['uLin', 'uBase', 'uCube', 'uMatch', 'uGain', 'uExpo', 'uHi', 'uSh', 'uLutAmt', 'uCubeSize', 'uMatchSize', 'uWbOn', 'uLutOn', 'uMatchOn', 'uFxOn', 'uDither', 'uWb', 'uToSrgb', 'uFromSrgb']) this.u[n] = gl.getUniformLocation(prog, n);
     if (fx && (fx.soft > 0.001 || fx.blur > 0.001 || fx.lowfi > 0.001)) {
       if (fx.lowfi > 0.001 && !(fx.lowfiCube && fx.lowfiCube.size >= 2)) throw new Error('raw-gpu: lowfi cube');
       this.fx = fx;
@@ -334,6 +340,7 @@ export class RawGpu {
       for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_3D, k, v);
       this.cube = t; this.cubeSize = lut.size; this.lutAmt = Math.max(0, Math.min(1, lut.amount));
     }
+    if (match && match.size >= 2) { this.match = this.cube3d(match.data, match.size); this.matchSize = match.size; }
     if (this.fx?.lowfiCube) this.lowCube = this.cube3d(this.fx.lowfiCube.data, this.fx.lowfiCube.size), this.lowCubeSize = this.fx.lowfiCube.size;
     if (gl.getError() !== gl.NO_ERROR) throw new Error('raw-gpu: upload');
   }
@@ -414,6 +421,9 @@ export class RawGpu {
     gl.uniform1f(this.u.uLutAmt, this.lutAmt);
     gl.uniform1f(this.u.uCubeSize, Math.max(2, this.cubeSize));
     gl.uniformMatrix3fv(this.u.uFromSrgb, true, new Float32Array(SRGB_TO_P3));
+    gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_3D, this.match); gl.uniform1i(this.u.uMatch, 4);
+    gl.uniform1i(this.u.uMatchOn, this.match ? 1 : 0);
+    gl.uniform1f(this.u.uMatchSize, Math.max(2, this.matchSize));
     const wb = rawWbMatrix(p, this.asShot);
     gl.uniform1i(this.u.uWbOn, wb ? 1 : 0);
     /* GLSL 的 mat3 是行優先：傳列優先的資料要轉置 */
@@ -464,7 +474,7 @@ export class RawGpu {
     const gl = this.gl;
     for (const { fb, tex } of this.fbs.values()) { gl.deleteFramebuffer(fb); gl.deleteTexture(tex); }
     this.fbs.clear();
-    gl.deleteTexture(this.lin); gl.deleteTexture(this.base); if (this.cube) gl.deleteTexture(this.cube); if (this.lowCube) gl.deleteTexture(this.lowCube);
+    gl.deleteTexture(this.lin); gl.deleteTexture(this.base); if (this.cube) gl.deleteTexture(this.cube); if (this.match) gl.deleteTexture(this.match); if (this.lowCube) gl.deleteTexture(this.lowCube);
     gl.deleteProgram(this.prog); if (this.fxProg) { gl.deleteProgram(this.fxProg.down); gl.deleteProgram(this.fxProg.blur); gl.deleteProgram(this.fxProg.fx); }
     gl.getExtension('WEBGL_lose_context')?.loseContext();
   }

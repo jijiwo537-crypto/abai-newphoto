@@ -345,6 +345,100 @@ enum ABAIRawDevelop {
         return img.cropped(to: e)
     }
 
+    // MARK: ⑥' 跟 Apple 的成像對齊（相機拍的 RAW）
+
+    /// 相機拍的 RAW：拍照時 Apple 處理好的那張（look["match"]，還沒套濾鏡）跟我們預設參數沖出來的逐區域比對，
+    /// 算出「我們的成像 → Apple 的成像」的 3D 對應表（Display P3 編碼值上，n³）。
+    /// 跟 Lightroom 的相機設定檔同一個概念，但是每一張各自匹配：預設參數下編輯器裡看到的就是拍出來的樣子；
+    /// 對應表套在 RAW 沖洗之後，拉曝光、救亮部用的仍然是 RAW 的完整資料
+    static func buildMatchCube(ours: CIImage, apple: CIImage, n N: Int = 17) -> ABAIImageCore.Cube? {
+        let e = ours.extent, ae = apple.extent
+        guard e.width > 8, e.height > 8, ae.width > 8, ae.height > 8, !e.isInfinite, !ae.isInfinite else { return nil }
+        /* 縮到長邊 192、輕微模糊再比：兩張的對位有一點點差（鏡頭校正、裁切）也不會影響，比的是每一區的顏色 */
+        let s = 192 / max(e.width, e.height)
+        let W = max(8, Int((e.width * s).rounded())), H = max(8, Int((e.height * s).rounded()))
+        func px(_ img: CIImage, _ ex: CGRect) -> [Float]? {
+            let t = img.transformed(by: CGAffineTransform(translationX: -ex.minX, y: -ex.minY))
+                .transformed(by: CGAffineTransform(scaleX: CGFloat(W) / ex.width, y: CGFloat(H) / ex.height))
+            let r = CGRect(x: 0, y: 0, width: W, height: H)
+            let b = t.clampedToExtent().applyingGaussianBlur(sigma: 1.0).cropped(to: r)
+            var buf = [Float](repeating: 0, count: W * H * 4)
+            buf.withUnsafeMutableBytes { p in
+                ABAIImageCore.context.render(b, toBitmap: p.baseAddress!, rowBytes: W * 16, bounds: r, format: .RGBAf, colorSpace: ABAIImageCore.displayP3)
+            }
+            return buf
+        }
+        guard let A = px(ours, e), let B = px(apple, ae) else { return nil }
+        let NN = N * N * N, M = Double(N - 1)
+        var sw = [Double](repeating: 0, count: NN), sr = sw, sg = sw, sb = sw
+        for i in 0..<(W * H) {
+            let a = (min(1, max(0, Double(A[i * 4]))), min(1, max(0, Double(A[i * 4 + 1]))), min(1, max(0, Double(A[i * 4 + 2]))))
+            let b = (Double(B[i * 4]), Double(B[i * 4 + 1]), Double(B[i * 4 + 2]))
+            let fx = a.0 * M, fy = a.1 * M, fz = a.2 * M
+            let x0 = min(N - 2, Int(fx)), y0 = min(N - 2, Int(fy)), z0 = min(N - 2, Int(fz))
+            let tx = fx - Double(x0), ty = fy - Double(y0), tz = fz - Double(z0)
+            for dz in 0...1 { for dy in 0...1 { for dx in 0...1 {
+                let w = (dx == 1 ? tx : 1 - tx) * (dy == 1 ? ty : 1 - ty) * (dz == 1 ? tz : 1 - tz)
+                if w <= 0 { continue }
+                let idx = ((z0 + dz) * N + (y0 + dy)) * N + (x0 + dx)
+                sw[idx] += w; sr[idx] += w * b.0; sg[idx] += w * b.1; sb[idx] += w * b.2
+            }}}
+        }
+        /* 每一格：Apple 的平均顏色減掉格點本身＝要移動多少。樣本少的格子往「不動」收（不讓少數像素帶偏） */
+        var off = [SIMD3<Double>](repeating: .zero, count: NN)
+        var known = [Bool](repeating: false, count: NN)
+        for z in 0..<N { for y in 0..<N { for x in 0..<N {
+            let idx = (z * N + y) * N + x
+            guard sw[idx] > 1e-6 else { continue }
+            let g = SIMD3(Double(x) / M, Double(y) / M, Double(z) / M)
+            let mean = SIMD3(sr[idx], sg[idx], sb[idx]) / sw[idx]
+            off[idx] = (mean - g) * (sw[idx] / (sw[idx] + 2))
+            known[idx] = true
+        }}}
+        /* 照片裡沒出現過的顏色：從鄰近有樣本的格子平滑地延伸過去 */
+        func nb(_ x: Int, _ y: Int, _ z: Int, _ f: (Int) -> Void) {
+            if x > 0 { f((z * N + y) * N + x - 1) }; if x < N - 1 { f((z * N + y) * N + x + 1) }
+            if y > 0 { f((z * N + y - 1) * N + x) }; if y < N - 1 { f((z * N + y + 1) * N + x) }
+            if z > 0 { f(((z - 1) * N + y) * N + x) }; if z < N - 1 { f(((z + 1) * N + y) * N + x) }
+        }
+        for _ in 0..<48 {
+            var next = off
+            for z in 0..<N { for y in 0..<N { for x in 0..<N {
+                let idx = (z * N + y) * N + x
+                if known[idx] { continue }
+                var acc = SIMD3<Double>.zero, c = 0.0
+                nb(x, y, z) { acc += off[$0]; c += 1 }
+                next[idx] = c > 0 ? acc / c : .zero
+            }}}
+            off = next
+        }
+        /* 最後整體輕輕平滑一次：對應表不會有突兀的轉折 */
+        var smooth = off
+        for z in 0..<N { for y in 0..<N { for x in 0..<N {
+            let idx = (z * N + y) * N + x
+            var acc = SIMD3<Double>.zero, c = 0.0
+            nb(x, y, z) { acc += off[$0]; c += 1 }
+            smooth[idx] = c > 0 ? off[idx] * 0.5 + (acc / c) * 0.5 : off[idx]
+        }}}
+        var data = [Float](repeating: 1, count: NN * 4)
+        for z in 0..<N { for y in 0..<N { for x in 0..<N {
+            let idx = (z * N + y) * N + x
+            let v = SIMD3(Double(x) / M, Double(y) / M, Double(z) / M) + smooth[idx]
+            data[idx * 4] = Float(min(1, max(0, v.x))); data[idx * 4 + 1] = Float(min(1, max(0, v.y))); data[idx * 4 + 2] = Float(min(1, max(0, v.z)))
+        }}}
+        return ABAIImageCore.Cube(size: N, data: data.withUnsafeBufferPointer { Data(buffer: $0) })
+    }
+
+    /// 套對應表（Display P3 編碼值上查，跟網頁 GPU 同一個方式）
+    static func applyMatch(_ img: CIImage, _ c: ABAIImageCore.Cube) -> CIImage {
+        guard let f = CIFilter(name: "CIColorCubeWithColorSpace") else { return img }
+        f.setValue(img, forKey: kCIInputImageKey)
+        f.setValue(c.size, forKey: "inputCubeDimension")
+        f.setValue(c.data, forKey: "inputCubeData")
+        f.setValue(ABAIImageCore.displayP3, forKey: "inputColorSpace")
+        return f.outputImage?.cropped(to: img.extent) ?? img
+    }
+
     /// 拍照當下的樣子（⑦）：比例裁切、小框、濾鏡、特效、日期
     static func applyLook(_ input: CIImage, look: [String: Any]?, withDate: Bool) -> CIImage {
         guard let look = look else { return input }
@@ -436,9 +530,29 @@ final class ABAIRawSession {
         proxyKey = p.rawKey
     }
 
+    /// 跟 Apple 的成像對齊用的對應表（相機拍的 RAW 才有，見 ABAIRawDevelop.buildMatchCube）。第一次用到時算一次
+    private var matchCube: ABAIImageCore.Cube?
+    private var matchTried = false
+    /// 要在沖洗自己的佇列上呼叫
+    private func ensureMatch() {
+        guard !matchTried else { return }
+        matchTried = true
+        guard let path = look?["match"] as? String, !path.isEmpty, let u = ABAIImageCore.fileURL(from: path),
+              FileManager.default.fileExists(atPath: u.path), let apple = ABAIImageCore.ciImage(u) else { return }
+        if proxy == nil { rebuild(ABAIRawParams(nil)) }
+        guard let lin = proxy, let base = proxyBase else { return }
+        let ours = ABAIRawDevelop.finish(lin, base: base, ABAIRawParams(nil), asShot: (asShotTemperature, asShotTint))
+        matchCube = ABAIRawDevelop.buildMatchCube(ours: ours, apple: apple)
+    }
+    private func matched(_ img: CIImage) -> CIImage {
+        guard let m = matchCube else { return img }
+        return ABAIRawDevelop.applyMatch(img, m)
+    }
+
     private func render(_ p: ABAIRawParams) -> CIImage? {
+        ensureMatch()
         guard let lin = proxy, let base = proxyBase else { return nil }
-        return ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(lin, base: base, p, asShot: (asShotTemperature, asShotTint)), look: look, withDate: false)
+        return ABAIRawDevelop.applyLook(matched(ABAIRawDevelop.finish(lin, base: base, p, asShot: (asShotTemperature, asShotTint))), look: look, withDate: false)
     }
 
     /// 打開時的第一格：同步算好（在沖洗自己的佇列上），讓畫面先有圖，網頁才把那一塊挖空 ——
@@ -556,6 +670,14 @@ final class ABAIRawSession {
     }
 
     var gpuLookOk: Bool { ABAIRawDevelop.lookGpuOk(look) }
+    /// 跟 Apple 成像對齊的對應表寫成檔案給網頁 GPU 用（沒有回 nil）
+    func matchCubeFile() throws -> (URL, Int)? {
+        let c: ABAIImageCore.Cube? = queue.sync { ensureMatch(); return matchCube }
+        guard let cube = c else { return nil }
+        let u = ABAIImageCore.newFileURL(ext: "cube")
+        try cube.data.write(to: u)
+        return (u, cube.size)
+    }
     /// 相機特效的強度，和低保真用的色彩表（寫成檔案給網頁 GPU 用）
     func lookFx() throws -> (soft: Double, blur: Double, lowfi: Double, lowfiCube: URL?, lowfiSize: Int) {
         let fx = ABAICameraFx(look?["fx"] as? [String: Any])
@@ -583,7 +705,8 @@ final class ABAIRawSession {
             throw ABAIImageCore.CoreError.decode
         }
         let base = ABAIRawDevelop.localBase(lin)
-        let img = ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(lin, base: base, p, asShot: (asShotTemperature, asShotTint)), look: look, withDate: true)
+        queue.sync { ensureMatch() }
+        let img = ABAIRawDevelop.applyLook(matched(ABAIRawDevelop.finish(lin, base: base, p, asShot: (asShotTemperature, asShotTint))), look: look, withDate: true)
         if format == "tiff16" {
             guard let data = ABAIImageCore.context.tiffRepresentation(of: img, format: .RGBA16, colorSpace: ABAIImageCore.displayP3, options: [:]) else { throw ABAIImageCore.CoreError.encode }
             let out = ABAIImageCore.newFileURL(ext: "tif")

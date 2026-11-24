@@ -60,7 +60,7 @@ export async function captureNative(o: {
   date?: string | null;
   /** 保留原始圖片：沒開 RAW 時，沒套濾鏡的原圖也留下來（originalPath，呼叫端存完要刪） */
   keepOriginal?: boolean;
-}): Promise<{ url: string; path: string; cleanPath?: string; rawPath?: string; renderedPath?: string; originalPath?: string; cropZoom: number; /** 有日期時：沒印日期的同一張（編輯用這張，存檔時再印） */ cleanUrl?: string } | null> {
+}): Promise<{ url: string; path: string; cleanPath?: string; rawPath?: string; renderedPath?: string; originalPath?: string; matchPath?: string; cropZoom: number; /** 有日期時：沒印日期的同一張（編輯用這張，存檔時再印） */ cleanUrl?: string } | null> {
   const cam = await nativeCamera(), img = await nativeImage();
   if (!cam || !img) return null;
   /* 小框：鏡頭真的變焦過去拍（清楚）；變不到的部分才用裁切補 */
@@ -75,9 +75,13 @@ export async function captureNative(o: {
     develop: o.develop || undefined, gps: shot.location || undefined,
     format: 'jpeg', quality: 0.95,
   });
-  /* 保留原始圖片（沒開 RAW）：系統拍的那張原圖留給呼叫端存相簿；不然就刪 */
+  /* 保留原始圖片（沒開 RAW）：系統拍的那張原圖留給呼叫端存相簿。
+     拍了 RAW：Apple 處理好的那張（還沒套濾鏡）留在相機相簿資料夾，編輯 RAW 時讓預設成像對齊它（進編輯不會變樣）。
+     其他情況就刪 */
   const originalPath = o.keepOriginal && !shot.rawPath ? shot.path : undefined;
-  if (!originalPath) img.remove({ path: shot.path }).catch(() => {});
+  let matchPath: string | undefined;
+  if (shot.rawPath) { try { matchPath = img.persist ? (await img.persist({ path: shot.path })).path : shot.path; } catch { matchPath = undefined; } }
+  else if (!originalPath) img.remove({ path: shot.path }).catch(() => {});
   /* 日期：先留一張沒印的（之後編輯都改這張，日期不會被調色、濾鏡影響），再從它印出成品 */
   let cleanPath: string | undefined;
   if (o.date) {
@@ -97,7 +101,7 @@ export async function captureNative(o: {
   const url = fileSrc(mainPath); rememberNativePath(url, mainPath);
   let cleanUrl: string | undefined;
   if (keptClean) { cleanUrl = fileSrc(keptClean); rememberNativePath(cleanUrl, keptClean); }
-  return { url, path: mainPath, cleanPath: keptClean, rawPath: keptRaw, renderedPath: keptRaw ? mainPath : undefined, originalPath, cropZoom, cleanUrl };
+  return { url, path: mainPath, cleanPath: keptClean, rawPath: keptRaw, renderedPath: keptRaw ? mainPath : undefined, originalPath, matchPath, cropZoom, cleanUrl };
 }
 
 /** 編輯完的圖重新印上日期（日期是「光加上去」的：畫面變暗，字自然更清楚）。沒有原生或失敗回 null */
@@ -129,6 +133,8 @@ export interface RawLook {
   lut: string; amount: number; aspect: number; zoom: number;
   fx?: { soft: number; blur: number; lowfi: number };
   date?: string | null;
+  /** 拍照時 Apple 處理好的那張（還沒套濾鏡）：編輯時讓 RAW 的預設成像對齊它（見 ABAIRawDevelop.buildMatchCube） */
+  match?: string;
 }
 
 /** 相機拍的 RAW（DNG 檔路徑）→ 沖成一張圖：iOS 內建的 RAW 解碼（從感光元件的原始資料算，亮部、暗部留得比一般照片多），
@@ -197,7 +203,7 @@ export interface RawBaseParams { exposure: number; temperature?: number; tint?: 
 type RawDevApi = {
   developPreview?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; maxPixel: number; final: boolean }): Promise<{ path: string; asShotTemperature: number; asShotTint: number }>;
   developFull?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; format?: 'jpeg' | 'tiff16' }): Promise<{ path: string }>;
-  developLinear?(o: { path: string; look: RawLook | null; w: number; h: number; bw: number; bh: number }): Promise<{ gpu: boolean; path?: string; basePath?: string; cubePath?: string; cubeSize?: number; lutAmount?: number; fx?: { soft: number; blur: number; lowfi: number }; lowfiCubePath?: string; lowfiCubeSize?: number; asShotTemperature: number; asShotTint: number }>;
+  developLinear?(o: { path: string; look: RawLook | null; w: number; h: number; bw: number; bh: number }): Promise<{ gpu: boolean; path?: string; basePath?: string; cubePath?: string; cubeSize?: number; lutAmount?: number; fx?: { soft: number; blur: number; lowfi: number }; lowfiCubePath?: string; lowfiCubeSize?: number; matchCubePath?: string; matchCubeSize?: number; asShotTemperature: number; asShotTint: number }>;
   developPixels?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; w: number; h: number; fw: number; fh: number }):
     Promise<{ path: string; fastPath: string; asShotTemperature: number; asShotTint: number }>;
 };
@@ -231,15 +237,15 @@ export async function rawDevelopPixels(path: string, b: RawBaseParams, look: Raw
 }
 /** 網頁 GPU 即時沖洗用的線性資料（線性 Display P3 半精度浮點）。gpu＝false：拍照時套了濾鏡、特效，網頁算不了。失敗回 null */
 export async function rawDevelopLinear(path: string, look: RawLook | null, w: number, h: number, bw: number, bh: number):
-  Promise<{ gpu: false; asShotTemperature: number; asShotTint: number } | { gpu: true; lin: Uint16Array; base: Uint16Array; cube: { data: Float32Array; size: number; amount: number } | null; fx: { soft: number; blur: number; lowfi: number; lowfiCube: { data: Float32Array; size: number } | null } | null; asShotTemperature: number; asShotTint: number } | null> {
+  Promise<{ gpu: false; asShotTemperature: number; asShotTint: number } | { gpu: true; lin: Uint16Array; base: Uint16Array; cube: { data: Float32Array; size: number; amount: number } | null; fx: { soft: number; blur: number; lowfi: number; lowfiCube: { data: Float32Array; size: number } | null } | null; match: { data: Float32Array; size: number } | null; asShotTemperature: number; asShotTint: number } | null> {
   const p = await rawDev(), img = await nativeImage();
   if (!p?.developLinear) return null;
-  let r: { gpu: boolean; path?: string; basePath?: string; cubePath?: string; cubeSize?: number; lutAmount?: number; fx?: { soft: number; blur: number; lowfi: number }; lowfiCubePath?: string; lowfiCubeSize?: number; asShotTemperature: number; asShotTint: number } | null = null;
+  let r: { gpu: boolean; path?: string; basePath?: string; cubePath?: string; cubeSize?: number; lutAmount?: number; fx?: { soft: number; blur: number; lowfi: number }; lowfiCubePath?: string; lowfiCubeSize?: number; matchCubePath?: string; matchCubeSize?: number; asShotTemperature: number; asShotTint: number } | null = null;
   try {
     r = await p.developLinear({ path, look, w, h, bw, bh });
     if (!r.gpu || !r.path || !r.basePath) return { gpu: false, asShotTemperature: r.asShotTemperature, asShotTint: r.asShotTint };
     const buf = async (f: string) => (await fetch(fileSrc(f))).arrayBuffer();
-    const [lb, bb, cb, fb] = await Promise.all([buf(r.path), buf(r.basePath), r.cubePath ? buf(r.cubePath) : Promise.resolve(null), r.lowfiCubePath ? buf(r.lowfiCubePath) : Promise.resolve(null)]);
+    const [lb, bb, cb, fb, mb] = await Promise.all([buf(r.path), buf(r.basePath), r.cubePath ? buf(r.cubePath) : Promise.resolve(null), r.lowfiCubePath ? buf(r.lowfiCubePath) : Promise.resolve(null), r.matchCubePath ? buf(r.matchCubePath) : Promise.resolve(null)]);
     const lin = new Uint16Array(lb), base = new Uint16Array(bb);
     if (lin.length !== w * h * 4 || base.length !== bw * bh * 4) return null;
     /* 拍照時套的濾鏡色彩表（size³ 個 RGBA Float32）：GPU 照原生同一份表查 */
@@ -256,9 +262,12 @@ export async function rawDevelopLinear(path: string, look: RawLook | null, w: nu
       if (fb && r.lowfiCubeSize) { const d = new Float32Array(fb); if (d.length !== r.lowfiCubeSize ** 3 * 4) return null; lowfiCube = { data: d, size: r.lowfiCubeSize }; }
       fx = { ...r.fx, lowfiCube };
     }
-    return { gpu: true, lin, base, cube, fx, asShotTemperature: r.asShotTemperature, asShotTint: r.asShotTint };
+    /* 跟 Apple 成像對齊的對應表（相機拍的 RAW 才有） */
+    let match: { data: Float32Array; size: number } | null = null;
+    if (mb && r.matchCubeSize) { const d = new Float32Array(mb); if (d.length !== r.matchCubeSize ** 3 * 4) return null; match = { data: d, size: r.matchCubeSize }; }
+    return { gpu: true, lin, base, cube, fx, match, asShotTemperature: r.asShotTemperature, asShotTint: r.asShotTint };
   } catch { return null; }
-  finally { if (r) for (const f of [r.path, r.basePath, r.cubePath, r.lowfiCubePath]) if (f) img?.remove({ path: f }).catch(() => {}); }
+  finally { if (r) for (const f of [r.path, r.basePath, r.cubePath, r.lowfiCubePath, r.matchCubePath]) if (f) img?.remove({ path: f }).catch(() => {}); }
 }
 /** 原尺寸、完整品質（存檔用）：檔案網址。失敗回 null */
 export async function rawDevelopFull(path: string, b: RawBaseParams, look: RawLook | null, format: 'jpeg' | 'tiff16' = 'jpeg'): Promise<string | null> {

@@ -308,7 +308,7 @@ function loadCamRoll() {
     for (const e0 of list) {
       if (!e0?.path) continue;
       const e: RollEntry = { ...e0, path: remapKeep(e0.path),
-        raw: e0.raw?.path ? { ...e0.raw, path: remapKeep(e0.raw.path) } : e0.raw,
+        raw: e0.raw?.path ? { ...e0.raw, path: remapKeep(e0.raw.path), look: e0.raw.look?.match ? { ...e0.raw.look, match: remapKeep(e0.raw.look.match) } : e0.raw.look } : e0.raw,
         clean: e0.clean?.path ? { ...e0.clean, path: remapKeep(e0.clean.path) } : e0.clean };
       const url = fileSrc(e.path); rememberNativePath(url, e.path);
       camRoll.photos.push(url);
@@ -1109,7 +1109,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         if (o.lutIdx > 0 && lutList[o.lutIdx]?.url) labelsRef.current.set(r.url, lutList[o.lutIdx].name);
         setPhotos(prev => [r.url, ...prev]);
         if (r.rawPath) {
-          rawOfRef.current.set(r.url, { path: r.rawPath, protectEV: o.raw ? RAW_PROTECT_EV : 0, look: { ...look, zoom: r.cropZoom } });   // 小框拍照時鏡頭已經變焦過，RAW 只要補剩下的裁切
+          rawOfRef.current.set(r.url, { path: r.rawPath, protectEV: o.raw ? RAW_PROTECT_EV : 0, look: { ...look, zoom: r.cropZoom, ...(r.matchPath ? { match: r.matchPath } : {}) } });   // 小框拍照時鏡頭已經變焦過，RAW 只要補剩下的裁切
           setRawShots(prev => new Set(prev).add(r.url));
         }
         /* 存進手機相簿（跟 Dazz 一樣）：每一張都存套好濾鏡、特效、日期的成品。真正的 RAW 留在 App 的相機相簿裡（重新編輯用）。
@@ -2151,7 +2151,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             prev.forEach((u, i) => {
               if (!del.has(i)) return;
               /* 相機相簿資料夾裡的檔案一起刪掉（成品、沒印日期的、RAW） */
-              const files = [nativePathOf(u), rawOfRef.current.get(u)?.path, (() => { const d = dateOfRef.current.get(u); return d ? nativePathOf(d.clean) : undefined; })()];
+              const files = [nativePathOf(u), rawOfRef.current.get(u)?.path, rawOfRef.current.get(u)?.look?.match, (() => { const d = dateOfRef.current.get(u); return d ? nativePathOf(d.clean) : undefined; })()];
               void nativeImage().then(n => files.forEach(f => { if (f) void n?.remove({ path: f }).catch(() => {}); }));
               forgetRaw(u); forgetDate(u); releaseUrl(u); labelsRef.current.delete(u);
             });
