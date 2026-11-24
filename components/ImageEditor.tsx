@@ -12,7 +12,8 @@ import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
-import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
+import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, rawDevelopLinear, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
+import { RawGpu } from '../utils/rawGpu';
 import { exposureEv } from '../utils/photoToneMath';
 
 /** RAW 照片：這幾個工具改調 raw* 欄位（由原生在 RAW 上做），網頁的那一份維持 0 */
@@ -8588,6 +8589,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     let busy = false;
     /** 上一次換上的是不是完整大小的那張 */
     let sharp = true;
+    /* GPU 即時沖洗（utils/rawGpu）：原生只交一次線性資料，之後每一格在網頁 GPU 上照同一套公式算。
+       建不起來（沒有 WebGL2、拍照時套了濾鏡或特效）就照舊每一格請原生出像素 */
+    let gpu: RawGpu | null = null;
+    let gpuFor = '';
+    /** 放手後：背景補一張完整的 JPEG 當正式來源（裁切、前後對比用）：不擋住下一次拖曳；這段時間又調了就不用了 */
+    const adoptLater = (want: Record<string, number>) => {
+      const wantKey = rawKeyOf(want as any);
+      void (async () => {
+        const j = await rawDevelopPreview(raw.path, rawBase({ ...DEFAULT_PARAMS, ...want }), raw.look, 2048, true);
+        if (!j || !alive || rawKeyOf(rawDevelopedRef.current as any) !== wantKey) return;
+        const im = await loadImg(j.url);
+        await im.decode?.().catch(() => {});
+        if (alive && rawKeyOf(rawDevelopedRef.current as any) === wantKey) adoptRawUrl(j.url, im);
+      })().catch(() => {});
+    };
     /* 拖的時候跟放手後用的是同一套運算（原生 RAW 沖洗）——看起來完全一樣，差別只在清晰度：
        拖的時候沖長邊 720 的（快，一直換上最新的），手放開再沖 2048 的完整那張。
        一次只沖一張，沖好就換上、馬上沖最新的值（不排隊、不會越拖越慢）。 */
@@ -8619,6 +8635,27 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           /* 拖曳代理（fast）拖的時候不會畫到畫面上（拖曳中一律畫全解析度）：拖的時候不沖，每格少傳一份；放手才補上 */
           const fw = final && cur.fast.source ? cur.fast.w : 0, fh = final && cur.fast.source ? cur.fast.h : 0;
           if (pw && ph && isGeoIdentity(geoRef.current)) {
+            const gk = `${pw}x${ph}`;
+            if (gpuFor !== gk) {
+              gpuFor = gk; gpu?.dispose(); gpu = null;
+              /* 底圖本來就是大範圍模糊過的：一半大小就夠（GPU 取樣時會平滑內插） */
+              const bw = Math.max(1, Math.round(pw / 2)), bh = Math.max(1, Math.round(ph / 2));
+              const L = await rawDevelopLinear(raw.path, raw.look, pw, ph, bw, bh);
+              if (!alive) return;
+              if (L && L.gpu) { try { gpu = new RawGpu(L.lin, pw, ph, L.base, bw, bh, [L.asShotTemperature, L.asShotTint]); } catch { gpu = null; } }
+            }
+            if (gpu && gpu.ok) {
+              const b = rawBase({ ...DEFAULT_PARAMS, ...want });
+              const pre = gpu.render(b);
+              const fast = pre && fw ? gpu.render(b, fw, fh) : null;
+              if (pre) {
+                if (!swapSourcePixels(pre, pw, ph, fast, fw, fh, `${srcListRef.current[safeIdxRef.current]}#rawpx${++pendingKeySeqRef.current}`)) return;
+                rawDevelopedRef.current = want;
+                sharp = final;
+                if (final) adoptLater(want);
+                return;
+              }
+            }
             /* 快速通道：原生照編輯頁預覽、拖曳代理的確切尺寸直接給像素 —— 拖曳中跟放手後是同一條路、同樣的像素
                （一樣的顏色、一樣的清晰度），也不用壓 JPEG、解 JPEG、重畫、讀回 */
             const px = await rawDevelopPixels(raw.path, rawBase({ ...DEFAULT_PARAMS, ...want }), raw.look, pw, ph, fw, fh);
@@ -8626,17 +8663,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             if (!swapSourcePixels(px.pixels, pw, ph, px.fast, fw, fh, `${srcListRef.current[safeIdxRef.current]}#rawpx${++pendingKeySeqRef.current}`)) return;
             rawDevelopedRef.current = want;
             sharp = final;
-            if (final) {
-              /* 背景補一張完整的 JPEG 當正式來源（裁切、前後對比用）：不擋住下一次拖曳；這段時間又調了就不用了 */
-              const wantKey = rawKeyOf(want as any);
-              void (async () => {
-                const j = await rawDevelopPreview(raw.path, rawBase({ ...DEFAULT_PARAMS, ...want }), raw.look, 2048, true);
-                if (!j || !alive || rawKeyOf(rawDevelopedRef.current as any) !== wantKey) return;
-                const im = await loadImg(j.url);
-                await im.decode?.().catch(() => {});
-                if (alive && rawKeyOf(rawDevelopedRef.current as any) === wantKey) adoptRawUrl(j.url, im);
-              })().catch(() => {});
-            }
+            if (final) adoptLater(want);
             return;
           }
           /* 有裁切（構圖）時照舊：沖一張圖、照幾何重建緩衝區 */
@@ -8655,7 +8682,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       })();
     };
     rafId = requestAnimationFrame(tick);
-    return () => { alive = false; cancelAnimationFrame(rafId); };
+    return () => { alive = false; cancelAnimationFrame(rafId); gpu?.dispose(); gpu = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [raw?.path]);
   const studioPrevRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });

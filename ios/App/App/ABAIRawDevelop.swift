@@ -348,6 +348,26 @@ enum ABAIRawDevelop {
     /// 拍照當下的樣子（⑦）：比例裁切、小框、濾鏡、特效、日期
     static func applyLook(_ input: CIImage, look: [String: Any]?, withDate: Bool) -> CIImage {
         guard let look = look else { return input }
+        var img = lookCrop(input, look: look)
+        if let name = look["lut"] as? String, !name.isEmpty, let u = ABAIImageCore.bundledLut(name), let cube = ABAIImageCore.cube(fromAtlas: u) {
+            img = ABAIImageCore.apply(cube: cube, to: img, amount: (look["amount"] as? NSNumber)?.doubleValue ?? 1)
+        }
+        let fx = ABAICameraFx(look["fx"] as? [String: Any])
+        if fx.isOn { img = fx.apply(to: img) }
+        if withDate, let d = look["date"] as? String, !d.isEmpty { img = ABAIDateStamp.stampDate(d, on: img) }
+        return img
+    }
+
+    /// look 裡只有裁切（比例、小框），沒有濾鏡、特效：網頁 GPU 可以照同一套公式即時沖（見 ABAIRawSession.linear）
+    static func lookIsCropOnly(_ look: [String: Any]?) -> Bool {
+        guard let look = look else { return true }
+        if let name = look["lut"] as? String, !name.isEmpty, ((look["amount"] as? NSNumber)?.doubleValue ?? 1) > 0 { return false }
+        return !ABAICameraFx(look["fx"] as? [String: Any]).isOn
+    }
+
+    /// 拍照當下的比例裁切、小框（⑦ 的幾何那一段）
+    static func lookCrop(_ input: CIImage, look: [String: Any]?) -> CIImage {
+        guard let look = look else { return input }
         var img = input
         let aspect = (look["aspect"] as? NSNumber)?.doubleValue ?? 0
         let zoom = max(1, (look["zoom"] as? NSNumber)?.doubleValue ?? 1)
@@ -361,12 +381,6 @@ enum ABAIRawDevelop {
             let r = e.integral
             img = img.cropped(to: r).transformed(by: CGAffineTransform(translationX: -r.minX, y: -r.minY))
         }
-        if let name = look["lut"] as? String, !name.isEmpty, let u = ABAIImageCore.bundledLut(name), let cube = ABAIImageCore.cube(fromAtlas: u) {
-            img = ABAIImageCore.apply(cube: cube, to: img, amount: (look["amount"] as? NSNumber)?.doubleValue ?? 1)
-        }
-        let fx = ABAICameraFx(look["fx"] as? [String: Any])
-        if fx.isOn { img = fx.apply(to: img) }
-        if withDate, let d = look["date"] as? String, !d.isEmpty { img = ABAIDateStamp.stampDate(d, on: img) }
         return img
     }
 
@@ -502,6 +516,38 @@ final class ABAIRawSession {
             }
         }
     }
+
+    /// 網頁 GPU 即時沖洗用：RAW 那一步的線性結果（拍照比例裁切後，縮到 w×h）和局部亮度底圖（縮到 bw×bh），
+    /// 都是線性 Display P3 半精度浮點（RGBA，由上往下）。之後曝光、白平衡、高光、陰影每一格都在網頁 GPU 上照 finish 的公式算
+    func linear(w: Int, h: Int, bw: Int, bh: Int) throws -> (URL, URL) {
+        try queue.sync {
+            try autoreleasepool {
+                if proxyDraft { filter = ABAIRawDevelop.rawFilter(url, longSide: longSide, draft: false) ?? filter; proxyDraft = false; proxy = nil }
+                if proxy == nil { rebuild(ABAIRawParams(nil)) }
+                guard let lin0 = proxy, let base0 = proxyBase else { throw ABAIImageCore.CoreError.decode }
+                func dump(_ src: CIImage, _ W: Int, _ H: Int) throws -> URL {
+                    let img = ABAIRawDevelop.lookCrop(src, look: look)
+                    let e = img.extent
+                    let scaled = img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+                        .transformed(by: CGAffineTransform(scaleX: CGFloat(W) / e.width, y: CGFloat(H) / e.height))
+                    guard let cg = ABAIImageCore.context.createCGImage(scaled, from: CGRect(x: 0, y: 0, width: W, height: H), format: .RGBAh, colorSpace: ABAIImageCore.linearP3),
+                          let raw = cg.dataProvider?.data, let p = CFDataGetBytePtr(raw) else { throw ABAIImageCore.CoreError.decode }
+                    let stride = cg.bytesPerRow, row = W * 8
+                    var packed = Data(count: row * H)
+                    packed.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) in
+                        guard let d = dst.baseAddress else { return }
+                        for y in 0..<H { memcpy(d + y * row, p + y * stride, row) }
+                    }
+                    let u = ABAIImageCore.newFileURL(ext: "rgbah")
+                    try packed.write(to: u)
+                    return u
+                }
+                return (try dump(lin0, w, h), try dump(base0, bw, bh))
+            }
+        }
+    }
+
+    var cropOnlyLook: Bool { ABAIRawDevelop.lookIsCropOnly(look) }
 
     /// 原尺寸、完整品質輸出成 JPEG（含拍照當下的濾鏡、特效、裁切、日期）
     func export(_ p: ABAIRawParams) throws -> URL {

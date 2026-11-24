@@ -41,6 +41,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "developPreview", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "developFull", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "developPixels", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "developLinear", returnType: CAPPluginReturnPromise),
     ]
 
     // MARK: 即時沖洗（見 ABAIRawDevelop.swift）
@@ -180,6 +181,27 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
                 self.rawLog.notice("RawDecode developPixels done \(w, privacy: .public)x\(h, privacy: .public) fast=\(fw, privacy: .public) \(ms, privacy: .public)ms")
                 call.resolve(["path": urls.first?.path ?? "", "fastPath": urls.count > 1 ? urls[1].path : "",
                               "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint])
+            } catch { call.reject(error.localizedDescription) }
+        }
+    }
+
+    /// developLinear({ path, look, w, h, bw, bh }) → { path, basePath, gpu, asShotTemperature, asShotTint }
+    /// 網頁 GPU 即時沖洗用的線性資料（見 ABAIRawSession.linear）。gpu＝false：look 有濾鏡、特效，網頁算不了，照舊走 developPixels
+    @objc func developLinear(_ call: CAPPluginCall) {
+        let path = call.getString("path") ?? ""
+        let look: [String: Any]? = call.getObject("look")
+        let w = call.getInt("w") ?? 0, h = call.getInt("h") ?? 0, bw = call.getInt("bw") ?? 0, bh = call.getInt("bh") ?? 0
+        headlessQueue.async {
+            guard let s = self.headlessSession(path, look: look, longSide: 2048) else { call.reject("系統不認得這個 RAW 格式"); return }
+            guard s.cropOnlyLook, w > 0, h > 0, bw > 0, bh > 0 else {
+                call.resolve(["gpu": false, "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint]); return
+            }
+            do {
+                let t0 = CFAbsoluteTimeGetCurrent()
+                let (a, b) = try s.linear(w: w, h: h, bw: bw, bh: bh)
+                let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+                self.rawLog.notice("RawDecode developLinear \(w, privacy: .public)x\(h, privacy: .public) \(ms, privacy: .public)ms")
+                call.resolve(["gpu": true, "path": a.path, "basePath": b.path, "asShotTemperature": s.asShotTemperature, "asShotTint": s.asShotTint])
             } catch { call.reject(error.localizedDescription) }
         }
     }
