@@ -26,7 +26,7 @@ textarea{width:100%;box-sizing:border-box;min-height:160px;margin-top:10px;backg
 </style>
 <main>
 <h1>ABAI 驗收清單</h1>
-<p class="sub">這幾天所有改動。勾掉你在 iPhone 上確認過的；按「複製未驗證項目」把剩下的貼給 Codex。勾選只存在這台裝置。對應 commit：d0b268c（main）。</p>
+<p class="sub">這幾天所有改動。勾掉你在 iPhone 上確認過的；按「複製未驗證項目」把剩下的貼給 Codex。勾選只存在這台裝置。對應 commit：ea2435d（main）。</p>
 <div id="list"></div>
 <textarea id="out" hidden readonly></textarea>
 </main>
@@ -34,6 +34,7 @@ textarea{width:100%;box-sizing:border-box;min-height:160px;margin-top:10px;backg
 <script>
 const G=[
 ["相機拍照",[
+["自拍成品不鏡像（新）","前鏡頭拍有文字的東西，相簿裡的成品文字是正的（跟原相機一樣），觀景窗仍像照鏡子"],
 ["自拍所見即所得","前鏡頭拍一張，與 iPhone 原生相機同場景對比：亮度、膚色、亮部不過曝，與觀景窗一致"],
 ["後鏡頭亮部沒有色階斷層","拍天空／燈光，亮部平滑漸層，無色塊、無偏色"],
 ["成品來自 Apple 處理圖＋濾鏡","套濾鏡拍照，相簿成品畫質＝原生相機等級，濾鏡效果與預覽一致"],
@@ -42,8 +43,8 @@ const G=[
 ["相機相簿與動畫",[
 ["相簿上滑速度與曲線","點左下縮圖，相簿起步俐落、尾段不拖；關閉下滑先加速後收"],
 ["相簿按鈕位置正確","打開後「多選」「返回」玻璃按鈕在正確位置，沒有往下偏或消失"],
-["點開大圖流暢（新）","點格子放大到全螢幕，120Hz 順暢不掉格，裁切從方形自然展開、無變形"],
-["下拉關閉縮回格子（新）","大圖往下拉放開，縮回原格子位置且裁成方形，順暢、無拉扁；落地後格子圖正常"],
+["點開大圖流暢、不跑位（新）","連續點開 10 次不同照片（含直、橫、方形）：每次都從格子位置放大展開，沒有一次直接跳到大圖、沒有偏移"],
+["下拉關閉縮回格子（新）","大圖往下拉放開（含滑到別張再拉、相簿捲動過再拉），縮回該張的格子、裁成方形、無拉扁、無偏移"],
 ["下拉沒關閉時回彈","輕拉一點放開，回彈順暢"],
 ["從相簿進編輯整頁滑動","大圖 → 編輯 → 返回，上滑／下滑順暢不掉格"],
 ["全 App 高更新率（新）","任一換頁／返回滑動，肉眼感覺 120Hz（Pro 機型）"]]],
@@ -63,7 +64,25 @@ const G=[
 ["匯入提示與實際一致","已在照片 App 編輯過的 RAW 不顯示「以 RAW 匯入」；未編輯的才顯示"],
 ["匯入時不跳「匯入中」與背景變色","匯入 RAW，畫面無異常提示、背景不變色"],
 ["返回首頁無殘影","匯入中途或失敗後回首頁，沒有照片替身停在首頁"],
-["照片飛入工具順暢","一般照片匯入時飛入動畫順暢"]]]
+["照片飛入工具順暢","一般照片匯入時飛入動畫順暢"],
+["工具介面分層進場（新）","首頁 → 編輯／美顏／仿色各導入一張：上方列輕輕落下、下方各列依序升起；播完後介面與以前完全相同，按鈕都能按、沒有半透明或位移殘留"],
+["進場不影響照片交接（新）","同上，照片從替身換成本人時無閃爍、無跳動"]]],
+["昨天的改動",[
+["RAW 拖曳與放手一致","編輯 RAW 時拖滑桿的畫面＝放手後的畫面，沒有跳一下"],
+["RAW 白平衡只改顏色","拉色溫、色調，亮度不跟著變；極端色溫亮部不斷層"],
+["色調方向統一","一般照片與 RAW 的色調滑桿都是左綠右洋紅"],
+["批量 RAW 各自調整","批量編輯多張 RAW，各自調曝光／色溫等，互不影響，存出正確"],
+["批量縮圖速度與清晰","批量編輯縮圖載入快、清楚"],
+["RAW 存相簿是真正 RAW","保留原始圖片開啟時，相簿多一張 RAW 且可在照片 App 編輯"],
+["相機相簿永久保存","殺掉 App 重開，相機相簿照片仍在；刪除會一起刪掉"],
+["相簿下拉不跳張","滑到第 5 張再下拉，回到的是第 5 張的格子，不是第一張"],
+["長按照片不被抓起","相簿長按照片沒有系統拖曳／選單"],
+["從編輯回大圖不變糊","大圖 → 編輯 → 返回，大圖仍清楚、第一次打開不閃黑"],
+["相機曝光拖曳","點對焦後上下拖調曝光（±2 EV），太陽圖示出現、放手 1 秒淡掉，靈敏度合適"],
+["橫拿拍照與日期","橫拿拍出橫的照片；直式日期印在右下且字是正的"],
+["返回滑走","各工具左上返回：往右滑走、無邊緣影子"],
+["儲存轉圈在最上層","在相機相簿裡的編輯頁儲存，也看得到轉圈"],
+["導入過場各比例不裁切","導入超寬全景、超長截圖、方形，飛行中整張完整、落點準確"]]]
 ];
 const K='abai-verify-v1';let st={};try{st=JSON.parse(localStorage.getItem(K)||'{}')}catch(e){}
 const L=document.getElementById('list');let n=0;
@@ -73,7 +92,7 @@ const c=l.querySelector('input');c.checked=!!st[id];c.onchange=()=>{st[id]=c.che
 function upd(){let d=0;document.querySelectorAll('section').forEach(s=>{const a=s.querySelectorAll('input'),k=[...a].filter(x=>x.checked).length;d+=k;s.querySelector('h2 span').textContent=`${k}/${a.length}`});document.getElementById('cnt').textContent=`${d}/${n}`}
 upd();
 document.getElementById('reset').onclick=()=>{st={};try{localStorage.removeItem(K)}catch(e){}document.querySelectorAll('input').forEach(x=>x.checked=false);upd()};
-document.getElementById('copy').onclick=()=>{let o='請在 iPhone 上驗證以下項目（commit d0b268c，main）。逐項回報通過／失敗與觀察到的現象，未實測的不要標通過：\n';
+document.getElementById('copy').onclick=()=>{let o='請在 iPhone 上驗證以下項目（commit ea2435d，main）。逐項回報通過／失敗與觀察到的現象，未實測的不要標通過：\n';
 G.forEach(([g,items],gi)=>{const r=items.filter((_,ii)=>!st[`c${gi}_${ii}`]);if(r.length){o+=`\n【${g}】\n`;r.forEach(([t,e])=>o+=`- ${t}：${e}\n`)}});
 const ta=document.getElementById('out');ta.value=o;const b=document.getElementById('copy');
 (navigator.clipboard?navigator.clipboard.writeText(o):Promise.reject()).then(()=>{b.textContent='已複製'},()=>{ta.hidden=false;ta.select();b.textContent='請手動複製下方文字'});setTimeout(()=>b.textContent='複製未驗證項目',2000)};
