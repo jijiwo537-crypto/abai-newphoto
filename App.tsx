@@ -52,7 +52,7 @@ const RAW_ACCEPT = SHARED_RAW_ACCEPT;
 import { processImageFile, normalizeImageFiles } from './utils/imageLoader';
 import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT, isRawFile } from './utils/fileTypes';
 import { nativePathOf } from './utils/nativeBridge';
-import { rawDevelopPreview, rawDevelopFull, type RawLook } from './utils/nativeCamera';
+import { rawDevelopPreview, type RawLook } from './utils/nativeCamera';
 import { upgradeImportHero } from './utils/importHero';
 import {
   draftTime as collageDraftTime,
@@ -154,6 +154,8 @@ const App: React.FC = () => {
   const [editorImage, setEditorImage] = useState<string | null>(null);
   /** 導入的是 RAW（有原生檔案）：一般編輯直接編 RAW。只有在編的正是這一張（src 一樣）時才算數 */
   const [editorRaw, setEditorRaw] = useState<{ src: string; path: string; protectEV: number; look: RawLook | null } | null>(null);
+  /** 批量裡的 RAW：底圖網址 → RAW 檔（編輯器裡這幾張的曝光、白平衡、高光、陰影一樣在 RAW 上做） */
+  const [editorRawMap, setEditorRawMap] = useState<Record<string, { path: string; protectEV: number; look: RawLook | null }>>({});
   /** 批量編輯：這次匯入的所有照片（只有一張時就是一般的單張編輯） */
   const [editorImages, setEditorImages] = useState<string[]>([]);
   const [collageInitialFile, setCollageInitialFile] = useState<File | null>(null);
@@ -286,9 +288,16 @@ const App: React.FC = () => {
   }, []);
 
   /** 批量裡的 RAW 由我們的 RAW 引擎從原檔原尺寸沖；不是 RAW、或沖不出來（網頁版）回 null，照一般圖片處理 */
-  const developRawForBatch = async (f: File): Promise<string | null> => {
+  /** 批量裡的 RAW：跟單張 RAW 一樣，由我們的 RAW 引擎沖一張 2048 的底圖（無銳化、亮部保護），並記下它的 RAW 檔，
+      編輯器裡這張的曝光、白平衡、高光、陰影就在 RAW 上做，存檔時從原檔原尺寸重沖。
+      不是 RAW、或沖不出來（網頁版）回 null，照一般圖片處理 */
+  const developRawForBatch = async (f: File, map: Record<string, { path: string; protectEV: number; look: RawLook | null }>): Promise<string | null> => {
     const rp = isRawFile(f) ? nativePathOf(f) : null;
-    return rp ? rawDevelopFull(rp, { exposure: 0, highlights: 0, shadows: 0 }, null).catch(() => null) : null;
+    if (!rp) return null;
+    const r = await rawDevelopPreview(rp, { exposure: 0, highlights: 0, shadows: 0 }, null, 2048, true).catch(() => null);
+    if (!r) return null;
+    map[r.url] = { path: rp, protectEV: 0, look: null };
+    return r.url;
   };
   /** 批量編輯裡的「新增」：把選到的照片接在現有清單後面，不重開編輯器 */
   const addPhotosInputRef = useRef<HTMLInputElement>(null);
@@ -301,7 +310,9 @@ const App: React.FC = () => {
       setIsImporting(true);
       try {
         const urls: string[] = [];
-        for (const f of files) urls.push((await developRawForBatch(f)) ?? await processImageFile(f, (u) => setImportPreviewUrl(u)));
+        const map: Record<string, { path: string; protectEV: number; look: RawLook | null }> = {};
+        for (const f of files) urls.push((await developRawForBatch(f, map)) ?? await processImageFile(f, (u) => setImportPreviewUrl(u)));
+        setEditorRawMap(prev => ({ ...prev, ...map }));
         setEditorImages(prev => [...prev, ...urls]);
       } catch (err) {
         console.error('Failed to process image:', err);
@@ -425,16 +436,18 @@ const App: React.FC = () => {
         }
         // 一次選多張就全部解碼進來，編輯器裡再切換要看哪一張
         const urls: string[] = [];
+        const rawMap: Record<string, { path: string; protectEV: number; look: RawLook | null }> = {};
         for (const f of files) {
-          /* 批量裡的 RAW：一樣交給我們的 RAW 引擎、從原檔原尺寸沖（無銳化、亮部保護，跟單張 RAW 同一套），
+          /* 批量裡的 RAW：一樣交給我們的 RAW 引擎（無銳化、亮部保護，跟單張 RAW 同一套），編輯時也在 RAW 上調。
              不讓網頁層把它當一般圖片解（iOS 的網頁層看得懂 DNG，但那是 Apple 沖好、有銳化的版本） */
-          const ru = await developRawForBatch(f);
+          const ru = await developRawForBatch(f, rawMap);
           if (ru) { urls.push(ru); continue; }
           urls.push(await processImageFile(f, (previewUrl) => {
             setImportPreviewUrl(previewUrl);
           }));
         }
         setToolDraftState(null);
+        setEditorRawMap(rawMap);
         setEditorImages(urls);
         setEditorImage(urls[0]);
         setEditorKey(prev => prev + 1);
@@ -855,6 +868,7 @@ const App: React.FC = () => {
           fullTabs
           imageSrc={editorImage}
           raw={editorRaw && editorRaw.src === editorImage ? editorRaw : null}
+          rawMap={editorRawMap}
           batchSrcs={editorImages}
           onAddPhotos={handleAddPhotosClick}
           initialState={toolDraftState}

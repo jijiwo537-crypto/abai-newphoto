@@ -807,6 +807,8 @@ interface ImageEditorProps {
   /** 這張有 RAW（相機底片模式拍的）：曝光、色溫、色調、高光、陰影改由原生在 RAW 的資料上做（16 位元、保留亮部），
       沖出來的圖當底圖，其他調整照舊疊在上面；存檔時由原生從 RAW 原尺寸重新沖 */
   raw?: { path: string; protectEV: number; look: RawLook | null } | null;
+  /** 批量裡的 RAW：照片網址 → 它的 RAW 檔。這幾張的曝光、色溫、色調、高光、陰影一樣在 RAW 上做 */
+  rawMap?: Record<string, { path: string; protectEV: number; look: RawLook | null }>;
   /** 存檔時印上的日期戳記（相機拍的有日期的照片：編輯的是沒印日期的那張） */
   stampDate?: string;
 }
@@ -1329,11 +1331,7 @@ function runThumbChunks<T>(
   step();
 }
 
-export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList: builtInLutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false, raw = null, stampDate }) => {
-  /** 這張是 RAW（只有單張時；批量編輯不走 RAW） */
-  const rawOn = !!raw && !(batchSrcs && batchSrcs.length > 1);
-  /** 滑桿實際調的參數：RAW 照片的曝光、色溫、色調、高光、陰影調 raw* 欄位 */
-  const sliderPid = (id: string) => (rawOn && RAW_TOOL[id] ? RAW_TOOL[id] : id);
+export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList: builtInLutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false, raw: rawProp = null, rawMap, stampDate }) => {
   const [customLuts, setCustomLuts] = useState<CustomLut[]>(loadCustomLuts);
   const lutList = useMemo(() => [...builtInLutList, ...customLuts], [builtInLutList, customLuts]);
   const customLutInputRef = useRef<HTMLInputElement>(null);
@@ -1364,6 +1362,31 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const safeIdx = Math.min(batchIdx, Math.max(0, srcList.length - 1));
   safeIdxRef.current = safeIdx;
   const activeSrc = srcList[safeIdx] || imageSrc;
+  /* ── 每張照片是不是 RAW ──
+     照片網址 → RAW 檔。RAW 換上新沖好的底圖時網址會換，新網址也記進來（見 adoptRawUrl／installRaw） */
+  const rawInfoRef = useRef<Map<string, { path: string; protectEV: number; look: RawLook | null }>>(new Map());
+  if (rawProp && !rawInfoRef.current.has(imageSrc)) rawInfoRef.current.set(imageSrc, rawProp);
+  if (rawMap) for (const k of Object.keys(rawMap)) if (!rawInfoRef.current.has(k)) rawInfoRef.current.set(k, rawMap[k]);
+  const rawOf = (src: string | undefined) => (src ? rawInfoRef.current.get(src) ?? null : null);
+  /** 目前這張的 RAW 檔（不是 RAW＝null） */
+  const raw = rawOf(activeSrc);
+  /** 目前這張是 RAW：曝光、色溫、色調、高光、陰影由原生從 RAW 沖 */
+  const rawOn = !!raw;
+  /** 滑桿實際調的參數：RAW 照片的曝光、色溫、色調、高光、陰影調 raw* 欄位 */
+  const sliderPid = (id: string) => (rawOn && RAW_TOOL[id] ? RAW_TOOL[id] : id);
+  /* 批量共用的那份參數一律存成「一般照片」的欄位；套到 RAW 那張時換成 raw* 欄位，收回來時換回去。
+     兩邊的刻度是同一套（曝光同一條 EV 曲線、色溫同樣 ±45 mired、色調同樣幅度），所以連動時每張看起來一致 */
+  const toCanon = (p: EditorParams, isRaw: boolean): EditorParams => {
+    if (!isRaw) return p;
+    const o: any = { ...p };
+    for (const k of Object.keys(RAW_TOOL)) { o[k] = (p as any)[RAW_TOOL[k]] || 0; o[RAW_TOOL[k]] = 0; }
+    return o;
+  };
+  const fromCanon = (p: EditorParams, isRaw: boolean): EditorParams => {
+    const o: any = { ...p };
+    for (const k of Object.keys(RAW_TOOL)) { o[RAW_TOOL[k]] = isRaw ? (p as any)[k] || 0 : 0; if (isRaw) o[k] = 0; }
+    return o;
+  };
   /** 哪幾張還跟著一起連動（預設全部連動） */
   const [linked, setLinked] = useState<boolean[]>(() => srcList.map(() => true));
   useEffect(() => {
@@ -1705,7 +1728,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const liveRef = useRef<BatchSnap | null>(null);
   liveRef.current = {
-    params, geo, selectedLutIdx,
+    params: toCanon(params, rawOn), geo, selectedLutIdx,
     isSoftActive, isBlurActive, isGrainActive, isHalationActive,
     softManuallyAdjusted, blurManuallyAdjusted, grainManuallyAdjusted, halationManuallyAdjusted,
     userSoft: userSoftRef.current, userBlur: userBlurRef.current,
@@ -1735,7 +1758,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // 連動的只有色彩／濾鏡／特效；遮色片與構圖用這張自己的那一份。
     // 沒動過的那幾張就用預設值 —— 不能沿用快照裡別人的遮色片／構圖。
     const ownMask = ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS);
-    const nextParams = { ...cloneSnap(snap).params, ...ownMask } as EditorParams;
+    const nextParams = fromCanon({ ...cloneSnap(snap).params, ...ownMask } as EditorParams, !!rawOf(srcListRef.current[i]));
     setParams(nextParams);
     const ownGeo = ownGeoRef.current[i]
       ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
@@ -1799,7 +1822,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (ov.width !== ovEl.width || ov.height !== ovEl.height) { ov.width = ovEl.width; ov.height = ovEl.height; }
       const og = ov.getContext('2d')!; og.globalCompositeOperation = 'copy'; og.drawImage(ovEl, 0, 0); og.globalCompositeOperation = 'source-over';
     } else if (ov) { ov.width = 0; ov = null; }
-    shots.set(src, { canvas: c, sig: maskShotSig(paramsRef.current, live.selectedLutIdx, live.geo), ov });
+    shots.set(src, { canvas: c, sig: maskShotSig(live.params, live.selectedLutIdx, live.geo), ov });
     while (shots.size > 3) { const k = shots.keys().next().value as string; const o = shots.get(k)!; o.canvas.width = 0; if (o.ov) o.ov.width = 0; shots.delete(k); }
   };
   /** 第 i 張留下來的那份還對得上它現在該有的樣子嗎 */
@@ -7947,7 +7970,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const live = liveRef.current!;
       const snap: BatchSnap = {
         ...cloneSnap(live),
-        params: { ...cloneSnap(live).params, ...(ownMaskRef.current[safeIdx] || pickMask(DEFAULT_PARAMS)) } as EditorParams,
+        params: fromCanon({ ...cloneSnap(live).params, ...(ownMaskRef.current[safeIdx] || pickMask(DEFAULT_PARAMS)) } as EditorParams, rawOn),
         geo: ownGeoRef.current[safeIdx]
           ? JSON.parse(JSON.stringify(ownGeoRef.current[safeIdx]))
           : cloneSnap(live).geo,
@@ -7978,7 +8001,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setTimeout(async () => {
         try {
             /* RAW：手放開後的精算還沒換上的話，先等它（存的一定是從 RAW 精算的結果） */
-            if (rawOn) await rawPendingRef.current;
+            await rawPendingRef.current;
             // 人像／仿色剛交回來的那張還在背景編碼：先等它換進來源清單
             await studioInstallRef.current;
             // 其他照片還在背景合併時先等它做完（最多 20 秒），存的才會是合併後的
@@ -7998,20 +8021,23 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               // 遮色片與構圖不連動，要用這一張自己的
               const snap: BatchSnap = {
                 ...cloneSnap(base),
-                params: { ...cloneSnap(base).params, ...(ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS)) } as EditorParams,
+                params: fromCanon({ ...cloneSnap(base).params, ...(ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS)) } as EditorParams, !!rawOf(srcs[i])),
                 geo: ownGeoRef.current[i]
                   ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
                   : (i === safeIdx ? cloneSnap(base).geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
               };
-              const img = await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
+              /* RAW：用這一張自己的參數，由原生從 RAW 原尺寸重沖（批量裡每張 RAW 各自的曝光、白平衡） */
+              const ri = rawOf(srcs[i]);
+              const rawFull = ri ? await rawFullFor(ri, snap.params) : null;
+              const img = rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
               // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
               const nfmt = exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png';
-              let wide = await nativeWideSave(srcs[i], snap, nfmt);
+              let wide = ri ? null : await nativeWideSave(srcs[i], snap, nfmt);
               /* 有局部、空間類編輯：網頁先做出無損成品，原生端補回廣色域與 HDR 亮部。
                  補不了的時候，這張成品 PNG／HEIC 直接拿來用，不重算 */
               let basePng = '';
-              if (!wide && nativePathOf(srcs[i]) && isGeoIdentity(snap.geo) && nativeHybridOk(snap.params) && !nativeColorOnly(snap.params)) {
+              if (!wide && !ri && nativePathOf(srcs[i]) && isGeoIdentity(snap.geo) && nativeHybridOk(snap.params) && !nativeColorOnly(snap.params)) {
                 basePng = await renderFullUrl(img, snap, 'image/png', 1);
                 if (basePng) wide = await nativeWideSave(srcs[i], snap, nfmt, basePng);
                 if (wide) { revokeUrls([basePng]); basePng = ''; }
@@ -8421,18 +8447,36 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      參數（raw*）一變，原生就從 RAW 沖一張出來換成底圖（拖的時候小一點、放手後完整大小），其他調整照舊疊在上面。
      換底圖用的是跟人像／仿色交回來時同一套（installStudioResult 那套）：不重設參數、不閃。
      存檔時由原生從 RAW 原尺寸、完整品質重新沖（fullJobs 的 bake）。 */
+  /** 每個 RAW 檔拍攝當下的白平衡（色溫、色調滑桿的中點）。目前這張的放在 rawAsShotRef */
+  const rawAsShotByPathRef = useRef<Map<string, { temp: number; tint: number }>>(new Map());
   const rawAsShotRef = useRef<{ temp: number; tint: number } | null>(null);
   const rawInputRef = useRef<string | null>(null);
-  const rawBase = (p: EditorParams): RawBaseParams => {
-    const a = rawAsShotRef.current;
+  type RawInfo = { path: string; protectEV: number; look: RawLook | null };
+  const rawBaseOf = (info: RawInfo | null, a: { temp: number; tint: number } | null, p: EditorParams): RawBaseParams => {
     const m0 = a ? 1e6 / Math.max(1500, a.temp) : 0;
     return {
-      exposure: (raw?.protectEV || 0) + exposureEv(p.rawExposure || 0),
+      exposure: (info?.protectEV || 0) + exposureEv(p.rawExposure || 0),
       // 跟網頁版色溫同一個手感：±100 ＝ ±45 mired；往右＝畫面變暖
       temperature: a ? 1e6 / Math.max(20, m0 - ((p.rawTemp || 0) / 100) * 45) : undefined,
       tint: a ? a.tint + (p.rawTint || 0) : undefined,
       highlights: (p.rawHighlights || 0) / 100, shadows: (p.rawShadows || 0) / 100,
     };
+  };
+  const rawBase = (p: EditorParams): RawBaseParams => rawBaseOf(raw, rawAsShotRef.current, p);
+  /** 拍攝當下的白平衡：問過就記著 */
+  const rawAsShotOf = async (info: RawInfo) => {
+    const hit = rawAsShotByPathRef.current.get(info.path);
+    if (hit) return hit;
+    const first = await rawDevelopPreview(info.path, rawBaseOf(info, null, DEFAULT_PARAMS), info.look, 64, false);
+    if (!first) return null;
+    const a = { temp: first.asShotTemperature, tint: first.asShotTint };
+    rawAsShotByPathRef.current.set(info.path, a);
+    return a;
+  };
+  /** 存檔用：這個 RAW 用這組參數、原尺寸完整品質沖一張。沖不出來回 null（照一般照片存） */
+  const rawFullFor = async (info: RawInfo, p: EditorParams) => {
+    const a = await rawAsShotOf(info);
+    return rawDevelopFull(info.path, rawBaseOf(info, a, p), info.look);
   };
   const rawBake = (_full: string) => (raw ? rawDevelopFull(raw.path, rawBase(paramsRef.current), raw.look) : Promise.resolve(null));
   const installRaw = async (url: string, final: boolean, decoded?: HTMLImageElement) => {
@@ -8456,6 +8500,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!final) return;
     /* 放手後的完整那張：正式換成來源（存檔時從 RAW 原尺寸重沖） */
     fullJobsRef.current[url] = { input: rawRoot, bake: rawBake, session: 'raw' };
+    if (raw) rawInfoRef.current.set(url, raw);
     thumbOriginRef.current[url] = thumbSrcOf(rawInputRef.current!);
     const cur = srcListRef.current;
     const next = [...cur]; next[i] = url;
@@ -8473,7 +8518,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 打開時的那張（相機已經從 RAW 沖好的）：存檔也要從 RAW 原尺寸重沖 */
   /* 來源標成 RAW 檔本身（不是任何一張圖的網址）：往回找原圖時不會繞回自己 */
   const rawRoot = raw ? `raw:${raw.path}` : '';
-  if (rawOn && !fullJobsRef.current[imageSrc]) fullJobsRef.current[imageSrc] = { input: rawRoot, bake: rawBake, session: 'raw' };
+  if (rawOn && !fullJobsRef.current[activeSrc]) fullJobsRef.current[activeSrc] = { input: rawRoot, bake: rawBake, session: 'raw' };
   /* ── RAW 快速通道：原生直接給像素，直接換掉預覽緩衝區的像素（不重建整套緩衝區、不重產濾鏡縮圖） ── */
   const swapSourcePixels = (pre: Uint8ClampedArray, pw: number, ph: number, fast: Uint8ClampedArray | null, fw: number, fh: number, key: string) => {
     const cur = buffers.current;
@@ -8512,6 +8557,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const adoptRawUrl = (url: string, im: HTMLImageElement) => {
     const i = safeIdxRef.current;
     fullJobsRef.current[url] = { input: rawRoot, bake: rawBake, session: 'raw' };
+    if (raw) rawInfoRef.current.set(url, raw);
     thumbOriginRef.current[url] = thumbSrcOf(rawInputRef.current || srcListRef.current[i]);
     if (!rawInputRef.current) rawInputRef.current = srcListRef.current[i];
     const next = [...srcListRef.current]; next[i] = url;
@@ -8532,6 +8578,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const rawPendingRef = useRef<Promise<void> | null>(null);
   useEffect(() => {
     if (!rawOn || !raw) return;
+    /* 換到另一張 RAW（批量）：這張的底圖還沒照目前參數沖過，拍攝當下的白平衡也是這張自己的 */
+    rawDevelopedRef.current = { rawExposure: NaN, rawTemp: 0, rawTint: 0, rawHighlights: 0, rawShadows: 0 };
+    rawAsShotRef.current = rawAsShotByPathRef.current.get(raw.path) ?? null;
+    rawInputRef.current = null;
     let alive = true, rafId = 0;
     let busy = false;
     /** 上一次換上的是不是完整大小的那張 */
@@ -8547,8 +8597,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const key = rawKeyOf(p0);
       const dragging = performance.now() - lastSliderMoveTimeRef.current < 160;
       if (key === rawKeyOf(rawDevelopedRef.current as any) && (sharp || dragging)) return;
-      /* 編輯頁的緩衝區還沒好（剛打開、正在解碼）：等它 */
+      /* 編輯頁的緩衝區還沒好（剛打開、正在解碼），或還是上一張照片的（批量剛切換）：等它 */
       if (!buffers.current.preview.source) return;
+      const bufSrc = buffersSrcRef.current, alias = bufferAliasRef.current;
+      if (bufSrc !== activeSrcRef.current && !(alias && alias.key === bufSrc && alias.for === activeSrcRef.current)) return;
+      if (rawOf(activeSrcRef.current)?.path !== raw.path) return;
       busy = true;
       const want = { rawExposure: p0.rawExposure || 0, rawTemp: p0.rawTemp || 0, rawTint: p0.rawTint || 0, rawHighlights: p0.rawHighlights || 0, rawShadows: p0.rawShadows || 0 };
       const final = !dragging;
@@ -8556,8 +8609,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         try {
           if (!rawAsShotRef.current) {
             /* 第一次：先問拍攝當下的白平衡（色溫、色調滑桿的中點） */
-            const first = await rawDevelopPreview(raw.path, rawBase(DEFAULT_PARAMS), raw.look, 64, false);
-            if (first) rawAsShotRef.current = { temp: first.asShotTemperature, tint: first.asShotTint };
+            rawAsShotRef.current = await rawAsShotOf(raw);
+            if (!alive) return;
           }
           const cur = buffers.current;
           const pw = cur.preview.w, ph = cur.preview.h;
@@ -8601,7 +8654,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     rafId = requestAnimationFrame(tick);
     return () => { alive = false; cancelAnimationFrame(rafId); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawOn]);
+  }, [raw?.path]);
   const studioPrevRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
   /* 取消＝丟掉這次在工具裡畫的東西：工具一直掛著（進出才會是立刻的），所以換一個新的 */
   const [studioGen, setStudioGen] = useState({ beauty: 0, match: 0 });
