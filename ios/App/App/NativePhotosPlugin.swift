@@ -192,7 +192,7 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
         let isVideo = call.getString("kind") == "video"
         let assetId = call.getString("assetId")
         let adjustment = call.getString("adjustment")
-        /* 相機底片模式：成品（套好濾鏡、日期）是主要的那張，RAW 跟它配成同一張（相簿看到的是成品，RAW 也留著） */
+        /* 相機 RAW：DNG 是原始檔（真正的 RAW），成品（套好濾鏡、日期）存成附屬檔案（見 createNew） */
         let rawURL = call.getString("rawPath").flatMap { ABAIImageCore.fileURL(from: $0) }
 
         /* 存檔途中切到背景也要做完 */
@@ -212,28 +212,11 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
             editOriginal(asset: asset, rendered: url, adjustment: adj, finish: finish)
             return
         }
-        /* 相機 RAW：DNG 當原始檔（相簿顯示 RAW 標記、之後可在任何 App 重新沖洗），成品 JPEG 當成「編輯過的版本」疊上去 ——
-           跟 Apple／Lightroom 存 RAW 的方式一樣。沒有完整相簿權限或失敗時，退回 成品＋RAW 配對 */
-        if !isVideo, let r = rawURL, FileManager.default.fileExists(atPath: r.path),
-           PHPhotoLibrary.authorizationStatus(for: .readWrite) == .authorized {
-            var placeholder: String?
-            PHPhotoLibrary.shared().performChanges({
-                let req = PHAssetCreationRequest.forAsset()
-                req.addResource(with: .photo, fileURL: r, options: PHAssetResourceCreationOptions())
-                placeholder = req.placeholderForCreatedAsset?.localIdentifier
-            }) { ok, _ in
-                guard ok, let id = placeholder,
-                      let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else {
-                    self.createNew(url: url, isVideo: false, raw: rawURL, finish: finish); return
-                }
-                self.editOriginal(asset: asset, rendered: url, adjustment: "{\"source\":\"abai-camera\"}", finish: finish)
-            }
-            return
-        }
         createNew(url: url, isVideo: isVideo, raw: rawURL, finish: finish)
     }
 
-    private func createNew(url: URL, isVideo: Bool, raw: URL? = nil, finish: @escaping (Result<[String: Any], Error>) -> Void) {
+    /// rawMode：0＝DNG 主檔＋成品附屬，1＝只有 DNG，2＝成品主檔＋DNG 附屬（舊的配對方式）。前一種被系統拒絕才退到下一種
+    private func createNew(url: URL, isVideo: Bool, raw: URL? = nil, rawMode: Int = 0, finish: @escaping (Result<[String: Any], Error>) -> Void) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
                 finish(.failure(NSError(domain: "abai", code: 1, userInfo: [NSLocalizedDescriptionKey: "沒有存到相簿的權限"]))); return
@@ -242,14 +225,30 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
             PHPhotoLibrary.shared().performChanges({
                 let req = PHAssetCreationRequest.forAsset()
                 let opts = PHAssetResourceCreationOptions()
-                req.addResource(with: isVideo ? .video : .photo, fileURL: url, options: opts)
+                /* 相機 RAW：DNG 本身就是這張照片的原始檔（不疊任何編輯）—— 在「照片」App 或任何 App 裡編輯、匯出，
+                   拿到的都是真正的 RAW（寬容度完整）。套了濾鏡、日期的成品 JPEG 一起存成這張照片的附屬檔案。
+                   （之前把成品當「編輯過的版本」疊在 DNG 上：相簿顯示 RAW，但編輯、匯出拿到的都是那張 JPEG） */
                 if !isVideo, let r = raw, FileManager.default.fileExists(atPath: r.path) {
-                    req.addResource(with: .alternatePhoto, fileURL: r, options: PHAssetResourceCreationOptions())
+                    switch rawMode {
+                    case 0:
+                        req.addResource(with: .photo, fileURL: r, options: PHAssetResourceCreationOptions())
+                        req.addResource(with: .alternatePhoto, fileURL: url, options: opts)
+                    case 1:
+                        req.addResource(with: .photo, fileURL: r, options: PHAssetResourceCreationOptions())
+                    default:
+                        req.addResource(with: .photo, fileURL: url, options: opts)
+                        req.addResource(with: .alternatePhoto, fileURL: r, options: PHAssetResourceCreationOptions())
+                    }
+                } else {
+                    req.addResource(with: isVideo ? .video : .photo, fileURL: url, options: opts)
                 }
                 placeholder = req.placeholderForCreatedAsset?.localIdentifier
             }) { ok, err in
-                if ok { finish(.success(["saved": true, "mode": "created", "assetId": placeholder ?? ""])) }
-                else { finish(.failure(err ?? NSError(domain: "abai", code: 2, userInfo: [NSLocalizedDescriptionKey: "存檔失敗"]))) }
+                if ok { finish(.success(["saved": true, "mode": "created", "rawMode": rawMode, "assetId": placeholder ?? ""])); return }
+                if !isVideo, raw != nil, rawMode < 2 {
+                    self.createNew(url: url, isVideo: isVideo, raw: raw, rawMode: rawMode + 1, finish: finish); return
+                }
+                finish(.failure(err ?? NSError(domain: "abai", code: 2, userInfo: [NSLocalizedDescriptionKey: "存檔失敗"])))
             }
         }
     }

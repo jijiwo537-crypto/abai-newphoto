@@ -2898,20 +2898,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       };
       const had = viewedImgRef.current.get(s) || warmImgRef.current.get(s);
       if (had && had.complete && had.naturalWidth) return finish(had);
-      /* 手機上的檔案（相簿匯出的、RAW 沖好的）：請原生直接縮成小圖，不在網頁解整張大圖
-         （照片一多、圖一大，iOS 偶爾會解碼失敗，那一格就一直是灰的） */
+      /* 照舊在網頁解碼（已經解好的直接用，最快）。解碼失敗（照片一多、圖一大，iOS 偶爾會）不要留一格灰的：
+         手機上的檔案改請原生縮成小圖再試，其他的等一下重試，最多三次 */
       const filePath = nativePathOf(s) || (s.includes('/_capacitor_file_') ? decodeURIComponent(s.slice(s.indexOf('/_capacitor_file_') + '/_capacitor_file_'.length)) : '');
       const load = (url: string, attempt: number) => {
         const im = new Image();
         if (!url.startsWith('blob:') && !url.startsWith('data:') && !url.includes('/_capacitor_file_')) im.crossOrigin = 'anonymous';
         im.onload = () => finish(im);
-        /* 讀失敗：等一下再試（最多三次），不要就這樣留一格灰的 */
-        im.onerror = () => { if (alive && attempt < 3) setTimeout(() => load(url, attempt + 1), 300 * (attempt + 1)); else resolve(); };
+        im.onerror = () => {
+          if (!alive || attempt >= 3) { resolve(); return; }
+          if (attempt === 0 && filePath) { void nativeDownsample(filePath, STRIP_THUMB * 2).then(r => load(r?.url || s, 1)).catch(() => load(s, 1)); return; }
+          setTimeout(() => load(url, attempt + 1), 300 * (attempt + 1));
+        };
         im.src = url;
       };
-      if (filePath) {
-        void nativeDownsample(filePath, STRIP_THUMB * 2).then(r => load(r?.url || s, 0)).catch(() => load(s, 0));
-      } else load(s, 0);
+      load(s, 0);
     });
     (async () => { for (const s of missing) { if (!alive) return; await make(s); } })();
     return () => { alive = false; };
