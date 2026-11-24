@@ -2206,7 +2206,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       </>)}
 
       {saveState === 'processing' && (
-        <BusyLayer className="z-[100] bg-black flex flex-col items-center justify-center animate-in fade-in duration-300">
+        <BusyLayer className="z-[400] bg-black flex flex-col items-center justify-center">
+          {/* 儲存中：按下去那一刻就完整出現（不淡入）；層級要高過相機相簿裡蓋上來的編輯頁（z-300），不然會被蓋在下面看不到 */}
           {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin"></div>
           <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">{embedded ? '套用中' : '儲存中'}</p>
