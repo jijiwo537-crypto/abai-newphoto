@@ -8478,8 +8478,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const swapSourcePixels = (pre: Uint8ClampedArray, pw: number, ph: number, fast: Uint8ClampedArray | null, fw: number, fh: number, key: string) => {
     const cur = buffers.current;
     if (cur.preview.w !== pw || cur.preview.h !== ph || !cur.preview.source) return false;
-    cur.preview.source = pre; cur.preview.sharpenDetail = null;
-    if (fast && cur.fast.source && cur.fast.w === fw && cur.fast.h === fh) { cur.fast.source = fast; cur.fast.sharpenDetail = null; }
+    /* source 跟 original（發光前的原圖，「沒有其他調整」時直接畫的就是它）都要換，發光也要重算 */
+    const put = (b: BufferSet, px: Uint8ClampedArray) => { b.source = px; b.original = px; b.glowKey = ''; b.sharpenDetail = null; };
+    put(cur.preview, pre);
+    if (fast && cur.fast.source && cur.fast.w === fw && cur.fast.h === fh) put(cur.fast, fast);
+    glowGenRef.current = 0;
     /* 跟換來源時一樣：所有跟「上一份像素」綁在一起的快取作廢 */
     filterPixelCacheRef.current = {}; cacheOrderRef.current = [];
     lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, curvesRef: null, hslRef: null, selectedLutIdx: -1 } as any;
@@ -8490,8 +8493,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     cachedBlurCanvasRef.current = null; cachedSoftCanvasRef.current = null; cachedNoise2CanvasRef.current = null;
     cachedHalationCanvasRef.current = null; cachedVignetteCanvasRef.current = null;
     blurCacheStateRef.current = null; softCacheStateRef.current = null; noise2CacheStateRef.current = null; halationCacheStateRef.current = null;
+    /* 緩衝區換了名字（快取的鍵跟著換），但還是「目前這張照片」：登記成別名，繪圖迴圈才會照常畫 */
     buffersSrcRef.current = key;
-    bufferAliasRef.current = null;
+    bufferAliasRef.current = { key, for: activeSrcRef.current };
     tapFastRef.current = true; isDirtyRef.current = true; lastRenderTimeRef.current = 0;
     if (paramsRef.current.sharpen > 0) {
       const owned = cur;
@@ -8515,6 +8519,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     rememberDecoded(url, im);
     SRC_IDS.set(url, srcIdOf(buffersSrcRef.current || url));
     buffersSrcRef.current = url;
+    bufferAliasRef.current = null;
     preinstalledSrcRef.current = url;
     swapToSrc(next);
     originalImgRef.current = im;

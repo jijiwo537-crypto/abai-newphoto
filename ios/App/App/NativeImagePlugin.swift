@@ -34,6 +34,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "encode", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "remove", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "persist", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "keepDir", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "beginBackgroundTask", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "endBackgroundTask", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "capabilities", returnType: CAPPluginReturnPromise),
@@ -231,6 +232,17 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         guard p.hasPrefix(ABAIImageCore.tempDir.standardizedFileURL.path) || p.hasPrefix(ABAIImageCore.keepDir.standardizedFileURL.path) else { call.resolve(); return }
         try? FileManager.default.removeItem(at: url)
         call.resolve()
+    }
+
+    /// 相機相簿資料夾現在的位置。App 更新後整個 App 資料夾的路徑會換（檔案還在），網頁要用這個把記住的舊路徑換過來
+    /// 也可以帶 paths：回傳其中已經不存在的（missing）
+    @objc func keepDir(_ call: CAPPluginCall) {
+        let paths = (call.getArray("paths") as? [String]) ?? []
+        let missing = paths.filter { p in
+            guard let u = ABAIImageCore.fileURL(from: p) else { return true }
+            return !FileManager.default.fileExists(atPath: u.path)
+        }
+        call.resolve(["path": ABAIImageCore.keepDir.standardizedFileURL.path, "missing": missing])
     }
 
     /// 暫存資料夾裡的檔案搬進相機相簿資料夾（永久保存），回傳新路徑。已經在裡面就原樣回傳

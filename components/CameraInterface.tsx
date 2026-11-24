@@ -257,14 +257,58 @@ const camRoll = {
 /* 相機的相簿存到手機上（只記檔案路徑，照片本身在原生的相機相簿資料夾）：關掉 App、更新 App 之後還在 */
 const ROLL_KEY = 'abai-camera-roll-v1';
 type RollEntry = { path: string; raw?: { path: string; protectEV: number; look: RawLook }; clean?: { path: string; date: string }; fav?: boolean; label?: string };
+/* App 更新後，整個 App 資料夾的路徑會換（裡面的檔案都還在）。記住的路徑一律接到「相簿資料夾現在的位置」上 */
+const KEEP_KEY = 'abai-keep-dir';
+const KEEP_SEG = '/abai-camera-roll/';
+let keepDirNow: string | null = (() => { try { return localStorage.getItem(KEEP_KEY); } catch { return null; } })();
+const remapKeep = (p: string) => {
+  const i = p.indexOf(KEEP_SEG);
+  return i < 0 || !keepDirNow ? p : keepDirNow.replace(/\/+$/, '') + p.slice(i + KEEP_SEG.length - 1);
+};
+/** 問原生相簿資料夾現在在哪、哪些照片檔案已經不在了（很早以前存在暫存區、被系統清掉的）。
+    有變動就把手機上的清單修好、回 true，呼叫端要重新讀一次相簿 */
+async function refreshKeepDir(): Promise<boolean> {
+  try {
+    const img = await nativeImage();
+    if (!img?.keepDir) return false;
+    const r = await img.keepDir();
+    let changed = false;
+    if (r?.path && r.path !== keepDirNow) {
+      keepDirNow = r.path; changed = true;
+      try { localStorage.setItem(KEEP_KEY, r.path); } catch { /* 存不了就下次再問 */ }
+    }
+    const list = JSON.parse(localStorage.getItem(ROLL_KEY) || '[]') as RollEntry[];
+    if (!Array.isArray(list) || !list.length) return changed;
+    const fixed = list.filter(e => e?.path).map(e => remapKeep(e.path));
+    const { missing = [] } = await img.keepDir({ paths: fixed });
+    if (missing.length) {
+      const gone = new Set(missing);
+      localStorage.setItem(ROLL_KEY, JSON.stringify(list.filter(e => e?.path && !gone.has(remapKeep(e.path)))));
+      changed = true;
+    }
+    return changed;
+  } catch { return false; }
+}
+/** 重新從手機上的清單讀一次（路徑換過了）。容器原地清空重填：拿著它們的 ref 不用換 */
+function reloadCamRoll() {
+  camRoll.photos = [];
+  camRoll.rawOf.clear(); camRoll.rawShots = new Set(); camRoll.dateOf.clear();
+  camRoll.favorites = new Set(); camRoll.labels.clear();
+  for (const k of Object.keys(camRoll.thumbs)) delete camRoll.thumbs[k];
+  camRoll.loaded = false;
+  loadCamRoll();
+}
 function loadCamRoll() {
   if (camRoll.loaded) return;
   camRoll.loaded = true;
   try {
     const list = JSON.parse(localStorage.getItem(ROLL_KEY) || '[]') as RollEntry[];
     if (!Array.isArray(list)) return;
-    for (const e of list) {
-      if (!e?.path) continue;
+    for (const e0 of list) {
+      if (!e0?.path) continue;
+      const e: RollEntry = { ...e0, path: remapKeep(e0.path),
+        raw: e0.raw?.path ? { ...e0.raw, path: remapKeep(e0.raw.path) } : e0.raw,
+        clean: e0.clean?.path ? { ...e0.clean, path: remapKeep(e0.clean.path) } : e0.clean };
       const url = fileSrc(e.path); rememberNativePath(url, e.path);
       camRoll.photos.push(url);
       if (e.raw?.path) { camRoll.rawOf.set(url, e.raw); camRoll.rawShots.add(url); }
@@ -346,7 +390,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /** 拍出來的照片 → 同一張的 RAW 檔（App 暫存裡的 DNG）＋拍的時候用的濾鏡。
       編輯時從 RAW 沖，再自動套上同一個濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
   const rawOfRef = useRef(camRoll.rawOf);
-  const [rawShots, setRawShots] = useState<Set<string>>(() => new Set(camRoll.rawShots));
+  const [rawShots, setRawShots] = useState<Set<string>>(() => { loadCamRoll(); return new Set(camRoll.rawShots); });
   useEffect(() => { camRoll.rawShots = rawShots; saveCamRoll(); }, [rawShots]);
   /** 有日期戳記的照片 → 沒印日期的同一張＋日期字。編輯一律改沒印的那張，存檔時才重新印上日期：
       調色、濾鏡不會改到日期；日期是光加上去的，畫面調暗了字自然更清楚 */
@@ -537,6 +581,16 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /* 相簿：愛心、每張拍照時用的濾鏡（大圖右上的標籤） */
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set(camRoll.favorites));
   useEffect(() => { camRoll.favorites = favorites; saveCamRoll(); }, [favorites]);
+  /* App 更新過（相簿資料夾換了位置）：路徑接到新位置、重新讀一次 */
+  useEffect(() => {
+    let alive = true;
+    void refreshKeepDir().then(changed => {
+      if (!alive || !changed) return;
+      reloadCamRoll();
+      setPhotos(camRoll.photos); setRawShots(new Set(camRoll.rawShots)); setFavorites(new Set(camRoll.favorites));
+    });
+    return () => { alive = false; };
+  }, []);
   const labelsRef = useRef(camRoll.labels);
   /* 進相簿（或從相簿進編輯）就把小框收掉：回到相機時應該是重新開始的滿版畫面，
      不是停在上一次捏的位置。frameZoomRef 也一起歸 1，免得畫面上沒有框、拍下去卻還是裁過的。 */

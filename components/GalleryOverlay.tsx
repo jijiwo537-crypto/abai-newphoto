@@ -376,6 +376,18 @@ const PhotoViewer: React.FC<{
     }
     return () => { alive = false; };
   }, [index, photos]);
+  /* 下拉時鎖住左右翻頁。iOS 把捲動容器改成 overflow: hidden 的那一下會把捲動位置歸零（變成第一張），
+     所以鎖住、解鎖時都把位置放回目前這一張，鎖住期間的捲動事件也不算換頁 */
+  const pagerLocked = useRef(false);
+  const lockPager = (on: boolean) => {
+    const el = pager.current; if (!el) return;
+    const left = indexRef.current * el.clientWidth;
+    pagerLocked.current = on;
+    el.style.overflowX = on ? 'hidden' : '';
+    el.scrollLeft = left;
+  };
+  const indexRef = useRef(index);
+  indexRef.current = index;
   const dragScale = (dy: number) => 1 - 0.38 * Math.min(1, Math.max(0, dy) / (window.innerHeight * 0.55));
   const startDrag = (d: NonNullable<typeof drag.current>) => {
     d.active = true;
@@ -383,7 +395,7 @@ const PhotoViewer: React.FC<{
     d.pic = curImg();
     d.img = (pager.current?.children[index] as HTMLElement | undefined) ?? null;
     if (d.img) { d.img.style.transform = ''; d.base = d.img.getBoundingClientRect(); d.img.style.willChange = 'transform'; }
-    if (pager.current) pager.current.style.overflowX = 'hidden';
+    lockPager(true);
     setDragging(true);
   };
   const moveDrag = (d: NonNullable<typeof drag.current>, dx: number, dy: number) => {
@@ -397,12 +409,12 @@ const PhotoViewer: React.FC<{
     const v = performance.now() - d.t0 > 120 ? 0 : d.vy;   // 停住一下才放手＝沒有甩
     const dismiss = !cancel && (d.dy > 110 || (d.dy > 40 && v > 0.5));
     const cell = dismiss ? cellOf(index) : null;
-    if (!img || !d.base) { if (dismiss) onClose(); else { setDragging(false); if (pager.current) pager.current.style.overflowX = ''; } return; }
+    if (!img || !d.base) { if (dismiss) onClose(); else { setDragging(false); lockPager(false); } return; }
     const from = { transform: img.style.transform || 'none', clipPath: 'inset(0px)' };
     if (!dismiss) {
       img.animate([from, { transform: 'translate3d(0,0,0) scale(1)', clipPath: 'inset(0px)' }], { duration: 320, easing: EASE }).finished.then(() => {
         img.style.transform = ''; img.style.willChange = '';
-        if (pager.current) pager.current.style.overflowX = '';
+        lockPager(false);
         setDragging(false);
       }).catch(() => {});
       return;
@@ -441,7 +453,7 @@ const PhotoViewer: React.FC<{
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const onScroll = () => {
-    const el = pager.current; if (!el) return;
+    const el = pager.current; if (!el || pagerLocked.current) return;
     const i = Math.round(el.scrollLeft / Math.max(1, el.clientWidth));
     if (i !== index && i >= 0 && i < photos.length) onIndex(i);
   };
