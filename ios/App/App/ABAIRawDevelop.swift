@@ -107,6 +107,40 @@ enum ABAIRawDevelop {
         return f.outputImage
     }
 
+    // MARK: ①' 白平衡不改亮度
+
+    /// 整張圖的「感覺亮度」：log 亮度的平均（幾何平均，跟人眼的感覺一致）
+    static func logMean(_ img: CIImage) -> Double? {
+        let e = img.extent
+        guard e.width > 0, e.height > 0, let k = logLumaKernel, let l = k.apply(extent: e, arguments: [img]) else { return nil }
+        let avg = l.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: e)])
+        var px = [Float](repeating: 0, count: 4)
+        ABAIImageCore.context.render(avg, toBitmap: &px, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
+        return px[0].isFinite ? Double(px[0]) : nil
+    }
+
+    /// 系統 RAW 引擎改色溫、色調時，整體亮度會跟著變（白平衡的增益沒有保持亮度）——
+    /// 看起來就像同時動到了曝光。專業沖洗軟體的白平衡只改顏色，所以這裡補回來：
+    /// 用一張很小的 RAW 在同樣曝光下各解一次（拍攝當下的白平衡、現在的白平衡），比較感覺亮度，差多少補多少。
+    static func wbGain(_ url: URL, _ p: ABAIRawParams) -> Double {
+        guard p.temperature != nil || p.tint != nil, let f = rawFilter(url, longSide: 320, draft: true) else { return 1 }
+        f.exposure = Float(p.exposure)
+        guard let a = f.outputImage, let la = logMean(a) else { return 1 }
+        if let t = p.temperature { f.neutralTemperature = Float(max(2000, min(50000, t))) }
+        if let t = p.tint { f.neutralTint = Float(max(-150, min(150, t))) }
+        guard let b = f.outputImage, let lb = logMean(b) else { return 1 }
+        return pow(2, max(-2, min(2, la - lb)))
+    }
+
+    static func gain(_ img: CIImage, _ g: Double) -> CIImage {
+        guard abs(g - 1) > 0.002 else { return img }
+        let v = CGFloat(g)
+        return img.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: v, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: v, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: v, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+        ])
+    }
+
     // MARK: ② 局部亮度底圖
 
     private static let logLumaKernel = CIColorKernel(source: """
@@ -329,8 +363,19 @@ final class ABAIRawSession {
         asShotTint = Double(f.neutralTint)
     }
 
+    private var gainCache: [String: Double] = [:]
+    private func wbGain(_ p: ABAIRawParams) -> Double {
+        let key = "\(p.exposure)|\(p.temperature ?? -1)|\(p.tint ?? -999)"
+        if let g = gainCache[key] { return g }
+        let g = ABAIRawDevelop.wbGain(url, p)
+        if gainCache.count > 64 { gainCache.removeAll() }
+        gainCache[key] = g
+        return g
+    }
+
     private func rebuild(_ p: ABAIRawParams) {
-        guard let f = filter, let out = ABAIRawDevelop.applyRaw(f, p, defaults: defaults), let baked = ABAIRawDevelop.bake(out) else { return }
+        guard let f = filter, let raw = ABAIRawDevelop.applyRaw(f, p, defaults: defaults),
+              let baked = ABAIRawDevelop.bake(ABAIRawDevelop.gain(raw, wbGain(p))) else { return }
         proxy = baked
         proxyBase = ABAIRawDevelop.bake(ABAIRawDevelop.localBase(baked)) ?? ABAIRawDevelop.localBase(baked)
         proxyKey = p.rawKey
@@ -376,7 +421,7 @@ final class ABAIRawSession {
     func export(_ p: ABAIRawParams) throws -> URL {
         guard let f = ABAIRawDevelop.rawFilter(url, longSide: nil, draft: false),
               let raw = ABAIRawDevelop.applyRaw(f, p, defaults: ABAIRawDefaults(f)),
-              let lin = ABAIRawDevelop.bake(raw) else {
+              let lin = ABAIRawDevelop.bake(ABAIRawDevelop.gain(raw, ABAIRawDevelop.wbGain(url, p))) else {
             throw ABAIImageCore.CoreError.decode
         }
         let base = ABAIRawDevelop.localBase(lin)

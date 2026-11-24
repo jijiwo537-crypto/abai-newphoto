@@ -178,8 +178,9 @@ export type HslBand = { h: number; s: number; l: number };
 export const HSL_PANEL_H = 221;
 
 /** 跟編輯頁 FastSlider（compact）同一個樣子的滑桿：名稱｜數值，下面一條；雙擊名稱、雙擊白點都回到 0 */
-export const CompactSlider: React.FC<{ label: string; value: number; min?: number; max?: number; dflt?: number; fmt?: (v: number) => string;
-  onStart: () => void; onValue: (v: number) => void; onCommit: () => void; onReset: () => void; }> = ({ label, value, min = -100, max = 100, fmt, onStart, onValue, onCommit, onReset }) => {
+export const CompactSlider: React.FC<{ label: string; value: number; min?: number; max?: number; step?: number; dflt?: number; fmt?: (v: number) => string;
+  /** 軌道換成色彩漸層（白平衡） */ track?: string;
+  onStart: () => void; onValue: (v: number) => void; onCommit: () => void; onReset: () => void; }> = ({ label, value, min = -100, max = 100, step = 1, fmt, track, onStart, onValue, onCommit, onReset }) => {
   const box = useRef<HTMLDivElement>(null);
   const resetRef = useRef(onReset); resetRef.current = onReset;
   useEffect(() => {
@@ -194,8 +195,9 @@ export const CompactSlider: React.FC<{ label: string; value: number; min?: numbe
         <span className="font-black text-white/40 uppercase pointer-events-none text-[10px] tracking-[0.2em]">{label}</span>
         <span className="font-sans tabular-nums font-bold bg-white/10 rounded text-xs px-2 py-0.5">{fmt ? fmt(value) : Math.round(value)}</span>
       </div>
-      <div ref={box}>
-        <LiveRange ariaLabel={label} min={min} max={max} step={1} value={value} height={30} className="custom-range compact"
+      <div ref={box} className="relative">
+        {track && <div aria-hidden className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-[3px] rounded-full opacity-80 pointer-events-none" style={{ background: track }} />}
+        <LiveRange ariaLabel={label} min={min} max={max} step={step} value={value} height={30} className={`custom-range compact ${track ? 'raw-track-colored' : ''}`}
           onPointerDown={onStart} onValue={onValue} onCommit={onCommit} />
       </div>
     </div>

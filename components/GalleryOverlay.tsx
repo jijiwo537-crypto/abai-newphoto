@@ -194,9 +194,16 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
       </header>
       <div ref={scrollRef} className="absolute inset-0 overflow-y-auto no-scrollbar" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 54px)', paddingBottom: `calc(max(env(safe-area-inset-bottom), 16px) + ${BACK_CIRCLE + 56}px)` }}>
         {photos.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center opacity-40">
-            <Icon name="no_photography" className="text-6xl mb-4" />
-            <p>尚未拍攝或導入任何照片</p>
+          /* 沒有照片：整個螢幕正中央（不跟著上下的內距偏）。細線條的相片圖示＋兩行字 */
+          <div className="fixed inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
+            <svg width="46" height="46" viewBox="0 0 48 48" fill="none" stroke="rgba(255,255,255,0.34)" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="8" y="12" width="32" height="26" rx="5" />
+              <path d="M12 9h24" opacity=".6" />
+              <circle cx="18.5" cy="21" r="2.6" />
+              <path d="m8.8 33.5 9-8.2 6.4 5.6 5.2-4.4 9.8 8.3" />
+            </svg>
+            <p className="mt-4 text-[15px] font-medium tracking-[0.02em] text-white/60">還沒有照片</p>
+            <p className="mt-1.5 text-[12.5px] tracking-[0.02em] text-white/30">拍下的照片會出現在這裡</p>
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-[2px]">
@@ -309,7 +316,9 @@ const PhotoViewer: React.FC<{
     const full = new Image(); full.src = src;
     const fullReady = full.decode().then(() => true, () => false);
     const go = async () => {
-      const useFull = await Promise.race([fullReady, new Promise<boolean>(r => setTimeout(() => r(false), 220))]);
+      /* 不等原圖：手指一放就開始飛（原圖已經解好就直接用原圖，不然先用縮圖、解好再換上去） */
+      const useFull = full.complete && full.naturalWidth > 0;
+      if (!useFull) void fullReady.then(ok => { if (ok && alive && g) g.src = src; });
       if (!alive) return;
       const pic = useFull ? full : im;
       const W = window.innerWidth, H = window.innerHeight;
@@ -324,7 +333,7 @@ const PhotoViewer: React.FC<{
       const tx = C.left + C.width / 2 - (B.left + w / 2), ty = C.top + C.height / 2 - (B.top + h / 2);
       if (cellImg) cellImg.style.visibility = 'hidden';
       const dur = 420;
-      bg.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dur * 0.7, easing: 'ease-out' });
+      bg.current?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: dur * 0.7, easing: 'ease-out', fill: 'forwards' });
       await g.animate([{ transform: `translate3d(${tx}px,${ty}px,0) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` }, { transform: 'none', clipPath: 'inset(0px)' }],
         { duration: dur, easing: EASE }).finished.catch(() => {});
       if (cellImg) cellImg.style.visibility = '';
@@ -378,12 +387,16 @@ const PhotoViewer: React.FC<{
     /* 鬆手：縮小的圖飛回相簿裡這一張的格子（裁成正方形），黑底同時淡掉、露出相簿 */
     setFlying(true);
     cell?.scrollIntoView({ block: 'nearest' });
+    /* 大圖的元素是撐滿整塊（object-fit: contain），真正的圖是中間那一塊：縮放比例照「圖」算，裁切照「元素」算 */
     const B = d.base, C = cell?.getBoundingClientRect();
+    const nw = img.naturalWidth || B.width, nh = img.naturalHeight || B.height;
+    const fit = Math.min(B.width / nw, B.height / nh);
+    const Pw = nw * fit, Ph = nh * fit;
     const cellImg = cell?.querySelector('img') as HTMLImageElement | null;
     if (cellImg) cellImg.style.visibility = 'hidden';
     let to: Keyframe;
     if (C && C.width > 0) {
-      const k = Math.max(C.width / B.width, C.height / B.height);
+      const k = Math.max(C.width / Pw, C.height / Ph);
       const ix = Math.max(0, (B.width - C.width / k) / 2), iy = Math.max(0, (B.height - C.height / k) / 2);
       const tx = C.left + C.width / 2 - (B.left + B.width / 2), ty = C.top + C.height / 2 - (B.top + B.height / 2);
       to = { transform: `translate3d(${tx}px,${ty}px,0) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` };
@@ -437,7 +450,8 @@ const PhotoViewer: React.FC<{
 
   return createPortal(
     <div ref={root} data-camera-viewer className={`fixed inset-0 z-[60] text-white select-none transition-opacity duration-[300ms] ${closing ? 'opacity-0' : ''}`}>
-      <div ref={bg} className="absolute inset-0 bg-black pointer-events-none" />
+      {/* 黑底：打開的動畫開始前是透明的（之前一掛上就是全黑，等動畫開始又從透明淡入 —— 就是那一下閃） */}
+      <div ref={bg} className="absolute inset-0 bg-black pointer-events-none" style={{ opacity: opening ? 0 : 1 }} />
       <img ref={ghost} alt="" aria-hidden className="fixed z-[5] pointer-events-none object-contain" style={{ visibility: 'hidden', transformOrigin: 'center', willChange: 'transform' }} />
       <div ref={pager} onScroll={onScroll} className="absolute inset-0 flex overflow-x-auto snap-x snap-mandatory no-scrollbar"
         style={{ touchAction: 'pan-x', opacity: opening ? 0 : 1 }}

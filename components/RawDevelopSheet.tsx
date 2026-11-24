@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { ChevronLeft } from 'lucide-react';
 import { LiveRange } from './LiveRange';
 import { Icon } from './Icon';
-import { CurvesPad, HslPanel, HSL_PANEL_H, LINEAR_CURVES, curveLut, isLinearCurve, type CurveSet, type HslBand } from './EditorCurvesHsl';
+import { CurvesPad, HslPanel, CompactSlider, HSL_PANEL_H, LINEAR_CURVES, curveLut, isLinearCurve, type CurveSet, type HslBand } from './EditorCurvesHsl';
 import { haptic } from '../utils/haptics';
 import { SLIDER_DOUBLE_TAP_EVENT } from '../utils/sliderTouch';
 import { punchThrough } from '../utils/nativePreview';
@@ -31,7 +31,7 @@ export interface RawDevelopSheetProps {
   developer?: typeof developRaw;
 }
 
-type Tab = 'light' | 'wb' | 'curve' | 'hsl';
+type Tab = 'exposure' | 'wb' | 'light' | 'curve' | 'hsl';
 interface State {
   exposure: number;
   /** 白平衡：色溫（K）、色調（綠 − ↔ ＋ 洋紅）。0 K＝還不知道拍攝當下的值（等原生回報） */
@@ -51,19 +51,15 @@ const K_MIN = 2000, K_MAX = 50000;
 const kToPos = (k: number) => -1e6 / Math.max(K_MIN, Math.min(K_MAX, k));
 const posToK = (p: number) => Math.round(-1e6 / p / 10) * 10;
 
-type ToolDef = { id: 'exposure' | 'highlights' | 'shadows' | 'kelvin' | 'tint'; label: string; icon: string };
-const TOOLS: Record<'light' | 'wb', ToolDef[]> = {
-  light: [
-    { id: 'exposure', label: '曝光', icon: 'brightness_6' },
-    { id: 'highlights', label: '高光', icon: 'tone_highlights' }, { id: 'shadows', label: '陰影', icon: 'tone_shadows' },
-  ],
-  wb: [{ id: 'kelvin', label: '色溫', icon: 'device_thermostat' }, { id: 'tint', label: '色調', icon: 'colorize' }],
+type SliderId = 'exposure' | 'kelvin' | 'tint' | 'highlights' | 'shadows';
+/** 每一頁直接排出來的滑桿（不用再點按鈕切換）：兩根的並排一列 */
+const TAB_SLIDERS: Record<'exposure' | 'wb' | 'light', SliderId[]> = {
+  exposure: ['exposure'], wb: ['kelvin', 'tint'], light: ['highlights', 'shadows'],
 };
-const TAB_TITLES: Record<Tab, string> = { light: '光線', wb: '白平衡', curve: '曲線', hsl: 'HSL' };
+const TAB_TITLES: Record<Tab, string> = { exposure: '曝光', wb: '白平衡', light: '光線', curve: '曲線', hsl: 'HSL' };
 
 export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previewSrc, leaving = false, protectEV, look, onCancel, onDone, developer = developRaw }) => {
-  const [tab, setTab] = useState<Tab>('light');
-  const [tool, setTool] = useState<ToolDef['id']>('exposure');
+  const [tab, setTab] = useState<Tab>('exposure');
   const asShot = useRef<{ temp: number; tint: number } | null>(null);
   const [st, setSt] = useState<State>(() => fresh(protectEV, null));
   const stRef = useRef(st); stRef.current = st;
@@ -222,7 +218,7 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
   /* ── 目前這顆工具的滑桿 ── */
   type Slider = { label: string; value: number; min: number; max: number; step: number; dflt: number; fmt: (v: number) => string; set: (v: number) => void; track?: string };
   const signed = (v: number) => `${v > 0 ? '+' : ''}${Math.round(v)}`;
-  const sliderOf = (id: ToolDef['id']): Slider => {
+  const sliderOf = (id: SliderId): Slider => {
     switch (id) {
       case 'exposure': return { label: '曝光', value: st.exposure, min: -5, max: 5, step: 0.01, dflt: protectEV,
         fmt: v => `${v > 0.004 ? '+' : v < -0.004 ? '−' : ''}${Math.abs(v).toFixed(2)} EV`, set: v => set({ exposure: v }) };
@@ -238,33 +234,17 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
       case 'shadows': return { label: '陰影', value: st.shadows, min: -100, max: 100, step: 1, dflt: 0, fmt: signed, set: v => set({ shadows: v }) };
     }
   };
-  const cur = sliderOf(tool);
-  const curRef = useRef(cur); curRef.current = cur;
-  const resetCur = () => { const c = curRef.current; touch(); c.set(c.dflt); commit(); haptic('detentMajor'); };
-  /* 雙擊白點：回到預設值（utils/sliderTouch 偵測到之後送到那根滑桿上） */
-  const sliderBox = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = sliderBox.current; if (!el) return;
-    const h = () => resetCur();
-    el.addEventListener(SLIDER_DOUBLE_TAP_EVENT, h);
-    return () => el.removeEventListener(SLIDER_DOUBLE_TAP_EVENT, h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
-  const isChanged = (id: ToolDef['id']) => { const s = sliderOf(id); return Math.abs(s.value - s.dflt) > s.step / 2 + (id === 'kelvin' ? 0.5 : 0); };
-  const tabChanged = useMemo(() => ({
-    light: TOOLS.light.some(t => isChanged(t.id)),
-    wb: !!asShot.current && (st.kelvin !== asShot.current.temp || st.tint !== asShot.current.tint),
-    curve: !(['rgb', 'r', 'g', 'b'] as const).every(c => isLinearCurve(st.curves[c])),
-    hsl: st.hsl.some(b => b.h || b.s || b.l),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [st]);
-
   /* 按住大圖：看原本的樣子（放開回來） */
   const compare = (on: boolean) => { comparing.current = on; setComparingOn(on); push(true); };
-  const pickTab = (t: Tab) => {
-    if (t === tab) return;
-    haptic('tick'); setTab(t);
-    if (t === 'light') setTool('exposure'); else if (t === 'wb') setTool('kelvin');
+  const pickTab = (t: Tab) => { if (t !== tab) { haptic('tick'); setTab(t); } };
+  /** 一根滑桿（跟編輯頁同一款）：雙擊名稱、雙擊白點都回到預設值 */
+  const sliderEl = (id: SliderId) => {
+    const c = sliderOf(id);
+    return (
+      <CompactSlider key={id} label={c.label} value={c.value} min={c.min} max={c.max} step={c.step} fmt={c.fmt} track={c.track}
+        onStart={touch} onValue={v => { touch(); c.set(v); }} onCommit={commit}
+        onReset={() => { touch(); sliderOf(id).set(c.dflt); commit(); }} />
+    );
   };
 
   return (
@@ -320,48 +300,19 @@ export const RawDevelopSheet: React.FC<RawDevelopSheetProps> = ({ rawPath, previ
           <div className="bg-[#111] border-t border-white/5" style={{ height: HSL_PANEL_H }}>
             <HslPanel value={st.hsl} onStart={touch} onChange={hsl => set({ hsl })} onCommit={commit} />
           </div>
-        ) : tab === 'curve' ? (
-          <div className="bg-[#111] border-t border-white/5" style={{ height: 0 }} />
-        ) : (
-          <>
-            {/* 滑桿（跟編輯頁一樣）：名稱｜數值，下面一條。雙擊名稱、雙擊白點都回到預設值 */}
-            <div className="bg-[#111] px-8 h-20 flex flex-col justify-center" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-              <div className="w-full">
-                <div className="flex justify-between items-center cursor-pointer select-none mb-1 translate-y-2" title="雙擊重置" onDoubleClick={resetCur}>
-                  <span className="font-black text-white/40 uppercase text-[10px] tracking-[0.2em]">{cur.label}</span>
-                  <span className="font-sans tabular-nums font-bold bg-white/10 rounded text-xs px-2 py-0.5">{cur.fmt(cur.value)}</span>
-                </div>
-                <div ref={sliderBox} className="relative">
-                  {cur.track && <div aria-hidden className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-[3px] rounded-full opacity-80 pointer-events-none" style={{ background: cur.track }} />}
-                  <LiveRange ariaLabel={cur.label} min={cur.min} max={cur.max} step={cur.step} value={cur.value} height={40}
-                    className={`custom-range ${cur.track ? 'raw-track-colored' : ''}`}
-                    onPointerDown={touch} onValue={x => { touch(); cur.set(x); }} onCommit={commit} />
-                </div>
-              </div>
-            </div>
-            {/* 工具：一排圓形按鈕（跟編輯頁一樣），選中的是白底黑字；調過的下面亮一個點 */}
-            <div className="flex items-center justify-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808] h-24">
-              {TOOLS[tab].map(t => {
-                const on = tool === t.id;
-                return (
-                  <button key={t.id} onClick={() => { if (!on) { haptic('tick'); setTool(t.id); } }} className="flex flex-col items-center gap-1 shrink-0 w-16">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${on ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40'}`}>
-                      <Icon name={t.icon} className="text-lg" fill={on} />
-                    </div>
-                    <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${on ? 'text-white' : 'text-white/20'}`}>{t.label}</span>
-                    <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${isChanged(t.id) ? 'bg-white/70' : 'bg-transparent'}`} />
-                  </button>
-                );
-              })}
-            </div>
-          </>
+        ) : tab === 'curve' ? null : (
+          /* 這一頁的滑桿直接排出來：曝光一根；白平衡（色溫、色調）、光線（高光、陰影）兩根並排 */
+          <div className="bg-[#111] border-t border-white/5 px-7 flex items-center" style={{ height: 120 }}>
+            {TAB_SLIDERS[tab].length === 1
+              ? <div className="w-full">{sliderEl(TAB_SLIDERS[tab][0])}</div>
+              : <div className="w-full grid grid-cols-2 gap-6">{TAB_SLIDERS[tab].map(sliderEl)}</div>}
+          </div>
         )}
         {/* 分頁（跟編輯頁的下方分頁列一樣） */}
         <div className="flex border-t border-white/10 bg-black px-3" style={{ height: 44, paddingBottom: 'max(env(safe-area-inset-bottom), 12px)', boxSizing: 'content-box' }}>
-          {(['light', 'wb', 'curve', 'hsl'] as const).map(t => (
+          {(['exposure', 'wb', 'light', 'curve', 'hsl'] as const).map(t => (
             <button key={t} onClick={() => pickTab(t)} className={`relative h-full flex items-center justify-center flex-1 ${tab === t ? 'text-white' : 'text-white/50'}`}>
               <span className="text-[12.5px] font-normal tracking-[0.04em] whitespace-nowrap">{TAB_TITLES[t]}</span>
-              {tabChanged[t] && tab !== t && <span aria-hidden className="absolute top-2.5 right-[calc(50%-22px)] w-1 h-1 rounded-full bg-white/60" />}
               <span aria-hidden className={`absolute left-1/2 bottom-[4px] -ml-[9px] w-[18px] h-[2px] rounded-full bg-white transition-[opacity,transform] duration-200 ${tab === t ? 'opacity-100 scale-x-100' : 'opacity-0 scale-x-50'}`} />
             </button>
           ))}

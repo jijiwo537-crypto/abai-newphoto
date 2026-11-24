@@ -521,3 +521,6 @@ html[data-vt="back"]::view-transition-new(root) { z-index: 1; animation-name: vt
 /* RAW 沖洗：白平衡、HSL 的滑桿軌道換成色彩漸層（外層畫），原本那條灰線藏起來 */
 .custom-range.raw-track-colored::-webkit-slider-runnable-track { background: transparent; }
 .custom-range.raw-track-colored::-moz-range-track { background: transparent; }
+
+/* 導入的放大過場播放中（utils/importHero）：不顯示「匯入中」的轉圈和文字，畫面上只有那張照片在動 */
+html[data-import-hero] [data-import-spinner] { visibility: hidden !important; }

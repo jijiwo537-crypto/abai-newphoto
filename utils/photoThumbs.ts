@@ -38,13 +38,20 @@ const thumbFromUrl = (src: string) => new Promise<string | null>(resolve => {
 });
 
 /** 每張照片都有 thumbs[src]；缺的依序產生 */
-export function usePhotoThumbs(photos: string[]) {
-  const [thumbs, setThumbs] = useState<Record<string, string>>({});
+/** keep：給一個放在元件外面的物件，縮圖就存在那裡、卸載時不回收（相機的相簿：離開相機再回來縮圖還在） */
+export function usePhotoThumbs(photos: string[], keep?: Record<string, string>) {
+  const [thumbs, setThumbs] = useState<Record<string, string>>(() => (keep ? { ...keep } : {}));
   const ref = useRef(thumbs); ref.current = thumbs;
   const busy = useRef(false);
   const alive = useRef(true);
+  useEffect(() => {
+    if (!keep) return;
+    Object.keys(keep).forEach(k => { if (!(k in thumbs)) delete keep[k]; });
+    Object.assign(keep, thumbs);
+  }, [thumbs, keep]);
   useEffect(() => () => {
     alive.current = false;
+    if (keep) return;
     (Object.entries(ref.current) as [string, string][]).forEach(([k, u]) => { if (u !== k) URL.revokeObjectURL(u); });
   }, []);
   const seed = useCallback((src: string, thumb: string | null) => {
@@ -64,7 +71,7 @@ export function usePhotoThumbs(photos: string[]) {
     busy.current = true;
     void thumbFromUrl(next).then(url => {
       busy.current = false;
-      if (!alive.current) { if (url) URL.revokeObjectURL(url); return; }
+      if (!alive.current) { if (url) { if (keep) keep[next] = url; else URL.revokeObjectURL(url); } return; }
       // 失敗時把照片本身記成縮圖，才不會一直重試
       setThumbs(t => ({ ...t, [next]: url ?? next }));
     });

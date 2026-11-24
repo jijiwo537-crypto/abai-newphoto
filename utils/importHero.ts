@@ -15,6 +15,28 @@ let ghost: HTMLDivElement | null = null;
 let ar = 1;
 let fullUrl: string | null = null;
 let token = 0;
+/** 一點下去就開始的那一段飛行（飛到預估的位置）；落地時等它飛完再做最後一點點修正 */
+let flight: Promise<void> = Promise.resolve();
+
+/** 安全區域（瀏海、底部橫條）的大小 */
+function safeInsets() {
+  const d = document.createElement('div');
+  Object.assign(d.style, { position: 'fixed', visibility: 'hidden', paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' });
+  document.body.appendChild(d);
+  const cs = getComputedStyle(d);
+  const r = { top: parseFloat(cs.paddingTop) || 0, bottom: parseFloat(cs.paddingBottom) || 0 };
+  d.remove();
+  return r;
+}
+/** 預估照片在工具裡會停的位置：工具頁上方標題列下面、下方工具面板上面那一塊的正中間（照片完整比例放進去） */
+function predictRect(aspect: number): DOMRect {
+  const W = window.innerWidth, H = window.innerHeight, s = safeInsets();
+  const top = s.top + 72, bottom = H - 262 - s.bottom;
+  const boxW = W - 32, boxH = Math.max(120, bottom - top);
+  let w = boxW, h = w / aspect;
+  if (h > boxH) { h = boxH; w = h * aspect; }
+  return new DOMRect((W - w) / 2, top + (boxH - h) / 2, w, h);
+}
 
 /** 這次導入要不要播：在主頁（沒有工具頁）才播 */
 export const heroAllowed = () => !document.querySelector('.safe-top');
@@ -41,6 +63,17 @@ export function beginImportHero(rect: DOMRect, src: string, aspect?: number) {
   g.appendChild(layer(src));
   document.body.appendChild(g);
   ghost = g;
+  document.documentElement.setAttribute('data-import-hero', '');
+  /* 手指一放就開始飛：從那一格放大、展開成完整比例，飛向照片在工具裡預估會停的位置（一路不停） */
+  const P = predictRect(ar);
+  const C = rect;
+  const k = Math.max(C.width / P.width, C.height / P.height);
+  const ix = Math.max(0, (P.width - C.width / k) / 2), iy = Math.max(0, (P.height - C.height / k) / 2);
+  Object.assign(g.style, { left: `${P.left}px`, top: `${P.top}px`, width: `${P.width}px`, height: `${P.height}px`, background: 'transparent' });
+  flight = g.animate([
+    { transform: `translate(${C.left - P.left - ix * k}px, ${C.top - P.top - iy * k}px) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` },
+    { transform: 'translate(0px, 0px) scale(1)', clipPath: 'inset(0px 0px)' },
+  ], { duration: 520, easing: EASE, fill: 'forwards' }).finished.then(() => {}, () => {});
 }
 
 /** 原檔讀好了：疊上高畫質版本（淡入）。RAW 之類瀏覽器解不了的，就維持縮圖 */
@@ -138,14 +171,16 @@ export async function landImportHero() {
   }
   if (!target || !last) { hide(null); finish(g, 240); return; }
   const T = last;
-  const C = g.getBoundingClientRect();
-  /* 替身換成「目的地」的大小與比例，用 transform 把它縮回那一格、再裁成那一格的正方形 —— 這一格看起來完全沒變 */
-  const k = Math.max(C.width / T.width, C.height / T.height);
-  const ix = Math.max(0, (T.width - C.width / k) / 2), iy = Math.max(0, (T.height - C.height / k) / 2);
-  Object.assign(g.style, { left: `${T.left}px`, top: `${T.top}px`, width: `${T.width}px`, height: `${T.height}px`, background: 'transparent' });
-  const from = { transform: `translate(${C.left - T.left - ix * k}px, ${C.top - T.top - iy * k}px) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` };
-  const to = { transform: 'translate(0px, 0px) scale(1)', clipPath: 'inset(0px 0px)' };
-  await g.animate([from, to], { duration: 520, easing: EASE, fill: 'forwards' }).finished.catch(() => {});
+  await flight;
+  if (my !== token) { hide(null); return; }
+  /* 最後的修正：從預估的位置移到照片真正的位置（同樣的比例，只有平移和縮放；預估得準的話幾乎看不出來） */
+  const P = g.getBoundingClientRect();
+  const k = P.width / T.width;
+  Object.assign(g.style, { left: `${T.left}px`, top: `${T.top}px`, width: `${T.width}px`, height: `${T.height}px` });
+  g.getAnimations().forEach(a => a.cancel());
+  const dist = Math.hypot(P.left - T.left, P.top - T.top) + Math.abs(P.width - T.width);
+  await g.animate([{ transform: `translate(${P.left - T.left}px, ${P.top - T.top}px) scale(${k})` }, { transform: 'translate(0px, 0px) scale(1)' }],
+    { duration: Math.min(380, 160 + dist * 1.2), easing: EASE, fill: 'forwards' }).finished.catch(() => {});
   /* 落地：照片本人先在底下出現，替身再慢慢淡掉 */
   hide(null);
   if (my !== token) return;
@@ -154,6 +189,7 @@ export async function landImportHero() {
 
 function finish(g: HTMLDivElement, ms: number) {
   if (ghost === g) ghost = null;
+  if (!ghost) document.documentElement.removeAttribute('data-import-hero');
   const url = fullUrl; fullUrl = null;
   g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {}).finally(() => {
     g.remove();

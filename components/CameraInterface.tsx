@@ -241,6 +241,19 @@ const SmallFrameOverlay = React.memo(React.forwardRef<SmallFrameApi, { baseMm: n
   );
 }));
 
+/* 相機的相簿：存在相機頁外面（模組層級），離開相機再進來照片都還在（App 沒被關掉之前）。
+   照片網址、RAW、日期、愛心、濾鏡標籤、縮圖都在這裡，相機頁卸載時不能回收。 */
+const camRoll = {
+  photos: [] as string[],
+  rawOf: new Map<string, { path: string; protectEV: number; look: RawLook }>(),
+  rawShots: new Set<string>(),
+  dateOf: new Map<string, { clean: string; date: string }>(),
+  favorites: new Set<string>(),
+  labels: new Map<string, string>(),
+  owned: new Set<string>(),
+  thumbs: {} as Record<string, string>,
+};
+
 export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutList, onImportNew }) => {
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const [captureNotice, setCaptureNotice] = useState('');
@@ -298,11 +311,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [proRaw, setProRaw] = useState(false);
   /** 拍出來的照片 → 同一張的 RAW 檔（App 暫存裡的 DNG）＋拍的時候用的濾鏡。
       編輯時從 RAW 沖，再自動套上同一個濾鏡（RAW 檔本身是感光元件的原始資料，存不進濾鏡） */
-  const rawOfRef = useRef<Map<string, { path: string; protectEV: number; look: RawLook }>>(new Map());
-  const [rawShots, setRawShots] = useState<Set<string>>(() => new Set());
+  const rawOfRef = useRef(camRoll.rawOf);
+  const [rawShots, setRawShots] = useState<Set<string>>(() => new Set(camRoll.rawShots));
+  useEffect(() => { camRoll.rawShots = rawShots; }, [rawShots]);
   /** 有日期戳記的照片 → 沒印日期的同一張＋日期字。編輯一律改沒印的那張，存檔時才重新印上日期：
       調色、濾鏡不會改到日期；日期是光加上去的，畫面調暗了字自然更清楚 */
-  const dateOfRef = useRef<Map<string, { clean: string; date: string }>>(new Map());
+  const dateOfRef = useRef(camRoll.dateOf);
   const forgetDate = (url: string) => {
     const d = dateOfRef.current.get(url); if (!d) return;
     dateOfRef.current.delete(url);
@@ -448,14 +462,15 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (pointersRef.current.size === 0) setTimeout(() => { gesturePinchedRef.current = false; }, 0);
   };
   
-  const [photos, setPhotos] = useState<string[]>([]);
-  const { thumbs, seed: seedThumb } = usePhotoThumbs(photos);
+  const [photos, setPhotos] = useState<string[]>(() => camRoll.photos);
+  useEffect(() => { camRoll.photos = photos; }, [photos]);
+  const { thumbs, seed: seedThumb } = usePhotoThumbs(photos, camRoll.thumbs);
   /* 只回收自己建立的 blob 網址；匯入的、編輯回存的字串不要亂動 */
-  const ownedUrlsRef = useRef<Set<string>>(new Set());
+  const ownedUrlsRef = useRef(camRoll.owned);
   const releaseUrl = useCallback((url: string) => {
     if (ownedUrlsRef.current.has(url)) { URL.revokeObjectURL(url); ownedUrlsRef.current.delete(url); }
   }, []);
-  useEffect(() => () => { ownedUrlsRef.current.forEach(u => URL.revokeObjectURL(u)); ownedUrlsRef.current.clear(); }, []);
+  /* 離開相機不回收：照片留在相機的相簿裡（camRoll），下次進來還在 */
   const [showGallery, setShowGallery] = useState(false);
   /** 相簿開始往下滑走（還沒滑完）：相機的按鈕這一刻就要放回來，滑完才出現會慢半拍 */
   const [galleryLeaving, setGalleryLeaving] = useState(false);
@@ -486,8 +501,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     return () => window.clearTimeout(t);
   }, [showGallery, proMode]);
   /* 相簿：愛心、每張拍照時用的濾鏡（大圖右上的標籤） */
-  const [favorites, setFavorites] = useState<Set<string>>(() => new Set());
-  const labelsRef = useRef<Map<string, string>>(new Map());
+  const [favorites, setFavorites] = useState<Set<string>>(() => new Set(camRoll.favorites));
+  useEffect(() => { camRoll.favorites = favorites; }, [favorites]);
+  const labelsRef = useRef(camRoll.labels);
   /* 進相簿（或從相簿進編輯）就把小框收掉：回到相機時應該是重新開始的滿版畫面，
      不是停在上一次捏的位置。frameZoomRef 也一起歸 1，免得畫面上沒有框、拍下去卻還是裁過的。 */
   useEffect(() => {
