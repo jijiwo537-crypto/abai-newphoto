@@ -89,7 +89,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
     if (closing) return;
     setClosing(true);
     onCloseStart?.();
-    window.setTimeout(onClose, 380);
+    window.setTimeout(onClose, motionMs('camGallerySheet'));
   };
 
   const share = async (idx: number[]) => {
@@ -188,6 +188,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   /* 掛在 body 上：相機頁（.safe-top）從狀態列下面才開始，放在裡面的話照片捲不到螢幕最上面 */
   return createPortal(
     <div data-camera-gallery
+      style={{ transitionDuration: `${motionMs('camGallerySheet')}ms` }}
       className={`fixed inset-0 bg-black text-white z-50 transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] ${closing || !entered ? 'translate-y-full' : 'translate-y-0'}`}>
 
       <style>{SEL_CSS}</style>
@@ -265,7 +266,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
         <PhotoViewer
           photos={shown} thumbs={thumbs} index={viewer} closing={closingViewer} suspended={suspended} rawShots={rawShots}
           onIndex={setViewer}
-          onClose={() => { setClosingViewer(true); window.setTimeout(() => { setViewer(null); setClosingViewer(false); }, 310); }}
+          onClose={() => { setClosingViewer(true); window.setTimeout(() => { setViewer(null); setClosingViewer(false); }, motionMs('camViewerFade') + 10); }}
           onDismissed={() => setViewer(null)}
           cellOf={i => scrollRef.current?.querySelector<HTMLElement>(`[data-cg-idx="${i}"]`) ?? null}
           favorites={favorites}
@@ -501,7 +502,7 @@ const PhotoViewer: React.FC<{
   const webCircle = 'rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-center active:scale-90 transition-transform';
 
   return createPortal(
-    <div ref={root} data-camera-viewer className={`fixed inset-0 z-[60] text-white select-none transition-opacity duration-[300ms] ${closing ? 'opacity-0' : ''}`}>
+    <div ref={root} data-camera-viewer style={{ transitionDuration: `${motionMs('camViewerFade')}ms` }} className={`fixed inset-0 z-[60] text-white select-none transition-opacity duration-[300ms] ${closing ? 'opacity-0' : ''}`}>
       {/* 黑底：打開的動畫開始前是透明的（之前一掛上就是全黑，等動畫開始又從透明淡入 —— 就是那一下閃） */}
       <div ref={bg} className="absolute inset-0 bg-black pointer-events-none" style={{ opacity: opening ? 0 : 1 }} />
       <img ref={ghost} alt="" aria-hidden className="fixed z-[5] pointer-events-none object-contain" style={{ visibility: 'hidden', transformOrigin: 'center', willChange: 'transform' }} />
@@ -552,7 +553,7 @@ const PhotoViewer: React.FC<{
         <span className="absolute right-6 h-[26px] px-[9px] rounded-full bg-white/[0.14] backdrop-blur-xl flex items-center text-white text-[13px] font-bold tracking-[0.03em] leading-none pointer-events-none"
           style={{ top: 'max(calc(env(safe-area-inset-top) - 22px), 10px)' }}>#{label}</span>
       )}
-      <div className={`absolute left-0 right-0 flex items-center justify-between px-[34px] transition-opacity duration-200 ${dragging || opening ? 'opacity-0 pointer-events-none' : ''}`} style={{ bottom: 'max(calc(env(safe-area-inset-bottom) - 5px), 14px)', height: CIRCLE }}>
+      <div className={`absolute left-0 right-0 flex items-center justify-between px-[34px] transition-opacity duration-200 ${dragging || opening ? 'opacity-0 pointer-events-none' : ''}`} style={{ transitionDuration: `${motionMs('camViewerButtons')}ms`, bottom: 'max(calc(env(safe-area-inset-bottom) - 5px), 14px)', height: CIRCLE }}>
         <button ref={shareRef} aria-label="分享" onClick={() => onShare(index)} className={`${webCircle} ${hideWeb}`} style={{ width: CIRCLE, height: CIRCLE }}>
           <Icon name="ios_share" className="text-[23px] text-white" />
         </button>

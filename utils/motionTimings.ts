@@ -35,6 +35,14 @@ export const MOTION_ITEMS: MotionItem[] = [
   { id: 'camGalleryClose', group: '相機相簿', label: '下拉關閉（縮回格子）', where: '大圖往下拉超過一段距離後放開', def: 420, kind: 'scale', easing: IOS },
   { id: 'camGalleryBounce', group: '相機相簿', label: '下拉沒關閉時回彈', where: '大圖往下拉一點點就放開', def: 320, kind: 'move', easing: IOS },
 
+  { id: 'camGallerySheet', group: '相機', label: '相簿從下方滑上來／滑下去', where: '相機 → 左下角最新照片（打開）、相簿左上角關閉', def: 380, kind: 'move', easing: IOS },
+  { id: 'camEditorSlide', group: '相機', label: '從相簿進編輯（整頁滑上來／滑下去）', where: '相機相簿 → 大圖 → 編輯；編輯頁返回', def: 440, kind: 'move', easing: 'cubic-bezier(0.4,0,0.2,1)' },
+  { id: 'camViewerFade', group: '相機', label: '大圖用按鈕關閉時淡出', where: '相機相簿 → 大圖 → 左上角返回', def: 300, kind: 'fade', easing: 'ease' },
+  { id: 'camViewerButtons', group: '相機', label: '大圖上的按鈕淡入淡出', where: '相機相簿 → 大圖：打開後按鈕出現、往下拉時按鈕消失', def: 200, kind: 'fade', easing: 'ease' },
+  { id: 'camFrameResize', group: '相機', label: '切換比例時觀景窗縮放', where: '相機 → 比例按鈕（例如 3:4 → 1:1）', def: 300, kind: 'scale', easing: 'cubic-bezier(0.2,0,0,1)' },
+  { id: 'camRotate', group: '相機', label: '橫拿手機時圖示轉正', where: '相機 → 把手機轉成橫的', def: 460, kind: 'scale', easing: 'cubic-bezier(0.25,0.9,0.3,1)' },
+  { id: 'camLastThumb', group: '相機', label: '拍完後左下角縮圖彈出', where: '相機 → 拍一張', def: 500, kind: 'scale', easing: 'cubic-bezier(0.2,0.8,0.2,1)' },
+  { id: 'camControlsRow', group: '相機', label: '濾鏡列、特效列出現', where: '相機 → 下方濾鏡或特效按鈕', def: 200, kind: 'fade', easing: 'ease' },
   { id: 'shutterDown', group: '相機', label: '快門按下', where: '相機 → 按住快門', def: 120, kind: 'press', easing: 'cubic-bezier(0.2,0.8,0.2,1)' },
   { id: 'shutterUp', group: '相機', label: '快門放開', where: '相機 → 放開快門', def: 260, kind: 'press', easing: 'cubic-bezier(0.2,0.8,0.2,1)' },
 
@@ -79,5 +87,9 @@ export const motionOverrides = () => ({ ...read() });
 
 /** 寫在 CSS 裡的那幾個（返回的滑走）用 CSS 變數 */
 export function applyCssMotion() {
-  try { document.documentElement.style.setProperty('--vt-back-ms', `${ms('pageBack')}ms`); } catch { /* 沒有 DOM */ }
+  try {
+    const r = document.documentElement.style;
+    r.setProperty('--vt-back-ms', `${ms('pageBack')}ms`);
+    r.setProperty('--cam-rot-ms', `${ms('camRotate')}ms`);
+  } catch { /* 沒有 DOM */ }
 }

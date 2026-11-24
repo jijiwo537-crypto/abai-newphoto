@@ -31,7 +31,7 @@ function makePhoto(seed: number, w = 360, h = 480) {
 }
 
 const abs = (s: Partial<CSSStyleDeclaration>): React.CSSProperties => ({ position: 'absolute', ...(s as any) });
-type Scene = 'home' | 'editor' | 'gallery' | 'viewer' | 'camera' | 'homeDialog' | 'homeSheet' | 'account' | 'contact';
+type Scene = 'home' | 'editor' | 'gallery' | 'viewer' | 'camera' | 'homeDialog' | 'homeSheet' | 'account' | 'contact' | 'cameraSheet' | 'viewerEditor';
 
 export interface MotionStageApi { play(id: string): void }
 
@@ -150,6 +150,63 @@ export const MotionStage = forwardRef<MotionStageApi, { slow: number }>(({ slow 
         g.remove(); cover.remove(); void r0;
         return;
       }
+      if (id === 'camGallerySheet') {
+        setScene('cameraSheet'); await tick();
+        const sh = q('[data-sheetlayer]')!, o = { duration: d(id), easing: ease(id), fill: 'forwards' as FillMode };
+        await sh.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], o).finished.catch(() => {});
+        await wait(700 * slow); if (!alive()) return;
+        await sh.animate([{ transform: 'none' }, { transform: 'translateY(100%)' }], o).finished.catch(() => {});
+        return;
+      }
+      if (id === 'camEditorSlide') {
+        setScene('viewerEditor'); await tick(); const ph = q('[data-editor-photo]'); if (ph) ph.style.opacity = '1';
+        const ed = q('[data-camedit]')!, o = { duration: d(id), easing: ease(id), fill: 'forwards' as FillMode };
+        await ed.animate([{ transform: 'translateY(100%)' }, { transform: 'none' }], o).finished.catch(() => {});
+        await wait(700 * slow); if (!alive()) return;
+        await ed.animate([{ transform: 'none' }, { transform: 'translateY(100%)' }], o).finished.catch(() => {});
+        return;
+      }
+      if (id === 'camViewerFade') {
+        setScene('viewer'); await tick(); await wait(300 * slow); if (!alive()) return;
+        await q('[data-viewer-root]')!.animate([{ opacity: 1 }, { opacity: 0 }], { duration: d(id), easing: ease(id), fill: 'forwards' }).finished.catch(() => {});
+        return;
+      }
+      if (id === 'camViewerButtons') {
+        setScene('viewer'); await tick();
+        const b = q('[data-viewer-btns]')!, o = { duration: d(id), easing: ease(id), fill: 'forwards' as FillMode };
+        await wait(300 * slow); if (!alive()) return;
+        await b.animate([{ opacity: 1 }, { opacity: 0 }], o).finished.catch(() => {});
+        await wait(500 * slow); if (!alive()) return;
+        await b.animate([{ opacity: 0 }, { opacity: 1 }], o).finished.catch(() => {});
+        return;
+      }
+      if (id === 'camFrameResize') {
+        setScene('camera'); await tick(); await wait(250 * slow); if (!alive()) return;
+        const f = q('[data-camframe]')!, h0 = (W - 12) / 0.75, h1 = W - 12, o = { duration: d(id), easing: ease(id), fill: 'forwards' as FillMode };
+        await f.animate([{ height: `${h0}px` }, { height: `${h1}px` }], o).finished.catch(() => {});
+        await wait(600 * slow); if (!alive()) return;
+        await f.animate([{ height: `${h1}px` }, { height: `${h0}px` }], o).finished.catch(() => {});
+        return;
+      }
+      if (id === 'camRotate') {
+        setScene('camera'); await tick(); await wait(250 * slow); if (!alive()) return;
+        const els = Array.from(root.current!.querySelectorAll('[data-rot]')) as HTMLElement[], o = { duration: d(id), easing: ease(id), fill: 'forwards' as FillMode };
+        await Promise.all(els.map(e => e.animate([{ rotate: '0deg' }, { rotate: '90deg' }], o).finished.catch(() => {})));
+        await wait(600 * slow); if (!alive()) return;
+        await Promise.all(els.map(e => e.animate([{ rotate: '90deg' }, { rotate: '0deg' }], o).finished.catch(() => {})));
+        return;
+      }
+      if (id === 'camLastThumb') {
+        setScene('camera'); await tick(); await wait(250 * slow); if (!alive()) return;
+        q('[data-lastthumb]')!.animate([{ opacity: 0, transform: 'scale(0.5)' }, { opacity: 1, transform: 'scale(1)' }], { duration: d(id), easing: ease(id), fill: 'both' });
+        return;
+      }
+      if (id === 'camControlsRow') {
+        setScene('camera'); await tick(); await wait(250 * slow); if (!alive()) return;
+        const r = q('[data-camrow]')!; r.style.visibility = 'visible';
+        r.animate([{ opacity: 0 }, { opacity: 1 }], { duration: d(id), easing: ease(id), fill: 'both' });
+        return;
+      }
       if (id === 'shutterDown' || id === 'shutterUp') {
         setScene('camera'); await tick(); await wait(250); if (!alive()) return;
         const b = q('[data-shutter]')!;
@@ -245,18 +302,26 @@ export const MotionStage = forwardRef<MotionStageApi, { slow: number }>(({ slow 
     </div>
   );
   const viewer = (
-    <div style={abs({ inset: '0', zIndex: '35' } as any)}>
+    <div data-viewer-root style={abs({ inset: '0', zIndex: '35' } as any)}>
       <div data-viewer-bg style={abs({ inset: '0', background: '#000' } as any)} />
       <img data-viewer-img src={photos[7]} style={abs({ left: '0', width: `${W}px`, top: `${(H - W / 0.75) / 2}px`, height: `${W / 0.75}px`, objectFit: 'contain' } as any)} />
-      <div style={abs({ left: '0', right: '0', bottom: '18px', display: 'flex', justifyContent: 'space-around' } as any)}>{['↑', '♡', '✎', '🗑'].map(t => <div key={t} style={{ width: '30px', height: '30px', borderRadius: '99px', background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{t}</div>)}</div>
+      <div data-viewer-btns style={abs({ left: '0', right: '0', bottom: '18px', display: 'flex', justifyContent: 'space-around' } as any)}>{['↑', '♡', '✎', '🗑'].map(t => <div key={t} style={{ width: '30px', height: '30px', borderRadius: '99px', background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{t}</div>)}</div>
     </div>
   );
   const camera = (
     <div style={abs({ inset: '0', background: '#000' } as any)}>
-      <img src={photos[2]} style={abs({ left: '6px', right: '6px', top: '40px', width: `${W - 12}px`, height: `${(W - 12) / 0.75}px`, objectFit: 'cover', borderRadius: '14px' } as any)} />
+      <div data-camframe style={abs({ left: '6px', top: '40px', width: `${W - 12}px`, height: `${(W - 12) / 0.75}px`, borderRadius: '14px', overflow: 'hidden' } as any)}>
+        <img src={photos[2]} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+      </div>
+      <div style={abs({ left: '0', right: '0', top: `${40 + (W - 12) / 0.75 + 8}px`, display: 'flex', justifyContent: 'space-around' } as any)}>
+        {['☀', 'K', '⚡', '✦', '⟲'].map(t => <span key={t} data-rot style={{ display: 'inline-block', color: '#fff', fontSize: '13px', width: '20px', textAlign: 'center' }}>{t}</span>)}
+      </div>
+      <div data-camrow style={abs({ left: '8px', right: '8px', top: `${40 + (W - 12) / 0.75 + 34}px`, display: 'flex', gap: '5px', visibility: 'hidden' } as any)}>
+        {['原圖', '暖陽', '冷調', '底片'].map((t, i) => <span key={t} style={{ flex: 1, height: '20px', borderRadius: '99px', background: i === 1 ? '#fff' : 'rgba(255,255,255,.12)', color: i === 1 ? '#000' : '#ddd', fontSize: '9px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{t}</span>)}
+      </div>
       <div data-flash style={abs({ left: '6px', right: '6px', top: '40px', height: `${(W - 12) / 0.75}px`, background: '#000', opacity: '0', borderRadius: '14px' } as any)} />
       <div data-shutter style={abs({ left: `${W / 2 - 30}px`, bottom: '34px', width: '60px', height: '60px', borderRadius: '99px', border: '3px solid #fff', padding: '3px' } as any)}><div style={{ width: '100%', height: '100%', borderRadius: '99px', background: '#fff' }} /></div>
-      <img src={photos[9]} style={abs({ left: '22px', bottom: '46px', width: '36px', height: '36px', objectFit: 'cover', borderRadius: '8px' } as any)} />
+      <img data-lastthumb src={photos[9]} style={abs({ left: '22px', bottom: '46px', width: '36px', height: '36px', objectFit: 'cover', borderRadius: '8px' } as any)} />
     </div>
   );
   const backdrop = <div data-backdrop style={abs({ inset: '0', background: 'rgba(0,0,0,.6)', zIndex: '20' } as any)} />;
@@ -288,6 +353,8 @@ export const MotionStage = forwardRef<MotionStageApi, { slow: number }>(({ slow 
         {scene === 'gallery' && gallery}
         {scene === 'viewer' && <>{gallery}{viewer}</>}
         {scene === 'camera' && camera}
+        {scene === 'cameraSheet' && <>{camera}<div data-sheetlayer style={abs({ inset: '0', zIndex: '40', transform: 'translateY(100%)' } as any)}>{gallery}</div></>}
+        {scene === 'viewerEditor' && <>{gallery}{viewer}<div data-camedit style={abs({ inset: '0', zIndex: '60', transform: 'translateY(100%)' } as any)}>{editor}</div></>}
         {scene === 'homeDialog' && homeDialog}
         {scene === 'homeSheet' && homeSheet}
         {scene === 'account' && account}

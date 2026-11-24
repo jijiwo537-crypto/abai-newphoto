@@ -574,7 +574,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const closeGalleryEditor = () => {
     if (editorLeaving) return;
     setEditorLeaving(true);
-    editorExitTimer.current = setTimeout(() => { setEditingPhoto(null); setEditorLeaving(false); }, 460);
+    editorExitTimer.current = setTimeout(() => { setEditingPhoto(null); setEditorLeaving(false); }, motionMs('camEditorSlide') + 20);
   };
   /* 相簿打開時（含大圖、RAW 沖洗）把原生觀景窗藏起來：後面任何透明的地方都不會透出相機畫面。
      相簿是從下面滑上來的，等它蓋滿再藏；關的時候先放回來再滑走 */
@@ -1720,7 +1720,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         <div className="w-full h-full flex items-end justify-center pb-0" ref={containerRef}>
           <div 
             className="relative rounded-camera overflow-hidden bg-black flex items-center justify-center transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]"
-            style={{ ...getFrameStyle(), touchAction: 'none' }}
+            style={{ ...getFrameStyle(), touchAction: 'none', transitionDuration: `${motionMs('camFrameResize')}ms` }}
             onPointerDown={onFramePointerDown}
             onPointerMove={onFramePointerMove}
             onPointerUp={onFramePointerEnd}
@@ -1995,7 +1995,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             </div>
           ) : activeControl === 'filters' ? (
             /* 濾鏡列跟其他控制列同一個 56px 高度：打開時上面的觀景窗、按鈕都不會被推動 */
-            <div data-camera-filter-row className="w-full flex items-center h-full overflow-hidden animate-in fade-in duration-200">
+            <div data-camera-filter-row style={{ animationDuration: `${motionMs('camControlsRow')}ms` }} className="w-full flex items-center h-full overflow-hidden animate-in fade-in duration-200">
                <div className="flex overflow-x-auto overflow-y-hidden w-full no-scrollbar gap-2 px-4 scroll-smooth items-center">
                  {lutList.map((lut, idx) => (
                    <button
@@ -2010,7 +2010,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             </div>
           ) : activeControl === 'effects' ? (
             /* 特效與曝光／白平衡共用同一個 56px 控制列高度，打開時觀景窗不會上移。 */
-            <div data-camera-effects-row key="camera-effect-controls" className="w-full relative flex items-center justify-center animate-in h-full">
+            <div data-camera-effects-row key="camera-effect-controls" style={{ animationDuration: `${motionMs('camControlsRow')}ms` }} className="w-full relative flex items-center justify-center animate-in h-full">
               {/* 剩兩個特效：每顆維持原本三等分的寬度，整組置中 */}
               <div className="flex justify-center gap-2 w-[calc(100%-96px)] min-w-0">
                 {FX_ITEMS.map(it => {
@@ -2091,7 +2091,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           <div className="flex justify-center">
             <button onClick={() => setShowGallery(true)} className="cam-rot w-[58px] h-[58px] rounded-[16px] overflow-hidden bg-zinc-900 ring-1 ring-inset ring-white/15 active:scale-[0.86] transition-[transform,opacity,color] duration-200 ease-[cubic-bezier(0.2,0.8,0.2,1)]">
               {photos.length > 0 ? (
-                 thumbs[photos[0]] ? <img key={photos[0]} src={thumbs[photos[0]]} className="w-full h-full object-cover animate-in fade-in zoom-in-50 duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]" alt="Latest" /> : <div className="w-full h-full bg-white/10" />
+                 thumbs[photos[0]] ? <img key={photos[0]} src={thumbs[photos[0]]} style={{ animationDuration: `${motionMs('camLastThumb')}ms` }} className="w-full h-full object-cover animate-in fade-in zoom-in-50 duration-500 ease-[cubic-bezier(0.2,0.8,0.2,1)]" alt="Latest" /> : <div className="w-full h-full bg-white/10" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
                   <Icon name="image" className="text-white/25 text-[22px]" />
@@ -2167,7 +2167,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       )}
 
       {editingPhoto && createPortal(
-        <div className={`fixed inset-0 z-[300] bg-black transition-transform duration-[440ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${editorLeaving ? 'translate-y-full' : editorEntered || editingPhoto.instant ? 'translate-x-0 translate-y-0' : 'translate-y-full'}`} style={editingPhoto.instant && !editorEntered ? { transition: 'none' } : undefined} data-camera-editor>
+        <div className={`fixed inset-0 z-[300] bg-black transition-transform duration-[440ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${editorLeaving ? 'translate-y-full' : editorEntered || editingPhoto.instant ? 'translate-x-0 translate-y-0' : 'translate-y-full'}`} style={editingPhoto.instant && !editorEntered ? { transition: 'none' } : { transitionDuration: `${motionMs('camEditorSlide')}ms` }} data-camera-editor>
         <ImageEditor 
           compactBottomBar
           fullTabs={!!editingPhoto.pro}
@@ -2216,7 +2216,7 @@ const LevelOverlay: React.FC<{ turns: number }> = ({ turns }) => {
   if (!visible) return null;
   const color = level ? '#ffd60a' : 'rgba(255,255,255,0.9)';
   return (
-    <div aria-hidden className="absolute left-1/2 top-1/2 z-[30] pointer-events-none" style={{ rotate: 'var(--cam-rot, 0deg)', transition: 'rotate 460ms cubic-bezier(0.25,0.9,0.3,1)' }}>
+    <div aria-hidden className="absolute left-1/2 top-1/2 z-[30] pointer-events-none" style={{ rotate: 'var(--cam-rot, 0deg)', transition: 'rotate var(--cam-rot-ms, 460ms) cubic-bezier(0.25,0.9,0.3,1)' }}>
       <div className="absolute -translate-y-1/2 h-px" style={{ left: -88, width: 34, background: color, boxShadow: '0 0 2px rgba(0,0,0,0.35)' }} />
       <div className="absolute -translate-y-1/2 h-px" style={{ left: 54, width: 34, background: color, boxShadow: '0 0 2px rgba(0,0,0,0.35)' }} />
       <div className="absolute -translate-y-1/2 h-px" style={{ left: level ? -54 : -44, width: level ? 108 : 88, background: color, rotate: `${level ? 0 : -dev}deg`, boxShadow: '0 0 2px rgba(0,0,0,0.35)', transition: 'left 160ms, width 160ms' }} />
