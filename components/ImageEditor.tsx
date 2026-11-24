@@ -45,7 +45,7 @@ import { LutGpu } from '../utils/lutGpu';
 import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from '../utils/fxSurfaceGl';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, releaseLargeFxBuffers, presentFxSource, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import {warmLowfiLut} from '../utils/lowfiLut';
-import { isPhotoInteractionBusy, awaitPhotoIdle } from '../utils/photoInteractionIdle';
+import { isPhotoInteractionBusy, awaitPhotoIdle, deferHeavyWork as deferHeavyWorkIdle } from '../utils/photoInteractionIdle';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
 import {effectControlValue,effectStoredValue,effectControlMin,effectControlStep,isContinuousEffectControl} from '../utils/effectControlValues';
 import {effectPreset,LEGACY_EFFECT_PRESETS} from '../utils/effectPresets';
@@ -1448,6 +1448,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   useEffect(() => { setBatchMenu(null); }, [srcList.length]);
   const [params, setParams] = useState<EditorParams>(DEFAULT_PARAMS);
   const [activeCategory, setActiveCategory] = useState<Category>('filter');
+  const activeCategoryRef = useRef(activeCategory); activeCategoryRef.current = activeCategory;
+  /* 編輯器剛打開的這 1.8 秒（介面進場、第一張預覽）：背景的重工作（特效縮圖、著色器預編、像素管線預熱）一律先等。
+     不管從哪裡進來（主頁導入、RAW、相機相簿、歷史紀錄）都一樣 */
+  useState(() => { deferHeavyWorkIdle(1800); return 0; });
   const activeCategoryNowRef = useRef<Category>('filter'); activeCategoryNowRef.current = activeCategory;
   /** 目前展開的是哪一個新特效（activeCategory === 'fx' 時才有意義） */
   const [activeFxId, setActiveFxId] = useState<string>(FX_DEFS[0].id);
@@ -4599,7 +4603,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       for (const k of order) steps.push(() => {
         if (thumbSrcOf(buffersSrcRef.current) !== cur) return next();
         if (k === 'filter') { if (filterThumbsMissing(cur)) buildFilterThumbs(cur, curPixels(), cancelled, next); else next(); }
-        else { if (fxThumbsMissing(cur)) buildFxThumbs(cur, curPixels(), cancelled, next); else next(); }
+        else {
+          if (!fxThumbsMissing(cur)) return next();
+          /* 特效縮圖：每一張都要把 GPU 畫好的結果搬回主執行緒，二十幾張加起來是編輯器打開時最重的一件事
+             （實測佔掉近一秒、正好壓在介面進場動畫上，就是卡頓的主因）。
+             停在其他分頁時，等進場結束、主執行緒有空（awaitPhotoIdle）才算；正在看特效分頁就馬上算 */
+          if (activeCategoryRef.current === 'effects') return buildFxThumbs(cur, curPixels(), cancelled, next);
+          void awaitPhotoIdle(4000).then(() => { if (cancelled()) return; if (fxThumbsMissing(cur)) buildFxThumbs(cur, curPixels(), cancelled, next); else next(); });
+        }
       });
       // 其他照片：解好的圖直接用，沒有就載一次（只用來縮小，不留）
       for (const u of others) steps.push(() => {
@@ -9001,9 +9012,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [studiosWarm, setStudiosWarm] = useState(false);
   useEffect(() => {
     if (!fullTabs || studiosWarm || isEditorLoading) return;
-    const ric = (window as any).requestIdleCallback as ((f: () => void, o?: any) => number) | undefined;
-    const id = ric ? ric(() => setStudiosWarm(true), { timeout: 800 }) : window.setTimeout(() => setStudiosWarm(true), 400);
-    return () => { if (ric) (window as any).cancelIdleCallback?.(id); else clearTimeout(id); };
+    /* 等介面進場結束、主執行緒真的有空（awaitPhotoIdle：避開打開後的 1.8 秒）才掛：
+       它們一掛上就要整張解碼、讀像素、建 GPU（實測幾百毫秒），以前就壓在進場動畫上。
+       仍然在你點進人像／仿色之前就準備好 —— 點進去時如果還沒掛，會立刻掛（見 beautySrc／matchSrc 的使用處） */
+    let alive = true;
+    void awaitPhotoIdle(3000).then(() => { if (alive) setStudiosWarm(true); });
+    return () => { alive = false; };
   }, [fullTabs, studiosWarm, isEditorLoading]);
   /* 人像／仿色拿到的對齊框：構圖改過比例的話它們顯示的是原圖，比例對不上就自己置中（studioAlign 會判斷） */
   const studioAlign = useMemo(() => previewAlign,
