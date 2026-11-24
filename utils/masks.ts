@@ -17,7 +17,11 @@ import { isGradeIdentity } from './colorGrade';
    masks 存全部（選中的那一格在切換時才回寫），maskActive 是選中的是第幾個。
    所有欄位都以 mask 開頭，批量編輯時「遮色片是這張照片自己的」那條規則自動涵蓋。 */
 
-export type MaskType = 'linear' | 'radial' | 'brush' | 'color' | 'luma';
+export type MaskType = 'linear' | 'radial' | 'brush' | 'color' | 'luma' | 'subject' | 'person';
+/** 自動選取（主體、人物）：iOS 影像分析算出來的灰階遮罩（白＝選到），以遮色片編號存；
+ *  遮色片屬於某一張照片、編號不重複，所以不會套錯照片。沒有（重開專案）時由編輯器重新分析補上 */
+export const autoMasks = new Map<string, CanvasImageSource & { width: number; height: number }>();
+export const isAutoMask = (t: MaskType | string | undefined) => t === 'subject' || t === 'person';
 export type MaskStroke = { x: number; y: number; r: number; e?: 1 };
 export type ColorSample = { r: number; g: number; b: number; x: number; y: number };
 
@@ -44,6 +48,8 @@ export type MaskSnap = {
   /* 這個遮色片自己的 HSL（八個色帶）與色輪（跟全圖同格式）；null＝沒調 */
   maskHsl: { h: number; s: number; l: number }[] | null;
   maskGrade: any | null;
+  /** 自動選取的遮罩更新了幾次（遮罩算好時加一：畫面快取跟著失效、重畫） */
+  maskAutoV: number;
 };
 
 export const MASK_ADJ_KEYS = ['maskBrightness', 'maskExposure', 'maskContrast', 'maskHighlights', 'maskShadows', 'maskWhites', 'maskBlacks', 'maskTemp', 'maskTint', 'maskSat', 'maskVib'] as const;
@@ -51,7 +57,7 @@ export const MASK_ADJ_KEYS = ['maskBrightness', 'maskExposure', 'maskContrast', 
 export const newMaskId = () => Math.random().toString(36).slice(2, 10);
 export const freshMask = (type: MaskType = 'linear', id = 'm0'): MaskSnap => ({
   maskId: id,
-  maskType: type, maskCreated: type === 'luma', maskInvert: false,
+  maskType: type, maskCreated: type === 'luma' || type === 'subject' || type === 'person', maskInvert: false,
   maskExposure: 0, maskBrightness: 0, maskContrast: 0, maskHighlights: 0, maskShadows: 0,
   maskWhites: 0, maskBlacks: 0,
   maskTemp: 0, maskTint: 0, maskSat: 0, maskVib: 0,
@@ -61,6 +67,7 @@ export const freshMask = (type: MaskType = 'linear', id = 'm0'): MaskSnap => ({
   maskColors: [], maskColorRange: 50, maskColorSmooth: 50,
   maskLumLo: 60, maskLumHi: 100, maskLumSmooth: 50,
   maskHsl: null, maskGrade: null,
+  maskAutoV: 0,
 });
 export const MASK_SNAP_KEYS = Object.keys(freshMask()) as (keyof MaskSnap)[];
 
@@ -267,6 +274,17 @@ export function maskAlpha(out: HTMLCanvasElement, id: string, m: MaskSnap, w: nu
   else if ((m.maskType === 'color' && m.maskColors.length) || m.maskType === 'luma') {
     if (src) { g.imageSmoothingQuality = 'high'; g.drawImage(rangeCanvas(id, m, src, w, h, baseKey, fast), 0, 0, w, h); }
   } else if (m.maskType === 'linear') paintLinear(g, m, w, h);
+  else if (isAutoMask(m.maskType)) {
+    const a = autoMasks.get(m.maskId);
+    if (a) {
+      /* 灰階遮罩（白＝選到）→ alpha：先畫上去，再用「亮度當 alpha」轉換（luminosity 換成白色＋透明度） */
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+      g.drawImage(a, 0, 0, w, h);
+      const d = g.getImageData(0, 0, w, h), px = d.data;
+      for (let i = 0; i < px.length; i += 4) { const v = px[i]; px[i] = 255; px[i + 1] = 255; px[i + 2] = 255; px[i + 3] = v; }
+      g.putImageData(d, 0, 0);
+    }
+  }
   if (m.maskInvert) {
     // 反轉：整片白，再把原本的選取挖掉
     const inv = scratchInv(w, h);

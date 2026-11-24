@@ -12,6 +12,7 @@ import { setRawImportHint } from '../utils/importHint';
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
+import { autoMasks, isAutoMask } from '../utils/masks';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
 import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, rawDevelopLinear, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
 import { RawGpu } from '../utils/rawGpu';
@@ -277,9 +278,13 @@ const MASK_TOOLS: ToolDef[] = [
 ];
 
 /** 五種遮色片（新增時選的那一排）與各自的參數工具（滑桿跟調整用同一根） */
-const MASK_TYPES: [MaskType, string][] = [['linear', '線性漸層'], ['radial', '放射漸層'], ['brush', '筆刷'], ['color', '顏色範圍'], ['luma', '明度範圍']];
+const MASK_TYPES: [MaskType, string][] = [['subject', '主體'], ['person', '人物'], ['linear', '線性漸層'], ['radial', '放射漸層'], ['brush', '筆刷'], ['color', '顏色範圍'], ['luma', '明度範圍']];
+/** 自動選取要用 iOS 的影像分析：只有 App 裡有（網頁版不顯示） */
+const autoMaskSupported = () => isNative();
 const MASK_TYPE_TOOLS: Record<MaskType, ToolDef[]> = {
   linear: [],
+  subject: [],
+  person: [],
   radial: [{ id: 'maskFeather', label: '羽化', icon: 'feather', min: 0, max: 100 }],
   brush: [
     { id: 'maskBrushSize', label: '大小', icon: 'size', min: 1, max: 100 },
@@ -367,6 +372,9 @@ const MASK_GLYPH_BODY: Record<string, string> = {
   close: '<path d="M6 6l12 12M18 6L6 18"/>',
   linear: '<rect x="4" y="4" width="16" height="16" rx="2.5"/><path d="M4 9.5h16"/><path d="M4 14.5h16" stroke-dasharray="2 2.2"/>',
   radial: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4" stroke-dasharray="2 2"/>',
+  /* 主體：四個角的取景框圍著一個形狀；人物：頭與肩 */
+  subject: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><path d="M8.5 16.5c0-3 1.6-5 3.5-5s3.5 2 3.5 5z"/><circle cx="12" cy="8.6" r="1.9"/>',
+  person: '<circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5c.6-4.2 3.6-6.6 7.5-6.6s6.9 2.4 7.5 6.6"/>',
   brush: '<path d="M14.5 4.5l5 5-7.5 7.5-5-5z"/><path d="M7 12.5c-2 0-3 1.5-3 3.2 0 1.6-.7 2.8-1.5 3.3 3.2.6 6.9-.3 7.5-3.5"/>',
   color: '<path d="M14.5 5.5l4 4-8.5 8.5H6v-4z"/><path d="M13 4l7 7"/><path d="M4 20l2-2"/>',
   luma: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z" fill="#fff" stroke="none"/>',
@@ -2410,7 +2418,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* ── 遮色片清單：新增、選取、刪除、反轉、顯示紅色範圍 ────────────────────
      選中的那一個住在 params 的 mask* 欄位；換選取時先把它寫回 masks，再把新的那一個攤開。 */
   /* 下面那一排只放九個調整；遮色片自己的參數（羽化、範圍…）在照片左邊那一欄（點了浮出滑桿） */
-  const MASK_DEFAULT_TOOL: Record<MaskType, string> = { linear: 'maskBrightness', radial: 'maskBrightness', brush: 'maskBrightness', color: 'maskBrightness', luma: 'maskBrightness' };
+  const MASK_DEFAULT_TOOL: Record<MaskType, string> = { linear: 'maskBrightness', radial: 'maskBrightness', brush: 'maskBrightness', color: 'maskBrightness', luma: 'maskBrightness', subject: 'maskBrightness', person: 'maskBrightness' };
   const commitMaskParams = (next: EditorParams) => {
     paramsRef.current = next; isDirtyRef.current = true;
     flushParamsSync(); addToHistory(next, selectedLutIdx);
@@ -2439,7 +2447,70 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setActiveToolId(MASK_DEFAULT_TOOL[type]);
     hideMaskLive();
     commitMaskParams(next);
+    if (isAutoMask(type)) void buildAutoMask(m.maskId, type, null, true);
   };
+  /* ── 自動選取（主體、人物）──
+     照片縮到長邊 1536 交給 iOS 的影像分析（原生 subjectMask），拿回灰階遮罩存進 autoMasks（以遮色片編號）。
+     img：要分析的那張（存檔時其他照片）；null＝現在畫面上這張（編輯用的緩衝區，跟預覽完全對齊） */
+  const autoMaskJobs = useRef(new Map<string, Promise<boolean>>());
+  /** 分析過但沒找到的：不再自動重試（使用者自己再新增一次才會再分析） */
+  const autoMaskFailed = useRef(new Set<string>());
+  const buildAutoMask = (maskId: string, kind: MaskType, img: CanvasImageSource & { width: number; height: number } | null, notify = false): Promise<boolean> => {
+    const running = autoMaskJobs.current.get(maskId);
+    if (running) return running;
+    const job = (async () => {
+      try {
+        const api = await nativeImage() as any;
+        if (!api?.subjectMask) return false;
+        let sw: number, sh: number, draw: (g: CanvasRenderingContext2D, w: number, h: number) => void;
+        if (img) { sw = img.width; sh = img.height; draw = (g, w, h) => g.drawImage(img, 0, 0, w, h); }
+        else {
+          const b = buffers.current.preview, px = b?.original || b?.source;
+          if (!b || !px || !b.w || !b.h) return false;
+          sw = b.w; sh = b.h;
+          const full = document.createElement('canvas'); full.width = b.w; full.height = b.h;
+          full.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(px), b.w, b.h), 0, 0);
+          draw = (g, w, h) => g.drawImage(full, 0, 0, w, h);
+        }
+        const k = Math.min(1, 1536 / Math.max(sw, sh));
+        const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(sw * k)); c.height = Math.max(1, Math.round(sh * k));
+        const g = c.getContext('2d')!; g.imageSmoothingQuality = 'high'; draw(g, c.width, c.height);
+        const blob = await new Promise<Blob | null>(res => c.toBlob(res, 'image/png'));
+        c.width = 0;
+        if (!blob) return false;
+        const inPath = await blobToNativeFile(blob, 'png');
+        let outPath = '';
+        try {
+          const r = await api.subjectMask({ path: inPath, kind });
+          outPath = r.path;
+          const bmp = await createImageBitmap(await (await fetch(fileSrc(r.path))).blob());
+          autoMasks.set(maskId, bmp);
+        } finally {
+          api.remove({ path: inPath }).catch(() => {});
+          if (outPath) api.remove({ path: outPath }).catch(() => {});
+        }
+        /* 遮罩到了：這個遮色片的版本加一（快取失效、重畫）；不記進上一步／下一步 */
+        const p = paramsRef.current;
+        const bump = (m: MaskSnap) => m.maskId === maskId ? { ...m, maskAutoV: (m.maskAutoV || 0) + 1 } : m;
+        const next: any = { ...p, masks: (p.masks || []).map(bump) };
+        if (p.maskId === maskId) next.maskAutoV = (p.maskAutoV || 0) + 1;
+        paramsRef.current = next; isDirtyRef.current = true;
+        flushParamsSync();
+        return true;
+      } catch (e: any) {
+        autoMaskFailed.current.add(maskId);
+        if (!img && notify) window.alert(kind === 'person' ? '這張照片裡沒有找到人物' : /17/.test(String(e?.message ?? e)) ? '自動選取主體需要 iOS 17 以上' : '這張照片裡沒有找到明顯的主體');
+        return false;
+      } finally { autoMaskJobs.current.delete(maskId); }
+    })();
+    autoMaskJobs.current.set(maskId, job);
+    return job;
+  };
+  /* 重新打開專案、復原到有自動選取的那一步：遮罩不在記憶體裡就重新分析（同一張照片結果一樣） */
+  useEffect(() => {
+    if (!autoMaskSupported()) return;
+    for (const m of maskList(params).list) if (isAutoMask(m.maskType) && m.maskCreated && !autoMasks.has(m.maskId) && !autoMaskFailed.current.has(m.maskId)) void buildAutoMask(m.maskId, m.maskType, null);
+  });
   const selOverlayScratchRef = useRef<HTMLCanvasElement | null>(null);
   /** 顏色／明度範圍上一次畫好的紅色範圍（縮小版，依遮色片 id） */
   const maskRangeOvCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
@@ -8149,6 +8220,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               let wide = ri ? (rawTiffPath && nativeColorOnly(snap.params) ? await nativeWideSave(srcs[i], snap, nfmt, undefined, rawTiffPath) : null) : await nativeWideSave(srcs[i], snap, nfmt);
               const rawFull = ri && !wide ? await rawFullFor(ri, snap.params) : null;
               const img = ri && wide ? (originalImgRef.current as HTMLImageElement) : rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
+              /* 這張有自動選取（主體、人物）但遮罩不在記憶體裡（例如批量裡沒打開過的照片）：用這張原圖分析補上 */
+              for (const m of maskList(snap.params).list) if (isAutoMask(m.maskType) && m.maskCreated && !autoMasks.has(m.maskId)) await buildAutoMask(m.maskId, m.maskType, img as HTMLImageElement);
               // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
               if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
               /* 有局部、空間類編輯：網頁先做出無損成品，原生端補回廣色域與 HDR 亮部。
@@ -10984,7 +11057,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             /* 還沒有任何遮色片、或按了＋：這一列換成五種遮色片讓使用者選 */
             if (maskPicking || !maskHasAny || maskDeselected) return (
               <div data-mask-types className="flex items-center gap-2">
-                {MASK_TYPES.map(([t, label]) => (
+                {MASK_TYPES.filter(([t]) => !isAutoMask(t) || autoMaskSupported()).map(([t, label]) => (
                   <button key={t} data-mask-type={t} onClick={() => addMask(t)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
                     <div className="w-10 h-10 rounded-full flex items-center justify-center transition-all bg-white/5 text-white/70 group-hover:bg-white/10"><MaskGlyph k={t} /></div>
                     <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap text-white/60">{label}</span>

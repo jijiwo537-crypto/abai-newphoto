@@ -18,6 +18,7 @@ import Capacitor
 import CoreImage
 import UIKit
 import os
+import Vision
 
 @objc(NativeImagePlugin)
 public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
@@ -38,6 +39,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "beginBackgroundTask", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "endBackgroundTask", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "capabilities", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "subjectMask", returnType: CAPPluginReturnPromise),
     ]
 
     /// 縮圖、編碼都是重工作：用一條序列佇列，同時只做一件，記憶體尖峰可預期
@@ -70,6 +72,54 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? ""),
               let size = ABAIImageCore.pixelSize(of: url) else { call.reject("讀不到這個檔案"); return }
         call.resolve(["width": Int(size.width), "height": Int(size.height), "hdr": ABAIImageCore.hasGainMap(url)])
+    }
+
+    /// subjectMask({ path, kind: 'subject' | 'person' }) → { path, width, height }：遮色片的「自動選取」。
+    /// 用 iOS 內建的影像分析（照片 App「拷貝主體」同一套）：
+    ///   subject：畫面裡的主體（人、動物、物品都算；iOS 17 起）
+    ///   person ：人物（精細模式，頭髮邊緣也算；iOS 15 起）
+    /// 輸入先縮到長邊 1536 再分析（夠精細、記憶體固定在幾十 MB 內，不會因為原圖很大而吃爆），
+    /// 輸出一張灰階 PNG（白＝選到），網頁再放大到照片的尺寸使用。
+    @objc func subjectMask(_ call: CAPPluginCall) {
+        guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? "") else { call.reject("沒有路徑"); return }
+        let kind = call.getString("kind") ?? "subject"
+        queue.async {
+            autoreleasepool {
+                do {
+                    guard let src = CIImage(contentsOf: url, options: [.applyOrientationProperty: true]) else { call.reject("讀不到這張照片"); return }
+                    let ext = src.extent
+                    let scale = min(1, 1536 / max(ext.width, ext.height))
+                    let small = src.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                    let sw = Int(small.extent.width.rounded()), sh = Int(small.extent.height.rounded())
+                    guard sw > 8, sh > 8,
+                          let cg = ABAIImageCore.context.createCGImage(small, from: CGRect(x: small.extent.minX, y: small.extent.minY, width: CGFloat(sw), height: CGFloat(sh))) else { call.reject("縮小失敗"); return }
+                    let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+                    var mask: CIImage? = nil
+                    if kind == "person" {
+                        let req = VNGeneratePersonSegmentationRequest()
+                        req.qualityLevel = .accurate
+                        req.outputPixelFormat = kCVPixelFormatType_OneComponent8
+                        try handler.perform([req])
+                        if let pb = req.results?.first?.pixelBuffer { mask = CIImage(cvPixelBuffer: pb) }
+                    } else {
+                        guard #available(iOS 17.0, *) else { call.reject("需要 iOS 17 以上"); return }
+                        let req = VNGenerateForegroundInstanceMaskRequest()
+                        try handler.perform([req])
+                        if let obs = req.results?.first {
+                            let pb = try obs.generateScaledMaskForImage(forInstances: obs.allInstances, from: handler)
+                            mask = CIImage(cvPixelBuffer: pb)
+                        }
+                    }
+                    guard let m = mask, m.extent.width > 0 else { call.reject("沒有找到"); return }
+                    /* 遮罩跟縮小後的照片對齊（人物分割輸出的尺寸可能不同）：拉到 sw×sh */
+                    let fitted = m.transformed(by: CGAffineTransform(scaleX: CGFloat(sw) / m.extent.width, y: CGFloat(sh) / m.extent.height))
+                    let out = ABAIImageCore.newFileURL(ext: "png")
+                    let gray = CGColorSpaceCreateDeviceGray()
+                    try ABAIImageCore.context.writePNGRepresentation(of: fitted, to: out, format: .L8, colorSpace: gray, options: [:])
+                    call.resolve(["path": out.path, "width": sw, "height": sh])
+                } catch { call.reject(error.localizedDescription) }
+            }
+        }
     }
 
     /// 縮小解碼並存成小檔。有透明的存 PNG，其餘存 P3 JPEG。
