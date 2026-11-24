@@ -107,8 +107,8 @@ export const NativeGallery: React.FC<{
   /** 不顯示去背（有透明像素）的照片：大部分工具不收去背圖 */
   noAlpha?: boolean;
   /** 導入單張時播放大過場（從主頁進編輯、美顏、仿色才有） */
-  hero?: boolean;
-}> = ({ api, limit, filter, onClose, noAlpha = false, hero = false }) => {
+  hero?: string;
+}> = ({ api, limit, filter, onClose, noAlpha = false, hero }) => {
   const multi = limit !== 1;
   const [shown, setShown] = useState(false);              // 滑上來的動畫
   const [status, setStatus] = useState<LibraryStatus | 'checking'>('checking');
@@ -254,7 +254,7 @@ export const NativeGallery: React.FC<{
       const cell = scrollRef.current?.querySelector<HTMLElement>(`[data-asset="${window.CSS.escape(ids[0])}"]`);
       const a = itemsRef.current.find(x => x.id === ids[0]);
       const thumb = cachedThumb(ids[0]);
-      if (cell && thumb && a && !a.video) beginImportHero(cell.getBoundingClientRect(), thumb, a.w && a.h ? a.w / a.h : undefined, () => bigThumb(ids[0]));
+      if (cell && thumb && a && !a.video) beginImportHero(hero, cell.getBoundingClientRect(), thumb, a.w && a.h ? a.w / a.h : undefined, () => bigThumb(ids[0]));
     }
     setExporting(true);
     try {

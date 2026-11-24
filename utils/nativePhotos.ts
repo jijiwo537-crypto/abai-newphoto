@@ -83,7 +83,7 @@ export function installNativeFilePicker() {
     if (qa) files = qa(filter);
     if (!files) try {
       /* 去背圖只有帶 data-allow-alpha 的匯入入口能選（見 utils/alphaGuard） */
-      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.hasAttribute('data-import-hero') });
+      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.getAttribute('data-import-hero') || undefined });
       /* 自己的相簿用不了（權限被拒、使用者選了系統的）→ 系統照片選擇器 */
       if (files === null) files = await pickNativeFiles(limit, filter);
     }

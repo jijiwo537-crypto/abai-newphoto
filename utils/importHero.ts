@@ -1,14 +1,13 @@
-/* 從主頁導入單張照片（編輯、美顏、仿色）時的過場：相簿裡那張小縮圖，一路流暢地放大、飛到工具裡照片的位置。
+/* 從主頁導入單張照片（編輯、美顏、仿色）時的過場：相簿裡那張小縮圖，一步到位地放大、飛到工具裡照片的位置。
  *
- * 做法：替身是一塊「跟著目標走」的框，每一格都用彈簧（臨界阻尼，不會晃）往目標靠近：
- *   ‧ 一點下去就開始動：目標先是「預估的位置」，工具畫出來、找到照片本人之後，目標換成照片真正的位置 ——
- *     彈簧會順順地轉過去，不會停一下再跳。工具之後自己又調整了照片的大小或位置，替身也會一路跟過去。
- *   ‧ 框的長寬比從那一格的正方形慢慢變成照片的比例；裡面的圖是 object-fit: cover，所以是從裁切的正方形「展開」成整張。
- *   ‧ 照片本人一找到就先藏起來（畫面上只會有一張），等它的位置連續 0.4 秒都沒變、替身也追上了，
- *     才把照片本人放回來、替身用 0.2 秒淡掉 —— 交接時兩張完全重疊，看不出切換。
- *   ‧ 清楚：點下去的那一刻用相簿的縮圖，同時去要 1024 的大縮圖（很快），原檔讀好後再換成原生縮到 1600 的版本。
- *     不直接解原檔：原檔可能是 4800 萬畫素／HEIC，工具本身也在解同一張，兩份全尺寸同時在記憶體裡有被系統關掉的風險。
+ * 只有兩個關鍵幀：起點＝相簿那一格（裁成正方形），終點＝照片在工具裡會停的位置（完整比例）。
+ * 終點在點下去的那一刻就算得出來 —— 三個工具的照片框都是固定的版面（見 FRAME）：
+ *   上緣＝狀態列下面 72、左右各 16、下面保留一段固定高度給工具列；照片照比例放進這個框、置中。
+ * 所以一點下去就整段播完，中間不找、不修正。飛完就停在終點等工具畫好，
+ * 照片本人的位置確定之後，放回照片本人、替身淡掉（兩張完全重疊，看不出切換）。
  *
+ * 清楚：起點用相簿的縮圖，同時去要 1024 的大縮圖（很快），原檔讀好後再換成原生縮到 1600 的版本。
+ * 不直接解原檔：原檔可能是 4800 萬畫素／HEIC，工具本身也在解同一張，兩份全尺寸同時在記憶體裡有被系統關掉的風險。
  * 安全：任何情況（找不到、取消、出錯）一定放回照片本人、恢復「匯入中」的轉圈；最多 12 秒一定收掉。
  * 只在主頁（畫面上沒有任何工具頁 .safe-top）、只選一張、而且是帶 data-import-hero 的導入入口時啟用。 */
 import { nativePathOf } from './nativeBridge';
@@ -40,11 +39,12 @@ function safeInsets() {
   d.remove();
   return r;
 }
-/** 預估照片在工具裡會停的位置（工具畫出來之前先往這裡飛；之後換成真正的位置） */
-function predict(aspect: number): R {
+/** 三個工具照片框下面保留的高度（工具列、分頁列；固定值，不含安全區域）—— 在 375／390／430 寬的手機上量過，都一樣 */
+const FRAME: Record<string, number> = { edit: 262, beauty: 237, match: 216 };
+/** 照片在工具裡會停的位置（工具頁從狀態列下面開始；照片框上緣 72、左右 16、下面保留 FRAME） */
+function predict(kind: string, aspect: number): R {
   const W = window.innerWidth, H = window.innerHeight, s = safeInsets();
-  const top = s.top + 64, bottom = H - 300 - s.bottom;
-  const boxW = W - 24, boxH = Math.max(160, bottom - top);
+  const top = s.top + 72, boxW = W - 32, boxH = Math.max(120, H - top - (FRAME[kind] ?? 262));
   let w = boxW, h = w / aspect;
   if (h > boxH) { h = boxH; w = h * aspect; }
   return { x: (W - w) / 2, y: top + (boxH - h) / 2, w, h };
@@ -118,17 +118,23 @@ function hide(el: HTMLElement | null) {
   if (o) { hiddenEl = o; hiddenPrev = o.style.opacity; o.style.opacity = '0'; }
 }
 
-/** 相簿裡點下去的那一刻。rect：那一格的位置；src：那一格的縮圖；aspect：照片的寬÷高；big：拿大縮圖（短邊約 1024）的函式 */
-export function beginImportHero(rect: DOMRect, src: string, aspect?: number, big?: () => Promise<string | null>) {
+/** 終點（替身停在這裡等工具畫好） */
+let end: R | null = null;
+
+/** 相簿裡點下去的那一刻。kind：哪一個工具；rect：那一格的位置；src：那一格的縮圖；aspect：照片的寬÷高；big：拿大縮圖的函式 */
+export function beginImportHero(kind: string | undefined, rect: DOMRect, src: string, aspect?: number, big?: () => Promise<string | null>) {
   cancelImportHero();
   const my = ++token;
   ar = aspect && isFinite(aspect) && aspect > 0 ? aspect : 1;
   landing = false;
+  const E = predict(kind ?? 'edit', ar);
+  end = E;
   const g = document.createElement('div');
   g.setAttribute('data-import-hero', '');
+  /* 替身本身就是終點的大小與位置；起點用 transform 把它縮回那一格、再裁成那一格的正方形 */
   Object.assign(g.style, {
     position: 'fixed', zIndex: '2147483000', pointerEvents: 'none', overflow: 'hidden', margin: '0',
-    left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px`, willChange: 'left, top, width, height',
+    left: `${E.x}px`, top: `${E.y}px`, width: `${E.w}px`, height: `${E.h}px`, transformOrigin: '0 0', willChange: 'transform, clip-path',
   } as CSSStyleDeclaration);
   g.appendChild(layer(src));
   document.body.appendChild(g);
@@ -137,21 +143,24 @@ export function beginImportHero(rect: DOMRect, src: string, aspect?: number, big
   window.clearTimeout(failsafe);
   failsafe = window.setTimeout(() => cancelImportHero(), 12000);
   if (big) void big().then(u => { if (u && my === token) upgrade(u, my); });
-  run(my, { x: rect.left, y: rect.top, w: rect.width, h: rect.height });
+  const C = rect;
+  const k = Math.max(C.width / E.w, C.height / E.h);
+  const ix = Math.max(0, (E.w - C.width / k) / 2), iy = Math.max(0, (E.h - C.height / k) / 2);
+  /* 兩個關鍵幀，一段播完 */
+  g.animate([
+    { transform: `translate(${C.left - E.x - ix * k}px, ${C.top - E.y - iy * k}px) scale(${k})`, clipPath: `inset(${iy}px ${ix}px)` },
+    { transform: 'translate(0px, 0px) scale(1)', clipPath: 'inset(0px 0px)' },
+  ], { duration: 460, easing: 'cubic-bezier(0.32, 0.72, 0, 1)', fill: 'forwards' });
+  watch(my);
 }
 
-/** 彈簧追目標：每一格往目標靠近（臨界阻尼：最快到、不會超過再彈回來） */
-function run(my: number, start: R) {
+/** 飛完就停在終點：等工具把照片畫好、位置穩定，放回照片本人、替身淡掉。替身這段完全不動 */
+function watch(my: number) {
   const g = ghost!;
-  const cur = { ...start }, vel = { x: 0, y: 0, w: 0, h: 0 };
-  const K = 120, D = 2 * Math.sqrt(K);
-  let last = performance.now();
   let target: HTMLElement | null = null, tr: R | null = null, stable = 0;
   const t0 = performance.now();
   const step = (now: number) => {
     if (my !== token || !g.isConnected) return;
-    const dt = Math.min(0.034, Math.max(0.001, (now - last) / 1000)); last = now;
-    /* 目標：找到照片本人就跟著它；還沒有就先往預估的位置飛 */
     if (landing) {
       if (target && !target.isConnected) { target = null; hide(null); }
       const prev = hiddenEl; if (prev) prev.style.opacity = hiddenPrev;
@@ -166,21 +175,9 @@ function run(my: number, start: R) {
         if (tr && Math.abs(n.x - tr.x) < 0.5 && Math.abs(n.y - tr.y) < 0.5 && Math.abs(n.w - tr.w) < 0.5 && Math.abs(n.h - tr.h) < 0.5) stable++;
         else stable = 0;
         tr = n;
+        /* 照片本人的位置連續約 0.3 秒都沒動：交接（兩張重疊，替身淡掉） */
+        if (stable >= 18 && now - t0 > 460) { unhide(); finish(g, 200); return; }
       }
-    }
-    const goal = tr ?? predict(ar);
-    (['x', 'y', 'w', 'h'] as const).forEach(k => {
-      const a = K * (goal[k] - cur[k]) - D * vel[k];
-      vel[k] += a * dt; cur[k] += vel[k] * dt;
-    });
-    g.style.left = `${cur.x}px`; g.style.top = `${cur.y}px`; g.style.width = `${Math.max(1, cur.w)}px`; g.style.height = `${Math.max(1, cur.h)}px`;
-    const close = tr && Math.abs(cur.x - tr.x) < 0.6 && Math.abs(cur.y - tr.y) < 0.6 && Math.abs(cur.w - tr.w) < 0.6 && Math.abs(cur.h - tr.h) < 0.6;
-    /* 照片位置連續約 0.4 秒都沒動、替身也追上了：交接 */
-    if (tr && close && stable >= 24) {
-      Object.assign(g.style, { left: `${tr.x}px`, top: `${tr.y}px`, width: `${tr.w}px`, height: `${tr.h}px` });
-      unhide();
-      finish(g, 200);
-      return;
     }
     if (now - t0 > 11000) { cancelImportHero(); return; }
     raf = requestAnimationFrame(step);
