@@ -180,6 +180,10 @@ const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
   );
 };
 
+const WORDMARK = './home-wordmark.png?v=20260912a';
+/** 這次開 App 字標已經完整解碼過（回到主頁時不用再等） */
+let wordmarkDecoded = false;
+
 const AvatarView: React.FC<{
   local: string | null;
   account: Account | null;
@@ -936,6 +940,22 @@ export const HomePage: React.FC<HomePageProps> = ({
       首頁最上面那張大圖就自己換掉了，人沒挑過卻一直在變。
       現在沒匯入就是空的（點下去挑一張），存檔再也不會動到它。 */
   const heroSrc = previews.hero || null;
+  /* 首頁字標：整張圖解碼完成才開始進場動畫。
+     之前圖片還在解碼（從主頁回來時元素是重新建的）動畫就先跑了，偶爾會看到只畫了一部分的字標。
+     解碼過一次之後瀏覽器有快取，再回到主頁時 decode() 幾乎立刻完成，進場時機跟以前一樣 */
+  const wordmarkRef = useRef<HTMLImageElement>(null);
+  const [wordmarkReady, setWordmarkReady] = useState(wordmarkDecoded);
+  useEffect(() => {
+    if (wordmarkReady) return;
+    const el = wordmarkRef.current;
+    let alive = true;
+    const done = () => { if (!alive) return; wordmarkDecoded = true; setWordmarkReady(true); };
+    if (!el) { done(); return; }
+    /* decode 失敗（極少數）也要讓字標出現：退回等 load，再不行 1.5 秒後照樣顯示 */
+    const t = window.setTimeout(done, 1500);
+    (el.decode ? el.decode() : Promise.reject()).then(done, () => { if (el.complete && el.naturalWidth) done(); else el.addEventListener('load', done, { once: true }); });
+    return () => { alive = false; window.clearTimeout(t); };
+  }, [wordmarkReady]);
 
   /* iOS 主畫面 Web App 的不透明狀態列會固定畫成黑色。viewport 在啟動時
      宣告為 cover 後，首頁只需補上狀態列背後的主視覺；所有實際內容仍留在
@@ -1337,13 +1357,14 @@ export const HomePage: React.FC<HomePageProps> = ({
             className="absolute left-5 right-5 bottom-[7px] flex flex-col items-start select-none"
           >
             <img
-              src="./home-wordmark.png?v=20260912a"
+              src={WORDMARK}
               alt="Abai"
               data-home-wordmark
               fetchPriority="high"
               decoding="sync"
               draggable={false}
-              className="abai-wordmark-enter block h-auto select-none pointer-events-none"
+              ref={wordmarkRef}
+              className={`${wordmarkReady ? 'abai-wordmark-enter' : 'opacity-0'} block h-auto select-none pointer-events-none`}
               /* 裁掉原檔透明留白後，以原本 ABAI 字樣的可視高度與左基準對齊；
                  圖片不參與父層尺寸計算，所以主視覺和下方工具位置完全不動。 */
               style={{ width: 'clamp(100px, 27vw, 116px)' }}

@@ -136,47 +136,71 @@ const ENTER_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 let enterObs: MutationObserver | null = null, enterRoot: HTMLElement | null = null, enterE: R | null = null;
 let revealT = 0, revealed = true, pending: Animation[] = [], enterFailsafe = 0, enterStopT = 0, rawRaf = 0;
 const entered = new WeakSet<Element>();
-function chromeBlocks(root: HTMLElement, E: R): HTMLElement[] {
+/** 這一塊裡有沒有照片（夠大的 img／canvas）：有的話不能整塊動，要往裡面拆 */
+function hasPhoto(el: HTMLElement, E: R): boolean {
+  if (el instanceof HTMLImageElement || el instanceof HTMLCanvasElement) { const r = el.getBoundingClientRect(); return r.width * r.height >= E.w * E.h * 0.2; }
+  for (const m of Array.from(el.querySelectorAll('img, canvas'))) { const r = m.getBoundingClientRect(); if (r.width * r.height >= E.w * E.h * 0.2) return true; }
+  return false;
+}
+/** 現在看得到嗎（提示、狀態文字平常是透明或藏起來的：不能被進場動畫拉出來） */
+function shownOpacity(el: HTMLElement): number {
+  const st = getComputedStyle(el);
+  if (st.visibility === 'hidden' || st.display === 'none') return 0;
+  return parseFloat(st.opacity) || 0;
+}
+type Block = { el: HTMLElement; kids?: HTMLElement[] };
+function chromeBlocks(root: HTMLElement, E: R): Block[] {
   const out: HTMLElement[] = [];
   const cx = E.x + E.w / 2, cy = E.y + E.h / 2;
   const walk = (el: HTMLElement, depth: number) => {
     for (const c of Array.from(el.children) as HTMLElement[]) {
       if (c.hasAttribute('data-import-hero') || c.hasAttribute('data-import-spinner')) continue;
+      if (shownOpacity(c) < 0.01) continue;
       const r = c.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) { if (depth < 8 && c.children.length) walk(c, depth + 1); continue; }
       const coversPhoto = r.left <= cx && r.right >= cx && r.top <= cy && r.bottom >= cy && r.width * r.height >= E.w * E.h * 0.5;
-      if (coversPhoto) { if (depth < 8) walk(c, depth + 1); continue; }
+      if (coversPhoto || hasPhoto(c, E)) { if (depth < 8) walk(c, depth + 1); continue; }
       out.push(c);
     }
   };
   walk(root, 0);
-  /* 下方的大面板（工具列＋分頁疊在一起）拆成裡面的每一列，各自錯開進場，層次才出得來 */
-  const res: HTMLElement[] = [];
-  for (const el of out) {
+  /* 下方的大面板（工具列＋分頁疊在一起）：整塊（連底色）一起升起淡入，裡面的每一列再各自多升一段、錯開 —— 層次出得來，底色也跟著動 */
+  return out.map(el => {
     const r = el.getBoundingClientRect();
     const kids = (Array.from(el.children) as HTMLElement[]).filter(k => { const q = k.getBoundingClientRect(); return q.width > 1 && q.height > 1; });
-    if (r.top > cy && r.height > 90 && kids.length >= 2 && kids.length <= 8) res.push(...kids); else res.push(el);
-  }
-  return res;
+    return r.top > cy && r.height > 90 && kids.length >= 2 && kids.length <= 8 ? { el, kids } : { el };
+  });
 }
 function runEnter(root: HTMLElement, E: R) {
-  const blocks = chromeBlocks(root, E).filter(b => !entered.has(b));
+  const blocks = chromeBlocks(root, E).filter(b => !entered.has(b.el));
   if (!blocks.length) return;
   /* 開播之後過一陣子才長出來的：短短進場、不錯開；開播當下（0.35 秒內）工具換版面重新長出來的，照樣完整分層進場 */
   const late = revealed && performance.now() - revealT > 350;
-  const rects = blocks.map(b => b.getBoundingClientRect());
+  const rects = blocks.map(b => b.el.getBoundingClientRect());
   const top: number[] = [], bottom: number[] = [];
   rects.forEach((r, i) => ((r.top + r.height / 2) < E.y ? top : bottom).push(i));
   bottom.sort((a, b) => rects[a].top - rects[b].top);
-  const play = (el: HTMLElement, dy: number, delay: number, dur: number) => {
-    entered.add(el);
-    const a = el.animate([{ opacity: 0, translate: `0 ${dy}px` }, { opacity: 1, translate: '0 0' }],
-      { duration: dur, delay, easing: ENTER_EASE, fill: 'backwards' });
+  const anim = (el: HTMLElement, k: Keyframe[], delay: number, dur: number) => {
+    const a = el.animate(k, { duration: dur, delay, easing: ENTER_EASE, fill: 'backwards' });
     if (!revealed) { a.pause(); pending.push(a); }   // 暫停在第一格（fill backwards → 看不見），等開播
   };
-  /* 上方的列：從上方 14px 落下；下方各列：由上而下依序從下方 34px 升起，每列錯開 55ms */
-  top.forEach(i => play(blocks[i], late ? -8 : -14, late ? 0 : 0, late ? 320 : 480));
-  bottom.forEach((i, n) => play(blocks[i], late ? 20 : 34, late ? 0 : 70 + Math.min(n, 6) * 55, late ? 360 : 600));
+  /* 透明度只從 0 回到它「本來的」透明度（半透明的就回到半透明），只用獨立的 translate 屬性 */
+  const play = (el: HTMLElement, dy: number, delay: number, dur: number) => {
+    entered.add(el);
+    const o = shownOpacity(el);
+    anim(el, [{ opacity: 0, translate: `0 ${dy}px` }, { opacity: o, translate: '0 0' }], delay, dur);
+  };
+  let n = 0;
+  top.forEach(i => play(blocks[i].el, late ? -8 : -14, 0, late ? 320 : 480));
+  for (const i of bottom) {
+    const b = blocks[i], d = late ? 0 : 60 + Math.min(n, 6) * 55;
+    play(b.el, late ? 20 : 30, d, late ? 360 : 600);
+    n++;
+    if (b.kids && !late) b.kids.forEach((k, m) => {
+      entered.add(k);
+      anim(k, [{ translate: '0 18px' }, { translate: '0 0' }], d + 50 + Math.min(m, 6) * 55, 560);
+    });
+  }
 }
 /** 開播：暫停在第一格的介面一起開始進場 */
 function revealEnter() {
@@ -289,6 +313,8 @@ function watch(my: number) {
   const t0 = performance.now();
   const step = (now: number) => {
     if (my !== token || !g.isConnected) return;
+    /* 介面不用等照片完全就定位：替身飛到七成、工具頁已經掛上來，就開始進場（跟照片落地重疊，更連貫） */
+    if (!revealed && now - t0 > motionMs('importFly') * 0.7 && document.querySelector('.safe-top')) revealEnter();
     if (landing) {
       if (target && !target.isConnected) { target = null; hide(null); }
       const prev = hiddenEl; if (prev) prev.style.opacity = hiddenPrev;
