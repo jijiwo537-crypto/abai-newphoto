@@ -32,6 +32,7 @@
 import Foundation
 import CoreImage
 import UIKit
+import simd
 
 struct ABAIRawParams: Equatable {
     var exposure = 0.0
@@ -61,7 +62,8 @@ struct ABAIRawParams: Equatable {
         if let c = d["curve"] as? [Any], c.count == 768 { curve = c.map { Float(($0 as? NSNumber)?.doubleValue ?? 0) } }
     }
     /// RAW 那一步（①）用到的參數；變了才要重新解 RAW
-    var rawKey: String { "\(exposure)|\(temperature ?? -1)|\(tint ?? -999)|\(sharpen)|\(lumaNR)|\(colorNR)" }
+    /// 白平衡不在 RAW 那一步做（見 ④' 白平衡），改色溫、色調不用重新解 RAW
+    var rawKey: String { "\(exposure)|\(sharpen)|\(lumaNR)|\(colorNR)" }
 }
 
 /// RAW 引擎針對這台相機的細節預設值（滑桿的 0）
@@ -99,51 +101,73 @@ enum ABAIRawDevelop {
 
     static func applyRaw(_ f: CIRAWFilter, _ p: ABAIRawParams, defaults d: ABAIRawDefaults) -> CIImage? {
         f.exposure = Float(p.exposure)
-        if let t = p.temperature { f.neutralTemperature = Float(max(2000, min(50000, t))) }
-        if let t = p.tint { f.neutralTint = Float(max(-150, min(150, t))) }
+        /* 白平衡一律照拍攝當下解（RAW 引擎改色溫會連亮度一起動）；使用者調的色溫、色調在 whiteBalance() 做，只改顏色 */
         if f.isSharpnessSupported { f.sharpnessAmount = around(d.sharp, p.sharpen) }
         if f.isLuminanceNoiseReductionSupported { f.luminanceNoiseReductionAmount = around(d.luma, p.lumaNR) }
         if f.isColorNoiseReductionSupported { f.colorNoiseReductionAmount = around(d.color, p.colorNR) }
         return f.outputImage
     }
 
-    // MARK: ①' 白平衡不改亮度
+    // MARK: ①' 白平衡：只改顏色，不改亮度
 
-    /// 整張圖的「感覺亮度」：log 亮度的平均（幾何平均，跟人眼的感覺一致）
-    static func logMean(_ img: CIImage) -> Double? {
-        let e = img.extent
-        guard e.width > 0, e.height > 0, let k = logLumaKernel, let l = k.apply(extent: e, arguments: [img]) else { return nil }
-        let avg = l.applyingFilter("CIAreaAverage", parameters: [kCIInputExtentKey: CIVector(cgRect: e)])
-        var px = [Float](repeating: 0, count: 4)
-        ABAIImageCore.context.render(avg, toBitmap: &px, rowBytes: 16, bounds: CGRect(x: 0, y: 0, width: 1, height: 1), format: .RGBAf, colorSpace: nil)
-        return px[0].isFinite ? Double(px[0]) : nil
+    /// 黑體（普朗克）光源在色溫 K 的色度座標 xy（Kim 等人的三次近似，1667～25000K）
+    static func planckXY(_ k: Double) -> (Double, Double) {
+        let T = max(1667, min(25000, k)), t1 = 1e3 / T, t2 = t1 * t1, t3 = t2 * t1
+        let x = T <= 4000 ? -0.2661239 * t3 - 0.2343589 * t2 + 0.8776956 * t1 + 0.179910
+                          : -3.0258469 * t3 + 2.1070379 * t2 + 0.2226347 * t1 + 0.240390
+        let x2 = x * x, x3 = x2 * x
+        let y = T <= 2222 ? -1.1063814 * x3 - 1.34811020 * x2 + 2.18555832 * x - 0.20219683
+              : T <= 4000 ? -0.9549476 * x3 - 1.37418593 * x2 + 2.09137015 * x - 0.16748867
+                          : 3.0817580 * x3 - 5.87338670 * x2 + 3.75112997 * x - 0.37001483
+        return (x, y)
     }
-
-    /// 系統 RAW 引擎改色溫、色調時，整體亮度會跟著變（白平衡的增益沒有保持亮度）——
-    /// 看起來就像同時動到了曝光。專業沖洗軟體的白平衡只改顏色，所以這裡補回來：
-    /// 用一張很小的 RAW 在同樣曝光下各解一次（拍攝當下的白平衡、現在的白平衡），比較感覺亮度，差多少補多少。
-    /// small：共用的小解碼器和它拍攝當下的白平衡（量之前先放回去）；不給就自己開一個
-    static func wbGain(_ url: URL, _ p: ABAIRawParams, small: (CIRAWFilter, Float, Float)? = nil) -> Double {
-        guard p.temperature != nil || p.tint != nil else { return 1 }
-        let f: CIRAWFilter
-        if let sm = small { f = sm.0; f.neutralTemperature = sm.1; f.neutralTint = sm.2 }
-        else if let made = rawFilter(url, longSide: 320, draft: true) { f = made }
-        else { return 1 }
-        f.exposure = Float(p.exposure)
-        guard let a = f.outputImage, let la = logMean(a) else { return 1 }
-        if let t = p.temperature { f.neutralTemperature = Float(max(2000, min(50000, t))) }
-        if let t = p.tint { f.neutralTint = Float(max(-150, min(150, t))) }
-        guard let b = f.outputImage, let lb = logMean(b) else { return 1 }
-        return pow(2, max(-2, min(2, la - lb)))
+    /// 色溫＋色調 → 光源的 xy。色調是垂直於黑體軌跡的偏移（CIE 1960 uv），±150 約 ±0.05 Duv
+    static func illuminantXY(_ k: Double, _ tint: Double) -> (Double, Double) {
+        func uv(_ p: (Double, Double)) -> (Double, Double) { let d = -2 * p.0 + 12 * p.1 + 3; return (4 * p.0 / d, 6 * p.1 / d) }
+        let a = uv(planckXY(k)), b = uv(planckXY(k * 1.01))
+        var tx = b.0 - a.0, ty = b.1 - a.1
+        let len = max(1e-9, (tx * tx + ty * ty).squareRoot()); tx /= len; ty /= len
+        var nx = -ty, ny = tx
+        /* 設定的是「光源」：光源偏綠，補償後畫面偏洋紅。所以色調＋＝光源往綠（v 變大）＝畫面偏洋紅（跟 Lightroom 一樣） */
+        if ny < 0 { nx = -nx; ny = -ny }
+        let d = max(-150, min(150, tint)) / 150 * 0.05
+        let u = a.0 + nx * d, v = a.1 + ny * d
+        let den = 2 * u - 8 * v + 4
+        return (3 * u / den, 2 * v / den)
     }
-
-    static func gain(_ img: CIImage, _ g: Double) -> CIImage {
-        guard abs(g - 1) > 0.002 else { return img }
-        let v = CGFloat(g)
-        return img.applyingFilter("CIColorMatrix", parameters: [
-            "inputRVector": CIVector(x: v, y: 0, z: 0, w: 0), "inputGVector": CIVector(x: 0, y: v, z: 0, w: 0),
-            "inputBVector": CIVector(x: 0, y: 0, z: v, w: 0), "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
-        ])
+    private static let p3ToXYZ = simd_double3x3(rows: [
+        SIMD3(0.4865709, 0.2656677, 0.1982173), SIMD3(0.2289746, 0.6917385, 0.0792869), SIMD3(0.0, 0.0451134, 1.0439444)])
+    private static let bradford = simd_double3x3(rows: [
+        SIMD3(0.8951, 0.2664, -0.1614), SIMD3(-0.7502, 1.7135, 0.0367), SIMD3(0.0389, -0.0685, 1.0296)])
+    /// 白平衡的換算矩陣（線性 Display P3 → 線性 Display P3）：Bradford 色彩適應，
+    /// 把「使用者設定的光源」當成白色，從拍攝當下的光源換過去 —— 物體之間的顏色關係（固有色）跟著光源一起換，不是整片疊顏色。
+    /// 色溫比拍攝當下高＝光源偏藍＝補償後畫面變暖（跟 Lightroom 一樣）。沒調過回 nil
+    static func wbMatrix(_ p: ABAIRawParams, asShot: (Double, Double)) -> simd_double3x3? {
+        guard let k = p.temperature else { return nil }
+        let t = p.tint ?? asShot.1
+        if abs(k - asShot.0) < 1 && abs(t - asShot.1) < 0.05 { return nil }
+        func XYZ(_ xy: (Double, Double)) -> SIMD3<Double> { SIMD3(xy.0 / xy.1, 1, (1 - xy.0 - xy.1) / xy.1) }
+        let src = bradford * XYZ(illuminantXY(k, t)), dst = bradford * XYZ(illuminantXY(asShot.0, asShot.1))
+        let scale = simd_double3x3(diagonal: dst / src)
+        let m = bradford.inverse * scale * bradford
+        return p3ToXYZ.inverse * m * p3ToXYZ
+    }
+    /// 套白平衡，然後每個像素的亮度放回原本的值 —— 調色溫、色調只改顏色，不改光線
+    private static let wbKernel = CIColorKernel(source: """
+    kernel vec4 abaiRawWB(__sample s, vec3 r0, vec3 r1, vec3 r2) {
+        vec3 c = max(s.rgb, vec3(0.0));
+        vec3 W = vec3(0.2289746, 0.6917385, 0.0792869);
+        float y0 = dot(c, W);
+        vec3 o = vec3(dot(r0, c), dot(r1, c), dot(r2, c));
+        float y1 = dot(max(o, vec3(0.0)), W);
+        o *= y1 > 1.0e-6 ? clamp(y0 / y1, 0.0, 8.0) : 1.0;
+        return vec4(o, s.a);
+    }
+    """)
+    static func whiteBalance(_ img: CIImage, _ m: simd_double3x3?) -> CIImage {
+        guard let m = m, let k = wbKernel else { return img }
+        func row(_ i: Int) -> CIVector { CIVector(x: CGFloat(m[0][i]), y: CGFloat(m[1][i]), z: CGFloat(m[2][i])) }
+        return k.apply(extent: img.extent, arguments: [img, row(0), row(1), row(2)]) ?? img
     }
 
     // MARK: ② 局部亮度底圖
@@ -277,9 +301,9 @@ enum ABAIRawDevelop {
     // MARK: ③～⑥ 整條
 
     /// 從 RAW 解出來的線性圖（①之後）＋底圖（②）往下做 ③～⑥
-    static func finish(_ linear: CIImage, base: CIImage, _ p: ABAIRawParams) -> CIImage {
+    static func finish(_ linear: CIImage, base: CIImage, _ p: ABAIRawParams, asShot: (Double, Double)) -> CIImage {
         let e = linear.extent
-        var img = linear
+        var img = whiteBalance(linear, wbMatrix(p, asShot: asShot))
         if let k = toneKernel {
             img = k.apply(extent: e, arguments: [img, base, p.contrast, p.highlights, p.shadows, p.whites, p.blacks, p.clarity]) ?? img
         }
@@ -368,22 +392,9 @@ final class ABAIRawSession {
         asShotTint = Double(f.neutralTint)
     }
 
-    private var gainCache: [String: Double] = [:]
-    /// 量白平衡亮度用的小解碼器（整段沖洗共用一個，不用每次重新開 RAW 檔）
-    private var smallFilter: (CIRAWFilter, Float, Float)?
-    private func wbGain(_ p: ABAIRawParams) -> Double {
-        let key = "\(p.exposure)|\(p.temperature ?? -1)|\(p.tint ?? -999)"
-        if let g = gainCache[key] { return g }
-        if smallFilter == nil, let f = ABAIRawDevelop.rawFilter(url, longSide: 320, draft: true) { smallFilter = (f, f.neutralTemperature, f.neutralTint) }
-        let g = ABAIRawDevelop.wbGain(url, p, small: smallFilter)
-        if gainCache.count > 64 { gainCache.removeAll() }
-        gainCache[key] = g
-        return g
-    }
-
     private func rebuild(_ p: ABAIRawParams) {
         guard let f = filter, let raw = ABAIRawDevelop.applyRaw(f, p, defaults: defaults),
-              let baked = ABAIRawDevelop.bake(ABAIRawDevelop.gain(raw, wbGain(p))) else { return }
+              let baked = ABAIRawDevelop.bake(raw) else { return }
         proxy = baked
         proxyBase = ABAIRawDevelop.bake(ABAIRawDevelop.localBase(baked)) ?? ABAIRawDevelop.localBase(baked)
         proxyKey = p.rawKey
@@ -391,7 +402,7 @@ final class ABAIRawSession {
 
     private func render(_ p: ABAIRawParams) -> CIImage? {
         guard let lin = proxy, let base = proxyBase else { return nil }
-        return ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(lin, base: base, p), look: look, withDate: false)
+        return ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(lin, base: base, p, asShot: (asShotTemperature, asShotTint)), look: look, withDate: false)
     }
 
     /// 打開時的第一格：同步算好（在沖洗自己的佇列上），讓畫面先有圖，網頁才把那一塊挖空 ——
@@ -429,11 +440,11 @@ final class ABAIRawSession {
     func export(_ p: ABAIRawParams) throws -> URL {
         guard let f = ABAIRawDevelop.rawFilter(url, longSide: nil, draft: false),
               let raw = ABAIRawDevelop.applyRaw(f, p, defaults: ABAIRawDefaults(f)),
-              let lin = ABAIRawDevelop.bake(ABAIRawDevelop.gain(raw, ABAIRawDevelop.wbGain(url, p))) else {
+              let lin = ABAIRawDevelop.bake(raw) else {
             throw ABAIImageCore.CoreError.decode
         }
         let base = ABAIRawDevelop.localBase(lin)
-        let img = ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(lin, base: base, p), look: look, withDate: true)
+        let img = ABAIRawDevelop.applyLook(ABAIRawDevelop.finish(lin, base: base, p, asShot: (asShotTemperature, asShotTint)), look: look, withDate: true)
         let data = try ABAIImageCore.encode(ABAIImageCore.dither(img), format: .jpeg, quality: 0.95)
         let out = ABAIImageCore.newFileURL(ext: "jpg")
         try data.write(to: out)

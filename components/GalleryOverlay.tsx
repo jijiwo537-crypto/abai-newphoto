@@ -49,12 +49,11 @@ const BACK_CIRCLE = 54;
 /** 大圖下面的圓鈕、膠囊高度 */
 const CIRCLE = 49;
 
-/** RAW 沖洗圖示：一格底片（上下兩排齒孔）。App 裡用的是同造型的 SF Symbol「film」 */
+/** RAW 沖洗圖示：光圈（App 裡用同造型的 SF Symbol「camera.aperture」，跟旁邊的調整、愛心同一套線條粗細與大小） */
 const RawEditIcon: React.FC<{ size?: number }> = ({ size = 21 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="4.5" y="3" width="15" height="18" rx="2.4" />
-    <path d="M8.5 3v18M15.5 3v18" />
-    <g fill="currentColor" stroke="none"><rect x="5.6" y="5.9" width="1.8" height="2.2" rx=".5" /><rect x="5.6" y="10.9" width="1.8" height="2.2" rx=".5" /><rect x="5.6" y="15.9" width="1.8" height="2.2" rx=".5" /><rect x="16.6" y="5.9" width="1.8" height="2.2" rx=".5" /><rect x="16.6" y="10.9" width="1.8" height="2.2" rx=".5" /><rect x="16.6" y="15.9" width="1.8" height="2.2" rx=".5" /></g>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M14.3 3.3 9.6 11.4M20.6 9.6l-9.4.1M18.4 18.1l-4.7-8.1M9.7 20.7l4.7-8.1M3.4 14.4l9.4-.1M5.6 5.9l4.7 8.1" />
   </svg>
 );
 
@@ -458,7 +457,7 @@ const PhotoViewer: React.FC<{
   const glass = useNativeGlass('camera-viewer', !closing && !suspended && !dragging && !opening, () => [
     { kind: 'circle', id: 'share', symbol: 'square.and.arrow.up', pointSize: 21, el: shareRef.current },
     { kind: 'capsule', el: midRef.current, pad: 0, buttons: [
-      ...(isRaw ? [{ id: 'pro', symbol: 'abai.film', pointSize: 21 }] : []),
+      ...(isRaw ? [{ id: 'pro', symbol: 'camera.aperture', pointSize: 21 }] : []),
       { id: 'edit', symbol: 'slider.horizontal.3', pointSize: 21 },
       { id: 'fav', symbol: fav ? 'heart.fill' : 'heart', tint: 'white', pointSize: 21 },
     ] },
