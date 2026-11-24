@@ -208,13 +208,16 @@ function chromeBlocks(root: HTMLElement, E: R): Block[] {
       if (coversPhoto || hasPhoto(c, E) || (c.children.length && hasRaisedZ(c, E))) { if (depth < 8) walk(c, depth + 1, inBox || coversPhoto || hasPhoto(c, E)); continue; }
       /* 疊在照片上的浮動按鈕（前後對比、標準／專業、換圖…）：不參與進場 ——
          它們本來就被飛進來的替身蓋著，跟照片一起出現；做透明度動畫會讓 iOS 暫時改變它的圖層與毛玻璃材質 */
+      /* 毛玻璃要先判斷（在「照片上的按鈕」之前）：
+         之前「標準／專業」外面那一圈容器疊在照片上，被當成一般按鈕整塊做透明度動畫 ——
+         上層只要透明度小於 1，裡面的毛玻璃就取不到後面的照片，整段動畫材質都是錯的。
+         ① 自己是毛玻璃：材質本身淡入（見 play），照片區裡的等照片本人出現後才開播
+         ② 裡面有毛玻璃：這一層不動，往裡面拆（毛玻璃的上層永遠不做透明度動畫）
+         ③ 其他疊在照片上的：等照片本人出現後才開播 */
+      const over = inBox || onPhoto(r);
+      if (hasBackdrop(c)) { out.push(c); if (over) tags.set(c, { onPhoto: true }); continue; }
+      if (c.querySelector('[class*="backdrop-"],[style*="backdrop"]')) { if (depth < 8) walk(c, depth + 1, over); continue; }
       if (onPhoto(r)) { out.push(c); tags.set(c, { onPhoto: true }); continue; }
-      /* 毛玻璃（backdrop-filter）的元素：做透明度動畫時 iOS 會暫時拿不到後面的畫面，材質跟就定位後不一樣 ——
-         它自己不動；包著它的那一塊往裡面拆，其他部分照樣進場 */
-      /* 照片區裡的毛玻璃：毛玻璃算的是「它後面的畫面」，替身還沒交接前，後面的照片本人是藏起來的（透明），
-         這時候算出來的材質是一片黑、跟就定位後不同。所以它跟照片上的按鈕一樣，等照片本人出現後才開播 —— 動畫不變，材質從第一格就對 */
-      if (hasBackdrop(c)) { out.push(c); if (inBox) tags.set(c, { onPhoto: true }); continue; }
-      if (inBox && c.querySelector('[class*="backdrop-"],[style*="backdrop"]')) { if (depth < 8) walk(c, depth + 1, inBox); continue; }
       out.push(c);
     }
   };
