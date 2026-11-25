@@ -4522,61 +4522,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const dropKeys = drop.map(d => 's' + srcIdOf(d));
     for (const store of [filterThumbStore, fxThumbStore]) {
       for (const k of Object.keys(store.current)) {
-        const sk = k.slice(0, k.indexOf(THUMB_SEP));
-        if (dropKeys.indexOf(sk) < 0) continue;
-        const e = store.current[k];
-        delete store.current[k];
-        archiveThumb(store === filterThumbStore ? 'f' : 'x', sk, k, e);
+        if (dropKeys.indexOf(k.slice(0, k.indexOf(THUMB_SEP))) >= 0) delete store.current[k];
       }
     }
-  };
-  /* 擠出記憶體的縮圖不直接丟：壓成小 JPEG 收起來（一張照片兩排約 1MB，原本畫布約 8MB）。
-     十幾張一起編輯、來回切換時直接解回來，不用整排重算；收藏總量有上限，最舊的才真的丟。 */
-  const THUMB_ARCHIVE_SRCS = 24;
-  const thumbArchiveRef = useRef(new Map<string, { s: 'f' | 'x'; k: string; sig: string; blob: Blob }[]>());
-  const archiveThumb = (s: 'f' | 'x', sk: string, k: string, e: ThumbEntry | undefined) => {
-    if (!e || !e.sig || !e.cvs.width || !e.cvs.height) return;
-    const sig = e.sig, cvs = e.cvs;
-    try {
-      cvs.toBlob(blob => {
-        if (!blob) return;
-        const m = thumbArchiveRef.current;
-        let list = m.get(sk);
-        if (!list) {
-          list = [];
-          m.set(sk, list);
-          while (m.size > THUMB_ARCHIVE_SRCS) m.delete(m.keys().next().value as string);
-        }
-        const at = list.findIndex(x => x.k === k);
-        if (at >= 0) list.splice(at, 1);
-        list.push({ s, k, sig, blob });
-      }, 'image/jpeg', 0.95);
-    } catch { /* 收不起來就算了，之後照常重算 */ }
-  };
-  /** 收藏裡有這張照片的縮圖就一張一張解回倉庫（已經在倉庫的不碰）；失敗的格子照常重算 */
-  const restoreThumbs = async (src: string): Promise<boolean> => {
-    const sk = thumbSrcKey(src);
-    const list = thumbArchiveRef.current.get(sk);
-    if (!list || !list.length || typeof createImageBitmap !== 'function') return false;
-    thumbArchiveRef.current.delete(sk);
-    let any = false;
-    const tmp = document.createElement('canvas');
-    for (const it of list) {
-      const store = it.s === 'f' ? filterThumbStore : fxThumbStore;
-      if (store.current[it.k]?.sig === it.sig) continue;
-      try {
-        const bmp = await createImageBitmap(it.blob);
-        if (store.current[it.k]?.sig !== it.sig) {
-          tmp.width = bmp.width; tmp.height = bmp.height;
-          const x = tmp.getContext('2d', { willReadFrequently: true });
-          if (x) { x.clearRect(0, 0, tmp.width, tmp.height); x.drawImage(bmp, 0, 0); putThumb(store, it.k, tmp, it.sig); any = true; }
-        }
-        bmp.close();
-      } catch { /* 解不回來的格子交給重算 */ }
-    }
-    tmp.width = tmp.height = 0;
-    if (any) repaintThumbs();
-    return any;
   };
   /* 濾鏡／特效按鈕縮圖的底圖：一律是「這張照片剛載進來的樣子」（留底的那一份），
      不管之後套了濾鏡、特效、合併、構圖、人像、仿色都不變 —— 所以只有換照片才需要重算。
@@ -4773,8 +4721,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       /* 每往下走一步就記一次進度；全部走完＝這一批結束（補救只在「沒在跑」或「卡很久」時才動手） */
       thumbRunningRef.current = true;
       const next = () => { if (cancelled()) return; thumbActivityRef.current = performance.now(); const f = steps.shift(); if (f) window.setTimeout(f, 0); else thumbRunningRef.current = false; };
-      // 先把收藏起來的縮圖解回來，剩下真的缺的才算
-      steps.push(() => { if (filterThumbsMissing(cur) || fxThumbsMissing(cur)) void restoreThumbs(cur).finally(next); else next(); });
       for (const k of order) steps.push(() => {
         if (thumbSrcOf(buffersSrcRef.current) !== cur) return next();
         if (k === 'filter') { if (filterThumbsMissing(cur)) buildFilterThumbs(cur, curPixels(), cancelled, next); else next(); }
@@ -4790,13 +4736,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       // 其他照片：解好的圖直接用，沒有就載一次（只用來縮小，不留）
       for (const u of others) steps.push(() => {
         if (!filterThumbsMissing(u) && !fxThumbsMissing(u)) return next();
-        if (thumbArchiveRef.current.has(thumbSrcKey(u))) { noteThumbSrc(u); void restoreThumbs(u).finally(() => {
-          if (cancelled()) return;
-          if (!filterThumbsMissing(u) && !fxThumbsMissing(u)) next(); else compute(u);
-        }); return; }
-        compute(u);
-      });
-      function compute(u: string) {
         const use = (im: HTMLImageElement) => {
           if (cancelled()) return;
           const w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
@@ -4808,7 +4747,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const ready = viewedImgRef.current.get(u) || warmImgRef.current.get(u);
         if (ready && ready.complete && ready.naturalWidth) use(ready);
         else loadImg(u).then(use).catch(() => next());
-      }
+      });
       next();
     };
     // 正在看的那一排缺格子：下一幀就開始；其他的等閒下來（不跟換照片、開分頁搶主執行緒）
