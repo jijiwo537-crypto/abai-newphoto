@@ -1463,7 +1463,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           <button
             data-home-tile="edit"
             onClick={onImportPhoto}
-            className="home-tile-white flex-1 h-[75px] rounded-[13px] bg-white text-black border-none flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-transform duration-300"
+            className="flex-1 h-[75px] rounded-[13px] bg-white text-black border-none flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-transform duration-300"
           >
             <span data-ht="icon" className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'opsz' 24" }}>
               add_photo_alternate
@@ -1473,7 +1473,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           <button
             data-home-tile="camera"
             onClick={onOpenCamera}
-            className="home-tile flex-1 h-[75px] rounded-[13px] text-white flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
+            className="home-tile home-tile-cam flex-1 h-[75px] rounded-[13px] text-white flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
           >
             <span data-ht="icon" className="inline-flex text-white/75"><Icon name="photo_camera" className="text-[24px] text-white/75" /></span>
             <span data-ht="text" className="text-sm font-black tracking-[0.06em]">相機</span>
@@ -1487,7 +1487,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               key={t.key}
               data-home-tile={t.key}
               onClick={tileAction[t.key]}
-              className="home-tile flex-1 min-w-0 h-[75px] rounded-[13px] text-white flex flex-col items-center justify-center gap-[9px] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
+              className="home-tile home-tile-sm flex-1 min-w-0 h-[75px] rounded-[13px] text-white flex flex-col items-center justify-center gap-[9px] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
             >
               <span data-ht="icon" className="inline-flex text-white/70"><Icon name={t.icon} className="text-[22px] text-white/70" /></span>
               <span data-ht="text" className="text-[10px] font-bold tracking-[0.06em] text-white/75 whitespace-nowrap">{t.label}</span>
@@ -1524,7 +1524,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               />
             </>
           )}
-          <div className="relative px-[14px] pt-7 pb-4">
+          <div className="relative px-[14px] pt-[30px] pb-4">
             <span data-ht="text" className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">藝術效果</span>
             <span data-ht="text" className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65 truncate">一鍵套用藝術風格</span>
             <span data-ht="pill" className="mt-3 h-[26px] w-fit pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 shrink-0">
@@ -1540,7 +1540,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           onClick={onOpenDotArt}
           className="home-tile relative flex-1 min-w-0 rounded-[14px] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
         >
-          <div className="relative px-[14px] pt-7 pb-4">
+          <div className="relative px-[14px] pt-[30px] pb-4">
             <span data-ht="text" className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">點陣文字</span>
             <span data-ht="text" className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65 truncate">將圖片轉點陣圖案</span>
             <span data-ht="pill" className="mt-3 h-[26px] w-fit pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 shrink-0">
