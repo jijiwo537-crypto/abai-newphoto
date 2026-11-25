@@ -4548,21 +4548,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     );
   };
   /** 算一張原圖的特效那排（已經算過的格子跳過） */
-  const buildFxThumbs = (forSrc: string, thumbSrcFull: Uint8ClampedArray, cancelled: () => boolean, done: () => void, paced = false) => {
-    /* 特效縮圖用 2 倍解析度算（3 倍螢幕上也是 2 倍）：卡片只有 64×76 點，2 倍已經很清楚；
-       特效（尤其柔光ll 的亮部統計、模糊類）的計算量跟像素數成正比，3 倍要多算 2.25 倍。
-       實測第二次之後整排的時間約減半（最慢那張 柔光ll 約 100ms → 約 45ms）。畫上卡片時由畫面自動放大 */
-    const FX_DPR = Math.min(THUMB_DPR, 2);
-    const W = CARD_W * FX_DPR, H = CARD_H * FX_DPR;
-    let thumbSrc = thumbSrcFull;
-    if (W !== THUMB_W || H !== THUMB_H) {
-      const a = document.createElement('canvas'); a.width = THUMB_W; a.height = THUMB_H;
-      a.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(thumbSrcFull), THUMB_W, THUMB_H), 0, 0);
-      const b = document.createElement('canvas'); b.width = W; b.height = H;
-      const bx = b.getContext('2d', { willReadFrequently: true })!; bx.imageSmoothingQuality = 'high'; bx.drawImage(a, 0, 0, W, H);
-      thumbSrc = bx.getImageData(0, 0, W, H).data;
-      a.width = a.height = b.width = b.height = 0;
-    }
+  const buildFxThumbs = (forSrc: string, thumbSrc: Uint8ClampedArray, cancelled: () => boolean, done: () => void, paced = false) => {
+    const W = THUMB_W, H = THUMB_H;
     const { flat, baseLut, curveLuts } = flatThumbTables();
     const baseData = new Uint8ClampedArray(thumbSrc.length);
     try {
