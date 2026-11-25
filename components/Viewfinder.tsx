@@ -495,6 +495,16 @@ export const Viewfinder = forwardRef(({ video, lutUrl, lutAmount = 1, exposure, 
       gl.deleteBuffer(uvBuf);
     };
   }, [gpuEpoch]);
+  /* 相機關掉（畫布真的從畫面上拿掉）：WebGL 環境明確放掉，不等瀏覽器回收 ——
+     iOS 同時存在的 WebGL 畫布有上限，反覆開關相機時舊的沒放掉，新的就可能建不起來（黑畫面）。
+     晚一格再判斷：畫布還在畫面上（只是重新掛上同一個元件）就不放 */
+  useEffect(() => {
+    const canvas = canvasRef.current;   // 卸下時 ref 已經被清掉了，先記住
+    return () => {
+    const gl = glRef.current;
+    window.setTimeout(() => { if (gl && canvas && !canvas.isConnected) { try { gl.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* 已經沒了 */ } canvas.width = canvas.height = 1; } }, 0);
+    };
+  }, []);
 
   // 繪製迴圈
   useEffect(() => {

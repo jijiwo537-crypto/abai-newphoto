@@ -2993,10 +2993,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      只能走慢很多的 2D 備用路徑（點特效要等一下）。所以一被收走就換一張全新的畫布，
      下一格就回到 GPU，速度跟平常一樣。 */
   const [surfaceGen,setSurfaceGen]=useState(0);
+  /** 最後一張掛上來的特效畫布（卸下時 fxSurfaceRef 已經被清成 null，關掉編輯器要靠這個放掉它） */
+  const fxSurfaceLastRef=useRef<HTMLCanvasElement|null>(null);
   const onSurfaceLost=useCallback(()=>{
     requestAnimationFrame(()=>{
       for(const r of [softPresentRef,halationPresentRef,leakPresentRef,blurPresentRef,simplePresentRef]){try{r.current?.dispose();}catch{}r.current=null;}
       try{surfaceGpuRef.current?.dispose();}catch{}
+      /* 被收走的那張畫布：登記的資料一起拿掉（不然一直留在 surfaces 裡） */
+      try{const dead=fxSurfaceRef.current;if(dead)disposeFxSurface(dead);}catch{}
       surfaceGpuRef.current=undefined;surfaceSrcKeyRef.current='';
       fxInputKeyRef.current='';legacyPreviewRef.current=null;
       showFxSurface(false);
@@ -3055,7 +3059,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const surface=fxSurfaceRef.current;
     showFxSurface(!!surface&&presentFxSource(ctx,w,h,surface));
   };
-  useEffect(()=>{const surface=fxSurfaceRef.current;return()=>{if(surface)disposeFxSurface(surface);};},[]);
+  /* 關掉編輯器：特效畫布（含被系統收回後重建的那一張，見 onSurfaceLost）的 GPU 資源全部明確放掉，不等瀏覽器回收 ——
+     iOS 同時存在的 WebGL 畫布有上限，反覆進出編輯器時舊的沒放掉，新的就可能建不起來 */
+  useEffect(()=>{const surface=fxSurfaceRef.current;return()=>{const cur=fxSurfaceLastRef.current;if(surface)disposeFxSurface(surface);if(cur&&cur!==surface)disposeFxSurface(cur);};},[]);
   /* 合併換來源時不要先切回 2D 畫布（那張還是舊的、沒濾鏡的，會閃一下）；讓新來源的第一次重畫決定 */
   useLayoutEffect(()=>{if(!srcSwapRef.current)showFxSurface(false);fxInputKeyRef.current='';legacyPreviewRef.current=null;},[activeSrc]);
   const helperCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -10659,7 +10665,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
                 {/* 合併時的定格畫面：從按下合併到全部做完，畫面完全不變（使用者一操作就收掉） */}
                 <canvas ref={freezeCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{display:'none',objectFit:'fill',zIndex:5}} />
-                <canvas key={surfaceGen} ref={el=>{(fxSurfaceRef as React.MutableRefObject<HTMLCanvasElement|null>).current=el;if(el){preferWebgl2(el);el.addEventListener('webglcontextlost',onSurfaceLost,{once:true});}}} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
+                <canvas key={surfaceGen} ref={el=>{(fxSurfaceRef as React.MutableRefObject<HTMLCanvasElement|null>).current=el;if(el){fxSurfaceLastRef.current=el;preferWebgl2(el);el.addEventListener('webglcontextlost',onSurfaceLost,{once:true});}}} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
                 {/* 拖遮色片形狀時的即時疊層（見 applyComplexEffects 的遮色片那段） */}
                 <canvas ref={maskLiveCanvasRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{display:'none',objectFit:'fill',zIndex:4,visibility: activeCategory === 'mask' && !maskPicking ? 'visible' : 'hidden'}} />
                 {/* 紅色範圍自己一層：選中／取消選中、按＋時跟參考線在同一幀出現／消失（用 CSS 切，不必重算照片） */}

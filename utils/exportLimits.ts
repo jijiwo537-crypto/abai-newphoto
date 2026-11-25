@@ -41,6 +41,9 @@ export async function safeImage(im: HTMLImageElement, maxPixels = MOBILE_MAX_PIX
   c.width = c.height = 0;
   if (!blob) return im;
   const out = new Image();
-  await new Promise<void>(r => { out.onload = () => r(); out.onerror = () => r(); out.src = URL.createObjectURL(blob); });
+  const url = URL.createObjectURL(blob);
+  await new Promise<void>(r => { out.onload = () => r(); out.onerror = () => r(); out.src = url; });
+  /* 圖片已經載好（資料留在圖片本身）：網址收掉，不然那份 JPEG 會一直留在記憶體裡直到 App 關掉 */
+  URL.revokeObjectURL(url);
   return out.naturalWidth ? out : im;
 }
