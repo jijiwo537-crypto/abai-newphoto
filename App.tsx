@@ -49,11 +49,13 @@ const LUT_LIST = [
 /* 收哪些檔案統一由 utils/fileTypes 決定（不要在各檔案各寫一串，內容容易不一致）*/
 const RAW_ACCEPT = SHARED_RAW_ACCEPT;
 
-import { processImageFile, normalizeImageFiles } from './utils/imageLoader';
+import { processImageFile as processImageFileRaw, normalizeImageFiles } from './utils/imageLoader';
+/* 讀照片（同 processImageFile），順便在導入量測裡標出開始／結束的時間（見 utils/importHero 的 perfStart） */
+const processImageFile: typeof processImageFileRaw = async (...a) => { perfMark('decode0'); try { return await processImageFileRaw(...a); } finally { perfMark('decode1'); } };
 import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT, isRawFile } from './utils/fileTypes';
 import { nativePathOf } from './utils/nativeBridge';
 import { rawDevelopPreview, type RawLook } from './utils/nativeCamera';
-import { upgradeImportHero, cancelImportHero } from './utils/importHero';
+import { upgradeImportHero, cancelImportHero, perfMark } from './utils/importHero';
 import { setRawImportHint } from './utils/importHint';
 import { MotionTuner, motionTunerEnabled } from './components/MotionTuner';
 import { applyCssMotion } from './utils/motionTimings';

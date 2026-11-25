@@ -335,6 +335,7 @@ function landNow() {
 /** 開播：暫停在第一格的介面一起開始進場 */
 function revealEnter() {
   if (revealed) return;
+  perfMark('reveal');
   revealed = true; revealT = performance.now();
   deferHeavyWork(1000);   // 進場這一秒：工具的背景工作（濾鏡縮圖、著色器預編）先等，主執行緒留給動畫
   window.clearTimeout(enterFailsafe);
@@ -354,7 +355,7 @@ function startEnter(E: R, failsafeMs: number) {
   const check = () => {
     const root = toolRoot();
     if (!root || !enterE) return;
-    if (root !== enterRoot) enterRoot = root;
+    if (root !== enterRoot) { enterRoot = root; perfMark('tool'); }
     runEnter(root, enterE);
   };
   /* MutationObserver 在 React 寫進畫面之後、瀏覽器畫出來之前就會跑：介面第一次出現時就已經停在第一格，不會先閃一下 */
@@ -375,6 +376,7 @@ function stopEnter() {
 /** 單張 RAW 導入（不播飛行過場）：介面一樣分層進場，時機是 RAW 沖好、照片出現在工具裡的那一刻 */
 export function beginToolEntrance(kind: string | undefined, aspect?: number) {
   if (!heroAllowed() || ghost) return;
+  perfStart(`import-raw ${kind ?? 'edit'}`);
   const a = aspect && isFinite(aspect) && aspect > 0 ? aspect : 1;
   const E = predict(kind ?? 'edit', a);
   startEnter(E, 15000);
@@ -499,10 +501,12 @@ export function setImportHeroFile(file: File) {
 
 /** 原檔交給工具了：開始找照片本人、跟過去、交接 */
 export function landImportHero() {
+  perfMark('files');
   if (ghost) landing = true;
 }
 
 function finish(g: HTMLDivElement, ms: number) {
+  perfMark('handoff');
   if (ghost === g) ghost = null;
   cancelAnimationFrame(raf);
   unhide();
@@ -559,18 +563,24 @@ if (typeof window !== 'undefined') window.setTimeout(() => {
 
 
 /* ── 實機量測（給 Codex 用 Safari 網頁檢閱器看）──
- * 每一次導入過場都記下主執行緒每一格的間隔，分成「照片飛行中」「介面進場中」兩段，
- * 結束時在主控台印出一行 [abai-perf]：每段幾格、超過 20ms／50ms 的有幾格、最長一格多久、最長的那幾格發生在第幾毫秒。
+ * 從使用者在相簿點下照片的那一刻開始，記下主執行緒每一格的間隔，最長 8 秒，並標出每個階段發生在第幾毫秒：
+ *   files＝照片檔案拿到了、decode0／decode1＝App 開始／結束讀這張照片（processImageFile）、
+ *   tool＝工具頁掛上來、reveal＝介面開始進場、handoff＝照片本人交接、done＝替身收掉。
+ * 結束時在主控台印出一行 [abai-perf]：各階段時間、每秒掉格數（>20ms／>50ms）、最長的幾格發生在第幾毫秒。
  * 只記錄、不改變任何行為；也存在 window.__abaiPerf（最近 10 次） */
+let perfCur: { t0: number; marks: string[] } | null = null;
+export function perfMark(name: string) { if (perfCur) perfCur.marks.push(`${name}@${Math.round(performance.now() - perfCur.t0)}`); }
 export function perfStart(label: string) {
-  const t0 = performance.now(), gaps: [number, number][] = [];
+  const t0 = performance.now(), gaps: [number, number][] = [], me = { t0, marks: [] as string[] };
+  perfCur = me;
   let last = t0, stop = false;
-  const f = (now: number) => { if (stop) return; gaps.push([Math.round(now - t0), now - last]); last = now; if (now - t0 < 4000) requestAnimationFrame(f); else done(); };
+  const f = (now: number) => { if (stop) return; gaps.push([Math.round(now - t0), now - last]); last = now; if (now - t0 < 8000) requestAnimationFrame(f); else done(); };
   const done = () => {
     if (stop) return; stop = true;
-    const phase = (a: number, b: number) => { const g = gaps.filter(([t]) => t >= a && t < b).map(x => x[1]); return `${g.length}格 >20ms:${g.filter(x => x > 20).length} >50ms:${g.filter(x => x > 50).length} 最長:${Math.round(Math.max(0, ...g))}ms`; };
-    const worst = [...gaps].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([t, d]) => `${t}ms(${Math.round(d)})`).join(' ');
-    const line = `[abai-perf] ${label} | 0-0.5s ${phase(0, 500)} | 0.5-1.5s ${phase(500, 1500)} | 1.5-4s ${phase(1500, 4000)} | 最長幾格@ ${worst}`;
+    if (perfCur === me) perfCur = null;
+    const sec = [0, 1, 2, 3, 4, 5, 6, 7].map(k => { const g = gaps.filter(([t]) => t >= k * 1000 && t < (k + 1) * 1000).map(x => x[1]); return `${k}s:${g.filter(x => x > 20).length}/${g.filter(x => x > 50).length}`; }).join(' ');
+    const worst = [...gaps].sort((a, b) => b[1] - a[1]).slice(0, 6).map(([t, d]) => `${t}ms(${Math.round(d)})`).join(' ');
+    const line = `[abai-perf] ${label} | 階段 ${me.marks.join(' ')} | 每秒掉格(>20ms/>50ms) ${sec} | 最長幾格@ ${worst}`;
     try { console.log(line); const w = window as any; (w.__abaiPerf ||= []).push(line); if (w.__abaiPerf.length > 10) w.__abaiPerf.shift(); } catch { /* 只是記錄 */ }
   };
   requestAnimationFrame(f);
