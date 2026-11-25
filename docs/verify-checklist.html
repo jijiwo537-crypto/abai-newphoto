@@ -26,13 +26,35 @@ textarea{width:100%;box-sizing:border-box;min-height:160px;margin-top:10px;backg
 </style>
 <main>
 <h1>ABAI 驗收清單</h1>
-<p class="sub">這幾天所有改動。勾掉你在 iPhone 上確認過的；按「複製未驗證項目」把剩下的貼給 Codex。勾選只存在這台裝置。對應 commit：ea2435d（main）。</p>
+<p class="sub">這幾天所有改動。勾掉你在 iPhone 上確認過的；按「複製未驗證項目」把剩下的貼給 Codex。勾選只存在這台裝置。對應 commit：498293d8（main）。</p>
 <div id="list"></div>
 <textarea id="out" hidden readonly></textarea>
 </main>
 <div class="bar"><span>已驗證 <b id="cnt">0</b></span><span class="sp"></span><button class="g" id="reset">清除勾選</button><button id="copy">複製未驗證項目</button></div>
 <script>
 const G=[
+["最新幾輪（優先驗證）",[
+["拍攝資訊保留（編輯）","相簿導入 iPhone 照片 → 編輯調色 → 儲存 → 照片 App 往上滑：機型、鏡頭、光圈、快門、ISO、時間、地點都在，方向正確"],
+["拍攝資訊保留（相機）","App 相機拍一張 → 看資訊：機型、快門等參數與地點都在"],
+["拍攝資訊保留（RAW）","導入 RAW → 編輯 → 儲存 → 拍攝資訊都在"],
+["美顏、仿色存檔品質","兩個工具各存 HEIC／JPG／PNG：格式正確、成品與預覽一致、拍攝資訊在；HDR 照片存 HEIC 後亮部仍是 HDR"],
+["美顏可選格式","首頁 → 美顏 → 儲存旁三個點：黑色液態玻璃面板，可選 JPG／PNG／HEIC"],
+["儲存旁三個點（五個工具）","編輯、美顏、仿色、創意拼圖、跨頁拼圖：黑色液態玻璃面板，位置與寬度跟以前網頁選單一樣，切換後儲存格式正確"],
+["編輯進場時機與層次","首頁導入照片進編輯：照片一起飛介面就進場，沒有黑畫面，上方列落下、下方各列依序升起；連續 10 次都完整，不會只看到前後兩幀"],
+["濾鏡縮圖提前就緒","進場開始時前 7 張濾鏡縮圖已經在；從動畫到停下來縮圖完全沒有變化（換解析度、抖動都沒有）"],
+["進場結束不抖","進場結束那一刻縮圖、按鈕都不抖、不跳"],
+["反覆進出不越來越卡","殺掉 App 重開等 10 秒，反覆「導入 → 編輯 → 回主頁」10 次：每次一樣順，不變黑"],
+["特效縮圖","進編輯後點特效分頁：縮圖清楚、很快出現；停在濾鏡頁時進編輯後那幾秒不卡"],
+["首頁字標不閃","從各工具回主頁 10 次：Abai 字標都不閃"],
+["自拍不鏡像","前鏡頭拍有字的東西：成品字是正的"],
+["相機相簿暫停鏡頭","開相簿：綠色相機燈熄滅；關相簿時觀景窗是黑底＋純白 Abai，降下後畫面淡入、濾鏡與位置正確"],
+["相機設定選單","右上三個點：圖示大小一致；水平線是一把簡單的尺"],
+["從主頁進相機","整頁從下方升上來，主頁變暗；升到定位才出現鏡頭畫面"],
+["遮色片主體／人物","遮色片 → 主體、人物：選取正確、右側清單有文字；沒人的照片選人物會提示且不留按鈕"],
+["前後對比","按住對比：原圖瞬間出現，跟以前看到的一樣"],
+["RAW 第二次打開更快","同一張 RAW 關掉再開：第二次解析明顯更快、顏色一樣"],
+["導入相簿","導入相簿點照片、多選、取消、最近項目都不震動；滑上滑下速度合適"],
+["相機相簿下滑關閉","捲到舊照片點開再下拉：沒有殘影、右側沒有半張圖，縮回該張格子"]]],
 ["相機拍照",[
 ["自拍成品不鏡像（新）","前鏡頭拍有文字的東西，相簿裡的成品文字是正的（跟原相機一樣），觀景窗仍像照鏡子"],
 ["自拍所見即所得","前鏡頭拍一張，與 iPhone 原生相機同場景對比：亮度、膚色、亮部不過曝，與觀景窗一致"],
@@ -92,7 +114,7 @@ const c=l.querySelector('input');c.checked=!!st[id];c.onchange=()=>{st[id]=c.che
 function upd(){let d=0;document.querySelectorAll('section').forEach(s=>{const a=s.querySelectorAll('input'),k=[...a].filter(x=>x.checked).length;d+=k;s.querySelector('h2 span').textContent=`${k}/${a.length}`});document.getElementById('cnt').textContent=`${d}/${n}`}
 upd();
 document.getElementById('reset').onclick=()=>{st={};try{localStorage.removeItem(K)}catch(e){}document.querySelectorAll('input').forEach(x=>x.checked=false);upd()};
-document.getElementById('copy').onclick=()=>{let o='請在 iPhone 上驗證以下項目（commit ea2435d，main）。逐項回報通過／失敗與觀察到的現象，未實測的不要標通過：\n';
+document.getElementById('copy').onclick=()=>{let o='請在 iPhone 上驗證以下項目（commit 498293d8，main）。逐項回報通過／失敗與觀察到的現象，未實測的不要標通過：\n';
 G.forEach(([g,items],gi)=>{const r=items.filter((_,ii)=>!st[`c${gi}_${ii}`]);if(r.length){o+=`\n【${g}】\n`;r.forEach(([t,e])=>o+=`- ${t}：${e}\n`)}});
 const ta=document.getElementById('out');ta.value=o;const b=document.getElementById('copy');
 (navigator.clipboard?navigator.clipboard.writeText(o):Promise.reject()).then(()=>{b.textContent='已複製'},()=>{ta.hidden=false;ta.select();b.textContent='請手動複製下方文字'});setTimeout(()=>b.textContent='複製未驗證項目',2000)};
