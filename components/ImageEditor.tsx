@@ -4574,11 +4574,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     && filterThumbStore.current[thumbKey(forSrc, l.id)]?.sig !== forSrc + '|' + l.id);
   const fxThumbsMissing = (forSrc: string) => EFFECT_TOOLS.some(t => fxThumbStore.current[thumbKey(forSrc, t.id)]?.sig !== forSrc + '|' + t.id);
   /** 算一張原圖的濾鏡那排（已經算過的格子跳過） */
-  const buildFilterThumbs = (forSrc: string, thumbSrc: Uint8ClampedArray, cancelled: () => boolean, done: () => void) => {
+  const buildFilterThumbs = (forSrc: string, thumbSrc: Uint8ClampedArray, cancelled: () => boolean, done: () => void, noWorker = false) => {
     const W = THUMB_W, H = THUMB_H;
     const { flat, baseLut, curveLuts } = flatThumbTables();
     /* 優先在背景執行緒算：主畫面（進場動畫、拖滑桿、捲動）完全不受影響，縮圖一樣馬上一張一張出現 */
-    const wk = getThumbWorker();
+    const wk = noWorker ? null : getThumbWorker();
     if (wk) {
       const jobs: { key: string; lutId: string | null; amount: number; sig: string }[] = [];
       for (const lut of lutList) {
@@ -4596,7 +4596,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const m = ev.data;
         if (m.id !== id) return;
         if (cancelled()) { wk.removeEventListener('message', onMsg); wk.postMessage({ cancel: id }); cancelAnimationFrame(raf); return; }
-        if (m.done) { wk.removeEventListener('message', onMsg); cancelAnimationFrame(raf); repaintThumbs(); done(); return; }
+        if (m.done) {
+          wk.removeEventListener('message', onMsg); cancelAnimationFrame(raf); repaintThumbs();
+          /* 背景算完還有缺的（那一張在背景算失敗）：改在主執行緒用原本的方式補，一定補齊 */
+          if (filterThumbsMissing(forSrc)) buildFilterThumbs(forSrc, thumbSrc, cancelled, done, true); else done();
+          return;
+        }
         /* 這一格先前放的是預先算的縮圖：真正的這張跟它幾乎一樣（肉眼不可能分辨）就不換、畫面完全不動；
            有看得出的差異才換成真正的 —— 最終一定跟原本的算法一模一樣 */
         const pre = preThumbPx.get(m.key);
@@ -4759,23 +4764,29 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      還有照片缺縮圖、而且 3 秒以上沒有任何縮圖畫好（工作卡住了），就重新排一次；同一組照片最多補 6 次（不會無限重試）。
      每次補救都在主控台記一行 [abai-thumbs]（哪幾張、缺哪一排），實機上可以看出是哪一種原因 */
   const thumbRetryCount = useRef(0);
+  const thumbNextRetryAt = useRef(0);
   useEffect(() => {
-    thumbRetryCount.current = 0;
+    /* 保證「正在看的那張」的濾鏡、特效縮圖一定會出來：不設次數上限，但間隔逐次拉長（2.5、5、10…最長 30 秒），
+       換照片就重新從頭算。只看正在看的那張：批量裡其他張只是預先準備（張數多時舊的會被清掉、切過去當下會立刻補算），
+       不拿來判斷，免得反覆重算白白耗電 */
+    thumbRetryCount.current = 0; thumbNextRetryAt.current = 0;
     const t = window.setInterval(() => {
-      if (isInteractingRef.current || thumbRetryCount.current >= 6) return;
-      /* 還在跑：給它 10 秒（可能在等主執行緒空檔）；沒在跑：3 秒沒進度就補 */
-      if (performance.now() - thumbActivityRef.current < (thumbRunningRef.current ? 10000 : 3000)) return;
-      const miss = srcListRef.current.map(u => thumbSrcOf(u)).filter((u, i, a) => a.indexOf(u) === i)
-        .map(u => ({ u, f: filterThumbsMissing(u), x: fxThumbsMissing(u) })).filter(m => m.f || m.x);
-      if (!miss.length) return;
+      if (isInteractingRef.current) return;
+      const now = performance.now();
+      if (now < thumbNextRetryAt.current) return;
+      if (now - thumbActivityRef.current < (thumbRunningRef.current ? 10000 : 3000)) return;
+      const cur = thumbSrcOf(buffersSrcRef.current || activeSrc);
+      const f = filterThumbsMissing(cur), x = fxThumbsMissing(cur);
+      if (!f && !x) { thumbRetryCount.current = 0; return; }
       thumbRetryCount.current++;
-      try { console.log(`[abai-thumbs] 補救第 ${thumbRetryCount.current} 次：${miss.map(m => `${srcIdOf(m.u)}${m.f ? ' 濾鏡' : ''}${m.x ? ' 特效' : ''}`).join('｜')}`); } catch { /* 只是記錄 */ }
-      thumbActivityRef.current = performance.now();
+      thumbNextRetryAt.current = now + Math.min(30000, 2500 * 2 ** Math.min(4, thumbRetryCount.current - 1));
+      try { console.log(`[abai-thumbs] 補救第 ${thumbRetryCount.current} 次：${srcIdOf(cur)}${f ? ' 濾鏡' : ''}${x ? ' 特效' : ''}`); } catch { /* 只是記錄 */ }
+      thumbActivityRef.current = now;
       setThumbRetry(n => n + 1);
     }, 2500);
     return () => window.clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcList]);
+  }, [activeSrc]);
 
   const handleFilterSelect = (idx: number) => {
     releaseFreeze(true);
