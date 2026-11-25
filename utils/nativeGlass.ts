@@ -23,7 +23,7 @@ interface NativeGlassApi {
   closeSheet?(): Promise<void>;
   addListener(ev: 'sheet', cb: (d: { id: string }) => void): Promise<{ remove: () => void }>;
   show(o: { group: string; items: unknown[]; animate?: boolean }): Promise<void>;
-  update(o: { group: string; id: string; symbol?: string; tint?: string; enabled?: boolean }): Promise<void>;
+  update(o: { group: string; id: string; symbol?: string; tint?: string; enabled?: boolean; title?: string }): Promise<void>;
   hide(o: { group: string; animate?: boolean }): Promise<void>;
   addListener(ev: 'tap', cb: (d: { group: string; id: string }) => void): Promise<{ remove: () => void }>;
   addListener(ev: 'menu', cb: (d: { id: string; value: unknown }) => void): Promise<{ remove: () => void }>;

@@ -94,9 +94,21 @@ function useNativeExportActions(ref: React.RefObject<HTMLSpanElement>) {
       });
       const sig = JSON.stringify(items);
       if (sig === last && shown) return;
-      const first = !shown;
+      /* 只有字或能不能按變了（位置、顏色都一樣）：原地更新那幾顆，不重建整組 —— 重建時玻璃會重新長出來，看起來會變色一下 */
+      const shape = (l: typeof items) => JSON.stringify(l.map(({ title: _t, enabled: _e, ...rest }) => rest));
+      if (shown && last && shape(JSON.parse(last)) === shape(items)) {
+        const prev = JSON.parse(last) as typeof items;
+        last = sig;
+        for (let i = 0; i < items.length; i++) {
+          if (prev[i].title !== items[i].title || prev[i].enabled !== items[i].enabled)
+            void p.update({ group: GROUP, id: items[i].id, title: items[i].title, enabled: items[i].enabled });
+        }
+        return;
+      }
       last = sig; shown = true;
-      await p.show({ group: GROUP, items, animate: first });
+      /* 不做淡入：玻璃材質不能半透明，淡入的過程中顏色會畫錯（開頭「變色一下」）。
+         成品頁本身就是在「儲存中」那層拿掉的那一格整頁直接換上，按鈕跟著同一格直接出現 */
+      await p.show({ group: GROUP, items, animate: false });
       if (alive && !leaving) setWebHidden(true);
     };
     const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { void sync(); }); };

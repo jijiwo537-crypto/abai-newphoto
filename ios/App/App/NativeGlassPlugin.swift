@@ -226,9 +226,11 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func update(_ call: CAPPluginCall) {
         let group = call.getString("group") ?? "default", id = call.getString("id") ?? ""
-        let symbol = call.getString("symbol"), tint = call.getString("tint"), enabled = call.getBool("enabled")
+        let symbol = call.getString("symbol"), tint = call.getString("tint"), enabled = call.getBool("enabled"), title = call.getString("title")
         DispatchQueue.main.async {
             if let b = self.buttons[group]?[id] {
+                /* 只換字（例如「儲存中…」→「已存到相簿」）：原地換，不重建整組（重建時玻璃會重新長出來、閃一下） */
+                if let t = title { UIView.performWithoutAnimation { b.setTitle(t, for: .normal); b.layoutIfNeeded() } }
                 if let s = symbol { b.setImage(ABAIGlass.image(s), for: .normal) }
                 if let t = tint { b.tintColor = Self.color(t) }
                 if let e = enabled { b.isEnabled = e; b.alpha = e ? 1 : 0.35 }
