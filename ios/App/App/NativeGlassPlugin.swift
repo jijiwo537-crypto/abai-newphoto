@@ -209,7 +209,10 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
             box.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             parent.insertSubview(box, aboveSubview: web)
             var map: [String: UIButton] = [:]
-            for item in items { box.addSubview(self.makeItem(item, group: group, into: &map)) }
+            for item in items {
+                let v = (item["kind"] as? String) == "tile" ? self.makeTile(item, group: group, into: &map) : self.makeItem(item, group: group, into: &map)
+                box.addSubview(v)
+            }
             self.groups[group] = box
             self.buttons[group] = map
             if let o = old { o.removeFromSuperview() }
@@ -261,7 +264,7 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
                 if self?.menuPanel === p { self?.menuPanel = nil }
                 self?.notifyListeners("menuClosed", data: [:])
             }
-            parent.insertSubview(p, aboveSubview: web)
+            parent.addSubview(p)
             self.menuPanel = p
             p.present()
             call.resolve(["opened": true])
@@ -285,7 +288,8 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
                 if self?.dialogView === d { self?.dialogView = nil }
                 call.resolve(["id": id ?? ""])
             }
-            parent.insertSubview(d, aboveSubview: web)
+            /* 放在最上層：主頁、成品頁那些原生按鈕也是疊在網頁上的，詢問框一定要蓋過它們 */
+            parent.addSubview(d)
             self.dialogView = d
             d.present()
         }
@@ -315,7 +319,7 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
             let v = ABAISheet(frame: web.frame, content: o)
             v.onEvent = { [weak self] id in self?.notifyListeners("sheet", data: ["id": id]) }
             v.onGone = { [weak self, weak v] in if self?.sheetView === v { self?.sheetView = nil } }
-            parent.insertSubview(v, aboveSubview: web)
+            parent.addSubview(v)
             self.sheetView = v
             v.present()
             call.resolve()
@@ -376,6 +380,94 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         }, for: .touchUpInside)
         map[id] = b
         return b
+    }
+
+    /// tile：主頁那種「一整塊」的按鈕（編輯、相機、四個工具、藝術效果卡）。玻璃底（dark／fill white）、圓角 radius，
+    /// 裡面的圖示、文字、白色小膠囊照網頁量好的位置畫（parts：相對這一塊的 x、y、w、h）。
+    /// enterDelay（ms）：有給就播進場 —— 玻璃從無長出來（材質本身的動畫，不是透明度）＋從下方浮上來、微微放大到原尺寸，內容跟著淡入
+    private func makeTile(_ item: [String: Any], group: String, into map: inout [String: UIButton]) -> UIView {
+        func n(_ d: [String: Any], _ k: String) -> CGFloat { CGFloat((d[k] as? NSNumber)?.doubleValue ?? 0) }
+        let id = item["id"] as? String ?? ""
+        let frame = CGRect(x: n(item, "x"), y: n(item, "y"), width: max(1, n(item, "w")), height: max(1, n(item, "h")))
+        let white = (item["fill"] as? String) == "white"
+        let glass = ABAIGlass.view(radius: n(item, "radius"), interactive: true, dark: (item["dark"] as? Bool) ?? false,
+                                   darkAlpha: CGFloat((item["darkAlpha"] as? NSNumber)?.doubleValue ?? 0.3))
+        glass.frame = frame
+        if white { glass.contentView.backgroundColor = .white; glass.layer.borderWidth = 0 }
+        let b = UIButton(type: .custom)
+        b.frame = glass.bounds
+        b.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        glass.contentView.addSubview(b)
+        let content = UIView(frame: glass.bounds)
+        content.isUserInteractionEnabled = false
+        glass.contentView.addSubview(content)
+        func color(_ d: [String: Any]) -> UIColor {
+            let c = d["color"] as? [Any] ?? [255, 255, 255, 1]
+            func f(_ i: Int) -> CGFloat { CGFloat((c.count > i ? c[i] as? NSNumber : nil)?.doubleValue ?? 1) }
+            return UIColor(red: f(0) / 255, green: f(1) / 255, blue: f(2) / 255, alpha: f(3))
+        }
+        for case let p as [String: Any] in item["parts"] as? [Any] ?? [] {
+            let r = CGRect(x: n(p, "x"), y: n(p, "y"), width: n(p, "w"), height: n(p, "h"))
+            switch p["type"] as? String {
+            case "symbol":
+                let iv = UIImageView(image: ABAIGlass.uniform(ABAIGlass.image(p["symbol"] as? String ?? "", pointSize: n(p, "size"), weight: .regular), box: n(p, "size")))
+                iv.tintColor = color(p)
+                iv.contentMode = .center
+                iv.frame = r
+                content.addSubview(iv)
+            case "pill":
+                /* 白色小膠囊（立即使用 ›） */
+                let pill = UIView(frame: r)
+                pill.backgroundColor = .white
+                pill.layer.cornerRadius = r.height / 2
+                pill.layer.cornerCurve = .continuous
+                let l = UILabel()
+                l.attributedText = NSAttributedString(string: p["text"] as? String ?? "", attributes: [
+                    .font: UIFont.systemFont(ofSize: n(p, "size"), weight: .black), .foregroundColor: UIColor.black, .kern: n(p, "kern")])
+                let ch = UIImageView(image: UIImage(systemName: "chevron.right", withConfiguration: UIImage.SymbolConfiguration(pointSize: n(p, "size") - 1, weight: .bold)))
+                ch.tintColor = .black
+                let row = UIStackView(arrangedSubviews: [l, ch])
+                row.spacing = 3
+                row.alignment = .center
+                row.frame = CGRect(x: n(p, "padL"), y: 0, width: r.width - n(p, "padL") - n(p, "padR"), height: r.height)
+                pill.addSubview(row)
+                content.addSubview(pill)
+            default:
+                let l = UILabel(frame: r)
+                let w = n(p, "weight")
+                let weight: UIFont.Weight = w >= 850 ? .black : w >= 750 ? .heavy : w >= 650 ? .bold : w >= 550 ? .semibold : .regular
+                l.attributedText = NSAttributedString(string: p["text"] as? String ?? "", attributes: [
+                    .font: UIFont.systemFont(ofSize: n(p, "size"), weight: weight), .foregroundColor: color(p), .kern: n(p, "kern")])
+                l.textAlignment = (p["align"] as? String) == "center" ? .center : .left
+                l.lineBreakMode = .byTruncatingTail
+                content.addSubview(l)
+            }
+        }
+        /* 按下去：整塊輕輕縮一點（跟網頁原本的 active:scale 一樣） */
+        b.addAction(UIAction { [weak glass] _ in UIView.animate(withDuration: 0.12) { glass?.transform = CGAffineTransform(scaleX: 0.98, y: 0.98) } }, for: .touchDown)
+        for ev: UIControl.Event in [.touchUpInside, .touchUpOutside, .touchCancel] {
+            b.addAction(UIAction { [weak glass] _ in UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0) { glass?.transform = .identity } }, for: ev)
+        }
+        b.addAction(UIAction { [weak self] _ in
+            self?.tapFeedback.impactOccurred(intensity: 0.6)
+            self?.notifyListeners("tap", data: ["group": group, "id": id])
+        }, for: .touchUpInside)
+        map[id] = b
+        if let d = item["enterDelay"] as? NSNumber {
+            let effect = glass.effect
+            let bg = glass.contentView.backgroundColor
+            glass.effect = nil
+            glass.contentView.backgroundColor = bg?.withAlphaComponent(0)
+            content.alpha = 0
+            glass.transform = CGAffineTransform(translationX: 0, y: 22).scaledBy(x: 0.94, y: 0.94)
+            UIView.animate(withDuration: 0.7, delay: d.doubleValue / 1000, usingSpringWithDamping: 0.82, initialSpringVelocity: 0, options: [.allowUserInteraction]) {
+                glass.effect = effect
+                glass.contentView.backgroundColor = bg
+                glass.transform = .identity
+            }
+            UIView.animate(withDuration: 0.45, delay: d.doubleValue / 1000 + 0.12, options: [.curveEaseOut, .allowUserInteraction]) { content.alpha = 1 }
+        }
+        return glass
     }
 
     private func makeItem(_ item: [String: Any], group: String, into map: inout [String: UIButton]) -> UIView {

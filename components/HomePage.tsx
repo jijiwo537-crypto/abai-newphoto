@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { sec as motionSec } from '../utils/motionTimings';
 import { Icon } from './Icon';
 import { LOCALES, changeLocale, getLocale } from '../utils/locale';
+import { useNativeHomeTiles } from './useNativeHomeTiles';
 import { isNative } from '../utils/native';
 import { nativeDialog, closeNativeDialog, nativeSheet, closeNativeSheet, onNativeSheet, type NativeSheetPage } from '../utils/nativeGlass';
 import { exportsStatus, subscribeExports, removeExport, type ExportMeta } from '../utils/exportHistory';
@@ -72,6 +73,8 @@ const PROMO_BG_KEY = 'abai:promoBg';
 const PREVIEW_MAX: Record<string, number> = { hero: 1080, promo: 1080 };
 const previewMaxOf = (k: string) => PREVIEW_MAX[k] ?? 720;
 
+/** 主頁工具按鈕換成原生時用的 iOS 圖示 */
+const TILE_SF: Record<string, string> = { collage: 'square.stack.3d.up', layout: 'square.grid.2x2', beauty: 'wand.and.stars', match: 'eyedropper' };
 const TOOL_TILES = [
   { icon: 'layers', label: '創意拼圖', key: 'collage' },
   { icon: 'grid_view', label: '跨頁拼圖', key: 'layout' },
@@ -1154,6 +1157,8 @@ export const HomePage: React.FC<HomePageProps> = ({
     void nativeSheet(page).then(ok => { if (!ok) setWebSettings(true); });
   }, [settingsOpen, settingsPage, webSettings, copied]);
   useEffect(() => () => { void closeNativeSheet(); }, []);
+  /* 主頁入口按鈕換成原生（見 useNativeHomeTiles）：只在「修圖」分頁、沒有任何彈出視窗時 */
+  useNativeHomeTiles(scrollRef, heroRef, nav === 'home' && !settingsOpen && !loginOpen && !emailOpen && !delOpen && !acctOpen && !outOpen && !histDel);
   const historyGrid = (slots: number) => (
     <div className="grid grid-cols-5 gap-2">
       {Array.from({ length: slots }, (_, i) => {
@@ -1461,20 +1466,22 @@ export const HomePage: React.FC<HomePageProps> = ({
  */}
         <div className="relative z-10 mt-[8px] shrink-0 flex gap-2">
           <button
+            data-home-tile="edit" data-ns="photo.badge.plus"
             onClick={onImportPhoto}
             className="flex-1 h-[75px] rounded-[13px] bg-white text-black border-none flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-transform duration-300"
           >
-            <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'opsz' 24" }}>
+            <span data-ht="icon" className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'opsz' 24" }}>
               add_photo_alternate
             </span>
-            <span className="text-sm font-black tracking-[0.06em]">編輯</span>
+            <span data-ht="text" className="text-sm font-black tracking-[0.06em]">編輯</span>
           </button>
           <button
+            data-home-tile="camera" data-ns="camera"
             onClick={onOpenCamera}
             className="flex-1 h-[75px] rounded-[13px] bg-white/[0.06] border border-white/10 text-white flex items-center justify-center gap-[9px] p-3.5 hover:bg-white/[0.12] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
           >
-            <Icon name="photo_camera" className="text-[24px] text-white/75" />
-            <span className="text-sm font-black tracking-[0.06em]">相機</span>
+            <span data-ht="icon" className="inline-flex text-white/75"><Icon name="photo_camera" className="text-[24px] text-white/75" /></span>
+            <span data-ht="text" className="text-sm font-black tracking-[0.06em]">相機</span>
           </button>
         </div>
 
@@ -1483,11 +1490,12 @@ export const HomePage: React.FC<HomePageProps> = ({
           {TOOL_TILES.map(t => (
             <button
               key={t.key}
+              data-home-tile={t.key} data-ns={TILE_SF[t.key]}
               onClick={tileAction[t.key]}
               className="flex-1 min-w-0 h-[75px] rounded-[13px] bg-white/[0.06] border border-white/10 text-white flex flex-col items-center justify-center gap-[9px] hover:bg-white/[0.12] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
             >
-              <Icon name={t.icon} className="text-[22px] text-white/70" />
-              <span className="text-[10px] font-bold tracking-[0.06em] text-white/75 whitespace-nowrap">{t.label}</span>
+              <span data-ht="icon" className="inline-flex text-white/70"><Icon name={t.icon} className="text-[22px] text-white/70" /></span>
+              <span data-ht="text" className="text-[10px] font-bold tracking-[0.06em] text-white/75 whitespace-nowrap">{t.label}</span>
             </button>
           ))}
         </div>
@@ -1498,6 +1506,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         <button
           type="button"
           aria-label="開啟藝術效果"
+          data-home-tile="art"
           onClick={onOpenArt}
           className="relative flex-1 min-w-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
           style={{ background: previews.promo ? undefined : 'rgba(255,255,255,.03)' }}
@@ -1522,9 +1531,9 @@ export const HomePage: React.FC<HomePageProps> = ({
             </>
           )}
           <div className="relative px-[14px] pt-7 pb-4">
-            <span className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">藝術效果</span>
-            <span className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65 truncate">一鍵套用藝術風格</span>
-            <span className="mt-3 h-[26px] w-fit pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 shrink-0">
+            <span data-ht="text" className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">藝術效果</span>
+            <span data-ht="text" className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65 truncate">一鍵套用藝術風格</span>
+            <span data-ht="pill" className="mt-3 h-[26px] w-fit pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 shrink-0">
               立即使用
               {pillArrow}
             </span>
@@ -1533,14 +1542,15 @@ export const HomePage: React.FC<HomePageProps> = ({
         <button
           type="button"
           aria-label="開啟點陣文字"
+          data-home-tile="dot"
           onClick={onOpenDotArt}
           className="relative flex-1 min-w-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
           style={{ background: 'rgba(255,255,255,.03)' }}
         >
           <div className="relative px-[14px] pt-7 pb-4">
-            <span className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">點陣文字</span>
-            <span className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65 truncate">將圖片轉點陣圖案</span>
-            <span className="mt-3 h-[26px] w-fit pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 shrink-0">
+            <span data-ht="text" className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">點陣文字</span>
+            <span data-ht="text" className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65 truncate">將圖片轉點陣圖案</span>
+            <span data-ht="pill" className="mt-3 h-[26px] w-fit pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 shrink-0">
               立即使用
               {pillArrow}
             </span>
