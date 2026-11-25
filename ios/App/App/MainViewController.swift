@@ -46,6 +46,11 @@ class MainViewController: CAPBridgeViewController {
     }
 
     override open func capacitorDidLoad() {
+        #if DEBUG
+        /* 開發版：讓 Mac 的 Safari 網頁檢閱器看得到這個 WebView（iOS 16.4 起預設關閉），
+           用來讀實機量測（[abai-perf]）。正式版（Release）不會開 */
+        if #available(iOS 16.4, *) { bridge?.webView?.isInspectable = true }
+        #endif
         bridge?.registerPluginInstance(HeicExportPlugin())
         bridge?.registerPluginInstance(RawDecodePlugin())
         bridge?.registerPluginInstance(MemoryPressurePlugin())
