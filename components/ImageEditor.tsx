@@ -2047,8 +2047,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const switchTo = (i: number) => {
     if (i === safeIdx || i < 0 || i >= srcList.length) return;
     setBatchMenu(null);
-    /* 先把畫面上現在這一張拍下來蓋著（見 veilUp），底下怎麼換都看不到；新的這張畫好才淡過去 */
-    veilUp();
+    /* 先把畫面上現在這一張拍下來蓋著（見 veilUp），底下怎麼換都看不到；新的這張完整畫好才直接換過去（不淡化） */
+    veilUp(true);
     keepMaskShot();
     stashCurrent();
     // 上一張的紅色遮色片範圍不能留在下一張上（看起來就像遮色片被帶過去了）
@@ -2087,12 +2087,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      以前切換時 GPU 畫布先收起來、露出底下還沒畫的畫布（黑一下，RAW 要沖的時候黑很久）；
      新照片先畫出只有色彩的預熱版、特效晚一點才補上，或 RAW 先出舊參數的底圖再跳成新的（先舊後新、生硬地變）。
      保險：最多蓋 2.5 秒；使用者一碰畫面或滑桿就馬上收掉，不會擋住操作 */
-  const veilRef = useRef<{ el: HTMLCanvasElement; timer: number; raf: number } | null>(null);
+  const veilRef = useRef<{ el: HTMLCanvasElement; timer: number; raf: number; cut?: boolean } | null>(null);
   /** RAW：這次切過去的那張要照現在的參數重沖（沖好換上之前，過場不收） */
   const rawSettlingRef = useRef(false);
   const veilDown = (ms = 200) => {
     const v = veilRef.current;
     if (!v) return;
+    /* 換成另一張照片：直接換（不淡化）；淡化只用在同一張照片自己的變化（例如 RAW 照新參數沖好換上） */
+    if (v.cut) ms = 0;
     veilRef.current = null;
     clearTimeout(v.timer); cancelAnimationFrame(v.raf);
     rawSettlingRef.current = false;
@@ -2120,7 +2122,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     v.raf = requestAnimationFrame(loop);
   };
   /** 把畫面上現在那一張拍下來蓋住預覽（已經蓋著就沿用，不重拍） */
-  const veilUp = () => {
+  const veilUp = (cut = false) => {
     if (veilRef.current) return;   // 已經蓋著（同一次切換還沒畫好）：沿用，等它畫好
     const box = previewBoxRef.current, shown = visibleEditorCanvas();
     if (!box || !shown || !shown.width || !shown.height) return;
@@ -2139,7 +2141,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     } as Partial<CSSStyleDeclaration>);
     el.setAttribute('data-switch-veil', '');
     box.appendChild(el);
-    veilRef.current = { el, raf: 0, timer: window.setTimeout(() => veilDown(), 2500) };
+    veilRef.current = { el, raf: 0, cut, timer: window.setTimeout(() => veilDown(), 2500) };
     watchVeil();
   };
   useEffect(() => () => veilDown(0), []);
@@ -9973,12 +9975,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               ? 'absolute right-2 top-1/2 -translate-y-1/2 w-[56px] py-1 flex flex-col items-center justify-center gap-[5px] select-none touch-none text-white active:scale-90 transition-transform'
               : 'absolute bottom-[58px] right-1 w-[56px] py-1 flex flex-col items-center justify-center gap-[5px] select-none touch-none text-white active:scale-90 transition-transform z-30'}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-              {/* 一張照片（前）＋後面疊著的兩張：「這張的調整套到全部」 */}
-              <path d="M8 4.5h9.5a2 2 0 0 1 2 2V16" stroke="white" strokeOpacity=".45" strokeWidth="1.5" strokeLinecap="round" />
-              <path d="M5.5 7.5H15a2 2 0 0 1 2 2V19" stroke="white" strokeOpacity=".75" strokeWidth="1.5" strokeLinecap="round" />
-              <rect x="3" y="10.5" width="11.5" height="9.5" rx="2" stroke="white" strokeWidth="1.5" />
-              <path d="m6.5 15.4 1.9 1.9 3.4-3.6" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+              {/* 一疊照片：前面那張是這張，後面兩張是其他照片 —— 套到全部 */}
+              <rect x="3.75" y="8.75" width="11.5" height="11.5" rx="2.5" stroke="white" strokeWidth="1.5" />
+              <path d="M7.25 6.25V6.5A1.25 1.25 0 0 1 8.5 5.25h8A2.25 2.25 0 0 1 18.75 7.5v8a1.25 1.25 0 0 1-1.25 1.25h-.25" stroke="white" strokeOpacity=".7" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M10.75 2.75h7.5a3 3 0 0 1 3 3v7.5" stroke="white" strokeOpacity=".4" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             <span className="text-[9.5px] leading-none font-medium tracking-wide whitespace-nowrap drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">應用全部</span>
           </button>);
@@ -12064,9 +12065,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             );
           }
           return (
-            <EditBar scroll={fullTabs} className="mt-auto">
+            <EditBar scroll={fullTabs && !isBatch} className="mt-auto">
               {tabs.map(([id, label, on, fn]) => (
-                <EditBarTab key={id} id={id} label={label} active={on} scroll={fullTabs} quiet /* 修圖最下面的功能分頁：點了不震 */
+                <EditBarTab key={id} id={id} label={label} active={on} scroll={fullTabs && !isBatch} quiet /* 修圖最下面的功能分頁：點了不震 */
                   onClick={() => { if (on && SELF_CONTAINED_TABS.includes(id)) return; leaveCategory(fn); }} />
               ))}
             </EditBar>

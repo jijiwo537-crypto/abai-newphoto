@@ -744,7 +744,9 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       </header>
         <div data-compose-controls className="flex items-center" style={{ height: 86 }}>
           {tab === 'crop' && (
-            <div className="w-full flex overflow-x-auto no-scrollbar px-4">
+            /* 左右兩邊淡進黑底：按鈕滑到邊緣時漸漸消失，不是被螢幕邊緣硬切 */
+            <div className="w-full flex overflow-x-auto no-scrollbar px-4"
+              style={{ WebkitMaskImage: 'linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', maskImage: 'linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
               <div className="flex gap-2 mx-auto pr-6">
               {ASPECT_PRESETS.map(a => (
                 <button
