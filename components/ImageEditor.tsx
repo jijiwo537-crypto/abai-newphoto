@@ -7727,7 +7727,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       let basePath = '', outPath = '';
       try {
         basePath = await blobToNativeFile(await (await fetch(baseUrl)).blob(), 'png');
-        const r = await api.render({ path, basePath, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true, ...geoArgs });
+        const r = await api.render({ path, basePath, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true, metaPath: rawOf(src)?.path, ...geoArgs });
         outPath = r.path;
         const blob = await (await fetch(fileSrc(r.path))).blob();
         if (!blob.size) return null;
@@ -7753,7 +7753,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const n = NATIVE_CUBE ** 3, f = new Float32Array(n * 4);
       for (let i = 0; i < n; i++) { f[i * 4] = baked.data[i * 3] / 255; f[i * 4 + 1] = baked.data[i * 3 + 1] / 255; f[i * 4 + 2] = baked.data[i * 3 + 2] / 255; f[i * 4 + 3] = 1; }
       cubePath = await blobToNativeFile(new Blob([f.buffer]), 'cube');
-      const r = await api.render({ path, cubePath, cubeSize: NATIVE_CUBE, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true, ...geoArgs });
+      /* metaPath：RAW 的話拍攝資訊從原本的 RAW 檔讀（沖出來的 16 位元中間檔沒有）*/
+      const r = await api.render({ path, cubePath, cubeSize: NATIVE_CUBE, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true, metaPath: rawOf(src)?.path, ...geoArgs });
       outPath = r.path;
       const blob = await (await fetch(fileSrc(r.path))).blob();
       if (!blob.size) return null;

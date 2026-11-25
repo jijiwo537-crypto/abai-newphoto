@@ -195,6 +195,33 @@ enum ABAIImageCore {
         return out
     }
 
+    /// 把原圖的拍攝資訊（EXIF：機型、鏡頭、光圈、快門、ISO、拍攝時間；GPS；IPTC；TIFF 的廠牌、型號）寫進成品。
+    /// 調色、濾鏡過程中這些資訊不會跟著影像往下傳，存出來的照片就會少了拍攝資訊。
+    /// 只動檔頭的中繼資料，不重新壓縮影像（畫質不受影響）。方向一律寫 1（像素已經轉正）、不帶原圖的像素尺寸（可能裁切過）。
+    static func copyMetadata(_ data: Data, from original: URL) -> Data {
+        guard let orig = CGImageSourceCreateWithURL(original as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(orig, 0, nil) as? [CFString: Any],
+              let src = CGImageSourceCreateWithData(data as CFData, nil), let type = CGImageSourceGetType(src) else { return data }
+        let meta = CGImageMetadataCreateMutable()
+        var n = 0
+        let skip: Set<String> = [kCGImagePropertyExifPixelXDimension as String, kCGImagePropertyExifPixelYDimension as String,
+                                 kCGImagePropertyTIFFOrientation as String, kCGImagePropertyOrientation as String]
+        for dict in [kCGImagePropertyExifDictionary, kCGImagePropertyGPSDictionary, kCGImagePropertyIPTCDictionary,
+                     kCGImagePropertyExifAuxDictionary, kCGImagePropertyTIFFDictionary] {
+            guard let d = props[dict] as? [CFString: Any] else { continue }
+            for (k, v) in d where !skip.contains(k as String) {
+                if CGImageMetadataSetValueMatchingImageProperty(meta, dict, k, v as CFTypeRef) { n += 1 }
+            }
+        }
+        guard n > 0 else { return data }
+        CGImageMetadataSetValueMatchingImageProperty(meta, kCGImagePropertyTIFFDictionary, kCGImagePropertyTIFFOrientation, NSNumber(value: 1))
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out as CFMutableData, type, 1, nil) else { return data }
+        let opts: [CFString: Any] = [kCGImageDestinationMetadata: meta, kCGImageDestinationMergeMetadata: true]
+        guard CGImageDestinationCopyImageSource(dest, src, opts as CFDictionary, nil) else { return data }
+        return out as Data
+    }
+
     /// 把拍照地點寫進照片的 GPS 資訊（只動檔頭的中繼資料，不重新壓縮影像）
     static func addGPS(_ data: Data, lat: Double, lon: Double, alt: Double?, time: Date) -> Data {
         guard let src = CGImageSourceCreateWithData(data as CFData, nil), let type = CGImageSourceGetType(src) else { return data }

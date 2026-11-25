@@ -187,6 +187,8 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         guard let url = ABAIImageCore.fileURL(from: call.getString("path") ?? "") else { call.reject("沒有路徑"); return }
         var format = ABAIImageCore.Format(rawValue: call.getString("format") ?? "jpeg") ?? .jpeg
         let quality = call.getDouble("quality") ?? 0.95
+        /* 拍攝資訊要從哪個檔讀（RAW：原本的 RAW 檔；不給＝就是 path 那張） */
+        let metaURL = call.getString("metaPath").flatMap { ABAIImageCore.fileURL(from: $0) }
         let maxPixel = call.getInt("maxPixel") ?? 0
         let amount = call.getDouble("amount") ?? 1
         // HDR 只在原圖真的帶增益圖時才做：沒有的照片寫一張一樣的增益圖只是白白變大
@@ -253,6 +255,8 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                 if cube != nil && format != .heic10 { sdr = ABAIImageCore.dither(sdr) }
                 do {
                     var data = try ABAIImageCore.encode(sdr, format: format, quality: quality, hdr: hdr)
+                    /* 原圖的拍攝資訊（機型、鏡頭、光圈、快門、ISO、拍攝時間、GPS）帶進成品（只動檔頭、不重新壓縮） */
+                    data = ABAIImageCore.copyMetadata(data, from: metaURL ?? url)
                     if let g = gps, let lat = (g["lat"] as? NSNumber)?.doubleValue, let lon = (g["lon"] as? NSNumber)?.doubleValue {
                         let t = (g["time"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) } ?? Date()
                         data = ABAIImageCore.addGPS(data, lat: lat, lon: lon, alt: (g["alt"] as? NSNumber)?.doubleValue, time: t)
