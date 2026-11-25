@@ -17,7 +17,7 @@ import { previewViewport } from '../utils/previewViewport';
 import { LinkGlowTiles } from '../utils/linkGlowTiles';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
-import {CollageExportOptions} from './CollageExportOptions';
+import {CollageExportOptions,openCollageExportMenu} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} from '../utils/collageVideoFormat';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
@@ -11971,7 +11971,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             <div className="relative shrink-0">
               <div className="h-7 rounded-full bg-white text-black shadow-lg flex items-center overflow-hidden">
                 <button onClick={(e)=>{e.stopPropagation();setExportOptionsOpen(false);setMoreOpen(false);setExportAsk(v=>!v);}} className="h-full pl-4 pr-2 text-[11px] font-black whitespace-nowrap">儲存</button>
-                <button data-creative-export-options-toggle aria-label="創意拼圖匯出選項" aria-expanded={exportOptionsOpen} onClick={()=>{setExportAsk(false);setMoreOpen(false);setExportOptionsOpen(v=>!v);}} className="h-full w-7 pr-1 flex items-center justify-center active:opacity-60"><Icon name="more_horiz" className="text-[16px]"/></button>
+                <button data-creative-export-options-toggle aria-label="創意拼圖匯出選項" aria-expanded={exportOptionsOpen} onClick={e=>{setExportAsk(false);setMoreOpen(false);const el=e.currentTarget;void openCollageExportMenu(el,{imageFormat:imageExportFormat,videoFormat:videoExportFormat,fps:videoExportFps,quality:videoExportQuality,onImage:setImageExportFormat,onVideo:setVideoExportFormat,onFps:setVideoExportFps,onQuality:setVideoExportQuality}).then(ok=>{if(!ok)setExportOptionsOpen(v=>!v);});}} className="h-full w-7 pr-1 flex items-center justify-center active:opacity-60"><Icon name="more_horiz" className="text-[16px]"/></button>
               </div>
               {/* 展開／收合都走同一組 transition，所以兩個方向都是順的。
                   刻意不用 scale：這兩顆裡面是線條圖示（SVG），整塊被縮放時

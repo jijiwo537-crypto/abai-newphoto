@@ -163,7 +163,7 @@ interface BeautyStudioProps {
     onCancel: () => void;
     /** 右上角的「儲存」與三個點：跟編輯器其他分頁同一顆（交給編輯器存檔、開匯出選項） */
     onSave?: () => void;
-    onMore?: () => void;
+    onMore?: (el?: HTMLElement | null) => void;
     /** 左上角的返回：跟編輯器其他分頁一樣離開編輯 */
     onBack?: () => void;
     /** 前後對比要看的那張：這張照片最原始的樣子（編輯器給；沒有就用工具拿到的那張） */
@@ -1845,7 +1845,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             <div className="h-8 flex items-center bg-white text-black rounded-full overflow-hidden">
               <button onClick={embedded.onSave || finishEmbedded} data-embedded-done className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap">儲存</button>
               <span aria-hidden="true" className="w-px h-4 bg-black/20" />
-              <button aria-label="匯出選項" onClick={embedded.onMore} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
+              <button aria-label="匯出選項" onClick={e => embedded.onMore?.(e.currentTarget)} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
             </div>
           </div>
         </header>

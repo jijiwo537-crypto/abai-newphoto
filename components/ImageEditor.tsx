@@ -13,6 +13,7 @@ import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
 import { autoMasks, isAutoMask } from '../utils/masks';
+import { openGlassMenu } from '../utils/nativeGlass';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
 import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, rawDevelopLinear, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
 import { RawGpu } from '../utils/rawGpu';
@@ -8218,6 +8219,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     setIgBusy(false);
   };
 
+  /* 儲存旁邊 ⋯：App 裡用原生黑色液態玻璃面板（見 utils/nativeGlass 的 openGlassMenu）；網頁版照舊打開網頁的面板 */
+  const toggleExportMenu = (el?: HTMLElement | null) => {
+    if (!el) { setExportMenuOpen(v => !v); return; }
+    void openGlassMenu(el, [{ id: 'format', type: 'choice', title: '匯出格式', value: exportFormat, options: [{ label: 'JPG', value: 'jpg' }, { label: 'PNG', value: 'png' }, { label: 'HEIC', value: 'heic', enabled: canExportHeic() }] }], (_id, v) => setExportFormat(v as 'png' | 'jpg' | 'heic'))
+      .then(ok => { if (!ok) setExportMenuOpen(v => !v); });
+  };
   const exportMenuEl = (cls: string) => (
     <div role="dialog" aria-label="匯出選項" className={`${cls} rounded-xl p-3`} style={SAVE_MENU_GLASS}>
       <div className="text-xs text-white/50 mb-2">匯出格式</div>
@@ -8994,7 +9001,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     onBack: () => studioSaveActs.current.back(),
     /* 前後對比：這張照片最一開始的樣子（合併、人像、仿色交回來的都不算），跟其他分頁的前後對比同一張 */
     getOriginalSrc: () => thumbSrcOfRef.current(srcListRef.current[safeIdxRef.current]),
-    onMore: () => setExportMenuOpen(v => !v),
+    onMore: (el?: HTMLElement | null) => toggleExportMenu(el),
     viewApi: studioViewRef,
   }), []);
   /* 預覽縮放三邊共用：在調節裡放大／縮小後切到人像、仿色（或反過來），照片維持一樣的大小與位置。
@@ -9612,7 +9619,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             <div className="h-8 flex items-center bg-white text-black rounded-full overflow-hidden">
               <button onClick={handleSave} className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap">儲存</button>
               <span aria-hidden="true" className="w-px h-4 bg-black/20" />
-              <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(v => !v)} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
+              <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={e => toggleExportMenu(e.currentTarget)} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
             </div>
             {exportMenuOpen && !STUDIO_CATS.includes(activeCategory) && exportMenuEl('absolute left-4 right-4 top-full mt-2 z-[81]')}
         </div>

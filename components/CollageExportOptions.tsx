@@ -2,6 +2,7 @@ import React from 'react';
 import {SAVE_MENU_GLASS,SAVE_MENU_BUTTON} from '../utils/premiumGlass';
 import {canExportHeic} from '../utils/heicExport';
 import {collageVideoMime,VIDEO_RES_CHOICES,type CollageVideoFormat} from '../utils/collageVideoFormat';
+import {openGlassMenu,type GlassMenuItem} from '../utils/nativeGlass';
 type Props={label:string;panelRef:React.Ref<HTMLDivElement>;imageFormat:'jpg'|'png'|'heic';videoFormat:CollageVideoFormat;fps:number;quality:number;
  onImage:(v:'jpg'|'png'|'heic')=>void;onVideo:(v:CollageVideoFormat)=>void;onFps:(v:number)=>void;onQuality:(v:number)=>void};
 /* 切換按鈕時會閃一下（電腦上特別明顯）：面板如果用毛玻璃（backdrop-filter），
@@ -22,3 +23,19 @@ export function CollageExportOptions(p:Props){return <div ref={p.panelRef} role=
  <Row label="影片幀率" value={String(p.fps)} choices={[['0','自動'],['24','24'],['30','30'],['50','50'],['60','60']]} onChange={v=>p.onFps(Number(v))}/>
  <Row label="影片畫質" value={String(p.quality)} choices={VIDEO_RES_CHOICES} onChange={v=>p.onQuality(Number(v))}/>
  </div>;}
+
+/** App 裡：同樣四列改用原生黑色液態玻璃面板（utils/nativeGlass 的 openGlassMenu）。回傳 false＝網頁版，呼叫端照舊打開上面那個網頁面板 */
+export function openCollageExportMenu(anchor:HTMLElement,p:Omit<Props,'label'|'panelRef'>):Promise<boolean>{
+ const items:GlassMenuItem[]=[
+  {id:'image',type:'choice',title:'圖片格式',value:p.imageFormat,options:[{label:'JPG',value:'jpg'},{label:'PNG',value:'png'},{label:'HEIC',value:'heic',enabled:canExportHeic()}]},
+  {id:'video',type:'choice',title:'影片格式',value:p.videoFormat,options:[{label:'自動',value:'auto'},{label:'MP4',value:'mp4',enabled:!!collageVideoMime('mp4' as CollageVideoFormat)}]},
+  {id:'fps',type:'choice',title:'影片幀率',value:String(p.fps),options:[['0','自動'],['24','24'],['30','30'],['50','50'],['60','60']].map(([value,label])=>({label,value}))},
+  {id:'quality',type:'choice',title:'影片畫質',value:String(p.quality),options:VIDEO_RES_CHOICES.map(([value,label])=>({label,value}))},
+ ];
+ return openGlassMenu(anchor,items,(id,v)=>{
+  if(id==='image')p.onImage(v as Props['imageFormat']);
+  else if(id==='video')p.onVideo(v as CollageVideoFormat);
+  else if(id==='fps')p.onFps(Number(v));
+  else if(id==='quality')p.onQuality(Number(v));
+ });
+}

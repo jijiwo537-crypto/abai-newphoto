@@ -22,6 +22,7 @@ import { BusySpinner } from './BusySpinner';
 import { ExportActionLift } from './ExportActionLift';
 import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { PREMIUM_GLASS, SAVE_MENU_GLASS, SAVE_MENU_BUTTON } from '../utils/premiumGlass';
+import { openGlassMenu } from '../utils/nativeGlass';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
 import { useAlignPad, ALIGN_FILL_CSS, useOriginalImage, drawOriginalInto, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
@@ -72,7 +73,7 @@ interface Props {
     onDone: (res: StudioResult | null) => void;
     onCancel: () => void;
     onSave?: () => void;
-    onMore?: () => void;
+    onMore?: (el?: HTMLElement | null) => void;
     onBack?: () => void;
     getOriginalSrc?: () => string | null;
     viewApi?: React.MutableRefObject<Record<string, StudioViewApi | undefined>>;
@@ -957,7 +958,7 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
         <div className="h-8 flex items-center bg-white text-black rounded-full overflow-hidden">
           <button onClick={() => { if (!saving) (embedded.onSave || finishEmbedded)(); }} data-embedded-done className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap">儲存</button>
           <span aria-hidden="true" className="w-px h-4 bg-black/20" />
-          <button aria-label="匯出選項" onClick={embedded.onMore} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
+          <button aria-label="匯出選項" onClick={e => embedded.onMore?.(e.currentTarget)} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
         </div>
       </header>
       ) : (
@@ -970,7 +971,7 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
           <div className="flex items-center rounded-full bg-white text-black overflow-hidden h-8">
             <button onClick={handleSave} disabled={!ready} className="h-8 px-4 text-[11px] font-black tracking-wider disabled:opacity-40 active:scale-95">儲存</button>
             <span className="h-4 w-px bg-black/20" />
-            <button aria-label="匯出選項" aria-expanded={formatOpen} onClick={() => setFormatOpen(v => !v)} className="h-8 px-2 flex items-center active:opacity-60"><Icon name="more_horiz" className="text-xl" /></button>
+            <button aria-label="匯出選項" aria-expanded={formatOpen} onClick={e => { const el = e.currentTarget; void openGlassMenu(el, [{ id: 'format', type: 'choice', title: '匯出格式', value: exportFormat, options: [{ label: 'JPG', value: 'jpg' }, { label: 'PNG', value: 'png' }, { label: 'HEIC', value: 'heic', enabled: canExportHeic() }] }], (_id, v) => setExportFormat(v as 'jpg' | 'png' | 'heic')).then(ok => { if (!ok) setFormatOpen(v => !v); }); }} className="h-8 px-2 flex items-center active:opacity-60"><Icon name="more_horiz" className="text-xl" /></button>
           </div>
           {formatOpen && <div role="dialog" aria-label="匯出格式" className="absolute top-full left-4 right-4 mt-2 rounded-xl p-3" style={SAVE_MENU_GLASS}>
             <p className="text-xs text-white/60 mb-3">匯出格式</p>

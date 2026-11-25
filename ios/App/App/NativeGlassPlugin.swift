@@ -28,12 +28,14 @@ enum ABAIGlass {
         return false
     }
 
-    static func view(radius: CGFloat, interactive: Bool = true) -> UIVisualEffectView {
-        var effect: UIVisualEffect = UIBlurEffect(style: .systemUltraThinMaterialDark)
+    static func view(radius: CGFloat, interactive: Bool = true, dark: Bool = false) -> UIVisualEffectView {
+        var effect: UIVisualEffect = UIBlurEffect(style: dark ? .systemThinMaterialDark : .systemUltraThinMaterialDark)
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             let g = UIGlassEffect()
             g.isInteractive = interactive
+            /* 黑色液態玻璃（App 的介面是黑的）：玻璃帶一層深色 */
+            if dark { g.tintColor = UIColor(white: 0, alpha: 0.55) }
             effect = g
         }
         #endif
@@ -50,21 +52,34 @@ enum ABAIGlass {
     }
 
     /// 水平儀的圖示（SF Symbols 沒有好看的）：一根水平管、中間一顆氣泡
+    /// 水平線：一條地平線，中間留一個小圓（跟專業相機的水平儀同一種語彙），簡單、跟其他線條圖示同樣粗細
     static func levelIcon(size: CGFloat = 20) -> UIImage {
         let r = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
         return r.image { ctx in
             let c = ctx.cgContext
+            let u = size / 24, mid = size / 2, rad = 3.2 * u
             c.setStrokeColor(UIColor.white.cgColor)
-            c.setFillColor(UIColor.white.cgColor)
-            c.setLineWidth(1.5)
-            let tube = CGRect(x: 1.5, y: size / 2 - 3.5, width: size - 3, height: 7)
-            c.addPath(UIBezierPath(roundedRect: tube, cornerRadius: 3.5).cgPath)
+            c.setLineWidth(1.8 * u)
+            c.setLineCap(.round)
+            c.move(to: CGPoint(x: 2.5 * u, y: mid)); c.addLine(to: CGPoint(x: mid - rad - 2 * u, y: mid))
+            c.move(to: CGPoint(x: mid + rad + 2 * u, y: mid)); c.addLine(to: CGPoint(x: size - 2.5 * u, y: mid))
             c.strokePath()
-            c.fillEllipse(in: CGRect(x: size / 2 - 2.2, y: size / 2 - 2.2, width: 4.4, height: 4.4))
-            c.move(to: CGPoint(x: size / 2 - 4.5, y: tube.minY)); c.addLine(to: CGPoint(x: size / 2 - 4.5, y: tube.maxY))
-            c.move(to: CGPoint(x: size / 2 + 4.5, y: tube.minY)); c.addLine(to: CGPoint(x: size / 2 + 4.5, y: tube.maxY))
-            c.setLineWidth(1)
-            c.strokePath()
+            c.strokeEllipse(in: CGRect(x: mid - rad, y: mid - rad, width: rad * 2, height: rad * 2))
+        }.withRenderingMode(.alwaysTemplate)
+    }
+
+    /// 把圖示照「圖形本身」的範圍（不含 SF Symbol 的基線留白）等比縮放進 box×box 的方框、置中：每一顆視覺上一樣大
+    static func uniform(_ img: UIImage?, box: CGFloat) -> UIImage? {
+        guard let img = img else { return nil }
+        let a = img.alignmentRectInsets
+        let content = CGRect(x: a.left, y: a.top, width: img.size.width - a.left - a.right, height: img.size.height - a.top - a.bottom)
+        guard content.width > 0, content.height > 0 else { return img }
+        let k = box / max(content.width, content.height)
+        let size = CGSize(width: box, height: box)
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            let w = img.size.width * k, h = img.size.height * k
+            let ox = (box - content.width * k) / 2 - a.left * k, oy = (box - content.height * k) / 2 - a.top * k
+            img.withTintColor(.white, renderingMode: .alwaysOriginal).draw(in: CGRect(x: ox, y: oy, width: w, height: h))
         }.withRenderingMode(.alwaysTemplate)
     }
 
@@ -148,6 +163,8 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "show", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "update", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "hide", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "menu", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "closeMenu", returnType: CAPPluginReturnPromise),
     ]
 
     private var groups: [String: ABAIPassthroughView] = [:]
@@ -193,6 +210,35 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
             }
             call.resolve()
         }
+    }
+
+    /// menu({ anchor, items, width? })：各工具「儲存」旁邊 ⋯ 的選項面板（黑色液態玻璃，跟相機設定面板同一套）。
+    /// items 跟相機設定面板一樣（choice：分段按鈕，options 可帶 enabled:false）。事件 menu { id, value }、menuClosed。
+    /// 面板開著時再呼叫一次＝收起來
+    private var menuPanel: ABAISettingsPanel?
+    @objc func menu(_ call: CAPPluginCall) {
+        let items = (call.getArray("items") ?? []).compactMap { $0 as? [String: Any] }
+        let o = call.getObject("anchor")
+        let anchor = CGRect(x: (o?["x"] as? NSNumber)?.doubleValue ?? 0, y: (o?["y"] as? NSNumber)?.doubleValue ?? 0,
+                            width: (o?["w"] as? NSNumber)?.doubleValue ?? 1, height: (o?["h"] as? NSNumber)?.doubleValue ?? 1)
+        let width = CGFloat(call.getDouble("width") ?? 264)
+        DispatchQueue.main.async {
+            guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有畫面"); return }
+            if let open = self.menuPanel { open.dismiss(); call.resolve(["opened": false]); return }
+            let p = ABAISettingsPanel(frame: web.frame, items: items, anchor: anchor, bounds: web.bounds, dark: true, width: width)
+            p.onChange = { [weak self] id, value in self?.notifyListeners("menu", data: ["id": id, "value": value]) }
+            p.onClose = { [weak self, weak p] in
+                if self?.menuPanel === p { self?.menuPanel = nil }
+                self?.notifyListeners("menuClosed", data: [:])
+            }
+            parent.insertSubview(p, aboveSubview: web)
+            self.menuPanel = p
+            p.present()
+            call.resolve(["opened": true])
+        }
+    }
+    @objc func closeMenu(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { self.menuPanel?.dismiss(); call.resolve() }
     }
 
     @objc func hide(_ call: CAPPluginCall) {
@@ -277,14 +323,14 @@ final class ABAISettingsPanel: UIView {
     private let menuAnchorPoint: CGPoint
 
     /// items 跟 NativeCameraPlugin.showMenu 一樣；anchor＝那顆按鈕、bounds＝觀景窗（面板不會超出它）
-    init(frame: CGRect, items: [[String: Any]], anchor: CGRect, bounds: CGRect) {
-        let width: CGFloat = 248
+    init(frame: CGRect, items: [[String: Any]], anchor: CGRect, bounds: CGRect, dark: Bool = false, width: CGFloat = 248) {
+        let width: CGFloat = width
         let rowsH = items.reduce(CGFloat(0)) { $0 + (($1["type"] as? String) == "choice" ? 76 : 46) }
         let height = rowsH + 16
         let right = min(bounds.maxX, frame.width) - 8
         let x = max(bounds.minX + 8, right - width)
         let y = min(anchor.maxY + 6, max(bounds.minY + 8, frame.height - height - 8))
-        panel = ABAIGlass.view(radius: 24, interactive: false)
+        panel = ABAIGlass.view(radius: 24, interactive: false, dark: dark)
         panel.frame = CGRect(x: x, y: y, width: width, height: height)
         menuAnchorPoint = CGPoint(x: anchor.midX, y: anchor.midY)
         super.init(frame: frame)
@@ -331,10 +377,14 @@ final class ABAISettingsPanel: UIView {
 
     private func row(_ item: [String: Any]) -> UIView {
         let id = item["id"] as? String ?? ""
-        let icon = UIImageView(image: ABAIGlass.image(item["symbol"] as? String ?? "circle", pointSize: 15, weight: .medium))
+        /* 圖示一律放進同一個 18×18 的方框、照圖形本身的範圍等比縮到剛好（SF Symbol 每個圖形本身大小不一：
+           細長的定位箭頭看起來小、方方的格線看起來大），視覺上每一顆一樣大 */
+        let sym = item["symbol"] as? String
+        let icon = UIImageView(image: sym.flatMap { ABAIGlass.uniform(ABAIGlass.image($0, pointSize: 17, weight: .medium), box: 18) })
         icon.tintColor = .white
         icon.contentMode = .center
-        icon.widthAnchor.constraint(equalToConstant: 22).isActive = true
+        icon.widthAnchor.constraint(equalToConstant: sym == nil ? 0 : 22).isActive = true
+        icon.isHidden = sym == nil
         let label = UILabel()
         label.text = item["title"] as? String
         label.font = .systemFont(ofSize: 15, weight: .regular)
@@ -345,6 +395,7 @@ final class ABAISettingsPanel: UIView {
             let seg = UISegmentedControl(items: options.map { $0["label"] as? String ?? "" })
             let current = item["value"] as? String
             seg.selectedSegmentIndex = options.firstIndex { ($0["value"] as? String) == current } ?? 0
+            for (i, o) in options.enumerated() where (o["enabled"] as? Bool) == false { seg.setEnabled(false, forSegmentAt: i) }
             /* 選中的不要系統藍／白底黑字：淡淡的白，跟面板同一個調性 */
             seg.selectedSegmentTintColor = UIColor(white: 1, alpha: 0.24)
             seg.backgroundColor = UIColor(white: 1, alpha: 0.06)

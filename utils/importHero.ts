@@ -312,6 +312,10 @@ function runEnter(root: HTMLElement, E: R) {
        層次改由「列裡面的內容」錯開淡入：按鈕、文字一列一列由上而下浮出來，列的底色始終完整 */
     if (b.kids && !late) b.kids.forEach((k, m) => {
       entered.add(k);
+      /* 有縮圖的那一列（濾鏡／特效卡片）裡面的內容不另外動，整列跟著面板升起：
+         縮圖是縮放顯示的圖片／畫布，單獨做位移動畫時畫在暫時的 GPU 圖層上，
+         動畫結束、圖層拿掉的那一刻會重新對齊像素，看起來就是「縮圖抖一下」 */
+      if (k.querySelector('canvas, img')) return;
       for (const c of Array.from(k.children) as HTMLElement[]) {
         if (hasBackdrop(c) || c.querySelector('[class*="backdrop-"],[style*="backdrop"]')) continue;
         const co = shownOpacity(c);
@@ -457,7 +461,8 @@ function watch(my: number) {
     /* 開播的時機挑「主執行緒剛好有空」的那一刻：連續 3 格的間隔都正常（沒有被工具初始化卡住），
        動畫才在順暢的時候交給 GPU 起跑；工具還在忙（整格整格掉）就再等一下，最晚到照片交接那一刻一定開播 */
     calm = lastNow && now - lastNow < 22 ? calm + 1 : 0; lastNow = now;
-    if (!revealed && calm >= 3 && now - t0 > motionMs('importFly') * 0.7 && toolRoot()) revealEnter();
+    /* 照片飛一小段（約 1/4）就開始進場；主執行緒那時正忙就再等一下，但最晚飛到一半多一定開播 */
+    if (!revealed && toolRoot() && ((calm >= 2 && now - t0 > motionMs('importFly') * 0.25) || now - t0 > motionMs('importFly') * 0.55)) revealEnter();
     if (landing) {
       if (target && !target.isConnected) { target = null; hide(null); }
       /* 每一格都找（新的照片元素一出現當格就藏起來，不會在替身底下閃一下）；

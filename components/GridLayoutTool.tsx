@@ -21,7 +21,7 @@ import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/class
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
-import {CollageExportOptions} from './CollageExportOptions';
+import {CollageExportOptions,openCollageExportMenu} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} from '../utils/collageVideoFormat';
 import {exportHeic} from '../utils/heicExport';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual } from '../utils/animationDefaults';
@@ -18125,7 +18125,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               >
                 儲存
               </button>
-              <button data-grid-export-options-toggle aria-label="跨頁拼圖匯出選項" aria-expanded={exportOptionsOpen} onClick={()=>{setMoreOpen(false);setExportOptionsOpen(v=>!v);}} className="h-full w-7 pr-1 flex items-center justify-center active:opacity-60"><Icon name="more_horiz" className="text-[16px]"/></button>
+              <button data-grid-export-options-toggle aria-label="跨頁拼圖匯出選項" aria-expanded={exportOptionsOpen} onClick={e=>{setMoreOpen(false);const el=e.currentTarget;void openCollageExportMenu(el,{imageFormat:imageExportFormat,videoFormat:videoExportFormat,fps:videoExportFps,quality:videoExportQuality,onImage:setImageExportFormat,onVideo:setVideoExportFormat,onFps:setVideoExportFps,onQuality:setVideoExportQuality}).then(ok=>{if(!ok)setExportOptionsOpen(v=>!v);});}} className="h-full w-7 pr-1 flex items-center justify-center active:opacity-60"><Icon name="more_horiz" className="text-[16px]"/></button>
               </div>
           </div>
           )}

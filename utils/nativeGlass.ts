@@ -14,10 +14,14 @@ export type GlassItem =
   | { kind: 'capsule'; el: HTMLElement | null; buttons: GlassButtonSpec[]; /** 左右內距（pt，不給＝8） */ pad?: number };
 
 interface NativeGlassApi {
+  menu?(o: { anchor: { x: number; y: number; w: number; h: number }; items: GlassMenuItem[]; width?: number }): Promise<{ opened: boolean }>;
+  closeMenu?(): Promise<void>;
   show(o: { group: string; items: unknown[]; animate?: boolean }): Promise<void>;
   update(o: { group: string; id: string; symbol?: string; tint?: string; enabled?: boolean }): Promise<void>;
   hide(o: { group: string; animate?: boolean }): Promise<void>;
   addListener(ev: 'tap', cb: (d: { group: string; id: string }) => void): Promise<{ remove: () => void }>;
+  addListener(ev: 'menu', cb: (d: { id: string; value: unknown }) => void): Promise<{ remove: () => void }>;
+  addListener(ev: 'menuClosed', cb: () => void): Promise<{ remove: () => void }>;
 }
 
 export const nativeGlass = () => nativePlugin<NativeGlassApi>('NativeGlass');
@@ -78,4 +82,22 @@ export function useNativeGlass(group: string, active: boolean, items: () => Glas
   useEffect(() => () => { if (shown.current) { shown.current = false; void nativeGlass().then(p => p?.hide({ group, animate: false })); } }, [group]);
 
   return { native };
+}
+
+
+/* ── 儲存旁邊 ⋯ 的選項面板：原生黑色液態玻璃（ios/App/App/NativeGlassPlugin.swift 的 menu）──
+ * 每一列是一組分段按鈕（例如 匯出格式：JPG／PNG／HEIC）。選了就馬上呼叫 onChange（面板留著，可以再改）；
+ * 點面板外面收起來。回傳 false＝沒有原生（網頁版、舊版 App）：呼叫端照舊打開網頁的選單 */
+export type GlassMenuItem = { id: string; type: 'choice'; title: string; value: string; options: { label: string; value: string; enabled?: boolean }[] };
+let menuSubs: { remove: () => void }[] = [];
+export async function openGlassMenu(anchor: HTMLElement, items: GlassMenuItem[], onChange: (id: string, value: string) => void): Promise<boolean> {
+  if (!isNative()) return false;
+  const p = await nativeGlass();
+  if (!p?.menu) return false;
+  menuSubs.forEach(s => s.remove()); menuSubs = [];
+  menuSubs.push(await p.addListener('menu', d => onChange(String(d.id), String(d.value))));
+  menuSubs.push(await p.addListener('menuClosed', () => { menuSubs.forEach(s => s.remove()); menuSubs = []; }));
+  const r = anchor.getBoundingClientRect();
+  try { await p.menu({ anchor: { x: r.left, y: r.top, w: r.width, h: r.height }, items }); return true; }
+  catch { menuSubs.forEach(s => s.remove()); menuSubs = []; return false; }
 }
