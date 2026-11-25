@@ -28,7 +28,8 @@ enum ABAIGlass {
         return false
     }
 
-    static func view(radius: CGFloat, interactive: Bool = true, dark: Bool = false) -> UIVisualEffectView {
+    /// darkAlpha：深色玻璃那層黑色的濃度（不給＝0.3）。個別地方要淺一點時才給（例如成品頁的按鈕）
+    static func view(radius: CGFloat, interactive: Bool = true, dark: Bool = false, darkAlpha: CGFloat = 0.3) -> UIVisualEffectView {
         var effect: UIVisualEffect = UIBlurEffect(style: dark ? .systemUltraThinMaterialDark : .systemUltraThinMaterialDark)
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
@@ -36,7 +37,7 @@ enum ABAIGlass {
             g.isInteractive = interactive
             /* 黑色液態玻璃（App 的介面是黑的）：玻璃帶一層深色 */
             /* 0.55 太深（⋯ 選單、詢問框、登入面板看起來幾乎是黑的）：降到 0.3，仍是深色但透得出後面 */
-            if dark { g.tintColor = UIColor(white: 0, alpha: 0.3) }
+            if dark { g.tintColor = UIColor(white: 0, alpha: darkAlpha) }
             effect = g
         }
         #endif
@@ -380,7 +381,8 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         let frame = CGRect(x: n("x"), y: n("y"), width: max(1, n("w")), height: max(1, n("h")))
         /* dark：深色玻璃（跟 ⋯ 選單同一種）；fill "white"：白底（成品頁的主要按鈕，例如「儲存圖片」） */
         let glass = ABAIGlass.view(radius: (item["shape"] as? String) == "roundedSquare" ? 11 : frame.height / 2,
-                                   interactive: group != "camera-viewer", dark: (item["dark"] as? Bool) ?? false)
+                                   interactive: group != "camera-viewer", dark: (item["dark"] as? Bool) ?? false,
+                                   darkAlpha: CGFloat((item["darkAlpha"] as? NSNumber)?.doubleValue ?? 0.3))
         glass.frame = frame
         if (item["fill"] as? String) == "white" {
             /* fillAlpha：白底的濃度（不給＝1，完全不透明）。成品頁的儲存給 0.85：白色、但透一點點後面的玻璃 */
