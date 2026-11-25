@@ -821,9 +821,9 @@ interface ImageEditorProps {
   fullTabs?: boolean;
   /** 這張有 RAW（相機底片模式拍的）：曝光、色溫、色調、高光、陰影改由原生在 RAW 的資料上做（16 位元、保留亮部），
       沖出來的圖當底圖，其他調整照舊疊在上面；存檔時由原生從 RAW 原尺寸重新沖 */
-  raw?: { path: string; protectEV: number; look: RawLook | null } | null;
+  raw?: { path: string; protectEV: number; look: RawLook | null; editLut?: number } | null;
   /** 批量裡的 RAW：照片網址 → 它的 RAW 檔。這幾張的曝光、色溫、色調、高光、陰影一樣在 RAW 上做 */
-  rawMap?: Record<string, { path: string; protectEV: number; look: RawLook | null }>;
+  rawMap?: Record<string, { path: string; protectEV: number; look: RawLook | null; editLut?: number }>;
   /** 存檔時印上的日期戳記（相機拍的有日期的照片：編輯的是沒印日期的那張） */
   stampDate?: string;
 }
@@ -8094,6 +8094,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const pendingTapRef = useRef<null | (() => void)>(null);
   const tapHandlersRef = useRef({ fx: handleEffectToolSelect, lut: handleFilterSelect, none: clearAllEffects });
   tapHandlersRef.current = { fx: handleEffectToolSelect, lut: handleFilterSelect, none: clearAllEffects };
+  /* 相機拍的 RAW：底圖是沒套濾鏡的 RAW，拍照時用的那顆濾鏡在濾鏡分頁直接選好（可以換、可以調強度）。
+     每張 RAW 只在第一次打開、底圖就緒、還沒選任何濾鏡時套一次；之後使用者怎麼改都不再動 */
+  const editLutDoneRef = useRef(new Set<string>());
+  useEffect(() => {
+    const r = rawOf(activeSrc) as { path: string; editLut?: number } | null;
+    const idx = r?.editLut;
+    if (!r || !idx || idx <= 0 || idx >= lutList.length || editLutDoneRef.current.has(r.path)) return;
+    if (!buffers.current.preview.source) return;
+    const t = window.setTimeout(() => {
+      if (editLutDoneRef.current.has(r.path) || rawOf(activeSrcRef.current)?.path !== r.path) return;
+      editLutDoneRef.current.add(r.path);
+      if (selectedLutIdxNowRef.current === 0) tapHandlersRef.current.lut(idx);
+    }, 0);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSrc, buffersTick, lutList.length]);
   useEffect(() => {
     if (mergePending || mergingRef.current || !pendingTapRef.current) return;
     const t = pendingTapRef.current; pendingTapRef.current = null; t();

@@ -563,7 +563,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [galleryLeaving, setGalleryLeaving] = useState(false);
   useEffect(() => { if (!showGallery) setGalleryLeaving(false); }, [showGallery]);
   const galleryCover = showGallery && !galleryLeaving;
-  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[]; /** 存檔時要重新印上的日期 */ date?: string; /** 從 RAW 沖洗接過來：直接出現在原位，不再從下面滑上來 */ instant?: boolean; /** 這張有 RAW：一般編輯直接在 RAW 上調 */ raw?: { path: string; protectEV: number; look: RawLook | null }; /** 多選進編輯：每一張 RAW 的資訊（以沖好的網址對應） */ rawMap?: Record<string, { path: string; protectEV: number; look: RawLook | null }> } | null>(null);
+  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[]; /** 存檔時要重新印上的日期 */ date?: string; /** 從 RAW 沖洗接過來：直接出現在原位，不再從下面滑上來 */ instant?: boolean; /** 這張有 RAW：一般編輯直接在 RAW 上調 */ raw?: { path: string; protectEV: number; look: RawLook | null; editLut?: number }; /** 多選進編輯：每一張 RAW 的資訊（以沖好的網址對應） */ rawMap?: Record<string, { path: string; protectEV: number; look: RawLook | null; editLut?: number }> } | null>(null);
   const [editorEntered, setEditorEntered] = useState(false);
   const [editorLeaving, setEditorLeaving] = useState(false);
   const editorExitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1525,7 +1525,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const rawInfoOf = (src: string) => {
     const r = rawOfRef.current.get(src);
     /* 日期不在 RAW 這裡印：存檔時才印（stampDate） */
-    return r ? { path: r.path, protectEV: r.protectEV, look: { ...r.look, date: null } as RawLook } : null;
+    if (!r) return null;
+    /* 編輯 RAW：底圖不套拍照時的濾鏡（從原圖開始），那顆濾鏡改在編輯頁的濾鏡分頁選好（editLut），可以換、可以調 */
+    const li = r.look?.lut ? lutList.findIndex(l => l.url && lutFileName(l.url) === r.look.lut) : -1;
+    if (li <= 0) return { path: r.path, protectEV: r.protectEV, look: { ...r.look, date: null } as RawLook };
+    return { path: r.path, protectEV: r.protectEV, look: { ...r.look, date: null, lut: '', amount: 0 } as RawLook, editLut: li };
   };
   const prepRaw = (src: string) => {
     const r = rawInfoOf(src);
@@ -1569,7 +1573,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       try {
         /* 多選裡的 RAW 也用 RAW 編（跟單張一樣）：每一張先沖好第一張畫面，編輯器拿到 rawMap 就在 RAW 上調；
            沖不出來的那張就用一般照片 */
-        const rawMap: Record<string, { path: string; protectEV: number; look: RawLook | null }> = {};
+        const rawMap: Record<string, { path: string; protectEV: number; look: RawLook | null; editLut?: number }> = {};
         /* 一張接一張沖（不同時沖）：很多張 RAW 一起沖，記憶體會一下子暴增、可能被系統關掉 */
         const list: string[] = [];
         for (const src of srcs) {
