@@ -383,17 +383,20 @@ function revealEnter() {
   enterStopT = window.setTimeout(() => { enterObs?.disconnect(); enterObs = null; }, 800);
   /* 動畫真的畫上螢幕（交給 GPU）要等兩格：之後才放行工具的重工作 */
   releasePending = true;
+  deferHeavyWork(1800);
   /* 等這一批動畫真的開播（停在第一格的那段等主執行緒閒下來，見 playWhenCalm）之後，再過兩格才放行重工作 */
   const started = calmStarts; calmStarts = [];
   const go = () => requestAnimationFrame(() => requestAnimationFrame(releaseWaiters));
   if (!started.length) go();
-  else void Promise.race([Promise.all(started.map(a => new Promise<void>(res => { const chk = () => (a.playState === 'running' || a.playState === 'finished' || a.playState === 'idle') ? res() : requestAnimationFrame(chk); chk(); }))), new Promise(r => setTimeout(r, 500))]).then(go);
+  /* 等整批動畫「播完」才放行（不是開播就放行）：照片解碼、建緩衝、送 GPU 這段會卡住主執行緒好幾百毫秒，
+     動畫只要還在播，被卡住的那段就會整段被吃掉 —— 畫面上就是「突然蹦一下出現」。最多等 1.6 秒 */
+  else void Promise.race([Promise.all(started.map(a => a.finished.catch(() => {}))), new Promise(r => setTimeout(r, 1600))]).then(go);
 }
 let entranceWaiters: (() => void)[] = [], releasePending = false;
 function releaseWaiters() { releasePending = false; const w = entranceWaiters; entranceWaiters = []; w.forEach(f => f()); }
 /** 工具載入照片的重工作（解碼後建緩衝、送 GPU）先等介面進場動畫開播、交給 GPU 之後再做。
  *  沒有進場在等（一般打開、RAW、其他入口）就立刻放行；最多等 maxMs，絕不卡住 */
-export function waitEntranceStart(maxMs = 450): Promise<void> {
+export function waitEntranceStart(maxMs = 1800): Promise<void> {
   if (releasePending) return new Promise(res => { entranceWaiters.push(res); window.setTimeout(res, maxMs); });
   if (!enterE || revealed) return Promise.resolve();
   return new Promise(res => { entranceWaiters.push(res); window.setTimeout(res, maxMs); });

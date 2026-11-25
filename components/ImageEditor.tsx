@@ -662,7 +662,6 @@ import { generateBaseCorrectionLut, processPixels, copyPixelDither, sharpenDetai
 import { processPixelsParallel, releasePixelPool } from '../utils/pixelParallel';
 import { BATCH_MAX } from '../utils/batchLimit';
 import { registerTrim } from '../utils/memoryPressure';
-import { fadeIn } from '../utils/tabEntrance';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceGain } from '../utils/photoToneMath';
 import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
 /* 快取鍵用短 id 代表照片，不用來源字串：data: 網址有好幾 MB，每格滑桿都把它串進鍵裡，一格就要多花約 15ms */
@@ -9990,25 +9989,32 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 左下角的參數膠囊：只有「選中了某個遮色片」時才出現（選種類、取消選中時都收掉），線性漸層沒有自己的參數 */
   const maskCapsuleShown = false && activeCategory === 'mask' && !maskTypePicking && !maskDeselected && maskListView.list.length > 0
     && (MASK_TYPE_TOOLS[(params.maskType ?? 'linear') as MaskType].length > 0 || params.maskType === 'brush');
-  /* ── 切換功能分頁時按鈕的進場動畫（見 utils/tabEntrance）──
-     濾鏡、特效的縮圖卡，調節、遮色片的按鈕，人像、仿色的按鈕：依序淡入、往上浮一點點。只動按鈕，欄位與照片不動。
-     構圖的介面不一樣，由 ComposeStudio 自己設計（entrance）。第一次進編輯器時不播（那時有整套的進場動畫） */
-  const tabGroup = ['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'effects' : activeCategory;
-  const tabGroupPrevRef = useRef<string | null>(null);
+  /* ── 濾鏡縮圖：前 7 格自己的縮圖都好了才讓整排卡片出現 ──
+     之前卡片一掛上就看得到，縮圖還在算的格子只有底色（灰格子）。
+     改成：前 7 格都有「自己的」縮圖（濾鏡檔還在下載、短時間不會有自己縮圖的，用「原始」頂著也算）才顯示卡片；
+     等不到（背景算失敗）最多 2.5 秒後，只要每格至少有「原始」頂著就顯示；6 秒後無條件顯示，絕不會整排一直空著 */
   useLayoutEffect(() => {
-    const prev = tabGroupPrevRef.current;
-    tabGroupPrevRef.current = tabGroup;
-    if (prev === null || prev === tabGroup || !firstReady) return;
-    if (tabGroup === 'beauty' || tabGroup === 'match') {
-      const row = document.querySelector(tabGroup === 'beauty' ? '[data-studio-host="beauty"] [data-beauty-toolbar]' : '[data-studio-host="match"] [data-cm-refs]');
-      if (row) { (row as HTMLElement).style.willChange = 'opacity'; fadeIn(row, { dur: 280 }); }
-      return;
-    }
-    if (tabGroup === 'compose' || tabGroup === 'template') return;
     const box = toolsScrollRef.current;
-    if (box) fadeIn(box, { dur: 280 });
+    if (!box) return;
+    if (activeCategory !== 'filter') { box.removeAttribute('data-thumbs-wait'); return; }
+    const t0 = performance.now();
+    const first = lutList.slice(0, 7);
+    const fb = thumbKey(activeSrc, lutList[0]?.id || '');
+    const check = () => {
+      const st = filterThumbStore.current, el = performance.now() - t0;
+      const ok = first.every(l => st[thumbKey(activeSrc, l.id)] || ((el > 2500 || (l.url && !LUT_CACHE[l.id])) && st[fb]));
+      if (ok || el > 6000) { box.removeAttribute('data-thumbs-wait'); return true; }
+      box.setAttribute('data-thumbs-wait', '1');
+      return false;
+    };
+    if (check()) return;
+    const set = thumbPainters.current;
+    const painter = () => { if (check()) set.delete(painter); };
+    set.add(painter);
+    const iv = window.setInterval(() => { if (check()) { window.clearInterval(iv); set.delete(painter); } }, 250);
+    return () => { set.delete(painter); window.clearInterval(iv); box.removeAttribute('data-thumbs-wait'); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabGroup]);
+  }, [activeCategory, activeSrc, lutList]);
   const sliderRowHidden = activeToolId === 'curves' || isColourPanelTool(activeToolId) || activeCategory === 'compose' || ownPanel || maskTypePicking;
   /** 批量：對比鍵放在滑桿列右邊（右下角讓給「應用全部」）；滑桿列收起來的時候照舊浮在預覽上 */
   const compareInRow = isBatch && !sliderRowHidden;
@@ -11729,8 +11735,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           style={{
               // 同上：時間長度不能靠 class，不然第一次進構圖時規則還沒產生。
               transitionDuration: '0ms',
-              /* 一直是獨立圖層：切分頁時整排淡入的動畫開始、結束都不會換圖層，縮圖不會在結束那一下跳半個像素 */
-              willChange: 'opacity',
               // HSL 開著的時候小分類列照樣留著（跟曲線一樣）。收起來的話，
               // 面板下緣會往下掉 96px，整條工具列看起來就是往下沉了一次。
               // 構圖的小分類（裁切／角度／翻轉／梯形）由 ComposeStudio 自己畫在
