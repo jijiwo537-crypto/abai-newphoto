@@ -1,6 +1,6 @@
 import { haptic } from '../utils/haptics';
 import React, { useEffect, useRef, useState } from 'react';
-import { BusyLayer, HeldBusy, heldBusyShowing } from './BusyLayer';
+import { BusyLayer, HeldBusy, heldBusyShowing, afterBusyGone, finishHeldBusy } from './BusyLayer';
 import { prepareFiles, shareFiles, shareSheet } from '../utils/shareAll';
 import { isNative } from '../utils/native';
 import { saveToPhotos, noteExportForReview } from '../utils/nativePhotos';
@@ -142,13 +142,17 @@ export const SaveButton: React.FC<{
     const k = pendingBuzz.get(key);
     if (!k) return;
     pendingBuzz.delete(key);
-    haptic(k);
+    /* 「儲存中」那一層是跨工具共用的同一個元素，最後一個人放手後還會多留 1.2 秒（讓算完圖接著存相簿接得上）——
+       存相簿已經結束、不會再有人接手了，所以叫它下一格就拿掉；等它真的從畫面上消失、畫出去之後才震 */
+    finishHeldBusy();
+    afterBusyGone(() => haptic(k));
   }, [covering, key]);
   return (
     <>
     {covering && coverLayer()}
     <button
       ref={btnRef}
+      data-save-btn=""
       /* App 裡存好之後（按鈕顯示「已存到相簿」），再按一次不是再存一份，而是叫出 iOS 原生的分享面板 */
       onClick={(e) => { e.stopPropagation(); if (!ready) return; if (isNative() && phase === 'saved') void shareSheet(files); else void save(); }}
       disabled={!ready || phase === 'saving'}

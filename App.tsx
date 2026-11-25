@@ -720,7 +720,20 @@ const App: React.FC = () => {
   };
 
   /* 「要繼續上次的編輯嗎？」：App 裡改用原生的詢問框，深色玻璃（跟「儲存」旁 ⋯ 選單同一種材質）。外掛不在才用網頁的框 */
-  const resumeAsk = !!resume && currentView === 'home' && !(autoPending && !autoResumed.current);
+  /* 等主頁真的出來了才問：開機畫面（#boot）淡出、拿掉之後再多等一下，讓主頁先完整出現。
+     原生的框疊在整個網頁上面，以前開機畫面還沒退就跳出來 */
+  const [homeShown, setHomeShown] = useState(false);
+  useEffect(() => {
+    let t = 0;
+    const done = () => !document.getElementById('boot') && !document.documentElement.classList.contains('boot-revealing') && !document.documentElement.classList.contains('booting');
+    const go = () => { if (!t) t = window.setTimeout(() => setHomeShown(true), 450); };
+    if (done()) { go(); return () => window.clearTimeout(t); }
+    const ob = new MutationObserver(() => { if (done()) { ob.disconnect(); go(); } });
+    ob.observe(document.body, { childList: true });
+    ob.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => { ob.disconnect(); window.clearTimeout(t); };
+  }, []);
+  const resumeAsk = homeShown && !!resume && currentView === 'home' && !(autoPending && !autoResumed.current);
   const [webResumeFallback, setWebResumeFallback] = useState(false);
   const resumeActs = useRef({ go: handleResume, drop: handleDiscardResume });
   resumeActs.current = { go: handleResume, drop: handleDiscardResume };

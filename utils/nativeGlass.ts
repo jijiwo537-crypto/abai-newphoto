@@ -8,9 +8,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { nativePlugin } from './nativeBridge';
 import { isNative } from './native';
 
-export interface GlassButtonSpec { id: string; symbol?: string; title?: string; tint?: 'white' | 'red' | 'pink' | 'yellow'; enabled?: boolean; /** 圖示大小（pt，不給＝19）；有給的會照圖形本身視覺置中 */ pointSize?: number }
+export interface GlassButtonSpec { id: string; symbol?: string; title?: string; tint?: 'white' | 'red' | 'pink' | 'yellow'; enabled?: boolean; /** 白底按鈕上的黑字 */ titleColor?: 'black'; /** 圖示大小（pt，不給＝19）；有給的會照圖形本身視覺置中 */ pointSize?: number }
 export type GlassItem =
-  | (GlassButtonSpec & { kind: 'circle'; el: HTMLElement | null; shape?: 'roundedSquare' })
+  | (GlassButtonSpec & { kind: 'circle'; el: HTMLElement | null; shape?: 'roundedSquare'; /** 深色玻璃 */ dark?: boolean; /** 白底 */ fill?: 'white' })
   | { kind: 'capsule'; el: HTMLElement | null; buttons: GlassButtonSpec[]; /** 左右內距（pt，不給＝8） */ pad?: number };
 
 interface NativeGlassApi {
@@ -18,6 +18,10 @@ interface NativeGlassApi {
   closeMenu?(): Promise<void>;
   dialog?(o: { title: string; message?: string; buttons: { id: string; title: string; role?: 'primary' | 'normal' }[]; style: 'clear' | 'dark' }): Promise<{ id: string }>;
   closeDialog?(): Promise<void>;
+  offset?(o: { group: string; x: number; y: number }): Promise<void>;
+  sheet?(o: NativeSheetPage): Promise<void>;
+  closeSheet?(): Promise<void>;
+  addListener(ev: 'sheet', cb: (d: { id: string }) => void): Promise<{ remove: () => void }>;
   show(o: { group: string; items: unknown[]; animate?: boolean }): Promise<void>;
   update(o: { group: string; id: string; symbol?: string; tint?: string; enabled?: boolean }): Promise<void>;
   hide(o: { group: string; animate?: boolean }): Promise<void>;
@@ -120,4 +124,25 @@ export async function nativeDialog(o: { title: string; message?: string; buttons
 export async function closeNativeDialog(): Promise<void> {
   if (!isNative()) return;
   try { await (await nativeGlass())?.closeDialog?.(); } catch { /* 沒開著 */ }
+}
+
+/** 深色原生面板的一頁（設定、語言、條款…）。rows：一列一列的選項；sections：一段可以捲動的文字 */
+export type NativeSheetPage = { title: string; back?: boolean; rows?: { id: string; title: string; checked?: boolean }[]; intro?: string; note?: string; sections?: { head?: string; body: string }[] };
+/** 打開（或換成）這一頁。沒有原生回傳 false（照常用網頁的面板） */
+export async function nativeSheet(page: NativeSheetPage): Promise<boolean> {
+  if (!isNative()) return false;
+  try { const p = await nativeGlass(); if (!p?.sheet) return false; await p.sheet(page); return true; } catch { return false; }
+}
+export async function closeNativeSheet(): Promise<void> {
+  if (!isNative()) return;
+  try { await (await nativeGlass())?.closeSheet?.(); } catch { /* 沒開著 */ }
+}
+export async function onNativeSheet(cb: (id: string) => void): Promise<() => void> {
+  if (!isNative()) return () => {};
+  try { const p = await nativeGlass(); if (!p?.sheet) return () => {}; const h = await p.addListener('sheet', d => cb(String(d.id))); return () => h.remove(); } catch { return () => {}; }
+}
+/** 一組原生按鈕跟著網頁捲動位移 */
+export async function offsetGlass(group: string, x: number, y: number): Promise<void> {
+  if (!isNative()) return;
+  try { await (await nativeGlass())?.offset?.({ group, x, y }); } catch { /* 舊版 */ }
 }

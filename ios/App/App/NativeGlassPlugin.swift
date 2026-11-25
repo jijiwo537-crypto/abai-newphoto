@@ -185,6 +185,9 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "closeMenu", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "dialog", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "closeDialog", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "offset", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "sheet", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "closeSheet", returnType: CAPPluginReturnPromise),
     ]
 
     private var groups: [String: ABAIPassthroughView] = [:]
@@ -285,6 +288,38 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func closeDialog(_ call: CAPPluginCall) {
         DispatchQueue.main.async { self.dialogView?.dismiss(nil); self.dialogView = nil; call.resolve() }
     }
+    /// offset({ group, x, y })：整組按鈕跟著網頁捲動位移（不重建按鈕）
+    @objc func offset(_ call: CAPPluginCall) {
+        let group = call.getString("group") ?? "default"
+        let x = CGFloat(call.getDouble("x") ?? 0), y = CGFloat(call.getDouble("y") ?? 0)
+        DispatchQueue.main.async {
+            self.groups[group]?.transform = CGAffineTransform(translationX: x, y: y)
+            call.resolve()
+        }
+    }
+
+    /// sheet({ title, back, rows?: [{ id, title, checked? }], sections?: [{ head?, body }], note? })
+    /// 畫面正中間的深色玻璃面板（跟 ⋯ 選單同一種材質）：設定、語言、條款這類「一頁一頁」的內容。
+    /// 已經開著時再呼叫＝換成新的那一頁（面板原地換內容、調整高度）。事件 sheet { id }：點了哪一列，或 __back（左上返回）、__close（右上關閉、點面板外面）
+    private var sheetView: ABAISheet?
+    @objc func sheet(_ call: CAPPluginCall) {
+        let o = call.options as? [String: Any] ?? [:]
+        DispatchQueue.main.async {
+            guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有畫面"); return }
+            if let open = self.sheetView, open.superview != nil { open.update(o); call.resolve(); return }
+            let v = ABAISheet(frame: web.frame, content: o)
+            v.onEvent = { [weak self] id in self?.notifyListeners("sheet", data: ["id": id]) }
+            v.onGone = { [weak self, weak v] in if self?.sheetView === v { self?.sheetView = nil } }
+            parent.insertSubview(v, aboveSubview: web)
+            self.sheetView = v
+            v.present()
+            call.resolve()
+        }
+    }
+    @objc func closeSheet(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { self.sheetView?.dismiss(); self.sheetView = nil; call.resolve() }
+    }
+
     @objc func closeMenu(_ call: CAPPluginCall) {
         DispatchQueue.main.async { self.menuPanel?.dismiss(); call.resolve() }
     }
@@ -325,7 +360,9 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         if let t = spec["title"] as? String {
             b.setTitle(t, for: .normal)
             b.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
-            b.setTitleColor(.white, for: .normal)
+            /* titleColor: "black"＝白底按鈕上的黑字（見 makeItem 的 fill） */
+            b.setTitleColor((spec["titleColor"] as? String) == "black" ? .black : .white, for: .normal)
+            if (spec["titleColor"] as? String) == "black" { b.tintColor = .black; b.titleLabel?.font = .systemFont(ofSize: 15, weight: .bold) }
         }
         if let e = spec["enabled"] as? Bool, !e { b.isEnabled = false; b.alpha = 0.35 }
         b.addAction(UIAction { [weak self] _ in
@@ -339,9 +376,14 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
     private func makeItem(_ item: [String: Any], group: String, into map: inout [String: UIButton]) -> UIView {
         func n(_ k: String) -> CGFloat { CGFloat((item[k] as? NSNumber)?.doubleValue ?? 0) }
         let frame = CGRect(x: n("x"), y: n("y"), width: max(1, n("w")), height: max(1, n("h")))
+        /* dark：深色玻璃（跟 ⋯ 選單同一種）；fill "white"：白底（成品頁的主要按鈕，例如「儲存圖片」） */
         let glass = ABAIGlass.view(radius: (item["shape"] as? String) == "roundedSquare" ? 11 : frame.height / 2,
-                                   interactive: group != "camera-viewer")
+                                   interactive: group != "camera-viewer", dark: (item["dark"] as? Bool) ?? false)
         glass.frame = frame
+        if (item["fill"] as? String) == "white" {
+            glass.contentView.backgroundColor = .white
+            glass.layer.borderWidth = 0
+        }
         let specs: [[String: Any]] = (item["kind"] as? String) == "capsule"
             ? (item["buttons"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
             : [item]
@@ -575,5 +617,153 @@ final class ABAIDialog: UIView {
             self.panel.alpha = 0
             self.panel.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)
         }, completion: { _ in self.removeFromSuperview() })
+    }
+}
+
+/// 設定這類的面板：深色玻璃、標題列（返回／關閉）、下面是一列一列的選項或一段可以捲動的文字
+final class ABAISheet: UIView {
+    var onEvent: ((String) -> Void)?
+    var onGone: (() -> Void)?
+    private let panel: UIVisualEffectView
+    private var body = UIView()
+    private let width: CGFloat
+    private var closing = false
+
+    init(frame: CGRect, content: [String: Any]) {
+        width = min(384, frame.width - 48)
+        panel = ABAIGlass.view(radius: 24, interactive: false, dark: true)
+        super.init(frame: frame)
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        backgroundColor = UIColor(white: 0, alpha: 0.35)
+        addSubview(panel)
+        build(content)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if let t = touches.first, !panel.frame.contains(t.location(in: self)) { onEvent?("__close") }
+    }
+
+    private func iconButton(_ symbol: String, _ id: String) -> UIButton {
+        let b = UIButton(type: .system)
+        b.setImage(UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)), for: .normal)
+        b.tintColor = UIColor(white: 1, alpha: 0.7)
+        b.addAction(UIAction { [weak self] _ in self?.onEvent?(id) }, for: .touchUpInside)
+        return b
+    }
+
+    /// 依內容排好面板（第一次、或換頁）
+    private func build(_ c: [String: Any]) {
+        let pad: CGFloat = 20, inner = width - pad * 2
+        let v = UIView()
+        var y: CGFloat = pad
+        /* 標題列 */
+        let back = (c["back"] as? Bool) ?? false
+        let title = UILabel()
+        title.text = c["title"] as? String
+        title.font = .systemFont(ofSize: 14, weight: .medium)
+        title.textColor = UIColor(white: 1, alpha: 0.9)
+        let tx: CGFloat = back ? pad + 26 : pad + 8
+        title.frame = CGRect(x: tx, y: y, width: inner - 60, height: 36)
+        v.addSubview(title)
+        if back { let b = iconButton("chevron.left", "__back"); b.frame = CGRect(x: pad - 6, y: y, width: 32, height: 36); v.addSubview(b) }
+        let x = iconButton("xmark", "__close"); x.frame = CGRect(x: width - pad - 36, y: y, width: 36, height: 36); v.addSubview(x)
+        y += 36 + 16
+        let maxH = bounds.height * 0.72
+        if let rows = c["rows"] as? [Any] {
+            for case let r as [String: Any] in rows {
+                let id = r["id"] as? String ?? ""
+                let checked = (r["checked"] as? Bool) ?? false
+                let b = UIButton(type: .custom)
+                b.frame = CGRect(x: pad, y: y, width: inner, height: 48)
+                b.backgroundColor = UIColor(white: 1, alpha: 0.06)
+                b.layer.cornerRadius = 12
+                b.layer.cornerCurve = .continuous
+                b.layer.borderWidth = 0.5
+                b.layer.borderColor = UIColor(white: 1, alpha: checked ? 0.9 : 0.1).cgColor
+                let l = UILabel(frame: CGRect(x: 16, y: 0, width: inner - 52, height: 48))
+                l.text = r["title"] as? String
+                l.font = .systemFont(ofSize: 13, weight: .regular)
+                l.textColor = .white
+                b.addSubview(l)
+                if checked {
+                    let ck = UIImageView(image: UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)))
+                    ck.tintColor = .white
+                    ck.frame = CGRect(x: inner - 34, y: 14, width: 20, height: 20)
+                    ck.contentMode = .center
+                    b.addSubview(ck)
+                }
+                b.addAction(UIAction { [weak b] _ in
+                    UIView.animate(withDuration: 0.08, animations: { b?.alpha = 0.6 }) { _ in UIView.animate(withDuration: 0.15) { b?.alpha = 1 } }
+                }, for: .touchDown)
+                b.addAction(UIAction { [weak self] _ in self?.onEvent?(id) }, for: .touchUpInside)
+                v.addSubview(b)
+                y += 48 + 8
+            }
+            y += pad - 8
+        } else if let secs = c["sections"] as? [Any] {
+            /* 一段長文字（條款、隱私權）：放在可以捲動的區塊裡 */
+            let text = NSMutableAttributedString()
+            let para = NSMutableParagraphStyle(); para.lineSpacing = 5; para.paragraphSpacing = 10
+            let headStyle = NSMutableParagraphStyle(); headStyle.paragraphSpacing = 4
+            if let intro = c["intro"] as? String, !intro.isEmpty {
+                text.append(NSAttributedString(string: intro + "\n", attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: UIColor(white: 1, alpha: 0.75), .paragraphStyle: para]))
+            }
+            if let note = c["note"] as? String, !note.isEmpty {
+                text.append(NSAttributedString(string: note + "\n", attributes: [.font: UIFont.systemFont(ofSize: 10), .foregroundColor: UIColor(white: 1, alpha: 0.35), .paragraphStyle: para]))
+            }
+            for case let sec as [String: Any] in secs {
+                if let h = sec["head"] as? String { text.append(NSAttributedString(string: h + "\n", attributes: [.font: UIFont.systemFont(ofSize: 12, weight: .bold), .foregroundColor: UIColor(white: 1, alpha: 0.85), .paragraphStyle: headStyle])) }
+                text.append(NSAttributedString(string: (sec["body"] as? String ?? "") + "\n", attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: UIColor(white: 1, alpha: 0.7), .paragraphStyle: para]))
+            }
+            let tv = UITextView()
+            tv.attributedText = text
+            tv.isEditable = false
+            tv.backgroundColor = .clear
+            tv.textContainerInset = .zero
+            tv.textContainer.lineFragmentPadding = 0
+            tv.showsVerticalScrollIndicator = false
+            let need = ceil(tv.sizeThatFits(CGSize(width: inner - 8, height: .greatestFiniteMagnitude)).height)
+            let h = min(need, max(120, maxH - y - pad))
+            tv.frame = CGRect(x: pad + 8, y: y, width: inner - 8, height: h)
+            v.addSubview(tv)
+            y += h + pad
+        }
+        let height = min(y, maxH)
+        body.removeFromSuperview()
+        body = v
+        v.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        panel.contentView.addSubview(v)
+        panel.bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        panel.center = CGPoint(x: bounds.midX, y: bounds.midY)
+    }
+
+    /// 換頁：舊的內容淡出、面板改成新的高度、新的內容淡入
+    func update(_ c: [String: Any]) {
+        let old = body
+        UIView.animate(withDuration: 0.12, animations: { old.alpha = 0 }) { _ in
+            self.build(c)
+            self.body.alpha = 0
+            UIView.animate(withDuration: 0.18) { self.body.alpha = 1 }
+        }
+    }
+
+    func present() {
+        alpha = 0
+        panel.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
+        UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0.2, options: [.allowUserInteraction]) {
+            self.alpha = 1
+            self.panel.transform = .identity
+        }
+    }
+
+    func dismiss() {
+        if closing { return }
+        closing = true
+        isUserInteractionEnabled = false
+        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseIn], animations: {
+            self.alpha = 0
+            self.panel.transform = CGAffineTransform(scaleX: 0.7, y: 0.7)
+        }, completion: { _ in self.removeFromSuperview(); self.onGone?() })
     }
 }

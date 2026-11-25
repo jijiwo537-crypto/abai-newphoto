@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { sec as motionSec } from '../utils/motionTimings';
 import { Icon } from './Icon';
 import { LOCALES, changeLocale, getLocale } from '../utils/locale';
+import { isNative } from '../utils/native';
+import { useNativeGlass, nativeSheet, closeNativeSheet, onNativeSheet, offsetGlass, type NativeSheetPage } from '../utils/nativeGlass';
 import { exportsStatus, subscribeExports, removeExport, type ExportMeta } from '../utils/exportHistory';
 import { haptic } from '../utils/haptics';
 import {
@@ -287,6 +289,33 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [contactOpen, setContactOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPage, setSettingsPage] = useState<'menu' | 'language' | 'terms' | 'privacy'>('menu');
+  /* ── 設定（App 裡改成原生的深色玻璃面板，跟儲存旁 ⋯ 選單同一種材質）──
+     設定、語言、條款、隱私權每一頁都由原生面板顯示（原地換頁）；外掛不在才用網頁的面板 */
+  const [webSettings, setWebSettings] = useState(false);
+  const sheetActs = useRef<(id: string) => void>(() => {});
+  sheetActs.current = (id: string) => {
+    if (id === '__close') setSettingsOpen(false);
+    else if (id === '__back') setSettingsPage('menu');
+    else if (id === 'language' || id === 'terms' || id === 'privacy') setSettingsPage(id);
+    else if (id === 'contact') { setSettingsOpen(false); setContactOpen(true); }
+    else if (id.startsWith('lang:')) changeLocale(id.slice(5) as Parameters<typeof changeLocale>[0]);
+  };
+  useEffect(() => {
+    let off: (() => void) | null = null, alive = true;
+    void onNativeSheet(id => sheetActs.current(id)).then(f => { if (alive) off = f; else f(); });
+    return () => { alive = false; off?.(); };
+  }, []);
+  useEffect(() => {
+    if (!settingsOpen || webSettings) { if (!settingsOpen) void closeNativeSheet(); return; }
+    const page: NativeSheetPage = settingsPage === 'menu'
+      ? { title: SETTINGS_TITLE.menu, rows: [{ id: 'language', title: '語言' }, { id: 'contact', title: '問題反饋' }, { id: 'terms', title: '使用條款' }, { id: 'privacy', title: '隱私權政策' }] }
+      : settingsPage === 'language'
+        ? { title: SETTINGS_TITLE.language, back: true, rows: LOCALES.map(l => ({ id: 'lang:' + l.id, title: l.name, checked: getLocale() === l.id })) }
+        : { title: SETTINGS_TITLE[settingsPage], back: true, intro: LEGAL[settingsPage].intro, note: `最後更新：${LEGAL[settingsPage].updated}`,
+            sections: LEGAL[settingsPage].sections.map(([head, body]) => ({ head, body })) };
+    void nativeSheet(page).then(ok => { if (!ok) setWebSettings(true); });
+  }, [settingsOpen, settingsPage, webSettings]);
+  useEffect(() => () => { void closeNativeSheet(); }, []);
   const [copied, setCopied] = useState(false);
 
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
@@ -324,6 +353,16 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [acctOpen, setAcctOpen] = useState(false);
   /** 登出前再問一次 */
   const [outOpen, setOutOpen] = useState(false);
+  /* 「我的」右上角的設定：App 裡換成原生的深色玻璃圓鈕。這一頁會捲動，原生按鈕跟著位移（不重建）；
+     這一頁滑進來（0.56 秒）之後才放上去；任何彈出的視窗蓋上來時先收起來 */
+  const settingsBtnRef = useRef<HTMLButtonElement>(null);
+  const meScrollRef = useRef<HTMLDivElement>(null);
+  const meScrollBase = useRef(0);
+  const settingsGlassOn = nav === 'me' && !settingsOpen && !contactOpen && !loginOpen && !emailOpen && !delOpen && !acctOpen && !outOpen;
+  const settingsGlass = useNativeGlass('home-settings', settingsGlassOn,
+    () => { meScrollBase.current = meScrollRef.current?.scrollTop ?? 0; return [{ kind: 'circle', id: 'settings', symbol: 'gearshape', pointSize: 16, dark: true, el: settingsBtnRef.current }]; },
+    () => { setSettingsPage('menu'); setSettingsOpen(true); }, [settingsGlassOn], 560);
+  useEffect(() => { if (settingsGlassOn) void offsetGlass('home-settings', 0, 0); }, [settingsGlassOn]);
 
   /* --- 頭貼 ---
      只存在這台裝置（localStorage），不會上傳雲端。換帳號就換一張。 */
@@ -1171,6 +1210,8 @@ export const HomePage: React.FC<HomePageProps> = ({
            這一頁的東西才會留在原來的位置，不會整組往上跑。
            不在「我的」的時候整頁移到右邊等著，而且不吃點擊。 */
         <div
+          ref={meScrollRef}
+          onScroll={e => { if (settingsGlass.native) void offsetGlass('home-settings', 0, meScrollBase.current - e.currentTarget.scrollTop); }}
           style={{
             transform: nav === 'me' ? 'translate3d(0,0,0)' : 'translate3d(100%,0,0)',
             transition: 'transform 560ms cubic-bezier(0.22,1,0.36,1)',
@@ -1178,9 +1219,9 @@ export const HomePage: React.FC<HomePageProps> = ({
           }}
           className={`no-scrollbar absolute inset-0 z-[6] overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border bg-black ${nav === 'me' ? '' : 'pointer-events-none'}`}
         >
-          <button aria-label="設定" onClick={() => { setSettingsPage('menu'); setSettingsOpen(true); }}
+          <button ref={settingsBtnRef} aria-label="設定" onClick={() => { setSettingsPage('menu'); setSettingsOpen(true); }}
             className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
-            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 20px)' }}>
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 20px)', visibility: settingsGlass.native ? 'hidden' : undefined }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true"><path d="m9 3-.7 2.5-2 .9L4 5.7 2 9l1.8 1.8v2.4L2 15l2 3.3 2.3-.7 2 .9L9 21h6l.7-2.5 2-.9 2.3.7 2-3.3-1.8-1.8v-2.4L22 9l-2-3.3-2.3.7-2-.9L15 3Z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
           {/* 登入入口。
@@ -1991,7 +2032,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       </AnimatePresence>
 
       <AnimatePresence>
-      {settingsOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: motionSec('homeSettingsBackdrop') }} className="fixed inset-0 z-[250] bg-black/35 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
+      {settingsOpen && (webSettings || !isNative()) && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: motionSec('homeSettingsBackdrop') }} className="fixed inset-0 z-[250] bg-black/35 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
         {/* 從畫面中央由小變大彈出，收起時縮回中央 */}
         <motion.section role="dialog" aria-modal="true" aria-label={SETTINGS_TITLE[settingsPage]} className="w-full max-w-sm border border-white/15 rounded-3xl p-5" style={{ ...SETTINGS_GLASS, transformOrigin: '50% 50%' }} onClick={e => e.stopPropagation()}
           initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}

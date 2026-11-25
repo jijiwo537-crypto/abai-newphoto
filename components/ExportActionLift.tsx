@@ -1,4 +1,6 @@
-import React, {useLayoutEffect, useRef} from 'react';
+import React, {useEffect, useLayoutEffect, useRef} from 'react';
+import { nativeGlass } from '../utils/nativeGlass';
+import { isNative } from '../utils/native';
 
 /**
  * 成品底部的空間減半（基本間距加上 56px 的上移）。圖片的上緣維持原位，必要時只把下緣縮短
@@ -50,5 +52,82 @@ export function ExportActionLift() {
     const observer=new ResizeObserver(apply);observer.observe(root);
     return()=>{observer.disconnect();root.removeEventListener('load',apply,true);root.removeEventListener('loadedmetadata',apply,true);};
   },[]);
+  useNativeExportActions(ref);
   return <span hidden ref={ref}/>;
+}
+
+/* ── 成品頁下方的按鈕換成原生的（App 裡）──
+ * 所有工具的成品頁都有這一列（data-export-actions），也都掛著這個元件，所以在這裡統一處理：
+ * 網頁照常把按鈕排好（位置、大小、字），App 裡在同一個位置疊原生按鈕 —— 白底的那顆（儲存）維持白底黑字，其他的是透明玻璃；
+ * 網頁的那幾顆藏起來（visibility: hidden，位置照樣佔著）。按下原生按鈕＝按下網頁那一顆（同一個 onClick）。
+ * 「儲存中」那層還蓋著的時候不顯示（原生按鈕疊在整個網頁上面，會蓋到轉圈上）；按了會離開成品頁的按鈕，原生那組先收掉（不跟著網頁滑走）。
+ * 外掛不在（舊版 App）、網頁版：什麼都不做，網頁按鈕照常顯示 */
+const GROUP = 'export-actions';
+function useNativeExportActions(ref: React.RefObject<HTMLSpanElement>) {
+  useEffect(() => {
+    if (!isNative()) return;
+    const root = ref.current?.closest<HTMLElement>('[data-export-screen]');
+    const actions = root?.querySelector<HTMLElement>('[data-export-actions]');
+    if (!root || !actions) return;
+    let alive = true, shown = false, leaving = false, raf = 0, last = '';
+    let sub: { remove: () => void } | null = null;
+    let list: HTMLButtonElement[] = [];
+    const buttons = () => (Array.from(actions.querySelectorAll<HTMLButtonElement>("button")) as HTMLButtonElement[]).filter(b => { const r = b.getBoundingClientRect(); return r.width > 1 && r.height > 1; });
+    const setWebHidden = (h: boolean) => { for (const b of Array.from(actions.querySelectorAll<HTMLButtonElement>("button")) as HTMLButtonElement[]) b.style.visibility = h ? 'hidden' : ''; };
+    const busy = () => !!document.querySelector('[data-busy-layer]');
+    const sync = async () => {
+      raf = 0;
+      if (!alive || leaving) return;
+      const p = await nativeGlass();
+      if (!p || !alive || leaving) return;
+      if (busy() || !root.isConnected) {
+        if (shown) { shown = false; last = ''; void p.hide({ group: GROUP, animate: false }); setWebHidden(false); }
+        return;
+      }
+      list = buttons();
+      const items = list.map((b, i) => {
+        const r = b.getBoundingClientRect();
+        const white = getComputedStyle(b).backgroundColor.replace(/\s/g, '') === 'rgb(255,255,255)';
+        return { kind: 'circle', id: 'b' + i, title: (b.textContent || '').trim(), x: r.left, y: r.top, w: r.width, h: r.height,
+          enabled: !b.disabled, ...(white ? { fill: 'white', titleColor: 'black' } : {}) };
+      });
+      const sig = JSON.stringify(items);
+      if (sig === last && shown) return;
+      const first = !shown;
+      last = sig; shown = true;
+      await p.show({ group: GROUP, items, animate: first });
+      if (alive && !leaving) setWebHidden(true);
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { void sync(); }); };
+    void nativeGlass().then(async p => {
+      if (!p || !alive) return;
+      const s2 = await p.addListener('tap', d => {
+        if (d.group !== GROUP) return;
+        const b = list[Number(String(d.id).slice(1))];
+        if (!b || b.disabled) return;
+        /* 儲存（再按一次是分享）留在成品頁；其他的都會離開成品頁：原生那組先收掉，網頁的跟著頁面一起滑走 */
+        if (!b.hasAttribute('data-save-btn')) { leaving = true; shown = false; void p.hide({ group: GROUP, animate: true }); setWebHidden(false); }
+        b.click();
+      });
+      if (alive) sub = s2; else s2.remove();
+      schedule();
+    });
+    /* 按鈕的字、能不能按（儲存中… → 已存到相簿）、「儲存中」那層出現／拿掉、位置變了：重新送一次 */
+    const mo = new MutationObserver(schedule);
+    mo.observe(actions, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['disabled', 'class', 'style'] });
+    const bodyMo = new MutationObserver(schedule);
+    bodyMo.observe(document.body, { childList: true, subtree: true });
+    const ro = new ResizeObserver(schedule); ro.observe(root);
+    window.addEventListener('resize', schedule);
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+      mo.disconnect(); bodyMo.disconnect(); ro.disconnect();
+      window.removeEventListener('resize', schedule);
+      sub?.remove();
+      if (shown || leaving) void nativeGlass().then(p => p?.hide({ group: GROUP, animate: false }));
+      setWebHidden(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }

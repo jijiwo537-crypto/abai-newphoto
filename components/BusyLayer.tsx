@@ -102,12 +102,31 @@ function ensureHeld(label: string): void {
   last = null;   // 之後要接手的那一層不能抄到更早以前別的畫面
   alignSpinners(el);
 }
+/** 等「儲存中」那層真的從畫面上拿掉（再過兩格、確定畫出去了）才要做的事：存好的震動 */
+let goneWaiters: (() => void)[] = [];
+const twoFrames = (f: () => void) => requestAnimationFrame(() => requestAnimationFrame(f));
+function flushGone() { const w = goneWaiters; goneWaiters = []; if (w.length) twoFrames(() => w.forEach(f => { try { f(); } catch { /* 單一個出錯不影響 */ } })); }
+function drop() {
+  releaseTimer = 0;
+  if (holders === 0 && held) { held.remove(); held = null; }
+  if (!held) flushGone();
+}
+/** 畫面上沒有「儲存中」那層了（拿掉、而且已經畫出去）才呼叫 cb */
+export function afterBusyGone(cb: () => void): void {
+  goneWaiters.push(cb);
+  if (!(held && held.isConnected)) flushGone();
+}
+/** 存相簿也結束了（不會再有人接手）：不用再多留 1.2 秒，下一格就拿掉 */
+export function finishHeldBusy(): void {
+  if (holders > 0 || !held) return;
+  if (releaseTimer < 0) clearTimeout(-releaseTimer); else if (releaseTimer) cancelAnimationFrame(releaseTimer);
+  releaseTimer = requestAnimationFrame(drop);
+}
 function releaseHeld(): void {
   holders = Math.max(0, holders - 1);
   if (holders > 0 || releaseTimer) return;
   /* App 裡算完圖一定接著存相簿：多等一下（成品頁、存相簿那段晚幾格才登記也接得上），一路播到存好為止。
      網頁版沒有存相簿那段：等兩格就拿掉 */
-  const drop = () => { releaseTimer = 0; if (holders === 0 && held) { held.remove(); held = null; } };
   if ((window as any).Capacitor?.isNativePlatform?.()) {
     const t = window.setTimeout(drop, 1200);
     releaseTimer = -t;   // 負數＝計時器（跟 requestAnimationFrame 的編號分開）
