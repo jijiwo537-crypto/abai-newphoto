@@ -1,5 +1,8 @@
 import { slideBack } from '../utils/pageTransition';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
+import { canExportHeic, exportHeicFromUrl } from '../utils/heicExport';
+import { openGlassMenu } from '../utils/nativeGlass';
+import { SAVE_MENU_GLASS, SAVE_MENU_BUTTON } from '../utils/premiumGlass';
 import { isDarkSwatch } from '../utils/swatch';
 import { BusyLayer, afterBusyPainted } from './BusyLayer';
 import { ImportSpinner } from './BusySpinner';
@@ -329,6 +332,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     return [dx * k, dy * k];
   };
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
+  /* 儲存格式（跟編輯、仿色一樣：JPG／PNG／HEIC，預設 PNG）。App 裡用原生黑色液態玻璃面板選，網頁版用網頁面板 */
+  const [exportFormat, setExportFormat] = useState<'jpg' | 'png' | 'heic'>('png');
+  const exportFormatRef = useRef(exportFormat); exportFormatRef.current = exportFormat;
+  const [formatOpen, setFormatOpen] = useState(false);
   const [finalImage, setFinalImage] = useState<string | null>(null);
   /* 成品是 blob 網址：重新導出時先回收上一張，離開時也要回收 */
   const finalUrlRef = useRef<string | null>(null);
@@ -1565,7 +1572,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   // ---------------------------------------------------------------
   // 全解析度輸出：把記錄下來的每一筆操作，在原圖解析度重跑一次
   // ---------------------------------------------------------------
-  const exportFullRes = useCallback(async (): Promise<string | null> => {
+  const exportFullRes = useCallback(async (type: 'image/png' | 'image/jpeg' = 'image/png'): Promise<string | null> => {
     const s = sessionRef.current;
     const cv = viewRef.current;
     if (!s || !cv) return null;
@@ -1578,13 +1585,14 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       im.src = imageSrc;
     });
     // 讀不到原圖就退回工作解析度，至少不會失敗
-    if (!img) return canvasToUrl(cv);
+    const q = type === 'image/jpeg' ? 1 : undefined;
+    if (!img) return canvasToUrl(cv, type, q);
 
     // 手機上成品面積有上限（見 utils/exportLimits）：48MP 照片原尺寸重播會讓記憶體爆掉閃退
     const sc = Math.min(1, EXPORT_MAX / Math.max(img.width, img.height)) * safeScale(img.width, img.height);
     const FW = Math.max(2, Math.round(img.width * sc));
     const FH = Math.max(2, Math.round(img.height * sc));
-    if (FW <= s.W) return canvasToUrl(cv);   // 原圖本來就不大
+    if (FW <= s.W) return canvasToUrl(cv, type, q);   // 原圖本來就不大
 
     const c = document.createElement('canvas');
     c.width = FW; c.height = FH;
@@ -1609,10 +1617,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     }
     if (orig) {
       const P = ctx.getImageData(0, 0, FW, FH).data; c.width = c.height = 0;
-      const u = await fullResFromProcessed(img, P, orig, FW, FH, 'image/png');
+      const u = await fullResFromProcessed(img, P, orig, FW, FH, type);
       if (u) return u;
     }
-    return canvasToUrl(c);
+    return canvasToUrl(c, type, q);
   }, [imageSrc]);
 
   /* 嵌在編輯器裡：切分頁或按「完成」時，馬上交出工作解析度的成品（同步，不用等），
@@ -1661,7 +1669,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     setTimeout(async () => {
       /* 「儲存中」那一層確定畫到螢幕上才開始算 */
       await afterBusyPainted();
-      const url = await exportFullRes();
+      const fmt = exportFormatRef.current;
+      let url = await exportFullRes(fmt === 'jpg' ? 'image/jpeg' : 'image/png');
+      /* HEIC：先做無損 PNG，再交給原生編碼器（跟編輯器同一條） */
+      if (url && fmt === 'heic') {
+        try { const h = await exportHeicFromUrl(url); if (h) { revokeUrl(url); url = h; } } catch { /* 轉不了就存 PNG */ }
+      }
       if (url) {
         revokeUrl(finalUrlRef.current);
         finalUrlRef.current = url;
@@ -1871,11 +1884,17 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             </button>
           </div>
           <div className="w-24 flex justify-end shrink-0">
-            <button onClick={handleSave}
-              className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap">
-              儲存
-            </button>
+            {/* 儲存＋三個點（匯出格式），跟編輯、仿色同一款 */}
+            <div className="h-8 flex items-center bg-white text-black rounded-full overflow-hidden shadow-lg">
+              <button onClick={() => { setFormatOpen(false); handleSave(); }} className="pl-4 pr-3 py-1.5 text-[11px] font-black uppercase tracking-wider active:opacity-70 whitespace-nowrap">儲存</button>
+              <span aria-hidden="true" className="w-px h-4 bg-black/20" />
+              <button aria-label="匯出選項" aria-expanded={formatOpen} onClick={e => { const el = e.currentTarget; void openGlassMenu(el, [{ id: 'format', type: 'choice', title: '匯出格式', value: exportFormat, options: [{ label: 'JPG', value: 'jpg' }, { label: 'PNG', value: 'png' }, { label: 'HEIC', value: 'heic', enabled: canExportHeic() }] }], (_id, v) => setExportFormat(v as 'jpg' | 'png' | 'heic')).then(ok => { if (!ok) setFormatOpen(v => !v); }); }} className="h-8 px-2 flex items-center active:opacity-60"><Icon name="more_horiz" className="text-xl" /></button>
+            </div>
           </div>
+          {formatOpen && <div role="dialog" aria-label="匯出格式" className="absolute top-full left-4 right-4 mt-2 rounded-xl p-3 z-[81]" style={SAVE_MENU_GLASS}>
+            <p className="text-xs text-white/60 mb-3">匯出格式</p>
+            <div className="flex gap-2">{(['jpg', 'png', 'heic'] as const).map(f => <button key={f} aria-pressed={exportFormat === f} disabled={f === 'heic' && !canExportHeic()} onClick={() => setExportFormat(f)} className={`flex-1 h-9 rounded-lg text-xs uppercase disabled:text-white/30 ${exportFormat === f ? 'bg-white text-black' : SAVE_MENU_BUTTON}`}>{f.toUpperCase()}</button>)}</div>
+          </div>}
         </header>
       )}
 
