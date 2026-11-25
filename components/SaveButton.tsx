@@ -1,3 +1,4 @@
+import { haptic } from '../utils/haptics';
 import React, { useEffect, useRef, useState } from 'react';
 import { BusyLayer, HeldBusy, heldBusyShowing } from './BusyLayer';
 import { prepareFiles, shareFiles, shareSheet } from '../utils/shareAll';
@@ -34,6 +35,8 @@ function coverLayer() {
 const reviewCounted = new Set<string>();
 /** 自動存檔已經結束（成功或失敗）的成品：成品頁不再蓋著 */
 const autoDone = new Set<string>();
+/** 自動存檔結束了、還沒震的那一下（成品頁掀開的那一格才震）：成功或失敗 */
+const pendingBuzz = new Map<string, 'success' | 'error'>();
 export const SaveButton: React.FC<{
   urls: string[];
   className?: string;
@@ -50,11 +53,14 @@ export const SaveButton: React.FC<{
   const [mediaReady, setMediaReady] = useState(false);
   const key = urls.join('|');
   useEffect(() => { setPhase('idle'); }, [key]);
-  const save = async () => {
+  const save = async (auto = false) => {
     if (!isNative()) { void shareFiles(files); return; }
     if (phase === 'saving') return;
     setPhase('saving');
-    const r = await saveToPhotos(files);
+    /* 自動存檔：存好的當下先不震 —— 那時「儲存中」那層可能還蓋著（成品頁的圖還在解、或還沒輪到畫面更新），
+       震動會比看到成品頁早。記下來，等那層真的掀開、成品頁畫上螢幕的那一格再震（見下面 covering） */
+    const r = await saveToPhotos(files, !auto);
+    if (auto) pendingBuzz.set(key, r?.status === 'saved' ? 'success' : 'error');
     if (!r) { setPhase('idle'); void shareFiles(files); return; }
     if (r.status === 'saved') {
       setPhase('saved');
@@ -88,7 +94,7 @@ export const SaveButton: React.FC<{
     };
     /* 保險：存檔 30 秒都沒回來就先掀開，不讓畫面一直蓋著 */
     const t = setTimeout(uncover, 30000);
-    void save().finally(() => { clearTimeout(t); uncover(); });
+    void save(true).finally(() => { clearTimeout(t); uncover(); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files, key]);
 
@@ -130,6 +136,14 @@ export const SaveButton: React.FC<{
     return () => { alive = false; };
   }, [key]);
   const covering = urls.length > 0 && (!mediaReady || (isNative() && !autoDone.has(key)));
+  /* 「儲存中」那層掀開了：這次 render 已經畫上螢幕（useEffect 在畫面更新之後才跑），這一刻震動 —— 看到成品頁跟震動是同一瞬間 */
+  useEffect(() => {
+    if (covering) return;
+    const k = pendingBuzz.get(key);
+    if (!k) return;
+    pendingBuzz.delete(key);
+    haptic(k);
+  }, [covering, key]);
   return (
     <>
     {covering && coverLayer()}

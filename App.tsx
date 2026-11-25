@@ -80,6 +80,7 @@ import { watchAppUpdates } from './utils/appUpdate';
 import { detectUnexpectedExit, markToolActive, markToolInactive } from './utils/crashRecovery';
 import { trimMemory, watchMemoryPressure } from './utils/memoryPressure';
 import { isNative } from './utils/native';
+import { nativeDialog, closeNativeDialog } from './utils/nativeGlass';
 import { ImportSpinner } from './components/BusySpinner';
 import { MOBILE_MAX_PIXELS } from './utils/exportLimits';
 
@@ -211,6 +212,25 @@ const App: React.FC = () => {
     exitPromptResolver.current = null;
     resolve?.(choice);
   }, []);
+
+  /* App 裡：「是否儲存為草稿」改用原生的詢問框（透明玻璃面板、玻璃膠囊按鈕）。
+     原生的框按下去就收起來；儲存中的轉圈照舊由網頁那層顯示。外掛不在（舊版 App）才退回網頁的框 */
+  const nativeAsk = isNative();
+  const [webExitFallback, setWebExitFallback] = useState(false);
+  useEffect(() => {
+    if (!exitPromptOpen || exitPromptBusy || !nativeAsk || webExitFallback) return;
+    let live = true;
+    void nativeDialog({
+      title: '是否儲存為草稿',
+      buttons: [{ id: 'save', title: '儲存', role: 'primary' }, { id: 'discard', title: '放棄' }, { id: 'cancel', title: '取消' }],
+      style: 'clear',
+    }).then(id => {
+      if (!live) return;
+      if (id === null) { setWebExitFallback(true); return; }
+      if (id === 'save' || id === 'discard' || id === 'cancel') resolveExit(id);
+    });
+    return () => { live = false; void closeNativeDialog(); };
+  }, [exitPromptOpen, exitPromptBusy, nativeAsk, webExitFallback, resolveExit]);
 
   const finishExit = useCallback((complete?: () => void) => {
     /* 離開工具回主頁：目前的畫面往右滑走（見 utils/pageTransition） */
@@ -699,6 +719,28 @@ const App: React.FC = () => {
     await Promise.all([clearCollageDraft(), clearToolDraft()]);
   };
 
+  /* 「要繼續上次的編輯嗎？」：App 裡改用原生的詢問框，深色玻璃（跟「儲存」旁 ⋯ 選單同一種材質）。外掛不在才用網頁的框 */
+  const resumeAsk = !!resume && currentView === 'home' && !(autoPending && !autoResumed.current);
+  const [webResumeFallback, setWebResumeFallback] = useState(false);
+  const resumeActs = useRef({ go: handleResume, drop: handleDiscardResume });
+  resumeActs.current = { go: handleResume, drop: handleDiscardResume };
+  useEffect(() => {
+    if (!resumeAsk || resuming || !nativeAsk || webResumeFallback || !resume) return;
+    let live = true;
+    void nativeDialog({
+      title: '要繼續上次的編輯嗎？',
+      message: `上次在「${TOOL_NAMES[resume.kind]}」還有沒完成的內容`,
+      buttons: [{ id: 'resume', title: '繼續編輯', role: 'primary' }, { id: 'discard', title: '重新開始' }],
+      style: 'dark',
+    }).then(id => {
+      if (!live) return;
+      if (id === null) { setWebResumeFallback(true); return; }
+      if (id === 'resume') void resumeActs.current.go();
+      else if (id === 'discard') void resumeActs.current.drop();
+    });
+    return () => { live = false; void closeNativeDialog(); };
+  }, [resumeAsk, resuming, nativeAsk, webResumeFallback, resume]);
+
   return (
     <div className="abai-shell">
      <div className="abai-frame">
@@ -710,7 +752,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {exitPromptOpen && (
+      {exitPromptOpen && (!nativeAsk || webExitFallback || exitPromptBusy) && (
         <div className={`fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in ${exitPromptBusy ? 'duration-300' : 'duration-200'}`}>
           <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl bg-[#141414] border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200'}`}>
             {exitPromptBusy ? (
@@ -793,7 +835,7 @@ const App: React.FC = () => {
       />
 
       {/* 上次還沒做完的東西：先問，不要直接跳進去（被系統關掉的那種會自動接回，見上面） */}
-      {resume && currentView === 'home' && !(autoPending && !autoResumed.current) && (
+      {resumeAsk && (!nativeAsk || webResumeFallback) && (
         <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">
           <div className="w-full max-w-[320px] rounded-3xl bg-[#141414] border border-white/10 p-6 text-center shadow-2xl animate-in zoom-in-95 duration-200">
             <p className="text-white font-black tracking-wide">要繼續上次的編輯嗎？</p>

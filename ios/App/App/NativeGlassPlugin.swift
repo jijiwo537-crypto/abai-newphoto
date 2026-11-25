@@ -183,6 +183,8 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "hide", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "menu", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "closeMenu", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "dialog", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "closeDialog", returnType: CAPPluginReturnPromise),
     ]
 
     private var groups: [String: ABAIPassthroughView] = [:]
@@ -257,6 +259,31 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
             p.present()
             call.resolve(["opened": true])
         }
+    }
+    /// dialog({ title, message?, buttons: [{ id, title, role?: 'primary' | 'normal' }], style: 'clear' | 'dark' })
+    /// 畫面正中間的詢問框（原生）：每一顆按鈕都是一條玻璃膠囊。按了哪一顆就回傳 { id }（框跟著收起來）。
+    /// style：clear＝透明的玻璃面板（不帶黑色）；dark＝跟「儲存」旁 ⋯ 選單同一種深色玻璃
+    private var dialogView: ABAIDialog?
+    @objc func dialog(_ call: CAPPluginCall) {
+        let title = call.getString("title") ?? ""
+        let message = call.getString("message")
+        let buttons = (call.getArray("buttons") ?? []).compactMap { $0 as? [String: Any] }
+        let dark = call.getString("style") == "dark"
+        DispatchQueue.main.async {
+            guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有畫面"); return }
+            self.dialogView?.dismiss(nil)
+            let d = ABAIDialog(frame: web.frame, title: title, message: message, buttons: buttons, dark: dark)
+            d.onPick = { [weak self, weak d] id in
+                if self?.dialogView === d { self?.dialogView = nil }
+                call.resolve(["id": id ?? ""])
+            }
+            parent.insertSubview(d, aboveSubview: web)
+            self.dialogView = d
+            d.present()
+        }
+    }
+    @objc func closeDialog(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { self.dialogView?.dismiss(nil); self.dialogView = nil; call.resolve() }
     }
     @objc func closeMenu(_ call: CAPPluginCall) {
         DispatchQueue.main.async { self.menuPanel?.dismiss(); call.resolve() }
@@ -452,5 +479,101 @@ final class ABAISettingsPanel: UIView {
         r.alignment = .center
         r.heightAnchor.constraint(equalToConstant: 46).isActive = true
         return r
+    }
+}
+
+/// 畫面正中間的詢問框：標題、說明、直排的玻璃膠囊按鈕（主要的那顆白底黑字）。點框外面不會關（一定要選一個）
+final class ABAIDialog: UIView {
+    var onPick: ((String?) -> Void)?
+    private let panel: UIVisualEffectView
+    private let dim = UIView()
+    private var picked = false
+
+    init(frame: CGRect, title: String, message: String?, buttons: [[String: Any]], dark: Bool) {
+        let width = min(320, frame.width - 64)
+        let btnH: CGFloat = 48, gap: CGFloat = 8, pad: CGFloat = 24
+        let titleL = UILabel()
+        titleL.text = title
+        titleL.font = .systemFont(ofSize: 17, weight: .bold)
+        titleL.textColor = .white
+        titleL.textAlignment = .center
+        titleL.numberOfLines = 0
+        let msgL = UILabel()
+        msgL.text = message
+        msgL.font = .systemFont(ofSize: 13, weight: .regular)
+        msgL.textColor = UIColor(white: 1, alpha: 0.55)
+        msgL.textAlignment = .center
+        msgL.numberOfLines = 0
+        let inner = width - pad * 2
+        let tH = ceil(titleL.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height)
+        let mH = message == nil ? 0 : ceil(msgL.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height)
+        let head = tH + (message == nil ? 0 : 8 + mH)
+        let height = pad + head + 24 + CGFloat(buttons.count) * btnH + CGFloat(max(0, buttons.count - 1)) * gap + pad
+        panel = ABAIGlass.view(radius: 28, interactive: false, dark: dark)
+        panel.frame = CGRect(x: (frame.width - width) / 2, y: (frame.height - height) / 2, width: width, height: height)
+        super.init(frame: frame)
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        dim.frame = bounds
+        dim.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        dim.backgroundColor = UIColor(white: 0, alpha: dark ? 0.45 : 0.3)
+        addSubview(dim)
+        titleL.frame = CGRect(x: pad, y: pad, width: inner, height: tH)
+        panel.contentView.addSubview(titleL)
+        if message != nil { msgL.frame = CGRect(x: pad, y: pad + tH + 8, width: inner, height: mH); panel.contentView.addSubview(msgL) }
+        var y = pad + head + 24
+        for spec in buttons {
+            let id = spec["id"] as? String ?? ""
+            let primary = (spec["role"] as? String) == "primary"
+            let b = UIButton(type: .system)
+            b.frame = CGRect(x: pad, y: y, width: inner, height: btnH)
+            b.setTitle(spec["title"] as? String, for: .normal)
+            b.titleLabel?.font = .systemFont(ofSize: 15, weight: primary ? .bold : .semibold)
+            if primary {
+                b.backgroundColor = .white
+                b.setTitleColor(.black, for: .normal)
+                b.layer.cornerRadius = btnH / 2
+                b.layer.cornerCurve = .continuous
+                panel.contentView.addSubview(b)
+            } else {
+                /* 其他按鈕：一條玻璃膠囊（跟 App 裡其他原生按鈕同一種材質） */
+                let g = ABAIGlass.view(radius: btnH / 2, interactive: true, dark: false)
+                g.frame = b.frame
+                b.frame = g.bounds
+                b.setTitleColor(UIColor(white: 1, alpha: 0.85), for: .normal)
+                g.contentView.addSubview(b)
+                panel.contentView.addSubview(g)
+            }
+            b.addAction(UIAction { [weak self] _ in
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                self?.dismiss(id)
+            }, for: .touchUpInside)
+            y += btnH + gap
+        }
+        addSubview(panel)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func present() {
+        dim.alpha = 0
+        panel.alpha = 0
+        panel.transform = CGAffineTransform(scaleX: 0.92, y: 0.92)
+        UIView.animate(withDuration: 0.38, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0, options: [.allowUserInteraction]) {
+            self.dim.alpha = 1
+            self.panel.alpha = 1
+            self.panel.transform = .identity
+        }
+    }
+
+    /// id：按了哪一顆（nil＝被網頁那邊收掉）
+    func dismiss(_ id: String?) {
+        if picked { return }
+        picked = true
+        isUserInteractionEnabled = false
+        onPick?(id)
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseIn], animations: {
+            self.dim.alpha = 0
+            self.panel.alpha = 0
+            self.panel.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)
+        }, completion: { _ in self.removeFromSuperview() })
     }
 }

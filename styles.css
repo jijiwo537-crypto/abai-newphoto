@@ -538,3 +538,6 @@ img, video, canvas { dynamic-range-limit: standard; }
 [data-mask-add] .mk-rot { transition: transform .34s cubic-bezier(.32,.72,0,1); will-change: transform; }
 [data-mask-add][data-x="1"] .mk-rot { transform: rotate(45deg); }
 
+
+/* 長按圖片不要被「抓起來」（iOS 會浮出一張半透明的圖可以拖走，例如儲存成功頁長按成品圖），也不要跳出系統的圖片選單 */
+img, video, canvas, svg { -webkit-user-drag: none; -webkit-touch-callout: none; }

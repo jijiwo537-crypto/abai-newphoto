@@ -16,6 +16,8 @@ export type GlassItem =
 interface NativeGlassApi {
   menu?(o: { anchor: { x: number; y: number; w: number; h: number }; items: GlassMenuItem[]; width?: number; place?: { x: number; y: number; w: number } }): Promise<{ opened: boolean }>;
   closeMenu?(): Promise<void>;
+  dialog?(o: { title: string; message?: string; buttons: { id: string; title: string; role?: 'primary' | 'normal' }[]; style: 'clear' | 'dark' }): Promise<{ id: string }>;
+  closeDialog?(): Promise<void>;
   show(o: { group: string; items: unknown[]; animate?: boolean }): Promise<void>;
   update(o: { group: string; id: string; symbol?: string; tint?: string; enabled?: boolean }): Promise<void>;
   hide(o: { group: string; animate?: boolean }): Promise<void>;
@@ -103,4 +105,19 @@ export async function openGlassMenu(anchor: HTMLElement, items: GlassMenuItem[],
   const place = hd ? { x: hd.left + 16, y: hd.bottom + 8, w: hd.width - 32 } : undefined;
   try { await p.menu({ anchor: { x: r.left, y: r.top, w: r.width, h: r.height }, items, place }); return true; }
   catch { menuSubs.forEach(s => s.remove()); menuSubs = []; return false; }
+}
+
+/** 原生的詢問框（畫面正中間）。回傳按了哪一顆的 id；被 closeNativeDialog 收掉回傳 ''。
+ *  沒有原生（網頁版、舊版 App）回傳 null —— 呼叫的地方照常顯示網頁版的框 */
+export async function nativeDialog(o: { title: string; message?: string; buttons: { id: string; title: string; role?: 'primary' | 'normal' }[]; style: 'clear' | 'dark' }): Promise<string | null> {
+  if (!isNative()) return null;
+  try {
+    const p = await nativeGlass();
+    if (!p?.dialog) return null;
+    return (await p.dialog(o)).id ?? '';
+  } catch { return null; }
+}
+export async function closeNativeDialog(): Promise<void> {
+  if (!isNative()) return;
+  try { await (await nativeGlass())?.closeDialog?.(); } catch { /* 沒開著 */ }
 }

@@ -280,7 +280,7 @@ const MASK_TOOLS: ToolDef[] = [
 ];
 
 /** 五種遮色片（新增時選的那一排）與各自的參數工具（滑桿跟調整用同一根） */
-const MASK_TYPES: [MaskType, string][] = [['subject', '主體'], ['person', '人物'], ['linear', '線性漸層'], ['radial', '放射漸層'], ['brush', '筆刷'], ['color', '顏色範圍'], ['luma', '明度範圍']];
+const MASK_TYPES: [MaskType, string][] = [['linear', '線性漸層'], ['radial', '放射漸層'], ['subject', '主體'], ['person', '人物'], ['color', '顏色範圍'], ['luma', '明度範圍'], ['brush', '筆刷']];
 /** 自動選取要用 iOS 的影像分析：只有 App 裡有（網頁版不顯示） */
 const autoMaskSupported = () => isNative();
 const MASK_TYPE_TOOLS: Record<MaskType, ToolDef[]> = {

@@ -135,7 +135,8 @@ export function setSaveContext(ctx: SaveContext | null) { saveContext = ctx; }
 /** 存進相簿。回傳 null＝不是 App（呼叫端走原本的分享／下載） */
 export interface SaveOutcome { status: 'saved' | 'failed'; error?: string }
 /** 存進相簿。回傳 null＝不是 App 或這版 App 沒有相簿外掛（呼叫端走原本的分享／下載） */
-export async function saveToPhotos(files: File[]): Promise<SaveOutcome | null> {
+/** buzz：存好時要不要在這裡就震動（不給＝要）。成品頁自動存檔時傳 false：震動改由成品頁在「畫面真的掀開」的那一格震（見 SaveButton） */
+export async function saveToPhotos(files: File[], buzz = true): Promise<SaveOutcome | null> {
   const p = await nativePhotos();
   const img = await nativeImage();
   if (!p || !img) return null;
@@ -167,7 +168,7 @@ export async function saveToPhotos(files: File[]): Promise<SaveOutcome | null> {
         if (path && !own) img.remove({ path }).catch(() => {});
       }
     }
-    haptic(ok === files.length ? 'success' : 'error');
+    if (buzz) haptic(ok === files.length ? 'success' : 'error');
     return ok === files.length ? { status: 'saved' } : { status: 'failed', error: error || '存檔失敗' };
   });
 }
