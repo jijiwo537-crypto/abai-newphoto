@@ -69,7 +69,7 @@ function useNativeExportActions(ref: React.RefObject<HTMLSpanElement>) {
     const root = ref.current?.closest<HTMLElement>('[data-export-screen]');
     const actions = root?.querySelector<HTMLElement>('[data-export-actions]');
     if (!root || !actions) return;
-    let alive = true, shown = false, leaving = false, raf = 0, last = '';
+    let alive = true, shown = false, leaving = false, raf = 0, last = '', clearSince = 0;
     let sub: { remove: () => void } | null = null;
     let list: HTMLButtonElement[] = [];
     const buttons = () => (Array.from(actions.querySelectorAll<HTMLButtonElement>("button")) as HTMLButtonElement[]).filter(b => { const r = b.getBoundingClientRect(); return r.width > 1 && r.height > 1; });
@@ -81,8 +81,16 @@ function useNativeExportActions(ref: React.RefObject<HTMLSpanElement>) {
       const p = await nativeGlass();
       if (!p || !alive || leaving) return;
       if (busy() || !root.isConnected) {
+        clearSince = 0;
         if (shown) { shown = false; last = ''; void p.hide({ group: GROUP, animate: false }); setWebHidden(false); }
         return;
+      }
+      /* 液態玻璃的顏色會跟著「它後面的畫面」自動調整。「儲存中」那層剛拿掉的那一格，螢幕上可能還是黑色的轉圈畫面，
+         這時放上去，玻璃先照黑底調色、下一格成品頁畫出來後又調一次 —— 就是開頭「變色一下」。
+         所以那層拿掉之後，等成品頁確定畫上螢幕（兩格＋一點餘裕）才放 */
+      if (!shown) {
+        if (!clearSince) clearSince = performance.now();
+        if (performance.now() - clearSince < 120) { window.setTimeout(schedule, 130); return; }
       }
       list = buttons();
       const items = list.map((b, i) => {
