@@ -15,9 +15,9 @@ import { isNative } from '../utils/native';
 import { autoMasks, isAutoMask, clearMaskCaches } from '../utils/masks';
 import { openGlassMenu } from '../utils/nativeGlass';
 import { waitEntranceStart, setPreThumbBuilder } from '../utils/importHero';
-import { nativeEncodeWithMeta } from '../utils/nativeFinish';
-import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
-import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, rawDevelopLinear, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
+import { nativeEncodeBase, type NativeOut } from '../utils/nativeFinish';
+import { nativeAssetIdOf, nativePathOf, fileSrc, rememberNativePath } from '../utils/nativeBridge';
+import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, rawDevelopLinear, rawDevelopSize, rawDevelopRender, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
 import { RawGpu } from '../utils/rawGpu';
 import { afterBusyPainted } from './BusyLayer';
 import { ms as motionMs, sec as motionSec } from '../utils/motionTimings';
@@ -26,7 +26,7 @@ import { exposureEv } from '../utils/photoToneMath';
 /** RAW 照片：這幾個工具改調 raw* 欄位（由原生在 RAW 上做），網頁的那一份維持 0 */
 const RAW_TOOL: Record<string, keyof EditorParams> = { exposure: 'rawExposure', temp: 'rawTemp', tint: 'rawTint', highlights: 'rawHighlights', shadows: 'rawShadows' };
 const rawKeyOf = (p: EditorParams) => [p.rawExposure || 0, p.rawTemp || 0, p.rawTint || 0, p.rawHighlights || 0, p.rawShadows || 0].join(',');
-import { nativeImage, blobToNativeFile, nativeImageSize, nativeDownsample } from '../utils/nativeImage';
+import { nativeImage, blobToNativeFile, nativeImageSize, nativeDownsample, nativeIoReady, pixelsToNativeFile, removeNativeFilesLater } from '../utils/nativeImage';
 import { useNativeHdrPreview } from '../utils/nativePreview';
 import { PrimariesPanel, COLOUR_PANEL_H } from './PrimariesPanel';
 import { EditBar, EditBarTab, EDIT_BAR_H } from './EditBar';
@@ -7917,69 +7917,129 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     !p.blur && !p.soft && !p.fringeIntensity && !p.leakOpacity && !hasGlow(p) && !hasActiveFx(p) && !(Number(p.fxLowfi) > 0);
   /** 原生端一次處理整張 16 位元影像：太大的照片（4800 萬像素要 400MB 左右）不走這條，免得記憶體不夠被系統收掉 */
   const NATIVE_MAX_PIXELS = 25_000_000;
-  /** fromPath：直接拿這個原生檔當原圖（RAW 從原檔沖好的 16 位元 TIFF） */
-  const nativeWideSave = async (src: string, snap: BatchSnap, fmt: 'heic10' | 'jpeg' | 'png', baseUrl?: string, fromPath?: string): Promise<string | null> => {
+  /** 成品頁顯示用的小圖長邊（螢幕看綽綽有餘；原尺寸成品留在原生，存相簿用） */
+  const PREVIEW_PX = 2560;
+  /** 這一次存檔留在原生的成品檔與顯示小圖：下一次存檔、離開編輯器時刪掉 */
+  const nativeOutsRef = useRef<string[]>([]);
+  const dropNativeOuts = (later = 0) => {
+    const list = nativeOutsRef.current;
+    nativeOutsRef.current = [];
+    removeNativeFilesLater(list, later);
+  };
+  /* 離開編輯器：等一下再刪（成品頁的存相簿、最近輸出的縮圖可能還在讀） */
+  useEffect(() => () => dropNativeOuts(60000), []);
+  /** 構圖交給原生：網頁算好投影矩陣（跟 composeCanvas 同一份幾何 geoHomography），輸出尺寸也一樣。沒有構圖回 {}；算不出來回 null */
+  const nativeGeoArgs = (w: number, h: number, g: GeoParams): { homography: number[]; outW: number; outH: number } | {} | null => {
+    if (isGeoIdentity(g)) return {};
+    const hm = geoHomography(w, h, g);
+    return hm ? { homography: [...hm.H], outW: hm.outW, outH: hm.outH } : null;
+  };
+  /** 編輯器的整條調色（濾鏡、曝光、對比、色溫、HSL、色輪、曲線…）烤成 64³ 色彩表交給原生。濾鏡檔還沒下載完回 null */
+  const bakeNativeCube = async (snap: BatchSnap): Promise<{ cubePath: string; cubeSize: number } | null> => {
     const p = snap.params;
-    if ((!fromPath && fullJobsRef.current[src]) || !(baseUrl ? nativeHybridOk(p) : nativeColorOnly(p))) return null;
-    const path = fromPath || nativePathOf(src);
+    const lut = lutList[snap.selectedLutIdx];
+    const activeLut = lut && lut.url ? lutDataRef.current[lut.id] : null;
+    if (lut && lut.url && !activeLut) return null;
+    generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseCorrectionLutRef.current);
+    const curves = getCurveLuts(p.curves);
+    const baked = bakeColorLut((bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, p, activeLut ? activeLut.data : null, activeLut ? activeLut.size : 0,
+      baseCorrectionLutRef.current, null, false, curves, null), NATIVE_CUBE);
+    const n = NATIVE_CUBE ** 3, f = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) { f[i * 4] = baked.data[i * 3] / 255; f[i * 4 + 1] = baked.data[i * 3 + 1] / 255; f[i * 4 + 2] = baked.data[i * 3 + 2] / 255; f[i * 4 + 3] = 1; }
+    return { cubePath: await blobToNativeFile(new Blob([f.buffer]), 'cube'), cubeSize: NATIVE_CUBE };
+  };
+  const qaLog = (s: string) => { try { (window as any).__abaiQALog?.push?.(s); } catch { /* 只是記錄 */ } };
+  /** 原生存檔（一般照片）：原圖在原生端用浮點流程套上編輯器的調色（或網頁算好的成品＋補回廣色域），日期、拍攝資訊一起寫進去，
+      直接編碼成最後的格式。成品留在原生（存相簿時直接用這個檔），另外出一張顯示用的小圖。
+      opt.base：網頁算好的成品（原生檔路徑或 PNG 網址；路徑由呼叫端負責刪）。任何一步失敗都回 null，呼叫端照原本的方式存 */
+  const nativeWideSave = async (src: string, snap: BatchSnap, fmt: 'heic10' | 'jpeg' | 'png',
+    opt: { base?: { path?: string; url?: string }; date?: string } = {}): Promise<NativeOut | null> => {
+    const p = snap.params, base = opt.base;
+    if (fullJobsRef.current[src] || !(base ? nativeHybridOk(p) : nativeColorOnly(p))) return null;
+    const path = nativePathOf(src);
     if (!path) return null;
     const api = await nativeImage();
     if (!api) return null;
     const size = await nativeImageSize(path);
     if (!size || size.width * size.height > NATIVE_MAX_PIXELS) return null;
-    /* 有構圖（裁切、旋轉、梯形…）：網頁算好投影矩陣交給原生，在浮點流程裡做（不用先降成 8 位元）。
-       矩陣跟網頁 composeCanvas 是同一份幾何（geoHomography），輸出尺寸也一樣 */
-    let geoArgs: { homography: number[]; outW: number; outH: number } | {} = {};
-    if (!isGeoIdentity(snap.geo)) {
-      const hm = geoHomography(size.width, size.height, snap.geo);
-      if (!hm) return null;
-      geoArgs = { homography: [...hm.H], outW: hm.outW, outH: hm.outH };
-    }
-    if (baseUrl) {
-      let basePath = '', outPath = '';
-      try {
-        basePath = await blobToNativeFile(await (await fetch(baseUrl)).blob(), 'png');
-        const r = await api.render({ path, basePath, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true, metaPath: rawOf(src)?.path, ...geoArgs });
-        outPath = r.path;
-        const blob = await (await fetch(fileSrc(r.path))).blob();
-        if (!blob.size) return null;
-        try { (window as any).__abaiQALog?.push?.(`wide hybrid save: ${fmt} ${r.width}x${r.height} ${blob.size}B`); } catch { /* 只是記錄 */ }
-        return URL.createObjectURL(new Blob([blob], { type: fmt === 'jpeg' ? 'image/jpeg' : fmt === 'png' ? 'image/png' : 'image/heic' }));
-      } catch (e) {
-        try { (window as any).__abaiQALog?.push?.(`wide hybrid save failed: ${String((e as any)?.message ?? e)}`); } catch { /* 只是記錄 */ }
-        return null;
-      } finally {
-        if (basePath) api.remove({ path: basePath }).catch(() => {});
-        if (outPath) api.remove({ path: outPath }).catch(() => {});
-      }
-    }
-    const lut = lutList[snap.selectedLutIdx];
-    const activeLut = lut && lut.url ? lutDataRef.current[lut.id] : null;
-    if (lut && lut.url && !activeLut) return null;
-    let cubePath = '', outPath = '';
+    const geoArgs = nativeGeoArgs(size.width, size.height, snap.geo);
+    if (!geoArgs) return null;
+    const common = { path, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true, metaPath: rawOf(src)?.path, date: opt.date || undefined, preview: PREVIEW_PX, ...geoArgs };
+    let tmp = '', cubePath = '';
     try {
-      generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseCorrectionLutRef.current);
-      const curves = getCurveLuts(p.curves);
-      const baked = bakeColorLut((bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, p, activeLut ? activeLut.data : null, activeLut ? activeLut.size : 0,
-        baseCorrectionLutRef.current, null, false, curves, null), NATIVE_CUBE);
-      const n = NATIVE_CUBE ** 3, f = new Float32Array(n * 4);
-      for (let i = 0; i < n; i++) { f[i * 4] = baked.data[i * 3] / 255; f[i * 4 + 1] = baked.data[i * 3 + 1] / 255; f[i * 4 + 2] = baked.data[i * 3 + 2] / 255; f[i * 4 + 3] = 1; }
-      cubePath = await blobToNativeFile(new Blob([f.buffer]), 'cube');
-      /* metaPath：RAW 的話拍攝資訊從原本的 RAW 檔讀（沖出來的 16 位元中間檔沒有）*/
-      const r = await api.render({ path, cubePath, cubeSize: NATIVE_CUBE, format: fmt, quality: 1, hdr: fmt !== 'png', keepGamut: true, metaPath: rawOf(src)?.path, ...geoArgs });
-      outPath = r.path;
-      const blob = await (await fetch(fileSrc(r.path))).blob();
-      if (!blob.size) return null;
-      const type = fmt === 'jpeg' ? 'image/jpeg' : fmt === 'png' ? 'image/png' : 'image/heic';
-      try { (window as any).__abaiQALog?.push?.(`wide save: ${fmt} ${r.width}x${r.height} ${blob.size}B`); } catch { /* 只是記錄 */ }
-      return URL.createObjectURL(new Blob([blob], { type }));
+      let r: { path: string; width: number; height: number; previewPath?: string };
+      if (base) {
+        const basePath = base.path || (tmp = await blobToNativeFile(await (await fetch(base.url!)).blob(), 'png'));
+        r = await api.render({ ...common, basePath });
+      } else {
+        const cube = await bakeNativeCube(snap);
+        if (!cube) return null;
+        cubePath = cube.cubePath;
+        r = await api.render({ ...common, ...cube });
+      }
+      if (!r?.path) return null;
+      qaLog(`wide ${base ? 'hybrid ' : ''}save: ${fmt} ${r.width}x${r.height}`);
+      return { path: r.path, previewPath: r.previewPath };
     } catch (e) {
-      try { (window as any).__abaiQALog?.push?.(`wide save failed: ${String((e as any)?.message ?? e)}`); } catch { /* 只是記錄 */ }
+      qaLog(`wide save failed: ${String((e as any)?.message ?? e)}`);
       return null;
     } finally {
+      if (tmp) api.remove({ path: tmp }).catch(() => {});
       if (cubePath) api.remove({ path: cubePath }).catch(() => {});
-      if (outPath) api.remove({ path: outPath }).catch(() => {});
     }
+  };
+  /** 原生存檔（RAW）：沖洗、構圖、調色（或網頁成品＋從 RAW 補回廣色域）、日期、拍攝資訊一次在原生做完（見 RawDecodePlugin.developRender）。
+      以前要先把 RAW 沖成一張中間檔、網頁那邊再沖一張，等於沖兩次；只有顏色類調整時現在一次都不用經過網頁。失敗回 null */
+  const rawNativeSave = async (ri: RawInfo, snap: BatchSnap, fmt: 'heic10' | 'jpeg' | 'png',
+    opt: { base?: { path?: string; url?: string }; date?: string } = {}): Promise<NativeOut | null> => {
+    const p = snap.params, base = opt.base;
+    if (!(base ? nativeHybridOk(p) : nativeColorOnly(p))) return null;
+    const api = await nativeImage();
+    if (!api) return null;
+    const b = rawBaseOf(ri, await rawAsShotOf(ri), p);
+    const size = await rawDevelopSize(ri.path, b, ri.look);
+    if (!size || size.width * size.height > NATIVE_MAX_PIXELS) return null;
+    const geoArgs = nativeGeoArgs(size.width, size.height, snap.geo);
+    if (!geoArgs) return null;
+    let tmp = '', cubePath = '';
+    try {
+      let extra: { basePath?: string; cubePath?: string; cubeSize?: number } = {};
+      if (base) extra = { basePath: base.path || (tmp = await blobToNativeFile(await (await fetch(base.url!)).blob(), 'png')) };
+      else {
+        const cube = await bakeNativeCube(snap);
+        if (!cube) return null;
+        cubePath = cube.cubePath;
+        extra = cube;
+      }
+      const r = await rawDevelopRender(ri.path, b, ri.look, { srcW: size.width, srcH: size.height, format: fmt, ...extra, ...geoArgs, date: opt.date, preview: PREVIEW_PX });
+      if (!r?.path) return null;
+      qaLog(`raw native save: ${fmt} ${r.width}x${r.height}${base ? ' hybrid' : ''}`);
+      return { path: r.path, previewPath: r.previewPath };
+    } catch { return null; }
+    finally {
+      if (tmp) api.remove({ path: tmp }).catch(() => {});
+      if (cubePath) api.remove({ path: cubePath }).catch(() => {});
+    }
+  };
+  /** 原尺寸成品給原生用：能直接交像素就交像素（{ path }：不壓 PNG、不轉 base64），不行就照舊做無損 PNG（{ url }）。
+      兩種都只算一次成品。超過手機畫布上限、梯形透視的照片照原本的方式（renderFullUrl） */
+  const renderFullForNative = async (img: HTMLImageElement, snap: BatchSnap): Promise<{ path?: string; url?: string }> => {
+    const ow = img.naturalWidth || img.width, oh = img.naturalHeight || img.height, g = snap.geo;
+    const aff = affineOf(g, ow, oh);
+    const out = isGeoIdentity(g) ? { w: ow, h: oh } : aff;
+    const big = !!out && (forceFullResRef() || safeScale(out.w, out.h) < 1);
+    if (!isNative() || !out || big || !(await nativeIoReady())) return { url: await renderFullUrl(img, snap, 'image/png', 1) };
+    const canvas = renderOneCanvas(img, snap);
+    try {
+      try {
+        const w = canvas.width, h = canvas.height;
+        const ctx = canvas.getContext('2d');
+        const px = ctx ? ctx.getImageData(0, 0, w, h).data : null;
+        const path = px ? await pixelsToNativeFile(px, w, h) : null;
+        if (path) return { path };
+      } catch { /* 讀不出像素：照舊做 PNG */ }
+      return { url: await canvasToUrl(canvas, 'image/png', 1) };
+    } finally { canvas.width = canvas.height = 0; }
   };
   /** 測試用：在電腦上強制走原尺寸存檔（window.__forceFullRes = true） */
   const forceFullResRef = () => { try { return !!(window as any).__forceFullRes; } catch { return false; } };
@@ -8491,9 +8551,23 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             // 不然「調到一半直接按儲存」時，其他連結中的照片會拿到上一次切換時的舊參數。
             stashCurrent();
             const live = liveRef.current!;
+            /* out：成品頁顯示的圖；encoded：真正存進相簿的檔（兩者一張對一張）。
+               App 裡成品直接留在原生（存相簿時用那個檔，不再讀回網頁、再搬回去），顯示用原生順便出的小圖 */
             const out: string[] = [];
             const encoded: string[] = [];
+            /** 日期沒有在原生那一次印到、要另外印的（網頁自己編碼的那幾張） */
+            const stampLater: number[] = [];
+            dropNativeOuts();
             const srcs = srcListRef.current;
+            const nfmt = exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png';
+            const takeNative = (r: NativeOut) => {
+              const saveUrl = fileSrc(r.path);
+              rememberNativePath(saveUrl, r.path);
+              nativeOutsRef.current.push(r.path);
+              let show = saveUrl;
+              if (r.previewPath) { show = fileSrc(r.previewPath); nativeOutsRef.current.push(r.previewPath); }
+              out.push(show); encoded.push(saveUrl);
+            };
             for (let i = 0; i < srcs.length; i++) {
               // 連結中的一律套現在這一份；解除連結的用它自己留下來的那一份。
               // 沒有留下來的（例如從頭到尾沒被切過去過）就直接用現在這一份，
@@ -8507,70 +8581,71 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
                   : (i === safeIdx ? cloneSnap(base).geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
               };
-              /* RAW：用這一張自己的參數，由原生從 RAW 原尺寸重沖（批量裡每張 RAW 各自的曝光、白平衡）。
-                 先沖成 16 位元 TIFF，編輯器其他的調色由原生用浮點套上去、直接輸出（全程不經過 8 位元）；
-                 原生做不了（局部、空間類編輯）才另外沖 JPEG 給網頁畫 */
               const ri = rawOf(srcs[i]);
-              const nfmt = exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png';
-              const rawTiff = ri && (nativeColorOnly(snap.params) || nativeHybridOk(snap.params)) ? await rawFullFor(ri, snap.params, 'tiff16') : null;
-              const rawTiffPath = rawTiff ? nativePathOf(rawTiff) : undefined;
-              let wide = ri ? (rawTiffPath && nativeColorOnly(snap.params) ? await nativeWideSave(srcs[i], snap, nfmt, undefined, rawTiffPath) : null) : await nativeWideSave(srcs[i], snap, nfmt);
-              const rawFull = ri && !wide ? await rawFullFor(ri, snap.params) : null;
-              const img = ri && wide ? (originalImgRef.current as HTMLImageElement) : rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
-              /* 這張有自動選取（主體、人物）但遮罩不在記憶體裡（例如批量裡沒打開過的照片）：用這張原圖分析補上 */
-              for (const m of maskList(snap.params).list) if (isAutoMask(m.maskType) && m.maskCreated && !autoMasks.has(m.maskId)) await buildAutoMask(m.maskId, m.maskType, img as HTMLImageElement);
-              // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
-              if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
-              /* 有局部、空間類編輯：網頁先做出無損成品，原生端補回廣色域與 HDR 亮部。
-                 補不了的時候，這張成品 PNG／HEIC 直接拿來用，不重算 */
-              let basePng = '';
-              if (!wide && (ri ? !!rawTiffPath : !!nativePathOf(srcs[i])) && nativeHybridOk(snap.params) && !nativeColorOnly(snap.params)) {
-                basePng = await renderFullUrl(img, snap, 'image/png', 1);
-                if (basePng) wide = await nativeWideSave(srcs[i], snap, nfmt, basePng, ri ? rawTiffPath : undefined);
-                if (wide) { revokeUrls([basePng]); basePng = ''; }
-              }
+              const p = snap.params;
               /* 拍攝資訊從哪個檔讀：RAW 用原本的 RAW 檔，其他用原圖 */
-              const metaPath = rawOf(srcs[i])?.path ?? nativePathOf(srcs[i]);
-              if (wide) {
-                out.push(wide);
-                if (exportFormat === 'heic') encoded.push(wide);
-              } else if (basePng && exportFormat !== 'jpg') {
-                /* 原生補不了色（例如有模糊類效果）：畫面完全用網頁的成品，原生只負責編碼、寫入原圖的拍攝資訊（見 utils/nativeFinish） */
-                const m = await nativeEncodeWithMeta(basePng, metaPath, exportFormat);
-                if (exportFormat === 'heic') { out.push(basePng); encoded.push(m ?? await exportHeicFromUrl(basePng)); }
-                else if (m) { revokeUrls([basePng]); out.push(m); }
-                else out.push(basePng);
-              } else if (exportFormat !== 'heic') {
-                if (basePng) revokeUrls([basePng]);
-                // JPG／PNG：大照片走原尺寸分段存檔（見 renderFullUrl），一般照片照一般流程
-                /* App 裡：先做無損 PNG，原生編碼成選的格式並寫入原圖的拍攝資訊；做不到才照舊由網頁直接編碼 */
-                const png = isNative() && metaPath ? await renderFullUrl(img, snap, 'image/png', 1) : '';
-                const m = png ? await nativeEncodeWithMeta(png, metaPath, exportFormat) : null;
-                if (m) { revokeUrls([png]); out.push(m); }
-                else if (png && exportFormat === 'png') out.push(png);
-                else { if (png) revokeUrls([png]); out.push(await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1)); }
-              } else {
-                // HEIC（App 才有）：先原尺寸做出無損 PNG（見 renderFullUrl），再交給原生編碼器轉 HEIC（同時寫入原圖的拍攝資訊）
-                const png = await renderFullUrl(img, snap, 'image/png', 1);
-                if (png) { out.push(png); encoded.push((await nativeEncodeWithMeta(png, metaPath, 'heic')) ?? await exportHeicFromUrl(png)); }
-                else {
-                  // 萬一分段失敗：退回一整張畫布（畫布上限內）
-                  const canvas = renderOneCanvas(img, snap, MOBILE_MAX_PIXELS);
-                  out.push(await canvasToUrl(canvas, 'image/png', 1));
-                  encoded.push(await exportHeic(canvas));
+              const metaPath = ri?.path ?? nativePathOf(srcs[i]);
+              /* 相機拍的有日期的照片：編輯的是沒印日期的那張，存檔時才印上去（日期是光加上去的，畫面調暗了字自然更清楚）。
+                 App 裡日期跟編碼同一次在原生印，不再另外解一次、印完再編一次 */
+              const date = stampDate || undefined;
+              /* ① 只有顏色類調整：原生從原圖（RAW 從 RAW 檔）用浮點整條做完，網頁一個像素都不用算 */
+              let res: NativeOut | null = null;
+              if (isNative() && nativeColorOnly(p)) res = ri ? await rawNativeSave(ri, snap, nfmt, { date }) : await nativeWideSave(srcs[i], snap, nfmt, { date });
+              if (res) { takeNative(res); continue; }
+              /* ② 網頁算成品。RAW：用這一張自己的參數從 RAW 原尺寸沖一張給網頁畫 */
+              const rawFull = ri ? await rawFullFor(ri, p) : null;
+              const rawFullPath = rawFull ? nativePathOf(rawFull) : undefined;
+              try {
+                const img = rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
+                /* 這張有自動選取（主體、人物）但遮罩不在記憶體裡（例如批量裡沒打開過的照片）：用這張原圖分析補上 */
+                for (const m of maskList(p).list) if (isAutoMask(m.maskType) && m.maskCreated && !autoMasks.has(m.maskId)) await buildAutoMask(m.maskId, m.maskType, img as HTMLImageElement);
+                // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
+                if (Number(p.fxLowfi) > 0) await warmLowfiLut();
+                if (isNative() && metaPath) {
+                  /* App：成品像素直接交給原生（不壓 PNG）。有局部、空間類編輯但沒有模糊類：原生補回廣色域與 HDR 亮部；
+                     補不了（例如有模糊類效果）：畫面完全用網頁的成品，原生只負責編碼、寫入拍攝資訊 */
+                  const made = await renderFullForNative(img, snap);
+                  try {
+                    if (nativeHybridOk(p)) res = ri ? await rawNativeSave(ri, snap, nfmt, { base: made, date }) : await nativeWideSave(srcs[i], snap, nfmt, { base: made, date });
+                    if (!res) res = await nativeEncodeBase(made, metaPath, exportFormat, { date, preview: PREVIEW_PX });
+                  } finally {
+                    if (made.path) void nativeImage().then(n => n?.remove({ path: made.path! })).catch(() => {});
+                  }
+                  if (res) { if (made.url) revokeUrls([made.url]); takeNative(res); continue; }
+                  /* 原生全部失敗（理論上不會）：PNG 直接用網頁的成品，其他格式往下由網頁編碼 */
+                  if (made.url && exportFormat === 'png') { out.push(made.url); encoded.push(made.url); stampLater.push(i); continue; }
+                  if (made.url) revokeUrls([made.url]);
                 }
+                /* ③ 網頁自己編碼（網頁版、原生做不到）。大照片走原尺寸分段存檔（見 renderFullUrl） */
+                if (exportFormat !== 'heic') {
+                  const u = await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1);
+                  out.push(u); encoded.push(u);
+                } else {
+                  // HEIC（App 才有）：先原尺寸做出無損 PNG，再交給原生編碼器轉 HEIC
+                  const png = await renderFullUrl(img, snap, 'image/png', 1);
+                  if (png) { out.push(png); encoded.push(await exportHeicFromUrl(png)); }
+                  else {
+                    // 萬一分段失敗：退回一整張畫布（畫布上限內）
+                    const canvas = renderOneCanvas(img, snap, MOBILE_MAX_PIXELS);
+                    out.push(await canvasToUrl(canvas, 'image/png', 1));
+                    encoded.push(await exportHeic(canvas));
+                  }
+                }
+                stampLater.push(i);
+              } finally {
+                /* RAW 沖給網頁畫的那張原尺寸中間檔很大：用完就刪 */
+                if (rawFullPath) void nativeImage().then(n => n?.remove({ path: rawFullPath })).catch(() => {});
               }
-              /* RAW 沖的 16 位元中間檔很大：用完就刪 */
-              if (rawTiffPath) void nativeImage().then(n => n?.remove({ path: rawTiffPath })).catch(() => {});
             }
-            /* 相機拍的有日期的照片：編輯的是沒印日期的那張，存檔時才印上去（日期是光加上去的，畫面調暗了字自然更清楚） */
+            /* 網頁自己編碼的那幾張：日期另外印（App 裡原生那一次已經印好的不重複印） */
             if (stampDate) {
-              for (let k = 0; k < out.length; k++) {
+              for (const k of stampLater) {
                 const stamped = await stampDateOnto(out[k], stampDate);
                 if (!stamped) continue;
-                revokeUrls([out[k]]);
+                const was = [out[k], encoded[k]];
                 out[k] = stamped;
-                if (exportFormat === 'heic' && encoded[k]) { revokeUrls([encoded[k]]); encoded[k] = await exportHeicFromUrl(stamped); }
+                encoded[k] = exportFormat === 'heic' ? await exportHeicFromUrl(stamped) : stamped;
+                revokeUrls(was.filter(u => u !== out[k] && u !== encoded[k]));
               }
             }
             if (request !== saveRequestRef.current) { revokeUrls([...out, ...encoded]); return; }

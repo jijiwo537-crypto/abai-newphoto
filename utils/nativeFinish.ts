@@ -51,3 +51,23 @@ export async function nativeEncodeWithMeta(pngUrl: string, metaPath: string | nu
     if (outPath) api.remove({ path: outPath }).catch(() => {});
   }
 }
+
+/** 編輯器存檔的成品：原生檔（呼叫端負責刪）＋成品頁顯示用的小圖 */
+export interface NativeOut { path: string; previewPath?: string }
+/** 網頁算好的成品（原生檔路徑，或 PNG 網址）只做編碼＋寫入拍攝資訊（不補色、不動像素），日期也在這一次印上。
+ *  跟 nativeEncodeWithMeta 一樣，只是成品留在原生、不讀回網頁（存相簿時直接用這個檔），並順便出一張顯示用的小圖。
+ *  base.path 由呼叫端負責刪；base.url 這裡上傳、用完就刪。失敗回 null */
+export async function nativeEncodeBase(base: { path?: string; url?: string }, metaPath: string | null | undefined, fmt: 'jpg' | 'png' | 'heic',
+  o: { date?: string; preview?: number } = {}): Promise<NativeOut | null> {
+  if (!isNative() || !metaPath || (!base.path && !base.url)) return null;
+  const api = await nativeImage();
+  if (!api) return null;
+  let tmp = '';
+  try {
+    const basePath = base.path || (tmp = await blobToNativeFile(await (await fetch(base.url!)).blob(), 'png'));
+    const nf = fmt === 'heic' ? 'heic' : fmt === 'jpg' ? 'jpeg' : 'png';
+    const r = await api.render({ path: basePath, basePath, baseOnly: true, metaPath, format: nf, quality: 1, hdr: false, date: o.date || undefined, preview: o.preview || 0 });
+    return r?.path ? { path: r.path, previewPath: r.previewPath } : null;
+  } catch { return null; }
+  finally { if (tmp) api.remove({ path: tmp }).catch(() => {}); }
+}

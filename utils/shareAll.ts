@@ -13,6 +13,7 @@
  */
 import { isNative } from './native';
 import { saveToPhotos } from './nativePhotos';
+import { nativePathOf, rememberNativeFile } from './nativeBridge';
 
 export type ShareResult = 'shared' | 'downloaded' | 'cancelled' | 'failed';
 
@@ -33,6 +34,17 @@ const extFor = (type: string, url: string): string => {
 export async function prepareFiles(urls: string[], baseName = 'abai'): Promise<File[]> {
   const out: File[] = [];
   for (let i = 0; i < urls.length; i++) {
+    /* App 裡成品本來就是原生的檔案（例如編輯器直接在原生編碼好的）：不讀進網頁，只做一個帶名字、類型的空殼，
+       記住它在原生的路徑 —— 存相簿、分享都直接用那個檔（幾十 MB 不必在網頁和原生之間來回搬） */
+    const np = isNative() ? nativePathOf(urls[i]) : undefined;
+    if (np) {
+      const ext = (np.split('.').pop() || 'jpg').toLowerCase();
+      const type = ext === 'heic' || ext === 'heif' ? 'image/heic' : ext === 'png' ? 'image/png' : ext === 'mov' ? 'video/quicktime' : ext === 'mp4' ? 'video/mp4' : 'image/jpeg';
+      const f = new File([], `${baseName}-${i + 1}.${ext === 'jpeg' ? 'jpg' : ext}`, { type });
+      rememberNativeFile(f, np);
+      out.push(f);
+      continue;
+    }
     const blob = await (await fetch(urls[i])).blob();
     const type = blob.type || 'image/png';
     out.push(new File([blob], `${baseName}-${i + 1}.${extFor(type, urls[i])}`, { type }));
@@ -103,6 +115,9 @@ async function nativeShare(files: File[]): Promise<ShareResult> {
 
   const uris: string[] = [];
   for (const f of files) {
+    /* 原生已經有這個檔（空殼 File）：直接交路徑 */
+    const np = nativePathOf(f);
+    if (np) { uris.push(np.startsWith('file://') ? np : `file://${np}`); continue; }
     try {
       const { uri } = await Filesystem.writeFile({
         path: `${NATIVE_DIR}/${f.name}`,

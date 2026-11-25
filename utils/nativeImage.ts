@@ -9,7 +9,7 @@ interface NativeImageApi {
   downsample(o: { path: string; maxPixel: number; quality?: number }): Promise<{ path: string; width: number; height: number }>;
   writeTemp(o: { data: string; ext: string }): Promise<{ path: string }>;
   appendTemp(o: { data: string; ext: string; path?: string }): Promise<{ path: string }>;
-  render(o: Record<string, unknown>): Promise<{ path: string; width: number; height: number }>;
+  render(o: Record<string, unknown>): Promise<{ path: string; width: number; height: number; previewPath?: string }>;
   encode(o: { path?: string; data?: string; format: string; quality?: number }): Promise<{ path: string }>;
   remove(o: { path: string }): Promise<void>;
   /** 搬進相機相簿資料夾（永久保存）；舊版 App 沒有這支 */
@@ -141,6 +141,26 @@ export async function writeNativeFileFast(parts: (Uint8Array | Blob)[], ext: str
     }
   }
   return path ?? null;
+}
+
+/** 原尺寸成品的像素直接交給原生（.abpx：RGBA、sRGB、不透明，見 ABAIImageCore.rawPixels）：
+ *  不壓 PNG、不轉 base64。有透明（不是每個像素都不透明）、或通道不能用就回 null，呼叫端照舊做 PNG */
+export async function pixelsToNativeFile(px: Uint8ClampedArray, w: number, h: number): Promise<string | null> {
+  if (!w || !h || px.length !== w * h * 4) return null;
+  for (let i = 3; i < px.length; i += 4) if (px[i] !== 255) return null;
+  const t = new Uint8Array(16);
+  t[0] = 0x41; t[1] = 0x42; t[2] = 0x50; t[3] = 0x58;
+  const dv = new DataView(t.buffer);
+  dv.setUint32(4, w, true); dv.setUint32(8, h, true);
+  return writeNativeFileFast([new Uint8Array(px.buffer, px.byteOffset, px.byteLength), t], 'abpx');
+}
+
+/** 過一段時間再刪掉這些原生暫存檔。計時器放在模組層（不在元件裡），不會連著整個元件的變數一起被抓住 */
+export function removeNativeFilesLater(paths: string[], ms = 0): void {
+  if (!paths.length) return;
+  const list = paths.slice();
+  const go = () => { void nativeImage().then(p => { if (p) for (const path of list) p.remove({ path }).catch(() => {}); }).catch(() => {}); };
+  if (ms > 0) setTimeout(go, ms); else go();
 }
 
 export async function blobToNativeFile(blob: Blob, ext: string): Promise<string> {

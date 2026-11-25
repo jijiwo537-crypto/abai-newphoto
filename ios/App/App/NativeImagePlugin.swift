@@ -212,6 +212,8 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         /* 編輯器的構圖：3×3 投影矩陣＋輸出尺寸（見 ABAIImageCore.warp） */
         let homography = (call.getArray("homography") as? [NSNumber])?.map { $0.doubleValue }
         let outW = call.getInt("outW") ?? 0, outH = call.getInt("outH") ?? 0
+        /* preview：另外輸出一張長邊這麼大的 JPEG 給成品頁顯示（0＝不要） */
+        let preview = call.getInt("preview") ?? 0
         queue.async {
             autoreleasepool {
                 var image: CIImage?
@@ -268,7 +270,11 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                     }
                     let out = ABAIImageCore.newFileURL(ext: format == .png ? "png" : (format == .jpeg ? "jpg" : "heic"))
                     try data.write(to: out)
-                    call.resolve(["path": out.path, "width": Int(img.extent.width), "height": Int(img.extent.height)])
+                    var res: [String: Any] = ["path": out.path, "width": Int(img.extent.width), "height": Int(img.extent.height)]
+                    if preview > 0, let pv = ABAIImageCore.writePreview(sdr, maxPixel: preview, space: baseOnly ? CGColorSpace(name: CGColorSpace.sRGB) : nil) {
+                        res["previewPath"] = pv.path
+                    }
+                    call.resolve(res)
                 } catch { call.reject(error.localizedDescription) }
             }
         }

@@ -118,6 +118,7 @@ enum ABAIImageCore {
     }
 
     static func ciImage(_ url: URL, expandHDR: Bool = false) -> CIImage? {
+        if url.pathExtension.lowercased() == "abpx" { return rawPixels(url) }
         var opts: [CIImageOption: Any] = [.applyOrientationProperty: true]
         if expandHDR, #available(iOS 18.0, *) { opts[.expandToHDR] = true }
         return CIImage(contentsOf: url, options: opts)
@@ -154,6 +155,37 @@ enum ABAIImageCore {
             case .unsupported(let s): return "這台裝置不支援：\(s)"
             }
         }
+    }
+
+    /// 網頁直接交過來的原始像素（.abpx，見 utils/nativeImage 的 pixelsToNativeFile）：
+    /// RGBA 8 位元、sRGB、不透明、由上往下一列一列；檔尾 16 位元組＝"ABPX"、寬、高、保留（32 位元小端序）。
+    /// 不經過 PNG：網頁不必壓縮、這裡不必解壓縮，像素一個不差。格式不對（長度、檔尾）一律回 nil，呼叫端照舊失敗退回
+    static func rawPixels(_ url: URL) -> CIImage? {
+        guard let data = try? Data(contentsOf: url, options: .alwaysMapped), data.count > 16 else { return nil }
+        let t = [UInt8](data.suffix(16))
+        guard t[0] == 0x41, t[1] == 0x42, t[2] == 0x50, t[3] == 0x58 else { return nil }
+        func u32(_ o: Int) -> Int { Int(t[o]) | Int(t[o + 1]) << 8 | Int(t[o + 2]) << 16 | Int(t[o + 3]) << 24 }
+        let w = u32(4), h = u32(8)
+        guard w > 0, h > 0, w <= 30000, h <= 30000, w * h * 4 + 16 == data.count,
+              let provider = CGDataProvider(data: data.prefix(w * h * 4) as CFData),
+              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let cg = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: space,
+                               bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                               provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return nil }
+        return CIImage(cgImage: cg)
+    }
+
+    /// 成品頁顯示用的小圖（長邊 maxPixel 的 JPEG）：成品頁不必把整張原尺寸成品解進網頁（十幾張就是好幾百 MB）
+    static func writePreview(_ image: CIImage, maxPixel: Int, space: CGColorSpace?) -> URL? {
+        let e = image.extent
+        guard maxPixel > 0, e.width > 0, e.height > 0, !e.isInfinite else { return nil }
+        let k = min(1, Double(maxPixel) / Double(max(e.width, e.height)))
+        var small = image.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+        if k < 1 { small = small.applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: k, kCIInputAspectRatioKey: 1]) }
+        let opts: [CIImageRepresentationOption: Any] = [CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): 0.9]
+        guard let d = context.jpegRepresentation(of: small, colorSpace: space ?? displayP3, options: opts) else { return nil }
+        let out = newFileURL(ext: "jpg")
+        do { try d.write(to: out); return out } catch { return nil }
     }
 
     /// 把 CGImage 寫成檔案，保留它自己的色彩描述檔（P3 照片維持 P3）

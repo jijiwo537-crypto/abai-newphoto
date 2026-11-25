@@ -9,7 +9,7 @@
  *   照片如果是從選擇器選來的、而且使用者允許完整相簿權限，就存成「原本那張照片的可逆編輯」：
  *   Photos 保留原圖，隨時能回復。 */
 import { isNative } from './native';
-import { nativePlugin, rememberNativeFile, fileSrc, isVideoItem, nativeVideoFile } from './nativeBridge';
+import { nativePlugin, rememberNativeFile, fileSrc, isVideoItem, nativeVideoFile, nativePathOf } from './nativeBridge';
 import { nativeImage, withBackgroundTask, blobToNativeFile } from './nativeImage';
 import { haptic } from './haptics';
 import { PHOTO_EXTS, RAW_EXTS, VIDEO_EXTS } from './fileTypes';
@@ -145,9 +145,11 @@ export async function saveToPhotos(files: File[]): Promise<SaveOutcome | null> {
     }
     for (const f of files) {
       let path = '';
+      /* 原生本來就有這個檔（成品直接在原生編碼好的、從相簿選進來的）：直接存那個檔，不再搬一次；那個檔不是這裡建的，不刪 */
+      const own = nativePathOf(f);
       try {
         const ext = (f.name.includes('.') ? f.name.split('.').pop()! : (f.type.split('/')[1] ?? 'jpg')).toLowerCase();
-        path = await blobToNativeFile(f, ext);
+        path = own || await blobToNativeFile(f, ext);
         const kind = f.type.startsWith('video') ? 'video' : 'photo';
         await p.save({
           path, kind,
@@ -159,7 +161,7 @@ export async function saveToPhotos(files: File[]): Promise<SaveOutcome | null> {
       } catch (e: any) {
         error = String(e?.message ?? e ?? '');
       } finally {
-        if (path) img.remove({ path }).catch(() => {});
+        if (path && !own) img.remove({ path }).catch(() => {});
       }
     }
     haptic(ok === files.length ? 'success' : 'error');

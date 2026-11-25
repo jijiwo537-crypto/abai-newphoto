@@ -208,6 +208,8 @@ type RawDevApi = {
   developLinear?(o: { path: string; look: RawLook | null; w: number; h: number; bw: number; bh: number }): Promise<{ gpu: boolean; path?: string; basePath?: string; cubePath?: string; cubeSize?: number; lutAmount?: number; fx?: { soft: number; blur: number; lowfi: number }; lowfiCubePath?: string; lowfiCubeSize?: number; matchCubePath?: string; matchCubeSize?: number; asShotTemperature: number; asShotTint: number }>;
   developPixels?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null; w: number; h: number; fw: number; fh: number }):
     Promise<{ path: string; fastPath: string; asShotTemperature: number; asShotTint: number }>;
+  developSize?(o: { path: string; params: Partial<RawEditParams>; look: RawLook | null }): Promise<{ width: number; height: number }>;
+  developRender?(o: Record<string, unknown>): Promise<{ path: string; width: number; height: number; previewPath?: string }>;
 };
 const rawDev = () => nativePlugin<RawDevApi>('RawDecode');
 const rawParams = (b: RawBaseParams): Partial<RawEditParams> => ({
@@ -276,6 +278,25 @@ export async function rawDevelopFull(path: string, b: RawBaseParams, look: RawLo
   const p = await rawDev();
   if (!p?.developFull) return null;
   try { const r = await p.developFull({ path, params: rawParams(b), look, format }); const u = fileSrc(r.path); rememberNativePath(u, r.path); return u; }
+  catch { return null; }
+}
+
+/** 原尺寸沖出來多大（不解碼；舊版 App 沒有這支回 null） */
+export async function rawDevelopSize(path: string, b: RawBaseParams, look: RawLook | null): Promise<{ width: number; height: number } | null> {
+  const p = await rawDev();
+  if (!p?.developSize) return null;
+  try { const r = await p.developSize({ path, params: rawParams(b), look }); return r.width > 0 && r.height > 0 ? r : null; }
+  catch { return null; }
+}
+/** 編輯器存 RAW：沖洗、構圖、調色（或網頁成品補色）、日期、編碼、拍攝資訊一次在原生做完。
+ *  回傳原生成品檔（呼叫端負責刪）；舊版 App 沒有這支、任何一步失敗都回 null */
+export async function rawDevelopRender(path: string, b: RawBaseParams, look: RawLook | null, o: {
+  srcW: number; srcH: number; format: 'jpeg' | 'heic' | 'heic10' | 'png'; quality?: number; keepGamut?: boolean;
+  cubePath?: string; cubeSize?: number; basePath?: string; homography?: number[]; outW?: number; outH?: number; date?: string; preview?: number;
+}): Promise<{ path: string; width: number; height: number; previewPath?: string } | null> {
+  const p = await rawDev();
+  if (!p?.developRender) return null;
+  try { return await p.developRender({ path, params: rawParams(b), look, quality: 1, keepGamut: true, ...o }); }
   catch { return null; }
 }
 

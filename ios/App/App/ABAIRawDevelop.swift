@@ -698,15 +698,29 @@ final class ABAIRawSession {
 
     /// 原尺寸、完整品質輸出成 JPEG（含拍照當下的濾鏡、特效、裁切、日期）
     /// format："jpeg"（預設，存檔用）或 "tiff16"（16 位元無損：拍照時從 RAW 沖成品的中間檔，後面還要套濾鏡、特效，不能先壓縮掉）
-    func export(_ p: ABAIRawParams, format: String = "jpeg") throws -> URL {
+    /// 原尺寸、完整品質的沖洗結果（還沒編碼）。export 跟編輯器的原生存檔（RawDecodePlugin.developRender）共用，兩邊像素一樣
+    func fullImage(_ p: ABAIRawParams) -> CIImage? {
         guard let f = ABAIRawDevelop.rawFilter(url, longSide: nil, draft: false),
               let raw = ABAIRawDevelop.applyRaw(f, p, defaults: ABAIRawDefaults(f)),
-              let lin = ABAIRawDevelop.bake(raw) else {
-            throw ABAIImageCore.CoreError.decode
-        }
+              let lin = ABAIRawDevelop.bake(raw) else { return nil }
         let base = ABAIRawDevelop.localBase(lin)
         queue.sync { ensureMatch() }
-        let img = ABAIRawDevelop.applyLook(matched(ABAIRawDevelop.finish(lin, base: base, p, asShot: (asShotTemperature, asShotTint))), look: look, withDate: true)
+        return ABAIRawDevelop.applyLook(matched(ABAIRawDevelop.finish(lin, base: base, p, asShot: (asShotTemperature, asShotTint))), look: look, withDate: true)
+    }
+
+    /// 原尺寸沖出來的大小（只讀 RAW 的檔頭資訊、不解碼）：網頁照這個大小算構圖矩陣。
+    /// 跟 fullImage 的實際大小對不上時，developRender 會拒絕、網頁照舊走原本的路
+    func fullSize(_ p: ABAIRawParams) -> CGSize? {
+        guard let f = ABAIRawDevelop.rawFilter(url, longSide: nil, draft: false),
+              let raw = ABAIRawDevelop.applyRaw(f, p, defaults: ABAIRawDefaults(f)) else { return nil }
+        let e = raw.extent
+        guard e.width > 0, e.height > 0, !e.isInfinite else { return nil }
+        let at0 = raw.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+        return ABAIRawDevelop.lookCrop(at0, look: look).extent.size
+    }
+
+    func export(_ p: ABAIRawParams, format: String = "jpeg") throws -> URL {
+        guard let img = fullImage(p) else { throw ABAIImageCore.CoreError.decode }
         if format == "tiff16" {
             guard let data = ABAIImageCore.context.tiffRepresentation(of: img, format: .RGBA16, colorSpace: ABAIImageCore.displayP3, options: [:]) else { throw ABAIImageCore.CoreError.encode }
             let out = ABAIImageCore.newFileURL(ext: "tif")

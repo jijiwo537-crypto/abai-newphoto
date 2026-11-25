@@ -43,6 +43,8 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "developFull", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "developPixels", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "developLinear", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "developSize", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "developRender", returnType: CAPPluginReturnPromise),
     ]
 
     // MARK: 即時沖洗（見 ABAIRawDevelop.swift）
@@ -233,6 +235,80 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
             autoreleasepool {
                 guard let s = self.headlessSession(path, look: look, longSide: 2048) else { call.reject("系統不認得這個 RAW 格式"); return }
                 do { call.resolve(["path": try s.export(p).path]) } catch { call.reject(error.localizedDescription) }
+            }
+        }
+    }
+
+    /// developSize({ path, params, look }) → { width, height }：原尺寸沖出來多大（不解碼），網頁算構圖矩陣用
+    @objc func developSize(_ call: CAPPluginCall) {
+        let path = call.getString("path") ?? ""
+        let look: [String: Any]? = call.getObject("look")
+        let p = ABAIRawParams(call.getObject("params"))
+        headlessQueue.async {
+            autoreleasepool {
+                guard let s = self.headlessSession(path, look: look, longSide: 2048), let z = s.fullSize(p) else { call.reject("系統不認得這個 RAW 格式"); return }
+                call.resolve(["width": Int(z.width.rounded()), "height": Int(z.height.rounded())])
+            }
+        }
+    }
+
+    /// developRender({ path, params, look, srcW, srcH, format, quality, keepGamut, cubePath, cubeSize, basePath,
+    ///                 homography, outW, outH, date, preview }) → { path, width, height, previewPath? }
+    /// 編輯器存 RAW：沖洗 → 構圖 → 編輯器的調色（色彩表）或網頁算好的成品（補回廣色域）→ 日期 → 編碼 → 拍攝資訊，
+    /// 一次在原生做完，中間不寫任何暫存檔、不經過 8 位元。以前要先把 RAW 沖成一張 JPEG、再沖一張給網頁，等於沖兩次。
+    /// 任何一步不對（大小對不上、色彩表讀不出來）都直接拒絕，網頁照舊走原本的路，不會存出沒調過的照片
+    @objc func developRender(_ call: CAPPluginCall) {
+        let path = call.getString("path") ?? ""
+        let look: [String: Any]? = call.getObject("look")
+        let p = ABAIRawParams(call.getObject("params"))
+        let srcW = call.getInt("srcW") ?? 0, srcH = call.getInt("srcH") ?? 0
+        let format = ABAIImageCore.Format(rawValue: call.getString("format") ?? "jpeg") ?? .jpeg
+        let quality = call.getDouble("quality") ?? 1
+        let keepGamut = call.getBool("keepGamut") ?? true
+        let cubePath = call.getString("cubePath"), cubeSize = call.getInt("cubeSize") ?? 0
+        let basePath = call.getString("basePath")
+        let homography = (call.getArray("homography") as? [NSNumber])?.map { $0.doubleValue }
+        let outW = call.getInt("outW") ?? 0, outH = call.getInt("outH") ?? 0
+        let dateText = call.getString("date").flatMap { $0.isEmpty ? nil : $0 }
+        let preview = call.getInt("preview") ?? 0
+        headlessQueue.async {
+            autoreleasepool {
+                guard let rawURL = ABAIImageCore.fileURL(from: path), let s = self.headlessSession(path, look: look, longSide: 2048) else {
+                    call.reject("系統不認得這個 RAW 格式"); return
+                }
+                guard var img = s.fullImage(p) else { call.reject("沖洗失敗"); return }
+                let e = img.extent
+                guard !e.isInfinite, Int(e.width.rounded()) == srcW, Int(e.height.rounded()) == srcH else { call.reject("大小對不上"); return }
+                img = img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+                if let hm = homography {
+                    guard let w = ABAIImageCore.warp(img, homography: hm, outW: outW, outH: outH) else { call.reject("構圖失敗"); return }
+                    img = w
+                }
+                var cube: ABAIImageCore.Cube?
+                if let cp = cubePath {
+                    guard cubeSize > 1, let u = ABAIImageCore.fileURL(from: cp), let d = try? Data(contentsOf: u),
+                          let c = ABAIImageCore.cube(data: d, size: cubeSize) else { call.reject("色彩表讀不出來"); return }
+                    cube = c
+                }
+                if let bp = basePath {
+                    guard let bu = ABAIImageCore.fileURL(from: bp), let base = ABAIImageCore.ciImage(bu) else { call.reject("讀不出成品"); return }
+                    img = keepGamut ? ABAIImageCore.keepGamut(edited: base, original: img) : base
+                } else if let c = cube {
+                    img = keepGamut ? ABAIImageCore.applyKeepingGamut(cube: c, to: img) : ABAIImageCore.apply(cube: c, to: img)
+                }
+                img = ABAIImageCore.uprightProperties(img)
+                if let d = dateText { img = ABAIDateStamp.stampDate(d, on: img) }
+                var sdr = img
+                if cube != nil && format != .heic10 { sdr = ABAIImageCore.dither(sdr) }
+                do {
+                    var data = try ABAIImageCore.encode(sdr, format: format, quality: quality)
+                    data = ABAIImageCore.copyMetadata(data, from: rawURL)
+                    let out = ABAIImageCore.newFileURL(ext: format == .png ? "png" : (format == .jpeg ? "jpg" : "heic"))
+                    try data.write(to: out)
+                    var res: [String: Any] = ["path": out.path, "width": Int(sdr.extent.width), "height": Int(sdr.extent.height)]
+                    if preview > 0, let pv = ABAIImageCore.writePreview(sdr, maxPixel: preview, space: nil) { res["previewPath"] = pv.path }
+                    call.resolve(res)
+                } catch { call.reject(error.localizedDescription) }
             }
         }
     }
