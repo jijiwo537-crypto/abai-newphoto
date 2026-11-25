@@ -1,3 +1,4 @@
+import { BATCH_MAX } from '../utils/batchLimit';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ms as motionMs, sheetOpenEase, sheetCloseEase } from '../utils/motionTimings';
 
@@ -161,6 +162,8 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   const selectRef = useRef<HTMLButtonElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const favAll = selectedIdx.length > 0 && selectedIdx.every(i => favorites?.has(shown[i]));
+  /** 批量編輯一次最多 BATCH_MAX 張：選超過就不給編輯鍵 */
+  const canEdit = selectedIdx.length <= BATCH_MAX;
   /** 多選編輯：照拍的先後（舊→新）交出去 */
   const editSelected = () => {
     if (!selectedIdx.length) return;
@@ -173,7 +176,7 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
       { kind: 'capsule' as const, el: actionsRef.current, buttons: [
         { id: 'fav', symbol: favAll ? 'heart.fill' : 'heart', tint: 'white' as const, enabled: selectedIdx.length > 0 },
         { id: 'share', symbol: 'square.and.arrow.up', enabled: selectedIdx.length > 0 },
-        { id: 'edit', symbol: 'slider.horizontal.3', enabled: selectedIdx.length > 0 },
+        ...(canEdit ? [{ id: 'edit', symbol: 'slider.horizontal.3', enabled: selectedIdx.length > 0 }] : []),
         { id: 'delete', symbol: 'trash', enabled: selectedIdx.length > 0 },
       ] },
     ] : [
@@ -184,11 +187,11 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
     else if (id === 'back') close();
     else if (id === 'fav') toggleFav(selectedIdx);
     else if (id === 'share') void share(selectedIdx);
-    else if (id === 'edit') editSelected();
+    else if (id === 'edit') { if (canEdit) editSelected(); }
     else if (id === 'delete') remove(selectedIdx);
     /* 原生按鈕照網頁元素「當下」的位置擺：一定要等相簿滑到定位才量（以前寫死 420ms，配的是 380ms 的動畫；
        動畫時長一改，量的時候相簿還在半路，多選鈕就偏下、返回鈕量到螢幕外而不見） */
-  }, [selecting, selectedIdx.join(','), favAll, photos.length], motionMs('camGallerySheet') + 40);
+  }, [selecting, selectedIdx.join(','), favAll, photos.length, canEdit], motionMs('camGallerySheet') + 40);
   const hideWeb = grid.native ? 'invisible' : '';
 
   /* 先把最新那幾張的螢幕版準備好（原生縮圖，很快）：第一次點開就是清楚的在飛 */
@@ -299,11 +302,11 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
             </button>
           </>
         ) : (
-          <div ref={actionsRef} className={`pointer-events-auto mx-auto h-[48px] w-[248px] rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-around px-2 ${hideWeb}`}>
+          <div ref={actionsRef} style={{ width: canEdit ? 248 : 188 }} className={`pointer-events-auto mx-auto h-[48px] rounded-full bg-white/10 border border-white/15 backdrop-blur-xl flex items-center justify-around px-2 ${hideWeb}`}>
             {([['fav', favAll ? 'favorite' : 'favorite_border', () => toggleFav(selectedIdx)],
                ['share', 'ios_share', () => void share(selectedIdx)],
                ['edit', 'tune', editSelected],
-               ['delete', 'delete', () => remove(selectedIdx)]] as const).map(([id, icon, fn]) => (
+               ['delete', 'delete', () => remove(selectedIdx)]] as const).filter(([id]) => id !== 'edit' || canEdit).map(([id, icon, fn]) => (
               <button key={id} onClick={fn} disabled={!selectedIdx.length} className="w-12 h-12 flex items-center justify-center disabled:opacity-30 active:scale-90 transition-transform">
                 <Icon name={icon} className="text-[22px] text-white" />
               </button>

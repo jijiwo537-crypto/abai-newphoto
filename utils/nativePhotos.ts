@@ -76,18 +76,21 @@ export function installNativeFilePicker() {
   void nativePhotos().then(p => { ready = ready || !!p; });
   void photoLibrary().then(p => { gallery = !!p; ready = ready || !!p; });
   const open = async (input: HTMLInputElement, filter: 'images' | 'videos' | 'any') => {
-    const limit = input.multiple ? 0 : 1;
+    /* 多選的上限：輸入框自己寫 data-max（例如批量編輯 15 張）；沒寫＝不限 */
+    const maxAttr = Number(input.getAttribute('data-max'));
+    const limit = input.multiple ? (maxAttr > 0 ? Math.floor(maxAttr) : 0) : 1;
     let files: File[] | null = null;
     /* 自動測試（utils/nativeQA）先放好的檔案：直接用，不開相簿 */
     const qa = (window as any).__abaiQAFiles as ((f: typeof filter) => File[] | null) | undefined;
     if (qa) files = qa(filter);
     if (!files) try {
       /* 去背圖只有帶 data-allow-alpha 的匯入入口能選（見 utils/alphaGuard） */
-      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.getAttribute('data-import-hero') || undefined });
+      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.getAttribute('data-import-hero') || undefined, quiet: maxAttr > 0 });
       /* 自己的相簿用不了（權限被拒、使用者選了系統的）→ 系統照片選擇器 */
       if (files === null) files = await pickNativeFiles(limit, filter);
     }
     catch (e: any) { alert(`開不了相簿：${String(e?.message ?? e ?? '')}`); return; }
+    if (files && limit > 1 && files.length > limit) files = files.slice(0, limit);
     /* 從主頁導入單張的過場：工具畫出來後，替身飛到照片的位置；其他情況收掉 */
     const { landImportHero, cancelImportHero, importHeroActive, setImportHeroFile } = await import('./importHero');
     if (importHeroActive()) {

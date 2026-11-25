@@ -660,6 +660,8 @@ export function generateCurveLut(channelPoints: Point[]): Uint8Array {
 export { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { generateBaseCorrectionLut, processPixels, copyPixelDither, sharpenDetailRows } from '../utils/photoPixelCore';
 import { processPixelsParallel, releasePixelPool } from '../utils/pixelParallel';
+import { BATCH_MAX } from '../utils/batchLimit';
+import { registerTrim } from '../utils/memoryPressure';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceGain } from '../utils/photoToneMath';
 import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
 /* 快取鍵用短 id 代表照片，不用來源字串：data: 網址有好幾 MB，每格滑桿都把它串進鍵裡，一格就要多花約 15ms */
@@ -1443,7 +1445,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      一次匯入多張時，編輯器本身完全不變 —— 畫面上永遠只有「目前這一張」，
      其他張的參數各自收在旁邊。連結中的照片共用同一份參數（改一張＝全部一起改），
      解除連結的照片有自己的一份，之後怎麼調都不會再互相影響。            */
-  const incoming = (batchSrcs && batchSrcs.length ? batchSrcs : [imageSrc]).filter(Boolean);
+  const incoming = (batchSrcs && batchSrcs.length ? batchSrcs : [imageSrc]).filter(Boolean).slice(0, BATCH_MAX);
   /** 清單自己留一份：縮圖列上可以刪照片，刪掉不必回頭改上層的狀態 */
   const [srcList, setSrcList] = useState<string[]>(incoming);
   /** 給 addToHistory／撤銷用的最新來源清單（callback 裡讀 state 會是舊的） */
@@ -1467,6 +1469,37 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const raw = rawOf(activeSrc);
   /** 目前這張是 RAW：曝光、色溫、色調、高光、陰影由原生從 RAW 沖 */
   const rawOn = !!raw;
+  /* 批量：在背景替每張照片做工作預覽（見 proxyRef）。從目前這張的左右開始，一次一張（原生同一條佇列），
+     等編輯器打開、畫面閒下來才開始，不跟進場搶。做好之前切過去的照樣解原圖，只是慢一點 */
+  useEffect(() => {
+    if (!isNative() || srcList.length < 2) return;
+    let alive = true;
+    void (async () => {
+      await awaitPhotoIdle(3000);
+      const at = Math.max(0, srcList.indexOf(activeSrcRef.current));
+      const order = srcList.map((u, i) => ({ u, d: Math.abs(i - at) + (i < at ? 0.5 : 0) })).sort((a, b) => a.d - b.d).map(x => x.u);
+      for (const u of order) {
+        if (!alive) return;
+        if (proxyRef.current.has(u) || rawOf(u) || fullJobsRef.current[u]) continue;
+        const path = nativePathOf(u);
+        if (!path) continue;
+        const size = await nativeImageSize(path);
+        if (!alive) return;
+        if (!size) continue;
+        fullDimsRef.current.set(u, { w: size.width, h: size.height });
+        /* 原圖本來就不大：做了也省不到什麼，還多壓一次 */
+        if (Math.max(size.width, size.height) <= PROXY_LONG * 1.25) continue;
+        const r = await nativeDownsample(path, PROXY_LONG);
+        if (!r) continue;
+        proxyFilesRef.current.push(r.path);
+        if (!alive) return;
+        proxyRef.current.set(u, r.url);
+      }
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcList]);
+  useEffect(() => () => { removeNativeFilesLater(proxyFilesRef.current, 60000); }, []);
   /** 滑桿實際調的參數：RAW 照片的曝光、色溫、色調、高光、陰影調 raw* 欄位 */
   const sliderPid = (id: string) => (rawOn && RAW_TOOL[id] ? RAW_TOOL[id] : id);
   /* 批量共用的那份參數一律存成「一般照片」的欄位；套到 RAW 那張時換成 raw* 欄位，收回來時換回去。
@@ -1908,7 +1941,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!live || !src) return;
     const old = shots.get(src); shots.delete(src);
     const shown = visibleEditorCanvas(), b = buffers.current.preview;
-    if (!shown || !b || !b.w || !b.h || !shown.width || !shown.height || isSwitching || showOriginalRef.current || isDirtyRef.current) { if (old) old.canvas.width = 0; return; }
+    if (!shown || !b || !b.w || !b.h || !shown.width || !shown.height || isSwitching || switchPendingRef.current || showOriginalRef.current || isDirtyRef.current) { if (old) old.canvas.width = 0; return; }
     const c = old?.canvas || document.createElement('canvas');
     if (c.width !== b.w || c.height !== b.h) { c.width = b.w; c.height = b.h; }
     const g = c.getContext('2d'); if (!g) return;
@@ -1977,8 +2010,26 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // 註：重建是同步的，所以「先等一下再蓋」行不通 —— 主執行緒被卡住時計時器根本輪不到。
     const decoded = viewedImgRef.current.get(srcList[i]) || warmImgRef.current.get(srcList[i]);
     const instant = !!(decoded && decoded.complete && decoded.naturalWidth);
-    if (!paintMaskShot(i, pendingSnapRef.current || liveRef.current) && !paintWarmNow(srcList[i], pendingSnapRef.current || liveRef.current) && !instant) setIsSwitching(true);
+    /* 新的這張還沒畫出來之前，畫面先留著上一張（不壓暗、不轉圈）：工作預覽解碼很快，通常一下就換過去了。
+       真的慢（例如第一次打開某張 RAW）超過 650ms 才顯示轉圈，讓人知道還在做 */
+    switchPendingRef.current = true;
+    try { performance.mark('abai-switch-start'); } catch { /* 只是量測 */ }
+    if (switchSpinTimerRef.current) clearTimeout(switchSpinTimerRef.current);
+    switchSpinTimerRef.current = 0;
+    if (!paintMaskShot(i, pendingSnapRef.current || liveRef.current) && !paintWarmNow(srcList[i], pendingSnapRef.current || liveRef.current) && !instant) {
+      switchSpinTimerRef.current = window.setTimeout(() => { switchSpinTimerRef.current = 0; if (switchPendingRef.current) setIsSwitching(true); }, 650);
+    }
   };
+  /** 切換後新的這張還沒建好（畫面上可能還是上一張） */
+  const switchPendingRef = useRef(false);
+  const switchSpinTimerRef = useRef(0);
+  const endSwitch = () => {
+    if (switchPendingRef.current) { try { performance.mark('abai-switch-ready'); } catch { /* 只是量測 */ } }
+    switchPendingRef.current = false;
+    if (switchSpinTimerRef.current) { clearTimeout(switchSpinTimerRef.current); switchSpinTimerRef.current = 0; }
+    setIsSwitching(false);
+  };
+  useEffect(() => () => { if (switchSpinTimerRef.current) clearTimeout(switchSpinTimerRef.current); }, []);
   /* ---- 縮圖的點按 ----------------------------------------------------------
      用 pointerup 而不是 click：手機上兩下點得快時，第二下的 click 常常被瀏覽器
      當成連擊手勢吞掉，看起來就是「點兩下沒反應」。順便補一個長按，
@@ -2109,7 +2160,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }, 1000);
     return () => window.clearInterval(timer);
   }, [imageSrc, activeSrc, historyIndex, initialState, histKey]);
-  const applyGeoRef = useRef<(g: GeoParams) => void>(() => {});
+  const applyGeoRef = useRef<(g: GeoParams, remapMasks?: boolean, force?: boolean) => void>(() => {});
   const activeDragRef = useRef<{
     type: MaskDragType;
     startX: number;
@@ -3029,8 +3080,39 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      背景預熱那份（warmImgRef）會一直被後面排隊的照片擠掉 —— 照片一多，
      擠掉的正好就是使用者正在來回切的那兩張，於是切回去又要重解一次碼。
      這一份只有切換時會寫，預熱碰不到，來回切才會是即時的。 */
-  const VIEWED_IMG_MAX = 5;
+  const VIEWED_IMG_MAX = 8;
+  /** 解好的圖總共最多佔多少像素（約 240MB）：工作預覽（2048）一張 300 萬像素，可以留好幾張；
+      原圖（1200 萬）就只留得下幾張 —— 跟以前「最多 5 張原圖」的記憶體一樣，不會更多 */
+  const DECODED_PIXEL_BUDGET = 60_000_000;
   const viewedImgRef = useRef<Map<string, HTMLImageElement>>(new Map());
+
+  /* ---- 批量編輯的工作預覽（smart preview）---------------------------------
+     專業修圖軟體批量編輯的做法：每張照片先做一份「螢幕用」的工作預覽，編輯、切換、縮圖都在它上面做，
+     原圖只在存檔時才讀。這裡由原生把每張照片縮成長邊 2048 的 JPEG（只解檔頭與縮小解碼，WebKit 不必解整張原圖）：
+       ‧ 切換時解碼只要原圖的 1/4 時間，解好的一張也只佔 1/4 記憶體，可以多留幾張，來回切幾乎都是現成的
+       ‧ 編輯預覽本來就只有 1800 長邊，2048 的工作預覽畫出來跟原圖畫的看不出差別
+       ‧ 存檔、IG 預覽一律從原圖做（見 fullOrNull）；有裁切、旋轉的照片構圖時需要更多像素，自動改讀原圖
+     RAW 本來就是沖好的 2048 底圖，不另外做。網頁版沒有原生，照原本的方式。 */
+  const PROXY_LONG = 2048;
+  const proxyRef = useRef<Map<string, string>>(new Map());
+  const proxyFilesRef = useRef<string[]>([]);
+  /** 從工作預覽解出來的圖（不是原圖）：存檔、IG 預覽不能拿它當原圖 */
+  const proxyImgsRef = useRef<WeakSet<HTMLImageElement>>(new WeakSet());
+  /** 原圖的真實尺寸（畫面上的「尺寸」顯示用；工作預覽比較小） */
+  const fullDimsRef = useRef<Map<string, { w: number; h: number }>>(new Map());
+  const proxyOf = (src: string) => proxyRef.current.get(src) ?? null;
+  /** 這張圖是原圖就回傳它；是工作預覽就回 null（呼叫端改讀原圖） */
+  const fullOrNull = (im: HTMLImageElement | null) => (im && !proxyImgsRef.current.has(im) ? im : null);
+  /** 解一張照片給編輯用：有工作預覽就解工作預覽（快、省記憶體），沒有就解原圖 */
+  const decodeForEdit = (src: string, preferFull = false) => new Promise<HTMLImageElement>((res, rej) => {
+    const proxy = preferFull ? null : proxyOf(src);
+    const im = new Image();
+    const u = proxy || src;
+    if (!u.startsWith('blob:') && !u.startsWith('data:')) im.crossOrigin = 'anonymous';
+    im.onload = async () => { try { if (typeof im.decode === 'function') await im.decode(); } catch { /* load 已成功 */ } if (proxy) proxyImgsRef.current.add(im); res(im); };
+    im.onerror = () => rej(new Error('load failed'));
+    im.src = u;
+  });
 
   /* ---- 底下那條批量縮圖列的小圖 -----------------------------------------
      格子只有 36×36，<img> 的 src 不能直接掛原圖 ——
@@ -3116,7 +3198,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const rememberDecoded = (src: string, im: HTMLImageElement) => {
     viewedImgRef.current.delete(src);
     viewedImgRef.current.set(src, im);
-    while (viewedImgRef.current.size > VIEWED_IMG_MAX) {
+    const pixelsOf = () => { let n = 0; viewedImgRef.current.forEach(x => { n += (x.naturalWidth || 0) * (x.naturalHeight || 0); }); return n; };
+    while (viewedImgRef.current.size > VIEWED_IMG_MAX || (viewedImgRef.current.size > 2 && pixelsOf() > DECODED_PIXEL_BUDGET)) {
       const oldest = viewedImgRef.current.keys().next().value as string;
       if (oldest === src) break;
       const old = viewedImgRef.current.get(oldest);
@@ -3229,9 +3312,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         // 看過的那幾張已經解好了，別再解一次（只讀不動順序，免得預熱把它們往前推）
         const cached = warmImgRef.current.get(src) || viewedImgRef.current.get(src);
         if (cached && cached.complete && cached.naturalWidth) return withImg(cached);
-        const im = new Image();
-        if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
-        im.onload = () => {
+        /* 有工作預覽就解工作預覽（不解整張原圖） */
+        decodeForEdit(src).then(im => {
+          if (cancelled) return;
           warmImgRef.current.set(src, im);
           while (warmImgRef.current.size > WARM_MAX + 1) {
             const oldest = warmImgRef.current.keys().next().value as string;
@@ -3239,9 +3322,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             warmImgRef.current.delete(oldest);
           }
           yieldTo(() => withImg(im));
-        };
-        im.onerror = done;
-        im.src = src;
+        }, done);
       };
       step();
     }, 900);
@@ -4491,8 +4572,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, []);
   /* 批量編輯時每一張照片的縮圖各留一份，來回切換就不用重算（切回去是瞬間的）。
      只留最近幾張，記憶體才不會一直長大。 */
-  /* 多圖編輯時每一張都留（一張兩排約 8MB），最多 8 張 */
-  const THUMB_CACHE_SRCS = 8;
+  /* 多圖編輯時每一張都留（一張兩排約 8MB）：整批（最多 BATCH_MAX 張）都留得住，來回切永遠不用重算。
+     原圖改用工作預覽之後省下的記憶體（一張原圖 48MB、工作預覽 12MB）遠大於多留的縮圖；
+     系統真的喊記憶體不夠時，只留目前這張的縮圖，其他的放掉（見下面的 registerTrim） */
+  /* iOS 的網頁畫布加起來有總量上限（舊機型約 384MB，超過新的畫布就建不出來）：
+     實體記憶體 6GB 以上的 iPhone 上限很寬，整批都留；較舊的機型維持原本的 8 張，其他的切過去再算 */
+  const thumbCacheSrcsRef = useRef(8);
+  useEffect(() => {
+    let alive = true;
+    void nativeImage().then(p => p?.memory()).then(m => {
+      if (alive && m && m.physical >= 5.5 * 1024 * 1024 * 1024) thumbCacheSrcsRef.current = BATCH_MAX;
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const thumbSrcsRef = useRef<string[]>([]);
   /** 倉庫的鍵。分隔符用空格：按鈕 id 跟照片的 URL 都不可能有空格 */
   const THUMB_SEP = ' ';
@@ -4513,12 +4605,27 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      每次重畫 React 比對 25 顆縮圖的 id 字串都要逐字比過一遍，點一下就卡上百毫秒。 */
   const thumbSrcKey = (src: string) => 's' + srcIdOf(thumbSrcOf(src));
   const thumbKey = (src: string, id: string) => thumbSrcKey(src) + THUMB_SEP + id;
+  /* 系統記憶體警告：批量的快取（其他照片的縮圖、解好的圖、預熱像素、留下來的畫面）全部放掉，只留目前這張要用的。
+     放掉的之後切過去會重算／重解，畫面一樣正確，只是那一下慢一點 —— 總比整個 App 被系統收掉好 */
+  useEffect(() => registerTrim('editor-batch-caches', () => {
+    const keep = thumbSrcKey(srcListRef.current[safeIdxRef.current] || '');
+    for (const store of [filterThumbStore, fxThumbStore]) {
+      for (const k of Object.keys(store.current)) if (k.slice(0, k.indexOf(THUMB_SEP)) !== keep) delete store.current[k];
+    }
+    thumbSrcsRef.current = thumbSrcsRef.current.filter(u => thumbSrcKey(u) === keep);
+    const cur = srcListRef.current[safeIdxRef.current];
+    for (const [k, im] of [...viewedImgRef.current]) if (k !== cur) { viewedImgRef.current.delete(k); if (im !== originalImgRef.current) im.src = ''; }
+    warmImgRef.current.clear();
+    warmPixelsRef.current.clear(); warmSigRef.current.clear();
+    for (const [k, shot] of [...maskShotRef.current]) { shot.canvas.width = 0; if (shot.ov) shot.ov.width = 0; maskShotRef.current.delete(k); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
   const noteThumbSrc = (src: string) => {
     const list = thumbSrcsRef.current;
     const at = list.indexOf(src);
     if (at >= 0) list.splice(at, 1);
     list.unshift(src);
-    const drop = list.splice(THUMB_CACHE_SRCS);
+    const drop = list.splice(thumbCacheSrcsRef.current);
     if (!drop.length) return;
     const dropKeys = drop.map(d => 's' + srcIdOf(d));
     for (const store of [filterThumbStore, fxThumbStore]) {
@@ -4715,7 +4822,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const others = srcList.map((u, i) => ({ u: thumbSrcOf(u), d: Math.abs(i - at) + (i < at ? 0.5 : 0) }))
       .sort((a, b) => a.d - b.d).map(x => x.u)
       .filter((u, i, a) => u !== cur && a.indexOf(u) === i)
-      .slice(0, THUMB_CACHE_SRCS - 1);   // 超過記憶體裡留得住的張數就不算（算了也會被擠掉，白做工）
+      .slice(0, thumbCacheSrcsRef.current - 1);   // 超過記憶體裡留得住的張數就不算（算了也會被擠掉，白做工）
     const run = () => {
       if (cancelled()) return;
       noteThumbSrc(cur);
@@ -4740,20 +4847,31 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           void awaitPhotoIdle(4000).then(() => { if (cancelled()) return; if (fxThumbsMissing(cur)) buildFxThumbs(cur, curPixels(), cancelled, next, true); else next(); });
         }
       });
-      // 其他照片：解好的圖直接用，沒有就載一次（只用來縮小，不留）
-      for (const u of others) steps.push(() => {
-        if (!filterThumbsMissing(u) && !fxThumbsMissing(u)) return next();
+      /* 其他照片：分兩輪。第一輪先把每一張「現在這個分頁」那一排算完（濾鏡那排在背景執行緒，很快），
+         第二輪才算另一排（特效那排要用 GPU，比較重）。以前一張一張兩排都算完才換下一張，
+         照片一多，跳到後面的照片時連正在看的那一排都還沒輪到。
+         縮圖用的小圖（幾十 KB）第一輪做好就留著，第二輪不必再解一次照片 */
+      const thumbPx = new Map<string, Uint8ClampedArray>();
+      const withPx = (u: string, go: (px: Uint8ClampedArray) => void) => {
+        const had = thumbPx.get(u);
+        if (had) return go(had);
         const use = (im: HTMLImageElement) => {
           if (cancelled()) return;
           const w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
           if (!w || !h) return next();
           const px = thumbPixelsFrom(im, w, h);
+          thumbPx.set(u, px);
           noteThumbSrc(u);
-          buildFilterThumbs(u, px, cancelled, () => buildFxThumbs(u, px, cancelled, next));
+          go(px);
         };
+        // 解好的圖直接用，沒有就解一次（有工作預覽就解工作預覽；只用來縮小，不留）
         const ready = viewedImgRef.current.get(u) || warmImgRef.current.get(u);
         if (ready && ready.complete && ready.naturalWidth) use(ready);
-        else loadImg(u).then(use).catch(() => next());
+        else decodeForEdit(u).then(use).catch(() => next());
+      };
+      for (const k of order) for (const u of others) steps.push(() => {
+        if (k === 'filter' ? !filterThumbsMissing(u) : !fxThumbsMissing(u)) return next();
+        withPx(u, px => k === 'filter' ? buildFilterThumbs(u, px, cancelled, next) : buildFxThumbs(u, px, cancelled, next));
       });
       next();
     };
@@ -7086,8 +7204,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       rememberDecoded(activeSrc, img);
       setIsPortrait(img.height > img.width);
 
-      // 動態更新尺寸
-      setImageDimensions(`${img.naturalWidth}×${img.naturalHeight}`);
+      // 動態更新尺寸（工作預覽比較小：顯示原圖的真實尺寸）
+      const fd = proxyImgsRef.current.has(img) ? fullDimsRef.current.get(activeSrc) : null;
+      setImageDimensions(fd ? `${fd.w}×${fd.h}` : `${img.naturalWidth}×${img.naturalHeight}`);
 
       noteBufferGeo(null);
       buildBuffersFromRef.current(img, img.width, img.height, true, activeSrc);
@@ -7097,7 +7216,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       // 兩次 buildBuffers 都在同一拍裡，React 只會提交一次，中間不會出現兩種尺寸。
       const own = geoRef.current;
       if (own && !isGeoIdentity(own)) applyGeoRef.current(own);
-      setIsSwitching(false);
+      endSwitch();
     };
 
     // 已經解好的就直接用，不要再繞一次 new Image()
@@ -7107,7 +7226,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       void waitEntranceStart().then(() => { if (loadIsCurrent) ready(done); });
     } else {
       const img = new Image();
-      if (!activeSrc.startsWith('blob:') && !activeSrc.startsWith('data:')) {
+      /* 批量：有工作預覽就解工作預覽（快、省記憶體）。這張自己有裁切、旋轉的話構圖要更多像素，照舊解原圖 */
+      const ownGeoNow = pendingSnapSrcRef.current === activeSrc && pendingSnapIdxRef.current != null ? ownGeoRef.current[pendingSnapIdxRef.current] : null;
+      const proxyUrl = !ownGeoNow || isGeoIdentity(ownGeoNow) ? proxyOf(activeSrc) : null;
+      const loadUrl = proxyUrl || activeSrc;
+      if (proxyUrl) proxyImgsRef.current.add(img);
+      if (!loadUrl.startsWith('blob:') && !loadUrl.startsWith('data:')) {
           img.crossOrigin = "anonymous";
       }
       let committed = false;
@@ -7134,13 +7258,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       img.onload = commitDecodedImage;
       img.onerror = () => {
         if (!loadIsCurrent) return;
-        setIsSwitching(false);
+        /* 工作預覽讀不到（例如暫存被系統清掉）：改讀原圖，不是錯誤 */
+        if (proxyUrl && !committed && img.src !== activeSrc) {
+          proxyRef.current.delete(activeSrc);
+          proxyImgsRef.current.delete(img);
+          img.src = activeSrc;
+          return;
+        }
+        endSwitch();
         console.error("Failed to load image in canvas:", activeSrc);
         alert("無法在畫布中解析此圖片，這可能是記憶體不足或格式損毀。");
         setIsEditorLoading(false);
         onCancel();
       };
-      img.src = activeSrc;
+      img.src = loadUrl;
       /* blob/data URL 在快取命中時可能在綁定 onload 前後立刻完成；補查一次，
          但用 committed 保證只會建立一次緩衝。 */
       if (img.complete && img.naturalWidth > 0) void commitDecodedImage();
@@ -7453,15 +7584,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   // 套用構圖：用新的幾何把來源重新算一次，再整個重建預覽緩衝。
   /* remapMasks：只有使用者在構圖分頁實際改了構圖才換算遮色片（復原／重做／切換照片時，遮色片本來就對應那個構圖，再換會移兩次） */
-  const applyGeo = useCallback((g: GeoParams, remapMasks = false) => {
+  const applyGeo = useCallback((g: GeoParams, remapMasks = false, force = false) => {
     if (!validGeo(g)) return false;
-    if (sameGeoPixels(bufferGeoRef.current, g)) {
+    if (!force && sameGeoPixels(bufferGeoRef.current, g)) {
       geoRef.current = g;
       setGeo(g);
       return false;
     }
     const img = originalImgRef.current;
     if (!img) return false;
+    /* 工作預覽的像素不夠構圖（裁切放大後會糊）：先用它畫，同時在背景解原圖，解好再照同樣的構圖重建一次 */
+    if (!isGeoIdentity(g) && proxyImgsRef.current.has(img)) upgradeToFullRef.current();
     const sw = img.naturalWidth || img.width;
     const sh = img.naturalHeight || img.height;
     if (remapMasks) { try { remapMasksRef.current(bufferGeoRef.current, g, sw, sh); } catch { /* 換算失敗就維持原樣 */ } }
@@ -7478,6 +7611,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, []);
 
   useEffect(() => { applyGeoRef.current = applyGeo; }, [applyGeo]);
+  /** 目前這張從工作預覽換成原圖（構圖需要原圖的像素時）：只做一次，換好照現在的構圖重建 */
+  const upgradingRef = useRef<string | null>(null);
+  const upgradeToFull = () => {
+    const src = activeSrcRef.current;
+    if (!src || upgradingRef.current === src) return;
+    upgradingRef.current = src;
+    decodeForEdit(src, true).then(full => {
+      if (upgradingRef.current === src) upgradingRef.current = null;
+      const cur = originalImgRef.current;
+      if (activeSrcRef.current !== src || !cur || !proxyImgsRef.current.has(cur)) return;
+      originalImgRef.current = full;
+      const g = geoRef.current;
+      if (g && !isGeoIdentity(g)) applyGeoRef.current(g, false, true);
+    }).catch(() => { if (upgradingRef.current === src) upgradingRef.current = null; });
+  };
+  const upgradeToFullRef = useRef(upgradeToFull); upgradeToFullRef.current = upgradeToFull;
   const remapMasksRef = useRef(remapMasksForGeo); remapMasksRef.current = remapMasksForGeo;
 
   const buildBuffersFromRef = useRef(buildBuffersFrom);
@@ -8384,7 +8533,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             if (mx === 0 || minA < 250) { cvs.width = cvs.height = 0; cvs = null; }
           }
           if (!cvs) {
-            const src0 = i === safeIdx && originalImgRef.current ? originalImgRef.current : await loadImg(srcList[i]);
+            const src0 = i === safeIdx && originalImgRef.current ? originalImgRef.current : await decodeForEdit(srcList[i]);
             const ow = src0.naturalWidth || src0.width, oh = src0.naturalHeight || src0.height;
             const k = Math.min(1, 1800 / Math.max(ow, oh));
             const small = document.createElement('canvas');
@@ -8504,7 +8653,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           ? JSON.parse(JSON.stringify(ownGeoRef.current[safeIdx]))
           : cloneSnap(live).geo,
       };
-      const url = await renderOne(await loadFullImg(srcListRef.current[safeIdx], originalImgRef.current), snap);
+      const url = await renderOne(await loadFullImg(srcListRef.current[safeIdx], fullOrNull(originalImgRef.current)), snap);
       revokeUrls(igShot && igShot !== url ? [igShot] : []);
       setIgShot(url);
       setIgOpen(true);
@@ -8607,7 +8756,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   const { img, made } = await webPhase(async () => {
                     const rawFull = ri ? await rawFullFor(ri, p) : null;
                     rawFullPath = rawFull ? nativePathOf(rawFull) : undefined;
-                    const img = rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
+                    const img = rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? fullOrNull(originalImgRef.current) : null);
                     /* 這張有自動選取（主體、人物）但遮罩不在記憶體裡（例如批量裡沒打開過的照片）：用這張原圖分析補上 */
                     for (const m of maskList(p).list) if (isAutoMask(m.maskType) && m.maskCreated && !autoMasks.has(m.maskId)) await buildAutoMask(m.maskId, m.maskType, img as HTMLImageElement);
                     // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
@@ -9202,6 +9351,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const rawDevelopedRef = useRef<Record<string, number>>({ rawExposure: NaN, rawTemp: 0, rawTint: 0, rawHighlights: 0, rawShadows: 0 });
   /** 正在沖、還沒換上：存檔前要等它 */
   const rawPendingRef = useRef<Promise<void> | null>(null);
+  /** 每張 RAW 底圖（網址）是用哪一組 raw* 參數沖的。切到一張 RAW 時，底圖已經是照現在的參數沖的就不必再沖。
+      匯入時沖的那張是預設值（全 0）；之後每次換上新沖的底圖都會記下來 */
+  const rawSrcKeyRef = useRef<Map<string, string>>(new Map());
+  if (rawSrcKeyRef.current.size === 0) {
+    const zero = rawKeyOf({} as EditorParams);
+    if (rawProp && imageSrc) rawSrcKeyRef.current.set(imageSrc, zero);
+    if (rawMap) for (const k of Object.keys(rawMap)) rawSrcKeyRef.current.set(k, zero);
+  }
   useEffect(() => {
     if (!rawOn || !raw) return;
     /* 換到另一張 RAW（批量）：這張的底圖還沒照目前參數沖過，拍攝當下的白平衡也是這張自己的 */
@@ -9217,6 +9374,31 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
        建不起來（沒有 WebGL2、拍照時套了濾鏡或特效）就照舊每一格請原生出像素 */
     let gpu: RawGpu | null = null;
     let gpuFor = '';
+    /** 準備 GPU 即時沖洗（原生交一次線性資料、建一個 GPU 畫布）。拖 RAW 滑桿要用；切換照片時不馬上做（見 warmGpuSoon） */
+    const ensureGpu = async (pw: number, ph: number) => {
+      const gk = `${pw}x${ph}`;
+      if (gpuFor === gk) return;
+      gpuFor = gk; gpu?.dispose(); gpu = null;
+      /* 底圖本來就是大範圍模糊過的：一半大小就夠（GPU 取樣時會平滑內插） */
+      const bw = Math.max(1, Math.round(pw / 2)), bh = Math.max(1, Math.round(ph / 2));
+      const L = await rawDevelopLinear(raw.path, raw.look, pw, ph, bw, bh);
+      if (!alive) return;
+      if (L && L.gpu) { try { gpu = new RawGpu(L.lin, pw, ph, L.base, bw, bh, [L.asShotTemperature, L.asShotTint], L.cube, L.fx, L.match); } catch { gpu = null; } }
+    };
+    /* 停在這張一下（沒有馬上又切走）才在背景把 GPU 即時沖洗準備好：之後一拖 RAW 滑桿就有反應；
+       快速連續切換時中間經過的那幾張不會每張都建一個 GPU 畫布、搬一次線性資料 */
+    let warmTimer = 0;
+    const warmGpuSoon = () => {
+      if (warmTimer) clearTimeout(warmTimer);
+      warmTimer = window.setTimeout(() => {
+        warmTimer = 0;
+        if (!alive || busy || !isGeoIdentity(geoRef.current)) return;
+        const pw = buffers.current.preview.w, ph = buffers.current.preview.h;
+        if (!pw || !ph) return;
+        busy = true;
+        void ensureGpu(pw, ph).catch(() => {}).finally(() => { busy = false; });
+      }, 900);
+    };
     /** 放手後：背景補一張完整的 JPEG 當正式來源（裁切、前後對比用）：不擋住下一次拖曳；這段時間又調了就不用了 */
     const adoptLater = (want: Record<string, number>) => {
       const wantKey = rawKeyOf(want as any);
@@ -9225,7 +9407,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         if (!j || !alive || rawKeyOf(rawDevelopedRef.current as any) !== wantKey) return;
         const im = await loadImg(j.url);
         await im.decode?.().catch(() => {});
-        if (alive && rawKeyOf(rawDevelopedRef.current as any) === wantKey) adoptRawUrl(j.url, im);
+        if (alive && rawKeyOf(rawDevelopedRef.current as any) === wantKey) { rawSrcKeyRef.current.set(j.url, wantKey); adoptRawUrl(j.url, im); }
       })().catch(() => {});
     };
     /* 拖的時候跟放手後用的是同一套運算（原生 RAW 沖洗）——看起來完全一樣，差別只在清晰度：
@@ -9251,8 +9433,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const exp = fromCanon(pendingSnapRef.current.params, true);
         if (Object.values(RAW_TOOL).some(k => ((exp as any)[k] || 0) !== ((p0 as any)[k] || 0))) return;
       }
-      busy = true;
       const want = { rawExposure: p0.rawExposure || 0, rawTemp: p0.rawTemp || 0, rawTint: p0.rawTint || 0, rawHighlights: p0.rawHighlights || 0, rawShadows: p0.rawShadows || 0 };
+      /* 這張的底圖本來就是照現在這組 RAW 參數沖的（匯入時的預設值、或之前看過時沖好的）：不用再沖。
+         以前每切到一張 RAW 都要重沖一次、建一個 GPU 畫布，放手後再背景補沖一張 2048 的、換掉來源 ——
+         15 張 RAW 來回切就一直在沖，切換慢、縮圖也一直被打斷重來 */
+      if (rawFresh && rawSrcKeyRef.current.get(activeSrcRef.current) === key) {
+        rawFresh = false; sharp = true;
+        rawDevelopedRef.current = want;
+        setRawFirstDone(true);
+        warmGpuSoon();
+        return;
+      }
+      busy = true;
       const final = !dragging;
       rawPendingRef.current = (async () => {
         try {
@@ -9266,15 +9458,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           /* 拖曳代理（fast）拖的時候不會畫到畫面上（拖曳中一律畫全解析度）：拖的時候不沖，每格少傳一份；放手才補上 */
           const fw = final && cur.fast.source ? cur.fast.w : 0, fh = final && cur.fast.source ? cur.fast.h : 0;
           if (pw && ph && isGeoIdentity(geoRef.current)) {
-            const gk = `${pw}x${ph}`;
-            if (gpuFor !== gk) {
-              gpuFor = gk; gpu?.dispose(); gpu = null;
-              /* 底圖本來就是大範圍模糊過的：一半大小就夠（GPU 取樣時會平滑內插） */
-              const bw = Math.max(1, Math.round(pw / 2)), bh = Math.max(1, Math.round(ph / 2));
-              const L = await rawDevelopLinear(raw.path, raw.look, pw, ph, bw, bh);
-              if (!alive) return;
-              if (L && L.gpu) { try { gpu = new RawGpu(L.lin, pw, ph, L.base, bw, bh, [L.asShotTemperature, L.asShotTint], L.cube, L.fx, L.match); } catch { gpu = null; } }
-            }
+            await ensureGpu(pw, ph);
+            if (!alive) return;
             if (gpu && gpu.ok) {
               const b = rawBase({ ...DEFAULT_PARAMS, ...want });
               const pre = gpu.render(b);
@@ -9309,6 +9494,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           if (!alive) return;
           rawDevelopedRef.current = want;
           sharp = final;
+          if (final) rawSrcKeyRef.current.set(r.url, rawKeyOf(want as any));
           await installRaw(r.url, final, im);
           setRawFirstDone(true); rawFresh = false;
         } catch { /* 沖不出來：維持上一張（下一格再試） */ }
@@ -9316,9 +9502,70 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       })();
     };
     rafId = requestAnimationFrame(tick);
-    return () => { alive = false; cancelAnimationFrame(rafId); gpu?.dispose(); gpu = null; };
+    /* 拍攝當下的白平衡（色溫、色調滑桿的中點）先問好：上面「不用再沖」的判斷要用它 */
+    if (!rawAsShotRef.current) void rawAsShotOf(raw).then(a => { if (alive && a && !rawAsShotRef.current) rawAsShotRef.current = a; }).catch(() => {});
+    return () => { alive = false; cancelAnimationFrame(rafId); if (warmTimer) clearTimeout(warmTimer); gpu?.dispose(); gpu = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [raw?.path]);
+  /* ── RAW 批量：背景先把左右鄰居照現在的參數沖好 ─────────────────────────────
+     專業修圖軟體的批量做法：調整一停下來，就在背景把「接下來最可能看的那幾張」照新參數重畫好。
+     這裡是 RAW 的底圖（RAW 那一步只能由原生沖）：連動中的 RAW 參數（曝光、白平衡、高光、陰影）一改，
+     其他張的底圖就都過時了，切過去才沖會看到舊的樣子再跳成新的。停手 1.2 秒後依序沖好左右各兩張、換上，
+     往左往右翻時切過去就已經是對的。一次只沖一張（原生同一條佇列），一動滑桿、一切換就停 */
+  const rawLiveKey = Object.keys(rawMap || {}).length > 1 && liveRef.current ? rawKeyOf(fromCanon(liveRef.current.params, true)) : '';
+  const adoptRawAt = (i: number, old: string, url: string, im: HTMLImageElement, key: string) => {
+    const info = rawOf(old);
+    if (!info) return;
+    rawInfoRef.current.set(url, info);
+    rawSrcKeyRef.current.set(url, key);
+    thumbOriginRef.current[url] = thumbSrcOf(old);
+    SRC_IDS.set(url, srcIdOf(old));
+    rememberDecoded(url, im);
+    /* 舊底圖留下的畫面、預熱像素都是舊參數的：丟掉 */
+    const shot = maskShotRef.current.get(old);
+    if (shot) { shot.canvas.width = 0; if (shot.ov) shot.ov.width = 0; maskShotRef.current.delete(old); }
+    warmPixelsRef.current.delete(old); warmSigRef.current.delete(old);
+    viewedImgRef.current.delete(old); warmImgRef.current.delete(old);
+    const next = [...srcListRef.current]; next[i] = url;
+    srcListRef.current = next;
+    setSrcList(next);
+  };
+  useEffect(() => {
+    if (!isNative() || !rawLiveKey || srcList.length < 2 || isInteracting) return;
+    let alive = true;
+    const t = window.setTimeout(() => void (async () => {
+      const at = safeIdxRef.current;
+      for (const i of [at + 1, at - 1, at + 2, at - 2]) {
+        if (!alive) return;
+        const list = srcListRef.current;
+        if (i < 0 || i >= list.length || i === safeIdxRef.current) continue;
+        const src = list[i];
+        const info = rawOf(src);
+        if (!info) continue;
+        const snapKey = () => {
+          const sn = linked[i] === false ? soloSnapsRef.current[i] : liveRef.current;
+          return sn ? { sn, key: rawKeyOf(fromCanon(sn.params, true)) } : null;
+        };
+        const want = snapKey();
+        if (!want || rawSrcKeyRef.current.get(src) === want.key) continue;
+        try {
+          const a = await rawAsShotOf(info);
+          if (!alive) return;
+          const r = await rawDevelopPreview(info.path, rawBaseOf(info, a, fromCanon(want.sn.params, true)), info.look, 2048, true);
+          if (!r || !alive) continue;
+          const im = await loadImg(r.url);
+          await im.decode?.().catch(() => {});
+          if (!alive) return;
+          /* 沖的這段時間情況可能變了（切到這張、參數又改了、照片被換掉）：對不上就不換 */
+          const now = snapKey();
+          if (srcListRef.current[i] !== src || i === safeIdxRef.current || pendingSnapSrcRef.current === src || !now || now.key !== want.key) continue;
+          adoptRawAt(i, src, r.url, im, want.key);
+        } catch { /* 沖不出來：切過去時照原本的方式沖 */ }
+      }
+    })(), 1200);
+    return () => { alive = false; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [safeIdx, rawLiveKey, isInteracting, srcList.length, linked]);
   const studioPrevRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
   /* 取消＝丟掉這次在工具裡畫的東西：工具一直掛著（進出才會是立刻的），所以換一個新的 */
   const [studioGen, setStudioGen] = useState({ beauty: 0, match: 0 });
@@ -10776,7 +11023,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   </div>
                 );
               })}
-              {onAddPhotos && (
+              {onAddPhotos && srcList.length < BATCH_MAX && (
                 <button
                   onClick={() => { setBatchMenu(null); onAddPhotos(); }}
                   title="新增照片"

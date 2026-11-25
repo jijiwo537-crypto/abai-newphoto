@@ -109,11 +109,13 @@ const Spinner: React.FC = () => (
 
 export const NativeGallery: React.FC<{
   api: PhotoLibraryApi; limit: number; filter: GalleryFilter; onClose: (files: File[] | null) => void;
+  /** 有上限但不寫出「最多可選 N 張」 */
+  quiet?: boolean;
   /** 不顯示去背（有透明像素）的照片：大部分工具不收去背圖 */
   noAlpha?: boolean;
   /** 導入單張時播放大過場（從主頁進編輯、美顏、仿色才有） */
   hero?: string;
-}> = ({ api, limit, filter, onClose, noAlpha = false, hero }) => {
+}> = ({ api, limit, filter, onClose, noAlpha = false, hero, quiet = false }) => {
   const multi = limit !== 1;
   const [shown, setShown] = useState(false);              // 滑上來的動畫
   const [status, setStatus] = useState<LibraryStatus | 'checking'>('checking');
@@ -375,7 +377,7 @@ export const NativeGallery: React.FC<{
                 onClick={() => { haptic('tick'); void api.manageLimited().then(() => reload()); }}>選更多照片</button>
             </div>
           )}
-          {multi && limit > 1 && ok && (
+          {multi && limit > 1 && ok && !quiet && (
             <div className="px-4 pb-2 text-[11.5px] text-white/40">{`最多可選 ${limit} 張`}</div>
           )}
         </div>
