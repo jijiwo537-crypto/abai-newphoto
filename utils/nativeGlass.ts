@@ -10,7 +10,7 @@ import { isNative } from './native';
 
 export interface GlassButtonSpec { id: string; symbol?: string; title?: string; tint?: 'white' | 'red' | 'pink' | 'yellow'; enabled?: boolean; /** 白底按鈕上的黑字 */ titleColor?: 'black'; /** 圖示大小（pt，不給＝19）；有給的會照圖形本身視覺置中 */ pointSize?: number }
 export type GlassItem =
-  | (GlassButtonSpec & { kind: 'circle'; el: HTMLElement | null; shape?: 'roundedSquare'; /** 深色玻璃 */ dark?: boolean; /** 白底 */ fill?: 'white' })
+  | (GlassButtonSpec & { kind: 'circle'; el: HTMLElement | null; shape?: 'roundedSquare'; /** 深色玻璃 */ dark?: boolean; /** 白底 */ fill?: 'white'; /** 白底的濃度（0～1） */ fillAlpha?: number })
   | { kind: 'capsule'; el: HTMLElement | null; buttons: GlassButtonSpec[]; /** 左右內距（pt，不給＝8） */ pad?: number };
 
 interface NativeGlassApi {

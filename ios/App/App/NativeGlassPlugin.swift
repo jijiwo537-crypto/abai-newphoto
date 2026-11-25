@@ -383,7 +383,8 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
                                    interactive: group != "camera-viewer", dark: (item["dark"] as? Bool) ?? false)
         glass.frame = frame
         if (item["fill"] as? String) == "white" {
-            glass.contentView.backgroundColor = .white
+            /* fillAlpha：白底的濃度（不給＝1，完全不透明）。成品頁的儲存給 0.85：白色、但透一點點後面的玻璃 */
+            glass.contentView.backgroundColor = UIColor(white: 1, alpha: CGFloat((item["fillAlpha"] as? NSNumber)?.doubleValue ?? 1))
             glass.layer.borderWidth = 0
         }
         let specs: [[String: Any]] = (item["kind"] as? String) == "capsule"

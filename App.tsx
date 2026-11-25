@@ -223,7 +223,7 @@ const App: React.FC = () => {
     void nativeDialog({
       title: '是否儲存為草稿',
       buttons: [{ id: 'save', title: '儲存', role: 'primary' }, { id: 'discard', title: '放棄' }, { id: 'cancel', title: '取消' }],
-      style: 'clear',
+      style: 'dark',
     }).then(id => {
       if (!live) return;
       if (id === null) { setWebExitFallback(true); return; }
