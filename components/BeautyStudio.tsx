@@ -2,6 +2,8 @@ import { slideBack } from '../utils/pageTransition';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { canExportHeic, exportHeicFromUrl } from '../utils/heicExport';
 import { openGlassMenu } from '../utils/nativeGlass';
+import { nativeFinish } from '../utils/nativeFinish';
+import { isNative } from '../utils/native';
 import { SAVE_MENU_GLASS, SAVE_MENU_BUTTON } from '../utils/premiumGlass';
 import { isDarkSwatch } from '../utils/swatch';
 import { BusyLayer, afterBusyPainted } from './BusyLayer';
@@ -1670,9 +1672,14 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       /* 「儲存中」那一層確定畫到螢幕上才開始算 */
       await afterBusyPainted();
       const fmt = exportFormatRef.current;
-      let url = await exportFullRes(fmt === 'jpg' ? 'image/jpeg' : 'image/png');
+      /* App 裡：先做無損 PNG，交給原生收尾（廣色域、HDR、10 位元 HEIC、拍攝資訊；見 utils/nativeFinish）；做不到才照舊用網頁編碼 */
+      const png = isNative() || fmt !== 'jpg' ? await exportFullRes('image/png') : null;
+      const fin = png ? await nativeFinish(png, imageSrc, fmt) : null;
+      let url = fin ?? (fmt !== 'jpg' ? png : await exportFullRes('image/jpeg'));
+      if (!fin && fmt === 'jpg' && png) revokeUrl(png);
+      if (fin && png) revokeUrl(png);
       /* HEIC：先做無損 PNG，再交給原生編碼器（跟編輯器同一條） */
-      if (url && fmt === 'heic') {
+      if (url && fmt === 'heic' && !fin) {
         try { const h = await exportHeicFromUrl(url); if (h) { revokeUrl(url); url = h; } } catch { /* 轉不了就存 PNG */ }
       }
       if (url) {

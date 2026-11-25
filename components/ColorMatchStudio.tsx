@@ -23,6 +23,8 @@ import { ExportActionLift } from './ExportActionLift';
 import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { PREMIUM_GLASS, SAVE_MENU_GLASS, SAVE_MENU_BUTTON } from '../utils/premiumGlass';
 import { openGlassMenu } from '../utils/nativeGlass';
+import { nativeFinish } from '../utils/nativeFinish';
+import { isNative } from '../utils/native';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
 import { useAlignPad, ALIGN_FILL_CSS, useOriginalImage, drawOriginalInto, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
@@ -775,6 +777,25 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
   };
 
   const saveCanvas = async (canvas: HTMLCanvasElement) => {
+    /* App 裡：網頁的無損成品交給原生收尾（廣色域、HDR、10 位元 HEIC、拍攝資訊；見 utils/nativeFinish）。
+       大照片先用導向上採樣做出原尺寸的無損 PNG 再交過去 */
+    if (isNative()) {
+      const big = srcImg && safeSize(srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height).k < 1;
+      const P = big ? readPixels(canvas) : null, D = big && P ? originalAt(srcImg!, canvas.width, canvas.height) : null;
+      const base = big ? (P && D ? await fullResFromProcessed(srcImg!, P, D, canvas.width, canvas.height, 'image/png') : null) : await canvasToUrl(canvas);
+      const fin = base ? await nativeFinish(base, imageSrc, exportFormat) : null;
+      if (fin) {
+        const previewUrl = big ? await canvasToUrl(canvas) : base!;
+        if (big && base) revokeUrl(base);
+        revokeUrl(finalPreviewRef.current);
+        finalPreviewRef.current = previewUrl;
+        setFinalPreview(previewUrl);
+        putFinal(fin);
+        await record(previewUrl);
+        return;
+      }
+      if (base) revokeUrl(base);
+    }
     /* 超過手機畫布上限的大照片：這張是上限內算的，用導向上採樣做出原尺寸檔案（見 utils/fullResExport）；
        預覽與歷史紀錄用上限內那張就夠 */
     if (srcImg && safeSize(srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height).k < 1 && exportFormat !== 'heic') {
