@@ -681,8 +681,25 @@ final class ABAISheet: UIView {
                 b.layer.cornerCurve = .continuous
                 b.layer.borderWidth = 0.5
                 b.layer.borderColor = UIColor(white: 1, alpha: checked ? 0.9 : 0.1).cgColor
-                let l = UILabel(frame: CGRect(x: 16, y: 0, width: inner - 52, height: 48))
+                /* 有圖示的列（問題反饋的信箱、IG）：左邊一顆小圓底圖示 */
+                var lx: CGFloat = 16
+                if let sym = r["symbol"] as? String {
+                    let dot = UIView(frame: CGRect(x: 10, y: 8, width: 32, height: 32))
+                    dot.backgroundColor = UIColor(white: 1, alpha: 0.08)
+                    dot.layer.cornerRadius = 16
+                    dot.isUserInteractionEnabled = false
+                    let ic = UIImageView(image: ABAIGlass.uniform(ABAIGlass.image(sym, pointSize: 15, weight: .regular), box: 16))
+                    ic.tintColor = .white
+                    ic.contentMode = .center
+                    ic.frame = dot.bounds
+                    dot.addSubview(ic)
+                    b.addSubview(dot)
+                    lx = 52
+                }
+                let l = UILabel(frame: CGRect(x: lx, y: 0, width: inner - lx - 36, height: 48))
                 l.text = r["title"] as? String
+                l.adjustsFontSizeToFitWidth = true
+                l.minimumScaleFactor = 0.75
                 l.font = .systemFont(ofSize: 13, weight: .regular)
                 l.textColor = .white
                 b.addSubview(l)
@@ -699,6 +716,16 @@ final class ABAISheet: UIView {
                 b.addAction(UIAction { [weak self] _ in self?.onEvent?(id) }, for: .touchUpInside)
                 v.addSubview(b)
                 y += 48 + 8
+            }
+            /* 列表下面的一行小字（例如「已複製」） */
+            if let foot = c["foot"] as? String, !foot.isEmpty {
+                let f = UILabel(frame: CGRect(x: pad, y: y, width: inner, height: 18))
+                f.text = foot
+                f.font = .systemFont(ofSize: 11, weight: .regular)
+                f.textColor = UIColor(white: 1, alpha: 0.45)
+                f.textAlignment = .center
+                v.addSubview(f)
+                y += 18 + 8
             }
             y += pad - 8
         } else if let secs = c["sections"] as? [Any] {

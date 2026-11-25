@@ -127,7 +127,7 @@ export async function closeNativeDialog(): Promise<void> {
 }
 
 /** 深色原生面板的一頁（設定、語言、條款…）。rows：一列一列的選項；sections：一段可以捲動的文字 */
-export type NativeSheetPage = { title: string; back?: boolean; rows?: { id: string; title: string; checked?: boolean }[]; intro?: string; note?: string; sections?: { head?: string; body: string }[] };
+export type NativeSheetPage = { title: string; back?: boolean; rows?: { id: string; title: string; checked?: boolean; symbol?: string }[]; foot?: string; intro?: string; note?: string; sections?: { head?: string; body: string }[] };
 /** 打開（或換成）這一頁。沒有原生回傳 false（照常用網頁的面板） */
 export async function nativeSheet(page: NativeSheetPage): Promise<boolean> {
   if (!isNative()) return false;

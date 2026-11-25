@@ -58,7 +58,7 @@ export function ExportActionLift() {
 
 /* ── 成品頁下方的按鈕換成原生的（App 裡）──
  * 所有工具的成品頁都有這一列（data-export-actions），也都掛著這個元件，所以在這裡統一處理：
- * 網頁照常把按鈕排好（位置、大小、字），App 裡在同一個位置疊原生按鈕 —— 白底的那顆（儲存）維持白底黑字，其他的是透明玻璃；
+ * 網頁照常把按鈕排好（位置、大小、字），App 裡在同一個位置疊原生按鈕 —— 白色的那顆（儲存）換成透明玻璃，其他的是深色玻璃；
  * 網頁的那幾顆藏起來（visibility: hidden，位置照樣佔著）。按下原生按鈕＝按下網頁那一顆（同一個 onClick）。
  * 「儲存中」那層還蓋著的時候不顯示（原生按鈕疊在整個網頁上面，會蓋到轉圈上）；按了會離開成品頁的按鈕，原生那組先收掉（不跟著網頁滑走）。
  * 外掛不在（舊版 App）、網頁版：什麼都不做，網頁按鈕照常顯示 */
@@ -89,7 +89,8 @@ function useNativeExportActions(ref: React.RefObject<HTMLSpanElement>) {
         const r = b.getBoundingClientRect();
         const white = getComputedStyle(b).backgroundColor.replace(/\s/g, '') === 'rgb(255,255,255)';
         return { kind: 'circle', id: 'b' + i, title: (b.textContent || '').trim(), x: r.left, y: r.top, w: r.width, h: r.height,
-          enabled: !b.disabled, ...(white ? { fill: 'white', titleColor: 'black' } : {}) };
+          /* 網頁上白色的那顆（儲存）＝透明玻璃；其他的＝深色玻璃（跟 ⋯ 選單同一種） */
+          enabled: !b.disabled, ...(white ? {} : { dark: true }) };
       });
       const sig = JSON.stringify(items);
       if (sig === last && shown) return;

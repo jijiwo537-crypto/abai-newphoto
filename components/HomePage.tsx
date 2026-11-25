@@ -5,7 +5,7 @@ import { sec as motionSec } from '../utils/motionTimings';
 import { Icon } from './Icon';
 import { LOCALES, changeLocale, getLocale } from '../utils/locale';
 import { isNative } from '../utils/native';
-import { useNativeGlass, nativeSheet, closeNativeSheet, onNativeSheet, offsetGlass, type NativeSheetPage } from '../utils/nativeGlass';
+import { useNativeGlass, nativeDialog, nativeSheet, closeNativeSheet, onNativeSheet, offsetGlass, type NativeSheetPage } from '../utils/nativeGlass';
 import { exportsStatus, subscribeExports, removeExport, type ExportMeta } from '../utils/exportHistory';
 import { haptic } from '../utils/haptics';
 import {
@@ -126,7 +126,7 @@ const toAccount = (u: AuthUser | null): Account | null =>
  */
 const LETTER_HUES = [212, 340, 24, 152, 268, 46, 190, 320];
 
-const SETTINGS_TITLE = { menu: '設定', language: '語言', terms: '使用條款', privacy: '隱私權政策' } as const;
+const SETTINGS_TITLE = { menu: '設定', language: '語言', terms: '使用條款', privacy: '隱私權政策', contact: '問題反饋' } as const;
 
 /* 使用條款／隱私權政策（範本，正式上架前請依實際營運主體與服務內容由法務確認） */
 const LEGAL: Record<'terms' | 'privacy', { updated: string; intro?: string; sections: [string, string][] }> = {
@@ -286,36 +286,8 @@ export const HomePage: React.FC<HomePageProps> = ({
 }) => {
   const [nav, setNav] = useState<string>('home');
   const [libQuery, setLibQuery] = useState('');
-  const [contactOpen, setContactOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsPage, setSettingsPage] = useState<'menu' | 'language' | 'terms' | 'privacy'>('menu');
-  /* ── 設定（App 裡改成原生的深色玻璃面板，跟儲存旁 ⋯ 選單同一種材質）──
-     設定、語言、條款、隱私權每一頁都由原生面板顯示（原地換頁）；外掛不在才用網頁的面板 */
-  const [webSettings, setWebSettings] = useState(false);
-  const sheetActs = useRef<(id: string) => void>(() => {});
-  sheetActs.current = (id: string) => {
-    if (id === '__close') setSettingsOpen(false);
-    else if (id === '__back') setSettingsPage('menu');
-    else if (id === 'language' || id === 'terms' || id === 'privacy') setSettingsPage(id);
-    else if (id === 'contact') { setSettingsOpen(false); setContactOpen(true); }
-    else if (id.startsWith('lang:')) changeLocale(id.slice(5) as Parameters<typeof changeLocale>[0]);
-  };
-  useEffect(() => {
-    let off: (() => void) | null = null, alive = true;
-    void onNativeSheet(id => sheetActs.current(id)).then(f => { if (alive) off = f; else f(); });
-    return () => { alive = false; off?.(); };
-  }, []);
-  useEffect(() => {
-    if (!settingsOpen || webSettings) { if (!settingsOpen) void closeNativeSheet(); return; }
-    const page: NativeSheetPage = settingsPage === 'menu'
-      ? { title: SETTINGS_TITLE.menu, rows: [{ id: 'language', title: '語言' }, { id: 'contact', title: '問題反饋' }, { id: 'terms', title: '使用條款' }, { id: 'privacy', title: '隱私權政策' }] }
-      : settingsPage === 'language'
-        ? { title: SETTINGS_TITLE.language, back: true, rows: LOCALES.map(l => ({ id: 'lang:' + l.id, title: l.name, checked: getLocale() === l.id })) }
-        : { title: SETTINGS_TITLE[settingsPage], back: true, intro: LEGAL[settingsPage].intro, note: `最後更新：${LEGAL[settingsPage].updated}`,
-            sections: LEGAL[settingsPage].sections.map(([head, body]) => ({ head, body })) };
-    void nativeSheet(page).then(ok => { if (!ok) setWebSettings(true); });
-  }, [settingsOpen, settingsPage, webSettings]);
-  useEffect(() => () => { void closeNativeSheet(); }, []);
+  const [settingsPage, setSettingsPage] = useState<'menu' | 'language' | 'terms' | 'privacy' | 'contact'>('menu');
   const [copied, setCopied] = useState(false);
 
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
@@ -353,16 +325,6 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [acctOpen, setAcctOpen] = useState(false);
   /** 登出前再問一次 */
   const [outOpen, setOutOpen] = useState(false);
-  /* 「我的」右上角的設定：App 裡換成原生的深色玻璃圓鈕。這一頁會捲動，原生按鈕跟著位移（不重建）；
-     這一頁滑進來（0.56 秒）之後才放上去；任何彈出的視窗蓋上來時先收起來 */
-  const settingsBtnRef = useRef<HTMLButtonElement>(null);
-  const meScrollRef = useRef<HTMLDivElement>(null);
-  const meScrollBase = useRef(0);
-  const settingsGlassOn = nav === 'me' && !settingsOpen && !contactOpen && !loginOpen && !emailOpen && !delOpen && !acctOpen && !outOpen;
-  const settingsGlass = useNativeGlass('home-settings', settingsGlassOn,
-    () => { meScrollBase.current = meScrollRef.current?.scrollTop ?? 0; return [{ kind: 'circle', id: 'settings', symbol: 'gearshape', pointSize: 16, dark: true, el: settingsBtnRef.current }]; },
-    () => { setSettingsPage('menu'); setSettingsOpen(true); }, [settingsGlassOn], 560);
-  useEffect(() => { if (settingsGlassOn) void offsetGlass('home-settings', 0, 0); }, [settingsGlassOn]);
 
   /* --- 頭貼 ---
      只存在這台裝置（localStorage），不會上傳雲端。換帳號就換一張。 */
@@ -1088,7 +1050,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   const pressStart = (id: string, e: React.PointerEvent) => {
     if (pressRef.current) window.clearTimeout(pressRef.current.timer);
     const p = { id, x: e.clientX, y: e.clientY, fired: false, timer: 0 };
-    p.timer = window.setTimeout(() => { p.fired = true; haptic('press'); setHistDel(id); }, 500);
+    p.timer = window.setTimeout(() => { p.fired = true; haptic('press'); askHistDel(id); }, 500);
     pressRef.current = p;
   };
   const pressMove = (e: React.PointerEvent) => {
@@ -1096,12 +1058,66 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (p && !p.fired && (Math.abs(e.clientX - p.x) > 10 || Math.abs(e.clientY - p.y) > 10)) { window.clearTimeout(p.timer); pressRef.current = null; }
   };
   const pressEnd = () => { const p = pressRef.current; if (p && !p.fired) { window.clearTimeout(p.timer); pressRef.current = null; } };
-  const confirmHistDel = async () => {
-    if (!histDel || histDelBusy) return;
+  const confirmHistDel = async (target = histDel) => {
+    if (!target || histDelBusy) return;
     setHistDelBusy(true);
-    try { await removeExport(histDel); haptic('success'); } catch { haptic('error'); }
+    try { await removeExport(target); haptic('success'); } catch { haptic('error'); }
     finally { setHistDelBusy(false); setHistDel(null); }
   };
+  /* App 裡：原生的深色詢問框（跟儲存旁 ⋯ 選單同一種材質）；外掛不在才用網頁的框 */
+  const askHistDel = (id: string) => {
+    if (!isNative()) { setHistDel(id); return; }
+    void nativeDialog({
+      title: '刪除這筆紀錄', message: '只會刪除 App 內的紀錄，已存到相簿的照片不受影響',
+      buttons: [{ id: 'delete', title: '刪除', role: 'primary' }, { id: 'cancel', title: '取消' }], style: 'dark',
+    }).then(r => {
+      if (pressRef.current?.id === id) pressRef.current = null;
+      if (r === null) setHistDel(id);
+      else if (r === 'delete') void confirmHistDel(id);
+    });
+  };
+  const copyEmailRef = useRef(copyEmail); copyEmailRef.current = copyEmail;
+  /* ── 設定（App 裡改成原生的深色玻璃面板，跟儲存旁 ⋯ 選單同一種材質）──
+     設定、語言、條款、隱私權每一頁都由原生面板顯示（原地換頁）；外掛不在才用網頁的面板 */
+  const [webSettings, setWebSettings] = useState(false);
+  const sheetActs = useRef<(id: string) => void>(() => {});
+  sheetActs.current = (id: string) => {
+    if (id === '__close') setSettingsOpen(false);
+    else if (id === '__back') setSettingsPage('menu');
+    else if (id === 'language' || id === 'terms' || id === 'privacy') setSettingsPage(id);
+    else if (id === 'contact') setSettingsPage('contact');
+    else if (id === 'mail') void copyEmailRef.current();
+    else if (id === 'ig') { try { window.open(CONTACT_IG_URL, '_blank', 'noopener'); } catch { /* 開不了 */ } }
+    else if (id.startsWith('lang:')) changeLocale(id.slice(5) as Parameters<typeof changeLocale>[0]);
+  };
+  useEffect(() => {
+    let off: (() => void) | null = null, alive = true;
+    void onNativeSheet(id => sheetActs.current(id)).then(f => { if (alive) off = f; else f(); });
+    return () => { alive = false; off?.(); };
+  }, []);
+  useEffect(() => {
+    if (!settingsOpen || webSettings) { if (!settingsOpen) void closeNativeSheet(); return; }
+    const page: NativeSheetPage = settingsPage === 'contact'
+      ? { title: SETTINGS_TITLE.contact, back: true, rows: [{ id: 'mail', title: CONTACT_EMAIL, symbol: 'envelope' }, { id: 'ig', title: CONTACT_IG, symbol: 'camera' }], foot: copied ? '已複製' : '' }
+      : settingsPage === 'menu'
+      ? { title: SETTINGS_TITLE.menu, rows: [{ id: 'language', title: '語言' }, { id: 'contact', title: '問題反饋' }, { id: 'terms', title: '使用條款' }, { id: 'privacy', title: '隱私權政策' }] }
+      : settingsPage === 'language'
+        ? { title: SETTINGS_TITLE.language, back: true, rows: LOCALES.map(l => ({ id: 'lang:' + l.id, title: l.name, checked: getLocale() === l.id })) }
+        : { title: SETTINGS_TITLE[settingsPage], back: true, intro: LEGAL[settingsPage].intro, note: `最後更新：${LEGAL[settingsPage].updated}`,
+            sections: LEGAL[settingsPage].sections.map(([head, body]) => ({ head, body })) };
+    void nativeSheet(page).then(ok => { if (!ok) setWebSettings(true); });
+  }, [settingsOpen, settingsPage, webSettings, copied]);
+  useEffect(() => () => { void closeNativeSheet(); }, []);
+  /* 「我的」頁「立即登入」左邊那個大圓（還沒登入、沒有頭貼時）：App 裡換成原生的玻璃圓（人像圖示）。
+     這一頁會捲動，原生的圓跟著位移（不重建）；這一頁滑進來（0.56 秒）之後才放上去；任何彈出的視窗蓋上來時先收起來。
+     有頭貼或已登入（顯示名字首字）時照舊用網頁的（原生按鈕放不了圖片） */
+  const avatarRef = useRef<HTMLSpanElement>(null);
+  const meScrollRef = useRef<HTMLDivElement>(null);
+  const meScrollBase = useRef(0);
+  const avatarGlassOn = nav === 'me' && !account && !avatar && !settingsOpen && !loginOpen && !emailOpen && !delOpen && !acctOpen && !outOpen;
+  const avatarGlass = useNativeGlass('home-avatar', avatarGlassOn,
+    () => { meScrollBase.current = meScrollRef.current?.scrollTop ?? 0; return [{ kind: 'circle', id: 'avatar', symbol: 'person', pointSize: 28, el: avatarRef.current }]; },
+    () => {}, [avatarGlassOn], 560);
   const historyGrid = (slots: number) => (
     <div className="grid grid-cols-5 gap-2">
       {Array.from({ length: slots }, (_, i) => {
@@ -1211,7 +1227,7 @@ export const HomePage: React.FC<HomePageProps> = ({
            不在「我的」的時候整頁移到右邊等著，而且不吃點擊。 */
         <div
           ref={meScrollRef}
-          onScroll={e => { if (settingsGlass.native) void offsetGlass('home-settings', 0, meScrollBase.current - e.currentTarget.scrollTop); }}
+          onScroll={e => { if (avatarGlass.native && avatarGlassOn) void offsetGlass('home-avatar', 0, meScrollBase.current - e.currentTarget.scrollTop); }}
           style={{
             transform: nav === 'me' ? 'translate3d(0,0,0)' : 'translate3d(100%,0,0)',
             transition: 'transform 560ms cubic-bezier(0.22,1,0.36,1)',
@@ -1219,16 +1235,16 @@ export const HomePage: React.FC<HomePageProps> = ({
           }}
           className={`no-scrollbar absolute inset-0 z-[6] overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border bg-black ${nav === 'me' ? '' : 'pointer-events-none'}`}
         >
-          <button ref={settingsBtnRef} aria-label="設定" onClick={() => { setSettingsPage('menu'); setSettingsOpen(true); }}
+          <button aria-label="設定" onClick={() => { setSettingsPage('menu'); setSettingsOpen(true); }}
             className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
-            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 20px)', visibility: settingsGlass.native ? 'hidden' : undefined }}>
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 20px)' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true"><path d="m9 3-.7 2.5-2 .9L4 5.7 2 9l1.8 1.8v2.4L2 15l2 3.3 2.3-.7 2 .9L9 21h6l.7-2.5 2-.9 2.3.7 2-3.3-1.8-1.8v-2.4L22 9l-2-3.3-2.3.7-2-.9L15 3Z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
           {/* 登入入口。
               整列不再是一顆大按鈕 —— 只有右邊那顆箭頭會有反應，
               點頭貼或名字都不會誤觸（登入前後都是同一顆，長相也一樣）。 */}
           <div className="w-full flex items-center gap-4 pt-3 pb-5 text-left" style={{ transform: 'translateY(12px)' }}>
-            <span className="w-[68px] h-[68px] shrink-0 rounded-full overflow-hidden bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
+            <span ref={avatarRef} style={{ visibility: avatarGlass.native && avatarGlassOn ? 'hidden' : undefined }} className="w-[68px] h-[68px] shrink-0 rounded-full overflow-hidden bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
               <AvatarView local={avatar} account={account} size={68} />
             </span>
             {/* 登入後只剩一行名字，讓它自己跟頭貼上下置中（外層已經 items-center）。
@@ -1974,7 +1990,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   取消
                 </button>
                 <button
-                  onClick={confirmHistDel}
+                  onClick={() => void confirmHistDel()}
                   disabled={histDelBusy}
                   className="flex-1 h-[46px] rounded-[12px] bg-white text-black text-[13px] font-black active:scale-[0.98] transition-transform disabled:opacity-40"
                 >
@@ -2037,62 +2053,17 @@ export const HomePage: React.FC<HomePageProps> = ({
         <motion.section role="dialog" aria-modal="true" aria-label={SETTINGS_TITLE[settingsPage]} className="w-full max-w-sm border border-white/15 rounded-3xl p-5" style={{ ...SETTINGS_GLASS, transformOrigin: '50% 50%' }} onClick={e => e.stopPropagation()}
           initial={{ opacity: 0, scale: 0.5 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
           transition={{ type: 'spring', stiffness: 460, damping: 30, mass: 0.85, opacity: { duration: 0.16 } }}>
-          <div className="flex items-center justify-between mb-4"><h2 className="pl-2 text-sm font-medium tracking-[.06em] text-white/90 flex items-center gap-1">{(settingsPage === 'terms' || settingsPage === 'privacy') && <button aria-label="返回" onClick={() => setSettingsPage('menu')} className="-ml-2 w-7 h-7 flex items-center justify-center text-white/60"><Icon name="chevron_left" className="text-[20px]" /></button>}{SETTINGS_TITLE[settingsPage]}</h2>
+          <div className="flex items-center justify-between mb-4"><h2 className="pl-2 text-sm font-medium tracking-[.06em] text-white/90 flex items-center gap-1">{(settingsPage === 'terms' || settingsPage === 'privacy' || settingsPage === 'contact') && <button aria-label="返回" onClick={() => setSettingsPage('menu')} className="-ml-2 w-7 h-7 flex items-center justify-center text-white/60"><Icon name="chevron_left" className="text-[20px]" /></button>}{SETTINGS_TITLE[settingsPage]}</h2>
             <button aria-label="關閉視窗" className="w-9 h-9 flex items-center justify-center text-white/65" onClick={() => setSettingsOpen(false)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
           </div>
           <AnimatePresence mode="wait" initial={false}><motion.div key={settingsPage} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
           {settingsPage === 'menu' ? <div className="flex flex-col gap-2">
             <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('language')}>語言</button>
-            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => { setSettingsOpen(false); setContactOpen(true); }}>問題反饋</button>
+            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('contact')}>問題反饋</button>
             <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('terms')}>使用條款</button>
             <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('privacy')}>隱私權政策</button>
-          </div> : settingsPage === 'terms' || settingsPage === 'privacy' ? <LegalText doc={settingsPage} /> : <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
-            className={`premium-glass-button min-h-12 px-4 py-3 rounded-xl text-[13px] font-normal flex justify-between items-center border ${getLocale() === l.id ? 'border-white' : 'border-white/10'}`}>
-            <span>{l.name}</span>{getLocale() === l.id && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>}
-          </button>)}</div>}
-          </motion.div></AnimatePresence>
-        </motion.section>
-      </motion.div>}
-      </AnimatePresence>
-      {/* --- 聯絡方式 --- */}
-      <AnimatePresence>
-        {contactOpen && (
-          <motion.div
-            key="contact"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: motionSec('homeBackdrop') }}
-            onClick={() => setContactOpen(false)}
-            className="absolute inset-0 z-[60] flex items-center justify-center px-8 bg-black/35"
-          >
-            <div className="relative w-full max-w-[320px] flex flex-col items-center">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.96, y: 8 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.97, y: 4 }}
-              transition={{ duration: motionSec('homeContact'), ease: [0.16, 1, 0.3, 1] }}
-              onClick={e => e.stopPropagation()}
-              className="w-full rounded-[24px] border border-white/10 shadow-2xl overflow-hidden"
-              style={SETTINGS_GLASS}
-            >
-              <div className="flex items-center justify-between px-5 pt-5 pb-3">
-                <span className="flex items-center gap-1 text-sm font-medium tracking-[.06em] text-white/90">
-                  {/* 返回設定 */}
-                  <button aria-label="返回" onClick={() => { setContactOpen(false); setSettingsPage('menu'); setSettingsOpen(true); }}
-                    className="w-7 h-7 -ml-1 flex items-center justify-center text-white/60 active:scale-90 transition-transform"><Icon name="chevron_left" className="text-[20px]" /></button>
-                  問題反饋
-                </span>
-                <button
-                  onClick={() => setContactOpen(false)}
-                  aria-label="關閉視窗"
-                  className="w-7 h-7 -mr-1 rounded-full flex items-center justify-center text-white/40 hover:text-white active:scale-90 transition-transform"
-                >
-                  <Icon name="close" className="text-[18px]" />
-                </button>
-              </div>
-
-              <div className="px-5 pb-5 flex flex-col gap-2">
+          </div> : settingsPage === 'contact' ? <div className="relative">
+              <div className="flex flex-col gap-2">
                 {/* 電子郵件 —— 點下去複製。複製成功的回饋在整張卡下面，卡裡不放東西 */}
                 <button
                   onClick={copyEmail}
@@ -2118,27 +2089,14 @@ export const HomePage: React.FC<HomePageProps> = ({
                   <span className="flex-1 min-w-0 text-[12px] leading-snug text-white/90 break-all">{CONTACT_IG}</span>
                 </a>
               </div>
-            </motion.div>
-
-            {/* 複製成功的回饋：絕對定位掛在卡片下面，不佔版面高度 ——
-                 用 flow 排的話它一出現就會把整張卡往上頂。 */}
-            <AnimatePresence>
-              {copied && (
-                <motion.div
-                  key="copied"
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -3 }}
-                  transition={{ duration: motionSec('homeToast'), ease: [0.16, 1, 0.3, 1] }}
-                  className="absolute top-full left-0 right-0 mt-3 text-center text-[11px] tracking-[0.14em] text-white/45 pointer-events-none"
-                >
-                  已複製
-                </motion.div>
-              )}
-            </AnimatePresence>
-            </div>
-          </motion.div>
-        )}
+            {copied && <div className="mt-3 text-center text-[11px] tracking-[0.14em] text-white/45">已複製</div>}
+          </div> : settingsPage === 'terms' || settingsPage === 'privacy' ? <LegalText doc={settingsPage} /> : <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
+            className={`premium-glass-button min-h-12 px-4 py-3 rounded-xl text-[13px] font-normal flex justify-between items-center border ${getLocale() === l.id ? 'border-white' : 'border-white/10'}`}>
+            <span>{l.name}</span>{getLocale() === l.id && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>}
+          </button>)}</div>}
+          </motion.div></AnimatePresence>
+        </motion.section>
+      </motion.div>}
       </AnimatePresence>
     </div>
   );
