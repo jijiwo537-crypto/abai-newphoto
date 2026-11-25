@@ -666,7 +666,10 @@ import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceG
 import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
 /* 快取鍵用短 id 代表照片，不用來源字串：data: 網址有好幾 MB，每格滑桿都把它串進鍵裡，一格就要多花約 15ms */
 const SRC_IDS = new Map<string, number>();
-const srcIdOf = (src: string) => { let id = SRC_IDS.get(src); if (id === undefined) { id = SRC_IDS.size + 1; SRC_IDS.set(src, id); } return id; };
+/* 編號一直往上加、不重複使用：編輯器關掉時整張表清掉（data: 網址當鍵會把好幾 MB 的字串一直留在記憶體裡，
+   每導入一次就多留一份），之後同一個網址拿到新編號 —— 舊快取只會對不上、不會拿錯 */
+let srcSeq = 0;
+const srcIdOf = (src: string) => { let id = SRC_IDS.get(src); if (id === undefined) { id = ++srcSeq; SRC_IDS.set(src, id); } return id; };
 const IDENTITY_BASE_LUT = Uint8Array.from({ length: 256 }, (_, i) => i);
 const IDENTITY_CURVE_LUTS = { rgb: IDENTITY_BASE_LUT, r: IDENTITY_BASE_LUT, g: IDENTITY_BASE_LUT, b: IDENTITY_BASE_LUT };
 
@@ -1246,8 +1249,12 @@ function getThumbWorker(): Worker | null {
  * 把濾鏡縮圖先算好。編輯器一掛上就直接放進縮圖倉庫，介面進場時前 7 張已經在了。
  * 縮圖只有約 192×228，用 1000px 的來源算跟用 1800px 的預覽算，肉眼看不出差別 */
 let knownLutList: { id: string; name: string; url: string }[] = [];
-type PreThumbs = { at: number; W: number; H: number; px: Map<string, Uint8ClampedArray>; onPixel?: (id: string, px: Uint8ClampedArray) => void };
+type PreThumbs = { at: number; W: number; H: number; px: Map<string, Uint8ClampedArray> };
 let preThumbs: PreThumbs | null = null;
+/** 已經掛上來的編輯器在收預先縮圖：照片的清楚小圖常常比編輯器掛上來還晚到（尤其來回導入、程式碼已經熱了的時候），
+ *  以前只在編輯器掛上的那一刻拿一次 —— 那時還沒開始算，就整批錯過、只能等編輯器自己重算（灰格子）。
+ *  改成編輯器掛著的期間，預先算好的每一張都直接送進去 */
+let preThumbSink: ((id: string, px: Uint8ClampedArray) => void) | null = null;
 /** 已經先放上去的預先縮圖（鍵＝縮圖倉庫的鍵）：真正的縮圖算好時拿來比對 */
 const preThumbPx = new Map<string, Uint8ClampedArray>();
 /** 兩張縮圖像素幾乎一樣（平均每個顏色差不到 1 階）：肉眼不可能分辨 */
@@ -1289,8 +1296,9 @@ function prebuildFilterThumbs(img: HTMLImageElement): Promise<void> {
       const m = ev.data;
       if (m.id !== id) return;
       if (m.done) { wk.removeEventListener('message', onMsg); resolve(); return; }
+      if (preThumbs !== me) return;
       me.px.set(m.key, m.px);
-      me.onPixel?.(m.key, m.px);
+      preThumbSink?.(m.key, m.px);
       if (++got >= need) resolve();
     };
     wk.addEventListener('message', onMsg);
@@ -1298,7 +1306,7 @@ function prebuildFilterThumbs(img: HTMLImageElement): Promise<void> {
     window.setTimeout(resolve, 1500);
   });
 }
-setPreThumbBuilder(prebuildFilterThumbs);
+setPreThumbBuilder(prebuildFilterThumbs, () => { preThumbs = null; });
 
 /** 把一顆濾鏡的查色表準備好（先問本機快取，沒有才下載＋解碼），放進 LUT_CACHE。
  *  模組層：編輯器還沒打開（主頁在選照片）時就能先載，見 warmFilterThumbLuts */
@@ -1348,8 +1356,8 @@ function loadLutIntoCache(lut: { id: string; url: string }): Promise<void> {
 export function warmFilterThumbLuts(list: { id: string; name: string; url: string }[]): void {
   if (!knownLutList.length) knownLutList = list;
   void (async () => {
-    for (const l of list.slice(0, 8)) await loadLutIntoCache(l);
-    for (const l of list.slice(8)) { await new Promise(r => window.setTimeout(r, 30)); await loadLutIntoCache(l); }
+    /* 只先載前 8 顆（縮圖列一進去看得到的那幾格，約 6MB）：其他的照舊等編輯器打開才載，不讓沒在修圖的人多佔記憶體 */
+    for (const l of list.slice(0, 8)) { await loadLutIntoCache(l); await new Promise(r => window.setTimeout(r, 30)); }
   })();
 }
 
@@ -1481,6 +1489,8 @@ function runThumbChunks<T>(
 }
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList: builtInLutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false, raw: rawProp = null, rawMap, stampDate }) => {
+  /* 關掉編輯器：照片網址對應的編號表清掉（見 SRC_IDS） */
+  useEffect(() => () => { SRC_IDS.clear(); }, []);
   const [customLuts, setCustomLuts] = useState<CustomLut[]>(loadCustomLuts);
   const lutList = useMemo(() => [...builtInLutList, ...customLuts], [builtInLutList, customLuts]);
   knownLutList = lutList;
@@ -4703,8 +4713,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 從主頁導入：照片飛行中已經先算好的濾鏡縮圖，一掛上就放進倉庫（畫面畫出來之前），之後陸續到的也接著放 */
   useLayoutEffect(() => {
     const pre = preThumbs;
-    if (!pre || performance.now() - pre.at > 15000 || pre.W !== THUMB_W || pre.H !== THUMB_H) return;
-    preThumbs = null;
     const forSrc = thumbSrcOf(imageSrc);
     const put = (lutId: string, px: Uint8ClampedArray) => {
       const key = thumbKey(forSrc, lutId), sig = forSrc + '|' + lutId;
@@ -4713,10 +4721,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       putThumbPixels(filterThumbStore, key, px, THUMB_W, THUMB_H, sig + '|pre');
       preThumbPx.set(key, px);
     };
-    pre.px.forEach((px, id) => put(id, px));
-    repaintThumbs();
-    pre.onPixel = (id, px) => { put(id, px); repaintThumbs(); };
-    return () => { pre.onPixel = undefined; };
+    if (pre && performance.now() - pre.at < 15000 && pre.W === THUMB_W && pre.H === THUMB_H) { pre.px.forEach((px, id) => put(id, px)); repaintThumbs(); }
+    let raf = 0;
+    const sink = (id: string, px: Uint8ClampedArray) => { put(id, px); if (!raf) raf = requestAnimationFrame(() => { raf = 0; repaintThumbs(); }); };
+    preThumbSink = sink;
+    return () => { if (preThumbSink === sink) preThumbSink = null; cancelAnimationFrame(raf); preThumbs = null; preThumbPx.clear(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   /* 批量編輯時每一張照片的縮圖各留一份，來回切換就不用重算（切回去是瞬間的）。

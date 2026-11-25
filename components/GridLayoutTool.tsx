@@ -392,6 +392,12 @@ export const getPreviewVideo = (src: string) => {
   return v;
 };
 
+/** 離開拼圖：預覽用的影片全部停掉、放掉解碼器（不然每段影片都在背景一直循環播放、佔著記憶體與電量） */
+const releasePreviewVideos = () => {
+  previewVideos.forEach(v => { try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* 已經不能用了 */ } });
+  previewVideos.clear();
+};
+
 const getImageDimensions = (url: string): Promise<{ width: number; height: number }> => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -9728,6 +9734,7 @@ function LayoutGeomSlider({ label, field, min, max, value, previewId, live, onSt
 }
 
 export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onRequestExit, onImportNew, initialFiles, initialState, lutList = [] }) => {
+  useEffect(() => () => releasePreviewVideos(), []);
   useKeyboardRecovery();
   /* 拍立得裡的照片：選中拍立得後再點一下照片窗口 → 選中照片（見 PolaPhotoLayer） */
   const [polaPhotoId, setPolaPhotoId] = useState<string | null>(null);

@@ -87,7 +87,8 @@ function upgrade(src: string, my: number) {
  * 照片飛行中拿到清楚的圖就開始算；介面進場等前 7 張好了才開播（最多等 0.4 秒，不會卡住） */
 let preThumbBuilder: ((img: HTMLImageElement) => Promise<void>) | null = null;
 let preThumbStarted = false, preThumbReady: Promise<void> | null = null;
-export function setPreThumbBuilder(fn: (img: HTMLImageElement) => Promise<void>) { preThumbBuilder = fn; }
+export function setPreThumbBuilder(fn: (img: HTMLImageElement) => Promise<void>, reset?: () => void) { preThumbBuilder = fn; preThumbReset = reset ?? null; }
+let preThumbReset: (() => void) | null = null;
 
 /** 這張圖在畫面上真正顯示的範圍（img 是 object-fit: contain 時，元素比圖大） */
 function contentRect(el: HTMLElement): DOMRect {
@@ -198,6 +199,80 @@ function startJob(j: Job) {
   } catch { /* 元素已經不在 */ }
 }
 let landed = true, afterLand: Job[] = [];
+/* ── 照片上的按鈕（前後對比…）提早出場 ──
+ * 它們本人在照片底下、被飛進來的替身蓋著，以前只能等照片本人載好、交接之後才開播 —— 而照片的重工作要讓進場動畫先跑，
+ * 所以按鈕明顯落後其他介面。改成：替身一飛到終點，就在替身上面放一份「長得一模一樣」的按鈕（複製節點）照原本的動畫開播；
+ * 交接時，本人從跟複製品完全相同的進度接著播（兩份疊在一起、內容相同），替身淡完再把複製品拿掉 —— 畫面上看不出換過 */
+let overBlocks: HTMLElement[] = [];
+const cloned = new Map<Job, Animation>();
+let cloneHost: HTMLDivElement | null = null;
+function stripClone(el: Element) {
+  for (const n of [el, ...Array.from(el.querySelectorAll('*'))]) {
+    for (const at of Array.from(n.attributes)) if (at.name === 'id' || at.name.startsWith('data-') || at.name.startsWith('aria-')) n.removeAttribute(at.name);
+  }
+}
+function pathTo(root: HTMLElement, el: HTMLElement): number[] | null {
+  const p: number[] = [];
+  for (let n: HTMLElement | null = el; n && n !== root; n = n.parentElement) {
+    if (!n.parentElement) return null;
+    p.unshift(Array.prototype.indexOf.call(n.parentElement.children, n));
+  }
+  return p;
+}
+function cloneOver() {
+  if (!afterLand.length) return;
+  try {
+    const host = cloneHost || document.createElement('div');
+    if (!cloneHost) {
+      host.setAttribute('data-import-hero', '');
+      Object.assign(host.style, { position: 'fixed', inset: '0', zIndex: '2147483001', pointerEvents: 'none' } as CSSStyleDeclaration);
+      document.body.appendChild(host);
+      cloneHost = host;
+    }
+    const made = new Map<HTMLElement, HTMLElement>();
+    for (const j of afterLand) {
+      if (cloned.has(j) || !j.el.isConnected) continue;
+      const b = overBlocks.find(o => o === j.el || o.contains(j.el));
+      if (!b || !b.isConnected) continue;
+      let c = made.get(b);
+      if (!c) {
+        const r = b.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) continue;
+        const wrap = document.createElement('div');
+        Object.assign(wrap.style, { position: 'absolute', left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` } as CSSStyleDeclaration);
+        c = b.cloneNode(true) as HTMLElement;
+        stripClone(c);
+        Object.assign(c.style, { position: 'absolute', left: '0', top: '0', right: 'auto', bottom: 'auto', width: '100%', height: '100%', margin: '0', transform: 'none', transition: 'none', willChange: '' } as CSSStyleDeclaration);
+        wrap.appendChild(c); host.appendChild(wrap); made.set(b, c);
+      }
+      const path = pathTo(b, j.el);
+      let t: Element | null = c;
+      for (const i of path ?? []) t = t?.children[i] ?? null;
+      if (!path || !(t instanceof HTMLElement)) continue;
+      /* 區塊本身：原本的定位用 transform（例如 -50% 置中）已經算進複製品的位置裡，關鍵幀只留位移那一段 */
+      const k = t === c ? j.k.map(f => f.transform ? { ...f, transform: String(f.transform).match(/^translate3d\([^)]*\)/)?.[0] ?? 'none' } : f) : j.k;
+      t.style.transition = 'none';
+      cloned.set(j, t.animate(k, j.opts));
+    }
+  } catch { /* 複製不了：照舊等交接 */ }
+}
+/** 本人接手：從複製品的進度接著播 */
+function takeOverCloned(j: Job): boolean {
+  const ca = cloned.get(j);
+  if (!ca) return false;
+  cloned.delete(j);
+  const ct = ca.currentTime;
+  if (ct == null) return false;
+  try {
+    j.held?.cancel();
+    const a = j.el.animate(j.k, j.opts);
+    a.currentTime = ct;
+    const restore = () => { if (j.el.style.willChange === 'transform, opacity') j.el.style.willChange = j.wc ?? ''; };
+    a.finished.then(restore, restore);
+    return true;
+  } catch { return false; }
+}
+function dropClones() { cloned.clear(); const h = cloneHost; cloneHost = null; h?.remove(); }
 /** 這一批真的開播了的動畫：工具的重工作要等它們開播之後才放行 */
 let calmStarts: Animation[] = [];
 let revealT = 0, revealed = true, pending: Job[] = [], enterFailsafe = 0, enterStopT = 0, rawRaf = 0;
@@ -358,14 +433,14 @@ function runEnter(root: HTMLElement, E: R) {
     });
   }
   /* 照片上的按鈕：照片落定後，由上而下、由左而右依序浮上來 */
-  over.forEach((i, m) => play(blocks[i], 10, Math.min(m, 5) * 50, 420, true));
+  over.forEach((i, m) => { overBlocks.push(blocks[i].el); play(blocks[i], 10, Math.min(m, 5) * 50, 420, true); });
 }
 /** 替身交接完了（或根本沒有替身）：照片上的按鈕開播 */
 function landNow() {
   if (!landed) deferHeavyWork(700);
   landed = true;
   const list = afterLand; afterLand = [];
-  for (const j of list) startJob(j);
+  for (const j of list) if (!takeOverCloned(j)) startJob(j);
 }
 /** 開播：暫停在第一格的介面一起開始進場 */
 function revealEnter() {
@@ -409,7 +484,7 @@ export function waitEntranceStart(maxMs = 1800): Promise<void> {
 function startEnter(E: R, failsafeMs: number) {
   stopEnter();
   deferHeavyWork(motionMs('importFly') + 1200);
-  revealed = false; landed = false; enterE = E; enterRoot = null; leadReveal = null; leadLand = null;
+  revealed = false; landed = false; overBlocks = []; dropClones(); enterE = E; enterRoot = null; leadReveal = null; leadLand = null;
   enterFailsafe = window.setTimeout(revealEnter, failsafeMs);
   const check = () => {
     const root = toolRoot();
@@ -439,6 +514,7 @@ function stopEnter() {
   revealEnter();
   releaseWaiters();
   landNow();
+  if (!ghost) dropClones();
   window.clearTimeout(enterStopT);
   enterObs?.disconnect(); enterObs = null; enterRoot = null; enterE = null;
 }
@@ -490,6 +566,7 @@ export function beginImportHero(kind: string | undefined, rect: DOMRect, src: st
   cancelImportHero();
   const my = ++token;
   preThumbStarted = false; preThumbReady = null;
+  preThumbReset?.();   // 上一次導入沒被用掉的預先縮圖（別張照片的）一定丟掉
   ar = aspect && isFinite(aspect) && aspect > 0 ? aspect : 1;
   landing = false;
   const E = predict(kind ?? 'edit', ar);
@@ -535,6 +612,7 @@ function watch(my: number) {
     calm = lastNow && now - lastNow < 22 ? calm + 1 : 0; lastNow = now;
     /* 照片一起飛（約 1/8）就開始進場；主執行緒那時正忙就再等一下，但最晚飛到約 1/3 一定開播 */
     if (!revealed && toolRoot() && ((calm >= 2 && now - t0 > motionMs('importFly') * 0.12) || now - t0 > motionMs('importFly') * 0.35)) revealEnter();
+    if (revealed && !cloneHost && now - t0 > motionMs('importFly')) cloneOver();
     if (landing) {
       if (target && !target.isConnected) { target = null; hide(null); }
       /* 每一格都找（新的照片元素一出現當格就藏起來，不會在替身底下閃一下）；
@@ -592,9 +670,17 @@ function finish(g: HTMLDivElement, ms: number) {
   document.documentElement.removeAttribute('data-import-hero');
   const tmp = tempPath; tempPath = null;
   /* 照片本人已經放回來了：照片上的按鈕跟替身淡出同時開始浮上來（不用等替身完全消失，才不會慢半拍） */
+  /* 已經在替身上面播著的（複製品）：本人立刻從同一個進度接手，複製品留到替身淡完才拿掉（兩份內容相同、疊在一起） */
+  const host = cloneHost;
+  if (host) {
+    cloneHost = null;
+    afterLand = afterLand.filter(j => !takeOverCloned(j));
+    cloned.clear();
+  }
   window.setTimeout(landNow, ms * 0.4);   // 替身淡到一半多一點（照片本人已經看得到）就開始
   g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'ease-out', fill: 'forwards' }).finished.catch(() => {}).finally(() => {
     g.remove();
+    host?.remove();
     if (tmp) void nativeImage().then(p => p?.remove({ path: tmp })).catch(() => {});
   });
 }
