@@ -4466,7 +4466,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const fxThumbStore = useRef<Record<string, ThumbEntry>>({});
   /** 掛在畫面上的縮圖格子，算好一張就直接叫它們重畫（完全不經過 React state） */
   const thumbPainters = useRef<Set<() => void>>(new Set());
-  const repaintThumbs = useCallback(() => { thumbPainters.current.forEach(f => f()); }, []);
+  /** 最後一次有縮圖畫好的時間（縮圖補救用：太久沒有進度、又還有缺的，就重新排一次） */
+  const thumbActivityRef = useRef(0);
+  const repaintThumbs = useCallback(() => { thumbActivityRef.current = performance.now(); thumbPainters.current.forEach(f => f()); }, []);
   /* 從主頁導入：照片飛行中已經先算好的濾鏡縮圖，一掛上就放進倉庫（畫面畫出來之前），之後陸續到的也接著放 */
   useLayoutEffect(() => {
     const pre = preThumbs;
@@ -4690,6 +4692,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 背景排程：先這一張（正在看濾鏡／特效頁的那一排優先、而且不等），再其他照片。
      拖滑桿時整個停下來，放手後接著做。 */
   const thumbJobRef = useRef(0);
+  const [thumbRetry, setThumbRetry] = useState(0);
+  const thumbRunningRef = useRef(false);
   useEffect(() => {
     if (isInteracting) return;
     const job = ++thumbJobRef.current;
@@ -4709,7 +4713,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         return pixels;
       };
       const steps: (() => void)[] = [];
-      const next = () => { if (cancelled()) return; const f = steps.shift(); if (f) window.setTimeout(f, 0); };
+      /* 每往下走一步就記一次進度；全部走完＝這一批結束（補救只在「沒在跑」或「卡很久」時才動手） */
+      thumbRunningRef.current = true;
+      const next = () => { if (cancelled()) return; thumbActivityRef.current = performance.now(); const f = steps.shift(); if (f) window.setTimeout(f, 0); else thumbRunningRef.current = false; };
       for (const k of order) steps.push(() => {
         if (thumbSrcOf(buffersSrcRef.current) !== cur) return next();
         if (k === 'filter') { if (filterThumbsMissing(cur)) buildFilterThumbs(cur, curPixels(), cancelled, next); else next(); }
@@ -4745,7 +4751,31 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const cancelT = urgent ? afterPaint(run, 0) : afterPaint(() => { idle = ric ? ric(run, { timeout: 1500 }) : window.setTimeout(run, 200); }, 350);
     return () => { thumbJobRef.current++; cancelT(); if (idle) { if (ric) (window as any).cancelIdleCallback?.(idle); else clearTimeout(idle); } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCategory, lutList, activeSrc, buffersTick, lutReadyTick, srcList, isInteracting]);
+  }, [activeCategory, lutList, activeSrc, buffersTick, lutReadyTick, srcList, isInteracting, thumbRetry]);
+
+  /* ── 縮圖補救 ──
+     批量（尤其 RAW）時，縮圖工作可能被反覆打斷（RAW 換上新底圖會重排）、某一張照片讀取失敗被跳過、
+     或張數太多時舊的被清掉 —— 結果是有幾張的縮圖一直沒出來。每 2.5 秒檢查一次：
+     還有照片缺縮圖、而且 3 秒以上沒有任何縮圖畫好（工作卡住了），就重新排一次；同一組照片最多補 6 次（不會無限重試）。
+     每次補救都在主控台記一行 [abai-thumbs]（哪幾張、缺哪一排），實機上可以看出是哪一種原因 */
+  const thumbRetryCount = useRef(0);
+  useEffect(() => {
+    thumbRetryCount.current = 0;
+    const t = window.setInterval(() => {
+      if (isInteractingRef.current || thumbRetryCount.current >= 6) return;
+      /* 還在跑：給它 10 秒（可能在等主執行緒空檔）；沒在跑：3 秒沒進度就補 */
+      if (performance.now() - thumbActivityRef.current < (thumbRunningRef.current ? 10000 : 3000)) return;
+      const miss = srcListRef.current.map(u => thumbSrcOf(u)).filter((u, i, a) => a.indexOf(u) === i)
+        .map(u => ({ u, f: filterThumbsMissing(u), x: fxThumbsMissing(u) })).filter(m => m.f || m.x);
+      if (!miss.length) return;
+      thumbRetryCount.current++;
+      try { console.log(`[abai-thumbs] 補救第 ${thumbRetryCount.current} 次：${miss.map(m => `${srcIdOf(m.u)}${m.f ? ' 濾鏡' : ''}${m.x ? ' 特效' : ''}`).join('｜')}`); } catch { /* 只是記錄 */ }
+      thumbActivityRef.current = performance.now();
+      setThumbRetry(n => n + 1);
+    }, 2500);
+    return () => window.clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcList]);
 
   const handleFilterSelect = (idx: number) => {
     releaseFreeze(true);
