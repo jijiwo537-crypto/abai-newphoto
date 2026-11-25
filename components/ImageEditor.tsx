@@ -12,7 +12,7 @@ import { setRawImportHint } from '../utils/importHint';
 import { freshGrade, isGradeIdentity, isGradeToolIdentity, makeGrade, applyGrade, normGrade, type ColorGrade, type GradeFast } from '../utils/colorGrade';
 import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
-import { autoMasks, isAutoMask } from '../utils/masks';
+import { autoMasks, isAutoMask, clearMaskCaches } from '../utils/masks';
 import { openGlassMenu } from '../utils/nativeGlass';
 import { waitEntranceStart, setPreThumbBuilder } from '../utils/importHero';
 import { nativeEncodeWithMeta } from '../utils/nativeFinish';
@@ -7352,8 +7352,60 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       pc.width = pc.height = 0;
   }, [render, getCurveLuts]);
 
+  /* ── 構圖改變時，遮色片跟著照片走 ──
+     遮色片的位置是用「構圖後的畫面」記的（中心、角度、半徑、筆刷每一點）。構圖一改（比例、裁切、角度、翻轉、梯形），
+     畫面的座標就變了 —— 不換算的話遮色片會整個偏掉。這裡把每個遮色片從舊構圖的畫面換算到新構圖的畫面：
+     舊畫面 →（舊構圖的反運算）→ 原圖 →（新構圖）→ 新畫面，所以遮色片永遠貼在照片的同一個地方（跟 Lightroom 一樣）。
+     顏色／明度範圍是看畫面內容算的，不用換；主體／人物的遮罩重新分析 */
+  const remapMasksForGeo = (oldG: GeoParams, newG: GeoParams, sw: number, sh: number) => {
+    const ho = geoHomography(sw, sh, oldG), hn = geoHomography(sw, sh, newG);
+    if (!ho || !hn) return;
+    const app = (M: number[], x: number, y: number): [number, number] => { const w = M[6] * x + M[7] * y + M[8]; return [(M[0] * x + M[1] * y + M[2]) / w, (M[3] * x + M[4] * y + M[5]) / w]; };
+    /** 舊畫面的像素 → 新畫面的像素 */
+    const P = (x: number, y: number) => { const [ox, oy] = app(ho.inv as unknown as number[], x, y); return app(hn.H as unknown as number[], ox, oy); };
+    const oW = ho.outW, oH = ho.outH, nW = hn.outW, nH = hn.outH;
+    const pt = (nx: number, ny: number) => { const [X, Y] = P(nx * oW, ny * oH); return [X / nW, Y / nH] as [number, number]; };
+    /** 從 (nx,ny) 往 ang 方向走 len（佔舊寬度的比例）→ 新畫面裡的點 */
+    const along = (nx: number, ny: number, ang: number, len: number) => { const [X, Y] = P(nx * oW + Math.cos(ang) * len * oW, ny * oH + Math.sin(ang) * len * oW); return [X, Y] as [number, number]; };
+    const remap = (m: MaskSnap): MaskSnap => {
+      if (!m.maskCreated) return m;
+      const out: any = { ...m };
+      const [cx, cy] = pt(m.maskCx, m.maskCy);
+      const C: [number, number] = [cx * nW, cy * nH];
+      if (m.maskType === 'linear' || m.maskType === 'radial') {
+        const a = along(m.maskCx, m.maskCy, m.maskAngle, m.maskType === 'linear' ? m.maskD : m.maskRx);
+        out.maskCx = cx; out.maskCy = cy;
+        out.maskAngle = Math.atan2(a[1] - C[1], a[0] - C[0]);
+        const len = Math.hypot(a[0] - C[0], a[1] - C[1]) / nW;
+        if (m.maskType === 'linear') out.maskD = len;
+        else {
+          out.maskRx = len;
+          const b = along(m.maskCx, m.maskCy, m.maskAngle + Math.PI / 2, m.maskRy);
+          out.maskRy = Math.hypot(b[0] - C[0], b[1] - C[1]) / nW;
+        }
+      } else if (m.maskType === 'brush') {
+        out.maskStrokes = (m.maskStrokes || []).map(st => {
+          const [x, y] = pt(st.x, st.y);
+          const e = along(st.x, st.y, 0, st.r);
+          return { ...st, x, y, r: Math.hypot(e[0] - x * nW, e[1] - y * nH) / nW };
+        });
+      } else if (isAutoMask(m.maskType)) {
+        autoMasks.delete(m.maskId); autoMaskFailed.current.delete(m.maskId);   // 主體／人物：照新構圖的畫面重新分析
+      }
+      return out;
+    };
+    const p = paramsRef.current;
+    const { list, active } = maskList(p);
+    if (!list.length) return;
+    const masks = withActiveStored(p).map(remap);
+    const next = loadMask(p, masks[Math.min(active, masks.length - 1)], masks, Math.min(active, masks.length - 1));
+    clearMaskCaches();
+    paramsRef.current = next; isDirtyRef.current = true;
+  };
+
   // 套用構圖：用新的幾何把來源重新算一次，再整個重建預覽緩衝。
-  const applyGeo = useCallback((g: GeoParams) => {
+  /* remapMasks：只有使用者在構圖分頁實際改了構圖才換算遮色片（復原／重做／切換照片時，遮色片本來就對應那個構圖，再換會移兩次） */
+  const applyGeo = useCallback((g: GeoParams, remapMasks = false) => {
     if (!validGeo(g)) return false;
     if (sameGeoPixels(bufferGeoRef.current, g)) {
       geoRef.current = g;
@@ -7364,6 +7416,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!img) return false;
     const sw = img.naturalWidth || img.width;
     const sh = img.naturalHeight || img.height;
+    if (remapMasks) { try { remapMasksRef.current(bufferGeoRef.current, g, sw, sh); } catch { /* 換算失敗就維持原樣 */ } }
     const src = isGeoIdentity(g) ? img : composeCanvas(img, sw, sh, g, 2400);
     const w = 'width' in src ? (src as HTMLCanvasElement).width : sw;
     const h = 'height' in src ? (src as HTMLCanvasElement).height : sh;
@@ -7377,6 +7430,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, []);
 
   useEffect(() => { applyGeoRef.current = applyGeo; }, [applyGeo]);
+  const remapMasksRef = useRef(remapMasksForGeo); remapMasksRef.current = remapMasksForGeo;
 
   const buildBuffersFromRef = useRef(buildBuffersFrom);
   useEffect(() => { buildBuffersFromRef.current = buildBuffersFrom; }, [buildBuffersFrom]);
@@ -9256,7 +9310,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      所以這個 effect 不會重複套一次）。 */
   useEffect(() => {
     if (activeCategory !== 'compose' && draftGeo) {
-      if (applyGeo(draftGeo)) addToHistory(paramsRef.current, selectedLutIdx);
+      if (applyGeo(draftGeo, true)) addToHistory(paramsRef.current, selectedLutIdx);
       setDraftGeo(null);
       releaseComposePreview();
     }
@@ -10853,7 +10907,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           alignCenter={previewAlign ? { x: previewAlign.left + previewAlign.width / 2, y: previewAlign.top + previewAlign.height / 2 } : null}
           onCancel={cancelCompose}
           onApply={() => {
-            if (applyGeo(draftGeo)) addToHistory(paramsRef.current, selectedLutIdx);
+            if (applyGeo(draftGeo, true)) addToHistory(paramsRef.current, selectedLutIdx);
             setDraftGeo(null);
             releaseComposePreview();
             setActiveCategory(beforeComposeRef.current.cat);
