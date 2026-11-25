@@ -40,10 +40,11 @@ export function riseIn(els: Iterable<Element>, o: RiseOpts = {}): void {
     if (!inView(el, clipRect)) continue;
     const end = getComputedStyle(el).opacity || '1';
     try {
-      el.animate([
+      /* y 為 0 時只動透明度（不碰位移，結束時不會有任何位置上的跳動） */
+      el.animate(y ? [
         { opacity: 0, translate: `0 ${y}px` },
         { opacity: end, translate: '0 0' },
-      ], { duration: dur, delay: delay + k * stagger, easing: EASE, fill: 'backwards' });
+      ] : [{ opacity: 0 }, { opacity: end }], { duration: dur, delay: delay + k * stagger, easing: EASE, fill: 'backwards' });
     } catch { /* 不支援就直接出現 */ }
     k++;
   }

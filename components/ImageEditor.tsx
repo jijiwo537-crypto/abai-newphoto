@@ -10000,12 +10000,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (prev === null || prev === tabGroup || !firstReady) return;
     if (tabGroup === 'beauty' || tabGroup === 'match') {
       const row = document.querySelector(tabGroup === 'beauty' ? '[data-studio-host="beauty"] [data-beauty-toolbar]' : '[data-studio-host="match"] [data-cm-refs]');
-      if (row) riseIn(row.children, { clip: row });
+      if (row) riseIn(row.children, { clip: row, y: 0, stagger: 0, dur: 220, max: 30 });
       return;
     }
     if (tabGroup === 'compose' || tabGroup === 'template') return;
     const box = toolsScrollRef.current;
-    if (box) riseIn(box.children, { clip: box });
+    if (box) riseIn(box.children, { clip: box, y: 0, stagger: 0, dur: 220, max: 30 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabGroup]);
   const sliderRowHidden = activeToolId === 'curves' || isColourPanelTool(activeToolId) || activeCategory === 'compose' || ownPanel || maskTypePicking;
@@ -11556,7 +11556,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           移成 safe-top 的直屬覆蓋層後，仍只覆蓋標題列與底部分頁列之間。 */}
       {activeCategory === 'compose' && draftGeo && (composePreviewRef.current || originalImgRef.current) && (
         <ComposeStudio
-          entrance
           image={composePreviewRef.current || originalImgRef.current!}
           geo={draftGeo}
           onChange={changeDraftGeo}
