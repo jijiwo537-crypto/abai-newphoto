@@ -60,5 +60,21 @@ export function fadeIn(el: Element | null | undefined, o: { dur?: number; delay?
   if (scaleX != null) { from.scale = `${scaleX} 1`; to.scale = '1 1'; }
   else if (scale != null) { from.scale = `${scale}`; to.scale = '1'; }
   if (y) { from.translate = `0 ${y}px`; to.translate = '0 0'; }
-  try { el.animate([from, to], { duration: dur, delay, easing: EASE, fill: 'backwards' }); } catch { /* 直接出現 */ }
+  try { playWhenCalm(el.animate([from, to], { duration: dur, delay, easing: EASE, fill: 'backwards' })); } catch { /* 直接出現 */ }
+}
+
+/** 等主執行緒閒下來（連續兩格的間隔都正常）才開播：切分頁、導入時最忙的那幾格裡開播的話，
+ *  動畫的開頭在主執行緒被卡住的期間就「播完」了，畫面上看起來是直接跳出來（或整段沒播）。
+ *  先停在第一格（看不見），閒下來才從頭播。最多等 maxMs */
+export function playWhenCalm(a: Animation, maxMs = 450): void {
+  try { a.pause(); a.currentTime = 0; } catch { return; }
+  const t0 = performance.now();
+  let last = 0, calm = 0;
+  const step = (now: number) => {
+    calm = last && now - last < 24 ? calm + 1 : 0;
+    last = now;
+    if (calm >= 2 || now - t0 > maxMs) { try { a.play(); } catch { /* 元素已經不在 */ } return; }
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
 }

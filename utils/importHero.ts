@@ -10,6 +10,7 @@
  * 不直接解原檔：原檔可能是 4800 萬畫素／HEIC，工具本身也在解同一張，兩份全尺寸同時在記憶體裡有被系統關掉的風險。
  * 安全：任何情況（找不到、取消、出錯）一定放回照片本人、恢復「匯入中」的轉圈；最多 12 秒一定收掉。
  * 只在主頁（畫面上沒有任何工具頁 .safe-top）、只選一張、而且是帶 data-import-hero 的導入入口時啟用。 */
+import { playWhenCalm } from './tabEntrance';
 import { nativePathOf } from './nativeBridge';
 import { ms as motionMs } from './motionTimings';
 import { nativeDownsample, nativeImage } from './nativeImage';
@@ -176,6 +177,9 @@ function startJob(j: Job) {
        起跑時間由瀏覽器在真的畫上螢幕的那一格才定，所以開頭不會被跳過 */
     const lead: Animation | null = null;
     const a = j.el.animate(j.k, j.opts);
+    /* 等主執行緒閒下來才從第一格開播（工具剛掛上、照片在解碼的那幾格最忙；那時開播，開頭就被吃掉了） */
+    playWhenCalm(a, 350);
+    calmStarts.push(a);
     if (lead) {
       /* 對齊到這一批的起跑時間（起跑時間還沒定的話，等它定了再對齊；這之間停在第一格、看不見） */
       /* 只在「這一批剛開播不久」時才對齊（載入中途換上的元素接在同一個進度）。
@@ -194,6 +198,8 @@ function startJob(j: Job) {
   } catch { /* 元素已經不在 */ }
 }
 let landed = true, afterLand: Job[] = [];
+/** 這一批真的開播了的動畫：工具的重工作要等它們開播之後才放行 */
+let calmStarts: Animation[] = [];
 let revealT = 0, revealed = true, pending: Job[] = [], enterFailsafe = 0, enterStopT = 0, rawRaf = 0;
 const entered = new WeakSet<Element>();
 /** 這一塊裡有沒有照片（夠大的 img／canvas）：有的話不能整塊動，要往裡面拆 */
@@ -377,7 +383,11 @@ function revealEnter() {
   enterStopT = window.setTimeout(() => { enterObs?.disconnect(); enterObs = null; }, 800);
   /* 動畫真的畫上螢幕（交給 GPU）要等兩格：之後才放行工具的重工作 */
   releasePending = true;
-  requestAnimationFrame(() => requestAnimationFrame(releaseWaiters));
+  /* 等這一批動畫真的開播（停在第一格的那段等主執行緒閒下來，見 playWhenCalm）之後，再過兩格才放行重工作 */
+  const started = calmStarts; calmStarts = [];
+  const go = () => requestAnimationFrame(() => requestAnimationFrame(releaseWaiters));
+  if (!started.length) go();
+  else void Promise.race([Promise.all(started.map(a => new Promise<void>(res => { const chk = () => (a.playState === 'running' || a.playState === 'finished' || a.playState === 'idle') ? res() : requestAnimationFrame(chk); chk(); }))), new Promise(r => setTimeout(r, 500))]).then(go);
 }
 let entranceWaiters: (() => void)[] = [], releasePending = false;
 function releaseWaiters() { releasePending = false; const w = entranceWaiters; entranceWaiters = []; w.forEach(f => f()); }
