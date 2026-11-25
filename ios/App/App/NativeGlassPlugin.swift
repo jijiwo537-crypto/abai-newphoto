@@ -272,10 +272,11 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         let message = call.getString("message")
         let buttons = (call.getArray("buttons") ?? []).compactMap { $0 as? [String: Any] }
         let dark = call.getString("style") == "dark"
+        let bottom = call.getBool("bottom") ?? false
         DispatchQueue.main.async {
             guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有畫面"); return }
             self.dialogView?.dismiss(nil)
-            let d = ABAIDialog(frame: web.frame, title: title, message: message, buttons: buttons, dark: dark)
+            let d = ABAIDialog(frame: web.frame, title: title, message: message, buttons: buttons, dark: dark, bottom: bottom, safeBottom: web.safeAreaInsets.bottom)
             d.onPick = { [weak self, weak d] id in
                 if self?.dialogView === d { self?.dialogView = nil }
                 call.resolve(["id": id ?? ""])
@@ -530,29 +531,35 @@ final class ABAIDialog: UIView {
     private let panel: UIVisualEffectView
     private let dim = UIView()
     private var picked = false
+    private let bottom: Bool
 
-    init(frame: CGRect, title: String, message: String?, buttons: [[String: Any]], dark: Bool) {
-        let width = min(320, frame.width - 64)
-        let btnH: CGFloat = 48, gap: CGFloat = 8, pad: CGFloat = 24
+    /// bottom：從畫面下方升上來的面板（登入），點面板外面＝關掉（回傳空字串）；不是 bottom 的一定要選一個
+    init(frame: CGRect, title: String, message: String?, buttons: [[String: Any]], dark: Bool, bottom: Bool = false, safeBottom: CGFloat = 0) {
+        self.bottom = bottom
+        let width = bottom ? min(430, frame.width) : min(320, frame.width - 64)
+        let btnH: CGFloat = bottom ? 50 : 48, gap: CGFloat = bottom ? 10 : 8, pad: CGFloat = 24
+        let btnR: CGFloat = bottom ? 14 : btnH / 2
         let titleL = UILabel()
         titleL.text = title
-        titleL.font = .systemFont(ofSize: 17, weight: .bold)
+        titleL.font = .systemFont(ofSize: bottom ? 22 : 17, weight: bottom ? .heavy : .bold)
         titleL.textColor = .white
-        titleL.textAlignment = .center
+        titleL.textAlignment = bottom ? .left : .center
         titleL.numberOfLines = 0
         let msgL = UILabel()
         msgL.text = message
         msgL.font = .systemFont(ofSize: 13, weight: .regular)
         msgL.textColor = UIColor(white: 1, alpha: 0.55)
-        msgL.textAlignment = .center
+        msgL.textAlignment = bottom ? .left : .center
         msgL.numberOfLines = 0
         let inner = width - pad * 2
         let tH = ceil(titleL.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height)
         let mH = message == nil ? 0 : ceil(msgL.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height)
         let head = tH + (message == nil ? 0 : 8 + mH)
-        let height = pad + head + 24 + CGFloat(buttons.count) * btnH + CGFloat(max(0, buttons.count - 1)) * gap + pad
-        panel = ABAIGlass.view(radius: 28, interactive: false, dark: dark)
-        panel.frame = CGRect(x: (frame.width - width) / 2, y: (frame.height - height) / 2, width: width, height: height)
+        let height = pad + head + 24 + CGFloat(buttons.count) * btnH + CGFloat(max(0, buttons.count - 1)) * gap + pad + (bottom ? safeBottom + 20 : 0)
+        panel = ABAIGlass.view(radius: bottom ? 24 : 28, interactive: false, dark: dark)
+        panel.frame = bottom
+            ? CGRect(x: (frame.width - width) / 2, y: frame.height - height, width: width, height: height + 40)
+            : CGRect(x: (frame.width - width) / 2, y: (frame.height - height) / 2, width: width, height: height)
         super.init(frame: frame)
         autoresizingMask = [.flexibleWidth, .flexibleHeight]
         dim.frame = bounds
@@ -562,6 +569,16 @@ final class ABAIDialog: UIView {
         titleL.frame = CGRect(x: pad, y: pad, width: inner, height: tH)
         panel.contentView.addSubview(titleL)
         if message != nil { msgL.frame = CGRect(x: pad, y: pad + tH + 8, width: inner, height: mH); panel.contentView.addSubview(msgL) }
+        if bottom {
+            /* 右上角關閉 */
+            let x = UIButton(type: .system)
+            x.setImage(UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)), for: .normal)
+            x.tintColor = UIColor(white: 1, alpha: 0.4)
+            x.frame = CGRect(x: width - pad - 30, y: pad - 6, width: 36, height: 36)
+            x.addAction(UIAction { [weak self] _ in self?.dismiss("") }, for: .touchUpInside)
+            panel.contentView.addSubview(x)
+            titleL.frame.size.width = inner - 40
+        }
         var y = pad + head + 24
         for spec in buttons {
             let id = spec["id"] as? String ?? ""
@@ -570,15 +587,26 @@ final class ABAIDialog: UIView {
             b.frame = CGRect(x: pad, y: y, width: inner, height: btnH)
             b.setTitle(spec["title"] as? String, for: .normal)
             b.titleLabel?.font = .systemFont(ofSize: 15, weight: primary ? .bold : .semibold)
+            /* 按鈕前面的圖示：SF Symbol，或網頁畫好的圖（data URL，例如 Google 的四色標誌，照原色畫） */
+            var icon: UIImage?
+            if let sym = spec["symbol"] as? String { icon = ABAIGlass.uniform(ABAIGlass.image(sym, pointSize: 17, weight: .medium), box: 18) }
+            if let du = spec["image"] as? String, let comma = du.firstIndex(of: ","), let data = Data(base64Encoded: String(du[du.index(after: comma)...])),
+               let img = UIImage(data: data, scale: 3) { icon = img.withRenderingMode(.alwaysOriginal) }
+            if let ic = icon {
+                b.setImage(ic, for: .normal)
+                b.tintColor = primary ? .black : .white
+                b.imageEdgeInsets = UIEdgeInsets(top: 0, left: -5, bottom: 0, right: 5)
+                b.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: -5)
+            }
             if primary {
                 b.backgroundColor = .white
                 b.setTitleColor(.black, for: .normal)
-                b.layer.cornerRadius = btnH / 2
+                b.layer.cornerRadius = btnR
                 b.layer.cornerCurve = .continuous
                 panel.contentView.addSubview(b)
             } else {
                 /* 其他按鈕：一條玻璃膠囊（跟 App 裡其他原生按鈕同一種材質） */
-                let g = ABAIGlass.view(radius: btnH / 2, interactive: true, dark: false)
+                let g = ABAIGlass.view(radius: btnR, interactive: true, dark: false)
                 g.frame = b.frame
                 b.frame = g.bounds
                 b.setTitleColor(UIColor(white: 1, alpha: 0.85), for: .normal)
@@ -595,8 +623,20 @@ final class ABAIDialog: UIView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if bottom, let t = touches.first, !panel.frame.contains(t.location(in: self)) { dismiss("") }
+    }
+
     func present() {
         dim.alpha = 0
+        if bottom {
+            panel.transform = CGAffineTransform(translationX: 0, y: panel.frame.height)
+            UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.9, initialSpringVelocity: 0, options: [.allowUserInteraction]) {
+                self.dim.alpha = 1
+                self.panel.transform = .identity
+            }
+            return
+        }
         panel.alpha = 0
         panel.transform = CGAffineTransform(scaleX: 0.92, y: 0.92)
         UIView.animate(withDuration: 0.38, delay: 0, usingSpringWithDamping: 0.86, initialSpringVelocity: 0, options: [.allowUserInteraction]) {
@@ -612,10 +652,10 @@ final class ABAIDialog: UIView {
         picked = true
         isUserInteractionEnabled = false
         onPick?(id)
-        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseIn], animations: {
+        UIView.animate(withDuration: bottom ? 0.26 : 0.18, delay: 0, options: [.curveEaseIn], animations: {
             self.dim.alpha = 0
-            self.panel.alpha = 0
-            self.panel.transform = CGAffineTransform(scaleX: 0.95, y: 0.95)
+            if self.bottom { self.panel.transform = CGAffineTransform(translationX: 0, y: self.panel.frame.height) }
+            else { self.panel.alpha = 0; self.panel.transform = CGAffineTransform(scaleX: 0.95, y: 0.95) }
         }, completion: { _ in self.removeFromSuperview() })
     }
 }

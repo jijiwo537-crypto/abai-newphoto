@@ -5,7 +5,7 @@ import { sec as motionSec } from '../utils/motionTimings';
 import { Icon } from './Icon';
 import { LOCALES, changeLocale, getLocale } from '../utils/locale';
 import { isNative } from '../utils/native';
-import { useNativeGlass, nativeDialog, nativeSheet, closeNativeSheet, onNativeSheet, offsetGlass, type NativeSheetPage } from '../utils/nativeGlass';
+import { useNativeGlass, nativeDialog, closeNativeDialog, nativeSheet, closeNativeSheet, onNativeSheet, offsetGlass, type NativeSheetPage } from '../utils/nativeGlass';
 import { exportsStatus, subscribeExports, removeExport, type ExportMeta } from '../utils/exportHistory';
 import { haptic } from '../utils/haptics';
 import {
@@ -214,6 +214,23 @@ function keepDecoded(src: string | null) {
   heroKeep.src = src; heroKeep.decode?.().catch(() => {});
 }
 
+
+
+/* Google 的四色標誌畫成 PNG（交給原生的登入面板用，原生沒有這個圖示）：只畫一次 */
+const GOOGLE_G_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-3.9H24v7.1h12.1c-.2 1.9-1.6 4.7-4.5 6.6l-.04.3 6.5 5 .5.05c4.1-3.8 6.5-9.4 6.5-15.1z"/> <path fill="#34A853" d="M24 46c5.9 0 10.9-1.9 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.1l-.3 0-6.7 5.2-.1.3C8 41.1 15.4 46 24 46z"/> <path fill="#FBBC05" d="M11.5 28.5c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l0-.3-6.8-5.3-.2.1C2.9 17.1 2 20.4 2 24s.9 6.9 2.5 9.9l7-5.4z"/> <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.500 29.9 2 24 2 15.4 2 8 6.9 4.5 14.1l7 5.4C13.3 14.3 18.2 10.6 24 10.6z"/></svg>';
+let googlePng: Promise<string | undefined> | null = null;
+const googleGlyphPng = () => googlePng ??= new Promise<string | undefined>(res => {
+  const im = new Image();
+  im.onload = () => {
+    try {
+      const c = document.createElement('canvas'); c.width = c.height = 51;   // 17pt × 3
+      c.getContext('2d')!.drawImage(im, 0, 0, 51, 51);
+      const u = c.toDataURL('image/png'); c.width = c.height = 0; res(u);
+    } catch { res(undefined); }
+  };
+  im.onerror = () => res(undefined);
+  im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(GOOGLE_G_SVG);
+});
 
 const AvatarView: React.FC<{
   local: string | null;
@@ -491,6 +508,33 @@ export const HomePage: React.FC<HomePageProps> = ({
     try { await signInWithProvider(p); }   // 會跳走，回來時 onAuthChange 接手
     catch (e) { fail(e); }
   };
+
+  /* ── 登入（App 裡）：三個登入方式改成原生的底部面板（深色玻璃；Apple 白底、Google 與電子郵件透明玻璃）──
+     點電子郵件之後要打字（信箱、驗證碼），那兩頁照舊用網頁的面板。外掛不在才整個用網頁的 */
+  const [webLogin, setWebLogin] = useState(false);
+  const nativeLoginStep = isNative() && !webLogin && loginOpen && !emailOpen && step === 'id';
+  const loginActs = useRef({ oauth, setEmailOpen, setLoginErr, setLoginNote, setLoginOpen });
+  loginActs.current = { oauth, setEmailOpen, setLoginErr, setLoginNote, setLoginOpen };
+  useEffect(() => {
+    if (!nativeLoginStep) return;
+    let live = true;
+    void googleGlyphPng().then(g => live ? nativeDialog({
+      title: '登入', message: loginErr || undefined, style: 'dark', bottom: true,
+      buttons: [
+        { id: 'apple', title: '使用 Apple 帳號登入', role: 'primary', symbol: 'apple.logo' },
+        { id: 'google', title: '使用 Google 帳號登入', image: g },
+        { id: 'email', title: '使用電子郵件登入', symbol: 'envelope' },
+      ],
+    }) : null).then(id => {
+      if (!live || id === undefined) return;
+      const a = loginActs.current;
+      if (id === null) { setWebLogin(true); return; }
+      if (id === 'apple' || id === 'google') void a.oauth(id);
+      else if (id === 'email') { a.setEmailOpen(true); a.setLoginErr(''); a.setLoginNote(''); }
+      else if (id === '') a.setLoginOpen(false);
+    });
+    return () => { live = false; void closeNativeDialog(); };
+  }, [nativeLoginStep, loginErr]);
 
   const logout = () => {
     signOut().catch(() => {});
@@ -1646,7 +1690,7 @@ export const HomePage: React.FC<HomePageProps> = ({
            沒有後端可以驗，所以驗證碼收到就算過，帳號存在這台裝置上。
            畫面與流程都照真的做，之後接上伺服器只要換掉 sendCode／submitCode 兩支。 */}
       <AnimatePresence>
-        {loginOpen && (
+        {loginOpen && !nativeLoginStep && !(isNative() && !webLogin && !emailOpen && step === 'busy') && (
           <motion.div
             key="login"
             initial={{ opacity: 0 }}
