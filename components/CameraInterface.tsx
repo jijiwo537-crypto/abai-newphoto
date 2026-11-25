@@ -1,4 +1,5 @@
 
+import { edgeFadeRef } from '../utils/edgeFade';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ms as motionMs } from '../utils/motionTimings';
 import { isNative } from '../utils/native';
@@ -2056,8 +2057,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             /* 濾鏡列跟其他控制列同一個 56px 高度：打開時上面的觀景窗、按鈕都不會被推動 */
             <div data-camera-filter-row style={{ animationDuration: `${motionMs('camControlsRow')}ms` }} className="w-full flex items-center h-full overflow-hidden animate-in fade-in duration-200">
                <div className="flex overflow-x-auto overflow-y-hidden w-full no-scrollbar gap-2 px-4 scroll-smooth items-center"
-                 /* 左右兩邊淡進黑底：濾鏡鈕滑到邊緣時漸漸消失，不是被螢幕邊緣硬切（跟構圖的比例列一樣） */
-                 style={{ WebkitMaskImage: 'linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', maskImage: 'linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
+                 /* 兩側淡進黑底：只在那一邊還能滑的時候才淡（見 utils/edgeFade） */
+                 ref={edgeFadeRef}>
                  {lutList.map((lut, idx) => (
                    <button
                     key={lut.id}

@@ -1,5 +1,6 @@
 import { EDIT_BAR_H } from './EditBar';
 import { riseIn, fadeIn } from '../utils/tabEntrance';
+import { edgeFadeRef } from '../utils/edgeFade';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ASPECT_PRESETS,
@@ -746,7 +747,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           {tab === 'crop' && (
             /* 左右兩邊淡進黑底：按鈕滑到邊緣時漸漸消失，不是被螢幕邊緣硬切 */
             <div className="w-full flex overflow-x-auto no-scrollbar px-4"
-              style={{ WebkitMaskImage: 'linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', maskImage: 'linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
+                 /* 兩側淡進黑底：只在那一邊還能滑的時候才淡（見 utils/edgeFade） */
+                 ref={edgeFadeRef}>
               <div className="flex gap-2 mx-auto pr-6">
               {ASPECT_PRESETS.map(a => (
                 <button

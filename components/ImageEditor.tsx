@@ -662,7 +662,7 @@ import { generateBaseCorrectionLut, processPixels, copyPixelDither, sharpenDetai
 import { processPixelsParallel, releasePixelPool } from '../utils/pixelParallel';
 import { BATCH_MAX } from '../utils/batchLimit';
 import { registerTrim } from '../utils/memoryPressure';
-import { riseIn } from '../utils/tabEntrance';
+import { fadeIn } from '../utils/tabEntrance';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceGain } from '../utils/photoToneMath';
 import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
 /* 快取鍵用短 id 代表照片，不用來源字串：data: 網址有好幾 MB，每格滑桿都把它串進鍵裡，一格就要多花約 15ms */
@@ -10001,12 +10001,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (prev === null || prev === tabGroup || !firstReady) return;
     if (tabGroup === 'beauty' || tabGroup === 'match') {
       const row = document.querySelector(tabGroup === 'beauty' ? '[data-studio-host="beauty"] [data-beauty-toolbar]' : '[data-studio-host="match"] [data-cm-refs]');
-      if (row) riseIn(row.children, { clip: row, y: 0, stagger: 0, dur: 220, max: 30 });
+      if (row) { (row as HTMLElement).style.willChange = 'opacity'; fadeIn(row, { dur: 280 }); }
       return;
     }
     if (tabGroup === 'compose' || tabGroup === 'template') return;
     const box = toolsScrollRef.current;
-    if (box) riseIn(box.children, { clip: box, y: 0, stagger: 0, dur: 220, max: 30 });
+    if (box) fadeIn(box, { dur: 280 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabGroup]);
   const sliderRowHidden = activeToolId === 'curves' || isColourPanelTool(activeToolId) || activeCategory === 'compose' || ownPanel || maskTypePicking;
@@ -11729,6 +11729,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           style={{
               // 同上：時間長度不能靠 class，不然第一次進構圖時規則還沒產生。
               transitionDuration: '0ms',
+              /* 一直是獨立圖層：切分頁時整排淡入的動畫開始、結束都不會換圖層，縮圖不會在結束那一下跳半個像素 */
+              willChange: 'opacity',
               // HSL 開著的時候小分類列照樣留著（跟曲線一樣）。收起來的話，
               // 面板下緣會往下掉 96px，整條工具列看起來就是往下沉了一次。
               // 構圖的小分類（裁切／角度／翻轉／梯形）由 ComposeStudio 自己畫在
