@@ -14,6 +14,7 @@ import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
 import { autoMasks, isAutoMask } from '../utils/masks';
 import { openGlassMenu } from '../utils/nativeGlass';
+import { waitEntranceStart } from '../utils/importHero';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
 import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, rawDevelopLinear, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
 import { RawGpu } from '../utils/rawGpu';
@@ -6966,7 +6967,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // 已經解好的就直接用，不要再繞一次 new Image()
     const done = takeDecoded(activeSrc);
     if (done) {
-      ready(done);
+      /* 從主頁導入：等介面進場動畫先開播（交給 GPU）再做這段重工作（見 utils/importHero 的 waitEntranceStart） */
+      void waitEntranceStart().then(() => { if (loadIsCurrent) ready(done); });
     } else {
       const img = new Image();
       if (!activeSrc.startsWith('blob:') && !activeSrc.startsWith('data:')) {
@@ -6986,6 +6988,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         try {
           if (typeof img.decode === 'function') await img.decode();
         } catch { /* onload 已成功，仍可安全使用這張圖 */ }
+        if (!loadIsCurrent) return;
+        await waitEntranceStart();
         if (!loadIsCurrent) return;
         requestAnimationFrame(() => {
           if (loadIsCurrent) ready(img);

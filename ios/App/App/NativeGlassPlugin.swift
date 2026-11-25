@@ -84,8 +84,8 @@ enum ABAIGlass {
     }
 
     static func image(_ symbol: String, pointSize: CGFloat = 19, weight: UIImage.SymbolWeight = .regular) -> UIImage? {
-        /* 水平線：用 iOS 系統的「level」圖示（跟系統設定、相機同一套語彙）；舊系統沒有才用自己畫的 */
-        if symbol == "abai.level" { return UIImage(systemName: "level", withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight)) ?? levelIcon(size: pointSize + 2) }
+        /* 水平線：用 iOS 系統的「尺」圖示（ruler）；萬一沒有才用自己畫的 */
+        if symbol == "abai.level" { return UIImage(systemName: "ruler", withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight)) ?? levelIcon(size: pointSize + 2) }
         if symbol == "abai.film" {
             /* 一格底片（直的）：左右兩條齒孔帶、每邊三個齒孔，中間是畫面。
                比 SF Symbol 大一點、線條留空隙，跟旁邊的編輯、愛心看起來一樣重 */

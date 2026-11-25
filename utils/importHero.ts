@@ -358,6 +358,18 @@ function revealEnter() {
   /* 開播後 0.8 秒內新長出來的介面也接著進場，之後就不再管 */
   window.clearTimeout(enterStopT);
   enterStopT = window.setTimeout(() => { enterObs?.disconnect(); enterObs = null; }, 800);
+  /* 動畫真的畫上螢幕（交給 GPU）要等兩格：之後才放行工具的重工作 */
+  releasePending = true;
+  requestAnimationFrame(() => requestAnimationFrame(releaseWaiters));
+}
+let entranceWaiters: (() => void)[] = [], releasePending = false;
+function releaseWaiters() { releasePending = false; const w = entranceWaiters; entranceWaiters = []; w.forEach(f => f()); }
+/** 工具載入照片的重工作（解碼後建緩衝、送 GPU）先等介面進場動畫開播、交給 GPU 之後再做。
+ *  沒有進場在等（一般打開、RAW、其他入口）就立刻放行；最多等 maxMs，絕不卡住 */
+export function waitEntranceStart(maxMs = 450): Promise<void> {
+  if (releasePending) return new Promise(res => { entranceWaiters.push(res); window.setTimeout(res, maxMs); });
+  if (!enterE || revealed) return Promise.resolve();
+  return new Promise(res => { entranceWaiters.push(res); window.setTimeout(res, maxMs); });
 }
 function startEnter(E: R, failsafeMs: number) {
   stopEnter();
@@ -367,8 +379,13 @@ function startEnter(E: R, failsafeMs: number) {
   const check = () => {
     const root = toolRoot();
     if (!root || !enterE) return;
-    if (root !== enterRoot) { enterRoot = root; perfMark('tool'); }
+    const first = root !== enterRoot;
+    if (first) { enterRoot = root; perfMark('tool'); }
     runEnter(root, enterE);
+    /* 有飛行替身時：工具頁一掛上來就開播（照片才剛起飛）。
+       開播之後編輯器才開始載入照片的那段重工作（見 waitEntranceStart）—— 動畫先交給 GPU 跑起來，
+       之後主執行緒再忙也不影響；以前是重工作先跑，動畫排不上，看起來就是「照片飛完才播」 */
+    if (first && ghost) revealEnter();
   };
   /* MutationObserver 在 React 寫進畫面之後、瀏覽器畫出來之前就會跑：介面第一次出現時就已經停在第一格，不會先閃一下 */
   /* 同一格裡的多次變動合併成一次檢查（在這一格畫出來之前跑），不會在 React 掛介面時反覆量版面拖慢主執行緒 */
@@ -380,6 +397,7 @@ function startEnter(E: R, failsafeMs: number) {
 }
 function stopEnter() {
   revealEnter();
+  releaseWaiters();
   landNow();
   window.clearTimeout(enterStopT);
   enterObs?.disconnect(); enterObs = null; enterRoot = null; enterE = null;
