@@ -202,8 +202,23 @@ enum ABAIImageCore {
     /// 只動檔頭的中繼資料，不重新壓縮影像（畫質不受影響）。方向一律寫 1（像素已經轉正）、不帶原圖的像素尺寸（可能裁切過）。
     static func copyMetadata(_ data: Data, from original: URL) -> Data {
         guard let orig = CGImageSourceCreateWithURL(original as CFURL, nil),
-              let props = CGImageSourceCopyPropertiesAtIndex(orig, 0, nil) as? [CFString: Any],
               let src = CGImageSourceCreateWithData(data as CFData, nil), let type = CGImageSourceGetType(src) else { return data }
+        /* 首選：原圖的拍攝資訊整份複製（不逐欄轉換）。逐欄寫入時很多欄位寫不進去（ISO 是陣列、GPS 是一組座標、
+           RAW 檔的資訊結構也不同），只會剩下鏡頭名稱那一欄 —— 整份複製才完整：機型、鏡頭、ISO、快門、光圈、時間、地點。
+           只改兩處：方向一律是 1（像素已經轉正）、拿掉原圖的像素尺寸（可能裁切過） */
+        if let whole = CGImageSourceCopyMetadataAtIndex(orig, 0, nil), let m = CGImageMetadataCreateMutableCopy(whole) {
+            for path in ["exif:PixelXDimension", "exif:PixelYDimension", "tiff:ImageWidth", "tiff:ImageLength"] {
+                CGImageMetadataRemoveTagWithPath(m, nil, path as CFString)
+            }
+            CGImageMetadataSetValueMatchingImageProperty(m, kCGImagePropertyTIFFDictionary, kCGImagePropertyTIFFOrientation, NSNumber(value: 1))
+            let out = NSMutableData()
+            if let dest = CGImageDestinationCreateWithData(out as CFMutableData, type, 1, nil) {
+                let opts: [CFString: Any] = [kCGImageDestinationMetadata: m, kCGImageDestinationMergeMetadata: true]
+                if CGImageDestinationCopyImageSource(dest, src, opts as CFDictionary, nil) { return out as Data }
+            }
+        }
+        /* 退路：逐欄寫入（讀不到整份資訊時） */
+        guard let props = CGImageSourceCopyPropertiesAtIndex(orig, 0, nil) as? [CFString: Any] else { return data }
         let meta = CGImageMetadataCreateMutable()
         var n = 0
         let skip: Set<String> = [kCGImagePropertyExifPixelXDimension as String, kCGImagePropertyExifPixelYDimension as String,
