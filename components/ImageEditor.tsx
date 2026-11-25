@@ -9923,7 +9923,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         <button
             aria-label="前後對比"
             /* 跟圖片、面板同一條曲線同一段時間移動；曲線時放在格子右下角 */
-            style={where === 'row' ? undefined : { bottom: activeToolId === 'curves' ? 22 : isBatch ? 58 : cmpFit ? cmpFit.mb + 16 : 8, transition: 'bottom 260ms cubic-bezier(.22,1,.36,1)' }}
+            style={where === 'row' ? undefined : { bottom: activeToolId === 'curves' ? 22 : cmpFit ? cmpFit.mb + 16 : 8, transition: 'bottom 260ms cubic-bezier(.22,1,.36,1)' }}
             onPointerDown={(e) => { 
                 e.preventDefault(); 
                 try {
@@ -9952,6 +9952,36 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <path d="M12 6H19.5C20.3284 6 21 6.67157 21 7.5V16.5C21 17.3284 20.3284 18 19.5 18H12" stroke="currentColor" strokeWidth="1.5" />
             </svg>
         </button>);
+  /** 應用全部鍵。row：批量時放在滑桿列右邊；float：滑桿列收起來的那幾頁浮在縮圖列右上方 */
+  const renderApplyAll = (where: 'float' | 'row') => (
+            <button
+            aria-label="應用全部"
+            data-apply-all
+            data-haptic="tick"
+            onClick={() => {
+              applyToAll();
+              if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+              const thumbs = Array.from(document.querySelectorAll<HTMLElement>('[data-batch-thumb]'));
+              let k = 0;
+              thumbs.forEach((el) => {
+                if (el.getAttribute('data-batch-thumb') === String(safeIdx)) return;
+                el.animate([{ transform: 'scale(1)' }, { transform: 'scale(.86)', offset: .45 }, { transform: 'scale(1)' }],
+                  { duration: 360, delay: Math.min(k++, 10) * 28, easing: 'cubic-bezier(.22,1,.36,1)' });
+              });
+            }}
+            className={where === 'row'
+              ? 'absolute right-2 top-1/2 -translate-y-1/2 w-[56px] py-1 flex flex-col items-center justify-center gap-[5px] select-none touch-none text-white active:scale-90 transition-transform'
+              : 'absolute bottom-[58px] right-1 w-[56px] py-1 flex flex-col items-center justify-center gap-[5px] select-none touch-none text-white active:scale-90 transition-transform z-30'}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+              {/* 一張照片（前）＋後面疊著的兩張：「這張的調整套到全部」 */}
+              <path d="M8 4.5h9.5a2 2 0 0 1 2 2V16" stroke="white" strokeOpacity=".45" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M5.5 7.5H15a2 2 0 0 1 2 2V19" stroke="white" strokeOpacity=".75" strokeWidth="1.5" strokeLinecap="round" />
+              <rect x="3" y="10.5" width="11.5" height="9.5" rx="2" stroke="white" strokeWidth="1.5" />
+              <path d="m6.5 15.4 1.9 1.9 3.4-3.6" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="text-[9.5px] leading-none font-medium tracking-wide whitespace-nowrap drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">應用全部</span>
+          </button>);
   const ownPanel = activeCategory === 'template' || STUDIO_CATS.includes(activeCategory);
   /** 遮色片在選新增哪一種的時候，滑桿列先收起來（沒有東西可以調） */
   /* 取消選中時，下面那一排直接變成「新增遮色片」的五種（不是一排變暗、按不了的調整） */
@@ -11172,7 +11202,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {saveState !== 'success' && srcList.length > 1 && (
           <div
             data-batch-strip
-            className={`absolute bottom-2 left-[14px] right-[74px] ${activeToolId === 'curves' ? 'z-50' : 'z-30'}`}
+            className={`absolute bottom-2 left-[14px] right-[50px] ${activeToolId === 'curves' ? 'z-50' : 'z-30'}`}
           >
             {/* 左右各留 2px，選中的白框才不會被捲動列的邊緣切掉 */}
             <div data-batch-row className="relative z-20 flex items-end gap-1.5 overflow-x-auto no-scrollbar px-[2px] pb-1 pt-1">
@@ -11222,34 +11252,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         )}
         {/* 應用全部：把這張的調整（濾鏡、調節、特效）套到其他每一張；構圖各張維持自己的。
             點下去縮圖列其他張依序輕輕彈一下，表示已經套過去了（不跳文字提示） */}
-        {saveState !== 'success' && srcList.length > 1 && (
-          <button
-            aria-label="應用全部"
-            data-apply-all
-            data-haptic="tick"
-            onClick={() => {
-              applyToAll();
-              if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-              const thumbs = Array.from(document.querySelectorAll<HTMLElement>('[data-batch-thumb]'));
-              let k = 0;
-              thumbs.forEach((el) => {
-                if (el.getAttribute('data-batch-thumb') === String(safeIdx)) return;
-                el.animate([{ transform: 'scale(1)' }, { transform: 'scale(.86)', offset: .45 }, { transform: 'scale(1)' }],
-                  { duration: 360, delay: Math.min(k++, 10) * 28, easing: 'cubic-bezier(.22,1,.36,1)' });
-              });
-            }}
-            className={`absolute bottom-2 right-2 w-[58px] py-1 flex flex-col items-center justify-center gap-[5px] select-none touch-none text-white active:scale-90 transition-transform ${activeToolId === 'curves' ? 'z-50' : 'z-30'}`}
-          >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-              <path d="M7.5 4.5H5.5V15.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M2.75 12.75 5.5 15.5 8.25 12.75" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M16.5 19.5H18.5V8.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M15.75 11.25 18.5 8.5 21.25 11.25" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              <rect x="9.5" y="7.5" width="5" height="9" rx="1" stroke="white" strokeWidth="1.5" />
-            </svg>
-            <span className="text-[9.5px] leading-none font-medium tracking-wide whitespace-nowrap drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">應用全部</span>
-          </button>
-        )}
+        {saveState !== 'success' && srcList.length > 1 && !compareInRow && renderApplyAll('float')}
 
         {/* 合併：把現在畫面上的樣子烤進圖層，烤完才能再疊下一個特效／濾鏡。
              位置跟右下角的前後對比鍵左右對稱。
@@ -11330,7 +11333,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             滑桿列收起來的時候（構圖、模板、HSL…）浮在縮圖列上方 */}
         {(() => {
         if (activeToolId === 'curves' && detailPanelHost) return createPortal(renderCompare('float'), detailPanelHost);
-        if (compareInRow) return null;
         return renderCompare('float');
         })()}
 
@@ -11591,7 +11593,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           className={`relative flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] px-8`}
           style={{
               /* 批量：右邊放對比鍵，滑桿往左讓出位置 */
-              paddingRight: compareInRow ? 56 : undefined,
+              paddingRight: compareInRow ? 76 : undefined,
               /* 時間長度走 inline style，不要用 duration-0 / duration-[380ms] 這種 class。
                  這個 App 掛的是 Tailwind 的瀏覽器版 JIT，規則是「在 DOM 看到那個 class
                  才產生」的：duration-0 剛好就是進構圖的那一刻第一次出現，規則會晚一幀，
@@ -11614,7 +11616,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               borderBottom: sliderRowHidden ? '0px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(255, 255, 255, 0.05)'
           }}
         >
-          {compareInRow && renderCompare('row')}
+          {compareInRow && renderApplyAll('row')}
           {activeTool && !['lightLeak', 'softLight'].includes(activeToolId) && activeToolId !== 'curves' && !isColourPanelTool(activeToolId) && (
               <div className="w-full">
                   <FastSlider 
@@ -11950,8 +11952,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <div data-mask-types className="flex items-center gap-2">
                 {MASK_TYPES.filter(([t]) => !isAutoMask(t) || autoMaskSupported()).map(([t, label]) => (
                   <button key={t} data-mask-type={t} onClick={() => addMask(t)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center transition-all bg-white/5 text-white/70 group-hover:bg-white/10"><MaskGlyph k={t} /></div>
-                    <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap text-white/60">{label}</span>
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center transition-all bg-white/5 text-white/40 group-hover:bg-white/10"><MaskGlyph k={t} /></div>
+                    <span className="text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap text-white/20">{label}</span>
                     <div className="w-1 h-1 mt-0.5" />
                   </button>
                 ))}
