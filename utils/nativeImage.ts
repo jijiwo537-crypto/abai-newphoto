@@ -81,9 +81,75 @@ export async function watchNativeMemoryBudget(): Promise<void> {
 }
 
 /** 把網頁的檔案（Blob）寫到原生暫存資料夾，回傳路徑。分段傳（每段 3MB），大圖也不會卡在橋接上 */
+/* ── 網頁 → 原生的二進位通道（見 ios/App/App/MainViewController.swift 的 ABAIIOSchemeHandler）──
+   位元組原封不動走 WebKit 自己的資源載入寫成原生暫存檔，不必先轉 base64、不經過外掛的 JSON 訊息。
+   第一次用之前先送一小段探測、再從原生讀回來逐位元組比對；任何一步不對（舊版 App 沒有這條通道、
+   系統不給送、內容對不上）就整個工作階段都不用，照舊走 base64 —— 只會比較慢，不會壞。 */
+const IO_PUT = 'abai-io://local/put';
+const IO_CHUNK = 8 * 1024 * 1024;
+let ioProbe: Promise<boolean> | null = null;
+async function ioPost(body: Uint8Array, ext: string, path?: string): Promise<{ path: string; size: number } | null> {
+  const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  /* 原生端沒回應（理論上不會）也不能讓存檔卡住：一段 8MB 給 20 秒，超過就放棄、改走 base64 */
+  const t = ctl ? setTimeout(() => ctl.abort(), 20000) : 0;
+  try {
+    const r = await fetch(`${IO_PUT}?ext=${encodeURIComponent(ext)}${path ? `&path=${encodeURIComponent(path)}` : ''}`,
+      { method: 'POST', body, cache: 'no-store', signal: ctl?.signal });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j && typeof j.path === 'string' && typeof j.size === 'number' ? { path: j.path, size: j.size } : null;
+  } catch { return null; }
+  finally { if (t) clearTimeout(t); }
+}
+/** 這條通道能不能用（每個工作階段探一次） */
+export function nativeIoReady(): Promise<boolean> {
+  if (!ioProbe) ioProbe = (async () => {
+    try {
+      const p = await nativeImage();
+      if (!p) return false;
+      const probe = new Uint8Array(257);
+      for (let i = 0; i < probe.length; i++) probe[i] = (i * 151 + 7) & 255;
+      const r = await ioPost(probe, 'probe');
+      if (!r) return false;
+      let ok = r.size === probe.length;
+      if (ok) {
+        try {
+          const back = new Uint8Array(await (await fetch(fileSrc(r.path), { cache: 'no-store' })).arrayBuffer());
+          ok = back.length === probe.length && back.every((v, i) => v === probe[i]);
+        } catch { ok = false; }
+      }
+      p.remove({ path: r.path }).catch(() => {});
+      return ok;
+    } catch { return false; }
+  })();
+  return ioProbe;
+}
+/** 位元組（可以分好幾塊）寫成一個原生暫存檔，回傳路徑；通道不能用或中途失敗回 null（不留半個檔） */
+export async function writeNativeFileFast(parts: (Uint8Array | Blob)[], ext: string): Promise<string | null> {
+  if (!(await nativeIoReady())) return null;
+  let path: string | undefined, total = 0;
+  const fail = () => { if (path) void nativeImage().then(p => p?.remove({ path: path! })).catch(() => {}); return null; };
+  for (const part of parts) {
+    const size = part instanceof Blob ? part.size : part.byteLength;
+    for (let off = 0; off < size; off += IO_CHUNK) {
+      const end = Math.min(size, off + IO_CHUNK);
+      const body = part instanceof Blob ? new Uint8Array(await part.slice(off, end).arrayBuffer()) : part.subarray(off, end);
+      const r = await ioPost(body, ext, path);
+      total += end - off;
+      if (!r || r.size !== total) return fail();
+      path = r.path;
+    }
+  }
+  return path ?? null;
+}
+
 export async function blobToNativeFile(blob: Blob, ext: string): Promise<string> {
   const p = await nativeImage();
   if (!p) throw new Error('沒有原生影像外掛');
+  if (blob.size > 0) {
+    const fast = await writeNativeFileFast([blob], ext);
+    if (fast) return fast;
+  }
   const CHUNK = 3 * 1024 * 1024;
   let path: string | undefined;
   for (let off = 0; off < blob.size || off === 0; off += CHUNK) {
