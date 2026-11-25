@@ -1,7 +1,7 @@
 import { slideBack } from '../utils/pageTransition';
 import { haptic } from '../utils/haptics';
 import { SLIDER_DOUBLE_TAP_EVENT } from '../utils/sliderTouch';
-import { BusyLayer } from './BusyLayer';
+import { BusyLayer, HeldBusy } from './BusyLayer';
 import { loadPresets, storePresets, presetParamsOf, nextPresetNumber, MAX_PRESETS, type UserPreset } from '../utils/userPresets';
 import { loadCustomLuts, importCustomLut, removeCustomLut, type CustomLut } from '../utils/customLuts';
 import { pickCustomLutFiles, type LutFileSelection } from '../utils/customLutPicker';
@@ -3061,9 +3061,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 格子 36pt、手機最高 3 倍螢幕＝108px；留一點餘裕給 4 倍縮放的情況 */
   const STRIP_THUMB = 144;
   const [stripThumbs, setStripThumbs] = useState<Record<string, string>>({});
+  const stripThumbsRef = useRef(stripThumbs); stripThumbsRef.current = stripThumbs;
+  /* 一輪做完還有缺的（例如解碼失敗）：過一下再補一輪 */
+  const [stripRetry, setStripRetry] = useState(0);
   /* 以「這張照片最初的網址」為準：RAW 調整後換上新沖好的底圖（網址會換），縮圖仍然是原本那張，跟一般照片一樣從頭到尾不變 */
   useEffect(() => {
-    const missing = Array.from(new Set<string>(srcList.filter(Boolean).map(s => thumbSrcOfRef.current(s)))).filter(s => !stripThumbs[s]);
+    const missing = Array.from(new Set<string>(srcList.filter(Boolean).map(s => thumbSrcOfRef.current(s)))).filter(s => !stripThumbsRef.current[s]);
     if (!missing.length) return;
     let alive = true;
     const make = (s: string) => new Promise<void>(resolve => {
@@ -3109,11 +3112,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         };
         im.src = url;
       };
+      /* 手機上的檔案（相機照片、RAW 沖好的底圖、導入的照片）：直接請原生縮成小圖（只讀檔頭／內嵌預覽、不在網頁解整張），
+         十幾張 RAW 也是一張幾十毫秒；原生不行才退回網頁解碼 */
+      if (filePath) { void nativeDownsample(filePath, STRIP_THUMB * 2).then(r => r?.url ? load(r.url, 1) : load(s, 1)).catch(() => load(s, 1)); return; }
       load(s, 0);
     });
-    (async () => { for (const s of missing) { if (!alive) return; await make(s); } })();
+    (async () => {
+      for (const s of missing) { if (!alive) return; if (stripThumbsRef.current[s]) continue; await make(s); }
+      if (alive && stripRetry < 5) setTimeout(() => { if (alive && missing.some(m => !stripThumbsRef.current[m])) setStripRetry(n => n + 1); }, 1500);
+    })();
     return () => { alive = false; };
-  }, [srcList, stripThumbs]);
+    // 只看照片清單：每做好一張就重跑的話，排在後面的會一直被中斷重來
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcList, stripRetry]);
   /** 這張的圖已經解好了嗎？順便把它移到最新，才不會被下一張擠掉 */
   const takeDecoded = (src: string): HTMLImageElement | null => {
     const im = viewedImgRef.current.get(src) || warmImgRef.current.get(src);
@@ -3151,7 +3162,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const t = window.setTimeout(() => {
       // 只預熱「連結中」的 —— 沒連結的那幾張參數各走各的，先算了也是白算
       // 已經留著「畫好的整張」而且還對得上的，切過去直接用那份，不必再背景算一次（省下每張兩趟整張運算）
-      const queue = srcList.filter((u, i) => u !== activeSrc && linked[i] !== false && !shotValid(i, liveRef.current));
+      /* 只留得住 WARM_MAX 張：先算左右鄰居（最可能下一個切過去的），越遠越後面、超過的不算。
+         以前照清單順序算，張數一多，留到最後的是清單尾巴那兩張、鄰居反而被擠掉 —— 切過去就要轉圈 */
+      const cur = srcList.indexOf(activeSrc);
+      const queue = srcList.map((u, i) => ({ u, i, d: Math.abs(i - cur) + (i < cur ? 0.5 : 0) }))
+        .filter(x => x.u !== activeSrc && linked[x.i] !== false && !shotValid(x.i, liveRef.current))
+        .sort((a, b) => a.d - b.d).slice(0, WARM_MAX).map(x => x.u);
       const live = liveRef.current;
       if (!live) return;
       const lut = lutList[live.selectedLutIdx];
@@ -3178,7 +3194,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           }
           pw = Math.max(1, pw); ph = Math.max(1, ph);
           const sig = warmSigOf(p, lut.id, pw, ph);
-          if (warmSigRef.current.get(src) === sig) return done(); // 這張已經是最新的了
+          if (warmSigRef.current.get(src) === sig) {   // 這張已經是最新的了：移到最新，不被擠掉
+            const w0 = warmPixelsRef.current.get(src);
+            if (w0) { warmPixelsRef.current.delete(src); warmPixelsRef.current.set(src, w0); }
+            return done();
+          }
           let source: Uint8ClampedArray;
           try {
             const c = document.createElement('canvas');
@@ -3212,6 +3232,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 }
               } catch { lut100 = null; }
               if (cancelled) return;
+              warmPixelsRef.current.delete(src);   // 重新插到最後（最新），擠掉的才會是最舊的那張
               warmPixelsRef.current.set(src, { w: pw, h: ph, lutId: lut.id, p, lut0, lut100 });
               warmSigRef.current.set(src, sig);
               // 超過上限就丟掉最舊的（Map 依插入順序）
@@ -11511,12 +11532,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         </>
       )}
       {saveState === 'processing' && (
-        <BusyLayer className="z-[400] bg-black flex flex-col items-center justify-center">
-          {/* 儲存中：按下去那一刻就完整出現（不淡入）；層級要高過相機相簿裡蓋上來的編輯頁（z-300），不然會被蓋在下面看不到 */}
-          {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
-          <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin"></div>
-          <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
-        </BusyLayer>
+        /* 「儲存中」從按下去到存進相簿是同一個元素，動畫一路播完（見 HeldBusy） */
+        <HeldBusy label={'儲存中'} />
       )}
     </div>
   );

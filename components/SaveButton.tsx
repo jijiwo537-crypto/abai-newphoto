@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BusyLayer } from './BusyLayer';
+import { BusyLayer, HeldBusy, heldBusyShowing } from './BusyLayer';
 import { prepareFiles, shareFiles, shareSheet } from '../utils/shareAll';
 import { isNative } from '../utils/native';
 import { saveToPhotos, noteExportForReview } from '../utils/nativePhotos';
@@ -17,6 +17,8 @@ import { saveToPhotos, noteExportForReview } from '../utils/nativePhotos';
 const autoSaved = new Set<string>();
 /** 成品頁準備好之前（App 還要等存相簿）蓋著的那一層：接手剛剛的「匯出中」，照原樣繼續顯示（見 BusyLayer） */
 function coverLayer() {
+  /* 前一段的「儲存中」還在：直接接著用同一個元素（動畫不中斷） */
+  if (heldBusyShowing()) return <HeldBusy claimOnly />;
   return (
     /* 全黑、不透明：後面的成品頁不能透出來。掀開時不淡出（淡出等於兩層疊在一起），成品頁準備好的那一格直接換過去。 */
     <BusyLayer continueLast data-abai-save-cover="" className="z-[10000] bg-black flex items-center justify-center" aria-label="儲存中">

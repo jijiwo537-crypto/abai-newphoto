@@ -3,7 +3,7 @@ import { selectedKinds, selectedFrame, paintSelectedAnimation, selectedPatternOf
 
 import { swatchEdge } from '../utils/swatch';
 import { paintTextBg, paintTextShadow, layoutText, drawTextRuns, drawUnderline, needsTextLayout, textInkShift, textInkShiftX, inkExtent, drawTextRunsAnimated, textFillStyle, setRunGradient, paintOuterStroke, paintTextDepth, paintDecoLines, textEffectPad } from '../utils/textDeco';
-import { BusyLayer, afterBusyPainted } from './BusyLayer';
+import { BusyLayer, HeldBusy, afterBusyPainted } from './BusyLayer';
 import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/waveWarp';
 import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
@@ -11825,11 +11825,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            畫面就永遠停在這裡，連退回主頁都做不到。
            現在等超過六秒還沒好就多出一顆返回鍵（見 StuckEscape）—— 正常的導出
            兩三秒就結束，根本看不到它。 */
-        <BusyLayer className="z-[120] bg-black flex flex-col items-center justify-center animate-in fade-in duration-300">
-          {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
-          <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin"></div>
-          <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
-        </BusyLayer>
+        /* 「儲存中」從按下去到存進相簿是同一個元素，動畫一路播完（見 HeldBusy） */
+        <HeldBusy label={'儲存中'} />
       )}
 
       {/* 返回、筆刷、復原、重做、更多、儲存；不加豎分隔線。 */}

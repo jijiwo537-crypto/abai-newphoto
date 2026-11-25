@@ -77,3 +77,52 @@ export function afterBusyPainted(): Promise<void> {
     requestAnimationFrame(look);
   });
 }
+
+/* ── 存檔用的「儲存中」：從按下儲存到存進相簿都是**同一個**畫面元素 ──
+   以前是兩層接力（算圖那一層收掉、存相簿那一層照抄內容再接上），轉圈對得上，但「儲存中」那行字的亮暗呼吸
+   重新開始，看得出斷一下。現在這一層不交給 React 管：由誰要用就登記一下，最後一個用的人放手後
+   （同一次畫面更新裡沒有人接手）才拿掉 —— 算完圖直接接著存相簿時，從頭到尾是同一個元素、動畫一路播完。 */
+let held: HTMLDivElement | null = null;
+let holders = 0;
+let releaseTimer = 0;
+function ensureHeld(label: string): void {
+  if (releaseTimer) { cancelAnimationFrame(releaseTimer); releaseTimer = 0; }
+  if (held && held.isConnected) return;
+  const host = (document.querySelector('.abai-frame') as HTMLElement | null) ?? document.body;
+  const el = document.createElement('div');
+  el.setAttribute('data-busy-layer', '');
+  el.setAttribute('data-held-busy', '');
+  el.setAttribute('aria-label', label);
+  el.className = 'fixed inset-0 z-[10000] bg-black flex items-center justify-center';
+  el.innerHTML = '<div class="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin"></div>'
+    + '<p data-busy-label style="position:absolute;left:0;right:0;top:calc(50% + 44px);text-align:center" class="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white"></p>';
+  (el.querySelector('p') as HTMLElement).textContent = label;
+  host.appendChild(el);
+  held = el;
+  last = null;   // 之後要接手的那一層不能抄到更早以前別的畫面
+  alignSpinners(el);
+}
+function releaseHeld(): void {
+  holders = Math.max(0, holders - 1);
+  if (holders > 0 || releaseTimer) return;
+  /* 等兩格：同一次更新裡接手的那一層（存相簿）會先登記，就不拿掉 */
+  releaseTimer = requestAnimationFrame(() => {
+    releaseTimer = requestAnimationFrame(() => {
+      releaseTimer = 0;
+      if (holders === 0 && held) { held.remove(); held = null; }
+    });
+  });
+}
+/** 現在有沒有一層「儲存中」正在顯示（存相簿那一段用：有就接著用同一層） */
+export const heldBusyShowing = () => !!(held && held.isConnected);
+/** 掛著時顯示「儲存中」（同一個元素一路用到最後一個放手的人）。不畫任何 React 節點 */
+export const HeldBusy: React.FC<{ label?: string; claimOnly?: boolean }> = ({ label = '儲存中', claimOnly = false }) => {
+  useLayoutEffect(() => {
+    if (claimOnly && !heldBusyShowing() && !releaseTimer) return;
+    holders++;
+    ensureHeld(label);
+    return releaseHeld;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+};

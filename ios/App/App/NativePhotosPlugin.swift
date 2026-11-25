@@ -216,7 +216,7 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
     }
 
     /// rawMode：0＝DNG 主檔＋成品附屬，1＝只有 DNG，2＝成品主檔＋DNG 附屬（舊的配對方式）。前一種被系統拒絕才退到下一種
-    private func createNew(url: URL, isVideo: Bool, raw: URL? = nil, rawMode: Int = 0, finish: @escaping (Result<[String: Any], Error>) -> Void) {
+    private func createNew(url: URL, isVideo: Bool, raw: URL? = nil, rawMode: Int = 0, attempt: Int = 0, finish: @escaping (Result<[String: Any], Error>) -> Void) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
                 finish(.failure(NSError(domain: "abai", code: 1, userInfo: [NSLocalizedDescriptionKey: "沒有存到相簿的權限"]))); return
@@ -245,6 +245,14 @@ public class NativePhotosPlugin: CAPPlugin, CAPBridgedPlugin, PHPickerViewContro
                 placeholder = req.placeholderForCreatedAsset?.localIdentifier
             }) { ok, err in
                 if ok { finish(.success(["saved": true, "mode": "created", "rawMode": rawMode, "assetId": placeholder ?? ""])); return }
+                /* 3301（操作被中斷）、3142／3143（相簿正在交接）：一次存很多張大檔時系統偶爾會打斷，
+                   等一下用同一種方式再存一次就好（最多再試 3 次） */
+                if let e = err as NSError?, e.domain == PHPhotosErrorDomain, [3301, 3142, 3143].contains(e.code), attempt < 3 {
+                    DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.6 * Double(attempt + 1)) {
+                        self.createNew(url: url, isVideo: isVideo, raw: raw, rawMode: rawMode, attempt: attempt + 1, finish: finish)
+                    }
+                    return
+                }
                 if !isVideo, raw != nil, rawMode < 2 {
                     self.createNew(url: url, isVideo: isVideo, raw: raw, rawMode: rawMode + 1, finish: finish); return
                 }
