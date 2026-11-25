@@ -39,7 +39,8 @@ export async function nativeEncodeWithMeta(pngUrl: string, metaPath: string | nu
   try {
     basePath = await blobToNativeFile(await (await fetch(pngUrl)).blob(), 'png');
     const nf = fmt === 'heic' ? 'heic' : fmt === 'jpg' ? 'jpeg' : 'png';
-    const r = await api.render({ path: metaPath, basePath, baseOnly: true, format: nf, quality: 1, hdr: false });
+    /* path 給網頁成品本身（不去解原圖：原圖是 RAW 時整張解碼又重又可能失敗，失敗就沒有拍攝資訊）；拍攝資訊從 metaPath 的檔頭讀 */
+    const r = await api.render({ path: basePath, basePath, baseOnly: true, metaPath, format: nf, quality: 1, hdr: false });
     outPath = r.path;
     const blob = await (await fetch(fileSrc(r.path))).blob();
     if (!blob.size) return null;

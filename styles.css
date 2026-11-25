@@ -520,3 +520,8 @@ html[data-vt="up"]::view-transition-new(root) { z-index: 2; animation-name: vtUp
 
 /* 導入的放大過場播放中（utils/importHero）：不顯示「匯入中」的轉圈和文字，畫面上只有那張照片在動 */
 html[data-import-hero] [data-import-spinner] { visibility: hidden !important; }
+
+/* 圖片一律以一般動態範圍（SDR）顯示：新版 iOS 會把 HDR 照片在 <img> 裡顯示成超亮的 HDR，
+   但編輯器的預覽是畫布（SDR）—— 一編輯、按前後對比就在兩者之間切換，看起來閃一下。統一成 SDR，從頭到尾一致 */
+:root { dynamic-range-limit: standard; }
+img, video, canvas { dynamic-range-limit: standard; }

@@ -7120,7 +7120,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     container: () => displayCanvasRef.current?.parentElement ?? null,
     hideWhileShown: () => [displayCanvasRef.current, fxSurfaceRef.current],
     src: activeSrc,
-    active: (showOriginal || historyIndex <= 0) && !isEditorLoading,
+    /* 關閉：編輯中的預覽是網頁畫布、只能顯示一般亮度（SDR），一編輯、按對比就在 HDR 與 SDR 之間切換＝閃一下。
+       整個編輯器統一用 SDR 顯示才一致（存出來的成品照樣保留 HDR） */
+    active: false && (showOriginal || historyIndex <= 0) && !isEditorLoading,
   });
 
   // 構圖會改變來源畫面的尺寸與內容，所以緩衝區的建立必須能重跑。第一次載入與每次套用

@@ -428,12 +428,17 @@ export function beginToolEntrance(kind: string | undefined, aspect?: number) {
   perfStart(`import-raw ${kind ?? 'edit'}`);
   const a = aspect && isFinite(aspect) && aspect > 0 ? aspect : 1;
   const E = predict(kind ?? 'edit', a);
-  startEnter(E, 15000);
-  let last: R | null = null, stable = 0;
+  /* 保險從 15 秒縮短到 4 秒：之前偵測不到照片時，介面要藏 15 秒（只看得到照片、其他地方全黑） */
+  startEnter(E, 4000);
+  let last: R | null = null, stable = 0, coverSeen = false;
   const t0 = performance.now();
   const step = () => {
     if (revealed) return;
     const root = toolRoot();
+    /* 編輯器：「載入中」的黑幕拿掉的那一刻就是照片出現的時候 —— 直接開播，不用再靠偵測照片 */
+    const cover = document.querySelector('[data-editor-initial-loading]');
+    if (cover) coverSeen = true;
+    else if (coverSeen && root) { revealEnter(); return; }
     let best: R | null = null, area = 0;
     root?.querySelectorAll<HTMLElement>('img, canvas').forEach(el => {
       if (el instanceof HTMLImageElement && (!el.complete || !el.naturalWidth)) return;
