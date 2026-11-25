@@ -390,7 +390,12 @@ function revealEnter() {
   if (!started.length) go();
   /* 等整批動畫「播完」才放行（不是開播就放行）：照片解碼、建緩衝、送 GPU 這段會卡住主執行緒好幾百毫秒，
      動畫只要還在播，被卡住的那段就會整段被吃掉 —— 畫面上就是「突然蹦一下出現」。最多等 1.6 秒 */
-  else void Promise.race([Promise.all(started.map(a => a.finished.catch(() => {}))), new Promise(r => setTimeout(r, 1600))]).then(go);
+  /* 不必等到最後一格：這條緩動曲線播到時間的 55% 時，畫面上已經走完約九成，剩下的尾巴幾乎不動，
+     這時主執行緒忙起來也看不出來；照片因此能早一點交接，照片上的按鈕（前後對比）也跟著早一點出來 */
+  else void Promise.race([Promise.all(started.map(a => a.ready.then(() => new Promise<void>(res => {
+    const t = a.effect?.getComputedTiming(); const d = Number(t?.delay ?? 0), du = Number(t?.duration ?? 0);
+    window.setTimeout(res, Math.max(0, d + du * 0.55 - Number(a.currentTime ?? 0)));
+  })).catch(() => {}))), new Promise(r => setTimeout(r, 1100))]).then(go);
 }
 let entranceWaiters: (() => void)[] = [], releasePending = false;
 function releaseWaiters() { releasePending = false; const w = entranceWaiters; entranceWaiters = []; w.forEach(f => f()); }

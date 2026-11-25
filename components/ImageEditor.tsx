@@ -1300,6 +1300,59 @@ function prebuildFilterThumbs(img: HTMLImageElement): Promise<void> {
 }
 setPreThumbBuilder(prebuildFilterThumbs);
 
+/** 把一顆濾鏡的查色表準備好（先問本機快取，沒有才下載＋解碼），放進 LUT_CACHE。
+ *  模組層：編輯器還沒打開（主頁在選照片）時就能先載，見 warmFilterThumbLuts */
+function loadLutIntoCache(lut: { id: string; url: string }): Promise<void> {
+  if (!lut.url || LUT_CACHE[lut.id]) return Promise.resolve();
+  if (LUT_LOADING[lut.id]) return LUT_LOADING[lut.id];
+  LUT_IN_FLIGHT.add(lut.id);
+  const p = (async () => {
+    const cacheUrl = needsLutAtlasRepair(lut.url) ? lut.url + '#' + LUT_ATLAS_REPAIR_REVISION : lut.url;
+    const cached = await loadCachedLut(lut.id, cacheUrl);
+    if (cached) { LUT_CACHE[lut.id] = cached; return; }
+    await new Promise<void>((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        try {
+          const size = img.width === img.height ? img.width / 8 : 64;
+          const size2 = size * size;
+          const c = document.createElement('canvas');
+          c.width = img.width; c.height = img.height;
+          const ctx = c.getContext('2d', { willReadFrequently: true })!;
+          ctx.drawImage(img, 0, 0);
+          const originalData = ctx.getImageData(0, 0, img.width, img.height).data;
+          c.width = c.height = 0;
+          const data = needsLutAtlasRepair(lut.url) ? repairLutAtlas(originalData, img.width, img.height).data : originalData;
+          const lutData = new Uint8ClampedArray(size * size * size * 3);
+          for (let b = 0; b < size; b++) for (let g = 0; g < size; g++) for (let r = 0; r < size; r++) {
+            const blockX = (b % 8) * size, blockY = (b / 8 | 0) * size;
+            const pxIdx = ((blockY + g) * img.width + (blockX + r)) * 4, lutIdx = (b * size2 + g * size + r) * 3;
+            lutData[lutIdx] = data[pxIdx]; lutData[lutIdx + 1] = data[pxIdx + 1]; lutData[lutIdx + 2] = data[pxIdx + 2];
+          }
+          LUT_CACHE[lut.id] = { data: lutData, size };
+          saveCachedLut(lut.id, cacheUrl, lutData, size);
+        } catch { /* 解不出來：下次再試 */ }
+        resolve();
+      };
+      img.onerror = () => resolve();
+      img.src = lut.url;
+    });
+  })().finally(() => { LUT_IN_FLIGHT.delete(lut.id); if (!LUT_CACHE[lut.id]) delete LUT_LOADING[lut.id]; });
+  LUT_LOADING[lut.id] = p;
+  return p;
+}
+/** 主頁（還在選照片時）就先把濾鏡列最前面幾顆的查色表載好，並記住濾鏡清單：
+ *  照片一點下去、還在飛的時候就能在背景把前 7 張濾鏡縮圖算好（見 prebuildFilterThumbs），
+ *  編輯器一出現縮圖就已經在了。前 8 顆先、一顆一顆來（不搶主頁的動畫），之後其他的慢慢載 */
+export function warmFilterThumbLuts(list: { id: string; name: string; url: string }[]): void {
+  if (!knownLutList.length) knownLutList = list;
+  void (async () => {
+    for (const l of list.slice(0, 8)) await loadLutIntoCache(l);
+    for (const l of list.slice(8)) { await new Promise(r => window.setTimeout(r, 30)); await loadLutIntoCache(l); }
+  })();
+}
+
 /**
  * 同 putThumb，但不做同步回讀：特效縮圖是 GPU 畫出來的，getImageData 會讓主執行緒
  * 等 GPU 把它畫完、再整塊搬回 CPU（一格一次，整排 20 幾次）—— 切到特效頁那一下的卡頓
@@ -4590,53 +4643,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      重開 App 就又整批重新下載一次。 */
   const ensureLutData = useCallback(async (lut: { id: string; url: string }) => {
     if (!lut.url || lutDataRef.current[lut.id]) return;
-    if (!loadingPromisesRef.current[lut.id]) {
-      LUT_IN_FLIGHT.add(lut.id);
-      loadingPromisesRef.current[lut.id] = (async () => {
-        // 先問本機：解過的表直接讀回來，不用下載也不用重新解碼重排
-        const cacheUrl=needsLutAtlasRepair(lut.url)?lut.url+'#'+LUT_ATLAS_REPAIR_REVISION:lut.url;
-        const cached = await loadCachedLut(lut.id, cacheUrl);
-        if (cached) {
-          lutDataRef.current[lut.id] = cached;
-          setLutReadyTick(t => t + 1);
-          return;
-        }
-        return new Promise<void>((resolve) => {
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          img.onload = () => {
-            const size = img.width === img.height ? img.width / 8 : 64;
-            const size2 = size * size;
-            const c = document.createElement('canvas');
-            c.width = img.width; c.height = img.height;
-            const ctx = c.getContext('2d', { willReadFrequently: true })!;
-            ctx.drawImage(img, 0, 0);
-            const originalData = ctx.getImageData(0, 0, img.width, img.height).data;
-            const data=needsLutAtlasRepair(lut.url)?repairLutAtlas(originalData,img.width,img.height).data:originalData;
-            const lutData = new Uint8ClampedArray(size * size * size * 3);
-            for (let b = 0; b < size; b++) {
-              for (let g = 0; g < size; g++) {
-                for (let r = 0; r < size; r++) {
-                  const blockX = (b % 8) * size; const blockY = (b / 8 | 0) * size;
-                  const pxIdx = ((blockY + g) * img.width + (blockX + r)) * 4;
-                  const lutIdx = (b * size2 + g * size + r) * 3;
-                  lutData[lutIdx] = data[pxIdx]; lutData[lutIdx + 1] = data[pxIdx + 1]; lutData[lutIdx + 2] = data[pxIdx + 2];
-                }
-              }
-            }
-            lutDataRef.current[lut.id] = { data: lutData, size };
-            LUT_IN_FLIGHT.delete(lut.id);
-            setLutReadyTick(t => t + 1);
-            saveCachedLut(lut.id, cacheUrl, lutData, size);
-            resolve();
-          };
-          // 載入失敗：不要留下「已完成」的承諾，下次點才會重試；也不再擋住重畫
-          img.onerror = () => { LUT_IN_FLIGHT.delete(lut.id); delete loadingPromisesRef.current[lut.id]; isDirtyRef.current = true; resolve(); };
-          img.src = lut.url;
-        });
-      })().finally(() => LUT_IN_FLIGHT.delete(lut.id));
-    }
-    await loadingPromisesRef.current[lut.id];
+    await loadLutIntoCache(lut);
+    if (lutDataRef.current[lut.id]) setLutReadyTick(t => t + 1); else isDirtyRef.current = true;
   }, []);
 
   const loadLut = useCallback(async (idx: number) => {
@@ -9989,32 +9997,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 左下角的參數膠囊：只有「選中了某個遮色片」時才出現（選種類、取消選中時都收掉），線性漸層沒有自己的參數 */
   const maskCapsuleShown = false && activeCategory === 'mask' && !maskTypePicking && !maskDeselected && maskListView.list.length > 0
     && (MASK_TYPE_TOOLS[(params.maskType ?? 'linear') as MaskType].length > 0 || params.maskType === 'brush');
-  /* ── 濾鏡縮圖：前 7 格自己的縮圖都好了才讓整排卡片出現 ──
-     之前卡片一掛上就看得到，縮圖還在算的格子只有底色（灰格子）。
-     改成：前 7 格都有「自己的」縮圖（濾鏡檔還在下載、短時間不會有自己縮圖的，用「原始」頂著也算）才顯示卡片；
-     等不到（背景算失敗）最多 2.5 秒後，只要每格至少有「原始」頂著就顯示；6 秒後無條件顯示，絕不會整排一直空著 */
-  useLayoutEffect(() => {
-    const box = toolsScrollRef.current;
-    if (!box) return;
-    if (activeCategory !== 'filter') { box.removeAttribute('data-thumbs-wait'); return; }
-    const t0 = performance.now();
-    const first = lutList.slice(0, 7);
-    const fb = thumbKey(activeSrc, lutList[0]?.id || '');
-    const check = () => {
-      const st = filterThumbStore.current, el = performance.now() - t0;
-      const ok = first.every(l => st[thumbKey(activeSrc, l.id)] || ((el > 2500 || (l.url && !LUT_CACHE[l.id])) && st[fb]));
-      if (ok || el > 6000) { box.removeAttribute('data-thumbs-wait'); return true; }
-      box.setAttribute('data-thumbs-wait', '1');
-      return false;
-    };
-    if (check()) return;
-    const set = thumbPainters.current;
-    const painter = () => { if (check()) set.delete(painter); };
-    set.add(painter);
-    const iv = window.setInterval(() => { if (check()) { window.clearInterval(iv); set.delete(painter); } }, 250);
-    return () => { set.delete(painter); window.clearInterval(iv); box.removeAttribute('data-thumbs-wait'); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCategory, activeSrc, lutList]);
   const sliderRowHidden = activeToolId === 'curves' || isColourPanelTool(activeToolId) || activeCategory === 'compose' || ownPanel || maskTypePicking;
   /** 批量：對比鍵放在滑桿列右邊（右下角讓給「應用全部」）；滑桿列收起來的時候照舊浮在預覽上 */
   const compareInRow = isBatch && !sliderRowHidden;

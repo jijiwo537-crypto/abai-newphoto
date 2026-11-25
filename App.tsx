@@ -10,7 +10,7 @@ import { BeautyStudio } from './components/BeautyStudio';
 import { ColorMatchStudio } from './components/ColorMatchStudio';
 import { ArtStudio } from './components/ArtStudio';
 import { DotArtStudio } from './components/DotArtStudio';
-import { resetPageScroll } from './components/ImageEditor';
+import { resetPageScroll, warmFilterThumbLuts } from './components/ImageEditor';
 import { warmCameraLuts } from './utils/cameraLuts';
 import { warmFontSamples } from './utils/fonts';
 import {warmLowfiLut} from './utils/lowfiLut';
@@ -130,6 +130,8 @@ const App: React.FC = () => {
   }, []);
   useEffect(() => { void warmCameraLuts(LUT_LIST.map(lut => lut.url)); }, []);
   useEffect(() => { void warmEditorLuts(LUT_LIST); }, []);
+  /* 編輯器濾鏡縮圖用的查色表：主頁一出現就（閒下來後）先載好，選照片、照片在飛的時候縮圖就能先算好 */
+  useEffect(() => { const t = window.setTimeout(() => warmFilterThumbLuts(LUT_LIST), 1200); return () => window.clearTimeout(t); }, []);
   useEffect(() => { void warmLowfiLut().catch(console.error); }, []);
   // 上次沒做完的東西一律先問過再接回去，不要一開 App 就直接跳進去。
   // 兩份草稿（經典拼圖／其他工具）取比較新的那一份。

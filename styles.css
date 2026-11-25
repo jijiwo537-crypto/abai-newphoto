@@ -538,5 +538,3 @@ img, video, canvas { dynamic-range-limit: standard; }
 [data-mask-add] .mk-rot { transition: transform .34s cubic-bezier(.32,.72,0,1); will-change: transform; }
 [data-mask-add][data-x="1"] .mk-rot { transform: rotate(45deg); }
 
-/* 濾鏡縮圖前 7 格還沒算好：卡片先不顯示（見 ImageEditor 的 data-thumbs-wait），不會看到灰格子 */
-[data-thumbs-wait] [data-filter-card] { visibility: hidden; }
