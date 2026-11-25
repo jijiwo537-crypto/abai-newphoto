@@ -656,7 +656,22 @@ const App: React.FC = () => {
         gr.addColorStop(0, '#6b8fb5'); gr.addColorStop(0.5, '#d9b38c'); gr.addColorStop(1, '#3a4a3f');
         g.fillStyle = gr; g.fillRect(0, 0, 120, 160);
         setEditorPrewarm(c.toDataURL('image/jpeg', 0.9));
-        t2 = window.setTimeout(() => setEditorPrewarm(null), 2600);
+        t2 = window.setTimeout(() => {
+          setEditorPrewarm(null);
+          /* 接著在主頁的空檔裡，一支一支把特效的 GPU 繪圖程式編好（整個 App 共用、只編一次）。
+             實測第一次進編輯器時，特效縮圖要先編這些程式、總共約 1 秒（之後每次只要約 0.1 秒）——
+             提前在主頁閒著時做掉，第一次進編輯器就跟之後一樣 */
+          void import('./utils/glEffects').then(({ FX_DEFS, warmFx }) => {
+            const ric = (window as any).requestIdleCallback as undefined | ((cb: () => void, o?: { timeout: number }) => void);
+            let i = 0;
+            const step = () => {
+              if (i >= FX_DEFS.length || currentViewRef.current !== 'home') return;
+              try { warmFx(FX_DEFS[i++].id); } catch { /* 編不了就算了 */ }
+              if (ric) ric(step, { timeout: 3000 }); else window.setTimeout(step, 120);
+            };
+            if (ric) ric(step, { timeout: 3000 }); else window.setTimeout(step, 120);
+          }).catch(() => {});
+        }, 2600);
       };
       const ric = (window as any).requestIdleCallback as undefined | ((cb: () => void, o?: { timeout: number }) => void);
       if (ric) ric(go, { timeout: 2500 }); else go();

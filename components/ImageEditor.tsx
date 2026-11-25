@@ -4548,7 +4548,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     );
   };
   /** 算一張原圖的特效那排（已經算過的格子跳過） */
-  const buildFxThumbs = (forSrc: string, thumbSrc: Uint8ClampedArray, cancelled: () => boolean, done: () => void) => {
+  const buildFxThumbs = (forSrc: string, thumbSrc: Uint8ClampedArray, cancelled: () => boolean, done: () => void, paced = false) => {
     const W = THUMB_W, H = THUMB_H;
     const { flat, baseLut, curveLuts } = flatThumbTables();
     const baseData = new Uint8ClampedArray(thumbSrc.length);
@@ -4564,7 +4564,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       cctx.putImageData(new ImageData(new Uint8ClampedArray(baseData), W, H), 0, 0);
       putThumbAsync(fxThumbStore, baseKey, cvs, repaintThumbs, forSrc + '|base');
     }
-    runThumbChunks(
+    /* paced（不在特效分頁時的背景生成）：一次只算一張，算完就讓出來，等主執行緒下一個空檔再算下一張。
+       實測第二次之後每張多半在 10ms 以內（只有「柔光ll」要做亮部統計、比較久）：
+       一張一張分散在空檔裡做，就不會像以前一次連算好幾張、在畫面上卡出一下 */
+    const runner = paced
+      ? (items: typeof EFFECT_TOOLS, make: (t: typeof EFFECT_TOOLS[number]) => boolean, emit: () => void, isCancelled: () => boolean, fin: () => void) => {
+          let i = 0;
+          const step = () => {
+            if (isCancelled()) return;
+            if (i >= items.length) { emit(); fin(); return; }
+            if (make(items[i++])) emit();
+            void awaitPhotoIdle(2000).then(step);
+          };
+          void awaitPhotoIdle(2000).then(step);
+        }
+      : runThumbChunks;
+    runner(
       EFFECT_TOOLS,
       (tool) => {
         const key = thumbKey(forSrc, tool.id), itemSig = forSrc + '|' + tool.id;
@@ -4614,7 +4629,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              （實測佔掉近一秒、正好壓在介面進場動畫上，就是卡頓的主因）。
              停在其他分頁時，等進場結束、主執行緒有空（awaitPhotoIdle）才算；正在看特效分頁就馬上算 */
           if (activeCategoryRef.current === 'effects') return buildFxThumbs(cur, curPixels(), cancelled, next);
-          void awaitPhotoIdle(4000).then(() => { if (cancelled()) return; if (fxThumbsMissing(cur)) buildFxThumbs(cur, curPixels(), cancelled, next); else next(); });
+          void awaitPhotoIdle(4000).then(() => { if (cancelled()) return; if (fxThumbsMissing(cur)) buildFxThumbs(cur, curPixels(), cancelled, next, true); else next(); });
         }
       });
       // 其他照片：解好的圖直接用，沒有就載一次（只用來縮小，不留）
