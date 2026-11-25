@@ -541,3 +541,32 @@ img, video, canvas { dynamic-range-limit: standard; }
 
 /* 長按圖片不要被「抓起來」（iOS 會浮出一張半透明的圖可以拖走，例如儲存成功頁長按成品圖），也不要跳出系統的圖片選單 */
 img, video, canvas, svg { -webkit-user-drag: none; -webkit-touch-callout: none; }
+
+/* ── 主頁的入口方塊（相機、四個工具、藝術效果、點陣文字）──
+   深色玻璃方塊：上淺下深的底、左上一抹微光、一圈很細的亮邊（上緣最亮）、內側一層柔光。
+   亮邊與柔光畫在 ::after（最上層、不吃點擊）：藝術效果放了背景圖時，邊一樣看得到 */
+.home-tile {
+  position: relative;
+  isolation: isolate;
+  border: 0;
+  background:
+    radial-gradient(120% 90% at 18% 0%, rgba(255,255,255,.05), rgba(255,255,255,0) 60%),
+    linear-gradient(180deg, #111 0%, #090909 55%, #060606 100%);
+}
+.home-tile::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.065),
+    inset 0 1px 0 rgba(255,255,255,.13),
+    inset 0 -1px 0 rgba(255,255,255,.03),
+    inset 0 0 18px rgba(255,255,255,.05);
+}
+/* 編輯（白色）：一點點立體感，邊緣不要硬 */
+.home-tile-white {
+  box-shadow: inset 0 -3px 7px rgba(0,0,0,.08), inset 0 0 0 1px rgba(0,0,0,.04);
+}
