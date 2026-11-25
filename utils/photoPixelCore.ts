@@ -48,7 +48,10 @@ export const processPixels = (
   curveLuts: { rgb: Uint8Array, r: Uint8Array, g: Uint8Array, b: Uint8Array },
   /** 局部陰影／亮部（utils/localTone）：有給就不把陰影／亮部放進色調曲線，
       改成每個像素先乘上那一帶的增益。沒給＝原本的全圖曲線。 */
-  local: { base: LocalBase; gain: Float32Array } | null = null
+  local: { base: LocalBase; gain: Float32Array } | null = null,
+  /** 只算整張圖的一條（多執行緒存檔用，見 utils/pixelParallel）：這一條從第 y0 列開始、整張圖有 fullH 列。
+      抖色表的位置、局部陰影／亮部的位置都照整張圖算，每一條拼回去跟一次算整張的每個像素一模一樣 */
+  strip: { y0: number; fullH: number } | null = null
 ) => {
   if (!sourceData || !destData || sourceData.length !== destData.length) return;
 
@@ -247,7 +250,10 @@ export const processPixels = (
   // 把主 LUT 套到像素上
   const len = sourceData.length;
   const sLUT = 0.12156862745; // 31 / 255
-  let ditherIdx = 0;
+  /** 這一條第一個像素在整張圖裡是第幾個（抖色表照整張圖的位置取） */
+  const pix0 = strip ? strip.y0 * w : 0;
+  const row0 = strip ? strip.y0 : 0;
+  let ditherIdx = pix0;
 
   // 各通道的修正互相獨立時，四面體內插剛好等於三張 1D 表。保留同一張主 LUT 和遞色，
   // 但不要每格滑桿都對幾百萬個像素重算 RGB 四面體。只有曝光是逐通道的（線性光的增益）；
@@ -262,7 +268,7 @@ export const processPixels = (
       bb[v]=masterLUT_B[a<<10]*(1-t)+masterLUT_B[b<<10]*t;
     }
     for(let i=0;i<len;i+=4){
-      const d=ditherTable[(i>>>2)&4095];
+      const d=ditherTable[((i>>>2)+pix0)&4095];
       destData[i]=rr[sourceData[i]]+d;destData[i+1]=gg[sourceData[i+1]]+d;
       destData[i+2]=bb[sourceData[i+2]]+d;destData[i+3]=255;
     }
@@ -272,10 +278,10 @@ export const processPixels = (
   // 拆成明確的迴圈，確保 CPU JIT 能向量化、不會整段退化
   if (local) {
       // 局部陰影／亮部：先乘上這一帶的增益，再走同一顆主表（四面體內插）
-      const applyRow = makeLocalApplier(local.base, local.gain, w, h);
+      const applyRow = makeLocalApplier(local.base, local.gain, w, strip ? strip.fullH : h);
       const lc = new Float32Array(w * 3);
       for (let i = 0, px = w, py = -1, o = 0; i < len; i += 4, px++, o += 3) {
-          if (px === w) { px = 0; o = 0; py++; applyRow(py, sourceData, i, lc); }
+          if (px === w) { px = 0; o = 0; py++; applyRow(py + row0, sourceData, i, lc); }
           const rf = lc[o] * sLUT; const gf = lc[o + 1] * sLUT; const bf = lc[o + 2] * sLUT;
           let r0 = rf | 0; let g0 = gf | 0; let b0 = bf | 0;
           if (r0 > 31) r0 = 31; if (g0 > 31) g0 = 31; if (b0 > 31) b0 = 31;
@@ -422,3 +428,33 @@ export const processPixels = (
       }
   }
 };
+
+/**
+ * 銳化要用的細節（每個像素減掉上下左右的平均，除以 2 放進 Int8）。整張圖的第一列、最後一列、最左、最右一行是 0。
+ * buf 是整張圖從第 t0 列開始的一段（要多帶上下各一列鄰居），算第 y0～y1 列（整張圖共 fullH 列）。
+ * 整張圖一次算就是 sharpenDetailRows(src, w, 0, 0, h, h)；分條算拼回去跟一次算的每個值一模一樣
+ */
+export function sharpenDetailRows(buf: Uint8ClampedArray, w: number, t0: number, y0: number, y1: number, fullH: number): Int8Array {
+  const stride = w * 4;
+  const detail = new Int8Array((y1 - y0) * stride);
+  const ya = Math.max(1, y0), yb = Math.min(fullH - 1, y1);
+  for (let y = ya; y < yb; y++) {
+    const rowOffset = (y - t0) * stride;
+    const upOffset = rowOffset - stride;
+    const downOffset = rowOffset + stride;
+    const outOffset = (y - y0) * stride;
+    for (let x = 1; x < w - 1; x++) {
+      const i = rowOffset + (x * 4);
+      const left = i - 4; const right = i + 4;
+      const up = upOffset + (x * 4);
+      const down = downOffset + (x * 4);
+      const o = outOffset + (x * 4);
+      for (let c = 0; c < 3; c++) {
+        const val = buf[i + c];
+        const avg = (buf[up + c] + buf[down + c] + buf[left + c] + buf[right + c]) * 0.25;
+        detail[o + c] = (val - avg) >> 1; // 剛好放進 Int8
+      }
+    }
+  }
+  return detail;
+}

@@ -658,7 +658,8 @@ export function generateCurveLut(channelPoints: Point[]): Uint8Array {
 // 曝光、對比、亮度預先合成一張 1D LUT，重用輸出暫存避免垃圾回收造成卡頓。
 // 共用、逐位元組相同的色彩計算也能在 worker 裡跑
 export { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
-import { generateBaseCorrectionLut, processPixels, copyPixelDither } from '../utils/photoPixelCore';
+import { generateBaseCorrectionLut, processPixels, copyPixelDither, sharpenDetailRows } from '../utils/photoPixelCore';
+import { processPixelsParallel, releasePixelPool } from '../utils/pixelParallel';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceGain } from '../utils/photoToneMath';
 import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
 /* 快取鍵用短 id 代表照片，不用來源字串：data: 網址有好幾 MB，每格滑桿都把它串進鍵裡，一格就要多花約 15ms */
@@ -731,30 +732,9 @@ export function fastBlur(imageData: ImageData, width: number, height: number, ra
   return imageData;
 }
 
+/* 銳化細節：跟存檔的多執行緒那條（utils/pixelParallel）用同一支，整張一次算 */
 function precomputeSharpenDetail(sourceData: Uint8ClampedArray, w: number, h: number): Int8Array {
-  const len = sourceData.length;
-  const detail = new Int8Array(len);
-  const stride = w * 4;
-  
-  for (let y = 1; y < h - 1; y++) {
-    const rowOffset = y * stride;
-    const upOffset = rowOffset - stride;
-    const downOffset = rowOffset + stride;
-
-    for (let x = 1; x < w - 1; x++) {
-      const i = rowOffset + (x * 4);
-      const left = i - 4; const right = i + 4;
-      const up = upOffset + (x * 4);
-      const down = downOffset + (x * 4);
-      
-      for (let c = 0; c < 3; c++) {
-         const val = sourceData[i + c];
-         const avg = (sourceData[up + c] + sourceData[down + c] + sourceData[left + c] + sourceData[right + c]) * 0.25;
-         detail[i + c] = (val - avg) >> 1; // 剛好放進 Int8
-      }
-    }
-  }
-  return detail;
+  return sharpenDetailRows(sourceData, w, 0, 0, h, h);
 }
 
 const patternIds = new WeakMap<object, number>();
@@ -7748,7 +7728,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   /** 把一張照片用指定的一組參數算出成品（存檔用的原始解析度） */
-  const renderOneCanvas = (img: HTMLImageElement, snap: BatchSnap, maxPixels?: number): HTMLCanvasElement => {
+  /* 存檔用的原尺寸運算一次只做一張（一張 12MP 就要好幾百 MB 的暫存）：批量時後一張排隊等前一張做完。
+     也保證共用的 GPU 狀態（貼圖、色彩表）不會被兩張交錯改 */
+  const fullRenderLockRef = useRef<Promise<void>>(Promise.resolve());
+  const renderOneCanvas = async (img: HTMLImageElement, snap: BatchSnap, maxPixels?: number, keep?: { data: Uint8ClampedArray | null }): Promise<HTMLCanvasElement> => {
+    const prev = fullRenderLockRef.current;
+    let release!: () => void;
+    fullRenderLockRef.current = new Promise<void>(r => { release = r; });
+    await prev;
+    try { return await renderOneCanvasNow(img, snap, maxPixels, keep); }
+    finally { release(); }
+  };
+  const renderOneCanvasNow = async (img: HTMLImageElement, snap: BatchSnap, maxPixels?: number, keep?: { data: Uint8ClampedArray | null }): Promise<HTMLCanvasElement> => {
     const g = snap.geo;
     const p = snap.params;
     const ow = img.naturalWidth || img.width;
@@ -7777,7 +7768,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       ctxOriginal.setTransform(1, 0, 0, 1, 0, 0);
     } else ctxOriginal.drawImage(geoSource, 0, 0, w, h);
     const originalData = ctxOriginal.getImageData(0, 0, w, h).data;
-    if (keepOriginalRef.current) keepOriginalRef.current.data = new Uint8ClampedArray(originalData);
+    if (keep) keep.data = new Uint8ClampedArray(originalData);
     /* 發光類特效先在原圖上算（跟預覽同一個順序），濾鏡與調節再套在「原圖＋光」上 */
     const sourceData = hasGlow(p) ? (glowCpu(p, originalData, w, h) || originalData) : originalData;
     const len = sourceData.length;
@@ -7791,7 +7782,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     /* 大型緩衝只在真的需要時建立。正常 GPU 匯出不再預先多佔兩張全尺寸圖，
        銳化為零時也不計算完全用不到的 detail。 */
     let destData: Uint8ClampedArray | null = null;
-    const sharpenDetail = p.sharpen > 0 ? precomputeSharpenDetail(sourceData, w, h) : null;
 
     const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d')!;
@@ -7851,8 +7841,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       gpuWarmKeyRef.current = '';
     }
     if (!gpuOk) {
-      destData = new Uint8ClampedArray(len);
-      processPixels(sourceData, destData, w, h, p, activeLut ? activeLut.data : null, lutSize, baseCorrectionLutRef.current, sharpenDetail, false, getCurveLuts(p.curves), localFor(p, sourceData, w, h, `export-cpu|${w}x${h}`));
+      /* 局部陰影／亮部的底圖：每一張照片自己算（不放進共用快取 —— 以前用「尺寸」當鑰匙，
+         批量裡同樣尺寸的第二張會拿到第一張的底圖，陰影、亮部就照著別張照片的明暗去調） */
+      const local = (p.shadows || p.highlights) ? { base: buildLocalBase(sourceData, w, h), gain: makeLocalGain(p) } : null;
+      const curves = getCurveLuts(p.curves);
+      /* 銳化、局部、雜訊這幾條 GPU 走不了：分條交給幾個背景執行緒一起算（跟這裡一次算整張逐位元一樣），
+         做不到才在這裡算 */
+      destData = await processPixelsParallel(sourceData, w, h, p, activeLut ? activeLut.data : null, lutSize, baseCorrectionLutRef.current, curves, local, p.sharpen > 0);
+      if (!destData) {
+        destData = new Uint8ClampedArray(len);
+        const sharpenDetail = p.sharpen > 0 ? precomputeSharpenDetail(sourceData, w, h) : null;
+        processPixels(sourceData, destData, w, h, p, activeLut ? activeLut.data : null, lutSize, baseCorrectionLutRef.current, sharpenDetail, false, curves, local);
+      }
       ctx.putImageData(new ImageData(destData, w, h), 0, 0);
     }
     const scale = Math.max(w, h) / 1080;
@@ -7862,8 +7862,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return canvas;
   };
 
-  /** 原尺寸存檔需要的「縮小尺寸原圖」：renderOneCanvas 讀出原圖時順便留一份（只在原尺寸存檔時要） */
-  const keepOriginalRef = useRef<{ data: Uint8ClampedArray | null } | null>(null);
   /** 沒有梯形的構圖：回傳輸出大小與「輸出 ← 原圖」的仿射矩陣（跟 composeCanvas 同一份幾何）；有梯形或沒有構圖回 null */
   const affineOf = (g: GeoParams, ow: number, oh: number): { w: number; h: number; m: [number, number, number, number, number, number] } | null => {
     if (isGeoIdentity(g) || g.keyV || g.keyH) return null;
@@ -7880,11 +7878,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const out = isGeoIdentity(g) ? { w: ow, h: oh } : aff;
     const big = !!out && (forceFullResRef() || safeScale(out.w, out.h) < 1);
     /* 只有梯形透視不是仿射、不能逐條畫原圖：用畫布上限 1600 萬算，1200 萬像素以下不縮小 */
-    if (!out) return canvasToUrl(renderOneCanvas(img, snap, MOBILE_MAX_PIXELS), type, quality);
-    if (!big) return canvasToUrl(renderOneCanvas(img, snap), type, quality);
-    keepOriginalRef.current = { data: null };
-    const proc = renderOneCanvas(img, snap);
-    const D = keepOriginalRef.current.data; keepOriginalRef.current = null;
+    if (!out) return canvasToUrl(await renderOneCanvas(img, snap, MOBILE_MAX_PIXELS), type, quality);
+    if (!big) return canvasToUrl(await renderOneCanvas(img, snap), type, quality);
+    const keep: { data: Uint8ClampedArray | null } = { data: null };
+    const proc = await renderOneCanvas(img, snap, undefined, keep);
+    const D = keep.data; keep.data = null;
     const pw = proc.width, ph = proc.height;
     const P = proc.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, pw, ph).data;
     if (!D || D.length !== P.length) return canvasToUrl(proc, type, quality);
@@ -7919,6 +7917,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const NATIVE_MAX_PIXELS = 25_000_000;
   /** 成品頁顯示用的小圖長邊（螢幕看綽綽有餘；原尺寸成品留在原生，存相簿用） */
   const PREVIEW_PX = 2560;
+  /** 批量存檔要兩張同時在路上（流水線），每一張都不能超過這個像素數 */
+  const PIPE_MAX_PIXELS = 16_000_000;
   /** 這一次存檔留在原生的成品檔與顯示小圖：下一次存檔、離開編輯器時刪掉 */
   const nativeOutsRef = useRef<string[]>([]);
   const dropNativeOuts = (later = 0) => {
@@ -7927,7 +7927,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     removeNativeFilesLater(list, later);
   };
   /* 離開編輯器：等一下再刪（成品頁的存相簿、最近輸出的縮圖可能還在讀） */
-  useEffect(() => () => dropNativeOuts(60000), []);
+  useEffect(() => () => { dropNativeOuts(60000); releasePixelPool(); }, []);
   /** 構圖交給原生：網頁算好投影矩陣（跟 composeCanvas 同一份幾何 geoHomography），輸出尺寸也一樣。沒有構圖回 {}；算不出來回 null */
   const nativeGeoArgs = (w: number, h: number, g: GeoParams): { homography: number[]; outW: number; outH: number } | {} | null => {
     if (isGeoIdentity(g)) return {};
@@ -8029,7 +8029,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const out = isGeoIdentity(g) ? { w: ow, h: oh } : aff;
     const big = !!out && (forceFullResRef() || safeScale(out.w, out.h) < 1);
     if (!isNative() || !out || big || !(await nativeIoReady())) return { url: await renderFullUrl(img, snap, 'image/png', 1) };
-    const canvas = renderOneCanvas(img, snap);
+    const canvas = await renderOneCanvas(img, snap);
     try {
       try {
         const w = canvas.width, h = canvas.height;
@@ -8046,8 +8046,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   /** 導出用：跟合併走同一支全解析度管線，只是最後轉成 PNG。
       成品用 blob 網址 —— 批次十張的話 dataURL 會是好幾百 MB 的字串。 */
-  const renderOne = (img: HTMLImageElement, snap: BatchSnap): Promise<string> =>
-    canvasToUrl(renderOneCanvas(img, snap));
+  const renderOne = async (img: HTMLImageElement, snap: BatchSnap): Promise<string> =>
+    canvasToUrl(await renderOneCanvas(img, snap));
 
   const loadImg = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
     const im = new Image();
@@ -8390,7 +8390,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             const small = document.createElement('canvas');
             small.width = Math.max(1, Math.round(ow * k)); small.height = Math.max(1, Math.round(oh * k));
             small.getContext('2d')!.drawImage(src0, 0, 0, small.width, small.height);
-            cvs = renderOneCanvas(small as unknown as HTMLImageElement, snap);
+            cvs = await renderOneCanvas(small as unknown as HTMLImageElement, snap);
             small.width = small.height = 0;
           }
           /* 走 canvasToUrl 不直接叫 toBlob：iOS 的 toBlob 在畫布很大又碰上
@@ -8551,95 +8551,132 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             // 不然「調到一半直接按儲存」時，其他連結中的照片會拿到上一次切換時的舊參數。
             stashCurrent();
             const live = liveRef.current!;
-            /* out：成品頁顯示的圖；encoded：真正存進相簿的檔（兩者一張對一張）。
-               App 裡成品直接留在原生（存相簿時用那個檔，不再讀回網頁、再搬回去），顯示用原生順便出的小圖 */
-            const out: string[] = [];
-            const encoded: string[] = [];
-            /** 日期沒有在原生那一次印到、要另外印的（網頁自己編碼的那幾張） */
-            const stampLater: number[] = [];
+            /* 每一張的結果：show＝成品頁顯示的圖；save＝真正存進相簿的檔（一張對一張）。
+               App 裡成品直接留在原生（存相簿時用那個檔，不再讀回網頁、再搬回去），顯示用原生順便出的小圖。
+               stamp：日期沒有在原生那一次印到、要另外印（網頁自己編碼的那幾張） */
+            type Entry = { show: string; save: string; stamp: boolean };
             dropNativeOuts();
             const srcs = srcListRef.current;
             const nfmt = exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png';
-            const takeNative = (r: NativeOut) => {
+            const fromNative = (r: NativeOut): Entry => {
               const saveUrl = fileSrc(r.path);
               rememberNativePath(saveUrl, r.path);
               nativeOutsRef.current.push(r.path);
               let show = saveUrl;
               if (r.previewPath) { show = fileSrc(r.previewPath); nativeOutsRef.current.push(r.previewPath); }
-              out.push(show); encoded.push(saveUrl);
+              return { show, save: saveUrl, stamp: false };
             };
-            for (let i = 0; i < srcs.length; i++) {
-              // 連結中的一律套現在這一份；解除連結的用它自己留下來的那一份。
-              // 沒有留下來的（例如從頭到尾沒被切過去過）就直接用現在這一份，
-              // 不能因為「還沒載入過」就跳過不套 —— 那就變成沒連結了。
-              const base = linked[i] === false ? (soloSnapsRef.current[i] || live) : live;
-              // 遮色片與構圖不連動，要用這一張自己的
-              const snap: BatchSnap = {
-                ...cloneSnap(base),
-                params: fromCanon({ ...cloneSnap(base).params, ...(ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS)) } as EditorParams, !!rawOf(srcs[i])),
-                geo: ownGeoRef.current[i]
-                  ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
-                  : (i === safeIdx ? cloneSnap(base).geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
-              };
-              const ri = rawOf(srcs[i]);
-              const p = snap.params;
-              /* 拍攝資訊從哪個檔讀：RAW 用原本的 RAW 檔，其他用原圖 */
-              const metaPath = ri?.path ?? nativePathOf(srcs[i]);
-              /* 相機拍的有日期的照片：編輯的是沒印日期的那張，存檔時才印上去（日期是光加上去的，畫面調暗了字自然更清楚）。
-                 App 裡日期跟編碼同一次在原生印，不再另外解一次、印完再編一次 */
-              const date = stampDate || undefined;
-              /* ① 只有顏色類調整：原生從原圖（RAW 從 RAW 檔）用浮點整條做完，網頁一個像素都不用算 */
-              let res: NativeOut | null = null;
-              if (isNative() && nativeColorOnly(p)) res = ri ? await rawNativeSave(ri, snap, nfmt, { date }) : await nativeWideSave(srcs[i], snap, nfmt, { date });
-              if (res) { takeNative(res); continue; }
-              /* ② 網頁算成品。RAW：用這一張自己的參數從 RAW 原尺寸沖一張給網頁畫 */
-              const rawFull = ri ? await rawFullFor(ri, p) : null;
-              const rawFullPath = rawFull ? nativePathOf(rawFull) : undefined;
-              try {
-                const img = rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
-                /* 這張有自動選取（主體、人物）但遮罩不在記憶體裡（例如批量裡沒打開過的照片）：用這張原圖分析補上 */
-                for (const m of maskList(p).list) if (isAutoMask(m.maskType) && m.maskCreated && !autoMasks.has(m.maskId)) await buildAutoMask(m.maskId, m.maskType, img as HTMLImageElement);
-                // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
-                if (Number(p.fxLowfi) > 0) await warmLowfiLut();
-                if (isNative() && metaPath) {
-                  /* App：成品像素直接交給原生（不壓 PNG）。有局部、空間類編輯但沒有模糊類：原生補回廣色域與 HDR 亮部；
-                     補不了（例如有模糊類效果）：畫面完全用網頁的成品，原生只負責編碼、寫入拍攝資訊 */
-                  const made = await renderFullForNative(img, snap);
-                  try {
-                    if (nativeHybridOk(p)) res = ri ? await rawNativeSave(ri, snap, nfmt, { base: made, date }) : await nativeWideSave(srcs[i], snap, nfmt, { base: made, date });
-                    if (!res) res = await nativeEncodeBase(made, metaPath, exportFormat, { date, preview: PREVIEW_PX });
-                  } finally {
-                    if (made.path) void nativeImage().then(n => n?.remove({ path: made.path! })).catch(() => {});
-                  }
-                  if (res) { if (made.url) revokeUrls([made.url]); takeNative(res); continue; }
-                  /* 原生全部失敗（理論上不會）：PNG 直接用網頁的成品，其他格式往下由網頁編碼 */
-                  if (made.url && exportFormat === 'png') { out.push(made.url); encoded.push(made.url); stampLater.push(i); continue; }
-                  if (made.url) revokeUrls([made.url]);
+            /* 網頁那一段（沖 RAW 給網頁、解原圖、算成品像素）一次只做一張：記憶體尖峰跟以前一樣是一張 */
+            let webTail: Promise<void> = Promise.resolve();
+            const webPhase = async <T,>(fn: () => Promise<T>): Promise<T> => {
+              const prev = webTail;
+              let release!: () => void;
+              webTail = new Promise<void>(r => { release = r; });
+              await prev;
+              try { return await fn(); } finally { release(); }
+            };
+            const saveOne = async (i: number): Promise<Entry> => {
+                // 連結中的一律套現在這一份；解除連結的用它自己留下來的那一份。
+                // 沒有留下來的（例如從頭到尾沒被切過去過）就直接用現在這一份，
+                // 不能因為「還沒載入過」就跳過不套 —— 那就變成沒連結了。
+                const base = linked[i] === false ? (soloSnapsRef.current[i] || live) : live;
+                // 遮色片與構圖不連動，要用這一張自己的
+                const snap: BatchSnap = {
+                  ...cloneSnap(base),
+                  params: fromCanon({ ...cloneSnap(base).params, ...(ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS)) } as EditorParams, !!rawOf(srcs[i])),
+                  geo: ownGeoRef.current[i]
+                    ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
+                    : (i === safeIdx ? cloneSnap(base).geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
+                };
+                const ri = rawOf(srcs[i]);
+                const p = snap.params;
+                /* 拍攝資訊從哪個檔讀：RAW 用原本的 RAW 檔，其他用原圖 */
+                const metaPath = ri?.path ?? nativePathOf(srcs[i]);
+                /* 相機拍的有日期的照片：編輯的是沒印日期的那張，存檔時才印上去（日期是光加上去的，畫面調暗了字自然更清楚）。
+                   App 裡日期跟編碼同一次在原生印，不再另外解一次、印完再編一次 */
+                const date = stampDate || undefined;
+                /* ① 只有顏色類調整：原生從原圖（RAW 從 RAW 檔）用浮點整條做完，網頁一個像素都不用算 */
+                if (isNative() && nativeColorOnly(p)) {
+                  const r = ri ? await rawNativeSave(ri, snap, nfmt, { date }) : await nativeWideSave(srcs[i], snap, nfmt, { date });
+                  if (r) return fromNative(r);
                 }
-                /* ③ 網頁自己編碼（網頁版、原生做不到）。大照片走原尺寸分段存檔（見 renderFullUrl） */
-                if (exportFormat !== 'heic') {
-                  const u = await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1);
-                  out.push(u); encoded.push(u);
-                } else {
+                let rawFullPath: string | undefined;
+                try {
+                  /* ② 網頁算成品。RAW：用這一張自己的參數從 RAW 原尺寸沖一張給網頁畫 */
+                  const { img, made } = await webPhase(async () => {
+                    const rawFull = ri ? await rawFullFor(ri, p) : null;
+                    rawFullPath = rawFull ? nativePathOf(rawFull) : undefined;
+                    const img = rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? originalImgRef.current : null);
+                    /* 這張有自動選取（主體、人物）但遮罩不在記憶體裡（例如批量裡沒打開過的照片）：用這張原圖分析補上 */
+                    for (const m of maskList(p).list) if (isAutoMask(m.maskType) && m.maskCreated && !autoMasks.has(m.maskId)) await buildAutoMask(m.maskId, m.maskType, img as HTMLImageElement);
+                    // 只有 lowfi 存檔需要這張 LUT；查表圖網路讀取失敗時，其他格式和特效不能被擋住
+                    if (Number(p.fxLowfi) > 0) await warmLowfiLut();
+                    /* App：成品像素直接交給原生（不壓 PNG） */
+                    const made = isNative() && metaPath ? await renderFullForNative(img, snap) : null;
+                    return { img, made };
+                  });
+                  if (made) {
+                    /* 有局部、空間類編輯但沒有模糊類：原生補回廣色域與 HDR 亮部；
+                       補不了（例如有模糊類效果）：畫面完全用網頁的成品，原生只負責編碼、寫入拍攝資訊。
+                       這一段在原生做，下一張的網頁那一段同時就開始了 */
+                    let res: NativeOut | null = null;
+                    try {
+                      if (nativeHybridOk(p)) res = ri ? await rawNativeSave(ri, snap, nfmt, { base: made, date }) : await nativeWideSave(srcs[i], snap, nfmt, { base: made, date });
+                      if (!res) res = await nativeEncodeBase(made, metaPath, exportFormat, { date, preview: PREVIEW_PX });
+                    } finally {
+                      if (made.path) void nativeImage().then(n => n?.remove({ path: made.path! })).catch(() => {});
+                    }
+                    if (res) { if (made.url) revokeUrls([made.url]); return fromNative(res); }
+                    /* 原生全部失敗（理論上不會）：PNG 直接用網頁的成品，其他格式往下由網頁編碼 */
+                    if (made.url && exportFormat === 'png') return { show: made.url, save: made.url, stamp: true };
+                    if (made.url) revokeUrls([made.url]);
+                  }
+                  /* ③ 網頁自己編碼（網頁版、原生做不到）。大照片走原尺寸分段存檔（見 renderFullUrl） */
+                  if (exportFormat !== 'heic') {
+                    const u = await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1);
+                    return { show: u, save: u, stamp: true };
+                  }
                   // HEIC（App 才有）：先原尺寸做出無損 PNG，再交給原生編碼器轉 HEIC
                   const png = await renderFullUrl(img, snap, 'image/png', 1);
-                  if (png) { out.push(png); encoded.push(await exportHeicFromUrl(png)); }
-                  else {
-                    // 萬一分段失敗：退回一整張畫布（畫布上限內）
-                    const canvas = renderOneCanvas(img, snap, MOBILE_MAX_PIXELS);
-                    out.push(await canvasToUrl(canvas, 'image/png', 1));
-                    encoded.push(await exportHeic(canvas));
-                  }
+                  if (png) return { show: png, save: await exportHeicFromUrl(png), stamp: true };
+                  // 萬一分段失敗：退回一整張畫布（畫布上限內）
+                  const canvas = await renderOneCanvas(img, snap, MOBILE_MAX_PIXELS);
+                  return { show: await canvasToUrl(canvas, 'image/png', 1), save: await exportHeic(canvas), stamp: true };
+                } finally {
+                  /* RAW 沖給網頁畫的那張原尺寸中間檔很大：用完就刪 */
+                  if (rawFullPath) void nativeImage().then(n => n?.remove({ path: rawFullPath })).catch(() => {});
                 }
-                stampLater.push(i);
-              } finally {
-                /* RAW 沖給網頁畫的那張原尺寸中間檔很大：用完就刪 */
-                if (rawFullPath) void nativeImage().then(n => n?.remove({ path: rawFullPath })).catch(() => {});
+            };
+            /* 批量流水線：上一張在原生編碼的時候，下一張的網頁那一段就開始（最多兩張在路上）。
+               只在 App 裡、而且每一張都不超過 1600 萬像素時才這樣做；太大的照片（例如 4800 萬像素）一次一張，記憶體跟以前一樣 */
+            let lanes = 1;
+            if (isNative() && srcs.length > 1) {
+              lanes = 2;
+              for (const u of srcs) {
+                const pth = rawOf(u)?.path ?? nativePathOf(u);
+                const z = pth ? await nativeImageSize(pth) : null;
+                if (!z || z.width * z.height > PIPE_MAX_PIXELS) { lanes = 1; break; }
               }
             }
+            const entries: Entry[] = new Array(srcs.length);
+            let nextI = 0, failed = false, failure: unknown;
+            await Promise.all(Array.from({ length: Math.min(lanes, srcs.length) }, async () => {
+              while (!failed && nextI < srcs.length) {
+                const i = nextI++;
+                try { entries[i] = await saveOne(i); }
+                catch (e) { if (!failed) { failed = true; failure = e; } }
+              }
+            }));
+            if (failed) {
+              revokeUrls(entries.filter(Boolean).flatMap(e => [e.show, e.save]));
+              throw failure ?? new Error('存檔失敗');
+            }
+            const out = entries.map(e => e.show);
+            const encoded = entries.map(e => e.save);
             /* 網頁自己編碼的那幾張：日期另外印（App 裡原生那一次已經印好的不重複印） */
             if (stampDate) {
-              for (const k of stampLater) {
+              for (let k = 0; k < entries.length; k++) {
+                if (!entries[k].stamp) continue;
                 const stamped = await stampDateOnto(out[k], stampDate);
                 if (!stamped) continue;
                 const was = [out[k], encoded[k]];
@@ -8662,7 +8699,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               params: paramsRef.current, geo, selectedLutIdx,
             }, histKey || undefined);
         } catch (e) { console.error("Save failed", e); if (request === saveRequestRef.current) setSaveState('idle'); }
-        finally { if (request === saveRequestRef.current) saveBusyRef.current = false; }
+        finally { if (request === saveRequestRef.current) saveBusyRef.current = false; releasePixelPool(30000); }
     }, 100);
   };
   
