@@ -21,6 +21,7 @@ function coverLayer() {
     /* 全黑、不透明：後面的成品頁不能透出來。掀開時不淡出（淡出等於兩層疊在一起），成品頁準備好的那一格直接換過去。 */
     <BusyLayer continueLast data-abai-save-cover="" className="z-[10000] bg-black flex items-center justify-center" aria-label="儲存中">
       <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
+      <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
     </BusyLayer>
   );
 }

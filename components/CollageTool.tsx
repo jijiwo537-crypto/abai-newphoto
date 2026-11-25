@@ -109,7 +109,6 @@ import { paintPattern, paintStripesRect, isStripeLikeTex, stripeDirArg, gingAngl
 import { paintMaskTexture, maskTextureSizeFromUi, maskTextureSizeToUi, maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
 import { spacedTextureRadius, maskTextureGapFromUi, maskTextureGapToUi } from '../utils/textureSpacing';
 import { ComposeStudio } from './ComposeStudio';
-import { StuckEscape } from './StuckEscape';
 import { ImportSpinner } from './BusySpinner';
 /* 影片：包成一個「長得跟 <img> 一樣」的來源，畫布那邊一行都不必改。
    詳細的理由與做法寫在 utils/videoSource.ts 的檔頭。 */
@@ -11830,7 +11829,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin"></div>
           <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
-          <StuckEscape onEscape={() => setSaveState('idle')} />
         </BusyLayer>
       )}
 

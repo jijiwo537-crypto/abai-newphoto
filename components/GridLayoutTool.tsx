@@ -146,7 +146,6 @@ import { paintPattern, PatternOpts, isStripeLikeTex, stripeDirArg, gingAngleUi, 
 import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
 import { PatternLayer } from './PatternLayer';
 import { ComposeStudio } from './ComposeStudio';
-import { StuckEscape } from './StuckEscape';
 import { VIDEO_ACCEPT, loadVideoEl, isVideoEl } from '../utils/videoSource';
 import { nativePathOf, fileSrc } from '../utils/nativeBridge';
 import { VideoGl } from '../utils/videoGl';

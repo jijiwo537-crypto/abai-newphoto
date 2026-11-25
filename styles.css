@@ -525,3 +525,15 @@ html[data-import-hero] [data-import-spinner] { visibility: hidden !important; }
    但編輯器的預覽是畫布（SDR）—— 一編輯、按前後對比就在兩者之間切換，看起來閃一下。統一成 SDR，從頭到尾一致 */
 :root { dynamic-range-limit: standard; }
 img, video, canvas { dynamic-range-limit: standard; }
+
+/* 遮色片右側欄：選中、＋⇄× 只用透明度與旋轉（合成器執行，主執行緒再忙也不卡） */
+[data-mask-chip] { opacity: .5; transition: opacity .2s ease; will-change: opacity; }
+[data-mask-chip][data-on="1"] { opacity: 1; }
+[data-mask-chip] > .mk-ring { position: absolute; inset: 0; border-radius: 9px; box-shadow: inset 0 0 0 1.5px #fff; opacity: 0; transition: opacity .2s ease; will-change: opacity; pointer-events: none; }
+[data-mask-chip][data-on="1"] > .mk-ring { opacity: 1; }
+[data-mask-add] .mk-white, [data-mask-add] .mk-ink-b, [data-mask-add] .mk-ink-w { transition: opacity .22s ease; will-change: opacity; }
+[data-mask-add] .mk-ink-w { opacity: 0; }
+[data-mask-add][data-x="1"] .mk-white, [data-mask-add][data-x="1"] .mk-ink-b { opacity: 0; }
+[data-mask-add][data-x="1"] .mk-ink-w { opacity: 1; }
+[data-mask-add] .mk-rot { transition: transform .34s cubic-bezier(.32,.72,0,1); will-change: transform; }
+[data-mask-add][data-x="1"] .mk-rot { transform: rotate(45deg); }

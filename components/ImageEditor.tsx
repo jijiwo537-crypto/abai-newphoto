@@ -69,7 +69,6 @@ import { addExport } from '../utils/exportHistory';
 import { canvasToUrl, revokeUrls, revokeUrlsLater } from '../utils/blobUrl';
 import { canExportHeic, exportHeic, exportHeicFromUrl } from '../utils/heicExport';
 import { PREMIUM_GLASS, SAVE_MENU_GLASS, SAVE_MENU_BUTTON } from '../utils/premiumGlass';
-import { StuckEscape } from './StuckEscape';
 import { motion, AnimatePresence } from 'motion/react';
 import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { ChevronLeft } from 'lucide-react';
@@ -2589,8 +2588,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const p = paramsRef.current;
     const masks = withActiveStored(p);
     setMaskDeselected(false);
-    if (!masks[i] || i === maskList(p).active) return;
+    /* 側欄的樣子在點下去時已經直接換成「選中這一顆、不在挑種類」：狀態一定要跟著一致（點已選中那顆也一樣） */
     setMaskPicking(false);
+    if (!masks[i] || i === maskList(p).active) return;
     uiFirstRef.current = true;
     if (!MASK_TOOLS.some(x => x.id === activeToolId)) setActiveToolId(MASK_DEFAULT_TOOL[masks[i].maskType]);
     commitMaskParams(loadMask(p, masks[i], masks, i));
@@ -4708,7 +4708,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const cur = thumbSrcOf(buffersSrcRef.current);
     const order: ('filter' | 'fx')[] = activeCategory === 'effects' ? ['fx', 'filter'] : ['filter', 'fx'];
     const urgent = (activeCategory === 'filter' && filterThumbsMissing(cur)) || (activeCategory === 'effects' && fxThumbsMissing(cur));
-    const others = srcList.map(thumbSrcOf).filter((u, i, a) => u !== cur && a.indexOf(u) === i);
+    /* 其他照片從「最可能下一個切過去的」開始算：左右鄰居先、越遠越後面。
+       以前照清單順序，第 1、2 張在算的時候使用者往右切到第 5 張，就看到整排灰的 */
+    const at = Math.max(0, srcList.findIndex(u => thumbSrcOf(u) === cur));
+    const others = srcList.map((u, i) => ({ u: thumbSrcOf(u), d: Math.abs(i - at) + (i < at ? 0.5 : 0) }))
+      .sort((a, b) => a.d - b.d).map(x => x.u)
+      .filter((u, i, a) => u !== cur && a.indexOf(u) === i)
+      .slice(0, THUMB_CACHE_SRCS - 1);   // 超過記憶體裡留得住的張數就不算（算了也會被擠掉，白做工）
     const run = () => {
       if (cancelled()) return;
       noteThumbSrc(cur);
@@ -9004,6 +9010,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     cachedHalationCanvasRef.current = null; cachedVignetteCanvasRef.current = null;
     blurCacheStateRef.current = null; softCacheStateRef.current = null; noise2CacheStateRef.current = null; halationCacheStateRef.current = null;
     /* 緩衝區換了名字（快取的鍵跟著換），但還是「目前這張照片」：登記成別名，繪圖迴圈才會照常畫 */
+    /* 縮圖認的是「這張照片」：新名字也要指回原圖，不然縮圖算在新名字底下，
+       畫面上那排（以照片本身為鍵）永遠等不到（批量 RAW 第二張縮圖一直不出來就是這個） */
+    if (!thumbOriginRef.current[key]) thumbOriginRef.current[key] = thumbSrcOf(activeSrcRef.current);
     buffersSrcRef.current = key;
     bufferAliasRef.current = { key, for: activeSrcRef.current };
     tapFastRef.current = true; isDirtyRef.current = true; lastRenderTimeRef.current = 0;
@@ -10324,9 +10333,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   <div className="flex flex-col items-center gap-2 pb-2">
                     {fade(
                       /* 還沒有任何畫出來的遮色片時，選種類是唯一能做的事：不給「×」（沒有可以退回去的地方） */
-                      <button data-mask-add aria-label="新增遮色片" tabIndex={maskRailOpen ? 0 : -1} onClick={() => setMaskPicking(v => made.length ? !v : true)}
-                        className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${maskPicking && made.length ? 'bg-white/20 text-white' : 'bg-white text-black'}`}>
-                        <MaskGlyph k={maskPicking && made.length ? 'close' : 'plus'} />
+                      /* 點下去的那一刻就直接改畫面上的屬性（顏色、＋⇄× 旋轉都只用透明度、旋轉，交給合成器跑），
+                         之後才讓整個編輯器重畫：重畫再重也卡不到這顆的動畫 */
+                      <button data-mask-add data-x={maskPicking && made.length ? '1' : '0'} aria-label="新增遮色片" tabIndex={maskRailOpen ? 0 : -1}
+                        onClick={e => {
+                          const x = e.currentTarget.dataset.x !== '1' && made.length > 0;
+                          e.currentTarget.dataset.x = x ? '1' : '0';
+                          if (x) e.currentTarget.closest('[data-mask-stack]')?.querySelectorAll('[data-mask-chip]').forEach(c => c.setAttribute('data-on', '0'));
+                          afterPaint(() => setMaskPicking(x));
+                        }}
+                        className="relative w-9 h-9 rounded-full flex items-center justify-center bg-white/20">
+                        <span aria-hidden className="mk-white absolute inset-0 rounded-full bg-white" />
+                        <span aria-hidden className="mk-rot relative inline-flex">
+                          <span className="mk-ink-b text-black inline-flex"><MaskGlyph k="plus" /></span>
+                          <span className="mk-ink-w text-white absolute inset-0 inline-flex"><MaskGlyph k="plus" /></span>
+                        </span>
                       </button>, 'add')}
                     {made.length > 0 && (
                       /* 一次最多看到 4 個；超過就在這一段裡上下滑（不會把下面的按鈕擠到太下面） */
@@ -10340,15 +10361,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           seen[t] = (seen[t] || 0) + 1;
                           const name = (NAMES[t] || '') + (total[t] > 1 ? String(seen[t]) : '');
                           return fade(
-                            <button data-mask-chip={i} data-on={on ? '1' : '0'} aria-label={`遮色片 ${name}`} tabIndex={maskRailOpen ? 0 : -1} onClick={() => selectMask(i)}
+                            <button data-mask-chip={i} data-on={on ? '1' : '0'} aria-label={`遮色片 ${name}`} tabIndex={maskRailOpen ? 0 : -1}
+                              /* 選中的樣子當場就換（直接改屬性，只動透明度，交給合成器）；真正切換遮色片（整個編輯器重畫、重算紅色範圍）
+                                 等這一格畫出去之後才做 —— 按下去馬上有反應，外框亮起來的動畫也不會被重畫卡住 */
+                              onClick={e => {
+                                const me = e.currentTarget;
+                                me.closest('[data-mask-stack]')?.querySelectorAll('[data-mask-chip]').forEach(c => c.setAttribute('data-on', c === me ? '1' : '0'));
+                                const add = me.closest('[data-mask-stack]')?.querySelector('[data-mask-add]') as HTMLElement | null;
+                                if (add) add.dataset.x = '0';
+                                afterPaint(() => selectMask(i));
+                              }}
                               /* 方形；選中不填滿，只有白色外框，整格從偏暗變回正常亮度 */
-                              className="relative shrink-0 w-9 h-9 rounded-[9px] flex items-center justify-center bg-white/[0.08] text-white text-[9.5px] font-medium tracking-[0.02em] leading-none transition-[opacity,box-shadow] duration-200"
+                              className="relative shrink-0 w-9 h-9 rounded-[9px] flex items-center justify-center bg-white/[0.08] text-white text-[9.5px] font-medium tracking-[0.02em] leading-none"
                               style={{
                                 scrollSnapAlign: 'start',
-                                opacity: on ? 1 : 0.5,
-                                boxShadow: on ? 'inset 0 0 0 1.5px #fff' : m.maskCreated ? 'inset 0 0 0 1px rgba(255,255,255,.22)' : 'none',
+                                boxShadow: m.maskCreated ? 'inset 0 0 0 1px rgba(255,255,255,.22)' : 'none',
                                 outline: m.maskCreated ? undefined : '1px dashed rgba(255,255,255,.55)', outlineOffset: -1,
                               }}>
+                              <span aria-hidden className="mk-ring" />
                               {name}
                               {m.maskInvert && <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-white text-black flex items-center justify-center"><MaskGlyph k="invert" size={9} /></span>}
                             </button>, `chip-${m.maskId}-${i}`);
@@ -11470,8 +11500,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin"></div>
           <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
-          {/* 這一層蓋住返回鍵，所以一定要有出口（見 StuckEscape） */}
-          <StuckEscape onEscape={() => { ++saveRequestRef.current; saveBusyRef.current = false; setSaveState('idle'); }} />
         </BusyLayer>
       )}
     </div>

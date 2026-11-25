@@ -8,7 +8,6 @@ import { SAVE_MENU_GLASS, SAVE_MENU_BUTTON } from '../utils/premiumGlass';
 import { isDarkSwatch } from '../utils/swatch';
 import { BusyLayer, afterBusyPainted } from './BusyLayer';
 import { ImportSpinner } from './BusySpinner';
-import { StuckEscape } from './StuckEscape';
 import React, { useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
@@ -2239,8 +2238,6 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin"></div>
           <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">{embedded ? '套用中' : '儲存中'}</p>
-          {/* 這一層蓋住返回鍵，所以一定要有出口（見 StuckEscape） */}
-          <StuckEscape onEscape={() => setSaveState('idle')} />
         </BusyLayer>
       )}
     </div>

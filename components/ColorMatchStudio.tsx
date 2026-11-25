@@ -26,7 +26,6 @@ import { openGlassMenu } from '../utils/nativeGlass';
 import { nativeFinish } from '../utils/nativeFinish';
 import { isNative } from '../utils/native';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
-import { StuckEscape } from './StuckEscape';
 import { useAlignPad, ALIGN_FILL_CSS, useOriginalImage, drawOriginalInto, centerViewToShared, sharedToCenterView, type AlignRect, type StudioViewApi } from './studioAlign';
 import {
   METHODS, METHOD_LABEL, Method,
@@ -1196,7 +1195,6 @@ skinRef.current=null;weightRef.current=null;setSrcImg(image);/* 還沒選參考�
           {/* 轉圈固定在正中央、字掛在下方：接下來存相簿那一層的轉圈位置完全一樣，不會跳 */}
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
           <p style={{ position: 'absolute', left: 0, right: 0, top: 'calc(50% + 44px)', textAlign: 'center' }} data-busy-label className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">{embedded ? '套用中' : '儲存中'}</p>
-          <StuckEscape onEscape={() => setSaving(false)} />
         </BusyLayer>
       )}
     </div>

@@ -38,6 +38,9 @@ export const BusyLayer: React.FC<{
     alignSpinners(el);
     if (!continueLast) last = { html: el.innerHTML, className, at: Date.now() };
   });
+  /* 「15 秒內」要從上一層**收掉**的那一刻算，不是從它最後一次重畫算：
+     存很久的時候那一層幾十秒都沒重畫，接手時就被當成過期，只剩轉圈、字不見了 */
+  useLayoutEffect(() => () => { if (!continueLast && last) last.at = Date.now(); }, [continueLast]);
   const node = snapshot ? (
     <div ref={ref} data-busy-layer {...rest} className={`fixed inset-0 ${snapshot.className} [&_button]:pointer-events-none`} style={style}
       dangerouslySetInnerHTML={{ __html: snapshot.html }} />
