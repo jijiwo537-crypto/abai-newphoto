@@ -28,3 +28,25 @@ export async function nativeFinish(pngUrl: string, originalSrc: string, fmt: 'jp
     if (outPath) api.remove({ path: outPath }).catch(() => {});
   }
 }
+
+/** 只寫拍攝資訊：畫面完全用網頁的成品（不補色、不動任何像素），原生只負責編碼成指定格式、寫入原圖的拍攝資訊。
+ *  給「原生沒辦法補色」的存檔用（例如有模糊類效果）。metaPath：拍攝資訊從哪個檔讀（RAW 給原本的 RAW 檔） */
+export async function nativeEncodeWithMeta(pngUrl: string, metaPath: string | null | undefined, fmt: 'jpg' | 'png' | 'heic'): Promise<string | null> {
+  if (!isNative() || !metaPath) return null;
+  const api = await nativeImage();
+  if (!api) return null;
+  let basePath = '', outPath = '';
+  try {
+    basePath = await blobToNativeFile(await (await fetch(pngUrl)).blob(), 'png');
+    const nf = fmt === 'heic' ? 'heic' : fmt === 'jpg' ? 'jpeg' : 'png';
+    const r = await api.render({ path: metaPath, basePath, baseOnly: true, format: nf, quality: 1, hdr: false });
+    outPath = r.path;
+    const blob = await (await fetch(fileSrc(r.path))).blob();
+    if (!blob.size) return null;
+    return URL.createObjectURL(new Blob([blob], { type: nf === 'jpeg' ? 'image/jpeg' : nf === 'png' ? 'image/png' : 'image/heic' }));
+  } catch { return null; }
+  finally {
+    if (basePath) api.remove({ path: basePath }).catch(() => {});
+    if (outPath) api.remove({ path: outPath }).catch(() => {});
+  }
+}

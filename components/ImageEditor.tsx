@@ -15,6 +15,7 @@ import { isNative } from '../utils/native';
 import { autoMasks, isAutoMask } from '../utils/masks';
 import { openGlassMenu } from '../utils/nativeGlass';
 import { waitEntranceStart, setPreThumbBuilder } from '../utils/importHero';
+import { nativeEncodeWithMeta } from '../utils/nativeFinish';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
 import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, rawDevelopLinear, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
 import { RawGpu } from '../utils/rawGpu';
@@ -8388,20 +8389,30 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 if (basePng) wide = await nativeWideSave(srcs[i], snap, nfmt, basePng, ri ? rawTiffPath : undefined);
                 if (wide) { revokeUrls([basePng]); basePng = ''; }
               }
+              /* 拍攝資訊從哪個檔讀：RAW 用原本的 RAW 檔，其他用原圖 */
+              const metaPath = rawOf(srcs[i])?.path ?? nativePathOf(srcs[i]);
               if (wide) {
                 out.push(wide);
                 if (exportFormat === 'heic') encoded.push(wide);
               } else if (basePng && exportFormat !== 'jpg') {
-                out.push(basePng);
-                if (exportFormat === 'heic') encoded.push(await exportHeicFromUrl(basePng));
+                /* 原生補不了色（例如有模糊類效果）：畫面完全用網頁的成品，原生只負責編碼、寫入原圖的拍攝資訊（見 utils/nativeFinish） */
+                const m = await nativeEncodeWithMeta(basePng, metaPath, exportFormat);
+                if (exportFormat === 'heic') { out.push(basePng); encoded.push(m ?? await exportHeicFromUrl(basePng)); }
+                else if (m) { revokeUrls([basePng]); out.push(m); }
+                else out.push(basePng);
               } else if (exportFormat !== 'heic') {
                 if (basePng) revokeUrls([basePng]);
                 // JPG／PNG：大照片走原尺寸分段存檔（見 renderFullUrl），一般照片照一般流程
-                out.push(await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
+                /* App 裡：先做無損 PNG，原生編碼成選的格式並寫入原圖的拍攝資訊；做不到才照舊由網頁直接編碼 */
+                const png = isNative() && metaPath ? await renderFullUrl(img, snap, 'image/png', 1) : '';
+                const m = png ? await nativeEncodeWithMeta(png, metaPath, exportFormat) : null;
+                if (m) { revokeUrls([png]); out.push(m); }
+                else if (png && exportFormat === 'png') out.push(png);
+                else { if (png) revokeUrls([png]); out.push(await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1)); }
               } else {
-                // HEIC（App 才有）：先原尺寸做出無損 PNG（見 renderFullUrl），再交給原生編碼器轉 HEIC
+                // HEIC（App 才有）：先原尺寸做出無損 PNG（見 renderFullUrl），再交給原生編碼器轉 HEIC（同時寫入原圖的拍攝資訊）
                 const png = await renderFullUrl(img, snap, 'image/png', 1);
-                if (png) { out.push(png); encoded.push(await exportHeicFromUrl(png)); }
+                if (png) { out.push(png); encoded.push((await nativeEncodeWithMeta(png, metaPath, 'heic')) ?? await exportHeicFromUrl(png)); }
                 else {
                   // 萬一分段失敗：退回一整張畫布（畫布上限內）
                   const canvas = renderOneCanvas(img, snap, MOBILE_MAX_PIXELS);

@@ -173,7 +173,9 @@ enum ABAIImageCore {
 
     /// 把 Core Image 的結果編碼成檔案。hdr 有值時（iOS 18 起）額外寫進增益圖：
     /// 一般螢幕看到的是 SDR 那一張，支援 HDR 的螢幕會用增益圖把亮部真的提亮。
-    static func encode(_ image: CIImage, format: Format, quality: Double, hdr: CIImage? = nil) throws -> Data {
+    /// space：輸出的色彩空間（預設 Display P3；網頁成品原樣存檔時用 sRGB，像素不經過轉換）
+    static func encode(_ image: CIImage, format: Format, quality: Double, hdr: CIImage? = nil, space: CGColorSpace? = nil) throws -> Data {
+        let cs = space ?? displayP3
         var opts: [CIImageRepresentationOption: Any] = [
             CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): quality,
         ]
@@ -183,13 +185,13 @@ enum ABAIImageCore {
         let data: Data?
         switch format {
         case .jpeg:
-            data = context.jpegRepresentation(of: image, colorSpace: displayP3, options: opts)
+            data = context.jpegRepresentation(of: image, colorSpace: cs, options: opts)
         case .png:
-            data = context.pngRepresentation(of: image, format: .RGBA8, colorSpace: displayP3, options: [:])
+            data = context.pngRepresentation(of: image, format: .RGBA8, colorSpace: cs, options: [:])
         case .heic:
-            data = context.heifRepresentation(of: image, format: .RGBA8, colorSpace: displayP3, options: opts)
+            data = context.heifRepresentation(of: image, format: .RGBA8, colorSpace: cs, options: opts)
         case .heic10:
-            data = try context.heif10Representation(of: image, colorSpace: displayP3, options: opts)
+            data = try context.heif10Representation(of: image, colorSpace: cs, options: opts)
         }
         guard let out = data else { throw CoreError.encode }
         return out

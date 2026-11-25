@@ -197,6 +197,8 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
         let keepGamut = call.getBool("keepGamut") ?? false
         let cubePath = call.getString("cubePath")
         let basePath = call.getString("basePath")             // 網頁算好的成品（有局部、空間類的編輯時）
+        /* baseOnly：畫面完全用網頁的成品，原生只負責編碼成指定格式、寫入原圖的拍攝資訊（不補色、不動任何像素） */
+        let baseOnly = call.getBool("baseOnly") ?? false
         if wantHDR && format == .heic10 { format = .heic }   // 帶增益圖的 HDR 照片用系統標準的 8 位元 HEIC＋增益圖
         let lutName = call.getString("lut")
         let cubeB64 = call.getString("cube"), cubeSize = call.getInt("cubeSize") ?? 0
@@ -235,7 +237,9 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                 if let cp = cubePath, cubeSize > 1, let u = ABAIImageCore.fileURL(from: cp), let d = try? Data(contentsOf: u) { cube = ABAIImageCore.cube(data: d, size: cubeSize) }
                 else if let b = cubeB64, cubeSize > 1 { cube = ABAIImageCore.cube(base64: b, size: cubeSize) }
                 else if let n = lutName, let u = ABAIImageCore.bundledLut(n) { cube = ABAIImageCore.cube(fromAtlas: u) }
-                if keepGamut, let bp = basePath, let bu = ABAIImageCore.fileURL(from: bp), let base = ABAIImageCore.ciImage(bu) {
+                if baseOnly, let bp = basePath, let bu = ABAIImageCore.fileURL(from: bp), let base = ABAIImageCore.ciImage(bu) {
+                    img = base
+                } else if keepGamut, let bp = basePath, let bu = ABAIImageCore.fileURL(from: bp), let base = ABAIImageCore.ciImage(bu) {
                     img = ABAIImageCore.keepGamut(edited: base, original: img)
                 } else if let c = cube { img = keepGamut ? ABAIImageCore.applyKeepingGamut(cube: c, to: img) : ABAIImageCore.apply(cube: c, to: img, amount: amount) }
                 if keepGamut { img = ABAIImageCore.uprightProperties(img) }
@@ -254,7 +258,8 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
                    跟網頁編輯頁的著色器同一招（±½ 階），肉眼看不到雜訊，但色階會被打散。10 位元不需要。 */
                 if cube != nil && format != .heic10 { sdr = ABAIImageCore.dither(sdr) }
                 do {
-                    var data = try ABAIImageCore.encode(sdr, format: format, quality: quality, hdr: hdr)
+                    /* baseOnly：網頁成品是 sRGB，照 sRGB 存（像素不轉色彩空間，跟網頁成品一模一樣） */
+                    var data = try ABAIImageCore.encode(sdr, format: format, quality: quality, hdr: hdr, space: baseOnly ? CGColorSpace(name: CGColorSpace.sRGB) : nil)
                     /* 原圖的拍攝資訊（機型、鏡頭、光圈、快門、ISO、拍攝時間、GPS）帶進成品（只動檔頭、不重新壓縮） */
                     data = ABAIImageCore.copyMetadata(data, from: metaURL ?? url)
                     if let g = gps, let lat = (g["lat"] as? NSNumber)?.doubleValue, let lon = (g["lon"] as? NSNumber)?.doubleValue {
