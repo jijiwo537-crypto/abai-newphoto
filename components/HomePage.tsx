@@ -183,6 +183,8 @@ const LegalText: React.FC<{ doc: 'terms' | 'privacy' }> = ({ doc }) => {
 
 /** 首頁的預覽圖（主視覺、橫幅、推薦格）：整個 App 只從 localStorage 讀一次，之後回到主頁直接用 */
 let previewCache: Record<string, string> | null = null;
+/** 字標的進場動畫已經播過（同一次打開 App 只播一次） */
+let wordmarkShown = false;
 function readPreviews(): Record<string, string> {
   const next: Record<string, string> = {};
   try {
@@ -949,6 +951,8 @@ export const HomePage: React.FC<HomePageProps> = ({
       首頁最上面那張大圖就自己換掉了，人沒挑過卻一直在變。
       現在沒匯入就是空的（點下去挑一張），存檔再也不會動到它。 */
   const heroSrc = previews.hero || null;
+  /* 字標的淡入上升只在打開 App 的第一次播：之前每次回到主頁都會從透明重播一次，看起來就是「閃一下」 */
+  const [wordmarkEnter] = useState(() => { const first = !wordmarkShown; wordmarkShown = true; return first; });
   keepDecoded(heroSrc);
 
   /* iOS 主畫面 Web App 的不透明狀態列會固定畫成黑色。viewport 在啟動時
@@ -1354,7 +1358,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                  圖片每次回到主頁都是新的元素、要重新解碼，偶爾有一格還沒畫出來＝閃一下；
                  向量是直接畫的、不用解碼，第一格就一定完整 —— 從根本上不會再閃 */}
             <AbaiLogo
-              className="abai-wordmark-enter block h-auto select-none pointer-events-none text-white"
+              className={`${wordmarkEnter ? 'abai-wordmark-enter' : ''} block h-auto select-none pointer-events-none text-white`}
               /* 裁掉原檔透明留白後，以原本 ABAI 字樣的可視高度與左基準對齊；
                  圖片不參與父層尺寸計算，所以主視覺和下方工具位置完全不動。 */
               style={{ width: 'clamp(100px, 27vw, 116px)', aspectRatio: '737 / 342' }}

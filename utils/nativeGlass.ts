@@ -14,7 +14,7 @@ export type GlassItem =
   | { kind: 'capsule'; el: HTMLElement | null; buttons: GlassButtonSpec[]; /** 左右內距（pt，不給＝8） */ pad?: number };
 
 interface NativeGlassApi {
-  menu?(o: { anchor: { x: number; y: number; w: number; h: number }; items: GlassMenuItem[]; width?: number }): Promise<{ opened: boolean }>;
+  menu?(o: { anchor: { x: number; y: number; w: number; h: number }; items: GlassMenuItem[]; width?: number; place?: { x: number; y: number; w: number } }): Promise<{ opened: boolean }>;
   closeMenu?(): Promise<void>;
   show(o: { group: string; items: unknown[]; animate?: boolean }): Promise<void>;
   update(o: { group: string; id: string; symbol?: string; tint?: string; enabled?: boolean }): Promise<void>;
@@ -98,6 +98,9 @@ export async function openGlassMenu(anchor: HTMLElement, items: GlassMenuItem[],
   menuSubs.push(await p.addListener('menu', d => onChange(String(d.id), String(d.value))));
   menuSubs.push(await p.addListener('menuClosed', () => { menuSubs.forEach(s => s.remove()); menuSubs = []; }));
   const r = anchor.getBoundingClientRect();
-  try { await p.menu({ anchor: { x: r.left, y: r.top, w: r.width, h: r.height }, items }); return true; }
+  /* 位置與寬度照原本網頁選單：標題列正下方 8px、左右各留 16px（滿版寬） */
+  const hd = (anchor.closest('header') as HTMLElement | null)?.getBoundingClientRect();
+  const place = hd ? { x: hd.left + 16, y: hd.bottom + 8, w: hd.width - 32 } : undefined;
+  try { await p.menu({ anchor: { x: r.left, y: r.top, w: r.width, h: r.height }, items, place }); return true; }
   catch { menuSubs.forEach(s => s.remove()); menuSubs = []; return false; }
 }

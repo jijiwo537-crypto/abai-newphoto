@@ -84,7 +84,8 @@ enum ABAIGlass {
     }
 
     static func image(_ symbol: String, pointSize: CGFloat = 19, weight: UIImage.SymbolWeight = .regular) -> UIImage? {
-        if symbol == "abai.level" { return levelIcon(size: pointSize + 2) }
+        /* 水平線：用 iOS 系統的「level」圖示（跟系統設定、相機同一套語彙）；舊系統沒有才用自己畫的 */
+        if symbol == "abai.level" { return UIImage(systemName: "level", withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight)) ?? levelIcon(size: pointSize + 2) }
         if symbol == "abai.film" {
             /* 一格底片（直的）：左右兩條齒孔帶、每邊三個齒孔，中間是畫面。
                比 SF Symbol 大一點、線條留空隙，跟旁邊的編輯、愛心看起來一樣重 */
@@ -222,10 +223,13 @@ public class NativeGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         let anchor = CGRect(x: (o?["x"] as? NSNumber)?.doubleValue ?? 0, y: (o?["y"] as? NSNumber)?.doubleValue ?? 0,
                             width: (o?["w"] as? NSNumber)?.doubleValue ?? 1, height: (o?["h"] as? NSNumber)?.doubleValue ?? 1)
         let width = CGFloat(call.getDouble("width") ?? 264)
+        let pl = call.getObject("place")
+        let place: CGRect? = pl.map { CGRect(x: ($0["x"] as? NSNumber)?.doubleValue ?? 0, y: ($0["y"] as? NSNumber)?.doubleValue ?? 0,
+                                               width: ($0["w"] as? NSNumber)?.doubleValue ?? 264, height: 1) }
         DispatchQueue.main.async {
             guard let web = self.bridge?.webView, let parent = web.superview else { call.reject("沒有畫面"); return }
             if let open = self.menuPanel { open.dismiss(); call.resolve(["opened": false]); return }
-            let p = ABAISettingsPanel(frame: web.frame, items: items, anchor: anchor, bounds: web.bounds, dark: true, width: width)
+            let p = ABAISettingsPanel(frame: web.frame, items: items, anchor: anchor, bounds: web.bounds, dark: true, width: width, place: place)
             p.onChange = { [weak self] id, value in self?.notifyListeners("menu", data: ["id": id, "value": value]) }
             p.onClose = { [weak self, weak p] in
                 if self?.menuPanel === p { self?.menuPanel = nil }
@@ -323,13 +327,14 @@ final class ABAISettingsPanel: UIView {
     private let menuAnchorPoint: CGPoint
 
     /// items 跟 NativeCameraPlugin.showMenu 一樣；anchor＝那顆按鈕、bounds＝觀景窗（面板不會超出它）
-    init(frame: CGRect, items: [[String: Any]], anchor: CGRect, bounds: CGRect, dark: Bool = false, width: CGFloat = 248) {
-        let width: CGFloat = width
+    /// place：給了就照它擺（x、y、寬，CSS px）—— 儲存旁的選單照原本網頁選單的位置與寬度
+    init(frame: CGRect, items: [[String: Any]], anchor: CGRect, bounds: CGRect, dark: Bool = false, width: CGFloat = 248, place: CGRect? = nil) {
+        let width: CGFloat = place?.width ?? width
         let rowsH = items.reduce(CGFloat(0)) { $0 + (($1["type"] as? String) == "choice" ? 76 : 46) }
         let height = rowsH + 16
         let right = min(bounds.maxX, frame.width) - 8
-        let x = max(bounds.minX + 8, right - width)
-        let y = min(anchor.maxY + 6, max(bounds.minY + 8, frame.height - height - 8))
+        let x = place?.minX ?? max(bounds.minX + 8, right - width)
+        let y = place.map { min($0.minY, frame.height - height - 8) } ?? min(anchor.maxY + 6, max(bounds.minY + 8, frame.height - height - 8))
         panel = ABAIGlass.view(radius: 24, interactive: false, dark: dark)
         panel.frame = CGRect(x: x, y: y, width: width, height: height)
         menuAnchorPoint = CGPoint(x: anchor.midX, y: anchor.midY)

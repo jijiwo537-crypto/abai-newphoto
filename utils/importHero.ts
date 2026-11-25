@@ -163,8 +163,16 @@ function startJob(j: Job) {
     const a = j.el.animate(j.k, j.opts);
     if (lead) {
       /* 對齊到這一批的起跑時間（起跑時間還沒定的話，等它定了再對齊；這之間停在第一格、看不見） */
-      if (lead.startTime != null) a.startTime = lead.startTime;
-      else { a.pause(); void lead.ready.then(() => { try { a.startTime = lead.startTime; } catch { a.play(); } }, () => a.play()); }
+      /* 只在「這一批剛開播不久」時才對齊（載入中途換上的元素接在同一個進度）。
+         主執行緒被卡住很久之後才長出來的元素，若照舊對齊，起跑時間早就過了 → 一出現就是最後一格（只看到前後兩幀）；
+         這種情況改成自己從頭播 */
+      const align = () => {
+        const now = Number(document.timeline.currentTime ?? 0), st = Number(lead.startTime ?? now);
+        const total = Number(j.opts.duration ?? 0) + Number(j.opts.delay ?? 0);
+        if (now - st < total * 0.4) a.startTime = lead.startTime; else a.play();
+      };
+      if (lead.startTime != null) align();
+      else { a.pause(); void lead.ready.then(() => { try { align(); } catch { a.play(); } }, () => a.play()); }
     } else if (j.after) leadLand = a; else leadReveal = a;
     const restore = () => { if (j.el.style.willChange === 'transform, opacity') j.el.style.willChange = j.wc ?? ''; };
     a.finished.then(restore, restore);
@@ -461,8 +469,8 @@ function watch(my: number) {
     /* 開播的時機挑「主執行緒剛好有空」的那一刻：連續 3 格的間隔都正常（沒有被工具初始化卡住），
        動畫才在順暢的時候交給 GPU 起跑；工具還在忙（整格整格掉）就再等一下，最晚到照片交接那一刻一定開播 */
     calm = lastNow && now - lastNow < 22 ? calm + 1 : 0; lastNow = now;
-    /* 照片飛一小段（約 1/4）就開始進場；主執行緒那時正忙就再等一下，但最晚飛到一半多一定開播 */
-    if (!revealed && toolRoot() && ((calm >= 2 && now - t0 > motionMs('importFly') * 0.25) || now - t0 > motionMs('importFly') * 0.55)) revealEnter();
+    /* 照片一起飛（約 1/8）就開始進場；主執行緒那時正忙就再等一下，但最晚飛到約 1/3 一定開播 */
+    if (!revealed && toolRoot() && ((calm >= 2 && now - t0 > motionMs('importFly') * 0.12) || now - t0 > motionMs('importFly') * 0.35)) revealEnter();
     if (landing) {
       if (target && !target.isConnected) { target = null; hide(null); }
       /* 每一格都找（新的照片元素一出現當格就藏起來，不會在替身底下閃一下）；
