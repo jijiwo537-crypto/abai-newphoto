@@ -29,13 +29,14 @@ enum ABAIGlass {
     }
 
     static func view(radius: CGFloat, interactive: Bool = true, dark: Bool = false) -> UIVisualEffectView {
-        var effect: UIVisualEffect = UIBlurEffect(style: dark ? .systemThinMaterialDark : .systemUltraThinMaterialDark)
+        var effect: UIVisualEffect = UIBlurEffect(style: dark ? .systemUltraThinMaterialDark : .systemUltraThinMaterialDark)
         #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             let g = UIGlassEffect()
             g.isInteractive = interactive
             /* 黑色液態玻璃（App 的介面是黑的）：玻璃帶一層深色 */
-            if dark { g.tintColor = UIColor(white: 0, alpha: 0.55) }
+            /* 0.55 太深（⋯ 選單、詢問框、登入面板看起來幾乎是黑的）：降到 0.3，仍是深色但透得出後面 */
+            if dark { g.tintColor = UIColor(white: 0, alpha: 0.3) }
             effect = g
         }
         #endif
@@ -550,7 +551,9 @@ final class ABAIDialog: UIView {
         msgL.font = .systemFont(ofSize: 13, weight: .regular)
         msgL.textColor = UIColor(white: 1, alpha: 0.55)
         msgL.textAlignment = bottom ? .left : .center
-        msgL.numberOfLines = 0
+        /* 置中的詢問框：說明一行放完（字太長就自動縮小，不換行，跟原本網頁版一樣）；登入面板的錯誤訊息可以換行 */
+        msgL.numberOfLines = bottom ? 0 : 1
+        if !bottom { msgL.adjustsFontSizeToFitWidth = true; msgL.minimumScaleFactor = 0.6; msgL.font = .systemFont(ofSize: 12, weight: .regular) }
         let inner = width - pad * 2
         let tH = ceil(titleL.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height)
         let mH = message == nil ? 0 : ceil(msgL.sizeThatFits(CGSize(width: inner, height: .greatestFiniteMagnitude)).height)
@@ -589,9 +592,13 @@ final class ABAIDialog: UIView {
             b.titleLabel?.font = .systemFont(ofSize: 15, weight: primary ? .bold : .semibold)
             /* 按鈕前面的圖示：SF Symbol，或網頁畫好的圖（data URL，例如 Google 的四色標誌，照原色畫） */
             var icon: UIImage?
-            if let sym = spec["symbol"] as? String { icon = ABAIGlass.uniform(ABAIGlass.image(sym, pointSize: 17, weight: .medium), box: 18) }
+            /* iconSize：圖示的視覺大小（pt）。每個圖形本身的比例不同（蘋果標誌細長、信封扁），各自給一個值，看起來才一樣大 */
+            let isz = CGFloat((spec["iconSize"] as? NSNumber)?.doubleValue ?? 18)
+            if let sym = spec["symbol"] as? String { icon = ABAIGlass.uniform(ABAIGlass.image(sym, pointSize: 17, weight: .medium), box: isz) }
             if let du = spec["image"] as? String, let comma = du.firstIndex(of: ","), let data = Data(base64Encoded: String(du[du.index(after: comma)...])),
-               let img = UIImage(data: data, scale: 3) { icon = img.withRenderingMode(.alwaysOriginal) }
+               let img = UIImage(data: data) {
+                icon = UIGraphicsImageRenderer(size: CGSize(width: isz, height: isz)).image { _ in img.draw(in: CGRect(x: 0, y: 0, width: isz, height: isz)) }.withRenderingMode(.alwaysOriginal)
+            }
             if let ic = icon {
                 b.setImage(ic, for: .normal)
                 b.tintColor = primary ? .black : .white

@@ -5,7 +5,7 @@ import { sec as motionSec } from '../utils/motionTimings';
 import { Icon } from './Icon';
 import { LOCALES, changeLocale, getLocale } from '../utils/locale';
 import { isNative } from '../utils/native';
-import { useNativeGlass, nativeDialog, closeNativeDialog, nativeSheet, closeNativeSheet, onNativeSheet, offsetGlass, type NativeSheetPage } from '../utils/nativeGlass';
+import { nativeDialog, closeNativeDialog, nativeSheet, closeNativeSheet, onNativeSheet, type NativeSheetPage } from '../utils/nativeGlass';
 import { exportsStatus, subscribeExports, removeExport, type ExportMeta } from '../utils/exportHistory';
 import { haptic } from '../utils/haptics';
 import {
@@ -217,14 +217,15 @@ function keepDecoded(src: string | null) {
 
 
 /* Google 的四色標誌畫成 PNG（交給原生的登入面板用，原生沒有這個圖示）：只畫一次 */
-const GOOGLE_G_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-3.9H24v7.1h12.1c-.2 1.9-1.6 4.7-4.5 6.6l-.04.3 6.5 5 .5.05c4.1-3.8 6.5-9.4 6.5-15.1z"/> <path fill="#34A853" d="M24 46c5.9 0 10.9-1.9 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.1l-.3 0-6.7 5.2-.1.3C8 41.1 15.4 46 24 46z"/> <path fill="#FBBC05" d="M11.5 28.5c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l0-.3-6.8-5.3-.2.1C2.9 17.1 2 20.4 2 24s.9 6.9 2.5 9.9l7-5.4z"/> <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.500 29.9 2 24 2 15.4 2 8 6.9 4.5 14.1l7 5.4C13.3 14.3 18.2 10.6 24 10.6z"/></svg>';
+/* 一定要寫 width/height：沒寫的 SVG 圖片預設是 300×150，畫進正方形畫布就被壓扁了（之前看起來「怪怪的」就是這個） */
+const GOOGLE_G_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-3.9H24v7.1h12.1c-.2 1.9-1.6 4.7-4.5 6.6l-.04.3 6.5 5 .5.05c4.1-3.8 6.5-9.4 6.5-15.1z"/> <path fill="#34A853" d="M24 46c5.9 0 10.9-1.9 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.1l-.3 0-6.7 5.2-.1.3C8 41.1 15.4 46 24 46z"/> <path fill="#FBBC05" d="M11.5 28.5c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l0-.3-6.8-5.3-.2.1C2.9 17.1 2 20.4 2 24s.9 6.9 2.5 9.9l7-5.4z"/> <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.500 29.9 2 24 2 15.4 2 8 6.9 4.5 14.1l7 5.4C13.3 14.3 18.2 10.6 24 10.6z"/></svg>';
 let googlePng: Promise<string | undefined> | null = null;
 const googleGlyphPng = () => googlePng ??= new Promise<string | undefined>(res => {
   const im = new Image();
   im.onload = () => {
     try {
-      const c = document.createElement('canvas'); c.width = c.height = 51;   // 17pt × 3
-      c.getContext('2d')!.drawImage(im, 0, 0, 51, 51);
+      const c = document.createElement('canvas'); c.width = c.height = 96;
+      c.getContext('2d')!.drawImage(im, 0, 0, 96, 96);
       const u = c.toDataURL('image/png'); c.width = c.height = 0; res(u);
     } catch { res(undefined); }
   };
@@ -521,9 +522,10 @@ export const HomePage: React.FC<HomePageProps> = ({
     void googleGlyphPng().then(g => live ? nativeDialog({
       title: '登入', message: loginErr || undefined, style: 'dark', bottom: true,
       buttons: [
-        { id: 'apple', title: '使用 Apple 帳號登入', role: 'primary', symbol: 'apple.logo' },
-        { id: 'google', title: '使用 Google 帳號登入', image: g },
-        { id: 'email', title: '使用電子郵件登入', symbol: 'envelope' },
+        /* 視覺大小對齊（跟網頁版同一套量法）：蘋果標誌細長，要給大一點的框；Google 幾乎填滿方框；信封是扁的 */
+        { id: 'apple', title: '使用 Apple 帳號登入', role: 'primary', symbol: 'apple.logo', iconSize: 20 },
+        { id: 'google', title: '使用 Google 帳號登入', image: g, iconSize: 17 },
+        { id: 'email', title: '使用電子郵件登入', symbol: 'envelope', iconSize: 18 },
       ],
     }) : null).then(id => {
       if (!live || id === undefined) return;
@@ -1152,16 +1154,6 @@ export const HomePage: React.FC<HomePageProps> = ({
     void nativeSheet(page).then(ok => { if (!ok) setWebSettings(true); });
   }, [settingsOpen, settingsPage, webSettings, copied]);
   useEffect(() => () => { void closeNativeSheet(); }, []);
-  /* 「我的」頁「立即登入」左邊那個大圓（還沒登入、沒有頭貼時）：App 裡換成原生的玻璃圓（人像圖示）。
-     這一頁會捲動，原生的圓跟著位移（不重建）；這一頁滑進來（0.56 秒）之後才放上去；任何彈出的視窗蓋上來時先收起來。
-     有頭貼或已登入（顯示名字首字）時照舊用網頁的（原生按鈕放不了圖片） */
-  const avatarRef = useRef<HTMLSpanElement>(null);
-  const meScrollRef = useRef<HTMLDivElement>(null);
-  const meScrollBase = useRef(0);
-  const avatarGlassOn = nav === 'me' && !account && !avatar && !settingsOpen && !loginOpen && !emailOpen && !delOpen && !acctOpen && !outOpen;
-  const avatarGlass = useNativeGlass('home-avatar', avatarGlassOn,
-    () => { meScrollBase.current = meScrollRef.current?.scrollTop ?? 0; return [{ kind: 'circle', id: 'avatar', symbol: 'person', pointSize: 28, el: avatarRef.current }]; },
-    () => {}, [avatarGlassOn], 560);
   const historyGrid = (slots: number) => (
     <div className="grid grid-cols-5 gap-2">
       {Array.from({ length: slots }, (_, i) => {
@@ -1270,8 +1262,6 @@ export const HomePage: React.FC<HomePageProps> = ({
            這一頁的東西才會留在原來的位置，不會整組往上跑。
            不在「我的」的時候整頁移到右邊等著，而且不吃點擊。 */
         <div
-          ref={meScrollRef}
-          onScroll={e => { if (avatarGlass.native && avatarGlassOn) void offsetGlass('home-avatar', 0, meScrollBase.current - e.currentTarget.scrollTop); }}
           style={{
             transform: nav === 'me' ? 'translate3d(0,0,0)' : 'translate3d(100%,0,0)',
             transition: 'transform 560ms cubic-bezier(0.22,1,0.36,1)',
@@ -1288,7 +1278,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               整列不再是一顆大按鈕 —— 只有右邊那顆箭頭會有反應，
               點頭貼或名字都不會誤觸（登入前後都是同一顆，長相也一樣）。 */}
           <div className="w-full flex items-center gap-4 pt-3 pb-5 text-left" style={{ transform: 'translateY(12px)' }}>
-            <span ref={avatarRef} style={{ visibility: avatarGlass.native && avatarGlassOn ? 'hidden' : undefined }} className="w-[68px] h-[68px] shrink-0 rounded-full overflow-hidden bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
+            <span className="w-[68px] h-[68px] shrink-0 rounded-full overflow-hidden bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
               <AvatarView local={avatar} account={account} size={68} />
             </span>
             {/* 登入後只剩一行名字，讓它自己跟頭貼上下置中（外層已經 items-center）。

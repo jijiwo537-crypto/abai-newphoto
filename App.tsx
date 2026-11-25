@@ -727,12 +727,13 @@ const App: React.FC = () => {
     let t = 0;
     const done = () => !document.getElementById('boot') || !document.documentElement.classList.contains('booting');
     /* 主頁一露出來（開機畫面開始淡出的那一刻）就問，不再多等 */
-    const go = () => { if (!t) { t = -1; setHomeShown(true); } };
-    if (done()) { go(); return; }
+    /* 主頁露出來（開機畫面開始淡出）之後再等 0.5 秒 */
+    const go = () => { if (!t) t = window.setTimeout(() => setHomeShown(true), 500); };
+    if (done()) { go(); return () => window.clearTimeout(t); }
     const ob = new MutationObserver(() => { if (done()) { ob.disconnect(); go(); } });
     ob.observe(document.body, { childList: true });
     ob.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    return () => ob.disconnect();
+    return () => { ob.disconnect(); window.clearTimeout(t); };
   }, []);
   const resumeAsk = homeShown && !!resume && currentView === 'home' && !(autoPending && !autoResumed.current);
   const [webResumeFallback, setWebResumeFallback] = useState(false);

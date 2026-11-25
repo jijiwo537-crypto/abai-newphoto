@@ -114,7 +114,7 @@ export async function openGlassMenu(anchor: HTMLElement, items: GlassMenuItem[],
 /** 原生的詢問框（畫面正中間）。回傳按了哪一顆的 id；被 closeNativeDialog 收掉回傳 ''。
  *  沒有原生（網頁版、舊版 App）回傳 null —— 呼叫的地方照常顯示網頁版的框 */
 /** bottom：從下方升上來的面板（點外面或 ✕ 關掉，回傳 ''）。按鈕可帶 SF Symbol（symbol）或網頁畫好的圖（image：PNG 的 data URL，照原色畫） */
-export type NativeDialogOpts = { title: string; message?: string; buttons: { id: string; title: string; role?: 'primary' | 'normal'; symbol?: string; image?: string }[]; style: 'clear' | 'dark'; bottom?: boolean };
+export type NativeDialogOpts = { title: string; message?: string; buttons: { id: string; title: string; role?: 'primary' | 'normal'; symbol?: string; image?: string; iconSize?: number }[]; style: 'clear' | 'dark'; bottom?: boolean };
 export async function nativeDialog(o: NativeDialogOpts): Promise<string | null> {
   if (!isNative()) return null;
   try {
