@@ -499,7 +499,7 @@ final class ABAIRawSession {
     let look: [String: Any]?
     /// 即時預覽的畫面；一般編輯用的（只要出圖，不顯示）是 nil
     let view: ABAIMetalView?
-    private let queue = DispatchQueue(label: "abai.raw.session", qos: .userInteractive)
+    private let queue = DispatchQueue(label: "abai.raw.session", qos: .userInteractive, autoreleaseFrequency: .workItem)
     private var filter: CIRAWFilter?
     private let defaults: ABAIRawDefaults
     private var proxy: CIImage?

@@ -265,7 +265,10 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
                   className={`cg-cell${on ? ' sel' : ''} relative aspect-square overflow-hidden bg-white/10`}>
                   {thumbs[src] && <img src={thumbs[src]} decoding="async" alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" />}
                   <span className="ring" />
-                  {/* 相機一律用 RAW 拍：格子上不再標 RAW */}
+                  {/* 有 RAW 的照片：左下角標 RAW（跟照片 App 一樣） */}
+                  {rawShots?.has(src) && (
+                    <span className="absolute left-1.5 bottom-1.5 px-1 h-[15px] rounded-[4px] bg-black/55 text-white text-[9px] font-bold leading-[15px] tracking-[0.04em] pointer-events-none">RAW</span>
+                  )}
                   {favorites?.has(src) && (
                     <span className="absolute left-2 top-2 pointer-events-none drop-shadow-[0_1px_3px_rgba(0,0,0,.6)]"><svg width="16" height="16" viewBox="0 0 24 24" fill="#fff"><path d="M12 21.1 10.6 20C5.1 15.5 2 12.8 2 9.3 2 6.4 4.3 4 7.2 4c1.8 0 3.6.9 4.8 2.3C13.2 4.9 15 4 16.8 4 19.7 4 22 6.4 22 9.3c0 3.5-3.1 6.2-8.6 10.7L12 21.1Z" /></svg></span>
                   )}

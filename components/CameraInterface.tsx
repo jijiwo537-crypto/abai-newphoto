@@ -563,7 +563,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [galleryLeaving, setGalleryLeaving] = useState(false);
   useEffect(() => { if (!showGallery) setGalleryLeaving(false); }, [showGallery]);
   const galleryCover = showGallery && !galleryLeaving;
-  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[]; /** 存檔時要重新印上的日期 */ date?: string; /** 從 RAW 沖洗接過來：直接出現在原位，不再從下面滑上來 */ instant?: boolean; /** 這張有 RAW：一般編輯直接在 RAW 上調 */ raw?: { path: string; protectEV: number; look: RawLook | null } } | null>(null);
+  const [editingPhoto, setEditingPhoto] = useState<{ src: string, index: number, init?: { params: typeof DEFAULT_PARAMS; selectedLutIdx: number } | null; pro?: boolean; batch?: string[]; /** 存檔時要重新印上的日期 */ date?: string; /** 從 RAW 沖洗接過來：直接出現在原位，不再從下面滑上來 */ instant?: boolean; /** 這張有 RAW：一般編輯直接在 RAW 上調 */ raw?: { path: string; protectEV: number; look: RawLook | null }; /** 多選進編輯：每一張 RAW 的資訊（以沖好的網址對應） */ rawMap?: Record<string, { path: string; protectEV: number; look: RawLook | null }> } | null>(null);
   const [editorEntered, setEditorEntered] = useState(false);
   const [editorLeaving, setEditorLeaving] = useState(false);
   const editorExitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1563,8 +1563,25 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     const srcs = indices.map(i => photos[i]).filter(Boolean);
     if (!srcs.length) return;
     if (srcs.length === 1) { openEditor(srcs[0], indices[0]); return; }
-    setEditingPhoto({ src: srcs[0], index: indices[0], init: null, batch: srcs });
-    setEditorId(prev => prev + 1);
+    if (openingRef.current) return;
+    openingRef.current = true;
+    void (async () => {
+      try {
+        /* 多選裡的 RAW 也用 RAW 編（跟單張一樣）：每一張先沖好第一張畫面，編輯器拿到 rawMap 就在 RAW 上調；
+           沖不出來的那張就用一般照片 */
+        const rawMap: Record<string, { path: string; protectEV: number; look: RawLook | null }> = {};
+        /* 一張接一張沖（不同時沖）：很多張 RAW 一起沖，記憶體會一下子暴增、可能被系統關掉 */
+        const list: string[] = [];
+        for (const src of srcs) {
+          const info = rawInfoOf(src);
+          const url = info ? await prepRaw(src) : null;
+          if (info && url) { rawMap[url] = info; list.push(url); }
+          else { const d = dateOfRef.current.get(src); list.push(d?.clean ?? src); }
+        }
+        setEditingPhoto({ src: list[0], index: indices[0], init: null, batch: list, raw: rawMap[list[0]], rawMap });
+        setEditorId(prev => prev + 1);
+      } finally { openingRef.current = false; }
+    })();
   };
   /* 離開相機回主頁：整頁往右滑走（見 utils/pageTransition）。
      原生相機的畫面在網頁底下、是挖空透出來的，整頁拍快照時那一塊會是空的 ——
@@ -2211,6 +2228,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           key={editorId}
           imageSrc={editingPhoto.src}
           raw={editingPhoto.raw ?? null}
+          rawMap={editingPhoto.rawMap}
           stampDate={editingPhoto.date}
           initialState={editingPhoto.init ?? null}
           lutList={lutList}

@@ -44,8 +44,8 @@ const fmtDuration = (s: number) => {
 };
 
 /* 一格照片。縮圖等它真的出現在畫面附近才去要 */
-const Cell = React.memo(function Cell({ a, order, multi, onTap }: {
-  a: LibraryAsset; order: number; multi: boolean; onTap: (a: LibraryAsset) => void;
+const Cell = React.memo(function Cell({ a, order, multi, onTap, raw = false }: {
+  a: LibraryAsset; order: number; multi: boolean; onTap: (a: LibraryAsset) => void; raw?: boolean;
 }) {
   const ref = useRef<HTMLButtonElement>(null);
   const [url, setUrl] = useState(() => cachedThumb(a.id));
@@ -75,6 +75,10 @@ const Cell = React.memo(function Cell({ a, order, multi, onTap }: {
           style={{ background: 'linear-gradient(to top, rgba(0,0,0,.55), transparent)' }}>
           {fmtDuration(a.duration)}
         </span>
+      )}
+      {/* RAW 照片：左下角標 RAW（跟照片 App 一樣） */}
+      {raw && !a.video && (
+        <span className="absolute left-1.5 bottom-1.5 px-1 h-[15px] rounded-[4px] bg-black/55 text-white text-[9px] font-bold leading-[15px] tracking-[0.04em] pointer-events-none">RAW</span>
       )}
       <span className="ring" />
       {multi && (
@@ -118,6 +122,16 @@ export const NativeGallery: React.FC<{
   const [albumOpen, setAlbumOpen] = useState(false);
   /* 先用預熱（或上一次打開）記下的第一頁畫出來，新的清單回來再換上 */
   const [items, setItems] = useState<LibraryAsset[]>(() => cachedFirstPage(filter)?.items ?? []);
+  /* 哪幾張是 RAW（左下角標 RAW）：每載入一頁就問一次新出現的那幾張 */
+  const [rawSet, setRawSet] = useState<Set<string>>(() => new Set());
+  const rawAsked = useRef(new Set<string>());
+  useEffect(() => {
+    const ids = items.filter(a => !a.video && !rawAsked.current.has(a.id)).map(a => a.id);
+    if (!ids.length) return;
+    ids.forEach(id => rawAsked.current.add(id));
+    /* 不在換頁時取消：已經問過的那幾張不會再問，結果回來一定要收 */
+    void rawAssetIds(ids).then(found => { if (found.size) setRawSet(prev => { const n = new Set(prev); found.forEach(id => n.add(id)); return n; }); });
+  }, [items]);
   const [total, setTotal] = useState(() => cachedFirstPage(filter)?.total ?? -1);
   const itemsRef = useRef<LibraryAsset[]>(items);
   /* 去背判斷：原生先標出「檔案類型可能透明」的那些（PNG…），這些先不顯示，
@@ -429,7 +443,7 @@ export const NativeGallery: React.FC<{
           {ok && total !== 0 && (
             <>
               <div className="grid grid-cols-3 gap-[2px]">
-                {visibleItems.map(a => <Cell key={a.id} a={a} order={order.get(a.id) ?? 0} multi={multi} onTap={onTap} />)}
+                {visibleItems.map(a => <Cell key={a.id} a={a} order={order.get(a.id) ?? 0} multi={multi} onTap={onTap} raw={rawSet.has(a.id)} />)}
                 {total < 0 && Array.from({ length: 24 }, (_, i) => (
                   <span key={`s${i}`} className="abg-cell"><span className="skel" style={{ animationDelay: `${(i % 6) * 60}ms` }} /></span>
                 ))}

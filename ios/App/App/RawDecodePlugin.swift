@@ -138,7 +138,7 @@ public class RawDecodePlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// 一般編輯用的沖洗：同一張 RAW 一直用同一個（RAW 那一步的結果有快取，只改光線、白平衡時很快）
     private var headless: (path: String, look: String, session: ABAIRawSession)?
-    private let headlessQueue = DispatchQueue(label: "abai.raw.headless", qos: .userInitiated)
+    private let headlessQueue = DispatchQueue(label: "abai.raw.headless", qos: .userInitiated, autoreleaseFrequency: .workItem)
     private func headlessSession(_ path: String, look: [String: Any]?, longSide: CGFloat) -> ABAIRawSession? {
         let key = (try? JSONSerialization.data(withJSONObject: look ?? [:], options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? ""
         if let h = headless, h.path == path, h.look == key { return h.session }

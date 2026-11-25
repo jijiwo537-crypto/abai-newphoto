@@ -43,7 +43,7 @@ public class NativeImagePlugin: CAPPlugin, CAPBridgedPlugin {
     ]
 
     /// 縮圖、編碼都是重工作：用一條序列佇列，同時只做一件，記憶體尖峰可預期
-    private let queue = DispatchQueue(label: "abai.nativeimage", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "abai.nativeimage", qos: .userInitiated, autoreleaseFrequency: .workItem)
     private var tasks: [Int: UIBackgroundTaskIdentifier] = [:]
     private var nextTask = 1
 
