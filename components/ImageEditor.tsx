@@ -1243,6 +1243,30 @@ function getThumbWorker(): Worker | null {
   } catch { thumbWorker = null; }
   return thumbWorker;
 }
+/* ── 濾鏡資料不要一直留好幾份 ──
+ * 濾鏡的查色表（一顆約 0.75MB、24 顆約 18MB）主執行緒留一份（LUT_CACHE），縮圖背景執行緒為了算縮圖也收了一份。
+ * 編輯器都關掉之後，背景執行緒那份完全用不到：直接把背景執行緒收掉（它的記憶體整塊還給系統），下次要用再開一個新的、
+ * 用到哪顆才送哪顆過去（見 thumbWorkerLuts）。關掉的時候不會有縮圖在算：會送工作給它的只有編輯器本身，
+ * 跟導入時的預先縮圖（那時編輯器還沒掛上來，而且是在這之後才開始，會開新的背景執行緒） */
+let editorsMounted = 0;
+function releaseThumbWorker() {
+  if (!thumbWorker) return;
+  try { thumbWorker.terminate(); } catch { /* 已經停了 */ }
+  thumbWorker = undefined;
+  thumbWorkerLuts.clear();
+}
+/* 系統說記憶體不夠、而且沒有開著的編輯器時：主執行緒那份也只留縮圖列最前面 8 顆（導入時預先算縮圖要用），其他的之後用到再讀
+   （讀回來走本機快取，不用重新下載）。編輯器開著時一顆都不動：畫面上正在用 */
+registerTrim('filter-lut-cache', () => {
+  if (editorsMounted > 0 || preThumbs) return;   // 編輯器開著、或正在導入（預先算縮圖中）：不動
+  releaseThumbWorker();
+  const keep = new Set(knownLutList.slice(0, 8).map(l => l.id));
+  for (const id of Object.keys(LUT_CACHE)) {
+    if (keep.has(id) || LUT_IN_FLIGHT.has(id)) continue;
+    delete LUT_CACHE[id];
+    delete LUT_LOADING[id];
+  }
+});
 
 /* ── 濾鏡縮圖預先準備（從主頁導入、照片還在飛的時候）──
  * importHero 拿到清楚的照片小圖（長邊約 1000px）就呼叫這裡：在背景執行緒用同一支 processPixels、同樣的參數
@@ -1490,7 +1514,16 @@ function runThumbChunks<T>(
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList: builtInLutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false, raw: rawProp = null, rawMap, stampDate }) => {
   /* 關掉編輯器：照片網址對應的編號表清掉（見 SRC_IDS） */
-  useEffect(() => () => { SRC_IDS.clear(); }, []);
+  useEffect(() => {
+    editorsMounted++;
+    return () => {
+      SRC_IDS.clear();
+      /* 最後一個編輯器關掉：縮圖背景執行緒收掉（見 releaseThumbWorker）。
+         晚一格再收：React 換頁時可能先卸下舊的、同一輪再掛上新的編輯器，那種情況不收 */
+      editorsMounted--;
+      window.setTimeout(() => { if (editorsMounted === 0 && !preThumbs) releaseThumbWorker(); }, 0);
+    };
+  }, []);
   const [customLuts, setCustomLuts] = useState<CustomLut[]>(loadCustomLuts);
   const lutList = useMemo(() => [...builtInLutList, ...customLuts], [builtInLutList, customLuts]);
   knownLutList = lutList;
