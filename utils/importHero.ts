@@ -171,7 +171,10 @@ const glassy = (el: HTMLElement) => hasBackdrop(el) || !!el.querySelector('[clas
 function startJob(j: Job) {
   try {
     j.held?.cancel();
-    const lead = j.after ? leadLand : leadReveal;
+    /* 每一個都從自己的第一格開始播（不再對齊到同一批的起跑時間）：對齊的話，主執行緒一忙、晚一點才開播的元素
+       一出現就已經播到中段 —— 前面那段等於被吃掉，看起來就是「從無直接跳出來」。
+       起跑時間由瀏覽器在真的畫上螢幕的那一格才定，所以開頭不會被跳過 */
+    const lead: Animation | null = null;
     const a = j.el.animate(j.k, j.opts);
     if (lead) {
       /* 對齊到這一批的起跑時間（起跑時間還沒定的話，等它定了再對齊；這之間停在第一格、看不見） */
@@ -529,7 +532,8 @@ function watch(my: number) {
         else stableSince = 0;
         tr = n;
         /* 照片本人的位置連續約 0.3 秒都沒動：交接（兩張重疊，替身淡掉） */
-        if (stableSince && now - stableSince >= 300 && now - t0 > motionMs('importFly')) { unhide(); revealEnter(); finish(g, motionMs('importLand')); return; }
+        /* 0.15 秒（原本 0.3 秒）：照片上的按鈕（前後對比）要等交接才開播，等太久就顯得晚出來 */
+        if (stableSince && now - stableSince >= 150 && now - t0 > motionMs('importFly')) { unhide(); revealEnter(); finish(g, motionMs('importLand')); return; }
       }
     }
     if (now - t0 > 11000) { cancelImportHero(); return; }
