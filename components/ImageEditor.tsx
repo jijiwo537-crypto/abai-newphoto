@@ -14,7 +14,7 @@ import { setSaveContext } from '../utils/nativePhotos';
 import { isNative } from '../utils/native';
 import { autoMasks, isAutoMask } from '../utils/masks';
 import { openGlassMenu } from '../utils/nativeGlass';
-import { waitEntranceStart } from '../utils/importHero';
+import { waitEntranceStart, setPreThumbBuilder } from '../utils/importHero';
 import { nativeAssetIdOf, nativePathOf, fileSrc } from '../utils/nativeBridge';
 import { rawDevelopPreview, rawDevelopFull, rawDevelopPixels, rawDevelopLinear, stampDateOnto, type RawLook, type RawBaseParams } from '../utils/nativeCamera';
 import { RawGpu } from '../utils/rawGpu';
@@ -1259,6 +1259,56 @@ function getThumbWorker(): Worker | null {
   return thumbWorker;
 }
 
+/* ── 濾鏡縮圖預先準備（從主頁導入、照片還在飛的時候）──
+ * importHero 拿到清楚的照片小圖（長邊約 1000px）就呼叫這裡：在背景執行緒用同一支 processPixels、同樣的參數
+ * 把濾鏡縮圖先算好。編輯器一掛上就直接放進縮圖倉庫，介面進場時前 7 張已經在了。
+ * 縮圖只有約 192×228，用 1000px 的來源算跟用 1800px 的預覽算，肉眼看不出差別 */
+let knownLutList: { id: string; name: string; url: string }[] = [];
+type PreThumbs = { at: number; W: number; H: number; px: Map<string, Uint8ClampedArray>; onPixel?: (id: string, px: Uint8ClampedArray) => void };
+let preThumbs: PreThumbs | null = null;
+function prebuildFilterThumbs(img: HTMLImageElement): Promise<void> {
+  const W = 64 * THUMB_DPR, H = 76 * THUMB_DPR;
+  const wk = getThumbWorker();
+  const list = knownLutList;
+  if (!wk || !list.length) return Promise.resolve();
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d', { willReadFrequently: true })!;
+  g.imageSmoothingQuality = 'high';
+  const sw = img.naturalWidth, sh = img.naturalHeight, sc = Math.max(W / sw, H / sh);
+  g.drawImage(img, (W - sw * sc) / 2, (H - sh * sc) / 2, sw * sc, sh * sc);
+  const src = g.getImageData(0, 0, W, H).data;
+  c.width = c.height = 0;
+  const flat = DEFAULT_PARAMS;
+  const baseLut = new Uint8Array(256); generateBaseCorrectionLut(flat.exposure, flat.contrast, flat.brightness, baseLut);
+  const curveLuts = { rgb: generateCurveLut(flat.curves.rgb), r: generateCurveLut(flat.curves.r), g: generateCurveLut(flat.curves.g), b: generateCurveLut(flat.curves.b) };
+  const jobs: { key: string; lutId: string | null; amount: number; sig: string }[] = [];
+  for (const lut of list) {
+    const data = lut.url ? LUT_CACHE[lut.id] : null;
+    if (lut.url && !data) continue;
+    if (data && !thumbWorkerLuts.has(lut.id)) { wk.postMessage({ lut: { id: lut.id, data: data.data, size: data.size } }); thumbWorkerLuts.add(lut.id); }
+    jobs.push({ key: lut.id, lutId: data ? lut.id : null, amount: lut.url ? (LUT_DEFAULT_AMOUNT[lut.id] ?? 100) : 100, sig: lut.id });
+  }
+  const me: PreThumbs = { at: performance.now(), W, H, px: new Map() };
+  preThumbs = me;
+  const need = Math.min(7, jobs.length);
+  const id = ++thumbJobSeq;
+  return new Promise<void>(resolve => {
+    let got = 0;
+    const onMsg = (ev: MessageEvent) => {
+      const m = ev.data;
+      if (m.id !== id) return;
+      if (m.done) { wk.removeEventListener('message', onMsg); resolve(); return; }
+      me.px.set(m.key, m.px);
+      me.onPixel?.(m.key, m.px);
+      if (++got >= need) resolve();
+    };
+    wk.addEventListener('message', onMsg);
+    wk.postMessage({ id, src, W, H, flat, baseLut, curveLuts, jobs });
+    window.setTimeout(resolve, 1500);
+  });
+}
+setPreThumbBuilder(prebuildFilterThumbs);
+
 /**
  * 同 putThumb，但不做同步回讀：特效縮圖是 GPU 畫出來的，getImageData 會讓主執行緒
  * 等 GPU 把它畫完、再整塊搬回 CPU（一格一次，整排 20 幾次）—— 切到特效頁那一下的卡頓
@@ -1389,6 +1439,7 @@ function runThumbChunks<T>(
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList: builtInLutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false, raw: rawProp = null, rawMap, stampDate }) => {
   const [customLuts, setCustomLuts] = useState<CustomLut[]>(loadCustomLuts);
   const lutList = useMemo(() => [...builtInLutList, ...customLuts], [builtInLutList, customLuts]);
+  knownLutList = lutList;
   const customLutInputRef = useRef<HTMLInputElement>(null);
   const filePickerOpenRef = useRef(false);
   const filterHoldRef = useRef<{ id: string; timer: number; fired: boolean; x: number; y: number } | null>(null);
@@ -4406,6 +4457,23 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 掛在畫面上的縮圖格子，算好一張就直接叫它們重畫（完全不經過 React state） */
   const thumbPainters = useRef<Set<() => void>>(new Set());
   const repaintThumbs = useCallback(() => { thumbPainters.current.forEach(f => f()); }, []);
+  /* 從主頁導入：照片飛行中已經先算好的濾鏡縮圖，一掛上就放進倉庫（畫面畫出來之前），之後陸續到的也接著放 */
+  useLayoutEffect(() => {
+    const pre = preThumbs;
+    if (!pre || performance.now() - pre.at > 15000 || pre.W !== THUMB_W || pre.H !== THUMB_H) return;
+    preThumbs = null;
+    const forSrc = thumbSrcOf(imageSrc);
+    const put = (lutId: string, px: Uint8ClampedArray) => {
+      const key = thumbKey(forSrc, lutId), sig = forSrc + '|' + lutId;
+      if (filterThumbStore.current[key]?.sig === sig) return;
+      putThumbPixels(filterThumbStore, key, px, THUMB_W, THUMB_H, sig);
+    };
+    pre.px.forEach((px, id) => put(id, px));
+    repaintThumbs();
+    pre.onPixel = (id, px) => { put(id, px); repaintThumbs(); };
+    return () => { pre.onPixel = undefined; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   /* 批量編輯時每一張照片的縮圖各留一份，來回切換就不用重算（切回去是瞬間的）。
      只留最近幾張，記憶體才不會一直長大。 */
   /* 多圖編輯時每一張都留（一張兩排約 8MB），最多 8 張 */

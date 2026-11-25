@@ -73,8 +73,20 @@ function upgrade(src: string, my: number) {
     if (my !== token || !g.isConnected) return;
     g.appendChild(im);
     im.animate([{ opacity: 0 }, { opacity: 1 }], { duration: motionMs('importUpgrade'), easing: 'ease-out', fill: 'forwards' });
+    /* 夠清楚的那一張到了：趁照片還在飛，先在背景把濾鏡縮圖算好（見 setPreThumbBuilder） */
+    if (!preThumbStarted && im.naturalWidth >= 400 && im.naturalHeight >= 400 && preThumbBuilder) {
+      preThumbStarted = true;
+      try { preThumbReady = preThumbBuilder(im); } catch { preThumbReady = null; }
+    }
   }, () => {});
 }
+
+/* ── 濾鏡縮圖預先準備 ──
+ * 編輯器把「用一張圖先算好濾鏡縮圖」的方法登記在這裡（components/ImageEditor 的 prebuildFilterThumbs）。
+ * 照片飛行中拿到清楚的圖就開始算；介面進場等前 7 張好了才開播（最多等 0.4 秒，不會卡住） */
+let preThumbBuilder: ((img: HTMLImageElement) => Promise<void>) | null = null;
+let preThumbStarted = false, preThumbReady: Promise<void> | null = null;
+export function setPreThumbBuilder(fn: (img: HTMLImageElement) => Promise<void>) { preThumbBuilder = fn; }
 
 /** 這張圖在畫面上真正顯示的範圍（img 是 object-fit: contain 時，元素比圖大） */
 function contentRect(el: HTMLElement): DOMRect {
@@ -387,7 +399,12 @@ function startEnter(E: R, failsafeMs: number) {
     /* 有飛行替身時：工具頁一掛上來就開播（照片才剛起飛）。
        開播之後編輯器才開始載入照片的那段重工作（見 waitEntranceStart）—— 動畫先交給 GPU 跑起來，
        之後主執行緒再忙也不影響；以前是重工作先跑，動畫排不上，看起來就是「照片飛完才播」 */
-    if (first && ghost) revealEnter();
+    if (first && ghost) {
+      /* 前 7 張濾鏡縮圖好了才開播（還在算就等一下，最多 0.4 秒） */
+      const ready = preThumbReady;
+      if (!ready) revealEnter();
+      else void Promise.race([ready.catch(() => {}), new Promise(res => window.setTimeout(res, 400))]).then(() => revealEnter());
+    }
   };
   /* MutationObserver 在 React 寫進畫面之後、瀏覽器畫出來之前就會跑：介面第一次出現時就已經停在第一格，不會先閃一下 */
   /* 同一格裡的多次變動合併成一次檢查（在這一格畫出來之前跑），不會在 React 掛介面時反覆量版面拖慢主執行緒 */
@@ -446,6 +463,7 @@ let end: R | null = null;
 export function beginImportHero(kind: string | undefined, rect: DOMRect, src: string, aspect?: number, big?: () => Promise<string | null>) {
   cancelImportHero();
   const my = ++token;
+  preThumbStarted = false; preThumbReady = null;
   ar = aspect && isFinite(aspect) && aspect > 0 ? aspect : 1;
   landing = false;
   const E = predict(kind ?? 'edit', ar);
