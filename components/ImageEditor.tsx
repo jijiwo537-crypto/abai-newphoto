@@ -1266,6 +1266,15 @@ function getThumbWorker(): Worker | null {
 let knownLutList: { id: string; name: string; url: string }[] = [];
 type PreThumbs = { at: number; W: number; H: number; px: Map<string, Uint8ClampedArray>; onPixel?: (id: string, px: Uint8ClampedArray) => void };
 let preThumbs: PreThumbs | null = null;
+/** 已經先放上去的預先縮圖（鍵＝縮圖倉庫的鍵）：真正的縮圖算好時拿來比對 */
+const preThumbPx = new Map<string, Uint8ClampedArray>();
+/** 兩張縮圖像素幾乎一樣（平均每個顏色差不到 1 階）：肉眼不可能分辨 */
+function thumbsAlike(a: Uint8ClampedArray, b: Uint8ClampedArray): boolean {
+  if (a.length !== b.length) return false;
+  let sum = 0, n = 0;
+  for (let i = 0; i < a.length; i += 4) { sum += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]); n += 3; }
+  return sum / n < 1;
+}
 function prebuildFilterThumbs(img: HTMLImageElement): Promise<void> {
   const W = 64 * THUMB_DPR, H = 76 * THUMB_DPR;
   const wk = getThumbWorker();
@@ -4466,7 +4475,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const put = (lutId: string, px: Uint8ClampedArray) => {
       const key = thumbKey(forSrc, lutId), sig = forSrc + '|' + lutId;
       if (filterThumbStore.current[key]?.sig === sig) return;
-      putThumbPixels(filterThumbStore, key, px, THUMB_W, THUMB_H, sig);
+      /* 先標成「預先的」：照片真正載好後照原本的方式重算一次，跟這張比對（見 buildFilterThumbs） */
+      putThumbPixels(filterThumbStore, key, px, THUMB_W, THUMB_H, sig + '|pre');
+      preThumbPx.set(key, px);
     };
     pre.px.forEach((px, id) => put(id, px));
     repaintThumbs();
@@ -4583,6 +4594,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         if (m.id !== id) return;
         if (cancelled()) { wk.removeEventListener('message', onMsg); wk.postMessage({ cancel: id }); cancelAnimationFrame(raf); return; }
         if (m.done) { wk.removeEventListener('message', onMsg); cancelAnimationFrame(raf); repaintThumbs(); done(); return; }
+        /* 這一格先前放的是預先算的縮圖：真正的這張跟它幾乎一樣（肉眼不可能分辨）就不換、畫面完全不動；
+           有看得出的差異才換成真正的 —— 最終一定跟原本的算法一模一樣 */
+        const pre = preThumbPx.get(m.key);
+        if (pre) {
+          preThumbPx.delete(m.key);
+          const e = filterThumbStore.current[m.key];
+          if (e && thumbsAlike(pre, m.px)) { e.sig = m.sig; return; }
+        }
         putThumbPixels(filterThumbStore, m.key, m.px, W, H, m.sig);
         /* 同一格送回來好幾張：合併成一次重畫 */
         if (!raf) raf = requestAnimationFrame(() => { raf = 0; repaintThumbs(); });
