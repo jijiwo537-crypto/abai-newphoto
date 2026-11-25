@@ -662,6 +662,7 @@ import { generateBaseCorrectionLut, processPixels, copyPixelDither, sharpenDetai
 import { processPixelsParallel, releasePixelPool } from '../utils/pixelParallel';
 import { BATCH_MAX } from '../utils/batchLimit';
 import { registerTrim } from '../utils/memoryPressure';
+import { riseIn } from '../utils/tabEntrance';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceGain } from '../utils/photoToneMath';
 import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
 /* 快取鍵用短 id 代表照片，不用來源字串：data: 網址有好幾 MB，每格滑桿都把它串進鍵裡，一格就要多花約 15ms */
@@ -1457,6 +1458,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 再點一次已經選中的那張才會跳出的小選單 */
   const [batchMenu, setBatchMenu] = useState<number | null>(null);
   const safeIdx = Math.min(batchIdx, Math.max(0, srcList.length - 1));
+  /** 批量編輯（一次編好幾張）：沒有遮色片、人像、仿色；每張各自調，按「應用全部」才把這張的調整套到其他張 */
+  const isBatch = srcList.length > 1;
   safeIdxRef.current = safeIdx;
   const activeSrc = srcList[safeIdx] || imageSrc;
   /* ── 每張照片是不是 RAW ──
@@ -1479,6 +1482,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const at = Math.max(0, srcList.indexOf(activeSrcRef.current));
       const order = srcList.map((u, i) => ({ u, d: Math.abs(i - at) + (i < at ? 0.5 : 0) })).sort((a, b) => a.d - b.d).map(x => x.u);
       for (const u of order) {
+        if (!alive) return;
+        await waitSaveIdle();
         if (!alive) return;
         if (proxyRef.current.has(u) || rawOf(u) || fullJobsRef.current[u]) continue;
         const path = nativePathOf(u);
@@ -1516,13 +1521,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     return o;
   };
   /** 哪幾張還跟著一起連動（預設全部連動） */
-  const [linked, setLinked] = useState<boolean[]>(() => srcList.map(() => true));
+  /* 批量：每張各自調整（不再自動連動）。要讓其他張跟這張一樣，按縮圖列右邊的「應用全部」（見 applyToAll）。
+     以前預設全部連動：每動一下滑桿，背景就要替其他張重新預熱、RAW 重沖，張數一多就一直在忙 */
+  const [linked, setLinked] = useState<boolean[]>(() => srcList.map(() => false));
   useEffect(() => {
-    setLinked(prev => (prev.length === srcList.length ? prev : srcList.map((_, i) => prev[i] ?? true)));
+    setLinked(prev => (prev.length === srcList.length ? prev : srcList.map((_, i) => prev[i] ?? false)));
   }, [srcList.length]);
   useEffect(() => { setBatchMenu(null); }, [srcList.length]);
   const [params, setParams] = useState<EditorParams>(DEFAULT_PARAMS);
   const [activeCategory, setActiveCategory] = useState<Category>('filter');
+  /* 批量時不會停在遮色片、人像、仿色（例如接續上次的草稿停在那幾頁）：回到濾鏡 */
+  useEffect(() => {
+    if (srcList.length > 1 && (activeCategory === 'mask' || STUDIO_CATS.includes(activeCategory))) { setActiveCategory('filter'); setActiveToolId('filter_select'); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcList.length, activeCategory]);
   const activeCategoryRef = useRef(activeCategory); activeCategoryRef.current = activeCategory;
   /* 編輯器剛打開的這 1.8 秒（介面進場、第一張預覽）：背景的重工作（特效縮圖、著色器預編、像素管線預熱）一律先等。
      不管從哪裡進來（主頁導入、RAW、相機相簿、歷史紀錄）都一樣 */
@@ -1558,6 +1570,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
   const saveRequestRef = useRef(0);
   const saveBusyRef = useRef(false);
+  /** 存檔中就等存完（背景工作在每一步之前都先等一下：不跟存檔搶記憶體、搶原生佇列） */
+  const waitSaveIdle = () => new Promise<void>(res => {
+    const check = () => { if (!saveBusyRef.current) res(); else window.setTimeout(check, 300); };
+    check();
+  });
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const editorHeaderRef = useRef<HTMLElement | null>(null);
   const [exportFormat, setExportFormat] = useState<'png' | 'jpg' | 'heic'>('png');
@@ -1807,7 +1824,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const applyPreviewAspect = useCallback((w: number, h: number) => {
     if (!(w > 0 && h > 0)) return;
     setPreviewAspect(prev => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
+    /* 畫布尺寸跟外框比例要在同一幀生效：React 的下一輪更新要等一下才到，這段時間畫布已經是新照片的尺寸、
+       外框卻還是上一張的比例（畫布是填滿外框的）—— 換照片時第一幀就會被壓成上一張的比例。
+       這裡照 previewFitSize 同一條公式直接改外框大小，React 之後寫的是一樣的值 */
+    const el = previewFitRef.current, box = previewBoxSizeRef.current, hf = hslFitNowRef.current;
+    if (el && box.width && box.height) {
+      const maxW = Math.max(1, box.width - 32), maxH = Math.max(1, hf ? hf.mh : box.height - 32);
+      const k = Math.min(maxW / w, maxH / h);
+      el.style.width = `${Math.max(1, Math.round(w * k))}px`;
+      el.style.height = `${Math.max(1, Math.round(h * k))}px`;
+    }
   }, []);
+  const previewBoxSizeRef = useRef({ width: 0, height: 0 });
+  const hslFitNowRef = useRef<{ mh: number } | null>(null);
   // 構圖參數。套用之後整個預覽緩衝會用新的幾何重建，色彩流程完全不用知道它的存在。
   const [geo, setGeo] = useState<GeoParams>(() => ({ ...DEFAULT_GEO, crop: { ...FULL_CROP } }));
   const [draftGeo, setDraftGeo] = useState<GeoParams | null>(null);
@@ -1926,6 +1955,32 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const snapFor = (i: number): BatchSnap | null =>
     (linked[i] === false ? soloSnapsRef.current[i] : sharedSnapRef.current) ?? null;
+  /** 還沒調過的那一張該有的樣子：全部預設（相機拍的 RAW 帶著拍照時那顆濾鏡，跟打開它時一樣） */
+  const freshSnapFor = (i: number): BatchSnap => {
+    const src = srcListRef.current[i];
+    const r = src ? (rawOf(src) as { editLut?: number } | null) : null;
+    const li = r?.editLut && r.editLut > 0 && r.editLut < lutList.length ? r.editLut : 0;
+    const params = JSON.parse(JSON.stringify(DEFAULT_PARAMS)) as EditorParams;
+    if (li) params.lutAmount = LUT_DEFAULT_AMOUNT[lutList[li].id] ?? 100;
+    return {
+      params, geo: { ...DEFAULT_GEO, crop: { ...FULL_CROP } }, selectedLutIdx: li,
+      isSoftActive: false, isBlurActive: false, isGrainActive: false, isHalationActive: false,
+      softManuallyAdjusted: false, blurManuallyAdjusted: false, grainManuallyAdjusted: false, halationManuallyAdjusted: false,
+      userSoft: 50, userBlur: 40, userHalation: 50, userGrain: { grain: 0, colorNoise: 40, colorNoise2: 0 },
+    };
+  };
+  /** 第 i 張現在該有的樣子：調過的用它自己的那一份，沒調過的是預設 */
+  const snapOrFresh = (i: number): BatchSnap => (i === safeIdxRef.current && liveRef.current) || soloSnapsRef.current[i] || freshSnapFor(i);
+  /** 「應用全部」：把這張的調整（濾鏡、調節、特效）套到其他每一張。構圖（裁切、旋轉）各張維持自己的 */
+  const [applyAllTick, setApplyAllTick] = useState(0);
+  const applyToAll = () => {
+    stashCurrent();
+    const live = liveRef.current;
+    if (!live) return;
+    for (let i = 0; i < srcListRef.current.length; i++) if (i !== safeIdx) soloSnapsRef.current[i] = cloneSnap(live);
+    /* 其他張留下來的畫面、預熱都是舊參數的：簽章對不上自然不會用；背景預熱、RAW 預沖照新的參數重排 */
+    setApplyAllTick(t => t + 1);
+  };
   /* 切走時把「畫好的整張」（含這張自己的遮色片、特效、濾鏡）留一份。背景預熱的那份只有連動的色彩調整，
      沒有遮色片也沒有特效 —— 切回來先畫預熱那份的話，遮色片／特效要等整條管線重跑完才補上，看起來就是慢半拍、
      像在重新載入。參數完全沒變的話直接畫留下來的這份，切過去的那一格就是最後的樣子。最多留三張（記憶體）。 */
@@ -1992,6 +2047,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const switchTo = (i: number) => {
     if (i === safeIdx || i < 0 || i >= srcList.length) return;
     setBatchMenu(null);
+    /* 先把畫面上現在這一張拍下來蓋著（見 veilUp），底下怎麼換都看不到；新的這張畫好才淡過去 */
+    veilUp();
     keepMaskShot();
     stashCurrent();
     // 上一張的紅色遮色片範圍不能留在下一張上（看起來就像遮色片被帶過去了）
@@ -2016,9 +2073,93 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     try { performance.mark('abai-switch-start'); } catch { /* 只是量測 */ }
     if (switchSpinTimerRef.current) clearTimeout(switchSpinTimerRef.current);
     switchSpinTimerRef.current = 0;
-    if (!paintMaskShot(i, pendingSnapRef.current || liveRef.current) && !paintWarmNow(srcList[i], pendingSnapRef.current || liveRef.current) && !instant) {
-      switchSpinTimerRef.current = window.setTimeout(() => { switchSpinTimerRef.current = 0; if (switchPendingRef.current) setIsSwitching(true); }, 650);
+    /* RAW：這張的底圖不是照它現在的參數沖的，切過去要重沖 —— 沖好換上之前過場不收（不會先看到舊的再跳成新的） */
+    { const ri = rawOf(srcList[i]); rawSettlingRef.current = !!ri && rawSrcKeyRef.current.get(srcList[i]) !== rawKeyOf(fromCanon((pendingSnapRef.current || freshSnapFor(i)).params, true)); }
+    const exact = paintMaskShot(i, pendingSnapRef.current || freshSnapFor(i));
+    if (exact && !rawSettlingRef.current) veilDown(160);   // 留下來的就是最後的樣子：直接淡過去
+    else if (!exact && !paintWarmNow(srcList[i], pendingSnapRef.current || freshSnapFor(i)) && !instant) {
+      switchSpinTimerRef.current = window.setTimeout(() => { switchSpinTimerRef.current = 0; if (switchPendingRef.current) { setIsSwitching(true); veilSpin(); } }, 650);
     }
+  };
+  /* ── 切換照片的過場 ─────────────────────────────────────────────────────
+     切換的那一刻把「畫面上現在那一張」原封不動拍下來，蓋在預覽上；底下換照片、重建緩衝區、套參數、
+     RAW 照現在的參數沖洗……全部看不到。新的這張完整畫好（含特效、RAW 沖好）才把蓋著的那張淡出（交叉淡化）。
+     以前切換時 GPU 畫布先收起來、露出底下還沒畫的畫布（黑一下，RAW 要沖的時候黑很久）；
+     新照片先畫出只有色彩的預熱版、特效晚一點才補上，或 RAW 先出舊參數的底圖再跳成新的（先舊後新、生硬地變）。
+     保險：最多蓋 2.5 秒；使用者一碰畫面或滑桿就馬上收掉，不會擋住操作 */
+  const veilRef = useRef<{ el: HTMLCanvasElement; timer: number; raf: number } | null>(null);
+  /** RAW：這次切過去的那張要照現在的參數重沖（沖好換上之前，過場不收） */
+  const rawSettlingRef = useRef(false);
+  const veilDown = (ms = 200) => {
+    const v = veilRef.current;
+    if (!v) return;
+    veilRef.current = null;
+    clearTimeout(v.timer); cancelAnimationFrame(v.raf);
+    rawSettlingRef.current = false;
+    const drop = () => { v.el.remove(); v.el.width = v.el.height = 0; };
+    if (ms <= 0) { drop(); return; }
+    try { v.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'cubic-bezier(.33,0,.2,1)', fill: 'forwards' }).finished.then(drop, drop); }
+    catch { drop(); }
+  };
+  /** 新的這張畫好了沒：緩衝區是這張的、沒有待畫的、RAW 不用再沖 —— 連續兩格都是才收（確定已經畫到螢幕上） */
+  const watchVeil = () => {
+    const v = veilRef.current;
+    if (!v) return;
+    let okFrames = 0;
+    const loop = () => {
+      const cur = veilRef.current;
+      if (cur !== v) return;
+      if (isInteractingRef.current) { veilDown(120); return; }
+      const bufSrc = buffersSrcRef.current, alias = bufferAliasRef.current, act = activeSrcRef.current;
+      const ours = bufSrc === act || (!!alias && alias.key === bufSrc && alias.for === act);
+      const settled = !switchPendingRef.current && !rawSettlingRef.current && !isDirtyRef.current && ours;
+      okFrames = settled ? okFrames + 1 : 0;
+      if (okFrames >= 2) { veilDown(); return; }
+      v.raf = requestAnimationFrame(loop);
+    };
+    v.raf = requestAnimationFrame(loop);
+  };
+  /** 把畫面上現在那一張拍下來蓋住預覽（已經蓋著就沿用，不重拍） */
+  const veilUp = () => {
+    if (veilRef.current) return;   // 已經蓋著（同一次切換還沒畫好）：沿用，等它畫好
+    const box = previewBoxRef.current, shown = visibleEditorCanvas();
+    if (!box || !shown || !shown.width || !shown.height) return;
+    const br = box.getBoundingClientRect(), sr = shown.getBoundingClientRect();
+    if (sr.width < 2 || sr.height < 2) return;
+    const el = document.createElement('canvas');
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const k = Math.min(1, 2400 / Math.max(sr.width * dpr, sr.height * dpr));
+    el.width = Math.max(1, Math.round(sr.width * dpr * k)); el.height = Math.max(1, Math.round(sr.height * dpr * k));
+    const g = el.getContext('2d');
+    if (!g) return;
+    try { g.drawImage(shown, 0, 0, el.width, el.height); } catch { return; }
+    Object.assign(el.style, {
+      position: 'absolute', left: `${sr.left - br.left}px`, top: `${sr.top - br.top}px`, width: `${sr.width}px`, height: `${sr.height}px`,
+      zIndex: '15', pointerEvents: 'none', borderRadius: '2px', willChange: 'opacity',
+    } as Partial<CSSStyleDeclaration>);
+    el.setAttribute('data-switch-veil', '');
+    box.appendChild(el);
+    veilRef.current = { el, raf: 0, timer: window.setTimeout(() => veilDown(), 2500) };
+    watchVeil();
+  };
+  useEffect(() => () => veilDown(0), []);
+  /** 真的很慢（超過 650ms）：蓋著的那張上面也轉個圈，讓人知道還在做 */
+  const veilSpin = () => {
+    const v = veilRef.current;
+    if (!v || v.el.parentElement?.querySelector('[data-veil-spin]')) return;
+    const sp = document.createElement('div');
+    sp.setAttribute('data-veil-spin', '');
+    sp.className = 'animate-spin';
+    Object.assign(sp.style, {
+      position: 'absolute', zIndex: '16', width: '28px', height: '28px', borderRadius: '9999px', pointerEvents: 'none',
+      border: '2px solid rgba(255,255,255,.25)', borderTopColor: '#fff',
+      left: `calc(${v.el.style.left} + ${v.el.style.width} / 2 - 14px)`, top: `calc(${v.el.style.top} + ${v.el.style.height} / 2 - 14px)`,
+    } as Partial<CSSStyleDeclaration>);
+    v.el.parentElement?.appendChild(sp);
+    const el = v.el;
+    /* 蓋著的那張收掉時一起收 */
+    const mo = new MutationObserver(() => { if (!el.isConnected) { sp.remove(); mo.disconnect(); } });
+    if (el.parentElement) mo.observe(el.parentElement, { childList: true });
   };
   /** 切換後新的這張還沒建好（畫面上可能還是上一張） */
   const switchPendingRef = useRef(false);
@@ -2063,10 +2204,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const beginThumbPress = (i: number, e: React.PointerEvent<HTMLElement>) => {
     cancelThumbPress();
-    pressRef.current = {
-      i, x: e.clientX, y: e.clientY, moved: false,
-      timer: window.setTimeout(() => { if (pressRef.current && !pressRef.current.moved) { openBatchMenu(i); cancelThumbPress(); } }, 450),
-    };
+    pressRef.current = { i, x: e.clientX, y: e.clientY, moved: false, timer: 0 };
   };
   const moveThumbPress = (e: React.PointerEvent<HTMLElement>) => {
     const st = pressRef.current;
@@ -2077,10 +2215,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const st = pressRef.current;
     cancelThumbPress();
     if (!st || st.i !== i || st.moved) return;   // 在捲動就不算點擊
-    // 已經選中的再點一下＝開選單。這裡刻意不做開關切換 ——
-    // 連點兩下時會變成開了又關，看起來就像沒反應。
-    if (active) openBatchMenu(i);
-    else { setBatchMenu(null); switchTo(i); }
+    // 點一下＝換成預覽這一張（已經選中的再點一下不做事）
+    if (!active) switchTo(i);
   };
 
   /** 從縮圖列刪掉一張（至少留一張） */
@@ -3227,23 +3363,27 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       // 已經留著「畫好的整張」而且還對得上的，切過去直接用那份，不必再背景算一次（省下每張兩趟整張運算）
       /* 只留得住 WARM_MAX 張：先算左右鄰居（最可能下一個切過去的），越遠越後面、超過的不算。
          以前照清單順序算，張數一多，留到最後的是清單尾巴那兩張、鄰居反而被擠掉 —— 切過去就要轉圈 */
+      /* 每張各自調整：預熱照的是那一張自己的參數（沒調過的就是預設） */
       const cur = srcList.indexOf(activeSrc);
       const queue = srcList.map((u, i) => ({ u, i, d: Math.abs(i - cur) + (i < cur ? 0.5 : 0) }))
-        .filter(x => x.u !== activeSrc && linked[x.i] !== false && !shotValid(x.i, liveRef.current))
-        .sort((a, b) => a.d - b.d).slice(0, WARM_MAX).map(x => x.u);
-      const live = liveRef.current;
-      if (!live) return;
-      const lut = lutList[live.selectedLutIdx];
-      if (!lut) return;
-      const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
-      // 濾鏡檔還沒下載完就先不算，等下一輪（參數沒變的話下一輪自然會補上）
-      if (lut.url && !activeLut) return;
-      const p: EditorParams = JSON.parse(JSON.stringify(live.params));
+        .filter(x => x.u !== activeSrc && !shotValid(x.i, snapOrFresh(x.i)))
+        .sort((a, b) => a.d - b.d).slice(0, WARM_MAX);
 
       const step = () => {
         if (cancelled) return;
-        const src = queue.shift();
-        if (!src) return;
+        if (saveBusyRef.current) { void waitSaveIdle().then(step); return; }
+        const item = queue.shift();
+        if (!item) return;
+        const src = item.u;
+        const sn = snapOrFresh(item.i);
+        const lut = lutList[sn.selectedLutIdx];
+        const activeLut = lut && lut.url ? lutDataRef.current[lut.id] : null;
+        // 濾鏡檔還沒下載完就先不算這一張（下一輪自然會補上）
+        if (!lut || (lut.url && !activeLut)) { yieldTo(step); return; }
+        /* 簽章照「快照裡的參數」算（切過去時拿來比的就是它）；實際運算用這張照片真正會用的參數
+           （RAW 的曝光、白平衡在 RAW 那一步做，這裡不能再套一次） */
+        const sigP: EditorParams = JSON.parse(JSON.stringify(sn.params));
+        const p: EditorParams = rawOf(src) ? fromCanon(sigP, true) : sigP;
 
         const PREVIEW_SIZE = 1800;
         const done = () => yieldTo(step);
@@ -3256,7 +3396,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             pw = (pw * r) | 0; ph = (ph * r) | 0;
           }
           pw = Math.max(1, pw); ph = Math.max(1, ph);
-          const sig = warmSigOf(p, lut.id, pw, ph);
+          const sig = warmSigOf(sigP, lut.id, pw, ph);
           if (warmSigRef.current.get(src) === sig) {   // 這張已經是最新的了：移到最新，不被擠掉
             const w0 = warmPixelsRef.current.get(src);
             if (w0) { warmPixelsRef.current.delete(src); warmPixelsRef.current.set(src, w0); }
@@ -3327,7 +3467,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       step();
     }, 900);
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [activeSrc, srcList, linked, params, selectedLutIdx, lutList, isInteracting]);
+  }, [activeSrc, srcList, linked, applyAllTick, lutList, lutReadyTick, isInteracting]);
   /** 切過去時，把背景算好的那份直接塞進 render() 本來就在用的快取 */
   const seedWarmPixels = useCallback((src: string, w: number, h: number) => {
     const warm = warmPixelsRef.current.get(src);
@@ -4576,12 +4716,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      原圖改用工作預覽之後省下的記憶體（一張原圖 48MB、工作預覽 12MB）遠大於多留的縮圖；
      系統真的喊記憶體不夠時，只留目前這張的縮圖，其他的放掉（見下面的 registerTrim） */
   /* iOS 的網頁畫布加起來有總量上限（舊機型約 384MB，超過新的畫布就建不出來）：
-     實體記憶體 6GB 以上的 iPhone 上限很寬，整批都留；較舊的機型維持原本的 8 張，其他的切過去再算 */
+     實體記憶體 8GB 的 iPhone 整批都留；其他機型維持原本的 8 張，其他的切過去再算。存檔前一律先放掉（見 trimBatchCaches） */
   const thumbCacheSrcsRef = useRef(8);
+  /** 這台裝置的實體記憶體（App 才拿得到；0＝不知道） */
+  const deviceRamRef = useRef(0);
   useEffect(() => {
     let alive = true;
     void nativeImage().then(p => p?.memory()).then(m => {
-      if (alive && m && m.physical >= 5.5 * 1024 * 1024 * 1024) thumbCacheSrcsRef.current = BATCH_MAX;
+      if (alive && m && m.physical >= 7.5 * 1024 * 1024 * 1024) thumbCacheSrcsRef.current = BATCH_MAX;
+      if (alive && m) deviceRamRef.current = m.physical;
     }).catch(() => {});
     return () => { alive = false; };
   }, []);
@@ -4607,7 +4750,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const thumbKey = (src: string, id: string) => thumbSrcKey(src) + THUMB_SEP + id;
   /* 系統記憶體警告：批量的快取（其他照片的縮圖、解好的圖、預熱像素、留下來的畫面）全部放掉，只留目前這張要用的。
      放掉的之後切過去會重算／重解，畫面一樣正確，只是那一下慢一點 —— 總比整個 App 被系統收掉好 */
-  useEffect(() => registerTrim('editor-batch-caches', () => {
+  useEffect(() => registerTrim('editor-batch-caches', () => trimBatchCachesRef.current()), []);
+  const trimBatchCaches = () => {
     const keep = thumbSrcKey(srcListRef.current[safeIdxRef.current] || '');
     for (const store of [filterThumbStore, fxThumbStore]) {
       for (const k of Object.keys(store.current)) if (k.slice(0, k.indexOf(THUMB_SEP)) !== keep) delete store.current[k];
@@ -4618,8 +4762,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     warmImgRef.current.clear();
     warmPixelsRef.current.clear(); warmSigRef.current.clear();
     for (const [k, shot] of [...maskShotRef.current]) { shot.canvas.width = 0; if (shot.ov) shot.ov.width = 0; maskShotRef.current.delete(k); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), []);
+  };
+  const trimBatchCachesRef = useRef(trimBatchCaches); trimBatchCachesRef.current = trimBatchCaches;
   const noteThumbSrc = (src: string) => {
     const list = thumbSrcsRef.current;
     const at = list.indexOf(src);
@@ -4834,7 +4978,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const steps: (() => void)[] = [];
       /* 每往下走一步就記一次進度；全部走完＝這一批結束（補救只在「沒在跑」或「卡很久」時才動手） */
       thumbRunningRef.current = true;
-      const next = () => { if (cancelled()) return; thumbActivityRef.current = performance.now(); const f = steps.shift(); if (f) window.setTimeout(f, 0); else thumbRunningRef.current = false; };
+      const next = () => {
+        if (cancelled()) return;
+        thumbActivityRef.current = performance.now();
+        const f = steps.shift();
+        if (!f) { thumbRunningRef.current = false; return; }
+        /* 存檔中先停，存完再接著做（不跟存檔搶記憶體） */
+        if (saveBusyRef.current) void waitSaveIdle().then(() => { if (!cancelled()) { thumbActivityRef.current = performance.now(); f(); } });
+        else window.setTimeout(f, 0);
+      };
       for (const k of order) steps.push(() => {
         if (thumbSrcOf(buffersSrcRef.current) !== cur) return next();
         if (k === 'filter') { if (filterThumbsMissing(cur)) buildFilterThumbs(cur, curPixels(), cancelled, next); else next(); }
@@ -8433,7 +8585,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         try { render({ ...frozenP, maskShowOverlay: false }, frozenLut); } catch { /* 重畫失敗就走背景那條 */ }
       }
       const shown = visibleEditorCanvas();
-      if (linked[i] !== false && shown && shown.width > 0 && !showOriginalRef.current && activeCategory !== 'compose') {
+      if (shown && shown.width > 0 && !showOriginalRef.current && activeCategory !== 'compose') {
         let cvs: HTMLCanvasElement | null = document.createElement('canvas');
         cvs.width = shown.width; cvs.height = shown.height;
         cvs.getContext('2d', { willReadFrequently: true })!.drawImage(shown, 0, 0);
@@ -8478,7 +8630,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           mergingRef.current = false;          // 之後的點擊照常、立刻套用
           setMergePending(false);
           // 其他連結中的照片也要合併時，交給下面背景那段（不影響畫面）
-          const others = srcList.some((_, n) => n !== i && linked[n] !== false);
+          /* 批量時每張各自調整：合併只烤畫面上這一張 */
+          const others = false;
           if (!others) {
             addToHistory(fresh, 0, false, false, false, false, false, false, false, false);
             return;
@@ -8503,8 +8656,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const next = [...srcList];
         const made: string[] = [];
         for (let i = 0; i < srcList.length; i++) {
-          // 沒連結的那幾張有自己的一份參數，這次合併不關它們的事
-          if (linked[i] === false) continue;
+          // 每張各自調整：合併只烤畫面上這一張
+          if (i !== safeIdx) continue;
           if (syncUrl && i === safeIdx) { next[i] = syncUrl; continue; }   // 這張剛剛已經同步換好了
           const base = cloneSnap(live);
           const snap: BatchSnap = {
@@ -8692,6 +8845,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             if (!originalImgRef.current) throw new Error('原圖還沒準備好');
             /* RAW：手放開後的精算還沒換上的話，先等它（存的一定是從 RAW 精算的結果） */
             await rawPendingRef.current;
+            /* 存檔是整個編輯器最吃記憶體的時候（原圖解碼、原尺寸運算）：批量的快取（其他照片的縮圖、
+               解好的圖、預熱像素、留下來的畫面）先全部放掉，存完回到編輯再慢慢補回來。
+               背景工作（縮圖、預熱、工作預覽、RAW 預沖）在存檔期間也全部暫停（見 waitSaveIdle） */
+            if (srcListRef.current.length > 1) trimBatchCachesRef.current();
             // 人像／仿色剛交回來的那張還在背景編碼：先等它換進來源清單
             await studioInstallRef.current;
             // 其他照片還在背景合併時先等它做完（最多 20 秒），存的才會是合併後的
@@ -8729,7 +8886,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 // 連結中的一律套現在這一份；解除連結的用它自己留下來的那一份。
                 // 沒有留下來的（例如從頭到尾沒被切過去過）就直接用現在這一份，
                 // 不能因為「還沒載入過」就跳過不套 —— 那就變成沒連結了。
-                const base = linked[i] === false ? (soloSnapsRef.current[i] || live) : live;
+                /* 這張用它自己的那一份；從頭到尾沒調過（也沒按過「應用全部」）的就是預設值 */
+                const base = i === safeIdx ? live : (soloSnapsRef.current[i] || freshSnapFor(i));
                 // 遮色片與構圖不連動，要用這一張自己的
                 const snap: BatchSnap = {
                   ...cloneSnap(base),
@@ -8753,7 +8911,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 let rawFullPath: string | undefined;
                 try {
                   /* ② 網頁算成品。RAW：用這一張自己的參數從 RAW 原尺寸沖一張給網頁畫 */
-                  const { img, made } = await webPhase(async () => {
+                  const { img, made, rawFull } = await webPhase(async () => {
                     const rawFull = ri ? await rawFullFor(ri, p) : null;
                     rawFullPath = rawFull ? nativePathOf(rawFull) : undefined;
                     const img = rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], i === safeIdx ? fullOrNull(originalImgRef.current) : null);
@@ -8763,8 +8921,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     if (Number(p.fxLowfi) > 0) await warmLowfiLut();
                     /* App：成品像素直接交給原生（不壓 PNG） */
                     const made = isNative() && metaPath ? await renderFullForNative(img, snap) : null;
-                    return { img, made };
+                    return { img, made, rawFull };
                   });
+                  /* 像素已經交給原生了：這張解好的原圖（一張 1200 萬像素就 48MB）馬上放掉，
+                     不要在原生編碼的這段時間還佔著（批量時下一張已經要開始解了）。原生萬一失敗，下面再解一次 */
+                  let im: HTMLImageElement | null = img;
+                  if (made?.path && img !== originalImgRef.current) { try { img.src = ''; } catch { /* 放不掉就算了 */ } im = null; }
+                  const imgAgain = async () => im || (im = rawFull ? await loadImg(rawFull) : await loadFullImg(srcs[i], null));
                   if (made) {
                     /* 有局部、空間類編輯但沒有模糊類：原生補回廣色域與 HDR 亮部；
                        補不了（例如有模糊類效果）：畫面完全用網頁的成品，原生只負責編碼、寫入拍攝資訊。
@@ -8783,14 +8946,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   }
                   /* ③ 網頁自己編碼（網頁版、原生做不到）。大照片走原尺寸分段存檔（見 renderFullUrl） */
                   if (exportFormat !== 'heic') {
-                    const u = await renderFullUrl(img, snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1);
+                    const u = await renderFullUrl(await imgAgain(), snap, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1);
                     return { show: u, save: u, stamp: true };
                   }
                   // HEIC（App 才有）：先原尺寸做出無損 PNG，再交給原生編碼器轉 HEIC
-                  const png = await renderFullUrl(img, snap, 'image/png', 1);
+                  const png = await renderFullUrl(await imgAgain(), snap, 'image/png', 1);
                   if (png) return { show: png, save: await exportHeicFromUrl(png), stamp: true };
                   // 萬一分段失敗：退回一整張畫布（畫布上限內）
-                  const canvas = await renderOneCanvas(img, snap, MOBILE_MAX_PIXELS);
+                  const canvas = await renderOneCanvas(await imgAgain(), snap, MOBILE_MAX_PIXELS);
                   return { show: await canvasToUrl(canvas, 'image/png', 1), save: await exportHeic(canvas), stamp: true };
                 } finally {
                   /* RAW 沖給網頁畫的那張原尺寸中間檔很大：用完就刪 */
@@ -8800,7 +8963,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             /* 批量流水線：上一張在原生編碼的時候，下一張的網頁那一段就開始（最多兩張在路上）。
                只在 App 裡、而且每一張都不超過 1600 萬像素時才這樣做；太大的照片（例如 4800 萬像素）一次一張，記憶體跟以前一樣 */
             let lanes = 1;
-            if (isNative() && srcs.length > 1) {
+            /* 兩張同時在路上會多佔一張照片的記憶體：只在 8GB 記憶體的機型上這樣做 */
+            if (isNative() && srcs.length > 1 && deviceRamRef.current >= 7.5 * 1024 * 1024 * 1024) {
               lanes = 2;
               for (const u of srcs) {
                 const pth = rawOf(u)?.path ?? nativePathOf(u);
@@ -8910,6 +9074,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      就把值算好，不會先閃一下原尺寸。ResizeObserver 負責轉向／視窗變化。 */
   const previewBoxRef = useRef<HTMLDivElement>(null);
   const [previewBoxSize, setPreviewBoxSize] = useState({ width: 0, height: 0 });
+  previewBoxSizeRef.current = previewBoxSize;
   const [previewLayoutReady, setPreviewLayoutReady] = useState(false);
   /* 第一次準備好之後就不再蓋黑底轉圈：從儲存頁按「繼續編輯」回來時預覽區會重新量一次尺寸，
      那一下（80ms）不能又閃一個轉圈 —— 那時圖早就在了，只是在確認大小 */
@@ -9053,6 +9218,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 只認 HSL／色輪自己量出來的那一份：從曲線切過來時，state 裡還是曲線面板量的值，
      拿來用會先縮成曲線的大小、下一格再縮成 HSL 的大小 —— 就是「跳一下」 */
   const hslFitNow = isColourPanelTool(activeToolId) && hslFit?.colour ? hslFit : null;
+  hslFitNowRef.current = hslFitNow;
   /* 前後對比鍵：面板剛掛上、還沒量好的那一格，先用上一次 HSL／色輪量到的位置（面板高度固定，位置一樣），
      從曲線切過來時才不會先掉到預設位置再往上爬 */
   const lastColourFitRef = useRef<{ mb: number; mh: number } | null>(null);
@@ -9440,6 +9606,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (rawFresh && rawSrcKeyRef.current.get(activeSrcRef.current) === key) {
         rawFresh = false; sharp = true;
         rawDevelopedRef.current = want;
+        rawSettlingRef.current = false;
         setRawFirstDone(true);
         warmGpuSoon();
         return;
@@ -9465,9 +9632,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               const pre = gpu.render(b);
               const fast = pre && fw ? gpu.render(b, fw, fh) : null;
               if (pre) {
+                /* 切過來後第一次沖好（過場已經因為等太久收掉了的話）：一樣先蓋上現在的畫面、換好再淡過去，不要生硬地跳 */
+                if (rawFresh) veilUp();
                 if (!swapSourcePixels(pre, pw, ph, fast, fw, fh, `${srcListRef.current[safeIdxRef.current]}#rawpx${++pendingKeySeqRef.current}`)) return;
                 rawDevelopedRef.current = want;
                 sharp = final;
+                if (rawFresh) rawSettlingRef.current = false;
                 setRawFirstDone(true); rawFresh = false;
                 if (final) adoptLater(want);
                 return;
@@ -9477,9 +9647,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                （一樣的顏色、一樣的清晰度），也不用壓 JPEG、解 JPEG、重畫、讀回 */
             const px = await rawDevelopPixels(raw.path, rawBase({ ...DEFAULT_PARAMS, ...want }), raw.look, pw, ph, fw, fh);
             if (!px || !alive) return;
+            if (rawFresh) veilUp();
             if (!swapSourcePixels(px.pixels, pw, ph, px.fast, fw, fh, `${srcListRef.current[safeIdxRef.current]}#rawpx${++pendingKeySeqRef.current}`)) return;
             rawDevelopedRef.current = want;
             sharp = final;
+            if (rawFresh) rawSettlingRef.current = false;
             setRawFirstDone(true); rawFresh = false;
             if (final) adoptLater(want);
             return;
@@ -9495,10 +9667,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           rawDevelopedRef.current = want;
           sharp = final;
           if (final) rawSrcKeyRef.current.set(r.url, rawKeyOf(want as any));
+          if (rawFresh) veilUp();
           await installRaw(r.url, final, im);
+          if (rawFresh) rawSettlingRef.current = false;
           setRawFirstDone(true); rawFresh = false;
         } catch { /* 沖不出來：維持上一張（下一格再試） */ }
-        finally { busy = false; rawPendingRef.current = null; }
+        finally { busy = false; rawPendingRef.current = null; if (!alive || !rawFresh) rawSettlingRef.current = false; }
       })();
     };
     rafId = requestAnimationFrame(tick);
@@ -9537,13 +9711,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const at = safeIdxRef.current;
       for (const i of [at + 1, at - 1, at + 2, at - 2]) {
         if (!alive) return;
+        await waitSaveIdle();
+        if (!alive) return;
         const list = srcListRef.current;
         if (i < 0 || i >= list.length || i === safeIdxRef.current) continue;
         const src = list[i];
         const info = rawOf(src);
         if (!info) continue;
         const snapKey = () => {
-          const sn = linked[i] === false ? soloSnapsRef.current[i] : liveRef.current;
+          const sn = soloSnapsRef.current[i] || freshSnapFor(i);
           return sn ? { sn, key: rawKeyOf(fromCanon(sn.params, true)) } : null;
         };
         const want = snapKey();
@@ -9565,7 +9741,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     })(), 1200);
     return () => { alive = false; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [safeIdx, rawLiveKey, isInteracting, srcList.length, linked]);
+  }, [safeIdx, rawLiveKey, isInteracting, srcList.length, linked, applyAllTick]);
   const studioPrevRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
   /* 取消＝丟掉這次在工具裡畫的東西：工具一直掛著（進出才會是立刻的），所以換一個新的 */
   const [studioGen, setStudioGen] = useState({ beauty: 0, match: 0 });
@@ -9742,6 +9918,40 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   ), [matchKey, matchSrc, studioGeo, studioEmbed, studioNoop, studioAlign, matchPainted]);
 
   /** 模板與疊圖層分頁：滑桿列與小分類列都收起來，整塊控制區給它自己的面板 */
+  /** 前後對比鍵。float：浮在預覽右下角（單張；批量時滑桿列收起來的那幾頁浮在縮圖列上方）；row：批量時放在滑桿那一列的右邊 */
+  const renderCompare = (where: 'float' | 'row') => (
+        <button
+            aria-label="前後對比"
+            /* 跟圖片、面板同一條曲線同一段時間移動；曲線時放在格子右下角 */
+            style={where === 'row' ? undefined : { bottom: activeToolId === 'curves' ? 22 : isBatch ? 58 : cmpFit ? cmpFit.mb + 16 : 8, transition: 'bottom 260ms cubic-bezier(.22,1,.36,1)' }}
+            onPointerDown={(e) => { 
+                e.preventDefault(); 
+                try {
+                    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+                } catch(err) {}
+                setShowOriginal(true); 
+            }} 
+            onPointerUp={(e) => { 
+                e.preventDefault(); 
+                try {
+                    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+                } catch(err) {}
+                setShowOriginal(false); 
+            }} 
+            onPointerCancel={(e) => { 
+                setShowOriginal(false); 
+            }}
+            data-compare={where}
+            className={where === 'row'
+              ? `absolute right-1 top-1/2 -translate-y-1/2 p-3 flex items-center justify-center select-none touch-none transition-colors active:scale-90 ${showOriginal ? 'text-white' : 'text-white/40'}`
+              : `absolute bottom-2 right-2 p-3 flex items-center justify-center select-none touch-none transition-all active:scale-90 ${showOriginal ? 'text-white' : 'text-white/40'} ${activeToolId === 'curves' ? 'z-50' : isColourPanelTool(activeToolId) ? 'z-[45]' : 'z-20'}`}
+        >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+              <path d="M12 6H4.5C3.67157 6 3 6.67157 3 7.5V16.5C3 17.3284 3.67157 18 4.5 18H12" stroke="white" strokeWidth="1.5" />
+              <line x1="12" y1="3" x2="12" y2="21" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M12 6H19.5C20.3284 6 21 6.67157 21 7.5V16.5C21 17.3284 20.3284 18 19.5 18H12" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+        </button>);
   const ownPanel = activeCategory === 'template' || STUDIO_CATS.includes(activeCategory);
   /** 遮色片在選新增哪一種的時候，滑桿列先收起來（沒有東西可以調） */
   /* 取消選中時，下面那一排直接變成「新增遮色片」的五種（不是一排變暗、按不了的調整） */
@@ -9749,7 +9959,28 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 左下角的參數膠囊：只有「選中了某個遮色片」時才出現（選種類、取消選中時都收掉），線性漸層沒有自己的參數 */
   const maskCapsuleShown = false && activeCategory === 'mask' && !maskTypePicking && !maskDeselected && maskListView.list.length > 0
     && (MASK_TYPE_TOOLS[(params.maskType ?? 'linear') as MaskType].length > 0 || params.maskType === 'brush');
+  /* ── 切換功能分頁時按鈕的進場動畫（見 utils/tabEntrance）──
+     濾鏡、特效的縮圖卡，調節、遮色片的按鈕，人像、仿色的按鈕：依序淡入、往上浮一點點。只動按鈕，欄位與照片不動。
+     構圖的介面不一樣，由 ComposeStudio 自己設計（entrance）。第一次進編輯器時不播（那時有整套的進場動畫） */
+  const tabGroup = ['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'effects' : activeCategory;
+  const tabGroupPrevRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const prev = tabGroupPrevRef.current;
+    tabGroupPrevRef.current = tabGroup;
+    if (prev === null || prev === tabGroup || !firstReady) return;
+    if (tabGroup === 'beauty' || tabGroup === 'match') {
+      const row = document.querySelector(tabGroup === 'beauty' ? '[data-studio-host="beauty"] [data-beauty-toolbar]' : '[data-studio-host="match"] [data-cm-refs]');
+      if (row) riseIn(row.children, { clip: row });
+      return;
+    }
+    if (tabGroup === 'compose' || tabGroup === 'template') return;
+    const box = toolsScrollRef.current;
+    if (box) riseIn(box.children, { clip: box });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabGroup]);
   const sliderRowHidden = activeToolId === 'curves' || isColourPanelTool(activeToolId) || activeCategory === 'compose' || ownPanel || maskTypePicking;
+  /** 批量：對比鍵放在滑桿列右邊（右下角讓給「應用全部」）；滑桿列收起來的時候照舊浮在預覽上 */
+  const compareInRow = isBatch && !sliderRowHidden;
   const subStripHidden = activeCategory === 'compose' || ownPanel;
 
 
@@ -10936,62 +11167,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           return <div data-mask-tip className="absolute left-1/2 -translate-x-1/2 z-[38] pointer-events-none px-3 py-1.5 rounded-full bg-black/60 backdrop-blur-sm text-[12px] text-white/90 whitespace-nowrap" style={{ bottom: Math.round(imgGap + 16 + (maskCapsuleShown ? 46 : 0)), transition: 'bottom 260ms cubic-bezier(.22,1,.36,1)' }}>{tip}</div>;
         })()}
         
-      {/* 批量編輯的縮圖列：跟「前後對比」同一排（畫面底部那一條），
-            只有多張時才出現，浮在畫面上不佔版面 —— 單張時的編輯介面不受影響。
-            點一下＝換成預覽這一張；再點一下已選中的那張才會跳出小選單。 */}
+      {/* 批量編輯的縮圖列：浮在畫面底部那一條，只有多張時才出現 —— 單張時的編輯介面不受影響。
+            點一下＝換成預覽這一張。右邊是「應用全部」：把這張的調整套到其他每一張 */}
         {saveState !== 'success' && srcList.length > 1 && (
           <div
             data-batch-strip
-            className={`absolute bottom-2 left-[14px] right-[50px] ${activeToolId === 'curves' ? 'z-50' : 'z-30'}`}
+            className={`absolute bottom-2 left-[14px] right-[74px] ${activeToolId === 'curves' ? 'z-50' : 'z-30'}`}
           >
-            {batchMenu !== null && (
-              <div
-                className="fixed inset-0 z-10"
-                onPointerDown={(e) => { e.stopPropagation(); setBatchMenu(null); }}
-              />
-            )}
             {/* 左右各留 2px，選中的白框才不會被捲動列的邊緣切掉 */}
-            {/* 縮圖列要壓在遮罩上面 —— 不然選單開著的時候，點縮圖的那一下會被遮罩吃掉，
-                第二下就變成只是把選單關掉，看起來就是「點兩下沒反應」。
-                選單打開時才在上面撐一大塊留白：捲動列是 overflow-x-auto，瀏覽器會把
-                overflow-y 也一起變成 auto，往上彈的東西只要超出這個框就會被裁掉。
-                留白算在框裡面，選單才看得到；再用等量的負 margin 拉回來，版面不變
-                （pt 比 mt 多 4px，就是原本的 pt-1）。
-                留白會蓋到上面的預覽，所以只在選單開著的時候才撐 —— 平常這條列
-                就是一條普通的捲動列，手指照樣滑得動。 */}
-            <div
-              data-batch-row
-              onPointerDown={(e) => { if (e.target === e.currentTarget) setBatchMenu(null); }}
-              className={`relative z-20 flex items-end gap-1.5 overflow-x-auto no-scrollbar px-[2px] pb-1 ${
-                batchMenu !== null ? 'pt-[100px] -mt-[96px]' : 'pt-1'
-              }`}
-            >
+            <div data-batch-row className="relative z-20 flex items-end gap-1.5 overflow-x-auto no-scrollbar px-[2px] pb-1 pt-1">
               {srcList.map((src, i) => {
-                const on = linked[i] !== false;
                 const active = i === safeIdx;
                 return (
-                  <div key={src + i} className={`relative shrink-0 ${batchMenu === i ? 'z-10' : ''}`}>
-                    {/* 選單就掛在縮圖底下 —— 同一個 DOM 子樹，捲動時完全同步，一格都不會差 */}
-                    {batchMenu === i && (
-                      <div
-                        className="absolute bottom-full mb-2 rounded-lg bg-[#1b1b1b] border border-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.6)] overflow-hidden"
-                        style={{ left: batchMenuDx }}
-                      >
-                        <button
-                          onClick={() => { toggleLink(i); setBatchMenu(null); }}
-                          className="block w-full px-3 h-9 text-[11px] font-bold text-white/90 whitespace-nowrap text-left active:bg-white/10"
-                        >
-                          {on ? '取消連結' : '重新連結'}
-                        </button>
-                        <div className="h-px bg-white/10" />
-                        <button
-                          onClick={() => { removePhoto(i); setBatchMenu(null); }}
-                          className="block w-full px-3 h-9 text-[11px] font-bold text-white/90 whitespace-nowrap text-left active:bg-white/10"
-                        >
-                          刪除
-                        </button>
-                      </div>
-                    )}
+                  <div key={src + i} className="relative shrink-0">
                     <button
                       onPointerDown={(e) => beginThumbPress(i, e)}
                       onPointerMove={(e) => moveThumbPress(e)}
@@ -11016,16 +11204,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         />
                       )}
                     </button>
-                    {/* 連結中是白底黑線的鎖鏈、沒有斜線；解除連結的維持黑底白線、打叉 */}
-                    <span className={`absolute -top-1 -right-1 w-[14px] h-[14px] rounded-full flex items-center justify-center pointer-events-none ${on ? 'bg-white' : 'bg-black'}`}>
-                      <Icon name={on ? 'link' : 'link_off'} className={`text-[9px] leading-none ${on ? 'text-black' : 'text-white/80'}`} />
-                    </span>
                   </div>
                 );
               })}
               {onAddPhotos && srcList.length < BATCH_MAX && (
                 <button
-                  onClick={() => { setBatchMenu(null); onAddPhotos(); }}
+                  onClick={() => onAddPhotos()}
                   title="新增照片"
                   data-batch-add
                   className="shrink-0 w-9 h-9 rounded-[4px] bg-[#2e2e2e] flex items-center justify-center text-[#b9b9b9] active:scale-95 transition-all touch-manipulation"
@@ -11035,6 +11219,36 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               )}
             </div>
           </div>
+        )}
+        {/* 應用全部：把這張的調整（濾鏡、調節、特效）套到其他每一張；構圖各張維持自己的。
+            點下去縮圖列其他張依序輕輕彈一下，表示已經套過去了（不跳文字提示） */}
+        {saveState !== 'success' && srcList.length > 1 && (
+          <button
+            aria-label="應用全部"
+            data-apply-all
+            data-haptic="tick"
+            onClick={() => {
+              applyToAll();
+              if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+              const thumbs = Array.from(document.querySelectorAll<HTMLElement>('[data-batch-thumb]'));
+              let k = 0;
+              thumbs.forEach((el) => {
+                if (el.getAttribute('data-batch-thumb') === String(safeIdx)) return;
+                el.animate([{ transform: 'scale(1)' }, { transform: 'scale(.86)', offset: .45 }, { transform: 'scale(1)' }],
+                  { duration: 360, delay: Math.min(k++, 10) * 28, easing: 'cubic-bezier(.22,1,.36,1)' });
+              });
+            }}
+            className={`absolute bottom-2 right-2 w-[58px] py-1 flex flex-col items-center justify-center gap-[5px] select-none touch-none text-white active:scale-90 transition-transform ${activeToolId === 'curves' ? 'z-50' : 'z-30'}`}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
+              <path d="M7.5 4.5H5.5V15.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M2.75 12.75 5.5 15.5 8.25 12.75" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M16.5 19.5H18.5V8.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M15.75 11.25 18.5 8.5 21.25 11.25" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <rect x="9.5" y="7.5" width="5" height="9" rx="1" stroke="white" strokeWidth="1.5" />
+            </svg>
+            <span className="text-[9.5px] leading-none font-medium tracking-wide whitespace-nowrap drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">應用全部</span>
+          </button>
         )}
 
         {/* 合併：把現在畫面上的樣子烤進圖層，烤完才能再疊下一個特效／濾鏡。
@@ -11112,39 +11326,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           </button>
         )}
 
-        {/* 對比按鈕 */}
+        {/* 對比按鈕。批量編輯時右下角讓給「應用全部」，對比鍵搬到下面滑桿那一列的右邊（見 compareInRow）；
+            滑桿列收起來的時候（構圖、模板、HSL…）浮在縮圖列上方 */}
         {(() => {
-        const compareButton = (
-        <button
-            aria-label="前後對比"
-            /* 跟圖片、面板同一條曲線同一段時間移動；曲線時放在格子右下角 */
-            style={{ bottom: activeToolId === 'curves' ? 22 : cmpFit ? cmpFit.mb + 16 : 8, transition: 'bottom 260ms cubic-bezier(.22,1,.36,1)' }}
-            onPointerDown={(e) => { 
-                e.preventDefault(); 
-                try {
-                    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                } catch(err) {}
-                setShowOriginal(true); 
-            }} 
-            onPointerUp={(e) => { 
-                e.preventDefault(); 
-                try {
-                    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-                } catch(err) {}
-                setShowOriginal(false); 
-            }} 
-            onPointerCancel={(e) => { 
-                setShowOriginal(false); 
-            }}
-            className={`absolute bottom-2 right-2 p-3 flex items-center justify-center select-none touch-none transition-all active:scale-90 ${showOriginal ? 'text-white' : 'text-white/40'} ${activeToolId === 'curves' ? 'z-50' : isColourPanelTool(activeToolId) ? 'z-[45]' : 'z-20'}`}
-        >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-              <path d="M12 6H4.5C3.67157 6 3 6.67157 3 7.5V16.5C3 17.3284 3.67157 18 4.5 18H12" stroke="white" strokeWidth="1.5" />
-              <line x1="12" y1="3" x2="12" y2="21" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-              <path d="M12 6H19.5C20.3284 6 21 6.67157 21 7.5V16.5C21 17.3284 20.3284 18 19.5 18H12" stroke="currentColor" strokeWidth="1.5" />
-            </svg>
-        </button>);
-        return activeToolId === 'curves' && detailPanelHost ? createPortal(compareButton, detailPanelHost) : compareButton;
+        if (activeToolId === 'curves' && detailPanelHost) return createPortal(renderCompare('float'), detailPanelHost);
+        if (compareInRow) return null;
+        return renderCompare('float');
         })()}
 
         {/* --- HSL 面板 ---
@@ -11367,6 +11554,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           移成 safe-top 的直屬覆蓋層後，仍只覆蓋標題列與底部分頁列之間。 */}
       {activeCategory === 'compose' && draftGeo && (composePreviewRef.current || originalImgRef.current) && (
         <ComposeStudio
+          entrance
           image={composePreviewRef.current || originalImgRef.current!}
           geo={draftGeo}
           onChange={changeDraftGeo}
@@ -11399,8 +11587,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       >
         <div ref={setDetailPanelHost} style={{ position: 'absolute', left: 0, right: 0, top: '5rem', height: 0, zIndex: 60 }} />
         <div 
-          className={`flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] px-8`}
+          data-slider-row
+          className={`relative flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] px-8`}
           style={{
+              /* 批量：右邊放對比鍵，滑桿往左讓出位置 */
+              paddingRight: compareInRow ? 56 : undefined,
               /* 時間長度走 inline style，不要用 duration-0 / duration-[380ms] 這種 class。
                  這個 App 掛的是 Tailwind 的瀏覽器版 JIT，規則是「在 DOM 看到那個 class
                  才產生」的：duration-0 剛好就是進構圖的那一刻第一次出現，規則會晚一幀，
@@ -11423,6 +11614,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               borderBottom: sliderRowHidden ? '0px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(255, 255, 255, 0.05)'
           }}
         >
+          {compareInRow && renderCompare('row')}
           {activeTool && !['lightLeak', 'softLight'].includes(activeToolId) && activeToolId !== 'curves' && !isColourPanelTool(activeToolId) && (
               <div className="w-full">
                   <FastSlider 
@@ -11856,6 +12048,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             ['compose', '構圖', activeCategory === 'compose', enterCompose],
             ['mask', '遮色片', activeCategory === 'mask', () => { setActiveCategory('mask'); setActiveToolId(params.maskCreated ? MASK_TOOLS[0].id : MASK_DEFAULT_TOOL[(params.maskType ?? 'linear') as MaskType]); }],
           ];
+          /* 批量編輯沒有遮色片、人像、仿色：這三個都是針對單張照片的局部編輯，不適合一次套到多張 */
+          if (isBatch) tabs.splice(tabs.findIndex(t => t[0] === 'mask'), 1);
           if (fullTabs) {
             const go = (c: Category) => () => {
               // 記住從哪一頁進美顏／仿色，按「完成」「取消」就回到那一頁
@@ -11863,7 +12057,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               setActiveCategory(c); setActiveToolId(c);
             };
             tabs.unshift(['template', '模板', activeCategory === 'template', go('template')]);
-            tabs.push(
+            if (!isBatch) tabs.push(
               ['beauty', '人像', activeCategory === 'beauty', go('beauty')],
               ['match', '仿色', activeCategory === 'match', go('match')],
             );
@@ -11881,7 +12075,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       {/* 人像、仿色：直接用那兩個工具，蓋住編輯器（分類列留著，切分頁會自動套用）。
           兩個都一直掛著、只切換看不看得到：進出都是立刻的，不會先黑一下再載入。
           兩邊的欄位高度跟編輯器一樣，預覽大小相同，切換時圖片不會跳。 */}
-      {fullTabs && (studiosWarm || STUDIO_CATS.includes(activeCategory)) && (
+      {fullTabs && !isBatch && (studiosWarm || STUDIO_CATS.includes(activeCategory)) && (
         <>
           <div data-studio-host="beauty" className={`absolute inset-x-0 top-0 ${studioHold === 'beauty' && activeCategory === 'match' ? 'z-[71]' : 'z-[70]'} ${studioHostCls('beauty')}`} aria-hidden={activeCategory !== 'beauty'}
             style={{ bottom: footerHeight + 1, pointerEvents: activeCategory === 'beauty' ? 'auto' : 'none' }}>

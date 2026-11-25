@@ -1,4 +1,5 @@
 import { EDIT_BAR_H } from './EditBar';
+import { riseIn, fadeIn } from '../utils/tabEntrance';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ASPECT_PRESETS,
@@ -38,6 +39,8 @@ const HEADER_H = 56;
 const FOOTER_H = EDIT_BAR_H + 1;   // ＋分類列上緣那條 1px 細線（留著不蓋掉）
 
 interface ComposeStudioProps {
+  /** 進場動畫（編輯器的構圖分頁用；拼圖工具不開，維持原樣） */
+  entrance?: boolean;
   /* 影片也走這一支：<video> 跟 <img> 一樣畫得上畫布，
      寬高改讀 videoWidth / videoHeight（下面那行已經一起處理）。 */
   image: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement;
@@ -117,9 +120,32 @@ export const COMPOSE_WARMUP_CLASSES =
   'transition-[background-color,color,border-color] transition-colors uppercase w-12 w-14 ' +
   'w-full w-px';
 
-export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H, stageLimit, stageInset, showFooterDivider = false, alignCenter }) => {
+export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H, stageLimit, stageInset, showFooterDivider = false, alignCenter, entrance = false }) => {
   const [tab, setTab] = useState<Tab>('crop');
   const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h' | null>(null);
+  /* ── 進場動畫（只動按鈕與控制，照片不動）──
+     一進構圖：上面「取消／重設／完成」淡入；中間那一列的控制依序浮上來；下面四個小分頁依序浮上來；
+     裁切框四個角的括號從外面輕輕扣回框角（構圖特有的那一下，表示「可以拖了」）。
+     切換小分頁（裁切／角度／翻轉／梯形）時，中間那一列的新控制同樣浮上來；角度、梯形的刻度尺從中間往兩邊展開 */
+  const rootRef = useRef<HTMLDivElement>(null);
+  const firstTabRef = useRef(true);
+  useLayoutEffect(() => {
+    if (!entrance) return;
+    const root = rootRef.current;
+    if (!root) return;
+    const first = firstTabRef.current;
+    firstTabRef.current = false;
+    const controls = root.querySelector('[data-compose-controls]');
+    const items: Element[] = controls ? Array.from(controls.querySelectorAll<Element>('button, [data-compose-ruler]')) : [];
+    const ruler = controls?.querySelector('[data-compose-ruler]');
+    riseIn(items.filter(el => el !== ruler), { delay: first ? 60 : 0, stagger: 22 });
+    if (ruler) fadeIn(ruler, { scaleX: 0.9, dur: 380, delay: first ? 90 : 30 });
+    if (!first) return;
+    fadeIn(root.querySelector('[data-compose-head]'), { dur: 260 });
+    riseIn(root.querySelectorAll('[data-compose-tabs] button'), { delay: 120, stagger: 30, y: 8 });
+    root.querySelectorAll('[data-compose-corner]').forEach((el, k) => fadeIn(el, { scale: 1.35, dur: 420, delay: 140 + k * 25 }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, keystoneAxis]);
   const audioRef = useRef<AudioContext | null>(null);
   const lastTickRef = useRef<number | null>(null);
   const rulerDragRef = useRef<{ startX: number; startValue: number; width: number } | null>(null);
@@ -432,6 +458,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     sensitivity = 0.72
   ) => (
     <div
+      data-compose-ruler
       className="relative h-12 flex-1 min-w-0 overflow-hidden cursor-ew-resize select-none"
       style={{ touchAction: 'none' }}
       onPointerDown={(e) => {
@@ -519,6 +546,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
        另外兩支則對齊到它。上下讓出來的部分會露出各工具自己的標題列與分頁列，
        跟「編輯」的行為一致。 */
     <div
+      ref={rootRef}
       className="fixed left-0 right-0 bg-black flex flex-col"
       style={{ zIndex, top: HEADER_H, bottom: footerHeight, borderBottom: showFooterDivider ? '1px solid rgba(255,255,255,0.1)' : undefined }}
     >
@@ -655,6 +683,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                   }}
                 >
                   <div
+                    data-compose-corner={corner ? '' : undefined}
                     className={`absolute bg-white ${corner ? '' : 'shadow-[0_1px_4px_rgba(0,0,0,0.6)]'}`}
                     style={corner
                       // 外掛式括號：兩段線方向與框角一致，但整體位於框外；
@@ -692,7 +721,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       </div>
 
       <div className="shrink-0">
-      <header className="shrink-0 flex items-center justify-between px-5 w-full max-w-3xl mx-auto" style={{ height: 41 }}>
+      <header data-compose-head className="shrink-0 flex items-center justify-between px-5 w-full max-w-3xl mx-auto" style={{ height: 41 }}>
         <button
           onClick={onCancel}
           className="text-[11px] font-bold tracking-[0.2em] text-white/50 hover:text-white transition-colors px-2 py-1"
@@ -713,7 +742,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           完成
         </button>
       </header>
-        <div className="flex items-center" style={{ height: 86 }}>
+        <div data-compose-controls className="flex items-center" style={{ height: 86 }}>
           {tab === 'crop' && (
             <div className="w-full flex overflow-x-auto no-scrollbar px-4">
               <div className="flex gap-2 mx-auto pr-6">
@@ -811,7 +840,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
              所以不用留 safe-area 的空間，留了會多出一塊黑的。 */}
         {/* 41 + 86 + 64 = 191，就是舞台可用高＝100vh − 340px 的由來，
              所以這三列的高度都要在第一幀就成立 —— 一律走 inline style。 */}
-        <div className="border-t border-white/10 bg-black" style={{ height: 64 }}>
+        <div data-compose-tabs className="border-t border-white/10 bg-black" style={{ height: 64 }}>
           <div className="flex h-full w-full max-w-2xl mx-auto">
           {([
             ['crop', 'crop', '裁切'],
