@@ -8554,7 +8554,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             /* 每一張的結果：show＝成品頁顯示的圖；save＝真正存進相簿的檔（一張對一張）。
                App 裡成品直接留在原生（存相簿時用那個檔，不再讀回網頁、再搬回去），顯示用原生順便出的小圖。
                stamp：日期沒有在原生那一次印到、要另外印（網頁自己編碼的那幾張） */
-            type Entry = { show: string; save: string; stamp: boolean };
+            type Entry = { show: string; save: string; stamp: boolean; route?: string };
+            const saveT0 = performance.now();
             dropNativeOuts();
             const srcs = srcListRef.current;
             const nfmt = exportFormat === 'heic' ? 'heic10' : exportFormat === 'jpg' ? 'jpeg' : 'png';
@@ -8564,7 +8565,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               nativeOutsRef.current.push(r.path);
               let show = saveUrl;
               if (r.previewPath) { show = fileSrc(r.previewPath); nativeOutsRef.current.push(r.previewPath); }
-              return { show, save: saveUrl, stamp: false };
+              return { show, save: saveUrl, stamp: false, route: 'native' };
             };
             /* 網頁那一段（沖 RAW 給網頁、解原圖、算成品像素）一次只做一張：記憶體尖峰跟以前一樣是一張 */
             let webTail: Promise<void> = Promise.resolve();
@@ -8598,7 +8599,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 /* ① 只有顏色類調整：原生從原圖（RAW 從 RAW 檔）用浮點整條做完，網頁一個像素都不用算 */
                 if (isNative() && nativeColorOnly(p)) {
                   const r = ri ? await rawNativeSave(ri, snap, nfmt, { date }) : await nativeWideSave(srcs[i], snap, nfmt, { date });
-                  if (r) return fromNative(r);
+                  if (r) return { ...fromNative(r), route: ri ? 'raw-native' : 'native-color' };
                 }
                 let rawFullPath: string | undefined;
                 try {
@@ -8626,7 +8627,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     } finally {
                       if (made.path) void nativeImage().then(n => n?.remove({ path: made.path! })).catch(() => {});
                     }
-                    if (res) { if (made.url) revokeUrls([made.url]); return fromNative(res); }
+                    if (res) { if (made.url) revokeUrls([made.url]); return { ...fromNative(res), route: made.path ? 'pixels' : 'png' }; }
                     /* 原生全部失敗（理論上不會）：PNG 直接用網頁的成品，其他格式往下由網頁編碼 */
                     if (made.url && exportFormat === 'png') return { show: made.url, save: made.url, stamp: true };
                     if (made.url) revokeUrls([made.url]);
@@ -8673,6 +8674,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             }
             const out = entries.map(e => e.show);
             const encoded = entries.map(e => e.save);
+            /* 實機量測：每一張走哪條路、整批花多久（Safari 網頁檢閱器看得到） */
+            try { console.info(`[abai-save] ${entries.length} 張 ${Math.round(performance.now() - saveT0)}ms lanes=${lanes}`, entries.map(e => e.route || 'web').join(',')); } catch { /* 只是記錄 */ }
             /* 網頁自己編碼的那幾張：日期另外印（App 裡原生那一次已經印好的不重複印） */
             if (stampDate) {
               for (let k = 0; k < entries.length; k++) {
