@@ -52,6 +52,23 @@ enum ABAIGlass {
     }
 
     /// 水平儀的圖示（SF Symbols 沒有好看的）：一根水平管、中間一顆氣泡
+    /// 尺：圓角長條＋三條刻度（中間長、兩邊短），簡單好認
+    static func rulerIcon(size: CGFloat = 22) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { ctx in
+            let c = ctx.cgContext
+            let u = size / 24
+            c.setStrokeColor(UIColor.white.cgColor)
+            c.setLineWidth(1.7 * u)
+            c.setLineCap(.round)
+            let body = CGRect(x: 2.5 * u, y: 8 * u, width: 19 * u, height: 8 * u)
+            c.addPath(UIBezierPath(roundedRect: body, cornerRadius: 1.8 * u).cgPath)
+            c.strokePath()
+            for (x, len) in [(CGFloat(7.5), CGFloat(2.6)), (12, 4.2), (16.5, 2.6)] {
+                c.move(to: CGPoint(x: x * u, y: body.minY)); c.addLine(to: CGPoint(x: x * u, y: body.minY + len * u))
+            }
+            c.strokePath()
+        }.withRenderingMode(.alwaysTemplate)
+    }
     /// 水平線：一條地平線，中間留一個小圓（跟專業相機的水平儀同一種語彙），簡單、跟其他線條圖示同樣粗細
     static func levelIcon(size: CGFloat = 20) -> UIImage {
         let r = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
@@ -84,8 +101,8 @@ enum ABAIGlass {
     }
 
     static func image(_ symbol: String, pointSize: CGFloat = 19, weight: UIImage.SymbolWeight = .regular) -> UIImage? {
-        /* 水平線：用 iOS 系統的「尺」圖示（ruler）；萬一沒有才用自己畫的 */
-        if symbol == "abai.level" { return UIImage(systemName: "ruler", withConfiguration: UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight)) ?? levelIcon(size: pointSize + 2) }
+        /* 水平線：一把簡單的尺（系統的 ruler 刻度太密），線條粗細跟其他圖示一樣 */
+        if symbol == "abai.level" { return rulerIcon(size: pointSize + 3) }
         if symbol == "abai.film" {
             /* 一格底片（直的）：左右兩條齒孔帶、每邊三個齒孔，中間是畫面。
                比 SF Symbol 大一點、線條留空隙，跟旁邊的編輯、愛心看起來一樣重 */

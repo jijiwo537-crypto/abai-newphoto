@@ -323,7 +323,9 @@ function runEnter(root: HTMLElement, E: R) {
       /* 有縮圖的那一列（濾鏡／特效卡片）裡面的內容不另外動，整列跟著面板升起：
          縮圖是縮放顯示的圖片／畫布，單獨做位移動畫時畫在暫時的 GPU 圖層上，
          動畫結束、圖層拿掉的那一刻會重新對齊像素，看起來就是「縮圖抖一下」 */
-      if (k.querySelector('canvas, img')) return;
+      /* 判斷「縮圖列」不能只看現在有沒有圖：介面剛出現時縮圖還沒畫好。可以左右捲動的那一列（縮圖列）一律整列動 */
+      const scroller = (el: HTMLElement) => /(auto|scroll)/.test(getComputedStyle(el).overflowX);
+      if (k.querySelector('canvas, img') || scroller(k) || (Array.from(k.children) as HTMLElement[]).some(scroller)) return;
       for (const c of Array.from(k.children) as HTMLElement[]) {
         if (hasBackdrop(c) || c.querySelector('[class*="backdrop-"],[style*="backdrop"]')) continue;
         const co = shownOpacity(c);

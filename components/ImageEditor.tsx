@@ -8411,6 +8411,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 第一次準備好之後就不再蓋黑底轉圈：從儲存頁按「繼續編輯」回來時預覽區會重新量一次尺寸，
      那一下（80ms）不能又閃一個轉圈 —— 那時圖早就在了，只是在確認大小 */
   const [firstReady, setFirstReady] = useState(false);
+  /* 從主頁導入、有照片飛進來（importHero）：不蓋載入中的黑幕。照片區由飛進來的替身蓋著、預覽本身在準備好前也是藏著的，
+     其他介面直接開始進場動畫 —— 蓋黑幕的話動畫在黑幕底下播完，拿掉時看起來就不是從無到有 */
+  const [heroCovering] = useState(() => typeof document !== 'undefined' && document.documentElement.hasAttribute('data-import-hero'));
   /* 打開的是 RAW：第一張 RAW 畫面（GPU／原生沖好、換上去）出來才算好 —— 換底圖的那一下發生在載入畫面底下，看不到
      （不然剛打開就去點濾鏡，剛好撞上換底圖，看起來就是閃一下）。最多等 8 秒 */
   const [rawFirstDone, setRawFirstDone] = useState(!rawOn);
@@ -9513,7 +9516,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         .channel-dot.active { transform: scale(1.1); }
       `}</style>
       
-      {saveState === 'idle' && !firstReady && (isEditorLoading || !previewLayoutReady || !rawFirstDone) && (
+      {saveState === 'idle' && !firstReady && !heroCovering && (isEditorLoading || !previewLayoutReady || !rawFirstDone) && (
         /* 首次解碼期間必須完全遮住預覽；半透明遮罩會把底下 canvas 從初始尺寸
            切換到正確比例的那一幀透出來，看起來就像圖片上下抖了一下。 */
         <div data-editor-initial-loading className="fixed inset-0 z-[120] flex items-center justify-center bg-black">
