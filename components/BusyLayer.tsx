@@ -86,7 +86,7 @@ let held: HTMLDivElement | null = null;
 let holders = 0;
 let releaseTimer = 0;
 function ensureHeld(label: string): void {
-  if (releaseTimer) { cancelAnimationFrame(releaseTimer); releaseTimer = 0; }
+  if (releaseTimer) { if (releaseTimer < 0) clearTimeout(-releaseTimer); else cancelAnimationFrame(releaseTimer); releaseTimer = 0; }
   if (held && held.isConnected) return;
   const host = (document.querySelector('.abai-frame') as HTMLElement | null) ?? document.body;
   const el = document.createElement('div');
@@ -105,13 +105,15 @@ function ensureHeld(label: string): void {
 function releaseHeld(): void {
   holders = Math.max(0, holders - 1);
   if (holders > 0 || releaseTimer) return;
-  /* 等兩格：同一次更新裡接手的那一層（存相簿）會先登記，就不拿掉 */
-  releaseTimer = requestAnimationFrame(() => {
-    releaseTimer = requestAnimationFrame(() => {
-      releaseTimer = 0;
-      if (holders === 0 && held) { held.remove(); held = null; }
-    });
-  });
+  /* App 裡算完圖一定接著存相簿：多等一下（成品頁、存相簿那段晚幾格才登記也接得上），一路播到存好為止。
+     網頁版沒有存相簿那段：等兩格就拿掉 */
+  const drop = () => { releaseTimer = 0; if (holders === 0 && held) { held.remove(); held = null; } };
+  if ((window as any).Capacitor?.isNativePlatform?.()) {
+    const t = window.setTimeout(drop, 1200);
+    releaseTimer = -t;   // 負數＝計時器（跟 requestAnimationFrame 的編號分開）
+    return;
+  }
+  releaseTimer = requestAnimationFrame(() => { releaseTimer = requestAnimationFrame(drop); });
 }
 /** 現在有沒有一層「儲存中」正在顯示（存相簿那一段用：有就接著用同一層） */
 export const heldBusyShowing = () => !!(held && held.isConnected);

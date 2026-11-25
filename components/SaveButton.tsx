@@ -16,9 +16,12 @@ import { saveToPhotos, noteExportForReview } from '../utils/nativePhotos';
 /** 已經自動存過的成品（同一份不重複存，例如成品頁重新顯示時） */
 const autoSaved = new Set<string>();
 /** 成品頁準備好之前（App 還要等存相簿）蓋著的那一層：接手剛剛的「匯出中」，照原樣繼續顯示（見 BusyLayer） */
+/** 上一層是有百分比／取消鍵的匯出畫面（兩個拼圖的影片匯出）：那種才照原樣接手 */
+const wantsSnapshot = () => !!document.querySelector('[data-busy-layer]:not([data-held-busy])');
 function coverLayer() {
-  /* 前一段的「儲存中」還在：直接接著用同一個元素（動畫不中斷） */
-  if (heldBusyShowing()) return <HeldBusy claimOnly />;
+  /* 存相簿一律用「儲存中」那一個元素：前一段還在就接著用（動畫不中斷），不在就自己開一個，播到存好為止。
+     不再照抄上一層的內容接力 */
+  if (heldBusyShowing() || !wantsSnapshot()) return <HeldBusy />;
   return (
     /* 全黑、不透明：後面的成品頁不能透出來。掀開時不淡出（淡出等於兩層疊在一起），成品頁準備好的那一格直接換過去。 */
     <BusyLayer continueLast data-abai-save-cover="" className="z-[10000] bg-black flex items-center justify-center" aria-label="儲存中">
