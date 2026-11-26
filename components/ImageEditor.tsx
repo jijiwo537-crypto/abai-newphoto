@@ -11407,9 +11407,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       onContextMenu={(e) => e.preventDefault()}
                       title={`第 ${i + 1} 張`}
                       data-batch-thumb={i}
-                      className={`block w-9 h-9 rounded-[4px] overflow-hidden bg-[#1a1a1a] transition-all active:scale-95 touch-manipulation select-none ${
-                        active ? 'ring-1 ring-inset ring-white' : ''
-                      }`}
+                      className="relative block w-9 h-9 rounded-[4px] overflow-hidden bg-[#1a1a1a] transition-all active:scale-95 touch-manipulation select-none"
                     >
                       {/* 沒選中的不用半透明 —— 實心、壓暗就好，才不會透出後面的畫面。
                           src 一定要用縮好的小圖，不能掛原圖（見上面 stripThumbs 的說明）。
@@ -11422,6 +11420,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           className={`w-full h-full object-cover pointer-events-none transition-all ${active ? '' : 'filter brightness-[0.5]'}`}
                         />
                       )}
+                      {active && <span aria-hidden className="absolute inset-0 pointer-events-none rounded-[4px] border-[1.5px] border-white" />}
                     </button>
                   </div>
                 );
