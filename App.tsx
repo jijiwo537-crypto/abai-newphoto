@@ -77,7 +77,7 @@ import {
 import { listExports, loadExport, subscribeExports, type ExportMeta } from './utils/exportHistory';
 import type { ExitChoice } from './types';
 import { watchAppUpdates } from './utils/appUpdate';
-import { detectUnexpectedExit, markToolActive, markToolInactive } from './utils/crashRecovery';
+import { markToolActive, markToolInactive } from './utils/crashRecovery';
 import { trimMemory, watchMemoryPressure } from './utils/memoryPressure';
 import { isNative } from './utils/native';
 import { nativeDialog, closeNativeDialog } from './utils/nativeGlass';
@@ -146,9 +146,6 @@ const App: React.FC = () => {
     return tool ? { kind: tool, at: t } : null;
   });
   const [resuming, setResuming] = useState(false);
-  /* 上次是不是在工具裡被系統強制關掉的（見 utils/crashRecovery）。一定要在第一次 render 就讀：
-     下面那個 effect 一回到首頁就會把記號清掉 */
-  const [crashed] = useState(() => detectUnexpectedExit());
 
   /* 首頁的「最近輸出」。每次回到首頁重讀一次，剛導出的那張才會馬上出現 */
   const [recentExports, setRecentExports] = useState<ExportMeta[]>([]);
@@ -652,18 +649,8 @@ const App: React.FC = () => {
   };
 
   /** 不接續：兩份草稿都收掉，從乾淨的首頁開始 */
-  /* 被系統關掉之後自動接回剛才的編輯（連續被關掉的話不自動，改回先問，見 crashRecovery） */
-  const autoResumed = useRef(false);
-  const autoPending = !!(crashed?.auto && resume && resume.kind === crashed.tool && resume.at >= crashed.since - 1000);
-  useEffect(() => {
-    if (autoResumed.current || !crashed?.auto || !resume) return;
-    /* 只接回「被關掉的那個工具、進去之後才存的」草稿。還沒存過就被關掉時，
-       留著的可能是更早、別的作品，那就照一般流程讓使用者自己選 */
-    if (resume.kind !== crashed.tool || resume.at < crashed.since - 1000) return;
-    autoResumed.current = true;
-    void handleResume();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [crashed, resume]);
+  /* 強制關閉與正常重開走同一條「詢問後接回」流程。
+     原本直接自動接回會繞開使用者確認，並在 WebView 恢復時留下舊預覽畫布。 */
   /* 在工具裡就打心跳；回到首頁＝正常離開 */
   useEffect(() => { if (currentView === 'home') markToolInactive(); else markToolActive(currentView); }, [currentView]);
   /* 回到主頁：導入過場的替身（掛在整個頁面上的那張照片）一定收掉。它只用在「從主頁飛進工具」，
@@ -741,7 +728,7 @@ const App: React.FC = () => {
     ob.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     return () => { ob.disconnect(); window.clearTimeout(t); };
   }, []);
-  const resumeAsk = homeShown && !!resume && currentView === 'home' && !(autoPending && !autoResumed.current);
+  const resumeAsk = homeShown && !!resume && currentView === 'home';
   const [webResumeFallback, setWebResumeFallback] = useState(false);
   const resumeActs = useRef({ go: handleResume, drop: handleDiscardResume });
   resumeActs.current = { go: handleResume, drop: handleDiscardResume };
