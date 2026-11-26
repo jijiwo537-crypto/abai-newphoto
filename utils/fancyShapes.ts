@@ -28,7 +28,7 @@ export const FANCY_PARAM: Record<string, { count: [number, number, number]; gap:
   'fancy-grid': { count: [2, 10, 5], gap: 54 },        // 每排幾顆
   'fancy-polka': { count: [2, 10, 6], gap: 52 },       // 幾排
   'fancy-boxrandom': { count: [5, 60, 30], gap: 35 },
-  'fancy-wand': { count: [0, 100, 80], gap: 1 },       // 0＝14 顆、100＝42 顆（gap 不用，填 1 讓打包後不會是 0）  // 總共幾顆
+  'fancy-wand': { count: [0, 100, 70], gap: 1 },       // 0＝14 顆、100＝42 顆（gap 不用，填 1 讓打包後不會是 0）  // 總共幾顆
 };
 /** 數量、間距、隨機種子打包成一個數字（畫圖時接在 kind 後面，見 scoreKindOf） */
 /* 方形隨機另外還有「隨機大小」「大小」兩個值：用第二種打包格式（加 2e15 當記號），
@@ -82,8 +82,8 @@ const evenOnPoly = (pts: [number, number][], n: number, offset = 0): [number, nu
   }
   return out;
 };
-/** 魔法棒的預設排列（沒按過隨機時、面板按鈕的圖示）：重新隨機挑的一組 */
-const WAND_DEFAULT_SEED = 20261126;
+/** 魔法棒的預設排列（沒按過隨機時、面板按鈕的圖示）：試了多組、挑分布最均勻、開頭最乾淨的一組 */
+const WAND_DEFAULT_SEED = 101;
 const designs: Record<string, (seed: number) => Design> = {
   /* 1 放射：從中心往外 10 條，越外面越大 */
   'fancy-radial': () => {
@@ -309,15 +309,24 @@ const designs: Record<string, (seed: number) => Design> = {
     const { seed, count } = unpack('fancy-wand', v);
     const R = rng(seed || WAND_DEFAULT_SEED), units: (Unit & { t: number })[] = [];
     const total = Math.round(14 + 28 * Math.max(0, Math.min(100, count)) / 100);
-    let guard = 0;
-    while (units.length < 42 && guard++ < 6000) {
-      const t = Math.sqrt(R());                                   // 越往右下越多（密度跟 t 成正比）
-      const spread = 1.5 + t * 19;                                // 越往右下散得越開（但不要太寬）
-      const along = 3 + t * 92 + (R() - 0.5) * 4, side = (R() - 0.5) * 2 * spread;   // 從左上角一路拉到右下角
-      const x = along + side * 0.7071, y = along - side * 0.7071;
-      const r = 0.9 + R() * (1.4 + t * 2.6);
-      if (x < r || y < r || x > 100 - r || y > 100 - r) continue;
-      if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.15)) units.push({ x, y, r, t: x + y });
+    /* 最左上一定是單獨一顆（之後的星星離它有一段距離才開始），從它開始一路往右下散開 */
+    units.push({ x: 5, y: 5, r: 1.35, t: 0 });
+    /* 分層排：把「從左上到右下」切成 41 段，每一段各放一顆（段內位置隨機）——
+       密度照 t 的平方根分配（越往右下越密），但每一段一定有星星，不會有一大塊空著。
+       側向的偏移左右交錯、再加一點隨機，兩側也不會整片空掉 */
+    const N = 41;
+    for (let i = 0; i < N; i++) {
+      let placed = false;
+      for (let tries = 0; tries < 60 && !placed; tries++) {
+        const t = Math.pow((i + 0.15 + R() * 0.7) / N, 0.68);   // 越往右下越密；開頭不留一大段空白
+        const spread = 1.5 + t * 19;
+        const along = 9 + t * 86 + (R() - 0.5) * 2;
+        const side = ((i % 2 ? 1 : -1) * (0.25 + R() * 0.75)) * spread;
+        const x = along + side * 0.7071, y = along - side * 0.7071;
+        const r = 0.9 + R() * (1.4 + t * 2.6);
+        if (x < r || y < r || x > 100 - r || y > 100 - r) continue;
+        if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.25)) { units.push({ x, y, r, t: x + y }); placed = true; }
+      }
     }
     const sorted = [...units].sort((a, b) => a.t - b.t), n = sorted.length, k = Math.min(n, total);
     const keep = k >= n ? sorted : Array.from({ length: k }, (_, i) => sorted[Math.round(i * (n - 1) / Math.max(1, k - 1))]);
