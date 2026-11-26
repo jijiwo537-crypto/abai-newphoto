@@ -94,7 +94,12 @@ export function useNativeGlass(group: string, active: boolean, items: () => Glas
 /* ── 儲存旁邊 ⋯ 的選項面板：原生黑色液態玻璃（ios/App/App/NativeGlassPlugin.swift 的 menu）──
  * 每一列是一組分段按鈕（例如 匯出格式：JPG／PNG／HEIC）。選了就馬上呼叫 onChange（面板留著，可以再改）；
  * 點面板外面收起來。回傳 false＝沒有原生（網頁版、舊版 App）：呼叫端照舊打開網頁的選單 */
-export type GlassMenuItem = { id: string; type: 'choice'; title: string; value: string; options: { label: string; value: string; enabled?: boolean }[] };
+export type GlassMenuItem =
+  | { id: string; type: 'choice'; title: string; value: string; options: { label: string; value: string; enabled?: boolean }[] }
+  /** 開關：值是 true／false（onChange 收到 'true'／'false'） */
+  | { id: string; type: 'switch'; title: string; value: boolean }
+  /** 點一下就做事、面板收起來：onChange 收到 'tap' */
+  | { id: string; type: 'action'; title: string };
 let menuSubs: { remove: () => void }[] = [];
 export async function openGlassMenu(anchor: HTMLElement, items: GlassMenuItem[], onChange: (id: string, value: string) => void): Promise<boolean> {
   if (!isNative()) return false;

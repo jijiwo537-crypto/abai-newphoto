@@ -580,6 +580,32 @@ final class ABAISettingsPanel: UIView {
         label.font = .systemFont(ofSize: 15, weight: .regular)
         label.textColor = .white
         label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        /* action：點一下就做事、面板收起來（例如拼圖 ⋯ 裡的「預覽」） */
+        if (item["type"] as? String) == "action" {
+            let b = UIButton(type: .system)
+            b.contentHorizontalAlignment = .leading
+            b.addAction(UIAction { [weak self] _ in
+                UISelectionFeedbackGenerator().selectionChanged()
+                self?.onChange?(id, "tap")
+                self?.dismiss()
+            }, for: .touchUpInside)
+            let r = UIStackView(arrangedSubviews: [icon, label])
+            r.spacing = 10
+            r.alignment = .center
+            r.isUserInteractionEnabled = false
+            let wrap = UIView()
+            wrap.heightAnchor.constraint(equalToConstant: 46).isActive = true
+            r.translatesAutoresizingMaskIntoConstraints = false
+            b.translatesAutoresizingMaskIntoConstraints = false
+            wrap.addSubview(r); wrap.addSubview(b)
+            NSLayoutConstraint.activate([
+                r.leadingAnchor.constraint(equalTo: wrap.leadingAnchor), r.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+                r.topAnchor.constraint(equalTo: wrap.topAnchor), r.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+                b.leadingAnchor.constraint(equalTo: wrap.leadingAnchor), b.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+                b.topAnchor.constraint(equalTo: wrap.topAnchor), b.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+            ])
+            return wrap
+        }
         if (item["type"] as? String) == "choice" {
             let options = (item["options"] as? [Any] ?? []).compactMap { $0 as? [String: Any] }
             let seg = UISegmentedControl(items: options.map { $0["label"] as? String ?? "" })

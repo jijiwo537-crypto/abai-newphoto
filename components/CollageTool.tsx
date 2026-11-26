@@ -18,6 +18,7 @@ import { LinkGlowTiles } from '../utils/linkGlowTiles';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions,openCollageExportMenu} from './CollageExportOptions';
+import { openGlassMenu } from '../utils/nativeGlass';
 import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} from '../utils/collageVideoFormat';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, dashSpeedToUi, dashSpeedFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual, PATTERN_IDLE_DEFAULTS } from '../utils/animationDefaults';
 import { glintBreath, glintBlink, GLINT_IDLE_KINDS } from '../utils/objectMotion';
@@ -11913,7 +11914,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             {/* 三個點：預覽與對齊。 */}
             <div className="relative" ref={moreWrapRef}>
               <button
-                onClick={() => {setExportOptionsOpen(false);setExportAsk(false);setMoreOpen(o => !o);}}
+                onClick={(e) => {
+                  setExportOptionsOpen(false);setExportAsk(false);
+                  /* App 裡跟儲存旁 ⋯ 一樣用原生液態玻璃面板（預覽、對齊）；網頁版照舊打開下面的網頁選單 */
+                  const el = e.currentTarget;
+                  void openGlassMenu(el, [
+                    ...(igSupported ? [{ id: 'preview', type: 'action' as const, title: '預覽' }] : []),
+                    { id: 'snap', type: 'switch' as const, title: '對齊', value: enableSnapping },
+                  ], (id, v) => {
+                    if (id === 'preview') openIgPreview();
+                    else if (id === 'snap') setEnableSnapping(() => { const on = v === 'true'; if (!on) { guidesRef.current = []; setGuides([]); } return on; });
+                  }).then(ok => { if (!ok) setMoreOpen(o => !o); });
+                }}
                 className={`w-9 h-9 flex items-center justify-center transition-colors active:scale-90 ${moreOpen ? 'text-white' : 'text-white/70'}`}
                 title="更多"
               >
