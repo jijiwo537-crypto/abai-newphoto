@@ -133,8 +133,11 @@ export function draftTool(): ToolKind | null {
 }
 
 let saving = false;
-/** 照片存不進去（多半是手機空間不足）之後，暫停到這個時間才再試：不然每秒都把十幾張大圖重讀一次，拖慢編輯、吃記憶體 */
-let backoffUntil = 0;
+/** 照片存不進去（多半是手機空間不足）之後，暫停到這個時間才再試：不然每秒都把十幾張大圖重讀一次，拖慢編輯、吃記憶體。
+ *  越失敗越慢：第一次 5 秒、再來 15 秒、之後 30 秒；成功一次就恢復成每秒都存 */
+let backoffUntil = 0, failures = 0;
+const BACKOFF_MS = [5000, 15000, 30000];
+const noteFailure = () => { backoffUntil = Date.now() + BACKOFF_MS[Math.min(failures, BACKOFF_MS.length - 1)]; failures++; };
 let queued: { tool: ToolKind; src: string | null; state: any; resumable: boolean } | null = null;
 
 /* 創意拼圖的 state 內還可能有多張浮動圖片。它們同樣是 blob: 網址，
@@ -280,7 +283,7 @@ export async function saveDraft(tool: ToolKind, src: string | null, state: any, 
       } catch { /* handled below */ }
       /* 讀不到照片時絕不能照樣更新 meta/旗標，否則會把上一份可用草稿
          變成「物件可選、圖片全透明」的壞草稿。 */
-      if (!stored) { backoffUntil = Date.now() + 30000; return; }
+      if (!stored) { noteFailure(); return; }
     } else {
       const existing = await tx<Blob>('readonly', s => s.get(BLOB_KEY) as IDBRequest<Blob>);
       if (!(existing instanceof Blob) || !existing.size) return;
@@ -298,11 +301,12 @@ export async function saveDraft(tool: ToolKind, src: string | null, state: any, 
     let persistedState = keep?.state ?? null;
     if (state != null) {
       try { persistedState = await externalizeState(state); }
-      catch { backoffUntil = Date.now() + 30000; return; }
+      catch { noteFailure(); return; }
     }
     const meta: ToolDraftMeta = { tool, savedAt: Date.now(), state: persistedState };
     const metaWritten = await tx<IDBValidKey>('readwrite', s => s.put(meta, META_KEY));
-    if (metaWritten == null) return;
+    if (metaWritten == null) { noteFailure(); return; }
+    failures = 0; backoffUntil = 0;
     /* 新的參數寫好之後才清：先清再寫的話，中途 App 被關掉，草稿會指向已經刪掉的照片 */
     await pruneAssets(assetRefs(persistedState));
     try {
@@ -352,7 +356,7 @@ export async function clearDraft(): Promise<void> {
   queued = null;
   while (saving) await new Promise(resolve => setTimeout(resolve, 0));
   queued = null;
-  backoffUntil = 0;
+  backoffUntil = 0; failures = 0;
   storedAssets.clear();
   try {
     localStorage.removeItem(FLAG_KEY);
