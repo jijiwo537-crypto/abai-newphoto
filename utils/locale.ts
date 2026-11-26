@@ -19,6 +19,9 @@ export function changeLocale(locale: Locale) {
   cover.setAttribute('role', 'status');
   cover.style.opacity = '1';
   cover.style.transition = 'none';
+  /* 開機畫面的 logo 平常是藏著、等淡入的（見 index.html 的 #boot img）：這裡要直接看得到 */
+  const logo = cover.querySelector('img');
+  if (logo) { logo.classList.remove('boot-in'); logo.style.animation = 'none'; logo.style.opacity = '1'; }
   document.body.appendChild(cover);
   }
   // 只有首頁能換語言。一起重新載入固定的選項目錄；絕不翻譯或修改作品的文字、ID、符號或圖案

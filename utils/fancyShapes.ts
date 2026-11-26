@@ -18,7 +18,7 @@ const FANCY_LEGACY = ['fancy-heart', 'fancy-wave', 'fancy-scatter', 'fancy-arch'
 const baseOf = (k: string) => k.split('!')[0].split('@')[0];   // '!' 後面是動畫進度（見 utils/fancyMotion）
 export const isFancyKind = (k?: string) => !!k && k.startsWith('fancy-') && ((FANCY_KINDS as readonly string[]).includes(baseOf(k)) || FANCY_LEGACY.includes(baseOf(k)));
 /** 可以按「隨機排列」的花式排列 */
-export const fancyCanRandom = (k?: string) => !!k && (baseOf(k) === 'fancy-mobile' || baseOf(k) === 'fancy-boxrandom');
+export const fancyCanRandom = (k?: string) => !!k && (baseOf(k) === 'fancy-mobile' || baseOf(k) === 'fancy-boxrandom' || baseOf(k) === 'fancy-constellation');
 /** 可以調「數量」「間距」的花式排列 */
 export const fancyHasParams = (k?: string) => !!k && ['fancy-grid', 'fancy-polka', 'fancy-boxrandom', 'fancy-wand'].includes(baseOf(k));
 /** 選中框固定是整個貼圖框（不貼著星星量）：隨機或調數量間距時星星位置一直變，框不能跟著變 */
@@ -327,12 +327,26 @@ const designs: Record<string, (seed: number) => Design> = {
     return { dw: 100, dh: 100, units };
   },
   /* 11 星座連線：幾顆不規則分布，用細線連起來（線不碰到星星） */
-  'fancy-constellation': () => {
-    const units: Unit[] = [
+  /* 隨機排列（seed 不是 0）：8 顆隨機散開（彼此不重疊、不貼邊），大小隨機；
+     連線照「左到右」串成一條，最後三顆再繞回去接成一個小圈 —— 跟預設那組同一種星座的樣子。沒有種子就是原本那組 */
+  'fancy-constellation': (seed) => {
+    let units: Unit[] = [
       { x: 10, y: 30, r: 4.2 }, { x: 28, y: 22, r: 3 }, { x: 44, y: 36, r: 3.6 }, { x: 60, y: 30, r: 5.4 },
       { x: 70, y: 52, r: 3.2 }, { x: 88, y: 58, r: 4.6 }, { x: 80, y: 80, r: 3.4 }, { x: 58, y: 74, r: 2.8 },
     ];
-    const links: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 4]];
+    let links: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 4]];
+    if (seed) {
+      const R = rng(seed), pts: Unit[] = [];
+      let guard = 0;
+      while (pts.length < 8 && guard++ < 4000) {
+        const r = 2.6 + R() * 3, x = 8 + R() * 84, y = 12 + R() * 76;
+        if (pts.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.6 + 9)) pts.push({ x, y, r });
+      }
+      pts.sort((a, b) => a.x - b.x);
+      units = pts;
+      links = pts.slice(1).map((_, i) => [i, i + 1] as [number, number]);
+      if (pts.length >= 4) links.push([pts.length - 1, pts.length - 3]);
+    }
     const lines: Line[] = links.map(([a, b]) => {
       const A = units[a], B = units[b], d = Math.hypot(B.x - A.x, B.y - A.y), ux = (B.x - A.x) / d, uy = (B.y - A.y) / d;
       return { x1: A.x + ux * A.r * 1.35, y1: A.y + uy * A.r * 1.35, x2: B.x - ux * B.r * 1.35, y2: B.y - uy * B.r * 1.35, w: 0.45 };
