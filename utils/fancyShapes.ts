@@ -86,8 +86,6 @@ const evenOnPoly = (pts: [number, number][], n: number, offset = 0): [number, nu
   }
   return out;
 };
-/** 魔法棒的預設排列（沒按過隨機時、面板按鈕的圖示）：試了多組、挑分布最均勻、開頭最乾淨的一組 */
-const WAND_DEFAULT_SEED = 101;
 const designs: Record<string, (seed: number) => Design> = {
   /* 1 放射：從中心往外 10 條，越外面越大 */
   'fancy-radial': () => {
@@ -305,42 +303,47 @@ const designs: Record<string, (seed: number) => Design> = {
   },
   /* 魔法棒：在固定的方框裡，從左上到右下散落星星，左上少、越往右下越多、散開的範圍越大 */
   'fancy-wand': (v) => {
-    /* 先排出完整的 42 顆，數量調少時照「從左上到右下」的順序平均挑掉 ——
+    /* 最一開始的排法：從左上到右下隨機撒，越往右下越多、散得越開。
+       先排出完整的 42 顆，數量調少時照「從左上到右下」的順序平均挑掉 ——
        剩下的還是從頭到尾一整條（頭尾一定留），越往右下越密的樣子也不變。
-       滑桿 0～100：0＝14 顆（再少就看不出形狀），100＝42 顆 */
-    /* 隨機排列：有種子就用種子排（星星的位置、大小都換一組，從左上到右下、越往右下越多越散的樣子不變）。
-       沒有種子＝預設那一組（WAND_DEFAULT_SEED，面板上的按鈕圖示也是這一組） */
+       滑桿 0～100：0＝14 顆（再少就看不出形狀），100＝42 顆。
+       有隨機種子（按過「隨機排列」）就換一組亂數，沒有就是原本那一組 */
     const { seed, count, jit = 50 } = unpack('fancy-wand', v);
     const jk = Math.max(0, Math.min(100, jit)) / 50;   // 隨機大小：1＝原本的差異
-    const R = rng(seed || WAND_DEFAULT_SEED), units: (Unit & { t: number; big?: boolean })[] = [];
+    const R = rng(seed || 41), units: (Unit & { t: number; big?: boolean })[] = [];
     const total = Math.round(14 + 28 * Math.max(0, Math.min(100, count)) / 100);
-    /* 最左上一定是單獨一顆（之後的星星離它有一段距離才開始），從它開始一路往右下散開 */
-    units.push({ x: 5, y: 5, r: 1.35, t: 0 });
-    /* 分層排：把「從左上到右下」切成 41 段，每一段各放一顆（段內位置隨機）——
-       密度照 t 的平方根分配（越往右下越密），但每一段一定有星星，不會有一大塊空著。
-       側向的偏移左右交錯、再加一點隨機，兩側也不會整片空掉 */
-    const N = 41;
-    for (let i = 0; i < N; i++) {
-      let placed = false;
-      for (let tries = 0; tries < 60 && !placed; tries++) {
-        const t = Math.pow((i + 0.15 + R() * 0.7) / N, 0.68);   // 越往右下越密；開頭不留一大段空白
-        const spread = 1.5 + t * 19;
-        const along = 9 + t * 86 + (R() - 0.5) * 2;
-        const side = ((i % 2 ? 1 : -1) * (0.25 + R() * 0.75)) * spread;
-        const x = along + side * 0.7071, y = along - side * 0.7071;
-        /* 大小：亂數用法跟原本一樣（位置不變），只是差異的幅度照「隨機大小」縮放 */
-        const range = 1.4 + t * 2.6, mid = 0.9 + range / 2;
-        let r = Math.max(0.6, mid + (R() - 0.5) * range * jk);
-        /* 大的星星不要擠在一起：附近（12 以內）已經有大星星的話，這一顆改成小的 */
-        const big = (k: number, tt: number) => k > 0.9 + (1.4 + tt * 2.6) * 0.72;
-        if (big(r, t) && units.some(u => u.big && Math.hypot(u.x - x, u.y - y) < 12)) r = Math.max(0.6, mid - range * 0.22 * Math.max(0.5, jk));
-        if (x < r || y < r || x > 100 - r || y > 100 - r) continue;
-        if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.25)) { units.push({ x, y, r, t: x + y, big: big(r, t) }); placed = true; }
-      }
+    const big = (k: number, tt: number) => k > 0.9 + (1.4 + tt * 2.6) * 0.72;
+    let guard = 0;
+    while (units.length < 42 && guard++ < 6000) {
+      const t = Math.sqrt(R());                                   // 越往右下越多（密度跟 t 成正比）
+      const spread = 1.5 + t * 19;                                // 越往右下散得越開（但不要太寬）
+      const along = 3 + t * 92 + (R() - 0.5) * 4, side = (R() - 0.5) * 2 * spread;   // 從左上角一路拉到右下角
+      const x = along + side * 0.7071, y = along - side * 0.7071;
+      /* 大小：亂數用法跟原本一樣（位置不變），差異的幅度照「隨機大小」縮放 */
+      const range = 1.4 + t * 2.6, mid = 0.9 + range / 2;
+      let r = Math.max(0.6, mid + (R() - 0.5) * range * jk);
+      /* 大的星星不要擠在一起：附近（12 以內）已經有大星星的話，這一顆改成小的 */
+      if (big(r, t) && units.some(u => u.big && Math.hypot(u.x - x, u.y - y) < 12)) r = Math.max(0.6, mid - range * 0.22 * Math.max(0.5, jk));
+      if (x < r || y < r || x > 100 - r || y > 100 - r) continue;
+      if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.15)) units.push({ x, y, r, t: x + y, big: big(r, t) });
     }
     const sorted = [...units].sort((a, b) => a.t - b.t), n = sorted.length, k = Math.min(n, total);
-    const keep = k >= n ? sorted : Array.from({ length: k }, (_, i) => sorted[Math.round(i * (n - 1) / Math.max(1, k - 1))]);
-    return { dw: 100, dh: 100, units: keep.map(({ x, y, r }) => ({ x, y, r })) };
+    const keep: Unit[] = (k >= n ? sorted : Array.from({ length: k }, (_, i) => sorted[Math.round(i * (n - 1) / Math.max(1, k - 1))])).map(({ x, y, r }) => ({ x, y, r }));
+    /* 開頭那段（左上）常常空一大段：沿著「左上→右下」的方向，開頭 35% 範圍裡任兩顆相鄰的星星
+       隔得比 6.5 還遠，就在中間補小星星（從前一顆的大小慢慢過渡），看起來是從第一顆一路自然接下去 */
+    const along = (u: Unit) => (u.x + u.y) / 2;
+    for (let i = 0; i + 1 < keep.length && along(keep[i]) < 35; i++) {
+      const p = keep[i], q = keep[i + 1], gap = along(q) - along(p);
+      if (gap <= 6.5) continue;
+      const fill = Math.min(4, Math.ceil(gap / 5.5) - 1), add: Unit[] = [];
+      for (let j = 1; j <= fill; j++) {
+        const f = j / (fill + 1), wob = (j % 2 ? 1 : -1) * 1.6;   // 左右輕輕交錯，不是排成一直線
+        add.push({ x: p.x + (q.x - p.x) * f + wob * 0.7071, y: p.y + (q.y - p.y) * f - wob * 0.7071, r: Math.min(1.5, p.r + (q.r - p.r) * f) });
+      }
+      keep.splice(i + 1, 0, ...add);
+      i += add.length;
+    }
+    return { dw: 100, dh: 100, units: keep };
   },
   /* 10 同心圓：三圈，外圈的比較大 */
   'fancy-concentric': () => {
