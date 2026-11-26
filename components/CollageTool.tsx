@@ -59,7 +59,7 @@ import { SYMBOLS } from '../utils/symbols';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
 import {
-  TextEditorPanel, TextEditSheet, ImageAdjustPanel, FX_PARAM_DEFAULTS,
+  TextEditorPanel, TextEditSheet, ImageAdjustPanel, FX_PARAM_DEFAULTS, effectStrengthKey,
   /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
@@ -3157,7 +3157,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      打開某個調節（曝光、對比…）時，閒下來就先把「全部照片都在 −100／目前的值／+100」三種整張場景畫好（原解析度）。
      手指拖的時候只是把這三張交疊（跟單張編輯一樣，見 PhotoAdjustmentBlend），不必每一格把每張照片重算一次；
      放手就照實際的值精確重畫，存出來的、停下來看到的都是精確的結果。 */
-  const allBlendTool = simpleAllEditing && adjustSub === 'tune' && BLEND_ADJUSTMENTS.has(tuneTool) ? tuneTool : '';
+  /* 調節（−100～100）或特效的「強度」（0～100）；特效最外層調的是別的參數（例如馬賽克格數）、或打開細項時不交疊 */
+  const allBlendFx = simpleAllEditing && adjustSub === 'effect' && !effectDetail ? (effectStrengthKey(effectCard) || '') : '';
+  const allBlendTool = simpleAllEditing && adjustSub === 'tune' && BLEND_ADJUSTMENTS.has(tuneTool) ? tuneTool : allBlendFx;
+  const allBlendRangeRef = useRef<[number, number]>([-100, 100]);
+  allBlendRangeRef.current = allBlendFx && allBlendTool === allBlendFx ? [0, 100] : [-100, 100];
   const allBlend = useRef<PhotoAdjustmentBlend | null>(null);
   const allBlendStamp = useRef<{ key: string; scale: number; w: number; h: number } | null>(null);
   const allBlendKeyRef = useRef('');
@@ -3184,7 +3188,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         renderToCanvasRef.current(capture, scale, true);
       } finally { photoRegionRef.current = prev; }
       return capture;
-    });
+    }, allBlendRangeRef.current);
   };
   useEffect(() => {
     if (!allBlendTool) { allBlend.current?.clear(); allBlendStamp.current = null; return; }
@@ -3770,7 +3774,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 預設排版：滿版（排版那一排的第一個）。滿版固定 3:4，原本的比例記起來，離開滿版時還原 */
       /* 預設排版：一開始就匯入好幾張 → 滿版；只有一張 → 右側遮罩（照舊）。
          滿版固定 3:4，原本的比例記起來，離開滿版時還原；兩邊的圖案數量各記各的。 */
-      const nextLayout = preserveLayout ? layout : grouped ? FULL : 'mask-right';
+      /* 創意拼圖：一張、好幾張都預設排版那一排的第二個（右側遮罩）。簡易拼圖沒有遮罩，一律滿版 */
+      const nextLayout = preserveLayout ? layout : simple ? FULL : 'mask-right';
       if (!preserveLayout && nextLayout === FULL && layout !== FULL) {
         setCanvasRatioBeforeFull(canvasRatio);
         setCanvasRatio('3:4');
@@ -4013,6 +4018,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 只有「換一張照片」才把歷史清掉。改「數量」也會重灑圖案，
      但那是一次可以上一步的操作，不該把之前做過的事一起抹掉。 */
   const histImageRef = useRef<any>(null);
+  /** 「數量」滑桿按下去那一刻的數量和圖案：放手時數字沒變就把圖案放回去、不記上一步；變了就只記一格 */
+  const holeCountDrag = useRef<{ start: number; holes: any[] } | null>(null);
+  const holeCountNow = useRef(holeCount); holeCountNow.current = holeCount;
+  const onHoleCountChange = (v: number) => {
+    if (!holeCountDrag.current) holeCountDrag.current = { start: holeCountNow.current, holes: holesRef.current };
+    setHoleCount(v);
+  };
+  const onHoleCountCommit = () => {
+    /* 最後一格的重灑要先跑完（effect 在這一輪 render 之後），再判斷 */
+    window.setTimeout(() => {
+      const d = holeCountDrag.current; holeCountDrag.current = null;
+      if (!d) return;
+      if (holeCountNow.current === d.start) { setHoles(d.holes); return; }
+      pushHistory(holesRef.current);
+    }, 0);
+  };
   useEffect(() => { 
     setSelectedTarget(null);
     const fresh = histImageRef.current !== imageState;
@@ -4024,7 +4045,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (initialState) return;
       if (!fresh) return;
     }
-    generateRandomHoles(fresh); 
+    /* 正在拖「數量」滑桿：每一格照樣重灑（看得到），但不記上一步；放手時只記一格（見 holeCountDrag） */
+    generateRandomHoles(fresh, undefined, fresh ? 'reset' : holeCountDrag.current ? 'none' : 'push');
     /* 這裡刻意「不」放 layout：換排版時是在按鈕裡跟 setLayout 同一批更新
        一起重灑的，放進來反而會多跑一輪 —— 那多出來的一格畫面就是
        「新版面配舊座標的圖案」，看起來就是閃一下。 */
@@ -12016,7 +12038,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
             <div aria-hidden="true" className="w-px h-4 mx-1 shrink-0" />
             {/* 三個點：預覽與對齊。 */}
-            {/* 簡易拼圖不放這顆 ⋯ */}
+            {/* 簡易拼圖不放這顆 ⋯，但留一樣寬的空位：復原／重做的位置跟創意拼圖一樣 */}
+            {simple && <div aria-hidden className="w-9 h-9 shrink-0" />}
             {!simple && <div className="relative" ref={moreWrapRef}>
               <button
                 onClick={(e) => {
@@ -12123,8 +12146,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         )}
         {exportOptionsOpen&&<CollageExportOptions imageOnly={simple} label="創意拼圖匯出設定" panelRef={exportOptionsRef} imageFormat={imageExportFormat} videoFormat={videoExportFormat} fps={videoExportFps} quality={videoExportQuality} onImage={setImageExportFormat} onVideo={setVideoExportFormat} onFps={setVideoExportFps} onQuality={setVideoExportQuality}/>}
         {/* 多選最多九張照片，全部加入同一個圖片排版區域。 */}
-        <input type="file" accept={MEDIA_ACCEPT} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
-        <input type="file" accept={MEDIA_ACCEPT} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={MEDIA_ACCEPT} multiple data-max={CREATIVE_PHOTO_LIMIT} className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
+        {/* 更換圖片：一樣可以多選 1～9 張（第一張當底，其餘排進圖片排版） */}
+        <input type="file" accept={MEDIA_ACCEPT} multiple data-max={CREATIVE_PHOTO_LIMIT} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
         <input type="file" accept={RAW_ACCEPT_IMG} multiple aria-label="填入圖片排版" className="hidden" ref={regionUploadRef} onChange={uploadRegionPhotos} />
         <input type="file" accept="image/*" aria-label="上傳遮罩圖片" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
       </header>
@@ -14147,7 +14171,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       中間留 7px 誰都不管的空白。左右維持 gap-4，寬度完全沒變。 */}
                   <div className="grid grid-cols-2 gap-x-7 gap-y-6">
                     <CompactSlider wide label="大小" value={Math.round(displayHoleSize)} min={0} max={100} onChange={handleHoleSizeChange} />
-                    <CompactSlider wide label="數量" value={holeCount} min={0} max={30} onChange={setHoleCount} step={1} />
+                    <CompactSlider wide label="數量" value={holeCount} min={0} max={30} onChange={onHoleCountChange} onCommit={onHoleCountCommit} step={1} />
                     <CompactSlider wide label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
                     <CompactSlider wide label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
                   </div>

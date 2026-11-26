@@ -624,6 +624,9 @@ const FX_AMOUNT: Record<string, string> = {
   softLight: 'soft', halation: 'fringeIntensity', lightLeak: 'leakOpacity',
 };
 const fxAmountId = (id: string) => FX_AMOUNT[id] || id;
+/** 這顆特效卡片最外層那根滑桿是不是「強度」（0～100）：是的話回傳它調的鍵；外層是別的參數（例如馬賽克格數）回傳 null */
+export const effectStrengthKey = (card: string | null | undefined): string | null =>
+  !card || FX_ROOT_PARAM_IDS.has(card) ? null : fxAmountId(card);
 
 /** 點下卡片時要套的強度，跟編輯同一組 */
 const FX_ON_AMOUNT: Record<string, number> = {
@@ -639,6 +642,7 @@ const FX_ALL_AMOUNTS = ['soft', 'fringeIntensity', 'leakOpacity', 'colorNoise', 
 
 /** 最外層那根滑桿要改調哪一個參數（沒設就是調「強度」）。
     來源是 FX_DEFS 裡的 rootParam —— 兩個工具讀同一份，不會各自走味。 */
+const FX_ROOT_PARAM_IDS = new Set(FX_DEFS.filter(d => d.rootParam).map(d => d.id));
 const FX_ROOT_PARAM: Record<string, { id: string; label: string; min: number; max: number; def: number }> =
   Object.fromEntries(
     FX_DEFS.filter(d => d.rootParam).map(d => {
@@ -3973,7 +3977,7 @@ export type ImageAdjustPanelProps = {
   hideShape?: boolean;
   /** 影片物件沒有「構圖」——構圖是把裁切的結果烤成一張圖，烤完就不是影片了 */
   hideCompose?: boolean;
-  /** 只留「濾鏡」「調節」兩個分類（簡易拼圖） */
+  /** 只留「濾鏡」「調節」「特效」三個分類（簡易拼圖：沒有造型、構圖） */
   onlyFilterTune?: boolean;
   /** 滑桿排成一排：名稱、軌道、數值全部同一列，上面不再有一排字 */
   inlineSlider?: boolean;
@@ -4226,10 +4230,10 @@ const CATS = ([
   // 構圖圖標跟「編輯」那邊用同一顆（crop）
   ['compose', 'crop', '構圖'],
 ] as const).filter(c => !(hideShape && c[0] === 'shape') && !(hideCompose && c[0] === 'compose') && !(isAlphaImg && c[0] === 'effect')
-    && !(onlyFilterTune && c[0] !== 'filter' && c[0] !== 'tune'))
+    && !(onlyFilterTune && c[0] !== 'filter' && c[0] !== 'tune' && c[0] !== 'effect'))
   .map(c => (isAlphaImg && c[0] === 'shape' ? [c[0], c[1], '外觀'] : c) as readonly [string, string, string]);
 useEffect(() => { if (isAlphaImg && adjustSub === 'effect') setAdjustSub('filter' as any); }, [isAlphaImg, adjustSub]);
-useEffect(() => { if (onlyFilterTune && adjustSub !== 'filter' && adjustSub !== 'tune') setAdjustSub('filter' as any); }, [onlyFilterTune, adjustSub]);
+useEffect(() => { if (onlyFilterTune && adjustSub !== 'filter' && adjustSub !== 'tune' && adjustSub !== 'effect') setAdjustSub('filter' as any); }, [onlyFilterTune, adjustSub]);
 const shapeTools = isAlphaImg ? SHAPE_TOOLS.filter(t => t[0] === 'stroke' || t[0] === 'glow') : SHAPE_TOOLS;
 const shapeSubTools = (menu: string) => (SHAPE_SUB_TOOLS[menu] || []).filter(t => !(isAlphaImg && t[0] === 'imgStrokeDash'));
 /* 打開特效頁：在這張圖實際用的 GPU 畫布上，把每個特效預先畫一次（跟編輯頁同一套）。
@@ -5652,6 +5656,25 @@ const putCardThumb=(key:string,canvas:HTMLCanvasElement)=>{
   cardThumbCache.set(key,canvas);
 };
 const cardSourceThumbCache=new Map<string,HTMLCanvasElement>();
+/** 卡片底圖：原圖（動輒 4000 點）一次縮成兩百多點，iPhone 的瀏覽器會縮得糊糊的、邊緣有鋸齒。
+    改成每次縮一半、用高品質取樣，最後一步才縮到卡片大小（等比例填滿、置中裁切） */
+const drawCardCover=(dst:HTMLCanvasElement,img:HTMLImageElement)=>{
+  const w=dst.width,h=dst.height,scale=Math.max(w/img.naturalWidth,h/img.naturalHeight);
+  // 整張縮到最後的大小（等比例填滿卡片）
+  const tw=img.naturalWidth*scale,th=img.naturalHeight*scale;
+  let src:CanvasImageSource=img,sw=img.naturalWidth,sh=img.naturalHeight;
+  const temps:HTMLCanvasElement[]=[];
+  // 還能再縮一半而且不會小於最後的大小：先縮一半
+  while(sw/2>=tw&&sh/2>=th){
+    const nw=Math.max(1,Math.round(sw/2)),nh=Math.max(1,Math.round(sh/2));
+    const t=document.createElement('canvas');t.width=nw;t.height=nh;
+    const tg=t.getContext('2d')!;tg.imageSmoothingEnabled=true;tg.imageSmoothingQuality='high';tg.drawImage(src,0,0,nw,nh);
+    temps.push(t);src=t;sw=nw;sh=nh;
+  }
+  const g=dst.getContext('2d')!;g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';
+  g.drawImage(src,(w-tw)/2,(h-th)/2,tw,th);
+  for(const t of temps)t.width=t.height=1;
+};
 const CardSourceThumb:React.FC<{src:string}>=({src})=>{
   const ref=useRef<HTMLCanvasElement|null>(null);
   useLayoutEffect(()=>{
@@ -5664,8 +5687,7 @@ const CardSourceThumb:React.FC<{src:string}>=({src})=>{
       let base=cardSourceThumbCache.get(key);
       if(!base){
         base=document.createElement('canvas');base.width=CARD_W*CARD_DPR;base.height=CARD_H*CARD_DPR;
-        const scale=Math.max(base.width/img.naturalWidth,base.height/img.naturalHeight);
-        base.getContext('2d')!.drawImage(img,(base.width-img.naturalWidth*scale)/2,(base.height-img.naturalHeight*scale)/2,img.naturalWidth*scale,img.naturalHeight*scale);
+        drawCardCover(base,img);
         if(cardSourceThumbCache.size>=20){const key=cardSourceThumbCache.keys().next().value!;const old=cardSourceThumbCache.get(key)!;old.width=old.height=1;cardSourceThumbCache.delete(key);}
         cardSourceThumbCache.set(key,base);
         dropBigPreviewImg(img);
@@ -5696,8 +5718,7 @@ const makeCardThumb = (img: HTMLImageElement, fx: PhotoFx): HTMLCanvasElement | 
   // 先等比例填滿卡片（object-cover），再把效果套在這張小圖上
   let cut=cardSourceThumbCache.get(img.src);
   if(!cut){cut=document.createElement('canvas');cut.width=w;cut.height=h;
-    const s=Math.max(w/img.naturalWidth,h/img.naturalHeight),dw=img.naturalWidth*s,dh=img.naturalHeight*s;
-    cut.getContext('2d')!.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);
+    drawCardCover(cut,img);
     if(cardSourceThumbCache.size>=20){const key=cardSourceThumbCache.keys().next().value!;const old=cardSourceThumbCache.get(key)!;old.width=old.height=1;cardSourceThumbCache.delete(key);}
     cardSourceThumbCache.set(img.src,cut);
     dropBigPreviewImg(img);

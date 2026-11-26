@@ -97,8 +97,10 @@ export function installNativeFilePicker() {
          App 讀完就清掉；data-pick-start 是這一次要先停在哪一種（用一次就清掉） */
       const modes = input.hasAttribute('data-pick-modes') && limit !== 1;
       const start = input.getAttribute('data-pick-start');
+      /* data-pick-hint：多選時下方那一條左邊寫的字（例如跨頁拼圖「選 1～20 張照片」） */
+      const trayHint = input.getAttribute('data-pick-hint') || undefined;
       input.removeAttribute('data-pick-start');
-      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.getAttribute('data-import-hero') || undefined, quiet: maxAttr > 0, rawLimit,
+      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.getAttribute('data-import-hero') || undefined, quiet: maxAttr > 0, rawLimit, trayHint,
         ...(modes ? {
           modes: true,
           initialMode: start === 'collage' || start === 'batch' ? start : 'edit',

@@ -142,9 +142,11 @@ export const NativeGallery: React.FC<{
       編輯＝點一下就進（單張）；拼圖＝選 2～9 張進簡易拼圖；批量編輯＝照原本的多選（上限 limit）。
       選好時用 onMode 告訴呼叫端是哪一種 */
   modes?: boolean;
+  /** 多選時下方那一條左邊寫的字（拼圖模式有自己的那一句） */
+  trayHint?: string;
   initialMode?: PickMode;
   onMode?: (mode: PickMode) => void;
-}> = ({ api, limit: baseLimit, filter, onClose, noAlpha = false, hero, quiet = false, rawLimit: baseRawLimit = 0, onInstant, onInstantFail, modes = false, initialMode = 'edit', onMode }) => {
+}> = ({ api, limit: baseLimit, filter, onClose, noAlpha = false, hero, quiet = false, rawLimit: baseRawLimit = 0, onInstant, onInstantFail, modes = false, initialMode = 'edit', onMode, trayHint = '' }) => {
   const [mode, setModeState] = useState<PickMode>(initialMode);
   /* 這一種模式能選幾張：編輯 1 張、拼圖最多 9 張、批量照呼叫端給的上限 */
   const limit = !modes ? baseLimit : mode === 'edit' ? 1 : mode === 'collage' ? COLLAGE_MAX : baseLimit;
@@ -485,11 +487,11 @@ export const NativeGallery: React.FC<{
           </div>
           {/* 編輯的導入相簿：三種導入方式。沒有按鈕外框，就是三個字：沒選的淡、選中的亮 */}
           {modes && ok && (
-            <div className="h-12 px-6 grid grid-cols-3 items-center border-t-[0.5px] border-white/15" role="tablist" aria-label="導入方式" data-pick-modes>
+            <div className="h-12 px-3 flex items-center justify-evenly border-t-[0.5px] border-white/15" role="tablist" aria-label="導入方式" data-pick-modes>
               {PICK_MODES.map(([id, label]) => (
                 <button key={id} type="button" role="tab" aria-selected={mode === id} data-pick-mode={id} disabled={exporting}
                   onClick={() => setMode(id)}
-                  className="h-12 text-[14px] font-semibold active:opacity-60"
+                  className="h-12 px-3 text-[14px] font-semibold active:opacity-60"
                   style={{ color: mode === id ? '#fff' : 'rgba(255,255,255,.38)', transition: 'color .22s ease' }}>
                   {label}
                 </button>
@@ -599,7 +601,7 @@ export const NativeGallery: React.FC<{
             style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)', transform: trayShown ? 'translateY(0)' : 'translateY(100%)',
               transition: `transform .38s ${EASE}`, pointerEvents: trayShown ? 'auto' : 'none', touchAction: 'pan-x' }}>
             <div className="px-4 pt-3.5 pb-3.5 flex items-center justify-between gap-3">
-              <span className="text-[12.5px] text-white/60 leading-none">{modes && mode === 'collage' ? `選 ${COLLAGE_MIN}～${COLLAGE_MAX} 張照片` : ''}</span>
+              <span className="text-[12.5px] text-white/60 leading-none">{modes && mode === 'collage' ? `選 ${COLLAGE_MIN}～${COLLAGE_MAX} 張照片` : trayHint}</span>
               <button type="button" disabled={picked.length < minPick || exporting} onClick={() => void finish(picked)} key={shake}
                 className="h-8 px-4 text-[13.5px] font-bold active:opacity-70"
                 style={{ background: picked.length >= minPick ? '#fff' : 'rgba(255,255,255,.18)', color: picked.length >= minPick ? '#000' : 'rgba(255,255,255,.45)',

@@ -53,6 +53,8 @@ import { processImageFile as processImageFileRaw, normalizeImageFiles } from './
 /* 讀照片（同 processImageFile），順便在導入量測裡標出開始／結束的時間（見 utils/importHero 的 perfStart） */
 const processImageFile: typeof processImageFileRaw = async (...a) => { perfMark('decode0'); try { return await processImageFileRaw(...a); } finally { perfMark('decode1'); } };
 import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT, isRawFile } from './utils/fileTypes';
+/** 跨頁拼圖一次最多導入幾張（相簿下方寫「選 1～20 張照片」） */
+const LAYOUT_IMPORT_MAX = 20;
 import { nativePathOf } from './utils/nativeBridge';
 import { BATCH_MAX, BATCH_RAW_MAX, BATCH_RAW_NOTE, batchCap } from './utils/batchLimit';
 import { rawDevelopPreview, type RawLook } from './utils/nativeCamera';
@@ -875,6 +877,7 @@ const App: React.FC = () => {
         className="hidden"
         accept={MEDIA_ACCEPT}
         multiple
+        data-max={9}
         onChange={(e) => {
           const files = Array.from(e.target.files || []) as File[];
           if (files.length) handleImportToCollage(files);
@@ -901,8 +904,10 @@ const App: React.FC = () => {
         className="hidden" 
         accept={MEDIA_ACCEPT}
         multiple
+        data-max={LAYOUT_IMPORT_MAX}
+        data-pick-hint={`選 1～${LAYOUT_IMPORT_MAX} 張照片`}
         onChange={(e) => {
-          const files = Array.from(e.target.files || []) as File[];
+          const files = (Array.from(e.target.files || []) as File[]).slice(0, LAYOUT_IMPORT_MAX);
           if (files.length > 0) handleImportToLayout(files);
           if (layoutFileInputRef.current) layoutFileInputRef.current.value = '';
         }}

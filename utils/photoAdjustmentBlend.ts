@@ -15,11 +15,14 @@ export class PhotoAdjustmentBlend {
   private anchor = 0;
   private values: number[] = [];
   private held = false;
+  private range: [number, number] = [-100, 100];
   constructor(private ready:()=>void) {}
   get isReady() { return this.stages.length===3; }
   setHeld(value:boolean) { this.held=value; }
-  prepare(source:CanvasImageSource,w:number,h:number,fx:PhotoFx,tool:string,project?:(photo:HTMLCanvasElement,fx:PhotoFx)=>HTMLCanvasElement) {
-    if(!BLEND_ADJUSTMENTS.has(tool))return;
+  /** range：這根滑桿的兩端（調節是 −100～100；特效強度是 0～100，見簡易拼圖的「全部照片」） */
+  prepare(source:CanvasImageSource,w:number,h:number,fx:PhotoFx,tool:string,project?:(photo:HTMLCanvasElement,fx:PhotoFx)=>HTMLCanvasElement,range:[number,number]=[-100,100]) {
+    if(!BLEND_ADJUSTMENTS.has(tool)&&!(range[0]===0&&range[1]===100))return;
+    this.range=range;
     // 限制的是快取記憶體，不是繪製畫質。很大的預覽照樣走精確的原解析度管線，不配置四張巨大的畫布。
     // 投影的拼圖存的是螢幕上的場景，不是比較大的解碼照片，所以兩者分開限制：4K 的來源超過四百萬像素是正常的，
     // 實際的預覽快取還是放得進 64MB
@@ -27,8 +30,8 @@ export class PhotoAdjustmentBlend {
     const sig=JSON.stringify([w,h,tool,{...fx,[tool]:0}]);
     if(this.source===source&&this.signature===sig)return;
     this.clear();this.source=source;this.signature=sig;
-    this.anchor=Math.max(-100,Math.min(100,Number(fx[tool])||0));
-    this.values=[this.anchor,-100,100];
+    this.anchor=Math.max(range[0],Math.min(range[1],Number((fx as any)[tool])||0));
+    this.values=[this.anchor,range[0],range[1]];
     const generation=this.generation;
     const build=async()=>{
       // 精確的端點快照可能觸發好幾百萬像素的 GPU 讀回。很短的計時器「不是」閒置：它會打斷下一次點分頁。
@@ -68,7 +71,7 @@ export class PhotoAdjustmentBlend {
   }
   paint(source:CanvasImageSource,w:number,h:number,fx:PhotoFx,tool:string):HTMLCanvasElement|null {
     if(this.stages.length!==3||this.source!==source||this.signature!==JSON.stringify([w,h,tool,{...fx,[tool]:0}]))return null;
-    const value=Math.max(-100,Math.min(100,Number(fx[tool])||0));
+    const value=Math.max(this.range[0],Math.min(this.range[1],Number((fx as any)[tool])||0));
     const endpoint=value>=this.anchor?2:1;
     const span=this.values[endpoint]-this.anchor;
     const alpha=span?(value-this.anchor)/span:0;
