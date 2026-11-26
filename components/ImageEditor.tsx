@@ -799,7 +799,7 @@ interface ImageEditorProps {
   onImportNew?: () => void;
   originalFile?: File | null;
   /** 接續上次時把存下來的參數餵回來（跳出應用再回來用的） */
-  initialState?: { params?: EditorParams; geo?: GeoParams; selectedLutIdx?: number } | null;
+  initialState?: { params?: EditorParams; geo?: GeoParams; selectedLutIdx?: number; fx?: any; history?: { items: any[]; idx: number }; batch?: any; __histKey?: string | null } | null;
   /** 只有主頁直接進入的獨立編輯器使用：縮短底部分頁列的空白，但保留完整圖標與文字。 */
   compactBottomBar?: boolean;
   /** 主頁進來的編輯：分類列可以左右滑，多了模板、人像、仿色、文字、圖形、符號、圖片 */
@@ -813,6 +813,8 @@ interface ImageEditorProps {
   stampDate?: string;
 }
 
+/** 草稿裡留幾步復原紀錄（太多步、每步都是整份參數，存起來沒必要） */
+const DRAFT_HISTORY_MAX = 60;
 interface HistoryItem {
   params: EditorParams;
   selectedLutIdx: number;
@@ -1549,7 +1551,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const safeIdxRef = useRef(0);
   srcListRef.current = srcList;
   useEffect(() => { setSrcList(incoming); }, [batchSrcs, imageSrc]);
-  const [batchIdx, setBatchIdx] = useState(0);
+  /* 接續上次的批量編輯：照片清單跟存檔時一樣（App 照草稿的清單打開）才用存下來的那些；張數對不上就當作沒有 */
+  const resumeBatch = initialState?.batch && Array.isArray(initialState.batch.list) && initialState.batch.list.length === incoming.length
+    ? initialState.batch : null;
+  const [batchIdx, setBatchIdx] = useState(() => resumeBatch ? Math.max(0, Math.min(incoming.length - 1, Number(resumeBatch.idx) || 0)) : 0);
   /** 再點一次已經選中的那張才會跳出的小選單 */
   const [batchMenu, setBatchMenu] = useState<number | null>(null);
   const safeIdx = Math.min(batchIdx, Math.max(0, srcList.length - 1));
@@ -1618,7 +1623,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 哪幾張還跟著一起連動（預設全部連動） */
   /* 批量：每張各自調整（不再自動連動）。要讓其他張跟這張一樣，按縮圖列右邊的「應用全部」（見 applyToAll）。
      以前預設全部連動：每動一下滑桿，背景就要替其他張重新預熱、RAW 重沖，張數一多就一直在忙 */
-  const [linked, setLinked] = useState<boolean[]>(() => srcList.map(() => false));
+  const [linked, setLinked] = useState<boolean[]>(() => srcList.map((_, i) => resumeBatch?.linked?.[i] ?? false));
+  const linkedRef = useRef(linked); linkedRef.current = linked;
   useEffect(() => {
     setLinked(prev => (prev.length === srcList.length ? prev : srcList.map((_, i) => prev[i] ?? false)));
   }, [srcList.length]);
@@ -1992,8 +1998,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const cloneSnap = (s: BatchSnap): BatchSnap => JSON.parse(JSON.stringify(s));
   /** 遮色片與構圖是「這張照片自己的事」，不跟著連動 —— 每張各存一份 */
-  const ownGeoRef = useRef<Record<number, GeoParams>>({});
-  const ownMaskRef = useRef<Record<number, Partial<EditorParams>>>({});
+  const ownGeoRef = useRef<Record<number, GeoParams>>(resumeBatch?.ownGeo ? JSON.parse(JSON.stringify(resumeBatch.ownGeo)) : {});
+  const ownMaskRef = useRef<Record<number, Partial<EditorParams>>>(resumeBatch?.ownMask ? JSON.parse(JSON.stringify(resumeBatch.ownMask)) : {});
   const isOwnKey = (k: string) => k.startsWith('mask');
   /* 遮色片的欄位有些是選填的（沒有就是預設）：一律列出來，沒有的也寫成 undefined，
      套到別張照片時才會蓋掉、不會把這張的遮色片帶過去 */
@@ -2003,8 +2009,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     for (const k of new Set([...OWN_MASK_KEYS, ...Object.keys(p).filter(isOwnKey)])) out[k] = (p as any)[k];
     return out;
   };
-  const sharedSnapRef = useRef<BatchSnap | null>(null);
-  const soloSnapsRef = useRef<Record<number, BatchSnap>>({});
+  const sharedSnapRef = useRef<BatchSnap | null>(resumeBatch?.shared ? JSON.parse(JSON.stringify(resumeBatch.shared)) : null);
+  const soloSnapsRef = useRef<Record<number, BatchSnap>>(resumeBatch?.solo ? JSON.parse(JSON.stringify(resumeBatch.solo)) : {});
   /** 換照片時要套上去的那一份，以及它是給哪一張的 */
   const pendingSnapRef = useRef<BatchSnap | null>(null);
   const pendingSnapSrcRef = useRef<string | null>(null);
@@ -2068,6 +2074,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const snapOrFresh = (i: number): BatchSnap => (i === safeIdxRef.current && liveRef.current) || soloSnapsRef.current[i] || freshSnapFor(i);
   /** 「應用全部」：把這張的調整（濾鏡、調節、特效）套到其他每一張。構圖（裁切、旋轉）各張維持自己的 */
   const [applyAllTick, setApplyAllTick] = useState(0);
+  const applyAllTickRef = useRef(0); applyAllTickRef.current = applyAllTick;
   const applyToAll = () => {
     stashCurrent();
     const live = liveRef.current;
@@ -2372,6 +2379,56 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const draftSrcSavedRef = useRef<string | null>(null);
   const latestEditorDraftRef = useRef({ params, geo, selectedLutIdx });
   latestEditorDraftRef.current = { params, geo, selectedLutIdx };
+  /* 存進草稿的除了「目前這張的參數」，還有：
+     ‧ 復原紀錄（目前這張的）：接回之後一樣能一步一步復原。只留最後 DRAFT_HISTORY_MAX 步；
+       合併過（來源換成烤好的圖）之前的那幾步不留 —— 那幾步要的是舊的來源圖，存進去等於多存好幾張大圖
+     ‧ 批量：整批照片、目前是第幾張、每一張各自的調整（濾鏡／調節／特效、構圖、遮色片）。
+       以前只存第一張＋目前這組參數，批量修到一半被關掉，接回來只剩一張
+     沒有任何變化時不重寫（以前每秒都整份重寫一次） */
+  const draftSigRef = useRef('');
+  const objIds = useRef(new WeakMap<object, number>());
+  const objSeq = useRef(0);
+  const objId = (o: unknown) => {
+    if (!o || typeof o !== 'object') return String(o);
+    let id = objIds.current.get(o as object);
+    if (id === undefined) { id = ++objSeq.current; objIds.current.set(o as object, id); }
+    return id;
+  };
+  const buildDraftState = () => {
+    const latest = latestEditorDraftRef.current;
+    const list = srcListRef.current;
+    const hist = historyRef.current, hIdx = historyIdxRef.current;
+    let from = 0;
+    for (let k = hist.length - 1; k >= 0; k--) {
+      const srcs = hist[k].srcs;
+      if (srcs && srcs.join('\n') !== list.join('\n')) { from = k + 1; break; }
+    }
+    from = Math.max(from, hIdx - DRAFT_HISTORY_MAX + 1, 0);
+    const histItems = hIdx >= from ? hist.slice(from, Math.min(hist.length, from + DRAFT_HISTORY_MAX * 2)) : [];
+    const live = liveRef.current;
+    return {
+      ...latest,
+      /* 柔光／朦朧／噪點／光暈的開關（以前沒存：接回來效果的參數在、開關卻是關的） */
+      fx: live ? {
+        isSoftActive: live.isSoftActive, isBlurActive: live.isBlurActive, isGrainActive: live.isGrainActive, isHalationActive: live.isHalationActive,
+        softManuallyAdjusted: live.softManuallyAdjusted, blurManuallyAdjusted: live.blurManuallyAdjusted,
+        grainManuallyAdjusted: live.grainManuallyAdjusted, halationManuallyAdjusted: live.halationManuallyAdjusted,
+        userSoft: live.userSoft, userBlur: live.userBlur, userHalation: live.userHalation, userGrain: live.userGrain,
+      } : undefined,
+      /* 每一步的來源清單不存：上面已經篩到「來源跟現在一樣」的那幾步，接回時再填上當下的清單
+         （照片網址重開 App 後會換成新的，存舊的網址反而對不上） */
+      history: histItems.length ? { items: histItems.map(({ srcs: _s, ...rest }) => rest), idx: hIdx - from } : undefined,
+      batch: list.length > 1 ? {
+        list: list.map(src => ({ src })),
+        idx: safeIdxRef.current,
+        solo: soloSnapsRef.current,
+        ownGeo: ownGeoRef.current,
+        ownMask: ownMaskRef.current,
+        shared: sharedSnapRef.current,
+        linked: linkedRef.current,
+      } : undefined,
+    };
+  };
   useEffect(() => {
     if (!imageSrc) return;
     const timer = window.setInterval(() => {
@@ -2384,14 +2441,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         JSON.stringify(latest.params) !== JSON.stringify(DEFAULT_PARAMS) ||
         !isGeoIdentity(latest.geo) ||
         latest.selectedLutIdx !== 0 ||
-        activeSrc !== imageSrc;
+        activeSrc !== imageSrc ||
+        srcListRef.current.length > 1;
+      /* 先用便宜的方式判斷有沒有變（物件是不是換了一份、游標、第幾張），沒變就不整份序列化、也不寫 */
+      const live = liveRef.current;
+      const sig = [objId(latest.params), objId(latest.geo), latest.selectedLutIdx, objId(historyRef.current), historyIdxRef.current,
+        objId(srcListRef.current), safeIdxRef.current, objId(linkedRef.current), applyAllTickRef.current, hasEditedContent,
+        live ? [live.isSoftActive, live.isBlurActive, live.isGrainActive, live.isHalationActive].join('') : ''].join('|');
+      if (!first && sig === draftSigRef.current) return;
+      draftSigRef.current = sig;
+      const state = { ...buildDraftState(), __histKey: histKey || initialState?.__histKey || null };
       /* 未編輯時仍可預存原圖，但不能建立首頁的「繼續編輯」提示。 */
-      saveToolDraft('editor', first ? imageSrc : null, {
-        ...latest,
-        __histKey: histKey || initialState?.__histKey || null,
-      }, hasEditedContent);
+      saveToolDraft('editor', first ? imageSrc : null, state, hasEditedContent);
     }, 1000);
     return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageSrc, activeSrc, historyIndex, initialState, histKey]);
   const applyGeoRef = useRef<(g: GeoParams, remapMasks?: boolean, force?: boolean) => void>(() => {});
   const activeDragRef = useRef<{
@@ -7325,6 +7389,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (resume.geo) { geoRef.current = resume.geo; setGeo(resume.geo); }
       if (typeof resume.selectedLutIdx === 'number') setSelectedLutIdx(resume.selectedLutIdx);
     }
+    /* 柔光／朦朧／噪點／光暈的開關與記憶值：要在下面那段把它們歸零之後才套（見 resumeFx） */
+    const resumeFx = resume?.fx ?? null;
     setSaveState('idle');
     setFinalImage(null);
     setShowOriginal(false);
@@ -7393,6 +7459,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       halationManuallyAdjusted: false
     };
     writeHistory([initialItem], 0);
+    if (resumeFx) {
+      setIsSoftActive(!!resumeFx.isSoftActive); setIsBlurActive(!!resumeFx.isBlurActive);
+      setIsGrainActive(!!resumeFx.isGrainActive); setIsHalationActive(!!resumeFx.isHalationActive);
+      setSoftManuallyAdjusted(!!resumeFx.softManuallyAdjusted); setBlurManuallyAdjusted(!!resumeFx.blurManuallyAdjusted);
+      setGrainManuallyAdjusted(!!resumeFx.grainManuallyAdjusted); setHalationManuallyAdjusted(!!resumeFx.halationManuallyAdjusted);
+      if (typeof resumeFx.userSoft === 'number') userSoftRef.current = resumeFx.userSoft;
+      if (typeof resumeFx.userBlur === 'number') userBlurRef.current = resumeFx.userBlur;
+      if (typeof resumeFx.userHalation === 'number') userHalationRef.current = resumeFx.userHalation;
+      if (resumeFx.userGrain) userGrainRef.current = { ...resumeFx.userGrain };
+    }
+    /* 接回上次的復原紀錄（只有接續的那一張）：每一步的來源清單都要跟現在一樣才接（草稿存的時候已經篩過，這裡再確認一次） */
+    const rh = resume?.history;
+    if (rh && Array.isArray(rh.items) && rh.items.length && rh.items.every((it: HistoryItem) => !it.srcs || it.srcs.join('\n') === srcListRef.current.join('\n'))) {
+      const items = (rh.items as HistoryItem[]).map(it => ({ ...it, srcs: [...srcListRef.current] }));
+      writeHistory(items, Math.max(0, Math.min(items.length - 1, Number(rh.idx) || 0)));
+    }
 
     // 批量編輯：換到另一張時，把那一張該有的參數套回來。
     // 一定要放在最後 —— 上面那些歸零（含柔光／朦朧／噪點／光暈四顆開關跟它們的
@@ -8492,6 +8574,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (choice === 'cancel') return;
     if (choice === 'save') {
       await saveToolDraft('editor', imageSrc, {
+        ...buildDraftState(),
         params: paramsRef.current, geo, selectedLutIdx,
         __histKey: histKey || initialState?.__histKey || null,
       });

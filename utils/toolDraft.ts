@@ -222,6 +222,25 @@ async function internalizeState(value: any, urls = new Map<string, string>()): P
   return value;
 }
 
+/** 這份參數裡用到的附加照片（idbtool:asset:…） */
+function assetRefs(value: any, out = new Set<string>()): Set<string> {
+  if (typeof value === 'string') { if (value.startsWith('idbtool:')) out.add(value.slice(8)); }
+  else if (Array.isArray(value)) value.forEach(v => assetRefs(v, out));
+  else if (value && typeof value === 'object') for (const v of Object.values(value)) assetRefs(v, out);
+  return out;
+}
+/** 清掉「這份草稿已經用不到」的附加照片。以前從來不清：每換一張照片、每次批量編輯都多留一份在手機裡，越積越多。
+ *  keep 給 null＝全部清掉（放棄草稿） */
+async function pruneAssets(keep: Set<string> | null): Promise<void> {
+  const keys = await tx<IDBValidKey[]>('readonly', s => s.getAllKeys());
+  if (!keys) return;
+  for (const k of keys) {
+    if (typeof k !== 'string' || !k.startsWith('asset:') || (keep && keep.has(k))) continue;
+    await tx('readwrite', s => s.delete(k));
+    for (const [src, key] of storedAssets) if (key === k) storedAssets.delete(src);
+  }
+}
+
 /**
  * 存一份草稿。同一時間只留一份（最後動的那個工具）。
  * src 給 null 就沿用上一次存的那張照片，只更新參數 —— 照片沒換的時候不用重存一次。
@@ -281,6 +300,8 @@ export async function saveDraft(tool: ToolKind, src: string | null, state: any, 
     const meta: ToolDraftMeta = { tool, savedAt: Date.now(), state: persistedState };
     const metaWritten = await tx<IDBValidKey>('readwrite', s => s.put(meta, META_KEY));
     if (metaWritten == null) return;
+    /* 新的參數寫好之後才清：先清再寫的話，中途 App 被關掉，草稿會指向已經刪掉的照片 */
+    await pruneAssets(assetRefs(persistedState));
     try {
       if (resumable) {
         localStorage.setItem(FLAG_KEY, String(meta.savedAt));
@@ -335,4 +356,5 @@ export async function clearDraft(): Promise<void> {
   } catch { /* ignore */ }
   await tx('readwrite', s => s.delete(META_KEY));
   await tx('readwrite', s => s.delete(BLOB_KEY));
+  await pruneAssets(null);
 }

@@ -565,8 +565,14 @@ const App: React.FC = () => {
          再次儲存時歷史中就會多出一份完全相同的項目。 */
       setHistKey(draft.state?.__histKey ?? null);
       if (draft.tool === 'editor') {
-        setEditorImage(draft.src);
-        setEditorImages([draft.src]);
+        /* 批量編輯：整批照片照草稿的順序接回來（每一張各自的調整在 state.batch 裡，編輯器自己套回去）。
+           清單不完整（有照片沒存成功）就退回只接第一張，編輯器也會因為張數對不上而不套批量的那些 */
+        const list: string[] = Array.isArray(draft.state?.batch?.list)
+          ? draft.state.batch.list.map((x: { src?: string }) => x?.src).filter((u: unknown): u is string => typeof u === 'string' && !!u)
+          : [];
+        const batch = list.length > 1 && list.length === draft.state.batch.list.length ? list.slice(0, BATCH_MAX) : null;
+        setEditorImage(batch ? batch[0] : draft.src);
+        setEditorImages(batch ?? [draft.src]);
         setEditorFile(null);
         setEditorKey(prev => prev + 1);
         setCurrentView('editor');
