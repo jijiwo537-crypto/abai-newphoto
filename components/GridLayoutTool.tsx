@@ -22,7 +22,7 @@ import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import {CollageExportOptions,openCollageExportMenu} from './CollageExportOptions';
-import { openGlassMenu } from '../utils/nativeGlass';
+import { openGlassMenu, closeGlassMenu } from '../utils/nativeGlass';
 import {collageVideoMime,type CollageVideoFormat,videoScaleFor,videoBitrateFor} from '../utils/collageVideoFormat';
 import {exportHeic} from '../utils/heicExport';
 import { idleDefaults, idleSpeedToUi, idleSpeedFromUi, glintSpeedToUi, glintSpeedFromUi, glintZoomSpeedToUi, glintZoomSpeedFromUi, blinkSpeedToUi, blinkSpeedFromUi, delayToUi, delayFromUi, holdToUi, holdFromUi, hasSpeedRange, rangedSpeedToUi, rangedSpeedFromUi, entrySpeedDefaultUi, SHARED_MID, toShared, fromShared, actualOnScale, floorActual } from '../utils/animationDefaults';
@@ -18066,17 +18066,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   /* App 裡跟儲存旁 ⋯ 一樣用原生液態玻璃面板（預覽、對齊）；網頁版照舊打開下面的網頁選單 */
                   const el = e.currentTarget;
                   void openGlassMenu(el, [
-                    ...(igPreviewSupported ? [{ id: 'preview', type: 'action' as const, title: '預覽' }] : []),
+                    ...(igPreviewSupported ? [{ id: 'preview', type: 'switch' as const, title: '預覽', value: igPreview }] : []),
                     { id: 'snap', type: 'switch' as const, title: '對齊', value: enableSnappingRef.current },
                   ], (id, v) => {
-                    if (id === 'preview') { igPreviewOpeningRef.current = true; setIgPreview(true); }
+                    /* 預覽是開關：打開＝收起選單、進預覽；關掉＝離開預覽 */
+                    if (id === 'preview') { if (v === 'true') { void closeGlassMenu(); igPreviewOpeningRef.current = true; setIgPreview(true); } else setIgPreview(false); }
                     else if (id === 'snap') {
                       const next = v === 'true';
                       enableSnappingRef.current = next;
                       setEnableSnapping(next);
                       if (!next) { layoutScaleSnapRef.current = null; setActiveGuidelines([]); }
                     }
-                  }).then(ok => { if (!ok) setMoreOpen(o => !o); });
+                  }, 210).then(ok => { if (!ok) setMoreOpen(o => !o); });
                 }}
                 // 打開時只有圖標變亮，不畫圓形底
                 className={`w-9 h-9 flex items-center justify-center transition-colors active:scale-90 ${

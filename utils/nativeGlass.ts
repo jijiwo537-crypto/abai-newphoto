@@ -101,7 +101,8 @@ export type GlassMenuItem =
   /** 點一下就做事、面板收起來：onChange 收到 'tap' */
   | { id: string; type: 'action'; title: string };
 let menuSubs: { remove: () => void }[] = [];
-export async function openGlassMenu(anchor: HTMLElement, items: GlassMenuItem[], onChange: (id: string, value: string) => void): Promise<boolean> {
+/** compactWidth：給了就不用滿版寬，面板只有這麼寬、靠著那顆按鈕的右緣往下長（拼圖 ⋯ 那種只有兩三列的小選單） */
+export async function openGlassMenu(anchor: HTMLElement, items: GlassMenuItem[], onChange: (id: string, value: string) => void, compactWidth?: number): Promise<boolean> {
   if (!isNative()) return false;
   const p = await nativeGlass();
   if (!p?.menu) return false;
@@ -111,7 +112,9 @@ export async function openGlassMenu(anchor: HTMLElement, items: GlassMenuItem[],
   const r = anchor.getBoundingClientRect();
   /* 位置與寬度照原本網頁選單：標題列正下方 8px、左右各留 16px（滿版寬） */
   const hd = (anchor.closest('header') as HTMLElement | null)?.getBoundingClientRect();
-  const place = hd ? { x: hd.left + 16, y: hd.bottom + 8, w: hd.width - 32 } : undefined;
+  const place = compactWidth
+    ? { x: Math.max(8, Math.min(window.innerWidth - compactWidth - 8, r.right - compactWidth)), y: (hd ? hd.bottom : r.bottom) + 8, w: compactWidth }
+    : hd ? { x: hd.left + 16, y: hd.bottom + 8, w: hd.width - 32 } : undefined;
   try { await p.menu({ anchor: { x: r.left, y: r.top, w: r.width, h: r.height }, items, place }); return true; }
   catch { menuSubs.forEach(s => s.remove()); menuSubs = []; return false; }
 }
@@ -152,4 +155,10 @@ export async function onNativeSheet(cb: (id: string) => void): Promise<() => voi
 export async function offsetGlass(group: string, x: number, y: number): Promise<void> {
   if (!isNative()) return;
   try { await (await nativeGlass())?.offset?.({ group, x, y }); } catch { /* 舊版 */ }
+}
+
+/** 把開著的原生選單收起來 */
+export async function closeGlassMenu(): Promise<void> {
+  if (!isNative()) return;
+  try { await (await nativeGlass())?.closeMenu?.(); } catch { /* 沒開著 */ }
 }
