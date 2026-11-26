@@ -58,6 +58,9 @@ const INLINE: Record<string, string> = {
   erase_spot: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.6 4.3 20 9.7a1.6 1.6 0 0 1 0 2.3l-7.4 7.4H8.3L4 15.1a1.6 1.6 0 0 1 0-2.3l8.3-8.5a1.6 1.6 0 0 1 2.3 0z"/><path d="M12.6 19.4H20"/></g><path d="M4 15.1a1.6 1.6 0 0 1 0-2.3l4.4-4.5 7 7-4 4.1H8.3z" fill="#fff"/>',
   /* 修補：一塊斜放的 OK 繃（中間透氣孔的四個點），跟去痘的圖標分得開 */
   patch_heal: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><rect x="3.2" y="8.6" width="17.6" height="6.8" rx="3.4" transform="rotate(-45 12 12)"/><rect x="8.9" y="8.9" width="6.2" height="6.2" rx="1" transform="rotate(-45 12 12)"/></g><g fill="#fff"><circle cx="11" cy="11" r=".8"/><circle cx="13" cy="11" r=".8"/><circle cx="11" cy="13" r=".8"/><circle cx="13" cy="13" r=".8"/></g>',
+  /* 創意拼圖：外框裡左邊一大格、右邊上下兩格。外框大小（24 格裡佔 17 格）、線寬（1.15）跟跨頁拼圖的 grid_view（Material Symbols 粗細 300）一樣，
+     兩顆並排時大小、粗細一致 */
+  collage_layout: '<g fill="none" stroke="#fff" stroke-width="1.15" stroke-linejoin="round"><rect x="4.075" y="4.075" width="15.85" height="15.85" rx=".55"/><path d="M11.6 4.075v15.85M11.6 12h8.325"/></g>',
   grade_wheels: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="2.4" fill="#fff"/>',
 };
 const maskOf = (body: string) =>

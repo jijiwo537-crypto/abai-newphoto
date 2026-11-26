@@ -23,7 +23,7 @@ const SKINS: Skin[] = [
 
 const ACCENT: Record<string, string> = { camera: '#7ab8ff', collage: '#ff8fb1', layout: '#8be3c4', beauty: '#ffc56b', match: '#b79bff', art: '#ff9f6b', dot: '#6fd3ff' };
 const TOOLS = [
-  { k: 'collage', icon: 'layers', label: '創意拼圖' }, { k: 'layout', icon: 'grid_view', label: '跨頁拼圖' },
+  { k: 'collage', icon: 'collage_layout', label: '創意拼圖' }, { k: 'layout', icon: 'grid_view', label: '跨頁拼圖' },
   { k: 'beauty', icon: 'magic_button', label: '美顏' }, { k: 'match', icon: 'colorize', label: '仿色' },
 ];
 

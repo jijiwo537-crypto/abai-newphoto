@@ -75,7 +75,7 @@ const previewMaxOf = (k: string) => PREVIEW_MAX[k] ?? 720;
 /** 這次打開 App，主頁入口方塊的進場已經播過了（之後回主頁直接在原位，不重播） */
 let homeTilesEntered = false;
 const TOOL_TILES = [
-  { icon: 'layers', label: '創意拼圖', key: 'collage' },
+  { icon: 'collage_layout', label: '創意拼圖', key: 'collage' },
   { icon: 'grid_view', label: '跨頁拼圖', key: 'layout' },
   { icon: 'magic_button', label: '美顏', key: 'beauty' },
   { icon: 'palette', label: '仿色', key: 'match' },
