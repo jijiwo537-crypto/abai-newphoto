@@ -561,8 +561,8 @@ img, video, canvas, svg { -webkit-user-drag: none; -webkit-touch-callout: none; 
   --line-top: .13;
   --line-bot: .13;
   background:
-    radial-gradient(ellipse 78% var(--glow-h) at 50% 0, rgba(255,255,255,var(--glow-top)) 0, rgba(255,255,255,calc(var(--glow-top) * .5)) 30%, rgba(255,255,255,calc(var(--glow-top) * .18)) 62%, rgba(255,255,255,0) 100%),
-    radial-gradient(ellipse 78% var(--glow-hb) at 50% 100%, rgba(255,255,255,var(--glow-bot)) 0, rgba(255,255,255,calc(var(--glow-bot) * .5)) 30%, rgba(255,255,255,calc(var(--glow-bot) * .18)) 62%, rgba(255,255,255,0) 100%),
+    radial-gradient(ellipse 62% var(--glow-h) at 50% 0, rgba(255,255,255,var(--glow-top)) 0, rgba(255,255,255,calc(var(--glow-top) * .5)) 30%, rgba(255,255,255,calc(var(--glow-top) * .18)) 62%, rgba(255,255,255,0) 100%),
+    radial-gradient(ellipse 62% var(--glow-hb) at 50% 100%, rgba(255,255,255,var(--glow-bot)) 0, rgba(255,255,255,calc(var(--glow-bot) * .5)) 30%, rgba(255,255,255,calc(var(--glow-bot) * .18)) 62%, rgba(255,255,255,0) 100%),
     #060606;
 }
 .home-tile::after {
@@ -572,11 +572,13 @@ img, video, canvas, svg { -webkit-user-drag: none; -webkit-touch-callout: none; 
   border-radius: inherit;
   pointer-events: none;
   z-index: 2;
-  /* 上下兩條亮線：中間最亮，往左右兩端淡到原本的三成左右 */
+  /* 上下兩條亮線：不是一條銳利的直線 —— 本身上下有柔邊（貼邊最亮、1.5px 內淡掉），
+     再用左右方向的遮罩讓它從中段往兩端平滑淡到完全看不見（在進入圓角之前就消失），沒有硬邊、也不會被圓角切出斷口 */
   background:
-    linear-gradient(90deg, rgba(255,255,255,calc(var(--line-top) * .25)) 0%, rgba(255,255,255,calc(var(--line-top) * .75)) 22%, rgba(255,255,255,var(--line-top)) 50%, rgba(255,255,255,calc(var(--line-top) * .75)) 78%, rgba(255,255,255,calc(var(--line-top) * .25)) 100%) top / 100% 0.67px no-repeat,
-    linear-gradient(90deg, rgba(255,255,255,calc(var(--line-bot) * .25)) 0%, rgba(255,255,255,calc(var(--line-bot) * .75)) 22%, rgba(255,255,255,var(--line-bot)) 50%, rgba(255,255,255,calc(var(--line-bot) * .75)) 78%, rgba(255,255,255,calc(var(--line-bot) * .25)) 100%) bottom / 100% 0.67px no-repeat;
-  box-shadow: inset 0 0 0 0.35px rgba(255,255,255,.035);
+    linear-gradient(to bottom, rgba(255,255,255,var(--line-top)) 0, rgba(255,255,255,calc(var(--line-top) * .45)) 0.6px, rgba(255,255,255,calc(var(--line-top) * .12)) 1.1px, rgba(255,255,255,0) 1.6px) top / 100% 1.6px no-repeat,
+    linear-gradient(to top, rgba(255,255,255,var(--line-bot)) 0, rgba(255,255,255,calc(var(--line-bot) * .45)) 0.6px, rgba(255,255,255,calc(var(--line-bot) * .12)) 1.1px, rgba(255,255,255,0) 1.6px) bottom / 100% 1.6px no-repeat;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,.04) 6%, rgba(0,0,0,.2) 12%, rgba(0,0,0,.5) 20%, rgba(0,0,0,.82) 30%, #000 40%, #000 60%, rgba(0,0,0,.82) 70%, rgba(0,0,0,.5) 80%, rgba(0,0,0,.2) 88%, rgba(0,0,0,.04) 94%, transparent 100%);
+          mask-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,.04) 6%, rgba(0,0,0,.2) 12%, rgba(0,0,0,.5) 20%, rgba(0,0,0,.82) 30%, #000 40%, #000 60%, rgba(0,0,0,.82) 70%, rgba(0,0,0,.5) 80%, rgba(0,0,0,.2) 88%, rgba(0,0,0,.04) 94%, transparent 100%);
 }
 .home-tile-sm {
   --glow-top: .13;
@@ -588,9 +590,9 @@ img, video, canvas, svg { -webkit-user-drag: none; -webkit-touch-callout: none; 
 }
 .home-tile-cam {
   background:
-    radial-gradient(ellipse 28px 62% at 0 50%, rgba(255,255,255,.09) 0, rgba(255,255,255,.065) 18%, rgba(255,255,255,.035) 45%, rgba(255,255,255,.012) 72%, rgba(255,255,255,0) 100%),
-    radial-gradient(ellipse 78% var(--glow-h) at 50% 0, rgba(255,255,255,var(--glow-top)) 0, rgba(255,255,255,calc(var(--glow-top) * .5)) 30%, rgba(255,255,255,calc(var(--glow-top) * .18)) 62%, rgba(255,255,255,0) 100%),
-    radial-gradient(ellipse 78% var(--glow-hb) at 50% 100%, rgba(255,255,255,var(--glow-bot)) 0, rgba(255,255,255,calc(var(--glow-bot) * .5)) 30%, rgba(255,255,255,calc(var(--glow-bot) * .18)) 62%, rgba(255,255,255,0) 100%),
+    radial-gradient(ellipse 28px 50% at 0 50%, rgba(255,255,255,.09) 0, rgba(255,255,255,.065) 18%, rgba(255,255,255,.035) 45%, rgba(255,255,255,.012) 72%, rgba(255,255,255,0) 100%),
+    radial-gradient(ellipse 62% var(--glow-h) at 50% 0, rgba(255,255,255,var(--glow-top)) 0, rgba(255,255,255,calc(var(--glow-top) * .5)) 30%, rgba(255,255,255,calc(var(--glow-top) * .18)) 62%, rgba(255,255,255,0) 100%),
+    radial-gradient(ellipse 62% var(--glow-hb) at 50% 100%, rgba(255,255,255,var(--glow-bot)) 0, rgba(255,255,255,calc(var(--glow-bot) * .5)) 30%, rgba(255,255,255,calc(var(--glow-bot) * .18)) 62%, rgba(255,255,255,0) 100%),
     #060606;
 }
 
