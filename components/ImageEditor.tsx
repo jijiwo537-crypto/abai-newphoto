@@ -2276,21 +2276,28 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   /** 把畫面上現在那一張拍下來蓋住預覽（已經蓋著就沿用，不重拍） */
   const veilUp = (cut = false) => {
-    if (veilRef.current) return;   // 已經蓋著（同一次切換還沒畫好）：沿用，等它畫好
+    if (veilRef.current) {
+      /* RAW 的淡入層還在時接著換照片，也必須改成立即切換。 */
+      if (cut) veilRef.current.cut = true;
+      return;
+    }
     const box = previewBoxRef.current, shown = visibleEditorCanvas();
     if (!box || !shown || !shown.width || !shown.height) return;
     const br = box.getBoundingClientRect(), sr = shown.getBoundingClientRect();
-    if (sr.width < 2 || sr.height < 2) return;
+    if (br.width < 2 || br.height < 2 || sr.width < 2 || sr.height < 2) return;
     const el = document.createElement('canvas');
     const dpr = Math.min(3, window.devicePixelRatio || 1);
-    const k = Math.min(1, 2400 / Math.max(sr.width * dpr, sr.height * dpr));
-    el.width = Math.max(1, Math.round(sr.width * dpr * k)); el.height = Math.max(1, Math.round(sr.height * dpr * k));
+    const k = Math.min(1, 2400 / Math.max(br.width * dpr, br.height * dpr));
+    el.width = Math.max(1, Math.round(br.width * dpr * k)); el.height = Math.max(1, Math.round(br.height * dpr * k));
     const g = el.getContext('2d');
     if (!g) return;
-    try { g.drawImage(shown, 0, 0, el.width, el.height); } catch { return; }
+    const sx = el.width / br.width, sy = el.height / br.height;
+    g.fillStyle = '#080808';
+    g.fillRect(0, 0, el.width, el.height);
+    try { g.drawImage(shown, (sr.left - br.left) * sx, (sr.top - br.top) * sy, sr.width * sx, sr.height * sy); } catch { return; }
     Object.assign(el.style, {
-      position: 'absolute', left: `${sr.left - br.left}px`, top: `${sr.top - br.top}px`, width: `${sr.width}px`, height: `${sr.height}px`,
-      zIndex: '15', pointerEvents: 'none', borderRadius: '2px', willChange: 'opacity',
+      position: 'absolute', left: '0', top: '0', width: '100%', height: '100%',
+      zIndex: '15', pointerEvents: 'none', willChange: 'opacity',
     } as Partial<CSSStyleDeclaration>);
     el.setAttribute('data-switch-veil', '');
     box.appendChild(el);
