@@ -660,7 +660,7 @@ export function generateCurveLut(channelPoints: Point[]): Uint8Array {
 export { generateBaseCorrectionLut, processPixels } from '../utils/photoPixelCore';
 import { generateBaseCorrectionLut, processPixels, copyPixelDither, sharpenDetailRows } from '../utils/photoPixelCore';
 import { processPixelsParallel, releasePixelPool } from '../utils/pixelParallel';
-import { BATCH_MAX } from '../utils/batchLimit';
+import { BATCH_MAX, BATCH_RAW_MAX } from '../utils/batchLimit';
 import { registerTrim } from '../utils/memoryPressure';
 import { makeToneStage, applyToneStage, applySaturation, makeToneFast, vibranceGain } from '../utils/photoToneMath';
 import { buildLocalBase, makeLocalGain, type LocalBase } from '../utils/localTone';
@@ -1908,12 +1908,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
      離目前位置最近的那一張，於是常常一進來就停在「剛剛在編輯的那一張」。
      每次出現這個畫面都明確捲回最左邊，才會一定從第一張開始看。 */
   const finalStripRef = useRef<HTMLDivElement>(null);
+  /** 成品頁正在看第幾張（只載入它和左右兩張） */
+  const [finalViewIdx, setFinalViewIdx] = useState(0);
   useLayoutEffect(() => {
     if (saveState !== 'success') return;
     const el = finalStripRef.current;
     if (!el) return;
     // 這一拍就歸零（不要 smooth，也不要等下一幀）—— 使用者不會看到它從中間滑回去
     el.scrollLeft = 0;
+    setFinalViewIdx(0);
     // 圖片是非同步解碼的，寬度長出來之後瀏覽器可能再挑一次定位點，所以下一幀再壓一次
     const id = requestAnimationFrame(() => { if (finalStripRef.current) finalStripRef.current.scrollLeft = 0; });
     return () => cancelAnimationFrame(id);
@@ -4879,7 +4882,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
   useEffect(() => {
     let alive = true;
     void nativeImage().then(p => p?.memory()).then(m => {
-      if (alive && m && m.physical >= 7.5 * 1024 * 1024 * 1024) thumbCacheSrcsRef.current = BATCH_MAX;
+      /* 一張的份約 8MB：最多留 15 張的份（批量可以到 50 張，全留會超過 iOS 網頁畫布的總量上限） */
+      if (alive && m && m.physical >= 7.5 * 1024 * 1024 * 1024) thumbCacheSrcsRef.current = Math.min(BATCH_MAX, 15);
       if (alive && m) deviceRamRef.current = m.physical;
     }).catch(() => {});
     return () => { alive = false; };
@@ -10562,12 +10566,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
                   {/* items-center：橫式的照片要跟直式的一樣停在中間，不然會黏在上緣 */}
                   <div
                     ref={finalStripRef}
+                    onScroll={finalImages.length > 1 ? (e) => {
+                      const el = e.currentTarget, step = el.clientWidth * 0.8 + 16;
+                      const i = Math.max(0, Math.min(finalImages.length - 1, Math.round(el.scrollLeft / Math.max(1, step))));
+                      if (i !== finalViewIdx) setFinalViewIdx(i);
+                    } : undefined}
                     className={`w-full flex flex-row items-center gap-4 ${finalImages.length > 1 ? 'overflow-x-auto no-scrollbar snap-x snap-mandatory px-[max(0px,calc(50%-40vw))]' : 'justify-center'}`}
                   >
                     {(finalImages.length ? finalImages : [finalImage!]).map((src, i) => (
                       <div
                         key={src}
-                        className="shrink-0 snap-center flex flex-col items-center gap-2"
+                        /* 多張時每一格固定 80vw × 60vh（照片在格子裡置中，看起來跟以前一樣），
+                           這樣只要載入「現在這張和左右兩張」：五十張的成品不會同時解在記憶體裡 */
+                        className={`shrink-0 snap-center flex flex-col items-center gap-2 ${finalImages.length > 1 ? 'w-[80vw] h-[60vh] justify-center' : ''}`}
                         /* 一次只准滑一張。
                            snap-mandatory 只保證「最後會停在某個定位點」，慣性滑動
                            照樣會衝過好幾張再吸住 —— 那就是「明明只滑一次卻跳過不只一張」。
@@ -10576,11 +10587,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
                         style={{ scrollSnapStop: 'always' }}
                       >
                         <div data-export-media className="relative shadow-2xl rounded overflow-hidden max-h-[60vh]">
-                          <img
+                          {(finalImages.length <= 1 || Math.abs(i - finalViewIdx) <= 2) && <img
                               src={src}
                               alt={`Final Result ${i + 1}`}
+                              decoding="async"
                               className="max-w-[80vw] max-h-[60vh] object-contain allow-callout relative z-10"
-                          />
+                          />}
                           <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded"></div>
                         </div>
                       </div>
@@ -11393,7 +11405,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
                   </div>
                 );
               })}
-              {onAddPhotos && srcList.length < BATCH_MAX && (
+              {/* 含 RAW 時上限是 BATCH_RAW_MAX 張 */}
+              {onAddPhotos && srcList.length < (srcList.some(u => rawOf(u)) ? BATCH_RAW_MAX : BATCH_MAX) && (
                 <button
                   onClick={() => onAddPhotos()}
                   title="新增照片"

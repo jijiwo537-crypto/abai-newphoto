@@ -85,7 +85,9 @@ export function installNativeFilePicker() {
     if (qa) files = qa(filter);
     if (!files) try {
       /* 去背圖只有帶 data-allow-alpha 的匯入入口能選（見 utils/alphaGuard） */
-      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.getAttribute('data-import-hero') || undefined, quiet: maxAttr > 0 });
+      /* data-raw-max：選到 RAW 時最多幾張（批量編輯：RAW 10 張、一般照片 50 張） */
+      const rawLimit = Math.max(0, Math.floor(Number(input.getAttribute('data-raw-max')) || 0));
+      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.getAttribute('data-import-hero') || undefined, quiet: maxAttr > 0, rawLimit });
       /* 自己的相簿用不了（權限被拒、使用者選了系統的）→ 系統照片選擇器 */
       if (files === null) files = await pickNativeFiles(limit, filter);
     }

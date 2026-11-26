@@ -1,3 +1,4 @@
+import { isNative } from './native';
 import heic2any from 'heic2any';
 import { isPlainWebImage, isVideoFileName } from './fileTypes';
 
@@ -111,6 +112,15 @@ export async function processImageFile(file: File, onPreview?: (url: string) => 
   const isHeic = ['heic', 'heif', 'heics'].includes(extension) || mimeType.includes('heic') || mimeType.includes('heif');
   const isRaw = ['arw', 'cr2', 'cr3', 'nef', 'dng', 'raf', 'orf', 'rw2', 'srw', 'pef', 'x3f'].includes(extension);
 
+  /* 0. App 裡（iOS 的網頁層本來就看得懂 JPEG／HEIC／PNG／WebP）：常見格式直接用，不再先整張載入一次測試 ——
+        批量一次導入幾十張時，每張都先完整解一次碼會讓記憶體一下子衝很高 */
+  /* HEIC 要 iOS 17 以上的網頁層才看得懂（App 支援到 iOS 15）：舊系統照原本的方式先測試 */
+  const iosMajor = Number((/OS (\d+)_/.exec(navigator.userAgent) || [])[1]) || 0;
+  const fastOk = ['jpg', 'jpeg', 'png', 'webp'].includes(extension) || ['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)
+    || (iosMajor >= 17 && (isHeic));
+  if (!isRaw && isNative() && fastOk) {
+    return URL.createObjectURL(file);
+  }
   // 1. 先看瀏覽器能不能直接顯示這個檔
   try {
     const nativeUrl = URL.createObjectURL(file);

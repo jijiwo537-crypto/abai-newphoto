@@ -1,3 +1,4 @@
+import { BATCH_RAW_NOTE } from '../utils/batchLimit';
 /* App 自己的相簿畫面（只在 App 裡出現，網頁版不會載入）。
  *
  * ‧ 從下面滑上來、收回去也是滑下去；標題點一下切換相簿（最近項目、個人收藏、影片…）。
@@ -115,7 +116,9 @@ export const NativeGallery: React.FC<{
   noAlpha?: boolean;
   /** 導入單張時播放大過場（從主頁進編輯、美顏、仿色才有） */
   hero?: string;
-}> = ({ api, limit, filter, onClose, noAlpha = false, hero, quiet = false }) => {
+  /** 選到 RAW 時最多幾張（0＝不限）。點的當下就問系統這張是不是 RAW */
+  rawLimit?: number;
+}> = ({ api, limit, filter, onClose, noAlpha = false, hero, quiet = false, rawLimit = 0 }) => {
   const multi = limit !== 1;
   const [shown, setShown] = useState(false);              // 滑上來的動畫
   const [status, setStatus] = useState<LibraryStatus | 'checking'>('checking');
@@ -299,17 +302,41 @@ export const NativeGallery: React.FC<{
 
   /* 用 ref 記目前選了哪些：點一下不會讓上千格全部重畫 */
   const pickedRef = useRef<string[]>([]);
-  const onTap = useCallback((a: LibraryAsset) => {
-    if (exportingRef.current) return;
+  /* 含 RAW 時的上限：哪幾張是 RAW 問過就記著（點的當下問一次，很快） */
+  const rawOfRef = useRef<Map<string, boolean>>(new Map());
+  const checkingRef = useRef(false);
+  const [rawNote, setRawNote] = useState(0);
+  const isRawAsset = async (id: string) => {
+    if (rawOfRef.current.has(id)) return rawOfRef.current.get(id)!;
+    let r = false;
+    try { r = !!api.rawIds && ((await api.rawIds({ ids: [id] })).raw || []).includes(id); } catch { /* 問不到就當作不是 */ }
+    rawOfRef.current.set(id, r);
+    return r;
+  };
+  const onTap = useCallback(async (a: LibraryAsset) => {
+    if (exportingRef.current || checkingRef.current) return;
     if (!multi) { void finish([a.id]); return; }
     const prev = pickedRef.current;
     let next: string[];
     if (prev.includes(a.id)) next = prev.filter(x => x !== a.id);
     else if (limit > 0 && prev.length >= limit) { haptic('error'); setShake(n => n + 1); return; }
-    else next = [...prev, a.id];
+    else {
+      next = [...prev, a.id];
+      if (rawLimit > 0 && next.length > rawLimit) {
+        checkingRef.current = true;
+        try {
+          const hasRaw = (await isRawAsset(a.id)) || prev.some(id => rawOfRef.current.get(id));
+          if (hasRaw) { haptic('error'); setShake(n => n + 1); setRawNote(n => n + 1); return; }
+        } finally { checkingRef.current = false; }
+      } else if (rawLimit > 0) void isRawAsset(a.id);   // 先問好，之後要判斷時就是現成的
+      if (pickedRef.current !== prev) return;
+    }
     pickedRef.current = next;
     setPicked(next);
-  }, [multi, limit, finish]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [multi, limit, rawLimit, finish]);
+  /* 「含 RAW 最多 10 張」的提示：擋下來時出現 2 秒 */
+  useEffect(() => { if (!rawNote) return; const t = window.setTimeout(() => setRawNote(0), 2200); return () => window.clearTimeout(t); }, [rawNote]);
 
   const order = useMemo(() => { const m = new Map<string, number>(); picked.forEach((id, i) => m.set(id, i + 1)); return m; }, [picked]);
 
@@ -379,6 +406,10 @@ export const NativeGallery: React.FC<{
           )}
           {multi && limit > 1 && ok && !quiet && (
             <div className="px-4 pb-2 text-[11.5px] text-white/40">{`最多可選 ${limit} 張`}</div>
+          )}
+          {/* 含 RAW 時擋下來：說明為什麼不能再選 */}
+          {rawNote > 0 && (
+            <div key={rawNote} className="px-4 pb-2 text-[12px] font-semibold text-[#ffb3a7]" role="status">{BATCH_RAW_NOTE}</div>
           )}
         </div>
 

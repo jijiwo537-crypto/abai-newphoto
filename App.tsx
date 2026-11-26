@@ -54,7 +54,7 @@ import { processImageFile as processImageFileRaw, normalizeImageFiles } from './
 const processImageFile: typeof processImageFileRaw = async (...a) => { perfMark('decode0'); try { return await processImageFileRaw(...a); } finally { perfMark('decode1'); } };
 import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT, isRawFile } from './utils/fileTypes';
 import { nativePathOf } from './utils/nativeBridge';
-import { BATCH_MAX } from './utils/batchLimit';
+import { BATCH_MAX, BATCH_RAW_MAX, BATCH_RAW_NOTE, batchCap } from './utils/batchLimit';
 import { rawDevelopPreview, type RawLook } from './utils/nativeCamera';
 import { upgradeImportHero, cancelImportHero, perfMark } from './utils/importHero';
 import { setRawImportHint } from './utils/importHint';
@@ -345,8 +345,13 @@ const App: React.FC = () => {
     addPhotosInputRef.current?.click();
   }, []);
   const handleAddPhotosChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    /* 批量最多 BATCH_MAX 張：多選的部分直接不收（網頁版的選擇器擋不住張數） */
-    const files = (Array.from(e.target.files || []) as File[]).slice(0, Math.max(0, BATCH_MAX - editorImages.length));
+    /* 批量最多 BATCH_MAX 張；含 RAW 時（已經在編輯器裡的或這次選的）最多 BATCH_RAW_MAX 張。
+       多的直接不收（系統選擇器、網頁版擋不住張數），含 RAW 被擋掉時說一聲 */
+    const picked = Array.from(e.target.files || []) as File[];
+    const hasRaw = picked.some(isRawFile) || Object.keys(editorRawMap).length > 0;
+    const room = Math.max(0, batchCap(hasRaw) - editorImages.length);
+    const files = picked.slice(0, room);
+    if (hasRaw && picked.length > room && picked.length + editorImages.length > BATCH_RAW_MAX) window.setTimeout(() => alert(BATCH_RAW_NOTE), 0);
     if (files.length) {
       setIsImporting(true);
       try {
@@ -454,7 +459,11 @@ const App: React.FC = () => {
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = (Array.from(e.target.files || []) as File[]).slice(0, BATCH_MAX);
+    /* 含 RAW 時最多 BATCH_RAW_MAX 張（相簿裡點的當下就擋了；系統選擇器、網頁版在這裡再擋一次） */
+    const picked = Array.from(e.target.files || []) as File[];
+    const cap = batchCap(picked.some(isRawFile));
+    const files = picked.slice(0, cap);
+    if (picked.length > cap && cap === BATCH_RAW_MAX) window.setTimeout(() => alert(BATCH_RAW_NOTE), 0);
     if (files.length) {
       setIsImporting(true);
       setImportPreviewUrl(null);
@@ -796,7 +805,8 @@ const App: React.FC = () => {
         type="file"
         ref={addPhotosInputRef}
         className="hidden"
-        data-max={Math.max(1, BATCH_MAX - editorImages.length)}
+        data-max={Math.max(1, (Object.keys(editorRawMap).length ? BATCH_RAW_MAX : BATCH_MAX) - editorImages.length)}
+        data-raw-max={Math.max(1, BATCH_RAW_MAX - editorImages.length)}
         multiple
         accept={RAW_ACCEPT}
         onChange={handleAddPhotosChange}
@@ -809,6 +819,7 @@ const App: React.FC = () => {
         data-import-hero="edit"
         className="hidden"
         data-max={BATCH_MAX}
+        data-raw-max={BATCH_RAW_MAX}
         multiple
         accept={RAW_ACCEPT}
         onChange={handleFileChange}

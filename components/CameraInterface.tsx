@@ -5,7 +5,7 @@ import { ms as motionMs } from '../utils/motionTimings';
 import { isNative } from '../utils/native';
 import { nativeCamera, captureNative, lutFileName, RAW_PROTECT_EV, stampDateOnto, rawDevelopPreview, type RawLook } from '../utils/nativeCamera';
 import { lutMaxAmount, lutDefaultAmount } from '../utils/photoFx';
-import { BATCH_MAX } from '../utils/batchLimit';
+import { batchCap } from '../utils/batchLimit';
 import { haptic, dialHaptic } from '../utils/haptics';
 import { nativePhotos } from '../utils/nativePhotos';
 import { nativeImage } from '../utils/nativeImage';
@@ -1566,7 +1566,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   };
   /** 相簿多選「編輯」：好幾張一起進編輯（編輯頁上面一排可以切換、同步套用） */
   const openEditMany = (indices: number[]) => {
-    if (indices.length > BATCH_MAX) return;   // 相簿選超過上限時本來就沒有編輯鍵
+    if (indices.length > batchCap(indices.some(i => rawShots.has(photos[i])))) return;   // 相簿選超過上限時本來就沒有編輯鍵（含 RAW 時上限較低）
     const srcs = indices.map(i => photos[i]).filter(Boolean);
     if (!srcs.length) return;
     if (srcs.length === 1) { openEditor(srcs[0], indices[0]); return; }

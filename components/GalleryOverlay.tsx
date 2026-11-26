@@ -1,4 +1,4 @@
-import { BATCH_MAX } from '../utils/batchLimit';
+import { batchCap } from '../utils/batchLimit';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ms as motionMs, sheetOpenEase, sheetCloseEase } from '../utils/motionTimings';
 
@@ -162,8 +162,8 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({
   const selectRef = useRef<HTMLButtonElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const favAll = selectedIdx.length > 0 && selectedIdx.every(i => favorites?.has(shown[i]));
-  /** 批量編輯一次最多 BATCH_MAX 張：選超過就不給編輯鍵 */
-  const canEdit = selectedIdx.length <= BATCH_MAX;
+  /** 批量編輯一次最多 BATCH_MAX 張（含 RAW 時 BATCH_RAW_MAX 張）：選超過就不給編輯鍵 */
+  const canEdit = selectedIdx.length <= batchCap(selectedIdx.some(i => rawShots?.has(shown[i])));
   /** 多選編輯：照拍的先後（舊→新）交出去 */
   const editSelected = () => {
     if (!selectedIdx.length) return;
