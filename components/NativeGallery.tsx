@@ -31,9 +31,12 @@ const CSS = `
 .abg-cell { position: relative; aspect-ratio: 1 / 1; overflow: hidden; background: #1c1c1e; -webkit-tap-highlight-color: transparent; }
 .abg-cell img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .28s ease, transform .32s ${EASE}; -webkit-user-drag: none; user-select: none; -webkit-touch-callout: none; }
 .abg-cell img.on { opacity: 1 }
-.abg-cell.sel img { transform: scale(.9); }
-.abg-cell .ring { position: absolute; inset: 0; border: 2px solid #fff; opacity: 0; transition: opacity .2s ease; pointer-events: none; }
-.abg-cell.sel .ring { opacity: 1 }
+.abg-cell .dim { position: absolute; inset: 0; background: rgba(0,0,0,.38); opacity: 0; transition: opacity .2s ease; pointer-events: none; }
+.abg-cell.sel .dim { opacity: 1 }
+@keyframes abg-check { from { transform: translate(-50%,-50%) scale(.6); opacity: 0 } to { transform: translate(-50%,-50%) scale(1); opacity: 1 } }
+.abg-cell .chk { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; border-radius: 9999px; background: #fff; color: #000;
+  display: flex; align-items: center; justify-content: center; transform: translate(-50%,-50%); box-shadow: 0 2px 10px rgba(0,0,0,.35);
+  animation: abg-check .2s ${EASE}; pointer-events: none; }
 .abg-cell .skel { position: absolute; inset: 0; background: #2c2c2e; animation: abg-shimmer 1.4s ease-in-out infinite; }
 .abg-cell:active img.on { filter: brightness(.82) }
 `;
@@ -81,13 +84,11 @@ const Cell = React.memo(function Cell({ a, order, multi, onTap, raw = false }: {
       {raw && !a.video && (
         <span className="absolute left-1.5 bottom-1.5 px-1 h-[15px] rounded-[4px] bg-black/55 text-white text-[9px] font-bold leading-[15px] tracking-[0.04em] pointer-events-none">RAW</span>
       )}
-      <span className="ring" />
-      {multi && (
-        <span className="absolute top-1.5 right-1.5 w-[22px] h-[22px] rounded-full flex items-center justify-center pointer-events-none"
-          style={sel
-            ? { background: '#fff', color: '#000', animation: 'abg-pop .18s ease-out', boxShadow: '0 1px 4px rgba(0,0,0,.35)' }
-            : { border: '1.5px solid rgba(255,255,255,.9)', background: 'rgba(0,0,0,.18)', boxShadow: '0 0 2px rgba(0,0,0,.4)' }}>
-          {sel && <span className="text-[12px] font-black leading-none">{order}</span>}
+      {/* 選中：照片稍微變暗、正中間一個勾（沒有外框、不縮小） */}
+      <span className="dim" />
+      {multi && sel && (
+        <span className="chk" aria-hidden>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
         </span>
       )}
     </button>
@@ -390,11 +391,14 @@ export const NativeGallery: React.FC<{
       <style>{CSS}</style>
       <div className="absolute inset-0 bg-black" style={{ opacity: shown ? 0.6 : 0, transition: `opacity ${shown ? '.48s' : '.4s'} ease` }} />
       <div className="absolute inset-0 flex flex-col bg-black text-white" style={sheet}>
-        {/* 上方：取消／相簿名稱／完成 */}
+        {/* 上方：返回（ㄑ）／相簿名稱／完成 */}
         <div ref={headerRef} className="relative z-20 shrink-0 bg-black/85 backdrop-blur-xl" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
           <div className="h-12 px-2 grid grid-cols-[1fr_auto_1fr] items-center">
-            <button type="button" className="justify-self-start h-10 px-3 text-[16px] text-white/90 active:opacity-50"
-              onClick={() => close([])}>取消</button>
+            <button type="button" aria-label="返回" className="justify-self-start h-10 w-11 flex items-center justify-center text-white/90 active:opacity-50"
+              onClick={() => close([])}>
+              {/* 沒有橫條的箭頭（像注音的ㄑ） */}
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 5l-7 7 7 7" /></svg>
+            </button>
             <button type="button" disabled={!ok} onClick={() => setAlbumOpen(v => !v)}
               className="h-10 px-3 flex items-center gap-1.5 active:opacity-60 max-w-[52vw]">
               <span className="text-[16px] font-semibold truncate">{ok ? album.title : title}</span>
