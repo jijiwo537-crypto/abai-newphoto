@@ -80,6 +80,9 @@ export function installNativeFilePicker() {
     const maxAttr = Number(input.getAttribute('data-max'));
     const limit = input.multiple ? (maxAttr > 0 ? Math.floor(maxAttr) : 0) : 1;
     let files: File[] | null = null;
+    /** 從自己的相簿選的時候用的是哪一種導入（見 data-pick-modes）；系統選擇器、網頁版沒有這個 */
+    let pickMode = '';
+    delete input.dataset.pickMode;
     /* 自動測試（utils/nativeQA）先放好的檔案：直接用，不開相簿 */
     const qa = (window as any).__abaiQAFiles as ((f: typeof filter) => File[] | null) | undefined;
     if (qa) files = qa(filter);
@@ -90,7 +93,17 @@ export function installNativeFilePicker() {
       /* data-instant：點了照片就直接進工具（點陣文字）。照片一點下去先發 abai-pick-begin（帶縮圖），
          讓工具馬上打開；原檔拿好後照常發 change。拿不到發 abai-pick-fail */
       const instant = input.hasAttribute('data-instant') && limit === 1;
+      /* data-pick-modes：相簿上面多一排「編輯／拼圖／批量編輯」（編輯的導入）。選了哪一種記在 input.dataset.pickMode，
+         App 讀完就清掉；data-pick-start 是這一次要先停在哪一種（用一次就清掉） */
+      const modes = input.hasAttribute('data-pick-modes') && limit !== 1;
+      const start = input.getAttribute('data-pick-start');
+      input.removeAttribute('data-pick-start');
       if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.getAttribute('data-import-hero') || undefined, quiet: maxAttr > 0, rawLimit,
+        ...(modes ? {
+          modes: true,
+          initialMode: start === 'collage' || start === 'batch' ? start : 'edit',
+          onMode: (m: 'edit' | 'collage' | 'batch') => { pickMode = m; },
+        } : {}),
         ...(instant ? {
           onInstant: (thumb: string | null) => input.dispatchEvent(new CustomEvent('abai-pick-begin', { detail: { thumb } })),
           onInstantFail: () => input.dispatchEvent(new CustomEvent('abai-pick-fail')),
@@ -117,6 +130,7 @@ export function installNativeFilePicker() {
       files = kept;
       if (!files.length) { failInstant(); return; }
     }
+    if (pickMode) input.dataset.pickMode = pickMode;
     try {
       const dt = new DataTransfer();
       files.forEach(f => dt.items.add(f));

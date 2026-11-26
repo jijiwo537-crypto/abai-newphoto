@@ -3973,6 +3973,8 @@ export type ImageAdjustPanelProps = {
   hideShape?: boolean;
   /** 影片物件沒有「構圖」——構圖是把裁切的結果烤成一張圖，烤完就不是影片了 */
   hideCompose?: boolean;
+  /** 只留「濾鏡」「調節」兩個分類（簡易拼圖） */
+  onlyFilterTune?: boolean;
   /** 滑桿排成一排：名稱、軌道、數值全部同一列，上面不再有一排字 */
   inlineSlider?: boolean;
   /** 區域編輯從 ref 畫；調整時只有這個小面板會更新 */
@@ -4017,7 +4019,7 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   img, set, lutList, loadingLut, setLoadingLut, lutRevision, setLutRevision,
   adjustSub, setAdjustSub, effectCard: effectCardProp, setEffectCard: setEffectCardProp, effectDetail: effectDetailProp, setEffectDetail: setEffectDetailProp,
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
-  setTuningEdge, openComposeFor, composeOpen, onLeaveCompose, hideShape, hideCompose, deferSlider, onSliderOpenChange, inlineSlider,
+  setTuningEdge, openComposeFor, composeOpen, onLeaveCompose, hideShape, hideCompose, onlyFilterTune, deferSlider, onSliderOpenChange, inlineSlider,
   isolateFxUpdates, onAdjustmentStart, onAdjustmentCommit, alphaHint, warmFxFor,
 }) => {
 /* 選中哪一顆特效、細項有沒有打開：面板自己先記一份、馬上換。
@@ -4223,9 +4225,11 @@ const CATS = ([
   ['shape', 'shapes', '造型'],
   // 構圖圖標跟「編輯」那邊用同一顆（crop）
   ['compose', 'crop', '構圖'],
-] as const).filter(c => !(hideShape && c[0] === 'shape') && !(hideCompose && c[0] === 'compose') && !(isAlphaImg && c[0] === 'effect'))
+] as const).filter(c => !(hideShape && c[0] === 'shape') && !(hideCompose && c[0] === 'compose') && !(isAlphaImg && c[0] === 'effect')
+    && !(onlyFilterTune && c[0] !== 'filter' && c[0] !== 'tune'))
   .map(c => (isAlphaImg && c[0] === 'shape' ? [c[0], c[1], '外觀'] : c) as readonly [string, string, string]);
 useEffect(() => { if (isAlphaImg && adjustSub === 'effect') setAdjustSub('filter' as any); }, [isAlphaImg, adjustSub]);
+useEffect(() => { if (onlyFilterTune && adjustSub !== 'filter' && adjustSub !== 'tune') setAdjustSub('filter' as any); }, [onlyFilterTune, adjustSub]);
 const shapeTools = isAlphaImg ? SHAPE_TOOLS.filter(t => t[0] === 'stroke' || t[0] === 'glow') : SHAPE_TOOLS;
 const shapeSubTools = (menu: string) => (SHAPE_SUB_TOOLS[menu] || []).filter(t => !(isAlphaImg && t[0] === 'imgStrokeDash'));
 /* 打開特效頁：在這張圖實際用的 GPU 畫布上，把每個特效預先畫一次（跟編輯頁同一套）。

@@ -172,7 +172,9 @@ let opening: Promise<File[] | null> | null = null;
 
 /** 打開相簿。limit：最多選幾張（0＝不限，1＝點一下就完成） */
 export function openGallery(o: { limit: number; filter: GalleryFilter; noAlpha?: boolean; /** 導入單張時播放大過場：哪一個工具（edit／beauty／match），終點照它的版面算 */ hero?: string; /** 有上限但不在相簿裡寫出「最多可選 N 張」 */ quiet?: boolean; /** 選到 RAW 時最多幾張（0＝不限） */ rawLimit?: number;
-  /** 點下去就直接進工具（不顯示匯入中）：見 NativeGallery 的 onInstant */ onInstant?: (thumb: string | null) => void; onInstantFail?: () => void }): Promise<File[] | null> {
+  /** 點下去就直接進工具（不顯示匯入中）：見 NativeGallery 的 onInstant */ onInstant?: (thumb: string | null) => void; onInstantFail?: () => void;
+  /** 編輯的導入相簿：上面多一排「編輯／拼圖／批量編輯」（見 NativeGallery 的 modes），選好時 onMode 回報是哪一種 */
+  modes?: boolean; initialMode?: 'edit' | 'collage' | 'batch'; onMode?: (mode: 'edit' | 'collage' | 'batch') => void }): Promise<File[] | null> {
   if (opening) return opening;              // 連點兩下不會疊兩個相簿
   opening = (async () => {
     const p = await photoLibrary();
@@ -190,7 +192,7 @@ export function openGallery(o: { limit: number; filter: GalleryFilter; noAlpha?:
         /* 等收起來的動畫跑完再拆掉 */
         setTimeout(() => { root.unmount(); host.remove(); }, 40);
       };
-      root.render(createElement(NativeGallery, { api: p, limit: o.limit, filter: o.filter, noAlpha: !!o.noAlpha, hero: o.hero, quiet: !!o.quiet, rawLimit: o.rawLimit || 0, onInstant: o.onInstant, onInstantFail: o.onInstantFail, onClose: close }));
+      root.render(createElement(NativeGallery, { api: p, limit: o.limit, filter: o.filter, noAlpha: !!o.noAlpha, hero: o.hero, quiet: !!o.quiet, rawLimit: o.rawLimit || 0, onInstant: o.onInstant, onInstantFail: o.onInstantFail, modes: !!o.modes, initialMode: o.initialMode, onMode: o.onMode, onClose: close }));
     });
   })().finally(() => { opening = null; });
   return opening;

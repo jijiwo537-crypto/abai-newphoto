@@ -171,6 +171,8 @@ const App: React.FC = () => {
   const [collageInitialFile, setCollageInitialFile] = useState<File | null>(null);
   /** 創意拼圖入口一次選了好幾個時，第一個之後的那些 */
   const [collageExtras, setCollageExtras] = useState<File[]>([]);
+  /** 簡易拼圖（從編輯的導入相簿選「拼圖」進來）：同一個拼圖引擎，只留比例、圖片排版、無縫、濾鏡、調節 */
+  const [collageSimple, setCollageSimple] = useState(false);
   const [layoutInitialFiles, setLayoutInitialFiles] = useState<File[]>([]);
   const [editorKey, setEditorKey] = useState(0);
   const [collageKey, setCollageKey] = useState(0);
@@ -264,7 +266,7 @@ const App: React.FC = () => {
      所以 RAW／HEIC 這種瀏覽器讀不懂的檔案到那裡就是一張載不出來的 <img>，
      畫面空白。這裡先解碼成一般 JPEG 再交出去，工具那邊一行都不用改。
      一般的 JPEG/PNG 會原樣放行，不會多轉一次、也不會掉畫質。 */
-  const handleImportToCollage = async (files: File | File[]) => {
+  const handleImportToCollage = async (files: File | File[], simple = false) => {
     // 創意拼圖收圖片與影片（第一個當底，其餘變成物件）。accept 只是選擇器提示，
     // 拖放／分享進來的檔案仍可能繞過它，因此在真正進工具前再做一次型別防線。
     const list = (Array.isArray(files) ? files : [files]).filter(file =>
@@ -287,6 +289,7 @@ const App: React.FC = () => {
     setHistKey(null);
     setCollageInitialFile(ready[0]);
     setCollageExtras(ready.slice(1));
+    setCollageSimple(simple);
     setCollageKey(prev => prev + 1);
     setCurrentView('collage');
   };
@@ -389,6 +392,13 @@ const App: React.FC = () => {
   const handleCollageImportClick = () => {
     collageFileInputRef.current?.click();
   };
+  /** 簡易拼圖的「拼下一張」：打開編輯的導入相簿，直接停在「拼圖」那一頁 */
+  const handleSimpleCollageImportClick = () => {
+    const el = fileInputRef.current;
+    if (!el) return;
+    el.setAttribute('data-pick-start', 'collage');
+    el.click();
+  };
   const handleBeautyImportClick = () => {
     beautyFileInputRef.current?.click();
   };
@@ -468,8 +478,17 @@ const App: React.FC = () => {
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    /* 含 RAW 時最多 BATCH_RAW_MAX 張（相簿裡點的當下就擋了；系統選擇器、網頁版在這裡再擋一次） */
+    /* 從 App 自己的相簿選的：上面那排選了哪一種（編輯／拼圖／批量編輯，見 utils/nativePhotos 的 data-pick-modes）。
+       讀完就清掉，下一次沒有帶的（系統選擇器、網頁版）照原本：一張＝編輯、多張＝批量 */
+    const pickMode = e.target.dataset.pickMode;
+    delete e.target.dataset.pickMode;
     const picked = Array.from(e.target.files || []) as File[];
+    if (pickMode === 'collage' && picked.length >= 2) {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      void handleImportToCollage(picked, true);
+      return;
+    }
+    /* 含 RAW 時最多 BATCH_RAW_MAX 張（相簿裡點的當下就擋了；系統選擇器、網頁版在這裡再擋一次） */
     const cap = batchCap(picked.some(isRawFile));
     const files = picked.slice(0, cap);
     if (picked.length > cap && cap === BATCH_RAW_MAX) window.setTimeout(() => alert(BATCH_RAW_NOTE), 0);
@@ -615,6 +634,7 @@ const App: React.FC = () => {
         // 拼貼原本就是吃 File，草稿的照片轉回 File 就能走同一條載入路徑
         const blob = await (await fetch(draft.src)).blob();
         setCollageInitialFile(new File([blob], 'resume', { type: blob.type || 'image/png' }));
+        setCollageSimple(draft.state?.simple === 1);
         setCollageKey(prev => prev + 1);
         setCurrentView('collage');
       }
@@ -662,6 +682,7 @@ const App: React.FC = () => {
       try {
         const blob = await (await fetch(rec.src)).blob();
         setCollageInitialFile(new File([blob], 'abai.jpg', { type: blob.type || 'image/jpeg' }));
+        setCollageSimple(rec.meta.state?.simple === 1);
         setCollageKey(prev => prev + 1);
         setCurrentView('collage');
         return;
@@ -826,6 +847,7 @@ const App: React.FC = () => {
         type="file"
         ref={fileInputRef}
         data-import-hero="edit"
+        data-pick-modes
         className="hidden"
         data-max={BATCH_MAX}
         data-raw-max={BATCH_RAW_MAX}
@@ -1011,7 +1033,8 @@ const App: React.FC = () => {
           initialState={toolDraftState}
           histKey={histKey}
           lutList={LUT_LIST}
-          onImportNew={handleCollageImportClick}
+          simple={collageSimple}
+          onImportNew={collageSimple ? handleSimpleCollageImportClick : handleCollageImportClick}
         />
       )}
 

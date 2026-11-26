@@ -1668,6 +1668,9 @@ interface CollageToolProps {
   /** 首頁多選的其餘照片：按選取順序加入同一個圖片排版區域。 */
   initialExtras?: File[];
   onImportNew: () => void;
+  /** 簡易拼圖（從編輯的導入相簿選「拼圖」進來）：同一套引擎，只留比例、圖片排版、無縫、濾鏡、調節。
+      沒有圖案、遮罩、新增、動畫；沒選照片時濾鏡／調節套在全部照片上 */
+  simple?: boolean;
   /** 接續上次時把存下來的參數餵回來 */
   initialState?: any;
   /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
@@ -1729,7 +1732,7 @@ const texFollow = (o: any, d: any) => {
   return { ...d, dotColor: texDotColorFor(c), stripeA: texStripeColorFor(c) };
 };
 
-export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned, onMotionChange, tunerMotion = null }) => {
+export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [], sandbox = false, patternSizes = null, initialPattern = 'star', onPatternSizeTuned, onMotionChange, tunerMotion = null, simple = false }) => {
   const saveToolDraft: typeof saveToolDraftImpl = (...args) => sandbox ? Promise.resolve() as any : saveToolDraftImpl(...args);
   useKeyboardRecovery();
   const [imageState, setImageState] = useState<any>(null);
@@ -2953,8 +2956,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [activeTab, selectedObj]);
   /* 圖片編輯頁是自己排好三段式高度的整頁面板：外面不能再包內距，
      footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-11 分類列 ＋ 分頁列）。 */
+  /* 簡易拼圖的編輯頁沒選照片＝整體：濾鏡／調節一次套在全部照片上。
+     面板顯示的值：剛進整體時取「每一張都一樣」的那些（各張調得不一樣的那一項就從預設開始） */
+  const simpleAllEditing = simple && activeTab === 'objedit' && !colorPickerTarget && selectedRegionPhoto === null && !baseSelected && !selectedObj
+    && !!photoRegion?.photos.some(p => p.src);
+  const simpleAllFxRef = useRef<PhotoFx>({});
+  const simpleAllOpenRef = useRef(false);
+  const simpleAllRegionRef = useRef<PhotoRegion | null>(null);
+  /* 剛進整體、或照片的設定換了（放開滑桿、復原／重做）：重新算一次面板要顯示的值 */
+  if (simpleAllEditing && (!simpleAllOpenRef.current || simpleAllRegionRef.current !== photoRegion)) {
+    const ps = (photoRegionRef.current?.photos || []).filter(p => p.src);
+    const common: any = {};
+    const first: any = ps[0]?.fx || {};
+    for (const k of Object.keys(first)) if (ps.every(p => (p.fx as any)?.[k] === first[k])) common[k] = first[k];
+    simpleAllFxRef.current = common;
+  }
+  simpleAllOpenRef.current = simpleAllEditing;
+  simpleAllRegionRef.current = photoRegion;
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
-    && (selectedRegionPhoto !== null || baseSelected || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
+    && (selectedRegionPhoto !== null || baseSelected || simpleAllEditing || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
   regionPhotoEditingRef.current=objEditImage;
   const objEditText = activeTab === 'objedit' && !colorPickerTarget && objects.some(o=>o.id===selectedObj&&o.type==='text');
   useEffect(()=>{
@@ -3600,6 +3620,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       saveToolDraft('collage', null, {
         ...env,
         __completeDraft: 1,
+        /* 簡易拼圖的草稿：接續時要回到簡易拼圖（見 App 的 collageSimple） */
+        simple: simple ? 1 : 0,
         holes: holesRef.current.map((h: any) => ({ ...h })),
         objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
         __histKey: histKey || initialState?.__histKey || null,
@@ -9804,6 +9826,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     try { pauseVideos(allVideosRef.current()); } catch { /* 停不了就算了 */ }
     if (choice === 'save') {
       await saveToolDraft('collage', photoUrlRef.current, {
+        simple: simple ? 1 : 0,
         photoRegion: photoRegionRef.current,
         layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash, symmetryEnabled,
@@ -9872,6 +9895,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          參數在這一行**同步**準備好（下面那個物件），只把「真的去做」延到
          連續兩格畫面之後 —— 那時候主頁已經畫出來了，慢一點也沒人感覺得到。 */
       const payload = {
+        simple: simple ? 1 : 0,
         photoRegion: photoRegionRef.current,
         layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash, symmetryEnabled,
@@ -11500,6 +11524,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       <button aria-label="所有圖片佈局" aria-expanded={photoLayoutOpen} onClick={()=>changePhotoLayoutOpen(true)} className="text-[#444] flex items-center justify-center focus:outline-none active:scale-95 transition-[color,transform]"><svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button>
     </div>
   </div>;
+  const seamlessControls=(photoRegion && photoRegion.photos.length>1 && seamlessPhotoBase(photoRegion) && <div className="space-y-3" data-creative-seamless>
+                    <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
+                    {/* 停在 0（無縫關著）時 GPU 那張畫布本來不會預熱：從 0 拉開的第一格要當場把每張原圖傳上 GPU、
+                        編譯著色器，就是「從 0 開始拖會卡一下」。滑桿一出現在畫面上，就趁空檔先預熱一次
+                        （只在打開這一頁時才做，不會每種版面都一直佔著 GPU）。 */}
+                    <IdleOnce k={photoRegion.photos.map(p=>p.src).join('|')} run={warmSeamNow} visible={seamSliderShown}/>
+                    {/* 只有軌道左右往內收（標題、上下位置不變）：貼滿整排太長，兩端也難拖 */}
+                    <div className="px-3">
+                      <RegionLiveRange value={creativeSeamlessSliderValue(photoRegion)} onStart={()=>{seamLiveRef.current=true;}}
+                        /* 拖動中只換融合量：已經直接顯示的那層 GPU 畫面自己重畫就好（跟跨頁拼圖一樣），
+                           不重畫整張主畫布的所有物件、遮罩。剛從「關」拉到「開」的那一下、或那層還沒出現時才整張重畫 */
+                        onChange={v=>{const cur=photoRegionRef.current!,next=withCreativeSeamlessAmount(cur,v);
+                          if(cur.seamless&&next.seamless&&creativeSeam.current){photoRegionRef.current=next;seamPendingAmount.current=next.seamlessAmount||0;
+                            if(!seamAmountRaf.current)seamAmountRaf.current=requestAnimationFrame(()=>{seamAmountRaf.current=0;
+                              /* 另一側遮罩底下也有一份照片（畫在主畫布上）時，要整張重畫它才會跟著即時變 */
+                              if(creativeSeam.current?.secondPiece||!creativeSeam.current?.updateLiveAmount(seamPendingAmount.current))regionPaintRef.current();});
+                            return;}
+                          commitRegion(next,true);}}
+                        onCommit={()=>{seamLiveRef.current=false;finishRegionEdit();}}/>
+                    </div>
+                  </div>);
   const uploadRegionPhotos=async(e:React.ChangeEvent<HTMLInputElement>)=>{
     const files=Array.from(e.target.files||[]) as File[];e.target.value='';if(!files.length)return;
     const old=photoRegionRef.current;if(!old)return;
@@ -11849,7 +11894,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         {imageState && !composeState && (
           <div className="flex items-center gap-2">
             {/* 畫筆／橡皮擦：創意拼圖獨有，留在外面 */}
-            {activeTab !== 'motion' && <button
+            {activeTab !== 'motion' && !simple && <button
               onClick={(e) => {
                 e.stopPropagation();
                 const paletteReady = activeTab === 'add' && (
@@ -11977,7 +12022,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             {/* 儲存：點一下，兩顆選項從它正下方延伸出來（不論有沒有設動畫都有影片） */}
             <div className="relative shrink-0">
               <div className="h-7 rounded-full bg-white text-black shadow-lg flex items-center overflow-hidden">
-                <button onClick={(e)=>{e.stopPropagation();setExportOptionsOpen(false);setMoreOpen(false);setExportAsk(v=>!v);}} className="h-full pl-4 pr-2 text-[11px] font-black whitespace-nowrap">儲存</button>
+                <button onClick={(e)=>{e.stopPropagation();setExportOptionsOpen(false);setMoreOpen(false);
+                  /* 簡易拼圖沒有動畫：儲存就是存圖片，不用再問圖片還是影片 */
+                  if(simple){setExportAsk(false);handleSave();return;}
+                  setExportAsk(v=>!v);}} className="h-full pl-4 pr-2 text-[11px] font-black whitespace-nowrap">儲存</button>
                 <button data-creative-export-options-toggle aria-label="創意拼圖匯出選項" aria-expanded={exportOptionsOpen} onClick={e=>{setExportAsk(false);setMoreOpen(false);const el=e.currentTarget;void openCollageExportMenu(el,{imageFormat:imageExportFormat,videoFormat:videoExportFormat,fps:videoExportFps,quality:videoExportQuality,onImage:setImageExportFormat,onVideo:setVideoExportFormat,onFps:setVideoExportFps,onQuality:setVideoExportQuality}).then(ok=>{if(!ok)setExportOptionsOpen(v=>!v);});}} className="h-full w-7 pr-1 flex items-center justify-center active:opacity-60"><Icon name="more_horiz" className="text-[16px]"/></button>
               </div>
               {/* 展開／收合都走同一組 transition，所以兩個方向都是順的。
@@ -12026,6 +12074,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         className="flex-1 flex items-center justify-center relative p-4 interactive-area overflow-hidden no-callout no-select"
         onPointerDown={() => { setSelectedTarget(null); setBaseSelected(false); setMaskSelected(false); setExportAsk(false); }}
       >
+        {/* 簡易拼圖的編輯頁：現在改的是全部照片還是單張。點「全部」回到整體 */}
+        {simple && activeTab === 'objedit' && imageState && saveState === 'idle' && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[70] h-8 p-[3px] rounded-full bg-black/55 backdrop-blur-md border border-white/10 flex items-center text-[11.5px] font-bold"
+            data-simple-target onPointerDown={e => e.stopPropagation()}>
+            <button type="button" aria-pressed={selectedRegionPhoto === null}
+              onClick={() => { if (selectedRegionPhoto === null) return; selectedRegionPhotoRef.current = null; setSelectedRegionPhoto(null); regionPaintRef.current(); }}
+              className={`h-full px-3.5 rounded-full transition-colors ${selectedRegionPhoto === null ? 'bg-white text-black' : 'text-white/60'}`}>全部照片</button>
+            <span className={`h-full px-3.5 rounded-full flex items-center transition-colors ${selectedRegionPhoto !== null ? 'bg-white text-black' : 'text-white/45'}`}>
+              {selectedRegionPhoto !== null ? `第 ${selectedRegionPhoto + 1} 張` : '點照片單張調整'}
+            </span>
+          </div>
+        )}
         {imageState && (
           <div
             ref={stageRef}
@@ -12495,7 +12555,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           </>);
         })()} />
 
-        {imageState && (
+        {/* 簡易拼圖沒有圖案：不放「隨機圖案」 */}
+        {imageState && !simple && (
           <div
             className="absolute right-2 z-[60]"
             /* 動畫頁時往上讓開播放列，並跟著圖片一起平滑移動。
@@ -12613,7 +12674,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }}>
         {!colorPickerTarget && (
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a]" data-main-tools>
-            {['setting', 'shape', 'add', 'objedit', 'motion'].map(id => (
+            {(simple ? ['setting', 'objedit'] : ['setting', 'shape', 'add', 'objedit', 'motion']).map(id => (
               <button 
                 key={id} 
                 data-creative-tab={id}
@@ -12757,7 +12818,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             />
           ) : (
             <>
-              {activeTab === 'setting' && <div className="max-w-md mx-auto space-y-4 pb-4 animate-in fade-in duration-300">
+              {/* 簡易拼圖的版面頁：圖片排版、比例、無縫拼圖（跟創意拼圖同一組控制） */}
+              {activeTab === 'setting' && simple && <div className="max-w-md mx-auto space-y-4 pb-4 animate-in fade-in duration-300" data-simple-collage-setting>
+                <div className="grid grid-cols-2 gap-3 items-start">
+                  {photoLayoutControls}
+                  {ratioControls}
+                </div>
+                {seamlessControls}
+              </div>}
+              {activeTab === 'setting' && !simple && <div className="max-w-md mx-auto space-y-4 pb-4 animate-in fade-in duration-300">
 
 
                 
@@ -12888,27 +12957,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     );
                   })()}
                   </div>
-                  {photoRegion && photoRegion.photos.length>1 && seamlessPhotoBase(photoRegion) && <div className="space-y-3" data-creative-seamless>
-                    <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
-                    {/* 停在 0（無縫關著）時 GPU 那張畫布本來不會預熱：從 0 拉開的第一格要當場把每張原圖傳上 GPU、
-                        編譯著色器，就是「從 0 開始拖會卡一下」。滑桿一出現在畫面上，就趁空檔先預熱一次
-                        （只在打開這一頁時才做，不會每種版面都一直佔著 GPU）。 */}
-                    <IdleOnce k={photoRegion.photos.map(p=>p.src).join('|')} run={warmSeamNow} visible={seamSliderShown}/>
-                    {/* 只有軌道左右往內收（標題、上下位置不變）：貼滿整排太長，兩端也難拖 */}
-                    <div className="px-3">
-                      <RegionLiveRange value={creativeSeamlessSliderValue(photoRegion)} onStart={()=>{seamLiveRef.current=true;}}
-                        /* 拖動中只換融合量：已經直接顯示的那層 GPU 畫面自己重畫就好（跟跨頁拼圖一樣），
-                           不重畫整張主畫布的所有物件、遮罩。剛從「關」拉到「開」的那一下、或那層還沒出現時才整張重畫 */
-                        onChange={v=>{const cur=photoRegionRef.current!,next=withCreativeSeamlessAmount(cur,v);
-                          if(cur.seamless&&next.seamless&&creativeSeam.current){photoRegionRef.current=next;seamPendingAmount.current=next.seamlessAmount||0;
-                            if(!seamAmountRaf.current)seamAmountRaf.current=requestAnimationFrame(()=>{seamAmountRaf.current=0;
-                              /* 另一側遮罩底下也有一份照片（畫在主畫布上）時，要整張重畫它才會跟著即時變 */
-                              if(creativeSeam.current?.secondPiece||!creativeSeam.current?.updateLiveAmount(seamPendingAmount.current))regionPaintRef.current();});
-                            return;}
-                          commitRegion(next,true);}}
-                        onCommit={()=>{seamLiveRef.current=false;finishRegionEdit();}}/>
-                    </div>
-                  </div>}
+                  {seamlessControls}
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
                     它們講的都是「這張版面長什麼樣」，本來就該在同一頁。
                     -mt-1 是為了讓它跟上面那排的間距，跟這三項彼此之間一樣。 */}
@@ -13229,10 +13278,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 // 分頁或特效卡片 render 時不能把前一份 React 快照回灌到 ImageAdjustPanel、蓋掉比較新的特效
                 const regionPhoto = editRegionIndex !== null ? photoRegionRef.current?.photos[editRegionIndex] : null;
                 const regionEditing = !!regionPhoto?.src;
+                /* 簡易拼圖的整體：面板拿第一張當縮圖，改的時候把「這一次改了哪幾項」套到每一張 */
+                const allPhoto = !regionEditing && simpleAllEditing ? photoRegionRef.current?.photos.find(p => p.src) : null;
+                const allEditing = !!allPhoto;
                 /* 底是影片：選中底的時候編輯的就是那段影片本人（濾鏡、調節、特效、構圖）。
                    設定記在 baseVidEdit 上（不放進 imageState，見那裡的註解），每一格畫的時候才套（見 renderToCanvas 的 baseVidEdited）。 */
                 const baseVideoEditing = !regionEditing && baseSelected && !!imageState?.vid && isVideoEl(imageState?.img);
                 const sel = regionEditing ? {...regionPhoto,id:`region-photo-${editRegionIndex}`,type:'image',img:decodedRegionPhotos.current.get(regionPhoto.src)}
+                  : allEditing ? {...allPhoto,fx:simpleAllFxRef.current,id:'region-photo-all',type:'image',img:decodedRegionPhotos.current.get(allPhoto!.src)}
                   : baseVideoEditing ? baseVideoSel(imageState, bvEdit, baseVidPoster)
                   : objects.find(o => o.id === selectedObj) || null;
                 const patch = (d0: any) => {
@@ -13245,7 +13298,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     if (Object.keys(keep).length) setBaseVidEdit(e => ({ ...(e.img === v ? e : {}), ...keep, img: v }));
                     return;
                   }
-                  if (regionEditing && photoRegionRef.current) {
+                  if (allEditing && photoRegionRef.current) {
+                    if (!('fx' in d)) return;
+                    const prev: any = simpleAllFxRef.current, next: any = d.fx || {}, diff: any = {};
+                    for (const k of new Set([...Object.keys(prev), ...Object.keys(next)])) if (prev[k] !== next[k]) diff[k] = next[k];
+                    simpleAllFxRef.current = next;
+                    if (!Object.keys(diff).length) return;
+                    clearPhotoDimmer();
+                    commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map(p=>{
+                      if (!p.src) return p;
+                      const fx: any = {...(p.fx||{}),...diff};
+                      for (const k of Object.keys(fx)) if (fx[k] === undefined) delete fx[k];
+                      return {...p,fx};
+                    })},true);
+                  } else if (regionEditing && photoRegionRef.current) {
                     clearPhotoDimmer();
                     commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)},!!d.fx);
                   } else if (maskSliderLive.current?.id === sel?.id) {
@@ -13264,7 +13330,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   if (held && Object.keys(held.patch).length) setObjects(prev => prev.map(o => o.id === held.id ? { ...o, ...held.patch } : o));
                 };
                 // 圖片物件（不是影片、不是底圖格子）的效果滑桿走即時通道
-                const liveObjFx = !regionEditing && sel?.type === 'image' && !isVideoEl(sel.img);
+                const liveObjFx = !regionEditing && !allEditing && sel?.type === 'image' && !isVideoEl(sel.img);
                 const commitObjFxLive = () => {
                   const held = maskSliderLive.current; maskSliderLive.current = null;
                   if (held && Object.keys(held.patch).length) setObjects(prev => prev.map(o => o.id === held.id ? { ...o, ...held.patch } : o));
@@ -13678,7 +13744,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <ImageAdjustPanel
                       key={baseVideoEditing ? 'base-video' : undefined}
                       /* 打開特效頁：在這個物件實際算特效的那張 GPU 畫布（scratch.base，見 fxCanvasOf）上預熱 */
-                      warmFxFor={sel?.type === 'image' && sel?.img && !isVideoEl(sel.img) && !regionEditing && !baseVideoEditing ? (fid: string) => {
+                      warmFxFor={sel?.type === 'image' && sel?.img && !isVideoEl(sel.img) && !regionEditing && !allEditing && !baseVideoEditing ? (fid: string) => {
                         const key = `${sel.id}|${fid}`;
                         if (warmedObjFx.current.has(key)) return;
                         warmedObjFx.current.add(key);
@@ -13698,10 +13764,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                          真正畫到畫布上的還是 sel.img（那段影片本人），這裡換掉的
                          只有面板看的那條網址。 */
                       img={panelImgOf(sel)}
-                      hideShape={regionEditing || baseVideoEditing}
-                      isolateFxUpdates={regionEditing||liveObjFx}
+                      hideShape={regionEditing || allEditing || baseVideoEditing}
+                      onlyFilterTune={simple}
+                      isolateFxUpdates={regionEditing||allEditing||liveObjFx}
                       onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : liveObjFx ? ()=>{maskSliderLive.current={id:sel.id,patch:{}};} : undefined}
-                      onAdjustmentCommit={regionEditing ? finishRegionEdit : liveObjFx ? commitObjFxLive : undefined}
+                      onAdjustmentCommit={regionEditing || allEditing ? finishRegionEdit : liveObjFx ? commitObjFxLive : undefined}
                       set={(d: any) => {
                         /* 圖片物件拖效果滑桿：跟遮罩滑桿同一招 —— 只改 objectsRef、直接重畫畫布，
                            放開才寫回 state（整個創意拼圖不必每一格重新 render）。

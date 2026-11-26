@@ -19,6 +19,10 @@ import { setRawImportHint } from '../utils/importHint';
 import { beginImportHero, cancelImportHero, heroAllowed, beginToolEntrance, cancelToolEntrance } from '../utils/importHero';
 
 const PAGE = 150;
+export type PickMode = 'edit' | 'collage' | 'batch';
+const PICK_MODES: [PickMode, string][] = [['edit', '編輯'], ['collage', '拼圖'], ['batch', '批量編輯']];
+/** 簡易拼圖：一次 2～9 張 */
+const COLLAGE_MIN = 2, COLLAGE_MAX = 9;
 const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
 
 const CSS = `
@@ -123,7 +127,18 @@ export const NativeGallery: React.FC<{
       先把縮圖交給工具（onInstant），原檔在背景拿好再交出去；拿不到時 onInstantFail */
   onInstant?: (thumb: string | null) => void;
   onInstantFail?: () => void;
-}> = ({ api, limit, filter, onClose, noAlpha = false, hero, quiet = false, rawLimit = 0, onInstant, onInstantFail }) => {
+  /** 編輯的導入相簿：標題下面多一排「編輯／拼圖／批量編輯」。
+      編輯＝點一下就進（單張）；拼圖＝選 2～9 張進簡易拼圖；批量編輯＝照原本的多選（上限 limit）。
+      選好時用 onMode 告訴呼叫端是哪一種 */
+  modes?: boolean;
+  initialMode?: PickMode;
+  onMode?: (mode: PickMode) => void;
+}> = ({ api, limit: baseLimit, filter, onClose, noAlpha = false, hero, quiet = false, rawLimit: baseRawLimit = 0, onInstant, onInstantFail, modes = false, initialMode = 'edit', onMode }) => {
+  const [mode, setModeState] = useState<PickMode>(initialMode);
+  /* 這一種模式能選幾張：編輯 1 張、拼圖最多 9 張、批量照呼叫端給的上限 */
+  const limit = !modes ? baseLimit : mode === 'edit' ? 1 : mode === 'collage' ? COLLAGE_MAX : baseLimit;
+  const rawLimit = !modes || mode === 'batch' ? baseRawLimit : 0;
+  const minPick = modes && mode === 'collage' ? COLLAGE_MIN : 1;
   const multi = limit !== 1;
   const [shown, setShown] = useState(false);              // 滑上來的動畫
   const [status, setStatus] = useState<LibraryStatus | 'checking'>('checking');
@@ -274,6 +289,7 @@ export const NativeGallery: React.FC<{
   const finish = useCallback(async (ids: string[]) => {
     if (!ids.length || exportingRef.current) return;
     exportingRef.current = true;
+    if (modes) onMode?.(modeRef.current);
     if (onInstant) {
       /* 直接進工具：相簿往下收、工具同時打開（帶著這張的縮圖），原檔在背景拿 */
       closedRef.current = true;
@@ -322,7 +338,8 @@ export const NativeGallery: React.FC<{
       haptic('error');
       alert(`照片讀不進來：${String(e?.message ?? e ?? '請再試一次')}`);
     }
-  }, [close]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [close, hero, modes, onMode, onInstant, onInstantFail, onClose]);
 
   /* 用 ref 記目前選了哪些：點一下不會讓上千格全部重畫 */
   const pickedRef = useRef<string[]>([]);
@@ -361,6 +378,19 @@ export const NativeGallery: React.FC<{
   }, [multi, limit, rawLimit, finish]);
   /* 「含 RAW 最多 10 張」的提示：擋下來時出現 2 秒 */
   useEffect(() => { if (!rawNote) return; const t = window.setTimeout(() => setRawNote(0), 2200); return () => window.clearTimeout(t); }, [rawNote]);
+
+  /* 換模式：已經選的清掉（單張／拼圖／批量的上限不一樣，留著會超過或不合規則） */
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const setMode = (m: PickMode) => {
+    if (m === modeRef.current || exportingRef.current) return;
+    haptic('tick');
+    modeRef.current = m;
+    pickedRef.current = [];
+    setPicked([]);
+    setRawNote(0);
+    setModeState(m);
+  };
 
   const order = useMemo(() => { const m = new Map<string, number>(); picked.forEach((id, i) => m.set(id, i + 1)); return m; }, [picked]);
 
@@ -411,12 +441,12 @@ export const NativeGallery: React.FC<{
             </button>
             <div className="justify-self-end pr-1">
               {multi && ok && (
-                <button type="button" disabled={!picked.length || exporting} onClick={() => void finish(picked)}
+                <button type="button" disabled={picked.length < minPick || exporting} onClick={() => void finish(picked)}
                   className="h-8 px-4 rounded-full text-[14px] font-bold"
                   style={{
-                    background: picked.length ? '#fff' : 'rgba(255,255,255,.14)', color: picked.length ? '#000' : 'rgba(255,255,255,.4)',
+                    background: picked.length >= minPick ? '#fff' : 'rgba(255,255,255,.14)', color: picked.length >= minPick ? '#000' : 'rgba(255,255,255,.4)',
                     transition: `background .25s ease, color .25s ease, transform .25s ${EASE}`,
-                    transform: picked.length ? 'scale(1)' : 'scale(.96)',
+                    transform: picked.length >= minPick ? 'scale(1)' : 'scale(.96)',
                     animation: shake ? 'abg-shake .3s ease' : undefined,
                   }} key={shake}>
                   完成
@@ -424,6 +454,19 @@ export const NativeGallery: React.FC<{
               )}
             </div>
           </div>
+          {/* 編輯的導入相簿：三種導入方式。沒有按鈕外框，就是三個字：沒選的淡、選中的亮 */}
+          {modes && ok && (
+            <div className="h-9 px-6 grid grid-cols-3 items-center" role="tablist" aria-label="導入方式" data-pick-modes>
+              {PICK_MODES.map(([id, label]) => (
+                <button key={id} type="button" role="tab" aria-selected={mode === id} data-pick-mode={id} disabled={exporting}
+                  onClick={() => setMode(id)}
+                  className="h-9 text-[14px] font-semibold active:opacity-60"
+                  style={{ color: mode === id ? '#fff' : 'rgba(255,255,255,.38)', transition: 'color .22s ease' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           {status === 'limited' && (
             <div className="px-4 pb-2.5 flex items-center gap-3 text-[12.5px] text-white/65">
               <span className="flex-1 leading-snug">你只開放了部分照片給 ABAI。</span>
@@ -431,8 +474,11 @@ export const NativeGallery: React.FC<{
                 onClick={() => { haptic('tick'); void api.manageLimited().then(() => reload()); }}>選更多照片</button>
             </div>
           )}
-          {multi && limit > 1 && ok && !quiet && (
+          {multi && limit > 1 && ok && !quiet && !(modes && mode === 'collage') && (
             <div className="px-4 pb-2 text-[11.5px] text-white/40">{`最多可選 ${limit} 張`}</div>
+          )}
+          {modes && mode === 'collage' && ok && (
+            <div className="px-4 pb-2 text-center text-[11.5px] text-white/40">{`選 ${COLLAGE_MIN}～${COLLAGE_MAX} 張照片`}</div>
           )}
           {/* 含 RAW 時擋下來：說明為什麼不能再選 */}
           {rawNote > 0 && (
