@@ -1749,6 +1749,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 底是影片、裁切改了比例時，鋪進原本框形的那一張（主畫布／匯出各一張） */
   const baseVidCoverRef = useRef<Record<string, { cv: HTMLCanvasElement }>>({});
   const [photoRegion, setPhotoRegion] = useState<PhotoRegion | null>(null);
+  /** 簡易拼圖「全部照片」的滑桿按著：每一張都要每格重算，先用輕一點的工作尺寸，放手再照完整尺寸算一次 */
+  const simpleAllLiveRef = useRef(false);
   const photoRegionRef = useRef(photoRegion);
   const committedRegionRef=useRef(photoRegion);
   if(committedRegionRef.current!==photoRegion){photoRegionRef.current=photoRegion;committedRegionRef.current=photoRegion;}
@@ -2181,6 +2183,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 穩定後的快照只做到螢幕密度（容量會跟著放大長上去）。做成原圖大小的話，一張 1200 萬像素就是約 48MB，
          每張編輯過的照片都留一份，幾張下來 iOS 就會關掉網頁；存檔時特效另外依成品大小重算 */
       if(prepareNative)cap=Math.max(cap,Math.min(1600,Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height)));
+      else if(simpleAllLiveRef.current){const n=photoRegionRef.current?.photos.length||1;cap=Math.min(cap,n<=2?720:n<=4?560:420);}
     }
     /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
        維持原本的尺寸才不會讓任何既有的畫面變糊。 */
@@ -4496,6 +4499,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const finishRegionEdit=()=>{
     regionSliderHeld.current=false;
+    simpleAllLiveRef.current=false;
     regionBlend.current?.setHeld(false);
     // 現在就把互動用的合成換成共用的精確管線，不要等縮圖的延遲時間到
     regionLiveUntil.current=performance.now()+350;
@@ -4788,7 +4792,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const tap=regionTap.current;
     if(tap?.id===e.pointerId){
       regionTap.current=null;
-      if(!hold?.active&&!tap.moved&&e.type!=='pointercancel'&&activePointers.current.size===1){
+      /* 簡易拼圖：再點一次已選中的那張＝放掉，回到「全部照片」 */
+      if(simple&&!hold?.active&&!tap.moved&&e.type!=='pointercancel'&&activePointers.current.size===1&&selectedRegionPhotoRef.current===tap.index){
+        selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);regionPaintRef.current();
+      }else if(!hold?.active&&!tap.moved&&e.type!=='pointercancel'&&activePointers.current.size===1){
         regionSelectionFeedbackPending.current=true;
         selectedRegionPhotoRef.current=tap.index;setSelectedRegionPhoto(tap.index);
         selectedObjRef.current=null;baseSelectedRef.current=false;maskSelectedRef.current=false;
@@ -4822,6 +4829,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           // 點到物件：換成選中那個物件
           selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);
           selectedObjRef.current=tapObj.pickObjId;setSelectedTarget(null);setSelectedObj(tapObj.pickObjId);
+        }else if(simple&&e.type!=='pointercancel'&&tapObj&&!tapObj.moved&&!tapObj.away&&!tapObj.pickHoleId){
+          /* 簡易拼圖：再點一次已選中的那張＝放掉，回到「全部照片」 */
+          selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);regionPaintRef.current();
         }else if(e.type!=='pointercancel'&&regionEditTap.current?.away&&!regionEditTap.current.moved){
           selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);
           // 點到的是圖案：換成選中那顆圖案
@@ -11957,7 +11967,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
             <div aria-hidden="true" className="w-px h-4 mx-1 shrink-0" />
             {/* 三個點：預覽與對齊。 */}
-            <div className="relative" ref={moreWrapRef}>
+            {/* 簡易拼圖沒有物件可對齊：⋯ 裡只有預覽（預覽也不支援這個比例時整顆不出現） */}
+            {(!simple || igSupported) && <div className="relative" ref={moreWrapRef}>
               <button
                 onClick={(e) => {
                   setExportOptionsOpen(false);setExportAsk(false);
@@ -11965,7 +11976,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const el = e.currentTarget;
                   void openGlassMenu(el, [
                     ...(igSupported ? [{ id: 'preview', type: 'action' as const, title: '預覽' }] : []),
-                    { id: 'snap', type: 'switch' as const, title: '對齊', value: enableSnapping },
+                    ...(simple ? [] : [{ id: 'snap', type: 'switch' as const, title: '對齊', value: enableSnapping }]),
                   ], (id, v) => {
                     if (id === 'preview') openIgPreview();
                     else if (id === 'snap') setEnableSnapping(() => { const on = v === 'true'; if (!on) { guidesRef.current = []; setGuides([]); } return on; });
@@ -11989,10 +12000,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         >
                           <span>預覽</span>
                         </button>
-                        <div className="h-px bg-white/10" />
+                        {!simple && <div className="h-px bg-white/10" />}
                       </>
                     )}
-                    <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
+                    {!simple && <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
                       <span>對齊</span>
                       <button
                         onClick={(e) => {
@@ -12013,11 +12024,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           enableSnapping ? 'translate-x-4 bg-black' : 'translate-x-0 bg-white/45'
                         }`} />
                       </button>
-                    </div>
+                    </div>}
                   </div>
                 </>
               )}
-            </div>
+            </div>}
 
             {/* 儲存：點一下，兩顆選項從它正下方延伸出來（不論有沒有設動畫都有影片） */}
             <div className="relative shrink-0">
@@ -12026,7 +12037,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   /* 簡易拼圖沒有動畫：儲存就是存圖片，不用再問圖片還是影片 */
                   if(simple){setExportAsk(false);handleSave();return;}
                   setExportAsk(v=>!v);}} className="h-full pl-4 pr-2 text-[11px] font-black whitespace-nowrap">儲存</button>
-                <button data-creative-export-options-toggle aria-label="創意拼圖匯出選項" aria-expanded={exportOptionsOpen} onClick={e=>{setExportAsk(false);setMoreOpen(false);const el=e.currentTarget;void openCollageExportMenu(el,{imageFormat:imageExportFormat,videoFormat:videoExportFormat,fps:videoExportFps,quality:videoExportQuality,onImage:setImageExportFormat,onVideo:setVideoExportFormat,onFps:setVideoExportFps,onQuality:setVideoExportQuality}).then(ok=>{if(!ok)setExportOptionsOpen(v=>!v);});}} className="h-full w-7 pr-1 flex items-center justify-center active:opacity-60"><Icon name="more_horiz" className="text-[16px]"/></button>
+                <button data-creative-export-options-toggle aria-label="創意拼圖匯出選項" aria-expanded={exportOptionsOpen} onClick={e=>{setExportAsk(false);setMoreOpen(false);const el=e.currentTarget;void openCollageExportMenu(el,{imageOnly:simple,imageFormat:imageExportFormat,videoFormat:videoExportFormat,fps:videoExportFps,quality:videoExportQuality,onImage:setImageExportFormat,onVideo:setVideoExportFormat,onFps:setVideoExportFps,onQuality:setVideoExportQuality}).then(ok=>{if(!ok)setExportOptionsOpen(v=>!v);});}} className="h-full w-7 pr-1 flex items-center justify-center active:opacity-60"><Icon name="more_horiz" className="text-[16px]"/></button>
               </div>
               {/* 展開／收合都走同一組 transition，所以兩個方向都是順的。
                   刻意不用 scale：這兩顆裡面是線條圖示（SVG），整塊被縮放時
@@ -12061,7 +12072,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             </div>
           </div>
         )}
-        {exportOptionsOpen&&<CollageExportOptions label="創意拼圖匯出設定" panelRef={exportOptionsRef} imageFormat={imageExportFormat} videoFormat={videoExportFormat} fps={videoExportFps} quality={videoExportQuality} onImage={setImageExportFormat} onVideo={setVideoExportFormat} onFps={setVideoExportFps} onQuality={setVideoExportQuality}/>}
+        {exportOptionsOpen&&<CollageExportOptions imageOnly={simple} label="創意拼圖匯出設定" panelRef={exportOptionsRef} imageFormat={imageExportFormat} videoFormat={videoExportFormat} fps={videoExportFps} quality={videoExportQuality} onImage={setImageExportFormat} onVideo={setVideoExportFormat} onFps={setVideoExportFps} onQuality={setVideoExportQuality}/>}
         {/* 多選最多九張照片，全部加入同一個圖片排版區域。 */}
         <input type="file" accept={MEDIA_ACCEPT} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
         <input type="file" accept={MEDIA_ACCEPT} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
@@ -12072,20 +12083,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       
       <main 
         className="flex-1 flex items-center justify-center relative p-4 interactive-area overflow-hidden no-callout no-select"
-        onPointerDown={() => { setSelectedTarget(null); setBaseSelected(false); setMaskSelected(false); setExportAsk(false); }}
+        onPointerDown={(e) => { setSelectedTarget(null); setBaseSelected(false); setMaskSelected(false); setExportAsk(false);
+          /* 簡易拼圖：點照片外面的空白＝放掉選中的照片，回到「全部照片」 */
+          if (simple && e.target === e.currentTarget && selectedRegionPhotoRef.current !== null) { selectedRegionPhotoRef.current = null; setSelectedRegionPhoto(null); regionPaintRef.current(); } }}
       >
-        {/* 簡易拼圖的編輯頁：現在改的是全部照片還是單張。點「全部」回到整體 */}
-        {simple && activeTab === 'objedit' && imageState && saveState === 'idle' && (
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[70] h-8 p-[3px] rounded-full bg-black/55 backdrop-blur-md border border-white/10 flex items-center text-[11.5px] font-bold"
-            data-simple-target onPointerDown={e => e.stopPropagation()}>
-            <button type="button" aria-pressed={selectedRegionPhoto === null}
-              onClick={() => { if (selectedRegionPhoto === null) return; selectedRegionPhotoRef.current = null; setSelectedRegionPhoto(null); regionPaintRef.current(); }}
-              className={`h-full px-3.5 rounded-full transition-colors ${selectedRegionPhoto === null ? 'bg-white text-black' : 'text-white/60'}`}>全部照片</button>
-            <span className={`h-full px-3.5 rounded-full flex items-center transition-colors ${selectedRegionPhoto !== null ? 'bg-white text-black' : 'text-white/45'}`}>
-              {selectedRegionPhoto !== null ? `第 ${selectedRegionPhoto + 1} 張` : '點照片單張調整'}
-            </span>
-          </div>
-        )}
         {imageState && (
           <div
             ref={stageRef}
@@ -13767,7 +13768,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       hideShape={regionEditing || allEditing || baseVideoEditing}
                       onlyFilterTune={simple}
                       isolateFxUpdates={regionEditing||allEditing||liveObjFx}
-                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : liveObjFx ? ()=>{maskSliderLive.current={id:sel.id,patch:{}};} : undefined}
+                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : allEditing ? ()=>{simpleAllLiveRef.current=true;} : liveObjFx ? ()=>{maskSliderLive.current={id:sel.id,patch:{}};} : undefined}
                       onAdjustmentCommit={regionEditing || allEditing ? finishRegionEdit : liveObjFx ? commitObjFxLive : undefined}
                       set={(d: any) => {
                         /* 圖片物件拖效果滑桿：跟遮罩滑桿同一招 —— 只改 objectsRef、直接重畫畫布，

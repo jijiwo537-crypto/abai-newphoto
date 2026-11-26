@@ -4,7 +4,8 @@ import {canExportHeic} from '../utils/heicExport';
 import {collageVideoMime,VIDEO_RES_CHOICES,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import {openGlassMenu,type GlassMenuItem} from '../utils/nativeGlass';
 type Props={label:string;panelRef:React.Ref<HTMLDivElement>;imageFormat:'jpg'|'png'|'heic';videoFormat:CollageVideoFormat;fps:number;quality:number;
- onImage:(v:'jpg'|'png'|'heic')=>void;onVideo:(v:CollageVideoFormat)=>void;onFps:(v:number)=>void;onQuality:(v:number)=>void};
+ onImage:(v:'jpg'|'png'|'heic')=>void;onVideo:(v:CollageVideoFormat)=>void;onFps:(v:number)=>void;onQuality:(v:number)=>void;
+ /** 只存圖片（簡易拼圖沒有動畫）：只留「圖片格式」 */imageOnly?:boolean};
 /* 切換按鈕時會閃一下（電腦上特別明顯）：面板如果用毛玻璃（backdrop-filter），
    裡面的按鈕一按就有縮放動畫，Chrome 會因此把整片毛玻璃重新取樣、閃一格；
    再加上每按一次整個編輯器都要重新 render，亮起來的那顆會慢半拍。
@@ -19,19 +20,22 @@ const PANEL=SAVE_MENU_GLASS;
 /** 共用的版面：兩個拼圖的存檔面板完全一樣 */
 export function CollageExportOptions(p:Props){return <div ref={p.panelRef} role="dialog" aria-label={p.label} data-collage-export-options style={PANEL} className="absolute left-4 right-4 top-full mt-2 z-[81] p-3 rounded-2xl flex flex-col gap-3">
  <Row label="圖片格式" value={p.imageFormat} choices={[['jpg','JPG'],['png','PNG'],['heic','HEIC']]} disabled={v=>v==='heic'&&!canExportHeic()} onChange={v=>p.onImage(v as Props['imageFormat'])}/>
+ {!p.imageOnly&&<>
  <Row label="影片格式" value={p.videoFormat} choices={[['auto','自動'],['mp4','MP4']]} disabled={v=>v!=='auto'&&!collageVideoMime(v as CollageVideoFormat)} onChange={v=>p.onVideo(v as CollageVideoFormat)}/>
  <Row label="影片幀率" value={String(p.fps)} choices={[['0','自動'],['24','24'],['30','30'],['50','50'],['60','60']]} onChange={v=>p.onFps(Number(v))}/>
  <Row label="影片畫質" value={String(p.quality)} choices={VIDEO_RES_CHOICES} onChange={v=>p.onQuality(Number(v))}/>
+ </>}
  </div>;}
 
 /** App 裡：同樣四列改用原生黑色液態玻璃面板（utils/nativeGlass 的 openGlassMenu）。回傳 false＝網頁版，呼叫端照舊打開上面那個網頁面板 */
 export function openCollageExportMenu(anchor:HTMLElement,p:Omit<Props,'label'|'panelRef'>):Promise<boolean>{
- const items:GlassMenuItem[]=[
+ const all:GlassMenuItem[]=[
   {id:'image',type:'choice',title:'圖片格式',value:p.imageFormat,options:[{label:'JPG',value:'jpg'},{label:'PNG',value:'png'},{label:'HEIC',value:'heic',enabled:canExportHeic()}]},
   {id:'video',type:'choice',title:'影片格式',value:p.videoFormat,options:[{label:'自動',value:'auto'},{label:'MP4',value:'mp4',enabled:!!collageVideoMime('mp4' as CollageVideoFormat)}]},
   {id:'fps',type:'choice',title:'影片幀率',value:String(p.fps),options:[['0','自動'],['24','24'],['30','30'],['50','50'],['60','60']].map(([value,label])=>({label,value}))},
   {id:'quality',type:'choice',title:'影片畫質',value:String(p.quality),options:VIDEO_RES_CHOICES.map(([value,label])=>({label,value}))},
  ];
+ const items=all.filter(it=>!p.imageOnly||it.id==='image');
  return openGlassMenu(anchor,items,(id,v)=>{
   if(id==='image')p.onImage(v as Props['imageFormat']);
   else if(id==='video')p.onVideo(v as CollageVideoFormat);

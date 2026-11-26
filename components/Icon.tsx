@@ -23,6 +23,8 @@ interface IconProps {
 const INLINE: Record<string, string> = {
   /* 調色盤（仿色）：畫家的調色盤外框（右下有拇指孔的缺口）＋四個顏料點，線寬跟主頁其他圖示（細體）一樣 */
   palette: '<path fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round" d="M12 3.6c-4.8 0-8.5 3.6-8.5 8.3 0 4.6 3.6 8.5 8.2 8.5 1.2 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.8-.5-1.2 0-1 .8-1.8 1.8-1.8h2.1c2.6 0 4.6-2.1 4.6-4.6 0-3.6-4.1-6.2-9.2-6.2z"/><g fill="#fff"><circle cx="7.6" cy="11.7" r="1.2"/><circle cx="9.6" cy="7.9" r="1.2"/><circle cx="14.3" cy="7.9" r="1.2"/><circle cx="16.6" cy="11.4" r="1.2"/></g>',
+  /* 主頁「仿色」的調色盤：外框是正圓（不會像舊的那樣一邊鼓出來、看起來歪），左上一圈四個顏料點、右下拇指孔 */
+  palette_round: '<g fill="none" stroke="#fff" stroke-width="1.5"><circle cx="12" cy="12" r="8.25"/><circle cx="15.1" cy="15.1" r="1.75"/></g><g fill="#fff"><circle cx="7.7" cy="13.6" r="1.2"/><circle cx="7.8" cy="10" r="1.2"/><circle cx="10.4" cy="7.6" r="1.2"/><circle cx="14" cy="7.8" r="1.2"/></g>',
   /* 專業相機：機身外框加鏡頭（相機設定選單的「專業」） */
   pro_camera: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><path d="M3.5 8.2a1.7 1.7 0 0 1 1.7-1.7h2.6l1.5-2h5.4l1.5 2h2.6a1.7 1.7 0 0 1 1.7 1.7v9.6a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z"/><circle cx="12" cy="12.8" r="3.6"/></g>',
   /* 愛心（相機相簿）：實心、空心 */
@@ -58,9 +60,9 @@ const INLINE: Record<string, string> = {
   erase_spot: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.6 4.3 20 9.7a1.6 1.6 0 0 1 0 2.3l-7.4 7.4H8.3L4 15.1a1.6 1.6 0 0 1 0-2.3l8.3-8.5a1.6 1.6 0 0 1 2.3 0z"/><path d="M12.6 19.4H20"/></g><path d="M4 15.1a1.6 1.6 0 0 1 0-2.3l4.4-4.5 7 7-4 4.1H8.3z" fill="#fff"/>',
   /* 修補：一塊斜放的 OK 繃（中間透氣孔的四個點），跟去痘的圖標分得開 */
   patch_heal: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><rect x="3.2" y="8.6" width="17.6" height="6.8" rx="3.4" transform="rotate(-45 12 12)"/><rect x="8.9" y="8.9" width="6.2" height="6.2" rx="1" transform="rotate(-45 12 12)"/></g><g fill="#fff"><circle cx="11" cy="11" r=".8"/><circle cx="13" cy="11" r=".8"/><circle cx="11" cy="13" r=".8"/><circle cx="13" cy="13" r=".8"/></g>',
-  /* 創意拼圖：外框裡左邊一大格、右邊上下兩格。外框大小（24 格裡佔 17 格）、線寬（1.15）跟跨頁拼圖的 grid_view（Material Symbols 粗細 300）一樣，
+  /* 創意拼圖：外框裡左邊一大格、右邊上下兩格。外框大小（24 格裡佔 17 格）、線寬（1.5，實測跟跨頁拼圖的字型圖示一樣粗）跟跨頁拼圖的 grid_view（Material Symbols 粗細 300）一樣，
      兩顆並排時大小、粗細一致 */
-  collage_layout: '<g fill="none" stroke="#fff" stroke-width="1.15" stroke-linejoin="round"><rect x="4.075" y="4.075" width="15.85" height="15.85" rx=".55"/><path d="M11.6 4.075v15.85M11.6 12h8.325"/></g>',
+  collage_layout: '<g fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"><rect x="4.075" y="4.075" width="15.85" height="15.85" rx=".55"/><path d="M11.6 4.075v15.85M11.6 12h8.325"/></g>',
   grade_wheels: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="2.4" fill="#fff"/>',
 };
 const maskOf = (body: string) =>

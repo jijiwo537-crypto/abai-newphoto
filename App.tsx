@@ -586,11 +586,26 @@ const App: React.FC = () => {
   /** 接續上次：經典拼圖自己會從草稿還原，其他工具要把照片與參數餵回去 */
   /* 按了「繼續編輯」一定要有結果：讀草稿期間蓋一層轉圈（批量的草稿要讀很多張，以前這段畫面毫無反應，
      看起來像停在主頁）；讀不到或出錯就明講，不會靜靜地什麼都不做。讀草稿最多等 20 秒（資料庫被卡住時不會永遠等） */
-  const resumeFailed = (msg: string) => {
-    setResume(null);
-    if (nativeAsk) void nativeDialog({ title: '無法繼續上次的編輯', message: msg, buttons: [{ id: 'ok', title: '好', role: 'primary' }], style: 'dark' });
-    else window.alert(msg);
-  };
+  /* 「繼續編輯」一定要有反應、而且不跳煩人的提示：一開 App 就先把草稿讀好、確認讀得出來，
+     讀得出來才問；讀不出來（壞掉、過期）就直接收掉，根本不會問。按下「繼續編輯」時用的就是這份已經讀好的草稿 */
+  const preloadedDraft = useRef<Promise<Awaited<ReturnType<typeof loadToolDraft>> | null> | null>(null);
+  const [draftChecked, setDraftChecked] = useState(() => !resume || resume.kind === 'layout');
+  useEffect(() => {
+    if (draftChecked || !resume || resume.kind === 'layout') return;
+    let live = true;
+    const p = loadToolDraft().catch(() => null);
+    preloadedDraft.current = p;
+    /* 資料庫卡住超過 20 秒：這次就不問（草稿留著，下次開 App 再試），不顯示任何提示 */
+    const t = window.setTimeout(() => { if (live) { preloadedDraft.current = null; setResume(null); } }, 20_000);
+    void p.then(d => {
+      if (!live) return;
+      window.clearTimeout(t);
+      if (!d) { preloadedDraft.current = null; void clearToolDraft(); setResume(null); }
+      setDraftChecked(true);
+    });
+    return () => { live = false; window.clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const handleResume = async () => {
     if (!resume || resuming) return;
     if (resume.kind === 'layout') {
@@ -600,12 +615,10 @@ const App: React.FC = () => {
     }
     setResuming(true);
     try {
-      const draft = await Promise.race([
-        loadToolDraft(),
-        new Promise<'timeout'>(res => window.setTimeout(() => res('timeout'), 20_000)),
-      ]).catch(() => null);
-      if (draft === 'timeout') { resumeFailed('讀取草稿太久了，請再試一次。'); return; }
-      if (!draft) { await clearToolDraft(); resumeFailed('上次的草稿已經過期或讀取失敗。'); return; }
+      const draft = await (preloadedDraft.current ?? loadToolDraft()).catch(() => null);
+      preloadedDraft.current = null;
+      /* 開 App 時已經確認過讀得出來，這裡幾乎不可能落空；真的落空就安靜地收掉，不跳提示 */
+      if (!draft) { await clearToolDraft(); setResume(null); return; }
       setToolDraftState(draft.state ?? null);
       /* 自動恢復也要延續原歷史項目的身份；否則工具會生成新 key，
          再次儲存時歷史中就會多出一份完全相同的項目。 */
@@ -640,7 +653,7 @@ const App: React.FC = () => {
       }
       setResume(null);
     } catch {
-      resumeFailed('讀取草稿時發生問題，請再試一次。');
+      setResume(null);
     } finally {
       setResuming(false);
     }
@@ -778,7 +791,7 @@ const App: React.FC = () => {
     return () => { ob.disconnect(); window.clearTimeout(t); };
   }, []);
   /* 上次沒做完的一律先問（不管是正常離開還是被系統關掉） */
-  const resumeAsk = homeShown && !!resume && currentView === 'home';
+  const resumeAsk = homeShown && draftChecked && !!resume && currentView === 'home';
   const [webResumeFallback, setWebResumeFallback] = useState(false);
   const resumeActs = useRef({ go: handleResume, drop: handleDiscardResume });
   resumeActs.current = { go: handleResume, drop: handleDiscardResume };

@@ -78,7 +78,7 @@ const TOOL_TILES = [
   { icon: 'collage_layout', label: '創意拼圖', key: 'collage' },
   { icon: 'grid_view', label: '跨頁拼圖', key: 'layout' },
   { icon: 'magic_button', label: '美顏', key: 'beauty' },
-  { icon: 'palette', label: '仿色', key: 'match' },
+  { icon: 'palette_round', label: '仿色', key: 'match' },
 ] as const;
 
 /**
