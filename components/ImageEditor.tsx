@@ -1573,15 +1573,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 再點一次已經選中的那張才會跳出的小選單 */
   const [batchMenu, setBatchMenu] = useState<number | null>(null);
   const safeIdx = Math.min(batchIdx, Math.max(0, srcList.length - 1));
-  /* 草稿可能接回中間一張；第一幀就把它完整放進縮圖列的可見範圍。 */
-  useLayoutEffect(() => {
-    const row = document.querySelector('[data-batch-row]') as HTMLElement | null;
-    const thumb = row?.querySelector(`[data-batch-thumb="${safeIdx}"]`) as HTMLElement | null;
-    if (!row || !thumb) return;
-    const left = thumb.offsetLeft, right = left + thumb.offsetWidth;
-    if (left < row.scrollLeft) row.scrollLeft = Math.max(0, left - 2);
-    else if (right > row.scrollLeft + row.clientWidth) row.scrollLeft = right - row.clientWidth + 2;
-  }, [safeIdx, srcList.length]);
   /** 批量編輯（一次編好幾張）：沒有遮色片、人像、仿色；每張各自調，按「應用全部」才把這張的調整套到其他張 */
   const isBatch = srcList.length > 1;
   safeIdxRef.current = safeIdx;
@@ -1896,20 +1887,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      所以真正的值放在 ref，setState 只是拿來重繪。 */
   const historyRef = useRef<HistoryItem[]>([]);
   const historyIdxRef = useRef(-1);
-  /* 批量編輯每張照片都有自己的撤銷堆疊。切照片時收起目前這張，回來時原樣接回。 */
-  const [restoredHistories] = useState<Record<number, { items: HistoryItem[]; idx: number }>>(() => {
-    const result: Record<number, { items: HistoryItem[]; idx: number }> = {};
-    const saved = resumeBatch?.histories;
-    if (!isObj(saved)) return result;
-    for (let i = 0; i < incoming.length; i++) {
-      const h = saved[i];
-      if (!isObj(h) || !Array.isArray(h.items) || h.items.length > DRAFT_HISTORY_MAX * 2 ||
-          !h.items.every(validHistoryItem) || !Number.isFinite(h.idx)) continue;
-      result[i] = { items: safeClone(h.items, []), idx: Math.max(0, Math.min(h.items.length - 1, h.idx)) };
-    }
-    return result;
-  });
-  const batchHistoriesRef = useRef(restoredHistories);
   const writeHistory = (arr: HistoryItem[], idx: number) => {
     historyRef.current = arr;
     historyIdxRef.current = idx;
@@ -2198,7 +2175,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 切換要預覽哪一張 */
   const switchTo = (i: number) => {
     if (i === safeIdx || i < 0 || i >= srcList.length) return;
-    batchHistoriesRef.current[safeIdx] = { items: historyRef.current, idx: historyIdxRef.current };
     setBatchMenu(null);
     /* 先把畫面上現在這一張拍下來蓋著（見 veilUp），底下怎麼換都看不到；新的這張完整畫好才直接換過去（不淡化） */
     veilUp(true);
@@ -2276,28 +2252,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   /** 把畫面上現在那一張拍下來蓋住預覽（已經蓋著就沿用，不重拍） */
   const veilUp = (cut = false) => {
-    if (veilRef.current) {
-      /* RAW 的淡入層還在時接著換照片，也必須改成立即切換。 */
-      if (cut) veilRef.current.cut = true;
-      return;
-    }
+    if (veilRef.current) return;   // 已經蓋著（同一次切換還沒畫好）：沿用，等它畫好
     const box = previewBoxRef.current, shown = visibleEditorCanvas();
     if (!box || !shown || !shown.width || !shown.height) return;
     const br = box.getBoundingClientRect(), sr = shown.getBoundingClientRect();
-    if (br.width < 2 || br.height < 2 || sr.width < 2 || sr.height < 2) return;
+    if (sr.width < 2 || sr.height < 2) return;
     const el = document.createElement('canvas');
     const dpr = Math.min(3, window.devicePixelRatio || 1);
-    const k = Math.min(1, 2400 / Math.max(br.width * dpr, br.height * dpr));
-    el.width = Math.max(1, Math.round(br.width * dpr * k)); el.height = Math.max(1, Math.round(br.height * dpr * k));
+    const k = Math.min(1, 2400 / Math.max(sr.width * dpr, sr.height * dpr));
+    el.width = Math.max(1, Math.round(sr.width * dpr * k)); el.height = Math.max(1, Math.round(sr.height * dpr * k));
     const g = el.getContext('2d');
     if (!g) return;
-    const sx = el.width / br.width, sy = el.height / br.height;
-    g.fillStyle = '#080808';
-    g.fillRect(0, 0, el.width, el.height);
-    try { g.drawImage(shown, (sr.left - br.left) * sx, (sr.top - br.top) * sy, sr.width * sx, sr.height * sy); } catch { return; }
+    try { g.drawImage(shown, 0, 0, el.width, el.height); } catch { return; }
     Object.assign(el.style, {
-      position: 'absolute', left: '0', top: '0', width: '100%', height: '100%',
-      zIndex: '15', pointerEvents: 'none', willChange: 'opacity',
+      position: 'absolute', left: `${sr.left - br.left}px`, top: `${sr.top - br.top}px`, width: `${sr.width}px`, height: `${sr.height}px`,
+      zIndex: '15', pointerEvents: 'none', borderRadius: '2px', willChange: 'opacity',
     } as Partial<CSSStyleDeclaration>);
     el.setAttribute('data-switch-veil', '');
     box.appendChild(el);
@@ -2398,8 +2367,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     soloSnapsRef.current = reindex(soloSnapsRef.current);
     ownGeoRef.current = reindex(ownGeoRef.current);
     ownMaskRef.current = reindex(ownMaskRef.current);
-    batchHistoriesRef.current[safeIdx] = { items: historyRef.current, idx: historyIdxRef.current };
-    batchHistoriesRef.current = reindex(batchHistoriesRef.current);
     setLinked(prev => prev.filter((_, n) => n !== i));
     if (nextIdx !== safeIdx) {
       stashCurrent();
@@ -2465,21 +2432,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     from = Math.max(from, hIdx - DRAFT_HISTORY_MAX + 1, 0);
     const histItems = hIdx >= from ? hist.slice(from, Math.min(hist.length, from + DRAFT_HISTORY_MAX * 2)) : [];
-    const savedHistories: Record<number, { items: Omit<HistoryItem, 'srcs'>[]; idx: number }> = {};
-    if (list.length > 1) {
-      for (let i = 0; i < list.length; i++) {
-        const entry = i === safeIdxRef.current ? { items: hist, idx: hIdx } : batchHistoriesRef.current[i];
-        if (!entry || !Array.isArray(entry.items) || entry.idx < 0) continue;
-        let sourceStart = 0;
-        for (let k = entry.items.length - 1; k >= 0; k--) {
-          const srcs = entry.items[k].srcs;
-          if (srcs && srcs.join('\n') !== list.join('\n')) { sourceStart = k + 1; break; }
-        }
-        const start = Math.max(sourceStart, entry.idx - DRAFT_HISTORY_MAX + 1, 0);
-        const items = entry.items.slice(start, Math.min(entry.items.length, start + DRAFT_HISTORY_MAX * 2));
-        if (items.length) savedHistories[i] = { items: items.map(({ srcs: _s, ...rest }) => rest), idx: entry.idx - start };
-      }
-    }
     const live = liveRef.current;
     return {
       ...latest,
@@ -2501,7 +2453,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         ownMask: ownMaskRef.current,
         shared: sharedSnapRef.current,
         linked: linkedRef.current,
-        histories: savedHistories,
       } : undefined,
     };
   };
@@ -7545,8 +7496,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (typeof resumeFx.userHalation === 'number') userHalationRef.current = resumeFx.userHalation;
       if (isObj(resumeFx.userGrain)) userGrainRef.current = { ...userGrainRef.current, ...resumeFx.userGrain };
     }
-    /* 目前這張的歷史優先；首次接回舊草稿則沿用頂層 history。 */
-    const rh = batchHistoriesRef.current[safeIdxRef.current] || resume?.history;
+    /* 接回上次的復原紀錄（只有接續的那一張）：每一步的來源清單都要跟現在一樣才接（草稿存的時候已經篩過，這裡再確認一次） */
+    const rh = resume?.history;
     if (isObj(rh) && Array.isArray(rh.items) && rh.items.length && rh.items.length <= DRAFT_HISTORY_MAX * 2 && rh.items.every(validHistoryItem)) {
       const items = (safeClone(rh.items, []) as HistoryItem[]).map(it => ({ ...it, params: { ...DEFAULT_PARAMS, ...it.params } as EditorParams, srcs: [...srcListRef.current] }));
       writeHistory(items, Math.max(0, Math.min(items.length - 1, Number(rh.idx) || 0)));
@@ -11414,7 +11365,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       onContextMenu={(e) => e.preventDefault()}
                       title={`第 ${i + 1} 張`}
                       data-batch-thumb={i}
-                      className="relative block w-9 h-9 rounded-[4px] overflow-hidden bg-[#1a1a1a] transition-all active:scale-95 touch-manipulation select-none"
+                      className={`block w-9 h-9 rounded-[4px] overflow-hidden bg-[#1a1a1a] transition-all active:scale-95 touch-manipulation select-none ${
+                        active ? 'ring-[length:1.5px] ring-white' : ''
+                      }`}
                     >
                       {/* 沒選中的不用半透明 —— 實心、壓暗就好，才不會透出後面的畫面。
                           src 一定要用縮好的小圖，不能掛原圖（見上面 stripThumbs 的說明）。
@@ -11427,7 +11380,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                           className={`w-full h-full object-cover pointer-events-none transition-all ${active ? '' : 'filter brightness-[0.5]'}`}
                         />
                       )}
-                      {active && <span aria-hidden className="absolute inset-0 pointer-events-none rounded-[4px] border-[1.5px] border-white" />}
                     </button>
                   </div>
                 );
