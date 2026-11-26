@@ -77,7 +77,6 @@ import {
 import { listExports, loadExport, subscribeExports, type ExportMeta } from './utils/exportHistory';
 import type { ExitChoice } from './types';
 import { watchAppUpdates } from './utils/appUpdate';
-import { detectUnexpectedExit, markToolActive, markToolInactive } from './utils/crashRecovery';
 import { trimMemory, watchMemoryPressure } from './utils/memoryPressure';
 import { isNative } from './utils/native';
 import { nativeDialog, closeNativeDialog } from './utils/nativeGlass';
@@ -146,9 +145,8 @@ const App: React.FC = () => {
     return tool ? { kind: tool, at: t } : null;
   });
   const [resuming, setResuming] = useState(false);
-  /* 上次是不是在工具裡被系統強制關掉的（見 utils/crashRecovery）。一定要在第一次 render 就讀：
-     下面那個 effect 一回到首頁就會把記號清掉 */
-  const [crashed] = useState(() => detectUnexpectedExit());
+  /* 以前「被系統關掉就自動接回」的記號（已拿掉這個功能，一律先問）：舊版留下的兩筆資料清掉一次 */
+  useState(() => { try { localStorage.removeItem('abai-active-tool'); localStorage.removeItem('abai-crash-log'); } catch { /* 私密瀏覽 */ } return 0; });
 
   /* 首頁的「最近輸出」。每次回到首頁重讀一次，剛導出的那張才會馬上出現 */
   const [recentExports, setRecentExports] = useState<ExportMeta[]>([]);
@@ -549,8 +547,15 @@ const App: React.FC = () => {
   }, [leaveTool]);
 
   /** 接續上次：經典拼圖自己會從草稿還原，其他工具要把照片與參數餵回去 */
+  /* 按了「繼續編輯」一定要有結果：讀草稿期間蓋一層轉圈（批量的草稿要讀很多張，以前這段畫面毫無反應，
+     看起來像停在主頁）；讀不到或出錯就明講，不會靜靜地什麼都不做。讀草稿最多等 20 秒（資料庫被卡住時不會永遠等） */
+  const resumeFailed = (msg: string) => {
+    setResume(null);
+    if (nativeAsk) void nativeDialog({ title: '無法繼續上次的編輯', message: msg, buttons: [{ id: 'ok', title: '好', role: 'primary' }], style: 'dark' });
+    else window.alert(msg);
+  };
   const handleResume = async () => {
-    if (!resume) return;
+    if (!resume || resuming) return;
     if (resume.kind === 'layout') {
       setResume(null);
       setCurrentView('layout');
@@ -558,8 +563,12 @@ const App: React.FC = () => {
     }
     setResuming(true);
     try {
-      const draft = await loadToolDraft();
-      if (!draft) { await clearToolDraft(); setResume(null); return; }
+      const draft = await Promise.race([
+        loadToolDraft(),
+        new Promise<'timeout'>(res => window.setTimeout(() => res('timeout'), 20_000)),
+      ]).catch(() => null);
+      if (draft === 'timeout') { resumeFailed('讀取草稿太久了，請再試一次。'); return; }
+      if (!draft) { await clearToolDraft(); resumeFailed('上次的草稿已經過期或讀取失敗。'); return; }
       setToolDraftState(draft.state ?? null);
       /* 自動恢復也要延續原歷史項目的身份；否則工具會生成新 key，
          再次儲存時歷史中就會多出一份完全相同的項目。 */
@@ -592,6 +601,8 @@ const App: React.FC = () => {
         setCurrentView('collage');
       }
       setResume(null);
+    } catch {
+      resumeFailed('讀取草稿時發生問題，請再試一次。');
     } finally {
       setResuming(false);
     }
@@ -652,20 +663,6 @@ const App: React.FC = () => {
   };
 
   /** 不接續：兩份草稿都收掉，從乾淨的首頁開始 */
-  /* 被系統關掉之後自動接回剛才的編輯（連續被關掉的話不自動，改回先問，見 crashRecovery） */
-  const autoResumed = useRef(false);
-  const autoPending = !!(crashed?.auto && resume && resume.kind === crashed.tool && resume.at >= crashed.since - 1000);
-  useEffect(() => {
-    if (autoResumed.current || !crashed?.auto || !resume) return;
-    /* 只接回「被關掉的那個工具、進去之後才存的」草稿。還沒存過就被關掉時，
-       留著的可能是更早、別的作品，那就照一般流程讓使用者自己選 */
-    if (resume.kind !== crashed.tool || resume.at < crashed.since - 1000) return;
-    autoResumed.current = true;
-    void handleResume();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [crashed, resume]);
-  /* 在工具裡就打心跳；回到首頁＝正常離開 */
-  useEffect(() => { if (currentView === 'home') markToolInactive(); else markToolActive(currentView); }, [currentView]);
   /* 回到主頁：導入過場的替身（掛在整個頁面上的那張照片）一定收掉。它只用在「從主頁飛進工具」，
      回到主頁代表這趟已經結束了 —— 不然還沒落地就返回時，它會蓋在主頁上最久 12 秒 */
   useEffect(() => { if (currentView === 'home') cancelImportHero(); }, [currentView]);
@@ -741,7 +738,8 @@ const App: React.FC = () => {
     ob.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     return () => { ob.disconnect(); window.clearTimeout(t); };
   }, []);
-  const resumeAsk = homeShown && !!resume && currentView === 'home' && !(autoPending && !autoResumed.current);
+  /* 上次沒做完的一律先問（不管是正常離開還是被系統關掉） */
+  const resumeAsk = homeShown && !!resume && currentView === 'home';
   const [webResumeFallback, setWebResumeFallback] = useState(false);
   const resumeActs = useRef({ go: handleResume, drop: handleDiscardResume });
   resumeActs.current = { go: handleResume, drop: handleDiscardResume };
@@ -767,7 +765,7 @@ const App: React.FC = () => {
      <div className="abai-frame">
       {/* 測試網站網址加上 ?motion：動畫時長面板 */}
       {motionTunerOn && <MotionTuner />}
-      {isImporting && (
+      {(isImporting || (resuming && currentView === 'home')) && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black">
           <ImportSpinner belowStatusBar />
         </div>
