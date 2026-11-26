@@ -610,11 +610,11 @@ img, video, canvas, svg { -webkit-user-drag: none; -webkit-touch-callout: none; 
 
 /* ── 主頁入口方塊的進場（只在打開 App、主頁第一次出來時播；之後回主頁直接在原位）──
    三層：① 方塊本身由下方浮上、微微放大到原尺寸 ② 裡面的圖示與文字晚一點浮上 ③ 邊緣的反光最後才亮起來。
-   每一顆依序錯開（--i）。開機畫面還在（html.booting）時停在第一格，主頁一露出來才開始播。
+   每一顆依序錯開 28ms（--i）：最後一顆約 0.6 秒內就位，層次仍在。開機畫面還在（html.booting）時停在第一格，主頁一露出來才開始播。
    只用 backwards：播完就完全不留動畫的值，按下去的縮放（active:scale）照常有效 */
-.home-tile-in { animation: homeTileIn .78s cubic-bezier(.22,1,.36,1) backwards; animation-delay: calc(var(--i) * 55ms + 90ms); }
-.home-tile-in > * { animation: homeTileContent .62s cubic-bezier(.22,1,.36,1) backwards; animation-delay: calc(var(--i) * 55ms + 210ms); }
-.home-tile-in::after { animation: homeTileRim .9s cubic-bezier(.4,0,.2,1) backwards; animation-delay: calc(var(--i) * 55ms + 330ms); }
+.home-tile-in { animation: homeTileIn .6s cubic-bezier(.22,1,.36,1) backwards; animation-delay: calc(var(--i) * 28ms + 40ms); }
+.home-tile-in > * { animation: homeTileContent .5s cubic-bezier(.22,1,.36,1) backwards; animation-delay: calc(var(--i) * 28ms + 110ms); }
+.home-tile-in::after { animation: homeTileRim .55s cubic-bezier(.4,0,.2,1) backwards; animation-delay: calc(var(--i) * 28ms + 180ms); }
 html.booting .home-tile-in, html.booting .home-tile-in > *, html.booting .home-tile-in::after { animation-play-state: paused; }
 @keyframes homeTileIn { from { opacity: 0; transform: translate3d(0, 18px, 0) scale(.955); } to { opacity: 1; transform: none; } }
 @keyframes homeTileContent { from { opacity: 0; transform: translate3d(0, 6px, 0); } to { opacity: 1; transform: none; } }

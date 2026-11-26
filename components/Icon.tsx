@@ -21,6 +21,8 @@ interface IconProps {
  * 重疊的地方還是同一層，整個圖示是均勻、不透明感的線條 —— 跟字型圖示一樣。
  */
 const INLINE: Record<string, string> = {
+  /* 調色盤（仿色）：畫家的調色盤外框（右下有拇指孔的缺口）＋四個顏料點，線寬跟主頁其他圖示（細體）一樣 */
+  palette: '<path fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round" d="M12 3.6c-4.8 0-8.5 3.6-8.5 8.3 0 4.6 3.6 8.5 8.2 8.5 1.2 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.8-.5-1.2 0-1 .8-1.8 1.8-1.8h2.1c2.6 0 4.6-2.1 4.6-4.6 0-3.6-4.1-6.2-9.2-6.2z"/><g fill="#fff"><circle cx="7.6" cy="11.7" r="1.2"/><circle cx="9.6" cy="7.9" r="1.2"/><circle cx="14.3" cy="7.9" r="1.2"/><circle cx="16.6" cy="11.4" r="1.2"/></g>',
   /* 專業相機：機身外框加鏡頭（相機設定選單的「專業」） */
   pro_camera: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><path d="M3.5 8.2a1.7 1.7 0 0 1 1.7-1.7h2.6l1.5-2h5.4l1.5 2h2.6a1.7 1.7 0 0 1 1.7 1.7v9.6a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z"/><circle cx="12" cy="12.8" r="3.6"/></g>',
   /* 愛心（相機相簿）：實心、空心 */

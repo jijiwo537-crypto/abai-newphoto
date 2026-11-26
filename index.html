@@ -458,14 +458,16 @@
             height: 252px;
             max-width: none;
             box-sizing: border-box;
-            animation: none;
-            opacity: 1;
+            /* 啟動時原生那一層是純黑的，網頁一畫出來 logo 就「突然出現」：改成很快地淡入（0.22 秒）。
+               開機畫面的最短顯示時間（BOOT_MIN_MS）照舊，總時長不變 */
+            animation: bootLogoIn .22s cubic-bezier(.2,0,.2,1) both;
             transform: none;
             transition: none;
             transform-origin: 50% 50%;
             backface-visibility: hidden;
             contain: strict;
         }
+        @keyframes bootLogoIn { from { opacity: 0; } to { opacity: 1; } }
         @media (prefers-reduced-motion: reduce) {
             #boot img { animation: none; opacity: 1; }
         }
