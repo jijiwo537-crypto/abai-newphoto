@@ -815,6 +815,21 @@ interface ImageEditorProps {
 
 /** 草稿裡留幾步復原紀錄（太多步、每步都是整份參數，存起來沒必要） */
 const DRAFT_HISTORY_MAX = 60;
+/* ── 接續草稿時的資料檢查 ──
+   草稿是存在手機裡的資料，可能是舊版存的、也可能存到一半被打斷。任何一項格式不對就當作沒有（不套用），
+   絕不能讓它在畫面繪製時出錯（那會整個白畫面）。 */
+const isObj = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
+const safeClone = <T,>(v: T, fallback: T): T => { try { return v == null ? fallback : JSON.parse(JSON.stringify(v)); } catch { return fallback; } };
+/** 一份「某張照片的調整」看起來是完整的：要有參數與構圖 */
+const validSnap = (v: unknown) => isObj(v) && isObj(v.params) && isObj(v.geo) && typeof v.selectedLutIdx === 'number';
+/** 只留下格式正確、而且是這一批裡的（第幾張在範圍內）那些 */
+const cleanIndexed = (v: unknown, n: number, ok: (x: unknown) => boolean): Record<number, any> => {
+  const out: Record<number, any> = {};
+  if (!isObj(v)) return out;
+  for (const [k, x] of Object.entries(v)) { const i = Number(k); if (Number.isInteger(i) && i >= 0 && i < n && ok(x)) out[i] = safeClone(x, null); }
+  return out;
+};
+const validHistoryItem = (v: unknown) => isObj(v) && isObj(v.params) && typeof v.selectedLutIdx === 'number';
 interface HistoryItem {
   params: EditorParams;
   selectedLutIdx: number;
@@ -1623,7 +1638,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 哪幾張還跟著一起連動（預設全部連動） */
   /* 批量：每張各自調整（不再自動連動）。要讓其他張跟這張一樣，按縮圖列右邊的「應用全部」（見 applyToAll）。
      以前預設全部連動：每動一下滑桿，背景就要替其他張重新預熱、RAW 重沖，張數一多就一直在忙 */
-  const [linked, setLinked] = useState<boolean[]>(() => srcList.map((_, i) => resumeBatch?.linked?.[i] ?? false));
+  const [linked, setLinked] = useState<boolean[]>(() => srcList.map((_, i) => Array.isArray(resumeBatch?.linked) && typeof resumeBatch.linked[i] === 'boolean' ? resumeBatch.linked[i] : false));
   const linkedRef = useRef(linked); linkedRef.current = linked;
   useEffect(() => {
     setLinked(prev => (prev.length === srcList.length ? prev : srcList.map((_, i) => prev[i] ?? false)));
@@ -1998,8 +2013,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   const cloneSnap = (s: BatchSnap): BatchSnap => JSON.parse(JSON.stringify(s));
   /** 遮色片與構圖是「這張照片自己的事」，不跟著連動 —— 每張各存一份 */
-  const ownGeoRef = useRef<Record<number, GeoParams>>(resumeBatch?.ownGeo ? JSON.parse(JSON.stringify(resumeBatch.ownGeo)) : {});
-  const ownMaskRef = useRef<Record<number, Partial<EditorParams>>>(resumeBatch?.ownMask ? JSON.parse(JSON.stringify(resumeBatch.ownMask)) : {});
+  /* 接續的批量資料只在第一次掛上時讀一次（useRef 的初值每次畫面更新都會重算，複製大物件很浪費），
+     而且先檢查格式（見 cleanIndexed）：壞掉的那幾張就當作沒調過 */
+  const resumeOnce = useRef<{ ownGeo: Record<number, GeoParams>; ownMask: Record<number, Partial<EditorParams>>; shared: BatchSnap | null; solo: Record<number, BatchSnap> } | null>(null);
+  if (!resumeOnce.current) {
+    const n = incoming.length;
+    resumeOnce.current = resumeBatch ? {
+      ownGeo: cleanIndexed(resumeBatch.ownGeo, n, x => isObj(x) && isObj((x as any).crop)),
+      ownMask: cleanIndexed(resumeBatch.ownMask, n, isObj),
+      shared: validSnap(resumeBatch.shared) ? safeClone(resumeBatch.shared, null) : null,
+      solo: cleanIndexed(resumeBatch.solo, n, validSnap),
+    } : { ownGeo: {}, ownMask: {}, shared: null, solo: {} };
+  }
+  const ownGeoRef = useRef<Record<number, GeoParams>>(resumeOnce.current.ownGeo);
+  const ownMaskRef = useRef<Record<number, Partial<EditorParams>>>(resumeOnce.current.ownMask);
   const isOwnKey = (k: string) => k.startsWith('mask');
   /* 遮色片的欄位有些是選填的（沒有就是預設）：一律列出來，沒有的也寫成 undefined，
      套到別張照片時才會蓋掉、不會把這張的遮色片帶過去 */
@@ -2009,8 +2036,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     for (const k of new Set([...OWN_MASK_KEYS, ...Object.keys(p).filter(isOwnKey)])) out[k] = (p as any)[k];
     return out;
   };
-  const sharedSnapRef = useRef<BatchSnap | null>(resumeBatch?.shared ? JSON.parse(JSON.stringify(resumeBatch.shared)) : null);
-  const soloSnapsRef = useRef<Record<number, BatchSnap>>(resumeBatch?.solo ? JSON.parse(JSON.stringify(resumeBatch.solo)) : {});
+  const sharedSnapRef = useRef<BatchSnap | null>(resumeOnce.current!.shared);
+  const soloSnapsRef = useRef<Record<number, BatchSnap>>(resumeOnce.current!.solo);
   /** 換照片時要套上去的那一份，以及它是給哪一張的 */
   const pendingSnapRef = useRef<BatchSnap | null>(null);
   const pendingSnapSrcRef = useRef<string | null>(null);
@@ -2431,7 +2458,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
   useEffect(() => {
     if (!imageSrc) return;
-    const timer = window.setInterval(() => {
+    const timer = window.setInterval(() => { try {
       const first = draftSrcSavedRef.current !== imageSrc;
       draftSrcSavedRef.current = imageSrc;
       const latest = latestEditorDraftRef.current;
@@ -2452,8 +2479,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       draftSigRef.current = sig;
       const state = { ...buildDraftState(), __histKey: histKey || initialState?.__histKey || null };
       /* 未編輯時仍可預存原圖，但不能建立首頁的「繼續編輯」提示。 */
-      saveToolDraft('editor', first ? imageSrc : null, state, hasEditedContent);
-    }, 1000);
+      void saveToolDraft('editor', first ? imageSrc : null, state, hasEditedContent).catch(() => { draftSigRef.current = ''; });
+    } catch { draftSigRef.current = ''; /* 這一次存不了就下一秒再試，絕不影響編輯 */ } }, 1000);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageSrc, activeSrc, historyIndex, initialState, histKey]);
@@ -7385,12 +7412,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (resumeSrcRef.current === null) resumeSrcRef.current = activeSrc;
     const resume = resumeSrcRef.current === activeSrc ? initialStateRef.current : null;
     if (resume) {
-      if (resume.params) setParams(resume.params);
-      if (resume.geo) { geoRef.current = resume.geo; setGeo(resume.geo); }
-      if (typeof resume.selectedLutIdx === 'number') setSelectedLutIdx(resume.selectedLutIdx);
+      if (isObj(resume.params)) setParams({ ...DEFAULT_PARAMS, ...resume.params } as EditorParams);
+      if (isObj(resume.geo) && isObj((resume.geo as any).crop)) { geoRef.current = resume.geo; setGeo(resume.geo); }
+      if (typeof resume.selectedLutIdx === 'number' && resume.selectedLutIdx >= 0 && resume.selectedLutIdx < lutList.length) setSelectedLutIdx(resume.selectedLutIdx);
     }
     /* 柔光／朦朧／噪點／光暈的開關與記憶值：要在下面那段把它們歸零之後才套（見 resumeFx） */
-    const resumeFx = resume?.fx ?? null;
+    const resumeFx = isObj(resume?.fx) ? resume!.fx : null;
     setSaveState('idle');
     setFinalImage(null);
     setShowOriginal(false);
@@ -7467,12 +7494,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (typeof resumeFx.userSoft === 'number') userSoftRef.current = resumeFx.userSoft;
       if (typeof resumeFx.userBlur === 'number') userBlurRef.current = resumeFx.userBlur;
       if (typeof resumeFx.userHalation === 'number') userHalationRef.current = resumeFx.userHalation;
-      if (resumeFx.userGrain) userGrainRef.current = { ...resumeFx.userGrain };
+      if (isObj(resumeFx.userGrain)) userGrainRef.current = { ...userGrainRef.current, ...resumeFx.userGrain };
     }
     /* 接回上次的復原紀錄（只有接續的那一張）：每一步的來源清單都要跟現在一樣才接（草稿存的時候已經篩過，這裡再確認一次） */
     const rh = resume?.history;
-    if (rh && Array.isArray(rh.items) && rh.items.length && rh.items.every((it: HistoryItem) => !it.srcs || it.srcs.join('\n') === srcListRef.current.join('\n'))) {
-      const items = (rh.items as HistoryItem[]).map(it => ({ ...it, srcs: [...srcListRef.current] }));
+    if (isObj(rh) && Array.isArray(rh.items) && rh.items.length && rh.items.length <= DRAFT_HISTORY_MAX * 2 && rh.items.every(validHistoryItem)) {
+      const items = (safeClone(rh.items, []) as HistoryItem[]).map(it => ({ ...it, params: { ...DEFAULT_PARAMS, ...it.params } as EditorParams, srcs: [...srcListRef.current] }));
       writeHistory(items, Math.max(0, Math.min(items.length - 1, Number(rh.idx) || 0)));
     }
 

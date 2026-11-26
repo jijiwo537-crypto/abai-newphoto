@@ -133,6 +133,8 @@ export function draftTool(): ToolKind | null {
 }
 
 let saving = false;
+/** 照片存不進去（多半是手機空間不足）之後，暫停到這個時間才再試：不然每秒都把十幾張大圖重讀一次，拖慢編輯、吃記憶體 */
+let backoffUntil = 0;
 let queued: { tool: ToolKind; src: string | null; state: any; resumable: boolean } | null = null;
 
 /* 創意拼圖的 state 內還可能有多張浮動圖片。它們同樣是 blob: 網址，
@@ -247,6 +249,7 @@ async function pruneAssets(keep: Set<string> | null): Promise<void> {
  * 反過來 state 給 null 也一樣是「沿用上一次的參數」，只換照片。
  */
 export async function saveDraft(tool: ToolKind, src: string | null, state: any, resumable = true): Promise<void> {
+  if (Date.now() < backoffUntil) return;
   if (saving) {
     /* 佇列只有一格，不能直接覆蓋 —— 那會把「還沒寫進去的那張照片」蓋掉。
        實際發生過的順序：選完照片的那一次存檔被排進佇列，緊接著的參數自動存檔
@@ -277,7 +280,7 @@ export async function saveDraft(tool: ToolKind, src: string | null, state: any, 
       } catch { /* handled below */ }
       /* 讀不到照片時絕不能照樣更新 meta/旗標，否則會把上一份可用草稿
          變成「物件可選、圖片全透明」的壞草稿。 */
-      if (!stored) return;
+      if (!stored) { backoffUntil = Date.now() + 30000; return; }
     } else {
       const existing = await tx<Blob>('readonly', s => s.get(BLOB_KEY) as IDBRequest<Blob>);
       if (!(existing instanceof Blob) || !existing.size) return;
@@ -295,7 +298,7 @@ export async function saveDraft(tool: ToolKind, src: string | null, state: any, 
     let persistedState = keep?.state ?? null;
     if (state != null) {
       try { persistedState = await externalizeState(state); }
-      catch { return; }
+      catch { backoffUntil = Date.now() + 30000; return; }
     }
     const meta: ToolDraftMeta = { tool, savedAt: Date.now(), state: persistedState };
     const metaWritten = await tx<IDBValidKey>('readwrite', s => s.put(meta, META_KEY));
@@ -349,6 +352,7 @@ export async function clearDraft(): Promise<void> {
   queued = null;
   while (saving) await new Promise(resolve => setTimeout(resolve, 0));
   queued = null;
+  backoffUntil = 0;
   storedAssets.clear();
   try {
     localStorage.removeItem(FLAG_KEY);
