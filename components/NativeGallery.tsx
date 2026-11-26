@@ -38,9 +38,12 @@ const CSS = `
 .abg-cell .dim { position: absolute; inset: 0; background: rgba(0,0,0,.38); opacity: 0; transition: opacity .2s ease; pointer-events: none; }
 .abg-cell.sel .dim { opacity: 1 }
 @keyframes abg-check { from { transform: translate(-50%,-50%) scale(.6); opacity: 0 } to { transform: translate(-50%,-50%) scale(1); opacity: 1 } }
-.abg-cell .chk { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; border-radius: 9999px; background: #fff; color: #000;
-  display: flex; align-items: center; justify-content: center; transform: translate(-50%,-50%); box-shadow: 0 2px 10px rgba(0,0,0,.35);
+.abg-cell .chk { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; color: #fff;
+  display: flex; align-items: center; justify-content: center; transform: translate(-50%,-50%);
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.45)) drop-shadow(0 0 6px rgba(0,0,0,.25));
   animation: abg-check .2s ${EASE}; pointer-events: none; }
+@keyframes abg-tray-in { from { opacity: 0; transform: scale(.7) } to { opacity: 1; transform: scale(1) } }
+.abg-tray::-webkit-scrollbar { display: none }
 .abg-cell .skel { position: absolute; inset: 0; background: #2c2c2e; animation: abg-shimmer 1.4s ease-in-out infinite; }
 .abg-cell:active img.on { filter: brightness(.82) }
 `;
@@ -92,7 +95,8 @@ const Cell = React.memo(function Cell({ a, order, multi, onTap, raw = false }: {
       <span className="dim" />
       {multi && sel && (
         <span className="chk" aria-hidden>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+          {/* 只有一個白色的勾（沒有底下的白色圓）：細一點、右邊那一撇長一點 */}
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round"><path d="M4.6 12.9l4.6 4.5L19.6 6.8" /></svg>
         </span>
       )}
     </button>
@@ -107,6 +111,13 @@ const AlbumCover: React.FC<{ id: string }> = ({ id }) => {
       {url && <img src={url} alt="" className="w-full h-full object-cover" draggable={false} />}
     </span>
   );
+};
+
+/** 拼圖下方那一條裡的小縮圖 */
+const PickedThumb: React.FC<{ id: string }> = ({ id }) => {
+  const [url, setUrl] = useState(() => cachedThumb(id));
+  useEffect(() => { if (!url) return requestThumb(id, setUrl); }, [id, url]);
+  return url ? <img src={url} alt="" draggable={false} className="w-full h-full object-cover" /> : null;
 };
 
 const Spinner: React.FC = () => (
@@ -392,6 +403,17 @@ export const NativeGallery: React.FC<{
     setModeState(m);
   };
 
+  /* 拼圖的下方那一條：選了第一張就滑上來 */
+  const TRAY_H = 112;
+  const trayShown = modes && mode === 'collage' && picked.length > 0;
+  const unpick = (id: string) => {
+    if (exportingRef.current) return;
+    haptic('tick');
+    const next = pickedRef.current.filter(x => x !== id);
+    pickedRef.current = next;
+    setPicked(next);
+  };
+
   const order = useMemo(() => { const m = new Map<string, number>(); picked.forEach((id, i) => m.set(id, i + 1)); return m; }, [picked]);
 
   const chooseAlbum = (a: LibraryAlbum) => {
@@ -456,11 +478,11 @@ export const NativeGallery: React.FC<{
           </div>
           {/* 編輯的導入相簿：三種導入方式。沒有按鈕外框，就是三個字：沒選的淡、選中的亮 */}
           {modes && ok && (
-            <div className="h-9 px-6 grid grid-cols-3 items-center" role="tablist" aria-label="導入方式" data-pick-modes>
+            <div className="h-12 px-6 grid grid-cols-3 items-center border-t-[0.5px] border-white/15" role="tablist" aria-label="導入方式" data-pick-modes>
               {PICK_MODES.map(([id, label]) => (
                 <button key={id} type="button" role="tab" aria-selected={mode === id} data-pick-mode={id} disabled={exporting}
                   onClick={() => setMode(id)}
-                  className="h-9 text-[14px] font-semibold active:opacity-60"
+                  className="h-12 text-[14px] font-semibold active:opacity-60"
                   style={{ color: mode === id ? '#fff' : 'rgba(255,255,255,.38)', transition: 'color .22s ease' }}>
                   {label}
                 </button>
@@ -476,9 +498,6 @@ export const NativeGallery: React.FC<{
           )}
           {multi && limit > 1 && ok && !quiet && !(modes && mode === 'collage') && (
             <div className="px-4 pb-2 text-[11.5px] text-white/40">{`最多可選 ${limit} 張`}</div>
-          )}
-          {modes && mode === 'collage' && ok && (
-            <div className="px-4 pb-2 text-center text-[11.5px] text-white/40">{`選 ${COLLAGE_MIN}～${COLLAGE_MAX} 張照片`}</div>
           )}
           {/* 含 RAW 時擋下來：說明為什麼不能再選 */}
           {rawNote > 0 && (
@@ -560,10 +579,36 @@ export const NativeGallery: React.FC<{
                   {(noAlpha ? visibleItems.length : total).toLocaleString()} {filter === 'videos' ? '部影片' : filter === 'images' ? '張照片' : '個項目'}
                 </div>
               )}
-              <div style={{ height: 'calc(env(safe-area-inset-bottom, 0px) + 12px)' }} />
+              <div style={{ height: trayShown ? `calc(env(safe-area-inset-bottom, 0px) + ${TRAY_H + 12}px)` : 'calc(env(safe-area-inset-bottom, 0px) + 12px)', transition: `height .38s ${EASE}` }} />
             </>
           )}
         </div>
+
+        {/* 拼圖：選了照片，下方滑上來一條，照選的順序排出來，每張右上角 × 可以拿掉 */}
+        {modes && ok && (
+          <div className="absolute left-0 right-0 bottom-0 z-20 bg-[#111]/95 backdrop-blur-xl border-t-[0.5px] border-white/10"
+            data-collage-tray aria-hidden={!trayShown}
+            style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)', transform: trayShown ? 'translateY(0)' : 'translateY(100%)',
+              transition: `transform .38s ${EASE}`, pointerEvents: trayShown ? 'auto' : 'none' }}>
+            <div className="h-9 px-4 flex items-end text-[12.5px] text-white/60">{`選 ${COLLAGE_MIN}～${COLLAGE_MAX} 張照片`}</div>
+            <div className="abg-tray flex gap-2 px-4 pt-2.5 pb-3 overflow-x-auto" style={{ height: TRAY_H - 36 }}>
+              {Array.from({ length: COLLAGE_MAX }, (_, i) => {
+                const id = picked[i];
+                return id ? (
+                  <div key={id} className="relative shrink-0 w-[60px] h-[60px] rounded-[6px] overflow-hidden bg-[#2c2c2e]" style={{ animation: `abg-tray-in .24s ${EASE}` }}>
+                    <PickedThumb id={id} />
+                    <button type="button" aria-label="拿掉這張" onClick={() => unpick(id)}
+                      className="absolute top-0 right-0 w-6 h-6 flex items-start justify-end p-[3px] active:opacity-60">
+                      <span className="w-[16px] h-[16px] rounded-full bg-black/60 flex items-center justify-center">
+                        <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round"><path d="M2 2l6 6M8 2l-6 6" /></svg>
+                      </span>
+                    </button>
+                  </div>
+                ) : <div key={`e${i}`} className="shrink-0 w-[60px] h-[60px] rounded-[6px] bg-white/[0.06]" />;
+              })}
+            </div>
+          </div>
+        )}
 
         {/* 把原檔拿出來的時候 */}
         {/* 讀原檔時：跟接下來匯入畫面一模一樣的黑底轉圈，兩段接起來看起來就是同一個 */}

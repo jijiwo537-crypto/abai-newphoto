@@ -123,7 +123,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
 import { setBlurRebuildListener } from '../utils/blurShapes';
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, prebakeColours, warmColourBakers, releaseColourBakers, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface,warmPhotoSceneColour,forgetPhotoFxSource,sourceHasAlpha} from '../utils/photoFx';
 import { strokeAlphaContour } from '../utils/alphaStroke';
@@ -1749,8 +1749,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 底是影片、裁切改了比例時，鋪進原本框形的那一張（主畫布／匯出各一張） */
   const baseVidCoverRef = useRef<Record<string, { cv: HTMLCanvasElement }>>({});
   const [photoRegion, setPhotoRegion] = useState<PhotoRegion | null>(null);
-  /** 簡易拼圖「全部照片」的滑桿按著：每一張都要每格重算，先用輕一點的工作尺寸，放手再照完整尺寸算一次 */
-  const simpleAllLiveRef = useRef(false);
+  /** 「全部照片」那一格的色彩表在背景烤：只畫最新那一次 */
+  const allBakeSeq = useRef(0);
+  /* 簡易拼圖：開起來閒下來之後，先把背景烤色彩表的執行緒跑熱 */
+  useEffect(() => { if (!simple) return; const t = window.setTimeout(() => { try { warmColourBakers(); } catch { /* 預熱失敗不影響使用 */ } }, 1500); return () => { window.clearTimeout(t); releaseColourBakers(); }; }, [simple]);
   const photoRegionRef = useRef(photoRegion);
   const committedRegionRef=useRef(photoRegion);
   if(committedRegionRef.current!==photoRegion){photoRegionRef.current=photoRegion;committedRegionRef.current=photoRegion;}
@@ -2183,7 +2185,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 穩定後的快照只做到螢幕密度（容量會跟著放大長上去）。做成原圖大小的話，一張 1200 萬像素就是約 48MB，
          每張編輯過的照片都留一份，幾張下來 iOS 就會關掉網頁；存檔時特效另外依成品大小重算 */
       if(prepareNative)cap=Math.max(cap,Math.min(1600,Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height)));
-      else if(simpleAllLiveRef.current){const n=photoRegionRef.current?.photos.length||1;cap=Math.min(cap,n<=2?720:n<=4?560:420);}
     }
     /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
        維持原本的尺寸才不會讓任何既有的畫面變糊。 */
@@ -2293,7 +2294,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        就停在那一格。換格時讓它換個編號，強迫重新上傳這一格。 */
     if (isVid) forgetPhotoFxSource(srcEl);
     const base = applyPhotoFx(srcEl, iw, ih, o.fx || {}, {
-      cacheSource: !isVid, fast: live, out: reuse, gpuSurface: regionPhoto || objectGpu,
+      cacheSource: !isVid, fast: live, out: reuse, gpuSurface: regionPhoto || objectGpu, sharedColour: regionPhoto,
     });
     if (objectGpu && base !== reuse) objGpuIdsRef.current.add(o.id);
     const finish = () => {
@@ -4499,7 +4500,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const finishRegionEdit=()=>{
     regionSliderHeld.current=false;
-    simpleAllLiveRef.current=false;
     regionBlend.current?.setHeld(false);
     // 現在就把互動用的合成換成共用的精確管線，不要等縮圖的延遲時間到
     regionLiveUntil.current=performance.now()+350;
@@ -11967,8 +11967,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
             <div aria-hidden="true" className="w-px h-4 mx-1 shrink-0" />
             {/* 三個點：預覽與對齊。 */}
-            {/* 簡易拼圖沒有物件可對齊：⋯ 裡只有預覽（預覽也不支援這個比例時整顆不出現） */}
-            {(!simple || igSupported) && <div className="relative" ref={moreWrapRef}>
+            {/* 簡易拼圖不放這顆 ⋯ */}
+            {!simple && <div className="relative" ref={moreWrapRef}>
               <button
                 onClick={(e) => {
                   setExportOptionsOpen(false);setExportAsk(false);
@@ -13306,12 +13306,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     simpleAllFxRef.current = next;
                     if (!Object.keys(diff).length) return;
                     clearPhotoDimmer();
-                    commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map(p=>{
+                    const nextRegion = {...photoRegionRef.current,photos:photoRegionRef.current.photos.map(p=>{
                       if (!p.src) return p;
                       const fx: any = {...(p.fx||{}),...diff};
                       for (const k of Object.keys(fx)) if (fx[k] === undefined) delete fx[k];
                       return {...p,fx};
-                    })},true);
+                    })};
+                    /* 每張照片各有自己的調整時，每一種調整都要一張新的色彩表：先交給背景執行緒同時烤好
+                       （結果跟主執行緒烤的一樣），烤好才畫這一格 —— 主執行緒不卡，手指一直跟得上。
+                       資料先更新（下一次拖動接著這一份算），只有「畫」等色彩表 */
+                    photoRegionRef.current = nextRegion;
+                    const seq = ++allBakeSeq.current;
+                    void prebakeColours(nextRegion.photos.filter(p => p.src).map(p => p.fx || {})).then(() => {
+                      if (seq !== allBakeSeq.current) return;          // 已經有更新的一格，畫那一格就好
+                      commitRegion(photoRegionRef.current!, true);
+                    });
                   } else if (regionEditing && photoRegionRef.current) {
                     clearPhotoDimmer();
                     commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)},!!d.fx);
@@ -13768,7 +13777,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       hideShape={regionEditing || allEditing || baseVideoEditing}
                       onlyFilterTune={simple}
                       isolateFxUpdates={regionEditing||allEditing||liveObjFx}
-                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : allEditing ? ()=>{simpleAllLiveRef.current=true;} : liveObjFx ? ()=>{maskSliderLive.current={id:sel.id,patch:{}};} : undefined}
+                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : liveObjFx ? ()=>{maskSliderLive.current={id:sel.id,patch:{}};} : undefined}
                       onAdjustmentCommit={regionEditing || allEditing ? finishRegionEdit : liveObjFx ? commitObjFxLive : undefined}
                       set={(d: any) => {
                         /* 圖片物件拖效果滑桿：跟遮罩滑桿同一招 —— 只改 objectsRef、直接重畫畫布，

@@ -19,6 +19,7 @@ import { applyGlEffects, hasActiveFx, FX_DEFS, disposeFxSurface, compactFxSurfac
 import type {FxColourInput} from './fxColourInput';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from './highlightSelection';
 import { bakeColorLut, bakedToTexture } from './lutBake';
+import { copyPixelDither } from './photoPixelCore';
 import { LutGpu } from './lutGpu';
 import { preferWebgl2, surfaceGl, isWebgl2, type GpuImage } from './fxSurfaceGl';
 import { loadCachedLut, saveCachedLut } from './lutStore';
@@ -84,6 +85,12 @@ let gpuC0: HTMLCanvasElement | null = null;
 let gpuC1: HTMLCanvasElement | null = null;
 const colorBakeCache = new Map<string, Uint8Array>();
 const strengthPairCache=new Map<string,{full:Uint8Array;plain:Uint8Array}>();
+/* 烤好的色彩表（33³，一張約 144KB）要留夠多張：拼圖裡每張照片各有自己的調整時，
+   每次重畫（拖滑桿的每一格、放大縮小的每一格）每一張都要一張表。以前只留 4 張，
+   第 5 張照片一來就把第 1 張的擠掉，每格重畫都在 CPU 上重烤每一張 —— 就是「單獨調過幾張之後很卡」。
+   最近用過的排到最後，丟的是最久沒用的（不是最早放進來的） */
+const COLOR_BAKE_MAX = 24, STRENGTH_PAIR_MAX = 24;
+const lruGet = <V,>(m: Map<string, V>, k: string): V | undefined => { const v = m.get(k); if (v !== undefined) { m.delete(k); m.set(k, v); } return v; };
 // 空間特效的滑桿不會改變照片的色彩結果。保留那份精確的原解析度輸入，特效的繪製目標分開：
 // 絕不把上一次的特效結果當成下一格的來源
 type EffectInput={key:string;source:HTMLCanvasElement;surface:HTMLCanvasElement;colourInput?:FxColourInput;rawKey?:string;viaImage?:boolean};
@@ -95,6 +102,8 @@ const opticalKeys = new Set(['soft','softThreshold','softRadius','softColor','fr
    照片的色彩結果畫在那裡當貼圖，特效直接讀：每格色彩滑桿不必把原解析度複製 GPU → 2D 畫布 → 2D 畫布 → GPU。
    烤好的表和著色器跟 gpuColorChain 一樣；底片強度的混合在著色器裡做，不用 2D 合成 */
 const newSurface=()=>{const c=document.createElement('canvas');preferWebgl2(c);return c;};
+/** 拼圖照片格共用的那一個 GPU 畫布（見 applyPhotoFxRaw 的 sharedColour） */
+let sharedColourSurface:HTMLCanvasElement|null=null;
 const surfaceGpus=new WeakMap<HTMLCanvasElement,LutGpu|null>();
 /* 每張輸出畫布只配一組 GPU 表面（一個 WebGL context），建了就記下來重複用。
    顯示卡那條路這一次走不通時也照樣留著：不然下一格又建一個新的，拖滑桿時每一格都多一個
@@ -112,7 +121,7 @@ function sourcePixels(source:CanvasImageSource,w:number,h:number,key:string):Uin
   g.clearRect(0,0,w,h);g.drawImage(source,0,0,w,h);const px=new Uint8ClampedArray(g.getImageData(0,0,w,h).data);
   c.width=c.height=1;putSrcPx(key,{px,scratch:null,plain:null});return px;
 }
-function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:number,h:number,fx:PhotoFx,residentStrength:boolean):GpuImage|null{
+function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:number,h:number,fx:PhotoFx,residentStrength:boolean,keyed=false):GpuImage|null{
   let g=surfaceGpus.get(canvas);
   if(g===undefined||g?.lost){try{const gl=surfaceGl(canvas);g=isWebgl2(gl)?LutGpu.createOn(gl):null;}catch{g=null;}surfaceGpus.set(canvas,g);}
   if(!g||!g.fits(w,h)){realizeGlow(source);return null;}
@@ -121,6 +130,8 @@ function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:
     /* 「原圖＋光」還沒畫出來（見 glowedSource）：光在這個 context 裡從原圖算成一張貼圖，
        顏色那一段直接吃它 —— 不經過 2D 畫布，不讀回、不重傳。 */
     const pend=pendingGlows.get(source as HTMLCanvasElement);
+    /* 共用的 context（keyed）只走「每張照片一張常駐貼圖」：發光那條會覆寫共用的來源貼圖，交給原本的路 */
+    if(keyed&&(pend||glowedCanvases.has(source as object)))return null;
     let glowTex:WebGLTexture|null=null;
     if(pend){
       const okey=`${srcToken(pend.source)}|${w}x${h}`;
@@ -129,7 +140,11 @@ function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:
       if(!glowTex)realizeGlow(source);
     }
     const key=`${srcToken(source)}|${w}x${h}`;
-    if(!glowTex&&gpuSourceKeys.get(g)!==key){
+    if(keyed&&gpuSourceKeys.get(g)!==key){
+      if(!g.useKeyedSource(key)){const px=sourcePixels(source,w,h,key);if(!px||!g.setKeyedSource(px,w,h,key,10))return null;}
+      gpuSourceKeys.set(g,key);
+    }
+    if(!keyed&&!glowTex&&gpuSourceKeys.get(g)!==key){
       // 「原圖＋光」那張是我們自己畫的不透明畫布：直接上傳，不讀回像素（拖發光滑桿時每一格都換）
       const direct=glowedCanvases.has(source as object)&&g.setSourceImage(source as HTMLCanvasElement,w,h);
       if(!direct){const px=sourcePixels(source,w,h,key);if(!px||!g.setSource(px,w,h))return null;}
@@ -139,21 +154,21 @@ function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:
     if(residentStrength&&lut&&p.hsl.every(b=>!b.h&&!b.s&&!b.l)){
       // 跟 gpuColorChain 常駐路線一樣的端點和權重
       const params={...p,lutAmount:100},pairKey=JSON.stringify(params)+'|'+srcToken(lut.data);
-      let pair=strengthPairCache.get(pairKey);
+      let pair=lruGet(strengthPairCache,pairKey);
       if(!pair){
         const bake=(film:Uint8ClampedArray|null)=>bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,params,film,film?lut.size:0,baseLut,null,false,IDENTITY_CURVE_LUTS),33));
         pair={full:bake(lut.data),plain:bake(null)};strengthPairCache.set(pairKey,pair);
-        while(strengthPairCache.size>8)strengthPairCache.delete(strengthPairCache.keys().next().value!);
+        while(strengthPairCache.size>STRENGTH_PAIR_MAX)strengthPairCache.delete(strengthPairCache.keys().next().value!);
       }
       if(!g.setLutMix(pair.full,pair.plain,33,amount*amount))return null;
     }else{
       const colorKey=colorKeyOf(fx);
       const bake=(film:Uint8ClampedArray|null,filmSize:number)=>{
         const bakeKey=colorKey+'|'+(film?srcToken(film):'none')+'|'+filmSize;
-        let texture=colorBakeCache.get(bakeKey);
+        let texture=lruGet(colorBakeCache,bakeKey);
         if(!texture){
           texture=bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,p,film,filmSize,baseLut,null,false,IDENTITY_CURVE_LUTS),33));
-          colorBakeCache.set(bakeKey,texture);while(colorBakeCache.size>4)colorBakeCache.delete(colorBakeCache.keys().next().value!);
+          colorBakeCache.set(bakeKey,texture);while(colorBakeCache.size>COLOR_BAKE_MAX)colorBakeCache.delete(colorBakeCache.keys().next().value!);
         }
         return texture;
       };
@@ -323,11 +338,11 @@ const gpuColorChain = (
     // 存檔維持原本的路線
     if(residentStrength&&lut&&p.hsl.every(b=>!b.h&&!b.s&&!b.l)){
       const params={...p,lutAmount:100},pairKey=JSON.stringify(params)+'|'+srcToken(lut.data);
-      let pair=strengthPairCache.get(pairKey);
+      let pair=lruGet(strengthPairCache,pairKey);
       if(!pair){
         const bake=(film:Uint8ClampedArray|null)=>bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,params,film,film?lut.size:0,baseLut,null,false,IDENTITY_CURVE_LUTS),33));
         pair={full:bake(lut.data),plain:bake(null)};strengthPairCache.set(pairKey,pair);
-        while(strengthPairCache.size>8)strengthPairCache.delete(strengthPairCache.keys().next().value!);
+        while(strengthPairCache.size>STRENGTH_PAIR_MAX)strengthPairCache.delete(strengthPairCache.keys().next().value!);
       }
       if(!g.setLutMix(pair.full,pair.plain,33,amount*amount))return false;
       const drawn=g.draw();if(!drawn)return false;
@@ -576,6 +591,90 @@ const IDENTITY_CURVE_LUTS = {
   b: generateCurveLut([{ x: 0, y: 0 }, { x: 255, y: 255 }] as any),
 };
 
+/* ── 背景執行緒先烤好色彩表 ─────────────────────────────────────────
+   拼圖「全部照片」一起調的時候，每一種不同的調整每一格都要烤一張色彩表（一張約 6 毫秒），
+   幾張照片各有自己的調整時，主執行緒一格要烤好幾張 —— 就是卡頓。改成先丟給幾個背景執行緒
+   同時烤（結果跟主執行緒烤的逐位元一樣），烤好放進同一個快取，畫的時候直接拿。 */
+let bakeWorkers: Worker[] | null = null, bakeBroken = false, bakeRR = 0, bakeId = 0;
+const bakeWaiting = new Map<number, (tex: Uint8Array | null) => void>();
+const bakeInFlight = new Map<string, Promise<void>>();
+function colourBakePool(): Worker[] | null {
+  if (bakeBroken) return null;
+  if (bakeWorkers) return bakeWorkers;
+  if (typeof Worker !== 'function') { bakeBroken = true; return null; }
+  const n = Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1));
+  try {
+    bakeWorkers = Array.from({ length: n }, () => new Worker(new URL('./colourBake.worker.ts', import.meta.url), { type: 'module' }));
+  } catch { bakeBroken = true; bakeWorkers = null; return null; }
+  const dither = copyPixelDither();
+  for (const w of bakeWorkers) {
+    w.postMessage({ dither });
+    w.onmessage = (e: MessageEvent) => { const cb = bakeWaiting.get(e.data.id); bakeWaiting.delete(e.data.id); cb?.(e.data.tex ?? null); };
+    w.onerror = () => { bakeBroken = true; for (const cb of bakeWaiting.values()) cb(null); bakeWaiting.clear(); };
+  }
+  return bakeWorkers;
+}
+/** 收掉背景烤色彩表的執行緒（離開拼圖時；閒著也佔記憶體） */
+export function releaseColourBakers(): void {
+  const p = bakeWorkers; bakeWorkers = null;
+  for (const cb of bakeWaiting.values()) cb(null);
+  bakeWaiting.clear();
+  p?.forEach(w => { try { w.terminate(); } catch { /* 已經收掉了 */ } });
+}
+/** 預熱背景烤色彩表的執行緒：先把程式跑熱（iPhone 的引擎一開始是直譯在跑，同一段跑過很多次才會變快），
+ *  第一次拖「全部照片」的滑桿就是正常速度。結果丟掉、不進快取 */
+export function warmColourBakers(): void {
+  const pool = colourBakePool();
+  if (!pool) return;
+  const keys = ['exposure', 'contrast', 'brightness', 'highlights', 'shadows', 'whites', 'blacks', 'temp', 'tint', 'sat', 'vib'];
+  pool.forEach((w, wi) => {
+    for (let i = 0; i < 14; i++) {
+      const id = -(++bakeId);
+      const fx: any = { [keys[(i + wi) % keys.length]]: i % 2 ? 40 : -40, exposure: (i * 7) % 50 };
+      bakeWaiting.set(id, () => {});
+      w.postMessage({ id, params: toParams(fx), film: null, filmSize: 0, curves: IDENTITY_CURVE_LUTS });
+    }
+  });
+}
+/** 這些 fx 要用到、快取裡還沒有的色彩表，交給背景執行緒同時烤好放進快取。
+ *  回傳 false＝背景執行緒用不了（呼叫端照舊在主執行緒烤）。烤失敗的那幾張畫的時候會在主執行緒補烤，不會壞 */
+export function prebakeColours(list: PhotoFx[]): Promise<boolean> {
+  const jobs = new Map<string, { p: EditorParams; film: Uint8ClampedArray | null; filmSize: number }>();
+  for (const fx of list) {
+    if (!fx || (!getLoadedLut(fx.lut) && ADJUST_KEYS.every(([k]) => !fx[k]))) continue;
+    const p = toParams(fx), lut = getLoadedLut(fx.lut), amount = (fx.lutAmount ?? 100) / 100, colorKey = colorKeyOf(fx);
+    const want: [Uint8ClampedArray | null, number][] = [[lut ? lut.data : null, lut ? lut.size : 0]];
+    if (lut && amount < 1) want.push([null, 0]);
+    for (const [film, filmSize] of want) {
+      const key = colorKey + '|' + (film ? srcToken(film) : 'none') + '|' + filmSize;
+      if (!colorBakeCache.has(key) && !jobs.has(key)) jobs.set(key, { p, film, filmSize });
+    }
+  }
+  if (!jobs.size) return Promise.resolve(true);
+  if (jobs.size > COLOR_BAKE_MAX) return Promise.resolve(false);
+  const pool = colourBakePool();
+  if (!pool) return Promise.resolve(false);
+  const waits: Promise<void>[] = [];
+  for (const [key, job] of jobs) {
+    let wait = bakeInFlight.get(key);
+    if (!wait) {
+      const id = ++bakeId, worker = pool[bakeRR++ % pool.length];
+      wait = new Promise<void>(resolve => {
+        const timer = setTimeout(() => { bakeWaiting.delete(id); resolve(); }, 2000);
+        bakeWaiting.set(id, tex => {
+          clearTimeout(timer);
+          if (tex) { colorBakeCache.set(key, tex); while (colorBakeCache.size > COLOR_BAKE_MAX) colorBakeCache.delete(colorBakeCache.keys().next().value!); }
+          resolve();
+        });
+        worker.postMessage({ id, params: job.p, film: job.film, filmSize: job.filmSize, curves: IDENTITY_CURVE_LUTS });
+      }).finally(() => { bakeInFlight.delete(key); });
+      bakeInFlight.set(key, wait);
+    }
+    waits.push(wait);
+  }
+  return Promise.all(waits).then(() => true);
+}
+
 const toParams = (fx: PhotoFx): EditorParams => ({
   ...DEFAULT_PARAMS,
   brightness: fx.brightness || 0,
@@ -778,6 +877,8 @@ function applyPhotoFxRaw(
    *       手機的畫布記憶體幾秒就會被系統收走（＝閃退回主畫面）。
    *       尺寸一樣就直接沿用，連 width 都不重設（重設等於重新配置一次）。 */
   opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean; gpuSurface?: boolean; scene?: FxScene;
+    /** 拼圖照片格：只有顏色時跟其他照片共用一個 GPU context（結果留在 out 這張 2D 畫布上） */
+    sharedColour?: boolean;
     /** 內部用：這一趟的來源已經是「原圖＋光」 */
     afterGlow?: boolean;
     /** 只有顏色、要畫進 scene：在效果表面自己的 context 裡算顏色、直接合成進場景（同上面那條） */
@@ -866,8 +967,8 @@ function applyPhotoFxRaw(
     const rawKey=`${srcToken(source)}|${oW}x${oH}`,params={...toParams(fx),lutAmount:100},base=new Uint8Array(256);
     generateBaseCorrectionLut(params.exposure,params.contrast,params.brightness,base);
     const pairKey=JSON.stringify(params)+'|'+srcToken(residentFilm.data);
-    let pair=strengthPairCache.get(pairKey);
-    if(!pair){const bake=(film:Uint8ClampedArray|null)=>bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,params,film,film?residentFilm.size:0,base,null,false,IDENTITY_CURVE_LUTS),33));pair={full:bake(residentFilm.data),plain:bake(null)};strengthPairCache.set(pairKey,pair);while(strengthPairCache.size>8)strengthPairCache.delete(strengthPairCache.keys().next().value!);}
+    let pair=lruGet(strengthPairCache,pairKey);
+    if(!pair){const bake=(film:Uint8ClampedArray|null)=>bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,params,film,film?residentFilm.size:0,base,null,false,IDENTITY_CURVE_LUTS),33));pair={full:bake(residentFilm.data),plain:bake(null)};strengthPairCache.set(pairKey,pair);while(strengthPairCache.size>STRENGTH_PAIR_MAX)strengthPairCache.delete(strengthPairCache.keys().next().value!);}
     if(record.rawKey!==rawKey){realizeGlow(source);record.source.width=oW;record.source.height=oH;record.source.getContext('2d')!.drawImage(source,0,0,oW,oH);record.rawKey=rawKey;}
     record.colourInput={...pair,amount:((fx.lutAmount??100)/100)**2,sourceKey:rawKey};record.key=inputKey;record.viaImage=false;effectInputs.set(out,record);
     const result=applyGlEffects(record.source.getContext('2d')!,oW,oH,fx,inputKey,record.surface,false,opts!.scene,record.colourInput);
@@ -889,6 +990,22 @@ function applyPhotoFxRaw(
      顏色在效果表面自己的 GPU context 裡算，結果直接畫在那張 GPU 畫布上回傳 ——
      跟主頁編輯同一招（presentFxSource）。不走下面的 2D 路，不然每動一格都把 GPU
      的結果複製進 2D 畫布（iPhone 上是一次整張讀回）。 */
+  /* 拼圖的照片格（sharedColour）：所有照片共用同一個 GPU context，每張照片的貼圖常駐在上面。
+     顏色在 GPU 上算好，畫到共用畫布，再搬進這張照片自己的畫布（out）留著 ——
+     同一格畫面裡下一張照片會覆寫共用畫布，所以每張的結果要各自留一份 */
+  if(opts?.sharedColour&&opts.gpuSurface&&opts.cacheSource&&!opts.scene&&!colourOnly&&!hasActiveFx(fx)&&!(fx as any).fxLowfi
+    &&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)){
+    const surf=(sharedColourSurface ||= newSurface());
+    const image=surfaceColourImage(surf,source,oW,oH,fx,false,true);
+    const g2=image&&out.getContext('2d');
+    if(image&&g2&&presentFxSource(g2,oW,oH,surf,image)){
+      g2.setTransform(1,0,0,1,0,0);g2.globalAlpha=1;g2.globalCompositeOperation='copy';
+      g2.drawImage(surf,0,0,oW,oH);g2.globalCompositeOperation='source-over';
+      /* 這張照片以前自己開過的 GPU 管線（例如之前套過特效）：用不到了，收掉 */
+      if(effectInputs.has(out)||opticalInputs.has(out))releasePhotoFxSurface(out);
+      return out;
+    }
+  }
   if(opts?.gpuSurface&&opts.cacheSource&&!opts.scene&&!colourOnly&&!hasActiveFx(fx)&&!(fx as any).fxLowfi
     &&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)){
     const record:EffectInput=retained||inputRecord(out);

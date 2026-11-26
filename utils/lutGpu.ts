@@ -376,6 +376,44 @@ export class LutGpu {
     return true;
   }
 
+  /* ── 很多張照片共用這一個 context（拼圖的每一格）────────────────────
+     每張照片的貼圖各自留在 GPU 上，換照片只是換綁定，不重傳；也不必每張照片各開一個 WebGL
+     context（開太多會超過瀏覽器的上限，最舊的被系統收掉，要重新編譯、重傳 —— 就是卡頓）。 */
+  private keyed = new Map<string, { tex: WebGLTexture; w: number; h: number }>();
+  /** 這張照片的貼圖已經在上面：綁上去就好。沒有回 false */
+  useKeyedSource(key: string): boolean {
+    const e = this.keyed.get(key);
+    if (!e || this.lost) return false;
+    this.keyed.delete(key); this.keyed.set(key, e);   // 最近用過的排到最後
+    if (this.imgTex !== e.tex) { this.imgTex = e.tex; this.srcW = e.w; this.srcH = e.h; this.srcGen++; }
+    return true;
+  }
+  /** 上傳一張照片的貼圖並留著（最多 limit 張，超過丟最久沒用的） */
+  setKeyedSource(data: Uint8ClampedArray, w: number, h: number, key: string, limit = 10): boolean {
+    if (this.lost || !this.fits(w, h)) return false;
+    const gl = this.gl;
+    const old = this.keyed.get(key);
+    const tex = old?.tex || gl.createTexture();
+    if (!tex) return false;
+    this.unpackDefaults();
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+      new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+    this.keyed.delete(key); this.keyed.set(key, { tex, w, h });
+    this.imgTex = tex; this.srcW = w; this.srcH = h; this.srcGen++;
+    for (const [k, e] of this.keyed) {
+      if (this.keyed.size <= limit) break;
+      if (e.tex === this.imgTex) continue;
+      this.keyed.delete(k); gl.deleteTexture(e.tex);
+    }
+    return true;
+  }
+
   /** 上傳來源影像（直接從一張不透明的 sRGB 2D 畫布，GPU 對 GPU，不必先 getImageData）。
    *  不做色彩轉換、不預乘：alpha 全是 255 時跟 setSource(那張畫布的像素) 位元相同。 */
   setSourceImage(image: HTMLCanvasElement, w: number, h: number): boolean {
@@ -645,6 +683,8 @@ precision highp float;uniform sampler2D uImage;in vec2 vUv;out vec4 fragColor;vo
     if (this.shared) {
       // context 屬於畫布本身，只放掉這個階段自己的儲存
       const gl = this.gl;
+      for (const e of this.keyed.values()) if (e.tex !== this.imgTex) gl.deleteTexture(e.tex);
+      this.keyed.clear();
       for (const t of [this.imgTex, this.lutTex, this.plainTex, this.toneTex, this.curveTex, this.baseTex, this.gainTex, this.outTex, this.smallTex, this.upTex]) if (t) gl.deleteTexture(t);
       for (const f of [this.outFbo, this.smallFbo, this.flipFbo]) if (f) gl.deleteFramebuffer(f);
       if (this.upProg) gl.deleteProgram(this.upProg);
