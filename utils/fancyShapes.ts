@@ -35,8 +35,9 @@ export const FANCY_PARAM: Record<string, { count: [number, number, number]; gap:
    舊格式（沒有這兩個值）的作品照舊畫，不會變 */
 const V2 = 2e15;
 export const FANCY_SIZE_DEFAULT = 20, FANCY_JIT_DEFAULT = 0;
-/** 「隨機大小」滑桿的預設值：魔法棒的 50＝原本的大小差異（0＝大小一致、100＝差異加倍）；其他照舊 0 */
-export const fancyJitDefault = (kind?: string) => kind && kind.split('@')[0] === 'fancy-wand' ? 50 : FANCY_JIT_DEFAULT;
+/** 「隨機大小」滑桿的預設值：魔法棒預設 25（50＝最早的大小差異，預設減半；0＝大小一致、100＝差異加倍）；其他照舊 0 */
+const WAND_JIT_DEFAULT = 25;
+export const fancyJitDefault = (kind?: string) => kind && kind.split('@')[0] === 'fancy-wand' ? WAND_JIT_DEFAULT : FANCY_JIT_DEFAULT;
 /** 有「隨機大小」滑桿的花式排列（要用第二種打包格式存它） */
 export const fancyHasJit = (kind?: string) => !!kind && ['fancy-boxrandom', 'fancy-wand'].includes(kind.split('@')[0]);
 export const fancyPack = (seed: number, count: number, gap: number, extra?: { jit: number; size: number }) => extra
@@ -308,7 +309,7 @@ const designs: Record<string, (seed: number) => Design> = {
        剩下的還是從頭到尾一整條（頭尾一定留），越往右下越密的樣子也不變。
        滑桿 0～100：0＝14 顆（再少就看不出形狀），100＝42 顆。
        有隨機種子（按過「隨機排列」）就換一組亂數，沒有就是原本那一組 */
-    const { seed, count, jit = 50 } = unpack('fancy-wand', v);
+    const { seed, count, jit = WAND_JIT_DEFAULT } = unpack('fancy-wand', v);
     const jk = Math.max(0, Math.min(100, jit)) / 50;   // 隨機大小：1＝原本的差異
     const R = rng(seed || 41), units: (Unit & { t: number; big?: boolean })[] = [];
     const total = Math.round(14 + 28 * Math.max(0, Math.min(100, count)) / 100);
