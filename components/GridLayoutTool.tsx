@@ -2,7 +2,7 @@ import { slideBack } from '../utils/pageTransition';
 import { texDotColorFor, texStripeColorFor } from '../utils/texColor';
 import { centerActiveChip } from '../utils/centerChip';
 import { isFancyMotion, fancyEntryDur, fancyMotionTag, fancyGroupMotion, fancyMotionLists, fancyMotionCfg } from '../utils/fancyMotion';
-import { FANCY_KINDS, isFancyKind, fancyPathD, fancyGeometry, fancyAlphaMask, paintWithFancyMask, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT } from '../utils/fancyShapes';
+import { FANCY_KINDS, isFancyKind, fancyPathD, fancyGeometry, fancyAlphaMask, paintWithFancyMask, fancyRatio, fancyCanRandom, fancyFixedFrame, fancyHasParams, fancyPack, fancyStretchSize, FANCY_PARAM, FANCY_SIZE_DEFAULT, FANCY_JIT_DEFAULT, fancyHasJit, fancyJitDefault } from '../utils/fancyShapes';
 import { SCORE_KINDS, isScoreKind, scorePathD, scoreRatio, scoreKindOf, scoreCanRandom } from '../utils/scoreShapes';
 import { swatchEdge } from '../utils/swatch';
 import { scoreRandomFeedback, SCORE_RANDOM_BTN } from '../utils/scoreFeedback';
@@ -3744,20 +3744,20 @@ export const ShapeEditorPanel: React.FC<{
           {(fancyCanRandom(layer.shape) || fancyHasParams(layer.shape)) && (() => {
                             /* 花式排列：色票（最上面）→ 隨機排列按鈕 → 數量 → 其他滑桿 */
                             const kind = layer.shape as string, P = FANCY_PARAM[kind], ob: any = layer;
-                            const box = kind === 'fancy-boxrandom';
+                            const box = kind === 'fancy-boxrandom', hasJit = fancyHasJit(kind);   // 魔法棒也有「隨機大小」
                             const cnt = ob.fancyCount ?? P?.count[2], gp = ob.fancyGap ?? P?.gap, sd = ob.fancySeed ?? 0;
-                            const jit = ob.fancyJit ?? FANCY_JIT_DEFAULT, sz = ob.fancySize ?? FANCY_SIZE_DEFAULT;
+                            const jit = ob.fancyJit ?? fancyJitDefault(kind), sz = ob.fancySize ?? FANCY_SIZE_DEFAULT;
                             const set = (q: { seed?: number; count?: number; jit?: number; size?: number }) => {
                               const seed = q.seed ?? sd, count = q.count ?? cnt, j2 = q.jit ?? jit, s2 = q.size ?? sz;
-                              onChange({ fancySeed: seed, fancyCount: count, fancyGap: gp, ...(box ? { fancyJit: j2, fancySize: s2 } : {}),
-                                scoreSeed: P ? fancyPack(seed, count, gp, box ? { jit: j2, size: s2 } : undefined) : seed } as any);
+                              onChange({ fancySeed: seed, fancyCount: count, fancyGap: gp, ...(hasJit ? { fancyJit: j2, fancySize: s2 } : {}),
+                                scoreSeed: P ? fancyPack(seed, count, gp, hasJit ? { jit: j2, size: s2 } : undefined) : seed } as any);
                             };
                             return <div className="px-2 w-full space-y-4" style={{ order: 0 }}>
                               {fancyCanRandom(kind) && <button onClick={(e) => { scoreRandomFeedback(e.currentTarget); set({ seed: 1 + Math.floor(Math.random() * (P ? 999998 : 1e9)) }); }}
                                 className={SCORE_RANDOM_BTN}>隨機排列</button>}
                               {P && slider('數量', cnt, P.count[0], P.count[1], (v: number) => set({ count: Math.round(v) }))}
                               {box && slider('大小', sz, 0, 100, (v: number) => set({ size: Math.round(v) }))}
-                              {box && slider('隨機大小', jit, 0, 100, (v: number) => set({ jit: Math.round(v) }))}
+                              {hasJit && slider('隨機大小', jit, 0, 100, (v: number) => set({ jit: Math.round(v) }))}
                             </div>;
                           })()}
                           {scoreCanRandom(layer.shape) && <div className="px-2 order-1 w-full">

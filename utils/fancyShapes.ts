@@ -35,6 +35,10 @@ export const FANCY_PARAM: Record<string, { count: [number, number, number]; gap:
    舊格式（沒有這兩個值）的作品照舊畫，不會變 */
 const V2 = 2e15;
 export const FANCY_SIZE_DEFAULT = 20, FANCY_JIT_DEFAULT = 0;
+/** 「隨機大小」滑桿的預設值：魔法棒的 50＝原本的大小差異（0＝大小一致、100＝差異加倍）；其他照舊 0 */
+export const fancyJitDefault = (kind?: string) => kind && kind.split('@')[0] === 'fancy-wand' ? 50 : FANCY_JIT_DEFAULT;
+/** 有「隨機大小」滑桿的花式排列（要用第二種打包格式存它） */
+export const fancyHasJit = (kind?: string) => !!kind && ['fancy-boxrandom', 'fancy-wand'].includes(kind.split('@')[0]);
 export const fancyPack = (seed: number, count: number, gap: number, extra?: { jit: number; size: number }) => extra
   ? V2 + (Math.max(0, Math.floor(seed)) % 1e6) * 1e9 + Math.round(extra.size) * 1e6 + Math.round(count) * 1000 + Math.round(extra.jit)
   : (Math.max(0, Math.floor(seed)) % 1e6) * 1e6 + Math.round(count) * 1000 + Math.round(gap);
@@ -306,8 +310,9 @@ const designs: Record<string, (seed: number) => Design> = {
        滑桿 0～100：0＝14 顆（再少就看不出形狀），100＝42 顆 */
     /* 隨機排列：有種子就用種子排（星星的位置、大小都換一組，從左上到右下、越往右下越多越散的樣子不變）。
        沒有種子＝預設那一組（WAND_DEFAULT_SEED，面板上的按鈕圖示也是這一組） */
-    const { seed, count } = unpack('fancy-wand', v);
-    const R = rng(seed || WAND_DEFAULT_SEED), units: (Unit & { t: number })[] = [];
+    const { seed, count, jit = 50 } = unpack('fancy-wand', v);
+    const jk = Math.max(0, Math.min(100, jit)) / 50;   // 隨機大小：1＝原本的差異
+    const R = rng(seed || WAND_DEFAULT_SEED), units: (Unit & { t: number; big?: boolean })[] = [];
     const total = Math.round(14 + 28 * Math.max(0, Math.min(100, count)) / 100);
     /* 最左上一定是單獨一顆（之後的星星離它有一段距離才開始），從它開始一路往右下散開 */
     units.push({ x: 5, y: 5, r: 1.35, t: 0 });
@@ -323,9 +328,14 @@ const designs: Record<string, (seed: number) => Design> = {
         const along = 9 + t * 86 + (R() - 0.5) * 2;
         const side = ((i % 2 ? 1 : -1) * (0.25 + R() * 0.75)) * spread;
         const x = along + side * 0.7071, y = along - side * 0.7071;
-        const r = 0.9 + R() * (1.4 + t * 2.6);
+        /* 大小：亂數用法跟原本一樣（位置不變），只是差異的幅度照「隨機大小」縮放 */
+        const range = 1.4 + t * 2.6, mid = 0.9 + range / 2;
+        let r = Math.max(0.6, mid + (R() - 0.5) * range * jk);
+        /* 大的星星不要擠在一起：附近（12 以內）已經有大星星的話，這一顆改成小的 */
+        const big = (k: number, tt: number) => k > 0.9 + (1.4 + tt * 2.6) * 0.72;
+        if (big(r, t) && units.some(u => u.big && Math.hypot(u.x - x, u.y - y) < 12)) r = Math.max(0.6, mid - range * 0.22 * Math.max(0.5, jk));
         if (x < r || y < r || x > 100 - r || y > 100 - r) continue;
-        if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.25)) { units.push({ x, y, r, t: x + y }); placed = true; }
+        if (units.every(u => Math.hypot(u.x - x, u.y - y) > (u.r + r) * 1.25)) { units.push({ x, y, r, t: x + y, big: big(r, t) }); placed = true; }
       }
     }
     const sorted = [...units].sort((a, b) => a.t - b.t), n = sorted.length, k = Math.min(n, total);
