@@ -580,17 +580,29 @@ img, video, canvas, svg { -webkit-user-drag: none; -webkit-touch-callout: none; 
   -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,.04) 6%, rgba(0,0,0,.2) 12%, rgba(0,0,0,.5) 20%, rgba(0,0,0,.82) 30%, #000 40%, #000 60%, rgba(0,0,0,.82) 70%, rgba(0,0,0,.5) 80%, rgba(0,0,0,.2) 88%, rgba(0,0,0,.04) 94%, transparent 100%);
           mask-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,.04) 6%, rgba(0,0,0,.2) 12%, rgba(0,0,0,.5) 20%, rgba(0,0,0,.82) 30%, #000 40%, #000 60%, rgba(0,0,0,.82) 70%, rgba(0,0,0,.5) 80%, rgba(0,0,0,.2) 88%, rgba(0,0,0,.04) 94%, transparent 100%);
 }
+/* 整圈若隱若現的輪廓（側邊也看得出方塊的形狀）：畫在 ::before（不受上下亮線那層的左右遮罩影響），
+   很淡、而且上下比左右稍亮一點，跟上下的反光自然接起來 */
+.home-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 2;
+  box-shadow: inset 0 0 0 0.6px rgba(255,255,255,.075), inset 0 0 6px rgba(255,255,255,.018);
+}
 .home-tile-sm {
-  --glow-top: .13;
-  --glow-h: 20px;
-  --glow-bot: .05;
+  /* 上緣的柔光減弱（原本 .13／20px 太明顯） */
+  --glow-top: .07;
+  --glow-h: 13px;
+  --glow-bot: .045;
   --glow-hb: 7px;
-  --line-top: .32;
-  --line-bot: .2;
+  --line-top: .22;
+  --line-bot: .17;
 }
 .home-tile-cam {
   background:
-    radial-gradient(ellipse 28px 50% at 0 50%, rgba(255,255,255,.09) 0, rgba(255,255,255,.065) 18%, rgba(255,255,255,.035) 45%, rgba(255,255,255,.012) 72%, rgba(255,255,255,0) 100%),
+    radial-gradient(ellipse 24px 50% at 0 50%, rgba(255,255,255,.05) 0, rgba(255,255,255,.035) 18%, rgba(255,255,255,.018) 45%, rgba(255,255,255,.006) 72%, rgba(255,255,255,0) 100%),
     radial-gradient(ellipse 62% var(--glow-h) at 50% 0, rgba(255,255,255,var(--glow-top)) 0, rgba(255,255,255,calc(var(--glow-top) * .5)) 30%, rgba(255,255,255,calc(var(--glow-top) * .18)) 62%, rgba(255,255,255,0) 100%),
     radial-gradient(ellipse 62% var(--glow-hb) at 50% 100%, rgba(255,255,255,var(--glow-bot)) 0, rgba(255,255,255,calc(var(--glow-bot) * .5)) 30%, rgba(255,255,255,calc(var(--glow-bot) * .18)) 62%, rgba(255,255,255,0) 100%),
     #060606;
