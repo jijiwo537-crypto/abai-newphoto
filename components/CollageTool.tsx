@@ -9872,17 +9872,61 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const globalComp = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
   const globalOut = useRef<HTMLCanvasElement | null>(null);
   const globalCrops = useRef<HTMLCanvasElement[]>([]);
+  const globalLast = useRef<{ key: string; G: HTMLCanvasElement } | null>(null);
+  /** 存檔：在成品畫布上原地套整體那一層。濾鏡、調節是逐像素的 —— 切成 1024 的方塊一塊一塊算（結果一樣，記憶體只要一小塊）；
+      有特效（模糊、暗角…要看整張圖）才整張算一次，算完立刻把 GPU 那幾份放掉 */
+  const applyGlobalInPlace = (cv: HTMLCanvasElement, gfx: PhotoFx) => {
+    const W = cv.width, H = cv.height, ctx = get2dWide(cv);
+    if (!ctx || !W || !H) return;
+    const colourKeys = new Set(['lut', 'lutAmount', ...ADJUST_KEYS.map(([k]) => k as string)]);
+    const colourOnly = Object.entries(gfx).every(([k, v]) => colourKeys.has(k) || !v);
+    const out = document.createElement('canvas');
+    try {
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'copy';
+      if (colourOnly) {
+        const T = 1024, tile = document.createElement('canvas'), tg = get2dWide(tile)!;
+        for (let y = 0; y < H; y += T) for (let x = 0; x < W; x += T) {
+          const tw = Math.min(T, W - x), th = Math.min(T, H - y);
+          if (tile.width !== tw) tile.width = tw; if (tile.height !== th) tile.height = th;
+          tg.setTransform(1, 0, 0, 1, 0, 0); tg.globalCompositeOperation = 'copy'; tg.drawImage(cv, x, y, tw, th, 0, 0, tw, th);
+          releasePhotoFxReadbacks(tile); forgetPhotoFxSource(tile);
+          const R = applyPhotoFx(tile, tw, th, gfx, { cacheSource: true, gpuSurface: true, out });
+          ctx.drawImage(R, 0, 0, tw, th, x, y, tw, th);
+        }
+        releasePhotoFxReadbacks(tile); forgetPhotoFxSource(tile); tile.width = tile.height = 0;
+      } else {
+        const R = applyPhotoFx(cv, W, H, gfx, { cacheSource: true, gpuSurface: true, out });
+        ctx.drawImage(R, 0, 0);
+        releasePhotoFxReadbacks(cv); forgetPhotoFxSource(cv);
+      }
+      ctx.restore();
+    } finally { releasePhotoFxSurface(out); out.width = out.height = 0; }
+  };
   const hashKey = (t: string) => { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1, previewCapture = false) => {
     const region = photoRegionRef.current;
     const gfx = simple && !globalInner.current && imageState && region?.globalFx && hasPhotoFx(region.globalFx as PhotoFx) ? region.globalFx as PhotoFx : null;
     if (!gfx || !imageState || !region) return renderScene(targetCanvas, renderScale, previewCapture);
     const mainLike = targetCanvas === canvasRef.current || previewCapture;
+    /* 存檔：直接把整張拼圖畫進成品畫布（不另外拼一張、不切格子），再在原地套整體那一層。
+       以前存檔時同時有好幾份成品大小的副本（拼好的那張、CPU 讀回的像素和它的快取、GPU 的來源／輸出、切片、成品），
+       成品一千多萬像素時加起來將近 0.5GB —— iOS 直接把網頁收掉，就是「導出時閃退」 */
+    if (!mainLike) {
+      globalInner.current = true;
+      try { renderScene(targetCanvas, renderScale, false); } finally { globalInner.current = false; }
+      applyGlobalInPlace(targetCanvas, gfx);
+      return;
+    }
     const t = imageTransform;
     const g1 = layoutGeometry(layout, imageState.baseW, imageState.baseH, maskScaleValue.current, canvasRatio);
         /* 預覽：照片只要跟螢幕實際的裝置像素一樣細就好，不用畫布為了圖形邊緣多給的 SUPERSAMPLE 倍（見 regionEffectCapacity）；
        不超過 4096。存檔用成品的解析度 */
-    const sC = mainLike ? Math.min(renderScale / SUPERSAMPLE, 4096 / Math.max(1, g1.cw, g1.ch)) : renderScale;
+    /* 而且拼的解析度一級一級（每級 √2 倍），一定不小於螢幕需要的：放大縮小時大部分的格子都不用重拼、重算，
+       也不會有「先糊、鬆手才清楚」—— 跨到下一級的那一下就直接換成更清楚的那一級 */
+    const need = renderScale / SUPERSAMPLE;
+    /* 多留一級（√2 倍）：一般放大縮小都還在同一級裡，不必重拼；預覽拼的這張本來就只有螢幕大小，多一級成本很小 */
+    const level = Math.pow(Math.SQRT2, Math.ceil(Math.log2(Math.max(1e-3, need)) * 2 - 1e-6) + 1);
+    const sC = Math.min(level, 4096 / Math.max(1, g1.cw, g1.ch));
     const base = { ...region, globalFx: undefined };
     const key = JSON.stringify([base, t, layout, canvasRatio, maskScaleValue.current, sC, lutRevision], compactSceneValue);
     let comp = mainLike ? globalComp.current : null;
@@ -9894,9 +9938,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       forgetPhotoFxSource(canvas);
       comp = { key, canvas };
       if (mainLike) globalComp.current = comp;
+      globalLast.current = null;
     }
-    const out = mainLike ? (globalOut.current ??= document.createElement('canvas')) : document.createElement('canvas');
-    const G = applyPhotoFx(comp.canvas, comp.canvas.width, comp.canvas.height, gfx, { cacheSource: true, gpuSurface: true, out });
+    const out = (globalOut.current ??= document.createElement('canvas'));
+    /* 拼好的圖、整體設定都沒變（例如只是放大縮小）：上一次的結果和切片直接用，什麼都不重算 */
+    const gKey = comp.key + '|' + JSON.stringify(gfx) + '|' + lutRevision;
+    const reuse = globalLast.current?.key === gKey;
+    const G = reuse ? globalLast.current!.G : applyPhotoFx(comp.canvas, comp.canvas.width, comp.canvas.height, gfx, { cacheSource: true, gpuSurface: true, out });
+    /* 拼好的圖已經在 GPU 上了：CPU 那份讀回的像素（最大幾十 MB）不要留著 */
+    if (!reuse) releasePhotoFxReadbacks(comp.canvas);
+    globalLast.current = { key: gKey, G };
     const offsC = layoutGeometry(layout, imageState.baseW * sC, imageState.baseH * sC, maskScaleValue.current, canvasRatio);
     const kx = G.width / Math.max(1, offsC.cw), ky = G.height / Math.max(1, offsC.ch);
     const rects = regionRects(region, t.w * sC, t.h * sC);
@@ -9908,10 +9959,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const x = (offsC.ix + (t.x * sC + r.x * t.w * sC)) * kx, y = (offsC.iy + (t.y * sC + r.y * t.h * sC)) * ky;
       const w = r.w * t.w * sC * kx, h = r.h * t.h * sC * ky;
       const cw = Math.max(1, Math.round(w)), ch = Math.max(1, Math.round(h));
-      const crop = mainLike ? (globalCrops.current[i] ??= document.createElement('canvas')) : document.createElement('canvas');
-      if (crop.width !== cw) crop.width = cw; if (crop.height !== ch) crop.height = ch;
-      const cg = crop.getContext('2d')!;
-      cg.setTransform(1, 0, 0, 1, 0, 0); cg.globalCompositeOperation = 'copy'; cg.drawImage(G, x, y, w, h, 0, 0, cw, ch); cg.globalCompositeOperation = 'source-over';
+      const crop = (globalCrops.current[i] ??= document.createElement('canvas'));
+      if (!reuse || crop.width !== cw || crop.height !== ch) {
+        if (crop.width !== cw) crop.width = cw; if (crop.height !== ch) crop.height = ch;
+        const cg = crop.getContext('2d')!;
+        cg.setTransform(1, 0, 0, 1, 0, 0); cg.globalCompositeOperation = 'copy'; cg.drawImage(G, x, y, w, h, 0, 0, cw, ch); cg.globalCompositeOperation = 'source-over';
+      }
       const src = `global:${i}:${tag}`;
       decodedRegionPhotos.current.set(src, crop as unknown as HTMLImageElement); added.push(src);
       return { src, width: cw, height: ch };
@@ -11466,9 +11519,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!t) continue;
       // 復原到比較舊的那一步時物件身上可能是舊的那張：現有最清楚的那張已經夠的話直接換回來
       if (t.tier >= required * 0.98) { if (objectsRef.current.some(o => o.src === src && o.img && o.img !== t.img && !isVideoEl(o.img))) { swapTier(src, t.img); swapped = true; } continue; }
+      /* 存檔前（wait）：一張做完再做下一張。同時做的話每一張都要先解開一張大圖、再開一張同樣大的畫布縮小，
+         六張一起就是好幾百 MB 同時在記憶體裡 —— 儲存時閃退就是這個。一張一張做，成品完全一樣，尖峰只剩一張的量 */
+      if (wait) { const img = await ensureTier(src, required); if (img && !leavingRef.current) { swapTier(src, img); swapped = true; } continue; }
       jobs.push(ensureTier(src, required).then(img => { if (img && !leavingRef.current) { swapTier(src, img); swapped = true; } }));
     }
-    if (wait && jobs.length) await Promise.all(jobs);
     return swapped;
   };
   const ensureTiersRef = useRef(ensureTiers); ensureTiersRef.current = ensureTiers;
