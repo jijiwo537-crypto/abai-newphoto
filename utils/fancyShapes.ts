@@ -346,6 +346,20 @@ const designs: Record<string, (seed: number) => Design> = {
       keep.splice(i + 1, 0, ...add);
       i += add.length;
     }
+    /* 預設那一組（沒按過隨機）：右下靠右那一塊（約 95,66）看起來缺一顆 ——
+       把最擠的那一顆（開頭那段除外：附近 8 以內的星星最多、而且最貼近鄰居的）搬過去 */
+    if (!seed && keep.length > 8) {
+      const T = { x: 95, y: 66 }, dist = (p: Unit, q: { x: number; y: number }) => Math.hypot(p.x - q.x, p.y - q.y);
+      if (!keep.some(u => dist(u, T) < 6)) {
+        let best = -1, bestN = -1, bestMin = Infinity;
+        keep.forEach((u, i) => {
+          if ((u.x + u.y) / 2 < 35) return;
+          const others = keep.filter(q => q !== u), n = others.filter(q => dist(u, q) < 8).length, mn = Math.min(...others.map(q => dist(u, q)));
+          if (n > bestN || (n === bestN && mn < bestMin)) { best = i; bestN = n; bestMin = mn; }
+        });
+        if (best >= 0) { const u = keep[best]; keep[best] = { x: T.x, y: T.y, r: Math.min(u.r, 100 - T.x - 0.5) }; }
+      }
+    }
     return { dw: 100, dh: 100, units: keep };
   },
   /* 10 同心圓：三圈，外圈的比較大 */
