@@ -28,15 +28,15 @@ export const FANCY_PARAM: Record<string, { count: [number, number, number]; gap:
   'fancy-grid': { count: [2, 10, 5], gap: 54 },        // 每排幾顆
   'fancy-polka': { count: [2, 10, 6], gap: 52 },       // 幾排
   'fancy-boxrandom': { count: [5, 60, 30], gap: 35 },
-  'fancy-wand': { count: [0, 100, 70], gap: 1 },       // 0＝14 顆、100＝42 顆（gap 不用，填 1 讓打包後不會是 0）  // 總共幾顆
+  'fancy-wand': { count: [0, 100, 80], gap: 1 },       // 0＝14 顆、100＝42 顆（gap 不用，填 1 讓打包後不會是 0）  // 總共幾顆
 };
 /** 數量、間距、隨機種子打包成一個數字（畫圖時接在 kind 後面，見 scoreKindOf） */
 /* 方形隨機另外還有「隨機大小」「大小」兩個值：用第二種打包格式（加 2e15 當記號），
    舊格式（沒有這兩個值）的作品照舊畫，不會變 */
 const V2 = 2e15;
 export const FANCY_SIZE_DEFAULT = 20, FANCY_JIT_DEFAULT = 0;
-/** 「隨機大小」滑桿的預設值：魔法棒預設 25（50＝最早的大小差異，預設減半；0＝大小一致、100＝差異加倍）；其他照舊 0 */
-const WAND_JIT_DEFAULT = 25;
+/** 「隨機大小」滑桿的預設值：魔法棒預設 45（50＝最早的大小差異；0＝大小一致、100＝差異加倍）；其他照舊 0 */
+const WAND_JIT_DEFAULT = 45;
 export const fancyJitDefault = (kind?: string) => kind && kind.split('@')[0] === 'fancy-wand' ? WAND_JIT_DEFAULT : FANCY_JIT_DEFAULT;
 /** 有「隨機大小」滑桿的花式排列（要用第二種打包格式存它） */
 export const fancyHasJit = (kind?: string) => !!kind && ['fancy-boxrandom', 'fancy-wand'].includes(kind.split('@')[0]);
@@ -317,8 +317,10 @@ const designs: Record<string, (seed: number) => Design> = {
     let guard = 0;
     while (units.length < 42 && guard++ < 6000) {
       const t = Math.sqrt(R());                                   // 越往右下越多（密度跟 t 成正比）
-      const spread = 1.5 + t * 19;                                // 越往右下散得越開（但不要太寬）
-      const along = 3 + t * 92 + (R() - 0.5) * 4, side = (R() - 0.5) * 2 * spread;   // 從左上角一路拉到右下角
+      /* 越往右下散得越開。斜帶不再一路拉到右下角（以前拉到角落，旁邊沒空間，散開的都被方框切掉，右下反而只剩中間一條）：
+         中線停在離角落還有一段的地方，右下那段才有空間往兩側展開 */
+      const spread = 1.5 + t * 23;
+      const along = 3 + t * 86 + (R() - 0.5) * 4, side = (R() - 0.5) * 2 * spread;
       const x = along + side * 0.7071, y = along - side * 0.7071;
       /* 大小：亂數用法跟原本一樣（位置不變），差異的幅度照「隨機大小」縮放 */
       const range = 1.4 + t * 2.6, mid = 0.9 + range / 2;
