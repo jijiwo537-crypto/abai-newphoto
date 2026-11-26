@@ -5658,7 +5658,14 @@ const putCardThumb=(key:string,canvas:HTMLCanvasElement)=>{
 const cardSourceThumbCache=new Map<string,HTMLCanvasElement>();
 /** 卡片底圖：原圖（動輒 4000 點）一次縮成兩百多點，iPhone 的瀏覽器會縮得糊糊的、邊緣有鋸齒。
     改成每次縮一半、用高品質取樣，最後一步才縮到卡片大小（等比例填滿、置中裁切） */
+/** 只有簡易拼圖用分段高品質縮小（其他工具維持原本那一次縮小：省計算，也是刻意設計的） */
+let cardHighQuality=false;
+export const setCardHighQuality=(on:boolean)=>{cardHighQuality=on;};
 const drawCardCover=(dst:HTMLCanvasElement,img:HTMLImageElement)=>{
+  if(!cardHighQuality){
+    const w=dst.width,h=dst.height,s=Math.max(w/img.naturalWidth,h/img.naturalHeight),dw=img.naturalWidth*s,dh=img.naturalHeight*s;
+    dst.getContext('2d')!.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);return;
+  }
   const w=dst.width,h=dst.height,scale=Math.max(w/img.naturalWidth,h/img.naturalHeight);
   // 整張縮到最後的大小（等比例填滿卡片）
   const tw=img.naturalWidth*scale,th=img.naturalHeight*scale;

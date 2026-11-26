@@ -8,7 +8,9 @@ export const CREATIVE_PHOTO_LIMIT = 9;
 export const PHOTO_SWAP_HOLD_MS = 304;
 export type PhotoArrangement = 'grid' | 'horizontal' | 'vertical' | 'feature';
 export type RegionPhoto = { src: string; width: number; height: number; zoom?: number; offsetX?: number; offsetY?: number; fx?: any; origSrc?: string; geo?: any };
-export type PhotoRegion = { photos: RegionPhoto[]; arrangement: PhotoArrangement; landscape: boolean; templateIndex?: number; multi?: boolean; overflowPhotos?: RegionPhoto[]; seamless?: boolean; seamlessAmount?: number };
+export type PhotoRegion = { photos: RegionPhoto[]; arrangement: PhotoArrangement; landscape: boolean; templateIndex?: number; multi?: boolean; overflowPhotos?: RegionPhoto[]; seamless?: boolean; seamlessAmount?: number;
+  /** 簡易拼圖的「全部照片」：整張拼圖上面的一層（濾鏡／調節／特效）。每張照片自己的調整在下面，這一層套在拼好的整張圖上 */
+  globalFx?: Record<string, any> };
 export type PhotoRect = { x: number; y: number; w: number; h: number; squareOverlay?:boolean; overlayAspect?:number };
 /** 換版面會重新分配圖案，絕不改使用者設的數量 */
 export function creativePatternCountForLayout(count:number,from:string,to:string){

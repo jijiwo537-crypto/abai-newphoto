@@ -878,6 +878,7 @@ const App: React.FC = () => {
         accept={MEDIA_ACCEPT}
         multiple
         data-max={9}
+        data-pick-hint="選 1～9 張照片"
         onChange={(e) => {
           const files = Array.from(e.target.files || []) as File[];
           if (files.length) handleImportToCollage(files);

@@ -59,7 +59,7 @@ import { SYMBOLS } from '../utils/symbols';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
 import {
-  TextEditorPanel, TextEditSheet, ImageAdjustPanel, FX_PARAM_DEFAULTS, effectStrengthKey,
+  TextEditorPanel, TextEditSheet, ImageAdjustPanel, FX_PARAM_DEFAULTS, effectStrengthKey, setCardHighQuality,
   /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
@@ -2968,12 +2968,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const simpleAllOpenRef = useRef(false);
   const simpleAllRegionRef = useRef<PhotoRegion | null>(null);
   /* 剛進整體、或照片的設定換了（放開滑桿、復原／重做）：重新算一次面板要顯示的值 */
+  /* 面板顯示的是整張拼圖上面那一層（globalFx）的值 */
   if (simpleAllEditing && (!simpleAllOpenRef.current || simpleAllRegionRef.current !== photoRegion)) {
-    const ps = (photoRegionRef.current?.photos || []).filter(p => p.src);
-    const common: any = {};
-    const first: any = ps[0]?.fx || {};
-    for (const k of Object.keys(first)) if (ps.every(p => (p.fx as any)?.[k] === first[k])) common[k] = first[k];
-    simpleAllFxRef.current = common;
+    simpleAllFxRef.current = { ...((photoRegionRef.current?.globalFx as PhotoFx) || {}) };
   }
   simpleAllOpenRef.current = simpleAllEditing;
   simpleAllRegionRef.current = photoRegion;
@@ -3159,7 +3156,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      放手就照實際的值精確重畫，存出來的、停下來看到的都是精確的結果。 */
   /* 調節（−100～100）或特效的「強度」（0～100）；特效最外層調的是別的參數（例如馬賽克格數）、或打開細項時不交疊 */
   const allBlendFx = simpleAllEditing && adjustSub === 'effect' && !effectDetail ? (effectStrengthKey(effectCard) || '') : '';
-  const allBlendTool = simpleAllEditing && adjustSub === 'tune' && BLEND_ADJUSTMENTS.has(tuneTool) ? tuneTool : allBlendFx;
+  /* 全部照片改成「整張圖上面一層」之後，每一格只算一次整張圖，直接精確地畫 —— 不再用交疊的近似畫面 */
+  const allBlendTool = '' as string; void allBlendFx;
   const allBlendRangeRef = useRef<[number, number]>([-100, 100]);
   allBlendRangeRef.current = allBlendFx && allBlendTool === allBlendFx ? [0, 100] : [-100, 100];
   const allBlend = useRef<PhotoAdjustmentBlend | null>(null);
@@ -3168,6 +3166,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const allBlendToolRef = useRef('');
   const allSliderHeld = useRef(false);
   const allBlendDummy = useRef<HTMLCanvasElement | null>(null);
+  /* 簡易拼圖的濾鏡／特效卡片縮圖用分段高品質縮小（只有這裡，見 GridLayoutTool 的 setCardHighQuality） */
+  useEffect(() => { if (!simple) return; setCardHighQuality(true); return () => setCardHighQuality(false); }, [simple]);
   allBlendToolRef.current = allBlendTool;
   allBlendKeyRef.current = allBlendTool ? JSON.stringify([imageState?.img?.src, layout, canvasRatio, imageTransform, maskScale, objects.length,
     photoRegion && { ...photoRegion, photos: photoRegion.photos.map(p => ({ ...p, fx: { ...(p.fx || {}), [allBlendTool]: 0 } })) }], compactSceneValue) : '';
@@ -6380,7 +6380,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
   useEffect(()=>()=>linkGlowTilesRef.current?.dispose(),[]);
   const committedImageTransform=imageTransform,committedHoles=holes;
-  const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1, previewCapture=false) => {
+  const renderScene = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1, previewCapture=false) => {
     const maskScale=liveMaskScale.current??maskScaleValue.current;
     const photoRegion=photoRegionRef.current;
     let objects=objectsRef.current;
@@ -7175,7 +7175,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       drawEmptyCellPrompts();
       // 底圖的外框屬於底圖層，在物件和圖案下面
       const index = selectedRegionPhotoRef.current;
-      if (!isMain || !photoRegion?.multi || index === null || activeTab === 'motion' || hideChromeRef.current || animRef.current) return;
+      if (!isMain || !photoRegion?.multi || index === null || activeTab === 'motion' || hideChromeRef.current || animRef.current || globalInner.current) return;
       const t=imageTransform,rects=regionRects(photoRegion,t.w*s*kIn,t.h*s*kIn),r=rects[index];
       if (!r) return;
       ctx.save();ctx.beginPath();ctx.rect(offs.ix,offs.iy,iw,ih);ctx.clip();
@@ -9862,6 +9862,76 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [imageState, bvEdit, photoRegion, swapSource, selectedRegionPhoto, activeTab, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
       stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlow, holeGlowColor, glowIdle, patternSceneIdentity,backdropSceneFingerprint,lutRevision,stableSceneKey]);
 
+  /* ── 簡易拼圖「全部照片」那一層 ────────────────────────────────────
+     每張照片自己的調整照舊；整體的濾鏡／調節／特效不是把每一張各算一次，而是：
+       ① 先把整張拼圖（每張照片＋自己的調整、無縫）拼成一張圖（只在照片或排版變了才重拼，見 globalComp）；
+       ② 整張圖套一次整體的設定（GPU，跟單張照片同一支 applyPhotoFx）；
+       ③ 結果切回每一格，當成那一格的照片畫 —— 排版、放大、選取框、快取全部照原本的路走。
+     存檔也走同一條（解析度換成成品的），所以預覽跟成品一樣；點選單張、回到全部，畫面完全不變。 */
+  const globalInner = useRef(false);
+  const globalComp = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
+  const globalOut = useRef<HTMLCanvasElement | null>(null);
+  const globalCrops = useRef<HTMLCanvasElement[]>([]);
+  const hashKey = (t: string) => { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(36); };
+  const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1, previewCapture = false) => {
+    const region = photoRegionRef.current;
+    const gfx = simple && !globalInner.current && imageState && region?.globalFx && hasPhotoFx(region.globalFx as PhotoFx) ? region.globalFx as PhotoFx : null;
+    if (!gfx || !imageState || !region) return renderScene(targetCanvas, renderScale, previewCapture);
+    const mainLike = targetCanvas === canvasRef.current || previewCapture;
+    const t = imageTransform;
+    const g1 = layoutGeometry(layout, imageState.baseW, imageState.baseH, maskScaleValue.current, canvasRatio);
+        /* 預覽：照片只要跟螢幕實際的裝置像素一樣細就好，不用畫布為了圖形邊緣多給的 SUPERSAMPLE 倍（見 regionEffectCapacity）；
+       不超過 4096。存檔用成品的解析度 */
+    const sC = mainLike ? Math.min(renderScale / SUPERSAMPLE, 4096 / Math.max(1, g1.cw, g1.ch)) : renderScale;
+    const base = { ...region, globalFx: undefined };
+    const key = JSON.stringify([base, t, layout, canvasRatio, maskScaleValue.current, sC, lutRevision], compactSceneValue);
+    let comp = mainLike ? globalComp.current : null;
+    if (!comp || comp.key !== key) {
+      const canvas = (mainLike && globalComp.current?.canvas) || document.createElement('canvas');
+      const keepForce = forceFullPreviewRef.current;
+      globalInner.current = true; forceFullPreviewRef.current = true;
+      try { renderScene(canvas, sC, mainLike); } finally { globalInner.current = false; forceFullPreviewRef.current = keepForce; }
+      forgetPhotoFxSource(canvas);
+      comp = { key, canvas };
+      if (mainLike) globalComp.current = comp;
+    }
+    const out = mainLike ? (globalOut.current ??= document.createElement('canvas')) : document.createElement('canvas');
+    const G = applyPhotoFx(comp.canvas, comp.canvas.width, comp.canvas.height, gfx, { cacheSource: true, gpuSurface: true, out });
+    const offsC = layoutGeometry(layout, imageState.baseW * sC, imageState.baseH * sC, maskScaleValue.current, canvasRatio);
+    const kx = G.width / Math.max(1, offsC.cw), ky = G.height / Math.max(1, offsC.ch);
+    const rects = regionRects(region, t.w * sC, t.h * sC);
+    const tag = hashKey(key + '|' + JSON.stringify(gfx));
+    const added: string[] = [];
+    const photos = region.photos.map((p, i) => {
+      const r = rects[i];
+      if (!p.src || !r) return p;
+      const x = (offsC.ix + (t.x * sC + r.x * t.w * sC)) * kx, y = (offsC.iy + (t.y * sC + r.y * t.h * sC)) * ky;
+      const w = r.w * t.w * sC * kx, h = r.h * t.h * sC * ky;
+      const cw = Math.max(1, Math.round(w)), ch = Math.max(1, Math.round(h));
+      const crop = mainLike ? (globalCrops.current[i] ??= document.createElement('canvas')) : document.createElement('canvas');
+      if (crop.width !== cw) crop.width = cw; if (crop.height !== ch) crop.height = ch;
+      const cg = crop.getContext('2d')!;
+      cg.setTransform(1, 0, 0, 1, 0, 0); cg.globalCompositeOperation = 'copy'; cg.drawImage(G, x, y, w, h, 0, 0, cw, ch); cg.globalCompositeOperation = 'source-over';
+      const src = `global:${i}:${tag}`;
+      decodedRegionPhotos.current.set(src, crop as unknown as HTMLImageElement); added.push(src);
+      return { src, width: cw, height: ch };
+    });
+    const keep = { region: photoRegionRef.current, colour: regionColourActive.current, spatial: regionSpatialActive.current, blend: regionBlendTool.current };
+    /* 單張照片那幾條 GPU 快路徑畫的是「沒有整體那一層」的樣子：有整體設定時不用 */
+    regionColour.current?.hide(); if (regionSpatial.current?.shown) regionSpatial.current.shown.style.display = 'none';
+    regionColourActive.current = false; regionSpatialActive.current = false; regionBlendTool.current = '';
+    photoRegionRef.current = { ...region, photos, seamless: false, globalFx: undefined };
+    try { return renderScene(targetCanvas, renderScale, previewCapture); }
+    finally {
+      photoRegionRef.current = keep.region;
+      regionColourActive.current = keep.colour; regionSpatialActive.current = keep.spatial; regionBlendTool.current = keep.blend;
+      for (const k of added) if (!k.endsWith(':' + tag) || !mainLike) decodedRegionPhotos.current.delete(k);
+      /* 預覽那幾格的切片留著（同一個畫面重畫直接用）；舊的版本丟掉 */
+      if (mainLike) for (const k of [...decodedRegionPhotos.current.keys()]) if (k.startsWith('global:') && !k.endsWith(':' + tag)) decodedRegionPhotos.current.delete(k);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [renderScene, simple, imageState, layout, canvasRatio, imageTransform, lutRevision]);
+
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
      離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話
      就沿用那一筆的），所以同一件作品不管進出幾次都只會留最新的一筆，
@@ -12146,9 +12216,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         )}
         {exportOptionsOpen&&<CollageExportOptions imageOnly={simple} label="創意拼圖匯出設定" panelRef={exportOptionsRef} imageFormat={imageExportFormat} videoFormat={videoExportFormat} fps={videoExportFps} quality={videoExportQuality} onImage={setImageExportFormat} onVideo={setVideoExportFormat} onFps={setVideoExportFps} onQuality={setVideoExportQuality}/>}
         {/* 多選最多九張照片，全部加入同一個圖片排版區域。 */}
-        <input type="file" accept={MEDIA_ACCEPT} multiple data-max={CREATIVE_PHOTO_LIMIT} className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={MEDIA_ACCEPT} multiple data-max={CREATIVE_PHOTO_LIMIT} data-pick-hint={`選 1～${CREATIVE_PHOTO_LIMIT} 張照片`} className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
         {/* 更換圖片：一樣可以多選 1～9 張（第一張當底，其餘排進圖片排版） */}
-        <input type="file" accept={MEDIA_ACCEPT} multiple data-max={CREATIVE_PHOTO_LIMIT} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={MEDIA_ACCEPT} multiple data-max={CREATIVE_PHOTO_LIMIT} data-pick-hint={`選 1～${CREATIVE_PHOTO_LIMIT} 張照片`} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
         <input type="file" accept={RAW_ACCEPT_IMG} multiple aria-label="填入圖片排版" className="hidden" ref={regionUploadRef} onChange={uploadRegionPhotos} />
         <input type="file" accept="image/*" aria-label="上傳遮罩圖片" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
       </header>
@@ -13373,27 +13443,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     return;
                   }
                   if (allEditing && photoRegionRef.current) {
+                    /* 全部照片：改的是整張拼圖上面那一層（見 renderToCanvas 的 globalFx），不動每一張自己的調整。
+                       每一格只要把已經拼好的整張圖套一次（GPU）；色彩表先交給背景執行緒烤，主執行緒不卡 */
                     if (!('fx' in d)) return;
-                    const prev: any = simpleAllFxRef.current, next: any = d.fx || {}, diff: any = {};
-                    for (const k of new Set([...Object.keys(prev), ...Object.keys(next)])) if (prev[k] !== next[k]) diff[k] = next[k];
+                    const next: any = { ...(d.fx || {}) };
+                    for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
                     simpleAllFxRef.current = next;
-                    if (!Object.keys(diff).length) return;
                     clearPhotoDimmer();
-                    const nextRegion = {...photoRegionRef.current,photos:photoRegionRef.current.photos.map(p=>{
-                      if (!p.src) return p;
-                      const fx: any = {...(p.fx||{}),...diff};
-                      for (const k of Object.keys(fx)) if (fx[k] === undefined) delete fx[k];
-                      return {...p,fx};
-                    })};
-                    /* 每張照片各有自己的調整時，每一種調整都要一張新的色彩表：先交給背景執行緒同時烤好
-                       （結果跟主執行緒烤的一樣），烤好才畫這一格 —— 主執行緒不卡，手指一直跟得上。
-                       資料先更新（下一次拖動接著這一份算），只有「畫」等色彩表 */
-                    /* 拖的正是準備好交疊的那一項：直接畫（交疊），不必等色彩表 */
-                    const onlyTool = Object.keys(diff).length === 1 && diff[allBlendToolRef.current] !== undefined;
-                    if (allSliderHeld.current && onlyTool && allBlend.current?.isReady) { ++allBakeSeq.current; commitRegion(nextRegion, true); return; }
-                    photoRegionRef.current = nextRegion;
+                    photoRegionRef.current = { ...photoRegionRef.current, globalFx: next };
                     const seq = ++allBakeSeq.current;
-                    void prebakeColours(nextRegion.photos.filter(p => p.src).map(p => p.fx || {})).then(() => {
+                    void prebakeColours([next]).then(() => {
                       if (seq !== allBakeSeq.current) return;          // 已經有更新的一格，畫那一格就好
                       commitRegion(photoRegionRef.current!, true);
                     });

@@ -487,11 +487,11 @@ export const NativeGallery: React.FC<{
           </div>
           {/* 編輯的導入相簿：三種導入方式。沒有按鈕外框，就是三個字：沒選的淡、選中的亮 */}
           {modes && ok && (
-            <div className="h-12 px-3 flex items-center justify-evenly border-t-[0.5px] border-white/15" role="tablist" aria-label="導入方式" data-pick-modes>
+            <div className="h-12 grid grid-cols-3 items-center border-t-[0.5px] border-white/15" role="tablist" aria-label="導入方式" data-pick-modes>
               {PICK_MODES.map(([id, label]) => (
                 <button key={id} type="button" role="tab" aria-selected={mode === id} data-pick-mode={id} disabled={exporting}
                   onClick={() => setMode(id)}
-                  className="h-12 px-3 text-[14px] font-semibold active:opacity-60"
+                  className="h-12 text-[14px] font-semibold active:opacity-60"
                   style={{ color: mode === id ? '#fff' : 'rgba(255,255,255,.38)', transition: 'color .22s ease' }}>
                   {label}
                 </button>
@@ -603,7 +603,7 @@ export const NativeGallery: React.FC<{
             <div className="px-4 pt-3.5 pb-3.5 flex items-center justify-between gap-3">
               <span className="text-[12.5px] text-white/60 leading-none">{modes && mode === 'collage' ? `選 ${COLLAGE_MIN}～${COLLAGE_MAX} 張照片` : trayHint}</span>
               <button type="button" disabled={picked.length < minPick || exporting} onClick={() => void finish(picked)} key={shake}
-                className="h-8 px-4 text-[13.5px] font-bold active:opacity-70"
+                className="h-7 px-3.5 text-[12.5px] font-bold active:opacity-70"
                 style={{ background: picked.length >= minPick ? '#fff' : 'rgba(255,255,255,.18)', color: picked.length >= minPick ? '#000' : 'rgba(255,255,255,.45)',
                   transition: 'background .25s ease, color .25s ease', animation: shake ? 'abg-shake .3s ease' : undefined }}>
                 下一步
