@@ -118,7 +118,11 @@ export const NativeGallery: React.FC<{
   hero?: string;
   /** 選到 RAW 時最多幾張（0＝不限）。點的當下就問系統這張是不是 RAW */
   rawLimit?: number;
-}> = ({ api, limit, filter, onClose, noAlpha = false, hero, quiet = false, rawLimit = 0 }) => {
+  /** 點下去就直接進工具（點陣文字）：相簿立刻收起來、不顯示「匯入中」轉圈，
+      先把縮圖交給工具（onInstant），原檔在背景拿好再交出去；拿不到時 onInstantFail */
+  onInstant?: (thumb: string | null) => void;
+  onInstantFail?: () => void;
+}> = ({ api, limit, filter, onClose, noAlpha = false, hero, quiet = false, rawLimit = 0, onInstant, onInstantFail }) => {
   const multi = limit !== 1;
   const [shown, setShown] = useState(false);              // 滑上來的動畫
   const [status, setStatus] = useState<LibraryStatus | 'checking'>('checking');
@@ -269,6 +273,25 @@ export const NativeGallery: React.FC<{
   const finish = useCallback(async (ids: string[]) => {
     if (!ids.length || exportingRef.current) return;
     exportingRef.current = true;
+    if (onInstant) {
+      /* 直接進工具：相簿往下收、工具同時打開（帶著這張的縮圖），原檔在背景拿 */
+      closedRef.current = true;
+      onInstant(cachedThumb(ids[0]) ?? null);
+      setShown(false);
+      const t0 = performance.now();
+      try {
+        const files = await exportAssets(ids);
+        /* 收起來的動畫跑完再拆掉相簿 */
+        await new Promise(r => setTimeout(r, Math.max(0, 480 - (performance.now() - t0))));
+        onClose(files);
+      } catch (e: any) {
+        haptic('error');
+        onInstantFail?.();
+        alert(`照片讀不進來：${String(e?.message ?? e ?? '請再試一次')}`);
+        onClose([]);
+      }
+      return;
+    }
     /* 從主頁導入單張：小縮圖放大、之後飛到工具裡照片的位置（見 utils/importHero） */
     /* 單張 RAW：不播過場（RAW 要先解析一段時間，飛完會停在那裡等），改成直接顯示「解析 RAW」的載入畫面 */
     /* 選到的照片裡有 RAW（單張或批量）：轉圈的字改成「正在解析RAW」 */

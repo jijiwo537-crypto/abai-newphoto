@@ -181,6 +181,15 @@ const App: React.FC = () => {
   const artFileInputRef = useRef<HTMLInputElement>(null);
   const dotArtInputRef = useRef<HTMLInputElement>(null);
   const [dotArtFiles, setDotArtFiles] = useState<File[]>([]);
+  /** 從相簿點下去、原檔還沒到的時候：先進點陣文字，這是左下要先放的縮圖（undefined＝沒有在等） */
+  const [dotArtThumb, setDotArtThumb] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    const el = dotArtInputRef.current; if (!el) return;
+    const begin = (e: Event) => { setDotArtFiles([]); setDotArtThumb((e as CustomEvent).detail?.thumb ?? null); setCurrentView('dotart'); };
+    const fail = () => { setDotArtThumb(undefined); setDotArtFiles([]); setCurrentView(v => (v === 'dotart' ? 'home' : v)); };
+    el.addEventListener('abai-pick-begin', begin); el.addEventListener('abai-pick-fail', fail);
+    return () => { el.removeEventListener('abai-pick-begin', begin); el.removeEventListener('abai-pick-fail', fail); };
+  }, []);
   const [matchRef, setMatchRef] = useState<string | null>(null);
   const [matchReferenceLoading,setMatchReferenceLoading]=useState(false);
   const [beautyKey, setBeautyKey] = useState(0);
@@ -925,11 +934,13 @@ const App: React.FC = () => {
         finally { setIsImporting(false);setImportPreviewUrl(null); }
       }}/>
       {currentView === 'art' && artImage && <ArtStudio initialSrc={artImage} onClose={() => void slideBack(() => setCurrentView('home'))} />}
-      <input ref={dotArtInputRef} hidden type="file" accept="image/*" multiple onChange={e => {
+      {/* 點陣文字：一次一張（跟美顏、仿色一樣，點照片就直接進）。data-instant：相簿點下去就直接進工具，
+          不另外顯示「匯入中」（工具裡本來就有轉圈），左下先放相簿的縮圖，原檔在背景拿好再交進來 */}
+      <input ref={dotArtInputRef} hidden type="file" accept="image/*" data-instant onChange={e => {
         const files = [...(e.target.files || [])]; e.target.value = ''; if (!files.length) return;
-        setDotArtFiles(files); setCurrentView('dotart');
+        setDotArtFiles(files.slice(0, 1)); setCurrentView('dotart');
       }}/>
-      {currentView === 'dotart' && dotArtFiles.length > 0 && <DotArtStudio initialFiles={dotArtFiles} onClose={() => void slideBack(() => setCurrentView('home'))} />}
+      {currentView === 'dotart' && (dotArtFiles.length > 0 || dotArtThumb !== undefined) && <DotArtStudio initialFiles={dotArtFiles} placeholderThumb={dotArtThumb} onClose={() => void slideBack(() => { setCurrentView('home'); setDotArtThumb(undefined); })} />}
       {currentView === 'match' && matchImage && (
         <ColorMatchStudio
           imageSrc={matchImage}

@@ -87,7 +87,14 @@ export function installNativeFilePicker() {
       /* 去背圖只有帶 data-allow-alpha 的匯入入口能選（見 utils/alphaGuard） */
       /* data-raw-max：選到 RAW 時最多幾張（批量編輯：RAW 10 張、一般照片 50 張） */
       const rawLimit = Math.max(0, Math.floor(Number(input.getAttribute('data-raw-max')) || 0));
-      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.getAttribute('data-import-hero') || undefined, quiet: maxAttr > 0, rawLimit });
+      /* data-instant：點了照片就直接進工具（點陣文字）。照片一點下去先發 abai-pick-begin（帶縮圖），
+         讓工具馬上打開；原檔拿好後照常發 change。拿不到發 abai-pick-fail */
+      const instant = input.hasAttribute('data-instant') && limit === 1;
+      if (gallery) files = await openGallery({ limit, filter, noAlpha: !allowsAlpha(input), hero: input.getAttribute('data-import-hero') || undefined, quiet: maxAttr > 0, rawLimit,
+        ...(instant ? {
+          onInstant: (thumb: string | null) => input.dispatchEvent(new CustomEvent('abai-pick-begin', { detail: { thumb } })),
+          onInstantFail: () => input.dispatchEvent(new CustomEvent('abai-pick-fail')),
+        } : {}) });
       /* 自己的相簿用不了（權限被拒、使用者選了系統的）→ 系統照片選擇器 */
       if (files === null) files = await pickNativeFiles(limit, filter);
     }
@@ -99,14 +106,16 @@ export function installNativeFilePicker() {
       if (files && files.length === 1) { setImportHeroFile(files[0]); void landImportHero(); }
       else cancelImportHero();
     }
-    if (!files) return;
-    if (!files.length) return;                       // 使用者按了取消
+    /* 直接進工具的那種（已經先打開工具了）：最後沒有拿到照片就通知它退回去 */
+    const failInstant = () => { if (input.hasAttribute('data-instant')) input.dispatchEvent(new CustomEvent('abai-pick-fail')); };
+    if (!files) { failInstant(); return; }
+    if (!files.length) { failInstant(); return; }    // 使用者按了取消
     /* 系統照片選擇器（或舊版 App 的相簿）沒辦法事先藏去背圖：選完再過濾 */
     if (!allowsAlpha(input) && filter !== 'videos') {
       const { kept, dropped } = await dropAlphaFiles(files);
       if (dropped) { cancelImportHero(); alert(ALPHA_NOT_ALLOWED_MSG); }
       files = kept;
-      if (!files.length) return;
+      if (!files.length) { failInstant(); return; }
     }
     try {
       const dt = new DataTransfer();

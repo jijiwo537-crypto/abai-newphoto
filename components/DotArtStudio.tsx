@@ -294,7 +294,8 @@ type HistStep = Step | SetStep;
 const sameSnap = (a: Snap, b: Snap) => a.glow === b.glow && a.gap.x === b.gap.x && a.gap.y === b.gap.y &&
   (['line', 'shade'] as const).every(k => a.raw[k].width === b.raw[k].width && a.raw[k].threshold === b.raw[k].threshold && a.raw[k].lines === b.raw[k].lines);
 
-export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; initialFiles: File[] }) {
+/* placeholderThumb：從相簿點下去就直接進來，原檔還在背景拿的時候，左下先放相簿的縮圖（initialFiles 晚一點才到） */
+export function DotArtStudio({ onClose, initialFiles, placeholderThumb }: { onClose: () => void; initialFiles: File[]; placeholderThumb?: string | null }) {
   const viewport = useStandaloneToolViewport();
   const [kind, setKind] = useState<Kind>('line');
   /* 兩種各記各的明暗：線稿 0.80、陰影 0.65（陰影要亮一點才看得出層次） */
@@ -348,7 +349,10 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         .catch(e => { console.error('dot art model', e); if (session.current === s) setModelReady(true); });
     } catch (e) { console.error('dot art', e); setStatus('error'); }
   }, []);
-  useEffect(() => { warmLineArtModel(); if (initialFiles[0]) open(initialFiles[0]); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => { warmLineArtModel(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  /* 原檔到了才開始做（直接進來的時候會晚一點到；平常一進來就有） */
+  const openedFile = useRef<File | null>(null);
+  useEffect(() => { const f = initialFiles[0]; if (f && f !== openedFile.current) { openedFile.current = f; open(f); } /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [initialFiles]);
   /* 離開時把大塊記憶體馬上還回去：線稿模型的背景執行緒、光暈的暫存陣列、畫面上的畫布點陣。
      不這樣做的話它們會一直留到系統回收，接著打開藝術效果時 iPhone 可能因為記憶體不夠直接把 App 收掉重開。 */
   useEffect(() => () => {
@@ -748,7 +752,7 @@ export function DotArtStudio({ onClose, initialFiles }: { onClose: () => void; i
         {/* 左下：目前的照片，點一下換一張；右下：反轉 */}
         <button aria-label="換一張照片" onClick={() => input.current?.click()}
           className="absolute left-4 bottom-3 w-11 h-11 rounded-xl overflow-hidden bg-white/10 active:scale-95">
-          {photo && <img src={photo} alt="" className="w-full h-full object-cover" />}
+          {(photo || placeholderThumb) && <img src={photo || placeholderThumb!} alt="" className="w-full h-full object-cover" />}
           <span className="absolute right-0.5 bottom-0.5 w-4 h-4 rounded-full bg-white text-black flex items-center justify-center"><Plus size={11} strokeWidth={3} /></span>
         </button>
         {/* 反轉：跟創意拼圖的隨機圖案鍵同一款，只有圖示 */}
