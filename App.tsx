@@ -1007,7 +1007,7 @@ const App: React.FC = () => {
           離開主頁（點任何工具）的那一刻立刻收掉，不會跟真正的編輯器同時存在 */}
       {editorPrewarm && currentView === 'home' && (
         <div data-prewarm aria-hidden style={{ position: 'fixed', left: 0, top: 0, width: '100vw', height: '100dvh', transform: 'translate3d(-300vw,0,0)', opacity: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: -1, contain: 'strict' }}>
-          <ImageEditor compactBottomBar fullTabs imageSrc={editorPrewarm} lutList={LUT_LIST}
+          <ImageEditor prewarm compactBottomBar fullTabs imageSrc={editorPrewarm} lutList={LUT_LIST}
             onSave={prewarmNoop} onCancel={prewarmNoop} onHome={prewarmNoop} onRequestExit={prewarmNoop} onImportNew={prewarmNoop} />
         </div>
       )}

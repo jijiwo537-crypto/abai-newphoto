@@ -804,6 +804,9 @@ interface ImageEditorProps {
   compactBottomBar?: boolean;
   /** 主頁進來的編輯：分類列可以左右滑，多了模板、人像、仿色、文字、圖形、符號、圖片 */
   fullTabs?: boolean;
+  /** 開機預熱用的隱形編輯器：完全不碰草稿（以前它每秒自動存檔，會用預熱小圖蓋掉使用者真正的草稿、
+      還把「有草稿」的標記刪掉 —— 首頁問了「繼續編輯」，按下去卻什麼都讀不到） */
+  prewarm?: boolean;
   /** 這張有 RAW（相機底片模式拍的）：曝光、色溫、色調、高光、陰影改由原生在 RAW 的資料上做（16 位元、保留亮部），
       沖出來的圖當底圖，其他調整照舊疊在上面；存檔時由原生從 RAW 原尺寸重新沖 */
   raw?: { path: string; protectEV: number; look: RawLook | null; editLut?: number } | null;
@@ -1529,7 +1532,7 @@ function runThumbChunks<T>(
   step();
 }
 
-export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList: builtInLutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false, raw: rawProp = null, rawMap, stampDate }) => {
+export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histKey, imageSrc, batchSrcs, onAddPhotos, lutList: builtInLutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false, fullTabs = false, raw: rawProp = null, rawMap, stampDate }) => {
   /* 關掉編輯器：照片網址對應的編號表清掉（見 SRC_IDS） */
   useEffect(() => {
     editorsMounted++;
@@ -2256,17 +2259,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const box = previewBoxRef.current, shown = visibleEditorCanvas();
     if (!box || !shown || !shown.width || !shown.height) return;
     const br = box.getBoundingClientRect(), sr = shown.getBoundingClientRect();
-    if (sr.width < 2 || sr.height < 2) return;
+    if (br.width < 2 || br.height < 2 || sr.width < 2 || sr.height < 2) return;
+    /* 蓋住「整個預覽區」（不是只蓋上一張照片那一塊）：下一張比例不同時，畫布會先換成新的大小，
+       蓋不到的地方就會露出還沒畫好的新照片或被拉變形的舊照片 —— 看起來就是兩張疊在一起
+       （接續草稿時照片要從資料庫重新解碼，比較慢，最容易看到）。底色跟預覽區一樣，舊照片畫在原本的位置 */
     const el = document.createElement('canvas');
     const dpr = Math.min(3, window.devicePixelRatio || 1);
-    const k = Math.min(1, 2400 / Math.max(sr.width * dpr, sr.height * dpr));
-    el.width = Math.max(1, Math.round(sr.width * dpr * k)); el.height = Math.max(1, Math.round(sr.height * dpr * k));
+    const k = Math.min(1, 2400 / Math.max(br.width * dpr, br.height * dpr));
+    el.width = Math.max(1, Math.round(br.width * dpr * k)); el.height = Math.max(1, Math.round(br.height * dpr * k));
     const g = el.getContext('2d');
     if (!g) return;
-    try { g.drawImage(shown, 0, 0, el.width, el.height); } catch { return; }
+    const fx = el.width / br.width, fy = el.height / br.height;
+    g.fillStyle = '#080808'; g.fillRect(0, 0, el.width, el.height);
+    try { g.drawImage(shown, (sr.left - br.left) * fx, (sr.top - br.top) * fy, sr.width * fx, sr.height * fy); } catch { return; }
     Object.assign(el.style, {
-      position: 'absolute', left: `${sr.left - br.left}px`, top: `${sr.top - br.top}px`, width: `${sr.width}px`, height: `${sr.height}px`,
-      zIndex: '15', pointerEvents: 'none', borderRadius: '2px', willChange: 'opacity',
+      position: 'absolute', left: '0px', top: '0px', width: `${br.width}px`, height: `${br.height}px`,
+      zIndex: '15', pointerEvents: 'none', willChange: 'opacity',
     } as Partial<CSSStyleDeclaration>);
     el.setAttribute('data-switch-veil', '');
     box.appendChild(el);
@@ -2457,7 +2465,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     };
   };
   useEffect(() => {
-    if (!imageSrc) return;
+    if (!imageSrc || prewarm) return;
     const timer = window.setInterval(() => { try {
       const first = draftSrcSavedRef.current !== imageSrc;
       draftSrcSavedRef.current = imageSrc;
@@ -11365,9 +11373,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       onContextMenu={(e) => e.preventDefault()}
                       title={`第 ${i + 1} 張`}
                       data-batch-thumb={i}
-                      className={`block w-9 h-9 rounded-[4px] overflow-hidden bg-[#1a1a1a] transition-all active:scale-95 touch-manipulation select-none ${
-                        active ? 'ring-[length:1.5px] ring-white' : ''
-                      }`}
+                      className="block w-9 h-9 rounded-[4px] overflow-hidden bg-[#1a1a1a] transition-all active:scale-95 touch-manipulation select-none"
                     >
                       {/* 沒選中的不用半透明 —— 實心、壓暗就好，才不會透出後面的畫面。
                           src 一定要用縮好的小圖，不能掛原圖（見上面 stripThumbs 的說明）。
@@ -11381,6 +11387,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         />
                       )}
                     </button>
+                    {/* 選中的白框：獨立一層畫在縮圖外圍（以前是按鈕自己的 box-shadow，
+                        按鈕又有 overflow-hidden、縮放動畫，iPhone 合成圖層時框有時會被切掉或錯位） */}
+                    {active && <span aria-hidden className="pointer-events-none absolute -inset-[1.5px] z-10 rounded-[5.5px] border-[1.5px] border-white" />}
                   </div>
                 );
               })}
