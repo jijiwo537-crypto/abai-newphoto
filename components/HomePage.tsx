@@ -72,6 +72,8 @@ const PROMO_BG_KEY = 'abai:promoBg';
 const PREVIEW_MAX: Record<string, number> = { hero: 1080, promo: 1080 };
 const previewMaxOf = (k: string) => PREVIEW_MAX[k] ?? 720;
 
+/** 這次打開 App，主頁入口方塊的進場已經播過了（之後回主頁直接在原位，不重播） */
+let homeTilesEntered = false;
 const TOOL_TILES = [
   { icon: 'layers', label: '創意拼圖', key: 'collage' },
   { icon: 'grid_view', label: '跨頁拼圖', key: 'layout' },
@@ -698,6 +700,9 @@ export const HomePage: React.FC<HomePageProps> = ({
      以及在不支援的瀏覽器上落回 JS 版 —— 那時候刻意**同步**寫 style，
      不進 rAF（排進下一格＝固定慢捲動一格，就是會看到抖的那一格）。 */
   const heroRef = useRef<HTMLDivElement>(null);
+  /* 入口方塊的進場：只有這次打開 App 第一次掛上主頁時播（見 styles.css 的 .home-tile-in） */
+  const [tilesEnter] = useState(() => { const first = !homeTilesEntered; homeTilesEntered = true; return first; });
+  const tileIn = (i: number) => tilesEnter ? { className: ' home-tile-in', style: { ['--i' as string]: i } as React.CSSProperties } : { className: '', style: undefined };
   /** 主視覺裡的照片。它比整屏再慢一層，JS 那條路也要跟著畫 */
   const artRef = useRef<HTMLDivElement>(null);
   const cssTimeline = useRef(typeof CSS !== 'undefined' && CSS.supports('animation-timeline: scroll()'));
@@ -1463,7 +1468,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           <button
             data-home-tile="edit"
             onClick={onImportPhoto}
-            className="flex-1 h-[75px] rounded-[13px] bg-white text-black border-none flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-transform duration-300"
+            style={tileIn(0).style}
+            className={"flex-1 h-[75px] rounded-[13px] bg-white text-black border-none flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-transform duration-300" + tileIn(0).className}
           >
             <span data-ht="icon" className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'opsz' 24" }}>
               add_photo_alternate
@@ -1473,7 +1479,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           <button
             data-home-tile="camera"
             onClick={onOpenCamera}
-            className="home-tile home-tile-cam flex-1 h-[75px] rounded-[13px] text-white flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
+            style={tileIn(1).style}
+            className={"home-tile home-tile-cam flex-1 h-[75px] rounded-[13px] text-white flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300" + tileIn(1).className}
           >
             <span data-ht="icon" className="inline-flex text-white/75"><Icon name="photo_camera" className="text-[24px] text-white/75" /></span>
             <span data-ht="text" className="text-sm font-black tracking-[0.06em]">相機</span>
@@ -1482,12 +1489,13 @@ export const HomePage: React.FC<HomePageProps> = ({
 
         {/* 四個工具 —— 一樣只有尺寸照參考圖放大（64→75），圖示與文字沒換 */}
         <div className="relative z-10 mt-[11px] shrink-0 flex gap-2">
-          {TOOL_TILES.map(t => (
+          {TOOL_TILES.map((t, ti) => (
             <button
               key={t.key}
               data-home-tile={t.key}
               onClick={tileAction[t.key]}
-              className="home-tile home-tile-sm flex-1 min-w-0 h-[75px] rounded-[13px] text-white flex flex-col items-center justify-center gap-[9px] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
+              style={tileIn(2 + ti).style}
+              className={"home-tile home-tile-sm flex-1 min-w-0 h-[75px] rounded-[13px] text-white flex flex-col items-center justify-center gap-[9px] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300" + tileIn(2 + ti).className}
             >
               <span data-ht="icon" className="inline-flex text-white/70"><Icon name={t.icon} className="text-[22px] text-white/70" /></span>
               <span data-ht="text" className="text-[10px] font-bold tracking-[0.06em] text-white/75 whitespace-nowrap">{t.label}</span>
@@ -1503,7 +1511,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           aria-label="開啟藝術效果"
           data-home-tile="art"
           onClick={onOpenArt}
-          className="home-tile relative flex-1 min-w-0 rounded-[14px] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
+          style={tileIn(6).style}
+          className={"home-tile relative flex-1 min-w-0 rounded-[14px] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300" + tileIn(6).className}
         >
           {previews.promo && (
             <>
@@ -1538,7 +1547,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           aria-label="開啟點陣文字"
           data-home-tile="dot"
           onClick={onOpenDotArt}
-          className="home-tile relative flex-1 min-w-0 rounded-[14px] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
+          style={tileIn(7).style}
+          className={"home-tile relative flex-1 min-w-0 rounded-[14px] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300" + tileIn(7).className}
         >
           <div className="relative px-[14px] pt-[30px] pb-4">
             <span data-ht="text" className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">點陣文字</span>

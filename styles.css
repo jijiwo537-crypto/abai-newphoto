@@ -546,16 +546,23 @@ img, video, canvas, svg { -webkit-user-drag: none; -webkit-touch-callout: none; 
    照設計參考圖逐點取樣調出來的（參考圖是 3 倍圖，數值換算成 CSS px）：
    ‧ 方塊本身幾乎純黑（#060606），左右兩側幾乎沒有邊
    ‧ 亮的只有上緣與下緣：一條很細的亮線，往內幾 px 的柔光很快收掉
+     —— 亮線與柔光都是「中間最亮、越靠左右兩端越弱」（橢圓形的光，不是整排一樣亮）
    ‧ 四個小工具的上緣柔光比較強（.home-tile-sm）
-   ‧ 相機左側有一道從旁邊白色「編輯」反過來的光（.home-tile-cam）
+   ‧ 相機左側有一道從旁邊白色「編輯」反過來的光（.home-tile-cam），一樣是中間最亮、往上下兩端變弱
    亮線畫在 ::after（最上層、不吃點擊）：藝術效果放了背景圖時，邊一樣看得到 */
 .home-tile {
   position: relative;
   isolation: isolate;
   border: 0;
+  --glow-top: .052;
+  --glow-bot: .052;
+  --glow-h: 8px;
+  --glow-hb: 8px;
+  --line-top: .13;
+  --line-bot: .13;
   background:
-    linear-gradient(to bottom, rgba(255,255,255,.052) 0, rgba(255,255,255,.026) 2px, rgba(255,255,255,.012) 4px, rgba(255,255,255,.004) 6px, rgba(255,255,255,0) 8px),
-    linear-gradient(to top, rgba(255,255,255,.052) 0, rgba(255,255,255,.026) 2px, rgba(255,255,255,.012) 4px, rgba(255,255,255,.004) 6px, rgba(255,255,255,0) 8px),
+    radial-gradient(ellipse 78% var(--glow-h) at 50% 0, rgba(255,255,255,var(--glow-top)) 0, rgba(255,255,255,calc(var(--glow-top) * .5)) 30%, rgba(255,255,255,calc(var(--glow-top) * .18)) 62%, rgba(255,255,255,0) 100%),
+    radial-gradient(ellipse 78% var(--glow-hb) at 50% 100%, rgba(255,255,255,var(--glow-bot)) 0, rgba(255,255,255,calc(var(--glow-bot) * .5)) 30%, rgba(255,255,255,calc(var(--glow-bot) * .18)) 62%, rgba(255,255,255,0) 100%),
     #060606;
 }
 .home-tile::after {
@@ -565,27 +572,37 @@ img, video, canvas, svg { -webkit-user-drag: none; -webkit-touch-callout: none; 
   border-radius: inherit;
   pointer-events: none;
   z-index: 2;
-  box-shadow:
-    inset 0 0.67px 0 rgba(255,255,255,.13),
-    inset 0 -0.67px 0 rgba(255,255,255,.13),
-    inset 0 0 0 0.35px rgba(255,255,255,.035);
+  /* 上下兩條亮線：中間最亮，往左右兩端淡到原本的三成左右 */
+  background:
+    linear-gradient(90deg, rgba(255,255,255,calc(var(--line-top) * .25)) 0%, rgba(255,255,255,calc(var(--line-top) * .75)) 22%, rgba(255,255,255,var(--line-top)) 50%, rgba(255,255,255,calc(var(--line-top) * .75)) 78%, rgba(255,255,255,calc(var(--line-top) * .25)) 100%) top / 100% 0.67px no-repeat,
+    linear-gradient(90deg, rgba(255,255,255,calc(var(--line-bot) * .25)) 0%, rgba(255,255,255,calc(var(--line-bot) * .75)) 22%, rgba(255,255,255,var(--line-bot)) 50%, rgba(255,255,255,calc(var(--line-bot) * .75)) 78%, rgba(255,255,255,calc(var(--line-bot) * .25)) 100%) bottom / 100% 0.67px no-repeat;
+  box-shadow: inset 0 0 0 0.35px rgba(255,255,255,.035);
 }
 .home-tile-sm {
-  background:
-    linear-gradient(to bottom, rgba(255,255,255,.13) 0, rgba(255,255,255,.1) 1.5px, rgba(255,255,255,.075) 3px, rgba(255,255,255,.055) 5px, rgba(255,255,255,.04) 8px, rgba(255,255,255,.015) 13px, rgba(255,255,255,0) 20px),
-    linear-gradient(to top, rgba(255,255,255,.05) 0, rgba(255,255,255,.03) 2px, rgba(255,255,255,.012) 4px, rgba(255,255,255,0) 7px),
-    #060606;
-}
-.home-tile-sm::after {
-  box-shadow:
-    inset 0 0.67px 0 rgba(255,255,255,.32),
-    inset 0 -0.67px 0 rgba(255,255,255,.2),
-    inset 0 0 0 0.35px rgba(255,255,255,.035);
+  --glow-top: .13;
+  --glow-h: 20px;
+  --glow-bot: .05;
+  --glow-hb: 7px;
+  --line-top: .32;
+  --line-bot: .2;
 }
 .home-tile-cam {
   background:
-    linear-gradient(to right, rgba(255,255,255,.09) 0, rgba(255,255,255,.075) 4px, rgba(255,255,255,.05) 9px, rgba(255,255,255,.028) 15px, rgba(255,255,255,.012) 21px, rgba(255,255,255,0) 28px),
-    linear-gradient(to bottom, rgba(255,255,255,.052) 0, rgba(255,255,255,.026) 2px, rgba(255,255,255,.012) 4px, rgba(255,255,255,.004) 6px, rgba(255,255,255,0) 8px),
-    linear-gradient(to top, rgba(255,255,255,.052) 0, rgba(255,255,255,.026) 2px, rgba(255,255,255,.012) 4px, rgba(255,255,255,.004) 6px, rgba(255,255,255,0) 8px),
+    radial-gradient(ellipse 28px 62% at 0 50%, rgba(255,255,255,.09) 0, rgba(255,255,255,.065) 18%, rgba(255,255,255,.035) 45%, rgba(255,255,255,.012) 72%, rgba(255,255,255,0) 100%),
+    radial-gradient(ellipse 78% var(--glow-h) at 50% 0, rgba(255,255,255,var(--glow-top)) 0, rgba(255,255,255,calc(var(--glow-top) * .5)) 30%, rgba(255,255,255,calc(var(--glow-top) * .18)) 62%, rgba(255,255,255,0) 100%),
+    radial-gradient(ellipse 78% var(--glow-hb) at 50% 100%, rgba(255,255,255,var(--glow-bot)) 0, rgba(255,255,255,calc(var(--glow-bot) * .5)) 30%, rgba(255,255,255,calc(var(--glow-bot) * .18)) 62%, rgba(255,255,255,0) 100%),
     #060606;
 }
+
+/* ── 主頁入口方塊的進場（只在打開 App、主頁第一次出來時播；之後回主頁直接在原位）──
+   三層：① 方塊本身由下方浮上、微微放大到原尺寸 ② 裡面的圖示與文字晚一點浮上 ③ 邊緣的反光最後才亮起來。
+   每一顆依序錯開（--i）。開機畫面還在（html.booting）時停在第一格，主頁一露出來才開始播。
+   只用 backwards：播完就完全不留動畫的值，按下去的縮放（active:scale）照常有效 */
+.home-tile-in { animation: homeTileIn .78s cubic-bezier(.22,1,.36,1) backwards; animation-delay: calc(var(--i) * 55ms + 90ms); }
+.home-tile-in > * { animation: homeTileContent .62s cubic-bezier(.22,1,.36,1) backwards; animation-delay: calc(var(--i) * 55ms + 210ms); }
+.home-tile-in::after { animation: homeTileRim .9s cubic-bezier(.4,0,.2,1) backwards; animation-delay: calc(var(--i) * 55ms + 330ms); }
+html.booting .home-tile-in, html.booting .home-tile-in > *, html.booting .home-tile-in::after { animation-play-state: paused; }
+@keyframes homeTileIn { from { opacity: 0; transform: translate3d(0, 18px, 0) scale(.955); } to { opacity: 1; transform: none; } }
+@keyframes homeTileContent { from { opacity: 0; transform: translate3d(0, 6px, 0); } to { opacity: 1; transform: none; } }
+@keyframes homeTileRim { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .home-tile-in, .home-tile-in > *, .home-tile-in::after { animation: none; } }
