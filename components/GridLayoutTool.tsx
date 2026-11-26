@@ -9155,7 +9155,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             className="absolute pointer-events-none z-30 border-solid border-white/95"
             style={{
               /* 有描邊時框要把描邊一起框進去（描邊往外長「粗細＋間距」），拖描邊滑桿時跟著即時變大變小 */
-              inset: -previewInv - strokeOut,
+              /* 框線整條畫在素材外面、內緣剛好貼著素材的邊：往外推的量＝框線粗細。
+                 以前往外推 1px、框線只有 0.75px，框跟素材之間四邊都空著 0.25px 的一條縫，看起來沒貼齊 */
+              inset: -0.75 * previewInv - strokeOut,
               borderWidth: 0.75 * previewInv,
               boxShadow: `0 0 ${4 * previewInv}px rgba(0,0,0,0.3)`,
             }}
