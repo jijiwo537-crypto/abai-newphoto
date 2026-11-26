@@ -404,8 +404,27 @@ export const NativeGallery: React.FC<{
   };
 
   /* 拼圖的下方那一條：選了第一張就滑上來 */
-  const TRAY_H = 112;
-  const trayShown = modes && mode === 'collage' && picked.length > 0;
+  const trayShown = multi && picked.length > 0;
+  const trayRef = useRef<HTMLDivElement>(null);
+  const trayScrollRef = useRef<HTMLDivElement>(null);
+  /* 下方那一條實際多高（方格底下要留同樣的空間，最後一排才不會被擋住） */
+  const [trayH, setTrayH] = useState(150);
+  useLayoutEffect(() => {
+    const el = trayRef.current; if (!el) return;
+    const ro = new ResizeObserver(() => setTrayH(el.offsetHeight)); ro.observe(el); setTrayH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, [multi, ok]);
+  /* 新選的那張超出畫面（第六張起）：捲到剛好看得到它 */
+  const prevPickCount = useRef(0);
+  useEffect(() => {
+    const el = trayScrollRef.current, n = picked.length, grew = n > prevPickCount.current;
+    prevPickCount.current = n;
+    if (!el || !grew || n < 6) return;
+    const item = el.children[n - 1] as HTMLElement | undefined;
+    if (!item) return;
+    const pad = 16, right = item.offsetLeft + item.offsetWidth + pad;
+    if (right > el.scrollLeft + el.clientWidth) el.scrollTo({ left: right - el.clientWidth, behavior: 'smooth' });
+  }, [picked]);
   const unpick = (id: string) => {
     if (exportingRef.current) return;
     haptic('tick');
@@ -443,7 +462,7 @@ export const NativeGallery: React.FC<{
       <style>{CSS}</style>
       <div className="absolute inset-0 bg-black" style={{ opacity: shown ? 0.6 : 0, transition: `opacity ${shown ? '.48s' : '.4s'} ease` }} />
       <div className="absolute inset-0 flex flex-col bg-black text-white" style={sheet}>
-        {/* 上方：返回（ㄑ）／相簿名稱／完成 */}
+        {/* 上方：返回（ㄑ）／相簿名稱 */}
         <div ref={headerRef} className="relative z-20 shrink-0 bg-black/85 backdrop-blur-xl" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
           <div className="h-12 px-2 grid grid-cols-[1fr_auto_1fr] items-center">
             <button type="button" aria-label="返回" className="justify-self-start h-10 w-11 flex items-center justify-center text-white/90 active:opacity-50"
@@ -461,20 +480,8 @@ export const NativeGallery: React.FC<{
                 </svg>
               )}
             </button>
-            <div className="justify-self-end pr-1">
-              {multi && ok && (
-                <button type="button" disabled={picked.length < minPick || exporting} onClick={() => void finish(picked)}
-                  className="h-8 px-4 rounded-full text-[14px] font-bold"
-                  style={{
-                    background: picked.length >= minPick ? '#fff' : 'rgba(255,255,255,.14)', color: picked.length >= minPick ? '#000' : 'rgba(255,255,255,.4)',
-                    transition: `background .25s ease, color .25s ease, transform .25s ${EASE}`,
-                    transform: picked.length >= minPick ? 'scale(1)' : 'scale(.96)',
-                    animation: shake ? 'abg-shake .3s ease' : undefined,
-                  }} key={shake}>
-                  完成
-                </button>
-              )}
-            </div>
+            {/* 右上不放「完成」：多選時改在下方那一條的「下一步」 */}
+            <div />
           </div>
           {/* 編輯的導入相簿：三種導入方式。沒有按鈕外框，就是三個字：沒選的淡、選中的亮 */}
           {modes && ok && (
@@ -579,32 +586,43 @@ export const NativeGallery: React.FC<{
                   {(noAlpha ? visibleItems.length : total).toLocaleString()} {filter === 'videos' ? '部影片' : filter === 'images' ? '張照片' : '個項目'}
                 </div>
               )}
-              <div style={{ height: trayShown ? `calc(env(safe-area-inset-bottom, 0px) + ${TRAY_H + 12}px)` : 'calc(env(safe-area-inset-bottom, 0px) + 12px)', transition: `height .38s ${EASE}` }} />
+              <div style={{ height: trayShown ? `calc(${trayH}px + 12px)` : 'calc(env(safe-area-inset-bottom, 0px) + 12px)', transition: `height .38s ${EASE}` }} />
             </>
           )}
         </div>
 
-        {/* 拼圖：選了照片，下方滑上來一條，照選的順序排出來，每張右上角 × 可以拿掉 */}
-        {modes && ok && (
-          <div className="absolute left-0 right-0 bottom-0 z-20 bg-[#111]/95 backdrop-blur-xl border-t-[0.5px] border-white/10"
+        {/* 多選：選了第一張，下方滑上來一條。照選的順序排出來（右上角 × 拿掉），右上「下一步」。
+            只能左右滑；一次剛好看得到五張，選到第六張起自動捲到看得到最新那張。拼圖另外寫張數範圍 */}
+        {multi && ok && (
+          <div ref={trayRef} className="absolute left-0 right-0 bottom-0 z-20 bg-[#111]/95 backdrop-blur-xl border-t-[0.5px] border-white/10"
             data-collage-tray aria-hidden={!trayShown}
             style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)', transform: trayShown ? 'translateY(0)' : 'translateY(100%)',
-              transition: `transform .38s ${EASE}`, pointerEvents: trayShown ? 'auto' : 'none' }}>
-            <div className="h-9 px-4 flex items-end text-[12.5px] text-white/60">{`選 ${COLLAGE_MIN}～${COLLAGE_MAX} 張照片`}</div>
-            <div className="abg-tray flex gap-2 px-4 pt-2.5 pb-3 overflow-x-auto" style={{ height: TRAY_H - 36 }}>
-              {Array.from({ length: COLLAGE_MAX }, (_, i) => {
+              transition: `transform .38s ${EASE}`, pointerEvents: trayShown ? 'auto' : 'none', touchAction: 'pan-x' }}>
+            <div className="px-4 pt-3.5 pb-3.5 flex items-center justify-between gap-3">
+              <span className="text-[12.5px] text-white/60 leading-none">{modes && mode === 'collage' ? `選 ${COLLAGE_MIN}～${COLLAGE_MAX} 張照片` : ''}</span>
+              <button type="button" disabled={picked.length < minPick || exporting} onClick={() => void finish(picked)} key={shake}
+                className="h-8 px-4 text-[13.5px] font-bold active:opacity-70"
+                style={{ background: picked.length >= minPick ? '#fff' : 'rgba(255,255,255,.18)', color: picked.length >= minPick ? '#000' : 'rgba(255,255,255,.45)',
+                  transition: 'background .25s ease, color .25s ease', animation: shake ? 'abg-shake .3s ease' : undefined }}>
+                下一步
+              </button>
+            </div>
+            <div ref={trayScrollRef} className="abg-tray flex gap-2 px-4 pb-3.5 overflow-x-auto overflow-y-hidden"
+              style={{ overscrollBehavior: 'contain', touchAction: 'pan-x' }}>
+              {Array.from({ length: Math.max(modes && mode === 'collage' ? COLLAGE_MAX : 5, picked.length) }, (_, i) => {
                 const id = picked[i];
+                const box = { width: 'calc((100vw - 64px) / 5)', height: 'calc((100vw - 64px) / 5)' };
                 return id ? (
-                  <div key={id} className="relative shrink-0 w-[60px] h-[60px] rounded-[6px] overflow-hidden bg-[#2c2c2e]" style={{ animation: `abg-tray-in .24s ${EASE}` }}>
+                  <div key={id} className="relative shrink-0 overflow-hidden bg-[#2c2c2e]" style={{ ...box, animation: `abg-tray-in .24s ${EASE}` }}>
                     <PickedThumb id={id} />
                     <button type="button" aria-label="拿掉這張" onClick={() => unpick(id)}
-                      className="absolute top-0 right-0 w-6 h-6 flex items-start justify-end p-[3px] active:opacity-60">
-                      <span className="w-[16px] h-[16px] rounded-full bg-black/60 flex items-center justify-center">
+                      className="absolute top-0 right-0 w-7 h-7 flex items-start justify-end p-[3px] active:opacity-60">
+                      <span className="w-[17px] h-[17px] rounded-full bg-black/60 flex items-center justify-center">
                         <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round"><path d="M2 2l6 6M8 2l-6 6" /></svg>
                       </span>
                     </button>
                   </div>
-                ) : <div key={`e${i}`} className="shrink-0 w-[60px] h-[60px] rounded-[6px] bg-white/[0.06]" />;
+                ) : <div key={`e${i}`} className="shrink-0 bg-white/[0.06]" style={box} />;
               })}
             </div>
           </div>

@@ -3153,6 +3153,46 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 一進編輯頁不預先選好任何工具：滑桿要點下工具鈕才浮出來 */
   const [shapeTool, setShapeTool] = useState('');
   const [tuneTool, setTuneTool] = useState('');
+  /* ── 簡易拼圖「全部照片」的調節滑桿：跟單張編輯同一套做法 ─────────────────
+     打開某個調節（曝光、對比…）時，閒下來就先把「全部照片都在 −100／目前的值／+100」三種整張場景畫好（原解析度）。
+     手指拖的時候只是把這三張交疊（跟單張編輯一樣，見 PhotoAdjustmentBlend），不必每一格把每張照片重算一次；
+     放手就照實際的值精確重畫，存出來的、停下來看到的都是精確的結果。 */
+  const allBlendTool = simpleAllEditing && adjustSub === 'tune' && BLEND_ADJUSTMENTS.has(tuneTool) ? tuneTool : '';
+  const allBlend = useRef<PhotoAdjustmentBlend | null>(null);
+  const allBlendStamp = useRef<{ key: string; scale: number; w: number; h: number } | null>(null);
+  const allBlendKeyRef = useRef('');
+  const allBlendToolRef = useRef('');
+  const allSliderHeld = useRef(false);
+  const allBlendDummy = useRef<HTMLCanvasElement | null>(null);
+  allBlendToolRef.current = allBlendTool;
+  allBlendKeyRef.current = allBlendTool ? JSON.stringify([imageState?.img?.src, layout, canvasRatio, imageTransform, maskScale, objects.length,
+    photoRegion && { ...photoRegion, photos: photoRegion.photos.map(p => ({ ...p, fx: { ...(p.fx || {}), [allBlendTool]: 0 } })) }], compactSceneValue) : '';
+  const prepareAllBlend = () => {
+    const tool = allBlendToolRef.current, main = canvasRef.current;
+    if (!tool || !main || allSliderHeld.current) return;
+    const blend = (allBlend.current ??= new PhotoAdjustmentBlend(() => {}));
+    const scale = previewScaleRef.current, key = allBlendKeyRef.current, st = allBlendStamp.current;
+    if (!st || st.key !== key || st.scale !== scale || st.w !== main.width || st.h !== main.height) blend.clear();
+    allBlendStamp.current = { key, scale, w: main.width, h: main.height };
+    const dummy = (allBlendDummy.current ??= Object.assign(document.createElement('canvas'), { width: 2, height: 2 }));
+    blend.prepare(dummy, 2, 2, { ...simpleAllFxRef.current }, tool, (photo, fx) => {
+      const prev = photoRegionRef.current;
+      if (!prev) return photo;
+      const capture = document.createElement('canvas');
+      try {
+        photoRegionRef.current = { ...prev, photos: prev.photos.map(p => p.src ? { ...p, fx: { ...(p.fx || {}), [tool]: (fx as any)[tool] } } : p) };
+        renderToCanvasRef.current(capture, scale, true);
+      } finally { photoRegionRef.current = prev; }
+      return capture;
+    });
+  };
+  useEffect(() => {
+    if (!allBlendTool) { allBlend.current?.clear(); allBlendStamp.current = null; return; }
+    prepareAllBlend();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allBlendTool, allBlendKeyRef.current]);
+  useEffect(() => () => allBlend.current?.clear(), []);
+  const prepareAllBlendRef = useRef(prepareAllBlend); prepareAllBlendRef.current = prepareAllBlend;
   regionBlendTool.current=activeTab==='objedit'&&(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune'&&BLEND_ADJUSTMENTS.has(tuneTool))?(adjustSub==='filter'?'brightness':tuneTool):'';
   regionColourActive.current=activeTab!=='motion'&&activeTab!=='setting'&&(baseSelected||selectedRegionPhoto!==null);
   // 切到濾鏡、調節時，已經套上的特效留在 GPU 上。分頁只是介面狀態，不是改用原圖大小 CPU 繪製的理由
@@ -4500,6 +4540,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const finishRegionEdit=()=>{
     regionSliderHeld.current=false;
+    if(allSliderHeld.current){allSliderHeld.current=false;allBlend.current?.setHeld(false);window.setTimeout(()=>prepareAllBlendRef.current(),0);}
     regionBlend.current?.setHeld(false);
     // 現在就把互動用的合成換成共用的精確管線，不要等縮圖的延遲時間到
     regionLiveUntil.current=performance.now()+350;
@@ -6564,6 +6605,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     }
     if(hasBackdrop){regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';}
+    /* 簡易拼圖「全部照片」拖調節滑桿：三張整張場景交疊（見 allBlend） */
+    if(targetCanvas===canvasRef.current&&allSliderHeld.current&&!previewCapture&&!animRef.current&&!viewPinchRef.current&&allBlendToolRef.current){
+      const st=allBlendStamp.current;
+      if(st&&st.key===allBlendKeyRef.current&&st.scale===renderScale&&st.w===targetCanvas.width&&st.h===targetCanvas.height&&allBlendDummy.current){
+        const scene=allBlend.current?.paint(allBlendDummy.current,2,2,{...simpleAllFxRef.current},allBlendToolRef.current);
+        if(scene){const g=get2dWide(targetCanvas)!;g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='copy';g.drawImage(scene,0,0);g.globalCompositeOperation='source-over';return;}
+      }
+    }
     if(!hasBackdrop&&targetCanvas===canvasRef.current&&regionSliderHeld.current&&!previewCapture&&!animRef.current&&!viewPinchRef.current&&stamp?.key===regionSceneKey.current&&stamp.scale===renderScale&&stamp.sceneW===targetCanvas.width&&stamp.sceneH===targetCanvas.height&&photo){
       const scene=regionBlend.current?.paint(stamp.source,stamp.w,stamp.h,photo.fx||{},regionBlendTool.current);
       if(scene){
@@ -13315,6 +13364,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     /* 每張照片各有自己的調整時，每一種調整都要一張新的色彩表：先交給背景執行緒同時烤好
                        （結果跟主執行緒烤的一樣），烤好才畫這一格 —— 主執行緒不卡，手指一直跟得上。
                        資料先更新（下一次拖動接著這一份算），只有「畫」等色彩表 */
+                    /* 拖的正是準備好交疊的那一項：直接畫（交疊），不必等色彩表 */
+                    const onlyTool = Object.keys(diff).length === 1 && diff[allBlendToolRef.current] !== undefined;
+                    if (allSliderHeld.current && onlyTool && allBlend.current?.isReady) { ++allBakeSeq.current; commitRegion(nextRegion, true); return; }
                     photoRegionRef.current = nextRegion;
                     const seq = ++allBakeSeq.current;
                     void prebakeColours(nextRegion.photos.filter(p => p.src).map(p => p.fx || {})).then(() => {
@@ -13777,7 +13829,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       hideShape={regionEditing || allEditing || baseVideoEditing}
                       onlyFilterTune={simple}
                       isolateFxUpdates={regionEditing||allEditing||liveObjFx}
-                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : liveObjFx ? ()=>{maskSliderLive.current={id:sel.id,patch:{}};} : undefined}
+                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : allEditing ? ()=>{allSliderHeld.current=true;allBlend.current?.setHeld(true);} : liveObjFx ? ()=>{maskSliderLive.current={id:sel.id,patch:{}};} : undefined}
                       onAdjustmentCommit={regionEditing || allEditing ? finishRegionEdit : liveObjFx ? commitObjFxLive : undefined}
                       set={(d: any) => {
                         /* 圖片物件拖效果滑桿：跟遮罩滑桿同一招 —— 只改 objectsRef、直接重畫畫布，

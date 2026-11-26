@@ -995,6 +995,8 @@ function applyPhotoFxRaw(
      同一格畫面裡下一張照片會覆寫共用畫布，所以每張的結果要各自留一份 */
   if(opts?.sharedColour&&opts.gpuSurface&&opts.cacheSource&&!opts.scene&&!colourOnly&&!hasActiveFx(fx)&&!(fx as any).fxLowfi
     &&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)){
+    /* 共用的 context 被系統收掉了（iOS 記憶體吃緊時會）：換一個新的，不要從此都走舊路 */
+    if(sharedColourSurface){try{if(surfaceGl(sharedColourSurface)?.isContextLost()){surfaceGpus.delete(sharedColourSurface);sharedColourSurface.width=sharedColourSurface.height=1;sharedColourSurface=null;}}catch{sharedColourSurface=null;}}
     const surf=(sharedColourSurface ||= newSurface());
     const image=surfaceColourImage(surf,source,oW,oH,fx,false,true);
     const g2=image&&out.getContext('2d');
