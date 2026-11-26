@@ -319,8 +319,8 @@ const designs: Record<string, (seed: number) => Design> = {
       const t = Math.sqrt(R());                                   // 越往右下越多（密度跟 t 成正比）
       /* 越往右下散得越開。斜帶不再一路拉到右下角（以前拉到角落，旁邊沒空間，散開的都被方框切掉，右下反而只剩中間一條）：
          中線停在離角落還有一段的地方，右下那段才有空間往兩側展開 */
-      const spread = 1.5 + t * 23;
-      const along = 3 + t * 86 + (R() - 0.5) * 4, side = (R() - 0.5) * 2 * spread;
+      const spread = 1.5 + t * 20.5;
+      const along = 3 + t * 89.5 + (R() - 0.5) * 4, side = (R() - 0.5) * 2 * spread;
       const x = along + side * 0.7071, y = along - side * 0.7071;
       /* 大小：亂數用法跟原本一樣（位置不變），差異的幅度照「隨機大小」縮放 */
       const range = 1.4 + t * 2.6, mid = 0.9 + range / 2;
