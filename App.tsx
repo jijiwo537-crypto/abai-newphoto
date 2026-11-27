@@ -251,6 +251,9 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!exitPromptOpen || exitPromptBusy || !nativeAsk || webExitFallback) return;
     let live = true;
+    /* 只有手機上的自動測試（-abaiQA）會設這個：直接回答，不跳原生框 */
+    const qa = (window as any).__abaiQAExitAnswer;
+    if (qa === 'discard' || qa === 'save' || qa === 'cancel') { resolveExit(qa); return; }
     void nativeDialog({
       title: '是否儲存為草稿',
       buttons: [{ id: 'save', title: '儲存', role: 'primary' }, { id: 'discard', title: '放棄' }, { id: 'cancel', title: '取消' }],

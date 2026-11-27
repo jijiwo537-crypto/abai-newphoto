@@ -223,6 +223,7 @@ async function scenarioStress(rounds = 8) {
   const { stabilityLog } = await import('./stability');
   const note = (m: string) => { log(m); stabilityLog('壓力測試：' + m); };
   note(`開始，共 ${rounds} 輪`);
+  (window as any).__abaiQAExitAnswer = 'discard';
   const photos: File[] = []; for (let i = 0; i < 5; i++) photos.push(await makeBigPhoto(i));
   for (let r = 1; r <= rounds; r++) {
     // ① 創意拼圖：5 張、無縫、存檔
@@ -237,8 +238,8 @@ async function scenarioStress(rounds = 8) {
       seam.dispatchEvent(new Event('change', { bubbles: true })); seam.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); await sleep(3000);
     }
     const save1 = findButton(/^儲存$/); if (save1) click(save1);
-    // 拼圖的「儲存」會先跳出「儲存照片／儲存影片」選單
-    const photoItem = await waitFor(() => findButton(/儲存照片/), 5000, '儲存照片').catch(() => null);
+    // 拼圖的「儲存」會先跳出「儲存圖片／儲存影片」選單
+    const photoItem = await waitFor(() => findButton(/儲存圖片/), 5000, '儲存圖片').catch(() => null);
     if (photoItem) click(photoItem);
     const ok1 = await waitFor(() => findButton(/拼下一張/), 180000, '拼圖存檔完成').then(() => true, e => { note(`第 ${r} 輪拼圖：${e.message}`); return false; });
     if (ok1) note(`第 ${r} 輪：創意拼圖存檔完成`);
