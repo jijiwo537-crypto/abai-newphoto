@@ -12329,7 +12329,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             <div aria-hidden="true" className="w-px h-4 mx-1 shrink-0" />
             {/* 三個點：預覽與對齊。 */}
             {/* 簡易拼圖不放這顆 ⋯，但留一樣寬的空位：復原／重做的位置跟創意拼圖一樣 */}
-            {simple && <div aria-hidden className="w-9 h-9 shrink-0" />}
+            {/* 臨時偵錯按鈕（簡易拼圖沒有 ⋯ 選單，放在原本的空位）：關→點一下開啟；開→可以複製診斷紀錄或關閉 */}
+            {simple && <button data-debug-toggle onClick={() => {
+                if (!debugMode) { toggleDebug(); return; }
+                if (window.confirm('偵錯模式開啟中。\n按「確定」：複製診斷紀錄\n按「取消」：關閉偵錯模式')) void copyDiag(); else toggleDebug();
+              }} className={`w-9 h-9 shrink-0 flex items-center justify-center text-[11px] font-bold rounded-full active:scale-90 ${debugMode ? 'text-[#4ade80]' : 'text-white/60'}`}>偵錯</button>}
             {!simple && <div className="relative" ref={moreWrapRef}>
               <button
                 onClick={(e) => {
