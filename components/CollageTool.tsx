@@ -3570,6 +3570,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   // 照片本身由 App 那邊存進 IndexedDB（跟其他工具共用一份草稿），
   // 這裡只負責把面板上的設定存起來、以及接續時套回去。
   const restoredRef = useRef(false);
+  /* 從草稿接回拼圖時，照片要非同步讀回來：讀好、畫上去之前舞台先藏起來（最多藏 4 秒，萬一讀不回來也一定會顯示） */
+  const [restoreHold, setRestoreHold] = useState(() => !!initialState?.photoRegion?.photos?.length);
+  const releaseRestoreHold = () => requestAnimationFrame(() => requestAnimationFrame(() => setRestoreHold(false)));
+  useEffect(() => { if (!restoreHold) return; const t = window.setTimeout(() => setRestoreHold(false), 4000); return () => clearTimeout(t); }, [restoreHold]);
   useEffect(() => {
     /* 必須等底圖建立 baseW/baseH 後才恢復。在空畫布階段先套位置的話，
        隨後的底圖初始化又隨機生成一次圖案，保存的位置便被覆蓋。 */
@@ -3596,8 +3600,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const epoch = ++photoRegionEpoch.current;
       void loadRegion(st.photoRegion).then(region => {
         if (epoch === photoRegionEpoch.current) setPhotoRegion(region);
-      }).catch(error => console.error('Photo region restore failed', error));
-    }
+      }).catch(error => console.error('Photo region restore failed', error)).finally(releaseRestoreHold);
+    } else releaseRestoreHold();
     if (st.maskScale !== undefined) setMaskScale(st.maskScale);
     if (isCanvasRatio(st.canvasRatio)) setCanvasRatio(st.canvasRatio);
     setCanvasRatioBeforeFull(isCanvasRatio(st.canvasRatioBeforeFull)?st.canvasRatioBeforeFull:null);
@@ -12467,6 +12471,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             data-canvas-ratio={canvasRatio}
             className="absolute inset-0 overflow-hidden"
             style={{
+              /* 從「繼續編輯」回來：整組拼圖畫好之前先不顯示（不然第一幀只看得到底圖那一張） */
+              visibility: restoreHold ? 'hidden' : undefined,
               touchAction: 'none',
               /* 工具欄讓上來之後，圖片如果會被擋到就整個縮一點、並往上移半個讓位量
                  （縮放的原點在正中央，所以中心往上移一半就剛好置中在剩下的空間裡）。
