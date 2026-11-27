@@ -23,8 +23,9 @@ interface IconProps {
 const INLINE: Record<string, string> = {
   /* 調色盤（仿色）：畫家的調色盤外框（右下有拇指孔的缺口）＋四個顏料點，線寬跟主頁其他圖示（細體）一樣 */
   palette: '<path fill="none" stroke="#fff" stroke-width="1.5" stroke-linejoin="round" d="M12 3.6c-4.8 0-8.5 3.6-8.5 8.3 0 4.6 3.6 8.5 8.2 8.5 1.2 0 2-.8 2-1.8 0-.5-.2-.9-.5-1.2-.3-.3-.5-.8-.5-1.2 0-1 .8-1.8 1.8-1.8h2.1c2.6 0 4.6-2.1 4.6-4.6 0-3.6-4.1-6.2-9.2-6.2z"/><g fill="#fff"><circle cx="7.6" cy="11.7" r="1.2"/><circle cx="9.6" cy="7.9" r="1.2"/><circle cx="14.3" cy="7.9" r="1.2"/><circle cx="16.6" cy="11.4" r="1.2"/></g>',
-  /* 主頁「仿色」的調色盤：外框是正圓（不會像舊的那樣一邊鼓出來、看起來歪），左上一圈四個顏料點、右下拇指孔 */
-  palette_round: '<g fill="none" stroke="#fff" stroke-width="1.5"><circle cx="12" cy="12" r="8.25"/><circle cx="15.1" cy="15.1" r="1.75"/></g><g fill="#fff"><circle cx="7.7" cy="13.6" r="1.2"/><circle cx="7.8" cy="10" r="1.2"/><circle cx="10.4" cy="7.6" r="1.2"/><circle cx="14" cy="7.8" r="1.2"/></g>',
+  /* 主頁「仿色」的調色盤：跟跨頁拼圖第五個分頁（背景）同一個圖形（lucide 的 palette），
+     縮成跟主頁其他圖示一樣大（外框約佔 24 格裡的 16.4 格），線寬換算後是 1.5（跟創意拼圖的外框一樣粗） */
+  palette_round: '<g fill="none" stroke="#fff" stroke-width="1.83" stroke-linecap="round" stroke-linejoin="round" transform="translate(12 12) scale(.82) translate(-12 -12)"><path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"/><g fill="#fff"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/></g></g>',
   /* 專業相機：機身外框加鏡頭（相機設定選單的「專業」） */
   pro_camera: '<g fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"><path d="M3.5 8.2a1.7 1.7 0 0 1 1.7-1.7h2.6l1.5-2h5.4l1.5 2h2.6a1.7 1.7 0 0 1 1.7 1.7v9.6a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z"/><circle cx="12" cy="12.8" r="3.6"/></g>',
   /* 愛心（相機相簿）：實心、空心 */

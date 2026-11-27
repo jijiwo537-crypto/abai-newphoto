@@ -11727,6 +11727,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
   const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
+  const mainToolsRef = useRef<HTMLDivElement>(null);
   const [motionSub, setMotionSub] = useState<'in' | 'idle'>('in');
   /* 文字編輯頁（從下面冒出來的那一塊）只在按「編輯」時打開：點文字本身不打開 */
   const [textSheetId, setTextSheetId] = useState<string | null>(null);
@@ -19956,8 +19957,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       >
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* 分頁列表 */}
-          <div className="flex px-4 pt-1 border-b border-[#1a1a1a] shrink-0" data-main-tools>
-            {['ratio', 'pages', 'add', 'adjust', 'color', 'motion'].map(id => {
+          {/* 六個分類：一開始只看得到前五個，左右滑才看到動畫頁。點第五、六個自動捲到最右，點第一、二個捲到最左 */}
+          <div ref={mainToolsRef} className="flex px-4 pt-1 border-b border-[#1a1a1a] shrink-0 overflow-x-auto overflow-y-hidden no-scrollbar overscroll-x-contain" style={{ touchAction: 'pan-x' }} data-main-tools>
+            {['ratio', 'pages', 'add', 'adjust', 'color', 'motion'].map((id, tabIndex) => {
               let iconEl = null;
               let titleText = '';
               if (id === 'ratio') {
@@ -20000,9 +20002,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                        就回到新增的主頁 —— 不必特地去按左上角的返回鍵。 */
                     if (id === 'add') setAddSub('root');
                     if (id === 'color') setColorPickerActive(true);
+                    const bar = mainToolsRef.current;
+                    if (bar && tabIndex >= 4) bar.scrollTo({ left: bar.scrollWidth, behavior: 'smooth' });
+                    else if (bar && tabIndex <= 1) bar.scrollTo({ left: 0, behavior: 'smooth' });
                   }} 
-                  /* 主工具列只有圖示：選中的變白，其他是實色灰 */
-                  className={`flex-1 h-11 flex items-center justify-center transition-colors duration-150 ${
+                  /* 主工具列只有圖示：選中的變白，其他是實色灰。每顆寬度是可視寬的五分之一 */
+                  style={{ width: '20%' }}
+                  className={`shrink-0 h-11 flex items-center justify-center transition-colors duration-150 ${
                     isActive ? 'text-white' : 'text-[#555]'
                   }`}
                   title={titleText}
