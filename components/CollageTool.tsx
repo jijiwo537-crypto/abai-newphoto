@@ -9894,6 +9894,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           tg.setTransform(1, 0, 0, 1, 0, 0); tg.globalCompositeOperation = 'copy'; tg.drawImage(cv, x, y, tw, th, 0, 0, tw, th);
           releasePhotoFxReadbacks(tile); forgetPhotoFxSource(tile);
           const R = applyPhotoFx(tile, tw, th, gfx, { cacheSource: true, gpuSurface: true, out });
+          /* 一塊一塊貼回去要用一般的疊法：'copy' 會把「這一塊以外」整張清掉 —— 以前就是這樣，存出來只剩最後一塊、其他全黑 */
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.clearRect(x, y, tw, th);
           ctx.drawImage(R, 0, 0, tw, th, x, y, tw, th);
         }
         releasePhotoFxReadbacks(tile); forgetPhotoFxSource(tile); tile.width = tile.height = 0;
