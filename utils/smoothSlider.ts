@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { sliderHaptic } from './haptics';
+import { frameBudgetOk, runMeasured } from './frameBudget';
 
 /* 滑桿「一格一格跳」與「跟不上手指」的共同解法。
  *
@@ -35,9 +36,11 @@ export function useSmoothSlider(
   useEffect(() => { if (!dragging.current) { setShown(value); sent.current = value; } }, [value]);
   useEffect(() => () => { if (frame.current) cancelAnimationFrame(frame.current); }, []);
   const deliver = () => {
+    /* 上一次畫面計算還在「讓手指」的時間裡：這一幀先不送，等下一幀（白點照樣跟手，見 utils/frameBudget） */
+    if (!frameBudgetOk() && dragging.current) { frame.current = requestAnimationFrame(deliver); return; }
     frame.current = 0;
     const v = pending.current; pending.current = null;
-    if (v !== null && v !== sent.current) { sent.current = v; cb.current(v); }
+    if (v !== null && v !== sent.current) { sent.current = v; runMeasured(() => cb.current(v)); }
   };
   const lastRaw = useRef(value);
   const input = useCallback((raw: number) => {

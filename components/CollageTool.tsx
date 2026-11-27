@@ -8,7 +8,8 @@ import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/wav
 import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
-import { diag, diagFlush, diagGpuWatch, diagMemory, copyDiag } from '../utils/diagLog';
+import { diag, diagFlush, diagGpuWatch, diagMemory, copyDiag, diagText } from '../utils/diagLog';
+import { frameBudgetOk, runMeasured } from '../utils/frameBudget';
 import { isMobileDevice, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
 import { reframeBasePhoto } from '../utils/reframeBasePhoto';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskSampleReach,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
@@ -3708,6 +3709,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       （正是這裡本來要修的那個 bug）。最後那一張留到分頁關掉為止，
       跟編輯、美顏兩個工具的做法一致。 */
   const photoUrlRef = useRef<string | null>(null);
+  /* 臨時偵錯模式：存檔時另外做一張「預覽／成品／診斷紀錄」對照圖給開發者（⋯ 選單開關，記在本機） */
+  const [debugMode, setDebugMode] = useState(() => { try { return localStorage.getItem('abai-debug') === '1'; } catch { return false; } });
+  const [debugSheet, setDebugSheet] = useState<string | null>(null);
+  const toggleDebug = () => setDebugMode(v => { const n = !v; try { localStorage.setItem('abai-debug', n ? '1' : '0'); } catch { /* ignore */ } alert(n ? '偵錯模式已開啟：之後每次儲存都會多跳出一張對照圖，長按存下傳給開發者' : '偵錯模式已關閉'); return n; });
   /* 這個工具替導入的照片／影片開的檔案網址。網址還在，瀏覽器就得一直扣著整份原始檔（一張 3～10MB）——
      以前離開工具沒有收，反覆「拼圖 → 存檔 → 回主頁 → 再導入」每一輪都留下一整批原檔，
      幾輪之後 iPhone 就把頁面殺掉（閃退）。離開時全部收掉；延後一下是讓還在讀的草稿存檔讀完 */
@@ -4587,7 +4592,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(live){regionSelectionFeedbackPending.current=false;regionLiveUntil.current=performance.now()+350;deferHeavyWork(600);}
     if(!live){setPhotoRegion(next);return;}
     if(regionSliderHeld.current&&regionBlend.current?.isReady&&regionSceneStamp.current?.key===regionSceneKey.current){regionPaintRef.current();return;}
-    if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
+    /* 幀預算（utils/frameBudget）：上一次畫太久就多等一幀，主執行緒留時間給手指和滑桿白點 */
+    if(!regionPaintRaf.current){const tick=()=>{if(!frameBudgetOk()){regionPaintRaf.current=requestAnimationFrame(tick);return;}regionPaintRaf.current=0;runMeasured(()=>regionPaintRef.current());};regionPaintRaf.current=requestAnimationFrame(tick);}
   };
   const finishRegionEdit=()=>{
     regionSliderHeld.current=false;
@@ -11697,6 +11703,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const exportW = Math.floor(originalW * finalScale);
         const exportScale = exportW / baseW;
 
+        /* 偵錯模式：存檔前先用預覽那條路畫一張（跟螢幕上看到的同一套） */
+        let debugPreview: HTMLCanvasElement | null = null;
+        if (debugMode) { try { debugPreview = document.createElement('canvas'); renderToCanvasRef.current(debugPreview, previewScaleRef.current, true); } catch (e) { diag('偵錯', '預覽截取失敗', String(e)); debugPreview = null; } }
         const exportCanvas = document.createElement('canvas');
         { const r = photoRegionRef.current;
           diag('存檔開始', `${simple ? '編輯的拼圖' : '創意拼圖'} 成品 ${exportW}x${Math.round(originalH * finalScale)}`, `無縫 ${r?.seamless ? (r.seamlessAmount ?? 0) : '關'}`,
@@ -11709,6 +11718,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         try { renderToCanvasRef.current(exportCanvas, exportScale); } finally { diagGpuWatch(false); }
         releaseExportFx();
         diag('存檔畫完', `${exportCanvas.width}x${exportCanvas.height}`, diagMemory());
+        if (debugMode) {
+          try {
+            const W = 1080, half = (src: HTMLCanvasElement | null) => src && src.width ? Math.round(W / 2 * src.height / src.width) : 0;
+            const hp = half(debugPreview), he = half(exportCanvas), log = diagText().split('\n').slice(-30).flatMap(l => { const out: string[] = []; for (let i = 0; i < l.length; i += 52) out.push(l.slice(i, i + 52)); return out; });
+            const sheet = document.createElement('canvas'); sheet.width = W; sheet.height = Math.max(hp, he) + 60 + log.length * 26 + 20;
+            const g = sheet.getContext('2d')!; g.fillStyle = '#111'; g.fillRect(0, 0, sheet.width, sheet.height);
+            g.fillStyle = '#fff'; g.font = 'bold 28px sans-serif'; g.fillText('預覽', 10, 36); g.fillText('成品', W / 2 + 10, 36);
+            if (debugPreview && hp) g.drawImage(debugPreview, 0, 50, W / 2 - 4, hp);
+            if (he) g.drawImage(exportCanvas, W / 2 + 4, 50, W / 2 - 4, he);
+            g.font = '18px monospace'; g.fillStyle = '#ddd';
+            log.forEach((l, i) => g.fillText(l, 10, Math.max(hp, he) + 90 + i * 26));
+            void canvasToUrl(sheet, 'image/jpeg', 0.9).then(u => { sheet.width = sheet.height = 0; if (u) setDebugSheet(u); });
+          } catch (e) { diag('偵錯', '對照圖失敗', String(e)); }
+          if (debugPreview) debugPreview.width = debugPreview.height = 0;
+        }
         
         // 用所選格式編碼，再持有 blob 網址，避免 dataURL 額外的字串記憶體。
         const url = imageExportFormat==='heic'?await exportHeic(exportCanvas):await canvasToUrl(exportCanvas,imageExportFormat==='jpg'?'image/jpeg':'image/png',1);
@@ -11871,7 +11895,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                              手停下來才正式重畫一次，結果一模一樣 */
                           const gfx=simple&&cur.globalFx&&hasPhotoFx(cur.globalFx as PhotoFx)?cur.globalFx as PhotoFx:null;
                           if(gfx&&cur.seamless&&next.seamless){photoRegionRef.current=next;
-                            if(!seamAmountRaf.current)seamAmountRaf.current=requestAnimationFrame(()=>{seamAmountRaf.current=0;if(!showGlobalOverlay(gfx,true))regionPaintRef.current();});
+                            if(!seamAmountRaf.current){const tick=()=>{if(!frameBudgetOk()){seamAmountRaf.current=requestAnimationFrame(tick);return;}seamAmountRaf.current=0;runMeasured(()=>{if(!showGlobalOverlay(gfx,true))regionPaintRef.current();});};seamAmountRaf.current=requestAnimationFrame(tick);}
                             if(globalSettle.current)clearTimeout(globalSettle.current);
                             globalSettle.current=window.setTimeout(()=>{globalSettle.current=0;hideGlobalOverlay();globalLast.current=null;commitRegion(photoRegionRef.current!,true);},280);
                             return;}
@@ -11904,6 +11928,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   return (
     <div onPointerDownCapture={()=>deferHeavyWork(600)} onClickCapture={()=>deferHeavyWork(600)} className="safe-top flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
+      {debugSheet && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-black/95 flex flex-col items-center overflow-auto" style={{ paddingTop: 'max(16px, env(safe-area-inset-top))', paddingBottom: 24 }}>
+          <div className="w-full flex items-center justify-between px-4 pb-3">
+            <span className="text-white text-[13px] font-bold">偵錯對照圖：長按圖片儲存，傳給開發者</span>
+            <button onClick={() => { revokeUrl(debugSheet); setDebugSheet(null); }} className="text-white text-[13px] font-bold px-3 py-1.5 rounded-full bg-white/15">關閉</button>
+          </div>
+          <img src={debugSheet} alt="偵錯對照圖" className="w-full h-auto" style={{ WebkitTouchCallout: 'default', userSelect: 'auto' } as React.CSSProperties} />
+        </div>, document.body)}
       {importBusy && createPortal(
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black" data-creative-import-loading="1">
           <ImportSpinner belowStatusBar />
@@ -12307,9 +12339,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   void openGlassMenu(el, [
                     ...(igSupported ? [{ id: 'preview', type: 'action' as const, title: '預覽' }] : []),
                     ...(simple ? [] : [{ id: 'snap', type: 'switch' as const, title: '對齊', value: enableSnapping }]),
+                    { id: 'debug', type: 'action' as const, title: debugMode ? '偵錯模式：開（點一下關閉）' : '偵錯模式：關（點一下開啟）' },
                     { id: 'diag', type: 'action' as const, title: '複製診斷紀錄' },
                   ], (id, v) => {
                     if (id === 'diag') void copyDiag();
+                    else if (id === 'debug') toggleDebug();
                     else if (id === 'preview') openIgPreview();
                     else if (id === 'snap') setEnableSnapping(() => { const on = v === 'true'; if (!on) { guidesRef.current = []; setGuides([]); } return on; });
                   }, 210).then(ok => { if (!ok) setMoreOpen(o => !o); });
@@ -12323,6 +12357,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 <>
                   <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
                   <div role="dialog" aria-label="創意拼圖更多選項" className="absolute right-0 top-[calc(100%+18px)] z-[61] w-36 rounded-2xl bg-[#101010] border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                    <button onClick={() => { setMoreOpen(false); toggleDebug(); }} className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90 hover:bg-white/10 transition-colors border-b border-white/10"><span>{debugMode ? '偵錯模式：開' : '偵錯模式：關'}</span></button>
                     <button onClick={() => { setMoreOpen(false); void copyDiag(); }} className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90 hover:bg-white/10 transition-colors border-b border-white/10"><span>複製診斷紀錄</span></button>
                     {/* 最上面是 IG 預覽，跟經典拼圖同一顆（比例 IG 吃不下時整個不出現） */}
                     {igSupported && (
