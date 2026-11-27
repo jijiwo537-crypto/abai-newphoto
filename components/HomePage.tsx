@@ -1,3 +1,4 @@
+import { copyStabilityReport } from '../utils/stability';
 import { AbaiLogo } from './AbaiLogo';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -1138,6 +1139,8 @@ export const HomePage: React.FC<HomePageProps> = ({
     else if (id === 'language' || id === 'terms' || id === 'privacy') setSettingsPage(id);
     else if (id === 'contact') setSettingsPage('contact');
     else if (id === 'mail') void copyEmailRef.current();
+    /* 穩定性紀錄（閃退、網頁程序被關掉…，見 utils/stability）：複製起來貼給開發者 */
+    else if (id === 'stability') void copyStabilityReport().then(ok => { if (ok) { setCopied(true); setTimeout(() => setCopied(false), 1600); } });
     else if (id === 'ig') { try { window.open(CONTACT_IG_URL, '_blank', 'noopener'); } catch { /* 開不了 */ } }
     else if (id.startsWith('lang:')) changeLocale(id.slice(5) as Parameters<typeof changeLocale>[0]);
   };
@@ -1149,7 +1152,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   useEffect(() => {
     if (!settingsOpen || webSettings) { if (!settingsOpen) void closeNativeSheet(); return; }
     const page: NativeSheetPage = settingsPage === 'contact'
-      ? { title: SETTINGS_TITLE.contact, back: true, rows: [{ id: 'mail', title: CONTACT_EMAIL, symbol: 'envelope' }, { id: 'ig', title: CONTACT_IG, symbol: 'camera' }], foot: copied ? '已複製' : '' }
+      ? { title: SETTINGS_TITLE.contact, back: true, rows: [{ id: 'mail', title: CONTACT_EMAIL, symbol: 'envelope' }, { id: 'ig', title: CONTACT_IG, symbol: 'camera' }, { id: 'stability', title: '複製穩定性紀錄', symbol: 'doc.on.doc' }], foot: copied ? '已複製' : '' }
       : settingsPage === 'menu'
       ? { title: SETTINGS_TITLE.menu, rows: [{ id: 'language', title: '語言' }, { id: 'contact', title: '問題反饋' }, { id: 'terms', title: '使用條款' }, { id: 'privacy', title: '隱私權政策' }] }
       : settingsPage === 'language'

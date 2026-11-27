@@ -69,6 +69,7 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(VideoWriterPlugin())
         bridge?.registerPluginInstance(PhotoLibraryPlugin())
         bridge?.registerPluginInstance(QAPlugin())
+        bridge?.registerPluginInstance(StabilityPlugin())
     }
 }
 

@@ -56,6 +56,7 @@ import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT, isRawFile } from './util
 /** 跨頁拼圖一次最多導入幾張（相簿下方寫「選 1～20 張照片」） */
 const LAYOUT_IMPORT_MAX = 20;
 import { nativePathOf } from './utils/nativeBridge';
+import { startStability } from './utils/stability';
 import { BATCH_MAX, BATCH_RAW_MAX, BATCH_RAW_NOTE, batchCap } from './utils/batchLimit';
 import { rawDevelopPreview, type RawLook } from './utils/nativeCamera';
 import { upgradeImportHero, cancelImportHero, perfMark } from './utils/importHero';
@@ -156,6 +157,8 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<AppView>('home');
   /* 主畫面 App 不會自己換新版：回到前景時檢查，只在首頁才重新載入。 */
   const currentViewRef = useRef(currentView);
+  /* 穩定性紀錄（App 才有）：網頁程序被關掉、程式錯誤時記下「當時在哪個工具」（見 utils/stability） */
+  useEffect(() => { startStability(() => currentViewRef.current); }, []);
   currentViewRef.current = currentView;
   const appUpdates = useRef<ReturnType<typeof watchAppUpdates> | null>(null);
   useEffect(() => {
