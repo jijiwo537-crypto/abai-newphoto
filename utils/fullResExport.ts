@@ -46,8 +46,9 @@ export function buildTransfer(P: Uint8ClampedArray, D: Uint8ClampedArray, pw: nu
   const a: Float32Array[] = [], b: Float32Array[] = [];
   const Dg = new Float32Array(gn), Pg = new Float32Array(gn), DD = new Float32Array(gn), DP = new Float32Array(gn);
   const mD = new Float32Array(gn), mP = new Float32Array(gn), mDD = new Float32Array(gn), mDP = new Float32Array(gn), tmp = new Float32Array(gn);
-  // 每個色版共用同一組暫存（以前每個色版各配一組，記憶體高峰多出一截）
-  const A = new Float32Array(gn), B = new Float32Array(gn);
+  /* A、B 借用 DD、DP 那兩塊：算出 mDD、mDP 之後 DD、DP 就用不到了（下一個色版開頭才重新寫入），
+     不必另外再開兩塊同大小的陣列。數值、順序完全一樣 */
+  const A = DD, B = DP;
   for (let c = 0; c < 3; c++) {
     // 2×2 平均到格子上
     for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
@@ -64,8 +65,10 @@ export function buildTransfer(P: Uint8ClampedArray, D: Uint8ClampedArray, pw: nu
       A[i] = ai; B[i] = mP[i] - ai * mD[i];
     }
     // 導向濾波的第二步：a、b 再平均一次，關係在空間上平滑
-    boxMean(A, gw, gh, r, tmp, mD); boxMean(B, gw, gh, r, tmp, mP);
-    a.push(new Float32Array(mD)); b.push(new Float32Array(mP));
+    // 直接平均進要留下來的那兩塊（以前先平均進暫存再複製一份）
+    const ac = new Float32Array(gn), bc = new Float32Array(gn);
+    boxMean(A, gw, gh, r, tmp, ac); boxMean(B, gw, gh, r, tmp, bc);
+    a.push(ac); b.push(bc);
   }
   // 殘差：成品 −（a×原圖＋b），在成品尺寸上
   const res = new Int8Array(pw * ph * 3);
