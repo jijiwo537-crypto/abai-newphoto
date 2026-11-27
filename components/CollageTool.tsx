@@ -8,6 +8,7 @@ import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/wav
 import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
+import { diag, diagFlush, diagGpuWatch, diagMemory, copyDiag } from '../utils/diagLog';
 import { isMobileDevice, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
 import { reframeBasePhoto } from '../utils/reframeBasePhoto';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskSampleReach,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
@@ -3844,6 +3845,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     try {
       const sources = [url, ...picked.slice(1, CREATIVE_PHOTO_LIMIT).map(f => ownUrl(f))];
+      diag('導入', `${simple ? '編輯的拼圖' : '創意拼圖'} ${sources.length} 張`, picked.slice(0, CREATIVE_PHOTO_LIMIT).map(f => `${f.type || '?'} ${Math.round(f.size / 1024)}KB`).join(', '), diagMemory());
       /* 每張只做成品用得到的解析度（見 utils/photoTiers）：width/height 一律是原圖尺寸，
          排版、裁切、存檔尺寸一律照原圖算；需要更清楚時（放大、存檔）會自動從原檔換上 */
       const start = sources.length > 1 ? TIER_MULTI_START : TIER_SINGLE_START;
@@ -9924,6 +9926,34 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const globalCrops = useRef<HTMLCanvasElement[]>([]);
   const globalLast = useRef<{ key: string; G: HTMLCanvasElement } | null>(null);
   const globalBakeSeq = useRef(0), globalBakeOk = useRef(false);
+  const globalOverlay = useRef<HTMLCanvasElement | null>(null), globalSettle = useRef(0);
+  const hideGlobalOverlay = () => { const o = globalOverlay.current; if (o) { o.style.display = 'none'; o.remove(); globalOverlay.current = null; } };
+  /** 調整「全部照片」時蓋在預覽上的那一層。做不到（還沒有拼好的那張、畫面放大中…）就回 false，照原本的方式畫 */
+  const showGlobalOverlay = (gfx: PhotoFx, recompose = false): boolean => {
+    const main = canvasRef.current, comp = globalComp.current;
+    if (!main || !comp || !comp.sC || viewT.k !== 1 || !main.parentElement || !hasPhotoFx(gfx)) return false;
+    if (recompose) {
+      /* 拼法變了（拖無縫）：拼好的那張重拼一次（跟 renderToCanvas 裡同一個做法、同一個解析度），整體效果照樣即時套上 */
+      const region = photoRegionRef.current; if (!region) return false;
+      const keep = region, keepForce = forceFullPreviewRef.current;
+      photoRegionRef.current = { ...region, globalFx: undefined };
+      globalInner.current = true; forceFullPreviewRef.current = true;
+      try { renderScene(comp.canvas, comp.sC, true); } catch { return false; }
+      finally { globalInner.current = false; forceFullPreviewRef.current = keepForce; photoRegionRef.current = keep; }
+      forgetPhotoFxSource(comp.canvas); markDirectSource(comp.canvas);
+      comp.key = 'stale';                                            // 下一次正式重畫一定重拼
+    }
+    const out = (globalOut.current ??= document.createElement('canvas'));
+    let G: HTMLCanvasElement;
+    try { G = applyPhotoFx(comp.canvas, comp.canvas.width, comp.canvas.height, gfx, { cacheSource: true, gpuSurface: true, out }); } catch { return false; }
+    if (G.isConnected && G !== globalOverlay.current) return false;      // 別處正在顯示的畫布，不搶
+    if (globalOverlay.current && globalOverlay.current !== G) hideGlobalOverlay();
+    placeOverMain(G, main); G.style.display = '';
+    if (!G.isConnected) main.parentElement.append(G);
+    globalOverlay.current = G; globalLast.current = null;
+    return true;
+  };
+  useEffect(() => () => { hideGlobalOverlay(); if (globalSettle.current) clearTimeout(globalSettle.current); }, []);
   /** 存檔：在成品畫布上原地套整體那一層。濾鏡、調節是逐像素的 —— 切成 1024 的方塊一塊一塊算（結果一樣，記憶體只要一小塊）；
       有特效（模糊、暗角…要看整張圖）才整張算一次，算完立刻把 GPU 那幾份放掉 */
   const applyGlobalInPlace = (cv: HTMLCanvasElement, gfx: PhotoFx) => {
@@ -11668,11 +11698,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const exportScale = exportW / baseW;
 
         const exportCanvas = document.createElement('canvas');
+        { const r = photoRegionRef.current;
+          diag('存檔開始', `${simple ? '編輯的拼圖' : '創意拼圖'} 成品 ${exportW}x${Math.round(originalH * finalScale)}`, `無縫 ${r?.seamless ? (r.seamlessAmount ?? 0) : '關'}`,
+            `照片 ${(r?.photos || []).map(ph => { const im: any = decodedRegionPhotos.current.get(ph.src); return `${ph.width}x${ph.height}→${im ? (im.naturalWidth || im.width) + 'x' + (im.naturalHeight || im.height) : '無'}${ph.fx && Object.keys(ph.fx).length ? '+效果' : ''}`; }).join(', ')}`,
+            r?.globalFx && Object.keys(r.globalFx).length ? `整體 ${Object.keys(r.globalFx).join('/')}` : '', diagMemory());
+          diagFlush(); diagGpuWatch(true); }
         /* 存成圖片時一律用「靜態的那一張」：所有元素都在自己的原位、
            原尺寸。不然會存到動畫半途，位置跟編輯時看到的對不上。 */
         animRef.current = null;
-        renderToCanvasRef.current(exportCanvas, exportScale);
+        try { renderToCanvasRef.current(exportCanvas, exportScale); } finally { diagGpuWatch(false); }
         releaseExportFx();
+        diag('存檔畫完', `${exportCanvas.width}x${exportCanvas.height}`, diagMemory());
         
         // 用所選格式編碼，再持有 blob 網址，避免 dataURL 額外的字串記憶體。
         const url = imageExportFormat==='heic'?await exportHeic(exportCanvas):await canvasToUrl(exportCanvas,imageExportFormat==='jpg'?'image/jpeg':'image/png',1);
@@ -11685,7 +11721,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         
         // 明確清掉
         exportCanvas.width = 0; exportCanvas.height = 0;
+        diag('存檔完成', diagMemory());
       } catch (e) {
+        diag('存檔失敗', String((e as any)?.stack || e).slice(0, 300));
         console.error("Failed to save collage", e);
         setSaveState('idle');
       }
@@ -11829,6 +11867,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         /* 拖動中只換融合量：已經直接顯示的那層 GPU 畫面自己重畫就好（跟跨頁拼圖一樣），
                            不重畫整張主畫布的所有物件、遮罩。剛從「關」拉到「開」的那一下、或那層還沒出現時才整張重畫 */
                         onChange={v=>{const cur=photoRegionRef.current!,next=withCreativeSeamlessAmount(cur,v);
+                          /* 有整體效果（編輯的拼圖「全部照片」）：每一格重拼＋GPU 套一次效果，直接蓋在預覽上（效果全程即時，不切格子、不整張重畫兩次）。
+                             手停下來才正式重畫一次，結果一模一樣 */
+                          const gfx=simple&&cur.globalFx&&hasPhotoFx(cur.globalFx as PhotoFx)?cur.globalFx as PhotoFx:null;
+                          if(gfx&&cur.seamless&&next.seamless){photoRegionRef.current=next;
+                            if(!seamAmountRaf.current)seamAmountRaf.current=requestAnimationFrame(()=>{seamAmountRaf.current=0;if(!showGlobalOverlay(gfx,true))regionPaintRef.current();});
+                            if(globalSettle.current)clearTimeout(globalSettle.current);
+                            globalSettle.current=window.setTimeout(()=>{globalSettle.current=0;hideGlobalOverlay();globalLast.current=null;commitRegion(photoRegionRef.current!,true);},280);
+                            return;}
                           if(cur.seamless&&next.seamless&&creativeSeam.current){photoRegionRef.current=next;seamPendingAmount.current=next.seamlessAmount||0;
                             if(!seamAmountRaf.current)seamAmountRaf.current=requestAnimationFrame(()=>{seamAmountRaf.current=0;
                               /* 另一側遮罩底下也有一份照片（畫在主畫布上）時，要整張重畫它才會跟著即時變 */
@@ -12261,8 +12307,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   void openGlassMenu(el, [
                     ...(igSupported ? [{ id: 'preview', type: 'action' as const, title: '預覽' }] : []),
                     ...(simple ? [] : [{ id: 'snap', type: 'switch' as const, title: '對齊', value: enableSnapping }]),
+                    { id: 'diag', type: 'action' as const, title: '複製診斷紀錄' },
                   ], (id, v) => {
-                    if (id === 'preview') openIgPreview();
+                    if (id === 'diag') void copyDiag();
+                    else if (id === 'preview') openIgPreview();
                     else if (id === 'snap') setEnableSnapping(() => { const on = v === 'true'; if (!on) { guidesRef.current = []; setGuides([]); } return on; });
                   }, 210).then(ok => { if (!ok) setMoreOpen(o => !o); });
                 }}
@@ -12275,6 +12323,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 <>
                   <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
                   <div role="dialog" aria-label="創意拼圖更多選項" className="absolute right-0 top-[calc(100%+18px)] z-[61] w-36 rounded-2xl bg-[#101010] border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                    <button onClick={() => { setMoreOpen(false); void copyDiag(); }} className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90 hover:bg-white/10 transition-colors border-b border-white/10"><span>複製診斷紀錄</span></button>
                     {/* 最上面是 IG 預覽，跟經典拼圖同一顆（比例 IG 吃不下時整個不出現） */}
                     {igSupported && (
                       <>
@@ -13593,8 +13642,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     simpleAllFxRef.current = next;
                     clearPhotoDimmer();
                     photoRegionRef.current = { ...photoRegionRef.current, globalFx: next };
-                    /* 當格就畫（不等背景執行緒烤完才提交：那樣畫面會一格一格跳，尤其剛開始拖的時候） */
-                    commitRegion(photoRegionRef.current!, true);
+                    /* 把整張拼圖當成「一張照片」來調：拼好的那張不動，每一格只在 GPU 上套一次效果，直接蓋在預覽上
+                       （跟編輯單張照片同一種成本）。手停下來才正式重畫一次（切回每一格），畫面就跟存檔完全一樣 */
+                    if (!showGlobalOverlay(next)) commitRegion(photoRegionRef.current!, true);
+                    if (globalSettle.current) clearTimeout(globalSettle.current);
+                    globalSettle.current = window.setTimeout(() => { globalSettle.current = 0; hideGlobalOverlay(); globalLast.current = null; commitRegion(photoRegionRef.current!, true); }, 280);
                   } else if (regionEditing && photoRegionRef.current) {
                     clearPhotoDimmer();
                     commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)},!!d.fx);
