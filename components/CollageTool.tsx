@@ -123,7 +123,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
 import { setBlurRebuildListener } from '../utils/blurShapes';
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, markDirectSource, prebakeColours, warmColourBakers, releaseColourBakers, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, markDirectSource, prebakeColours, coloursBaked, warmColourBakers, releaseColourBakers, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface,warmPhotoSceneColour,forgetPhotoFxSource,sourceHasAlpha} from '../utils/photoFx';
 import { strokeAlphaContour } from '../utils/alphaStroke';
@@ -3707,6 +3707,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       （正是這裡本來要修的那個 bug）。最後那一張留到分頁關掉為止，
       跟編輯、美顏兩個工具的做法一致。 */
   const photoUrlRef = useRef<string | null>(null);
+  /* 這個工具替導入的照片／影片開的檔案網址。網址還在，瀏覽器就得一直扣著整份原始檔（一張 3～10MB）——
+     以前離開工具沒有收，反覆「拼圖 → 存檔 → 回主頁 → 再導入」每一輪都留下一整批原檔，
+     幾輪之後 iPhone 就把頁面殺掉（閃退）。離開時全部收掉；延後一下是讓還在讀的草稿存檔讀完 */
+  const ownedUrls = useRef(new Set<string>());
+  const ownUrl = (f: Blob) => { const u = URL.createObjectURL(f); ownedUrls.current.add(u); return u; };
+  /* StrictMode 的「掛載→清理→再掛載」不能真的收（照片還在用，見上面 photoUrlRef 的說明）：
+     清理時只排定 15 秒後檢查，那時工具又掛回來了（alive）就什麼都不做 */
+  const urlsAlive = useRef(true);
+  useEffect(() => {
+    urlsAlive.current = true;
+    return () => {
+      urlsAlive.current = false;
+      const owned = ownedUrls.current;
+      setTimeout(() => {
+        if (urlsAlive.current) return;
+        for (const u of owned) { try { URL.revokeObjectURL(u); } catch { /* 收過了就算了 */ } }
+        owned.clear();
+      }, 15000);
+    };
+  }, []);
   /** 現在當底的那一段影片（沒有影片就是 null）。換底、離開時要收掉。 */
   const baseVidRef = useRef<HTMLVideoElement | null>(null);
 
@@ -3747,7 +3767,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        每一張的原始位元組都會被那個沒回收的網址一直扣著（一張 5MB 就是 5MB）。
        折衷：只留「現在這一張」，換下一張的時候才把上一張收掉。
        那時候上一張的草稿早就讀完了，不會再有人用到它。 */
-    const url = URL.createObjectURL(file);
+    const url = ownUrl(file);
     if (photoUrlRef.current && photoUrlRef.current !== url && !photoRegionRef.current?.photos.some(p => p.src === photoUrlRef.current)) {
       try { URL.revokeObjectURL(photoUrlRef.current); } catch { /* 收過了就算了 */ }
     }
@@ -3823,7 +3843,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       return;
     }
     try {
-      const sources = [url, ...picked.slice(1, CREATIVE_PHOTO_LIMIT).map(f => URL.createObjectURL(f))];
+      const sources = [url, ...picked.slice(1, CREATIVE_PHOTO_LIMIT).map(f => ownUrl(f))];
       /* 每張只做成品用得到的解析度（見 utils/photoTiers）：width/height 一律是原圖尺寸，
          排版、裁切、存檔尺寸一律照原圖算；需要更清楚時（放大、存檔）會自動從原檔換上 */
       const start = sources.length > 1 ? TIER_MULTI_START : TIER_SINGLE_START;
@@ -4217,7 +4237,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
    * 不然全部疊在正中央，看起來像只加進來一個。
    */
   const addMediaObject = useCallback((f: File, idx = 0) => {
-    const url = URL.createObjectURL(f);
+    const url = ownUrl(f);
     const place = (src: HTMLImageElement | HTMLVideoElement, w0: number, h0: number, poster?: string) => {
       const offs2 = getLayoutOffsetsRef.current?.();
       if (!offs2) return;
@@ -9903,6 +9923,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const globalOut = useRef<HTMLCanvasElement | null>(null);
   const globalCrops = useRef<HTMLCanvasElement[]>([]);
   const globalLast = useRef<{ key: string; G: HTMLCanvasElement } | null>(null);
+  const globalBakeSeq = useRef(0), globalBakeOk = useRef(false);
   /** 存檔：在成品畫布上原地套整體那一層。濾鏡、調節是逐像素的 —— 切成 1024 的方塊一塊一塊算（結果一樣，記憶體只要一小塊）；
       有特效（模糊、暗角…要看整張圖）才整張算一次，算完立刻把 GPU 那幾份放掉 */
   const applyGlobalInPlace = (cv: HTMLCanvasElement, gfx: PhotoFx) => {
@@ -9972,6 +9993,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       globalInner.current = true; forceFullPreviewRef.current = true;
       try { renderScene(canvas, sC, mainLike); } finally { globalInner.current = false; forceFullPreviewRef.current = keepForce; }
       forgetPhotoFxSource(canvas);
+      /* 拼好的這張直接從畫布傳上 GPU（GPU 對 GPU），不要整張 getImageData 讀回 CPU 再傳上去 ——
+         讀回那一下（一張螢幕大小的圖，手機上幾百毫秒）就是「滑桿剛開始拖時畫面卡一下」。
+         上傳時不轉色域、不預乘，拿到的位元組跟讀回的一模一樣，顏色不會變 */
+      markDirectSource(canvas);
       comp = { key, canvas };
       if (mainLike) globalComp.current = comp;
       globalLast.current = null;
@@ -9979,11 +10004,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const out = (globalOut.current ??= document.createElement('canvas'));
     /* 拼好的圖、整體設定都沒變（例如只是放大縮小）：上一次的結果和切片直接用，什麼都不重算 */
     const gKey = comp.key + '|' + JSON.stringify(gfx) + '|' + lutRevision;
-    const reuse = globalLast.current?.key === gKey;
+    /* 拖滑桿：這一格的色彩表還沒烤好 → 先顯示上一格（同一張拼好的圖），交給背景執行緒烤，烤好再補畫這一格。
+       主執行緒永遠不同步烤（一張要幾十毫秒，手機上滑桿就只剩 30 幀）。烤好之後的那一次重畫放行同步（萬一快取被擠掉也一定畫得出來） */
+    const lastSame = !!globalLast.current && globalLast.current.key.startsWith(comp.key + '|');
+    let stale = false;
+    if (lastSame && globalLast.current!.key !== gKey && !globalBakeOk.current && !coloursBaked(gfx)) {
+      stale = true;
+      const seq = ++globalBakeSeq.current;
+      void prebakeColours([gfx]).then(() => {
+        if (seq !== globalBakeSeq.current) return;
+        globalBakeOk.current = true;
+        try { regionPaintRef.current?.(); } finally { globalBakeOk.current = false; }
+      });
+    }
+    const reuse = stale || globalLast.current?.key === gKey;
     const G = reuse ? globalLast.current!.G : applyPhotoFx(comp.canvas, comp.canvas.width, comp.canvas.height, gfx, { cacheSource: true, gpuSurface: true, out });
     /* 拼好的圖已經在 GPU 上了：CPU 那份讀回的像素（最大幾十 MB）不要留著 */
     if (!reuse) releasePhotoFxReadbacks(comp.canvas);
-    globalLast.current = { key: gKey, G };
+    if (!stale) globalLast.current = { key: gKey, G };
     const offsC = layoutGeometry(layout, imageState.baseW * sC, imageState.baseH * sC, maskScaleValue.current, canvasRatio);
     const kx = G.width / Math.max(1, offsC.cw), ky = G.height / Math.max(1, offsC.ch);
     const rects = regionRects(region, t.w * sC, t.h * sC);
@@ -11801,7 +11839,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     try{
       const normalized=await normalizeImageFiles(files.slice(0,slots.length));
       const photos=await Promise.all(normalized.map(f=>{
-        const src=URL.createObjectURL(f);
+        const src=ownUrl(f);
         return openTiered(src,f.type,TIER_MULTI_START).then(t=>{decodedRegionPhotos.current.set(src,t.img);return {src,width:t.ow,height:t.oh};})
           .catch(()=>{URL.revokeObjectURL(src);throw Error('圖片無法讀取');});
       }));

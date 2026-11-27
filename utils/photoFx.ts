@@ -639,6 +639,14 @@ export function warmColourBakers(): void {
     }
   });
 }
+/** 這組 fx 要的色彩表是不是都已經烤好在快取裡（拖滑桿時：沒烤好就先顯示上一格，交給背景執行緒烤，主執行緒不烤） */
+export function coloursBaked(fx: PhotoFx): boolean {
+  if (!fx || (!getLoadedLut(fx.lut) && ADJUST_KEYS.every(([k]) => !fx[k]))) return true;
+  const lut = getLoadedLut(fx.lut), amount = (fx.lutAmount ?? 100) / 100, colorKey = colorKeyOf(fx);
+  const want: [Uint8ClampedArray | null, number][] = [[lut ? lut.data : null, lut ? lut.size : 0]];
+  if (lut && amount < 1) want.push([null, 0]);
+  return want.every(([film, filmSize]) => colorBakeCache.has(colorKey + '|' + (film ? srcToken(film) : 'none') + '|' + filmSize));
+}
 /** 這些 fx 要用到、快取裡還沒有的色彩表，交給背景執行緒同時烤好放進快取。
  *  回傳 false＝背景執行緒用不了（呼叫端照舊在主執行緒烤）。烤失敗的那幾張畫的時候會在主執行緒補烤，不會壞 */
 export function prebakeColours(list: PhotoFx[]): Promise<boolean> {
@@ -1085,7 +1093,7 @@ function applyPhotoFxRaw(
     const separable = !lut && !p.temp && !p.tint && !p.sat && !p.vib && !p.shadows && !p.highlights && !p.whites && !p.blacks;
     if (!(opts?.preferSeparableCpu && separable))
       gpuOk = !!gpuColorChain(ctx, readPixels, out.width, out.height, p, lut, amt, baseLut, k, colorKeyOf(fx),!!opts?.scene,
-        opts?.afterGlow && source instanceof HTMLCanvasElement ? source : undefined);
+        source instanceof HTMLCanvasElement && (opts?.afterGlow || directSources.has(source)) ? source : undefined);
   }
 
   if (import.meta.env.DEV) out.dataset.colorBackend = gpuOk ? 'gpu' : 'cpu';

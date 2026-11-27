@@ -106,7 +106,7 @@ import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, primeCanvasFont, ensureTextFonts, downloadFontFully } from '../utils/fonts';
 import { videoPoster } from '../utils/videoPoster';
 import { canEncodeFrames, encodeCanvasFrames, isPlayableVideo, seekVideosTo } from '../utils/frameExactVideo';
-import { sourceHasAlpha, lutMaxAmount, warmPhotoFxSurface } from '../utils/photoFx';
+import { sourceHasAlpha, lutMaxAmount, warmPhotoFxSurface, markDirectSource } from '../utils/photoFx';
 import { strokeAlphaContour } from '../utils/alphaStroke';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, settlePhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern, warmEditorLuts } from '../utils/photoFx';
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
@@ -5662,6 +5662,9 @@ const cardSourceThumbCache=new Map<string,HTMLCanvasElement>();
 let cardHighQuality=false;
 export const setCardHighQuality=(on:boolean)=>{cardHighQuality=on;};
 const drawCardCover=(dst:HTMLCanvasElement,img:HTMLImageElement)=>{
+  /* 卡片小圖套效果時直接從這張畫布傳上 GPU，不用 getImageData 讀回 CPU：讀回要排在 GPU 正在做的事後面，
+     剛拖完無縫／調整滑桿時 GPU 還在忙，主執行緒就整個卡住等（「剛開始卡一下」） */
+  markDirectSource(dst);
   if(!cardHighQuality){
     const w=dst.width,h=dst.height,s=Math.max(w/img.naturalWidth,h/img.naturalHeight),dw=img.naturalWidth*s,dh=img.naturalHeight*s;
     dst.getContext('2d')!.drawImage(img,(w-dw)/2,(h-dh)/2,dw,dh);return;
