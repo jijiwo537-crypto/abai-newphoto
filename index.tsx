@@ -8,10 +8,7 @@ import { installTapOnly } from './utils/tapOnly';
 import { setupNativeShell } from './utils/native';
 import { installAlphaGuard } from './utils/alphaGuard';
 import { installCanvasShadowSpace } from './utils/canvasShadowSpace';
-import { installDiag } from './utils/diagLog';
 
-/* 診斷紀錄（閃退、存檔異常時給開發者看）：最先裝，才記得到啟動時的錯誤 */
-installDiag();
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

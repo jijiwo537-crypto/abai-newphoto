@@ -1,4 +1,3 @@
-import { diag, diagWatching } from './diagLog';
 import { seamGeometry, seamImageTransform, type SeamPhoto, type SeamRect } from './seamlessLayout';
 import { configureWebglWide, get2dWide } from './colorSpace';
 export type SeamTexture = { image: CanvasImageSource; width: number; height: number } | null;
@@ -327,14 +326,13 @@ class SeamGpu {
               const ctx=pixels.getContext('2d',{colorSpace:this.color.colorSpace});if(!ctx)continue;
               ctx.imageSmoothingQuality='high';ctx.drawImage(image,0,0,pw,ph);
               const d=ctx.getImageData(0,0,pw,ph);
-              if(isBlank(d.data)&&k>1/16){if(diagWatching())diag('無縫貼圖','讀出來是空白，縮小重試',`${pw}x${ph}`);throw new Error('blank');}
+              if(isBlank(d.data)&&k>1/16)throw new Error('blank');
               // GPU 記憶體不夠時 texImage2D 也不報錯，貼圖就是空的：先試傳一次，失敗就縮小再來
               for(let i=3;i<d.data.length;i+=4){const a=d.data[i]/255;if(a!==1){d.data[i-3]*=a;d.data[i-2]*=a;d.data[i-1]*=a;}}
               while(gl.getError()!==gl.NO_ERROR){/* 清掉之前的錯誤 */}
               gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
               gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,pw,ph,0,gl.RGBA,gl.UNSIGNED_BYTE,d.data);
-              if(gl.getError()===gl.OUT_OF_MEMORY&&k>1/16){if(diagWatching())diag('無縫貼圖','GPU 記憶體不足，縮小重試',`${pw}x${ph}`);throw new Error('gpu memory');}
-              if(diagWatching())diag('無縫貼圖',`上傳 ${pw}x${ph}（原圖 ${sw}x${sh}${k<1?'，縮小過':''}）`,`來源 ${(image as any).naturalWidth||(image as any).width}x${(image as any).naturalHeight||(image as any).height}`);
+              if(gl.getError()===gl.OUT_OF_MEMORY&&k>1/16)throw new Error('gpu memory');
               data=d;break;
             }catch{/* 記憶體不夠：再縮小一半 */}
             pixels.width=pixels.height=1;

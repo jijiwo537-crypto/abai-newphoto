@@ -1,4 +1,3 @@
-import { diag, diagWatching } from './diagLog';
 import {drawSeamPreview,disposeSeamPreview,copySeamPreviewPixels,seamTextureEpoch,type SeamView} from './seamlessPreview';
 import {get2dWide} from './colorSpace';
 import {scenePixelEdge} from './scenePixelGrid';
@@ -183,9 +182,6 @@ export class CreativeSeamless {
     const surface=this.surface||(this.surface=document.createElement('canvas'));
     const photos=base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0}));
     const sources=base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;});
-    if(diagWatching())diag('無縫存檔',`範圍 ${right-left}x${bottom-top}、${Math.ceil((right-left)/1024)*Math.ceil((bottom-top)/1024)} 塊、${isWebKit()?'Safari 路徑':'其他'}`,`照片 ${base.photos.length} 張（全部 ${region.photos.length}）`,
-      sources.map((s0,i)=>s0?`${i}:${s0.width}x${s0.height}/${(s0.image as any).naturalWidth||(s0.image as any).width}x${(s0.image as any).naturalHeight||(s0.image as any).height}${(s0.image as any).complete===false?'(未載完)':''}`:`${i}:沒有圖`).join(' '),
-      `格子 ${rects.map(r=>[r.x,r.y,r.w,r.h].map(v=>v.toFixed(2)).join(',')).join(' ')}`);
     // 圖塊也限制原解析度存檔的範圍；每個圖塊都取樣原本的座標，羽化權重跟互動預覽完全一樣
     if(ctx.globalCompositeOperation==='copy'){
       ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);ctx.restore();
@@ -193,14 +189,13 @@ export class CreativeSeamless {
     ctx.save();ctx.globalCompositeOperation='source-over';ctx.beginPath();ctx.rect(x,y,w,h);ctx.clip();
     try{
       /* iPhone（Safari 核心）存檔：用預覽同一套合成（2D、羽化權重一樣、取樣同一批原圖），直接畫在成品解析度上。
-         GPU 分塊畫完再讀回的那條路在 iPhone 真機上會畫壞（整排雜線、錯位直條；偵錯紀錄確認照片都正確上傳），
+         GPU 分塊畫完再讀回的那條路在 iPhone 真機上會畫壞（整排雜線、錯位直條；照片都有正確上傳），
          電腦和模擬的 Safari 都重現不了。預覽本來就是這套，預覽和成品因此一模一樣 */
       if(isWebKit()){
         const exp=new CreativeFeatherSurface();
         try{
           /* 存檔一律用省記憶體那種（只用成品實體像素，不另外快取原圖密度的大圖）：iPhone 上大圖存檔才不會被系統關掉 */
           if(exp.paint(ctx,base,decoded,x,y,w,h,0)){
-            if(diagWatching())diag('無縫存檔','用預覽同一套合成（2D、省記憶體）');
             if(dim>=0&&dim<rects.length){const r=rects[dim];ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(x+r.x*w,y+r.y*h,r.w*w,r.h*h);}
             if(overlays.length)paintPhotoRegion(ctx,region,decoded,x,y,w,h,dim,overlays);
             return true;

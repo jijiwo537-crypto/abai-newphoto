@@ -10,7 +10,6 @@ export function runMeasured(fn: () => void) {
   const t0 = performance.now();
   try { fn(); } finally {
     const t1 = performance.now(), d = t1 - t0;
-    noteWork(d);
     // 很便宜的（< 4ms）不必讓：一幀 8ms 裡本來就留得下手指的時間
     busyUntil = d >= 4 ? t1 + d : 0;
   }
@@ -23,19 +22,3 @@ export function budgetedFrame(fn: () => void): () => void {
   return () => { dead = true; cancelAnimationFrame(id); };
 }
 
-/* ── 滑桿卡頓偵測（偵錯紀錄用） ─────────────────────────────
- * 拖滑桿期間每一幀量一次間隔；放手時記一筆：拖了多久、幾幀、最長一幀、超過 20ms（掉到 50 幀以下）的有幾幀、
- * 畫面計算（runMeasured）平均／最長花多久。卡在哪裡一看就知道：最長一幀很長但畫面計算很短＝別的東西佔住主執行緒。 */
-let workSum = 0, workN = 0, workMax = 0;
-export function startJankProbe(label: string, log: (tag: string, msg: string) => void): () => void {
-  const t0 = performance.now(); let last = t0, frames = 0, slow = 0, worst = 0, raf = 0, alive = true;
-  workSum = 0; workN = 0; workMax = 0;
-  const tick = (t: number) => { if (!alive) return; const d = t - last; last = t; if (frames++ > 0) { if (d > worst) worst = d; if (d > 20) slow++; } raf = requestAnimationFrame(tick); };
-  raf = requestAnimationFrame(tick);
-  return () => {
-    if (!alive) return; alive = false; cancelAnimationFrame(raf);
-    const dur = performance.now() - t0; if (dur < 120) return;
-    log('滑桿', `${label}：拖 ${Math.round(dur)}ms、${frames} 幀（約 ${Math.round(frames * 1000 / dur)}fps）、最長一幀 ${Math.round(worst)}ms、慢幀(>20ms) ${slow}、畫面計算 ${workN} 次 平均 ${workN ? (workSum / workN).toFixed(1) : 0}ms 最長 ${workMax.toFixed(1)}ms`);
-  };
-}
-export function noteWork(d: number) { workSum += d; workN++; if (d > workMax) workMax = d; }
