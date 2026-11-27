@@ -198,8 +198,9 @@ export class CreativeSeamless {
       if(isWebKit()){
         const exp=new CreativeFeatherSurface();
         try{
-          if(exp.paint(ctx,base,decoded,x,y,w,h)){
-            if(diagWatching())diag('無縫存檔','用預覽同一套合成（2D）');
+          /* 存檔一律用省記憶體那種（只用成品實體像素，不另外快取原圖密度的大圖）：iPhone 上大圖存檔才不會被系統關掉 */
+          if(exp.paint(ctx,base,decoded,x,y,w,h,0)){
+            if(diagWatching())diag('無縫存檔','用預覽同一套合成（2D、省記憶體）');
             if(dim>=0&&dim<rects.length){const r=rects[dim];ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(x+r.x*w,y+r.y*h,r.w*w,r.h*h);}
             if(overlays.length)paintPhotoRegion(ctx,region,decoded,x,y,w,h,dim,overlays);
             return true;

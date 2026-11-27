@@ -13,7 +13,8 @@ export class CreativeFeatherSurface {
   private fallback=new CreativeViewportFeatherSurface();
   private usingFallback=false;
   private scenes=new Map<string,{out:HTMLCanvasElement;cells:{canvas:HTMLCanvasElement;key:string;x:number;y:number;scale:number;image?:string}[];lastKey?:string}>();
-  paint(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number){
+  /** maxBytes：原圖密度那組暫存的上限，超過就改用只用實體 viewport 像素的省記憶體合成（存檔時傳 0：一律省記憶體） */
+  paint(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,maxBytes=448*1024*1024){
     const m=ctx.getTransform();if(m.b||m.c||m.a<=0||m.d<=0)return false;
     const logicalW=1000,logicalH=Math.round(1000*h/w*1e6)/1e6,ratio=w/logicalW;
     const rects=regionRects(region,logicalW,logicalH);
@@ -26,7 +27,7 @@ export class CreativeFeatherSurface {
     // 大的原圖不能再多做一整組沒有上限的解碼照片。退回原本用實體 viewport 的合成器，不是較低 DPI 的快照；
     // 預覽和存檔照樣取樣同樣的原圖像素
     if(import.meta.env.DEV)ctx.canvas.dataset.featherBytes=String(nativeBytes);
-    if(nativeBytes>448*1024*1024){
+    if(nativeBytes>maxBytes){
       if(import.meta.env.DEV)ctx.canvas.dataset.featherMode='viewport';
       if(!this.usingFallback){this.clearNative();this.usingFallback=true;}
       return this.fallback.paint(ctx,region,decoded,x,y,w,h);

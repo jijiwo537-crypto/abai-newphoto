@@ -8,6 +8,7 @@ import { waveWarp, revealPathD, drawWaveBatch, type WaveJob } from '../utils/wav
 import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
+import { nativeImage } from '../utils/nativeImage';
 import { diag, diagFlush, diagGpuWatch, diagMemory, copyDiag, diagText } from '../utils/diagLog';
 import { frameBudgetOk, runMeasured, startJankProbe } from '../utils/frameBudget';
 import { isMobileDevice, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
@@ -9944,26 +9945,35 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const globalCrops = useRef<HTMLCanvasElement[]>([]);
   const globalLast = useRef<{ key: string; G: HTMLCanvasElement } | null>(null);
   const globalBakeSeq = useRef(0), globalBakeOk = useRef(false);
-  const globalOverlay = useRef<HTMLCanvasElement | null>(null), globalSettle = useRef(0);
+  const globalOverlay = useRef<HTMLCanvasElement | null>(null), globalSettle = useRef(0), globalDrag = useRef<HTMLCanvasElement | null>(null);
+  /** 偵錯紀錄用：整體那一層每一格「重拼」和「套效果」各花多久 */
+  const globalStats = useRef({ n: 0, rec: 0, app: 0, recMax: 0, appMax: 0, fallback: 0, px: '' });
+  const flushGlobalStats = (label: string) => { const st = globalStats.current; if (st.n || st.fallback) diag('整體效果', `${label}：疊層 ${st.n} 次（${st.px}）重拼 平均 ${(st.rec / Math.max(1, st.n)).toFixed(1)}ms 最長 ${st.recMax.toFixed(1)}ms、套效果 平均 ${(st.app / Math.max(1, st.n)).toFixed(1)}ms 最長 ${st.appMax.toFixed(1)}ms、改走完整重畫 ${st.fallback} 次`); globalStats.current = { n: 0, rec: 0, app: 0, recMax: 0, appMax: 0, fallback: 0, px: '' }; };
   const hideGlobalOverlay = () => { const o = globalOverlay.current; if (o) { o.style.display = 'none'; o.remove(); globalOverlay.current = null; } };
   /** 調整「全部照片」時蓋在預覽上的那一層。做不到（還沒有拼好的那張、畫面放大中…）就回 false，照原本的方式畫 */
   const showGlobalOverlay = (gfx: PhotoFx, recompose = false): boolean => {
     const main = canvasRef.current, comp = globalComp.current;
     if (!main || !comp || !comp.sC || viewT.k !== 1 || !main.parentElement || !hasPhotoFx(gfx)) return false;
+    let src = comp.canvas;
+    const t0 = performance.now();
     if (recompose) {
-      /* 拼法變了（拖無縫）：拼好的那張重拼一次（跟 renderToCanvas 裡同一個做法、同一個解析度），整體效果照樣即時套上 */
+      /* 拼法變了（拖無縫）：在另一張畫布上重拼（跟拼好的那張同一個解析度：換解析度的話合成器的快取整個重建，第一格反而卡兩秒），
+         整體效果照樣每一格即時套上 */
       const region = photoRegionRef.current; if (!region) return false;
       const keep = region, keepForce = forceFullPreviewRef.current;
+      const drag = (globalDrag.current ??= document.createElement('canvas'));
       photoRegionRef.current = { ...region, globalFx: undefined };
       globalInner.current = true; forceFullPreviewRef.current = true;
-      try { renderScene(comp.canvas, comp.sC, true); } catch { return false; }
+      try { renderScene(drag, comp.sC, true); } catch { return false; }
       finally { globalInner.current = false; forceFullPreviewRef.current = keepForce; photoRegionRef.current = keep; }
-      forgetPhotoFxSource(comp.canvas); markDirectSource(comp.canvas);
+      forgetPhotoFxSource(drag); markDirectSource(drag); src = drag;
       comp.key = 'stale';                                            // 下一次正式重畫一定重拼
     }
+    const t1 = performance.now();
     const out = (globalOut.current ??= document.createElement('canvas'));
     let G: HTMLCanvasElement;
-    try { G = applyPhotoFx(comp.canvas, comp.canvas.width, comp.canvas.height, gfx, { cacheSource: true, gpuSurface: true, out }); } catch { return false; }
+    try { G = applyPhotoFx(src, src.width, src.height, gfx, { cacheSource: true, gpuSurface: true, out }); } catch { return false; }
+    const st = globalStats.current; st.n++; st.rec += t1 - t0; st.app += performance.now() - t1; st.recMax = Math.max(st.recMax, t1 - t0); st.appMax = Math.max(st.appMax, performance.now() - t1); st.px = `${src.width}x${src.height}`;
     if (G.isConnected && G !== globalOverlay.current) return false;      // 別處正在顯示的畫布，不搶
     if (globalOverlay.current && globalOverlay.current !== G) hideGlobalOverlay();
     placeOverMain(G, main); G.style.display = '';
@@ -11712,6 +11722,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const area = rawSize.w * finalScale * rawSize.h * finalScale;
         if (area > MAX_EXPORT_PIXELS) finalScale *= Math.sqrt(MAX_EXPORT_PIXELS / area);
 
+        /* 記憶體保險：存檔前問 iPhone 還剩多少記憶體。成品畫布加上合成的暫存大約要「成品像素 × 4 位元組 × 6」，
+           剩的不到它的 2 倍就把成品解析度降一點（最多降到 6 成），不硬撐到被系統關掉（閃退） */
+        try {
+          const api = await nativeImage();
+          if (api) {
+            const { available } = await api.memory();
+            const need = rawSize.w * finalScale * rawSize.h * finalScale * 4 * 6;
+            if (available > 0 && available < need * 2) {
+              const k = Math.max(0.6, Math.sqrt(available / (need * 2)));
+              diag('記憶體保險', `剩 ${Math.round(available / 1048576)}MB，成品解析度降為 ${Math.round(k * 100)}%`);
+              finalScale *= k;
+            }
+          }
+        } catch { /* 網頁版沒有這支 */ }
         const exportW = Math.floor(originalW * finalScale);
         const exportScale = exportW / baseW;
 
@@ -11923,9 +11947,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                              手停下來才正式重畫一次，結果一模一樣 */
                           const gfx=simple&&cur.globalFx&&hasPhotoFx(cur.globalFx as PhotoFx)?cur.globalFx as PhotoFx:null;
                           if(gfx&&cur.seamless&&next.seamless){photoRegionRef.current=next;
-                            if(!seamAmountRaf.current){const tick=()=>{if(!frameBudgetOk()){seamAmountRaf.current=requestAnimationFrame(tick);return;}seamAmountRaf.current=0;runMeasured(()=>{if(!showGlobalOverlay(gfx,true))regionPaintRef.current();});};seamAmountRaf.current=requestAnimationFrame(tick);}
+                            if(!seamAmountRaf.current){const tick=()=>{if(!frameBudgetOk()){seamAmountRaf.current=requestAnimationFrame(tick);return;}seamAmountRaf.current=0;runMeasured(()=>{if(!showGlobalOverlay(gfx,true)){globalStats.current.fallback++;regionPaintRef.current();}});};seamAmountRaf.current=requestAnimationFrame(tick);}
                             if(globalSettle.current)clearTimeout(globalSettle.current);
-                            globalSettle.current=window.setTimeout(()=>{globalSettle.current=0;hideGlobalOverlay();globalLast.current=null;commitRegion(photoRegionRef.current!,true);},280);
+                            globalSettle.current=window.setTimeout(()=>{globalSettle.current=0;flushGlobalStats('拖無縫');hideGlobalOverlay();globalLast.current=null;commitRegion(photoRegionRef.current!,true);},280);
                             return;}
                           if(cur.seamless&&next.seamless&&creativeSeam.current){photoRegionRef.current=next;seamPendingAmount.current=next.seamlessAmount||0;
                             if(!seamAmountRaf.current)seamAmountRaf.current=requestAnimationFrame(()=>{seamAmountRaf.current=0;
@@ -13711,9 +13735,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     photoRegionRef.current = { ...photoRegionRef.current, globalFx: next };
                     /* 把整張拼圖當成「一張照片」來調：拼好的那張不動，每一格只在 GPU 上套一次效果，直接蓋在預覽上
                        （跟編輯單張照片同一種成本）。手停下來才正式重畫一次（切回每一格），畫面就跟存檔完全一樣 */
-                    if (!showGlobalOverlay(next)) commitRegion(photoRegionRef.current!, true);
+                    if (!showGlobalOverlay(next)) { globalStats.current.fallback++; commitRegion(photoRegionRef.current!, true); }
                     if (globalSettle.current) clearTimeout(globalSettle.current);
-                    globalSettle.current = window.setTimeout(() => { globalSettle.current = 0; hideGlobalOverlay(); globalLast.current = null; commitRegion(photoRegionRef.current!, true); }, 280);
+                    globalSettle.current = window.setTimeout(() => { globalSettle.current = 0; flushGlobalStats('全部照片調整'); hideGlobalOverlay(); globalLast.current = null; commitRegion(photoRegionRef.current!, true); }, 280);
                   } else if (regionEditing && photoRegionRef.current) {
                     clearPhotoDimmer();
                     commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)},!!d.fx);
