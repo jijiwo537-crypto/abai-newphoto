@@ -3572,8 +3572,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const restoredRef = useRef(false);
   /* 從草稿接回拼圖時，照片要非同步讀回來：讀好、畫上去之前舞台先藏起來（最多藏 4 秒，萬一讀不回來也一定會顯示） */
   const [restoreHold, setRestoreHold] = useState(() => !!initialState?.photoRegion?.photos?.length);
+  /* 草稿資料可能晚一點才傳進來（工具先建立）：每次重畫都重新判斷「草稿裡有拼圖、拼圖還沒建立好」 */
+  const [holdTimedOut, setHoldTimedOut] = useState(false);
+  const restoreHoldRef = useRef(false);
   const releaseRestoreHold = () => requestAnimationFrame(() => requestAnimationFrame(() => setRestoreHold(false)));
   useEffect(() => { if (!restoreHold) return; const t = window.setTimeout(() => setRestoreHold(false), 4000); return () => clearTimeout(t); }, [restoreHold]);
+  restoreHoldRef.current = !holdTimedOut && (initialState?.photoRegion?.photos?.length || 0) > 1 && (photoRegion?.photos.length || 0) < initialState.photoRegion.photos.length;
+  // 萬一照片一直讀不回來：4 秒後照樣畫
+  useEffect(() => { if (!initialState?.photoRegion?.photos?.length) return; const t = window.setTimeout(() => setHoldTimedOut(true), 4000); return () => clearTimeout(t); }, [initialState]);
   useEffect(() => {
     /* 必須等底圖建立 baseW/baseH 後才恢復。在空畫布階段先套位置的話，
        隨後的底圖初始化又隨機生成一次圖案，保存的位置便被覆蓋。 */
@@ -3600,8 +3606,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const epoch = ++photoRegionEpoch.current;
       void loadRegion(st.photoRegion).then(region => {
         if (epoch === photoRegionEpoch.current) setPhotoRegion(region);
-      }).catch(error => console.error('Photo region restore failed', error)).finally(releaseRestoreHold);
-    } else releaseRestoreHold();
+      }).catch(error => { console.error('Photo region restore failed', error); releaseRestoreHold(); });
+    }
     if (st.maskScale !== undefined) setMaskScale(st.maskScale);
     if (isCanvasRatio(st.canvasRatio)) setCanvasRatio(st.canvasRatio);
     setCanvasRatioBeforeFull(isCanvasRatio(st.canvasRatioBeforeFull)?st.canvasRatioBeforeFull:null);
@@ -7096,6 +7102,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const maskPhotosReady=!photoRegion||(photoRegion.photos.every(p=>p.src&&decodedRegionPhotos.current.has(p.src))&&regionRects(photoRegion,iw,ih).length===photoRegion.photos.length);
     const directMaskPhotos:BackdropPhotoLayer[]|null=isMain&&!previewCapture&&hasBackdrop&&maskPhotosReady&&layout!==AROUND&&(layout===FULL||patternType==='none'&&!maskImageState)&&!holes.length&&!animRef.current&&!regionHold.current?.active&&!swapSource&&!baseSelected&&selectedRegionPhotoRef.current===null&&!photoRegion?.seamless&&objects.every(o=>!o.below&&o.type==='shape'&&isBackdropMask(o.kind)&&o.kind!=='mask-frost-feather')?[]:null;
     const drawBase = (g: CanvasRenderingContext2D, img: any, x: number, y: number, w: number, h: number, allowDim = false, clip?:number[]) => {
+      /* 從「繼續編輯」接回拼圖、照片還沒全部回來：照片那一塊先不畫（接回時會先用第一張照片自動拼出「只有一張」的拼圖，
+         那就是第一幀只看到一張圖）。排版、其他畫面照常立刻出現，照片到齊就直接是整組 */
+      if (restoreHoldRef.current) return;
       if(directMaskPhotos&&img===baseImg){
         const m=g.getTransform(),transform=(r:number[])=>[m.a*r[0]+m.e,m.d*r[1]+m.f,m.a*r[2],m.d*r[3]],multi=photoRegion&&(photoRegion.multi||photoRegion.photos.length>1);
         const cells=multi?regionRects(regionForPaint!,w,h):[{x:0,y:0,w:1,h:1}];
@@ -12471,8 +12480,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             data-canvas-ratio={canvasRatio}
             className="absolute inset-0 overflow-hidden"
             style={{
-              /* 從「繼續編輯」回來：整組拼圖畫好之前先不顯示（不然第一幀只看得到底圖那一張） */
-              visibility: restoreHold ? 'hidden' : undefined,
               touchAction: 'none',
               /* 工具欄讓上來之後，圖片如果會被擋到就整個縮一點、並往上移半個讓位量
                  （縮放的原點在正中央，所以中心往上移一半就剛好置中在剩下的空間裡）。
