@@ -1,0 +1,19 @@
+name: 核心回歸測試
+# 每次部署（推到 main）自動跑；也可以手動執行。任何一項不通過，這個流程會顯示失敗。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - run: npm i --no-save playwright@1.56.1 && npx playwright install --with-deps chromium
+      - run: (npx vite --port 4321 --host 127.0.0.1 > vite.log 2>&1 &) ; until curl -s -o /dev/null http://127.0.0.1:4321/; do sleep 1; done
+      - run: BASE_URL=http://127.0.0.1:4321/ node tests/regression/core.mjs
