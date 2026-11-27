@@ -314,13 +314,31 @@ class SeamGpu {
         }else{
           // Safari 的 DOM 貼圖匯入可能把描述檔套兩次。自己在原解析度做一次 ICC 轉換，
           // 再用輸出色域上傳原始位元組（每個手勢都不讀回）
-          const pixels=document.createElement('canvas');pixels.width=uploadW;pixels.height=uploadH;
-          const ctx=pixels.getContext('2d',{colorSpace:this.color.colorSpace})!;ctx.imageSmoothingQuality='high';ctx.drawImage(image,0,0,uploadW,uploadH);
-          const data=ctx.getImageData(0,0,pixels.width,pixels.height);
-          // 型別陣列上傳不會做 UNPACK_PREMULTIPLY_ALPHA_WEBGL
-          for(let k=0;k<data.data.length;k+=4){const a=data.data[k+3]/255;if(a!==1){data.data[k]*=a;data.data[k+1]*=a;data.data[k+2]*=a;}}
-          gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
-          gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,pixels.width,pixels.height,0,gl.RGBA,gl.UNSIGNED_BYTE,data.data);
+          /* iPhone 存檔時照片很大又很多：畫布記憶體超過上限時，iOS 不會報錯，那張畫布直接變「全透明」——
+             上傳上去那張照片就不見了，無縫羽化露出旁邊照片延伸出來的部分（存出來像被切開、兩張疊在一起）。
+             讀出來先檢查：空白就縮小一半再來，一定要有圖 */
+          const isBlank=(u:Uint8ClampedArray)=>{const step=Math.max(4,(u.length>>10)&~3);for(let i=3;i<u.length;i+=step)if(u[i])return false;return true;};
+          const pixels=document.createElement('canvas');let data:ImageData|null=null;
+          for(let k=1;k>=1/16;k/=2){
+            const pw=Math.max(1,Math.round(uploadW*k)),ph=Math.max(1,Math.round(uploadH*k));
+            pixels.width=pw;pixels.height=ph;
+            try{
+              const ctx=pixels.getContext('2d',{colorSpace:this.color.colorSpace});if(!ctx)continue;
+              ctx.imageSmoothingQuality='high';ctx.drawImage(image,0,0,pw,ph);
+              const d=ctx.getImageData(0,0,pw,ph);
+              if(isBlank(d.data)&&k>1/16)throw new Error('blank');
+              // GPU 記憶體不夠時 texImage2D 也不報錯，貼圖就是空的：先試傳一次，失敗就縮小再來
+              for(let i=3;i<d.data.length;i+=4){const a=d.data[i]/255;if(a!==1){d.data[i-3]*=a;d.data[i-2]*=a;d.data[i-1]*=a;}}
+              while(gl.getError()!==gl.NO_ERROR){/* 清掉之前的錯誤 */}
+              gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+              gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,pw,ph,0,gl.RGBA,gl.UNSIGNED_BYTE,d.data);
+              if(gl.getError()===gl.OUT_OF_MEMORY&&k>1/16)throw new Error('gpu memory');
+              data=d;break;
+            }catch{/* 記憶體不夠：再縮小一半 */}
+            pixels.width=pixels.height=1;
+          }
+          // （型別陣列上傳不會做 UNPACK_PREMULTIPLY_ALPHA_WEBGL：上面已經自己預乘、傳好了）
+          if(!data){gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(4));}
           pixels.width=pixels.height=1;
         }
         // 每張原圖一份固定的反鋸齒金字塔，縮小時照片的細節才不會閃爍。三線性取樣是連續的，

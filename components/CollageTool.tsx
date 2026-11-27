@@ -11601,7 +11601,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 存檔前：最多同時做兩張（六張一起會爆記憶體，一張一張又太慢；兩張是尖峰只多一點、速度快將近一倍的平衡） */
     if (wait && waitList.length) {
       let next = 0;
-      const lane = async () => { while (next < waitList.length) { const [src, required] = waitList[next++]; const img = await ensureTier(src, required); if (img && !leavingRef.current) { swapTier(src, img); swapped = true; } } };
+      /* 換上去之前一定要解碼完：iPhone 上沒解碼完的圖畫進畫布是一片全透明，那張照片在成品裡就不見了
+         （無縫拼圖會露出旁邊照片延伸過來的部分，看起來像被切開、兩張疊在一起） */
+      const lane = async () => { while (next < waitList.length) { const [src, required] = waitList[next++]; const img = await ensureTier(src, required); if (img) { try { await img.decode?.(); } catch { /* 解碼失敗就照舊 */ } } if (img && !leavingRef.current) { swapTier(src, img); swapped = true; } } };
       await Promise.all([lane(), lane()]);
     }
     return swapped;
