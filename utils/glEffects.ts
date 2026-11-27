@@ -1011,6 +1011,8 @@ function warmDraw(c: Ctx, progs: (WebGLProgram | null)[]) {
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 4, 4, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    /* 建完就解開：不然它還掛在當時那個貼圖槽上，預熱畫的時候「讀自己、寫自己」，Safari 會把那一筆丟掉並報 feedback loop */
+    gl.bindTexture(gl.TEXTURE_2D, null);
     t = { tex, fb }; warmTargets.set(gl, t);
   }
   const prevFb = gl.getParameter(gl.FRAMEBUFFER_BINDING), prevVp = gl.getParameter(gl.VIEWPORT) as Int32Array;
