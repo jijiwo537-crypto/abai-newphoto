@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { sliderHaptic } from './haptics';
-import { frameBudgetOk, runMeasured } from './frameBudget';
+import { frameBudgetOk, runMeasured, startJankProbe } from './frameBudget';
+import { diag } from './diagLog';
 
 /* 滑桿「一格一格跳」與「跟不上手指」的共同解法。
  *
@@ -43,11 +44,13 @@ export function useSmoothSlider(
     if (v !== null && v !== sent.current) { sent.current = v; runMeasured(() => cb.current(v)); }
   };
   const lastRaw = useRef(value);
+  const probe = useRef<(() => void) | null>(null);
   const input = useCallback((raw: number) => {
     if (!Number.isFinite(raw)) return;
     /* App 裡：經過 0 輕震一下、拉到頭再震一下（網頁版什麼都不做） */
     sliderHaptic(dragging.current ? lastRaw.current : sent.current, raw, min, max);
     lastRaw.current = raw;
+    if (!dragging.current && !probe.current) probe.current = startJankProbe(`滑桿 ${min}～${max}`, diag);
     dragging.current = true;
     setShown(raw);
     pending.current = snapToStep(raw, min, max, step);
@@ -58,6 +61,7 @@ export function useSmoothSlider(
     if (frame.current) cancelAnimationFrame(frame.current);
     deliver();
     dragging.current = false;
+    probe.current?.(); probe.current = null;
     setShown(sent.current);
     commitCb.current?.();
   }, []);

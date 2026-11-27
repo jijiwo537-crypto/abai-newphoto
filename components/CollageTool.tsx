@@ -9,7 +9,7 @@ import { snapHaptic } from '../utils/haptics';
 import { hsvToHex, hexToHsv } from '../utils/hsv';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { diag, diagFlush, diagGpuWatch, diagMemory, copyDiag, diagText } from '../utils/diagLog';
-import { frameBudgetOk, runMeasured } from '../utils/frameBudget';
+import { frameBudgetOk, runMeasured, startJankProbe } from '../utils/frameBudget';
 import { isMobileDevice, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
 import { reframeBasePhoto } from '../utils/reframeBasePhoto';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskSampleReach,maskGeometry,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
@@ -11709,8 +11709,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const exportCanvas = document.createElement('canvas');
         { const r = photoRegionRef.current;
           diag('存檔開始', `${simple ? '編輯的拼圖' : '創意拼圖'} 成品 ${exportW}x${Math.round(originalH * finalScale)}`, `無縫 ${r?.seamless ? (r.seamlessAmount ?? 0) : '關'}`,
-            `照片 ${(r?.photos || []).map(ph => { const im: any = decodedRegionPhotos.current.get(ph.src); return `${ph.width}x${ph.height}→${im ? (im.naturalWidth || im.width) + 'x' + (im.naturalHeight || im.height) : '無'}${ph.fx && Object.keys(ph.fx).length ? '+效果' : ''}`; }).join(', ')}`,
-            r?.globalFx && Object.keys(r.globalFx).length ? `整體 ${Object.keys(r.globalFx).join('/')}` : '', diagMemory());
+            `照片 ${(r?.photos || []).map(ph => { const im: any = decodedRegionPhotos.current.get(ph.src); return `${ph.width}x${ph.height}→${im ? (im.naturalWidth || im.width) + 'x' + (im.naturalHeight || im.height) : '無'}${ph.fx && Object.values(ph.fx).some(v => v) ? '+效果' : ''}`; }).join(', ')}`,
+            r?.globalFx ? `整體 ${Object.entries(r.globalFx).filter(([, v]) => v && v !== 100).map(([k, v]) => `${k}=${v}`).join('/') || '無'}` : '', diagMemory());
           diagFlush(); diagGpuWatch(true); }
         /* 存成圖片時一律用「靜態的那一張」：所有元素都在自己的原位、
            原尺寸。不然會存到動畫半途，位置跟編輯時看到的對不上。 */
@@ -11718,7 +11718,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         try { renderToCanvasRef.current(exportCanvas, exportScale); } finally { diagGpuWatch(false); }
         releaseExportFx();
         diag('存檔畫完', `${exportCanvas.width}x${exportCanvas.height}`, diagMemory());
+        let debugSheetCanvas: HTMLCanvasElement | null = null;
         if (debugMode) {
+          /* 自動比對：預覽和成品都縮到 48×64，切 6×8 格，記下差最多的格子（哪一塊壞掉一看就知道） */
+          try {
+            if (debugPreview && debugPreview.width && exportCanvas.width) {
+              const cw = 48, ch = Math.max(8, Math.round(48 * exportCanvas.height / exportCanvas.width));
+              const px = (src: HTMLCanvasElement) => { const c = document.createElement('canvas'); c.width = cw; c.height = ch; const g = c.getContext('2d')!; g.drawImage(src, 0, 0, cw, ch); return g.getImageData(0, 0, cw, ch, { colorSpace: 'srgb' } as any).data; };
+              const a = px(debugPreview), b = px(exportCanvas), GX = 6, GY = 8, rows: string[] = []; let worst = 0;
+              for (let gy = 0; gy < GY; gy++) { const row: number[] = []; for (let gx = 0; gx < GX; gx++) { let sum = 0, n = 0;
+                for (let y = Math.floor(gy * ch / GY); y < (gy + 1) * ch / GY; y++) for (let x = Math.floor(gx * cw / GX); x < (gx + 1) * cw / GX; x++) { const i = (y * cw + x) * 4; sum += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]); n += 3; }
+                const d = Math.round(sum / Math.max(1, n)); row.push(d); if (d > worst) worst = d; } rows.push(row.join(' ')); }
+              diag('預覽vs成品', `最大差 ${worst}（0～255，超過 25 肉眼看得出來）每格：`, rows.join(' | '));
+            }
+          } catch (e) { diag('偵錯', '比對失敗', String(e)); }
           try {
             const W = 1080, half = (src: HTMLCanvasElement | null) => src && src.width ? Math.round(W / 2 * src.height / src.width) : 0;
             const hp = half(debugPreview), he = half(exportCanvas), log = diagText().split('\n').slice(-30).flatMap(l => { const out: string[] = []; for (let i = 0; i < l.length; i += 52) out.push(l.slice(i, i + 52)); return out; });
@@ -11729,13 +11742,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             if (he) g.drawImage(exportCanvas, W / 2 + 4, 50, W / 2 - 4, he);
             g.font = '18px monospace'; g.fillStyle = '#ddd';
             log.forEach((l, i) => g.fillText(l, 10, Math.max(hp, he) + 90 + i * 26));
-            void canvasToUrl(sheet, 'image/jpeg', 0.9).then(u => { sheet.width = sheet.height = 0; if (u) setDebugSheet(u); });
+            debugSheetCanvas = sheet;
           } catch (e) { diag('偵錯', '對照圖失敗', String(e)); }
           if (debugPreview) debugPreview.width = debugPreview.height = 0;
         }
         
         // 用所選格式編碼，再持有 blob 網址，避免 dataURL 額外的字串記憶體。
-        const url = imageExportFormat==='heic'?await exportHeic(exportCanvas):await canvasToUrl(exportCanvas,imageExportFormat==='jpg'?'image/jpeg':'image/png',1);
+        /* 偵錯模式：存進相簿的就是那張對照圖（App 裡沒辦法長按另存） */
+        const url = debugSheetCanvas ? await canvasToUrl(debugSheetCanvas, 'image/jpeg', 0.92)
+          : imageExportFormat==='heic'?await exportHeic(exportCanvas):await canvasToUrl(exportCanvas,imageExportFormat==='jpg'?'image/jpeg':'image/png',1);
+        if (debugSheetCanvas) { debugSheetCanvas.width = debugSheetCanvas.height = 0; }
         // 兩條路都轉不出來（見 canvasToUrl）——當成失敗收掉，不要停在「正在存檔」
         if (!url) throw new Error('導出的圖轉不出來');
         revokeUrl(finalUrlRef.current);
@@ -14599,14 +14615,15 @@ const IdleOnce=({k,run,visible}:{k:string;run:()=>void;visible?:{current:boolean
 const RegionLiveRange=({value,onChange,onCommit,onStart,min=0,max=100,step=1,label='融合程度'}:{value:number;onChange:(v:number)=>void;onCommit:()=>void;onStart?:()=>void;min?:number;max?:number;step?:number;label?:string})=>{
   const [shown,setShown]=React.useState(value);
   const release=React.useRef<(()=>void)|null>(null);
-  const finish=()=>{release.current?.();release.current=null;onCommit();};
+  const probe=React.useRef<(()=>void)|null>(null);
+  const finish=()=>{probe.current?.();probe.current=null;release.current?.();release.current=null;onCommit();};
   React.useEffect(()=>()=>release.current?.(),[]);
   React.useEffect(()=>setShown(value),[value]);
   return <div className="slider-wrap w-full" style={{height:16}}>
     {/* 白點連續跟手（step="any"）：無縫、佔比都吃小數，不必一格一格跳 */}
     <input aria-label={label} type="range" min={min} max={max} step={step===1?"any":step} value={shown} className="premium-slider w-full"
       onChange={e=>{const v=Number(e.target.value);setShown(v);deferHeavyWork();onChange(v);}}
-      onPointerDown={e=>{e.stopPropagation();release.current?.();release.current=holdPhotoInteraction();onStart?.();}}
+      onPointerDown={e=>{e.stopPropagation();release.current?.();release.current=holdPhotoInteraction();probe.current?.();probe.current=startJankProbe(label,diag);onStart?.();}}
       onPointerUp={finish} onPointerCancel={finish} onTouchEnd={finish} onKeyUp={finish}/></div>;
 };
 

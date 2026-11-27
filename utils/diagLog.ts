@@ -26,6 +26,7 @@ export function diagFlush() { if (persistTimer) { clearTimeout(persistTimer); pe
 const shortStack = () => (new Error().stack || '').split('\n').slice(2, 6).map(s => s.trim().replace(/^at /, '').replace(/^.*\//, '').replace(/\?[^:)]*/, '')).join(' < ');
 
 /** 存檔期間打開 GPU／畫布檢查（可以巢狀） */
+export const diagWatching = () => gpuWatch > 0;
 export function diagGpuWatch(on: boolean) { gpuWatch = Math.max(0, gpuWatch + (on ? 1 : -1)); }
 
 async function heartbeat() {

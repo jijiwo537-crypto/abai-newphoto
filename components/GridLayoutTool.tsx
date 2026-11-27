@@ -4162,6 +4162,15 @@ useEffect(()=>{
   const key0=previewSrc(cardSrc,0),cutOf=()=>cardSourceThumbCache.get(key0);
   const source=cutOf()?null:getPreviewImg(key0);
   const prime=()=>{if(cancelled||(!cutOf()&&!source?.naturalWidth))return;
+    /* 濾鏡那排也先備好（跟編輯頁一樣：使用者還在別的分頁時就趁空檔算，點進濾鏡頁時縮圖已經在了）。
+       濾鏡縮圖很便宜（一張小圖查一次色表），排在特效前面；色表還沒載好的那幾張留給卡片自己算 */
+    for(const l of lutList){
+      if(!l.url||!getLoadedLut(l.id))continue;
+      const key=`${cardSrc}|lut:${l.id}|ready`;
+      if(cardThumbCache.has(key))continue;
+      void queueCardThumb(()=>{if(cardThumbCache.has(key))return;const preset={lut:l.id,lutAmount:lutDefaultAmount(l.id)} as PhotoFx,cut=cutOf();
+        const thumb=cut?applyPhotoFx(cut,CARD_W*CARD_DPR,CARD_H*CARD_DPR,preset):source?makeCardThumb(source,preset):null;if(thumb)putCardThumb(key,thumb);},()=>cancelled);
+    }
     for(const [id] of FX_ROOT_TOOLS){
       /* 柔光ll 第一次要編譯十幾段顯示卡程式（其他特效一張只要零點零幾秒）：不先備，
          等真的打開特效頁、卡片出現時才算，不會在使用者拖別的滑桿時突然卡住 */

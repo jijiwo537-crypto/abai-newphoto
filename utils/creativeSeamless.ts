@@ -1,3 +1,4 @@
+import { diag, diagWatching } from './diagLog';
 import {drawSeamPreview,disposeSeamPreview,copySeamPreviewPixels,seamTextureEpoch,type SeamView} from './seamlessPreview';
 import {get2dWide} from './colorSpace';
 import {scenePixelEdge} from './scenePixelGrid';
@@ -182,6 +183,9 @@ export class CreativeSeamless {
     const surface=this.surface||(this.surface=document.createElement('canvas'));
     const photos=base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0}));
     const sources=base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;});
+    if(diagWatching())diag('無縫存檔',`範圍 ${right-left}x${bottom-top}、${Math.ceil((right-left)/1024)*Math.ceil((bottom-top)/1024)} 塊、${isWebKit()?'Safari 路徑':'其他'}`,`照片 ${base.photos.length} 張（全部 ${region.photos.length}）`,
+      sources.map((s0,i)=>s0?`${i}:${s0.width}x${s0.height}/${(s0.image as any).naturalWidth||(s0.image as any).width}x${(s0.image as any).naturalHeight||(s0.image as any).height}${(s0.image as any).complete===false?'(未載完)':''}`:`${i}:沒有圖`).join(' '),
+      `格子 ${rects.map(r=>[r.x,r.y,r.w,r.h].map(v=>v.toFixed(2)).join(',')).join(' ')}`);
     // 圖塊也限制原解析度存檔的範圍；每個圖塊都取樣原本的座標，羽化權重跟互動預覽完全一樣
     if(ctx.globalCompositeOperation==='copy'){
       ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);ctx.restore();
