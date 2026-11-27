@@ -4157,36 +4157,8 @@ useEffect(() => {
 const cardSrc = !panelIsVideo ? img.src
   : knownPoster || (madePoster?.url === videoUrl ? madePoster.poster : BLANK_CARD_SRC);
 useEffect(()=>{
-  let cancelled=false;
-  // 卡片縮圖很小：用預覽小副本就夠了（見 utils/previewCopies）；卡片小圖已經做好就連讀都不讀
-  const key0=previewSrc(cardSrc,0),cutOf=()=>cardSourceThumbCache.get(key0);
-  const source=cutOf()?null:getPreviewImg(key0);
-  const prime=()=>{if(cancelled||(!cutOf()&&!source?.naturalWidth))return;
-    /* 濾鏡那排也先備好（跟編輯頁一樣：使用者還在別的分頁時就趁空檔算，點進濾鏡頁時縮圖已經在了）。
-       濾鏡縮圖很便宜（一張小圖查一次色表），排在特效前面；色表還沒載好的那幾張留給卡片自己算 */
-    for(const l of lutList){
-      if(!l.url||!getLoadedLut(l.id))continue;
-      const key=`${cardSrc}|lut:${l.id}|ready`;
-      if(cardThumbCache.has(key))continue;
-      void queueCardThumb(()=>{if(cardThumbCache.has(key))return;const preset={lut:l.id,lutAmount:lutDefaultAmount(l.id)} as PhotoFx,cut=cutOf();
-        const thumb=cut?applyPhotoFx(cut,CARD_W*CARD_DPR,CARD_H*CARD_DPR,preset):source?makeCardThumb(source,preset):null;if(thumb)putCardThumb(key,thumb);},()=>cancelled);
-    }
-    for(const [id] of FX_ROOT_TOOLS){
-      /* 柔光ll 第一次要編譯十幾段顯示卡程式（其他特效一張只要零點零幾秒）：不先備，
-         等真的打開特效頁、卡片出現時才算，不會在使用者拖別的滑桿時突然卡住 */
-      if(id==='fxExposureSpill')continue;
-      const key=`${cardSrc}|fx:${id}`;
-      if(cardThumbCache.has(key))continue;
-      void queueCardThumb(()=>{if(cardThumbCache.has(key))return;const preset=effectPreset(id,FX_DEFS) as PhotoFx,cut=cutOf();
-        const thumb=cut?applyPhotoFx(cut,CARD_W*CARD_DPR,CARD_H*CARD_DPR,preset):source?makeCardThumb(source,preset):null;if(thumb)putCardThumb(key,thumb);},()=>cancelled);
-    }
-  };
-  /* 特效卡片的縮圖是「先備著」的（打開特效頁時卡片自己會算）：進編輯頁之後等 2.5 秒再開始。
-     有幾張特效第一次要編譯很多段顯示卡程式（柔光ll 一張就要編十幾段），一開編輯頁就算的話，
-     常常剛好撞上使用者第一下拖濾鏡、調節滑桿 —— 那就是「剛開始預覽一卡一卡、過一陣子就好」 */
-  const start=()=>{if(!source||source.complete)prime();else source.addEventListener('load',prime,{once:true});};
-  const t=window.setTimeout(start,2500);
-  return()=>{cancelled=true;clearTimeout(t);source?.removeEventListener('load',prime);};
+  /* 濾鏡縮圖很便宜：面板一出現、閒下來就算；特效那排照舊晚一點（見 primeCardThumbs） */
+  return primeCardThumbs(cardSrc,lutList);
 },[cardSrc]);
 
 /* ── 兩段式的那幾顆（形狀／描邊／發光）按下去要立刻有反應 ──────────────
@@ -5728,6 +5700,28 @@ function queueCardThumb(work:()=>void,cancelled:()=>boolean):Promise<void>{
     await awaitPhotoIdle();if(!cancelled())work();
   });
   cardThumbWork=task.catch(()=>{});return task;
+}
+
+/**
+ * 先把一張照片的濾鏡／特效卡片縮圖算好放進快取（跟編輯頁一樣：使用者還在別處時趁空檔算，點進濾鏡、特效頁時縮圖已經在了）。
+ * 濾鏡（便宜，查一次色表）閒下來就馬上算；特效等 fxDelay 毫秒再算（有幾張第一次要編譯 GPU 程式，不要撞上使用者第一下拖滑桿）。
+ * 柔光ll 不先備（一張要編十幾段 GPU 程式），等卡片出現才算。回傳取消函式。拼圖導入照片後也會叫這支。
+ */
+export function primeCardThumbs(cardSrc:string,lutList:{id:string;url:string}[],fxDelay=2500,withFx=true):()=>void{
+  let cancelled=false;
+  if(!cardSrc||cardSrc.startsWith('data:'))return()=>{};
+  const key0=previewSrc(cardSrc,0),cutOf=()=>cardSourceThumbCache.get(key0);
+  const source=cutOf()?null:getPreviewImg(key0);
+  const one=(key:string,preset:PhotoFx)=>{if(cardThumbCache.has(key))return;
+    void queueCardThumb(()=>{if(cardThumbCache.has(key))return;const cut=cutOf();
+      const thumb=cut?applyPhotoFx(cut,CARD_W*CARD_DPR,CARD_H*CARD_DPR,preset):source?.naturalWidth?makeCardThumb(source,preset):null;if(thumb)putCardThumb(key,thumb);},()=>cancelled);};
+  const filters=()=>{if(cancelled)return;for(const l of lutList){if(!l.url||!getLoadedLut(l.id))continue;one(`${cardSrc}|lut:${l.id}|ready`,{lut:l.id,lutAmount:lutDefaultAmount(l.id)} as PhotoFx);}};
+  const effects=()=>{if(cancelled)return;for(const [id] of FX_ROOT_TOOLS){if(id==='fxExposureSpill')continue;one(`${cardSrc}|fx:${id}`,effectPreset(id,FX_DEFS) as PhotoFx);}};
+  const ready=(f:()=>void)=>{if(!source||source.complete)f();else source.addEventListener('load',f,{once:true});};
+  const ric=(window as any).requestIdleCallback as ((f:()=>void,o?:any)=>number)|undefined;
+  const idle=ric?ric(()=>ready(filters),{timeout:600}):window.setTimeout(()=>ready(filters),150);
+  const t=withFx?window.setTimeout(()=>ready(effects),fxDelay):0;
+  return()=>{cancelled=true;if(ric)(window as any).cancelIdleCallback?.(idle);else clearTimeout(idle);if(t)clearTimeout(t);source?.removeEventListener('load',filters);source?.removeEventListener('load',effects);};
 }
 
 /** 這一格縮圖：把來源縮成卡片大小之後才套效果，所以很快 */

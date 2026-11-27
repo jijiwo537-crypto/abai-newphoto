@@ -192,6 +192,20 @@ export class CreativeSeamless {
     }
     ctx.save();ctx.globalCompositeOperation='source-over';ctx.beginPath();ctx.rect(x,y,w,h);ctx.clip();
     try{
+      /* iPhone（Safari 核心）存檔：用預覽同一套合成（2D、羽化權重一樣、取樣同一批原圖），直接畫在成品解析度上。
+         GPU 分塊畫完再讀回的那條路在 iPhone 真機上會畫壞（整排雜線、錯位直條；偵錯紀錄確認照片都正確上傳），
+         電腦和模擬的 Safari 都重現不了。預覽本來就是這套，預覽和成品因此一模一樣 */
+      if(isWebKit()){
+        const exp=new CreativeFeatherSurface();
+        try{
+          if(exp.paint(ctx,base,decoded,x,y,w,h)){
+            if(diagWatching())diag('無縫存檔','用預覽同一套合成（2D）');
+            if(dim>=0&&dim<rects.length){const r=rects[dim];ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(x+r.x*w,y+r.y*h,r.w*w,r.h*h);}
+            if(overlays.length)paintPhotoRegion(ctx,region,decoded,x,y,w,h,dim,overlays);
+            return true;
+          }
+        }finally{exp.dispose();}
+      }
       for(let py=top;py<bottom;py+=1024)for(let px=left;px<right;px+=1024){
         const tw=Math.min(1024,right-px),th=Math.min(1024,bottom-py);
         if(surface.width!==tw)surface.width=tw;if(surface.height!==th)surface.height=th;

@@ -61,7 +61,7 @@ import { SYMBOLS } from '../utils/symbols';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
 import {
-  TextEditorPanel, TextEditSheet, ImageAdjustPanel, FX_PARAM_DEFAULTS, effectStrengthKey, setCardHighQuality,
+  TextEditorPanel, TextEditSheet, ImageAdjustPanel, FX_PARAM_DEFAULTS, effectStrengthKey, setCardHighQuality, primeCardThumbs,
   /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
@@ -3176,7 +3176,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const allSliderHeld = useRef(false);
   const allBlendDummy = useRef<HTMLCanvasElement | null>(null);
   /* 簡易拼圖的濾鏡／特效卡片縮圖用分段高品質縮小（只有這裡，見 GridLayoutTool 的 setCardHighQuality） */
-  useEffect(() => { if (!simple) return; setCardHighQuality(true); return () => setCardHighQuality(false); }, [simple]);
+  /* 卡片縮圖跟編輯頁同一種縮小（不再另外做分段高品質縮小）。
+     導入照片、畫面穩定之後就趁空檔先把每張照片的濾鏡縮圖、第一張的特效縮圖算好：點進編輯頁時縮圖已經在了 */
+  void setCardHighQuality;
+  useEffect(() => {
+    if (!photoRegion?.photos.length) return;
+    let stop: (() => void)[] = [], dead = false;
+    const t = window.setTimeout(() => { void awaitPhotoIdle().then(() => {
+      if (dead) return;
+      photoRegion.photos.forEach((p, i) => { const im = decodedRegionPhotos.current.get(p.src); if (im?.src) stop.push(primeCardThumbs(im.src, lutList || [], 1500, i === 0)); });
+    }); }, 400);
+    return () => { dead = true; clearTimeout(t); stop.forEach(f => f()); stop = []; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photoRegion?.photos.map(p => p.src).join('|')]);
   allBlendToolRef.current = allBlendTool;
   allBlendKeyRef.current = allBlendTool ? JSON.stringify([imageState?.img?.src, layout, canvasRatio, imageTransform, maskScale, objects.length,
     photoRegion && { ...photoRegion, photos: photoRegion.photos.map(p => ({ ...p, fx: { ...(p.fx || {}), [allBlendTool]: 0 } })) }], compactSceneValue) : '';
