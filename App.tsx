@@ -170,6 +170,22 @@ const App: React.FC = () => {
   const [editorRawMap, setEditorRawMap] = useState<Record<string, { path: string; protectEV: number; look: RawLook | null }>>({});
   /** 批量編輯：這次匯入的所有照片（只有一張時就是一般的單張編輯） */
   const [editorImages, setEditorImages] = useState<string[]>([]);
+  /* 導入進編輯時替原始照片開的檔案網址。網址還在，瀏覽器就得一直扣著整份原檔（一張 3～10MB）——
+     以前換成下一批照片後舊的從來沒收，每導入一次就多扣一份。換掉之後、確定沒在用了才收（15 秒後再確認一次）。
+     只收這裡自己開的：草稿、最近使用的照片網址不是這裡開的，不碰 */
+  const editorOwnedUrls = useRef(new Set<string>());
+  const ownEditorUrl = (u: string) => { if (u.startsWith('blob:')) editorOwnedUrls.current.add(u); return u; };
+  const editorRefsNow = useRef<{ list: string[]; one: string | null }>({ list: [], one: null });
+  useEffect(() => {
+    editorRefsNow.current = { list: editorImages, one: editorImage };
+    const inUse = (u: string) => editorRefsNow.current.one === u || editorRefsNow.current.list.includes(u);
+    const stale = [...editorOwnedUrls.current].filter(u => !inUse(u));
+    if (!stale.length) return;
+    const t = window.setTimeout(() => {
+      for (const u of stale) if (!inUse(u) && editorOwnedUrls.current.delete(u)) { try { URL.revokeObjectURL(u); } catch { /* 收過了 */ } }
+    }, 15000);
+    return () => clearTimeout(t);
+  }, [editorImages, editorImage]);
   const [collageInitialFile, setCollageInitialFile] = useState<File | null>(null);
   /** 創意拼圖入口一次選了好幾個時，第一個之後的那些 */
   const [collageExtras, setCollageExtras] = useState<File[]>([]);
@@ -371,7 +387,7 @@ const App: React.FC = () => {
       try {
         const urls: string[] = [];
         const map: Record<string, { path: string; protectEV: number; look: RawLook | null }> = {};
-        for (const f of files) urls.push((await developRawForBatch(f, map)) ?? await processImageFile(f, (u) => setImportPreviewUrl(u)));
+        for (const f of files) urls.push((await developRawForBatch(f, map)) ?? ownEditorUrl(await processImageFile(f, (u) => setImportPreviewUrl(u))));
         setEditorRawMap(prev => ({ ...prev, ...map }));
         setEditorImages(prev => [...prev, ...urls]);
       } catch (err) {
@@ -528,9 +544,9 @@ const App: React.FC = () => {
              不讓網頁層把它當一般圖片解（iOS 的網頁層看得懂 DNG，但那是 Apple 沖好、有銳化的版本） */
           const ru = await developRawForBatch(f, rawMap);
           if (ru) { urls.push(ru); continue; }
-          urls.push(await processImageFile(f, (previewUrl) => {
+          urls.push(ownEditorUrl(await processImageFile(f, (previewUrl) => {
             setImportPreviewUrl(previewUrl);
-          }));
+          })));
         }
         setToolDraftState(null);
         if (Object.keys(rawMap).length) rawHintToEditorRef.current = true;
