@@ -2,6 +2,10 @@ name: WebKit check
 # 在 Safari 的引擎（WebKit）上跑幾個關鍵畫面，結果印在 log（手動執行）
 on:
   workflow_dispatch:
+    inputs:
+      script:
+        description: 'tests/webkit 裡要跑的檔名（不含 .mjs）'
+        default: 'studio-preview'
 jobs:
   webkit:
     runs-on: macos-15
@@ -13,4 +17,10 @@ jobs:
       - run: git apply .github/deploy-layout.patch
       - run: rm -f package-lock.json && npm install --no-audit --no-fund
       - run: npm i --no-save playwright@1.56.1 && npx playwright install webkit
-      - run: (npx vite --port 4173 --host 127.0.0.1 > vite.log 2>&1 &) ; until curl -s -o /dev/null http://127.0.0.1:4173/; do sleep 1; done; node tests/webkit/studio-preview.mjs
+      - run: (npx vite --port 4173 --host 127.0.0.1 > vite.log 2>&1 &) ; until curl -s -o /dev/null http://127.0.0.1:4173/; do sleep 1; done; node tests/webkit/${{ github.event.inputs.script || 'studio-preview' }}.mjs
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webkit-out
+          path: webkit-out
+          if-no-files-found: ignore
