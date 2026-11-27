@@ -3572,6 +3572,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const restoredRef = useRef(false);
   /* 從草稿接回拼圖時，照片要非同步讀回來：讀好、畫上去之前舞台先藏起來（最多藏 4 秒，萬一讀不回來也一定會顯示） */
   const [restoreHold, setRestoreHold] = useState(() => !!initialState?.photoRegion?.photos?.length);
+  /* 接回草稿的這一段（讀照片、畫好）都算「載入中」；全部好了之後的導入才回到「匯入中」 */
+  const [resumeUi, setResumeUi] = useState(() => !!initialState);
   const releaseRestoreHold = () => requestAnimationFrame(() => requestAnimationFrame(() => setRestoreHold(false)));
   useEffect(() => { if (!restoreHold) return; const t = window.setTimeout(() => setRestoreHold(false), 4000); return () => clearTimeout(t); }, [restoreHold]);
   useEffect(() => {
@@ -3750,6 +3752,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   const addMediaFilesRef = useRef<(files: File[]) => void>(() => {});
   const [importBusy, setImportBusy] = useState(false);
+  useEffect(() => { if (resumeUi && !restoreHold && !importBusy) setResumeUi(false); }, [resumeUi, restoreHold, importBusy]);
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     /* 先把元素抓起來再 await —— 這支現在是非同步的，等解碼回來之後
        才去碰 e.target 會依賴「事件物件還活著」。React 19 不回收事件所以
@@ -11936,9 +11939,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   return (
     <div onPointerDownCapture={()=>deferHeavyWork(600)} onClickCapture={()=>deferHeavyWork(600)} className="safe-top flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
-      {importBusy && createPortal(
+      {/* 從「繼續編輯」接回拼圖：讀照片、全部畫上去之前同一層從頭蓋到尾，字是「載入中」、不帶三個點
+          （接回之後再導入照片，照舊是「匯入中...」） */}
+      {(importBusy || restoreHold) && createPortal(
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black" data-creative-import-loading="1">
-          <ImportSpinner belowStatusBar />
+          {resumeUi ? <ImportSpinner belowStatusBar label="載入中" noDots /> : <ImportSpinner belowStatusBar />}
         </div>, document.body)}
       {regionSwapPhoto && createPortal(<canvas ref={regionThumbRef} data-creative-swap-thumbnail="1"
         className="fixed pointer-events-none z-[9999] border-2 border-white rounded-[8px]"
@@ -12471,7 +12476,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             data-canvas-ratio={canvasRatio}
             className="absolute inset-0 overflow-hidden"
             style={{
-              /* 從「繼續編輯」回來：整組拼圖畫好之前先不顯示（不然第一幀只看得到底圖那一張） */
+              /* 從「繼續編輯」回來：整組拼圖畫好之前先不顯示（上面蓋著「載入中」；不然第一幀只看得到底圖那一張） */
               visibility: restoreHold ? 'hidden' : undefined,
               touchAction: 'none',
               /* 工具欄讓上來之後，圖片如果會被擋到就整個縮一點、並往上移半個讓位量

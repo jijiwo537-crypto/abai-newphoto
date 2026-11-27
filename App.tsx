@@ -176,16 +176,6 @@ const App: React.FC = () => {
   const editorOwnedUrls = useRef(new Set<string>());
   const ownEditorUrl = (u: string) => { if (u.startsWith('blob:')) editorOwnedUrls.current.add(u); return u; };
   const editorRefsNow = useRef<{ list: string[]; one: string | null }>({ list: [], one: null });
-  useEffect(() => {
-    editorRefsNow.current = { list: editorImages, one: editorImage };
-    const inUse = (u: string) => editorRefsNow.current.one === u || editorRefsNow.current.list.includes(u);
-    const stale = [...editorOwnedUrls.current].filter(u => !inUse(u));
-    if (!stale.length) return;
-    const t = window.setTimeout(() => {
-      for (const u of stale) if (!inUse(u) && editorOwnedUrls.current.delete(u)) { try { URL.revokeObjectURL(u); } catch { /* 收過了 */ } }
-    }, 15000);
-    return () => clearTimeout(t);
-  }, [editorImages, editorImage]);
   const [collageInitialFile, setCollageInitialFile] = useState<File | null>(null);
   /** 創意拼圖入口一次選了好幾個時，第一個之後的那些 */
   const [collageExtras, setCollageExtras] = useState<File[]>([]);
@@ -212,6 +202,17 @@ const App: React.FC = () => {
   }, []);
   const [matchRef, setMatchRef] = useState<string | null>(null);
   const [matchReferenceLoading,setMatchReferenceLoading]=useState(false);
+  useEffect(() => {
+    editorRefsNow.current = { list: [...editorImages, beautyImage, matchImage, matchRef, artImage].filter(Boolean) as string[], one: editorImage };
+    // 人像、仿色（含參考圖）、藝術效果導入的照片也一樣：換掉、離開之後確定沒在用才收
+    const inUse = (u: string) => editorRefsNow.current.one === u || editorRefsNow.current.list.includes(u);
+    const stale = [...editorOwnedUrls.current].filter(u => !inUse(u));
+    if (!stale.length) return;
+    const t = window.setTimeout(() => {
+      for (const u of stale) if (!inUse(u) && editorOwnedUrls.current.delete(u)) { try { URL.revokeObjectURL(u); } catch { /* 收過了 */ } }
+    }, 15000);
+    return () => clearTimeout(t);
+  }, [editorImages, editorImage, beautyImage, matchImage, matchRef, artImage]);
   const [beautyKey, setBeautyKey] = useState(0);
   /* 從歷史紀錄點開來的那一筆是誰。工具再存一次的時候要沿用同一個 key，
      這樣才會「蓋掉同一筆」而不是又多一筆一模一樣的。開新的照片就清掉。 */
@@ -432,7 +433,7 @@ const App: React.FC = () => {
           setImportPreviewUrl(previewUrl);
         });
         setToolDraftState(null);
-        setBeautyImage(objectUrl);
+        setBeautyImage(ownEditorUrl(objectUrl));
         setBeautyKey(prev => prev + 1);
         setCurrentView('beauty');
       } catch (err) {
@@ -459,7 +460,7 @@ const App: React.FC = () => {
       setImportPreviewUrl(null);
       try {
         const objectUrl = await processImageFile(file, (u) => setImportPreviewUrl(u));
-        setMatchImage(objectUrl);
+        setMatchImage(ownEditorUrl(objectUrl));
         if (currentView !== 'match') { setMatchRef(null); setToolDraftState(null); }
         setCurrentView('match');
       } catch (err) {
@@ -475,7 +476,7 @@ const App: React.FC = () => {
       // 導入參考圖時不能用全螢幕的黑色導入畫面蓋住原圖預覽，解 HEIC／RAW 時也一樣
       setMatchReferenceLoading(true);
       try {
-        setMatchRef(await processImageFile(file));
+        setMatchRef(ownEditorUrl(await processImageFile(file)));
       } catch (err) {
         console.error('Failed to process reference:', err);
         alert('無法處理此圖片格式');
@@ -985,7 +986,7 @@ const App: React.FC = () => {
         try {
           /* App 裡大照片先在原生端縮到藝術效果的工作尺寸，網頁不必解開整張原圖 */
           const capped=isNative()?await import('./utils/nativeImage').then(m=>m.nativeImportCapped(file,MOBILE_MAX_PIXELS)).catch(()=>null):null;
-          setArtImage(capped??await processImageFile(file,u=>setImportPreviewUrl(u)));
+          setArtImage(capped??ownEditorUrl(await processImageFile(file,u=>setImportPreviewUrl(u))));
           setCurrentView('art');
         } catch { alert('無法處理此圖片格式'); }
         finally { setIsImporting(false);setImportPreviewUrl(null); }
