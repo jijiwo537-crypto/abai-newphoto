@@ -6,7 +6,7 @@ import {TransformWrapper,TransformComponent} from 'react-zoom-pan-pinch';
 import React,{useState,useRef,useEffect,useLayoutEffect,useCallback} from 'react';
 import {ASCII_DEFAULTS} from '../utils/asciiRenderer';
 import {ASCII_PRESETS,withAsciiPreset,withAsciiCoverage,withAsciiMetric} from '../utils/asciiControls';
-import {SVGContext,asciiVector,paintAsciiViewport} from '../utils/artVector';
+import {SVGContext,asciiVector,paintAsciiViewport,releaseArtSampling} from '../utils/artVector';
 import {MATERIALS} from '../utils/artMaterials';
 import {trackingDefaults,renderTracking,invalidateTracking,redistributeRegions,trackingChainAngle} from '../utils/artTracking';
 import {ArtColorControls} from './ArtColorControls';
@@ -24,6 +24,8 @@ type EffectId='ascii'|'tracking';
 const EFFECTS=[{id:'ascii' as const,name:'ASCII'},{id:'tracking' as const,name:'視覺追蹤'}];
 
 export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:string}){
+ // 離開工具：放掉取樣用的原解析度複本（見 utils/artVector 的 releaseArtSampling）
+ useEffect(()=>()=>releaseArtSampling(),[]);
  const standalone=isHomeScreenWebApp();
  const root=useRef<HTMLDivElement>(null);
  useLayoutEffect(()=>{

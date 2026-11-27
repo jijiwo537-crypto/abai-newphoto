@@ -22,6 +22,12 @@ export class SVGContext{
 }
 let sampled=null;
 let samplingSource=null;
+/** 離開藝術效果時放掉：取樣用的原解析度複本（一張跟原圖一樣大的畫布，1200 萬像素約 48MB）和小取樣圖。
+ *  以前是全域快取，離開工具後一直留著，到下次再進來換照片才換掉 */
+export function releaseArtSampling(){
+ if(samplingSource){samplingSource.canvas.width=samplingSource.canvas.height=0;samplingSource=null;}
+ if(sampled){if(sampled.canvas)sampled.canvas.width=sampled.canvas.height=0;sampled=null;}
+}
 function sourceForSampling(source){
  if(samplingSource?.source===source)return samplingSource.canvas;
  // 原解析度的照片只放進 CPU 可讀的畫布一次，改密度時不必每次讀回前都重新解碼、傳輸同一張圖。
