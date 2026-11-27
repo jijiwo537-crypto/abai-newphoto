@@ -1,3 +1,4 @@
+import { canvasToUrl } from './blobUrl';
 /* 原尺寸存檔（超過手機畫布上限的大照片，例如 48MP）
  *
  * iPhone 的 Safari 單張畫布最多約 1677 萬像素，48MP 照片（約 4900 萬）放不進任何一張畫布，
@@ -114,7 +115,17 @@ function applyStrip(T: Transfer, O: Uint8ClampedArray, W: number, H: number, y0:
 }
 
 /** 一條一條讀原圖、套關係、送去編碼，回傳成品的 blob 網址 */
+/** 背景壓縮程式多久沒有任何進度就判定卡住（被系統關掉又沒回報錯誤時，以前會永遠停在「儲存中」） */
+const STALL_MS = 20000;
 export async function exportFullRes(src: StripSource, T: Transfer, type: 'image/jpeg' | 'image/png'): Promise<string | null> {
+  /* 卡住或失敗：換一個新的背景程式從頭再做一次（使用者只會看到轉久一點，成品一模一樣） */
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const url = await exportFullResOnce(src, T, type);
+    if (url) return url;
+  }
+  return null;
+}
+async function exportFullResOnce(src: StripSource, T: Transfer, type: 'image/jpeg' | 'image/png'): Promise<string | null> {
   const { W, H } = src;
   const worker = new Worker(new URL('./stripEncoder.worker.ts', import.meta.url), { type: 'module' });
   const c = document.createElement('canvas');
@@ -122,15 +133,20 @@ export async function exportFullRes(src: StripSource, T: Transfer, type: 'image/
      編碼比讀圖慢的時候主執行緒會等，像素不會在訊息佇列裡無限堆積 */
   const MAX_INFLIGHT = 2;
   let inflight = 0, wake: (() => void) | null = null, failed: unknown = null;
+  let stall = 0;
+  const fail = (e: unknown, rej?: (e: unknown) => void) => { if (failed) return; failed = e; rej?.(e); const w = wake; wake = null; w?.(); };
   try {
     const done = new Promise<Blob>((res, rej) => {
+      const arm = () => { clearTimeout(stall); stall = window.setTimeout(() => fail(new Error('encoder stalled'), rej), STALL_MS); };
+      arm();
       worker.onmessage = e => {
         const t = e.data?.type;
+        arm();
         if (t === 'ack') { inflight--; const w = wake; wake = null; w?.(); }
-        else if (t === 'done') res(e.data.blob);
-        else if (t === 'error') { failed = new Error(e.data.error); rej(failed); const w = wake; wake = null; w?.(); }
+        else if (t === 'done') { clearTimeout(stall); res(e.data.blob); }
+        else if (t === 'error') fail(new Error(e.data.error), rej);
       };
-      worker.onerror = e => { failed = e; rej(e); const w = wake; wake = null; w?.(); };
+      worker.onerror = e => fail(e, rej);
     });
     done.catch(() => {});
     worker.postMessage({ type: 'start', fmt: type === 'image/png' ? 'png' : 'jpeg', w: W, h: H, quality: 100 });
@@ -158,10 +174,18 @@ export async function exportFullRes(src: StripSource, T: Transfer, type: 'image/
     console.error('full-res export failed', e);
     return null;
   } finally {
-    // 成功或失敗都收乾淨：暫存畫布、背景執行緒
+    // 成功或失敗都收乾淨：計時器、暫存畫布、背景執行緒
+    clearTimeout(stall);
     c.width = c.height = 0;
     worker.terminate();
   }
+}
+
+/** 原尺寸做不出來（重試也失敗）時的最後退路：存手機上算好的那張（工作解析度），畫面正確、一定存得出來 */
+export function workingResUrl(P: Uint8ClampedArray, pw: number, ph: number, type: 'image/jpeg' | 'image/png'): Promise<string> {
+  const c = document.createElement('canvas'); c.width = pw; c.height = ph;
+  c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(P), pw, ph), 0, 0);
+  return canvasToUrl(c, type, 1).finally(() => { c.width = c.height = 0; });
 }
 
 /** 從一張「縮小尺寸算好的成品畫布」＋同尺寸原圖，做出原尺寸成品（工具共用） */
@@ -169,7 +193,8 @@ export async function fullResFromProcessed(img: CanvasImageSource & { width: num
   pw: number, ph: number, type: 'image/jpeg' | 'image/png' = 'image/png'): Promise<string | null> {
   const W = (img as HTMLImageElement).naturalWidth || img.width, H = (img as HTMLImageElement).naturalHeight || img.height;
   const T = buildTransfer(P, D, pw, ph);
-  return exportFullRes({ W, H, drawStrip: (ctx, y0, h) => ctx.drawImage(img, 0, y0, W, h, 0, 0, W, h) }, T, type);
+  const url = await exportFullRes({ W, H, drawStrip: (ctx, y0, h) => ctx.drawImage(img, 0, y0, W, h, 0, 0, W, h) }, T, type);
+  return url || workingResUrl(P, pw, ph, type);
 }
 
 /** 同尺寸的原圖像素（給 fullResFromProcessed 用） */

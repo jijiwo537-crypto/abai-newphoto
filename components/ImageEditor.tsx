@@ -36,7 +36,7 @@ import { ColorMatchStudio } from './ColorMatchStudio';
 import { TemplatePanel } from './TemplatePanel';
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { safeScale, MOBILE_MAX_PIXELS } from '../utils/exportLimits';
-import { buildTransfer, exportFullRes } from '../utils/fullResExport';
+import { buildTransfer, exportFullRes, workingResUrl } from '../utils/fullResExport';
 import { LUT_DEFAULT_AMOUNT, lutDefaultAmount, lutMaxAmount } from '../utils/photoFx';
 import { setLutCap } from '../utils/effectControlValues';
 import { GLOW_FX_IDS, hasGlow, glowSig, stripGlow, pickGlow } from '../utils/glowFx';
@@ -8375,7 +8375,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
         ctx.setTransform(1, 0, 0, 1, 0, 0);
       },
     }, T, type);
-    return url || '';
+    // 原尺寸重試也失敗：存手機上算好的那張（畫面正確），不要存出空的
+    return url || workingResUrl(P, pw, ph, type);
   };
   /* ── 廣色域＋高位元存檔（App 才有）────────────────────────────────
      只用了「顏色類」調整的照片（濾鏡、曝光、對比、色溫、HSL、色輪、曲線…）：顏色整條是一個純 RGB→RGB
