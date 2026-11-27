@@ -2088,8 +2088,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const cap=photoPreviewCapacity(required,regionPreviewCaps.current.get(id)||0,sourceSize,1024);
     regionPreviewCaps.current.set(id,cap);return cap;
   };
+  /** 存檔＋無縫時複製出來的 2D 版特效結果（見 regionForPaint）：存完一起放掉 */
+  const exportFlats = useRef<HTMLCanvasElement[]>([]);
+  /** 預覽用的（同上）：每張照片一份，特效沒變就沿用 */
+  const seamFlats = useRef(new Map<string, { rev: string; canvas: HTMLCanvasElement }>());
+  useEffect(() => () => { for (const e of seamFlats.current.values()) e.canvas.width = e.canvas.height = 0; seamFlats.current.clear(); }, []);
   /** 存檔用的特效像素只用一次，存完就放掉 */
   const releaseExportFx = () => {
+    for (const c of exportFlats.current) c.width = c.height = 0;
+    exportFlats.current = [];
     for (const [key, entry] of objFxCache.current) if (key.startsWith('export-')) {
       if (entry.cv instanceof HTMLCanvasElement) entry.cv.width = entry.cv.height = 1;
       objFxCache.current.delete(key);
@@ -7015,6 +7022,29 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         targetCanvas.dataset.regionFxBackend=(processed as HTMLCanvasElement).dataset?.colorBackend || '';
       }
       if (!processed) return p;
+      /* 存檔＋無縫：無縫合成器（另一個 GPU 程式）要讀這張特效結果。結果如果還是 WebGL 畫布，
+         等它讀的時候內容可能已經失效、或透明度被當成預乘過的 —— 存出來那張照片的特效就會變得灰灰的、不對
+         （預覽沒事，只有存檔會）。先複製成一張普通的 2D 畫布再交出去 */
+      /* 無縫：無縫合成器（另一個 GPU 程式）要讀這張特效結果。結果是 WebGL 畫布的話，它的內容只在剛畫完的那一刻保證有效
+         （下一格就可能被清掉、或還是上一次的）—— 無縫合成器晚一點才讀到，就是「預覽、存檔的那張照片特效時對時錯」。
+         當下就複製成一張普通的 2D 畫布交出去（同一份特效只複製一次）。預覽、存檔都一樣 */
+      if (photoRegion.seamless && processed instanceof HTMLCanvasElement && !processed.getContext('2d')) {
+        const rev = processed.dataset.seamRevision || '';
+        const id = `region-fx-${i}@${p.src}`;
+        const cached = isMain ? seamFlats.current.get(id) : undefined;
+        let flat: HTMLCanvasElement;
+        if (cached && cached.rev === rev && rev && cached.canvas.width === processed.width && cached.canvas.height === processed.height) flat = cached.canvas;
+        else {
+          flat = cached?.canvas || document.createElement('canvas');
+          if (flat.width !== processed.width) flat.width = processed.width; if (flat.height !== processed.height) flat.height = processed.height;
+          const fg = flat.getContext('2d')!; fg.globalCompositeOperation = 'copy'; fg.drawImage(processed, 0, 0); fg.globalCompositeOperation = 'source-over';
+          flat.dataset.seamRevision = rev || ('flat' + Math.random());
+          if (isMain) seamFlats.current.set(id, { rev, canvas: flat }); else exportFlats.current.push(flat);
+        }
+        const src=`region-processed-${i}@${p.src}@${JSON.stringify(p.fx)}@flat${flat.width}x${flat.height}@${flat.dataset.seamRevision}`;
+        regionDecoded.set(src, flat as unknown as HTMLImageElement);
+        return {...p,src,width:flat.width,height:flat.height};
+      }
       // 重用的特效畫布內容會變：就算畫布是同一個，羽化快取也要看得到參數的版本變化
       const src=`region-processed-${i}@${p.src}@${JSON.stringify(p.fx)}@${(processed as HTMLCanvasElement).width}x${(processed as HTMLCanvasElement).height}`;
       regionDecoded.set(src, processed as HTMLImageElement);

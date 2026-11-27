@@ -231,7 +231,9 @@ class SeamGpu {
       const revision=(image as HTMLCanvasElement).dataset?.seamRevision||'';
       // 編輯好的固定照片跟原圖一樣，在上傳貼圖時做一次色彩管理。只有即時、會變的特效畫布需要在著色器裡轉換，
       // 預覽縮放時才不會一直重複算 gamma 次方
-      const srgbCanvas=image instanceof HTMLCanvasElement&&!!revision&&image.dataset.regionImmutable!=='1';
+      /* 瀏覽器上傳時會自己轉色域（directUpload，例如 Chrome 的 unpackColorSpace）就交給它，著色器不要再轉一次 ——
+         兩次轉換會讓這張照片看起來灰灰的（存檔、預覽不一樣）。WebKit 沒有這個轉換，照舊在著色器裡轉 */
+      const srgbCanvas=image instanceof HTMLCanvasElement&&!!revision&&image.dataset.regionImmutable!=='1'&&!this.color.directUpload;
       /* 記憶體：一張 1200 萬像素的原生貼圖加上 mipmap 約 64MB。預覽是用螢幕密度取樣，
          所以貼圖上限設成手機螢幕看得到的程度（照片越多，每張越小）。同時常駐好幾張全尺寸原圖時 iOS 會關掉網頁。
          存檔（直接畫）維持原解析度；UV 是正規化的，幾何不變 */
