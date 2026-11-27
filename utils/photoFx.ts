@@ -104,6 +104,9 @@ const opticalKeys = new Set(['soft','softThreshold','softRadius','softColor','fr
 const newSurface=()=>{const c=document.createElement('canvas');preferWebgl2(c);return c;};
 /** 拼圖照片格共用的那一個 GPU 畫布（見 applyPhotoFxRaw 的 sharedColour） */
 let sharedColourSurface:HTMLCanvasElement|null=null;
+/** 呼叫端保證是「不透明的 sRGB 2D 畫布」的來源：上傳 GPU 時直接從畫布傳（GPU 對 GPU），不用 getImageData 讀回 CPU */
+const directSources=new WeakSet<object>();
+export function markDirectSource(canvas:HTMLCanvasElement){directSources.add(canvas);}
 const surfaceGpus=new WeakMap<HTMLCanvasElement,LutGpu|null>();
 /* 每張輸出畫布只配一組 GPU 表面（一個 WebGL context），建了就記下來重複用。
    顯示卡那條路這一次走不通時也照樣留著：不然下一格又建一個新的，拖滑桿時每一格都多一個
@@ -146,7 +149,7 @@ function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:
     }
     if(!keyed&&!glowTex&&gpuSourceKeys.get(g)!==key){
       // 「原圖＋光」那張是我們自己畫的不透明畫布：直接上傳，不讀回像素（拖發光滑桿時每一格都換）
-      const direct=glowedCanvases.has(source as object)&&g.setSourceImage(source as HTMLCanvasElement,w,h);
+      const direct=(glowedCanvases.has(source as object)||directSources.has(source as object))&&g.setSourceImage(source as HTMLCanvasElement,w,h);
       if(!direct){const px=sourcePixels(source,w,h,key);if(!px||!g.setSource(px,w,h))return null;}
       gpuSourceKeys.set(g,key);}
     const baseLut=new Uint8Array(256);generateBaseCorrectionLut(p.exposure,p.contrast,p.brightness,baseLut);

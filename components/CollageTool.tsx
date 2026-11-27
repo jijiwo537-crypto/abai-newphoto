@@ -123,7 +123,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
 import { setBlurRebuildListener } from '../utils/blurShapes';
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, prebakeColours, warmColourBakers, releaseColourBakers, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, markDirectSource, prebakeColours, warmColourBakers, releaseColourBakers, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface,warmPhotoSceneColour,forgetPhotoFxSource,sourceHasAlpha} from '../utils/photoFx';
 import { strokeAlphaContour } from '../utils/alphaStroke';
@@ -9884,7 +9884,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     try {
       ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'copy';
       if (colourOnly) {
-        const T = 1024, tile = document.createElement('canvas'), tg = get2dWide(tile)!;
+        /* 方塊用一般的 sRGB 畫布：從成品畫布畫過來時瀏覽器就順便換好色域（跟以前讀像素前做的轉換是同一個），
+           然後整塊直接傳上 GPU，不必用 getImageData 把像素讀回 CPU（那是存檔最慢的一步） */
+        const T = 2048, tile = document.createElement('canvas'), tg = tile.getContext('2d', { alpha: false })!;
+        markDirectSource(tile);
         for (let y = 0; y < H; y += T) for (let x = 0; x < W; x += T) {
           const tw = Math.min(T, W - x), th = Math.min(T, H - y);
           if (tile.width !== tw) tile.width = tw; if (tile.height !== th) tile.height = th;
@@ -11513,16 +11516,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   /** 把 scale 倍率需要的細節補齊（wait＝等全部做完，存檔前用） */
   const ensureTiers = async (scale: number, wait: boolean): Promise<boolean> => {
-    const jobs: Promise<void>[] = [];let swapped = false;
+    const jobs: Promise<void>[] = [];let swapped = false;const waitList: [string, number][] = [];
     for (const [src, required] of tierNeeds(scale)) {
       const t = tierOf(src);
       if (!t) continue;
       // 復原到比較舊的那一步時物件身上可能是舊的那張：現有最清楚的那張已經夠的話直接換回來
       if (t.tier >= required * 0.98) { if (objectsRef.current.some(o => o.src === src && o.img && o.img !== t.img && !isVideoEl(o.img))) { swapTier(src, t.img); swapped = true; } continue; }
-      /* 存檔前（wait）：一張做完再做下一張。同時做的話每一張都要先解開一張大圖、再開一張同樣大的畫布縮小，
-         六張一起就是好幾百 MB 同時在記憶體裡 —— 儲存時閃退就是這個。一張一張做，成品完全一樣，尖峰只剩一張的量 */
-      if (wait) { const img = await ensureTier(src, required); if (img && !leavingRef.current) { swapTier(src, img); swapped = true; } continue; }
+      /* 存檔前（wait）：不要全部同時做。每一張都要先解開一張大圖、再開一張同樣大的畫布縮小，
+         六張一起就是好幾百 MB 同時在記憶體裡 —— 儲存時閃退就是這個（見下面最多兩張同時做） */
+      if (wait) { waitList.push([src, required]); continue; }
       jobs.push(ensureTier(src, required).then(img => { if (img && !leavingRef.current) { swapTier(src, img); swapped = true; } }));
+    }
+    /* 存檔前：最多同時做兩張（六張一起會爆記憶體，一張一張又太慢；兩張是尖峰只多一點、速度快將近一倍的平衡） */
+    if (wait && waitList.length) {
+      let next = 0;
+      const lane = async () => { while (next < waitList.length) { const [src, required] = waitList[next++]; const img = await ensureTier(src, required); if (img && !leavingRef.current) { swapTier(src, img); swapped = true; } } };
+      await Promise.all([lane(), lane()]);
     }
     return swapped;
   };
