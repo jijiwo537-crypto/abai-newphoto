@@ -7,13 +7,14 @@
  *
  * 訊息：{type:'start', fmt, w, h, quality} → 多次 {type:'rows', data(RGBA), rows} → {type:'end'} → 回 {type:'done', blob} */
 
-let enc: { push(d: Uint8ClampedArray, rows: number): void; end(): Promise<Blob> } | null = null;
+let enc: { push(d: Uint8ClampedArray, rows: number): void | Promise<void>; end(): Promise<Blob> } | null = null;
 
 self.onmessage = async (e: MessageEvent) => {
   const m = e.data;
   try {
     if (m.type === 'start') enc = m.fmt === 'png' ? pngEncoder(m.w, m.h) : jpegEncoder(m.w, m.h, m.quality ?? 100);
-    else if (m.type === 'rows') enc!.push(new Uint8ClampedArray(m.data), m.rows);
+    /* 流量控制：這一條真的消化完（PNG：壓縮串流也收下了）才回 ack，主執行緒最多只讓幾條在途中 */
+    else if (m.type === 'rows') { await enc!.push(new Uint8ClampedArray(m.data), m.rows); (self as any).postMessage({ type: 'ack' }); }
     else if (m.type === 'end') { const blob = await enc!.end(); enc = null; (self as any).postMessage({ type: 'done', blob }); }
   } catch (err) { (self as any).postMessage({ type: 'error', error: String(err) }); }
 };
@@ -218,7 +219,8 @@ function pngEncoder(W: number, H: number) {
           pr = r; pg = g; pb = b;
         }
       }
-      writer.write(out);
+      // 等壓縮串流有空位才塞下一條：不然壓縮跟不上時，未壓縮的列會一直堆在串流的佇列裡
+      return writer.ready.then(() => writer.write(out));
     },
     async end() {
       await writer.close(); await reading;

@@ -45,6 +45,8 @@ export function buildTransfer(P: Uint8ClampedArray, D: Uint8ClampedArray, pw: nu
   const a: Float32Array[] = [], b: Float32Array[] = [];
   const Dg = new Float32Array(gn), Pg = new Float32Array(gn), DD = new Float32Array(gn), DP = new Float32Array(gn);
   const mD = new Float32Array(gn), mP = new Float32Array(gn), mDD = new Float32Array(gn), mDP = new Float32Array(gn), tmp = new Float32Array(gn);
+  // 每個色版共用同一組暫存（以前每個色版各配一組，記憶體高峰多出一截）
+  const A = new Float32Array(gn), B = new Float32Array(gn);
   for (let c = 0; c < 3; c++) {
     // 2×2 平均到格子上
     for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
@@ -55,7 +57,6 @@ export function buildTransfer(P: Uint8ClampedArray, D: Uint8ClampedArray, pw: nu
       const i = gy * gw + gx; Dg[i] = sd / n; Pg[i] = sp / n; DD[i] = Dg[i] * Dg[i]; DP[i] = Dg[i] * Pg[i];
     }
     boxMean(Dg, gw, gh, r, tmp, mD); boxMean(Pg, gw, gh, r, tmp, mP); boxMean(DD, gw, gh, r, tmp, mDD); boxMean(DP, gw, gh, r, tmp, mDP);
-    const A = new Float32Array(gn), B = new Float32Array(gn);
     for (let i = 0; i < gn; i++) {
       const v = mDD[i] - mD[i] * mD[i], cv = mDP[i] - mD[i] * mP[i];
       const ai = clampI(cv / (v + eps), 0, 4);
@@ -116,34 +117,51 @@ function applyStrip(T: Transfer, O: Uint8ClampedArray, W: number, H: number, y0:
 export async function exportFullRes(src: StripSource, T: Transfer, type: 'image/jpeg' | 'image/png'): Promise<string | null> {
   const { W, H } = src;
   const worker = new Worker(new URL('./stripEncoder.worker.ts', import.meta.url), { type: 'module' });
+  const c = document.createElement('canvas');
+  /* 流量控制：每送一條，背景執行緒消化完才回 ack；在途中最多 MAX_INFLIGHT 條（每條約 8MB），
+     編碼比讀圖慢的時候主執行緒會等，像素不會在訊息佇列裡無限堆積 */
+  const MAX_INFLIGHT = 2;
+  let inflight = 0, wake: (() => void) | null = null, failed: unknown = null;
   try {
     const done = new Promise<Blob>((res, rej) => {
-      worker.onmessage = e => { if (e.data?.type === 'done') res(e.data.blob); else if (e.data?.type === 'error') rej(new Error(e.data.error)); };
-      worker.onerror = e => rej(e);
+      worker.onmessage = e => {
+        const t = e.data?.type;
+        if (t === 'ack') { inflight--; const w = wake; wake = null; w?.(); }
+        else if (t === 'done') res(e.data.blob);
+        else if (t === 'error') { failed = new Error(e.data.error); rej(failed); const w = wake; wake = null; w?.(); }
+      };
+      worker.onerror = e => { failed = e; rej(e); const w = wake; wake = null; w?.(); };
     });
+    done.catch(() => {});
     worker.postMessage({ type: 'start', fmt: type === 'image/png' ? 'png' : 'jpeg', w: W, h: H, quality: 100 });
     const STRIP = Math.max(8, Math.min(256, Math.floor(2_000_000 / W) & ~7));   // 每條約 200 萬像素以內
-    const c = document.createElement('canvas'); c.width = W; c.height = STRIP;
+    c.width = W; c.height = STRIP;
     const g = c.getContext('2d', { willReadFrequently: true })!;
     g.imageSmoothingQuality = 'high';
     for (let y0 = 0; y0 < H; y0 += STRIP) {
+      while (inflight >= MAX_INFLIGHT && !failed) await new Promise<void>(r => { wake = r; });
+      if (failed) throw failed;
       const rows = Math.min(STRIP, H - y0);
       g.clearRect(0, 0, W, STRIP);
       src.drawStrip(g, y0, rows);
       const d = g.getImageData(0, 0, W, rows).data;
       applyStrip(T, d, W, H, y0, rows);
+      inflight++;
       worker.postMessage({ type: 'rows', data: d.buffer, rows }, [d.buffer]);
       // 讓出主執行緒：轉圈動畫、介面不會整個凍住
       await new Promise(r => setTimeout(r, 0));
     }
-    c.width = c.height = 0;
     worker.postMessage({ type: 'end' });
     const blob = await done;
     return URL.createObjectURL(blob);
   } catch (e) {
     console.error('full-res export failed', e);
     return null;
-  } finally { worker.terminate(); }
+  } finally {
+    // 成功或失敗都收乾淨：暫存畫布、背景執行緒
+    c.width = c.height = 0;
+    worker.terminate();
+  }
 }
 
 /** 從一張「縮小尺寸算好的成品畫布」＋同尺寸原圖，做出原尺寸成品（工具共用） */
