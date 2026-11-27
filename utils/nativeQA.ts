@@ -195,6 +195,68 @@ async function scenarioTool(name: string) {
   logButtons(`tool ${name}`);
 }
 
+/* 實機壓力測試（在自己的 iPhone 上跑：桌面的「ABAI壓力測試.command」）。
+   反覆用 1200 萬像素的照片做最容易出事的操作，每一步記錄，結果同時寫進「穩定性紀錄」（設定 → 問題反饋 → 複製穩定性紀錄）：
+     ① 創意拼圖：5 張照片、開無縫、存檔、回主頁
+     ② 編輯：1 張照片、套濾鏡、存檔、回主頁
+   跑完寫「壓力測試完成」。中途閃退的話，穩定性紀錄裡會有「網頁程序被 iOS 關掉」或「App 沒有正常結束」，以及當時做到第幾輪。 */
+async function makeBigPhoto(i: number): Promise<File> {
+  const c = document.createElement('canvas'); c.width = 4032; c.height = 3024;
+  const g = c.getContext('2d')!;
+  const grd = g.createLinearGradient(0, 0, 4032, 3024); grd.addColorStop(0, `hsl(${i * 70} 70% 45%)`); grd.addColorStop(1, `hsl(${i * 70 + 50} 70% 65%)`);
+  g.fillStyle = grd; g.fillRect(0, 0, 4032, 3024);
+  for (let k = 0; k < 600; k++) { g.fillStyle = `hsla(${(i * 70 + k * 17) % 360},60%,${30 + k % 50}%,.4)`; g.fillRect((k * 397) % 4032, (k * 613) % 3024, 160, 120); }
+  const blob = await new Promise<Blob | null>(r => c.toBlob(r, 'image/jpeg', 0.9)); c.width = c.height = 0;
+  return new File([blob!], `stress${i}.jpg`, { type: 'image/jpeg' });
+}
+async function backHome() {
+  for (let k = 0; k < 4; k++) {
+    if (findButton(TOOL_ENTRY.collage) && findButton(/美顏/)) return true;
+    const back = findButton(/^返回$|chevron_left|arrow_back/) || (document.querySelector('header button') as HTMLElement | null);
+    if (back) click(back as HTMLElement);
+    await sleep(900);
+    const discard = findButton(/^(放棄|不儲存|離開)$/); if (discard) { click(discard); await sleep(900); }
+  }
+  return !!findButton(TOOL_ENTRY.collage);
+}
+async function scenarioStress(rounds = 8) {
+  const { stabilityLog } = await import('./stability');
+  const note = (m: string) => { log(m); stabilityLog('壓力測試：' + m); };
+  note(`開始，共 ${rounds} 輪`);
+  const photos: File[] = []; for (let i = 0; i < 5; i++) photos.push(await makeBigPhoto(i));
+  for (let r = 1; r <= rounds; r++) {
+    // ① 創意拼圖：5 張、無縫、存檔
+    (window as any).__abaiQAFiles = () => photos;
+    click(await waitFor(() => findButton(TOOL_ENTRY.collage), 20000, '創意拼圖按鈕'));
+    await waitFor(() => document.querySelector('[data-creative-stage]'), 60000, '拼圖舞台'); await sleep(5000);
+    const setting = document.querySelector('[data-creative-tab="setting"]') as HTMLElement | null; if (setting) { click(setting); await sleep(800); }
+    const seam = document.querySelector('[data-creative-seamless] input[type=range]') as HTMLInputElement | null;
+    if (seam) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      for (const v of [20, 40, 60]) { setter.call(seam, String(v)); seam.dispatchEvent(new Event('input', { bubbles: true })); await sleep(300); }
+      seam.dispatchEvent(new Event('change', { bubbles: true })); seam.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); await sleep(3000);
+    }
+    const save1 = findButton(/^儲存$/); if (save1) click(save1);
+    await waitFor(() => findButton(/拼下一張/), 180000, '拼圖存檔完成').catch(e => note(`第 ${r} 輪拼圖：${e.message}`));
+    note(`第 ${r} 輪：創意拼圖存檔完成`);
+    const cont = findButton(/繼續編輯/); if (cont) { click(cont); await sleep(1200); }
+    if (!(await backHome())) { note(`第 ${r} 輪：回不到主頁，停止`); return; }
+    await sleep(3000);
+    // ② 編輯：1 張、套濾鏡、存檔
+    (window as any).__abaiQAFiles = () => [photos[r % 5]];
+    click(await waitFor(() => findButton(TOOL_ENTRY.edit), 20000, '編輯按鈕'));
+    await sleep(8000);
+    const f3 = buttons().find(b => (b.textContent || '').trim() === 'F3'); if (f3) { click(f3); await sleep(2500); }
+    const save2 = findButton(/^儲存$/); if (save2) click(save2);
+    await waitFor(() => findButton(/修下一張/), 180000, '編輯存檔完成').catch(e => note(`第 ${r} 輪編輯：${e.message}`));
+    note(`第 ${r} 輪：編輯存檔完成`);
+    const cont2 = findButton(/繼續編輯/); if (cont2) { click(cont2); await sleep(1200); }
+    if (!(await backHome())) { note(`第 ${r} 輪：回不到主頁，停止`); return; }
+    await sleep(3000);
+  }
+  note(`壓力測試完成：${rounds} 輪都沒有閃退`);
+}
+
 /* 跨頁拼圖選一段影片、按儲存，盯著進度 */
 async function scenarioLayoutVideo() {
   /* 先做一段 4 秒的測試影片，當成「從相簿選的影片」 */
@@ -749,7 +811,8 @@ export async function runNativeQA(forced?: string) {
   log(`start ${scenario}`);
   await sleep(4000);
   try {
-    if (scenario === 'save') await scenarioSave();
+    if (scenario.startsWith('stress')) await scenarioStress(Number(scenario.split('-')[1]) || 8);
+    else if (scenario === 'save') await scenarioSave();
     else if (scenario === 'video') await scenarioVideo();
     else if (scenario === 'gallery') await scenarioGallery();
     else if (scenario === 'camfx') await scenarioCamFx();
