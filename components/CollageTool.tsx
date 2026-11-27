@@ -10040,7 +10040,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        也不會有「先糊、鬆手才清楚」—— 跨到下一級的那一下就直接換成更清楚的那一級 */
     const need = renderScale / SUPERSAMPLE;
     /* 多留一級（√2 倍）：一般放大縮小都還在同一級裡，不必重拼；預覽拼的這張本來就只有螢幕大小，多一級成本很小 */
-    const level = Math.pow(Math.SQRT2, Math.ceil(Math.log2(Math.max(1e-3, need)) * 2 - 1e-6) + 1);
+    /* 不再多留一級：縮放手勢中本來就不重拼（見下面 zooming），多留那一級只是讓整體效果每一格多算一倍像素
+       （偵錯紀錄：iPhone 上套發光類特效一格 55～87ms，拖無縫只剩 18fps） */
+    const level = Math.pow(Math.SQRT2, Math.ceil(Math.log2(Math.max(1e-3, need)) * 2 - 1e-6));
     let sC = Math.min(level, 4096 / Math.max(1, g1.cw, g1.ch));
     const base = { ...region, globalFx: undefined };
     const baseKey = JSON.stringify([base, t, layout, canvasRatio, maskScaleValue.current, lutRevision], compactSceneValue);
@@ -11729,8 +11731,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           if (api) {
             const { available } = await api.memory();
             const need = rawSize.w * finalScale * rawSize.h * finalScale * 4 * 6;
-            if (available > 0 && available < need * 2) {
-              const k = Math.max(0.6, Math.sqrt(available / (need * 2)));
+            /* 下限：有任何一張原圖長邊達 4000 就不低於 4096，全部都不到 4000 就不低於 2560（原本就比下限小的維持原樣） */
+            const photosLong = Math.max(0, ...(photoRegionRef.current?.photos || []).map(ph => Math.max(ph.width || 0, ph.height || 0)));
+            const floorLong = photosLong >= 4000 ? 4096 : 2560, curLong = rawLong * finalScale;
+            const minK = curLong > floorLong ? floorLong / curLong : 1;
+            if (available > 0 && available < need * 2 && minK < 1) {
+              const k = Math.max(minK, Math.sqrt(available / (need * 2)));
               diag('記憶體保險', `剩 ${Math.round(available / 1048576)}MB，成品解析度降為 ${Math.round(k * 100)}%`);
               finalScale *= k;
             }
