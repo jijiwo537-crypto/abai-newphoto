@@ -9919,7 +9919,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        ③ 結果切回每一格，當成那一格的照片畫 —— 排版、放大、選取框、快取全部照原本的路走。
      存檔也走同一條（解析度換成成品的），所以預覽跟成品一樣；點選單張、回到全部，畫面完全不變。 */
   const globalInner = useRef(false);
-  const globalComp = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
+  const globalComp = useRef<{ key: string; canvas: HTMLCanvasElement; base?: string; sC?: number } | null>(null);
   const globalOut = useRef<HTMLCanvasElement | null>(null);
   const globalCrops = useRef<HTMLCanvasElement[]>([]);
   const globalLast = useRef<{ key: string; G: HTMLCanvasElement } | null>(null);
@@ -9983,9 +9983,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const need = renderScale / SUPERSAMPLE;
     /* 多留一級（√2 倍）：一般放大縮小都還在同一級裡，不必重拼；預覽拼的這張本來就只有螢幕大小，多一級成本很小 */
     const level = Math.pow(Math.SQRT2, Math.ceil(Math.log2(Math.max(1e-3, need)) * 2 - 1e-6) + 1);
-    const sC = Math.min(level, 4096 / Math.max(1, g1.cw, g1.ch));
+    let sC = Math.min(level, 4096 / Math.max(1, g1.cw, g1.ch));
     const base = { ...region, globalFx: undefined };
-    const key = JSON.stringify([base, t, layout, canvasRatio, maskScaleValue.current, sC, lutRevision], compactSceneValue);
+    const baseKey = JSON.stringify([base, t, layout, canvasRatio, maskScaleValue.current, lutRevision], compactSceneValue);
+    /* 放大縮小的手勢中：解析度跨級也不重拼整張（重拼＝整張再畫一次＋重套整體設定，就是「縮放超級卡」）。
+       沿用現在這一張，手放開、閒下來之後才換成更清楚的那一級 */
+    const zooming = !!viewPinchRef.current || performance.now() < wheelUntilRef.current;
+    if (mainLike && zooming && globalComp.current?.base === baseKey && globalComp.current.sC) sC = globalComp.current.sC;
+    const key = baseKey + '|' + sC;
     let comp = mainLike ? globalComp.current : null;
     if (!comp || comp.key !== key) {
       const canvas = (mainLike && globalComp.current?.canvas) || document.createElement('canvas');
@@ -9997,7 +10002,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          讀回那一下（一張螢幕大小的圖，手機上幾百毫秒）就是「滑桿剛開始拖時畫面卡一下」。
          上傳時不轉色域、不預乘，拿到的位元組跟讀回的一模一樣，顏色不會變 */
       markDirectSource(canvas);
-      comp = { key, canvas };
+      comp = { key, canvas, base: baseKey, sC };
       if (mainLike) globalComp.current = comp;
       globalLast.current = null;
     }
@@ -10008,7 +10013,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        主執行緒永遠不同步烤（一張要幾十毫秒，手機上滑桿就只剩 30 幀）。烤好之後的那一次重畫放行同步（萬一快取被擠掉也一定畫得出來） */
     const lastSame = !!globalLast.current && globalLast.current.key.startsWith(comp.key + '|');
     let stale = false;
-    if (lastSame && globalLast.current!.key !== gKey && !globalBakeOk.current && !coloursBaked(gfx)) {
+    if (false && lastSame && globalLast.current!.key !== gKey && !globalBakeOk.current && !coloursBaked(gfx)) {
       stale = true;
       const seq = ++globalBakeSeq.current;
       void prebakeColours([gfx]).then(() => {
@@ -13588,11 +13593,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     simpleAllFxRef.current = next;
                     clearPhotoDimmer();
                     photoRegionRef.current = { ...photoRegionRef.current, globalFx: next };
-                    const seq = ++allBakeSeq.current;
-                    void prebakeColours([next]).then(() => {
-                      if (seq !== allBakeSeq.current) return;          // 已經有更新的一格，畫那一格就好
-                      commitRegion(photoRegionRef.current!, true);
-                    });
+                    /* 當格就畫（不等背景執行緒烤完才提交：那樣畫面會一格一格跳，尤其剛開始拖的時候） */
+                    commitRegion(photoRegionRef.current!, true);
                   } else if (regionEditing && photoRegionRef.current) {
                     clearPhotoDimmer();
                     commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)},!!d.fx);

@@ -138,7 +138,13 @@ function surfaceColourImage(canvas:HTMLCanvasElement,source:CanvasImageSource,w:
     let glowTex:WebGLTexture|null=null;
     if(pend){
       const okey=`${srcToken(pend.source)}|${w}x${h}`;
-      if(gpuSourceKeys.get(g)!==okey){const px=sourcePixels(pend.source,w,h,okey);if(px&&g.setSource(px,w,h))gpuSourceKeys.set(g,okey);}
+      if(gpuSourceKeys.get(g)!==okey){
+        /* 呼叫端保證可以直接上傳的畫布（拼好的整張拼圖）：GPU 對 GPU，不要每一格整張 getImageData 讀回
+           ——有發光類特效時以前每格都讀，無縫滑桿／放大縮小每一格都卡在這裡 */
+        const direct=directSources.has(pend.source as object)&&pend.source instanceof HTMLCanvasElement&&g.setSourceImage(pend.source,w,h);
+        if(direct)gpuSourceKeys.set(g,okey);
+        else{const px=sourcePixels(pend.source,w,h,okey);if(px&&g.setSource(px,w,h))gpuSourceKeys.set(g,okey);}
+      }
       if(gpuSourceKeys.get(g)===okey)glowTex=surfaceGlowTexture(canvas,g,pend.source,w,h,pend.fx);
       if(!glowTex)realizeGlow(source);
     }
