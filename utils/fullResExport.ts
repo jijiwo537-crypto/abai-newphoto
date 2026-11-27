@@ -44,30 +44,37 @@ export function buildTransfer(P: Uint8ClampedArray, D: Uint8ClampedArray, pw: nu
   const gw = Math.max(1, Math.ceil(pw / 2)), gh = Math.max(1, Math.ceil(ph / 2)), gn = gw * gh;
   const r = 2, eps = 16;   // 5×5 鄰域；eps 讓平坦的地方不會亂學出很大的增益
   const a: Float32Array[] = [], b: Float32Array[] = [];
-  const Dg = new Float32Array(gn), Pg = new Float32Array(gn), DD = new Float32Array(gn), DP = new Float32Array(gn);
-  const mD = new Float32Array(gn), mP = new Float32Array(gn), mDD = new Float32Array(gn), mDP = new Float32Array(gn), tmp = new Float32Array(gn);
-  /* A、B 借用 DD、DP 那兩塊：算出 mDD、mDP 之後 DD、DP 就用不到了（下一個色版開頭才重新寫入），
-     不必另外再開兩塊同大小的陣列。數值、順序完全一樣 */
-  const A = DD, B = DP;
+  /* 分段算（每段 BAND 列格子，上下各多算 HALO 列）：兩次 5×5 平均，每一格最遠用到上下 4 列，
+     多算 4 列就跟整張一起算是同一個結果（只差浮點累加的進位，成品偶爾 ±1）。
+     暫存只要一段的大小，不必九塊整張大小的陣列（800 萬像素的工作尺寸時省下約 70MB） */
+  const BAND = 64, HALO = 2 * r;
+  const cap = Math.min(gh, BAND + 2 * HALO) * gw;
+  const Dg = new Float32Array(cap), Pg = new Float32Array(cap), DD = new Float32Array(cap), DP = new Float32Array(cap);
+  const mD = new Float32Array(cap), mP = new Float32Array(cap), mDD = new Float32Array(cap), mDP = new Float32Array(cap), tmp = new Float32Array(cap);
+  const A = DD, B = DP;   // 算出 mDD、mDP 之後 DD、DP 就用不到了
   for (let c = 0; c < 3; c++) {
-    // 2×2 平均到格子上
-    for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
-      let sd = 0, sp = 0, n = 0;
-      for (let yy = gy * 2; yy < Math.min(ph, gy * 2 + 2); yy++) for (let xx = gx * 2; xx < Math.min(pw, gx * 2 + 2); xx++) {
-        const o = (yy * pw + xx) * 4 + c; sd += D[o]; sp += P[o]; n++;
-      }
-      const i = gy * gw + gx; Dg[i] = sd / n; Pg[i] = sp / n; DD[i] = Dg[i] * Dg[i]; DP[i] = Dg[i] * Pg[i];
-    }
-    boxMean(Dg, gw, gh, r, tmp, mD); boxMean(Pg, gw, gh, r, tmp, mP); boxMean(DD, gw, gh, r, tmp, mDD); boxMean(DP, gw, gh, r, tmp, mDP);
-    for (let i = 0; i < gn; i++) {
-      const v = mDD[i] - mD[i] * mD[i], cv = mDP[i] - mD[i] * mP[i];
-      const ai = clampI(cv / (v + eps), 0, 4);
-      A[i] = ai; B[i] = mP[i] - ai * mD[i];
-    }
-    // 導向濾波的第二步：a、b 再平均一次，關係在空間上平滑
-    // 直接平均進要留下來的那兩塊（以前先平均進暫存再複製一份）
     const ac = new Float32Array(gn), bc = new Float32Array(gn);
-    boxMean(A, gw, gh, r, tmp, ac); boxMean(B, gw, gh, r, tmp, bc);
+    for (let g0 = 0; g0 < gh; g0 += BAND) {
+      const g1 = Math.min(gh, g0 + BAND), s0 = Math.max(0, g0 - HALO), s1 = Math.min(gh, g1 + HALO), sh = s1 - s0;
+      // 2×2 平均到格子上
+      for (let gy = s0; gy < s1; gy++) for (let gx = 0; gx < gw; gx++) {
+        let sd = 0, sp = 0, n = 0;
+        for (let yy = gy * 2; yy < Math.min(ph, gy * 2 + 2); yy++) for (let xx = gx * 2; xx < Math.min(pw, gx * 2 + 2); xx++) {
+          const o = (yy * pw + xx) * 4 + c; sd += D[o]; sp += P[o]; n++;
+        }
+        const i = (gy - s0) * gw + gx; Dg[i] = sd / n; Pg[i] = sp / n; DD[i] = Dg[i] * Dg[i]; DP[i] = Dg[i] * Pg[i];
+      }
+      boxMean(Dg, gw, sh, r, tmp, mD); boxMean(Pg, gw, sh, r, tmp, mP); boxMean(DD, gw, sh, r, tmp, mDD); boxMean(DP, gw, sh, r, tmp, mDP);
+      for (let i = 0; i < sh * gw; i++) {
+        const v = mDD[i] - mD[i] * mD[i], cv = mDP[i] - mD[i] * mP[i];
+        const ai = clampI(cv / (v + eps), 0, 4);
+        A[i] = ai; B[i] = mP[i] - ai * mD[i];
+      }
+      // 導向濾波的第二步：a、b 再平均一次，關係在空間上平滑；只留這一段本身（不含多算的上下幾列）
+      boxMean(A, gw, sh, r, tmp, mD); boxMean(B, gw, sh, r, tmp, mP);
+      ac.set(mD.subarray((g0 - s0) * gw, (g1 - s0) * gw), g0 * gw);
+      bc.set(mP.subarray((g0 - s0) * gw, (g1 - s0) * gw), g0 * gw);
+    }
     a.push(ac); b.push(bc);
   }
   // 殘差：成品 −（a×原圖＋b），在成品尺寸上
