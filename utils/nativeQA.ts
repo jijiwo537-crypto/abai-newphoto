@@ -237,8 +237,11 @@ async function scenarioStress(rounds = 8) {
       seam.dispatchEvent(new Event('change', { bubbles: true })); seam.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); await sleep(3000);
     }
     const save1 = findButton(/^儲存$/); if (save1) click(save1);
-    await waitFor(() => findButton(/拼下一張/), 180000, '拼圖存檔完成').catch(e => note(`第 ${r} 輪拼圖：${e.message}`));
-    note(`第 ${r} 輪：創意拼圖存檔完成`);
+    // 拼圖的「儲存」會先跳出「儲存照片／儲存影片」選單
+    const photoItem = await waitFor(() => findButton(/儲存照片/), 5000, '儲存照片').catch(() => null);
+    if (photoItem) click(photoItem);
+    const ok1 = await waitFor(() => findButton(/拼下一張/), 180000, '拼圖存檔完成').then(() => true, e => { note(`第 ${r} 輪拼圖：${e.message}`); return false; });
+    if (ok1) note(`第 ${r} 輪：創意拼圖存檔完成`);
     const cont = findButton(/繼續編輯/); if (cont) { click(cont); await sleep(1200); }
     if (!(await backHome())) { note(`第 ${r} 輪：回不到主頁，停止`); return; }
     await sleep(3000);
@@ -248,8 +251,8 @@ async function scenarioStress(rounds = 8) {
     await sleep(8000);
     const f3 = buttons().find(b => (b.textContent || '').trim() === 'F3'); if (f3) { click(f3); await sleep(2500); }
     const save2 = findButton(/^儲存$/); if (save2) click(save2);
-    await waitFor(() => findButton(/修下一張/), 180000, '編輯存檔完成').catch(e => note(`第 ${r} 輪編輯：${e.message}`));
-    note(`第 ${r} 輪：編輯存檔完成`);
+    const ok2 = await waitFor(() => findButton(/修下一張/), 180000, '編輯存檔完成').then(() => true, e => { note(`第 ${r} 輪編輯：${e.message}`); return false; });
+    if (ok2) note(`第 ${r} 輪：編輯存檔完成`);
     const cont2 = findButton(/繼續編輯/); if (cont2) { click(cont2); await sleep(1200); }
     if (!(await backHome())) { note(`第 ${r} 輪：回不到主頁，停止`); return; }
     await sleep(3000);
