@@ -322,11 +322,11 @@ async function scenarioFull(rounds = 1) {
   const big48 = await makeSized(8064, 6048, 7);
   const mixed = [await makeSized(3024, 4032, 1), await makeSized(4032, 3024, 2), await makeSized(1800, 1800, 3, true)];
   /** 從主頁進工具（交給它 files）、做 prep、按儲存（有選單就選圖片）、等成品頁、檢查成品 */
-  const runTool = async (name: string, entry: RegExp, files: File[], done: RegExp, expect: number, prep?: () => Promise<void>) => {
+  const runTool = async (name: string, entry: RegExp, files: File[], done: RegExp, expect: number, prep?: () => Promise<void>, enter?: () => void) => {
     const t0 = Date.now();
     try {
       (window as any).__abaiQAFiles = () => files;
-      click(await waitFor(() => findButton(entry), 20000, `${name}按鈕`));
+      if (enter) enter(); else click(await waitFor(() => findButton(entry), 20000, `${name}按鈕`));
       await sleep(9000);
       if (prep) await prep();
       const save = await waitFor(() => findButton(/^儲存$/), 20000, '儲存按鈕'); click(save);
@@ -351,21 +351,34 @@ async function scenarioFull(rounds = 1) {
       if (await tapText(/^特效$/)) { const c = document.querySelector('[data-fx-card]:not([data-fx-card=""])') as HTMLElement | null; if (c) { click(c); await sleep(4000); } else note('（找不到特效卡，略過特效）'); }
     });
     await runTool('批量：直＋橫＋透明 PNG', TOOL_ENTRY.edit, mixed, /修下一張/, 3, async () => { await tapText(/^F5$/); });
-    await runTool('創意拼圖：5 張、無縫＋整體特效', TOOL_ENTRY.collage, big12, /拼下一張/, 1, async () => {
+    const seamless = async () => {
       const setting = document.querySelector('[data-creative-tab="setting"]') as HTMLElement | null; if (setting) { click(setting); await sleep(800); }
       const seam = document.querySelector('[data-creative-seamless] input[type=range]') as HTMLInputElement | null;
-      if (seam) { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!; for (const v of [20, 40, 60]) { set.call(seam, String(v)); seam.dispatchEvent(new Event('input', { bubbles: true })); await sleep(300); } seam.dispatchEvent(new Event('change', { bubbles: true })); await sleep(3000); }
-      else note('（找不到無縫滑桿）');
-      const objTab = document.querySelector('[data-creative-tab="objedit"]') as HTMLElement | null, stage = document.querySelector('[data-creative-stage]') as HTMLElement | null;
-      let fxOn = false;
-      if (objTab && stage) {
-        click(objTab); await sleep(800);
-        const rc = stage.getBoundingClientRect(); await tapAt(5, rc.top + 20); await sleep(1000);
-        if (await tapText(/^特效$/)) { const c = document.querySelector('[data-fx-card="fxExposureSpill"]') as HTMLElement | null; if (c) { click(c); fxOn = true; await sleep(5000); } }
-        if (setting) { click(setting); await sleep(1500); }
+      if (seam) { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!; for (const v of [20, 40, 60]) { set.call(seam, String(v)); seam.dispatchEvent(new Event('input', { bubbles: true })); await sleep(300); } seam.dispatchEvent(new Event('change', { bubbles: true })); await sleep(3000); return true; }
+      note('（找不到無縫滑桿）'); return false;
+    };
+    await runTool('創意拼圖：5 張＋無縫', TOOL_ENTRY.collage, big12, /拼下一張/, 1, async () => { await seamless(); });
+    /* 編輯裡的拼圖（相簿上排選「拼圖」）：5 張、無縫＋整體特效 —— 存檔最吃記憶體的情況 */
+    {
+      const editBtn = await waitFor(() => findButton(TOOL_ENTRY.edit), 20000, '編輯按鈕').catch(() => null);
+      const input = document.querySelector('input[data-pick-modes]') as HTMLInputElement | null;
+      if (!input) pass('編輯裡的拼圖：5 張、無縫＋整體特效', false, '找不到匯入入口');
+      else {
+        void editBtn;
+        await runTool('編輯裡的拼圖：5 張、無縫＋整體特效', /^$/, big12, /拼下一張/, 1, async () => {
+          await seamless();
+          const objTab = document.querySelector('[data-creative-tab="objedit"]') as HTMLElement | null, stage = document.querySelector('[data-creative-stage]') as HTMLElement | null;
+          let fxOn = false;
+          if (objTab && stage) {
+            click(objTab); await sleep(800);
+            const rc = stage.getBoundingClientRect(); await tapAt(5, rc.top + 20); await sleep(1000);
+            if (await tapText(/^特效$/)) { const c = document.querySelector('[data-fx-card="fxExposureSpill"]') as HTMLElement | null; if (c) { click(c); fxOn = true; await sleep(5000); } }
+            const setting = document.querySelector('[data-creative-tab="setting"]') as HTMLElement | null; if (setting) { click(setting); await sleep(1500); }
+          }
+          note(`（整體特效${fxOn ? '已套用' : '沒套到，這項只測無縫'}；存檔前可用記憶體 ${await memMB()}MB）`);
+        }, () => { const dt = new DataTransfer(); for (const f of big12) dt.items.add(f); input.files = dt.files; input.dataset.pickMode = 'collage'; input.dispatchEvent(new Event('change', { bubbles: true })); });
       }
-      note(`（整體特效${fxOn ? '已套用' : '沒套到，這項只測無縫'}；存檔前可用記憶體 ${await memMB()}MB）`);
-    });
+    }
     await runTool('美顏', TOOL_ENTRY.beauty, [big12[0]], /修下一張/, 1);
     await runTool('仿色', TOOL_ENTRY.match, [big12[1]], /接著調色/, 1);
     await runTool('藝術效果', TOOL_ENTRY.art, [big12[2]], /修下一張/, 1);
