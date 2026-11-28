@@ -521,12 +521,9 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             let settings: AVCapturePhotoSettings
             if wantRaw, let raw = self.rawFormat() {
                 settings = AVCapturePhotoSettings(rawPixelFormatType: raw, processedFormat: processed)
-                /* RAW 檔裡內嵌一張預覽圖（跟原相機的 ProRAW 一樣）：存進相簿時「照片」App 直接顯示這張，
-                   不用等它自己把 RAW 沖完（不然一開始是灰的、過一陣子才出現） */
-                /* 只指定格式、尺寸交給系統（跟 Apple 官方範例相機 AVCam 一樣）：自己指定尺寸萬一不被接受，拍照時會丟例外 */
-                if let codec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first {
-                    settings.rawEmbeddedThumbnailPhotoFormat = [AVVideoCodecKey: codec]
-                }
+                /* 不再內嵌預覽圖：尺寸交給系統時給的是一張很小的圖，「照片」App 會一直拿它來顯示（存到相簿的 RAW 看起來很糊、
+                   跟成品像不同張），不會自己沖 RAW。不內嵌的話「照片」App 一定用真正的 RAW 資料自己沖（打開時可能先灰一下下）。
+                   App 自己的相機相簿、編輯都是直接沖 RAW，不受影響 */
             } else {
                 settings = AVCapturePhotoSettings(format: processed)
             }
