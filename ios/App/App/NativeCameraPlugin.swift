@@ -581,6 +581,8 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
     }
 
     /// 小框構圖拍照時暫時變焦：拍完要變回去的倍率；這段期間觀景窗停在上一格
+    /// 這一次拍照的診斷：哪個時間點的畫面（秒）、尺寸
+    private var captureDiag: [String: (Double, String)] = [:]
     private var zoomToRestore: CGFloat?
     private var previewFrozen = false
     private func restoreZoomAfterCapture() {
@@ -628,6 +630,11 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         let isRaw = photo.isRawPhoto
         let url = ABAIImageCore.newFileURL(ext: isRaw ? "dng" : (output.availablePhotoCodecTypes.contains(.hevc) ? "heic" : "jpg"))
         do { try data.write(to: url) } catch { return }
+        /* 診斷（寫進穩定性紀錄）：這一張是哪個時間點的畫面、多大 —— 用來確認 RAW 跟成品是不是同一瞬間、RAW 有沒有比較小 */
+        let t = CMTimeGetSeconds(photo.timestamp)
+        let dims = "\(photo.resolvedSettings.photoDimensions.width)×\(photo.resolvedSettings.photoDimensions.height)"
+        if isRaw { captureDiag["raw"] = (t, isRaw ? "\(photo.resolvedSettings.rawPhotoDimensions.width)×\(photo.resolvedSettings.rawPhotoDimensions.height)" : dims) }
+        else { captureDiag["processed"] = (t, dims) }
         if isRaw { captured["rawPath"] = url.path }
         else {
             captured["path"] = url.path
@@ -642,6 +649,12 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
         restoreZoomAfterCapture()
         if let e = error { call?.reject(e.localizedDescription); return }
         if captured["path"] == nil, let raw = captured["rawPath"] { captured["path"] = raw }
+        if let r = captureDiag["raw"], let p = captureDiag["processed"] {
+            var zsl = "?"
+            if #available(iOS 17.0, *) { zsl = output.isZeroShutterLagEnabled ? "開" : "關" }
+            StabilityPlugin.write("拍照：成品 \(p.1)、RAW \(r.1)，兩張畫面相差 \(Int(((r.0 - p.0) * 1000).rounded())) 毫秒（正數＝RAW 比較晚），零延遲快門\(zsl)，鏡頭倍率 \(String(format: "%.2f", Double(self.device?.videoZoomFactor ?? 0)))")
+        }
+        captureDiag = [:]
         call?.resolve(captured)
     }
 
