@@ -25,8 +25,8 @@ let samplingSource=null;
 /** 離開藝術效果時放掉：取樣用的原解析度複本（一張跟原圖一樣大的畫布，1200 萬像素約 48MB）和小取樣圖。
  *  以前是全域快取，離開工具後一直留著，到下次再進來換照片才換掉 */
 export function releaseArtSampling(){
- if(samplingSource){samplingSource.canvas.width=samplingSource.canvas.height=0;samplingSource=null;}
- if(sampled){if(sampled.canvas)sampled.canvas.width=sampled.canvas.height=0;sampled=null;}
+ // 只放手、不清空：萬一還有工作正在用這兩張圖，它手上的那份照樣完整；沒人用了瀏覽器才回收
+ samplingSource=null;sampled=null;
 }
 function sourceForSampling(source){
  if(samplingSource?.source===source)return samplingSource.canvas;
