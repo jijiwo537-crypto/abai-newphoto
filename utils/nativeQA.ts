@@ -219,6 +219,10 @@ async function backHome() {
   }
   return !!findButton(TOOL_ENTRY.collage);
 }
+/** 手機現在還能用多少記憶體（MB）；拿不到回 '?' */
+async function memMB() {
+  try { const p = await nativePlugin<{ beat(o: { where: string }): Promise<{ availableMB: number }> }>('Stability'); return p ? (await p.beat({ where: '壓力測試' })).availableMB : '?'; } catch { return '?'; }
+}
 async function scenarioStress(rounds = 8) {
   const { stabilityLog } = await import('./stability');
   const note = (m: string) => { log(m); stabilityLog('壓力測試：' + m); };
@@ -237,12 +241,27 @@ async function scenarioStress(rounds = 8) {
       for (const v of [20, 40, 60]) { setter.call(seam, String(v)); seam.dispatchEvent(new Event('input', { bubbles: true })); await sleep(300); }
       seam.dispatchEvent(new Event('change', { bubbles: true })); seam.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })); await sleep(3000);
     }
+    // 套整體特效（存檔最吃記憶體的情況）：選整個照片區 → 特效 → 第一顆可用的特效
+    const objTab = document.querySelector('[data-creative-tab="objedit"]') as HTMLElement | null;
+    const stage = document.querySelector('[data-creative-stage]') as HTMLElement | null;
+    let fxOn = false;
+    if (objTab && stage) {
+      click(objTab); await sleep(800);
+      const rc = stage.getBoundingClientRect();
+      const hit = document.elementFromPoint(5, rc.top + 20) as HTMLElement | null;
+      if (hit) { for (const t of ['pointerdown', 'pointerup', 'click']) hit.dispatchEvent(new PointerEvent(t, { bubbles: true, clientX: 5, clientY: rc.top + 20, pointerId: 1, isPrimary: true })); await sleep(1000); }
+      const fxBtn = findButton(/^特效$/); if (fxBtn) { click(fxBtn); await sleep(800); }
+      const card = document.querySelector('[data-fx-card="fxExposureSpill"]') as HTMLElement | null;
+      if (card) { click(card); fxOn = true; await sleep(5000); }
+      const setTab = document.querySelector('[data-creative-tab="setting"]') as HTMLElement | null; if (setTab) { click(setTab); await sleep(1500); }
+    }
+    note(`第 ${r} 輪：整體特效${fxOn ? '已套用' : '沒套到（找不到按鈕，這一輪只測無縫）'}；存檔前可用記憶體 ${await memMB()}MB`);
     const save1 = findButton(/^儲存$/); if (save1) click(save1);
     // 拼圖的「儲存」會先跳出「儲存圖片／儲存影片」選單
     const photoItem = await waitFor(() => findButton(/儲存圖片/), 5000, '儲存圖片').catch(() => null);
     if (photoItem) click(photoItem);
     const ok1 = await waitFor(() => findButton(/拼下一張/), 180000, '拼圖存檔完成').then(() => true, e => { note(`第 ${r} 輪拼圖：${e.message}`); return false; });
-    if (ok1) note(`第 ${r} 輪：創意拼圖存檔完成`);
+    if (ok1) note(`第 ${r} 輪：創意拼圖存檔完成（存檔後可用記憶體 ${await memMB()}MB）`);
     const cont = findButton(/繼續編輯/); if (cont) { click(cont); await sleep(1200); }
     if (!(await backHome())) { note(`第 ${r} 輪：回不到主頁，停止`); return; }
     await sleep(3000);
