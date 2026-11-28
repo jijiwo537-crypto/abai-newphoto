@@ -334,7 +334,7 @@ async function scenarioFull(rounds = 1) {
       await waitFor(() => findButton(done), 300000, `${name}存檔完成`);
       await sleep(1500);
       const imgs = await resultImages();
-      const bad = imgs.filter(x => x.lum >= 0 && (x.lum < 8 || x.lum > 250));
+      const bad = name === '點陣文字' ? [] : imgs.filter(x => x.lum >= 0 && (x.lum < 8 || x.lum > 250));
       const ok = imgs.length >= expect && bad.length === 0;
       pass(name, ok, `${Math.round((Date.now() - t0) / 1000)} 秒；成品 ${imgs.map(x => `${x.w}×${x.h}${x.lum < 0 ? '' : `(亮度${x.lum})`}`).join('、') || '沒看到'}${bad.length ? '；有全黑或全白' : ''}${imgs.length < expect ? `；應該有 ${expect} 張` : ''}`);
     } catch (e: any) { pass(name, false, String(e?.message ?? e)); }
@@ -383,7 +383,11 @@ async function scenarioFull(rounds = 1) {
     await runTool('仿色', TOOL_ENTRY.match, [big12[1]], /接著調色/, 1);
     await runTool('藝術效果', TOOL_ENTRY.art, [big12[2]], /修下一張/, 1);
     await runTool('跨頁拼圖：3 張', TOOL_ENTRY.layout, big12.slice(0, 3), /拼下一組/, 1);
-    await runTool('點陣文字', TOOL_ENTRY.dot, [big12[3]], /繼續編輯/, 1);   // 點陣文字的成品頁只有「繼續編輯」
+    /* 點陣文字：線稿模型第一次要下載、載入（模擬器很慢），等它真的算好（儲存按鈕可以按）再存；成品是去背 PNG，不檢查亮度 */
+    await runTool('點陣文字', TOOL_ENTRY.dot, [big12[3]], /繼續編輯/, 1, async () => {
+      await waitFor(() => { const b = findButton(/^儲存$/) as HTMLButtonElement | undefined; return b && !b.disabled && getComputedStyle(b).opacity !== '0.4' ? b : null; }, 120000, '點陣文字算好').catch(() => null);
+      await sleep(3000);
+    });
     // 影片匯出：創意拼圖 2 張 → 儲存影片 → 成品影片要能播、有畫面
     {
       const t0 = Date.now();
