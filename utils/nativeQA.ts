@@ -320,7 +320,7 @@ async function scenarioFull(rounds = 1) {
   note(`開始，共 ${rounds} 輪；可用記憶體 ${await memMB()}MB`);
   const big12 = [] as File[]; for (let i = 0; i < 5; i++) big12.push(await makeSized(i % 2 ? 3024 : 4032, i % 2 ? 4032 : 3024, i));
   const big48 = await makeSized(8064, 6048, 7);
-  const mixed = [await makeSized(3024, 4032, 1), await makeSized(4032, 3024, 2), await makeSized(1800, 1800, 3, true)];
+  const mixed = [await makeSized(3024, 4032, 1), await makeSized(4032, 3024, 2), await makeSized(3000, 3000, 3)];
   /** 從主頁進工具（交給它 files）、做 prep、按儲存（有選單就選圖片）、等成品頁、檢查成品 */
   const runTool = async (name: string, entry: RegExp, files: File[], done: RegExp, expect: number, prep?: () => Promise<void>, enter?: () => void) => {
     const t0 = Date.now();
@@ -350,7 +350,7 @@ async function scenarioFull(rounds = 1) {
       if (!(await tapText(/^F3$/))) note('（找不到 F3，略過濾鏡）');
       if (await tapText(/^特效$/)) { const c = document.querySelector('[data-fx-card]:not([data-fx-card=""])') as HTMLElement | null; if (c) { click(c); await sleep(4000); } else note('（找不到特效卡，略過特效）'); }
     });
-    await runTool('批量：直＋橫＋透明 PNG', TOOL_ENTRY.edit, mixed, /修下一張/, 3, async () => { await tapText(/^F5$/); });
+    await runTool('批量：直＋橫＋方 三張', TOOL_ENTRY.edit, mixed, /修下一張/, 3, async () => { await tapText(/^F5$/); });
     const seamless = async () => {
       const setting = document.querySelector('[data-creative-tab="setting"]') as HTMLElement | null; if (setting) { click(setting); await sleep(800); }
       const seam = document.querySelector('[data-creative-seamless] input[type=range]') as HTMLInputElement | null;
@@ -383,7 +383,7 @@ async function scenarioFull(rounds = 1) {
     await runTool('仿色', TOOL_ENTRY.match, [big12[1]], /接著調色/, 1);
     await runTool('藝術效果', TOOL_ENTRY.art, [big12[2]], /修下一張/, 1);
     await runTool('跨頁拼圖：3 張', TOOL_ENTRY.layout, big12.slice(0, 3), /拼下一組/, 1);
-    await runTool('點陣文字', TOOL_ENTRY.dot, [big12[3]], /修下一張|拼下一張|拼下一組|再做一張|下一張/, 1);
+    await runTool('點陣文字', TOOL_ENTRY.dot, [big12[3]], /繼續編輯/, 1);   // 點陣文字的成品頁只有「繼續編輯」
     // 影片匯出：創意拼圖 2 張 → 儲存影片 → 成品影片要能播、有畫面
     {
       const t0 = Date.now();

@@ -23,6 +23,7 @@ public class StabilityPlugin: CAPPlugin, CAPBridgedPlugin, MXMetricManagerSubscr
     public let identifier = "StabilityPlugin"
     public let jsName = "Stability"
     public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "available", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "hello", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "beat", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "log", returnType: CAPPluginReturnPromise),
@@ -76,6 +77,9 @@ public class StabilityPlugin: CAPPlugin, CAPBridgedPlugin, MXMetricManagerSubscr
         nc.addObserver(forName: UIApplication.willTerminateNotification, object: nil, queue: .main) { _ in d.set(false, forKey: Self.cleanKey) }
         if #available(iOS 14.0, *) { MXMetricManager.shared.add(self) }
     }
+
+    /// 網頁端（utils/nativeBridge 的 nativePlugin）先呼叫這支確認外掛存在，才會用其他方法
+    @objc func available(_ call: CAPPluginCall) { call.resolve(["available": true]) }
 
     @objc func hello(_ call: CAPPluginCall) {
         hellos += 1
