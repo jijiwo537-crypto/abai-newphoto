@@ -370,6 +370,24 @@ async function scenarioFull(rounds = 1) {
     await runTool('仿色', TOOL_ENTRY.match, [big12[1]], /接著調色/, 1);
     await runTool('藝術效果', TOOL_ENTRY.art, [big12[2]], /修下一張/, 1);
     await runTool('跨頁拼圖：3 張', TOOL_ENTRY.layout, big12.slice(0, 3), /拼下一組/, 1);
+    await runTool('點陣文字', TOOL_ENTRY.dot, [big12[3]], /修下一張|拼下一張|拼下一組|再做一張|下一張/, 1);
+    // 影片匯出：創意拼圖 2 張 → 儲存影片 → 成品影片要能播、有畫面
+    {
+      const t0 = Date.now();
+      try {
+        (window as any).__abaiQAFiles = () => big12.slice(0, 2);
+        click(await waitFor(() => findButton(TOOL_ENTRY.collage), 20000, '創意拼圖按鈕')); await sleep(9000);
+        click(await waitFor(() => findButton(/^儲存$/), 20000, '儲存按鈕')); await sleep(1200);
+        click(await waitFor(() => findButton(/儲存影片/), 5000, '儲存影片'));
+        const v = await waitFor(() => document.querySelector('[data-export-media] video') as HTMLVideoElement | null, 300000, '影片成品');
+        await waitFor(() => v.readyState >= 2, 20000, '影片可以播');
+        const c = document.createElement('canvas'); c.width = 16; c.height = 16; const g = c.getContext('2d')!; g.drawImage(v, 0, 0, 16, 16);
+        const d = g.getImageData(0, 0, 16, 16).data; let l = 0; for (let i = 0; i < d.length; i += 4) l += d[i] + d[i + 1] + d[i + 2]; l = Math.round(l / 256 / 3);
+        pass('影片匯出（創意拼圖 2 張）', v.duration > 0.5 && l > 8 && l < 250, `${Math.round((Date.now() - t0) / 1000)} 秒；${v.videoWidth}×${v.videoHeight}、${v.duration.toFixed(1)} 秒、亮度 ${l}`);
+      } catch (e: any) { pass('影片匯出（創意拼圖 2 張）', false, String(e?.message ?? e)); }
+      const cont = findButton(/繼續編輯/); if (cont) { click(cont); await sleep(1200); }
+      await backHome(); await sleep(2500);
+    }
     note(`── 第 ${r} 輪結束，可用記憶體 ${await memMB()}MB（開始時 ${m0}MB）`);
   }
   const bad = results.filter(x => !x.ok);
