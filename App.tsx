@@ -991,8 +991,10 @@ const App: React.FC = () => {
         setIsImporting(true);setImportPreviewUrl(null);
         try {
           /* App 裡大照片先在原生端縮到藝術效果的工作尺寸，網頁不必解開整張原圖 */
-          const capped=isNative()?await import('./utils/nativeImage').then(m=>m.nativeImportCapped(file,MOBILE_MAX_PIXELS)).catch(()=>null):null;
-          setArtImage(capped??ownEditorUrl(await processImageFile(file,u=>setImportPreviewUrl(u))));
+          /* RAW 先用我們的 RAW 引擎沖（跟編輯器、其他工具同一個樣子），再從沖好的原生檔縮到工作尺寸 */
+          const dev=isNative()&&isRawFile(file)?await processImageFile(file,u=>setImportPreviewUrl(u)).catch(()=>null):null;
+          const capped=isNative()?await import('./utils/nativeImage').then(m=>m.nativeImportCapped(dev??file,MOBILE_MAX_PIXELS)).catch(()=>null):null;
+          setArtImage(capped??ownEditorUrl(dev??await processImageFile(file,u=>setImportPreviewUrl(u))));
           setCurrentView('art');
         } catch { alert('無法處理此圖片格式'); }
         finally { setIsImporting(false);setImportPreviewUrl(null); }

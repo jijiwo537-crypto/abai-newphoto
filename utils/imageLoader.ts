@@ -1,6 +1,6 @@
 import { isNative } from './native';
 import heic2any from 'heic2any';
-import { isPlainWebImage, isVideoFileName } from './fileTypes';
+import { isPlainWebImage, isVideoFileName, isRawFile } from './fileTypes';
 
 // ImageMagick 只在最後一道防線用到（TIFF、PSD、以及 HEIC/RAW 解碼失敗時），
 // 但它的 JS 膠水層與 13.7MB 的 wasm 若靜態載入，等於每位使用者一開 app
@@ -105,12 +105,25 @@ async function extractLargestJpegFromRaw(file: File, onPreview?: (url: string) =
   return null;
 }
 
+/** App 裡用我們的 RAW 引擎沖原尺寸（跟編輯器匯入 RAW 同一組參數：曝光、高光、陰影都是 0）。回傳檔案網址，失敗回 null */
+async function developRawWithEngine(file: File, ext: string, onPreview?: (url: string) => void): Promise<string | null> {
+  const { nativePathOf } = await import('./nativeBridge');
+  const { rawDevelopFull } = await import('./nativeCamera');
+  /* 從 App 自己的相簿來的有原生路徑；系統檔案 app 來的沒有，就分段寫成原生檔（不會一次產生一整個檔案大小的文字） */
+  let path = nativePathOf(file);
+  if (!path) { const { blobToNativeFile } = await import('./nativeImage'); path = await blobToNativeFile(file, ext || 'dng'); }
+  /* 沖原尺寸要一兩秒：先給內嵌的預覽墊著（跟原本一樣） */
+  if (onPreview) { try { const pv = await extractLargestJpegFromRaw(file); if (pv) onPreview(pv); } catch { /* 沒有就算了 */ } }
+  return rawDevelopFull(path, { exposure: 0, highlights: 0, shadows: 0 }, null, 'jpeg');
+}
+
 export async function processImageFile(file: File, onPreview?: (url: string) => void): Promise<string> {
   const extension = file.name.split('.').pop()?.toLowerCase() || '';
   const mimeType = file.type.toLowerCase();
   
   const isHeic = ['heic', 'heif', 'heics'].includes(extension) || mimeType.includes('heic') || mimeType.includes('heif');
-  const isRaw = ['arw', 'cr2', 'cr3', 'nef', 'dng', 'raf', 'orf', 'rw2', 'srw', 'pef', 'x3f'].includes(extension);
+  /* 跟 App 允許選的 RAW 清單同一份（以前這裡只認 11 種，Nikon NRW、Leica RWL、哈蘇 3FR、GoPro GPR… 會掉到最後的萬用轉檔） */
+  const isRaw = isRawFile(file);
 
   /* 0. App 裡（iOS 的網頁層本來就看得懂 JPEG／HEIC／PNG／WebP）：常見格式直接用，不再先整張載入一次測試 ——
         批量一次導入幾十張時，每張都先完整解一次碼會讓記憶體一下子衝很高 */
@@ -120,6 +133,14 @@ export async function processImageFile(file: File, onPreview?: (url: string) => 
     || (iosMajor >= 17 && (isHeic));
   if (!isRaw && isNative() && fastOk) {
     return URL.createObjectURL(file);
+  }
+  /* App 裡的 RAW：用編輯器同一套 RAW 引擎沖（不銳化、亮部保護），所有工具裡同一張 RAW 長得一樣。
+     原生直接讀檔案路徑、沖好寫成檔案，網頁只拿到一個檔案網址 —— 不再把整個 RAW 轉成文字傳過去、再把成品轉成文字傳回來。
+     （iOS 的網頁層自己也看得懂部分 RAW，但那是系統預設的沖法，跟編輯器不一樣，所以要排在下面「瀏覽器直接顯示」之前。）
+     沖不出來（舊版 App、系統不認得的格式）就照原本的路走。 */
+  if (isRaw && isNative()) {
+    const dev = await developRawWithEngine(file, extension, onPreview).catch(() => null);
+    if (dev) return dev;
   }
   // 1. 先看瀏覽器能不能直接顯示這個檔
   try {
@@ -261,7 +282,10 @@ export async function normalizeImageFile(
     /* 副檔名換成 .jpg：下游有些地方會看副檔名判斷型別，
        留著 .ARW 會讓它們以為還是 RAW。 */
     const base = file.name.replace(/\.[^.]+$/, '');
-    return new File([blob], `${base}.jpg`, { type: blob.type || 'image/jpeg', lastModified: file.lastModified });
+    const out = new File([blob], `${base}.jpg`, { type: blob.type || 'image/jpeg', lastModified: file.lastModified });
+    /* RAW 引擎沖出來的是原生檔：記下路徑，下游（拼圖縮圖、原生縮小）可以直接讀原生檔，不必在網頁裡解整張 */
+    if (isNative()) { const { nativePathOf, rememberNativeFile } = await import('./nativeBridge'); const np = nativePathOf(url); if (np) rememberNativeFile(out, np); }
+    return out;
   } finally {
     /* 上面已經把位元組讀進 blob 了，這條中繼網址就沒用了。
        （processImageFile 內部若直接回傳原生網址，收掉它也沒關係 ——

@@ -39,7 +39,7 @@ export async function nativeImageSize(path: string): Promise<{ width: number; he
  *  從相簿選來、超過上限的照片在原生端解碼時就縮好，WebKit 不必先把整張 4800 萬像素解開
  *  （光那一下就要約 200MB，前面編輯過很多東西時，網頁會因此被系統收掉，看起來就是閃退）。
  *  工具本來就會縮到同一個尺寸，所以成品一樣。回傳 null＝不需要／做不到，照原本的方式讀。 */
-export async function nativeImportCapped(file: Blob, maxPixels: number): Promise<string | null> {
+export async function nativeImportCapped(file: Blob | string, maxPixels: number): Promise<string | null> {
   const path = nativePathOf(file);
   if (!path) return null;
   const size = await nativeImageSize(path);
