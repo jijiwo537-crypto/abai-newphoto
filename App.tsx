@@ -528,6 +528,8 @@ const App: React.FC = () => {
           setRawImportHint(true);
           const path = nativePathOf(files[0]);
           const r = path ? await rawDevelopPreview(path, { exposure: 0, highlights: 0, shadows: 0 }, null, 2048, true) : null;
+          /* 穩定性紀錄裡留一筆：RAW 進編輯沒被當成 RAW 時，看這行就知道是哪一步（沒有原生路徑／沖不出來） */
+          void import('./utils/stability').then(m => m.stabilityLog(`匯入 RAW：${files[0].name}，原生路徑${path ? '有' : '沒有'}，${r ? '用 RAW 引擎沖好' : '沖不出來，改當一般照片'}`)).catch(() => {});
           if (path && r) {
             rawHintToEditorRef.current = true;
             upgradeImportHero(r.url);

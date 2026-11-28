@@ -482,6 +482,29 @@ public class PhotoLibraryPlugin: CAPPlugin, CAPBridgedPlugin, PHPhotoLibraryChan
     }
 
     private func exportPhoto(_ a: PHAsset, name: String?, done: @escaping ([String: Any]?, String?) -> Void) {
+        /* RAW（沒在「照片」App 編輯過）：直接把 RAW 檔本身寫出來，不經過 requestImageData ——
+           那條路對某些 RAW（例如 ProRAW、或原檔還在 iCloud 的）會交回系統沖好的 JPEG／HEIC，
+           編輯器就不會把它當 RAW（看得到「RAW」標示、進編輯卻不是 RAW）。寫不出來才照原本的方式 */
+        if importsAsRaw(a), let r = photoResource(a), let t = UTType(r.uniformTypeIdentifier), t.conforms(to: .rawImage) {
+            let ext = t.preferredFilenameExtension ?? "dng"
+            let url = ABAIImageCore.newFileURL(ext: ext)
+            let ro = PHAssetResourceRequestOptions(); ro.isNetworkAccessAllowed = true
+            PHAssetResourceManager.default().writeData(for: r, toFile: url, options: ro) { err in
+                if err == nil {
+                    let base = ((name ?? "photo") as NSString).deletingPathExtension
+                    done(["path": url.path, "name": "\(base).\(ext)", "type": t.preferredMIMEType ?? "image/x-adobe-dng",
+                          "assetId": a.localIdentifier, "width": a.pixelWidth, "height": a.pixelHeight], nil)
+                } else {
+                    try? FileManager.default.removeItem(at: url)
+                    self.exportPhotoData(a, name: name, done: done)
+                }
+            }
+            return
+        }
+        exportPhotoData(a, name: name, done: done)
+    }
+
+    private func exportPhotoData(_ a: PHAsset, name: String?, done: @escaping ([String: Any]?, String?) -> Void) {
         let o = PHImageRequestOptions()
         o.version = .current
         o.deliveryMode = .highQualityFormat
