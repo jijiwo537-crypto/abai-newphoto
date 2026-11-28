@@ -36,26 +36,40 @@ function boxMean(src: Float32Array, w: number, h: number, r: number, tmp: Float3
   }
 }
 
-/** 局部關係：每個通道的 a、b（在 1/2 尺寸的格子上，平滑的）＋ 殘差（成品尺寸，Int8） */
-interface Transfer { gw: number; gh: number; a: Float32Array[]; b: Float32Array[]; res: Int8Array; pw: number; ph: number; }
+/** 局部關係：每個通道的 a、b（在 1/2 尺寸的格子上，平滑的）＋ 殘差（成品尺寸，Int8）。
+ *  不一次算完整張：存檔是由上往下一條一條做的，用到哪一段才算哪一段（每段 BAND 列格子），
+ *  用過的段就丟掉。算法、分段的位置都跟以前整張先算好完全一樣，所以成品逐位元相同；
+ *  只是同時只留兩三段在記憶體裡（1600 萬像素的工作尺寸：以前 a、b、殘差整張約 150MB，現在約 10MB）。 */
+export interface Transfer {
+  gw: number; gh: number; pw: number; ph: number;
+  /** 第 c 通道、格子第 gy 列的 a／b（長度 gw） */
+  aRow(c: number, gy: number): Float32Array; bRow(c: number, gy: number): Float32Array;
+  /** 成品第 py 列的殘差（長度 pw×3） */
+  resRow(py: number): Int8Array;
+  /** 告訴它「格子第 gy 列以前、成品第 py 列以前都不會再用到了」，那些段可以丟掉 */
+  release(gy: number, py: number): void;
+}
+const BAND = 64;
 
-/** P＝成品（縮小尺寸算出來的），D＝同尺寸的原圖；兩者都是 RGBA */
+/** P＝成品（縮小尺寸算出來的），D＝同尺寸的原圖；兩者都是 RGBA。只記下來，真正的計算在用到時才做 */
 export function buildTransfer(P: Uint8ClampedArray, D: Uint8ClampedArray, pw: number, ph: number): Transfer {
-  const gw = Math.max(1, Math.ceil(pw / 2)), gh = Math.max(1, Math.ceil(ph / 2)), gn = gw * gh;
+  const gw = Math.max(1, Math.ceil(pw / 2)), gh = Math.max(1, Math.ceil(ph / 2));
   const r = 2, eps = 16;   // 5×5 鄰域；eps 讓平坦的地方不會亂學出很大的增益
-  const a: Float32Array[] = [], b: Float32Array[] = [];
   /* 分段算（每段 BAND 列格子，上下各多算 HALO 列）：兩次 5×5 平均，每一格最遠用到上下 4 列，
-     多算 4 列就跟整張一起算是同一個結果（只差浮點累加的進位，成品偶爾 ±1）。
-     暫存只要一段的大小，不必九塊整張大小的陣列（800 萬像素的工作尺寸時省下約 70MB） */
-  const BAND = 64, HALO = 2 * r;
+     多算 4 列就跟整張一起算是同一個結果（只差浮點累加的進位，成品偶爾 ±1）。 */
+  const HALO = 2 * r;
   const cap = Math.min(gh, BAND + 2 * HALO) * gw;
-  const Dg = new Float32Array(cap), Pg = new Float32Array(cap), DD = new Float32Array(cap), DP = new Float32Array(cap);
-  const mD = new Float32Array(cap), mP = new Float32Array(cap), mDD = new Float32Array(cap), mDP = new Float32Array(cap), tmp = new Float32Array(cap);
-  const A = DD, B = DP;   // 算出 mDD、mDP 之後 DD、DP 就用不到了
-  for (let c = 0; c < 3; c++) {
-    const ac = new Float32Array(gn), bc = new Float32Array(gn);
-    for (let g0 = 0; g0 < gh; g0 += BAND) {
-      const g1 = Math.min(gh, g0 + BAND), s0 = Math.max(0, g0 - HALO), s1 = Math.min(gh, g1 + HALO), sh = s1 - s0;
+  let scratch: Float32Array[] | null = null;
+  const ab = new Map<number, { a: Float32Array[]; b: Float32Array[] }>();
+  const resB = new Map<number, Int8Array>();
+  const abBand = (k: number) => {
+    let e = ab.get(k); if (e) return e;
+    if (!scratch) scratch = Array.from({ length: 9 }, () => new Float32Array(cap));
+    const [Dg, Pg, DD, DP, mD, mP, mDD, mDP, tmp] = scratch;
+    const A = DD, B = DP;   // 算出 mDD、mDP 之後 DD、DP 就用不到了
+    const g0 = k * BAND, g1 = Math.min(gh, g0 + BAND), s0 = Math.max(0, g0 - HALO), s1 = Math.min(gh, g1 + HALO), sh = s1 - s0;
+    e = { a: [], b: [] };
+    for (let c = 0; c < 3; c++) {
       // 2×2 平均到格子上
       for (let gy = s0; gy < s1; gy++) for (let gx = 0; gx < gw; gx++) {
         let sd = 0, sp = 0, n = 0;
@@ -72,56 +86,74 @@ export function buildTransfer(P: Uint8ClampedArray, D: Uint8ClampedArray, pw: nu
       }
       // 導向濾波的第二步：a、b 再平均一次，關係在空間上平滑；只留這一段本身（不含多算的上下幾列）
       boxMean(A, gw, sh, r, tmp, mD); boxMean(B, gw, sh, r, tmp, mP);
-      ac.set(mD.subarray((g0 - s0) * gw, (g1 - s0) * gw), g0 * gw);
-      bc.set(mP.subarray((g0 - s0) * gw, (g1 - s0) * gw), g0 * gw);
+      e.a.push(mD.slice((g0 - s0) * gw, (g1 - s0) * gw));
+      e.b.push(mP.slice((g0 - s0) * gw, (g1 - s0) * gw));
     }
-    a.push(ac); b.push(bc);
-  }
-  // 殘差：成品 −（a×原圖＋b），在成品尺寸上
-  const res = new Int8Array(pw * ph * 3);
-  for (let y = 0; y < ph; y++) {
-    const fy = (y + 0.5) / 2 - 0.5, ya = clampI(Math.floor(fy), 0, gh - 1), yb = clampI(ya + 1, 0, gh - 1), ty = clampI(fy - ya, 0, 1);
-    for (let x = 0; x < pw; x++) {
-      const fx = (x + 0.5) / 2 - 0.5, xa = clampI(Math.floor(fx), 0, gw - 1), xb = clampI(xa + 1, 0, gw - 1), tx = clampI(fx - xa, 0, 1);
-      const i00 = ya * gw + xa, i10 = ya * gw + xb, i01 = yb * gw + xa, i11 = yb * gw + xb;
-      const w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty), w01 = (1 - tx) * ty, w11 = tx * ty;
-      const o = (y * pw + x) * 4;
-      for (let c = 0; c < 3; c++) {
-        const A = a[c], B = b[c];
-        const av = A[i00] * w00 + A[i10] * w10 + A[i01] * w01 + A[i11] * w11, bv = B[i00] * w00 + B[i10] * w10 + B[i01] * w01 + B[i11] * w11;
-        res[(y * pw + x) * 3 + c] = clampI(Math.round(P[o + c] - (av * D[o + c] + bv)), -127, 127);
+    ab.set(k, e); return e;
+  };
+  const aRow = (c: number, gy: number) => { const k = (gy / BAND) | 0, o = (gy - k * BAND) * gw; return abBand(k).a[c].subarray(o, o + gw); };
+  const bRow = (c: number, gy: number) => { const k = (gy / BAND) | 0, o = (gy - k * BAND) * gw; return abBand(k).b[c].subarray(o, o + gw); };
+  // 殘差：成品 −（a×原圖＋b），在成品尺寸上；一段＝成品的 2×BAND 列
+  const PB = 2 * BAND;
+  const resBand = (k: number) => {
+    let e = resB.get(k); if (e) return e;
+    const y0 = k * PB, y1 = Math.min(ph, y0 + PB);
+    e = new Int8Array((y1 - y0) * pw * 3);
+    for (let y = y0; y < y1; y++) {
+      const fy = (y + 0.5) / 2 - 0.5, ya = clampI(Math.floor(fy), 0, gh - 1), yb = clampI(ya + 1, 0, gh - 1), ty = clampI(fy - ya, 0, 1);
+      const Aa = [aRow(0, ya), aRow(1, ya), aRow(2, ya)], Ab = [aRow(0, yb), aRow(1, yb), aRow(2, yb)];
+      const Ba = [bRow(0, ya), bRow(1, ya), bRow(2, ya)], Bb = [bRow(0, yb), bRow(1, yb), bRow(2, yb)];
+      for (let x = 0; x < pw; x++) {
+        const fx = (x + 0.5) / 2 - 0.5, xa = clampI(Math.floor(fx), 0, gw - 1), xb = clampI(xa + 1, 0, gw - 1), tx = clampI(fx - xa, 0, 1);
+        const w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty), w01 = (1 - tx) * ty, w11 = tx * ty;
+        const o = (y * pw + x) * 4;
+        for (let c = 0; c < 3; c++) {
+          const av = Aa[c][xa] * w00 + Aa[c][xb] * w10 + Ab[c][xa] * w01 + Ab[c][xb] * w11, bv = Ba[c][xa] * w00 + Ba[c][xb] * w10 + Bb[c][xa] * w01 + Bb[c][xb] * w11;
+          e[((y - y0) * pw + x) * 3 + c] = clampI(Math.round(P[o + c] - (av * D[o + c] + bv)), -127, 127);
+        }
       }
     }
-  }
-  return { gw, gh, a, b, res, pw, ph };
+    resB.set(k, e); return e;
+  };
+  const resRow = (py: number) => { const k = (py / PB) | 0, o = (py - k * PB) * pw * 3; return resBand(k).subarray(o, o + pw * 3); };
+  const release = (gy: number, py: number) => {
+    for (const k of [...ab.keys()]) if ((k + 1) * BAND <= gy) ab.delete(k);
+    for (const k of [...resB.keys()]) if ((k + 1) * PB <= py) resB.delete(k);
+  };
+  return { gw, gh, pw, ph, aRow, bRow, resRow, release };
 }
 
 /** 把局部關係套到原尺寸的一條（rows 列，從 y0 開始），就地改寫 RGBA */
 function applyStrip(T: Transfer, O: Uint8ClampedArray, W: number, H: number, y0: number, rows: number) {
-  const { gw, gh, a, b, res, pw, ph } = T;
+  const { gw, gh, pw, ph } = T;
   const kx = pw / W, ky = ph / H;
+  let minG = Infinity, minP = Infinity;
   for (let yy = 0; yy < rows; yy++) {
     const y = y0 + yy;
     const py = (y + 0.5) * ky - 0.5, pya = clampI(Math.floor(py), 0, ph - 1), pyb = clampI(pya + 1, 0, ph - 1), pty = clampI(py - pya, 0, 1);
     const gyf = (py + 0.5) / 2 - 0.5, gya = clampI(Math.floor(gyf), 0, gh - 1), gyb = clampI(gya + 1, 0, gh - 1), gty = clampI(gyf - gya, 0, 1);
+    if (gya < minG) minG = gya; if (pya < minP) minP = pya;
+    const Aa = [T.aRow(0, gya), T.aRow(1, gya), T.aRow(2, gya)], Ab = [T.aRow(0, gyb), T.aRow(1, gyb), T.aRow(2, gyb)];
+    const Ba = [T.bRow(0, gya), T.bRow(1, gya), T.bRow(2, gya)], Bb = [T.bRow(0, gyb), T.bRow(1, gyb), T.bRow(2, gyb)];
+    const Ra = T.resRow(pya), Rb = T.resRow(pyb);
     for (let x = 0; x < W; x++) {
       const px = (x + 0.5) * kx - 0.5, pxa = clampI(Math.floor(px), 0, pw - 1), pxb = clampI(pxa + 1, 0, pw - 1), ptx = clampI(px - pxa, 0, 1);
       const gxf = (px + 0.5) / 2 - 0.5, gxa = clampI(Math.floor(gxf), 0, gw - 1), gxb = clampI(gxa + 1, 0, gw - 1), gtx = clampI(gxf - gxa, 0, 1);
-      const g00 = gya * gw + gxa, g10 = gya * gw + gxb, g01 = gyb * gw + gxa, g11 = gyb * gw + gxb;
       const v00 = (1 - gtx) * (1 - gty), v10 = gtx * (1 - gty), v01 = (1 - gtx) * gty, v11 = gtx * gty;
-      const r00 = (pya * pw + pxa) * 3, r10 = (pya * pw + pxb) * 3, r01 = (pyb * pw + pxa) * 3, r11 = (pyb * pw + pxb) * 3;
+      const r0 = pxa * 3, r1 = pxb * 3;
       const u00 = (1 - ptx) * (1 - pty), u10 = ptx * (1 - pty), u01 = (1 - ptx) * pty, u11 = ptx * pty;
       const o = (yy * W + x) * 4;
       for (let c = 0; c < 3; c++) {
-        const A = a[c], B = b[c];
-        const av = A[g00] * v00 + A[g10] * v10 + A[g01] * v01 + A[g11] * v11;
-        const bv = B[g00] * v00 + B[g10] * v10 + B[g01] * v01 + B[g11] * v11;
-        const rv = res[r00 + c] * u00 + res[r10 + c] * u10 + res[r01 + c] * u01 + res[r11 + c] * u11;
+        const av = Aa[c][gxa] * v00 + Aa[c][gxb] * v10 + Ab[c][gxa] * v01 + Ab[c][gxb] * v11;
+        const bv = Ba[c][gxa] * v00 + Ba[c][gxb] * v10 + Bb[c][gxa] * v01 + Bb[c][gxb] * v11;
+        const rv = Ra[r0 + c] * u00 + Ra[r1 + c] * u10 + Rb[r0 + c] * u01 + Rb[r1 + c] * u11;
         O[o + c] = av * O[o + c] + bv + rv;
       }
       O[o + 3] = 255;
     }
   }
+  // 由上往下做：這一條最上面用到的段以前的，之後都不會再用
+  T.release(minG, minP);
 }
 
 /** 一條一條讀原圖、套關係、送去編碼，回傳成品的 blob 網址 */
