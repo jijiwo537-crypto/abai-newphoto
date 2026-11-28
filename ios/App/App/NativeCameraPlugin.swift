@@ -521,13 +521,25 @@ public class NativeCameraPlugin: CAPPlugin, CAPBridgedPlugin, AVCaptureVideoData
             let settings: AVCapturePhotoSettings
             if wantRaw, let raw = self.rawFormat() {
                 settings = AVCapturePhotoSettings(rawPixelFormatType: raw, processedFormat: processed)
-                /* 不再內嵌預覽圖：尺寸交給系統時給的是一張很小的圖，「照片」App 會一直拿它來顯示（存到相簿的 RAW 看起來很糊、
-                   跟成品像不同張），不會自己沖 RAW。不內嵌的話「照片」App 一定用真正的 RAW 資料自己沖（打開時可能先灰一下下）。
-                   App 自己的相機相簿、編輯都是直接沖 RAW，不受影響 */
             } else {
                 settings = AVCapturePhotoSettings(format: processed)
             }
             if #available(iOS 16.0, *) { settings.maxPhotoDimensions = self.photoOutput.maxPhotoDimensions }
+            /* RAW 檔裡內嵌一張「跟照片一樣大」的 JPEG 預覽（Apple WWDC21〈Capture and process ProRAW images〉的官方做法，
+               原相機、專業相機 App 都這樣）：「照片」App 打開立刻清楚，不會灰一下、也不會一直顯示小縮圖。
+               以前只指定格式、尺寸交給系統，給的是很小的一張，「照片」App 就一直拿它顯示（看起來很糊、像不同張）。
+               尺寸用這一次拍照實際的照片尺寸（相機自己回報支援的），拿不到就不內嵌（照片 App 自己沖，最多先灰一下） */
+            if settings.rawPhotoPixelFormatType != 0, let codec = settings.availableRawEmbeddedThumbnailPhotoCodecTypes.first {
+                var w = 0, h = 0
+                if #available(iOS 16.0, *) { w = Int(settings.maxPhotoDimensions.width); h = Int(settings.maxPhotoDimensions.height) }
+                if w <= 0 || h <= 0, let d = self.device {
+                    let hr = d.activeFormat.highResolutionStillImageDimensions
+                    w = Int(hr.width); h = Int(hr.height)
+                }
+                if w > 0 && h > 0 {
+                    settings.rawEmbeddedThumbnailPhotoFormat = [AVVideoCodecKey: codec, AVVideoWidthKey: w, AVVideoHeightKey: h]
+                }
+            }
             /* RAW 跟原相機一樣用「品質優先」：ProRAW 會多張合成（Smart HDR／Deep Fusion），雜訊低、寬容度大很多。
                「平衡」合成得少，拉亮暗部、救亮部時就差很多（看起來像假的 RAW） */
             settings.photoQualityPrioritization = (wantRaw && self.rawFormat() != nil) ? .quality : .balanced
