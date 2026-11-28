@@ -19,6 +19,7 @@ public class QAPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "available", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "scenario", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "log", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "makePhoto", returnType: CAPPluginReturnPromise),
     ]
 
     /// 同一份紀錄也寫進 App 的 Documents/abaiqa.log，CI 從模擬器裡直接拿檔案（不靠系統紀錄）
@@ -77,10 +78,47 @@ public class QAPlugin: CAPPlugin, CAPBridgedPlugin {
 
     @objc func available(_ call: CAPPluginCall) { call.resolve(["available": true]) }
 
+    /// 這次開 App 已經交出過情境了嗎：網頁程序被 iOS 關掉、自己重新載入後又來問，就不要再從頭跑一次
+    /// （以前會一直從頭重跑、一直被關掉，看起來像無限循環）
+    private static var answered = false
+
     @objc func scenario(_ call: CAPPluginCall) {
         let s = Self.scenarioName
-        if !s.isEmpty { asked = true; Self.write("web asked scenario=\(s)") }
+        if !s.isEmpty && Self.answered {
+            Self.write("web asked again after a reload: not restarting \(s)")
+            StabilityPlugin.write("⚠️ 自動測試中斷：網頁程序被 iOS 關掉了（上面那一行「開始」就是當時在做的那一項），不從頭重跑")
+            call.resolve(["scenario": ""]); return
+        }
+        if !s.isEmpty { asked = true; Self.answered = true; Self.write("web asked scenario=\(s)") }
         call.resolve(["scenario": s])
+    }
+
+    /// makePhoto({ w, h, i, png }) → { path }：測試用的大照片直接在原生做（跟從相簿選的照片一樣是原生檔），
+    /// 不在網頁開一張幾千萬像素的畫布（那樣網頁程序自己就會被 iOS 關掉，測到的是測試本身的問題）
+    @objc func makePhoto(_ call: CAPPluginCall) {
+        let w = max(16, call.getInt("w") ?? 1600), h = max(16, call.getInt("h") ?? 1200), i = call.getInt("i") ?? 0
+        let png = call.getBool("png") ?? false
+        DispatchQueue.global(qos: .userInitiated).async {
+            autoreleasepool {
+                let fmt = UIGraphicsImageRendererFormat(); fmt.scale = 1; fmt.opaque = !png
+                let img = UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: fmt).image { ctx in
+                    let cg = ctx.cgContext
+                    let c1 = UIColor(hue: CGFloat((i * 70) % 360) / 360, saturation: 0.7, brightness: 0.55, alpha: 1)
+                    let c2 = UIColor(hue: CGFloat((i * 70 + 50) % 360) / 360, saturation: 0.7, brightness: 0.8, alpha: 1)
+                    if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: [c1.cgColor, c2.cgColor] as CFArray, locations: [0, 1]) {
+                        if png { cg.addEllipse(in: CGRect(x: w / 10, y: h / 10, width: w * 8 / 10, height: h * 8 / 10)); cg.clip() }
+                        cg.drawLinearGradient(g, start: .zero, end: CGPoint(x: w, y: h), options: [])
+                    }
+                    for k in 0..<400 {
+                        UIColor(hue: CGFloat((i * 70 + k * 17) % 360) / 360, saturation: 0.6, brightness: CGFloat(30 + k % 50) / 100, alpha: 0.35).setFill()
+                        cg.fill(CGRect(x: (k * 397) % w, y: (k * 613) % h, width: w / 25, height: h / 25))
+                    }
+                }
+                guard let data = png ? img.pngData() : img.jpegData(compressionQuality: 0.9) else { call.reject("做不出測試照片"); return }
+                let url = ABAIImageCore.newFileURL(ext: png ? "png" : "jpg")
+                do { try data.write(to: url); call.resolve(["path": url.path]) } catch { call.reject(error.localizedDescription) }
+            }
+        }
     }
 
     @objc func log(_ call: CAPPluginCall) {

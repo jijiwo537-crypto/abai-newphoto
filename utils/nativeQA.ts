@@ -289,6 +289,17 @@ async function scenarioStress(rounds = 8) {
      美顏／仿色／藝術效果／跨頁拼圖  各存一次
    每一項都檢查：存得完、成品張數、成品不是全黑／全白；每輪前後記可用記憶體（多輪下來一直掉＝有東西沒放掉）。 */
 async function makeSized(w: number, h: number, i: number, png = false): Promise<File> {
+  /* 優先在原生做（跟從相簿選的照片一樣是原生檔、記著路徑）：網頁不用開一張幾千萬像素的畫布 */
+  try {
+    const q = await nativePlugin<{ makePhoto(o: { w: number; h: number; i: number; png: boolean }): Promise<{ path: string }> }>('ABAIQA');
+    if (q?.makePhoto) {
+      const { path } = await q.makePhoto({ w, h, i, png });
+      const { fileSrc, rememberNativeFile } = await import('./nativeBridge');
+      const f = new File([await (await fetch(fileSrc(path))).blob()], `full${i}.${png ? 'png' : 'jpg'}`, { type: png ? 'image/png' : 'image/jpeg', lastModified: Date.now() });
+      rememberNativeFile(f, path);
+      return f;
+    }
+  } catch { /* 舊版 App：照下面在網頁做 */ }
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d')!;
   if (png) g.clearRect(0, 0, w, h);
@@ -324,6 +335,7 @@ async function scenarioFull(rounds = 1) {
   /** 從主頁進工具（交給它 files）、做 prep、按儲存（有選單就選圖片）、等成品頁、檢查成品 */
   const runTool = async (name: string, entry: RegExp, files: File[], done: RegExp, expect: number, prep?: () => Promise<void>, enter?: () => void) => {
     const t0 = Date.now();
+    note(`開始：${name}`);
     try {
       (window as any).__abaiQAFiles = () => files;
       if (enter) enter(); else click(await waitFor(() => findButton(entry), 20000, `${name}按鈕`));
