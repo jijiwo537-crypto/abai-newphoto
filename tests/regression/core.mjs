@@ -25,8 +25,8 @@ async function newPage(b) {
   return { p, errors };
 }
 /** 在頁面裡做幾張有內容的測試照片並導入 */
-async function importPhotos(p, n, mode, w = 2400, h = 3200) {
-  await p.evaluate(async ([n, mode, w, h]) => {
+async function importPhotos(p, n, mode, w = 2400, h = 3200, sel = 'input[data-pick-modes]') {
+  await p.evaluate(async ([n, mode, w, h, sel]) => {
     const mk = (i) => new Promise(r => {
       const cv = document.createElement('canvas'); cv.width = i % 2 ? h : w; cv.height = i % 2 ? w : h; const g = cv.getContext('2d');
       const gr = g.createLinearGradient(0, 0, cv.width, cv.height); gr.addColorStop(0, `hsl(${i * 72},70%,40%)`); gr.addColorStop(1, `hsl(${i * 72 + 50},60%,70%)`);
@@ -35,10 +35,10 @@ async function importPhotos(p, n, mode, w = 2400, h = 3200) {
       g.fillStyle = '#fff'; g.font = `bold ${cv.height / 3}px sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(i + 1), cv.width / 2, cv.height / 2);
       cv.toBlob(bl => { cv.width = 1; r(new File([bl], `p${i}.jpg`, { type: 'image/jpeg' })); }, 'image/jpeg', .92);
     });
-    const el = document.querySelector('input[data-pick-modes]'); const dt = new DataTransfer();
+    const el = document.querySelector(sel); const dt = new DataTransfer();
     for (let i = 0; i < n; i++) dt.items.add(await mk(i));
-    el.files = dt.files; el.dataset.pickMode = mode; el.dispatchEvent(new Event('change', { bubbles: true }));
-  }, [n, mode, w, h]);
+    el.files = dt.files; if (mode) el.dataset.pickMode = mode; el.dispatchEvent(new Event('change', { bubbles: true }));
+  }, [n, mode, w, h, sel]);
 }
 /** 預覽截圖 vs 成品：都縮到同一個大小、切 6×8 格，回傳最差的那一格的平均差（0～255）與成品資訊 */
 async function compareWithExport(p, previewPng) {
@@ -62,8 +62,8 @@ async function compareWithExport(p, previewPng) {
     return { worst: Math.round(worst), meanLum: Math.round(lum / (e.length / 4) / 3), size: im.naturalWidth + 'x' + im.naturalHeight };
   }, previewPng.toString('base64'));
 }
-async function save(p, doneText) {
-  await p.locator('button', { hasText: /^儲存$/ }).first().click();
+async function save(p, doneText, label = /^儲存$/) {
+  await p.locator('button', { hasText: label }).first().click();
   await p.waitForSelector(`text=${doneText}`, { timeout: 600000 });
   await p.waitForTimeout(1500);
 }
@@ -148,8 +148,39 @@ async function editorLeak(b) {
   await p.close();
 }
 
+// ── 5. 其他工具：導入 → 存檔，成品張數、尺寸、有內容、沒有程式錯誤 ──
+/** 每個工具：怎麼導入、按哪顆儲存、存完畫面上會出現哪個字、應該存出幾張、成品最短邊至少多少 */
+const TOOLS = [
+  { name: '美顏', sel: 'input[data-import-hero="beauty"]', n: 1, done: '修下一張', count: 1, minSide: 1600 },
+  { name: '仿色', sel: 'input[data-import-hero="match"]', n: 1, done: '接著調色', count: 1, minSide: 1600 },
+  { name: '藝術效果', sel: 'input[type=file][hidden]:not([data-instant])', n: 1, done: '修下一張', count: 1, minSide: 1600 },
+  { name: '跨頁拼圖', sel: 'input[data-allow-alpha]', n: 3, done: '拼下一組', count: 1, minSide: 2000 },
+  { name: '批量編輯', sel: 'input[data-pick-modes]', n: 3, done: '修下一張', count: 3, minSide: 1600, label: /^儲存$/ },
+];
+async function toolSaves(b) {
+  for (const t of TOOLS) {
+    const { p, errors } = await newPage(b);
+    try {
+      await importPhotos(p, t.n, null, 1600, 2000, t.sel);
+      await p.waitForTimeout(12000);
+      await save(p, t.done, t.label);
+      const r = await p.evaluate(() => Promise.all([...document.querySelectorAll('img')].filter(i => i.naturalWidth > 500).map(async im => {
+        await im.decode().catch(() => {});
+        const c = document.createElement('canvas'); c.width = 40; c.height = 40; c.getContext('2d').drawImage(im, 0, 0, 40, 40);
+        const d = c.getContext('2d').getImageData(0, 0, 40, 40).data; let l = 0; for (let i = 0; i < d.length; i += 4) l += d[i] + d[i + 1] + d[i + 2];
+        return { w: im.naturalWidth, h: im.naturalHeight, lum: Math.round(l / 1600 / 3) };
+      })));
+      // 仿色的成品頁同時顯示原圖和成品：只要求「至少」該有的張數
+      const ok = r.length >= t.count && r.every(x => Math.min(x.w, x.h) >= t.minSide && x.lum > 20);
+      check(`${t.name}：存檔成功、尺寸對、有內容`, ok, JSON.stringify(r));
+      check(`${t.name}：沒有程式錯誤`, errors.length === 0, errors.slice(0, 3).join(' | '));
+    } catch (e) { check(`${t.name}：存檔`, false, 'crashed: ' + String(e.message || e).slice(0, 200)); }
+    await p.close();
+  }
+}
+
 const b = await launch();
-for (const t of [fullRes, editorFilter, editorLeak, collageSeamless].filter(t => !process.env.ONLY || process.env.ONLY.split(',').includes(t.name))) {
+for (const t of [fullRes, editorFilter, editorLeak, collageSeamless, toolSaves].filter(t => !process.env.ONLY || process.env.ONLY.split(',').includes(t.name))) {
   try { await t(b); } catch (e) { check(t.name, false, 'crashed: ' + String(e.message || e).slice(0, 200)); }
 }
 await b.close();
