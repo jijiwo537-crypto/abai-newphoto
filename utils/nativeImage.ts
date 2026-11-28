@@ -145,13 +145,14 @@ export async function writeNativeFileFast(parts: (Uint8Array | Blob)[], ext: str
 
 /** 原尺寸成品的像素直接交給原生（.abpx：RGBA、sRGB、不透明，見 ABAIImageCore.rawPixels）：
  *  不壓 PNG、不轉 base64。有透明（不是每個像素都不透明）、或通道不能用就回 null，呼叫端照舊做 PNG */
-export async function pixelsToNativeFile(px: Uint8ClampedArray, w: number, h: number): Promise<string | null> {
+export async function pixelsToNativeFile(px: Uint8ClampedArray, w: number, h: number, p3 = false): Promise<string | null> {
   if (!w || !h || px.length !== w * h * 4) return null;
   for (let i = 3; i < px.length; i += 4) if (px[i] !== 255) return null;
   const t = new Uint8Array(16);
   t[0] = 0x41; t[1] = 0x42; t[2] = 0x50; t[3] = 0x58;
   const dv = new DataView(t.buffer);
   dv.setUint32(4, w, true); dv.setUint32(8, h, true);
+  if (p3) t[12] = 1;
   return writeNativeFileFast([new Uint8Array(px.buffer, px.byteOffset, px.byteLength), t], 'abpx');
 }
 

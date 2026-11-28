@@ -158,7 +158,7 @@ enum ABAIImageCore {
     }
 
     /// 網頁直接交過來的原始像素（.abpx，見 utils/nativeImage 的 pixelsToNativeFile）：
-    /// RGBA 8 位元、sRGB、不透明、由上往下一列一列；檔尾 16 位元組＝"ABPX"、寬、高、保留（32 位元小端序）。
+    /// RGBA 8 位元、不透明、由上往下一列一列；檔尾 16 位元組＝"ABPX"、寬、高、色彩空間（第 12 個位元組：1＝Display P3，其他＝sRGB）。
     /// 不經過 PNG：網頁不必壓縮、這裡不必解壓縮，像素一個不差。格式不對（長度、檔尾）一律回 nil，呼叫端照舊失敗退回
     static func rawPixels(_ url: URL) -> CIImage? {
         guard let data = try? Data(contentsOf: url, options: .alwaysMapped), data.count > 16 else { return nil }
@@ -168,7 +168,8 @@ enum ABAIImageCore {
         let w = u32(4), h = u32(8)
         guard w > 0, h > 0, w <= 30000, h <= 30000, w * h * 4 + 16 == data.count,
               let provider = CGDataProvider(data: data.prefix(w * h * 4) as CFData),
-              let space = CGColorSpace(name: CGColorSpace.sRGB),
+              /* 檔尾第 12 個位元組＝1：像素是 Display P3（網頁的廣色域畫布直接讀出來的），否則 sRGB */
+              let space = CGColorSpace(name: t[12] == 1 ? CGColorSpace.displayP3 : CGColorSpace.sRGB),
               let cg = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: space,
                                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
                                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else { return nil }
