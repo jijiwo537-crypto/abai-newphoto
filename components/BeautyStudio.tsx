@@ -183,10 +183,11 @@ interface BeautyStudioProps {
 /** 嵌在編輯器裡的工具交回去的成品：preview 是工作解析度、馬上就能換上的那張；
     bake 是存檔時才跑的原尺寸版本（拿原尺寸的來源圖重播同一組操作） */
 export type StudioResult = { preview: HTMLCanvasElement; bake: (fullSrc: string) => Promise<string | null>; session?: string;
-  /** false＝有把像素搬位置的操作（液化、修補、去痘、舊版去皺）：成品跟原圖的位置對不上，存檔時不能從原圖補回廣色域（會補錯位置） */
+  /** false＝有把像素搬位置的操作（液化、修補、仿製、去痘、舊版去皺）：成品跟原圖的位置對不上，存檔時不能從原圖補回廣色域（會補錯位置） */
   aligned?: boolean };
-/** 這組操作有沒有把像素搬到別的位置（液化推開、修補／去痘從旁邊借皮膚過來）。磨皮、新版去皺、上妝是原地處理，位置還對得上 */
-export const beautyMovesPixels = (ops: readonly Op[]) => ops.some(o => o.k === 'liquify' || o.k === 'patch' || o.k === 'heal' || o.k === 'wrinkle');
+/** 這組操作有沒有把像素搬到別的位置（液化推開、修補／仿製／去痘從旁邊借皮膚過來）。磨皮、新版去皺、上妝是原地處理，位置還對得上 */
+/* 用「白名單」：只有確定是原地處理的（磨皮／去皺筆刷、上妝）算對得上；其他（液化、去痘、修補、仿製、舊版去皺，以及以後新加的任何操作）一律當成有搬位置，寧可少補色域也不補錯 */
+export const beautyMovesPixels = (ops: readonly Op[]) => ops.some(o => o.k !== 'stroke' && o.k !== 'makeup');
 
 /** 把一組美顏操作重播在任一張圖上（sessionW 是當初操作時的工作寬度，座標照比例換算） */
 export async function renderBeautyOn(src: string, ops: Op[], count: number, sessionW: number): Promise<string | null> {

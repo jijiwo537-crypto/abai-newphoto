@@ -139,7 +139,11 @@ export async function processImageFile(file: File, onPreview?: (url: string) => 
      （iOS 的網頁層自己也看得懂部分 RAW，但那是系統預設的沖法，跟編輯器不一樣，所以要排在下面「瀏覽器直接顯示」之前。）
      沖不出來（舊版 App、系統不認得的格式）就照原本的路走。 */
   if (isRaw && isNative()) {
-    const dev = await developRawWithEngine(file, extension, onPreview).catch(() => null);
+    /* 原生萬一卡住沒回應：60 秒後放棄，照原本的路走（不會一直停在載入中） */
+    const dev = await Promise.race([
+      developRawWithEngine(file, extension, onPreview).catch(() => null),
+      new Promise<null>(r => setTimeout(() => r(null), 60000)),
+    ]);
     if (dev) return dev;
   }
   // 1. 先看瀏覽器能不能直接顯示這個檔

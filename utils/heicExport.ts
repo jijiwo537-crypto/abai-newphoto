@@ -6,7 +6,8 @@ export async function exportHeic(canvas: HTMLCanvasElement): Promise<string> {
   /* 優先：畫布像素直接分塊交給原生、原生編 HEIC（跟編輯器同一條路）。
      舊的做法是整張先壓成 PNG、再變成一大串 base64 一次傳過去 —— 2000 萬像素的拼圖要好幾百 MB 記憶體。
      有透明、或原生那條不通就照舊 */
-  const native = await heicViaPixels(canvas).catch(() => null);
+  /* 原生萬一卡住沒回應：60 秒後放棄，改走舊的那條（不會一直停在「儲存中」） */
+  const native = await Promise.race([heicViaPixels(canvas).catch(() => null), new Promise<null>(r => setTimeout(() => r(null), 60000))]);
   if (native) return native;
   const { base64 } = await encoder.encode({ png: canvas.toDataURL('image/png').split(',')[1] });
   const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
@@ -64,9 +65,29 @@ async function heicViaPixels(canvas: HTMLCanvasElement): Promise<string | null> 
     const out = await (await fetch(fileSrc(outPath))).blob();
     const head = new Uint8Array(await out.slice(4, 8).arrayBuffer());
     if (!out.size || String.fromCharCode(...head) !== 'ftyp') return null;
-    return URL.createObjectURL(new Blob([out], { type: 'image/heic' }));
+    const heic = new Blob([out], { type: 'image/heic' });
+    /* 自我檢查：成品縮成 32×32 跟畫布本身比顏色，差太多（色彩空間弄錯之類）就不用這張、退回舊的那條。
+       這台讀不出 HEIC（舊系統）就不檢查 */
+    const diff = await meanDiff(canvas, heic).catch(() => -1);
+    if (diff > 6) return null;
+    return URL.createObjectURL(heic);
   } finally {
     if (inPath) api.remove({ path: inPath }).catch(() => {});
     if (outPath) api.remove({ path: outPath }).catch(() => {});
   }
+}
+
+/** 兩張圖縮成 32×32（都換成 sRGB）後每個通道的平均差（0～255）；讀不出來回 -1 */
+async function meanDiff(canvas: HTMLCanvasElement, blob: Blob): Promise<number> {
+  const N = 32;
+  const px = (src: CanvasImageSource) => { const c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d')!; g.drawImage(src, 0, 0, N, N); return g.getImageData(0, 0, N, N, { colorSpace: 'srgb' } as any).data; };
+  const url = URL.createObjectURL(blob);
+  try {
+    const im = new Image(); im.src = url;
+    await im.decode();
+    if (!im.naturalWidth) return -1;
+    const a = px(canvas), b = px(im);
+    let s = 0; for (let i = 0; i < a.length; i += 4) s += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]);
+    return s / (N * N * 3);
+  } finally { URL.revokeObjectURL(url); }
 }
