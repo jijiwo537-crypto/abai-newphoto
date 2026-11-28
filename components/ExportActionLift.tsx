@@ -89,6 +89,9 @@ function useNativeExportActions(ref: React.RefObject<HTMLSpanElement>) {
          這時放上去，玻璃先照黑底調色、下一格成品頁畫出來後又調一次 —— 就是開頭「變色一下」。
          所以那層拿掉之後，等成品頁確定畫上螢幕（兩格＋一點餘裕）才放 */
       if (!shown) {
+        /* 等原生按鈕的這一小段，網頁那組先藏起來：不然網頁的白色「儲存」會先露臉一下、再被原生的蓋掉（就是「閃白一下」）。
+           原生萬一放不上去（下面的 catch），再把網頁那組放回來 */
+        setWebHidden(true);
         if (!clearSince) clearSince = performance.now();
         if (performance.now() - clearSince < 120) { window.setTimeout(schedule, 130); return; }
       }
@@ -116,7 +119,8 @@ function useNativeExportActions(ref: React.RefObject<HTMLSpanElement>) {
       last = sig; shown = true;
       /* 不做淡入：玻璃材質不能半透明，淡入的過程中顏色會畫錯（開頭「變色一下」）。
          成品頁本身就是在「儲存中」那層拿掉的那一格整頁直接換上，按鈕跟著同一格直接出現 */
-      await p.show({ group: GROUP, items, animate: false });
+      try { await p.show({ group: GROUP, items, animate: false }); }
+      catch { shown = false; last = ''; setWebHidden(false); return; }
       if (alive && !leaving) setWebHidden(true);
     };
     const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { void sync(); }); };
