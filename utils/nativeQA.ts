@@ -281,6 +281,101 @@ async function scenarioStress(rounds = 8) {
 }
 
 /* 跨頁拼圖選一段影片、按儲存，盯著進度 */
+/* ── 全面實機驗證（桌面的「ABAI全面驗證.command」）────────────────────────────
+   一輪就把每個工具最容易出事的情況一次做完，每一步記「✅／❌」到穩定性紀錄，最後一行是總結：
+     修圖     4800 萬像素＋濾鏡＋特效 → 原尺寸存檔（大圖分條存檔、記憶體）
+     批量     直、橫、透明 PNG 三張一起存
+     創意拼圖 5 張 1200 萬像素、無縫＋整體特效 → 存檔（最吃記憶體的情況）
+     美顏／仿色／藝術效果／跨頁拼圖  各存一次
+   每一項都檢查：存得完、成品張數、成品不是全黑／全白；每輪前後記可用記憶體（多輪下來一直掉＝有東西沒放掉）。 */
+async function makeSized(w: number, h: number, i: number, png = false): Promise<File> {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d')!;
+  if (png) g.clearRect(0, 0, w, h);
+  const grd = g.createLinearGradient(0, 0, w, h); grd.addColorStop(0, `hsl(${i * 70} 70% 45%)`); grd.addColorStop(1, `hsl(${i * 70 + 50} 70% 65%)`);
+  g.fillStyle = grd;
+  if (png) { g.beginPath(); g.arc(w / 2, h / 2, Math.min(w, h) * 0.4, 0, Math.PI * 2); g.fill(); } else g.fillRect(0, 0, w, h);
+  for (let k = 0; k < 400; k++) { g.fillStyle = `hsla(${(i * 70 + k * 17) % 360},60%,${30 + k % 50}%,.35)`; g.fillRect((k * 397) % w, (k * 613) % h, w / 25, h / 25); }
+  const blob = await new Promise<Blob | null>(r => c.toBlob(r, png ? 'image/png' : 'image/jpeg', 0.9)); c.width = c.height = 0;
+  return new File([blob!], `full${i}.${png ? 'png' : 'jpg'}`, { type: png ? 'image/png' : 'image/jpeg' });
+}
+/** 成品頁上的成品圖：張數、最大那張的尺寸、每張是不是全黑／全白 */
+async function resultImages() {
+  const ims = Array.from(document.querySelectorAll('img')).filter(i => visible(i) && i.naturalWidth >= 400) as HTMLImageElement[];
+  const out: { w: number; h: number; lum: number }[] = [];
+  for (const im of ims) {
+    await im.decode().catch(() => {});
+    const c = document.createElement('canvas'); c.width = 24; c.height = 24; const g = c.getContext('2d')!;
+    try { g.drawImage(im, 0, 0, 24, 24); const d = g.getImageData(0, 0, 24, 24).data; let l = 0; for (let i = 0; i < d.length; i += 4) l += d[i] + d[i + 1] + d[i + 2]; out.push({ w: im.naturalWidth, h: im.naturalHeight, lum: Math.round(l / 576 / 3) }); }
+    catch { out.push({ w: im.naturalWidth, h: im.naturalHeight, lum: -1 }); }
+  }
+  return out;
+}
+async function scenarioFull(rounds = 1) {
+  const { stabilityLog } = await import('./stability');
+  const results: { name: string; ok: boolean }[] = [];
+  const note = (m: string) => { log(m); stabilityLog('全面驗證：' + m); };
+  const pass = (name: string, ok: boolean, detail: string) => { results.push({ name, ok }); note(`${ok ? '✅' : '❌'} ${name}　${detail}`); };
+  (window as any).__abaiQAExitAnswer = 'discard';
+  note(`開始，共 ${rounds} 輪；可用記憶體 ${await memMB()}MB`);
+  const big12 = [] as File[]; for (let i = 0; i < 5; i++) big12.push(await makeSized(i % 2 ? 3024 : 4032, i % 2 ? 4032 : 3024, i));
+  const big48 = await makeSized(8064, 6048, 7);
+  const mixed = [await makeSized(3024, 4032, 1), await makeSized(4032, 3024, 2), await makeSized(1800, 1800, 3, true)];
+  /** 從主頁進工具（交給它 files）、做 prep、按儲存（有選單就選圖片）、等成品頁、檢查成品 */
+  const runTool = async (name: string, entry: RegExp, files: File[], done: RegExp, expect: number, prep?: () => Promise<void>) => {
+    const t0 = Date.now();
+    try {
+      (window as any).__abaiQAFiles = () => files;
+      click(await waitFor(() => findButton(entry), 20000, `${name}按鈕`));
+      await sleep(9000);
+      if (prep) await prep();
+      const save = await waitFor(() => findButton(/^儲存$/), 20000, '儲存按鈕'); click(save);
+      const item = await waitFor(() => findButton(/^儲存圖片$|儲存圖片/), 3000, '儲存圖片').catch(() => null); if (item) click(item);
+      await waitFor(() => findButton(done), 300000, `${name}存檔完成`);
+      await sleep(1500);
+      const imgs = await resultImages();
+      const bad = imgs.filter(x => x.lum >= 0 && (x.lum < 8 || x.lum > 250));
+      const ok = imgs.length >= expect && bad.length === 0;
+      pass(name, ok, `${Math.round((Date.now() - t0) / 1000)} 秒；成品 ${imgs.map(x => `${x.w}×${x.h}${x.lum < 0 ? '' : `(亮度${x.lum})`}`).join('、') || '沒看到'}${bad.length ? '；有全黑或全白' : ''}${imgs.length < expect ? `；應該有 ${expect} 張` : ''}`);
+    } catch (e: any) { pass(name, false, String(e?.message ?? e)); }
+    const cont = findButton(/繼續編輯/); if (cont) { click(cont); await sleep(1200); }
+    if (!(await backHome())) { pass(`${name}：回主頁`, false, '回不到主頁'); }
+    await sleep(2500);
+  };
+  const tapText = async (re: RegExp) => { const b = buttons().find(x => re.test((x.textContent || '').trim())); if (b) { click(b); await sleep(2000); return true; } return false; };
+  for (let r = 1; r <= rounds; r++) {
+    const m0 = await memMB();
+    note(`── 第 ${r} 輪開始，可用記憶體 ${m0}MB`);
+    await runTool('修圖 4800 萬像素＋濾鏡＋特效', TOOL_ENTRY.edit, [big48], /修下一張/, 1, async () => {
+      if (!(await tapText(/^F3$/))) note('（找不到 F3，略過濾鏡）');
+      if (await tapText(/^特效$/)) { const c = document.querySelector('[data-fx-card]:not([data-fx-card=""])') as HTMLElement | null; if (c) { click(c); await sleep(4000); } else note('（找不到特效卡，略過特效）'); }
+    });
+    await runTool('批量：直＋橫＋透明 PNG', TOOL_ENTRY.edit, mixed, /修下一張/, 3, async () => { await tapText(/^F5$/); });
+    await runTool('創意拼圖：5 張、無縫＋整體特效', TOOL_ENTRY.collage, big12, /拼下一張/, 1, async () => {
+      const setting = document.querySelector('[data-creative-tab="setting"]') as HTMLElement | null; if (setting) { click(setting); await sleep(800); }
+      const seam = document.querySelector('[data-creative-seamless] input[type=range]') as HTMLInputElement | null;
+      if (seam) { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!; for (const v of [20, 40, 60]) { set.call(seam, String(v)); seam.dispatchEvent(new Event('input', { bubbles: true })); await sleep(300); } seam.dispatchEvent(new Event('change', { bubbles: true })); await sleep(3000); }
+      else note('（找不到無縫滑桿）');
+      const objTab = document.querySelector('[data-creative-tab="objedit"]') as HTMLElement | null, stage = document.querySelector('[data-creative-stage]') as HTMLElement | null;
+      let fxOn = false;
+      if (objTab && stage) {
+        click(objTab); await sleep(800);
+        const rc = stage.getBoundingClientRect(); await tapAt(5, rc.top + 20); await sleep(1000);
+        if (await tapText(/^特效$/)) { const c = document.querySelector('[data-fx-card="fxExposureSpill"]') as HTMLElement | null; if (c) { click(c); fxOn = true; await sleep(5000); } }
+        if (setting) { click(setting); await sleep(1500); }
+      }
+      note(`（整體特效${fxOn ? '已套用' : '沒套到，這項只測無縫'}；存檔前可用記憶體 ${await memMB()}MB）`);
+    });
+    await runTool('美顏', TOOL_ENTRY.beauty, [big12[0]], /修下一張/, 1);
+    await runTool('仿色', TOOL_ENTRY.match, [big12[1]], /接著調色/, 1);
+    await runTool('藝術效果', TOOL_ENTRY.art, [big12[2]], /修下一張/, 1);
+    await runTool('跨頁拼圖：3 張', TOOL_ENTRY.layout, big12.slice(0, 3), /拼下一組/, 1);
+    note(`── 第 ${r} 輪結束，可用記憶體 ${await memMB()}MB（開始時 ${m0}MB）`);
+  }
+  const bad = results.filter(x => !x.ok);
+  note(bad.length ? `全面驗證結束：❌ ${bad.length} 項沒過（${[...new Set(bad.map(x => x.name))].join('、')}），沒有閃退` : `全面驗證結束：✅ 全部 ${results.length} 項通過，沒有閃退`);
+}
+
 async function scenarioLayoutVideo() {
   /* 先做一段 4 秒的測試影片，當成「從相簿選的影片」 */
   const v = await encodeTest('native', 120);
@@ -834,7 +929,8 @@ export async function runNativeQA(forced?: string) {
   log(`start ${scenario}`);
   await sleep(4000);
   try {
-    if (scenario.startsWith('stress')) await scenarioStress(Number(scenario.split('-')[1]) || 8);
+    if (scenario.startsWith('full')) await scenarioFull(Number(scenario.split('-')[1]) || 1);
+    else if (scenario.startsWith('stress')) await scenarioStress(Number(scenario.split('-')[1]) || 8);
     else if (scenario === 'save') await scenarioSave();
     else if (scenario === 'video') await scenarioVideo();
     else if (scenario === 'gallery') await scenarioGallery();
