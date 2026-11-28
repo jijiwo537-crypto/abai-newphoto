@@ -2,7 +2,8 @@ import { slideBack } from '../utils/pageTransition';
 import { canvasToUrl, revokeUrl, revokeUrlsLater } from '../utils/blobUrl';
 import { canExportHeic, exportHeicFromUrl } from '../utils/heicExport';
 import { openGlassMenu } from '../utils/nativeGlass';
-import { nativeFinish } from '../utils/nativeFinish';
+import { nativeFinish, nativeEncodeWithMeta } from '../utils/nativeFinish';
+import { nativePathOf } from '../utils/nativeBridge';
 import { isNative } from '../utils/native';
 import { SAVE_MENU_GLASS, SAVE_MENU_BUTTON } from '../utils/premiumGlass';
 import { isDarkSwatch } from '../utils/swatch';
@@ -181,7 +182,11 @@ interface BeautyStudioProps {
 
 /** 嵌在編輯器裡的工具交回去的成品：preview 是工作解析度、馬上就能換上的那張；
     bake 是存檔時才跑的原尺寸版本（拿原尺寸的來源圖重播同一組操作） */
-export type StudioResult = { preview: HTMLCanvasElement; bake: (fullSrc: string) => Promise<string | null>; session?: string };
+export type StudioResult = { preview: HTMLCanvasElement; bake: (fullSrc: string) => Promise<string | null>; session?: string;
+  /** false＝有把像素搬位置的操作（液化、修補、去痘、舊版去皺）：成品跟原圖的位置對不上，存檔時不能從原圖補回廣色域（會補錯位置） */
+  aligned?: boolean };
+/** 這組操作有沒有把像素搬到別的位置（液化推開、修補／去痘從旁邊借皮膚過來）。磨皮、新版去皺、上妝是原地處理，位置還對得上 */
+export const beautyMovesPixels = (ops: readonly Op[]) => ops.some(o => o.k === 'liquify' || o.k === 'patch' || o.k === 'heal' || o.k === 'wrinkle');
 
 /** 把一組美顏操作重播在任一張圖上（sessionW 是當初操作時的工作寬度，座標照比例換算） */
 export async function renderBeautyOn(src: string, ops: Op[], count: number, sessionW: number): Promise<string | null> {
@@ -1650,7 +1655,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       g.putImageData(out, 0, 0);
     } else g.putImageData(s.base, 0, 0);
     const ops = s.ops.slice(0, s.opsApplied), W = s.W;
-    return { preview: c, session: sessionIdRef.current, bake: (src: string) => renderBeautyOn(src, ops, ops.length, W) };
+    return { preview: c, session: sessionIdRef.current, bake: (src: string) => renderBeautyOn(src, ops, ops.length, W), aligned: !beautyMovesPixels(ops) && !(s.lq.max > 0) };
   };
   if (embedded) embedded.commitRef.current = takeResult;
   if (embedded?.viewApi) embedded.viewApi.current.beauty = {
@@ -1673,7 +1678,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       const fmt = exportFormatRef.current;
       /* App 裡：先做無損 PNG，交給原生收尾（廣色域、HDR、10 位元 HEIC、拍攝資訊；見 utils/nativeFinish）；做不到才照舊用網頁編碼 */
       const png = isNative() || fmt !== 'jpg' ? await exportFullRes('image/png') : null;
-      const fin = png ? await nativeFinish(png, imageSrc, fmt) : null;
+      /* 有搬過像素（液化、修補、去痘）：原圖的位置對不上成品，不補廣色域，只交給原生編碼、寫入拍攝資訊 */
+      const moved = !!sessionRef.current && (beautyMovesPixels(sessionRef.current.ops.slice(0, sessionRef.current.opsApplied)) || sessionRef.current.lq.max > 0);
+      const fin = png ? (moved ? await nativeEncodeWithMeta(png, nativePathOf(imageSrc), fmt) : await nativeFinish(png, imageSrc, fmt)) : null;
       let url = fin ?? (fmt !== 'jpg' ? png : await exportFullRes('image/jpeg'));
       if (!fin && fmt === 'jpg' && png) revokeUrl(png);
       if (fin && png) revokeUrl(png);

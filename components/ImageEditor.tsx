@@ -8429,6 +8429,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
     return { cubePath: await blobToNativeFile(new Blob([f.buffer]), 'cube'), cubeSize: NATIVE_CUBE };
   };
   /** 一路往前找到這張照片最原始的來源（換過人像／仿色、合併過的照片，記錄裡都有「從哪一張來」） */
+  /** 這一路上的人像有沒有搬過像素（液化、修補、去痘）：搬過就不能從原圖補廣色域（位置對不上），只做編碼＋拍攝資訊 */
+  const chainAligned = (u: string) => { let s = u; for (let g = 0; g < 64 && fullJobsRef.current[s]; g++) { if (fullJobsRef.current[s].aligned === false) return false; s = fullJobsRef.current[s].input; } return true; };
   const rootSrcOf = (u: string) => { let s = u; for (let g = 0; g < 64 && fullJobsRef.current[s]; g++) s = fullJobsRef.current[s].input; return s; };
   const qaLog = (s: string) => { try { (window as any).__abaiQALog?.push?.(s); } catch { /* 只是記錄 */ } };
   /** 原生存檔（一般照片）：原圖在原生端用浮點流程套上編輯器的調色（或網頁算好的成品＋補回廣色域），日期、拍攝資訊一起寫進去，
@@ -8441,7 +8443,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
     /* 換過人像／仿色（或合併過）的照片：畫面一定要用網頁的成品（base），原生只負責從「最原始的那張原圖」補回廣色域與 HDR 亮部。
        沒有成品就不能只套色彩表（那會把人像／仿色的效果丟掉）。最原始那張是 RAW 的照舊走網頁那條 */
     const root = fullJobsRef.current[src] ? rootSrcOf(src) : src;
-    if (root !== src && (!base || rawOf(root))) return null;
+    if (root !== src && (!base || rawOf(root) || !chainAligned(src))) return null;
     const path = nativePathOf(root);
     if (!path) return null;
     const api = await nativeImage();
@@ -8550,7 +8552,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
      （存檔、輸出、IG 預覽）時才依序烤出來。這樣合併後不管點什麼都跟沒合併一樣快。
      key 是合併後那張預覽圖的網址；input 是合併前那張（可能也是待辦，會一路往前接）。 */
   /* bake：人像／仿色換上來的預覽尺寸照片，原尺寸那張由那個工具自己重播（見 installStudioResult） */
-  const fullJobsRef = useRef<Record<string, { input: string; snap?: BatchSnap; bake?: (fullSrc: string) => Promise<string | null>; run?: Promise<string>; session?: string }>>({});
+  const fullJobsRef = useRef<Record<string, { input: string; snap?: BatchSnap; bake?: (fullSrc: string) => Promise<string | null>; run?: Promise<string>; session?: string; aligned?: boolean }>>({});
   const resolveFullSrc = (u: string): Promise<string> => {
     const job = fullJobsRef.current[u];
     if (!job) return Promise.resolve(u);
@@ -9545,7 +9547,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
       if (!blob) return;
       const url = URL.createObjectURL(blob);
       mergedUrlsRef.current.push(url);
-      fullJobsRef.current[url] = { input, bake: res.bake, session: res.session };
+      fullJobsRef.current[url] = { input, bake: res.bake, session: res.session, aligned: res.aligned };
       thumbOriginRef.current[url] = thumbSrcOf(input);
       const kind = res.session?.split('-')[0];
       if (kind) studioLastOutRef.current[kind] = url;
