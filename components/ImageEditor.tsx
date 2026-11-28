@@ -8428,6 +8428,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
     for (let i = 0; i < n; i++) { f[i * 4] = baked.data[i * 3] / 255; f[i * 4 + 1] = baked.data[i * 3 + 1] / 255; f[i * 4 + 2] = baked.data[i * 3 + 2] / 255; f[i * 4 + 3] = 1; }
     return { cubePath: await blobToNativeFile(new Blob([f.buffer]), 'cube'), cubeSize: NATIVE_CUBE };
   };
+  /** 一路往前找到這張照片最原始的來源（換過人像／仿色、合併過的照片，記錄裡都有「從哪一張來」） */
+  const rootSrcOf = (u: string) => { let s = u; for (let g = 0; g < 64 && fullJobsRef.current[s]; g++) s = fullJobsRef.current[s].input; return s; };
   const qaLog = (s: string) => { try { (window as any).__abaiQALog?.push?.(s); } catch { /* 只是記錄 */ } };
   /** 原生存檔（一般照片）：原圖在原生端用浮點流程套上編輯器的調色（或網頁算好的成品＋補回廣色域），日期、拍攝資訊一起寫進去，
       直接編碼成最後的格式。成品留在原生（存相簿時直接用這個檔），另外出一張顯示用的小圖。
@@ -8435,8 +8437,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
   const nativeWideSave = async (src: string, snap: BatchSnap, fmt: 'heic10' | 'jpeg' | 'png',
     opt: { base?: { path?: string; url?: string }; date?: string } = {}): Promise<NativeOut | null> => {
     const p = snap.params, base = opt.base;
-    if (fullJobsRef.current[src] || !(base ? nativeHybridOk(p) : nativeColorOnly(p))) return null;
-    const path = nativePathOf(src);
+    if (!(base ? nativeHybridOk(p) : nativeColorOnly(p))) return null;
+    /* 換過人像／仿色（或合併過）的照片：畫面一定要用網頁的成品（base），原生只負責從「最原始的那張原圖」補回廣色域與 HDR 亮部。
+       沒有成品就不能只套色彩表（那會把人像／仿色的效果丟掉）。最原始那張是 RAW 的照舊走網頁那條 */
+    const root = fullJobsRef.current[src] ? rootSrcOf(src) : src;
+    if (root !== src && (!base || rawOf(root))) return null;
+    const path = nativePathOf(root);
     if (!path) return null;
     const api = await nativeImage();
     if (!api) return null;
@@ -9079,7 +9085,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ prewarm = false, histK
                 const ri = rawOf(srcs[i]);
                 const p = snap.params;
                 /* 拍攝資訊從哪個檔讀：RAW 用原本的 RAW 檔，其他用原圖 */
-                const metaPath = ri?.path ?? nativePathOf(srcs[i]);
+                /* 換過人像／仿色的照片：拍攝資訊從最原始的那張讀（以前這種照片存出來沒有拍攝資訊、也沒有補回廣色域） */
+                const metaPath = ri?.path ?? nativePathOf(srcs[i]) ?? nativePathOf(rootSrcOf(srcs[i])) ?? rawOf(rootSrcOf(srcs[i]))?.path;
                 /* 相機拍的有日期的照片：編輯的是沒印日期的那張，存檔時才印上去（日期是光加上去的，畫面調暗了字自然更清楚）。
                    App 裡日期跟編碼同一次在原生印，不再另外解一次、印完再編一次 */
                 const date = stampDate || undefined;
